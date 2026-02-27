@@ -347,8 +347,9 @@ body {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-/* Date input: calendar icon on left, click anywhere opens picker */
+/* Date input: calendar icon on left, compact width */
 input[type="date"].form-input {
+    width: 180px;
     direction: rtl;
     text-align: left;
     cursor: pointer;
