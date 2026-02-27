@@ -188,12 +188,25 @@ body {
     color: #555;
 }
 
-.legend-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #3b82f6;
+.calendar-legend {
+    gap: 8px;
 }
+
+.legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-left: 12px;
+}
+
+.legend-dot:first-child {
+    margin-left: 0;
+}
+
+.dot-daesung, .legend-dot.dot-daesung { background: #3b82f6; }
+.dot-hyodon, .legend-dot.dot-hyodon { background: #22c55e; }
+.dot-cj, .legend-dot.dot-cj { background: #f59e0b; }
 
 .calendar-table {
     width: 100%;
@@ -253,11 +266,29 @@ body {
     margin-bottom: 4px;
 }
 
-.day-qty {
-    font-size: 11px;
-    color: #3b82f6;
-    font-weight: 500;
+.day-payments {
+    margin-top: 2px;
 }
+
+.day-payment-item {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.day-payment-item .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.day-payment-item.daesung { color: #3b82f6; }
+.day-payment-item.hyodon { color: #22c55e; }
+.day-payment-item.cj { color: #f59e0b; }
 
 /* Card */
 .card {

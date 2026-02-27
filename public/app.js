@@ -81,8 +81,8 @@ function renderCalendar() {
     let hyodonPayment = 0;
     let cjPayment = 0;
 
-    // Build daily payment map
-    const dailyPayment = {};
+    // Build daily payment map per partner
+    const dailyPayments = {}; // { '2026-02-27': { daesung: 0, hyodon: 0, cj: 0 } }
 
     settlements.forEach(s => {
         if (s.date && s.date.startsWith(monthStr)) {
@@ -91,8 +91,11 @@ function renderCalendar() {
             if (s.partner === '대성(시온)') daesungPayment += amount;
             if (s.partner === '효돈농협') hyodonPayment += amount;
             if (s.partner === 'CJ택배비고') cjPayment += amount;
-            if (!dailyPayment[s.date]) dailyPayment[s.date] = 0;
-            dailyPayment[s.date] += amount;
+
+            if (!dailyPayments[s.date]) dailyPayments[s.date] = { daesung: 0, hyodon: 0, cj: 0 };
+            if (s.partner === '대성(시온)') dailyPayments[s.date].daesung += amount;
+            if (s.partner === '효돈농협') dailyPayments[s.date].hyodon += amount;
+            if (s.partner === 'CJ택배비고') dailyPayments[s.date].cj += amount;
         }
     });
 
@@ -129,8 +132,15 @@ function renderCalendar() {
                 if (dow === 6) classes.push('sat');
                 if (isToday) classes.push('today');
 
-                const payment = dailyPayment[dateStr];
-                const qtyHtml = payment ? `<div class="day-qty">${payment.toLocaleString()}원</div>` : '';
+                const dp = dailyPayments[dateStr];
+                let qtyHtml = '';
+                if (dp) {
+                    qtyHtml = '<div class="day-payments">';
+                    if (dp.daesung) qtyHtml += `<div class="day-payment-item daesung"><span class="dot dot-daesung"></span>${dp.daesung.toLocaleString()}</div>`;
+                    if (dp.hyodon) qtyHtml += `<div class="day-payment-item hyodon"><span class="dot dot-hyodon"></span>${dp.hyodon.toLocaleString()}</div>`;
+                    if (dp.cj) qtyHtml += `<div class="day-payment-item cj"><span class="dot dot-cj"></span>${dp.cj.toLocaleString()}</div>`;
+                    qtyHtml += '</div>';
+                }
 
                 html += `<td class="${classes.join(' ')}">
                     <span class="day-number">${isToday ? '오늘' : day}</span>
