@@ -702,6 +702,36 @@ input[type="date"].form-input::-webkit-datetime-edit {
     color: #fff;
 }
 
+.btn-view-items {
+    padding: 4px 12px;
+    background: #fff;
+    color: #22c55e;
+    border: 1px solid #22c55e;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-right: 4px;
+}
+
+.btn-view-items:hover {
+    background: #22c55e;
+    color: #fff;
+}
+
+.badge-pricing {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #eff6ff;
+    color: #3b82f6;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
 /* Data Table */
 .data-table {
     width: 100%;
@@ -734,6 +764,33 @@ input[type="date"].form-input::-webkit-datetime-edit {
     text-align: center;
     color: #999;
     padding: 30px 16px !important;
+}
+
+/* 품목별 금액 목록 테두리 및 컬럼 비율 */
+#pricing-list td {
+    border: 1px solid #d0d0d0;
+    padding: 10px 16px;
+}
+
+#page-pricing .data-table th:nth-child(1),
+#page-pricing .data-table td:nth-child(1) { width: 15%; }
+#page-pricing .data-table th:nth-child(2),
+#page-pricing .data-table td:nth-child(2) { width: 12%; }
+#page-pricing .data-table th:nth-child(3),
+#page-pricing .data-table td:nth-child(3) { width: 50%; }
+#page-pricing .data-table th:nth-child(4),
+#page-pricing .data-table td:nth-child(4) { width: 23%; }
+
+/* 거래처별 색상 - 대성(파랑) */
+tr.pricing-daesung td {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+
+/* 거래처별 색상 - 효돈(노랑) */
+tr.pricing-hyodon td {
+    background: #fefce8;
+    border-color: #fde68a;
 }
 
 /* Month Picker */

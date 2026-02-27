@@ -448,11 +448,13 @@ function renderSettlementList() {
     } else {
         tbody.innerHTML = filtered.map(item => {
             totalAmount += (item.amount || 0);
+            const fromPricingBadge = item.fromPricing ? '<span class="badge-pricing">품목별금액</span>' : '';
             return `<tr>
                 <td>${item.date}</td>
-                <td>${item.partner}</td>
+                <td>${item.partner} ${fromPricingBadge}</td>
                 <td>${(item.amount || 0).toLocaleString()} 원</td>
                 <td>
+                    ${item.items && item.items.length > 0 ? `<button class="btn-view-items" onclick="viewSettlementItems(${item.id})">상세</button>` : ''}
                     ${item.images && item.images.length > 0 ? `<button class="btn-view" onclick="viewImages(${item.id}, 'settlements')">보기</button>` : ''}
                     <button class="btn-danger" onclick="deleteSettlement(${item.id})">삭제</button>
                 </td>
@@ -469,6 +471,51 @@ window.deleteSettlement = function(id) {
     data = data.filter(d => d.id !== id);
     saveData(STORAGE_KEYS.settlements, data);
     renderSettlementList();
+};
+
+window.viewSettlementItems = function(id) {
+    const data = loadData(STORAGE_KEYS.settlements);
+    const item = data.find(d => d.id === id);
+    if (!item || !item.items || item.items.length === 0) return;
+
+    const rows = item.items.map(i => `
+        <tr>
+            <td>${i.name}</td>
+            <td style="text-align:right">${(i.price || 0).toLocaleString()} 원</td>
+            <td style="text-align:center">${i.qty || 1}</td>
+            <td style="text-align:right">${(i.subtotal || i.price || 0).toLocaleString()} 원</td>
+        </tr>
+    `).join('');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3>${item.date} - ${item.partner} 상세</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>품목명</th>
+                        <th style="text-align:right">단가</th>
+                        <th style="text-align:center">수량</th>
+                        <th style="text-align:right">소계</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3"><strong>합계</strong></td>
+                        <td style="text-align:right"><strong>${(item.amount || 0).toLocaleString()} 원</strong></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+    document.body.appendChild(overlay);
 };
 
 // ---- Pricing Page (품목별 금액) ----
@@ -675,8 +722,11 @@ document.getElementById('pricing-save').addEventListener('click', () => {
         }
     });
 
+    if (rows.length === 0) return alert('품목을 입력해주세요.');
+
+    const pricingId = Date.now();
     const record = {
-        id: Date.now(),
+        id: pricingId,
         startDate,
         endDate,
         partner: selectedPricingPartner,
@@ -687,6 +737,28 @@ document.getElementById('pricing-save').addEventListener('click', () => {
     data.push(record);
     saveData(STORAGE_KEYS.pricing, data);
 
+    // 정산 데이터에도 연동 저장
+    const totalAmount = rows.reduce((sum, r) => sum + r.price, 0);
+    const settlementItems = rows.map(r => ({
+        name: r.name,
+        price: r.price,
+        qty: 1,
+        subtotal: r.price
+    }));
+
+    const settlementRecord = {
+        id: pricingId + 1,
+        date: startDate,
+        partner: selectedPricingPartner,
+        amount: totalAmount,
+        items: settlementItems,
+        fromPricing: true
+    };
+
+    const settlements = loadData(STORAGE_KEYS.settlements);
+    settlements.push(settlementRecord);
+    saveData(STORAGE_KEYS.settlements, settlements);
+
     // Reset
     selectedPricingPartner = null;
     document.querySelectorAll('#pricing-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
@@ -694,6 +766,7 @@ document.getElementById('pricing-save').addEventListener('click', () => {
     resetPricingPaste();
 
     renderPricingList();
+    renderSettlementList();
     alert('저장되었습니다.');
 });
 
@@ -704,17 +777,29 @@ function renderPricingList() {
     if (data.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="4">설정된 금액이 없습니다.</td></tr>';
     } else {
-        tbody.innerHTML = data.map(item => {
-            return `<tr>
-                <td>${item.startDate} ~ ${item.endDate}</td>
-                <td>${item.partner}</td>
-                <td>${item.items ? item.items.length : 0}</td>
-                <td>
-                    ${item.images && item.images.length > 0 ? `<button class="btn-view" onclick="viewImages(${item.id}, 'pricing')">보기</button>` : ''}
-                    <button class="btn-danger" onclick="deletePricing(${item.id})">삭제</button>
-                </td>
-            </tr>`;
-        }).join('');
+        let rows = '';
+        data.forEach(item => {
+            const items = item.items || [];
+            if (items.length === 0) {
+                rows += `<tr>
+                    <td>${item.startDate} ~ ${item.endDate}</td>
+                    <td>${item.partner}</td>
+                    <td>-</td>
+                    <td>-</td>
+                </tr>`;
+            } else {
+                const colorClass = item.partner === '대성(시온)' ? 'pricing-daesung' : 'pricing-hyodon';
+                items.forEach((it, idx) => {
+                    rows += `<tr class="${colorClass}">
+                        ${idx === 0 ? `<td rowspan="${items.length}">${item.startDate} ~ ${item.endDate}<br><button class="btn-danger" style="margin-top:6px" onclick="deletePricing(${item.id})">삭제</button></td>` : ''}
+                        ${idx === 0 ? `<td rowspan="${items.length}">${item.partner}</td>` : ''}
+                        <td>${it.name}</td>
+                        <td>${(it.price || 0).toLocaleString()} 원</td>
+                    </tr>`;
+                });
+            }
+        });
+        tbody.innerHTML = rows;
     }
 }
 
