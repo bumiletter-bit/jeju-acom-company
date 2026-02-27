@@ -175,8 +175,8 @@ document.getElementById('settlement-partner-group').addEventListener('click', (e
     selectedSettlementPartner = btn.dataset.value;
 });
 
-// File upload
-setupUpload('settlement-upload', 'settlement-file', 'settlement-preview', (files) => {
+// Excel file upload
+setupExcelUpload('settlement-upload', 'settlement-file', 'settlement-preview', (files) => {
     settlementFiles = files;
 });
 
@@ -453,6 +453,68 @@ function setupUpload(areaId, inputId, previewId, callback) {
         preview.innerHTML = files.map((f, i) => `
             <div class="preview-item">
                 <img src="${f.dataUrl}" alt="${f.name}">
+                <button class="remove-btn" data-index="${i}">×</button>
+            </div>
+        `).join('');
+
+        preview.querySelectorAll('.remove-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                files.splice(Number(btn.dataset.index), 1);
+                renderPreview();
+                callback(files);
+            });
+        });
+    }
+}
+
+// ---- Excel Upload Helper ----
+function setupExcelUpload(areaId, inputId, previewId, callback) {
+    const area = document.getElementById(areaId);
+    const input = document.getElementById(inputId);
+    const preview = document.getElementById(previewId);
+    let files = [];
+
+    area.addEventListener('click', () => input.click());
+
+    area.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        area.classList.add('dragover');
+    });
+
+    area.addEventListener('dragleave', () => {
+        area.classList.remove('dragover');
+    });
+
+    area.addEventListener('drop', (e) => {
+        e.preventDefault();
+        area.classList.remove('dragover');
+        handleFiles(e.dataTransfer.files);
+    });
+
+    input.addEventListener('change', () => {
+        handleFiles(input.files);
+        input.value = '';
+    });
+
+    function handleFiles(fileList) {
+        Array.from(fileList).forEach(file => {
+            if (!file.name.match(/\.(xls|xlsx)$/i)) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const fileObj = { name: file.name, dataUrl: e.target.result };
+                files.push(fileObj);
+                renderPreview();
+                callback(files);
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function renderPreview() {
+        preview.innerHTML = files.map((f, i) => `
+            <div class="excel-preview-item">
+                <span class="excel-icon">📊</span>
+                <span class="excel-name">${f.name}</span>
                 <button class="remove-btn" data-index="${i}">×</button>
             </div>
         `).join('');

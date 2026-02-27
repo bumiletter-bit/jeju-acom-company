@@ -496,6 +496,41 @@ input[type="date"].form-input::-webkit-datetime-edit {
     line-height: 1;
 }
 
+/* Excel Preview */
+.excel-preview-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.excel-icon {
+    font-size: 18px;
+}
+
+.excel-name {
+    flex: 1;
+    color: #333;
+}
+
+.excel-preview-item .remove-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 /* Buttons */
 .btn-primary {
     padding: 10px 24px;
