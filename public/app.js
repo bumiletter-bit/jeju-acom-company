@@ -175,15 +175,22 @@ document.getElementById('settlement-partner-group').addEventListener('click', (e
     selectedSettlementPartner = btn.dataset.value;
 });
 
-// Settlement paste area (결제가 입력 - 붙여넣기/드래그)
+// Settlement paste/upload area (결제가 입력)
 const pasteArea = document.getElementById('settlement-paste-area');
+const excelFileInput = document.getElementById('settlement-excel-file');
 
-pasteArea.addEventListener('paste', (e) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text');
-    parseAndFillRows(text);
+// 클릭 시 파일 선택
+pasteArea.addEventListener('click', () => excelFileInput.click());
+
+// 파일 선택 시 엑셀 파싱
+excelFileInput.addEventListener('change', () => {
+    if (excelFileInput.files.length > 0) {
+        parseExcelFile(excelFileInput.files[0]);
+        excelFileInput.value = '';
+    }
 });
 
+// 드래그 앤 드롭
 pasteArea.addEventListener('dragover', (e) => {
     e.preventDefault();
     pasteArea.classList.add('dragover');
@@ -196,39 +203,108 @@ pasteArea.addEventListener('dragleave', () => {
 pasteArea.addEventListener('drop', (e) => {
     e.preventDefault();
     pasteArea.classList.remove('dragover');
+
+    // 파일 드롭 확인
+    if (e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        if (file.name.match(/\.(xls|xlsx)$/i)) {
+            parseExcelFile(file);
+            return;
+        }
+    }
+    // 텍스트 드롭
     const text = e.dataTransfer.getData('text');
-    if (text) parseAndFillRows(text);
+    if (text) parseTextAndFillRows(text);
 });
 
-// 전체 페이지에서 Ctrl+V 시에도 동작
+// Ctrl+V 붙여넣기
+pasteArea.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    if (text) parseTextAndFillRows(text);
+});
+
 document.getElementById('page-settlement').addEventListener('paste', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     e.preventDefault();
     const text = e.clipboardData.getData('text');
-    parseAndFillRows(text);
+    if (text) parseTextAndFillRows(text);
 });
 
-function parseAndFillRows(text) {
+// 엑셀 파일 파싱
+function parseExcelFile(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+            if (jsonData.length === 0) return alert('엑셀에 데이터가 없습니다.');
+
+            // 헤더에서 옵션명/단가 컬럼 찾기
+            const header = jsonData[0].map(h => String(h || '').trim());
+            let nameCol = -1;
+            let priceCol = -1;
+
+            header.forEach((h, i) => {
+                const lower = h.toLowerCase();
+                if (lower.includes('옵션명') || lower.includes('품목명') || lower.includes('상품명') || lower.includes('품목')) nameCol = i;
+                if (lower.includes('단가') || lower.includes('가격') || lower.includes('금액')) priceCol = i;
+            });
+
+            // 컬럼을 못 찾으면 첫 번째=품목명, 두 번째=단가로 추정
+            if (nameCol === -1) nameCol = 0;
+            if (priceCol === -1) priceCol = header.length >= 2 ? 1 : -1;
+
+            // 기존 행 초기화
+            document.getElementById('settlement-rows').innerHTML = '';
+
+            // 데이터 행 파싱 (헤더 제외)
+            for (let i = 1; i < jsonData.length; i++) {
+                const row = jsonData[i];
+                if (!row || row.length === 0) continue;
+
+                const name = String(row[nameCol] || '').trim();
+                let price = 0;
+                if (priceCol >= 0 && row[priceCol] != null) {
+                    price = Number(String(row[priceCol]).replace(/[,원\s]/g, '')) || 0;
+                }
+
+                if (name) {
+                    addSettlementRow(name, price, 1);
+                }
+            }
+
+            showSettlementRows();
+            updateSettlementTotal();
+        } catch (err) {
+            alert('엑셀 파일을 읽는데 실패했습니다: ' + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// 텍스트 파싱
+function parseTextAndFillRows(text) {
     const lines = text.trim().split('\n').filter(l => l.trim());
     if (lines.length === 0) return;
 
-    // 기존 행 초기화
     document.getElementById('settlement-rows').innerHTML = '';
 
     lines.forEach(line => {
-        // 탭 또는 여러 공백으로 분리
         const parts = line.split(/\t/).map(s => s.trim()).filter(s => s);
 
         let name = '';
         let price = 0;
 
         if (parts.length >= 2) {
-            // 마지막 요소가 가격
             const priceStr = parts[parts.length - 1].replace(/[,원\s]/g, '');
             price = Number(priceStr) || 0;
             name = parts.slice(0, parts.length - 1).join(' ');
         } else {
-            // 탭이 없으면 공백으로 분리하여 마지막 숫자를 가격으로
             const match = line.match(/^(.+?)\s{2,}([\d,]+)/);
             if (match) {
                 name = match[1].trim();
@@ -238,12 +314,12 @@ function parseAndFillRows(text) {
             }
         }
 
-        if (name) {
+        // 헤더행 스킵 (옵션명, 단가 등)
+        if (name && !name.match(/^(옵션명|품목명|상품명|단가|가격)$/)) {
             addSettlementRow(name, price, 1);
         }
     });
 
-    // 헤더, 행추가 버튼 보이기, 붙여넣기 영역 숨기기
     showSettlementRows();
     updateSettlementTotal();
 }
