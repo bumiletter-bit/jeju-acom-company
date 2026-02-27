@@ -90,12 +90,12 @@ function renderCalendar() {
             totalPayment += amount;
             if (s.partner === '대성(시온)') daesungPayment += amount;
             if (s.partner === '효돈농협') hyodonPayment += amount;
-            if (s.partner === 'CJ택배비고') cjPayment += amount;
+            if (s.partner === 'CJ대한통운') cjPayment += amount;
 
             if (!dailyPayments[s.date]) dailyPayments[s.date] = { daesung: 0, hyodon: 0, cj: 0 };
             if (s.partner === '대성(시온)') dailyPayments[s.date].daesung += amount;
             if (s.partner === '효돈농협') dailyPayments[s.date].hyodon += amount;
-            if (s.partner === 'CJ택배비고') dailyPayments[s.date].cj += amount;
+            if (s.partner === 'CJ대한통운') dailyPayments[s.date].cj += amount;
         }
     });
 
