@@ -470,6 +470,13 @@ function formatDate(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+// ---- Date input click opens picker ----
+document.querySelectorAll('input[type="date"]').forEach(input => {
+    input.addEventListener('click', () => {
+        if (input.showPicker) input.showPicker();
+    });
+});
+
 // ---- Init ----
 renderCalendar();
 renderSettlementList();

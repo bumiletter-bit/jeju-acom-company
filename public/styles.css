@@ -347,6 +347,23 @@ body {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
+/* Date input: calendar icon on left, click anywhere opens picker */
+input[type="date"].form-input {
+    direction: rtl;
+    text-align: left;
+    cursor: pointer;
+}
+
+input[type="date"].form-input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    margin-left: 0;
+    margin-right: auto;
+}
+
+input[type="date"].form-input::-webkit-datetime-edit {
+    direction: ltr;
+}
+
 .form-input-sm {
     padding: 6px 10px;
     border: 1px solid #ddd;
