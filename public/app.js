@@ -473,8 +473,6 @@ window.deleteSettlement = function(id) {
 
 // ---- Pricing Page (품목별 금액) ----
 let selectedPricingPartner = null;
-let pricingFiles = [];
-let pricingRows = [];
 
 // Set default dates (this week Monday ~ Sunday)
 const startOfWeek = new Date();
@@ -494,39 +492,170 @@ document.getElementById('pricing-partner-group').addEventListener('click', (e) =
     document.querySelectorAll('#pricing-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     selectedPricingPartner = btn.dataset.value;
-
-    // Show rows section
-    document.getElementById('pricing-rows-section').style.display = 'block';
-    document.getElementById('pricing-partner-label').textContent = `${selectedPricingPartner} 단가`;
-
-    if (pricingRows.length === 0) addPricingRow();
 });
 
-// File upload
-setupUpload('pricing-upload', 'pricing-file', 'pricing-preview', (files) => {
-    pricingFiles = files;
+// Pricing Excel upload / paste
+const pricingPasteArea = document.getElementById('pricing-paste-area');
+const pricingExcelInput = document.getElementById('pricing-excel-file');
+
+pricingPasteArea.addEventListener('click', () => pricingExcelInput.click());
+
+pricingExcelInput.addEventListener('change', () => {
+    if (pricingExcelInput.files.length > 0) {
+        parsePricingExcel(pricingExcelInput.files[0]);
+        pricingExcelInput.value = '';
+    }
 });
+
+pricingPasteArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    pricingPasteArea.classList.add('dragover');
+});
+
+pricingPasteArea.addEventListener('dragleave', () => {
+    pricingPasteArea.classList.remove('dragover');
+});
+
+pricingPasteArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    pricingPasteArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        if (file.name.match(/\.(xls|xlsx)$/i)) {
+            parsePricingExcel(file);
+            return;
+        }
+    }
+    const text = e.dataTransfer.getData('text');
+    if (text) parsePricingText(text);
+});
+
+pricingPasteArea.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    if (text) parsePricingText(text);
+});
+
+document.getElementById('page-pricing').addEventListener('paste', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    if (text) parsePricingText(text);
+});
+
+function parsePricingExcel(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+            if (jsonData.length === 0) return alert('엑셀에 데이터가 없습니다.');
+
+            const header = jsonData[0].map(h => String(h || '').trim());
+            let nameCol = -1;
+            let priceCol = -1;
+
+            header.forEach((h, i) => {
+                const lower = h.toLowerCase();
+                if (lower.includes('옵션명') || lower.includes('품목명') || lower.includes('상품명') || lower.includes('품목')) nameCol = i;
+                if (lower.includes('단가') || lower.includes('가격') || lower.includes('금액')) priceCol = i;
+            });
+
+            if (nameCol === -1) nameCol = 0;
+            if (priceCol === -1) priceCol = header.length >= 2 ? 1 : -1;
+
+            document.getElementById('pricing-rows').innerHTML = '';
+
+            for (let i = 1; i < jsonData.length; i++) {
+                const row = jsonData[i];
+                if (!row || row.length === 0) continue;
+                const name = String(row[nameCol] || '').trim();
+                let price = 0;
+                if (priceCol >= 0 && row[priceCol] != null) {
+                    price = Number(String(row[priceCol]).replace(/[,원\s]/g, '')) || 0;
+                }
+                if (name) addPricingRow(name, price);
+            }
+
+            showPricingRows();
+        } catch (err) {
+            alert('엑셀 파일을 읽는데 실패했습니다: ' + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function parsePricingText(text) {
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    if (lines.length === 0) return;
+
+    document.getElementById('pricing-rows').innerHTML = '';
+
+    lines.forEach(line => {
+        const parts = line.split(/\t/).map(s => s.trim()).filter(s => s);
+        let name = '';
+        let price = 0;
+
+        if (parts.length >= 2) {
+            const priceStr = parts[parts.length - 1].replace(/[,원\s]/g, '');
+            price = Number(priceStr) || 0;
+            name = parts.slice(0, parts.length - 1).join(' ');
+        } else {
+            const match = line.match(/^(.+?)\s{2,}([\d,]+)/);
+            if (match) {
+                name = match[1].trim();
+                price = Number(match[2].replace(/,/g, '')) || 0;
+            } else {
+                name = line.trim();
+            }
+        }
+
+        if (name && !name.match(/^(옵션명|품목명|상품명|단가|가격)$/)) {
+            addPricingRow(name, price);
+        }
+    });
+
+    showPricingRows();
+}
+
+function showPricingRows() {
+    document.getElementById('pricing-rows-header').style.display = 'flex';
+    document.getElementById('pricing-add-row').style.display = '';
+    document.getElementById('pricing-paste-area').style.display = 'none';
+}
+
+function resetPricingPaste() {
+    document.getElementById('pricing-rows-header').style.display = 'none';
+    document.getElementById('pricing-add-row').style.display = 'none';
+    document.getElementById('pricing-paste-area').style.display = '';
+}
 
 // Add row
-document.getElementById('pricing-add-row').addEventListener('click', addPricingRow);
+document.getElementById('pricing-add-row').addEventListener('click', () => addPricingRow());
 
-function addPricingRow() {
+function addPricingRow(name, price) {
+    name = name || '';
+    price = price || '';
     const container = document.getElementById('pricing-rows');
-    const rowId = Date.now();
+    const rowId = Date.now() + Math.random();
     const div = document.createElement('div');
     div.className = 'pricing-row';
     div.dataset.id = rowId;
     div.innerHTML = `
-        <input type="text" placeholder="품목명" class="pricing-item-name">
-        <input type="number" placeholder="단가 (원)" class="pricing-item-price">
-        <button class="btn-remove-row" onclick="removePricingRow(${rowId})">×</button>
+        <input type="text" placeholder="품목명" class="pricing-item-name" value="${name}">
+        <input type="number" placeholder="단가 (원)" class="pricing-item-price" value="${price}">
+        <button class="btn-remove-row" onclick="removePricingRow(this)">×</button>
     `;
     container.appendChild(div);
+    showPricingRows();
 }
 
-window.removePricingRow = function(id) {
-    const row = document.querySelector(`.pricing-row[data-id="${id}"]`);
-    if (row) row.remove();
+window.removePricingRow = function(btn) {
+    btn.closest('.pricing-row').remove();
 };
 
 // Save pricing
@@ -551,8 +680,7 @@ document.getElementById('pricing-save').addEventListener('click', () => {
         startDate,
         endDate,
         partner: selectedPricingPartner,
-        items: rows,
-        images: pricingFiles.map(f => f.dataUrl)
+        items: rows
     };
 
     const data = loadData(STORAGE_KEYS.pricing);
@@ -561,11 +689,9 @@ document.getElementById('pricing-save').addEventListener('click', () => {
 
     // Reset
     selectedPricingPartner = null;
-    pricingFiles = [];
     document.querySelectorAll('#pricing-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
-    document.getElementById('pricing-preview').innerHTML = '';
     document.getElementById('pricing-rows').innerHTML = '';
-    document.getElementById('pricing-rows-section').style.display = 'none';
+    resetPricingPaste();
 
     renderPricingList();
     alert('저장되었습니다.');
