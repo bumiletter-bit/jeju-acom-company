@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>제주아꼼이네 농업회사법인 (주)</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>제주아꼼이네 농업회사법인 (주)</h2>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-page="home">
+                    <span class="nav-icon">🏠</span>
+                    <span>홈</span>
+                </a>
+                <a href="#" class="nav-item" data-page="settlement">
+                    <span class="nav-icon">📋</span>
+                    <span>정산관리</span>
+                </a>
+                <a href="#" class="nav-item" data-page="inventory">
+                    <span class="nav-icon">📦</span>
+                    <span>박스재고</span>
+                </a>
+                <a href="#" class="nav-item" data-page="pricing">
+                    <span class="nav-icon">💰</span>
+                    <span>품목별 금액</span>
+                </a>
+                <a href="#" class="nav-item" data-page="data">
+                    <span class="nav-icon">📁</span>
+                    <span>데이터관리</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- 홈 페이지 -->
+            <div id="page-home" class="page active">
+                <div class="page-header">
+                    <h1 id="calendar-title">2026년 2월</h1>
+                    <div class="month-nav">
+                        <button id="prev-month" class="btn-nav">&lt;</button>
+                        <button id="next-month" class="btn-nav">&gt;</button>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label" id="month-trade-label">2월 총 거래건수</div>
+                        <div class="stat-value" id="month-trade-count">0 건</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label" id="month-qty-label">2월 총 수량</div>
+                        <div class="stat-value" id="month-qty-count">0 개</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">오늘 거래건수</div>
+                        <div class="stat-value" id="today-trade-count">0 건</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">오늘 총 수량</div>
+                        <div class="stat-value" id="today-qty-count">0 개</div>
+                    </div>
+                </div>
+
+                <div class="calendar-section">
+                    <div class="calendar-legend">
+                        <span class="legend-dot"></span>
+                        <span>총 수량</span>
+                    </div>
+                    <table class="calendar-table">
+                        <thead>
+                            <tr>
+                                <th class="sun">일</th>
+                                <th>월</th>
+                                <th>화</th>
+                                <th>수</th>
+                                <th>목</th>
+                                <th>금</th>
+                                <th class="sat">토</th>
+                            </tr>
+                        </thead>
+                        <tbody id="calendar-body">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 정산관리 페이지 -->
+            <div id="page-settlement" class="page">
+                <h1>정산관리</h1>
+
+                <div class="card">
+                    <h2>정산 데이터 입력</h2>
+
+                    <div class="form-group">
+                        <label>날짜</label>
+                        <input type="date" id="settlement-date" class="form-input">
+                    </div>
+
+                    <div class="form-group">
+                        <label>거래처 선택</label>
+                        <div class="btn-group" id="settlement-partner-group">
+                            <button class="btn-toggle" data-value="대성(시온)">대성(시온)</button>
+                            <button class="btn-toggle" data-value="효돈농협">효돈농협</button>
+                            <button class="btn-toggle" data-value="CJ택배비고">CJ택배비고</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>파일 업로드 (이미지)</label>
+                        <div class="upload-area" id="settlement-upload">
+                            <div class="upload-icon">⬆</div>
+                            <p>이미지를 드래그하거나 클릭하여 업로드</p>
+                            <span class="upload-hint">JPG, PNG 지원</span>
+                            <input type="file" id="settlement-file" accept=".jpg,.jpeg,.png" hidden>
+                        </div>
+                        <div id="settlement-preview" class="upload-preview"></div>
+                    </div>
+
+                    <button class="btn-primary" id="settlement-save">저장</button>
+                </div>
+
+                <div class="card">
+                    <div class="card-header-row">
+                        <h2>정산 데이터 목록</h2>
+                        <div class="month-picker">
+                            <label>월 선택:</label>
+                            <input type="month" id="settlement-month-filter" class="form-input-sm">
+                        </div>
+                    </div>
+
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>날짜</th>
+                                <th>거래처</th>
+                                <th>품목 수</th>
+                                <th>총 수량</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="settlement-list">
+                            <tr class="empty-row">
+                                <td colspan="5">데이터가 없습니다.</td>
+                            </tr>
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="2"><strong>합계</strong></td>
+                                <td id="settlement-total-items"><strong>0</strong></td>
+                                <td id="settlement-total-qty"><strong>0 개</strong></td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 박스재고 페이지 -->
+            <div id="page-inventory" class="page">
+                <h1>박스재고</h1>
+                <div class="card">
+                    <div class="placeholder-content">
+                        <p>박스재고 관리 페이지입니다.</p>
+                        <p class="text-muted">추후 기능이 추가됩니다.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 품목별 금액 페이지 -->
+            <div id="page-pricing" class="page">
+                <h1>품목별 금액</h1>
+
+                <div class="card">
+                    <h2>주간 금액 설정</h2>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>시작일</label>
+                            <input type="date" id="pricing-start-date" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>종료일</label>
+                            <input type="date" id="pricing-end-date" class="form-input">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>거래처 선택</label>
+                        <div class="btn-group" id="pricing-partner-group">
+                            <button class="btn-toggle" data-value="대성(시온)">대성(시온)</button>
+                            <button class="btn-toggle" data-value="효돈농협">효돈농협</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>파일 업로드 (이미지)</label>
+                        <div class="upload-area" id="pricing-upload">
+                            <div class="upload-icon">⬆</div>
+                            <p>이미지를 드래그하거나 클릭하여 업로드</p>
+                            <span class="upload-hint">JPG, PNG 지원</span>
+                            <input type="file" id="pricing-file" accept=".jpg,.jpeg,.png" hidden>
+                        </div>
+                        <div id="pricing-preview" class="upload-preview"></div>
+                    </div>
+
+                    <div id="pricing-rows-section" style="display:none;">
+                        <label id="pricing-partner-label" class="section-label">단가</label>
+                        <div id="pricing-rows"></div>
+                        <button class="btn-add-row" id="pricing-add-row">+ 행 추가</button>
+                    </div>
+
+                    <button class="btn-primary" id="pricing-save">저장</button>
+                </div>
+
+                <div class="card">
+                    <h2>설정된 주간 금액 목록</h2>
+
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>기간</th>
+                                <th>거래처</th>
+                                <th>항목 수</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pricing-list">
+                            <tr class="empty-row">
+                                <td colspan="4">설정된 금액이 없습니다.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 데이터관리 페이지 -->
+            <div id="page-data" class="page">
+                <h1>데이터관리</h1>
+                <div class="card">
+                    <div class="placeholder-content">
+                        <p>데이터관리 페이지입니다.</p>
+                        <p class="text-muted">추후 기능이 추가됩니다.</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

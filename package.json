@@ -1,0 +1,12 @@
+{
+  "name": "jeju-acom-company",
+  "version": "1.0.0",
+  "description": "제주아꼼이네 농업회사법인 업무 프로그램",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
