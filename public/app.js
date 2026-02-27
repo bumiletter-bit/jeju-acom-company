@@ -175,10 +175,52 @@ document.getElementById('settlement-partner-group').addEventListener('click', (e
     selectedSettlementPartner = btn.dataset.value;
 });
 
-// Excel file upload
-setupExcelUpload('settlement-upload', 'settlement-file', 'settlement-preview', (files) => {
-    settlementFiles = files;
-});
+// Settlement rows (결제가 입력)
+document.getElementById('settlement-add-row').addEventListener('click', addSettlementRow);
+addSettlementRow(); // 기본 1행
+
+function addSettlementRow() {
+    const container = document.getElementById('settlement-rows');
+    const rowId = Date.now() + Math.random();
+    const div = document.createElement('div');
+    div.className = 'settlement-row';
+    div.dataset.id = rowId;
+    div.innerHTML = `
+        <input type="text" placeholder="품목명" class="s-item-name">
+        <input type="number" placeholder="단가" class="s-item-price">
+        <input type="number" placeholder="수량" class="s-item-qty" value="1">
+        <span class="s-item-subtotal">0 원</span>
+        <button class="btn-remove-row" onclick="removeSettlementRow(this)">×</button>
+    `;
+    container.appendChild(div);
+
+    // 소계 자동 계산
+    const priceInput = div.querySelector('.s-item-price');
+    const qtyInput = div.querySelector('.s-item-qty');
+    const calc = () => {
+        const price = Number(priceInput.value) || 0;
+        const qty = Number(qtyInput.value) || 0;
+        div.querySelector('.s-item-subtotal').textContent = `${(price * qty).toLocaleString()} 원`;
+        updateSettlementTotal();
+    };
+    priceInput.addEventListener('input', calc);
+    qtyInput.addEventListener('input', calc);
+}
+
+window.removeSettlementRow = function(btn) {
+    btn.closest('.settlement-row').remove();
+    updateSettlementTotal();
+};
+
+function updateSettlementTotal() {
+    let total = 0;
+    document.querySelectorAll('#settlement-rows .settlement-row').forEach(row => {
+        const price = Number(row.querySelector('.s-item-price').value) || 0;
+        const qty = Number(row.querySelector('.s-item-qty').value) || 0;
+        total += price * qty;
+    });
+    document.getElementById('settlement-amount').value = total;
+}
 
 // Month filter change
 document.getElementById('settlement-month-filter').addEventListener('change', renderSettlementList);
@@ -189,6 +231,15 @@ document.getElementById('settlement-save').addEventListener('click', () => {
     if (!date) return alert('날짜를 선택해주세요.');
     if (!selectedSettlementPartner) return alert('거래처를 선택해주세요.');
 
+    // 결제가 행 데이터 수집
+    const items = [];
+    document.querySelectorAll('#settlement-rows .settlement-row').forEach(row => {
+        const name = row.querySelector('.s-item-name').value.trim();
+        const price = Number(row.querySelector('.s-item-price').value) || 0;
+        const qty = Number(row.querySelector('.s-item-qty').value) || 0;
+        if (name) items.push({ name, price, qty, subtotal: price * qty });
+    });
+
     const amount = Number(document.getElementById('settlement-amount').value) || 0;
 
     const record = {
@@ -196,7 +247,7 @@ document.getElementById('settlement-save').addEventListener('click', () => {
         date: date,
         partner: selectedSettlementPartner,
         amount: amount,
-        images: settlementFiles.map(f => f.dataUrl)
+        items: items
     };
 
     const data = loadData(STORAGE_KEYS.settlements);
@@ -205,10 +256,10 @@ document.getElementById('settlement-save').addEventListener('click', () => {
 
     // Reset form
     selectedSettlementPartner = null;
-    settlementFiles = [];
     document.getElementById('settlement-amount').value = '';
     document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
-    document.getElementById('settlement-preview').innerHTML = '';
+    document.getElementById('settlement-rows').innerHTML = '';
+    addSettlementRow();
 
     renderSettlementList();
     alert('저장되었습니다.');

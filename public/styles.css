@@ -496,6 +496,76 @@ input[type="date"].form-input::-webkit-datetime-edit {
     line-height: 1;
 }
 
+/* Settlement Rows */
+.settlement-rows-header {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #e8e8e8;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #666;
+}
+
+.row-header-item { flex: 2; }
+.row-header-price { flex: 1; }
+.row-header-qty { flex: 1; }
+.row-header-subtotal { flex: 1; text-align: right; }
+.row-header-action { width: 30px; }
+
+.settlement-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 8px;
+    align-items: center;
+}
+
+.settlement-row input {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.settlement-row input:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.settlement-row .s-item-name { flex: 2; }
+.settlement-row .s-item-price { flex: 1; }
+.settlement-row .s-item-qty { flex: 1; }
+
+.settlement-row .s-item-subtotal {
+    flex: 1;
+    text-align: right;
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    padding-right: 4px;
+}
+
+.settlement-row .btn-remove-row {
+    width: 30px;
+    height: 30px;
+    border: 1px solid #ddd;
+    background: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #ef4444;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.settlement-row .btn-remove-row:hover {
+    background: #fef2f2;
+    border-color: #ef4444;
+}
+
 /* Excel Preview */
 .excel-preview-item {
     display: flex;
