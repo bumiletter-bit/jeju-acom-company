@@ -123,7 +123,11 @@
 
                     <div class="form-group">
                         <label>결제가 입력</label>
-                        <div class="settlement-rows-header">
+                        <div class="paste-area" id="settlement-paste-area">
+                            <p>품목/가격 데이터를 여기에 붙여넣기 또는 드래그하세요</p>
+                            <span class="paste-hint">엑셀, 텍스트 모두 가능 (품목명 + 가격 형식)</span>
+                        </div>
+                        <div class="settlement-rows-header" id="settlement-rows-header" style="display:none;">
                             <span class="row-header-item">품목명</span>
                             <span class="row-header-price">단가 (원)</span>
                             <span class="row-header-qty">수량</span>
@@ -131,7 +135,7 @@
                             <span class="row-header-action"></span>
                         </div>
                         <div id="settlement-rows"></div>
-                        <button type="button" class="btn-add-row" id="settlement-add-row">+ 행 추가</button>
+                        <button type="button" class="btn-add-row" id="settlement-add-row" style="display:none;">+ 행 추가</button>
                     </div>
 
                     <button class="btn-primary" id="settlement-save">저장</button>

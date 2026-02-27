@@ -496,6 +496,39 @@ input[type="date"].form-input::-webkit-datetime-edit {
     line-height: 1;
 }
 
+/* Paste Area */
+.paste-area {
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    padding: 30px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: #fafafa;
+    margin-bottom: 12px;
+}
+
+.paste-area:hover {
+    border-color: #3b82f6;
+    background: #f0f4ff;
+}
+
+.paste-area.dragover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+
+.paste-area p {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 4px;
+}
+
+.paste-hint {
+    font-size: 12px;
+    color: #999;
+}
+
 /* Settlement Rows */
 .settlement-rows-header {
     display: flex;

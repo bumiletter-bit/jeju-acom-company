@@ -175,32 +175,123 @@ document.getElementById('settlement-partner-group').addEventListener('click', (e
     selectedSettlementPartner = btn.dataset.value;
 });
 
-// Settlement rows (결제가 입력)
-document.getElementById('settlement-add-row').addEventListener('click', addSettlementRow);
-addSettlementRow(); // 기본 1행
+// Settlement paste area (결제가 입력 - 붙여넣기/드래그)
+const pasteArea = document.getElementById('settlement-paste-area');
 
-function addSettlementRow() {
+pasteArea.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    parseAndFillRows(text);
+});
+
+pasteArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    pasteArea.classList.add('dragover');
+});
+
+pasteArea.addEventListener('dragleave', () => {
+    pasteArea.classList.remove('dragover');
+});
+
+pasteArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    pasteArea.classList.remove('dragover');
+    const text = e.dataTransfer.getData('text');
+    if (text) parseAndFillRows(text);
+});
+
+// 전체 페이지에서 Ctrl+V 시에도 동작
+document.getElementById('page-settlement').addEventListener('paste', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    parseAndFillRows(text);
+});
+
+function parseAndFillRows(text) {
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    if (lines.length === 0) return;
+
+    // 기존 행 초기화
+    document.getElementById('settlement-rows').innerHTML = '';
+
+    lines.forEach(line => {
+        // 탭 또는 여러 공백으로 분리
+        const parts = line.split(/\t/).map(s => s.trim()).filter(s => s);
+
+        let name = '';
+        let price = 0;
+
+        if (parts.length >= 2) {
+            // 마지막 요소가 가격
+            const priceStr = parts[parts.length - 1].replace(/[,원\s]/g, '');
+            price = Number(priceStr) || 0;
+            name = parts.slice(0, parts.length - 1).join(' ');
+        } else {
+            // 탭이 없으면 공백으로 분리하여 마지막 숫자를 가격으로
+            const match = line.match(/^(.+?)\s{2,}([\d,]+)/);
+            if (match) {
+                name = match[1].trim();
+                price = Number(match[2].replace(/,/g, '')) || 0;
+            } else {
+                name = line.trim();
+            }
+        }
+
+        if (name) {
+            addSettlementRow(name, price, 1);
+        }
+    });
+
+    // 헤더, 행추가 버튼 보이기, 붙여넣기 영역 숨기기
+    showSettlementRows();
+    updateSettlementTotal();
+}
+
+function showSettlementRows() {
+    document.getElementById('settlement-rows-header').style.display = 'flex';
+    document.getElementById('settlement-add-row').style.display = '';
+    document.getElementById('settlement-paste-area').style.display = 'none';
+}
+
+function resetSettlementPaste() {
+    document.getElementById('settlement-rows-header').style.display = 'none';
+    document.getElementById('settlement-add-row').style.display = 'none';
+    document.getElementById('settlement-paste-area').style.display = '';
+}
+
+// Settlement rows (결제가 입력)
+document.getElementById('settlement-add-row').addEventListener('click', () => addSettlementRow());
+
+function addSettlementRow(name, price, qty) {
+    name = name || '';
+    price = price || '';
+    qty = qty || 1;
+    const subtotal = (Number(price) || 0) * (Number(qty) || 0);
+
     const container = document.getElementById('settlement-rows');
     const rowId = Date.now() + Math.random();
     const div = document.createElement('div');
     div.className = 'settlement-row';
     div.dataset.id = rowId;
     div.innerHTML = `
-        <input type="text" placeholder="품목명" class="s-item-name">
-        <input type="number" placeholder="단가" class="s-item-price">
-        <input type="number" placeholder="수량" class="s-item-qty" value="1">
-        <span class="s-item-subtotal">0 원</span>
+        <input type="text" placeholder="품목명" class="s-item-name" value="${name}">
+        <input type="number" placeholder="단가" class="s-item-price" value="${price}">
+        <input type="number" placeholder="수량" class="s-item-qty" value="${qty}">
+        <span class="s-item-subtotal">${subtotal.toLocaleString()} 원</span>
         <button class="btn-remove-row" onclick="removeSettlementRow(this)">×</button>
     `;
     container.appendChild(div);
+
+    showSettlementRows();
 
     // 소계 자동 계산
     const priceInput = div.querySelector('.s-item-price');
     const qtyInput = div.querySelector('.s-item-qty');
     const calc = () => {
-        const price = Number(priceInput.value) || 0;
-        const qty = Number(qtyInput.value) || 0;
-        div.querySelector('.s-item-subtotal').textContent = `${(price * qty).toLocaleString()} 원`;
+        const p = Number(priceInput.value) || 0;
+        const q = Number(qtyInput.value) || 0;
+        div.querySelector('.s-item-subtotal').textContent = `${(p * q).toLocaleString()} 원`;
         updateSettlementTotal();
     };
     priceInput.addEventListener('input', calc);
@@ -259,7 +350,7 @@ document.getElementById('settlement-save').addEventListener('click', () => {
     document.getElementById('settlement-amount').value = '';
     document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
     document.getElementById('settlement-rows').innerHTML = '';
-    addSettlementRow();
+    resetSettlementPaste();
 
     renderSettlementList();
     alert('저장되었습니다.');
