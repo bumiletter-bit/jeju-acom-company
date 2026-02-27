@@ -258,11 +258,13 @@ let selectedPricingPartner = null;
 let pricingFiles = [];
 let pricingRows = [];
 
-// Set default dates (this week Sunday to next Sunday)
+// Set default dates (this week Monday ~ Sunday)
 const startOfWeek = new Date();
-startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+const dayOfWeek = startOfWeek.getDay(); // 0=일, 1=월, ...
+const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+startOfWeek.setDate(startOfWeek.getDate() + diffToMonday);
 const endOfWeek = new Date(startOfWeek);
-endOfWeek.setDate(endOfWeek.getDate() + 6 + 28); // about a month ahead
+endOfWeek.setDate(endOfWeek.getDate() + 6); // Sunday
 
 document.getElementById('pricing-start-date').value = formatDate(startOfWeek);
 document.getElementById('pricing-end-date').value = formatDate(endOfWeek);
