@@ -51,27 +51,27 @@
 
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-label" id="month-trade-label">2월 총 거래건수</div>
-                        <div class="stat-value" id="month-trade-count">0 건</div>
+                        <div class="stat-label" id="total-payment-label">2월 총 결제금액</div>
+                        <div class="stat-value" id="total-payment">0 원</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label" id="month-qty-label">2월 총 수량</div>
-                        <div class="stat-value" id="month-qty-count">0 개</div>
+                        <div class="stat-label" id="daesung-payment-label">대성(시온) 결제금액</div>
+                        <div class="stat-value" id="daesung-payment">0 원</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">오늘 거래건수</div>
-                        <div class="stat-value" id="today-trade-count">0 건</div>
+                        <div class="stat-label" id="hyodon-payment-label">효돈농협 결제금액</div>
+                        <div class="stat-value" id="hyodon-payment">0 원</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">오늘 총 수량</div>
-                        <div class="stat-value" id="today-qty-count">0 개</div>
+                        <div class="stat-label" id="cj-payment-label">CJ택배 결제금액</div>
+                        <div class="stat-value" id="cj-payment">0 원</div>
                     </div>
                 </div>
 
                 <div class="calendar-section">
                     <div class="calendar-legend">
                         <span class="legend-dot"></span>
-                        <span>총 수량</span>
+                        <span>결제금액</span>
                     </div>
                     <table class="calendar-table">
                         <thead>
@@ -113,6 +113,11 @@
                     </div>
 
                     <div class="form-group">
+                        <label>결제금액 (원)</label>
+                        <input type="number" id="settlement-amount" class="form-input" placeholder="결제금액을 입력하세요">
+                    </div>
+
+                    <div class="form-group">
                         <label>파일 업로드 (이미지)</label>
                         <div class="upload-area" id="settlement-upload">
                             <div class="upload-icon">⬆</div>
@@ -140,21 +145,19 @@
                             <tr>
                                 <th>날짜</th>
                                 <th>거래처</th>
-                                <th>품목 수</th>
-                                <th>총 수량</th>
+                                <th>결제금액</th>
                                 <th>관리</th>
                             </tr>
                         </thead>
                         <tbody id="settlement-list">
                             <tr class="empty-row">
-                                <td colspan="5">데이터가 없습니다.</td>
+                                <td colspan="4">데이터가 없습니다.</td>
                             </tr>
                         </tbody>
                         <tfoot>
                             <tr>
                                 <td colspan="2"><strong>합계</strong></td>
-                                <td id="settlement-total-items"><strong>0</strong></td>
-                                <td id="settlement-total-qty"><strong>0 개</strong></td>
+                                <td id="settlement-total-amount"><strong>0 원</strong></td>
                                 <td></td>
                             </tr>
                         </tfoot>

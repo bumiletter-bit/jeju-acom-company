@@ -67,39 +67,39 @@ function renderCalendar() {
 
     // Update stat labels
     const monthNum = currentMonth + 1;
-    document.getElementById('month-trade-label').textContent = `${monthNum}월 총 거래건수`;
-    document.getElementById('month-qty-label').textContent = `${monthNum}월 총 수량`;
+    document.getElementById('total-payment-label').textContent = `${monthNum}월 총 결제금액`;
+    document.getElementById('daesung-payment-label').textContent = `${monthNum}월 대성(시온) 결제금액`;
+    document.getElementById('hyodon-payment-label').textContent = `${monthNum}월 효돈농협 결제금액`;
+    document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배 결제금액`;
 
-    // Calculate stats from settlements
+    // Calculate payment stats from settlements
     const settlements = loadData(STORAGE_KEYS.settlements);
     const monthStr = `${currentYear}-${String(monthNum).padStart(2, '0')}`;
-    const todayStr = formatDate(new Date());
 
-    let monthTradeCount = 0;
-    let monthQty = 0;
-    let todayTradeCount = 0;
-    let todayQty = 0;
+    let totalPayment = 0;
+    let daesungPayment = 0;
+    let hyodonPayment = 0;
+    let cjPayment = 0;
 
-    // Build daily quantity map
-    const dailyQty = {};
+    // Build daily payment map
+    const dailyPayment = {};
 
     settlements.forEach(s => {
         if (s.date && s.date.startsWith(monthStr)) {
-            monthTradeCount++;
-            monthQty += (s.totalQty || 0);
-            if (!dailyQty[s.date]) dailyQty[s.date] = 0;
-            dailyQty[s.date] += (s.totalQty || 0);
-        }
-        if (s.date === todayStr) {
-            todayTradeCount++;
-            todayQty += (s.totalQty || 0);
+            const amount = s.amount || 0;
+            totalPayment += amount;
+            if (s.partner === '대성(시온)') daesungPayment += amount;
+            if (s.partner === '효돈농협') hyodonPayment += amount;
+            if (s.partner === 'CJ택배비고') cjPayment += amount;
+            if (!dailyPayment[s.date]) dailyPayment[s.date] = 0;
+            dailyPayment[s.date] += amount;
         }
     });
 
-    document.getElementById('month-trade-count').textContent = `${monthTradeCount} 건`;
-    document.getElementById('month-qty-count').textContent = `${monthQty} 개`;
-    document.getElementById('today-trade-count').textContent = `${todayTradeCount} 건`;
-    document.getElementById('today-qty-count').textContent = `${todayQty} 개`;
+    document.getElementById('total-payment').textContent = `${totalPayment.toLocaleString()} 원`;
+    document.getElementById('daesung-payment').textContent = `${daesungPayment.toLocaleString()} 원`;
+    document.getElementById('hyodon-payment').textContent = `${hyodonPayment.toLocaleString()} 원`;
+    document.getElementById('cj-payment').textContent = `${cjPayment.toLocaleString()} 원`;
 
     // Build calendar grid
     const firstDay = new Date(currentYear, currentMonth, 1).getDay();
@@ -129,8 +129,8 @@ function renderCalendar() {
                 if (dow === 6) classes.push('sat');
                 if (isToday) classes.push('today');
 
-                const qty = dailyQty[dateStr];
-                const qtyHtml = qty ? `<div class="day-qty">${qty}개</div>` : '';
+                const payment = dailyPayment[dateStr];
+                const qtyHtml = payment ? `<div class="day-qty">${payment.toLocaleString()}원</div>` : '';
 
                 html += `<td class="${classes.join(' ')}">
                     <span class="day-number">${isToday ? '오늘' : day}</span>
@@ -179,12 +179,13 @@ document.getElementById('settlement-save').addEventListener('click', () => {
     if (!date) return alert('날짜를 선택해주세요.');
     if (!selectedSettlementPartner) return alert('거래처를 선택해주세요.');
 
+    const amount = Number(document.getElementById('settlement-amount').value) || 0;
+
     const record = {
         id: Date.now(),
         date: date,
         partner: selectedSettlementPartner,
-        itemCount: 0,
-        totalQty: 0,
+        amount: amount,
         images: settlementFiles.map(f => f.dataUrl)
     };
 
@@ -195,6 +196,7 @@ document.getElementById('settlement-save').addEventListener('click', () => {
     // Reset form
     selectedSettlementPartner = null;
     settlementFiles = [];
+    document.getElementById('settlement-amount').value = '';
     document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
     document.getElementById('settlement-preview').innerHTML = '';
 
@@ -211,20 +213,17 @@ function renderSettlementList() {
         : data;
 
     const tbody = document.getElementById('settlement-list');
-    let totalItems = 0;
-    let totalQty = 0;
+    let totalAmount = 0;
 
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">데이터가 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">데이터가 없습니다.</td></tr>';
     } else {
         tbody.innerHTML = filtered.map(item => {
-            totalItems += (item.itemCount || 0);
-            totalQty += (item.totalQty || 0);
+            totalAmount += (item.amount || 0);
             return `<tr>
                 <td>${item.date}</td>
                 <td>${item.partner}</td>
-                <td>${item.itemCount || 0}</td>
-                <td>${item.totalQty || 0} 개</td>
+                <td>${(item.amount || 0).toLocaleString()} 원</td>
                 <td>
                     ${item.images && item.images.length > 0 ? `<button class="btn-view" onclick="viewImages(${item.id}, 'settlements')">보기</button>` : ''}
                     <button class="btn-danger" onclick="deleteSettlement(${item.id})">삭제</button>
@@ -233,8 +232,7 @@ function renderSettlementList() {
         }).join('');
     }
 
-    document.getElementById('settlement-total-items').innerHTML = `<strong>${totalItems}</strong>`;
-    document.getElementById('settlement-total-qty').innerHTML = `<strong>${totalQty} 개</strong>`;
+    document.getElementById('settlement-total-amount').innerHTML = `<strong>${totalAmount.toLocaleString()} 원</strong>`;
 }
 
 window.deleteSettlement = function(id) {
