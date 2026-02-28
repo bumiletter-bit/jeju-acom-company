@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=8">
+    <link rel="stylesheet" href="styles.css?v=9">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -110,10 +110,13 @@
 
                     <div class="form-group">
                         <label>거래처 선택</label>
-                        <div class="btn-group" id="settlement-partner-group">
-                            <button class="btn-toggle" data-value="대성(시온)">대성(시온)</button>
-                            <button class="btn-toggle" data-value="효돈농협">효돈농협</button>
-                            <button class="btn-toggle" data-value="CJ대한통운">CJ대한통운</button>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div class="btn-group" id="settlement-partner-group">
+                                <button class="btn-toggle" data-value="대성(시온)">대성(시온)</button>
+                                <button class="btn-toggle" data-value="효돈농협">효돈농협</button>
+                                <button class="btn-toggle" data-value="CJ대한통운">CJ대한통운</button>
+                            </div>
+                            <button type="button" class="btn-reset" id="settlement-reset-btn">초기화</button>
                         </div>
                     </div>
 
@@ -129,21 +132,6 @@
                             <h4 class="ocr-warning-title">매칭 실패 항목</h4>
                             <div id="sales-unmatched-list"></div>
                         </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>결제예상금액(원)</label>
-                        <input type="number" id="settlement-amount" class="form-input" placeholder="결제예상금액을 입력하세요">
-                    </div>
-
-                    <div class="form-group">
-                        <label>결제가 입력</label>
-                        <div class="paste-area" id="settlement-paste-area">
-                            <div class="upload-icon">📊</div>
-                            <p>엑셀 파일을 드래그하거나 클릭하여 업로드</p>
-                            <span class="paste-hint">XLS, XLSX 파일 또는 텍스트 붙여넣기(Ctrl+V) 가능</span>
-                            <input type="file" id="settlement-excel-file" accept=".xls,.xlsx" hidden>
-                        </div>
                         <div class="settlement-rows-header" id="settlement-rows-header" style="display:none;">
                             <span class="row-header-item">품목명</span>
                             <span class="row-header-price">단가 (원)</span>
@@ -153,6 +141,11 @@
                         </div>
                         <div id="settlement-rows"></div>
                         <button type="button" class="btn-add-row" id="settlement-add-row" style="display:none;">+ 행 추가</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label>결제예상금액(원)</label>
+                        <input type="number" id="settlement-amount" class="form-input" placeholder="결제예상금액을 입력하세요">
                     </div>
 
                     <button class="btn-primary" id="settlement-save">저장</button>
@@ -283,6 +276,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=15"></script>
 </body>
 </html>

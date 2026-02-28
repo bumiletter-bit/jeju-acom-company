@@ -175,6 +175,24 @@ document.getElementById('settlement-partner-group').addEventListener('click', (e
     selectedSettlementPartner = btn.dataset.value;
 });
 
+// ---- 초기화 버튼 ----
+document.getElementById('settlement-reset-btn').addEventListener('click', () => {
+    // 날짜 초기화
+    document.getElementById('settlement-date').value = '';
+    // 거래처 선택 해제
+    document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
+    selectedSettlementPartner = '';
+    // 결제예상금액 초기화
+    document.getElementById('settlement-amount').value = '';
+    // 행 목록 초기화
+    document.getElementById('settlement-rows').innerHTML = '';
+    resetSettlementPaste();
+    // 매칭 실패 영역 숨김
+    document.getElementById('sales-unmatched-container').style.display = 'none';
+    // 업로드 영역 다시 표시
+    document.getElementById('sales-upload-area').style.display = '';
+});
+
 // ---- 판매현황 엑셀 업로드 ----
 const salesUploadArea = document.getElementById('sales-upload-area');
 const salesExcelFile = document.getElementById('sales-excel-file');
@@ -275,8 +293,15 @@ function handleSalesExcel(file) {
             const pricingItems = getPricingForDate(selectedSettlementPartner, settlementDate);
             console.log('=== 품목별 금액 데이터 ===', pricingItems);
 
+            // 디버그: 조회된 품목별 금액 목록 표시
+            const pricingDebug = pricingItems.length > 0
+                ? pricingItems.map(p => p.name + ' (' + p.price + '원)').join('\n')
+                : '(없음)';
+            console.log('[디버그] 거래처:', selectedSettlementPartner, '날짜:', settlementDate);
+            console.log('[디버그] 품목별 금액:\n' + pricingDebug);
+
             if (pricingItems.length === 0) {
-                alert('해당 날짜/거래처의 품목별 금액이 등록되지 않았습니다.\n먼저 품목별 금액에서 단가를 등록해주세요.');
+                alert('해당 날짜(' + settlementDate + ') / 거래처(' + selectedSettlementPartner + ')의 품목별 금액이 등록되지 않았습니다.\n먼저 품목별 금액에서 단가를 등록해주세요.');
                 return;
             }
 
@@ -337,9 +362,18 @@ function handleSalesExcel(file) {
                 unmatchedContainer.style.display = 'none';
             }
 
-            // 결과 알림
-            let msg = groupedList.length + '개 품목 매칭 완료!';
-            if (unmatched.length > 0) msg += '\n' + unmatched.length + '개 품목 매칭 실패 (수동 입력 필요)';
+            // 결과 알림 (상세)
+            let msg = '=== 매칭 결과 ===\n';
+            msg += '품목별 금액 등록: ' + pricingItems.length + '개\n';
+            msg += '매칭 성공: ' + groupedList.length + '개 / 실패: ' + unmatched.length + '개\n\n';
+            if (groupedList.length > 0) {
+                msg += '[매칭 성공]\n';
+                groupedList.forEach(g => { msg += '  ' + g.name + ' (' + g.price + '원 x ' + g.qty + ')\n'; });
+            }
+            if (unmatched.length > 0) {
+                msg += '\n[매칭 실패]\n';
+                unmatched.forEach(u => { msg += '  ' + u.name + '\n'; });
+            }
             alert(msg);
 
         } catch (err) {
@@ -350,82 +384,57 @@ function handleSalesExcel(file) {
     reader.readAsArrayBuffer(file);
 }
 
-// 판매현황 품목명 → 품목별 금액 매칭
+// 판매현황 품목명 → 품목별 금액 매칭 (키워드 기반)
+// 원리: 품목별 금액 이름 "한라봉 가정용 3kg"의 모든 키워드가
+//       판매현황 이름 "하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 3kg(...)"에 모두 포함되면 매칭
 function matchSalesToPricing(salesName, pricingItems) {
     // 1순위: 정확히 일치
     for (const p of pricingItems) {
         if (p.name === salesName) return p;
     }
 
-    // 2순위: 특징 기반 매칭 (과일명 + 무게 + 등급)
-    const salesFeatures = extractItemFeatures(salesName);
-    if (!salesFeatures.fruit) return null;
-
+    // 2순위: 키워드 매칭
+    const salesLower = salesName.toLowerCase();
     let bestMatch = null;
-    let bestScore = 0;
+    let bestKeywordCount = 0;
 
     for (const p of pricingItems) {
-        const pFeatures = extractItemFeatures(p.name);
-        if (!pFeatures.fruit || salesFeatures.fruit !== pFeatures.fruit) continue;
+        // 품목별 금액 이름에서 키워드 추출
+        const keywords = p.name.split(/\s+/).filter(k => k.length > 0);
 
-        let score = 3; // 과일명 일치
+        // 모든 키워드가 판매현황 이름에 포함되는지 확인
+        const allMatch = keywords.every(kw => containsKeyword(salesLower, kw.toLowerCase()));
 
-        // 무게 일치
-        if (salesFeatures.weight && pFeatures.weight) {
-            if (salesFeatures.weight === pFeatures.weight) score += 2;
-            else continue; // 무게 불일치 → 스킵
-        }
-
-        // 등급 일치
-        if (salesFeatures.grade && pFeatures.grade) {
-            if (salesFeatures.grade === pFeatures.grade) score += 2;
-            else score -= 1;
-        }
-
-        if (score > bestScore) {
-            bestScore = score;
+        if (allMatch && keywords.length > bestKeywordCount) {
+            bestKeywordCount = keywords.length;
             bestMatch = p;
         }
     }
 
-    return bestMatch && bestScore >= 5 ? bestMatch : null;
+    if (bestMatch) {
+        console.log('[매칭 성공]', salesName, '→', bestMatch.name, '(키워드', bestKeywordCount + '개)');
+    } else {
+        console.log('[매칭 실패]', salesName);
+    }
+
+    return bestMatch;
 }
 
-// 품목명에서 특징 추출 (엑셀 텍스트용 - OCR 오인식 없이 정확한 텍스트)
-function extractItemFeatures(text) {
-    const f = {};
-    const t = text.replace(/\s*[A-Z0-9]*사이즈로[!]?\s*/g, ' ').trim();
-
-    // 과일명
-    if (/비가림귤/.test(t)) f.fruit = '비가림귤';
-    else if (/천혜향/.test(t)) f.fruit = '천혜향';
-    else if (/레드향/.test(t)) f.fruit = '레드향';
-    else if (/한라봉/.test(t)) f.fruit = '한라봉';
-    else if (/레몬/.test(t)) f.fruit = '레몬';
-
-    // 무게 (엑셀 텍스트이므로 정확한 "Xkg" 패턴 사용)
-    const kgMatch = t.match(/(\d+)\s*kg/i);
-    if (kgMatch) {
-        f.weight = parseInt(kgMatch[1]);
-    } else {
-        // "- 3kg" 형식: 대시 뒤 숫자
-        const dashMatch = t.match(/[-\u2013\u2014\uFF0D]\s*(\d+)/);
-        if (dashMatch) f.weight = parseInt(dashMatch[1]);
+// 키워드가 텍스트에 포함되는지 확인
+// "3kg"가 "13kg"에서 잘못 매칭되는 것을 방지
+function containsKeyword(text, keyword) {
+    let idx = 0;
+    while (idx <= text.length - keyword.length) {
+        const pos = text.indexOf(keyword, idx);
+        if (pos === -1) return false;
+        // 숫자로 시작하는 키워드: 바로 앞 글자가 숫자면 건너뜀
+        if (/^\d/.test(keyword) && pos > 0 && /\d/.test(text[pos - 1])) {
+            idx = pos + 1;
+            continue;
+        }
+        return true;
     }
-
-    // 등급
-    if (f.fruit === '비가림귤') {
-        if (/프리미엄/.test(t)) f.grade = '선물용';
-        else if (/로얄과/.test(t)) f.grade = '로얄과';
-        else if (/중대과/.test(t) || /L\s*이상/.test(t)) f.grade = '중대과';
-        else if (/소과/.test(t) && !/중소과/.test(t)) f.grade = '소과';
-        else f.grade = '로얄과';
-    } else if (f.fruit === '천혜향' || f.fruit === '레드향' || f.fruit === '한라봉') {
-        if (/선물/.test(t) || /프리미엄/.test(t)) f.grade = '선물용';
-        else f.grade = '가정용';
-    }
-
-    return f;
+    return false;
 }
 
 // 해당 날짜/거래처의 품목별 단가 조회
@@ -450,165 +459,14 @@ function getPricingForDate(partner, dateStr) {
 }
 
 
-// Settlement paste/upload area (결제가 입력)
-const pasteArea = document.getElementById('settlement-paste-area');
-const excelFileInput = document.getElementById('settlement-excel-file');
-
-// 클릭 시 파일 선택
-pasteArea.addEventListener('click', () => excelFileInput.click());
-
-// 파일 선택 시 엑셀 파싱
-excelFileInput.addEventListener('change', () => {
-    if (excelFileInput.files.length > 0) {
-        parseExcelFile(excelFileInput.files[0]);
-        excelFileInput.value = '';
-    }
-});
-
-// 드래그 앤 드롭
-pasteArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    pasteArea.classList.add('dragover');
-});
-
-pasteArea.addEventListener('dragleave', () => {
-    pasteArea.classList.remove('dragover');
-});
-
-pasteArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    pasteArea.classList.remove('dragover');
-
-    // 파일 드롭 확인
-    if (e.dataTransfer.files.length > 0) {
-        const file = e.dataTransfer.files[0];
-        if (file.name.match(/\.(xls|xlsx)$/i)) {
-            parseExcelFile(file);
-            return;
-        }
-    }
-    // 텍스트 드롭
-    const text = e.dataTransfer.getData('text');
-    if (text) parseTextAndFillRows(text);
-});
-
-// Ctrl+V 붙여넣기
-pasteArea.addEventListener('paste', (e) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text');
-    if (text) parseTextAndFillRows(text);
-});
-
-document.getElementById('page-settlement').addEventListener('paste', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    e.preventDefault();
-    const text = e.clipboardData.getData('text');
-    if (text) parseTextAndFillRows(text);
-});
-
-// 엑셀 파일 파싱
-function parseExcelFile(file) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        try {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array' });
-            const sheetName = workbook.SheetNames[0];
-            const sheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
-            if (jsonData.length === 0) return alert('엑셀에 데이터가 없습니다.');
-
-            // 헤더에서 옵션명/단가 컬럼 찾기
-            const header = jsonData[0].map(h => String(h || '').trim());
-            let nameCol = -1;
-            let priceCol = -1;
-
-            header.forEach((h, i) => {
-                const lower = h.toLowerCase();
-                if (lower.includes('옵션명') || lower.includes('품목명') || lower.includes('상품명') || lower.includes('품목')) nameCol = i;
-                if (lower.includes('단가') || lower.includes('가격') || lower.includes('금액')) priceCol = i;
-            });
-
-            // 컬럼을 못 찾으면 첫 번째=품목명, 두 번째=단가로 추정
-            if (nameCol === -1) nameCol = 0;
-            if (priceCol === -1) priceCol = header.length >= 2 ? 1 : -1;
-
-            // 기존 행 초기화
-            document.getElementById('settlement-rows').innerHTML = '';
-
-            // 데이터 행 파싱 (헤더 제외)
-            for (let i = 1; i < jsonData.length; i++) {
-                const row = jsonData[i];
-                if (!row || row.length === 0) continue;
-
-                const name = String(row[nameCol] || '').trim();
-                let price = 0;
-                if (priceCol >= 0 && row[priceCol] != null) {
-                    price = Number(String(row[priceCol]).replace(/[,원\s]/g, '')) || 0;
-                }
-
-                if (name) {
-                    addSettlementRow(name, price, 1);
-                }
-            }
-
-            showSettlementRows();
-            updateSettlementTotal();
-        } catch (err) {
-            alert('엑셀 파일을 읽는데 실패했습니다: ' + err.message);
-        }
-    };
-    reader.readAsArrayBuffer(file);
-}
-
-// 텍스트 파싱
-function parseTextAndFillRows(text) {
-    const lines = text.trim().split('\n').filter(l => l.trim());
-    if (lines.length === 0) return;
-
-    document.getElementById('settlement-rows').innerHTML = '';
-
-    lines.forEach(line => {
-        const parts = line.split(/\t/).map(s => s.trim()).filter(s => s);
-
-        let name = '';
-        let price = 0;
-
-        if (parts.length >= 2) {
-            const priceStr = parts[parts.length - 1].replace(/[,원\s]/g, '');
-            price = Number(priceStr) || 0;
-            name = parts.slice(0, parts.length - 1).join(' ');
-        } else {
-            const match = line.match(/^(.+?)\s{2,}([\d,]+)/);
-            if (match) {
-                name = match[1].trim();
-                price = Number(match[2].replace(/,/g, '')) || 0;
-            } else {
-                name = line.trim();
-            }
-        }
-
-        // 헤더행 스킵 (옵션명, 단가 등)
-        if (name && !name.match(/^(옵션명|품목명|상품명|단가|가격)$/)) {
-            addSettlementRow(name, price, 1);
-        }
-    });
-
-    showSettlementRows();
-    updateSettlementTotal();
-}
-
 function showSettlementRows() {
     document.getElementById('settlement-rows-header').style.display = 'flex';
     document.getElementById('settlement-add-row').style.display = '';
-    document.getElementById('settlement-paste-area').style.display = 'none';
 }
 
 function resetSettlementPaste() {
     document.getElementById('settlement-rows-header').style.display = 'none';
     document.getElementById('settlement-add-row').style.display = 'none';
-    document.getElementById('settlement-paste-area').style.display = '';
 }
 
 // Settlement rows (결제가 입력)

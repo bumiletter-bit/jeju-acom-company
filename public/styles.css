@@ -949,6 +949,25 @@ tr.pricing-hyodon td {
     }
 }
 
+/* 초기화 버튼 */
+.btn-reset {
+    padding: 6px 14px;
+    border: 1px solid #ef4444;
+    background: #fff;
+    color: #ef4444;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.btn-reset:hover {
+    background: #ef4444;
+    color: #fff;
+}
+
 /* ===== OCR 관련 스타일 ===== */
 .ocr-progress-bar {
     width: 100%;
