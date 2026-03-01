@@ -1281,6 +1281,286 @@ window.rejectDocument = async function(id) {
 };
 
 // =============================================
+// 송장변환
+// =============================================
+let invoiceDataSmart = null;
+let invoiceDataJasamol = null;
+let invoiceDataCoupang = null;
+
+function setupInvoiceArea(areaId, inputId, fileNameId, btnId, headerRange, convertFn, storeKey) {
+    const area = document.getElementById(areaId);
+    const input = document.getElementById(inputId);
+    const fileNameEl = document.getElementById(fileNameId);
+    const btn = document.getElementById(btnId);
+    if (!area || !input || !btn) return;
+
+    area.addEventListener('click', () => input.click());
+    area.addEventListener('dragover', (e) => { e.preventDefault(); area.classList.add('dragover'); });
+    area.addEventListener('dragleave', () => area.classList.remove('dragover'));
+    area.addEventListener('drop', (e) => {
+        e.preventDefault();
+        area.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            input.files = e.dataTransfer.files;
+            loadInvoiceFile(e.dataTransfer.files[0], area, fileNameEl, btn, headerRange, convertFn, storeKey);
+        }
+    });
+    input.addEventListener('change', (e) => {
+        if (e.target.files.length) loadInvoiceFile(e.target.files[0], area, fileNameEl, btn, headerRange, convertFn, storeKey);
+    });
+    btn.addEventListener('click', () => {
+        const data = storeKey === 'smart' ? invoiceDataSmart : storeKey === 'jasamol' ? invoiceDataJasamol : invoiceDataCoupang;
+        if (!data) return;
+        let converted = convertFn(data);
+        converted.sort((a, b) => (a['옵션정보'] || '').localeCompare(b['옵션정보'] || '', 'ko'));
+        exportInvoiceExcel(converted);
+    });
+}
+
+function loadInvoiceFile(file, area, fileNameEl, btn, headerRange, convertFn, storeKey) {
+    fileNameEl.textContent = file.name;
+    area.classList.add('has-file');
+    const successMsg = document.getElementById('invoice-success-msg');
+    if (successMsg) successMsg.style.display = 'none';
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const wb = XLSX.read(e.target.result, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(ws, { range: headerRange, defval: '' });
+            if (data.length > 0) {
+                if (storeKey === 'smart') invoiceDataSmart = data;
+                else if (storeKey === 'jasamol') invoiceDataJasamol = data;
+                else if (storeKey === 'coupang') invoiceDataCoupang = data;
+                btn.disabled = false;
+                showInvoicePreview(convertFn(data));
+            } else {
+                alert('데이터가 없습니다. 올바른 엑셀 파일인지 확인해주세요.');
+            }
+        } catch (err) {
+            alert('파일을 읽는 중 오류: ' + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function showInvoicePreview(converted) {
+    document.getElementById('invoice-preview-section').style.display = '';
+    document.getElementById('invoice-total-orders').textContent = converted.length;
+    document.getElementById('invoice-total-qty').textContent = converted.reduce((sum, row) => sum + (parseInt(row['수량']) || 1), 0);
+    document.getElementById('invoice-unique-recipients').textContent = new Set(converted.map(r => r['수취인명'])).size;
+
+    const headers = ['보내는사람', '보내는사람연락처', '수취인명', '옵션정보', '수량', '배송지'];
+    let html = '<table><thead><tr>';
+    headers.forEach(h => html += `<th>${h}</th>`);
+    html += '</tr></thead><tbody>';
+    converted.slice(0, 10).forEach(row => {
+        html += '<tr>';
+        headers.forEach(h => {
+            let val = row[h] || '';
+            if (typeof val === 'string' && val.length > 30) val = val.substring(0, 30) + '...';
+            html += `<td>${val}</td>`;
+        });
+        html += '</tr>';
+    });
+    if (converted.length > 10) html += `<tr><td colspan="${headers.length}" style="text-align:center;color:#999;padding:12px;">... 외 ${converted.length - 10}건 더</td></tr>`;
+    html += '</tbody></table>';
+    document.getElementById('invoice-table-wrapper').innerHTML = html;
+}
+
+// 사이즈 감지
+function detectSize(msg) {
+    if (!msg) return null;
+    const lower = msg.toLowerCase().trim();
+    const koreanMap = [
+        { patterns: ['투에스', '2에스'], size: '2S' },
+        { patterns: ['에스', '스몰'], size: 'S' },
+        { patterns: ['엠', '미디엄', '미듐'], size: 'M' },
+    ];
+    for (const item of koreanMap) {
+        for (const p of item.patterns) {
+            if (lower.includes(p)) return item.size;
+        }
+    }
+    let match = lower.match(/(2s|s|m)\s*사이즈/);
+    if (match) return match[1].toUpperCase();
+    match = lower.match(/\b(2s)\b/) || lower.match(/\b([sm])\b/);
+    if (match) return match[1].toUpperCase();
+    return null;
+}
+
+// 상품 카탈로그 매칭
+function matchProduct(rawText) {
+    const t = rawText || '';
+    const wm = t.match(/(\d+)\s*kg/i);
+    if (!wm) return t.trim();
+    const w = parseInt(wm[1]);
+    const wStr = w + 'kg';
+
+    if (/3종세트/.test(t)) return '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 ' + wStr + '(3종세트)';
+    if (/레몬/.test(t)) return '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
+    if (/비가림|감귤/.test(t)) {
+        if (/선물용|프리미엄\s*로얄/.test(t)) return '고당도 비가림귤 / 상품 및 과수: 프리미엄 로얄과 - ' + wStr + '(선물용 2S~M)';
+        return '고당도 비가림귤 / 상품 및 과수: 로얄과 - ' + wStr + '(가정용 2S~M)';
+    }
+
+    let fruit;
+    if (/레드향/.test(t)) fruit = '레드향';
+    else if (/한라봉/.test(t)) fruit = '한라봉';
+    else if (/천혜향/.test(t)) fruit = '천혜향';
+    else return t.trim();
+
+    if (w === 2 && /프리미엄/.test(t)) return '프리미엄 선물용 / 상품 및 과수: 프리미엄 선물용 ' + fruit + ' - 2kg';
+
+    let type;
+    if (/못난이/.test(t)) type = '못난이';
+    else if (/선물용/.test(t)) type = '선물용';
+    else type = '가정용';
+
+    let category;
+    if (fruit === '레드향') category = '알알톡톡 레드향';
+    else if (fruit === '천혜향') category = '과즙팡팡 천혜향';
+    else {
+        const isNoji = /노지/.test(t) || (type === '가정용' && /랜덤/.test(t));
+        category = isNoji ? '노지 한라봉' : '하우스 한라봉';
+    }
+
+    let detail;
+    if (type === '못난이') detail = '랜덤과';
+    else if (type === '선물용') detail = w === 3 ? '대과 7~13과' : w === 5 ? '대과 12~22과' : '';
+    else {
+        if (category === '노지 한라봉') detail = '랜덤과';
+        else if (w === 9) detail = '중과 45과 전후';
+        else if (fruit === '천혜향') detail = w === 3 ? '중소과 15과 전후' : w === 5 ? '중소과 25과 전후' : '';
+        else detail = w === 3 ? '중소과 18과 전후' : w === 5 ? '중소과 28과 전후' : '';
+    }
+
+    let fruitLabel = fruit;
+    if (fruit === '레드향' && w === 9) fruitLabel = '★레드향';
+    return category + ' / 상품 및 과수: ' + fruitLabel + ' ' + type + ' - ' + wStr + '(' + detail + ')';
+}
+
+function addSizeSuffix(optionInfo, msg) {
+    let detectedSize = detectSize(msg);
+    if (!detectedSize && /귤/.test(optionInfo) && /작은|작게|작다|작아|소과/.test(msg)) detectedSize = 'S';
+    if (detectedSize) optionInfo = optionInfo.trim() + ' ' + detectedSize + '사이즈로!';
+    return optionInfo;
+}
+
+// 스마트스토어 변환
+function convertDataSmart(data) {
+    const addr = document.getElementById('invoice-sender-address').value.trim();
+    return data.map(row => {
+        const buyer = (row['구매자명'] || '').trim();
+        let opt = matchProduct(row['옵션정보'] || '');
+        opt = addSizeSuffix(opt, (row['배송메세지'] || '').trim());
+        return {
+            '보내는사람': buyer ? buyer + '(제주아꼼이네)' : '',
+            '보내는사람연락처': (row['구매자연락처'] || '').includes('*') ? '010-6687-4031' : (row['구매자연락처'] || ''),
+            '출고지': addr,
+            '수취인명': ((row['수취인명'] || '').trim().length === 1) ? row['수취인명'].trim() + '*' : (row['수취인명'] || ''),
+            '옵션정보': opt, '수량': parseInt(row['수량']) || 1,
+            '수취인연락처1': row['수취인연락처1'] || '', '수취인연락처2': row['수취인연락처2'] || '',
+            '배송지': row['통합배송지'] || '', '배송메세지': row['배송메세지'] || '', '구매자연락처': row['구매자연락처'] || ''
+        };
+    });
+}
+
+// 자사몰 변환
+function convertDataJasamol(data) {
+    const addr = document.getElementById('invoice-sender-address').value.trim();
+    return data.map(row => {
+        const buyer = (row['주문자명'] || '').trim();
+        let opt = matchProduct(row['주문상품명(세트상품 포함)'] || '');
+        opt = addSizeSuffix(opt, (row['배송메시지'] || '').trim());
+        const recip = (row['수령인'] || '').trim();
+        return {
+            '보내는사람': buyer ? buyer + '(제주아꼼이네 자사몰)' : '',
+            '보내는사람연락처': (row['주문자 휴대전화'] || '').includes('*') ? '010-6687-4031' : (row['주문자 휴대전화'] || ''),
+            '출고지': addr,
+            '수취인명': (recip.length === 1) ? recip + '*' : recip,
+            '옵션정보': opt, '수량': parseInt(row['수량']) || 1,
+            '수취인연락처1': row['수령인 휴대전화'] || '', '수취인연락처2': '',
+            '배송지': row['수령인 주소(전체)'] || '', '배송메세지': row['배송메시지'] || '', '구매자연락처': row['주문자 휴대전화'] || ''
+        };
+    });
+}
+
+// 쿠팡 변환
+function convertDataCoupang(data) {
+    const addr = document.getElementById('invoice-sender-address').value.trim();
+    return data.map(row => {
+        const buyer = (row['구매자'] || '').trim();
+        const raw = (row['등록상품명'] || '') + ' ' + (row['노출상품명(옵션명)'] || '');
+        let opt = matchProduct(raw);
+        opt = addSizeSuffix(opt, (row['배송메세지'] || '').trim());
+        const recip = (row['수취인이름'] || '').trim();
+        return {
+            '보내는사람': buyer ? buyer + '(제주아꼼이네 쿠팡)' : '',
+            '보내는사람연락처': (row['구매자전화번호'] || '').includes('*') ? '010-6687-4031' : (row['구매자전화번호'] || ''),
+            '출고지': addr,
+            '수취인명': (recip.length === 1) ? recip + '*' : recip,
+            '옵션정보': opt, '수량': parseInt(row['구매수(수량)']) || 1,
+            '수취인연락처1': row['수취인전화번호'] || '', '수취인연락처2': '',
+            '배송지': row['수취인 주소'] || '', '배송메세지': row['배송메세지'] || '', '구매자연락처': row['구매자전화번호'] || ''
+        };
+    });
+}
+
+// 엑셀 내보내기 (스타일 포함)
+function exportInvoiceExcel(converted) {
+    const wb = XLSX.utils.book_new();
+    const headers = ['보내는사람', '보내는사람연락처', '출고지', '수취인명', '옵션정보', '수량', '수취인연락처1', '수취인연락처2', '배송지', '배송메세지', '구매자연락처'];
+    const ws = XLSX.utils.json_to_sheet(converted, { header: headers });
+    ws['!cols'] = [
+        { wch: 18.5 }, { wch: 14.25 }, { wch: 50.75 }, { wch: 13.75 },
+        { wch: 60.25 }, { wch: 5.5 }, { wch: 14.75 }, { wch: 14.75 },
+        { wch: 73.25 }, { wch: 51 }, { wch: 13 },
+    ];
+
+    const thinBorder = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    const hGreen = { fill: { fgColor: { rgb: '92D050' } }, font: { bold: true, name: '맑은 고딕', sz: 11 }, border: thinBorder, alignment: { horizontal: 'center', vertical: 'center' } };
+    const hYellow = { fill: { fgColor: { rgb: 'FFFF00' } }, font: { bold: true, name: '맑은 고딕', sz: 11 }, border: thinBorder, alignment: { horizontal: 'center', vertical: 'center' } };
+    const dStyle = { border: thinBorder, font: { name: '맑은 고딕', sz: 11 }, alignment: { vertical: 'center' } };
+    const dRed = { border: thinBorder, font: { name: '맑은 고딕', sz: 11, color: { rgb: 'FF0000' }, bold: true }, fill: { fgColor: { rgb: 'FFC7CE' } }, alignment: { vertical: 'center' } };
+    const dYellow = { border: thinBorder, font: { name: '맑은 고딕', sz: 11 }, fill: { fgColor: { rgb: 'FFFF00' } }, alignment: { vertical: 'center' } };
+
+    function hasDateRequest(msg) {
+        if (!msg) return false;
+        return /다음\s*주|다음\s*날|내일|모레|글피|\d+일|\d+월|\d+\/\d+|월요|화요|수요|목요|금요|토요|일요|주말|평일|다다음|이번\s*주|일주일|[이삼사오육칠팔]\s*일\s*뒤|[이삼사오육칠팔]\s*일\s*후|\d+\s*일\s*뒤|\d+\s*일\s*후|며칠|몇\s*일/.test(msg);
+    }
+
+    const cols = ['A','B','C','D','E','F','G','H','I','J','K'];
+    cols.forEach((col, i) => { const ref = col + '1'; if (ws[ref]) ws[ref].s = i < 3 ? hGreen : hYellow; });
+
+    for (let r = 2; r <= converted.length + 1; r++) {
+        const msgVal = ws['J' + r] ? String(ws['J' + r].v || '') : '';
+        const isDateReq = hasDateRequest(msgVal);
+        const addrVal = ws['I' + r] ? String(ws['I' + r].v || '') : '';
+        const isJeju = /제주/.test(addrVal);
+        cols.forEach(col => {
+            const ref = col + r;
+            let style = dStyle;
+            if (isDateReq && col === 'J') style = dRed;
+            else if (isJeju && col === 'I') style = dYellow;
+            if (ws[ref]) ws[ref].s = style;
+            else ws[ref] = { v: '', t: 's', s: style };
+        });
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const today = new Date();
+    const dateStr = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');
+    XLSX.writeFile(wb, `송장_${dateStr}.xlsx`);
+    document.getElementById('invoice-success-msg').style.display = '';
+}
+
+// 채널 초기화
+setupInvoiceArea('invoice-upload-smart', 'invoice-file-smart', 'invoice-filename-smart', 'invoice-convert-smart', 1, convertDataSmart, 'smart');
+setupInvoiceArea('invoice-upload-jasamol', 'invoice-file-jasamol', 'invoice-filename-jasamol', 'invoice-convert-jasamol', 0, convertDataJasamol, 'jasamol');
+setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-filename-coupang', 'invoice-convert-coupang', 0, convertDataCoupang, 'coupang');
+
+// =============================================
 // Utility
 // =============================================
 function formatDate(date) {

@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=11">
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="styles.css?v=12">
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
     <!-- 로그인 화면 -->
@@ -464,14 +464,79 @@
                 </div>
             </div>
 
-            <!-- 송장변환 placeholder -->
+            <!-- 송장변환 페이지 -->
             <div id="page-invoice" class="page">
                 <h1>송장변환</h1>
+
+                <!-- 출고지 정보 -->
                 <div class="card">
-                    <div class="placeholder-content">
-                        <p>송장변환 관리 페이지입니다.</p>
-                        <p class="text-muted">추후 기능이 추가됩니다.</p>
+                    <h2>출고지 정보</h2>
+                    <div class="form-group">
+                        <label>출고지 주소</label>
+                        <input type="text" id="invoice-sender-address" class="form-input" value="제주특별자치도 제주시 연삼로 1066-31, 제주아꼼이네" style="width:100%;">
                     </div>
+                    <p style="font-size:12px; color:#888; margin-top:4px;">* 보내는사람 = 구매자명(제주아꼼이네) / 보내는사람연락처 = 구매자연락처 (자동 변환)</p>
+                </div>
+
+                <!-- 채널별 업로드 -->
+                <div class="invoice-upload-grid">
+                    <div class="card invoice-upload-card">
+                        <div class="channel-label channel-smart">스마트스토어</div>
+                        <div class="invoice-upload-area" id="invoice-upload-smart">
+                            <div class="upload-icon">📄</div>
+                            <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
+                            <div class="invoice-file-name" id="invoice-filename-smart"></div>
+                        </div>
+                        <input type="file" id="invoice-file-smart" accept=".xlsx,.xls" hidden>
+                        <button class="btn-primary invoice-convert-btn" id="invoice-convert-smart" disabled>변환 및 다운로드</button>
+                    </div>
+
+                    <div class="card invoice-upload-card">
+                        <div class="channel-label channel-jasamol">자사몰</div>
+                        <div class="invoice-upload-area" id="invoice-upload-jasamol">
+                            <div class="upload-icon">📄</div>
+                            <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
+                            <div class="invoice-file-name" id="invoice-filename-jasamol"></div>
+                        </div>
+                        <input type="file" id="invoice-file-jasamol" accept=".xlsx,.xls" hidden>
+                        <button class="btn-primary invoice-convert-btn" id="invoice-convert-jasamol" disabled>변환 및 다운로드</button>
+                    </div>
+
+                    <div class="card invoice-upload-card">
+                        <div class="channel-label channel-coupang">쿠팡</div>
+                        <div class="invoice-upload-area" id="invoice-upload-coupang">
+                            <div class="upload-icon">📄</div>
+                            <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
+                            <div class="invoice-file-name" id="invoice-filename-coupang"></div>
+                        </div>
+                        <input type="file" id="invoice-file-coupang" accept=".xlsx,.xls" hidden>
+                        <button class="btn-primary invoice-convert-btn" id="invoice-convert-coupang" disabled>변환 및 다운로드</button>
+                    </div>
+                </div>
+
+                <!-- 성공 메시지 -->
+                <div class="invoice-success-msg" id="invoice-success-msg" style="display:none;">
+                    송장 엑셀 파일이 성공적으로 다운로드되었습니다!
+                </div>
+
+                <!-- 미리보기 -->
+                <div class="card" id="invoice-preview-section" style="display:none;">
+                    <h2>미리보기</h2>
+                    <div class="invoice-stats">
+                        <div class="invoice-stat-card">
+                            <div class="number" id="invoice-total-orders">0</div>
+                            <div class="label">총 주문 건수</div>
+                        </div>
+                        <div class="invoice-stat-card">
+                            <div class="number" id="invoice-total-qty">0</div>
+                            <div class="label">총 수량</div>
+                        </div>
+                        <div class="invoice-stat-card">
+                            <div class="number" id="invoice-unique-recipients">0</div>
+                            <div class="label">수취인 수</div>
+                        </div>
+                    </div>
+                    <div class="invoice-table-wrapper" id="invoice-table-wrapper"></div>
                 </div>
             </div>
 
@@ -524,6 +589,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=19"></script>
+    <script src="app.js?v=20"></script>
 </body>
 </html>
