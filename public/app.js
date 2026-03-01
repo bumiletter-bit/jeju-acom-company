@@ -158,6 +158,7 @@ function switchPage(pageName) {
     if (pageName === 'settlement') {
         renderSettlementCalendar().catch(console.error);
         renderSettlementList().catch(console.error);
+        renderWeeklySettlement().catch(console.error);
         renderPrepaymentCard().catch(console.error);
     }
     if (pageName === 'pricing') renderPricingList().catch(console.error);
@@ -368,12 +369,14 @@ document.getElementById('settlement-prev-month').addEventListener('click', () =>
     settlementCalMonth--;
     if (settlementCalMonth < 0) { settlementCalMonth = 11; settlementCalYear--; }
     renderSettlementCalendar().catch(console.error);
+    renderWeeklySettlement().catch(console.error);
 });
 
 document.getElementById('settlement-next-month').addEventListener('click', () => {
     settlementCalMonth++;
     if (settlementCalMonth > 11) { settlementCalMonth = 0; settlementCalYear++; }
     renderSettlementCalendar().catch(console.error);
+    renderWeeklySettlement().catch(console.error);
 });
 
 async function renderSettlementCalendar() {
@@ -616,11 +619,27 @@ function handleSalesExcel(file) {
                 return;
             }
 
+            // DB 매핑 조회
+            let mappings = [];
+            try { mappings = await api(`/api/product-mappings?partner=${selectedSettlementPartner}`); } catch(e) {}
+            const mappingMap = {};
+            mappings.forEach(m => { mappingMap[m.sales_name] = m.pricing_name; });
+
+            // 현재 pricing items를 전역에 저장 (매칭 기억하기에서 사용)
+            window._currentPricingItems = pricingItems;
+
             const matched = [], unmatched = [];
             for (const item of salesItems) {
+                // 1차: DB 매핑 확인
+                if (mappingMap[item.name]) {
+                    const p = pricingItems.find(pi => pi.name === mappingMap[item.name]);
+                    if (p) { matched.push({ pricingName: p.name, price: p.price, qty: item.qty, originalName: item.name }); continue; }
+                }
+                // 2차: 키워드 매칭
                 const result = matchSalesToPricing(item.name, pricingItems);
-                if (result) matched.push({ pricingName: result.name, price: result.price, qty: item.qty, originalName: item.name });
-                else unmatched.push(item);
+                if (result) { matched.push({ pricingName: result.name, price: result.price, qty: item.qty, originalName: item.name }); continue; }
+                // 미매칭
+                unmatched.push(item);
             }
 
             const grouped = {};
@@ -639,15 +658,22 @@ function handleSalesExcel(file) {
 
             const unmatchedContainer = document.getElementById('sales-unmatched-container');
             if (unmatched.length > 0) {
+                const optionsHtml = pricingItems.map(p =>
+                    '<option value="' + p.name.replace(/"/g, '&quot;') + '">' + p.name + ' (' + p.price.toLocaleString() + '원)</option>'
+                ).join('');
                 document.getElementById('sales-unmatched-list').innerHTML = unmatched.map(item =>
-                    '<div class="ocr-unmatched-item"><span class="unmatched-name" title="' + item.name + '">' + item.name + '</span><span class="unmatched-qty">' + item.qty + '개</span></div>'
+                    '<div class="ocr-unmatched-item">' +
+                    '<span class="unmatched-name" title="' + item.name.replace(/"/g, '&quot;') + '">' + item.name + '</span>' +
+                    '<span class="unmatched-qty">' + item.qty + '개</span>' +
+                    '<select class="unmatched-select" data-sales-name="' + item.name.replace(/"/g, '&quot;') + '" data-qty="' + item.qty + '">' +
+                    '<option value="">-- 품목 선택 --</option>' + optionsHtml + '</select></div>'
                 ).join('');
                 unmatchedContainer.style.display = 'block';
             } else { unmatchedContainer.style.display = 'none'; }
 
-            let msg = '=== 매칭 결과 ===\n매칭 성공: ' + groupedList.length + '개 / 실패: ' + unmatched.length + '개\n';
-            if (groupedList.length > 0) { msg += '\n[매칭 성공]\n'; groupedList.forEach(g => { msg += '  ' + g.name + ' (' + g.price + '원 x ' + g.qty + ')\n'; }); }
-            if (unmatched.length > 0) { msg += '\n[매칭 실패]\n'; unmatched.forEach(u => { msg += '  ' + u.name + '\n'; }); }
+            let msg = '=== 매칭 결과 ===\n매칭 성공: ' + matched.length + '개 품목 / 실패: ' + unmatched.length + '개\n';
+            if (groupedList.length > 0) { msg += '\n[매칭 성공 (그룹핑)]\n'; groupedList.forEach(g => { msg += '  ' + g.name + ' (' + g.price.toLocaleString() + '원 x ' + g.qty + ')\n'; }); }
+            if (unmatched.length > 0) { msg += '\n[매칭 실패 - 드롭다운에서 수동 선택 가능]\n'; unmatched.forEach(u => { msg += '  ' + u.name + '\n'; }); }
             alert(msg);
         } catch (err) {
             alert('엑셀 파일을 읽는데 실패했습니다: ' + err.message);
@@ -682,7 +708,16 @@ function containsKeyword(text, keyword) {
 
 async function getPricingForDate(partner, dateStr) {
     const pricingData = await api('/api/pricing');
-    const applicable = pricingData.filter(p => p.partner === partner && p.startDate <= dateStr && p.endDate >= dateStr);
+    let applicable = pricingData.filter(p => p.partner === partner && p.startDate <= dateStr && p.endDate >= dateStr);
+
+    // 가격 동결: 해당 주간 가격이 없으면 가장 최근 가격 사용
+    if (applicable.length === 0) {
+        const past = pricingData
+            .filter(p => p.partner === partner && p.endDate < dateStr)
+            .sort((a, b) => b.endDate.localeCompare(a.endDate));
+        if (past.length > 0) applicable = [past[0]];
+    }
+
     if (applicable.length === 0) return [];
     const itemMap = {};
     applicable.sort((a, b) => a.id - b.id);
@@ -700,6 +735,50 @@ function resetSettlementPaste() {
 }
 
 document.getElementById('settlement-add-row').addEventListener('click', () => addSettlementRow());
+
+// 매칭 기억하기 버튼
+document.getElementById('save-mappings-btn').addEventListener('click', async () => {
+    const selects = document.querySelectorAll('.unmatched-select');
+    let savedCount = 0;
+    const pricingItems = window._currentPricingItems || [];
+
+    for (const sel of selects) {
+        if (!sel.value) continue;
+        const salesName = sel.dataset.salesName;
+        const qty = Number(sel.dataset.qty) || 1;
+
+        try {
+            await api('/api/product-mappings', 'POST', {
+                salesName, pricingName: sel.value, partner: selectedSettlementPartner
+            });
+            savedCount++;
+
+            // 정산 행에서 해당 미매칭 항목 찾아 가격 업데이트
+            const price = pricingItems.find(p => p.name === sel.value)?.price || 0;
+            const rows = document.querySelectorAll('#settlement-rows .settlement-row');
+            for (const row of rows) {
+                const nameInput = row.querySelector('.s-item-name');
+                if (nameInput && nameInput.value === salesName) {
+                    nameInput.value = sel.value;
+                    row.querySelector('.s-item-price').value = price;
+                    const q = Number(row.querySelector('.s-item-qty').value) || 0;
+                    row.querySelector('.s-item-subtotal').textContent = (price * q).toLocaleString() + ' 원';
+                    break;
+                }
+            }
+        } catch (err) {
+            console.error('매핑 저장 실패:', err);
+        }
+    }
+
+    if (savedCount > 0) {
+        updateSettlementTotal();
+        document.getElementById('sales-unmatched-container').style.display = 'none';
+        alert(savedCount + '개 매칭이 저장되었습니다. 다음부터 자동 매칭됩니다.');
+    } else {
+        alert('매칭할 품목을 드롭다운에서 선택해주세요.');
+    }
+});
 
 function addSettlementRow(name, price, qty) {
     name = name || ''; price = price || ''; qty = qty || 1;
@@ -927,6 +1006,23 @@ function showPricingRows() { document.getElementById('pricing-rows-header').styl
 function resetPricingPaste() { document.getElementById('pricing-rows-header').style.display = 'none'; document.getElementById('pricing-add-row').style.display = 'none'; document.getElementById('pricing-paste-area').style.display = ''; }
 
 document.getElementById('pricing-add-row').addEventListener('click', () => addPricingRow());
+
+// 품목별 금액 초기화 버튼
+document.getElementById('pricing-reset-btn').addEventListener('click', () => {
+    selectedPricingPartner = null;
+    document.querySelectorAll('#pricing-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
+    document.getElementById('pricing-rows').innerHTML = '';
+    resetPricingPaste();
+    // 날짜를 현재 주로 리셋
+    const sow = new Date();
+    const dow2 = sow.getDay();
+    const diff2 = dow2 === 0 ? -6 : 1 - dow2;
+    sow.setDate(sow.getDate() + diff2);
+    const eow = new Date(sow);
+    eow.setDate(eow.getDate() + 6);
+    document.getElementById('pricing-start-date').value = formatDate(sow);
+    document.getElementById('pricing-end-date').value = formatDate(eow);
+});
 
 function addPricingRow(name, price) {
     name = name || ''; price = price || '';
@@ -2093,6 +2189,177 @@ window.deletePrepayment = async function(id) {
         await renderSettlementCalendar();
     } catch (err) {
         alert('삭제 실패: ' + err.message);
+    }
+};
+
+// =============================================
+// 주간 정산 현황
+// =============================================
+
+async function renderWeeklySettlement() {
+    const tbody = document.getElementById('weekly-settlement-list');
+    if (!tbody) return;
+
+    const monthStr = `${settlementCalYear}-${String(settlementCalMonth + 1).padStart(2, '0')}`;
+
+    try {
+        const [settlements, completions] = await Promise.all([
+            api(`/api/settlements?month=${monthStr}`),
+            api(`/api/settlement-completions?month=${monthStr}`)
+        ]);
+
+        // 해당 월의 주차 계산 (월~일 기준)
+        const weeks = getWeeksInMonth(settlementCalYear, settlementCalMonth);
+
+        // 완료 맵 생성
+        const completionMap = {};
+        completions.forEach(c => {
+            const key = `${c.partner}_${c.week_start}`;
+            completionMap[key] = c;
+        });
+
+        if (weeks.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">데이터가 없습니다.</td></tr>';
+            return;
+        }
+
+        let html = '';
+        weeks.forEach((week, idx) => {
+            let daesungTotal = 0, hyodonTotal = 0;
+
+            settlements.forEach(s => {
+                if (s.date >= week.start && s.date <= week.end) {
+                    if (s.partner === '대성(시온)') daesungTotal += (s.amount || 0);
+                    if (s.partner === '효돈농협') hyodonTotal += (s.amount || 0);
+                }
+            });
+
+            const weekTotal = daesungTotal + hyodonTotal;
+            const daesungComp = completionMap[`대성(시온)_${week.start}`];
+            const hyodonComp = completionMap[`효돈농협_${week.start}`];
+            const allCompleted = daesungComp && hyodonComp;
+
+            const weekLabel = `${idx + 1}주차<br><span style="font-size:11px; color:#6b7280;">${week.start.slice(5)} ~ ${week.end.slice(5)}</span>`;
+
+            // 대성 상태
+            let daesungStatus = '';
+            if (daesungComp) {
+                daesungStatus = `<span class="weekly-status-badge completed">정산완료</span>`;
+                if (currentUser?.role === 'admin') {
+                    daesungStatus += ` <button class="btn-cancel-settle" onclick="cancelWeekSettlement(${daesungComp.id})">취소</button>`;
+                }
+            } else if (daesungTotal > 0 && currentUser?.role === 'admin') {
+                daesungStatus = `<button class="btn-settle-week" onclick="completeWeekSettlement('${week.start}','${week.end}','대성(시온)',${daesungTotal})">정산완료</button>`;
+            }
+
+            // 효돈 상태
+            let hyodonStatus = '';
+            if (hyodonComp) {
+                hyodonStatus = `<span class="weekly-status-badge completed">정산완료</span>`;
+                if (currentUser?.role === 'admin') {
+                    hyodonStatus += ` <button class="btn-cancel-settle" onclick="cancelWeekSettlement(${hyodonComp.id})">취소</button>`;
+                }
+            } else if (hyodonTotal > 0 && currentUser?.role === 'admin') {
+                hyodonStatus = `<button class="btn-settle-week" onclick="completeWeekSettlement('${week.start}','${week.end}','효돈농협',${hyodonTotal})">정산완료</button>`;
+            }
+
+            // 전체 상태 배지
+            let statusBadge = '';
+            if (allCompleted) {
+                statusBadge = '<span class="weekly-status-badge completed">완료</span>';
+            } else if (weekTotal > 0) {
+                statusBadge = '<span class="weekly-status-badge pending">미정산</span>';
+            } else {
+                statusBadge = '<span style="color:#9ca3af; font-size:12px;">-</span>';
+            }
+
+            html += `<tr>
+                <td>${weekLabel}</td>
+                <td>${daesungTotal > 0 ? daesungTotal.toLocaleString() + ' 원' : '-'} ${daesungStatus}</td>
+                <td>${hyodonTotal > 0 ? hyodonTotal.toLocaleString() + ' 원' : '-'} ${hyodonStatus}</td>
+                <td><strong>${weekTotal > 0 ? weekTotal.toLocaleString() + ' 원' : '-'}</strong></td>
+                <td>${statusBadge}</td>
+            </tr>`;
+        });
+
+        tbody.innerHTML = html;
+    } catch (err) {
+        console.error('주간 정산 현황 오류:', err);
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">로드 실패</td></tr>';
+    }
+}
+
+function getWeeksInMonth(year, month) {
+    const weeks = [];
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+
+    // 첫 번째 월요일 찾기 (또는 1일이 월요일이면 그대로)
+    let current = new Date(firstDay);
+    // 1일이 속한 주의 월요일 찾기
+    const dayOfWeek = current.getDay(); // 0=일, 1=월, ...
+    if (dayOfWeek !== 1) {
+        // 1일부터 가장 가까운 이전 월요일 (이번 달 밖일 수도 있으므로 1일 시작)
+        // 첫 주는 1일~첫번째 일요일
+        const firstSunday = new Date(firstDay);
+        const daysUntilSunday = dayOfWeek === 0 ? 0 : (7 - dayOfWeek);
+        firstSunday.setDate(firstSunday.getDate() + daysUntilSunday);
+
+        if (firstSunday <= lastDay) {
+            weeks.push({
+                start: formatDate(firstDay),
+                end: formatDate(firstSunday)
+            });
+            current = new Date(firstSunday);
+            current.setDate(current.getDate() + 1); // 다음 월요일
+        } else {
+            // 한 주도 안 되는 경우
+            weeks.push({
+                start: formatDate(firstDay),
+                end: formatDate(lastDay)
+            });
+            return weeks;
+        }
+    }
+
+    // 월요일부터 시작하는 나머지 주들
+    while (current <= lastDay) {
+        const weekStart = new Date(current);
+        const weekEnd = new Date(current);
+        weekEnd.setDate(weekEnd.getDate() + 6); // 일요일
+
+        weeks.push({
+            start: formatDate(weekStart),
+            end: formatDate(weekEnd > lastDay ? lastDay : weekEnd)
+        });
+
+        current.setDate(current.getDate() + 7);
+    }
+
+    return weeks;
+}
+
+window.completeWeekSettlement = async function(weekStart, weekEnd, partner, amount) {
+    if (!confirm(`${partner} ${weekStart} ~ ${weekEnd} 정산을 완료 처리하시겠습니까?\n금액: ${amount.toLocaleString()} 원`)) return;
+    try {
+        await api('/api/settlement-completions', 'POST', {
+            partner, weekStart, weekEnd, totalAmount: amount
+        });
+        await renderWeeklySettlement();
+        await renderSettlementCalendar();
+    } catch (err) {
+        alert('정산 완료 처리 실패: ' + err.message);
+    }
+};
+
+window.cancelWeekSettlement = async function(id) {
+    if (!confirm('정산 완료를 취소하시겠습니까?')) return;
+    try {
+        await api(`/api/settlement-completions/${id}`, 'DELETE');
+        await renderWeeklySettlement();
+        await renderSettlementCalendar();
+    } catch (err) {
+        alert('취소 실패: ' + err.message);
     }
 };
 

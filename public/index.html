@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=19">
+    <link rel="stylesheet" href="styles.css?v=20">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -344,8 +344,9 @@
                             <input type="file" id="sales-excel-file" accept=".xls,.xlsx" hidden>
                         </div>
                         <div id="sales-unmatched-container" style="display:none;">
-                            <h4 class="ocr-warning-title">매칭 실패 항목</h4>
+                            <h4 class="ocr-warning-title">매칭 실패 항목 (드롭다운으로 수동 매칭)</h4>
                             <div id="sales-unmatched-list"></div>
+                            <button type="button" class="btn-primary btn-sm" id="save-mappings-btn" style="margin-top:8px;">매칭 기억하기</button>
                         </div>
                         <div class="settlement-rows-header" id="settlement-rows-header" style="display:none;">
                             <span class="row-header-item">품목명</span>
@@ -399,6 +400,27 @@
                     </table>
                 </div>
             </div>
+
+                <!-- 주간 정산 현황 -->
+                <div class="card" id="weekly-settlement-card">
+                    <div class="card-header-row">
+                        <h2>주간 정산 현황</h2>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>주차</th>
+                                <th>대성(시온)</th>
+                                <th>효돈농협</th>
+                                <th>합계</th>
+                                <th>상태</th>
+                            </tr>
+                        </thead>
+                        <tbody id="weekly-settlement-list">
+                            <tr class="empty-row"><td colspan="5">데이터가 없습니다.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
 
                 <!-- 선수금 관리 (관리자 전용) -->
                 <div class="card" id="prepayment-card" style="display:none;">
@@ -486,7 +508,10 @@
                         <button class="btn-add-row" id="pricing-add-row" style="display:none;">+ 행 추가</button>
                     </div>
 
-                    <button class="btn-primary" id="pricing-save">저장</button>
+                    <div style="display:flex; gap:10px;">
+                        <button class="btn-primary" id="pricing-save">저장</button>
+                        <button type="button" class="btn-reset" id="pricing-reset-btn">초기화</button>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -720,6 +745,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=27"></script>
+    <script src="app.js?v=28"></script>
 </body>
 </html>

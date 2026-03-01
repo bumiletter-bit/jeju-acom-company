@@ -186,6 +186,32 @@ async function initDB() {
         )
     `);
 
+    // 품목명 수동 매칭 기억
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS product_mappings (
+            id SERIAL PRIMARY KEY,
+            sales_name TEXT NOT NULL,
+            pricing_name TEXT NOT NULL,
+            partner VARCHAR(50) NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(sales_name, partner)
+        )
+    `);
+
+    // 주간 정산 완료 기록
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS settlement_completions (
+            id SERIAL PRIMARY KEY,
+            partner VARCHAR(50) NOT NULL,
+            week_start DATE NOT NULL,
+            week_end DATE NOT NULL,
+            total_amount NUMERIC DEFAULT 0,
+            completed_by INTEGER REFERENCES users(id),
+            completed_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(partner, week_start)
+        )
+    `);
+
     // AI 대화 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -811,6 +837,108 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
         }));
 
         res.json(balances);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// === Product Mappings API (품목 매칭 기억) ===
+
+app.get('/api/product-mappings', authMiddleware, async (req, res) => {
+    try {
+        const { partner } = req.query;
+        let result;
+        if (partner) {
+            result = await pool.query('SELECT * FROM product_mappings WHERE partner = $1 ORDER BY id', [partner]);
+        } else {
+            result = await pool.query('SELECT * FROM product_mappings ORDER BY id');
+        }
+        res.json(result.rows.map(r => ({
+            id: r.id, sales_name: r.sales_name, pricing_name: r.pricing_name, partner: r.partner
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/product-mappings', authMiddleware, async (req, res) => {
+    try {
+        const { salesName, pricingName, partner } = req.body;
+        if (!salesName || !pricingName || !partner) return res.status(400).json({ error: '필수 항목을 입력해주세요' });
+
+        const result = await pool.query(
+            `INSERT INTO product_mappings (sales_name, pricing_name, partner) VALUES ($1, $2, $3)
+             ON CONFLICT (sales_name, partner) DO UPDATE SET pricing_name = $2
+             RETURNING *`,
+            [salesName, pricingName, partner]
+        );
+        const r = result.rows[0];
+        res.json({ id: r.id, sales_name: r.sales_name, pricing_name: r.pricing_name, partner: r.partner });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/product-mappings/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM product_mappings WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// === Settlement Completions API (주간 정산 완료) ===
+
+app.get('/api/settlement-completions', authMiddleware, async (req, res) => {
+    try {
+        const { month } = req.query;
+        let result;
+        if (month) {
+            // 해당 월에 걸치는 주차들 조회
+            const startOfMonth = month + '-01';
+            const endOfMonth = month + '-31';
+            result = await pool.query(
+                "SELECT sc.*, u.name as completed_by_name FROM settlement_completions sc LEFT JOIN users u ON sc.completed_by = u.id WHERE sc.week_start <= $2 AND sc.week_end >= $1 ORDER BY sc.week_start, sc.partner",
+                [startOfMonth, endOfMonth]
+            );
+        } else {
+            result = await pool.query(
+                'SELECT sc.*, u.name as completed_by_name FROM settlement_completions sc LEFT JOIN users u ON sc.completed_by = u.id ORDER BY sc.week_start DESC, sc.partner'
+            );
+        }
+        res.json(result.rows.map(r => ({
+            id: r.id, partner: r.partner, weekStart: r.week_start, weekEnd: r.week_end,
+            totalAmount: Number(r.total_amount), completedBy: r.completed_by,
+            completedByName: r.completed_by_name, completedAt: r.completed_at
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/settlement-completions', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { partner, weekStart, weekEnd, totalAmount } = req.body;
+        if (!partner || !weekStart || !weekEnd) return res.status(400).json({ error: '필수 항목을 입력해주세요' });
+
+        const result = await pool.query(
+            `INSERT INTO settlement_completions (partner, week_start, week_end, total_amount, completed_by)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (partner, week_start) DO UPDATE SET total_amount = $4, completed_by = $5, completed_at = NOW()
+             RETURNING *`,
+            [partner, weekStart, weekEnd, totalAmount || 0, req.user.id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/settlement-completions/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM settlement_completions WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
