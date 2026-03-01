@@ -379,11 +379,12 @@ body {
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
+    font-size: 14px;
 }
 
 .calendar-table th {
-    padding: 10px;
-    font-size: 13px;
+    padding: 12px;
+    font-size: 14px;
     font-weight: 600;
     color: #666;
     text-align: center;
@@ -394,11 +395,13 @@ body {
 .calendar-table th.sat { color: var(--accent-blue); }
 
 .calendar-table td {
-    padding: 12px 10px;
-    text-align: center;
+    padding: 10px 8px 12px;
+    text-align: left;
     font-size: 14px;
     color: #333;
     vertical-align: top;
+    min-height: 110px;
+    height: 110px;
     height: 80px;
     border-bottom: 1px solid #f0f0f0;
 }
@@ -425,25 +428,31 @@ body {
 
 .day-number {
     display: inline-block;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
+    font-weight: 600;
+    font-size: 13px;
 }
 
-.day-payments { margin-top: 2px; }
+.day-payments { margin-top: 4px; }
 
 .day-payment-item {
     display: flex;
     align-items: center;
-    gap: 3px;
-    font-size: 10px;
+    justify-content: space-between;
+    font-size: 12px;
     font-weight: 500;
-    line-height: 1.4;
+    line-height: 1.6;
+    padding: 1px 0;
 }
 
-.day-payment-item .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
+.pay-label {
+    font-weight: 600;
+    margin-right: 4px;
     flex-shrink: 0;
+}
+
+.pay-amount {
+    text-align: right;
 }
 
 .day-payment-item.daesung { color: var(--accent-blue); }
@@ -451,23 +460,25 @@ body {
 .day-payment-item.cj { color: #f59e0b; }
 
 .day-total {
-    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-dark);
     border-top: 1px solid #e2e8f0;
-    margin-top: 2px;
-    padding-top: 1px;
-    text-align: right;
+    margin-top: 3px;
+    padding-top: 3px;
 }
 
 .day-prepay-item {
-    font-size: 9px;
+    font-size: 11px;
     color: #7c3aed;
     font-weight: 600;
     background: #f5f3ff;
-    border-radius: 3px;
-    padding: 1px 3px;
-    margin-top: 2px;
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin-top: 3px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -507,11 +507,11 @@ async function renderSettlementCalendar() {
                 const dp = dailyPayments[dateStr];
                 if (dp) {
                     contentHtml += '<div class="day-payments">';
-                    if (dp.daesung) contentHtml += `<div class="day-payment-item daesung"><span class="dot dot-daesung"></span>${dp.daesung.toLocaleString()}</div>`;
-                    if (dp.hyodon) contentHtml += `<div class="day-payment-item hyodon"><span class="dot dot-hyodon"></span>${dp.hyodon.toLocaleString()}</div>`;
-                    if (dp.cj) contentHtml += `<div class="day-payment-item cj"><span class="dot dot-cj"></span>${dp.cj.toLocaleString()}</div>`;
+                    if (dp.daesung) contentHtml += `<div class="day-payment-item daesung"><span class="pay-label">대성</span><span class="pay-amount">${dp.daesung.toLocaleString()}원</span></div>`;
+                    if (dp.hyodon) contentHtml += `<div class="day-payment-item hyodon"><span class="pay-label">효돈</span><span class="pay-amount">${dp.hyodon.toLocaleString()}원</span></div>`;
+                    if (dp.cj) contentHtml += `<div class="day-payment-item cj"><span class="pay-label">CJ</span><span class="pay-amount">${dp.cj.toLocaleString()}원</span></div>`;
                     const dayTotal = (dp.daesung || 0) + (dp.hyodon || 0) + (dp.cj || 0);
-                    if (dayTotal > 0) contentHtml += `<div class="day-total">${dayTotal.toLocaleString()}</div>`;
+                    if (dayTotal > 0) contentHtml += `<div class="day-total"><span class="pay-label">합계</span><span class="pay-amount">${dayTotal.toLocaleString()}원</span></div>`;
                     contentHtml += '</div>';
                 }
 
@@ -2296,12 +2296,22 @@ async function renderWeeklySettlement() {
     const monthStr = `${settlementCalYear}-${String(settlementCalMonth + 1).padStart(2, '0')}`;
 
     try {
-        const [settlements, prepayments] = await Promise.all([
+        // 주차가 이전/다음 달에 걸칠 수 있으므로 전후 월 데이터도 가져옴
+        const prevMonth = settlementCalMonth === 0 ? 12 : settlementCalMonth;
+        const prevYear = settlementCalMonth === 0 ? settlementCalYear - 1 : settlementCalYear;
+        const nextMonth = settlementCalMonth === 11 ? 1 : settlementCalMonth + 2;
+        const nextYear = settlementCalMonth === 11 ? settlementCalYear + 1 : settlementCalYear;
+        const prevMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+        const nextMonthStr = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+
+        const [settCurr, settPrev, settNext, prepayments] = await Promise.all([
             api(`/api/settlements?month=${monthStr}`),
+            api(`/api/settlements?month=${prevMonthStr}`),
+            api(`/api/settlements?month=${nextMonthStr}`),
             api('/api/prepayments')
         ]);
+        const settlements = [...settPrev, ...settCurr, ...settNext];
 
-        // 해당 월의 주차 계산 (월~일 기준, 1일이 월요일 아니면 첫 월요일부터 시작)
         const weeks = getWeeksInMonth(settlementCalYear, settlementCalMonth);
 
         if (weeks.length === 0) {
@@ -2338,8 +2348,11 @@ async function renderWeeklySettlement() {
 
             const weekTotal = daesungTotal + hyodonTotal + cjTotal - weekPrepay;
 
-            const startLabel = week.start.slice(5).replace('-', '/');
-            const endLabel = week.end.slice(5).replace('-', '/');
+            // 날짜 라벨: M/D 형태
+            const sDate = new Date(week.start + 'T00:00:00');
+            const eDate = new Date(week.end + 'T00:00:00');
+            const startLabel = `${sDate.getMonth() + 1}/${sDate.getDate()}`;
+            const endLabel = `${eDate.getMonth() + 1}/${eDate.getDate()}`;
             const weekLabel = `${idx + 1}주차<br><span style="font-size:11px; color:#6b7280;">${startLabel} ~ ${endLabel}</span>`;
 
             html += `<tr>
@@ -2361,32 +2374,39 @@ async function renderWeeklySettlement() {
 
 function getWeeksInMonth(year, month) {
     const weeks = [];
-    const lastDay = new Date(year, month + 1, 0);
-    const lastDate = lastDay.getDate();
+    const firstOfMonth = new Date(year, month, 1);
+    const lastOfMonth = new Date(year, month + 1, 0);
+    const lastDate = lastOfMonth.getDate();
 
-    // 이번 달의 첫 번째 월요일 찾기
-    let firstMonday = 1;
-    while (firstMonday <= lastDate) {
-        const d = new Date(year, month, firstMonday);
-        if (d.getDay() === 1) break; // 월요일
-        firstMonday++;
+    // 1일이 속한 주의 월요일 찾기 (이전 달일 수 있음)
+    const dow1 = firstOfMonth.getDay(); // 0=일,1=월,...
+    let startMonday;
+    if (dow1 === 1) {
+        startMonday = new Date(year, month, 1);
+    } else if (dow1 === 0) {
+        // 일요일 → 그 주의 월요일은 6일 전
+        startMonday = new Date(year, month, 1 - 6);
+    } else {
+        // 화~토 → 이전 월요일
+        startMonday = new Date(year, month, 1 - (dow1 - 1));
     }
 
-    // 첫 월요일 이전 날짜들(예: 3/1 토)은 이전 달 마지막 주에 포함 → 건너뜀
-
-    // 월요일부터 일요일까지 주차 생성
-    let current = firstMonday;
-    while (current <= lastDate) {
-        const weekStart = new Date(year, month, current);
-        const weekEndDate = Math.min(current + 6, lastDate);
-        const weekEnd = new Date(year, month, weekEndDate);
+    // 주차 생성: startMonday부터 7일씩, 해당 월의 마지막 날을 포함하는 주까지
+    let current = new Date(startMonday);
+    while (true) {
+        const weekStart = new Date(current);
+        const weekEnd = new Date(current);
+        weekEnd.setDate(weekEnd.getDate() + 6); // 일요일
 
         weeks.push({
             start: formatDate(weekStart),
             end: formatDate(weekEnd)
         });
 
-        current += 7;
+        // 이 주의 일요일이 이번 달 마지막 날 이상이면 종료
+        if (weekEnd >= lastOfMonth) break;
+
+        current.setDate(current.getDate() + 7);
     }
 
     return weeks;
