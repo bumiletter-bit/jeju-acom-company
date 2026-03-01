@@ -718,27 +718,70 @@ function handleSalesExcel(file) {
     reader.readAsArrayBuffer(file);
 }
 
-function matchSalesToPricing(salesName, pricingItems) {
-    for (const p of pricingItems) { if (p.name === salesName) return p; }
-    const salesLower = salesName.toLowerCase();
-    let bestMatch = null, bestKeywordCount = 0;
-    for (const p of pricingItems) {
-        const keywords = p.name.split(/\s+/).filter(k => k.length > 0);
-        const allMatch = keywords.every(kw => containsKeyword(salesLower, kw.toLowerCase()));
-        if (allMatch && keywords.length > bestKeywordCount) { bestKeywordCount = keywords.length; bestMatch = p; }
-    }
-    return bestMatch;
+// 품목명에서 과일명/용도/중량 3가지 특징 추출
+function extractFeatures(text) {
+    const t = (text || '');
+
+    // 과일명 추출 (3종세트 우선)
+    let fruit = null;
+    if (/3종세트/.test(t)) fruit = '3종세트';
+    else if (/비가림|감귤/.test(t)) fruit = '비가림귤';
+    else if (/천혜향/.test(t)) fruit = '천혜향';
+    else if (/레드향/.test(t)) fruit = '레드향';
+    else if (/한라봉/.test(t)) fruit = '한라봉';
+    else if (/레몬/.test(t)) fruit = '레몬';
+
+    // 용도/등급 추출
+    let grade = null;
+    if (/로얄과/.test(t)) grade = '로얄과';
+    else if (/소과/.test(t)) grade = '소과';
+    else if (/중대과/.test(t)) grade = '중대과';
+    else if (/못난이/.test(t)) grade = '못난이';
+    else if (/선물용/.test(t)) grade = '선물용';
+    else if (/프리미엄/.test(t)) grade = '선물용';
+    else if (/가정용/.test(t)) grade = '가정용';
+
+    // 중량 추출
+    let weight = null;
+    const wMatch = t.match(/(\d+)\s*kg/i);
+    if (wMatch) weight = wMatch[1] + 'kg';
+
+    return { fruit, grade, weight };
 }
 
-function containsKeyword(text, keyword) {
-    let idx = 0;
-    while (idx <= text.length - keyword.length) {
-        const pos = text.indexOf(keyword, idx);
-        if (pos === -1) return false;
-        if (/^\d/.test(keyword) && pos > 0 && /\d/.test(text[pos - 1])) { idx = pos + 1; continue; }
-        return true;
+function matchSalesToPricing(salesName, pricingItems) {
+    // 1차: 정확한 이름 매칭
+    for (const p of pricingItems) { if (p.name === salesName) return p; }
+
+    // 2차: 특징 기반 매칭 (과일명 + 용도 + 중량)
+    const sf = extractFeatures(salesName);
+    if (!sf.fruit) return null;
+
+    let bestMatch = null, bestScore = 0;
+    for (const p of pricingItems) {
+        const pf = extractFeatures(p.name);
+        if (!pf.fruit || sf.fruit !== pf.fruit) continue;
+
+        let score = 1; // 과일명 일치
+        let mismatch = false;
+
+        // 중량: 둘 다 있으면 일치해야 함
+        if (sf.weight && pf.weight) {
+            if (sf.weight === pf.weight) score += 2;
+            else mismatch = true;
+        }
+
+        // 등급: 둘 다 있으면 일치해야 함
+        if (sf.grade && pf.grade) {
+            if (sf.grade === pf.grade) score += 2;
+            else mismatch = true;
+        }
+
+        if (mismatch) continue;
+        if (score > bestScore) { bestScore = score; bestMatch = p; }
     }
-    return false;
+
+    return bestMatch;
 }
 
 async function getPricingForDate(partner, dateStr) {
