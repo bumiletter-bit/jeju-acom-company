@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=21">
+    <link rel="stylesheet" href="styles.css?v=22">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -257,28 +257,32 @@
                     </div>
 
                     <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-label" id="total-payment-label">3월 총 결제금액</div>
+                        <div class="stat-card expected">
+                            <div class="stat-label" id="expected-payment-label">3월 결제예정금액</div>
+                            <div class="stat-value" id="expected-payment">0 원</div>
+                        </div>
+                        <div class="stat-card total">
+                            <div class="stat-label" id="total-payment-label">3월 총결제금액</div>
                             <div class="stat-value" id="total-payment">0 원</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-label" id="daesung-payment-label">대성(시온) 결제금액</div>
+                            <div class="stat-label" id="daesung-payment-label">3월 대성(시온)</div>
                             <div class="stat-value" id="daesung-payment">0 원</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-label" id="hyodon-payment-label">효돈농협 결제금액</div>
+                            <div class="stat-label" id="hyodon-payment-label">3월 효돈농협</div>
                             <div class="stat-value" id="hyodon-payment">0 원</div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-label" id="cj-payment-label">CJ택배 결제금액</div>
+                            <div class="stat-label" id="cj-payment-label">3월 CJ택배 결제금액</div>
                             <div class="stat-value" id="cj-payment">0 원</div>
                         </div>
                         <div class="stat-card prepayment">
-                            <div class="stat-label" id="daesung-prepay-label">대성(시온) 선수금 잔액</div>
+                            <div class="stat-label" id="daesung-prepay-label">대성(시온) 선결제 잔액</div>
                             <div class="stat-value" id="daesung-prepay">0 원</div>
                         </div>
                         <div class="stat-card prepayment">
-                            <div class="stat-label" id="hyodon-prepay-label">효돈농협 선수금 잔액</div>
+                            <div class="stat-label" id="hyodon-prepay-label">효돈농협 선결제 잔액</div>
                             <div class="stat-value" id="hyodon-prepay">0 원</div>
                         </div>
                     </div>
@@ -422,9 +426,9 @@
                     </table>
                 </div>
 
-                <!-- 선수금 관리 (관리자 전용) -->
+                <!-- 선결제 관리 (관리자 전용) -->
                 <div class="card" id="prepayment-card" style="display:none;">
-                    <h2>선수금 관리</h2>
+                    <h2>선결제 관리</h2>
                     <div class="form-row" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
                         <div class="form-group" style="min-width:120px;">
                             <label>거래처</label>
@@ -459,7 +463,7 @@
                             </tr>
                         </thead>
                         <tbody id="prepayment-list">
-                            <tr class="empty-row"><td colspan="5">선수금 내역이 없습니다.</td></tr>
+                            <tr class="empty-row"><td colspan="5">선결제 내역이 없습니다.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -746,6 +750,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=29"></script>
+    <script src="app.js?v=30"></script>
 </body>
 </html>

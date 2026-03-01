@@ -456,6 +456,33 @@ body {
     text-align: right;
 }
 
+.day-prepay-item {
+    font-size: 9px;
+    color: #7c3aed;
+    font-weight: 600;
+    background: #f5f3ff;
+    border-radius: 3px;
+    padding: 1px 3px;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.stat-card.expected {
+    border-top-color: #3b82f6;
+}
+
+.stat-card.total {
+    border-top-color: #059669;
+    background: #f0fdf4;
+}
+
+.stat-card.total .stat-value {
+    color: #059669;
+    font-weight: 700;
+}
+
 .stat-card.prepayment {
     border-top-color: #8b5cf6;
 }

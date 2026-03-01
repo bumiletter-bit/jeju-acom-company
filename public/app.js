@@ -384,20 +384,23 @@ async function renderSettlementCalendar() {
     document.getElementById('settlement-calendar-title').textContent = `${settlementCalYear}년 ${monthNames[settlementCalMonth]}`;
 
     const monthNum = settlementCalMonth + 1;
-    document.getElementById('total-payment-label').textContent = `${monthNum}월 총 결제금액`;
-    document.getElementById('daesung-payment-label').textContent = `${monthNum}월 대성(시온) 결제금액`;
-    document.getElementById('hyodon-payment-label').textContent = `${monthNum}월 효돈농협 결제금액`;
+    document.getElementById('expected-payment-label').textContent = `${monthNum}월 결제예정금액`;
+    document.getElementById('total-payment-label').textContent = `${monthNum}월 총결제금액`;
+    document.getElementById('daesung-payment-label').textContent = `${monthNum}월 대성(시온)`;
+    document.getElementById('hyodon-payment-label').textContent = `${monthNum}월 효돈농협`;
     document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배 결제금액`;
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
-    const settlements = await api(`/api/settlements?month=${monthStr}`);
+    const [settlements, prepayments] = await Promise.all([
+        api(`/api/settlements?month=${monthStr}`),
+        api('/api/prepayments')
+    ]);
 
-    let totalPayment = 0, daesungPayment = 0, hyodonPayment = 0, cjPayment = 0;
+    let daesungPayment = 0, hyodonPayment = 0, cjPayment = 0;
     const dailyPayments = {};
 
     settlements.forEach(s => {
         const amount = s.amount || 0;
-        totalPayment += amount;
         if (s.partner === '대성(시온)') daesungPayment += amount;
         if (s.partner === '효돈농협') hyodonPayment += amount;
         if (s.partner === 'CJ대한통운') cjPayment += amount;
@@ -408,15 +411,23 @@ async function renderSettlementCalendar() {
         if (s.partner === 'CJ대한통운') dailyPayments[s.date].cj += amount;
     });
 
-    document.getElementById('total-payment').textContent = `${totalPayment.toLocaleString()} 원`;
+    // 결제예정금액 = 대성 + 효돈 + CJ
+    const expectedPayment = daesungPayment + hyodonPayment + cjPayment;
+    document.getElementById('expected-payment').textContent = `${expectedPayment.toLocaleString()} 원`;
     document.getElementById('daesung-payment').textContent = `${daesungPayment.toLocaleString()} 원`;
     document.getElementById('hyodon-payment').textContent = `${hyodonPayment.toLocaleString()} 원`;
     document.getElementById('cj-payment').textContent = `${cjPayment.toLocaleString()} 원`;
 
-    // 선수금 잔액 표시
+    // 선결제 잔액 조회 + 총결제금액 계산
+    let totalPrepayDeduction = 0;
     try {
         const balances = await api('/api/prepayments/balance');
         balances.forEach(b => {
+            const thisMonthAmount = b.partner === '대성(시온)' ? daesungPayment : hyodonPayment;
+            const balanceBefore = b.balance + thisMonthAmount;
+            const covered = Math.min(thisMonthAmount, Math.max(0, balanceBefore));
+            totalPrepayDeduction += covered;
+
             if (b.partner === '대성(시온)') {
                 document.getElementById('daesung-prepay').textContent = `${b.balance.toLocaleString()} 원`;
             } else if (b.partner === '효돈농협') {
@@ -424,8 +435,22 @@ async function renderSettlementCalendar() {
             }
         });
     } catch (err) {
-        console.error('선수금 잔액 로드 오류:', err);
+        console.error('선결제 잔액 로드 오류:', err);
     }
+
+    // 총결제금액 = 결제예정 - 선결제 차감분
+    const actualPayment = expectedPayment - totalPrepayDeduction;
+    document.getElementById('total-payment').textContent = `${actualPayment.toLocaleString()} 원`;
+
+    // 달력용 선결제 내역 (해당 월)
+    const dailyPrepayments = {};
+    prepayments.forEach(p => {
+        if (p.date && p.date.startsWith(monthStr)) {
+            if (!dailyPrepayments[p.date]) dailyPrepayments[p.date] = [];
+            const shortName = p.partner === '대성(시온)' ? '대성' : (p.partner === '효돈농협' ? '효돈' : p.partner);
+            dailyPrepayments[p.date].push({ name: shortName, amount: p.amount });
+        }
+    });
 
     const firstDay = new Date(settlementCalYear, settlementCalMonth, 1).getDay();
     const daysInMonth = new Date(settlementCalYear, settlementCalMonth + 1, 0).getDate();
@@ -453,21 +478,31 @@ async function renderSettlementCalendar() {
                 if (dow === 6) classes.push('sat');
                 if (isToday) classes.push('today');
 
+                let contentHtml = '';
+
+                // 선결제 표시
+                const pp = dailyPrepayments[dateStr];
+                if (pp) {
+                    pp.forEach(item => {
+                        contentHtml += `<div class="day-prepay-item">${item.name} 선결제 ${item.amount.toLocaleString()}원</div>`;
+                    });
+                }
+
+                // 정산금액 표시
                 const dp = dailyPayments[dateStr];
-                let qtyHtml = '';
                 if (dp) {
-                    qtyHtml = '<div class="day-payments">';
-                    if (dp.daesung) qtyHtml += `<div class="day-payment-item daesung"><span class="dot dot-daesung"></span>${dp.daesung.toLocaleString()}</div>`;
-                    if (dp.hyodon) qtyHtml += `<div class="day-payment-item hyodon"><span class="dot dot-hyodon"></span>${dp.hyodon.toLocaleString()}</div>`;
-                    if (dp.cj) qtyHtml += `<div class="day-payment-item cj"><span class="dot dot-cj"></span>${dp.cj.toLocaleString()}</div>`;
+                    contentHtml += '<div class="day-payments">';
+                    if (dp.daesung) contentHtml += `<div class="day-payment-item daesung"><span class="dot dot-daesung"></span>${dp.daesung.toLocaleString()}</div>`;
+                    if (dp.hyodon) contentHtml += `<div class="day-payment-item hyodon"><span class="dot dot-hyodon"></span>${dp.hyodon.toLocaleString()}</div>`;
+                    if (dp.cj) contentHtml += `<div class="day-payment-item cj"><span class="dot dot-cj"></span>${dp.cj.toLocaleString()}</div>`;
                     const dayTotal = (dp.daesung || 0) + (dp.hyodon || 0) + (dp.cj || 0);
-                    if (dayTotal > 0) qtyHtml += `<div class="day-total">${dayTotal.toLocaleString()}</div>`;
-                    qtyHtml += '</div>';
+                    if (dayTotal > 0) contentHtml += `<div class="day-total">${dayTotal.toLocaleString()}</div>`;
+                    contentHtml += '</div>';
                 }
 
                 html += `<td class="${classes.join(' ')}">
                     <span class="day-number">${isToday ? '오늘' : day}</span>
-                    ${qtyHtml}
+                    ${contentHtml}
                 </td>`;
                 day++;
             }
@@ -2125,7 +2160,7 @@ async function deleteLunchMenu(id) {
 window.deleteLunchMenu = deleteLunchMenu;
 
 // =============================================
-// 선수금 관리
+// 선결제 관리
 // =============================================
 
 async function renderPrepaymentCard() {
@@ -2142,7 +2177,7 @@ async function renderPrepaymentList() {
         const data = await api('/api/prepayments');
         const tbody = document.getElementById('prepayment-list');
         if (data.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">선수금 내역이 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">선결제 내역이 없습니다.</td></tr>';
         } else {
             tbody.innerHTML = data.map(item => `<tr>
                 <td>${item.date}</td>
@@ -2153,7 +2188,7 @@ async function renderPrepaymentList() {
             </tr>`).join('');
         }
     } catch (err) {
-        console.error('선수금 목록 오류:', err);
+        console.error('선결제 목록 오류:', err);
     }
 }
 
@@ -2175,14 +2210,14 @@ document.getElementById('prepay-save').addEventListener('click', async () => {
         document.getElementById('prepay-note').value = '';
         await renderPrepaymentList();
         await renderSettlementCalendar();
-        alert('선수금이 추가되었습니다.');
+        alert('선결제이 추가되었습니다.');
     } catch (err) {
         alert('추가 실패: ' + err.message);
     }
 });
 
 window.deletePrepayment = async function(id) {
-    if (!confirm('이 선수금 내역을 삭제하시겠습니까?')) return;
+    if (!confirm('이 선결제 내역을 삭제하시겠습니까?')) return;
     try {
         await api(`/api/prepayments/${id}`, 'DELETE');
         await renderPrepaymentList();

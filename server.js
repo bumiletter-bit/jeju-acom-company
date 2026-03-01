@@ -175,7 +175,7 @@ async function initDB() {
         console.log('기본 점심메뉴 36개 등록 완료');
     }
 
-    // 선수금 테이블
+    // 선결제 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS prepayments (
             id SERIAL PRIMARY KEY,
@@ -777,7 +777,7 @@ app.get('/api/settlements/box-count', authMiddleware, async (req, res) => {
     }
 });
 
-// === Prepayments API (선수금) ===
+// === Prepayments API (선결제) ===
 
 app.get('/api/prepayments', authMiddleware, async (req, res) => {
     try {
@@ -824,7 +824,7 @@ app.delete('/api/prepayments/:id', authMiddleware, adminOnly, async (req, res) =
 
 app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
     try {
-        // 거래처별 선수금 합계
+        // 거래처별 선결제 합계
         const prepayResult = await pool.query(
             "SELECT partner, COALESCE(SUM(amount), 0) as total FROM prepayments WHERE partner IN ('대성(시온)', '효돈농협') GROUP BY partner"
         );
