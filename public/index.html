@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=13">
+    <link rel="stylesheet" href="styles.css?v=15">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -511,8 +511,11 @@
                     </div>
                 </div>
 
-                <!-- 통합 변환 버튼 -->
-                <button class="btn-primary invoice-merge-btn" id="invoice-merge-btn" disabled>통합 변환 및 다운로드</button>
+                <!-- 통합 변환 / 초기화 버튼 -->
+                <div class="invoice-btn-row">
+                    <button class="btn-primary invoice-merge-btn" id="invoice-merge-btn" disabled>통합 변환 및 다운로드</button>
+                    <button class="btn-reset invoice-reset-btn" id="invoice-reset-btn" onclick="resetInvoice()">초기화</button>
+                </div>
 
                 <!-- 성공 메시지 -->
                 <div class="invoice-success-msg" id="invoice-success-msg" style="display:none;">
@@ -540,14 +543,72 @@
                 </div>
             </div>
 
-            <!-- 점심메뉴 placeholder -->
+            <!-- 점심메뉴 페이지 -->
             <div id="page-lunch" class="page">
-                <h1>점심메뉴</h1>
+                <h1>오늘 점심은 뭐먹지? 🍽️</h1>
+
+                <!-- 추천 카드 -->
                 <div class="card">
-                    <div class="placeholder-content">
-                        <p>점심메뉴 관리 페이지입니다.</p>
-                        <p class="text-muted">추후 기능이 추가됩니다.</p>
+                    <div class="card-header-row">
+                        <h2>오늘의 추천 메뉴</h2>
+                        <button class="btn-lunch-recommend" id="btn-lunch-recommend" onclick="handleLunchRecommend()">🎰 추천받기</button>
                     </div>
+
+                    <!-- 슬롯머신 영역 -->
+                    <div id="lunch-slot-area" style="display:none;">
+                        <div class="lunch-slot-machine">
+                            <div class="lunch-slot-window">
+                                <div class="lunch-slot-reel" id="lunch-slot-reel"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 메뉴 카드 그리드 -->
+                    <div id="lunch-menu-cards" class="lunch-menu-grid"></div>
+
+                    <!-- 빈 상태 -->
+                    <div id="lunch-empty" class="placeholder-content" style="padding:40px 20px;">
+                        <p>🎰 추천받기 버튼을 눌러 오늘의 메뉴를 확인하세요!</p>
+                    </div>
+
+                    <!-- 투표 결과 -->
+                    <div id="lunch-vote-result" style="display:none;"></div>
+                </div>
+
+                <!-- 관리자 메뉴 관리 -->
+                <div class="card" id="lunch-admin-card" style="display:none;">
+                    <h2>메뉴 관리</h2>
+                    <div class="form-row" style="align-items:flex-end; gap:12px; margin-bottom:16px;">
+                        <div class="form-group" style="flex:1; margin-bottom:0;">
+                            <label>메뉴 이름</label>
+                            <input type="text" id="lunch-menu-name" class="form-input" placeholder="메뉴 이름을 입력하세요">
+                        </div>
+                        <div class="form-group" style="flex:0 0 auto; margin-bottom:0;">
+                            <label>카테고리</label>
+                            <select id="lunch-menu-category" class="form-input" style="width:130px;">
+                                <option value="한식">한식</option>
+                                <option value="제주">제주</option>
+                                <option value="중식">중식</option>
+                                <option value="일식">일식</option>
+                                <option value="양식">양식</option>
+                                <option value="분식">분식</option>
+                                <option value="패스트푸드">패스트푸드</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" style="margin-top:0;" onclick="addLunchMenu()">추가</button>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>메뉴명</th>
+                                <th>카테고리</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lunch-menu-list">
+                            <tr class="empty-row"><td colspan="3">메뉴가 없습니다.</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -589,6 +650,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=21"></script>
+    <script src="app.js?v=23"></script>
 </body>
 </html>

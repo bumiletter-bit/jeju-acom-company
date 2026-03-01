@@ -114,6 +114,34 @@ async function initDB() {
         END $$
     `);
 
+    // 점심메뉴 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS lunch_menus (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            category VARCHAR(20) NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS lunch_sessions (
+            id SERIAL PRIMARY KEY,
+            date DATE UNIQUE NOT NULL,
+            menus JSONB DEFAULT '[]'::jsonb,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS lunch_votes (
+            id SERIAL PRIMARY KEY,
+            session_id INTEGER REFERENCES lunch_sessions(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            menu_name VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(session_id, user_id)
+        )
+    `);
+
     // 초기 관리자 계정 생성
     const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
@@ -123,6 +151,26 @@ async function initDB() {
             ['admin', hash, '관리자', '대표', '#ef4444', 'admin', 15]
         );
         console.log('초기 관리자 계정 생성: admin / admin123');
+    }
+
+    // 기본 점심메뉴 시드
+    const menuCheck = await pool.query('SELECT COUNT(*) FROM lunch_menus');
+    if (parseInt(menuCheck.rows[0].count) === 0) {
+        const defaultMenus = [
+            ['김치찌개','한식'],['된장찌개','한식'],['순두부찌개','한식'],['불고기','한식'],['제육볶음','한식'],
+            ['비빔밥','한식'],['갈치조림','한식'],['고등어구이','한식'],['돼지국밥','한식'],['해물파전','한식'],
+            ['감자탕','한식'],['삼겹살','한식'],['칼국수','한식'],
+            ['고기국수','제주'],['몸국','제주'],['흑돼지구이','제주'],['전복죽','제주'],['보말칼국수','제주'],
+            ['짜장면','중식'],['짬뽕','중식'],['탕수육','중식'],['볶음밥','중식'],['마파두부','중식'],
+            ['초밥','일식'],['돈카츠','일식'],['라멘','일식'],['우동','일식'],
+            ['파스타','양식'],['피자','양식'],['햄버거','양식'],['스테이크','양식'],['리조또','양식'],
+            ['떡볶이','분식'],['김밥','분식'],['라볶이','분식'],
+            ['치킨','패스트푸드']
+        ];
+        for (const [name, category] of defaultMenus) {
+            await pool.query('INSERT INTO lunch_menus (name, category) VALUES ($1, $2)', [name, category]);
+        }
+        console.log('기본 점심메뉴 36개 등록 완료');
     }
 
     console.log('DB 테이블 초기화 완료');
@@ -468,12 +516,106 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
     }
 });
 
+// 서류 수정
+app.put('/api/documents/:id', authMiddleware, async (req, res) => {
+    try {
+        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+
+        const d = doc.rows[0];
+        // 권한: 대기중/반려 → 본인, 승인 → 관리자만
+        if (d.status === 'approved') {
+            if (req.user.role !== 'admin') return res.status(403).json({ error: '승인된 서류는 관리자만 수정할 수 있습니다' });
+        } else {
+            if (d.applicant_id !== req.user.id && req.user.role !== 'admin') {
+                return res.status(403).json({ error: '본인의 서류만 수정할 수 있습니다' });
+            }
+        }
+
+        const { subType, startDate, endDate, reason, approverId } = req.body;
+        const newSubType = subType || d.sub_type;
+        const newStartDate = startDate || d.start_date;
+        const newEndDate = endDate || startDate || d.end_date;
+        const newReason = reason !== undefined ? reason : d.reason;
+        const newApproverId = approverId || d.approver_id;
+
+        // 연차 재계산: 기존 차감분 복구 후 새로 차감
+        const oldDeducted = Number(d.deducted_leave);
+        if (d.status !== 'rejected' && oldDeducted > 0) {
+            await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [oldDeducted, d.applicant_id]);
+        }
+
+        let newDeducted = 0;
+        if (d.type === 'vacation') {
+            if (newSubType === '연차') {
+                const s = new Date(newStartDate);
+                const e = new Date(newEndDate);
+                newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+            } else if (newSubType === '반차') {
+                newDeducted = 0.5;
+            }
+            if (newDeducted > 0) {
+                const userResult = await pool.query('SELECT annual_leave FROM users WHERE id = $1', [d.applicant_id]);
+                if (Number(userResult.rows[0].annual_leave) < newDeducted) {
+                    // 복구 실패 방지: 원래 차감분 다시 빼기
+                    if (d.status !== 'rejected' && oldDeducted > 0) {
+                        await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [oldDeducted, d.applicant_id]);
+                    }
+                    return res.status(400).json({ error: `잔여연차(${userResult.rows[0].annual_leave}일)가 부족합니다.` });
+                }
+                await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [newDeducted, d.applicant_id]);
+            }
+        }
+
+        // 반려 상태에서 수정 → 대기중으로 재제출
+        const newStatus = d.status === 'rejected' ? 'pending' : d.status;
+
+        await pool.query(
+            'UPDATE documents SET sub_type=$1, start_date=$2, end_date=$3, reason=$4, approver_id=$5, deducted_leave=$6, status=$7, processed_at=$8 WHERE id=$9',
+            [newSubType, newStartDate, newEndDate, newReason, newApproverId, newDeducted, newStatus, newStatus === 'pending' ? null : d.processed_at, req.params.id]
+        );
+
+        // 연동 일정 재생성
+        await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
+        if (d.type === 'vacation' || d.type === 'attendance') {
+            const applicant = await pool.query('SELECT name FROM users WHERE id = $1', [d.applicant_id]);
+            const userName = applicant.rows[0].name;
+            const scheduleTitle = `${newSubType} - ${userName}`;
+            if (d.type === 'vacation' && newSubType === '연차') {
+                const s = new Date(newStartDate);
+                const e = new Date(newEndDate);
+                for (let dd = new Date(s); dd <= e; dd.setDate(dd.getDate() + 1)) {
+                    const dateStr = dd.toISOString().split('T')[0];
+                    await pool.query(
+                        'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                        [d.applicant_id, dateStr, scheduleTitle, d.type, req.params.id]
+                    );
+                }
+            } else {
+                await pool.query(
+                    'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                    [d.applicant_id, newStartDate, scheduleTitle, d.type, req.params.id]
+                );
+            }
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('PUT /api/documents/:id error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
     try {
         const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
         if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
 
         const d = doc.rows[0];
+        // 권한: 대기중 → 본인/관리자, 승인 → 관리자만, 반려 → 본인/관리자
+        if (d.status === 'approved' && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '승인된 서류는 관리자만 삭제할 수 있습니다' });
+        }
         if (d.applicant_id !== req.user.id && req.user.role !== 'admin') {
             return res.status(403).json({ error: '본인의 서류만 삭제할 수 있습니다' });
         }
@@ -587,6 +729,106 @@ app.delete('/api/pricing/:id', authMiddleware, async (req, res) => {
     try {
         await pool.query('DELETE FROM pricing WHERE id = $1', [req.params.id]);
         res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// === Lunch Menu API ===
+
+app.get('/api/lunch/menus', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM lunch_menus ORDER BY category, name');
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/lunch/menus', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { name, category } = req.body;
+        if (!name || !category) return res.status(400).json({ error: '메뉴 이름과 카테고리는 필수입니다' });
+        const result = await pool.query('INSERT INTO lunch_menus (name, category) VALUES ($1, $2) RETURNING *', [name, category]);
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/lunch/menus/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM lunch_menus WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/lunch/today', authMiddleware, async (req, res) => {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const session = await pool.query('SELECT * FROM lunch_sessions WHERE date = $1', [today]);
+        if (session.rows.length === 0) return res.json({ session: null, votes: [], myVote: null });
+
+        const s = session.rows[0];
+        const votes = await pool.query(
+            'SELECT v.menu_name, v.user_id, u.name as user_name, u.color as user_color FROM lunch_votes v JOIN users u ON v.user_id = u.id WHERE v.session_id = $1',
+            [s.id]
+        );
+        const myVote = votes.rows.find(v => v.user_id === req.user.id);
+        res.json({ session: { id: s.id, date: s.date, menus: s.menus }, votes: votes.rows, myVote: myVote ? myVote.menu_name : null });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/lunch/recommend', authMiddleware, async (req, res) => {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const existing = await pool.query('SELECT * FROM lunch_sessions WHERE date = $1', [today]);
+        if (existing.rows.length > 0) {
+            const s = existing.rows[0];
+            const votes = await pool.query(
+                'SELECT v.menu_name, v.user_id, u.name as user_name, u.color as user_color FROM lunch_votes v JOIN users u ON v.user_id = u.id WHERE v.session_id = $1',
+                [s.id]
+            );
+            const myVote = votes.rows.find(v => v.user_id === req.user.id);
+            return res.json({ session: { id: s.id, date: s.date, menus: s.menus }, votes: votes.rows, myVote: myVote ? myVote.menu_name : null, isNew: false });
+        }
+
+        const allMenus = await pool.query('SELECT name, category FROM lunch_menus ORDER BY RANDOM() LIMIT 6');
+        if (allMenus.rows.length === 0) return res.status(400).json({ error: '등록된 메뉴가 없습니다' });
+
+        const menus = allMenus.rows.map(m => ({ name: m.name, category: m.category }));
+        const result = await pool.query(
+            'INSERT INTO lunch_sessions (date, menus) VALUES ($1, $2) RETURNING *',
+            [today, JSON.stringify(menus)]
+        );
+        const s = result.rows[0];
+        res.json({ session: { id: s.id, date: s.date, menus: s.menus }, votes: [], myVote: null, isNew: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/lunch/vote', authMiddleware, async (req, res) => {
+    try {
+        const { sessionId, menuName } = req.body;
+        if (!sessionId || !menuName) return res.status(400).json({ error: '세션 ID와 메뉴명은 필수입니다' });
+
+        await pool.query(
+            `INSERT INTO lunch_votes (session_id, user_id, menu_name) VALUES ($1, $2, $3)
+             ON CONFLICT (session_id, user_id) DO UPDATE SET menu_name = $3, created_at = NOW()`,
+            [sessionId, req.user.id, menuName]
+        );
+
+        const votes = await pool.query(
+            'SELECT v.menu_name, v.user_id, u.name as user_name, u.color as user_color FROM lunch_votes v JOIN users u ON v.user_id = u.id WHERE v.session_id = $1',
+            [sessionId]
+        );
+        const myVote = votes.rows.find(v => v.user_id === req.user.id);
+        res.json({ votes: votes.rows, myVote: myVote ? myVote.menu_name : null });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

@@ -160,6 +160,7 @@ function switchPage(pageName) {
         renderSettlementList().catch(console.error);
     }
     if (pageName === 'pricing') renderPricingList().catch(console.error);
+    if (pageName === 'lunch') renderLunchPage().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
 }
 
@@ -1184,11 +1185,22 @@ async function renderDocList() {
             return;
         }
 
+        const isAdmin = currentUser?.role === 'admin';
+
         tbody.innerHTML = docs.map(d => {
             const statusClass = d.status === 'approved' ? 'status-approved' : d.status === 'rejected' ? 'status-rejected' : 'status-pending';
             const statusLabel = d.status === 'approved' ? '승인' : d.status === 'rejected' ? '반려' : '대기중';
             const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
-            const canDelete = d.status === 'pending';
+
+            const isMine = d.applicantId === currentUser?.id;
+            // 수정: 대기중/반려 → 본인, 승인 → 관리자
+            const canEdit = (d.status === 'pending' && isMine) || (d.status === 'rejected' && isMine) || (d.status === 'approved' && isAdmin);
+            // 삭제: 대기중 → 본인/관리자, 승인 → 관리자만, 반려 → 본인/관리자
+            const canDelete = (d.status === 'pending' && (isMine || isAdmin)) || (d.status === 'approved' && isAdmin) || (d.status === 'rejected' && (isMine || isAdmin));
+
+            let actions = '';
+            if (canEdit) actions += `<button class="btn-view" onclick="openEditDocument(${d.id})">${d.status === 'rejected' ? '재제출' : '수정'}</button>`;
+            if (canDelete) actions += `<button class="btn-danger" onclick="deleteDocument(${d.id})">삭제</button>`;
 
             return `<tr>
                 <td>${d.subType}</td>
@@ -1196,7 +1208,7 @@ async function renderDocList() {
                 <td>${d.reason || '-'}</td>
                 <td>${d.approverName || '-'}</td>
                 <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
-                <td>${canDelete ? `<button class="btn-danger" onclick="deleteDocument(${d.id})">삭제</button>` : ''}</td>
+                <td>${actions}</td>
             </tr>`;
         }).join('');
     } catch (err) {
@@ -1237,7 +1249,7 @@ async function renderApprovalList() {
 
 // 서류 삭제
 window.deleteDocument = async function(id) {
-    if (!confirm('서류를 삭제하시겠습니까?\n연차가 차감된 경우 복구됩니다.')) return;
+    if (!confirm('정말 삭제하시겠습니까?\n연차가 차감된 경우 자동 복구됩니다.')) return;
     try {
         await api(`/api/documents/${id}`, 'DELETE');
         const me = await api('/api/auth/me');
@@ -1245,8 +1257,131 @@ window.deleteDocument = async function(id) {
         localStorage.setItem('jwt_user', JSON.stringify(me));
         document.getElementById('annual-leave-count').textContent = me.annualLeave;
         await renderDocList();
+        if (currentUser.role === 'admin') await renderApprovalList();
     } catch (err) {
         alert('삭제 실패: ' + err.message);
+    }
+};
+
+// 서류 수정 모달
+window.openEditDocument = async function(id) {
+    try {
+        const docs = await api(`/api/documents?type=${currentDocType}&mine=true`);
+        const doc = docs.find(d => d.id === id);
+        if (!doc) {
+            // 관리자가 다른 사람 서류 수정 시
+            const allDocs = await api('/api/documents');
+            const found = allDocs.find(d => d.id === id);
+            if (!found) return alert('서류를 찾을 수 없습니다.');
+            showEditDocModal(found);
+        } else {
+            showEditDocModal(doc);
+        }
+    } catch (err) {
+        alert('서류 정보 로드 실패: ' + err.message);
+    }
+};
+
+async function showEditDocModal(doc) {
+    const approvers = await api('/api/users/approvers');
+    const approverOptions = approvers.map(a => `<option value="${a.id}" ${a.id === doc.approverId ? 'selected' : ''}>${a.position ? a.position + ' ' : ''}${a.name}</option>`).join('');
+
+    const typeMap = {
+        vacation: { label: '휴가종류', options: ['연차','반차','병가'] },
+        attendance: { label: '종류', options: ['휴직','예비군','병가','기타'] },
+        reason: { label: '종류', options: ['지각','미출근','조퇴','기타'] }
+    };
+    const typeInfo = typeMap[doc.type] || { label: '종류', options: [doc.subType] };
+
+    const showEndDate = doc.type === 'vacation' && doc.subType === '연차';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'edit-doc-modal';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:480px;">
+            <button class="modal-close" onclick="closeEditDocModal()">&times;</button>
+            <h3>${doc.status === 'rejected' ? '서류 재제출' : '서류 수정'}</h3>
+            <div class="form-group">
+                <label>${typeInfo.label}</label>
+                <div class="btn-group" id="edit-doc-subtype-group">
+                    ${typeInfo.options.map(o => `<button class="btn-toggle ${o === doc.subType ? 'active' : ''}" data-value="${o}" onclick="selectEditSubType(this)">${o}</button>`).join('')}
+                </div>
+            </div>
+            <div class="form-row" style="gap:12px;">
+                <div class="form-group">
+                    <label>시작일</label>
+                    <input type="date" id="edit-doc-start" class="form-input" value="${doc.startDate}">
+                </div>
+                <div class="form-group" id="edit-doc-end-group" style="${showEndDate ? '' : 'display:none;'}">
+                    <label>종료일</label>
+                    <input type="date" id="edit-doc-end" class="form-input" value="${doc.endDate || doc.startDate}">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>사유</label>
+                <textarea id="edit-doc-reason" class="form-input" rows="3">${doc.reason || ''}</textarea>
+            </div>
+            <div class="form-group">
+                <label>결재자</label>
+                <select id="edit-doc-approver" class="form-input">
+                    <option value="">결재자를 선택하세요</option>
+                    ${approverOptions}
+                </select>
+            </div>
+            <button class="btn-primary" style="width:100%;" onclick="submitEditDocument(${doc.id}, '${doc.type}')">${doc.status === 'rejected' ? '재제출' : '수정 저장'}</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeEditDocModal(); });
+
+    // 종류 변경 시 종료일 표시 토글 (휴가만)
+    if (doc.type === 'vacation') {
+        updateEditEndDateVisibility();
+    }
+}
+
+window.selectEditSubType = function(btn) {
+    btn.parentElement.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    updateEditEndDateVisibility();
+};
+
+function updateEditEndDateVisibility() {
+    const activeBtn = document.querySelector('#edit-doc-subtype-group .btn-toggle.active');
+    const endGroup = document.getElementById('edit-doc-end-group');
+    if (activeBtn && endGroup) {
+        endGroup.style.display = activeBtn.dataset.value === '연차' ? '' : 'none';
+    }
+}
+
+window.closeEditDocModal = function() {
+    const modal = document.getElementById('edit-doc-modal');
+    if (modal) modal.remove();
+};
+
+window.submitEditDocument = async function(id, type) {
+    const subType = document.querySelector('#edit-doc-subtype-group .btn-toggle.active')?.dataset.value;
+    const startDate = document.getElementById('edit-doc-start').value;
+    const endDate = document.getElementById('edit-doc-end').value || startDate;
+    const reason = document.getElementById('edit-doc-reason').value;
+    const approverId = document.getElementById('edit-doc-approver').value;
+
+    if (!startDate) return alert('시작일을 입력하세요.');
+    if (!approverId) return alert('결재자를 선택하세요.');
+
+    try {
+        await api(`/api/documents/${id}`, 'PUT', { subType, startDate, endDate, reason, approverId: Number(approverId) });
+        closeEditDocModal();
+        const me = await api('/api/auth/me');
+        currentUser = me;
+        localStorage.setItem('jwt_user', JSON.stringify(me));
+        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        await renderDocList();
+        if (currentUser.role === 'admin') await renderApprovalList();
+        alert(type === 'rejected' ? '재제출되었습니다.' : '수정되었습니다.');
+    } catch (err) {
+        alert('수정 실패: ' + err.message);
     }
 };
 
@@ -1578,6 +1713,31 @@ setupInvoiceArea('invoice-upload-smart', 'invoice-file-smart', 'invoice-filename
 setupInvoiceArea('invoice-upload-jasamol', 'invoice-file-jasamol', 'invoice-filename-jasamol', 0, convertDataJasamol, 'jasamol');
 setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-filename-coupang', 0, convertDataCoupang, 'coupang');
 
+// 송장변환 초기화
+function resetInvoice() {
+    invoiceDataSmart = null;
+    invoiceDataJasamol = null;
+    invoiceDataCoupang = null;
+
+    ['smart', 'jasamol', 'coupang'].forEach(ch => {
+        const fileInput = document.getElementById(`invoice-file-${ch}`);
+        const fileName = document.getElementById(`invoice-filename-${ch}`);
+        const area = document.getElementById(`invoice-upload-${ch}`);
+        if (fileInput) fileInput.value = '';
+        if (fileName) fileName.textContent = '';
+        if (area) area.classList.remove('has-file');
+    });
+
+    document.getElementById('invoice-merge-btn').disabled = true;
+    document.getElementById('invoice-success-msg').style.display = 'none';
+    document.getElementById('invoice-preview-section').style.display = 'none';
+    document.getElementById('invoice-table-wrapper').innerHTML = '';
+    document.getElementById('invoice-total-orders').textContent = '0';
+    document.getElementById('invoice-total-qty').textContent = '0';
+    document.getElementById('invoice-unique-recipients').textContent = '0';
+}
+window.resetInvoice = resetInvoice;
+
 // =============================================
 // Utility
 // =============================================
@@ -1604,3 +1764,224 @@ async function init() {
 }
 
 checkAuth();
+
+// =============================================
+// 점심메뉴
+// =============================================
+
+const LUNCH_CATEGORY_EMOJI = { '한식':'🍚', '제주':'🍊', '중식':'🥡', '일식':'🍣', '양식':'🍝', '분식':'🧆', '패스트푸드':'🍔' };
+const LUNCH_CATEGORY_COLORS = {
+    '한식': { bg:'#fef3c7', text:'#92400e', border:'#fde68a' },
+    '제주': { bg:'#fed7aa', text:'#9a3412', border:'#fdba74' },
+    '중식': { bg:'#fce7f3', text:'#9d174d', border:'#f9a8d4' },
+    '일식': { bg:'#dbeafe', text:'#1e40af', border:'#93c5fd' },
+    '양식': { bg:'#d1fae5', text:'#065f46', border:'#6ee7b7' },
+    '분식': { bg:'#ede9fe', text:'#5b21b6', border:'#c4b5fd' },
+    '패스트푸드': { bg:'#fee2e2', text:'#991b1b', border:'#fca5a5' }
+};
+
+let lunchSession = null;
+let lunchVotes = [];
+let lunchMyVote = null;
+
+async function renderLunchPage() {
+    const adminCard = document.getElementById('lunch-admin-card');
+    if (adminCard) adminCard.style.display = currentUser?.role === 'admin' ? '' : 'none';
+
+    try {
+        const data = await api('/api/lunch/today');
+        lunchSession = data.session;
+        lunchVotes = data.votes || [];
+        lunchMyVote = data.myVote;
+
+        if (lunchSession && lunchSession.menus && lunchSession.menus.length > 0) {
+            document.getElementById('lunch-empty').style.display = 'none';
+            renderLunchMenuCards(lunchSession.menus);
+            renderLunchVoteResult(lunchVotes);
+        } else {
+            document.getElementById('lunch-empty').style.display = '';
+            document.getElementById('lunch-menu-cards').innerHTML = '';
+            document.getElementById('lunch-vote-result').style.display = 'none';
+        }
+    } catch (err) {
+        console.error('점심메뉴 로드 오류:', err);
+    }
+
+    if (currentUser?.role === 'admin') renderLunchAdminPanel().catch(console.error);
+}
+
+async function handleLunchRecommend() {
+    try {
+        const data = await api('/api/lunch/recommend', 'POST');
+        lunchSession = data.session;
+        lunchVotes = data.votes || [];
+        lunchMyVote = data.myVote;
+
+        document.getElementById('lunch-empty').style.display = 'none';
+
+        if (data.isNew) {
+            runSlotAnimation(lunchSession.menus, () => {
+                renderLunchMenuCards(lunchSession.menus);
+                renderLunchVoteResult(lunchVotes);
+            });
+        } else {
+            renderLunchMenuCards(lunchSession.menus);
+            renderLunchVoteResult(lunchVotes);
+        }
+    } catch (err) {
+        alert(err.message || '추천 실패');
+    }
+}
+window.handleLunchRecommend = handleLunchRecommend;
+
+function runSlotAnimation(menus, callback) {
+    const slotArea = document.getElementById('lunch-slot-area');
+    const reel = document.getElementById('lunch-slot-reel');
+    const cardsEl = document.getElementById('lunch-menu-cards');
+    cardsEl.innerHTML = '';
+    slotArea.style.display = '';
+
+    const allNames = menus.map(m => `${LUNCH_CATEGORY_EMOJI[m.category] || '🍽️'} ${m.name}`);
+    const spinItems = [];
+    for (let i = 0; i < 20; i++) spinItems.push(allNames[i % allNames.length]);
+    spinItems.push(...allNames);
+
+    reel.innerHTML = spinItems.map(n => `<div class="lunch-slot-item">${n}</div>`).join('');
+    reel.style.transition = 'none';
+    reel.style.transform = 'translateY(0)';
+
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            const itemH = 60;
+            const target = -(spinItems.length - allNames.length) * itemH;
+            reel.style.transition = 'transform 2.5s cubic-bezier(0.15, 0.85, 0.35, 1)';
+            reel.style.transform = `translateY(${target}px)`;
+        });
+    });
+
+    setTimeout(() => {
+        slotArea.style.display = 'none';
+        callback();
+    }, 2800);
+}
+
+function renderLunchMenuCards(menus) {
+    const container = document.getElementById('lunch-menu-cards');
+    const voteCounts = {};
+    lunchVotes.forEach(v => { voteCounts[v.menu_name] = (voteCounts[v.menu_name] || 0) + 1; });
+
+    const maxVotes = Math.max(0, ...Object.values(voteCounts));
+
+    container.innerHTML = menus.map((m, i) => {
+        const colors = LUNCH_CATEGORY_COLORS[m.category] || { bg:'#f3f4f6', text:'#333', border:'#ddd' };
+        const emoji = LUNCH_CATEGORY_EMOJI[m.category] || '🍽️';
+        const count = voteCounts[m.name] || 0;
+        const isMyVote = lunchMyVote === m.name;
+        const isWinner = maxVotes > 0 && count === maxVotes;
+
+        return `<div class="lunch-card ${isMyVote ? 'lunch-card-voted' : ''} ${isWinner ? 'lunch-card-winner' : ''}"
+                     style="--card-bg:${colors.bg}; --card-text:${colors.text}; --card-border:${colors.border}; animation-delay:${i * 0.1}s"
+                     onclick="voteLunchMenu('${m.name}')">
+                    ${isWinner && count > 0 ? '<span class="lunch-crown">👑</span>' : ''}
+                    <div class="lunch-card-emoji">${emoji}</div>
+                    <div class="lunch-card-name">${m.name}</div>
+                    <div class="lunch-card-category" style="color:${colors.text}">${m.category}</div>
+                    <div class="lunch-card-votes">${count > 0 ? `${count}표` : '투표하기'}</div>
+                </div>`;
+    }).join('');
+}
+
+function renderLunchVoteResult(votes) {
+    const container = document.getElementById('lunch-vote-result');
+    if (!votes || votes.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = '';
+
+    const voteCounts = {};
+    const voters = {};
+    votes.forEach(v => {
+        voteCounts[v.menu_name] = (voteCounts[v.menu_name] || 0) + 1;
+        if (!voters[v.menu_name]) voters[v.menu_name] = [];
+        voters[v.menu_name].push({ name: v.user_name, color: v.user_color });
+    });
+
+    const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
+    const maxV = sorted[0][1];
+
+    container.innerHTML = `
+        <h3 style="margin:20px 0 12px; font-size:16px;">📊 투표 현황</h3>
+        ${sorted.map(([name, count]) => `
+            <div class="lunch-vote-row">
+                <span class="lunch-vote-name">${name}</span>
+                <div class="lunch-vote-bar-wrap">
+                    <div class="lunch-vote-bar" style="width:${(count / maxV) * 100}%"></div>
+                </div>
+                <span class="lunch-vote-count">${count}표</span>
+                <div class="lunch-vote-voters">
+                    ${voters[name].map(v => `<span class="lunch-voter-dot" style="background:${v.color}" title="${v.name}"></span>`).join('')}
+                </div>
+            </div>
+        `).join('')}
+    `;
+}
+
+async function voteLunchMenu(name) {
+    if (!lunchSession) return;
+    try {
+        const data = await api('/api/lunch/vote', 'POST', { sessionId: lunchSession.id, menuName: name });
+        lunchVotes = data.votes;
+        lunchMyVote = data.myVote;
+        renderLunchMenuCards(lunchSession.menus);
+        renderLunchVoteResult(lunchVotes);
+    } catch (err) {
+        alert(err.message || '투표 실패');
+    }
+}
+window.voteLunchMenu = voteLunchMenu;
+
+async function renderLunchAdminPanel() {
+    try {
+        const menus = await api('/api/lunch/menus');
+        const tbody = document.getElementById('lunch-menu-list');
+        if (!menus || menus.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="3">메뉴가 없습니다.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = menus.map(m => `
+            <tr>
+                <td>${m.name}</td>
+                <td><span style="padding:2px 8px; border-radius:10px; font-size:12px; background:${(LUNCH_CATEGORY_COLORS[m.category] || {bg:'#f3f4f6'}).bg}; color:${(LUNCH_CATEGORY_COLORS[m.category] || {text:'#333'}).text}">${LUNCH_CATEGORY_EMOJI[m.category] || '🍽️'} ${m.category}</span></td>
+                <td><button class="btn-danger" onclick="deleteLunchMenu(${m.id})">삭제</button></td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        console.error('관리자 메뉴 목록 오류:', err);
+    }
+}
+
+async function addLunchMenu() {
+    const name = document.getElementById('lunch-menu-name').value.trim();
+    const category = document.getElementById('lunch-menu-category').value;
+    if (!name) return alert('메뉴 이름을 입력하세요');
+    try {
+        await api('/api/lunch/menus', 'POST', { name, category });
+        document.getElementById('lunch-menu-name').value = '';
+        await renderLunchAdminPanel();
+    } catch (err) {
+        alert(err.message || '추가 실패');
+    }
+}
+window.addLunchMenu = addLunchMenu;
+
+async function deleteLunchMenu(id) {
+    if (!confirm('이 메뉴를 삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/lunch/menus/${id}`, 'DELETE');
+        await renderLunchAdminPanel();
+    } catch (err) {
+        alert(err.message || '삭제 실패');
+    }
+}
+window.deleteLunchMenu = deleteLunchMenu;

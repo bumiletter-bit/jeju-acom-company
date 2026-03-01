@@ -1167,9 +1167,15 @@ textarea.form-input {
     font-weight: 600;
 }
 
+.invoice-btn-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
 .invoice-merge-btn {
     display: block;
-    width: 100%;
+    flex: 1;
     padding: 16px;
     background: var(--primary);
     color: #fff;
@@ -1178,8 +1184,14 @@ textarea.form-input {
     font-size: 17px;
     font-weight: 700;
     cursor: pointer;
-    margin-bottom: 24px;
     transition: background 0.2s, transform 0.1s;
+}
+
+.invoice-reset-btn {
+    padding: 16px 28px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
 }
 
 .invoice-merge-btn:hover:not(:disabled) {
@@ -1308,6 +1320,225 @@ textarea.form-input {
    ======================================== */
 @media (max-width: 1024px) {
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ========================================
+   Lunch Menu (점심메뉴)
+   ======================================== */
+.btn-lunch-recommend {
+    padding: 10px 24px;
+    background: linear-gradient(135deg, var(--primary), #f59e0b);
+    color: #fff;
+    border: none;
+    border-radius: 24px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    animation: lunch-pulse 2s infinite;
+}
+
+.btn-lunch-recommend:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(245, 166, 35, 0.4);
+}
+
+@keyframes lunch-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(245, 166, 35, 0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(245, 166, 35, 0); }
+}
+
+/* Slot Machine */
+.lunch-slot-machine {
+    display: flex;
+    justify-content: center;
+    margin: 20px 0;
+}
+
+.lunch-slot-window {
+    width: 280px;
+    height: 60px;
+    overflow: hidden;
+    border-radius: 12px;
+    border: 3px solid var(--primary);
+    background: #fff;
+    position: relative;
+}
+
+.lunch-slot-window::before,
+.lunch-slot-window::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 20px;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.lunch-slot-window::before {
+    top: 0;
+    background: linear-gradient(to bottom, #fff, transparent);
+}
+
+.lunch-slot-window::after {
+    bottom: 0;
+    background: linear-gradient(to top, #fff, transparent);
+}
+
+.lunch-slot-reel {
+    transition: transform 2.5s cubic-bezier(0.15, 0.85, 0.35, 1);
+}
+
+.lunch-slot-item {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-dark);
+}
+
+/* Menu Card Grid */
+.lunch-menu-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.lunch-card {
+    background: var(--card-bg);
+    border: 2px solid var(--card-border);
+    border-radius: 14px;
+    padding: 20px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    animation: lunch-card-pop 0.4s ease backwards;
+}
+
+@keyframes lunch-card-pop {
+    0% { transform: scale(0.5) rotate(-5deg); opacity: 0; }
+    100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+.lunch-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+}
+
+.lunch-card-voted {
+    border-width: 3px;
+    box-shadow: 0 0 0 3px var(--card-border);
+}
+
+.lunch-card-winner {
+    border-color: #f59e0b;
+}
+
+.lunch-crown {
+    position: absolute;
+    top: -12px;
+    right: -6px;
+    font-size: 22px;
+}
+
+.lunch-card-emoji {
+    font-size: 36px;
+    margin-bottom: 8px;
+}
+
+.lunch-card-name {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--card-text);
+    margin-bottom: 4px;
+}
+
+.lunch-card-category {
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.lunch-card-votes {
+    font-size: 13px;
+    font-weight: 600;
+    color: #888;
+    padding: 4px 12px;
+    background: rgba(255,255,255,0.6);
+    border-radius: 12px;
+    display: inline-block;
+}
+
+.lunch-card-voted .lunch-card-votes {
+    background: var(--primary);
+    color: #fff;
+}
+
+/* Vote Result */
+.lunch-vote-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.lunch-vote-name {
+    width: 80px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-dark);
+    flex-shrink: 0;
+    text-align: right;
+}
+
+.lunch-vote-bar-wrap {
+    flex: 1;
+    height: 24px;
+    background: #f3f4f6;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.lunch-vote-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), #f59e0b);
+    border-radius: 12px;
+    transition: width 0.5s ease;
+    min-width: 8px;
+}
+
+.lunch-vote-count {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--primary-dark);
+    width: 36px;
+    flex-shrink: 0;
+}
+
+.lunch-vote-voters {
+    display: flex;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.lunch-voter-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: inline-block;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+@media (max-width: 768px) {
+    .lunch-menu-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
 
 @media (max-width: 768px) {
