@@ -312,7 +312,7 @@ body {
    ======================================== */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 16px;
     margin-bottom: 24px;
 }
@@ -445,6 +445,44 @@ body {
 .day-payment-item.daesung { color: var(--accent-blue); }
 .day-payment-item.hyodon { color: var(--success); }
 .day-payment-item.cj { color: #f59e0b; }
+
+.day-total {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-dark);
+    border-top: 1px solid #e2e8f0;
+    margin-top: 2px;
+    padding-top: 1px;
+    text-align: right;
+}
+
+.stat-card.prepayment {
+    border-top-color: #8b5cf6;
+}
+
+.btn-auto-calc {
+    padding: 8px 16px;
+    background: var(--accent-blue);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.2s;
+}
+.btn-auto-calc:hover { background: #2563eb; }
+
+.cj-auto-detail {
+    margin-top: 8px;
+    padding: 10px 14px;
+    background: #f0f9ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #1e40af;
+}
 
 /* Schedule items in calendar */
 .day-schedules { margin-top: 4px; }

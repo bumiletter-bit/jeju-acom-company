@@ -174,6 +174,18 @@ async function initDB() {
         console.log('기본 점심메뉴 36개 등록 완료');
     }
 
+    // 선수금 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS prepayments (
+            id SERIAL PRIMARY KEY,
+            partner VARCHAR(50) NOT NULL,
+            amount NUMERIC NOT NULL,
+            date DATE NOT NULL,
+            note TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+
     // AI 대화 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -699,6 +711,106 @@ app.delete('/api/settlements/:id', authMiddleware, async (req, res) => {
     try {
         await pool.query('DELETE FROM settlements WHERE id = $1', [req.params.id]);
         res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// CJ 자동계산: 해당 날짜 대성+효돈 박스수 합산
+app.get('/api/settlements/box-count', authMiddleware, async (req, res) => {
+    try {
+        const { date } = req.query;
+        if (!date) return res.status(400).json({ error: '날짜를 지정해주세요' });
+
+        const result = await pool.query(
+            "SELECT partner, items FROM settlements WHERE date = $1 AND partner IN ('대성(시온)', '효돈농협')",
+            [date]
+        );
+
+        let daesung = 0, hyodon = 0;
+        result.rows.forEach(row => {
+            const items = row.items || [];
+            const qty = items.reduce((sum, item) => sum + (item.qty || 0), 0);
+            if (row.partner === '대성(시온)') daesung += qty;
+            else if (row.partner === '효돈농협') hyodon += qty;
+        });
+
+        res.json({ totalBoxes: daesung + hyodon, daesung, hyodon });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// === Prepayments API (선수금) ===
+
+app.get('/api/prepayments', authMiddleware, async (req, res) => {
+    try {
+        const { partner } = req.query;
+        let result;
+        if (partner) {
+            result = await pool.query('SELECT * FROM prepayments WHERE partner = $1 ORDER BY date DESC, id DESC', [partner]);
+        } else {
+            result = await pool.query('SELECT * FROM prepayments ORDER BY date DESC, id DESC');
+        }
+        res.json(result.rows.map(r => ({
+            id: r.id, partner: r.partner, amount: Number(r.amount),
+            date: r.date, note: r.note
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/prepayments', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { partner, amount, date, note } = req.body;
+        if (!partner || !amount || !date) return res.status(400).json({ error: '거래처, 금액, 날짜는 필수입니다' });
+
+        const result = await pool.query(
+            'INSERT INTO prepayments (partner, amount, date, note) VALUES ($1, $2, $3, $4) RETURNING *',
+            [partner, amount, date, note || '']
+        );
+        const r = result.rows[0];
+        res.json({ id: r.id, partner: r.partner, amount: Number(r.amount), date: r.date, note: r.note });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/prepayments/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM prepayments WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
+    try {
+        // 거래처별 선수금 합계
+        const prepayResult = await pool.query(
+            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM prepayments WHERE partner IN ('대성(시온)', '효돈농협') GROUP BY partner"
+        );
+        // 거래처별 정산 합계
+        const settleResult = await pool.query(
+            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM settlements WHERE partner IN ('대성(시온)', '효돈농협') GROUP BY partner"
+        );
+
+        const prepayMap = {};
+        prepayResult.rows.forEach(r => { prepayMap[r.partner] = Number(r.total); });
+        const settleMap = {};
+        settleResult.rows.forEach(r => { settleMap[r.partner] = Number(r.total); });
+
+        const partners = ['대성(시온)', '효돈농협'];
+        const balances = partners.map(p => ({
+            partner: p,
+            prepaidTotal: prepayMap[p] || 0,
+            settledTotal: settleMap[p] || 0,
+            balance: (prepayMap[p] || 0) - (settleMap[p] || 0)
+        }));
+
+        res.json(balances);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

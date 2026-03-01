@@ -158,6 +158,7 @@ function switchPage(pageName) {
     if (pageName === 'settlement') {
         renderSettlementCalendar().catch(console.error);
         renderSettlementList().catch(console.error);
+        renderPrepaymentCard().catch(console.error);
     }
     if (pageName === 'pricing') renderPricingList().catch(console.error);
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
@@ -409,6 +410,20 @@ async function renderSettlementCalendar() {
     document.getElementById('hyodon-payment').textContent = `${hyodonPayment.toLocaleString()} 원`;
     document.getElementById('cj-payment').textContent = `${cjPayment.toLocaleString()} 원`;
 
+    // 선수금 잔액 표시
+    try {
+        const balances = await api('/api/prepayments/balance');
+        balances.forEach(b => {
+            if (b.partner === '대성(시온)') {
+                document.getElementById('daesung-prepay').textContent = `${b.balance.toLocaleString()} 원`;
+            } else if (b.partner === '효돈농협') {
+                document.getElementById('hyodon-prepay').textContent = `${b.balance.toLocaleString()} 원`;
+            }
+        });
+    } catch (err) {
+        console.error('선수금 잔액 로드 오류:', err);
+    }
+
     const firstDay = new Date(settlementCalYear, settlementCalMonth, 1).getDay();
     const daysInMonth = new Date(settlementCalYear, settlementCalMonth + 1, 0).getDate();
     const today = new Date();
@@ -442,6 +457,8 @@ async function renderSettlementCalendar() {
                     if (dp.daesung) qtyHtml += `<div class="day-payment-item daesung"><span class="dot dot-daesung"></span>${dp.daesung.toLocaleString()}</div>`;
                     if (dp.hyodon) qtyHtml += `<div class="day-payment-item hyodon"><span class="dot dot-hyodon"></span>${dp.hyodon.toLocaleString()}</div>`;
                     if (dp.cj) qtyHtml += `<div class="day-payment-item cj"><span class="dot dot-cj"></span>${dp.cj.toLocaleString()}</div>`;
+                    const dayTotal = (dp.daesung || 0) + (dp.hyodon || 0) + (dp.cj || 0);
+                    if (dayTotal > 0) qtyHtml += `<div class="day-total">${dayTotal.toLocaleString()}</div>`;
                     qtyHtml += '</div>';
                 }
 
@@ -497,6 +514,34 @@ document.getElementById('cj-parcel-qty').addEventListener('input', () => {
     document.getElementById('settlement-amount').value = amount;
 });
 
+// CJ 자동 계산 버튼
+document.getElementById('cj-auto-calc-btn').addEventListener('click', async () => {
+    const date = document.getElementById('settlement-date').value;
+    if (!date) return alert('먼저 날짜를 선택해주세요.');
+
+    try {
+        const data = await api(`/api/settlements/box-count?date=${date}`);
+        document.getElementById('cj-parcel-qty').value = data.totalBoxes;
+
+        // 상세 표시
+        const detailEl = document.getElementById('cj-auto-detail');
+        if (data.totalBoxes > 0) {
+            detailEl.innerHTML = `대성(시온) <strong>${data.daesung}건</strong> + 효돈농협 <strong>${data.hyodon}건</strong> = 총 <strong>${data.totalBoxes}건</strong>`;
+            detailEl.style.display = '';
+        } else {
+            detailEl.innerHTML = '해당 날짜에 대성/효돈 정산 데이터가 없습니다.';
+            detailEl.style.display = '';
+        }
+
+        // 금액 자동 계산 트리거
+        const amount = data.totalBoxes * 3100;
+        document.getElementById('cj-calc-amount').textContent = amount.toLocaleString() + ' 원';
+        document.getElementById('settlement-amount').value = amount;
+    } catch (err) {
+        alert('자동 계산 실패: ' + err.message);
+    }
+});
+
 document.getElementById('settlement-reset-btn').addEventListener('click', () => {
     document.getElementById('settlement-date').value = '';
     document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
@@ -506,6 +551,7 @@ document.getElementById('settlement-reset-btn').addEventListener('click', () => 
     resetSettlementPaste();
     document.getElementById('sales-unmatched-container').style.display = 'none';
     document.getElementById('sales-upload-area').style.display = '';
+    document.getElementById('cj-auto-detail').style.display = 'none';
     toggleCjMode(false);
 });
 
@@ -723,8 +769,10 @@ document.getElementById('settlement-save').addEventListener('click', async () =>
         document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
         document.getElementById('settlement-rows').innerHTML = '';
         resetSettlementPaste();
+        document.getElementById('cj-auto-detail').style.display = 'none';
         toggleCjMode(false);
         await renderSettlementList();
+        await renderSettlementCalendar();
         alert('저장되었습니다.');
     } catch (err) { alert('저장 실패: ' + err.message); }
 });
@@ -760,7 +808,7 @@ async function renderSettlementList() {
 
 window.deleteSettlement = async function(id) {
     if (!confirm('삭제하시겠습니까?')) return;
-    try { await api(`/api/settlements/${id}`, 'DELETE'); await renderSettlementList(); } catch (err) { alert('삭제 실패: ' + err.message); }
+    try { await api(`/api/settlements/${id}`, 'DELETE'); await renderSettlementList(); await renderSettlementCalendar(); } catch (err) { alert('삭제 실패: ' + err.message); }
 };
 
 window.viewSettlementItems = function(id) {
@@ -1979,6 +2027,74 @@ async function deleteLunchMenu(id) {
     }
 }
 window.deleteLunchMenu = deleteLunchMenu;
+
+// =============================================
+// 선수금 관리
+// =============================================
+
+async function renderPrepaymentCard() {
+    const card = document.getElementById('prepayment-card');
+    if (!card) return;
+    card.style.display = currentUser?.role === 'admin' ? '' : 'none';
+    if (currentUser?.role === 'admin') {
+        await renderPrepaymentList();
+    }
+}
+
+async function renderPrepaymentList() {
+    try {
+        const data = await api('/api/prepayments');
+        const tbody = document.getElementById('prepayment-list');
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">선수금 내역이 없습니다.</td></tr>';
+        } else {
+            tbody.innerHTML = data.map(item => `<tr>
+                <td>${item.date}</td>
+                <td>${item.partner}</td>
+                <td>${item.amount.toLocaleString()} 원</td>
+                <td>${item.note || '-'}</td>
+                <td><button class="btn-danger" onclick="deletePrepayment(${item.id})">삭제</button></td>
+            </tr>`).join('');
+        }
+    } catch (err) {
+        console.error('선수금 목록 오류:', err);
+    }
+}
+
+document.getElementById('prepay-save').addEventListener('click', async () => {
+    const partner = document.getElementById('prepay-partner').value;
+    const amount = Number(document.getElementById('prepay-amount').value);
+    const date = document.getElementById('prepay-date').value;
+    const note = document.getElementById('prepay-note').value.trim();
+
+    if (!partner) return alert('거래처를 선택해주세요.');
+    if (!amount) return alert('금액을 입력해주세요.');
+    if (!date) return alert('날짜를 선택해주세요.');
+
+    try {
+        await api('/api/prepayments', 'POST', { partner, amount, date, note });
+        document.getElementById('prepay-partner').value = '';
+        document.getElementById('prepay-amount').value = '';
+        document.getElementById('prepay-date').value = '';
+        document.getElementById('prepay-note').value = '';
+        await renderPrepaymentList();
+        await renderSettlementCalendar();
+        alert('선수금이 추가되었습니다.');
+    } catch (err) {
+        alert('추가 실패: ' + err.message);
+    }
+});
+
+window.deletePrepayment = async function(id) {
+    if (!confirm('이 선수금 내역을 삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/prepayments/${id}`, 'DELETE');
+        await renderPrepaymentList();
+        await renderSettlementCalendar();
+    } catch (err) {
+        alert('삭제 실패: ' + err.message);
+    }
+};
 
 // =============================================
 // AI 작업방

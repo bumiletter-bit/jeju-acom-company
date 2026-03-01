@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=18">
+    <link rel="stylesheet" href="styles.css?v=19">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -273,6 +273,14 @@
                             <div class="stat-label" id="cj-payment-label">CJ택배 결제금액</div>
                             <div class="stat-value" id="cj-payment">0 원</div>
                         </div>
+                        <div class="stat-card prepayment">
+                            <div class="stat-label" id="daesung-prepay-label">대성(시온) 선수금 잔액</div>
+                            <div class="stat-value" id="daesung-prepay">0 원</div>
+                        </div>
+                        <div class="stat-card prepayment">
+                            <div class="stat-label" id="hyodon-prepay-label">효돈농협 선수금 잔액</div>
+                            <div class="stat-value" id="hyodon-prepay">0 원</div>
+                        </div>
                     </div>
 
                     <div class="calendar-section" style="border:none;padding:0;">
@@ -318,11 +326,13 @@
                     <!-- CJ대한통운 전용 입력 -->
                     <div class="form-group" id="cj-input-section" style="display:none;">
                         <label>주문건 수량</label>
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="number" id="cj-parcel-qty" class="form-input" placeholder="주문건 수량을 입력하세요" min="0" style="flex:1;">
+                        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <input type="number" id="cj-parcel-qty" class="form-input" placeholder="주문건 수량을 입력하세요" min="0" style="flex:1; min-width:150px;">
+                            <button type="button" class="btn-auto-calc" id="cj-auto-calc-btn">자동 계산</button>
                             <span style="white-space:nowrap; font-size:14px; color:#666;">x 3,100원 =</span>
                             <span id="cj-calc-amount" style="white-space:nowrap; font-weight:bold; font-size:16px; color:var(--primary);">0 원</span>
                         </div>
+                        <div id="cj-auto-detail" class="cj-auto-detail" style="display:none;"></div>
                     </div>
 
                     <div class="form-group" id="sales-upload-section">
@@ -386,6 +396,49 @@
                                 <td></td>
                             </tr>
                         </tfoot>
+                    </table>
+                </div>
+            </div>
+
+                <!-- 선수금 관리 (관리자 전용) -->
+                <div class="card" id="prepayment-card" style="display:none;">
+                    <h2>선수금 관리</h2>
+                    <div class="form-row" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
+                        <div class="form-group" style="min-width:120px;">
+                            <label>거래처</label>
+                            <select id="prepay-partner" class="form-input">
+                                <option value="">선택</option>
+                                <option value="대성(시온)">대성(시온)</option>
+                                <option value="효돈농협">효돈농협</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="min-width:140px;">
+                            <label>금액 (원)</label>
+                            <input type="number" id="prepay-amount" class="form-input" placeholder="금액">
+                        </div>
+                        <div class="form-group" style="min-width:140px;">
+                            <label>날짜</label>
+                            <input type="date" id="prepay-date" class="form-input">
+                        </div>
+                        <div class="form-group" style="flex:1; min-width:140px;">
+                            <label>메모</label>
+                            <input type="text" id="prepay-note" class="form-input" placeholder="메모 (선택)">
+                        </div>
+                        <button class="btn-primary" id="prepay-save" style="margin-bottom:16px;">추가</button>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>날짜</th>
+                                <th>거래처</th>
+                                <th>금액</th>
+                                <th>메모</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="prepayment-list">
+                            <tr class="empty-row"><td colspan="5">선수금 내역이 없습니다.</td></tr>
+                        </tbody>
                     </table>
                 </div>
             </div>
@@ -667,6 +720,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=26"></script>
+    <script src="app.js?v=27"></script>
 </body>
 </html>
