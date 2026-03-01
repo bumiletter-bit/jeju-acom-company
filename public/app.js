@@ -2443,12 +2443,30 @@ function renderAIMessages(messages) {
         container.innerHTML = '';
         return;
     }
-    container.innerHTML = messages.map(m => `
-        <div class="ai-message ${m.role}">
+    container.innerHTML = messages.map(m => {
+        let bubbleContent;
+        if (m.message_type === 'image' && m.role === 'assistant') {
+            try {
+                const imgData = JSON.parse(m.content);
+                bubbleContent = `<div class="ai-message-bubble ai-image-bubble">
+                    <img src="${escapeHtml(imgData.url)}" alt="생성된 이미지" class="ai-generated-image" onclick="window.open(this.src,'_blank')" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <div class="ai-image-expired" style="display:none;">이미지가 만료되었습니다</div>
+                    ${imgData.revised_prompt ? `<div class="ai-image-prompt">${escapeHtml(imgData.revised_prompt)}</div>` : ''}
+                </div>`;
+            } catch (e) {
+                bubbleContent = `<div class="ai-message-bubble ai-image-bubble">
+                    <img src="${escapeHtml(m.content)}" alt="생성된 이미지" class="ai-generated-image" onclick="window.open(this.src,'_blank')" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <div class="ai-image-expired" style="display:none;">이미지가 만료되었습니다</div>
+                </div>`;
+            }
+        } else {
+            bubbleContent = `<div class="ai-message-bubble">${escapeHtml(m.content)}</div>`;
+        }
+        return `<div class="ai-message ${m.role}">
             <div class="ai-message-sender">${m.role === 'user' ? '나' : 'AI'}</div>
-            <div class="ai-message-bubble">${escapeHtml(m.content)}</div>
-        </div>
-    `).join('');
+            ${bubbleContent}
+        </div>`;
+    }).join('');
     container.scrollTop = container.scrollHeight;
 }
 
@@ -2526,6 +2544,77 @@ async function sendAIMessage() {
     }
 }
 window.sendAIMessage = sendAIMessage;
+
+async function sendAIImage() {
+    const input = document.getElementById('ai-message-input');
+    const sendBtn = document.getElementById('ai-send-btn');
+    const imageBtn = document.getElementById('ai-image-btn');
+    const prompt = input.value.trim();
+    if (!prompt || !aiCurrentConvId) return;
+
+    const container = document.getElementById('ai-chat-messages');
+    container.innerHTML += `
+        <div class="ai-message user">
+            <div class="ai-message-sender">나</div>
+            <div class="ai-message-bubble">🎨 ${escapeHtml(prompt)}</div>
+        </div>
+    `;
+    input.value = '';
+    input.style.height = 'auto';
+
+    container.innerHTML += `
+        <div class="ai-typing" id="ai-typing-indicator">
+            <div class="ai-typing-dot"></div>
+            <div class="ai-typing-dot"></div>
+            <div class="ai-typing-dot"></div>
+            <span style="margin-left:8px; font-size:12px; color:#868e96;">이미지 생성 중...</span>
+        </div>
+    `;
+    container.scrollTop = container.scrollHeight;
+
+    sendBtn.disabled = true;
+    imageBtn.disabled = true;
+    input.disabled = true;
+
+    try {
+        const data = await api('/api/ai/image', 'POST', {
+            conversationId: aiCurrentConvId,
+            prompt: prompt
+        });
+
+        const typing = document.getElementById('ai-typing-indicator');
+        if (typing) typing.remove();
+
+        container.innerHTML += `
+            <div class="ai-message assistant">
+                <div class="ai-message-sender">AI</div>
+                <div class="ai-message-bubble ai-image-bubble">
+                    <img src="${escapeHtml(data.imageUrl)}" alt="생성된 이미지" class="ai-generated-image" onclick="window.open(this.src,'_blank')" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <div class="ai-image-expired" style="display:none;">이미지가 만료되었습니다</div>
+                    ${data.revisedPrompt ? `<div class="ai-image-prompt">${escapeHtml(data.revisedPrompt)}</div>` : ''}
+                </div>
+            </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+        renderAIWorkspace();
+    } catch (err) {
+        const typing = document.getElementById('ai-typing-indicator');
+        if (typing) typing.remove();
+        container.innerHTML += `
+            <div class="ai-message assistant">
+                <div class="ai-message-sender">AI</div>
+                <div class="ai-message-bubble" style="color:var(--danger);">오류: ${err.message || '이미지 생성에 실패했습니다'}</div>
+            </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+    } finally {
+        sendBtn.disabled = false;
+        imageBtn.disabled = false;
+        input.disabled = false;
+        input.focus();
+    }
+}
+window.sendAIImage = sendAIImage;
 
 async function deleteConversation(id) {
     if (!confirm('이 대화를 삭제하시겠습니까?')) return;

@@ -1648,6 +1648,71 @@ textarea.form-input {
     cursor: not-allowed;
 }
 
+/* AI 이미지 생성 버튼 */
+.ai-image-btn {
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #8b5cf6, #6366f1);
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    white-space: nowrap;
+}
+
+.ai-image-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #7c3aed, #4f46e5);
+    transform: translateY(-1px);
+}
+
+.ai-image-btn:disabled {
+    background: #ddd;
+    color: #999;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* AI 이미지 메시지 */
+.ai-image-bubble {
+    padding: 8px !important;
+    background: #f1f3f5 !important;
+}
+
+.ai-generated-image {
+    max-width: 100%;
+    max-height: 400px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    display: block;
+}
+
+.ai-generated-image:hover {
+    opacity: 0.9;
+}
+
+.ai-image-expired {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-light);
+    font-size: 13px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px dashed #dee2e6;
+}
+
+.ai-image-prompt {
+    margin-top: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text-light);
+    background: #e9ecef;
+    border-radius: 6px;
+    line-height: 1.4;
+}
+
 /* ========================================
    Responsive
    ======================================== */
@@ -2013,5 +2078,14 @@ textarea.form-input {
         margin-bottom: 0;
         padding: 8px 10px;
         font-size: 12px;
+    }
+
+    .ai-image-btn {
+        padding: 10px 12px;
+        font-size: 12px;
+    }
+
+    .ai-generated-image {
+        max-height: 280px;
     }
 }

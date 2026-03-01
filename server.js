@@ -5,6 +5,7 @@ const { Pool, types } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -230,6 +231,15 @@ async function initDB() {
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
         )
+    `);
+
+    // ai_messages에 message_type 컬럼 추가 (이미지/텍스트 구분)
+    await pool.query(`
+        DO $$ BEGIN
+            ALTER TABLE ai_messages ADD COLUMN message_type VARCHAR(10) DEFAULT 'text';
+        EXCEPTION
+            WHEN duplicate_column THEN NULL;
+        END $$;
     `);
 
     console.log('DB 테이블 초기화 완료');
@@ -1136,7 +1146,7 @@ app.get('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
         if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
 
         const messages = await pool.query(
-            'SELECT id, role, content, created_at FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC',
+            'SELECT id, role, content, message_type, created_at FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC',
             [req.params.id]
         );
         res.json({ conversation: conv.rows[0], messages: messages.rows });
@@ -1187,9 +1197,9 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
             [conversationId, 'user', message]
         );
 
-        // 기존 메시지 히스토리 로드
+        // 기존 메시지 히스토리 로드 (텍스트만 - 이미지 JSON은 Claude에 전달하지 않음)
         const history = await pool.query(
-            'SELECT role, content FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC',
+            "SELECT role, content FROM ai_messages WHERE conversation_id = $1 AND message_type = 'text' ORDER BY created_at ASC",
             [conversationId]
         );
 
@@ -1224,6 +1234,62 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('AI 채팅 오류:', err);
         res.status(500).json({ error: 'AI 응답 생성 중 오류가 발생했습니다' });
+    }
+});
+
+// === AI 이미지 생성 (DALL-E 3) ===
+app.post('/api/ai/image', authMiddleware, async (req, res) => {
+    try {
+        const { conversationId, prompt } = req.body;
+        if (!conversationId || !prompt) return res.status(400).json({ error: '대화 ID와 프롬프트는 필수입니다' });
+
+        const conv = await pool.query(
+            'SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2',
+            [conversationId, req.user.id]
+        );
+        if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
+
+        // 사용자 메시지 저장
+        await pool.query(
+            "INSERT INTO ai_messages (conversation_id, role, content, message_type) VALUES ($1, 'user', $2, 'text')",
+            [conversationId, prompt]
+        );
+
+        // 첫 메시지면 대화 제목 업데이트
+        const msgCount = await pool.query('SELECT COUNT(*) FROM ai_messages WHERE conversation_id = $1', [conversationId]);
+        if (parseInt(msgCount.rows[0].count) === 1) {
+            const title = '🎨 ' + (prompt.length > 27 ? prompt.substring(0, 27) + '...' : prompt);
+            await pool.query('UPDATE ai_conversations SET title = $1 WHERE id = $2', [title, conversationId]);
+        }
+
+        if (!process.env.OPENAI_API_KEY) {
+            return res.status(500).json({ error: 'OPENAI_API_KEY가 설정되지 않았습니다' });
+        }
+
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        const imageResponse = await openai.images.generate({
+            model: 'dall-e-3',
+            prompt: prompt,
+            n: 1,
+            size: '1024x1024',
+            quality: 'standard'
+        });
+
+        const imageUrl = imageResponse.data[0].url;
+        const revisedPrompt = imageResponse.data[0].revised_prompt || '';
+
+        // AI 응답 저장 (이미지 URL + revised prompt를 JSON으로)
+        const imageContent = JSON.stringify({ url: imageUrl, revised_prompt: revisedPrompt });
+        await pool.query(
+            "INSERT INTO ai_messages (conversation_id, role, content, message_type) VALUES ($1, 'assistant', $2, 'image')",
+            [conversationId, imageContent]
+        );
+
+        res.json({ imageUrl, revisedPrompt });
+    } catch (err) {
+        console.error('이미지 생성 오류:', err);
+        const errorMessage = err?.error?.message || err.message || '이미지 생성 중 오류가 발생했습니다';
+        res.status(500).json({ error: errorMessage });
     }
 });
 
