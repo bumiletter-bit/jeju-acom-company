@@ -4,6 +4,7 @@ const path = require('path');
 const { Pool, types } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const Anthropic = require('@anthropic-ai/sdk');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -172,6 +173,26 @@ async function initDB() {
         }
         console.log('기본 점심메뉴 36개 등록 완료');
     }
+
+    // AI 대화 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS ai_conversations (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(200) DEFAULT '새 대화',
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS ai_messages (
+            id SERIAL PRIMARY KEY,
+            conversation_id INTEGER REFERENCES ai_conversations(id) ON DELETE CASCADE,
+            role VARCHAR(20) NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -847,6 +868,122 @@ app.post('/api/lunch/vote', authMiddleware, async (req, res) => {
         res.json({ votes: votes.rows, myVote: myVote ? myVote.menu_name : null });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// === AI Workspace API ===
+
+const AI_SYSTEM_PROMPT = '당신은 제주아꼼이네 농업회사법인의 마케팅 도우미입니다. 온라인 판매 홍보문구, 톡톡 이미지 문구, 숏클립 문구, SNS 게시글 등을 작성해줍니다. 제주 감귤, 천혜향, 레드향, 한라봉 등 제주 과일 판매 업체입니다.';
+
+app.get('/api/ai/conversations', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT id, title, created_at FROM ai_conversations WHERE user_id = $1 ORDER BY created_at DESC',
+            [req.user.id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
+    try {
+        const conv = await pool.query(
+            'SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2',
+            [req.params.id, req.user.id]
+        );
+        if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
+
+        const messages = await pool.query(
+            'SELECT id, role, content, created_at FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC',
+            [req.params.id]
+        );
+        res.json({ conversation: conv.rows[0], messages: messages.rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/ai/conversations', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'INSERT INTO ai_conversations (user_id) VALUES ($1) RETURNING *',
+            [req.user.id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query(
+            'DELETE FROM ai_conversations WHERE id = $1 AND user_id = $2',
+            [req.params.id, req.user.id]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/ai/chat', authMiddleware, async (req, res) => {
+    try {
+        const { conversationId, message } = req.body;
+        if (!conversationId || !message) return res.status(400).json({ error: '대화 ID와 메시지는 필수입니다' });
+
+        // 대화 소유권 확인
+        const conv = await pool.query(
+            'SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2',
+            [conversationId, req.user.id]
+        );
+        if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
+
+        // 사용자 메시지 저장
+        await pool.query(
+            'INSERT INTO ai_messages (conversation_id, role, content) VALUES ($1, $2, $3)',
+            [conversationId, 'user', message]
+        );
+
+        // 기존 메시지 히스토리 로드
+        const history = await pool.query(
+            'SELECT role, content FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC',
+            [conversationId]
+        );
+
+        // 첫 메시지면 대화 제목 업데이트
+        if (history.rows.length === 1) {
+            const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
+            await pool.query('UPDATE ai_conversations SET title = $1 WHERE id = $2', [title, conversationId]);
+        }
+
+        // Claude API 호출
+        if (!process.env.ANTHROPIC_API_KEY) {
+            return res.status(500).json({ error: 'ANTHROPIC_API_KEY가 설정되지 않았습니다' });
+        }
+
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const aiResponse = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 2048,
+            system: AI_SYSTEM_PROMPT,
+            messages: history.rows.map(m => ({ role: m.role, content: m.content }))
+        });
+
+        const assistantContent = aiResponse.content[0].text;
+
+        // AI 응답 저장
+        await pool.query(
+            'INSERT INTO ai_messages (conversation_id, role, content) VALUES ($1, $2, $3)',
+            [conversationId, 'assistant', assistantContent]
+        );
+
+        res.json({ reply: assistantContent });
+    } catch (err) {
+        console.error('AI 채팅 오류:', err);
+        res.status(500).json({ error: 'AI 응답 생성 중 오류가 발생했습니다' });
     }
 });
 

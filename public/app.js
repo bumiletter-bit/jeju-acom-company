@@ -161,6 +161,7 @@ function switchPage(pageName) {
     }
     if (pageName === 'pricing') renderPricingList().catch(console.error);
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
+    if (pageName === 'ai-workspace') renderAIWorkspace().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
 }
 
@@ -1978,3 +1979,199 @@ async function deleteLunchMenu(id) {
     }
 }
 window.deleteLunchMenu = deleteLunchMenu;
+
+// =============================================
+// AI 작업방
+// =============================================
+
+let aiCurrentConvId = null;
+
+async function renderAIWorkspace() {
+    try {
+        const convs = await api('/api/ai/conversations');
+        const listEl = document.getElementById('ai-conv-list');
+        if (!convs || convs.length === 0) {
+            listEl.innerHTML = '<p style="color:#adb5bd; font-size:13px; text-align:center; padding:20px 0;">대화가 없습니다</p>';
+        } else {
+            listEl.innerHTML = convs.map(c => `
+                <div class="ai-conv-item ${aiCurrentConvId === c.id ? 'active' : ''}" onclick="loadConversation(${c.id})">
+                    <span class="ai-conv-item-title">${c.title}</span>
+                    <button class="ai-conv-item-delete" onclick="event.stopPropagation(); deleteConversation(${c.id})" title="삭제">&times;</button>
+                </div>
+            `).join('');
+        }
+        if (aiCurrentConvId) {
+            loadConversation(aiCurrentConvId);
+        }
+    } catch (err) {
+        console.error('AI 작업방 로드 오류:', err);
+    }
+}
+
+async function createNewConversation() {
+    try {
+        const conv = await api('/api/ai/conversations', 'POST');
+        aiCurrentConvId = conv.id;
+        document.getElementById('ai-chat-empty').style.display = 'none';
+        document.getElementById('ai-input-area').style.display = '';
+        document.getElementById('ai-chat-messages').innerHTML = '';
+        document.getElementById('ai-message-input').value = '';
+        document.getElementById('ai-message-input').focus();
+        await renderAIWorkspace();
+    } catch (err) {
+        alert(err.message || '대화 생성 실패');
+    }
+}
+window.createNewConversation = createNewConversation;
+
+async function loadConversation(id) {
+    try {
+        aiCurrentConvId = id;
+        const data = await api(`/api/ai/conversations/${id}`);
+        document.getElementById('ai-chat-empty').style.display = 'none';
+        document.getElementById('ai-input-area').style.display = '';
+        renderAIMessages(data.messages);
+
+        // 대화 목록에서 active 표시 업데이트
+        document.querySelectorAll('.ai-conv-item').forEach(el => {
+            el.classList.toggle('active', el.onclick.toString().includes(String(id)));
+        });
+        const listEl = document.getElementById('ai-conv-list');
+        listEl.querySelectorAll('.ai-conv-item').forEach(el => {
+            const isActive = el.getAttribute('onclick')?.includes(`(${id})`);
+            el.classList.toggle('active', isActive);
+        });
+    } catch (err) {
+        alert(err.message || '대화 로드 실패');
+    }
+}
+window.loadConversation = loadConversation;
+
+function renderAIMessages(messages) {
+    const container = document.getElementById('ai-chat-messages');
+    if (!messages || messages.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = messages.map(m => `
+        <div class="ai-message ${m.role}">
+            <div class="ai-message-sender">${m.role === 'user' ? '나' : 'AI'}</div>
+            <div class="ai-message-bubble">${escapeHtml(m.content)}</div>
+        </div>
+    `).join('');
+    container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function sendAIMessage() {
+    const input = document.getElementById('ai-message-input');
+    const sendBtn = document.getElementById('ai-send-btn');
+    const message = input.value.trim();
+    if (!message || !aiCurrentConvId) return;
+
+    // 사용자 메시지 즉시 표시
+    const container = document.getElementById('ai-chat-messages');
+    container.innerHTML += `
+        <div class="ai-message user">
+            <div class="ai-message-sender">나</div>
+            <div class="ai-message-bubble">${escapeHtml(message)}</div>
+        </div>
+    `;
+    input.value = '';
+    input.style.height = 'auto';
+
+    // 로딩 표시
+    container.innerHTML += `
+        <div class="ai-typing" id="ai-typing-indicator">
+            <div class="ai-typing-dot"></div>
+            <div class="ai-typing-dot"></div>
+            <div class="ai-typing-dot"></div>
+        </div>
+    `;
+    container.scrollTop = container.scrollHeight;
+
+    sendBtn.disabled = true;
+    input.disabled = true;
+
+    try {
+        const data = await api('/api/ai/chat', 'POST', {
+            conversationId: aiCurrentConvId,
+            message: message
+        });
+
+        // 로딩 제거
+        const typing = document.getElementById('ai-typing-indicator');
+        if (typing) typing.remove();
+
+        // AI 응답 표시
+        container.innerHTML += `
+            <div class="ai-message assistant">
+                <div class="ai-message-sender">AI</div>
+                <div class="ai-message-bubble">${escapeHtml(data.reply)}</div>
+            </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+
+        // 대화 목록 갱신 (제목이 업데이트되었을 수 있음)
+        renderAIWorkspace();
+    } catch (err) {
+        const typing = document.getElementById('ai-typing-indicator');
+        if (typing) typing.remove();
+        container.innerHTML += `
+            <div class="ai-message assistant">
+                <div class="ai-message-sender">AI</div>
+                <div class="ai-message-bubble" style="color:var(--danger);">오류: ${err.message || 'AI 응답 생성에 실패했습니다'}</div>
+            </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+    } finally {
+        sendBtn.disabled = false;
+        input.disabled = false;
+        input.focus();
+    }
+}
+window.sendAIMessage = sendAIMessage;
+
+async function deleteConversation(id) {
+    if (!confirm('이 대화를 삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/ai/conversations/${id}`, 'DELETE');
+        if (aiCurrentConvId === id) {
+            aiCurrentConvId = null;
+            document.getElementById('ai-chat-messages').innerHTML = `
+                <div class="ai-chat-empty" id="ai-chat-empty">
+                    <div style="font-size:48px; margin-bottom:16px;">🤖</div>
+                    <p>새 대화를 시작하거나 기존 대화를 선택하세요</p>
+                    <p style="font-size:13px; color:#999; margin-top:8px;">마케팅 문구, 홍보 콘텐츠 등을 요청해보세요</p>
+                </div>
+            `;
+            document.getElementById('ai-input-area').style.display = 'none';
+        }
+        await renderAIWorkspace();
+    } catch (err) {
+        alert(err.message || '삭제 실패');
+    }
+}
+window.deleteConversation = deleteConversation;
+
+// Enter 키로 전송 (Shift+Enter는 줄바꿈)
+document.addEventListener('DOMContentLoaded', () => {
+    const aiInput = document.getElementById('ai-message-input');
+    if (aiInput) {
+        aiInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendAIMessage();
+            }
+        });
+        aiInput.addEventListener('input', () => {
+            aiInput.style.height = 'auto';
+            aiInput.style.height = Math.min(aiInput.scrollHeight, 120) + 'px';
+        });
+    }
+});
