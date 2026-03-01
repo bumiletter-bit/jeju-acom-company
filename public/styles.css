@@ -1400,83 +1400,136 @@ textarea.form-input {
     color: var(--text-dark);
 }
 
-/* Menu Card Grid */
-.lunch-menu-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-top: 16px;
+/* Random Result */
+.lunch-random-result-card {
+    text-align: center;
+    padding: 30px 20px;
+    background: linear-gradient(135deg, #fef3c7, #fed7aa);
+    border-radius: 16px;
+    margin: 16px 0;
 }
 
-.lunch-card {
-    background: var(--card-bg);
-    border: 2px solid var(--card-border);
-    border-radius: 14px;
-    padding: 20px 16px;
+.lunch-random-emoji {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.lunch-random-label {
+    font-size: 16px;
+    color: #92400e;
+    margin-bottom: 8px;
+}
+
+.lunch-random-name {
+    font-size: 32px;
+    font-weight: 800;
+    color: #9a3412;
+    animation: lunch-result-pop 0.5s ease;
+}
+
+@keyframes lunch-result-pop {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Vote Grid */
+.lunch-vote-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.lunch-vote-item {
+    padding: 16px 12px;
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 12px;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s;
     position: relative;
-    animation: lunch-card-pop 0.4s ease backwards;
 }
 
-@keyframes lunch-card-pop {
-    0% { transform: scale(0.5) rotate(-5deg); opacity: 0; }
-    100% { transform: scale(1) rotate(0deg); opacity: 1; }
+.lunch-vote-item:hover {
+    border-color: var(--primary);
+    background: var(--primary-light);
+    transform: translateY(-2px);
 }
 
-.lunch-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+.lunch-vote-item.voted {
+    border-color: var(--primary);
+    background: var(--primary-light);
+    box-shadow: 0 0 0 2px var(--primary);
 }
 
-.lunch-card-voted {
-    border-width: 3px;
-    box-shadow: 0 0 0 3px var(--card-border);
-}
-
-.lunch-card-winner {
+.lunch-vote-item.winner {
     border-color: #f59e0b;
+    background: #fef3c7;
 }
 
-.lunch-crown {
-    position: absolute;
-    top: -12px;
-    right: -6px;
-    font-size: 22px;
-}
-
-.lunch-card-emoji {
-    font-size: 36px;
-    margin-bottom: 8px;
-}
-
-.lunch-card-name {
-    font-size: 17px;
-    font-weight: 700;
-    color: var(--card-text);
-    margin-bottom: 4px;
-}
-
-.lunch-card-category {
-    font-size: 12px;
-    font-weight: 500;
-    margin-bottom: 8px;
-}
-
-.lunch-card-votes {
-    font-size: 13px;
+.lunch-vote-item-name {
+    font-size: 15px;
     font-weight: 600;
-    color: #888;
-    padding: 4px 12px;
-    background: rgba(255,255,255,0.6);
-    border-radius: 12px;
-    display: inline-block;
+    color: var(--text-dark);
+    margin-bottom: 6px;
 }
 
-.lunch-card-voted .lunch-card-votes {
-    background: var(--primary);
-    color: #fff;
+.lunch-vote-item-count {
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.lunch-vote-item.voted .lunch-vote-item-count {
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.lunch-vote-item-crown {
+    position: absolute;
+    top: -10px;
+    right: -6px;
+    font-size: 18px;
+}
+
+.lunch-vote-status {
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/* Restaurant Management */
+.lunch-restaurant-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.lunch-restaurant-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 20px;
+    font-size: 14px;
+}
+
+.lunch-restaurant-tag .btn-tag-delete {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+    line-height: 1;
+}
+
+.lunch-restaurant-tag .btn-tag-delete:hover {
+    color: #dc2626;
 }
 
 /* Vote Result */
@@ -1536,8 +1589,8 @@ textarea.form-input {
 }
 
 @media (max-width: 768px) {
-    .lunch-menu-grid {
-        grid-template-columns: repeat(2, 1fr);
+    .lunch-vote-grid {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
     }
 }
 

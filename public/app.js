@@ -1769,17 +1769,7 @@ checkAuth();
 // 점심메뉴
 // =============================================
 
-const LUNCH_CATEGORY_EMOJI = { '한식':'🍚', '제주':'🍊', '중식':'🥡', '일식':'🍣', '양식':'🍝', '분식':'🧆', '패스트푸드':'🍔' };
-const LUNCH_CATEGORY_COLORS = {
-    '한식': { bg:'#fef3c7', text:'#92400e', border:'#fde68a' },
-    '제주': { bg:'#fed7aa', text:'#9a3412', border:'#fdba74' },
-    '중식': { bg:'#fce7f3', text:'#9d174d', border:'#f9a8d4' },
-    '일식': { bg:'#dbeafe', text:'#1e40af', border:'#93c5fd' },
-    '양식': { bg:'#d1fae5', text:'#065f46', border:'#6ee7b7' },
-    '분식': { bg:'#ede9fe', text:'#5b21b6', border:'#c4b5fd' },
-    '패스트푸드': { bg:'#fee2e2', text:'#991b1b', border:'#fca5a5' }
-};
-
+let lunchRestaurants = [];
 let lunchSession = null;
 let lunchVotes = [];
 let lunchMyVote = null;
@@ -1790,19 +1780,13 @@ async function renderLunchPage() {
 
     try {
         const data = await api('/api/lunch/today');
+        lunchRestaurants = data.restaurants || [];
         lunchSession = data.session;
         lunchVotes = data.votes || [];
         lunchMyVote = data.myVote;
 
-        if (lunchSession && lunchSession.menus && lunchSession.menus.length > 0) {
-            document.getElementById('lunch-empty').style.display = 'none';
-            renderLunchMenuCards(lunchSession.menus);
-            renderLunchVoteResult(lunchVotes);
-        } else {
-            document.getElementById('lunch-empty').style.display = '';
-            document.getElementById('lunch-menu-cards').innerHTML = '';
-            document.getElementById('lunch-vote-result').style.display = 'none';
-        }
+        renderLunchVoteGrid();
+        renderLunchVoteResult(lunchVotes);
     } catch (err) {
         console.error('점심메뉴 로드 오류:', err);
     }
@@ -1810,41 +1794,35 @@ async function renderLunchPage() {
     if (currentUser?.role === 'admin') renderLunchAdminPanel().catch(console.error);
 }
 
-async function handleLunchRecommend() {
-    try {
-        const data = await api('/api/lunch/recommend', 'POST');
-        lunchSession = data.session;
-        lunchVotes = data.votes || [];
-        lunchMyVote = data.myVote;
-
-        document.getElementById('lunch-empty').style.display = 'none';
-
-        if (data.isNew) {
-            runSlotAnimation(lunchSession.menus, () => {
-                renderLunchMenuCards(lunchSession.menus);
-                renderLunchVoteResult(lunchVotes);
-            });
-        } else {
-            renderLunchMenuCards(lunchSession.menus);
-            renderLunchVoteResult(lunchVotes);
-        }
-    } catch (err) {
-        alert(err.message || '추천 실패');
+async function handleLunchRandom() {
+    if (lunchRestaurants.length === 0) {
+        alert('등록된 식당이 없습니다');
+        return;
     }
-}
-window.handleLunchRecommend = handleLunchRecommend;
+    document.getElementById('lunch-random-empty').style.display = 'none';
+    document.getElementById('lunch-random-result').style.display = 'none';
 
-function runSlotAnimation(menus, callback) {
+    runRouletteAnimation(lunchRestaurants, (winner) => {
+        document.getElementById('lunch-random-name').textContent = winner;
+        document.getElementById('lunch-random-result').style.display = '';
+    });
+}
+window.handleLunchRandom = handleLunchRandom;
+
+function runRouletteAnimation(restaurants, callback) {
     const slotArea = document.getElementById('lunch-slot-area');
     const reel = document.getElementById('lunch-slot-reel');
-    const cardsEl = document.getElementById('lunch-menu-cards');
-    cardsEl.innerHTML = '';
     slotArea.style.display = '';
 
-    const allNames = menus.map(m => `${LUNCH_CATEGORY_EMOJI[m.category] || '🍽️'} ${m.name}`);
+    const names = restaurants.map(r => r.name);
+    const winnerIdx = Math.floor(Math.random() * names.length);
+    const winner = names[winnerIdx];
+
     const spinItems = [];
-    for (let i = 0; i < 20; i++) spinItems.push(allNames[i % allNames.length]);
-    spinItems.push(...allNames);
+    for (let i = 0; i < 25; i++) {
+        spinItems.push(names[Math.floor(Math.random() * names.length)]);
+    }
+    spinItems.push(winner);
 
     reel.innerHTML = spinItems.map(n => `<div class="lunch-slot-item">${n}</div>`).join('');
     reel.style.transition = 'none';
@@ -1853,40 +1831,47 @@ function runSlotAnimation(menus, callback) {
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             const itemH = 60;
-            const target = -(spinItems.length - allNames.length) * itemH;
-            reel.style.transition = 'transform 2.5s cubic-bezier(0.15, 0.85, 0.35, 1)';
+            const target = -(spinItems.length - 1) * itemH;
+            reel.style.transition = 'transform 3s cubic-bezier(0.15, 0.85, 0.35, 1)';
             reel.style.transform = `translateY(${target}px)`;
         });
     });
 
     setTimeout(() => {
         slotArea.style.display = 'none';
-        callback();
-    }, 2800);
+        callback(winner);
+    }, 3300);
 }
 
-function renderLunchMenuCards(menus) {
-    const container = document.getElementById('lunch-menu-cards');
+function renderLunchVoteGrid() {
+    const container = document.getElementById('lunch-vote-grid');
+    const emptyEl = document.getElementById('lunch-vote-empty');
+
+    if (!lunchRestaurants || lunchRestaurants.length === 0) {
+        container.innerHTML = '';
+        emptyEl.style.display = '';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
     const voteCounts = {};
     lunchVotes.forEach(v => { voteCounts[v.menu_name] = (voteCounts[v.menu_name] || 0) + 1; });
-
     const maxVotes = Math.max(0, ...Object.values(voteCounts));
 
-    container.innerHTML = menus.map((m, i) => {
-        const colors = LUNCH_CATEGORY_COLORS[m.category] || { bg:'#f3f4f6', text:'#333', border:'#ddd' };
-        const emoji = LUNCH_CATEGORY_EMOJI[m.category] || '🍽️';
-        const count = voteCounts[m.name] || 0;
-        const isMyVote = lunchMyVote === m.name;
+    const totalVotes = lunchVotes.length;
+    const statusEl = document.getElementById('lunch-vote-status');
+    statusEl.textContent = totalVotes > 0 ? `총 ${totalVotes}명 투표` : '아직 투표가 없습니다';
+
+    container.innerHTML = lunchRestaurants.map(r => {
+        const count = voteCounts[r.name] || 0;
+        const isMyVote = lunchMyVote === r.name;
         const isWinner = maxVotes > 0 && count === maxVotes;
 
-        return `<div class="lunch-card ${isMyVote ? 'lunch-card-voted' : ''} ${isWinner ? 'lunch-card-winner' : ''}"
-                     style="--card-bg:${colors.bg}; --card-text:${colors.text}; --card-border:${colors.border}; animation-delay:${i * 0.1}s"
-                     onclick="voteLunchMenu('${m.name}')">
-                    ${isWinner && count > 0 ? '<span class="lunch-crown">👑</span>' : ''}
-                    <div class="lunch-card-emoji">${emoji}</div>
-                    <div class="lunch-card-name">${m.name}</div>
-                    <div class="lunch-card-category" style="color:${colors.text}">${m.category}</div>
-                    <div class="lunch-card-votes">${count > 0 ? `${count}표` : '투표하기'}</div>
+        return `<div class="lunch-vote-item ${isMyVote ? 'voted' : ''} ${isWinner ? 'winner' : ''}"
+                     onclick="voteLunchMenu('${r.name.replace(/'/g, "\\'")}')">
+                    ${isWinner && count > 0 ? '<span class="lunch-vote-item-crown">👑</span>' : ''}
+                    <div class="lunch-vote-item-name">${r.name}</div>
+                    <div class="lunch-vote-item-count">${count > 0 ? count + '표' : '투표하기'}</div>
                 </div>`;
     }).join('');
 }
@@ -1928,12 +1913,16 @@ function renderLunchVoteResult(votes) {
 }
 
 async function voteLunchMenu(name) {
-    if (!lunchSession) return;
     try {
-        const data = await api('/api/lunch/vote', 'POST', { sessionId: lunchSession.id, menuName: name });
+        const data = await api('/api/lunch/vote', 'POST', { menuName: name });
         lunchVotes = data.votes;
         lunchMyVote = data.myVote;
-        renderLunchMenuCards(lunchSession.menus);
+        if (!lunchSession) {
+            const todayData = await api('/api/lunch/today');
+            lunchSession = todayData.session;
+            lunchRestaurants = todayData.restaurants || lunchRestaurants;
+        }
+        renderLunchVoteGrid();
         renderLunchVoteResult(lunchVotes);
     } catch (err) {
         alert(err.message || '투표 실패');
@@ -1944,42 +1933,46 @@ window.voteLunchMenu = voteLunchMenu;
 async function renderLunchAdminPanel() {
     try {
         const menus = await api('/api/lunch/menus');
-        const tbody = document.getElementById('lunch-menu-list');
+        const container = document.getElementById('lunch-restaurant-list');
         if (!menus || menus.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="3">메뉴가 없습니다.</td></tr>';
+            container.innerHTML = '<p style="color:#9ca3af;">등록된 식당이 없습니다.</p>';
             return;
         }
-        tbody.innerHTML = menus.map(m => `
-            <tr>
-                <td>${m.name}</td>
-                <td><span style="padding:2px 8px; border-radius:10px; font-size:12px; background:${(LUNCH_CATEGORY_COLORS[m.category] || {bg:'#f3f4f6'}).bg}; color:${(LUNCH_CATEGORY_COLORS[m.category] || {text:'#333'}).text}">${LUNCH_CATEGORY_EMOJI[m.category] || '🍽️'} ${m.category}</span></td>
-                <td><button class="btn-danger" onclick="deleteLunchMenu(${m.id})">삭제</button></td>
-            </tr>
+        container.innerHTML = menus.map(m => `
+            <div class="lunch-restaurant-tag">
+                <span>${m.name}</span>
+                <button class="btn-tag-delete" onclick="deleteLunchMenu(${m.id})" title="삭제">&times;</button>
+            </div>
         `).join('');
     } catch (err) {
-        console.error('관리자 메뉴 목록 오류:', err);
+        console.error('식당 목록 오류:', err);
     }
 }
 
-async function addLunchMenu() {
-    const name = document.getElementById('lunch-menu-name').value.trim();
-    const category = document.getElementById('lunch-menu-category').value;
-    if (!name) return alert('메뉴 이름을 입력하세요');
+async function addLunchRestaurant() {
+    const name = document.getElementById('lunch-restaurant-name').value.trim();
+    if (!name) return alert('식당 이름을 입력하세요');
     try {
-        await api('/api/lunch/menus', 'POST', { name, category });
-        document.getElementById('lunch-menu-name').value = '';
+        await api('/api/lunch/menus', 'POST', { name });
+        document.getElementById('lunch-restaurant-name').value = '';
         await renderLunchAdminPanel();
+        const data = await api('/api/lunch/today');
+        lunchRestaurants = data.restaurants || [];
+        renderLunchVoteGrid();
     } catch (err) {
         alert(err.message || '추가 실패');
     }
 }
-window.addLunchMenu = addLunchMenu;
+window.addLunchRestaurant = addLunchRestaurant;
 
 async function deleteLunchMenu(id) {
-    if (!confirm('이 메뉴를 삭제하시겠습니까?')) return;
+    if (!confirm('이 식당을 삭제하시겠습니까?')) return;
     try {
         await api(`/api/lunch/menus/${id}`, 'DELETE');
         await renderLunchAdminPanel();
+        const data = await api('/api/lunch/today');
+        lunchRestaurants = data.restaurants || [];
+        renderLunchVoteGrid();
     } catch (err) {
         alert(err.message || '삭제 실패');
     }

@@ -748,8 +748,9 @@ app.get('/api/lunch/menus', authMiddleware, async (req, res) => {
 app.post('/api/lunch/menus', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { name, category } = req.body;
-        if (!name || !category) return res.status(400).json({ error: '메뉴 이름과 카테고리는 필수입니다' });
-        const result = await pool.query('INSERT INTO lunch_menus (name, category) VALUES ($1, $2) RETURNING *', [name, category]);
+        if (!name) return res.status(400).json({ error: '식당 이름은 필수입니다' });
+        const actualCategory = category || '기타';
+        const result = await pool.query('INSERT INTO lunch_menus (name, category) VALUES ($1, $2) RETURNING *', [name, actualCategory]);
         res.json(result.rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -768,8 +769,12 @@ app.delete('/api/lunch/menus/:id', authMiddleware, adminOnly, async (req, res) =
 app.get('/api/lunch/today', authMiddleware, async (req, res) => {
     try {
         const today = new Date().toISOString().split('T')[0];
+        const restaurants = await pool.query('SELECT id, name FROM lunch_menus ORDER BY name');
         const session = await pool.query('SELECT * FROM lunch_sessions WHERE date = $1', [today]);
-        if (session.rows.length === 0) return res.json({ session: null, votes: [], myVote: null });
+
+        if (session.rows.length === 0) {
+            return res.json({ restaurants: restaurants.rows, session: null, votes: [], myVote: null });
+        }
 
         const s = session.rows[0];
         const votes = await pool.query(
@@ -777,7 +782,7 @@ app.get('/api/lunch/today', authMiddleware, async (req, res) => {
             [s.id]
         );
         const myVote = votes.rows.find(v => v.user_id === req.user.id);
-        res.json({ session: { id: s.id, date: s.date, menus: s.menus }, votes: votes.rows, myVote: myVote ? myVote.menu_name : null });
+        res.json({ restaurants: restaurants.rows, session: { id: s.id, date: s.date }, votes: votes.rows, myVote: myVote ? myVote.menu_name : null });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -814,8 +819,19 @@ app.post('/api/lunch/recommend', authMiddleware, async (req, res) => {
 
 app.post('/api/lunch/vote', authMiddleware, async (req, res) => {
     try {
-        const { sessionId, menuName } = req.body;
-        if (!sessionId || !menuName) return res.status(400).json({ error: '세션 ID와 메뉴명은 필수입니다' });
+        const { menuName } = req.body;
+        if (!menuName) return res.status(400).json({ error: '식당명은 필수입니다' });
+
+        const today = new Date().toISOString().split('T')[0];
+        let session = await pool.query('SELECT * FROM lunch_sessions WHERE date = $1', [today]);
+        if (session.rows.length === 0) {
+            try {
+                session = await pool.query("INSERT INTO lunch_sessions (date, menus) VALUES ($1, '[]'::jsonb) RETURNING *", [today]);
+            } catch (e) {
+                session = await pool.query('SELECT * FROM lunch_sessions WHERE date = $1', [today]);
+            }
+        }
+        const sessionId = session.rows[0].id;
 
         await pool.query(
             `INSERT INTO lunch_votes (session_id, user_id, menu_name) VALUES ($1, $2, $3)
