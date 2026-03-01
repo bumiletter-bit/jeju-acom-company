@@ -403,12 +403,19 @@ async function renderSettlementCalendar() {
         const amount = s.amount || 0;
         if (s.partner === '대성(시온)') daesungPayment += amount;
         if (s.partner === '효돈농협') hyodonPayment += amount;
-        if (s.partner === 'CJ대한통운') cjPayment += amount;
 
         if (!dailyPayments[s.date]) dailyPayments[s.date] = { daesung: 0, hyodon: 0, cj: 0 };
         if (s.partner === '대성(시온)') dailyPayments[s.date].daesung += amount;
         if (s.partner === '효돈농협') dailyPayments[s.date].hyodon += amount;
-        if (s.partner === 'CJ대한통운') dailyPayments[s.date].cj += amount;
+
+        // CJ택배비 자동 계산: 대성/효돈 정산의 items 수량 합계 × 3,100원
+        if (s.partner === '대성(시온)' || s.partner === '효돈농협') {
+            const items = s.items || [];
+            const boxCount = items.reduce((sum, item) => sum + (item.qty || 0), 0);
+            const cjCost = boxCount * 3100;
+            dailyPayments[s.date].cj += cjCost;
+            cjPayment += cjCost;
+        }
     });
 
     // 결제예정금액 = 대성 + 효돈 + CJ

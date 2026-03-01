@@ -843,7 +843,7 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
             partner: p,
             prepaidTotal: prepayMap[p] || 0,
             settledTotal: settleMap[p] || 0,
-            balance: (prepayMap[p] || 0) - (settleMap[p] || 0)
+            balance: Math.max(0, (prepayMap[p] || 0) - (settleMap[p] || 0))
         }));
 
         res.json(balances);
