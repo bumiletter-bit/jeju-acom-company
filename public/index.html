@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=12">
+    <link rel="stylesheet" href="styles.css?v=13">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -488,7 +488,6 @@
                             <div class="invoice-file-name" id="invoice-filename-smart"></div>
                         </div>
                         <input type="file" id="invoice-file-smart" accept=".xlsx,.xls" hidden>
-                        <button class="btn-primary invoice-convert-btn" id="invoice-convert-smart" disabled>변환 및 다운로드</button>
                     </div>
 
                     <div class="card invoice-upload-card">
@@ -499,7 +498,6 @@
                             <div class="invoice-file-name" id="invoice-filename-jasamol"></div>
                         </div>
                         <input type="file" id="invoice-file-jasamol" accept=".xlsx,.xls" hidden>
-                        <button class="btn-primary invoice-convert-btn" id="invoice-convert-jasamol" disabled>변환 및 다운로드</button>
                     </div>
 
                     <div class="card invoice-upload-card">
@@ -510,9 +508,11 @@
                             <div class="invoice-file-name" id="invoice-filename-coupang"></div>
                         </div>
                         <input type="file" id="invoice-file-coupang" accept=".xlsx,.xls" hidden>
-                        <button class="btn-primary invoice-convert-btn" id="invoice-convert-coupang" disabled>변환 및 다운로드</button>
                     </div>
                 </div>
+
+                <!-- 통합 변환 버튼 -->
+                <button class="btn-primary invoice-merge-btn" id="invoice-merge-btn" disabled>통합 변환 및 다운로드</button>
 
                 <!-- 성공 메시지 -->
                 <div class="invoice-success-msg" id="invoice-success-msg" style="display:none;">
@@ -589,6 +589,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=20"></script>
+    <script src="app.js?v=21"></script>
 </body>
 </html>
