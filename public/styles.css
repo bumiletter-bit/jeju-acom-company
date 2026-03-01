@@ -1167,6 +1167,31 @@ textarea.form-input {
     font-weight: 600;
 }
 
+.invoice-merge-btn {
+    display: block;
+    width: 100%;
+    padding: 16px;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 17px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-bottom: 24px;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.invoice-merge-btn:hover:not(:disabled) {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+}
+
+.invoice-merge-btn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
 /* ========================================
    Placeholder
    ======================================== */

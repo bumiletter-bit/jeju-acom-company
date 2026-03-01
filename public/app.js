@@ -1287,12 +1287,11 @@ let invoiceDataSmart = null;
 let invoiceDataJasamol = null;
 let invoiceDataCoupang = null;
 
-function setupInvoiceArea(areaId, inputId, fileNameId, btnId, headerRange, convertFn, storeKey) {
+function setupInvoiceArea(areaId, inputId, fileNameId, headerRange, convertFn, storeKey) {
     const area = document.getElementById(areaId);
     const input = document.getElementById(inputId);
     const fileNameEl = document.getElementById(fileNameId);
-    const btn = document.getElementById(btnId);
-    if (!area || !input || !btn) return;
+    if (!area || !input) return;
 
     area.addEventListener('click', () => input.click());
     area.addEventListener('dragover', (e) => { e.preventDefault(); area.classList.add('dragover'); });
@@ -1302,22 +1301,15 @@ function setupInvoiceArea(areaId, inputId, fileNameId, btnId, headerRange, conve
         area.classList.remove('dragover');
         if (e.dataTransfer.files.length) {
             input.files = e.dataTransfer.files;
-            loadInvoiceFile(e.dataTransfer.files[0], area, fileNameEl, btn, headerRange, convertFn, storeKey);
+            loadInvoiceFile(e.dataTransfer.files[0], area, fileNameEl, headerRange, convertFn, storeKey);
         }
     });
     input.addEventListener('change', (e) => {
-        if (e.target.files.length) loadInvoiceFile(e.target.files[0], area, fileNameEl, btn, headerRange, convertFn, storeKey);
-    });
-    btn.addEventListener('click', () => {
-        const data = storeKey === 'smart' ? invoiceDataSmart : storeKey === 'jasamol' ? invoiceDataJasamol : invoiceDataCoupang;
-        if (!data) return;
-        let converted = convertFn(data);
-        converted.sort((a, b) => (a['옵션정보'] || '').localeCompare(b['옵션정보'] || '', 'ko'));
-        exportInvoiceExcel(converted);
+        if (e.target.files.length) loadInvoiceFile(e.target.files[0], area, fileNameEl, headerRange, convertFn, storeKey);
     });
 }
 
-function loadInvoiceFile(file, area, fileNameEl, btn, headerRange, convertFn, storeKey) {
+function loadInvoiceFile(file, area, fileNameEl, headerRange, convertFn, storeKey) {
     fileNameEl.textContent = file.name;
     area.classList.add('has-file');
     const successMsg = document.getElementById('invoice-success-msg');
@@ -1332,8 +1324,8 @@ function loadInvoiceFile(file, area, fileNameEl, btn, headerRange, convertFn, st
                 if (storeKey === 'smart') invoiceDataSmart = data;
                 else if (storeKey === 'jasamol') invoiceDataJasamol = data;
                 else if (storeKey === 'coupang') invoiceDataCoupang = data;
-                btn.disabled = false;
-                showInvoicePreview(convertFn(data));
+                updateInvoiceMergeBtn();
+                showInvoiceMergedPreview();
             } else {
                 alert('데이터가 없습니다. 올바른 엑셀 파일인지 확인해주세요.');
             }
@@ -1343,6 +1335,32 @@ function loadInvoiceFile(file, area, fileNameEl, btn, headerRange, convertFn, st
     };
     reader.readAsArrayBuffer(file);
 }
+
+function updateInvoiceMergeBtn() {
+    const hasData = invoiceDataSmart || invoiceDataJasamol || invoiceDataCoupang;
+    document.getElementById('invoice-merge-btn').disabled = !hasData;
+}
+
+function getMergedConverted() {
+    let all = [];
+    if (invoiceDataSmart) all = all.concat(convertDataSmart(invoiceDataSmart));
+    if (invoiceDataJasamol) all = all.concat(convertDataJasamol(invoiceDataJasamol));
+    if (invoiceDataCoupang) all = all.concat(convertDataCoupang(invoiceDataCoupang));
+    all.sort((a, b) => (a['옵션정보'] || '').localeCompare(b['옵션정보'] || '', 'ko'));
+    return all;
+}
+
+function showInvoiceMergedPreview() {
+    const converted = getMergedConverted();
+    if (converted.length === 0) return;
+    showInvoicePreview(converted);
+}
+
+document.getElementById('invoice-merge-btn').addEventListener('click', () => {
+    const converted = getMergedConverted();
+    if (converted.length === 0) return alert('업로드된 파일이 없습니다.');
+    exportInvoiceExcel(converted);
+});
 
 function showInvoicePreview(converted) {
     document.getElementById('invoice-preview-section').style.display = '';
@@ -1556,9 +1574,9 @@ function exportInvoiceExcel(converted) {
 }
 
 // 채널 초기화
-setupInvoiceArea('invoice-upload-smart', 'invoice-file-smart', 'invoice-filename-smart', 'invoice-convert-smart', 1, convertDataSmart, 'smart');
-setupInvoiceArea('invoice-upload-jasamol', 'invoice-file-jasamol', 'invoice-filename-jasamol', 'invoice-convert-jasamol', 0, convertDataJasamol, 'jasamol');
-setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-filename-coupang', 'invoice-convert-coupang', 0, convertDataCoupang, 'coupang');
+setupInvoiceArea('invoice-upload-smart', 'invoice-file-smart', 'invoice-filename-smart', 1, convertDataSmart, 'smart');
+setupInvoiceArea('invoice-upload-jasamol', 'invoice-file-jasamol', 'invoice-filename-jasamol', 0, convertDataJasamol, 'jasamol');
+setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-filename-coupang', 0, convertDataCoupang, 'coupang');
 
 // =============================================
 // Utility
