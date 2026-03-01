@@ -2,23 +2,24 @@
 // 제주아꼼이네 농업회사법인 (주) - 회사 프로그램
 // ==========================================
 
-// ---- Data Store (localStorage) ----
-const STORAGE_KEYS = {
-    settlements: 'jejuacom_settlements',
-    pricing: 'jejuacom_pricing'
-};
-
-function loadData(key) {
-    try {
-        return JSON.parse(localStorage.getItem(key)) || [];
-    } catch {
-        return [];
+// ---- API Helper ----
+async function api(url, method = 'GET', body = null) {
+    const options = { method };
+    if (body) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify(body);
     }
+    const res = await fetch(url, options);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: '서버 오류' }));
+        throw new Error(err.error || '서버 오류');
+    }
+    return res.json();
 }
 
-function saveData(key, data) {
-    localStorage.setItem(key, JSON.stringify(data));
-}
+// 캐시 (모달 조회용)
+let settlementsCache = [];
+let pricingCache = [];
 
 // ---- Navigation ----
 const navItems = document.querySelectorAll('.nav-item');
@@ -40,9 +41,9 @@ function switchPage(pageName) {
     document.getElementById(`page-${pageName}`).classList.add('active');
 
     // Refresh page data
-    if (pageName === 'home') renderCalendar();
-    if (pageName === 'settlement') renderSettlementList();
-    if (pageName === 'pricing') renderPricingList();
+    if (pageName === 'home') renderCalendar().catch(console.error);
+    if (pageName === 'settlement') renderSettlementList().catch(console.error);
+    if (pageName === 'pricing') renderPricingList().catch(console.error);
 }
 
 // ---- Calendar (Home) ----
@@ -52,16 +53,16 @@ let currentMonth = new Date().getMonth(); // 0-indexed
 document.getElementById('prev-month').addEventListener('click', () => {
     currentMonth--;
     if (currentMonth < 0) { currentMonth = 11; currentYear--; }
-    renderCalendar();
+    renderCalendar().catch(console.error);
 });
 
 document.getElementById('next-month').addEventListener('click', () => {
     currentMonth++;
     if (currentMonth > 11) { currentMonth = 0; currentYear++; }
-    renderCalendar();
+    renderCalendar().catch(console.error);
 });
 
-function renderCalendar() {
+async function renderCalendar() {
     const monthNames = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
     document.getElementById('calendar-title').textContent = `${currentYear}년 ${monthNames[currentMonth]}`;
 
@@ -73,8 +74,8 @@ function renderCalendar() {
     document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배 결제금액`;
 
     // Calculate payment stats from settlements
-    const settlements = loadData(STORAGE_KEYS.settlements);
     const monthStr = `${currentYear}-${String(monthNum).padStart(2, '0')}`;
+    const settlements = await api(`/api/settlements?month=${monthStr}`);
 
     let totalPayment = 0;
     let daesungPayment = 0;
@@ -85,18 +86,16 @@ function renderCalendar() {
     const dailyPayments = {}; // { '2026-02-27': { daesung: 0, hyodon: 0, cj: 0 } }
 
     settlements.forEach(s => {
-        if (s.date && s.date.startsWith(monthStr)) {
-            const amount = s.amount || 0;
-            totalPayment += amount;
-            if (s.partner === '대성(시온)') daesungPayment += amount;
-            if (s.partner === '효돈농협') hyodonPayment += amount;
-            if (s.partner === 'CJ대한통운') cjPayment += amount;
+        const amount = s.amount || 0;
+        totalPayment += amount;
+        if (s.partner === '대성(시온)') daesungPayment += amount;
+        if (s.partner === '효돈농협') hyodonPayment += amount;
+        if (s.partner === 'CJ대한통운') cjPayment += amount;
 
-            if (!dailyPayments[s.date]) dailyPayments[s.date] = { daesung: 0, hyodon: 0, cj: 0 };
-            if (s.partner === '대성(시온)') dailyPayments[s.date].daesung += amount;
-            if (s.partner === '효돈농협') dailyPayments[s.date].hyodon += amount;
-            if (s.partner === 'CJ대한통운') dailyPayments[s.date].cj += amount;
-        }
+        if (!dailyPayments[s.date]) dailyPayments[s.date] = { daesung: 0, hyodon: 0, cj: 0 };
+        if (s.partner === '대성(시온)') dailyPayments[s.date].daesung += amount;
+        if (s.partner === '효돈농협') dailyPayments[s.date].hyodon += amount;
+        if (s.partner === 'CJ대한통운') dailyPayments[s.date].cj += amount;
     });
 
     document.getElementById('total-payment').textContent = `${totalPayment.toLocaleString()} 원`;
@@ -125,7 +124,6 @@ function renderCalendar() {
                 started = true;
                 const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                 const isToday = (currentYear === today.getFullYear() && currentMonth === today.getMonth() && day === today.getDate());
-                const isHoliday = today.getFullYear() === currentYear && today.getMonth() === currentMonth && new Date(currentYear, currentMonth, day).getDay() === 3 && day === 11;
 
                 let classes = [];
                 if (dow === 0) classes.push('sun');
@@ -173,6 +171,29 @@ document.getElementById('settlement-partner-group').addEventListener('click', (e
     document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     selectedSettlementPartner = btn.dataset.value;
+    toggleCjMode(selectedSettlementPartner === 'CJ대한통운');
+});
+
+// CJ대한통운 모드 전환
+function toggleCjMode(isCj) {
+    document.getElementById('cj-input-section').style.display = isCj ? '' : 'none';
+    document.getElementById('sales-upload-section').style.display = isCj ? 'none' : '';
+    document.getElementById('settlement-amount-section').style.display = isCj ? 'none' : '';
+    if (isCj) {
+        document.getElementById('cj-parcel-qty').value = '';
+        document.getElementById('cj-calc-amount').textContent = '0 원';
+        document.getElementById('settlement-amount').value = '';
+        document.getElementById('settlement-rows').innerHTML = '';
+        resetSettlementPaste();
+    }
+}
+
+// CJ 택배수량 입력 → 자동 계산
+document.getElementById('cj-parcel-qty').addEventListener('input', () => {
+    const qty = Number(document.getElementById('cj-parcel-qty').value) || 0;
+    const amount = qty * 3100;
+    document.getElementById('cj-calc-amount').textContent = amount.toLocaleString() + ' 원';
+    document.getElementById('settlement-amount').value = amount;
 });
 
 // ---- 초기화 버튼 ----
@@ -191,6 +212,8 @@ document.getElementById('settlement-reset-btn').addEventListener('click', () => 
     document.getElementById('sales-unmatched-container').style.display = 'none';
     // 업로드 영역 다시 표시
     document.getElementById('sales-upload-area').style.display = '';
+    // CJ 모드 초기화
+    toggleCjMode(false);
 });
 
 // ---- 판매현황 엑셀 업로드 ----
@@ -240,7 +263,7 @@ function handleSalesExcel(file) {
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
         try {
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, { type: 'array' });
@@ -289,8 +312,8 @@ function handleSalesExcel(file) {
                 return;
             }
 
-            // 품목별 금액에서 단가 조회
-            const pricingItems = getPricingForDate(selectedSettlementPartner, settlementDate);
+            // 품목별 금액에서 단가 조회 (async)
+            const pricingItems = await getPricingForDate(selectedSettlementPartner, settlementDate);
             console.log('=== 품목별 금액 데이터 ===', pricingItems);
 
             // 디버그: 조회된 품목별 금액 목록 표시
@@ -385,8 +408,6 @@ function handleSalesExcel(file) {
 }
 
 // 판매현황 품목명 → 품목별 금액 매칭 (키워드 기반)
-// 원리: 품목별 금액 이름 "한라봉 가정용 3kg"의 모든 키워드가
-//       판매현황 이름 "하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 3kg(...)"에 모두 포함되면 매칭
 function matchSalesToPricing(salesName, pricingItems) {
     // 1순위: 정확히 일치
     for (const p of pricingItems) {
@@ -399,10 +420,7 @@ function matchSalesToPricing(salesName, pricingItems) {
     let bestKeywordCount = 0;
 
     for (const p of pricingItems) {
-        // 품목별 금액 이름에서 키워드 추출
         const keywords = p.name.split(/\s+/).filter(k => k.length > 0);
-
-        // 모든 키워드가 판매현황 이름에 포함되는지 확인
         const allMatch = keywords.every(kw => containsKeyword(salesLower, kw.toLowerCase()));
 
         if (allMatch && keywords.length > bestKeywordCount) {
@@ -421,13 +439,11 @@ function matchSalesToPricing(salesName, pricingItems) {
 }
 
 // 키워드가 텍스트에 포함되는지 확인
-// "3kg"가 "13kg"에서 잘못 매칭되는 것을 방지
 function containsKeyword(text, keyword) {
     let idx = 0;
     while (idx <= text.length - keyword.length) {
         const pos = text.indexOf(keyword, idx);
         if (pos === -1) return false;
-        // 숫자로 시작하는 키워드: 바로 앞 글자가 숫자면 건너뜀
         if (/^\d/.test(keyword) && pos > 0 && /\d/.test(text[pos - 1])) {
             idx = pos + 1;
             continue;
@@ -438,8 +454,8 @@ function containsKeyword(text, keyword) {
 }
 
 // 해당 날짜/거래처의 품목별 단가 조회
-function getPricingForDate(partner, dateStr) {
-    const pricingData = loadData(STORAGE_KEYS.pricing);
+async function getPricingForDate(partner, dateStr) {
+    const pricingData = await api('/api/pricing');
     const applicable = pricingData.filter(p => {
         return p.partner === partner && p.startDate <= dateStr && p.endDate >= dateStr;
     });
@@ -523,63 +539,75 @@ function updateSettlementTotal() {
 }
 
 // Month filter change
-document.getElementById('settlement-month-filter').addEventListener('change', renderSettlementList);
-
-// Save
-document.getElementById('settlement-save').addEventListener('click', () => {
-    const date = document.getElementById('settlement-date').value;
-    if (!date) return alert('날짜를 선택해주세요.');
-    if (!selectedSettlementPartner) return alert('거래처를 선택해주세요.');
-
-    // 결제가 행 데이터 수집
-    const items = [];
-    document.querySelectorAll('#settlement-rows .settlement-row').forEach(row => {
-        const name = row.querySelector('.s-item-name').value.trim();
-        const price = Number(row.querySelector('.s-item-price').value) || 0;
-        const qty = Number(row.querySelector('.s-item-qty').value) || 0;
-        if (name) items.push({ name, price, qty, subtotal: price * qty });
-    });
-
-    const amount = Number(document.getElementById('settlement-amount').value) || 0;
-
-    const record = {
-        id: Date.now(),
-        date: date,
-        partner: selectedSettlementPartner,
-        amount: amount,
-        items: items
-    };
-
-    const data = loadData(STORAGE_KEYS.settlements);
-    data.push(record);
-    saveData(STORAGE_KEYS.settlements, data);
-
-    // Reset form
-    selectedSettlementPartner = null;
-    document.getElementById('settlement-amount').value = '';
-    document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
-    document.getElementById('settlement-rows').innerHTML = '';
-    resetSettlementPaste();
-
-    renderSettlementList();
-    alert('저장되었습니다.');
+document.getElementById('settlement-month-filter').addEventListener('change', () => {
+    renderSettlementList().catch(console.error);
 });
 
-function renderSettlementList() {
-    const monthVal = document.getElementById('settlement-month-filter').value;
-    const data = loadData(STORAGE_KEYS.settlements);
+// Save
+document.getElementById('settlement-save').addEventListener('click', async () => {
+    try {
+        const date = document.getElementById('settlement-date').value;
+        if (!date) return alert('날짜를 선택해주세요.');
+        if (!selectedSettlementPartner) return alert('거래처를 선택해주세요.');
 
-    const filtered = monthVal
-        ? data.filter(d => d.date && d.date.startsWith(monthVal))
-        : data;
+        let items = [];
+        let amount = 0;
+
+        if (selectedSettlementPartner === 'CJ대한통운') {
+            const parcelQty = Number(document.getElementById('cj-parcel-qty').value) || 0;
+            if (parcelQty <= 0) return alert('택배수량을 입력해주세요.');
+            amount = parcelQty * 3100;
+            items = [{ name: 'CJ택배', price: 3100, qty: parcelQty, subtotal: amount }];
+        } else {
+            document.querySelectorAll('#settlement-rows .settlement-row').forEach(row => {
+                const name = row.querySelector('.s-item-name').value.trim();
+                const price = Number(row.querySelector('.s-item-price').value) || 0;
+                const qty = Number(row.querySelector('.s-item-qty').value) || 0;
+                if (name) items.push({ name, price, qty, subtotal: price * qty });
+            });
+            amount = Number(document.getElementById('settlement-amount').value) || 0;
+        }
+
+        const record = {
+            date: date,
+            partner: selectedSettlementPartner,
+            amount: amount,
+            items: items
+        };
+
+        await api('/api/settlements', 'POST', record);
+
+        // Reset form
+        selectedSettlementPartner = null;
+        document.getElementById('settlement-amount').value = '';
+        document.querySelectorAll('#settlement-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
+        document.getElementById('settlement-rows').innerHTML = '';
+        resetSettlementPaste();
+        toggleCjMode(false);
+
+        await renderSettlementList();
+        alert('저장되었습니다.');
+    } catch (err) {
+        alert('저장 실패: ' + err.message);
+        console.error('Settlement save error:', err);
+    }
+});
+
+async function renderSettlementList() {
+    const monthVal = document.getElementById('settlement-month-filter').value;
+    const url = monthVal ? `/api/settlements?month=${monthVal}` : '/api/settlements';
+    const data = await api(url);
+
+    // 캐시 업데이트 (상세보기 모달용)
+    settlementsCache = data;
 
     const tbody = document.getElementById('settlement-list');
     let totalAmount = 0;
 
-    if (filtered.length === 0) {
+    if (data.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="4">데이터가 없습니다.</td></tr>';
     } else {
-        tbody.innerHTML = filtered.map(item => {
+        tbody.innerHTML = data.map(item => {
             totalAmount += (item.amount || 0);
             const fromPricingBadge = item.fromPricing ? '<span class="badge-pricing">품목별금액</span>' : '';
             return `<tr>
@@ -588,7 +616,6 @@ function renderSettlementList() {
                 <td>${(item.amount || 0).toLocaleString()} 원</td>
                 <td>
                     ${item.items && item.items.length > 0 ? `<button class="btn-view-items" onclick="viewSettlementItems(${item.id})">상세</button>` : ''}
-                    ${item.images && item.images.length > 0 ? `<button class="btn-view" onclick="viewImages(${item.id}, 'settlements')">보기</button>` : ''}
                     <button class="btn-danger" onclick="deleteSettlement(${item.id})">삭제</button>
                 </td>
             </tr>`;
@@ -598,17 +625,18 @@ function renderSettlementList() {
     document.getElementById('settlement-total-amount').innerHTML = `<strong>${totalAmount.toLocaleString()} 원</strong>`;
 }
 
-window.deleteSettlement = function(id) {
+window.deleteSettlement = async function(id) {
     if (!confirm('삭제하시겠습니까?')) return;
-    let data = loadData(STORAGE_KEYS.settlements);
-    data = data.filter(d => d.id !== id);
-    saveData(STORAGE_KEYS.settlements, data);
-    renderSettlementList();
+    try {
+        await api(`/api/settlements/${id}`, 'DELETE');
+        await renderSettlementList();
+    } catch (err) {
+        alert('삭제 실패: ' + err.message);
+    }
 };
 
 window.viewSettlementItems = function(id) {
-    const data = loadData(STORAGE_KEYS.settlements);
-    const item = data.find(d => d.id === id);
+    const item = settlementsCache.find(d => d.id === id);
     if (!item || !item.items || item.items.length === 0) return;
 
     const rows = item.items.map(i => `
@@ -839,72 +867,54 @@ window.removePricingRow = function(btn) {
 };
 
 // Save pricing
-document.getElementById('pricing-save').addEventListener('click', () => {
-    const startDate = document.getElementById('pricing-start-date').value;
-    const endDate = document.getElementById('pricing-end-date').value;
-    if (!startDate || !endDate) return alert('기간을 선택해주세요.');
-    if (!selectedPricingPartner) return alert('거래처를 선택해주세요.');
+document.getElementById('pricing-save').addEventListener('click', async () => {
+    try {
+        const startDate = document.getElementById('pricing-start-date').value;
+        const endDate = document.getElementById('pricing-end-date').value;
+        if (!startDate || !endDate) return alert('기간을 선택해주세요.');
+        if (!selectedPricingPartner) return alert('거래처를 선택해주세요.');
 
-    // Collect rows
-    const rows = [];
-    document.querySelectorAll('#pricing-rows .pricing-row').forEach(row => {
-        const name = row.querySelector('.pricing-item-name').value.trim();
-        const price = row.querySelector('.pricing-item-price').value;
-        if (name) {
-            rows.push({ name, price: Number(price) || 0 });
-        }
-    });
+        // Collect rows
+        const rows = [];
+        document.querySelectorAll('#pricing-rows .pricing-row').forEach(row => {
+            const name = row.querySelector('.pricing-item-name').value.trim();
+            const price = row.querySelector('.pricing-item-price').value;
+            if (name) {
+                rows.push({ name, price: Number(price) || 0 });
+            }
+        });
 
-    if (rows.length === 0) return alert('품목을 입력해주세요.');
+        if (rows.length === 0) return alert('품목을 입력해주세요.');
 
-    const pricingId = Date.now();
-    const record = {
-        id: pricingId,
-        startDate,
-        endDate,
-        partner: selectedPricingPartner,
-        items: rows
-    };
+        const record = {
+            startDate,
+            endDate,
+            partner: selectedPricingPartner,
+            items: rows
+        };
 
-    const data = loadData(STORAGE_KEYS.pricing);
-    data.push(record);
-    saveData(STORAGE_KEYS.pricing, data);
+        // 서버에서 pricing + settlement 동시 저장
+        await api('/api/pricing', 'POST', record);
 
-    // 정산 데이터에도 연동 저장
-    const totalAmount = rows.reduce((sum, r) => sum + r.price, 0);
-    const settlementItems = rows.map(r => ({
-        name: r.name,
-        price: r.price,
-        qty: 1,
-        subtotal: r.price
-    }));
+        // Reset
+        selectedPricingPartner = null;
+        document.querySelectorAll('#pricing-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
+        document.getElementById('pricing-rows').innerHTML = '';
+        resetPricingPaste();
 
-    const settlementRecord = {
-        id: pricingId + 1,
-        date: startDate,
-        partner: selectedPricingPartner,
-        amount: totalAmount,
-        items: settlementItems,
-        fromPricing: true
-    };
-
-    const settlements = loadData(STORAGE_KEYS.settlements);
-    settlements.push(settlementRecord);
-    saveData(STORAGE_KEYS.settlements, settlements);
-
-    // Reset
-    selectedPricingPartner = null;
-    document.querySelectorAll('#pricing-partner-group .btn-toggle').forEach(b => b.classList.remove('active'));
-    document.getElementById('pricing-rows').innerHTML = '';
-    resetPricingPaste();
-
-    renderPricingList();
-    renderSettlementList();
-    alert('저장되었습니다.');
+        await renderPricingList();
+        await renderSettlementList();
+        alert('저장되었습니다.');
+    } catch (err) {
+        alert('저장 실패: ' + err.message);
+        console.error('Pricing save error:', err);
+    }
 });
 
-function renderPricingList() {
-    const data = loadData(STORAGE_KEYS.pricing);
+async function renderPricingList() {
+    const data = await api('/api/pricing');
+    pricingCache = data;
+
     const tbody = document.getElementById('pricing-list');
 
     if (data.length === 0) {
@@ -936,19 +946,20 @@ function renderPricingList() {
     }
 }
 
-window.deletePricing = function(id) {
+window.deletePricing = async function(id) {
     if (!confirm('삭제하시겠습니까?')) return;
-    let data = loadData(STORAGE_KEYS.pricing);
-    data = data.filter(d => d.id !== id);
-    saveData(STORAGE_KEYS.pricing, data);
-    renderPricingList();
+    try {
+        await api(`/api/pricing/${id}`, 'DELETE');
+        await renderPricingList();
+    } catch (err) {
+        alert('삭제 실패: ' + err.message);
+    }
 };
 
 // ---- Image Viewer Modal ----
 window.viewImages = function(id, type) {
-    const storageKey = type === 'settlements' ? STORAGE_KEYS.settlements : STORAGE_KEYS.pricing;
-    const data = loadData(storageKey);
-    const item = data.find(d => d.id === id);
+    const cache = type === 'settlements' ? settlementsCache : pricingCache;
+    const item = cache.find(d => d.id === id);
     if (!item || !item.images || item.images.length === 0) return;
 
     const overlay = document.createElement('div');
@@ -1104,6 +1115,13 @@ document.querySelectorAll('input[type="date"]').forEach(input => {
 });
 
 // ---- Init ----
-renderCalendar();
-renderSettlementList();
-renderPricingList();
+async function init() {
+    try {
+        await renderCalendar();
+        await renderSettlementList();
+        await renderPricingList();
+    } catch (err) {
+        console.error('초기화 오류:', err);
+    }
+}
+init();
