@@ -828,9 +828,9 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
         const prepayResult = await pool.query(
             "SELECT partner, COALESCE(SUM(amount), 0) as total FROM prepayments WHERE partner IN ('대성(시온)', '효돈농협') GROUP BY partner"
         );
-        // 거래처별 정산 합계
+        // 거래처별 정산 합계 (실제 정산만 - 품목별 금액 세팅 제외)
         const settleResult = await pool.query(
-            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM settlements WHERE partner IN ('대성(시온)', '효돈농협') GROUP BY partner"
+            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM settlements WHERE partner IN ('대성(시온)', '효돈농협') AND (from_pricing IS NULL OR from_pricing = false) GROUP BY partner"
         );
 
         const prepayMap = {};
