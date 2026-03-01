@@ -148,6 +148,13 @@ function switchPage(pageName) {
     document.getElementById(`page-${pageName}`).classList.add('active');
 
     if (pageName === 'schedule') renderScheduleCalendar().catch(console.error);
+    if (pageName === 'document') {
+        loadApprovers().catch(console.error);
+        renderDocList().catch(console.error);
+        document.getElementById('approval-pending-card').style.display = currentUser?.role === 'admin' ? '' : 'none';
+        if (currentUser?.role === 'admin') renderApprovalList().catch(console.error);
+        if (currentUser) document.getElementById('doc-applicant').value = `${currentUser.position} ${currentUser.name}`;
+    }
     if (pageName === 'settlement') {
         renderSettlementCalendar().catch(console.error);
         renderSettlementList().catch(console.error);
@@ -320,7 +327,7 @@ async function loadDaySchedules(dateStr, overlay) {
         } else {
             listEl.innerHTML = daySchedules.map(s => {
                 const typeLabel = s.type === 'vacation' ? ' (휴가)' : s.type === 'attendance' ? ' (근태)' : '';
-                const canDelete = currentUser && (currentUser.id === s.userId || currentUser.role === 'admin');
+                const canDelete = currentUser && (currentUser.id === s.userId || currentUser.role === 'admin') && !s.documentId;
                 return `<div class="schedule-detail-item" style="border-left:3px solid ${s.userColor};">
                     <div><strong>${s.userName}</strong>${typeLabel}: ${s.title}</div>
                     ${canDelete ? `<button class="btn-danger btn-sm" onclick="deleteSchedule(${s.id}, this)">삭제</button>` : ''}
@@ -1055,6 +1062,222 @@ window.openUserModal = async function(userId) {
 window.deleteUser = async function(id) {
     if (!confirm('정말 삭제하시겠습니까?')) return;
     try { await api(`/api/users/${id}`, 'DELETE'); await renderUserList(); } catch (err) { alert('삭제 실패: ' + err.message); }
+};
+
+// =============================================
+// 기안서류
+// =============================================
+let currentDocType = 'vacation';
+let selectedDocSubType = '연차';
+let approverList = [];
+
+// 탭 전환
+document.querySelectorAll('.doc-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.doc-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentDocType = tab.dataset.docType;
+        updateDocForm();
+        renderDocList().catch(console.error);
+    });
+});
+
+function updateDocForm() {
+    const typeLabels = { vacation: '휴가신청서', attendance: '근태신청서', reason: '사유서' };
+    document.getElementById('doc-form-title').textContent = typeLabels[currentDocType] + ' 작성';
+
+    document.getElementById('doc-vacation-type-group').style.display = currentDocType === 'vacation' ? '' : 'none';
+    document.getElementById('doc-attendance-type-group').style.display = currentDocType === 'attendance' ? '' : 'none';
+    document.getElementById('doc-reason-type-group').style.display = currentDocType === 'reason' ? '' : 'none';
+
+    if (currentDocType === 'vacation') selectedDocSubType = '연차';
+    else if (currentDocType === 'attendance') selectedDocSubType = '휴직';
+    else selectedDocSubType = '지각';
+
+    const activeGroup = document.getElementById(`doc-${currentDocType}-type-group`);
+    if (activeGroup) {
+        activeGroup.querySelectorAll('.btn-toggle').forEach((b, i) => b.classList.toggle('active', i === 0));
+    }
+
+    updateDocEndDateVisibility();
+    document.getElementById('doc-list-title').textContent = typeLabels[currentDocType] + ' 목록';
+}
+
+function updateDocEndDateVisibility() {
+    const showEndDate = currentDocType === 'vacation' && selectedDocSubType === '연차';
+    document.getElementById('doc-end-date-group').style.display = showEndDate ? '' : 'none';
+}
+
+// 서류 하위 유형 선택
+['vacation', 'attendance', 'reason'].forEach(type => {
+    const group = document.getElementById(`doc-${type}-type-group`);
+    if (!group) return;
+    group.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-toggle');
+        if (!btn) return;
+        group.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedDocSubType = btn.dataset.value;
+        updateDocEndDateVisibility();
+    });
+});
+
+// 결재자 목록 로드
+async function loadApprovers() {
+    try {
+        approverList = await api('/api/users/approvers');
+        const select = document.getElementById('doc-approver');
+        select.innerHTML = '<option value="">결재자를 선택하세요</option>' +
+            approverList.map(a => `<option value="${a.id}">${a.position ? a.position + ' ' : ''}${a.name}</option>`).join('');
+    } catch (err) {
+        console.error('loadApprovers error:', err);
+    }
+}
+
+// 서류 제출
+document.getElementById('doc-submit').addEventListener('click', async () => {
+    const approverId = document.getElementById('doc-approver').value;
+    const startDate = document.getElementById('doc-start-date').value;
+    const endDate = document.getElementById('doc-end-date').value;
+    const reason = document.getElementById('doc-reason').value.trim();
+
+    if (!startDate) return alert('날짜를 선택해주세요.');
+    if (!approverId) return alert('결재자를 선택해주세요.');
+
+    const body = {
+        type: currentDocType,
+        subType: selectedDocSubType,
+        approverId: Number(approverId),
+        startDate,
+        endDate: (currentDocType === 'vacation' && selectedDocSubType === '연차') ? endDate || startDate : startDate,
+        reason
+    };
+
+    try {
+        await api('/api/documents', 'POST', body);
+        alert('서류가 제출되었습니다.');
+
+        document.getElementById('doc-start-date').value = '';
+        document.getElementById('doc-end-date').value = '';
+        document.getElementById('doc-reason').value = '';
+
+        const me = await api('/api/auth/me');
+        currentUser = me;
+        localStorage.setItem('jwt_user', JSON.stringify(me));
+        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+
+        await renderDocList();
+        if (currentUser.role === 'admin') await renderApprovalList();
+    } catch (err) {
+        alert('제출 실패: ' + err.message);
+    }
+});
+
+// 서류 목록 렌더링
+async function renderDocList() {
+    try {
+        const docs = await api(`/api/documents?type=${currentDocType}&mine=true`);
+        const tbody = document.getElementById('doc-list');
+
+        if (docs.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">서류가 없습니다.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = docs.map(d => {
+            const statusClass = d.status === 'approved' ? 'status-approved' : d.status === 'rejected' ? 'status-rejected' : 'status-pending';
+            const statusLabel = d.status === 'approved' ? '승인' : d.status === 'rejected' ? '반려' : '대기중';
+            const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            const canDelete = d.status === 'pending';
+
+            return `<tr>
+                <td>${d.subType}</td>
+                <td>${dateStr}</td>
+                <td>${d.reason || '-'}</td>
+                <td>${d.approverName || '-'}</td>
+                <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+                <td>${canDelete ? `<button class="btn-danger" onclick="deleteDocument(${d.id})">삭제</button>` : ''}</td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        console.error('renderDocList error:', err);
+    }
+}
+
+// 결재 대기 목록 (관리자)
+async function renderApprovalList() {
+    try {
+        const docs = await api('/api/documents?status=pending');
+        const tbody = document.getElementById('approval-pending-list');
+
+        if (docs.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">대기 중인 결재가 없습니다.</td></tr>';
+            return;
+        }
+
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '사유서' };
+
+        tbody.innerHTML = docs.map(d => {
+            const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            return `<tr>
+                <td>${typeLabels[d.type] || d.type} - ${d.subType}</td>
+                <td>${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}</td>
+                <td>${dateStr}</td>
+                <td>${d.reason || '-'}</td>
+                <td>
+                    <button class="btn-approve" onclick="approveDocument(${d.id})">승인</button>
+                    <button class="btn-reject" onclick="rejectDocument(${d.id})">반려</button>
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        console.error('renderApprovalList error:', err);
+    }
+}
+
+// 서류 삭제
+window.deleteDocument = async function(id) {
+    if (!confirm('서류를 삭제하시겠습니까?\n연차가 차감된 경우 복구됩니다.')) return;
+    try {
+        await api(`/api/documents/${id}`, 'DELETE');
+        const me = await api('/api/auth/me');
+        currentUser = me;
+        localStorage.setItem('jwt_user', JSON.stringify(me));
+        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        await renderDocList();
+    } catch (err) {
+        alert('삭제 실패: ' + err.message);
+    }
+};
+
+// 결재 승인
+window.approveDocument = async function(id) {
+    if (!confirm('승인하시겠습니까?')) return;
+    try {
+        await api(`/api/documents/${id}/approve`, 'PUT');
+        await renderApprovalList();
+        await renderDocList();
+        alert('승인되었습니다.');
+    } catch (err) {
+        alert('승인 실패: ' + err.message);
+    }
+};
+
+// 결재 반려
+window.rejectDocument = async function(id) {
+    if (!confirm('반려하시겠습니까?\n연차가 차감된 경우 복구됩니다.')) return;
+    try {
+        await api(`/api/documents/${id}/reject`, 'PUT');
+        await renderApprovalList();
+        await renderDocList();
+        const me = await api('/api/auth/me');
+        currentUser = me;
+        localStorage.setItem('jwt_user', JSON.stringify(me));
+        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        alert('반려되었습니다.');
+    } catch (err) {
+        alert('반려 실패: ' + err.message);
+    }
 };
 
 // =============================================

@@ -88,6 +88,32 @@ async function initDB() {
         )
     `);
 
+    // documents 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS documents (
+            id SERIAL PRIMARY KEY,
+            type VARCHAR(20) NOT NULL,
+            sub_type VARCHAR(50) NOT NULL,
+            applicant_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            approver_id INTEGER REFERENCES users(id),
+            start_date DATE NOT NULL,
+            end_date DATE,
+            reason TEXT DEFAULT '',
+            status VARCHAR(20) DEFAULT 'pending',
+            deducted_leave NUMERIC DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW(),
+            processed_at TIMESTAMP
+        )
+    `);
+
+    // schedules에 document_id 컬럼 추가 (기안서류 연동)
+    await pool.query(`
+        DO $$ BEGIN
+            ALTER TABLE schedules ADD COLUMN document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_column THEN NULL;
+        END $$
+    `);
+
     // 초기 관리자 계정 생성
     const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
@@ -175,6 +201,16 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// 결재자 목록 (관리자 목록)
+app.get('/api/users/approvers', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT id, name, position FROM users WHERE role = 'admin' ORDER BY name");
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { name, position, color, role, annualLeave, password } = req.body;
@@ -234,7 +270,7 @@ app.get('/api/schedules', authMiddleware, async (req, res) => {
         }
         res.json(result.rows.map(r => ({
             id: r.id, userId: r.user_id, date: r.date, title: r.title, type: r.type,
-            userName: r.user_name, userColor: r.user_color
+            userName: r.user_name, userColor: r.user_color, documentId: r.document_id || null
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -269,6 +305,7 @@ app.delete('/api/schedules/:id', authMiddleware, async (req, res) => {
         if (schedule.rows.length === 0) return res.status(404).json({ error: '일정을 찾을 수 없습니다' });
 
         const s = schedule.rows[0];
+        if (s.document_id) return res.status(400).json({ error: '기안서류를 통해 생성된 일정은 서류에서 관리해주세요' });
         if (s.user_id !== req.user.id && req.user.role !== 'admin') {
             return res.status(403).json({ error: '본인의 일정만 삭제할 수 있습니다' });
         }
@@ -279,6 +316,175 @@ app.delete('/api/schedules/:id', authMiddleware, async (req, res) => {
         }
 
         await pool.query('DELETE FROM schedules WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// === Documents API (기안서류) ===
+
+app.get('/api/documents', authMiddleware, async (req, res) => {
+    try {
+        const { type, status, mine } = req.query;
+        let query = `
+            SELECT d.*, u1.name as applicant_name, u1.position as applicant_position, u2.name as approver_name
+            FROM documents d
+            JOIN users u1 ON d.applicant_id = u1.id
+            LEFT JOIN users u2 ON d.approver_id = u2.id
+        `;
+        const conditions = [];
+        const values = [];
+        let idx = 1;
+
+        if (type) { conditions.push(`d.type = $${idx++}`); values.push(type); }
+        if (status) { conditions.push(`d.status = $${idx++}`); values.push(status); }
+        if (mine === 'true' || req.user.role !== 'admin') {
+            conditions.push(`d.applicant_id = $${idx++}`);
+            values.push(req.user.id);
+        }
+
+        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+        query += ' ORDER BY d.created_at DESC';
+
+        const result = await pool.query(query, values);
+        res.json(result.rows.map(r => ({
+            id: r.id, type: r.type, subType: r.sub_type,
+            applicantId: r.applicant_id, applicantName: r.applicant_name, applicantPosition: r.applicant_position,
+            approverId: r.approver_id, approverName: r.approver_name,
+            startDate: r.start_date, endDate: r.end_date,
+            reason: r.reason, status: r.status, deductedLeave: Number(r.deducted_leave),
+            createdAt: r.created_at, processedAt: r.processed_at
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/documents', authMiddleware, async (req, res) => {
+    try {
+        const { type, subType, approverId, startDate, endDate, reason } = req.body;
+        if (!type || !subType || !approverId || !startDate) {
+            return res.status(400).json({ error: '필수 항목을 입력해주세요' });
+        }
+
+        // 휴가 연차 차감 계산
+        let deductedLeave = 0;
+        if (type === 'vacation') {
+            if (subType === '연차') {
+                const start = new Date(startDate);
+                const end = new Date(endDate || startDate);
+                deductedLeave = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+            } else if (subType === '반차') {
+                deductedLeave = 0.5;
+            }
+            // 병가는 차감 없음
+
+            if (deductedLeave > 0) {
+                const userResult = await pool.query('SELECT annual_leave FROM users WHERE id = $1', [req.user.id]);
+                if (Number(userResult.rows[0].annual_leave) < deductedLeave) {
+                    return res.status(400).json({ error: `잔여연차(${userResult.rows[0].annual_leave}일)가 부족합니다.` });
+                }
+                await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [deductedLeave, req.user.id]);
+            }
+        }
+
+        const actualEndDate = endDate || startDate;
+        const result = await pool.query(
+            'INSERT INTO documents (type, sub_type, applicant_id, approver_id, start_date, end_date, reason, deducted_leave) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+            [type, subType, req.user.id, approverId, startDate, actualEndDate, reason || '', deductedLeave]
+        );
+        const docId = result.rows[0].id;
+
+        // 휴가/근태: 캘린더에 일정 자동 생성
+        if (type === 'vacation' || type === 'attendance') {
+            const scheduleTitle = `${subType} - ${req.user.name}`;
+            if (type === 'vacation' && subType === '연차') {
+                const start = new Date(startDate);
+                const end = new Date(actualEndDate);
+                for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                    const dateStr = d.toISOString().split('T')[0];
+                    await pool.query(
+                        'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                        [req.user.id, dateStr, scheduleTitle, type, docId]
+                    );
+                }
+            } else {
+                await pool.query(
+                    'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                    [req.user.id, startDate, scheduleTitle, type, docId]
+                );
+            }
+        }
+
+        res.json({ id: docId, success: true });
+    } catch (err) {
+        console.error('POST /api/documents error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/documents/:id/approve', authMiddleware, async (req, res) => {
+    try {
+        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+
+        const d = doc.rows[0];
+        if (d.approver_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '결재 권한이 없습니다' });
+        }
+        if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
+
+        await pool.query('UPDATE documents SET status = $1, processed_at = NOW() WHERE id = $2', ['approved', req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
+    try {
+        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+
+        const d = doc.rows[0];
+        if (d.approver_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '결재 권한이 없습니다' });
+        }
+        if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
+
+        // 연차 복구
+        if (Number(d.deducted_leave) > 0) {
+            await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
+        }
+
+        // 연동된 일정 삭제
+        await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
+
+        await pool.query('UPDATE documents SET status = $1, processed_at = NOW() WHERE id = $2', ['rejected', req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
+    try {
+        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+
+        const d = doc.rows[0];
+        if (d.applicant_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '본인의 서류만 삭제할 수 있습니다' });
+        }
+
+        // 반려 아닌 경우 연차 복구
+        if (d.status !== 'rejected' && Number(d.deducted_leave) > 0) {
+            await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
+        }
+
+        // 연동 일정은 ON DELETE CASCADE로 자동 삭제
+        await pool.query('DELETE FROM documents WHERE id = $1', [req.params.id]);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });

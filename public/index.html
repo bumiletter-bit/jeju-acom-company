@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=10">
+    <link rel="stylesheet" href="styles.css?v=11">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
@@ -117,14 +117,124 @@
                 </div>
             </div>
 
-            <!-- 기안서류 placeholder -->
+            <!-- 기안서류 페이지 -->
             <div id="page-document" class="page">
                 <h1>기안서류</h1>
-                <div class="card">
-                    <div class="placeholder-content">
-                        <p>기안서류 관리 페이지입니다.</p>
-                        <p class="text-muted">추후 기능이 추가됩니다.</p>
+
+                <!-- 탭 네비게이션 -->
+                <div class="doc-tabs">
+                    <button class="doc-tab active" data-doc-type="vacation">휴가신청서</button>
+                    <button class="doc-tab" data-doc-type="attendance">근태신청서</button>
+                    <button class="doc-tab" data-doc-type="reason">사유서</button>
+                </div>
+
+                <!-- 결재 대기 목록 (관리자용) -->
+                <div class="card" id="approval-pending-card" style="display:none;">
+                    <div class="card-header-row">
+                        <h2>결재 대기 목록</h2>
                     </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>유형</th>
+                                <th>신청자</th>
+                                <th>기간/날짜</th>
+                                <th>사유</th>
+                                <th>처리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="approval-pending-list">
+                            <tr class="empty-row"><td colspan="5">대기 중인 결재가 없습니다.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 서류 작성 폼 -->
+                <div class="card" id="doc-form-card">
+                    <h2 id="doc-form-title">휴가신청서 작성</h2>
+
+                    <div class="form-group">
+                        <label>신청자</label>
+                        <input type="text" id="doc-applicant" class="form-input" readonly style="background:#f3f4f6;">
+                    </div>
+
+                    <!-- 휴가 종류 -->
+                    <div class="form-group" id="doc-vacation-type-group">
+                        <label>휴가종류</label>
+                        <div class="btn-group">
+                            <button class="btn-toggle active" data-value="연차">연차</button>
+                            <button class="btn-toggle" data-value="반차">반차</button>
+                            <button class="btn-toggle" data-value="병가">병가</button>
+                        </div>
+                    </div>
+
+                    <!-- 근태 종류 -->
+                    <div class="form-group" id="doc-attendance-type-group" style="display:none;">
+                        <label>종류</label>
+                        <div class="btn-group">
+                            <button class="btn-toggle active" data-value="휴직">휴직</button>
+                            <button class="btn-toggle" data-value="예비군">예비군</button>
+                            <button class="btn-toggle" data-value="병가">병가</button>
+                            <button class="btn-toggle" data-value="기타">기타</button>
+                        </div>
+                    </div>
+
+                    <!-- 사유서 종류 -->
+                    <div class="form-group" id="doc-reason-type-group" style="display:none;">
+                        <label>종류</label>
+                        <div class="btn-group">
+                            <button class="btn-toggle active" data-value="지각">지각</button>
+                            <button class="btn-toggle" data-value="미출근">미출근</button>
+                            <button class="btn-toggle" data-value="조퇴">조퇴</button>
+                            <button class="btn-toggle" data-value="기타">기타</button>
+                        </div>
+                    </div>
+
+                    <!-- 날짜 -->
+                    <div class="form-row" id="doc-date-range-row">
+                        <div class="form-group">
+                            <label>시작일</label>
+                            <input type="date" id="doc-start-date" class="form-input">
+                        </div>
+                        <div class="form-group" id="doc-end-date-group">
+                            <label>종료일</label>
+                            <input type="date" id="doc-end-date" class="form-input">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>사유</label>
+                        <textarea id="doc-reason" class="form-input" rows="3" placeholder="사유를 입력하세요"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>결재자</label>
+                        <select id="doc-approver" class="form-input">
+                            <option value="">결재자를 선택하세요</option>
+                        </select>
+                    </div>
+
+                    <button class="btn-primary" id="doc-submit">제출</button>
+                </div>
+
+                <!-- 서류 목록 -->
+                <div class="card">
+                    <h2 id="doc-list-title">휴가신청서 목록</h2>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>유형</th>
+                                <th>기간/날짜</th>
+                                <th>사유</th>
+                                <th>결재자</th>
+                                <th>상태</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="doc-list">
+                            <tr class="empty-row"><td colspan="6">서류가 없습니다.</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -414,6 +524,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=18"></script>
+    <script src="app.js?v=19"></script>
 </body>
 </html>
