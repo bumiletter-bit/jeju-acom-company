@@ -2296,137 +2296,97 @@ async function renderWeeklySettlement() {
     const monthStr = `${settlementCalYear}-${String(settlementCalMonth + 1).padStart(2, '0')}`;
 
     try {
-        const [settlements, completions] = await Promise.all([
+        const [settlements, prepayments] = await Promise.all([
             api(`/api/settlements?month=${monthStr}`),
-            api(`/api/settlement-completions?month=${monthStr}`)
+            api('/api/prepayments')
         ]);
 
-        // 해당 월의 주차 계산 (월~일 기준)
+        // 해당 월의 주차 계산 (월~일 기준, 1일이 월요일 아니면 첫 월요일부터 시작)
         const weeks = getWeeksInMonth(settlementCalYear, settlementCalMonth);
 
-        // 완료 맵 생성
-        const completionMap = {};
-        completions.forEach(c => {
-            const key = `${c.partner}_${c.week_start}`;
-            completionMap[key] = c;
-        });
-
         if (weeks.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">데이터가 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">데이터가 없습니다.</td></tr>';
             return;
         }
 
         let html = '';
         weeks.forEach((week, idx) => {
-            let daesungTotal = 0, hyodonTotal = 0;
+            let daesungTotal = 0, hyodonTotal = 0, cjTotal = 0;
 
             settlements.forEach(s => {
                 if (s.date >= week.start && s.date <= week.end) {
-                    if (s.partner === '대성(시온)') daesungTotal += (s.amount || 0);
-                    if (s.partner === '효돈농협') hyodonTotal += (s.amount || 0);
+                    if (s.partner === '대성(시온)') {
+                        daesungTotal += (s.amount || 0);
+                        const items = s.items || [];
+                        cjTotal += items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
+                    }
+                    if (s.partner === '효돈농협') {
+                        hyodonTotal += (s.amount || 0);
+                        const items = s.items || [];
+                        cjTotal += items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
+                    }
                 }
             });
 
-            const weekTotal = daesungTotal + hyodonTotal;
-            const daesungComp = completionMap[`대성(시온)_${week.start}`];
-            const hyodonComp = completionMap[`효돈농협_${week.start}`];
-            const allCompleted = daesungComp && hyodonComp;
-
-            const weekLabel = `${idx + 1}주차<br><span style="font-size:11px; color:#6b7280;">${week.start.slice(5)} ~ ${week.end.slice(5)}</span>`;
-
-            // 대성 상태
-            let daesungStatus = '';
-            if (daesungComp) {
-                daesungStatus = `<span class="weekly-status-badge completed">정산완료</span>`;
-                if (currentUser?.role === 'admin') {
-                    daesungStatus += ` <button class="btn-cancel-settle" onclick="cancelWeekSettlement(${daesungComp.id})">취소</button>`;
+            // 해당 주차 선결제 합계
+            let weekPrepay = 0;
+            prepayments.forEach(p => {
+                if (p.date >= week.start && p.date <= week.end) {
+                    weekPrepay += (p.amount || 0);
                 }
-            } else if (daesungTotal > 0 && currentUser?.role === 'admin') {
-                daesungStatus = `<button class="btn-settle-week" onclick="completeWeekSettlement('${week.start}','${week.end}','대성(시온)',${daesungTotal})">정산완료</button>`;
-            }
+            });
 
-            // 효돈 상태
-            let hyodonStatus = '';
-            if (hyodonComp) {
-                hyodonStatus = `<span class="weekly-status-badge completed">정산완료</span>`;
-                if (currentUser?.role === 'admin') {
-                    hyodonStatus += ` <button class="btn-cancel-settle" onclick="cancelWeekSettlement(${hyodonComp.id})">취소</button>`;
-                }
-            } else if (hyodonTotal > 0 && currentUser?.role === 'admin') {
-                hyodonStatus = `<button class="btn-settle-week" onclick="completeWeekSettlement('${week.start}','${week.end}','효돈농협',${hyodonTotal})">정산완료</button>`;
-            }
+            const weekTotal = daesungTotal + hyodonTotal + cjTotal - weekPrepay;
 
-            // 전체 상태 배지
-            let statusBadge = '';
-            if (allCompleted) {
-                statusBadge = '<span class="weekly-status-badge completed">완료</span>';
-            } else if (weekTotal > 0) {
-                statusBadge = '<span class="weekly-status-badge pending">미정산</span>';
-            } else {
-                statusBadge = '<span style="color:#9ca3af; font-size:12px;">-</span>';
-            }
+            const startLabel = week.start.slice(5).replace('-', '/');
+            const endLabel = week.end.slice(5).replace('-', '/');
+            const weekLabel = `${idx + 1}주차<br><span style="font-size:11px; color:#6b7280;">${startLabel} ~ ${endLabel}</span>`;
 
             html += `<tr>
                 <td>${weekLabel}</td>
-                <td>${daesungTotal > 0 ? daesungTotal.toLocaleString() + ' 원' : '-'} ${daesungStatus}</td>
-                <td>${hyodonTotal > 0 ? hyodonTotal.toLocaleString() + ' 원' : '-'} ${hyodonStatus}</td>
-                <td><strong>${weekTotal > 0 ? weekTotal.toLocaleString() + ' 원' : '-'}</strong></td>
-                <td>${statusBadge}</td>
+                <td>${daesungTotal > 0 ? daesungTotal.toLocaleString() + ' 원' : '-'}</td>
+                <td>${hyodonTotal > 0 ? hyodonTotal.toLocaleString() + ' 원' : '-'}</td>
+                <td>${cjTotal > 0 ? cjTotal.toLocaleString() + ' 원' : '-'}</td>
+                <td>${weekPrepay > 0 ? '<span style="color:#8b5cf6;">-' + weekPrepay.toLocaleString() + ' 원</span>' : '-'}</td>
+                <td><strong>${weekTotal !== 0 ? weekTotal.toLocaleString() + ' 원' : '-'}</strong></td>
             </tr>`;
         });
 
         tbody.innerHTML = html;
     } catch (err) {
         console.error('주간 정산 현황 오류:', err);
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">로드 실패</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">로드 실패</td></tr>';
     }
 }
 
 function getWeeksInMonth(year, month) {
     const weeks = [];
-    const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
+    const lastDate = lastDay.getDate();
 
-    // 첫 번째 월요일 찾기 (또는 1일이 월요일이면 그대로)
-    let current = new Date(firstDay);
-    // 1일이 속한 주의 월요일 찾기
-    const dayOfWeek = current.getDay(); // 0=일, 1=월, ...
-    if (dayOfWeek !== 1) {
-        // 1일부터 가장 가까운 이전 월요일 (이번 달 밖일 수도 있으므로 1일 시작)
-        // 첫 주는 1일~첫번째 일요일
-        const firstSunday = new Date(firstDay);
-        const daysUntilSunday = dayOfWeek === 0 ? 0 : (7 - dayOfWeek);
-        firstSunday.setDate(firstSunday.getDate() + daysUntilSunday);
-
-        if (firstSunday <= lastDay) {
-            weeks.push({
-                start: formatDate(firstDay),
-                end: formatDate(firstSunday)
-            });
-            current = new Date(firstSunday);
-            current.setDate(current.getDate() + 1); // 다음 월요일
-        } else {
-            // 한 주도 안 되는 경우
-            weeks.push({
-                start: formatDate(firstDay),
-                end: formatDate(lastDay)
-            });
-            return weeks;
-        }
+    // 이번 달의 첫 번째 월요일 찾기
+    let firstMonday = 1;
+    while (firstMonday <= lastDate) {
+        const d = new Date(year, month, firstMonday);
+        if (d.getDay() === 1) break; // 월요일
+        firstMonday++;
     }
 
-    // 월요일부터 시작하는 나머지 주들
-    while (current <= lastDay) {
-        const weekStart = new Date(current);
-        const weekEnd = new Date(current);
-        weekEnd.setDate(weekEnd.getDate() + 6); // 일요일
+    // 첫 월요일 이전 날짜들(예: 3/1 토)은 이전 달 마지막 주에 포함 → 건너뜀
+
+    // 월요일부터 일요일까지 주차 생성
+    let current = firstMonday;
+    while (current <= lastDate) {
+        const weekStart = new Date(year, month, current);
+        const weekEndDate = Math.min(current + 6, lastDate);
+        const weekEnd = new Date(year, month, weekEndDate);
 
         weeks.push({
             start: formatDate(weekStart),
-            end: formatDate(weekEnd > lastDay ? lastDay : weekEnd)
+            end: formatDate(weekEnd)
         });
 
-        current.setDate(current.getDate() + 7);
+        current += 7;
     }
 
     return weeks;
