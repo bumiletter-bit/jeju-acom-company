@@ -385,10 +385,9 @@ async function renderSettlementCalendar() {
 
     const monthNum = settlementCalMonth + 1;
     document.getElementById('expected-payment-label').textContent = `${monthNum}월 결제예정금액`;
-    document.getElementById('total-payment-label').textContent = `${monthNum}월 총결제금액`;
     document.getElementById('daesung-payment-label').textContent = `${monthNum}월 대성(시온)`;
     document.getElementById('hyodon-payment-label').textContent = `${monthNum}월 효돈농협`;
-    document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배 결제금액`;
+    document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배`;
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
     const [settlements, prepayments] = await Promise.all([
@@ -418,36 +417,45 @@ async function renderSettlementCalendar() {
         }
     });
 
-    // 결제예정금액 = 대성 + 효돈 + CJ
-    const expectedPayment = daesungPayment + hyodonPayment + cjPayment;
-    document.getElementById('expected-payment').textContent = `${expectedPayment.toLocaleString()} 원`;
-    document.getElementById('daesung-payment').textContent = `${daesungPayment.toLocaleString()} 원`;
-    document.getElementById('hyodon-payment').textContent = `${hyodonPayment.toLocaleString()} 원`;
     document.getElementById('cj-payment').textContent = `${cjPayment.toLocaleString()} 원`;
 
-    // 선결제 잔액 조회 + 총결제금액 계산
-    let totalPrepayDeduction = 0;
+    // 선결제 잔액 조회 → 대성/효돈 카드에 선결제 차감 표시
+    let daesungPrepay = 0, hyodonPrepay = 0;
     try {
         const balances = await api('/api/prepayments/balance');
         balances.forEach(b => {
-            const thisMonthAmount = b.partner === '대성(시온)' ? daesungPayment : hyodonPayment;
-            const balanceBefore = b.balance + thisMonthAmount;
-            const covered = Math.min(thisMonthAmount, Math.max(0, balanceBefore));
-            totalPrepayDeduction += covered;
-
-            if (b.partner === '대성(시온)') {
-                document.getElementById('daesung-prepay').textContent = `${b.balance.toLocaleString()} 원`;
-            } else if (b.partner === '효돈농협') {
-                document.getElementById('hyodon-prepay').textContent = `${b.balance.toLocaleString()} 원`;
-            }
+            if (b.partner === '대성(시온)') daesungPrepay = b.prepaidTotal || 0;
+            else if (b.partner === '효돈농협') hyodonPrepay = b.prepaidTotal || 0;
         });
     } catch (err) {
         console.error('선결제 잔액 로드 오류:', err);
     }
 
-    // 총결제금액 = 결제예정 - 선결제 차감분
-    const actualPayment = expectedPayment - totalPrepayDeduction;
-    document.getElementById('total-payment').textContent = `${actualPayment.toLocaleString()} 원`;
+    // 대성 카드: 정산 - 선결제
+    const daesungNet = daesungPayment - daesungPrepay;
+    document.getElementById('daesung-payment').textContent = `${daesungNet.toLocaleString()} 원`;
+    const daesungPrepayLine = document.getElementById('daesung-prepay-line');
+    if (daesungPrepay > 0) {
+        daesungPrepayLine.textContent = `선결제 -${daesungPrepay.toLocaleString()}원`;
+        daesungPrepayLine.style.display = '';
+    } else {
+        daesungPrepayLine.style.display = 'none';
+    }
+
+    // 효돈 카드: 정산 - 선결제
+    const hyodonNet = hyodonPayment - hyodonPrepay;
+    document.getElementById('hyodon-payment').textContent = `${hyodonNet.toLocaleString()} 원`;
+    const hyodonPrepayLine = document.getElementById('hyodon-prepay-line');
+    if (hyodonPrepay > 0) {
+        hyodonPrepayLine.textContent = `선결제 -${hyodonPrepay.toLocaleString()}원`;
+        hyodonPrepayLine.style.display = '';
+    } else {
+        hyodonPrepayLine.style.display = 'none';
+    }
+
+    // 결제예정금액 = (대성-선결제) + (효돈-선결제) + CJ
+    const expectedPayment = daesungNet + hyodonNet + cjPayment;
+    document.getElementById('expected-payment').textContent = `${expectedPayment.toLocaleString()} 원`;
 
     // 달력용 선결제 내역 (해당 월)
     const dailyPrepayments = {};

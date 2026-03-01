@@ -317,6 +317,10 @@ body {
     margin-bottom: 24px;
 }
 
+.stats-grid.stats-grid-4 {
+    grid-template-columns: repeat(4, 1fr);
+}
+
 .stat-card {
     background: #fff;
     border: 1px solid var(--border);
@@ -473,18 +477,23 @@ body {
     border-top-color: #3b82f6;
 }
 
-.stat-card.total {
-    border-top-color: #059669;
-    background: #f0fdf4;
+.stat-card.daesung {
+    border-top-color: #f59e0b;
 }
 
-.stat-card.total .stat-value {
-    color: #059669;
-    font-weight: 700;
+.stat-card.hyodon {
+    border-top-color: #10b981;
 }
 
-.stat-card.prepayment {
-    border-top-color: #8b5cf6;
+.stat-card.cj {
+    border-top-color: #ef4444;
+}
+
+.stat-sub {
+    font-size: 12px;
+    color: #8b5cf6;
+    margin-top: 4px;
+    font-weight: 500;
 }
 
 .btn-auto-calc {
