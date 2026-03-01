@@ -1986,12 +1986,28 @@ window.deleteLunchMenu = deleteLunchMenu;
 
 let aiCurrentConvId = null;
 
+function showAIChatEmpty() {
+    const container = document.getElementById('ai-chat-messages');
+    container.innerHTML = `
+        <div class="ai-chat-empty">
+            <div style="font-size:48px; margin-bottom:16px;">🤖</div>
+            <p>새 대화를 시작하거나 기존 대화를 선택하세요</p>
+            <p style="font-size:13px; color:#999; margin-top:8px;">마케팅 문구, 홍보 콘텐츠 등을 요청해보세요</p>
+        </div>
+    `;
+    document.getElementById('ai-input-area').style.display = 'none';
+}
+
 async function renderAIWorkspace() {
     try {
         const convs = await api('/api/ai/conversations');
         const listEl = document.getElementById('ai-conv-list');
         if (!convs || convs.length === 0) {
             listEl.innerHTML = '<p style="color:#adb5bd; font-size:13px; text-align:center; padding:20px 0;">대화가 없습니다</p>';
+            if (aiCurrentConvId) {
+                aiCurrentConvId = null;
+                showAIChatEmpty();
+            }
         } else {
             listEl.innerHTML = convs.map(c => `
                 <div class="ai-conv-item ${aiCurrentConvId === c.id ? 'active' : ''}" onclick="loadConversation(${c.id})">
@@ -1999,9 +2015,6 @@ async function renderAIWorkspace() {
                     <button class="ai-conv-item-delete" onclick="event.stopPropagation(); deleteConversation(${c.id})" title="삭제">&times;</button>
                 </div>
             `).join('');
-        }
-        if (aiCurrentConvId) {
-            loadConversation(aiCurrentConvId);
         }
     } catch (err) {
         console.error('AI 작업방 로드 오류:', err);
@@ -2012,9 +2025,8 @@ async function createNewConversation() {
     try {
         const conv = await api('/api/ai/conversations', 'POST');
         aiCurrentConvId = conv.id;
-        document.getElementById('ai-chat-empty').style.display = 'none';
-        document.getElementById('ai-input-area').style.display = '';
         document.getElementById('ai-chat-messages').innerHTML = '';
+        document.getElementById('ai-input-area').style.display = '';
         document.getElementById('ai-message-input').value = '';
         document.getElementById('ai-message-input').focus();
         await renderAIWorkspace();
@@ -2028,16 +2040,11 @@ async function loadConversation(id) {
     try {
         aiCurrentConvId = id;
         const data = await api(`/api/ai/conversations/${id}`);
-        document.getElementById('ai-chat-empty').style.display = 'none';
         document.getElementById('ai-input-area').style.display = '';
         renderAIMessages(data.messages);
 
         // 대화 목록에서 active 표시 업데이트
-        document.querySelectorAll('.ai-conv-item').forEach(el => {
-            el.classList.toggle('active', el.onclick.toString().includes(String(id)));
-        });
-        const listEl = document.getElementById('ai-conv-list');
-        listEl.querySelectorAll('.ai-conv-item').forEach(el => {
+        document.getElementById('ai-conv-list').querySelectorAll('.ai-conv-item').forEach(el => {
             const isActive = el.getAttribute('onclick')?.includes(`(${id})`);
             el.classList.toggle('active', isActive);
         });
@@ -2143,14 +2150,7 @@ async function deleteConversation(id) {
         await api(`/api/ai/conversations/${id}`, 'DELETE');
         if (aiCurrentConvId === id) {
             aiCurrentConvId = null;
-            document.getElementById('ai-chat-messages').innerHTML = `
-                <div class="ai-chat-empty" id="ai-chat-empty">
-                    <div style="font-size:48px; margin-bottom:16px;">🤖</div>
-                    <p>새 대화를 시작하거나 기존 대화를 선택하세요</p>
-                    <p style="font-size:13px; color:#999; margin-top:8px;">마케팅 문구, 홍보 콘텐츠 등을 요청해보세요</p>
-                </div>
-            `;
-            document.getElementById('ai-input-area').style.display = 'none';
+            showAIChatEmpty();
         }
         await renderAIWorkspace();
     } catch (err) {
