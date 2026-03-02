@@ -1917,7 +1917,7 @@ function matchProduct(rawText) {
     const w = parseInt(wm[1]);
     const wStr = w + 'kg';
 
-    if (/3종세트/.test(t)) return '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 ' + wStr + '(3종세트)';
+    if (/3종세트|레드향.*한라봉.*천혜향|한라봉.*천혜향.*레드향|선물세트/.test(t)) return '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 ' + wStr + '(3종세트)';
     if (/레몬/.test(t)) {
         if (/못난이/.test(t)) return '과수 및 크기: 제주 못난이 레몬' + wStr + '(랜덤과)';
         return '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
