@@ -2592,22 +2592,81 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// === 이미지 첨부 관련 ===
+let aiAttachedImage = null; // { base64, mimeType, name }
+
+function handleImageAttach(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    processAttachedFile(file);
+    event.target.value = '';
+}
+window.handleImageAttach = handleImageAttach;
+
+function processAttachedFile(file) {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+        alert('지원하지 않는 이미지 형식입니다.\n(jpg, png, gif, webp만 가능)');
+        return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+        alert('파일 크기가 10MB를 초과합니다.');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const base64Full = e.target.result;
+        const base64Data = base64Full.split(',')[1];
+        aiAttachedImage = { base64: base64Data, mimeType: file.type, name: file.name };
+
+        const preview = document.getElementById('ai-image-preview');
+        const previewImg = document.getElementById('ai-preview-img');
+        previewImg.src = base64Full;
+        preview.style.display = 'flex';
+    };
+    reader.readAsDataURL(file);
+}
+
+function removeAttachedImage() {
+    aiAttachedImage = null;
+    const preview = document.getElementById('ai-image-preview');
+    if (preview) preview.style.display = 'none';
+    document.getElementById('ai-file-input').value = '';
+}
+window.removeAttachedImage = removeAttachedImage;
+
 async function sendAIMessage() {
     const input = document.getElementById('ai-message-input');
     const sendBtn = document.getElementById('ai-send-btn');
     const message = input.value.trim();
-    if (!message || !aiCurrentConvId) return;
+    const hasImage = !!aiAttachedImage;
+    if (!message && !hasImage) return;
+    if (!aiCurrentConvId) return;
+
+    const displayMessage = hasImage ? `📎 ${message || '이미지 분석 요청'}` : message;
+    const imageForSend = hasImage ? { ...aiAttachedImage } : null;
 
     // 사용자 메시지 즉시 표시
     const container = document.getElementById('ai-chat-messages');
+    let userBubble = '';
+    if (hasImage) {
+        userBubble = `<div class="ai-message-bubble">
+            <img src="data:${imageForSend.mimeType};base64,${imageForSend.base64}" alt="첨부 이미지" style="max-width:200px; max-height:150px; border-radius:8px; display:block; margin-bottom:6px;">
+            ${message ? escapeHtml(message) : '<span style="color:#868e96;">이미지 분석 요청</span>'}
+        </div>`;
+    } else {
+        userBubble = `<div class="ai-message-bubble">${escapeHtml(message)}</div>`;
+    }
     container.innerHTML += `
         <div class="ai-message user">
             <div class="ai-message-sender">나</div>
-            <div class="ai-message-bubble">${escapeHtml(message)}</div>
+            ${userBubble}
         </div>
     `;
     input.value = '';
     input.style.height = 'auto';
+    removeAttachedImage();
 
     // 로딩 표시
     container.innerHTML += `
@@ -2615,6 +2674,7 @@ async function sendAIMessage() {
             <div class="ai-typing-dot"></div>
             <div class="ai-typing-dot"></div>
             <div class="ai-typing-dot"></div>
+            ${hasImage ? '<span style="margin-left:8px; font-size:12px; color:#868e96;">이미지 분석 중...</span>' : ''}
         </div>
     `;
     container.scrollTop = container.scrollHeight;
@@ -2623,10 +2683,12 @@ async function sendAIMessage() {
     input.disabled = true;
 
     try {
-        const data = await api('/api/ai/chat', 'POST', {
-            conversationId: aiCurrentConvId,
-            message: message
-        });
+        const body = { conversationId: aiCurrentConvId, message: message || '' };
+        if (imageForSend) {
+            body.image = imageForSend.base64;
+            body.imageMimeType = imageForSend.mimeType;
+        }
+        const data = await api('/api/ai/chat', 'POST', body);
 
         // 로딩 제거
         const typing = document.getElementById('ai-typing-indicator');
@@ -2747,7 +2809,7 @@ async function deleteConversation(id) {
 }
 window.deleteConversation = deleteConversation;
 
-// Enter 키로 전송 (Shift+Enter는 줄바꿈)
+// Enter 키로 전송 (Shift+Enter는 줄바꿈) + 드래그 앤 드롭
 document.addEventListener('DOMContentLoaded', () => {
     const aiInput = document.getElementById('ai-message-input');
     if (aiInput) {
@@ -2760,6 +2822,37 @@ document.addEventListener('DOMContentLoaded', () => {
         aiInput.addEventListener('input', () => {
             aiInput.style.height = 'auto';
             aiInput.style.height = Math.min(aiInput.scrollHeight, 120) + 'px';
+        });
+    }
+
+    // 드래그 앤 드롭 이미지 첨부
+    const chatMessages = document.getElementById('ai-chat-messages');
+    if (chatMessages) {
+        let dragCounter = 0;
+        chatMessages.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            dragCounter++;
+            chatMessages.classList.add('drag-over');
+        });
+        chatMessages.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter <= 0) {
+                dragCounter = 0;
+                chatMessages.classList.remove('drag-over');
+            }
+        });
+        chatMessages.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+        chatMessages.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dragCounter = 0;
+            chatMessages.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) {
+                processAttachedFile(file);
+            }
         });
     }
 });

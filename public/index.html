@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=27">
+    <link rel="stylesheet" href="styles.css?v=28">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -709,7 +709,13 @@
                             </div>
                         </div>
                         <div class="ai-input-area" id="ai-input-area" style="display:none;">
+                            <div class="ai-image-preview" id="ai-image-preview" style="display:none;">
+                                <img id="ai-preview-img" src="" alt="미리보기">
+                                <button class="ai-preview-remove" onclick="removeAttachedImage()" title="이미지 제거">&times;</button>
+                            </div>
                             <div class="ai-input-row">
+                                <button class="ai-attach-btn" id="ai-attach-btn" onclick="document.getElementById('ai-file-input').click()" title="이미지 첨부">📎</button>
+                                <input type="file" id="ai-file-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;" onchange="handleImageAttach(event)">
                                 <textarea id="ai-message-input" class="ai-message-input" placeholder="메시지를 입력하세요..." rows="1"></textarea>
                                 <button class="ai-send-btn" id="ai-send-btn" onclick="sendAIMessage()">전송</button>
                                 <button class="ai-image-btn" id="ai-image-btn" onclick="sendAIImage()">🎨 이미지</button>
@@ -757,6 +763,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=43"></script>
+    <script src="app.js?v=44"></script>
 </body>
 </html>

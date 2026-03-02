@@ -24,7 +24,7 @@ if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost'))
 }
 const pool = new Pool(dbConfig);
 
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // === JWT 인증 미들웨어 ===
@@ -1182,8 +1182,11 @@ app.delete('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
 
 app.post('/api/ai/chat', authMiddleware, async (req, res) => {
     try {
-        const { conversationId, message } = req.body;
-        if (!conversationId || !message) return res.status(400).json({ error: '대화 ID와 메시지는 필수입니다' });
+        const { conversationId, message, image, imageMimeType } = req.body;
+        if (!conversationId) return res.status(400).json({ error: '대화 ID는 필수입니다' });
+        if (!message && !image) return res.status(400).json({ error: '메시지 또는 이미지는 필수입니다' });
+
+        const userMessage = message || '이 이미지를 분석해주세요';
 
         // 대화 소유권 확인
         const conv = await pool.query(
@@ -1195,35 +1198,66 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
         // 사용자 메시지 저장
         await pool.query(
             'INSERT INTO ai_messages (conversation_id, role, content) VALUES ($1, $2, $3)',
-            [conversationId, 'user', message]
-        );
-
-        // 기존 메시지 히스토리 로드 (텍스트만 - 이미지 JSON은 Claude에 전달하지 않음)
-        const history = await pool.query(
-            "SELECT role, content FROM ai_messages WHERE conversation_id = $1 AND message_type = 'text' ORDER BY created_at ASC",
-            [conversationId]
+            [conversationId, 'user', image ? `📎 ${userMessage}` : userMessage]
         );
 
         // 첫 메시지면 대화 제목 업데이트
-        if (history.rows.length === 1) {
-            const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
+        const msgCount = await pool.query('SELECT COUNT(*) FROM ai_messages WHERE conversation_id = $1', [conversationId]);
+        if (parseInt(msgCount.rows[0].count) === 1) {
+            const prefix = image ? '📎 ' : '';
+            const title = prefix + (userMessage.length > 27 ? userMessage.substring(0, 27) + '...' : userMessage);
             await pool.query('UPDATE ai_conversations SET title = $1 WHERE id = $2', [title, conversationId]);
         }
 
-        // Claude API 호출
-        if (!process.env.ANTHROPIC_API_KEY) {
-            return res.status(500).json({ error: 'ANTHROPIC_API_KEY가 설정되지 않았습니다' });
+        let assistantContent;
+
+        if (image) {
+            // 이미지 포함 → Gemini API 사용
+            if (!process.env.GEMINI_API_KEY) {
+                return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다' });
+            }
+
+            const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+            const response = await genai.models.generateContent({
+                model: 'gemini-2.0-flash',
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { inlineData: { mimeType: imageMimeType || 'image/jpeg', data: image } },
+                        { text: userMessage }
+                    ]
+                }]
+            });
+
+            // Gemini 응답에서 텍스트 추출
+            if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+                const parts = response.candidates[0].content.parts || [];
+                assistantContent = parts.filter(p => p.text).map(p => p.text).join('\n') || 'AI가 응답을 생성하지 못했습니다.';
+            } else {
+                assistantContent = 'AI가 응답을 생성하지 못했습니다.';
+            }
+        } else {
+            // 텍스트만 → 기존 Claude API 사용
+            if (!process.env.ANTHROPIC_API_KEY) {
+                return res.status(500).json({ error: 'ANTHROPIC_API_KEY가 설정되지 않았습니다' });
+            }
+
+            // 기존 메시지 히스토리 로드 (텍스트만)
+            const history = await pool.query(
+                "SELECT role, content FROM ai_messages WHERE conversation_id = $1 AND message_type = 'text' ORDER BY created_at ASC",
+                [conversationId]
+            );
+
+            const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+            const aiResponse = await anthropic.messages.create({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 2048,
+                system: AI_SYSTEM_PROMPT,
+                messages: history.rows.map(m => ({ role: m.role, content: m.content }))
+            });
+
+            assistantContent = aiResponse.content[0].text;
         }
-
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const aiResponse = await anthropic.messages.create({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 2048,
-            system: AI_SYSTEM_PROMPT,
-            messages: history.rows.map(m => ({ role: m.role, content: m.content }))
-        });
-
-        const assistantContent = aiResponse.content[0].text;
 
         // AI 응답 저장
         await pool.query(
@@ -1234,7 +1268,8 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
         res.json({ reply: assistantContent });
     } catch (err) {
         console.error('AI 채팅 오류:', err);
-        res.status(500).json({ error: 'AI 응답 생성 중 오류가 발생했습니다' });
+        const errorMessage = err?.message || 'AI 응답 생성 중 오류가 발생했습니다';
+        res.status(500).json({ error: '이미지 분석 중 오류가 발생했습니다. 다시 시도해주세요.' });
     }
 });
 
