@@ -2730,15 +2730,29 @@ async function sendAIImage() {
     const prompt = input.value.trim();
     if (!prompt || !aiCurrentConvId) return;
 
+    const hasImage = !!aiAttachedImage;
+    const imageForSend = hasImage ? { ...aiAttachedImage } : null;
+
+    // 사용자 메시지 표시
     const container = document.getElementById('ai-chat-messages');
+    let userBubble = '';
+    if (hasImage) {
+        userBubble = `<div class="ai-message-bubble">
+            <img src="data:${imageForSend.mimeType};base64,${imageForSend.base64}" alt="참고 이미지" style="max-width:200px; max-height:150px; border-radius:8px; display:block; margin-bottom:6px;">
+            🎨 ${escapeHtml(prompt)}
+        </div>`;
+    } else {
+        userBubble = `<div class="ai-message-bubble">🎨 ${escapeHtml(prompt)}</div>`;
+    }
     container.innerHTML += `
         <div class="ai-message user">
             <div class="ai-message-sender">나</div>
-            <div class="ai-message-bubble">🎨 ${escapeHtml(prompt)}</div>
+            ${userBubble}
         </div>
     `;
     input.value = '';
     input.style.height = 'auto';
+    removeAttachedImage();
 
     container.innerHTML += `
         <div class="ai-typing" id="ai-typing-indicator">
@@ -2755,10 +2769,12 @@ async function sendAIImage() {
     input.disabled = true;
 
     try {
-        const data = await api('/api/ai/image', 'POST', {
-            conversationId: aiCurrentConvId,
-            prompt: prompt
-        });
+        const body = { conversationId: aiCurrentConvId, prompt: prompt };
+        if (imageForSend) {
+            body.referenceImage = imageForSend.base64;
+            body.referenceImageMimeType = imageForSend.mimeType;
+        }
+        const data = await api('/api/ai/image', 'POST', body);
 
         const typing = document.getElementById('ai-typing-indicator');
         if (typing) typing.remove();

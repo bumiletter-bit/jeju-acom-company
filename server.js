@@ -1276,7 +1276,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 // === AI 이미지 생성 (Gemini) ===
 app.post('/api/ai/image', authMiddleware, async (req, res) => {
     try {
-        const { conversationId, prompt } = req.body;
+        const { conversationId, prompt, referenceImage, referenceImageMimeType } = req.body;
         if (!conversationId || !prompt) return res.status(400).json({ error: '대화 ID와 프롬프트는 필수입니다' });
 
         const conv = await pool.query(
@@ -1286,9 +1286,10 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
 
         // 사용자 메시지 저장
+        const saveMsg = referenceImage ? `📎🎨 ${prompt}` : prompt;
         await pool.query(
             "INSERT INTO ai_messages (conversation_id, role, content, message_type) VALUES ($1, 'user', $2, 'text')",
-            [conversationId, prompt]
+            [conversationId, saveMsg]
         );
 
         // 첫 메시지면 대화 제목 업데이트
@@ -1304,12 +1305,19 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
 
         const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+        // Gemini에 보낼 contents 구성
+        const parts = [];
+        if (referenceImage) {
+            parts.push({ inlineData: { mimeType: referenceImageMimeType || 'image/jpeg', data: referenceImage } });
+        }
+        parts.push({ text: prompt });
+
         // Gemini 이미지 생성 함수 (재시도 로직 포함)
         const generateImage = async (retryCount = 0) => {
             try {
                 return await genai.models.generateContent({
                     model: 'gemini-2.0-flash-exp-image-generation',
-                    contents: prompt,
+                    contents: [{ role: 'user', parts }],
                     config: {
                         responseModalities: ['Text', 'Image']
                     }
