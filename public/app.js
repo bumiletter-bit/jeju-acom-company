@@ -100,6 +100,13 @@ function updateUserUI() {
 
     const userCard = document.getElementById('user-management-card');
     if (userCard) userCard.style.display = currentUser.role === 'admin' ? '' : 'none';
+
+    // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리)
+    const adminOnlyPages = ['settlement', 'pricing', 'data'];
+    adminOnlyPages.forEach(page => {
+        const navEl = document.querySelector(`.nav-item[data-page="${page}"]`);
+        if (navEl) navEl.style.display = currentUser.role === 'admin' ? '' : 'none';
+    });
 }
 
 document.getElementById('btn-logout').addEventListener('click', () => {
@@ -141,6 +148,12 @@ navItems.forEach(item => {
 });
 
 function switchPage(pageName) {
+    // 관리자 전용 페이지 접근 차단
+    const adminOnlyPages = ['settlement', 'pricing', 'data'];
+    if (adminOnlyPages.includes(pageName) && currentUser?.role !== 'admin') {
+        pageName = 'schedule';
+    }
+
     navItems.forEach(n => n.classList.remove('active'));
     pages.forEach(p => p.classList.remove('active'));
 

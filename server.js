@@ -704,7 +704,7 @@ app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
 
 // === Settlements API (인증 추가) ===
 
-app.get('/api/settlements', authMiddleware, async (req, res) => {
+app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { month } = req.query;
         let result;
@@ -726,7 +726,7 @@ app.get('/api/settlements', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/settlements', authMiddleware, async (req, res) => {
+app.post('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { date, partner, amount, items, fromPricing } = req.body;
         const result = await pool.query(
@@ -743,7 +743,7 @@ app.post('/api/settlements', authMiddleware, async (req, res) => {
     }
 });
 
-app.delete('/api/settlements/:id', authMiddleware, async (req, res) => {
+app.delete('/api/settlements/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         await pool.query('DELETE FROM settlements WHERE id = $1', [req.params.id]);
         res.json({ success: true });
@@ -753,7 +753,7 @@ app.delete('/api/settlements/:id', authMiddleware, async (req, res) => {
 });
 
 // CJ 자동계산: 해당 날짜 대성+효돈 박스수 합산
-app.get('/api/settlements/box-count', authMiddleware, async (req, res) => {
+app.get('/api/settlements/box-count', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { date } = req.query;
         if (!date) return res.status(400).json({ error: '날짜를 지정해주세요' });
@@ -854,7 +854,7 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
 
 // === Product Mappings API (품목 매칭 기억) ===
 
-app.get('/api/product-mappings', authMiddleware, async (req, res) => {
+app.get('/api/product-mappings', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { partner } = req.query;
         let result;
@@ -871,7 +871,7 @@ app.get('/api/product-mappings', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/product-mappings', authMiddleware, async (req, res) => {
+app.post('/api/product-mappings', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { salesName, pricingName, partner } = req.body;
         if (!salesName || !pricingName || !partner) return res.status(400).json({ error: '필수 항목을 입력해주세요' });
@@ -889,7 +889,7 @@ app.post('/api/product-mappings', authMiddleware, async (req, res) => {
     }
 });
 
-app.delete('/api/product-mappings/:id', authMiddleware, async (req, res) => {
+app.delete('/api/product-mappings/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         await pool.query('DELETE FROM product_mappings WHERE id = $1', [req.params.id]);
         res.json({ success: true });
@@ -900,7 +900,7 @@ app.delete('/api/product-mappings/:id', authMiddleware, async (req, res) => {
 
 // === Settlement Completions API (주간 정산 완료) ===
 
-app.get('/api/settlement-completions', authMiddleware, async (req, res) => {
+app.get('/api/settlement-completions', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { month } = req.query;
         let result;
@@ -956,7 +956,7 @@ app.delete('/api/settlement-completions/:id', authMiddleware, adminOnly, async (
 
 // === Pricing API (인증 추가) ===
 
-app.get('/api/pricing', authMiddleware, async (req, res) => {
+app.get('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM pricing ORDER BY start_date DESC, id DESC');
         const data = result.rows.map(row => ({
@@ -969,7 +969,7 @@ app.get('/api/pricing', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/pricing', authMiddleware, async (req, res) => {
+app.post('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { startDate, endDate, partner, items } = req.body;
         const result = await pool.query(
@@ -996,7 +996,7 @@ app.post('/api/pricing', authMiddleware, async (req, res) => {
     }
 });
 
-app.delete('/api/pricing/:id', authMiddleware, async (req, res) => {
+app.delete('/api/pricing/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         await pool.query('DELETE FROM pricing WHERE id = $1', [req.params.id]);
         res.json({ success: true });
