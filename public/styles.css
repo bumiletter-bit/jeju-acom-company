@@ -427,7 +427,7 @@ body {
     font-weight: 600;
     color: #666;
     text-align: center;
-    border-bottom: 1px solid #e8e8e8;
+    border: 1px solid #e0e0e0;
 }
 
 .calendar-table th.sun { color: var(--danger); }
@@ -441,7 +441,7 @@ body {
     vertical-align: top;
     min-height: 120px;
     height: 120px;
-    border-bottom: 1px solid #f0f0f0;
+    border: 1px solid #e0e0e0;
 }
 
 .calendar-table td.sun { color: var(--danger); }
