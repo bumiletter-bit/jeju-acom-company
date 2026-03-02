@@ -1269,7 +1269,7 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
 
         const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const response = await genai.models.generateContent({
-            model: 'gemini-2.0-flash-exp',
+            model: 'gemini-2.0-flash-exp-image-generation',
             contents: prompt,
             config: {
                 responseModalities: ['Text', 'Image']
