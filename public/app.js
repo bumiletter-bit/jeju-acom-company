@@ -1385,10 +1385,63 @@ function updateDocForm() {
     document.getElementById('doc-list-title').textContent = typeLabels[currentDocType] + ' 목록';
 }
 
-function updateDocEndDateVisibility() {
-    const showEndDate = currentDocType === 'vacation' && selectedDocSubType === '연차';
-    document.getElementById('doc-end-date-group').style.display = showEndDate ? '' : 'none';
+function resetDocForm() {
+    document.getElementById('doc-start-date').value = '';
+    document.getElementById('doc-end-date').value = '';
+    document.getElementById('doc-reason').value = '';
+    document.getElementById('doc-approver').value = '';
+    const startTime = document.getElementById('doc-start-time');
+    const endTime = document.getElementById('doc-end-time');
+    if (startTime) startTime.value = '';
+    if (endTime) endTime.value = '';
+    const hoursDisplay = document.getElementById('doc-time-hours');
+    if (hoursDisplay) hoursDisplay.textContent = '';
+    updateDocForm();
 }
+window.resetDocForm = resetDocForm;
+
+function updateDocEndDateVisibility() {
+    const isTime = currentDocType === 'vacation' && selectedDocSubType === '시간차';
+    const showEndDate = currentDocType === 'vacation' && (selectedDocSubType === '연차' || selectedDocSubType === '병가' || selectedDocSubType === '시간차');
+    document.getElementById('doc-end-date-group').style.display = showEndDate ? '' : 'none';
+    document.getElementById('doc-start-time-group').style.display = isTime ? '' : 'none';
+    document.getElementById('doc-end-time-group').style.display = isTime ? '' : 'none';
+    document.getElementById('doc-time-hours-group').style.display = isTime ? '' : 'none';
+    if (isTime) initTimeSelects();
+}
+
+function initTimeSelects() {
+    const startSel = document.getElementById('doc-start-time');
+    const endSel = document.getElementById('doc-end-time');
+    if (startSel.options.length > 1) return;
+    const options = ['<option value="">선택</option>'];
+    for (let h = 8; h <= 18; h++) {
+        for (let m = 0; m < 60; m += 30) {
+            if (h === 18 && m > 0) break;
+            const t = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+            options.push(`<option value="${t}">${t}</option>`);
+        }
+    }
+    startSel.innerHTML = options.join('');
+    endSel.innerHTML = options.join('');
+}
+
+function calcTimeLeave() {
+    const startDate = document.getElementById('doc-start-date').value;
+    const endDate = document.getElementById('doc-end-date').value;
+    const startTime = document.getElementById('doc-start-time').value;
+    const endTime = document.getElementById('doc-end-time').value;
+    const display = document.getElementById('doc-time-hours');
+    if (!startTime || !endTime || !startDate) { display.textContent = ''; return; }
+    const sd = endDate || startDate;
+    const s = new Date(`${startDate}T${startTime}`);
+    const e = new Date(`${sd}T${endTime}`);
+    const hours = (e - s) / (1000 * 60 * 60);
+    if (hours <= 0) { display.textContent = '시간을 확인해주세요'; return; }
+    const days = Math.round(hours / 8 * 10) / 10;
+    display.textContent = `사용시간: ${hours}시간 (연차 ${days}일 차감)`;
+}
+window.calcTimeLeave = calcTimeLeave;
 
 // 서류 하위 유형 선택
 ['vacation', 'attendance', 'reason'].forEach(type => {
@@ -1426,14 +1479,27 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
     if (!startDate) return alert('날짜를 선택해주세요.');
     if (!approverId) return alert('결재자를 선택해주세요.');
 
+    const isTime = currentDocType === 'vacation' && selectedDocSubType === '시간차';
+    const hasEndDate = currentDocType === 'vacation' && (selectedDocSubType === '연차' || selectedDocSubType === '병가' || selectedDocSubType === '시간차');
+
+    if (isTime) {
+        const st = document.getElementById('doc-start-time').value;
+        const et = document.getElementById('doc-end-time').value;
+        if (!st || !et) return alert('시작시간과 종료시간을 선택해주세요.');
+    }
+
     const body = {
         type: currentDocType,
         subType: selectedDocSubType,
         approverId: Number(approverId),
         startDate,
-        endDate: (currentDocType === 'vacation' && selectedDocSubType === '연차') ? endDate || startDate : startDate,
+        endDate: hasEndDate ? endDate || startDate : startDate,
         reason
     };
+    if (isTime) {
+        body.startTime = document.getElementById('doc-start-time').value;
+        body.endTime = document.getElementById('doc-end-time').value;
+    }
 
     try {
         await api('/api/documents', 'POST', body);
@@ -1442,6 +1508,11 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
         document.getElementById('doc-start-date').value = '';
         document.getElementById('doc-end-date').value = '';
         document.getElementById('doc-reason').value = '';
+        if (isTime) {
+            document.getElementById('doc-start-time').value = '';
+            document.getElementById('doc-end-time').value = '';
+            document.getElementById('doc-time-hours').textContent = '';
+        }
 
         const me = await api('/api/auth/me');
         currentUser = me;
@@ -1471,7 +1542,10 @@ async function renderDocList() {
         tbody.innerHTML = docs.map(d => {
             const statusClass = d.status === 'approved' ? 'status-approved' : d.status === 'rejected' ? 'status-rejected' : 'status-pending';
             const statusLabel = d.status === 'approved' ? '승인' : d.status === 'rejected' ? '반려' : '대기중';
-            const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            let dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            if (d.subType === '시간차' && d.startTime && d.endTime) {
+                dateStr += ` (${d.startTime}~${d.endTime})`;
+            }
 
             const isMine = d.applicantId === currentUser?.id;
             // 수정: 대기중/반려 → 본인, 승인 → 관리자
@@ -1568,13 +1642,13 @@ async function showEditDocModal(doc) {
     const approverOptions = approvers.map(a => `<option value="${a.id}" ${a.id === doc.approverId ? 'selected' : ''}>${a.position ? a.position + ' ' : ''}${a.name}</option>`).join('');
 
     const typeMap = {
-        vacation: { label: '휴가종류', options: ['연차','반차','병가'] },
+        vacation: { label: '휴가종류', options: ['연차','시간차','병가'] },
         attendance: { label: '종류', options: ['휴직','예비군','병가','기타'] },
         reason: { label: '종류', options: ['지각','미출근','조퇴','기타'] }
     };
     const typeInfo = typeMap[doc.type] || { label: '종류', options: [doc.subType] };
 
-    const showEndDate = doc.type === 'vacation' && doc.subType === '연차';
+    const showEndDate = doc.type === 'vacation' && (doc.subType === '연차' || doc.subType === '병가' || doc.subType === '시간차');
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -1632,7 +1706,8 @@ function updateEditEndDateVisibility() {
     const activeBtn = document.querySelector('#edit-doc-subtype-group .btn-toggle.active');
     const endGroup = document.getElementById('edit-doc-end-group');
     if (activeBtn && endGroup) {
-        endGroup.style.display = activeBtn.dataset.value === '연차' ? '' : 'none';
+        const val = activeBtn.dataset.value;
+        endGroup.style.display = (val === '연차' || val === '병가' || val === '시간차') ? '' : 'none';
     }
 }
 
@@ -2259,6 +2334,23 @@ async function deleteLunchMenu(id) {
     }
 }
 window.deleteLunchMenu = deleteLunchMenu;
+
+async function resetLunchVotes() {
+    if (!confirm('오늘의 투표 결과를 초기화하시겠습니까?')) return;
+    try {
+        await api('/api/lunch/today', 'DELETE');
+        lunchSession = null;
+        lunchVotes = [];
+        lunchMyVote = null;
+        document.getElementById('lunch-random-result').style.display = 'none';
+        document.getElementById('lunch-random-empty').style.display = '';
+        renderLunchVoteGrid();
+        renderLunchVoteResult([]);
+    } catch (err) {
+        alert(err.message || '초기화 실패');
+    }
+}
+window.resetLunchVotes = resetLunchVotes;
 
 // =============================================
 // 선결제 관리

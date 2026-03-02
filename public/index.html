@@ -176,7 +176,7 @@
                         <label>휴가종류</label>
                         <div class="btn-group">
                             <button class="btn-toggle active" data-value="연차">연차</button>
-                            <button class="btn-toggle" data-value="반차">반차</button>
+                            <button class="btn-toggle" data-value="시간차">시간차</button>
                             <button class="btn-toggle" data-value="병가">병가</button>
                         </div>
                     </div>
@@ -209,10 +209,21 @@
                             <label>시작일</label>
                             <input type="date" id="doc-start-date" class="form-input">
                         </div>
+                        <div class="form-group" id="doc-start-time-group" style="display:none;">
+                            <label>시작시간</label>
+                            <select id="doc-start-time" class="form-input" onchange="calcTimeLeave()"></select>
+                        </div>
                         <div class="form-group" id="doc-end-date-group">
                             <label>종료일</label>
                             <input type="date" id="doc-end-date" class="form-input">
                         </div>
+                        <div class="form-group" id="doc-end-time-group" style="display:none;">
+                            <label>종료시간</label>
+                            <select id="doc-end-time" class="form-input" onchange="calcTimeLeave()"></select>
+                        </div>
+                    </div>
+                    <div class="form-group" id="doc-time-hours-group" style="display:none;">
+                        <span id="doc-time-hours" style="font-size:14px; color:var(--primary); font-weight:600;"></span>
                     </div>
 
                     <div class="form-group">
@@ -227,7 +238,10 @@
                         </select>
                     </div>
 
-                    <button class="btn-primary" id="doc-submit">제출</button>
+                    <div style="display:flex; gap:10px;">
+                        <button class="btn-primary" id="doc-submit" style="flex:1;">제출</button>
+                        <button class="btn-outline" onclick="resetDocForm()" style="flex:0 0 auto;">초기화</button>
+                    </div>
                 </div>
 
                 <!-- 서류 목록 -->
@@ -670,6 +684,7 @@
                     <div class="card-header-row">
                         <h2>투표하세요!</h2>
                         <span id="lunch-vote-status" class="lunch-vote-status"></span>
+                        <button class="btn-sm btn-outline" onclick="resetLunchVotes()" style="margin-left:auto; font-size:12px;">초기화</button>
                     </div>
                     <div id="lunch-vote-grid" class="lunch-vote-grid"></div>
                     <div id="lunch-vote-empty" class="placeholder-content" style="padding:30px 20px; display:none;">
@@ -763,6 +778,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=47"></script>
+    <script src="app.js?v=48"></script>
 </body>
 </html>

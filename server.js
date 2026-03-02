@@ -117,6 +117,20 @@ async function initDB() {
         END $$
     `);
 
+    // documents에 start_time, end_time 컬럼 추가 (시간차용)
+    await pool.query(`
+        DO $$ BEGIN
+            ALTER TABLE documents ADD COLUMN start_time VARCHAR(10);
+        EXCEPTION WHEN duplicate_column THEN NULL;
+        END $$
+    `);
+    await pool.query(`
+        DO $$ BEGIN
+            ALTER TABLE documents ADD COLUMN end_time VARCHAR(10);
+        EXCEPTION WHEN duplicate_column THEN NULL;
+        END $$
+    `);
+
     // 점심메뉴 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS lunch_menus (
@@ -471,6 +485,7 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
             applicantId: r.applicant_id, applicantName: r.applicant_name, applicantPosition: r.applicant_position,
             approverId: r.approver_id, approverName: r.approver_name,
             startDate: r.start_date, endDate: r.end_date,
+            startTime: r.start_time, endTime: r.end_time,
             reason: r.reason, status: r.status, deductedLeave: Number(r.deducted_leave),
             createdAt: r.created_at, processedAt: r.processed_at
         })));
@@ -481,7 +496,7 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
 
 app.post('/api/documents', authMiddleware, async (req, res) => {
     try {
-        const { type, subType, approverId, startDate, endDate, reason } = req.body;
+        const { type, subType, approverId, startDate, endDate, reason, startTime, endTime } = req.body;
         if (!type || !subType || !approverId || !startDate) {
             return res.status(400).json({ error: '필수 항목을 입력해주세요' });
         }
@@ -493,8 +508,16 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
                 const start = new Date(startDate);
                 const end = new Date(endDate || startDate);
                 deductedLeave = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
-            } else if (subType === '반차') {
-                deductedLeave = 0.5;
+            } else if (subType === '시간차') {
+                if (startTime && endTime) {
+                    const sd = endDate || startDate;
+                    const s = new Date(`${startDate}T${startTime}`);
+                    const e = new Date(`${sd}T${endTime}`);
+                    const hours = (e - s) / (1000 * 60 * 60);
+                    deductedLeave = Math.round(hours / 8 * 10) / 10;
+                } else {
+                    deductedLeave = 0.5;
+                }
             }
             // 병가는 차감 없음
 
@@ -509,15 +532,19 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
 
         const actualEndDate = endDate || startDate;
         const result = await pool.query(
-            'INSERT INTO documents (type, sub_type, applicant_id, approver_id, start_date, end_date, reason, deducted_leave) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-            [type, subType, req.user.id, approverId, startDate, actualEndDate, reason || '', deductedLeave]
+            'INSERT INTO documents (type, sub_type, applicant_id, approver_id, start_date, end_date, reason, deducted_leave, start_time, end_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+            [type, subType, req.user.id, approverId, startDate, actualEndDate, reason || '', deductedLeave, startTime || null, endTime || null]
         );
         const docId = result.rows[0].id;
 
         // 휴가/근태: 캘린더에 일정 자동 생성
         if (type === 'vacation' || type === 'attendance') {
-            const scheduleTitle = `${subType} - ${req.user.name}`;
-            if (type === 'vacation' && subType === '연차') {
+            let scheduleTitle = `${subType} - ${req.user.name}`;
+            if (subType === '시간차' && startTime && endTime) {
+                scheduleTitle = `시간차(${startTime}~${endTime}) - ${req.user.name}`;
+            }
+            const multiDay = subType === '연차' || subType === '병가' || subType === '시간차';
+            if (type === 'vacation' && multiDay) {
                 const start = new Date(startDate);
                 const end = new Date(actualEndDate);
                 for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -602,12 +629,14 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
             }
         }
 
-        const { subType, startDate, endDate, reason, approverId } = req.body;
+        const { subType, startDate, endDate, reason, approverId, startTime, endTime } = req.body;
         const newSubType = subType || d.sub_type;
         const newStartDate = startDate || d.start_date;
         const newEndDate = endDate || startDate || d.end_date;
         const newReason = reason !== undefined ? reason : d.reason;
         const newApproverId = approverId || d.approver_id;
+        const newStartTime = startTime !== undefined ? startTime : d.start_time;
+        const newEndTime = endTime !== undefined ? endTime : d.end_time;
 
         // 연차 재계산: 기존 차감분 복구 후 새로 차감
         const oldDeducted = Number(d.deducted_leave);
@@ -621,13 +650,20 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
                 const s = new Date(newStartDate);
                 const e = new Date(newEndDate);
                 newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
-            } else if (newSubType === '반차') {
-                newDeducted = 0.5;
+            } else if (newSubType === '시간차') {
+                if (newStartTime && newEndTime) {
+                    const sd = newEndDate || newStartDate;
+                    const s = new Date(`${newStartDate}T${newStartTime}`);
+                    const e = new Date(`${sd}T${newEndTime}`);
+                    const hours = (e - s) / (1000 * 60 * 60);
+                    newDeducted = Math.round(hours / 8 * 10) / 10;
+                } else {
+                    newDeducted = 0.5;
+                }
             }
             if (newDeducted > 0) {
                 const userResult = await pool.query('SELECT annual_leave FROM users WHERE id = $1', [d.applicant_id]);
                 if (Number(userResult.rows[0].annual_leave) < newDeducted) {
-                    // 복구 실패 방지: 원래 차감분 다시 빼기
                     if (d.status !== 'rejected' && oldDeducted > 0) {
                         await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [oldDeducted, d.applicant_id]);
                     }
@@ -641,8 +677,8 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
         const newStatus = d.status === 'rejected' ? 'pending' : d.status;
 
         await pool.query(
-            'UPDATE documents SET sub_type=$1, start_date=$2, end_date=$3, reason=$4, approver_id=$5, deducted_leave=$6, status=$7, processed_at=$8 WHERE id=$9',
-            [newSubType, newStartDate, newEndDate, newReason, newApproverId, newDeducted, newStatus, newStatus === 'pending' ? null : d.processed_at, req.params.id]
+            'UPDATE documents SET sub_type=$1, start_date=$2, end_date=$3, reason=$4, approver_id=$5, deducted_leave=$6, status=$7, processed_at=$8, start_time=$9, end_time=$10 WHERE id=$11',
+            [newSubType, newStartDate, newEndDate, newReason, newApproverId, newDeducted, newStatus, newStatus === 'pending' ? null : d.processed_at, newStartTime || null, newEndTime || null, req.params.id]
         );
 
         // 연동 일정 재생성
@@ -650,8 +686,12 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
         if (d.type === 'vacation' || d.type === 'attendance') {
             const applicant = await pool.query('SELECT name FROM users WHERE id = $1', [d.applicant_id]);
             const userName = applicant.rows[0].name;
-            const scheduleTitle = `${newSubType} - ${userName}`;
-            if (d.type === 'vacation' && newSubType === '연차') {
+            let scheduleTitle = `${newSubType} - ${userName}`;
+            if (newSubType === '시간차' && newStartTime && newEndTime) {
+                scheduleTitle = `시간차(${newStartTime}~${newEndTime}) - ${userName}`;
+            }
+            const multiDay = newSubType === '연차' || newSubType === '병가' || newSubType === '시간차';
+            if (d.type === 'vacation' && multiDay) {
                 const s = new Date(newStartDate);
                 const e = new Date(newEndDate);
                 for (let dd = new Date(s); dd <= e; dd.setDate(dd.getDate() + 1)) {
@@ -1117,6 +1157,21 @@ app.post('/api/lunch/vote', authMiddleware, async (req, res) => {
         );
         const myVote = votes.rows.find(v => v.user_id === req.user.id);
         res.json({ votes: votes.rows, myVote: myVote ? myVote.menu_name : null });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 점심 투표 초기화
+app.delete('/api/lunch/today', authMiddleware, async (req, res) => {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const session = await pool.query('SELECT id FROM lunch_sessions WHERE date = $1', [today]);
+        if (session.rows.length > 0) {
+            await pool.query('DELETE FROM lunch_votes WHERE session_id = $1', [session.rows[0].id]);
+            await pool.query('DELETE FROM lunch_sessions WHERE id = $1', [session.rows[0].id]);
+        }
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
