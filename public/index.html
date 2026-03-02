@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=25">
+    <link rel="stylesheet" href="styles.css?v=26">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -249,13 +249,15 @@
                 <!-- 정산 캘린더 (기존 홈에서 이동) -->
                 <div class="card">
                     <div class="card-header-row">
-                        <h2 id="settlement-calendar-title">2026년 3월</h2>
-                        <button id="settlement-refresh-btn" class="btn-refresh" title="새로고침">
-                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-                            </svg>
-                        </button>
-                        <span id="settlement-refresh-time" class="refresh-time"></span>
+                        <div class="calendar-title-group">
+                            <h2 id="settlement-calendar-title">2026년 3월</h2>
+                            <button id="settlement-refresh-btn" class="btn-refresh" title="새로고침">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                                </svg>
+                            </button>
+                            <span id="settlement-refresh-time" class="refresh-time"></span>
+                        </div>
                         <div class="month-nav">
                             <button id="settlement-prev-month" class="btn-nav">&lt;</button>
                             <button id="settlement-next-month" class="btn-nav">&gt;</button>

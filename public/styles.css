@@ -626,6 +626,12 @@ body {
 
 .card-header-row h2 { margin-bottom: 0; }
 
+.calendar-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 /* ========================================
    Form
    ======================================== */
