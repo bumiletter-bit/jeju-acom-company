@@ -3104,25 +3104,38 @@ function renderWorklogCalendar() {
     body.innerHTML = html;
 }
 
+function parseWorklogContent(content) {
+    try {
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed.morning === 'string') return parsed;
+    } catch (e) {}
+    // 기존 단일 텍스트 호환: 전체를 오전에 넣기
+    return { morning: content || '', afternoon: '' };
+}
+
 function openWorklogModal(dateStr) {
     worklogEditDate = dateStr;
     const [y, m, d] = dateStr.split('-');
     document.getElementById('worklog-modal-date-label').textContent = `${y}년 ${parseInt(m)}월 ${parseInt(d)}일`;
 
     const log = worklogData.find(l => l.date === dateStr);
-    const content = document.getElementById('worklog-content');
+    const morningEl = document.getElementById('worklog-morning');
+    const afternoonEl = document.getElementById('worklog-afternoon');
     const deleteBtn = document.getElementById('worklog-delete-btn');
     const saveBtn = document.getElementById('worklog-save-btn');
     const titleEl = document.getElementById('worklog-modal-title');
 
     if (log) {
-        content.value = log.content;
+        const parsed = parseWorklogContent(log.content);
+        morningEl.value = parsed.morning;
+        afternoonEl.value = parsed.afternoon;
         worklogEditId = log.id;
         deleteBtn.style.display = '';
         titleEl.textContent = '업무일지 수정';
         saveBtn.textContent = '수정';
     } else {
-        content.value = '';
+        morningEl.value = '';
+        afternoonEl.value = '';
         worklogEditId = null;
         deleteBtn.style.display = 'none';
         titleEl.textContent = '업무일지 작성';
@@ -3131,12 +3144,13 @@ function openWorklogModal(dateStr) {
 
     // 관리자가 다른 직원 것 보는 경우 읽기 전용
     const isViewingOther = currentUser?.role === 'admin' && document.getElementById('worklog-user-select')?.value;
-    content.readOnly = !!isViewingOther;
+    morningEl.readOnly = !!isViewingOther;
+    afternoonEl.readOnly = !!isViewingOther;
     saveBtn.style.display = isViewingOther ? 'none' : '';
     deleteBtn.style.display = isViewingOther ? 'none' : (log ? '' : 'none');
 
     document.getElementById('worklog-modal').style.display = 'flex';
-    if (!isViewingOther) content.focus();
+    if (!isViewingOther) morningEl.focus();
 }
 window.openWorklogModal = openWorklogModal;
 
@@ -3153,11 +3167,13 @@ function closeWorklogModal() {
 window.closeWorklogModal = closeWorklogModal;
 
 async function saveWorkLog() {
-    const content = document.getElementById('worklog-content').value.trim();
-    if (!content) {
-        alert('업무 내용을 입력해주세요.');
+    const morning = document.getElementById('worklog-morning').value.trim();
+    const afternoon = document.getElementById('worklog-afternoon').value.trim();
+    if (!morning && !afternoon) {
+        alert('오전 또는 오후 업무 내용을 입력해주세요.');
         return;
     }
+    const content = JSON.stringify({ morning, afternoon });
 
     try {
         if (worklogEditId) {
