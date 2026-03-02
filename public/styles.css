@@ -10,10 +10,10 @@
     --accent-blue-light: #eff6ff;
     --white: #ffffff;
     --bg: #f8f9fa;
-    --sidebar-bg: #1a1a2e;
-    --sidebar-text: #a0a0b8;
-    --sidebar-hover: rgba(245, 166, 35, 0.08);
-    --sidebar-active-bg: rgba(245, 166, 35, 0.12);
+    --sidebar-bg: #4da6ff;
+    --sidebar-text: #ffffff;
+    --sidebar-hover: rgba(255, 255, 255, 0.2);
+    --sidebar-active-bg: rgba(255, 255, 255, 0.25);
     --text-dark: #1a1a1a;
     --text-mid: #555;
     --text-light: #999;
@@ -124,10 +124,11 @@ body {
 }
 
 .sidebar-header h2 {
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 700;
-    color: var(--primary);
+    color: #fff;
     line-height: 1.5;
+    text-align: center;
 }
 
 .sidebar-nav {
@@ -151,13 +152,13 @@ body {
 
 .nav-item:hover {
     background: var(--sidebar-hover);
-    color: var(--primary);
+    color: #fff;
 }
 
 .nav-item.active {
     background: var(--sidebar-active-bg);
-    color: var(--primary);
-    border-left-color: var(--primary);
+    color: #fff;
+    border-left-color: #fff;
     font-weight: 600;
 }
 
