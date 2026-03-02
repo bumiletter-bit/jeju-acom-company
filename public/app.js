@@ -1913,12 +1913,15 @@ function detectSize(msg) {
 function matchProduct(rawText) {
     const t = rawText || '';
     const wm = t.match(/(\d+)\s*kg/i);
-    if (!wm) return t.trim();
+    if (!wm) return '[미매칭] ' + t.trim();
     const w = parseInt(wm[1]);
     const wStr = w + 'kg';
 
     if (/3종세트/.test(t)) return '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 ' + wStr + '(3종세트)';
-    if (/레몬/.test(t)) return '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
+    if (/레몬/.test(t)) {
+        if (/못난이/.test(t)) return '과수 및 크기: 제주 못난이 레몬' + wStr + '(랜덤과)';
+        return '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
+    }
     if (/비가림|감귤/.test(t)) {
         if (/선물용|프리미엄\s*로얄/.test(t)) return '고당도 비가림귤 / 상품 및 과수: 프리미엄 로얄과 - ' + wStr + '(선물용 2S~M)';
         if (/중대과|[lL]이상|대과/.test(t)) return '고당도 비가림귤 / 상품 및 과수: 중대과 - ' + wStr + '(가정용 L이상)';
@@ -1934,7 +1937,7 @@ function matchProduct(rawText) {
     if (/레드향/.test(t)) fruit = '레드향';
     else if (/한라봉/.test(t)) fruit = '한라봉';
     else if (/천혜향/.test(t)) fruit = '천혜향';
-    else return t.trim();
+    else return '[미매칭] ' + t.trim();
 
     if (w === 2 && /프리미엄/.test(t)) return '프리미엄 선물용 / 상품 및 과수: 프리미엄 선물용 ' + fruit + ' - 2kg';
 
@@ -2062,10 +2065,13 @@ function exportInvoiceExcel(converted) {
         const isDateReq = hasDateRequest(msgVal);
         const addrVal = ws['I' + r] ? String(ws['I' + r].v || '') : '';
         const isJeju = /제주/.test(addrVal);
+        const optVal = ws['E' + r] ? String(ws['E' + r].v || '') : '';
+        const isUnmatched = optVal.startsWith('[미매칭]');
         cols.forEach(col => {
             const ref = col + r;
             let style = dStyle;
-            if (isDateReq && col === 'J') style = dRed;
+            if (isUnmatched && col === 'E') style = dRed;
+            else if (isDateReq && col === 'J') style = dRed;
             else if (isJeju && col === 'I') style = dYellow;
             if (ws[ref]) ws[ref].s = style;
             else ws[ref] = { v: '', t: 's', s: style };
