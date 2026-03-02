@@ -778,10 +778,10 @@
 
             <!-- AI 작업방 페이지 -->
             <div id="page-ai-workspace" class="page">
-                <h1>AI 작업방</h1>
+                <h1>AI 작업방 <span style="font-size:14px; font-weight:normal; color:var(--text-light); margin-left:8px;">작업방에 오신 것을 환영합니다.</span></h1>
                 <div class="ai-workspace-container">
                     <div class="ai-conv-panel">
-                        <button class="btn-primary ai-new-conv-btn" onclick="createNewConversation()">+ 새 대화</button>
+                        <button class="btn-primary ai-new-conv-btn" onclick="createNewConversation()">+ 작업하기</button>
                         <div id="ai-conv-list" class="ai-conv-list"></div>
                     </div>
                     <div class="ai-chat-panel">
@@ -800,7 +800,7 @@
                             <div class="ai-input-row">
                                 <button class="ai-attach-btn" id="ai-attach-btn" onclick="document.getElementById('ai-file-input').click()" title="이미지 첨부">📎</button>
                                 <input type="file" id="ai-file-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;" onchange="handleImageAttach(event)">
-                                <textarea id="ai-message-input" class="ai-message-input" placeholder="메시지를 입력하세요..." rows="1"></textarea>
+                                <textarea id="ai-message-input" class="ai-message-input" placeholder="메시지를 입력하세요... (문구 생성 시 &quot;전송&quot;, 이미지 생성을 원할 시 &quot;이미지&quot;를 눌러주세요)" rows="1"></textarea>
                                 <button class="ai-send-btn" id="ai-send-btn" onclick="sendAIMessage()">전송</button>
                                 <button class="ai-image-btn" id="ai-image-btn" onclick="sendAIImage()">🎨 이미지</button>
                             </div>
@@ -847,6 +847,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=49"></script>
+    <script src="app.js?v=50"></script>
 </body>
 </html>
