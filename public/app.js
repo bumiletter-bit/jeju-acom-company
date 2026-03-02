@@ -198,6 +198,21 @@ document.getElementById('schedule-next-month').addEventListener('click', () => {
     renderScheduleCalendar().catch(console.error);
 });
 
+document.getElementById('schedule-refresh-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('schedule-refresh-btn');
+    btn.classList.add('spinning');
+    try {
+        await renderScheduleCalendar();
+        const now = new Date();
+        const h = String(now.getHours()).padStart(2, '0');
+        const m = String(now.getMinutes()).padStart(2, '0');
+        document.getElementById('schedule-refresh-time').textContent = `${h}:${m} 업데이트됨`;
+    } catch (err) {
+        console.error('새로고침 오류:', err);
+    }
+    btn.classList.remove('spinning');
+});
+
 async function renderScheduleCalendar() {
     const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
     document.getElementById('schedule-calendar-title').textContent = `${scheduleYear}년 ${monthNames[scheduleMonth]}`;
