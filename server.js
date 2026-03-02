@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -1237,7 +1238,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
     }
 });
 
-// === AI 이미지 생성 (DALL-E 3) ===
+// === AI 이미지 생성 (Gemini) ===
 app.post('/api/ai/image', authMiddleware, async (req, res) => {
     try {
         const { conversationId, prompt } = req.body;
@@ -1262,23 +1263,40 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
             await pool.query('UPDATE ai_conversations SET title = $1 WHERE id = $2', [title, conversationId]);
         }
 
-        if (!process.env.OPENAI_API_KEY) {
-            return res.status(500).json({ error: 'OPENAI_API_KEY가 설정되지 않았습니다' });
+        if (!process.env.GEMINI_API_KEY) {
+            return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다' });
         }
 
-        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-        const imageResponse = await openai.images.generate({
-            model: 'dall-e-3',
-            prompt: prompt,
-            n: 1,
-            size: '1024x1024',
-            quality: 'standard'
+        const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await genai.models.generateContent({
+            model: 'gemini-2.0-flash-exp',
+            contents: prompt,
+            config: {
+                responseModalities: ['Text', 'Image']
+            }
         });
 
-        const imageUrl = imageResponse.data[0].url;
-        const revisedPrompt = imageResponse.data[0].revised_prompt || '';
+        // 응답에서 이미지와 텍스트 추출
+        let imageUrl = '';
+        let revisedPrompt = '';
 
-        // AI 응답 저장 (이미지 URL + revised prompt를 JSON으로)
+        if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+            const parts = response.candidates[0].content.parts || [];
+            for (const part of parts) {
+                if (part.inlineData && part.inlineData.data) {
+                    const mimeType = part.inlineData.mimeType || 'image/png';
+                    imageUrl = `data:${mimeType};base64,${part.inlineData.data}`;
+                } else if (part.text) {
+                    revisedPrompt = part.text;
+                }
+            }
+        }
+
+        if (!imageUrl) {
+            return res.status(500).json({ error: '이미지 생성에 실패했습니다. 다른 프롬프트로 시도해 주세요.' });
+        }
+
+        // AI 응답 저장 (이미지 data URL + 텍스트를 JSON으로)
         const imageContent = JSON.stringify({ url: imageUrl, revised_prompt: revisedPrompt });
         await pool.query(
             "INSERT INTO ai_messages (conversation_id, role, content, message_type) VALUES ($1, 'assistant', $2, 'image')",
@@ -1288,7 +1306,7 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         res.json({ imageUrl, revisedPrompt });
     } catch (err) {
         console.error('이미지 생성 오류:', err);
-        const errorMessage = err?.error?.message || err.message || '이미지 생성 중 오류가 발생했습니다';
+        const errorMessage = err?.message || '이미지 생성 중 오류가 발생했습니다';
         res.status(500).json({ error: errorMessage });
     }
 });
