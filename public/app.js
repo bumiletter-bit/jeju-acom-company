@@ -1909,6 +1909,47 @@ function detectSize(msg) {
     return null;
 }
 
+// 품목명 카탈로그 (품목명 추가(03.02).xlsx 기준)
+const PRODUCT_CATALOG = new Set([
+    '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 3kg(3종세트)',
+    '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 5kg(3종세트)',
+    '과수 및 크기: 제주 레몬3kg(중대과)',
+    '과수 및 크기: 제주 레몬5kg(중대과)',
+    '과수 및 크기: 제주 레몬10kg(중대과)',
+    '과수 및 크기: 제주 못난이 레몬5kg(랜덤과)',
+    '하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 3kg(중소과 18과 전후)',
+    '하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 5kg(중소과 28과 전후)',
+    '하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 9kg(중과 45과 전후)',
+    '하우스 한라봉 / 상품 및 과수: 한라봉 선물용 - 3kg(대과 7~13과)',
+    '하우스 한라봉 / 상품 및 과수: 한라봉 선물용 - 5kg(대과 12~22과)',
+    '하우스 한라봉 / 상품 및 과수: 한라봉 못난이 - 5kg(랜덤과)',
+    '하우스 한라봉 / 상품 및 과수: 한라봉 못난이 - 10kg(랜덤과)',
+    '알알톡톡 레드향 / 상품 및 과수: 레드향 가정용 - 3kg(중소과 18과 전후)',
+    '알알톡톡 레드향 / 상품 및 과수: 레드향 가정용 - 5kg(중소과 28과 전후)',
+    '알알톡톡 레드향 / 상품 및 과수: 레드향 가정용 - 9kg(중과 45과 전후)',
+    '알알톡톡 레드향 / 상품 및 과수: 레드향 못난이 - 5kg(랜덤과)',
+    '과즙팡팡 천혜향 / 상품 및 과수: 천혜향 선물용 - 3kg(대과 7~13과)',
+    '과즙팡팡 천혜향 / 상품 및 과수: 천혜향 선물용 - 5kg(대과 12~22과)',
+    '과즙팡팡 천혜향 / 상품 및 과수: 천혜향 가정용 - 3kg(중소과 15과 전후)',
+    '과즙팡팡 천혜향 / 상품 및 과수: 천혜향 가정용 - 5kg(중소과 25과 전후)',
+    '과즙팡팡 천혜향 / 상품 및 과수: 천혜향 가정용 - 9kg(중과 45과 전후)',
+    '노지 한라봉 / 상품 및 과수: 한라봉 가정용 - 10kg(랜덤과)',
+    '노지 한라봉 / 상품 및 과수: 한라봉 가정용 - 5kg(랜덤과)',
+    '노지 한라봉 / 상품 및 과수: 한라봉 못난이 - 5kg(랜덤과)',
+    '노지 한라봉 / 상품 및 과수: 한라봉 못난이 - 10kg(랜덤과)',
+    '제주자몽 / 상품 및 과수: 제주자몽 가정용 3kg(10과전후)',
+    '제주자몽 / 상품 및 과수: 제주자몽 가정용 5kg(17과전후)',
+    '제주자몽 / 상품 및 과수: 제주자몽 선물용 3kg(10과전후)',
+    '제주자몽 / 상품 및 과수: 제주자몽 선물용 5kg(17과전후)',
+    '고당도 비가림귤 / 상품 및 과수: 로얄과 - 3kg(가정용 2S~M)',
+    '고당도 비가림귤 / 상품 및 과수: 로얄과 - 5kg(가정용 2S~M)',
+    '고당도 비가림귤 / 상품 및 과수: 프리미엄 로얄과 - 3kg(선물용 2S~M)',
+    '고당도 비가림귤 / 상품 및 과수: 중대과 - 5kg(가정용 L이상)',
+    '프리미엄 선물용 / 상품 및 과수: 프리미엄 선물용 레드향 - 2kg',
+    '프리미엄 선물용 / 상품 및 과수: 프리미엄 선물용 한라봉 - 2kg',
+    '프리미엄 선물용 / 상품 및 과수: 프리미엄 선물용 천혜향 - 2kg',
+]);
+
 // 상품 카탈로그 매칭
 function matchProduct(rawText) {
     const t = rawText || '';
@@ -1917,54 +1958,61 @@ function matchProduct(rawText) {
     const w = parseInt(wm[1]);
     const wStr = w + 'kg';
 
-    if (/3종세트|레드향.*한라봉.*천혜향|한라봉.*천혜향.*레드향/.test(t)) return '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 ' + wStr + '(3종세트)';
-    if (/레몬/.test(t)) {
-        if (/못난이/.test(t)) return '과수 및 크기: 제주 못난이 레몬' + wStr + '(랜덤과)';
-        return '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
-    }
-    if (/비가림|감귤/.test(t)) {
-        if (/선물용|프리미엄\s*로얄/.test(t)) return '고당도 비가림귤 / 상품 및 과수: 프리미엄 로얄과 - ' + wStr + '(선물용 2S~M)';
-        if (/중대과|[lL]이상|대과/.test(t)) return '고당도 비가림귤 / 상품 및 과수: 중대과 - ' + wStr + '(가정용 L이상)';
-        return '고당도 비가림귤 / 상품 및 과수: 로얄과 - ' + wStr + '(가정용 2S~M)';
-    }
-    if (/자몽/.test(t)) {
+    let result = null;
+
+    if (/3종세트|레드향.*한라봉.*천혜향|한라봉.*천혜향.*레드향/.test(t)) {
+        result = '★추천 선물세트 / 상품 및 과수: 레드향&한라봉&천혜향 ' + wStr + '(3종세트)';
+    } else if (/레몬/.test(t)) {
+        if (/못난이/.test(t)) result = '과수 및 크기: 제주 못난이 레몬' + wStr + '(랜덤과)';
+        else result = '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
+    } else if (/비가림|감귤/.test(t)) {
+        if (/선물용|프리미엄\s*로얄/.test(t)) result = '고당도 비가림귤 / 상품 및 과수: 프리미엄 로얄과 - ' + wStr + '(선물용 2S~M)';
+        else if (/중대과|[lL]이상|대과/.test(t)) result = '고당도 비가림귤 / 상품 및 과수: 중대과 - ' + wStr + '(가정용 L이상)';
+        else result = '고당도 비가림귤 / 상품 및 과수: 로얄과 - ' + wStr + '(가정용 2S~M)';
+    } else if (/자몽/.test(t)) {
         const type = /선물/.test(t) ? '선물용' : '가정용';
         const detail = w === 3 ? '10과전후' : w === 5 ? '17과전후' : '';
-        return '제주자몽 / 상품 및 과수: 제주자몽 ' + type + ' ' + wStr + '(' + detail + ')';
+        result = '제주자몽 / 상품 및 과수: 제주자몽 ' + type + ' ' + wStr + '(' + detail + ')';
+    } else {
+        let fruit;
+        if (/레드향/.test(t)) fruit = '레드향';
+        else if (/한라봉/.test(t)) fruit = '한라봉';
+        else if (/천혜향/.test(t)) fruit = '천혜향';
+
+        if (!fruit) return '[미매칭] ' + t.trim();
+
+        if (w === 2 && /프리미엄/.test(t)) {
+            result = '프리미엄 선물용 / 상품 및 과수: 프리미엄 선물용 ' + fruit + ' - 2kg';
+        } else {
+            let type;
+            if (/못난이/.test(t)) type = '못난이';
+            else if (/선물용/.test(t)) type = '선물용';
+            else type = '가정용';
+
+            let category;
+            if (fruit === '레드향') category = '알알톡톡 레드향';
+            else if (fruit === '천혜향') category = '과즙팡팡 천혜향';
+            else {
+                const isNoji = /노지/.test(t) || (type === '가정용' && /랜덤/.test(t));
+                category = isNoji ? '노지 한라봉' : '하우스 한라봉';
+            }
+
+            let detail;
+            if (type === '못난이') detail = '랜덤과';
+            else if (type === '선물용') detail = w === 3 ? '대과 7~13과' : w === 5 ? '대과 12~22과' : '';
+            else {
+                if (category === '노지 한라봉') detail = '랜덤과';
+                else if (w === 9) detail = '중과 45과 전후';
+                else if (fruit === '천혜향') detail = w === 3 ? '중소과 15과 전후' : w === 5 ? '중소과 25과 전후' : '';
+                else detail = w === 3 ? '중소과 18과 전후' : w === 5 ? '중소과 28과 전후' : '';
+            }
+            result = category + ' / 상품 및 과수: ' + fruit + ' ' + type + ' - ' + wStr + '(' + detail + ')';
+        }
     }
 
-    let fruit;
-    if (/레드향/.test(t)) fruit = '레드향';
-    else if (/한라봉/.test(t)) fruit = '한라봉';
-    else if (/천혜향/.test(t)) fruit = '천혜향';
-    else return '[미매칭] ' + t.trim();
-
-    if (w === 2 && /프리미엄/.test(t)) return '프리미엄 선물용 / 상품 및 과수: 프리미엄 선물용 ' + fruit + ' - 2kg';
-
-    let type;
-    if (/못난이/.test(t)) type = '못난이';
-    else if (/선물용/.test(t)) type = '선물용';
-    else type = '가정용';
-
-    let category;
-    if (fruit === '레드향') category = '알알톡톡 레드향';
-    else if (fruit === '천혜향') category = '과즙팡팡 천혜향';
-    else {
-        const isNoji = /노지/.test(t) || (type === '가정용' && /랜덤/.test(t));
-        category = isNoji ? '노지 한라봉' : '하우스 한라봉';
-    }
-
-    let detail;
-    if (type === '못난이') detail = '랜덤과';
-    else if (type === '선물용') detail = w === 3 ? '대과 7~13과' : w === 5 ? '대과 12~22과' : '';
-    else {
-        if (category === '노지 한라봉') detail = '랜덤과';
-        else if (w === 9) detail = '중과 45과 전후';
-        else if (fruit === '천혜향') detail = w === 3 ? '중소과 15과 전후' : w === 5 ? '중소과 25과 전후' : '';
-        else detail = w === 3 ? '중소과 18과 전후' : w === 5 ? '중소과 28과 전후' : '';
-    }
-
-    return category + ' / 상품 및 과수: ' + fruit + ' ' + type + ' - ' + wStr + '(' + detail + ')';
+    // 카탈로그 검증: 생성된 품목명이 카탈로그에 없으면 원본 그대로 + [미매칭]
+    if (result && PRODUCT_CATALOG.has(result)) return result;
+    return '[미매칭] ' + t.trim();
 }
 
 function addSizeSuffix(optionInfo, msg) {
