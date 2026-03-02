@@ -1268,13 +1268,32 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         }
 
         const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const response = await genai.models.generateContent({
-            model: 'gemini-2.0-flash-exp-image-generation',
-            contents: prompt,
-            config: {
-                responseModalities: ['Text', 'Image']
+
+        // Gemini 이미지 생성 함수 (재시도 로직 포함)
+        const generateImage = async (retryCount = 0) => {
+            try {
+                return await genai.models.generateContent({
+                    model: 'gemini-2.0-flash-exp-image-generation',
+                    contents: prompt,
+                    config: {
+                        responseModalities: ['Text', 'Image']
+                    }
+                });
+            } catch (apiErr) {
+                const status = apiErr?.status || apiErr?.statusCode || apiErr?.code;
+                const is429 = status === 429 || String(apiErr?.message || '').includes('429') || String(apiErr?.message || '').includes('RESOURCE_EXHAUSTED');
+                console.error(`이미지 생성 API 오류 (시도 ${retryCount + 1}):`, apiErr);
+
+                if (is429 && retryCount === 0) {
+                    console.log('429 quota 초과 - 30초 후 재시도합니다...');
+                    await new Promise(resolve => setTimeout(resolve, 30000));
+                    return generateImage(1);
+                }
+                throw apiErr;
             }
-        });
+        };
+
+        const response = await generateImage();
 
         // 응답에서 이미지와 텍스트 추출
         let imageUrl = '';
@@ -1306,8 +1325,14 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         res.json({ imageUrl, revisedPrompt });
     } catch (err) {
         console.error('이미지 생성 오류:', err);
-        const errorMessage = err?.message || '이미지 생성 중 오류가 발생했습니다';
-        res.status(500).json({ error: errorMessage });
+        const status = err?.status || err?.statusCode || err?.code;
+        const is429 = status === 429 || String(err?.message || '').includes('429') || String(err?.message || '').includes('RESOURCE_EXHAUSTED');
+
+        if (is429) {
+            res.status(429).json({ error: '요청이 많아 잠시 후 다시 시도해주세요 (30초 후)' });
+        } else {
+            res.status(500).json({ error: '이미지 생성에 실패했습니다. 다시 시도해주세요.' });
+        }
     }
 });
 
