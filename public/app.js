@@ -221,6 +221,15 @@ async function renderScheduleCalendar() {
     const monthStr = `${scheduleYear}-${String(scheduleMonth + 1).padStart(2, '0')}`;
     const schedules = await api(`/api/schedules?month=${monthStr}`);
 
+    // 당직일수 계산 (본인의 당직 중 오늘 이전 날짜만 카운트)
+    if (currentUser) {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const dutyCount = schedules.filter(s =>
+            s.type === 'duty' && s.userId === currentUser.id && s.date < todayStr
+        ).length;
+        document.getElementById('duty-count').textContent = dutyCount;
+    }
+
     // 사용자별 범례
     const userMap = {};
     schedules.forEach(s => {
@@ -268,7 +277,7 @@ async function renderScheduleCalendar() {
                 if (daySchedules.length > 0) {
                     scheduleHtml = '<div class="day-schedules">';
                     daySchedules.forEach(s => {
-                        const typeIcon = s.type === 'vacation' ? '🏖️ ' : s.type === 'attendance' ? '📌 ' : '';
+                        const typeIcon = s.type === 'vacation' ? '🏖️ ' : s.type === 'attendance' ? '📌 ' : s.type === 'duty' ? '🔴 ' : '';
                         scheduleHtml += `<div class="day-schedule-item" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}">${typeIcon}${s.title}</div>`;
                     });
                     scheduleHtml += '</div>';
@@ -306,6 +315,7 @@ window.openScheduleModal = function(dateStr) {
                 <label>유형</label>
                 <div class="btn-group" id="modal-schedule-type-group">
                     <button class="btn-toggle active" data-value="normal">일반</button>
+                    <button class="btn-toggle" data-value="duty" style="background:#fef2f2;border-color:#fca5a5;color:#dc2626;">당직</button>
                     <button class="btn-toggle" data-value="vacation">휴가</button>
                     <button class="btn-toggle" data-value="attendance">근태</button>
                 </div>
@@ -359,7 +369,7 @@ async function loadDaySchedules(dateStr, overlay) {
             listEl.innerHTML = '<p style="color:#999;">등록된 일정이 없습니다.</p>';
         } else {
             listEl.innerHTML = daySchedules.map(s => {
-                const typeLabel = s.type === 'vacation' ? ' (휴가)' : s.type === 'attendance' ? ' (근태)' : '';
+                const typeLabel = s.type === 'vacation' ? ' (휴가)' : s.type === 'attendance' ? ' (근태)' : s.type === 'duty' ? ' (당직)' : '';
                 const canDelete = currentUser && (currentUser.id === s.userId || currentUser.role === 'admin') && !s.documentId;
                 return `<div class="schedule-detail-item" style="border-left:3px solid ${s.userColor};">
                     <div><strong>${s.userName}</strong>${typeLabel}: ${s.title}</div>
