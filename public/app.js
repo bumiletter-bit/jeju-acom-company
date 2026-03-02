@@ -1921,7 +1921,13 @@ function matchProduct(rawText) {
     if (/레몬/.test(t)) return '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
     if (/비가림|감귤/.test(t)) {
         if (/선물용|프리미엄\s*로얄/.test(t)) return '고당도 비가림귤 / 상품 및 과수: 프리미엄 로얄과 - ' + wStr + '(선물용 2S~M)';
+        if (/중대과|[lL]이상|대과/.test(t)) return '고당도 비가림귤 / 상품 및 과수: 중대과 - ' + wStr + '(가정용 L이상)';
         return '고당도 비가림귤 / 상품 및 과수: 로얄과 - ' + wStr + '(가정용 2S~M)';
+    }
+    if (/자몽/.test(t)) {
+        const type = /선물/.test(t) ? '선물용' : '가정용';
+        const detail = w === 3 ? '10과전후' : w === 5 ? '17과전후' : '';
+        return '제주자몽 / 상품 및 과수: 제주자몽 ' + type + ' ' + wStr + '(' + detail + ')';
     }
 
     let fruit;
@@ -1955,9 +1961,7 @@ function matchProduct(rawText) {
         else detail = w === 3 ? '중소과 18과 전후' : w === 5 ? '중소과 28과 전후' : '';
     }
 
-    let fruitLabel = fruit;
-    if (fruit === '레드향' && w === 9) fruitLabel = '★레드향';
-    return category + ' / 상품 및 과수: ' + fruitLabel + ' ' + type + ' - ' + wStr + '(' + detail + ')';
+    return category + ' / 상품 및 과수: ' + fruit + ' ' + type + ' - ' + wStr + '(' + detail + ')';
 }
 
 function addSizeSuffix(optionInfo, msg) {
