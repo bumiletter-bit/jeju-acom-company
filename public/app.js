@@ -174,6 +174,7 @@ function switchPage(pageName) {
         renderWeeklySettlement().catch(console.error);
         renderPrepaymentCard().catch(console.error);
     }
+    if (pageName === 'worklog') renderWorklogPage().catch(console.error);
     if (pageName === 'pricing') renderPricingList().catch(console.error);
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
     if (pageName === 'ai-workspace') renderAIWorkspace().catch(console.error);
@@ -2933,6 +2934,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // 업무일지 월 이동 버튼
+    document.getElementById('worklog-prev-month').addEventListener('click', () => {
+        worklogMonth--;
+        if (worklogMonth < 0) { worklogMonth = 11; worklogYear--; }
+        loadWorkLogs();
+    });
+    document.getElementById('worklog-next-month').addEventListener('click', () => {
+        worklogMonth++;
+        if (worklogMonth > 11) { worklogMonth = 0; worklogYear++; }
+        loadWorkLogs();
+    });
+
     // 드래그 앤 드롭 이미지 첨부
     const chatMessages = document.getElementById('ai-chat-messages');
     if (chatMessages) {
@@ -2964,3 +2977,218 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+// =============================================
+// 업무일지
+// =============================================
+
+let worklogYear = new Date().getFullYear();
+let worklogMonth = new Date().getMonth();
+let worklogData = []; // 현재 월의 업무일지 데이터
+let worklogEditId = null; // 수정 중인 업무일지 ID
+let worklogEditDate = null; // 현재 모달에 열려있는 날짜
+
+async function renderWorklogPage() {
+    // 관리자이면 직원 선택 드롭다운 표시
+    const adminCard = document.getElementById('worklog-admin-card');
+    if (currentUser?.role === 'admin') {
+        adminCard.style.display = '';
+        await loadWorklogUsers();
+    } else {
+        adminCard.style.display = 'none';
+    }
+    await loadWorkLogs();
+}
+
+async function loadWorklogUsers() {
+    try {
+        const users = await api('/api/users');
+        const select = document.getElementById('worklog-user-select');
+        const currentVal = select.value;
+        select.innerHTML = `<option value="">내 업무일지</option>` +
+            users.map(u => `<option value="${u.id}">${u.name} (${u.position})</option>`).join('');
+        if (currentVal) select.value = currentVal;
+    } catch (err) {
+        console.error('직원 목록 로드 오류:', err);
+    }
+}
+
+async function loadWorkLogs() {
+    const monthStr = `${worklogYear}-${String(worklogMonth + 1).padStart(2, '0')}`;
+    document.getElementById('worklog-calendar-title').textContent = `${worklogYear}년 ${worklogMonth + 1}월`;
+
+    try {
+        const selectedUser = document.getElementById('worklog-user-select')?.value;
+        if (currentUser?.role === 'admin' && selectedUser) {
+            worklogData = await api(`/api/work-logs/admin?month=${monthStr}&user_id=${selectedUser}`);
+        } else {
+            worklogData = await api(`/api/work-logs?month=${monthStr}`);
+        }
+    } catch (err) {
+        console.error('업무일지 로드 오류:', err);
+        worklogData = [];
+    }
+
+    renderWorklogCalendar();
+}
+window.loadWorkLogs = loadWorkLogs;
+
+function renderWorklogCalendar() {
+    const body = document.getElementById('worklog-calendar-body');
+    const firstDay = new Date(worklogYear, worklogMonth, 1).getDay();
+    const lastDate = new Date(worklogYear, worklogMonth + 1, 0).getDate();
+
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    // 업무일지 데이터를 날짜별 맵으로
+    const logMap = {};
+    worklogData.forEach(log => {
+        logMap[log.date] = log;
+    });
+
+    const isViewingOther = currentUser?.role === 'admin' && document.getElementById('worklog-user-select')?.value;
+
+    let html = '';
+    let day = 1;
+    for (let row = 0; row < 6; row++) {
+        if (day > lastDate) break;
+        html += '<tr>';
+        for (let col = 0; col < 7; col++) {
+            if ((row === 0 && col < firstDay) || day > lastDate) {
+                html += '<td class="empty"></td>';
+            } else {
+                const dateStr = `${worklogYear}-${String(worklogMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const isToday = dateStr === todayStr;
+                const hasLog = !!logMap[dateStr];
+                const log = logMap[dateStr];
+
+                let cellClass = '';
+                if (col === 0) cellClass = 'sun';
+                if (col === 6) cellClass = 'sat';
+                if (isToday) cellClass += ' today';
+
+                html += `<td class="${cellClass}">`;
+                html += `<div class="calendar-day">${day}`;
+                if (hasLog) {
+                    html += `<span class="worklog-dot" title="작성완료"></span>`;
+                }
+                html += `</div>`;
+
+                if (isViewingOther) {
+                    // 관리자가 다른 직원 보기: 클릭하면 내용 보기만
+                    if (hasLog) {
+                        html += `<button class="worklog-view-btn" onclick="viewWorkLog('${dateStr}')">보기</button>`;
+                    }
+                } else {
+                    // 자기 업무일지
+                    if (isToday && !hasLog) {
+                        html += `<button class="worklog-write-btn" onclick="openWorklogModal('${dateStr}')">업무일지 작성</button>`;
+                    } else if (hasLog) {
+                        html += `<button class="worklog-view-btn" onclick="openWorklogModal('${dateStr}')">보기/수정</button>`;
+                    } else {
+                        // 과거 날짜에도 작성 가능
+                        const dateObj = new Date(worklogYear, worklogMonth, day);
+                        if (dateObj <= today) {
+                            html += `<button class="worklog-write-btn" onclick="openWorklogModal('${dateStr}')" style="background:#999;">작성</button>`;
+                        }
+                    }
+                }
+
+                html += `</td>`;
+                day++;
+            }
+        }
+        html += '</tr>';
+    }
+    body.innerHTML = html;
+}
+
+function openWorklogModal(dateStr) {
+    worklogEditDate = dateStr;
+    const [y, m, d] = dateStr.split('-');
+    document.getElementById('worklog-modal-date-label').textContent = `${y}년 ${parseInt(m)}월 ${parseInt(d)}일`;
+
+    const log = worklogData.find(l => l.date === dateStr);
+    const content = document.getElementById('worklog-content');
+    const deleteBtn = document.getElementById('worklog-delete-btn');
+    const saveBtn = document.getElementById('worklog-save-btn');
+    const titleEl = document.getElementById('worklog-modal-title');
+
+    if (log) {
+        content.value = log.content;
+        worklogEditId = log.id;
+        deleteBtn.style.display = '';
+        titleEl.textContent = '업무일지 수정';
+        saveBtn.textContent = '수정';
+    } else {
+        content.value = '';
+        worklogEditId = null;
+        deleteBtn.style.display = 'none';
+        titleEl.textContent = '업무일지 작성';
+        saveBtn.textContent = '저장';
+    }
+
+    // 관리자가 다른 직원 것 보는 경우 읽기 전용
+    const isViewingOther = currentUser?.role === 'admin' && document.getElementById('worklog-user-select')?.value;
+    content.readOnly = !!isViewingOther;
+    saveBtn.style.display = isViewingOther ? 'none' : '';
+    deleteBtn.style.display = isViewingOther ? 'none' : (log ? '' : 'none');
+
+    document.getElementById('worklog-modal').style.display = 'flex';
+    if (!isViewingOther) content.focus();
+}
+window.openWorklogModal = openWorklogModal;
+
+function viewWorkLog(dateStr) {
+    openWorklogModal(dateStr);
+}
+window.viewWorkLog = viewWorkLog;
+
+function closeWorklogModal() {
+    document.getElementById('worklog-modal').style.display = 'none';
+    worklogEditId = null;
+    worklogEditDate = null;
+}
+window.closeWorklogModal = closeWorklogModal;
+
+async function saveWorkLog() {
+    const content = document.getElementById('worklog-content').value.trim();
+    if (!content) {
+        alert('업무 내용을 입력해주세요.');
+        return;
+    }
+
+    try {
+        if (worklogEditId) {
+            await api(`/api/work-logs/${worklogEditId}`, 'PUT', { content });
+        } else {
+            await api('/api/work-logs', 'POST', { date: worklogEditDate, content });
+        }
+
+        closeWorklogModal();
+        await loadWorkLogs();
+
+        // 토스트 메시지 표시
+        const toast = document.getElementById('worklog-toast');
+        toast.style.display = 'block';
+        setTimeout(() => { toast.style.display = 'none'; }, 3000);
+    } catch (err) {
+        alert('저장 실패: ' + (err.message || '오류'));
+    }
+}
+window.saveWorkLog = saveWorkLog;
+
+async function deleteWorkLog() {
+    if (!worklogEditId) return;
+    if (!confirm('이 업무일지를 삭제하시겠습니까?')) return;
+
+    try {
+        await api(`/api/work-logs/${worklogEditId}`, 'DELETE');
+        closeWorklogModal();
+        await loadWorkLogs();
+    } catch (err) {
+        alert('삭제 실패: ' + (err.message || '오류'));
+    }
+}
+window.deleteWorkLog = deleteWorkLog;

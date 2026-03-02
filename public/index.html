@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=34">
+    <link rel="stylesheet" href="styles.css?v=35">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -42,6 +42,10 @@
                 <a href="#" class="nav-item active" data-page="schedule">
                     <span class="nav-icon">📅</span>
                     <span class="nav-text">일정</span>
+                </a>
+                <a href="#" class="nav-item" data-page="worklog">
+                    <span class="nav-icon">📒</span>
+                    <span class="nav-text">업무일지</span>
                 </a>
                 <a href="#" class="nav-item" data-page="document">
                     <span class="nav-icon">📝</span>
@@ -128,6 +132,71 @@
                         </table>
                     </div>
                 </div>
+            </div>
+
+            <!-- 업무일지 페이지 -->
+            <div id="page-worklog" class="page">
+                <h1>업무일지</h1>
+
+                <!-- 관리자: 직원 선택 -->
+                <div class="card" id="worklog-admin-card" style="display:none;">
+                    <div class="form-row" style="align-items:center; gap:12px;">
+                        <label style="font-weight:600; white-space:nowrap;">직원 선택</label>
+                        <select id="worklog-user-select" class="form-input" style="max-width:200px;" onchange="loadWorkLogs()">
+                        </select>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header-row">
+                        <div class="calendar-title-group">
+                            <h2 id="worklog-calendar-title">2026년 3월</h2>
+                        </div>
+                        <div class="month-nav">
+                            <button id="worklog-prev-month" class="btn-nav">&lt;</button>
+                            <button id="worklog-next-month" class="btn-nav">&gt;</button>
+                        </div>
+                    </div>
+                    <div class="calendar-section" style="border:none;padding:0;">
+                        <table class="calendar-table">
+                            <thead>
+                                <tr>
+                                    <th class="sun">일</th><th>월</th><th>화</th><th>수</th><th>목</th><th>금</th><th class="sat">토</th>
+                                </tr>
+                            </thead>
+                            <tbody id="worklog-calendar-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 업무일지 작성/보기 모달 -->
+            <div class="modal-overlay" id="worklog-modal" style="display:none;" onclick="if(event.target===this)closeWorklogModal()">
+                <div class="modal-card" style="max-width:520px; width:90%;">
+                    <div class="modal-header">
+                        <h2 id="worklog-modal-title">업무일지 작성</h2>
+                        <button class="modal-close" onclick="closeWorklogModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label id="worklog-modal-date-label" style="font-weight:600; font-size:15px; color:var(--primary);"></label>
+                        </div>
+                        <div class="form-group">
+                            <label>업무 내용</label>
+                            <textarea id="worklog-content" class="form-input" rows="8" placeholder="오늘의 업무 내용을 작성해주세요..."></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer" style="display:flex; gap:10px;">
+                        <button class="btn-primary" id="worklog-save-btn" onclick="saveWorkLog()" style="flex:1;">저장</button>
+                        <button class="btn-outline btn-danger-outline" id="worklog-delete-btn" onclick="deleteWorkLog()" style="display:none;">삭제</button>
+                        <button class="btn-outline" onclick="closeWorklogModal()">닫기</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 업무일지 토스트 -->
+            <div class="worklog-toast" id="worklog-toast" style="display:none;">
+                오늘도 고생하셨습니다 🙏
             </div>
 
             <!-- 기안서류 페이지 -->
@@ -778,6 +847,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=48"></script>
+    <script src="app.js?v=49"></script>
 </body>
 </html>

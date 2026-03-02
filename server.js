@@ -131,6 +131,18 @@ async function initDB() {
         END $$
     `);
 
+    // 업무일지 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS work_logs (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            date DATE NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(user_id, date)
+        )
+    `);
+
     // 점심메뉴 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS lunch_menus (
@@ -1431,6 +1443,112 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         } else {
             res.status(500).json({ error: '이미지 생성에 실패했습니다. 다시 시도해주세요.' });
         }
+    }
+});
+
+// === Work Logs API (업무일지) ===
+// 내 업무일지 조회 (월별)
+app.get('/api/work-logs', authMiddleware, async (req, res) => {
+    try {
+        const { month } = req.query; // '2026-03'
+        let startDate, endDate;
+        if (month) {
+            startDate = `${month}-01`;
+            const [y, m] = month.split('-').map(Number);
+            endDate = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+        } else {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = now.getMonth() + 1;
+            startDate = `${y}-${String(m).padStart(2, '0')}-01`;
+            endDate = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+        }
+        const result = await pool.query(
+            'SELECT id, date, content, created_at FROM work_logs WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date',
+            [req.user.id, startDate, endDate]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('업무일지 조회 오류:', err);
+        res.status(500).json({ error: '업무일지 조회 실패' });
+    }
+});
+
+// 관리자: 특정 직원의 업무일지 조회
+app.get('/api/work-logs/admin', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { month, user_id } = req.query;
+        if (!user_id) return res.status(400).json({ error: '사용자 ID가 필요합니다' });
+        let startDate, endDate;
+        if (month) {
+            startDate = `${month}-01`;
+            const [y, m] = month.split('-').map(Number);
+            endDate = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+        } else {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = now.getMonth() + 1;
+            startDate = `${y}-${String(m).padStart(2, '0')}-01`;
+            endDate = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+        }
+        const result = await pool.query(
+            'SELECT id, date, content, created_at FROM work_logs WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date',
+            [user_id, startDate, endDate]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('업무일지 관리자 조회 오류:', err);
+        res.status(500).json({ error: '업무일지 조회 실패' });
+    }
+});
+
+// 업무일지 작성 (upsert)
+app.post('/api/work-logs', authMiddleware, async (req, res) => {
+    try {
+        const { date, content } = req.body;
+        if (!date || !content) return res.status(400).json({ error: '날짜와 내용은 필수입니다' });
+        const result = await pool.query(
+            `INSERT INTO work_logs (user_id, date, content) VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, date) DO UPDATE SET content = $3
+             RETURNING *`,
+            [req.user.id, date, content]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('업무일지 저장 오류:', err);
+        res.status(500).json({ error: '업무일지 저장 실패' });
+    }
+});
+
+// 업무일지 수정
+app.put('/api/work-logs/:id', authMiddleware, async (req, res) => {
+    try {
+        const { content } = req.body;
+        if (!content) return res.status(400).json({ error: '내용은 필수입니다' });
+        const result = await pool.query(
+            'UPDATE work_logs SET content = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+            [content, req.params.id, req.user.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '업무일지를 찾을 수 없습니다' });
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('업무일지 수정 오류:', err);
+        res.status(500).json({ error: '업무일지 수정 실패' });
+    }
+});
+
+// 업무일지 삭제
+app.delete('/api/work-logs/:id', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'DELETE FROM work_logs WHERE id = $1 AND user_id = $2 RETURNING *',
+            [req.params.id, req.user.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '업무일지를 찾을 수 없습니다' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('업무일지 삭제 오류:', err);
+        res.status(500).json({ error: '업무일지 삭제 실패' });
     }
 });
 

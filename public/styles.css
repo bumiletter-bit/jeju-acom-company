@@ -125,8 +125,8 @@ body {
 
 .sidebar-header h2 {
     font-size: 16px;
-    font-weight: 900;
-    color: #fff;
+    font-weight: normal;
+    color: #F5A623;
     line-height: 1.5;
     text-align: center;
 }
@@ -1887,6 +1887,146 @@ textarea.form-input {
     background: #e9ecef;
     border-radius: 6px;
     line-height: 1.4;
+}
+
+/* ========================================
+   Work Log (업무일지)
+   ======================================== */
+.worklog-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--success);
+    border-radius: 50%;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.worklog-write-btn {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 3px 6px;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.worklog-write-btn:hover {
+    background: var(--primary-dark);
+}
+
+.worklog-view-btn {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 3px 6px;
+    background: var(--success);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.worklog-view-btn:hover {
+    background: #16a34a;
+}
+
+/* 업무일지 모달 */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    overflow: hidden;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: var(--text-light);
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: var(--danger);
+}
+
+.modal-body {
+    padding: 20px 24px;
+}
+
+.modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+}
+
+.btn-danger-outline {
+    border-color: var(--danger) !important;
+    color: var(--danger) !important;
+}
+
+.btn-danger-outline:hover {
+    background: #fef2f2 !important;
+}
+
+/* 업무일지 토스트 */
+.worklog-toast {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, var(--success), #16a34a);
+    color: #fff;
+    padding: 16px 32px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    box-shadow: 0 8px 30px rgba(34, 197, 94, 0.4);
+    z-index: 2000;
+    animation: toastSlideUp 0.4s ease-out;
+}
+
+@keyframes toastSlideUp {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
 }
 
 /* ========================================
