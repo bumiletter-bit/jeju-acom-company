@@ -2316,22 +2316,24 @@ async function renderPlannerHabits() {
             return;
         }
 
+        const dayLabels = ['월','화','수','목','금','토','일'];
         list.innerHTML = habits.map(h => {
             const habitLogs = logs.filter(l => l.habitId === h.id).map(l => l.date?.split('T')[0] || l.date);
             let doneCount = 0;
-            const dots = weekDates.map(date => {
+            const dots = weekDates.map((date, i) => {
                 const done = habitLogs.includes(date);
                 if (done) doneCount++;
                 const isToday = date === todayStr;
                 const cls = ['habit-dot'];
                 if (done) cls.push('done');
                 if (isToday) cls.push('today-dot', 'clickable');
-                return `<span class="${cls.join(' ')}" ${isToday ? `onclick="toggleHabitLog(${h.id},'${date}',${done})"` : ''}></span>`;
+                return `<span class="${cls.join(' ')}" ${isToday ? `onclick="toggleHabitLog(${h.id},'${date}',${done})"` : ''}>${dayLabels[i]}</span>`;
             }).join('');
+            const scoreText = doneCount === 7 ? '잘 하셨어요! 🎉' : `${doneCount}/7`;
             return `<div class="planner-habit-item">
                 <div class="habit-dots">${dots}</div>
                 <span class="habit-name">${h.title}</span>
-                <span class="habit-score">${doneCount}/7</span>
+                <span class="habit-score ${doneCount === 7 ? 'habit-perfect' : ''}">${scoreText}</span>
                 <button class="habit-del" onclick="deletePlannerHabit(${h.id})">×</button>
             </div>`;
         }).join('');

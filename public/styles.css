@@ -1341,20 +1341,26 @@ tr.pricing-hyodon td { background: #fefce8; border-color: #fde68a; }
     gap: 6px;
 }
 .habit-dot {
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
     border: 2px solid #e0e0e0;
     background: #fff;
     cursor: pointer;
     transition: all 0.15s;
-    font-size: 0;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
-.habit-dot.done { background: var(--success); border-color: var(--success); }
+.habit-dot.done { background: var(--success); border-color: var(--success); color: #fff; }
 .habit-dot.today-dot { border-color: var(--primary); border-width: 2px; }
 .habit-dot:not(.clickable) { cursor: default; opacity: 0.6; }
 .habit-name { font-size: 14px; font-weight: 500; flex: 1; }
 .habit-score { font-size: 12px; color: var(--text-light); }
+.habit-perfect { color: var(--success); font-weight: 600; }
 .habit-del { background: none; border: none; color: var(--text-light); cursor: pointer; font-size: 14px; padding: 2px 6px; }
 .habit-del:hover { color: var(--danger); }
 
