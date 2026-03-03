@@ -172,15 +172,18 @@ async function initDB() {
     `);
 
     // 초기 관리자 계정 생성
-    const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'admin'");
+    const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'ceo'");
     if (adminCheck.rows.length === 0) {
         const hash = await bcrypt.hash('admin123', 10);
         await pool.query(
             "INSERT INTO users (username, password_hash, name, position, color, role, annual_leave) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            ['admin', hash, '관리자', '대표', '#ef4444', 'admin', 15]
+            ['ceo', hash, '전승범', '대표', '#ef4444', 'admin', 15]
         );
-        console.log('초기 관리자 계정 생성: admin / admin123');
+        console.log('초기 관리자 계정 생성: ceo / admin123');
     }
+
+    // 기존 admin 아이디를 ceo로 변경
+    await pool.query("UPDATE users SET username = 'ceo' WHERE username = 'admin'");
 
     // 기본 점심메뉴 시드
     const menuCheck = await pool.query('SELECT COUNT(*) FROM lunch_menus');
@@ -418,7 +421,7 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         const check = await pool.query('SELECT username FROM users WHERE id = $1', [req.params.id]);
-        if (check.rows.length > 0 && check.rows[0].username === 'admin') {
+        if (check.rows.length > 0 && check.rows[0].username === 'ceo') {
             return res.status(400).json({ error: '기본 관리자 계정은 삭제할 수 없습니다' });
         }
         await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
