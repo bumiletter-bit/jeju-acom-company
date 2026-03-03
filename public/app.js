@@ -1385,7 +1385,7 @@ document.querySelectorAll('.doc-main-tab').forEach(tab => {
     });
 });
 
-// 하위 탭 전환 (휴가/근태/사유서)
+// 하위 탭 전환 (휴가/근태/시말서)
 document.querySelectorAll('.doc-tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.doc-tab').forEach(t => t.classList.remove('active'));
@@ -1397,7 +1397,7 @@ document.querySelectorAll('.doc-tab').forEach(tab => {
 });
 
 function updateDocForm() {
-    const typeLabels = { vacation: '휴가신청서', attendance: '근태신청서', reason: '사유서' };
+    const typeLabels = { vacation: '휴가신청서', attendance: '근태신청서', reason: '시말서' };
     document.getElementById('doc-form-title').textContent = typeLabels[currentDocType] + ' 작성';
 
     document.getElementById('doc-vacation-type-group').style.display = currentDocType === 'vacation' ? '' : 'none';
@@ -1614,7 +1614,7 @@ async function renderApprovalList() {
             return;
         }
 
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '사유서' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
 
         tbody.innerHTML = docs.map(d => {
             const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
@@ -1874,7 +1874,7 @@ window.searchDocHistory = async function() {
 
 function renderDocHistory(docs) {
     const tbody = document.getElementById('doc-history-list');
-    const typeLabels = { vacation: '휴가', attendance: '근태', reason: '사유서' };
+    const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
 
     if (!docs || docs.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="8">검색 결과가 없습니다.</td></tr>';
