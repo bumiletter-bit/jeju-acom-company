@@ -182,6 +182,7 @@ function switchPage(pageName) {
     if (pageName === 'worklog') renderWorklogPage().catch(console.error);
     if (pageName === 'pricing') renderPricingList().catch(console.error);
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
+    if (pageName === 'planner') renderPlannerPage().catch(console.error);
     if (pageName === 'inventory') renderBoxInventory().catch(console.error);
     if (pageName === 'ai-workspace') renderAIWorkspace().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
@@ -2023,6 +2024,318 @@ window.saveManualDoc = async function() {
     } catch (err) {
         alert('저장 실패: ' + err.message);
     }
+};
+
+// =============================================
+// 마이 플래너
+// =============================================
+
+let plannerYear = new Date().getFullYear();
+let plannerMonth = new Date().getMonth();
+let plannerSelectedDate = new Date().toISOString().split('T')[0];
+let plannerCalDots = { todoDates: [], memoDates: [] };
+
+async function renderPlannerPage() {
+    // 환영 카드
+    const welcome = document.getElementById('planner-welcome');
+    if (localStorage.getItem('planner_welcome_hidden') === 'true') {
+        welcome.style.display = 'none';
+    } else {
+        welcome.style.display = '';
+    }
+    await renderPlannerCalendar();
+    await renderPlannerTodos();
+    await renderPlannerMemo();
+    await renderPlannerDdays();
+    await renderPlannerHabits();
+}
+
+window.hidePlannerWelcome = function(permanent) {
+    document.getElementById('planner-welcome').style.display = 'none';
+    if (permanent) localStorage.setItem('planner_welcome_hidden', 'true');
+};
+
+// -- 미니 달력 --
+window.plannerPrevMonth = function() {
+    plannerMonth--;
+    if (plannerMonth < 0) { plannerMonth = 11; plannerYear--; }
+    renderPlannerCalendar();
+};
+window.plannerNextMonth = function() {
+    plannerMonth++;
+    if (plannerMonth > 11) { plannerMonth = 0; plannerYear++; }
+    renderPlannerCalendar();
+};
+
+async function renderPlannerCalendar() {
+    const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+    document.getElementById('planner-cal-title').textContent = `${plannerYear}년 ${monthNames[plannerMonth]}`;
+
+    const mm = String(plannerMonth + 1).padStart(2, '0');
+    try {
+        plannerCalDots = await api(`/api/planner/calendar-dots?month=${plannerYear}-${mm}`);
+    } catch (e) { plannerCalDots = { todoDates: [], memoDates: [] }; }
+
+    const daysInMonth = new Date(plannerYear, plannerMonth + 1, 0).getDate();
+    const firstDay = new Date(plannerYear, plannerMonth, 1).getDay();
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    let html = '';
+    let day = 1;
+    for (let week = 0; week < 6; week++) {
+        if (day > daysInMonth) break;
+        html += '<tr>';
+        for (let dow = 0; dow < 7; dow++) {
+            if ((week === 0 && dow < firstDay) || day > daysInMonth) {
+                html += '<td class="empty"></td>';
+            } else {
+                const dateStr = `${plannerYear}-${mm}-${String(day).padStart(2, '0')}`;
+                const cls = [];
+                if (dow === 0) cls.push('sun');
+                if (dow === 6) cls.push('sat');
+                if (dateStr === todayStr) cls.push('today');
+                if (dateStr === plannerSelectedDate) cls.push('selected');
+
+                const hasTodo = plannerCalDots.todoDates?.includes(dateStr);
+                const hasMemo = plannerCalDots.memoDates?.includes(dateStr);
+                let dots = '';
+                if (hasTodo || hasMemo) {
+                    dots = '<div class="planner-cal-dots">';
+                    if (hasTodo) dots += '<span class="dot-todo"></span>';
+                    if (hasMemo) dots += '<span class="dot-memo"></span>';
+                    dots += '</div>';
+                }
+
+                html += `<td class="${cls.join(' ')}" onclick="selectPlannerDate('${dateStr}')">${day}${dots}</td>`;
+                day++;
+            }
+        }
+        html += '</tr>';
+    }
+    document.getElementById('planner-cal-body').innerHTML = html;
+}
+
+window.selectPlannerDate = function(dateStr) {
+    plannerSelectedDate = dateStr;
+    renderPlannerCalendar();
+    renderPlannerTodos();
+    renderPlannerMemo();
+};
+
+// -- 할일 --
+async function renderPlannerTodos() {
+    const d = new Date(plannerSelectedDate);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isToday = plannerSelectedDate === todayStr;
+    const label = isToday ? '오늘의 할일' : `${d.getMonth()+1}/${d.getDate()} 할일`;
+    document.getElementById('planner-todo-title').textContent = `✅ ${label}`;
+
+    try {
+        const todos = await api(`/api/planner/todos?date=${plannerSelectedDate}`);
+        const list = document.getElementById('planner-todo-list');
+        if (todos.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-light); font-size:13px; text-align:center; padding:16px 0;">할일이 없습니다</p>';
+            return;
+        }
+        list.innerHTML = todos.map(t => `
+            <div class="planner-todo-item">
+                <input type="checkbox" ${t.isCompleted ? 'checked' : ''} onchange="togglePlannerTodo(${t.id}, this.checked)">
+                <span class="todo-text ${t.isCompleted ? 'completed' : ''}">${t.content}</span>
+                <div class="todo-actions">
+                    <button onclick="postponePlannerTodo(${t.id})" title="내일로 미루기">→</button>
+                    <button onclick="deletePlannerTodo(${t.id})" title="삭제">×</button>
+                </div>
+            </div>
+        `).join('');
+    } catch (err) { console.error(err); }
+}
+
+window.addPlannerTodo = async function() {
+    const input = document.getElementById('planner-todo-input');
+    const content = input.value.trim();
+    if (!content) return;
+    try {
+        await api('/api/planner/todos', 'POST', { date: plannerSelectedDate, content });
+        input.value = '';
+        await renderPlannerTodos();
+        await renderPlannerCalendar();
+    } catch (err) { alert('추가 실패: ' + err.message); }
+};
+
+window.togglePlannerTodo = async function(id, checked) {
+    try {
+        await api(`/api/planner/todos/${id}`, 'PUT', { isCompleted: checked });
+        await renderPlannerTodos();
+    } catch (err) { console.error(err); }
+};
+
+window.postponePlannerTodo = async function(id) {
+    const next = new Date(plannerSelectedDate);
+    next.setDate(next.getDate() + 1);
+    const nextStr = next.toISOString().split('T')[0];
+    try {
+        await api(`/api/planner/todos/${id}`, 'PUT', { date: nextStr });
+        await renderPlannerTodos();
+        await renderPlannerCalendar();
+    } catch (err) { console.error(err); }
+};
+
+window.deletePlannerTodo = async function(id) {
+    if (!confirm('삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/planner/todos/${id}`, 'DELETE');
+        await renderPlannerTodos();
+        await renderPlannerCalendar();
+    } catch (err) { console.error(err); }
+};
+
+// -- 메모 --
+async function renderPlannerMemo() {
+    const d = new Date(plannerSelectedDate);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isToday = plannerSelectedDate === todayStr;
+    const label = isToday ? '한줄 메모' : `${d.getMonth()+1}/${d.getDate()} 메모`;
+    document.getElementById('planner-memo-title').textContent = `📝 ${label}`;
+
+    try {
+        const memo = await api(`/api/planner/memos?date=${plannerSelectedDate}`);
+        document.getElementById('planner-memo-input').value = memo?.content || '';
+    } catch (err) { console.error(err); }
+}
+
+window.savePlannerMemo = async function() {
+    const content = document.getElementById('planner-memo-input').value.trim();
+    if (!content) return;
+    try {
+        await api('/api/planner/memos', 'POST', { date: plannerSelectedDate, content });
+        await renderPlannerCalendar();
+    } catch (err) { console.error(err); }
+};
+
+// -- D-day --
+async function renderPlannerDdays() {
+    try {
+        const ddays = await api('/api/planner/ddays');
+        const list = document.getElementById('planner-dday-list');
+        if (ddays.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-light); font-size:13px; text-align:center; padding:12px 0;">D-day를 추가해보세요</p>';
+            return;
+        }
+        const today = new Date(); today.setHours(0,0,0,0);
+        list.innerHTML = ddays.map(d => {
+            const target = new Date(d.targetDate); target.setHours(0,0,0,0);
+            const diff = Math.round((target - today) / (1000*60*60*24));
+            let label;
+            if (diff === 0) label = '<span class="dday-today">D-DAY 🎉</span>';
+            else if (diff > 0) label = `<span class="dday-label">D-${diff}</span>`;
+            else label = `<span class="dday-label" style="color:var(--text-light);">D+${Math.abs(diff)}</span>`;
+            return `<div class="planner-dday-item">
+                <div><span style="margin-right:8px;">${d.title}</span>${label}</div>
+                <button class="habit-del" onclick="deletePlannerDday(${d.id})">×</button>
+            </div>`;
+        }).join('');
+    } catch (err) { console.error(err); }
+}
+
+window.openDdayModal = function() {
+    document.getElementById('dday-title').value = '';
+    document.getElementById('dday-date').value = '';
+    document.getElementById('dday-modal').style.display = '';
+};
+
+window.saveDday = async function() {
+    const title = document.getElementById('dday-title').value.trim();
+    const targetDate = document.getElementById('dday-date').value;
+    if (!title || !targetDate) { alert('제목과 날짜를 입력해주세요.'); return; }
+    try {
+        await api('/api/planner/ddays', 'POST', { title, targetDate });
+        document.getElementById('dday-modal').style.display = 'none';
+        await renderPlannerDdays();
+    } catch (err) { alert('저장 실패: ' + err.message); }
+};
+
+window.deletePlannerDday = async function(id) {
+    if (!confirm('삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/planner/ddays/${id}`, 'DELETE');
+        await renderPlannerDdays();
+    } catch (err) { console.error(err); }
+};
+
+// -- 습관 트래커 --
+async function renderPlannerHabits() {
+    try {
+        const habits = await api('/api/planner/habits');
+        const today = new Date();
+        const mm = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+        const logs = await api(`/api/planner/habit-logs?month=${mm}`);
+
+        // 이번 주 월~일 날짜 계산
+        const todayDay = today.getDay();
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - ((todayDay === 0 ? 7 : todayDay) - 1));
+        const weekDates = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(monday);
+            d.setDate(monday.getDate() + i);
+            weekDates.push(d.toISOString().split('T')[0]);
+        }
+        const todayStr = today.toISOString().split('T')[0];
+
+        const list = document.getElementById('planner-habit-list');
+        if (habits.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-light); font-size:13px; text-align:center; padding:12px 0;">습관을 추가해보세요</p>';
+            return;
+        }
+
+        list.innerHTML = habits.map(h => {
+            const habitLogs = logs.filter(l => l.habitId === h.id).map(l => l.date?.split('T')[0] || l.date);
+            let doneCount = 0;
+            const dots = weekDates.map(date => {
+                const done = habitLogs.includes(date);
+                if (done) doneCount++;
+                const isToday = date === todayStr;
+                const cls = ['habit-dot'];
+                if (done) cls.push('done');
+                if (isToday) cls.push('today-dot', 'clickable');
+                return `<span class="${cls.join(' ')}" ${isToday ? `onclick="toggleHabitLog(${h.id},'${date}',${done})"` : ''}></span>`;
+            }).join('');
+            return `<div class="planner-habit-item">
+                <div class="habit-dots">${dots}</div>
+                <span class="habit-name">${h.title}</span>
+                <span class="habit-score">${doneCount}/7</span>
+                <button class="habit-del" onclick="deletePlannerHabit(${h.id})">×</button>
+            </div>`;
+        }).join('');
+    } catch (err) { console.error(err); }
+}
+
+window.addPlannerHabit = async function() {
+    const title = prompt('습관명을 입력하세요:');
+    if (!title || !title.trim()) return;
+    try {
+        await api('/api/planner/habits', 'POST', { title: title.trim() });
+        await renderPlannerHabits();
+    } catch (err) { alert('추가 실패: ' + err.message); }
+};
+
+window.toggleHabitLog = async function(habitId, date, isDone) {
+    try {
+        if (isDone) {
+            await api('/api/planner/habit-logs', 'DELETE', { habitId, date });
+        } else {
+            await api('/api/planner/habit-logs', 'POST', { habitId, date });
+        }
+        await renderPlannerHabits();
+    } catch (err) { console.error(err); }
+};
+
+window.deletePlannerHabit = async function(id) {
+    if (!confirm('이 습관을 삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/planner/habits/${id}`, 'DELETE');
+        await renderPlannerHabits();
+    } catch (err) { console.error(err); }
 };
 
 // =============================================

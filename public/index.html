@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=42">
+    <link rel="stylesheet" href="styles.css?v=43">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -46,6 +46,10 @@
                 <a href="#" class="nav-item" data-page="worklog">
                     <span class="nav-icon">📒</span>
                     <span class="nav-text">업무일지</span>
+                </a>
+                <a href="#" class="nav-item" data-page="planner">
+                    <span class="nav-icon">📔</span>
+                    <span class="nav-text">마이 플래너</span>
                 </a>
                 <a href="#" class="nav-item" data-page="document">
                     <span class="nav-icon">📝</span>
@@ -786,6 +790,107 @@
                 </div>
             </div>
 
+            <!-- 마이 플래너 페이지 -->
+            <div id="page-planner" class="page">
+                <h1>마이 플래너</h1>
+
+                <!-- 환영 카드 -->
+                <div id="planner-welcome" class="planner-welcome">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <div>
+                            <strong style="font-size:16px;">🔒 나만의 비밀 플래너</strong>
+                            <p style="margin:8px 0 4px;">이 공간은 오직 나만 볼 수 있는 개인 공간이에요.<br>관리자를 포함해 그 누구도 내 플래너를 볼 수 없으니 편하게 자유롭게 활용해보세요!</p>
+                            <p style="margin:12px 0 4px; font-weight:600;">💡 이렇게 활용해보세요</p>
+                            <p style="margin:0; font-size:13px; line-height:1.8;">
+                                ✅ 할일: "천혜향 5kg 30박스 포장", "거래처 전화하기"<br>
+                                📝 메모: "오늘 출하 완료! 내일 대성시온 정산 확인"<br>
+                                📅 D-day: "아들 생일 D-7", "차량 정기검사 D-30"<br>
+                                💪 습관: "물 마시기", "비타민 먹기", "스트레칭"
+                            </p>
+                        </div>
+                        <div style="display:flex; gap:8px; flex-shrink:0; margin-left:16px;">
+                            <button class="btn-outline" onclick="hidePlannerWelcome(true)" style="font-size:12px; padding:4px 10px;">다시 보지 않기</button>
+                            <button class="btn-outline" onclick="hidePlannerWelcome(false)" style="font-size:12px; padding:4px 10px;">닫기</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 메인 2열 레이아웃 -->
+                <div class="planner-layout">
+                    <!-- 왼쪽: 미니 달력 + D-day -->
+                    <div class="planner-left">
+                        <div class="card">
+                            <div class="card-header-row">
+                                <div class="calendar-title-group">
+                                    <h2 id="planner-cal-title"></h2>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <button class="btn-nav" onclick="plannerPrevMonth()">&lt;</button>
+                                    <button class="btn-nav" onclick="plannerNextMonth()">&gt;</button>
+                                    <button id="planner-help-btn" class="btn-nav" onclick="document.getElementById('planner-welcome').style.display=''" title="도움말" style="font-size:14px;">?</button>
+                                </div>
+                            </div>
+                            <table class="planner-mini-cal">
+                                <thead><tr><th class="sun">일</th><th>월</th><th>화</th><th>수</th><th>목</th><th>금</th><th class="sat">토</th></tr></thead>
+                                <tbody id="planner-cal-body"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header-row">
+                                <h2>📅 D-day</h2>
+                                <button class="btn-primary" onclick="openDdayModal()" style="font-size:12px; padding:4px 12px;">+ 추가</button>
+                            </div>
+                            <div id="planner-dday-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- 오른쪽: 할일 + 메모 + 습관 -->
+                    <div class="planner-right">
+                        <div class="card">
+                            <h2 id="planner-todo-title">✅ 오늘의 할일</h2>
+                            <div id="planner-todo-list"></div>
+                            <div style="display:flex; gap:8px; margin-top:12px;">
+                                <input type="text" id="planner-todo-input" class="form-input" placeholder="할일을 입력하세요" style="flex:1;" onkeydown="if(event.key==='Enter')addPlannerTodo()">
+                                <button class="btn-primary" onclick="addPlannerTodo()" style="flex-shrink:0;">추가</button>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <h2 id="planner-memo-title">📝 한줄 메모</h2>
+                            <textarea id="planner-memo-input" class="form-input" rows="2" placeholder="오늘 하루 메모를 남겨보세요" onblur="savePlannerMemo()"></textarea>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header-row">
+                                <h2>💪 습관 트래커</h2>
+                                <button class="btn-primary" onclick="addPlannerHabit()" style="font-size:12px; padding:4px 12px;">+ 추가</button>
+                            </div>
+                            <div id="planner-habit-list"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- D-day 추가 모달 -->
+                <div id="dday-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal">
+                        <h3>D-day 추가</h3>
+                        <div class="form-group">
+                            <label>제목</label>
+                            <input type="text" id="dday-title" class="form-input" placeholder="예: 아들 생일">
+                        </div>
+                        <div class="form-group">
+                            <label>날짜</label>
+                            <input type="date" id="dday-date" class="form-input">
+                        </div>
+                        <div style="display:flex; gap:10px; justify-content:flex-end;">
+                            <button class="btn-outline" onclick="document.getElementById('dday-modal').style.display='none'">취소</button>
+                            <button class="btn-primary" onclick="saveDday()">저장</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 박스재고 페이지 -->
             <div id="page-inventory" class="page">
                 <h1>박스재고</h1>
@@ -1053,6 +1158,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=63"></script>
+    <script src="app.js?v=64"></script>
 </body>
 </html>

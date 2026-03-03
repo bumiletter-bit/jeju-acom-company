@@ -263,6 +263,32 @@ async function initDB() {
         await pool.query('INSERT INTO box_inventory (product_name) VALUES ($1) ON CONFLICT (product_name) DO NOTHING', [name]);
     }
 
+    // 마이 플래너 테이블
+    await pool.query(`CREATE TABLE IF NOT EXISTS planner_todos (
+        id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id),
+        date DATE NOT NULL, content VARCHAR(200) NOT NULL,
+        is_completed BOOLEAN DEFAULT false, sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS planner_memos (
+        id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id),
+        date DATE NOT NULL, content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(), UNIQUE(user_id, date)
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS planner_ddays (
+        id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id),
+        title VARCHAR(100) NOT NULL, target_date DATE NOT NULL,
+        color VARCHAR(7) DEFAULT '#F5A623', created_at TIMESTAMP DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS planner_habits (
+        id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id),
+        title VARCHAR(50) NOT NULL, created_at TIMESTAMP DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS planner_habit_logs (
+        id SERIAL PRIMARY KEY, habit_id INTEGER REFERENCES planner_habits(id) ON DELETE CASCADE,
+        date DATE NOT NULL, is_done BOOLEAN DEFAULT true, UNIQUE(habit_id, date)
+    )`);
+
     // AI 대화 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -965,6 +991,172 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// === Planner API (마이 플래너) ===
+
+// Todos
+app.get('/api/planner/todos', authMiddleware, async (req, res) => {
+    try {
+        const { date } = req.query;
+        const result = await pool.query(
+            'SELECT * FROM planner_todos WHERE user_id = $1 AND date = $2 ORDER BY is_completed, sort_order, id',
+            [req.user.id, date]
+        );
+        res.json(result.rows.map(r => ({ id: r.id, date: r.date, content: r.content, isCompleted: r.is_completed, sortOrder: r.sort_order })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/planner/todos', authMiddleware, async (req, res) => {
+    try {
+        const { date, content } = req.body;
+        const result = await pool.query(
+            'INSERT INTO planner_todos (user_id, date, content) VALUES ($1, $2, $3) RETURNING id',
+            [req.user.id, date, content]
+        );
+        res.json({ id: result.rows[0].id, success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/planner/todos/:id', authMiddleware, async (req, res) => {
+    try {
+        const { isCompleted, date } = req.body;
+        const doc = await pool.query('SELECT user_id FROM planner_todos WHERE id = $1', [req.params.id]);
+        if (!doc.rows[0] || doc.rows[0].user_id !== req.user.id) return res.status(403).json({ error: '권한 없음' });
+        const sets = [];
+        const vals = [];
+        let idx = 1;
+        if (isCompleted !== undefined) { sets.push(`is_completed = $${idx++}`); vals.push(isCompleted); }
+        if (date !== undefined) { sets.push(`date = $${idx++}`); vals.push(date); }
+        vals.push(req.params.id);
+        await pool.query(`UPDATE planner_todos SET ${sets.join(', ')} WHERE id = $${idx}`, vals);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/planner/todos/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM planner_todos WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Memos
+app.get('/api/planner/memos', authMiddleware, async (req, res) => {
+    try {
+        const { date } = req.query;
+        const result = await pool.query('SELECT * FROM planner_memos WHERE user_id = $1 AND date = $2', [req.user.id, date]);
+        res.json(result.rows[0] ? { id: result.rows[0].id, content: result.rows[0].content } : null);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/planner/memos', authMiddleware, async (req, res) => {
+    try {
+        const { date, content } = req.body;
+        await pool.query(
+            'INSERT INTO planner_memos (user_id, date, content) VALUES ($1, $2, $3) ON CONFLICT (user_id, date) DO UPDATE SET content = $3',
+            [req.user.id, date, content]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// D-days
+app.get('/api/planner/ddays', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM planner_ddays WHERE user_id = $1 ORDER BY target_date', [req.user.id]);
+        res.json(result.rows.map(r => ({ id: r.id, title: r.title, targetDate: r.target_date, color: r.color })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/planner/ddays', authMiddleware, async (req, res) => {
+    try {
+        const { title, targetDate, color } = req.body;
+        const result = await pool.query(
+            'INSERT INTO planner_ddays (user_id, title, target_date, color) VALUES ($1, $2, $3, $4) RETURNING id',
+            [req.user.id, title, targetDate, color || '#F5A623']
+        );
+        res.json({ id: result.rows[0].id, success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/planner/ddays/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM planner_ddays WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Habits
+app.get('/api/planner/habits', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM planner_habits WHERE user_id = $1 ORDER BY id', [req.user.id]);
+        res.json(result.rows.map(r => ({ id: r.id, title: r.title })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/planner/habits', authMiddleware, async (req, res) => {
+    try {
+        const { title } = req.body;
+        const result = await pool.query('INSERT INTO planner_habits (user_id, title) VALUES ($1, $2) RETURNING id', [req.user.id, title]);
+        res.json({ id: result.rows[0].id, success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/planner/habits/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM planner_habits WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Habit Logs
+app.get('/api/planner/habit-logs', authMiddleware, async (req, res) => {
+    try {
+        const { month } = req.query;
+        const result = await pool.query(
+            `SELECT hl.* FROM planner_habit_logs hl JOIN planner_habits h ON hl.habit_id = h.id
+             WHERE h.user_id = $1 AND to_char(hl.date, 'YYYY-MM') = $2`,
+            [req.user.id, month]
+        );
+        res.json(result.rows.map(r => ({ id: r.id, habitId: r.habit_id, date: r.date, isDone: r.is_done })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/planner/habit-logs', authMiddleware, async (req, res) => {
+    try {
+        const { habitId, date } = req.body;
+        const h = await pool.query('SELECT user_id FROM planner_habits WHERE id = $1', [habitId]);
+        if (!h.rows[0] || h.rows[0].user_id !== req.user.id) return res.status(403).json({ error: '권한 없음' });
+        await pool.query('INSERT INTO planner_habit_logs (habit_id, date) VALUES ($1, $2) ON CONFLICT (habit_id, date) DO NOTHING', [habitId, date]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/planner/habit-logs', authMiddleware, async (req, res) => {
+    try {
+        const { habitId, date } = req.body;
+        const h = await pool.query('SELECT user_id FROM planner_habits WHERE id = $1', [habitId]);
+        if (!h.rows[0] || h.rows[0].user_id !== req.user.id) return res.status(403).json({ error: '권한 없음' });
+        await pool.query('DELETE FROM planner_habit_logs WHERE habit_id = $1 AND date = $2', [habitId, date]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Calendar dots (할일/메모 있는 날짜)
+app.get('/api/planner/calendar-dots', authMiddleware, async (req, res) => {
+    try {
+        const { month } = req.query;
+        const todos = await pool.query(
+            "SELECT DISTINCT to_char(date, 'YYYY-MM-DD') as d FROM planner_todos WHERE user_id = $1 AND to_char(date, 'YYYY-MM') = $2",
+            [req.user.id, month]
+        );
+        const memos = await pool.query(
+            "SELECT DISTINCT to_char(date, 'YYYY-MM-DD') as d FROM planner_memos WHERE user_id = $1 AND to_char(date, 'YYYY-MM') = $2",
+            [req.user.id, month]
+        );
+        res.json({ todoDates: todos.rows.map(r => r.d), memoDates: memos.rows.map(r => r.d) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // === Settlements API (인증 추가) ===
