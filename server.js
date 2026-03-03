@@ -171,22 +171,18 @@ async function initDB() {
         )
     `);
 
-    // 기존 admin 아이디를 ceo로 변경
-    const oldAdmin = await pool.query("SELECT id FROM users WHERE username = 'admin'");
-    if (oldAdmin.rows.length > 0) {
-        await pool.query("UPDATE users SET username = 'ceo' WHERE username = 'admin'");
-        console.log('관리자 아이디 변경: admin → ceo');
-    }
+    // ceo로 변경된 아이디를 다시 admin으로 복원
+    await pool.query("UPDATE users SET username = 'admin' WHERE username = 'ceo'");
 
-    // 초기 관리자 계정 생성 (ceo 계정이 없을 때만)
-    const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'ceo'");
+    // 초기 관리자 계정 생성
+    const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
         const hash = await bcrypt.hash('admin123', 10);
         await pool.query(
             "INSERT INTO users (username, password_hash, name, position, color, role, annual_leave) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            ['ceo', hash, '전승범', '대표', '#ef4444', 'admin', 15]
+            ['admin', hash, '전승범', '대표', '#ef4444', 'admin', 15]
         );
-        console.log('초기 관리자 계정 생성: ceo / admin123');
+        console.log('초기 관리자 계정 생성: admin / admin123');
     }
 
     // 기본 점심메뉴 시드
@@ -425,7 +421,7 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         const check = await pool.query('SELECT username FROM users WHERE id = $1', [req.params.id]);
-        if (check.rows.length > 0 && check.rows[0].username === 'ceo') {
+        if (check.rows.length > 0 && check.rows[0].username === 'admin') {
             return res.status(400).json({ error: '기본 관리자 계정은 삭제할 수 없습니다' });
         }
         await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
