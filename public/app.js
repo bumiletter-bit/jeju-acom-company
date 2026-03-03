@@ -2202,7 +2202,7 @@ let lunchMyVote = null;
 
 async function renderLunchPage() {
     const adminCard = document.getElementById('lunch-admin-card');
-    if (adminCard) adminCard.style.display = currentUser?.role === 'admin' ? '' : 'none';
+    if (adminCard) adminCard.style.display = '';
 
     try {
         const data = await api('/api/lunch/today');

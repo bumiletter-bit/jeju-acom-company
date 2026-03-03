@@ -1104,7 +1104,7 @@ app.get('/api/lunch/menus', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/lunch/menus', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/lunch/menus', authMiddleware, async (req, res) => {
     try {
         const { name, category } = req.body;
         if (!name) return res.status(400).json({ error: '식당 이름은 필수입니다' });
@@ -1116,7 +1116,7 @@ app.post('/api/lunch/menus', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
-app.delete('/api/lunch/menus/:id', authMiddleware, adminOnly, async (req, res) => {
+app.delete('/api/lunch/menus/:id', authMiddleware, async (req, res) => {
     try {
         await pool.query('DELETE FROM lunch_menus WHERE id = $1', [req.params.id]);
         res.json({ success: true });
