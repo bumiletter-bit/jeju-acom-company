@@ -171,8 +171,8 @@ async function initDB() {
         )
     `);
 
-    // ceo로 변경된 아이디를 다시 admin으로 복원
-    await pool.query("UPDATE users SET username = 'admin' WHERE username = 'ceo'");
+    // 잘못 생성된 ceo 계정 정리
+    await pool.query("DELETE FROM users WHERE username = 'ceo' AND (SELECT COUNT(*) FROM users WHERE username = 'admin') > 0");
 
     // 초기 관리자 계정 생성
     const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'admin'");
