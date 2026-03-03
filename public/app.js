@@ -2217,7 +2217,7 @@ async function renderLunchPage() {
         console.error('점심메뉴 로드 오류:', err);
     }
 
-    if (currentUser?.role === 'admin') renderLunchAdminPanel().catch(console.error);
+    renderLunchAdminPanel().catch(console.error);
 }
 
 async function handleLunchRandom() {
