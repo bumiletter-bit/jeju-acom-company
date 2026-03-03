@@ -393,6 +393,34 @@ app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     }
 });
 
+// 직원별 연차 현황 (관리자 전용)
+app.get('/api/users/leave-summary', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT u.id, u.name, u.position, u.annual_leave,
+                   COALESCE(SUM(CASE WHEN d.status = 'approved' AND d.type = 'vacation'
+                       THEN d.deducted_leave ELSE 0 END), 0) as used_leave,
+                   COALESCE(SUM(CASE WHEN d.status = 'pending' AND d.type = 'vacation'
+                       THEN d.deducted_leave ELSE 0 END), 0) as pending_leave
+            FROM users u
+            LEFT JOIN documents d ON u.id = d.applicant_id
+            WHERE u.role = 'user'
+            GROUP BY u.id, u.name, u.position, u.annual_leave
+            ORDER BY u.name
+        `);
+        res.json(result.rows.map(r => ({
+            id: r.id,
+            name: r.name,
+            position: r.position,
+            annualLeave: Number(r.annual_leave),
+            usedLeave: Number(r.used_leave),
+            pendingLeave: Number(r.pending_leave)
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { name, position, color, role, annualLeave, password } = req.body;
@@ -537,6 +565,57 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
             startDate: r.start_date, endDate: r.end_date,
             startTime: r.start_time, endTime: r.end_time,
             reason: r.reason, status: r.status, deductedLeave: Number(r.deducted_leave),
+            createdAt: r.created_at, processedAt: r.processed_at
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 승인 이력 조회 (관리자 전용)
+app.get('/api/documents/history', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { employeeId, startDate, endDate, type } = req.query;
+        let query = `
+            SELECT d.*, u1.name as applicant_name, u1.position as applicant_position,
+                   u2.name as approver_name
+            FROM documents d
+            JOIN users u1 ON d.applicant_id = u1.id
+            LEFT JOIN users u2 ON d.approver_id = u2.id
+            WHERE d.status IN ('approved', 'rejected')
+        `;
+        const values = [];
+        let idx = 1;
+
+        if (employeeId) {
+            query += ` AND d.applicant_id = $${idx++}`;
+            values.push(Number(employeeId));
+        }
+        if (startDate) {
+            query += ` AND d.start_date >= $${idx++}`;
+            values.push(startDate);
+        }
+        if (endDate) {
+            query += ` AND d.start_date <= $${idx++}`;
+            values.push(endDate);
+        }
+        if (type) {
+            query += ` AND d.type = $${idx++}`;
+            values.push(type);
+        }
+
+        query += ' ORDER BY d.processed_at DESC';
+
+        const result = await pool.query(query, values);
+        res.json(result.rows.map(r => ({
+            id: r.id, type: r.type, subType: r.sub_type,
+            applicantId: r.applicant_id, applicantName: r.applicant_name,
+            applicantPosition: r.applicant_position,
+            approverId: r.approver_id, approverName: r.approver_name,
+            startDate: r.start_date, endDate: r.end_date,
+            startTime: r.start_time, endTime: r.end_time,
+            reason: r.reason, status: r.status,
+            deductedLeave: Number(r.deducted_leave),
             createdAt: r.created_at, processedAt: r.processed_at
         })));
     } catch (err) {

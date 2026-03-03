@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=37">
+    <link rel="stylesheet" href="styles.css?v=38">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -216,6 +216,15 @@
             <div id="page-document" class="page">
                 <h1>기안서류</h1>
 
+                <!-- 상위 탭: 신청목록 / 승인 이력 (관리자 전용) -->
+                <div class="doc-main-tabs" id="doc-main-tabs" style="display:none;">
+                    <button class="doc-main-tab active" data-doc-main="list">신청목록</button>
+                    <button class="doc-main-tab" data-doc-main="history">승인 이력</button>
+                </div>
+
+                <!-- 신청목록 섹션 -->
+                <div id="doc-section-list">
+
                 <!-- 탭 네비게이션 -->
                 <div class="doc-tabs">
                     <button class="doc-tab active" data-doc-type="vacation">휴가신청서</button>
@@ -345,6 +354,73 @@
                         </tbody>
                     </table>
                 </div>
+
+                </div><!-- /doc-section-list -->
+
+                <!-- 승인 이력 섹션 (관리자 전용) -->
+                <div id="doc-section-history" style="display:none;">
+
+                    <!-- 직원별 연차 현황 -->
+                    <div class="card">
+                        <h2>직원별 연차 현황</h2>
+                        <div class="stats-grid" id="leave-summary-grid"></div>
+                    </div>
+
+                    <!-- 필터 -->
+                    <div class="card">
+                        <h2>승인 이력 검색</h2>
+                        <div class="form-row" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label>직원</label>
+                                <select id="history-employee" class="form-input" style="width:150px;">
+                                    <option value="">전체</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label>서류종류</label>
+                                <select id="history-type" class="form-input" style="width:150px;">
+                                    <option value="">전체</option>
+                                    <option value="vacation">휴가신청서</option>
+                                    <option value="attendance">근태신청서</option>
+                                    <option value="reason">사유서</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label>시작일</label>
+                                <input type="date" id="history-start-date" class="form-input" style="width:160px;">
+                            </div>
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label>종료일</label>
+                                <input type="date" id="history-end-date" class="form-input" style="width:160px;">
+                            </div>
+                            <button class="btn-primary" onclick="searchDocHistory()" style="height:40px;">검색</button>
+                        </div>
+                    </div>
+
+                    <!-- 이력 테이블 -->
+                    <div class="card">
+                        <h2>승인/반려 이력</h2>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>유형</th>
+                                    <th>신청자</th>
+                                    <th>기간/날짜</th>
+                                    <th>사유</th>
+                                    <th>차감일수</th>
+                                    <th>결재자</th>
+                                    <th>상태</th>
+                                    <th>처리일</th>
+                                </tr>
+                            </thead>
+                            <tbody id="doc-history-list">
+                                <tr class="empty-row"><td colspan="8">검색 조건을 선택하고 검색해주세요.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                </div><!-- /doc-section-history -->
+
             </div>
 
             <!-- 정산관리 페이지 -->
@@ -898,6 +974,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=58"></script>
+    <script src="app.js?v=59"></script>
 </body>
 </html>

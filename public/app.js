@@ -165,8 +165,13 @@ function switchPage(pageName) {
         loadApprovers().catch(console.error);
         renderDocList().catch(console.error);
         document.getElementById('approval-pending-card').style.display = currentUser?.role === 'admin' ? '' : 'none';
+        document.getElementById('doc-main-tabs').style.display = currentUser?.role === 'admin' ? '' : 'none';
         if (currentUser?.role === 'admin') renderApprovalList().catch(console.error);
         if (currentUser) document.getElementById('doc-applicant').value = `${currentUser.position} ${currentUser.name}`;
+        // 항상 신청목록 탭으로 초기화
+        document.querySelectorAll('.doc-main-tab').forEach(t => t.classList.toggle('active', t.dataset.docMain === 'list'));
+        document.getElementById('doc-section-list').style.display = '';
+        document.getElementById('doc-section-history').style.display = 'none';
     }
     if (pageName === 'settlement') {
         renderSettlementCalendar().catch(console.error);
@@ -1364,7 +1369,23 @@ let currentDocType = 'vacation';
 let selectedDocSubType = '연차';
 let approverList = [];
 
-// 탭 전환
+// 상위 탭 전환 (신청목록 / 승인 이력)
+document.querySelectorAll('.doc-main-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.doc-main-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const section = tab.dataset.docMain;
+        document.getElementById('doc-section-list').style.display = section === 'list' ? '' : 'none';
+        document.getElementById('doc-section-history').style.display = section === 'history' ? '' : 'none';
+        if (section === 'history') {
+            loadHistoryFilters();
+            renderLeaveSummary();
+            searchDocHistory();
+        }
+    });
+});
+
+// 하위 탭 전환 (휴가/근태/사유서)
 document.querySelectorAll('.doc-tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.doc-tab').forEach(t => t.classList.remove('active'));
@@ -1781,6 +1802,109 @@ window.rejectDocument = async function(id) {
         alert('반려 실패: ' + err.message);
     }
 };
+
+// =============================================
+// 승인 이력 (관리자 전용)
+// =============================================
+
+async function loadHistoryFilters() {
+    try {
+        const users = await api('/api/users');
+        const select = document.getElementById('history-employee');
+        select.innerHTML = '<option value="">전체</option>' +
+            users.filter(u => u.role === 'user').map(u =>
+                `<option value="${u.id}">${u.position ? u.position + ' ' : ''}${u.name}</option>`
+            ).join('');
+    } catch (err) {
+        console.error('loadHistoryFilters error:', err);
+    }
+}
+
+async function renderLeaveSummary() {
+    try {
+        const data = await api('/api/users/leave-summary');
+        const grid = document.getElementById('leave-summary-grid');
+
+        if (data.length === 0) {
+            grid.innerHTML = '<p style="color:var(--text-light);">직원 데이터가 없습니다.</p>';
+            return;
+        }
+
+        grid.innerHTML = data.map(emp => {
+            const total = emp.annualLeave + emp.usedLeave + emp.pendingLeave;
+            return `
+                <div class="leave-summary-card">
+                    <div class="emp-name">${emp.name}</div>
+                    <div class="emp-position">${emp.position || ''}</div>
+                    <div class="leave-numbers">
+                        <div>총<span class="num">${total}</span></div>
+                        <div>사용<span class="num used">${emp.usedLeave}</span></div>
+                        <div>잔여<span class="num remaining">${emp.annualLeave}</span></div>
+                        <div>대기<span class="num pending">${emp.pendingLeave}</span></div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        console.error('renderLeaveSummary error:', err);
+    }
+}
+
+window.searchDocHistory = async function() {
+    try {
+        const employeeId = document.getElementById('history-employee').value;
+        const startDate = document.getElementById('history-start-date').value;
+        const endDate = document.getElementById('history-end-date').value;
+        const type = document.getElementById('history-type').value;
+
+        let url = '/api/documents/history?';
+        const params = [];
+        if (employeeId) params.push(`employeeId=${employeeId}`);
+        if (startDate) params.push(`startDate=${startDate}`);
+        if (endDate) params.push(`endDate=${endDate}`);
+        if (type) params.push(`type=${type}`);
+        url += params.join('&');
+
+        const docs = await api(url);
+        renderDocHistory(docs);
+    } catch (err) {
+        console.error('searchDocHistory error:', err);
+    }
+};
+
+function renderDocHistory(docs) {
+    const tbody = document.getElementById('doc-history-list');
+    const typeLabels = { vacation: '휴가', attendance: '근태', reason: '사유서' };
+
+    if (!docs || docs.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="8">검색 결과가 없습니다.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = docs.map(d => {
+        const statusClass = d.status === 'approved' ? 'status-approved' : 'status-rejected';
+        const statusLabel = d.status === 'approved' ? '승인' : '반려';
+        const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
+        const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
+        let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
+        if (d.subType === '시간차' && d.startTime && d.endTime) {
+            dateStr += ` (${d.startTime}~${d.endTime})`;
+        }
+        const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+        const deducted = d.deductedLeave > 0 ? d.deductedLeave + '일' : '-';
+
+        return `<tr>
+            <td>${typeLabels[d.type] || d.type} - ${d.subType}</td>
+            <td>${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}</td>
+            <td>${dateStr}</td>
+            <td>${d.reason || '-'}</td>
+            <td>${deducted}</td>
+            <td>${d.approverName || '-'}</td>
+            <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+            <td>${processedDate}</td>
+        </tr>`;
+    }).join('');
+}
 
 // =============================================
 // 송장변환
