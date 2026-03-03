@@ -171,7 +171,14 @@ async function initDB() {
         )
     `);
 
-    // 초기 관리자 계정 생성
+    // 기존 admin 아이디를 ceo로 변경
+    const oldAdmin = await pool.query("SELECT id FROM users WHERE username = 'admin'");
+    if (oldAdmin.rows.length > 0) {
+        await pool.query("UPDATE users SET username = 'ceo' WHERE username = 'admin'");
+        console.log('관리자 아이디 변경: admin → ceo');
+    }
+
+    // 초기 관리자 계정 생성 (ceo 계정이 없을 때만)
     const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'ceo'");
     if (adminCheck.rows.length === 0) {
         const hash = await bcrypt.hash('admin123', 10);
@@ -181,9 +188,6 @@ async function initDB() {
         );
         console.log('초기 관리자 계정 생성: ceo / admin123');
     }
-
-    // 기존 admin 아이디를 ceo로 변경
-    await pool.query("UPDATE users SET username = 'ceo' WHERE username = 'admin'");
 
     // 기본 점심메뉴 시드
     const menuCheck = await pool.query('SELECT COUNT(*) FROM lunch_menus');
