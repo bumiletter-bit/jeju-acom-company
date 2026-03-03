@@ -182,6 +182,7 @@ function switchPage(pageName) {
     if (pageName === 'worklog') renderWorklogPage().catch(console.error);
     if (pageName === 'pricing') renderPricingList().catch(console.error);
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
+    if (pageName === 'inventory') renderBoxInventory().catch(console.error);
     if (pageName === 'ai-workspace') renderAIWorkspace().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
     if (pageName === 'myinfo') renderMyInfoPage();
@@ -2023,6 +2024,93 @@ window.saveManualDoc = async function() {
         alert('저장 실패: ' + err.message);
     }
 };
+
+// =============================================
+// 박스재고
+// =============================================
+
+let boxInventoryData = [];
+
+async function renderBoxInventory() {
+    try {
+        const data = await api('/api/box-inventory');
+        boxInventoryData = data;
+        const grid = document.getElementById('box-inventory-grid');
+        const isAdmin = currentUser?.role === 'admin';
+
+        grid.innerHTML = data.map(item => {
+            const total = item.companyStock + item.daesongStock;
+            return `
+                <div class="leave-summary-card">
+                    <div class="emp-name">${item.productName}</div>
+                    <div class="leave-numbers" style="margin-top:12px;">
+                        <div>총주문량<span class="num">${total}</span></div>
+                        <div>업체재고<span class="num used ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="editBoxStock(${item.id},'company')"` : ''} data-box-id="${item.id}" data-box-field="company">${item.companyStock}</span></div>
+                        <div>대성(시온)<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="editBoxStock(${item.id},'daesong')"` : ''} data-box-id="${item.id}" data-box-field="daesong">${item.daesongStock}</span></div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        document.getElementById('box-inventory-save-row').style.display = 'none';
+    } catch (err) {
+        console.error('renderBoxInventory error:', err);
+    }
+}
+
+window.editBoxStock = function(id, field) {
+    const item = boxInventoryData.find(i => i.id === id);
+    if (!item) return;
+    const label = field === 'company' ? '업체재고' : '대성(시온)재고';
+    const current = field === 'company' ? item.companyStock : item.daesongStock;
+    const val = prompt(`${item.productName} - ${label} 수량 입력:`, current);
+    if (val === null) return;
+    const num = parseInt(val);
+    if (isNaN(num) || num < 0) { alert('올바른 숫자를 입력해주세요.'); return; }
+
+    if (field === 'company') item.companyStock = num;
+    else item.daesongStock = num;
+
+    // UI 즉시 반영
+    const total = item.companyStock + item.daesongStock;
+    const card = document.querySelector(`[data-box-id="${id}"][data-box-field="company"]`).closest('.leave-summary-card');
+    card.querySelector('.num:first-of-type').textContent = total;
+    card.querySelector('[data-box-field="company"]').textContent = item.companyStock;
+    card.querySelector('[data-box-field="daesong"]').textContent = item.daesongStock;
+
+    document.getElementById('box-inventory-save-row').style.display = '';
+};
+
+window.saveBoxInventory = async function() {
+    try {
+        for (const item of boxInventoryData) {
+            await api(`/api/box-inventory/${item.id}`, 'PUT', {
+                companyStock: item.companyStock,
+                daesongStock: item.daesongStock
+            });
+        }
+        alert('저장되었습니다.');
+        document.getElementById('box-inventory-save-row').style.display = 'none';
+    } catch (err) {
+        alert('저장 실패: ' + err.message);
+    }
+};
+
+// 새로고침 버튼
+document.getElementById('inventory-refresh-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('inventory-refresh-btn');
+    btn.classList.add('spinning');
+    try {
+        await renderBoxInventory();
+        const now = new Date();
+        document.getElementById('inventory-refresh-time').textContent =
+            `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')} 업데이트됨`;
+    } catch (err) {
+        console.error(err);
+    } finally {
+        btn.classList.remove('spinning');
+    }
+});
 
 // =============================================
 // 송장변환

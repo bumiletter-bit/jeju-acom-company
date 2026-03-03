@@ -246,6 +246,23 @@ async function initDB() {
         )
     `);
 
+    // 박스재고 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS box_inventory (
+            id SERIAL PRIMARY KEY,
+            product_name VARCHAR(50) NOT NULL UNIQUE,
+            company_stock INTEGER DEFAULT 0,
+            daesong_stock INTEGER DEFAULT 0,
+            updated_by INTEGER REFERENCES users(id),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // 초기 데이터 삽입 (이미 있으면 무시)
+    const boxProducts = ['귤 박스 3kg', '귤 박스 5kg', '귤 박스 10kg', '만감 박스 3kg', '만감 박스 5kg', '만감 박스 10kg'];
+    for (const name of boxProducts) {
+        await pool.query('INSERT INTO box_inventory (product_name) VALUES ($1) ON CONFLICT (product_name) DO NOTHING', [name]);
+    }
+
     // AI 대화 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -914,6 +931,36 @@ app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
 
         // 연동 일정은 ON DELETE CASCADE로 자동 삭제
         await pool.query('DELETE FROM documents WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// === Box Inventory API (박스재고) ===
+
+app.get('/api/box-inventory', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM box_inventory ORDER BY id');
+        res.json(result.rows.map(r => ({
+            id: r.id,
+            productName: r.product_name,
+            companyStock: r.company_stock,
+            daesongStock: r.daesong_stock,
+            updatedAt: r.updated_at
+        })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { companyStock, daesongStock } = req.body;
+        await pool.query(
+            'UPDATE box_inventory SET company_stock = $1, daesong_stock = $2, updated_by = $3, updated_at = NOW() WHERE id = $4',
+            [companyStock, daesongStock, req.user.id, req.params.id]
+        );
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
