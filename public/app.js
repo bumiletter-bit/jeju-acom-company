@@ -2074,11 +2074,24 @@ async function renderPlannerCalendar() {
     const mm = String(plannerMonth + 1).padStart(2, '0');
     try {
         plannerCalDots = await api(`/api/planner/calendar-dots?month=${plannerYear}-${mm}`);
-    } catch (e) { plannerCalDots = { todoDates: [], memoDates: [] }; }
+    } catch (e) { plannerCalDots = { todoDates: [], memoDates: [], todosByDate: {}, memosByDate: {}, ddaysByDate: {} }; }
 
     const daysInMonth = new Date(plannerYear, plannerMonth + 1, 0).getDate();
     const firstDay = new Date(plannerYear, plannerMonth, 1).getDay();
     const todayStr = new Date().toISOString().split('T')[0];
+
+    // D-day 당일 알림
+    const alertDiv = document.getElementById('planner-dday-alert');
+    const todayDdays = plannerCalDots.ddaysByDate?.[todayStr];
+    if (todayDdays && todayDdays.length > 0) {
+        alertDiv.style.display = '';
+        alertDiv.innerHTML = todayDdays.map(title =>
+            `<div class="planner-dday-alert-item">🎉 오늘이 <strong>${title}</strong>의 날입니다!</div>`
+        ).join('');
+    } else {
+        alertDiv.style.display = 'none';
+        alertDiv.innerHTML = '';
+    }
 
     let html = '';
     let day = 1;
@@ -2096,17 +2109,30 @@ async function renderPlannerCalendar() {
                 if (dateStr === todayStr) cls.push('today');
                 if (dateStr === plannerSelectedDate) cls.push('selected');
 
-                const hasTodo = plannerCalDots.todoDates?.includes(dateStr);
-                const hasMemo = plannerCalDots.memoDates?.includes(dateStr);
-                let dots = '';
-                if (hasTodo || hasMemo) {
-                    dots = '<div class="planner-cal-dots">';
-                    if (hasTodo) dots += '<span class="dot-todo"></span>';
-                    if (hasMemo) dots += '<span class="dot-memo"></span>';
-                    dots += '</div>';
+                // 셀 안에 이벤트 내용 표시
+                let events = '<div class="planner-cal-events">';
+                // D-day
+                const ddays = plannerCalDots.ddaysByDate?.[dateStr];
+                if (ddays) {
+                    ddays.forEach(title => { events += `<div class="cal-evt-dday">${title}</div>`; });
                 }
+                // 할일 (최대 2개 + 나머지 개수)
+                const todos = plannerCalDots.todosByDate?.[dateStr];
+                if (todos) {
+                    todos.slice(0, 2).forEach(t => {
+                        events += `<div class="cal-evt-todo">${t.done ? '✓' : '·'} ${t.content}</div>`;
+                    });
+                    if (todos.length > 2) events += `<div class="cal-evt-todo" style="color:var(--text-light);">+${todos.length - 2}개</div>`;
+                }
+                // 메모
+                const memo = plannerCalDots.memosByDate?.[dateStr];
+                if (memo) {
+                    const short = memo.length > 8 ? memo.substring(0, 8) + '…' : memo;
+                    events += `<div class="cal-evt-memo">📝 ${short}</div>`;
+                }
+                events += '</div>';
 
-                html += `<td class="${cls.join(' ')}" onclick="selectPlannerDate('${dateStr}')">${day}${dots}</td>`;
+                html += `<td class="${cls.join(' ')}" onclick="selectPlannerDate('${dateStr}')"><span class="planner-day-num">${day}</span>${events}</td>`;
                 day++;
             }
         }
@@ -2251,6 +2277,7 @@ window.saveDday = async function() {
         await api('/api/planner/ddays', 'POST', { title, targetDate });
         document.getElementById('dday-modal').style.display = 'none';
         await renderPlannerDdays();
+        await renderPlannerCalendar();
     } catch (err) { alert('저장 실패: ' + err.message); }
 };
 
@@ -2259,6 +2286,7 @@ window.deletePlannerDday = async function(id) {
     try {
         await api(`/api/planner/ddays/${id}`, 'DELETE');
         await renderPlannerDdays();
+        await renderPlannerCalendar();
     } catch (err) { console.error(err); }
 };
 

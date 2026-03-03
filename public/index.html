@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=43">
+    <link rel="stylesheet" href="styles.css?v=44">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -815,9 +815,12 @@
                     </div>
                 </div>
 
-                <!-- 메인 2열 레이아웃 -->
+                <!-- D-day 당일 알림 -->
+                <div id="planner-dday-alert" style="display:none;"></div>
+
+                <!-- 메인 2열 레이아웃: 달력(왼쪽 넓게) + 사이드(오른쪽) -->
                 <div class="planner-layout">
-                    <!-- 왼쪽: 미니 달력 + D-day -->
+                    <!-- 왼쪽: 큰 달력 -->
                     <div class="planner-left">
                         <div class="card">
                             <div class="card-header-row">
@@ -835,17 +838,9 @@
                                 <tbody id="planner-cal-body"></tbody>
                             </table>
                         </div>
-
-                        <div class="card">
-                            <div class="card-header-row">
-                                <h2>📅 D-day</h2>
-                                <button class="btn-primary" onclick="openDdayModal()" style="font-size:12px; padding:4px 12px;">+ 추가</button>
-                            </div>
-                            <div id="planner-dday-list"></div>
-                        </div>
                     </div>
 
-                    <!-- 오른쪽: 할일 + 메모 + 습관 -->
+                    <!-- 오른쪽: 할일 + 메모 + D-day + 습관 -->
                     <div class="planner-right">
                         <div class="card">
                             <h2 id="planner-todo-title">✅ 오늘의 할일</h2>
@@ -859,6 +854,14 @@
                         <div class="card">
                             <h2 id="planner-memo-title">📝 한줄 메모</h2>
                             <textarea id="planner-memo-input" class="form-input" rows="2" placeholder="오늘 하루 메모를 남겨보세요" onblur="savePlannerMemo()"></textarea>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header-row">
+                                <h2>📅 D-day</h2>
+                                <button class="btn-primary" onclick="openDdayModal()" style="font-size:12px; padding:4px 12px;">+ 추가</button>
+                            </div>
+                            <div id="planner-dday-list"></div>
                         </div>
 
                         <div class="card">
@@ -1158,6 +1161,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=64"></script>
+    <script src="app.js?v=65"></script>
 </body>
 </html>

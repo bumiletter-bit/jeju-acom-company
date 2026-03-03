@@ -1206,9 +1206,20 @@ tr.pricing-hyodon td { background: #fefce8; border-color: #fde68a; }
     color: var(--text-dark);
 }
 
+.planner-dday-alert-item {
+    background: #FEF2F2;
+    border: 1px solid #fca5a5;
+    border-radius: 12px;
+    padding: 12px 20px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    color: #dc2626;
+    text-align: center;
+}
+
 .planner-layout {
     display: grid;
-    grid-template-columns: 340px 1fr;
+    grid-template-columns: 1fr 380px;
     gap: 24px;
     align-items: start;
 }
@@ -1229,36 +1240,41 @@ tr.pricing-hyodon td { background: #fefce8; border-color: #fde68a; }
 .planner-mini-cal th.sun { color: var(--danger); }
 .planner-mini-cal th.sat { color: var(--accent-blue); }
 .planner-mini-cal td {
-    padding: 4px;
-    text-align: center;
+    padding: 4px 2px;
+    text-align: left;
     font-size: 13px;
     cursor: pointer;
     position: relative;
-    height: 36px;
-    vertical-align: middle;
-    border-radius: 6px;
+    height: 80px;
+    vertical-align: top;
+    border: 1px solid #f0f0f0;
     transition: background 0.1s;
 }
 .planner-mini-cal td:hover { background: var(--primary-light); }
 .planner-mini-cal td.sun { color: var(--danger); }
 .planner-mini-cal td.sat { color: var(--accent-blue); }
-.planner-mini-cal td.today { background: var(--primary); color: #fff; border-radius: 6px; font-weight: 700; }
-.planner-mini-cal td.today:hover { background: var(--primary-dark); }
-.planner-mini-cal td.selected { outline: 2px solid var(--primary); outline-offset: -2px; }
-.planner-mini-cal td.empty { cursor: default; }
-.planner-mini-cal td.empty:hover { background: none; }
-.planner-cal-dots {
-    display: flex;
-    justify-content: center;
-    gap: 3px;
-    margin-top: 2px;
-    position: absolute;
-    bottom: 2px;
-    left: 0;
-    right: 0;
+.planner-mini-cal td.today .planner-day-num {
+    background: var(--primary); color: #fff; border-radius: 4px; padding: 1px 5px; font-weight: 700;
 }
-.planner-cal-dots .dot-todo { width: 5px; height: 5px; border-radius: 50%; background: var(--primary); }
-.planner-cal-dots .dot-memo { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-blue); }
+.planner-mini-cal td.today:hover { background: var(--primary-light); }
+.planner-mini-cal td.selected { background: var(--primary-light); outline: 2px solid var(--primary); outline-offset: -2px; }
+.planner-mini-cal td.empty { cursor: default; border-color: transparent; }
+.planner-mini-cal td.empty:hover { background: none; }
+.planner-day-num { display: inline-block; font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+.planner-cal-events { font-size: 11px; line-height: 1.4; overflow: hidden; max-height: 52px; }
+.planner-cal-events .cal-evt-todo {
+    color: var(--primary-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 0 2px; font-size: 10px;
+}
+.planner-cal-events .cal-evt-dday {
+    color: #fff; background: var(--danger); border-radius: 3px;
+    padding: 0 3px; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-top: 1px;
+}
+.planner-cal-events .cal-evt-memo {
+    color: var(--accent-blue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 0 2px; font-size: 10px;
+}
 
 /* Todo List */
 .planner-todo-item {

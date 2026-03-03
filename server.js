@@ -1143,19 +1143,42 @@ app.delete('/api/planner/habit-logs', authMiddleware, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Calendar dots (할일/메모 있는 날짜)
+// Calendar dots + 상세 데이터 (할일/메모/D-day)
 app.get('/api/planner/calendar-dots', authMiddleware, async (req, res) => {
     try {
         const { month } = req.query;
         const todos = await pool.query(
-            "SELECT DISTINCT to_char(date, 'YYYY-MM-DD') as d FROM planner_todos WHERE user_id = $1 AND to_char(date, 'YYYY-MM') = $2",
+            "SELECT to_char(date, 'YYYY-MM-DD') as d, content, is_completed FROM planner_todos WHERE user_id = $1 AND to_char(date, 'YYYY-MM') = $2 ORDER BY is_completed, sort_order, id",
             [req.user.id, month]
         );
         const memos = await pool.query(
-            "SELECT DISTINCT to_char(date, 'YYYY-MM-DD') as d FROM planner_memos WHERE user_id = $1 AND to_char(date, 'YYYY-MM') = $2",
+            "SELECT to_char(date, 'YYYY-MM-DD') as d, content FROM planner_memos WHERE user_id = $1 AND to_char(date, 'YYYY-MM') = $2",
             [req.user.id, month]
         );
-        res.json({ todoDates: todos.rows.map(r => r.d), memoDates: memos.rows.map(r => r.d) });
+        const ddays = await pool.query(
+            "SELECT title, to_char(target_date, 'YYYY-MM-DD') as target_date FROM planner_ddays WHERE user_id = $1",
+            [req.user.id]
+        );
+        // Group todos by date
+        const todosByDate = {};
+        todos.rows.forEach(r => {
+            if (!todosByDate[r.d]) todosByDate[r.d] = [];
+            todosByDate[r.d].push({ content: r.content, done: r.is_completed });
+        });
+        // Group memos by date
+        const memosByDate = {};
+        memos.rows.forEach(r => { memosByDate[r.d] = r.content; });
+        // Group ddays by target_date
+        const ddaysByDate = {};
+        ddays.rows.forEach(r => {
+            if (!ddaysByDate[r.target_date]) ddaysByDate[r.target_date] = [];
+            ddaysByDate[r.target_date].push(r.title);
+        });
+        res.json({
+            todoDates: Object.keys(todosByDate),
+            memoDates: Object.keys(memosByDate),
+            todosByDate, memosByDate, ddaysByDate
+        });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
