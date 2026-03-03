@@ -179,6 +179,7 @@ function switchPage(pageName) {
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
     if (pageName === 'ai-workspace') renderAIWorkspace().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
+    if (pageName === 'myinfo') renderMyInfoPage();
 }
 
 // =============================================
@@ -3276,3 +3277,43 @@ async function deleteWorkLog() {
     }
 }
 window.deleteWorkLog = deleteWorkLog;
+
+// =============================================
+// 내 정보 페이지
+// =============================================
+function renderMyInfoPage() {
+    if (!currentUser) return;
+    document.getElementById('myinfo-username').textContent = currentUser.username;
+    document.getElementById('myinfo-name').textContent = currentUser.name;
+    document.getElementById('myinfo-position').textContent = currentUser.position || '-';
+    document.getElementById('myinfo-color').style.backgroundColor = currentUser.color || '#3b82f6';
+}
+
+document.getElementById('form-change-password').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const currentPw = document.getElementById('pw-current').value;
+    const newPw = document.getElementById('pw-new').value;
+    const confirmPw = document.getElementById('pw-confirm').value;
+
+    if (newPw !== confirmPw) {
+        alert('새 비밀번호가 일치하지 않습니다.');
+        return;
+    }
+    if (newPw.length < 4) {
+        alert('새 비밀번호는 4자 이상이어야 합니다.');
+        return;
+    }
+
+    try {
+        await api('/api/auth/change-password', 'PUT', { currentPassword: currentPw, newPassword: newPw });
+        alert('비밀번호가 변경되었습니다. 다시 로그인해주세요.');
+        document.getElementById('form-change-password').reset();
+        // 로그아웃 처리
+        localStorage.removeItem('jwt_token');
+        localStorage.removeItem('jwt_user');
+        currentUser = null;
+        showLoginPage();
+    } catch (err) {
+        alert(err.message || '비밀번호 변경에 실패했습니다.');
+    }
+});

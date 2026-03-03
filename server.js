@@ -311,6 +311,29 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
     }
 });
 
+// === 비밀번호 변경 (본인) ===
+app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        if (!currentPassword || !newPassword) return res.status(400).json({ error: '현재 비밀번호와 새 비밀번호를 입력해주세요' });
+        if (newPassword.length < 4) return res.status(400).json({ error: '새 비밀번호는 4자 이상이어야 합니다' });
+
+        const result = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+
+        const valid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+        if (!valid) return res.status(401).json({ error: '현재 비밀번호가 올바르지 않습니다' });
+
+        const hash = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+
+        res.json({ success: true, message: '비밀번호가 변경되었습니다' });
+    } catch (err) {
+        console.error('PUT /api/auth/change-password error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // === Users API (관리자 전용) ===
 
 app.get('/api/users', authMiddleware, adminOnly, async (req, res) => {
