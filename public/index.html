@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=40">
+    <link rel="stylesheet" href="styles.css?v=41">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -398,7 +398,10 @@
 
                     <!-- 이력 테이블 -->
                     <div class="card">
-                        <h2>승인/반려 이력</h2>
+                        <div class="card-header-row">
+                            <h2>승인/반려 이력</h2>
+                            <button class="btn-primary" onclick="openManualDocModal()" style="font-size:13px; padding:6px 14px;">+ 추가하기</button>
+                        </div>
                         <table class="data-table">
                             <thead>
                                 <tr>
@@ -417,6 +420,72 @@
                             </tbody>
                         </table>
                     </div>
+
+                <!-- 수기 추가 모달 -->
+                <div id="manual-doc-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal">
+                        <h3>수기 이력 추가</h3>
+
+                        <div class="form-group">
+                            <label>직원</label>
+                            <select id="manual-employee" class="form-input"></select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>서류종류</label>
+                            <select id="manual-doc-type" class="form-input" onchange="onManualDocTypeChange()">
+                                <option value="vacation">휴가신청서</option>
+                                <option value="attendance">근태신청서</option>
+                                <option value="reason">시말서</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="manual-subtype-group">
+                            <label>유형</label>
+                            <select id="manual-subtype" class="form-input" onchange="onManualSubTypeChange()">
+                                <option value="연차">연차</option>
+                                <option value="시간차">시간차</option>
+                            </select>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>시작일</label>
+                                <input type="date" id="manual-start-date" class="form-input" onchange="calcManualDeducted()">
+                            </div>
+                            <div class="form-group">
+                                <label>종료일</label>
+                                <input type="date" id="manual-end-date" class="form-input" onchange="calcManualDeducted()">
+                            </div>
+                        </div>
+
+                        <div class="form-row" id="manual-time-group" style="display:none;">
+                            <div class="form-group">
+                                <label>시작시간</label>
+                                <select id="manual-start-time" class="form-input" onchange="calcManualDeducted()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>종료시간</label>
+                                <select id="manual-end-time" class="form-input" onchange="calcManualDeducted()"></select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>사유</label>
+                            <textarea id="manual-reason" class="form-input" rows="2" placeholder="사유를 입력하세요"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label>차감일수</label>
+                            <input type="number" id="manual-deducted" class="form-input" step="0.1" value="0" style="width:120px;">
+                        </div>
+
+                        <div style="display:flex; gap:10px; justify-content:flex-end;">
+                            <button class="btn-outline" onclick="closeManualDocModal()">취소</button>
+                            <button class="btn-primary" onclick="saveManualDoc()">저장</button>
+                        </div>
+                    </div>
+                </div>
 
                 </div><!-- /doc-section-history -->
 
@@ -973,6 +1042,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=61"></script>
+    <script src="app.js?v=62"></script>
 </body>
 </html>

@@ -1907,6 +1907,124 @@ function renderDocHistory(docs) {
 }
 
 // =============================================
+// 수기 이력 추가 (관리자 전용)
+// =============================================
+
+window.openManualDocModal = async function() {
+    document.getElementById('manual-doc-modal').style.display = '';
+    // 직원 목록 로드
+    try {
+        const users = await api('/api/users');
+        const sel = document.getElementById('manual-employee');
+        sel.innerHTML = users.filter(u => u.role === 'user').map(u =>
+            `<option value="${u.id}">${u.position ? u.position + ' ' : ''}${u.name}</option>`
+        ).join('');
+    } catch (err) { console.error(err); }
+    // 초기화
+    document.getElementById('manual-doc-type').value = 'vacation';
+    onManualDocTypeChange();
+    document.getElementById('manual-start-date').value = '';
+    document.getElementById('manual-end-date').value = '';
+    document.getElementById('manual-reason').value = '';
+    document.getElementById('manual-deducted').value = '0';
+};
+
+window.closeManualDocModal = function() {
+    document.getElementById('manual-doc-modal').style.display = 'none';
+};
+
+window.onManualDocTypeChange = function() {
+    const type = document.getElementById('manual-doc-type').value;
+    const subGroup = document.getElementById('manual-subtype-group');
+    const subSel = document.getElementById('manual-subtype');
+
+    if (type === 'vacation') {
+        subGroup.style.display = '';
+        subSel.innerHTML = '<option value="연차">연차</option><option value="시간차">시간차</option>';
+    } else if (type === 'attendance') {
+        subGroup.style.display = '';
+        subSel.innerHTML = '<option value="휴직">휴직</option><option value="예비군">예비군</option><option value="병가">병가</option><option value="기타">기타</option>';
+    } else {
+        subGroup.style.display = 'none';
+        subSel.innerHTML = '<option value="지각">지각</option><option value="미출근">미출근</option><option value="조퇴">조퇴</option><option value="기타">기타</option>';
+    }
+    onManualSubTypeChange();
+};
+
+window.onManualSubTypeChange = function() {
+    const type = document.getElementById('manual-doc-type').value;
+    const sub = document.getElementById('manual-subtype').value;
+    const isTime = type === 'vacation' && sub === '시간차';
+    document.getElementById('manual-time-group').style.display = isTime ? '' : 'none';
+    if (isTime) {
+        const opts = [];
+        for (let h = 8; h <= 18; h++) {
+            opts.push(`<option value="${String(h).padStart(2,'0')}:00">${String(h).padStart(2,'0')}:00</option>`);
+            if (h < 18) opts.push(`<option value="${String(h).padStart(2,'0')}:30">${String(h).padStart(2,'0')}:30</option>`);
+        }
+        document.getElementById('manual-start-time').innerHTML = opts.join('');
+        document.getElementById('manual-end-time').innerHTML = opts.join('');
+    }
+    calcManualDeducted();
+};
+
+window.calcManualDeducted = function() {
+    const type = document.getElementById('manual-doc-type').value;
+    const sub = document.getElementById('manual-subtype').value;
+    const startDate = document.getElementById('manual-start-date').value;
+    const endDate = document.getElementById('manual-end-date').value;
+
+    if (type === 'vacation' && sub === '시간차') {
+        const st = document.getElementById('manual-start-time').value;
+        const et = document.getElementById('manual-end-time').value;
+        if (st && et) {
+            const s = new Date(`2000-01-01T${st}`);
+            const e = new Date(`2000-01-01T${et}`);
+            const hours = (e - s) / (1000 * 60 * 60);
+            document.getElementById('manual-deducted').value = hours > 0 ? (Math.round(hours / 8 * 10) / 10) : 0;
+        }
+    } else if (type === 'vacation' && sub === '연차' && startDate && endDate) {
+        const days = Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
+        document.getElementById('manual-deducted').value = days > 0 ? days : 0;
+    } else {
+        document.getElementById('manual-deducted').value = '0';
+    }
+};
+
+window.saveManualDoc = async function() {
+    const employeeId = document.getElementById('manual-employee').value;
+    const type = document.getElementById('manual-doc-type').value;
+    const subType = document.getElementById('manual-subtype').value;
+    const startDate = document.getElementById('manual-start-date').value;
+    const endDate = document.getElementById('manual-end-date').value;
+    const reason = document.getElementById('manual-reason').value;
+    const deductedLeave = parseFloat(document.getElementById('manual-deducted').value) || 0;
+
+    if (!employeeId || !startDate) {
+        alert('직원과 시작일을 선택해주세요.');
+        return;
+    }
+
+    const body = { employeeId: Number(employeeId), type, subType, startDate, endDate: endDate || startDate, reason, deductedLeave };
+
+    const isTime = type === 'vacation' && subType === '시간차';
+    if (isTime) {
+        body.startTime = document.getElementById('manual-start-time').value;
+        body.endTime = document.getElementById('manual-end-time').value;
+    }
+
+    try {
+        await api('/api/documents/manual', 'POST', body);
+        closeManualDocModal();
+        alert('추가 완료되었습니다.');
+        renderLeaveSummary();
+        searchDocHistory();
+    } catch (err) {
+        alert('저장 실패: ' + err.message);
+    }
+};
+
+// =============================================
 // 송장변환
 // =============================================
 let invoiceDataSmart = null;

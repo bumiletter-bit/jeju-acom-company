@@ -623,6 +623,54 @@ app.get('/api/documents/history', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
+// 수기 이력 추가 (관리자 전용)
+app.post('/api/documents/manual', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { employeeId, type, subType, startDate, endDate, reason, startTime, endTime, deductedLeave } = req.body;
+        if (!employeeId || !type || !subType || !startDate) {
+            return res.status(400).json({ error: '필수 항목을 입력해주세요' });
+        }
+
+        const actualEndDate = endDate || startDate;
+        const leave = Number(deductedLeave) || 0;
+
+        // 연차 차감
+        if (leave > 0) {
+            await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [leave, employeeId]);
+        }
+
+        const result = await pool.query(
+            'INSERT INTO documents (type, sub_type, applicant_id, approver_id, start_date, end_date, reason, deducted_leave, start_time, end_time, status, processed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()) RETURNING id',
+            [type, subType, employeeId, req.user.id, startDate, actualEndDate, reason || '', leave, startTime || null, endTime || null, 'approved']
+        );
+        const docId = result.rows[0].id;
+
+        // 캘린더 일정 자동 생성
+        if (type === 'vacation' || type === 'attendance') {
+            const empResult = await pool.query('SELECT name FROM users WHERE id = $1', [employeeId]);
+            const empName = empResult.rows[0]?.name || '';
+            let scheduleTitle = `${subType} - ${empName}`;
+            if (subType === '시간차' && startTime && endTime) {
+                scheduleTitle = `시간차(${startTime}~${endTime}) - ${empName}`;
+            }
+            const start = new Date(startDate);
+            const end = new Date(actualEndDate);
+            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                const dateStr = d.toISOString().split('T')[0];
+                await pool.query(
+                    'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                    [employeeId, dateStr, scheduleTitle, type, docId]
+                );
+            }
+        }
+
+        res.json({ id: docId, success: true });
+    } catch (err) {
+        console.error('POST /api/documents/manual error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/documents', authMiddleware, async (req, res) => {
     try {
         const { type, subType, approverId, startDate, endDate, reason, startTime, endTime } = req.body;
