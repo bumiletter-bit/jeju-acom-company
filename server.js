@@ -368,10 +368,19 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
-// 결재자 목록 (관리자 목록)
+// 결재자 목록 (직원→전연희 부장, 전연희 부장→전승범 대표)
 app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     try {
-        const result = await pool.query("SELECT id, name, position FROM users WHERE role = 'admin' ORDER BY name");
+        let result;
+        if (req.user.name === '전연희') {
+            result = await pool.query("SELECT id, name, position FROM users WHERE name = '전승범' AND role = 'admin'");
+        } else {
+            result = await pool.query("SELECT id, name, position FROM users WHERE name = '전연희' AND role = 'admin'");
+        }
+        // 해당 결재자가 없으면 전체 관리자 목록 반환 (fallback)
+        if (result.rows.length === 0) {
+            result = await pool.query("SELECT id, name, position FROM users WHERE role = 'admin' ORDER BY name");
+        }
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
