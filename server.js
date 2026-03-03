@@ -174,6 +174,9 @@ async function initDB() {
     // 잘못 생성된 ceo 계정 정리
     await pool.query("DELETE FROM users WHERE username = 'ceo' AND (SELECT COUNT(*) FROM users WHERE username = 'admin') > 0");
 
+    // 품목별 금액 저장 시 잘못 생성된 정산 데이터 삭제
+    await pool.query("DELETE FROM settlements WHERE from_pricing = true");
+
     // 초기 관리자 계정 생성
     const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
@@ -1065,15 +1068,6 @@ app.post('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
             [startDate, endDate, partner, JSON.stringify(items || [])]
         );
         const row = result.rows[0];
-
-        const totalAmount = (items || []).reduce((sum, r) => sum + (r.price || 0), 0);
-        const settlementItems = (items || []).map(r => ({
-            name: r.name, price: r.price, qty: 1, subtotal: r.price
-        }));
-        await pool.query(
-            'INSERT INTO settlements (date, partner, amount, items, from_pricing) VALUES ($1, $2, $3, $4, true)',
-            [startDate, partner, totalAmount, JSON.stringify(settlementItems)]
-        );
 
         res.json({
             id: row.id, startDate: row.start_date, endDate: row.end_date,

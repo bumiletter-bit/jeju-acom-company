@@ -1205,7 +1205,6 @@ document.getElementById('pricing-save').addEventListener('click', async () => {
         document.getElementById('pricing-rows').innerHTML = '';
         resetPricingPaste();
         await renderPricingList();
-        await renderSettlementList();
         alert('저장되었습니다.');
     } catch (err) { alert('저장 실패: ' + err.message); }
 });
