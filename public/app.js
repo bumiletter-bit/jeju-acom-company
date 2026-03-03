@@ -1434,7 +1434,7 @@ window.resetDocForm = resetDocForm;
 
 function updateDocEndDateVisibility() {
     const isTime = currentDocType === 'vacation' && selectedDocSubType === '시간차';
-    const showEndDate = currentDocType === 'vacation' && (selectedDocSubType === '연차' || selectedDocSubType === '병가' || selectedDocSubType === '시간차');
+    const showEndDate = currentDocType === 'vacation' || currentDocType === 'attendance';
     document.getElementById('doc-end-date-group').style.display = showEndDate ? '' : 'none';
     document.getElementById('doc-start-time-group').style.display = isTime ? '' : 'none';
     document.getElementById('doc-end-time-group').style.display = isTime ? '' : 'none';

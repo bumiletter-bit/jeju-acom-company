@@ -672,8 +672,8 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
             if (subType === '시간차' && startTime && endTime) {
                 scheduleTitle = `시간차(${startTime}~${endTime}) - ${req.user.name}`;
             }
-            const multiDay = subType === '연차' || subType === '병가' || subType === '시간차';
-            if (type === 'vacation' && multiDay) {
+            const multiDay = subType === '연차' || subType === '시간차';
+            if ((type === 'vacation' && multiDay) || type === 'attendance') {
                 const start = new Date(startDate);
                 const end = new Date(actualEndDate);
                 for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
