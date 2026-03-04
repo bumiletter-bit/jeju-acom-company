@@ -533,10 +533,12 @@ async function renderSettlementCalendar() {
     document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배`;
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
-    const [settlements, prepayments] = await Promise.all([
+    const [settlements, prepayments, cjCarryoverData] = await Promise.all([
         api(`/api/settlements?month=${monthStr}`),
-        api('/api/prepayments')
+        api('/api/prepayments'),
+        api(`/api/cj-carryover?month=${monthStr}`).catch(() => ({ amount: 0, note: '' }))
     ]);
+    const cjCarryover = cjCarryoverData.amount || 0;
 
     let daesungPayment = 0, hyodonPayment = 0, cjPayment = 0;
     const dailyPayments = {};
@@ -560,7 +562,22 @@ async function renderSettlementCalendar() {
         }
     });
 
-    document.getElementById('cj-payment').textContent = `${cjPayment.toLocaleString()} 원`;
+    // CJ 카드: 이월금액 반영
+    const cjTotal = cjCarryover + cjPayment;
+    document.getElementById('cj-payment').textContent = `${cjTotal.toLocaleString()} 원`;
+    const cjCarryoverDetail = document.getElementById('cj-carryover-detail');
+    const cjMonthlyLine = document.getElementById('cj-monthly-line');
+    if (cjCarryover > 0) {
+        cjCarryoverDetail.style.display = '';
+        cjMonthlyLine.style.display = '';
+        document.getElementById('cj-carryover-line').textContent = `이월 ${cjCarryover.toLocaleString()}원`;
+        cjMonthlyLine.textContent = `당월 ${cjPayment.toLocaleString()}원`;
+    } else {
+        // 이월 0원이어도 편집 아이콘은 표시
+        cjCarryoverDetail.style.display = '';
+        cjMonthlyLine.style.display = 'none';
+        document.getElementById('cj-carryover-line').textContent = '이월 없음';
+    }
 
     // 선결제 잔액 조회 → 대성/효돈 카드에 선결제 차감 표시
     let daesungPrepay = 0, hyodonPrepay = 0;
@@ -596,8 +613,8 @@ async function renderSettlementCalendar() {
         hyodonPrepayLine.style.display = 'none';
     }
 
-    // 결제예정금액 = (대성-선결제) + (효돈-선결제) + CJ
-    const expectedPayment = daesungNet + hyodonNet + cjPayment;
+    // 결제예정금액 = (대성-선결제) + (효돈-선결제) + CJ(이월+당월)
+    const expectedPayment = daesungNet + hyodonNet + cjTotal;
     document.getElementById('expected-payment').textContent = `${expectedPayment.toLocaleString()} 원`;
 
     // 달력용 선결제 내역 (해당 월)
@@ -3261,6 +3278,32 @@ window.deletePrepayment = async function(id) {
 // =============================================
 // 주간 정산 현황
 // =============================================
+
+// -- CJ 이월금액 모달 --
+window.openCjCarryoverModal = async function() {
+    const monthStr = `${settlementCalYear}-${String(settlementCalMonth + 1).padStart(2, '0')}`;
+    document.getElementById('cj-carryover-month').value = monthStr;
+    try {
+        const data = await api(`/api/cj-carryover?month=${monthStr}`);
+        document.getElementById('cj-carryover-amount').value = data.amount || '';
+        document.getElementById('cj-carryover-note').value = data.note || '';
+    } catch (e) {
+        document.getElementById('cj-carryover-amount').value = '';
+        document.getElementById('cj-carryover-note').value = '';
+    }
+    document.getElementById('cj-carryover-modal').style.display = '';
+};
+
+window.saveCjCarryover = async function() {
+    const month = document.getElementById('cj-carryover-month').value;
+    const amount = Number(document.getElementById('cj-carryover-amount').value) || 0;
+    const note = document.getElementById('cj-carryover-note').value.trim();
+    try {
+        await api('/api/cj-carryover', 'POST', { month, amount, note });
+        document.getElementById('cj-carryover-modal').style.display = 'none';
+        await renderSettlementCalendar();
+    } catch (err) { alert('저장 실패: ' + err.message); }
+};
 
 async function renderWeeklySettlement() {
     const tbody = document.getElementById('weekly-settlement-list');

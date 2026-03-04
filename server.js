@@ -58,6 +58,17 @@ async function initDB() {
         )
     `);
     await pool.query(`
+        CREATE TABLE IF NOT EXISTS cj_carryover (
+            id SERIAL PRIMARY KEY,
+            month VARCHAR(7) NOT NULL,
+            amount INTEGER DEFAULT 0,
+            note VARCHAR(200),
+            updated_by INTEGER REFERENCES users(id),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(month)
+        )
+    `);
+    await pool.query(`
         CREATE TABLE IF NOT EXISTS pricing (
             id SERIAL PRIMARY KEY,
             start_date DATE NOT NULL,
@@ -1179,6 +1190,29 @@ app.get('/api/planner/calendar-dots', authMiddleware, async (req, res) => {
             memoDates: Object.keys(memosByDate),
             todosByDate, memosByDate, ddaysByDate
         });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// === CJ 이월금액 API ===
+app.get('/api/cj-carryover', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { month } = req.query;
+        const result = await pool.query('SELECT * FROM cj_carryover WHERE month = $1', [month]);
+        res.json(result.rows[0] || { month, amount: 0, note: '' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/cj-carryover', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { month, amount, note } = req.body;
+        const result = await pool.query(
+            `INSERT INTO cj_carryover (month, amount, note, updated_by, updated_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (month) DO UPDATE SET amount = $2, note = $3, updated_by = $4, updated_at = NOW()
+             RETURNING *`,
+            [month, amount || 0, note || '', req.user.id]
+        );
+        res.json(result.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
