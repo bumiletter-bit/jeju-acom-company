@@ -624,6 +624,7 @@ body {
 
 .duty-name {
     font-weight: 600;
+    color: #000;
 }
 
 .day-payments { margin-top: 4px; }
@@ -745,10 +746,84 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.day-schedule-item.schedule-completed .schedule-text {
+    text-decoration: line-through;
+    color: #adb5bd;
+}
+.day-schedule-item.schedule-completed {
+    opacity: 0.6;
+}
+.schedule-detail-item.schedule-completed span {
+    text-decoration: line-through;
+    color: #adb5bd;
+}
+
+/* 체크박스 커스텀 */
+.schedule-check {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+}
+.schedule-check input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.schedule-checkmark {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #adb5bd;
+    border-radius: 3px;
+    display: inline-block;
+    transition: all 0.15s;
+}
+.schedule-check input:checked + .schedule-checkmark {
+    background: #22c55e;
+    border-color: #22c55e;
+}
+.schedule-check input:checked + .schedule-checkmark::after {
+    content: '✓';
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+/* 토스트 메시지 */
+.toast-message {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.8);
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    padding: 16px 32px;
+    border-radius: 12px;
+    font-size: 18px;
+    font-weight: 700;
+    z-index: 9999;
+    opacity: 0;
+    transition: all 0.3s;
+    pointer-events: none;
+}
+.toast-message.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
 }
 
 .schedule-detail-item {

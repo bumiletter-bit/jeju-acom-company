@@ -373,7 +373,7 @@ async function renderScheduleCalendar() {
                 if (dutySchedules.length > 0) {
                     dutyHtml = dutySchedules.map(s => {
                         const shortName = s.userName.length > 2 ? s.userName.slice(-2) : s.userName;
-                        return `<span class="duty-badge" title="${s.userName} 당직"><span class="duty-label">당직🌙</span><span class="duty-name" style="color:${s.userColor}">${shortName}</span></span>`;
+                        return `<span class="duty-badge" title="${s.userName} 당직"><span class="duty-label">당직🌙</span><span class="duty-name">${shortName}</span></span>`;
                     }).join('');
                 }
 
@@ -382,7 +382,13 @@ async function renderScheduleCalendar() {
                     scheduleHtml = '<div class="day-schedules">';
                     normalSchedules.forEach(s => {
                         const typeIcon = s.type === 'vacation' ? '🏖️ ' : s.type === 'attendance' ? '📌 ' : '';
-                        scheduleHtml += `<div class="day-schedule-item" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}">${typeIcon}${s.title}</div>`;
+                        if (s.type === 'normal') {
+                            const checked = s.isCompleted ? 'checked' : '';
+                            const completedClass = s.isCompleted ? ' schedule-completed' : '';
+                            scheduleHtml += `<div class="day-schedule-item${completedClass}" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}"><label class="schedule-check" onclick="event.stopPropagation();"><input type="checkbox" ${checked} onchange="toggleScheduleComplete(${s.id}, this)"><span class="schedule-checkmark"></span></label><span class="schedule-text">${s.title}</span></div>`;
+                        } else {
+                            scheduleHtml += `<div class="day-schedule-item" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}">${typeIcon}${s.title}</div>`;
+                        }
                     });
                     scheduleHtml += '</div>';
                 }
@@ -475,8 +481,15 @@ async function loadDaySchedules(dateStr, overlay) {
             listEl.innerHTML = daySchedules.map(s => {
                 const typeLabel = s.type === 'vacation' ? ' (휴가)' : s.type === 'attendance' ? ' (근태)' : s.type === 'duty' ? ' (당직)' : '';
                 const canDelete = currentUser && (currentUser.id === s.userId || currentUser.role === 'admin') && !s.documentId;
-                return `<div class="schedule-detail-item" style="border-left:3px solid ${s.userColor};">
-                    <div><strong>${s.userName}</strong>${typeLabel}: ${s.title}</div>
+                const nameStyle = s.type === 'duty' ? ' style="color:#000"' : '';
+                const completedClass = (s.type === 'normal' && s.isCompleted) ? ' schedule-completed' : '';
+                let checkboxHtml = '';
+                if (s.type === 'normal') {
+                    const checked = s.isCompleted ? 'checked' : '';
+                    checkboxHtml = `<label class="schedule-check" style="margin-right:8px;"><input type="checkbox" ${checked} onchange="toggleScheduleComplete(${s.id}, this)"><span class="schedule-checkmark"></span></label>`;
+                }
+                return `<div class="schedule-detail-item${completedClass}" style="border-left:3px solid ${s.userColor};">
+                    <div style="display:flex;align-items:center;">${checkboxHtml}<span${nameStyle}><strong>${s.userName}</strong>${typeLabel}: ${s.title}</span></div>
                     ${canDelete ? `<button class="btn-danger btn-sm" onclick="deleteSchedule(${s.id}, this)">삭제</button>` : ''}
                 </div>`;
             }).join('');
@@ -501,6 +514,32 @@ window.deleteSchedule = async function(id, btn) {
         alert('삭제 실패: ' + err.message);
     }
 };
+
+// 일정 완료 토글
+window.toggleScheduleComplete = async function(id, checkbox) {
+    try {
+        const res = await api(`/api/schedules/${id}/toggle-complete`, 'PUT');
+        const item = checkbox.closest('.day-schedule-item');
+        if (res.isCompleted) {
+            item.classList.add('schedule-completed');
+            showToast('미션 성공! 🎉');
+        } else {
+            item.classList.remove('schedule-completed');
+        }
+    } catch (err) {
+        checkbox.checked = !checkbox.checked;
+        alert('상태 변경 실패: ' + err.message);
+    }
+};
+
+function showToast(msg) {
+    const toast = document.createElement('div');
+    toast.className = 'toast-message';
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000);
+}
 
 // =============================================
 // 정산관리 캘린더 (기존 홈에서 이동)

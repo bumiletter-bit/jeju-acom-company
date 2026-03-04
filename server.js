@@ -106,6 +106,7 @@ async function initDB() {
             created_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT false`);
 
     // documents 테이블
     await pool.query(`
@@ -613,7 +614,8 @@ app.get('/api/schedules', authMiddleware, async (req, res) => {
         }
         res.json(result.rows.map(r => ({
             id: r.id, userId: r.user_id, date: r.date, title: r.title, type: r.type,
-            userName: r.user_name, userColor: r.user_color, documentId: r.document_id || null
+            userName: r.user_name, userColor: r.user_color, documentId: r.document_id || null,
+            isCompleted: r.is_completed || false
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -660,6 +662,22 @@ app.delete('/api/schedules/:id', authMiddleware, async (req, res) => {
 
         await pool.query('DELETE FROM schedules WHERE id = $1', [req.params.id]);
         res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 일정 완료 토글
+app.put('/api/schedules/:id/toggle-complete', authMiddleware, async (req, res) => {
+    try {
+        const schedule = await pool.query('SELECT * FROM schedules WHERE id = $1', [req.params.id]);
+        if (schedule.rows.length === 0) return res.status(404).json({ error: '일정을 찾을 수 없습니다' });
+        const s = schedule.rows[0];
+        if (s.type !== 'normal') return res.status(400).json({ error: '일반 일정만 완료 처리할 수 있습니다' });
+
+        const newVal = !s.is_completed;
+        await pool.query('UPDATE schedules SET is_completed = $1 WHERE id = $2', [newVal, req.params.id]);
+        res.json({ success: true, isCompleted: newVal });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
