@@ -539,6 +539,8 @@ async function renderSettlementCalendar() {
         api(`/api/cj-carryover?month=${monthStr}`).catch(() => ({ amount: 0, note: '' }))
     ]);
     const cjCarryover = cjCarryoverData.amount || 0;
+    const cjCarryoverStart = cjCarryoverData.start_date || '';
+    const cjCarryoverEnd = cjCarryoverData.end_date || '';
 
     let daesungPayment = 0, hyodonPayment = 0, cjPayment = 0;
     const dailyPayments = {};
@@ -570,10 +572,16 @@ async function renderSettlementCalendar() {
     if (cjCarryover > 0) {
         cjCarryoverDetail.style.display = '';
         cjMonthlyLine.style.display = '';
-        document.getElementById('cj-carryover-line').textContent = `이월 ${cjCarryover.toLocaleString()}원`;
+        // 기간 표시 (M/D~M/D 형식)
+        let periodStr = '';
+        if (cjCarryoverStart && cjCarryoverEnd) {
+            const s = new Date(cjCarryoverStart + 'T00:00:00');
+            const e = new Date(cjCarryoverEnd + 'T00:00:00');
+            periodStr = ` (${s.getMonth()+1}/${s.getDate()}~${e.getMonth()+1}/${e.getDate()})`;
+        }
+        document.getElementById('cj-carryover-line').textContent = `이월 ${cjCarryover.toLocaleString()}원${periodStr}`;
         cjMonthlyLine.textContent = `당월 ${cjPayment.toLocaleString()}원`;
     } else {
-        // 이월 0원이어도 편집 아이콘은 표시
         cjCarryoverDetail.style.display = '';
         cjMonthlyLine.style.display = 'none';
         document.getElementById('cj-carryover-line').textContent = '이월 없음';
@@ -3285,21 +3293,36 @@ window.openCjCarryoverModal = async function() {
     document.getElementById('cj-carryover-month').value = monthStr;
     try {
         const data = await api(`/api/cj-carryover?month=${monthStr}`);
+        document.getElementById('cj-carryover-start').value = data.start_date || '';
+        document.getElementById('cj-carryover-end').value = data.end_date || '';
         document.getElementById('cj-carryover-amount').value = data.amount || '';
         document.getElementById('cj-carryover-note').value = data.note || '';
     } catch (e) {
+        document.getElementById('cj-carryover-start').value = '';
+        document.getElementById('cj-carryover-end').value = '';
         document.getElementById('cj-carryover-amount').value = '';
         document.getElementById('cj-carryover-note').value = '';
     }
     document.getElementById('cj-carryover-modal').style.display = '';
 };
 
+// 종료일 변경 시 month 자동 설정
+window.updateCjCarryoverMonth = function() {
+    const endDate = document.getElementById('cj-carryover-end').value;
+    if (endDate) {
+        document.getElementById('cj-carryover-month').value = endDate.substring(0, 7);
+    }
+};
+
 window.saveCjCarryover = async function() {
-    const month = document.getElementById('cj-carryover-month').value;
+    const startDate = document.getElementById('cj-carryover-start').value;
+    const endDate = document.getElementById('cj-carryover-end').value;
+    if (!startDate || !endDate) { alert('시작일과 종료일을 입력해주세요.'); return; }
+    const month = endDate.substring(0, 7);
     const amount = Number(document.getElementById('cj-carryover-amount').value) || 0;
     const note = document.getElementById('cj-carryover-note').value.trim();
     try {
-        await api('/api/cj-carryover', 'POST', { month, amount, note });
+        await api('/api/cj-carryover', 'POST', { month, amount, note, startDate, endDate });
         document.getElementById('cj-carryover-modal').style.display = 'none';
         await renderSettlementCalendar();
     } catch (err) { alert('저장 실패: ' + err.message); }

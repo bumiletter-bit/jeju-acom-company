@@ -63,11 +63,16 @@ async function initDB() {
             month VARCHAR(7) NOT NULL,
             amount INTEGER DEFAULT 0,
             note VARCHAR(200),
+            start_date DATE,
+            end_date DATE,
             updated_by INTEGER REFERENCES users(id),
             updated_at TIMESTAMP DEFAULT NOW(),
             UNIQUE(month)
         )
     `);
+    // 기존 cj_carryover 테이블에 start_date, end_date 컬럼 추가 (이미 있으면 무시)
+    await pool.query(`ALTER TABLE cj_carryover ADD COLUMN IF NOT EXISTS start_date DATE`);
+    await pool.query(`ALTER TABLE cj_carryover ADD COLUMN IF NOT EXISTS end_date DATE`);
     await pool.query(`
         CREATE TABLE IF NOT EXISTS pricing (
             id SERIAL PRIMARY KEY,
@@ -1197,20 +1202,23 @@ app.get('/api/planner/calendar-dots', authMiddleware, async (req, res) => {
 app.get('/api/cj-carryover', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { month } = req.query;
-        const result = await pool.query('SELECT * FROM cj_carryover WHERE month = $1', [month]);
-        res.json(result.rows[0] || { month, amount: 0, note: '' });
+        const result = await pool.query(
+            `SELECT *, to_char(start_date, 'YYYY-MM-DD') as start_date, to_char(end_date, 'YYYY-MM-DD') as end_date FROM cj_carryover WHERE month = $1`,
+            [month]
+        );
+        res.json(result.rows[0] || { month, amount: 0, note: '', start_date: '', end_date: '' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/cj-carryover', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { month, amount, note } = req.body;
+        const { month, amount, note, startDate, endDate } = req.body;
         const result = await pool.query(
-            `INSERT INTO cj_carryover (month, amount, note, updated_by, updated_at)
-             VALUES ($1, $2, $3, $4, NOW())
-             ON CONFLICT (month) DO UPDATE SET amount = $2, note = $3, updated_by = $4, updated_at = NOW()
+            `INSERT INTO cj_carryover (month, amount, note, start_date, end_date, updated_by, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (month) DO UPDATE SET amount = $2, note = $3, start_date = $4, end_date = $5, updated_by = $6, updated_at = NOW()
              RETURNING *`,
-            [month, amount || 0, note || '', req.user.id]
+            [month, amount || 0, note || '', startDate || null, endDate || null, req.user.id]
         );
         res.json(result.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
