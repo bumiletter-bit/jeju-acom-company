@@ -501,14 +501,22 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
-// 결재자 목록 (직원→전연희 부장, 전연희 부장→전승범 대표)
+// 결재자 목록 - 연차 승인은 전승범(대표)만 가능
 app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     try {
-        // 관리자 목록에서 본인은 제외
+        // 결재자 = 전승범(대표)만 (본인 제외)
         const result = await pool.query(
-            "SELECT id, name, position FROM users WHERE role = 'admin' AND id != $1 ORDER BY name",
+            "SELECT id, name, position FROM users WHERE name = '전승범' AND role = 'admin' AND id != $1",
             [req.user.id]
         );
+        // fallback: 전승범이 본인인 경우(대표가 직접 서류 올릴 때) → 다른 관리자
+        if (result.rows.length === 0) {
+            const fallback = await pool.query(
+                "SELECT id, name, position FROM users WHERE role = 'admin' AND id != $1 ORDER BY name",
+                [req.user.id]
+            );
+            return res.json(fallback.rows);
+        }
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -686,8 +694,10 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
         if (type) { conditions.push(`d.type = $${idx++}`); values.push(type); }
         if (status) {
             if (status === 'pending') {
-                // pending 조회 시 modification_pending도 포함
+                // pending 조회 시 modification_pending도 포함 + 본인이 결재자인 것만
                 conditions.push(`d.status IN ('pending', 'modification_pending')`);
+                conditions.push(`d.approver_id = $${idx++}`);
+                values.push(req.user.id);
             } else {
                 conditions.push(`d.status = $${idx++}`); values.push(status);
             }
@@ -899,8 +909,9 @@ app.put('/api/documents/:id/approve', authMiddleware, async (req, res) => {
         if (d.applicant_id === req.user.id) {
             return res.status(400).json({ error: '본인 서류는 본인이 승인할 수 없습니다' });
         }
-        if (d.approver_id !== req.user.id && req.user.role !== 'admin') {
-            return res.status(403).json({ error: '결재 권한이 없습니다' });
+        // 지정된 결재자만 승인 가능
+        if (d.approver_id !== req.user.id) {
+            return res.status(403).json({ error: '지정된 결재자만 승인할 수 있습니다' });
         }
         if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
 
@@ -917,8 +928,9 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
         if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
 
         const d = doc.rows[0];
-        if (d.approver_id !== req.user.id && req.user.role !== 'admin') {
-            return res.status(403).json({ error: '결재 권한이 없습니다' });
+        // 지정된 결재자만 반려 가능
+        if (d.approver_id !== req.user.id) {
+            return res.status(403).json({ error: '지정된 결재자만 반려할 수 있습니다' });
         }
         if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
 
@@ -967,6 +979,7 @@ app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, r
         if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
         const d = doc.rows[0];
         if (d.applicant_id === req.user.id) return res.status(400).json({ error: '본인 서류는 본인이 승인할 수 없습니다' });
+        if (d.approver_id !== req.user.id) return res.status(403).json({ error: '지정된 결재자만 처리할 수 있습니다' });
         if (d.status !== 'modification_pending') return res.status(400).json({ error: '수정 대기 중인 서류가 아닙니다' });
 
         if (d.modification_type === 'cancel') {
@@ -1049,6 +1062,7 @@ app.put('/api/documents/:id/reject-modification', authMiddleware, async (req, re
         const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
         if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
         const d = doc.rows[0];
+        if (d.approver_id !== req.user.id) return res.status(403).json({ error: '지정된 결재자만 처리할 수 있습니다' });
         if (d.status !== 'modification_pending') return res.status(400).json({ error: '수정 대기 중인 서류가 아닙니다' });
         // 기존 승인 상태로 복원, 수정요청 내용 초기화
         await pool.query(
