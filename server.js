@@ -491,16 +491,11 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
 // 결재자 목록 (직원→전연희 부장, 전연희 부장→전승범 대표)
 app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     try {
-        let result;
-        if (req.user.name === '전연희') {
-            result = await pool.query("SELECT id, name, position FROM users WHERE name = '전승범' AND role = 'admin'");
-        } else {
-            result = await pool.query("SELECT id, name, position FROM users WHERE name = '전연희' AND role = 'admin'");
-        }
-        // 해당 결재자가 없으면 전체 관리자 목록 반환 (fallback)
-        if (result.rows.length === 0) {
-            result = await pool.query("SELECT id, name, position FROM users WHERE role = 'admin' ORDER BY name");
-        }
+        // 관리자 목록에서 본인은 제외
+        const result = await pool.query(
+            "SELECT id, name, position FROM users WHERE role = 'admin' AND id != $1 ORDER BY name",
+            [req.user.id]
+        );
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -518,7 +513,6 @@ app.get('/api/users/leave-summary', authMiddleware, adminOnly, async (req, res) 
                        THEN d.deducted_leave ELSE 0 END), 0) as pending_leave
             FROM users u
             LEFT JOIN documents d ON u.id = d.applicant_id
-            WHERE u.role = 'user'
             GROUP BY u.id, u.name, u.position, u.annual_leave
             ORDER BY u.name
         `);
@@ -866,6 +860,10 @@ app.put('/api/documents/:id/approve', authMiddleware, async (req, res) => {
         if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
 
         const d = doc.rows[0];
+        // 본인 서류는 본인이 승인할 수 없음
+        if (d.applicant_id === req.user.id) {
+            return res.status(400).json({ error: '본인 서류는 본인이 승인할 수 없습니다' });
+        }
         if (d.approver_id !== req.user.id && req.user.role !== 'admin') {
             return res.status(403).json({ error: '결재 권한이 없습니다' });
         }

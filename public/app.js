@@ -1937,13 +1937,15 @@ async function loadHistoryFilters() {
         const users = await api('/api/users');
         const select = document.getElementById('history-employee');
         select.innerHTML = '<option value="">전체</option>' +
-            users.filter(u => u.role === 'user').map(u =>
+            users.map(u =>
                 `<option value="${u.id}">${u.position ? u.position + ' ' : ''}${u.name}</option>`
             ).join('');
     } catch (err) {
         console.error('loadHistoryFilters error:', err);
     }
 }
+
+let selectedLeaveEmpId = null;
 
 async function renderLeaveSummary() {
     try {
@@ -1957,8 +1959,9 @@ async function renderLeaveSummary() {
 
         grid.innerHTML = data.map(emp => {
             const total = emp.annualLeave + emp.usedLeave + emp.pendingLeave;
+            const isSelected = selectedLeaveEmpId === emp.id;
             return `
-                <div class="leave-summary-card">
+                <div class="leave-summary-card ${isSelected ? 'selected' : ''}" onclick="clickLeaveCard(${emp.id})" style="cursor:pointer;">
                     <div class="emp-name">${emp.name}</div>
                     <div class="emp-position">${emp.position || ''}</div>
                     <div class="leave-numbers">
@@ -1974,6 +1977,23 @@ async function renderLeaveSummary() {
         console.error('renderLeaveSummary error:', err);
     }
 }
+
+window.clickLeaveCard = function(empId) {
+    if (selectedLeaveEmpId === empId) {
+        // 같은 카드 다시 클릭 → 해제 (전체 보기)
+        selectedLeaveEmpId = null;
+        document.getElementById('history-employee').value = '';
+    } else {
+        selectedLeaveEmpId = empId;
+        document.getElementById('history-employee').value = empId;
+    }
+    // 카드 선택 상태 업데이트
+    document.querySelectorAll('.leave-summary-card').forEach(card => {
+        card.classList.toggle('selected', card.onclick.toString().includes(selectedLeaveEmpId));
+    });
+    renderLeaveSummary();
+    searchDocHistory();
+};
 
 window.searchDocHistory = async function() {
     try {
