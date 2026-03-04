@@ -548,42 +548,47 @@ body {
 }
 
 .calendar-table th {
-    padding: 12px;
-    font-size: 14px;
-    font-weight: 600;
-    color: #666;
+    padding: 14px 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #555;
     text-align: center;
     border: 1px solid #e0e0e0;
+    background: #fafbfc;
 }
 
 .calendar-table th.sun { color: var(--danger); }
 .calendar-table th.sat { color: var(--accent-blue); }
 
 .calendar-table td {
-    padding: 6px;
+    padding: 8px;
     text-align: left;
     font-size: 14px;
     color: #333;
     vertical-align: top;
-    min-height: 120px;
-    height: 120px;
+    min-height: 150px;
+    height: 150px;
     border: 1px solid #e0e0e0;
 }
 
 .calendar-table td.sun { color: var(--danger); }
 .calendar-table td.sat { color: var(--accent-blue); }
 
+.calendar-table td.today {
+    background: #fff8e1;
+}
+
 .calendar-table td.today .day-number {
     background: var(--primary);
     color: #fff;
     border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 11px;
+    padding: 2px 8px;
+    font-size: 13px;
 }
 
 .calendar-table td.clickable-day {
     cursor: pointer;
-    transition: background 0.1s;
+    transition: background 0.15s;
 }
 
 .calendar-table td.clickable-day:hover {
@@ -592,22 +597,24 @@ body {
 
 .day-number {
     display: inline-block;
-    font-weight: 600;
-    font-size: 13px;
+    font-weight: 700;
+    font-size: 16px;
 }
 
 .day-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 4px;
-    gap: 2px;
+    margin-bottom: 6px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #eee;
+    gap: 4px;
 }
 
 .duty-badge {
-    font-size: 11px;
+    font-size: 12px;
     white-space: nowrap;
-    line-height: 1;
+    line-height: 1.2;
 }
 
 .duty-label {
@@ -721,18 +728,23 @@ body {
 .day-schedules {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    margin-top: 4px;
-    max-height: 85px;
+    gap: 4px;
+    margin-top: 2px;
+    max-height: 100px;
     overflow-y: auto;
 }
 
 .day-schedule-item {
-    padding: 2px 4px;
-    border-radius: 3px;
-    background: #f9fafb;
-    font-size: 12px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: #f4f6f8;
+    font-size: 13px;
+    color: #2c3e50;
+    line-height: 1.4;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -2929,13 +2941,17 @@ textarea.form-input {
 
     /* -- 일정 달력 -- */
     .calendar-table td {
-        min-height: 55px;
-        padding: 2px;
+        min-height: 60px;
+        height: auto;
+        padding: 3px;
         font-size: 11px;
     }
-    .calendar-table th { font-size: 11px; padding: 6px 2px; }
-    .day-schedules { max-height: 36px; }
-    .day-schedule-item { font-size: 10px; padding: 1px 3px; margin-bottom: 1px; }
+    .calendar-table th { font-size: 12px; padding: 8px 2px; }
+    .day-number { font-size: 13px; }
+    .day-header { margin-bottom: 3px; padding-bottom: 2px; }
+    .duty-badge { font-size: 10px; }
+    .day-schedules { max-height: 40px; }
+    .day-schedule-item { font-size: 11px; padding: 2px 3px; }
 
     /* -- 정산관리 -- */
     .table-scroll-wrapper { margin: 0 -14px; padding: 0 14px; }
@@ -2996,10 +3012,14 @@ textarea.form-input {
 @media (max-width: 480px) {
     .stats-grid, .stats-grid-4 { grid-template-columns: 1fr !important; }
     #box-inventory-grid { grid-template-columns: 1fr !important; }
-    .calendar-table td { min-height: 45px; font-size: 10px; }
+    .calendar-table td { min-height: 50px; font-size: 10px; }
     .calendar-table th { font-size: 10px; }
+    .day-number { font-size: 12px; }
+    .day-header { border-bottom: none; padding-bottom: 1px; margin-bottom: 2px; }
+    .duty-badge { font-size: 9px; }
     .planner-mini-cal td { height: 40px; }
     .planner-cal-events { max-height: 24px; }
     .day-schedules { max-height: 28px; }
+    .day-schedule-item { font-size: 10px; }
     .main-content { padding: 56px 10px 10px; }
 }
