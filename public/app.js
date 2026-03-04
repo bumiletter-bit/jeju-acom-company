@@ -2,6 +2,76 @@
 // 제주아꼼이네 농업회사법인 (주) - 회사 프로그램
 // ==========================================
 
+// ---- PWA 설치 ----
+let deferredInstallPrompt = null;
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+// beforeinstallprompt 이벤트 저장 (Android Chrome)
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    showInstallButton();
+    showInstallBannerIfNeeded();
+});
+
+// 설치 완료 시 버튼 숨김
+window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    hideInstallButton();
+    const banner = document.getElementById('pwa-install-banner');
+    if (banner) banner.style.display = 'none';
+});
+
+function showInstallButton() {
+    const btn = document.getElementById('btn-install-app');
+    if (btn && !isStandalone) btn.style.display = '';
+}
+function hideInstallButton() {
+    const btn = document.getElementById('btn-install-app');
+    if (btn) btn.style.display = 'none';
+}
+
+window.handleInstallClick = function() {
+    if (deferredInstallPrompt) {
+        // Android Chrome: 설치 팝업
+        deferredInstallPrompt.prompt();
+        deferredInstallPrompt.userChoice.then(result => {
+            if (result.outcome === 'accepted') hideInstallButton();
+            deferredInstallPrompt = null;
+        });
+    } else if (isIOS) {
+        // iOS Safari: 안내 모달
+        document.getElementById('ios-install-modal').style.display = '';
+    } else {
+        // 기타 (PC 등): 안내 모달
+        document.getElementById('pc-install-modal').style.display = '';
+    }
+};
+
+function showInstallBannerIfNeeded() {
+    if (isStandalone) return;
+    const dismissed = localStorage.getItem('pwa_banner_dismissed');
+    if (dismissed && Date.now() - parseInt(dismissed) < 7 * 24 * 60 * 60 * 1000) return;
+    const banner = document.getElementById('pwa-install-banner');
+    if (banner) banner.style.display = '';
+}
+window.dismissInstallBanner = function() {
+    const banner = document.getElementById('pwa-install-banner');
+    if (banner) banner.style.display = 'none';
+    localStorage.setItem('pwa_banner_dismissed', Date.now().toString());
+};
+
+// iOS/기타 브라우저: beforeinstallprompt 미지원 → 직접 버튼/배너 표시
+if (!isStandalone) {
+    document.addEventListener('DOMContentLoaded', () => {
+        if (isIOS) {
+            showInstallButton();
+            showInstallBannerIfNeeded();
+        }
+    });
+}
+
 // ---- API Helper (JWT 자동 첨부) ----
 async function api(url, method = 'GET', body = null) {
     const options = { method, headers: {} };

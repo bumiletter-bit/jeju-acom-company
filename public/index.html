@@ -4,7 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=47">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#F5A623">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="아꼼이네">
+    <link rel="apple-touch-icon" href="/logo.png">
+    <link rel="stylesheet" href="styles.css?v=48">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -27,6 +33,47 @@
                 <div id="login-error" class="login-error" style="display:none;"></div>
                 <button type="submit" class="btn-login">로그인</button>
             </form>
+        </div>
+    </div>
+
+    <!-- PWA 설치 유도 배너 -->
+    <div id="pwa-install-banner" class="pwa-install-banner" style="display:none;">
+        <span>📱 홈 화면에 추가하면 앱처럼 사용할 수 있어요!</span>
+        <div class="pwa-banner-btns">
+            <button class="pwa-banner-install" onclick="handleInstallClick()">설치하기</button>
+            <button class="pwa-banner-close" onclick="dismissInstallBanner()">닫기</button>
+        </div>
+    </div>
+
+    <!-- iOS 설치 안내 모달 -->
+    <div id="ios-install-modal" class="modal-overlay" style="display:none;">
+        <div class="modal" style="max-width:360px;">
+            <h3 style="margin-bottom:16px;">📱 앱 설치 방법</h3>
+            <div style="font-size:14px; line-height:1.8; color:var(--text-mid);">
+                <p><strong>iPhone / iPad:</strong></p>
+                <p>1. 하단 공유 버튼 (↑) 클릭</p>
+                <p>2. <strong>"홈 화면에 추가"</strong> 선택</p>
+                <p>3. 홈 화면에서 앱처럼 사용!</p>
+                <p style="margin-top:12px; font-size:12px; color:var(--text-light);">※ Safari 브라우저에서만 가능합니다</p>
+            </div>
+            <div style="text-align:right; margin-top:20px;">
+                <button class="btn-primary" onclick="document.getElementById('ios-install-modal').style.display='none'">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PC 설치 안내 모달 -->
+    <div id="pc-install-modal" class="modal-overlay" style="display:none;">
+        <div class="modal" style="max-width:360px;">
+            <h3 style="margin-bottom:16px;">💻 앱 설치 방법</h3>
+            <div style="font-size:14px; line-height:1.8; color:var(--text-mid);">
+                <p>크롬 브라우저에서 접속 후</p>
+                <p><strong>주소창 오른쪽 설치 아이콘</strong> 또는</p>
+                <p><strong>메뉴(⋮) → 앱 설치</strong>를 눌러주세요.</p>
+            </div>
+            <div style="text-align:right; margin-top:20px;">
+                <button class="btn-primary" onclick="document.getElementById('pc-install-modal').style.display='none'">확인</button>
+            </div>
         </div>
     </div>
 
@@ -98,6 +145,9 @@
                     <span class="user-color-dot" id="sidebar-user-dot"></span>
                     <span class="nav-text" id="sidebar-user-name">-</span>
                 </div>
+                <button id="btn-install-app" class="btn-install-app" onclick="handleInstallClick()" style="display:none;">
+                    <span class="nav-icon">📱</span><span class="nav-text">앱 설치</span>
+                </button>
                 <button id="btn-logout" class="btn-logout"><span class="nav-icon">🚪</span><span class="nav-text">로그아웃</span></button>
             </div>
         </aside>
@@ -1166,6 +1216,11 @@
         </main>
     </div>
 
-    <script src="app.js?v=67"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js');
+        }
+    </script>
+    <script src="app.js?v=68"></script>
 </body>
 </html>

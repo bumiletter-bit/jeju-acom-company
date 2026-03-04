@@ -216,6 +216,67 @@ body {
     border-color: var(--danger);
 }
 
+/* App Install Button */
+.btn-install-app {
+    width: 100%;
+    padding: 8px;
+    background: rgba(245, 166, 35, 0.15);
+    border: 1px solid rgba(245, 166, 35, 0.3);
+    color: #FFE033;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.btn-install-app:hover {
+    background: rgba(245, 166, 35, 0.25);
+    color: #fff;
+    border-color: var(--primary);
+}
+
+/* PWA Install Banner */
+.pwa-install-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2000;
+    background: var(--primary);
+    color: #fff;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.pwa-banner-btns { display: flex; gap: 8px; flex-shrink: 0; }
+.pwa-banner-install {
+    background: #fff;
+    color: var(--primary-dark);
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.pwa-banner-close {
+    background: transparent;
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
 /* Mobile Menu Button & Overlay */
 .mobile-menu-btn {
     display: none;
