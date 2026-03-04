@@ -1503,6 +1503,8 @@ document.querySelectorAll('.doc-main-tab').forEach(tab => {
         document.getElementById('doc-section-list').style.display = section === 'list' ? '' : 'none';
         document.getElementById('doc-section-history').style.display = section === 'history' ? '' : 'none';
         if (section === 'history') {
+            selectedLeaveEmpId = null;
+            document.getElementById('history-employee').value = '';
             loadHistoryFilters();
             renderLeaveSummary();
             searchDocHistory();
