@@ -136,6 +136,7 @@ body {
     display: flex;
     flex-direction: column;
     flex: 1;
+    overflow-y: auto;
 }
 
 .nav-item {
@@ -173,6 +174,7 @@ body {
     margin-top: auto;
     padding: 16px 20px;
     border-top: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
 }
 
 .user-info {
@@ -213,6 +215,52 @@ body {
     color: var(--danger);
     border-color: var(--danger);
 }
+
+/* Mobile Menu Button & Overlay */
+.mobile-menu-btn {
+    display: none;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 1001;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: var(--sidebar-bg);
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.mobile-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: rgba(0,0,0,0.5);
+}
+.mobile-overlay.show { display: block; }
+.sidebar-close-btn {
+    display: none;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    font-size: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    z-index: 101;
+    align-items: center;
+    justify-content: center;
+}
+.sidebar-close-btn:hover { background: rgba(255,255,255,0.2); }
 
 /* ========================================
    Main Content
@@ -1012,6 +1060,10 @@ input[type="date"].form-input::-webkit-datetime-edit {
 /* ========================================
    Data Table
    ======================================== */
+.table-scroll-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
 .data-table {
     width: 100%;
     border-collapse: collapse;
@@ -2573,70 +2625,97 @@ textarea.form-input {
     box-shadow: 0 1px 3px rgba(0,0,0,0.15);
 }
 
+/* ========================================
+   모바일 반응형 (768px 이하)
+   ======================================== */
 @media (max-width: 768px) {
-    .lunch-vote-grid {
-        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    }
-}
+    /* -- 모바일 메뉴 버튼 & 닫기 -- */
+    .mobile-menu-btn { display: flex; }
+    .sidebar-close-btn { display: flex; }
 
-@media (max-width: 768px) {
+    /* -- 사이드바: 숨김 → 슬라이드 -- */
     .sidebar {
-        width: 160px;
-        min-width: 160px;
+        width: 260px;
+        min-width: 260px;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
     }
+    .sidebar.mobile-open { transform: translateX(0); }
 
-    .sidebar-header {
-        padding: 16px 14px;
-    }
+    .sidebar-header { padding: 16px 14px; padding-top: 48px; }
+    .sidebar-header h2 { font-size: 13px; }
+    .nav-item { padding: 14px 20px; font-size: 14px; }
+    .sidebar-footer { padding: 12px 14px; }
+    .sidebar-footer .user-info { font-size: 12px; }
+    .btn-logout { padding: 10px 8px; font-size: 12px; min-height: 44px; }
 
-    .sidebar-header h2 {
-        font-size: 12px;
-    }
-
-    .nav-item {
-        padding: 14px 14px;
-        gap: 10px;
-        font-size: 14px;
-    }
-
-    .nav-text {
-        display: inline;
-        font-size: 13px;
-    }
-
-    .sidebar-footer {
-        padding: 12px 14px;
-    }
-
-    .sidebar-footer .user-info {
-        font-size: 12px;
-    }
-
-    .btn-logout {
-        padding: 10px 8px;
-        font-size: 12px;
-    }
-
+    /* -- 메인 콘텐츠 -- */
     .main-content {
-        margin-left: 160px;
-        padding: 16px;
+        margin-left: 0;
+        padding: 60px 14px 14px;
     }
 
+    /* -- 공통: 터치 영역 & iOS 줌 방지 -- */
+    .btn-primary, .btn-outline, .btn-nav { min-height: 44px; }
+    .form-input, .form-select, textarea { font-size: 16px; }
+    .card { padding: 16px; overflow-x: auto; }
+
+    /* -- 모달: 전체 화면 -- */
+    .modal { width: 95%; max-width: none; }
+    .modal-card { width: 95%; max-width: none; max-height: 90vh; }
+
+    /* -- 환영/통계 -- */
+    .welcome-section { flex-direction: column; align-items: flex-start; gap: 10px; }
     .stats-grid { grid-template-columns: 1fr 1fr; }
 
-    .welcome-section { flex-direction: column; align-items: flex-start; gap: 10px; }
+    /* -- 일정 달력 -- */
+    .calendar-table td {
+        min-height: 55px;
+        padding: 2px;
+        font-size: 11px;
+    }
+    .calendar-table th { font-size: 11px; padding: 6px 2px; }
+    .day-schedules { max-height: 36px; }
+    .day-schedule-item { font-size: 10px; padding: 1px 3px; margin-bottom: 1px; }
 
+    /* -- 정산관리 -- */
+    .table-scroll-wrapper { margin: 0 -14px; padding: 0 14px; }
+
+    /* -- 기안서류 -- */
+    .form-row { flex-direction: column; gap: 8px; }
+    .form-row .form-input { width: 100% !important; }
+    .doc-main-tabs .tab-btn { font-size: 12px; padding: 10px 12px; }
+    .doc-tabs .tab-btn { font-size: 12px; padding: 8px 10px; }
+
+    /* -- 업무일지 -- */
+    .worklog-write-btn, .worklog-view-btn { font-size: 10px; padding: 2px 4px; }
+
+    /* -- 마이 플래너 -- */
+    .planner-mini-cal td { height: 50px; font-size: 10px; }
+    .planner-cal-events { font-size: 9px; max-height: 30px; }
+    .planner-cal-events .cal-evt-todo,
+    .planner-cal-events .cal-evt-dday,
+    .planner-cal-events .cal-evt-memo { font-size: 9px; }
+    .planner-day-num { font-size: 11px; }
+
+    /* -- 박스재고 -- */
+    #box-inventory-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+    /* -- 송장변환 -- */
     .invoice-upload-grid { flex-direction: column; }
 
+    /* -- 점심메뉴 -- */
+    .lunch-vote-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+
+    /* -- AI 작업방 -- */
     .ai-workspace-container {
         flex-direction: column;
-        height: calc(100vh - 120px);
+        height: calc(100vh - 80px);
     }
-
     .ai-conv-panel {
         width: 100%;
         min-width: 0;
-        max-height: 140px;
+        max-height: 120px;
         border-right: none;
         border-bottom: 1px solid var(--border);
         padding: 10px;
@@ -2644,35 +2723,24 @@ textarea.form-input {
         gap: 8px;
         align-items: flex-start;
     }
+    .ai-new-conv-btn { margin-bottom: 0; width: auto; white-space: nowrap; padding: 8px 14px; font-size: 13px; }
+    .ai-conv-list { display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; }
+    .ai-conv-item { white-space: nowrap; margin-bottom: 0; padding: 8px 10px; font-size: 12px; }
+    .ai-image-btn { padding: 10px 12px; font-size: 12px; }
+    .ai-generated-image { max-height: 280px; }
+    .ai-input-row textarea { font-size: 16px; }
+}
 
-    .ai-new-conv-btn {
-        margin-bottom: 0;
-        width: auto;
-        white-space: nowrap;
-        padding: 8px 14px;
-        font-size: 13px;
-    }
-
-    .ai-conv-list {
-        display: flex;
-        gap: 6px;
-        overflow-x: auto;
-        overflow-y: hidden;
-    }
-
-    .ai-conv-item {
-        white-space: nowrap;
-        margin-bottom: 0;
-        padding: 8px 10px;
-        font-size: 12px;
-    }
-
-    .ai-image-btn {
-        padding: 10px 12px;
-        font-size: 12px;
-    }
-
-    .ai-generated-image {
-        max-height: 280px;
-    }
+/* ========================================
+   소형 폰 (480px 이하)
+   ======================================== */
+@media (max-width: 480px) {
+    .stats-grid, .stats-grid-4 { grid-template-columns: 1fr !important; }
+    #box-inventory-grid { grid-template-columns: 1fr !important; }
+    .calendar-table td { min-height: 45px; font-size: 10px; }
+    .calendar-table th { font-size: 10px; }
+    .planner-mini-cal td { height: 40px; }
+    .planner-cal-events { max-height: 24px; }
+    .day-schedules { max-height: 28px; }
+    .main-content { padding: 56px 10px 10px; }
 }

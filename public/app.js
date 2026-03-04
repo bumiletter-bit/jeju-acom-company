@@ -144,8 +144,19 @@ navItems.forEach(item => {
         e.preventDefault();
         const page = item.dataset.page;
         switchPage(page);
+        closeMobileSidebar();
     });
 });
+
+// 모바일 사이드바 토글
+window.toggleMobileSidebar = function() {
+    document.querySelector('.sidebar').classList.toggle('mobile-open');
+    document.querySelector('.mobile-overlay').classList.toggle('show');
+};
+window.closeMobileSidebar = function() {
+    document.querySelector('.sidebar').classList.remove('mobile-open');
+    document.querySelector('.mobile-overlay').classList.remove('show');
+};
 
 function switchPage(pageName) {
     // 관리자 전용 페이지 접근 차단

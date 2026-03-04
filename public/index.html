@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>제주아꼼이네 농업회사법인 (주)</title>
-    <link rel="stylesheet" href="styles.css?v=46">
+    <link rel="stylesheet" href="styles.css?v=47">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -32,8 +32,13 @@
 
     <!-- 앱 본체 -->
     <div class="app" style="display:none;">
+        <!-- 모바일 햄버거 메뉴 -->
+        <button class="mobile-menu-btn" onclick="toggleMobileSidebar()">☰</button>
+        <div class="mobile-overlay" onclick="closeMobileSidebar()"></div>
+
         <!-- Sidebar -->
         <aside class="sidebar">
+            <button class="sidebar-close-btn" onclick="closeMobileSidebar()">×</button>
             <div class="sidebar-header">
                 <img src="/logo.png" alt="제주아꼼이네 로고" style="width:120px; height:auto; display:block; margin:0 auto 8px auto;">
                 <h2>제주아꼼이네<br>농업회사법인 (주)</h2>
@@ -1161,6 +1166,6 @@
         </main>
     </div>
 
-    <script src="app.js?v=66"></script>
+    <script src="app.js?v=67"></script>
 </body>
 </html>
