@@ -108,6 +108,7 @@ function showLoginPage() {
     document.getElementById('login-page').style.display = 'flex';
     document.querySelector('.app').style.display = 'none';
     currentUser = null;
+    stopNotiPolling();
 }
 
 function showAppPage() {
@@ -158,6 +159,7 @@ function onLoginSuccess() {
     showAppPage();
     updateUserUI();
     init();
+    startNotiPolling();
 }
 
 function updateUserUI() {
@@ -540,6 +542,138 @@ function showToast(msg) {
     requestAnimationFrame(() => toast.classList.add('show'));
     setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000);
 }
+
+// =============================================
+// 알림 시스템
+// =============================================
+let notiPollingTimer = null;
+let lastUnreadCount = 0;
+
+function timeAgo(dateStr) {
+    const now = new Date();
+    const d = new Date(dateStr);
+    const diff = Math.floor((now - d) / 1000);
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+    if (diff < 172800) return '어제';
+    if (diff < 2592000) return `${Math.floor(diff / 86400)}일 전`;
+    return d.toLocaleDateString('ko-KR');
+}
+
+async function fetchUnreadCount() {
+    try {
+        const data = await api('/api/notifications/unread-count');
+        const badge = document.getElementById('bell-badge');
+        if (data.count > 0) {
+            badge.textContent = data.count > 99 ? '99+' : data.count;
+            badge.style.display = 'flex';
+        } else {
+            badge.style.display = 'none';
+        }
+        // 새 알림 감지 시 토스트
+        if (data.count > lastUnreadCount && lastUnreadCount >= 0) {
+            const notis = await api('/api/notifications');
+            const newest = notis.find(n => !n.isRead);
+            if (newest && lastUnreadCount > 0) {
+                showNotificationToast(newest.message);
+            }
+        }
+        lastUnreadCount = data.count;
+    } catch (err) { /* ignore */ }
+}
+
+function showNotificationToast(msg) {
+    const toast = document.createElement('div');
+    toast.className = 'toast-message noti-toast';
+    toast.textContent = '🔔 ' + msg;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+function startNotiPolling() {
+    if (notiPollingTimer) clearInterval(notiPollingTimer);
+    lastUnreadCount = -1;
+    fetchUnreadCount();
+    notiPollingTimer = setInterval(fetchUnreadCount, 30000);
+}
+
+function stopNotiPolling() {
+    if (notiPollingTimer) { clearInterval(notiPollingTimer); notiPollingTimer = null; }
+}
+
+window.toggleNotificationDropdown = async function(e) {
+    e.stopPropagation();
+    const dropdown = document.getElementById('notification-dropdown');
+    if (dropdown.style.display === 'none') {
+        dropdown.style.display = 'flex';
+        await renderNotificationList();
+    } else {
+        dropdown.style.display = 'none';
+    }
+};
+
+// 외부 클릭 시 닫기
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('notification-dropdown');
+    const bell = document.getElementById('notification-bell');
+    if (dropdown && bell && !bell.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
+async function renderNotificationList() {
+    const listEl = document.getElementById('noti-list');
+    try {
+        const notis = await api('/api/notifications');
+        if (notis.length === 0) {
+            listEl.innerHTML = '<div class="noti-empty">알림이 없습니다.</div>';
+            return;
+        }
+        listEl.innerHTML = notis.map(n => `
+            <div class="noti-item ${n.isRead ? '' : 'unread'}" data-id="${n.id}" data-link="${n.link || 'documents'}">
+                <span class="noti-dot ${n.isRead ? 'read' : 'unread'}"></span>
+                <div class="noti-content" onclick="clickNotification(${n.id}, '${n.link || 'documents'}')">
+                    <div class="noti-msg">${n.message}</div>
+                    <div class="noti-time">${timeAgo(n.createdAt)}</div>
+                </div>
+                <button class="noti-delete" onclick="deleteNotification(event, ${n.id})" title="삭제">×</button>
+            </div>
+        `).join('');
+    } catch (err) {
+        listEl.innerHTML = '<div class="noti-empty">알림을 불러올 수 없습니다.</div>';
+    }
+}
+
+window.clickNotification = async function(id, link) {
+    try {
+        await api(`/api/notifications/${id}/read`, 'PUT');
+        fetchUnreadCount();
+    } catch (err) { /* ignore */ }
+    document.getElementById('notification-dropdown').style.display = 'none';
+    // 해당 페이지로 이동
+    const navItem = document.querySelector(`.nav-item[data-page="${link}"]`);
+    if (navItem) navItem.click();
+};
+
+window.markAllNotificationsRead = async function(e) {
+    e.stopPropagation();
+    try {
+        await api('/api/notifications/read-all', 'PUT');
+        fetchUnreadCount();
+        await renderNotificationList();
+    } catch (err) { alert('실패: ' + err.message); }
+};
+
+window.deleteNotification = async function(e, id) {
+    e.stopPropagation();
+    try {
+        await api(`/api/notifications/${id}`, 'DELETE');
+        fetchUnreadCount();
+        await renderNotificationList();
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+};
 
 // =============================================
 // 정산관리 캘린더 (기존 홈에서 이동)

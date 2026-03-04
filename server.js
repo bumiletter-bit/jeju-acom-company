@@ -108,6 +108,20 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT false`);
 
+    // notifications 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS notifications (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            type VARCHAR(50) NOT NULL,
+            title VARCHAR(200) NOT NULL,
+            message TEXT,
+            link VARCHAR(100),
+            is_read BOOLEAN DEFAULT false,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+
     // documents 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS documents (
@@ -596,6 +610,63 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// === Notifications API ===
+
+async function createNotification(userId, type, title, message, link) {
+    try {
+        await pool.query(
+            'INSERT INTO notifications (user_id, type, title, message, link) VALUES ($1, $2, $3, $4, $5)',
+            [userId, type, title, message || '', link || 'documents']
+        );
+        // 30일 지난 알림 정리
+        await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '30 days'");
+    } catch (err) { console.error('createNotification error:', err); }
+}
+
+app.get('/api/notifications', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 30',
+            [req.user.id]
+        );
+        res.json(result.rows.map(r => ({
+            id: r.id, type: r.type, title: r.title, message: r.message,
+            link: r.link, isRead: r.is_read, createdAt: r.created_at
+        })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/notifications/unread-count', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT COUNT(*) as cnt FROM notifications WHERE user_id = $1 AND is_read = false',
+            [req.user.id]
+        );
+        res.json({ count: parseInt(result.rows[0].cnt) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/notifications/:id/read', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/notifications/read-all', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('UPDATE notifications SET is_read = true WHERE user_id = $1', [req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/notifications/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM notifications WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // === Schedules API ===
 
 app.get('/api/schedules', authMiddleware, async (req, res) => {
@@ -914,6 +985,15 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
             }
         }
 
+        // 알림: 결재자에게
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        await createNotification(
+            approverId, 'document_submitted',
+            '새 서류 신청',
+            `${req.user.name}님이 ${typeLabels[type] || type}(${subType})을 신청했습니다.`,
+            'documents'
+        );
+
         res.json({ id: docId, success: true });
     } catch (err) {
         console.error('POST /api/documents error:', err);
@@ -934,6 +1014,16 @@ app.put('/api/documents/:id/approve', authMiddleware, async (req, res) => {
         if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
 
         await pool.query('UPDATE documents SET status = $1, processed_at = NOW() WHERE id = $2', ['approved', req.params.id]);
+
+        // 알림: 신청자에게
+        const tl = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        await createNotification(
+            d.applicant_id, 'document_approved',
+            '서류 승인',
+            `${tl[d.type] || d.type}(${d.sub_type}) 신청이 승인되었습니다.`,
+            'documents'
+        );
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -961,6 +1051,16 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
         await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
 
         await pool.query('UPDATE documents SET status = $1, processed_at = NOW() WHERE id = $2', ['rejected', req.params.id]);
+
+        // 알림: 신청자에게
+        const tl2 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        await createNotification(
+            d.applicant_id, 'document_rejected',
+            '서류 반려',
+            `${tl2[d.type] || d.type}(${d.sub_type}) 신청이 반려되었습니다.`,
+            'documents'
+        );
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -986,6 +1086,17 @@ app.put('/api/documents/:id/request-modification', authMiddleware, async (req, r
              WHERE id = $7`,
             [modification_type, modification_reason, new_start_date || null, new_end_date || null, new_start_time || null, new_end_time || null, req.params.id]
         );
+
+        // 알림: 결재자에게
+        const tl3 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const modLabel = modification_type === 'cancel' ? '취소' : '수정';
+        await createNotification(
+            d.approver_id, 'modification_requested',
+            '서류 수정 요청',
+            `${req.user.name}님이 ${tl3[d.type] || d.type}(${d.sub_type}) ${modLabel}을 요청했습니다.`,
+            'documents'
+        );
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1070,6 +1181,17 @@ app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, r
                 [newStart, newEnd, newStartTime, newEndTime, newDeducted, req.params.id]
             );
         }
+
+        // 알림: 신청자에게
+        const tl4 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const modLabel2 = d.modification_type === 'cancel' ? '취소' : '수정';
+        await createNotification(
+            d.applicant_id, 'modification_approved',
+            '수정 요청 승인',
+            `${tl4[d.type] || d.type}(${d.sub_type}) ${modLabel2} 요청이 승인되었습니다.`,
+            'documents'
+        );
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1089,6 +1211,17 @@ app.put('/api/documents/:id/reject-modification', authMiddleware, async (req, re
              new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
              WHERE id = $1`, [req.params.id]
         );
+
+        // 알림: 신청자에게
+        const tl5 = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const modLabel3 = d.modification_type === 'cancel' ? '취소' : '수정';
+        await createNotification(
+            d.applicant_id, 'modification_rejected',
+            '수정 요청 반려',
+            `${tl5[d.type] || d.type}(${d.sub_type}) ${modLabel3} 요청이 반려되었습니다.`,
+            'documents'
+        );
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
