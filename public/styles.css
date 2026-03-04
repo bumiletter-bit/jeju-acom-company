@@ -592,9 +592,24 @@ body {
 
 .day-number {
     display: inline-block;
-    margin-bottom: 6px;
     font-weight: 600;
     font-size: 13px;
+}
+
+.day-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    gap: 2px;
+}
+
+.duty-badge {
+    font-size: 11px;
+    color: #2d1b69;
+    font-weight: 600;
+    white-space: nowrap;
+    line-height: 1;
 }
 
 .day-payments { margin-top: 4px; }

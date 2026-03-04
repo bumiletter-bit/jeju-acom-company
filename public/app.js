@@ -365,18 +365,30 @@ async function renderScheduleCalendar() {
                 if (isToday) classes.push('today');
 
                 const daySchedules = dailySchedules[dateStr] || [];
+                // 당직과 일반 일정 분리
+                const dutySchedules = daySchedules.filter(s => s.type === 'duty');
+                const normalSchedules = daySchedules.filter(s => s.type !== 'duty');
+
+                let dutyHtml = '';
+                if (dutySchedules.length > 0) {
+                    dutyHtml = dutySchedules.map(s => {
+                        const shortName = s.userName.length > 2 ? s.userName.slice(-2) : s.userName;
+                        return `<span class="duty-badge" title="${s.userName} 당직">🌙${shortName}</span>`;
+                    }).join('');
+                }
+
                 let scheduleHtml = '';
-                if (daySchedules.length > 0) {
+                if (normalSchedules.length > 0) {
                     scheduleHtml = '<div class="day-schedules">';
-                    daySchedules.forEach(s => {
-                        const typeIcon = s.type === 'vacation' ? '🏖️ ' : s.type === 'attendance' ? '📌 ' : s.type === 'duty' ? '🔴 ' : '';
+                    normalSchedules.forEach(s => {
+                        const typeIcon = s.type === 'vacation' ? '🏖️ ' : s.type === 'attendance' ? '📌 ' : '';
                         scheduleHtml += `<div class="day-schedule-item" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}">${typeIcon}${s.title}</div>`;
                     });
                     scheduleHtml += '</div>';
                 }
 
                 html += `<td class="${classes.join(' ')}" data-date="${dateStr}" onclick="openScheduleModal('${dateStr}')">
-                    <span class="day-number">${isToday ? '오늘' : day}</span>
+                    <div class="day-header"><span class="day-number">${isToday ? '오늘' : day}</span>${dutyHtml}</div>
                     ${scheduleHtml}
                 </td>`;
                 day++;
