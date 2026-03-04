@@ -860,8 +860,8 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
         // 휴가/근태: 캘린더에 일정 자동 생성
         if (type === 'vacation' || type === 'attendance') {
             let scheduleTitle = `${subType} - ${req.user.name}`;
-            if (subType === '시간차' && startTime && endTime) {
-                scheduleTitle = `시간차(${startTime}~${endTime}) - ${req.user.name}`;
+            if ((subType === '시간차' || subType === '기타') && startTime && endTime) {
+                scheduleTitle = `${subType}(${startTime}~${endTime}) - ${req.user.name}`;
             }
             const multiDay = subType === '연차' || subType === '시간차';
             if ((type === 'vacation' && multiDay) || type === 'attendance') {

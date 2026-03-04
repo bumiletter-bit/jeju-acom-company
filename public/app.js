@@ -1562,7 +1562,8 @@ function resetDocForm() {
 window.resetDocForm = resetDocForm;
 
 function updateDocEndDateVisibility() {
-    const isTime = currentDocType === 'vacation' && selectedDocSubType === '시간차';
+    const isTime = (currentDocType === 'vacation' && selectedDocSubType === '시간차') ||
+                   (currentDocType === 'attendance' && selectedDocSubType === '기타');
     const showEndDate = currentDocType === 'vacation' || currentDocType === 'attendance';
     document.getElementById('doc-end-date-group').style.display = showEndDate ? '' : 'none';
     document.getElementById('doc-start-time-group').style.display = isTime ? '' : 'none';
@@ -1675,8 +1676,9 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
     if (!startDate) return alert('날짜를 선택해주세요.');
     if (!approverId) return alert('결재자를 선택해주세요.');
 
-    const isTime = currentDocType === 'vacation' && selectedDocSubType === '시간차';
-    const hasEndDate = currentDocType === 'vacation' && (selectedDocSubType === '연차' || selectedDocSubType === '병가' || selectedDocSubType === '시간차');
+    const isTime = (currentDocType === 'vacation' && selectedDocSubType === '시간차') ||
+                   (currentDocType === 'attendance' && selectedDocSubType === '기타');
+    const hasEndDate = currentDocType === 'vacation' || currentDocType === 'attendance';
 
     if (isTime) {
         const st = document.getElementById('doc-start-time').value;
