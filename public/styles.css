@@ -606,10 +606,17 @@ body {
 
 .duty-badge {
     font-size: 11px;
-    color: #2d1b69;
-    font-weight: 600;
     white-space: nowrap;
     line-height: 1;
+}
+
+.duty-label {
+    color: #1a237e;
+    font-weight: 700;
+}
+
+.duty-name {
+    font-weight: 600;
 }
 
 .day-payments { margin-top: 4px; }
