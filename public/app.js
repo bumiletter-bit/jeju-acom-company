@@ -265,6 +265,7 @@ function switchPage(pageName) {
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
     if (pageName === 'planner') renderPlannerPage().catch(console.error);
     if (pageName === 'inventory') renderBoxInventory().catch(console.error);
+    if (pageName === 'cs-room') renderCsTemplates().catch(console.error);
     if (pageName === 'ai-workspace') renderAIWorkspace().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
     if (pageName === 'myinfo') renderMyInfoPage();
@@ -2146,6 +2147,126 @@ window.saveManualDoc = async function() {
     } catch (err) {
         alert('저장 실패: ' + err.message);
     }
+};
+
+// =============================================
+// CS처리방
+// =============================================
+
+let csCurrentCategory = '전체';
+let csTemplatesData = [];
+
+async function renderCsTemplates() {
+    try {
+        csTemplatesData = await api('/api/cs-templates');
+    } catch (err) { csTemplatesData = []; }
+
+    const search = (document.getElementById('cs-search-input')?.value || '').trim().toLowerCase();
+    let filtered = csTemplatesData;
+
+    if (csCurrentCategory !== '전체') {
+        filtered = filtered.filter(t => t.category === csCurrentCategory);
+    }
+    if (search) {
+        filtered = filtered.filter(t => t.title.toLowerCase().includes(search) || t.content.toLowerCase().includes(search));
+    }
+
+    const list = document.getElementById('cs-template-list');
+    if (!list) return;
+
+    if (filtered.length === 0) {
+        list.innerHTML = '<p style="color:var(--text-light); font-size:14px; text-align:center; padding:40px 0;">등록된 문구가 없습니다</p>';
+        return;
+    }
+
+    list.innerHTML = filtered.map(t => `
+        <div class="cs-card" onclick="copyCsTemplate(event, ${t.id})">
+            <div class="cs-card-header">
+                <span class="cs-badge ${t.category}">${t.category}</span>
+                <span class="cs-card-title">${t.title}</span>
+                <div class="cs-card-actions">
+                    <button onclick="event.stopPropagation(); editCsTemplate(${t.id})">수정</button>
+                    <button onclick="event.stopPropagation(); deleteCsTemplate(${t.id})">삭제</button>
+                </div>
+            </div>
+            <div class="cs-card-content">${t.content}</div>
+        </div>
+    `).join('');
+}
+
+window.filterCsCategory = function(cat) {
+    csCurrentCategory = cat;
+    document.querySelectorAll('.cs-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.textContent === cat);
+    });
+    renderCsTemplates();
+};
+
+window.copyCsTemplate = async function(event, id) {
+    const tpl = csTemplatesData.find(t => t.id === id);
+    if (!tpl) return;
+    try {
+        await navigator.clipboard.writeText(tpl.content);
+        const toast = document.getElementById('cs-copy-toast');
+        toast.style.display = '';
+        setTimeout(() => { toast.style.display = 'none'; }, 2000);
+    } catch (err) {
+        // fallback
+        const ta = document.createElement('textarea');
+        ta.value = tpl.content;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        const toast = document.getElementById('cs-copy-toast');
+        toast.style.display = '';
+        setTimeout(() => { toast.style.display = 'none'; }, 2000);
+    }
+};
+
+window.openCsTemplateModal = function() {
+    document.getElementById('cs-modal-title').textContent = '문구 추가';
+    document.getElementById('cs-edit-id').value = '';
+    document.getElementById('cs-template-category').value = '간편인사';
+    document.getElementById('cs-template-title-input').value = '';
+    document.getElementById('cs-template-content').value = '';
+    document.getElementById('cs-template-modal').style.display = '';
+};
+
+window.editCsTemplate = function(id) {
+    const tpl = csTemplatesData.find(t => t.id === id);
+    if (!tpl) return;
+    document.getElementById('cs-modal-title').textContent = '문구 수정';
+    document.getElementById('cs-edit-id').value = id;
+    document.getElementById('cs-template-category').value = tpl.category;
+    document.getElementById('cs-template-title-input').value = tpl.title;
+    document.getElementById('cs-template-content').value = tpl.content;
+    document.getElementById('cs-template-modal').style.display = '';
+};
+
+window.saveCsTemplate = async function() {
+    const id = document.getElementById('cs-edit-id').value;
+    const category = document.getElementById('cs-template-category').value;
+    const title = document.getElementById('cs-template-title-input').value.trim();
+    const content = document.getElementById('cs-template-content').value.trim();
+    if (!title || !content) { alert('제목과 내용을 입력해주세요.'); return; }
+    try {
+        if (id) {
+            await api(`/api/cs-templates/${id}`, 'PUT', { category, title, content });
+        } else {
+            await api('/api/cs-templates', 'POST', { category, title, content });
+        }
+        document.getElementById('cs-template-modal').style.display = 'none';
+        await renderCsTemplates();
+    } catch (err) { alert('저장 실패: ' + err.message); }
+};
+
+window.deleteCsTemplate = async function(id) {
+    if (!confirm('이 문구를 삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/cs-templates/${id}`, 'DELETE');
+        await renderCsTemplates();
+    } catch (err) { alert('삭제 실패: ' + err.message); }
 };
 
 // =============================================

@@ -325,6 +325,37 @@ async function initDB() {
         )
     `);
 
+    // CS 템플릿
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS cs_templates (
+            id SERIAL PRIMARY KEY,
+            category VARCHAR(50) NOT NULL,
+            title VARCHAR(100) NOT NULL,
+            content TEXT NOT NULL,
+            sort_order INTEGER DEFAULT 0,
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // 초기 데이터 (테이블이 비어있을 때만)
+    const csCount = await pool.query('SELECT COUNT(*) FROM cs_templates');
+    if (parseInt(csCount.rows[0].count) === 0) {
+        const seeds = [
+            ['간편인사', '첫 주문 감사', '안녕하세요! 제주아꼼이네입니다 🍊\n첫 주문 감사드립니다! 정성껏 준비하여 보내드리겠습니다.\n감사합니다!', 1],
+            ['간편인사', '재주문 감사', '안녕하세요! 제주아꼼이네입니다 🍊\n다시 찾아주셔서 정말 감사합니다!\n이번에도 맛있는 귤 준비해드리겠습니다!', 2],
+            ['클레임', '파손 접수', '안녕하세요 고객님, 제주아꼼이네입니다.\n파손된 상품 사진을 보내주시면 빠르게 재발송 또는 환불 처리 도와드리겠습니다.\n불편을 드려 죄송합니다.', 1],
+            ['클레임', '교환 안내', '안녕하세요 고객님, 제주아꼼이네입니다.\n교환을 원하시면 상품 상태 사진과 함께 말씀해주세요.\n빠르게 처리 도와드리겠습니다.', 2],
+            ['클레임', '반품 안내', '안녕하세요 고객님, 제주아꼼이네입니다.\n반품 접수 도와드리겠습니다.\n수거 후 환불 처리까지 2~3일 소요됩니다.', 3],
+            ['주문안내/가격정보', '주문 확인', '안녕하세요! 제주아꼼이네입니다.\n주문 확인되었습니다. 빠르게 준비하여 발송해드리겠습니다!\n감사합니다 🍊', 1],
+            ['주문안내/가격정보', '품절 안내', '안녕하세요 고객님, 제주아꼼이네입니다.\n문의하신 상품은 현재 품절 상태입니다.\n입고되는 대로 안내드리겠습니다.', 2],
+            ['도착정보', '배송완료 미수령', '안녕하세요 고객님, 제주아꼼이네입니다.\n배송 완료로 확인되나 수령이 안 되셨다면, 경비실이나 문 앞을 확인해주세요.\n확인이 안 되시면 택배사에 문의 도와드리겠습니다.', 1],
+            ['도착정보', '부분배송 안내', '안녕하세요 고객님, 제주아꼼이네입니다.\n나머지 상품은 별도 발송되어 1~2일 내 도착 예정입니다.\n불편을 드려 죄송합니다.', 2],
+        ];
+        for (const [cat, title, content, order] of seeds) {
+            await pool.query('INSERT INTO cs_templates (category, title, content, sort_order) VALUES ($1, $2, $3, $4)', [cat, title, content, order]);
+        }
+    }
+
     // ai_messages에 message_type 컬럼 추가 (이미지/텍스트 구분)
     await pool.query(`
         DO $$ BEGIN
@@ -1647,6 +1678,49 @@ app.delete('/api/lunch/today', authMiddleware, async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// === CS Templates API ===
+app.get('/api/cs-templates', authMiddleware, async (req, res) => {
+    try {
+        const { category } = req.query;
+        let result;
+        if (category) {
+            result = await pool.query('SELECT * FROM cs_templates WHERE category = $1 ORDER BY sort_order, id', [category]);
+        } else {
+            result = await pool.query('SELECT * FROM cs_templates ORDER BY category, sort_order, id');
+        }
+        res.json(result.rows.map(r => ({ ...r, createdBy: r.created_by, createdAt: r.created_at, sortOrder: r.sort_order })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/cs-templates', authMiddleware, async (req, res) => {
+    try {
+        const { category, title, content, sortOrder } = req.body;
+        const result = await pool.query(
+            'INSERT INTO cs_templates (category, title, content, sort_order, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [category, title, content, sortOrder || 0, req.user.id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/cs-templates/:id', authMiddleware, async (req, res) => {
+    try {
+        const { category, title, content } = req.body;
+        const result = await pool.query(
+            'UPDATE cs_templates SET category = $1, title = $2, content = $3 WHERE id = $4 RETURNING *',
+            [category, title, content, req.params.id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/cs-templates/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM cs_templates WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // === AI Workspace API ===

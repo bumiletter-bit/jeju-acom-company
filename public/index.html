@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=50">
+    <link rel="stylesheet" href="styles.css?v=51">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -130,6 +130,10 @@
                 <a href="#" class="nav-item" data-page="ai-workspace">
                     <span class="nav-icon">🤖</span>
                     <span class="nav-text">AI 작업방</span>
+                </a>
+                <a href="#" class="nav-item" data-page="cs-room">
+                    <span class="nav-icon">💬</span>
+                    <span class="nav-text">CS처리방</span>
                 </a>
                 <a href="#" class="nav-item" data-page="data">
                     <span class="nav-icon">📁</span>
@@ -1175,6 +1179,62 @@
                 </div>
             </div>
 
+            <!-- CS처리방 페이지 -->
+            <div id="page-cs-room" class="page">
+                <div class="card-header-row" style="margin-bottom:20px;">
+                    <h1>CS처리방</h1>
+                    <button class="btn-primary" onclick="openCsTemplateModal()">+ 문구 추가</button>
+                </div>
+                <p style="color:var(--text-light); font-size:13px; margin-bottom:16px;">문구를 클릭하면 바로 복사됩니다! 📋</p>
+
+                <!-- 카테고리 탭 -->
+                <div class="cs-tabs" style="margin-bottom:12px;">
+                    <button class="cs-tab active" onclick="filterCsCategory('전체')">전체</button>
+                    <button class="cs-tab" onclick="filterCsCategory('간편인사')">간편인사</button>
+                    <button class="cs-tab" onclick="filterCsCategory('클레임')">클레임</button>
+                    <button class="cs-tab" onclick="filterCsCategory('주문안내/가격정보')">주문안내/가격정보</button>
+                    <button class="cs-tab" onclick="filterCsCategory('도착정보')">도착정보</button>
+                </div>
+
+                <!-- 검색 -->
+                <input type="text" id="cs-search-input" class="form-input" placeholder="제목 또는 내용으로 검색..." oninput="renderCsTemplates()" style="margin-bottom:16px;">
+
+                <!-- 문구 목록 -->
+                <div id="cs-template-list"></div>
+
+                <!-- 토스트 -->
+                <div id="cs-copy-toast" class="cs-copy-toast" style="display:none;">복사되었습니다! ✅</div>
+            </div>
+
+            <!-- CS 문구 추가/수정 모달 -->
+            <div id="cs-template-modal" class="modal-overlay" style="display:none;">
+                <div class="modal" style="max-width:500px;">
+                    <h3 id="cs-modal-title" style="margin-bottom:16px;">문구 추가</h3>
+                    <input type="hidden" id="cs-edit-id">
+                    <div class="form-group">
+                        <label>카테고리</label>
+                        <select id="cs-template-category" class="form-select">
+                            <option value="간편인사">간편인사</option>
+                            <option value="클레임">클레임</option>
+                            <option value="주문안내/가격정보">주문안내/가격정보</option>
+                            <option value="도착정보">도착정보</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>제목</label>
+                        <input type="text" id="cs-template-title-input" class="form-input" placeholder="예: 파손 안내">
+                    </div>
+                    <div class="form-group">
+                        <label>문구 내용</label>
+                        <textarea id="cs-template-content" class="form-input" rows="6" placeholder="고객에게 보낼 문구를 입력하세요"></textarea>
+                    </div>
+                    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+                        <button class="btn-outline" onclick="document.getElementById('cs-template-modal').style.display='none'">취소</button>
+                        <button class="btn-primary" onclick="saveCsTemplate()">저장</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 데이터관리 페이지 -->
             <div id="page-data" class="page">
                 <h1>데이터관리</h1>
@@ -1256,6 +1316,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=71"></script>
+    <script src="app.js?v=72"></script>
 </body>
 </html>
