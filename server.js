@@ -325,6 +325,30 @@ async function initDB() {
         )
     `);
 
+    // CS 카테고리
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS cs_categories (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(50) NOT NULL UNIQUE,
+            color VARCHAR(20) DEFAULT '#9E9E9E',
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // 초기 카테고리 데이터
+    const csCatCount = await pool.query('SELECT COUNT(*) FROM cs_categories');
+    if (parseInt(csCatCount.rows[0].count) === 0) {
+        const catSeeds = [
+            ['간편인사', '#4CAF50', 1],
+            ['클레임', '#F44336', 2],
+            ['주문안내/가격정보', '#2196F3', 3],
+            ['도착정보', '#FF9800', 4],
+        ];
+        for (const [name, color, order] of catSeeds) {
+            await pool.query('INSERT INTO cs_categories (name, color, sort_order) VALUES ($1, $2, $3)', [name, color, order]);
+        }
+    }
+
     // CS 템플릿
     await pool.query(`
         CREATE TABLE IF NOT EXISTS cs_templates (
@@ -1678,6 +1702,64 @@ app.delete('/api/lunch/today', authMiddleware, async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// === CS Categories API ===
+app.get('/api/cs-categories', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM cs_categories ORDER BY sort_order, id');
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/cs-categories', authMiddleware, async (req, res) => {
+    try {
+        const { name, color } = req.body;
+        if (!name) return res.status(400).json({ error: '카테고리 이름을 입력해주세요' });
+        const maxOrder = await pool.query('SELECT COALESCE(MAX(sort_order), 0) + 1 as next FROM cs_categories');
+        const result = await pool.query(
+            'INSERT INTO cs_categories (name, color, sort_order) VALUES ($1, $2, $3) RETURNING *',
+            [name.trim(), color || '#9E9E9E', maxOrder.rows[0].next]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        if (err.code === '23505') return res.status(400).json({ error: '이미 존재하는 카테고리입니다' });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/cs-categories/:id', authMiddleware, async (req, res) => {
+    try {
+        const { name, color } = req.body;
+        if (!name) return res.status(400).json({ error: '카테고리 이름을 입력해주세요' });
+        // 기존 이름 조회 (템플릿 카테고리명 업데이트용)
+        const old = await pool.query('SELECT name FROM cs_categories WHERE id = $1', [req.params.id]);
+        if (old.rows.length === 0) return res.status(404).json({ error: '카테고리를 찾을 수 없습니다' });
+        const oldName = old.rows[0].name;
+        const result = await pool.query(
+            'UPDATE cs_categories SET name = $1, color = $2 WHERE id = $3 RETURNING *',
+            [name.trim(), color || '#9E9E9E', req.params.id]
+        );
+        // 관련 템플릿의 카테고리명도 업데이트
+        if (oldName !== name.trim()) {
+            await pool.query('UPDATE cs_templates SET category = $1 WHERE category = $2', [name.trim(), oldName]);
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        if (err.code === '23505') return res.status(400).json({ error: '이미 존재하는 카테고리입니다' });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/cs-categories/:id', authMiddleware, async (req, res) => {
+    try {
+        const cat = await pool.query('SELECT name FROM cs_categories WHERE id = $1', [req.params.id]);
+        if (cat.rows.length === 0) return res.status(404).json({ error: '카테고리를 찾을 수 없습니다' });
+        // 해당 카테고리의 템플릿을 "미분류"로 이동
+        await pool.query('UPDATE cs_templates SET category = $1 WHERE category = $2', ['미분류', cat.rows[0].name]);
+        await pool.query('DELETE FROM cs_categories WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // === CS Templates API ===

@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=51">
+    <link rel="stylesheet" href="styles.css?v=52">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -1187,13 +1187,12 @@
                 </div>
                 <p style="color:var(--text-light); font-size:13px; margin-bottom:16px;">문구를 클릭하면 바로 복사됩니다! 📋</p>
 
-                <!-- 카테고리 탭 -->
-                <div class="cs-tabs" style="margin-bottom:12px;">
-                    <button class="cs-tab active" onclick="filterCsCategory('전체')">전체</button>
-                    <button class="cs-tab" onclick="filterCsCategory('간편인사')">간편인사</button>
-                    <button class="cs-tab" onclick="filterCsCategory('클레임')">클레임</button>
-                    <button class="cs-tab" onclick="filterCsCategory('주문안내/가격정보')">주문안내/가격정보</button>
-                    <button class="cs-tab" onclick="filterCsCategory('도착정보')">도착정보</button>
+                <!-- 카테고리 탭 (동적 생성) -->
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+                    <div class="cs-tabs" id="cs-tabs-container" style="flex:1;">
+                        <button class="cs-tab active" onclick="filterCsCategory('전체')">전체</button>
+                    </div>
+                    <button class="btn-icon" onclick="openCsCategoryModal()" title="카테고리 관리" style="font-size:18px; padding:6px; cursor:pointer; background:none; border:none;">⚙️</button>
                 </div>
 
                 <!-- 검색 -->
@@ -1214,10 +1213,7 @@
                     <div class="form-group">
                         <label>카테고리</label>
                         <select id="cs-template-category" class="form-select">
-                            <option value="간편인사">간편인사</option>
-                            <option value="클레임">클레임</option>
-                            <option value="주문안내/가격정보">주문안내/가격정보</option>
-                            <option value="도착정보">도착정보</option>
+                            <!-- 동적으로 채워짐 -->
                         </select>
                     </div>
                     <div class="form-group">
@@ -1231,6 +1227,25 @@
                     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
                         <button class="btn-outline" onclick="document.getElementById('cs-template-modal').style.display='none'">취소</button>
                         <button class="btn-primary" onclick="saveCsTemplate()">저장</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CS 카테고리 관리 모달 -->
+            <div id="cs-category-modal" class="modal-overlay" style="display:none;">
+                <div class="modal" style="max-width:460px;">
+                    <h3 style="margin-bottom:16px;">카테고리 관리</h3>
+                    <div id="cs-category-list" style="margin-bottom:16px;"></div>
+                    <div style="border-top:1px solid var(--border); padding-top:12px;">
+                        <p style="font-size:13px; font-weight:600; margin-bottom:8px;">새 카테고리 추가</p>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <input type="color" id="cs-new-cat-color" value="#9E9E9E" style="width:36px; height:36px; border:none; cursor:pointer;">
+                            <input type="text" id="cs-new-cat-name" class="form-input" placeholder="카테고리 이름" style="flex:1;">
+                            <button class="btn-primary" onclick="addCsCategory()">추가</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+                        <button class="btn-outline" onclick="document.getElementById('cs-category-modal').style.display='none'">닫기</button>
                     </div>
                 </div>
             </div>
@@ -1316,6 +1331,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=72"></script>
+    <script src="app.js?v=73"></script>
 </body>
 </html>

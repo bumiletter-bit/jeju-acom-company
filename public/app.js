@@ -2155,8 +2155,41 @@ window.saveManualDoc = async function() {
 
 let csCurrentCategory = '전체';
 let csTemplatesData = [];
+let csCategoriesData = [];
+
+async function loadCsCategories() {
+    try {
+        csCategoriesData = await api('/api/cs-categories');
+    } catch (err) { csCategoriesData = []; }
+}
+
+function getCsCategoryColor(catName) {
+    const cat = csCategoriesData.find(c => c.name === catName);
+    return cat ? cat.color : '#9E9E9E';
+}
+
+function renderCsTabs() {
+    const container = document.getElementById('cs-tabs-container');
+    if (!container) return;
+    container.innerHTML = `<button class="cs-tab ${csCurrentCategory === '전체' ? 'active' : ''}" onclick="filterCsCategory('전체')">전체</button>` +
+        csCategoriesData.map(c =>
+            `<button class="cs-tab ${csCurrentCategory === c.name ? 'active' : ''}" onclick="filterCsCategory('${c.name.replace(/'/g, "\\'")}')">${c.name}</button>`
+        ).join('');
+}
+
+function renderCsCategoryDropdown() {
+    const sel = document.getElementById('cs-template-category');
+    if (!sel) return;
+    sel.innerHTML = csCategoriesData.map(c =>
+        `<option value="${c.name}">${c.name}</option>`
+    ).join('');
+}
 
 async function renderCsTemplates() {
+    await loadCsCategories();
+    renderCsTabs();
+    renderCsCategoryDropdown();
+
     try {
         csTemplatesData = await api('/api/cs-templates');
     } catch (err) { csTemplatesData = []; }
@@ -2179,10 +2212,13 @@ async function renderCsTemplates() {
         return;
     }
 
-    list.innerHTML = filtered.map(t => `
+    list.innerHTML = filtered.map(t => {
+        const bgColor = getCsCategoryColor(t.category);
+        const lightBg = bgColor + '22';
+        return `
         <div class="cs-card" onclick="copyCsTemplate(event, ${t.id})">
             <div class="cs-card-header">
-                <span class="cs-badge ${t.category}">${t.category}</span>
+                <span class="cs-badge" style="background:${lightBg}; color:${bgColor};">${t.category}</span>
                 <span class="cs-card-title">${t.title}</span>
                 <div class="cs-card-actions">
                     <button onclick="event.stopPropagation(); editCsTemplate(${t.id})">수정</button>
@@ -2190,8 +2226,8 @@ async function renderCsTemplates() {
                 </div>
             </div>
             <div class="cs-card-content">${t.content}</div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 window.filterCsCategory = function(cat) {
@@ -2199,7 +2235,34 @@ window.filterCsCategory = function(cat) {
     document.querySelectorAll('.cs-tab').forEach(tab => {
         tab.classList.toggle('active', tab.textContent === cat);
     });
-    renderCsTemplates();
+    // 탭 클릭 시 목록만 재필터링 (카테고리 재로드 불필요)
+    (async () => {
+        const search = (document.getElementById('cs-search-input')?.value || '').trim().toLowerCase();
+        let filtered = csTemplatesData;
+        if (csCurrentCategory !== '전체') filtered = filtered.filter(t => t.category === csCurrentCategory);
+        if (search) filtered = filtered.filter(t => t.title.toLowerCase().includes(search) || t.content.toLowerCase().includes(search));
+        const list = document.getElementById('cs-template-list');
+        if (!list) return;
+        if (filtered.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-light); font-size:14px; text-align:center; padding:40px 0;">등록된 문구가 없습니다</p>';
+            return;
+        }
+        list.innerHTML = filtered.map(t => {
+            const bgColor = getCsCategoryColor(t.category);
+            const lightBg = bgColor + '22';
+            return `<div class="cs-card" onclick="copyCsTemplate(event, ${t.id})">
+                <div class="cs-card-header">
+                    <span class="cs-badge" style="background:${lightBg}; color:${bgColor};">${t.category}</span>
+                    <span class="cs-card-title">${t.title}</span>
+                    <div class="cs-card-actions">
+                        <button onclick="event.stopPropagation(); editCsTemplate(${t.id})">수정</button>
+                        <button onclick="event.stopPropagation(); deleteCsTemplate(${t.id})">삭제</button>
+                    </div>
+                </div>
+                <div class="cs-card-content">${t.content}</div>
+            </div>`;
+        }).join('');
+    })();
 };
 
 window.copyCsTemplate = async function(event, id) {
@@ -2227,7 +2290,9 @@ window.copyCsTemplate = async function(event, id) {
 window.openCsTemplateModal = function() {
     document.getElementById('cs-modal-title').textContent = '문구 추가';
     document.getElementById('cs-edit-id').value = '';
-    document.getElementById('cs-template-category').value = '간편인사';
+    renderCsCategoryDropdown();
+    const sel = document.getElementById('cs-template-category');
+    if (sel.options.length > 0) sel.selectedIndex = 0;
     document.getElementById('cs-template-title-input').value = '';
     document.getElementById('cs-template-content').value = '';
     document.getElementById('cs-template-modal').style.display = '';
@@ -2265,6 +2330,95 @@ window.deleteCsTemplate = async function(id) {
     if (!confirm('이 문구를 삭제하시겠습니까?')) return;
     try {
         await api(`/api/cs-templates/${id}`, 'DELETE');
+        await renderCsTemplates();
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+};
+
+// --- CS 카테고리 관리 ---
+window.openCsCategoryModal = async function() {
+    await loadCsCategories();
+    renderCsCategoryList();
+    document.getElementById('cs-new-cat-name').value = '';
+    document.getElementById('cs-new-cat-color').value = '#9E9E9E';
+    document.getElementById('cs-category-modal').style.display = '';
+};
+
+function renderCsCategoryList() {
+    const container = document.getElementById('cs-category-list');
+    if (!container) return;
+    if (csCategoriesData.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-light); font-size:13px; text-align:center; padding:12px;">등록된 카테고리가 없습니다</p>';
+        return;
+    }
+    container.innerHTML = csCategoriesData.map(c => `
+        <div class="cs-cat-item" data-id="${c.id}">
+            <span class="cs-cat-color-dot" style="background:${c.color};"></span>
+            <span class="cs-cat-name">${c.name}</span>
+            <div class="cs-cat-actions">
+                <button onclick="editCsCategory(${c.id})">수정</button>
+                <button onclick="deleteCsCategory(${c.id})">삭제</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+window.addCsCategory = async function() {
+    const name = document.getElementById('cs-new-cat-name').value.trim();
+    const color = document.getElementById('cs-new-cat-color').value;
+    if (!name) { alert('카테고리 이름을 입력해주세요.'); return; }
+    try {
+        await api('/api/cs-categories', 'POST', { name, color });
+        document.getElementById('cs-new-cat-name').value = '';
+        document.getElementById('cs-new-cat-color').value = '#9E9E9E';
+        await loadCsCategories();
+        renderCsCategoryList();
+        renderCsTabs();
+        renderCsCategoryDropdown();
+    } catch (err) { alert('추가 실패: ' + err.message); }
+};
+
+window.editCsCategory = function(id) {
+    const cat = csCategoriesData.find(c => c.id === id);
+    if (!cat) return;
+    const item = document.querySelector(`.cs-cat-item[data-id="${id}"]`);
+    if (!item) return;
+    item.innerHTML = `
+        <input type="color" value="${cat.color}" style="width:32px; height:32px; border:none; cursor:pointer;" id="cs-edit-cat-color-${id}">
+        <input type="text" value="${cat.name}" class="form-input" style="flex:1; padding:4px 8px; font-size:13px;" id="cs-edit-cat-name-${id}">
+        <div class="cs-cat-actions">
+            <button onclick="saveCsCategory(${id})">저장</button>
+            <button onclick="renderCsCategoryList()">취소</button>
+        </div>
+    `;
+};
+
+window.saveCsCategory = async function(id) {
+    const name = document.getElementById(`cs-edit-cat-name-${id}`).value.trim();
+    const color = document.getElementById(`cs-edit-cat-color-${id}`).value;
+    if (!name) { alert('카테고리 이름을 입력해주세요.'); return; }
+    try {
+        await api(`/api/cs-categories/${id}`, 'PUT', { name, color });
+        await loadCsCategories();
+        renderCsCategoryList();
+        renderCsTabs();
+        renderCsCategoryDropdown();
+    } catch (err) { alert('수정 실패: ' + err.message); }
+};
+
+window.deleteCsCategory = async function(id) {
+    const cat = csCategoriesData.find(c => c.id === id);
+    if (!cat) return;
+    if (!confirm(`"${cat.name}" 카테고리를 삭제하시겠습니까?\n해당 카테고리의 문구는 "미분류"로 이동됩니다.`)) return;
+    try {
+        await api(`/api/cs-categories/${id}`, 'DELETE');
+        await loadCsCategories();
+        renderCsCategoryList();
+        renderCsTabs();
+        renderCsCategoryDropdown();
+        // 삭제된 카테고리를 보고 있었다면 전체로 돌아가기
+        if (csCurrentCategory === cat.name) {
+            csCurrentCategory = '전체';
+        }
         await renderCsTemplates();
     } catch (err) { alert('삭제 실패: ' + err.message); }
 };
