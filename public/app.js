@@ -664,8 +664,9 @@ window.clickNotification = async function(id, link) {
         fetchUnreadCount();
     } catch (err) { /* ignore */ }
     document.getElementById('notification-dropdown').style.display = 'none';
-    // 해당 페이지로 이동
-    const navItem = document.querySelector(`.nav-item[data-page="${link}"]`);
+    // 해당 페이지로 이동 (documents → document 보정)
+    const page = link === 'documents' ? 'document' : link;
+    const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
     if (navItem) navItem.click();
 };
 
