@@ -564,13 +564,16 @@ function timeAgo(dateStr) {
 async function fetchUnreadCount() {
     try {
         const data = await api('/api/notifications/unread-count');
-        const badge = document.getElementById('bell-badge');
-        if (data.count > 0) {
-            badge.textContent = data.count > 99 ? '99+' : data.count;
-            badge.style.display = 'flex';
-        } else {
-            badge.style.display = 'none';
-        }
+        const badges = [document.getElementById('bell-badge'), document.getElementById('mobile-bell-badge')];
+        badges.forEach(badge => {
+            if (!badge) return;
+            if (data.count > 0) {
+                badge.textContent = data.count > 99 ? '99+' : data.count;
+                badge.style.display = 'flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        });
         // 새 알림 감지 시 토스트
         if (data.count > lastUnreadCount && lastUnreadCount >= 0) {
             const notis = await api('/api/notifications');
@@ -585,8 +588,13 @@ async function fetchUnreadCount() {
 
 function showNotificationToast(msg) {
     const toast = document.createElement('div');
-    toast.className = 'toast-message noti-toast';
+    toast.className = 'noti-toast';
     toast.textContent = '🔔 ' + msg;
+    toast.onclick = () => {
+        toast.remove();
+        const navItem = document.querySelector('.nav-item[data-page="document"]');
+        if (navItem) navItem.click();
+    };
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('show'));
     setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
@@ -618,8 +626,12 @@ window.toggleNotificationDropdown = async function(e) {
 document.addEventListener('click', (e) => {
     const dropdown = document.getElementById('notification-dropdown');
     const bell = document.getElementById('notification-bell');
-    if (dropdown && bell && !bell.contains(e.target) && !dropdown.contains(e.target)) {
-        dropdown.style.display = 'none';
+    const mobileBell = document.getElementById('mobile-noti-btn');
+    if (dropdown && dropdown.style.display !== 'none') {
+        const clickedBell = (bell && bell.contains(e.target)) || (mobileBell && mobileBell.contains(e.target));
+        if (!clickedBell && !dropdown.contains(e.target)) {
+            dropdown.style.display = 'none';
+        }
     }
 });
 

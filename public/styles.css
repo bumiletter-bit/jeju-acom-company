@@ -132,20 +132,19 @@ body {
     text-align: center;
 }
 
-/* 알림 벨 */
+/* 알림 벨 (welcome-section 내) */
 .notification-bell-wrap {
-    position: absolute;
-    top: 24px;
-    right: 16px;
+    position: relative;
     cursor: pointer;
     user-select: none;
-    z-index: 102;
+    margin-left: auto;
+    padding: 6px;
 }
 .bell-icon { font-size: 22px; }
 .bell-badge {
     position: absolute;
-    top: -4px;
-    right: -6px;
+    top: 0;
+    right: -2px;
     background: #ef4444;
     color: #fff;
     font-size: 11px;
@@ -160,17 +159,49 @@ body {
     line-height: 1;
 }
 
+/* 모바일 알림 버튼 */
+.mobile-noti-btn {
+    display: none;
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 1001;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: var(--sidebar-bg);
+    font-size: 20px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+}
+.mobile-bell-badge {
+    top: -2px;
+    right: -2px;
+}
+.noti-close-btn {
+    display: none;
+    background: none;
+    border: none;
+    font-size: 22px;
+    color: #666;
+    cursor: pointer;
+    padding: 4px 8px;
+    line-height: 1;
+}
+
 /* 알림 드롭다운 */
 .notification-dropdown {
-    position: absolute;
-    top: 52px;
-    right: -8px;
-    width: 320px;
+    position: fixed;
+    top: 60px;
+    right: 24px;
+    width: 340px;
     max-height: 440px;
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-    z-index: 1000;
+    z-index: 1100;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -964,6 +995,31 @@ body {
 .toast-message.show {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
+}
+
+/* 알림 토스트 (오른쪽 상단) */
+.noti-toast {
+    position: fixed;
+    top: 20px;
+    right: 24px;
+    background: #fff;
+    color: #333;
+    padding: 14px 20px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    border-left: 4px solid var(--primary);
+    z-index: 9999;
+    opacity: 0;
+    transform: translateX(100%);
+    transition: all 0.3s ease;
+    cursor: pointer;
+    max-width: 360px;
+}
+.noti-toast.show {
+    opacity: 1;
+    transform: translateX(0);
 }
 
 .schedule-detail-item {
@@ -3130,13 +3186,14 @@ textarea.form-input {
 
     .sidebar-header { padding: 16px 14px; padding-top: 48px; }
     .sidebar-header h2 { font-size: 13px; }
-    .notification-bell-wrap { top: 50px; right: 14px; }
+    .notification-bell-wrap { display: none; }
+    .mobile-noti-btn { display: flex; }
+    .noti-close-btn { display: inline-block; }
     .notification-dropdown {
         position: fixed;
         top: 0; left: 0; right: 0; bottom: 0;
         width: 100%; max-height: 100%;
         border-radius: 0;
-        z-index: 1100;
     }
     .noti-list { max-height: calc(100vh - 56px); }
     .noti-item { padding: 14px 16px; min-height: 44px; }
