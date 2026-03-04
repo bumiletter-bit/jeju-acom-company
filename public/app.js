@@ -1590,20 +1590,28 @@ function initTimeSelects() {
     endSel.innerHTML = options.join('');
 }
 
+function calcWorkHoursClient(startTimeStr, endTimeStr) {
+    const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const s = toMin(startTimeStr);
+    const e = toMin(endTimeStr);
+    const total = (e - s) / 60;
+    const lunchStart = 720, lunchEnd = 780;
+    let lunchOverlap = 0;
+    if (s < lunchEnd && e > lunchStart) {
+        lunchOverlap = (Math.min(e, lunchEnd) - Math.max(s, lunchStart)) / 60;
+    }
+    return Math.max(total - lunchOverlap, 0);
+}
+
 function calcTimeLeave() {
-    const startDate = document.getElementById('doc-start-date').value;
-    const endDate = document.getElementById('doc-end-date').value;
     const startTime = document.getElementById('doc-start-time').value;
     const endTime = document.getElementById('doc-end-time').value;
     const display = document.getElementById('doc-time-hours');
-    if (!startTime || !endTime || !startDate) { display.textContent = ''; return; }
-    const sd = endDate || startDate;
-    const s = new Date(`${startDate}T${startTime}`);
-    const e = new Date(`${sd}T${endTime}`);
-    const hours = (e - s) / (1000 * 60 * 60);
+    if (!startTime || !endTime) { display.textContent = ''; return; }
+    const hours = calcWorkHoursClient(startTime, endTime);
     if (hours <= 0) { display.textContent = '시간을 확인해주세요'; return; }
     const days = parseFloat((hours / 8).toFixed(4));
-    display.textContent = `차감 연차: ${hours}시간 (${days}일 차감)`;
+    display.textContent = `차감 연차: ${hours}시간 (${days}일 차감) *점심시간 제외`;
 }
 window.calcTimeLeave = calcTimeLeave;
 
@@ -2197,9 +2205,7 @@ function renderDocHistory(docs) {
         let deducted = '-';
         if (d.deductedLeave > 0) {
             if (d.subType === '시간차' && d.startTime && d.endTime) {
-                const s = new Date(`2000-01-01T${d.startTime}`);
-                const e = new Date(`2000-01-01T${d.endTime}`);
-                const hrs = (e - s) / (1000 * 60 * 60);
+                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
                 deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
             } else {
                 deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일';

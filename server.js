@@ -653,6 +653,21 @@ app.delete('/api/schedules/:id', authMiddleware, async (req, res) => {
     }
 });
 
+// 시간차 실근무시간 계산 (점심시간 12:00~13:00 제외)
+function calcWorkHours(startTimeStr, endTimeStr) {
+    const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const s = toMin(startTimeStr);
+    const e = toMin(endTimeStr);
+    const total = (e - s) / 60;
+    // 점심시간(720~780분)과 겹치는 부분 제외
+    const lunchStart = 720, lunchEnd = 780;
+    let lunchOverlap = 0;
+    if (s < lunchEnd && e > lunchStart) {
+        lunchOverlap = (Math.min(e, lunchEnd) - Math.max(s, lunchStart)) / 60;
+    }
+    return Math.max(total - lunchOverlap, 0);
+}
+
 // === Documents API (기안서류) ===
 
 app.get('/api/documents', authMiddleware, async (req, res) => {
@@ -818,10 +833,7 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
                 deductedLeave = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
             } else if (subType === '시간차') {
                 if (startTime && endTime) {
-                    const sd = endDate || startDate;
-                    const s = new Date(`${startDate}T${startTime}`);
-                    const e = new Date(`${sd}T${endTime}`);
-                    const hours = (e - s) / (1000 * 60 * 60);
+                    const hours = calcWorkHours(startTime, endTime);
                     deductedLeave = parseFloat((hours / 8).toFixed(4));
                 } else {
                     deductedLeave = 0.5;
@@ -986,9 +998,7 @@ app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, r
                     newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
                 } else if (d.sub_type === '시간차') {
                     if (newStartTime && newEndTime) {
-                        const s = new Date(`${newStart}T${newStartTime}`);
-                        const e = new Date(`${newEnd}T${newEndTime}`);
-                        const hours = (e - s) / (1000 * 60 * 60);
+                        const hours = calcWorkHours(newStartTime, newEndTime);
                         newDeducted = parseFloat((hours / 8).toFixed(4));
                     } else { newDeducted = 0.5; }
                 }
@@ -1090,11 +1100,8 @@ app.put('/api/documents/:id', authMiddleware, async (req, res) => {
                 newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
             } else if (newSubType === '시간차') {
                 if (newStartTime && newEndTime) {
-                    const sd = newEndDate || newStartDate;
-                    const s = new Date(`${newStartDate}T${newStartTime}`);
-                    const e = new Date(`${sd}T${newEndTime}`);
-                    const hours = (e - s) / (1000 * 60 * 60);
-                    newDeducted = Math.round(hours / 8 * 10) / 10;
+                    const hours = calcWorkHours(newStartTime, newEndTime);
+                    newDeducted = parseFloat((hours / 8).toFixed(4));
                 } else {
                     newDeducted = 0.5;
                 }
