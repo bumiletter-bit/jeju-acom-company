@@ -822,7 +822,7 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
                     const s = new Date(`${startDate}T${startTime}`);
                     const e = new Date(`${sd}T${endTime}`);
                     const hours = (e - s) / (1000 * 60 * 60);
-                    deductedLeave = Math.round(hours / 8 * 10) / 10;
+                    deductedLeave = parseFloat((hours / 8).toFixed(4));
                 } else {
                     deductedLeave = 0.5;
                 }
@@ -989,7 +989,7 @@ app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, r
                         const s = new Date(`${newStart}T${newStartTime}`);
                         const e = new Date(`${newEnd}T${newEndTime}`);
                         const hours = (e - s) / (1000 * 60 * 60);
-                        newDeducted = Math.round(hours / 8 * 10) / 10;
+                        newDeducted = parseFloat((hours / 8).toFixed(4));
                     } else { newDeducted = 0.5; }
                 }
             }

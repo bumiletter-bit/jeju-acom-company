@@ -164,7 +164,7 @@ function updateUserUI() {
     if (!currentUser) return;
     document.getElementById('welcome-message').textContent =
         `${currentUser.position} ${currentUser.name}님 안녕하세요`;
-    document.getElementById('annual-leave-count').textContent = currentUser.annualLeave;
+    document.getElementById('annual-leave-count').textContent = parseFloat(Number(currentUser.annualLeave).toFixed(2));
     document.getElementById('sidebar-user-name').textContent = `${currentUser.position} ${currentUser.name}`;
     document.getElementById('sidebar-user-dot').style.backgroundColor = currentUser.color;
 
@@ -441,7 +441,7 @@ window.openScheduleModal = function(dateStr) {
                 const me = await api('/api/auth/me');
                 currentUser = me;
                 localStorage.setItem('jwt_user', JSON.stringify(me));
-                document.getElementById('annual-leave-count').textContent = me.annualLeave;
+                document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
             }
         } catch (err) {
             alert('저장 실패: ' + err.message);
@@ -483,7 +483,7 @@ window.deleteSchedule = async function(id, btn) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
     } catch (err) {
         alert('삭제 실패: ' + err.message);
     }
@@ -1567,6 +1567,10 @@ function updateDocEndDateVisibility() {
     document.getElementById('doc-start-time-group').style.display = isTime ? '' : 'none';
     document.getElementById('doc-end-time-group').style.display = isTime ? '' : 'none';
     document.getElementById('doc-time-hours-group').style.display = isTime ? '' : 'none';
+    // 휴가신청서 연차/시간차는 사유란 숨김
+    const hideReason = currentDocType === 'vacation' && (selectedDocSubType === '연차' || selectedDocSubType === '시간차');
+    document.getElementById('doc-reason-group').style.display = hideReason ? 'none' : '';
+    if (hideReason) document.getElementById('doc-reason').value = '';
     if (isTime) initTimeSelects();
 }
 
@@ -1598,8 +1602,8 @@ function calcTimeLeave() {
     const e = new Date(`${sd}T${endTime}`);
     const hours = (e - s) / (1000 * 60 * 60);
     if (hours <= 0) { display.textContent = '시간을 확인해주세요'; return; }
-    const days = Math.round(hours / 8 * 10) / 10;
-    display.textContent = `사용시간: ${hours}시간 (연차 ${days}일 차감)`;
+    const days = parseFloat((hours / 8).toFixed(4));
+    display.textContent = `차감 연차: ${hours}시간 (${days}일 차감)`;
 }
 window.calcTimeLeave = calcTimeLeave;
 
@@ -1677,7 +1681,7 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
 
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
@@ -1834,7 +1838,7 @@ window.deleteDocument = async function(id) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
     } catch (err) {
@@ -1956,7 +1960,7 @@ window.submitEditDocument = async function(id, type) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
         alert(type === 'rejected' ? '재제출되었습니다.' : '수정되었습니다.');
@@ -2037,7 +2041,7 @@ window.approveModification = async function(id) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
         alert('수정 요청이 승인되었습니다.');
     } catch (err) { alert('승인 실패: ' + err.message); }
 };
@@ -2075,7 +2079,7 @@ window.rejectDocument = async function(id) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
         alert('반려되었습니다.');
     } catch (err) {
         alert('반려 실패: ' + err.message);
@@ -2112,7 +2116,7 @@ async function renderLeaveSummary() {
         }
 
         grid.innerHTML = data.map(emp => {
-            const total = emp.annualLeave + emp.usedLeave + emp.pendingLeave;
+            const total = parseFloat((emp.annualLeave + emp.usedLeave + emp.pendingLeave).toFixed(2));
             const isSelected = selectedLeaveEmpId === emp.id;
             return `
                 <div class="leave-summary-card ${isSelected ? 'selected' : ''}" onclick="clickLeaveCard(${emp.id})" style="cursor:pointer;">
@@ -2120,9 +2124,9 @@ async function renderLeaveSummary() {
                     <div class="emp-position">${emp.position || ''}</div>
                     <div class="leave-numbers">
                         <div>총<span class="num">${total}</span></div>
-                        <div>사용<span class="num used">${emp.usedLeave}</span></div>
-                        <div>잔여<span class="num remaining">${emp.annualLeave}</span></div>
-                        <div>대기<span class="num pending">${emp.pendingLeave}</span></div>
+                        <div>사용<span class="num used">${parseFloat(emp.usedLeave.toFixed(2))}</span></div>
+                        <div>잔여<span class="num remaining">${parseFloat(emp.annualLeave.toFixed(2))}</span></div>
+                        <div>대기<span class="num pending">${parseFloat(emp.pendingLeave.toFixed(2))}</span></div>
                     </div>
                 </div>
             `;
@@ -2190,7 +2194,17 @@ function renderDocHistory(docs) {
             dateStr += ` (${d.startTime}~${d.endTime})`;
         }
         const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
-        const deducted = d.deductedLeave > 0 ? d.deductedLeave + '일' : '-';
+        let deducted = '-';
+        if (d.deductedLeave > 0) {
+            if (d.subType === '시간차' && d.startTime && d.endTime) {
+                const s = new Date(`2000-01-01T${d.startTime}`);
+                const e = new Date(`2000-01-01T${d.endTime}`);
+                const hrs = (e - s) / (1000 * 60 * 60);
+                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
+            } else {
+                deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일';
+            }
+        }
 
         return `<tr>
             <td>${typeLabels[d.type] || d.type} - ${d.subType}</td>
