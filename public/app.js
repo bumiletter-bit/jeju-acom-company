@@ -1746,10 +1746,11 @@ async function renderDocList() {
             }
 
             const isMine = d.applicantId === currentUser?.id;
-            // 수정: 대기중/반려 → 본인, 승인 → 관리자
-            const canEdit = (d.status === 'pending' && isMine) || (d.status === 'rejected' && isMine) || (d.status === 'approved' && isAdmin);
-            // 삭제: 대기중 → 본인/관리자, 승인 → 관리자만, 반려 → 본인/관리자
-            const canDelete = (d.status === 'pending' && (isMine || isAdmin)) || (d.status === 'approved' && isAdmin) || (d.status === 'rejected' && (isMine || isAdmin));
+            const isMyApproval = d.approverId === currentUser?.id;
+            // 수정: 대기중/반려 → 본인, 승인 → 결재자
+            const canEdit = (d.status === 'pending' && isMine) || (d.status === 'rejected' && isMine) || (d.status === 'approved' && isMyApproval);
+            // 삭제: 대기중/반려 → 본인 또는 결재자, 승인 → 결재자만
+            const canDelete = (d.status === 'approved' && isMyApproval) || (d.status !== 'approved' && (isMine || isMyApproval));
 
             let actions = '';
             if (canEdit) actions += `<button class="btn-view" onclick="openEditDocument(${d.id})">${d.status === 'rejected' ? '재제출' : '수정'}</button>`;
