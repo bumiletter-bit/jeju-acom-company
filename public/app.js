@@ -250,6 +250,7 @@ function switchPage(pageName) {
         document.getElementById('doc-main-tabs').style.display = currentUser?.role === 'admin' ? '' : 'none';
         if (currentUser?.role === 'admin') renderApprovalList().catch(console.error);
         if (currentUser) document.getElementById('doc-applicant').value = `${currentUser.position} ${currentUser.name}`;
+        updateDocEndDateVisibility();
         // 항상 신청목록 탭으로 초기화
         document.querySelectorAll('.doc-main-tab').forEach(t => t.classList.toggle('active', t.dataset.docMain === 'list'));
         document.getElementById('doc-section-list').style.display = '';
