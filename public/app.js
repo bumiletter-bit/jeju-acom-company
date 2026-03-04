@@ -245,6 +245,7 @@ function switchPage(pageName) {
     if (pageName === 'document') {
         loadApprovers().catch(console.error);
         renderDocList().catch(console.error);
+        renderMyApprovedList().catch(console.error);
         document.getElementById('approval-pending-card').style.display = currentUser?.role === 'admin' ? '' : 'none';
         document.getElementById('doc-main-tabs').style.display = currentUser?.role === 'admin' ? '' : 'none';
         if (currentUser?.role === 'admin') renderApprovalList().catch(console.error);
@@ -1730,7 +1731,7 @@ async function renderDocList() {
     }
 }
 
-// 결재 대기 목록 (관리자)
+// 결재 대기 목록 (관리자) - pending + modification_pending
 async function renderApprovalList() {
     try {
         const docs = await api('/api/documents?status=pending');
@@ -1745,19 +1746,83 @@ async function renderApprovalList() {
 
         tbody.innerHTML = docs.map(d => {
             const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            const isMod = d.status === 'modification_pending';
+            let modBadge = '';
+            if (isMod) {
+                const badgeClass = d.modificationType === 'cancel' ? 'mod-badge-cancel' : 'mod-badge-modify';
+                const badgeLabel = d.modificationType === 'cancel' ? '취소요청' : '수정요청';
+                modBadge = ` <span class="${badgeClass}">${badgeLabel}</span>`;
+            }
+
+            let infoHtml = d.reason || '-';
+            if (isMod) {
+                infoHtml = `<div style="font-size:12px;">${d.modificationReason || '-'}</div>`;
+                if (d.modificationType === 'modify') {
+                    const newDate = d.newStartDate === d.newEndDate ? d.newStartDate : `${d.newStartDate} ~ ${d.newEndDate}`;
+                    infoHtml += `<div style="font-size:11px; color:var(--primary); margin-top:2px;">변경: ${newDate}</div>`;
+                }
+            }
+
+            const approveFunc = isMod ? `approveModification(${d.id})` : `approveDocument(${d.id})`;
+            const rejectFunc = isMod ? `rejectModification(${d.id})` : `rejectDocument(${d.id})`;
+
             return `<tr>
-                <td>${typeLabels[d.type] || d.type} - ${d.subType}</td>
+                <td>${typeLabels[d.type] || d.type} - ${d.subType}${modBadge}</td>
                 <td>${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}</td>
                 <td>${dateStr}</td>
-                <td>${d.reason || '-'}</td>
+                <td>${infoHtml}</td>
                 <td>
-                    <button class="btn-approve" onclick="approveDocument(${d.id})">승인</button>
-                    <button class="btn-reject" onclick="rejectDocument(${d.id})">반려</button>
+                    <button class="btn-approve" onclick="${approveFunc}">승인</button>
+                    <button class="btn-reject" onclick="${rejectFunc}">반려</button>
                 </td>
             </tr>`;
         }).join('');
     } catch (err) {
         console.error('renderApprovalList error:', err);
+    }
+}
+
+// 내 승인 완료 목록
+async function renderMyApprovedList() {
+    try {
+        const docs = await api('/api/documents?mine=true');
+        const approved = docs.filter(d => d.status === 'approved' || d.status === 'modification_pending');
+        const tbody = document.getElementById('my-approved-list');
+
+        if (approved.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">승인 완료된 서류가 없습니다.</td></tr>';
+            return;
+        }
+
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+
+        tbody.innerHTML = approved.map(d => {
+            let dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            if (d.subType === '시간차' && d.startTime && d.endTime) {
+                dateStr += ` (${d.startTime}~${d.endTime})`;
+            }
+            const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+
+            let statusHtml = '<span class="status-badge status-approved">승인</span>';
+            let actionHtml = `<button class="btn-mod-request" onclick="openModRequestModal(${d.id})">수정요청</button>`;
+            if (d.status === 'modification_pending') {
+                const badgeClass = d.modificationType === 'cancel' ? 'mod-badge-cancel' : 'mod-badge-modify';
+                const badgeLabel = d.modificationType === 'cancel' ? '취소대기' : '수정대기';
+                statusHtml = `<span class="${badgeClass}">${badgeLabel}</span>`;
+                actionHtml = '<span style="font-size:12px; color:var(--text-light);">대기중</span>';
+            }
+
+            return `<tr>
+                <td>${typeLabels[d.type] || d.type} - ${d.subType}</td>
+                <td>${dateStr}</td>
+                <td>${d.reason || '-'}</td>
+                <td>${processedDate}</td>
+                <td>${statusHtml}</td>
+                <td>${actionHtml}</td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        console.error('renderMyApprovedList error:', err);
     }
 }
 
@@ -1898,6 +1963,93 @@ window.submitEditDocument = async function(id, type) {
     } catch (err) {
         alert('수정 실패: ' + err.message);
     }
+};
+
+// 수정요청 모달
+window.openModRequestModal = function(id) {
+    const docs = [];
+    // mine 데이터에서 찾기
+    const tbody = document.getElementById('my-approved-list');
+    // API에서 다시 가져옴
+    api('/api/documents?mine=true').then(allDocs => {
+        const doc = allDocs.find(d => d.id === id);
+        if (!doc) return alert('서류를 찾을 수 없습니다.');
+
+        document.getElementById('mod-doc-id').value = id;
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        let dateStr = doc.startDate === doc.endDate ? doc.startDate : `${doc.startDate} ~ ${doc.endDate}`;
+        if (doc.subType === '시간차' && doc.startTime && doc.endTime) dateStr += ` (${doc.startTime}~${doc.endTime})`;
+
+        document.getElementById('mod-original-info').innerHTML =
+            `<strong>기존 내용</strong><br>유형: ${typeLabels[doc.type] || doc.type} - ${doc.subType}<br>기간: ${dateStr}<br>사유: ${doc.reason || '-'}`;
+
+        document.getElementById('mod-start-date').value = doc.startDate;
+        document.getElementById('mod-end-date').value = doc.endDate;
+        document.getElementById('mod-start-time').value = doc.startTime || '';
+        document.getElementById('mod-end-time').value = doc.endTime || '';
+        document.getElementById('mod-reason').value = '';
+        document.querySelector('input[name="mod-type"][value="modify"]').checked = true;
+
+        // 시간차면 시간 필드 표시
+        document.getElementById('mod-time-fields').style.display = doc.subType === '시간차' ? '' : 'none';
+        document.getElementById('mod-date-fields').style.display = '';
+
+        document.getElementById('mod-request-modal').style.display = '';
+    });
+};
+
+window.toggleModFields = function() {
+    const type = document.querySelector('input[name="mod-type"]:checked').value;
+    document.getElementById('mod-date-fields').style.display = type === 'modify' ? '' : 'none';
+};
+
+window.submitModRequest = async function() {
+    const id = document.getElementById('mod-doc-id').value;
+    const modificationType = document.querySelector('input[name="mod-type"]:checked').value;
+    const modificationReason = document.getElementById('mod-reason').value.trim();
+    if (!modificationReason) { alert('사유를 입력해주세요.'); return; }
+
+    const body = { modification_type: modificationType, modification_reason: modificationReason };
+    if (modificationType === 'modify') {
+        body.new_start_date = document.getElementById('mod-start-date').value;
+        body.new_end_date = document.getElementById('mod-end-date').value;
+        body.new_start_time = document.getElementById('mod-start-time').value || null;
+        body.new_end_time = document.getElementById('mod-end-time').value || null;
+    }
+
+    try {
+        await api(`/api/documents/${id}/request-modification`, 'PUT', body);
+        document.getElementById('mod-request-modal').style.display = 'none';
+        await renderMyApprovedList();
+        if (currentUser.role === 'admin') await renderApprovalList();
+        alert('수정 요청이 제출되었습니다.');
+    } catch (err) { alert('요청 실패: ' + err.message); }
+};
+
+// 수정 요청 승인/반려
+window.approveModification = async function(id) {
+    if (!confirm('수정/취소 요청을 승인하시겠습니까?')) return;
+    try {
+        await api(`/api/documents/${id}/approve-modification`, 'PUT');
+        await renderApprovalList();
+        await renderMyApprovedList();
+        await renderDocList();
+        const me = await api('/api/auth/me');
+        currentUser = me;
+        localStorage.setItem('jwt_user', JSON.stringify(me));
+        document.getElementById('annual-leave-count').textContent = me.annualLeave;
+        alert('수정 요청이 승인되었습니다.');
+    } catch (err) { alert('승인 실패: ' + err.message); }
+};
+
+window.rejectModification = async function(id) {
+    if (!confirm('수정/취소 요청을 반려하시겠습니까?\n기존 승인 내용이 유지됩니다.')) return;
+    try {
+        await api(`/api/documents/${id}/reject-modification`, 'PUT');
+        await renderApprovalList();
+        await renderMyApprovedList();
+        alert('수정 요청이 반려되었습니다. 기존 승인 내용이 유지됩니다.');
+    } catch (err) { alert('반려 실패: ' + err.message); }
 };
 
 // 결재 승인

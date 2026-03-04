@@ -147,6 +147,19 @@ async function initDB() {
         END $$
     `);
 
+    // documents에 수정요청 관련 컬럼 추가
+    const modCols = [
+        ['modification_type', 'VARCHAR(20)'],
+        ['modification_reason', 'TEXT'],
+        ['new_start_date', 'DATE'],
+        ['new_end_date', 'DATE'],
+        ['new_start_time', 'VARCHAR(10)'],
+        ['new_end_time', 'VARCHAR(10)'],
+    ];
+    for (const [col, type] of modCols) {
+        await pool.query(`DO $$ BEGIN ALTER TABLE documents ADD COLUMN ${col} ${type}; EXCEPTION WHEN duplicate_column THEN NULL; END $$`);
+    }
+
     // 업무일지 테이블
     await pool.query(`
         CREATE TABLE IF NOT EXISTS work_logs (
@@ -656,7 +669,14 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
         let idx = 1;
 
         if (type) { conditions.push(`d.type = $${idx++}`); values.push(type); }
-        if (status) { conditions.push(`d.status = $${idx++}`); values.push(status); }
+        if (status) {
+            if (status === 'pending') {
+                // pending 조회 시 modification_pending도 포함
+                conditions.push(`d.status IN ('pending', 'modification_pending')`);
+            } else {
+                conditions.push(`d.status = $${idx++}`); values.push(status);
+            }
+        }
         if (mine === 'true' || req.user.role !== 'admin') {
             conditions.push(`d.applicant_id = $${idx++}`);
             values.push(req.user.id);
@@ -673,7 +693,10 @@ app.get('/api/documents', authMiddleware, async (req, res) => {
             startDate: r.start_date, endDate: r.end_date,
             startTime: r.start_time, endTime: r.end_time,
             reason: r.reason, status: r.status, deductedLeave: Number(r.deducted_leave),
-            createdAt: r.created_at, processedAt: r.processed_at
+            createdAt: r.created_at, processedAt: r.processed_at,
+            modificationType: r.modification_type, modificationReason: r.modification_reason,
+            newStartDate: r.new_start_date, newEndDate: r.new_end_date,
+            newStartTime: r.new_start_time, newEndTime: r.new_end_time
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -900,6 +923,132 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// 수정/취소 요청
+app.put('/api/documents/:id/request-modification', authMiddleware, async (req, res) => {
+    try {
+        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+        const d = doc.rows[0];
+        if (d.applicant_id !== req.user.id) return res.status(403).json({ error: '본인 서류만 수정 요청할 수 있습니다' });
+        if (d.status !== 'approved') return res.status(400).json({ error: '승인된 서류만 수정 요청할 수 있습니다' });
+
+        const { modification_type, modification_reason, new_start_date, new_end_date, new_start_time, new_end_time } = req.body;
+        if (!modification_type || !modification_reason) return res.status(400).json({ error: '수정 유형과 사유를 입력해주세요' });
+
+        await pool.query(
+            `UPDATE documents SET status = 'modification_pending',
+             modification_type = $1, modification_reason = $2,
+             new_start_date = $3, new_end_date = $4, new_start_time = $5, new_end_time = $6
+             WHERE id = $7`,
+            [modification_type, modification_reason, new_start_date || null, new_end_date || null, new_start_time || null, new_end_time || null, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 수정 요청 승인
+app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, res) => {
+    try {
+        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+        const d = doc.rows[0];
+        if (d.applicant_id === req.user.id) return res.status(400).json({ error: '본인 서류는 본인이 승인할 수 없습니다' });
+        if (d.status !== 'modification_pending') return res.status(400).json({ error: '수정 대기 중인 서류가 아닙니다' });
+
+        if (d.modification_type === 'cancel') {
+            // 취소: 연차 복구 + 일정 삭제 + status cancelled
+            if (Number(d.deducted_leave) > 0) {
+                await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
+            }
+            await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
+            await pool.query(
+                `UPDATE documents SET status = 'cancelled', processed_at = NOW(),
+                 modification_type = NULL, modification_reason = NULL,
+                 new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
+                 WHERE id = $1`, [req.params.id]
+            );
+        } else {
+            // 수정: 날짜 변경 + 연차 재계산 + 일정 재생성
+            const newStart = d.new_start_date || d.start_date;
+            const newEnd = d.new_end_date || d.end_date;
+            const newStartTime = d.new_start_time || d.start_time;
+            const newEndTime = d.new_end_time || d.end_time;
+            const oldDeducted = Number(d.deducted_leave);
+
+            // 새 연차 차감량 계산
+            let newDeducted = 0;
+            if (d.type === 'vacation') {
+                if (d.sub_type === '연차') {
+                    const s = new Date(newStart);
+                    const e = new Date(newEnd);
+                    newDeducted = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+                } else if (d.sub_type === '시간차') {
+                    if (newStartTime && newEndTime) {
+                        const s = new Date(`${newStart}T${newStartTime}`);
+                        const e = new Date(`${newEnd}T${newEndTime}`);
+                        const hours = (e - s) / (1000 * 60 * 60);
+                        newDeducted = Math.round(hours / 8 * 10) / 10;
+                    } else { newDeducted = 0.5; }
+                }
+            }
+
+            // 연차 차이 반영
+            const diff = oldDeducted - newDeducted;
+            if (diff !== 0) {
+                await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [diff, d.applicant_id]);
+            }
+
+            // 기존 일정 삭제 + 새 일정 생성
+            await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
+            if (d.type === 'vacation' || d.type === 'attendance') {
+                const userName = (await pool.query('SELECT name FROM users WHERE id = $1', [d.applicant_id])).rows[0].name;
+                let scheduleTitle = `${d.sub_type} - ${userName}`;
+                if (d.sub_type === '시간차' && newStartTime && newEndTime) {
+                    scheduleTitle = `시간차(${newStartTime}~${newEndTime}) - ${userName}`;
+                }
+                const start = new Date(newStart);
+                const end = new Date(newEnd);
+                for (let dt = new Date(start); dt <= end; dt.setDate(dt.getDate() + 1)) {
+                    const dateStr = dt.toISOString().split('T')[0];
+                    await pool.query(
+                        'INSERT INTO schedules (user_id, date, title, type, document_id) VALUES ($1, $2, $3, $4, $5)',
+                        [d.applicant_id, dateStr, scheduleTitle, d.type, req.params.id]
+                    );
+                }
+            }
+
+            // 서류 업데이트
+            await pool.query(
+                `UPDATE documents SET status = 'approved', processed_at = NOW(),
+                 start_date = $1, end_date = $2, start_time = $3, end_time = $4, deducted_leave = $5,
+                 modification_type = NULL, modification_reason = NULL,
+                 new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
+                 WHERE id = $6`,
+                [newStart, newEnd, newStartTime, newEndTime, newDeducted, req.params.id]
+            );
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 수정 요청 반려
+app.put('/api/documents/:id/reject-modification', authMiddleware, async (req, res) => {
+    try {
+        const doc = await pool.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
+        if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
+        const d = doc.rows[0];
+        if (d.status !== 'modification_pending') return res.status(400).json({ error: '수정 대기 중인 서류가 아닙니다' });
+        // 기존 승인 상태로 복원, 수정요청 내용 초기화
+        await pool.query(
+            `UPDATE documents SET status = 'approved',
+             modification_type = NULL, modification_reason = NULL,
+             new_start_date = NULL, new_end_date = NULL, new_start_time = NULL, new_end_time = NULL
+             WHERE id = $1`, [req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 서류 수정

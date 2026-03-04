@@ -1687,6 +1687,37 @@ tr.pricing-hyodon td { background: #fefce8; border-color: #fde68a; }
     color: #fff;
 }
 
+.btn-mod-request {
+    background: none;
+    border: 1px solid #FF9800;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    color: #FF9800;
+    font-weight: 600;
+}
+.btn-mod-request:hover { background: #FF9800; color: #fff; }
+
+.mod-badge-modify {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: 600;
+    background: #fff3e0;
+    color: #e65100;
+}
+.mod-badge-cancel {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: 600;
+    background: #fce4ec;
+    color: #c62828;
+}
+
 /* Textarea */
 textarea.form-input {
     resize: vertical;

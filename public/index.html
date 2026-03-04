@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=53">
+    <link rel="stylesheet" href="styles.css?v=54">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -417,6 +417,26 @@
                     </table>
                 </div>
 
+                <!-- 내 승인 완료 목록 -->
+                <div class="card" id="my-approved-card">
+                    <h2>내 승인 완료 목록</h2>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>유형</th>
+                                <th>기간/날짜</th>
+                                <th>사유</th>
+                                <th>승인일</th>
+                                <th>상태</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="my-approved-list">
+                            <tr class="empty-row"><td colspan="6">승인 완료된 서류가 없습니다.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
                 </div><!-- /doc-section-list -->
 
                 <!-- 승인 이력 섹션 (관리자 전용) -->
@@ -485,6 +505,61 @@
                     </div>
 
                 <!-- 수기 추가 모달 -->
+                <!-- 수정/취소 요청 모달 -->
+                <div id="mod-request-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:500px;">
+                        <h3 style="margin-bottom:16px;">서류 수정 요청</h3>
+                        <input type="hidden" id="mod-doc-id">
+
+                        <div id="mod-original-info" style="background:var(--bg-secondary); padding:12px; border-radius:8px; margin-bottom:16px; font-size:13px;"></div>
+
+                        <div class="form-group">
+                            <label>수정 유형</label>
+                            <div style="display:flex; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                                    <input type="radio" name="mod-type" value="modify" checked onchange="toggleModFields()"> 내용 수정
+                                </label>
+                                <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                                    <input type="radio" name="mod-type" value="cancel" onchange="toggleModFields()"> 취소 요청
+                                </label>
+                            </div>
+                        </div>
+
+                        <div id="mod-date-fields">
+                            <div class="form-row" style="gap:12px;">
+                                <div class="form-group" style="flex:1;">
+                                    <label>시작일</label>
+                                    <input type="date" id="mod-start-date" class="form-input">
+                                </div>
+                                <div class="form-group" style="flex:1;">
+                                    <label>종료일</label>
+                                    <input type="date" id="mod-end-date" class="form-input">
+                                </div>
+                            </div>
+                            <div class="form-row" style="gap:12px; display:none;" id="mod-time-fields">
+                                <div class="form-group" style="flex:1;">
+                                    <label>시작시간</label>
+                                    <input type="time" id="mod-start-time" class="form-input">
+                                </div>
+                                <div class="form-group" style="flex:1;">
+                                    <label>종료시간</label>
+                                    <input type="time" id="mod-end-time" class="form-input">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>수정/취소 사유</label>
+                            <textarea id="mod-reason" class="form-input" rows="3" placeholder="사유를 입력하세요..."></textarea>
+                        </div>
+
+                        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+                            <button class="btn-outline" onclick="document.getElementById('mod-request-modal').style.display='none'">닫기</button>
+                            <button class="btn-primary" onclick="submitModRequest()">요청하기</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="manual-doc-modal" class="modal-overlay" style="display:none;">
                     <div class="modal">
                         <h3>수기 이력 추가</h3>
@@ -1331,6 +1406,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=75"></script>
+    <script src="app.js?v=76"></script>
 </body>
 </html>
