@@ -905,10 +905,20 @@ function handleSalesExcel(file) {
 function extractFeatures(text) {
     const t = (text || '');
 
-    // 과일명 추출 (3종세트 우선)
+    // 재배방식/접두사 추출 (노지, 하우스, 비가림, 블러드 등)
+    let growType = '';
+    if (/노지/.test(t)) growType = '노지';
+    else if (/하우스/.test(t)) growType = '하우스';
+    else if (/비가림/.test(t)) growType = '비가림';
+    else if (/블러드/.test(t)) growType = '블러드';
+
+    // 과일명 추출 (3종세트 우선, 접두사 포함 품목은 접두사+과일명)
     let fruit = null;
     if (/3종세트/.test(t)) fruit = '3종세트';
+    else if (/블러드오렌지|블러드/.test(t)) fruit = '블러드오렌지';
     else if (/비가림|감귤/.test(t)) fruit = '비가림귤';
+    else if (/수라향/.test(t)) fruit = '수라향';
+    else if (/자몽/.test(t)) fruit = '자몽';
     else if (/천혜향/.test(t)) fruit = '천혜향';
     else if (/레드향/.test(t)) fruit = '레드향';
     else if (/한라봉/.test(t)) fruit = '한라봉';
@@ -929,14 +939,14 @@ function extractFeatures(text) {
     const wMatch = t.match(/(\d+)\s*kg/i);
     if (wMatch) weight = wMatch[1] + 'kg';
 
-    return { fruit, grade, weight };
+    return { fruit, grade, weight, growType };
 }
 
 function matchSalesToPricing(salesName, pricingItems) {
     // 1차: 정확한 이름 매칭
     for (const p of pricingItems) { if (p.name === salesName) return p; }
 
-    // 2차: 특징 기반 매칭 (과일명 + 용도 + 중량)
+    // 2차: 특징 기반 매칭 (과일명 + 재배방식 + 용도 + 중량)
     const sf = extractFeatures(salesName);
     if (!sf.fruit) return null;
 
@@ -947,6 +957,12 @@ function matchSalesToPricing(salesName, pricingItems) {
 
         let score = 1; // 과일명 일치
         let mismatch = false;
+
+        // 재배방식(growType): 불일치 시 절대 매칭 안됨
+        if (sf.growType || pf.growType) {
+            if (sf.growType === pf.growType) score += 3;
+            else mismatch = true;
+        }
 
         // 중량: 둘 다 있으면 일치해야 함
         if (sf.weight && pf.weight) {
