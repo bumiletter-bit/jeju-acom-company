@@ -375,7 +375,7 @@ async function renderScheduleCalendar() {
                 if (dutySchedules.length > 0) {
                     dutyHtml = dutySchedules.map(s => {
                         const shortName = s.userName.length > 2 ? s.userName.slice(-2) : s.userName;
-                        return `<span class="duty-badge" title="${s.userName} 당직"><span class="duty-label">당직🌙</span><span class="duty-name">${shortName}</span></span>`;
+                        return `<span class="duty-badge" title="${s.userName} 당직"><span class="duty-label"><span class="duty-full">당직</span><span class="duty-short"></span>🌙</span><span class="duty-name">${shortName}</span></span>`;
                     }).join('');
                 }
 

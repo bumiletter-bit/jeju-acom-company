@@ -735,6 +735,8 @@ body {
     padding-bottom: 5px;
     border-bottom: 1px solid #eee;
     gap: 4px;
+    flex-wrap: wrap;
+    overflow: hidden;
 }
 
 .duty-badge {
@@ -748,12 +750,17 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 1px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .duty-label {
     color: #1a237e;
     font-weight: 700;
 }
+.duty-label .duty-short { display: none; }
+.duty-label .duty-full { display: inline; }
 
 .duty-name {
     font-weight: 600;
@@ -3167,7 +3174,10 @@ textarea.form-input {
     .calendar-table th { font-size: 12px; padding: 8px 2px; }
     .day-number { font-size: 13px; }
     .day-header { margin-bottom: 3px; padding-bottom: 2px; }
-    .duty-badge { font-size: 10px; }
+    .duty-badge { font-size: 10px; padding: 1px 4px; }
+    .duty-label .duty-full { display: none; }
+    .duty-label .duty-short { display: inline; }
+    .calendar-table td { overflow: hidden; }
     .day-schedules { max-height: 40px; }
     .day-schedule-item { font-size: 11px; padding: 2px 3px; }
 
@@ -3234,7 +3244,7 @@ textarea.form-input {
     .calendar-table th { font-size: 10px; }
     .day-number { font-size: 12px; }
     .day-header { border-bottom: none; padding-bottom: 1px; margin-bottom: 2px; }
-    .duty-badge { font-size: 9px; }
+    .duty-badge { font-size: 9px; padding: 1px 3px; }
     .planner-mini-cal td { height: 40px; }
     .planner-cal-events { max-height: 24px; }
     .day-schedules { max-height: 28px; }
