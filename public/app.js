@@ -164,7 +164,7 @@ function updateUserUI() {
     if (!currentUser) return;
     document.getElementById('welcome-message').textContent =
         `${currentUser.position} ${currentUser.name}님 안녕하세요`;
-    document.getElementById('annual-leave-count').textContent = parseFloat(Number(currentUser.annualLeave).toFixed(2));
+    document.getElementById('annual-leave-count').textContent = formatLeave(currentUser.annualLeave);
     document.getElementById('sidebar-user-name').textContent = `${currentUser.position} ${currentUser.name}`;
     document.getElementById('sidebar-user-dot').style.backgroundColor = currentUser.color;
 
@@ -441,7 +441,7 @@ window.openScheduleModal = function(dateStr) {
                 const me = await api('/api/auth/me');
                 currentUser = me;
                 localStorage.setItem('jwt_user', JSON.stringify(me));
-                document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
+                document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
             }
         } catch (err) {
             alert('저장 실패: ' + err.message);
@@ -483,7 +483,7 @@ window.deleteSchedule = async function(id, btn) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
+        document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
     } catch (err) {
         alert('삭제 실패: ' + err.message);
     }
@@ -1590,6 +1590,29 @@ function initTimeSelects() {
     endSel.innerHTML = options.join('');
 }
 
+// 소수점 연차를 "일 + 시간" 형식으로 변환 (1일 = 8시간, 30분 단위 반올림)
+function formatLeave(val) {
+    const n = Number(val);
+    if (isNaN(n) || n === 0) return '0';
+    const days = Math.floor(Math.abs(n));
+    const fracHours = (Math.abs(n) - days) * 8;
+    // 30분 단위로 반올림: 0, 0.5, 1, 1.5, ...
+    const roundedHours = Math.round(fracHours * 2) / 2;
+    const wholeH = Math.floor(roundedHours);
+    const hasHalf = roundedHours % 1 !== 0;
+
+    let result = '';
+    if (days > 0) result += days + '일';
+    if (wholeH > 0 || hasHalf) {
+        if (result) result += ' ';
+        if (hasHalf && wholeH > 0) result += wholeH + '시간 30분';
+        else if (hasHalf) result += '30분';
+        else result += wholeH + '시간';
+    }
+    if (!result) result = '0';
+    return result;
+}
+
 function calcWorkHoursClient(startTimeStr, endTimeStr) {
     const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     const s = toMin(startTimeStr);
@@ -1689,7 +1712,7 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
+        document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
 
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
@@ -1846,7 +1869,7 @@ window.deleteDocument = async function(id) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
+        document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
     } catch (err) {
@@ -1968,7 +1991,7 @@ window.submitEditDocument = async function(id, type) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
+        document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
         alert(type === 'rejected' ? '재제출되었습니다.' : '수정되었습니다.');
@@ -2049,7 +2072,7 @@ window.approveModification = async function(id) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
+        document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
         alert('수정 요청이 승인되었습니다.');
     } catch (err) { alert('승인 실패: ' + err.message); }
 };
@@ -2087,7 +2110,7 @@ window.rejectDocument = async function(id) {
         const me = await api('/api/auth/me');
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
-        document.getElementById('annual-leave-count').textContent = parseFloat(Number(me.annualLeave).toFixed(2));
+        document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
         alert('반려되었습니다.');
     } catch (err) {
         alert('반려 실패: ' + err.message);
@@ -2124,17 +2147,17 @@ async function renderLeaveSummary() {
         }
 
         grid.innerHTML = data.map(emp => {
-            const total = parseFloat((emp.annualLeave + emp.usedLeave + emp.pendingLeave).toFixed(2));
+            const total = emp.annualLeave + emp.usedLeave + emp.pendingLeave;
             const isSelected = selectedLeaveEmpId === emp.id;
             return `
                 <div class="leave-summary-card ${isSelected ? 'selected' : ''}" onclick="clickLeaveCard(${emp.id})" style="cursor:pointer;">
                     <div class="emp-name">${emp.name}</div>
                     <div class="emp-position">${emp.position || ''}</div>
                     <div class="leave-numbers">
-                        <div>총<span class="num">${total}</span></div>
-                        <div>사용<span class="num used">${parseFloat(emp.usedLeave.toFixed(2))}</span></div>
-                        <div>잔여<span class="num remaining">${parseFloat(emp.annualLeave.toFixed(2))}</span></div>
-                        <div>대기<span class="num pending">${parseFloat(emp.pendingLeave.toFixed(2))}</span></div>
+                        <div>총<span class="num">${formatLeave(total)}</span></div>
+                        <div>사용<span class="num used">${formatLeave(emp.usedLeave)}</span></div>
+                        <div>잔여<span class="num remaining">${formatLeave(emp.annualLeave)}</span></div>
+                        <div>대기<span class="num pending">${formatLeave(emp.pendingLeave)}</span></div>
                     </div>
                 </div>
             `;
