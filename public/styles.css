@@ -3024,6 +3024,65 @@ textarea.form-input {
     100% { transform: scale(1); opacity: 1; }
 }
 
+/* Ladder Game */
+.ladder-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.ladder-member-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.2s;
+    user-select: none;
+    background: #fff;
+}
+.ladder-member-chip:hover { border-color: #94a3b8; }
+.ladder-member-chip.selected {
+    border-color: var(--primary);
+    background: #fef3c7;
+}
+.ladder-member-chip .chip-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+#ladder-canvas {
+    width: 100%;
+    max-width: 600px;
+    display: block;
+    margin: 0 auto;
+    border-radius: 8px;
+    background: #fafaf9;
+}
+.ladder-result-card {
+    text-align: center;
+    padding: 24px;
+    background: linear-gradient(135deg, #fef3c7, #fde68a);
+    border-radius: 12px;
+    margin-top: 16px;
+}
+.ladder-result-emoji { font-size: 48px; margin-bottom: 8px; }
+.ladder-result-label { font-size: 14px; color: #92400e; margin-bottom: 4px; }
+.ladder-result-name {
+    font-size: 28px;
+    font-weight: 800;
+    color: #92400e;
+    animation: ladder-pop 0.5s ease;
+}
+@keyframes ladder-pop {
+    0% { transform: scale(0.5); opacity: 0; }
+    60% { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
 /* Vote Grid */
 .lunch-vote-grid {
     display: grid;

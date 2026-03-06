@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=66">
+    <link rel="stylesheet" href="styles.css?v=67">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -1213,10 +1213,24 @@
                     </div>
                 </div>
 
-                <!-- 섹션2: 오늘의 투표 -->
+                <!-- 섹션2: 오늘의 주인공?! (사다리 게임) -->
                 <div class="card">
                     <div class="card-header-row">
-                        <h2>투표하세요!</h2>
+                        <h2>오늘의 주인공?!</h2>
+                    </div>
+                    <p style="color:#64748b; font-size:13px; margin-bottom:12px;">참여할 멤버를 선택하고 사다리를 타보세요! 당첨자가 밥값을 쏩니다!</p>
+                    <div id="ladder-members" class="ladder-members"></div>
+                    <button class="btn-primary" id="btn-ladder-start" onclick="startLadderGame()" style="width:100%; margin-top:12px;">사다리 타기!</button>
+                    <div id="ladder-canvas-wrap" style="margin-top:16px; display:none;">
+                        <canvas id="ladder-canvas" width="600" height="400"></canvas>
+                    </div>
+                    <div id="ladder-result" style="display:none;"></div>
+                </div>
+
+                <!-- 섹션3: 오늘의 투표 -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h2 style="font-size:18px;">투표하세요!</h2>
                         <span id="lunch-vote-status" class="lunch-vote-status"></span>
                         <button class="btn-sm btn-outline" onclick="resetLunchVotes()" style="margin-left:auto; font-size:12px;">초기화</button>
                     </div>
@@ -1426,6 +1440,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=92"></script>
+    <script src="app.js?v=93"></script>
 </body>
 </html>

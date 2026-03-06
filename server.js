@@ -542,6 +542,16 @@ app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     }
 });
 
+// 직원 이름 목록 (사다리 게임용)
+app.get('/api/users/names', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT id, name, color FROM users ORDER BY id");
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // 직원별 연차 현황 (관리자 전용)
 app.get('/api/users/leave-summary', authMiddleware, adminOnly, async (req, res) => {
     try {
