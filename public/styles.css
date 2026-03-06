@@ -2440,30 +2440,53 @@ textarea.form-input {
     font-weight: 600;
 }
 
-.ai-conv-item-title {
+.ai-conv-item-info {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.ai-conv-item-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: 13px;
 }
-
-.ai-conv-item-delete {
-    background: none;
-    border: none;
-    color: #ccc;
-    cursor: pointer;
-    font-size: 14px;
-    padding: 2px 4px;
-    border-radius: 4px;
+.ai-conv-item-author {
+    font-size: 11px;
+    color: #9ca3af;
+    font-weight: 400;
+}
+.ai-conv-item.active .ai-conv-item-author {
+    color: var(--primary);
+}
+.ai-conv-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
     flex-shrink: 0;
     opacity: 0;
     transition: opacity 0.15s;
 }
-
-.ai-conv-item:hover .ai-conv-item-delete {
+.ai-conv-item:hover .ai-conv-item-actions {
     opacity: 1;
 }
-
+.ai-conv-item-edit,
+.ai-conv-item-delete {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #adb5bd;
+    transition: color 0.15s;
+}
+.ai-conv-item-edit:hover {
+    color: var(--primary);
+    background: var(--primary-light);
+}
 .ai-conv-item-delete:hover {
     color: var(--danger);
     background: #fef2f2;

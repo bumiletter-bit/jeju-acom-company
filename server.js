@@ -417,6 +417,15 @@ async function initDB() {
         END $$;
     `);
 
+    // ai_messages에 sender_user_id 컬럼 추가 (누가 보냈는지 추적)
+    await pool.query(`
+        DO $$ BEGIN
+            ALTER TABLE ai_messages ADD COLUMN sender_user_id INTEGER REFERENCES users(id);
+        EXCEPTION
+            WHEN duplicate_column THEN NULL;
+        END $$;
+    `);
+
     console.log('DB 테이블 초기화 완료');
 }
 
@@ -2156,8 +2165,7 @@ const AI_SYSTEM_PROMPT = '당신은 제주아꼼이네 농업회사법인의 마
 app.get('/api/ai/conversations', authMiddleware, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT id, title, created_at FROM ai_conversations WHERE user_id = $1 ORDER BY created_at DESC',
-            [req.user.id]
+            'SELECT c.id, c.title, c.user_id, c.created_at, u.name as user_name FROM ai_conversations c JOIN users u ON c.user_id = u.id ORDER BY c.created_at DESC'
         );
         res.json(result.rows);
     } catch (err) {
@@ -2168,13 +2176,13 @@ app.get('/api/ai/conversations', authMiddleware, async (req, res) => {
 app.get('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
     try {
         const conv = await pool.query(
-            'SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2',
-            [req.params.id, req.user.id]
+            'SELECT c.*, u.name as user_name FROM ai_conversations c JOIN users u ON c.user_id = u.id WHERE c.id = $1',
+            [req.params.id]
         );
         if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
 
         const messages = await pool.query(
-            'SELECT id, role, content, message_type, created_at FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC',
+            "SELECT m.id, m.role, m.content, m.message_type, m.created_at, CASE WHEN m.role = 'user' THEN COALESCE(u.name, cu.name) ELSE 'AI' END as sender_name FROM ai_messages m LEFT JOIN users u ON m.sender_user_id = u.id LEFT JOIN users cu ON cu.id = (SELECT user_id FROM ai_conversations WHERE id = m.conversation_id) WHERE m.conversation_id = $1 ORDER BY m.created_at ASC",
             [req.params.id]
         );
         res.json({ conversation: conv.rows[0], messages: messages.rows });
@@ -2185,9 +2193,10 @@ app.get('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
 
 app.post('/api/ai/conversations', authMiddleware, async (req, res) => {
     try {
+        const { title } = req.body || {};
         const result = await pool.query(
-            'INSERT INTO ai_conversations (user_id) VALUES ($1) RETURNING *',
-            [req.user.id]
+            'INSERT INTO ai_conversations (user_id, title) VALUES ($1, $2) RETURNING *',
+            [req.user.id, title || '새 대화']
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -2197,10 +2206,29 @@ app.post('/api/ai/conversations', authMiddleware, async (req, res) => {
 
 app.delete('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
     try {
-        await pool.query(
-            'DELETE FROM ai_conversations WHERE id = $1 AND user_id = $2',
-            [req.params.id, req.user.id]
-        );
+        const conv = await pool.query('SELECT user_id FROM ai_conversations WHERE id = $1', [req.params.id]);
+        if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
+        if (conv.rows[0].user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '삭제 권한이 없습니다' });
+        }
+        await pool.query('DELETE FROM ai_conversations WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 대화방 이름 수정
+app.put('/api/ai/conversations/:id/title', authMiddleware, async (req, res) => {
+    try {
+        const { title } = req.body;
+        if (!title || !title.trim()) return res.status(400).json({ error: '이름을 입력해주세요' });
+        const conv = await pool.query('SELECT user_id FROM ai_conversations WHERE id = $1', [req.params.id]);
+        if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
+        if (conv.rows[0].user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '수정 권한이 없습니다' });
+        }
+        await pool.query('UPDATE ai_conversations SET title = $1 WHERE id = $2', [title.trim(), req.params.id]);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2215,26 +2243,18 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
         const userMessage = message || '이 이미지를 분석해주세요';
 
-        // 대화 소유권 확인
+        // 대화 존재 확인
         const conv = await pool.query(
-            'SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2',
-            [conversationId, req.user.id]
+            'SELECT * FROM ai_conversations WHERE id = $1',
+            [conversationId]
         );
         if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
 
         // 사용자 메시지 저장
         await pool.query(
-            'INSERT INTO ai_messages (conversation_id, role, content) VALUES ($1, $2, $3)',
-            [conversationId, 'user', image ? `📎 ${userMessage}` : userMessage]
+            'INSERT INTO ai_messages (conversation_id, role, content, sender_user_id) VALUES ($1, $2, $3, $4)',
+            [conversationId, 'user', image ? `📎 ${userMessage}` : userMessage, req.user.id]
         );
-
-        // 첫 메시지면 대화 제목 업데이트
-        const msgCount = await pool.query('SELECT COUNT(*) FROM ai_messages WHERE conversation_id = $1', [conversationId]);
-        if (parseInt(msgCount.rows[0].count) === 1) {
-            const prefix = image ? '📎 ' : '';
-            const title = prefix + (userMessage.length > 27 ? userMessage.substring(0, 27) + '...' : userMessage);
-            await pool.query('UPDATE ai_conversations SET title = $1 WHERE id = $2', [title, conversationId]);
-        }
 
         let assistantContent;
 
@@ -2307,24 +2327,17 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         if (!conversationId || !prompt) return res.status(400).json({ error: '대화 ID와 프롬프트는 필수입니다' });
 
         const conv = await pool.query(
-            'SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2',
-            [conversationId, req.user.id]
+            'SELECT * FROM ai_conversations WHERE id = $1',
+            [conversationId]
         );
         if (conv.rows.length === 0) return res.status(404).json({ error: '대화를 찾을 수 없습니다' });
 
         // 사용자 메시지 저장
         const saveMsg = referenceImage ? `📎🎨 ${prompt}` : prompt;
         await pool.query(
-            "INSERT INTO ai_messages (conversation_id, role, content, message_type) VALUES ($1, 'user', $2, 'text')",
-            [conversationId, saveMsg]
+            "INSERT INTO ai_messages (conversation_id, role, content, message_type, sender_user_id) VALUES ($1, 'user', $2, 'text', $3)",
+            [conversationId, saveMsg, req.user.id]
         );
-
-        // 첫 메시지면 대화 제목 업데이트
-        const msgCount = await pool.query('SELECT COUNT(*) FROM ai_messages WHERE conversation_id = $1', [conversationId]);
-        if (parseInt(msgCount.rows[0].count) === 1) {
-            const title = '🎨 ' + (prompt.length > 27 ? prompt.substring(0, 27) + '...' : prompt);
-            await pool.query('UPDATE ai_conversations SET title = $1 WHERE id = $2', [title, conversationId]);
-        }
 
         if (!process.env.GEMINI_API_KEY) {
             return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다' });

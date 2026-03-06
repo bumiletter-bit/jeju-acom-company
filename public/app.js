@@ -4499,30 +4499,68 @@ async function renderAIWorkspace() {
                 showAIChatEmpty();
             }
         } else {
-            listEl.innerHTML = convs.map(c => `
+            listEl.innerHTML = convs.map(c => {
+                const isOwner = currentUser && (c.user_id === currentUser.id || currentUser.role === 'admin');
+                return `
                 <div class="ai-conv-item ${aiCurrentConvId === c.id ? 'active' : ''}" onclick="loadConversation(${c.id})">
-                    <span class="ai-conv-item-title">${c.title}</span>
-                    <button class="ai-conv-item-delete" onclick="event.stopPropagation(); deleteConversation(${c.id})" title="삭제">&times;</button>
-                </div>
-            `).join('');
+                    <div class="ai-conv-item-info">
+                        <span class="ai-conv-item-title">${c.title}</span>
+                        <span class="ai-conv-item-author">${c.user_name}</span>
+                    </div>
+                    <div class="ai-conv-item-actions">
+                        ${isOwner ? `<button class="ai-conv-item-edit" onclick="event.stopPropagation(); renameConversation(${c.id}, '${c.title.replace(/'/g, "\\'")}')" title="이름 수정">✏️</button>` : ''}
+                        ${isOwner ? `<button class="ai-conv-item-delete" onclick="event.stopPropagation(); deleteConversation(${c.id})" title="삭제">&times;</button>` : ''}
+                    </div>
+                </div>`;
+            }).join('');
         }
     } catch (err) {
         console.error('AI 작업방 로드 오류:', err);
     }
 }
 
-async function createNewConversation() {
-    try {
-        const conv = await api('/api/ai/conversations', 'POST');
-        aiCurrentConvId = conv.id;
-        document.getElementById('ai-chat-messages').innerHTML = '';
-        document.getElementById('ai-input-area').style.display = '';
-        document.getElementById('ai-message-input').value = '';
-        document.getElementById('ai-message-input').focus();
-        await renderAIWorkspace();
-    } catch (err) {
-        alert(err.message || '대화 생성 실패');
+function createNewConversation() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:400px;">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3>새 작업방 만들기</h3>
+            <div class="form-group" style="margin-top:16px;">
+                <label>작업방 이름</label>
+                <input type="text" id="new-conv-title" class="form-input" placeholder="예: 문구지시방, 이미지작업" autofocus>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:16px;">
+                <button class="btn-primary" style="flex:1;" id="new-conv-create-btn">만들기</button>
+                <button class="btn-outline" style="flex:1;" onclick="this.closest('.modal-overlay').remove()">취소</button>
+            </div>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+
+    const titleInput = overlay.querySelector('#new-conv-title');
+    titleInput.focus();
+
+    async function doCreate() {
+        const title = titleInput.value.trim();
+        if (!title) return alert('작업방 이름을 입력해주세요.');
+        try {
+            const conv = await api('/api/ai/conversations', 'POST', { title });
+            aiCurrentConvId = conv.id;
+            document.getElementById('ai-chat-messages').innerHTML = '';
+            document.getElementById('ai-input-area').style.display = '';
+            document.getElementById('ai-message-input').value = '';
+            document.getElementById('ai-message-input').focus();
+            overlay.remove();
+            await renderAIWorkspace();
+        } catch (err) {
+            alert(err.message || '대화 생성 실패');
+        }
     }
+
+    overlay.querySelector('#new-conv-create-btn').addEventListener('click', doCreate);
+    titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doCreate(); });
 }
 window.createNewConversation = createNewConversation;
 
@@ -4569,8 +4607,9 @@ function renderAIMessages(messages) {
         } else {
             bubbleContent = `<div class="ai-message-bubble">${escapeHtml(m.content)}</div>`;
         }
+        const senderName = m.role === 'user' ? (m.sender_name || '사용자') : 'AI';
         return `<div class="ai-message ${m.role}">
-            <div class="ai-message-sender">${m.role === 'user' ? '나' : 'AI'}</div>
+            <div class="ai-message-sender">${senderName}</div>
             ${bubbleContent}
         </div>`;
     }).join('');
@@ -4651,7 +4690,7 @@ async function sendAIMessage() {
     }
     container.innerHTML += `
         <div class="ai-message user">
-            <div class="ai-message-sender">나</div>
+            <div class="ai-message-sender">${currentUser?.name || '나'}</div>
             ${userBubble}
         </div>
     `;
@@ -4737,7 +4776,7 @@ async function sendAIImage() {
     }
     container.innerHTML += `
         <div class="ai-message user">
-            <div class="ai-message-sender">나</div>
+            <div class="ai-message-sender">${currentUser?.name || '나'}</div>
             ${userBubble}
         </div>
     `;
@@ -4815,6 +4854,18 @@ async function deleteConversation(id) {
     }
 }
 window.deleteConversation = deleteConversation;
+
+async function renameConversation(id, currentTitle) {
+    const newTitle = prompt('작업방 이름 수정', currentTitle);
+    if (!newTitle || newTitle.trim() === '' || newTitle.trim() === currentTitle) return;
+    try {
+        await api(`/api/ai/conversations/${id}/title`, 'PUT', { title: newTitle.trim() });
+        await renderAIWorkspace();
+    } catch (err) {
+        alert(err.message || '이름 수정 실패');
+    }
+}
+window.renameConversation = renameConversation;
 
 // Enter 키로 전송 (Shift+Enter는 줄바꿈) + 드래그 앤 드롭
 document.addEventListener('DOMContentLoaded', () => {
