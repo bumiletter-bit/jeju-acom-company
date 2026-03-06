@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=67">
+    <link rel="stylesheet" href="styles.css?v=68">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
@@ -1217,12 +1217,22 @@
                 <div class="card">
                     <div class="card-header-row">
                         <h2>오늘의 주인공?!</h2>
+                        <button class="btn-sm btn-outline" onclick="resetLadderGame()" style="margin-left:auto; font-size:12px;">초기화</button>
                     </div>
-                    <p style="color:#64748b; font-size:13px; margin-bottom:12px;">참여할 멤버를 선택하고 사다리를 타보세요! 당첨자가 밥값을 쏩니다!</p>
+                    <p style="color:#64748b; font-size:13px; margin-bottom:12px;">참여할 멤버를 추가하고 사다리를 타보세요! 당첨자가 밥값을 쏩니다!</p>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <select id="ladder-user-select" class="form-input" style="flex:1; width:auto;">
+                            <option value="">-- 멤버 선택 --</option>
+                        </select>
+                        <button class="btn-primary" style="white-space:nowrap;" onclick="addLadderMember()">추가</button>
+                    </div>
                     <div id="ladder-members" class="ladder-members"></div>
                     <button class="btn-primary" id="btn-ladder-start" onclick="startLadderGame()" style="width:100%; margin-top:12px;">사다리 타기!</button>
-                    <div id="ladder-canvas-wrap" style="margin-top:16px; display:none;">
+                    <div id="ladder-canvas-wrap" style="margin-top:16px; display:none; position:relative;">
                         <canvas id="ladder-canvas" width="600" height="400"></canvas>
+                        <div id="ladder-cover" class="ladder-cover" onclick="revealLadder()">
+                            <span>터치하여 사다리 공개!</span>
+                        </div>
                     </div>
                     <div id="ladder-result" style="display:none;"></div>
                 </div>
@@ -1440,6 +1450,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=93"></script>
+    <script src="app.js?v=94"></script>
 </body>
 </html>

@@ -3731,60 +3731,104 @@ async function renderLunchPage() {
 }
 
 // 사다리 게임
-let ladderMembers = [];
-let ladderSelected = new Set();
+let ladderAllUsers = [];
+let ladderPlayers = [];
+let ladderGameData = null; // 생성된 사다리 데이터 저장
 
 async function loadLadderMembers() {
     try {
-        const users = await api('/api/users/names');
-        ladderMembers = users;
-        const container = document.getElementById('ladder-members');
-        if (!container) return;
-        // 기본으로 전원 선택
-        ladderSelected = new Set(users.map(u => u.id));
-        container.innerHTML = users.map(u =>
-            `<div class="ladder-member-chip selected" data-id="${u.id}" onclick="toggleLadderMember(${u.id}, this)">
-                <span class="chip-dot" style="background:${u.color}"></span>${u.name}
-            </div>`
-        ).join('');
+        ladderAllUsers = await api('/api/users/names');
+        renderLadderSelect();
+        renderLadderChips();
     } catch (err) {
         console.error('사다리 멤버 로드 오류:', err);
     }
 }
 
-window.toggleLadderMember = function(id, el) {
-    if (ladderSelected.has(id)) {
-        ladderSelected.delete(id);
-        el.classList.remove('selected');
-    } else {
-        ladderSelected.add(id);
-        el.classList.add('selected');
+function renderLadderSelect() {
+    const select = document.getElementById('ladder-user-select');
+    if (!select) return;
+    const addedIds = new Set(ladderPlayers.map(p => p.id));
+    select.innerHTML = '<option value="">-- 멤버 선택 --</option>' +
+        ladderAllUsers.filter(u => !addedIds.has(u.id))
+            .map(u => `<option value="${u.id}">${u.name}</option>`).join('');
+}
+
+function renderLadderChips() {
+    const container = document.getElementById('ladder-members');
+    if (!container) return;
+    if (ladderPlayers.length === 0) {
+        container.innerHTML = '<p style="color:#9ca3af; font-size:13px;">멤버를 추가해주세요 (2명 이상)</p>';
+        return;
     }
+    container.innerHTML = ladderPlayers.map(p =>
+        `<div class="ladder-member-chip selected">
+            <span class="chip-dot" style="background:${p.color}"></span>${p.name}
+            <button style="background:none;border:none;cursor:pointer;font-size:16px;color:#94a3b8;margin-left:4px;padding:0;" onclick="removeLadderMember(${p.id})">&times;</button>
+        </div>`
+    ).join('');
+}
+
+window.addLadderMember = function() {
+    const select = document.getElementById('ladder-user-select');
+    const id = Number(select.value);
+    if (!id) return alert('멤버를 선택해주세요.');
+    const user = ladderAllUsers.find(u => u.id === id);
+    if (!user || ladderPlayers.find(p => p.id === id)) return;
+    ladderPlayers.push(user);
+    renderLadderSelect();
+    renderLadderChips();
+};
+
+window.removeLadderMember = function(id) {
+    ladderPlayers = ladderPlayers.filter(p => p.id !== id);
+    renderLadderSelect();
+    renderLadderChips();
+};
+
+window.resetLadderGame = function() {
+    ladderPlayers = [];
+    ladderGameData = null;
+    document.getElementById('ladder-canvas-wrap').style.display = 'none';
+    document.getElementById('ladder-result').style.display = 'none';
+    const cover = document.getElementById('ladder-cover');
+    if (cover) cover.classList.remove('revealed');
+    renderLadderSelect();
+    renderLadderChips();
+};
+
+window.revealLadder = function() {
+    const cover = document.getElementById('ladder-cover');
+    if (cover) cover.classList.add('revealed');
+    // 애니메이션 시작
+    if (ladderGameData) runLadderAnimation(ladderGameData);
 };
 
 window.startLadderGame = function() {
-    const players = ladderMembers.filter(m => ladderSelected.has(m.id));
-    if (players.length < 2) return alert('2명 이상 선택해주세요.');
+    if (ladderPlayers.length < 2) return alert('2명 이상 추가해주세요.');
 
     document.getElementById('ladder-result').style.display = 'none';
+    const cover = document.getElementById('ladder-cover');
+    if (cover) cover.classList.remove('revealed');
+
     const wrap = document.getElementById('ladder-canvas-wrap');
     wrap.style.display = '';
 
     const canvas = document.getElementById('ladder-canvas');
     const ctx = canvas.getContext('2d');
+    const players = [...ladderPlayers];
     const n = players.length;
 
-    // 캔버스 크기 조정
-    const canvasWidth = Math.max(400, n * 80);
+    const canvasWidth = Math.max(350, n * 80);
     canvas.width = canvasWidth;
     canvas.height = 380;
 
     const padX = 40;
     const topY = 50;
     const botY = 340;
-    const gap = (canvasWidth - padX * 2) / (n - 1);
+    const gap = n > 1 ? (canvasWidth - padX * 2) / (n - 1) : 0;
 
-    // 가로선 생성 (랜덤)
+    // 가로선 생성
     const rungs = [];
     const rungRows = 8;
     const rowH = (botY - topY) / (rungRows + 1);
@@ -3792,7 +3836,6 @@ window.startLadderGame = function() {
         const y = topY + r * rowH;
         for (let i = 0; i < n - 1; i++) {
             if (Math.random() < 0.5) {
-                // 연속 가로선 방지
                 if (rungs.length > 0) {
                     const last = rungs[rungs.length - 1];
                     if (last.y === y && last.col === i - 1) continue;
@@ -3802,15 +3845,11 @@ window.startLadderGame = function() {
         }
     }
 
-    // 당첨자 결정 (역추적)
     const winnerCol = Math.floor(Math.random() * n);
 
-    // 각 출발점에서 결과 추적
     function tracePath(startCol) {
         let col = startCol;
-        let y = topY;
-        const path = [{ x: padX + col * gap, y }];
-
+        const path = [{ x: padX + col * gap, y: topY }];
         const sortedRungs = [...rungs].sort((a, b) => a.y - b.y);
         for (const rung of sortedRungs) {
             if (rung.col === col) {
@@ -3827,94 +3866,94 @@ window.startLadderGame = function() {
         return { path, endCol: col };
     }
 
-    // 각 플레이어의 경로 추적
     const paths = players.map((_, i) => tracePath(i));
-
-    // 당첨 위치에 도착하는 시작 열 찾기
     const winnerStartIdx = paths.findIndex(p => p.endCol === winnerCol);
 
-    // 사다리 그리기 (배경)
-    function drawLadder() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 사다리 데이터 저장
+    ladderGameData = { players, n, canvasWidth, padX, topY, botY, gap, rungs, winnerCol, paths, winnerStartIdx };
 
-        // 세로선
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 3;
-        for (let i = 0; i < n; i++) {
-            const x = padX + i * gap;
-            ctx.beginPath();
-            ctx.moveTo(x, topY);
-            ctx.lineTo(x, botY);
-            ctx.stroke();
-        }
+    // 초기 그리기 (이름 + 세로선 + 하단 결과만, 가로선은 커버로 가림)
+    drawLadderBase(ladderGameData);
+};
 
-        // 가로선
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2.5;
-        for (const rung of rungs) {
-            const x1 = padX + rung.col * gap;
-            const x2 = padX + (rung.col + 1) * gap;
-            ctx.beginPath();
-            ctx.moveTo(x1, rung.y);
-            ctx.lineTo(x2, rung.y);
-            ctx.stroke();
-        }
+function drawLadderBase(data) {
+    const { players, n, padX, topY, botY, gap, rungs, winnerCol } = data;
+    const canvas = document.getElementById('ladder-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 이름 표시 (상단)
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#334155';
-        players.forEach((p, i) => {
-            ctx.fillText(p.name, padX + i * gap, topY - 12);
-        });
-
-        // 하단 - 당첨 표시
-        for (let i = 0; i < n; i++) {
-            const x = padX + i * gap;
-            if (i === winnerCol) {
-                ctx.fillStyle = '#dc2626';
-                ctx.font = 'bold 16px sans-serif';
-                ctx.fillText('당첨!', x, botY + 28);
-            } else {
-                ctx.fillStyle = '#94a3b8';
-                ctx.font = '13px sans-serif';
-                ctx.fillText('꽝', x, botY + 25);
-            }
-        }
+    // 세로선
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 3;
+    for (let i = 0; i < n; i++) {
+        const x = padX + i * gap;
+        ctx.beginPath();
+        ctx.moveTo(x, topY);
+        ctx.lineTo(x, botY);
+        ctx.stroke();
     }
 
-    drawLadder();
+    // 가로선
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2.5;
+    for (const rung of rungs) {
+        const x1 = padX + rung.col * gap;
+        const x2 = padX + (rung.col + 1) * gap;
+        ctx.beginPath();
+        ctx.moveTo(x1, rung.y);
+        ctx.lineTo(x2, rung.y);
+        ctx.stroke();
+    }
 
-    // 당첨자 경로 애니메이션
+    // 이름 (상단)
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#334155';
+    players.forEach((p, i) => {
+        ctx.fillText(p.name, padX + i * gap, topY - 12);
+    });
+
+    // 하단 결과
+    for (let i = 0; i < n; i++) {
+        const x = padX + i * gap;
+        if (i === winnerCol) {
+            ctx.fillStyle = '#dc2626';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.fillText('당첨!', x, botY + 28);
+        } else {
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '13px sans-serif';
+            ctx.fillText('꽝', x, botY + 25);
+        }
+    }
+}
+
+function runLadderAnimation(data) {
+    const { players, winnerStartIdx, paths } = data;
+    const canvas = document.getElementById('ladder-canvas');
+    const ctx = canvas.getContext('2d');
+
     const winnerPath = paths[winnerStartIdx].path;
-    let step = 0;
-    const speed = 3;
-    const totalSteps = winnerPath.reduce((sum, _, i) => {
-        if (i === 0) return 0;
-        const dx = winnerPath[i].x - winnerPath[i - 1].x;
-        const dy = winnerPath[i].y - winnerPath[i - 1].y;
-        return sum + Math.sqrt(dx * dx + dy * dy);
-    }, 0);
-
-    let accumulated = 0;
     const segLengths = [];
+    let totalSteps = 0;
     for (let i = 1; i < winnerPath.length; i++) {
         const dx = winnerPath[i].x - winnerPath[i - 1].x;
         const dy = winnerPath[i].y - winnerPath[i - 1].y;
-        segLengths.push(Math.sqrt(dx * dx + dy * dy));
+        const len = Math.sqrt(dx * dx + dy * dy);
+        segLengths.push(len);
+        totalSteps += len;
     }
 
-    let progress = 0;
     const animDuration = 2000;
     let animStart = null;
 
     function animate(timestamp) {
         if (!animStart) animStart = timestamp;
-        progress = Math.min((timestamp - animStart) / animDuration, 1);
+        const progress = Math.min((timestamp - animStart) / animDuration, 1);
         const eased = 1 - Math.pow(1 - progress, 3);
         const targetDist = eased * totalSteps;
 
-        drawLadder();
+        drawLadderBase(data);
 
         ctx.strokeStyle = '#f59e0b';
         ctx.lineWidth = 4;
@@ -3933,8 +3972,6 @@ window.startLadderGame = function() {
                 const x = winnerPath[i].x + (winnerPath[i + 1].x - winnerPath[i].x) * ratio;
                 const y = winnerPath[i].y + (winnerPath[i + 1].y - winnerPath[i].y) * ratio;
                 ctx.lineTo(x, y);
-
-                // 현재 위치에 원 표시
                 ctx.stroke();
                 ctx.beginPath();
                 ctx.arc(x, y, 6, 0, Math.PI * 2);
@@ -3948,7 +3985,6 @@ window.startLadderGame = function() {
         if (progress < 1) {
             requestAnimationFrame(animate);
         } else {
-            // 결과 표시
             const winner = players[winnerStartIdx];
             const resultEl = document.getElementById('ladder-result');
             resultEl.style.display = '';
@@ -3964,7 +4000,7 @@ window.startLadderGame = function() {
     }
 
     requestAnimationFrame(animate);
-};
+}
 
 async function handleLunchRandom() {
     if (lunchRestaurants.length === 0) {

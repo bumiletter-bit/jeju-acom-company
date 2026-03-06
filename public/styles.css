@@ -3082,20 +3082,47 @@ textarea.form-input {
     60% { transform: scale(1.2); }
     100% { transform: scale(1); opacity: 1; }
 }
+.ladder-cover {
+    position: absolute;
+    top: 50px;
+    left: 0;
+    right: 0;
+    bottom: 40px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, #334155 8%, #334155 92%, rgba(255,255,255,0.1) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border-radius: 4px;
+    z-index: 2;
+    transition: opacity 0.5s;
+}
+.ladder-cover span {
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    background: rgba(0,0,0,0.3);
+    padding: 10px 24px;
+    border-radius: 20px;
+}
+.ladder-cover.revealed {
+    opacity: 0;
+    pointer-events: none;
+}
 
 /* Vote Grid */
 .lunch-vote-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
     margin-bottom: 16px;
 }
 
 .lunch-vote-item {
-    padding: 16px 12px;
+    padding: 10px 8px;
     background: #f9fafb;
     border: 2px solid #e5e7eb;
-    border-radius: 12px;
+    border-radius: 10px;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s;
@@ -3120,14 +3147,14 @@ textarea.form-input {
 }
 
 .lunch-vote-item-name {
-    font-size: 15px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-dark);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .lunch-vote-item-count {
-    font-size: 13px;
+    font-size: 11px;
     color: #6b7280;
     font-weight: 500;
 }
