@@ -4017,6 +4017,12 @@ async function handleLunchRandom() {
 }
 window.handleLunchRandom = handleLunchRandom;
 
+window.resetLunchRandom = function() {
+    document.getElementById('lunch-random-result').style.display = 'none';
+    document.getElementById('lunch-slot-area').style.display = 'none';
+    document.getElementById('lunch-random-empty').style.display = '';
+};
+
 function runRouletteAnimation(restaurants, callback) {
     const slotArea = document.getElementById('lunch-slot-area');
     const reel = document.getElementById('lunch-slot-reel');

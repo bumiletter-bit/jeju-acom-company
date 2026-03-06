@@ -1193,6 +1193,7 @@
                     <div class="card-header-row">
                         <h2>랜덤 추천</h2>
                         <button class="btn-lunch-recommend" id="btn-lunch-random" onclick="handleLunchRandom()">🎰 랜덤 돌리기</button>
+                        <button class="btn-sm btn-outline" onclick="resetLunchRandom()" style="font-size:12px;">초기화</button>
                     </div>
                     <div id="lunch-slot-area" style="display:none;">
                         <div class="lunch-slot-machine">
@@ -1450,6 +1451,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=94"></script>
+    <script src="app.js?v=95"></script>
 </body>
 </html>
