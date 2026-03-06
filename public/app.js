@@ -428,8 +428,16 @@ window.openScheduleModal = function(dateStr) {
                 <div class="btn-group" id="modal-schedule-type-group">
                     <button class="btn-toggle active" data-value="normal">일반</button>
                     <button class="btn-toggle" data-value="duty" style="background:#fef2f2;border-color:#fca5a5;color:#dc2626;">당직</button>
-                    <button class="btn-toggle" data-value="vacation">휴가</button>
-                    <button class="btn-toggle" data-value="attendance">근태</button>
+                </div>
+            </div>
+            <div style="display:flex;gap:12px;">
+                <div class="form-group" style="flex:1;">
+                    <label>시작일</label>
+                    <input type="date" id="modal-schedule-start" class="form-input" value="${dateStr}">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>종료일</label>
+                    <input type="date" id="modal-schedule-end" class="form-input" value="${dateStr}">
                 </div>
             </div>
             <button class="btn-primary" id="modal-schedule-save" style="width:100%;">저장</button>
@@ -453,17 +461,15 @@ window.openScheduleModal = function(dateStr) {
     overlay.querySelector('#modal-schedule-save').addEventListener('click', async () => {
         const title = overlay.querySelector('#modal-schedule-title').value.trim();
         if (!title) return alert('일정 내용을 입력해주세요.');
+        const startDate = overlay.querySelector('#modal-schedule-start').value;
+        const endDate = overlay.querySelector('#modal-schedule-end').value;
+        if (!startDate || !endDate) return alert('시작일과 종료일을 입력해주세요.');
+        if (endDate < startDate) return alert('종료일은 시작일 이후여야 합니다.');
 
         try {
-            await api('/api/schedules', 'POST', { date: dateStr, title, type: selectedType });
+            await api('/api/schedules', 'POST', { startDate, endDate, title, type: selectedType });
             overlay.remove();
             await renderScheduleCalendar();
-            if (selectedType === 'vacation') {
-                const me = await api('/api/auth/me');
-                currentUser = me;
-                localStorage.setItem('jwt_user', JSON.stringify(me));
-                document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
-            }
         } catch (err) {
             alert('저장 실패: ' + err.message);
         }

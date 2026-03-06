@@ -695,21 +695,34 @@ app.get('/api/schedules', authMiddleware, async (req, res) => {
 
 app.post('/api/schedules', authMiddleware, async (req, res) => {
     try {
-        const { date, title, type } = req.body;
-        if (!date || !title) return res.status(400).json({ error: '날짜와 일정 내용은 필수입니다' });
+        const { date, startDate, endDate, title, type } = req.body;
+        if (!title) return res.status(400).json({ error: '일정 내용은 필수입니다' });
 
-        const result = await pool.query(
-            'INSERT INTO schedules (user_id, date, title, type) VALUES ($1, $2, $3, $4) RETURNING *',
-            [req.user.id, date, title, type || 'normal']
-        );
+        // 날짜 범위 지원 (startDate~endDate) 또는 단일 날짜(date) 호환
+        const start = startDate || date;
+        const end = endDate || date;
+        if (!start) return res.status(400).json({ error: '날짜는 필수입니다' });
 
-        // 휴가 시 연차 차감
-        if (type === 'vacation') {
-            await pool.query('UPDATE users SET annual_leave = annual_leave - 1 WHERE id = $1', [req.user.id]);
+        const dates = [];
+        const cur = new Date(start);
+        const last = new Date(end);
+        while (cur <= last) {
+            dates.push(cur.toISOString().slice(0, 10));
+            cur.setDate(cur.getDate() + 1);
+        }
+        if (dates.length === 0) dates.push(start);
+
+        const results = [];
+        for (const d of dates) {
+            const result = await pool.query(
+                'INSERT INTO schedules (user_id, date, title, type) VALUES ($1, $2, $3, $4) RETURNING *',
+                [req.user.id, d, title, type || 'normal']
+            );
+            results.push(result.rows[0]);
         }
 
-        const r = result.rows[0];
-        res.json({ id: r.id, userId: r.user_id, date: r.date, title: r.title, type: r.type, userName: req.user.name, userColor: req.user.color });
+        const mapped = results.map(r => ({ id: r.id, userId: r.user_id, date: r.date, title: r.title, type: r.type, userName: req.user.name, userColor: req.user.color }));
+        res.json(mapped.length === 1 ? mapped[0] : mapped);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
