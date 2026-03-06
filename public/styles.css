@@ -1111,6 +1111,18 @@ input[type="date"].form-input::-webkit-calendar-picker-indicator {
     cursor: pointer;
     margin-left: 0;
     margin-right: auto;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+}
+
+input[type="date"].form-input {
+    position: relative;
 }
 
 input[type="date"].form-input::-webkit-datetime-edit {
