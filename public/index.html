@@ -525,7 +525,10 @@
 
                     <!-- 직원별 연차 현황 -->
                     <div class="card">
-                        <h2>직원별 연차 현황</h2>
+                        <div class="card-header-row">
+                            <h2>직원별 연차 현황</h2>
+                            <button class="btn-outline" onclick="downloadLeaveSummary()" style="font-size:13px;padding:6px 14px;">📥 다운로드</button>
+                        </div>
                         <div class="stats-grid" id="leave-summary-grid"></div>
                     </div>
 
@@ -1568,6 +1571,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=105"></script>
+    <script src="app.js?v=106"></script>
 </body>
 </html>

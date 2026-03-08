@@ -2595,15 +2595,13 @@ function renderDocHistory(docs) {
 }
 
 // 기안서류 승인이력 엑셀 다운로드
-window.downloadDocHistory = async function() {
+// 직원별 연차 현황 다운로드
+window.downloadLeaveSummary = async function() {
     if (currentUser?.role !== 'admin') { alert('관리자만 다운로드할 수 있습니다.'); return; }
-
     try {
-        // 시트1: 직원별 연차 현황
         const leaveData = await api('/api/users/leave-summary');
         const now = new Date();
         const monthLabel = `${now.getFullYear()}년 ${now.getMonth() + 1}월`;
-
         const leaveRows = [
             [`직원별 연차 현황 (${monthLabel} 기준)`],
             [],
@@ -2611,22 +2609,29 @@ window.downloadDocHistory = async function() {
         ];
         leaveData.forEach(emp => {
             const total = emp.annualLeave + emp.usedLeave + emp.pendingLeave;
-            leaveRows.push([
-                emp.name,
-                emp.position || '',
-                formatLeave(total),
-                formatLeave(emp.usedLeave),
-                formatLeave(emp.annualLeave),
-                formatLeave(emp.pendingLeave)
-            ]);
+            leaveRows.push([emp.name, emp.position || '', formatLeave(total), formatLeave(emp.usedLeave), formatLeave(emp.annualLeave), formatLeave(emp.pendingLeave)]);
         });
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(leaveRows);
+        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+        ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 10 }];
+        if (ws['A1']) ws['A1'].s = { font: { bold: true, sz: 14 }, alignment: { horizontal: 'center' } };
+        ['A3','B3','C3','D3','E3','F3'].forEach(cell => {
+            if (ws[cell]) ws[cell].s = { font: { bold: true }, fill: { fgColor: { rgb: 'F3F4F6' } }, alignment: { horizontal: 'center' } };
+        });
+        XLSX.utils.book_append_sheet(wb, ws, '직원별 연차 현황');
+        XLSX.writeFile(wb, `직원별_연차현황_${now.getFullYear()}년${now.getMonth() + 1}월.xlsx`);
+    } catch (err) { alert('다운로드 실패: ' + err.message); }
+};
 
-        // 시트2: 승인/반려 이력 (현재 필터 적용)
+// 승인/반려 이력 다운로드
+window.downloadDocHistory = async function() {
+    if (currentUser?.role !== 'admin') { alert('관리자만 다운로드할 수 있습니다.'); return; }
+    try {
         const employeeId = document.getElementById('history-employee').value;
         const startDate = document.getElementById('history-start-date').value;
         const endDate = document.getElementById('history-end-date').value;
         const type = document.getElementById('history-type').value;
-
         let url = '/api/documents/history?';
         const params = [];
         if (employeeId) params.push(`employeeId=${employeeId}`);
@@ -2634,72 +2639,39 @@ window.downloadDocHistory = async function() {
         if (endDate) params.push(`endDate=${endDate}`);
         if (type) params.push(`type=${type}`);
         url += params.join('&');
-
         const docs = await api(url);
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
-
-        const historyRows = [
-            ['유형', '신청자', '기간/날짜', '사유', '차감일수', '결재자', '상태', '처리일']
-        ];
+        const historyRows = [['유형', '신청자', '기간/날짜', '사유', '차감일수', '결재자', '상태', '처리일']];
         docs.forEach(d => {
             const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
             const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
             let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
-            if (d.subType === '시간차' && d.startTime && d.endTime) {
-                dateStr += ` (${d.startTime}~${d.endTime})`;
-            }
+            if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` (${d.startTime}~${d.endTime})`;
             const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '';
             let deducted = '';
             if (d.deductedLeave > 0) {
                 if (d.subType === '시간차' && d.startTime && d.endTime) {
                     const hrs = calcWorkHoursClient(d.startTime, d.endTime);
                     deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
-                } else {
-                    deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일';
-                }
+                } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
             }
             historyRows.push([
                 `${typeLabels[d.type] || d.type} - ${d.subType}`,
                 `${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}`,
-                dateStr,
-                d.reason || '',
-                deducted,
-                d.approverName || '',
-                d.status === 'approved' ? '승인' : '반려',
-                processedDate
+                dateStr, d.reason || '', deducted, d.approverName || '',
+                d.status === 'approved' ? '승인' : '반려', processedDate
             ]);
         });
-
-        // 엑셀 생성
+        const now = new Date();
         const wb = XLSX.utils.book_new();
-
-        // 시트1: 연차 현황
-        const ws1 = XLSX.utils.aoa_to_sheet(leaveRows);
-        // 제목 병합 + 스타일
-        ws1['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
-        ws1['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 10 }];
-        // 제목 스타일
-        if (ws1['A1']) ws1['A1'].s = { font: { bold: true, sz: 14 }, alignment: { horizontal: 'center' } };
-        // 헤더 스타일 (A3~F3)
-        ['A3','B3','C3','D3','E3','F3'].forEach(cell => {
-            if (ws1[cell]) ws1[cell].s = { font: { bold: true }, fill: { fgColor: { rgb: 'F3F4F6' } }, alignment: { horizontal: 'center' } };
-        });
-        XLSX.utils.book_append_sheet(wb, ws1, '직원별 연차 현황');
-
-        // 시트2: 승인/반려 이력
-        const ws2 = XLSX.utils.aoa_to_sheet(historyRows);
-        ws2['!cols'] = [{ wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 24 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 14 }];
-        // 헤더 스타일
+        const ws = XLSX.utils.aoa_to_sheet(historyRows);
+        ws['!cols'] = [{ wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 24 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 14 }];
         ['A1','B1','C1','D1','E1','F1','G1','H1'].forEach(cell => {
-            if (ws2[cell]) ws2[cell].s = { font: { bold: true }, fill: { fgColor: { rgb: 'F3F4F6' } }, alignment: { horizontal: 'center' } };
+            if (ws[cell]) ws[cell].s = { font: { bold: true }, fill: { fgColor: { rgb: 'F3F4F6' } }, alignment: { horizontal: 'center' } };
         });
-        XLSX.utils.book_append_sheet(wb, ws2, '승인반려 이력');
-
-        const fileName = `기안서류_승인이력_${now.getFullYear()}년${now.getMonth() + 1}월.xlsx`;
-        XLSX.writeFile(wb, fileName);
-    } catch (err) {
-        alert('다운로드 실패: ' + err.message);
-    }
+        XLSX.utils.book_append_sheet(wb, ws, '승인반려 이력');
+        XLSX.writeFile(wb, `승인반려_이력_${now.getFullYear()}년${now.getMonth() + 1}월.xlsx`);
+    } catch (err) { alert('다운로드 실패: ' + err.message); }
 };
 
 // =============================================
