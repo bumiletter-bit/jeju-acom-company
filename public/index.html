@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=74">
+    <link rel="stylesheet" href="styles.css?v=75">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -351,6 +351,11 @@
                         <input type="text" id="doc-applicant" class="form-input" readonly style="background:#f3f4f6;">
                     </div>
 
+                    <div class="form-group">
+                        <label>결재라인</label>
+                        <div id="doc-approval-line" class="expense-approval-line"></div>
+                    </div>
+
                     <!-- 휴가 종류 -->
                     <div class="form-group" id="doc-vacation-type-group">
                         <label>휴가종류</label>
@@ -408,11 +413,6 @@
                     <div class="form-group" id="doc-reason-group">
                         <label>사유</label>
                         <textarea id="doc-reason" class="form-input" rows="3" placeholder="사유를 입력하세요"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>결재라인</label>
-                        <div id="doc-approval-line" class="expense-approval-line"></div>
                     </div>
 
                     <div style="display:flex; gap:10px;">
