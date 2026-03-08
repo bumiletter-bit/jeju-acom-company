@@ -587,7 +587,7 @@ app.get('/api/users/approvers', authMiddleware, async (req, res) => {
 // 직원 이름 목록 (사다리 게임용)
 app.get('/api/users/names', authMiddleware, async (req, res) => {
     try {
-        const result = await pool.query("SELECT id, name, color FROM users ORDER BY id");
+        const result = await pool.query("SELECT id, name, position, color FROM users ORDER BY id");
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1500,7 +1500,7 @@ app.get('/api/expense-reports/pending', authMiddleware, async (req, res) => {
                  LEFT JOIN users c ON er.ceo_id = c.id
                  WHERE er.ceo_id = $1 AND er.ceo_status = 'pending'
                    AND (er.manager_id IS NULL OR er.manager_status = 'approved')
-                   AND er.status != 'rejected' AND er.applicant_id != $1
+                   AND er.status != 'rejected'
                  ORDER BY er.created_at DESC`,
                 [req.user.id]
             );
@@ -1528,16 +1528,21 @@ app.get('/api/expense-reports/pending', authMiddleware, async (req, res) => {
 // 전체 이력 조회 (관리자만)
 app.get('/api/expense-reports/history', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const result = await pool.query(
-            `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
+        const { applicant_id } = req.query;
+        let query = `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
                     m.name as manager_name, m.position as manager_position,
                     c.name as ceo_name, c.position as ceo_position
              FROM expense_reports er
              LEFT JOIN users u ON er.applicant_id = u.id
              LEFT JOIN users m ON er.manager_id = m.id
-             LEFT JOIN users c ON er.ceo_id = c.id
-             ORDER BY er.created_at DESC`
-        );
+             LEFT JOIN users c ON er.ceo_id = c.id`;
+        const params = [];
+        if (applicant_id) {
+            query += ' WHERE er.applicant_id = $1';
+            params.push(applicant_id);
+        }
+        query += ' ORDER BY er.created_at DESC';
+        const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

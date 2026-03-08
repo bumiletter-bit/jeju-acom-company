@@ -724,6 +724,12 @@
                 <!-- 조회/이력 탭 -->
                 <div id="expense-section-history" class="card" style="display:none;">
                     <h2>전체 지출결의서 조회</h2>
+                    <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+                        <label style="font-weight:600;font-size:14px;">직원 필터:</label>
+                        <select id="expense-history-filter" class="form-input" style="width:180px;">
+                            <option value="">전체</option>
+                        </select>
+                    </div>
                     <div class="table-scroll-wrapper">
                         <table class="data-table">
                             <thead><tr><th>제목</th><th>신청자</th><th>금액</th><th>신청일</th><th>상태</th><th>상세</th></tr></thead>
@@ -1535,6 +1541,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=100"></script>
+    <script src="app.js?v=101"></script>
 </body>
 </html>

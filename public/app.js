@@ -5382,7 +5382,10 @@ function initExpensePage() {
     // 목록 로드
     renderExpenseMyList().catch(console.error);
     if (isPending) renderExpensePendingList().catch(console.error);
-    if (currentUser.role === 'admin') renderExpenseHistoryList().catch(console.error);
+    if (currentUser.role === 'admin') {
+        loadExpenseUserFilter().catch(console.error);
+        renderExpenseHistoryList().catch(console.error);
+    }
 }
 
 // 탭 전환
@@ -5524,7 +5527,10 @@ async function renderExpensePendingList() {
 // 전체 이력
 async function renderExpenseHistoryList() {
     try {
-        const data = await api('/api/expense-reports/history');
+        const filterEl = document.getElementById('expense-history-filter');
+        const selectedUser = filterEl ? filterEl.value : '';
+        const url = selectedUser ? `/api/expense-reports/history?applicant_id=${selectedUser}` : '/api/expense-reports/history';
+        const data = await api(url);
         const tbody = document.getElementById('expense-history-list');
         if (data.length === 0) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="6">지출결의서가 없습니다.</td></tr>';
@@ -5532,6 +5538,7 @@ async function renderExpenseHistoryList() {
         }
         tbody.innerHTML = data.map(d => {
             const deleteBtn = currentUser.position === '대표' ? `<button class="btn-danger" onclick="deleteExpense(${d.id})" style="margin-left:4px;">삭제</button>` : '';
+            const pdfBtn = d.status === 'approved' ? `<button class="btn-view" onclick="downloadExpensePDF(${d.id})" style="margin-left:4px;color:#7c3aed;border-color:#7c3aed;">PDF</button>` : '';
             return `<tr>
                 <td>${d.title}</td>
                 <td>${d.applicant_position} ${d.applicant_name}</td>
@@ -5540,12 +5547,29 @@ async function renderExpenseHistoryList() {
                 <td>${getExpenseStatusBadge(d.status)}</td>
                 <td>
                     <button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button>
+                    ${pdfBtn}
                     ${deleteBtn}
                 </td>
             </tr>`;
         }).join('');
     } catch (err) { console.error('전체 이력 로드 오류:', err); }
 }
+
+// 직원 필터 로드
+async function loadExpenseUserFilter() {
+    try {
+        const users = await api('/api/users/names');
+        const filterEl = document.getElementById('expense-history-filter');
+        if (!filterEl) return;
+        const current = filterEl.value;
+        filterEl.innerHTML = '<option value="">전체</option>' + users.map(u => `<option value="${u.id}">${u.position ? u.position + ' ' : ''}${u.name}</option>`).join('');
+        if (current) filterEl.value = current;
+    } catch (err) { console.error('직원 필터 로드 오류:', err); }
+}
+
+document.getElementById('expense-history-filter')?.addEventListener('change', () => {
+    renderExpenseHistoryList().catch(console.error);
+});
 
 function getExpenseStatusBadge(status) {
     const map = {
