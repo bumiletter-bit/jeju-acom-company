@@ -824,6 +824,92 @@ body {
 .day-payment-item.hyodon { color: var(--success); }
 .day-payment-item.cj { color: #f59e0b; }
 
+.day-payment-item.paid, .day-total.paid {
+    opacity: 0.4;
+    text-decoration: line-through;
+}
+
+.settlement-day-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.settlement-day-entry {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: #f8fafc;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+}
+
+.settlement-day-entry.paid {
+    opacity: 0.5;
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+
+.entry-partner {
+    font-weight: 600;
+    min-width: 80px;
+}
+
+.entry-amount {
+    flex: 1;
+    text-align: right;
+    font-weight: 500;
+    font-size: 15px;
+}
+
+.entry-note {
+    font-size: 12px;
+    color: #9ca3af;
+}
+
+.btn-paid {
+    padding: 4px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.btn-paid:hover {
+    background: #f0fdf4;
+    border-color: #86efac;
+}
+
+.btn-paid.active {
+    background: #dcfce7;
+    border-color: #86efac;
+    color: #166534;
+}
+
+.settlement-day-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    margin-top: 12px;
+    border-top: 2px solid #e2e8f0;
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.badge-paid {
+    margin-left: 4px;
+}
+
+.badge-unpaid {
+    margin-left: 4px;
+    color: #9ca3af;
+}
+
 .day-total {
     display: flex;
     align-items: center;

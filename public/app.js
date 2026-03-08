@@ -699,6 +699,7 @@ window.deleteNotification = async function(e, id) {
 // =============================================
 let settlementCalYear = new Date().getFullYear();
 let settlementCalMonth = new Date().getMonth();
+let settlementDailyData = {};
 
 document.getElementById('settlement-prev-month').addEventListener('click', () => {
     settlementCalMonth--;
@@ -754,12 +755,26 @@ async function renderSettlementCalendar() {
 
     settlements.forEach(s => {
         const amount = s.amount || 0;
-        if (s.partner === '대성(시온)') daesungPayment += amount;
-        if (s.partner === '효돈농협') hyodonPayment += amount;
+        const isPaid = s.isPaid || false;
 
-        if (!dailyPayments[s.date]) dailyPayments[s.date] = { daesung: 0, hyodon: 0, cj: 0 };
-        if (s.partner === '대성(시온)') dailyPayments[s.date].daesung += amount;
-        if (s.partner === '효돈농협') dailyPayments[s.date].hyodon += amount;
+        if (!dailyPayments[s.date]) dailyPayments[s.date] = {
+            daesung: 0, hyodon: 0, cj: 0,
+            daesungPaid: 0, hyodonPaid: 0, cjPaid: 0,
+            entries: []
+        };
+
+        dailyPayments[s.date].entries.push({ id: s.id, partner: s.partner, amount, isPaid, items: s.items });
+
+        if (s.partner === '대성(시온)') {
+            dailyPayments[s.date].daesung += amount;
+            if (isPaid) dailyPayments[s.date].daesungPaid += amount;
+            else daesungPayment += amount;
+        }
+        if (s.partner === '효돈농협') {
+            dailyPayments[s.date].hyodon += amount;
+            if (isPaid) dailyPayments[s.date].hyodonPaid += amount;
+            else hyodonPayment += amount;
+        }
 
         // CJ택배비 자동 계산: 대성/효돈 정산의 items 수량 합계 × 3,100원
         if (s.partner === '대성(시온)' || s.partner === '효돈농협') {
@@ -767,9 +782,12 @@ async function renderSettlementCalendar() {
             const boxCount = items.reduce((sum, item) => sum + (item.qty || 0), 0);
             const cjCost = boxCount * 3100;
             dailyPayments[s.date].cj += cjCost;
-            cjPayment += cjCost;
+            if (isPaid) dailyPayments[s.date].cjPaid += cjCost;
+            else cjPayment += cjCost;
         }
     });
+
+    settlementDailyData = dailyPayments;
 
     // CJ 카드: 이월금액 반영
     const cjTotal = cjCarryover + cjPayment;
@@ -882,15 +900,32 @@ async function renderSettlementCalendar() {
                 const dp = dailyPayments[dateStr];
                 if (dp) {
                     contentHtml += '<div class="day-payments">';
-                    if (dp.daesung) contentHtml += `<div class="day-payment-item daesung"><span class="pay-label">대성</span><span class="pay-amount">${dp.daesung.toLocaleString()}원</span></div>`;
-                    if (dp.hyodon) contentHtml += `<div class="day-payment-item hyodon"><span class="pay-label">효돈</span><span class="pay-amount">${dp.hyodon.toLocaleString()}원</span></div>`;
-                    if (dp.cj) contentHtml += `<div class="day-payment-item cj"><span class="pay-label">CJ</span><span class="pay-amount">${dp.cj.toLocaleString()}원</span></div>`;
+                    if (dp.daesung) {
+                        const allPaid = dp.daesungPaid === dp.daesung;
+                        const cls = allPaid ? 'day-payment-item daesung paid' : 'day-payment-item daesung';
+                        contentHtml += `<div class="${cls}"><span class="pay-label">대성</span><span class="pay-amount">${dp.daesung.toLocaleString()}원</span></div>`;
+                    }
+                    if (dp.hyodon) {
+                        const allPaid = dp.hyodonPaid === dp.hyodon;
+                        const cls = allPaid ? 'day-payment-item hyodon paid' : 'day-payment-item hyodon';
+                        contentHtml += `<div class="${cls}"><span class="pay-label">효돈</span><span class="pay-amount">${dp.hyodon.toLocaleString()}원</span></div>`;
+                    }
+                    if (dp.cj) {
+                        const allPaid = dp.cjPaid === dp.cj;
+                        const cls = allPaid ? 'day-payment-item cj paid' : 'day-payment-item cj';
+                        contentHtml += `<div class="${cls}"><span class="pay-label">CJ</span><span class="pay-amount">${dp.cj.toLocaleString()}원</span></div>`;
+                    }
                     const dayTotal = (dp.daesung || 0) + (dp.hyodon || 0) + (dp.cj || 0);
-                    if (dayTotal > 0) contentHtml += `<div class="day-total"><span class="pay-label">합계</span><span class="pay-amount">${dayTotal.toLocaleString()}원</span></div>`;
+                    const dayTotalPaid = (dp.daesungPaid || 0) + (dp.hyodonPaid || 0) + (dp.cjPaid || 0);
+                    if (dayTotal > 0) {
+                        const allPaid = dayTotalPaid === dayTotal;
+                        const cls = allPaid ? 'day-total paid' : 'day-total';
+                        contentHtml += `<div class="${cls}"><span class="pay-label">합계</span><span class="pay-amount">${dayTotal.toLocaleString()}원</span></div>`;
+                    }
                     contentHtml += '</div>';
                 }
 
-                html += `<td class="${classes.join(' ')}">
+                html += `<td class="${classes.join(' ')}" onclick="showSettlementDayModal('${dateStr}')" style="cursor:pointer;">
                     <span class="day-number">${isToday ? '오늘' : day}</span>
                     ${contentHtml}
                 </td>`;
@@ -902,6 +937,76 @@ async function renderSettlementCalendar() {
 
     document.getElementById('settlement-calendar-body').innerHTML = html;
 }
+
+window.showSettlementDayModal = function(dateStr) {
+    const dp = settlementDailyData[dateStr];
+    if (!dp || !dp.entries || dp.entries.length === 0) return;
+
+    let entriesHtml = '';
+    let total = 0;
+
+    // 대성, 효돈 entries
+    ['대성(시온)', '효돈농협'].forEach(partner => {
+        const entries = dp.entries.filter(e => e.partner === partner);
+        if (!entries.length) return;
+        entries.forEach(e => {
+            total += e.amount;
+            const paidClass = e.isPaid ? 'settlement-day-entry paid' : 'settlement-day-entry';
+            const btnText = e.isPaid ? '✅ 완료' : '☐ 결제완료';
+            const btnClass = e.isPaid ? 'btn-paid active' : 'btn-paid';
+            entriesHtml += `<div class="${paidClass}">
+                <span class="entry-partner">${partner}</span>
+                <span class="entry-amount">${e.amount.toLocaleString()}원</span>
+                <button class="${btnClass}" onclick="toggleSettlementPaid(${e.id})">${btnText}</button>
+            </div>`;
+        });
+    });
+
+    // CJ 택배비 (자동계산 - 정보 표시만)
+    if (dp.cj > 0) {
+        total += dp.cj;
+        const allCjPaid = dp.cjPaid === dp.cj;
+        const paidClass = allCjPaid ? 'settlement-day-entry paid' : 'settlement-day-entry';
+        entriesHtml += `<div class="${paidClass}">
+            <span class="entry-partner">CJ택배</span>
+            <span class="entry-amount">${dp.cj.toLocaleString()}원</span>
+            <span class="entry-note">(자동계산)</span>
+        </div>`;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'settlement-day-modal';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:480px;">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3 style="margin-bottom:16px;">${dateStr} 정산 내역</h3>
+            <div class="settlement-day-entries">${entriesHtml}</div>
+            <div class="settlement-day-total">
+                <span>합계</span>
+                <span>${total.toLocaleString()}원</span>
+            </div>
+            <div style="text-align:right; margin-top:16px;">
+                <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
+            </div>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+
+window.toggleSettlementPaid = async function(id) {
+    try {
+        await api(`/api/settlements/${id}/toggle-paid`, 'PUT');
+        const modal = document.getElementById('settlement-day-modal');
+        if (modal) modal.remove();
+        await renderSettlementCalendar();
+        await renderSettlementList();
+        await renderWeeklySettlement();
+    } catch (err) {
+        alert('결제완료 처리 실패: ' + err.message);
+    }
+};
 
 // =============================================
 // 정산관리 (기존 기능 유지)
@@ -1355,10 +1460,11 @@ async function renderSettlementList() {
         tbody.innerHTML = data.map(item => {
             totalAmount += (item.amount || 0);
             const fromPricingBadge = item.fromPricing ? '<span class="badge-pricing">품목별금액</span>' : '';
+            const paidBadge = item.isPaid ? '<span class="badge-paid">✅</span>' : '<span class="badge-unpaid">☐</span>';
             return `<tr>
                 <td>${item.date}</td>
                 <td>${item.partner} ${fromPricingBadge}</td>
-                <td>${(item.amount || 0).toLocaleString()} 원</td>
+                <td>${(item.amount || 0).toLocaleString()} 원 ${paidBadge}</td>
                 <td>
                     ${item.items && item.items.length > 0 ? `<button class="btn-view-items" onclick="viewSettlementItems(${item.id})">상세</button>` : ''}
                     <button class="btn-danger" onclick="deleteSettlement(${item.id})">삭제</button>
@@ -4361,6 +4467,7 @@ async function renderWeeklySettlement() {
             let daesungTotal = 0, hyodonTotal = 0, cjTotal = 0;
 
             settlements.forEach(s => {
+                if (s.isPaid) return; // 결제완료된 항목 제외
                 if (s.date >= week.start && s.date <= week.end) {
                     if (s.partner === '대성(시온)') {
                         daesungTotal += (s.amount || 0);

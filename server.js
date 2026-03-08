@@ -73,6 +73,9 @@ async function initDB() {
     // 기존 cj_carryover 테이블에 start_date, end_date 컬럼 추가 (이미 있으면 무시)
     await pool.query(`ALTER TABLE cj_carryover ADD COLUMN IF NOT EXISTS start_date DATE`);
     await pool.query(`ALTER TABLE cj_carryover ADD COLUMN IF NOT EXISTS end_date DATE`);
+    // 정산 결제완료 상태 컬럼 추가
+    await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS is_paid BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`);
     await pool.query(`
         CREATE TABLE IF NOT EXISTS pricing (
             id SERIAL PRIMARY KEY,
@@ -1648,7 +1651,8 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
         }
         const data = result.rows.map(row => ({
             id: row.id, date: row.date, partner: row.partner,
-            amount: Number(row.amount), items: row.items, fromPricing: row.from_pricing
+            amount: Number(row.amount), items: row.items, fromPricing: row.from_pricing,
+            isPaid: row.is_paid || false, paidAt: row.paid_at
         }));
         res.json(data);
     } catch (err) {
@@ -1680,6 +1684,18 @@ app.delete('/api/settlements/:id', authMiddleware, adminOnly, async (req, res) =
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+app.put('/api/settlements/:id/toggle-paid', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'UPDATE settlements SET is_paid = NOT COALESCE(is_paid, false), paid_at = CASE WHEN COALESCE(is_paid, false) = false THEN NOW() ELSE NULL END WHERE id = $1 RETURNING *',
+            [req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
+        const row = result.rows[0];
+        res.json({ id: row.id, isPaid: row.is_paid, paidAt: row.paid_at });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // CJ 자동계산: 해당 날짜 대성+효돈 박스수 합산
