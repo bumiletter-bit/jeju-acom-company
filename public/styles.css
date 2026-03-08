@@ -133,11 +133,26 @@ body {
 }
 
 /* 알림 벨 (welcome-section 내) */
-.notification-bell-wrap {
+/* 📢 지시사항 버튼 */
+.announcement-btn-wrap {
     position: relative;
     cursor: pointer;
     user-select: none;
     margin-left: auto;
+    padding: 6px;
+}
+.announcement-icon {
+    font-size: 20px;
+    transition: transform 0.2s;
+}
+.announcement-btn-wrap:hover .announcement-icon {
+    transform: scale(1.15);
+}
+
+.notification-bell-wrap {
+    position: relative;
+    cursor: pointer;
+    user-select: none;
     padding: 6px;
 }
 .bell-icon { font-size: 22px; }
@@ -287,6 +302,34 @@ body {
     line-height: 1;
 }
 .noti-delete:hover { color: #ef4444; }
+
+/* 지시사항 알림 스타일 */
+.noti-item.noti-announcement { background: #FFF8E1; }
+.noti-item.noti-announcement:hover { background: #FFF3C4; }
+.noti-item.noti-announcement.unread { background: #FFF8E1; }
+.noti-item.noti-announcement .noti-dot { background: none; width: auto; height: auto; font-size: 14px; margin-top: 2px; }
+.noti-toast-announcement { border-left-color: #F5A623; }
+
+/* 지시사항 모달 직원 선택 */
+.announcement-users-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.announcement-user-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #f9fafb;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    user-select: none;
+}
+.announcement-user-check:hover { background: #f3f4f6; }
+.announcement-user-check input[type="checkbox"] { accent-color: var(--primary); }
 
 .sidebar-nav {
     padding: 8px 0;

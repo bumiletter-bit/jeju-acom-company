@@ -749,6 +749,32 @@ app.delete('/api/notifications/:id', authMiddleware, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 지시사항/공지 전달 (관리자 전용)
+app.post('/api/notifications/announcement', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: '권한이 없습니다.' });
+    try {
+        const { message, target, user_ids } = req.body;
+        if (!message || !message.trim()) return res.status(400).json({ error: '내용을 입력해주세요.' });
+
+        let targetIds = [];
+        if (target === 'all') {
+            const result = await pool.query('SELECT id FROM users WHERE id != $1', [req.user.id]);
+            targetIds = result.rows.map(r => r.id);
+        } else if (user_ids && user_ids.length > 0) {
+            targetIds = user_ids;
+        } else {
+            return res.status(400).json({ error: '대상을 선택해주세요.' });
+        }
+
+        const title = '📢 지시사항: ' + message.trim().substring(0, 30) + (message.trim().length > 30 ? '...' : '');
+        for (const uid of targetIds) {
+            await createNotification(uid, 'announcement', title, message.trim(), null);
+        }
+
+        res.json({ success: true, count: targetIds.length });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // === Schedules API ===
 
 app.get('/api/schedules', authMiddleware, async (req, res) => {

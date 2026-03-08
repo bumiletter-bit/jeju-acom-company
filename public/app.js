@@ -179,6 +179,10 @@ function updateUserUI() {
         const navEl = document.querySelector(`.nav-item[data-page="${page}"]`);
         if (navEl) navEl.style.display = currentUser.role === 'admin' ? '' : 'none';
     });
+
+    // 관리자 전용 📢 지시사항 버튼
+    const announcementBtn = document.getElementById('announcement-btn');
+    if (announcementBtn) announcementBtn.style.display = currentUser.role === 'admin' ? '' : 'none';
 }
 
 document.getElementById('btn-logout').addEventListener('click', () => {
@@ -588,21 +592,24 @@ async function fetchUnreadCount() {
             const notis = await api('/api/notifications');
             const newest = notis.find(n => !n.isRead);
             if (newest && lastUnreadCount > 0) {
-                showNotificationToast(newest.message);
+                if (newest.type === 'announcement') {
+                    showNotificationToast('📢 새 지시사항이 있습니다', true);
+                } else {
+                    showNotificationToast(newest.message);
+                }
             }
         }
         lastUnreadCount = data.count;
     } catch (err) { /* ignore */ }
 }
 
-function showNotificationToast(msg) {
+function showNotificationToast(msg, isAnnouncement) {
     const toast = document.createElement('div');
-    toast.className = 'noti-toast';
-    toast.textContent = '🔔 ' + msg;
+    toast.className = 'noti-toast' + (isAnnouncement ? ' noti-toast-announcement' : '');
+    toast.textContent = isAnnouncement ? msg : ('🔔 ' + msg);
     toast.onclick = () => {
         toast.remove();
-        const navItem = document.querySelector('.nav-item[data-page="document"]');
-        if (navItem) navItem.click();
+        toggleNotificationDropdown(new Event('click'));
     };
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('show'));
@@ -652,16 +659,24 @@ async function renderNotificationList() {
             listEl.innerHTML = '<div class="noti-empty">알림이 없습니다.</div>';
             return;
         }
-        listEl.innerHTML = notis.map(n => `
-            <div class="noti-item ${n.isRead ? '' : 'unread'}" data-id="${n.id}" data-link="${n.link || 'documents'}">
-                <span class="noti-dot ${n.isRead ? 'read' : 'unread'}"></span>
-                <div class="noti-content" onclick="clickNotification(${n.id}, '${n.link || 'documents'}')">
+        // 알림 목록을 저장해두고 클릭 시 참조
+        window._notiCache = notis;
+        listEl.innerHTML = notis.map(n => {
+            const isAnnouncement = n.type === 'announcement';
+            const icon = isAnnouncement ? '📢' : '';
+            const extraClass = isAnnouncement ? ' noti-announcement' : '';
+            const clickAction = isAnnouncement
+                ? `showAnnouncementDetail(${n.id})`
+                : `clickNotification(${n.id}, '${n.link || 'documents'}')`;
+            return `<div class="noti-item ${n.isRead ? '' : 'unread'}${extraClass}" data-id="${n.id}">
+                <span class="noti-dot ${n.isRead ? 'read' : 'unread'}">${icon}</span>
+                <div class="noti-content" onclick="${clickAction}">
                     <div class="noti-msg">${n.message}</div>
                     <div class="noti-time">${timeAgo(n.createdAt)}</div>
                 </div>
                 <button class="noti-delete" onclick="deleteNotification(event, ${n.id})" title="삭제">×</button>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     } catch (err) {
         listEl.innerHTML = '<div class="noti-empty">알림을 불러올 수 없습니다.</div>';
     }
@@ -677,6 +692,38 @@ window.clickNotification = async function(id, link) {
     const page = link === 'documents' ? 'document' : link;
     const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
     if (navItem) navItem.click();
+};
+
+window.showAnnouncementDetail = async function(id) {
+    const noti = (window._notiCache || []).find(n => n.id === id);
+    const message = noti ? noti.message : '';
+
+    try {
+        await api(`/api/notifications/${id}/read`, 'PUT');
+        fetchUnreadCount();
+        await renderNotificationList();
+    } catch (err) { /* ignore */ }
+    document.getElementById('notification-dropdown').style.display = 'none';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const msgDiv = document.createElement('div');
+    msgDiv.style.cssText = 'padding:16px;background:#FFF8E1;border-radius:8px;border:1px solid #FFE082;line-height:1.7;white-space:pre-wrap;word-break:break-word;';
+    msgDiv.textContent = message;
+
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:480px;">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3 style="margin-bottom:16px;">📢 지시사항</h3>
+            <div id="announcement-detail-body"></div>
+            <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+                <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
+            </div>
+        </div>
+    `;
+    overlay.querySelector('#announcement-detail-body').appendChild(msgDiv);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 };
 
 window.markAllNotificationsRead = async function(e) {
@@ -696,6 +743,95 @@ window.deleteNotification = async function(e, id) {
         await renderNotificationList();
     } catch (err) { alert('삭제 실패: ' + err.message); }
 };
+
+// =============================================
+// 📢 지시사항 전달 (관리자 전용)
+// =============================================
+window.openAnnouncementModal = async function() {
+    let userListHtml = '';
+    try {
+        const users = await api('/api/users/names');
+        const others = users.filter(u => u.id !== currentUser.id);
+        userListHtml = others.map(u => `<label class="announcement-user-check"><input type="checkbox" value="${u.id}" checked> ${u.name}</label>`).join('');
+    } catch (err) { console.error(err); }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'announcement-modal';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:480px;">
+            <button class="modal-close" onclick="closeAnnouncementModal()">×</button>
+            <h3 style="margin-bottom:16px;">📢 지시사항 전달하기</h3>
+            <div class="form-group">
+                <label>전달 내용</label>
+                <textarea id="announcement-message" class="form-input" rows="5" placeholder="지시사항을 입력하세요..."></textarea>
+            </div>
+            <div class="form-group">
+                <label>대상</label>
+                <div class="btn-group" id="announcement-target-group">
+                    <button class="btn-toggle active" data-value="all" onclick="selectAnnouncementTarget(this)">전체 직원</button>
+                    <button class="btn-toggle" data-value="select" onclick="selectAnnouncementTarget(this)">직원 선택</button>
+                </div>
+            </div>
+            <div class="form-group" id="announcement-user-list" style="display:none;">
+                <div class="announcement-users-grid">${userListHtml}</div>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:8px;">
+                <button class="btn-primary" style="flex:1;" onclick="submitAnnouncement()">전달하기</button>
+                <button class="btn-outline" onclick="closeAnnouncementModal()">취소</button>
+            </div>
+        </div>
+    `;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAnnouncementModal(); });
+    document.body.appendChild(overlay);
+};
+
+window.selectAnnouncementTarget = function(btn) {
+    btn.parentElement.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const userList = document.getElementById('announcement-user-list');
+    userList.style.display = btn.dataset.value === 'select' ? '' : 'none';
+};
+
+window.closeAnnouncementModal = function() {
+    const modal = document.getElementById('announcement-modal');
+    if (modal) modal.remove();
+};
+
+window.submitAnnouncement = async function() {
+    const message = document.getElementById('announcement-message').value.trim();
+    if (!message) return alert('전달 내용을 입력해주세요.');
+
+    const targetBtn = document.querySelector('#announcement-target-group .btn-toggle.active');
+    const target = targetBtn ? targetBtn.dataset.value : 'all';
+
+    let body = { message };
+    if (target === 'all') {
+        body.target = 'all';
+    } else {
+        const checked = document.querySelectorAll('#announcement-user-list input[type="checkbox"]:checked');
+        const ids = Array.from(checked).map(c => Number(c.value));
+        if (ids.length === 0) return alert('최소 한 명의 직원을 선택해주세요.');
+        body.user_ids = ids;
+    }
+
+    if (!confirm(`지시사항을 전달하시겠습니까?`)) return;
+
+    try {
+        const result = await api('/api/notifications/announcement', 'POST', body);
+        closeAnnouncementModal();
+        showAnnouncementToast(`전달 완료! (${result.count}명)`);
+    } catch (err) { alert('전달 실패: ' + err.message); }
+};
+
+function showAnnouncementToast(msg) {
+    const toast = document.createElement('div');
+    toast.className = 'noti-toast';
+    toast.textContent = '📢 ' + msg;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
+}
 
 // =============================================
 // 정산관리 캘린더 (기존 홈에서 이동)
