@@ -5529,7 +5529,14 @@ async function renderExpenseHistoryList() {
     try {
         const filterEl = document.getElementById('expense-history-filter');
         const selectedUser = filterEl ? filterEl.value : '';
-        const url = selectedUser ? `/api/expense-reports/history?applicant_id=${selectedUser}` : '/api/expense-reports/history';
+        const startDate = document.getElementById('expense-history-start')?.value || '';
+        const endDate = document.getElementById('expense-history-end')?.value || '';
+        const queryParams = new URLSearchParams();
+        if (selectedUser) queryParams.set('applicant_id', selectedUser);
+        if (startDate) queryParams.set('start_date', startDate);
+        if (endDate) queryParams.set('end_date', endDate);
+        const qs = queryParams.toString();
+        const url = `/api/expense-reports/history${qs ? '?' + qs : ''}`;
         const data = await api(url);
         const tbody = document.getElementById('expense-history-list');
         if (data.length === 0) {
@@ -5567,7 +5574,7 @@ async function loadExpenseUserFilter() {
     } catch (err) { console.error('직원 필터 로드 오류:', err); }
 }
 
-document.getElementById('expense-history-filter')?.addEventListener('change', () => {
+document.getElementById('expense-history-search')?.addEventListener('click', () => {
     renderExpenseHistoryList().catch(console.error);
 });
 

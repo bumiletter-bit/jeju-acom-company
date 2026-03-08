@@ -1528,7 +1528,7 @@ app.get('/api/expense-reports/pending', authMiddleware, async (req, res) => {
 // 전체 이력 조회 (관리자만)
 app.get('/api/expense-reports/history', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { applicant_id } = req.query;
+        const { applicant_id, start_date, end_date } = req.query;
         let query = `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
                     m.name as manager_name, m.position as manager_position,
                     c.name as ceo_name, c.position as ceo_position
@@ -1536,11 +1536,21 @@ app.get('/api/expense-reports/history', authMiddleware, adminOnly, async (req, r
              LEFT JOIN users u ON er.applicant_id = u.id
              LEFT JOIN users m ON er.manager_id = m.id
              LEFT JOIN users c ON er.ceo_id = c.id`;
+        const conditions = [];
         const params = [];
         if (applicant_id) {
-            query += ' WHERE er.applicant_id = $1';
             params.push(applicant_id);
+            conditions.push(`er.applicant_id = $${params.length}`);
         }
+        if (start_date) {
+            params.push(start_date);
+            conditions.push(`er.created_at >= $${params.length}::date`);
+        }
+        if (end_date) {
+            params.push(end_date);
+            conditions.push(`er.created_at < ($${params.length}::date + INTERVAL '1 day')`);
+        }
+        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
         query += ' ORDER BY er.created_at DESC';
         const result = await pool.query(query, params);
         res.json(result.rows);

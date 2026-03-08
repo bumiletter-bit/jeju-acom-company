@@ -726,10 +726,15 @@
                 <div id="expense-section-history" class="card" style="display:none;">
                     <h2>전체 지출결의서 조회</h2>
                     <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
-                        <label style="font-weight:600;font-size:14px;">직원 필터:</label>
-                        <select id="expense-history-filter" class="form-input" style="width:180px;">
+                        <label style="font-weight:600;font-size:14px;">직원:</label>
+                        <select id="expense-history-filter" class="form-input" style="width:160px;">
                             <option value="">전체</option>
                         </select>
+                        <label style="font-weight:600;font-size:14px;">시작일:</label>
+                        <input type="date" id="expense-history-start" class="form-input" style="width:160px;">
+                        <label style="font-weight:600;font-size:14px;">종료일:</label>
+                        <input type="date" id="expense-history-end" class="form-input" style="width:160px;">
+                        <button class="btn-primary" id="expense-history-search" style="padding:8px 20px;">검색</button>
                     </div>
                     <div class="table-scroll-wrapper">
                         <table class="data-table">
@@ -1542,6 +1547,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=102"></script>
+    <script src="app.js?v=103"></script>
 </body>
 </html>
