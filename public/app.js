@@ -5646,9 +5646,7 @@ function updateExpenseTotal() {
 
 // 제출
 document.getElementById('expense-submit').addEventListener('click', async () => {
-    const title = document.getElementById('expense-title').value.trim();
     const purpose = document.getElementById('expense-purpose').value.trim();
-    if (!title) { alert('제목을 입력해주세요.'); return; }
 
     const items = [];
     document.querySelectorAll('.expense-item-row').forEach(row => {
@@ -5660,12 +5658,14 @@ document.getElementById('expense-submit').addEventListener('click', async () => 
     });
     if (items.length === 0) { alert('지출 항목을 하나 이상 추가해주세요.'); return; }
 
-    if (!confirm(`"${title}" 지출결의서를 제출하시겠습니까?\n합계: ${items.reduce((s, i) => s + i.amount, 0).toLocaleString()} 원`)) return;
+    // 제목은 첫 번째 항목 카테고리로 자동 생성
+    const title = items.map(i => i.category).join(', ');
+
+    if (!confirm(`지출결의서를 제출하시겠습니까?\n합계: ${items.reduce((s, i) => s + i.amount, 0).toLocaleString()} 원`)) return;
 
     try {
         await api('/api/expense-reports', 'POST', { title, purpose, items });
         alert('지출결의서가 제출되었습니다.');
-        document.getElementById('expense-title').value = '';
         document.getElementById('expense-purpose').value = '';
         document.getElementById('expense-items').innerHTML = '';
         addExpenseItem();
