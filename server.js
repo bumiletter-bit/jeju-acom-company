@@ -73,6 +73,8 @@ async function initDB() {
     // 기존 cj_carryover 테이블에 start_date, end_date 컬럼 추가 (이미 있으면 무시)
     await pool.query(`ALTER TABLE cj_carryover ADD COLUMN IF NOT EXISTS start_date DATE`);
     await pool.query(`ALTER TABLE cj_carryover ADD COLUMN IF NOT EXISTS end_date DATE`);
+    // 결재 도장/사인 이미지
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_image TEXT`);
     // 정산 결제완료 상태 컬럼 추가
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS is_paid BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`);
@@ -492,10 +494,10 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, username, name, position, color, role, annual_leave FROM users WHERE id = $1', [req.user.id]);
+        const result = await pool.query('SELECT id, username, name, position, color, role, annual_leave, signature_image FROM users WHERE id = $1', [req.user.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
         const u = result.rows[0];
-        res.json({ id: u.id, username: u.username, name: u.name, position: u.position, color: u.color, role: u.role, annualLeave: Number(u.annual_leave) });
+        res.json({ id: u.id, username: u.username, name: u.name, position: u.position, color: u.color, role: u.role, annualLeave: Number(u.annual_leave), hasSignature: !!u.signature_image });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -522,6 +524,34 @@ app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
         console.error('PUT /api/auth/change-password error:', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+// === Signature API (결재 도장/사인) ===
+
+app.put('/api/users/signature', authMiddleware, async (req, res) => {
+    try {
+        const { signatureImage } = req.body;
+        if (!signatureImage) return res.status(400).json({ error: '이미지 데이터가 없습니다' });
+        // base64 크기 체크 (약 2MB = ~2.7MB base64)
+        if (signatureImage.length > 3 * 1024 * 1024) return res.status(400).json({ error: '이미지 크기가 2MB를 초과합니다' });
+        await pool.query('UPDATE users SET signature_image = $1 WHERE id = $2', [signatureImage, req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/users/signature', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('UPDATE users SET signature_image = NULL WHERE id = $1', [req.user.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/users/:id/signature', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT signature_image FROM users WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+        res.json({ signatureImage: result.rows[0].signature_image || null });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // === Users API (관리자 전용) ===

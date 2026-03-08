@@ -5431,13 +5431,62 @@ window.deleteWorkLog = deleteWorkLog;
 // =============================================
 // 내 정보 페이지
 // =============================================
-function renderMyInfoPage() {
+async function renderMyInfoPage() {
     if (!currentUser) return;
     document.getElementById('myinfo-username').textContent = currentUser.username;
     document.getElementById('myinfo-name').textContent = currentUser.name;
     document.getElementById('myinfo-position').textContent = currentUser.position || '-';
     document.getElementById('myinfo-color').style.backgroundColor = currentUser.color || '#3b82f6';
+    // 도장 미리보기 로드
+    try {
+        const sig = await api(`/api/users/${currentUser.id}/signature`);
+        updateSignaturePreview(sig.signatureImage);
+    } catch (err) { updateSignaturePreview(null); }
 }
+
+function updateSignaturePreview(imgData) {
+    const emptyEl = document.getElementById('signature-preview-empty');
+    const imgEl = document.getElementById('signature-preview-img');
+    const delBtn = document.getElementById('signature-delete-btn');
+    if (imgData) {
+        emptyEl.style.display = 'none';
+        imgEl.style.display = '';
+        imgEl.src = imgData;
+        delBtn.style.display = '';
+    } else {
+        emptyEl.style.display = '';
+        imgEl.style.display = 'none';
+        imgEl.src = '';
+        delBtn.style.display = 'none';
+    }
+}
+
+document.getElementById('signature-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { alert('파일 크기가 2MB를 초과합니다.'); e.target.value = ''; return; }
+    if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) { alert('PNG 또는 JPG 파일만 업로드 가능합니다.'); e.target.value = ''; return; }
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+        const base64 = ev.target.result;
+        try {
+            await api('/api/users/signature', 'PUT', { signatureImage: base64 });
+            updateSignaturePreview(base64);
+            alert('도장 이미지가 등록되었습니다.');
+        } catch (err) { alert('업로드 실패: ' + err.message); }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+});
+
+document.getElementById('signature-delete-btn').addEventListener('click', async () => {
+    if (!confirm('등록된 도장 이미지를 삭제하시겠습니까?')) return;
+    try {
+        await api('/api/users/signature', 'DELETE');
+        updateSignaturePreview(null);
+        alert('도장 이미지가 삭제되었습니다.');
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+});
 
 document.getElementById('form-change-password').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -5702,28 +5751,43 @@ window.viewExpenseDetail = async function(id) {
         const d = await api(`/api/expense-reports/${id}`);
         const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
 
-        // 결재란
+        // 결재란 + 도장 이미지 조회
+        const detailSigIds = [d.applicant_id];
+        if (d.manager_id) detailSigIds.push(d.manager_id);
+        detailSigIds.push(d.ceo_id);
+        const detailSigResults = await Promise.all(
+            [...new Set(detailSigIds)].map(uid => api(`/api/users/${uid}/signature`).catch(() => ({ signatureImage: null })))
+        );
+        const detailSigMap = {};
+        [...new Set(detailSigIds)].forEach((uid, i) => { detailSigMap[uid] = detailSigResults[i].signatureImage; });
+
+        function stampAreaHtml(userId, status, fallbackText) {
+            const sig = detailSigMap[userId];
+            if (status && sig) return `<div class="stamp-area"><img src="${sig}" style="width:45px;height:45px;object-fit:contain;" alt="도장"></div>`;
+            if (status) return `<div class="stamp-area approved">${fallbackText}</div>`;
+            return `<div class="stamp-area">${fallbackText}</div>`;
+        }
+
         let stampHtml = '<div class="expense-detail-approval">';
-        // 신청자
         stampHtml += `<div class="expense-stamp-box">
             <div class="stamp-label">신청자</div>
-            <div class="stamp-area approved">신청</div>
+            ${stampAreaHtml(d.applicant_id, true, '신청')}
             <div class="stamp-name">${d.applicant_name}</div>
         </div>`;
-        // 1차 (부장)
         if (d.manager_id) {
             const mApproved = d.manager_status === 'approved';
+            const mText = mApproved ? '승인' : (d.status === 'rejected' && d.rejected_by === d.manager_id ? '반려' : '대기');
             stampHtml += `<div class="expense-stamp-box">
                 <div class="stamp-label">부장</div>
-                <div class="stamp-area ${mApproved ? 'approved' : ''}">${mApproved ? '승인' : (d.status === 'rejected' && d.rejected_by === d.manager_id ? '반려' : '대기')}</div>
+                ${stampAreaHtml(d.manager_id, mApproved, mText)}
                 <div class="stamp-name">${d.manager_name || ''}</div>
             </div>`;
         }
-        // 대표
         const cApproved = d.ceo_status === 'approved';
+        const cText = cApproved ? '승인' : (d.status === 'rejected' && d.rejected_by === d.ceo_id ? '반려' : '대기');
         stampHtml += `<div class="expense-stamp-box">
             <div class="stamp-label">대표</div>
-            <div class="stamp-area ${cApproved ? 'approved' : ''}">${cApproved ? '승인' : (d.status === 'rejected' && d.rejected_by === d.ceo_id ? '반려' : '대기')}</div>
+            ${stampAreaHtml(d.ceo_id, cApproved, cText)}
             <div class="stamp-name">${d.ceo_name || ''}</div>
         </div>`;
         stampHtml += '</div>';
@@ -5805,13 +5869,23 @@ window.downloadExpensePDF = async function(id) {
         const d = await api(`/api/expense-reports/${id}`);
         const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
 
-        // 결재란 데이터
+        // 결재란 데이터 + 도장 이미지 조회
         const stamps = [];
-        stamps.push({ label: '신청자', name: d.applicant_name, status: '신청' });
+        const sigIds = [d.applicant_id];
+        stamps.push({ label: '신청자', name: d.applicant_name, status: '신청', userId: d.applicant_id });
         if (d.manager_id) {
-            stamps.push({ label: '부장', name: d.manager_name || '', status: d.manager_status === 'approved' ? '승인' : '' });
+            stamps.push({ label: '부장', name: d.manager_name || '', status: d.manager_status === 'approved' ? '승인' : '', userId: d.manager_id });
+            sigIds.push(d.manager_id);
         }
-        stamps.push({ label: '대표', name: d.ceo_name || '', status: d.ceo_status === 'approved' ? '승인' : '' });
+        stamps.push({ label: '대표', name: d.ceo_name || '', status: d.ceo_status === 'approved' ? '승인' : '', userId: d.ceo_id });
+        sigIds.push(d.ceo_id);
+
+        // 도장 이미지 병렬 조회
+        const sigResults = await Promise.all(
+            [...new Set(sigIds)].map(uid => api(`/api/users/${uid}/signature`).catch(() => ({ signatureImage: null })))
+        );
+        const sigMap = {};
+        [...new Set(sigIds)].forEach((uid, i) => { sigMap[uid] = sigResults[i].signatureImage; });
 
         // 항목 행 HTML
         const itemRows = items.map(i =>
@@ -5820,13 +5894,22 @@ window.downloadExpensePDF = async function(id) {
             `<td style="padding:8px 12px;border:1px solid #000;text-align:left;">${i.note || ''}</td></tr>`
         ).join('');
 
-        // 결재란 HTML
-        const stampHtml = stamps.map(s =>
-            `<td style="width:90px;border:1px solid #000;padding:0;text-align:center;vertical-align:top;">` +
-            `<div style="background:#f3f4f6;padding:4px;font-size:12px;font-weight:bold;border-bottom:1px solid #000;">${s.label}</div>` +
-            `<div style="height:50px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:bold;color:${s.status ? '#dc2626' : '#ccc'};">${s.status || ''}</div>` +
-            `<div style="padding:4px;font-size:12px;border-top:1px solid #000;background:#f9fafb;">${s.name}</div></td>`
-        ).join('');
+        // 결재란 HTML (도장 이미지 있으면 이미지, 없으면 텍스트)
+        const stampHtml = stamps.map(s => {
+            const sig = sigMap[s.userId];
+            let stampContent;
+            if (s.status && sig) {
+                stampContent = `<img src="${sig}" style="width:50px;height:50px;object-fit:contain;" alt="도장">`;
+            } else if (s.status) {
+                stampContent = `<span style="font-size:16px;font-weight:bold;color:#dc2626;">${s.status}</span>`;
+            } else {
+                stampContent = '';
+            }
+            return `<td style="width:90px;border:1px solid #000;padding:0;text-align:center;vertical-align:top;">` +
+                `<div style="background:#f3f4f6;padding:4px;font-size:12px;font-weight:bold;border-bottom:1px solid #000;">${s.label}</div>` +
+                `<div style="height:55px;display:flex;align-items:center;justify-content:center;">${stampContent}</div>` +
+                `<div style="padding:4px;font-size:12px;border-top:1px solid #000;background:#f9fafb;">${s.name}</div></td>`;
+        }).join('');
 
         // 숨겨진 HTML 요소 생성
         const container = document.createElement('div');

@@ -1524,6 +1524,24 @@
                 </div>
 
                 <div class="card">
+                    <h2>결재 도장/사인</h2>
+                    <div style="max-width:400px;">
+                        <div id="signature-preview-area" style="margin-bottom:12px;">
+                            <div id="signature-preview-empty" style="padding:20px;text-align:center;color:#9ca3af;background:#f9fafb;border:2px dashed #e2e8f0;border-radius:8px;">등록된 도장이 없습니다</div>
+                            <img id="signature-preview-img" src="" alt="결재 도장" style="display:none;max-width:120px;max-height:120px;border:1px solid #e2e8f0;border-radius:8px;padding:8px;background:#fff;">
+                        </div>
+                        <div style="display:flex;gap:8px;margin-bottom:8px;">
+                            <label class="btn-primary" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                                이미지 업로드
+                                <input type="file" id="signature-file-input" accept="image/png,image/jpeg,image/jpg" style="display:none;">
+                            </label>
+                            <button class="btn-danger" id="signature-delete-btn" style="display:none;padding:8px 16px;">삭제</button>
+                        </div>
+                        <p style="font-size:12px;color:#9ca3af;margin:0;">* 투명 배경 PNG 권장, 정사각형 이미지 권장 (예: 200×200px), 최대 2MB</p>
+                    </div>
+                </div>
+
+                <div class="card">
                     <h2>비밀번호 변경</h2>
                     <form id="form-change-password" style="max-width:400px;">
                         <div class="form-group">
@@ -1550,6 +1568,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=104"></script>
+    <script src="app.js?v=105"></script>
 </body>
 </html>
