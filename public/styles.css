@@ -804,25 +804,28 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1.6;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
     padding: 1px 0;
 }
 
 .pay-label {
-    font-weight: 600;
+    font-weight: 700;
     margin-right: 4px;
     flex-shrink: 0;
+    font-size: 14px;
 }
 
 .pay-amount {
     text-align: right;
+    font-size: 14px;
+    font-weight: 600;
 }
 
-.day-payment-item.daesung { color: var(--accent-blue); }
-.day-payment-item.hyodon { color: var(--success); }
-.day-payment-item.cj { color: #f59e0b; }
+.day-payment-item.daesung { color: #1565C0; }
+.day-payment-item.hyodon { color: #2E7D32; }
+.day-payment-item.cj { color: #E65100; }
 
 .day-payment-item.paid, .day-total.paid {
     opacity: 0.4;
@@ -914,18 +917,18 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: 15px;
     font-weight: 700;
-    color: var(--text-dark);
+    color: #000000;
     border-top: 1px solid #e2e8f0;
     margin-top: 3px;
     padding-top: 3px;
 }
 
 .day-prepay-item {
-    font-size: 11px;
-    color: #7c3aed;
-    font-weight: 600;
+    font-size: 12px;
+    color: #6d28d9;
+    font-weight: 700;
     background: #f5f3ff;
     border-radius: 4px;
     padding: 2px 4px;

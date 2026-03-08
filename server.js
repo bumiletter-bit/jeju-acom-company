@@ -76,6 +76,16 @@ async function initDB() {
     // 정산 결제완료 상태 컬럼 추가
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS is_paid BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`);
+    // CJ택배 일별 결제완료 상태
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS cj_daily_payments (
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL UNIQUE,
+            amount INTEGER DEFAULT 0,
+            is_paid BOOLEAN DEFAULT false,
+            paid_at TIMESTAMP
+        )
+    `);
     await pool.query(`
         CREATE TABLE IF NOT EXISTS pricing (
             id SERIAL PRIMARY KEY,
@@ -1695,6 +1705,48 @@ app.put('/api/settlements/:id/toggle-paid', authMiddleware, adminOnly, async (re
         if (result.rows.length === 0) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
         const row = result.rows[0];
         res.json({ id: row.id, isPaid: row.is_paid, paidAt: row.paid_at });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// CJ택배 일별 결제완료 API
+app.get('/api/cj-daily-payments', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { month } = req.query;
+        let result;
+        if (month) {
+            result = await pool.query(
+                "SELECT * FROM cj_daily_payments WHERE TO_CHAR(date, 'YYYY-MM') = $1 ORDER BY date",
+                [month]
+            );
+        } else {
+            result = await pool.query('SELECT * FROM cj_daily_payments ORDER BY date');
+        }
+        res.json(result.rows.map(r => ({
+            id: r.id, date: r.date, amount: Number(r.amount), isPaid: r.is_paid || false, paidAt: r.paid_at
+        })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/cj-daily-payments/toggle-paid', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { date, amount } = req.body;
+        if (!date) return res.status(400).json({ error: '날짜를 지정해주세요' });
+        // UPSERT: 없으면 생성, 있으면 토글
+        const existing = await pool.query('SELECT * FROM cj_daily_payments WHERE date = $1', [date]);
+        let result;
+        if (existing.rows.length === 0) {
+            result = await pool.query(
+                'INSERT INTO cj_daily_payments (date, amount, is_paid, paid_at) VALUES ($1, $2, true, NOW()) RETURNING *',
+                [date, amount || 0]
+            );
+        } else {
+            result = await pool.query(
+                'UPDATE cj_daily_payments SET is_paid = NOT is_paid, paid_at = CASE WHEN is_paid = false THEN NOW() ELSE NULL END, amount = $2 WHERE date = $1 RETURNING *',
+                [date, amount || existing.rows[0].amount]
+            );
+        }
+        const r = result.rows[0];
+        res.json({ id: r.id, date: r.date, amount: Number(r.amount), isPaid: r.is_paid, paidAt: r.paid_at });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -741,11 +741,15 @@ async function renderSettlementCalendar() {
     document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배`;
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
-    const [settlements, prepayments, cjCarryoverData] = await Promise.all([
+    const [settlements, prepayments, cjCarryoverData, cjDailyPayments] = await Promise.all([
         api(`/api/settlements?month=${monthStr}`),
         api('/api/prepayments'),
-        api(`/api/cj-carryover?month=${monthStr}`).catch(() => ({ amount: 0, note: '' }))
+        api(`/api/cj-carryover?month=${monthStr}`).catch(() => ({ amount: 0, note: '' })),
+        api(`/api/cj-daily-payments?month=${monthStr}`).catch(() => [])
     ]);
+    // CJ 일별 결제완료 맵
+    const cjPaidMap = {};
+    cjDailyPayments.forEach(c => { cjPaidMap[c.date] = c.isPaid || false; });
     const cjCarryover = cjCarryoverData.amount || 0;
     const cjCarryoverStart = cjCarryoverData.start_date || '';
     const cjCarryoverEnd = cjCarryoverData.end_date || '';
@@ -777,13 +781,24 @@ async function renderSettlementCalendar() {
         }
 
         // CJ택배비 자동 계산: 대성/효돈 정산의 items 수량 합계 × 3,100원
+        // CJ 결제완료는 대성/효돈과 독립적으로 cjPaidMap에서 관리
         if (s.partner === '대성(시온)' || s.partner === '효돈농협') {
             const items = s.items || [];
             const boxCount = items.reduce((sum, item) => sum + (item.qty || 0), 0);
             const cjCost = boxCount * 3100;
             dailyPayments[s.date].cj += cjCost;
-            if (isPaid) dailyPayments[s.date].cjPaid += cjCost;
-            else cjPayment += cjCost;
+        }
+    });
+
+    // CJ 결제완료 상태 독립 적용
+    Object.keys(dailyPayments).forEach(date => {
+        const dp = dailyPayments[date];
+        const cjIsPaid = cjPaidMap[date] || false;
+        if (cjIsPaid) {
+            dp.cjPaid = dp.cj;
+        }
+        if (!cjIsPaid) {
+            cjPayment += dp.cj;
         }
     });
 
@@ -962,15 +977,17 @@ window.showSettlementDayModal = function(dateStr) {
         });
     });
 
-    // CJ 택배비 (자동계산 - 정보 표시만)
+    // CJ 택배비 (독립 결제완료 토글)
     if (dp.cj > 0) {
         total += dp.cj;
-        const allCjPaid = dp.cjPaid === dp.cj;
-        const paidClass = allCjPaid ? 'settlement-day-entry paid' : 'settlement-day-entry';
+        const cjIsPaid = dp.cjPaid === dp.cj && dp.cj > 0;
+        const paidClass = cjIsPaid ? 'settlement-day-entry paid' : 'settlement-day-entry';
+        const btnText = cjIsPaid ? '✅ 완료' : '☐ 결제완료';
+        const btnClass = cjIsPaid ? 'btn-paid active' : 'btn-paid';
         entriesHtml += `<div class="${paidClass}">
             <span class="entry-partner">CJ택배</span>
             <span class="entry-amount">${dp.cj.toLocaleString()}원</span>
-            <span class="entry-note">(자동계산)</span>
+            <button class="${btnClass}" onclick="toggleCjDailyPaid('${dateStr}', ${dp.cj})">${btnText}</button>
         </div>`;
     }
 
@@ -1005,6 +1022,18 @@ window.toggleSettlementPaid = async function(id) {
         await renderWeeklySettlement();
     } catch (err) {
         alert('결제완료 처리 실패: ' + err.message);
+    }
+};
+
+window.toggleCjDailyPaid = async function(date, amount) {
+    try {
+        await api('/api/cj-daily-payments/toggle-paid', 'POST', { date, amount });
+        const modal = document.getElementById('settlement-day-modal');
+        if (modal) modal.remove();
+        await renderSettlementCalendar();
+        await renderWeeklySettlement();
+    } catch (err) {
+        alert('CJ 결제완료 처리 실패: ' + err.message);
     }
 };
 
@@ -4447,13 +4476,20 @@ async function renderWeeklySettlement() {
         const prevMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
         const nextMonthStr = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
 
-        const [settCurr, settPrev, settNext, prepayments] = await Promise.all([
+        const [settCurr, settPrev, settNext, prepayments, cjDailyAll] = await Promise.all([
             api(`/api/settlements?month=${monthStr}`),
             api(`/api/settlements?month=${prevMonthStr}`),
             api(`/api/settlements?month=${nextMonthStr}`),
-            api('/api/prepayments')
+            api('/api/prepayments'),
+            Promise.all([
+                api(`/api/cj-daily-payments?month=${monthStr}`).catch(() => []),
+                api(`/api/cj-daily-payments?month=${prevMonthStr}`).catch(() => []),
+                api(`/api/cj-daily-payments?month=${nextMonthStr}`).catch(() => [])
+            ]).then(arr => [...arr[0], ...arr[1], ...arr[2]])
         ]);
         const settlements = [...settPrev, ...settCurr, ...settNext];
+        const weeklyCjPaidMap = {};
+        cjDailyAll.forEach(c => { weeklyCjPaidMap[c.date] = c.isPaid || false; });
 
         const weeks = getWeeksInMonth(settlementCalYear, settlementCalMonth);
 
@@ -4466,19 +4502,32 @@ async function renderWeeklySettlement() {
         weeks.forEach((week, idx) => {
             let daesungTotal = 0, hyodonTotal = 0, cjTotal = 0;
 
+            // CJ 일별 금액을 날짜별로 모아서 결제완료 여부 확인
+            const cjByDate = {};
+
             settlements.forEach(s => {
-                if (s.isPaid) return; // 결제완료된 항목 제외
                 if (s.date >= week.start && s.date <= week.end) {
                     if (s.partner === '대성(시온)') {
-                        daesungTotal += (s.amount || 0);
+                        if (!s.isPaid) daesungTotal += (s.amount || 0);
                         const items = s.items || [];
-                        cjTotal += items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
+                        const cjCost = items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
+                        if (!cjByDate[s.date]) cjByDate[s.date] = 0;
+                        cjByDate[s.date] += cjCost;
                     }
                     if (s.partner === '효돈농협') {
-                        hyodonTotal += (s.amount || 0);
+                        if (!s.isPaid) hyodonTotal += (s.amount || 0);
                         const items = s.items || [];
-                        cjTotal += items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
+                        const cjCost = items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
+                        if (!cjByDate[s.date]) cjByDate[s.date] = 0;
+                        cjByDate[s.date] += cjCost;
                     }
+                }
+            });
+
+            // CJ: 결제완료 안 된 날짜 금액만 합산
+            Object.keys(cjByDate).forEach(date => {
+                if (!weeklyCjPaidMap[date]) {
+                    cjTotal += cjByDate[date];
                 }
             });
 
