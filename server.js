@@ -2287,12 +2287,51 @@ app.delete('/api/settlement-completions/:id', authMiddleware, adminOnly, async (
 
 // === Pricing API (인증 추가) ===
 
+// 날짜를 YYYY-MM-DD로 안전하게 변환 (timezone 영향 없이)
+function normDateSafe(d) {
+    if (!d) return null;
+    if (typeof d === 'string') return d.slice(0, 10);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 app.get('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM pricing ORDER BY start_date DESC, id DESC');
-        const normDate = (d) => d ? new Date(d).toISOString().slice(0, 10) : null;
         const data = result.rows.map(row => ({
-            id: row.id, startDate: normDate(row.start_date), endDate: normDate(row.end_date),
+            id: row.id, startDate: normDateSafe(row.start_date), endDate: normDateSafe(row.end_date),
+            partner: row.partner, items: row.items
+        }));
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 특정 날짜에 해당하는 품목별 금액 조회 (SQL에서 직접 필터링)
+app.get('/api/pricing/for-date', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { partner, date } = req.query;
+        if (!partner || !date) return res.status(400).json({ error: 'partner와 date 파라미터가 필요합니다' });
+
+        // 1차: 정산 날짜가 기간에 포함되는 pricing
+        let result = await pool.query(
+            'SELECT * FROM pricing WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date ORDER BY id ASC',
+            [partner, date]
+        );
+
+        // 2차(fallback): 해당 날짜에 맞는 기간이 없으면 가장 최근 이전 기간
+        if (result.rows.length === 0) {
+            result = await pool.query(
+                'SELECT * FROM pricing WHERE partner = $1 AND end_date < $2::date ORDER BY end_date DESC LIMIT 1',
+                [partner, date]
+            );
+        }
+
+        const data = result.rows.map(row => ({
+            id: row.id, startDate: normDateSafe(row.start_date), endDate: normDateSafe(row.end_date),
             partner: row.partner, items: row.items
         }));
         res.json(data);
@@ -2310,9 +2349,8 @@ app.post('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
         );
         const row = result.rows[0];
 
-        const normDate2 = (d) => d ? new Date(d).toISOString().slice(0, 10) : null;
         res.json({
-            id: row.id, startDate: normDate2(row.start_date), endDate: normDate2(row.end_date),
+            id: row.id, startDate: normDateSafe(row.start_date), endDate: normDateSafe(row.end_date),
             partner: row.partner, items: row.items
         });
     } catch (err) {

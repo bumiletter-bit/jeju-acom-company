@@ -1464,24 +1464,22 @@ function matchSalesToPricing(salesName, pricingItems) {
 }
 
 async function getPricingForDate(partner, dateStr) {
-    const pricingData = await api('/api/pricing');
-    // 날짜를 YYYY-MM-DD 형식으로 정규화 (ISO 문자열 "2026-03-09T00:00:00.000Z" → "2026-03-09")
-    const normDate = (d) => String(d || '').slice(0, 10);
-    let applicable = pricingData.filter(p => p.partner === partner && normDate(p.startDate) <= dateStr && normDate(p.endDate) >= dateStr);
+    // 서버에서 SQL로 직접 날짜 기간 필터링 (timezone 문제 방지)
+    const applicable = await api(`/api/pricing/for-date?partner=${encodeURIComponent(partner)}&date=${dateStr}`);
 
-    // 가격 동결: 해당 주간 가격이 없으면 가장 최근 가격 사용
-    if (applicable.length === 0) {
-        const past = pricingData
-            .filter(p => p.partner === partner && normDate(p.endDate) < dateStr)
-            .sort((a, b) => normDate(b.endDate).localeCompare(normDate(a.endDate)));
-        if (past.length > 0) applicable = [past[0]];
+    if (applicable.length > 0) {
+        console.log(`[정산 매칭] 정산날짜: ${dateStr}, 매칭된 pricing 기간: ${applicable[0].startDate} ~ ${applicable[0].endDate}, 품목 수: ${applicable.reduce((sum, p) => sum + (p.items || []).length, 0)}`);
+    } else {
+        console.log(`[정산 매칭] 정산날짜: ${dateStr}, 거래처: ${partner} - 매칭되는 pricing 없음`);
     }
 
     if (applicable.length === 0) return [];
     const itemMap = {};
     applicable.sort((a, b) => a.id - b.id);
     applicable.forEach(p => { (p.items || []).forEach(item => { itemMap[item.name] = item.price; }); });
-    return Object.entries(itemMap).map(([name, price]) => ({ name, price }));
+    const result = Object.entries(itemMap).map(([name, price]) => ({ name, price }));
+    console.log(`[정산 매칭] 사용 가능한 품목:`, result.map(r => r.name).join(', '));
+    return result;
 }
 
 function showSettlementRows() {
