@@ -5557,18 +5557,52 @@ function renderExpenseApprovalLine() {
 }
 
 // 지출 항목 추가/삭제
+const EXPENSE_CATEGORIES = [
+    { name: '거래처 정산', detail: '거래선 정산대금 (대성, 효돈, 택배비 등)' },
+    { name: '복리후생비', detail: '직원 식대, 간식, 음료, 경조사비, 야근 식비' },
+    { name: '업무차 교통비', detail: '출장비, 택시비, 주차비, 톨비, 항공/기차비, 숙박비' },
+    { name: '업무차 접대비', detail: '거래처 식사, 선물, 경조사(외부)' },
+    { name: '소모품비', detail: '사무용품, 프린터 잉크/토너, 문구류, 청소용품' },
+    { name: '공과금', detail: '임대료, 관리비, 전화요금, 인터넷, 우편, 전기세 등' },
+    { name: '광고선전비', detail: '온라인 광고, 인쇄물, 촬영비, 홍보물 제작, 플랫폼 이용료' },
+    { name: '수선유지비', detail: '사무실 수리, 장비 수리, 시설 보수' },
+    { name: '차량유지비', detail: '사무차량 유류비, 차량 수리, 보험료' },
+    { name: '교육훈련비', detail: '직원 교육, 세미나, 자격증, 도서 구입' },
+    { name: '기타', detail: '' }
+];
+
 document.getElementById('expense-add-item').addEventListener('click', () => addExpenseItem());
 
 function addExpenseItem() {
     const container = document.getElementById('expense-items');
     const row = document.createElement('div');
     row.className = 'expense-item-row';
+    const options = EXPENSE_CATEGORIES.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
     row.innerHTML = `
-        <input type="text" placeholder="항목명" class="expense-item-name">
+        <select class="expense-item-category"><option value="">선택</option>${options}</select>
+        <div class="expense-item-detail">카테고리를 선택하세요</div>
         <input type="number" placeholder="금액" class="expense-item-amount" min="0">
         <input type="text" placeholder="비고" class="expense-item-note">
         <button type="button" class="expense-item-remove" onclick="this.closest('.expense-item-row').remove(); updateExpenseTotal();">×</button>
     `;
+    const sel = row.querySelector('.expense-item-category');
+    const detailEl = row.querySelector('.expense-item-detail');
+    sel.addEventListener('change', () => {
+        const cat = EXPENSE_CATEGORIES.find(c => c.name === sel.value);
+        if (!cat) { detailEl.innerHTML = '카테고리를 선택하세요'; detailEl.contentEditable = 'false'; return; }
+        if (cat.name === '기타') {
+            detailEl.innerHTML = '';
+            detailEl.contentEditable = 'true';
+            detailEl.style.color = '#333';
+            detailEl.style.background = '#fff';
+            detailEl.focus();
+        } else {
+            detailEl.textContent = cat.detail;
+            detailEl.contentEditable = 'false';
+            detailEl.style.color = '#9ca3af';
+            detailEl.style.background = '#f9fafb';
+        }
+    });
     row.querySelector('.expense-item-amount').addEventListener('input', updateExpenseTotal);
     container.appendChild(row);
 }
@@ -5589,10 +5623,11 @@ document.getElementById('expense-submit').addEventListener('click', async () => 
 
     const items = [];
     document.querySelectorAll('.expense-item-row').forEach(row => {
-        const item = row.querySelector('.expense-item-name').value.trim();
+        const category = row.querySelector('.expense-item-category').value;
+        const detail = row.querySelector('.expense-item-detail').textContent.trim();
         const amount = Number(row.querySelector('.expense-item-amount').value) || 0;
         const note = row.querySelector('.expense-item-note').value.trim();
-        if (item && amount > 0) items.push({ item, amount, note });
+        if (category && amount > 0) items.push({ category, detail, amount, note });
     });
     if (items.length === 0) { alert('지출 항목을 하나 이상 추가해주세요.'); return; }
 
@@ -5765,7 +5800,11 @@ window.viewExpenseDetail = async function(id) {
         stampHtml += '</div>';
 
         // 항목 테이블
-        const itemRows = items.map(i => `<tr><td>${i.item}</td><td style="text-align:right">${Number(i.amount).toLocaleString()} 원</td><td>${i.note || ''}</td></tr>`).join('');
+        const itemRows = items.map(i => {
+            const name = i.category || i.item || '';
+            const detail = i.detail ? `<div style="font-size:12px;color:#6b7280;">${i.detail}</div>` : '';
+            return `<tr><td>${name}${detail}</td><td style="text-align:right">${Number(i.amount).toLocaleString()} 원</td><td>${i.note || ''}</td></tr>`;
+        }).join('');
 
         // 반려 사유
         const rejectHtml = d.status === 'rejected' ? `<div style="margin-top:12px;padding:12px;background:#fee2e2;border-radius:8px;"><strong>반려 사유:</strong> ${d.reject_reason || '(사유 없음)'}<br><small>반려자: ${d.rejected_by_name || ''}</small></div>` : '';
@@ -5860,11 +5899,13 @@ window.downloadExpensePDF = async function(id) {
         [...new Set(sigIds)].forEach((uid, i) => { sigMap[uid] = sigResults[i].signatureImage; });
 
         // 항목 행 HTML
-        const itemRows = items.map(i =>
-            `<tr><td style="padding:8px 12px;border:1px solid #000;text-align:left;">${i.item}</td>` +
-            `<td style="padding:8px 12px;border:1px solid #000;text-align:right;">${Number(i.amount).toLocaleString()}</td>` +
-            `<td style="padding:8px 12px;border:1px solid #000;text-align:left;">${i.note || ''}</td></tr>`
-        ).join('');
+        const itemRows = items.map(i => {
+            const name = i.category || i.item || '';
+            const detail = i.detail ? `<div style="font-size:11px;color:#6b7280;">${i.detail}</div>` : '';
+            return `<tr><td style="padding:8px 12px;border:1px solid #000;text-align:left;">${name}${detail}</td>` +
+                `<td style="padding:8px 12px;border:1px solid #000;text-align:right;">${Number(i.amount).toLocaleString()}</td>` +
+                `<td style="padding:8px 12px;border:1px solid #000;text-align:left;">${i.note || ''}</td></tr>`;
+        }).join('');
 
         // 결재란 HTML (도장 이미지 있으면 이미지, 없으면 텍스트)
         const stampHtml = stamps.map(s => {
