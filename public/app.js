@@ -1181,7 +1181,8 @@ window.toggleCjDailyPaid = async function(date, amount) {
 // =============================================
 let selectedSettlementPartner = null;
 
-document.getElementById('settlement-date').valueAsDate = new Date();
+// 오늘 날짜를 로컬 기준으로 설정 (UTC 차이 방지)
+document.getElementById('settlement-date').value = new Date().toLocaleDateString('en-CA');
 
 const now = new Date();
 document.getElementById('settlement-month-filter').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
