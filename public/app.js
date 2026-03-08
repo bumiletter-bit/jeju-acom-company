@@ -5689,164 +5689,77 @@ window.downloadExpensePDF = async function(id) {
     try {
         const d = await api(`/api/expense-reports/${id}`);
         const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF('p', 'mm', 'a4');
-        const pageW = 210;
-        let y = 20;
 
-        // 한글 폰트 대신 기본 폰트 사용 + 유니코드 지원을 위해 간단한 방식 사용
-        // jsPDF 기본 폰트는 한글 미지원이므로 HTML 캔버스 방식 사용
-        const canvas = document.createElement('canvas');
-        canvas.width = 794; // A4 width at 96dpi
-        canvas.height = 1123; // A4 height at 96dpi
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        const scale = 2;
-        canvas.width *= scale;
-        canvas.height *= scale;
-        ctx.scale(scale, scale);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, 794, 1123);
-
-        // 테두리
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(40, 30, 714, 1060);
-
-        // 제목
-        ctx.fillStyle = '#000';
-        ctx.font = 'bold 28px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('지 출 결 의 서', 397, 80);
-
-        // 결재란
-        const stampStartX = 460;
-        const stampY = 100;
-        const stampW = 80;
-        const stampH = 90;
-
-        const stampData = [];
-        stampData.push({ label: '신청자', name: d.applicant_name, status: '신청' });
+        // 결재란 데이터
+        const stamps = [];
+        stamps.push({ label: '신청자', name: d.applicant_name, status: '신청' });
         if (d.manager_id) {
-            stampData.push({ label: '부장', name: d.manager_name || '', status: d.manager_status === 'approved' ? '승인' : '' });
+            stamps.push({ label: '부장', name: d.manager_name || '', status: d.manager_status === 'approved' ? '승인' : '' });
         }
-        stampData.push({ label: '대표', name: d.ceo_name || '', status: d.ceo_status === 'approved' ? '승인' : '' });
+        stamps.push({ label: '대표', name: d.ceo_name || '', status: d.ceo_status === 'approved' ? '승인' : '' });
 
-        stampData.forEach((s, i) => {
-            const sx = stampStartX + i * (stampW + 5);
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(sx, stampY, stampW, stampH);
-            // 라벨
-            ctx.fillStyle = '#f3f4f6';
-            ctx.fillRect(sx + 1, stampY + 1, stampW - 2, 20);
-            ctx.fillStyle = '#000';
-            ctx.font = '11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(s.label, sx + stampW / 2, stampY + 14);
-            // 구분선
-            ctx.beginPath(); ctx.moveTo(sx, stampY + 21); ctx.lineTo(sx + stampW, stampY + 21); ctx.stroke();
-            // 승인 도장
-            if (s.status) {
-                ctx.fillStyle = '#dc2626';
-                ctx.font = 'bold 16px sans-serif';
-                ctx.fillText(s.status, sx + stampW / 2, stampY + 52);
-            }
-            // 이름 구분선
-            ctx.beginPath(); ctx.moveTo(sx, stampY + 65); ctx.lineTo(sx + stampW, stampY + 65); ctx.stroke();
-            ctx.fillStyle = '#000';
-            ctx.font = '12px sans-serif';
-            ctx.fillText(s.name, sx + stampW / 2, stampY + 82);
-        });
+        // 항목 행 HTML
+        const itemRows = items.map(i =>
+            `<tr><td style="padding:8px 12px;border:1px solid #000;text-align:left;">${i.item}</td>` +
+            `<td style="padding:8px 12px;border:1px solid #000;text-align:right;">${Number(i.amount).toLocaleString()}</td>` +
+            `<td style="padding:8px 12px;border:1px solid #000;text-align:left;">${i.note || ''}</td></tr>`
+        ).join('');
 
-        // 정보
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#000';
-        let infoY = 220;
-        ctx.font = 'bold 14px sans-serif';
-        ctx.fillText('제목:', 60, infoY);
-        ctx.font = '14px sans-serif';
-        ctx.fillText(d.title, 120, infoY);
-        infoY += 28;
-        ctx.font = 'bold 14px sans-serif';
-        ctx.fillText('작성일:', 60, infoY);
-        ctx.font = '14px sans-serif';
-        ctx.fillText(new Date(d.created_at).toLocaleDateString(), 120, infoY);
-        infoY += 28;
-        ctx.font = 'bold 14px sans-serif';
-        ctx.fillText('지출목적:', 60, infoY);
-        ctx.font = '14px sans-serif';
-        ctx.fillText(d.purpose || '-', 140, infoY);
-        infoY += 40;
+        // 결재란 HTML
+        const stampHtml = stamps.map(s =>
+            `<td style="width:90px;border:1px solid #000;padding:0;text-align:center;vertical-align:top;">` +
+            `<div style="background:#f3f4f6;padding:4px;font-size:12px;font-weight:bold;border-bottom:1px solid #000;">${s.label}</div>` +
+            `<div style="height:50px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:bold;color:${s.status ? '#dc2626' : '#ccc'};">${s.status || ''}</div>` +
+            `<div style="padding:4px;font-size:12px;border-top:1px solid #000;background:#f9fafb;">${s.name}</div></td>`
+        ).join('');
 
-        // 테이블
-        const tableX = 60;
-        const colWidths = [250, 200, 180];
-        const headers = ['항목', '금액(원)', '비고'];
+        // 숨겨진 HTML 요소 생성
+        const container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;padding:40px;box-sizing:border-box;font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo",sans-serif;';
+        container.innerHTML = `
+            <div style="border:2px solid #000;padding:30px;min-height:1050px;position:relative;">
+                <h1 style="text-align:center;font-size:26px;letter-spacing:12px;margin:0 0 20px 0;">지출결의서</h1>
+                <table style="border-collapse:collapse;margin-left:auto;margin-bottom:24px;">
+                    <tr>${stampHtml}</tr>
+                </table>
+                <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                    <tr><td style="padding:8px 0;font-weight:bold;width:80px;">제목</td><td style="padding:8px 0;">${d.title}</td></tr>
+                    <tr><td style="padding:8px 0;font-weight:bold;">작성일</td><td style="padding:8px 0;">${new Date(d.created_at).toLocaleDateString()}</td></tr>
+                    <tr><td style="padding:8px 0;font-weight:bold;">지출목적</td><td style="padding:8px 0;">${d.purpose || '-'}</td></tr>
+                </table>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#f3f4f6;">
+                            <th style="padding:8px 12px;border:1px solid #000;text-align:center;width:40%;">항목</th>
+                            <th style="padding:8px 12px;border:1px solid #000;text-align:center;width:30%;">금액(원)</th>
+                            <th style="padding:8px 12px;border:1px solid #000;text-align:center;width:30%;">비고</th>
+                        </tr>
+                    </thead>
+                    <tbody>${itemRows}</tbody>
+                    <tfoot>
+                        <tr style="background:#f9fafb;">
+                            <td style="padding:8px 12px;border:1px solid #000;text-align:center;font-weight:bold;">합계</td>
+                            <td style="padding:8px 12px;border:1px solid #000;text-align:right;font-weight:bold;">${Number(d.total_amount).toLocaleString()} 원</td>
+                            <td style="padding:8px 12px;border:1px solid #000;"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+                <div style="position:absolute;bottom:20px;left:0;right:0;text-align:center;color:#6b7280;font-size:14px;">제주아꼼이네 농업회사법인(주)</div>
+            </div>
+        `;
+        document.body.appendChild(container);
 
-        // 헤더
-        ctx.fillStyle = '#f3f4f6';
-        ctx.fillRect(tableX, infoY, colWidths[0] + colWidths[1] + colWidths[2], 30);
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(tableX, infoY, colWidths[0] + colWidths[1] + colWidths[2], 30);
+        // html2canvas로 렌더링
+        const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        document.body.removeChild(container);
 
-        ctx.fillStyle = '#000';
-        ctx.font = 'bold 13px sans-serif';
-        let cx = tableX;
-        headers.forEach((h, i) => {
-            ctx.strokeRect(cx, infoY, colWidths[i], 30);
-            ctx.textAlign = 'center';
-            ctx.fillText(h, cx + colWidths[i] / 2, infoY + 20);
-            cx += colWidths[i];
-        });
-        infoY += 30;
-
-        // 행
-        ctx.font = '13px sans-serif';
-        items.forEach(item => {
-            cx = tableX;
-            ctx.strokeRect(cx, infoY, colWidths[0], 28);
-            ctx.textAlign = 'left';
-            ctx.fillText(item.item, cx + 10, infoY + 19);
-            cx += colWidths[0];
-            ctx.strokeRect(cx, infoY, colWidths[1], 28);
-            ctx.textAlign = 'right';
-            ctx.fillText(Number(item.amount).toLocaleString(), cx + colWidths[1] - 10, infoY + 19);
-            cx += colWidths[1];
-            ctx.strokeRect(cx, infoY, colWidths[2], 28);
-            ctx.textAlign = 'left';
-            ctx.fillText(item.note || '', cx + 10, infoY + 19);
-            infoY += 28;
-        });
-
-        // 합계
-        ctx.fillStyle = '#f9fafb';
-        cx = tableX;
-        ctx.fillRect(cx, infoY, colWidths[0] + colWidths[1] + colWidths[2], 30);
-        ctx.fillStyle = '#000';
-        ctx.font = 'bold 14px sans-serif';
-        ctx.strokeRect(cx, infoY, colWidths[0], 30);
-        ctx.textAlign = 'center';
-        ctx.fillText('합계', cx + colWidths[0] / 2, infoY + 20);
-        cx += colWidths[0];
-        ctx.strokeRect(cx, infoY, colWidths[1], 30);
-        ctx.textAlign = 'right';
-        ctx.fillText(Number(d.total_amount).toLocaleString() + ' 원', cx + colWidths[1] - 10, infoY + 20);
-        cx += colWidths[1];
-        ctx.strokeRect(cx, infoY, colWidths[2], 30);
-
-        // 하단 회사명
-        ctx.textAlign = 'center';
-        ctx.font = '14px sans-serif';
-        ctx.fillStyle = '#6b7280';
-        ctx.fillText('제주아꼼이네 농업회사법인(주)', 397, 1060);
-
-        // 캔버스를 이미지로 변환 후 PDF에 추가
+        // jsPDF로 PDF 생성
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('p', 'mm', 'a4');
         const imgData = canvas.toDataURL('image/png');
-        doc.addImage(imgData, 'PNG', 0, 0, 210, 297);
-        doc.save(`지출결의서_${d.title}_${new Date(d.created_at).toLocaleDateString()}.pdf`);
+        const pdfW = 210;
+        const pdfH = (canvas.height * pdfW) / canvas.width;
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+        pdf.save(`지출결의서_${d.title}.pdf`);
     } catch (err) { alert('PDF 다운로드 실패: ' + err.message); }
 };
