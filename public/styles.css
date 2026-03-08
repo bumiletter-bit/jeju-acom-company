@@ -3554,6 +3554,12 @@ textarea.form-input {
     color: var(--text-dark);
 }
 
+.expense-approval-step .step-position {
+    font-size: 11px;
+    color: #9ca3af;
+    margin-top: 2px;
+}
+
 .expense-approval-arrow {
     font-size: 18px;
     color: #9ca3af;

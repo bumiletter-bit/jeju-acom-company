@@ -1892,7 +1892,7 @@ function resetDocForm() {
     document.getElementById('doc-start-date').value = '';
     document.getElementById('doc-end-date').value = '';
     document.getElementById('doc-reason').value = '';
-    document.getElementById('doc-approver').value = '';
+    // 결재라인은 자동 표시이므로 초기화 불필요
     const startTime = document.getElementById('doc-start-time');
     const endTime = document.getElementById('doc-end-time');
     if (startTime) startTime.value = '';
@@ -1996,13 +1996,30 @@ window.calcTimeLeave = calcTimeLeave;
     });
 });
 
-// 결재자 목록 로드
+// 결재자 목록 로드 → 결재라인 카드 UI 표시
 async function loadApprovers() {
     try {
         approverList = await api('/api/users/approvers');
-        const select = document.getElementById('doc-approver');
-        select.innerHTML = '<option value="">결재자를 선택하세요</option>' +
-            approverList.map(a => `<option value="${a.id}">${a.position ? a.position + ' ' : ''}${a.name}</option>`).join('');
+        const container = document.getElementById('doc-approval-line');
+        if (!container) return;
+
+        // 신청자(현재 로그인 사용자) + 결재자 카드
+        let html = `<div class="expense-approval-step">
+            <span class="step-label">신청자</span>
+            <span class="step-name">${currentUser.name}</span>
+            <span class="step-position">${currentUser.position || ''}</span>
+        </div>`;
+
+        if (approverList.length > 0) {
+            const approver = approverList[0];
+            html += `<span class="expense-approval-arrow">→</span>`;
+            html += `<div class="expense-approval-step">
+                <span class="step-label">결재</span>
+                <span class="step-name">${approver.name}</span>
+                <span class="step-position">${approver.position || ''}</span>
+            </div>`;
+        }
+        container.innerHTML = html;
     } catch (err) {
         console.error('loadApprovers error:', err);
     }
@@ -2010,13 +2027,13 @@ async function loadApprovers() {
 
 // 서류 제출
 document.getElementById('doc-submit').addEventListener('click', async () => {
-    const approverId = document.getElementById('doc-approver').value;
+    const approverId = approverList.length > 0 ? approverList[0].id : null;
     const startDate = document.getElementById('doc-start-date').value;
     const endDate = document.getElementById('doc-end-date').value;
     const reason = document.getElementById('doc-reason').value.trim();
 
     if (!startDate) return alert('날짜를 선택해주세요.');
-    if (!approverId) return alert('결재자를 선택해주세요.');
+    if (!approverId) return alert('결재자 정보를 불러올 수 없습니다. 페이지를 새로고침해주세요.');
 
     const isTime = (currentDocType === 'vacation' && selectedDocSubType === '시간차') ||
                    (currentDocType === 'attendance' && selectedDocSubType === '기타');
@@ -2244,7 +2261,7 @@ window.openEditDocument = async function(id) {
 
 async function showEditDocModal(doc) {
     const approvers = await api('/api/users/approvers');
-    const approverOptions = approvers.map(a => `<option value="${a.id}" ${a.id === doc.approverId ? 'selected' : ''}>${a.position ? a.position + ' ' : ''}${a.name}</option>`).join('');
+    const editApprover = approvers.length > 0 ? approvers[0] : null;
 
     const typeMap = {
         vacation: { label: '휴가종류', options: ['연차','시간차','병가'] },
@@ -2283,11 +2300,20 @@ async function showEditDocModal(doc) {
                 <textarea id="edit-doc-reason" class="form-input" rows="3">${doc.reason || ''}</textarea>
             </div>
             <div class="form-group">
-                <label>결재자</label>
-                <select id="edit-doc-approver" class="form-input">
-                    <option value="">결재자를 선택하세요</option>
-                    ${approverOptions}
-                </select>
+                <label>결재라인</label>
+                <div class="expense-approval-line" id="edit-doc-approval-line">
+                    <div class="expense-approval-step">
+                        <span class="step-label">신청자</span>
+                        <span class="step-name">${currentUser.name}</span>
+                        <span class="step-position">${currentUser.position || ''}</span>
+                    </div>
+                    ${editApprover ? `<span class="expense-approval-arrow">→</span>
+                    <div class="expense-approval-step">
+                        <span class="step-label">결재</span>
+                        <span class="step-name">${editApprover.name}</span>
+                        <span class="step-position">${editApprover.position || ''}</span>
+                    </div>` : ''}
+                </div>
             </div>
             <button class="btn-primary" style="width:100%;" onclick="submitEditDocument(${doc.id}, '${doc.type}')">${doc.status === 'rejected' ? '재제출' : '수정 저장'}</button>
         </div>
@@ -2326,10 +2352,11 @@ window.submitEditDocument = async function(id, type) {
     const startDate = document.getElementById('edit-doc-start').value;
     const endDate = document.getElementById('edit-doc-end').value || startDate;
     const reason = document.getElementById('edit-doc-reason').value;
-    const approverId = document.getElementById('edit-doc-approver').value;
+    const editApprovers = await api('/api/users/approvers');
+    const approverId = editApprovers.length > 0 ? editApprovers[0].id : null;
 
     if (!startDate) return alert('시작일을 입력하세요.');
-    if (!approverId) return alert('결재자를 선택하세요.');
+    if (!approverId) return alert('결재자 정보를 불러올 수 없습니다.');
 
     try {
         await api(`/api/documents/${id}`, 'PUT', { subType, startDate, endDate, reason, approverId: Number(approverId) });
