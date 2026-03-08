@@ -2027,6 +2027,20 @@ app.put('/api/settlements/:id/toggle-paid', authMiddleware, adminOnly, async (re
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 정산 항목 수정 API
+app.put('/api/settlements/:id/items', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { items, amount } = req.body;
+        const result = await pool.query(
+            'UPDATE settlements SET items = $1, amount = $2 WHERE id = $3 RETURNING *',
+            [JSON.stringify(items), amount, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
+        const row = result.rows[0];
+        res.json({ id: row.id, date: row.date, partner: row.partner, amount: row.amount, items: row.items, isPaid: row.is_paid });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // CJ택배 일별 결제완료 API
 app.get('/api/cj-daily-payments', authMiddleware, adminOnly, async (req, res) => {
     try {

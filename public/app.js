@@ -1654,23 +1654,99 @@ window.viewSettlementItems = function(id) {
     const item = settlementsCache.find(d => d.id === id);
     if (!item || !item.items || item.items.length === 0) return;
 
-    const rows = item.items.map(i => `<tr><td>${i.name}</td><td style="text-align:right">${(i.price || 0).toLocaleString()} 원</td><td style="text-align:center">${i.qty || 1}</td><td style="text-align:right">${(i.subtotal || i.price || 0).toLocaleString()} 원</td></tr>`).join('');
+    let isEditMode = false;
+    const originalItems = JSON.parse(JSON.stringify(item.items));
 
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.innerHTML = `
-        <div class="modal">
+    function renderModal(overlay) {
+        const rows = item.items.map((i, idx) => {
+            const price = i.price || 0;
+            const qty = i.qty || 1;
+            const subtotal = price * qty;
+            if (isEditMode) {
+                return `<tr>
+                    <td>${i.name}</td>
+                    <td style="text-align:right">${price.toLocaleString()} 원</td>
+                    <td style="text-align:center"><input type="number" class="settlement-qty-input" data-idx="${idx}" value="${qty}" min="0" style="width:70px;text-align:center;padding:4px 6px;border:1px solid #F5A623;border-radius:4px;font-size:14px;"></td>
+                    <td style="text-align:right" class="settlement-subtotal" data-idx="${idx}">${subtotal.toLocaleString()} 원</td>
+                </tr>`;
+            }
+            return `<tr><td>${i.name}</td><td style="text-align:right">${price.toLocaleString()} 원</td><td style="text-align:center">${qty}</td><td style="text-align:right">${(i.subtotal || price).toLocaleString()} 원</td></tr>`;
+        }).join('');
+
+        const total = item.items.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
+
+        const editBtn = isEditMode
+            ? `<div style="display:flex;gap:8px;justify-content:center;margin-top:16px;">
+                <button class="btn-primary" id="settlement-save-btn" style="padding:8px 24px;">저장</button>
+                <button class="btn-secondary" id="settlement-cancel-btn" style="padding:8px 24px;">취소</button>
+               </div>`
+            : `<div style="text-align:center;margin-top:16px;">
+                <button class="btn-secondary" id="settlement-edit-btn" style="padding:8px 24px;">수정</button>
+               </div>`;
+
+        overlay.querySelector('.modal').innerHTML = `
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-            <h3>${item.date} - ${item.partner} 상세</h3>
+            <h3>${item.date} - ${item.partner} 상세${isEditMode ? ' <span style="color:#F5A623;font-size:14px;">[수정모드]</span>' : ''}</h3>
             <table class="data-table">
                 <thead><tr><th>품목명</th><th style="text-align:right">단가</th><th style="text-align:center">수량</th><th style="text-align:right">소계</th></tr></thead>
                 <tbody>${rows}</tbody>
-                <tfoot><tr><td colspan="3"><strong>합계</strong></td><td style="text-align:right"><strong>${(item.amount || 0).toLocaleString()} 원</strong></td></tr></tfoot>
+                <tfoot><tr><td colspan="3"><strong>합계</strong></td><td style="text-align:right" id="settlement-total"><strong>${total.toLocaleString()} 원</strong></td></tr></tfoot>
             </table>
-        </div>
-    `;
+            ${editBtn}
+        `;
+
+        // 버튼 이벤트 바인딩
+        const editBtnEl = overlay.querySelector('#settlement-edit-btn');
+        if (editBtnEl) {
+            editBtnEl.addEventListener('click', () => { isEditMode = true; renderModal(overlay); });
+        }
+        const cancelBtnEl = overlay.querySelector('#settlement-cancel-btn');
+        if (cancelBtnEl) {
+            cancelBtnEl.addEventListener('click', () => {
+                item.items = JSON.parse(JSON.stringify(originalItems));
+                isEditMode = false;
+                renderModal(overlay);
+            });
+        }
+        const saveBtnEl = overlay.querySelector('#settlement-save-btn');
+        if (saveBtnEl) {
+            saveBtnEl.addEventListener('click', async () => {
+                const newTotal = item.items.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
+                const updatedItems = item.items.map(i => ({ ...i, subtotal: (i.price || 0) * (i.qty || 1) }));
+                try {
+                    await api(`/api/settlements/${id}/items`, 'PUT', { items: updatedItems, amount: newTotal });
+                    item.items = updatedItems;
+                    item.amount = newTotal;
+                    isEditMode = false;
+                    renderModal(overlay);
+                    showToast('수정 완료');
+                    loadSettlements();
+                } catch (err) {
+                    alert('수정 실패: ' + (err.message || err));
+                }
+            });
+        }
+
+        // 수량 input 실시간 계산
+        overlay.querySelectorAll('.settlement-qty-input').forEach(input => {
+            input.addEventListener('input', () => {
+                const idx = parseInt(input.dataset.idx);
+                const newQty = parseInt(input.value) || 0;
+                item.items[idx].qty = newQty;
+                const subtotal = (item.items[idx].price || 0) * newQty;
+                overlay.querySelector(`.settlement-subtotal[data-idx="${idx}"]`).textContent = subtotal.toLocaleString() + ' 원';
+                const total = item.items.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
+                overlay.querySelector('#settlement-total').innerHTML = `<strong>${total.toLocaleString()} 원</strong>`;
+            });
+        });
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = '<div class="modal"></div>';
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
+    renderModal(overlay);
 };
 
 // =============================================
