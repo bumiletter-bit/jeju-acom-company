@@ -564,7 +564,10 @@
                     <div class="card">
                         <div class="card-header-row">
                             <h2>승인/반려 이력</h2>
-                            <button class="btn-primary" onclick="openManualDocModal()" style="font-size:13px; padding:6px 14px;">+ 추가하기</button>
+                            <div style="display:flex;gap:8px;">
+                                <button class="btn-outline" onclick="downloadDocHistory()" style="font-size:13px;padding:6px 14px;">📥 다운로드</button>
+                                <button class="btn-primary" onclick="openManualDocModal()" style="font-size:13px; padding:6px 14px;">+ 추가하기</button>
+                            </div>
                         </div>
                         <table class="data-table">
                             <thead>
@@ -1547,6 +1550,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=103"></script>
+    <script src="app.js?v=104"></script>
 </body>
 </html>
