@@ -1465,13 +1465,15 @@ function matchSalesToPricing(salesName, pricingItems) {
 
 async function getPricingForDate(partner, dateStr) {
     const pricingData = await api('/api/pricing');
-    let applicable = pricingData.filter(p => p.partner === partner && p.startDate <= dateStr && p.endDate >= dateStr);
+    // 날짜를 YYYY-MM-DD 형식으로 정규화 (ISO 문자열 "2026-03-09T00:00:00.000Z" → "2026-03-09")
+    const normDate = (d) => String(d || '').slice(0, 10);
+    let applicable = pricingData.filter(p => p.partner === partner && normDate(p.startDate) <= dateStr && normDate(p.endDate) >= dateStr);
 
     // 가격 동결: 해당 주간 가격이 없으면 가장 최근 가격 사용
     if (applicable.length === 0) {
         const past = pricingData
-            .filter(p => p.partner === partner && p.endDate < dateStr)
-            .sort((a, b) => b.endDate.localeCompare(a.endDate));
+            .filter(p => p.partner === partner && normDate(p.endDate) < dateStr)
+            .sort((a, b) => normDate(b.endDate).localeCompare(normDate(a.endDate)));
         if (past.length > 0) applicable = [past[0]];
     }
 

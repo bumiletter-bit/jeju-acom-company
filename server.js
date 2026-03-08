@@ -2276,8 +2276,9 @@ app.delete('/api/settlement-completions/:id', authMiddleware, adminOnly, async (
 app.get('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM pricing ORDER BY start_date DESC, id DESC');
+        const normDate = (d) => d ? new Date(d).toISOString().slice(0, 10) : null;
         const data = result.rows.map(row => ({
-            id: row.id, startDate: row.start_date, endDate: row.end_date,
+            id: row.id, startDate: normDate(row.start_date), endDate: normDate(row.end_date),
             partner: row.partner, items: row.items
         }));
         res.json(data);
@@ -2295,8 +2296,9 @@ app.post('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
         );
         const row = result.rows[0];
 
+        const normDate2 = (d) => d ? new Date(d).toISOString().slice(0, 10) : null;
         res.json({
-            id: row.id, startDate: row.start_date, endDate: row.end_date,
+            id: row.id, startDate: normDate2(row.start_date), endDate: normDate2(row.end_date),
             partner: row.partner, items: row.items
         });
     } catch (err) {
