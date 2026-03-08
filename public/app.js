@@ -5594,13 +5594,15 @@ function addExpenseItem() {
             detailEl.innerHTML = '';
             detailEl.contentEditable = 'true';
             detailEl.style.color = '#333';
+            detailEl.style.fontStyle = 'normal';
             detailEl.style.background = '#fff';
             detailEl.focus();
         } else {
             detailEl.textContent = cat.detail;
             detailEl.contentEditable = 'false';
-            detailEl.style.color = '#9ca3af';
-            detailEl.style.background = '#f9fafb';
+            detailEl.style.color = '';
+            detailEl.style.fontStyle = '';
+            detailEl.style.background = '';
         }
     });
     row.querySelector('.expense-item-amount').addEventListener('input', updateExpenseTotal);
