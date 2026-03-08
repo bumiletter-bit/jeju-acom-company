@@ -1718,7 +1718,8 @@ window.viewSettlementItems = function(id) {
                     isEditMode = false;
                     renderModal(overlay);
                     showToast('수정 완료');
-                    loadSettlements();
+                    await renderSettlementList();
+                    await renderSettlementCalendar();
                 } catch (err) {
                     alert('수정 실패: ' + (err.message || err));
                 }
