@@ -10,8 +10,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=71">
+    <link rel="stylesheet" href="styles.css?v=72">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 </head>
 <body>
     <!-- 로그인 화면 -->
@@ -109,6 +110,10 @@
                 <a href="#" class="nav-item" data-page="document">
                     <span class="nav-icon">📝</span>
                     <span class="nav-text">기안서류</span>
+                </a>
+                <a href="#" class="nav-item" data-page="expense">
+                    <span class="nav-icon">💳</span>
+                    <span class="nav-text">지출결의서</span>
                 </a>
                 <a href="#" class="nav-item" data-page="settlement">
                     <span class="nav-icon">📋</span>
@@ -647,6 +652,85 @@
 
                 </div><!-- /doc-section-history -->
 
+            </div>
+
+            <!-- 지출결의서 페이지 -->
+            <div id="page-expense" class="page">
+                <h1>지출결의서</h1>
+
+                <div class="doc-main-tabs" id="expense-tabs">
+                    <button class="doc-main-tab active" data-expense-tab="write">작성</button>
+                    <button class="doc-main-tab" data-expense-tab="pending" id="expense-tab-pending" style="display:none;">결재 대기</button>
+                    <button class="doc-main-tab" data-expense-tab="my">내 신청 목록</button>
+                    <button class="doc-main-tab" data-expense-tab="history" id="expense-tab-history" style="display:none;">조회/이력</button>
+                </div>
+
+                <!-- 작성 탭 -->
+                <div id="expense-section-write" class="card">
+                    <h2>지출결의서 작성</h2>
+                    <div class="form-group">
+                        <label>신청자</label>
+                        <input type="text" id="expense-applicant" class="form-input" readonly style="width:200px;background:#f9fafb;">
+                    </div>
+                    <div class="form-group">
+                        <label>결재라인</label>
+                        <div id="expense-approval-line" class="expense-approval-line"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>제목</label>
+                        <input type="text" id="expense-title" class="form-input" placeholder="지출결의서 제목을 입력하세요">
+                    </div>
+                    <div class="form-group">
+                        <label>지출 목적</label>
+                        <textarea id="expense-purpose" class="form-input" rows="3" placeholder="지출 목적을 입력하세요"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>지출 항목</label>
+                        <div class="expense-items-header">
+                            <span>항목명</span><span>금액(원)</span><span>비고</span><span></span>
+                        </div>
+                        <div id="expense-items"></div>
+                        <button type="button" class="btn-add-row" id="expense-add-item">+ 항목 추가</button>
+                    </div>
+                    <div class="form-group">
+                        <label>합계</label>
+                        <div id="expense-total" class="expense-total-display">0 원</div>
+                    </div>
+                    <button class="btn-primary" id="expense-submit">제출</button>
+                </div>
+
+                <!-- 결재 대기 탭 -->
+                <div id="expense-section-pending" class="card" style="display:none;">
+                    <h2>결재 대기 목록</h2>
+                    <div class="table-scroll-wrapper">
+                        <table class="data-table">
+                            <thead><tr><th>제목</th><th>신청자</th><th>금액</th><th>신청일</th><th>상태</th><th>처리</th></tr></thead>
+                            <tbody id="expense-pending-list"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 내 신청 목록 탭 -->
+                <div id="expense-section-my" class="card" style="display:none;">
+                    <h2>내 신청 목록</h2>
+                    <div class="table-scroll-wrapper">
+                        <table class="data-table">
+                            <thead><tr><th>제목</th><th>금액</th><th>신청일</th><th>상태</th><th>상세</th></tr></thead>
+                            <tbody id="expense-my-list"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 조회/이력 탭 -->
+                <div id="expense-section-history" class="card" style="display:none;">
+                    <h2>전체 지출결의서 조회</h2>
+                    <div class="table-scroll-wrapper">
+                        <table class="data-table">
+                            <thead><tr><th>제목</th><th>신청자</th><th>금액</th><th>신청일</th><th>상태</th><th>상세</th></tr></thead>
+                            <tbody id="expense-history-list"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <!-- 정산관리 페이지 -->
@@ -1451,6 +1535,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=99"></script>
+    <script src="app.js?v=100"></script>
 </body>
 </html>

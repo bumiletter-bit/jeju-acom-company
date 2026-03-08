@@ -3518,3 +3518,174 @@ textarea.form-input {
     .day-schedule-item { font-size: 10px; }
     .main-content { padding: 56px 10px 10px; }
 }
+
+/* === 지출결의서 === */
+.expense-approval-line {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 12px;
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    flex-wrap: wrap;
+}
+
+.expense-approval-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 16px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+    min-width: 80px;
+}
+
+.expense-approval-step .step-label {
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 4px;
+}
+
+.expense-approval-step .step-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-dark);
+}
+
+.expense-approval-arrow {
+    font-size: 18px;
+    color: #9ca3af;
+}
+
+.expense-items-header {
+    display: grid;
+    grid-template-columns: 2fr 1.5fr 2fr 40px;
+    gap: 8px;
+    padding: 8px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.expense-item-row {
+    display: grid;
+    grid-template-columns: 2fr 1.5fr 2fr 40px;
+    gap: 8px;
+    padding: 8px 0;
+    align-items: center;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.expense-item-row input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.expense-item-row input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.expense-item-remove {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: #fee2e2;
+    color: #dc2626;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.expense-item-remove:hover {
+    background: #fecaca;
+}
+
+.expense-total-display {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--primary);
+    padding: 8px 0;
+}
+
+.expense-status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.expense-status-badge.pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.expense-status-badge.manager_approved {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.expense-status-badge.approved {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.expense-status-badge.rejected {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.expense-detail-approval {
+    display: flex;
+    gap: 12px;
+    margin: 16px 0;
+    justify-content: center;
+}
+
+.expense-stamp-box {
+    width: 80px;
+    text-align: center;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.expense-stamp-box .stamp-label {
+    background: #f3f4f6;
+    padding: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
+    border-bottom: 1px solid #d1d5db;
+}
+
+.expense-stamp-box .stamp-area {
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.expense-stamp-box .stamp-area.approved {
+    color: #dc2626;
+}
+
+.expense-stamp-box .stamp-name {
+    padding: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    border-top: 1px solid #d1d5db;
+    background: #f9fafb;
+}

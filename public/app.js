@@ -258,6 +258,9 @@ function switchPage(pageName) {
         document.getElementById('doc-section-list').style.display = '';
         document.getElementById('doc-section-history').style.display = 'none';
     }
+    if (pageName === 'expense') {
+        initExpensePage();
+    }
     if (pageName === 'settlement') {
         renderSettlementCalendar().catch(console.error);
         renderSettlementList().catch(console.error);
@@ -5356,3 +5359,470 @@ document.getElementById('form-change-password').addEventListener('submit', async
         alert(err.message || '비밀번호 변경에 실패했습니다.');
     }
 });
+
+// =============================================
+// 지출결의서
+// =============================================
+
+function initExpensePage() {
+    if (!currentUser) return;
+    // 신청자 표시
+    document.getElementById('expense-applicant').value = `${currentUser.position} ${currentUser.name}`;
+    // 결재라인 표시
+    renderExpenseApprovalLine();
+    // 탭 권한
+    const isPending = currentUser.role === 'admin';
+    document.getElementById('expense-tab-pending').style.display = isPending ? '' : 'none';
+    document.getElementById('expense-tab-history').style.display = currentUser.role === 'admin' ? '' : 'none';
+    // 항상 작성 탭으로 초기화
+    switchExpenseTab('write');
+    // 항목 초기화
+    const itemsEl = document.getElementById('expense-items');
+    if (itemsEl.children.length === 0) addExpenseItem();
+    // 목록 로드
+    renderExpenseMyList().catch(console.error);
+    if (isPending) renderExpensePendingList().catch(console.error);
+    if (currentUser.role === 'admin') renderExpenseHistoryList().catch(console.error);
+}
+
+// 탭 전환
+document.querySelectorAll('[data-expense-tab]').forEach(tab => {
+    tab.addEventListener('click', () => {
+        switchExpenseTab(tab.dataset.expenseTab);
+    });
+});
+
+function switchExpenseTab(tabName) {
+    document.querySelectorAll('[data-expense-tab]').forEach(t => t.classList.toggle('active', t.dataset.expenseTab === tabName));
+    ['write', 'pending', 'my', 'history'].forEach(s => {
+        const el = document.getElementById(`expense-section-${s}`);
+        if (el) el.style.display = s === tabName ? '' : 'none';
+    });
+    if (tabName === 'my') renderExpenseMyList().catch(console.error);
+    if (tabName === 'pending') renderExpensePendingList().catch(console.error);
+    if (tabName === 'history') renderExpenseHistoryList().catch(console.error);
+}
+
+// 결재라인 표시
+function renderExpenseApprovalLine() {
+    const el = document.getElementById('expense-approval-line');
+    let steps = [];
+    steps.push({ label: '신청자', name: `${currentUser.position} ${currentUser.name}` });
+
+    if (currentUser.position === '대표') {
+        steps.push({ label: '최종결재', name: `${currentUser.name} (자체)` });
+    } else if (currentUser.role === 'admin') {
+        steps.push({ label: '최종결재', name: '전승범 대표' });
+    } else {
+        steps.push({ label: '1차 결재', name: '전연희 부장' });
+        steps.push({ label: '2차 결재', name: '전승범 대표' });
+    }
+
+    el.innerHTML = steps.map((s, i) => {
+        const arrow = i < steps.length - 1 ? '<span class="expense-approval-arrow">→</span>' : '';
+        return `<div class="expense-approval-step"><span class="step-label">${s.label}</span><span class="step-name">${s.name}</span></div>${arrow}`;
+    }).join('');
+}
+
+// 지출 항목 추가/삭제
+document.getElementById('expense-add-item').addEventListener('click', () => addExpenseItem());
+
+function addExpenseItem() {
+    const container = document.getElementById('expense-items');
+    const row = document.createElement('div');
+    row.className = 'expense-item-row';
+    row.innerHTML = `
+        <input type="text" placeholder="항목명" class="expense-item-name">
+        <input type="number" placeholder="금액" class="expense-item-amount" min="0">
+        <input type="text" placeholder="비고" class="expense-item-note">
+        <button type="button" class="expense-item-remove" onclick="this.closest('.expense-item-row').remove(); updateExpenseTotal();">×</button>
+    `;
+    row.querySelector('.expense-item-amount').addEventListener('input', updateExpenseTotal);
+    container.appendChild(row);
+}
+
+function updateExpenseTotal() {
+    let total = 0;
+    document.querySelectorAll('.expense-item-amount').forEach(input => {
+        total += Number(input.value) || 0;
+    });
+    document.getElementById('expense-total').textContent = `${total.toLocaleString()} 원`;
+}
+
+// 제출
+document.getElementById('expense-submit').addEventListener('click', async () => {
+    const title = document.getElementById('expense-title').value.trim();
+    const purpose = document.getElementById('expense-purpose').value.trim();
+    if (!title) { alert('제목을 입력해주세요.'); return; }
+
+    const items = [];
+    document.querySelectorAll('.expense-item-row').forEach(row => {
+        const item = row.querySelector('.expense-item-name').value.trim();
+        const amount = Number(row.querySelector('.expense-item-amount').value) || 0;
+        const note = row.querySelector('.expense-item-note').value.trim();
+        if (item && amount > 0) items.push({ item, amount, note });
+    });
+    if (items.length === 0) { alert('지출 항목을 하나 이상 추가해주세요.'); return; }
+
+    if (!confirm(`"${title}" 지출결의서를 제출하시겠습니까?\n합계: ${items.reduce((s, i) => s + i.amount, 0).toLocaleString()} 원`)) return;
+
+    try {
+        await api('/api/expense-reports', 'POST', { title, purpose, items });
+        alert('지출결의서가 제출되었습니다.');
+        document.getElementById('expense-title').value = '';
+        document.getElementById('expense-purpose').value = '';
+        document.getElementById('expense-items').innerHTML = '';
+        addExpenseItem();
+        updateExpenseTotal();
+        switchExpenseTab('my');
+    } catch (err) { alert('제출 실패: ' + err.message); }
+});
+
+// 내 신청 목록
+async function renderExpenseMyList() {
+    try {
+        const data = await api('/api/expense-reports/my');
+        const tbody = document.getElementById('expense-my-list');
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">신청 내역이 없습니다.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = data.map(d => `<tr>
+            <td>${d.title}</td>
+            <td>${Number(d.total_amount).toLocaleString()} 원</td>
+            <td>${new Date(d.created_at).toLocaleDateString()}</td>
+            <td>${getExpenseStatusBadge(d.status)}</td>
+            <td><button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button></td>
+        </tr>`).join('');
+    } catch (err) { console.error('내 신청 목록 로드 오류:', err); }
+}
+
+// 결재 대기 목록
+async function renderExpensePendingList() {
+    try {
+        const data = await api('/api/expense-reports/pending');
+        const tbody = document.getElementById('expense-pending-list');
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">결재 대기 건이 없습니다.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = data.map(d => `<tr>
+            <td>${d.title}</td>
+            <td>${d.applicant_position} ${d.applicant_name}</td>
+            <td>${Number(d.total_amount).toLocaleString()} 원</td>
+            <td>${new Date(d.created_at).toLocaleDateString()}</td>
+            <td>${getExpenseStatusBadge(d.status)}</td>
+            <td>
+                <button class="btn-view" onclick="viewExpenseDetail(${d.id})" style="margin-right:4px;">상세</button>
+                <button class="btn-primary" onclick="approveExpense(${d.id})" style="padding:4px 12px;font-size:12px;margin-right:4px;">승인</button>
+                <button class="btn-danger" onclick="rejectExpense(${d.id})">반려</button>
+            </td>
+        </tr>`).join('');
+    } catch (err) { console.error('결재 대기 목록 로드 오류:', err); }
+}
+
+// 전체 이력
+async function renderExpenseHistoryList() {
+    try {
+        const data = await api('/api/expense-reports/history');
+        const tbody = document.getElementById('expense-history-list');
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">지출결의서가 없습니다.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = data.map(d => {
+            const deleteBtn = currentUser.position === '대표' ? `<button class="btn-danger" onclick="deleteExpense(${d.id})" style="margin-left:4px;">삭제</button>` : '';
+            return `<tr>
+                <td>${d.title}</td>
+                <td>${d.applicant_position} ${d.applicant_name}</td>
+                <td>${Number(d.total_amount).toLocaleString()} 원</td>
+                <td>${new Date(d.created_at).toLocaleDateString()}</td>
+                <td>${getExpenseStatusBadge(d.status)}</td>
+                <td>
+                    <button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button>
+                    ${deleteBtn}
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (err) { console.error('전체 이력 로드 오류:', err); }
+}
+
+function getExpenseStatusBadge(status) {
+    const map = {
+        'pending': '<span class="expense-status-badge pending">대기중</span>',
+        'manager_approved': '<span class="expense-status-badge manager_approved">1차 승인</span>',
+        'approved': '<span class="expense-status-badge approved">최종 승인</span>',
+        'rejected': '<span class="expense-status-badge rejected">반려</span>'
+    };
+    return map[status] || status;
+}
+
+// 상세 보기 모달
+window.viewExpenseDetail = async function(id) {
+    try {
+        const d = await api(`/api/expense-reports/${id}`);
+        const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
+
+        // 결재란
+        let stampHtml = '<div class="expense-detail-approval">';
+        // 신청자
+        stampHtml += `<div class="expense-stamp-box">
+            <div class="stamp-label">신청자</div>
+            <div class="stamp-area approved">신청</div>
+            <div class="stamp-name">${d.applicant_name}</div>
+        </div>`;
+        // 1차 (부장)
+        if (d.manager_id) {
+            const mApproved = d.manager_status === 'approved';
+            stampHtml += `<div class="expense-stamp-box">
+                <div class="stamp-label">부장</div>
+                <div class="stamp-area ${mApproved ? 'approved' : ''}">${mApproved ? '승인' : (d.status === 'rejected' && d.rejected_by === d.manager_id ? '반려' : '대기')}</div>
+                <div class="stamp-name">${d.manager_name || ''}</div>
+            </div>`;
+        }
+        // 대표
+        const cApproved = d.ceo_status === 'approved';
+        stampHtml += `<div class="expense-stamp-box">
+            <div class="stamp-label">대표</div>
+            <div class="stamp-area ${cApproved ? 'approved' : ''}">${cApproved ? '승인' : (d.status === 'rejected' && d.rejected_by === d.ceo_id ? '반려' : '대기')}</div>
+            <div class="stamp-name">${d.ceo_name || ''}</div>
+        </div>`;
+        stampHtml += '</div>';
+
+        // 항목 테이블
+        const itemRows = items.map(i => `<tr><td>${i.item}</td><td style="text-align:right">${Number(i.amount).toLocaleString()} 원</td><td>${i.note || ''}</td></tr>`).join('');
+
+        // 반려 사유
+        const rejectHtml = d.status === 'rejected' ? `<div style="margin-top:12px;padding:12px;background:#fee2e2;border-radius:8px;"><strong>반려 사유:</strong> ${d.reject_reason || '(사유 없음)'}<br><small>반려자: ${d.rejected_by_name || ''}</small></div>` : '';
+
+        // PDF 다운로드 버튼 (승인완료 + 관리자만)
+        const pdfBtn = d.status === 'approved' && currentUser.role === 'admin'
+            ? `<button class="btn-primary" onclick="downloadExpensePDF(${d.id})" style="margin-right:8px;">PDF 다운로드</button>`
+            : '';
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:560px;">
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+                <h3 style="text-align:center;margin-bottom:8px;">지출결의서</h3>
+                ${stampHtml}
+                <div style="margin-bottom:8px;"><strong>제목:</strong> ${d.title}</div>
+                <div style="margin-bottom:8px;"><strong>작성일:</strong> ${new Date(d.created_at).toLocaleDateString()}</div>
+                <div style="margin-bottom:12px;"><strong>지출목적:</strong> ${d.purpose || '-'}</div>
+                <table class="data-table">
+                    <thead><tr><th>항목</th><th style="text-align:right">금액(원)</th><th>비고</th></tr></thead>
+                    <tbody>${itemRows}</tbody>
+                    <tfoot><tr><td><strong>합계</strong></td><td style="text-align:right"><strong>${Number(d.total_amount).toLocaleString()} 원</strong></td><td></td></tr></tfoot>
+                </table>
+                ${rejectHtml}
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+                    ${pdfBtn}
+                    <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
+                </div>
+            </div>
+        `;
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+    } catch (err) { alert('상세 조회 실패: ' + err.message); }
+};
+
+// 승인
+window.approveExpense = async function(id) {
+    if (!confirm('이 지출결의서를 승인하시겠습니까?')) return;
+    try {
+        await api(`/api/expense-reports/${id}/approve`, 'PUT');
+        alert('승인 완료');
+        renderExpensePendingList().catch(console.error);
+        renderExpenseHistoryList().catch(console.error);
+    } catch (err) { alert('승인 실패: ' + err.message); }
+};
+
+// 반려
+window.rejectExpense = async function(id) {
+    const reason = prompt('반려 사유를 입력해주세요:');
+    if (reason === null) return;
+    try {
+        await api(`/api/expense-reports/${id}/reject`, 'PUT', { reason });
+        alert('반려 완료');
+        renderExpensePendingList().catch(console.error);
+        renderExpenseHistoryList().catch(console.error);
+    } catch (err) { alert('반려 실패: ' + err.message); }
+};
+
+// 삭제 (대표만)
+window.deleteExpense = async function(id) {
+    if (!confirm('이 지출결의서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
+    try {
+        await api(`/api/expense-reports/${id}`, 'DELETE');
+        alert('삭제 완료');
+        renderExpenseHistoryList().catch(console.error);
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+};
+
+// PDF 다운로드
+window.downloadExpensePDF = async function(id) {
+    try {
+        const d = await api(`/api/expense-reports/${id}`);
+        const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('p', 'mm', 'a4');
+        const pageW = 210;
+        let y = 20;
+
+        // 한글 폰트 대신 기본 폰트 사용 + 유니코드 지원을 위해 간단한 방식 사용
+        // jsPDF 기본 폰트는 한글 미지원이므로 HTML 캔버스 방식 사용
+        const canvas = document.createElement('canvas');
+        canvas.width = 794; // A4 width at 96dpi
+        canvas.height = 1123; // A4 height at 96dpi
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const scale = 2;
+        canvas.width *= scale;
+        canvas.height *= scale;
+        ctx.scale(scale, scale);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 794, 1123);
+
+        // 테두리
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(40, 30, 714, 1060);
+
+        // 제목
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('지 출 결 의 서', 397, 80);
+
+        // 결재란
+        const stampStartX = 460;
+        const stampY = 100;
+        const stampW = 80;
+        const stampH = 90;
+
+        const stampData = [];
+        stampData.push({ label: '신청자', name: d.applicant_name, status: '신청' });
+        if (d.manager_id) {
+            stampData.push({ label: '부장', name: d.manager_name || '', status: d.manager_status === 'approved' ? '승인' : '' });
+        }
+        stampData.push({ label: '대표', name: d.ceo_name || '', status: d.ceo_status === 'approved' ? '승인' : '' });
+
+        stampData.forEach((s, i) => {
+            const sx = stampStartX + i * (stampW + 5);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(sx, stampY, stampW, stampH);
+            // 라벨
+            ctx.fillStyle = '#f3f4f6';
+            ctx.fillRect(sx + 1, stampY + 1, stampW - 2, 20);
+            ctx.fillStyle = '#000';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(s.label, sx + stampW / 2, stampY + 14);
+            // 구분선
+            ctx.beginPath(); ctx.moveTo(sx, stampY + 21); ctx.lineTo(sx + stampW, stampY + 21); ctx.stroke();
+            // 승인 도장
+            if (s.status) {
+                ctx.fillStyle = '#dc2626';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.fillText(s.status, sx + stampW / 2, stampY + 52);
+            }
+            // 이름 구분선
+            ctx.beginPath(); ctx.moveTo(sx, stampY + 65); ctx.lineTo(sx + stampW, stampY + 65); ctx.stroke();
+            ctx.fillStyle = '#000';
+            ctx.font = '12px sans-serif';
+            ctx.fillText(s.name, sx + stampW / 2, stampY + 82);
+        });
+
+        // 정보
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#000';
+        let infoY = 220;
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText('제목:', 60, infoY);
+        ctx.font = '14px sans-serif';
+        ctx.fillText(d.title, 120, infoY);
+        infoY += 28;
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText('작성일:', 60, infoY);
+        ctx.font = '14px sans-serif';
+        ctx.fillText(new Date(d.created_at).toLocaleDateString(), 120, infoY);
+        infoY += 28;
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText('지출목적:', 60, infoY);
+        ctx.font = '14px sans-serif';
+        ctx.fillText(d.purpose || '-', 140, infoY);
+        infoY += 40;
+
+        // 테이블
+        const tableX = 60;
+        const colWidths = [250, 200, 180];
+        const headers = ['항목', '금액(원)', '비고'];
+
+        // 헤더
+        ctx.fillStyle = '#f3f4f6';
+        ctx.fillRect(tableX, infoY, colWidths[0] + colWidths[1] + colWidths[2], 30);
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tableX, infoY, colWidths[0] + colWidths[1] + colWidths[2], 30);
+
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 13px sans-serif';
+        let cx = tableX;
+        headers.forEach((h, i) => {
+            ctx.strokeRect(cx, infoY, colWidths[i], 30);
+            ctx.textAlign = 'center';
+            ctx.fillText(h, cx + colWidths[i] / 2, infoY + 20);
+            cx += colWidths[i];
+        });
+        infoY += 30;
+
+        // 행
+        ctx.font = '13px sans-serif';
+        items.forEach(item => {
+            cx = tableX;
+            ctx.strokeRect(cx, infoY, colWidths[0], 28);
+            ctx.textAlign = 'left';
+            ctx.fillText(item.item, cx + 10, infoY + 19);
+            cx += colWidths[0];
+            ctx.strokeRect(cx, infoY, colWidths[1], 28);
+            ctx.textAlign = 'right';
+            ctx.fillText(Number(item.amount).toLocaleString(), cx + colWidths[1] - 10, infoY + 19);
+            cx += colWidths[1];
+            ctx.strokeRect(cx, infoY, colWidths[2], 28);
+            ctx.textAlign = 'left';
+            ctx.fillText(item.note || '', cx + 10, infoY + 19);
+            infoY += 28;
+        });
+
+        // 합계
+        ctx.fillStyle = '#f9fafb';
+        cx = tableX;
+        ctx.fillRect(cx, infoY, colWidths[0] + colWidths[1] + colWidths[2], 30);
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.strokeRect(cx, infoY, colWidths[0], 30);
+        ctx.textAlign = 'center';
+        ctx.fillText('합계', cx + colWidths[0] / 2, infoY + 20);
+        cx += colWidths[0];
+        ctx.strokeRect(cx, infoY, colWidths[1], 30);
+        ctx.textAlign = 'right';
+        ctx.fillText(Number(d.total_amount).toLocaleString() + ' 원', cx + colWidths[1] - 10, infoY + 20);
+        cx += colWidths[1];
+        ctx.strokeRect(cx, infoY, colWidths[2], 30);
+
+        // 하단 회사명
+        ctx.textAlign = 'center';
+        ctx.font = '14px sans-serif';
+        ctx.fillStyle = '#6b7280';
+        ctx.fillText('제주아꼼이네 농업회사법인(주)', 397, 1060);
+
+        // 캔버스를 이미지로 변환 후 PDF에 추가
+        const imgData = canvas.toDataURL('image/png');
+        doc.addImage(imgData, 'PNG', 0, 0, 210, 297);
+        doc.save(`지출결의서_${d.title}_${new Date(d.created_at).toLocaleDateString()}.pdf`);
+    } catch (err) { alert('PDF 다운로드 실패: ' + err.message); }
+};

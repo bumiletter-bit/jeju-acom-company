@@ -87,6 +87,26 @@ async function initDB() {
         )
     `);
     await pool.query(`
+        CREATE TABLE IF NOT EXISTS expense_reports (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR(200) NOT NULL,
+            applicant_id INTEGER REFERENCES users(id),
+            total_amount INTEGER DEFAULT 0,
+            purpose TEXT,
+            items JSONB DEFAULT '[]'::jsonb,
+            status VARCHAR(20) DEFAULT 'pending',
+            manager_id INTEGER REFERENCES users(id),
+            manager_status VARCHAR(20) DEFAULT 'pending',
+            manager_approved_at TIMESTAMP,
+            ceo_id INTEGER REFERENCES users(id),
+            ceo_status VARCHAR(20) DEFAULT 'pending',
+            ceo_approved_at TIMESTAMP,
+            rejected_by INTEGER REFERENCES users(id),
+            reject_reason TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
         CREATE TABLE IF NOT EXISTS pricing (
             id SERIAL PRIMARY KEY,
             start_date DATE NOT NULL,
@@ -1398,6 +1418,234 @@ app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// === Expense Reports API (지출결의서) ===
+
+// 지출결의서 작성
+app.post('/api/expense-reports', authMiddleware, async (req, res) => {
+    try {
+        const { title, purpose, items } = req.body;
+        if (!title) return res.status(400).json({ error: '제목을 입력해주세요' });
+        if (!items || items.length === 0) return res.status(400).json({ error: '지출 항목을 추가해주세요' });
+        const totalAmount = items.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+
+        // 결재라인 결정
+        let managerId = null, ceoId = null;
+        const ceoResult = await pool.query("SELECT id FROM users WHERE position = '대표' AND role = 'admin' LIMIT 1");
+        const ceoUser = ceoResult.rows[0];
+        if (!ceoUser) return res.status(500).json({ error: '대표 계정을 찾을 수 없습니다' });
+        ceoId = ceoUser.id;
+
+        if (req.user.position === '대표') {
+            // 대표 본인 → 자체 결재 (manager 없음)
+            managerId = null;
+        } else if (req.user.role === 'admin') {
+            // 부장(관리자) → 1차 없이 대표에게 바로
+            managerId = null;
+        } else {
+            // 일반 직원 → 부장(1차) + 대표(2차)
+            const mgrResult = await pool.query("SELECT id FROM users WHERE role = 'admin' AND position != '대표' ORDER BY name LIMIT 1");
+            managerId = mgrResult.rows.length > 0 ? mgrResult.rows[0].id : null;
+        }
+
+        const result = await pool.query(
+            `INSERT INTO expense_reports (title, applicant_id, total_amount, purpose, items, manager_id, ceo_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+            [title, req.user.id, totalAmount, purpose || '', JSON.stringify(items), managerId, ceoId]
+        );
+
+        // 알림: 1차 결재자 또는 대표에게
+        const notifyTo = managerId || ceoId;
+        const applicantInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [req.user.id]);
+        const applicantName = applicantInfo.rows[0] ? `${applicantInfo.rows[0].position} ${applicantInfo.rows[0].name}` : '';
+        await createNotification(notifyTo, 'expense', '지출결의서 결재 요청', `${applicantName}님이 "${title}" 지출결의서를 제출했습니다.`, 'expense');
+
+        res.json({ id: result.rows[0].id, success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 내 신청 목록
+app.get('/api/expense-reports/my', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
+                    m.name as manager_name, m.position as manager_position,
+                    c.name as ceo_name, c.position as ceo_position
+             FROM expense_reports er
+             LEFT JOIN users u ON er.applicant_id = u.id
+             LEFT JOIN users m ON er.manager_id = m.id
+             LEFT JOIN users c ON er.ceo_id = c.id
+             WHERE er.applicant_id = $1
+             ORDER BY er.created_at DESC`,
+            [req.user.id]
+        );
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 결재 대기 목록
+app.get('/api/expense-reports/pending', authMiddleware, async (req, res) => {
+    try {
+        let result;
+        if (req.user.position === '대표') {
+            // 대표: manager_approved(1차 완료) + ceo_status=pending 이거나, manager 없이 ceo에게 바로 온 것
+            result = await pool.query(
+                `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
+                        m.name as manager_name, m.position as manager_position,
+                        c.name as ceo_name, c.position as ceo_position
+                 FROM expense_reports er
+                 LEFT JOIN users u ON er.applicant_id = u.id
+                 LEFT JOIN users m ON er.manager_id = m.id
+                 LEFT JOIN users c ON er.ceo_id = c.id
+                 WHERE er.ceo_id = $1 AND er.ceo_status = 'pending'
+                   AND (er.manager_id IS NULL OR er.manager_status = 'approved')
+                   AND er.status != 'rejected' AND er.applicant_id != $1
+                 ORDER BY er.created_at DESC`,
+                [req.user.id]
+            );
+        } else if (req.user.role === 'admin') {
+            // 부장: manager_status=pending인 것
+            result = await pool.query(
+                `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
+                        m.name as manager_name, m.position as manager_position,
+                        c.name as ceo_name, c.position as ceo_position
+                 FROM expense_reports er
+                 LEFT JOIN users u ON er.applicant_id = u.id
+                 LEFT JOIN users m ON er.manager_id = m.id
+                 LEFT JOIN users c ON er.ceo_id = c.id
+                 WHERE er.manager_id = $1 AND er.manager_status = 'pending' AND er.status != 'rejected'
+                 ORDER BY er.created_at DESC`,
+                [req.user.id]
+            );
+        } else {
+            result = { rows: [] };
+        }
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 전체 이력 조회 (관리자만)
+app.get('/api/expense-reports/history', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
+                    m.name as manager_name, m.position as manager_position,
+                    c.name as ceo_name, c.position as ceo_position
+             FROM expense_reports er
+             LEFT JOIN users u ON er.applicant_id = u.id
+             LEFT JOIN users m ON er.manager_id = m.id
+             LEFT JOIN users c ON er.ceo_id = c.id
+             ORDER BY er.created_at DESC`
+        );
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 상세 조회
+app.get('/api/expense-reports/:id', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT er.*, u.name as applicant_name, u.position as applicant_position,
+                    m.name as manager_name, m.position as manager_position,
+                    c.name as ceo_name, c.position as ceo_position,
+                    r.name as rejected_by_name
+             FROM expense_reports er
+             LEFT JOIN users u ON er.applicant_id = u.id
+             LEFT JOIN users m ON er.manager_id = m.id
+             LEFT JOIN users c ON er.ceo_id = c.id
+             LEFT JOIN users r ON er.rejected_by = r.id
+             WHERE er.id = $1`,
+            [req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        const row = result.rows[0];
+        // 본인 또는 관리자만 조회 가능
+        if (row.applicant_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: '조회 권한이 없습니다' });
+        }
+        res.json(row);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 승인
+app.put('/api/expense-reports/:id/approve', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM expense_reports WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        const er = result.rows[0];
+
+        // 1차 결재 (부장)
+        if (er.manager_id === req.user.id && er.manager_status === 'pending') {
+            await pool.query(
+                `UPDATE expense_reports SET manager_status = 'approved', manager_approved_at = NOW(), status = 'manager_approved' WHERE id = $1`,
+                [req.params.id]
+            );
+            // 알림: 대표에게 + 신청자에게
+            const applicantInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [er.applicant_id]);
+            const aName = applicantInfo.rows[0] ? `${applicantInfo.rows[0].position} ${applicantInfo.rows[0].name}` : '';
+            await createNotification(er.ceo_id, 'expense', '지출결의서 2차 결재 요청', `${aName}님의 "${er.title}" 지출결의서가 1차 승인되었습니다.`, 'expense');
+            await createNotification(er.applicant_id, 'expense', '지출결의서 1차 승인', `"${er.title}" 지출결의서가 1차 승인되었습니다.`, 'expense');
+            return res.json({ success: true, status: 'manager_approved' });
+        }
+
+        // 2차 결재 (대표) 또는 대표 자체 결재
+        if (er.ceo_id === req.user.id && er.ceo_status === 'pending') {
+            // 1차가 필요한데 아직 안된 경우 차단
+            if (er.manager_id && er.manager_status !== 'approved') {
+                return res.status(400).json({ error: '1차 결재가 완료되지 않았습니다' });
+            }
+            await pool.query(
+                `UPDATE expense_reports SET ceo_status = 'approved', ceo_approved_at = NOW(), status = 'approved' WHERE id = $1`,
+                [req.params.id]
+            );
+            // 알림: 신청자에게 (본인이 아닌 경우)
+            if (er.applicant_id !== req.user.id) {
+                await createNotification(er.applicant_id, 'expense', '지출결의서 최종 승인', `"${er.title}" 지출결의서가 최종 승인되었습니다.`, 'expense');
+            }
+            return res.json({ success: true, status: 'approved' });
+        }
+
+        res.status(403).json({ error: '결재 권한이 없습니다' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 반려
+app.put('/api/expense-reports/:id/reject', authMiddleware, async (req, res) => {
+    try {
+        const { reason } = req.body;
+        const result = await pool.query('SELECT * FROM expense_reports WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        const er = result.rows[0];
+
+        const isManager = er.manager_id === req.user.id && er.manager_status === 'pending';
+        const isCeo = er.ceo_id === req.user.id && er.ceo_status === 'pending';
+        if (!isManager && !isCeo) return res.status(403).json({ error: '반려 권한이 없습니다' });
+
+        await pool.query(
+            `UPDATE expense_reports SET status = 'rejected', rejected_by = $1, reject_reason = $2 WHERE id = $3`,
+            [req.user.id, reason || '', req.params.id]
+        );
+
+        // 알림: 신청자에게
+        const rejectorInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [req.user.id]);
+        const rName = rejectorInfo.rows[0] ? `${rejectorInfo.rows[0].position} ${rejectorInfo.rows[0].name}` : '';
+        await createNotification(er.applicant_id, 'expense', '지출결의서 반려', `"${er.title}" 지출결의서가 ${rName}님에 의해 반려되었습니다.${reason ? ' 사유: ' + reason : ''}`, 'expense');
+
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 삭제 (대표만 가능)
+app.delete('/api/expense-reports/:id', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.position !== '대표') {
+            return res.status(403).json({ error: '지출결의서 삭제는 대표만 가능합니다' });
+        }
+        const result = await pool.query('DELETE FROM expense_reports WHERE id = $1 RETURNING id', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // === Box Inventory API (박스재고) ===
