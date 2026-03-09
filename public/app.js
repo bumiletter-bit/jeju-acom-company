@@ -1655,9 +1655,11 @@ window.viewSettlementItems = function(id) {
 
     let isEditMode = false;
     const originalItems = JSON.parse(JSON.stringify(item.items));
+    let editItems = JSON.parse(JSON.stringify(item.items));
 
     function renderModal(overlay) {
-        const rows = item.items.map((i, idx) => {
+        const displayItems = isEditMode ? editItems : item.items;
+        const rows = displayItems.map((i, idx) => {
             const price = i.price || 0;
             const qty = i.qty || 1;
             const subtotal = price * qty;
@@ -1672,7 +1674,7 @@ window.viewSettlementItems = function(id) {
             return `<tr><td>${i.name}</td><td style="text-align:right">${price.toLocaleString()} 원</td><td style="text-align:center">${qty}</td><td style="text-align:right">${(i.subtotal || price).toLocaleString()} 원</td></tr>`;
         }).join('');
 
-        const total = item.items.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
+        const total = displayItems.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
 
         const editBtn = isEditMode
             ? `<div style="display:flex;gap:8px;justify-content:center;margin-top:16px;">
@@ -1685,7 +1687,7 @@ window.viewSettlementItems = function(id) {
                </div>`;
 
         overlay.querySelector('.modal').innerHTML = `
-            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <button class="modal-close" id="settlement-x-btn">×</button>
             <h3>${item.date} - ${item.partner} 상세${isEditMode ? ' <span style="color:#F5A623;font-size:14px;">[수정모드]</span>' : ''}</h3>
             <table class="data-table">
                 <thead><tr><th>품목명</th><th style="text-align:right">단가</th><th style="text-align:center">수량</th><th style="text-align:right">소계</th></tr></thead>
@@ -1696,18 +1698,22 @@ window.viewSettlementItems = function(id) {
         `;
 
         // 버튼 이벤트 바인딩
+        const xBtnEl = overlay.querySelector('#settlement-x-btn');
+        if (xBtnEl) {
+            xBtnEl.addEventListener('click', () => { restoreAndClose(overlay); });
+        }
         const editBtnEl = overlay.querySelector('#settlement-edit-btn');
         if (editBtnEl) {
-            editBtnEl.addEventListener('click', () => { isEditMode = true; renderModal(overlay); });
+            editBtnEl.addEventListener('click', () => { editItems = JSON.parse(JSON.stringify(item.items)); isEditMode = true; renderModal(overlay); });
         }
         const closeBtnEl = overlay.querySelector('#settlement-close-btn');
         if (closeBtnEl) {
-            closeBtnEl.addEventListener('click', () => { overlay.remove(); });
+            closeBtnEl.addEventListener('click', () => { restoreAndClose(overlay); });
         }
         const cancelBtnEl = overlay.querySelector('#settlement-cancel-btn');
         if (cancelBtnEl) {
             cancelBtnEl.addEventListener('click', () => {
-                item.items = JSON.parse(JSON.stringify(originalItems));
+                editItems = JSON.parse(JSON.stringify(originalItems));
                 isEditMode = false;
                 renderModal(overlay);
             });
@@ -1715,8 +1721,8 @@ window.viewSettlementItems = function(id) {
         const saveBtnEl = overlay.querySelector('#settlement-save-btn');
         if (saveBtnEl) {
             saveBtnEl.addEventListener('click', async () => {
-                const newTotal = item.items.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
-                const updatedItems = item.items.map(i => ({ ...i, subtotal: (i.price || 0) * (i.qty || 1) }));
+                const newTotal = editItems.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
+                const updatedItems = editItems.map(i => ({ ...i, subtotal: (i.price || 0) * (i.qty || 1) }));
                 try {
                     await api(`/api/settlements/${id}/items`, 'PUT', { items: updatedItems, amount: newTotal });
                     item.items = updatedItems;
@@ -1732,24 +1738,30 @@ window.viewSettlementItems = function(id) {
             });
         }
 
-        // 수량 input 실시간 계산
+        // 수량 input 실시간 계산 (editItems 임시 배열만 수정, 원본은 저장 시에만 변경)
         overlay.querySelectorAll('.settlement-qty-input').forEach(input => {
             input.addEventListener('input', () => {
                 const idx = parseInt(input.dataset.idx);
                 const newQty = parseInt(input.value) || 0;
-                item.items[idx].qty = newQty;
-                const subtotal = (item.items[idx].price || 0) * newQty;
+                editItems[idx].qty = newQty;
+                const subtotal = (editItems[idx].price || 0) * newQty;
                 overlay.querySelector(`.settlement-subtotal[data-idx="${idx}"]`).textContent = subtotal.toLocaleString() + ' 원';
-                const total = item.items.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
+                const total = editItems.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
                 overlay.querySelector('#settlement-total').innerHTML = `<strong>${total.toLocaleString()} 원</strong>`;
             });
         });
     }
 
+    // 모달 닫힐 때 원본 복원하는 함수
+    function restoreAndClose(overlay) {
+        item.items = JSON.parse(JSON.stringify(originalItems));
+        overlay.remove();
+    }
+
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = '<div class="modal"></div>';
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) restoreAndClose(overlay); });
     document.body.appendChild(overlay);
     renderModal(overlay);
 };
