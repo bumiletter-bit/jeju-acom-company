@@ -2811,11 +2811,12 @@ window.searchDocHistory = async function() {
 };
 
 function renderDocHistory(docs) {
+    window._lastDocHistory = docs || [];
     const tbody = document.getElementById('doc-history-list');
     const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
 
     if (!docs || docs.length === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="8">검색 결과가 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>';
         return;
     }
 
@@ -2848,9 +2849,238 @@ function renderDocHistory(docs) {
             <td>${d.approverName || '-'}</td>
             <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
             <td>${processedDate}</td>
+            <td><button class="btn-view-items" onclick="viewDocDetail(${d.id})">상세</button></td>
         </tr>`;
     }).join('');
 }
+
+// 기안서류 개별 상세 모달
+window.viewDocDetail = async function(id) {
+    try {
+        const docs = await api('/api/documents/history?');
+        const d = docs.find(doc => doc.id === id);
+        if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
+
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabel = `${typeLabels[d.type] || d.type} - ${d.subType}`;
+
+        // 날짜 포맷
+        const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
+        const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
+        let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
+        if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` (${d.startTime}~${d.endTime})`;
+
+        // 차감일수
+        let deducted = '-';
+        if (d.deductedLeave > 0) {
+            if (d.subType === '시간차' && d.startTime && d.endTime) {
+                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
+                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
+            } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
+        }
+
+        const statusClass = d.status === 'approved' ? 'status-approved' : 'status-rejected';
+        const statusLabel = d.status === 'approved' ? '승인' : '반려';
+        const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+
+        // 결재란 도장 이미지 조회
+        const sigIds = [d.applicantId];
+        if (d.approverId) sigIds.push(d.approverId);
+        const sigResults = await Promise.all(
+            [...new Set(sigIds)].map(uid => api(`/api/users/${uid}/signature`).catch(() => ({ signatureImage: null })))
+        );
+        const sigMap = {};
+        [...new Set(sigIds)].forEach((uid, i) => { sigMap[uid] = sigResults[i].signatureImage; });
+
+        function stampBox(label, userId, name, isApproved, fallbackText) {
+            const sig = sigMap[userId];
+            let stampContent;
+            if (isApproved && sig) stampContent = `<img src="${sig}" style="width:45px;height:45px;object-fit:contain;" alt="도장">`;
+            else if (isApproved) stampContent = `<div class="stamp-area approved">${fallbackText}</div>`;
+            else stampContent = `<div class="stamp-area">${fallbackText}</div>`;
+            return `<div class="expense-stamp-box"><div class="stamp-label">${label}</div>${stampContent}<div class="stamp-name">${name}</div></div>`;
+        }
+
+        const approvalHtml = `<div class="expense-detail-approval">
+            ${stampBox('신청자', d.applicantId, `${d.applicantPosition || ''} ${d.applicantName}`, true, '신청')}
+            ${d.approverId ? stampBox('결재', d.approverId, d.approverName || '', d.status === 'approved', statusLabel) : ''}
+        </div>`;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:520px;">
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+                <h3 style="text-align:center;margin-bottom:12px;">기안서류 상세</h3>
+                ${approvalHtml}
+                <div style="margin:16px 0;line-height:2;">
+                    <div><strong>유형:</strong> ${typeLabel}</div>
+                    <div><strong>신청자:</strong> ${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}</div>
+                    <div><strong>기간:</strong> ${dateStr}</div>
+                    <div><strong>사유:</strong> ${d.reason || '-'}</div>
+                    <div><strong>차감일수:</strong> ${deducted}</div>
+                    <div><strong>상태:</strong> <span class="status-badge ${statusClass}">${statusLabel}</span></div>
+                    <div><strong>처리일:</strong> ${processedDate}</div>
+                </div>
+                <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
+                    <button class="btn-primary" onclick="downloadDocPDF(${d.id})" style="padding:8px 16px;">PDF 다운로드</button>
+                    <button class="btn-secondary" onclick="downloadDocExcel(${d.id})" style="padding:8px 16px;">엑셀 다운로드</button>
+                    <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()" style="padding:8px 16px;">닫기</button>
+                </div>
+            </div>
+        `;
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+    } catch (err) { alert('상세 조회 실패: ' + err.message); }
+};
+
+// 기안서류 개별 PDF 다운로드
+window.downloadDocPDF = async function(id) {
+    try {
+        const docs = await api('/api/documents/history?');
+        const d = docs.find(doc => doc.id === id);
+        if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
+
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : '시말서';
+
+        // 날짜 포맷
+        const sd = d.startDate ? new Date(d.startDate) : null;
+        const ed = d.endDate ? new Date(d.endDate) : null;
+        let dateStr = '';
+        if (sd) {
+            dateStr = `${sd.getFullYear()}년 ${sd.getMonth() + 1}월 ${sd.getDate()}일`;
+            if (ed && sd.getTime() !== ed.getTime()) dateStr += ` ~ ${ed.getFullYear()}년 ${ed.getMonth() + 1}월 ${ed.getDate()}일`;
+            if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` ${d.startTime} ~ ${d.endTime}`;
+        }
+
+        // 차감일수
+        let deducted = '-';
+        if (d.deductedLeave > 0) {
+            if (d.subType === '시간차' && d.startTime && d.endTime) {
+                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
+                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
+            } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
+        }
+
+        const statusLabel = d.status === 'approved' ? '승인' : '반려';
+        const processedDate = d.processedAt ? new Date(d.processedAt) : null;
+        const processedStr = processedDate ? `${processedDate.getFullYear()}년 ${processedDate.getMonth() + 1}월 ${processedDate.getDate()}일` : '-';
+
+        // 도장 이미지 조회
+        const stamps = [];
+        const sigIds = [d.applicantId];
+        stamps.push({ label: '신청자', name: `${d.applicantPosition || ''} ${d.applicantName}`, status: '신청', userId: d.applicantId });
+        if (d.approverId) {
+            stamps.push({ label: '결재자', name: d.approverName || '', status: d.status === 'approved' ? '승인' : (d.status === 'rejected' ? '반려' : ''), userId: d.approverId });
+            sigIds.push(d.approverId);
+        }
+        const sigResults = await Promise.all(
+            [...new Set(sigIds)].map(uid => api(`/api/users/${uid}/signature`).catch(() => ({ signatureImage: null })))
+        );
+        const sigMap = {};
+        [...new Set(sigIds)].forEach((uid, i) => { sigMap[uid] = sigResults[i].signatureImage; });
+
+        const stampHtml = stamps.map(s => {
+            const sig = sigMap[s.userId];
+            let stampContent;
+            if (s.status && sig) stampContent = `<img src="${sig}" style="width:50px;height:50px;object-fit:contain;" alt="도장">`;
+            else if (s.status) stampContent = `<span style="font-size:16px;font-weight:bold;color:#dc2626;">${s.status}</span>`;
+            else stampContent = '';
+            return `<td style="width:90px;border:1px solid #000;padding:0;text-align:center;vertical-align:top;">
+                <div style="background:#f3f4f6;padding:4px;font-size:12px;font-weight:bold;border-bottom:1px solid #000;">${s.label}</div>
+                <div style="height:55px;display:flex;align-items:center;justify-content:center;">${stampContent}</div>
+                <div style="padding:4px;font-size:12px;border-top:1px solid #000;background:#f9fafb;">${s.name}</div></td>`;
+        }).join('');
+
+        const container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;padding:40px;box-sizing:border-box;font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo",sans-serif;';
+        container.innerHTML = `
+            <div style="border:2px solid #000;padding:30px;min-height:1050px;position:relative;">
+                <h1 style="text-align:center;font-size:26px;letter-spacing:12px;margin:0 0 20px 0;">${docTitle}</h1>
+                <table style="border-collapse:collapse;margin-left:auto;margin-bottom:24px;">
+                    <tr>${stampHtml}</tr>
+                </table>
+                <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                    <tr><td style="padding:10px 0;font-weight:bold;width:100px;border-bottom:1px solid #ddd;">유형</td><td style="padding:10px 0;border-bottom:1px solid #ddd;">${typeLabels[d.type] || d.type} - ${d.subType}</td></tr>
+                    <tr><td style="padding:10px 0;font-weight:bold;border-bottom:1px solid #ddd;">신청자</td><td style="padding:10px 0;border-bottom:1px solid #ddd;">${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}</td></tr>
+                    <tr><td style="padding:10px 0;font-weight:bold;border-bottom:1px solid #ddd;">기간</td><td style="padding:10px 0;border-bottom:1px solid #ddd;">${dateStr}</td></tr>
+                    <tr><td style="padding:10px 0;font-weight:bold;border-bottom:1px solid #ddd;">사유</td><td style="padding:10px 0;border-bottom:1px solid #ddd;">${d.reason || '-'}</td></tr>
+                    <tr><td style="padding:10px 0;font-weight:bold;border-bottom:1px solid #ddd;">차감일수</td><td style="padding:10px 0;border-bottom:1px solid #ddd;">${deducted}</td></tr>
+                    <tr><td style="padding:10px 0;font-weight:bold;border-bottom:1px solid #ddd;">상태</td><td style="padding:10px 0;border-bottom:1px solid #ddd;">${statusLabel}</td></tr>
+                    <tr><td style="padding:10px 0;font-weight:bold;">처리일</td><td style="padding:10px 0;">${processedStr}</td></tr>
+                </table>
+                <div style="position:absolute;bottom:20px;left:0;right:0;text-align:center;color:#6b7280;font-size:14px;">제주아꼼이네 농업회사법인(주)</div>
+            </div>
+        `;
+        document.body.appendChild(container);
+
+        const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        document.body.removeChild(container);
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const imgData = canvas.toDataURL('image/png');
+        const pdfW = 210;
+        const pdfH = (canvas.height * pdfW) / canvas.width;
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+
+        const dateForFile = d.startDate ? d.startDate.replace(/-/g, '').slice(0, 8) : '';
+        pdf.save(`${docTitle}_${d.applicantName}_${d.subType}_${dateForFile}.pdf`);
+    } catch (err) { alert('PDF 다운로드 실패: ' + err.message); }
+};
+
+// 기안서류 개별 엑셀 다운로드
+window.downloadDocExcel = function(id) {
+    try {
+        const docs = window._lastDocHistory || [];
+        const d = docs.find(doc => doc.id === id);
+        if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
+
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabel = `${typeLabels[d.type] || d.type} - ${d.subType}`;
+        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : '시말서';
+
+        const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
+        const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
+        let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
+        if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` (${d.startTime}~${d.endTime})`;
+
+        let deducted = '-';
+        if (d.deductedLeave > 0) {
+            if (d.subType === '시간차' && d.startTime && d.endTime) {
+                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
+                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
+            } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
+        }
+
+        const statusLabel = d.status === 'approved' ? '승인' : '반려';
+        const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+
+        const rows = [
+            [docTitle],
+            [],
+            ['항목', '내용'],
+            ['유형', typeLabel],
+            ['신청자', `${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}`],
+            ['기간', dateStr],
+            ['사유', d.reason || '-'],
+            ['차감일수', deducted],
+            ['결재자', d.approverName || '-'],
+            ['상태', statusLabel],
+            ['처리일', processedDate]
+        ];
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
+        ws['!cols'] = [{ wch: 14 }, { wch: 36 }];
+        XLSX.utils.book_append_sheet(wb, ws, docTitle);
+
+        const dateForFile = d.startDate ? d.startDate.replace(/-/g, '').slice(0, 8) : '';
+        XLSX.writeFile(wb, `기안서류_${d.applicantName}_${d.subType}_${dateForFile}.xlsx`);
+    } catch (err) { alert('엑셀 다운로드 실패: ' + err.message); }
+};
 
 // 기안서류 승인이력 엑셀 다운로드
 // 직원별 연차 현황 다운로드
