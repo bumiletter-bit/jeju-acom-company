@@ -1311,6 +1311,8 @@ function handleSalesExcel(file) {
             }
 
             if (salesItems.length === 0) { alert('엑셀에서 품목/수량 데이터를 찾을 수 없습니다.'); return; }
+            console.log('[정산 엑셀] 파싱된 품목 수:', salesItems.length, '총 수량:', salesItems.reduce((s, i) => s + i.qty, 0));
+            console.log('[정산 엑셀] 품목 목록:', salesItems.map(i => `${i.name} (${i.qty})`).join(', '));
 
             const pricingItems = await getPricingForDate(selectedSettlementPartner, settlementDate);
             if (pricingItems.length === 0) {
@@ -1348,6 +1350,8 @@ function handleSalesExcel(file) {
                 grouped[key].qty += item.qty;
             }
             const groupedList = Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+            console.log('[정산 엑셀] 매칭 성공:', matched.length, '실패:', unmatched.length);
+            console.log('[정산 엑셀] 그룹핑 결과:', groupedList.map(g => `${g.name} (${g.qty})`).join(', '));
 
             document.getElementById('settlement-rows').innerHTML = '';
             for (const item of groupedList) addSettlementRow(item.name, item.price, item.qty);
@@ -1407,7 +1411,8 @@ function extractFeatures(text) {
 
     // 용도/등급 추출
     let grade = null;
-    if (/로얄과/.test(t)) grade = '로얄과';
+    if (/프리미엄\s*로얄/.test(t)) grade = '선물용';
+    else if (/로얄과/.test(t)) grade = '로얄과';
     else if (/소과/.test(t)) grade = '소과';
     else if (/중대과/.test(t)) grade = '중대과';
     else if (/못난이/.test(t)) grade = '못난이';
