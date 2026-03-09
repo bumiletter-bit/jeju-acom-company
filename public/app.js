@@ -536,14 +536,14 @@ window.toggleScheduleComplete = async function(id, checkbox) {
         const res = await api(`/api/schedules/${id}/toggle-complete`, 'PUT');
         const item = checkbox.closest('.day-schedule-item');
         if (res.isCompleted) {
-            item.classList.add('schedule-completed');
+            if (item) item.classList.add('schedule-completed');
             showToast('미션 성공! 🎉');
         } else {
-            item.classList.remove('schedule-completed');
+            if (item) item.classList.remove('schedule-completed');
         }
     } catch (err) {
         checkbox.checked = !checkbox.checked;
-        alert('상태 변경 실패: ' + err.message);
+        console.error('일정 상태 변경 실패:', err);
     }
 };
 
