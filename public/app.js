@@ -1291,28 +1291,47 @@ function handleSalesExcel(file) {
 
             if (jsonData.length === 0) return alert('엑셀에 데이터가 없습니다.');
 
-            const header = jsonData[0].map(h => String(h || '').trim());
+            // 헤더 행 탐색: 첫 번째 행부터 검사하여 품목명+수량 헤더가 있는 행을 찾음
+            let headerRowIdx = 0;
             let nameCol = -1, qtyCol = -1;
-            header.forEach((h, i) => {
-                const lower = h.toLowerCase();
-                if (lower.includes('옵션명') || lower.includes('품목명') || lower.includes('상품명') || lower.includes('품목') || lower.includes('옵션')) nameCol = i;
-                if (lower.includes('수량') || lower.includes('판매수량') || lower.includes('주문수량') || lower.includes('qty')) qtyCol = i;
-            });
+            for (let r = 0; r < Math.min(jsonData.length, 10); r++) {
+                const row = jsonData[r];
+                if (!row) continue;
+                const testHeader = row.map(h => String(h || '').trim().toLowerCase());
+                let nc = -1, qc = -1;
+                testHeader.forEach((h, i) => {
+                    if (h.includes('옵션명') || h.includes('품목명') || h.includes('상품명') || h.includes('품목') || h.includes('옵션')) nc = i;
+                    if (h.includes('수량') || h.includes('판매수량') || h.includes('주문수량') || h.includes('qty')) qc = i;
+                });
+                if (nc !== -1 && qc !== -1) { headerRowIdx = r; nameCol = nc; qtyCol = qc; break; }
+            }
+            // 헤더를 못 찾으면 첫 번째 행을 헤더로 간주
+            if (nameCol === -1) {
+                const header = jsonData[0].map(h => String(h || '').trim());
+                header.forEach((h, i) => {
+                    const lower = h.toLowerCase();
+                    if (lower.includes('옵션명') || lower.includes('품목명') || lower.includes('상품명') || lower.includes('품목') || lower.includes('옵션')) nameCol = i;
+                    if (lower.includes('수량') || lower.includes('판매수량') || lower.includes('주문수량') || lower.includes('qty')) qtyCol = i;
+                });
+            }
             if (nameCol === -1) nameCol = 0;
-            if (qtyCol === -1) qtyCol = header.length >= 2 ? header.length - 1 : 1;
+            if (qtyCol === -1) qtyCol = jsonData[0].length >= 2 ? jsonData[0].length - 1 : 1;
+            console.log('[정산 엑셀] 헤더 행:', headerRowIdx, '품목 열:', nameCol, '수량 열:', qtyCol);
 
             const salesItems = [];
-            for (let i = 1; i < jsonData.length; i++) {
+            for (let i = headerRowIdx + 1; i < jsonData.length; i++) {
                 const row = jsonData[i];
                 if (!row || row.length === 0) continue;
                 const name = String(row[nameCol] || '').trim();
                 const qty = parseInt(String(row[qtyCol] || '0').replace(/[,\s]/g, ''), 10) || 0;
-                if (name && qty > 0) salesItems.push({ name, qty });
+                // 헤더 행이 중간에 반복되면 건너뛰기 (데이터 중복 방지)
+                const nameLower = name.toLowerCase();
+                if (nameLower.includes('옵션명') || nameLower.includes('품목명') || nameLower.includes('상품명') || nameLower === '품목' || nameLower === '옵션' || nameLower === '상품명') continue;
+                if (name && qty > 0) { salesItems.push({ name, qty }); console.log(`[정산 엑셀] 행${i}: "${name}" → ${qty}개`); }
             }
 
             if (salesItems.length === 0) { alert('엑셀에서 품목/수량 데이터를 찾을 수 없습니다.'); return; }
             console.log('[정산 엑셀] 파싱된 품목 수:', salesItems.length, '총 수량:', salesItems.reduce((s, i) => s + i.qty, 0));
-            console.log('[정산 엑셀] 품목 목록:', salesItems.map(i => `${i.name} (${i.qty})`).join(', '));
 
             const pricingItems = await getPricingForDate(selectedSettlementPartner, settlementDate);
             if (pricingItems.length === 0) {
