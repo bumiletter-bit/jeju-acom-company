@@ -1679,8 +1679,9 @@ window.viewSettlementItems = function(id) {
                 <button class="btn-primary" id="settlement-save-btn" style="padding:8px 24px;">저장</button>
                 <button class="btn-secondary" id="settlement-cancel-btn" style="padding:8px 24px;">취소</button>
                </div>`
-            : `<div style="text-align:center;margin-top:16px;">
+            : `<div style="display:flex;gap:8px;justify-content:center;margin-top:16px;">
                 <button class="btn-secondary" id="settlement-edit-btn" style="padding:8px 24px;">수정</button>
+                <button class="btn-secondary" id="settlement-close-btn" style="padding:8px 24px;">닫기</button>
                </div>`;
 
         overlay.querySelector('.modal').innerHTML = `
@@ -1698,6 +1699,10 @@ window.viewSettlementItems = function(id) {
         const editBtnEl = overlay.querySelector('#settlement-edit-btn');
         if (editBtnEl) {
             editBtnEl.addEventListener('click', () => { isEditMode = true; renderModal(overlay); });
+        }
+        const closeBtnEl = overlay.querySelector('#settlement-close-btn');
+        if (closeBtnEl) {
+            closeBtnEl.addEventListener('click', () => { overlay.remove(); });
         }
         const cancelBtnEl = overlay.querySelector('#settlement-cancel-btn');
         if (cancelBtnEl) {
