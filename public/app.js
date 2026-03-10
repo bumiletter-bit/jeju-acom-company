@@ -1439,12 +1439,16 @@ function extractFeatures(text) {
     else if (/프리미엄/.test(t)) grade = '선물용';
     else if (/가정용/.test(t)) grade = '가정용';
 
+    // 꼬마 여부 추출
+    let size = '';
+    if (/꼬마/.test(t)) size = '꼬마';
+
     // 중량 추출
     let weight = null;
     const wMatch = t.match(/(\d+)\s*kg/i);
     if (wMatch) weight = wMatch[1] + 'kg';
 
-    return { fruit, grade, weight, growType };
+    return { fruit, grade, weight, growType, size };
 }
 
 function matchSalesToPricing(salesName, pricingItems) {
@@ -1462,6 +1466,10 @@ function matchSalesToPricing(salesName, pricingItems) {
 
         let score = 1; // 과일명 일치
         let mismatch = false;
+
+        // 꼬마 여부(size): 불일치 시 절대 매칭 안됨
+        if (sf.size !== pf.size) mismatch = true;
+        if (sf.size && pf.size && sf.size === pf.size) score += 3;
 
         // 재배방식(growType): 불일치 시 절대 매칭 안됨
         if (sf.growType || pf.growType) {
