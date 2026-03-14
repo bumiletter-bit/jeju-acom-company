@@ -655,21 +655,22 @@ async function renderNotificationList() {
     const listEl = document.getElementById('noti-list');
     try {
         const notis = await api('/api/notifications');
-        if (notis.length === 0) {
-            listEl.innerHTML = '<div class="noti-empty">알림이 없습니다.</div>';
-            return;
-        }
         // 알림 목록을 저장해두고 클릭 시 참조
         window._notiCache = notis;
-        listEl.innerHTML = notis.map(n => {
+        const unreadNotis = notis.filter(n => !n.isRead);
+        if (unreadNotis.length === 0) {
+            listEl.innerHTML = '<div class="noti-empty">새로운 알림이 없습니다.</div>';
+            return;
+        }
+        listEl.innerHTML = unreadNotis.map(n => {
             const isAnnouncement = n.type === 'announcement';
             const icon = isAnnouncement ? '📢' : '';
             const extraClass = isAnnouncement ? ' noti-announcement' : '';
             const clickAction = isAnnouncement
                 ? `showAnnouncementDetail(${n.id})`
                 : `clickNotification(${n.id}, '${n.link || 'documents'}')`;
-            return `<div class="noti-item ${n.isRead ? '' : 'unread'}${extraClass}" data-id="${n.id}">
-                <span class="noti-dot ${n.isRead ? 'read' : 'unread'}">${icon}</span>
+            return `<div class="noti-item unread${extraClass}" data-id="${n.id}">
+                <span class="noti-dot unread">${icon}</span>
                 <div class="noti-content" onclick="${clickAction}">
                     <div class="noti-msg">${n.message}</div>
                     <div class="noti-time">${timeAgo(n.createdAt)}</div>
