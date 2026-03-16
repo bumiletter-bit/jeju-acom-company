@@ -2707,7 +2707,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
             const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
             const response = await genai.models.generateContent({
-                model: 'gemini-2.0-flash',
+                model: 'gemini-2.5-flash',
                 contents: [{
                     role: 'user',
                     parts: [
@@ -2738,7 +2738,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
             const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
             const aiResponse = await anthropic.messages.create({
-                model: 'claude-sonnet-4-20250514',
+                model: 'claude-sonnet-4-6',
                 max_tokens: 2048,
                 system: AI_SYSTEM_PROMPT,
                 messages: history.rows.map(m => ({ role: m.role, content: m.content }))
@@ -2755,9 +2755,23 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
         res.json({ reply: assistantContent });
     } catch (err) {
-        console.error('AI 채팅 오류:', err);
-        const errorMessage = err?.message || 'AI 응답 생성 중 오류가 발생했습니다';
-        res.status(500).json({ error: '이미지 분석 중 오류가 발생했습니다. 다시 시도해주세요.' });
+        const errMsg = err?.message || String(err);
+        const status = err?.status || err?.statusCode || err?.code;
+        console.error('AI 채팅 오류:', { status, message: errMsg, name: err?.name });
+
+        const isNotFound = status === 404 || errMsg.includes('not found') || errMsg.includes('NOT_FOUND');
+        const is429 = status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED');
+        const isAuth = status === 401 || status === 403 || errMsg.includes('API_KEY') || errMsg.includes('PERMISSION_DENIED');
+
+        if (isNotFound) {
+            res.status(500).json({ error: 'AI 모델을 찾을 수 없습니다. 관리자에게 문의해주세요.' });
+        } else if (is429) {
+            res.status(429).json({ error: 'API 요청 한도 초과입니다. 잠시 후 다시 시도해주세요.' });
+        } else if (isAuth) {
+            res.status(500).json({ error: 'API 인증 오류입니다. 관리자에게 문의해주세요.' });
+        } else {
+            res.status(500).json({ error: `AI 응답 생성 오류: ${errMsg.substring(0, 100)}` });
+        }
     }
 });
 
@@ -2797,7 +2811,7 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         const generateImage = async (retryCount = 0) => {
             try {
                 return await genai.models.generateContent({
-                    model: 'gemini-2.5-flash-preview-image-generation',
+                    model: 'gemini-2.5-flash-image',
                     contents: [{ role: 'user', parts }],
                     config: {
                         responseModalities: ['Text', 'Image']
