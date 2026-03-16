@@ -2797,7 +2797,7 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
         const generateImage = async (retryCount = 0) => {
             try {
                 return await genai.models.generateContent({
-                    model: 'gemini-2.0-flash-exp-image-generation',
+                    model: 'gemini-2.5-flash-preview-image-generation',
                     contents: [{ role: 'user', parts }],
                     config: {
                         responseModalities: ['Text', 'Image']
@@ -2805,8 +2805,14 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
                 });
             } catch (apiErr) {
                 const status = apiErr?.status || apiErr?.statusCode || apiErr?.code;
-                const is429 = status === 429 || String(apiErr?.message || '').includes('429') || String(apiErr?.message || '').includes('RESOURCE_EXHAUSTED');
-                console.error(`이미지 생성 API 오류 (시도 ${retryCount + 1}):`, apiErr);
+                const errMsg = apiErr?.message || String(apiErr);
+                const is429 = status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED');
+                console.error(`이미지 생성 API 오류 (시도 ${retryCount + 1}):`, {
+                    status,
+                    message: errMsg,
+                    name: apiErr?.name,
+                    details: apiErr?.errorDetails || apiErr?.details
+                });
 
                 if (is429 && retryCount === 0) {
                     console.log('429 quota 초과 - 30초 후 재시도합니다...');
@@ -2848,14 +2854,25 @@ app.post('/api/ai/image', authMiddleware, async (req, res) => {
 
         res.json({ imageUrl, revisedPrompt });
     } catch (err) {
-        console.error('이미지 생성 오류:', err);
+        const errMsg = err?.message || String(err);
         const status = err?.status || err?.statusCode || err?.code;
-        const is429 = status === 429 || String(err?.message || '').includes('429') || String(err?.message || '').includes('RESOURCE_EXHAUSTED');
+        console.error('이미지 생성 오류:', { status, message: errMsg, name: err?.name, details: err?.errorDetails || err?.details });
+
+        const is429 = status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED');
+        const isNotFound = status === 404 || errMsg.includes('not found') || errMsg.includes('NOT_FOUND');
+        const isAuth = status === 401 || status === 403 || errMsg.includes('API_KEY') || errMsg.includes('PERMISSION_DENIED');
+        const isSafety = errMsg.includes('SAFETY') || errMsg.includes('blocked') || errMsg.includes('safety');
 
         if (is429) {
-            res.status(429).json({ error: '요청이 많아 잠시 후 다시 시도해주세요 (30초 후)' });
+            res.status(429).json({ error: 'API 요청 한도 초과입니다. 잠시 후 다시 시도해주세요.' });
+        } else if (isNotFound) {
+            res.status(500).json({ error: 'AI 모델을 찾을 수 없습니다. 관리자에게 문의해주세요.' });
+        } else if (isAuth) {
+            res.status(500).json({ error: 'API 인증 오류입니다. 관리자에게 문의해주세요.' });
+        } else if (isSafety) {
+            res.status(400).json({ error: '안전 정책에 의해 이미지 생성이 차단되었습니다. 다른 프롬프트로 시도해주세요.' });
         } else {
-            res.status(500).json({ error: '이미지 생성에 실패했습니다. 다시 시도해주세요.' });
+            res.status(500).json({ error: `이미지 생성 실패: ${errMsg.substring(0, 100)}` });
         }
     }
 });
