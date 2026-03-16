@@ -4197,14 +4197,16 @@ const PRODUCT_CATALOG = new Set([
     '과즙팡팡 천혜향 / 상품 및 과수: 꼬마 천혜향 가정용 - 9kg(55과 전후)',
     '하우스 한라봉 / 상품 및 과수: 꼬마 한라봉 - 5kg(30과 전후)',
     '하우스 한라봉 / 상품 및 과수: 꼬마 한라봉 - 9kg(54과 전후)',
+    '제주 하귤 / 상품 및 과수: 하귤 가정용 4.5kg(랜덤과)',
+    '제주 하귤 / 상품 및 과수: 하귤 가정용 9kg(랜덤과)',
 ]);
 
 // 상품 카탈로그 매칭
 function matchProduct(rawText) {
     const t = rawText || '';
-    const wm = t.match(/(\d+)\s*kg/i);
+    const wm = t.match(/(\d+\.?\d*)\s*kg/i);
     if (!wm) return '[미매칭] ' + t.trim();
-    const w = parseInt(wm[1]);
+    const w = parseFloat(wm[1]);
     const wStr = w + 'kg';
 
     let result = null;
@@ -4236,6 +4238,8 @@ function matchProduct(rawText) {
         const type = /선물/.test(t) ? '선물용' : '가정용';
         const detail = w === 3 ? '10과전후' : w === 5 ? '17과전후' : '';
         result = '제주자몽 / 상품 및 과수: 제주자몽 ' + type + ' ' + wStr + '(' + detail + ')';
+    } else if (/하귤/.test(t)) {
+        result = '제주 하귤 / 상품 및 과수: 하귤 가정용 ' + wStr + '(랜덤과)';
     } else {
         let fruit;
         if (/레드향/.test(t)) fruit = '레드향';
