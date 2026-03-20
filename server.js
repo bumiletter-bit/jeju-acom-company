@@ -1056,8 +1056,8 @@ app.post('/api/documents/manual', authMiddleware, adminOnly, async (req, res) =>
         const actualEndDate = endDate || startDate;
         const leave = Number(deductedLeave) || 0;
 
-        // 연차 차감
-        if (leave > 0) {
+        // 연차 차감(양수) 또는 추가(음수)
+        if (leave !== 0) {
             await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [leave, employeeId]);
         }
 
@@ -1215,8 +1215,8 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
         }
         if (d.status !== 'pending') return res.status(400).json({ error: '이미 처리된 서류입니다' });
 
-        // 연차 복구
-        if (Number(d.deducted_leave) > 0) {
+        // 연차 복구 (차감이면 +, 추가였으면 -)
+        if (Number(d.deducted_leave) !== 0) {
             await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
         }
 
@@ -1286,7 +1286,7 @@ app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, r
 
         if (d.modification_type === 'cancel') {
             // 취소: 연차 복구 + 일정 삭제 + status cancelled
-            if (Number(d.deducted_leave) > 0) {
+            if (Number(d.deducted_leave) !== 0) {
                 await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
             }
             await pool.query('DELETE FROM schedules WHERE document_id = $1', [req.params.id]);
@@ -1516,7 +1516,7 @@ app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
         }
 
         // 반려 아닌 경우 연차 복구
-        if (d.status !== 'rejected' && Number(d.deducted_leave) > 0) {
+        if (d.status !== 'rejected' && Number(d.deducted_leave) !== 0) {
             await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [d.deducted_leave, d.applicant_id]);
         }
 

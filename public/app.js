@@ -2222,6 +2222,22 @@ function formatLeave(val) {
     return result;
 }
 
+// 차감/추가일수 표시 헬퍼
+function formatDeductedLeave(d) {
+    const val = d.deductedLeave;
+    if (!val || val === 0) return '-';
+    if (val < 0) {
+        // 추가일수
+        return `+${parseFloat(Math.abs(val).toFixed(2))}일`;
+    }
+    // 차감일수
+    if (d.subType === '시간차' && d.startTime && d.endTime) {
+        const hrs = calcWorkHoursClient(d.startTime, d.endTime);
+        return `${hrs}시간 (-${parseFloat(val.toFixed(2))}일)`;
+    }
+    return `-${parseFloat(val.toFixed(2))}일`;
+}
+
 function calcWorkHoursClient(startTimeStr, endTimeStr) {
     const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     const s = toMin(startTimeStr);
@@ -2882,15 +2898,7 @@ function renderDocHistory(docs) {
             dateStr += ` (${d.startTime}~${d.endTime})`;
         }
         const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
-        let deducted = '-';
-        if (d.deductedLeave > 0) {
-            if (d.subType === '시간차' && d.startTime && d.endTime) {
-                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
-                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
-            } else {
-                deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일';
-            }
-        }
+        const deducted = formatDeductedLeave(d);
 
         return `<tr>
             <td>${typeLabels[d.type] || d.type} - ${d.subType}</td>
@@ -2922,14 +2930,7 @@ window.viewDocDetail = async function(id) {
         let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
         if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` (${d.startTime}~${d.endTime})`;
 
-        // 차감일수
-        let deducted = '-';
-        if (d.deductedLeave > 0) {
-            if (d.subType === '시간차' && d.startTime && d.endTime) {
-                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
-                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
-            } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
-        }
+        const deducted = formatDeductedLeave(d);
 
         const statusClass = d.status === 'approved' ? 'status-approved' : 'status-rejected';
         const statusLabel = d.status === 'approved' ? '승인' : '반려';
@@ -3006,14 +3007,7 @@ window.downloadDocPDF = async function(id) {
             if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` ${d.startTime} ~ ${d.endTime}`;
         }
 
-        // 차감일수
-        let deducted = '-';
-        if (d.deductedLeave > 0) {
-            if (d.subType === '시간차' && d.startTime && d.endTime) {
-                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
-                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
-            } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
-        }
+        const deducted = formatDeductedLeave(d);
 
         const statusLabel = d.status === 'approved' ? '승인' : '반려';
         const processedDate = d.processedAt ? new Date(d.processedAt) : null;
@@ -3098,13 +3092,7 @@ window.downloadDocExcel = function(id) {
         let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
         if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` (${d.startTime}~${d.endTime})`;
 
-        let deducted = '-';
-        if (d.deductedLeave > 0) {
-            if (d.subType === '시간차' && d.startTime && d.endTime) {
-                const hrs = calcWorkHoursClient(d.startTime, d.endTime);
-                deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
-            } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
-        }
+        const deducted = formatDeductedLeave(d);
 
         const statusLabel = d.status === 'approved' ? '승인' : '반려';
         const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
@@ -3200,13 +3188,7 @@ window.downloadDocHistory = async function() {
             let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
             if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` (${d.startTime}~${d.endTime})`;
             const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '';
-            let deducted = '';
-            if (d.deductedLeave > 0) {
-                if (d.subType === '시간차' && d.startTime && d.endTime) {
-                    const hrs = calcWorkHoursClient(d.startTime, d.endTime);
-                    deducted = `${hrs}시간 (${parseFloat(d.deductedLeave.toFixed(2))}일)`;
-                } else { deducted = parseFloat(d.deductedLeave.toFixed(2)) + '일'; }
-            }
+            const deducted = formatDeductedLeave(d) === '-' ? '' : formatDeductedLeave(d);
             historyRows.push([
                 `${typeLabels[d.type] || d.type} - ${d.subType}`,
                 `${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}`,
@@ -3340,7 +3322,7 @@ window.openManualDocModal = async function() {
     try {
         const users = await api('/api/users');
         const sel = document.getElementById('manual-employee');
-        sel.innerHTML = users.filter(u => u.role === 'user').map(u =>
+        sel.innerHTML = users.map(u =>
             `<option value="${u.id}">${u.position ? u.position + ' ' : ''}${u.name}</option>`
         ).join('');
     } catch (err) { console.error(err); }
@@ -3351,6 +3333,7 @@ window.openManualDocModal = async function() {
     document.getElementById('manual-end-date').value = '';
     document.getElementById('manual-reason').value = '';
     document.getElementById('manual-deducted').value = '0';
+    document.getElementById('manual-added').value = '0';
 };
 
 window.closeManualDocModal = function() {
@@ -3407,11 +3390,25 @@ window.calcManualDeducted = function() {
             const hours = (e - s) / (1000 * 60 * 60);
             document.getElementById('manual-deducted').value = hours > 0 ? (Math.round(hours / 8 * 10) / 10) : 0;
         }
+        document.getElementById('manual-added').value = '0';
     } else if (type === 'vacation' && sub === '연차' && startDate && endDate) {
         const days = Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
         document.getElementById('manual-deducted').value = days > 0 ? days : 0;
+        document.getElementById('manual-added').value = '0';
     } else {
         document.getElementById('manual-deducted').value = '0';
+        document.getElementById('manual-added').value = '0';
+    }
+};
+
+// 차감일수/추가일수 상호 배타 입력
+window.onManualDeductInput = function(which) {
+    if (which === 'deduct') {
+        const val = parseFloat(document.getElementById('manual-deducted').value) || 0;
+        if (val > 0) document.getElementById('manual-added').value = '0';
+    } else {
+        const val = parseFloat(document.getElementById('manual-added').value) || 0;
+        if (val > 0) document.getElementById('manual-deducted').value = '0';
     }
 };
 
@@ -3422,12 +3419,21 @@ window.saveManualDoc = async function() {
     const startDate = document.getElementById('manual-start-date').value;
     const endDate = document.getElementById('manual-end-date').value;
     const reason = document.getElementById('manual-reason').value;
-    const deductedLeave = parseFloat(document.getElementById('manual-deducted').value) || 0;
+    const deductDays = parseFloat(document.getElementById('manual-deducted').value) || 0;
+    const addDays = parseFloat(document.getElementById('manual-added').value) || 0;
+
+    if (deductDays > 0 && addDays > 0) {
+        alert('차감일수와 추가일수는 동시에 입력할 수 없습니다.');
+        return;
+    }
 
     if (!employeeId || !startDate) {
         alert('직원과 시작일을 선택해주세요.');
         return;
     }
+
+    // 차감: 양수, 추가: 음수로 전달
+    const deductedLeave = addDays > 0 ? -addDays : deductDays;
 
     const body = { employeeId: Number(employeeId), type, subType, startDate, endDate: endDate || startDate, reason, deductedLeave };
 
