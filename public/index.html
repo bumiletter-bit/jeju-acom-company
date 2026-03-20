@@ -550,6 +550,7 @@
                                     <option value="vacation">휴가신청서</option>
                                     <option value="attendance">근태신청서</option>
                                     <option value="reason">시말서</option>
+                                    <option value="leave_adjustment">연차 조정</option>
                                 </select>
                             </div>
                             <div class="form-group" style="margin-bottom:0;">
@@ -655,6 +656,67 @@
                         <div style="display:flex; gap:10px; justify-content:flex-end;">
                             <button class="btn-outline" onclick="closeManualDocModal()">취소</button>
                             <button class="btn-primary" onclick="saveManualDoc()">저장</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 연차 조정 내역 (관리자에게만 표시) -->
+                <div id="leave-adjustment-section" class="card" style="display:none;">
+                    <div class="card-header-row">
+                        <h2>연차 조정 내역</h2>
+                        <button id="btn-add-leave-adj" class="btn-primary" onclick="openLeaveAdjModal()" style="font-size:13px; padding:6px 14px; display:none;">+ 연차 조정</button>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>날짜</th>
+                                <th>대상 직원</th>
+                                <th>조정</th>
+                                <th>사유</th>
+                                <th>처리자</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="leave-adj-list">
+                            <tr class="empty-row"><td colspan="6">연차 조정 내역이 없습니다.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 연차 조정 모달 -->
+                <div id="leave-adj-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal">
+                        <h3>연차 조정</h3>
+                        <div class="form-group">
+                            <label>대상 직원</label>
+                            <select id="adj-employee" class="form-input"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>조정 유형</label>
+                            <div style="display:flex; gap:16px; align-items:center; padding:8px 0;">
+                                <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-weight:500;">
+                                    <input type="radio" name="adj-type" value="add" checked> 추가(+)
+                                </label>
+                                <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-weight:500;">
+                                    <input type="radio" name="adj-type" value="sub"> 차감(-)
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>일수</label>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <input type="number" id="adj-days" class="form-input" step="0.5" min="0.5" value="1" style="width:120px;">
+                                <span>일</span>
+                            </div>
+                            <small style="color:var(--text-light);">예: 1, 0.5 등</small>
+                        </div>
+                        <div class="form-group">
+                            <label>사유</label>
+                            <input type="text" id="adj-reason" class="form-input" placeholder="예: 대체휴무, 포상휴가">
+                        </div>
+                        <div style="display:flex; gap:10px; justify-content:flex-end;">
+                            <button class="btn-outline" onclick="closeLeaveAdjModal()">취소</button>
+                            <button class="btn-primary" onclick="saveLeaveAdj()">저장</button>
                         </div>
                     </div>
                 </div>
@@ -1569,6 +1631,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=131"></script>
+    <script src="app.js?v=132"></script>
 </body>
 </html>

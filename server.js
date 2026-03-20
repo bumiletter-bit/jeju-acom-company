@@ -250,6 +250,18 @@ async function initDB() {
         )
     `);
 
+    // 연차 조정 이력 테이블
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS leave_adjustments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            adjustment DECIMAL(5,2) NOT NULL,
+            reason VARCHAR(200) NOT NULL,
+            adjusted_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+
     // 잘못 생성된 ceo 계정 정리
     await pool.query("DELETE FROM users WHERE username = 'ceo' AND (SELECT COUNT(*) FROM users WHERE username = 'admin') > 0");
 
@@ -969,12 +981,52 @@ app.get('/api/documents/history', authMiddleware, adminOnly, async (req, res) =>
             query += ` AND d.start_date <= $${idx++}`;
             values.push(endDate);
         }
-        if (type) {
+        if (type && type !== 'leave_adjustment') {
             query += ` AND d.type = $${idx++}`;
             values.push(type);
         }
 
         query += ' ORDER BY d.processed_at DESC';
+
+        // 연차 조정 타입이면 leave_adjustments에서만 조회
+        if (type === 'leave_adjustment') {
+            let adjQuery = `
+                SELECT la.*, u.name as user_name, u.position as user_position,
+                       ab.name as adjusted_by_name
+                FROM leave_adjustments la
+                JOIN users u ON la.user_id = u.id
+                JOIN users ab ON la.adjusted_by = ab.id
+                WHERE 1=1
+            `;
+            const adjValues = [];
+            let adjIdx = 1;
+            if (employeeId) {
+                adjQuery += ` AND la.user_id = $${adjIdx++}`;
+                adjValues.push(Number(employeeId));
+            }
+            if (startDate) {
+                adjQuery += ` AND la.created_at >= $${adjIdx++}`;
+                adjValues.push(startDate);
+            }
+            if (endDate) {
+                adjQuery += ` AND la.created_at <= ($${adjIdx++})::date + INTERVAL '1 day'`;
+                adjValues.push(endDate);
+            }
+            adjQuery += ' ORDER BY la.created_at DESC';
+            const adjResult = await pool.query(adjQuery, adjValues);
+            return res.json(adjResult.rows.map(r => ({
+                id: r.id, type: 'leave_adjustment', subType: '',
+                applicantId: r.user_id, applicantName: r.user_name,
+                applicantPosition: r.user_position,
+                approverId: r.adjusted_by, approverName: r.adjusted_by_name,
+                startDate: null, endDate: null,
+                startTime: null, endTime: null,
+                reason: r.reason, status: 'completed',
+                deductedLeave: Number(r.adjustment),
+                createdAt: r.created_at, processedAt: r.created_at,
+                isLeaveAdjustment: true
+            })));
+        }
 
         const result = await pool.query(query, values);
         res.json(result.rows.map(r => ({
@@ -2994,6 +3046,117 @@ app.delete('/api/work-logs/:id', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('업무일지 삭제 오류:', err);
         res.status(500).json({ error: '업무일지 삭제 실패' });
+    }
+});
+
+// === 연차 조정 API ===
+
+// 연차 조정 등록 (부장만 가능)
+app.post('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        // 부장만 가능 (position === '부장')
+        if (req.user.position !== '부장') {
+            return res.status(403).json({ error: '연차 조정 권한이 없습니다 (부장만 가능)' });
+        }
+        const { user_id, adjustment, reason } = req.body;
+        if (!user_id || adjustment === undefined || !reason) {
+            return res.status(400).json({ error: '대상 직원, 조정값, 사유를 입력해주세요' });
+        }
+        const adj = Number(adjustment);
+        if (isNaN(adj) || adj === 0) {
+            return res.status(400).json({ error: '유효한 조정값을 입력해주세요' });
+        }
+
+        // 이력 저장
+        const result = await pool.query(
+            'INSERT INTO leave_adjustments (user_id, adjustment, reason, adjusted_by) VALUES ($1, $2, $3, $4) RETURNING *',
+            [user_id, adj, reason, req.user.id]
+        );
+
+        // users.annual_leave 업데이트
+        await pool.query('UPDATE users SET annual_leave = annual_leave + $1 WHERE id = $2', [adj, user_id]);
+
+        res.json({ success: true, id: result.rows[0].id });
+    } catch (err) {
+        console.error('POST /api/leave-adjustments error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 연차 조정 내역 조회 (관리자)
+app.get('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { employeeId, startDate, endDate } = req.query;
+        let query = `
+            SELECT la.*, u.name as user_name, u.position as user_position,
+                   ab.name as adjusted_by_name
+            FROM leave_adjustments la
+            JOIN users u ON la.user_id = u.id
+            JOIN users ab ON la.adjusted_by = ab.id
+        `;
+        const values = [];
+        const conditions = [];
+        let idx = 1;
+
+        if (employeeId) {
+            conditions.push(`la.user_id = $${idx++}`);
+            values.push(Number(employeeId));
+        }
+        if (startDate) {
+            conditions.push(`la.created_at >= $${idx++}`);
+            values.push(startDate);
+        }
+        if (endDate) {
+            conditions.push(`la.created_at <= ($${idx++})::date + INTERVAL '1 day'`);
+            values.push(endDate);
+        }
+
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
+        }
+        query += ' ORDER BY la.created_at DESC';
+
+        const result = await pool.query(query, values);
+        res.json(result.rows.map(r => ({
+            id: r.id,
+            userId: r.user_id,
+            userName: r.user_name,
+            userPosition: r.user_position,
+            adjustment: Number(r.adjustment),
+            reason: r.reason,
+            adjustedByName: r.adjusted_by_name,
+            createdAt: r.created_at
+        })));
+    } catch (err) {
+        console.error('GET /api/leave-adjustments error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 연차 조정 삭제/취소 (부장만 가능, annual_leave 원복)
+app.delete('/api/leave-adjustments/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (req.user.position !== '부장') {
+            return res.status(403).json({ error: '연차 조정 취소 권한이 없습니다 (부장만 가능)' });
+        }
+        const { id } = req.params;
+        // 기존 조정 내역 조회
+        const existing = await pool.query('SELECT * FROM leave_adjustments WHERE id = $1', [id]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ error: '조정 내역을 찾을 수 없습니다' });
+        }
+        const record = existing.rows[0];
+
+        // annual_leave 원복 (반대 값 적용)
+        await pool.query('UPDATE users SET annual_leave = annual_leave - $1 WHERE id = $2', [Number(record.adjustment), record.user_id]);
+
+        // 이력 삭제
+        await pool.query('DELETE FROM leave_adjustments WHERE id = $1', [id]);
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('DELETE /api/leave-adjustments error:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 

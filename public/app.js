@@ -2116,6 +2116,7 @@ document.querySelectorAll('.doc-main-tab').forEach(tab => {
             loadHistoryFilters();
             renderLeaveSummary();
             searchDocHistory();
+            loadLeaveAdjustments();
         }
     });
 });
@@ -2846,7 +2847,7 @@ window.searchDocHistory = async function() {
 function renderDocHistory(docs) {
     window._lastDocHistory = docs || [];
     const tbody = document.getElementById('doc-history-list');
-    const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+    const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', leave_adjustment: '연차 조정' };
 
     if (!docs || docs.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>';
@@ -2854,6 +2855,24 @@ function renderDocHistory(docs) {
     }
 
     tbody.innerHTML = docs.map(d => {
+        // 연차 조정 타입 특별 처리
+        if (d.isLeaveAdjustment || d.type === 'leave_adjustment') {
+            const adj = d.deductedLeave;
+            const adjSign = adj > 0 ? '+' : '';
+            const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+            return `<tr>
+                <td>연차 조정 ${adjSign}${adj}일</td>
+                <td>${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}</td>
+                <td>-</td>
+                <td>${d.reason || '-'}</td>
+                <td>${adjSign}${adj}일</td>
+                <td>${d.approverName || '-'}</td>
+                <td><span class="status-badge status-approved">완료</span></td>
+                <td>${processedDate}</td>
+                <td></td>
+            </tr>`;
+        }
+
         const statusClass = d.status === 'approved' ? 'status-approved' : 'status-rejected';
         const statusLabel = d.status === 'approved' ? '승인' : '반려';
         const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
@@ -3161,9 +3180,21 @@ window.downloadDocHistory = async function() {
         if (type) params.push(`type=${type}`);
         url += params.join('&');
         const docs = await api(url);
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', leave_adjustment: '연차 조정' };
         const historyRows = [['유형', '신청자', '기간/날짜', '사유', '차감일수', '결재자', '상태', '처리일']];
         docs.forEach(d => {
+            // 연차 조정 타입 특별 처리
+            if (d.isLeaveAdjustment || d.type === 'leave_adjustment') {
+                const adj = d.deductedLeave;
+                const adjSign = adj > 0 ? '+' : '';
+                const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '';
+                historyRows.push([
+                    `연차 조정 ${adjSign}${adj}일`,
+                    `${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}`,
+                    '-', d.reason || '', `${adjSign}${adj}일`, d.approverName || '', '완료', processedDate
+                ]);
+                return;
+            }
             const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
             const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
             let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
@@ -3193,6 +3224,110 @@ window.downloadDocHistory = async function() {
         XLSX.utils.book_append_sheet(wb, ws, '승인반려 이력');
         XLSX.writeFile(wb, `승인반려_이력_${now.getFullYear()}년${now.getMonth() + 1}월.xlsx`);
     } catch (err) { alert('다운로드 실패: ' + err.message); }
+};
+
+// =============================================
+// 연차 조정 내역 (부장 전용 등록/삭제, 관리자 조회)
+// =============================================
+
+async function loadLeaveAdjustments() {
+    const section = document.getElementById('leave-adjustment-section');
+    if (!section) return;
+    if (currentUser?.role !== 'admin') {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = '';
+
+    // 부장만 + 연차 조정 버튼 표시
+    const addBtn = document.getElementById('btn-add-leave-adj');
+    if (addBtn) {
+        addBtn.style.display = currentUser.position === '부장' ? '' : 'none';
+    }
+
+    try {
+        const data = await api('/api/leave-adjustments');
+        const tbody = document.getElementById('leave-adj-list');
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">연차 조정 내역이 없습니다.</td></tr>';
+            return;
+        }
+        const isBujang = currentUser.position === '부장';
+        tbody.innerHTML = data.map(d => {
+            const date = new Date(d.createdAt).toLocaleDateString('ko-KR');
+            const adjSign = d.adjustment > 0 ? '+' : '';
+            return `<tr>
+                <td>${date}</td>
+                <td>${d.userPosition ? d.userPosition + ' ' : ''}${d.userName}</td>
+                <td style="font-weight:600; color:${d.adjustment > 0 ? '#2563eb' : '#dc2626'};">${adjSign}${d.adjustment}일</td>
+                <td>${d.reason}</td>
+                <td>${d.adjustedByName}</td>
+                <td>${isBujang ? `<button class="btn-view-items" onclick="deleteLeaveAdj(${d.id})" style="color:#dc2626;">취소</button>` : ''}</td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        console.error('loadLeaveAdjustments error:', err);
+    }
+}
+
+window.openLeaveAdjModal = async function() {
+    document.getElementById('leave-adj-modal').style.display = '';
+    try {
+        const users = await api('/api/users');
+        const select = document.getElementById('adj-employee');
+        select.innerHTML = users
+            .filter(u => u.id !== currentUser.id) // 본인 제외 가능, 필요 시 제거
+            .map(u => `<option value="${u.id}">${u.position ? u.position + ' ' : ''}${u.name}</option>`)
+            .join('');
+    } catch (err) {
+        console.error('openLeaveAdjModal error:', err);
+    }
+    // 초기화
+    document.getElementById('adj-days').value = '1';
+    document.getElementById('adj-reason').value = '';
+    document.querySelector('input[name="adj-type"][value="add"]').checked = true;
+};
+
+window.closeLeaveAdjModal = function() {
+    document.getElementById('leave-adj-modal').style.display = 'none';
+};
+
+window.saveLeaveAdj = async function() {
+    const userId = document.getElementById('adj-employee').value;
+    const days = parseFloat(document.getElementById('adj-days').value);
+    const reason = document.getElementById('adj-reason').value.trim();
+    const isAdd = document.querySelector('input[name="adj-type"]:checked').value === 'add';
+
+    if (!userId) { alert('대상 직원을 선택해주세요.'); return; }
+    if (!days || days <= 0) { alert('일수를 입력해주세요.'); return; }
+    if (!reason) { alert('사유를 입력해주세요.'); return; }
+
+    const adjustment = isAdd ? days : -days;
+
+    try {
+        await api('/api/leave-adjustments', {
+            method: 'POST',
+            body: JSON.stringify({ user_id: Number(userId), adjustment, reason })
+        });
+        closeLeaveAdjModal();
+        showToast('연차 조정 완료');
+        loadLeaveAdjustments();
+        renderLeaveSummary();
+    } catch (err) {
+        alert('연차 조정 실패: ' + err.message);
+    }
+};
+
+window.deleteLeaveAdj = async function(id) {
+    if (!confirm('이 연차 조정을 취소하시겠습니까? 연차가 원복됩니다.')) return;
+    try {
+        await api(`/api/leave-adjustments/${id}`, { method: 'DELETE' });
+        showToast('연차 조정이 취소되었습니다');
+        loadLeaveAdjustments();
+        renderLeaveSummary();
+    } catch (err) {
+        alert('취소 실패: ' + err.message);
+    }
 };
 
 // =============================================
