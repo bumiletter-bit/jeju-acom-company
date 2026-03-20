@@ -641,9 +641,9 @@ app.get('/api/users/leave-summary', authMiddleware, adminOnly, async (req, res) 
     try {
         const result = await pool.query(`
             SELECT u.id, u.name, u.position, u.annual_leave,
-                   COALESCE(SUM(CASE WHEN d.status = 'approved' AND d.type = 'vacation'
+                   COALESCE(SUM(CASE WHEN d.status = 'approved' AND d.type = 'vacation' AND d.deducted_leave > 0
                        THEN d.deducted_leave ELSE 0 END), 0) as used_leave,
-                   COALESCE(SUM(CASE WHEN d.status = 'pending' AND d.type = 'vacation'
+                   COALESCE(SUM(CASE WHEN d.status = 'pending' AND d.type = 'vacation' AND d.deducted_leave > 0
                        THEN d.deducted_leave ELSE 0 END), 0) as pending_leave
             FROM users u
             LEFT JOIN documents d ON u.id = d.applicant_id
