@@ -3239,10 +3239,10 @@ async function loadLeaveAdjustments() {
     }
     section.style.display = '';
 
-    // 부장만 + 연차 조정 버튼 표시
+    // 대표/부장만 연차 조정 버튼 표시
     const addBtn = document.getElementById('btn-add-leave-adj');
     if (addBtn) {
-        addBtn.style.display = currentUser.position === '부장' ? '' : 'none';
+        addBtn.style.display = (currentUser.position === '부장' || currentUser.position === '대표') ? '' : 'none';
     }
 
     try {
@@ -3252,7 +3252,7 @@ async function loadLeaveAdjustments() {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="6">연차 조정 내역이 없습니다.</td></tr>';
             return;
         }
-        const isBujang = currentUser.position === '부장';
+        const canAdjust = currentUser.position === '부장' || currentUser.position === '대표';
         tbody.innerHTML = data.map(d => {
             const date = new Date(d.createdAt).toLocaleDateString('ko-KR');
             const adjSign = d.adjustment > 0 ? '+' : '';
@@ -3262,7 +3262,7 @@ async function loadLeaveAdjustments() {
                 <td style="font-weight:600; color:${d.adjustment > 0 ? '#2563eb' : '#dc2626'};">${adjSign}${d.adjustment}일</td>
                 <td>${d.reason}</td>
                 <td>${d.adjustedByName}</td>
-                <td>${isBujang ? `<button class="btn-view-items" onclick="deleteLeaveAdj(${d.id})" style="color:#dc2626;">취소</button>` : ''}</td>
+                <td>${canAdjust ? `<button class="btn-view-items" onclick="deleteLeaveAdj(${d.id})" style="color:#dc2626;">취소</button>` : ''}</td>
             </tr>`;
         }).join('');
     } catch (err) {

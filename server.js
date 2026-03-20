@@ -3051,12 +3051,11 @@ app.delete('/api/work-logs/:id', authMiddleware, async (req, res) => {
 
 // === 연차 조정 API ===
 
-// 연차 조정 등록 (부장만 가능)
+// 연차 조정 등록 (대표/부장만 가능)
 app.post('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) => {
     try {
-        // 부장만 가능 (position === '부장')
-        if (req.user.position !== '부장') {
-            return res.status(403).json({ error: '연차 조정 권한이 없습니다 (부장만 가능)' });
+        if (req.user.position !== '부장' && req.user.position !== '대표') {
+            return res.status(403).json({ error: '연차 조정 권한이 없습니다 (대표/부장만 가능)' });
         }
         const { user_id, adjustment, reason } = req.body;
         if (!user_id || adjustment === undefined || !reason) {
@@ -3133,11 +3132,11 @@ app.get('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
-// 연차 조정 삭제/취소 (부장만 가능, annual_leave 원복)
+// 연차 조정 삭제/취소 (대표/부장만 가능, annual_leave 원복)
 app.delete('/api/leave-adjustments/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
-        if (req.user.position !== '부장') {
-            return res.status(403).json({ error: '연차 조정 취소 권한이 없습니다 (부장만 가능)' });
+        if (req.user.position !== '부장' && req.user.position !== '대표') {
+            return res.status(403).json({ error: '연차 조정 취소 권한이 없습니다 (대표/부장만 가능)' });
         }
         const { id } = req.params;
         // 기존 조정 내역 조회
