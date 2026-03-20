@@ -2909,10 +2909,26 @@ function renderDocHistory(docs) {
             <td>${d.approverName || '-'}</td>
             <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
             <td>${processedDate}</td>
-            <td><button class="btn-view-items" onclick="viewDocDetail(${d.id})">상세</button></td>
+            <td>
+                <button class="btn-view-items" onclick="viewDocDetail(${d.id})">상세</button>
+                ${currentUser.position === '대표' ? `<button class="btn-view-items" onclick="deleteDocHistory(${d.id})" style="color:#dc2626; margin-left:4px;">삭제</button>` : ''}
+            </td>
         </tr>`;
     }).join('');
 }
+
+// 승인이력 삭제 (대표 전용)
+window.deleteDocHistory = async function(id) {
+    if (!confirm('이 승인 이력을 삭제하시겠습니까?\n차감된 연차도 복구됩니다.')) return;
+    try {
+        await api(`/api/documents/${id}`, 'DELETE');
+        showToast('이력이 삭제되었습니다');
+        searchDocHistory();
+        renderLeaveSummary();
+    } catch (err) {
+        alert('삭제 실패: ' + err.message);
+    }
+};
 
 // 기안서류 개별 상세 모달
 window.viewDocDetail = async function(id) {

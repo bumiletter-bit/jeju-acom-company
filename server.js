@@ -1505,14 +1505,18 @@ app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
         if (doc.rows.length === 0) return res.status(404).json({ error: '서류를 찾을 수 없습니다' });
 
         const d = doc.rows[0];
+        const isDaepyo = req.user.position === '대표';
         const isApplicant = d.applicant_id === req.user.id;
         const isApprover = d.approver_id === req.user.id;
-        // 대기/반려: 신청자 본인 또는 결재자
-        // 승인 완료: 결재자만 (신청자는 수정요청으로)
-        if (d.status === 'approved') {
-            if (!isApprover) return res.status(403).json({ error: '승인된 서류는 결재자만 삭제할 수 있습니다' });
-        } else {
-            if (!isApplicant && !isApprover) return res.status(403).json({ error: '삭제 권한이 없습니다' });
+        // 대표는 모든 서류 삭제 가능
+        if (!isDaepyo) {
+            // 대기/반려: 신청자 본인 또는 결재자
+            // 승인 완료: 결재자만 (신청자는 수정요청으로)
+            if (d.status === 'approved') {
+                if (!isApprover) return res.status(403).json({ error: '승인된 서류는 결재자만 삭제할 수 있습니다' });
+            } else {
+                if (!isApplicant && !isApprover) return res.status(403).json({ error: '삭제 권한이 없습니다' });
+            }
         }
 
         // 반려 아닌 경우 연차 복구
