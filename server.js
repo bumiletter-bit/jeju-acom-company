@@ -2034,11 +2034,64 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
         } else {
             result = await pool.query('SELECT * FROM settlements ORDER BY date, id');
         }
-        const data = result.rows.map(row => ({
-            id: row.id, date: row.date, partner: row.partner,
-            amount: Number(row.amount), items: row.items, fromPricing: row.from_pricing,
-            isPaid: row.is_paid || false, paidAt: row.paid_at
-        }));
+
+        // 모든 pricing 데이터 조회 (실시간 단가 반영용)
+        const pricingResult = await pool.query('SELECT * FROM pricing ORDER BY id ASC');
+        const allPricing = pricingResult.rows;
+
+        const data = result.rows.map(row => {
+            const items = row.items || [];
+            const settlementDate = normDateSafe(row.date);
+
+            // 해당 날짜+거래처에 맞는 pricing 찾기
+            let matchedPricing = allPricing.filter(p =>
+                p.partner === row.partner &&
+                normDateSafe(p.start_date) <= settlementDate &&
+                normDateSafe(p.end_date) >= settlementDate
+            );
+            // fallback: 기간 매칭 없으면 가장 최근 이전 pricing
+            if (matchedPricing.length === 0) {
+                const prev = allPricing.filter(p =>
+                    p.partner === row.partner &&
+                    normDateSafe(p.end_date) < settlementDate
+                ).sort((a, b) => normDateSafe(b.end_date).localeCompare(normDateSafe(a.end_date)));
+                if (prev.length > 0) matchedPricing = [prev[0]];
+            }
+
+            // pricing의 품목별 단가 맵 생성
+            const priceMap = {};
+            matchedPricing.forEach(p => {
+                (p.items || []).forEach(item => {
+                    priceMap[item.name] = Number(item.price) || 0;
+                });
+            });
+
+            // items의 단가를 pricing 단가로 업데이트 (매칭되는 품목만)
+            let updatedItems = items;
+            if (Object.keys(priceMap).length > 0 && items.length > 0) {
+                updatedItems = items.map(item => {
+                    if (priceMap[item.name] !== undefined) {
+                        const newPrice = priceMap[item.name];
+                        return {
+                            ...item,
+                            price: newPrice,
+                            subtotal: newPrice * (item.qty || 0)
+                        };
+                    }
+                    return item;
+                });
+            }
+
+            const updatedAmount = updatedItems.length > 0
+                ? updatedItems.reduce((sum, item) => sum + (item.subtotal || (item.price || 0) * (item.qty || 0)), 0)
+                : Number(row.amount);
+
+            return {
+                id: row.id, date: row.date, partner: row.partner,
+                amount: updatedAmount, items: updatedItems, fromPricing: row.from_pricing,
+                isPaid: row.is_paid || false, paidAt: row.paid_at
+            };
+        });
         res.json(data);
     } catch (err) {
         res.status(500).json({ error: err.message });
