@@ -3183,10 +3183,14 @@ window.downloadDocHistory = async function() {
         if (endDate) params.push(`endDate=${endDate}`);
         if (type) params.push(`type=${type}`);
         url += params.join('&');
-        const docs = await api(url);
+        const [docs, leaveData] = await Promise.all([api(url), api('/api/users/leave-summary')]);
+        // 직원별 잔여연차 맵 (id → annualLeave)
+        const leaveMap = {};
+        leaveData.forEach(emp => { leaveMap[emp.id] = emp.annualLeave; });
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', leave_adjustment: '연차 조정' };
-        const historyRows = [['유형', '신청자', '기간/날짜', '사유', '차감일수', '결재자', '상태', '처리일']];
+        const historyRows = [['유형', '신청자', '기간/날짜', '사유', '차감일수', '잔여연차', '결재자', '상태', '처리일']];
         docs.forEach(d => {
+            const remainLeave = leaveMap[d.applicantId] !== undefined ? formatLeave(leaveMap[d.applicantId]) : '';
             // 연차 조정 타입 특별 처리
             if (d.isLeaveAdjustment || d.type === 'leave_adjustment') {
                 const adj = d.deductedLeave;
@@ -3195,7 +3199,7 @@ window.downloadDocHistory = async function() {
                 historyRows.push([
                     `연차 조정 ${adjSign}${adj}일`,
                     `${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}`,
-                    '-', d.reason || '', `${adjSign}${adj}일`, d.approverName || '', '완료', processedDate
+                    '-', d.reason || '', `${adjSign}${adj}일`, remainLeave, d.approverName || '', '완료', processedDate
                 ]);
                 return;
             }
@@ -3208,15 +3212,15 @@ window.downloadDocHistory = async function() {
             historyRows.push([
                 `${typeLabels[d.type] || d.type} - ${d.subType}`,
                 `${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}`,
-                dateStr, d.reason || '', deducted, d.approverName || '',
+                dateStr, d.reason || '', deducted, remainLeave, d.approverName || '',
                 d.status === 'approved' ? '승인' : '반려', processedDate
             ]);
         });
         const now = new Date();
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet(historyRows);
-        ws['!cols'] = [{ wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 24 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 14 }];
-        ['A1','B1','C1','D1','E1','F1','G1','H1'].forEach(cell => {
+        ws['!cols'] = [{ wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 24 }, { wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 14 }];
+        ['A1','B1','C1','D1','E1','F1','G1','H1','I1'].forEach(cell => {
             if (ws[cell]) ws[cell].s = { font: { bold: true }, fill: { fgColor: { rgb: 'F3F4F6' } }, alignment: { horizontal: 'center' } };
         });
         XLSX.utils.book_append_sheet(wb, ws, '승인반려 이력');
