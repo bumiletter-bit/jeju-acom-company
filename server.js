@@ -2035,12 +2035,23 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
             result = await pool.query('SELECT * FROM settlements ORDER BY date, id');
         }
 
+        // JSONB 안전 파싱 헬퍼
+        function safeItems(val) {
+            if (!val) return [];
+            if (typeof val === 'string') { try { return JSON.parse(val); } catch { return []; } }
+            return Array.isArray(val) ? val : [];
+        }
+
         // 모든 pricing 데이터 조회 (실시간 단가 반영용)
         const pricingResult = await pool.query('SELECT * FROM pricing ORDER BY id ASC');
         const allPricing = pricingResult.rows;
 
+        // product_mappings 조회 (품목명 매칭 fallback용)
+        const mappingsResult = await pool.query('SELECT * FROM product_mappings ORDER BY id');
+        const allMappings = mappingsResult.rows;
+
         const data = result.rows.map(row => {
-            const items = row.items || [];
+            const items = safeItems(row.items);
             const settlementDate = normDateSafe(row.date);
 
             // 해당 날짜+거래처에 맞는 pricing 찾기
@@ -2061,30 +2072,54 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
             // pricing의 품목별 단가 맵 생성
             const priceMap = {};
             matchedPricing.forEach(p => {
-                (p.items || []).forEach(item => {
-                    priceMap[item.name] = Number(item.price) || 0;
+                safeItems(p.items).forEach(item => {
+                    if (item && item.name) priceMap[item.name] = Number(item.price) || 0;
                 });
             });
 
-            // items의 단가를 pricing 단가로 업데이트 (매칭되는 품목만)
+            // 해당 거래처의 product_mappings (sales_name → pricing_name 매핑)
+            const partnerMappings = {};
+            allMappings.filter(m => m.partner === row.partner).forEach(m => {
+                partnerMappings[m.sales_name] = m.pricing_name;
+            });
+
+            // items의 단가를 pricing 단가로 업데이트
             let updatedItems = items;
             if (Object.keys(priceMap).length > 0 && items.length > 0) {
                 updatedItems = items.map(item => {
-                    if (priceMap[item.name] !== undefined) {
-                        const newPrice = priceMap[item.name];
-                        return {
-                            ...item,
-                            price: newPrice,
-                            subtotal: newPrice * (item.qty || 0)
-                        };
+                    if (!item || !item.name) return item;
+                    let pricingName = item.name;
+                    // 1차: 정확한 이름 매칭
+                    if (priceMap[pricingName] !== undefined) {
+                        const newPrice = priceMap[pricingName];
+                        return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
+                    }
+                    // 2차: product_mappings 테이블 기반 매칭
+                    if (partnerMappings[item.name] && priceMap[partnerMappings[item.name]] !== undefined) {
+                        const newPrice = priceMap[partnerMappings[item.name]];
+                        return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
+                    }
+                    // 3차: pricing 품목명이 정산 품목명을 포함하거나 그 반대인 경우
+                    for (const [pName, pPrice] of Object.entries(priceMap)) {
+                        if (pName.includes(item.name) || item.name.includes(pName)) {
+                            return { ...item, price: pPrice, subtotal: pPrice * (item.qty || 0) };
+                        }
                     }
                     return item;
                 });
             }
 
             const updatedAmount = updatedItems.length > 0
-                ? updatedItems.reduce((sum, item) => sum + (item.subtotal || (item.price || 0) * (item.qty || 0)), 0)
+                ? updatedItems.reduce((sum, item) => sum + ((item.price || 0) * (item.qty || 0)), 0)
                 : Number(row.amount);
+
+            // 디버깅: 단가 변경 여부 로그
+            if (items.length > 0 && matchedPricing.length > 0) {
+                const origAmount = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || 0)), 0);
+                if (origAmount !== updatedAmount) {
+                    console.log(`[정산 단가 반영] ${settlementDate} ${row.partner}: ${origAmount} → ${updatedAmount} (pricing 기간: ${normDateSafe(matchedPricing[0].start_date)}~${normDateSafe(matchedPricing[0].end_date)})`);
+                }
+            }
 
             return {
                 id: row.id, date: row.date, partner: row.partner,
@@ -2094,6 +2129,7 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
         });
         res.json(data);
     } catch (err) {
+        console.error('[정산 조회 오류]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
