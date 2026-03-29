@@ -2025,15 +2025,6 @@ app.post('/api/cj-carryover', authMiddleware, adminOnly, async (req, res) => {
 app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { month } = req.query;
-        let result;
-        if (month) {
-            result = await pool.query(
-                "SELECT * FROM settlements WHERE TO_CHAR(date, 'YYYY-MM') = $1 ORDER BY date, id",
-                [month]
-            );
-        } else {
-            result = await pool.query('SELECT * FROM settlements ORDER BY date, id');
-        }
 
         // JSONB 안전 파싱 헬퍼
         function safeItems(val) {
@@ -2042,64 +2033,74 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
             return Array.isArray(val) ? val : [];
         }
 
-        // 모든 pricing 데이터 조회 (실시간 단가 반영용)
-        const pricingResult = await pool.query('SELECT * FROM pricing ORDER BY id ASC');
-        const allPricing = pricingResult.rows;
+        // SQL로 settlements + 매칭되는 pricing을 한 번에 조회 (JS 날짜비교 제거)
+        const settlementQuery = month
+            ? `SELECT s.*,
+                 (SELECT jsonb_agg(p.items) FROM pricing p
+                  WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items,
+                 (SELECT jsonb_agg(p.items) FROM pricing p
+                  WHERE p.partner = s.partner AND p.end_date < s.date
+                  AND p.end_date = (SELECT MAX(p2.end_date) FROM pricing p2 WHERE p2.partner = s.partner AND p2.end_date < s.date)) as fallback_pricing_items
+               FROM settlements s WHERE TO_CHAR(s.date, 'YYYY-MM') = $1 ORDER BY s.date, s.id`
+            : `SELECT s.*,
+                 (SELECT jsonb_agg(p.items) FROM pricing p
+                  WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items,
+                 (SELECT jsonb_agg(p.items) FROM pricing p
+                  WHERE p.partner = s.partner AND p.end_date < s.date
+                  AND p.end_date = (SELECT MAX(p2.end_date) FROM pricing p2 WHERE p2.partner = s.partner AND p2.end_date < s.date)) as fallback_pricing_items
+               FROM settlements s ORDER BY s.date, s.id`;
+
+        const result = month
+            ? await pool.query(settlementQuery, [month])
+            : await pool.query(settlementQuery);
 
         // product_mappings 조회 (품목명 매칭 fallback용)
         const mappingsResult = await pool.query('SELECT * FROM product_mappings ORDER BY id');
-        const allMappings = mappingsResult.rows;
+        const mappingsByPartner = {};
+        mappingsResult.rows.forEach(m => {
+            if (!mappingsByPartner[m.partner]) mappingsByPartner[m.partner] = {};
+            mappingsByPartner[m.partner][m.sales_name] = m.pricing_name;
+        });
 
         const data = result.rows.map(row => {
             const items = safeItems(row.items);
             const settlementDate = normDateSafe(row.date);
 
-            // 해당 날짜+거래처에 맞는 pricing 찾기
-            let matchedPricing = allPricing.filter(p =>
-                p.partner === row.partner &&
-                normDateSafe(p.start_date) <= settlementDate &&
-                normDateSafe(p.end_date) >= settlementDate
-            );
-            // fallback: 기간 매칭 없으면 가장 최근 이전 pricing
-            if (matchedPricing.length === 0) {
-                const prev = allPricing.filter(p =>
-                    p.partner === row.partner &&
-                    normDateSafe(p.end_date) < settlementDate
-                ).sort((a, b) => normDateSafe(b.end_date).localeCompare(normDateSafe(a.end_date)));
-                if (prev.length > 0) matchedPricing = [prev[0]];
+            // SQL에서 가져온 pricing items 사용 (1차: 기간 매칭, 2차: fallback)
+            let rawPricingItems = safeItems(row.pricing_items);
+            if (rawPricingItems.length === 0) {
+                rawPricingItems = safeItems(row.fallback_pricing_items);
             }
 
-            // pricing의 품목별 단가 맵 생성
+            // pricing의 품목별 단가 맵 생성 (jsonb_agg 결과는 배열의 배열)
             const priceMap = {};
-            matchedPricing.forEach(p => {
-                safeItems(p.items).forEach(item => {
+            rawPricingItems.forEach(pItems => {
+                const pArr = safeItems(pItems);
+                pArr.forEach(item => {
                     if (item && item.name) priceMap[item.name] = Number(item.price) || 0;
                 });
             });
 
-            // 해당 거래처의 product_mappings (sales_name → pricing_name 매핑)
-            const partnerMappings = {};
-            allMappings.filter(m => m.partner === row.partner).forEach(m => {
-                partnerMappings[m.sales_name] = m.pricing_name;
-            });
+            // 해당 거래처의 product_mappings
+            const partnerMappings = mappingsByPartner[row.partner] || {};
 
             // items의 단가를 pricing 단가로 업데이트
             let updatedItems = items;
             if (Object.keys(priceMap).length > 0 && items.length > 0) {
                 updatedItems = items.map(item => {
                     if (!item || !item.name) return item;
-                    let pricingName = item.name;
                     // 1차: 정확한 이름 매칭
-                    if (priceMap[pricingName] !== undefined) {
-                        const newPrice = priceMap[pricingName];
+                    if (priceMap[item.name] !== undefined) {
+                        const newPrice = priceMap[item.name];
                         return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
                     }
                     // 2차: product_mappings 테이블 기반 매칭
-                    if (partnerMappings[item.name] && priceMap[partnerMappings[item.name]] !== undefined) {
-                        const newPrice = priceMap[partnerMappings[item.name]];
+                    const mappedName = partnerMappings[item.name];
+                    if (mappedName && priceMap[mappedName] !== undefined) {
+                        const newPrice = priceMap[mappedName];
                         return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
                     }
-                    // 3차: pricing 품목명이 정산 품목명을 포함하거나 그 반대인 경우
+                    // 3차: 부분 문자열 매칭
                     for (const [pName, pPrice] of Object.entries(priceMap)) {
                         if (pName.includes(item.name) || item.name.includes(pName)) {
                             return { ...item, price: pPrice, subtotal: pPrice * (item.qty || 0) };
@@ -2113,13 +2114,9 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
                 ? updatedItems.reduce((sum, item) => sum + ((item.price || 0) * (item.qty || 0)), 0)
                 : Number(row.amount);
 
-            // 디버깅: 단가 변경 여부 로그
-            if (items.length > 0 && matchedPricing.length > 0) {
-                const origAmount = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || 0)), 0);
-                if (origAmount !== updatedAmount) {
-                    console.log(`[정산 단가 반영] ${settlementDate} ${row.partner}: ${origAmount} → ${updatedAmount} (pricing 기간: ${normDateSafe(matchedPricing[0].start_date)}~${normDateSafe(matchedPricing[0].end_date)})`);
-                }
-            }
+            // 디버깅 로그: 모든 정산에 대해 pricing 매칭 상태 출력
+            const origAmount = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || 0)), 0);
+            console.log(`[정산] ${settlementDate} ${row.partner} | DB금액=${origAmount} → 적용금액=${updatedAmount} | priceMap=${JSON.stringify(priceMap)} | items=${JSON.stringify(items.map(i => i.name))}`);
 
             return {
                 id: row.id, date: row.date, partner: row.partner,
@@ -2129,7 +2126,7 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
         });
         res.json(data);
     } catch (err) {
-        console.error('[정산 조회 오류]', err.message);
+        console.error('[정산 조회 오류]', err.message, err.stack);
         res.status(500).json({ error: err.message });
     }
 });
@@ -2148,6 +2145,59 @@ app.post('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// 디버깅: 특정 날짜/거래처의 pricing 매칭 상태 확인
+app.get('/api/settlements/debug-pricing', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { date, partner } = req.query;
+        if (!date) return res.status(400).json({ error: 'date 파라미터 필요 (예: 2026-03-24)' });
+
+        // 1. 해당 날짜의 정산 데이터
+        let settQuery = 'SELECT id, date, partner, amount, items FROM settlements WHERE date = $1::date';
+        const params = [date];
+        if (partner) { settQuery += ' AND partner = $2'; params.push(partner); }
+        const settlements = await pool.query(settQuery, params);
+
+        // 2. 해당 날짜에 매칭되는 pricing
+        let pricQuery = 'SELECT id, partner, start_date, end_date, items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date';
+        const pricParams = [date];
+        if (partner) { pricQuery += ' AND partner = $2'; pricParams.push(partner); }
+        const pricings = await pool.query(pricQuery, pricParams);
+
+        // 3. fallback pricing (기간 매칭 없을 때)
+        let fallbackQuery = `SELECT id, partner, start_date, end_date, items FROM pricing
+            WHERE end_date < $1::date ${partner ? 'AND partner = $2' : ''}
+            ORDER BY end_date DESC LIMIT 3`;
+        const fallbacks = await pool.query(fallbackQuery, partner ? [date, partner] : [date]);
+
+        // 4. product_mappings
+        let mapQuery = 'SELECT * FROM product_mappings';
+        if (partner) { mapQuery += ' WHERE partner = $1'; }
+        const mappings = await pool.query(mapQuery, partner ? [partner] : []);
+
+        res.json({
+            query: { date, partner },
+            settlements: settlements.rows.map(r => ({
+                id: r.id, date: normDateSafe(r.date), partner: r.partner,
+                dbAmount: Number(r.amount),
+                items: r.items
+            })),
+            matchedPricings: pricings.rows.map(r => ({
+                id: r.id, partner: r.partner,
+                startDate: normDateSafe(r.start_date), endDate: normDateSafe(r.end_date),
+                items: r.items
+            })),
+            fallbackPricings: fallbacks.rows.map(r => ({
+                id: r.id, partner: r.partner,
+                startDate: normDateSafe(r.start_date), endDate: normDateSafe(r.end_date),
+                items: r.items
+            })),
+            productMappings: mappings.rows
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message, stack: err.stack });
     }
 });
 
