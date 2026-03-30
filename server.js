@@ -2888,7 +2888,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
         // 사용자 메시지 저장
         await pool.query(
-            'INSERT INTO ai_messages (conversation_id, role, content, sender_user_id) VALUES ($1, $2, $3, $4)',
+            "INSERT INTO ai_messages (conversation_id, role, content, message_type, sender_user_id) VALUES ($1, $2, $3, 'text', $4)",
             [conversationId, 'user', image ? `📎 ${userMessage}` : userMessage, req.user.id]
         );
 
@@ -2925,9 +2925,9 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
                 return res.status(500).json({ error: 'ANTHROPIC_API_KEY가 설정되지 않았습니다' });
             }
 
-            // 기존 메시지 히스토리 로드 (텍스트만)
+            // 기존 메시지 히스토리 로드 (텍스트만, 기존 NULL 데이터 호환)
             const history = await pool.query(
-                "SELECT role, content FROM ai_messages WHERE conversation_id = $1 AND message_type = 'text' ORDER BY created_at ASC",
+                "SELECT role, content FROM ai_messages WHERE conversation_id = $1 AND (message_type = 'text' OR message_type IS NULL) ORDER BY created_at ASC",
                 [conversationId]
             );
 
@@ -2944,7 +2944,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
         // AI 응답 저장
         await pool.query(
-            'INSERT INTO ai_messages (conversation_id, role, content) VALUES ($1, $2, $3)',
+            "INSERT INTO ai_messages (conversation_id, role, content, message_type) VALUES ($1, $2, $3, 'text')",
             [conversationId, 'assistant', assistantContent]
         );
 
