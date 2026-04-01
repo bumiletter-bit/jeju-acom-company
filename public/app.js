@@ -944,6 +944,15 @@ async function renderSettlementCalendar() {
 
     settlementDailyData = dailyPayments;
 
+    // 월별 총 결제금액 배지 (해당 월 전체 금액 합산: 결제완료+미결제 모두)
+    let monthlyTotal = 0;
+    settlements.forEach(s => { monthlyTotal += (s.amount || 0); });
+    // CJ택배비도 합산
+    Object.keys(dailyPayments).forEach(date => { monthlyTotal += dailyPayments[date].cj; });
+    // CJ 이월금액 합산
+    monthlyTotal += cjCarryover;
+    document.getElementById('monthly-total-badge').textContent = `${monthNum}월 총 결제금액: ${monthlyTotal.toLocaleString()}원`;
+
     // CJ 카드: 이월금액 반영
     const cjTotal = cjCarryover + cjPayment;
     document.getElementById('cj-payment').textContent = `${cjTotal.toLocaleString()} 원`;
