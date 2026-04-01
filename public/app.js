@@ -5294,14 +5294,14 @@ async function renderWeeklySettlement() {
             settlements.forEach(s => {
                 if (s.date >= week.start && s.date <= week.end) {
                     if (s.partner === '대성(시온)') {
-                        if (!s.isPaid) daesungTotal += (s.amount || 0);
+                        daesungTotal += (s.amount || 0);
                         const items = s.items || [];
                         const cjCost = items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
                         if (!cjByDate[s.date]) cjByDate[s.date] = 0;
                         cjByDate[s.date] += cjCost;
                     }
                     if (s.partner === '효돈농협') {
-                        if (!s.isPaid) hyodonTotal += (s.amount || 0);
+                        hyodonTotal += (s.amount || 0);
                         const items = s.items || [];
                         const cjCost = items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
                         if (!cjByDate[s.date]) cjByDate[s.date] = 0;
@@ -5310,11 +5310,9 @@ async function renderWeeklySettlement() {
                 }
             });
 
-            // CJ: 결제완료 안 된 날짜 금액만 합산
+            // CJ: 모든 날짜 금액 합산 (달력과 동일하게)
             Object.keys(cjByDate).forEach(date => {
-                if (!weeklyCjPaidMap[date]) {
-                    cjTotal += cjByDate[date];
-                }
+                cjTotal += cjByDate[date];
             });
 
             // 해당 주차 선결제 합계
