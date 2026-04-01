@@ -875,10 +875,10 @@ async function renderSettlementCalendar() {
     document.getElementById('settlement-calendar-title').textContent = `${settlementCalYear}년 ${monthNames[settlementCalMonth]}`;
 
     const monthNum = settlementCalMonth + 1;
-    document.getElementById('expected-payment-label').textContent = `${monthNum}월 결제예정금액`;
-    document.getElementById('daesung-payment-label').textContent = `${monthNum}월 대성(시온)`;
-    document.getElementById('hyodon-payment-label').textContent = `${monthNum}월 효돈농협`;
-    document.getElementById('cj-payment-label').textContent = `${monthNum}월 CJ택배`;
+    document.getElementById('expected-payment-label').textContent = '총 결제예정금액';
+    document.getElementById('daesung-payment-label').textContent = '대성(시온)';
+    document.getElementById('hyodon-payment-label').textContent = '효돈농협';
+    document.getElementById('cj-payment-label').textContent = 'CJ택배';
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
     const [settlements, prepayments, cjCarryoverData, cjDailyPayments] = await Promise.all([
@@ -967,43 +967,24 @@ async function renderSettlementCalendar() {
         document.getElementById('cj-carryover-line').textContent = '이월 없음';
     }
 
-    // 선결제 잔액 조회 → 대성/효돈 카드에 선결제 차감 표시
-    let daesungPrepay = 0, hyodonPrepay = 0;
+    // 전체 미정산 합계 API 호출 (모든 월 합산)
     try {
-        const balances = await api('/api/prepayments/balance');
-        balances.forEach(b => {
-            if (b.partner === '대성(시온)') daesungPrepay = b.prepaidTotal || 0;
-            else if (b.partner === '효돈농협') hyodonPrepay = b.prepaidTotal || 0;
-        });
+        const totalUnpaid = await api('/api/settlements/total-unpaid');
+        document.getElementById('daesung-payment').textContent = `${(totalUnpaid.daesung || 0).toLocaleString()} 원`;
+        document.getElementById('hyodon-payment').textContent = `${(totalUnpaid.hyodon || 0).toLocaleString()} 원`;
+        document.getElementById('cj-payment').textContent = `${(totalUnpaid.cj || 0).toLocaleString()} 원`;
+        document.getElementById('expected-payment').textContent = `${(totalUnpaid.total || 0).toLocaleString()} 원`;
+
+        // 선결제 라인 숨김 (총합에 이미 반영됨)
+        document.getElementById('daesung-prepay-line').style.display = 'none';
+        document.getElementById('hyodon-prepay-line').style.display = 'none';
     } catch (err) {
-        console.error('선결제 잔액 로드 오류:', err);
+        console.error('전체 미정산 합계 로드 오류:', err);
+        // 폴백: 현재 월 데이터만 표시
+        document.getElementById('daesung-payment').textContent = `${daesungPayment.toLocaleString()} 원`;
+        document.getElementById('hyodon-payment').textContent = `${hyodonPayment.toLocaleString()} 원`;
+        document.getElementById('expected-payment').textContent = `${(daesungPayment + hyodonPayment + cjTotal).toLocaleString()} 원`;
     }
-
-    // 대성 카드: 정산 - 선결제
-    const daesungNet = daesungPayment - daesungPrepay;
-    document.getElementById('daesung-payment').textContent = `${daesungNet.toLocaleString()} 원`;
-    const daesungPrepayLine = document.getElementById('daesung-prepay-line');
-    if (daesungPrepay > 0) {
-        daesungPrepayLine.textContent = `선결제 -${daesungPrepay.toLocaleString()}원`;
-        daesungPrepayLine.style.display = '';
-    } else {
-        daesungPrepayLine.style.display = 'none';
-    }
-
-    // 효돈 카드: 정산 - 선결제
-    const hyodonNet = hyodonPayment - hyodonPrepay;
-    document.getElementById('hyodon-payment').textContent = `${hyodonNet.toLocaleString()} 원`;
-    const hyodonPrepayLine = document.getElementById('hyodon-prepay-line');
-    if (hyodonPrepay > 0) {
-        hyodonPrepayLine.textContent = `선결제 -${hyodonPrepay.toLocaleString()}원`;
-        hyodonPrepayLine.style.display = '';
-    } else {
-        hyodonPrepayLine.style.display = 'none';
-    }
-
-    // 결제예정금액 = (대성-선결제) + (효돈-선결제) + CJ(이월+당월)
-    const expectedPayment = daesungNet + hyodonNet + cjTotal;
-    document.getElementById('expected-payment').textContent = `${expectedPayment.toLocaleString()} 원`;
 
     // 달력용 선결제 내역 (해당 월)
     const dailyPrepayments = {};

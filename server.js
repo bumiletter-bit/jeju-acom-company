@@ -2278,6 +2278,74 @@ app.post('/api/cj-daily-payments/toggle-paid', authMiddleware, adminOnly, async 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 전체 미정산 합계 API (모든 월의 미결제 금액 합산)
+app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        // 대성/효돈 미결제 합계
+        const partnerResult = await pool.query(`
+            SELECT partner, COALESCE(SUM(amount), 0) as total
+            FROM settlements
+            WHERE COALESCE(is_paid, false) = false
+            GROUP BY partner
+        `);
+        let daesung = 0, hyodon = 0;
+        partnerResult.rows.forEach(r => {
+            if (r.partner === '대성(시온)') daesung = Number(r.total);
+            else if (r.partner === '효돈농협') hyodon = Number(r.total);
+        });
+
+        // CJ택배: 미결제 날짜의 박스수 합산 × 3100 + 모든 이월금액
+        const cjBoxResult = await pool.query(`
+            SELECT s.date, SUM(
+                COALESCE((SELECT SUM((item->>'qty')::int) FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(s.items) = 'array' THEN s.items ELSE '[]'::jsonb END
+                ) item), 0)
+            ) as box_count
+            FROM settlements s
+            WHERE (s.partner = '대성(시온)' OR s.partner = '효돈농협')
+            GROUP BY s.date
+        `);
+        // CJ 일별 결제완료 상태 전체 조회
+        const cjPaidResult = await pool.query(`SELECT date, is_paid FROM cj_daily_payments WHERE is_paid = true`);
+        const cjPaidDates = new Set(cjPaidResult.rows.map(r => {
+            const d = new Date(r.date);
+            return d.toISOString().split('T')[0];
+        }));
+        let cjTotal = 0;
+        cjBoxResult.rows.forEach(r => {
+            const dateStr = new Date(r.date).toISOString().split('T')[0];
+            if (!cjPaidDates.has(dateStr)) {
+                cjTotal += Number(r.box_count) * 3100;
+            }
+        });
+
+        // CJ 이월금액 합산 (모든 월)
+        const carryoverResult = await pool.query(`SELECT COALESCE(SUM(amount), 0) as total FROM cj_carryover`);
+        cjTotal += Number(carryoverResult.rows[0].total);
+
+        // 선결제 잔액 차감
+        const prepayResult = await pool.query(`
+            SELECT partner, COALESCE(SUM(amount), 0) as total
+            FROM prepayments
+            GROUP BY partner
+        `);
+        let daesungPrepay = 0, hyodonPrepay = 0;
+        prepayResult.rows.forEach(r => {
+            if (r.partner === '대성(시온)') daesungPrepay = Number(r.total);
+            else if (r.partner === '효돈농협') hyodonPrepay = Number(r.total);
+        });
+
+        const daesungNet = daesung - daesungPrepay;
+        const hyodonNet = hyodon - hyodonPrepay;
+        const total = daesungNet + hyodonNet + cjTotal;
+
+        res.json({ daesung: daesungNet, hyodon: hyodonNet, cj: cjTotal, total });
+    } catch (err) {
+        console.error('전체 미정산 합계 오류:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // CJ 자동계산: 해당 날짜 대성+효돈 박스수 합산
 app.get('/api/settlements/box-count', authMiddleware, adminOnly, async (req, res) => {
     try {
