@@ -2944,6 +2944,12 @@ textarea.form-input {
     margin-left: 4px;
     vertical-align: middle;
 }
+.worklog-meeting-dot {
+    font-size: 10px;
+    margin-left: 2px;
+    vertical-align: middle;
+    cursor: default;
+}
 
 .worklog-write-btn {
     display: block;

@@ -5964,6 +5964,13 @@ function renderWorklogCalendar() {
                 html += `<div class="calendar-day">${day}`;
                 if (hasLog) {
                     html += `<span class="worklog-dot" title="작성완료"></span>`;
+                    // 관리자: 회의록 작성 여부 표시
+                    if (currentUser?.role === 'admin' && log) {
+                        const parsed = parseWorklogContent(log.content);
+                        if (parsed.meeting) {
+                            html += `<span class="worklog-meeting-dot" title="회의록 있음">📋</span>`;
+                        }
+                    }
                 }
                 html += `</div>`;
 
@@ -5999,10 +6006,10 @@ function renderWorklogCalendar() {
 function parseWorklogContent(content) {
     try {
         const parsed = JSON.parse(content);
-        if (parsed && typeof parsed.morning === 'string') return parsed;
+        if (parsed && typeof parsed.morning === 'string') return { morning: parsed.morning, afternoon: parsed.afternoon || '', meeting: parsed.meeting || '' };
     } catch (e) {}
     // 기존 단일 텍스트 호환: 전체를 오전에 넣기
-    return { morning: content || '', afternoon: '' };
+    return { morning: content || '', afternoon: '', meeting: '' };
 }
 
 function openWorklogModal(dateStr) {
@@ -6017,10 +6024,14 @@ function openWorklogModal(dateStr) {
     const saveBtn = document.getElementById('worklog-save-btn');
     const titleEl = document.getElementById('worklog-modal-title');
 
+    const meetingEl = document.getElementById('worklog-meeting');
+    const meetingGroup = document.getElementById('worklog-meeting-group');
+
     if (log) {
         const parsed = parseWorklogContent(log.content);
         morningEl.value = parsed.morning;
         afternoonEl.value = parsed.afternoon;
+        meetingEl.value = parsed.meeting;
         worklogEditId = log.id;
         deleteBtn.style.display = '';
         titleEl.textContent = '업무일지 수정';
@@ -6028,6 +6039,7 @@ function openWorklogModal(dateStr) {
     } else {
         morningEl.value = '';
         afternoonEl.value = '';
+        meetingEl.value = '';
         worklogEditId = null;
         deleteBtn.style.display = 'none';
         titleEl.textContent = '업무일지 작성';
@@ -6038,8 +6050,17 @@ function openWorklogModal(dateStr) {
     const isViewingOther = currentUser?.role === 'admin' && document.getElementById('worklog-user-select')?.value;
     morningEl.readOnly = !!isViewingOther;
     afternoonEl.readOnly = !!isViewingOther;
+    meetingEl.readOnly = !!isViewingOther;
     saveBtn.style.display = isViewingOther ? 'none' : '';
     deleteBtn.style.display = isViewingOther ? 'none' : (log ? '' : 'none');
+
+    // 회의록: 관리자가 다른 직원 것 볼 때만 표시 (일반 직원은 항상 표시 - 작성용)
+    // 관리자가 자기 업무일지 볼 때도 표시
+    meetingGroup.style.display = '';
+    // 관리자가 다른 직원 조회 시: 회의록 있으면 표시, 없으면 숨김
+    if (isViewingOther && !meetingEl.value) {
+        meetingGroup.style.display = 'none';
+    }
 
     document.getElementById('worklog-modal').style.display = 'flex';
     if (!isViewingOther) morningEl.focus();
@@ -6061,11 +6082,12 @@ window.closeWorklogModal = closeWorklogModal;
 async function saveWorkLog() {
     const morning = document.getElementById('worklog-morning').value.trim();
     const afternoon = document.getElementById('worklog-afternoon').value.trim();
+    const meeting = document.getElementById('worklog-meeting').value.trim();
     if (!morning && !afternoon) {
         alert('오전 또는 오후 업무 내용을 입력해주세요.');
         return;
     }
-    const content = JSON.stringify({ morning, afternoon });
+    const content = JSON.stringify({ morning, afternoon, meeting });
 
     try {
         if (worklogEditId) {
