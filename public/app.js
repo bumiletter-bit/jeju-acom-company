@@ -5167,9 +5167,17 @@ async function renderPrepaymentList() {
     }
 }
 
+// 선결제 금액 입력 시 천 단위 콤마 자동 표시
+document.getElementById('prepay-amount').addEventListener('input', function(e) {
+    let val = e.target.value.replace(/[^0-9]/g, '');
+    if (val) {
+        e.target.value = Number(val).toLocaleString();
+    }
+});
+
 document.getElementById('prepay-save').addEventListener('click', async () => {
     const partner = document.getElementById('prepay-partner').value;
-    const amount = Number(document.getElementById('prepay-amount').value);
+    const amount = Number(document.getElementById('prepay-amount').value.replace(/,/g, ''));
     const date = document.getElementById('prepay-date').value;
     const note = document.getElementById('prepay-note').value.trim();
 
