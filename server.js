@@ -386,9 +386,12 @@ async function initDB() {
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
             title VARCHAR(200) DEFAULT '새 대화',
+            category VARCHAR(50) DEFAULT 'marketing',
             created_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // category 컬럼 추가 (기존 테이블 호환)
+    await pool.query(`ALTER TABLE ai_conversations ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'marketing'`).catch(() => {});
 
     await pool.query(`
         CREATE TABLE IF NOT EXISTS ai_messages (
@@ -2268,17 +2271,72 @@ app.post('/api/cj-daily-payments/toggle-paid', authMiddleware, adminOnly, async 
 // 전체 미정산 합계 API (모든 월의 미결제 금액 합산)
 app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, res) => {
     try {
-        // 대성/효돈 미결제 합계
+        // JSONB 안전 파싱 헬퍼
+        function safeItems(val) {
+            if (!val) return [];
+            if (typeof val === 'string') { try { return JSON.parse(val); } catch { return []; } }
+            return Array.isArray(val) ? val : [];
+        }
+
+        // 대성/효돈 미결제 합계 (pricing 동적 적용 - GET /api/settlements과 동일 방식)
         const partnerResult = await pool.query(`
-            SELECT partner, COALESCE(SUM(amount), 0) as total
-            FROM settlements
-            WHERE COALESCE(is_paid, false) = false
-            GROUP BY partner
+            SELECT s.*,
+                (SELECT jsonb_agg(p.items ORDER BY p.id ASC) FROM pricing p
+                 WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items
+            FROM settlements s
+            WHERE COALESCE(s.is_paid, false) = false
+            ORDER BY s.id
         `);
+
+        // product_mappings 조회 (품목명 매칭 fallback용)
+        const mappingsResult = await pool.query('SELECT * FROM product_mappings ORDER BY id');
+        const mappingsByPartner = {};
+        mappingsResult.rows.forEach(m => {
+            if (!mappingsByPartner[m.partner]) mappingsByPartner[m.partner] = {};
+            mappingsByPartner[m.partner][m.sales_name] = m.pricing_name;
+        });
+
         let daesung = 0, hyodon = 0;
-        partnerResult.rows.forEach(r => {
-            if (r.partner === '대성(시온)') daesung = Number(r.total);
-            else if (r.partner === '효돈농협') hyodon = Number(r.total);
+        partnerResult.rows.forEach(row => {
+            const items = safeItems(row.items);
+            const rawPricingItems = safeItems(row.pricing_items);
+
+            // pricing 단가 맵 생성 (최신 id가 나중에 적용되어 우선)
+            const priceMap = {};
+            rawPricingItems.forEach(pItems => {
+                const pArr = safeItems(pItems);
+                pArr.forEach(item => {
+                    if (item && item.name) priceMap[item.name] = Number(item.price) || 0;
+                });
+            });
+
+            const partnerMappings = mappingsByPartner[row.partner] || {};
+
+            // items의 단가를 pricing 단가로 적용하여 금액 계산
+            let amount;
+            if (Object.keys(priceMap).length > 0 && items.length > 0) {
+                amount = items.reduce((sum, item) => {
+                    if (!item || !item.name) return sum + ((item && item.price || 0) * (item && item.qty || 0));
+                    // 1차: 정확한 이름 매칭
+                    if (priceMap[item.name] !== undefined) {
+                        return sum + priceMap[item.name] * (item.qty || 0);
+                    }
+                    // 2차: product_mappings 기반 매칭
+                    const mappedName = partnerMappings[item.name];
+                    if (mappedName && priceMap[mappedName] !== undefined) {
+                        return sum + priceMap[mappedName] * (item.qty || 0);
+                    }
+                    // 미매칭 시 원본 가격 사용
+                    return sum + ((item.price || 0) * (item.qty || 0));
+                }, 0);
+            } else {
+                amount = items.length > 0
+                    ? items.reduce((sum, item) => sum + ((item.price || 0) * (item.qty || 0)), 0)
+                    : Number(row.amount);
+            }
+
+            if (row.partner === '대성(시온)') daesung += amount;
+            else if (row.partner === '효돈농협') hyodon += amount;
         });
 
         // CJ택배: 미결제 날짜의 박스수 합산 × 3100 + 모든 이월금액
