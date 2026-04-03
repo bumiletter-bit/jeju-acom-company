@@ -2091,8 +2091,11 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
                         const newPrice = priceMap[mappedName];
                         return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
                     }
-                    // 3차: 부분 문자열 매칭
+                    // 3차: 부분 문자열 매칭 (꼬마 여부 불일치 시 제외)
                     for (const [pName, pPrice] of Object.entries(priceMap)) {
+                        const itemHasKkoma = item.name.includes('꼬마');
+                        const pHasKkoma = pName.includes('꼬마');
+                        if (itemHasKkoma !== pHasKkoma) continue;
                         if (pName.includes(item.name) || item.name.includes(pName)) {
                             return { ...item, price: pPrice, subtotal: pPrice * (item.qty || 0) };
                         }
