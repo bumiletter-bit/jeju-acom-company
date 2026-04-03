@@ -2402,6 +2402,28 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
 });
 
 // CJ 자동계산: 해당 날짜 대성+효돈 박스수 합산
+// [임시 디버그] CJ 박스 수량 원인 파악용 - 확인 후 즉시 제거
+app.get('/api/debug/cj-check', async (req, res) => {
+    try {
+        const date = '2026-04-03';
+        const result = await pool.query(
+            "SELECT id, partner, amount, items FROM settlements WHERE date = $1 AND partner IN ('대성(시온)', '효돈농협') ORDER BY id",
+            [date]
+        );
+        const details = result.rows.map(row => {
+            const items = row.items || [];
+            const qtySum = items.reduce((sum, i) => sum + (i.qty || 0), 0);
+            return {
+                id: row.id, partner: row.partner, dbAmount: Number(row.amount),
+                itemCount: items.length, qtySum,
+                items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price }))
+            };
+        });
+        const totalQty = details.reduce((sum, d) => sum + d.qtySum, 0);
+        res.json({ date, totalQty, cjAmount: totalQty * 3100, rowCount: result.rows.length, details });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/settlements/box-count', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { date } = req.query;
