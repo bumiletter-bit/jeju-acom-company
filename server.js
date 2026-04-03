@@ -2095,7 +2095,12 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
                         const newPrice = priceMap[mappedName];
                         return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
                     }
-                    // 1차/2차 미매칭 시 원본 유지 (부분 문자열 매칭 없음)
+                    // 3차: 특징 기반 매칭 (과일명+용도+중량+꼬마여부)
+                    const featurePrice = matchItemToPricing(item.name, priceMap);
+                    if (featurePrice !== undefined) {
+                        return { ...item, price: featurePrice, subtotal: featurePrice * (item.qty || 0) };
+                    }
+                    // 미매칭 시 원본 유지
                     return item;
                 });
             }
@@ -2325,6 +2330,11 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
                     const mappedName = partnerMappings[item.name];
                     if (mappedName && priceMap[mappedName] !== undefined) {
                         return sum + priceMap[mappedName] * (item.qty || 0);
+                    }
+                    // 3차: 특징 기반 매칭 (과일명+용도+중량+꼬마여부)
+                    const featurePrice = matchItemToPricing(item.name, priceMap);
+                    if (featurePrice !== undefined) {
+                        return sum + featurePrice * (item.qty || 0);
                     }
                     // 미매칭 시 원본 가격 사용
                     return sum + ((item.price || 0) * (item.qty || 0));
@@ -2603,6 +2613,79 @@ function normDateSafe(d) {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+}
+
+// 품목명에서 과일명/용도/중량 특징 추출 (프론트엔드 extractFeatures와 동일)
+function extractFeatures(text) {
+    const t = (text || '');
+    let growType = '';
+    if (/노지/.test(t)) growType = '노지';
+    else if (/하우스/.test(t)) growType = '하우스';
+    else if (/비가림/.test(t)) growType = '비가림';
+    else if (/블러드/.test(t)) growType = '블러드';
+
+    let fruit = null;
+    if (/3종세트/.test(t)) fruit = '3종세트';
+    else if (/블러드오렌지|블러드/.test(t)) fruit = '블러드오렌지';
+    else if (/비가림|감귤/.test(t)) fruit = '비가림귤';
+    else if (/수라향/.test(t)) fruit = '수라향';
+    else if (/자몽/.test(t)) fruit = '자몽';
+    else if (/천혜향/.test(t)) fruit = '천혜향';
+    else if (/레드향/.test(t)) fruit = '레드향';
+    else if (/한라봉/.test(t)) fruit = '한라봉';
+    else if (/레몬/.test(t)) fruit = '레몬';
+    else if (/카라향/.test(t)) fruit = '카라향';
+    else if (/하귤/.test(t)) fruit = '하귤';
+
+    let grade = null;
+    if (/프리미엄\s*로얄/.test(t)) grade = '선물용';
+    else if (/로얄과/.test(t)) grade = '로얄과';
+    else if (/소과/.test(t)) grade = '소과';
+    else if (/중대과/.test(t)) grade = '중대과';
+    else if (/못난이/.test(t)) grade = '못난이';
+    else if (/선물용/.test(t)) grade = '선물용';
+    else if (/프리미엄/.test(t)) grade = '선물용';
+    else if (/가정용/.test(t)) grade = '가정용';
+
+    let size = '';
+    if (/꼬마/.test(t)) size = '꼬마';
+
+    let weight = null;
+    const wMatch = t.match(/(\d+)\s*kg/i);
+    if (wMatch) weight = wMatch[1] + 'kg';
+
+    return { fruit, grade, weight, growType, size };
+}
+
+// pricing 단가맵에서 특징 기반 매칭 (서버용 - 프론트엔드 matchSalesToPricing과 동일 로직)
+function matchItemToPricing(itemName, priceMap) {
+    const sf = extractFeatures(itemName);
+    if (!sf.fruit) return undefined;
+
+    let bestMatch = null, bestScore = 0;
+    for (const [pricingName, price] of Object.entries(priceMap)) {
+        const pf = extractFeatures(pricingName);
+        if (!pf.fruit || sf.fruit !== pf.fruit) continue;
+
+        let score = 1, mismatch = false;
+        if (sf.size !== pf.size) mismatch = true;
+        if (sf.size && pf.size && sf.size === pf.size) score += 3;
+        if (sf.growType || pf.growType) {
+            if (sf.growType === pf.growType) score += 3;
+            else mismatch = true;
+        }
+        if (sf.weight && pf.weight) {
+            if (sf.weight === pf.weight) score += 2;
+            else mismatch = true;
+        }
+        if (sf.grade && pf.grade) {
+            if (sf.grade === pf.grade) score += 2;
+            else mismatch = true;
+        }
+        if (mismatch) continue;
+        if (score > bestScore) { bestScore = score; bestMatch = { name: pricingName, price }; }
+    }
+    return bestMatch ? bestMatch.price : undefined;
 }
 
 app.get('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
