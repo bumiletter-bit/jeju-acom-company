@@ -1034,7 +1034,7 @@
                                 <th>대성(시온)</th>
                                 <th>효돈농협</th>
                                 <th>CJ대한통운</th>
-                                <th>선결제</th>
+                                <th>지급결제</th>
                                 <th>합계</th>
                             </tr>
                         </thead>
@@ -1044,9 +1044,9 @@
                     </table>
                 </div>
 
-                <!-- 선결제 관리 (관리자 전용) -->
+                <!-- 지급결제 관리 (관리자 전용) -->
                 <div class="card" id="prepayment-card" style="display:none;">
-                    <h2>선결제 관리</h2>
+                    <h2>지급결제 관리</h2>
                     <div class="form-row" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
                         <div class="form-group" style="min-width:120px;">
                             <label>거래처</label>
@@ -1058,7 +1058,7 @@
                         </div>
                         <div class="form-group" style="min-width:140px;">
                             <label>금액 (원)</label>
-                            <input type="text" id="prepay-amount" class="form-input" placeholder="금액" inputmode="numeric">
+                            <input type="text" id="prepay-amount" class="form-input" placeholder="금액 (예: -50000)">
                         </div>
                         <div class="form-group" style="min-width:140px;">
                             <label>날짜</label>
@@ -1081,7 +1081,7 @@
                             </tr>
                         </thead>
                         <tbody id="prepayment-list">
-                            <tr class="empty-row"><td colspan="5">선결제 내역이 없습니다.</td></tr>
+                            <tr class="empty-row"><td colspan="5">지급결제 내역이 없습니다.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1647,6 +1647,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=144"></script>
+    <script src="app.js?v=145"></script>
 </body>
 </html>

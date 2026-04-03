@@ -1037,7 +1037,7 @@ async function renderSettlementCalendar() {
                 const pp = dailyPrepayments[dateStr];
                 if (pp) {
                     pp.forEach(item => {
-                        contentHtml += `<div class="day-prepay-item">${item.name} 선결제 ${item.amount.toLocaleString()}원</div>`;
+                        contentHtml += `<div class="day-prepay-item">${item.name} 지급결제 ${item.amount.toLocaleString()}원</div>`;
                     });
                 }
 
@@ -5152,7 +5152,7 @@ async function renderPrepaymentList() {
         const data = await api('/api/prepayments');
         const tbody = document.getElementById('prepayment-list');
         if (data.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">선결제 내역이 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">지급결제 내역이 없습니다.</td></tr>';
         } else {
             tbody.innerHTML = data.map(item => `<tr>
                 <td>${item.date}</td>
@@ -5167,11 +5167,15 @@ async function renderPrepaymentList() {
     }
 }
 
-// 선결제 금액 입력 시 천 단위 콤마 자동 표시
+// 지급결제 금액 입력 시 천 단위 콤마 자동 표시 (마이너스 지원)
 document.getElementById('prepay-amount').addEventListener('input', function(e) {
-    let val = e.target.value.replace(/[^0-9]/g, '');
-    if (val) {
-        e.target.value = Number(val).toLocaleString();
+    const raw = e.target.value;
+    const isNegative = raw.startsWith('-');
+    const digits = raw.replace(/[^0-9]/g, '');
+    if (digits) {
+        e.target.value = (isNegative ? '-' : '') + Number(digits).toLocaleString();
+    } else {
+        e.target.value = isNegative ? '-' : '';
     }
 });
 
@@ -5193,14 +5197,14 @@ document.getElementById('prepay-save').addEventListener('click', async () => {
         document.getElementById('prepay-note').value = '';
         await renderPrepaymentList();
         await renderSettlementCalendar();
-        alert('선결제이 추가되었습니다.');
+        alert('지급결제가 추가되었습니다.');
     } catch (err) {
         alert('추가 실패: ' + err.message);
     }
 });
 
 window.deletePrepayment = async function(id) {
-    if (!confirm('이 선결제 내역을 삭제하시겠습니까?')) return;
+    if (!confirm('이 지급결제 내역을 삭제하시겠습니까?')) return;
     try {
         await api(`/api/prepayments/${id}`, 'DELETE');
         await renderPrepaymentList();
@@ -5345,7 +5349,7 @@ async function renderWeeklySettlement() {
                 <td>${daesungTotal > 0 ? daesungTotal.toLocaleString() + ' 원' : '-'}</td>
                 <td>${hyodonTotal > 0 ? hyodonTotal.toLocaleString() + ' 원' : '-'}</td>
                 <td>${cjTotal > 0 ? cjTotal.toLocaleString() + ' 원' : '-'}</td>
-                <td>${weekPrepay > 0 ? '<span style="color:#8b5cf6;">-' + weekPrepay.toLocaleString() + ' 원</span>' : '-'}</td>
+                <td>${weekPrepay !== 0 ? '<span style="color:#8b5cf6;">' + (weekPrepay > 0 ? '-' : '') + Math.abs(weekPrepay).toLocaleString() + ' 원</span>' : '-'}</td>
                 <td><strong>${weekTotal !== 0 ? weekTotal.toLocaleString() + ' 원' : '-'}</strong></td>
             </tr>`;
         });

@@ -2033,21 +2033,15 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
             return Array.isArray(val) ? val : [];
         }
 
-        // SQL로 settlements + 매칭되는 pricing을 한 번에 조회 (JS 날짜비교 제거)
+        // SQL로 settlements + 정확히 날짜 범위가 매칭되는 pricing만 조회 (fallback 없음)
         const settlementQuery = month
             ? `SELECT s.*,
                  (SELECT jsonb_agg(p.items) FROM pricing p
-                  WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items,
-                 (SELECT jsonb_agg(p.items) FROM pricing p
-                  WHERE p.partner = s.partner AND p.end_date < s.date
-                  AND p.end_date = (SELECT MAX(p2.end_date) FROM pricing p2 WHERE p2.partner = s.partner AND p2.end_date < s.date)) as fallback_pricing_items
+                  WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items
                FROM settlements s WHERE TO_CHAR(s.date, 'YYYY-MM') = $1 ORDER BY s.date, s.id`
             : `SELECT s.*,
                  (SELECT jsonb_agg(p.items) FROM pricing p
-                  WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items,
-                 (SELECT jsonb_agg(p.items) FROM pricing p
-                  WHERE p.partner = s.partner AND p.end_date < s.date
-                  AND p.end_date = (SELECT MAX(p2.end_date) FROM pricing p2 WHERE p2.partner = s.partner AND p2.end_date < s.date)) as fallback_pricing_items
+                  WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items
                FROM settlements s ORDER BY s.date, s.id`;
 
         const result = month
@@ -2066,11 +2060,8 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
             const items = safeItems(row.items);
             const settlementDate = normDateSafe(row.date);
 
-            // SQL에서 가져온 pricing items 사용 (1차: 기간 매칭, 2차: fallback)
-            let rawPricingItems = safeItems(row.pricing_items);
-            if (rawPricingItems.length === 0) {
-                rawPricingItems = safeItems(row.fallback_pricing_items);
-            }
+            // SQL에서 가져온 pricing items 사용 (정확한 날짜 범위 매칭만, fallback 없음)
+            const rawPricingItems = safeItems(row.pricing_items);
 
             // pricing의 품목별 단가 맵 생성 (jsonb_agg 결과는 배열의 배열)
             const priceMap = {};
@@ -2579,19 +2570,11 @@ app.get('/api/pricing/for-date', authMiddleware, adminOnly, async (req, res) => 
         const { partner, date } = req.query;
         if (!partner || !date) return res.status(400).json({ error: 'partner와 date 파라미터가 필요합니다' });
 
-        // 1차: 정산 날짜가 기간에 포함되는 pricing
-        let result = await pool.query(
+        // 정산 날짜가 기간에 포함되는 pricing만 조회 (fallback 없음: 정확한 날짜 범위만 적용)
+        const result = await pool.query(
             'SELECT * FROM pricing WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date ORDER BY id ASC',
             [partner, date]
         );
-
-        // 2차(fallback): 해당 날짜에 맞는 기간이 없으면 가장 최근 이전 기간
-        if (result.rows.length === 0) {
-            result = await pool.query(
-                'SELECT * FROM pricing WHERE partner = $1 AND end_date < $2::date ORDER BY end_date DESC LIMIT 1',
-                [partner, date]
-            );
-        }
 
         const data = result.rows.map(row => ({
             id: row.id, startDate: normDateSafe(row.start_date), endDate: normDateSafe(row.end_date),
