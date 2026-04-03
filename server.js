@@ -2034,13 +2034,14 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
         }
 
         // SQL로 settlements + 정확히 날짜 범위가 매칭되는 pricing만 조회 (fallback 없음)
+        // jsonb_agg ORDER BY p.id ASC: 최신 pricing 기록(높은 id)이 나중에 적용되어 우선순위 가짐 (for-date API와 동일 방식)
         const settlementQuery = month
             ? `SELECT s.*,
-                 (SELECT jsonb_agg(p.items) FROM pricing p
+                 (SELECT jsonb_agg(p.items ORDER BY p.id ASC) FROM pricing p
                   WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items
                FROM settlements s WHERE TO_CHAR(s.date, 'YYYY-MM') = $1 ORDER BY s.date, s.id`
             : `SELECT s.*,
-                 (SELECT jsonb_agg(p.items) FROM pricing p
+                 (SELECT jsonb_agg(p.items ORDER BY p.id ASC) FROM pricing p
                   WHERE p.partner = s.partner AND p.start_date <= s.date AND p.end_date >= s.date) as pricing_items
                FROM settlements s ORDER BY s.date, s.id`;
 
