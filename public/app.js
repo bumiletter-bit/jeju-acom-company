@@ -1624,6 +1624,14 @@ document.getElementById('settlement-save').addEventListener('click', async () =>
             amount = Number(document.getElementById('settlement-amount').value) || 0;
         }
 
+        // 같은 날짜+거래처 중복 저장 방지 확인
+        if (settlementsCache && settlementsCache.length > 0) {
+            const duplicate = settlementsCache.find(s => s.date === date && s.partner === selectedSettlementPartner);
+            if (duplicate) {
+                if (!confirm(`⚠️ ${date} ${selectedSettlementPartner} 정산이 이미 존재합니다.\n중복 저장하시겠습니까?`)) return;
+            }
+        }
+
         await api('/api/settlements', 'POST', { date, partner: selectedSettlementPartner, amount, items });
 
         selectedSettlementPartner = null;
