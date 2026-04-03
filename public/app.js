@@ -1418,6 +1418,8 @@ function extractFeatures(text) {
     else if (/레드향/.test(t)) fruit = '레드향';
     else if (/한라봉/.test(t)) fruit = '한라봉';
     else if (/레몬/.test(t)) fruit = '레몬';
+    else if (/카라향/.test(t)) fruit = '카라향';
+    else if (/하귤/.test(t)) fruit = '하귤';
 
     // 용도/등급 추출
     let grade = null;
