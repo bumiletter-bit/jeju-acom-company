@@ -2402,25 +2402,27 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
 });
 
 // CJ 자동계산: 해당 날짜 대성+효돈 박스수 합산
-// [임시 디버그] CJ 박스 수량 원인 파악용 - 확인 후 즉시 제거
-app.get('/api/debug/cj-check', async (req, res) => {
+// [임시] 대성 id=88에서 price=0 효돈 품목 제거 + 디버그 확인
+app.get('/api/debug/cj-fix', async (req, res) => {
     try {
-        const date = '2026-04-03';
-        const result = await pool.query(
-            "SELECT id, partner, amount, items FROM settlements WHERE date = $1 AND partner IN ('대성(시온)', '효돈농협') ORDER BY id",
-            [date]
+        // 대성 id=88의 items에서 price=0인 항목(효돈 품목) 제거
+        const result = await pool.query("SELECT id, items, amount FROM settlements WHERE id = 88");
+        if (result.rows.length === 0) return res.json({ error: 'id=88 not found' });
+        const row = result.rows[0];
+        const items = row.items || [];
+        const filteredItems = items.filter(i => (i.price || 0) > 0);
+        const newAmount = filteredItems.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || 0)), 0);
+        await pool.query("UPDATE settlements SET items = $1, amount = $2 WHERE id = 88", [JSON.stringify(filteredItems), newAmount]);
+        // 수정 후 확인
+        const checkResult = await pool.query(
+            "SELECT id, partner, items FROM settlements WHERE date = '2026-04-03' AND partner IN ('대성(시온)', '효돈농협') ORDER BY id"
         );
-        const details = result.rows.map(row => {
-            const items = row.items || [];
-            const qtySum = items.reduce((sum, i) => sum + (i.qty || 0), 0);
-            return {
-                id: row.id, partner: row.partner, dbAmount: Number(row.amount),
-                itemCount: items.length, qtySum,
-                items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price }))
-            };
+        const details = checkResult.rows.map(r => {
+            const items = r.items || [];
+            return { id: r.id, partner: r.partner, itemCount: items.length, qtySum: items.reduce((sum, i) => sum + (i.qty || 0), 0) };
         });
         const totalQty = details.reduce((sum, d) => sum + d.qtySum, 0);
-        res.json({ date, totalQty, cjAmount: totalQty * 3100, rowCount: result.rows.length, details });
+        res.json({ fixed: true, removedItems: items.length - filteredItems.length, newAmount, totalQty, cjAmount: totalQty * 3100, details });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
