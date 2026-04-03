@@ -5439,7 +5439,7 @@ function showAIChatEmpty() {
         <div class="ai-chat-empty">
             <div style="font-size:48px; margin-bottom:16px;">🤖</div>
             <p>새 대화를 시작하거나 기존 대화를 선택하세요</p>
-            <p style="font-size:13px; color:#999; margin-top:8px;">마케팅 문구, 홍보 콘텐츠 등을 요청해보세요</p>
+            <p style="font-size:13px; color:#999; margin-top:8px;">마케팅, 질문답변, 문서작성, CS 등 다양한 AI를 활용해보세요</p>
         </div>
     `;
     document.getElementById('ai-input-area').style.display = 'none';
@@ -5458,11 +5458,12 @@ async function renderAIWorkspace() {
         } else {
             listEl.innerHTML = convs.map(c => {
                 const isOwner = currentUser && (c.user_id === currentUser.id || currentUser.role === 'admin');
+                const catInfo = AI_CATEGORY_LABELS[c.category] || AI_CATEGORY_LABELS.marketing;
                 return `
                 <div class="ai-conv-item ${aiCurrentConvId === c.id ? 'active' : ''}" onclick="loadConversation(${c.id})">
                     <div class="ai-conv-item-info">
-                        <span class="ai-conv-item-title">${c.title}</span>
-                        <span class="ai-conv-item-author">${c.user_name}</span>
+                        <span class="ai-conv-item-title">${catInfo.icon} ${c.title}</span>
+                        <span class="ai-conv-item-author">${c.user_name} · ${catInfo.label}</span>
                     </div>
                     <div class="ai-conv-item-actions">
                         ${isOwner ? `<button class="ai-conv-item-edit" onclick="event.stopPropagation(); renameConversation(${c.id}, '${c.title.replace(/'/g, "\\'")}')" title="이름 수정">✏️</button>` : ''}
@@ -5476,16 +5477,42 @@ async function renderAIWorkspace() {
     }
 }
 
+const AI_CATEGORIES = [
+    { value: 'marketing', label: '마케팅 도우미', icon: '📣', desc: '홍보문구, SNS, 숏클립 등' },
+    { value: 'qna', label: '무엇이든 물어봐', icon: '💡', desc: '질문답변, 상식, 아이디어' },
+    { value: 'document', label: '문서 작성 도우미', icon: '📝', desc: '보고서, 공문, 이메일 등' },
+    { value: 'cs', label: 'CS답변 도우미', icon: '💬', desc: '고객상담, 클레임 답변' },
+    { value: 'general', label: '기본버전', icon: '🤖', desc: '다양한 작업, 자유 대화' }
+];
+
+const AI_CATEGORY_LABELS = {};
+AI_CATEGORIES.forEach(c => { AI_CATEGORY_LABELS[c.value] = { label: c.label, icon: c.icon }; });
+
 function createNewConversation() {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-        <div class="modal" style="max-width:400px;">
+        <div class="modal" style="max-width:440px;">
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             <h3>새 작업방 만들기</h3>
             <div class="form-group" style="margin-top:16px;">
                 <label>작업방 이름</label>
                 <input type="text" id="new-conv-title" class="form-input" placeholder="예: 문구지시방, 이미지작업" autofocus>
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label>AI 카테고리</label>
+                <div id="ai-category-selector" style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+                    ${AI_CATEGORIES.map((c, i) => `
+                        <label class="ai-category-option ${i === 0 ? 'selected' : ''}" style="display:flex; align-items:center; gap:10px; padding:10px 12px; border:2px solid ${i === 0 ? '#F5A623' : '#e9ecef'}; border-radius:10px; cursor:pointer; transition:all 0.2s; background:${i === 0 ? '#FFF8E1' : '#fff'};" onclick="document.querySelectorAll('.ai-category-option').forEach(el=>{el.style.borderColor='#e9ecef';el.style.background='#fff';el.classList.remove('selected')});this.style.borderColor='#F5A623';this.style.background='#FFF8E1';this.classList.add('selected');this.querySelector('input').checked=true;">
+                            <input type="radio" name="ai-category" value="${c.value}" ${i === 0 ? 'checked' : ''} style="display:none;">
+                            <span style="font-size:22px;">${c.icon}</span>
+                            <div style="flex:1;">
+                                <div style="font-weight:600; font-size:14px; color:#2c3e50;">${c.label}</div>
+                                <div style="font-size:12px; color:#888; margin-top:1px;">${c.desc}</div>
+                            </div>
+                        </label>
+                    `).join('')}
+                </div>
             </div>
             <div style="display:flex; gap:8px; margin-top:16px;">
                 <button class="btn-primary" style="flex:1;" id="new-conv-create-btn">만들기</button>
@@ -5502,8 +5529,9 @@ function createNewConversation() {
     async function doCreate() {
         const title = titleInput.value.trim();
         if (!title) return alert('작업방 이름을 입력해주세요.');
+        const category = overlay.querySelector('input[name="ai-category"]:checked')?.value || 'marketing';
         try {
-            const conv = await api('/api/ai/conversations', 'POST', { title });
+            const conv = await api('/api/ai/conversations', 'POST', { title, category });
             aiCurrentConvId = conv.id;
             document.getElementById('ai-chat-messages').innerHTML = '';
             document.getElementById('ai-input-area').style.display = '';

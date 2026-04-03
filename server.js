@@ -2901,12 +2901,19 @@ app.delete('/api/cs-templates/:id', authMiddleware, async (req, res) => {
 
 // === AI Workspace API ===
 
-const AI_SYSTEM_PROMPT = '당신은 제주아꼼이네 농업회사법인의 마케팅 도우미입니다. 온라인 판매 홍보문구, 톡톡 이미지 문구, 숏클립 문구, SNS 게시글 등을 작성해줍니다. 제주 감귤, 천혜향, 레드향, 한라봉 등 제주 과일 판매 업체입니다.';
+const AI_SYSTEM_PROMPTS = {
+    marketing: '당신은 제주아꼼이네 농업회사법인의 마케팅 도우미입니다. 온라인 판매 홍보문구, 톡톡 이미지 문구, 숏클립 문구, SNS 게시글 등을 작성해줍니다. 제주 감귤, 천혜향, 레드향, 한라봉 등 제주 과일 판매 업체입니다. 친근하고 따뜻한 톤으로 작성해주세요.',
+    qna: '당신은 친절하고 똑똑한 AI 어시스턴트입니다. 사용자가 궁금한 것을 무엇이든 물어보면 정확하고 이해하기 쉽게 답변해줍니다. 일상적인 질문, 업무 관련 질문, 상식, 아이디어 등 다양한 주제에 대해 도움을 줍니다.',
+    document: '당신은 문서 작성 전문 도우미입니다. 보고서, 공문, 안내문, 이메일, 회의록, 기획서 등 다양한 업무 문서를 작성하거나 수정하는 것을 도와줍니다. 명확하고 깔끔한 문체로 작성하며, 사용자의 요청에 맞는 적절한 형식과 톤을 사용합니다.',
+    cs: '당신은 제주아꼼이네 농업회사법인의 CS(고객상담) 답변 도우미입니다. 고객 문의, 클레임, 교환/반품, 배송 관련 답변을 작성해줍니다. 정중하고 공감하는 톤으로, 고객이 만족할 수 있도록 답변합니다. 제주 감귤, 천혜향, 레드향, 한라봉 등 제주 과일을 판매하는 업체입니다.',
+    general: '당신은 다재다능한 AI 어시스턴트입니다. 대화, 질문 답변, 아이디어 브레인스토밍, 번역, 요약, 분석 등 다양한 작업을 도와줍니다. 사용자의 요청에 맞게 유연하게 대응하며, 친절하고 유용한 답변을 제공합니다.'
+};
+const AI_SYSTEM_PROMPT = AI_SYSTEM_PROMPTS.marketing; // 기본값 (하위 호환)
 
 app.get('/api/ai/conversations', authMiddleware, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT c.id, c.title, c.user_id, c.created_at, u.name as user_name FROM ai_conversations c JOIN users u ON c.user_id = u.id ORDER BY c.created_at DESC'
+            'SELECT c.id, c.title, c.category, c.user_id, c.created_at, u.name as user_name FROM ai_conversations c JOIN users u ON c.user_id = u.id ORDER BY c.created_at DESC'
         );
         res.json(result.rows);
     } catch (err) {
@@ -2934,10 +2941,11 @@ app.get('/api/ai/conversations/:id', authMiddleware, async (req, res) => {
 
 app.post('/api/ai/conversations', authMiddleware, async (req, res) => {
     try {
-        const { title } = req.body || {};
+        const { title, category } = req.body || {};
+        const validCategory = AI_SYSTEM_PROMPTS[category] ? category : 'marketing';
         const result = await pool.query(
-            'INSERT INTO ai_conversations (user_id, title) VALUES ($1, $2) RETURNING *',
-            [req.user.id, title || '새 대화']
+            'INSERT INTO ai_conversations (user_id, title, category) VALUES ($1, $2, $3) RETURNING *',
+            [req.user.id, title || '새 대화', validCategory]
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -3040,7 +3048,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
             const aiResponse = await anthropic.messages.create({
                 model: 'claude-sonnet-4-6',
                 max_tokens: 2048,
-                system: AI_SYSTEM_PROMPT,
+                system: AI_SYSTEM_PROMPTS[conv.rows[0].category] || AI_SYSTEM_PROMPTS.marketing,
                 messages: history.rows.map(m => ({ role: m.role, content: m.content }))
             });
 
