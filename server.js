@@ -2402,29 +2402,6 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
 });
 
 // CJ 자동계산: 해당 날짜 대성+효돈 박스수 합산
-// [임시] 대성 id=88에서 price=0 효돈 품목 제거 + 디버그 확인
-app.get('/api/debug/cj-fix', async (req, res) => {
-    try {
-        // 대성 id=88의 items에서 price=0인 항목(효돈 품목) 제거
-        const result = await pool.query("SELECT id, items, amount FROM settlements WHERE id = 88");
-        if (result.rows.length === 0) return res.json({ error: 'id=88 not found' });
-        const row = result.rows[0];
-        const items = row.items || [];
-        const filteredItems = items.filter(i => (i.price || 0) > 0);
-        const newAmount = filteredItems.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || 0)), 0);
-        await pool.query("UPDATE settlements SET items = $1, amount = $2 WHERE id = 88", [JSON.stringify(filteredItems), newAmount]);
-        // 수정 후 확인
-        const checkResult = await pool.query(
-            "SELECT id, partner, items FROM settlements WHERE date = '2026-04-03' AND partner IN ('대성(시온)', '효돈농협') ORDER BY id"
-        );
-        const details = checkResult.rows.map(r => {
-            const items = r.items || [];
-            return { id: r.id, partner: r.partner, itemCount: items.length, qtySum: items.reduce((sum, i) => sum + (i.qty || 0), 0) };
-        });
-        const totalQty = details.reduce((sum, d) => sum + d.qtySum, 0);
-        res.json({ fixed: true, removedItems: items.length - filteredItems.length, newAmount, totalQty, cjAmount: totalQty * 3100, details });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 app.get('/api/settlements/box-count', authMiddleware, adminOnly, async (req, res) => {
     try {

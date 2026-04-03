@@ -897,8 +897,6 @@ async function renderSettlementCalendar() {
     let daesungPayment = 0, hyodonPayment = 0, cjPayment = 0;
     const dailyPayments = {};
 
-    // [디버그] 전체 settlements 수 확인
-    console.log(`[CJ디버그] 전체 정산 건수: ${settlements.length}`);
     settlements.forEach(s => {
         const amount = s.amount || 0;
         const isPaid = s.isPaid || false;
@@ -929,8 +927,6 @@ async function renderSettlementCalendar() {
             const boxCount = items.reduce((sum, item) => sum + (item.qty || 0), 0);
             const cjCost = boxCount * 3100;
             dailyPayments[s.date].cj += cjCost;
-            // [디버그] 날짜별 CJ 계산 과정
-            console.log(`[CJ디버그] ${s.date} ${s.partner} id=${s.id} | items수=${items.length} qty합계=${boxCount} | CJ누적=${dailyPayments[s.date].cj} | items=${JSON.stringify(items.map(i => ({name:i.name, qty:i.qty})))}`);
         }
     });
 
