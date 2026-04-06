@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=78">
+    <link rel="stylesheet" href="styles.css?v=79">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -830,6 +830,15 @@
             <div id="page-settlement" class="page">
                 <h1>정산관리</h1>
 
+                <!-- 정산관리/정산현황 탭 -->
+                <div class="settlement-tab-bar">
+                    <button class="settlement-tab active" data-tab="settlement-main">정산관리</button>
+                    <button class="settlement-tab" data-tab="settlement-status">정산현황</button>
+                </div>
+
+                <!-- 정산관리 탭 콘텐츠 (기존) -->
+                <div id="settlement-main" class="settlement-tab-content active">
+
                 <!-- 정산 캘린더 (기존 홈에서 이동) -->
                 <div class="card">
                     <div class="card-header-row">
@@ -1085,6 +1094,65 @@
                         </tbody>
                     </table>
                 </div>
+                </div><!-- /settlement-main -->
+
+                <!-- 정산현황 탭 콘텐츠 (새로운 정산현황 프로그램) -->
+                <div id="settlement-status" class="settlement-tab-content">
+                    <!-- 헤더 바 -->
+                    <div class="ss-header">
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <div class="ss-logo">꼼</div>
+                            <div class="ss-header-title"><b>제주아꼼이네</b> 정산 현황</div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="ss-btn ss-by" onclick="ssOpenAddModal()">📅 날짜 추가</button>
+                            <button class="ss-btn ss-bg" onclick="ssExportCSV()">📤 CSV 내보내기</button>
+                        </div>
+                    </div>
+
+                    <!-- 날짜 탭 바 -->
+                    <div class="ss-dbar" id="ss-dbar"></div>
+
+                    <!-- 메인 콘텐츠 -->
+                    <div class="ss-wrap" id="ss-wrap">
+                        <div class="ss-empty"><div class="ss-ico">📋</div><p>상단 <b>날짜 추가</b> 버튼으로 정산일을 추가하세요.</p></div>
+                    </div>
+
+                    <div class="ss-toast" id="ss-toast"></div>
+
+                    <!-- 날짜 추가 모달 -->
+                    <div class="ss-mo" id="ss-moAdd">
+                        <div class="ss-mbox">
+                            <div class="ss-mh">📅 날짜 추가</div>
+                            <div class="ss-mb">
+                                <div class="ss-frow">
+                                    <label class="ss-flbl">정산 날짜</label>
+                                    <input type="date" class="ss-finp" id="ss-newDate">
+                                </div>
+                            </div>
+                            <div class="ss-mf">
+                                <button class="ss-btn ss-bh" onclick="ssCloseModal('ss-moAdd')">취소</button>
+                                <button class="ss-btn ss-bn" onclick="ssConfirmAdd()">추가</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 삭제 모달 -->
+                    <div class="ss-mo" id="ss-moDel">
+                        <div class="ss-mbox">
+                            <div class="ss-mh">🗑️ 날짜 삭제</div>
+                            <div class="ss-mb">
+                                <p style="font-size:14px;line-height:1.9">이 날짜의 정산 데이터를 삭제할까요?<br>
+                                <span style="color:#E53935;font-weight:600">되돌릴 수 없습니다.</span></p>
+                            </div>
+                            <div class="ss-mf">
+                                <button class="ss-btn ss-bh" onclick="ssCloseModal('ss-moDel')">취소</button>
+                                <button class="ss-btn ss-br" onclick="ssConfirmDel()">삭제</button>
+                            </div>
+                        </div>
+                    </div>
+                </div><!-- /settlement-status -->
+
             </div>
 
             <!-- 품목별 금액 페이지 -->
@@ -1647,6 +1715,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=151"></script>
+    <script src="app.js?v=152"></script>
 </body>
 </html>

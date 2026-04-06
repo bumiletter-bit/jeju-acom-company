@@ -6752,3 +6752,424 @@ window.downloadExpensePDF = async function(id) {
         pdf.save(`지출결의서_${d.title}.pdf`);
     } catch (err) { alert('PDF 다운로드 실패: ' + err.message); }
 };
+
+// ============================================================
+//  정산관리/정산현황 탭 전환
+// ============================================================
+document.querySelectorAll('.settlement-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.settlement-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.settlement-tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab).classList.add('active');
+        // 정산현황 탭 처음 열 때 초기화
+        if (tab.dataset.tab === 'settlement-status' && !window._ssInitialized) {
+            ssInit();
+            window._ssInitialized = true;
+        }
+    });
+});
+
+// ============================================================
+//  정산현황 (Settlement Status) - localStorage 기반
+//  모든 함수/변수명은 ss 접두사로 충돌 방지
+// ============================================================
+const SS_KEY = 'acom_v3';
+
+function ssLoad() {
+    try { return JSON.parse(localStorage.getItem(SS_KEY)) || { dates: [], records: {} }; }
+    catch { return { dates: [], records: {} }; }
+}
+function ssSave(d) { localStorage.setItem(SS_KEY, JSON.stringify(d)); }
+
+function ssBlank() {
+    return {
+        settlement_scheduled: 0, unsettled: 0, current_cash: 0,
+        ad_naver: 0, ad_gfa: 0,
+        card_fee: 0, corp_card: 0,
+        hyodong: 0, daesong: 0, delivery: 0,
+        coupang_unpaid: 0, selfmall_unpaid: 0,
+        memo: ''
+    };
+}
+
+function ssCompute(r) {
+    const n = k => ssToNum(r[k]);
+    const subtotal = n('current_cash')
+        + n('settlement_scheduled') + n('unsettled')
+        + n('coupang_unpaid') + n('selfmall_unpaid')
+        + n('ad_naver') + n('ad_gfa')
+        - n('card_fee') - n('corp_card');
+    const total = subtotal - n('delivery') - n('hyodong') - n('daesong');
+    return { subtotal, total };
+}
+
+let ssAll = [];
+let ssCur = null;
+
+function ssInit() {
+    const d = ssLoad();
+    ssAll = d.dates.map(dt => ({ date: dt, record: d.records[dt] || ssBlank() }));
+    if (ssAll.length) ssCur = ssAll[0].date;
+    const t = new Date();
+    document.getElementById('ss-newDate').value =
+        `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    ssRenderTabs();
+    ssRenderMain();
+}
+
+function ssRenderTabs() {
+    const bar = document.getElementById('ss-dbar');
+    bar.innerHTML = '';
+    ssAll.forEach(({ date }) => {
+        const t = document.createElement('div');
+        t.className = 'ss-dtab' + (date === ssCur ? ' on' : '');
+        t.textContent = ssLbl(date);
+        t.onclick = () => { ssCur = date; ssRenderTabs(); ssRenderMain(); };
+        bar.appendChild(t);
+    });
+}
+
+function ssLbl(d) { const [y, m, day] = d.split('-'); return `${y.slice(2)}.${m}.${day}`; }
+
+function ssRenderMain() {
+    const wrap = document.getElementById('ss-wrap');
+    if (!ssCur) {
+        wrap.innerHTML = `<div class="ss-empty"><div class="ss-ico">📋</div><p>날짜 추가 버튼으로 정산일을 추가하세요.</p></div>`;
+        return;
+    }
+    const entry = ssAll.find(e => e.date === ssCur);
+    const r = entry.record;
+    const { subtotal, total } = ssCompute(r);
+    const n = k => parseFloat(r[k] || 0);
+
+    wrap.innerHTML = `
+    <div class="ss-date-banner">
+      <div class="ss-date-banner-left">
+        <div class="ss-date-banner-co">제주아꼼이네 농업회사법인(주)</div>
+        <div class="ss-date-banner-title">${ssCur.split('-')[0].slice(2)}년 ${parseInt(ssCur.split('-')[1])}월 ${parseInt(ssCur.split('-')[2])}일 <span>현황</span></div>
+      </div>
+      <div class="ss-date-banner-right">
+        <div class="ss-date-banner-day">정산일</div>
+        <div class="ss-date-banner-badge">${ssCur}</div>
+      </div>
+    </div>
+    <div class="ss-slbl">📊 요약</div>
+    <div class="ss-sc-total-wrap">
+      <div class="ss-sc total">
+        <div class="ss-total-left">
+          <div class="ss-sc-lbl">총 합계</div>
+          <div class="ss-sc-sub">최종 정산 합계</div>
+        </div>
+        <div class="ss-total-right">
+          <div class="ss-sc-val-total ${total < 0 ? 'r' : ''}" id="ss_sc_tot">${ssFmt(total)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="ss-sg">
+      <div class="ss-sc y">
+        <div class="ss-sc-lbl">정산현황</div>
+        <div class="ss-sc-val" id="ss_sc_settle">${ssFmt(n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid'))}</div>
+        <div class="ss-sc-sub">현재현금+스토어+쿠팡+자사몰</div>
+      </div>
+      <div class="ss-sc">
+        <div class="ss-sc-lbl">광고비</div>
+        <div class="ss-sc-val g" id="ss_sc_ad">+${ssFmt(n('ad_naver') + n('ad_gfa'))}</div>
+        <div class="ss-sc-sub">네이버 + GFA</div>
+      </div>
+      <div class="ss-sc r">
+        <div class="ss-sc-lbl">카드비용</div>
+        <div class="ss-sc-val r" id="ss_sc_card">-${ssFmt(n('card_fee') + n('corp_card'))}</div>
+        <div class="ss-sc-sub">카드이용금액 + 법인카드</div>
+      </div>
+      <div class="ss-sc">
+        <div class="ss-sc-lbl">정산항목</div>
+        <div class="ss-sc-val ${(-n('daesong') - n('hyodong') - n('delivery')) >= 0 ? 'g' : 'r'}" id="ss_sc_items">${ssFmt(-n('daesong') - n('hyodong') - n('delivery'))}</div>
+        <div class="ss-sc-sub">－ 대성 / 효돈 / 택배</div>
+      </div>
+    </div>
+
+    <div class="ss-slbl">💰 정산 현황</div>
+    <div class="ss-card">
+      <div class="ss-ch">📑 정산 내역 <a class="ss-ch-link" href="https://sell.smartstore.naver.com/#/home/dashboard" target="_blank">스마트스토어 확인하기 </a></div>
+      <table class="ss-tbl">
+        <tr class="ss-hl"><th>현재 현금 (계좌내역) <span class="ss-badge ss-badge-plus">＋</span></th>
+          <td><input class="ss-ni ss-pos" type="text" inputmode="numeric" value="${ssAddComma(r.current_cash)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'current_cash')" onblur="ssOnBlurNi(this,'current_cash')"></td></tr>
+        <tr><th>스토어 정산예정 <span class="ss-badge ss-badge-plus">＋</span></th>
+          <td><input class="ss-ni ss-pos" type="text" inputmode="numeric" value="${ssAddComma(r.settlement_scheduled)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'settlement_scheduled')" onblur="ssOnBlurNi(this,'settlement_scheduled')"></td></tr>
+        <tr><th>스토어 미정산 <span class="ss-badge ss-badge-plus">＋</span></th>
+          <td><input class="ss-ni ss-pos" type="text" inputmode="numeric" value="${ssAddComma(r.unsettled)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'unsettled')" onblur="ssOnBlurNi(this,'unsettled')"></td></tr>
+        <tr><th>쿠팡 미정산 <span class="ss-badge ss-badge-plus">＋</span></th>
+          <td><input class="ss-ni ss-pos" type="text" inputmode="numeric" value="${ssAddComma(r.coupang_unpaid)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'coupang_unpaid')" onblur="ssOnBlurNi(this,'coupang_unpaid')"></td></tr>
+        <tr><th>자사몰 미정산 <span class="ss-badge ss-badge-plus">＋</span></th>
+          <td><input class="ss-ni ss-pos" type="text" inputmode="numeric" value="${ssAddComma(r.selfmall_unpaid)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'selfmall_unpaid')" onblur="ssOnBlurNi(this,'selfmall_unpaid')"></td></tr>
+        <tr class="ss-tr"><th>정산현황 합계</th>
+          <td><div class="ss-cmp ss-pos" id="ss_f_settle_tot">${ssFmt(n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid'))}</div></td></tr>
+      </table>
+    </div>
+
+    <div class="ss-slbl">📢 광고비 <span class="ss-badge ss-badge-plus">+ 자산</span></div>
+    <div class="ss-card">
+      <div class="ss-ch">📈 광고비 (수취 예정 자산) <a class="ss-ch-link" href="https://ads.naver.com/manage/" target="_blank">광고 확인하기 </a></div>
+      <table class="ss-tbl">
+        <tr><th>네이버 광고 <span class="ss-badge ss-badge-plus">+</span></th>
+          <td><input class="ss-ni ss-pos" type="text" inputmode="numeric" value="${ssAddComma(r.ad_naver)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'ad_naver')" onblur="ssOnBlurNi(this,'ad_naver')"></td></tr>
+        <tr><th>GFA 광고 <span class="ss-badge ss-badge-plus">+</span></th>
+          <td><input class="ss-ni ss-pos" type="text" inputmode="numeric" value="${ssAddComma(r.ad_gfa)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'ad_gfa')" onblur="ssOnBlurNi(this,'ad_gfa')"></td></tr>
+        <tr class="ss-hl"><th>광고비 합계</th>
+          <td><div class="ss-cmp ss-pos" id="ss_f_ad_tot">${ssFmt(n('ad_naver') + n('ad_gfa'))}</div></td></tr>
+      </table>
+    </div>
+
+    <div class="ss-slbl">💳 카드 비용 <span class="ss-badge ss-badge-minus">- 비용</span></div>
+    <div class="ss-card">
+      <div class="ss-ch">💳 카드 비용 (차감 금액)</div>
+      <table class="ss-tbl">
+        <tr><th>카드이용금액 <span class="ss-badge ss-badge-minus">－</span></th>
+          <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.card_fee)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'card_fee')" onblur="ssOnBlurNi(this,'card_fee')"></td></tr>
+        <tr><th>법인카드 (제주) <span class="ss-badge ss-badge-minus">－</span></th>
+          <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.corp_card)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'corp_card')" onblur="ssOnBlurNi(this,'corp_card')"></td></tr>
+        <tr class="ss-hl"><th>카드 비용 합계</th>
+          <td><div class="ss-cmp ss-neg" id="ss_f_card_tot">${ssFmt(n('card_fee') + n('corp_card'))}</div></td></tr>
+      </table>
+    </div>
+
+    <div class="ss-slbl">📦 정산항목</div>
+    <div class="ss-card">
+      <div class="ss-ch">🗂️ 정산항목 <a class="ss-ch-link" href="https://jeju-acom-company.onrender.com/" target="_blank">회사 관리 확인하기 </a></div>
+      <table class="ss-tbl">
+        <tr><th>대성 정산예정금액 <span class="ss-badge ss-badge-minus">－</span></th>
+          <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.daesong)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'daesong')" onblur="ssOnBlurNi(this,'daesong')"></td></tr>
+        <tr><th>효돈 정산예정금액 <span class="ss-badge ss-badge-minus">－</span></th>
+          <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.hyodong)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'hyodong')" onblur="ssOnBlurNi(this,'hyodong')"></td></tr>
+        <tr><th>택배 정산예정금액 <span class="ss-badge ss-badge-minus">－</span></th>
+          <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.delivery)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'delivery')" onblur="ssOnBlurNi(this,'delivery')"></td></tr>
+      </table>
+    </div>
+
+    <div class="ss-card" style="margin-top:8px">
+      <table class="ss-tbl">
+        <tr class="ss-spacer-row"><td colspan="2"></td></tr>
+        <tr class="ss-tr"><th>합 계</th>
+          <td><div class="ss-cmp ${subtotal < 0 ? 'ss-neg' : subtotal > 0 ? 'ss-pos' : 'ss-zer'}" id="ss_f_sub">${ssFmt(subtotal)}</div></td></tr>
+        <tr class="ss-spacer-row"><td colspan="2"></td></tr>
+        <tr class="ss-deduct-row"><th>카드비용 차감</th>
+          <td><div class="ss-cmp ss-neg" id="ss_f_deduct_card">-${ssFmt(n('card_fee') + n('corp_card'))}</div></td></tr>
+        <tr class="ss-deduct-row"><th>정산항목 차감</th>
+          <td><div class="ss-cmp ss-neg" id="ss_f_deduct_items">-${ssFmt(n('daesong') + n('hyodong') + n('delivery'))}</div></td></tr>
+        <tr class="ss-spacer-row"><td colspan="2"></td></tr>
+        <tr class="ss-total-final"><th>총 합계</th>
+          <td><div class="ss-cmp ${total < 0 ? 'ss-neg' : total > 0 ? 'ss-pos' : 'ss-zer'}" id="ss_f_tot">${ssFmt(total)}</div></td></tr>
+      </table>
+    </div>
+
+    <div class="ss-slbl">📝 비고</div>
+    <div class="ss-card">
+      <textarea class="ss-memo" placeholder="비고 (예: 대성사오 21일 86만, 23일 95만 등)"
+        oninput="ssInp('memo',this.value)">${r.memo || ''}</textarea>
+    </div>
+
+    <div class="ss-abar">
+      <button class="ss-btn ss-bg" onclick="ssExportCSV()">📤 CSV 내보내기</button>
+      <button class="ss-btn ss-bh" onclick="ssCopyDate()">📋 복사해서 새 날짜</button>
+      <button class="ss-btn ss-bn" onclick="ssCaptureScreen()" id="ss-captureBtn">📸 캡처하기</button>
+      <button class="ss-btn ss-br" style="margin-left:auto" onclick="document.getElementById('ss-moDel').classList.add('open')">🗑️ 이 날짜 삭제</button>
+    </div>
+  `;
+}
+
+// 유틸 함수들
+function ssToNum(v) { return parseFloat(String(v).replace(/,/g, '')) || 0; }
+function ssAddComma(v) { const n = ssToNum(v); return n === 0 ? '' : n.toLocaleString('ko-KR'); }
+function ssFmt(v) { const n = parseFloat(v) || 0; if (n === 0) return '-'; return n.toLocaleString('ko-KR'); }
+
+function ssOnFocusNi(el) { const v = el.value; el.value = ''; el.value = v; }
+function ssOnInputNi(el, field) {
+    const pos = el.selectionStart;
+    const raw = ssToNum(el.value);
+    if (raw === 0) { el.value = ''; return; }
+    const formatted = raw.toLocaleString('ko-KR');
+    const oldLen = el.value.length;
+    el.value = formatted;
+    const newLen = formatted.length;
+    const newPos = pos + (newLen - oldLen);
+    try { el.setSelectionRange(newPos, newPos); } catch (e) { }
+    ssInp(field, raw);
+}
+function ssOnBlurNi(el, field) {
+    const raw = ssToNum(el.value);
+    el.value = ssAddComma(raw);
+    ssInp(field, raw);
+}
+
+let _ssSaveTimer;
+function ssInp(field, val) {
+    const entry = ssAll.find(e => e.date === ssCur);
+    entry.record[field] = field === 'memo' ? val : (ssToNum(val) || 0);
+    const r = entry.record;
+    const n = k => ssToNum(r[k]);
+    const adTot = n('ad_naver') + n('ad_gfa');
+    const cardTot = n('card_fee') + n('corp_card');
+    const { subtotal, total } = ssCompute(r);
+
+    ssSetC('ss_f_ad_tot', adTot, 'ss-pos');
+    ssSetC('ss_f_card_tot', cardTot, 'ss-neg');
+    ssSetC('ss_f_sub', subtotal, subtotal > 0 ? 'ss-pos' : subtotal < 0 ? 'ss-neg' : 'ss-zer');
+    ssSetC('ss_f_tot', total, total > 0 ? 'ss-pos' : total < 0 ? 'ss-neg' : 'ss-zer');
+
+    const settleTot = n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid');
+    const ss = document.getElementById('ss_sc_settle');
+    const sa = document.getElementById('ss_sc_ad');
+    const scd = document.getElementById('ss_sc_card');
+    const st = document.getElementById('ss_sc_tot');
+    if (ss) ss.textContent = ssFmt(settleTot);
+    if (sa) { sa.textContent = '+' + ssFmt(adTot); sa.className = 'ss-sc-val g'; }
+    if (scd) scd.textContent = '-' + ssFmt(cardTot);
+    if (st) { st.textContent = ssFmt(total); st.className = 'ss-sc-val-total ' + (total < 0 ? 'r' : ''); }
+    ssSetC('ss_f_settle_tot', settleTot, 'ss-pos');
+    const deductCard = n('card_fee') + n('corp_card');
+    const deductItems = n('daesong') + n('hyodong') + n('delivery');
+    const dc = document.getElementById('ss_f_deduct_card');
+    const di = document.getElementById('ss_f_deduct_items');
+    if (dc) dc.textContent = '-' + ssFmt(deductCard);
+    if (di) di.textContent = '-' + ssFmt(deductItems);
+    const itemsTot = -n('daesong') - n('hyodong') - n('delivery');
+    const si = document.getElementById('ss_sc_items');
+    if (si) { si.textContent = ssFmt(itemsTot); si.className = 'ss-sc-val ' + (itemsTot >= 0 ? 'g' : 'r'); }
+
+    clearTimeout(_ssSaveTimer);
+    _ssSaveTimer = setTimeout(ssPersist, 600);
+}
+
+function ssSetC(id, val, cls) {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = ssFmt(val); el.className = 'ss-cmp ' + cls; }
+}
+
+function ssPersist() {
+    const d = { dates: ssAll.map(e => e.date), records: {} };
+    ssAll.forEach(e => { d.records[e.date] = e.record; });
+    ssSave(d);
+}
+
+// 날짜 추가
+let _ssCpRec = null;
+function ssOpenAddModal() { _ssCpRec = null; document.getElementById('ss-moAdd').classList.add('open'); }
+function ssCloseModal(id) { document.getElementById(id).classList.remove('open'); }
+function ssConfirmAdd() {
+    const d = document.getElementById('ss-newDate').value;
+    if (!d) { ssShowToast('날짜를 선택하세요'); return; }
+    if (ssAll.find(e => e.date === d)) { ssShowToast('이미 존재하는 날짜입니다'); return; }
+    const rec = _ssCpRec ? JSON.parse(JSON.stringify(_ssCpRec)) : ssBlank();
+    ssAll.push({ date: d, record: rec });
+    ssAll.sort((a, b) => b.date.localeCompare(a.date));
+    ssCur = d;
+    ssPersist();
+    ssCloseModal('ss-moAdd');
+    ssRenderTabs();
+    ssRenderMain();
+    ssShowToast(_ssCpRec ? '📋 복사 완료' : '📅 날짜 추가됨');
+    _ssCpRec = null;
+}
+function ssCopyDate() {
+    const entry = ssAll.find(e => e.date === ssCur);
+    _ssCpRec = JSON.parse(JSON.stringify(entry.record));
+    const t = new Date();
+    document.getElementById('ss-newDate').value =
+        `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    document.getElementById('ss-moAdd').classList.add('open');
+}
+
+// 삭제
+function ssConfirmDel() {
+    ssAll = ssAll.filter(e => e.date !== ssCur);
+    ssPersist();
+    ssCur = ssAll.length ? ssAll[0].date : null;
+    ssCloseModal('ss-moDel');
+    ssRenderTabs();
+    ssRenderMain();
+    ssShowToast('🗑️ 삭제됨');
+}
+
+// CSV 내보내기
+function ssExportCSV() {
+    const rows = [['날짜', '정산예정', '미정산', '현재현금', '네이버광고(+)', 'GFA광고(+)', '카드이용금액(-)', '법인카드(-)',
+        '효돈정산예정(-)', '대성정산예정(-)', '택배정산예정(-)', '쿠팡미입금(+)', '자사몰미입금(+)', '합계', '총합계', '비고']];
+    ssAll.forEach(({ date, record: r }) => {
+        const n = k => parseFloat(r[k] || 0);
+        const { subtotal, total } = ssCompute(r);
+        rows.push([date,
+            n('settlement_scheduled'), n('unsettled'), n('current_cash'),
+            n('ad_naver'), n('ad_gfa'), n('card_fee'), n('corp_card'),
+            n('hyodong'), n('daesong'), n('delivery'),
+            n('coupang_unpaid'), n('selfmall_unpaid'),
+            subtotal, total, r.memo || ''
+        ]);
+    });
+    const csv = '\uFEFF' + rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `제주아꼼이네_정산_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    ssShowToast('📤 CSV 파일 다운로드 완료');
+}
+
+// 캡처
+async function ssCaptureScreen() {
+    const btn = document.getElementById('ss-captureBtn');
+    const origText = btn.innerHTML;
+    btn.innerHTML = '⏳ 캡처 중...';
+    btn.disabled = true;
+    try {
+        const target = document.getElementById('ss-wrap');
+        const canvas = await html2canvas(target, {
+            backgroundColor: '#EEF2F9',
+            scale: 2,
+            useCORS: true,
+            scrollY: -window.scrollY,
+            windowWidth: document.documentElement.scrollWidth,
+            onclone: (doc) => {
+                const wrap = doc.getElementById('ss-wrap');
+                const header = doc.createElement('div');
+                header.style.cssText = 'background:#1B3A6B;color:#fff;padding:14px 24px;font-family:sans-serif;font-size:15px;font-weight:700;';
+                header.textContent = '🍊 제주아꼼이네 정산 내역  |  ' + (ssCur || '');
+                wrap.prepend(header);
+                const abar = wrap.querySelector('.ss-abar');
+                if (abar) abar.style.display = 'none';
+            }
+        });
+        canvas.toBlob(async (blob) => {
+            try {
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                ssShowToast('✅ 캡처 완료! 붙여넣기(Ctrl+V) 하세요');
+            } catch (e) {
+                const a = document.createElement('a');
+                a.href = canvas.toDataURL('image/png');
+                a.download = '아꼼이네_정산_' + (ssCur || '날짜없음') + '.png';
+                a.click();
+                ssShowToast('📥 PNG 이미지로 저장됐어요');
+            }
+            btn.innerHTML = origText;
+            btn.disabled = false;
+        }, 'image/png');
+    } catch (err) {
+        ssShowToast('캡처 실패: ' + err.message);
+        btn.innerHTML = origText;
+        btn.disabled = false;
+    }
+}
+
+// 토스트
+let _ssTt;
+function ssShowToast(msg) {
+    const t = document.getElementById('ss-toast');
+    t.textContent = msg;
+    t.classList.add('on');
+    clearTimeout(_ssTt);
+    _ssTt = setTimeout(() => t.classList.remove('on'), 2400);
+}
+
+// 모달 바깥 클릭 닫기
+document.querySelectorAll('.ss-mo').forEach(el => {
+    el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
