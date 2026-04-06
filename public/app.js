@@ -4362,13 +4362,16 @@ const PRODUCT_CATALOG = new Set([
     '제주 하귤 / 상품 및 과수: 하귤 가정용 9kg(랜덤과)',
     '새콤달콤 카라향 / 상품 및 과수: 카라향 가정용 - 3kg(24과 전후)',
     '새콤달콤 카라향 / 상품 및 과수: 카라향 가정용 - 5kg(40과 전후)',
+    '새콤달콤 카라향 / 상품 및 과수: 카라향 가정용 - 9kg(72과 전후)',
     '새콤달콤 카라향 / 상품 및 과수: 카라향 선물용 - 2kg(10~17과)',
 ]);
 
 // 상품 카탈로그 매칭
 function matchProduct(rawText) {
     const t = rawText || '';
-    const wm = t.match(/(\d+\.?\d*)\s*kg/i);
+    // 중량up 행사: "3kg→중량up 5kg" 등 패턴에서 업그레이드된 중량 추출
+    const weightUpMatch = t.match(/중량\s*(?:up|업|UP)\s*(\d+\.?\d*)\s*kg/i);
+    const wm = weightUpMatch ? weightUpMatch : t.match(/(\d+\.?\d*)\s*kg/i);
     if (!wm) return '[미매칭] ' + t.trim();
     const w = parseFloat(wm[1]);
     const wStr = w + 'kg';
@@ -4406,7 +4409,7 @@ function matchProduct(rawText) {
         if (/선물/.test(t)) {
             result = '새콤달콤 카라향 / 상품 및 과수: 카라향 선물용 - ' + wStr + '(10~17과)';
         } else {
-            const detail = w === 3 ? '24과 전후' : w === 5 ? '40과 전후' : '';
+            const detail = w === 3 ? '24과 전후' : w === 5 ? '40과 전후' : w === 9 ? '72과 전후' : '';
             result = '새콤달콤 카라향 / 상품 및 과수: 카라향 가정용 - ' + wStr + '(' + detail + ')';
         }
     } else if (/하귤/.test(t)) {
