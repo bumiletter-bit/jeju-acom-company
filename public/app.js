@@ -6848,7 +6848,7 @@ function ssRenderTabs() {
 
 function ssLbl(d) { const [y, m, day] = d.split('-'); return `${y.slice(2)}.${m}.${day}`; }
 
-function ssRenderMain() {
+async function ssRenderMain() {
     const wrap = document.getElementById('ss-wrap');
     if (!ssCur) {
         wrap.innerHTML = `<div class="ss-empty"><div class="ss-ico">📋</div><p>날짜 추가 버튼으로 정산일을 추가하세요.</p></div>`;
@@ -6856,6 +6856,27 @@ function ssRenderMain() {
     }
     const entry = ssAll.find(e => e.date === ssCur);
     const r = entry.record;
+
+    // 정산관리 데이터에서 대성/효돈/CJ 금액 자동 매칭
+    try {
+        const monthStr = ssCur.substring(0, 7);
+        const settlements = await api(`/api/settlements?month=${monthStr}`);
+        let daesongTotal = 0, hyodongTotal = 0, deliveryTotal = 0;
+        settlements.forEach(s => {
+            const sDate = (s.date || '').split('T')[0];
+            if (sDate === ssCur) {
+                if (s.partner === '대성(시온)') daesongTotal += (s.amount || 0);
+                else if (s.partner === '효돈농협') hyodongTotal += (s.amount || 0);
+                else if (s.partner === 'CJ대한통운') deliveryTotal += (s.amount || 0);
+            }
+        });
+        r.daesong = daesongTotal;
+        r.hyodong = hyodongTotal;
+        r.delivery = deliveryTotal;
+    } catch (err) {
+        console.error('정산항목 자동매칭 실패:', err);
+    }
+
     const { subtotal, total } = ssCompute(r);
     const n = k => parseFloat(r[k] || 0);
 
@@ -6975,8 +6996,12 @@ function ssRenderMain() {
           <td><div class="ss-cmp ss-neg" id="ss_f_deduct_items">-${ssFmt(n('daesong') + n('hyodong') + n('delivery'))}</div></td></tr>
         <tr class="ss-spacer-row"><td colspan="2"></td></tr>
         <tr class="ss-total-final"><th>총 합계</th>
-          <td><div class="ss-cmp ${total < 0 ? 'ss-neg' : total > 0 ? 'ss-pos' : 'ss-zer'}" id="ss_f_tot">${ssFmt(total)}</div></td></tr>
+          <td><div class="ss-cmp ss-total-yellow" id="ss_f_tot">${ssFmt(total)}</div></td></tr>
       </table>
+    </div>
+
+    <div style="text-align:center;margin:16px 0;">
+      <button class="ss-btn ss-by" style="padding:12px 40px;font-size:15px;font-weight:700;" onclick="ssSaveNow()">💾 저장</button>
     </div>
 
     <div class="ss-slbl">📝 비고</div>
@@ -7031,7 +7056,7 @@ function ssInp(field, val) {
     ssSetC('ss_f_ad_tot', adTot, 'ss-pos');
     ssSetC('ss_f_card_tot', cardTot, 'ss-neg');
     ssSetC('ss_f_sub', subtotal, subtotal > 0 ? 'ss-pos' : subtotal < 0 ? 'ss-neg' : 'ss-zer');
-    ssSetC('ss_f_tot', total, total > 0 ? 'ss-pos' : total < 0 ? 'ss-neg' : 'ss-zer');
+    ssSetC('ss_f_tot', total, 'ss-total-yellow');
 
     const settleTot = n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid');
     const ss = document.getElementById('ss_sc_settle');
@@ -7072,6 +7097,21 @@ async function ssPersist() {
         });
     } catch (err) {
         console.error('ssPersist error:', err);
+    }
+}
+
+// 저장 버튼 클릭
+async function ssSaveNow() {
+    const entry = ssAll.find(e => e.date === ssCur);
+    if (!entry) return;
+    try {
+        await api('/api/settlement-status', 'POST', {
+            date: entry.date,
+            ...entry.record
+        });
+        ssShowToast('✅ 저장 완료');
+    } catch (err) {
+        ssShowToast('저장 실패: ' + err.message);
     }
 }
 

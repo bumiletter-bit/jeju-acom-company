@@ -4017,6 +4017,7 @@ textarea.form-input {
 .ss-tbl .ss-spacer-row td, .ss-tbl .ss-spacer-row th { height: 16px; background: transparent; border: none !important; padding: 0; }
 .ss-tbl .ss-total-final th { background: #0f2347; color: #fff; font-weight: 900; font-size: 15px; }
 .ss-tbl .ss-total-final td { background: #0f2347; font-weight: 900; font-size: 17px; }
+.ss-cmp.ss-total-yellow { color: #F5C800; font-weight: 900; font-size: 17px; text-align: right; padding: 2px 4px; }
 
 /* 메모 */
 .ss-memo {
