@@ -6964,14 +6964,16 @@ async function ssRenderMain() {
     const entry = ssAll.find(e => e.date === ssCur);
     const r = entry.record;
 
-    // 정산관리 전체 미결제 금액 자동 매칭 (정산관리 상단 카드와 동일)
-    try {
-        const totalUnpaid = await api('/api/settlements/total-unpaid');
-        r.daesong = totalUnpaid.daesung || 0;
-        r.hyodong = totalUnpaid.hyodon || 0;
-        r.delivery = totalUnpaid.cj || 0;
-    } catch (err) {
-        console.error('정산항목 자동매칭 실패:', err);
+    // 정산관리 전체 미결제 금액 자동 매칭 (새 날짜에만 적용, 저장된 날짜는 DB값 유지)
+    if (entry._temp) {
+        try {
+            const totalUnpaid = await api('/api/settlements/total-unpaid');
+            r.daesong = totalUnpaid.daesung || 0;
+            r.hyodong = totalUnpaid.hyodon || 0;
+            r.delivery = totalUnpaid.cj || 0;
+        } catch (err) {
+            console.error('정산항목 자동매칭 실패:', err);
+        }
     }
 
     const { subtotal, total } = ssCompute(r);
