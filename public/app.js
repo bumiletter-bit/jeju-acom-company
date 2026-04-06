@@ -6828,10 +6828,37 @@ async function ssInit() {
         ssCur = null;
     }
     const t = new Date();
-    document.getElementById('ss-newDate').value =
-        `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    document.getElementById('ss-newDate').value = todayStr;
+    document.getElementById('ss-date-input').value = ssCur || todayStr;
     ssRenderTabs();
     ssRenderMain();
+}
+
+// 날짜 선택 시 호출
+async function ssSelectDate(dateStr) {
+    if (!dateStr) return;
+    // 이미 존재하면 해당 날짜로 이동
+    const existing = ssAll.find(e => e.date === dateStr);
+    if (existing) {
+        ssCur = dateStr;
+        ssRenderTabs();
+        ssRenderMain();
+        return;
+    }
+    // 없으면 새로 생성
+    const rec = ssBlank();
+    try {
+        await api('/api/settlement-status', 'POST', { date: dateStr, ...rec });
+        ssAll.push({ date: dateStr, record: rec });
+        ssAll.sort((a, b) => b.date.localeCompare(a.date));
+        ssCur = dateStr;
+        ssRenderTabs();
+        ssRenderMain();
+        ssShowToast('📅 ' + dateStr + ' 추가됨');
+    } catch (err) {
+        ssShowToast('추가 실패: ' + err.message);
+    }
 }
 
 function ssRenderTabs() {
@@ -6841,7 +6868,7 @@ function ssRenderTabs() {
         const t = document.createElement('div');
         t.className = 'ss-dtab' + (date === ssCur ? ' on' : '');
         t.textContent = ssLbl(date);
-        t.onclick = () => { ssCur = date; ssRenderTabs(); ssRenderMain(); };
+        t.onclick = () => { ssCur = date; document.getElementById('ss-date-input').value = date; ssRenderTabs(); ssRenderMain(); };
         bar.appendChild(t);
     });
 }
@@ -6850,10 +6877,14 @@ function ssLbl(d) { const [y, m, day] = d.split('-'); return `${y.slice(2)}.${m}
 
 async function ssRenderMain() {
     const wrap = document.getElementById('ss-wrap');
+    const delBtn = document.getElementById('ss-date-del-btn');
     if (!ssCur) {
-        wrap.innerHTML = `<div class="ss-empty"><div class="ss-ico">📋</div><p>날짜 추가 버튼으로 정산일을 추가하세요.</p></div>`;
+        wrap.innerHTML = `<div class="ss-empty"><div class="ss-ico">📋</div><p>위에서 <b>날짜를 선택</b>하면 정산 현황을 확인할 수 있습니다.</p></div>`;
+        if (delBtn) delBtn.style.display = 'none';
         return;
     }
+    if (delBtn) delBtn.style.display = '';
+    document.getElementById('ss-date-input').value = ssCur;
     const entry = ssAll.find(e => e.date === ssCur);
     const r = entry.record;
 

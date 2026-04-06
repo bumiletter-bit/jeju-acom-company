@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=80">
+    <link rel="stylesheet" href="styles.css?v=81">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1104,10 +1104,18 @@
                             <div class="ss-logo">꼼</div>
                             <div class="ss-header-title"><b>제주아꼼이네</b> 정산 현황</div>
                         </div>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                            <button class="ss-btn ss-by" onclick="ssOpenAddModal()">📅 날짜 추가</button>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                             <button class="ss-btn ss-bg" onclick="ssExportCSV()">📤 CSV 내보내기</button>
                         </div>
+                    </div>
+
+                    <!-- 날짜 선택 바 -->
+                    <div class="ss-date-picker-bar">
+                        <div class="ss-date-picker-group">
+                            <label class="ss-date-picker-label">📅 날짜 선택</label>
+                            <input type="date" id="ss-date-input" class="ss-date-input" onchange="ssSelectDate(this.value)">
+                        </div>
+                        <button class="ss-btn ss-br ss-date-del-btn" id="ss-date-del-btn" style="display:none;" onclick="document.getElementById('ss-moDel').classList.add('open')">🗑️ 삭제</button>
                     </div>
 
                     <!-- 날짜 탭 바 -->
@@ -1715,6 +1723,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=154"></script>
+    <script src="app.js?v=155"></script>
 </body>
 </html>

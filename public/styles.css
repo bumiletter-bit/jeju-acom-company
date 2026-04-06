@@ -3865,6 +3865,49 @@ textarea.form-input {
 }
 .ss-header-title b { color: #F5C800; }
 
+/* 날짜 선택 바 */
+.ss-date-picker-bar {
+    background: #f0f4ff;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid #e5e7eb;
+}
+.ss-date-picker-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.ss-date-picker-label {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1B3A6B;
+    white-space: nowrap;
+}
+.ss-date-input {
+    padding: 8px 14px;
+    border: 2px solid #1B3A6B;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1B3A6B;
+    background: #fff;
+    font-family: 'Noto Sans KR', sans-serif;
+    cursor: pointer;
+    outline: none;
+    transition: border-color .15s;
+}
+.ss-date-input:focus {
+    border-color: #F5C800;
+    box-shadow: 0 0 0 3px rgba(245,200,0,.2);
+}
+.ss-date-del-btn {
+    font-size: 12px !important;
+    padding: 6px 12px !important;
+}
+
 /* 날짜 탭 바 */
 .ss-dbar {
     background: #0f2347;
