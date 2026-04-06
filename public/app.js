@@ -6882,30 +6882,12 @@ async function ssRenderMain() {
     const entry = ssAll.find(e => e.date === ssCur);
     const r = entry.record;
 
-    // 정산관리 데이터에서 대성/효돈/CJ 금액 자동 매칭
+    // 정산관리 전체 미결제 금액 자동 매칭 (정산관리 상단 카드와 동일)
     try {
-        const monthStr = ssCur.substring(0, 7);
-        const settlements = await api(`/api/settlements?month=${monthStr}`);
-        let daesongTotal = 0, hyodongTotal = 0, cjBoxCount = 0;
-        settlements.forEach(s => {
-            const sDate = (s.date || '').split('T')[0];
-            if (sDate === ssCur) {
-                if (s.partner === '대성(시온)') {
-                    daesongTotal += (s.amount || 0);
-                    // CJ택배: 대성 items qty 합산
-                    const items = s.items || [];
-                    cjBoxCount += items.reduce((sum, item) => sum + (item.qty || 0), 0);
-                } else if (s.partner === '효돈농협') {
-                    hyodongTotal += (s.amount || 0);
-                    // CJ택배: 효돈 items qty 합산
-                    const items = s.items || [];
-                    cjBoxCount += items.reduce((sum, item) => sum + (item.qty || 0), 0);
-                }
-            }
-        });
-        r.daesong = daesongTotal;
-        r.hyodong = hyodongTotal;
-        r.delivery = cjBoxCount * 3100;
+        const totalUnpaid = await api('/api/settlements/total-unpaid');
+        r.daesong = totalUnpaid.daesung || 0;
+        r.hyodong = totalUnpaid.hyodon || 0;
+        r.delivery = totalUnpaid.cj || 0;
     } catch (err) {
         console.error('정산항목 자동매칭 실패:', err);
     }
