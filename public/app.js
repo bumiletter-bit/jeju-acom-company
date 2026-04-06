@@ -6846,19 +6846,13 @@ async function ssSelectDate(dateStr) {
         ssRenderMain();
         return;
     }
-    // 없으면 새로 생성
+    // 없으면 DB 저장 없이 임시로 0값 표시 (저장 버튼 누를 때 DB 저장)
     const rec = ssBlank();
-    try {
-        await api('/api/settlement-status', 'POST', { date: dateStr, ...rec });
-        ssAll.push({ date: dateStr, record: rec });
-        ssAll.sort((a, b) => b.date.localeCompare(a.date));
-        ssCur = dateStr;
-        ssRenderTabs();
-        ssRenderMain();
-        ssShowToast('📅 ' + dateStr + ' 추가됨');
-    } catch (err) {
-        ssShowToast('추가 실패: ' + err.message);
-    }
+    ssAll.push({ date: dateStr, record: rec, _temp: true });
+    ssAll.sort((a, b) => b.date.localeCompare(a.date));
+    ssCur = dateStr;
+    ssRenderTabs();
+    ssRenderMain();
 }
 
 function ssRenderTabs() {
@@ -6892,18 +6886,26 @@ async function ssRenderMain() {
     try {
         const monthStr = ssCur.substring(0, 7);
         const settlements = await api(`/api/settlements?month=${monthStr}`);
-        let daesongTotal = 0, hyodongTotal = 0, deliveryTotal = 0;
+        let daesongTotal = 0, hyodongTotal = 0, cjBoxCount = 0;
         settlements.forEach(s => {
             const sDate = (s.date || '').split('T')[0];
             if (sDate === ssCur) {
-                if (s.partner === '대성(시온)') daesongTotal += (s.amount || 0);
-                else if (s.partner === '효돈농협') hyodongTotal += (s.amount || 0);
-                else if (s.partner === 'CJ대한통운') deliveryTotal += (s.amount || 0);
+                if (s.partner === '대성(시온)') {
+                    daesongTotal += (s.amount || 0);
+                    // CJ택배: 대성 items qty 합산
+                    const items = s.items || [];
+                    cjBoxCount += items.reduce((sum, item) => sum + (item.qty || 0), 0);
+                } else if (s.partner === '효돈농협') {
+                    hyodongTotal += (s.amount || 0);
+                    // CJ택배: 효돈 items qty 합산
+                    const items = s.items || [];
+                    cjBoxCount += items.reduce((sum, item) => sum + (item.qty || 0), 0);
+                }
             }
         });
         r.daesong = daesongTotal;
         r.hyodong = hyodongTotal;
-        r.delivery = deliveryTotal;
+        r.delivery = cjBoxCount * 3100;
     } catch (err) {
         console.error('정산항목 자동매칭 실패:', err);
     }
@@ -7140,6 +7142,7 @@ async function ssSaveNow() {
             date: entry.date,
             ...entry.record
         });
+        if (entry._temp) delete entry._temp;
         ssShowToast('✅ 저장 완료');
     } catch (err) {
         ssShowToast('저장 실패: ' + err.message);
