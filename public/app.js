@@ -6799,6 +6799,8 @@ function ssCompute(r) {
 
 let ssAll = [];
 let ssCur = null;
+let ssCalYear = new Date().getFullYear();
+let ssCalMonth = new Date().getMonth(); // 0-based
 
 async function ssInit() {
     try {
@@ -6831,51 +6833,124 @@ async function ssInit() {
     const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
     document.getElementById('ss-newDate').value = todayStr;
     document.getElementById('ss-date-input').value = ssCur || todayStr;
-    ssRenderTabs();
+    // 선택된 날짜가 있으면 해당 월로 달력 이동
+    if (ssCur) {
+        const [y, m] = ssCur.split('-');
+        ssCalYear = parseInt(y);
+        ssCalMonth = parseInt(m) - 1;
+    }
+    ssRenderCalendar();
     ssRenderMain();
 }
 
 // 날짜 선택 시 호출
 async function ssSelectDate(dateStr) {
     if (!dateStr) return;
-    // 이미 존재하면 해당 날짜로 이동
     const existing = ssAll.find(e => e.date === dateStr);
     if (existing) {
         ssCur = dateStr;
-        ssRenderTabs();
+        ssRenderCalendar();
         ssRenderMain();
         return;
     }
-    // 없으면 DB 저장 없이 임시로 0값 표시 (저장 버튼 누를 때 DB 저장)
     const rec = ssBlank();
     ssAll.push({ date: dateStr, record: rec, _temp: true });
     ssAll.sort((a, b) => b.date.localeCompare(a.date));
     ssCur = dateStr;
-    ssRenderTabs();
+    ssRenderCalendar();
     ssRenderMain();
 }
 
-function ssRenderTabs() {
-    const bar = document.getElementById('ss-dbar');
-    bar.innerHTML = '';
-    ssAll.forEach(({ date }) => {
-        const t = document.createElement('div');
-        t.className = 'ss-dtab' + (date === ssCur ? ' on' : '');
+function ssCalPrev() { ssCalMonth--; if (ssCalMonth < 0) { ssCalMonth = 11; ssCalYear--; } ssRenderCalendar(); }
+function ssCalNext() { ssCalMonth++; if (ssCalMonth > 11) { ssCalMonth = 0; ssCalYear++; } ssRenderCalendar(); }
 
-        const label = document.createElement('span');
-        label.textContent = ssLbl(date);
-        label.onclick = () => { ssCur = date; document.getElementById('ss-date-input').value = date; ssRenderTabs(); ssRenderMain(); };
+function ssRenderCalendar() {
+    const wrap = document.getElementById('ss-cal-wrap');
+    const year = ssCalYear, month = ssCalMonth;
+    const firstDay = new Date(year, month, 1).getDay(); // 0=일
+    const lastDate = new Date(year, month + 1, 0).getDate();
+    const days = ['일', '월', '화', '수', '목', '금', '토'];
+    const mm = String(month + 1).padStart(2, '0');
 
-        const xBtn = document.createElement('span');
-        xBtn.className = 'ss-dtab-x';
-        xBtn.textContent = '✕';
-        xBtn.onclick = (e) => { e.stopPropagation(); ssDeleteDate(date); };
-
-        t.appendChild(label);
-        t.appendChild(xBtn);
-        bar.appendChild(t);
+    // 이 달에 데이터가 있는 날짜들의 금액 맵
+    const amountMap = {};
+    ssAll.forEach(({ date, record }) => {
+        if (date.startsWith(`${year}-${mm}`)) {
+            const day = parseInt(date.split('-')[2]);
+            const { total } = ssCompute(record);
+            amountMap[day] = total;
+        }
     });
+
+    let html = `
+    <div class="ss-cal-header">
+      <button class="ss-cal-nav" onclick="ssCalPrev()">◀</button>
+      <div class="ss-cal-title">${year}년 ${month + 1}월</div>
+      <button class="ss-cal-nav" onclick="ssCalNext()">▶</button>
+    </div>
+    <div class="ss-cal-grid">`;
+
+    // 요일 헤더
+    days.forEach((d, i) => {
+        const cls = i === 0 ? ' ss-cal-sun' : i === 6 ? ' ss-cal-sat' : '';
+        html += `<div class="ss-cal-dayname${cls}">${d}</div>`;
+    });
+
+    // 빈 칸
+    for (let i = 0; i < firstDay; i++) html += `<div class="ss-cal-cell ss-cal-empty"></div>`;
+
+    // 날짜 칸
+    for (let d = 1; d <= lastDate; d++) {
+        const dateStr = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+        const hasData = amountMap.hasOwnProperty(d);
+        const isSelected = dateStr === ssCur;
+        const dayOfWeek = new Date(year, month, d).getDay();
+        let cls = 'ss-cal-cell';
+        if (isSelected) cls += ' ss-cal-sel';
+        if (hasData) cls += ' ss-cal-has';
+        if (dayOfWeek === 0) cls += ' ss-cal-sun';
+        if (dayOfWeek === 6) cls += ' ss-cal-sat';
+
+        let amtHtml = '';
+        if (hasData) {
+            const amt = amountMap[d];
+            const amtCls = amt >= 0 ? 'ss-cal-amt-pos' : 'ss-cal-amt-neg';
+            const display = Math.abs(amt) >= 10000
+                ? (amt >= 0 ? '' : '-') + Math.round(Math.abs(amt) / 10000).toLocaleString() + '만'
+                : amt.toLocaleString();
+            amtHtml = `<div class="ss-cal-amt ${amtCls}">${display}</div>`;
+        }
+
+        html += `<div class="${cls}" onclick="ssCalClick('${dateStr}', ${hasData})">
+          <div class="ss-cal-num">${d}</div>
+          ${amtHtml}
+        </div>`;
+    }
+
+    html += `</div>`;
+    wrap.innerHTML = html;
 }
+
+function ssCalClick(dateStr, hasData) {
+    if (hasData) {
+        ssCur = dateStr;
+        document.getElementById('ss-date-input').value = dateStr;
+        ssRenderCalendar();
+        ssRenderMain();
+        // 상세 영역으로 스크롤
+        setTimeout(() => {
+            document.getElementById('ss-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+    } else {
+        // 데이터 없는 날짜 → 새로 추가할지 물어봄
+        if (confirm(`${dateStr} 에 정산 데이터를 추가할까요?`)) {
+            ssSelectDate(dateStr);
+        }
+    }
+}
+
+// 기존 호환용
+function ssRenderTabs() { ssRenderCalendar(); }
 
 function ssLbl(d) { const [y, m, day] = d.split('-'); return `${y.slice(2)}.${m}.${day}`; }
 
@@ -7147,7 +7222,7 @@ async function ssConfirmAdd() {
         ssAll.sort((a, b) => b.date.localeCompare(a.date));
         ssCur = d;
         ssCloseModal('ss-moAdd');
-        ssRenderTabs();
+        ssRenderCalendar();
         ssRenderMain();
         ssShowToast(_ssCpRec ? '📋 복사 완료' : '📅 날짜 추가됨');
         _ssCpRec = null;
@@ -7171,7 +7246,7 @@ async function ssConfirmDel() {
         ssAll = ssAll.filter(e => e.date !== ssCur);
         ssCur = ssAll.length ? ssAll[0].date : null;
         ssCloseModal('ss-moDel');
-        ssRenderTabs();
+        ssRenderCalendar();
         ssRenderMain();
         ssShowToast('🗑️ 삭제됨');
     } catch (err) {
@@ -7189,7 +7264,7 @@ async function ssDeleteDate(date) {
         }
         ssAll = ssAll.filter(e => e.date !== date);
         if (ssCur === date) ssCur = ssAll.length ? ssAll[0].date : null;
-        ssRenderTabs();
+        ssRenderCalendar();
         ssRenderMain();
         ssShowToast('🗑️ 삭제됨');
     } catch (err) {
