@@ -3932,6 +3932,21 @@ textarea.form-input {
 }
 .ss-dtab:hover { color: rgba(255,255,255,.85); }
 .ss-dtab.on { color: #F5C800; border-bottom-color: #F5C800; font-weight: 700; }
+.ss-dtab { display: flex; align-items: center; gap: 6px; }
+.ss-dtab-x {
+    font-size: 10px;
+    color: rgba(255,255,255,.3);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: all .15s;
+    line-height: 1;
+}
+.ss-dtab-x:hover {
+    color: #E53935;
+    background: rgba(229,57,53,.15);
+}
+.ss-sc-click { cursor: pointer; }
 
 /* 메인 콘텐츠 */
 .ss-wrap {

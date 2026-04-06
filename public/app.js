@@ -6861,8 +6861,18 @@ function ssRenderTabs() {
     ssAll.forEach(({ date }) => {
         const t = document.createElement('div');
         t.className = 'ss-dtab' + (date === ssCur ? ' on' : '');
-        t.textContent = ssLbl(date);
-        t.onclick = () => { ssCur = date; document.getElementById('ss-date-input').value = date; ssRenderTabs(); ssRenderMain(); };
+
+        const label = document.createElement('span');
+        label.textContent = ssLbl(date);
+        label.onclick = () => { ssCur = date; document.getElementById('ss-date-input').value = date; ssRenderTabs(); ssRenderMain(); };
+
+        const xBtn = document.createElement('span');
+        xBtn.className = 'ss-dtab-x';
+        xBtn.textContent = '✕';
+        xBtn.onclick = (e) => { e.stopPropagation(); ssDeleteDate(date); };
+
+        t.appendChild(label);
+        t.appendChild(xBtn);
         bar.appendChild(t);
     });
 }
@@ -6871,13 +6881,10 @@ function ssLbl(d) { const [y, m, day] = d.split('-'); return `${y.slice(2)}.${m}
 
 async function ssRenderMain() {
     const wrap = document.getElementById('ss-wrap');
-    const delBtn = document.getElementById('ss-date-del-btn');
     if (!ssCur) {
         wrap.innerHTML = `<div class="ss-empty"><div class="ss-ico">📋</div><p>위에서 <b>날짜를 선택</b>하면 정산 현황을 확인할 수 있습니다.</p></div>`;
-        if (delBtn) delBtn.style.display = 'none';
         return;
     }
-    if (delBtn) delBtn.style.display = '';
     document.getElementById('ss-date-input').value = ssCur;
     const entry = ssAll.find(e => e.date === ssCur);
     const r = entry.record;
@@ -6919,29 +6926,29 @@ async function ssRenderMain() {
       </div>
     </div>
     <div class="ss-sg">
-      <div class="ss-sc y">
+      <div class="ss-sc y ss-sc-click" onclick="document.getElementById('ss-sec-settle').scrollIntoView({behavior:'smooth'})">
         <div class="ss-sc-lbl">정산현황</div>
         <div class="ss-sc-val" id="ss_sc_settle">${ssFmt(n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid'))}</div>
         <div class="ss-sc-sub">현재현금+스토어+쿠팡+자사몰</div>
       </div>
-      <div class="ss-sc">
+      <div class="ss-sc ss-sc-click" onclick="document.getElementById('ss-sec-ad').scrollIntoView({behavior:'smooth'})">
         <div class="ss-sc-lbl">광고비</div>
         <div class="ss-sc-val g" id="ss_sc_ad">+${ssFmt(n('ad_naver') + n('ad_gfa'))}</div>
         <div class="ss-sc-sub">네이버 + GFA</div>
       </div>
-      <div class="ss-sc r">
+      <div class="ss-sc r ss-sc-click" onclick="document.getElementById('ss-sec-card').scrollIntoView({behavior:'smooth'})">
         <div class="ss-sc-lbl">카드비용</div>
         <div class="ss-sc-val r" id="ss_sc_card">-${ssFmt(n('card_fee') + n('corp_card'))}</div>
         <div class="ss-sc-sub">카드이용금액 + 법인카드</div>
       </div>
-      <div class="ss-sc">
+      <div class="ss-sc ss-sc-click" onclick="document.getElementById('ss-sec-items').scrollIntoView({behavior:'smooth'})">
         <div class="ss-sc-lbl">정산항목</div>
         <div class="ss-sc-val ${(-n('daesong') - n('hyodong') - n('delivery')) >= 0 ? 'g' : 'r'}" id="ss_sc_items">${ssFmt(-n('daesong') - n('hyodong') - n('delivery'))}</div>
         <div class="ss-sc-sub">－ 대성 / 효돈 / 택배</div>
       </div>
     </div>
 
-    <div class="ss-slbl">💰 정산 현황</div>
+    <div class="ss-slbl" id="ss-sec-settle">💰 정산 현황</div>
     <div class="ss-card">
       <div class="ss-ch">📑 정산 내역 <a class="ss-ch-link" href="https://sell.smartstore.naver.com/#/home/dashboard" target="_blank">스마트스토어 확인하기 </a></div>
       <table class="ss-tbl">
@@ -6960,7 +6967,7 @@ async function ssRenderMain() {
       </table>
     </div>
 
-    <div class="ss-slbl">📢 광고비 <span class="ss-badge ss-badge-plus">+ 자산</span></div>
+    <div class="ss-slbl" id="ss-sec-ad">📢 광고비 <span class="ss-badge ss-badge-plus">+ 자산</span></div>
     <div class="ss-card">
       <div class="ss-ch">📈 광고비 (수취 예정 자산) <a class="ss-ch-link" href="https://ads.naver.com/manage/" target="_blank">광고 확인하기 </a></div>
       <table class="ss-tbl">
@@ -6973,7 +6980,7 @@ async function ssRenderMain() {
       </table>
     </div>
 
-    <div class="ss-slbl">💳 카드 비용 <span class="ss-badge ss-badge-minus">- 비용</span></div>
+    <div class="ss-slbl" id="ss-sec-card">💳 카드 비용 <span class="ss-badge ss-badge-minus">- 비용</span></div>
     <div class="ss-card">
       <div class="ss-ch">💳 카드 비용 (차감 금액)</div>
       <table class="ss-tbl">
@@ -6986,7 +6993,7 @@ async function ssRenderMain() {
       </table>
     </div>
 
-    <div class="ss-slbl">📦 정산항목</div>
+    <div class="ss-slbl" id="ss-sec-items">📦 정산항목</div>
     <div class="ss-card">
       <div class="ss-ch">🗂️ 정산항목 <a class="ss-ch-link" href="https://jeju-acom-company.onrender.com/" target="_blank">회사 관리 확인하기 </a></div>
       <table class="ss-tbl">
@@ -7025,12 +7032,6 @@ async function ssRenderMain() {
         oninput="ssInp('memo',this.value)">${r.memo || ''}</textarea>
     </div>
 
-    <div class="ss-abar">
-      <button class="ss-btn ss-bg" onclick="ssExportCSV()">📤 CSV 내보내기</button>
-      <button class="ss-btn ss-bh" onclick="ssCopyDate()">📋 복사해서 새 날짜</button>
-      <button class="ss-btn ss-bn" onclick="ssCaptureScreen()" id="ss-captureBtn">📸 캡처하기</button>
-      <button class="ss-btn ss-br" style="margin-left:auto" onclick="document.getElementById('ss-moDel').classList.add('open')">🗑️ 이 날짜 삭제</button>
-    </div>
   `;
 }
 
@@ -7170,6 +7171,24 @@ async function ssConfirmDel() {
         ssAll = ssAll.filter(e => e.date !== ssCur);
         ssCur = ssAll.length ? ssAll[0].date : null;
         ssCloseModal('ss-moDel');
+        ssRenderTabs();
+        ssRenderMain();
+        ssShowToast('🗑️ 삭제됨');
+    } catch (err) {
+        ssShowToast('삭제 실패: ' + err.message);
+    }
+}
+
+// 날짜 탭 X 버튼으로 삭제
+async function ssDeleteDate(date) {
+    if (!confirm(`${date} 정산 데이터를 삭제할까요?`)) return;
+    const entry = ssAll.find(e => e.date === date);
+    try {
+        if (!entry._temp) {
+            await api(`/api/settlement-status/${date}`, 'DELETE');
+        }
+        ssAll = ssAll.filter(e => e.date !== date);
+        if (ssCur === date) ssCur = ssAll.length ? ssAll[0].date : null;
         ssRenderTabs();
         ssRenderMain();
         ssShowToast('🗑️ 삭제됨');
