@@ -6771,16 +6771,9 @@ document.querySelectorAll('.settlement-tab').forEach(tab => {
 });
 
 // ============================================================
-//  정산현황 (Settlement Status) - localStorage 기반
+//  정산현황 (Settlement Status) - 서버 DB 기반
 //  모든 함수/변수명은 ss 접두사로 충돌 방지
 // ============================================================
-const SS_KEY = 'acom_v3';
-
-function ssLoad() {
-    try { return JSON.parse(localStorage.getItem(SS_KEY)) || { dates: [], records: {} }; }
-    catch { return { dates: [], records: {} }; }
-}
-function ssSave(d) { localStorage.setItem(SS_KEY, JSON.stringify(d)); }
 
 function ssBlank() {
     return {
@@ -6807,10 +6800,33 @@ function ssCompute(r) {
 let ssAll = [];
 let ssCur = null;
 
-function ssInit() {
-    const d = ssLoad();
-    ssAll = d.dates.map(dt => ({ date: dt, record: d.records[dt] || ssBlank() }));
-    if (ssAll.length) ssCur = ssAll[0].date;
+async function ssInit() {
+    try {
+        const data = await api('/api/settlement-status');
+        ssAll = data.map(row => ({
+            date: row.date.split('T')[0],
+            record: {
+                current_cash: Number(row.current_cash) || 0,
+                settlement_scheduled: Number(row.settlement_scheduled) || 0,
+                unsettled: Number(row.unsettled) || 0,
+                coupang_unpaid: Number(row.coupang_unpaid) || 0,
+                selfmall_unpaid: Number(row.selfmall_unpaid) || 0,
+                ad_naver: Number(row.ad_naver) || 0,
+                ad_gfa: Number(row.ad_gfa) || 0,
+                card_fee: Number(row.card_fee) || 0,
+                corp_card: Number(row.corp_card) || 0,
+                hyodong: Number(row.hyodong) || 0,
+                daesong: Number(row.daesong) || 0,
+                delivery: Number(row.delivery) || 0,
+                memo: row.memo || ''
+            }
+        }));
+        if (ssAll.length) ssCur = ssAll[0].date;
+    } catch (err) {
+        console.error('ssInit error:', err);
+        ssAll = [];
+        ssCur = null;
+    }
     const t = new Date();
     document.getElementById('ss-newDate').value =
         `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
@@ -7046,30 +7062,41 @@ function ssSetC(id, val, cls) {
     if (el) { el.textContent = ssFmt(val); el.className = 'ss-cmp ' + cls; }
 }
 
-function ssPersist() {
-    const d = { dates: ssAll.map(e => e.date), records: {} };
-    ssAll.forEach(e => { d.records[e.date] = e.record; });
-    ssSave(d);
+async function ssPersist() {
+    const entry = ssAll.find(e => e.date === ssCur);
+    if (!entry) return;
+    try {
+        await api('/api/settlement-status', 'POST', {
+            date: entry.date,
+            ...entry.record
+        });
+    } catch (err) {
+        console.error('ssPersist error:', err);
+    }
 }
 
 // 날짜 추가
 let _ssCpRec = null;
 function ssOpenAddModal() { _ssCpRec = null; document.getElementById('ss-moAdd').classList.add('open'); }
 function ssCloseModal(id) { document.getElementById(id).classList.remove('open'); }
-function ssConfirmAdd() {
+async function ssConfirmAdd() {
     const d = document.getElementById('ss-newDate').value;
     if (!d) { ssShowToast('날짜를 선택하세요'); return; }
     if (ssAll.find(e => e.date === d)) { ssShowToast('이미 존재하는 날짜입니다'); return; }
     const rec = _ssCpRec ? JSON.parse(JSON.stringify(_ssCpRec)) : ssBlank();
-    ssAll.push({ date: d, record: rec });
-    ssAll.sort((a, b) => b.date.localeCompare(a.date));
-    ssCur = d;
-    ssPersist();
-    ssCloseModal('ss-moAdd');
-    ssRenderTabs();
-    ssRenderMain();
-    ssShowToast(_ssCpRec ? '📋 복사 완료' : '📅 날짜 추가됨');
-    _ssCpRec = null;
+    try {
+        await api('/api/settlement-status', 'POST', { date: d, ...rec });
+        ssAll.push({ date: d, record: rec });
+        ssAll.sort((a, b) => b.date.localeCompare(a.date));
+        ssCur = d;
+        ssCloseModal('ss-moAdd');
+        ssRenderTabs();
+        ssRenderMain();
+        ssShowToast(_ssCpRec ? '📋 복사 완료' : '📅 날짜 추가됨');
+        _ssCpRec = null;
+    } catch (err) {
+        ssShowToast('저장 실패: ' + err.message);
+    }
 }
 function ssCopyDate() {
     const entry = ssAll.find(e => e.date === ssCur);
@@ -7081,14 +7108,18 @@ function ssCopyDate() {
 }
 
 // 삭제
-function ssConfirmDel() {
-    ssAll = ssAll.filter(e => e.date !== ssCur);
-    ssPersist();
-    ssCur = ssAll.length ? ssAll[0].date : null;
-    ssCloseModal('ss-moDel');
-    ssRenderTabs();
-    ssRenderMain();
-    ssShowToast('🗑️ 삭제됨');
+async function ssConfirmDel() {
+    try {
+        await api(`/api/settlement-status/${ssCur}`, 'DELETE');
+        ssAll = ssAll.filter(e => e.date !== ssCur);
+        ssCur = ssAll.length ? ssAll[0].date : null;
+        ssCloseModal('ss-moDel');
+        ssRenderTabs();
+        ssRenderMain();
+        ssShowToast('🗑️ 삭제됨');
+    } catch (err) {
+        ssShowToast('삭제 실패: ' + err.message);
+    }
 }
 
 // CSV 내보내기

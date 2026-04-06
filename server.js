@@ -476,6 +476,30 @@ async function initDB() {
         END $$;
     `);
 
+    // 정산현황 (날짜별 정산 현황 데이터)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS settlement_status (
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL UNIQUE,
+            current_cash NUMERIC DEFAULT 0,
+            settlement_scheduled NUMERIC DEFAULT 0,
+            unsettled NUMERIC DEFAULT 0,
+            coupang_unpaid NUMERIC DEFAULT 0,
+            selfmall_unpaid NUMERIC DEFAULT 0,
+            ad_naver NUMERIC DEFAULT 0,
+            ad_gfa NUMERIC DEFAULT 0,
+            card_fee NUMERIC DEFAULT 0,
+            corp_card NUMERIC DEFAULT 0,
+            hyodong NUMERIC DEFAULT 0,
+            daesong NUMERIC DEFAULT 0,
+            delivery NUMERIC DEFAULT 0,
+            memo TEXT DEFAULT '',
+            updated_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+
     console.log('DB 테이블 초기화 완료');
 }
 
@@ -3495,6 +3519,58 @@ app.delete('/api/leave-adjustments/:id', authMiddleware, adminOnly, async (req, 
         res.json({ success: true });
     } catch (err) {
         console.error('DELETE /api/leave-adjustments error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// === 정산현황 API ===
+
+// 전체 날짜 목록 + 데이터 조회
+app.get('/api/settlement-status', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM settlement_status ORDER BY date DESC');
+        res.json(result.rows);
+    } catch (err) {
+        console.error('GET /api/settlement-status error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 날짜 추가/수정 (upsert)
+app.post('/api/settlement-status', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { date, current_cash, settlement_scheduled, unsettled, coupang_unpaid, selfmall_unpaid,
+                ad_naver, ad_gfa, card_fee, corp_card, hyodong, daesong, delivery, memo } = req.body;
+        if (!date) return res.status(400).json({ error: '날짜가 필요합니다' });
+
+        const result = await pool.query(`
+            INSERT INTO settlement_status (date, current_cash, settlement_scheduled, unsettled, coupang_unpaid, selfmall_unpaid,
+                ad_naver, ad_gfa, card_fee, corp_card, hyodong, daesong, delivery, memo, updated_by, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+            ON CONFLICT (date) DO UPDATE SET
+                current_cash=EXCLUDED.current_cash, settlement_scheduled=EXCLUDED.settlement_scheduled,
+                unsettled=EXCLUDED.unsettled, coupang_unpaid=EXCLUDED.coupang_unpaid, selfmall_unpaid=EXCLUDED.selfmall_unpaid,
+                ad_naver=EXCLUDED.ad_naver, ad_gfa=EXCLUDED.ad_gfa, card_fee=EXCLUDED.card_fee, corp_card=EXCLUDED.corp_card,
+                hyodong=EXCLUDED.hyodong, daesong=EXCLUDED.daesong, delivery=EXCLUDED.delivery,
+                memo=EXCLUDED.memo, updated_by=EXCLUDED.updated_by, updated_at=NOW()
+            RETURNING *
+        `, [date, current_cash||0, settlement_scheduled||0, unsettled||0, coupang_unpaid||0, selfmall_unpaid||0,
+            ad_naver||0, ad_gfa||0, card_fee||0, corp_card||0, hyodong||0, daesong||0, delivery||0, memo||'', req.user.id]);
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('POST /api/settlement-status error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 날짜 삭제
+app.delete('/api/settlement-status/:date', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM settlement_status WHERE date = $1', [req.params.date]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('DELETE /api/settlement-status error:', err);
         res.status(500).json({ error: err.message });
     }
 });
