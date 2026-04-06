@@ -7097,8 +7097,9 @@ async function ssRenderMain() {
       </table>
     </div>
 
-    <div style="text-align:center;margin:16px 0;">
+    <div style="text-align:center;margin:16px 0;display:flex;justify-content:center;gap:12px;">
       <button class="ss-btn ss-by" style="padding:12px 40px;font-size:15px;font-weight:700;" onclick="ssSaveNow()">💾 저장</button>
+      <button class="ss-btn ss-br" style="padding:12px 40px;font-size:15px;font-weight:700;" onclick="ssDeleteDate('${ssCur}')">🗑️ 삭제</button>
     </div>
 
     <div class="ss-slbl">📝 비고</div>
