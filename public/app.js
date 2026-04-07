@@ -6882,6 +6882,21 @@ function ssRenderCalendar() {
         }
     });
 
+    // 전일대비 계산: 해당 날짜 기준 직전 데이터 날짜와의 차이
+    const diffMap = {};
+    // ssAll을 날짜 오름차순 정렬하여 전체에서 직전 데이터 찾기
+    const sortedAll = [...ssAll].sort((a, b) => a.date.localeCompare(b.date));
+    for (let d = 1; d <= lastDate; d++) {
+        if (!amountMap.hasOwnProperty(d)) continue;
+        const dateStr2 = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+        const idx = sortedAll.findIndex(s => s.date === dateStr2);
+        if (idx > 0) {
+            const prevRec = sortedAll[idx - 1].record;
+            const { total: prevTotal } = ssCompute(prevRec);
+            diffMap[d] = amountMap[d] - prevTotal;
+        }
+    }
+
     let html = `
     <div class="ss-cal-header">
       <button class="ss-cal-nav" onclick="ssCalPrev()">◀</button>
@@ -6919,6 +6934,16 @@ function ssRenderCalendar() {
                 ? (amt >= 0 ? '' : '-') + Math.round(Math.abs(amt) / 10000).toLocaleString() + '만'
                 : amt.toLocaleString();
             amtHtml = `<div class="ss-cal-amt ${amtCls}">${display}</div>`;
+
+            if (diffMap.hasOwnProperty(d)) {
+                const diff = diffMap[d];
+                const sign = diff > 0 ? '+' : '';
+                const diffDisplay = Math.abs(diff) >= 10000
+                    ? sign + Math.round(diff / 10000).toLocaleString() + '만'
+                    : sign + diff.toLocaleString();
+                const diffCls = diff > 0 ? 'ss-cal-diff-up' : diff < 0 ? 'ss-cal-diff-down' : 'ss-cal-diff-zero';
+                amtHtml += `<div class="ss-cal-diff ${diffCls}">${diffDisplay}</div>`;
+            }
         }
 
         html += `<div class="${cls}" onclick="ssCalClick('${dateStr}', ${hasData})">

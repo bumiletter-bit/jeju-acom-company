@@ -3960,6 +3960,17 @@ textarea.form-input {
 }
 .ss-cal-amt-pos { color: #1a7340; }
 .ss-cal-amt-neg { color: #E53935; }
+.ss-cal-diff {
+    font-size: 8px;
+    font-weight: 600;
+    line-height: 1.1;
+    margin-top: 1px;
+    word-break: keep-all;
+}
+.ss-cal-diff-up { color: #E53935; }
+.ss-cal-diff-down { color: #1565C0; }
+.ss-cal-diff-zero { color: #888; }
+.ss-cal-cell.ss-cal-sel .ss-cal-diff { opacity: 0.9; }
 .ss-cal-cell.ss-cal-has::after {
     content: '';
     position: absolute;
@@ -4187,6 +4198,7 @@ textarea.form-input {
     .ss-cal-cell { min-height: 52px; padding: 4px 2px 3px; border-radius: 8px; }
     .ss-cal-num { font-size: 11px; }
     .ss-cal-amt { font-size: 8.5px; }
+    .ss-cal-diff { font-size: 7px; }
     .ss-cal-title { font-size: 15px; }
     .ss-cal-nav { width: 32px; height: 32px; font-size: 11px; }
     .ss-cal-dayname { font-size: 10px; }
