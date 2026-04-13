@@ -699,6 +699,10 @@ body {
     grid-template-columns: repeat(4, 1fr);
 }
 
+.stats-grid.stats-grid-5 {
+    grid-template-columns: repeat(5, 1fr);
+}
+
 .stat-card {
     background: #fff;
     border: 1px solid var(--border);
@@ -881,6 +885,7 @@ body {
 
 .day-payment-item.daesung { color: #1565C0; }
 .day-payment-item.hyodon { color: #2E7D32; }
+.day-payment-item.aewol { color: #7C3AED; }
 .day-payment-item.cj { color: #E65100; }
 
 .day-payment-item.paid, .day-total.paid {
@@ -1004,6 +1009,10 @@ body {
 
 .stat-card.hyodon {
     border-top-color: #10b981;
+}
+
+.stat-card.aewol {
+    border-top-color: #8b5cf6;
 }
 
 .stat-card.cj {
@@ -1629,6 +1638,7 @@ input[type="date"].form-input::-webkit-datetime-edit {
 
 tr.pricing-daesung td { background: var(--accent-blue-light); border-color: #bfdbfe; }
 tr.pricing-hyodon td { background: #fefce8; border-color: #fde68a; }
+tr.pricing-aewol td { background: #f3e8ff; border-color: #d8b4fe; }
 
 /* Month Picker */
 .month-picker {
@@ -3567,7 +3577,7 @@ textarea.form-input {
    소형 폰 (480px 이하)
    ======================================== */
 @media (max-width: 480px) {
-    .stats-grid, .stats-grid-4 { grid-template-columns: 1fr !important; }
+    .stats-grid, .stats-grid-4, .stats-grid-5 { grid-template-columns: 1fr !important; }
     #box-inventory-grid { grid-template-columns: 1fr !important; }
     .calendar-table td { min-height: 50px; font-size: 10px; }
     .calendar-table th { font-size: 10px; }

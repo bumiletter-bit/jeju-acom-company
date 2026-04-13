@@ -878,6 +878,7 @@ async function renderSettlementCalendar() {
     document.getElementById('expected-payment-label').textContent = '총 결제예정금액';
     document.getElementById('daesung-payment-label').textContent = '대성(시온)';
     document.getElementById('hyodon-payment-label').textContent = '효돈농협';
+    document.getElementById('aewol-payment-label').textContent = '애월취나물';
     document.getElementById('cj-payment-label').textContent = 'CJ택배';
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
@@ -894,7 +895,7 @@ async function renderSettlementCalendar() {
     const cjCarryoverStart = cjCarryoverData.start_date || '';
     const cjCarryoverEnd = cjCarryoverData.end_date || '';
 
-    let daesungPayment = 0, hyodonPayment = 0, cjPayment = 0;
+    let daesungPayment = 0, hyodonPayment = 0, aewolPayment = 0, cjPayment = 0;
     const dailyPayments = {};
 
     settlements.forEach(s => {
@@ -902,8 +903,8 @@ async function renderSettlementCalendar() {
         const isPaid = s.isPaid || false;
 
         if (!dailyPayments[s.date]) dailyPayments[s.date] = {
-            daesung: 0, hyodon: 0, cj: 0,
-            daesungPaid: 0, hyodonPaid: 0, cjPaid: 0,
+            daesung: 0, hyodon: 0, aewol: 0, cj: 0,
+            daesungPaid: 0, hyodonPaid: 0, aewolPaid: 0, cjPaid: 0,
             entries: []
         };
 
@@ -919,10 +920,15 @@ async function renderSettlementCalendar() {
             if (isPaid) dailyPayments[s.date].hyodonPaid += amount;
             else hyodonPayment += amount;
         }
+        if (s.partner === '애월취나물') {
+            dailyPayments[s.date].aewol += amount;
+            if (isPaid) dailyPayments[s.date].aewolPaid += amount;
+            else aewolPayment += amount;
+        }
 
-        // CJ택배비 자동 계산: 대성/효돈 정산의 items 수량 합계 × 3,100원
-        // CJ 결제완료는 대성/효돈과 독립적으로 cjPaidMap에서 관리
-        if (s.partner === '대성(시온)' || s.partner === '효돈농협') {
+        // CJ택배비 자동 계산: 대성/효돈/애월 정산의 items 수량 합계 × 3,100원
+        // CJ 결제완료는 대성/효돈/애월과 독립적으로 cjPaidMap에서 관리
+        if (s.partner === '대성(시온)' || s.partner === '효돈농협' || s.partner === '애월취나물') {
             const items = s.items || [];
             const boxCount = items.reduce((sum, item) => sum + (item.qty || 0), 0);
             const cjCost = boxCount * 3100;
@@ -981,18 +987,21 @@ async function renderSettlementCalendar() {
         const totalUnpaid = await api('/api/settlements/total-unpaid');
         document.getElementById('daesung-payment').textContent = `${(totalUnpaid.daesung || 0).toLocaleString()} 원`;
         document.getElementById('hyodon-payment').textContent = `${(totalUnpaid.hyodon || 0).toLocaleString()} 원`;
+        document.getElementById('aewol-payment').textContent = `${(totalUnpaid.aewol || 0).toLocaleString()} 원`;
         document.getElementById('cj-payment').textContent = `${(totalUnpaid.cj || 0).toLocaleString()} 원`;
         document.getElementById('expected-payment').textContent = `${(totalUnpaid.total || 0).toLocaleString()} 원`;
 
         // 선결제 라인 숨김 (총합에 이미 반영됨)
         document.getElementById('daesung-prepay-line').style.display = 'none';
         document.getElementById('hyodon-prepay-line').style.display = 'none';
+        document.getElementById('aewol-prepay-line').style.display = 'none';
     } catch (err) {
         console.error('전체 미정산 합계 로드 오류:', err);
         // 폴백: 현재 월 데이터만 표시
         document.getElementById('daesung-payment').textContent = `${daesungPayment.toLocaleString()} 원`;
         document.getElementById('hyodon-payment').textContent = `${hyodonPayment.toLocaleString()} 원`;
-        document.getElementById('expected-payment').textContent = `${(daesungPayment + hyodonPayment + cjTotal).toLocaleString()} 원`;
+        document.getElementById('aewol-payment').textContent = `${aewolPayment.toLocaleString()} 원`;
+        document.getElementById('expected-payment').textContent = `${(daesungPayment + hyodonPayment + aewolPayment + cjTotal).toLocaleString()} 원`;
     }
 
     // 달력용 선결제 내역 (해당 월)
@@ -1000,7 +1009,7 @@ async function renderSettlementCalendar() {
     prepayments.forEach(p => {
         if (p.date && p.date.startsWith(monthStr)) {
             if (!dailyPrepayments[p.date]) dailyPrepayments[p.date] = [];
-            const shortName = p.partner === '대성(시온)' ? '대성' : (p.partner === '효돈농협' ? '효돈' : p.partner);
+            const shortName = p.partner === '대성(시온)' ? '대성' : (p.partner === '효돈농협' ? '효돈' : (p.partner === '애월취나물' ? '애월' : p.partner));
             dailyPrepayments[p.date].push({ name: shortName, amount: p.amount });
         }
     });
@@ -1055,13 +1064,18 @@ async function renderSettlementCalendar() {
                         const cls = allPaid ? 'day-payment-item hyodon paid' : 'day-payment-item hyodon';
                         contentHtml += `<div class="${cls}"><span class="pay-label">효돈</span><span class="pay-amount">${dp.hyodon.toLocaleString()}원</span></div>`;
                     }
+                    if (dp.aewol) {
+                        const allPaid = dp.aewolPaid === dp.aewol;
+                        const cls = allPaid ? 'day-payment-item aewol paid' : 'day-payment-item aewol';
+                        contentHtml += `<div class="${cls}"><span class="pay-label">애월</span><span class="pay-amount">${dp.aewol.toLocaleString()}원</span></div>`;
+                    }
                     if (dp.cj) {
                         const allPaid = dp.cjPaid === dp.cj;
                         const cls = allPaid ? 'day-payment-item cj paid' : 'day-payment-item cj';
                         contentHtml += `<div class="${cls}"><span class="pay-label">CJ</span><span class="pay-amount">${dp.cj.toLocaleString()}원</span></div>`;
                     }
-                    const dayTotal = (dp.daesung || 0) + (dp.hyodon || 0) + (dp.cj || 0);
-                    const dayTotalPaid = (dp.daesungPaid || 0) + (dp.hyodonPaid || 0) + (dp.cjPaid || 0);
+                    const dayTotal = (dp.daesung || 0) + (dp.hyodon || 0) + (dp.aewol || 0) + (dp.cj || 0);
+                    const dayTotalPaid = (dp.daesungPaid || 0) + (dp.hyodonPaid || 0) + (dp.aewolPaid || 0) + (dp.cjPaid || 0);
                     if (dayTotal > 0) {
                         const allPaid = dayTotalPaid === dayTotal;
                         const cls = allPaid ? 'day-total paid' : 'day-total';
@@ -1091,7 +1105,7 @@ window.showSettlementDayModal = function(dateStr) {
     let total = 0;
 
     // 대성, 효돈 entries
-    ['대성(시온)', '효돈농협'].forEach(partner => {
+    ['대성(시온)', '효돈농협', '애월취나물'].forEach(partner => {
         const entries = dp.entries.filter(e => e.partner === partner);
         if (!entries.length) return;
         entries.forEach(e => {
@@ -1219,7 +1233,7 @@ document.getElementById('cj-auto-calc-btn').addEventListener('click', async () =
         // 상세 표시
         const detailEl = document.getElementById('cj-auto-detail');
         if (data.totalBoxes > 0) {
-            detailEl.innerHTML = `대성(시온) <strong>${data.daesung}건</strong> + 효돈농협 <strong>${data.hyodon}건</strong> = 총 <strong>${data.totalBoxes}건</strong>`;
+            detailEl.innerHTML = `대성(시온) <strong>${data.daesung}건</strong> + 효돈농협 <strong>${data.hyodon}건</strong> + 애월취나물 <strong>${data.aewol}건</strong> = 총 <strong>${data.totalBoxes}건</strong>`;
             detailEl.style.display = '';
         } else {
             detailEl.innerHTML = '해당 날짜에 대성/효돈 정산 데이터가 없습니다.';
@@ -1961,7 +1975,7 @@ async function renderPricingList() {
             if (items.length === 0) {
                 rows += `<tr><td>${item.startDate} ~ ${item.endDate}</td><td>${item.partner}</td><td>-</td><td>-</td></tr>`;
             } else {
-                const colorClass = item.partner === '대성(시온)' ? 'pricing-daesung' : 'pricing-hyodon';
+                const colorClass = item.partner === '대성(시온)' ? 'pricing-daesung' : (item.partner === '효돈농협' ? 'pricing-hyodon' : 'pricing-aewol');
                 items.forEach((it, idx) => {
                     rows += `<tr class="${colorClass}">
                         ${idx === 0 ? `<td rowspan="${items.length}">${item.startDate} ~ ${item.endDate}<br><button class="btn-danger" style="margin-top:6px" onclick="deletePricing(${item.id})">삭제</button></td>` : ''}
@@ -5314,7 +5328,7 @@ async function renderWeeklySettlement() {
 
         let html = '';
         weeks.forEach((week, idx) => {
-            let daesungTotal = 0, hyodonTotal = 0, cjTotal = 0;
+            let daesungTotal = 0, hyodonTotal = 0, aewolTotal = 0, cjTotal = 0;
 
             // CJ 일별 금액을 날짜별로 모아서 결제완료 여부 확인
             const cjByDate = {};
@@ -5330,6 +5344,13 @@ async function renderWeeklySettlement() {
                     }
                     if (s.partner === '효돈농협') {
                         hyodonTotal += (s.amount || 0);
+                        const items = s.items || [];
+                        const cjCost = items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
+                        if (!cjByDate[s.date]) cjByDate[s.date] = 0;
+                        cjByDate[s.date] += cjCost;
+                    }
+                    if (s.partner === '애월취나물') {
+                        aewolTotal += (s.amount || 0);
                         const items = s.items || [];
                         const cjCost = items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
                         if (!cjByDate[s.date]) cjByDate[s.date] = 0;
@@ -5351,7 +5372,7 @@ async function renderWeeklySettlement() {
                 }
             });
 
-            const weekTotal = daesungTotal + hyodonTotal + cjTotal - weekPrepay;
+            const weekTotal = daesungTotal + hyodonTotal + aewolTotal + cjTotal - weekPrepay;
 
             // 날짜 라벨: M/D 형태
             const sDate = new Date(week.start + 'T00:00:00');
@@ -5364,6 +5385,7 @@ async function renderWeeklySettlement() {
                 <td>${weekLabel}</td>
                 <td>${daesungTotal > 0 ? daesungTotal.toLocaleString() + ' 원' : '-'}</td>
                 <td>${hyodonTotal > 0 ? hyodonTotal.toLocaleString() + ' 원' : '-'}</td>
+                <td>${aewolTotal > 0 ? aewolTotal.toLocaleString() + ' 원' : '-'}</td>
                 <td>${cjTotal > 0 ? cjTotal.toLocaleString() + ' 원' : '-'}</td>
                 <td>${weekPrepay !== 0 ? '<span style="color:#8b5cf6;">' + (weekPrepay > 0 ? '-' : '') + Math.abs(weekPrepay).toLocaleString() + ' 원</span>' : '-'}</td>
                 <td><strong>${weekTotal !== 0 ? weekTotal.toLocaleString() + ' 원' : '-'}</strong></td>
@@ -6783,7 +6805,7 @@ function ssBlank() {
         settlement_scheduled: 0, unsettled: 0, current_cash: 0,
         ad_naver: 0, ad_gfa: 0,
         card_fee: 0, corp_card: 0,
-        hyodong: 0, daesong: 0, delivery: 0,
+        hyodong: 0, daesong: 0, aewol: 0, delivery: 0,
         coupang_unpaid: 0, selfmall_unpaid: 0,
         memo: ''
     };
@@ -6796,7 +6818,7 @@ function ssCompute(r) {
         + n('coupang_unpaid') + n('selfmall_unpaid')
         + n('ad_naver') + n('ad_gfa')
         - n('card_fee') - n('corp_card');
-    const total = subtotal - n('delivery') - n('hyodong') - n('daesong');
+    const total = subtotal - n('delivery') - n('hyodong') - n('daesong') - n('aewol');
     return { subtotal, total };
 }
 
@@ -6822,6 +6844,7 @@ async function ssInit() {
                 corp_card: Number(row.corp_card) || 0,
                 hyodong: Number(row.hyodong) || 0,
                 daesong: Number(row.daesong) || 0,
+                aewol: Number(row.aewol) || 0,
                 delivery: Number(row.delivery) || 0,
                 memo: row.memo || ''
             }
@@ -6998,6 +7021,7 @@ async function ssRenderMain() {
             const totalUnpaid = await api('/api/settlements/total-unpaid');
             r.daesong = totalUnpaid.daesung || 0;
             r.hyodong = totalUnpaid.hyodon || 0;
+            r.aewol = totalUnpaid.aewol || 0;
             r.delivery = totalUnpaid.cj || 0;
         } catch (err) {
             console.error('정산항목 자동매칭 실패:', err);
@@ -7048,8 +7072,8 @@ async function ssRenderMain() {
       </div>
       <div class="ss-sc ss-sc-click" onclick="document.getElementById('ss-sec-items').scrollIntoView({behavior:'smooth'})">
         <div class="ss-sc-lbl">정산항목</div>
-        <div class="ss-sc-val ${(-n('daesong') - n('hyodong') - n('delivery')) >= 0 ? 'g' : 'r'}" id="ss_sc_items">${ssFmt(-n('daesong') - n('hyodong') - n('delivery'))}</div>
-        <div class="ss-sc-sub">－ 대성 / 효돈 / 택배</div>
+        <div class="ss-sc-val ${(-n('daesong') - n('hyodong') - n('aewol') - n('delivery')) >= 0 ? 'g' : 'r'}" id="ss_sc_items">${ssFmt(-n('daesong') - n('hyodong') - n('aewol') - n('delivery'))}</div>
+        <div class="ss-sc-sub">－ 대성 / 효돈 / 애월 / 택배</div>
       </div>
     </div>
 
@@ -7106,6 +7130,8 @@ async function ssRenderMain() {
           <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.daesong)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'daesong')" onblur="ssOnBlurNi(this,'daesong')"></td></tr>
         <tr><th>효돈 정산예정금액 <span class="ss-badge ss-badge-minus">－</span></th>
           <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.hyodong)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'hyodong')" onblur="ssOnBlurNi(this,'hyodong')"></td></tr>
+        <tr><th>애월 정산예정금액 <span class="ss-badge ss-badge-minus">－</span></th>
+          <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.aewol)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'aewol')" onblur="ssOnBlurNi(this,'aewol')"></td></tr>
         <tr><th>택배 정산예정금액 <span class="ss-badge ss-badge-minus">－</span></th>
           <td><input class="ss-ni ss-neg" type="text" inputmode="numeric" value="${ssAddComma(r.delivery)}" placeholder="0" onfocus="ssOnFocusNi(this)" oninput="ssOnInputNi(this,'delivery')" onblur="ssOnBlurNi(this,'delivery')"></td></tr>
       </table>
@@ -7120,7 +7146,7 @@ async function ssRenderMain() {
         <tr class="ss-deduct-row"><th>카드비용 차감</th>
           <td><div class="ss-cmp ss-neg" id="ss_f_deduct_card">-${ssFmt(n('card_fee') + n('corp_card'))}</div></td></tr>
         <tr class="ss-deduct-row"><th>정산항목 차감</th>
-          <td><div class="ss-cmp ss-neg" id="ss_f_deduct_items">-${ssFmt(n('daesong') + n('hyodong') + n('delivery'))}</div></td></tr>
+          <td><div class="ss-cmp ss-neg" id="ss_f_deduct_items">-${ssFmt(n('daesong') + n('hyodong') + n('aewol') + n('delivery'))}</div></td></tr>
         <tr class="ss-spacer-row"><td colspan="2"></td></tr>
         <tr class="ss-total-final"><th>총 합계</th>
           <td><div class="ss-cmp ss-total-yellow" id="ss_f_tot">${ssFmt(total)}</div></td></tr>
@@ -7191,12 +7217,12 @@ function ssInp(field, val) {
     if (st) { st.textContent = ssFmt(total); st.className = 'ss-sc-val-total ' + (total < 0 ? 'r' : ''); }
     ssSetC('ss_f_settle_tot', settleTot, 'ss-pos');
     const deductCard = n('card_fee') + n('corp_card');
-    const deductItems = n('daesong') + n('hyodong') + n('delivery');
+    const deductItems = n('daesong') + n('hyodong') + n('aewol') + n('delivery');
     const dc = document.getElementById('ss_f_deduct_card');
     const di = document.getElementById('ss_f_deduct_items');
     if (dc) dc.textContent = '-' + ssFmt(deductCard);
     if (di) di.textContent = '-' + ssFmt(deductItems);
-    const itemsTot = -n('daesong') - n('hyodong') - n('delivery');
+    const itemsTot = -n('daesong') - n('hyodong') - n('aewol') - n('delivery');
     const si = document.getElementById('ss_sc_items');
     if (si) { si.textContent = ssFmt(itemsTot); si.className = 'ss-sc-val ' + (itemsTot >= 0 ? 'g' : 'r'); }
 
@@ -7306,14 +7332,14 @@ async function ssDeleteDate(date) {
 // CSV 내보내기
 function ssExportCSV() {
     const rows = [['날짜', '정산예정', '미정산', '현재현금', '네이버광고(+)', 'GFA광고(+)', '카드이용금액(-)', '법인카드(-)',
-        '효돈정산예정(-)', '대성정산예정(-)', '택배정산예정(-)', '쿠팡미입금(+)', '자사몰미입금(+)', '합계', '총합계', '비고']];
+        '효돈정산예정(-)', '대성정산예정(-)', '애월정산예정(-)', '택배정산예정(-)', '쿠팡미입금(+)', '자사몰미입금(+)', '합계', '총합계', '비고']];
     ssAll.forEach(({ date, record: r }) => {
         const n = k => parseFloat(r[k] || 0);
         const { subtotal, total } = ssCompute(r);
         rows.push([date,
             n('settlement_scheduled'), n('unsettled'), n('current_cash'),
             n('ad_naver'), n('ad_gfa'), n('card_fee'), n('corp_card'),
-            n('hyodong'), n('daesong'), n('delivery'),
+            n('hyodong'), n('daesong'), n('aewol'), n('delivery'),
             n('coupang_unpaid'), n('selfmall_unpaid'),
             subtotal, total, r.memo || ''
         ]);

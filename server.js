@@ -492,6 +492,7 @@ async function initDB() {
             corp_card NUMERIC DEFAULT 0,
             hyodong NUMERIC DEFAULT 0,
             daesong NUMERIC DEFAULT 0,
+            aewol NUMERIC DEFAULT 0,
             delivery NUMERIC DEFAULT 0,
             memo TEXT DEFAULT '',
             updated_by INTEGER REFERENCES users(id),
@@ -499,6 +500,9 @@ async function initDB() {
             updated_at TIMESTAMP DEFAULT NOW()
         )
     `);
+
+    // 애월취나물 컬럼 추가 (기존 DB 마이그레이션)
+    await pool.query(`ALTER TABLE settlement_status ADD COLUMN IF NOT EXISTS aewol NUMERIC DEFAULT 0`);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -2325,7 +2329,7 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
             mappingsByPartner[m.partner][m.sales_name] = m.pricing_name;
         });
 
-        let daesung = 0, hyodon = 0;
+        let daesung = 0, hyodon = 0, aewol = 0;
         partnerResult.rows.forEach(row => {
             const items = safeItems(row.items);
             const rawPricingItems = safeItems(row.pricing_items);
@@ -2371,6 +2375,7 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
 
             if (row.partner === '대성(시온)') daesung += amount;
             else if (row.partner === '효돈농협') hyodon += amount;
+            else if (row.partner === '애월취나물') aewol += amount;
         });
 
         // CJ택배: 미결제 날짜의 박스수 합산 × 3100 + 모든 이월금액
@@ -2381,7 +2386,7 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
                 ) item), 0)
             ) as box_count
             FROM settlements s
-            WHERE (s.partner = '대성(시온)' OR s.partner = '효돈농협')
+            WHERE (s.partner = '대성(시온)' OR s.partner = '효돈농협' OR s.partner = '애월취나물')
             GROUP BY s.date
         `);
         // CJ 일별 결제완료 상태 전체 조회
@@ -2408,17 +2413,19 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
             FROM prepayments
             GROUP BY partner
         `);
-        let daesungPrepay = 0, hyodonPrepay = 0;
+        let daesungPrepay = 0, hyodonPrepay = 0, aewolPrepay = 0;
         prepayResult.rows.forEach(r => {
             if (r.partner === '대성(시온)') daesungPrepay = Number(r.total);
             else if (r.partner === '효돈농협') hyodonPrepay = Number(r.total);
+            else if (r.partner === '애월취나물') aewolPrepay = Number(r.total);
         });
 
         const daesungNet = daesung - daesungPrepay;
         const hyodonNet = hyodon - hyodonPrepay;
-        const total = daesungNet + hyodonNet + cjTotal;
+        const aewolNet = aewol - aewolPrepay;
+        const total = daesungNet + hyodonNet + aewolNet + cjTotal;
 
-        res.json({ daesung: daesungNet, hyodon: hyodonNet, cj: cjTotal, total });
+        res.json({ daesung: daesungNet, hyodon: hyodonNet, aewol: aewolNet, cj: cjTotal, total });
     } catch (err) {
         console.error('전체 미정산 합계 오류:', err);
         res.status(500).json({ error: err.message });
@@ -2433,19 +2440,20 @@ app.get('/api/settlements/box-count', authMiddleware, adminOnly, async (req, res
         if (!date) return res.status(400).json({ error: '날짜를 지정해주세요' });
 
         const result = await pool.query(
-            "SELECT partner, items FROM settlements WHERE date = $1 AND partner IN ('대성(시온)', '효돈농협')",
+            "SELECT partner, items FROM settlements WHERE date = $1 AND partner IN ('대성(시온)', '효돈농협', '애월취나물')",
             [date]
         );
 
-        let daesung = 0, hyodon = 0;
+        let daesung = 0, hyodon = 0, aewol = 0;
         result.rows.forEach(row => {
             const items = row.items || [];
             const qty = items.reduce((sum, item) => sum + (item.qty || 0), 0);
             if (row.partner === '대성(시온)') daesung += qty;
             else if (row.partner === '효돈농협') hyodon += qty;
+            else if (row.partner === '애월취나물') aewol += qty;
         });
 
-        res.json({ totalBoxes: daesung + hyodon, daesung, hyodon });
+        res.json({ totalBoxes: daesung + hyodon + aewol, daesung, hyodon, aewol });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -2500,11 +2508,11 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
     try {
         // 거래처별 선결제 합계
         const prepayResult = await pool.query(
-            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM prepayments WHERE partner IN ('대성(시온)', '효돈농협') GROUP BY partner"
+            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM prepayments WHERE partner IN ('대성(시온)', '효돈농협', '애월취나물') GROUP BY partner"
         );
         // 거래처별 정산 합계 (실제 정산만 - 품목별 금액 세팅 제외)
         const settleResult = await pool.query(
-            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM settlements WHERE partner IN ('대성(시온)', '효돈농협') AND (from_pricing IS NULL OR from_pricing = false) GROUP BY partner"
+            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM settlements WHERE partner IN ('대성(시온)', '효돈농협', '애월취나물') AND (from_pricing IS NULL OR from_pricing = false) GROUP BY partner"
         );
 
         const prepayMap = {};
@@ -2512,7 +2520,7 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
         const settleMap = {};
         settleResult.rows.forEach(r => { settleMap[r.partner] = Number(r.total); });
 
-        const partners = ['대성(시온)', '효돈농협'];
+        const partners = ['대성(시온)', '효돈농협', '애월취나물'];
         const balances = partners.map(p => ({
             partner: p,
             prepaidTotal: prepayMap[p] || 0,
@@ -3540,22 +3548,22 @@ app.get('/api/settlement-status', authMiddleware, adminOnly, async (req, res) =>
 app.post('/api/settlement-status', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { date, current_cash, settlement_scheduled, unsettled, coupang_unpaid, selfmall_unpaid,
-                ad_naver, ad_gfa, card_fee, corp_card, hyodong, daesong, delivery, memo } = req.body;
+                ad_naver, ad_gfa, card_fee, corp_card, hyodong, daesong, aewol, delivery, memo } = req.body;
         if (!date) return res.status(400).json({ error: '날짜가 필요합니다' });
 
         const result = await pool.query(`
             INSERT INTO settlement_status (date, current_cash, settlement_scheduled, unsettled, coupang_unpaid, selfmall_unpaid,
-                ad_naver, ad_gfa, card_fee, corp_card, hyodong, daesong, delivery, memo, updated_by, updated_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+                ad_naver, ad_gfa, card_fee, corp_card, hyodong, daesong, aewol, delivery, memo, updated_by, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
             ON CONFLICT (date) DO UPDATE SET
                 current_cash=EXCLUDED.current_cash, settlement_scheduled=EXCLUDED.settlement_scheduled,
                 unsettled=EXCLUDED.unsettled, coupang_unpaid=EXCLUDED.coupang_unpaid, selfmall_unpaid=EXCLUDED.selfmall_unpaid,
                 ad_naver=EXCLUDED.ad_naver, ad_gfa=EXCLUDED.ad_gfa, card_fee=EXCLUDED.card_fee, corp_card=EXCLUDED.corp_card,
-                hyodong=EXCLUDED.hyodong, daesong=EXCLUDED.daesong, delivery=EXCLUDED.delivery,
+                hyodong=EXCLUDED.hyodong, daesong=EXCLUDED.daesong, aewol=EXCLUDED.aewol, delivery=EXCLUDED.delivery,
                 memo=EXCLUDED.memo, updated_by=EXCLUDED.updated_by, updated_at=NOW()
             RETURNING *
         `, [date, current_cash||0, settlement_scheduled||0, unsettled||0, coupang_unpaid||0, selfmall_unpaid||0,
-            ad_naver||0, ad_gfa||0, card_fee||0, corp_card||0, hyodong||0, daesong||0, delivery||0, memo||'', req.user.id]);
+            ad_naver||0, ad_gfa||0, card_fee||0, corp_card||0, hyodong||0, daesong||0, aewol||0, delivery||0, memo||'', req.user.id]);
 
         res.json(result.rows[0]);
     } catch (err) {

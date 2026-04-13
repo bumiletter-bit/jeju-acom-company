@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=84">
+    <link rel="stylesheet" href="styles.css?v=85">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -858,7 +858,7 @@
                         </div>
                     </div>
 
-                    <div class="stats-grid stats-grid-4">
+                    <div class="stats-grid stats-grid-5">
                         <div class="stat-card expected">
                             <div class="stat-label" id="expected-payment-label">총 결제예정금액</div>
                             <div class="stat-value" id="expected-payment">0 원</div>
@@ -872,6 +872,11 @@
                             <div class="stat-label" id="hyodon-payment-label">효돈농협</div>
                             <div class="stat-value" id="hyodon-payment">0 원</div>
                             <div class="stat-sub" id="hyodon-prepay-line" style="display:none;"></div>
+                        </div>
+                        <div class="stat-card aewol">
+                            <div class="stat-label" id="aewol-payment-label">애월취나물</div>
+                            <div class="stat-value" id="aewol-payment">0 원</div>
+                            <div class="stat-sub" id="aewol-prepay-line" style="display:none;"></div>
                         </div>
                         <div class="stat-card cj">
                             <div class="stat-label" id="cj-payment-label">CJ택배</div>
@@ -948,6 +953,7 @@
                             <div class="btn-group" id="settlement-partner-group">
                                 <button class="btn-toggle" data-value="대성(시온)">대성(시온)</button>
                                 <button class="btn-toggle" data-value="효돈농협">효돈농협</button>
+                                <button class="btn-toggle" data-value="애월취나물">애월취나물</button>
                                 <button class="btn-toggle" data-value="CJ대한통운">CJ대한통운</button>
                             </div>
                             <button type="button" class="btn-reset" id="settlement-reset-btn">초기화</button>
@@ -1042,13 +1048,14 @@
                                 <th>주차</th>
                                 <th>대성(시온)</th>
                                 <th>효돈농협</th>
+                                <th>애월취나물</th>
                                 <th>CJ대한통운</th>
                                 <th>지급결제</th>
                                 <th>합계</th>
                             </tr>
                         </thead>
                         <tbody id="weekly-settlement-list">
-                            <tr class="empty-row"><td colspan="6">데이터가 없습니다.</td></tr>
+                            <tr class="empty-row"><td colspan="7">데이터가 없습니다.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1063,6 +1070,7 @@
                                 <option value="">선택</option>
                                 <option value="대성(시온)">대성(시온)</option>
                                 <option value="효돈농협">효돈농협</option>
+                                <option value="애월취나물">애월취나물</option>
                             </select>
                         </div>
                         <div class="form-group" style="min-width:140px;">
@@ -1178,6 +1186,7 @@
                         <div class="btn-group" id="pricing-partner-group">
                             <button class="btn-toggle" data-value="대성(시온)">대성(시온)</button>
                             <button class="btn-toggle" data-value="효돈농협">효돈농협</button>
+                            <button class="btn-toggle" data-value="애월취나물">애월취나물</button>
                         </div>
                     </div>
 
@@ -1715,6 +1724,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=163"></script>
+    <script src="app.js?v=164"></script>
 </body>
 </html>
