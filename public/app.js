@@ -180,6 +180,14 @@ function updateUserUI() {
         if (navEl) navEl.style.display = currentUser.role === 'admin' ? '' : 'none';
     });
 
+    // 세무사(accountant): 지출결의서만 노출, 나머지 메뉴 모두 숨김
+    if (currentUser.role === 'accountant') {
+        const allowed = ['expense'];
+        document.querySelectorAll('.nav-item[data-page]').forEach(nav => {
+            nav.style.display = allowed.includes(nav.dataset.page) ? '' : 'none';
+        });
+    }
+
     // 관리자 전용 📢 지시사항 버튼
     const announcementBtn = document.getElementById('announcement-btn');
     if (announcementBtn) announcementBtn.style.display = currentUser.role === 'admin' ? '' : 'none';
@@ -239,6 +247,10 @@ function switchPage(pageName) {
     const adminOnlyPages = ['settlement', 'pricing', 'data'];
     if (adminOnlyPages.includes(pageName) && currentUser?.role !== 'admin') {
         pageName = 'schedule';
+    }
+    // 세무사: 지출결의서 외엔 모두 expense로
+    if (currentUser?.role === 'accountant' && pageName !== 'expense') {
+        pageName = 'expense';
     }
 
     navItems.forEach(n => n.classList.remove('active'));
@@ -2011,7 +2023,7 @@ async function renderUserList() {
                 <td>${u.name}</td>
                 <td>${u.position || '-'}</td>
                 <td><span class="user-color-dot" style="background:${u.color};display:inline-block;"></span> ${u.color}</td>
-                <td>${u.role === 'admin' ? '관리자' : '직원'}</td>
+                <td>${u.role === 'admin' ? '관리자' : u.role === 'accountant' ? '세무사' : '직원'}</td>
                 <td>${u.annualLeave}</td>
                 <td>
                     <button class="btn-view-items" onclick="openUserModal(${u.id})">수정</button>
@@ -2064,6 +2076,7 @@ window.openUserModal = async function(userId) {
                 <select id="modal-user-role" class="form-input">
                     <option value="user" ${user && user.role === 'user' ? 'selected' : ''}>직원</option>
                     <option value="admin" ${user && user.role === 'admin' ? 'selected' : ''}>관리자</option>
+                    <option value="accountant" ${user && user.role === 'accountant' ? 'selected' : ''}>세무사 (조회 전용)</option>
                 </select>
             </div>
             <div class="form-group">
@@ -4637,6 +4650,11 @@ document.querySelectorAll('input[type="date"]').forEach(input => {
 // =============================================
 async function init() {
     try {
+        // 세무사: 일정 페이지 대신 지출결의서로 자동 이동
+        if (currentUser?.role === 'accountant') {
+            switchPage('expense');
+            return;
+        }
         await renderScheduleCalendar();
         await renderSettlementList();
         await renderPricingList();
@@ -6290,23 +6308,28 @@ document.getElementById('form-change-password').addEventListener('submit', async
 
 function initExpensePage() {
     if (!currentUser) return;
-    // 신청자 표시
-    document.getElementById('expense-applicant').value = `${currentUser.position} ${currentUser.name}`;
-    // 결재라인 표시
-    renderExpenseApprovalLine();
-    // 탭 권한
-    const isPending = currentUser.role === 'admin';
-    document.getElementById('expense-tab-pending').style.display = isPending ? '' : 'none';
-    document.getElementById('expense-tab-history').style.display = currentUser.role === 'admin' ? '' : 'none';
-    // 항상 작성 탭으로 초기화
-    switchExpenseTab('write');
-    // 항목 초기화
-    const itemsEl = document.getElementById('expense-items');
-    if (itemsEl.children.length === 0) addExpenseItem();
-    // 목록 로드
-    renderExpenseMyList().catch(console.error);
-    if (isPending) renderExpensePendingList().catch(console.error);
-    if (currentUser.role === 'admin') {
+    const isAdmin = currentUser.role === 'admin';
+    const isAccountant = currentUser.role === 'accountant';
+    // 세무사는 작성/내신청/결재대기 탭 숨김
+    document.getElementById('expense-tab-write').style.display = isAccountant ? 'none' : '';
+    document.getElementById('expense-tab-my').style.display = isAccountant ? 'none' : '';
+    document.getElementById('expense-tab-pending').style.display = isAdmin ? '' : 'none';
+    document.getElementById('expense-tab-history').style.display = (isAdmin || isAccountant) ? '' : 'none';
+    document.getElementById('expense-tab-card').style.display = (isAdmin || isAccountant) ? '' : 'none';
+
+    if (!isAccountant) {
+        document.getElementById('expense-applicant').value = `${currentUser.position} ${currentUser.name}`;
+        renderExpenseApprovalLine();
+        const itemsEl = document.getElementById('expense-items');
+        if (itemsEl.children.length === 0) addExpenseItem();
+        renderExpenseMyList().catch(console.error);
+    }
+
+    // 초기 탭: 세무사는 카드이용내역, 그 외는 작성
+    switchExpenseTab(isAccountant ? 'card' : 'write');
+
+    if (isAdmin) renderExpensePendingList().catch(console.error);
+    if (isAdmin || isAccountant) {
         loadExpenseUserFilter().catch(console.error);
         renderExpenseHistoryList().catch(console.error);
     }
@@ -6321,13 +6344,14 @@ document.querySelectorAll('[data-expense-tab]').forEach(tab => {
 
 function switchExpenseTab(tabName) {
     document.querySelectorAll('[data-expense-tab]').forEach(t => t.classList.toggle('active', t.dataset.expenseTab === tabName));
-    ['write', 'pending', 'my', 'history'].forEach(s => {
+    ['write', 'pending', 'my', 'history', 'card'].forEach(s => {
         const el = document.getElementById(`expense-section-${s}`);
         if (el) el.style.display = s === tabName ? '' : 'none';
     });
     if (tabName === 'my') renderExpenseMyList().catch(console.error);
     if (tabName === 'pending') renderExpensePendingList().catch(console.error);
     if (tabName === 'history') renderExpenseHistoryList().catch(console.error);
+    if (tabName === 'card') initCardTransactionsTab();
 }
 
 // 결재라인 표시
@@ -6770,6 +6794,302 @@ window.downloadExpensePDF = async function(id) {
         pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
         pdf.save(`지출결의서_${d.title}.pdf`);
     } catch (err) { alert('PDF 다운로드 실패: ' + err.message); }
+};
+
+// ============================================================
+//  카드이용내역 (지출결의서 페이지 내부 탭)
+// ============================================================
+
+const CARD_CATEGORIES = ['식비', '교통', '접대', '소모품', '공과금', '기타'];
+let cardTxAll = [];
+
+function initCardTransactionsTab() {
+    if (!currentUser) return;
+    const isAccountant = currentUser.role === 'accountant';
+
+    // 세무사: 업로드/수정/삭제 버튼 숨김
+    const actionsEl = document.getElementById('card-bank-actions');
+    const readonlyBadge = document.getElementById('card-readonly-badge');
+    if (isAccountant) {
+        if (actionsEl) {
+            // 다운로드 버튼만 남김
+            const uploadBtn = document.getElementById('card-upload-btn');
+            if (uploadBtn) uploadBtn.style.display = 'none';
+        }
+        if (readonlyBadge) readonlyBadge.style.display = '';
+    } else {
+        const uploadBtn = document.getElementById('card-upload-btn');
+        if (uploadBtn) uploadBtn.style.display = '';
+        if (readonlyBadge) readonlyBadge.style.display = 'none';
+    }
+
+    // 기본값: 이번 달
+    const monthEl = document.getElementById('card-filter-month');
+    if (monthEl && !monthEl.value) {
+        const now = new Date();
+        monthEl.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    loadCardTransactions().catch(console.error);
+}
+
+async function loadCardTransactions() {
+    try {
+        const month = document.getElementById('card-filter-month').value;
+        const qs = month ? `?month=${month}` : '';
+        cardTxAll = await api('/api/card-transactions' + qs);
+        renderCardTransactions();
+    } catch (err) {
+        console.error('카드내역 로드 실패:', err);
+        document.getElementById('card-tx-list').innerHTML =
+            `<tr class="empty-row"><td colspan="7">불러오기 실패: ${err.message}</td></tr>`;
+    }
+}
+
+function renderCardTransactions() {
+    const tbody = document.getElementById('card-tx-list');
+    const isAccountant = currentUser.role === 'accountant';
+
+    if (cardTxAll.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="7">카드 이용내역이 없습니다.</td></tr>';
+        document.getElementById('card-tx-total').textContent = '0 원';
+        document.getElementById('card-bank-summary').innerHTML = '';
+        return;
+    }
+
+    let total = 0;
+    const byCategory = {};
+    tbody.innerHTML = cardTxAll.map(tx => {
+        const amount = Number(tx.amount) || 0;
+        total += amount;
+        byCategory[tx.category] = (byCategory[tx.category] || 0) + amount;
+        const dateStr = (tx.transaction_date || '').toString().split('T')[0];
+        const categoryOptions = CARD_CATEGORIES.map(c =>
+            `<option value="${c}" ${c === tx.category ? 'selected' : ''}>${c}</option>`
+        ).join('');
+
+        const categoryCell = isAccountant
+            ? `<span class="card-category-badge cat-${tx.category}">${tx.category}</span>`
+            : `<select class="card-tx-category" data-id="${tx.id}">${categoryOptions}</select>`;
+
+        const memoCell = isAccountant
+            ? `<span>${escapeHtml(tx.memo || '')}</span>`
+            : `<input type="text" class="card-tx-memo" data-id="${tx.id}" value="${escapeHtml(tx.memo || '')}" placeholder="메모">`;
+
+        const linkCell = tx.expense_report_id
+            ? `<span class="card-link-badge">📎 #${tx.expense_report_id} ${escapeHtml((tx.expense_title || '').slice(0, 14))}</span>
+               ${isAccountant ? '' : `<button class="card-link-clear" onclick="clearCardLink(${tx.id})">×</button>`}`
+            : (isAccountant ? '<span style="color:#9ca3af;">-</span>' : `<button class="btn-link" onclick="openCardLinkModal(${tx.id}, '${dateStr}')">연동</button>`);
+
+        const actionCell = isAccountant
+            ? ''
+            : `<button class="btn-icon-delete" onclick="deleteCardTransaction(${tx.id})" title="삭제">🗑</button>`;
+
+        return `<tr>
+            <td>${dateStr}</td>
+            <td>${escapeHtml(tx.merchant_name)}</td>
+            <td style="text-align:right;font-weight:600;">${amount.toLocaleString()}</td>
+            <td>${categoryCell}</td>
+            <td>${memoCell}</td>
+            <td>${linkCell}</td>
+            <td class="card-action-col">${actionCell}</td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('card-tx-total').textContent = total.toLocaleString() + ' 원';
+
+    // 카테고리별 소계
+    const summaryEl = document.getElementById('card-bank-summary');
+    summaryEl.innerHTML = Object.entries(byCategory)
+        .sort((a, b) => b[1] - a[1])
+        .map(([cat, sum]) => `<span class="card-category-summary cat-${cat}">${cat}: ${sum.toLocaleString()}원</span>`)
+        .join('');
+
+    // 이벤트 바인딩 (수정 가능 모드만)
+    if (!isAccountant) {
+        tbody.querySelectorAll('.card-tx-category').forEach(sel => {
+            sel.addEventListener('change', async () => {
+                try {
+                    await api(`/api/card-transactions/${sel.dataset.id}`, 'PUT', { category: sel.value });
+                    loadCardTransactions();
+                } catch (err) { alert('수정 실패: ' + err.message); }
+            });
+        });
+        tbody.querySelectorAll('.card-tx-memo').forEach(input => {
+            input.addEventListener('blur', async () => {
+                try {
+                    await api(`/api/card-transactions/${input.dataset.id}`, 'PUT', { memo: input.value });
+                } catch (err) { alert('메모 저장 실패: ' + err.message); }
+            });
+        });
+    }
+}
+
+function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 필터 이벤트
+document.getElementById('card-filter-apply')?.addEventListener('click', () => loadCardTransactions());
+document.getElementById('card-filter-reset')?.addEventListener('click', () => {
+    document.getElementById('card-filter-month').value = '';
+    loadCardTransactions();
+});
+
+// 업로드
+document.getElementById('card-upload-btn')?.addEventListener('click', () => {
+    document.getElementById('card-upload-file').click();
+});
+document.getElementById('card-upload-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+        const transactions = await parseCardFile(file);
+        if (transactions.length === 0) { alert('파일에서 유효한 카드내역을 찾을 수 없습니다.'); return; }
+        if (!confirm(`${transactions.length}건을 업로드하시겠습니까?\n(같은 날짜+가맹점+금액은 자동 스킵)`)) return;
+        const result = await api('/api/card-transactions/bulk', 'POST', { transactions });
+        alert(`업로드 완료\n신규: ${result.inserted}건 / 중복 스킵: ${result.skipped}건`);
+        loadCardTransactions();
+    } catch (err) {
+        alert('업로드 실패: ' + err.message);
+    } finally {
+        e.target.value = '';
+    }
+});
+
+async function parseCardFile(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const data = new Uint8Array(ev.target.result);
+                const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+                if (rows.length === 0) return resolve([]);
+                // 헤더 인식: 날짜/가맹점/금액 키워드 찾기
+                let headerIdx = -1, dateCol = -1, merchantCol = -1, amountCol = -1;
+                for (let i = 0; i < Math.min(rows.length, 10); i++) {
+                    const r = rows[i].map(c => String(c).trim());
+                    const di = r.findIndex(c => /날짜|일자|date/i.test(c));
+                    const mi = r.findIndex(c => /가맹점|상호|merchant|store/i.test(c));
+                    const ai = r.findIndex(c => /금액|amount|이용금액|승인금액/i.test(c));
+                    if (di >= 0 && mi >= 0 && ai >= 0) {
+                        headerIdx = i; dateCol = di; merchantCol = mi; amountCol = ai;
+                        break;
+                    }
+                }
+                if (headerIdx < 0) {
+                    // 기본 가정: 0=날짜, 1=가맹점, 2=금액
+                    headerIdx = -1; dateCol = 0; merchantCol = 1; amountCol = 2;
+                }
+                const transactions = [];
+                for (let i = headerIdx + 1; i < rows.length; i++) {
+                    const r = rows[i];
+                    const dateRaw = r[dateCol];
+                    const merchant = String(r[merchantCol] || '').trim();
+                    let amountRaw = r[amountCol];
+                    if (!dateRaw || !merchant) continue;
+                    // 금액 파싱: 쉼표/공백/원 제거
+                    const amount = Number(String(amountRaw).replace(/[^\d.-]/g, '')) || 0;
+                    if (amount === 0) continue;
+                    // 날짜 파싱
+                    let dateStr;
+                    if (dateRaw instanceof Date) {
+                        dateStr = `${dateRaw.getFullYear()}-${String(dateRaw.getMonth() + 1).padStart(2, '0')}-${String(dateRaw.getDate()).padStart(2, '0')}`;
+                    } else {
+                        const s = String(dateRaw).trim().replace(/\./g, '-').replace(/\//g, '-');
+                        const m = s.match(/(\d{4})-?(\d{1,2})-?(\d{1,2})/);
+                        if (!m) continue;
+                        dateStr = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+                    }
+                    transactions.push({ transaction_date: dateStr, merchant_name: merchant, amount });
+                }
+                resolve(transactions);
+            } catch (err) { reject(err); }
+        };
+        reader.onerror = () => reject(new Error('파일 읽기 실패'));
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+// 엑셀 다운로드
+document.getElementById('card-download-btn')?.addEventListener('click', () => {
+    if (cardTxAll.length === 0) { alert('다운로드할 데이터가 없습니다.'); return; }
+    const rows = [['날짜', '가맹점명', '금액', '카테고리', '메모', '지출결의서 연동']];
+    cardTxAll.forEach(tx => {
+        const dateStr = (tx.transaction_date || '').toString().split('T')[0];
+        rows.push([
+            dateStr,
+            tx.merchant_name,
+            Number(tx.amount) || 0,
+            tx.category || '',
+            tx.memo || '',
+            tx.expense_report_id ? `#${tx.expense_report_id} ${tx.expense_title || ''}` : ''
+        ]);
+    });
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws, '카드이용내역');
+    const month = document.getElementById('card-filter-month').value || 'all';
+    XLSX.writeFile(wb, `카드이용내역_${month}.xlsx`);
+});
+
+// 삭제
+window.deleteCardTransaction = async function(id) {
+    if (!confirm('이 카드내역을 삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/card-transactions/${id}`, 'DELETE');
+        loadCardTransactions();
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+};
+
+// 지출결의서 연동 해제
+window.clearCardLink = async function(id) {
+    if (!confirm('지출결의서 연동을 해제하시겠습니까?')) return;
+    try {
+        await api(`/api/card-transactions/${id}`, 'PUT', { expense_report_id: null });
+        loadCardTransactions();
+    } catch (err) { alert('해제 실패: ' + err.message); }
+};
+
+// 연동 모달
+window.openCardLinkModal = async function(cardId, nearDate) {
+    try {
+        const candidates = await api('/api/card-transactions/link-candidates?near_date=' + nearDate);
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:600px;">
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+                <h3>지출결의서 연동</h3>
+                <p style="color:#6b7280;font-size:13px;margin-bottom:12px;">카드 사용일(${nearDate}) 근처 지출결의서가 위에 표시됩니다.</p>
+                ${candidates.length === 0
+                    ? '<div style="padding:24px;text-align:center;color:#9ca3af;">연동 가능한 지출결의서가 없습니다.</div>'
+                    : `<div class="card-link-list">${candidates.map(c => `
+                        <div class="card-link-item" onclick="confirmCardLink(${cardId}, ${c.id})">
+                            <div class="card-link-item-title">#${c.id} ${escapeHtml(c.title)}</div>
+                            <div class="card-link-item-meta">
+                                <span>${c.applicant_position || ''} ${escapeHtml(c.applicant_name || '')}</span>
+                                <span>${Number(c.total_amount).toLocaleString()}원</span>
+                                <span>${new Date(c.created_at).toLocaleDateString()}</span>
+                            </div>
+                        </div>
+                    `).join('')}</div>`}
+            </div>
+        `;
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+    } catch (err) { alert('목록 조회 실패: ' + err.message); }
+};
+
+window.confirmCardLink = async function(cardId, expenseId) {
+    try {
+        await api(`/api/card-transactions/${cardId}`, 'PUT', { expense_report_id: expenseId });
+        document.querySelector('.modal-overlay')?.remove();
+        loadCardTransactions();
+    } catch (err) { alert('연동 실패: ' + err.message); }
 };
 
 // ============================================================

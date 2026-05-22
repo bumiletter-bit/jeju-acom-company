@@ -44,6 +44,14 @@ function adminOnly(req, res, next) {
     next();
 }
 
+// 카드내역 조회 권한: admin + accountant
+function adminOrAccountant(req, res, next) {
+    if (req.user.role !== 'admin' && req.user.role !== 'accountant') {
+        return res.status(403).json({ error: '권한이 없습니다' });
+    }
+    next();
+}
+
 // === DB 테이블 자동 생성 ===
 async function initDB() {
     await pool.query(`
@@ -503,6 +511,24 @@ async function initDB() {
 
     // 애월취나물 컬럼 추가 (기존 DB 마이그레이션)
     await pool.query(`ALTER TABLE settlement_status ADD COLUMN IF NOT EXISTS aewol NUMERIC DEFAULT 0`);
+
+    // 카드이용내역 (지출결의서 연동)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS card_transactions (
+            id SERIAL PRIMARY KEY,
+            transaction_date DATE NOT NULL,
+            merchant_name VARCHAR(200) NOT NULL,
+            amount NUMERIC NOT NULL DEFAULT 0,
+            category VARCHAR(50) DEFAULT '기타',
+            memo TEXT DEFAULT '',
+            expense_report_id INTEGER REFERENCES expense_reports(id) ON DELETE SET NULL,
+            card_name VARCHAR(100) DEFAULT '제주은행 법인카드',
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_card_tx_date ON card_transactions(transaction_date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_card_tx_dup ON card_transactions(transaction_date, merchant_name, amount)`);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -1803,6 +1829,127 @@ app.delete('/api/expense-reports/:id', authMiddleware, async (req, res) => {
         const result = await pool.query('DELETE FROM expense_reports WHERE id = $1 RETURNING id', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
         res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// === Card Transactions API (카드이용내역) ===
+
+// 목록 조회 (월별 필터)
+app.get('/api/card-transactions', authMiddleware, adminOrAccountant, async (req, res) => {
+    try {
+        const { month, start_date, end_date } = req.query;
+        let query = `
+            SELECT ct.*, er.title AS expense_title, er.status AS expense_status,
+                   u.name AS created_by_name
+            FROM card_transactions ct
+            LEFT JOIN expense_reports er ON ct.expense_report_id = er.id
+            LEFT JOIN users u ON ct.created_by = u.id
+        `;
+        const conditions = [];
+        const params = [];
+        if (month) {
+            params.push(month + '-01');
+            conditions.push(`ct.transaction_date >= $${params.length}::date`);
+            params.push(month + '-01');
+            conditions.push(`ct.transaction_date < ($${params.length}::date + INTERVAL '1 month')`);
+        }
+        if (start_date) {
+            params.push(start_date);
+            conditions.push(`ct.transaction_date >= $${params.length}::date`);
+        }
+        if (end_date) {
+            params.push(end_date);
+            conditions.push(`ct.transaction_date <= $${params.length}::date`);
+        }
+        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+        query += ' ORDER BY ct.transaction_date DESC, ct.id DESC';
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 일괄 업로드 (엑셀/CSV 파싱 후 클라이언트가 JSON으로 전송)
+app.post('/api/card-transactions/bulk', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { transactions } = req.body;
+        if (!Array.isArray(transactions) || transactions.length === 0) {
+            return res.status(400).json({ error: '업로드할 내역이 없습니다' });
+        }
+        let inserted = 0, skipped = 0;
+        for (const tx of transactions) {
+            const date = tx.transaction_date || tx.date;
+            const merchant = (tx.merchant_name || tx.merchant || '').toString().trim();
+            const amount = Number(tx.amount) || 0;
+            if (!date || !merchant || amount === 0) { skipped++; continue; }
+            // 중복 체크: 같은 날짜+가맹점+금액
+            const dup = await pool.query(
+                'SELECT id FROM card_transactions WHERE transaction_date = $1 AND merchant_name = $2 AND amount = $3 LIMIT 1',
+                [date, merchant, amount]
+            );
+            if (dup.rows.length > 0) { skipped++; continue; }
+            await pool.query(
+                `INSERT INTO card_transactions (transaction_date, merchant_name, amount, category, memo, card_name, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [date, merchant, amount, tx.category || '기타', tx.memo || '', tx.card_name || '제주은행 법인카드', req.user.id]
+            );
+            inserted++;
+        }
+        res.json({ success: true, inserted, skipped });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 단건 수정 (카테고리/메모/연동)
+app.put('/api/card-transactions/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { category, memo, expense_report_id } = req.body;
+        const fields = [];
+        const params = [];
+        if (category !== undefined) { params.push(category); fields.push(`category = $${params.length}`); }
+        if (memo !== undefined) { params.push(memo); fields.push(`memo = $${params.length}`); }
+        if (expense_report_id !== undefined) {
+            params.push(expense_report_id || null);
+            fields.push(`expense_report_id = $${params.length}`);
+        }
+        if (fields.length === 0) return res.status(400).json({ error: '수정할 내용이 없습니다' });
+        params.push(req.params.id);
+        const result = await pool.query(
+            `UPDATE card_transactions SET ${fields.join(', ')} WHERE id = $${params.length} RETURNING id`,
+            params
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '카드내역을 찾을 수 없습니다' });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 삭제
+app.delete('/api/card-transactions/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM card_transactions WHERE id = $1 RETURNING id', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '카드내역을 찾을 수 없습니다' });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 지출결의서 연동용 - 승인된 지출결의서 목록 (날짜 근처 우선)
+app.get('/api/card-transactions/link-candidates', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { near_date } = req.query;
+        let query = `
+            SELECT er.id, er.title, er.total_amount, er.created_at, er.status,
+                   u.name AS applicant_name, u.position AS applicant_position
+            FROM expense_reports er
+            LEFT JOIN users u ON er.applicant_id = u.id
+            WHERE er.status IN ('approved', 'manager_approved', 'pending')
+        `;
+        const params = [];
+        if (near_date) {
+            params.push(near_date);
+            query += ` ORDER BY ABS(EXTRACT(EPOCH FROM (er.created_at - $${params.length}::timestamp))) ASC LIMIT 50`;
+        } else {
+            query += ' ORDER BY er.created_at DESC LIMIT 50';
+        }
+        const result = await pool.query(query, params);
+        res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
