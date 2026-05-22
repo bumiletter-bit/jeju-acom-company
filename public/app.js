@@ -6967,13 +6967,15 @@ async function parseCardFile(file) {
                 const sheet = workbook.Sheets[workbook.SheetNames[0]];
                 const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
                 if (rows.length === 0) return resolve([]);
-                // 헤더 인식: 날짜/가맹점/금액 키워드 찾기
+                // 헤더 인식: 날짜/가맹점/금액 키워드 찾기 (최대 30행까지 스캔)
                 let headerIdx = -1, dateCol = -1, merchantCol = -1, amountCol = -1;
-                for (let i = 0; i < Math.min(rows.length, 10); i++) {
+                // 금액 키워드는 "합계"가 들어간 셀(요약행)은 제외
+                const isAmountHeader = c => /(금액|amount)/i.test(c) && !/합계|총액|total/i.test(c);
+                for (let i = 0; i < Math.min(rows.length, 30); i++) {
                     const r = rows[i].map(c => String(c).trim());
-                    const di = r.findIndex(c => /날짜|일자|date/i.test(c));
-                    const mi = r.findIndex(c => /가맹점|상호|merchant|store/i.test(c));
-                    const ai = r.findIndex(c => /금액|amount|이용금액|승인금액/i.test(c));
+                    const di = r.findIndex(c => /(사용일|이용일|거래일|승인일|날짜|일자|date)/i.test(c));
+                    const mi = r.findIndex(c => /(가맹점|상호|merchant|store)/i.test(c));
+                    const ai = r.findIndex(c => isAmountHeader(c));
                     if (di >= 0 && mi >= 0 && ai >= 0) {
                         headerIdx = i; dateCol = di; merchantCol = mi; amountCol = ai;
                         break;
