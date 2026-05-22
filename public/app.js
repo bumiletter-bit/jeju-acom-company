@@ -7047,13 +7047,19 @@ window.deleteCardTransaction = async function(id) {
     } catch (err) { alert('삭제 실패: ' + err.message); }
 };
 
-// 처리상태 토글 (미입력 ↔ 입력)
+// 처리상태 토글 (미입력 ↔ 입력) - 같은 행의 메모도 함께 저장
 window.toggleCardProcessed = async function(id, nextValue) {
     try {
-        await api(`/api/card-transactions/${id}`, 'PUT', { is_processed: nextValue });
-        // 로컬 상태만 업데이트 후 부분 재렌더 (전체 fetch 부담 줄이기)
+        const payload = { is_processed: nextValue };
+        // 같은 행의 메모 input 현재값도 같이 전송 (blur보다 click이 먼저 발생해 메모 유실 방지)
+        const memoInput = document.querySelector(`.card-tx-memo[data-id="${id}"]`);
+        if (memoInput) payload.memo = memoInput.value;
+        await api(`/api/card-transactions/${id}`, 'PUT', payload);
         const tx = cardTxAll.find(t => t.id === id);
-        if (tx) tx.is_processed = nextValue;
+        if (tx) {
+            tx.is_processed = nextValue;
+            if (memoInput) tx.memo = memoInput.value;
+        }
         renderCardTransactions();
     } catch (err) { alert('상태 변경 실패: ' + err.message); }
 };
