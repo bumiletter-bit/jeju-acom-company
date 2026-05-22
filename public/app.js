@@ -6876,10 +6876,10 @@ function renderCardTransactions() {
             ? `<span>${escapeHtml(tx.memo || '')}</span>`
             : `<input type="text" class="card-tx-memo" data-id="${tx.id}" value="${escapeHtml(tx.memo || '')}" placeholder="메모">`;
 
-        const linkCell = tx.expense_report_id
-            ? `<span class="card-link-badge">📎 #${tx.expense_report_id} ${escapeHtml((tx.expense_title || '').slice(0, 14))}</span>
-               ${isAccountant ? '' : `<button class="card-link-clear" onclick="clearCardLink(${tx.id})">×</button>`}`
-            : (isAccountant ? '<span style="color:#9ca3af;">-</span>' : `<button class="btn-link" onclick="openCardLinkModal(${tx.id}, '${dateStr}')">연동</button>`);
+        const processed = !!tx.is_processed;
+        const statusCell = isAccountant
+            ? `<span class="card-status-badge ${processed ? 'status-done' : 'status-todo'}">${processed ? '입력' : '미입력'}</span>`
+            : `<button class="card-status-btn ${processed ? 'status-done' : 'status-todo'}" onclick="toggleCardProcessed(${tx.id}, ${!processed})">${processed ? '입력' : '미입력'}</button>`;
 
         const actionCell = isAccountant
             ? ''
@@ -6891,7 +6891,7 @@ function renderCardTransactions() {
             <td style="text-align:right;font-weight:600;">${amount.toLocaleString()}</td>
             <td>${categoryCell}</td>
             <td>${memoCell}</td>
-            <td>${linkCell}</td>
+            <td>${statusCell}</td>
             <td class="card-action-col">${actionCell}</td>
         </tr>`;
     }).join('');
@@ -7018,7 +7018,7 @@ async function parseCardFile(file) {
 // 엑셀 다운로드
 document.getElementById('card-download-btn')?.addEventListener('click', () => {
     if (cardTxAll.length === 0) { alert('다운로드할 데이터가 없습니다.'); return; }
-    const rows = [['날짜', '가맹점명', '금액', '카테고리', '메모', '지출결의서 연동']];
+    const rows = [['날짜', '가맹점명', '금액', '카테고리', '메모', '처리상태']];
     cardTxAll.forEach(tx => {
         const dateStr = (tx.transaction_date || '').toString().split('T')[0];
         rows.push([
@@ -7027,12 +7027,12 @@ document.getElementById('card-download-btn')?.addEventListener('click', () => {
             Number(tx.amount) || 0,
             tx.category || '',
             tx.memo || '',
-            tx.expense_report_id ? `#${tx.expense_report_id} ${tx.expense_title || ''}` : ''
+            tx.is_processed ? '입력' : '미입력'
         ]);
     });
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 30 }];
+    ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, ws, '카드이용내역');
     const month = document.getElementById('card-filter-month').value || 'all';
     XLSX.writeFile(wb, `카드이용내역_${month}.xlsx`);
@@ -7047,51 +7047,15 @@ window.deleteCardTransaction = async function(id) {
     } catch (err) { alert('삭제 실패: ' + err.message); }
 };
 
-// 지출결의서 연동 해제
-window.clearCardLink = async function(id) {
-    if (!confirm('지출결의서 연동을 해제하시겠습니까?')) return;
+// 처리상태 토글 (미입력 ↔ 입력)
+window.toggleCardProcessed = async function(id, nextValue) {
     try {
-        await api(`/api/card-transactions/${id}`, 'PUT', { expense_report_id: null });
-        loadCardTransactions();
-    } catch (err) { alert('해제 실패: ' + err.message); }
-};
-
-// 연동 모달
-window.openCardLinkModal = async function(cardId, nearDate) {
-    try {
-        const candidates = await api('/api/card-transactions/link-candidates?near_date=' + nearDate);
-        const overlay = document.createElement('div');
-        overlay.className = 'modal-overlay';
-        overlay.innerHTML = `
-            <div class="modal" style="max-width:600px;">
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-                <h3>지출결의서 연동</h3>
-                <p style="color:#6b7280;font-size:13px;margin-bottom:12px;">카드 사용일(${nearDate}) 근처 지출결의서가 위에 표시됩니다.</p>
-                ${candidates.length === 0
-                    ? '<div style="padding:24px;text-align:center;color:#9ca3af;">연동 가능한 지출결의서가 없습니다.</div>'
-                    : `<div class="card-link-list">${candidates.map(c => `
-                        <div class="card-link-item" onclick="confirmCardLink(${cardId}, ${c.id})">
-                            <div class="card-link-item-title">#${c.id} ${escapeHtml(c.title)}</div>
-                            <div class="card-link-item-meta">
-                                <span>${c.applicant_position || ''} ${escapeHtml(c.applicant_name || '')}</span>
-                                <span>${Number(c.total_amount).toLocaleString()}원</span>
-                                <span>${new Date(c.created_at).toLocaleDateString()}</span>
-                            </div>
-                        </div>
-                    `).join('')}</div>`}
-            </div>
-        `;
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-        document.body.appendChild(overlay);
-    } catch (err) { alert('목록 조회 실패: ' + err.message); }
-};
-
-window.confirmCardLink = async function(cardId, expenseId) {
-    try {
-        await api(`/api/card-transactions/${cardId}`, 'PUT', { expense_report_id: expenseId });
-        document.querySelector('.modal-overlay')?.remove();
-        loadCardTransactions();
-    } catch (err) { alert('연동 실패: ' + err.message); }
+        await api(`/api/card-transactions/${id}`, 'PUT', { is_processed: nextValue });
+        // 로컬 상태만 업데이트 후 부분 재렌더 (전체 fetch 부담 줄이기)
+        const tx = cardTxAll.find(t => t.id === id);
+        if (tx) tx.is_processed = nextValue;
+        renderCardTransactions();
+    } catch (err) { alert('상태 변경 실패: ' + err.message); }
 };
 
 // ============================================================

@@ -529,6 +529,8 @@ async function initDB() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_card_tx_date ON card_transactions(transaction_date)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_card_tx_dup ON card_transactions(transaction_date, merchant_name, amount)`);
+    // 처리상태 컬럼 (지출결의서 연동 대체 - 05.22)
+    await pool.query(`ALTER TABLE card_transactions ADD COLUMN IF NOT EXISTS is_processed BOOLEAN DEFAULT false`);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -1898,17 +1900,17 @@ app.post('/api/card-transactions/bulk', authMiddleware, adminOnly, async (req, r
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 단건 수정 (카테고리/메모/연동)
+// 단건 수정 (카테고리/메모/처리상태)
 app.put('/api/card-transactions/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { category, memo, expense_report_id } = req.body;
+        const { category, memo, is_processed } = req.body;
         const fields = [];
         const params = [];
         if (category !== undefined) { params.push(category); fields.push(`category = $${params.length}`); }
         if (memo !== undefined) { params.push(memo); fields.push(`memo = $${params.length}`); }
-        if (expense_report_id !== undefined) {
-            params.push(expense_report_id || null);
-            fields.push(`expense_report_id = $${params.length}`);
+        if (is_processed !== undefined) {
+            params.push(!!is_processed);
+            fields.push(`is_processed = $${params.length}`);
         }
         if (fields.length === 0) return res.status(400).json({ error: '수정할 내용이 없습니다' });
         params.push(req.params.id);

@@ -4247,11 +4247,18 @@ textarea.form-input {
 .card-tx-table .btn-icon-delete:hover { opacity: 1; }
 .card-tx-table .btn-link { padding: 4px 10px; background: #0066CC; color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; }
 .card-tx-table .btn-link:hover { background: #0052a3; }
-.card-link-badge { display: inline-block; padding: 3px 8px; background: #E6F0FA; color: #0066CC; border-radius: 4px; font-size: 12px; font-weight: 600; }
-.card-link-clear { background: none; border: none; color: #ef4444; font-size: 14px; cursor: pointer; margin-left: 4px; padding: 0 4px; }
 .card-tx-total-row td { padding: 12px 8px; background: #F0F7FF; border-top: 2px solid #0066CC; font-size: 15px; }
-.card-link-list { max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-.card-link-item { padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
-.card-link-item:hover { background: #F0F7FF; border-color: #0066CC; }
-.card-link-item-title { font-weight: 600; color: #1f2937; margin-bottom: 4px; }
-.card-link-item-meta { display: flex; gap: 12px; font-size: 13px; color: #6b7280; }
+/* 처리상태 뱃지/버튼 */
+.card-status-btn, .card-status-badge {
+    display: inline-block; padding: 5px 14px; border-radius: 14px; font-size: 13px; font-weight: 700;
+    border: none; cursor: pointer; transition: all 0.15s; min-width: 70px; text-align: center;
+}
+.card-status-badge { cursor: default; }
+.card-status-btn.status-todo, .card-status-badge.status-todo {
+    background: #fee2e2; color: #b91c1c; border: 1.5px solid #fca5a5;
+}
+.card-status-btn.status-todo:hover { background: #fecaca; }
+.card-status-btn.status-done, .card-status-badge.status-done {
+    background: #d1fae5; color: #047857; border: 1.5px solid #6ee7b7;
+}
+.card-status-btn.status-done:hover { background: #a7f3d0; }
