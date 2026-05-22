@@ -4227,19 +4227,22 @@ textarea.form-input {
 .card-bank-readonly-badge { margin-left: auto; padding: 4px 10px; background: #fef3c7; color: #92400e; border-radius: 12px; font-size: 12px; font-weight: 600; }
 .card-bank-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .card-category-summary { padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 600; background: #f3f4f6; color: #374151; }
-.card-category-summary.cat-식비 { background: #fee2e2; color: #b91c1c; }
-.card-category-summary.cat-교통 { background: #dbeafe; color: #1e40af; }
-.card-category-summary.cat-접대 { background: #fce7f3; color: #9d174d; }
-.card-category-summary.cat-소모품 { background: #e0e7ff; color: #3730a3; }
-.card-category-summary.cat-공과금 { background: #fef3c7; color: #92400e; }
-.card-category-summary.cat-기타 { background: #f3f4f6; color: #4b5563; }
 .card-category-badge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #f3f4f6; color: #4b5563; }
-.card-category-badge.cat-식비 { background: #fee2e2; color: #b91c1c; }
-.card-category-badge.cat-교통 { background: #dbeafe; color: #1e40af; }
-.card-category-badge.cat-접대 { background: #fce7f3; color: #9d174d; }
-.card-category-badge.cat-소모품 { background: #e0e7ff; color: #3730a3; }
-.card-category-badge.cat-공과금 { background: #fef3c7; color: #92400e; }
-.card-category-badge.cat-기타 { background: #f3f4f6; color: #4b5563; }
+/* 카테고리 색상 11종 - 지출결의서와 동일 카테고리 */
+.card-category-summary.cat-거래처정산, .card-category-badge.cat-거래처정산 { background: #ede9fe; color: #6d28d9; }
+.card-category-summary.cat-복리후생비, .card-category-badge.cat-복리후생비 { background: #fee2e2; color: #b91c1c; }
+.card-category-summary.cat-업무차교통비, .card-category-badge.cat-업무차교통비 { background: #dbeafe; color: #1e40af; }
+.card-category-summary.cat-업무차접대비, .card-category-badge.cat-업무차접대비 { background: #fce7f3; color: #9d174d; }
+.card-category-summary.cat-소모품비, .card-category-badge.cat-소모품비 { background: #e0e7ff; color: #3730a3; }
+.card-category-summary.cat-공과금, .card-category-badge.cat-공과금 { background: #fef3c7; color: #92400e; }
+.card-category-summary.cat-광고선전비, .card-category-badge.cat-광고선전비 { background: #cffafe; color: #155e75; }
+.card-category-summary.cat-수선유지비, .card-category-badge.cat-수선유지비 { background: #fef3e8; color: #9a3412; }
+.card-category-summary.cat-차량유지비, .card-category-badge.cat-차량유지비 { background: #ffedd5; color: #c2410c; }
+.card-category-summary.cat-교육훈련비, .card-category-badge.cat-교육훈련비 { background: #d1fae5; color: #047857; }
+.card-category-summary.cat-기타, .card-category-badge.cat-기타 { background: #f3f4f6; color: #4b5563; }
+/* 카테고리 셀 (드롭다운 + 세부내용) */
+.card-category-cell { display: flex; flex-direction: column; gap: 4px; }
+.card-tx-cat-detail { font-size: 11px; color: #6b7280; line-height: 1.35; padding: 0 2px; word-break: keep-all; }
 .card-tx-table th { background: #E6F0FA; color: #0066CC; }
 .card-tx-table input.card-tx-memo { width: 100%; padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 13px; }
 .card-tx-table select.card-tx-category { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 13px; background: #fff; }

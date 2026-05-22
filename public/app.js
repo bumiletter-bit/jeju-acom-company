@@ -6800,7 +6800,24 @@ window.downloadExpensePDF = async function(id) {
 //  카드이용내역 (지출결의서 페이지 내부 탭)
 // ============================================================
 
-const CARD_CATEGORIES = ['식비', '교통', '접대', '소모품', '공과금', '기타'];
+// 카드내역 카테고리는 지출결의서(EXPENSE_CATEGORIES)와 동일하게 사용
+// 옛 카테고리 → 새 카테고리 자동 매핑 (기존 데이터 호환)
+const CARD_CATEGORY_MIGRATION = {
+    '식비': '복리후생비',
+    '교통': '업무차 교통비',
+    '접대': '업무차 접대비',
+    '소모품': '소모품비'
+};
+function normalizeCardCategory(cat) {
+    return CARD_CATEGORY_MIGRATION[cat] || cat || '기타';
+}
+function getCardCategoryDetail(name) {
+    const c = EXPENSE_CATEGORIES.find(c => c.name === name);
+    return c ? c.detail : '';
+}
+function categorySlug(name) {
+    return (name || '기타').replace(/\s+/g, '');
+}
 let cardTxAll = [];
 
 function initCardTransactionsTab() {
@@ -6862,15 +6879,24 @@ function renderCardTransactions() {
     tbody.innerHTML = cardTxAll.map(tx => {
         const amount = Number(tx.amount) || 0;
         total += amount;
-        byCategory[tx.category] = (byCategory[tx.category] || 0) + amount;
+        const catName = normalizeCardCategory(tx.category);
+        byCategory[catName] = (byCategory[catName] || 0) + amount;
+        const catDetail = getCardCategoryDetail(catName);
+        const catSlug = categorySlug(catName);
         const dateStr = (tx.transaction_date || '').toString().split('T')[0];
-        const categoryOptions = CARD_CATEGORIES.map(c =>
-            `<option value="${c}" ${c === tx.category ? 'selected' : ''}>${c}</option>`
+        const categoryOptions = EXPENSE_CATEGORIES.map(c =>
+            `<option value="${c.name}" ${c.name === catName ? 'selected' : ''}>${c.name}</option>`
         ).join('');
 
         const categoryCell = isAccountant
-            ? `<span class="card-category-badge cat-${tx.category}">${tx.category}</span>`
-            : `<select class="card-tx-category" data-id="${tx.id}">${categoryOptions}</select>`;
+            ? `<div class="card-category-cell">
+                 <span class="card-category-badge cat-${catSlug}">${catName}</span>
+                 ${catDetail ? `<div class="card-tx-cat-detail">${escapeHtml(catDetail)}</div>` : ''}
+               </div>`
+            : `<div class="card-category-cell">
+                 <select class="card-tx-category" data-id="${tx.id}">${categoryOptions}</select>
+                 <div class="card-tx-cat-detail">${escapeHtml(catDetail)}</div>
+               </div>`;
 
         const memoCell = isAccountant
             ? `<span>${escapeHtml(tx.memo || '')}</span>`
@@ -6902,16 +6928,22 @@ function renderCardTransactions() {
     const summaryEl = document.getElementById('card-bank-summary');
     summaryEl.innerHTML = Object.entries(byCategory)
         .sort((a, b) => b[1] - a[1])
-        .map(([cat, sum]) => `<span class="card-category-summary cat-${cat}">${cat}: ${sum.toLocaleString()}원</span>`)
+        .map(([cat, sum]) => `<span class="card-category-summary cat-${categorySlug(cat)}">${cat}: ${sum.toLocaleString()}원</span>`)
         .join('');
 
     // 이벤트 바인딩 (수정 가능 모드만)
     if (!isAccountant) {
         tbody.querySelectorAll('.card-tx-category').forEach(sel => {
             sel.addEventListener('change', async () => {
+                const newCat = sel.value;
+                // 세부내용 즉시 반영
+                const detailEl = sel.closest('.card-category-cell')?.querySelector('.card-tx-cat-detail');
+                if (detailEl) detailEl.textContent = getCardCategoryDetail(newCat);
                 try {
-                    await api(`/api/card-transactions/${sel.dataset.id}`, 'PUT', { category: sel.value });
-                    loadCardTransactions();
+                    await api(`/api/card-transactions/${sel.dataset.id}`, 'PUT', { category: newCat });
+                    const tx = cardTxAll.find(t => t.id === Number(sel.dataset.id));
+                    if (tx) tx.category = newCat;
+                    renderCardTransactions(); // 소계 갱신용 전체 재렌더
                 } catch (err) { alert('수정 실패: ' + err.message); }
             });
         });
@@ -6919,6 +6951,8 @@ function renderCardTransactions() {
             input.addEventListener('blur', async () => {
                 try {
                     await api(`/api/card-transactions/${input.dataset.id}`, 'PUT', { memo: input.value });
+                    const tx = cardTxAll.find(t => t.id === Number(input.dataset.id));
+                    if (tx) tx.memo = input.value;
                 } catch (err) { alert('메모 저장 실패: ' + err.message); }
             });
         });
@@ -7018,21 +7052,23 @@ async function parseCardFile(file) {
 // 엑셀 다운로드
 document.getElementById('card-download-btn')?.addEventListener('click', () => {
     if (cardTxAll.length === 0) { alert('다운로드할 데이터가 없습니다.'); return; }
-    const rows = [['날짜', '가맹점명', '금액', '카테고리', '메모', '처리상태']];
+    const rows = [['날짜', '가맹점명', '금액', '카테고리', '세부내용', '메모', '처리상태']];
     cardTxAll.forEach(tx => {
         const dateStr = (tx.transaction_date || '').toString().split('T')[0];
+        const catName = normalizeCardCategory(tx.category);
         rows.push([
             dateStr,
             tx.merchant_name,
             Number(tx.amount) || 0,
-            tx.category || '',
+            catName,
+            getCardCategoryDetail(catName),
             tx.memo || '',
             tx.is_processed ? '입력' : '미입력'
         ]);
     });
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 12 }];
+    ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 10 }];
     XLSX.utils.book_append_sheet(wb, ws, '카드이용내역');
     const month = document.getElementById('card-filter-month').value || 'all';
     XLSX.writeFile(wb, `카드이용내역_${month}.xlsx`);
