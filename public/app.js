@@ -3058,15 +3058,6 @@ window.viewDocDetail = async function(id) {
 
 // 재직증명서 전용 PDF 양식 (표준 양식)
 async function renderEmploymentCertPDF(d) {
-    // 대표 정보 + 도장
-    let ceo = null;
-    let ceoSig = null;
-    try {
-        ceo = await api('/api/users/ceo');
-        const sigRes = await api(`/api/users/${ceo.id}/signature`).catch(() => ({ signatureImage: null }));
-        ceoSig = sigRes.signatureImage;
-    } catch (err) { console.warn('대표 정보 조회 실패:', err); }
-
     // 발급일자: 처리일 우선, 없으면 오늘
     const issueDate = d.processedAt ? new Date(d.processedAt) : new Date();
     const issueDateStr = `${issueDate.getFullYear()}년 ${String(issueDate.getMonth() + 1).padStart(2, '0')}월 ${String(issueDate.getDate()).padStart(2, '0')}일`;
@@ -3111,8 +3102,8 @@ async function renderEmploymentCertPDF(d) {
 
             <div style="margin-top:80px;text-align:center;font-size:22px;font-weight:bold;letter-spacing:3px;display:flex;align-items:center;justify-content:center;gap:24px;">
                 <span>제주아꼼이네 농업회사법인(주)</span>
-                <span style="display:inline-block;width:90px;height:90px;border:2px solid #c00;border-radius:50%;color:#c00;font-size:14px;font-weight:bold;display:flex;align-items:center;justify-content:center;background:#fff;">
-                    ${ceoSig ? `<img src="${ceoSig}" style="width:86px;height:86px;object-fit:contain;border-radius:50%;" alt="대표 인감">` : '<span style="line-height:1.2;">대표<br>인감</span>'}
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:95px;height:95px;border:1.5px dashed #9ca3af;border-radius:50%;background:#fff;color:#9ca3af;font-size:13px;font-weight:normal;letter-spacing:1px;">
+                    (법인인감)
                 </span>
             </div>
 
