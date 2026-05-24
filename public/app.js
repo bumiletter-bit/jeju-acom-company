@@ -6840,11 +6840,14 @@ function initCardTransactionsTab() {
         if (readonlyBadge) readonlyBadge.style.display = 'none';
     }
 
-    // 기본값: 이번 달
-    const monthEl = document.getElementById('card-filter-month');
-    if (monthEl && !monthEl.value) {
+    // 기본값: 이번 달 1일 ~ 오늘
+    const startEl = document.getElementById('card-filter-start');
+    const endEl = document.getElementById('card-filter-end');
+    if (startEl && !startEl.value) {
         const now = new Date();
-        monthEl.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        startEl.value = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+        endEl.value = ymd(now);
     }
 
     loadCardTransactions().catch(console.error);
@@ -6852,8 +6855,12 @@ function initCardTransactionsTab() {
 
 async function loadCardTransactions() {
     try {
-        const month = document.getElementById('card-filter-month').value;
-        const qs = month ? `?month=${month}` : '';
+        const start = document.getElementById('card-filter-start').value;
+        const end = document.getElementById('card-filter-end').value;
+        const params = [];
+        if (start) params.push(`start_date=${start}`);
+        if (end) params.push(`end_date=${end}`);
+        const qs = params.length ? '?' + params.join('&') : '';
         cardTxAll = await api('/api/card-transactions' + qs);
         renderCardTransactions();
     } catch (err) {
@@ -6966,7 +6973,8 @@ function escapeHtml(s) {
 // 필터 이벤트
 document.getElementById('card-filter-apply')?.addEventListener('click', () => loadCardTransactions());
 document.getElementById('card-filter-reset')?.addEventListener('click', () => {
-    document.getElementById('card-filter-month').value = '';
+    document.getElementById('card-filter-start').value = '';
+    document.getElementById('card-filter-end').value = '';
     loadCardTransactions();
 });
 
@@ -7070,8 +7078,10 @@ document.getElementById('card-download-btn')?.addEventListener('click', () => {
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 10 }];
     XLSX.utils.book_append_sheet(wb, ws, '카드이용내역');
-    const month = document.getElementById('card-filter-month').value || 'all';
-    XLSX.writeFile(wb, `카드이용내역_${month}.xlsx`);
+    const start = document.getElementById('card-filter-start').value;
+    const end = document.getElementById('card-filter-end').value;
+    const range = (start || end) ? `${start || ''}~${end || ''}` : 'all';
+    XLSX.writeFile(wb, `카드이용내역_${range}.xlsx`);
 });
 
 // 삭제

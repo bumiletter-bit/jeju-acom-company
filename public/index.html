@@ -837,8 +837,10 @@
                         </div>
                     </div>
                     <div class="card-bank-filter">
-                        <label>월별 필터:</label>
-                        <input type="month" id="card-filter-month" class="form-input" style="width:160px;">
+                        <label>기간:</label>
+                        <input type="date" id="card-filter-start" class="form-input" style="width:160px;">
+                        <span style="color:#6b7280;">~</span>
+                        <input type="date" id="card-filter-end" class="form-input" style="width:160px;">
                         <button class="btn-outline" id="card-filter-apply">조회</button>
                         <button class="btn-outline" id="card-filter-reset">초기화</button>
                         <span class="card-bank-readonly-badge" id="card-readonly-badge" style="display:none;">📖 조회 전용 모드</span>
@@ -1768,6 +1770,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=177"></script>
+    <script src="app.js?v=178"></script>
 </body>
 </html>
