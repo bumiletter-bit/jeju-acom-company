@@ -2305,7 +2305,7 @@ function calcTimeLeave() {
 window.calcTimeLeave = calcTimeLeave;
 
 // 서류 하위 유형 선택
-['vacation', 'attendance', 'reason'].forEach(type => {
+['vacation', 'attendance', 'reason', 'employment'].forEach(type => {
     const group = document.getElementById(`doc-${type}-type-group`);
     if (!group) return;
     group.addEventListener('click', (e) => {
@@ -3056,6 +3056,87 @@ window.viewDocDetail = async function(id) {
     } catch (err) { alert('상세 조회 실패: ' + err.message); }
 };
 
+// 재직증명서 전용 PDF 양식 (표준 양식)
+async function renderEmploymentCertPDF(d) {
+    // 대표 정보 + 도장
+    let ceo = null;
+    let ceoSig = null;
+    try {
+        ceo = await api('/api/users/ceo');
+        const sigRes = await api(`/api/users/${ceo.id}/signature`).catch(() => ({ signatureImage: null }));
+        ceoSig = sigRes.signatureImage;
+    } catch (err) { console.warn('대표 정보 조회 실패:', err); }
+
+    // 발급일자: 처리일 우선, 없으면 오늘
+    const issueDate = d.processedAt ? new Date(d.processedAt) : new Date();
+    const issueDateStr = `${issueDate.getFullYear()}년 ${String(issueDate.getMonth() + 1).padStart(2, '0')}월 ${String(issueDate.getDate()).padStart(2, '0')}일`;
+
+    // 발급 매수 파싱 (reason에 "발급 매수: N부"로 저장됨)
+    const countMatch = (d.reason || '').match(/(\d+)\s*부/);
+    const issueCount = countMatch ? countMatch[1] : '1';
+    const purpose = d.subType || '-';
+
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;padding:50px 60px;box-sizing:border-box;font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo",sans-serif;color:#000;';
+    container.innerHTML = `
+        <div style="min-height:1000px;position:relative;padding:30px 0;">
+            <h1 style="text-align:center;font-size:34px;letter-spacing:18px;margin:30px 0 60px 0;font-weight:bold;">재 직 증 명 서</h1>
+
+            <table style="width:100%;border-collapse:collapse;border-top:2px solid #000;border-bottom:2px solid #000;margin-bottom:50px;font-size:16px;">
+                <tr style="border-bottom:1px solid #999;">
+                    <td style="width:140px;padding:14px 18px;background:#f5f5f5;font-weight:bold;text-align:center;border-right:1px solid #999;">성       명</td>
+                    <td style="padding:14px 20px;">${d.applicantName || ''}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #999;">
+                    <td style="padding:14px 18px;background:#f5f5f5;font-weight:bold;text-align:center;border-right:1px solid #999;">소       속</td>
+                    <td style="padding:14px 20px;">제주아꼼이네 농업회사법인(주)</td>
+                </tr>
+                <tr style="border-bottom:1px solid #999;">
+                    <td style="padding:14px 18px;background:#f5f5f5;font-weight:bold;text-align:center;border-right:1px solid #999;">직       급</td>
+                    <td style="padding:14px 20px;">${d.applicantPosition || '-'}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #999;">
+                    <td style="padding:14px 18px;background:#f5f5f5;font-weight:bold;text-align:center;border-right:1px solid #999;">발 급 용 도</td>
+                    <td style="padding:14px 20px;">${purpose}</td>
+                </tr>
+                <tr>
+                    <td style="padding:14px 18px;background:#f5f5f5;font-weight:bold;text-align:center;border-right:1px solid #999;">발 급 매 수</td>
+                    <td style="padding:14px 20px;">${issueCount} 부</td>
+                </tr>
+            </table>
+
+            <p style="font-size:17px;line-height:2;margin:40px 0;text-align:center;">위 사람은 본사에 위와 같이 재직 중임을 증명합니다.</p>
+
+            <p style="font-size:18px;text-align:center;margin-top:80px;letter-spacing:2px;">${issueDateStr}</p>
+
+            <div style="margin-top:80px;text-align:center;font-size:22px;font-weight:bold;letter-spacing:3px;display:flex;align-items:center;justify-content:center;gap:24px;">
+                <span>제주아꼼이네 농업회사법인(주)</span>
+                <span style="display:inline-block;width:90px;height:90px;border:2px solid #c00;border-radius:50%;color:#c00;font-size:14px;font-weight:bold;display:flex;align-items:center;justify-content:center;background:#fff;">
+                    ${ceoSig ? `<img src="${ceoSig}" style="width:86px;height:86px;object-fit:contain;border-radius:50%;" alt="대표 인감">` : '<span style="line-height:1.2;">대표<br>인감</span>'}
+                </span>
+            </div>
+
+            <div style="position:absolute;bottom:0;left:0;right:0;text-align:center;color:#9ca3af;font-size:11px;padding-top:30px;border-top:1px solid #e5e7eb;margin-top:60px;">
+                ※ 법인 인감도장 직인은 따로 법인직인대장에 기록 후 사용
+            </div>
+        </div>
+    `;
+    document.body.appendChild(container);
+
+    const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+    document.body.removeChild(container);
+
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const imgData = canvas.toDataURL('image/png');
+    const pdfW = 210;
+    const pdfH = (canvas.height * pdfW) / canvas.width;
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+
+    const dateForFile = `${issueDate.getFullYear()}${String(issueDate.getMonth() + 1).padStart(2, '0')}${String(issueDate.getDate()).padStart(2, '0')}`;
+    pdf.save(`재직증명서_${d.applicantName}_${dateForFile}.pdf`);
+}
+
 // 기안서류 개별 PDF 다운로드
 window.downloadDocPDF = async function(id) {
     try {
@@ -3063,8 +3144,14 @@ window.downloadDocPDF = async function(id) {
         const d = docs.find(doc => doc.id === id);
         if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
 
+        // 재직증명서: 표준 양식으로 별도 처리
+        if (d.type === 'employment') {
+            await renderEmploymentCertPDF(d);
+            return;
+        }
+
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
-        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : d.type === 'employment' ? '재직증명서' : '시말서';
+        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : '시말서';
 
         // 날짜 포맷
         const sd = d.startDate ? new Date(d.startDate) : null;
