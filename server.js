@@ -685,6 +685,19 @@ app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     }
 });
 
+// 대표 정보 (재직증명서 등 대표 단독결재용)
+app.get('/api/users/ceo', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT id, name, position FROM users WHERE position = '대표' AND role = 'admin' LIMIT 1"
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '대표 계정을 찾을 수 없습니다' });
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // 직원 이름 목록 (사다리 게임용)
 app.get('/api/users/names', authMiddleware, async (req, res) => {
     try {

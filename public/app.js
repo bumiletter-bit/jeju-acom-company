@@ -2161,16 +2161,20 @@ document.querySelectorAll('.doc-tab').forEach(tab => {
 });
 
 function updateDocForm() {
-    const typeLabels = { vacation: '휴가신청서', attendance: '근태신청서', reason: '시말서' };
+    const typeLabels = { vacation: '휴가신청서', attendance: '근태신청서', reason: '시말서', employment: '재직증명서' };
     document.getElementById('doc-form-title').textContent = typeLabels[currentDocType] + ' 작성';
 
     document.getElementById('doc-vacation-type-group').style.display = currentDocType === 'vacation' ? '' : 'none';
     document.getElementById('doc-attendance-type-group').style.display = currentDocType === 'attendance' ? '' : 'none';
     document.getElementById('doc-reason-type-group').style.display = currentDocType === 'reason' ? '' : 'none';
+    document.getElementById('doc-employment-type-group').style.display = currentDocType === 'employment' ? '' : 'none';
+    document.getElementById('doc-employment-count-group').style.display = currentDocType === 'employment' ? '' : 'none';
+    document.getElementById('doc-employment-notice').style.display = currentDocType === 'employment' ? '' : 'none';
 
     if (currentDocType === 'vacation') selectedDocSubType = '연차';
     else if (currentDocType === 'attendance') selectedDocSubType = '휴직';
-    else selectedDocSubType = '지각';
+    else if (currentDocType === 'reason') selectedDocSubType = '지각';
+    else if (currentDocType === 'employment') selectedDocSubType = '은행 제출용';
 
     const activeGroup = document.getElementById(`doc-${currentDocType}-type-group`);
     if (activeGroup) {
@@ -2178,6 +2182,8 @@ function updateDocForm() {
     }
 
     updateDocEndDateVisibility();
+    // 재직증명서는 결재라인을 대표 단독으로 갱신
+    loadApprovers().catch(console.error);
     document.getElementById('doc-list-title').textContent = typeLabels[currentDocType] + ' 목록';
 }
 
@@ -2204,10 +2210,17 @@ function updateDocEndDateVisibility() {
     document.getElementById('doc-start-time-group').style.display = isTime ? '' : 'none';
     document.getElementById('doc-end-time-group').style.display = isTime ? '' : 'none';
     document.getElementById('doc-time-hours-group').style.display = isTime ? '' : 'none';
-    // 휴가신청서 연차/시간차는 사유란 숨김
-    const hideReason = currentDocType === 'vacation' && (selectedDocSubType === '연차' || selectedDocSubType === '시간차');
+    // 휴가신청서 연차/시간차, 재직증명서는 사유란 숨김
+    const hideReason = (currentDocType === 'vacation' && (selectedDocSubType === '연차' || selectedDocSubType === '시간차'))
+                     || currentDocType === 'employment';
     document.getElementById('doc-reason-group').style.display = hideReason ? 'none' : '';
     if (hideReason) document.getElementById('doc-reason').value = '';
+    // 재직증명서: 시작일 라벨을 '필요일'로 변경, 종료일 숨김
+    const startLabel = document.querySelector('label[for=""]');
+    const startDateLabel = document.getElementById('doc-start-date')?.previousElementSibling;
+    if (startDateLabel && startDateLabel.tagName === 'LABEL') {
+        startDateLabel.textContent = currentDocType === 'employment' ? '필요일' : '시작일';
+    }
     if (isTime) initTimeSelects();
 }
 
@@ -2308,7 +2321,13 @@ window.calcTimeLeave = calcTimeLeave;
 // 결재자 목록 로드 → 결재라인 카드 UI 표시
 async function loadApprovers() {
     try {
-        approverList = await api('/api/users/approvers');
+        // 재직증명서는 항상 대표 단독 결재
+        if (currentDocType === 'employment') {
+            const ceo = await api('/api/users/ceo');
+            approverList = [ceo];
+        } else {
+            approverList = await api('/api/users/approvers');
+        }
         const container = document.getElementById('doc-approval-line');
         if (!container) return;
 
@@ -2339,7 +2358,7 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
     const approverId = approverList.length > 0 ? approverList[0].id : null;
     const startDate = document.getElementById('doc-start-date').value;
     const endDate = document.getElementById('doc-end-date').value;
-    const reason = document.getElementById('doc-reason').value.trim();
+    let reason = document.getElementById('doc-reason').value.trim();
 
     if (!startDate) return alert('날짜를 선택해주세요.');
     if (!approverId) return alert('결재자 정보를 불러올 수 없습니다. 페이지를 새로고침해주세요.');
@@ -2352,6 +2371,12 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
         const st = document.getElementById('doc-start-time').value;
         const et = document.getElementById('doc-end-time').value;
         if (!st || !et) return alert('시작시간과 종료시간을 선택해주세요.');
+    }
+
+    // 재직증명서: 매수를 reason에 자동 기록
+    if (currentDocType === 'employment') {
+        const count = Number(document.getElementById('doc-employment-count').value) || 1;
+        reason = `발급 매수: ${count}부`;
     }
 
     const body = {
@@ -2449,7 +2474,7 @@ async function renderApprovalList() {
             return;
         }
 
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
 
         tbody.innerHTML = docs.map(d => {
             const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
@@ -2501,7 +2526,7 @@ async function renderMyApprovedList() {
             return;
         }
 
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
 
         tbody.innerHTML = approved.map(d => {
             let dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
@@ -2693,7 +2718,7 @@ window.openModRequestModal = function(id) {
         if (!doc) return alert('서류를 찾을 수 없습니다.');
 
         document.getElementById('mod-doc-id').value = id;
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
         let dateStr = doc.startDate === doc.endDate ? doc.startDate : `${doc.startDate} ~ ${doc.endDate}`;
         if (doc.subType === '시간차' && doc.startTime && doc.endTime) dateStr += ` (${doc.startTime}~${doc.endTime})`;
 
@@ -2891,7 +2916,7 @@ window.searchDocHistory = async function() {
 function renderDocHistory(docs) {
     window._lastDocHistory = docs || [];
     const tbody = document.getElementById('doc-history-list');
-    const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', leave_adjustment: '연차 조정' };
+    const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서', leave_adjustment: '연차 조정' };
 
     if (!docs || docs.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>';
@@ -2965,7 +2990,7 @@ window.viewDocDetail = async function(id) {
         const d = docs.find(doc => doc.id === id);
         if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
 
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
         const typeLabel = `${typeLabels[d.type] || d.type} - ${d.subType}`;
 
         // 날짜 포맷
@@ -3038,8 +3063,8 @@ window.downloadDocPDF = async function(id) {
         const d = docs.find(doc => doc.id === id);
         if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
 
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
-        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : '시말서';
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
+        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : d.type === 'employment' ? '재직증명서' : '시말서';
 
         // 날짜 포맷
         const sd = d.startDate ? new Date(d.startDate) : null;
@@ -3127,9 +3152,9 @@ window.downloadDocExcel = function(id) {
         const d = docs.find(doc => doc.id === id);
         if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
 
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
         const typeLabel = `${typeLabels[d.type] || d.type} - ${d.subType}`;
-        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : '시말서';
+        const docTitle = d.type === 'vacation' ? '휴가신청서' : d.type === 'attendance' ? '근태신청서' : d.type === 'employment' ? '재직증명서' : '시말서';
 
         const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
         const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
@@ -3215,7 +3240,7 @@ window.downloadDocHistory = async function() {
         // 직원별 잔여연차 맵 (id → annualLeave)
         const leaveMap = {};
         leaveData.forEach(emp => { leaveMap[emp.id] = emp.annualLeave; });
-        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', leave_adjustment: '연차 조정' };
+        const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서', leave_adjustment: '연차 조정' };
         const historyRows = [['유형', '신청자', '기간/날짜', '사유', '차감일수', '잔여연차', '결재자', '상태', '처리일']];
         docs.forEach(d => {
             const remainLeave = leaveMap[d.applicantId] !== undefined ? formatLeave(leaveMap[d.applicantId]) : '';

@@ -329,6 +329,7 @@
                     <button class="doc-tab active" data-doc-type="vacation">휴가신청서</button>
                     <button class="doc-tab" data-doc-type="attendance">근태신청서</button>
                     <button class="doc-tab" data-doc-type="reason">시말서</button>
+                    <button class="doc-tab" data-doc-type="employment">재직증명서</button>
                 </div>
 
                 <!-- 결재 대기 목록 (관리자용) -->
@@ -394,6 +395,30 @@
                             <button class="btn-toggle" data-value="미출근">미출근</button>
                             <button class="btn-toggle" data-value="조퇴">조퇴</button>
                             <button class="btn-toggle" data-value="기타">기타</button>
+                        </div>
+                    </div>
+
+                    <!-- 재직증명서 용도 -->
+                    <div class="form-group" id="doc-employment-type-group" style="display:none;">
+                        <label>발급 용도</label>
+                        <div class="btn-group">
+                            <button class="btn-toggle active" data-value="은행 제출용">은행 제출용</button>
+                            <button class="btn-toggle" data-value="관공서 제출용">관공서 제출용</button>
+                            <button class="btn-toggle" data-value="회사 제출용">회사 제출용</button>
+                            <button class="btn-toggle" data-value="기타">기타</button>
+                        </div>
+                    </div>
+
+                    <!-- 재직증명서 매수 -->
+                    <div class="form-group" id="doc-employment-count-group" style="display:none;">
+                        <label>발급 매수</label>
+                        <input type="number" id="doc-employment-count" class="form-input" value="1" min="1" max="10" style="width:120px;">
+                    </div>
+
+                    <!-- 재직증명서 안내 -->
+                    <div class="form-group" id="doc-employment-notice" style="display:none;">
+                        <div style="padding:12px 14px;background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;font-size:13px;color:#92400e;line-height:1.5;">
+                            ⚠️ 법인 인감도장 직인은 따로 법인직인대장에 기록 후 사용
                         </div>
                     </div>
 
@@ -557,6 +582,7 @@
                                     <option value="vacation">휴가신청서</option>
                                     <option value="attendance">근태신청서</option>
                                     <option value="reason">시말서</option>
+                                    <option value="employment">재직증명서</option>
                                     <option value="leave_adjustment">연차 조정</option>
                                 </select>
                             </div>
@@ -1770,6 +1796,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=178"></script>
+    <script src="app.js?v=179"></script>
 </body>
 </html>
