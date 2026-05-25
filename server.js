@@ -1779,16 +1779,18 @@ app.get('/api/expense-reports/history', authMiddleware, adminOnly, async (req, r
             params.push(applicant_id);
             conditions.push(`er.applicant_id = $${params.length}`);
         }
+        // 사용날짜(use_date) 기준 필터링. use_date 없는 기존 데이터는 created_at::date로 fallback.
         if (start_date) {
             params.push(start_date);
-            conditions.push(`er.created_at >= $${params.length}::date`);
+            conditions.push(`COALESCE(er.use_date, er.created_at::date) >= $${params.length}::date`);
         }
         if (end_date) {
             params.push(end_date);
-            conditions.push(`er.created_at < ($${params.length}::date + INTERVAL '1 day')`);
+            conditions.push(`COALESCE(er.use_date, er.created_at::date) <= $${params.length}::date`);
         }
         if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
-        query += ' ORDER BY er.created_at DESC';
+        // 사용날짜 기준 정렬 (없으면 작성일)
+        query += ' ORDER BY COALESCE(er.use_date, er.created_at::date) DESC, er.created_at DESC';
         const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }

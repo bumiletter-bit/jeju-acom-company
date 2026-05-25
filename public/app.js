@@ -6918,9 +6918,9 @@ document.getElementById('expense-history-download')?.addEventListener('click', (
         }
     });
 
-    // 합계 행
-    rows.push([]);
+    // 합계 행 (빈 행 제거, 바로 합계로)
     rows.push(['', '', '', '', '총 합계', grandTotal, '', `${data.length}건`]);
+    const totalRowIdx = rows.length - 1;
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -6928,6 +6928,8 @@ document.getElementById('expense-history-download')?.addEventListener('click', (
         { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
         { wch: 40 }, { wch: 14 }, { wch: 26 }, { wch: 12 }
     ];
+    // 스타일 적용 (금액 컬럼=5, 합계 행)
+    styleExcelSheet(ws, [5], [totalRowIdx]);
     XLSX.utils.book_append_sheet(wb, ws, '지출결의서');
 
     const start = document.getElementById('expense-history-start')?.value || '';
@@ -7194,6 +7196,45 @@ function categorySlug(name) {
 }
 let cardTxAll = [];
 
+// 엑셀 시트 스타일 일괄 적용 (테두리 + 천단위 콤마 + 헤더/합계 강조)
+// amountCols: 천단위 콤마 적용할 0-based 컬럼 인덱스 배열
+// totalRows: 합계 행으로 강조할 0-based 행 인덱스 배열 (옵션)
+function styleExcelSheet(ws, amountCols = [], totalRows = []) {
+    if (!ws['!ref']) return;
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const border = {
+        top: { style: 'thin', color: { rgb: '999999' } },
+        bottom: { style: 'thin', color: { rgb: '999999' } },
+        left: { style: 'thin', color: { rgb: '999999' } },
+        right: { style: 'thin', color: { rgb: '999999' } }
+    };
+    for (let R = range.s.r; R <= range.e.r; R++) {
+        for (let C = range.s.c; C <= range.e.c; C++) {
+            const ref = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+            const isHeader = R === 0;
+            const isTotal = totalRows.includes(R);
+            const isAmount = amountCols.includes(C);
+            const s = { border, alignment: { vertical: 'center', wrapText: true } };
+            if (isHeader) {
+                s.font = { bold: true, sz: 11 };
+                s.fill = { fgColor: { rgb: 'E6F0FA' } };
+                s.alignment = { horizontal: 'center', vertical: 'center' };
+            } else if (isTotal) {
+                s.font = { bold: true };
+                s.fill = { fgColor: { rgb: 'FFF8E1' } };
+            }
+            if (isAmount && !isHeader) {
+                s.numFmt = '#,##0';
+                s.alignment = { ...s.alignment, horizontal: 'right' };
+                // 숫자 셀로 명시
+                if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
+            }
+            ws[ref].s = s;
+        }
+    }
+}
+
 function initCardTransactionsTab() {
     if (!currentUser) return;
     const isAccountant = currentUser.role === 'accountant';
@@ -7435,22 +7476,30 @@ async function parseCardFile(file) {
 document.getElementById('card-download-btn')?.addEventListener('click', () => {
     if (cardTxAll.length === 0) { alert('다운로드할 데이터가 없습니다.'); return; }
     const rows = [['날짜', '가맹점명', '금액', '카테고리', '세부내용', '메모', '처리상태']];
+    let cardTotal = 0;
     cardTxAll.forEach(tx => {
         const dateStr = (tx.transaction_date || '').toString().split('T')[0];
         const catName = normalizeCardCategory(tx.category);
+        const amt = Number(tx.amount) || 0;
+        cardTotal += amt;
         rows.push([
             dateStr,
             tx.merchant_name,
-            Number(tx.amount) || 0,
+            amt,
             catName,
             getCardCategoryDetail(catName),
             tx.memo || '',
             tx.is_processed ? '입력' : '미입력'
         ]);
     });
+    // 합계 행
+    rows.push(['', '총 합계', cardTotal, '', '', `${cardTxAll.length}건`, '']);
+    const totalRowIdx = rows.length - 1;
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 10 }];
+    // 스타일 적용 (금액 컬럼=2, 합계 행)
+    styleExcelSheet(ws, [2], [totalRowIdx]);
     XLSX.utils.book_append_sheet(wb, ws, '카드이용내역');
     const start = document.getElementById('card-filter-start').value;
     const end = document.getElementById('card-filter-end').value;
