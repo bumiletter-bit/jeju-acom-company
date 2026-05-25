@@ -512,6 +512,9 @@ async function initDB() {
     // 애월취나물 컬럼 추가 (기존 DB 마이그레이션)
     await pool.query(`ALTER TABLE settlement_status ADD COLUMN IF NOT EXISTS aewol NUMERIC DEFAULT 0`);
 
+    // 지출결의서 사용날짜 컬럼 (작성일과 별개)
+    await pool.query(`ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS use_date DATE`);
+
     // 카드이용내역 (지출결의서 연동)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS card_transactions (
@@ -1609,7 +1612,7 @@ app.delete('/api/documents/:id', authMiddleware, async (req, res) => {
 // 지출결의서 작성
 app.post('/api/expense-reports', authMiddleware, async (req, res) => {
     try {
-        const { title, purpose, items } = req.body;
+        const { title, purpose, items, useDate } = req.body;
         if (!title) return res.status(400).json({ error: '제목을 입력해주세요' });
         if (!items || items.length === 0) return res.status(400).json({ error: '지출 항목을 추가해주세요' });
         const totalAmount = items.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
@@ -1634,9 +1637,9 @@ app.post('/api/expense-reports', authMiddleware, async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO expense_reports (title, applicant_id, total_amount, purpose, items, manager_id, ceo_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-            [title, req.user.id, totalAmount, purpose || '', JSON.stringify(items), managerId, ceoId]
+            `INSERT INTO expense_reports (title, applicant_id, total_amount, purpose, items, manager_id, ceo_id, use_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [title, req.user.id, totalAmount, purpose || '', JSON.stringify(items), managerId, ceoId, useDate || null]
         );
 
         // 알림: 1차 결재자 또는 대표에게
