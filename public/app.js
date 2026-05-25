@@ -6837,6 +6837,7 @@ async function renderExpenseHistoryList() {
         const qs = queryParams.toString();
         const url = `/api/expense-reports/history${qs ? '?' + qs : ''}`;
         const data = await api(url);
+        window._lastExpenseHistory = data; // 엑셀 다운로드용 캐시
         const tbody = document.getElementById('expense-history-list');
         if (data.length === 0) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="6">지출결의서가 없습니다.</td></tr>';
@@ -6875,6 +6876,64 @@ async function loadExpenseUserFilter() {
 
 document.getElementById('expense-history-search')?.addEventListener('click', () => {
     renderExpenseHistoryList().catch(console.error);
+});
+
+// 지출결의서 조회 결과 엑셀 일괄 다운로드 (세무사 검토용)
+document.getElementById('expense-history-download')?.addEventListener('click', () => {
+    const data = window._lastExpenseHistory || [];
+    if (data.length === 0) { alert('다운로드할 데이터가 없습니다. 먼저 검색을 실행해주세요.'); return; }
+
+    const fmt = v => v ? new Date(v).toISOString().slice(0, 10) : '';
+    const statusLabel = s => ({pending:'대기중', manager_approved:'1차 승인', approved:'최종 승인', rejected:'반려'}[s] || s);
+
+    // 헤더
+    const rows = [['사용날짜', '작성일', '신청자', '항목', '세부내용', '금액(원)', '비고', '상태']];
+
+    let grandTotal = 0;
+    // 각 결의서 → items 배열을 펼쳐서 항목별 행으로
+    data.forEach(d => {
+        const items = (() => {
+            try { return typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []); }
+            catch { return []; }
+        })();
+        const applicant = `${d.applicant_position || ''} ${d.applicant_name || ''}`.trim();
+        const useDate = fmt(d.use_date);
+        const createdDate = fmt(d.created_at);
+        const status = statusLabel(d.status);
+
+        if (items.length === 0) {
+            // 항목 없는 결의서도 1행
+            const amount = Number(d.total_amount) || 0;
+            grandTotal += amount;
+            rows.push([useDate, createdDate, applicant, d.title || '', '', amount, '', status]);
+        } else {
+            items.forEach(it => {
+                const category = it.category || it.item || '';
+                const detail = it.detail || '';
+                const amount = Number(it.amount) || 0;
+                const note = it.note || '';
+                grandTotal += amount;
+                rows.push([useDate, createdDate, applicant, category, detail, amount, note, status]);
+            });
+        }
+    });
+
+    // 합계 행
+    rows.push([]);
+    rows.push(['', '', '', '', '총 합계', grandTotal, '', `${data.length}건`]);
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [
+        { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
+        { wch: 40 }, { wch: 14 }, { wch: 26 }, { wch: 12 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, '지출결의서');
+
+    const start = document.getElementById('expense-history-start')?.value || '';
+    const end = document.getElementById('expense-history-end')?.value || '';
+    const range = (start || end) ? `${start || ''}~${end || ''}` : 'all';
+    XLSX.writeFile(wb, `지출결의서_${range}.xlsx`);
 });
 
 function getExpenseStatusBadge(status) {
