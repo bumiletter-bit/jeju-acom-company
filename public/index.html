@@ -779,7 +779,13 @@
 
                 <!-- 작성 탭 -->
                 <div id="expense-section-write" class="card">
-                    <h2>지출결의서 작성</h2>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                        <h2 style="margin:0;">지출결의서 작성</h2>
+                        <div>
+                            <input type="file" id="expense-bulk-file" accept=".xlsx,.xls" hidden>
+                            <button class="btn-outline" id="expense-bulk-btn" type="button">📤 엑셀 일괄 업로드</button>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label>신청자</label>
                         <input type="text" id="expense-applicant" class="form-input" readonly style="width:200px;background:#f9fafb;">
@@ -1800,6 +1806,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=182"></script>
+    <script src="app.js?v=183"></script>
 </body>
 </html>

@@ -1652,6 +1652,56 @@ app.post('/api/expense-reports', authMiddleware, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 지출결의서 일괄 업로드 (엑셀에서 파싱한 거래 N건을 한 번에 등록)
+app.post('/api/expense-reports/bulk', authMiddleware, async (req, res) => {
+    try {
+        const { transactions } = req.body;
+        if (!Array.isArray(transactions) || transactions.length === 0) {
+            return res.status(400).json({ error: '업로드할 거래가 없습니다' });
+        }
+
+        // 결재라인 결정 (현재 사용자 기준)
+        let managerId = null, ceoId = null;
+        const ceoResult = await pool.query("SELECT id FROM users WHERE position = '대표' AND role = 'admin' LIMIT 1");
+        if (ceoResult.rows.length === 0) return res.status(500).json({ error: '대표 계정을 찾을 수 없습니다' });
+        ceoId = ceoResult.rows[0].id;
+
+        if (req.user.position !== '대표' && req.user.role !== 'admin') {
+            const mgrResult = await pool.query("SELECT id FROM users WHERE role = 'admin' AND position != '대표' ORDER BY name LIMIT 1");
+            managerId = mgrResult.rows.length > 0 ? mgrResult.rows[0].id : null;
+        }
+
+        let inserted = 0, failed = 0;
+        for (const tx of transactions) {
+            try {
+                const { useDate, category, detail, amount, note, purpose } = tx;
+                if (!category || !amount) { failed++; continue; }
+                const title = category;
+                const items = [{ category, detail: detail || '', amount: Number(amount), note: note || '' }];
+                await pool.query(
+                    `INSERT INTO expense_reports (title, applicant_id, total_amount, purpose, items, manager_id, ceo_id, use_date)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [title, req.user.id, Number(amount), purpose || '', JSON.stringify(items), managerId, ceoId, useDate || null]
+                );
+                inserted++;
+            } catch (err) {
+                failed++;
+                console.error('bulk insert error:', err.message);
+            }
+        }
+
+        // 결재자에게 일괄 알림 (1건만)
+        const notifyTo = managerId || ceoId;
+        if (notifyTo && inserted > 0) {
+            const applicantInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [req.user.id]);
+            const applicantName = applicantInfo.rows[0] ? `${applicantInfo.rows[0].position} ${applicantInfo.rows[0].name}` : '';
+            await createNotification(notifyTo, 'expense', '지출결의서 일괄 결재 요청', `${applicantName}님이 ${inserted}건의 지출결의서를 일괄 제출했습니다.`, 'expense');
+        }
+
+        res.json({ success: true, inserted, failed });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // 내 신청 목록
 app.get('/api/expense-reports/my', authMiddleware, async (req, res) => {
     try {

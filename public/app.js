@@ -6583,6 +6583,203 @@ document.getElementById('expense-submit').addEventListener('click', async () => 
     } catch (err) { alert('제출 실패: ' + err.message); }
 });
 
+// ============================================================
+//  지출결의서 엑셀 일괄 업로드 (제주은행 통장 거래내역)
+// ============================================================
+
+document.getElementById('expense-bulk-btn')?.addEventListener('click', () => {
+    document.getElementById('expense-bulk-file').click();
+});
+
+document.getElementById('expense-bulk-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+        const txs = await parseBankExcelFile(file);
+        if (txs.length === 0) { alert('유효한 거래를 찾을 수 없습니다. 엑셀 양식을 확인해주세요.'); return; }
+        showBulkExpensePreview(txs);
+    } catch (err) {
+        alert('파일 읽기 실패: ' + err.message);
+    } finally {
+        e.target.value = '';
+    }
+});
+
+function classifyExpenseAuto(note, merchant) {
+    const t = (note || '') + ' ' + (merchant || '');
+    if (/광고|네이버 보상|안내문자|GFA/i.test(t)) return '광고선전비';
+    if (/대성|효돈|애월|취나물|박스구입|한라포장|택배비|씨제이대한통운|조기만/i.test(t)) return '거래처 정산';
+    if (/인터넷|통신비|cctv 통신|전기세|전기료|렌탈|복합기 임대|관리비|임대료|보증금|중개사|4대보험|등기|법무|인증|수수료|토스페이먼츠|pg사|세금/i.test(t)) return '공과금';
+    if (/화한|결혼|식대|간식|복리|경조사|지원금/i.test(t)) return '복리후생비';
+    if (/사무용품|책상|파티션|컴퓨터|cctv 구입|아성다이소|소모품/i.test(t)) return '소모품비';
+    if (/인테리어|간판|블라인드|수선|수리|보수/i.test(t)) return '수선유지비';
+    if (/차량|타스만|취득세/i.test(t)) return '차량유지비';
+    return '기타';
+}
+
+async function parseBankExcelFile(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const data = new Uint8Array(ev.target.result);
+                const wb = XLSX.read(data, { type: 'array', cellDates: true });
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+
+                // 헤더 인식: 거래일자/출금금액/출금내용 필수
+                let headerIdx = -1, dateCol = -1, merchantCol = -1, amountCol = -1, noteCol = -1;
+                for (let i = 0; i < Math.min(rows.length, 10); i++) {
+                    const r = rows[i].map(c => String(c).trim());
+                    const di = r.findIndex(c => /(거래일자|거래일|사용일|이용일|날짜|일자)$|^날짜|^일자/.test(c));
+                    const mi = r.findIndex(c => /(통장인자|가맹점|상대처|상호)/.test(c));
+                    // '입출금구분' 같은 헤더 제외 — 정확히 금액 컬럼만
+                    const ai = r.findIndex(c => /(출금금액|이용금액|사용금액|승인금액)/.test(c) && !/(합계|총액|구분)/.test(c));
+                    // '통장인자내용' 같은 헤더 제외 — '내용' 단독 매치 방지
+                    const ni = r.findIndex((c, idx) => idx !== mi && /(출금내용|적요|메모|용도|적요내용)/.test(c));
+                    if (di >= 0 && ai >= 0) {
+                        headerIdx = i; dateCol = di; merchantCol = mi; amountCol = ai; noteCol = ni;
+                        break;
+                    }
+                }
+                if (headerIdx < 0) return reject(new Error('엑셀 양식을 인식할 수 없습니다 (거래일자/출금금액 컬럼 필요)'));
+
+                const txs = [];
+                let skippedCardSalary = 0;
+                for (let i = headerIdx + 1; i < rows.length; i++) {
+                    const r = rows[i];
+                    const dateRaw = r[dateCol];
+                    const merchant = String(merchantCol >= 0 ? (r[merchantCol] || '') : '').trim();
+                    const amount = Number(String(r[amountCol] || '').replace(/[^\d.-]/g, '')) || 0;
+                    const note = String(noteCol >= 0 ? (r[noteCol] || '') : '').trim();
+                    if (!dateRaw || !amount) continue;
+                    if (!note && !merchant) continue;
+
+                    // 카드대금/급여 자동 제외
+                    if (/카드대금|급여지급|급여이체/i.test(note + ' ' + merchant)) {
+                        skippedCardSalary++;
+                        continue;
+                    }
+
+                    let dateStr;
+                    if (dateRaw instanceof Date) {
+                        dateStr = `${dateRaw.getFullYear()}-${String(dateRaw.getMonth() + 1).padStart(2, '0')}-${String(dateRaw.getDate()).padStart(2, '0')}`;
+                    } else {
+                        const s = String(dateRaw).trim().replace(/\./g, '-').replace(/\//g, '-');
+                        const m = s.match(/(\d{4})-?(\d{1,2})-?(\d{1,2})/);
+                        if (!m) continue;
+                        dateStr = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+                    }
+
+                    const category = classifyExpenseAuto(note, merchant);
+                    const detail = (EXPENSE_CATEGORIES.find(c => c.name === category) || {}).detail || '';
+
+                    txs.push({
+                        useDate: dateStr,
+                        category,
+                        detail,
+                        amount,
+                        note: merchant,
+                        purpose: note
+                    });
+                }
+                txs._skippedCardSalary = skippedCardSalary;
+                resolve(txs);
+            } catch (err) { reject(err); }
+        };
+        reader.onerror = () => reject(new Error('파일 읽기 실패'));
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+function showBulkExpensePreview(txs) {
+    const byCat = {};
+    txs.forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
+    const total = txs.reduce((s, t) => s + t.amount, 0);
+    const skipped = txs._skippedCardSalary || 0;
+
+    const slug = name => (name || '기타').replace(/\s+/g, '');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:1000px;max-height:90vh;display:flex;flex-direction:column;">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3 style="margin:0 0 12px 0;">지출결의서 일괄 업로드 미리보기</h3>
+            <div style="background:#F0F7FF;padding:14px;border-radius:8px;margin-bottom:12px;">
+                <div style="font-size:15px;margin-bottom:8px;">
+                    <strong>총 ${txs.length}건</strong> · 합계 <strong style="color:#0066CC;">${total.toLocaleString()}원</strong>
+                    ${skipped > 0 ? `<span style="color:#9ca3af;font-size:13px;margin-left:8px;">(카드대금/급여 ${skipped}건 자동 제외)</span>` : ''}
+                </div>
+                <div>
+                    ${Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([cat, sum]) =>
+                        `<span class="card-category-summary cat-${slug(cat)}" style="margin:2px 4px 2px 0;">${cat}: ${sum.toLocaleString()}원</span>`
+                    ).join('')}
+                </div>
+            </div>
+            <div style="flex:1;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;">
+                <table class="data-table" style="font-size:12px;margin:0;">
+                    <thead style="position:sticky;top:0;background:#f9fafb;z-index:1;">
+                        <tr>
+                            <th style="width:90px;">사용날짜</th>
+                            <th style="width:140px;">카테고리</th>
+                            <th>지출 내용</th>
+                            <th style="width:160px;">거래처</th>
+                            <th style="width:110px;">금액</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${txs.map((t, idx) => `<tr>
+                            <td>${t.useDate}</td>
+                            <td>
+                                <select class="bulk-cat-select" data-idx="${idx}" style="padding:3px 6px;font-size:11px;border:1px solid #d1d5db;border-radius:4px;">
+                                    ${EXPENSE_CATEGORIES.map(c => `<option value="${c.name}" ${c.name === t.category ? 'selected' : ''}>${c.name}</option>`).join('')}
+                                </select>
+                            </td>
+                            <td>${escapeHtml(t.purpose)}</td>
+                            <td>${escapeHtml(t.note)}</td>
+                            <td style="text-align:right;font-weight:600;">${t.amount.toLocaleString()}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+                <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">취소</button>
+                <button class="btn-primary" id="bulk-expense-confirm">${txs.length}건 등록</button>
+            </div>
+        </div>
+    `;
+
+    // 카테고리 변경 이벤트
+    overlay.querySelectorAll('.bulk-cat-select').forEach(sel => {
+        sel.addEventListener('change', () => {
+            const idx = Number(sel.dataset.idx);
+            txs[idx].category = sel.value;
+            txs[idx].detail = (EXPENSE_CATEGORIES.find(c => c.name === sel.value) || {}).detail || '';
+        });
+    });
+
+    overlay.querySelector('#bulk-expense-confirm').addEventListener('click', async () => {
+        const btn = overlay.querySelector('#bulk-expense-confirm');
+        btn.disabled = true;
+        btn.textContent = '등록 중...';
+        try {
+            const result = await api('/api/expense-reports/bulk', 'POST', { transactions: txs });
+            alert(`등록 완료\n성공: ${result.inserted}건\n실패: ${result.failed}건`);
+            overlay.remove();
+            renderExpenseMyList().catch(console.error);
+            switchExpenseTab('my');
+        } catch (err) {
+            alert('등록 실패: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = `${txs.length}건 등록`;
+        }
+    });
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
 // 내 신청 목록
 async function renderExpenseMyList() {
     try {
