@@ -6839,6 +6839,12 @@ async function renderExpenseHistoryList() {
         const data = await api(url);
         window._lastExpenseHistory = data; // 엑셀 다운로드용 캐시
         const tbody = document.getElementById('expense-history-list');
+        // 합계 계산 (반려 제외)
+        const totalEl = document.getElementById('expense-history-total');
+        const countEl = document.getElementById('expense-history-count');
+        const sum = data.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
+        if (totalEl) totalEl.textContent = sum.toLocaleString() + ' 원';
+        if (countEl) countEl.textContent = data.length > 0 ? `${data.length}건` : '-';
         if (data.length === 0) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="6">지출결의서가 없습니다.</td></tr>';
             return;
