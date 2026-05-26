@@ -3438,10 +3438,7 @@ window.saveLeaveAdj = async function() {
     const adjustment = isAdd ? days : -days;
 
     try {
-        await api('/api/leave-adjustments', {
-            method: 'POST',
-            body: JSON.stringify({ user_id: Number(userId), adjustment, reason })
-        });
+        await api('/api/leave-adjustments', 'POST', { user_id: Number(userId), adjustment, reason });
         closeLeaveAdjModal();
         showToast('연차 조정 완료');
         loadLeaveAdjustments();
@@ -3454,7 +3451,7 @@ window.saveLeaveAdj = async function() {
 window.deleteLeaveAdj = async function(id) {
     if (!confirm('이 연차 조정을 취소하시겠습니까? 연차가 원복됩니다.')) return;
     try {
-        await api(`/api/leave-adjustments/${id}`, { method: 'DELETE' });
+        await api(`/api/leave-adjustments/${id}`, 'DELETE');
         showToast('연차 조정이 취소되었습니다');
         loadLeaveAdjustments();
         renderLeaveSummary();
