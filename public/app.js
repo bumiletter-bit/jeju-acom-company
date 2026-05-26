@@ -2477,7 +2477,11 @@ async function renderApprovalList() {
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
 
         tbody.innerHTML = docs.map(d => {
-            const dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            let dateStr = d.startDate === d.endDate ? d.startDate : `${d.startDate} ~ ${d.endDate}`;
+            // 시간차 휴가: 시간 표기 추가
+            if (d.subType === '시간차' && d.startTime && d.endTime) {
+                dateStr += ` (${d.startTime}~${d.endTime})`;
+            }
             const isMod = d.status === 'modification_pending';
             let modBadge = '';
             if (isMod) {
@@ -2490,7 +2494,10 @@ async function renderApprovalList() {
             if (isMod) {
                 infoHtml = `<div style="font-size:12px;">${d.modificationReason || '-'}</div>`;
                 if (d.modificationType === 'modify') {
-                    const newDate = d.newStartDate === d.newEndDate ? d.newStartDate : `${d.newStartDate} ~ ${d.newEndDate}`;
+                    let newDate = d.newStartDate === d.newEndDate ? d.newStartDate : `${d.newStartDate} ~ ${d.newEndDate}`;
+                    if (d.subType === '시간차' && d.newStartTime && d.newEndTime) {
+                        newDate += ` (${d.newStartTime}~${d.newEndTime})`;
+                    }
                     infoHtml += `<div style="font-size:11px; color:var(--primary); margin-top:2px;">변경: ${newDate}</div>`;
                 }
             }
