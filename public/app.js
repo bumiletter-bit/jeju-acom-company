@@ -6846,17 +6846,26 @@ async function renderExpenseHistoryList() {
         if (totalEl) totalEl.textContent = sum.toLocaleString() + ' 원';
         if (countEl) countEl.textContent = data.length > 0 ? `${data.length}건` : '-';
         if (data.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">지출결의서가 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="7">지출결의서가 없습니다.</td></tr>';
             return;
         }
+        const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         tbody.innerHTML = data.map(d => {
             const deleteBtn = currentUser.position === '대표' ? `<button class="btn-danger" onclick="deleteExpense(${d.id})" style="margin-left:4px;">삭제</button>` : '';
             const pdfBtn = d.status === 'approved' ? `<button class="btn-view" onclick="downloadExpensePDF(${d.id})" style="margin-left:4px;color:#7c3aed;border-color:#7c3aed;">PDF</button>` : '';
+            // 비고: items의 note들을 합쳐서 표시 (어디에 쓰였는지 식별용)
+            let noteText = '';
+            try {
+                const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
+                noteText = items.map(it => (it.note || '').trim()).filter(Boolean).join(', ');
+            } catch {}
+            const noteCell = noteText ? escapeHtml(noteText) : '<span style="color:#9ca3af;">-</span>';
             return `<tr>
                 <td>${d.title}</td>
                 <td>${d.applicant_position} ${d.applicant_name}</td>
                 <td>${Number(d.total_amount).toLocaleString()} 원</td>
                 <td>${new Date(d.created_at).toLocaleDateString()}</td>
+                <td style="max-width:280px;white-space:normal;word-break:break-word;font-size:13px;color:#374151;" title="${noteText ? escapeHtml(noteText) : ''}">${noteCell}</td>
                 <td>${getExpenseStatusBadge(d.status)}</td>
                 <td>
                     <button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button>
@@ -7138,7 +7147,7 @@ window.downloadExpensePDF = async function(id) {
                 </table>
                 <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
                     <tr><td style="padding:8px 0;font-weight:bold;width:80px;">제목</td><td style="padding:8px 0;">${d.title}</td></tr>
-                    <tr><td style="padding:8px 0;font-weight:bold;">작성일</td><td style="padding:8px 0;">${new Date(d.created_at).toLocaleDateString()}</td></tr>
+                    <tr><td style="padding:8px 0;font-weight:bold;">사용날짜</td><td style="padding:8px 0;">${new Date(d.use_date || d.created_at).toLocaleDateString()}</td></tr>
                     <tr><td style="padding:8px 0;font-weight:bold;">지출목적</td><td style="padding:8px 0;">${d.purpose || '-'}</td></tr>
                 </table>
                 <table style="width:100%;border-collapse:collapse;">
