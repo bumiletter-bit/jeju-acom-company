@@ -1463,9 +1463,9 @@ function extractFeatures(text) {
     let size = '';
     if (/꼬마/.test(t)) size = '꼬마';
 
-    // 중량 추출
+    // 중량 추출 (소수점 포함: 2.5kg, 4.5kg 등)
     let weight = null;
-    const wMatch = t.match(/(\d+)\s*kg/i);
+    const wMatch = t.match(/(\d+(?:\.\d+)?)\s*kg/i);
     if (wMatch) weight = wMatch[1] + 'kg';
 
     return { fruit, grade, weight, growType, size };
