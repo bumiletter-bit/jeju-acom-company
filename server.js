@@ -1671,13 +1671,26 @@ app.post('/api/expense-reports/bulk', authMiddleware, async (req, res) => {
             managerId = mgrResult.rows.length > 0 ? mgrResult.rows[0].id : null;
         }
 
-        let inserted = 0, failed = 0;
+        let inserted = 0, failed = 0, skipped = 0;
         for (const tx of transactions) {
             try {
                 const { useDate, category, detail, amount, note, purpose } = tx;
                 if (!category || !amount) { failed++; continue; }
                 const title = category;
                 const items = [{ category, detail: detail || '', amount: Number(amount), note: note || '' }];
+
+                // 중복 체크: 같은 사용날짜+거래처(note)+금액 → 스킵 (카드내역 일괄업로드와 동일 정책)
+                if (useDate) {
+                    const dup = await pool.query(
+                        `SELECT id FROM expense_reports
+                         WHERE use_date = $1 AND total_amount = $2
+                           AND items::text LIKE $3
+                         LIMIT 1`,
+                        [useDate, Number(amount), `%${(note || '').replace(/[%_]/g, m => '\\' + m)}%`]
+                    );
+                    if (dup.rows.length > 0) { skipped++; continue; }
+                }
+
                 await pool.query(
                     `INSERT INTO expense_reports (title, applicant_id, total_amount, purpose, items, manager_id, ceo_id, use_date)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -1698,7 +1711,7 @@ app.post('/api/expense-reports/bulk', authMiddleware, async (req, res) => {
             await createNotification(notifyTo, 'expense', '지출결의서 일괄 결재 요청', `${applicantName}님이 ${inserted}건의 지출결의서를 일괄 제출했습니다.`, 'expense');
         }
 
-        res.json({ success: true, inserted, failed });
+        res.json({ success: true, inserted, failed, skipped });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

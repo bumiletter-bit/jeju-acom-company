@@ -6621,6 +6621,24 @@ document.getElementById('expense-bulk-file')?.addEventListener('change', async (
     }
 });
 
+// 지출조회/이력 다운로드 탭의 일괄 업로드 (작성 탭과 동일 함수 재사용, 중복은 서버에서 스킵)
+document.getElementById('expense-history-bulk-btn')?.addEventListener('click', () => {
+    document.getElementById('expense-history-bulk-file').click();
+});
+document.getElementById('expense-history-bulk-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+        const txs = await parseBankExcelFile(file);
+        if (txs.length === 0) { alert('유효한 거래를 찾을 수 없습니다. 엑셀 양식을 확인해주세요.'); return; }
+        showBulkExpensePreview(txs);
+    } catch (err) {
+        alert('파일 읽기 실패: ' + err.message);
+    } finally {
+        e.target.value = '';
+    }
+});
+
 function classifyExpenseAuto(note, merchant) {
     const t = (note || '') + ' ' + (merchant || '');
     if (/광고|네이버 보상|안내문자|GFA/i.test(t)) return '광고선전비';
@@ -6643,16 +6661,18 @@ async function parseBankExcelFile(file) {
                 const ws = wb.Sheets[wb.SheetNames[0]];
                 const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
 
-                // 헤더 인식: 거래일자/출금금액/출금내용 필수
+                // 헤더 인식: 거래일자/출금금액 필수. 가맹점/메모는 양식별로 다름
+                // 지원 양식: ① 거래일자/통장인자/출금금액/출금내용  ② 거래일시/적요/거래내용/출금금액/.../메모
                 let headerIdx = -1, dateCol = -1, merchantCol = -1, amountCol = -1, noteCol = -1;
                 for (let i = 0; i < Math.min(rows.length, 10); i++) {
                     const r = rows[i].map(c => String(c).trim());
-                    const di = r.findIndex(c => /(거래일자|거래일|사용일|이용일|날짜|일자)$|^날짜|^일자/.test(c));
-                    const mi = r.findIndex(c => /(통장인자|가맹점|상대처|상호)/.test(c));
+                    const di = r.findIndex(c => /(거래일자|거래일시|거래일|사용일|이용일|날짜|일자)$|^날짜|^일자/.test(c));
+                    const mi = r.findIndex(c => /(통장인자|거래내용|가맹점|상대처|상호)/.test(c));
                     // '입출금구분' 같은 헤더 제외 — 정확히 금액 컬럼만
                     const ai = r.findIndex(c => /(출금금액|이용금액|사용금액|승인금액)/.test(c) && !/(합계|총액|구분)/.test(c));
                     // '통장인자내용' 같은 헤더 제외 — '내용' 단독 매치 방지
-                    const ni = r.findIndex((c, idx) => idx !== mi && /(출금내용|적요|메모|용도|적요내용)/.test(c));
+                    // 우선순위: 출금내용(기존양식) > 메모(새양식 사용자 직접입력) > 적요(거래채널)
+                    const ni = r.findIndex((c, idx) => idx !== mi && /(출금내용|메모|적요내용|적요|용도)/.test(c));
                     if (di >= 0 && ai >= 0) {
                         headerIdx = i; dateCol = di; merchantCol = mi; amountCol = ai; noteCol = ni;
                         break;
@@ -6781,10 +6801,17 @@ function showBulkExpensePreview(txs) {
         btn.textContent = '등록 중...';
         try {
             const result = await api('/api/expense-reports/bulk', 'POST', { transactions: txs });
-            alert(`등록 완료\n성공: ${result.inserted}건\n실패: ${result.failed}건`);
+            const skippedTxt = (result.skipped > 0) ? `\n중복 스킵: ${result.skipped}건` : '';
+            alert(`등록 완료\n성공: ${result.inserted}건${skippedTxt}\n실패: ${result.failed}건`);
             overlay.remove();
-            renderExpenseMyList().catch(console.error);
-            switchExpenseTab('my');
+            // 현재 활성 탭에 맞춰 새로고침. 조회/이력 탭에서 호출한 경우 history 갱신.
+            const activeTab = document.querySelector('[data-expense-tab].active')?.dataset.expenseTab;
+            if (activeTab === 'history') {
+                renderExpenseHistoryList().catch(console.error);
+            } else {
+                renderExpenseMyList().catch(console.error);
+                switchExpenseTab('my');
+            }
         } catch (err) {
             alert('등록 실패: ' + err.message);
             btn.disabled = false;
