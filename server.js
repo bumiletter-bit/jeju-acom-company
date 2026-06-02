@@ -2451,6 +2451,54 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// 박스재고 자동 차감/복구 헬퍼
+// settlement: { date, partner, items }, delta: +1 = 차감, -1 = 복구
+// 현재 대성(시온)만 자체 박스 → daesong_stock에서 ± qty
+async function applyBoxAdjustment(settlement, delta) {
+    try {
+        if (!settlement || settlement.partner !== '대성(시온)') return;
+        const dateRaw = settlement.date;
+        const dateStr = dateRaw instanceof Date
+            ? `${dateRaw.getFullYear()}-${String(dateRaw.getMonth() + 1).padStart(2, '0')}-${String(dateRaw.getDate()).padStart(2, '0')}`
+            : String(dateRaw).slice(0, 10);
+        const items = (typeof settlement.items === 'string' ? JSON.parse(settlement.items) : settlement.items) || [];
+        if (items.length === 0) return;
+
+        // 해당 날짜에 적용되는 pricing 조회 (대성)
+        const pricResult = await pool.query(
+            `SELECT items FROM pricing
+             WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date
+             ORDER BY id DESC LIMIT 1`,
+            ['대성(시온)', dateStr]
+        );
+        if (pricResult.rows.length === 0) return;
+        const pricItems = (pricResult.rows[0].items || []);
+        const boxTypeMap = {};
+        pricItems.forEach(p => {
+            if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType;
+        });
+        if (Object.keys(boxTypeMap).length === 0) return;
+
+        // 정산 items → 박스타입별 수량 누적
+        const adj = {};
+        items.forEach(it => {
+            const bt = boxTypeMap[it.name];
+            if (bt) adj[bt] = (adj[bt] || 0) + (Number(it.qty) || 0);
+        });
+
+        // box_inventory.daesong_stock 업데이트
+        for (const [boxType, qty] of Object.entries(adj)) {
+            if (qty === 0) continue;
+            await pool.query(
+                'UPDATE box_inventory SET daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2',
+                [delta * qty, boxType]
+            );
+        }
+    } catch (err) {
+        console.error('[box adj] error:', err.message);
+    }
+}
+
 app.post('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { date, partner, amount, items, fromPricing } = req.body;
@@ -2459,6 +2507,8 @@ app.post('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
             [date, partner, amount || 0, JSON.stringify(items || []), fromPricing || false]
         );
         const row = result.rows[0];
+        // 박스재고 자동 차감
+        await applyBoxAdjustment(row, +1);
         res.json({
             id: row.id, date: row.date, partner: row.partner,
             amount: Number(row.amount), items: row.items, fromPricing: row.from_pricing
@@ -2523,7 +2573,11 @@ app.get('/api/settlements/debug-pricing', authMiddleware, adminOnly, async (req,
 
 app.delete('/api/settlements/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
+        // 삭제 전 settlement 조회 — 박스 차감 복구용
+        const old = await pool.query('SELECT * FROM settlements WHERE id = $1', [req.params.id]);
+        const oldRow = old.rows[0];
         await pool.query('DELETE FROM settlements WHERE id = $1', [req.params.id]);
+        if (oldRow) await applyBoxAdjustment(oldRow, -1);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2546,12 +2600,21 @@ app.put('/api/settlements/:id/toggle-paid', authMiddleware, adminOnly, async (re
 app.put('/api/settlements/:id/items', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { items, amount } = req.body;
+        // 옛 settlement 먼저 조회 — 박스 차감 복구용
+        const old = await pool.query('SELECT * FROM settlements WHERE id = $1', [req.params.id]);
+        const oldRow = old.rows[0];
+
         const result = await pool.query(
             'UPDATE settlements SET items = $1, amount = $2 WHERE id = $3 RETURNING *',
             [JSON.stringify(items), amount, req.params.id]
         );
         if (result.rows.length === 0) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
         const row = result.rows[0];
+
+        // 박스 차감 재조정: 옛 복구(-1) → 새 차감(+1)
+        if (oldRow) await applyBoxAdjustment(oldRow, -1);
+        await applyBoxAdjustment(row, +1);
+
         res.json({ id: row.id, date: row.date, partner: row.partner, amount: row.amount, items: row.items, isPaid: row.is_paid });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
