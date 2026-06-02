@@ -1931,6 +1931,45 @@ app.put('/api/expense-reports/:id/reject', authMiddleware, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 재요청 (반려된 결의서를 다시 결재대기 상태로 되돌림 — 신청자 본인만)
+app.put('/api/expense-reports/:id/resubmit', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM expense_reports WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        const er = result.rows[0];
+
+        if (er.applicant_id !== req.user.id) {
+            return res.status(403).json({ error: '본인이 신청한 결의서만 재요청할 수 있습니다' });
+        }
+        if (er.status !== 'rejected') {
+            return res.status(400).json({ error: '반려된 결의서만 재요청할 수 있습니다' });
+        }
+
+        await pool.query(
+            `UPDATE expense_reports
+             SET status = 'pending',
+                 manager_status = CASE WHEN manager_id IS NULL THEN manager_status ELSE 'pending' END,
+                 manager_approved_at = NULL,
+                 ceo_status = 'pending',
+                 ceo_approved_at = NULL,
+                 rejected_by = NULL,
+                 reject_reason = NULL
+             WHERE id = $1`,
+            [req.params.id]
+        );
+
+        // 알림: 1차 결재자(부장 있으면 부장, 없으면 대표)
+        const notifyTo = er.manager_id || er.ceo_id;
+        if (notifyTo) {
+            const applicantInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [req.user.id]);
+            const applicantName = applicantInfo.rows[0] ? `${applicantInfo.rows[0].position} ${applicantInfo.rows[0].name}` : '';
+            await createNotification(notifyTo, 'expense', '지출결의서 재요청', `${applicantName}님이 "${er.title}" 지출결의서를 재요청했습니다.`, 'expense');
+        }
+
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // 삭제 (대표만 가능)
 app.delete('/api/expense-reports/:id', authMiddleware, async (req, res) => {
     try {

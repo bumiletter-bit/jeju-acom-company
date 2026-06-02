@@ -7104,6 +7104,11 @@ window.viewExpenseDetail = async function(id) {
             ? `<button class="btn-primary" onclick="downloadExpensePDF(${d.id})" style="margin-right:8px;">PDF 다운로드</button>`
             : '';
 
+        // 재요청 버튼 (반려된 결의서 + 신청자 본인일 때만)
+        const resubmitBtn = d.status === 'rejected' && d.applicant_id === currentUser.id
+            ? `<button class="btn-primary" onclick="resubmitExpense(${d.id})" style="margin-right:8px;background:#0066CC;border-color:#0066CC;">🔄 재요청</button>`
+            : '';
+
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
@@ -7123,6 +7128,7 @@ window.viewExpenseDetail = async function(id) {
                 ${rejectHtml}
                 <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
                     ${pdfBtn}
+                    ${resubmitBtn}
                     <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
                 </div>
             </div>
@@ -7130,6 +7136,18 @@ window.viewExpenseDetail = async function(id) {
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
         document.body.appendChild(overlay);
     } catch (err) { alert('상세 조회 실패: ' + err.message); }
+};
+
+// 재요청 (반려된 결의서를 다시 결재대기로 — 신청자 본인만)
+window.resubmitExpense = async function(id) {
+    if (!confirm('이 지출결의서를 다시 결재 요청하시겠습니까?\n반려 사유는 초기화되며 결재라인이 처음부터 다시 진행됩니다.')) return;
+    try {
+        await api(`/api/expense-reports/${id}/resubmit`, 'PUT');
+        alert('재요청 완료');
+        document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+        renderExpenseMyList().catch(console.error);
+        renderExpenseHistoryList().catch(console.error);
+    } catch (err) { alert('재요청 실패: ' + err.message); }
 };
 
 // 승인
