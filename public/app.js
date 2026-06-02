@@ -5513,11 +5513,16 @@ async function renderWeeklySettlement() {
             const endLabel = `${eDate.getMonth() + 1}/${eDate.getDate()}`;
             const weekLabel = `${idx + 1}주차<br><span style="font-size:11px; color:#6b7280;">${startLabel} ~ ${endLabel}</span>`;
 
+            // 클릭 가능한 거래처 금액 셀 (해당 주차 결제금액 엑셀 다운로드)
+            const partnerLink = (partner, total) => total > 0
+                ? `<a href="#" onclick="downloadPartnerWeeklySettlement('${partner}','${week.start}','${week.end}');return false;" title="해당 주차 결제금액 엑셀 다운로드" style="color:#0066CC;text-decoration:underline;cursor:pointer;font-weight:600;">${total.toLocaleString()} 원 📥</a>`
+                : '-';
+
             html += `<tr>
                 <td>${weekLabel}</td>
-                <td>${daesungTotal > 0 ? daesungTotal.toLocaleString() + ' 원' : '-'}</td>
-                <td>${hyodonTotal > 0 ? hyodonTotal.toLocaleString() + ' 원' : '-'}</td>
-                <td>${aewolTotal > 0 ? aewolTotal.toLocaleString() + ' 원' : '-'}</td>
+                <td>${partnerLink('대성(시온)', daesungTotal)}</td>
+                <td>${partnerLink('효돈농협', hyodonTotal)}</td>
+                <td>${partnerLink('애월취나물', aewolTotal)}</td>
                 <td>${cjTotal > 0 ? cjTotal.toLocaleString() + ' 원' : '-'}</td>
                 <td>${weekPrepay !== 0 ? '<span style="color:#8b5cf6;">' + (weekPrepay > 0 ? '-' : '') + Math.abs(weekPrepay).toLocaleString() + ' 원</span>' : '-'}</td>
                 <td><strong>${weekTotal !== 0 ? weekTotal.toLocaleString() + ' 원' : '-'}</strong></td>
@@ -5528,6 +5533,195 @@ async function renderWeeklySettlement() {
     } catch (err) {
         console.error('주간 정산 현황 오류:', err);
         tbody.innerHTML = '<tr class="empty-row"><td colspan="6">로드 실패</td></tr>';
+    }
+}
+
+// 주간 거래처별 결제금액 엑셀 다운로드 (옵션명 + 요일별 수량 + 총금액)
+window.downloadPartnerWeeklySettlement = async function(partner, weekStart, weekEnd) {
+    try {
+        // 주차가 월 경계에 걸칠 수 있어 전후 월 모두 조회
+        const startMonth = weekStart.substring(0, 7);
+        const endMonth = weekEnd.substring(0, 7);
+        const months = [...new Set([startMonth, endMonth])];
+        const settsByMonth = await Promise.all(months.map(m => api(`/api/settlements?month=${m}`).catch(() => [])));
+        const all = settsByMonth.flat();
+        const target = all.filter(s => s.partner === partner && s.date >= weekStart && s.date <= weekEnd);
+
+        if (target.length === 0) { alert('해당 주차에 정산 데이터가 없습니다.'); return; }
+
+        // 주차의 7일 날짜 배열 (월~일)
+        const days = [];
+        const sD = new Date(weekStart + 'T00:00:00');
+        const eD = new Date(weekEnd + 'T00:00:00');
+        for (let d = new Date(sD); d <= eD; d.setDate(d.getDate() + 1)) {
+            const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+            days.push(`${y}-${m}-${dd}`);
+        }
+        const dowLabels = ['일','월','화','수','목','금','토'];
+
+        // 품목별 요일별 집계
+        const byItem = {};
+        target.forEach(s => {
+            (s.items || []).forEach(it => {
+                const name = it.name || '(미입력)';
+                if (!byItem[name]) byItem[name] = { price: 0, qtyByDate: {}, totalQty: 0 };
+                byItem[name].qtyByDate[s.date] = (byItem[name].qtyByDate[s.date] || 0) + (Number(it.qty) || 0);
+                byItem[name].totalQty += (Number(it.qty) || 0);
+                if (Number(it.price) > 0) byItem[name].price = Number(it.price);
+            });
+        });
+        const itemNames = Object.keys(byItem).sort((a, b) => a.localeCompare(b, 'ko'));
+
+        // 요일 헤더 (예: "월\n5/25")
+        const dayHeaders = days.map(d => {
+            const dt = new Date(d + 'T00:00:00');
+            return `${dowLabels[dt.getDay()]}\n${dt.getMonth() + 1}/${dt.getDate()}`;
+        });
+
+        // 시트 데이터 구성 (rows = AoA)
+        const rows = [];
+        rows.push([`${partner} — 결제금액 (${weekStart} ~ ${weekEnd})`]);
+        rows.push([]);
+
+        // 표 1: 옵션명 / 단가 / 요일별 / 총수량 / 총금액
+        rows.push(['옵션명', '단가', ...dayHeaders, '총수량', '총금액']);
+        const dayQtyTotals = days.map(() => 0);
+        const dayAmtTotals = days.map(() => 0);
+        let grandQty = 0, grandAmount = 0;
+        itemNames.forEach(name => {
+            const info = byItem[name];
+            const qtys = days.map(d => info.qtyByDate[d] || 0);
+            qtys.forEach((q, i) => { dayQtyTotals[i] += q; dayAmtTotals[i] += q * info.price; });
+            const amt = info.price * info.totalQty;
+            grandQty += info.totalQty;
+            grandAmount += amt;
+            rows.push([name, info.price, ...qtys, info.totalQty, amt]);
+        });
+        const totalRowIdx_1 = rows.length;
+        rows.push(['합계', '', ...dayQtyTotals, grandQty, grandAmount]);
+
+        // 표 2: 수기 입력용 차감/비고 (사용자가 직접 채움)
+        rows.push([]);
+        rows.push(['※ 아래는 차감/파손/반품 수기 입력용 표입니다.']);
+        rows.push(['옵션명', '차감수량', '차감금액', '비고']);
+        itemNames.forEach(name => rows.push([name, '', '', '']));
+        rows.push(['합계', '', '', '']);
+
+        // 표 3: 요일별 총금액
+        rows.push([]);
+        rows.push(['요일별 총금액']);
+        rows.push(['요일', '금액']);
+        const dowTotalStartIdx = rows.length;
+        days.forEach((d, i) => {
+            const dt = new Date(d + 'T00:00:00');
+            rows.push([`${dowLabels[dt.getDay()]} (${dt.getMonth() + 1}/${dt.getDate()})`, dayAmtTotals[i]]);
+        });
+        rows.push(['총 결제금액', grandAmount]);
+
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+
+        // 컬럼 너비
+        ws['!cols'] = [
+            { wch: 32 },                            // 옵션명
+            { wch: 11 },                            // 단가
+            ...days.map(() => ({ wch: 10 })),       // 요일별 7개
+            { wch: 10 },                            // 총수량
+            { wch: 14 }                             // 총금액
+        ];
+
+        // 머지: 메인 헤더 행
+        const lastCol = 2 + days.length + 2 - 1;
+        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } }];
+
+        // 행 높이 (요일 헤더 줄바꿈)
+        ws['!rows'] = [
+            { hpt: 28 },  // 헤더
+            {},
+            { hpt: 32 }   // 컬럼 헤더 (줄바꿈)
+        ];
+
+        // 스타일 적용
+        styleSettlementWeeklySheet(ws, {
+            mainHeaderRow: 0,
+            colHeaderRow: 2,
+            dataStart: 3,
+            dataEnd: 2 + itemNames.length,
+            totalRow1: totalRowIdx_1,
+            amountCols: [1, 2 + days.length + 1], // 단가, 총금액
+            dayQtyCols: Array.from({ length: days.length }, (_, i) => 2 + i),
+            qtyTotalCol: 2 + days.length, // 총수량
+            dowTotalStart: dowTotalStartIdx
+        });
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, partner.substring(0, 30));
+        const fname = `${partner}_결제금액_${weekStart}~${weekEnd}.xlsx`;
+        XLSX.writeFile(wb, fname);
+    } catch (err) {
+        alert('엑셀 다운로드 실패: ' + err.message);
+        console.error(err);
+    }
+};
+
+// 주간 정산현황 엑셀 시트 스타일링 (테두리 + 색상 + 천단위 콤마)
+function styleSettlementWeeklySheet(ws, opt) {
+    if (!ws['!ref']) return;
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const border = {
+        top: { style: 'thin', color: { rgb: '999999' } },
+        bottom: { style: 'thin', color: { rgb: '999999' } },
+        left: { style: 'thin', color: { rgb: '999999' } },
+        right: { style: 'thin', color: { rgb: '999999' } }
+    };
+    for (let R = range.s.r; R <= range.e.r; R++) {
+        for (let C = range.s.c; C <= range.e.c; C++) {
+            const ref = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+            const s = { border, alignment: { vertical: 'center', wrapText: true } };
+            // 메인 타이틀
+            if (R === opt.mainHeaderRow) {
+                s.font = { bold: true, sz: 14 };
+                s.alignment = { horizontal: 'center', vertical: 'center' };
+                s.fill = { fgColor: { rgb: 'FFE0B2' } };
+            }
+            // 컬럼 헤더 (옵션명/단가/요일/총수량/총금액)
+            if (R === opt.colHeaderRow) {
+                s.font = { bold: true, sz: 11 };
+                s.fill = { fgColor: { rgb: 'E6F0FA' } };
+                s.alignment = { horizontal: 'center', vertical: 'center', wrapText: true };
+            }
+            // 데이터 행: 금액 컬럼 천단위 콤마, 수량 컬럼 가운데
+            if (R >= opt.dataStart && R <= opt.dataEnd) {
+                if (opt.amountCols.includes(C)) {
+                    s.numFmt = '#,##0';
+                    s.alignment = { ...s.alignment, horizontal: 'right' };
+                    if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
+                } else if (opt.dayQtyCols.includes(C) || C === opt.qtyTotalCol) {
+                    s.alignment = { ...s.alignment, horizontal: 'center' };
+                    if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
+                }
+            }
+            // 합계 행 1 (수량 + 금액 합계)
+            if (R === opt.totalRow1) {
+                s.font = { bold: true };
+                s.fill = { fgColor: { rgb: 'FFF8E1' } };
+                if (opt.amountCols.includes(C)) {
+                    s.numFmt = '#,##0';
+                    s.alignment = { ...s.alignment, horizontal: 'right' };
+                    if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
+                } else if (opt.dayQtyCols.includes(C) || C === opt.qtyTotalCol) {
+                    s.alignment = { ...s.alignment, horizontal: 'center' };
+                    if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
+                }
+            }
+            // 요일별 총금액 표의 금액 컬럼
+            if (R >= opt.dowTotalStart && C === 1) {
+                s.numFmt = '#,##0';
+                s.alignment = { ...s.alignment, horizontal: 'right' };
+                if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
+            }
+            ws[ref].s = s;
+        }
     }
 }
 
