@@ -358,6 +358,19 @@ async function initDB() {
             updated_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 박스 입고/이동 기록 — 거래처 자료 + 이력 추적용
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS box_movements (
+            id SERIAL PRIMARY KEY,
+            product_name VARCHAR(50) NOT NULL,
+            movement_type VARCHAR(20) NOT NULL,   -- 'order' (업체 입고) | 'transfer' (업체→대성 이동)
+            qty INTEGER NOT NULL,
+            date DATE NOT NULL,
+            note TEXT DEFAULT '',
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
     // 초기 데이터 삽입 (이미 있으면 무시)
     const boxProducts = ['귤 박스 3kg', '귤 박스 5kg', '귤 박스 10kg', '만감 박스 3kg', '만감 박스 5kg', '만감 박스 10kg'];
     for (const name of boxProducts) {
@@ -2135,6 +2148,72 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
+// 박스 입고/이동 등록 + 박스재고 자동 업데이트
+// type='order': 업체 입고 → company_stock +qty
+// type='transfer': 업체 → 대성 이동 → company_stock -qty, daesong_stock +qty
+app.post('/api/box-movements', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { productName, movementType, qty, date, note } = req.body;
+        const q = Number(qty) || 0;
+        if (!productName) return res.status(400).json({ error: 'productName 필요' });
+        if (!['order', 'transfer'].includes(movementType)) return res.status(400).json({ error: 'movementType은 order 또는 transfer' });
+        if (q <= 0) return res.status(400).json({ error: 'qty는 양수여야 합니다' });
+        if (!date) return res.status(400).json({ error: 'date 필요' });
+
+        // 박스재고 존재 확인
+        const inv = await pool.query('SELECT * FROM box_inventory WHERE product_name = $1', [productName]);
+        if (inv.rows.length === 0) return res.status(404).json({ error: `박스재고 '${productName}'을 찾을 수 없습니다` });
+
+        // 박스재고 업데이트
+        if (movementType === 'order') {
+            await pool.query(
+                'UPDATE box_inventory SET company_stock = company_stock + $1, updated_at = NOW() WHERE product_name = $2',
+                [q, productName]
+            );
+        } else { // transfer
+            await pool.query(
+                'UPDATE box_inventory SET company_stock = company_stock - $1, daesong_stock = daesong_stock + $1, updated_at = NOW() WHERE product_name = $2',
+                [q, productName]
+            );
+        }
+
+        // 이동 기록
+        const r = await pool.query(
+            `INSERT INTO box_movements (product_name, movement_type, qty, date, note, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            [productName, movementType, q, date, note || '', req.user.id]
+        );
+        res.json({ success: true, movement: r.rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 박스 이동 기록 삭제 (잘못 등록한 경우) — 박스재고도 역으로 복구
+app.delete('/api/box-movements/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM box_movements WHERE id = $1', [req.params.id]);
+        if (r.rows.length === 0) return res.status(404).json({ error: '기록을 찾을 수 없습니다' });
+        const m = r.rows[0];
+        const q = Number(m.qty) || 0;
+        if (m.movement_type === 'order') {
+            await pool.query(
+                'UPDATE box_inventory SET company_stock = company_stock - $1, updated_at = NOW() WHERE product_name = $2',
+                [q, m.product_name]
+            );
+        } else {
+            await pool.query(
+                'UPDATE box_inventory SET company_stock = company_stock + $1, daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2',
+                [q, m.product_name]
+            );
+        }
+        await pool.query('DELETE FROM box_movements WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // 박스 차감 마킹 초기화 — 모든 대성(시온) 정산의 box_adjusted_at = NULL
 // 박스재고 자체는 건들지 않음. 사용자가 박스재고를 수동 입력해 정확한 시작점으로 만든 뒤
 // 일괄 적용(markOnly)로 마킹만 다시 해주면 깔끔한 상태가 됨.
@@ -2151,21 +2230,24 @@ app.post('/api/box-inventory/reset-adjustments', authMiddleware, adminOnly, asyn
     }
 });
 
-// 특정 박스타입의 차감 이력 — 박스재고 카드 클릭 시 보여줄 리스트
-// 응답: [{ date, settlementId, qty, items: [{name, qty}], isAdjusted }]
+// 특정 박스타입의 통합 이력 — 박스재고 카드 클릭 시 보여줄 리스트
+// 자동 차감(대성 정산) + 업체 입고 + 시온 이동 모두 시간순
+// 응답: { productName, items: [{ date, type, qty, sign, note, ...meta }], summary: {...} }
 app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
     try {
         const { productName, startDate, endDate } = req.query;
         if (!productName) return res.status(400).json({ error: 'productName 필요' });
 
-        let query = 'SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner = $1';
-        const params = ['대성(시온)'];
-        if (startDate) { params.push(startDate); query += ` AND date >= $${params.length}::date`; }
-        if (endDate)   { params.push(endDate);   query += ` AND date <= $${params.length}::date`; }
-        query += ' ORDER BY date DESC';
-        const settResult = await pool.query(query, params);
+        // 1. 자동 차감 이력 (대성 정산 → daesong_stock 감소)
+        let settQuery = 'SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner = $1';
+        const settParams = ['대성(시온)'];
+        if (startDate) { settParams.push(startDate); settQuery += ` AND date >= $${settParams.length}::date`; }
+        if (endDate)   { settParams.push(endDate);   settQuery += ` AND date <= $${settParams.length}::date`; }
+        settQuery += ' ORDER BY date';
+        const settResult = await pool.query(settQuery, settParams);
 
-        const history = [];
+        const events = [];
+        let totalConsumed = 0;
         for (const sett of settResult.rows) {
             const dateStr = sett.date instanceof Date
                 ? `${sett.date.getFullYear()}-${String(sett.date.getMonth() + 1).padStart(2, '0')}-${String(sett.date.getDate()).padStart(2, '0')}`
@@ -2186,17 +2268,75 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
             if (matched.length === 0) continue;
             const totalQty = matched.reduce((s, it) => s + (Number(it.qty) || 0), 0);
             if (totalQty === 0) continue;
-            history.push({
+
+            totalConsumed += totalQty;
+            events.push({
                 date: dateStr,
-                settlementId: sett.id,
+                type: 'consume',                 // 정산 차감
                 qty: totalQty,
-                items: matched.map(it => ({ name: it.name, qty: Number(it.qty) || 0 })),
-                isAdjusted: !!sett.box_adjusted_at
+                sign: -1,
+                stockTarget: 'daesong',
+                note: matched.map(i => `${i.name}(${i.qty})`).join(', '),
+                isAdjusted: !!sett.box_adjusted_at,
+                refId: sett.id
             });
         }
 
-        const grandQty = history.reduce((s, h) => s + h.qty, 0);
-        res.json({ productName, history, grandQty, count: history.length });
+        // 2. 입고/이동 기록 조회
+        let movQuery = 'SELECT id, movement_type, qty, date, note FROM box_movements WHERE product_name = $1';
+        const movParams = [productName];
+        if (startDate) { movParams.push(startDate); movQuery += ` AND date >= $${movParams.length}::date`; }
+        if (endDate)   { movParams.push(endDate);   movQuery += ` AND date <= $${movParams.length}::date`; }
+        movQuery += ' ORDER BY date';
+        const movResult = await pool.query(movQuery, movParams);
+
+        let totalOrdered = 0, totalTransferred = 0;
+        for (const m of movResult.rows) {
+            const dateStr = m.date instanceof Date
+                ? `${m.date.getFullYear()}-${String(m.date.getMonth() + 1).padStart(2, '0')}-${String(m.date.getDate()).padStart(2, '0')}`
+                : String(m.date).slice(0, 10);
+            if (m.movement_type === 'order') {
+                totalOrdered += Number(m.qty) || 0;
+                events.push({
+                    date: dateStr,
+                    type: 'order',                // 업체 입고
+                    qty: Number(m.qty) || 0,
+                    sign: +1,
+                    stockTarget: 'company',
+                    note: m.note || '',
+                    refId: m.id
+                });
+            } else {
+                totalTransferred += Number(m.qty) || 0;
+                events.push({
+                    date: dateStr,
+                    type: 'transfer',             // 업체 → 대성 이동
+                    qty: Number(m.qty) || 0,
+                    sign: 0,                      // 회사 전체 합은 변동 없음 (재배치)
+                    stockTarget: 'transfer',
+                    note: m.note || '',
+                    refId: m.id
+                });
+            }
+        }
+
+        // 날짜 오름차순 정렬 (같은 날은 자동차감 → 입고 → 이동 순)
+        const typeOrder = { consume: 0, order: 1, transfer: 2 };
+        events.sort((a, b) => {
+            if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+            return (typeOrder[a.type] || 99) - (typeOrder[b.type] || 99);
+        });
+
+        res.json({
+            productName,
+            events,
+            summary: {
+                consumed: totalConsumed,       // 대성에서 정산으로 빠진 총 박스 수
+                ordered: totalOrdered,         // 업체에 신규 주문 입고된 총 수
+                transferred: totalTransferred, // 업체→대성 이동된 총 수
+                count: events.length
+            }
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

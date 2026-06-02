@@ -4555,61 +4555,209 @@ document.getElementById('box-reset-btn')?.addEventListener('click', async () => 
     }
 });
 
-// 박스 차감 이력 모달 — 박스 카드 클릭 시 호출
+// 박스 통합 이력 모달 (자동차감 + 업체 입고 + 시온 이동) — 박스 카드 클릭 시
 window.showBoxHistoryModal = async function(productName) {
     try {
         const r = await api(`/api/box-inventory/history?productName=${encodeURIComponent(productName)}`);
-        const rows = (r.history || []).map(h => {
-            const itemLines = h.items.map(i => `${i.name}(${i.qty})`).join(', ');
-            const mark = h.isAdjusted
-                ? '<span style="color:#16a34a;font-size:11px;">✅ 차감완료</span>'
-                : '<span style="color:#f59e0b;font-size:11px;">⏳ 미차감</span>';
+        const events = r.events || [];
+        const s = r.summary || { consumed:0, ordered:0, transferred:0, count:0 };
+
+        const typeMeta = {
+            order:    { label: '📥 업체 입고',  color: '#16a34a' },
+            transfer: { label: '🚚 시온 이동',  color: '#0066CC' },
+            consume:  { label: '📤 정산 차감',  color: '#dc2626' }
+        };
+
+        const rows = events.map(e => {
+            const meta = typeMeta[e.type] || { label: e.type, color: '#6b7280' };
+            const qtyDisplay = e.sign > 0 ? `+${e.qty}` : (e.sign < 0 ? `−${e.qty}` : `${e.qty}`);
+            const qtyColor = e.sign > 0 ? '#16a34a' : (e.sign < 0 ? '#dc2626' : '#0066CC');
+            const noteText = (e.note || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const delBtn = (e.type === 'order' || e.type === 'transfer')
+                ? `<button class="btn-danger" style="padding:2px 8px;font-size:11px;" onclick="deleteBoxMovement(${e.refId}, '${productName.replace(/'/g,"\\'")}')">삭제</button>`
+                : (e.isAdjusted === false ? '<span style="color:#f59e0b;font-size:11px;">⏳ 미차감</span>' : '<span style="color:#16a34a;font-size:11px;">✅</span>');
             return `<tr>
-                <td>${h.date}</td>
-                <td style="text-align:right;font-weight:700;color:#dc2626;">−${h.qty}</td>
-                <td style="font-size:12px;color:#6b7280;">${itemLines}</td>
-                <td style="text-align:center;">${mark}</td>
+                <td>${e.date}</td>
+                <td style="color:${meta.color};font-weight:600;">${meta.label}</td>
+                <td style="text-align:right;font-weight:700;color:${qtyColor};">${qtyDisplay}</td>
+                <td style="font-size:12px;color:#6b7280;">${noteText}</td>
+                <td style="text-align:center;">${delBtn}</td>
             </tr>`;
         }).join('');
 
-        const bodyHtml = (r.history || []).length === 0
-            ? '<div style="padding:20px;text-align:center;color:#9ca3af;">이 박스로 매칭된 정산이 없습니다.<br>(품목별 금액에서 박스 매핑을 먼저 해주세요)</div>'
+        const bodyHtml = events.length === 0
+            ? '<div style="padding:20px;text-align:center;color:#9ca3af;">아직 기록된 이력이 없습니다.</div>'
             : `<table class="data-table" style="font-size:13px;width:100%;">
-                <thead>
-                    <tr><th>날짜</th><th style="text-align:right;">수량</th><th>품목</th><th style="text-align:center;">차감 상태</th></tr>
-                </thead>
+                <thead><tr><th>날짜</th><th>구분</th><th style="text-align:right;">수량</th><th>비고/품목</th><th style="text-align:center;">관리</th></tr></thead>
                 <tbody>${rows}</tbody>
-                <tfoot>
-                    <tr style="background:#FFF8E1;font-weight:700;">
-                        <td>합계 (${r.count}건)</td>
-                        <td style="text-align:right;color:#dc2626;">−${r.grandQty}</td>
-                        <td colspan="2"></td>
-                    </tr>
-                </tfoot>
             </table>`;
 
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
-            <div class="modal" style="max-width:720px;">
+            <div class="modal" style="max-width:820px;">
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-                <h3 style="margin-bottom:12px;">📊 ${productName} — 차감 이력</h3>
-                <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">
-                    💡 대성(시온) 정산 중 <strong>${productName}</strong>와 매핑된 정산만 표시됩니다.<br>
-                    💡 ✅ 차감완료 = box_adjusted_at 표시된 정산 / ⏳ 미차감 = 아직 차감되지 않은 정산
+                <h3 style="margin-bottom:12px;">📊 ${productName} — 박스 이력</h3>
+                <div style="background:#F0F7FF;padding:12px;border-radius:6px;margin-bottom:12px;display:flex;gap:14px;flex-wrap:wrap;font-size:13px;">
+                    <span><strong style="color:#16a34a;">📥 업체 입고:</strong> +${s.ordered}</span>
+                    <span><strong style="color:#0066CC;">🚚 시온 이동:</strong> ${s.transferred}</span>
+                    <span><strong style="color:#dc2626;">📤 정산 차감:</strong> −${s.consumed}</span>
                 </div>
                 ${bodyHtml}
-                <div style="text-align:right;margin-top:16px;">
+                <div style="display:flex;justify-content:space-between;margin-top:16px;">
+                    <button class="btn-outline" onclick="downloadBoxHistoryExcel('${productName.replace(/'/g,"\\'")}')">📄 거래처 자료 (엑셀)</button>
                     <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
                 </div>
             </div>
         `;
         overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
         document.body.appendChild(overlay);
+
+        // 다운로드용 캐시
+        window._lastBoxHistory = { productName, events, summary: s };
     } catch (err) {
         alert('이력 조회 실패: ' + err.message);
     }
 };
+
+// 박스 이동 기록 삭제
+window.deleteBoxMovement = async function(id, productName) {
+    if (!confirm('이 기록을 삭제하시겠습니까?\n박스재고가 등록 전 상태로 자동 복구됩니다.')) return;
+    try {
+        await api(`/api/box-movements/${id}`, 'DELETE');
+        document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+        await renderBoxInventory();
+        showBoxHistoryModal(productName);
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+};
+
+// 박스 이력 엑셀 다운로드 (거래처 제출용)
+window.downloadBoxHistoryExcel = function(productName) {
+    const cache = window._lastBoxHistory;
+    if (!cache || cache.productName !== productName) { alert('이력을 다시 조회해주세요.'); return; }
+    const { events, summary } = cache;
+    const typeLabel = { order: '업체 입고', transfer: '시온 이동', consume: '정산 차감' };
+
+    const rows = [[`${productName} — 박스 이력 자료`]];
+    rows.push([]);
+    rows.push(['📥 업체 입고', summary.ordered, '🚚 시온 이동', summary.transferred, '📤 정산 차감', summary.consumed]);
+    rows.push([]);
+    rows.push(['날짜', '구분', '수량', '비고/품목']);
+    events.forEach(e => {
+        rows.push([
+            e.date,
+            typeLabel[e.type] || e.type,
+            e.sign > 0 ? e.qty : (e.sign < 0 ? -e.qty : e.qty),
+            e.note || ''
+        ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 13 }, { wch: 14 }, { wch: 10 }, { wch: 50 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }];
+
+    // 스타일링 — 헤더/합계 강조
+    if (XLSX.utils && ws['!ref']) {
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        const border = { top:{style:'thin',color:{rgb:'999999'}}, bottom:{style:'thin',color:{rgb:'999999'}}, left:{style:'thin',color:{rgb:'999999'}}, right:{style:'thin',color:{rgb:'999999'}} };
+        for (let R = range.s.r; R <= range.e.r; R++) {
+            for (let C = range.s.c; C <= range.e.c; C++) {
+                const ref = XLSX.utils.encode_cell({ r: R, c: C });
+                if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+                const st = { border, alignment: { vertical: 'center' } };
+                if (R === 0) { st.font = { bold: true, sz: 14 }; st.alignment = { horizontal: 'center', vertical: 'center' }; st.fill = { fgColor: { rgb: 'FFE0B2' } }; }
+                if (R === 2) { st.font = { bold: true }; st.fill = { fgColor: { rgb: 'F0F7FF' } }; }
+                if (R === 4) { st.font = { bold: true }; st.fill = { fgColor: { rgb: 'E6F0FA' } }; st.alignment = { horizontal: 'center' }; }
+                if (R >= 5 && C === 2) { st.alignment = { ...st.alignment, horizontal: 'right' }; st.numFmt = '#,##0'; if (typeof ws[ref].v === 'number') ws[ref].t = 'n'; }
+                ws[ref].s = st;
+            }
+        }
+    }
+
+    const wb = XLSX.utils.book_new();
+    const sheetName = productName.length > 28 ? productName.substring(0, 28) : productName;
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const today = new Date();
+    const fname = `${productName}_박스이력_${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}.xlsx`;
+    XLSX.writeFile(wb, fname);
+};
+
+// 박스 입고/이동 등록 모달
+document.getElementById('box-movement-btn')?.addEventListener('click', () => {
+    const optionsHtml = (boxInventoryData || []).map(b => `<option value="${b.productName}">${b.productName}</option>`).join('');
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:480px;">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3 style="margin-bottom:14px;">📥 박스 입고/이동 등록</h3>
+            <div style="font-size:12px;color:#6b7280;margin-bottom:12px;line-height:1.5;">
+                💡 <strong>업체 입고</strong>: 제작 업체에서 박스가 들어옴 → <strong>업체재고 +</strong><br>
+                💡 <strong>시온 이동</strong>: 업체재고에서 대성으로 배달 → <strong>업체재고 - / 대성재고 +</strong>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                <div>
+                    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">구분</label>
+                    <div style="display:flex;gap:8px;">
+                        <label style="flex:1;padding:10px;border:2px solid #16a34a;border-radius:6px;cursor:pointer;text-align:center;background:#f0fdf4;">
+                            <input type="radio" name="mov-type" value="order" checked style="margin-right:6px;">📥 업체 입고
+                        </label>
+                        <label style="flex:1;padding:10px;border:2px solid #0066CC;border-radius:6px;cursor:pointer;text-align:center;background:#F0F7FF;">
+                            <input type="radio" name="mov-type" value="transfer" style="margin-right:6px;">🚚 시온 이동
+                        </label>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">박스 종류</label>
+                    <select id="mov-product" class="form-input" style="width:100%;">${optionsHtml}</select>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <div style="flex:1;">
+                        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">수량</label>
+                        <input type="number" id="mov-qty" class="form-input" placeholder="예: 100" min="1" style="width:100%;">
+                    </div>
+                    <div style="flex:1;">
+                        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">날짜</label>
+                        <input type="date" id="mov-date" class="form-input" value="${todayStr}" style="width:100%;">
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">비고 (선택)</label>
+                    <input type="text" id="mov-note" class="form-input" placeholder="예: 한라포장 주문분 / 시온 1차 배달" style="width:100%;">
+                </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+                <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">취소</button>
+                <button class="btn-primary" id="mov-save">💾 저장</button>
+            </div>
+        </div>
+    `;
+    overlay.querySelector('#mov-save').addEventListener('click', async () => {
+        const movementType = overlay.querySelector('input[name="mov-type"]:checked').value;
+        const productName = overlay.querySelector('#mov-product').value;
+        const qty = Number(overlay.querySelector('#mov-qty').value) || 0;
+        const date = overlay.querySelector('#mov-date').value;
+        const note = overlay.querySelector('#mov-note').value.trim();
+        if (qty <= 0) { alert('수량을 입력해주세요.'); return; }
+        if (!date) { alert('날짜를 선택해주세요.'); return; }
+        const btn = overlay.querySelector('#mov-save');
+        btn.disabled = true; btn.textContent = '저장 중...';
+        try {
+            await api('/api/box-movements', 'POST', { productName, movementType, qty, date, note });
+            overlay.remove();
+            await renderBoxInventory();
+            alert('등록 완료');
+        } catch (err) {
+            alert('등록 실패: ' + err.message);
+            btn.disabled = false; btn.textContent = '💾 저장';
+        }
+    });
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+});
 
 // =============================================
 // 송장변환
