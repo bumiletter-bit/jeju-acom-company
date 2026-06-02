@@ -5596,8 +5596,8 @@ window.downloadPartnerWeeklySettlement = async function(partner, weekStart, week
             const amt = info.price * info.totalQty;
             grandQty += info.totalQty;
             grandAmount += amt;
-            // 차감수량 빈칸, 차감금액·총입금금액은 placeholder (수식은 시트화 후 주입)
-            rows.push([name, info.price, ...qtys, info.totalQty, amt, '', 0, amt]);
+            // 차감수량은 기본 0 (사용자가 직접 수량을 입력하면 차감금액·총입금금액 자동 계산)
+            rows.push([name, info.price, ...qtys, info.totalQty, amt, 0, 0, amt]);
         });
         // 합계 행 — 차감수량/차감금액/총입금금액은 합계 수식 주입
         const totalRowIdx = rows.length;
