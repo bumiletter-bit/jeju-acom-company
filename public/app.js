@@ -6622,12 +6622,10 @@ async function handleExpenseBulkUpload(file) {
         console.warn('중복 사전 체크 실패 (서버 응답 후 스킵으로 폴백):', err.message);
     }
 
-    const skippedCardSalary = txs._skippedCardSalary || 0;
-    newTxs._skippedCardSalary = skippedCardSalary;
     newTxs._skippedDuplicate = skippedDup;
 
     if (newTxs.length === 0) {
-        alert(`업로드할 신규 거래가 없습니다.\n중복: ${skippedDup}건 / 카드·급여 자동 제외: ${skippedCardSalary}건`);
+        alert(`업로드할 신규 거래가 없습니다.\n중복: ${skippedDup}건`);
         return;
     }
     showBulkExpensePreview(newTxs);
@@ -6698,7 +6696,6 @@ async function parseBankExcelFile(file) {
                 if (headerIdx < 0) return reject(new Error('엑셀 양식을 인식할 수 없습니다 (거래일자/출금금액 컬럼 필요)'));
 
                 const txs = [];
-                let skippedCardSalary = 0;
                 for (let i = headerIdx + 1; i < rows.length; i++) {
                     const r = rows[i];
                     const dateRaw = r[dateCol];
@@ -6707,12 +6704,6 @@ async function parseBankExcelFile(file) {
                     const note = String(noteCol >= 0 ? (r[noteCol] || '') : '').trim();
                     if (!dateRaw || !amount) continue;
                     if (!note && !merchant) continue;
-
-                    // 카드대금/급여 자동 제외
-                    if (/카드대금|급여지급|급여이체/i.test(note + ' ' + merchant)) {
-                        skippedCardSalary++;
-                        continue;
-                    }
 
                     let dateStr;
                     if (dateRaw instanceof Date) {
@@ -6736,7 +6727,6 @@ async function parseBankExcelFile(file) {
                         purpose: note
                     });
                 }
-                txs._skippedCardSalary = skippedCardSalary;
                 resolve(txs);
             } catch (err) { reject(err); }
         };
@@ -6749,14 +6739,12 @@ function showBulkExpensePreview(txs) {
     const byCat = {};
     txs.forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
     const total = txs.reduce((s, t) => s + t.amount, 0);
-    const skippedCardSalary = txs._skippedCardSalary || 0;
     const skippedDup = txs._skippedDuplicate || 0;
 
     const slug = name => (name || '기타').replace(/\s+/g, '');
-    const noticeBits = [];
-    if (skippedDup > 0) noticeBits.push(`중복 ${skippedDup}건 자동 제외`);
-    if (skippedCardSalary > 0) noticeBits.push(`카드대금/급여 ${skippedCardSalary}건 자동 제외`);
-    const noticeHtml = noticeBits.length ? `<span style="color:#9ca3af;font-size:13px;margin-left:8px;">(${noticeBits.join(' · ')})</span>` : '';
+    const noticeHtml = skippedDup > 0
+        ? `<span style="color:#9ca3af;font-size:13px;margin-left:8px;">(중복 ${skippedDup}건 자동 제외)</span>`
+        : '';
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
