@@ -2135,6 +2135,73 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
+// 박스 차감 마킹 초기화 — 모든 대성(시온) 정산의 box_adjusted_at = NULL
+// 박스재고 자체는 건들지 않음. 사용자가 박스재고를 수동 입력해 정확한 시작점으로 만든 뒤
+// 일괄 적용(markOnly)로 마킹만 다시 해주면 깔끔한 상태가 됨.
+app.post('/api/box-inventory/reset-adjustments', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE settlements SET box_adjusted_at = NULL
+             WHERE partner = $1 AND box_adjusted_at IS NOT NULL RETURNING id`,
+            ['대성(시온)']
+        );
+        res.json({ success: true, cleared: r.rows.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 특정 박스타입의 차감 이력 — 박스재고 카드 클릭 시 보여줄 리스트
+// 응답: [{ date, settlementId, qty, items: [{name, qty}], isAdjusted }]
+app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
+    try {
+        const { productName, startDate, endDate } = req.query;
+        if (!productName) return res.status(400).json({ error: 'productName 필요' });
+
+        let query = 'SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner = $1';
+        const params = ['대성(시온)'];
+        if (startDate) { params.push(startDate); query += ` AND date >= $${params.length}::date`; }
+        if (endDate)   { params.push(endDate);   query += ` AND date <= $${params.length}::date`; }
+        query += ' ORDER BY date DESC';
+        const settResult = await pool.query(query, params);
+
+        const history = [];
+        for (const sett of settResult.rows) {
+            const dateStr = sett.date instanceof Date
+                ? `${sett.date.getFullYear()}-${String(sett.date.getMonth() + 1).padStart(2, '0')}-${String(sett.date.getDate()).padStart(2, '0')}`
+                : String(sett.date).slice(0, 10);
+            const items = (typeof sett.items === 'string' ? JSON.parse(sett.items) : sett.items) || [];
+            if (items.length === 0) continue;
+
+            const pricResult = await pool.query(
+                `SELECT items FROM pricing WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date ORDER BY id DESC LIMIT 1`,
+                ['대성(시온)', dateStr]
+            );
+            if (pricResult.rows.length === 0) continue;
+            const pricItems = pricResult.rows[0].items || [];
+            const boxTypeMap = {};
+            pricItems.forEach(p => { if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType; });
+
+            const matched = items.filter(it => boxTypeMap[it.name] === productName);
+            if (matched.length === 0) continue;
+            const totalQty = matched.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+            if (totalQty === 0) continue;
+            history.push({
+                date: dateStr,
+                settlementId: sett.id,
+                qty: totalQty,
+                items: matched.map(it => ({ name: it.name, qty: Number(it.qty) || 0 })),
+                isAdjusted: !!sett.box_adjusted_at
+            });
+        }
+
+        const grandQty = history.reduce((s, h) => s + h.qty, 0);
+        res.json({ productName, history, grandQty, count: history.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // 박스재고 차감 일괄 적용 — 특정 시작일 이후 대성(시온) 정산을 모두 순회하며 daesong_stock 차감
 // 매칭 결과 상세 반환: 적용 정산 수, 박스타입별 누적 차감, 매칭 실패 항목, pricing 누락 날짜
 app.post('/api/box-inventory/reapply-adjustments', authMiddleware, adminOnly, async (req, res) => {

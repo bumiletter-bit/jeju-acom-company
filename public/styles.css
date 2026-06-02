@@ -1657,6 +1657,10 @@ tr.pricing-aewol td { background: #f3e8ff; border-color: #d8b4fe; }
     align-items: center;
 }
 
+/* 박스재고 카드 클릭 가능 표시 */
+.box-card-clickable { cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+.box-card-clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+
 /* 박스 선택 라인이 추가된 v2 행 */
 .pricing-row.pricing-row-v2 {
     flex-direction: column;

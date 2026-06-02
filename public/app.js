@@ -4389,12 +4389,12 @@ async function renderBoxInventory() {
         grid.innerHTML = data.map(item => {
             const total = item.companyStock + item.daesongStock;
             return `
-                <div class="leave-summary-card">
-                    <div class="emp-name">${item.productName}</div>
+                <div class="leave-summary-card box-card-clickable" onclick="showBoxHistoryModal('${item.productName.replace(/'/g, "\\'")}')">
+                    <div class="emp-name">${item.productName} <span style="color:#9ca3af;font-size:11px;font-weight:400;">📊 클릭하면 차감 이력</span></div>
                     <div class="leave-numbers" style="margin-top:12px;">
                         <div>총 재고<span class="num">${total}</span></div>
-                        <div>업체재고<span class="num used ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="editBoxStock(${item.id},'company')"` : ''} data-box-id="${item.id}" data-box-field="company">${item.companyStock}</span></div>
-                        <div>대성(시온)<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="editBoxStock(${item.id},'daesong')"` : ''} data-box-id="${item.id}" data-box-field="daesong">${item.daesongStock}</span></div>
+                        <div>업체재고<span class="num used ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="event.stopPropagation();editBoxStock(${item.id},'company')"` : ''} data-box-id="${item.id}" data-box-field="company">${item.companyStock}</span></div>
+                        <div>대성(시온)<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="event.stopPropagation();editBoxStock(${item.id},'daesong')"` : ''} data-box-id="${item.id}" data-box-field="daesong">${item.daesongStock}</span></div>
                     </div>
                 </div>
             `;
@@ -4542,6 +4542,74 @@ document.getElementById('box-reapply-btn')?.addEventListener('click', async () =
         inp.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
     }
 })();
+
+// 박스 차감 마킹 초기화 (모든 대성 정산의 box_adjusted_at = NULL)
+document.getElementById('box-reset-btn')?.addEventListener('click', async () => {
+    if (!confirm('⚠️ 모든 대성(시온) 정산의 \'박스 차감 완료\' 표시를 초기화합니다.\n\n박스재고 수량은 변경되지 않습니다.\n초기화 후 박스재고를 수동으로 정확한 값으로 입력하고,\n일괄 적용(✓ 마킹만 체크)으로 깔끔한 시작점을 만들어주세요.\n\n계속하시겠습니까?')) return;
+    try {
+        const r = await api('/api/box-inventory/reset-adjustments', 'POST', {});
+        alert(`초기화 완료. ${r.cleared}건의 정산 표시가 풀렸습니다.\n\n이제 박스재고 카드를 클릭해서 정확한 수량을 입력하고,\n일괄 적용 시 '✓ 마킹만' 체크해서 다시 표시해주세요.`);
+        await renderBoxInventory();
+    } catch (err) {
+        alert('초기화 실패: ' + err.message);
+    }
+});
+
+// 박스 차감 이력 모달 — 박스 카드 클릭 시 호출
+window.showBoxHistoryModal = async function(productName) {
+    try {
+        const r = await api(`/api/box-inventory/history?productName=${encodeURIComponent(productName)}`);
+        const rows = (r.history || []).map(h => {
+            const itemLines = h.items.map(i => `${i.name}(${i.qty})`).join(', ');
+            const mark = h.isAdjusted
+                ? '<span style="color:#16a34a;font-size:11px;">✅ 차감완료</span>'
+                : '<span style="color:#f59e0b;font-size:11px;">⏳ 미차감</span>';
+            return `<tr>
+                <td>${h.date}</td>
+                <td style="text-align:right;font-weight:700;color:#dc2626;">−${h.qty}</td>
+                <td style="font-size:12px;color:#6b7280;">${itemLines}</td>
+                <td style="text-align:center;">${mark}</td>
+            </tr>`;
+        }).join('');
+
+        const bodyHtml = (r.history || []).length === 0
+            ? '<div style="padding:20px;text-align:center;color:#9ca3af;">이 박스로 매칭된 정산이 없습니다.<br>(품목별 금액에서 박스 매핑을 먼저 해주세요)</div>'
+            : `<table class="data-table" style="font-size:13px;width:100%;">
+                <thead>
+                    <tr><th>날짜</th><th style="text-align:right;">수량</th><th>품목</th><th style="text-align:center;">차감 상태</th></tr>
+                </thead>
+                <tbody>${rows}</tbody>
+                <tfoot>
+                    <tr style="background:#FFF8E1;font-weight:700;">
+                        <td>합계 (${r.count}건)</td>
+                        <td style="text-align:right;color:#dc2626;">−${r.grandQty}</td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
+            </table>`;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:720px;">
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+                <h3 style="margin-bottom:12px;">📊 ${productName} — 차감 이력</h3>
+                <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">
+                    💡 대성(시온) 정산 중 <strong>${productName}</strong>와 매핑된 정산만 표시됩니다.<br>
+                    💡 ✅ 차감완료 = box_adjusted_at 표시된 정산 / ⏳ 미차감 = 아직 차감되지 않은 정산
+                </div>
+                ${bodyHtml}
+                <div style="text-align:right;margin-top:16px;">
+                    <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
+                </div>
+            </div>
+        `;
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+    } catch (err) {
+        alert('이력 조회 실패: ' + err.message);
+    }
+};
 
 // =============================================
 // 송장변환

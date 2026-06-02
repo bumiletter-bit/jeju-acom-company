@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=90">
+    <link rel="stylesheet" href="styles.css?v=91">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1472,6 +1472,10 @@
                         </label>
                         <button class="btn-primary" id="box-reapply-btn">📦 일괄 차감 적용</button>
                     </div>
+                    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #e5e7eb;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        <button class="btn-danger" id="box-reset-btn">🔄 차감 표시 초기화</button>
+                        <span style="font-size:12px;color:#dc2626;">⚠️ 이중 차감되어 박스재고가 꼬였을 때만 사용. 박스재고는 안 바뀌고 모든 정산의 '차감 완료' 표시만 풀립니다.</span>
+                    </div>
                 </div>
             </div>
 
@@ -1839,6 +1843,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=205"></script>
+    <script src="app.js?v=206"></script>
 </body>
 </html>
