@@ -4350,7 +4350,7 @@ async function renderBoxInventory() {
                 <div class="leave-summary-card">
                     <div class="emp-name">${item.productName}</div>
                     <div class="leave-numbers" style="margin-top:12px;">
-                        <div>총주문량<span class="num">${total}</span></div>
+                        <div>총 재고<span class="num">${total}</span></div>
                         <div>업체재고<span class="num used ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="editBoxStock(${item.id},'company')"` : ''} data-box-id="${item.id}" data-box-field="company">${item.companyStock}</span></div>
                         <div>대성(시온)<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="editBoxStock(${item.id},'daesong')"` : ''} data-box-id="${item.id}" data-box-field="daesong">${item.daesongStock}</span></div>
                     </div>
