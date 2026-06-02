@@ -86,6 +86,8 @@ async function initDB() {
     // 정산 결제완료 상태 컬럼 추가
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS is_paid BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`);
+    // 박스재고 차감 완료 표시 (NULL = 미적용, NOT NULL = 적용 시각)
+    await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS box_adjusted_at TIMESTAMP`);
     // CJ택배 일별 결제완료 상태
     await pool.query(`
         CREATE TABLE IF NOT EXISTS cj_daily_payments (
@@ -2137,11 +2139,20 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
 // 매칭 결과 상세 반환: 적용 정산 수, 박스타입별 누적 차감, 매칭 실패 항목, pricing 누락 날짜
 app.post('/api/box-inventory/reapply-adjustments', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { startDate } = req.body;
+        const { startDate, markOnly } = req.body;
         if (!startDate) return res.status(400).json({ error: 'startDate 필요 (YYYY-MM-DD)' });
 
+        // 이미 차감 적용된 정산(box_adjusted_at IS NOT NULL)은 자동 제외 — 이중 차감 방지
         const settResult = await pool.query(
-            `SELECT * FROM settlements WHERE partner = $1 AND date >= $2::date ORDER BY date`,
+            `SELECT * FROM settlements
+             WHERE partner = $1 AND date >= $2::date AND box_adjusted_at IS NULL
+             ORDER BY date`,
+            ['대성(시온)', startDate]
+        );
+        // 별도로 이미 적용된 정산 수 카운트 (사용자에게 안내)
+        const alreadyResult = await pool.query(
+            `SELECT COUNT(*)::int AS cnt FROM settlements
+             WHERE partner = $1 AND date >= $2::date AND box_adjusted_at IS NOT NULL`,
             ['대성(시온)', startDate]
         );
 
@@ -2150,7 +2161,8 @@ app.post('/api/box-inventory/reapply-adjustments', authMiddleware, adminOnly, as
             boxAdjustments: {},      // { '귤 박스 3kg': 차감수량 누적, ... }
             unmatchedItems: [],      // [{ date, name }] — boxType 매핑 안 된 정산 품목
             pricingMissingDates: [], // [date] — pricing 자체가 없는 날짜
-            settlementCount: settResult.rows.length
+            settlementCount: settResult.rows.length,
+            alreadyAppliedCount: alreadyResult.rows[0].cnt
         };
 
         for (const sett of settResult.rows) {
@@ -2187,16 +2199,24 @@ app.post('/api/box-inventory/reapply-adjustments', authMiddleware, adminOnly, as
                     result.unmatchedItems.push({ date: dateStr, name: it.name, qty });
                 }
             }
-            for (const [bt, qty] of Object.entries(adj)) {
-                if (qty > 0) {
-                    await pool.query(
-                        'UPDATE box_inventory SET daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2',
-                        [qty, bt]
-                    );
+            // markOnly=true이면 박스재고는 건들지 않고 box_adjusted_at만 마킹 (이미 수동 차감한 경우)
+            if (!markOnly) {
+                for (const [bt, qty] of Object.entries(adj)) {
+                    if (qty > 0) {
+                        await pool.query(
+                            'UPDATE box_inventory SET daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2',
+                            [qty, bt]
+                        );
+                    }
                 }
             }
-            if (matched) result.settlementsProcessed++;
+            // 매칭된 정산은 box_adjusted_at 마킹 → 다음 일괄 적용에서 자동 제외 (이중 차감 방지)
+            if (matched) {
+                await pool.query(`UPDATE settlements SET box_adjusted_at = NOW() WHERE id = $1`, [sett.id]);
+                result.settlementsProcessed++;
+            }
         }
+        result.markOnly = !!markOnly;
 
         res.json(result);
     } catch (err) {
@@ -2523,17 +2543,18 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
 });
 
 // 박스재고 자동 차감/복구 헬퍼
-// settlement: { date, partner, items }, delta: +1 = 차감, -1 = 복구
+// settlement: { id, date, partner, items, box_adjusted_at? }, delta: +1 = 차감, -1 = 복구
 // 현재 대성(시온)만 자체 박스 → daesong_stock에서 ± qty
+// settlements.box_adjusted_at = NULL(미적용) / NOT NULL(적용 완료) — 이중 차감 방지
 async function applyBoxAdjustment(settlement, delta) {
     try {
-        if (!settlement || settlement.partner !== '대성(시온)') return;
+        if (!settlement || settlement.partner !== '대성(시온)') return false;
         const dateRaw = settlement.date;
         const dateStr = dateRaw instanceof Date
             ? `${dateRaw.getFullYear()}-${String(dateRaw.getMonth() + 1).padStart(2, '0')}-${String(dateRaw.getDate()).padStart(2, '0')}`
             : String(dateRaw).slice(0, 10);
         const items = (typeof settlement.items === 'string' ? JSON.parse(settlement.items) : settlement.items) || [];
-        if (items.length === 0) return;
+        if (items.length === 0) return false;
 
         // 해당 날짜에 적용되는 pricing 조회 (대성)
         const pricResult = await pool.query(
@@ -2542,13 +2563,13 @@ async function applyBoxAdjustment(settlement, delta) {
              ORDER BY id DESC LIMIT 1`,
             ['대성(시온)', dateStr]
         );
-        if (pricResult.rows.length === 0) return;
+        if (pricResult.rows.length === 0) return false;
         const pricItems = (pricResult.rows[0].items || []);
         const boxTypeMap = {};
         pricItems.forEach(p => {
             if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType;
         });
-        if (Object.keys(boxTypeMap).length === 0) return;
+        if (Object.keys(boxTypeMap).length === 0) return false;
 
         // 정산 items → 박스타입별 수량 누적
         const adj = {};
@@ -2556,6 +2577,7 @@ async function applyBoxAdjustment(settlement, delta) {
             const bt = boxTypeMap[it.name];
             if (bt) adj[bt] = (adj[bt] || 0) + (Number(it.qty) || 0);
         });
+        if (Object.values(adj).every(q => q === 0)) return false;
 
         // box_inventory.daesong_stock 업데이트
         for (const [boxType, qty] of Object.entries(adj)) {
@@ -2565,8 +2587,19 @@ async function applyBoxAdjustment(settlement, delta) {
                 [delta * qty, boxType]
             );
         }
+
+        // 적용 완료 표시 / 복구 시 표시 해제
+        if (settlement.id) {
+            if (delta > 0) {
+                await pool.query(`UPDATE settlements SET box_adjusted_at = NOW() WHERE id = $1`, [settlement.id]);
+            } else {
+                await pool.query(`UPDATE settlements SET box_adjusted_at = NULL WHERE id = $1`, [settlement.id]);
+            }
+        }
+        return true;
     } catch (err) {
         console.error('[box adj] error:', err.message);
+        return false;
     }
 }
 
@@ -2644,11 +2677,12 @@ app.get('/api/settlements/debug-pricing', authMiddleware, adminOnly, async (req,
 
 app.delete('/api/settlements/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
-        // 삭제 전 settlement 조회 — 박스 차감 복구용
+        // 삭제 전 settlement 조회 — 박스 차감 복구용 (이미 적용된 경우만)
         const old = await pool.query('SELECT * FROM settlements WHERE id = $1', [req.params.id]);
         const oldRow = old.rows[0];
+        // 박스 복구를 먼저 (id 살아있을 때)
+        if (oldRow && oldRow.box_adjusted_at) await applyBoxAdjustment(oldRow, -1);
         await pool.query('DELETE FROM settlements WHERE id = $1', [req.params.id]);
-        if (oldRow) await applyBoxAdjustment(oldRow, -1);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2671,7 +2705,7 @@ app.put('/api/settlements/:id/toggle-paid', authMiddleware, adminOnly, async (re
 app.put('/api/settlements/:id/items', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { items, amount } = req.body;
-        // 옛 settlement 먼저 조회 — 박스 차감 복구용
+        // 옛 settlement 먼저 조회 — 박스 차감 복구용 (box_adjusted_at 포함)
         const old = await pool.query('SELECT * FROM settlements WHERE id = $1', [req.params.id]);
         const oldRow = old.rows[0];
 
@@ -2682,8 +2716,8 @@ app.put('/api/settlements/:id/items', authMiddleware, adminOnly, async (req, res
         if (result.rows.length === 0) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
         const row = result.rows[0];
 
-        // 박스 차감 재조정: 옛 복구(-1) → 새 차감(+1)
-        if (oldRow) await applyBoxAdjustment(oldRow, -1);
+        // 박스 차감 재조정: 옛 settlement이 이미 차감된 경우만 -1 복구 → 새 +1 차감
+        if (oldRow && oldRow.box_adjusted_at) await applyBoxAdjustment(oldRow, -1);
         await applyBoxAdjustment(row, +1);
 
         res.json({ id: row.id, date: row.date, partner: row.partner, amount: row.amount, items: row.items, isPaid: row.is_paid });

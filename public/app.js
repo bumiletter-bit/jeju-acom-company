@@ -4464,18 +4464,22 @@ document.getElementById('inventory-refresh-btn')?.addEventListener('click', asyn
 document.getElementById('box-reapply-btn')?.addEventListener('click', async () => {
     const startInput = document.getElementById('box-reapply-start');
     const startDate = startInput.value;
+    const markOnly = document.getElementById('box-reapply-markonly')?.checked || false;
     if (!startDate) { alert('시작일을 선택해주세요. (예: 2026-06-01)'); return; }
-    if (!confirm(`${startDate} 이후 대성(시온) 정산을 모두 조회해서 대성재고를 차감합니다.\n\n⚠️ 이미 차감된 정산도 다시 차감되므로, 처음 한 번만 적용하세요.\n\n계속하시겠습니까?`)) return;
+
+    const confirmMsg = markOnly
+        ? `${startDate} 이후 대성(시온) 정산을 '차감 완료'로 마킹만 합니다.\n박스재고는 변동되지 않습니다.\n\n(이미 수동으로 차감 적용한 경우에만 사용하세요)\n\n계속하시겠습니까?`
+        : `${startDate} 이후 대성(시온) 정산을 조회해서 박스재고를 차감합니다.\n이미 차감 적용된 정산(box_adjusted_at 표시)은 자동 제외됩니다.\n\n계속하시겠습니까?`;
+    if (!confirm(confirmMsg)) return;
 
     const btn = document.getElementById('box-reapply-btn');
     btn.disabled = true; btn.textContent = '적용 중...';
     try {
-        const r = await api('/api/box-inventory/reapply-adjustments', 'POST', { startDate });
+        const r = await api('/api/box-inventory/reapply-adjustments', 'POST', { startDate, markOnly });
 
-        // 결과 모달
         const adjLines = Object.entries(r.boxAdjustments || {})
-            .map(([bt, qty]) => `<li><strong>${bt}</strong>: 대성재고 <strong style="color:#dc2626;">−${qty}개</strong></li>`)
-            .join('') || '<li style="color:#9ca3af;">차감된 박스가 없습니다 (매칭 결과 0)</li>';
+            .map(([bt, qty]) => `<li><strong>${bt}</strong>: ${r.markOnly ? '<span style="color:#9ca3af;">마킹만 (재고 변동 X)</span>' : `대성재고 <strong style="color:#dc2626;">−${qty}개</strong>`}</li>`)
+            .join('') || '<li style="color:#9ca3af;">매칭된 박스가 없습니다</li>';
 
         const unmatchedHtml = (r.unmatchedItems || []).length === 0
             ? '<div style="color:#16a34a;font-size:13px;">✅ 모든 품목이 매칭됨</div>'
@@ -4487,17 +4491,27 @@ document.getElementById('box-reapply-btn')?.addEventListener('click', async () =
         const missingHtml = (r.pricingMissingDates || []).length === 0 ? ''
             : `<div style="margin-top:8px;color:#dc2626;font-size:12px;">📅 pricing 미등록 날짜: ${r.pricingMissingDates.join(', ')}</div>`;
 
+        const alreadyHtml = r.alreadyAppliedCount > 0
+            ? `<div style="font-size:13px;color:#0066CC;margin-top:6px;">⏭ 이미 차감 적용된 정산: <strong>${r.alreadyAppliedCount}건</strong> (자동 제외됨)</div>`
+            : '';
+
+        const modeHtml = r.markOnly
+            ? '<div style="background:#FFF8E1;padding:8px;border-radius:6px;margin-bottom:10px;font-size:13px;">📝 <strong>마킹 모드</strong> — 박스재고는 변동되지 않았고, 정산만 \'차감 완료\'로 표시됐어요. 다음 일괄 적용에서 이 정산들은 자동 제외돼요.</div>'
+            : '';
+
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
             <div class="modal" style="max-width:560px;">
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-                <h3 style="margin-bottom:12px;">📦 일괄 차감 적용 결과</h3>
+                <h3 style="margin-bottom:12px;">📦 일괄 적용 결과</h3>
+                ${modeHtml}
                 <div style="background:#F0F7FF;padding:12px;border-radius:6px;margin-bottom:12px;font-size:14px;">
-                    <div>📋 조회된 정산: <strong>${r.settlementCount}건</strong></div>
-                    <div>✅ 매칭되어 차감 적용: <strong>${r.settlementsProcessed}건</strong></div>
+                    <div>📋 새로 처리할 정산: <strong>${r.settlementCount}건</strong></div>
+                    <div>✅ 매칭되어 ${r.markOnly ? '마킹' : '차감'}: <strong>${r.settlementsProcessed}건</strong></div>
+                    ${alreadyHtml}
                 </div>
-                <h4 style="margin:8px 0;">박스타입별 누적 차감</h4>
+                <h4 style="margin:8px 0;">박스타입별 결과</h4>
                 <ul style="margin:0 0 0 16px;font-size:14px;">${adjLines}</ul>
                 ${unmatchedHtml}
                 ${missingHtml}
@@ -4509,6 +4523,9 @@ document.getElementById('box-reapply-btn')?.addEventListener('click', async () =
         overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
         document.body.appendChild(overlay);
 
+        // 체크박스 초기화
+        const mc = document.getElementById('box-reapply-markonly');
+        if (mc) mc.checked = false;
         await renderBoxInventory();
     } catch (err) {
         alert('일괄 적용 실패: ' + err.message);
