@@ -2133,6 +2133,77 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
+// 박스재고 차감 일괄 적용 — 특정 시작일 이후 대성(시온) 정산을 모두 순회하며 daesong_stock 차감
+// 매칭 결과 상세 반환: 적용 정산 수, 박스타입별 누적 차감, 매칭 실패 항목, pricing 누락 날짜
+app.post('/api/box-inventory/reapply-adjustments', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { startDate } = req.body;
+        if (!startDate) return res.status(400).json({ error: 'startDate 필요 (YYYY-MM-DD)' });
+
+        const settResult = await pool.query(
+            `SELECT * FROM settlements WHERE partner = $1 AND date >= $2::date ORDER BY date`,
+            ['대성(시온)', startDate]
+        );
+
+        const result = {
+            settlementsProcessed: 0,
+            boxAdjustments: {},      // { '귤 박스 3kg': 차감수량 누적, ... }
+            unmatchedItems: [],      // [{ date, name }] — boxType 매핑 안 된 정산 품목
+            pricingMissingDates: [], // [date] — pricing 자체가 없는 날짜
+            settlementCount: settResult.rows.length
+        };
+
+        for (const sett of settResult.rows) {
+            const dateStr = sett.date instanceof Date
+                ? `${sett.date.getFullYear()}-${String(sett.date.getMonth() + 1).padStart(2, '0')}-${String(sett.date.getDate()).padStart(2, '0')}`
+                : String(sett.date).slice(0, 10);
+            const items = (typeof sett.items === 'string' ? JSON.parse(sett.items) : sett.items) || [];
+            if (items.length === 0) continue;
+
+            const pricResult = await pool.query(
+                `SELECT items FROM pricing WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date ORDER BY id DESC LIMIT 1`,
+                ['대성(시온)', dateStr]
+            );
+            if (pricResult.rows.length === 0) {
+                if (!result.pricingMissingDates.includes(dateStr)) result.pricingMissingDates.push(dateStr);
+                continue;
+            }
+            const pricItems = pricResult.rows[0].items || [];
+            const boxTypeMap = {};
+            pricItems.forEach(p => {
+                if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType;
+            });
+
+            const adj = {};
+            let matched = false;
+            for (const it of items) {
+                const bt = boxTypeMap[it.name];
+                const qty = Number(it.qty) || 0;
+                if (bt && qty > 0) {
+                    adj[bt] = (adj[bt] || 0) + qty;
+                    result.boxAdjustments[bt] = (result.boxAdjustments[bt] || 0) + qty;
+                    matched = true;
+                } else if (qty > 0) {
+                    result.unmatchedItems.push({ date: dateStr, name: it.name, qty });
+                }
+            }
+            for (const [bt, qty] of Object.entries(adj)) {
+                if (qty > 0) {
+                    await pool.query(
+                        'UPDATE box_inventory SET daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2',
+                        [qty, bt]
+                    );
+                }
+            }
+            if (matched) result.settlementsProcessed++;
+        }
+
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // === Planner API (마이 플래너) ===
 
 // Todos

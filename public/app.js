@@ -4460,6 +4460,72 @@ document.getElementById('inventory-refresh-btn')?.addEventListener('click', asyn
     }
 });
 
+// 박스 차감 일괄 적용 — 시작일 입력 + API 호출 + 결과 표시
+document.getElementById('box-reapply-btn')?.addEventListener('click', async () => {
+    const startInput = document.getElementById('box-reapply-start');
+    const startDate = startInput.value;
+    if (!startDate) { alert('시작일을 선택해주세요. (예: 2026-06-01)'); return; }
+    if (!confirm(`${startDate} 이후 대성(시온) 정산을 모두 조회해서 대성재고를 차감합니다.\n\n⚠️ 이미 차감된 정산도 다시 차감되므로, 처음 한 번만 적용하세요.\n\n계속하시겠습니까?`)) return;
+
+    const btn = document.getElementById('box-reapply-btn');
+    btn.disabled = true; btn.textContent = '적용 중...';
+    try {
+        const r = await api('/api/box-inventory/reapply-adjustments', 'POST', { startDate });
+
+        // 결과 모달
+        const adjLines = Object.entries(r.boxAdjustments || {})
+            .map(([bt, qty]) => `<li><strong>${bt}</strong>: 대성재고 <strong style="color:#dc2626;">−${qty}개</strong></li>`)
+            .join('') || '<li style="color:#9ca3af;">차감된 박스가 없습니다 (매칭 결과 0)</li>';
+
+        const unmatchedHtml = (r.unmatchedItems || []).length === 0
+            ? '<div style="color:#16a34a;font-size:13px;">✅ 모든 품목이 매칭됨</div>'
+            : `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#f59e0b;font-weight:600;">⚠ 매칭 실패 ${r.unmatchedItems.length}건 (품목별 금액에 박스 매핑이 없는 정산 품목)</summary>
+                <ul style="margin:8px 0 0 16px;font-size:12px;max-height:200px;overflow:auto;">
+                    ${r.unmatchedItems.slice(0, 200).map(u => `<li>${u.date} · ${u.name} (${u.qty}개)</li>`).join('')}
+                </ul></details>`;
+
+        const missingHtml = (r.pricingMissingDates || []).length === 0 ? ''
+            : `<div style="margin-top:8px;color:#dc2626;font-size:12px;">📅 pricing 미등록 날짜: ${r.pricingMissingDates.join(', ')}</div>`;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:560px;">
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+                <h3 style="margin-bottom:12px;">📦 일괄 차감 적용 결과</h3>
+                <div style="background:#F0F7FF;padding:12px;border-radius:6px;margin-bottom:12px;font-size:14px;">
+                    <div>📋 조회된 정산: <strong>${r.settlementCount}건</strong></div>
+                    <div>✅ 매칭되어 차감 적용: <strong>${r.settlementsProcessed}건</strong></div>
+                </div>
+                <h4 style="margin:8px 0;">박스타입별 누적 차감</h4>
+                <ul style="margin:0 0 0 16px;font-size:14px;">${adjLines}</ul>
+                ${unmatchedHtml}
+                ${missingHtml}
+                <div style="text-align:right;margin-top:16px;">
+                    <button class="btn-primary" onclick="this.closest('.modal-overlay').remove()">확인</button>
+                </div>
+            </div>
+        `;
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+
+        await renderBoxInventory();
+    } catch (err) {
+        alert('일괄 적용 실패: ' + err.message);
+    } finally {
+        btn.disabled = false; btn.textContent = '📦 일괄 차감 적용';
+    }
+});
+
+// 박스재고 페이지 진입 시 시작일 기본값(오늘) 설정
+(function setBoxReapplyDefault(){
+    const inp = document.getElementById('box-reapply-start');
+    if (inp && !inp.value) {
+        const t = new Date();
+        inp.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+    }
+})();
+
 // =============================================
 // 송장변환
 // =============================================
