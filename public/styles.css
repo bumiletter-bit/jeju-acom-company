@@ -4035,7 +4035,7 @@ textarea.form-input {
 .ss-cal-cell.ss-cal-sel.ss-cal-sun .ss-cal-num,
 .ss-cal-cell.ss-cal-sel.ss-cal-sat .ss-cal-num { color: #fff; }
 .ss-cal-amt {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     line-height: 1.2;
     word-break: keep-all;
@@ -4043,16 +4043,20 @@ textarea.form-input {
 .ss-cal-amt-pos { color: #1a7340; }
 .ss-cal-amt-neg { color: #E53935; }
 .ss-cal-diff {
-    font-size: 8px;
-    font-weight: 600;
-    line-height: 1.1;
-    margin-top: 1px;
+    font-size: 10.5px;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-top: 2px;
     word-break: keep-all;
 }
-.ss-cal-diff-up { color: #E53935; }
-.ss-cal-diff-down { color: #1565C0; }
+.ss-cal-diff-up { color: #D32F2F; }     /* 상승: 진한 빨강 (가독성 향상) */
+.ss-cal-diff-down { color: #1565C0; }    /* 하락: 파랑 */
 .ss-cal-diff-zero { color: #888; }
-.ss-cal-cell.ss-cal-sel .ss-cal-diff { opacity: 0.9; }
+/* 선택된 셀(남색 배경)에서는 diff가 묻히지 않도록 밝은 색으로 강제 + 굵게 */
+.ss-cal-cell.ss-cal-sel .ss-cal-diff { opacity: 1; font-weight: 900; }
+.ss-cal-cell.ss-cal-sel .ss-cal-diff-up   { color: #FFB4B4 !important; text-shadow: 0 0 6px rgba(255,180,180,0.3); }
+.ss-cal-cell.ss-cal-sel .ss-cal-diff-down { color: #9FD7FF !important; text-shadow: 0 0 6px rgba(159,215,255,0.3); }
+.ss-cal-cell.ss-cal-sel .ss-cal-diff-zero { color: #e5e7eb !important; }
 .ss-cal-cell.ss-cal-has::after {
     content: '';
     position: absolute;
@@ -4277,10 +4281,10 @@ textarea.form-input {
     .ss-header { padding: 0 12px; flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px; }
     .ss-cal-wrap { padding: 10px 8px; }
     .ss-cal-grid { gap: 3px; }
-    .ss-cal-cell { min-height: 52px; padding: 4px 2px 3px; border-radius: 8px; }
+    .ss-cal-cell { min-height: 60px; padding: 4px 2px 3px; border-radius: 8px; }
     .ss-cal-num { font-size: 11px; }
-    .ss-cal-amt { font-size: 8.5px; }
-    .ss-cal-diff { font-size: 7px; }
+    .ss-cal-amt { font-size: 9.5px; font-weight: 700; }
+    .ss-cal-diff { font-size: 9px; font-weight: 800; margin-top: 1px; }
     .ss-cal-title { font-size: 15px; }
     .ss-cal-nav { width: 32px; height: 32px; font-size: 11px; }
     .ss-cal-dayname { font-size: 10px; }
