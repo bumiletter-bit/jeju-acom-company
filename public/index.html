@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=89">
+    <link rel="stylesheet" href="styles.css?v=90">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1295,6 +1295,7 @@
                         <div class="settlement-rows-header" id="pricing-rows-header" style="display:none;">
                             <span class="row-header-item">품목명</span>
                             <span class="row-header-price">단가 (원)</span>
+                            <span class="row-header-box" style="flex:1;color:#6b7280;font-size:13px;">📦 박스 (1개 선택)</span>
                             <span class="row-header-action"></span>
                         </div>
                         <div id="pricing-rows"></div>
@@ -1317,11 +1318,12 @@
                                 <th>거래처</th>
                                 <th>품목명</th>
                                 <th>단가(가격)</th>
+                                <th>박스</th>
                             </tr>
                         </thead>
                         <tbody id="pricing-list">
                             <tr class="empty-row">
-                                <td colspan="4">설정된 금액이 없습니다.</td>
+                                <td colspan="5">설정된 금액이 없습니다.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1818,6 +1820,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=202"></script>
+    <script src="app.js?v=203"></script>
 </body>
 </html>

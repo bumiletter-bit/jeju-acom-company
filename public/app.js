@@ -2043,12 +2043,38 @@ document.getElementById('pricing-reset-btn').addEventListener('click', () => {
     document.getElementById('pricing-end-date').value = formatDate(eow);
 });
 
-function addPricingRow(name, price) {
-    name = name || ''; price = price || '';
+// 박스 옵션 (값은 box_inventory.product_name과 정확히 일치 — 추후 차감 매칭용)
+const BOX_OPTIONS = [
+    { value: '해당없음', label: '해당없음' },
+    { value: '귤 박스 3kg', label: '귤박스 3kg' },
+    { value: '귤 박스 5kg', label: '귤박스 5kg' },
+    { value: '귤 박스 10kg', label: '귤박스 10kg' },
+    { value: '만감 박스 3kg', label: '만감박스 3kg' },
+    { value: '만감 박스 5kg', label: '만감박스 5kg' },
+    { value: '만감 박스 10kg', label: '만감박스 10kg' }
+];
+let _pricingRowUid = 0;
+
+function addPricingRow(name, price, boxType) {
+    name = name || ''; price = price || ''; boxType = boxType || '해당없음';
     const container = document.getElementById('pricing-rows');
     const div = document.createElement('div');
-    div.className = 'pricing-row';
-    div.innerHTML = `<input type="text" placeholder="품목명" class="pricing-item-name" value="${name}"><input type="number" placeholder="단가 (원)" class="pricing-item-price" value="${price}"><button class="btn-remove-row" onclick="removePricingRow(this)">×</button>`;
+    div.className = 'pricing-row pricing-row-v2';
+    const uid = ++_pricingRowUid;
+    const boxHtml = BOX_OPTIONS.map(o =>
+        `<label class="pricing-box-opt"><input type="radio" name="pricing-box-${uid}" value="${o.value}" ${o.value === boxType ? 'checked' : ''}><span>${o.label}</span></label>`
+    ).join('');
+    div.innerHTML = `
+        <div class="pricing-row-main">
+            <input type="text" placeholder="품목명" class="pricing-item-name" value="${name}">
+            <input type="number" placeholder="단가 (원)" class="pricing-item-price" value="${price}">
+            <button class="btn-remove-row" onclick="removePricingRow(this)">×</button>
+        </div>
+        <div class="pricing-row-box-line">
+            <span class="pricing-box-label">📦 박스:</span>
+            ${boxHtml}
+        </div>
+    `;
     container.appendChild(div);
     showPricingRows();
 }
@@ -2065,7 +2091,9 @@ document.getElementById('pricing-save').addEventListener('click', async () => {
         document.querySelectorAll('#pricing-rows .pricing-row').forEach(row => {
             const name = row.querySelector('.pricing-item-name').value.trim();
             const price = row.querySelector('.pricing-item-price').value;
-            if (name) rows.push({ name, price: Number(price) || 0 });
+            const boxChecked = row.querySelector('input[type="radio"]:checked');
+            const boxType = boxChecked ? boxChecked.value : '해당없음';
+            if (name) rows.push({ name, price: Number(price) || 0, boxType });
         });
         if (rows.length === 0) return alert('품목을 입력해주세요.');
 
@@ -2080,26 +2108,40 @@ document.getElementById('pricing-save').addEventListener('click', async () => {
     } catch (err) { alert('저장 실패: ' + err.message); }
 });
 
+// 박스 표시용 짧은 라벨 + 색상
+function pricingBoxBadge(boxType) {
+    if (!boxType || boxType === '해당없음') return '<span style="color:#9ca3af;font-size:12px;">해당없음</span>';
+    const opt = BOX_OPTIONS.find(o => o.value === boxType);
+    const label = opt ? opt.label : boxType;
+    // 귤박스=주황, 만감박스=초록 톤
+    const isGyul = boxType.indexOf('귤') === 0;
+    const bg = isGyul ? '#FFF3E0' : '#E8F5E9';
+    const color = isGyul ? '#E65100' : '#2E7D32';
+    return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">📦 ${label}</span>`;
+}
+
 async function renderPricingList() {
     const data = await api('/api/pricing');
     pricingCache = data;
     const tbody = document.getElementById('pricing-list');
 
     if (data.length === 0) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">설정된 금액이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">설정된 금액이 없습니다.</td></tr>';
     } else {
         let rows = '';
         data.forEach(item => {
             const items = item.items || [];
             if (items.length === 0) {
-                rows += `<tr><td>${item.startDate} ~ ${item.endDate}</td><td>${item.partner}</td><td>-</td><td>-</td></tr>`;
+                rows += `<tr><td>${item.startDate} ~ ${item.endDate}</td><td>${item.partner}</td><td>-</td><td>-</td><td>-</td></tr>`;
             } else {
                 const colorClass = item.partner === '대성(시온)' ? 'pricing-daesung' : (item.partner === '효돈농협' ? 'pricing-hyodon' : 'pricing-aewol');
                 items.forEach((it, idx) => {
                     rows += `<tr class="${colorClass}">
                         ${idx === 0 ? `<td rowspan="${items.length}">${item.startDate} ~ ${item.endDate}<br><button class="btn-danger" style="margin-top:6px" onclick="deletePricing(${item.id})">삭제</button></td>` : ''}
                         ${idx === 0 ? `<td rowspan="${items.length}">${item.partner}</td>` : ''}
-                        <td>${it.name}</td><td>${(it.price || 0).toLocaleString()} 원</td>
+                        <td>${it.name}</td>
+                        <td>${(it.price || 0).toLocaleString()} 원</td>
+                        <td>${pricingBoxBadge(it.boxType)}</td>
                     </tr>`;
                 });
             }
