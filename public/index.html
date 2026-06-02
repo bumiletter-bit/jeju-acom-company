@@ -1456,28 +1456,6 @@
                     </div>
                 </div>
 
-                <!-- 박스 차감 일괄 적용 -->
-                <div class="card" id="box-reapply-card">
-                    <h2>📦 박스 차감 일괄 적용 (대성(시온))</h2>
-                    <div style="font-size:13px;color:#6b7280;margin-bottom:12px;">
-                        💡 <strong>이미 차감 적용된 정산은 자동으로 건너뜁니다.</strong> 새 정산만 차감되니까 매일 누를 필요 없어요.<br>
-                        💡 시작일 이후 <strong>대성(시온) 정산</strong>을 조회해서 품목별 금액의 박스 매핑대로 <strong>대성재고</strong>를 차감합니다.<br>
-                        💡 새로 저장하는 정산은 <strong>자동 차감</strong>됩니다.
-                    </div>
-                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                        <label style="font-weight:600;font-size:14px;">시작일:</label>
-                        <input type="date" id="box-reapply-start" class="form-input" style="width:170px;">
-                        <label style="font-size:13px;color:#6b7280;cursor:pointer;">
-                            <input type="checkbox" id="box-reapply-markonly" style="vertical-align:middle;">
-                            <span style="vertical-align:middle;">✓ 마킹만 (이미 차감 적용함 — 박스재고 변동 X)</span>
-                        </label>
-                        <button class="btn-primary" id="box-reapply-btn">📦 일괄 차감 적용</button>
-                    </div>
-                    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #e5e7eb;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                        <button class="btn-danger" id="box-reset-btn">🔄 차감 표시 초기화</button>
-                        <span style="font-size:12px;color:#dc2626;">⚠️ 이중 차감되어 박스재고가 꼬였을 때만 사용. 박스재고는 안 바뀌고 모든 정산의 '차감 완료' 표시만 풀립니다.</span>
-                    </div>
-                </div>
             </div>
 
             <!-- 송장변환 페이지 -->
@@ -1844,6 +1822,6 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=207"></script>
+    <script src="app.js?v=208"></script>
 </body>
 </html>
