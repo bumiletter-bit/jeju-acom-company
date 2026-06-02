@@ -358,6 +358,22 @@ async function initDB() {
             updated_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 키워드 순위 (네이버 쇼핑/광고/파워링크 추이)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS keyword_rankings (
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL,
+            keyword VARCHAR(80) NOT NULL,
+            shopping_rank INTEGER,
+            ad_rank INTEGER,
+            powerlink_rank INTEGER,
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(date, keyword)
+        )
+    `);
+
     // 박스 입고/이동 기록 — 거래처 자료 + 이력 추적용
     await pool.query(`
         CREATE TABLE IF NOT EXISTS box_movements (
@@ -2146,6 +2162,72 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// === Keyword Rankings API (순위관리) ===
+
+// 목록 조회 (기간 필터)
+app.get('/api/rankings', authMiddleware, async (req, res) => {
+    try {
+        const { startDate, endDate, keyword } = req.query;
+        let q = 'SELECT * FROM keyword_rankings WHERE 1=1';
+        const params = [];
+        if (startDate) { params.push(startDate); q += ` AND date >= $${params.length}::date`; }
+        if (endDate)   { params.push(endDate);   q += ` AND date <= $${params.length}::date`; }
+        if (keyword)   { params.push(keyword);   q += ` AND keyword = $${params.length}`; }
+        q += ' ORDER BY date DESC, keyword';
+        const r = await pool.query(q, params);
+        res.json(r.rows.map(row => ({
+            id: row.id,
+            date: row.date instanceof Date
+                ? `${row.date.getFullYear()}-${String(row.date.getMonth()+1).padStart(2,'0')}-${String(row.date.getDate()).padStart(2,'0')}`
+                : String(row.date).slice(0,10),
+            keyword: row.keyword,
+            shoppingRank: row.shopping_rank,
+            adRank: row.ad_rank,
+            powerlinkRank: row.powerlink_rank,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at
+        })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 일괄 저장 (UPSERT — 같은 date+keyword는 덮어쓰기)
+app.post('/api/rankings/bulk', authMiddleware, async (req, res) => {
+    try {
+        const { date, rows } = req.body;
+        if (!date) return res.status(400).json({ error: 'date 필요' });
+        if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'rows 비어있음' });
+        let inserted = 0, updated = 0;
+        for (const r of rows) {
+            const k = (r.keyword || '').trim();
+            if (!k) continue;
+            const sh = r.shoppingRank != null ? Number(r.shoppingRank) : null;
+            const ad = r.adRank != null ? Number(r.adRank) : null;
+            const pl = r.powerlinkRank != null ? Number(r.powerlinkRank) : null;
+            const upsert = await pool.query(
+                `INSERT INTO keyword_rankings (date, keyword, shopping_rank, ad_rank, powerlink_rank, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (date, keyword) DO UPDATE
+                   SET shopping_rank = EXCLUDED.shopping_rank,
+                       ad_rank = EXCLUDED.ad_rank,
+                       powerlink_rank = EXCLUDED.powerlink_rank,
+                       updated_at = NOW()
+                 RETURNING (xmax = 0) AS inserted`,
+                [date, k, sh, ad, pl, req.user.id]
+            );
+            if (upsert.rows[0].inserted) inserted++; else updated++;
+        }
+        res.json({ success: true, inserted, updated });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 단건 삭제
+app.delete('/api/rankings/:id', authMiddleware, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM keyword_rankings WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 박스 입고/이동 등록 + 박스재고 자동 업데이트

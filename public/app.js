@@ -260,6 +260,7 @@ function switchPage(pageName) {
     document.getElementById(`page-${pageName}`).classList.add('active');
 
     if (pageName === 'schedule') renderScheduleCalendar().catch(console.error);
+    if (pageName === 'rankings') renderRankingsPage().catch(console.error);
     if (pageName === 'document') {
         loadApprovers().catch(console.error);
         renderDocList().catch(console.error);
@@ -327,6 +328,57 @@ document.getElementById('schedule-refresh-btn').addEventListener('click', async 
     btn.classList.remove('spinning');
 });
 
+// 일정 유형 필터 (다중 토글) + 순위관리 페이지 진입 버튼
+// 직원 색상 범례를 대체. 필터 상태는 window._scheduleTypeFilter (Set).
+function renderScheduleTypeFilter() {
+    const wrap = document.getElementById('schedule-legend');
+    if (!wrap) return;
+    if (!window._scheduleTypeFilter) {
+        window._scheduleTypeFilter = new Set(['event','product','duty','normal','vacation','attendance']);
+    }
+    const f = window._scheduleTypeFilter;
+    const isAll = ['event','product','duty','normal','vacation','attendance'].every(t => f.has(t));
+    const types = [
+        { key: 'all',     label: '전체', cls: 'sch-flt-all' },
+        { key: 'event',   label: '🎉 행사', cls: 'sch-flt-event' },
+        { key: 'product', label: '📦 상품', cls: 'sch-flt-product' },
+        { key: 'duty',    label: '🌙 당직', cls: 'sch-flt-duty' },
+        { key: 'normal',  label: '일반', cls: 'sch-flt-normal' }
+    ];
+    wrap.innerHTML = types.map(t => {
+        let active;
+        if (t.key === 'all') active = isAll;
+        else active = f.has(t.key);
+        return `<button class="sch-flt-btn ${t.cls}${active ? ' active' : ''}" data-type="${t.key}">${t.label}</button>`;
+    }).join('') +
+    `<button class="sch-flt-btn sch-flt-rank" data-type="__rank__" title="순위관리 화면으로 이동">📊 순위</button>`;
+
+    wrap.querySelectorAll('.sch-flt-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const k = btn.dataset.type;
+            if (k === '__rank__') { switchPage('rankings'); return; }
+            if (k === 'all') {
+                if (isAll) {
+                    // 전체 → 행사만
+                    window._scheduleTypeFilter = new Set(['event']);
+                } else {
+                    window._scheduleTypeFilter = new Set(['event','product','duty','normal','vacation','attendance']);
+                }
+            } else {
+                // 토글
+                if (f.has(k)) f.delete(k); else f.add(k);
+                if (f.size === 0) f.add(k); // 빈 상태 방지
+                // 휴가/근태는 normal과 함께 묶어서 처리
+                if (k === 'normal') {
+                    if (f.has('normal')) { f.add('vacation'); f.add('attendance'); }
+                    else { f.delete('vacation'); f.delete('attendance'); }
+                }
+            }
+            renderScheduleCalendar().catch(console.error);
+        });
+    });
+}
+
 async function renderScheduleCalendar() {
     const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
     document.getElementById('schedule-calendar-title').textContent = `${scheduleYear}년 ${monthNames[scheduleMonth]}`;
@@ -343,20 +395,29 @@ async function renderScheduleCalendar() {
         document.getElementById('duty-count').textContent = dutyCount;
     }
 
-    // 사용자별 범례
-    const userMap = {};
-    schedules.forEach(s => {
-        if (!userMap[s.userId]) userMap[s.userId] = { name: s.userName, color: s.userColor };
-    });
-    document.getElementById('schedule-legend').innerHTML = Object.values(userMap).map(u =>
-        `<span class="legend-dot" style="background:${u.color}"></span><span>${u.name}</span>`
-    ).join('');
+    // 유형 필터 + 순위 버튼 (직원별 범례를 대체)
+    renderScheduleTypeFilter();
+
+    // 필터 상태에 따라 일정 필터링 (vacation/attendance는 항상 표시)
+    const activeTypes = window._scheduleTypeFilter || new Set(['event','product','duty','normal','vacation','attendance']);
+    const filteredSchedules = schedules.filter(s => activeTypes.has(s.type));
 
     // 일별 일정
     const dailySchedules = {};
-    schedules.forEach(s => {
+    filteredSchedules.forEach(s => {
         if (!dailySchedules[s.date]) dailySchedules[s.date] = [];
         dailySchedules[s.date].push(s);
+    });
+
+    // 정렬 우선순위: 행사 > 상품 > 당직 > 휴가 > 근태 > 일반
+    const typeOrder = { event: 0, product: 1, duty: 2, vacation: 3, attendance: 4, normal: 5 };
+    Object.keys(dailySchedules).forEach(d => {
+        dailySchedules[d].sort((a, b) => {
+            const oa = typeOrder[a.type] ?? 99;
+            const ob = typeOrder[b.type] ?? 99;
+            if (oa !== ob) return oa - ob;
+            return (a.id || 0) - (b.id || 0); // 같은 유형은 기존 순서 유지
+        });
     });
 
     const firstDay = new Date(scheduleYear, scheduleMonth, 1).getDay();
@@ -402,13 +463,18 @@ async function renderScheduleCalendar() {
                 if (normalSchedules.length > 0) {
                     scheduleHtml = '<div class="day-schedules">';
                     normalSchedules.forEach(s => {
-                        const typeIcon = s.type === 'vacation' ? '🏖️ ' : s.type === 'attendance' ? '📌 ' : '';
+                        const typeIcon =
+                            s.type === 'event' ? '🎉 ' :
+                            s.type === 'product' ? '📦 ' :
+                            s.type === 'vacation' ? '🏖️ ' :
+                            s.type === 'attendance' ? '📌 ' : '';
+                        const typeClass = ` type-${s.type}`;
                         if (s.type === 'normal') {
                             const checked = s.isCompleted ? 'checked' : '';
                             const completedClass = s.isCompleted ? ' schedule-completed' : '';
-                            scheduleHtml += `<div class="day-schedule-item${completedClass}" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}"><label class="schedule-check" onclick="event.stopPropagation();"><input type="checkbox" ${checked} onchange="toggleScheduleComplete(${s.id}, this)"><span class="schedule-checkmark"></span></label><span class="schedule-text">${s.title}</span></div>`;
+                            scheduleHtml += `<div class="day-schedule-item${typeClass}${completedClass}" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}"><label class="schedule-check" onclick="event.stopPropagation();"><input type="checkbox" ${checked} onchange="toggleScheduleComplete(${s.id}, this)"><span class="schedule-checkmark"></span></label><span class="schedule-text">${s.title}</span></div>`;
                         } else {
-                            scheduleHtml += `<div class="day-schedule-item" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}">${typeIcon}${s.title}</div>`;
+                            scheduleHtml += `<div class="day-schedule-item${typeClass}" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}">${typeIcon}${s.title}</div>`;
                         }
                     });
                     scheduleHtml += '</div>';
@@ -447,6 +513,8 @@ window.openScheduleModal = function(dateStr) {
                 <div class="btn-group" id="modal-schedule-type-group">
                     <button class="btn-toggle active" data-value="normal">일반</button>
                     <button class="btn-toggle" data-value="duty" style="background:#fef2f2;border-color:#fca5a5;color:#dc2626;">당직</button>
+                    <button class="btn-toggle" data-value="product" style="background:#ecfdf5;border-color:#86efac;color:#047857;">상품</button>
+                    <button class="btn-toggle" data-value="event" style="background:#faf5ff;border-color:#d8b4fe;color:#7c3aed;">행사</button>
                 </div>
             </div>
             <div style="display:flex;gap:12px;">
@@ -8865,3 +8933,261 @@ function ssShowToast(msg) {
 document.querySelectorAll('.ss-mo').forEach(el => {
     el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
 });
+
+// =============================================
+// 순위관리 (네이버 쇼핑/광고/파워링크 추이)
+// =============================================
+
+let _rankParsed = null;       // 미리보기 직전 파싱 결과: { date, rows }
+let _rankChart = null;        // Chart.js 인스턴스
+let _rankData = [];           // 화면에 표시할 기간 내 데이터 캐시
+
+function _rankFmtToday() {
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+}
+
+async function renderRankingsPage() {
+    // 기본값 — 날짜 입력 오늘, 기간 시작=오늘-1개월, 종료=오늘
+    const inp = document.getElementById('rank-input-date');
+    if (inp && !inp.value) inp.value = _rankFmtToday();
+
+    const startEl = document.getElementById('rank-range-start');
+    const endEl = document.getElementById('rank-range-end');
+    if (endEl && !endEl.value) endEl.value = _rankFmtToday();
+    if (startEl && !startEl.value) {
+        const t = new Date();
+        t.setMonth(t.getMonth() - 1);
+        startEl.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+    }
+
+    await loadRankings();
+}
+
+// 카톡 텍스트 파싱
+// "(26.06.02. 10:16 기준)" → 날짜 추출
+// "키워드(N위) 광고N위 파워링크N위" → 행 추출
+function _parseRankText(text) {
+    const lines = (text || '').split(/\r?\n/);
+    const rows = [];
+    let extractedDate = null;
+
+    const dateRe = /\((\d{2,4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*\d{1,2}:\d{2}\s*기준\)/;
+    const rowRe = /^(.+?)\((\d+)위\)\s*광고\s*(\d+)위\s*파워링크\s*(\d+)위/;
+
+    for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
+
+        // 날짜 추출
+        const dm = line.match(dateRe);
+        if (dm && !extractedDate) {
+            let y = parseInt(dm[1], 10);
+            if (y < 100) y += 2000;
+            const mo = String(parseInt(dm[2], 10)).padStart(2, '0');
+            const d = String(parseInt(dm[3], 10)).padStart(2, '0');
+            extractedDate = `${y}-${mo}-${d}`;
+            continue;
+        }
+
+        // 키워드 행 추출
+        const rm = line.match(rowRe);
+        if (rm) {
+            rows.push({
+                keyword: rm[1].trim(),
+                shoppingRank: parseInt(rm[2], 10),
+                adRank: parseInt(rm[3], 10),
+                powerlinkRank: parseInt(rm[4], 10)
+            });
+        }
+    }
+    return { date: extractedDate, rows };
+}
+
+document.getElementById('rank-parse-btn')?.addEventListener('click', () => {
+    const text = document.getElementById('rank-input-text').value;
+    const parsed = _parseRankText(text);
+    if (parsed.rows.length === 0) {
+        alert('파싱 가능한 키워드 행을 찾지 못했어요.\n예: 귤(16위) 광고2위 파워링크1위');
+        return;
+    }
+    if (parsed.date) document.getElementById('rank-input-date').value = parsed.date;
+    _rankParsed = parsed;
+
+    // 미리보기 표 생성
+    const wrap = document.getElementById('rank-preview-table');
+    const escape = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const rowsHtml = parsed.rows.map((r, i) => `<tr>
+        <td>${escape(r.keyword)}</td>
+        <td style="text-align:center;font-weight:600;">${r.shoppingRank}위</td>
+        <td style="text-align:center;color:#6b7280;">${r.adRank}위</td>
+        <td style="text-align:center;color:#6b7280;">${r.powerlinkRank}위</td>
+    </tr>`).join('');
+    wrap.innerHTML = `<table class="data-table" style="font-size:13px;">
+        <thead><tr><th>키워드</th><th>쇼핑</th><th>광고</th><th>파워링크</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+    </table>`;
+    document.getElementById('rank-preview-wrap').style.display = '';
+});
+
+document.getElementById('rank-clear-btn')?.addEventListener('click', () => {
+    document.getElementById('rank-input-text').value = '';
+    document.getElementById('rank-preview-wrap').style.display = 'none';
+    _rankParsed = null;
+});
+
+document.getElementById('rank-save-btn')?.addEventListener('click', async () => {
+    if (!_rankParsed || _rankParsed.rows.length === 0) { alert('먼저 정리 버튼을 눌러주세요.'); return; }
+    const date = document.getElementById('rank-input-date').value;
+    if (!date) { alert('날짜를 입력해주세요.'); return; }
+    const btn = document.getElementById('rank-save-btn');
+    btn.disabled = true; btn.textContent = '저장 중...';
+    try {
+        const r = await api('/api/rankings/bulk', 'POST', { date, rows: _rankParsed.rows });
+        alert(`저장 완료\n신규: ${r.inserted}건 / 덮어쓰기: ${r.updated}건`);
+        document.getElementById('rank-input-text').value = '';
+        document.getElementById('rank-preview-wrap').style.display = 'none';
+        _rankParsed = null;
+        await loadRankings();
+    } catch (err) {
+        alert('저장 실패: ' + err.message);
+    } finally {
+        btn.disabled = false; btn.textContent = '💾 저장';
+    }
+});
+
+// 기간 단축 버튼
+document.querySelectorAll('#rank-range-quick .btn-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('#rank-range-quick .btn-toggle').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const months = parseInt(btn.dataset.months, 10);
+        const end = new Date();
+        const start = new Date();
+        start.setMonth(start.getMonth() - months);
+        document.getElementById('rank-range-start').value = `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,'0')}-${String(start.getDate()).padStart(2,'0')}`;
+        document.getElementById('rank-range-end').value = `${end.getFullYear()}-${String(end.getMonth()+1).padStart(2,'0')}-${String(end.getDate()).padStart(2,'0')}`;
+        loadRankings();
+    });
+});
+
+document.getElementById('rank-range-apply')?.addEventListener('click', () => {
+    document.querySelectorAll('#rank-range-quick .btn-toggle').forEach(b => b.classList.remove('active'));
+    loadRankings();
+});
+
+document.getElementById('rank-keyword-select')?.addEventListener('change', () => drawRankChart());
+
+async function loadRankings() {
+    const startDate = document.getElementById('rank-range-start').value;
+    const endDate = document.getElementById('rank-range-end').value;
+    try {
+        const qs = new URLSearchParams();
+        if (startDate) qs.set('startDate', startDate);
+        if (endDate) qs.set('endDate', endDate);
+        _rankData = await api(`/api/rankings?${qs.toString()}`);
+        // 키워드 드롭다운 갱신
+        const sel = document.getElementById('rank-keyword-select');
+        const prev = sel.value;
+        const keywords = [...new Set(_rankData.map(r => r.keyword))].sort((a,b) => a.localeCompare(b, 'ko'));
+        sel.innerHTML = keywords.length === 0
+            ? '<option value="">(없음)</option>'
+            : keywords.map(k => `<option value="${k}">${k}</option>`).join('');
+        if (prev && keywords.includes(prev)) sel.value = prev;
+        renderRankTable();
+        drawRankChart();
+    } catch (err) {
+        console.error('rankings load error:', err);
+    }
+}
+
+function renderRankTable() {
+    const tbody = document.getElementById('rank-table-body');
+    if (!tbody) return;
+    if (_rankData.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">기록이 없습니다.</td></tr>';
+        return;
+    }
+    // 키워드별 시간순 정렬 (증감 계산용)
+    const byKw = {};
+    _rankData.slice().sort((a,b) => a.date < b.date ? -1 : 1).forEach(r => {
+        if (!byKw[r.keyword]) byKw[r.keyword] = [];
+        byKw[r.keyword].push(r);
+    });
+    // 화면에 보여줄 순서는 최신순
+    const sorted = _rankData.slice().sort((a,b) => a.date < b.date ? 1 : -1);
+    const diffHtml = (cur, prev) => {
+        if (cur == null || prev == null) return '';
+        if (cur === prev) return ' <span style="color:#9ca3af;font-size:11px;">−</span>';
+        if (cur < prev) return ` <span style="color:#0066CC;font-size:11px;font-weight:700;">▲${prev - cur}</span>`;
+        return ` <span style="color:#dc2626;font-size:11px;font-weight:700;">▼${cur - prev}</span>`;
+    };
+    tbody.innerHTML = sorted.map(r => {
+        const list = byKw[r.keyword] || [];
+        const idx = list.findIndex(x => x.id === r.id);
+        const prev = idx > 0 ? list[idx - 1] : null;
+        return `<tr>
+            <td>${r.date}</td>
+            <td><strong>${r.keyword}</strong></td>
+            <td style="text-align:center;font-weight:700;">${r.shoppingRank ?? '-'}위${prev ? diffHtml(r.shoppingRank, prev.shoppingRank) : ''}</td>
+            <td style="text-align:center;color:#6b7280;">${r.adRank ?? '-'}위${prev ? diffHtml(r.adRank, prev.adRank) : ''}</td>
+            <td style="text-align:center;color:#6b7280;">${r.powerlinkRank ?? '-'}위${prev ? diffHtml(r.powerlinkRank, prev.powerlinkRank) : ''}</td>
+            <td><button class="btn-danger" style="padding:3px 10px;font-size:11px;" onclick="deleteRanking(${r.id})">삭제</button></td>
+        </tr>`;
+    }).join('');
+}
+
+window.deleteRanking = async function(id) {
+    if (!confirm('이 기록을 삭제하시겠습니까?')) return;
+    try {
+        await api(`/api/rankings/${id}`, 'DELETE');
+        await loadRankings();
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+};
+
+function drawRankChart() {
+    const canvas = document.getElementById('rank-chart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const keyword = document.getElementById('rank-keyword-select').value;
+    if (!keyword) {
+        if (_rankChart) { _rankChart.destroy(); _rankChart = null; }
+        return;
+    }
+    const points = _rankData.filter(r => r.keyword === keyword).slice().sort((a,b) => a.date < b.date ? -1 : 1);
+    const labels = points.map(p => p.date);
+    const dsShopping = points.map(p => p.shoppingRank);
+    const dsAd = points.map(p => p.adRank);
+    const dsPl = points.map(p => p.powerlinkRank);
+
+    if (_rankChart) _rankChart.destroy();
+    _rankChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: '쇼핑 순위', data: dsShopping, borderColor: '#0066CC', backgroundColor: 'rgba(0,102,204,0.1)', tension: 0.25, fill: false, spanGaps: true, pointRadius: 4, pointHoverRadius: 6 },
+                { label: '광고 순위', data: dsAd,       borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.1)', tension: 0.25, fill: false, spanGaps: true, pointRadius: 4, pointHoverRadius: 6 },
+                { label: '파워링크',  data: dsPl,       borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', tension: 0.25, fill: false, spanGaps: true, pointRadius: 4, pointHoverRadius: 6 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: { display: true, text: `${keyword} — 순위 추이` },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}위` } }
+            },
+            scales: {
+                y: {
+                    reverse: true,           // 1위가 맨 위 (Y축 반전)
+                    beginAtZero: false,
+                    ticks: { stepSize: 1, callback: v => `${v}위` },
+                    title: { display: true, text: '순위 (작을수록 상위)' }
+                },
+                x: { title: { display: true, text: '날짜' } }
+            }
+        }
+    });
+}
+
+

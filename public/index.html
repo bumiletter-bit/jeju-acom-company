@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=92">
+    <link rel="stylesheet" href="styles.css?v=93">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -99,6 +99,10 @@
                 <a href="#" class="nav-item active" data-page="schedule">
                     <span class="nav-icon">📅</span>
                     <span class="nav-text">일정</span>
+                </a>
+                <a href="#" class="nav-item" data-page="rankings">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">순위관리</span>
                 </a>
                 <a href="#" class="nav-item" data-page="worklog">
                     <span class="nav-icon">📒</span>
@@ -230,6 +234,89 @@
                                 </tr>
                             </thead>
                             <tbody id="schedule-calendar-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 순위관리 페이지 -->
+            <div id="page-rankings" class="page">
+                <div class="page-header">
+                    <h1>📊 순위관리</h1>
+                </div>
+
+                <!-- 입력 카드 -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h2>카톡 텍스트 붙여넣기</h2>
+                        <span style="font-size:12px;color:#9ca3af;">예: "귤(16위) 광고2위 파워링크1위"</span>
+                    </div>
+                    <div class="form-group">
+                        <label>날짜 (자동 추출, 수정 가능)</label>
+                        <input type="date" id="rank-input-date" class="form-input" style="width:200px;">
+                    </div>
+                    <div class="form-group">
+                        <label>본문</label>
+                        <textarea id="rank-input-text" class="form-input" rows="10" placeholder="카톡에 올리는 순위 텍스트를 그대로 붙여넣으세요.&#10;&#10;예시:&#10;아꼼이네 주요 키워드 순위기준&#10;(26.06.02. 10:16 기준)&#10;쇼핑검색-모바일&#10;귤(16위) 광고2위 파워링크1위&#10;..."></textarea>
+                    </div>
+                    <div style="display:flex;gap:10px;">
+                        <button class="btn-primary" id="rank-parse-btn">🔍 붙여넣기 정리</button>
+                        <button class="btn-outline" id="rank-clear-btn">초기화</button>
+                    </div>
+                    <div id="rank-preview-wrap" style="margin-top:16px;display:none;">
+                        <h3 style="margin:0 0 8px 0;font-size:15px;">미리보기</h3>
+                        <div id="rank-preview-table"></div>
+                        <div style="margin-top:10px;font-size:12px;color:#6b7280;">💡 같은 날짜+키워드는 덮어쓰기됩니다.</div>
+                        <button class="btn-primary" id="rank-save-btn" style="margin-top:10px;">💾 저장</button>
+                    </div>
+                </div>
+
+                <!-- 기간 + 키워드 선택 -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h2>📈 순위 추이</h2>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+                        <div class="btn-group" id="rank-range-quick">
+                            <button class="btn-toggle active" data-months="1">1개월</button>
+                            <button class="btn-toggle" data-months="2">2개월</button>
+                            <button class="btn-toggle" data-months="3">3개월</button>
+                            <button class="btn-toggle" data-months="6">6개월</button>
+                        </div>
+                        <span style="color:#9ca3af;">|</span>
+                        <label style="font-size:13px;">시작</label>
+                        <input type="date" id="rank-range-start" class="form-input" style="width:160px;">
+                        <label style="font-size:13px;">종료</label>
+                        <input type="date" id="rank-range-end" class="form-input" style="width:160px;">
+                        <button class="btn-outline" id="rank-range-apply">적용</button>
+                        <span style="color:#9ca3af;">|</span>
+                        <label style="font-size:13px;">키워드</label>
+                        <select id="rank-keyword-select" class="form-input" style="width:170px;"></select>
+                    </div>
+                    <div style="position:relative;height:320px;">
+                        <canvas id="rank-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 일자별 표 (증감 표시) -->
+                <div class="card">
+                    <h2>📋 일자별 기록</h2>
+                    <div style="font-size:12px;color:#6b7280;margin-bottom:8px;">💡 ▲ 파랑 = 순위 개선 (숫자 감소) / ▼ 빨강 = 하락 (숫자 증가)</div>
+                    <div class="table-scroll-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>날짜</th>
+                                    <th>키워드</th>
+                                    <th>쇼핑</th>
+                                    <th>광고</th>
+                                    <th>파워링크</th>
+                                    <th>관리</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rank-table-body">
+                                <tr class="empty-row"><td colspan="6">기록이 없습니다.</td></tr>
+                            </tbody>
                         </table>
                     </div>
                 </div>
@@ -1822,6 +1909,7 @@
             navigator.serviceWorker.register('/sw.js');
         }
     </script>
-    <script src="app.js?v=208"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="app.js?v=209"></script>
 </body>
 </html>
