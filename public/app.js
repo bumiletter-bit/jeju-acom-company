@@ -5536,7 +5536,9 @@ async function renderWeeklySettlement() {
     }
 }
 
-// 주간 거래처별 결제금액 엑셀 다운로드 (옵션명 + 요일별 수량 + 총금액)
+// 주간 거래처별 결제금액 엑셀 다운로드
+// 양식: 옵션명 | 단가 | 요일별수량(월~일) | 총수량 | 금액 | 차감수량 | 차감금액 | 총 입금금액
+// 차감수량만 입력하면 차감금액·총입금금액은 엑셀 수식으로 자동 계산
 window.downloadPartnerWeeklySettlement = async function(partner, weekStart, weekEnd) {
     try {
         // 주차가 월 경계에 걸칠 수 있어 전후 월 모두 조회
@@ -5578,79 +5580,101 @@ window.downloadPartnerWeeklySettlement = async function(partner, weekStart, week
             return `${dowLabels[dt.getDay()]}\n${dt.getMonth() + 1}/${dt.getDate()}`;
         });
 
-        // 시트 데이터 구성 (rows = AoA)
+        // 시트 데이터 (AoA)
         const rows = [];
         rows.push([`${partner} — 결제금액 (${weekStart} ~ ${weekEnd})`]);
         rows.push([]);
+        // 컬럼 헤더 (14개): 옵션명/단가/요일7개/총수량/금액/차감수량/차감금액/총입금금액
+        rows.push(['옵션명', '단가', ...dayHeaders, '총수량', '금액', '차감수량', '차감금액', '총 입금금액']);
 
-        // 표 1: 옵션명 / 단가 / 요일별 / 총수량 / 총금액
-        rows.push(['옵션명', '단가', ...dayHeaders, '총수량', '총금액']);
         const dayQtyTotals = days.map(() => 0);
-        const dayAmtTotals = days.map(() => 0);
         let grandQty = 0, grandAmount = 0;
         itemNames.forEach(name => {
             const info = byItem[name];
             const qtys = days.map(d => info.qtyByDate[d] || 0);
-            qtys.forEach((q, i) => { dayQtyTotals[i] += q; dayAmtTotals[i] += q * info.price; });
+            qtys.forEach((q, i) => { dayQtyTotals[i] += q; });
             const amt = info.price * info.totalQty;
             grandQty += info.totalQty;
             grandAmount += amt;
-            rows.push([name, info.price, ...qtys, info.totalQty, amt]);
+            // 차감수량 빈칸, 차감금액·총입금금액은 placeholder (수식은 시트화 후 주입)
+            rows.push([name, info.price, ...qtys, info.totalQty, amt, '', 0, amt]);
         });
-        const totalRowIdx_1 = rows.length;
-        rows.push(['합계', '', ...dayQtyTotals, grandQty, grandAmount]);
-
-        // 표 2: 수기 입력용 차감/비고 (사용자가 직접 채움)
-        rows.push([]);
-        rows.push(['※ 아래는 차감/파손/반품 수기 입력용 표입니다.']);
-        rows.push(['옵션명', '차감수량', '차감금액', '비고']);
-        itemNames.forEach(name => rows.push([name, '', '', '']));
-        rows.push(['합계', '', '', '']);
-
-        // 표 3: 요일별 총금액
-        rows.push([]);
-        rows.push(['요일별 총금액']);
-        rows.push(['요일', '금액']);
-        const dowTotalStartIdx = rows.length;
-        days.forEach((d, i) => {
-            const dt = new Date(d + 'T00:00:00');
-            rows.push([`${dowLabels[dt.getDay()]} (${dt.getMonth() + 1}/${dt.getDate()})`, dayAmtTotals[i]]);
-        });
-        rows.push(['총 결제금액', grandAmount]);
+        // 합계 행 — 차감수량/차감금액/총입금금액은 합계 수식 주입
+        const totalRowIdx = rows.length;
+        rows.push(['합계', '', ...dayQtyTotals, grandQty, grandAmount, 0, 0, grandAmount]);
 
         const ws = XLSX.utils.aoa_to_sheet(rows);
+
+        // 컬럼 인덱스 (0-based) 정리
+        const PRICE_C = 1;
+        const DAY_START = 2;
+        const DAY_END = 2 + days.length - 1;
+        const QTY_TOTAL_C = 2 + days.length;       // 총수량
+        const AMOUNT_C = QTY_TOTAL_C + 1;          // 금액
+        const DEDUCT_QTY_C = AMOUNT_C + 1;         // 차감수량
+        const DEDUCT_AMT_C = DEDUCT_QTY_C + 1;     // 차감금액
+        const FINAL_C = DEDUCT_AMT_C + 1;          // 총 입금금액
+        const LAST_C = FINAL_C;
+        const dataStart = 3;
+        const dataEnd = 2 + itemNames.length;
+
+        // ── 수식 주입: 데이터 행 ──
+        // 차감금액 = 단가 × 차감수량  (차감수량 빈칸이면 Excel이 0으로 계산)
+        // 총 입금금액 = 금액 - 차감금액
+        for (let r = dataStart; r <= dataEnd; r++) {
+            const excelRow = r + 1; // 1-based
+            const priceRef = XLSX.utils.encode_col(PRICE_C) + excelRow;
+            const amountRef = XLSX.utils.encode_col(AMOUNT_C) + excelRow;
+            const deductQtyRef = XLSX.utils.encode_col(DEDUCT_QTY_C) + excelRow;
+            const deductAmtRef = XLSX.utils.encode_col(DEDUCT_AMT_C) + excelRow;
+
+            // 차감금액 셀
+            const damtCell = XLSX.utils.encode_cell({ r, c: DEDUCT_AMT_C });
+            ws[damtCell] = { t: 'n', v: 0, f: `${priceRef}*${deductQtyRef}` };
+            // 총 입금금액 셀
+            const finalCell = XLSX.utils.encode_cell({ r, c: FINAL_C });
+            const initialFinal = Number(ws[finalCell] && ws[finalCell].v) || 0;
+            ws[finalCell] = { t: 'n', v: initialFinal, f: `${amountRef}-${deductAmtRef}` };
+        }
+
+        // ── 수식 주입: 합계 행 ──
+        const sumRowExcel = totalRowIdx + 1;
+        const dataStartExcel = dataStart + 1;
+        const dataEndExcel = dataEnd + 1;
+        const sumRange = (col) => `SUM(${XLSX.utils.encode_col(col)}${dataStartExcel}:${XLSX.utils.encode_col(col)}${dataEndExcel})`;
+        // 차감수량 합계
+        ws[XLSX.utils.encode_cell({ r: totalRowIdx, c: DEDUCT_QTY_C })] = { t: 'n', v: 0, f: sumRange(DEDUCT_QTY_C) };
+        // 차감금액 합계
+        ws[XLSX.utils.encode_cell({ r: totalRowIdx, c: DEDUCT_AMT_C })] = { t: 'n', v: 0, f: sumRange(DEDUCT_AMT_C) };
+        // 총 입금금액 합계
+        ws[XLSX.utils.encode_cell({ r: totalRowIdx, c: FINAL_C })] = { t: 'n', v: grandAmount, f: sumRange(FINAL_C) };
 
         // 컬럼 너비
         ws['!cols'] = [
             { wch: 32 },                            // 옵션명
             { wch: 11 },                            // 단가
-            ...days.map(() => ({ wch: 10 })),       // 요일별 7개
+            ...days.map(() => ({ wch: 9 })),        // 요일별 7개
             { wch: 10 },                            // 총수량
-            { wch: 14 }                             // 총금액
+            { wch: 13 },                            // 금액
+            { wch: 11 },                            // 차감수량
+            { wch: 13 },                            // 차감금액
+            { wch: 14 }                             // 총 입금금액
         ];
 
-        // 머지: 메인 헤더 행
-        const lastCol = 2 + days.length + 2 - 1;
-        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } }];
+        // 머지 (메인 타이틀 행)
+        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: LAST_C } }];
 
-        // 행 높이 (요일 헤더 줄바꿈)
-        ws['!rows'] = [
-            { hpt: 28 },  // 헤더
-            {},
-            { hpt: 32 }   // 컬럼 헤더 (줄바꿈)
-        ];
+        // 행 높이 (요일 헤더 줄바꿈 + 메인 헤더)
+        ws['!rows'] = [{ hpt: 28 }, {}, { hpt: 32 }];
 
-        // 스타일 적용
+        // 스타일
         styleSettlementWeeklySheet(ws, {
             mainHeaderRow: 0,
             colHeaderRow: 2,
-            dataStart: 3,
-            dataEnd: 2 + itemNames.length,
-            totalRow1: totalRowIdx_1,
-            amountCols: [1, 2 + days.length + 1], // 단가, 총금액
-            dayQtyCols: Array.from({ length: days.length }, (_, i) => 2 + i),
-            qtyTotalCol: 2 + days.length, // 총수량
-            dowTotalStart: dowTotalStartIdx
+            dataStart, dataEnd,
+            totalRow: totalRowIdx,
+            amountCols: [PRICE_C, AMOUNT_C, DEDUCT_AMT_C, FINAL_C],
+            qtyCols: [...Array.from({ length: days.length }, (_, i) => DAY_START + i), QTY_TOTAL_C, DEDUCT_QTY_C]
         });
 
         const wb = XLSX.utils.book_new();
@@ -5673,52 +5697,43 @@ function styleSettlementWeeklySheet(ws, opt) {
         left: { style: 'thin', color: { rgb: '999999' } },
         right: { style: 'thin', color: { rgb: '999999' } }
     };
+    const amountSet = new Set(opt.amountCols);
+    const qtySet = new Set(opt.qtyCols);
+
     for (let R = range.s.r; R <= range.e.r; R++) {
         for (let C = range.s.c; C <= range.e.c; C++) {
             const ref = XLSX.utils.encode_cell({ r: R, c: C });
             if (!ws[ref]) ws[ref] = { t: 's', v: '' };
             const s = { border, alignment: { vertical: 'center', wrapText: true } };
-            // 메인 타이틀
+
             if (R === opt.mainHeaderRow) {
                 s.font = { bold: true, sz: 14 };
                 s.alignment = { horizontal: 'center', vertical: 'center' };
                 s.fill = { fgColor: { rgb: 'FFE0B2' } };
-            }
-            // 컬럼 헤더 (옵션명/단가/요일/총수량/총금액)
-            if (R === opt.colHeaderRow) {
+            } else if (R === opt.colHeaderRow) {
                 s.font = { bold: true, sz: 11 };
                 s.fill = { fgColor: { rgb: 'E6F0FA' } };
                 s.alignment = { horizontal: 'center', vertical: 'center', wrapText: true };
-            }
-            // 데이터 행: 금액 컬럼 천단위 콤마, 수량 컬럼 가운데
-            if (R >= opt.dataStart && R <= opt.dataEnd) {
-                if (opt.amountCols.includes(C)) {
+            } else if (R >= opt.dataStart && R <= opt.dataEnd) {
+                if (amountSet.has(C)) {
                     s.numFmt = '#,##0';
                     s.alignment = { ...s.alignment, horizontal: 'right' };
                     if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
-                } else if (opt.dayQtyCols.includes(C) || C === opt.qtyTotalCol) {
+                } else if (qtySet.has(C)) {
                     s.alignment = { ...s.alignment, horizontal: 'center' };
                     if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
                 }
-            }
-            // 합계 행 1 (수량 + 금액 합계)
-            if (R === opt.totalRow1) {
+            } else if (R === opt.totalRow) {
                 s.font = { bold: true };
                 s.fill = { fgColor: { rgb: 'FFF8E1' } };
-                if (opt.amountCols.includes(C)) {
+                if (amountSet.has(C)) {
                     s.numFmt = '#,##0';
                     s.alignment = { ...s.alignment, horizontal: 'right' };
                     if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
-                } else if (opt.dayQtyCols.includes(C) || C === opt.qtyTotalCol) {
+                } else if (qtySet.has(C)) {
                     s.alignment = { ...s.alignment, horizontal: 'center' };
                     if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
                 }
-            }
-            // 요일별 총금액 표의 금액 컬럼
-            if (R >= opt.dowTotalStart && C === 1) {
-                s.numFmt = '#,##0';
-                s.alignment = { ...s.alignment, horizontal: 'right' };
-                if (typeof ws[ref].v === 'number') ws[ref].t = 'n';
             }
             ws[ref].s = s;
         }
