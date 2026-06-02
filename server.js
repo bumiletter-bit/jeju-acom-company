@@ -1653,6 +1653,34 @@ app.post('/api/expense-reports', authMiddleware, async (req, res) => {
 });
 
 // 지출결의서 일괄 업로드 (엑셀에서 파싱한 거래 N건을 한 번에 등록)
+// 일괄 업로드 전 중복 사전 체크 (사용날짜+금액+거래처 substring 매칭)
+// 미리보기에서 중복 행을 즉시 제외하기 위함 — bulk INSERT의 중복 정책과 동일 조건
+app.post('/api/expense-reports/check-duplicates', authMiddleware, async (req, res) => {
+    try {
+        const { transactions } = req.body;
+        if (!Array.isArray(transactions)) return res.status(400).json({ error: '잘못된 요청' });
+        const results = [];
+        for (const tx of transactions) {
+            const useDate = tx.useDate;
+            const note = (tx.note || '').toString();
+            const amount = Number(tx.amount) || 0;
+            let isDuplicate = false;
+            if (useDate && amount) {
+                const dup = await pool.query(
+                    `SELECT id FROM expense_reports
+                     WHERE use_date = $1 AND total_amount = $2
+                       AND items::text LIKE $3
+                     LIMIT 1`,
+                    [useDate, amount, `%${note.replace(/[%_\\]/g, m => '\\' + m)}%`]
+                );
+                isDuplicate = dup.rows.length > 0;
+            }
+            results.push({ isDuplicate });
+        }
+        res.json({ results });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/expense-reports/bulk', authMiddleware, async (req, res) => {
     try {
         const { transactions } = req.body;

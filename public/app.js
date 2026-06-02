@@ -6603,40 +6603,57 @@ document.getElementById('expense-submit').addEventListener('click', async () => 
 //  지출결의서 엑셀 일괄 업로드 (제주은행 통장 거래내역)
 // ============================================================
 
+// 일괄 업로드 공통 처리: 파일 → 파싱 → 사전 중복 체크 → 미리보기
+async function handleExpenseBulkUpload(file) {
+    const txs = await parseBankExcelFile(file);
+    if (txs.length === 0) { alert('유효한 거래를 찾을 수 없습니다. 엑셀 양식을 확인해주세요.'); return; }
+
+    // 사전 중복 체크: 이미 등록된 거래는 미리보기에서 즉시 제외
+    let skippedDup = 0;
+    let newTxs = txs;
+    try {
+        const check = await api('/api/expense-reports/check-duplicates', 'POST', {
+            transactions: txs.map(t => ({ useDate: t.useDate, note: t.note, amount: t.amount }))
+        });
+        const dupFlags = (check.results || []).map(r => !!r.isDuplicate);
+        skippedDup = dupFlags.filter(Boolean).length;
+        newTxs = txs.filter((_, i) => !dupFlags[i]);
+    } catch (err) {
+        console.warn('중복 사전 체크 실패 (서버 응답 후 스킵으로 폴백):', err.message);
+    }
+
+    const skippedCardSalary = txs._skippedCardSalary || 0;
+    newTxs._skippedCardSalary = skippedCardSalary;
+    newTxs._skippedDuplicate = skippedDup;
+
+    if (newTxs.length === 0) {
+        alert(`업로드할 신규 거래가 없습니다.\n중복: ${skippedDup}건 / 카드·급여 자동 제외: ${skippedCardSalary}건`);
+        return;
+    }
+    showBulkExpensePreview(newTxs);
+}
+
 document.getElementById('expense-bulk-btn')?.addEventListener('click', () => {
     document.getElementById('expense-bulk-file').click();
 });
-
 document.getElementById('expense-bulk-file')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    try {
-        const txs = await parseBankExcelFile(file);
-        if (txs.length === 0) { alert('유효한 거래를 찾을 수 없습니다. 엑셀 양식을 확인해주세요.'); return; }
-        showBulkExpensePreview(txs);
-    } catch (err) {
-        alert('파일 읽기 실패: ' + err.message);
-    } finally {
-        e.target.value = '';
-    }
+    try { await handleExpenseBulkUpload(file); }
+    catch (err) { alert('파일 읽기 실패: ' + err.message); }
+    finally { e.target.value = ''; }
 });
 
-// 지출조회/이력 다운로드 탭의 일괄 업로드 (작성 탭과 동일 함수 재사용, 중복은 서버에서 스킵)
+// 지출조회/이력 다운로드 탭의 일괄 업로드
 document.getElementById('expense-history-bulk-btn')?.addEventListener('click', () => {
     document.getElementById('expense-history-bulk-file').click();
 });
 document.getElementById('expense-history-bulk-file')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    try {
-        const txs = await parseBankExcelFile(file);
-        if (txs.length === 0) { alert('유효한 거래를 찾을 수 없습니다. 엑셀 양식을 확인해주세요.'); return; }
-        showBulkExpensePreview(txs);
-    } catch (err) {
-        alert('파일 읽기 실패: ' + err.message);
-    } finally {
-        e.target.value = '';
-    }
+    try { await handleExpenseBulkUpload(file); }
+    catch (err) { alert('파일 읽기 실패: ' + err.message); }
+    finally { e.target.value = ''; }
 });
 
 function classifyExpenseAuto(note, merchant) {
@@ -6732,21 +6749,27 @@ function showBulkExpensePreview(txs) {
     const byCat = {};
     txs.forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
     const total = txs.reduce((s, t) => s + t.amount, 0);
-    const skipped = txs._skippedCardSalary || 0;
+    const skippedCardSalary = txs._skippedCardSalary || 0;
+    const skippedDup = txs._skippedDuplicate || 0;
 
     const slug = name => (name || '기타').replace(/\s+/g, '');
+    const noticeBits = [];
+    if (skippedDup > 0) noticeBits.push(`중복 ${skippedDup}건 자동 제외`);
+    if (skippedCardSalary > 0) noticeBits.push(`카드대금/급여 ${skippedCardSalary}건 자동 제외`);
+    const noticeHtml = noticeBits.length ? `<span style="color:#9ca3af;font-size:13px;margin-left:8px;">(${noticeBits.join(' · ')})</span>` : '';
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-        <div class="modal" style="max-width:1000px;max-height:90vh;display:flex;flex-direction:column;">
+        <div class="modal" style="max-width:1080px;max-height:90vh;display:flex;flex-direction:column;">
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             <h3 style="margin:0 0 12px 0;">지출결의서 일괄 업로드 미리보기</h3>
             <div style="background:#F0F7FF;padding:14px;border-radius:8px;margin-bottom:12px;">
                 <div style="font-size:15px;margin-bottom:8px;">
                     <strong>총 ${txs.length}건</strong> · 합계 <strong style="color:#0066CC;">${total.toLocaleString()}원</strong>
-                    ${skipped > 0 ? `<span style="color:#9ca3af;font-size:13px;margin-left:8px;">(카드대금/급여 ${skipped}건 자동 제외)</span>` : ''}
+                    ${noticeHtml}
                 </div>
+                <div style="font-size:12px;color:#6b7280;margin-bottom:6px;">💡 <strong>카테고리</strong>는 자동 분류된 결과예요. <strong>메모</strong>에 실제 사용 내역을 직접 적으면 결재 시 명확해져요.</div>
                 <div>
                     ${Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([cat, sum]) =>
                         `<span class="card-category-summary cat-${slug(cat)}" style="margin:2px 4px 2px 0;">${cat}: ${sum.toLocaleString()}원</span>`
@@ -6759,8 +6782,8 @@ function showBulkExpensePreview(txs) {
                         <tr>
                             <th style="width:90px;">사용날짜</th>
                             <th style="width:140px;">카테고리</th>
-                            <th>지출 내용</th>
                             <th style="width:160px;">거래처</th>
+                            <th>메모 (직접 입력)</th>
                             <th style="width:110px;">금액</th>
                         </tr>
                     </thead>
@@ -6772,8 +6795,13 @@ function showBulkExpensePreview(txs) {
                                     ${EXPENSE_CATEGORIES.map(c => `<option value="${c.name}" ${c.name === t.category ? 'selected' : ''}>${c.name}</option>`).join('')}
                                 </select>
                             </td>
-                            <td>${escapeHtml(t.purpose)}</td>
                             <td>${escapeHtml(t.note)}</td>
+                            <td>
+                                <input type="text" class="bulk-memo-input" data-idx="${idx}"
+                                    value="${escapeHtml(t.purpose || '')}"
+                                    placeholder="예: 5월 효돈 정산 / 사무용품 구입 등"
+                                    style="width:100%;padding:3px 6px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;">
+                            </td>
                             <td style="text-align:right;font-weight:600;">${t.amount.toLocaleString()}</td>
                         </tr>`).join('')}
                     </tbody>
@@ -6792,6 +6820,14 @@ function showBulkExpensePreview(txs) {
             const idx = Number(sel.dataset.idx);
             txs[idx].category = sel.value;
             txs[idx].detail = (EXPENSE_CATEGORIES.find(c => c.name === sel.value) || {}).detail || '';
+        });
+    });
+
+    // 메모(=지출 목적) 직접 입력 이벤트 — purpose 필드를 사용자 입력으로 덮어씀
+    overlay.querySelectorAll('.bulk-memo-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            const idx = Number(inp.dataset.idx);
+            txs[idx].purpose = inp.value;
         });
     });
 
