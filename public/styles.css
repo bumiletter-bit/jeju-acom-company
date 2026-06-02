@@ -1054,19 +1054,19 @@ body {
 .day-schedules {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     margin-top: 2px;
-    max-height: 100px;
+    max-height: 130px;
     overflow-y: auto;
 }
 
 .day-schedule-item {
-    padding: 3px 6px;
+    padding: 1px 5px;
     border-radius: 4px;
     background: #f4f6f8;
-    font-size: 13px;
+    font-size: 11px;
     color: #2c3e50;
-    line-height: 1.4;
+    line-height: 1.35;
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
@@ -1074,7 +1074,7 @@ body {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
 }
 
 .day-schedule-item.schedule-completed .schedule-text {
@@ -1096,8 +1096,8 @@ body {
     align-items: center;
     cursor: pointer;
     flex-shrink: 0;
-    width: 18px;
-    height: 18px;
+    width: 14px;
+    height: 14px;
 }
 .schedule-check input {
     position: absolute;
@@ -1106,9 +1106,9 @@ body {
     height: 0;
 }
 .schedule-checkmark {
-    width: 16px;
-    height: 16px;
-    border: 2px solid #adb5bd;
+    width: 12px;
+    height: 12px;
+    border: 1.5px solid #adb5bd;
     border-radius: 3px;
     display: inline-block;
     transition: all 0.15s;
@@ -1120,7 +1120,7 @@ body {
 .schedule-check input:checked + .schedule-checkmark::after {
     content: '✓';
     color: #fff;
-    font-size: 11px;
+    font-size: 9px;
     font-weight: 700;
     display: flex;
     align-items: center;
@@ -3517,8 +3517,11 @@ textarea.form-input {
     .duty-label .duty-full { display: none; }
     .duty-label .duty-short { display: inline; }
     .calendar-table td { overflow: hidden; }
-    .day-schedules { max-height: 40px; }
-    .day-schedule-item { font-size: 11px; padding: 2px 3px; }
+    .day-schedules { max-height: 80px; gap: 1px; }
+    .day-schedule-item { font-size: 9.5px; padding: 1px 3px; line-height: 1.25; gap: 2px; }
+    .schedule-check { width: 11px; height: 11px; }
+    .schedule-checkmark { width: 10px; height: 10px; border-width: 1px; }
+    .schedule-check input:checked + .schedule-checkmark::after { font-size: 8px; }
 
     /* -- 정산관리 -- */
     .table-scroll-wrapper { margin: 0 -14px; padding: 0 14px; }
@@ -3579,15 +3582,18 @@ textarea.form-input {
 @media (max-width: 480px) {
     .stats-grid, .stats-grid-4, .stats-grid-5 { grid-template-columns: 1fr !important; }
     #box-inventory-grid { grid-template-columns: 1fr !important; }
-    .calendar-table td { min-height: 50px; font-size: 10px; }
+    .calendar-table td { min-height: 70px; font-size: 10px; }
     .calendar-table th { font-size: 10px; }
     .day-number { font-size: 12px; }
     .day-header { border-bottom: none; padding-bottom: 1px; margin-bottom: 2px; }
     .duty-badge { font-size: 9px; padding: 1px 3px; }
     .planner-mini-cal td { height: 40px; }
     .planner-cal-events { max-height: 24px; }
-    .day-schedules { max-height: 28px; }
-    .day-schedule-item { font-size: 10px; }
+    .day-schedules { max-height: 56px; gap: 1px; }
+    .day-schedule-item { font-size: 8.5px; padding: 0 3px; line-height: 1.25; gap: 2px; }
+    .schedule-check { width: 10px; height: 10px; }
+    .schedule-checkmark { width: 9px; height: 9px; border-width: 1px; }
+    .schedule-check input:checked + .schedule-checkmark::after { font-size: 7px; }
     .main-content { padding: 56px 10px 10px; }
 }
 
