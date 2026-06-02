@@ -6918,12 +6918,45 @@ async function renderExpenseHistoryList() {
         const data = await api(url);
         window._lastExpenseHistory = data; // 엑셀 다운로드용 캐시
         const tbody = document.getElementById('expense-history-list');
-        // 합계 계산 (반려 제외)
+        const summaryEl = document.getElementById('expense-history-summary');
+        // 합계 계산 (반려 제외하지 않음 — 전체 결과 기준)
         const totalEl = document.getElementById('expense-history-total');
         const countEl = document.getElementById('expense-history-count');
         const sum = data.reduce((s, d) => s + (Number(d.total_amount) || 0), 0);
         if (totalEl) totalEl.textContent = sum.toLocaleString() + ' 원';
         if (countEl) countEl.textContent = data.length > 0 ? `${data.length}건` : '-';
+
+        // 검색 영역 바로 아래 합계 요약 카드 (카드내역 스타일)
+        if (summaryEl) {
+            if (data.length === 0) {
+                summaryEl.innerHTML = '';
+            } else {
+                // 카테고리별 합계 (items 펼쳐서 카테고리별 누적)
+                const byCategory = {};
+                data.forEach(d => {
+                    try {
+                        const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
+                        if (items.length === 0) {
+                            const cat = d.title || '기타';
+                            byCategory[cat] = (byCategory[cat] || 0) + (Number(d.total_amount) || 0);
+                        } else {
+                            items.forEach(it => {
+                                const cat = it.category || it.item || '기타';
+                                byCategory[cat] = (byCategory[cat] || 0) + (Number(it.amount) || 0);
+                            });
+                        }
+                    } catch {}
+                });
+                const slug = name => (name || '기타').replace(/\s+/g, '');
+                const totalCard = `<span class="card-category-summary" style="background:#0066CC;color:#fff;font-size:14px;font-weight:700;">총 합계: ${sum.toLocaleString()}원 (${data.length}건)</span>`;
+                const catCards = Object.entries(byCategory)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([cat, amt]) => `<span class="card-category-summary cat-${slug(cat)}">${cat}: ${amt.toLocaleString()}원</span>`)
+                    .join('');
+                summaryEl.innerHTML = totalCard + catCards;
+            }
+        }
+
         if (data.length === 0) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="7">지출결의서가 없습니다.</td></tr>';
             return;
@@ -6939,11 +6972,15 @@ async function renderExpenseHistoryList() {
                 noteText = items.map(it => (it.note || '').trim()).filter(Boolean).join(', ');
             } catch {}
             const noteCell = noteText ? escapeHtml(noteText) : '<span style="color:#9ca3af;">-</span>';
+            // 사용날짜 우선 (없으면 작성일 fallback)
+            const useDateStr = d.use_date
+                ? new Date(d.use_date).toLocaleDateString()
+                : `<span style="color:#9ca3af;">${new Date(d.created_at).toLocaleDateString()}</span>`;
             return `<tr>
                 <td>${d.title}</td>
                 <td>${d.applicant_position} ${d.applicant_name}</td>
                 <td>${Number(d.total_amount).toLocaleString()} 원</td>
-                <td>${new Date(d.created_at).toLocaleDateString()}</td>
+                <td>${useDateStr}</td>
                 <td style="max-width:280px;white-space:normal;word-break:break-word;font-size:13px;color:#374151;" title="${noteText ? escapeHtml(noteText) : ''}">${noteCell}</td>
                 <td>${getExpenseStatusBadge(d.status)}</td>
                 <td>
