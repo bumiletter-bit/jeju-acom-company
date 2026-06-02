@@ -1116,7 +1116,7 @@ window.showSettlementDayModal = function(dateStr) {
     let entriesHtml = '';
     let total = 0;
 
-    // 대성, 효돈 entries
+    // 대성, 효돈 entries — 거래처명 클릭 시 품목 상세 모달
     ['대성(시온)', '효돈농협', '애월취나물'].forEach(partner => {
         const entries = dp.entries.filter(e => e.partner === partner);
         if (!entries.length) return;
@@ -1126,7 +1126,7 @@ window.showSettlementDayModal = function(dateStr) {
             const btnText = e.isPaid ? '✅ 완료' : '☐ 결제완료';
             const btnClass = e.isPaid ? 'btn-paid active' : 'btn-paid';
             entriesHtml += `<div class="${paidClass}">
-                <span class="entry-partner">${partner}</span>
+                <span class="entry-partner" onclick="showSettlementItemsModal(${e.id})" title="클릭: 상품/수량 상세 (수량 수정 가능)" style="cursor:pointer;color:#0066CC;text-decoration:underline;">${partner}</span>
                 <span class="entry-amount">${e.amount.toLocaleString()}원</span>
                 <button class="${btnClass}" onclick="toggleSettlementPaid(${e.id})">${btnText}</button>
             </div>`;
@@ -1191,6 +1191,112 @@ window.toggleCjDailyPaid = async function(date, amount) {
     } catch (err) {
         alert('CJ 결제완료 처리 실패: ' + err.message);
     }
+};
+
+// 일자 모달에서 거래처명 클릭 시 → 해당 settlement의 품목 상세 + 수량 수정
+window.showSettlementItemsModal = function(settlementId) {
+    let entry = null;
+    Object.values(settlementDailyData).forEach(dp => {
+        const found = (dp.entries || []).find(e => e.id === settlementId);
+        if (found) entry = found;
+    });
+    if (!entry) { alert('정산 데이터를 찾을 수 없습니다'); return; }
+
+    const items = (entry.items || []).map(it => ({
+        name: it.name || '',
+        qty: Number(it.qty) || 0,
+        price: Number(it.price) || 0
+    }));
+    if (items.length === 0) { alert('등록된 품목이 없습니다'); return; }
+
+    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    const initialTotal = items.reduce((s, it) => s + it.qty * it.price, 0);
+    const rowsHtml = items.map((it, idx) => `
+        <tr>
+            <td>${escapeHtml(it.name)}</td>
+            <td style="text-align:center;">
+                <input type="number" class="si-qty-input" data-idx="${idx}" value="${it.qty}" min="0"
+                    style="width:80px;text-align:center;padding:5px 6px;border:1px solid #d1d5db;border-radius:4px;">
+            </td>
+            <td style="text-align:right;">${it.price.toLocaleString()}원</td>
+            <td class="si-subtotal" data-idx="${idx}" style="text-align:right;font-weight:600;">${(it.qty * it.price).toLocaleString()}원</td>
+        </tr>
+    `).join('');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:680px;">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3 style="margin-bottom:6px;">${entry.partner} — 정산 품목</h3>
+            <div style="font-size:12px;color:#6b7280;margin-bottom:12px;">💡 수량 입력 시 합계가 자동 갱신됩니다. 저장하면 달력 금액이 반영돼요.</div>
+            <table class="data-table" style="width:100%;font-size:13px;">
+                <thead>
+                    <tr>
+                        <th>상품명</th>
+                        <th style="width:90px;">수량</th>
+                        <th style="width:110px;">단가</th>
+                        <th style="width:140px;">합계</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+                <tfoot>
+                    <tr style="background:#FFF8E1;font-weight:700;">
+                        <td colspan="3" style="text-align:right;">총 합계</td>
+                        <td id="si-total" style="text-align:right;color:#0066CC;">${initialTotal.toLocaleString()}원</td>
+                    </tr>
+                </tfoot>
+            </table>
+            <div style="text-align:right;margin-top:16px;">
+                <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()" style="margin-right:8px;">취소</button>
+                <button class="btn-primary" id="si-save">💾 저장</button>
+            </div>
+        </div>
+    `;
+
+    const recalc = () => {
+        let total = 0;
+        overlay.querySelectorAll('.si-qty-input').forEach(inp => {
+            const idx = Number(inp.dataset.idx);
+            const qty = Number(inp.value) || 0;
+            const price = items[idx].price;
+            const sub = qty * price;
+            overlay.querySelector(`.si-subtotal[data-idx="${idx}"]`).textContent = sub.toLocaleString() + '원';
+            total += sub;
+        });
+        overlay.querySelector('#si-total').textContent = total.toLocaleString() + '원';
+        return total;
+    };
+    overlay.querySelectorAll('.si-qty-input').forEach(inp => inp.addEventListener('input', recalc));
+
+    overlay.querySelector('#si-save').addEventListener('click', async () => {
+        const btn = overlay.querySelector('#si-save');
+        btn.disabled = true;
+        btn.textContent = '저장 중...';
+        try {
+            const updatedItems = items.map((it, idx) => {
+                const qty = Number(overlay.querySelector(`.si-qty-input[data-idx="${idx}"]`).value) || 0;
+                return { name: it.name, qty, price: it.price, subtotal: qty * it.price };
+            });
+            const amount = updatedItems.reduce((s, it) => s + it.subtotal, 0);
+            await api(`/api/settlements/${settlementId}/items`, 'PUT', { items: updatedItems, amount });
+            overlay.remove();
+            // 일자 모달 닫고 달력/목록/주간 새로고침
+            const parent = document.getElementById('settlement-day-modal');
+            if (parent) parent.remove();
+            await renderSettlementCalendar();
+            await renderSettlementList();
+            await renderWeeklySettlement();
+        } catch (err) {
+            alert('저장 실패: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = '💾 저장';
+        }
+    });
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 };
 
 // =============================================
