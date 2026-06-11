@@ -1583,6 +1583,15 @@
             <div id="page-invoice" class="page">
                 <h1>송장변환</h1>
 
+                <!-- 모드 토글 -->
+                <div class="invoice-mode-toggle">
+                    <button class="invoice-mode-btn active" id="invoice-mode-convert-btn" onclick="switchInvoiceMode('convert')">송장 변환</button>
+                    <button class="invoice-mode-btn" id="invoice-mode-qty-btn" onclick="switchInvoiceMode('qty')">📊 현재까지 수량</button>
+                </div>
+
+                <!-- ===== 송장 변환 모드 ===== -->
+                <div id="invoice-convert-mode">
+
                 <!-- 출고지 정보 -->
                 <div class="card">
                     <h2>출고지 정보</h2>
@@ -1655,6 +1664,37 @@
                         </div>
                     </div>
                     <div class="invoice-table-wrapper" id="invoice-table-wrapper"></div>
+                </div>
+
+                </div><!-- /invoice-convert-mode -->
+
+                <!-- ===== 현재까지 수량 모드 ===== -->
+                <div id="invoice-qty-mode" style="display:none;">
+                    <div class="card">
+                        <p style="font-size:13px;color:#666;margin-bottom:12px;">스마트스토어 발주 파일(비번 걸린 원본 그대로)을 올리면 품목별 합계 수량이 나와요. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
+                        <div class="invoice-upload-area" id="invoice-qty-upload">
+                            <div class="upload-icon">📦</div>
+                            <p>발주 엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
+                            <div class="invoice-file-name" id="invoice-qty-filename"></div>
+                        </div>
+                        <input type="file" id="invoice-qty-file" accept=".xlsx,.xls" hidden>
+                        <div id="invoice-qty-loading" style="display:none;text-align:center;padding:16px;color:#666;">⏳ 파일 처리 중...</div>
+                    </div>
+
+                    <!-- 결과 -->
+                    <div class="card" id="invoice-qty-result" style="display:none;">
+                        <div class="invoice-qty-toolbar">
+                            <div class="invoice-qty-summary">
+                                선택 <strong id="invoice-qty-sel-count">0</strong>품목 · 합계 <strong id="invoice-qty-sel-total">0</strong>
+                            </div>
+                            <div class="invoice-qty-actions">
+                                <button class="btn-sm btn-outline" onclick="qtySelectAll(true)">전체선택</button>
+                                <button class="btn-sm btn-outline" onclick="qtySelectAll(false)">전체해제</button>
+                                <button class="btn-primary btn-sm" onclick="saveQtyImage()">📷 선택분 이미지 저장</button>
+                            </div>
+                        </div>
+                        <div id="invoice-qty-list"></div>
+                    </div>
                 </div>
             </div>
 
@@ -1944,6 +1984,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=211"></script>
+    <script src="app.js?v=212"></script>
 </body>
 </html>

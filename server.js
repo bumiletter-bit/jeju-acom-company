@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { GoogleGenAI } = require('@google/genai');
+const officeCrypto = require('officecrypto-tool');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -605,6 +606,22 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
         res.json({ id: u.id, username: u.username, name: u.name, position: u.position, color: u.color, role: u.role, annualLeave: Number(u.annual_leave), hasSignature: !!u.signature_image });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// === 송장변환: 스마트스토어 발주 파일 복호화 ===
+// 스마트스토어 발주 엑셀은 암호화(agile encryption)되어 브라우저 XLSX로 못 엶.
+// 서버에서 고정 비번으로 복호화만 수행하고, 파싱은 클라이언트(기존 matchProduct)가 담당.
+app.post('/api/invoice/decrypt', authMiddleware, async (req, res) => {
+    try {
+        const { fileBase64 } = req.body || {};
+        if (!fileBase64) return res.status(400).json({ error: '파일 데이터가 없습니다' });
+        const password = process.env.SMARTSTORE_FILE_PASSWORD || '4031';
+        const input = Buffer.from(fileBase64, 'base64');
+        const decrypted = await officeCrypto.decrypt(input, { password });
+        res.json({ fileBase64: decrypted.toString('base64') });
+    } catch (err) {
+        res.status(400).json({ error: '복호화 실패: ' + err.message });
     }
 });
 

@@ -5333,6 +5333,187 @@ function resetInvoice() {
 window.resetInvoice = resetInvoice;
 
 // =============================================
+// 송장변환 - 현재까지 수량 (모바일 중간발주표)
+// =============================================
+function switchInvoiceMode(mode) {
+    const convert = document.getElementById('invoice-convert-mode');
+    const qty = document.getElementById('invoice-qty-mode');
+    const cBtn = document.getElementById('invoice-mode-convert-btn');
+    const qBtn = document.getElementById('invoice-mode-qty-btn');
+    if (mode === 'qty') {
+        convert.style.display = 'none'; qty.style.display = '';
+        cBtn.classList.remove('active'); qBtn.classList.add('active');
+    } else {
+        convert.style.display = ''; qty.style.display = 'none';
+        cBtn.classList.add('active'); qBtn.classList.remove('active');
+    }
+}
+window.switchInvoiceMode = switchInvoiceMode;
+
+let qtyAggregated = [];   // [{ name, qty, cat, checked }]
+let qtyImageCounter = 1;
+
+// 과일별 색상 분류 (사진 기준)
+function qtyCategory(name) {
+    if (name.startsWith('[미매칭]')) return 'none';
+    if (/미니밤호박|밤호박|호박/.test(name)) return 'orange';
+    if (/블러드오렌지/.test(name)) return 'blue';
+    if (/자몽/.test(name)) return 'green';
+    return 'yellow';
+}
+
+function arrayBufferToBase64(buf) {
+    let binary = '';
+    const bytes = new Uint8Array(buf);
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+}
+function base64ToArrayBuffer(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+}
+
+// 엑셀 버퍼 → 행 배열 (암호화 등 실패 시 null)
+function readInvoiceRows(data) {
+    try {
+        const wb = XLSX.read(data, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        return XLSX.utils.sheet_to_json(ws, { range: 1, defval: '' });
+    } catch (e) {
+        return null;
+    }
+}
+
+// 파일 업로드 → (필요 시 서버 복호화) → 파싱 → 합산
+async function handleQtyFile(file) {
+    document.getElementById('invoice-qty-filename').textContent = file.name;
+    document.getElementById('invoice-qty-upload').classList.add('has-file');
+    const loading = document.getElementById('invoice-qty-loading');
+    loading.style.display = '';
+    document.getElementById('invoice-qty-result').style.display = 'none';
+    try {
+        const buf = await file.arrayBuffer();
+        // 먼저 그대로 읽어보고(암호화 X), 실패하거나 빈 결과면 서버 복호화
+        let rows = readInvoiceRows(buf);
+        if (!rows || rows.length === 0) {
+            const resp = await api('/api/invoice/decrypt', 'POST', { fileBase64: arrayBufferToBase64(buf) });
+            rows = readInvoiceRows(base64ToArrayBuffer(resp.fileBase64));
+        }
+        rows = rows || [];
+
+        const map = new Map();
+        rows.forEach(row => {
+            const name = matchProduct(row['옵션정보'] || '');
+            const q = parseInt(row['수량']) || 1;
+            map.set(name, (map.get(name) || 0) + q);
+        });
+        qtyAggregated = Array.from(map.entries())
+            .map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), checked: true }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+
+        if (qtyAggregated.length === 0) {
+            alert('품목 데이터를 찾을 수 없습니다. 올바른 발주 파일인지 확인해주세요.');
+            return;
+        }
+        renderQtyList();
+        document.getElementById('invoice-qty-result').style.display = '';
+    } catch (err) {
+        alert('파일 처리 오류: ' + err.message);
+    } finally {
+        loading.style.display = 'none';
+    }
+}
+
+function renderQtyList() {
+    const list = document.getElementById('invoice-qty-list');
+    list.innerHTML = qtyAggregated.map((it, i) => `
+        <div class="qty-row qty-cat-${it.cat} ${it.checked ? '' : 'unchecked'} ${it.cat === 'none' ? 'unmatched' : ''}" onclick="toggleQtyRow(${i})">
+            <input type="checkbox" ${it.checked ? 'checked' : ''} onclick="event.stopPropagation(); toggleQtyRow(${i})">
+            <span class="qty-name">${it.name}</span>
+            <span class="qty-num">${it.qty}</span>
+        </div>
+    `).join('');
+    updateQtySummary();
+}
+
+function toggleQtyRow(i) {
+    qtyAggregated[i].checked = !qtyAggregated[i].checked;
+    renderQtyList();
+}
+window.toggleQtyRow = toggleQtyRow;
+
+function qtySelectAll(val) {
+    qtyAggregated.forEach(it => it.checked = val);
+    renderQtyList();
+}
+window.qtySelectAll = qtySelectAll;
+
+function updateQtySummary() {
+    const sel = qtyAggregated.filter(it => it.checked);
+    document.getElementById('invoice-qty-sel-count').textContent = sel.length;
+    document.getElementById('invoice-qty-sel-total').textContent = sel.reduce((s, it) => s + it.qty, 0);
+}
+
+// 선택된 품목으로 중간발주표 이미지 생성 → 자동 다운로드
+async function saveQtyImage() {
+    const sel = qtyAggregated.filter(it => it.checked);
+    if (sel.length === 0) { alert('선택된 품목이 없습니다.'); return; }
+    const total = sel.reduce((s, it) => s + it.qty, 0);
+
+    const cap = document.createElement('div');
+    cap.id = 'invoice-qty-capture';
+    let html = '<table><tbody>';
+    sel.forEach(it => {
+        html += `<tr><td class="cap-name qty-cat-${it.cat}">${it.name}</td><td class="cap-num">${it.qty}</td></tr>`;
+    });
+    html += `<tr class="cap-total"><td class="cap-name qty-cat-yellow"></td><td class="cap-num qty-cat-yellow">${total}</td></tr>`;
+    html += '</tbody></table>';
+    cap.innerHTML = html;
+    document.body.appendChild(cap);
+
+    try {
+        const canvas = await html2canvas(cap, { scale: 2, backgroundColor: '#ffffff' });
+        const fileName = `중간발주${qtyImageCounter}.png`;
+        await new Promise(resolve => {
+            canvas.toBlob(blob => {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = fileName;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                resolve();
+            }, 'image/png');
+        });
+        qtyImageCounter++;
+    } catch (err) {
+        alert('이미지 생성 오류: ' + err.message);
+    } finally {
+        document.body.removeChild(cap);
+    }
+}
+window.saveQtyImage = saveQtyImage;
+
+// 업로드 영역 이벤트
+(function setupQtyUpload() {
+    const area = document.getElementById('invoice-qty-upload');
+    const input = document.getElementById('invoice-qty-file');
+    if (!area || !input) return;
+    area.addEventListener('click', () => input.click());
+    area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('dragover'); });
+    area.addEventListener('dragleave', () => area.classList.remove('dragover'));
+    area.addEventListener('drop', e => {
+        e.preventDefault(); area.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleQtyFile(e.dataTransfer.files[0]);
+    });
+    input.addEventListener('change', e => { if (e.target.files.length) handleQtyFile(e.target.files[0]); });
+})();
+
+// =============================================
 // Utility
 // =============================================
 function formatDate(date) {
