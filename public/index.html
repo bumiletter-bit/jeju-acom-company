@@ -1671,13 +1671,19 @@
                 <!-- ===== 현재까지 수량 모드 ===== -->
                 <div id="invoice-qty-mode" style="display:none;">
                     <div class="card">
-                        <p style="font-size:13px;color:#666;margin-bottom:12px;">스마트스토어 발주 파일(비번 걸린 원본 그대로 4031)을 올리면 품목별 합계 수량이 나와요. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
+                        <p style="font-size:13px;color:#666;margin-bottom:12px;">스마트스토어 발주 파일(비번 걸린 원본 그대로 4031)을 올리면 품목별 합계 수량이 나와요. 현금파일이 있으면 같이 합산돼요. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
                         <div class="invoice-upload-area" id="invoice-qty-upload">
                             <div class="upload-icon">📦</div>
-                            <p>발주 엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
+                            <p>네이버 스마트스토어 배송준비(신규주문 발주후) 파일을 업로드하세요</p>
                             <div class="invoice-file-name" id="invoice-qty-filename"></div>
                         </div>
                         <input type="file" id="invoice-qty-file" accept=".xlsx,.xls" hidden>
+                        <div class="invoice-upload-area" id="invoice-qty-cash-upload" style="margin-top:12px;">
+                            <div class="upload-icon">💵</div>
+                            <p>현금파일이 있다면 현금파일을 업로드 해주세요</p>
+                            <div class="invoice-file-name" id="invoice-qty-cash-filename"></div>
+                        </div>
+                        <input type="file" id="invoice-qty-cash-file" accept=".xlsx,.xls" hidden>
                         <div id="invoice-qty-loading" style="display:none;text-align:center;padding:16px;color:#666;">⏳ 파일 처리 중...</div>
                     </div>
 
@@ -1985,6 +1991,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=215"></script>
+    <script src="app.js?v=216"></script>
 </body>
 </html>

@@ -5355,6 +5355,8 @@ function switchInvoiceMode(mode) {
 window.switchInvoiceMode = switchInvoiceMode;
 
 let qtyAggregated = [];   // [{ name, qty, cat, checked }]
+let qtyRowsMain = [];     // 발주(스마트스토어) 파일 행
+let qtyRowsCash = [];     // 현금파일 행
 let qtyImageCounter = 1;
 
 // 과일별 색상 분류 (사진 기준)
@@ -5382,49 +5384,45 @@ function base64ToArrayBuffer(b64) {
     return bytes.buffer;
 }
 
-// 엑셀 버퍼 → 행 배열 (암호화 등 실패 시 null)
-function readInvoiceRows(data) {
-    try {
-        const wb = XLSX.read(data, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        return XLSX.utils.sheet_to_json(ws, { range: 1, defval: '' });
-    } catch (e) {
-        return null;
+// 엑셀 버퍼 → 행 배열 (헤더행 자동 감지: '옵션정보' 포함 행). 암호화 등 실패 시 null
+function parseInvoiceRows(data) {
+    let wb;
+    try { wb = XLSX.read(data, { type: 'array' }); } catch (e) { return null; }
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) return [];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    let hdrIdx = -1;
+    for (let i = 0; i < Math.min(aoa.length, 10); i++) {
+        if ((aoa[i] || []).some(c => String(c).trim() === '옵션정보')) { hdrIdx = i; break; }
     }
+    if (hdrIdx < 0) return [];
+    return XLSX.utils.sheet_to_json(ws, { range: hdrIdx, defval: '' });
 }
 
-// 파일 업로드 → (필요 시 서버 복호화) → 파싱 → 합산
-async function handleQtyFile(file) {
-    document.getElementById('invoice-qty-filename').textContent = file.name;
-    document.getElementById('invoice-qty-upload').classList.add('has-file');
+// 파일 업로드 → (필요 시 서버 복호화) → 파싱 → 해당 버킷 저장 → 재합산
+// which: 'main'(발주) | 'cash'(현금파일)
+async function handleQtyUpload(file, which) {
+    const fnId = which === 'cash' ? 'invoice-qty-cash-filename' : 'invoice-qty-filename';
+    const areaId = which === 'cash' ? 'invoice-qty-cash-upload' : 'invoice-qty-upload';
+    document.getElementById(fnId).textContent = file.name;
+    document.getElementById(areaId).classList.add('has-file');
     const loading = document.getElementById('invoice-qty-loading');
     loading.style.display = '';
-    document.getElementById('invoice-qty-result').style.display = 'none';
     try {
         const buf = await file.arrayBuffer();
         // 먼저 그대로 읽어보고(암호화 X), 실패하거나 빈 결과면 서버 복호화
-        let rows = readInvoiceRows(buf);
+        let rows = parseInvoiceRows(buf);
         if (!rows || rows.length === 0) {
             const resp = await api('/api/invoice/decrypt', 'POST', { fileBase64: arrayBufferToBase64(buf) });
-            rows = readInvoiceRows(base64ToArrayBuffer(resp.fileBase64));
+            rows = parseInvoiceRows(base64ToArrayBuffer(resp.fileBase64));
         }
         rows = rows || [];
-
-        const map = new Map();
-        rows.forEach(row => {
-            const name = matchProduct(row['옵션정보'] || '');
-            const q = parseInt(row['수량']) || 1;
-            map.set(name, (map.get(name) || 0) + q);
-        });
-        qtyAggregated = Array.from(map.entries())
-            .map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), checked: true }))
-            .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-
-        if (qtyAggregated.length === 0) {
-            alert('품목 데이터를 찾을 수 없습니다. 올바른 발주 파일인지 확인해주세요.');
+        if (rows.length === 0) {
+            alert('품목 데이터를 찾을 수 없습니다. 올바른 파일인지 확인해주세요.');
             return;
         }
-        renderQtyList();
+        if (which === 'cash') qtyRowsCash = rows; else qtyRowsMain = rows;
+        recomputeQtyAggregate();
         document.getElementById('invoice-qty-result').style.display = '';
     } catch (err) {
         alert('파일 처리 오류: ' + err.message);
@@ -5433,17 +5431,39 @@ async function handleQtyFile(file) {
     }
 }
 
+// 발주 + 현금파일 행을 합쳐 품목별 합산 (수기 수정은 재합산 시 초기화됨)
+function recomputeQtyAggregate() {
+    const map = new Map();
+    qtyRowsMain.concat(qtyRowsCash).forEach(row => {
+        const name = matchProduct(row['옵션정보'] || '');
+        const q = parseInt(row['수량']) || 1;
+        map.set(name, (map.get(name) || 0) + q);
+    });
+    qtyAggregated = Array.from(map.entries())
+        .map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), checked: true }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    renderQtyList();
+}
+
 function renderQtyList() {
     const list = document.getElementById('invoice-qty-list');
     list.innerHTML = qtyAggregated.map((it, i) => `
         <div class="qty-row qty-cat-${it.cat} ${it.checked ? '' : 'unchecked'} ${it.cat === 'none' ? 'unmatched' : ''}" onclick="toggleQtyRow(${i})">
             <input type="checkbox" ${it.checked ? 'checked' : ''} onclick="event.stopPropagation(); toggleQtyRow(${i})">
             <span class="qty-name">${it.name}</span>
-            <span class="qty-num">${it.qty}</span>
+            <input type="number" class="qty-num-input" value="${it.qty}" min="0" onclick="event.stopPropagation()" onchange="editQtyNum(${i}, this.value)">
         </div>
     `).join('');
     updateQtySummary();
 }
+
+// 수량 수기 수정 (다운로드 이미지에 그대로 반영)
+function editQtyNum(i, val) {
+    const n = parseInt(val);
+    qtyAggregated[i].qty = isNaN(n) || n < 0 ? 0 : n;
+    updateQtySummary();
+}
+window.editQtyNum = editQtyNum;
 
 function toggleQtyRow(i) {
     qtyAggregated[i].checked = !qtyAggregated[i].checked;
@@ -5504,31 +5524,36 @@ window.saveQtyImage = saveQtyImage;
 
 // 초기화 (파일/목록/결과 비우기)
 function resetInvoiceQty() {
-    qtyAggregated = [];
-    const fileInput = document.getElementById('invoice-qty-file');
-    if (fileInput) fileInput.value = '';
+    qtyAggregated = []; qtyRowsMain = []; qtyRowsCash = [];
+    ['invoice-qty-file', 'invoice-qty-cash-file'].forEach(id => {
+        const f = document.getElementById(id); if (f) f.value = '';
+    });
     document.getElementById('invoice-qty-filename').textContent = '';
+    document.getElementById('invoice-qty-cash-filename').textContent = '';
     document.getElementById('invoice-qty-upload').classList.remove('has-file');
+    document.getElementById('invoice-qty-cash-upload').classList.remove('has-file');
     document.getElementById('invoice-qty-loading').style.display = 'none';
     document.getElementById('invoice-qty-result').style.display = 'none';
     document.getElementById('invoice-qty-list').innerHTML = '';
 }
 window.resetInvoiceQty = resetInvoiceQty;
 
-// 업로드 영역 이벤트
-(function setupQtyUpload() {
-    const area = document.getElementById('invoice-qty-upload');
-    const input = document.getElementById('invoice-qty-file');
+// 업로드 영역 이벤트 (발주 + 현금파일)
+function setupQtyArea(areaId, inputId, which) {
+    const area = document.getElementById(areaId);
+    const input = document.getElementById(inputId);
     if (!area || !input) return;
     area.addEventListener('click', () => input.click());
     area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('dragover'); });
     area.addEventListener('dragleave', () => area.classList.remove('dragover'));
     area.addEventListener('drop', e => {
         e.preventDefault(); area.classList.remove('dragover');
-        if (e.dataTransfer.files.length) handleQtyFile(e.dataTransfer.files[0]);
+        if (e.dataTransfer.files.length) handleQtyUpload(e.dataTransfer.files[0], which);
     });
-    input.addEventListener('change', e => { if (e.target.files.length) handleQtyFile(e.target.files[0]); });
-})();
+    input.addEventListener('change', e => { if (e.target.files.length) handleQtyUpload(e.target.files[0], which); });
+}
+setupQtyArea('invoice-qty-upload', 'invoice-qty-file', 'main');
+setupQtyArea('invoice-qty-cash-upload', 'invoice-qty-cash-file', 'cash');
 
 // =============================================
 // Utility

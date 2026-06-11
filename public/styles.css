@@ -2424,6 +2424,17 @@ textarea.form-input {
 .qty-row input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
 .qty-row .qty-name { flex: 1; font-size: 13px; line-height: 1.3; }
 .qty-row .qty-num { font-weight: 800; font-size: 15px; min-width: 36px; text-align: right; }
+.qty-row .qty-num-input {
+    width: 58px;
+    text-align: right;
+    font-weight: 800;
+    font-size: 15px;
+    border: 1px solid #888;
+    border-radius: 4px;
+    padding: 4px 6px;
+    background: #fff;
+    flex-shrink: 0;
+}
 .qty-row.unchecked { opacity: 0.4; }
 .qty-row.unmatched { color: #c0392b; }
 
