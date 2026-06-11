@@ -3612,13 +3612,17 @@ async function loadLeaveAdjustments() {
         tbody.innerHTML = data.map(d => {
             const date = new Date(d.createdAt).toLocaleDateString('ko-KR');
             const adjSign = d.adjustment > 0 ? '+' : '';
+            const isDoc = d.source === 'document';   // 수기 이력에서 넘어온 추가일수
+            const actionCell = isDoc
+                ? '<span style="color:#9ca3af; font-size:12px;">승인이력에서 관리</span>'
+                : (canAdjust ? `<button class="btn-view-items" onclick="deleteLeaveAdj(${d.id})" style="color:#dc2626;">취소</button>` : '');
             return `<tr>
                 <td>${date}</td>
                 <td>${d.userPosition ? d.userPosition + ' ' : ''}${d.userName}</td>
                 <td style="font-weight:600; color:${d.adjustment > 0 ? '#2563eb' : '#dc2626'};">${adjSign}${d.adjustment}일</td>
-                <td>${d.reason}</td>
+                <td>${d.reason}${isDoc ? ' <span style="color:#16a34a; font-size:11px;">(수기 이력)</span>' : ''}</td>
                 <td>${d.adjustedByName}</td>
-                <td>${canAdjust ? `<button class="btn-view-items" onclick="deleteLeaveAdj(${d.id})" style="color:#dc2626;">취소</button>` : ''}</td>
+                <td>${actionCell}</td>
             </tr>`;
         }).join('');
     } catch (err) {
@@ -5497,6 +5501,19 @@ async function saveQtyImage() {
     }
 }
 window.saveQtyImage = saveQtyImage;
+
+// 초기화 (파일/목록/결과 비우기)
+function resetInvoiceQty() {
+    qtyAggregated = [];
+    const fileInput = document.getElementById('invoice-qty-file');
+    if (fileInput) fileInput.value = '';
+    document.getElementById('invoice-qty-filename').textContent = '';
+    document.getElementById('invoice-qty-upload').classList.remove('has-file');
+    document.getElementById('invoice-qty-loading').style.display = 'none';
+    document.getElementById('invoice-qty-result').style.display = 'none';
+    document.getElementById('invoice-qty-list').innerHTML = '';
+}
+window.resetInvoiceQty = resetInvoiceQty;
 
 // 업로드 영역 이벤트
 (function setupQtyUpload() {

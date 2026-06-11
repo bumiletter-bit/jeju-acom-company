@@ -4275,8 +4275,9 @@ app.get('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) =>
         query += ' ORDER BY la.created_at DESC';
 
         const result = await pool.query(query, values);
-        res.json(result.rows.map(r => ({
+        const adjRows = result.rows.map(r => ({
             id: r.id,
+            source: 'adjustment',
             userId: r.user_id,
             userName: r.user_name,
             userPosition: r.user_position,
@@ -4284,7 +4285,48 @@ app.get('/api/leave-adjustments', authMiddleware, adminOnly, async (req, res) =>
             reason: r.reason,
             adjustedByName: r.adjusted_by_name,
             createdAt: r.created_at
-        })));
+        }));
+
+        // 수기 이력의 추가일수(연차+, 대체근무 등)도 조정내역에 포함
+        // deducted_leave < 0 은 일반 휴가신청에서는 생기지 않고 수기 추가 조정에서만 발생
+        let docQuery = `
+            SELECT d.id, d.applicant_id AS user_id, u.name AS user_name, u.position AS user_position,
+                   d.deducted_leave, d.reason, d.sub_type, d.start_date, d.created_at,
+                   ab.name AS adjusted_by_name
+            FROM documents d
+            JOIN users u ON d.applicant_id = u.id
+            LEFT JOIN users ab ON d.approver_id = ab.id
+            WHERE d.type = 'vacation' AND d.status = 'approved' AND d.deducted_leave < 0
+        `;
+        const docValues = [];
+        const docConds = [];
+        let didx = 1;
+        if (employeeId) { docConds.push(`d.applicant_id = $${didx++}`); docValues.push(Number(employeeId)); }
+        if (startDate)  { docConds.push(`d.start_date >= $${didx++}`); docValues.push(startDate); }
+        if (endDate)    { docConds.push(`d.start_date <= $${didx++}`); docValues.push(endDate); }
+        if (docConds.length > 0) docQuery += ' AND ' + docConds.join(' AND ');
+        docQuery += ' ORDER BY d.start_date DESC';
+
+        const docResult = await pool.query(docQuery, docValues);
+        const docRows = docResult.rows.map(r => ({
+            id: 'doc-' + r.id,
+            source: 'document',
+            userId: r.user_id,
+            userName: r.user_name,
+            userPosition: r.user_position,
+            adjustment: -Number(r.deducted_leave),  // 음수 차감 → 양수 추가(+)
+            reason: (r.sub_type ? `[${r.sub_type}] ` : '') + (r.reason || ''),
+            adjustedByName: r.adjusted_by_name || '',
+            createdAt: r.start_date  // 실제 발생일 기준 표시
+        }));
+
+        // 두 소스 통합 후 날짜 내림차순 정렬
+        const merged = adjRows.concat(docRows).sort((a, b) => {
+            const da = new Date(a.createdAt).getTime();
+            const db = new Date(b.createdAt).getTime();
+            return db - da;
+        });
+        res.json(merged);
     } catch (err) {
         console.error('GET /api/leave-adjustments error:', err);
         res.status(500).json({ error: err.message });
