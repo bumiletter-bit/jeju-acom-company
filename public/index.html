@@ -1543,6 +1543,40 @@
                     </div>
                 </div>
 
+                <!-- 전체 입출고 현황 -->
+                <div class="card" style="margin-top:18px;">
+                    <div class="card-header-row">
+                        <h2>📋 전체 입출고 현황</h2>
+                        <button class="btn-outline" id="box-hist-excel-btn" style="padding:6px 14px;font-size:13px;">📄 엑셀 다운로드</button>
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;margin:12px 0 6px;">
+                        <div>
+                            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;color:#6b7280;">시작일</label>
+                            <input type="date" id="box-hist-start" class="form-input" style="padding:6px 8px;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;color:#6b7280;">종료일</label>
+                            <input type="date" id="box-hist-end" class="form-input" style="padding:6px 8px;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;color:#6b7280;">박스 종류</label>
+                            <select id="box-hist-product" class="form-input" style="padding:6px 8px;"><option value="">전체</option></select>
+                        </div>
+                        <div>
+                            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;color:#6b7280;">구분</label>
+                            <select id="box-hist-type" class="form-input" style="padding:6px 8px;">
+                                <option value="">전체</option>
+                                <option value="order">📥 업체 입고</option>
+                                <option value="transfer">🚚 시온 이동</option>
+                                <option value="consume">📤 정산 차감</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" id="box-hist-search-btn" style="padding:7px 18px;">조회</button>
+                    </div>
+                    <div id="box-hist-summary" style="margin:8px 0;"></div>
+                    <div id="box-hist-table"></div>
+                </div>
+
             </div>
 
             <!-- 송장변환 페이지 -->
@@ -1910,6 +1944,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=210"></script>
+    <script src="app.js?v=211"></script>
 </body>
 </html>

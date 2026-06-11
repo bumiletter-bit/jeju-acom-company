@@ -2318,7 +2318,7 @@ app.post('/api/box-inventory/reset-adjustments', authMiddleware, adminOnly, asyn
 app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
     try {
         const { productName, startDate, endDate } = req.query;
-        if (!productName) return res.status(400).json({ error: 'productName 필요' });
+        const wantAll = !productName; // productName 없으면 전체 박스 통합 조회
 
         // 1. 자동 차감 이력 (대성 정산 → daesong_stock 감소)
         let settQuery = 'SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner = $1';
@@ -2346,29 +2346,41 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
             const boxTypeMap = {};
             pricItems.forEach(p => { if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType; });
 
-            const matched = items.filter(it => boxTypeMap[it.name] === productName);
-            if (matched.length === 0) continue;
-            const totalQty = matched.reduce((s, it) => s + (Number(it.qty) || 0), 0);
-            if (totalQty === 0) continue;
-
-            totalConsumed += totalQty;
-            events.push({
-                date: dateStr,
-                type: 'consume',                 // 정산 차감
-                qty: totalQty,
-                sign: -1,
-                stockTarget: 'daesong',
-                note: matched.map(i => `${i.name}(${i.qty})`).join(', '),
-                isAdjusted: !!sett.box_adjusted_at,
-                refId: sett.id
+            // 박스 종류별로 그룹화 (전체 조회 시 한 정산에 여러 박스가 섞일 수 있음)
+            const byBox = {};
+            items.forEach(it => {
+                const bt = boxTypeMap[it.name];
+                if (!bt) return;
+                if (!wantAll && bt !== productName) return;
+                (byBox[bt] = byBox[bt] || []).push(it);
             });
+            for (const [bt, matched] of Object.entries(byBox)) {
+                const totalQty = matched.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+                if (totalQty === 0) continue;
+
+                totalConsumed += totalQty;
+                events.push({
+                    date: dateStr,
+                    productName: bt,
+                    type: 'consume',                 // 정산 차감
+                    qty: totalQty,
+                    sign: -1,
+                    stockTarget: 'daesong',
+                    note: matched.map(i => `${i.name}(${i.qty})`).join(', '),
+                    isAdjusted: !!sett.box_adjusted_at,
+                    refId: sett.id
+                });
+            }
         }
 
         // 2. 입고/이동 기록 조회
-        let movQuery = 'SELECT id, movement_type, qty, date, note FROM box_movements WHERE product_name = $1';
-        const movParams = [productName];
-        if (startDate) { movParams.push(startDate); movQuery += ` AND date >= $${movParams.length}::date`; }
-        if (endDate)   { movParams.push(endDate);   movQuery += ` AND date <= $${movParams.length}::date`; }
+        let movQuery = 'SELECT id, product_name, movement_type, qty, date, note FROM box_movements';
+        const movParams = [];
+        const movConds = [];
+        if (productName) { movParams.push(productName); movConds.push(`product_name = $${movParams.length}`); }
+        if (startDate)   { movParams.push(startDate);   movConds.push(`date >= $${movParams.length}::date`); }
+        if (endDate)     { movParams.push(endDate);     movConds.push(`date <= $${movParams.length}::date`); }
+        if (movConds.length) movQuery += ' WHERE ' + movConds.join(' AND ');
         movQuery += ' ORDER BY date';
         const movResult = await pool.query(movQuery, movParams);
 
@@ -2381,6 +2393,7 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
                 totalOrdered += Number(m.qty) || 0;
                 events.push({
                     date: dateStr,
+                    productName: m.product_name,
                     type: 'order',                // 업체 입고
                     qty: Number(m.qty) || 0,
                     sign: +1,
@@ -2392,6 +2405,7 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
                 totalTransferred += Number(m.qty) || 0;
                 events.push({
                     date: dateStr,
+                    productName: m.product_name,
                     type: 'transfer',             // 업체 → 대성 이동
                     qty: Number(m.qty) || 0,
                     sign: 0,                      // 회사 전체 합은 변동 없음 (재배치)
@@ -2406,7 +2420,9 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
         const typeOrder = { consume: 0, order: 1, transfer: 2 };
         events.sort((a, b) => {
             if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-            return (typeOrder[a.type] || 99) - (typeOrder[b.type] || 99);
+            const t = (typeOrder[a.type] || 99) - (typeOrder[b.type] || 99);
+            if (t !== 0) return t;
+            return String(a.productName || '').localeCompare(String(b.productName || ''), 'ko');
         });
 
         res.json({

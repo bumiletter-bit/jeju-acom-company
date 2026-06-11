@@ -4469,10 +4469,155 @@ async function renderBoxInventory() {
         }).join('');
 
         document.getElementById('box-inventory-save-row').style.display = 'none';
+
+        // 전체 입출고 현황 — 박스 종류 필터 옵션 채우기 + 기간 기본값 + 조회
+        const histSel = document.getElementById('box-hist-product');
+        if (histSel) {
+            const prev = histSel.value;
+            histSel.innerHTML = '<option value="">전체</option>' +
+                data.map(b => `<option value="${b.productName.replace(/"/g,'&quot;')}">${b.productName}</option>`).join('');
+            histSel.value = prev;
+        }
+        const histStart = document.getElementById('box-hist-start');
+        const histEnd = document.getElementById('box-hist-end');
+        if (histStart && histEnd && !histStart.value) {
+            const now = new Date();
+            histStart.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+            histEnd.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+        }
+        loadBoxHistoryAll();
     } catch (err) {
         console.error('renderBoxInventory error:', err);
     }
 }
+
+// 전체 입출고 현황 조회 (모든 박스 통합)
+let _boxHistAllCache = null;
+async function loadBoxHistoryAll() {
+    const tableEl = document.getElementById('box-hist-table');
+    const summaryEl = document.getElementById('box-hist-summary');
+    if (!tableEl) return;
+    const startDate = document.getElementById('box-hist-start')?.value || '';
+    const endDate = document.getElementById('box-hist-end')?.value || '';
+    const product = document.getElementById('box-hist-product')?.value || '';
+    const typeFilter = document.getElementById('box-hist-type')?.value || '';
+
+    try {
+        const qs = new URLSearchParams();
+        if (product) qs.set('productName', product);
+        if (startDate) qs.set('startDate', startDate);
+        if (endDate) qs.set('endDate', endDate);
+        const r = await api(`/api/box-inventory/history?${qs.toString()}`);
+        let events = r.events || [];
+        if (typeFilter) events = events.filter(e => e.type === typeFilter);
+
+        const typeMeta = {
+            order:    { label: '📥 업체 입고', color: '#16a34a' },
+            transfer: { label: '🚚 시온 이동', color: '#0066CC' },
+            consume:  { label: '📤 정산 차감', color: '#dc2626' }
+        };
+
+        // 요약 (필터 반영)
+        let sOrder = 0, sTransfer = 0, sConsume = 0;
+        events.forEach(e => {
+            if (e.type === 'order') sOrder += e.qty;
+            else if (e.type === 'transfer') sTransfer += e.qty;
+            else if (e.type === 'consume') sConsume += e.qty;
+        });
+        summaryEl.innerHTML = `<div style="background:#F0F7FF;padding:10px 14px;border-radius:6px;display:flex;gap:18px;flex-wrap:wrap;font-size:13px;">
+            <span><strong style="color:#16a34a;">📥 업체 입고:</strong> +${sOrder}</span>
+            <span><strong style="color:#0066CC;">🚚 시온 이동:</strong> ${sTransfer}</span>
+            <span><strong style="color:#dc2626;">📤 정산 차감:</strong> −${sConsume}</span>
+            <span style="color:#9ca3af;">건수: ${events.length}</span>
+        </div>`;
+
+        const esc = s => String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        if (events.length === 0) {
+            tableEl.innerHTML = '<div style="padding:20px;text-align:center;color:#9ca3af;">해당 기간/조건의 입출고 기록이 없습니다.</div>';
+        } else {
+            const rows = events.map(e => {
+                const meta = typeMeta[e.type] || { label: e.type, color: '#6b7280' };
+                const qtyDisplay = e.sign > 0 ? `+${e.qty}` : (e.sign < 0 ? `−${e.qty}` : `${e.qty}`);
+                const qtyColor = e.sign > 0 ? '#16a34a' : (e.sign < 0 ? '#dc2626' : '#0066CC');
+                return `<tr>
+                    <td>${e.date}</td>
+                    <td style="font-weight:600;">${esc(e.productName)}</td>
+                    <td style="color:${meta.color};font-weight:600;">${meta.label}</td>
+                    <td style="text-align:right;font-weight:700;color:${qtyColor};">${qtyDisplay}</td>
+                    <td style="font-size:12px;color:#6b7280;">${esc(e.note)}</td>
+                </tr>`;
+            }).join('');
+            tableEl.innerHTML = `<table class="data-table" style="font-size:13px;width:100%;">
+                <thead><tr><th>날짜</th><th>박스 종류</th><th>구분</th><th style="text-align:right;">수량</th><th>비고/품목</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+        }
+        _boxHistAllCache = { events, startDate, endDate };
+    } catch (err) {
+        tableEl.innerHTML = `<div style="padding:20px;text-align:center;color:#dc2626;">조회 실패: ${err.message}</div>`;
+    }
+}
+
+// 전체 입출고 현황 엑셀 다운로드
+function downloadBoxHistoryAllExcel() {
+    if (!_boxHistAllCache || !_boxHistAllCache.events.length) { alert('다운로드할 데이터가 없습니다. 먼저 조회해주세요.'); return; }
+    const { events, startDate, endDate } = _boxHistAllCache;
+    const typeLabel = { order: '업체 입고', transfer: '시온 이동', consume: '정산 차감' };
+
+    let sOrder = 0, sTransfer = 0, sConsume = 0;
+    events.forEach(e => {
+        if (e.type === 'order') sOrder += e.qty;
+        else if (e.type === 'transfer') sTransfer += e.qty;
+        else if (e.type === 'consume') sConsume += e.qty;
+    });
+
+    const rows = [[`박스 전체 입출고 현황 (${startDate || ''} ~ ${endDate || ''})`]];
+    rows.push([]);
+    rows.push(['📥 업체 입고', sOrder, '🚚 시온 이동', sTransfer, '📤 정산 차감', sConsume]);
+    rows.push([]);
+    rows.push(['날짜', '박스 종류', '구분', '수량', '비고/품목']);
+    events.forEach(e => {
+        rows.push([
+            e.date,
+            e.productName || '',
+            typeLabel[e.type] || e.type,
+            e.sign > 0 ? e.qty : (e.sign < 0 ? -e.qty : e.qty),
+            e.note || ''
+        ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 13 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 50 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+    if (XLSX.utils && ws['!ref']) {
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        const border = { top:{style:'thin',color:{rgb:'999999'}}, bottom:{style:'thin',color:{rgb:'999999'}}, left:{style:'thin',color:{rgb:'999999'}}, right:{style:'thin',color:{rgb:'999999'}} };
+        for (let R = range.s.r; R <= range.e.r; R++) {
+            for (let C = range.s.c; C <= range.e.c; C++) {
+                const ref = XLSX.utils.encode_cell({ r: R, c: C });
+                if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+                const st = { border, alignment: { vertical: 'center' } };
+                if (R === 0) { st.font = { bold: true, sz: 14 }; st.alignment = { horizontal: 'center', vertical: 'center' }; st.fill = { fgColor: { rgb: 'FFE0B2' } }; }
+                if (R === 2) { st.font = { bold: true }; st.fill = { fgColor: { rgb: 'F0F7FF' } }; }
+                if (R === 4) { st.font = { bold: true }; st.fill = { fgColor: { rgb: 'E6F0FA' } }; st.alignment = { horizontal: 'center' }; }
+                if (R >= 5 && C === 3) { st.alignment = { ...st.alignment, horizontal: 'right' }; st.numFmt = '#,##0'; if (typeof ws[ref].v === 'number') ws[ref].t = 'n'; }
+                ws[ref].s = st;
+            }
+        }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '입출고현황');
+    const today = new Date();
+    const fname = `박스_입출고현황_${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}.xlsx`;
+    XLSX.writeFile(wb, fname);
+}
+
+document.getElementById('box-hist-search-btn')?.addEventListener('click', loadBoxHistoryAll);
+document.getElementById('box-hist-type')?.addEventListener('change', loadBoxHistoryAll);
+document.getElementById('box-hist-product')?.addEventListener('change', loadBoxHistoryAll);
+document.getElementById('box-hist-excel-btn')?.addEventListener('click', downloadBoxHistoryAllExcel);
 
 window.editBoxStock = function(id, field) {
     const item = boxInventoryData.find(i => i.id === id);
