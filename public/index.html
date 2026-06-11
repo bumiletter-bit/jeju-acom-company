@@ -1671,19 +1671,13 @@
                 <!-- ===== 현재까지 수량 모드 ===== -->
                 <div id="invoice-qty-mode" style="display:none;">
                     <div class="card">
-                        <p style="font-size:13px;color:#666;margin-bottom:12px;">스마트스토어 발주 파일(비번 걸린 원본 그대로 4031)을 올리면 품목별 합계 수량이 나와요. 현금파일이 있으면 같이 합산돼요. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
+                        <p style="font-size:13px;color:#666;margin-bottom:12px;">스마트스토어 발주 파일(비번 걸린 원본 그대로 4031)을 올리면 품목별 합계 수량이 나와요. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
                         <div class="invoice-upload-area" id="invoice-qty-upload">
                             <div class="upload-icon">📦</div>
                             <p>네이버 스마트스토어 배송준비(신규주문 발주후) 파일을 업로드하세요</p>
                             <div class="invoice-file-name" id="invoice-qty-filename"></div>
                         </div>
                         <input type="file" id="invoice-qty-file" accept=".xlsx,.xls" hidden>
-                        <div class="invoice-upload-area" id="invoice-qty-cash-upload" style="margin-top:12px;">
-                            <div class="upload-icon">💵</div>
-                            <p>현금파일이 있다면 현금파일을 업로드 해주세요</p>
-                            <div class="invoice-file-name" id="invoice-qty-cash-filename"></div>
-                        </div>
-                        <input type="file" id="invoice-qty-cash-file" accept=".xlsx,.xls" hidden>
                         <div id="invoice-qty-loading" style="display:none;text-align:center;padding:16px;color:#666;">⏳ 파일 처리 중...</div>
                     </div>
 
@@ -1698,6 +1692,15 @@
                                 <button class="btn-sm btn-outline" onclick="qtySelectAll(false)">전체해제</button>
                                 <button class="btn-primary btn-sm" onclick="saveQtyImage()">📷 선택분 이미지 저장</button>
                                 <button class="btn-reset btn-sm" onclick="resetInvoiceQty()">초기화</button>
+                            </div>
+                        </div>
+                        <div class="invoice-qty-additem">
+                            <button class="btn-sm btn-outline" onclick="toggleAddItemForm()">➕ 품목추가</button>
+                            <div id="invoice-qty-addform" style="display:none;">
+                                <input type="text" id="qty-add-name" placeholder="품목명 (직접 입력)">
+                                <input type="number" id="qty-add-qty" placeholder="수량" min="0">
+                                <button class="btn-primary btn-sm" onclick="confirmAddItem()">추가</button>
+                                <button class="btn-sm btn-outline" onclick="toggleAddItemForm()">취소</button>
                             </div>
                         </div>
                         <div id="invoice-qty-list"></div>
@@ -1991,6 +1994,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=216"></script>
+    <script src="app.js?v=217"></script>
 </body>
 </html>

@@ -5356,7 +5356,7 @@ window.switchInvoiceMode = switchInvoiceMode;
 
 let qtyAggregated = [];   // [{ name, qty, cat, checked }]
 let qtyRowsMain = [];     // 발주(스마트스토어) 파일 행
-let qtyRowsCash = [];     // 현금파일 행
+let qtyManual = [];       // 수기로 직접 추가한 품목 [{ name, qty }]
 let qtyImageCounter = 1;
 
 // 과일별 색상 분류 (사진 기준)
@@ -5399,13 +5399,10 @@ function parseInvoiceRows(data) {
     return XLSX.utils.sheet_to_json(ws, { range: hdrIdx, defval: '' });
 }
 
-// 파일 업로드 → (필요 시 서버 복호화) → 파싱 → 해당 버킷 저장 → 재합산
-// which: 'main'(발주) | 'cash'(현금파일)
-async function handleQtyUpload(file, which) {
-    const fnId = which === 'cash' ? 'invoice-qty-cash-filename' : 'invoice-qty-filename';
-    const areaId = which === 'cash' ? 'invoice-qty-cash-upload' : 'invoice-qty-upload';
-    document.getElementById(fnId).textContent = file.name;
-    document.getElementById(areaId).classList.add('has-file');
+// 발주 파일 업로드 → (필요 시 서버 복호화) → 파싱 → 재합산
+async function handleQtyUpload(file) {
+    document.getElementById('invoice-qty-filename').textContent = file.name;
+    document.getElementById('invoice-qty-upload').classList.add('has-file');
     const loading = document.getElementById('invoice-qty-loading');
     loading.style.display = '';
     try {
@@ -5421,7 +5418,7 @@ async function handleQtyUpload(file, which) {
             alert('품목 데이터를 찾을 수 없습니다. 올바른 파일인지 확인해주세요.');
             return;
         }
-        if (which === 'cash') qtyRowsCash = rows; else qtyRowsMain = rows;
+        qtyRowsMain = rows;
         recomputeQtyAggregate();
         document.getElementById('invoice-qty-result').style.display = '';
     } catch (err) {
@@ -5431,19 +5428,44 @@ async function handleQtyUpload(file, which) {
     }
 }
 
-// 발주 + 현금파일 행을 합쳐 품목별 합산 (수기 수정은 재합산 시 초기화됨)
+// 발주 파일 + 수기 추가 품목을 합쳐 품목별 합산 (수기 수정은 재합산 시 초기화됨)
 function recomputeQtyAggregate() {
     const map = new Map();
-    qtyRowsMain.concat(qtyRowsCash).forEach(row => {
+    qtyRowsMain.forEach(row => {
         const name = matchProduct(row['옵션정보'] || '');
         const q = parseInt(row['수량']) || 1;
         map.set(name, (map.get(name) || 0) + q);
+    });
+    qtyManual.forEach(it => {
+        map.set(it.name, (map.get(it.name) || 0) + it.qty);
     });
     qtyAggregated = Array.from(map.entries())
         .map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), checked: true }))
         .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
     renderQtyList();
 }
+
+// 품목추가 폼 토글
+function toggleAddItemForm() {
+    const form = document.getElementById('invoice-qty-addform');
+    const show = form.style.display === 'none';
+    form.style.display = show ? 'flex' : 'none';
+    if (show) { document.getElementById('qty-add-name').value = ''; document.getElementById('qty-add-qty').value = ''; document.getElementById('qty-add-name').focus(); }
+}
+window.toggleAddItemForm = toggleAddItemForm;
+
+// 수기 품목 추가 → 합산 목록에 반영
+function confirmAddItem() {
+    const name = document.getElementById('qty-add-name').value.trim();
+    const qty = parseInt(document.getElementById('qty-add-qty').value);
+    if (!name) { alert('품목명을 입력해주세요.'); return; }
+    if (isNaN(qty) || qty <= 0) { alert('수량을 1 이상 입력해주세요.'); return; }
+    qtyManual.push({ name, qty });
+    recomputeQtyAggregate();
+    document.getElementById('invoice-qty-result').style.display = '';
+    toggleAddItemForm();
+}
+window.confirmAddItem = confirmAddItem;
 
 function renderQtyList() {
     const list = document.getElementById('invoice-qty-list');
@@ -5522,38 +5544,34 @@ async function saveQtyImage() {
 }
 window.saveQtyImage = saveQtyImage;
 
-// 초기화 (파일/목록/결과 비우기)
+// 초기화 (파일/목록/결과/수기품목 비우기)
 function resetInvoiceQty() {
-    qtyAggregated = []; qtyRowsMain = []; qtyRowsCash = [];
-    ['invoice-qty-file', 'invoice-qty-cash-file'].forEach(id => {
-        const f = document.getElementById(id); if (f) f.value = '';
-    });
+    qtyAggregated = []; qtyRowsMain = []; qtyManual = [];
+    const f = document.getElementById('invoice-qty-file'); if (f) f.value = '';
     document.getElementById('invoice-qty-filename').textContent = '';
-    document.getElementById('invoice-qty-cash-filename').textContent = '';
     document.getElementById('invoice-qty-upload').classList.remove('has-file');
-    document.getElementById('invoice-qty-cash-upload').classList.remove('has-file');
     document.getElementById('invoice-qty-loading').style.display = 'none';
     document.getElementById('invoice-qty-result').style.display = 'none';
     document.getElementById('invoice-qty-list').innerHTML = '';
+    const addform = document.getElementById('invoice-qty-addform');
+    if (addform) addform.style.display = 'none';
 }
 window.resetInvoiceQty = resetInvoiceQty;
 
-// 업로드 영역 이벤트 (발주 + 현금파일)
-function setupQtyArea(areaId, inputId, which) {
-    const area = document.getElementById(areaId);
-    const input = document.getElementById(inputId);
+// 업로드 영역 이벤트 (발주 파일)
+(function setupQtyArea() {
+    const area = document.getElementById('invoice-qty-upload');
+    const input = document.getElementById('invoice-qty-file');
     if (!area || !input) return;
     area.addEventListener('click', () => input.click());
     area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('dragover'); });
     area.addEventListener('dragleave', () => area.classList.remove('dragover'));
     area.addEventListener('drop', e => {
         e.preventDefault(); area.classList.remove('dragover');
-        if (e.dataTransfer.files.length) handleQtyUpload(e.dataTransfer.files[0], which);
+        if (e.dataTransfer.files.length) handleQtyUpload(e.dataTransfer.files[0]);
     });
-    input.addEventListener('change', e => { if (e.target.files.length) handleQtyUpload(e.target.files[0], which); });
-}
-setupQtyArea('invoice-qty-upload', 'invoice-qty-file', 'main');
-setupQtyArea('invoice-qty-cash-upload', 'invoice-qty-cash-file', 'cash');
+    input.addEventListener('change', e => { if (e.target.files.length) handleQtyUpload(e.target.files[0]); });
+})();
 
 // =============================================
 // Utility

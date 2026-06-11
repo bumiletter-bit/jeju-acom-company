@@ -2411,6 +2411,11 @@ textarea.form-input {
 .invoice-qty-summary strong { color: var(--primary); font-size: 16px; }
 .invoice-qty-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
+.invoice-qty-additem { margin-bottom: 12px; }
+#invoice-qty-addform { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+#invoice-qty-addform input[type="text"] { flex: 1; min-width: 150px; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+#invoice-qty-addform input[type="number"] { width: 72px; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; text-align: right; }
+
 #invoice-qty-list { display: flex; flex-direction: column; gap: 4px; }
 .qty-row {
     display: flex;
