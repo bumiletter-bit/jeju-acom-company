@@ -625,6 +625,29 @@ app.post('/api/invoice/decrypt', authMiddleware, async (req, res) => {
     }
 });
 
+// === [임시 진단] 박스 차감 매칭 점검 (확인 후 제거 예정) ===
+app.get('/api/_diag/box-match', async (req, res) => {
+    if (req.query.key !== 'boxdiag-2026') return res.status(403).json({ error: 'forbidden' });
+    try {
+        const pr = await pool.query(
+            `SELECT id, start_date, end_date, items FROM pricing WHERE partner='대성(시온)' ORDER BY end_date DESC LIMIT 2`
+        );
+        const pricing = pr.rows.map(r => ({
+            id: r.id,
+            period: String(r.start_date).slice(0, 10) + '~' + String(r.end_date).slice(0, 10),
+            items: (r.items || []).map(p => ({ name: p.name, boxType: p.boxType || '해당없음' }))
+        }));
+        const st = await pool.query(
+            `SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner='대성(시온)' ORDER BY date DESC LIMIT 50`
+        );
+        const settlements = st.rows.map(r => ({
+            id: r.id, date: String(r.date).slice(0, 10), adjusted: !!r.box_adjusted_at,
+            items: (typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])).map(it => ({ name: it.name, qty: it.qty }))
+        }));
+        res.json({ pricing, settlements });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // === 비밀번호 변경 (본인) ===
 app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
     try {
