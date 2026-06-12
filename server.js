@@ -625,30 +625,6 @@ app.post('/api/invoice/decrypt', authMiddleware, async (req, res) => {
     }
 });
 
-// === [임시 진단] 박스 차감 매칭 점검 (확인 후 제거 예정) ===
-app.get('/api/_diag/box-match', async (req, res) => {
-    if (req.query.key !== 'boxdiag-2026') return res.status(403).json({ error: 'forbidden' });
-    try {
-        const pr = await pool.query(
-            `SELECT id, start_date, end_date, items FROM pricing WHERE partner='대성(시온)' ORDER BY end_date DESC`
-        );
-        const pricing = pr.rows.map(r => ({
-            id: r.id,
-            start: String(r.start_date).slice(0, 10), end: String(r.end_date).slice(0, 10),
-            period: String(r.start_date).slice(0, 10) + '~' + String(r.end_date).slice(0, 10),
-            items: (r.items || []).map(p => ({ name: p.name, boxType: p.boxType || '해당없음' }))
-        }));
-        const st = await pool.query(
-            `SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner='대성(시온)' ORDER BY date DESC LIMIT 300`
-        );
-        const settlements = st.rows.map(r => ({
-            id: r.id, date: String(r.date).slice(0, 10), adjusted: !!r.box_adjusted_at,
-            items: (typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])).map(it => ({ name: it.name, qty: it.qty }))
-        }));
-        res.json({ pricing, settlements });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // === 비밀번호 변경 (본인) ===
 app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
     try {
@@ -2378,14 +2354,8 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
             const items = (typeof sett.items === 'string' ? JSON.parse(sett.items) : sett.items) || [];
             if (items.length === 0) continue;
 
-            const pricResult = await pool.query(
-                `SELECT items FROM pricing WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date ORDER BY id DESC LIMIT 1`,
-                ['대성(시온)', dateStr]
-            );
-            if (pricResult.rows.length === 0) continue;
-            const pricItems = pricResult.rows[0].items || [];
-            const boxTypeMap = {};
-            pricItems.forEach(p => { if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType; });
+            const { boxTypeMap, count } = await getDaesongBoxTypeMap(dateStr);
+            if (count === 0) continue;
 
             // 박스 종류별로 그룹화 (전체 조회 시 한 정산에 여러 박스가 섞일 수 있음)
             const byBox = {};
@@ -2518,19 +2488,11 @@ app.post('/api/box-inventory/reapply-adjustments', authMiddleware, adminOnly, as
             const items = (typeof sett.items === 'string' ? JSON.parse(sett.items) : sett.items) || [];
             if (items.length === 0) continue;
 
-            const pricResult = await pool.query(
-                `SELECT items FROM pricing WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date ORDER BY id DESC LIMIT 1`,
-                ['대성(시온)', dateStr]
-            );
-            if (pricResult.rows.length === 0) {
+            const { boxTypeMap, count } = await getDaesongBoxTypeMap(dateStr);
+            if (count === 0) {
                 if (!result.pricingMissingDates.includes(dateStr)) result.pricingMissingDates.push(dateStr);
                 continue;
             }
-            const pricItems = pricResult.rows[0].items || [];
-            const boxTypeMap = {};
-            pricItems.forEach(p => {
-                if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType;
-            });
 
             const adj = {};
             let matched = false;
@@ -2888,6 +2850,23 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// 특정 날짜에 적용되는 대성 박스타입 맵 — 같은 기간 중복 단가표가 여러 개일 수 있어 모두 병합
+// (예: 06-08~06-14 기간에 단가표 2개 — 한쪽은 미니밤호박만, 한쪽은 레몬/세미놀 등. 둘 다 합쳐야 정상 차감)
+// 박스 매칭 전용. 단가/금액 조회는 별개(getPricingForDate)이며 여기서 건드리지 않음.
+async function getDaesongBoxTypeMap(dateStr) {
+    const pr = await pool.query(
+        `SELECT items FROM pricing
+         WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date
+         ORDER BY id ASC`,
+        ['대성(시온)', dateStr]
+    );
+    const boxTypeMap = {};
+    pr.rows.forEach(r => (r.items || []).forEach(p => {
+        if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType;
+    }));
+    return { boxTypeMap, count: pr.rows.length };
+}
+
 // 박스재고 자동 차감/복구 헬퍼
 // settlement: { id, date, partner, items, box_adjusted_at? }, delta: +1 = 차감, -1 = 복구
 // 현재 대성(시온)만 자체 박스 → daesong_stock에서 ± qty
@@ -2902,19 +2881,9 @@ async function applyBoxAdjustment(settlement, delta) {
         const items = (typeof settlement.items === 'string' ? JSON.parse(settlement.items) : settlement.items) || [];
         if (items.length === 0) return false;
 
-        // 해당 날짜에 적용되는 pricing 조회 (대성)
-        const pricResult = await pool.query(
-            `SELECT items FROM pricing
-             WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date
-             ORDER BY id DESC LIMIT 1`,
-            ['대성(시온)', dateStr]
-        );
-        if (pricResult.rows.length === 0) return false;
-        const pricItems = (pricResult.rows[0].items || []);
-        const boxTypeMap = {};
-        pricItems.forEach(p => {
-            if (p.boxType && p.boxType !== '해당없음') boxTypeMap[p.name] = p.boxType;
-        });
+        // 해당 날짜에 적용되는 pricing 조회 (대성) — 중복 단가표 모두 병합
+        const { boxTypeMap, count } = await getDaesongBoxTypeMap(dateStr);
+        if (count === 0) return false;
         if (Object.keys(boxTypeMap).length === 0) return false;
 
         // 정산 items → 박스타입별 수량 누적
