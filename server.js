@@ -630,15 +630,16 @@ app.get('/api/_diag/box-match', async (req, res) => {
     if (req.query.key !== 'boxdiag-2026') return res.status(403).json({ error: 'forbidden' });
     try {
         const pr = await pool.query(
-            `SELECT id, start_date, end_date, items FROM pricing WHERE partner='대성(시온)' ORDER BY end_date DESC LIMIT 2`
+            `SELECT id, start_date, end_date, items FROM pricing WHERE partner='대성(시온)' ORDER BY end_date DESC`
         );
         const pricing = pr.rows.map(r => ({
             id: r.id,
+            start: String(r.start_date).slice(0, 10), end: String(r.end_date).slice(0, 10),
             period: String(r.start_date).slice(0, 10) + '~' + String(r.end_date).slice(0, 10),
             items: (r.items || []).map(p => ({ name: p.name, boxType: p.boxType || '해당없음' }))
         }));
         const st = await pool.query(
-            `SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner='대성(시온)' ORDER BY date DESC LIMIT 50`
+            `SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner='대성(시온)' ORDER BY date DESC LIMIT 300`
         );
         const settlements = st.rows.map(r => ({
             id: r.id, date: String(r.date).slice(0, 10), adjusted: !!r.box_adjusted_at,
