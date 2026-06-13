@@ -653,6 +653,23 @@ app.get('/api/_diag/box-recon', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// === [임시] 06-08~12 누락 박스 1회 정정 (실행 후 제거) ===
+app.post('/api/_diag/box-fix-0613', async (req, res) => {
+    if (req.query.key !== 'boxfix-0613') return res.status(403).json({ error: 'forbidden' });
+    try {
+        const deltas = { '만감 박스 3kg': 136, '만감 박스 5kg': 191, '만감 박스 10kg': 140 };
+        const after = [];
+        for (const [box, qty] of Object.entries(deltas)) {
+            const r = await pool.query(
+                'UPDATE box_inventory SET daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2 RETURNING product_name, daesong_stock',
+                [qty, box]
+            );
+            if (r.rows[0]) after.push(r.rows[0]);
+        }
+        res.json({ applied: deltas, after });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // === 비밀번호 변경 (본인) ===
 app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
     try {
