@@ -625,51 +625,6 @@ app.post('/api/invoice/decrypt', authMiddleware, async (req, res) => {
     }
 });
 
-// === [임시 진단2] 박스 재고 정정 측정 (확인 후 제거) ===
-app.get('/api/_diag/box-recon', async (req, res) => {
-    if (req.query.key !== 'boxdiag-2026') return res.status(403).json({ error: 'forbidden' });
-    try {
-        const inv = await pool.query('SELECT product_name, company_stock, daesong_stock FROM box_inventory ORDER BY product_name');
-        const mov = await pool.query('SELECT product_name, movement_type, qty, date FROM box_movements ORDER BY date');
-        const pr = await pool.query(
-            `SELECT id, start_date, end_date, items FROM pricing WHERE partner='대성(시온)' ORDER BY id ASC`
-        );
-        const pricing = pr.rows.map(r => ({
-            id: r.id, start: String(r.start_date).slice(0, 10), end: String(r.end_date).slice(0, 10),
-            items: (r.items || []).map(p => ({ name: p.name, boxType: p.boxType || '해당없음' }))
-        }));
-        const st = await pool.query(
-            `SELECT id, date, items, box_adjusted_at FROM settlements WHERE partner='대성(시온)' ORDER BY date ASC`
-        );
-        const settlements = st.rows.map(r => ({
-            id: r.id, date: String(r.date).slice(0, 10), adjusted: !!r.box_adjusted_at,
-            items: (typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])).map(it => ({ name: it.name, qty: Number(it.qty) || 0 }))
-        }));
-        res.json({
-            inventory: inv.rows,
-            movements: mov.rows.map(m => ({ product_name: m.product_name, type: m.movement_type, qty: m.qty, date: String(m.date).slice(0, 10) })),
-            pricing, settlements
-        });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// === [임시] 06-08~12 누락 박스 1회 정정 (실행 후 제거) ===
-app.post('/api/_diag/box-fix-0613', async (req, res) => {
-    if (req.query.key !== 'boxfix-0613') return res.status(403).json({ error: 'forbidden' });
-    try {
-        const deltas = { '만감 박스 3kg': 136, '만감 박스 5kg': 191, '만감 박스 10kg': 140 };
-        const after = [];
-        for (const [box, qty] of Object.entries(deltas)) {
-            const r = await pool.query(
-                'UPDATE box_inventory SET daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2 RETURNING product_name, daesong_stock',
-                [qty, box]
-            );
-            if (r.rows[0]) after.push(r.rows[0]);
-        }
-        res.json({ applied: deltas, after });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // === 비밀번호 변경 (본인) ===
 app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
     try {
