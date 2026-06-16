@@ -359,6 +359,12 @@ async function initDB() {
             updated_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // [A안] 박스재고 단일 진실원천 모델
+    // company_stock / daesong_stock = "base_date 시점의 실재고(기준값)"로 의미 변경
+    // 표시 재고 = 기준값 + (base_date 이후 입고/이동/정산차감 재계산)  → computeBoxStocks()
+    await pool.query(`ALTER TABLE box_inventory ADD COLUMN IF NOT EXISTS base_date DATE`);
+    // 기존 행: 현재 컬럼값을 '오늘 기준값'으로 고정 (오늘 이전 이력은 이미 컬럼값에 반영된 상태 → 보존)
+    await pool.query(`UPDATE box_inventory SET base_date = CURRENT_DATE WHERE base_date IS NULL`);
     // 키워드 순위 (네이버 쇼핑/광고/파워링크 추이)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS keyword_rankings (
@@ -2153,15 +2159,74 @@ app.get('/api/card-transactions/link-candidates', authMiddleware, adminOnly, asy
 
 // === Box Inventory API (박스재고) ===
 
-app.get('/api/box-inventory', authMiddleware, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM box_inventory ORDER BY id');
-        res.json(result.rows.map(r => ({
+// [A안] 박스재고 단일 진실원천 계산
+// 표시 재고 = 기준값(컬럼) + base_date 이후의 입고/이동/정산차감 재계산
+//  - 업체재고 = base_company + Σ(order, date>base) - Σ(transfer, date>base)
+//  - 대성재고 = base_daesong + Σ(transfer, date>base) - Σ(정산차감, date>base)
+//  - base_date NULL = 처음부터 전체 재계산(기준값 0인 신규 박스)
+// 입출고현황(/api/box-inventory/history)과 동일 원본을 사용하므로 두 화면이 항상 일치.
+async function computeBoxStocks() {
+    const invRes = await pool.query('SELECT id, product_name, company_stock, daesong_stock, base_date, updated_at FROM box_inventory ORDER BY id');
+    const byName = {};
+    invRes.rows.forEach(r => {
+        byName[r.product_name] = {
             id: r.id,
             productName: r.product_name,
-            companyStock: r.company_stock,
-            daesongStock: r.daesong_stock,
+            company: Number(r.company_stock) || 0,
+            daesong: Number(r.daesong_stock) || 0,
+            baseDate: r.base_date ? normDateSafe(r.base_date) : null,
             updatedAt: r.updated_at
+        };
+    });
+
+    // 입고/이동 (box_movements) — 기준일 이후만 반영
+    const movs = await pool.query('SELECT product_name, movement_type, qty, date FROM box_movements');
+    for (const m of movs.rows) {
+        const box = byName[m.product_name];
+        if (!box) continue;
+        const d = normDateSafe(m.date);
+        if (box.baseDate && !(d > box.baseDate)) continue;
+        const q = Number(m.qty) || 0;
+        if (m.movement_type === 'order') {
+            box.company += q;          // 업체 입고
+        } else {                       // transfer: 시온 이동
+            box.company -= q;
+            box.daesong += q;
+        }
+    }
+
+    // 정산 차감 (대성 정산) — 기준일 이후만, 날짜별 박스타입 매핑 (history와 동일 로직)
+    const setts = await pool.query('SELECT date, items FROM settlements WHERE partner = $1 ORDER BY date', ['대성(시온)']);
+    const mapCache = {};
+    for (const s of setts.rows) {
+        const d = normDateSafe(s.date);
+        const items = (typeof s.items === 'string' ? JSON.parse(s.items) : s.items) || [];
+        if (items.length === 0) continue;
+        if (!(d in mapCache)) mapCache[d] = (await getDaesongBoxTypeMap(d)).boxTypeMap;
+        const btMap = mapCache[d];
+        for (const it of items) {
+            const bt = btMap[it.name];
+            if (!bt) continue;
+            const box = byName[bt];
+            if (!box) continue;
+            if (box.baseDate && !(d > box.baseDate)) continue;
+            box.daesong -= (Number(it.qty) || 0);
+        }
+    }
+
+    return Object.values(byName);
+}
+
+app.get('/api/box-inventory', authMiddleware, async (req, res) => {
+    try {
+        const boxes = await computeBoxStocks();
+        res.json(boxes.map(b => ({
+            id: b.id,
+            productName: b.productName,
+            companyStock: b.company,
+            daesongStock: b.daesong,
+            baseDate: b.baseDate,
+            updatedAt: b.updatedAt
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2171,8 +2236,9 @@ app.get('/api/box-inventory', authMiddleware, async (req, res) => {
 app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { companyStock, daesongStock } = req.body;
+        // [A안] 수동 수정 = 기준값(base) 재설정 + 기준일을 오늘로 → 이후 입출고만 자동 반영
         await pool.query(
-            'UPDATE box_inventory SET company_stock = $1, daesong_stock = $2, updated_by = $3, updated_at = NOW() WHERE id = $4',
+            'UPDATE box_inventory SET company_stock = $1, daesong_stock = $2, base_date = CURRENT_DATE, updated_by = $3, updated_at = NOW() WHERE id = $4',
             [companyStock, daesongStock, req.user.id, req.params.id]
         );
         res.json({ success: true });
@@ -2263,18 +2329,7 @@ app.post('/api/box-movements', authMiddleware, adminOnly, async (req, res) => {
         const inv = await pool.query('SELECT * FROM box_inventory WHERE product_name = $1', [productName]);
         if (inv.rows.length === 0) return res.status(404).json({ error: `박스재고 '${productName}'을 찾을 수 없습니다` });
 
-        // 박스재고 업데이트
-        if (movementType === 'order') {
-            await pool.query(
-                'UPDATE box_inventory SET company_stock = company_stock + $1, updated_at = NOW() WHERE product_name = $2',
-                [q, productName]
-            );
-        } else { // transfer
-            await pool.query(
-                'UPDATE box_inventory SET company_stock = company_stock - $1, daesong_stock = daesong_stock + $1, updated_at = NOW() WHERE product_name = $2',
-                [q, productName]
-            );
-        }
+        // [A안] 컬럼(기준값) 직접 변경 금지 — 기록만 남기고 표시 재고는 computeBoxStocks()가 재계산
 
         // 이동 기록
         const r = await pool.query(
@@ -2293,19 +2348,7 @@ app.delete('/api/box-movements/:id', authMiddleware, adminOnly, async (req, res)
     try {
         const r = await pool.query('SELECT * FROM box_movements WHERE id = $1', [req.params.id]);
         if (r.rows.length === 0) return res.status(404).json({ error: '기록을 찾을 수 없습니다' });
-        const m = r.rows[0];
-        const q = Number(m.qty) || 0;
-        if (m.movement_type === 'order') {
-            await pool.query(
-                'UPDATE box_inventory SET company_stock = company_stock - $1, updated_at = NOW() WHERE product_name = $2',
-                [q, m.product_name]
-            );
-        } else {
-            await pool.query(
-                'UPDATE box_inventory SET company_stock = company_stock + $1, daesong_stock = daesong_stock - $1, updated_at = NOW() WHERE product_name = $2',
-                [q, m.product_name]
-            );
-        }
+        // [A안] 컬럼(기준값) 직접 복구 금지 — 기록만 삭제하면 표시 재고는 자동 재계산됨
         await pool.query('DELETE FROM box_movements WHERE id = $1', [req.params.id]);
         res.json({ success: true });
     } catch (err) {
@@ -2378,7 +2421,7 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
                     sign: -1,
                     stockTarget: 'daesong',
                     note: matched.map(i => `${i.name}(${i.qty})`).join(', '),
-                    isAdjusted: !!sett.box_adjusted_at,
+                    isAdjusted: true,   // [A안] 기준일 이후 차감은 항상 재고에 자동 반영됨
                     refId: sett.id
                 });
             }
@@ -2454,6 +2497,9 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
 // 박스재고 차감 일괄 적용 — 특정 시작일 이후 대성(시온) 정산을 모두 순회하며 daesong_stock 차감
 // 매칭 결과 상세 반환: 적용 정산 수, 박스타입별 누적 차감, 매칭 실패 항목, pricing 누락 날짜
 app.post('/api/box-inventory/reapply-adjustments', authMiddleware, adminOnly, async (req, res) => {
+    // [A안] 폐기: 박스재고는 표시 시점에 재계산되므로 일괄 차감(컬럼 직접 변경)은 기준값을 오염시킴.
+    return res.status(410).json({ error: '폐기된 기능입니다. 박스재고는 자동 재계산되며, 실재고는 카드에서 직접 수정하세요.' });
+    /* eslint-disable no-unreachable */
     try {
         const { startDate, markOnly } = req.body;
         if (!startDate) return res.status(400).json({ error: 'startDate 필요 (YYYY-MM-DD)' });
@@ -2867,7 +2913,7 @@ async function getDaesongBoxTypeMap(dateStr) {
     return { boxTypeMap, count: pr.rows.length };
 }
 
-// 박스재고 자동 차감/복구 헬퍼
+// [A안 폐기] 박스재고 자동 차감/복구 헬퍼 — 더 이상 호출되지 않음 (표시 시점 재계산으로 대체).
 // settlement: { id, date, partner, items, box_adjusted_at? }, delta: +1 = 차감, -1 = 복구
 // 현재 대성(시온)만 자체 박스 → daesong_stock에서 ± qty
 // settlements.box_adjusted_at = NULL(미적용) / NOT NULL(적용 완료) — 이중 차감 방지
@@ -2926,8 +2972,7 @@ app.post('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
             [date, partner, amount || 0, JSON.stringify(items || []), fromPricing || false]
         );
         const row = result.rows[0];
-        // 박스재고 자동 차감
-        await applyBoxAdjustment(row, +1);
+        // [A안] 박스재고는 컬럼 차감 없이 표시 시점에 재계산됨 (applyBoxAdjustment 사용 중단)
         res.json({
             id: row.id, date: row.date, partner: row.partner,
             amount: Number(row.amount), items: row.items, fromPricing: row.from_pricing
@@ -2993,10 +3038,7 @@ app.get('/api/settlements/debug-pricing', authMiddleware, adminOnly, async (req,
 app.delete('/api/settlements/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         // 삭제 전 settlement 조회 — 박스 차감 복구용 (이미 적용된 경우만)
-        const old = await pool.query('SELECT * FROM settlements WHERE id = $1', [req.params.id]);
-        const oldRow = old.rows[0];
-        // 박스 복구를 먼저 (id 살아있을 때)
-        if (oldRow && oldRow.box_adjusted_at) await applyBoxAdjustment(oldRow, -1);
+        // [A안] 박스재고 복구 불필요 — 정산 삭제 시 표시 재고가 자동 재계산됨
         await pool.query('DELETE FROM settlements WHERE id = $1', [req.params.id]);
         res.json({ success: true });
     } catch (err) {
@@ -3020,10 +3062,6 @@ app.put('/api/settlements/:id/toggle-paid', authMiddleware, adminOnly, async (re
 app.put('/api/settlements/:id/items', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { items, amount } = req.body;
-        // 옛 settlement 먼저 조회 — 박스 차감 복구용 (box_adjusted_at 포함)
-        const old = await pool.query('SELECT * FROM settlements WHERE id = $1', [req.params.id]);
-        const oldRow = old.rows[0];
-
         const result = await pool.query(
             'UPDATE settlements SET items = $1, amount = $2 WHERE id = $3 RETURNING *',
             [JSON.stringify(items), amount, req.params.id]
@@ -3031,10 +3069,7 @@ app.put('/api/settlements/:id/items', authMiddleware, adminOnly, async (req, res
         if (result.rows.length === 0) return res.status(404).json({ error: '정산 데이터를 찾을 수 없습니다' });
         const row = result.rows[0];
 
-        // 박스 차감 재조정: 옛 settlement이 이미 차감된 경우만 -1 복구 → 새 +1 차감
-        if (oldRow && oldRow.box_adjusted_at) await applyBoxAdjustment(oldRow, -1);
-        await applyBoxAdjustment(row, +1);
-
+        // [A안] 박스재고 재조정 불필요 — 정산 수정 시 표시 재고가 자동 재계산됨
         res.json({ id: row.id, date: row.date, partner: row.partner, amount: row.amount, items: row.items, isPaid: row.is_paid });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

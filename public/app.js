@@ -4628,7 +4628,7 @@ window.editBoxStock = function(id, field) {
     if (!item) return;
     const label = field === 'company' ? '업체재고' : '대성(시온)재고';
     const current = field === 'company' ? item.companyStock : item.daesongStock;
-    const val = prompt(`${item.productName} - ${label} 수량 입력:`, current);
+    const val = prompt(`${item.productName} - ${label} 실재고 입력\n(오늘 기준 실제 재고 수량 → 내일부터 입출고 자동 반영):`, current);
     if (val === null) return;
     const num = parseInt(val);
     if (isNaN(num) || num < 0) { alert('올바른 숫자를 입력해주세요.'); return; }
