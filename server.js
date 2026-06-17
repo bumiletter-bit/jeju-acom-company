@@ -2247,6 +2247,36 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
+// [임시 보정] 만감 박스 대성재고 기준값 설정 (기준일=오늘 06-17) — 1회 적용 후 제거
+// 사용: GET /api/_diag/box-fix?key=jeju0617
+app.get('/api/_diag/box-fix', async (req, res) => {
+    try {
+        if (req.query.key !== 'jeju0617') return res.status(403).json({ error: 'forbidden' });
+        const targets = [
+            { name: '만감 박스 3kg', daesong: 1392 },
+            { name: '만감 박스 5kg', daesong: 933 },
+            { name: '만감 박스 10kg', daesong: 592 }
+        ];
+        const applied = [];
+        for (const t of targets) {
+            const r = await pool.query(
+                `UPDATE box_inventory SET daesong_stock = $1, base_date = '2026-06-17'::date, updated_at = NOW()
+                 WHERE product_name = $2 RETURNING product_name, company_stock, daesong_stock, base_date`,
+                [t.daesong, t.name]
+            );
+            applied.push(r.rows[0] || { product_name: t.name, error: 'not found' });
+        }
+        // 적용 후 실제 표시값 재계산으로 검증
+        const computed = await computeBoxStocks();
+        const verify = computed
+            .filter(c => c.productName.startsWith('만감 박스'))
+            .map(c => ({ productName: c.productName, companyStock: c.company, daesongStock: c.daesong }));
+        res.json({ applied, verify });
+    } catch (err) {
+        res.status(500).json({ error: err.message, stack: err.stack });
+    }
+});
+
 // === Keyword Rankings API (순위관리) ===
 
 // 목록 조회 (기간 필터)
