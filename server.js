@@ -2247,69 +2247,6 @@ app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
-// [임시 진단] 박스재고 상태 덤프 — 기준값/기준일 + base_date 이후 차감되는 이벤트 추적 (읽기 전용)
-// 확인 후 제거 예정. 사용: GET /api/_diag/box-state?key=jeju0617
-app.get('/api/_diag/box-state', async (req, res) => {
-    try {
-        if (req.query.key !== 'jeju0617') return res.status(403).json({ error: 'forbidden' });
-        const today = normDateSafe(new Date());
-
-        const invRes = await pool.query('SELECT id, product_name, company_stock, daesong_stock, base_date, updated_at FROM box_inventory ORDER BY id');
-        const boxes = invRes.rows.map(r => ({
-            productName: r.product_name,
-            baseCompany: Number(r.company_stock) || 0,
-            baseDaesong: Number(r.daesong_stock) || 0,
-            baseDate: r.base_date ? normDateSafe(r.base_date) : null,
-            updatedAt: r.updated_at,
-            afterBaseEvents: []   // base_date 이후 실제로 적용되는 이벤트
-        }));
-        const byName = {};
-        boxes.forEach(b => byName[b.productName] = b);
-
-        // 입고/이동
-        const movs = await pool.query('SELECT product_name, movement_type, qty, date FROM box_movements ORDER BY date');
-        for (const m of movs.rows) {
-            const box = byName[m.product_name];
-            if (!box) continue;
-            const d = normDateSafe(m.date);
-            const counted = !(box.baseDate && !(d > box.baseDate));
-            if (counted) box.afterBaseEvents.push({ date: d, type: m.movement_type, qty: Number(m.qty) || 0 });
-        }
-
-        // 정산 차감 (대성)
-        const setts = await pool.query('SELECT id, date, items FROM settlements WHERE partner = $1 ORDER BY date', ['대성(시온)']);
-        const mapCache = {};
-        for (const s of setts.rows) {
-            const d = normDateSafe(s.date);
-            const items = (typeof s.items === 'string' ? JSON.parse(s.items) : s.items) || [];
-            if (items.length === 0) continue;
-            if (!(d in mapCache)) mapCache[d] = (await getDaesongBoxTypeMap(d)).boxTypeMap;
-            const btMap = mapCache[d];
-            for (const it of items) {
-                const bt = btMap[it.name];
-                if (!bt) continue;
-                const box = byName[bt];
-                if (!box) continue;
-                const counted = !(box.baseDate && !(d > box.baseDate));
-                if (counted) box.afterBaseEvents.push({ date: d, type: 'consume', settId: s.id, name: it.name, qty: Number(it.qty) || 0 });
-            }
-        }
-
-        const computed = await computeBoxStocks();
-        const computedMap = {};
-        computed.forEach(c => computedMap[c.productName] = { company: c.company, daesong: c.daesong });
-
-        boxes.forEach(b => {
-            b.computed = computedMap[b.productName];
-            b.consumeAfterBase = b.afterBaseEvents.filter(e => e.type === 'consume').reduce((s, e) => s + e.qty, 0);
-        });
-
-        res.json({ serverToday: today, boxes });
-    } catch (err) {
-        res.status(500).json({ error: err.message, stack: err.stack });
-    }
-});
-
 // === Keyword Rankings API (순위관리) ===
 
 // 목록 조회 (기간 필터)
