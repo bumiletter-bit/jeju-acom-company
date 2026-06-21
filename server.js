@@ -742,6 +742,88 @@ app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     }
 });
 
+// [임시] 부장 퇴사 보정: 부장에게 묶인 대기 결재를 대표 앞으로 이관 (키-게이트, 보정 후 제거 예정)
+// 조회: GET /api/_diag/reassign-approvals?key=acom-2026
+// 적용: GET /api/_diag/reassign-approvals?key=acom-2026&apply=1
+app.get('/api/_diag/reassign-approvals', async (req, res) => {
+    try {
+        if (req.query.key !== 'acom-2026') return res.status(403).json({ error: 'forbidden' });
+        const apply = req.query.apply === '1';
+
+        const ceoRes = await pool.query("SELECT id, name, position FROM users WHERE position = '대표' AND role = 'admin' LIMIT 1");
+        if (ceoRes.rows.length === 0) return res.status(500).json({ error: '대표 계정을 찾을 수 없습니다' });
+        const ceo = ceoRes.rows[0];
+
+        // 부장(=대표가 아닌 admin) 목록
+        const mgrRes = await pool.query("SELECT id, name, position FROM users WHERE role = 'admin' AND position != '대표'");
+        const managers = mgrRes.rows;
+        const mgrIds = managers.map(m => m.id);
+
+        // 대기 중인 지출결의서 (부장 1차 대기, 미완료/미반려)
+        const pendingExpenses = mgrIds.length === 0 ? { rows: [] } : await pool.query(
+            `SELECT er.id, er.title, er.total_amount, er.created_at,
+                    u.name as applicant_name, u.position as applicant_position,
+                    m.name as manager_name
+             FROM expense_reports er
+             LEFT JOIN users u ON er.applicant_id = u.id
+             LEFT JOIN users m ON er.manager_id = m.id
+             WHERE er.manager_id = ANY($1) AND er.manager_status = 'pending'
+               AND er.status NOT IN ('approved','rejected')
+             ORDER BY er.created_at`,
+            [mgrIds]
+        );
+
+        // 대기 중인 기안서류 (부장 결재 대기)
+        const pendingDocs = mgrIds.length === 0 ? { rows: [] } : await pool.query(
+            `SELECT d.id, d.type, d.sub_type, d.start_date, d.status, d.created_at,
+                    u.name as applicant_name, u.position as applicant_position,
+                    a.name as approver_name
+             FROM documents d
+             LEFT JOIN users u ON d.applicant_id = u.id
+             LEFT JOIN users a ON d.approver_id = a.id
+             WHERE d.approver_id = ANY($1) AND d.status = 'pending'
+             ORDER BY d.created_at`,
+            [mgrIds]
+        );
+
+        let appliedExpenses = 0, appliedDocs = 0;
+        if (apply && mgrIds.length > 0) {
+            // 지출결의서: 부장 1차 단계 제거 → 대표(ceo_id)에게 바로 (manager_id NULL)
+            const e = await pool.query(
+                `UPDATE expense_reports
+                 SET manager_id = NULL, manager_status = 'approved'
+                 WHERE manager_id = ANY($1) AND manager_status = 'pending'
+                   AND status NOT IN ('approved','rejected')
+                 RETURNING id`,
+                [mgrIds]
+            );
+            appliedExpenses = e.rows.length;
+            // 기안서류: 결재자를 대표로 변경
+            const d = await pool.query(
+                `UPDATE documents SET approver_id = $1
+                 WHERE approver_id = ANY($2) AND status = 'pending'
+                 RETURNING id`,
+                [ceo.id, mgrIds]
+            );
+            appliedDocs = d.rows.length;
+        }
+
+        res.json({
+            mode: apply ? 'applied' : 'dry-run',
+            ceo,
+            managers,
+            pendingExpenses: pendingExpenses.rows,
+            pendingDocs: pendingDocs.rows,
+            counts: {
+                pendingExpenses: pendingExpenses.rows.length,
+                pendingDocs: pendingDocs.rows.length,
+                appliedExpenses,
+                appliedDocs
+            }
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // 대표 정보 (재직증명서 등 대표 단독결재용)
 app.get('/api/users/ceo', authMiddleware, async (req, res) => {
     try {
