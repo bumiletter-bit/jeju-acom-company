@@ -4146,9 +4146,12 @@ app.get('/api/work-logs', authMiddleware, async (req, res) => {
     }
 });
 
-// 관리자: 특정 직원의 업무일지 조회
+// 대표 전용: 특정 직원의 업무일지 조회 (관리자라도 대표만 타인 업무일지 열람 가능)
 app.get('/api/work-logs/admin', authMiddleware, adminOnly, async (req, res) => {
     try {
+        if (req.user.position !== '대표') {
+            return res.status(403).json({ error: '다른 직원의 업무일지는 대표만 조회할 수 있습니다' });
+        }
         const { month, user_id } = req.query;
         if (!user_id) return res.status(400).json({ error: '사용자 ID가 필요합니다' });
         let startDate, endDate;

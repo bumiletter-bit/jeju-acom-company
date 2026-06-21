@@ -7119,9 +7119,9 @@ let worklogEditId = null; // 수정 중인 업무일지 ID
 let worklogEditDate = null; // 현재 모달에 열려있는 날짜
 
 async function renderWorklogPage() {
-    // 관리자이면 직원 선택 드롭다운 표시
+    // 대표만 직원 선택 드롭다운 표시 (다른 직원 업무일지는 대표 전용)
     const adminCard = document.getElementById('worklog-admin-card');
-    if (currentUser?.role === 'admin') {
+    if (currentUser?.position === '대표') {
         adminCard.style.display = '';
         await loadWorklogUsers();
     } else {
@@ -7149,7 +7149,7 @@ async function loadWorkLogs() {
 
     try {
         const selectedUser = document.getElementById('worklog-user-select')?.value;
-        if (currentUser?.role === 'admin' && selectedUser) {
+        if (currentUser?.position === '대표' && selectedUser) {
             worklogData = await api(`/api/work-logs/admin?month=${monthStr}&user_id=${selectedUser}`);
         } else {
             worklogData = await api(`/api/work-logs?month=${monthStr}`);
@@ -7177,7 +7177,7 @@ function renderWorklogCalendar() {
         logMap[log.date] = log;
     });
 
-    const isViewingOther = currentUser?.role === 'admin' && document.getElementById('worklog-user-select')?.value;
+    const isViewingOther = currentUser?.position === '대표' && document.getElementById('worklog-user-select')?.value;
 
     let html = '';
     let day = 1;
@@ -7285,7 +7285,7 @@ function openWorklogModal(dateStr) {
     }
 
     // 관리자가 다른 직원 것 보는 경우 읽기 전용
-    const isViewingOther = currentUser?.role === 'admin' && document.getElementById('worklog-user-select')?.value;
+    const isViewingOther = currentUser?.position === '대표' && document.getElementById('worklog-user-select')?.value;
     morningEl.readOnly = !!isViewingOther;
     afternoonEl.readOnly = !!isViewingOther;
     meetingEl.readOnly = !!isViewingOther;
