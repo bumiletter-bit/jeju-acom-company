@@ -742,6 +742,17 @@ app.get('/api/users/approvers', authMiddleware, async (req, res) => {
     }
 });
 
+// [임시] 사용자 권한 점검 (읽기전용, 키-게이트, 확인 후 제거 예정)
+app.get('/api/_diag/users', async (req, res) => {
+    try {
+        if (req.query.key !== 'acom-2026') return res.status(403).json({ error: 'forbidden' });
+        const result = await pool.query(
+            "SELECT id, username, name, position, role FROM users ORDER BY id"
+        );
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // 대표 정보 (재직증명서 등 대표 단독결재용)
 app.get('/api/users/ceo', authMiddleware, async (req, res) => {
     try {
