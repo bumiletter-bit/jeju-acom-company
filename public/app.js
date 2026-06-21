@@ -7516,11 +7516,9 @@ function renderExpenseApprovalLine() {
 
     if (currentUser.position === '대표') {
         steps.push({ label: '최종결재', name: `${currentUser.name} (자체)` });
-    } else if (currentUser.role === 'admin') {
-        steps.push({ label: '최종결재', name: '전승범 대표' });
     } else {
-        steps.push({ label: '1차 결재', name: '전연희 부장' });
-        steps.push({ label: '2차 결재', name: '전승범 대표' });
+        // 부장 퇴사로 모든 결재를 대표가 단독 처리
+        steps.push({ label: '최종결재', name: '전승범 대표' });
     }
 
     el.innerHTML = steps.map((s, i) => {

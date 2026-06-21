@@ -731,9 +731,9 @@ app.get('/api/users/approvers', authMiddleware, async (req, res) => {
                 "SELECT id, name, position FROM users WHERE position = '대표' AND role = 'admin'"
             );
         } else {
-            // 일반 직원: 대표가 아닌 관리자만 반환 (전연희)
+            // 일반 직원: 대표 단독 결재 (부장 퇴사로 대표가 모든 결재 처리)
             result = await pool.query(
-                "SELECT id, name, position FROM users WHERE role = 'admin' AND position != '대표' ORDER BY name"
+                "SELECT id, name, position FROM users WHERE position = '대표' AND role = 'admin'"
             );
         }
         res.json(result.rows);
@@ -1678,17 +1678,8 @@ app.post('/api/expense-reports', authMiddleware, async (req, res) => {
         if (!ceoUser) return res.status(500).json({ error: '대표 계정을 찾을 수 없습니다' });
         ceoId = ceoUser.id;
 
-        if (req.user.position === '대표') {
-            // 대표 본인 → 자체 결재 (manager 없음)
-            managerId = null;
-        } else if (req.user.role === 'admin') {
-            // 부장(관리자) → 1차 없이 대표에게 바로
-            managerId = null;
-        } else {
-            // 일반 직원 → 부장(1차) + 대표(2차)
-            const mgrResult = await pool.query("SELECT id FROM users WHERE role = 'admin' AND position != '대표' ORDER BY name LIMIT 1");
-            managerId = mgrResult.rows.length > 0 ? mgrResult.rows[0].id : null;
-        }
+        // 부장 퇴사로 모든 결재를 대표가 단독 처리 → 1차(부장) 단계 없음
+        managerId = null;
 
         const result = await pool.query(
             `INSERT INTO expense_reports (title, applicant_id, total_amount, purpose, items, manager_id, ceo_id, use_date)
@@ -1748,10 +1739,7 @@ app.post('/api/expense-reports/bulk', authMiddleware, async (req, res) => {
         if (ceoResult.rows.length === 0) return res.status(500).json({ error: '대표 계정을 찾을 수 없습니다' });
         ceoId = ceoResult.rows[0].id;
 
-        if (req.user.position !== '대표' && req.user.role !== 'admin') {
-            const mgrResult = await pool.query("SELECT id FROM users WHERE role = 'admin' AND position != '대표' ORDER BY name LIMIT 1");
-            managerId = mgrResult.rows.length > 0 ? mgrResult.rows[0].id : null;
-        }
+        // 부장 퇴사로 모든 결재를 대표가 단독 처리 → 1차(부장) 단계 없음 (managerId는 항상 null)
 
         let inserted = 0, failed = 0, skipped = 0;
         for (const tx of transactions) {
