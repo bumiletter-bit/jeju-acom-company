@@ -3595,10 +3595,10 @@ async function loadLeaveAdjustments() {
     }
     section.style.display = '';
 
-    // 대표/부장만 연차 조정 버튼 표시
+    // 관리자만 연차 조정 버튼 표시
     const addBtn = document.getElementById('btn-add-leave-adj');
     if (addBtn) {
-        addBtn.style.display = (currentUser.position === '부장' || currentUser.position === '대표') ? '' : 'none';
+        addBtn.style.display = (currentUser.role === 'admin') ? '' : 'none';
     }
 
     try {
@@ -3608,7 +3608,7 @@ async function loadLeaveAdjustments() {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="6">연차 조정 내역이 없습니다.</td></tr>';
             return;
         }
-        const canAdjust = currentUser.position === '부장' || currentUser.position === '대표';
+        const canAdjust = currentUser.role === 'admin';
         tbody.innerHTML = data.map(d => {
             const date = new Date(d.createdAt).toLocaleDateString('ko-KR');
             const adjSign = d.adjustment > 0 ? '+' : '';
