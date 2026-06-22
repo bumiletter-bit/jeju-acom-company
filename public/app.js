@@ -958,7 +958,7 @@ async function renderSettlementCalendar() {
     document.getElementById('expected-payment-label').textContent = '총 결제예정금액';
     document.getElementById('daesung-payment-label').textContent = '대성(시온)';
     document.getElementById('hyodon-payment-label').textContent = '효돈농협';
-    document.getElementById('aewol-payment-label').textContent = '애월취나물';
+    document.getElementById('aewol-payment-label').textContent = '기타거래처';
     document.getElementById('cj-payment-label').textContent = 'CJ택배';
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
@@ -1000,7 +1000,7 @@ async function renderSettlementCalendar() {
             if (isPaid) dailyPayments[s.date].hyodonPaid += amount;
             else hyodonPayment += amount;
         }
-        if (s.partner === '애월취나물') {
+        if (s.partner === '기타거래처') {
             dailyPayments[s.date].aewol += amount;
             if (isPaid) dailyPayments[s.date].aewolPaid += amount;
             else aewolPayment += amount;
@@ -1008,7 +1008,7 @@ async function renderSettlementCalendar() {
 
         // CJ택배비 자동 계산: 대성/효돈/애월 정산의 items 수량 합계 × 3,100원
         // CJ 결제완료는 대성/효돈/애월과 독립적으로 cjPaidMap에서 관리
-        if (s.partner === '대성(시온)' || s.partner === '효돈농협' || s.partner === '애월취나물') {
+        if (s.partner === '대성(시온)' || s.partner === '효돈농협' || s.partner === '기타거래처') {
             const items = s.items || [];
             const boxCount = items.reduce((sum, item) => sum + (item.qty || 0), 0);
             const cjCost = boxCount * 3100;
@@ -1089,7 +1089,7 @@ async function renderSettlementCalendar() {
     prepayments.forEach(p => {
         if (p.date && p.date.startsWith(monthStr)) {
             if (!dailyPrepayments[p.date]) dailyPrepayments[p.date] = [];
-            const shortName = p.partner === '대성(시온)' ? '대성' : (p.partner === '효돈농협' ? '효돈' : (p.partner === '애월취나물' ? '애월' : p.partner));
+            const shortName = p.partner === '대성(시온)' ? '대성' : (p.partner === '효돈농협' ? '효돈' : (p.partner === '기타거래처' ? '기타' : p.partner));
             dailyPrepayments[p.date].push({ name: shortName, amount: p.amount });
         }
     });
@@ -1147,7 +1147,7 @@ async function renderSettlementCalendar() {
                     if (dp.aewol) {
                         const allPaid = dp.aewolPaid === dp.aewol;
                         const cls = allPaid ? 'day-payment-item aewol paid' : 'day-payment-item aewol';
-                        contentHtml += `<div class="${cls}"><span class="pay-label">애월</span><span class="pay-amount">${dp.aewol.toLocaleString()}원</span></div>`;
+                        contentHtml += `<div class="${cls}"><span class="pay-label">기타</span><span class="pay-amount">${dp.aewol.toLocaleString()}원</span></div>`;
                     }
                     if (dp.cj) {
                         const allPaid = dp.cjPaid === dp.cj;
@@ -1185,7 +1185,7 @@ window.showSettlementDayModal = function(dateStr) {
     let total = 0;
 
     // 대성, 효돈 entries — 거래처명 클릭 시 품목 상세 모달
-    ['대성(시온)', '효돈농협', '애월취나물'].forEach(partner => {
+    ['대성(시온)', '효돈농협', '기타거래처'].forEach(partner => {
         const entries = dp.entries.filter(e => e.partner === partner);
         if (!entries.length) return;
         entries.forEach(e => {
@@ -1419,7 +1419,7 @@ document.getElementById('cj-auto-calc-btn').addEventListener('click', async () =
         // 상세 표시
         const detailEl = document.getElementById('cj-auto-detail');
         if (data.totalBoxes > 0) {
-            detailEl.innerHTML = `대성(시온) <strong>${data.daesung}건</strong> + 효돈농협 <strong>${data.hyodon}건</strong> + 애월취나물 <strong>${data.aewol}건</strong> = 총 <strong>${data.totalBoxes}건</strong>`;
+            detailEl.innerHTML = `대성(시온) <strong>${data.daesung}건</strong> + 효돈농협 <strong>${data.hyodon}건</strong> + 기타거래처 <strong>${data.aewol}건</strong> = 총 <strong>${data.totalBoxes}건</strong>`;
             detailEl.style.display = '';
         } else {
             detailEl.innerHTML = '해당 날짜에 대성/효돈 정산 데이터가 없습니다.';
@@ -6300,7 +6300,7 @@ async function renderWeeklySettlement() {
                         if (!cjByDate[s.date]) cjByDate[s.date] = 0;
                         cjByDate[s.date] += cjCost;
                     }
-                    if (s.partner === '애월취나물') {
+                    if (s.partner === '기타거래처') {
                         aewolTotal += (s.amount || 0);
                         const items = s.items || [];
                         const cjCost = items.reduce((sum, item) => sum + (item.qty || 0), 0) * 3100;
@@ -6341,7 +6341,7 @@ async function renderWeeklySettlement() {
                 <td>${weekLabel}</td>
                 <td>${partnerLink('대성(시온)', daesungTotal)}</td>
                 <td>${partnerLink('효돈농협', hyodonTotal)}</td>
-                <td>${partnerLink('애월취나물', aewolTotal)}</td>
+                <td>${partnerLink('기타거래처', aewolTotal)}</td>
                 <td>${cjTotal > 0 ? cjTotal.toLocaleString() + ' 원' : '-'}</td>
                 <td>${weekPrepay !== 0 ? '<span style="color:#8b5cf6;">' + (weekPrepay > 0 ? '-' : '') + Math.abs(weekPrepay).toLocaleString() + ' 원</span>' : '-'}</td>
                 <td><strong>${weekTotal !== 0 ? weekTotal.toLocaleString() + ' 원' : '-'}</strong></td>

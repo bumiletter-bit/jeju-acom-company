@@ -547,8 +547,14 @@ async function initDB() {
         )
     `);
 
-    // 애월취나물 컬럼 추가 (기존 DB 마이그레이션)
+    // 기타거래처 컬럼 추가 (기존 DB 마이그레이션)
     await pool.query(`ALTER TABLE settlement_status ADD COLUMN IF NOT EXISTS aewol NUMERIC DEFAULT 0`);
+
+    // 거래처명 변경: 애월취나물 → 기타거래처 (기존 데이터 보존용, 멱등)
+    await pool.query(`UPDATE settlements SET partner = '기타거래처' WHERE partner = '애월취나물'`);
+    await pool.query(`UPDATE pricing SET partner = '기타거래처' WHERE partner = '애월취나물'`);
+    await pool.query(`UPDATE prepayments SET partner = '기타거래처' WHERE partner = '애월취나물'`);
+    await pool.query(`UPDATE product_mappings SET partner = '기타거래처' WHERE partner = '애월취나물'`).catch(() => {});
 
     // 지출결의서 사용날짜 컬럼 (작성일과 별개)
     await pool.query(`ALTER TABLE expense_reports ADD COLUMN IF NOT EXISTS use_date DATE`);
@@ -3178,7 +3184,7 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
 
             if (row.partner === '대성(시온)') daesung += amount;
             else if (row.partner === '효돈농협') hyodon += amount;
-            else if (row.partner === '애월취나물') aewol += amount;
+            else if (row.partner === '기타거래처') aewol += amount;
         });
 
         // CJ택배: 미결제 날짜의 박스수 합산 × 3100 + 모든 이월금액
@@ -3189,7 +3195,7 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
                 ) item), 0)
             ) as box_count
             FROM settlements s
-            WHERE (s.partner = '대성(시온)' OR s.partner = '효돈농협' OR s.partner = '애월취나물')
+            WHERE (s.partner = '대성(시온)' OR s.partner = '효돈농협' OR s.partner = '기타거래처')
             GROUP BY s.date
         `);
         // CJ 일별 결제완료 상태 전체 조회
@@ -3220,7 +3226,7 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
         prepayResult.rows.forEach(r => {
             if (r.partner === '대성(시온)') daesungPrepay = Number(r.total);
             else if (r.partner === '효돈농협') hyodonPrepay = Number(r.total);
-            else if (r.partner === '애월취나물') aewolPrepay = Number(r.total);
+            else if (r.partner === '기타거래처') aewolPrepay = Number(r.total);
         });
 
         const daesungNet = daesung - daesungPrepay;
@@ -3243,7 +3249,7 @@ app.get('/api/settlements/box-count', authMiddleware, adminOnly, async (req, res
         if (!date) return res.status(400).json({ error: '날짜를 지정해주세요' });
 
         const result = await pool.query(
-            "SELECT partner, items FROM settlements WHERE date = $1 AND partner IN ('대성(시온)', '효돈농협', '애월취나물')",
+            "SELECT partner, items FROM settlements WHERE date = $1 AND partner IN ('대성(시온)', '효돈농협', '기타거래처')",
             [date]
         );
 
@@ -3253,7 +3259,7 @@ app.get('/api/settlements/box-count', authMiddleware, adminOnly, async (req, res
             const qty = items.reduce((sum, item) => sum + (item.qty || 0), 0);
             if (row.partner === '대성(시온)') daesung += qty;
             else if (row.partner === '효돈농협') hyodon += qty;
-            else if (row.partner === '애월취나물') aewol += qty;
+            else if (row.partner === '기타거래처') aewol += qty;
         });
 
         res.json({ totalBoxes: daesung + hyodon + aewol, daesung, hyodon, aewol });
@@ -3311,11 +3317,11 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
     try {
         // 거래처별 선결제 합계
         const prepayResult = await pool.query(
-            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM prepayments WHERE partner IN ('대성(시온)', '효돈농협', '애월취나물') GROUP BY partner"
+            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM prepayments WHERE partner IN ('대성(시온)', '효돈농협', '기타거래처') GROUP BY partner"
         );
         // 거래처별 정산 합계 (실제 정산만 - 품목별 금액 세팅 제외)
         const settleResult = await pool.query(
-            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM settlements WHERE partner IN ('대성(시온)', '효돈농협', '애월취나물') AND (from_pricing IS NULL OR from_pricing = false) GROUP BY partner"
+            "SELECT partner, COALESCE(SUM(amount), 0) as total FROM settlements WHERE partner IN ('대성(시온)', '효돈농협', '기타거래처') AND (from_pricing IS NULL OR from_pricing = false) GROUP BY partner"
         );
 
         const prepayMap = {};
@@ -3323,7 +3329,7 @@ app.get('/api/prepayments/balance', authMiddleware, async (req, res) => {
         const settleMap = {};
         settleResult.rows.forEach(r => { settleMap[r.partner] = Number(r.total); });
 
-        const partners = ['대성(시온)', '효돈농협', '애월취나물'];
+        const partners = ['대성(시온)', '효돈농협', '기타거래처'];
         const balances = partners.map(p => ({
             partner: p,
             prepaidTotal: prepayMap[p] || 0,
