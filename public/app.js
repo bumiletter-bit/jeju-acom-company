@@ -5057,11 +5057,23 @@ const PRODUCT_CATALOG = new Set([
     '미니밤호박 중품못난이 / 상품 및 과수: 못난이 3kg(랜덤과)',
     '미니밤호박 중품못난이 / 상품 및 과수: 못난이 5kg(랜덤과)',
     '미니밤호박 중품못난이 / 상품 및 과수: 못난이 10kg(랜덤과)',
+    '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 3kg(15과 전후)',
+    '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 5kg(25과 전후)',
+    '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 10kg(50과 전후)',
+    '애플초당옥수수 미니 / 10개입',
+    '애플초당옥수수 미니 / 20개입',
 ]);
 
 // 상품 카탈로그 매칭
 function matchProduct(rawText) {
     const t = rawText || '';
+    // 애플초당옥수수: kg가 아닌 '개입(개수)' 단위라 중량 매칭 전에 처리
+    if (/옥수수/.test(t)) {
+        const cm = t.match(/(\d+)\s*개/);
+        const result = cm ? ('애플초당옥수수 미니 / ' + cm[1] + '개입') : null;
+        if (result && PRODUCT_CATALOG.has(result)) return result;
+        return '[미매칭] ' + t.trim();
+    }
     // 중량up 행사: "3kg→중량up 5kg" 등 패턴에서 업그레이드된 중량 추출
     const weightUpMatch = t.match(/중량\s*(?:up|업|UP)\s*(\d+\.?\d*)\s*kg/i);
     const wm = weightUpMatch ? weightUpMatch : t.match(/(\d+\.?\d*)\s*kg/i);
@@ -5096,7 +5108,10 @@ function matchProduct(rawText) {
         if (/못난이/.test(t)) result = '과수 및 크기: 제주 못난이 레몬' + wStr + '(랜덤과)';
         else result = '과수 및 크기: 제주 레몬' + wStr + '(중대과)';
     } else if (/미니밤호박|밤호박|호박/.test(t)) {
-        if (/못난이/.test(t)) {
+        if (/꼬마|한입/.test(t)) {
+            const detail = w === 3 ? '15과 전후' : w === 5 ? '25과 전후' : w === 10 ? '50과 전후' : '';
+            result = '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 ' + wStr + '(' + detail + ')';
+        } else if (/못난이/.test(t)) {
             result = '미니밤호박 중품못난이 / 상품 및 과수: 못난이 ' + wStr + '(랜덤과)';
         } else {
             const detail = w === 3 ? '6~12개' : w === 5 ? '10~20개' : w === 10 ? '20~40개' : '';
