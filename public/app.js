@@ -7999,8 +7999,13 @@ async function renderExpenseHistoryList() {
             }
         }
 
+        const isAdmin = currentUser.role === 'admin';
         if (data.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="7">지출결의서가 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="8">지출결의서가 없습니다.</td></tr>';
+            const batchBtn0 = document.getElementById('expense-history-batch-approve');
+            if (batchBtn0) batchBtn0.style.display = 'none';
+            const checkAll0 = document.getElementById('expense-history-check-all');
+            if (checkAll0) checkAll0.style.display = 'none';
             return;
         }
         const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -8018,7 +8023,13 @@ async function renderExpenseHistoryList() {
             const useDateStr = d.use_date
                 ? new Date(d.use_date).toLocaleDateString()
                 : `<span style="color:#9ca3af;">${new Date(d.created_at).toLocaleDateString()}</span>`;
+            // 승인 전(결재대기) 상태만 체크박스 표시 (admin만)
+            const approvable = d.status === 'pending' || d.status === 'manager_approved';
+            const checkCell = (isAdmin && approvable)
+                ? `<td style="text-align:center;"><input type="checkbox" class="expense-history-check" value="${d.id}"></td>`
+                : '<td></td>';
             return `<tr>
+                ${checkCell}
                 <td>${d.title}</td>
                 <td>${d.applicant_position} ${d.applicant_name}</td>
                 <td>${Number(d.total_amount).toLocaleString()} 원</td>
@@ -8032,8 +8043,39 @@ async function renderExpenseHistoryList() {
                 </td>
             </tr>`;
         }).join('');
+
+        // 일괄 승인 UI: 결재대기 항목이 있고 admin일 때만 노출
+        const hasApprovable = isAdmin && data.some(d => d.status === 'pending' || d.status === 'manager_approved');
+        const batchBtn = document.getElementById('expense-history-batch-approve');
+        const checkAll = document.getElementById('expense-history-check-all');
+        if (batchBtn) batchBtn.style.display = hasApprovable ? '' : 'none';
+        if (checkAll) {
+            checkAll.style.display = hasApprovable ? '' : 'none';
+            checkAll.checked = false;
+            checkAll.onchange = () => {
+                tbody.querySelectorAll('.expense-history-check').forEach(cb => { cb.checked = checkAll.checked; });
+            };
+        }
     } catch (err) { console.error('전체 이력 로드 오류:', err); }
 }
+
+// 선택 일괄 승인
+document.getElementById('expense-history-batch-approve')?.addEventListener('click', async () => {
+    const checked = Array.from(document.querySelectorAll('#expense-history-list .expense-history-check:checked')).map(cb => Number(cb.value));
+    if (checked.length === 0) { alert('승인할 항목을 선택해주세요.'); return; }
+    if (!confirm(`선택한 ${checked.length}건을 승인하시겠습니까?`)) return;
+    let ok = 0, fail = 0;
+    const errs = [];
+    for (const id of checked) {
+        try { await api(`/api/expense-reports/${id}/approve`, 'PUT'); ok++; }
+        catch (err) { fail++; errs.push(`#${id}: ${err.message}`); }
+    }
+    let msg = `승인 완료: ${ok}건`;
+    if (fail > 0) msg += `\n실패: ${fail}건\n${errs.slice(0, 5).join('\n')}`;
+    alert(msg);
+    renderExpenseHistoryList().catch(console.error);
+    renderExpensePendingList().catch(console.error);
+});
 
 // 직원 필터 로드
 async function loadExpenseUserFilter() {
@@ -8483,6 +8525,7 @@ function renderCardTransactions() {
     if (cardTxAll.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="7">카드 이용내역이 없습니다.</td></tr>';
         document.getElementById('card-tx-total').textContent = '0 원';
+        document.getElementById('card-tx-count').textContent = '-';
         document.getElementById('card-bank-summary').innerHTML = '';
         return;
     }
@@ -8536,6 +8579,7 @@ function renderCardTransactions() {
     }).join('');
 
     document.getElementById('card-tx-total').textContent = total.toLocaleString() + ' 원';
+    document.getElementById('card-tx-count').textContent = `${cardTxAll.length}건`;
 
     // 카테고리별 소계
     const summaryEl = document.getElementById('card-bank-summary');
