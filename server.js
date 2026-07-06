@@ -5009,6 +5009,220 @@ app.delete('/api/settlement-status/:date', authMiddleware, adminOnly, async (req
     }
 });
 
+// ============================================================
+// === 관리 API (/api/admin/*) — 2단계: 일정/기안/품목/정산 ===
+// MCP 서버(3단계)와 공유하는 서비스 함수 + REST 라우트.
+// 파괴적 액션은 confirm:true 필수. 모든 쓰기는 audit_logs 기록.
+// ============================================================
+
+// audit 기록 헬퍼 (실패해도 본 작업은 진행)
+async function writeAudit({ action, targetType, targetId = null, changes = null, source = 'admin_api', actor = null }) {
+    try {
+        await pool.query(
+            `INSERT INTO audit_logs (action, target_type, target_id, changes, source, actor_id, actor_name)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [action, targetType, targetId, changes ? JSON.stringify(changes) : null, source,
+             actor?.id ?? null, actor?.name ?? null]
+        );
+    } catch (e) { console.error('audit 기록 실패:', e.message); }
+}
+
+// --- 일정 서비스 ---
+async function svcListSchedules({ from, to }) {
+    const cond = ['s.is_deleted = false'];
+    const params = [];
+    if (from) { params.push(from); cond.push(`s.date >= $${params.length}`); }
+    if (to) { params.push(to); cond.push(`s.date <= $${params.length}`); }
+    const r = await pool.query(
+        `SELECT s.id, s.date, s.title, s.type, s.start_time, s.content, s.is_completed,
+                s.user_id, u.name AS user_name
+         FROM schedules s LEFT JOIN users u ON s.user_id = u.id
+         WHERE ${cond.join(' AND ')}
+         ORDER BY s.date ASC, s.id ASC`, params);
+    return r.rows;
+}
+async function svcCreateSchedule({ date, title, type = 'normal', start_time = null, content = null, user_id }, actor) {
+    if (!date || !title) throw { status: 400, message: '날짜(date)와 제목(title)은 필수입니다' };
+    const uid = user_id ?? actor?.id ?? null;
+    const r = await pool.query(
+        `INSERT INTO schedules (user_id, date, title, type, start_time, content)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [uid, date, title, type, start_time, content]);
+    const row = r.rows[0];
+    await writeAudit({ action: 'create', targetType: 'schedule', targetId: row.id, changes: { after: row }, source: actor?.source, actor });
+    return row;
+}
+async function svcUpdateSchedule(id, patch, actor) {
+    const cur = await pool.query('SELECT * FROM schedules WHERE id=$1 AND is_deleted=false', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '일정을 찾을 수 없습니다' };
+    const before = cur.rows[0];
+    const fields = ['date', 'title', 'type', 'start_time', 'content', 'is_completed'];
+    const sets = []; const params = [];
+    for (const f of fields) {
+        if (patch[f] !== undefined) { params.push(patch[f]); sets.push(`${f}=$${params.length}`); }
+    }
+    if (sets.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
+    params.push(id);
+    const r = await pool.query(`UPDATE schedules SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
+    const after = r.rows[0];
+    await writeAudit({ action: 'update', targetType: 'schedule', targetId: id, changes: { before, after }, source: actor?.source, actor });
+    return after;
+}
+async function svcSoftDeleteSchedule(id, actor) {
+    const cur = await pool.query('SELECT * FROM schedules WHERE id=$1 AND is_deleted=false', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '일정을 찾을 수 없습니다' };
+    const r = await pool.query('UPDATE schedules SET is_deleted=true WHERE id=$1 RETURNING *', [id]);
+    await writeAudit({ action: 'delete', targetType: 'schedule', targetId: id, changes: { before: cur.rows[0] }, source: actor?.source, actor });
+    return r.rows[0];
+}
+
+// --- 기안(결재) 서비스 (1차: 조회 전용, 승인/반려는 2차) ---
+async function svcListApprovals(status = 'pending') {
+    const r = await pool.query(
+        `SELECT d.id, d.type, d.sub_type, d.status, d.start_date, d.end_date, d.reason,
+                d.deducted_leave, d.created_at, a.name AS applicant_name, ap.name AS approver_name
+         FROM documents d
+         LEFT JOIN users a ON d.applicant_id = a.id
+         LEFT JOIN users ap ON d.approver_id = ap.id
+         WHERE d.status = $1
+         ORDER BY d.created_at DESC`, [status]);
+    return r.rows;
+}
+async function svcGetApprovalDetail(id) {
+    const r = await pool.query(
+        `SELECT d.*, a.name AS applicant_name, ap.name AS approver_name
+         FROM documents d
+         LEFT JOIN users a ON d.applicant_id = a.id
+         LEFT JOIN users ap ON d.approver_id = ap.id
+         WHERE d.id = $1`, [id]);
+    if (r.rows.length === 0) throw { status: 404, message: '기안을 찾을 수 없습니다' };
+    return r.rows[0];
+}
+
+// --- 품목 서비스 ---
+async function svcListItems({ q = '', includeInactive = false } = {}) {
+    const cond = ['is_deleted = false'];
+    const params = [];
+    if (!includeInactive) cond.push('is_active = true');
+    if (q) { params.push(`%${q}%`); cond.push(`(name ILIKE $${params.length} OR alias ILIKE $${params.length})`); }
+    const r = await pool.query(
+        `SELECT id, name, alias, spec, is_active, created_at, updated_at
+         FROM items WHERE ${cond.join(' AND ')} ORDER BY id ASC`, params);
+    return r.rows;
+}
+async function svcCreateItem({ name, alias = '', spec = '' }, actor) {
+    if (!name || !String(name).trim()) throw { status: 400, message: '품목명(name)은 필수입니다' };
+    const r = await pool.query(
+        `INSERT INTO items (name, alias, spec) VALUES ($1,$2,$3) RETURNING *`,
+        [String(name).trim(), alias, spec]);
+    const row = r.rows[0];
+    await writeAudit({ action: 'create', targetType: 'item', targetId: row.id, changes: { after: row }, source: actor?.source, actor });
+    return row;
+}
+async function svcUpdateItem(id, patch, actor) {
+    const cur = await pool.query('SELECT * FROM items WHERE id=$1 AND is_deleted=false', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '품목을 찾을 수 없습니다' };
+    const before = cur.rows[0];
+    const fields = ['name', 'alias', 'spec', 'is_active'];
+    const sets = ['updated_at = NOW()']; const params = [];
+    for (const f of fields) {
+        if (patch[f] !== undefined) { params.push(patch[f]); sets.push(`${f}=$${params.length}`); }
+    }
+    if (params.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
+    params.push(id);
+    const r = await pool.query(`UPDATE items SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
+    const after = r.rows[0];
+    await writeAudit({ action: 'update', targetType: 'item', targetId: id, changes: { before, after }, source: actor?.source, actor });
+    return after;
+}
+async function svcDeactivateItem(id, actor) {
+    const cur = await pool.query('SELECT * FROM items WHERE id=$1 AND is_deleted=false', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '품목을 찾을 수 없습니다' };
+    const r = await pool.query('UPDATE items SET is_active=false, updated_at=NOW() WHERE id=$1 RETURNING *', [id]);
+    await writeAudit({ action: 'deactivate', targetType: 'item', targetId: id, changes: { before: cur.rows[0], after: r.rows[0] }, source: actor?.source, actor });
+    return r.rows[0];
+}
+
+// --- 정산 서비스 (읽기 전용) ---
+async function svcGetSettlements({ from, to }) {
+    const cond = []; const params = [];
+    if (from) { params.push(from); cond.push(`date >= $${params.length}`); }
+    if (to) { params.push(to); cond.push(`date <= $${params.length}`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    const r = await pool.query(
+        `SELECT id, date, partner, amount, items FROM settlements ${where} ORDER BY date DESC, id DESC`, params);
+    return r.rows;
+}
+
+// --- 공통 헬퍼 ---
+function adminActor(req) {
+    return { id: req.user.id, name: req.user.name, position: req.user.position, role: req.user.role, source: 'admin_api' };
+}
+function requireConfirm(req, res) {
+    if (req.body?.confirm !== true) {
+        res.status(400).json({ error: '확인 필요: 이 작업은 되돌리기 어렵습니다. 실행하려면 confirm:true 를 함께 보내주세요.' });
+        return false;
+    }
+    return true;
+}
+function handleAdminErr(res, err) {
+    const status = err?.status || 500;
+    if (status === 500) console.error('관리 API 오류:', err?.message || err);
+    res.status(status).json({ error: err?.message || String(err) });
+}
+
+// --- REST 라우트 (전부 admin 전용) ---
+// 일정
+app.get('/api/admin/schedules', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ schedules: await svcListSchedules({ from: req.query.from, to: req.query.to }) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/admin/schedules', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ message: '일정이 등록되었습니다', schedule: await svcCreateSchedule(req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.patch('/api/admin/schedules/:id', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ message: '일정이 수정되었습니다', schedule: await svcUpdateSchedule(req.params.id, req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.delete('/api/admin/schedules/:id', authMiddleware, adminOnly, async (req, res) => {
+    if (!requireConfirm(req, res)) return;
+    try { res.json({ message: '일정이 삭제되었습니다(복구 가능)', schedule: await svcSoftDeleteSchedule(req.params.id, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+// 기안 (조회 전용)
+app.get('/api/admin/approvals', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ approvals: await svcListApprovals(req.query.status || 'pending') }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.get('/api/admin/approvals/:id', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ approval: await svcGetApprovalDetail(req.params.id) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+// 품목
+app.get('/api/admin/items', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ items: await svcListItems({ q: req.query.q || '', includeInactive: req.query.all === 'true' }) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/admin/items', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ message: '품목이 추가되었습니다', item: await svcCreateItem(req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.patch('/api/admin/items/:id', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ message: '품목이 수정되었습니다', item: await svcUpdateItem(req.params.id, req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/admin/items/:id/deactivate', authMiddleware, adminOnly, async (req, res) => {
+    if (!requireConfirm(req, res)) return;
+    try { res.json({ message: '품목이 비활성 처리되었습니다(복구 가능)', item: await svcDeactivateItem(req.params.id, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+// 정산 (조회 전용)
+app.get('/api/admin/settlements', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ settlements: await svcGetSettlements({ from: req.query.from, to: req.query.to }) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+
 // SPA fallback
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
