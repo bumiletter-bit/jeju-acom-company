@@ -5223,6 +5223,136 @@ app.get('/api/admin/settlements', authMiddleware, adminOnly, async (req, res) =>
     catch (err) { handleAdminErr(res, err); }
 });
 
+// ============================================================
+// === MCP 서버 (/mcp/:secret) — 3단계 ===
+// authless 커넥터 + URL 시크릿 인증. Streamable HTTP(stateless, JSON 응답).
+// 도구는 2단계 svc* 함수 재사용. 1차 공개도구=읽기+안전쓰기만.
+// 인증: URL 경로의 :secret === env MCP_AUTH_TOKEN (없으면 fail-closed 404)
+// ============================================================
+let _mcpActor = null;
+async function getMcpActor() {
+    if (_mcpActor) return _mcpActor;
+    let r = await pool.query(`SELECT id, name, position, role FROM users WHERE position = '대표' ORDER BY id ASC LIMIT 1`);
+    if (r.rows.length === 0) r = await pool.query(`SELECT id, name, position, role FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1`);
+    const u = r.rows[0];
+    _mcpActor = u ? { id: u.id, name: u.name, position: u.position, role: u.role, source: 'mcp' } : { id: null, name: 'MCP', source: 'mcp' };
+    return _mcpActor;
+}
+
+const MCP_SERVER_INFO = { name: '제주아꼼이네 관리', version: '1.0.0' };
+const MCP_TOOLS = [
+    {
+        name: 'list_schedules',
+        description: '기간별 일정을 조회합니다. from/to(YYYY-MM-DD)로 범위 지정, 생략 시 전체. 삭제된 일정은 제외됩니다.',
+        inputSchema: { type: 'object', properties: { from: { type: 'string', description: '시작일 YYYY-MM-DD' }, to: { type: 'string', description: '종료일 YYYY-MM-DD' } } },
+        handler: async (args) => svcListSchedules({ from: args.from, to: args.to }),
+    },
+    {
+        name: 'create_schedule',
+        description: '새 일정을 등록합니다. date(YYYY-MM-DD)와 title은 필수. type/start_time(HH:MM)/content는 선택. 담당자는 대표로 자동 설정됩니다.',
+        inputSchema: { type: 'object', properties: { date: { type: 'string' }, title: { type: 'string' }, type: { type: 'string' }, start_time: { type: 'string' }, content: { type: 'string' } }, required: ['date', 'title'] },
+        handler: async (args, actor) => svcCreateSchedule(args, actor),
+    },
+    {
+        name: 'update_schedule',
+        description: '기존 일정을 수정합니다. id 필수. date/title/type/start_time/content/is_completed 중 바꿀 값만 전달합니다.',
+        inputSchema: { type: 'object', properties: { id: { type: 'integer' }, date: { type: 'string' }, title: { type: 'string' }, type: { type: 'string' }, start_time: { type: 'string' }, content: { type: 'string' }, is_completed: { type: 'boolean' } }, required: ['id'] },
+        handler: async (args, actor) => { const { id, ...patch } = args; return svcUpdateSchedule(id, patch, actor); },
+    },
+    {
+        name: 'list_pending_approvals',
+        description: '결재 대기중인 기안서류(휴가/근태/시말서 등) 목록을 조회합니다. status(pending/approved/rejected) 생략 시 pending.',
+        inputSchema: { type: 'object', properties: { status: { type: 'string' } } },
+        handler: async (args) => svcListApprovals(args.status || 'pending'),
+    },
+    {
+        name: 'get_approval_detail',
+        description: '기안서류 한 건의 상세 정보를 조회합니다. id 필수.',
+        inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] },
+        handler: async (args) => svcGetApprovalDetail(args.id),
+    },
+    {
+        name: 'search_items',
+        description: '품목 마스터에서 품목을 검색/조회합니다. q(검색어)로 이름·별칭 부분검색, 생략 시 활성 품목 전체. (송장변환 품목과 별개인 관리용 목록)',
+        inputSchema: { type: 'object', properties: { q: { type: 'string' } } },
+        handler: async (args) => svcListItems({ q: args.q || '' }),
+    },
+    {
+        name: 'add_item',
+        description: '품목 마스터에 새 품목을 추가합니다. name 필수, alias(별칭)/spec(규격) 선택.',
+        inputSchema: { type: 'object', properties: { name: { type: 'string' }, alias: { type: 'string' }, spec: { type: 'string' } }, required: ['name'] },
+        handler: async (args, actor) => svcCreateItem(args, actor),
+    },
+    {
+        name: 'update_item',
+        description: '품목 정보를 수정합니다. id 필수. name/alias/spec 중 바꿀 값만 전달.',
+        inputSchema: { type: 'object', properties: { id: { type: 'integer' }, name: { type: 'string' }, alias: { type: 'string' }, spec: { type: 'string' } }, required: ['id'] },
+        handler: async (args, actor) => { const { id, ...patch } = args; return svcUpdateItem(id, patch, actor); },
+    },
+    {
+        name: 'get_settlements',
+        description: '정산 내역을 조회합니다(읽기 전용). from/to(YYYY-MM-DD)로 기간 지정. 거래처/금액/품목이 반환됩니다.',
+        inputSchema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+        handler: async (args) => svcGetSettlements({ from: args.from, to: args.to }),
+    },
+];
+
+async function handleMcpRpc(msg) {
+    if (!msg || typeof msg !== 'object' || !msg.method) return null;
+    const isRequest = msg.id !== undefined && msg.id !== null;
+    if (!isRequest) return null; // 알림/응답 → 202
+    const { id, method, params } = msg;
+    const reply = (result) => ({ jsonrpc: '2.0', id, result });
+    const fail = (code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
+    try {
+        if (method === 'initialize') {
+            return reply({
+                protocolVersion: (params && params.protocolVersion) || '2025-06-18',
+                capabilities: { tools: {} },
+                serverInfo: MCP_SERVER_INFO,
+            });
+        }
+        if (method === 'ping') return reply({});
+        if (method === 'tools/list') {
+            return reply({ tools: MCP_TOOLS.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
+        }
+        if (method === 'tools/call') {
+            const tool = MCP_TOOLS.find(t => t.name === (params && params.name));
+            if (!tool) return fail(-32602, `알 수 없는 도구: ${params && params.name}`);
+            const actor = await getMcpActor();
+            try {
+                const data = await tool.handler((params && params.arguments) || {}, actor);
+                return reply({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
+            } catch (err) {
+                return reply({ content: [{ type: 'text', text: `오류: ${err?.message || String(err)}` }], isError: true });
+            }
+        }
+        return fail(-32601, `지원하지 않는 메서드: ${method}`);
+    } catch (err) {
+        return fail(-32603, err?.message || String(err));
+    }
+}
+
+function mcpSecretOk(req) {
+    const secret = process.env.MCP_AUTH_TOKEN;
+    return !!secret && req.params.secret === secret;
+}
+app.post('/mcp/:secret', async (req, res) => {
+    if (!mcpSecretOk(req)) return res.status(404).json({ error: 'Not found' });
+    if (Array.isArray(req.body)) return res.status(400).json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: '배치 요청 미지원' } });
+    const response = await handleMcpRpc(req.body);
+    if (response === null) return res.status(202).end();
+    res.json(response);
+});
+app.get('/mcp/:secret', (req, res) => {
+    if (!mcpSecretOk(req)) return res.status(404).json({ error: 'Not found' });
+    res.status(405).json({ error: 'Method Not Allowed (SSE 미지원)' });
+});
+app.delete('/mcp/:secret', (req, res) => {
+    if (!mcpSecretOk(req)) return res.status(404).json({ error: 'Not found' });
+    res.status(405).json({ error: 'Method Not Allowed' });
+});
+
 // SPA fallback
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
