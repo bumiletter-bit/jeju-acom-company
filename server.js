@@ -579,6 +579,110 @@ async function initDB() {
     // 처리상태 컬럼 (지출결의서 연동 대체 - 05.22)
     await pool.query(`ALTER TABLE card_transactions ADD COLUMN IF NOT EXISTS is_processed BOOLEAN DEFAULT false`);
 
+    // === 관리 API / MCP 1단계: 품목 마스터 + 변경이력 + soft-delete ===
+    // items: 품목 마스터 (송장변환 PRODUCT_CATALOG와 별개의 독립 목록. 송장변환 매칭엔 영향 없음)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS items (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(300) NOT NULL,
+            alias VARCHAR(300) DEFAULT '',
+            spec VARCHAR(100) DEFAULT '',
+            is_active BOOLEAN DEFAULT true,
+            is_deleted BOOLEAN DEFAULT false,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_items_name ON items(name)`);
+
+    // audit_logs: 관리 API/MCP를 통한 모든 쓰기 작업 추적 (누가·언제·무엇을·before/after)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id SERIAL PRIMARY KEY,
+            action VARCHAR(50) NOT NULL,
+            target_type VARCHAR(50) NOT NULL,
+            target_id INTEGER,
+            changes JSONB,
+            source VARCHAR(20) DEFAULT 'mcp',
+            actor_id INTEGER REFERENCES users(id),
+            actor_name VARCHAR(100),
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)`);
+
+    // schedules: soft-delete + 관리 API용 선택 컬럼(시간/내용). 기존 화면엔 영향 없음(전부 nullable)
+    await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS start_time VARCHAR(10)`);
+    await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS content TEXT`);
+
+    // 품목 마스터 최초 1회 시드 (비어있을 때만 — 재배포 시 중복 방지)
+    const itemCount = await pool.query('SELECT COUNT(*)::int AS c FROM items');
+    if (itemCount.rows[0].c === 0) {
+        const ITEM_SEED = [
+            "★추천 선물세트 / 상품 및 과수: 한라봉&카라향 3kg(2종세트)",
+            "★추천 선물세트 / 상품 및 과수: 한라봉&카라향 5kg(2종세트)",
+            "과수 및 크기: 제주 레몬3kg(혼합과)",
+            "과수 및 크기: 제주 레몬5kg(혼합과)",
+            "과수 및 크기: 제주 레몬10kg(혼합과)",
+            "과수 및 크기: 제주 못난이 레몬5kg(랜덤과)",
+            "과수 및 크기: 제주 못난이 레몬10kg(랜덤과)",
+            "과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 3kg(중소과 17과 전후)",
+            "과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 5kg(중소과 27과 전후)",
+            "과즙팡팡 황금향 / 상품 및 과수: 황금향 선물용 - 3kg(대과 7~15과)",
+            "과즙팡팡 황금향 / 상품 및 과수: 황금향 선물용 - 5kg(대과 13~23과)",
+            "하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 3kg(중소과 18과 전후)",
+            "하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 5kg(중소과 28과 전후)",
+            "하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 10kg(중소과 55과 전후)",
+            "하우스 한라봉 / 상품 및 과수: 한라봉 선물용 - 3kg(대과 7~13과)",
+            "하우스 한라봉 / 상품 및 과수: 한라봉 선물용 - 5kg(대과 12~22과)",
+            "하우스 한라봉 / 상품 및 과수: 한라봉 못난이 - 5kg(랜덤과)",
+            "하우스 한라봉 / 상품 및 과수: 한라봉 못난이 - 10kg(랜덤과)",
+            "제주자몽 / 상품 및 과수: 제주자몽 가정용 3kg(10과전후)",
+            "제주자몽 / 상품 및 과수: 제주자몽 가정용 5kg(17과전후)",
+            "제주자몽 / 상품 및 과수: 제주자몽 선물용 3kg(10과전후)",
+            "제주자몽 / 상품 및 과수: 제주자몽 선물용 5kg(17과전후)",
+            "제주자몽 / 상품 및 과수: 제주자몽 못난이 5kg(랜덤과)",
+            "제주자몽 / 상품 및 과수: 제주자몽 못난이 10kg(랜덤과)",
+            "블러드오렌지 / 상품 및 과수: 블러드오렌지 가정용 5kg(랜덤과)",
+            "블러드오렌지 / 상품 및 과수: 블러드오렌지 가정용 3kg(랜덤과)",
+            "블러드오렌지 / 상품 및 과수: 블러드오렌지 못난이 5kg(랜덤과)",
+            "살살녹는 수라향 / 상품 및 과수: 수라향 가정용 - 5kg(랜덤과)",
+            "살살녹는 수라향 / 상품 및 과수: 수라향 가정용 - 3kg(랜덤과)",
+            "살살녹는 수라향 / 상품 및 과수: 수라향 못난이 - 5kg(랜덤과)",
+            "제주 하귤 / 상품 및 과수: 하귤 가정용 4.5kg(랜덤과)",
+            "제주 하귤 / 상품 및 과수: 하귤 가정용 9kg(랜덤과)",
+            "새콤달콤 카라향 / 상품 및 과수: 카라향 가정용 - 3kg(24과 전후)",
+            "새콤달콤 카라향 / 상품 및 과수: 카라향 가정용 - 5kg(40과 전후)",
+            "새콤달콤 카라향 / 상품 및 과수: 카라향 가정용 - 9kg(72과 전후)",
+            "새콤달콤 카라향 / 상품 및 과수: 카라향 선물용 - 2kg(10~17과)",
+            "맛이진한 세미놀귤 / 세미놀귤 가정용 - 3kg(랜덤과)",
+            "맛이진한 세미놀귤 / 세미놀귤 가정용 - 5kg(랜덤과)",
+            "맛이진한 세미놀귤 / 세미놀귤 가정용 - 10kg(랜덤과)",
+            "맛이진한 세미놀귤 / 세미놀귤 못난이 - 5kg(랜덤과)",
+            "고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - 2.5kg(로얄과)",
+            "고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - 2.5kg(소과)",
+            "고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - 4.5kg(로얄과)",
+            "고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - 10kg(로얄과)",
+            "고당도 하우스감귤 / 상품 및 과수: 하우스감귤 선물용 - 3kg(로얄과)",
+            "미니밤호박 특품최상급 / 상품 및 과수: 특품 3kg(6~12개)",
+            "미니밤호박 특품최상급 / 상품 및 과수: 특품 5kg(10~20개)",
+            "미니밤호박 특품최상급 / 상품 및 과수: 특품 10kg(20~40개)",
+            "미니밤호박 중품못난이 / 상품 및 과수: 못난이 3kg(랜덤과)",
+            "미니밤호박 중품못난이 / 상품 및 과수: 못난이 5kg(랜덤과)",
+            "미니밤호박 중품못난이 / 상품 및 과수: 못난이 10kg(랜덤과)",
+            "미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 3kg(15과 전후)",
+            "미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 5kg(25과 전후)",
+            "미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 10kg(50과 전후)",
+            "초당옥수수 / 중품 10+1개입",
+            "초당옥수수 / 중품 20+2개입",
+        ];
+        for (const name of ITEM_SEED) {
+            await pool.query('INSERT INTO items (name) VALUES ($1)', [name]);
+        }
+        console.log(`items 품목 마스터 시드 완료: ${ITEM_SEED.length}건`);
+    }
+
     console.log('DB 테이블 초기화 완료');
 }
 
