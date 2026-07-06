@@ -5064,15 +5064,23 @@ const PRODUCT_CATALOG = new Set([
     '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 3kg(15과 전후)',
     '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 5kg(25과 전후)',
     '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 10kg(50과 전후)',
-    '애플초당옥수수 미니 / 10개입',
-    '애플초당옥수수 미니 / 20개입',
+    '초당옥수수 / 중품 10+1개입',
+    '초당옥수수 / 중품 20+2개입',
 ]);
 
 // 상품 카탈로그 매칭
 function matchProduct(rawText) {
     const t = rawText || '';
-    // 애플초당옥수수: kg가 아닌 '개입(개수)' 단위라 중량 매칭 전에 처리
+    // 초당옥수수: kg가 아닌 '개입(개수)' 단위라 중량 매칭 전에 처리
     if (/옥수수/.test(t)) {
+        // 초당옥수수(07.06 시작): 'N+M개입' 형식 (중품, 예: 10+1개입 / 20+2개입)
+        const cm2 = t.match(/(\d+)\s*\+\s*(\d+)\s*개/);
+        if (cm2) {
+            const result = '초당옥수수 / 중품 ' + cm2[1] + '+' + cm2[2] + '개입';
+            if (PRODUCT_CATALOG.has(result)) return result;
+            return '[미매칭] ' + t.trim();
+        }
+        // 애플초당옥수수(종료): 'N개입' 단위 — 카탈로그 제거로 [미매칭] 처리됨
         const cm = t.match(/(\d+)\s*개/);
         const result = cm ? ('애플초당옥수수 미니 / ' + cm[1] + '개입') : null;
         if (result && PRODUCT_CATALOG.has(result)) return result;
