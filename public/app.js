@@ -5067,6 +5067,8 @@ const PRODUCT_CATALOG = new Set([
     '미니밤호박 꼬마 / 상품 및 과수: 한입밤호박 10kg(50과 전후)',
     '초당옥수수 / 중품 10+1개입',
     '초당옥수수 / 중품 20+2개입',
+    '최상품 청귤(풋귤) 5kg',
+    '최상품 청귤(풋귤) 10kg',
 ]);
 
 // 상품 카탈로그 매칭
@@ -5138,6 +5140,8 @@ function matchProduct(rawText) {
         } else {
             result = '고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - ' + wStr + '(로얄과)';
         }
+    } else if (/청귤|풋귤/.test(t)) {
+        result = '최상품 청귤(풋귤) ' + wStr;
     } else if (/비가림|감귤/.test(t)) {
         if (/소과|2S미만/.test(t)) result = '고당도 비가림귤 / 상품 및 과수: 소과 - ' + wStr + '(가정용 2S미만)';
         else if (/선물용|프리미엄\s*로얄/.test(t)) result = '고당도 비가림귤 / 상품 및 과수: 프리미엄 로얄과 - ' + wStr + '(선물용 2S~M)';
