@@ -2062,12 +2062,13 @@ function parsePricingExcel(file) {
             if (priceCol === -1) priceCol = header.length >= 2 ? 1 : -1;
 
             document.getElementById('pricing-rows').innerHTML = '';
+            const inheritMap = getInheritedBoxTypeMap();
             for (let i = 1; i < jsonData.length; i++) {
                 const row = jsonData[i]; if (!row || row.length === 0) continue;
                 const name = String(row[nameCol] || '').trim();
                 let price = 0;
                 if (priceCol >= 0 && row[priceCol] != null) price = Number(String(row[priceCol]).replace(/[,원\s]/g, '')) || 0;
-                if (name) addPricingRow(name, price);
+                if (name) addPricingRow(name, price, inheritMap[name]);
             }
             showPricingRows();
         } catch (err) { alert('엑셀 파일을 읽는데 실패했습니다: ' + err.message); }
@@ -2079,12 +2080,13 @@ function parsePricingText(text) {
     const lines = text.trim().split('\n').filter(l => l.trim());
     if (lines.length === 0) return;
     document.getElementById('pricing-rows').innerHTML = '';
+    const inheritMap = getInheritedBoxTypeMap();
     lines.forEach(line => {
         const parts = line.split(/\t/).map(s => s.trim()).filter(s => s);
         let name = '', price = 0;
         if (parts.length >= 2) { price = Number(parts[parts.length - 1].replace(/[,원\s]/g, '')) || 0; name = parts.slice(0, parts.length - 1).join(' '); }
         else { const match = line.match(/^(.+?)\s{2,}([\d,]+)/); if (match) { name = match[1].trim(); price = Number(match[2].replace(/,/g, '')) || 0; } else { name = line.trim(); } }
-        if (name && !name.match(/^(옵션명|품목명|상품명|단가|가격)$/)) addPricingRow(name, price);
+        if (name && !name.match(/^(옵션명|품목명|상품명|단가|가격)$/)) addPricingRow(name, price, inheritMap[name]);
     });
     showPricingRows();
 }
@@ -2122,6 +2124,28 @@ const BOX_OPTIONS = [
     { value: '만감 박스 10kg', label: '만감박스 10kg' }
 ];
 let _pricingRowUid = 0;
+
+// 엑셀/붙여넣기로 단가표를 채울 때, 같은 거래처의 가장 최근 단가표에서
+// 품목명이 일치하는 boxType(박스 매핑)을 자동 상속한다.
+// (매주 새 표를 만들 때 박스 라디오를 수동 재설정하다 빠뜨리는 실수 방지)
+function getInheritedBoxTypeMap() {
+    if (!selectedPricingPartner || !Array.isArray(pricingCache)) return {};
+    // 박스 매핑이 하나라도 있는 같은 거래처 단가표만 후보 (매핑이 텅 빈 표는 기준에서 제외)
+    const same = pricingCache.filter(p => p.partner === selectedPricingPartner
+        && (p.items || []).some(it => it.boxType && it.boxType !== '해당없음'));
+    if (same.length === 0) return {};
+    // 종료일 최신 → 동일 시 id 최신 순으로 가장 최근 표 선택
+    same.sort((a, b) => {
+        const ae = a.endDate || '', be = b.endDate || '';
+        if (ae !== be) return ae < be ? 1 : -1;
+        return (b.id || 0) - (a.id || 0);
+    });
+    const map = {};
+    (same[0].items || []).forEach(it => {
+        if (it.boxType && it.boxType !== '해당없음') map[it.name] = it.boxType;
+    });
+    return map;
+}
 
 function addPricingRow(name, price, boxType) {
     name = name || ''; price = price || ''; boxType = boxType || '해당없음';

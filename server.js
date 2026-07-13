@@ -3687,6 +3687,31 @@ app.post('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// 단가표 제자리 수정 (기간/품목/박스매핑 갱신) — 삭제 후 재생성으로 인한 중복 표 방지
+app.put('/api/pricing/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { startDate, endDate, partner, items } = req.body;
+        const result = await pool.query(
+            `UPDATE pricing SET
+                start_date = COALESCE($1, start_date),
+                end_date   = COALESCE($2, end_date),
+                partner    = COALESCE($3, partner),
+                items      = COALESCE($4, items)
+             WHERE id = $5 RETURNING *`,
+            [startDate || null, endDate || null, partner || null,
+             items ? JSON.stringify(items) : null, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: '해당 단가표가 없습니다.' });
+        const row = result.rows[0];
+        res.json({
+            id: row.id, startDate: normDateSafe(row.start_date), endDate: normDateSafe(row.end_date),
+            partner: row.partner, items: row.items
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.delete('/api/pricing/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
         await pool.query('DELETE FROM pricing WHERE id = $1', [req.params.id]);
