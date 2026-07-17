@@ -4701,3 +4701,17 @@ textarea.form-input {
 .ao-copy-head { display: flex; justify-content: space-between; align-items: center; margin: 12px 0 4px; font-size: 13px; color: #1B3A6B; }
 .ao-copy-body { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.7;
     white-space: pre-wrap; word-break: break-all; font-family: inherit; margin: 0; max-height: 340px; overflow-y: auto; }
+
+/* 5차-①: 실시간 시각화 — 진행률 바 · 보고함 뱃지 · 상시 말풍선 */
+.ao-progress { display: none; width: 64px; height: 6px; margin: 3px auto 0; background: #e9ecef; border: 1px solid rgba(27,58,107,.3); border-radius: 3px; overflow: hidden; }
+.ao-agent.st-running .ao-progress { display: block; }
+.ao-progress-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #F5C800, #2F9E44); transition: width .5s ease; }
+.ao-inbox { cursor: pointer; position: relative; }
+.ao-inbox:hover { background: #FFFBEA; }
+.ao-inbox-badge { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 5px;
+    background: #E03131; color: #fff; font-size: 11px; font-weight: 800; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center; border: 2px solid #fff; box-shadow: 1px 1px 0 rgba(27,58,107,.3); }
+@keyframes aoInboxPop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+.ao-inbox-pop { animation: aoInboxPop .4s ease; }
+.ao-say-persist { animation: aoPulse 1.4s ease-in-out infinite; }
+@keyframes aoPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }

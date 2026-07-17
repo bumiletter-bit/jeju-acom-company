@@ -9781,7 +9781,7 @@ async function aoSendOrder() {
         const res = await api('/api/agent-office/orders', 'POST', { content });
         input.value = '';
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
-        aoSay('마루', '📋 접수! 분석 중...', 3000);
+        aoSay('마루', '🧠 분석 중...', 0); // 결과 나올 때까지 상시 표시
         aoPollOrder(res.order.id);
     } catch (err) {
         alert(err.message);
@@ -9809,6 +9809,7 @@ function aoPollOrder(orderId) {
 
 function aoHandleOrderResult(order) {
     const r = order.result || {};
+    aoClearSay('마루'); // '분석 중...' 상시 말풍선 제거
     if (order.status === '질문') {
         // 애매한 지시 → 마루가 되묻기 (추측 실행 금지 원칙)
         aoSay('마루', '🤔 ' + (r.question || '확인이 필요합니다'), 9000);
@@ -9841,7 +9842,7 @@ window.aoProcessOrder = async function(orderId) {
         showToast('마루가 분석을 시작했습니다');
         const overlay = document.getElementById('ao-detail-overlay');
         if (overlay) overlay.remove();
-        aoSay('마루', '📋 지시 분석 중...', 3000);
+        aoSay('마루', '🧠 분석 중...', 0);
         aoPollOrder(orderId);
     } catch (err) { alert(err.message); }
 };
@@ -9897,7 +9898,10 @@ function aoRenderOffice() {
     const chief = aoAgents.find(a => a.role === 'chief');
     const visible = a => aoBiz === '전체' || a.workplace === aoBiz || a.workplace === '공통';
     office.innerHTML = `
-        <div class="ao-inbox" id="ao-inbox">📥<div class="ao-inbox-label">보고함</div></div>
+        <div class="ao-inbox" id="ao-inbox" onclick="aoGoReports()" title="보고서함 열기">📥
+            <span class="ao-inbox-badge" id="ao-inbox-badge" style="display:none;">0</span>
+            <div class="ao-inbox-label">보고함</div>
+        </div>
         <div class="ao-org">
             ${aoCeoHtml()}
             <div class="ao-vline"></div>
@@ -9959,6 +9963,7 @@ function aoCharHtml(a, vis) {
         </div>
         <div class="ao-nametag"><span class="ao-ai-badge">🤖AI</span> ${a.name}</div>
         <div class="ao-roletag">${AO_ROLE_LABEL[a.role] || a.role}${dutyLabel}</div>
+        <div class="ao-progress"><div class="ao-progress-fill"></div></div>
     </div>`;
 }
 
@@ -9977,16 +9982,37 @@ function aoAgentElByName(name) {
     return agent ? document.querySelector(`.ao-agent[data-agent-id="${agent.id}"]`) : null;
 }
 
-// 말풍선 (잠깐 표시)
+// 말풍선 (ms=0이면 지울 때까지 상시 표시)
 function aoSay(name, text, ms = 2500) {
     const el = aoAgentElByName(name);
     if (!el) return;
     el.querySelectorAll('.ao-say').forEach(s => s.remove());
     const say = document.createElement('div');
-    say.className = 'ao-say';
+    say.className = 'ao-say' + (ms === 0 ? ' ao-say-persist' : '');
     say.textContent = text;
     el.appendChild(say);
-    setTimeout(() => say.remove(), ms);
+    if (ms > 0) setTimeout(() => say.remove(), ms);
+}
+
+function aoClearSay(name) {
+    const el = aoAgentElByName(name);
+    if (el) el.querySelectorAll('.ao-say').forEach(s => s.remove());
+}
+
+// 실행 진행률 바 (작업 단계 n/total)
+function aoSetProgress(agentId, done, total) {
+    const el = document.querySelector(`.ao-agent[data-agent-id="${agentId}"] .ao-progress-fill`);
+    if (!el) return;
+    const pct = total > 0 ? Math.min(100, Math.round(done / total * 100)) : 0;
+    el.style.width = pct + '%';
+}
+
+// 보고함 뱃지 (오늘 완료 보고 수)
+function aoSetInboxBadge(count) {
+    const badge = document.getElementById('ao-inbox-badge');
+    if (!badge) return;
+    if (count > 0) { badge.textContent = count > 99 ? '99+' : count; badge.style.display = ''; }
+    else badge.style.display = 'none';
 }
 
 // 서류/보고서 아이콘 이동 애니메이션 (1.5차: 조직도 연결선을 따라 직각 경로)
@@ -10052,6 +10078,7 @@ function aoStartRunPolling() {
                 aoActiveRun = null;
                 aoSetAgentStatus(finishedAgentId, run.status === 'done' ? 'done' : 'error');
                 if (run.status === 'done') setTimeout(() => aoSetAgentStatus(finishedAgentId, 'idle'), 3000);
+                aoSetProgress(finishedAgentId, 0, 3); // 진행률 초기화 (다음 실행 대비)
                 aoRefreshGrowth();
                 aoFinishDetailProgress(run);
             }
@@ -10097,10 +10124,15 @@ function aoAnimateStep(step, run) {
             if (managerEl && workerEl) aoFlyDoc(managerEl, workerEl, '📋');
             break;
         case 'work':
-            aoSay(workerName, step.text, 2000);
+            aoSay(workerName, step.text, 2600);
+            if (aoActiveRun) {
+                aoActiveRun.workCount = (aoActiveRun.workCount || 0) + 1;
+                if (worker) aoSetProgress(worker.id, aoActiveRun.workCount, 3);
+            }
             break;
         case 'report':
             aoSay(workerName, '✅ 완료 보고');
+            if (worker) aoSetProgress(worker.id, 3, 3);
             if (workerEl) aoFlyDoc(workerEl, managerEl || maruEl || workerEl, '✅');
             break;
         case 'review':
@@ -10113,7 +10145,15 @@ function aoAnimateStep(step, run) {
             setTimeout(() => {
                 const fly = document.getElementById('ao-doc-fly');
                 if (fly) fly.style.display = 'none';
-            }, 1200);
+                // 보고함 뱃지 +1 (도착 연출)
+                const badge = document.getElementById('ao-inbox-badge');
+                if (badge) {
+                    const cur = badge.style.display === 'none' ? 0 : (parseInt(badge.textContent) || 0);
+                    aoSetInboxBadge(cur + 1);
+                    const inbox = document.getElementById('ao-inbox');
+                    if (inbox) { inbox.classList.remove('ao-inbox-pop'); void inbox.offsetWidth; inbox.classList.add('ao-inbox-pop'); }
+                }
+            }, 1100);
             break;
     }
 }
@@ -10161,9 +10201,13 @@ function aoOrderLogLine(o) {
 async function aoRefreshLog() {
     try {
         const [data, orderData] = await Promise.all([
-            api('/api/agent-office/runs?limit=10'),
+            api('/api/agent-office/runs?limit=30'),
             api('/api/agent-office/orders?limit=15'),
         ]);
+        // 보고함 뱃지: 오늘 완료된 보고 수
+        const todayStr = new Date().toDateString();
+        aoSetInboxBadge(data.runs.filter(r =>
+            r.status === 'done' && new Date(r.started_at).toDateString() === todayStr).length);
         const log = document.getElementById('ao-live-log');
         if (!log) return;
         const lines = [];
@@ -10312,6 +10356,12 @@ function aoFinishDetailProgress(run) {
             '<div class="ao-prog-item ao-prog-final">🏁 ' + run.result.summary + '</div>');
     }
 }
+
+// 보고함 클릭 → 보고서함 탭으로 이동
+window.aoGoReports = function() {
+    const tab = document.querySelector('.ao-view-tab[data-view="reports"]');
+    if (tab) tab.click();
+};
 
 // 카피 본문 복사 (알리고 붙여넣기용)
 window.aoCopyText = async function(elId) {
