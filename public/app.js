@@ -9760,6 +9760,11 @@ function aoBindEventsOnce() {
         });
     });
     document.getElementById('ao-report-search').addEventListener('click', aoLoadReports);
+    // LIVE 로그 항목 클릭 → 보고서 모달 (8차 — 모바일 동일)
+    document.getElementById('ao-live-log').addEventListener('click', (e) => {
+        const item = e.target.closest('[data-run-id]');
+        if (item) aoOpenReport(Number(item.dataset.runId));
+    });
     // 상시 지시 입력바 (1.5차)
     const orderInput = document.getElementById('ao-order-input');
     document.getElementById('ao-order-send').addEventListener('click', aoSendOrder);
@@ -9825,6 +9830,12 @@ function aoHandleOrderResult(order) {
     } else if (order.status === '완료' && r.type === 'schedule_cancelled') {
         aoSay('마루', 'ℹ️ 일정 등록을 취소했어요', 5000);
         showToast('일정 등록 취소');
+    } else if (order.status === '완료' && r.type === 'settlement_saved') {
+        aoSay('마루', `✅ 저장 완료 — 총 합계 ${Math.round(r.total || 0).toLocaleString()}원`, 9000);
+        showToast('✅ 정산현황 저장 — 정산관리 화면에서 수정 가능');
+    } else if (order.status === '완료' && r.type === 'settlement_cancelled') {
+        aoSay('마루', 'ℹ️ 정산현황 저장을 취소했어요', 5000);
+        showToast('정산현황 저장 취소');
     } else if (order.status === '완료') {
         aoSay('마루', `📋 ${r.team || ''} ${r.assignee || ''} 배정 → 실행!`, 5000);
         showToast(`마루: ${r.assignee}에게 배정 · 실행 시작`);
@@ -10090,6 +10101,7 @@ function aoStartRunPolling() {
             aoHandleRunUpdate(run);
             if (run.status !== 'running') {
                 clearInterval(aoRunPollTimer);
+                aoAppendLiveLogHtml(aoRunPreviewLine(run)); // 결과 미리보기 라인 (클릭 → 보고서)
                 const finishedAgentId = aoActiveRun.agentId;
                 aoActiveRun = null;
                 aoSetAgentStatus(finishedAgentId, run.status === 'done' ? 'done' : 'error');
@@ -10108,7 +10120,7 @@ function aoHandleRunUpdate(run) {
     const fresh = steps.slice(aoActiveRun.stepCount);
     aoActiveRun.stepCount = steps.length;
     fresh.forEach(step => {
-        aoAppendLiveLog(step);
+        aoAppendLiveLog(step, run.id);
         aoAppendDetailProgress(step);
         aoAnimateStep(step, run);
     });
@@ -10174,10 +10186,24 @@ function aoAnimateStep(step, run) {
     }
 }
 
-// ---- LIVE 로그 ----
-function aoStepLogLine(step) {
+// ---- LIVE 로그 (8차: 항목 클릭 → 보고서 모달 바로 열기) ----
+function aoStepLogLine(step, runId) {
     const time = new Date(step.t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
-    return `<div class="ao-log-item"><span class="ao-log-time">${time}</span> <strong>${step.actor}</strong> → ${step.text}</div>`;
+    const click = runId ? ` ao-log-click" data-run-id="${runId}` : '';
+    return `<div class="ao-log-item${click}"><span class="ao-log-time">${time}</span> <strong>${step.actor}</strong> → ${step.text}</div>`;
+}
+
+// 완료된 실행의 결과 미리보기 라인 (클릭 → 보고서)
+function aoRunPreviewLine(r) {
+    const t = r.finished_at || r.started_at;
+    const time = new Date(t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const res = r.result || {};
+    const first = Array.isArray(res.lines) && res.lines.length ? res.lines[0] : '';
+    const icon = r.status === 'done' ? '✅' : '❗';
+    const text = aoTrunc(`${res.summary || (r.status === 'done' ? '완료' : '오류')}${first ? ' — ' + first : ''}`);
+    return `<div class="ao-log-item ao-log-click ao-log-preview" data-run-id="${r.id}">
+        <span class="ao-log-time">${time}</span> ${icon} <strong>${aoEsc(r.agent_name || '')}</strong> ${aoEsc(text)}
+        <span class="ao-log-open">📄 보기</span></div>`;
 }
 
 function aoAppendLiveLogHtml(html) {
@@ -10189,12 +10215,17 @@ function aoAppendLiveLogHtml(html) {
     while (log.children.length > 60) log.lastChild.remove();
 }
 
-function aoAppendLiveLog(step) {
-    aoAppendLiveLogHtml(aoStepLogLine(step));
+function aoAppendLiveLog(step, runId) {
+    aoAppendLiveLogHtml(aoStepLogLine(step, runId));
 }
 
 function aoEsc(s) {
     return String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+}
+
+function aoTrunc(s, n = 95) {
+    s = String(s || '');
+    return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
 // 접수 지시 로그 라인 (🕐 대표 → 마루: 내용 + 마루 처리 결과)
@@ -10208,6 +10239,8 @@ function aoOrderLogLine(o) {
     else if (st === '완료' && r.type === 'schedule_list') extra = `<div class="ao-log-sub">📅 마루 → 대표: 일정 ${r.count}건${(r.items && r.items.length) ? ' — ' + r.items.slice(0, 3).map(aoEsc).join(' / ') + (r.count > 3 ? ' 외' : '') : ''}</div>`;
     else if (st === '완료' && r.type === 'schedule_created') extra = `<div class="ao-log-sub">✅ 마루 → 일정 ${r.count}건 등록: ${(r.items || []).slice(0, 3).map(aoEsc).join(' / ')}</div>`;
     else if (st === '완료' && r.type === 'schedule_cancelled') extra = `<div class="ao-log-sub">ℹ️ 일정 등록 취소</div>`;
+    else if (st === '완료' && r.type === 'settlement_saved') extra = `<div class="ao-log-sub">💾 마루 → 정산현황 저장 (${aoEsc(r.date || '')}) · 총 합계 ${Math.round(r.total || 0).toLocaleString()}원 — ${(r.items || []).slice(0, 3).map(aoEsc).join(' / ')}</div>`;
+    else if (st === '완료' && r.type === 'settlement_cancelled') extra = `<div class="ao-log-sub">ℹ️ 정산현황 저장 취소</div>`;
     else if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
     else if (st === '완료' && r.assignee) {
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
@@ -10215,7 +10248,9 @@ function aoOrderLogLine(o) {
     }
     else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
     else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)}</div>`;
-    return `<div class="ao-log-item ao-log-order"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${extra}</div>`;
+    const runId = o.run_id || (r && r.run_id) || null;
+    const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
+    return `<div class="ao-log-item ao-log-order${clickAttr}"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${extra}</div>`;
 }
 
 async function aoRefreshLog() {
@@ -10231,7 +10266,13 @@ async function aoRefreshLog() {
         const log = document.getElementById('ao-live-log');
         if (!log) return;
         const lines = [];
-        data.runs.forEach(r => (r.steps || []).forEach(s => lines.push({ t: s.t, html: aoStepLogLine(s) })));
+        data.runs.forEach(r => {
+            (r.steps || []).forEach(s => lines.push({ t: s.t, html: aoStepLogLine(s, r.id) }));
+            // 완료/오류 실행은 결과 미리보기 라인 추가 (클릭 → 보고서 모달)
+            if (r.status === 'done' || r.status === 'error') {
+                lines.push({ t: r.finished_at || r.started_at, html: aoRunPreviewLine(r) });
+            }
+        });
         orderData.orders.forEach(o => lines.push({ t: o.created_at, html: aoOrderLogLine(o) }));
         lines.sort((a, b) => new Date(b.t) - new Date(a.t));
         log.innerHTML = lines.length
@@ -10520,11 +10561,15 @@ window.aoOpenReport = async function(runId) {
     try {
         run = (await api('/api/agent-office/runs/' + runId)).run;
     } catch (err) { return alert(err.message); }
-    const rep = run.result && run.result.report;
-    if (!rep) return alert('상세 보고서가 없는 실행입니다');
+    const rep = (run.result && run.result.report) || null;
+    if (!run.result) return alert('아직 결과가 없는 실행입니다 (진행 중이거나 기록 없음)');
 
     const dt = new Date(run.started_at).toLocaleString('ko-KR');
     let body = '';
+    if (!rep) {
+        // 상세 report가 없는 실행 — 요약·결과 줄만 표시 (로그 클릭으로도 열리게)
+        body = `<div class="ao-result-box">${((run.result && run.result.lines) || []).map(l => '<div>· ' + aoEsc(l) + '</div>').join('') || '<div>· 결과 요약 없음</div>'}</div>`;
+    } else
 
     if (rep.no_data) {
         body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.note || '데이터 없음')}</div>`;
@@ -10541,6 +10586,49 @@ window.aoOpenReport = async function(runId) {
             <pre class="ao-copy-body" id="ao-copy-${run.id}-${i}">${aoEsc(v.text)}</pre>`).join('')}
         ${rep.send_tip ? `<div class="ao-result-box" style="margin-top:10px;">💡 ${aoEsc(rep.send_tip)}</div>` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}${rep.char_counts ? ' · ' + aoEsc(rep.char_counts) : ''} · 모델 ${aoEsc(rep.model || '')}</p>`;
+    } else if (rep.type === 'semi_status') {
+        // 8차: 특정 일자 정산현황 조회 보고서
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        if (rep.no_data) {
+            body = `
+            <h4 class="ao-sec-title">📒 정산현황 ${aoEsc(rep.date_label || rep.date)}</h4>
+            <div class="ao-placeholder-box ao-soon-note">📭 해당 날짜에는 정산현황 기록이 없습니다${rep.nearest ? `<br><span style="font-size:12px;color:#666;">가장 가까운 기록: <strong>${aoEsc(rep.nearest)}</strong></span>` : ''}</div>
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        } else {
+            const t = rep.totals || {};
+            const diffCell = rep.prev
+                ? `<span class="${rep.prev.diff >= 0 ? 'ao-up' : 'ao-down'}">${rep.prev.diff >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(rep.prev.diff)).toLocaleString()}원</span> <small style="color:#888;">(직전 ${aoEsc(rep.prev.label)} ${won(rep.prev.total)})</small>`
+                : '<span style="color:#999;">이전 기록 없음</span>';
+            body = `
+            <h4 class="ao-sec-title">📒 정산현황 ${aoEsc(rep.date_label || rep.date)}</h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>구분</th><th>금액</th></tr></thead>
+                <tbody>
+                    <tr><td>정산현황 합계 (＋)</td><td>${won(t.settle)}</td></tr>
+                    <tr><td>광고비 (＋)</td><td>${won(t.ad)}</td></tr>
+                    <tr><td>카드비용 (－)</td><td>${won(t.card)}</td></tr>
+                    <tr><td>정산항목 (－)</td><td>${won(t.items)}</td></tr>
+                    <tr class="ao-partner-sum"><td><strong>총 합계</strong></td><td><strong>${won(t.total)}</strong></td></tr>
+                    <tr><td>직전 기록 대비</td><td>${diffCell}</td></tr>
+                </tbody>
+            </table></div>
+            ${(rep.fields || []).length ? `
+            <h4 class="ao-sec-title">항목별 입력값</h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>항목</th><th>금액</th></tr></thead>
+                <tbody>${rep.fields.map(f => `<tr><td>${aoEsc(f.label)}</td><td>${won(f.value)}</td></tr>`).join('')}</tbody>
+            </table></div>` : ''}
+            ${rep.memo ? `<div class="ao-result-box" style="margin-top:8px;">📝 ${aoEsc(rep.memo)}</div>` : ''}
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        }
+    } else if (rep.type === 'maru_settlement') {
+        // 8차: 마루 정산현황 입력 보고서
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        body = `
+        <h4 class="ao-sec-title">💾 정산현황 입력 ${aoEsc(rep.date_label || rep.date)}${rep.overwrote ? ' <small style="color:#e67700;">(기존 기록 부분 덮어씀)</small>' : ''}</h4>
+        <div class="ao-result-box">${(rep.saved || []).map(s => '<div>· ' + aoEsc(s) + '</div>').join('')}</div>
+        <div class="ao-grand-total">총 합계 <strong>${won(rep.total)}</strong>${rep.prev_total != null ? ` <small style="color:#ccc;">(저장 전 ${won(rep.prev_total)})</small>` : ''}</div>
+        <p class="ao-rep-note">ℹ️ 말씀하신 항목만 저장 (나머지 무변경) · 정산관리 → 정산현황 화면에서 수정 가능</p>`;
     } else if (rep.type === 'maru_schedule') {
         // 7차: 마루 일정 직접 처리 보고서
         body = `

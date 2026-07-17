@@ -4731,3 +4731,9 @@ textarea.form-input {
 .ao-lesson-no { padding: 3px 8px; min-height: 30px; font-size: 11px; background: #ffe3e3; border-color: #c92a2a; }
 .ao-fb-history { max-height: 160px; overflow-y: auto; font-size: 12px; }
 .ao-fb-hist-item { padding: 5px 2px; border-bottom: 1px dashed #eee; line-height: 1.5; }
+
+/* 8차: LIVE 로그 클릭·미리보기 */
+.ao-log-click { cursor: pointer; }
+.ao-log-click:hover { background: #FFFBEA; }
+.ao-log-preview { background: #F3FAF3; border-left: 3px solid #2F9E44; }
+.ao-log-open { font-size: 10px; background: #1B3A6B; color: #F5C800; border-radius: 4px; padding: 1px 5px; margin-left: 4px; white-space: nowrap; }

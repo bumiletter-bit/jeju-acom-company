@@ -104,6 +104,83 @@ function cjBoxCount(rows) {
         ? s + r.items.reduce((q, it) => q + (Number(it.qty) || 0), 0) : s, 0);
 }
 
+// ===== 8차: 특정 일자 정산현황 조회 (settlement_status — 읽기 전용) =====
+const SS_LABELS = {
+    current_cash: '현재 현금', settlement_scheduled: '스토어 정산예정', unsettled: '스토어 미정산',
+    coupang_unpaid: '쿠팡 미정산', selfmall_unpaid: '자사몰 미정산',
+    ad_naver: '네이버 광고', ad_gfa: 'GFA 광고',
+    card_fee: '카드이용금액', corp_card: '법인카드',
+    daesong: '대성', hyodong: '효돈', aewol: '애월', delivery: '택배',
+};
+function ssTotalRow(row) {
+    const n = k => Number(row[k]) || 0;
+    return n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid')
+        + n('ad_naver') + n('ad_gfa') - n('card_fee') - n('corp_card')
+        - n('daesong') - n('hyodong') - n('aewol') - n('delivery');
+}
+function dateLabelOf(ds) {
+    const s = String(ds).slice(0, 10);
+    const dt = new Date(s + 'T00:00:00Z');
+    return `${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}(${['일', '월', '화', '수', '목', '금', '토'][dt.getUTCDay()]})`;
+}
+
+// 특정 날짜 정산현황 보고 (총합계·섹션 요약·직전 기록 대비)
+async function statusReport({ pool, date }) {
+    const cur = await pool.query('SELECT * FROM settlement_status WHERE date = $1', [date]);
+    const dl = dateLabelOf(date);
+    if (cur.rows.length === 0) {
+        // 정직 안내: 기록 없음 + 가장 가까운 기록
+        const near = await pool.query(
+            `SELECT date FROM settlement_status
+             ORDER BY GREATEST(date - $1::date, $1::date - date) ASC LIMIT 1`, [date]);
+        const nearest = near.rows[0] ? String(near.rows[0].date).slice(0, 10) : null;
+        return {
+            summary: `${dl} 정산현황 기록 없음${nearest ? ` — 가장 가까운 기록: ${dateLabelOf(nearest)}` : ''}`,
+            lines: [
+                `${date}에는 정산현황이 입력되어 있지 않습니다`,
+                nearest ? `가장 가까운 기록: ${dateLabelOf(nearest)} (${nearest}) — 그 날짜로 다시 물어보시면 조회해드립니다` : '정산현황 기록이 아직 한 건도 없습니다',
+                '입력은 마루에게: "오늘 정산현황 입력할게. 대성 283만..." 형식으로 지시 가능',
+            ],
+            report: { type: 'semi_status', date, date_label: dl, no_data: true, nearest,
+                note: '해당 날짜 정산현황 기록 없음 — 정직 안내' },
+        };
+    }
+    const row = cur.rows[0];
+    const n = k => Number(row[k]) || 0;
+    const settleTot = n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid');
+    const adTot = n('ad_naver') + n('ad_gfa');
+    const cardTot = n('card_fee') + n('corp_card');
+    const itemsTot = n('daesong') + n('hyodong') + n('aewol') + n('delivery');
+    const total = settleTot + adTot - cardTot - itemsTot;
+    const prevQ = await pool.query(
+        `SELECT * FROM settlement_status WHERE date < $1 ORDER BY date DESC LIMIT 1`, [date]);
+    const prev = prevQ.rows[0] || null;
+    const prevTotal = prev ? ssTotalRow(prev) : null;
+    const diff = prevTotal !== null ? total - prevTotal : null;
+    const prevLabel = prev ? dateLabelOf(prev.date) : null;
+    const fields = Object.entries(SS_LABELS)
+        .map(([f, label]) => ({ label, value: n(f) }))
+        .filter(v => v.value !== 0);
+    return {
+        summary: `완료: ${dl} 정산현황 총 합계 ${fmt(total)}원${diff !== null ? ` (${prevLabel} 대비 ${diff >= 0 ? '+' : ''}${fmt(diff)}원)` : ''}`,
+        lines: [
+            `정산현황 ${fmt(settleTot)} + 광고 ${fmt(adTot)} − 카드 ${fmt(cardTot)} − 정산항목 ${fmt(itemsTot)} = ${fmt(total)}원`,
+            diff !== null
+                ? `직전 기록(${prevLabel}) 총 합계 ${fmt(prevTotal)}원 → ${diff >= 0 ? '+' : ''}${fmt(diff)}원`
+                : '이전 기록이 없어 대비 계산 불가',
+            '항목별 상세는 보고서에서 확인 (정산관리 화면과 동일 공식)',
+        ],
+        report: {
+            type: 'semi_status', date, date_label: dl,
+            totals: { settle: settleTot, ad: adTot, card: cardTot, items: itemsTot, total },
+            fields,
+            prev: prev ? { date: String(prev.date).slice(0, 10), label: prevLabel, total: prevTotal, diff } : null,
+            memo: row.memo || '',
+            note: '정산관리 정산현황과 동일 계산 공식 · 읽기 전용',
+        },
+    };
+}
+
 // ===== 3.5차: 조건 필터 (마루가 추출한 품목/기간 — AI 추가 호출 없음) =====
 
 function monthEndStr(ym) {
@@ -257,6 +334,12 @@ module.exports = {
                     note: '오션라운지 매출 데이터 없음 — 데이터 등록 후 조회 가능',
                 },
             };
+        }
+
+        // ===== 특정 일자 정산현황 조회 (8차) =====
+        const targetDate = String(params.target_date || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+            return statusReport({ pool, date: targetDate });
         }
 
         // ===== 조건 필터 모드 — 마루가 추출한 품목/기간 조건 (없으면 기존 전체 보고서) =====

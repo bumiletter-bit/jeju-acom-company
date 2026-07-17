@@ -5755,7 +5755,7 @@ const MARU_ROUTE_TOOL = {
         type: 'object',
         additionalProperties: false,
         properties: {
-            action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물에 대한 평가/수정 요구, schedule=일정 조회·등록(마루 직접 처리)' },
+            action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule', 'settlement_input'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물 평가/수정, schedule=일정 조회·등록(마루 직접), settlement_input=정산현황 숫자 입력(마루 직접)' },
             team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/실장실 중 하나). clarify면 빈 문자열' },
             assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/마루 중 하나). clarify면 빈 문자열' },
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
@@ -5763,6 +5763,21 @@ const MARU_ROUTE_TOOL = {
             clarify_question: { type: 'string', description: 'clarify일 때 대표에게 물을 질문 딱 하나. route면 빈 문자열' },
             item_keyword: { type: 'string', description: "지시에 언급된 품목 키워드 하나 (예: '하우스감귤', '카라향', '레몬'). 품목 언급이 없으면 빈 문자열" },
             period: { type: 'string', description: "기간 조건: '이번주'→'this_week', '이번달/이달'→'this_month', 특정 월(예: '6월')→'YYYY-MM' 형식(오늘 날짜 기준, 미래 월이면 작년으로), 기간 언급 없으면 빈 문자열" },
+            target_date: { type: 'string', description: "재무 지시에서 특정 하루를 물으면(예: '4월 14일 정산현황') 그 날짜 YYYY-MM-DD (미래면 작년). 아니면 빈 문자열" },
+            settlement_date: { type: 'string', description: 'action=settlement_input일 때 입력 대상 날짜 YYYY-MM-DD (언급 없으면 오늘). 그 외엔 빈 문자열' },
+            settlement_entries: {
+                type: 'array',
+                description: 'action=settlement_input일 때 언급된 항목만 (미언급 항목은 넣지 않음). 그 외엔 빈 배열',
+                items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        field: { type: 'string', enum: ['current_cash', 'settlement_scheduled', 'unsettled', 'coupang_unpaid', 'selfmall_unpaid', 'ad_naver', 'ad_gfa', 'card_fee', 'corp_card', 'daesong', 'hyodong', 'aewol', 'delivery'] },
+                        amount: { type: 'number', description: "원 단위 정수로 환산 ('283만'→2830000, '1.2억'→120000000)" },
+                    },
+                    required: ['field', 'amount'],
+                },
+            },
             feedback_kind: { type: 'string', enum: ['칭찬', '수정', '지적', '코멘트'], description: "action=feedback일 때 피드백 분류. 그 외 action이면 '코멘트'로 둘 것" },
             schedule_op: { type: 'string', enum: ['조회', '등록', '불가', '해당없음'], description: "action=schedule일 때: 조회/등록, 삭제·수정 요구면 '불가'. 그 외 action이면 '해당없음'" },
             schedule_from: { type: 'string', description: '일정 조회 시작일 YYYY-MM-DD (조회일 때만, 아니면 빈 문자열)' },
@@ -5784,7 +5799,7 @@ const MARU_ROUTE_TOOL = {
                 },
             },
         },
-        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period', 'feedback_kind', 'schedule_op', 'schedule_from', 'schedule_to', 'schedule_items'],
+        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period', 'target_date', 'feedback_kind', 'schedule_op', 'schedule_from', 'schedule_to', 'schedule_items', 'settlement_date', 'settlement_entries'],
     },
 };
 
@@ -5827,6 +5842,16 @@ ${JSON.stringify(routingTable, null, 2)}
      여러 건이면 schedule_items에 전부 담는다 (한 번에 확인받기 위해).
    - 삭제·수정 요구 → schedule_op='불가' (아직 말로 처리 불가 — 프로그램에서 직접).
    실제 직원 명단: ${staffNames.join(', ') || '(명단 없음)'}
+4-2. 정산현황 숫자 입력도 마루 직접: action='settlement_input'.
+   (예: "오늘 정산현황 입력할게. 대성 283만, 효돈 203만, 택배 604만")
+   - settlement_date: 대상 날짜 YYYY-MM-DD (언급 없으면 오늘).
+   - settlement_entries: 언급된 항목만 넣는다. 금액은 원 단위 정수로 환산 (283만→2830000).
+   - 항목 매핑: 대성→daesong, 효돈→hyodong, 애월/기타→aewol, 택배→delivery,
+     현금/현재현금/통장→current_cash, (스토어)정산예정→settlement_scheduled, (스토어)미정산→unsettled,
+     쿠팡→coupang_unpaid, 자사몰→selfmall_unpaid, 네이버광고→ad_naver, GFA광고→ad_gfa,
+     카드/카드이용→card_fee, 법인카드→corp_card.
+   - 어느 항목인지 또는 금액 단위가 애매하면 절대 추측하지 말고 clarify로 되묻는다.
+   - "정산현황 얼마야?"처럼 조회는 settlement_input이 아니라 재무팀 세미 배정(route)이다. 특정 하루 조회면 target_date를 채운다.
 5. 여러 분야가 섞인 지시는 가장 핵심인 분야 하나로 배정하고 reason에 나머지를 언급한다.
 6. 재무 지시(세미 배정)에서는 조건을 함께 추출한다:
    - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
@@ -6002,8 +6027,113 @@ async function maruHandleSchedule(order, d, actor) {
     });
 }
 
-// 확인 답변("응/등록해")으로 대기 중인 일정 등록 실행 — AI 호출 없이 정규식 판별
-const MARU_YES_RE = /^(응+|어+|네+|넵|예|ㅇㅋ|ok|오케이|yes|등록해줘|등록해|등록|진행해|진행|해줘|고고|고)[!~.\s]*$/i;
+// ------------------------------------------------------------
+// 8차: 정산현황 입력 (마루 직접 — 일정 등록과 같은 확인 패턴)
+// 확인 없이 자동 저장 경로 없음. 기존 정산관리 화면·계산 로직 무변경.
+// ------------------------------------------------------------
+const SS_FIELD_LABELS = {
+    current_cash: '현재 현금', settlement_scheduled: '스토어 정산예정', unsettled: '스토어 미정산',
+    coupang_unpaid: '쿠팡 미정산', selfmall_unpaid: '자사몰 미정산',
+    ad_naver: '네이버 광고', ad_gfa: 'GFA 광고',
+    card_fee: '카드이용금액', corp_card: '법인카드',
+    daesong: '대성', hyodong: '효돈', aewol: '애월', delivery: '택배',
+};
+const SS_NUM_FIELDS = Object.keys(SS_FIELD_LABELS);
+
+// 정산관리 화면과 동일한 총 합계 공식 (ssCompute와 일치)
+function ssTotalOf(row) {
+    const n = k => Number(row[k]) || 0;
+    return n('current_cash') + n('settlement_scheduled') + n('unsettled')
+        + n('coupang_unpaid') + n('selfmall_unpaid')
+        + n('ad_naver') + n('ad_gfa')
+        - n('card_fee') - n('corp_card')
+        - n('daesong') - n('hyodong') - n('aewol') - n('delivery');
+}
+const fmtWon = n => Math.round(Number(n) || 0).toLocaleString('ko-KR') + '원';
+function fmtDateLabel(ds) {
+    const dt = new Date(String(ds).slice(0, 10) + 'T00:00:00Z');
+    const day = ['일', '월', '화', '수', '목', '금', '토'][dt.getUTCDay()];
+    return `${Number(String(ds).slice(5, 7))}/${Number(String(ds).slice(8, 10))}(${day})`;
+}
+
+// 정산현황 입력 지시 → 표로 정리해 확인 요청 (저장은 확인 후에만)
+async function maruHandleSettlementInput(order, d, actor) {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(d.settlement_date) ? d.settlement_date : kstTodayStr();
+    const raw = (Array.isArray(d.settlement_entries) ? d.settlement_entries : [])
+        .filter(e => e && SS_NUM_FIELDS.includes(e.field) && Number.isFinite(Number(e.amount)) && Number(e.amount) >= 0);
+    if (raw.length === 0) {
+        await maruFinishOrder(order.id, '질문', {
+            type: 'clarify', question: '입력할 항목과 금액을 알려주세요 (예: "오늘 정산현황 입력 — 대성 283만, 효돈 203만")',
+            summary: d.task_summary, reason: d.reason,
+        });
+        return;
+    }
+    const map = {};
+    raw.forEach(e => { map[e.field] = Math.round(Number(e.amount)); }); // 같은 항목 중복 언급 시 마지막 값
+    const entries = Object.entries(map).map(([field, amount]) => ({ field, amount }));
+    const existing = (await pool.query('SELECT * FROM settlement_status WHERE date = $1', [date])).rows[0] || null;
+    const dateLabel = fmtDateLabel(date);
+    const rows = entries.map(e => `${SS_FIELD_LABELS[e.field]} ${fmtWon(e.amount)}`);
+    const untouchedNote = existing ? '미언급 항목은 기존값 유지' : '미언급 항목은 미입력(0)';
+    const existNote = existing
+        ? ` ⚠️ ${dateLabel} 기록이 이미 있습니다 (기존 총 합계 ${fmtWon(ssTotalOf(existing))}) — 말씀하신 항목만 덮어씁니다.`
+        : '';
+    await maruFinishOrder(order.id, '질문', {
+        type: 'settlement_confirm', date, entries, existing: !!existing, formatted: rows,
+        question: `${dateLabel} 정산현황 — ${rows.join(' / ')} (${untouchedNote})${existNote} 저장할까요? ("응" 또는 "저장해"로 답해주세요)`,
+    });
+}
+
+// 확인 후 실제 저장 — 부분 업데이트 (언급 항목만), audit_log before/after 기록
+async function maruExecuteSettlementSave(pending, currentOrder, actor) {
+    const date = pending.result.date;
+    const entries = ((pending.result && pending.result.entries) || [])
+        .filter(e => e && SS_NUM_FIELDS.includes(e.field) && Number.isFinite(Number(e.amount))); // 화이트리스트 재검증
+    if (entries.length === 0) {
+        await maruFinishOrder(currentOrder.id, '오류', { type: 'error', error: '저장할 항목이 없습니다' });
+        return;
+    }
+    const before = (await pool.query('SELECT * FROM settlement_status WHERE date = $1', [date])).rows[0] || null;
+    let after;
+    if (before) {
+        const sets = ['updated_at = NOW()'];
+        const params = [];
+        entries.forEach(e => { params.push(e.amount); sets.push(`${e.field} = $${params.length}`); });
+        if (actor?.id) { params.push(actor.id); sets.push(`updated_by = $${params.length}`); }
+        params.push(date);
+        after = (await pool.query(
+            `UPDATE settlement_status SET ${sets.join(', ')} WHERE date = $${params.length} RETURNING *`, params)).rows[0];
+    } else {
+        const cols = ['date'];
+        const vals = ['$1'];
+        const params = [date];
+        entries.forEach(e => { params.push(e.amount); cols.push(e.field); vals.push(`$${params.length}`); });
+        if (actor?.id) { params.push(actor.id); cols.push('updated_by'); vals.push(`$${params.length}`); }
+        after = (await pool.query(
+            `INSERT INTO settlement_status (${cols.join(', ')}) VALUES (${vals.join(', ')}) RETURNING *`, params)).rows[0];
+    }
+    await writeAudit({
+        action: before ? 'update' : 'create', targetType: 'settlement_status', targetId: after.id,
+        changes: { before, after }, source: 'agent_office', actor,
+    });
+    const total = ssTotalOf(after);
+    const savedLines = entries.map(e => `${SS_FIELD_LABELS[e.field]} ${fmtWon(e.amount)}`);
+    const summaryText = `✅ 저장 완료 — ${fmtDateLabel(date)} 총 합계 ${fmtWon(total)}`;
+    const run = await maruRecordRun('정산현황 입력', summaryText, savedLines.slice(0, 3), {
+        type: 'maru_settlement', date, date_label: fmtDateLabel(date),
+        saved: savedLines, overwrote: !!before, total,
+        prev_total: before ? ssTotalOf(before) : null,
+    });
+    const doneResult = {
+        type: 'settlement_saved', date, total, items: savedLines, run_id: run?.id,
+        notice: '정산관리 → 정산현황 화면에서 언제든 수정할 수 있습니다',
+    };
+    await maruFinishOrder(pending.id, '완료', doneResult, run?.id);
+    await maruFinishOrder(currentOrder.id, '완료', doneResult, run?.id);
+}
+
+// 확인 답변("응/등록해/저장해")으로 대기 중인 등록·저장 실행 — AI 호출 없이 정규식 판별 (일정+정산 공용)
+const MARU_YES_RE = /^(응+|어+|네+|넵|예|ㅇㅋ|ok|오케이|yes|등록해줘|등록해|등록|저장해줘|저장해|저장|진행해|진행|해줘|고고|고)[!~.\s]*$/i;
 const MARU_NO_RE = /^(아니요?|아냐|취소|취소해|하지마|노|ㄴㄴ|no)[!~.\s]*$/i;
 
 async function maruTryScheduleConfirm(order, actor) {
@@ -6014,15 +6144,25 @@ async function maruTryScheduleConfirm(order, actor) {
     if (!isYes && !isNo) return false;
     const pendingQ = await pool.query(
         `SELECT * FROM pending_orders
-         WHERE status = '질문' AND is_deleted = false AND result->>'type' = 'schedule_confirm'
+         WHERE status = '질문' AND is_deleted = false
+           AND result->>'type' IN ('schedule_confirm', 'settlement_confirm')
            AND created_at > NOW() - interval '1 hour' AND id != $1
          ORDER BY created_at DESC LIMIT 1`, [order.id]);
     const pending = pendingQ.rows[0];
     if (!pending) return false;
+    const ptype = pending.result && pending.result.type;
 
     if (isNo) {
-        await maruFinishOrder(pending.id, '안내', { type: 'schedule_cancelled', notice: '일정 등록을 취소했습니다' });
-        await maruFinishOrder(order.id, '완료', { type: 'schedule_cancelled', notice: '알겠습니다 — 일정 등록을 취소했어요' });
+        const what = ptype === 'settlement_confirm' ? '정산현황 저장' : '일정 등록';
+        await maruFinishOrder(pending.id, '안내', { type: 'confirm_cancelled', notice: `${what}을 취소했습니다` });
+        await maruFinishOrder(order.id, '완료', {
+            type: ptype === 'settlement_confirm' ? 'settlement_cancelled' : 'schedule_cancelled',
+            notice: `알겠습니다 — ${what}을 취소했어요`,
+        });
+        return true;
+    }
+    if (ptype === 'settlement_confirm') {
+        await maruExecuteSettlementSave(pending, order, actor);
         return true;
     }
     // 승인 → 실제 등록 (svcCreateSchedule 재사용: audit_log 자동 기록)
@@ -6127,6 +6267,12 @@ async function processOrderWithMaru(order, actor) {
             return;
         }
 
+        // ①-4 정산현황 입력 → 마루 직접 처리 (파싱 → 확인 1회 → 부분 저장)
+        if (d.action === 'settlement_input') {
+            await maruHandleSettlementInput(order, d, actor);
+            return;
+        }
+
         // ② 배정 — 요원 조회
         const agentQ = await pool.query(
             `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [d.assignee]);
@@ -6134,8 +6280,9 @@ async function processOrderWithMaru(order, actor) {
         const conditions = {
             item_keyword: String(d.item_keyword || '').trim(),
             period: String(d.period || '').trim(),
+            target_date: String(d.target_date || '').trim(),
         };
-        const condText = [conditions.item_keyword, conditions.period].filter(Boolean).join(' · ');
+        const condText = [conditions.item_keyword, conditions.target_date || conditions.period].filter(Boolean).join(' · ');
         const routeInfo = {
             type: 'route', team: d.team, assignee: d.assignee, summary: d.task_summary, reason: d.reason,
             conditions: (conditions.item_keyword || conditions.period) ? conditions : null,
@@ -6183,6 +6330,7 @@ async function processOrderWithMaru(order, actor) {
             workplace: '전체',
             item_keyword: conditions.item_keyword,
             period: conditions.period,
+            target_date: conditions.target_date,
             order_content: order.content,
         });
         await maruFinishOrder(order.id, '완료', { ...routeInfo, run_id: run.id }, run.id);
