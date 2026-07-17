@@ -4751,3 +4751,6 @@ textarea.form-input {
 .ao-fb-target { color: #555; font-size: 11px; }
 .ao-fb-view { padding: 1px 6px; min-height: 24px; font-size: 10px; vertical-align: 1px; }
 .ao-lesson-src { font-size: 11px; color: #888; margin-top: 3px; }
+
+/* 10차-1: 지식 노트 모달 이번 주 표시 */
+.ao-week-line { font-size: 12px; color: #2b8a3e; background: #F3FAF3; border: 1px dashed #2F9E44; border-radius: 6px; padding: 5px 10px; margin-bottom: 8px; }

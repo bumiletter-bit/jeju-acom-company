@@ -9782,6 +9782,7 @@ function aoBindEventsOnce() {
 
 // ---- 상시 지시 입력바 (3차: 마루 AI가 즉시 분석·배정) ----
 let aoOrderPollTimer = null;
+let aoWeekLessons = 0;
 
 async function aoSendOrder() {
     const input = document.getElementById('ao-order-input');
@@ -9918,10 +9919,10 @@ async function aoRefreshAgents() {
 async function aoRefreshGrowth() {
     try {
         const g = await api('/api/agent-office/growth');
+        aoWeekLessons = g.lessons.this_week; // 지식 노트 모달 상단 표시용
         document.getElementById('ao-growth-widget').innerHTML =
             '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenLessonsModal(false)">📚 지식 노트 <strong>' + g.lessons.total + '</strong>건</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenLessonsModal(true)">🌱 이번 주 학습 <strong>+' + g.lessons.this_week + '</strong>건</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 누적 <strong>' + g.feedback.total + '</strong>건</span>';
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 <strong>' + g.feedback.total + '</strong>건</span>';
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
@@ -10489,6 +10490,7 @@ window.aoOpenLessonsModal = async function(weekOnly) {
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
         <h3 style="margin:0 0 8px;">${weekOnly ? '🌱 이번 주 학습' : '📚 지식 노트 전체'} <small style="color:#888;">(${lessons.length}건)</small></h3>
+        ${weekOnly ? '' : `<div class="ao-week-line">🌱 이번 주 +${aoWeekLessons}건</div>`}
         ${bodyHtml}
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
