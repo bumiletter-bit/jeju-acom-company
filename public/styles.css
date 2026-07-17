@@ -4676,3 +4676,9 @@ textarea.form-input {
 .ao-detail-modal .ao-report-table { min-width: 0; }
 .ao-detail-modal .ao-report-table th { padding: 6px 8px; font-size: 12px; }
 .ao-detail-modal .ao-report-table td { padding: 6px 8px; font-size: 12px; }
+
+/* 세미 보고서 v2: 거래처 그룹 + 총 합계 */
+.ao-partner-head td { background: #EEF3FA; font-weight: 700; color: #1B3A6B; border-top: 2px solid rgba(27,58,107,.3); }
+.ao-partner-sum td { background: #FFFBEA; border-bottom: 2px solid #F5C800; }
+.ao-grand-total { margin-top: 10px; background: #1B3A6B; color: #fff; border-radius: 8px; padding: 10px 14px; font-size: 13px; text-align: center; }
+.ao-grand-total strong { color: #F5C800; font-size: 15px; }

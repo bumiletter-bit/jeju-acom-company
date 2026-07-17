@@ -10305,34 +10305,77 @@ window.aoOpenReport = async function(runId) {
             const cls = diff >= 0 ? 'ao-up' : 'ao-down';
             return `<span class="${cls}">${diff >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% (${diff >= 0 ? '+' : ''}${Math.round(diff).toLocaleString()}원)</span>`;
         };
-        body = `
-        <h4 class="ao-sec-title">📊 매출 요약 (${aoEsc(rep.workplace)})</h4>
-        <div class="ao-report-table-wrap"><table class="ao-report-table">
-            <thead><tr><th>구분</th><th>기간</th><th>매출 합계</th><th>정산 건수</th></tr></thead>
-            <tbody>
-                <tr><td>이번 주</td><td>${rep.week.from} ~ ${rep.week.to}</td><td><strong>${Math.round(rep.week.total).toLocaleString()}원</strong></td><td>${rep.week.count}건</td></tr>
-                <tr><td>이번 달</td><td>${rep.month.from} ~ ${rep.month.to}</td><td><strong>${Math.round(rep.month.total).toLocaleString()}원</strong></td><td>${rep.month.count}건</td></tr>
-                <tr><td>전년 동기</td><td>${rep.prev.from} ~ ${rep.prev.to}</td><td>${Math.round(rep.prev.total).toLocaleString()}원</td><td>${rep.prev.count}건</td></tr>
-                <tr><td>증감</td><td>—</td><td colspan="2">${pctCell(rep.total_pct, rep.total_diff)}</td></tr>
-            </tbody>
-        </table></div>
-        <h4 class="ao-sec-title">🧾 품목별 금액 (이번 달)</h4>
-        ${rep.month_items.length ? `
-        <div class="ao-report-table-wrap"><table class="ao-report-table">
-            <thead><tr><th>품목</th><th>수량</th><th>금액</th></tr></thead>
-            <tbody>${rep.month_items.map(i =>
-                `<tr><td>${aoEsc(i.name)}</td><td>${i.qty.toLocaleString()}</td><td>${Math.round(i.amount).toLocaleString()}원</td></tr>`).join('')}
-            </tbody>
-        </table></div>` : '<div class="ao-empty-note">이번 달 품목 데이터가 없습니다</div>'}
-        <h4 class="ao-sec-title">📈 전년 동기대비 품목별 증감</h4>
-        ${rep.yoy_items.length ? `
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        const yoyTable = `
+        <h4 class="ao-sec-title">📈 전년 동기대비 품목별 증감 (상품 기준)</h4>
+        ${rep.yoy_items && rep.yoy_items.length ? `
         <div class="ao-report-table-wrap"><table class="ao-report-table">
             <thead><tr><th>품목</th><th>올해</th><th>작년</th><th>증감</th></tr></thead>
             <tbody>${rep.yoy_items.map(i =>
-                `<tr><td>${aoEsc(i.name)}</td><td>${Math.round(i.cur_amount).toLocaleString()}원</td><td>${Math.round(i.prev_amount).toLocaleString()}원</td><td>${pctCell(i.pct, i.diff)}</td></tr>`).join('')}
+                `<tr><td>${aoEsc(i.name)}</td><td>${won(i.cur_amount)}</td><td>${won(i.prev_amount)}</td><td>${pctCell(i.pct, i.diff)}</td></tr>`).join('')}
             </tbody>
-        </table></div>` : '<div class="ao-empty-note">비교할 품목 데이터가 없습니다</div>'}
-        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        </table></div>` : '<div class="ao-empty-note">비교할 품목 데이터가 없습니다</div>'}`;
+
+        if (rep.partners) {
+            // 신형 보고서: 결제 요약(상품+택배) + 거래처별 그룹 + 총 합계
+            const m = rep.month, w = rep.week;
+            const cjMonthTotal = (m.cj_fee || 0) + (m.cj_carryover || 0);
+            body = `
+            <h4 class="ao-sec-title">📊 결제 요약 (${aoEsc(rep.workplace)})</h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>구분</th><th>기간</th><th>상품 매출</th><th>택배비</th><th>총 결제금액</th></tr></thead>
+                <tbody>
+                    <tr><td>이번 주</td><td>${w.from} ~ ${w.to}</td><td>${won(w.product_total)}</td><td>${won(w.cj_fee)}</td><td><strong>${won(w.payment_total)}</strong></td></tr>
+                    <tr><td>이번 달</td><td>${m.from} ~ ${m.to}</td><td>${won(m.product_total)}</td>
+                        <td>${won(cjMonthTotal)}${m.cj_carryover ? `<br><small style="color:#888;">(당월 ${won(m.cj_fee)} + 이월 ${won(m.cj_carryover)})</small>` : ''}</td>
+                        <td><strong>${won(m.payment_total)}</strong></td></tr>
+                    <tr><td>전년 동기<br><small>(상품 기준)</small></td><td>${rep.prev.from} ~ ${rep.prev.to}</td><td>${won(rep.prev.total)}</td><td>—</td><td>${pctCell(rep.total_pct, rep.total_diff)}</td></tr>
+                </tbody>
+            </table></div>
+            <h4 class="ao-sec-title">🧾 거래처별 품목 금액 (이번 달)</h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>품목</th><th>수량</th><th>금액</th></tr></thead>
+                <tbody>
+                ${rep.partners.map(p =>
+                    `<tr class="ao-partner-head"><td colspan="3">🏢 ${aoEsc(p.partner)}</td></tr>` +
+                    (p.items.length
+                        ? p.items.map(i => `<tr><td>${aoEsc(i.name)}</td><td>${(i.qty || 0).toLocaleString()}</td><td>${won(i.amount)}</td></tr>`).join('')
+                        : '<tr><td colspan="3" style="color:#999;">품목 정보 없음</td></tr>') +
+                    `<tr class="ao-partner-sum"><td><strong>거래처 합계 (${p.count}건)</strong></td><td></td><td><strong>${won(p.total)}</strong></td></tr>`
+                ).join('')}
+                <tr class="ao-partner-head"><td colspan="3">🚚 CJ택배</td></tr>
+                <tr><td>택배비 (박스 ${(m.box_count || 0).toLocaleString()}개 × 3,100원)</td><td>${(m.box_count || 0).toLocaleString()}</td><td>${won(m.cj_fee)}</td></tr>
+                ${m.cj_carryover ? `<tr><td>이월금액</td><td>—</td><td>${won(m.cj_carryover)}</td></tr>` : ''}
+                <tr class="ao-partner-sum"><td><strong>CJ택배 합계</strong></td><td></td><td><strong>${won(cjMonthTotal)}</strong></td></tr>
+                </tbody>
+            </table></div>
+            <div class="ao-grand-total">상품 정산 ${won(m.product_total)} + 택배비 ${won(cjMonthTotal)} = 총 결제금액 <strong>${won(m.payment_total)}</strong></div>
+            ${yoyTable}
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        } else {
+            // 구형 보고서 호환 (거래처 그룹 도입 전 실행 기록)
+            body = `
+            <h4 class="ao-sec-title">📊 매출 요약 (${aoEsc(rep.workplace)})</h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>구분</th><th>기간</th><th>매출 합계</th><th>정산 건수</th></tr></thead>
+                <tbody>
+                    <tr><td>이번 주</td><td>${rep.week.from} ~ ${rep.week.to}</td><td><strong>${won(rep.week.total)}</strong></td><td>${rep.week.count}건</td></tr>
+                    <tr><td>이번 달</td><td>${rep.month.from} ~ ${rep.month.to}</td><td><strong>${won(rep.month.total)}</strong></td><td>${rep.month.count}건</td></tr>
+                    <tr><td>전년 동기</td><td>${rep.prev.from} ~ ${rep.prev.to}</td><td>${won(rep.prev.total)}</td><td>${rep.prev.count}건</td></tr>
+                    <tr><td>증감</td><td>—</td><td colspan="2">${pctCell(rep.total_pct, rep.total_diff)}</td></tr>
+                </tbody>
+            </table></div>
+            <h4 class="ao-sec-title">🧾 품목별 금액 (이번 달)</h4>
+            ${rep.month_items && rep.month_items.length ? `
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>품목</th><th>수량</th><th>금액</th></tr></thead>
+                <tbody>${rep.month_items.map(i =>
+                    `<tr><td>${aoEsc(i.name)}</td><td>${i.qty.toLocaleString()}</td><td>${won(i.amount)}</td></tr>`).join('')}
+                </tbody>
+            </table></div>` : '<div class="ao-empty-note">이번 달 품목 데이터가 없습니다</div>'}
+            ${yoyTable}
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        }
     } else {
         body = `<div class="ao-result-box">${((run.result && run.result.lines) || []).map(l => '<div>· ' + aoEsc(l) + '</div>').join('')}</div>`;
     }
