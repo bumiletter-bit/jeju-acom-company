@@ -181,6 +181,59 @@ async function statusReport({ pool, date }) {
     };
 }
 
+// ===== 8차 보강: 특정 일자 통합 보고 — 일별 정산(정산관리 캘린더와 동일 기준) + 정산현황 기록 =====
+async function dayReport({ pool, helpers, date }) {
+    const dl = dateLabelOf(date);
+    // ① 일별 정산 (settlements — 캘린더 셀과 동일: 거래처별 재계산 금액 + 박스×3,100원)
+    const rows = await fetchSettlements(pool, helpers, date, date);
+    const byPartner = {};
+    rows.forEach(r => { byPartner[r.partner] = (byPartner[r.partner] || 0) + r.amount; });
+    const partners = Object.entries(byPartner)
+        .sort((a, b) => b[1] - a[1])
+        .map(([partner, amount]) => ({ partner, amount }));
+    const boxes = cjBoxCount(rows);
+    const cjFee = boxes * CJ_BOX_FEE;
+    const productTotal = rows.reduce((s, r) => s + r.amount, 0);
+    const dayTotal = productTotal + cjFee;
+    const hasSett = rows.length > 0;
+
+    // ② 정산현황 기록 (재무현황 탭: 현금·광고·카드·정산항목)
+    const statusRes = await statusReport({ pool, date });
+    const st = statusRes.report;
+
+    // 둘 다 없으면 가장 가까운 정산 날짜도 안내 (정직)
+    let nearestSett = null;
+    if (!hasSett) {
+        const near = await pool.query(
+            `SELECT date FROM settlements ORDER BY GREATEST(date - $1::date, $1::date - date) ASC LIMIT 1`, [date]);
+        nearestSett = near.rows[0] ? String(near.rows[0].date).slice(0, 10) : null;
+    }
+
+    const settLine = hasSett
+        ? `일별 정산 ${fmt(dayTotal)}원 (${partners.map(p => `${p.partner} ${fmt(p.amount)}`).join(' + ')}${cjFee ? ` + 택배 ${fmt(cjFee)}` : ''})`
+        : `해당 날짜 일별 정산 기록 없음${nearestSett ? ` — 가장 가까운 정산: ${dateLabelOf(nearestSett)}` : ''}`;
+    const statusLine = st.no_data
+        ? `정산현황(현금·광고·카드) 기록 없음${st.nearest ? ` — 가장 가까운 기록: ${dateLabelOf(st.nearest)}` : ''}`
+        : `정산현황 총 합계 ${fmt(st.totals.total)}원${st.prev ? ` (${st.prev.label} 대비 ${st.prev.diff >= 0 ? '+' : ''}${fmt(st.prev.diff)}원)` : ''}`;
+
+    const summary = hasSett
+        ? `완료: ${dl} 정산 ${fmt(dayTotal)}원 (${partners.map(p => `${p.partner} ${fmt(p.amount)}`).join(' + ')}${cjFee ? ` + 택배 ${fmt(cjFee)}` : ''})`
+        : (st.no_data
+            ? `${dl} 정산·정산현황 기록 없음${nearestSett ? ` — 가장 가까운 정산: ${dateLabelOf(nearestSett)}` : ''}`
+            : `완료: ${dl} 일별 정산 없음 · 정산현황 총 합계 ${fmt(st.totals.total)}원`);
+
+    return {
+        summary,
+        lines: [settLine, statusLine, '보고서에서 거래처별 정산 + 정산현황 상세 확인 (정산관리 화면과 동일 기준)'],
+        report: {
+            type: 'semi_day', date, date_label: dl,
+            settlements: { has: hasSett, partners, box_count: boxes, cj_fee: cjFee, product_total: productTotal, total: dayTotal, count: rows.length, nearest: nearestSett },
+            status: st,
+            note: '일별 정산 = 정산관리 캘린더 셀과 동일 기준 (거래처 재계산 금액 + 박스×3,100원) · 정산현황 = 재무현황 입력 탭 기준 · 읽기 전용',
+        },
+    };
+}
+
 // ===== 3.5차: 조건 필터 (마루가 추출한 품목/기간 — AI 추가 호출 없음) =====
 
 function monthEndStr(ym) {
@@ -336,10 +389,10 @@ module.exports = {
             };
         }
 
-        // ===== 특정 일자 정산현황 조회 (8차) =====
+        // ===== 특정 일자 통합 조회 (8차 보강: 일별 정산 + 정산현황 기록) =====
         const targetDate = String(params.target_date || '').trim();
         if (/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
-            return statusReport({ pool, date: targetDate });
+            return dayReport({ pool, helpers, date: targetDate });
         }
 
         // ===== 조건 필터 모드 — 마루가 추출한 품목/기간 조건 (없으면 기존 전체 보고서) =====

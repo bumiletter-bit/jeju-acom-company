@@ -10586,6 +10586,52 @@ window.aoOpenReport = async function(runId) {
             <pre class="ao-copy-body" id="ao-copy-${run.id}-${i}">${aoEsc(v.text)}</pre>`).join('')}
         ${rep.send_tip ? `<div class="ao-result-box" style="margin-top:10px;">💡 ${aoEsc(rep.send_tip)}</div>` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}${rep.char_counts ? ' · ' + aoEsc(rep.char_counts) : ''} · 모델 ${aoEsc(rep.model || '')}</p>`;
+    } else if (rep.type === 'semi_day') {
+        // 8차 보강: 특정 일자 통합 보고 — 일별 정산(캘린더 기준) + 정산현황 기록
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        const sd = rep.settlements || {};
+        const st = rep.status || {};
+        let settBody;
+        if (sd.has) {
+            settBody = `
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>거래처</th><th>금액</th></tr></thead>
+                <tbody>
+                    ${(sd.partners || []).map(p => `<tr><td>🏢 ${aoEsc(p.partner)}</td><td>${won(p.amount)}</td></tr>`).join('')}
+                    <tr><td>🚚 CJ택배 (박스 ${(sd.box_count || 0).toLocaleString()}개 × 3,100원)</td><td>${won(sd.cj_fee)}</td></tr>
+                    <tr class="ao-partner-sum"><td><strong>합계 (캘린더 셀과 동일)</strong></td><td><strong>${won(sd.total)}</strong></td></tr>
+                </tbody>
+            </table></div>`;
+        } else {
+            settBody = `<div class="ao-empty-note">해당 날짜 일별 정산 기록이 없습니다${sd.nearest ? ` — 가장 가까운 정산: ${aoEsc(sd.nearest)}` : ''}</div>`;
+        }
+        let stBody;
+        if (st.no_data) {
+            stBody = `<div class="ao-empty-note">정산현황(현금·광고·카드) 기록 없음${st.nearest ? ` — 가장 가까운 기록: ${aoEsc(st.nearest)}` : ''}</div>`;
+        } else {
+            const t = st.totals || {};
+            const diffCell = st.prev
+                ? `<span class="${st.prev.diff >= 0 ? 'ao-up' : 'ao-down'}">${st.prev.diff >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(st.prev.diff)).toLocaleString()}원</span> <small style="color:#888;">(직전 ${aoEsc(st.prev.label || '')} ${won(st.prev.total)})</small>`
+                : '<span style="color:#999;">이전 기록 없음</span>';
+            stBody = `
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>구분</th><th>금액</th></tr></thead>
+                <tbody>
+                    <tr><td>정산현황 합계 (＋)</td><td>${won(t.settle)}</td></tr>
+                    <tr><td>광고비 (＋)</td><td>${won(t.ad)}</td></tr>
+                    <tr><td>카드비용 (－)</td><td>${won(t.card)}</td></tr>
+                    <tr><td>정산항목 (－)</td><td>${won(t.items)}</td></tr>
+                    <tr class="ao-partner-sum"><td><strong>총 합계</strong></td><td><strong>${won(t.total)}</strong></td></tr>
+                    <tr><td>직전 기록 대비</td><td>${diffCell}</td></tr>
+                </tbody>
+            </table></div>`;
+        }
+        body = `
+        <h4 class="ao-sec-title">📅 ${aoEsc(rep.date_label || rep.date)} 일별 정산 <small style="color:#888;">(정산관리 캘린더 기준)</small></h4>
+        ${settBody}
+        <h4 class="ao-sec-title">📒 정산현황 기록 <small style="color:#888;">(재무현황 입력 탭 기준)</small></h4>
+        ${stBody}
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
     } else if (rep.type === 'semi_status') {
         // 8차: 특정 일자 정산현황 조회 보고서
         const won = n => Math.round(n || 0).toLocaleString() + '원';
