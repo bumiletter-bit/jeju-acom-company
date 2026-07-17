@@ -683,6 +683,220 @@ async function initDB() {
         console.log(`items 품목 마스터 시드 완료: ${ITEM_SEED.length}건`);
     }
 
+    // ============================================================
+    // === AGENT OFFICE 1차: AI 에이전트 조직 + 실행/로그 + 성장 구조 ===
+    // 기존 테이블 무변경 — 순수 추가만. soft-delete + audit_logs 원칙 유지.
+    // ============================================================
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS agents (
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(30) UNIQUE NOT NULL,
+            name VARCHAR(20) NOT NULL,
+            role VARCHAR(10) NOT NULL,
+            team VARCHAR(30) NOT NULL,
+            duty VARCHAR(50) DEFAULT '',
+            description TEXT DEFAULT '',
+            workplace VARCHAR(20) DEFAULT '공통',
+            knowledge_files JSONB DEFAULT '[]',
+            status VARCHAR(20) DEFAULT 'idle',
+            last_run_at TIMESTAMP,
+            sort_order INTEGER DEFAULT 0,
+            is_active BOOLEAN DEFAULT true,
+            is_deleted BOOLEAN DEFAULT false,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // agent_runs: 실행 기록 — 단계 로그(steps)는 반드시 서버 코드가 기록 (허위 보고 방지)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            id SERIAL PRIMARY KEY,
+            agent_id INTEGER REFERENCES agents(id),
+            status VARCHAR(20) DEFAULT 'running',
+            steps JSONB DEFAULT '[]',
+            result JSONB,
+            started_at TIMESTAMP DEFAULT NOW(),
+            finished_at TIMESTAMP,
+            is_deleted BOOLEAN DEFAULT false
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_id, started_at DESC)`);
+    // agent_feedback: 대표가 결과물에 준 피드백 (👍/✏️/👎/💬) — 성장 시스템 1차 구조
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS agent_feedback (
+            id SERIAL PRIMARY KEY,
+            agent_id INTEGER REFERENCES agents(id),
+            run_id INTEGER REFERENCES agent_runs(id),
+            feedback_type VARCHAR(10) NOT NULL,
+            original_output TEXT,
+            corrected_output TEXT,
+            comment TEXT,
+            is_deleted BOOLEAN DEFAULT false,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // agent_lessons: 요원별 학습 노트 (교훈) — AI 연결 차수에서 실동작
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS agent_lessons (
+            id SERIAL PRIMARY KEY,
+            agent_id INTEGER REFERENCES agents(id),
+            lesson TEXT NOT NULL,
+            source_feedback_ids JSONB DEFAULT '[]',
+            category VARCHAR(20) DEFAULT '',
+            status VARCHAR(20) DEFAULT 'active',
+            is_deleted BOOLEAN DEFAULT false,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // agent_tools: 요원별 도구함 (시크릿은 환경변수 참조만 — config에 키 저장 금지)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS agent_tools (
+            id SERIAL PRIMARY KEY,
+            agent_id INTEGER REFERENCES agents(id),
+            tool_name VARCHAR(100) NOT NULL,
+            tool_type VARCHAR(20) NOT NULL,
+            config JSONB DEFAULT '{}',
+            enabled BOOLEAN DEFAULT true,
+            is_deleted BOOLEAN DEFAULT false,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // agent_office_config: 라우팅 테이블·운영 규칙·직원 명단 (마스터 지시문 3·4·5절)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS agent_office_config (
+            key VARCHAR(50) PRIMARY KEY,
+            value JSONB NOT NULL,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+
+    // 서버 재시작으로 중단된 실행 정리 ('실행중'으로 남은 기록 → 오류 처리)
+    await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW(),
+        result=COALESCE(result, '{"summary":"서버 재시작으로 실행이 중단되었습니다"}'::jsonb)
+        WHERE status='running'`);
+    await pool.query(`UPDATE agents SET status='idle' WHERE status='running'`);
+
+    // 조직도 시드 (비어있을 때만) — 마스터 지시문 1절 확정 조직 10명
+    const agentCount = await pool.query('SELECT COUNT(*)::int AS c FROM agents');
+    if (agentCount.rows[0].c === 0) {
+        const MK_DOCS = [
+            'marketing/문자톡톡_전문가_지침.md', 'marketing/상품별_톤앤매너_가이드.md',
+            'marketing/마케팅_문자_가이드북.md', 'marketing/명분_라이브러리.md',
+            'marketing/검증된_카피_자산집.md', 'marketing/마케팅_전문팀_시스템.md',
+        ];
+        const AGENT_SEED = [
+            { code: 'maru', name: '마루', role: 'chief', team: '실장실', duty: '총괄', workplace: '공통', sort: 1,
+              description: '오더 접수 → 담당 팀 배정 → 통합 보고 / 회사 데이터 질문 즉답',
+              knowledge: ['company/운영_지시규칙.md', 'company/비전과목표.md'] },
+            { code: 'hangyeol', name: '한결', role: 'manager', team: '마케팅팀', duty: '팀 관리·검수', workplace: '공통', sort: 2,
+              description: '대표 지시 정리 → 전문 프롬프트 변환 → 팀원 배분·검수',
+              knowledge: [...MK_DOCS, 'company/비전과목표.md'] },
+            { code: 'miso', name: '미소', role: 'worker', team: '마케팅팀', duty: '디자인', workplace: '공통', sort: 3,
+              description: '시안 방향·Gemini 이미지/영상 프롬프트 제작',
+              knowledge: ['marketing/마케팅_전문팀_시스템.md'] },
+            { code: 'geulsaem', name: '글샘', role: 'worker', team: '마케팅팀', duty: '문구', workplace: '공통', sort: 4,
+              description: 'LMS/톡톡/상세페이지 카피 작성',
+              knowledge: MK_DOCS },
+            { code: 'yeri', name: '예리', role: 'worker', team: '마케팅팀', duty: '분석', workplace: '공통', sort: 5,
+              description: '인스타 성과 기록·추이 + 타사 경쟁상품/가격/신제품 분석',
+              knowledge: ['company/비전과목표.md'] },
+            { code: 'hansu', name: '한수', role: 'manager', team: '재무팀', duty: '팀 관리', workplace: '법인', sort: 6,
+              description: '질문을 정확한 조회 지시로 정리',
+              knowledge: [] },
+            { code: 'semi', name: '세미', role: 'worker', team: '재무팀', duty: '회계조회', workplace: '법인', sort: 7,
+              description: '정산현황·품목별 금액·비용 조회, 전년 동기대비 품목 매출 증감 분석 (※ 2차에서 정산 DB 실제 연결)',
+              knowledge: ['company/운영_지시규칙.md'] },
+            { code: 'jiyul', name: '지율', role: 'manager', team: '법무팀', duty: '노무·법률', workplace: '공통', sort: 8,
+              description: '노무/법률 자문 보조 (팀원 없음) — 모든 자문에 "최종 확정 전 노무사 검토 필요" 표시',
+              knowledge: ['legal/노무자문_페르소나.md'] },
+            { code: 'mirae', name: '미래', role: 'manager', team: '개발부서', duty: '팀 관리', workplace: '공통', sort: 9,
+              description: '정리·지시·기획안 검토',
+              knowledge: [] },
+            { code: 'gian', name: '기안', role: 'worker', team: '개발부서', duty: '기획', workplace: '공통', sort: 10,
+              description: '대표 미팅 내용 → 기획 보고서 작성 (상세페이지 방향·타사 가격비교·판매 계획·출장 촬영 가이드)',
+              knowledge: ['company/비전과목표.md'] },
+        ];
+        for (const a of AGENT_SEED) {
+            await pool.query(
+                `INSERT INTO agents (code, name, role, team, duty, description, workplace, knowledge_files, sort_order)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                [a.code, a.name, a.role, a.team, a.duty, a.description, a.workplace, JSON.stringify(a.knowledge), a.sort]);
+        }
+        console.log(`agents 조직도 시드 완료: ${AGENT_SEED.length}명`);
+
+        // 도구 로드맵 시드 (전부 enabled=false 예정 상태 — 각 차수에서 연결, 성장시스템 지시문 4절)
+        const TOOL_SEED = [
+            ['miso', 'Higgsfield 영상 생성', 'mcp', { planned: '후속 차수', purpose: 'AI 영상 직접 제작' }],
+            ['miso', 'Gemini 이미지 API', 'api', { planned: '후속 차수', purpose: '이미지 시안 직접 생성' }],
+            ['geulsaem', '알리고 문자 발송', 'api', { planned: '후속 차수', purpose: '문자 발송 (반드시 대표 승인 후)' }],
+            ['yeri', 'Instagram Graph API', 'api', { planned: '후속 차수', purpose: '인스타 성과 자동 수집' }],
+            ['yeri', '네이버 쇼핑 검색 API', 'api', { planned: '후속 차수', purpose: '타사 가격·신제품 자동 조사' }],
+            ['semi', '내부 정산·품목 DB', 'internal', { planned: '2차', purpose: '정산현황·품목별 금액 조회' }],
+            ['maru', '내부 전체 조회 API', 'internal', { planned: '3차', purpose: '회사 데이터 Q&A 즉답' }],
+        ];
+        for (const [code, toolName, toolType, config] of TOOL_SEED) {
+            await pool.query(
+                `INSERT INTO agent_tools (agent_id, tool_name, tool_type, config, enabled)
+                 SELECT id, $2, $3, $4, false FROM agents WHERE code = $1`,
+                [code, toolName, toolType, JSON.stringify(config)]);
+        }
+    }
+
+    // 라우팅 테이블·운영 규칙·직원 명단 시드 (이미 있으면 건드리지 않음)
+    const AGENT_OFFICE_CONFIG_SEED = {
+        // 마스터 3절: 오더 라우팅 규칙 (마루 실장용 — 지금은 데이터로만, AI 연결은 후속)
+        routing_table: [
+            { keywords: ['문자', 'LMS', '톡톡', '카피', '문구', '홍보글'], team: '마케팅팀', assignee: '글샘', reviewer: '한결' },
+            { keywords: ['이미지', '시안', '디자인', '영상', '프롬프트'], team: '마케팅팀', assignee: '미소', reviewer: '한결' },
+            { keywords: ['인스타', '릴스 성과', '경쟁사', '타사 가격', '신제품 조사'], team: '마케팅팀', assignee: '예리', reviewer: null },
+            { keywords: ['매출', '정산', '비용', '품목 금액', '동기대비', '증감'], team: '재무팀', assignee: '세미', reviewer: '한수' },
+            { keywords: ['알바', '직원', '근로계약', '주휴수당', '4대보험', '노무', '법률'], team: '법무팀', assignee: '지율', reviewer: null },
+            { keywords: ['미팅 정리', '기획안', '신상품', '상품 출시', '보고서'], team: '개발부서', assignee: '기안', reviewer: '미래' },
+            { keywords: ['일정', '등록', '조회'], team: '실장실', assignee: '마루', reviewer: null, note: '회사프로그램 운영 지시 — 운영 규칙(문서 I) 적용' },
+            { keywords: [], team: null, assignee: '마루', reviewer: null, note: '분야 불명확 → 마루가 확인 질문' },
+        ],
+        // 마스터 4절: 실행 등급 + 공통 안전 규칙 (전 에이전트 공통, 문서 I 기반)
+        action_grades: {
+            grades: [
+                { grade: '조회', emoji: '🟢', rule: '확인 없이 즉시 실행', examples: ['일정·정산·품목·로그 보기'] },
+                { grade: '등록·수정', emoji: '🟡', rule: '정리해서 보여주기 → 확인 1회 → 실행 → ✅ 결과 보고', examples: ['일정 등록', '데이터 기록'] },
+                { grade: '결재(승인/반려)', emoji: '🔴', rule: '에이전트 실행 불가. "프로그램에서 직접 눌러주세요" 안내. 단 대기 기안 내용 조회·요약은 가능', examples: ['승인', '반려'] },
+                { grade: '삭제·비활성', emoji: '⛔', rule: '에이전트 실행 불가. 프로그램에서 직접 처리 안내', examples: ['삭제', '비활성'] },
+            ],
+            common_rules: [
+                '애매한 지시는 추측 실행 금지, 되묻기는 한 번에 하나만',
+                '애매한 날짜("금요일쯤")는 구체 날짜로 제안하되 확인 문구에 표시',
+                '여러 건 동시 변경은 전체 목록 확인 후 일괄 실행',
+                '품목 관련은 중복 여부 먼저 확인 후 등록',
+                'MCP URL(시크릿 포함)은 어떤 화면·로그에도 출력 금지',
+                '실행 기록·보고는 반드시 서버 코드가 기록 (에이전트 자가 보고 금지)',
+            ],
+            formats: { schedule: '날짜(요일) 시간 — 내용 (담당자)', done_report: '✅ + 요약', default_assignee: '대표' },
+        },
+        // 마스터 5절: 실제 직원 명단 (에이전트와 구분! 일정·담당자 배정용 참조 데이터)
+        staff_roster: {
+            '농업회사법인': [
+                { name: '전승범', title: '대표', note: '범 대표님' },
+                { name: '김민주', title: '팀장' },
+                { name: '현승협', title: '대리' },
+                { name: '조가영', title: '과장' },
+                { name: '정지현', title: '팀장' },
+            ],
+            '오션라운지': [
+                { name: '김지아', title: '점장' },
+                { name: '이지은', title: '총괄' },
+                { name: '김소희', title: '파트', note: '평일 오후 16:30~21:30' },
+                { name: '전민희', title: '매니저', note: '주말·공휴일 09:30~21:30' },
+                { name: '조현준', title: '파트', note: '주말·공휴일 11:00~18:00' },
+            ],
+            note: 'AI 에이전트(마루·한결 등)와 실제 직원은 절대 혼동 금지 — 에이전트에는 🤖 배지 표시',
+        },
+    };
+    for (const [key, value] of Object.entries(AGENT_OFFICE_CONFIG_SEED)) {
+        await pool.query(
+            `INSERT INTO agent_office_config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+            [key, JSON.stringify(value)]);
+    }
+
     console.log('DB 테이블 초기화 완료');
 }
 
@@ -5246,6 +5460,222 @@ app.post('/api/admin/items/:id/deactivate', authMiddleware, adminOnly, async (re
 app.get('/api/admin/settlements', authMiddleware, adminOnly, async (req, res) => {
     try { res.json({ settlements: await svcGetSettlements({ from: req.query.from, to: req.query.to }) }); }
     catch (err) { handleAdminErr(res, err); }
+});
+
+// ============================================================
+// === AGENT OFFICE API (/api/agent-office/*) — 1차: 대표 전용 ===
+// 전 라우트 authMiddleware + adminOnly (URL 직접 호출도 차단).
+// 실행은 테스트 모드(단계 진행 → 더미 결과). 로직은 agents/{이름}.js로 분리.
+// 모든 단계 로그는 서버 코드가 직접 기록 — 에이전트 자가 보고 금지 원칙.
+// ============================================================
+
+// 에이전트별 실행 스크립트 로더 (agents/{이름}.js — 없으면 기본 3단계)
+const AGENT_DEFAULT_RUNNER = {
+    steps: ['업무 준비 중...', '작업 처리 중...', '보고서 작성 중...'],
+    stepDelayMs: 2000,
+    result: () => ({ summary: '완료: 테스트 실행 성공', lines: ['테스트 실행이 정상 완료되었습니다', '실제 업무 로직은 후속 차수에서 연결됩니다'] }),
+};
+function loadAgentRunner(agentName) {
+    try {
+        return { ...AGENT_DEFAULT_RUNNER, ...require(path.join(__dirname, 'agents', `${agentName}.js`)) };
+    } catch (e) {
+        return AGENT_DEFAULT_RUNNER;
+    }
+}
+
+function agentStep(kind, actor, text) {
+    return { t: new Date().toISOString(), kind, actor, text };
+}
+async function agentRunAppendStep(runId, step) {
+    await pool.query(`UPDATE agent_runs SET steps = steps || $2::jsonb WHERE id = $1`,
+        [runId, JSON.stringify([step])]);
+}
+
+// 테스트 실행 엔진 — 지시 전달 흐름(마루→팀장→팀원→보고)을 서버가 순서대로 기록
+async function executeAgentTestRun(run, agent, managerName) {
+    const runner = loadAgentRunner(agent.name);
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    try {
+        await wait(800);
+        await agentRunAppendStep(run.id, agentStep('route', '마루', `${agent.team} 배정`));
+        if (managerName && managerName !== agent.name) {
+            await wait(800);
+            await agentRunAppendStep(run.id, agentStep('assign', managerName, `${agent.name}에게 지시 전달`));
+        }
+        for (const label of runner.steps) {
+            await wait(runner.stepDelayMs || 2000);
+            await agentRunAppendStep(run.id, agentStep('work', agent.name, label));
+        }
+        await wait(600);
+        const result = typeof runner.result === 'function' ? runner.result({ agent }) : { summary: '완료' };
+        await agentRunAppendStep(run.id, agentStep('report', agent.name, '완료 보고'));
+        if (managerName && managerName !== agent.name) {
+            await agentRunAppendStep(run.id, agentStep('review', managerName, '검수 후 상신'));
+        }
+        await agentRunAppendStep(run.id, agentStep('done', '마루', '보고서함에 보고 등록'));
+        await pool.query(`UPDATE agent_runs SET status='done', result=$2, finished_at=NOW() WHERE id=$1`,
+            [run.id, JSON.stringify(result)]);
+        await pool.query(`UPDATE agents SET status='done', last_run_at=NOW() WHERE id=$1`, [agent.id]);
+        // 완료 배지는 프론트에서 3초 표시 — 이후 대기 상태로 복귀
+        setTimeout(() => {
+            pool.query(`UPDATE agents SET status='idle' WHERE id=$1 AND status='done'`, [agent.id]).catch(() => {});
+        }, 5000);
+    } catch (err) {
+        console.error('AGENT OFFICE 실행 오류:', err.message);
+        await pool.query(`UPDATE agent_runs SET status='error', result=$2, finished_at=NOW() WHERE id=$1`,
+            [run.id, JSON.stringify({ summary: `오류: ${err.message}` })]).catch(() => {});
+        await pool.query(`UPDATE agents SET status='error' WHERE id=$1`, [agent.id]).catch(() => {});
+    }
+}
+
+// 에이전트 목록 (사무실 렌더용 — 도구/학습노트 수/최근 실행 포함)
+app.get('/api/agent-office/agents', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const agents = (await pool.query(
+            `SELECT * FROM agents WHERE is_deleted = false ORDER BY sort_order, id`)).rows;
+        const tools = (await pool.query(
+            `SELECT id, agent_id, tool_name, tool_type, config, enabled FROM agent_tools WHERE is_deleted = false ORDER BY id`)).rows;
+        const lessonCounts = (await pool.query(
+            `SELECT agent_id, COUNT(*)::int AS c FROM agent_lessons
+             WHERE is_deleted = false AND status = 'active' GROUP BY agent_id`)).rows;
+        const lastRuns = (await pool.query(
+            `SELECT DISTINCT ON (agent_id) agent_id, id, status, result, started_at, finished_at
+             FROM agent_runs WHERE is_deleted = false ORDER BY agent_id, started_at DESC`)).rows;
+        const merged = agents.map(a => ({
+            ...a,
+            tools: tools.filter(t => t.agent_id === a.id),
+            lesson_count: lessonCounts.find(l => l.agent_id === a.id)?.c || 0,
+            last_run: lastRuns.find(r => r.agent_id === a.id) || null,
+        }));
+        res.json({ agents: merged });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 에이전트 상세 (패널용 — 학습 노트 + 최근 실행 5건)
+app.get('/api/agent-office/agents/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT * FROM agents WHERE id = $1 AND is_deleted = false`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '에이전트를 찾을 수 없습니다' };
+        const agent = r.rows[0];
+        const tools = (await pool.query(
+            `SELECT id, tool_name, tool_type, config, enabled FROM agent_tools
+             WHERE agent_id = $1 AND is_deleted = false ORDER BY id`, [agent.id])).rows;
+        const lessons = (await pool.query(
+            `SELECT id, lesson, category, status, created_at FROM agent_lessons
+             WHERE agent_id = $1 AND is_deleted = false AND status != '폐기' ORDER BY created_at DESC LIMIT 20`, [agent.id])).rows;
+        const runs = (await pool.query(
+            `SELECT id, status, steps, result, started_at, finished_at FROM agent_runs
+             WHERE agent_id = $1 AND is_deleted = false ORDER BY started_at DESC LIMIT 5`, [agent.id])).rows;
+        res.json({ agent, tools, lessons, runs });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 실행 트리거 — 1차는 worker만 (chief/manager는 다음 업데이트에서 연결)
+app.post('/api/agent-office/agents/:id/run', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT * FROM agents WHERE id = $1 AND is_deleted = false`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '에이전트를 찾을 수 없습니다' };
+        const agent = r.rows[0];
+        if (!agent.is_active) throw { status: 400, message: '비활성 상태의 에이전트입니다' };
+        if (agent.role !== 'worker') throw { status: 400, message: '1차에서는 팀원(worker)만 실행 가능합니다. 실장·팀장 실행은 다음 업데이트에서 연결 예정입니다.' };
+        const running = await pool.query(
+            `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false LIMIT 1`, [agent.id]);
+        if (running.rows.length > 0) throw { status: 409, message: '이미 실행 중인 작업이 있습니다' };
+        const mgr = await pool.query(
+            `SELECT name FROM agents WHERE team = $1 AND role = 'manager' AND is_deleted = false AND is_active = true LIMIT 1`, [agent.team]);
+        const firstStep = agentStep('order', '마루', `오더 접수 — ${agent.team} ${agent.name} 작업 실행`);
+        const run = (await pool.query(
+            `INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
+            [agent.id, JSON.stringify([firstStep])])).rows[0];
+        await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [agent.id]);
+        await writeAudit({
+            action: 'agent_run', targetType: 'agent_run', targetId: run.id,
+            changes: { after: { agent: agent.name, team: agent.team, mode: 'test' } },
+            source: 'agent_office', actor: adminActor(req),
+        });
+        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null); // 비동기 진행 — 응답은 즉시
+        res.json({ message: `${agent.name} 실행을 시작했습니다`, run });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 실행 상태 조회 (폴링용)
+app.get('/api/agent-office/runs/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT r.*, a.name AS agent_name, a.team AS agent_team
+             FROM agent_runs r JOIN agents a ON r.agent_id = a.id
+             WHERE r.id = $1 AND r.is_deleted = false`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '실행 기록을 찾을 수 없습니다' };
+        res.json({ run: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 실행 로그 목록 (LIVE 로그 + 보고서함 — 에이전트/팀/기간 필터)
+app.get('/api/agent-office/runs', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const cond = ['r.is_deleted = false'];
+        const params = [];
+        if (req.query.agent_id) { params.push(req.query.agent_id); cond.push(`r.agent_id = $${params.length}`); }
+        if (req.query.team) { params.push(req.query.team); cond.push(`a.team = $${params.length}`); }
+        if (req.query.from) { params.push(req.query.from); cond.push(`r.started_at >= $${params.length}`); }
+        if (req.query.to) { params.push(req.query.to); cond.push(`r.started_at < ($${params.length}::date + 1)`); }
+        const limit = Math.min(parseInt(req.query.limit) || 50, 300);
+        const r = await pool.query(
+            `SELECT r.id, r.agent_id, r.status, r.steps, r.result, r.started_at, r.finished_at,
+                    a.name AS agent_name, a.team AS agent_team, a.role AS agent_role
+             FROM agent_runs r JOIN agents a ON r.agent_id = a.id
+             WHERE ${cond.join(' AND ')}
+             ORDER BY r.started_at DESC LIMIT ${limit}`, params);
+        res.json({ runs: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 피드백 기록 (👍 good / ✏️ edited / 👎 bad / 💬 comment) — 성장 시스템 1차
+app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { agent_id, run_id = null, feedback_type, comment = '', corrected_output = '' } = req.body || {};
+        const TYPES = ['good', 'edited', 'bad', 'comment'];
+        if (!agent_id || !TYPES.includes(feedback_type)) throw { status: 400, message: 'agent_id와 feedback_type(good/edited/bad/comment)은 필수입니다' };
+        if (feedback_type === 'bad' && !String(comment).trim()) throw { status: 400, message: '👎 피드백은 이유 한 줄이 필요합니다 (교훈화용)' };
+        let original = null;
+        if (run_id) {
+            const runQ = await pool.query(`SELECT result FROM agent_runs WHERE id = $1`, [run_id]);
+            original = runQ.rows[0]?.result ? JSON.stringify(runQ.rows[0].result) : null;
+        }
+        const row = (await pool.query(
+            `INSERT INTO agent_feedback (agent_id, run_id, feedback_type, original_output, corrected_output, comment)
+             VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+            [agent_id, run_id, feedback_type, original, corrected_output, comment])).rows[0];
+        await writeAudit({
+            action: 'create', targetType: 'agent_feedback', targetId: row.id,
+            changes: { after: { agent_id, run_id, feedback_type, comment } },
+            source: 'agent_office', actor: adminActor(req),
+        });
+        res.json({ message: '피드백이 기록되었습니다', feedback: row });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 성장 지표 위젯 (지식 노트 N건 / 이번 주 학습 +N건 / 피드백 누적)
+app.get('/api/agent-office/growth', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const lessons = await pool.query(
+            `SELECT COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE created_at >= date_trunc('week', NOW()))::int AS this_week
+             FROM agent_lessons WHERE is_deleted = false AND status = 'active'`);
+        const feedback = await pool.query(
+            `SELECT COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE created_at >= date_trunc('week', NOW()))::int AS this_week
+             FROM agent_feedback WHERE is_deleted = false`);
+        res.json({ lessons: lessons.rows[0], feedback: feedback.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 설정 조회 (라우팅 테이블·운영 규칙·직원 명단 — 후속 차수 마루 AI 연결용)
+app.get('/api/agent-office/config', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT key, value, updated_at FROM agent_office_config ORDER BY key`);
+        res.json({ config: Object.fromEntries(r.rows.map(row => [row.key, row.value])) });
+    } catch (err) { handleAdminErr(res, err); }
 });
 
 // ============================================================
