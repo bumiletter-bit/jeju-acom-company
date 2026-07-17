@@ -10149,7 +10149,10 @@ function aoOrderLogLine(o) {
     const r = o.result || {};
     let extra = '';
     if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
-    else if (st === '완료' && r.assignee) extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.team || '')} ${aoEsc(r.assignee)} 배정${r.run_id ? ' · 실행 #' + r.run_id : ''}</div>`;
+    else if (st === '완료' && r.assignee) {
+        const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
+        extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.team || '')} ${aoEsc(r.assignee)} 배정${cond ? ' [조건: ' + aoEsc(cond) + ']' : ''}${r.run_id ? ' · 실행 #' + r.run_id : ''}</div>`;
+    }
     else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
     else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)}</div>`;
     return `<div class="ao-log-item ao-log-order"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${extra}</div>`;
@@ -10386,6 +10389,34 @@ window.aoOpenReport = async function(runId) {
 
     if (rep.no_data) {
         body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.note || '데이터 없음')}</div>`;
+    } else if (rep.type === 'semi_settlement_filtered') {
+        // 3.5차: 조건 필터 보고서 (품목 키워드 · 기간)
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        if (rep.no_match) {
+            body = `
+            <h4 class="ao-sec-title">🔍 ${aoEsc(rep.title)}</h4>
+            <div class="ao-placeholder-box ao-soon-note">📭 "${aoEsc(rep.keyword)}" 품목을 찾을 수 없습니다<br>
+            <span style="font-size:11px;color:#999;">(조회 기간: ${rep.period.from} ~ ${rep.period.to})</span></div>
+            ${rep.available_items && rep.available_items.length ? `
+            <h4 class="ao-sec-title">📦 해당 기간 등록 품목 (${rep.available_items.length}종)</h4>
+            <div class="ao-tool-list">${rep.available_items.map(n => '<span class="ao-knowledge-badge">' + aoEsc(n) + '</span>').join('')}</div>`
+            : '<div class="ao-empty-note">해당 기간에는 정산 데이터가 없습니다</div>'}
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        } else {
+            body = `
+            <h4 class="ao-sec-title">🔍 ${aoEsc(rep.title)} <small style="color:#888;">(${rep.period.from} ~ ${rep.period.to})</small></h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>품목 (규격별)</th><th>수량</th><th>금액</th></tr></thead>
+                <tbody>
+                ${(rep.items || []).map(i =>
+                    `<tr><td>${aoEsc(i.name)}</td><td>${(i.qty || 0).toLocaleString()}</td><td>${won(i.amount)}</td></tr>`).join('')}
+                <tr class="ao-partner-sum"><td><strong>합계</strong></td><td><strong>${(rep.total_qty || 0).toLocaleString()}개</strong></td><td><strong>${won(rep.product_total)}</strong></td></tr>
+                </tbody>
+            </table></div>
+            ${rep.payment_total != null ? `
+            <div class="ao-grand-total">상품 ${won(rep.product_total)} + 택배비 ${won((rep.cj_fee || 0) + (rep.cj_carryover || 0))} = 총 결제금액 <strong>${won(rep.payment_total)}</strong></div>` : ''}
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        }
     } else if (rep.type === 'semi_settlement') {
         const pctCell = (pct, diff) => {
             if (pct === null || pct === undefined) return '<span style="color:#999;">전년 데이터 없음</span>';

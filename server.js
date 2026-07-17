@@ -5720,8 +5720,10 @@ const MARU_ROUTE_TOOL = {
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
             reason: { type: 'string', description: '배정 근거 또는 판단 이유 한 줄' },
             clarify_question: { type: 'string', description: 'clarify일 때 대표에게 물을 질문 딱 하나. route면 빈 문자열' },
+            item_keyword: { type: 'string', description: "지시에 언급된 품목 키워드 하나 (예: '하우스감귤', '카라향', '레몬'). 품목 언급이 없으면 빈 문자열" },
+            period: { type: 'string', description: "기간 조건: '이번주'→'this_week', '이번달/이달'→'this_month', 특정 월(예: '6월')→'YYYY-MM' 형식(오늘 날짜 기준, 미래 월이면 작년으로), 기간 언급 없으면 빈 문자열" },
         },
-        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question'],
+        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period'],
     },
 };
 
@@ -5734,8 +5736,10 @@ async function maruBuildSystemPrompt() {
          WHERE is_deleted = false AND is_active = true ORDER BY sort_order`);
     const orgLines = agentsQ.rows.map(a =>
         `- ${a.name} (${a.role === 'chief' ? '실장' : a.role === 'manager' ? '팀장' : '요원'} · ${a.team}${a.duty ? ' · ' + a.duty : ''}): ${a.description}`).join('\n');
+    const todayKst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
     return `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE의 실장 '마루'다.
 범 대표님(전승범)의 지시를 접수해 담당 팀·요원을 배정하는 것이 너의 유일한 임무다.
+오늘 날짜: ${todayKst} (KST)
 
 ## 조직도
 ${orgLines}
@@ -5748,7 +5752,11 @@ ${JSON.stringify(routingTable, null, 2)}
 2. 분야가 불명확하거나 여러 해석이 가능하면 절대 추측하지 말고 action='clarify'로 되묻는다. 질문은 한 번에 딱 하나만.
 3. 일정 등록/조회 등 회사프로그램 운영 지시는 실장실 마루 담당이다.
 4. 여러 분야가 섞인 지시는 가장 핵심인 분야 하나로 배정하고 reason에 나머지를 언급한다.
-5. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.`;
+5. 재무 지시(세미 배정)에서는 조건을 함께 추출한다:
+   - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
+   - period: "이번주"→this_week, "이번달"→this_month, "6월"처럼 특정 월→YYYY-MM (오늘 날짜 기준 올해, 아직 오지 않은 월이면 작년). 기간 언급 없으면 빈 문자열.
+   - 조건이 없는 재무 지시는 둘 다 빈 문자열로 두면 전체 보고서가 나간다. 조건이 없다고 clarify하지 말 것.
+6. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.`;
 }
 
 // 접수 지시 상태 갱신 헬퍼
@@ -5796,7 +5804,15 @@ async function processOrderWithMaru(order, actor) {
         const agentQ = await pool.query(
             `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [d.assignee]);
         const agent = agentQ.rows[0] || null;
-        const routeInfo = { type: 'route', team: d.team, assignee: d.assignee, summary: d.task_summary, reason: d.reason };
+        const conditions = {
+            item_keyword: String(d.item_keyword || '').trim(),
+            period: String(d.period || '').trim(),
+        };
+        const condText = [conditions.item_keyword, conditions.period].filter(Boolean).join(' · ');
+        const routeInfo = {
+            type: 'route', team: d.team, assignee: d.assignee, summary: d.task_summary, reason: d.reason,
+            conditions: (conditions.item_keyword || conditions.period) ? conditions : null,
+        };
 
         // 실전 연결된 worker만 실제 실행 (agents/{이름}.js의 live:true — 현재 세미)
         const runner = agent ? loadAgentRunner(agent.name) : null;
@@ -5822,17 +5838,20 @@ async function processOrderWithMaru(order, actor) {
         }
         const mgr = await pool.query(
             `SELECT name FROM agents WHERE team = $1 AND role = 'manager' AND is_deleted = false AND is_active = true LIMIT 1`, [agent.team]);
-        const firstStep = agentStep('order', '마루', `오더 접수 — "${d.task_summary}" → ${agent.team} ${agent.name} 배정`);
+        const firstStep = agentStep('order', '마루',
+            `오더 접수 — "${d.task_summary}"${condText ? ` [조건: ${condText}]` : ''} → ${agent.team} ${agent.name} 배정`);
         const run = (await pool.query(
             `INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
             [agent.id, JSON.stringify([firstStep])])).rows[0];
         await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [agent.id]);
         await writeAudit({
             action: 'agent_run', targetType: 'agent_run', targetId: run.id,
-            changes: { after: { agent: agent.name, team: agent.team, mode: 'maru_routed', order_id: order.id } },
+            changes: { after: { agent: agent.name, team: agent.team, mode: 'maru_routed', order_id: order.id, conditions } },
             source: 'agent_office', actor,
         });
-        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null, { workplace: '전체' });
+        // 마루가 추출한 조건을 요원 실행에 그대로 전달 (AI 추가 호출 없음)
+        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null,
+            { workplace: '전체', item_keyword: conditions.item_keyword, period: conditions.period });
         await maruFinishOrder(order.id, '완료', { ...routeInfo, run_id: run.id }, run.id);
     } catch (err) {
         // 정직한 오류 표시 — 허위 응답 금지. Anthropic API 오류는 상태코드와 함께 그대로 기록.

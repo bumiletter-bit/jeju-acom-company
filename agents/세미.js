@@ -104,6 +104,138 @@ function cjBoxCount(rows) {
         ? s + r.items.reduce((q, it) => q + (Number(it.qty) || 0), 0) : s, 0);
 }
 
+// ===== 3.5차: 조건 필터 (마루가 추출한 품목/기간 — AI 추가 호출 없음) =====
+
+function monthEndStr(ym) {
+    const y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7));
+    return ym + '-' + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0');
+}
+
+// 기간 문자열 해석 → {from, to, label} / 해석 불가 시 null
+function resolvePeriod(period) {
+    const now = kstNow();
+    const today = ymd(now);
+    const ym = today.slice(0, 7);
+    if (period === 'this_week') {
+        const dow = (now.getUTCDay() + 6) % 7; // 월=0
+        const monday = new Date(now);
+        monday.setUTCDate(now.getUTCDate() - dow);
+        return { from: ymd(monday), to: today, label: `이번 주(${ymd(monday)}~${today})` };
+    }
+    if (period === 'this_month') {
+        return { from: ym + '-01', to: monthEndStr(ym), label: Number(ym.slice(5, 7)) + '월' };
+    }
+    const m = period.match(/^(\d{4})-(\d{1,2})$/);
+    if (m) {
+        const target = m[1] + '-' + String(Number(m[2])).padStart(2, '0');
+        const label = (m[1] === ym.slice(0, 4) ? '' : m[1] + '년 ') + Number(m[2]) + '월';
+        return { from: target + '-01', to: monthEndStr(target), label };
+    }
+    return null;
+}
+
+// 품목 키워드 매칭 — 정규화 부분일치 + 재배형 토큰 분해
+// ("하우스귤" → [하우스, 귤] → '하우스감귤' 계열 전부 매칭, '하귤'은 하우스 없음 → 제외)
+function matchesKeyword(itemName, keyword) {
+    const norm = s => String(s).replace(/\s+/g, '').toLowerCase();
+    const name = norm(itemName);
+    let kw = norm(keyword);
+    if (!kw) return true;
+    if (name.includes(kw)) return true; // 1차: 그대로 부분 일치
+    const tokens = [];
+    for (const g of ['하우스', '노지', '비가림', '블러드']) { // 2차: 재배형 토큰 분해 (정산관리 특징 매칭과 동일 분류)
+        if (kw.includes(g)) { tokens.push(g); kw = kw.split(g).join(''); }
+    }
+    if (kw) tokens.push(kw);
+    return tokens.length > 0 && tokens.every(t => name.includes(t));
+}
+
+// 조건 필터 보고서 (품목 키워드 and/or 기간)
+async function filteredReport({ pool, helpers, keyword, period }) {
+    const parsed = resolvePeriod(period);
+    const range = parsed || resolvePeriod('this_month'); // 기간 미지정/해석불가 → 이번 달
+    const periodNote = (period && !parsed) ? ` · 기간 '${period}' 해석 불가 → 이번 달 기준` : '';
+    const rows = await fetchSettlements(pool, helpers, range.from, range.to);
+
+    // 품목 집계 (키워드 있으면 매칭 품목만, 없으면 전체)
+    const byItem = {};
+    let totalQty = 0, productTotal = 0;
+    rows.forEach(r => r.items.forEach(it => {
+        if (!it || !it.name) return;
+        if (keyword && !matchesKeyword(it.name, keyword)) return;
+        const qty = Number(it.qty) || 0;
+        const amt = (Number(it.price) || 0) * qty;
+        if (!byItem[it.name]) byItem[it.name] = { name: it.name, qty: 0, amount: 0 };
+        byItem[it.name].qty += qty;
+        byItem[it.name].amount += amt;
+        totalQty += qty;
+        productTotal += amt;
+    }));
+    const items = Object.values(byItem).sort((a, b) => b.amount - a.amount);
+
+    // 키워드가 어떤 품목과도 매칭 안 됨 → 정직하게 표시 (등록 품목 목록 제시)
+    if (keyword && items.length === 0) {
+        const allNames = [...new Set(rows.flatMap(r => r.items.map(it => it && it.name).filter(Boolean)))].slice(0, 40);
+        return {
+            summary: `해당 품목을 찾을 수 없습니다: "${keyword}" (${range.label})`,
+            lines: [
+                `"${keyword}"와 매칭되는 품목이 ${range.label} 정산에 없습니다`,
+                allNames.length
+                    ? `해당 기간 등록 품목 ${allNames.length}종: ${allNames.slice(0, 4).join(', ')}${allNames.length > 4 ? ' 외' : ''}`
+                    : '해당 기간에는 정산 데이터 자체가 없습니다',
+                '품목명을 확인해서 다시 지시해주세요',
+            ],
+            report: {
+                type: 'semi_settlement_filtered', title: `${keyword} · ${range.label}`,
+                keyword, period: range, no_match: true, available_items: allNames,
+                note: '요청 품목과 매칭되는 정산 품목 없음 — 등록 품목 목록 참고' + periodNote,
+            },
+        };
+    }
+
+    // 전체(키워드 없음) 기간 조회 → 택배비/이월 포함 총 결제금액 (정산관리 배지와 동일 공식)
+    let cjFee = null, cjCarryover = null, paymentTotal = null;
+    if (!keyword) {
+        cjFee = cjBoxCount(rows) * CJ_BOX_FEE;
+        cjCarryover = 0;
+        const isFullMonth = range.from.endsWith('-01') && range.to === monthEndStr(range.from.slice(0, 7));
+        if (isFullMonth) {
+            const cj = await pool.query('SELECT amount FROM cj_carryover WHERE month = $1 LIMIT 1', [range.from.slice(0, 7)]);
+            cjCarryover = Number(cj.rows[0]?.amount) || 0;
+        }
+        paymentTotal = productTotal + cjFee + cjCarryover;
+    }
+
+    const summary = keyword
+        ? `완료: ${keyword} ${range.label}: ${totalQty.toLocaleString('ko-KR')}개 / ${fmt(productTotal)}원`
+        : `완료: ${range.label} 총 ${fmt(paymentTotal)}원 (상품 ${fmt(productTotal)} + 택배 ${fmt(cjFee + cjCarryover)})`;
+
+    return {
+        summary,
+        lines: [
+            keyword
+                ? `${keyword} ${range.label}(${range.from}~${range.to}) — 규격 ${items.length}종 · ${totalQty.toLocaleString('ko-KR')}개 · ${fmt(productTotal)}원`
+                : `${range.label}(${range.from}~${range.to}) 상품 ${fmt(productTotal)}원 · 정산 ${rows.length}건`,
+            items.length
+                ? `최다: ${items[0].name} (${items[0].qty.toLocaleString('ko-KR')}개 / ${fmt(items[0].amount)}원)`
+                : '집계된 품목이 없습니다',
+            keyword
+                ? '상품 기준 금액 (택배비 미포함) · 정산관리와 동일 단가 매칭'
+                : `택배비 ${fmt(cjFee + cjCarryover)}원 포함 총 ${fmt(paymentTotal)}원`,
+        ],
+        report: {
+            type: 'semi_settlement_filtered', title: `${keyword || '전체'} · ${range.label}`,
+            keyword: keyword || null, period: range,
+            items: items.slice(0, 60), total_qty: totalQty, product_total: productTotal,
+            cj_fee: cjFee, cj_carryover: cjCarryover, payment_total: paymentTotal,
+            note: (keyword
+                ? '품목 부분 일치 매칭 · 상품 기준 금액 (택배비 미포함)'
+                : `총 결제금액 = 상품 + 택배비(박스×${CJ_BOX_FEE.toLocaleString()}원)${cjCarryover ? ' + 이월' : ''}`)
+                + ' · 정산관리와 동일 단가 계산 · 읽기 전용' + periodNote,
+        },
+    };
+}
+
 module.exports = {
     live: true, // 실전 연결됨 (2차) — 마루 라우팅 시 실제 실행 대상
     steps: ['정산 데이터 조회 중...', '거래처·품목별 집계 중...', '전년 동기대비 분석 중...'],
@@ -125,6 +257,13 @@ module.exports = {
                     note: '오션라운지 매출 데이터 없음 — 데이터 등록 후 조회 가능',
                 },
             };
+        }
+
+        // ===== 조건 필터 모드 — 마루가 추출한 품목/기간 조건 (없으면 기존 전체 보고서) =====
+        const kw = String(params.item_keyword || '').trim();
+        const periodRaw = String(params.period || '').trim();
+        if (kw || periodRaw) {
+            return filteredReport({ pool, helpers, keyword: kw, period: periodRaw });
         }
 
         const now = kstNow();
