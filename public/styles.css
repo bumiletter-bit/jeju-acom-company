@@ -4715,3 +4715,9 @@ textarea.form-input {
 .ao-inbox-pop { animation: aoInboxPop .4s ease; }
 .ao-say-persist { animation: aoPulse 1.4s ease-in-out infinite; }
 @keyframes aoPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* 5차-②: 미소 프롬프트 보고서 */
+.ao-media-badge { font-size: 11px; background: #EEF3FA; color: #1B3A6B; border: 1px solid rgba(27,58,107,.3); border-radius: 5px; padding: 2px 7px; margin-right: 6px; }
+.ao-prompt-en { font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; background: #10264a; color: #CFF5D2; border: none; }
+.ao-prompt-ko { font-size: 12px; color: #444; background: #FFFBEA; border: 1px solid #F5C800; border-radius: 6px; padding: 8px 10px; margin-top: 6px; line-height: 1.6; }
+.ao-prompt-meta { font-size: 12px; color: #666; margin: 4px 0 14px; }

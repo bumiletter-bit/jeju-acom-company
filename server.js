@@ -921,6 +921,9 @@ async function initDB() {
     // 4차: 글샘 카피 생성 연결 반영 (발송은 대표가 알리고에서 직접 — 자동 발송 없음)
     await pool.query(`UPDATE agents SET description = 'LMS/톡톡/상세페이지 카피 작성 (✅ 카피 생성 연결됨 — 4차 · 발송은 대표가 알리고에서 직접)'
         WHERE code = 'geulsaem' AND is_deleted = false`);
+    // 5차: 미소 프롬프트 작성 연결 반영 (이미지/영상 생성은 대표가 Gemini에서 직접 — 자동 생성 없음)
+    await pool.query(`UPDATE agents SET description = '시안 방향·Gemini 이미지/영상 프롬프트 제작 (✅ 프롬프트 작성 연결됨 — 5차 · 생성은 대표가 Gemini에서 직접)'
+        WHERE code = 'miso' AND is_deleted = false`);
 
     console.log('DB 테이블 초기화 완료');
 }

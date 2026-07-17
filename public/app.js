@@ -10472,6 +10472,22 @@ window.aoOpenReport = async function(runId) {
             <pre class="ao-copy-body" id="ao-copy-${run.id}-${i}">${aoEsc(v.text)}</pre>`).join('')}
         ${rep.send_tip ? `<div class="ao-result-box" style="margin-top:10px;">💡 ${aoEsc(rep.send_tip)}</div>` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}${rep.char_counts ? ' · ' + aoEsc(rep.char_counts) : ''} · 모델 ${aoEsc(rep.model || '')}</p>`;
+    } else if (rep.type === 'miso_prompt') {
+        // 5차: 미소 프롬프트 보고서 — 영문 프롬프트(코드블록) + 한글 해석 + 비율/사용처 + [복사]
+        body = `
+        ${rep.concept_note ? `<div class="ao-result-box">🎨 ${aoEsc(rep.concept_note)}</div>` : ''}
+        ${(rep.outputs || []).map((o, i) => `
+            <div class="ao-copy-head">
+                <strong>${aoEsc(o.label || ('시안 ' + (i + 1)))}</strong>
+                <span>
+                    <span class="ao-media-badge">${o.media === '영상' ? '🎬 영상 (Veo 3)' : '🖼️ 이미지 (Nano Banana Pro)'}</span>
+                    <button class="ao-fb-btn" onclick="aoCopyText('ao-miso-${run.id}-${i}')">📋 프롬프트 복사</button>
+                </span>
+            </div>
+            <pre class="ao-copy-body ao-prompt-en" id="ao-miso-${run.id}-${i}">${aoEsc(o.prompt_en)}</pre>
+            <div class="ao-prompt-ko">🇰🇷 ${aoEsc(o.prompt_ko || '')}</div>
+            <div class="ao-prompt-meta">비율 <strong>${aoEsc(o.ratio || '-')}</strong> · 사용처 ${aoEsc(o.usage || '-')}</div>`).join('')}
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')} · 모델 ${aoEsc(rep.model || '')}</p>`;
     } else if (rep.type === 'semi_settlement_filtered') {
         // 3.5차: 조건 필터 보고서 (품목 키워드 · 기간)
         const won = n => Math.round(n || 0).toLocaleString() + '원';
