@@ -106,8 +106,14 @@ module.exports = {
             }
         } catch (e) { /* 노트 로드 실패는 카피 작성을 막지 않음 */ }
 
+        // 오늘 날짜+요일 (KST) — 본문 날짜 표기 시 요일 검산용
+        const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+        const todayStr = nowKst.toISOString().slice(0, 10);
+        const dayName = ['일', '월', '화', '수', '목', '금', '토'][nowKst.getUTCDay()];
+
         const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.
 아래 지식 문서(검증된 카피 자산)를 완전히 준수해 즉시 발송 가능한 완성 카피를 작성한다.
+오늘 날짜: ${todayStr} (${dayName}요일, KST) — 본문에 날짜·마감일을 쓸 때 요일은 이 기준으로 반드시 검산할 것. 확신 없으면 요일을 빼고 날짜만 쓴다.
 
 ## 작업 규칙 (반드시 준수)
 1. 채널 판단: 지시에 채널 언급이 없으면 알리고 LMS(1,000자 이내) 기본. "톡톡"이라 하면 네이버 톡톡 규격, "짧게"/"문자 90자"면 SMS.

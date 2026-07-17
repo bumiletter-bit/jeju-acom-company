@@ -9824,6 +9824,11 @@ function aoHandleOrderResult(order) {
             aoSetAgentStatus(agent.id, 'running');
             aoStartRunPolling();
         }
+    } else if (order.status === '피드백') {
+        // 마루가 피드백으로 분류 → 해당 요원에게 전달 + 교훈 추출
+        aoSay('마루', `📚 ${r.target}에게 전달했어요 — 교훈으로 정리 중입니다`, 7000);
+        if (r.target) aoSay(r.target, '피드백 감사합니다! 교훈으로 정리해서 다음 작업부터 반영할게요 📚', 6000);
+        showToast(`마루: ${r.target}에게 피드백 전달 (${r.kind || '코멘트'})`);
     } else if (order.status === '안내') {
         aoSay('마루', 'ℹ️ ' + (r.notice || '안내'), 9000);
         showToast(`마루: ${r.assignee || ''} 배정 기록 (실전 연결 전)`);
@@ -10185,10 +10190,11 @@ function aoEsc(s) {
 function aoOrderLogLine(o) {
     const time = new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
     const st = o.status || '대기';
-    const stCls = st === '완료' ? 'done' : st === '오류' ? 'err' : st === '질문' ? 'ask' : st === '안내' ? 'info' : 'wait';
+    const stCls = st === '완료' ? 'done' : st === '오류' ? 'err' : st === '질문' ? 'ask' : (st === '안내' || st === '피드백') ? 'info' : 'wait';
     const r = o.result || {};
     let extra = '';
-    if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
+    if (st === '피드백' && r.target) extra = `<div class="ao-log-sub">📚 마루 → ${aoEsc(r.target)} 피드백 전달 (${aoEsc(r.kind || '코멘트')})</div>`;
+    else if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
     else if (st === '완료' && r.assignee) {
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
         extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.team || '')} ${aoEsc(r.assignee)} 배정${cond ? ' [조건: ' + aoEsc(cond) + ']' : ''}${r.run_id ? ' · 실행 #' + r.run_id : ''}</div>`;
@@ -10248,6 +10254,9 @@ window.openAoDetail = async function(agentId) {
         data = await api('/api/agent-office/agents/' + agentId);
     } catch (err) { return alert(err.message); }
     const agent = data.agent, tools = data.tools, lessons = data.lessons, runs = data.runs;
+    const feedbackList = data.feedback || [];
+    const lessonProposals = lessons.filter(l => l.status === '제안');
+    const activeLessons = lessons.filter(l => l.status === 'active');
     const color = AO_COLORS[agent.code] || '#1B3A6B';
     const lastDone = runs.find(r => r.status === 'done');
     const resultLines = (lastDone && lastDone.result && lastDone.result.lines) ||
@@ -10308,10 +10317,27 @@ window.openAoDetail = async function(agentId) {
                 <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'bad')">👎</button>
                 <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'comment')">💬</button>
             </div>` : ''}
-            <h4 class="ao-sec-title">📚 학습 노트 <small style="color:#aaa;">(${lessons.length}건)</small></h4>
-            ${lessons.length
-                ? '<ul class="ao-lesson-list">' + lessons.map(l => '<li>[' + (l.category || '일반') + '] ' + l.lesson + '</li>').join('') + '</ul>'
-                : '<div class="ao-empty-note">아직 학습 노트가 없습니다 — 피드백이 쌓이면 교훈이 기록됩니다</div>'}
+            <h4 class="ao-sec-title">📚 학습 노트 <small style="color:#aaa;">(활성 ${activeLessons.length} · 제안 ${lessonProposals.length})</small></h4>
+            ${lessonProposals.length ? lessonProposals.map(l => `
+                <div class="ao-lesson-prop">
+                    <span class="ao-lesson-prop-text">🌱 [${aoEsc(l.category || '일반')}] ${aoEsc(l.lesson)}</span>
+                    <span class="ao-lesson-btns">
+                        <button class="ao-fb-btn ao-lesson-ok" onclick="aoApproveLesson(${l.id}, ${agent.id})">✔ 승인</button>
+                        <button class="ao-fb-btn ao-lesson-no" onclick="aoDiscardLesson(${l.id}, ${agent.id})">✖ 폐기</button>
+                    </span>
+                </div>`).join('') : ''}
+            ${activeLessons.length
+                ? '<ul class="ao-lesson-list">' + activeLessons.map(l => '<li>[' + aoEsc(l.category || '일반') + '] ' + aoEsc(l.lesson) + '</li>').join('') + '</ul>'
+                : (lessonProposals.length ? '' : '<div class="ao-empty-note">아직 학습 노트가 없습니다 — 피드백이 쌓이면 교훈이 제안됩니다</div>')}
+            <h4 class="ao-sec-title">💬 받은 피드백 <small style="color:#aaa;">(${feedbackList.length}건)</small></h4>
+            ${feedbackList.length
+                ? '<div class="ao-fb-history">' + feedbackList.map(f => {
+                    const icon = { good: '👍', edited: '✏️', bad: '👎', comment: '💬' }[f.feedback_type] || '💬';
+                    const dt = new Date(f.created_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    const text = f.comment || f.corrected_output || '(코멘트 없음)';
+                    return `<div class="ao-fb-hist-item">${icon} <span class="ao-log-time">${dt}</span> ${aoEsc(text)}</div>`;
+                }).join('') + '</div>'
+                : '<div class="ao-empty-note">아직 받은 피드백이 없습니다</div>'}
             <h4 class="ao-sec-title">🛠 도구</h4>
             ${tools.length
                 ? '<div class="ao-tool-list">' + tools.map(t => '<span class="ao-tool-badge ' + (t.enabled ? '' : 'ao-tool-planned') + '">' + t.tool_name + (t.enabled ? '' : ' (예정)') + '</span>').join('') + '</div>'
@@ -10402,7 +10428,36 @@ window.aoSendFeedback = async function(agentId, runId, type) {
         await api('/api/agent-office/feedback', 'POST', {
             agent_id: agentId, run_id: runId, feedback_type: type, comment: comment, corrected_output: corrected,
         });
-        showToast('피드백이 기록되었습니다 ✍️');
+        const agentName = (aoAgents.find(a => a.id === agentId) || {}).name;
+        if (agentName) {
+            aoSay(agentName, type === 'good'
+                ? '감사합니다! 😊'
+                : '피드백 감사합니다! 교훈으로 정리해서 다음 작업부터 반영할게요 📚', 6000);
+        }
+        showToast(type === 'good' ? '피드백이 기록되었습니다 👍' : '피드백 기록 — 교훈 후보 정리 중 📚 (마루 패널에서 승인)');
+        aoRefreshGrowth();
+    } catch (err) { alert(err.message); }
+};
+
+// 교훈 승인/폐기 (성장시스템 3절 — 대표 승인 시에만 활성)
+window.aoApproveLesson = async function(lessonId, agentId) {
+    try {
+        const res = await api('/api/agent-office/lessons/' + lessonId + '/approve', 'POST');
+        showToast('✔ ' + res.message);
+        const overlay = document.getElementById('ao-detail-overlay');
+        if (overlay) overlay.remove();
+        openAoDetail(agentId);
+        aoRefreshGrowth();
+    } catch (err) { alert(err.message); }
+};
+window.aoDiscardLesson = async function(lessonId, agentId) {
+    if (!confirm('이 교훈 제안을 폐기할까요?')) return;
+    try {
+        const res = await api('/api/agent-office/lessons/' + lessonId + '/discard', 'POST');
+        showToast('✖ ' + res.message);
+        const overlay = document.getElementById('ao-detail-overlay');
+        if (overlay) overlay.remove();
+        openAoDetail(agentId);
         aoRefreshGrowth();
     } catch (err) { alert(err.message); }
 };

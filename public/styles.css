@@ -4721,3 +4721,13 @@ textarea.form-input {
 .ao-prompt-en { font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; background: #10264a; color: #CFF5D2; border: none; }
 .ao-prompt-ko { font-size: 12px; color: #444; background: #FFFBEA; border: 1px solid #F5C800; border-radius: 6px; padding: 8px 10px; margin-top: 6px; line-height: 1.6; }
 .ao-prompt-meta { font-size: 12px; color: #666; margin: 4px 0 14px; }
+
+/* 6차: 학습 루프 — 교훈 제안 승인/폐기 + 피드백 이력 */
+.ao-lesson-prop { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #F3FAF3; border: 1px dashed #2F9E44; border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; font-size: 12px; }
+.ao-lesson-prop-text { flex: 1; min-width: 0; line-height: 1.5; }
+.ao-lesson-btns { display: flex; gap: 4px; flex-shrink: 0; }
+.ao-lesson-ok { padding: 3px 8px; min-height: 30px; font-size: 11px; background: #d3f9d8; border-color: #2F9E44; }
+.ao-lesson-no { padding: 3px 8px; min-height: 30px; font-size: 11px; background: #ffe3e3; border-color: #c92a2a; }
+.ao-fb-history { max-height: 160px; overflow-y: auto; font-size: 12px; }
+.ao-fb-hist-item { padding: 5px 2px; border-bottom: 1px dashed #eee; line-height: 1.5; }

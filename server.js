@@ -5598,7 +5598,10 @@ app.get('/api/agent-office/agents/:id', authMiddleware, adminOnly, async (req, r
         const runs = (await pool.query(
             `SELECT id, status, steps, result, started_at, finished_at FROM agent_runs
              WHERE agent_id = $1 AND is_deleted = false ORDER BY started_at DESC LIMIT 5`, [agent.id])).rows;
-        res.json({ agent, tools, lessons, runs });
+        const feedback = (await pool.query(
+            `SELECT id, run_id, feedback_type, comment, corrected_output, created_at FROM agent_feedback
+             WHERE agent_id = $1 AND is_deleted = false ORDER BY created_at DESC LIMIT 20`, [agent.id])).rows;
+        res.json({ agent, tools, lessons, runs, feedback });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -5684,7 +5687,39 @@ app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, re
             changes: { after: { agent_id, run_id, feedback_type, comment } },
             source: 'agent_office', actor: adminActor(req),
         });
-        res.json({ message: '피드백이 기록되었습니다', feedback: row });
+        // 6차: ✏️/👎/💬 피드백은 교훈 후보 자동 추출 (제안 상태 — 대표 승인 후에만 활성)
+        if (feedback_type !== 'good') extractLessonFromFeedback(row, adminActor(req));
+        res.json({ message: '피드백이 기록되었습니다 — 교훈 후보를 정리 중입니다', feedback: row });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 교훈 승인 — 대표 승인 시에만 '제안' → 'active' (자동 활성화 금지)
+app.post('/api/agent-office/lessons/:id/approve', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE agent_lessons SET status = 'active' WHERE id = $1 AND status = '제안' AND is_deleted = false RETURNING *`,
+            [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '승인 대기(제안) 상태의 교훈을 찾을 수 없습니다' };
+        await writeAudit({
+            action: 'lesson_approved', targetType: 'agent_lesson', targetId: r.rows[0].id,
+            changes: { after: { lesson: r.rows[0].lesson } }, source: 'agent_office', actor: adminActor(req),
+        });
+        res.json({ message: '교훈이 활성화되었습니다 — 다음 실행부터 반영됩니다', lesson: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 교훈 폐기 (제안 또는 활성 → 폐기)
+app.post('/api/agent-office/lessons/:id/discard', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE agent_lessons SET status = '폐기' WHERE id = $1 AND status IN ('제안', 'active') AND is_deleted = false RETURNING *`,
+            [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '폐기할 교훈을 찾을 수 없습니다' };
+        await writeAudit({
+            action: 'lesson_discarded', targetType: 'agent_lesson', targetId: r.rows[0].id,
+            changes: { before: { lesson: r.rows[0].lesson } }, source: 'agent_office', actor: adminActor(req),
+        });
+        res.json({ message: '교훈이 폐기되었습니다', lesson: r.rows[0] });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -5720,7 +5755,7 @@ const MARU_ROUTE_TOOL = {
         type: 'object',
         additionalProperties: false,
         properties: {
-            action: { type: 'string', enum: ['route', 'clarify'], description: 'route=배정 확정, clarify=애매해서 되묻기' },
+            action: { type: 'string', enum: ['route', 'clarify', 'feedback'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물에 대한 평가/수정 요구' },
             team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/실장실 중 하나). clarify면 빈 문자열' },
             assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/마루 중 하나). clarify면 빈 문자열' },
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
@@ -5728,8 +5763,9 @@ const MARU_ROUTE_TOOL = {
             clarify_question: { type: 'string', description: 'clarify일 때 대표에게 물을 질문 딱 하나. route면 빈 문자열' },
             item_keyword: { type: 'string', description: "지시에 언급된 품목 키워드 하나 (예: '하우스감귤', '카라향', '레몬'). 품목 언급이 없으면 빈 문자열" },
             period: { type: 'string', description: "기간 조건: '이번주'→'this_week', '이번달/이달'→'this_month', 특정 월(예: '6월')→'YYYY-MM' 형식(오늘 날짜 기준, 미래 월이면 작년으로), 기간 언급 없으면 빈 문자열" },
+            feedback_kind: { type: 'string', enum: ['칭찬', '수정', '지적', '코멘트'], description: "action=feedback일 때 피드백 분류. 그 외 action이면 '코멘트'로 둘 것" },
         },
-        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period'],
+        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period', 'feedback_kind'],
     },
 };
 
@@ -5755,14 +5791,96 @@ ${JSON.stringify(routingTable, null, 2)}
 
 ## 판단 원칙 (반드시 준수)
 1. 지시가 라우팅 규칙의 어느 분야에 해당하는지 판단해 action='route'로 팀·요원을 배정한다.
-2. 분야가 불명확하거나 여러 해석이 가능하면 절대 추측하지 말고 action='clarify'로 되묻는다. 질문은 한 번에 딱 하나만.
-3. 일정 등록/조회 등 회사프로그램 운영 지시는 실장실 마루 담당이다.
-4. 여러 분야가 섞인 지시는 가장 핵심인 분야 하나로 배정하고 reason에 나머지를 언급한다.
-5. 재무 지시(세미 배정)에서는 조건을 함께 추출한다:
+2. 지시가 새 작업이 아니라 **기존 결과물에 대한 평가·수정 요구**면 (예: "아까 그 문자 요일 틀렸어", "방금 카피 너무 좋았어", "프롬프트에 돌담 빼줘") action='feedback'으로 분류한다.
+   assignee=그 결과물을 만든 요원(문자·카피→글샘, 이미지·영상 프롬프트→미소, 정산 보고→세미), feedback_kind=칭찬/수정/지적/코멘트.
+   어느 요원의 결과물인지 불명확하면 clarify로 되묻는다.
+3. 분야가 불명확하거나 여러 해석이 가능하면 절대 추측하지 말고 action='clarify'로 되묻는다. 질문은 한 번에 딱 하나만.
+4. 일정 등록/조회 등 회사프로그램 운영 지시는 실장실 마루 담당이다.
+5. 여러 분야가 섞인 지시는 가장 핵심인 분야 하나로 배정하고 reason에 나머지를 언급한다.
+6. 재무 지시(세미 배정)에서는 조건을 함께 추출한다:
    - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
    - period: "이번주"→this_week, "이번달"→this_month, "6월"처럼 특정 월→YYYY-MM (오늘 날짜 기준 올해, 아직 오지 않은 월이면 작년). 기간 언급 없으면 빈 문자열.
    - 조건이 없는 재무 지시는 둘 다 빈 문자열로 두면 전체 보고서가 나간다. 조건이 없다고 clarify하지 말 것.
-6. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.`;
+7. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.`;
+}
+
+// ------------------------------------------------------------
+// 6차: 피드백 → 교훈 추출 (성장시스템 2절) — Haiku로 교훈 후보 추출,
+// '제안' 상태로만 등록. 활성화는 반드시 대표 승인(approve)으로만.
+// ------------------------------------------------------------
+const LESSON_TOOL = {
+    name: 'propose_lesson',
+    description: '대표 피드백에서 요원이 다음 작업부터 적용할 교훈을 추출한다.',
+    strict: true,
+    input_schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+            has_lesson: { type: 'boolean', description: '재사용 가능한 교훈이 있으면 true. 단순 칭찬·일회성 사실이면 false' },
+            lesson: { type: 'string', description: '교훈 한 줄 — 다음 작업에 바로 적용 가능한 지시문 형태 (예: "본문에 날짜를 쓸 때 요일은 오늘 날짜 기준으로 반드시 검산할 것"). has_lesson=false면 빈 문자열' },
+            category: { type: 'string', enum: ['톤', '형식', '금지사항', '선호', '정확성', '기타'] },
+        },
+        required: ['has_lesson', 'lesson', 'category'],
+    },
+};
+
+async function extractLessonFromFeedback(fb, actor) {
+    try {
+        if (!process.env.ANTHROPIC_API_KEY) {
+            console.error('교훈 추출 불가: ANTHROPIC_API_KEY 환경변수 없음');
+            return;
+        }
+        const agentQ = await pool.query('SELECT id, name, duty FROM agents WHERE id = $1', [fb.agent_id]);
+        const agent = agentQ.rows[0];
+        if (!agent) return;
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const fbDesc = `요원: ${agent.name} (${agent.duty || ''})
+피드백 종류: ${fb.feedback_type} (good=좋음/edited=수정됨/bad=다시/comment=코멘트)
+대표 코멘트: ${fb.comment || '(없음)'}
+대표 수정본: ${fb.corrected_output || '(없음)'}
+원본 결과 요약: ${String(fb.original_output || '').slice(0, 1500) || '(없음)'}`;
+        const msg = await anthropic.messages.create({
+            model: MARU_MODEL,
+            max_tokens: 300,
+            system: '너는 AI 요원 조직의 학습 노트 관리자다. 대표 피드백에서 해당 요원이 다음 작업부터 일반적으로 적용할 교훈 한 줄을 추출한다. 교훈은 구체적 지시문 형태로 쓴다. 재사용 불가능한 일회성 내용이나 단순 칭찬은 has_lesson=false. 반드시 propose_lesson 도구로 답한다.',
+            tools: [LESSON_TOOL],
+            tool_choice: { type: 'tool', name: 'propose_lesson' },
+            messages: [{ role: 'user', content: fbDesc }],
+        });
+        const tu = msg.content.find(b => b.type === 'tool_use');
+        if (!tu || !tu.input.has_lesson || !String(tu.input.lesson).trim()) return;
+        const row = (await pool.query(
+            `INSERT INTO agent_lessons (agent_id, lesson, category, status, source_feedback_ids)
+             VALUES ($1, $2, $3, '제안', $4) RETURNING *`,
+            [fb.agent_id, String(tu.input.lesson).trim(), tu.input.category, JSON.stringify([fb.id])])).rows[0];
+        await writeAudit({
+            action: 'lesson_proposed', targetType: 'agent_lesson', targetId: row.id,
+            changes: { after: { agent: agent.name, lesson: row.lesson, category: row.category, feedback_id: fb.id } },
+            source: 'agent_office', actor,
+        });
+        console.log(`교훈 제안 등록: ${agent.name} — ${row.lesson}`);
+    } catch (err) {
+        // 오류 정직 기록 — 교훈 추출 실패해도 피드백 저장은 유지됨
+        console.error('교훈 추출 오류:', err?.status ? `Anthropic API 오류 (${err.status}): ${err.message}` : (err?.message || err));
+    }
+}
+
+// 소급 처리: 교훈이 아직 추출되지 않은 기존 피드백 처리 (서버 기동 시 1회 — 멱등)
+async function backfillLessonsFromFeedback() {
+    try {
+        if (!process.env.ANTHROPIC_API_KEY) return;
+        const r = await pool.query(`
+            SELECT f.* FROM agent_feedback f
+            WHERE f.is_deleted = false AND f.feedback_type != 'good'
+              AND NOT EXISTS (SELECT 1 FROM agent_lessons l WHERE l.source_feedback_ids @> jsonb_build_array(f.id))
+            ORDER BY f.id ASC LIMIT 20`);
+        if (r.rows.length === 0) return;
+        console.log(`교훈 소급 추출 시작: 기존 피드백 ${r.rows.length}건`);
+        const actor = await getMcpActor();
+        for (const fb of r.rows) {
+            await extractLessonFromFeedback(fb, actor);
+        }
+    } catch (e) { console.error('교훈 소급 추출 오류:', e.message); }
 }
 
 // 접수 지시 상태 갱신 헬퍼
@@ -5802,6 +5920,41 @@ async function processOrderWithMaru(order, actor) {
         if (d.action === 'clarify') {
             await maruFinishOrder(order.id, '질문', {
                 type: 'clarify', question: d.clarify_question, summary: d.task_summary, reason: d.reason,
+            });
+            return;
+        }
+
+        // ①-2 기존 결과물에 대한 피드백 → 해당 요원 최근 실행에 연결 저장 + 교훈 추출
+        if (d.action === 'feedback') {
+            const targetQ = await pool.query(
+                `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [d.assignee]);
+            const target = targetQ.rows[0];
+            if (!target) {
+                await maruFinishOrder(order.id, '질문', {
+                    type: 'clarify', question: '어느 요원의 결과물에 대한 피드백인가요? (글샘/미소/세미 등 요원 이름을 함께 말씀해주세요)',
+                    summary: d.task_summary, reason: d.reason,
+                });
+                return;
+            }
+            const lastRun = await pool.query(
+                `SELECT id, result FROM agent_runs WHERE agent_id = $1 AND status = 'done' AND is_deleted = false
+                 ORDER BY started_at DESC LIMIT 1`, [target.id]);
+            const kindMap = { '칭찬': 'good', '수정': 'edited', '지적': 'bad', '코멘트': 'comment' };
+            const fbType = kindMap[d.feedback_kind] || 'comment';
+            const original = lastRun.rows[0]?.result ? JSON.stringify(lastRun.rows[0].result) : null;
+            const fbRow = (await pool.query(
+                `INSERT INTO agent_feedback (agent_id, run_id, feedback_type, original_output, comment)
+                 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+                [target.id, lastRun.rows[0]?.id || null, fbType, original, order.content])).rows[0];
+            await writeAudit({
+                action: 'create', targetType: 'agent_feedback', targetId: fbRow.id,
+                changes: { after: { via: 'maru', target: target.name, feedback_type: fbType } },
+                source: 'agent_office', actor,
+            });
+            if (fbType !== 'good') extractLessonFromFeedback(fbRow, actor); // 비동기 — 교훈 후보 추출
+            await maruFinishOrder(order.id, '피드백', {
+                type: 'feedback', target: target.name, kind: d.feedback_kind || '코멘트',
+                feedback_id: fbRow.id, summary: d.task_summary, reason: d.reason,
             });
             return;
         }
@@ -6077,6 +6230,8 @@ app.get('*', (req, res) => {
 initDB().then(() => {
     app.listen(PORT, () => {
         console.log(`서버 실행 중: http://localhost:${PORT}`);
+        // 6차: 기존 피드백 교훈 소급 추출 (미처리분만 — 멱등)
+        setTimeout(() => backfillLessonsFromFeedback(), 8000);
     });
 }).catch(err => {
     console.error('DB 초기화 실패:', err);

@@ -90,8 +90,14 @@ module.exports = {
             }
         } catch (e) { /* 노트 로드 실패는 작성을 막지 않음 */ }
 
+        // 오늘 날짜+요일 (KST) — 문구에 날짜 표기 시 요일 검산용
+        const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+        const todayStr = nowKst.toISOString().slice(0, 10);
+        const dayName = ['일', '월', '화', '수', '목', '금', '토'][nowKst.getUTCDay()];
+
         const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 비주얼 디렉터 '미소'다.
 아래 지식 문서의 Gemini 프롬프트 작성 원칙을 완전히 준수해 즉시 사용 가능한 프롬프트를 작성한다.
+오늘 날짜: ${todayStr} (${dayName}요일, KST) — 설명·문구에 날짜를 쓸 때 요일은 이 기준으로 반드시 검산할 것.
 
 ## 작업 규칙 (반드시 준수)
 1. 영문 프롬프트는 8단계 구조 순서 준수: 이미지 타입 → 주요 피사체 → 구도 → 조명 → 배경 → 브랜드 컬러(golden yellow #F5C800 main accent, navy blue #1B3A6B) → 분위기 → 기술 사양(4K 등).
