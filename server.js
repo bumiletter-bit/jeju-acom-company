@@ -918,6 +918,9 @@ async function initDB() {
         WHERE tool_name = '내부 정산·품목 DB' AND is_deleted = false AND enabled = false`);
     await pool.query(`UPDATE agents SET description = '정산현황·품목별 금액·비용 조회, 전년 동기대비 품목 매출 증감 분석 (✅ 정산 DB 연결됨 — 2차)'
         WHERE code = 'semi' AND is_deleted = false`);
+    // 4차: 글샘 카피 생성 연결 반영 (발송은 대표가 알리고에서 직접 — 자동 발송 없음)
+    await pool.query(`UPDATE agents SET description = 'LMS/톡톡/상세페이지 카피 작성 (✅ 카피 생성 연결됨 — 4차 · 발송은 대표가 알리고에서 직접)'
+        WHERE code = 'geulsaem' AND is_deleted = false`);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -5849,9 +5852,13 @@ async function processOrderWithMaru(order, actor) {
             changes: { after: { agent: agent.name, team: agent.team, mode: 'maru_routed', order_id: order.id, conditions } },
             source: 'agent_office', actor,
         });
-        // 마루가 추출한 조건을 요원 실행에 그대로 전달 (AI 추가 호출 없음)
-        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null,
-            { workplace: '전체', item_keyword: conditions.item_keyword, period: conditions.period });
+        // 마루가 추출한 조건 + 대표 지시 원문(한 글자도 자르지 않고 통째)을 요원 실행에 전달
+        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null, {
+            workplace: '전체',
+            item_keyword: conditions.item_keyword,
+            period: conditions.period,
+            order_content: order.content,
+        });
         await maruFinishOrder(order.id, '완료', { ...routeInfo, run_id: run.id }, run.id);
     } catch (err) {
         // 정직한 오류 표시 — 허위 응답 금지. Anthropic API 오류는 상태코드와 함께 그대로 기록.

@@ -4695,3 +4695,9 @@ textarea.form-input {
 .ao-maru-order-item { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px dashed #e6e6e6; color: #444; }
 .ao-maru-order-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ao-maru-order-btn { padding: 2px 8px; min-height: 28px; font-size: 11px; flex-shrink: 0; }
+
+/* 4차: 글샘 카피 보고서 */
+.ao-missing-box { background: #FFF3BF; border: 2px solid #F5C800; border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #6b5900; margin-bottom: 4px; }
+.ao-copy-head { display: flex; justify-content: space-between; align-items: center; margin: 12px 0 4px; font-size: 13px; color: #1B3A6B; }
+.ao-copy-body { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-all; font-family: inherit; margin: 0; max-height: 340px; overflow-y: auto; }

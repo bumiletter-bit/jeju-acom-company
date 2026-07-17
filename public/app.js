@@ -10313,6 +10313,26 @@ function aoFinishDetailProgress(run) {
     }
 }
 
+// 카피 본문 복사 (알리고 붙여넣기용)
+window.aoCopyText = async function(elId) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const text = el.textContent;
+    try {
+        await navigator.clipboard.writeText(text);
+        showToast('📋 카피 복사 완료 — 알리고에 붙여넣으세요');
+    } catch (e) {
+        // 구형 브라우저 폴백
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        showToast('📋 카피 복사 완료');
+    }
+};
+
 // ---- 피드백 (👍 / ✏️수정 / 👎 / 💬) ----
 window.aoSendFeedback = async function(agentId, runId, type) {
     let comment = '', corrected = '';
@@ -10389,6 +10409,19 @@ window.aoOpenReport = async function(runId) {
 
     if (rep.no_data) {
         body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.note || '데이터 없음')}</div>`;
+    } else if (rep.type === 'geulsaem_copy') {
+        // 4차: 글샘 카피 보고서 — [복사] 버튼으로 알리고에 바로 붙여넣기
+        const missing = rep.missing_fields || [];
+        body = `
+        ${missing.length ? `<div class="ao-missing-box">✏️ <strong>채워야 할 항목:</strong> ${missing.map(aoEsc).join(', ')}
+            <span style="color:#888;font-size:11px;">— 본문의 [ ] 자리표시를 채운 뒤 발송하세요</span></div>` : ''}
+        <h4 class="ao-sec-title">✍️ ${aoEsc(rep.channel)} 카피${rep.title ? ` · 제목안 "${aoEsc(rep.title)}"` : ''}</h4>
+        ${(rep.versions || []).map((v, i) => `
+            <div class="ao-copy-head"><strong>${aoEsc(v.label || ('버전 ' + (i + 1)))}</strong>
+                <button class="ao-fb-btn" onclick="aoCopyText('ao-copy-${run.id}-${i}')">📋 복사</button></div>
+            <pre class="ao-copy-body" id="ao-copy-${run.id}-${i}">${aoEsc(v.text)}</pre>`).join('')}
+        ${rep.send_tip ? `<div class="ao-result-box" style="margin-top:10px;">💡 ${aoEsc(rep.send_tip)}</div>` : ''}
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}${rep.char_counts ? ' · ' + aoEsc(rep.char_counts) : ''} · 모델 ${aoEsc(rep.model || '')}</p>`;
     } else if (rep.type === 'semi_settlement_filtered') {
         // 3.5차: 조건 필터 보고서 (품목 키워드 · 기간)
         const won = n => Math.round(n || 0).toLocaleString() + '원';

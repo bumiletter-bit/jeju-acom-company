@@ -1,16 +1,162 @@
 // AGENT OFFICE 실행 스크립트 — 글샘 (마케팅팀 · 문구)
-// 1차: 테스트 실행 모드. 후속 차수에서 지식 문서(10블록 구조) 기반 AI 카피 생성 연결.
+// 4차: 실전 연결 — Anthropic Sonnet으로 즉시 발송 가능한 카피 생성.
+// 원칙: ① 카피 "생성"까지만 — 자동 발송 경로는 어디에도 없음 (발송은 대표가 알리고에서 직접)
+//       ② 대표 지시 원문을 자르지 않고 통째로 전달받아 작성
+//       ③ 지식 문서(10블록·검증 라임·명분·톤앤매너) 완전 준수, 학습 노트는 지식보다 우선
+//       ④ 누락 정보는 지어내지 않고 [가격 입력] 자리표시 + 채울 목록 보고
+//       ⑤ API 오류 시 허위 카피 없이 오류 그대로 (throw → 실행 '오류' 기록)
+const fs = require('fs');
+const path = require('path');
+const Anthropic = require('@anthropic-ai/sdk');
+
+// 카피 품질이 중요해서 Haiku가 아닌 Sonnet급 기본 (환경변수로 교체 가능)
+const GEULSAEM_MODEL = process.env.GEULSAEM_MODEL || 'claude-sonnet-4-6';
+
+const KNOWLEDGE_DIR = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing');
+const KNOWLEDGE_FILES = [
+    '문자톡톡_전문가_지침.md',   // [B] 10블록 구조 · 검증 라임 · 절대 금지
+    '상품별_톤앤매너_가이드.md',  // [C]
+    '마케팅_문자_가이드북.md',    // [D] 채널 규격 · 골든타임
+    '명분_라이브러리.md',        // [E] 명분 없는 할인 금지
+    '검증된_카피_자산집.md',     // [F] 킬러 카피
+    '마케팅_전문팀_시스템.md',    // [G] 비전 · 출력 규칙
+];
+let _knowledgeCache = null;
+function loadKnowledge() {
+    if (_knowledgeCache) return _knowledgeCache;
+    const parts = [];
+    for (const f of KNOWLEDGE_FILES) {
+        try {
+            parts.push(`\n\n===== [지식 문서: ${f}] =====\n` + fs.readFileSync(path.join(KNOWLEDGE_DIR, f), 'utf8'));
+        } catch (e) {
+            parts.push(`\n\n===== [지식 문서: ${f}] =====\n(로드 실패: ${e.message})`);
+        }
+    }
+    _knowledgeCache = parts.join('');
+    return _knowledgeCache;
+}
+
+// 강제 tool 호출로 구조화된 카피 제출 보장
+const COPY_TOOL = {
+    name: 'submit_copy',
+    description: '작성 완료한 카피 결과물을 제출한다.',
+    strict: true,
+    input_schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+            channel: { type: 'string', enum: ['LMS', 'SMS', '톡톡'], description: '작성한 채널' },
+            title: { type: 'string', description: 'LMS 제목 제안 (한글 13자 이내). 해당 없으면 빈 문자열' },
+            versions: {
+                type: 'array',
+                description: '카피 버전 1~3개. 단일 지시면 1개, 열린 지시면 안정형/어그로형/감성형 3개',
+                items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        label: { type: 'string', description: '버전 이름 (예: 기본 / 안정형 / 어그로형 / 감성형)' },
+                        text: { type: 'string', description: '즉시 발송 가능한 완성 카피 본문 전체' },
+                    },
+                    required: ['label', 'text'],
+                },
+            },
+            missing_fields: {
+                type: 'array', items: { type: 'string' },
+                description: "지시에 없어 [자리표시]로 남긴 항목 목록 (예: '가격', '마감일', '링크'). 없으면 빈 배열",
+            },
+            char_counts: { type: 'string', description: "버전별 글자 수 요약 (예: '기본 842자')" },
+            send_tip: { type: 'string', description: '추천 발송 타이밍·후속 전략 한두 줄' },
+        },
+        required: ['channel', 'title', 'versions', 'missing_fields', 'char_counts', 'send_tip'],
+    },
+};
+
 module.exports = {
-    steps: ['지식 문서(10블록 구조) 로드 중...', '카피 초안 작성 중...', '검증 라임 점검 중...'],
-    stepDelayMs: 2000,
-    result() {
+    live: true, // 실전 연결됨 (4차) — 마루 라우팅 시 실제 카피 생성
+    steps: ['지식 문서(10블록·검증 라임) 로드 중...', '카피 초안 작성 중...', '규격·금지사항 검수 중...'],
+    stepDelayMs: 1500,
+    async result({ agent, pool, params = {} }) {
+        // 대표 지시 원문 (마루가 자르지 않고 통째로 전달)
+        const instruction = String(params.order_content || '').trim();
+        if (!instruction) {
+            // 수동 [지금 실행] 등 지시 원문이 없는 경우 — 허위 카피를 만들지 않음
+            return {
+                summary: '지시 내용이 없어 카피를 만들지 않았습니다',
+                lines: [
+                    '글샘은 대표 지시 원문이 있어야 카피를 작성합니다',
+                    '하단 입력바로 마루에게 지시하면 원문이 그대로 전달됩니다',
+                    '예: "카라향 마감 임박 LMS 만들어줘 — 5kg 39,900원, 일요일 마감"',
+                ],
+            };
+        }
+        if (!process.env.ANTHROPIC_API_KEY) {
+            throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다 (Render 환경변수 확인 필요)');
+        }
+
+        // 학습 노트 (활성) — 지식 문서보다 우선 적용
+        let lessonsText = '';
+        try {
+            const lr = await pool.query(
+                `SELECT lesson, category FROM agent_lessons
+                 WHERE agent_id = $1 AND status = 'active' AND is_deleted = false
+                 ORDER BY created_at DESC LIMIT 30`, [agent.id]);
+            if (lr.rows.length) {
+                lessonsText = '\n\n## 📚 대표님 학습 노트 — 아래 교훈이 지식 문서와 충돌하면 학습 노트를 우선 적용할 것!\n'
+                    + lr.rows.map(l => `- [${l.category || '일반'}] ${l.lesson}`).join('\n');
+            }
+        } catch (e) { /* 노트 로드 실패는 카피 작성을 막지 않음 */ }
+
+        const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.
+아래 지식 문서(검증된 카피 자산)를 완전히 준수해 즉시 발송 가능한 완성 카피를 작성한다.
+
+## 작업 규칙 (반드시 준수)
+1. 채널 판단: 지시에 채널 언급이 없으면 알리고 LMS(1,000자 이내) 기본. "톡톡"이라 하면 네이버 톡톡 규격, "짧게"/"문자 90자"면 SMS.
+2. 알리고(LMS/SMS) 절대 위반 금지: 이모지 사용 금지(★ ▶ ◆ ━ ─ 기호만), 첫 줄 "(광고)제주아꼼이네입니다^^" 고정, 표준 10블록 순서 유지, VIP 혜택 블록 + 수신거부 안내 고정. 톡톡은 이모지 허용.
+3. 누락 정보 처리: 가격·쿠폰·마감일·수량·링크가 지시에 없으면 절대 지어내지 말고 [가격 입력], [마감일 입력], [링크 입력] 같은 대괄호 자리표시로 초안을 완성한 뒤 missing_fields에 나열한다. 되묻느라 멈추지 말고 초안을 먼저 완성한다.
+4. 버전: 단일·구체 지시면 1개, 열린 지시면 최대 3개(안정형/어그로형/감성형).
+5. 과장·허위 금지, 명분 없는 할인 표현 금지 (명분 라이브러리 준수).
+6. 반드시 submit_copy 도구로 제출한다. 도구 밖 텍스트 응답 금지.
+${loadKnowledge()}${lessonsText}`;
+
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        let msg;
+        try {
+            msg = await anthropic.messages.create({
+                model: GEULSAEM_MODEL,
+                max_tokens: 4000,
+                system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+                tools: [COPY_TOOL],
+                tool_choice: { type: 'tool', name: 'submit_copy' },
+                messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
+            });
+        } catch (err) {
+            // 오류 정직 표시 — 허위 카피 생성 금지
+            throw new Error(err && err.status
+                ? `Anthropic API 오류 (${err.status}): ${err.message}`
+                : (err && err.message) || String(err));
+        }
+        const toolUse = msg.content.find(b => b.type === 'tool_use');
+        if (!toolUse) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
+        const c = toolUse.input;
+        const versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
+        if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다');
+        const missing = Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [];
+
         return {
-            summary: '완료: 테스트 실행 성공',
+            summary: `완료: ${c.channel} 카피 ${versions.length}종${missing.length ? ` (채울 항목 ${missing.length}개)` : ''}`,
             lines: [
-                '마케팅 지식 문서(B~G) 매핑 확인 정상',
-                '10블록 구조 검수 시나리오 테스트 통과',
-                'AI 카피 생성 연결은 후속 차수에서 진행됩니다',
+                `채널 ${c.channel}${c.title ? ` · 제목안 "${c.title}"` : ''}${c.char_counts ? ' · ' + c.char_counts : ''}`,
+                missing.length ? `✏️ 채워야 할 항목: ${missing.join(', ')}` : '누락 정보 없음 — 바로 발송 가능한 초안',
+                '발송은 대표님이 알리고에서 직접 (자동 발송 경로 없음)',
             ],
+            report: {
+                type: 'geulsaem_copy',
+                channel: c.channel, title: c.title || '',
+                versions, missing_fields: missing,
+                char_counts: c.char_counts || '', send_tip: c.send_tip || '',
+                model: GEULSAEM_MODEL, instruction,
+                note: '글샘은 카피 생성까지만 — 발송은 알리고에서 대표가 직접 (자동 발송 경로 없음)',
+            },
         };
     },
 };
