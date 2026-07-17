@@ -4617,3 +4617,54 @@ textarea.form-input {
     .ao-detail-modal { max-width: 94vw; }
     .ao-report-filters .form-input { flex: 1 1 45%; min-width: 0; }
 }
+
+/* ============================================= */
+/* 🎮 AGENT OFFICE 1.5차 — 조직도형 레이아웃 + 상시 지시 입력바 */
+/* ============================================= */
+.ao-org { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+.ao-ceo { cursor: default; }
+.ao-ceo:hover { transform: none; }
+.ao-ceo .ao-crown { position: absolute; left: 50%; transform: translateX(-50%); top: 0; font-size: 15px; }
+.ao-ceo .ao-nametag { color: #10264a; }
+.ao-vline { width: 3px; height: 16px; background: rgba(27,58,107,.35); flex-shrink: 0; }
+.ao-vline-sm { height: 12px; }
+.ao-org-teams { display: flex; width: 100%; justify-content: center; align-items: flex-start; }
+.ao-org-branch { flex: 1; min-width: 0; position: relative; padding-top: 16px; display: flex; flex-direction: column; align-items: center; }
+.ao-org-branch::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 3px; height: 16px; background: rgba(27,58,107,.35); }
+.ao-org-branch::after { content: ''; position: absolute; top: -2px; left: 0; right: 0; height: 3px; background: rgba(27,58,107,.35); }
+.ao-org-branch:first-child::after { left: 50%; }
+.ao-org-branch:last-child::after { right: 50%; }
+.ao-org-branch:only-child::after { display: none; }
+.ao-team-tag { font-size: 11px; font-weight: 700; color: #1B3A6B; background: #fff; border: 2px solid rgba(27,58,107,.35);
+    border-radius: 6px; padding: 2px 8px; margin-top: 2px; box-shadow: 2px 2px 0 rgba(27,58,107,.15); white-space: nowrap; }
+.ao-team-tag[data-team="마케팅팀"] { border-color: rgba(232,89,12,.55); }
+.ao-team-tag[data-team="재무팀"] { border-color: rgba(47,158,68,.55); }
+.ao-team-tag[data-team="법무팀"] { border-color: rgba(27,58,107,.55); }
+.ao-team-tag[data-team="개발부서"] { border-color: rgba(112,72,232,.55); }
+.ao-org-members { display: flex; justify-content: center; }
+.ao-org-member { position: relative; padding-top: 14px; }
+.ao-org-member::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 3px; height: 14px; background: rgba(27,58,107,.3); }
+.ao-org-member::after { content: ''; position: absolute; top: -2px; left: 0; right: 0; height: 3px; background: rgba(27,58,107,.3); }
+.ao-org-member:first-child::after { left: 50%; }
+.ao-org-member:last-child::after { right: 50%; }
+.ao-org-member:only-child::after { display: none; }
+.ao-office > .ao-inbox { position: absolute; top: 12px; right: 12px; width: 74px; padding: 6px 0; z-index: 3; }
+
+/* 상시 지시 입력바 (하단 고정) */
+.ao-order-bar { position: sticky; bottom: 8px; z-index: 30; display: flex; gap: 8px; align-items: center;
+    background: #1B3A6B; border: 3px solid #F5C800; border-radius: 12px; padding: 10px 12px; margin-top: 16px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.28); }
+.ao-order-label { color: #F5C800; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.ao-order-bar .form-input { flex: 1; min-height: 42px; border: none; font-size: 14px; }
+#ao-order-send { min-height: 44px; padding: 0 18px; font-weight: 700; flex-shrink: 0; }
+.ao-log-order { background: #FFFBEA; border-left: 3px solid #F5C800; }
+.ao-order-status { font-size: 10px; color: #e67700; font-weight: 700; }
+
+/* 모바일: 세로 조직도 (대표 → 마루 → 팀장+팀원 그룹 순서) */
+@media (max-width: 700px) {
+    .ao-org-teams { flex-direction: column; gap: 18px; align-items: stretch; }
+    .ao-org-branch { padding-top: 14px; border-top: 2px dashed rgba(27,58,107,.25); }
+    .ao-org-branch::before, .ao-org-branch::after { display: none; }
+    .ao-order-label { display: none; }
+    .ao-order-bar { bottom: 4px; padding: 8px; }
+}

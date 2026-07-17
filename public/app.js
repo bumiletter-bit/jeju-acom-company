@@ -9760,6 +9760,33 @@ function aoBindEventsOnce() {
         });
     });
     document.getElementById('ao-report-search').addEventListener('click', aoLoadReports);
+    // 상시 지시 입력바 (1.5차)
+    const orderInput = document.getElementById('ao-order-input');
+    document.getElementById('ao-order-send').addEventListener('click', aoSendOrder);
+    orderInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); aoSendOrder(); }
+    });
+}
+
+// ---- 상시 지시 입력바: 접수 → pending_orders 저장 + LIVE 로그 + 마루 말풍선 ----
+async function aoSendOrder() {
+    const input = document.getElementById('ao-order-input');
+    const content = input.value.trim();
+    if (!content) return;
+    const btn = document.getElementById('ao-order-send');
+    btn.disabled = true;
+    try {
+        const res = await api('/api/agent-office/orders', 'POST', { content });
+        input.value = '';
+        aoAppendLiveLogHtml(aoOrderLogLine(res.order));
+        aoSay('마루', '지시 접수! AI 연결(3차 업데이트) 후 자동 처리됩니다', 4000);
+        showToast('📋 지시가 접수되었습니다');
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        btn.disabled = false;
+        input.focus();
+    }
 }
 
 async function aoRefreshAgents() {
@@ -9788,30 +9815,54 @@ async function aoRefreshGrowth() {
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
-// ---- 픽셀 사무실 렌더 ----
+// ---- 픽셀 사무실 렌더 (1.5차: 조직도형 레이아웃 + 연결선) ----
 function aoRenderOffice() {
     const office = document.getElementById('ao-office');
     if (!office) return;
     const chief = aoAgents.find(a => a.role === 'chief');
     const visible = a => aoBiz === '전체' || a.workplace === aoBiz || a.workplace === '공통';
     office.innerHTML = `
-        <div class="ao-office-top">
-            <div class="ao-chief-zone" data-team="실장실">
-                <div class="ao-zone-label">🤵 실장 데스크</div>
-                <div class="ao-team-members">${chief ? aoCharHtml(chief, visible(chief)) : ''}</div>
+        <div class="ao-inbox" id="ao-inbox">📥<div class="ao-inbox-label">보고함</div></div>
+        <div class="ao-org">
+            ${aoCeoHtml()}
+            <div class="ao-vline"></div>
+            ${chief ? aoCharHtml(chief, visible(chief)) : ''}
+            <div class="ao-vline"></div>
+            <div class="ao-org-teams">
+                ${AO_TEAMS.map(t => {
+                    const mgr = aoAgents.find(a => a.team === t.name && a.role === 'manager');
+                    const members = aoAgents.filter(a => a.team === t.name && a.role === 'worker');
+                    return `
+                    <div class="ao-org-branch">
+                        ${mgr ? aoCharHtml(mgr, visible(mgr)) : ''}
+                        <div class="ao-team-tag" data-team="${t.name}">${t.emoji} ${t.name}</div>
+                        ${members.length ? `
+                        <div class="ao-vline ao-vline-sm"></div>
+                        <div class="ao-org-members">
+                            ${members.map(m => `<div class="ao-org-member">${aoCharHtml(m, visible(m))}</div>`).join('')}
+                        </div>` : ''}
+                    </div>`;
+                }).join('')}
             </div>
-            <div class="ao-inbox" id="ao-inbox">📥<div class="ao-inbox-label">보고함</div></div>
-        </div>
-        <div class="ao-teams">
-            ${AO_TEAMS.map(t => `
-                <div class="ao-team-zone" data-team="${t.name}">
-                    <div class="ao-zone-label">${t.emoji} ${t.name}</div>
-                    <div class="ao-team-members">
-                        ${aoAgents.filter(a => a.team === t.name).map(a => aoCharHtml(a, visible(a))).join('')}
-                    </div>
-                </div>`).join('')}
         </div>
         <div class="ao-doc-fly" id="ao-doc-fly" style="display:none;">📋</div>`;
+}
+
+// 대표 노드 (실제 사람 — AI 배지 없음, 왕관 표시)
+function aoCeoHtml() {
+    return `
+    <div class="ao-agent ao-ceo" id="ao-ceo-node">
+        <div class="ao-bubbles"><span class="ao-crown">👑</span></div>
+        <div class="ao-sprite">
+            <div class="ao-hair" style="background:#2b2b2b;"></div>
+            <div class="ao-face"><span class="ao-eye"></span><span class="ao-eye"></span></div>
+            <div class="ao-body" style="background:#1B3A6B;"></div>
+            <div class="ao-arms"><span class="ao-arm"></span><span class="ao-arm"></span></div>
+            <div class="ao-desk"><span class="ao-monitor"></span></div>
+        </div>
+        <div class="ao-nametag">전승범</div>
+        <div class="ao-roletag">대표</div>
+    </div>`;
 }
 
 function aoCharHtml(a, vis) {
@@ -9863,7 +9914,7 @@ function aoSay(name, text, ms = 2500) {
     setTimeout(() => say.remove(), ms);
 }
 
-// 서류/보고서 아이콘 이동 애니메이션 (사무실 바닥 경로)
+// 서류/보고서 아이콘 이동 애니메이션 (1.5차: 조직도 연결선을 따라 직각 경로)
 function aoFlyDoc(fromEl, toEl, icon = '📋') {
     const fly = document.getElementById('ao-doc-fly');
     const office = document.getElementById('ao-office');
@@ -9871,15 +9922,25 @@ function aoFlyDoc(fromEl, toEl, icon = '📋') {
     const oRect = office.getBoundingClientRect();
     const f = fromEl.getBoundingClientRect();
     const t = toEl.getBoundingClientRect();
+    const fx = f.left - oRect.left + f.width / 2 - 11;
+    const fy = f.top - oRect.top - 6;
+    const tx = t.left - oRect.left + t.width / 2 - 11;
+    const ty = t.top - oRect.top - 6;
+    const midY = (fy + ty) / 2; // 두 계층 사이 연결선 높이
     fly.textContent = icon;
     fly.style.transition = 'none';
     fly.style.display = 'block';
-    fly.style.left = (f.left - oRect.left + f.width / 2 - 11) + 'px';
-    fly.style.top = (f.top - oRect.top - 6) + 'px';
+    fly.style.left = fx + 'px';
+    fly.style.top = fy + 'px';
+    const seg = (x, y) => {
+        fly.style.transition = 'left .3s ease-in-out, top .3s ease-in-out';
+        fly.style.left = x + 'px';
+        fly.style.top = y + 'px';
+    };
     requestAnimationFrame(() => {
-        fly.style.transition = 'left .9s ease-in-out, top .9s ease-in-out';
-        fly.style.left = (t.left - oRect.left + t.width / 2 - 11) + 'px';
-        fly.style.top = (t.top - oRect.top - 6) + 'px';
+        seg(fx, midY);                        // │ 세로 (연결선 진입)
+        setTimeout(() => seg(tx, midY), 320); // ─ 가로 (연결선 따라 이동)
+        setTimeout(() => seg(tx, ty), 640);   // │ 세로 (도착)
     });
 }
 
@@ -9945,9 +10006,12 @@ function aoAnimateStep(step, run) {
     const inboxEl = document.getElementById('ao-inbox');
 
     switch (step.kind) {
-        case 'order':
+        case 'order': {
+            const ceoEl = document.getElementById('ao-ceo-node');
+            if (ceoEl && maruEl) aoFlyDoc(ceoEl, maruEl, '📋');
             aoSay('마루', '📋 오더 접수');
             break;
+        }
         case 'route':
             aoSay('마루', step.text);
             if (maruEl && (managerEl || workerEl)) aoFlyDoc(maruEl, managerEl || workerEl, '📋');
@@ -9984,22 +10048,40 @@ function aoStepLogLine(step) {
     return `<div class="ao-log-item"><span class="ao-log-time">${time}</span> <strong>${step.actor}</strong> → ${step.text}</div>`;
 }
 
-function aoAppendLiveLog(step) {
+function aoAppendLiveLogHtml(html) {
     const log = document.getElementById('ao-live-log');
     if (!log) return;
     const empty = log.querySelector('.ao-log-empty');
     if (empty) empty.remove();
-    log.insertAdjacentHTML('afterbegin', aoStepLogLine(step));
+    log.insertAdjacentHTML('afterbegin', html);
     while (log.children.length > 60) log.lastChild.remove();
+}
+
+function aoAppendLiveLog(step) {
+    aoAppendLiveLogHtml(aoStepLogLine(step));
+}
+
+function aoEsc(s) {
+    return String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+}
+
+// 접수 지시 로그 라인 (🕐 대표 → 마루: 내용)
+function aoOrderLogLine(o) {
+    const time = new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `<div class="ao-log-item ao-log-order"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-order-status">[${o.status}]</span></div>`;
 }
 
 async function aoRefreshLog() {
     try {
-        const data = await api('/api/agent-office/runs?limit=10');
+        const [data, orderData] = await Promise.all([
+            api('/api/agent-office/runs?limit=10'),
+            api('/api/agent-office/orders?limit=15'),
+        ]);
         const log = document.getElementById('ao-live-log');
         if (!log) return;
         const lines = [];
         data.runs.forEach(r => (r.steps || []).forEach(s => lines.push({ t: s.t, html: aoStepLogLine(s) })));
+        orderData.orders.forEach(o => lines.push({ t: o.created_at, html: aoOrderLogLine(o) }));
         lines.sort((a, b) => new Date(b.t) - new Date(a.t));
         log.innerHTML = lines.length
             ? lines.slice(0, 60).map(l => l.html).join('')
@@ -10048,10 +10130,8 @@ window.openAoDetail = async function(agentId) {
             ${isRunning ? '⏳ 실행 중...' : '▶ 지금 실행'}</button>`;
     } else if (agent.role === 'chief') {
         actionHtml = `
-            <div class="ao-placeholder-box">
-                <label style="font-weight:600;font-size:13px;">💬 질문/지시 입력 <span class="ao-soon-badge">다음 업데이트 예정</span></label>
-                <textarea class="form-input" rows="2" disabled placeholder="예: 이번주 정산 얼마야? / 카라향 홍보문자 만들어줘 (AI 연결 후 사용 가능)"></textarea>
-            </div>`;
+            <div class="ao-placeholder-box ao-soon-note">💬 지시는 사무실 화면 하단 <strong>상시 입력바</strong>에서 바로 보낼 수 있습니다<br>
+            <span style="font-size:11px;color:#999;">접수된 지시는 3차 업데이트에서 마루가 자동 처리합니다</span></div>`;
     } else {
         actionHtml = `<div class="ao-placeholder-box ao-soon-note">🔒 팀장 실행은 다음 업데이트에서 연결 예정입니다</div>`;
     }

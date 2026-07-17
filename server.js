@@ -768,6 +768,16 @@ async function initDB() {
             updated_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // pending_orders: 상시 지시 입력바로 접수된 대표 지시 큐 (1.5차 — 3차에서 마루 AI 처리 큐로 사용)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS pending_orders (
+            id SERIAL PRIMARY KEY,
+            content TEXT NOT NULL,
+            status VARCHAR(20) DEFAULT '대기',
+            created_at TIMESTAMP DEFAULT NOW(),
+            is_deleted BOOLEAN DEFAULT false
+        )
+    `);
 
     // 서버 재시작으로 중단된 실행 정리 ('실행중'으로 남은 기록 → 오류 처리)
     await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW(),
@@ -5667,6 +5677,34 @@ app.get('/api/agent-office/growth', authMiddleware, adminOnly, async (req, res) 
                     COUNT(*) FILTER (WHERE created_at >= date_trunc('week', NOW()))::int AS this_week
              FROM agent_feedback WHERE is_deleted = false`);
         res.json({ lessons: lessons.rows[0], feedback: feedback.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 지시 접수 (상시 입력바 — 1.5차: 저장만, 3차에서 마루 AI가 이 큐를 처리)
+app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const content = String(req.body?.content || '').trim();
+        if (!content) throw { status: 400, message: '지시 내용을 입력해주세요' };
+        if (content.length > 500) throw { status: 400, message: '지시는 500자 이내로 입력해주세요' };
+        const row = (await pool.query(
+            `INSERT INTO pending_orders (content) VALUES ($1) RETURNING *`, [content])).rows[0];
+        await writeAudit({
+            action: 'create', targetType: 'pending_order', targetId: row.id,
+            changes: { after: { content, status: row.status } },
+            source: 'agent_office', actor: adminActor(req),
+        });
+        res.json({ message: '지시가 접수되었습니다', order: row });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 접수된 지시 목록 (LIVE 로그 병합 + 3차 처리 큐 확인용)
+app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 30, 200);
+        const r = await pool.query(
+            `SELECT id, content, status, created_at FROM pending_orders
+             WHERE is_deleted = false ORDER BY created_at DESC LIMIT ${limit}`);
+        res.json({ orders: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
 

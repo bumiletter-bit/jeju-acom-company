@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=94">
+    <link rel="stylesheet" href="styles.css?v=95">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -2053,6 +2053,14 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- 상시 지시 입력바 (1.5차 — 하단 고정, 3차에서 마루 AI 연결) -->
+                <div class="ao-order-bar" id="ao-order-bar">
+                    <span class="ao-order-label">💬 마루에게 지시하기</span>
+                    <input type="text" id="ao-order-input" class="form-input" maxlength="500"
+                        placeholder="마루에게 지시하세요 — 예: 이번주 정산 얼마야? / 카라향 홍보문자 만들어줘">
+                    <button class="btn-primary" id="ao-order-send">전송</button>
+                </div>
             </div>
         </main>
     </div>
@@ -2063,6 +2071,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=231"></script>
+    <script src="app.js?v=232"></script>
 </body>
 </html>
