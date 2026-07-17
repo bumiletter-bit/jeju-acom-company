@@ -173,8 +173,8 @@ function updateUserUI() {
     const userCard = document.getElementById('user-management-card');
     if (userCard) userCard.style.display = currentUser.role === 'admin' ? '' : 'none';
 
-    // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리)
-    const adminOnlyPages = ['settlement', 'pricing', 'data'];
+    // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
+    const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
     adminOnlyPages.forEach(page => {
         const navEl = document.querySelector(`.nav-item[data-page="${page}"]`);
         if (navEl) navEl.style.display = currentUser.role === 'admin' ? '' : 'none';
@@ -244,7 +244,7 @@ window.closeMobileSidebar = function() {
 
 function switchPage(pageName) {
     // 관리자 전용 페이지 접근 차단
-    const adminOnlyPages = ['settlement', 'pricing', 'data'];
+    const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
     if (adminOnlyPages.includes(pageName) && currentUser?.role !== 'admin') {
         pageName = 'schedule';
     }
@@ -293,6 +293,7 @@ function switchPage(pageName) {
     if (pageName === 'ai-workspace') renderAIWorkspace().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
     if (pageName === 'myinfo') renderMyInfoPage();
+    if (pageName === 'agent-office') renderAgentOffice().catch(console.error);
 }
 
 // =============================================
@@ -9699,3 +9700,504 @@ function drawRankChart() {
 }
 
 
+
+// =============================================
+// 🎮 AGENT OFFICE (대표 전용) — 픽셀 사무실 + 실행/로그
+// =============================================
+let aoAgents = [];
+let aoBiz = '전체';
+let aoActiveRun = null;      // { runId, agentId, stepCount }
+let aoRunPollTimer = null;
+let aoLogPollTimer = null;
+let aoEventsBound = false;
+
+const AO_TEAMS = [
+    { name: '마케팅팀', emoji: '📣' },
+    { name: '재무팀', emoji: '💰' },
+    { name: '법무팀', emoji: '⚖️' },
+    { name: '개발부서', emoji: '💡' },
+];
+const AO_COLORS = {
+    maru: '#F5C800', hangyeol: '#E8590C', miso: '#D6336C', geulsaem: '#7048E8', yeri: '#1098AD',
+    hansu: '#2F9E44', semi: '#74B816', jiyul: '#1B3A6B', mirae: '#F76707', gian: '#0CA678',
+};
+const AO_ROLE_LABEL = { chief: '실장', manager: '팀장', worker: '요원' };
+const AO_STATUS_LABEL = { idle: '대기', running: '실행중', done: '완료', error: '오류' };
+
+function aoPageActive() {
+    return document.getElementById('page-agent-office')?.classList.contains('active');
+}
+
+async function renderAgentOffice() {
+    aoBindEventsOnce();
+    await aoRefreshAgents();
+    await aoRefreshGrowth();
+    await aoRefreshLog();
+    aoStartLogPolling();
+}
+
+function aoBindEventsOnce() {
+    if (aoEventsBound) return;
+    aoEventsBound = true;
+    // 사업장 필터
+    document.getElementById('ao-biz-filter').addEventListener('click', (e) => {
+        const btn = e.target.closest('.ao-biz-btn');
+        if (!btn) return;
+        document.querySelectorAll('.ao-biz-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        aoBiz = btn.dataset.biz;
+        aoRenderOffice();
+    });
+    // 사무실/보고서함 탭
+    document.querySelectorAll('.ao-view-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.ao-view-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            const isOffice = tab.dataset.view === 'office';
+            document.getElementById('ao-office-view').style.display = isOffice ? '' : 'none';
+            document.getElementById('ao-reports-view').style.display = isOffice ? 'none' : '';
+            if (!isOffice) aoLoadReports();
+        });
+    });
+    document.getElementById('ao-report-search').addEventListener('click', aoLoadReports);
+}
+
+async function aoRefreshAgents() {
+    const data = await api('/api/agent-office/agents');
+    aoAgents = data.agents;
+    aoRenderOffice();
+    // 보고서함 에이전트 필터 옵션 (1회 채움)
+    const sel = document.getElementById('ao-report-agent');
+    if (sel && sel.options.length <= 1) {
+        aoAgents.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = a.id;
+            opt.textContent = a.name + ' (' + a.team + ')';
+            sel.appendChild(opt);
+        });
+    }
+}
+
+async function aoRefreshGrowth() {
+    try {
+        const g = await api('/api/agent-office/growth');
+        document.getElementById('ao-growth-widget').innerHTML =
+            '<span class="ao-growth-chip">📚 지식 노트 <strong>' + g.lessons.total + '</strong>건</span>' +
+            '<span class="ao-growth-chip">🌱 이번 주 학습 <strong>+' + g.lessons.this_week + '</strong>건</span>' +
+            '<span class="ao-growth-chip">💬 피드백 누적 <strong>' + g.feedback.total + '</strong>건</span>';
+    } catch (e) { console.error('growth 조회 실패:', e); }
+}
+
+// ---- 픽셀 사무실 렌더 ----
+function aoRenderOffice() {
+    const office = document.getElementById('ao-office');
+    if (!office) return;
+    const chief = aoAgents.find(a => a.role === 'chief');
+    const visible = a => aoBiz === '전체' || a.workplace === aoBiz || a.workplace === '공통';
+    office.innerHTML = `
+        <div class="ao-office-top">
+            <div class="ao-chief-zone" data-team="실장실">
+                <div class="ao-zone-label">🤵 실장 데스크</div>
+                <div class="ao-team-members">${chief ? aoCharHtml(chief, visible(chief)) : ''}</div>
+            </div>
+            <div class="ao-inbox" id="ao-inbox">📥<div class="ao-inbox-label">보고함</div></div>
+        </div>
+        <div class="ao-teams">
+            ${AO_TEAMS.map(t => `
+                <div class="ao-team-zone" data-team="${t.name}">
+                    <div class="ao-zone-label">${t.emoji} ${t.name}</div>
+                    <div class="ao-team-members">
+                        ${aoAgents.filter(a => a.team === t.name).map(a => aoCharHtml(a, visible(a))).join('')}
+                    </div>
+                </div>`).join('')}
+        </div>
+        <div class="ao-doc-fly" id="ao-doc-fly" style="display:none;">📋</div>`;
+}
+
+function aoCharHtml(a, vis) {
+    const color = AO_COLORS[a.code] || '#1B3A6B';
+    const dutyLabel = a.role === 'worker' && a.duty ? '·' + a.duty : '';
+    return `
+    <div class="ao-agent st-${a.status || 'idle'} ${vis ? '' : 'ao-dimmed'}" data-agent-id="${a.id}" onclick="openAoDetail(${a.id})">
+        <div class="ao-bubbles">
+            <span class="ao-bub ao-bub-run">💼</span>
+            <span class="ao-bub ao-bub-done">✅</span>
+            <span class="ao-bub ao-bub-err">❗</span>
+        </div>
+        <div class="ao-sprite">
+            <div class="ao-hair" style="background:${color};"></div>
+            <div class="ao-face"><span class="ao-eye"></span><span class="ao-eye"></span></div>
+            <div class="ao-body" style="background:${color};"></div>
+            <div class="ao-arms"><span class="ao-arm"></span><span class="ao-arm"></span></div>
+            <div class="ao-desk"><span class="ao-monitor"></span></div>
+        </div>
+        <div class="ao-nametag"><span class="ao-ai-badge">🤖AI</span> ${a.name}</div>
+        <div class="ao-roletag">${AO_ROLE_LABEL[a.role] || a.role}${dutyLabel}</div>
+    </div>`;
+}
+
+function aoSetAgentStatus(agentId, status) {
+    const agent = aoAgents.find(a => a.id === agentId);
+    if (agent) agent.status = status;
+    const el = document.querySelector(`.ao-agent[data-agent-id="${agentId}"]`);
+    if (el) {
+        el.classList.remove('st-idle', 'st-running', 'st-done', 'st-error');
+        el.classList.add('st-' + status);
+    }
+}
+
+function aoAgentElByName(name) {
+    const agent = aoAgents.find(a => a.name === name);
+    return agent ? document.querySelector(`.ao-agent[data-agent-id="${agent.id}"]`) : null;
+}
+
+// 말풍선 (잠깐 표시)
+function aoSay(name, text, ms = 2500) {
+    const el = aoAgentElByName(name);
+    if (!el) return;
+    el.querySelectorAll('.ao-say').forEach(s => s.remove());
+    const say = document.createElement('div');
+    say.className = 'ao-say';
+    say.textContent = text;
+    el.appendChild(say);
+    setTimeout(() => say.remove(), ms);
+}
+
+// 서류/보고서 아이콘 이동 애니메이션 (사무실 바닥 경로)
+function aoFlyDoc(fromEl, toEl, icon = '📋') {
+    const fly = document.getElementById('ao-doc-fly');
+    const office = document.getElementById('ao-office');
+    if (!fly || !office || !fromEl || !toEl) return;
+    const oRect = office.getBoundingClientRect();
+    const f = fromEl.getBoundingClientRect();
+    const t = toEl.getBoundingClientRect();
+    fly.textContent = icon;
+    fly.style.transition = 'none';
+    fly.style.display = 'block';
+    fly.style.left = (f.left - oRect.left + f.width / 2 - 11) + 'px';
+    fly.style.top = (f.top - oRect.top - 6) + 'px';
+    requestAnimationFrame(() => {
+        fly.style.transition = 'left .9s ease-in-out, top .9s ease-in-out';
+        fly.style.left = (t.left - oRect.left + t.width / 2 - 11) + 'px';
+        fly.style.top = (t.top - oRect.top - 6) + 'px';
+    });
+}
+
+// ---- 실행 ----
+window.aoRunAgent = async function(agentId) {
+    try {
+        const res = await api('/api/agent-office/agents/' + agentId + '/run', 'POST');
+        showToast(res.message);
+        aoActiveRun = { runId: res.run.id, agentId, stepCount: 0 };
+        aoSetAgentStatus(agentId, 'running');
+        aoStartRunPolling();
+        // 모달 진행 영역 초기화
+        const prog = document.getElementById('ao-detail-progress');
+        if (prog) { prog.style.display = ''; prog.querySelector('.ao-prog-list').innerHTML = ''; }
+        const runBtn = document.getElementById('ao-detail-run-btn');
+        if (runBtn) { runBtn.disabled = true; runBtn.textContent = '⏳ 실행 중...'; }
+    } catch (err) {
+        alert(err.message);
+    }
+};
+
+function aoStartRunPolling() {
+    clearInterval(aoRunPollTimer);
+    aoRunPollTimer = setInterval(async () => {
+        if (!aoActiveRun) { clearInterval(aoRunPollTimer); return; }
+        try {
+            const data = await api('/api/agent-office/runs/' + aoActiveRun.runId);
+            const run = data.run;
+            aoHandleRunUpdate(run);
+            if (run.status !== 'running') {
+                clearInterval(aoRunPollTimer);
+                const finishedAgentId = aoActiveRun.agentId;
+                aoActiveRun = null;
+                aoSetAgentStatus(finishedAgentId, run.status === 'done' ? 'done' : 'error');
+                if (run.status === 'done') setTimeout(() => aoSetAgentStatus(finishedAgentId, 'idle'), 3000);
+                aoRefreshGrowth();
+                aoFinishDetailProgress(run);
+            }
+        } catch (e) { console.error('run 폴링 실패:', e); }
+    }, 1000);
+}
+
+function aoHandleRunUpdate(run) {
+    if (!aoActiveRun) return;
+    const steps = run.steps || [];
+    const fresh = steps.slice(aoActiveRun.stepCount);
+    aoActiveRun.stepCount = steps.length;
+    fresh.forEach(step => {
+        aoAppendLiveLog(step);
+        aoAppendDetailProgress(step);
+        aoAnimateStep(step, run);
+    });
+}
+
+// 지시 전달 흐름 애니메이션 (마스터 지시문 2절 ②~⑤)
+function aoAnimateStep(step, run) {
+    const workerName = run.agent_name;
+    const worker = aoAgents.find(a => a.name === workerName);
+    const mgr = worker ? aoAgents.find(a => a.team === worker.team && a.role === 'manager') : null;
+    const managerEl = mgr ? aoAgentElByName(mgr.name) : null;
+    const maruEl = aoAgentElByName('마루');
+    const workerEl = aoAgentElByName(workerName);
+    const inboxEl = document.getElementById('ao-inbox');
+
+    switch (step.kind) {
+        case 'order':
+            aoSay('마루', '📋 오더 접수');
+            break;
+        case 'route':
+            aoSay('마루', step.text);
+            if (maruEl && (managerEl || workerEl)) aoFlyDoc(maruEl, managerEl || workerEl, '📋');
+            break;
+        case 'assign':
+            aoSay(step.actor, '검토 중...');
+            if (managerEl && workerEl) aoFlyDoc(managerEl, workerEl, '📋');
+            break;
+        case 'work':
+            aoSay(workerName, step.text, 2000);
+            break;
+        case 'report':
+            aoSay(workerName, '✅ 완료 보고');
+            if (workerEl) aoFlyDoc(workerEl, managerEl || maruEl || workerEl, '✅');
+            break;
+        case 'review':
+            aoSay(step.actor, '검수 완료');
+            if (managerEl && maruEl) aoFlyDoc(managerEl, maruEl, '✅');
+            break;
+        case 'done':
+            aoSay('마루', '보고 등록');
+            if (maruEl && inboxEl) aoFlyDoc(maruEl, inboxEl, '✅');
+            setTimeout(() => {
+                const fly = document.getElementById('ao-doc-fly');
+                if (fly) fly.style.display = 'none';
+            }, 1200);
+            break;
+    }
+}
+
+// ---- LIVE 로그 ----
+function aoStepLogLine(step) {
+    const time = new Date(step.t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `<div class="ao-log-item"><span class="ao-log-time">${time}</span> <strong>${step.actor}</strong> → ${step.text}</div>`;
+}
+
+function aoAppendLiveLog(step) {
+    const log = document.getElementById('ao-live-log');
+    if (!log) return;
+    const empty = log.querySelector('.ao-log-empty');
+    if (empty) empty.remove();
+    log.insertAdjacentHTML('afterbegin', aoStepLogLine(step));
+    while (log.children.length > 60) log.lastChild.remove();
+}
+
+async function aoRefreshLog() {
+    try {
+        const data = await api('/api/agent-office/runs?limit=10');
+        const log = document.getElementById('ao-live-log');
+        if (!log) return;
+        const lines = [];
+        data.runs.forEach(r => (r.steps || []).forEach(s => lines.push({ t: s.t, html: aoStepLogLine(s) })));
+        lines.sort((a, b) => new Date(b.t) - new Date(a.t));
+        log.innerHTML = lines.length
+            ? lines.slice(0, 60).map(l => l.html).join('')
+            : '<div class="ao-log-empty">아직 실행 로그가 없습니다</div>';
+    } catch (e) { console.error('로그 조회 실패:', e); }
+}
+
+function aoStartLogPolling() {
+    clearInterval(aoLogPollTimer);
+    aoLogPollTimer = setInterval(() => {
+        if (!aoPageActive()) { clearInterval(aoLogPollTimer); return; }
+        if (aoActiveRun) return; // 실행 중엔 run 폴링이 로그를 채움
+        aoRefreshLog();
+        aoRefreshAgentsStatusOnly();
+    }, 8000);
+}
+
+async function aoRefreshAgentsStatusOnly() {
+    try {
+        const data = await api('/api/agent-office/agents');
+        data.agents.forEach(fresh => {
+            const cur = aoAgents.find(a => a.id === fresh.id);
+            if (cur && cur.status !== fresh.status) aoSetAgentStatus(fresh.id, fresh.status);
+            if (cur) { cur.last_run = fresh.last_run; cur.last_run_at = fresh.last_run_at; }
+        });
+    } catch (e) { /* 무시 */ }
+}
+
+// ---- 에이전트 상세 패널 ----
+window.openAoDetail = async function(agentId) {
+    let data;
+    try {
+        data = await api('/api/agent-office/agents/' + agentId);
+    } catch (err) { return alert(err.message); }
+    const agent = data.agent, tools = data.tools, lessons = data.lessons, runs = data.runs;
+    const color = AO_COLORS[agent.code] || '#1B3A6B';
+    const lastDone = runs.find(r => r.status === 'done');
+    const resultLines = (lastDone && lastDone.result && lastDone.result.lines) ||
+        (lastDone && lastDone.result && lastDone.result.summary ? [lastDone.result.summary] : []);
+    const isRunning = agent.status === 'running' || (aoActiveRun && aoActiveRun.agentId === agent.id);
+
+    // 역할별 실행 영역
+    let actionHtml = '';
+    if (agent.role === 'worker') {
+        actionHtml = `<button class="btn-primary ao-run-btn" id="ao-detail-run-btn" onclick="aoRunAgent(${agent.id})" ${isRunning ? 'disabled' : ''}>
+            ${isRunning ? '⏳ 실행 중...' : '▶ 지금 실행'}</button>`;
+    } else if (agent.role === 'chief') {
+        actionHtml = `
+            <div class="ao-placeholder-box">
+                <label style="font-weight:600;font-size:13px;">💬 질문/지시 입력 <span class="ao-soon-badge">다음 업데이트 예정</span></label>
+                <textarea class="form-input" rows="2" disabled placeholder="예: 이번주 정산 얼마야? / 카라향 홍보문자 만들어줘 (AI 연결 후 사용 가능)"></textarea>
+            </div>`;
+    } else {
+        actionHtml = `<div class="ao-placeholder-box ao-soon-note">🔒 팀장 실행은 다음 업데이트에서 연결 예정입니다</div>`;
+    }
+    if (agent.code === 'gian') {
+        actionHtml += `
+            <div class="ao-placeholder-box" style="margin-top:8px;">
+                <label style="font-weight:600;font-size:13px;">📝 미팅 내용 입력 <span class="ao-soon-badge">다음 업데이트 예정</span></label>
+                <textarea class="form-input" rows="2" disabled placeholder="거래처 미팅 내용을 넣으면 기획 보고서가 생성됩니다 (AI 연결 후)"></textarea>
+            </div>`;
+    }
+
+    const knowledge = agent.knowledge_files || [];
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'ao-detail-overlay';
+    overlay.innerHTML = `
+        <div class="modal ao-detail-modal">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <div class="ao-detail-head">
+                <div class="ao-detail-avatar" style="background:${color};">${agent.name.charAt(0)}</div>
+                <div>
+                    <h3 style="margin:0;"><span class="ao-ai-badge">🤖AI</span> ${agent.name} <small style="color:#888;">${AO_ROLE_LABEL[agent.role]}${agent.duty ? ' · ' + agent.duty : ''}</small></h3>
+                    <div class="ao-detail-meta">${agent.team} · ${agent.workplace} · 상태: <strong class="ao-status-${agent.status}">${AO_STATUS_LABEL[agent.status] || agent.status}</strong>
+                    ${agent.last_run_at ? ' · 마지막 실행 ' + new Date(agent.last_run_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+                </div>
+            </div>
+            <p class="ao-detail-desc">${agent.description || ''}</p>
+            ${actionHtml}
+            <div id="ao-detail-progress" style="display:${isRunning ? '' : 'none'};">
+                <h4 class="ao-sec-title">⚙️ 진행상황</h4>
+                <div class="ao-prog-list"></div>
+            </div>
+            ${resultLines.length ? `
+            <h4 class="ao-sec-title">📋 최근 결과 요약</h4>
+            <div class="ao-result-box">${resultLines.slice(0, 3).map(l => '<div>· ' + l + '</div>').join('')}</div>
+            <div class="ao-feedback-row">
+                <span style="font-size:12px;color:#888;">피드백:</span>
+                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'good')">👍</button>
+                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'edited')">✏️ 수정</button>
+                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'bad')">👎</button>
+                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'comment')">💬</button>
+            </div>` : ''}
+            <h4 class="ao-sec-title">📚 학습 노트 <small style="color:#aaa;">(${lessons.length}건)</small></h4>
+            ${lessons.length
+                ? '<ul class="ao-lesson-list">' + lessons.map(l => '<li>[' + (l.category || '일반') + '] ' + l.lesson + '</li>').join('') + '</ul>'
+                : '<div class="ao-empty-note">아직 학습 노트가 없습니다 — 피드백이 쌓이면 교훈이 기록됩니다</div>'}
+            <h4 class="ao-sec-title">🛠 도구</h4>
+            ${tools.length
+                ? '<div class="ao-tool-list">' + tools.map(t => '<span class="ao-tool-badge ' + (t.enabled ? '' : 'ao-tool-planned') + '">' + t.tool_name + (t.enabled ? '' : ' (예정)') + '</span>').join('') + '</div>'
+                : '<div class="ao-empty-note">등록된 도구가 없습니다</div>'}
+            ${knowledge.length ? `
+            <h4 class="ao-sec-title">📖 지식 문서</h4>
+            <div class="ao-tool-list">${knowledge.map(k => '<span class="ao-knowledge-badge">' + k + '</span>').join('')}</div>` : ''}
+            <h4 class="ao-sec-title">🕘 최근 실행 이력</h4>
+            ${runs.length
+                ? '<div class="ao-run-history">' + runs.map(r => {
+                    const dt = new Date(r.started_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    const dur = r.finished_at ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + '초' : '-';
+                    const stIcon = r.status === 'done' ? '✅' : r.status === 'error' ? '❗' : '⏳';
+                    return '<div class="ao-run-item">' + stIcon + ' ' + dt + ' · ' + ((r.result && r.result.summary) || '진행 중') + ' <span style="color:#aaa;">(' + dur + ')</span></div>';
+                }).join('') + '</div>'
+                : '<div class="ao-empty-note">아직 실행 이력이 없습니다</div>'}
+        </div>`;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+
+function aoAppendDetailProgress(step) {
+    const prog = document.getElementById('ao-detail-progress');
+    if (!prog) return;
+    prog.style.display = '';
+    const list = prog.querySelector('.ao-prog-list');
+    const time = new Date(step.t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    list.insertAdjacentHTML('beforeend', `<div class="ao-prog-item ao-prog-${step.kind}"><span class="ao-log-time">${time}</span> ${step.actor} — ${step.text}</div>`);
+    list.scrollTop = list.scrollHeight;
+}
+
+function aoFinishDetailProgress(run) {
+    const runBtn = document.getElementById('ao-detail-run-btn');
+    if (runBtn) {
+        runBtn.disabled = false;
+        runBtn.textContent = '▶ 지금 실행';
+    }
+    const prog = document.getElementById('ao-detail-progress');
+    if (prog && run.result && run.result.summary) {
+        prog.querySelector('.ao-prog-list').insertAdjacentHTML('beforeend',
+            '<div class="ao-prog-item ao-prog-final">🏁 ' + run.result.summary + '</div>');
+    }
+}
+
+// ---- 피드백 (👍 / ✏️수정 / 👎 / 💬) ----
+window.aoSendFeedback = async function(agentId, runId, type) {
+    let comment = '', corrected = '';
+    if (type === 'bad') {
+        comment = prompt('어떤 점이 아쉬웠나요? (교훈 기록을 위해 필수)');
+        if (!comment || !comment.trim()) return;
+    }
+    if (type === 'comment') {
+        comment = prompt('코멘트를 입력해주세요');
+        if (!comment || !comment.trim()) return;
+    }
+    if (type === 'edited') {
+        corrected = prompt('대표님 수정본을 붙여넣어 주세요 (원본과 비교해 교훈 추출용)');
+        if (corrected === null) return;
+    }
+    try {
+        await api('/api/agent-office/feedback', 'POST', {
+            agent_id: agentId, run_id: runId, feedback_type: type, comment: comment, corrected_output: corrected,
+        });
+        showToast('피드백이 기록되었습니다 ✍️');
+        aoRefreshGrowth();
+    } catch (err) { alert(err.message); }
+};
+
+// ---- 보고서함 ----
+async function aoLoadReports() {
+    const team = document.getElementById('ao-report-team').value;
+    const agentId = document.getElementById('ao-report-agent').value;
+    const from = document.getElementById('ao-report-from').value;
+    const to = document.getElementById('ao-report-to').value;
+    const params = new URLSearchParams({ limit: 100 });
+    if (team) params.set('team', team);
+    if (agentId) params.set('agent_id', agentId);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    try {
+        const data = await api('/api/agent-office/runs?' + params.toString());
+        const tbody = document.getElementById('ao-report-tbody');
+        if (!data.runs.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>';
+            return;
+        }
+        tbody.innerHTML = data.runs.map(r => {
+            const dt = new Date(r.started_at).toLocaleString('ko-KR', { year: '2-digit', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const dur = r.finished_at ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + '초' : '-';
+            const stBadge = r.status === 'done' ? '<span class="ao-st-badge ao-st-badge-done">완료</span>'
+                : r.status === 'error' ? '<span class="ao-st-badge ao-st-badge-err">오류</span>'
+                : '<span class="ao-st-badge ao-st-badge-run">실행중</span>';
+            return '<tr>' +
+                '<td>' + dt + '</td>' +
+                '<td><span class="ao-ai-badge">🤖AI</span> ' + r.agent_name + '</td>' +
+                '<td>' + r.agent_team + '</td>' +
+                '<td>' + stBadge + '</td>' +
+                '<td>' + ((r.result && r.result.summary) || '-') + '</td>' +
+                '<td>' + dur + '</td>' +
+                '</tr>';
+        }).join('');
+    } catch (err) { alert(err.message); }
+}

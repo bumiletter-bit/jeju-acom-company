@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=93">
+    <link rel="stylesheet" href="styles.css?v=94">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -143,6 +143,10 @@
                 <a href="#" class="nav-item" data-page="ai-workspace">
                     <span class="nav-icon">🤖</span>
                     <span class="nav-text">AI 작업방</span>
+                </a>
+                <a href="#" class="nav-item" data-page="agent-office">
+                    <span class="nav-icon">🎮</span>
+                    <span class="nav-text">AGENT OFFICE</span>
                 </a>
                 <a href="#" class="nav-item" data-page="cs-room">
                     <span class="nav-icon">💬</span>
@@ -1986,6 +1990,70 @@
                     </form>
                 </div>
             </div>
+
+            <!-- 🎮 AGENT OFFICE 페이지 (대표 전용) -->
+            <div id="page-agent-office" class="page">
+                <div class="ao-topbar">
+                    <h1>🎮 AGENT OFFICE</h1>
+                    <div class="ao-topbar-controls">
+                        <div class="ao-biz-filter" id="ao-biz-filter">
+                            <button class="ao-biz-btn active" data-biz="전체">전체</button>
+                            <button class="ao-biz-btn" data-biz="법인">법인</button>
+                            <button class="ao-biz-btn" data-biz="오션라운지">오션라운지</button>
+                        </div>
+                        <div class="ao-view-tabs">
+                            <button class="ao-view-tab active" data-view="office">🏢 사무실</button>
+                            <button class="ao-view-tab" data-view="reports">📁 보고서함</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="ao-growth-widget" id="ao-growth-widget"></div>
+
+                <!-- 사무실 뷰 -->
+                <div id="ao-office-view" class="ao-layout">
+                    <div class="ao-office-wrap">
+                        <div class="ao-office" id="ao-office"></div>
+                    </div>
+                    <div class="ao-log-card">
+                        <div class="ao-log-head">📡 LIVE 로그</div>
+                        <div class="ao-live-log" id="ao-live-log">
+                            <div class="ao-log-empty">아직 실행 로그가 없습니다</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 보고서함 뷰 -->
+                <div id="ao-reports-view" style="display:none;">
+                    <div class="card">
+                        <h2>📁 보고서함 — 전체 실행 이력</h2>
+                        <div class="ao-report-filters">
+                            <select id="ao-report-team" class="form-input">
+                                <option value="">팀 전체</option>
+                                <option value="마케팅팀">📣 마케팅팀</option>
+                                <option value="재무팀">💰 재무팀</option>
+                                <option value="법무팀">⚖️ 법무팀</option>
+                                <option value="개발부서">💡 개발부서</option>
+                            </select>
+                            <select id="ao-report-agent" class="form-input">
+                                <option value="">에이전트 전체</option>
+                            </select>
+                            <input type="date" id="ao-report-from" class="form-input">
+                            <input type="date" id="ao-report-to" class="form-input">
+                            <button class="btn-primary" id="ao-report-search">조회</button>
+                        </div>
+                        <div class="ao-report-table-wrap">
+                            <table class="ao-report-table">
+                                <thead>
+                                    <tr><th>일시</th><th>에이전트</th><th>팀</th><th>상태</th><th>결과</th><th>소요시간</th></tr>
+                                </thead>
+                                <tbody id="ao-report-tbody">
+                                    <tr><td colspan="6" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -1995,6 +2063,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=230"></script>
+    <script src="app.js?v=231"></script>
 </body>
 </html>
