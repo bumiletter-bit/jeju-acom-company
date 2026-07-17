@@ -4682,3 +4682,16 @@ textarea.form-input {
 .ao-partner-sum td { background: #FFFBEA; border-bottom: 2px solid #F5C800; }
 .ao-grand-total { margin-top: 10px; background: #1B3A6B; color: #fff; border-radius: 8px; padding: 10px 14px; font-size: 13px; text-align: center; }
 .ao-grand-total strong { color: #F5C800; font-size: 15px; }
+
+/* 3차: 마루 AI 라우팅 — 지시 상태 배지 + 마루 패널 지시 목록 */
+.ao-ord-badge { font-size: 10px; font-weight: 700; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.ao-ord-wait { background: #e9ecef; color: #666; }
+.ao-ord-done { background: #d3f9d8; color: #2b8a3e; }
+.ao-ord-ask { background: #fff3bf; color: #e67700; }
+.ao-ord-info { background: #e7f0ff; color: #1971c2; }
+.ao-ord-err { background: #ffe3e3; color: #c92a2a; }
+.ao-log-sub { font-size: 11px; color: #555; margin-top: 3px; padding-left: 14px; }
+.ao-log-suberr { color: #c92a2a; }
+.ao-maru-order-item { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px dashed #e6e6e6; color: #444; }
+.ao-maru-order-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-maru-order-btn { padding: 2px 8px; min-height: 28px; font-size: 11px; flex-shrink: 0; }

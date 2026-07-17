@@ -768,7 +768,7 @@ async function initDB() {
             updated_at TIMESTAMP DEFAULT NOW()
         )
     `);
-    // pending_orders: 상시 지시 입력바로 접수된 대표 지시 큐 (1.5차 — 3차에서 마루 AI 처리 큐로 사용)
+    // pending_orders: 상시 지시 입력바로 접수된 대표 지시 큐 (3차: 마루 AI가 처리)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS pending_orders (
             id SERIAL PRIMARY KEY,
@@ -778,6 +778,12 @@ async function initDB() {
             is_deleted BOOLEAN DEFAULT false
         )
     `);
+    // 3차: 마루 처리 결과 컬럼 (멱등 추가)
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS result JSONB`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS run_id INTEGER`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP`);
+    // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
+    await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
 
     // 서버 재시작으로 중단된 실행 정리 ('실행중'으로 남은 기록 → 오류 처리)
     await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW(),
@@ -5487,6 +5493,7 @@ app.get('/api/admin/settlements', authMiddleware, adminOnly, async (req, res) =>
 
 // 에이전트별 실행 스크립트 로더 (agents/{이름}.js — 없으면 기본 3단계)
 const AGENT_DEFAULT_RUNNER = {
+    live: false, // 실전 연결 여부 — true인 요원만 마루가 실제 실행 (현재: 세미)
     steps: ['업무 준비 중...', '작업 처리 중...', '보고서 작성 중...'],
     stepDelayMs: 2000,
     result: () => ({ summary: '완료: 테스트 실행 성공', lines: ['테스트 실행이 정상 완료되었습니다', '실제 업무 로직은 후속 차수에서 연결됩니다'] }),
@@ -5690,7 +5697,156 @@ app.get('/api/agent-office/growth', authMiddleware, adminOnly, async (req, res) 
     } catch (err) { handleAdminErr(res, err); }
 });
 
-// 지시 접수 (상시 입력바 — 1.5차: 저장만, 3차에서 마루 AI가 이 큐를 처리)
+// ------------------------------------------------------------
+// 3차: 마루 AI 라우팅 — Anthropic Haiku로 지시 분석 → 팀 배정
+// 원칙: API 키는 환경변수(ANTHROPIC_API_KEY)만 사용 (하드코딩 금지),
+//       애매한 지시는 추측 실행 금지(clarify로 되묻기, 질문은 하나만),
+//       API 오류는 정직하게 '오류' 상태로 기록 (허위 응답 금지).
+// ------------------------------------------------------------
+const MARU_MODEL = process.env.MARU_MODEL || 'claude-haiku-4-5';
+
+// 강제 tool 호출로 구조화된 배정 결과를 보장
+const MARU_ROUTE_TOOL = {
+    name: 'route_order',
+    description: '대표 지시를 분석해 담당 팀/요원을 배정하거나(route), 분야가 불명확하면 되묻는다(clarify).',
+    strict: true,
+    input_schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+            action: { type: 'string', enum: ['route', 'clarify'], description: 'route=배정 확정, clarify=애매해서 되묻기' },
+            team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/실장실 중 하나). clarify면 빈 문자열' },
+            assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/마루 중 하나). clarify면 빈 문자열' },
+            task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
+            reason: { type: 'string', description: '배정 근거 또는 판단 이유 한 줄' },
+            clarify_question: { type: 'string', description: 'clarify일 때 대표에게 물을 질문 딱 하나. route면 빈 문자열' },
+        },
+        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question'],
+    },
+};
+
+// 시스템 프롬프트: DB의 라우팅 테이블 + 조직도를 그대로 사용 (마스터 지시문 3절)
+async function maruBuildSystemPrompt() {
+    const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'routing_table'`);
+    const routingTable = cfg.rows[0]?.value || [];
+    const agentsQ = await pool.query(
+        `SELECT name, role, team, duty, description FROM agents
+         WHERE is_deleted = false AND is_active = true ORDER BY sort_order`);
+    const orgLines = agentsQ.rows.map(a =>
+        `- ${a.name} (${a.role === 'chief' ? '실장' : a.role === 'manager' ? '팀장' : '요원'} · ${a.team}${a.duty ? ' · ' + a.duty : ''}): ${a.description}`).join('\n');
+    return `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE의 실장 '마루'다.
+범 대표님(전승범)의 지시를 접수해 담당 팀·요원을 배정하는 것이 너의 유일한 임무다.
+
+## 조직도
+${orgLines}
+
+## 오더 라우팅 규칙 (분야 키워드 → 배정)
+${JSON.stringify(routingTable, null, 2)}
+
+## 판단 원칙 (반드시 준수)
+1. 지시가 라우팅 규칙의 어느 분야에 해당하는지 판단해 action='route'로 팀·요원을 배정한다.
+2. 분야가 불명확하거나 여러 해석이 가능하면 절대 추측하지 말고 action='clarify'로 되묻는다. 질문은 한 번에 딱 하나만.
+3. 일정 등록/조회 등 회사프로그램 운영 지시는 실장실 마루 담당이다.
+4. 여러 분야가 섞인 지시는 가장 핵심인 분야 하나로 배정하고 reason에 나머지를 언급한다.
+5. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.`;
+}
+
+// 접수 지시 상태 갱신 헬퍼
+async function maruFinishOrder(orderId, status, result, runId = null) {
+    await pool.query(
+        `UPDATE pending_orders SET status=$2, result=$3, run_id=$4, processed_at=NOW() WHERE id=$1`,
+        [orderId, status, JSON.stringify(result), runId]);
+}
+
+// 마루 처리 엔진: 지시 1건 분석 → 배정 → (연결된 요원이면) 실제 실행
+async function processOrderWithMaru(order, actor) {
+    try {
+        await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
+        if (!process.env.ANTHROPIC_API_KEY) {
+            throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다 (Render 환경변수 확인 필요)');
+        }
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const systemPrompt = await maruBuildSystemPrompt();
+        const msg = await anthropic.messages.create({
+            model: MARU_MODEL,
+            max_tokens: 500,
+            system: systemPrompt,
+            tools: [MARU_ROUTE_TOOL],
+            tool_choice: { type: 'tool', name: 'route_order' },
+            messages: [{ role: 'user', content: `대표 지시: ${order.content}` }],
+        });
+        const toolUse = msg.content.find(b => b.type === 'tool_use');
+        if (!toolUse) throw new Error('마루 응답에서 배정 결과(tool_use)를 찾지 못했습니다');
+        const d = toolUse.input;
+        await writeAudit({
+            action: 'maru_route', targetType: 'pending_order', targetId: order.id,
+            changes: { after: { decision: d, model: MARU_MODEL } },
+            source: 'agent_office', actor,
+        });
+
+        // ① 애매한 지시 → 되묻기 (추측 실행 금지)
+        if (d.action === 'clarify') {
+            await maruFinishOrder(order.id, '질문', {
+                type: 'clarify', question: d.clarify_question, summary: d.task_summary, reason: d.reason,
+            });
+            return;
+        }
+
+        // ② 배정 — 요원 조회
+        const agentQ = await pool.query(
+            `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [d.assignee]);
+        const agent = agentQ.rows[0] || null;
+        const routeInfo = { type: 'route', team: d.team, assignee: d.assignee, summary: d.task_summary, reason: d.reason };
+
+        // 실전 연결된 worker만 실제 실행 (agents/{이름}.js의 live:true — 현재 세미)
+        const runner = agent ? loadAgentRunner(agent.name) : null;
+        const isLive = !!(agent && runner.live && agent.role === 'worker' && agent.is_active);
+
+        if (!isLive) {
+            await maruFinishOrder(order.id, '안내', {
+                ...routeInfo,
+                notice: `${d.assignee}은(는) 아직 실전 연결 전입니다 — 배정만 기록했습니다 (해당 차수에서 실행 연결 예정)`,
+            });
+            return;
+        }
+
+        // ③ 연결된 요원(세미) → 실제 실행 (기존 실행 파이프라인 재사용)
+        const running = await pool.query(
+            `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false LIMIT 1`, [agent.id]);
+        if (running.rows.length > 0) {
+            await maruFinishOrder(order.id, '안내', {
+                ...routeInfo,
+                notice: `${agent.name}이(가) 이미 다른 작업을 실행 중입니다 — 완료 후 다시 지시해주세요`,
+            });
+            return;
+        }
+        const mgr = await pool.query(
+            `SELECT name FROM agents WHERE team = $1 AND role = 'manager' AND is_deleted = false AND is_active = true LIMIT 1`, [agent.team]);
+        const firstStep = agentStep('order', '마루', `오더 접수 — "${d.task_summary}" → ${agent.team} ${agent.name} 배정`);
+        const run = (await pool.query(
+            `INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
+            [agent.id, JSON.stringify([firstStep])])).rows[0];
+        await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [agent.id]);
+        await writeAudit({
+            action: 'agent_run', targetType: 'agent_run', targetId: run.id,
+            changes: { after: { agent: agent.name, team: agent.team, mode: 'maru_routed', order_id: order.id } },
+            source: 'agent_office', actor,
+        });
+        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null, { workplace: '전체' });
+        await maruFinishOrder(order.id, '완료', { ...routeInfo, run_id: run.id }, run.id);
+    } catch (err) {
+        // 정직한 오류 표시 — 허위 응답 금지. Anthropic API 오류는 상태코드와 함께 그대로 기록.
+        const errMsg = err?.status
+            ? `Anthropic API 오류 (${err.status}): ${err.message}`
+            : (err?.message || String(err));
+        console.error('마루 라우팅 오류:', errMsg);
+        await pool.query(
+            `UPDATE pending_orders SET status='오류', result=$2, processed_at=NOW() WHERE id=$1`,
+            [order.id, JSON.stringify({ type: 'error', error: errMsg })]).catch(() => {});
+    }
+}
+
+// 지시 접수 (상시 입력바) — 저장 즉시 마루가 비동기 처리
 app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
     try {
         const content = String(req.body?.content || '').trim();
@@ -5703,16 +5859,43 @@ app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res)
             changes: { after: { content, status: row.status } },
             source: 'agent_office', actor: adminActor(req),
         });
-        res.json({ message: '지시가 접수되었습니다', order: row });
+        processOrderWithMaru(row, adminActor(req)); // 비동기 — 응답은 즉시, 결과는 폴링
+        res.json({ message: '지시가 접수되었습니다 — 마루가 분석 중입니다', order: row });
     } catch (err) { handleAdminErr(res, err); }
 });
 
-// 접수된 지시 목록 (LIVE 로그 병합 + 3차 처리 큐 확인용)
+// 쌓인 지시 재처리 (대기/오류 상태만 — 마루 상세 패널의 처리 버튼)
+app.post('/api/agent-office/orders/:id/process', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT * FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '지시를 찾을 수 없습니다' };
+        const order = r.rows[0];
+        if (!['대기', '오류'].includes(order.status)) {
+            throw { status: 400, message: `'${order.status}' 상태의 지시는 재처리할 수 없습니다 (대기/오류만 가능)` };
+        }
+        processOrderWithMaru(order, adminActor(req)); // 비동기
+        res.json({ message: '마루가 처리를 시작했습니다', order: { ...order, status: '처리중' } });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 지시 1건 상태 조회 (프론트 폴링용)
+app.get('/api/agent-office/orders/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, content, status, result, run_id, created_at, processed_at
+             FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '지시를 찾을 수 없습니다' };
+        res.json({ order: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 접수된 지시 목록 (LIVE 로그 병합 + 마루 패널 처리 큐)
 app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 30, 200);
         const r = await pool.query(
-            `SELECT id, content, status, created_at FROM pending_orders
+            `SELECT id, content, status, result, run_id, created_at, processed_at FROM pending_orders
              WHERE is_deleted = false ORDER BY created_at DESC LIMIT ${limit}`);
         res.json({ orders: r.rows });
     } catch (err) { handleAdminErr(res, err); }

@@ -105,6 +105,7 @@ function cjBoxCount(rows) {
 }
 
 module.exports = {
+    live: true, // 실전 연결됨 (2차) — 마루 라우팅 시 실제 실행 대상
     steps: ['정산 데이터 조회 중...', '거래처·품목별 집계 중...', '전년 동기대비 분석 중...'],
     stepDelayMs: 1500,
     async result({ pool, params = {}, helpers }) {

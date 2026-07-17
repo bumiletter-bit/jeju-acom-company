@@ -9768,7 +9768,9 @@ function aoBindEventsOnce() {
     });
 }
 
-// ---- 상시 지시 입력바: 접수 → pending_orders 저장 + LIVE 로그 + 마루 말풍선 ----
+// ---- 상시 지시 입력바 (3차: 마루 AI가 즉시 분석·배정) ----
+let aoOrderPollTimer = null;
+
 async function aoSendOrder() {
     const input = document.getElementById('ao-order-input');
     const content = input.value.trim();
@@ -9779,14 +9781,87 @@ async function aoSendOrder() {
         const res = await api('/api/agent-office/orders', 'POST', { content });
         input.value = '';
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
-        aoSay('마루', '지시 접수! AI 연결(3차 업데이트) 후 자동 처리됩니다', 4000);
-        showToast('📋 지시가 접수되었습니다');
+        aoSay('마루', '📋 접수! 분석 중...', 3000);
+        aoPollOrder(res.order.id);
     } catch (err) {
         alert(err.message);
     } finally {
         btn.disabled = false;
         input.focus();
     }
+}
+
+// 마루 처리 결과 폴링 (질문/완료/안내/오류가 될 때까지)
+function aoPollOrder(orderId) {
+    clearInterval(aoOrderPollTimer);
+    let tries = 0;
+    aoOrderPollTimer = setInterval(async () => {
+        if (++tries > 40) { clearInterval(aoOrderPollTimer); return; }
+        try {
+            const data = await api('/api/agent-office/orders/' + orderId);
+            const order = data.order;
+            if (order.status === '대기' || order.status === '처리중') return;
+            clearInterval(aoOrderPollTimer);
+            aoHandleOrderResult(order);
+        } catch (e) { console.error('지시 폴링 실패:', e); }
+    }, 1500);
+}
+
+function aoHandleOrderResult(order) {
+    const r = order.result || {};
+    if (order.status === '질문') {
+        // 애매한 지시 → 마루가 되묻기 (추측 실행 금지 원칙)
+        aoSay('마루', '🤔 ' + (r.question || '확인이 필요합니다'), 9000);
+        showToast('마루의 확인 질문 — 입력바로 답해주세요');
+    } else if (order.status === '완료') {
+        aoSay('마루', `📋 ${r.team || ''} ${r.assignee || ''} 배정 → 실행!`, 5000);
+        showToast(`마루: ${r.assignee}에게 배정 · 실행 시작`);
+        // 실행 추적 시작 → 서류 이동 애니메이션 + 진행 로그 재생
+        const agent = aoAgents.find(a => a.name === r.assignee);
+        if (r.run_id && agent) {
+            aoActiveRun = { runId: r.run_id, agentId: agent.id, stepCount: 0 };
+            aoSetAgentStatus(agent.id, 'running');
+            aoStartRunPolling();
+        }
+    } else if (order.status === '안내') {
+        aoSay('마루', 'ℹ️ ' + (r.notice || '안내'), 9000);
+        showToast(`마루: ${r.assignee || ''} 배정 기록 (실전 연결 전)`);
+    } else if (order.status === '오류') {
+        // 정직한 오류 표시 (허위 응답 금지)
+        aoSay('마루', '⚠️ 처리 오류 — 로그 확인', 7000);
+        showToast('마루 처리 오류: ' + (r.error || '알 수 없는 오류'));
+    }
+    aoRefreshLog();
+}
+
+// 쌓인 지시 재처리 (마루 상세 패널)
+window.aoProcessOrder = async function(orderId) {
+    try {
+        await api('/api/agent-office/orders/' + orderId + '/process', 'POST');
+        showToast('마루가 분석을 시작했습니다');
+        const overlay = document.getElementById('ao-detail-overlay');
+        if (overlay) overlay.remove();
+        aoSay('마루', '📋 지시 분석 중...', 3000);
+        aoPollOrder(orderId);
+    } catch (err) { alert(err.message); }
+};
+
+// 마루 패널: 처리 대기/오류 지시 목록
+async function aoLoadMaruOrders() {
+    const box = document.getElementById('ao-maru-orders');
+    if (!box) return;
+    try {
+        const data = await api('/api/agent-office/orders?limit=30');
+        const pending = data.orders.filter(o => o.status === '대기' || o.status === '오류');
+        if (!pending.length) { box.innerHTML = '📭 처리 대기 중인 지시가 없습니다'; return;
+        }
+        box.innerHTML = '<div style="font-weight:600;color:#1B3A6B;margin-bottom:4px;">📥 쌓인 지시 ' + pending.length + '건 — 마루에게 처리시킬 수 있어요</div>' +
+            pending.map(o => `<div class="ao-maru-order-item">
+                <span class="ao-ord-badge ao-ord-${o.status === '오류' ? 'err' : 'wait'}">[${o.status}]</span>
+                <span class="ao-maru-order-text">${aoEsc(o.content)}</span>
+                <button class="ao-fb-btn ao-maru-order-btn" onclick="aoProcessOrder(${o.id})">▶ 처리</button>
+            </div>`).join('');
+    } catch (e) { box.textContent = '지시 목록 조회 실패: ' + e.message; }
 }
 
 async function aoRefreshAgents() {
@@ -10066,10 +10141,18 @@ function aoEsc(s) {
     return String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 }
 
-// 접수 지시 로그 라인 (🕐 대표 → 마루: 내용)
+// 접수 지시 로그 라인 (🕐 대표 → 마루: 내용 + 마루 처리 결과)
 function aoOrderLogLine(o) {
     const time = new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
-    return `<div class="ao-log-item ao-log-order"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-order-status">[${o.status}]</span></div>`;
+    const st = o.status || '대기';
+    const stCls = st === '완료' ? 'done' : st === '오류' ? 'err' : st === '질문' ? 'ask' : st === '안내' ? 'info' : 'wait';
+    const r = o.result || {};
+    let extra = '';
+    if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
+    else if (st === '완료' && r.assignee) extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.team || '')} ${aoEsc(r.assignee)} 배정${r.run_id ? ' · 실행 #' + r.run_id : ''}</div>`;
+    else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
+    else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)}</div>`;
+    return `<div class="ao-log-item ao-log-order"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${extra}</div>`;
 }
 
 async function aoRefreshLog() {
@@ -10131,8 +10214,11 @@ window.openAoDetail = async function(agentId) {
             ${isRunning ? '⏳ 실행 중...' : '▶ 지금 실행'}</button>`;
     } else if (agent.role === 'chief') {
         actionHtml = `
-            <div class="ao-placeholder-box ao-soon-note">💬 지시는 사무실 화면 하단 <strong>상시 입력바</strong>에서 바로 보낼 수 있습니다<br>
-            <span style="font-size:11px;color:#999;">접수된 지시는 3차 업데이트에서 마루가 자동 처리합니다</span></div>`;
+            <div class="ao-placeholder-box">
+                <div style="font-weight:600;font-size:13px;margin-bottom:6px;">💬 하단 입력바로 지시하면 마루가 즉시 분석·배정합니다
+                    <span class="ao-soon-badge" style="background:#2F9E44;color:#fff;">🤖 AI 연결됨</span></div>
+                <div id="ao-maru-orders" style="font-size:12px;color:#888;">대기 지시 확인 중...</div>
+            </div>`;
     } else {
         actionHtml = `<div class="ao-placeholder-box ao-soon-note">🔒 팀장 실행은 다음 업데이트에서 연결 예정입니다</div>`;
     }
@@ -10198,6 +10284,7 @@ window.openAoDetail = async function(agentId) {
         </div>`;
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
+    if (agent.role === 'chief') aoLoadMaruOrders();
 };
 
 function aoAppendDetailProgress(step) {
