@@ -5857,7 +5857,9 @@ ${JSON.stringify(routingTable, null, 2)}
    - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
    - period: "이번주"→this_week, "이번달"→this_month, "6월"처럼 특정 월→YYYY-MM (오늘 날짜 기준 올해, 아직 오지 않은 월이면 작년). 기간 언급 없으면 빈 문자열.
    - 조건이 없는 재무 지시는 둘 다 빈 문자열로 두면 전체 보고서가 나간다. 조건이 없다고 clarify하지 말 것.
-7. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.`;
+7. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.
+8. 모든 문자열 필드에는 순수한 값만 넣는다. XML/태그 문법(<parameter>, </ 등)과 <, > 문자를 절대 포함하지 않는다.
+   해당 없는 문자열 필드는 빈 문자열(""), 해당 없는 배열 필드는 빈 배열([])로 둔다.`;
 }
 
 // ------------------------------------------------------------
@@ -5937,6 +5939,53 @@ async function backfillLessonsFromFeedback() {
             await extractLessonFromFeedback(fb, actor);
         }
     } catch (e) { console.error('교훈 소급 추출 오류:', e.message); }
+}
+
+// ------------------------------------------------------------
+// 핫픽스: 마루 응답 오염 방지 — 모델이 필드 값에 도구 호출 태그 문법을
+// 섞어 넣는 경우(</antml...> 등) 감지 → 1회 재시도 → 서버측 정화
+// ------------------------------------------------------------
+const MARU_TAG_RE = /<\/?\s*(antml|parameter|invoke|function)[^>]*>?/gi;
+
+// 서술형 필드: 태그만 제거하고 텍스트는 살림
+function maruCleanText(v) {
+    if (typeof v !== 'string') return '';
+    return v.replace(MARU_TAG_RE, '').replace(/<[^>]*>/g, '').trim();
+}
+// 토큰형 필드(키워드/날짜/이름): 태그 흔적이 있으면 통째로 무효 (오염값 전파 차단)
+function maruCleanToken(v) {
+    if (typeof v !== 'string') return '';
+    const s = v.trim();
+    if (/[<>]/.test(s) || /antml|parameter|invoke/i.test(s)) return '';
+    return s;
+}
+function maruDecisionPolluted(input) {
+    const bad = v => typeof v === 'string' && /[<>]/.test(v) && /antml|parameter|invoke|function/i.test(v);
+    return Object.values(input || {}).some(v => Array.isArray(v)
+        ? v.some(o => o && typeof o === 'object' && Object.values(o).some(bad))
+        : bad(v));
+}
+function maruCleanDecision(raw) {
+    const d = { ...raw };
+    d.team = maruCleanToken(d.team);
+    d.assignee = maruCleanToken(d.assignee);
+    d.task_summary = maruCleanText(d.task_summary);
+    d.reason = maruCleanText(d.reason);
+    d.clarify_question = maruCleanText(d.clarify_question);
+    d.item_keyword = maruCleanToken(d.item_keyword);
+    d.period = maruCleanToken(d.period);
+    d.target_date = maruCleanToken(d.target_date);
+    d.settlement_date = maruCleanToken(d.settlement_date);
+    d.schedule_from = maruCleanToken(d.schedule_from);
+    d.schedule_to = maruCleanToken(d.schedule_to);
+    d.schedule_items = (Array.isArray(d.schedule_items) ? d.schedule_items : []).map(i => ({
+        date: maruCleanToken(i && i.date),
+        time: maruCleanToken(i && i.time),
+        title: maruCleanText(i && i.title),
+        assignee_name: maruCleanToken(i && i.assignee_name),
+        date_note: maruCleanText(i && i.date_note),
+    }));
+    return d;
 }
 
 // 접수 지시 상태 갱신 헬퍼
@@ -6201,20 +6250,30 @@ async function processOrderWithMaru(order, actor) {
         }
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         const systemPrompt = await maruBuildSystemPrompt();
-        const msg = await anthropic.messages.create({
-            model: MARU_MODEL,
-            max_tokens: 500,
-            system: systemPrompt,
-            tools: [MARU_ROUTE_TOOL],
-            tool_choice: { type: 'tool', name: 'route_order' },
-            messages: [{ role: 'user', content: `대표 지시: ${order.content}` }],
-        });
-        const toolUse = msg.content.find(b => b.type === 'tool_use');
-        if (!toolUse) throw new Error('마루 응답에서 배정 결과(tool_use)를 찾지 못했습니다');
-        const d = toolUse.input;
+        const callMaru = async (extraNote) => {
+            const msg = await anthropic.messages.create({
+                model: MARU_MODEL,
+                max_tokens: 800,
+                system: systemPrompt + (extraNote || ''),
+                tools: [MARU_ROUTE_TOOL],
+                tool_choice: { type: 'tool', name: 'route_order' },
+                messages: [{ role: 'user', content: `대표 지시: ${order.content}` }],
+            });
+            const tu = msg.content.find(b => b.type === 'tool_use');
+            if (!tu) throw new Error('마루 응답에서 배정 결과(tool_use)를 찾지 못했습니다');
+            return tu.input;
+        };
+        let rawDecision = await callMaru();
+        let polluted = maruDecisionPolluted(rawDecision);
+        if (polluted) {
+            console.warn(`마루 응답 오염 감지 (지시 #${order.id}) — 1회 재시도`);
+            rawDecision = await callMaru('\n\n※ 경고: 직전 응답의 필드 값에 XML 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 없는 문자열 필드는 반드시 빈 문자열("")로, 배열 필드는 빈 배열로 둔다. 태그 문자(<, >)는 어떤 필드에도 절대 넣지 않는다.');
+            polluted = maruDecisionPolluted(rawDecision);
+        }
+        const d = maruCleanDecision(rawDecision); // 잔여 오염은 서버측 정화 (토큰형 필드는 무효화)
         await writeAudit({
             action: 'maru_route', targetType: 'pending_order', targetId: order.id,
-            changes: { after: { decision: d, model: MARU_MODEL } },
+            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted } },
             source: 'agent_office', actor,
         });
 
