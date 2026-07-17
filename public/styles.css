@@ -4737,3 +4737,12 @@ textarea.form-input {
 .ao-log-click:hover { background: #FFFBEA; }
 .ao-log-preview { background: #F3FAF3; border-left: 3px solid #2F9E44; }
 .ao-log-open { font-size: 10px; background: #1B3A6B; color: #F5C800; border-radius: 4px; padding: 1px 5px; margin-left: 4px; white-space: nowrap; }
+
+/* 9차: UI 정리 — 위젯 클릭·교훈 모달·보관 */
+.ao-chip-click { cursor: pointer; transition: transform .12s; }
+.ao-chip-click:hover { transform: translateY(-2px); background: #FFFBEA; }
+.ao-lesson-row { font-size: 12px; padding: 6px 4px; border-bottom: 1px dashed #eee; line-height: 1.6; }
+.ao-lesson-meta { font-size: 10px; color: #2b8a3e; background: #d3f9d8; border-radius: 4px; padding: 1px 6px; margin-left: 6px; white-space: nowrap; }
+.ao-arch-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #666; cursor: pointer; white-space: nowrap; }
+.ao-run-archived { opacity: .45; background: #f1f3f5; }
+.ao-arch-badge { font-size: 10px; color: #868e96; background: #e9ecef; border-radius: 4px; padding: 1px 5px; }

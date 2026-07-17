@@ -768,6 +768,9 @@ async function initDB() {
             updated_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 9차: 교훈 승인 시각 (성장 위젯 모달의 '승인일' 표시용)
+    await pool.query(`ALTER TABLE agent_lessons ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP`);
+
     // pending_orders: 상시 지시 입력바로 접수된 대표 지시 큐 (3차: 마루 AI가 처리)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS pending_orders (
@@ -5649,7 +5652,7 @@ app.get('/api/agent-office/runs/:id', authMiddleware, adminOnly, async (req, res
 // 실행 로그 목록 (LIVE 로그 + 보고서함 — 에이전트/팀/기간 필터)
 app.get('/api/agent-office/runs', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const cond = ['r.is_deleted = false'];
+        const cond = [req.query.include_archived === 'true' ? 'TRUE' : 'r.is_deleted = false'];
         const params = [];
         if (req.query.agent_id) { params.push(req.query.agent_id); cond.push(`r.agent_id = $${params.length}`); }
         if (req.query.team) { params.push(req.query.team); cond.push(`a.team = $${params.length}`); }
@@ -5657,7 +5660,7 @@ app.get('/api/agent-office/runs', authMiddleware, adminOnly, async (req, res) =>
         if (req.query.to) { params.push(req.query.to); cond.push(`r.started_at < ($${params.length}::date + 1)`); }
         const limit = Math.min(parseInt(req.query.limit) || 50, 300);
         const r = await pool.query(
-            `SELECT r.id, r.agent_id, r.status, r.steps, r.result, r.started_at, r.finished_at,
+            `SELECT r.id, r.agent_id, r.status, r.steps, r.result, r.started_at, r.finished_at, r.is_deleted,
                     a.name AS agent_name, a.team AS agent_team, a.role AS agent_role
              FROM agent_runs r JOIN agents a ON r.agent_id = a.id
              WHERE ${cond.join(' AND ')}
@@ -5697,7 +5700,7 @@ app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, re
 app.post('/api/agent-office/lessons/:id/approve', authMiddleware, adminOnly, async (req, res) => {
     try {
         const r = await pool.query(
-            `UPDATE agent_lessons SET status = 'active' WHERE id = $1 AND status = '제안' AND is_deleted = false RETURNING *`,
+            `UPDATE agent_lessons SET status = 'active', approved_at = NOW() WHERE id = $1 AND status = '제안' AND is_deleted = false RETURNING *`,
             [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '승인 대기(제안) 상태의 교훈을 찾을 수 없습니다' };
         await writeAudit({
@@ -5720,6 +5723,54 @@ app.post('/api/agent-office/lessons/:id/discard', authMiddleware, adminOnly, asy
             changes: { before: { lesson: r.rows[0].lesson } }, source: 'agent_office', actor: adminActor(req),
         });
         res.json({ message: '교훈이 폐기되었습니다', lesson: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 9차: 전체 교훈 목록 (성장 위젯 모달 — week=1이면 이번 주 활성화분만)
+app.get('/api/agent-office/lessons', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const weekOnly = req.query.week === '1';
+        const cond = [`l.is_deleted = false`, `l.status IN ('제안', 'active')`];
+        if (weekOnly) cond.push(`l.status = 'active'`, `l.created_at >= date_trunc('week', NOW())`);
+        const r = await pool.query(
+            `SELECT l.id, l.lesson, l.category, l.status, l.created_at, l.approved_at,
+                    a.id AS agent_id, a.name AS agent_name, a.team AS agent_team
+             FROM agent_lessons l JOIN agents a ON l.agent_id = a.id
+             WHERE ${cond.join(' AND ')}
+             ORDER BY a.sort_order, l.status DESC, l.created_at DESC LIMIT 200`);
+        res.json({ lessons: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 9차: 전체 피드백 이력 (성장 위젯 모달 — 최근순)
+app.get('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT f.id, f.feedback_type, f.comment, f.corrected_output, f.created_at, f.run_id,
+                    a.name AS agent_name, a.team AS agent_team
+             FROM agent_feedback f JOIN agents a ON f.agent_id = a.id
+             WHERE f.is_deleted = false ORDER BY f.created_at DESC LIMIT 100`);
+        res.json({ feedback: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 9차: 보고서 보관/복원 (soft-delete — 진짜 삭제 없음, 피드백·학습 노트 무영향)
+app.post('/api/agent-office/runs/:id/archive', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE agent_runs SET is_deleted = true WHERE id = $1 AND is_deleted = false RETURNING id`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '보관할 보고서를 찾을 수 없습니다' };
+        await writeAudit({ action: 'archive', targetType: 'agent_run', targetId: r.rows[0].id, source: 'agent_office', actor: adminActor(req) });
+        res.json({ message: '보관되었습니다 (복원 가능)' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/runs/:id/unarchive', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE agent_runs SET is_deleted = false WHERE id = $1 AND is_deleted = true RETURNING id`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '복원할 보고서를 찾을 수 없습니다' };
+        await writeAudit({ action: 'unarchive', targetType: 'agent_run', targetId: r.rows[0].id, source: 'agent_office', actor: adminActor(req) });
+        res.json({ message: '복원되었습니다' });
     } catch (err) { handleAdminErr(res, err); }
 });
 

@@ -9756,10 +9756,17 @@ function aoBindEventsOnce() {
             const isOffice = tab.dataset.view === 'office';
             document.getElementById('ao-office-view').style.display = isOffice ? '' : 'none';
             document.getElementById('ao-reports-view').style.display = isOffice ? 'none' : '';
-            if (!isOffice) aoLoadReports();
+            if (!isOffice) {
+                // 보고서함 열람 = 읽음 처리 → 보고함 뱃지 리셋 (9차)
+                localStorage.setItem('ao_inbox_seen', String(Date.now()));
+                aoSetInboxBadge(0);
+                aoLoadReports();
+            }
         });
     });
     document.getElementById('ao-report-search').addEventListener('click', aoLoadReports);
+    const archToggle = document.getElementById('ao-report-archived');
+    if (archToggle) archToggle.addEventListener('change', aoLoadReports);
     // LIVE 로그 항목 클릭 → 보고서 모달 (8차 — 모바일 동일)
     document.getElementById('ao-live-log').addEventListener('click', (e) => {
         const item = e.target.closest('[data-run-id]');
@@ -9912,9 +9919,9 @@ async function aoRefreshGrowth() {
     try {
         const g = await api('/api/agent-office/growth');
         document.getElementById('ao-growth-widget').innerHTML =
-            '<span class="ao-growth-chip">📚 지식 노트 <strong>' + g.lessons.total + '</strong>건</span>' +
-            '<span class="ao-growth-chip">🌱 이번 주 학습 <strong>+' + g.lessons.this_week + '</strong>건</span>' +
-            '<span class="ao-growth-chip">💬 피드백 누적 <strong>' + g.feedback.total + '</strong>건</span>';
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenLessonsModal(false)">📚 지식 노트 <strong>' + g.lessons.total + '</strong>건</span>' +
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenLessonsModal(true)">🌱 이번 주 학습 <strong>+' + g.lessons.this_week + '</strong>건</span>' +
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 누적 <strong>' + g.feedback.total + '</strong>건</span>';
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
@@ -10120,7 +10127,7 @@ function aoHandleRunUpdate(run) {
     const fresh = steps.slice(aoActiveRun.stepCount);
     aoActiveRun.stepCount = steps.length;
     fresh.forEach(step => {
-        aoAppendLiveLog(step, run.id);
+        aoAppendLiveLog(step);
         aoAppendDetailProgress(step);
         aoAnimateStep(step, run);
     });
@@ -10186,11 +10193,10 @@ function aoAnimateStep(step, run) {
     }
 }
 
-// ---- LIVE 로그 (8차: 항목 클릭 → 보고서 모달 바로 열기) ----
-function aoStepLogLine(step, runId) {
+// ---- LIVE 로그 (9차: 보고서 있는 항목만 클릭 가능·📄 배지, 중간 진행 로그는 클릭 불가) ----
+function aoStepLogLine(step) {
     const time = new Date(step.t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
-    const click = runId ? ` ao-log-click" data-run-id="${runId}` : '';
-    return `<div class="ao-log-item${click}"><span class="ao-log-time">${time}</span> <strong>${step.actor}</strong> → ${step.text}</div>`;
+    return `<div class="ao-log-item"><span class="ao-log-time">${time}</span> <strong>${step.actor}</strong> → ${step.text}</div>`;
 }
 
 // 완료된 실행의 결과 미리보기 라인 (클릭 → 보고서)
@@ -10215,8 +10221,8 @@ function aoAppendLiveLogHtml(html) {
     while (log.children.length > 60) log.lastChild.remove();
 }
 
-function aoAppendLiveLog(step, runId) {
-    aoAppendLiveLogHtml(aoStepLogLine(step, runId));
+function aoAppendLiveLog(step) {
+    aoAppendLiveLogHtml(aoStepLogLine(step));
 }
 
 function aoEsc(s) {
@@ -10259,16 +10265,16 @@ async function aoRefreshLog() {
             api('/api/agent-office/runs?limit=30'),
             api('/api/agent-office/orders?limit=15'),
         ]);
-        // 보고함 뱃지: 오늘 완료된 보고 수
-        const todayStr = new Date().toDateString();
+        // 보고함 뱃지: 마지막으로 보고서함을 연 이후 도착한 신규 보고만 카운트 (9차)
+        const seenAt = Number(localStorage.getItem('ao_inbox_seen') || 0);
         aoSetInboxBadge(data.runs.filter(r =>
-            r.status === 'done' && new Date(r.started_at).toDateString() === todayStr).length);
+            r.status === 'done' && new Date(r.finished_at || r.started_at).getTime() > seenAt).length);
         const log = document.getElementById('ao-live-log');
         if (!log) return;
         const lines = [];
         data.runs.forEach(r => {
-            (r.steps || []).forEach(s => lines.push({ t: s.t, html: aoStepLogLine(s, r.id) }));
-            // 완료/오류 실행은 결과 미리보기 라인 추가 (클릭 → 보고서 모달)
+            (r.steps || []).forEach(s => lines.push({ t: s.t, html: aoStepLogLine(s) })); // 중간 로그는 클릭 불가
+            // 완료/오류 실행만 결과 미리보기 라인 (📄 클릭 → 보고서 모달)
             if (r.status === 'done' || r.status === 'error') {
                 lines.push({ t: r.finished_at || r.started_at, html: aoRunPreviewLine(r) });
             }
@@ -10438,6 +10444,96 @@ function aoFinishDetailProgress(run) {
     }
 }
 
+// ---- 9차: 성장 위젯 상세 모달 ----
+// 지식 노트 / 이번 주 학습 모달 (요원별 그룹, 제안은 바로 승인/폐기)
+window.aoOpenLessonsModal = async function(weekOnly) {
+    let data;
+    try { data = await api('/api/agent-office/lessons' + (weekOnly ? '?week=1' : '')); }
+    catch (e) { return alert(e.message); }
+    const lessons = data.lessons || [];
+    const groups = {};
+    lessons.forEach(l => { (groups[l.agent_name] = groups[l.agent_name] || []).push(l); });
+    const fmtD = d => d ? new Date(d).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }) : '-';
+    const bodyHtml = lessons.length ? Object.entries(groups).map(([name, ls]) => `
+        <h4 class="ao-sec-title">🤖 ${aoEsc(name)} <small style="color:#aaa;">(${ls.length}건)</small></h4>
+        ${ls.map(l => l.status === '제안' ? `
+            <div class="ao-lesson-prop">
+                <span class="ao-lesson-prop-text">🌱 [${aoEsc(l.category || '일반')}] ${aoEsc(l.lesson)}</span>
+                <span class="ao-lesson-btns">
+                    <button class="ao-fb-btn ao-lesson-ok" onclick="aoModalLessonAct(${l.id}, 'approve', ${weekOnly})">✔ 승인</button>
+                    <button class="ao-fb-btn ao-lesson-no" onclick="aoModalLessonAct(${l.id}, 'discard', ${weekOnly})">✖ 폐기</button>
+                </span>
+            </div>` : `
+            <div class="ao-lesson-row">✅ [${aoEsc(l.category || '일반')}] ${aoEsc(l.lesson)}
+                <span class="ao-lesson-meta">활성 · 승인 ${fmtD(l.approved_at)}</span></div>`).join('')}`).join('')
+        : `<div class="ao-empty-note">${weekOnly ? '이번 주 활성화된 교훈이 없습니다' : '등록된 교훈이 없습니다 — 피드백이 쌓이면 제안이 올라옵니다'}</div>`;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'ao-lessons-overlay';
+    overlay.innerHTML = `<div class="modal ao-detail-modal">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 8px;">${weekOnly ? '🌱 이번 주 학습' : '📚 지식 노트 전체'} <small style="color:#888;">(${lessons.length}건)</small></h3>
+        ${bodyHtml}
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+
+window.aoModalLessonAct = async function(id, act, weekOnly) {
+    if (act === 'discard' && !confirm('이 교훈 제안을 폐기할까요?')) return;
+    try {
+        const res = await api('/api/agent-office/lessons/' + id + '/' + act, 'POST');
+        showToast(res.message);
+        const ov = document.getElementById('ao-lessons-overlay');
+        if (ov) ov.remove();
+        aoOpenLessonsModal(weekOnly);
+        aoRefreshGrowth();
+    } catch (e) { alert(e.message); }
+};
+
+// 피드백 이력 모달 (최근순)
+window.aoOpenFeedbackModal = async function() {
+    let data;
+    try { data = await api('/api/agent-office/feedback'); }
+    catch (e) { return alert(e.message); }
+    const fb = data.feedback || [];
+    const icons = { good: '👍', edited: '✏️', bad: '👎', comment: '💬' };
+    const body = fb.length
+        ? '<div class="ao-fb-history" style="max-height:60vh;">' + fb.map(f => {
+            const dt = new Date(f.created_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            return `<div class="ao-fb-hist-item">${icons[f.feedback_type] || '💬'} <strong>${aoEsc(f.agent_name)}</strong>
+                <span class="ao-log-time">${dt}</span> ${aoEsc(aoTrunc(f.comment || f.corrected_output || '(코멘트 없음)', 120))}</div>`;
+        }).join('') + '</div>'
+        : '<div class="ao-empty-note">아직 피드백이 없습니다</div>';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal ao-detail-modal">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 8px;">💬 피드백 이력 <small style="color:#888;">(${fb.length}건)</small></h3>
+        ${body}
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+
+// ---- 9차: 보고서 보관/복원 (soft-delete — 피드백·학습 노트 무영향) ----
+window.aoArchiveRun = async function(runId) {
+    try {
+        const res = await api('/api/agent-office/runs/' + runId + '/archive', 'POST');
+        showToast('📦 ' + res.message);
+        aoLoadReports();
+        aoRefreshLog();
+    } catch (e) { alert(e.message); }
+};
+window.aoRestoreRun = async function(runId) {
+    try {
+        const res = await api('/api/agent-office/runs/' + runId + '/unarchive', 'POST');
+        showToast('↩️ ' + res.message);
+        aoLoadReports();
+        aoRefreshLog();
+    } catch (e) { alert(e.message); }
+};
+
 // 보고함 클릭 → 보고서함 탭으로 이동
 window.aoGoReports = function() {
     const tab = document.querySelector('.ao-view-tab[data-view="reports"]');
@@ -10523,16 +10619,18 @@ async function aoLoadReports() {
     const agentId = document.getElementById('ao-report-agent').value;
     const from = document.getElementById('ao-report-from').value;
     const to = document.getElementById('ao-report-to').value;
+    const includeArchived = document.getElementById('ao-report-archived')?.checked;
     const params = new URLSearchParams({ limit: 100 });
     if (team) params.set('team', team);
     if (agentId) params.set('agent_id', agentId);
     if (from) params.set('from', from);
     if (to) params.set('to', to);
+    if (includeArchived) params.set('include_archived', 'true');
     try {
         const data = await api('/api/agent-office/runs?' + params.toString());
         const tbody = document.getElementById('ao-report-tbody');
         if (!data.runs.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>';
             return;
         }
         tbody.innerHTML = data.runs.map(r => {
@@ -10542,14 +10640,19 @@ async function aoLoadReports() {
                 : r.status === 'error' ? '<span class="ao-st-badge ao-st-badge-err">오류</span>'
                 : '<span class="ao-st-badge ao-st-badge-run">실행중</span>';
             const hasReport = r.result && r.result.report;
-            return '<tr>' +
-                '<td>' + dt + '</td>' +
+            const archived = !!r.is_deleted;
+            const archBtn = archived
+                ? '<button class="ao-fb-btn" onclick="aoRestoreRun(' + r.id + ')">↩️ 복원</button>'
+                : '<button class="ao-fb-btn" onclick="aoArchiveRun(' + r.id + ')">📦 보관</button>';
+            return '<tr class="' + (archived ? 'ao-run-archived' : '') + '">' +
+                '<td>' + dt + (archived ? ' <span class="ao-arch-badge">보관됨</span>' : '') + '</td>' +
                 '<td><span class="ao-ai-badge">🤖AI</span> ' + r.agent_name + '</td>' +
                 '<td>' + r.agent_team + '</td>' +
                 '<td>' + stBadge + '</td>' +
                 '<td>' + ((r.result && r.result.summary) || '-') + '</td>' +
                 '<td>' + dur + '</td>' +
                 '<td>' + (hasReport ? '<button class="ao-fb-btn" onclick="aoOpenReport(' + r.id + ')">📄 보고서</button>' : '-') + '</td>' +
+                '<td>' + archBtn + '</td>' +
                 '</tr>';
         }).join('');
     } catch (err) { alert(err.message); }
