@@ -9814,6 +9814,17 @@ function aoHandleOrderResult(order) {
         // 애매한 지시 → 마루가 되묻기 (추측 실행 금지 원칙)
         aoSay('마루', '🤔 ' + (r.question || '확인이 필요합니다'), 9000);
         showToast('마루의 확인 질문 — 입력바로 답해주세요');
+    } else if (order.status === '완료' && r.type === 'schedule_list') {
+        // 마루 직접 처리: 일정 조회 즉답
+        const preview = (r.items || []).slice(0, 3).join(' / ');
+        aoSay('마루', r.count > 0 ? `📅 일정 ${r.count}건 — ${preview}` : '📅 해당 기간 일정이 없습니다', 10000);
+        showToast(r.count > 0 ? `일정 ${r.count}건 조회 완료 (보고서함에서 전체 확인)` : '해당 기간 일정 없음');
+    } else if (order.status === '완료' && r.type === 'schedule_created') {
+        aoSay('마루', `✅ 일정 ${r.count}건 등록 완료!`, 8000);
+        showToast(`✅ 일정 ${r.count}건 등록 완료`);
+    } else if (order.status === '완료' && r.type === 'schedule_cancelled') {
+        aoSay('마루', 'ℹ️ 일정 등록을 취소했어요', 5000);
+        showToast('일정 등록 취소');
     } else if (order.status === '완료') {
         aoSay('마루', `📋 ${r.team || ''} ${r.assignee || ''} 배정 → 실행!`, 5000);
         showToast(`마루: ${r.assignee}에게 배정 · 실행 시작`);
@@ -10194,6 +10205,9 @@ function aoOrderLogLine(o) {
     const r = o.result || {};
     let extra = '';
     if (st === '피드백' && r.target) extra = `<div class="ao-log-sub">📚 마루 → ${aoEsc(r.target)} 피드백 전달 (${aoEsc(r.kind || '코멘트')})</div>`;
+    else if (st === '완료' && r.type === 'schedule_list') extra = `<div class="ao-log-sub">📅 마루 → 대표: 일정 ${r.count}건${(r.items && r.items.length) ? ' — ' + r.items.slice(0, 3).map(aoEsc).join(' / ') + (r.count > 3 ? ' 외' : '') : ''}</div>`;
+    else if (st === '완료' && r.type === 'schedule_created') extra = `<div class="ao-log-sub">✅ 마루 → 일정 ${r.count}건 등록: ${(r.items || []).slice(0, 3).map(aoEsc).join(' / ')}</div>`;
+    else if (st === '완료' && r.type === 'schedule_cancelled') extra = `<div class="ao-log-sub">ℹ️ 일정 등록 취소</div>`;
     else if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
     else if (st === '완료' && r.assignee) {
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
@@ -10527,6 +10541,14 @@ window.aoOpenReport = async function(runId) {
             <pre class="ao-copy-body" id="ao-copy-${run.id}-${i}">${aoEsc(v.text)}</pre>`).join('')}
         ${rep.send_tip ? `<div class="ao-result-box" style="margin-top:10px;">💡 ${aoEsc(rep.send_tip)}</div>` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}${rep.char_counts ? ' · ' + aoEsc(rep.char_counts) : ''} · 모델 ${aoEsc(rep.model || '')}</p>`;
+    } else if (rep.type === 'maru_schedule') {
+        // 7차: 마루 일정 직접 처리 보고서
+        body = `
+        <h4 class="ao-sec-title">📅 일정 ${aoEsc(rep.op || '조회')}${rep.from ? ` <small style="color:#888;">(${rep.from} ~ ${rep.to})</small>` : ''}</h4>
+        ${(rep.items || []).length
+            ? `<div class="ao-result-box">${rep.items.map(i => '<div>· ' + aoEsc(i) + '</div>').join('')}</div>`
+            : '<div class="ao-empty-note">해당 기간 등록된 일정이 없습니다</div>'}
+        <p class="ao-rep-note">ℹ️ 표기: 날짜(요일) 시간 — 내용 (담당자) · 담당자 미지정=대표 · 삭제·수정은 프로그램 일정 화면에서 직접</p>`;
     } else if (rep.type === 'miso_prompt') {
         // 5차: 미소 프롬프트 보고서 — 영문 프롬프트(코드블록) + 한글 해석 + 비율/사용처 + [복사]
         body = `

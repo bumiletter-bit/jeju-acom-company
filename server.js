@@ -5755,7 +5755,7 @@ const MARU_ROUTE_TOOL = {
         type: 'object',
         additionalProperties: false,
         properties: {
-            action: { type: 'string', enum: ['route', 'clarify', 'feedback'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물에 대한 평가/수정 요구' },
+            action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물에 대한 평가/수정 요구, schedule=일정 조회·등록(마루 직접 처리)' },
             team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/실장실 중 하나). clarify면 빈 문자열' },
             assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/마루 중 하나). clarify면 빈 문자열' },
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
@@ -5764,15 +5764,39 @@ const MARU_ROUTE_TOOL = {
             item_keyword: { type: 'string', description: "지시에 언급된 품목 키워드 하나 (예: '하우스감귤', '카라향', '레몬'). 품목 언급이 없으면 빈 문자열" },
             period: { type: 'string', description: "기간 조건: '이번주'→'this_week', '이번달/이달'→'this_month', 특정 월(예: '6월')→'YYYY-MM' 형식(오늘 날짜 기준, 미래 월이면 작년으로), 기간 언급 없으면 빈 문자열" },
             feedback_kind: { type: 'string', enum: ['칭찬', '수정', '지적', '코멘트'], description: "action=feedback일 때 피드백 분류. 그 외 action이면 '코멘트'로 둘 것" },
+            schedule_op: { type: 'string', enum: ['조회', '등록', '불가', '해당없음'], description: "action=schedule일 때: 조회/등록, 삭제·수정 요구면 '불가'. 그 외 action이면 '해당없음'" },
+            schedule_from: { type: 'string', description: '일정 조회 시작일 YYYY-MM-DD (조회일 때만, 아니면 빈 문자열)' },
+            schedule_to: { type: 'string', description: '일정 조회 종료일 YYYY-MM-DD (조회일 때만, 아니면 빈 문자열)' },
+            schedule_items: {
+                type: 'array',
+                description: '등록할 일정 목록 (schedule_op=등록일 때만, 아니면 빈 배열)',
+                items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        date: { type: 'string', description: 'YYYY-MM-DD — 애매한 표현은 오늘 기준 가장 가까운 미래 해당 날짜로 확정 제안' },
+                        time: { type: 'string', description: 'HH:MM, 시간 언급 없으면 빈 문자열' },
+                        title: { type: 'string', description: '일정 내용' },
+                        assignee_name: { type: 'string', description: '담당자 이름 (실제 직원 명단 중에서만). 미지정이면 빈 문자열(=대표)' },
+                        date_note: { type: 'string', description: "애매한 날짜 표현이었으면 원래 표현 그대로 (예: '금요일쯤'). 명확했으면 빈 문자열" },
+                    },
+                    required: ['date', 'time', 'title', 'assignee_name', 'date_note'],
+                },
+            },
         },
-        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period', 'feedback_kind'],
+        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period', 'feedback_kind', 'schedule_op', 'schedule_from', 'schedule_to', 'schedule_items'],
     },
 };
 
 // 시스템 프롬프트: DB의 라우팅 테이블 + 조직도를 그대로 사용 (마스터 지시문 3절)
 async function maruBuildSystemPrompt() {
-    const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'routing_table'`);
-    const routingTable = cfg.rows[0]?.value || [];
+    const cfg = await pool.query(`SELECT key, value FROM agent_office_config WHERE key IN ('routing_table', 'staff_roster')`);
+    const routingTable = cfg.rows.find(r => r.key === 'routing_table')?.value || [];
+    const roster = cfg.rows.find(r => r.key === 'staff_roster')?.value || {};
+    const staffNames = [];
+    for (const [biz, people] of Object.entries(roster)) {
+        if (Array.isArray(people)) people.forEach(p => staffNames.push(`${p.name}(${p.title || ''}·${biz})`));
+    }
     const agentsQ = await pool.query(
         `SELECT name, role, team, duty, description FROM agents
          WHERE is_deleted = false AND is_active = true ORDER BY sort_order`);
@@ -5795,7 +5819,14 @@ ${JSON.stringify(routingTable, null, 2)}
    assignee=그 결과물을 만든 요원(문자·카피→글샘, 이미지·영상 프롬프트→미소, 정산 보고→세미), feedback_kind=칭찬/수정/지적/코멘트.
    어느 요원의 결과물인지 불명확하면 clarify로 되묻는다.
 3. 분야가 불명확하거나 여러 해석이 가능하면 절대 추측하지 말고 action='clarify'로 되묻는다. 질문은 한 번에 딱 하나만.
-4. 일정 등록/조회 등 회사프로그램 운영 지시는 실장실 마루 담당이다.
+4. 일정 분야는 팀 배정 없이 마루(너)가 직접 처리한다: action='schedule'.
+   - 조회 ("이번주 일정 뭐 있어?", "내일 일정") → schedule_op='조회', schedule_from/to를 YYYY-MM-DD로 채운다 (이번주=오늘 기준 이번 월요일~일요일, 오늘/내일은 해당 하루).
+   - 등록 ("화요일 카라향 출고 등록해줘") → schedule_op='등록', schedule_items에 각 건을 채운다.
+     날짜는 반드시 YYYY-MM-DD로 확정 제안 — 애매한 표현("금요일쯤", "다음주 초")은 오늘 기준 가장 가까운 미래의 해당 날짜로 제안하고 date_note에 원래 표현을 기록한다.
+     담당자는 실제 직원 명단에 있는 이름일 때만 assignee_name에 넣고, 미지정이면 빈 문자열(=대표)로 둔다.
+     여러 건이면 schedule_items에 전부 담는다 (한 번에 확인받기 위해).
+   - 삭제·수정 요구 → schedule_op='불가' (아직 말로 처리 불가 — 프로그램에서 직접).
+   실제 직원 명단: ${staffNames.join(', ') || '(명단 없음)'}
 5. 여러 분야가 섞인 지시는 가장 핵심인 분야 하나로 배정하고 reason에 나머지를 언급한다.
 6. 재무 지시(세미 배정)에서는 조건을 함께 추출한다:
    - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
@@ -5890,10 +5921,141 @@ async function maruFinishOrder(orderId, status, result, runId = null) {
         [orderId, status, JSON.stringify(result), runId]);
 }
 
+// ------------------------------------------------------------
+// 7차: 마루 직접 처리 — 일정 (운영_지시규칙.md 원칙 적용)
+// 조회=즉시 실행·즉답 / 등록=정리→확인 1회→실행 / 삭제=불가 안내
+// 실행 기록은 서버 코드가 직접 기록 (LIVE 로그 + 보고서함)
+// ------------------------------------------------------------
+function kstTodayStr() {
+    return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// 표기 규칙: 날짜(요일) 시간 — 내용 (담당자)
+function fmtScheduleLine(dateStr, time, title, assignee) {
+    const ds = String(dateStr).slice(0, 10);
+    const d = new Date(ds + 'T00:00:00Z');
+    const day = ['일', '월', '화', '수', '목', '금', '토'][d.getUTCDay()];
+    const md = `${Number(ds.slice(5, 7))}/${Number(ds.slice(8, 10))}`;
+    return `${md}(${day})${time ? ' ' + time : ''} — ${title} (${assignee || '대표'})`;
+}
+
+// 마루 직접 처리 실행 기록 (보고서함/LIVE 로그용 — 완료 상태로 즉시 기록)
+async function maruRecordRun(opLabel, summaryText, lines, reportObj) {
+    const maruQ = await pool.query(`SELECT id FROM agents WHERE role = 'chief' AND is_deleted = false LIMIT 1`);
+    const maru = maruQ.rows[0];
+    if (!maru) return null;
+    const steps = [
+        agentStep('order', '마루', `오더 접수 — ${opLabel}`),
+        agentStep('work', '마루', `${opLabel} 처리 중...`),
+        agentStep('done', '마루', '보고서함에 보고 등록'),
+    ];
+    const run = (await pool.query(
+        `INSERT INTO agent_runs (agent_id, status, steps, result, finished_at)
+         VALUES ($1, 'done', $2, $3, NOW()) RETURNING *`,
+        [maru.id, JSON.stringify(steps),
+         JSON.stringify({ summary: summaryText, lines, report: reportObj })])).rows[0];
+    await pool.query(`UPDATE agents SET last_run_at = NOW() WHERE id = $1`, [maru.id]);
+    return run;
+}
+
+// 일정 지시 처리 (조회/등록 제안/불가)
+async function maruHandleSchedule(order, d, actor) {
+    if (d.schedule_op === '조회') {
+        const from = /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_from) ? d.schedule_from : kstTodayStr();
+        const to = /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_to) ? d.schedule_to : from;
+        const rows = await svcListSchedules({ from, to });
+        const lines = rows.slice(0, 30).map(s => fmtScheduleLine(s.date, s.start_time, s.title, s.user_name));
+        const summaryText = rows.length
+            ? `완료: ${from}~${to} 일정 ${rows.length}건`
+            : `${from}~${to} 등록된 일정이 없습니다`;
+        const run = await maruRecordRun('일정 조회', summaryText, lines.slice(0, 3),
+            { type: 'maru_schedule', op: '조회', from, to, items: lines, count: rows.length });
+        await maruFinishOrder(order.id, '완료', {
+            type: 'schedule_list', from, to, count: rows.length, items: lines.slice(0, 10), run_id: run?.id,
+        }, run?.id);
+        return;
+    }
+    if (d.schedule_op === '등록') {
+        const items = (Array.isArray(d.schedule_items) ? d.schedule_items : [])
+            .filter(i => i && /^\d{4}-\d{2}-\d{2}$/.test(i.date) && String(i.title || '').trim());
+        if (items.length === 0) {
+            await maruFinishOrder(order.id, '질문', {
+                type: 'clarify', question: '등록할 일정의 날짜와 내용을 알려주세요 (예: "화요일 카라향 출고")',
+                summary: d.task_summary, reason: d.reason,
+            });
+            return;
+        }
+        // 등록은 확인 1회 필수 — 목록 전체를 보여주고 대기 (여러 건도 확인 1회)
+        const formatted = items.map(i =>
+            fmtScheduleLine(i.date, i.time, i.title, i.assignee_name)
+            + (i.date_note ? ` (※'${i.date_note}' → 제안한 날짜)` : ''));
+        await maruFinishOrder(order.id, '질문', {
+            type: 'schedule_confirm', items, formatted,
+            question: `${formatted.join('  /  ')}  —  이대로 ${items.length}건 등록할까요? ("응" 또는 "등록해"로 답해주세요)`,
+        });
+        return;
+    }
+    // 삭제·수정 → 불가 안내 (기존 원칙)
+    await maruFinishOrder(order.id, '안내', {
+        type: 'schedule_blocked',
+        notice: '일정 삭제·수정은 아직 말로 처리할 수 없습니다 — 프로그램 일정 화면에서 직접 처리해주세요 (조회·등록은 가능합니다)',
+    });
+}
+
+// 확인 답변("응/등록해")으로 대기 중인 일정 등록 실행 — AI 호출 없이 정규식 판별
+const MARU_YES_RE = /^(응+|어+|네+|넵|예|ㅇㅋ|ok|오케이|yes|등록해줘|등록해|등록|진행해|진행|해줘|고고|고)[!~.\s]*$/i;
+const MARU_NO_RE = /^(아니요?|아냐|취소|취소해|하지마|노|ㄴㄴ|no)[!~.\s]*$/i;
+
+async function maruTryScheduleConfirm(order, actor) {
+    const content = String(order.content || '').trim();
+    if (content.length > 12) return false;
+    const isYes = MARU_YES_RE.test(content);
+    const isNo = MARU_NO_RE.test(content);
+    if (!isYes && !isNo) return false;
+    const pendingQ = await pool.query(
+        `SELECT * FROM pending_orders
+         WHERE status = '질문' AND is_deleted = false AND result->>'type' = 'schedule_confirm'
+           AND created_at > NOW() - interval '1 hour' AND id != $1
+         ORDER BY created_at DESC LIMIT 1`, [order.id]);
+    const pending = pendingQ.rows[0];
+    if (!pending) return false;
+
+    if (isNo) {
+        await maruFinishOrder(pending.id, '안내', { type: 'schedule_cancelled', notice: '일정 등록을 취소했습니다' });
+        await maruFinishOrder(order.id, '완료', { type: 'schedule_cancelled', notice: '알겠습니다 — 일정 등록을 취소했어요' });
+        return true;
+    }
+    // 승인 → 실제 등록 (svcCreateSchedule 재사용: audit_log 자동 기록)
+    const items = (pending.result && pending.result.items) || [];
+    const created = [];
+    for (const i of items) {
+        let uid = null;
+        if (i.assignee_name) {
+            const u = await pool.query('SELECT id FROM users WHERE name = $1 LIMIT 1', [i.assignee_name]);
+            uid = u.rows[0]?.id || null;
+        }
+        await svcCreateSchedule({
+            date: i.date, title: i.title, type: 'normal',
+            start_time: i.time || null,
+            user_id: uid ?? actor?.id ?? undefined, // 담당자 미지정/미매칭 = 대표
+        }, actor);
+        created.push(fmtScheduleLine(i.date, i.time, i.title, i.assignee_name));
+    }
+    const summaryText = `✅ 일정 ${created.length}건 등록 완료`;
+    const run = await maruRecordRun('일정 등록', summaryText, created.slice(0, 3),
+        { type: 'maru_schedule', op: '등록', items: created, count: created.length });
+    const doneResult = { type: 'schedule_created', count: created.length, items: created, run_id: run?.id };
+    await maruFinishOrder(pending.id, '완료', doneResult, run?.id);
+    await maruFinishOrder(order.id, '완료', doneResult, run?.id);
+    return true;
+}
+
 // 마루 처리 엔진: 지시 1건 분석 → 배정 → (연결된 요원이면) 실제 실행
 async function processOrderWithMaru(order, actor) {
     try {
         await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
+        // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
+        if (await maruTryScheduleConfirm(order, actor)) return;
         if (!process.env.ANTHROPIC_API_KEY) {
             throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다 (Render 환경변수 확인 필요)');
         }
@@ -5959,6 +6121,12 @@ async function processOrderWithMaru(order, actor) {
             return;
         }
 
+        // ①-3 일정 분야 → 마루 직접 처리 (조회 즉답 / 등록 확인 1회 / 삭제 불가)
+        if (d.action === 'schedule') {
+            await maruHandleSchedule(order, d, actor);
+            return;
+        }
+
         // ② 배정 — 요원 조회
         const agentQ = await pool.query(
             `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [d.assignee]);
@@ -5980,7 +6148,9 @@ async function processOrderWithMaru(order, actor) {
         if (!isLive) {
             await maruFinishOrder(order.id, '안내', {
                 ...routeInfo,
-                notice: `${d.assignee}은(는) 아직 실전 연결 전입니다 — 배정만 기록했습니다 (해당 차수에서 실행 연결 예정)`,
+                notice: d.assignee === '마루'
+                    ? '일정은 이렇게 말씀해주세요 — 조회: "이번주 일정 뭐 있어?" / 등록: "화요일 카라향 출고 등록해줘"'
+                    : `${d.assignee}은(는) 아직 실전 연결 전입니다 — 배정만 기록했습니다 (해당 차수에서 실행 연결 예정)`,
             });
             return;
         }
