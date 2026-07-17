@@ -6080,6 +6080,227 @@ async function maruFinishOrder(orderId, status, result, runId = null) {
         [orderId, status, JSON.stringify(result), runId]);
 }
 
+// 마루 판단 호출 (오염 감지 → 재시도 → 정화 포함) — 실제 처리와 역량 테스트가 공용
+async function maruDecide(content) {
+    if (!process.env.ANTHROPIC_API_KEY) {
+        throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다 (Render 환경변수 확인 필요)');
+    }
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const systemPrompt = await maruBuildSystemPrompt();
+    const call = async (extraNote) => {
+        const msg = await anthropic.messages.create({
+            model: MARU_MODEL,
+            max_tokens: 800,
+            system: systemPrompt + (extraNote || ''),
+            tools: [MARU_ROUTE_TOOL],
+            tool_choice: { type: 'tool', name: 'route_order' },
+            messages: [{ role: 'user', content: `대표 지시: ${content}` }],
+        });
+        const tu = msg.content.find(b => b.type === 'tool_use');
+        if (!tu) throw new Error('마루 응답에서 배정 결과(tool_use)를 찾지 못했습니다');
+        return tu.input;
+    };
+    let raw = await call();
+    let polluted = maruDecisionPolluted(raw);
+    if (polluted) {
+        raw = await call('\n\n※ 경고: 직전 응답의 필드 값에 XML 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 없는 문자열 필드는 반드시 빈 문자열("")로, 배열 필드는 빈 배열로 둔다. 태그 문자(<, >)는 어떤 필드에도 절대 넣지 않는다.');
+        polluted = maruDecisionPolluted(raw);
+    }
+    return { d: maruCleanDecision(raw), polluted };
+}
+
+// ============================================================
+// 10차: AI 전 직원 자동 역량 테스트 — 보고서만 등록, 자동 수정 없음.
+// 규칙: 에이전트 수정 후 배포 전 이 점검 통과 필수.
+// 기대 금액값은 2026-07-17 DB 스냅샷 기준 (대표가 정산관리 화면으로 검증한 값).
+// ============================================================
+const CAP_EMOJI_RE = /[\u{1F300}-\u{1FAFF}]|[\u{2700}-\u{27BF}]|[\u{2B00}-\u{2BFF}]|[\u{231A}-\u{23FF}]|\u{FE0F}/u;
+
+// 본문 속 '7/20(월)' / '7월 20일(월)' 표기의 요일 검산
+function capWeekdayErrors(text) {
+    const errs = [];
+    const year = Number(kstTodayStr().slice(0, 4));
+    const re = /(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*\(\s*([일월화수목금토])\s*\)|(\d{1,2})\/(\d{1,2})\s*\(\s*([일월화수목금토])\s*\)/g;
+    let m;
+    while ((m = re.exec(String(text))) !== null) {
+        const mo = Number(m[1] || m[4]), d = Number(m[2] || m[5]), day = m[3] || m[6];
+        if (mo < 1 || mo > 12 || d < 1 || d > 31) continue;
+        const real = ['일', '월', '화', '수', '목', '금', '토'][new Date(Date.UTC(year, mo - 1, d)).getUTCDay()];
+        if (real !== day) errs.push(`${mo}/${d}=${real}요일인데 (${day}) 표기`);
+    }
+    return errs;
+}
+
+let capTestRunning = false;
+
+async function executeCapabilityTest(run, actor) {
+    const t0 = Date.now();
+    const results = { '마루': [], '세미': [], '글샘': [], '미소': [] };
+    const artifacts = [];
+    const add = (agent, name, pass, expected, actual, note) =>
+        results[agent].push({ name, pass: !!pass, expected: String(expected), actual: String(actual ?? ''), note: note || '' });
+    const step = (text) => agentRunAppendStep(run.id, agentStep('work', '마루', text));
+    try {
+        // ===== 마루 라우팅 (Haiku 실호출) =====
+        await step('마루 라우팅 점검 중... (10문항)');
+        const rc = [
+            { name: '문자→글샘', q: '카라향 마감 임박 문자 만들어줘', exp: 'route/글샘', check: d => d.action === 'route' && d.assignee === '글샘' },
+            { name: '이미지→미소', q: '감귤 인스타 이미지 시안 프롬프트 뽑아줘', exp: 'route/미소', check: d => d.action === 'route' && d.assignee === '미소' },
+            { name: '정산→세미', q: '이번달 정산 얼마야?', exp: 'route/세미', check: d => d.action === 'route' && d.assignee === '세미' },
+            { name: '일정 조회→마루 직접', q: '이번주 일정 뭐 있어?', exp: 'schedule/조회+날짜범위', check: d => d.action === 'schedule' && d.schedule_op === '조회' && /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_from) },
+            { name: '다음주 일정→마루 직접', q: '다음주 일정 알려줘', exp: 'schedule/조회', check: d => d.action === 'schedule' && d.schedule_op === '조회' },
+            { name: '애매한 지시→되묻기', q: '그거 처리해줘', exp: 'clarify+질문 1개', check: d => d.action === 'clarify' && !!d.clarify_question },
+            { name: '피드백 문장→피드백 분류', q: '아까 글샘이 만든 문자 좋았어', exp: 'feedback/글샘', check: d => d.action === 'feedback' && d.assignee === '글샘' },
+            { name: '정산 입력 파싱 (283만→2,830,000)', q: '오늘 정산현황 입력할게. 대성 283만', exp: 'settlement_input/daesong=2830000', check: d => d.action === 'settlement_input' && (d.settlement_entries || []).some(e => e.field === 'daesong' && Number(e.amount) === 2830000) },
+            { name: '일정 삭제→불가 안내', q: '어제 일정 지워줘', exp: 'schedule/불가', check: d => d.action === 'schedule' && d.schedule_op === '불가' },
+        ];
+        for (const c of rc) {
+            try {
+                const { d, polluted } = await maruDecide(c.q);
+                const actual = `${d.action}/${d.assignee || d.schedule_op || ''}${polluted ? ' (오염 재시도 발생)' : ''}`;
+                add('마루', c.name, c.check(d) && !maruDecisionPolluted(d), c.exp, actual, c.q);
+            } catch (e) { add('마루', c.name, false, c.exp, '오류: ' + e.message, c.q); }
+        }
+        {
+            const q = '4월 14일 정산현황 얼마야?';
+            const explicit = parseExplicitDate(q, kstTodayStr());
+            add('마루', '특정일 날짜 서버 파싱', explicit === '2026-04-14', '2026-04-14', explicit || '(파싱 실패)', q);
+        }
+
+        // ===== 세미 (코드 실행 — DB 계산값 대조) =====
+        await step('세미 정산 점검 중... (8문항 — DB 대조)');
+        const semiAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'semi' LIMIT 1`)).rows[0];
+        const semiRunner = loadAgentRunner('세미');
+        const helpers = { matchItemToPricing, normDateSafe };
+        const callSemi = (p) => semiRunner.result({ agent: semiAgent, pool, params: { workplace: '전체', ...p }, helpers });
+        const sc = [
+            { name: '4/14 일별 정산 (연속1)', p: { target_date: '2026-04-14' }, exp: '11,191,500원',
+              check: r => r.report?.type === 'semi_day' && Math.abs((r.report.settlements?.total || 0) - 11191500) < 10,
+              act: r => Math.round(r.report?.settlements?.total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '4/5 일별 정산', p: { target_date: '2026-04-05' }, exp: '10,563,900원',
+              check: r => Math.abs((r.report?.settlements?.total || 0) - 10563900) < 10,
+              act: r => Math.round(r.report?.settlements?.total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '4/4 기록없음 + 4/5 안내', p: { target_date: '2026-04-04' }, exp: '기록 없음 + 가장 가까운 4/5',
+              check: r => r.report?.settlements?.has === false && /4\/5/.test(String(r.summary)), act: r => r.summary },
+            { name: '4/14 재확인 (연속2·직전 답 재사용 검출)', p: { target_date: '2026-04-14' }, exp: '11,191,500원 (연속1과 동일해야)',
+              check: r => Math.abs((r.report?.settlements?.total || 0) - 11191500) < 10,
+              act: r => Math.round(r.report?.settlements?.total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '4/5 재확인 (연속3·직전 답 재사용 검출)', p: { target_date: '2026-04-05' }, exp: '10,563,900원',
+              check: r => Math.abs((r.report?.settlements?.total || 0) - 10563900) < 10,
+              act: r => Math.round(r.report?.settlements?.total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '이번달 정산 (총결제 공식 검산)', p: {}, exp: '상품+택배+이월=총결제 일치',
+              check: r => { const m = r.report?.month; return r.report?.type === 'semi_settlement' && m && Math.abs(m.payment_total - (m.product_total + m.cj_fee + m.cj_carryover)) < 1; },
+              act: r => r.summary },
+            { name: '하우스귤 7월 (계열 매칭·하귤 제외)', p: { item_keyword: '하우스귤', period: '2026-07' }, exp: '15,779,500원 · 하귤 미포함',
+              check: r => Math.abs((r.report?.product_total || 0) - 15779500) < 10 && (r.report?.items || []).every(i => !i.name.includes('하귤')),
+              act: r => Math.round(r.report?.product_total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '없는 품목 (바나나) 정직 안내', p: { item_keyword: '바나나' }, exp: '찾을 수 없음 + 등록 품목 목록',
+              check: r => r.report?.no_match === true && Array.isArray(r.report?.available_items), act: r => r.summary },
+        ];
+        for (const c of sc) {
+            try { const r = await callSemi(c.p); add('세미', c.name, c.check(r), c.exp, c.act(r)); }
+            catch (e) { add('세미', c.name, false, c.exp, '오류: ' + e.message); }
+        }
+
+        // ===== 글샘 (Sonnet 실생성 — 규격 검사) =====
+        await step('글샘 카피 점검 중... (2문항 — Sonnet 생성, 1~2분 소요)');
+        const gAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'geulsaem' LIMIT 1`)).rows[0];
+        const gRunner = loadAgentRunner('글샘');
+        const gc = [
+            { name: '마감 LMS (정보 완비)', wantMissing: false,
+              q: '카라향 5kg 마감 임박 LMS 만들어줘 — 가격 39,900원, 이번주 일요일 마감, 200박스 한정, 링크 https://smartstore.naver.com/akkome' },
+            { name: '마감 문자 (정보 부족 → 자리표시)', wantMissing: true, q: '레몬 마감 문자 하나 뽑아줘' },
+        ];
+        for (const c of gc) {
+            try {
+                const r = await gRunner.result({ agent: gAgent, pool, params: { order_content: c.q }, helpers });
+                const rep = r.report;
+                const text = (rep.versions || []).map(v => v.text).join('\n\n');
+                const checks = [];
+                if (rep.channel !== '톡톡') {
+                    checks.push(['(광고) 첫줄', (rep.versions || []).every(v => String(v.text).trim().startsWith('(광고)제주아꼼이네입니다^^'))]);
+                    checks.push(['이모지 0개', !CAP_EMOJI_RE.test(text)]);
+                    checks.push(['★ 박스 강조', text.includes('★')]);
+                    checks.push(['VIP 블록', text.includes('VIP 전용 혜택 안내')]);
+                    checks.push(['수신거부 안내', /수신/.test(text)]);
+                }
+                const wd = capWeekdayErrors(text);
+                checks.push(['요일 정확', wd.length === 0]);
+                checks.push([c.wantMissing ? '자리표시+채울목록' : '완비 정보 반영',
+                    c.wantMissing ? ((rep.missing_fields || []).length > 0 && text.includes('[')) : text.includes('39,900')]);
+                const failed = checks.filter(x => !x[1]).map(x => x[0]);
+                add('글샘', c.name, failed.length === 0, '규격 전체 통과',
+                    failed.length ? '위반: ' + failed.join(', ') + (wd.length ? ' — ' + wd.join('; ') : '') : '통과 (' + rep.channel + ')', c.q);
+                artifacts.push({ agent: '글샘', title: `${c.name} — ${rep.channel}${rep.title ? ' · 제목안 "' + rep.title + '"' : ''}`,
+                    text: (rep.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n────────────\n\n') });
+            } catch (e) { add('글샘', c.name, false, '규격 전체 통과', '오류: ' + e.message, c.q); }
+        }
+
+        // ===== 미소 (Sonnet 실생성 — 규격 검사) =====
+        await step('미소 프롬프트 점검 중... (2문항)');
+        const mAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'miso' LIMIT 1`)).rows[0];
+        const mRunner = loadAgentRunner('미소');
+        const mc = [
+            { name: '이미지 프롬프트', media: '이미지', q: '카라향 선물세트 인스타 이미지 프롬프트 만들어줘 — 돌담 배경' },
+            { name: '릴스 영상 프롬프트', media: '영상', q: '하우스감귤 릴스 영상 프롬프트 만들어줘' },
+        ];
+        for (const c of mc) {
+            try {
+                const r = await mRunner.result({ agent: mAgent, pool, params: { order_content: c.q }, helpers });
+                const outs = r.report?.outputs || [];
+                const o = outs[0] || {};
+                const checks = [
+                    ['media=' + c.media, o.media === c.media],
+                    ['영문 프롬프트 충분', String(o.prompt_en || '').length > 80],
+                    ['브랜드 컬러 #F5C800', /F5C800/i.test(o.prompt_en || '')],
+                    ['한글 해석', String(o.prompt_ko || '').length > 10],
+                    ['비율 유효', /^(1:1|9:16|16:9|4:5)$/.test(String(o.ratio || '').trim())],
+                    ['금지어 없음', !/AI generated|cartoon|cheap|discount/i.test(o.prompt_en || '')],
+                ];
+                const failed = checks.filter(x => !x[1]).map(x => x[0]);
+                add('미소', c.name, failed.length === 0, '규격 전체 통과', failed.length ? '위반: ' + failed.join(', ') : '통과 (' + (o.ratio || '') + ')', c.q);
+                artifacts.push({ agent: '미소', title: `${c.name} — ${o.media || ''} ${o.ratio || ''} · ${o.usage || ''}`,
+                    text: outs.map(x => `[${x.label} · ${x.media} ${x.ratio}]\n${x.prompt_en}\n\n🇰🇷 ${x.prompt_ko}`).join('\n\n────────────\n\n') });
+            } catch (e) { add('미소', c.name, false, '규격 전체 통과', '오류: ' + e.message, c.q); }
+        }
+    } catch (fatal) {
+        console.error('역량 점검 치명 오류:', fatal.message);
+    }
+
+    // ===== 집계 → 보고서 등록 (자동 수정 없음) =====
+    const sections = Object.entries(results).map(([agent, rs]) => ({
+        agent, results: rs, pass: rs.filter(r => r.pass).length, total: rs.length,
+    }));
+    const passTotal = sections.reduce((s, x) => s + x.pass, 0);
+    const total = sections.reduce((s, x) => s + x.total, 0);
+    const fails = sections.flatMap(s => s.results.filter(r => !r.pass).map(r => ({ agent: s.agent, ...r })));
+    const suggestions = fails.length
+        ? fails.map(f => `[${f.agent}] "${f.name}" 실패 — 기대: ${f.expected} / 실제: ${f.actual} → 원인 검토 후 별도 지시로 수정`)
+        : ['전 항목 통과 — 개선 제안 없음'];
+    suggestions.push('※ 자동 수정 금지 원칙 — 이 보고서는 점검 결과만 기록하며 수정은 대표 검토 후 별도 지시로 진행');
+    suggestions.push('※ 기대 금액값(4/14·4/5·하우스귤 7월)은 2026-07-17 DB 스냅샷 기준 — 정산 데이터 수정 시 기대값 갱신 필요');
+    const durS = Math.round((Date.now() - t0) / 1000);
+    const summary = `🧪 역량 점검: ${passTotal}/${total} 통과 (${sections.map(s => `${s.agent} ${s.pass}/${s.total}`).join(' · ')})`;
+    await agentRunAppendStep(run.id, agentStep('report', '마루', `역량 점검 완료 — ${passTotal}/${total} 통과`));
+    await agentRunAppendStep(run.id, agentStep('done', '마루', '역량 점검 보고서 등록'));
+    await pool.query(`UPDATE agent_runs SET status='done', result=$2, finished_at=NOW() WHERE id=$1`,
+        [run.id, JSON.stringify({
+            summary,
+            lines: [
+                `${sections.map(s => `${s.agent} ${s.pass}/${s.total}`).join(' · ')} · 소요 ${durS}초`,
+                fails.length ? `실패 ${fails.length}건: ${fails.slice(0, 3).map(f => `[${f.agent}] ${f.name}`).join(' / ')}${fails.length > 3 ? ' 외' : ''}` : '전 항목 통과 ✅',
+                '자동 수정 없음 — 상세·생성물 원문은 보고서에서',
+            ],
+            report: { type: 'capability_test', ran_at: new Date().toISOString(), duration_s: durS,
+                totals: { pass: passTotal, total, by_agent: sections.map(s => ({ agent: s.agent, pass: s.pass, total: s.total })) },
+                sections, artifacts, suggestions,
+                note: '자동 수정 금지 — 보고서만 등록 · 에이전트 수정 후 배포 전 이 점검 통과 필수' },
+        })]);
+    await pool.query(`UPDATE agents SET status='idle', last_run_at=NOW() WHERE id = $1`, [run.agent_id]).catch(() => {});
+    await writeAudit({ action: 'capability_test', targetType: 'agent_run', targetId: run.id,
+        changes: { after: { pass: passTotal, total, fails: fails.length } }, source: 'agent_office', actor });
+}
+
 // ------------------------------------------------------------
 // 7차: 마루 직접 처리 — 일정 (운영_지시규칙.md 원칙 적용)
 // 조회=즉시 실행·즉답 / 등록=정리→확인 1회→실행 / 삭제=불가 안내
@@ -6330,32 +6551,9 @@ async function processOrderWithMaru(order, actor) {
         await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
         if (await maruTryScheduleConfirm(order, actor)) return;
-        if (!process.env.ANTHROPIC_API_KEY) {
-            throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다 (Render 환경변수 확인 필요)');
-        }
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const systemPrompt = await maruBuildSystemPrompt();
-        const callMaru = async (extraNote) => {
-            const msg = await anthropic.messages.create({
-                model: MARU_MODEL,
-                max_tokens: 800,
-                system: systemPrompt + (extraNote || ''),
-                tools: [MARU_ROUTE_TOOL],
-                tool_choice: { type: 'tool', name: 'route_order' },
-                messages: [{ role: 'user', content: `대표 지시: ${order.content}` }],
-            });
-            const tu = msg.content.find(b => b.type === 'tool_use');
-            if (!tu) throw new Error('마루 응답에서 배정 결과(tool_use)를 찾지 못했습니다');
-            return tu.input;
-        };
-        let rawDecision = await callMaru();
-        let polluted = maruDecisionPolluted(rawDecision);
-        if (polluted) {
-            console.warn(`마루 응답 오염 감지 (지시 #${order.id}) — 1회 재시도`);
-            rawDecision = await callMaru('\n\n※ 경고: 직전 응답의 필드 값에 XML 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 없는 문자열 필드는 반드시 빈 문자열("")로, 배열 필드는 빈 배열로 둔다. 태그 문자(<, >)는 어떤 필드에도 절대 넣지 않는다.');
-            polluted = maruDecisionPolluted(rawDecision);
-        }
-        const d = maruCleanDecision(rawDecision); // 잔여 오염은 서버측 정화 (토큰형 필드는 무효화)
+        // 판단 호출 (오염 감지·재시도·정화 포함) — 역량 테스트와 공용 로직
+        const { d, polluted } = await maruDecide(order.content);
+        if (polluted) console.warn(`마루 응답 오염 잔존 (지시 #${order.id}) — 토큰형 필드 무효화됨`);
         await writeAudit({
             action: 'maru_route', targetType: 'pending_order', targetId: order.id,
             changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted } },
@@ -6550,6 +6748,33 @@ app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) 
             `SELECT id, content, status, result, run_id, created_at, processed_at FROM pending_orders
              WHERE is_deleted = false ORDER BY created_at DESC LIMIT ${limit}`);
         res.json({ orders: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 10차: 역량 점검 실행 (명령 한 번 — 결과는 보고서함에 '역량 점검 보고서'로 등록)
+app.post('/api/agent-office/capability-test', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!process.env.ANTHROPIC_API_KEY) throw { status: 500, message: 'ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다' };
+        if (capTestRunning) throw { status: 409, message: '역량 점검이 이미 진행 중입니다 — 완료 후 다시 실행해주세요' };
+        const maru = (await pool.query(`SELECT * FROM agents WHERE role = 'chief' AND is_deleted = false LIMIT 1`)).rows[0];
+        if (!maru) throw { status: 500, message: '마루 에이전트를 찾을 수 없습니다' };
+        const firstStep = agentStep('order', '마루', '🧪 역량 점검 시작 — 전 요원 자동 테스트 (마루·세미·글샘·미소)');
+        const run = (await pool.query(
+            `INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
+            [maru.id, JSON.stringify([firstStep])])).rows[0];
+        await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [maru.id]);
+        capTestRunning = true;
+        executeCapabilityTest(run, adminActor(req))
+            .catch(err => {
+                console.error('역량 점검 실행 오류:', err.message);
+                return pool.query(`UPDATE agent_runs SET status='error', result=$2, finished_at=NOW() WHERE id=$1`,
+                    [run.id, JSON.stringify({ summary: `오류: ${err.message}` })]);
+            })
+            .finally(() => {
+                capTestRunning = false;
+                pool.query(`UPDATE agents SET status='idle' WHERE id = $1 AND status='running'`, [maru.id]).catch(() => {});
+            });
+        res.json({ message: '역량 점검을 시작했습니다 (약 2~3분 소요 — 완료 시 보고서함에 등록)', run });
     } catch (err) { handleAdminErr(res, err); }
 });
 

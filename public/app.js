@@ -10336,7 +10336,8 @@ window.openAoDetail = async function(agentId) {
                 <div style="font-weight:600;font-size:13px;margin-bottom:6px;">💬 하단 입력바로 지시하면 마루가 즉시 분석·배정합니다
                     <span class="ao-soon-badge" style="background:#2F9E44;color:#fff;">🤖 AI 연결됨</span></div>
                 <div id="ao-maru-orders" style="font-size:12px;color:#888;">대기 지시 확인 중...</div>
-            </div>`;
+            </div>
+            <button class="btn-primary ao-run-btn" style="margin-top:8px;" onclick="aoRunCapabilityTest()">🧪 역량 점검 (전 요원 자동 테스트)</button>`;
     } else {
         actionHtml = `<div class="ao-placeholder-box ao-soon-note">🔒 팀장 실행은 다음 업데이트에서 연결 예정입니다</div>`;
     }
@@ -10547,6 +10548,23 @@ window.aoRestoreRun = async function(runId) {
     } catch (e) { alert(e.message); }
 };
 
+// 10차: 역량 점검 실행 (자동 수정 없음 — 보고서만 등록)
+window.aoRunCapabilityTest = async function() {
+    if (!confirm('전 요원 역량 점검을 시작할까요? (약 2~3분 소요, AI 호출 비용 발생)')) return;
+    try {
+        const res = await api('/api/agent-office/capability-test', 'POST');
+        showToast('🧪 ' + res.message);
+        const overlay = document.getElementById('ao-detail-overlay');
+        if (overlay) overlay.remove();
+        const maru = aoAgents.find(a => a.role === 'chief');
+        if (maru && res.run) {
+            aoActiveRun = { runId: res.run.id, agentId: maru.id, stepCount: 0 };
+            aoSetAgentStatus(maru.id, 'running');
+            aoStartRunPolling();
+        }
+    } catch (err) { alert(err.message); }
+};
+
 // 보고함 클릭 → 보고서함 탭으로 이동
 window.aoGoReports = function() {
     const tab = document.querySelector('.ao-view-tab[data-view="reports"]');
@@ -10702,6 +10720,45 @@ window.aoOpenReport = async function(runId) {
             <pre class="ao-copy-body" id="ao-copy-${run.id}-${i}">${aoEsc(v.text)}</pre>`).join('')}
         ${rep.send_tip ? `<div class="ao-result-box" style="margin-top:10px;">💡 ${aoEsc(rep.send_tip)}</div>` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}${rep.char_counts ? ' · ' + aoEsc(rep.char_counts) : ''} · 모델 ${aoEsc(rep.model || '')}</p>`;
+    } else if (rep.type === 'capability_test') {
+        // 10차: 역량 점검 보고서
+        const t = rep.totals || {};
+        const fails = (rep.sections || []).flatMap(s => (s.results || []).filter(r => !r.pass).map(r => ({ agent: s.agent, ...r })));
+        body = `
+        <h4 class="ao-sec-title">🧪 요원별 통과율 <small style="color:#888;">(소요 ${rep.duration_s || '-'}초)</small></h4>
+        <div class="ao-report-table-wrap"><table class="ao-report-table">
+            <thead><tr><th>요원</th><th>통과</th><th>통과율</th></tr></thead>
+            <tbody>
+                ${(t.by_agent || []).map(a => {
+                    const pct = a.total ? Math.round(a.pass / a.total * 100) : 0;
+                    return `<tr><td><span class="ao-ai-badge">🤖AI</span> ${aoEsc(a.agent)}</td><td>${a.pass}/${a.total}</td>
+                        <td><span class="${pct === 100 ? 'ao-up' : 'ao-down'}">${pct}%</span></td></tr>`;
+                }).join('')}
+                <tr class="ao-partner-sum"><td><strong>전체</strong></td><td><strong>${t.pass}/${t.total}</strong></td>
+                    <td><strong>${t.total ? Math.round(t.pass / t.total * 100) : 0}%</strong></td></tr>
+            </tbody>
+        </table></div>
+        ${fails.length ? `
+        <h4 class="ao-sec-title">❌ 실패 상세 (${fails.length}건)</h4>
+        <div class="ao-report-table-wrap"><table class="ao-report-table">
+            <thead><tr><th>요원</th><th>항목</th><th>기대</th><th>실제</th></tr></thead>
+            <tbody>${fails.map(f => `<tr><td>${aoEsc(f.agent)}</td><td>${aoEsc(f.name)}${f.note ? '<br><small style="color:#999;">' + aoEsc(f.note) + '</small>' : ''}</td>
+                <td>${aoEsc(f.expected)}</td><td class="ao-down">${aoEsc(f.actual)}</td></tr>`).join('')}</tbody>
+        </table></div>` : '<div class="ao-result-box">✅ 전 항목 통과</div>'}
+        <h4 class="ao-sec-title">📋 전체 결과</h4>
+        ${(rep.sections || []).map(s => `
+            <div class="ao-copy-head"><strong>🤖 ${aoEsc(s.agent)} (${s.pass}/${s.total})</strong></div>
+            <div class="ao-fb-history" style="max-height:200px;">${(s.results || []).map(r =>
+                `<div class="ao-fb-hist-item">${r.pass ? '✅' : '❌'} ${aoEsc(r.name)} — ${aoEsc(r.actual)}</div>`).join('')}</div>`).join('')}
+        ${(rep.artifacts || []).length ? `
+        <h4 class="ao-sec-title">📝 생성물 원문 (글샘·미소)</h4>
+        ${rep.artifacts.map((a, i) => `
+            <div class="ao-copy-head"><strong>${aoEsc(a.agent)} · ${aoEsc(a.title)}</strong>
+                <button class="ao-fb-btn" onclick="aoCopyText('ao-cap-${run.id}-${i}')">📋 복사</button></div>
+            <pre class="ao-copy-body" id="ao-cap-${run.id}-${i}">${aoEsc(a.text)}</pre>`).join('')}` : ''}
+        <h4 class="ao-sec-title">💡 개선 제안</h4>
+        <div class="ao-result-box">${(rep.suggestions || []).map(s => '<div>· ' + aoEsc(s) + '</div>').join('')}</div>
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
     } else if (rep.type === 'semi_day') {
         // 8차 보강: 특정 일자 통합 보고 — 일별 정산(캘린더 기준) + 정산현황 기록
         const won = n => Math.round(n || 0).toLocaleString() + '원';
