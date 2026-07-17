@@ -5602,8 +5602,10 @@ app.get('/api/agent-office/agents/:id', authMiddleware, adminOnly, async (req, r
             `SELECT id, status, steps, result, started_at, finished_at FROM agent_runs
              WHERE agent_id = $1 AND is_deleted = false ORDER BY started_at DESC LIMIT 5`, [agent.id])).rows;
         const feedback = (await pool.query(
-            `SELECT id, run_id, feedback_type, comment, corrected_output, created_at FROM agent_feedback
-             WHERE agent_id = $1 AND is_deleted = false ORDER BY created_at DESC LIMIT 20`, [agent.id])).rows;
+            `SELECT f.id, f.run_id, f.feedback_type, f.comment, f.corrected_output, f.created_at,
+                    r.result->>'summary' AS run_summary
+             FROM agent_feedback f LEFT JOIN agent_runs r ON f.run_id = r.id
+             WHERE f.agent_id = $1 AND f.is_deleted = false ORDER BY f.created_at DESC LIMIT 20`, [agent.id])).rows;
         res.json({ agent, tools, lessons, runs, feedback });
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -5734,8 +5736,16 @@ app.get('/api/agent-office/lessons', authMiddleware, adminOnly, async (req, res)
         if (weekOnly) cond.push(`l.status = 'active'`, `l.created_at >= date_trunc('week', NOW())`);
         const r = await pool.query(
             `SELECT l.id, l.lesson, l.category, l.status, l.created_at, l.approved_at,
-                    a.id AS agent_id, a.name AS agent_name, a.team AS agent_team
-             FROM agent_lessons l JOIN agents a ON l.agent_id = a.id
+                    a.id AS agent_id, a.name AS agent_name, a.team AS agent_team,
+                    sf.feedback_type AS src_type, sf.comment AS src_comment,
+                    sf.corrected_output AS src_corrected, sf.run_id AS src_run_id
+             FROM agent_lessons l
+             JOIN agents a ON l.agent_id = a.id
+             LEFT JOIN LATERAL (
+                 SELECT f.feedback_type, f.comment, f.corrected_output, f.run_id
+                 FROM agent_feedback f
+                 WHERE l.source_feedback_ids @> jsonb_build_array(f.id) LIMIT 1
+             ) sf ON TRUE
              WHERE ${cond.join(' AND ')}
              ORDER BY a.sort_order, l.status DESC, l.created_at DESC LIMIT 200`);
         res.json({ lessons: r.rows });
@@ -5747,8 +5757,11 @@ app.get('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res
     try {
         const r = await pool.query(
             `SELECT f.id, f.feedback_type, f.comment, f.corrected_output, f.created_at, f.run_id,
-                    a.name AS agent_name, a.team AS agent_team
-             FROM agent_feedback f JOIN agents a ON f.agent_id = a.id
+                    a.name AS agent_name, a.team AS agent_team,
+                    r.result->>'summary' AS run_summary
+             FROM agent_feedback f
+             JOIN agents a ON f.agent_id = a.id
+             LEFT JOIN agent_runs r ON f.run_id = r.id
              WHERE f.is_deleted = false ORDER BY f.created_at DESC LIMIT 100`);
         res.json({ feedback: r.rows });
     } catch (err) { handleAdminErr(res, err); }
@@ -5761,7 +5774,7 @@ app.post('/api/agent-office/runs/:id/archive', authMiddleware, adminOnly, async 
             `UPDATE agent_runs SET is_deleted = true WHERE id = $1 AND is_deleted = false RETURNING id`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '보관할 보고서를 찾을 수 없습니다' };
         await writeAudit({ action: 'archive', targetType: 'agent_run', targetId: r.rows[0].id, source: 'agent_office', actor: adminActor(req) });
-        res.json({ message: '보관되었습니다 (복원 가능)' });
+        res.json({ message: '확인 처리했습니다 — "확인한 보고 포함"으로 다시 볼 수 있어요' });
     } catch (err) { handleAdminErr(res, err); }
 });
 app.post('/api/agent-office/runs/:id/unarchive', authMiddleware, adminOnly, async (req, res) => {
@@ -5770,7 +5783,7 @@ app.post('/api/agent-office/runs/:id/unarchive', authMiddleware, adminOnly, asyn
             `UPDATE agent_runs SET is_deleted = false WHERE id = $1 AND is_deleted = true RETURNING id`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '복원할 보고서를 찾을 수 없습니다' };
         await writeAudit({ action: 'unarchive', targetType: 'agent_run', targetId: r.rows[0].id, source: 'agent_office', actor: adminActor(req) });
-        res.json({ message: '복원되었습니다' });
+        res.json({ message: '다시 목록에 표시합니다' });
     } catch (err) { handleAdminErr(res, err); }
 });
 

@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="아꼼이네">
     <link rel="apple-touch-icon" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=104">
+    <link rel="stylesheet" href="styles.css?v=105">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -2040,12 +2040,12 @@
                             <input type="date" id="ao-report-from" class="form-input">
                             <input type="date" id="ao-report-to" class="form-input">
                             <button class="btn-primary" id="ao-report-search">조회</button>
-                            <label class="ao-arch-toggle"><input type="checkbox" id="ao-report-archived"> 보관 포함</label>
+                            <label class="ao-arch-toggle"><input type="checkbox" id="ao-report-archived"> 확인한 보고 포함</label>
                         </div>
                         <div class="ao-report-table-wrap">
                             <table class="ao-report-table">
                                 <thead>
-                                    <tr><th>일시</th><th>에이전트</th><th>팀</th><th>상태</th><th>결과</th><th>소요시간</th><th>상세</th><th>보관</th></tr>
+                                    <tr><th>일시</th><th>에이전트</th><th>팀</th><th>상태</th><th>결과</th><th>소요시간</th><th>상세</th><th>확인</th></tr>
                                 </thead>
                                 <tbody id="ao-report-tbody">
                                     <tr><td colspan="8" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>
@@ -2072,6 +2072,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=244"></script>
+    <script src="app.js?v=245"></script>
 </body>
 </html>

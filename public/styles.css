@@ -4746,3 +4746,8 @@ textarea.form-input {
 .ao-arch-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #666; cursor: pointer; white-space: nowrap; }
 .ao-run-archived { opacity: .45; background: #f1f3f5; }
 .ao-arch-badge { font-size: 10px; color: #868e96; background: #e9ecef; border-radius: 4px; padding: 1px 5px; }
+
+/* 9.5차: 피드백 대상·교훈 출처 표시 */
+.ao-fb-target { color: #555; font-size: 11px; }
+.ao-fb-view { padding: 1px 6px; min-height: 24px; font-size: 10px; vertical-align: 1px; }
+.ao-lesson-src { font-size: 11px; color: #888; margin-top: 3px; }

@@ -10392,12 +10392,7 @@ window.openAoDetail = async function(agentId) {
                 : (lessonProposals.length ? '' : '<div class="ao-empty-note">아직 학습 노트가 없습니다 — 피드백이 쌓이면 교훈이 제안됩니다</div>')}
             <h4 class="ao-sec-title">💬 받은 피드백 <small style="color:#aaa;">(${feedbackList.length}건)</small></h4>
             ${feedbackList.length
-                ? '<div class="ao-fb-history">' + feedbackList.map(f => {
-                    const icon = { good: '👍', edited: '✏️', bad: '👎', comment: '💬' }[f.feedback_type] || '💬';
-                    const dt = new Date(f.created_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-                    const text = f.comment || f.corrected_output || '(코멘트 없음)';
-                    return `<div class="ao-fb-hist-item">${icon} <span class="ao-log-time">${dt}</span> ${aoEsc(text)}</div>`;
-                }).join('') + '</div>'
+                ? '<div class="ao-fb-history">' + feedbackList.map(f => aoFbLine(f, false)).join('') + '</div>'
                 : '<div class="ao-empty-note">아직 받은 피드백이 없습니다</div>'}
             <h4 class="ao-sec-title">🛠 도구</h4>
             ${tools.length
@@ -10444,6 +10439,20 @@ function aoFinishDetailProgress(run) {
     }
 }
 
+// 피드백 한 줄 렌더 (9.5차: 종류 라벨 + 대상 보고서 + 보기 링크)
+const AO_FB_LABEL = { good: '👍 좋음', edited: '✏️ 수정', bad: '👎 다시', comment: '💬 코멘트' };
+function aoFbLine(f, withAgent) {
+    const dt = new Date(f.created_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const label = AO_FB_LABEL[f.feedback_type] || '💬';
+    const text = f.comment || f.corrected_output || '';
+    const target = f.run_id
+        ? ` <span class="ao-fb-target">— 대상: "${aoEsc(aoTrunc(f.run_summary || '실행 #' + f.run_id, 40))}"
+            <button class="ao-fb-btn ao-fb-view" onclick="aoOpenReport(${f.run_id})">📄 보고서 보기</button></span>`
+        : '';
+    return `<div class="ao-fb-hist-item"><strong>${label}</strong>${withAgent ? ' <strong>' + aoEsc(f.agent_name) + '</strong>' : ''}
+        <span class="ao-log-time">${dt}</span>${text ? ' ' + aoEsc(aoTrunc(text, 120)) : ''}${target}</div>`;
+}
+
 // ---- 9차: 성장 위젯 상세 모달 ----
 // 지식 노트 / 이번 주 학습 모달 (요원별 그룹, 제안은 바로 승인/폐기)
 window.aoOpenLessonsModal = async function(weekOnly) {
@@ -10456,16 +10465,23 @@ window.aoOpenLessonsModal = async function(weekOnly) {
     const fmtD = d => d ? new Date(d).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }) : '-';
     const bodyHtml = lessons.length ? Object.entries(groups).map(([name, ls]) => `
         <h4 class="ao-sec-title">🤖 ${aoEsc(name)} <small style="color:#aaa;">(${ls.length}건)</small></h4>
-        ${ls.map(l => l.status === '제안' ? `
+        ${ls.map(l => {
+            // 9.5차: 교훈 출처 (원본 피드백) 표시
+            const srcText = l.src_type ? (l.src_comment || l.src_corrected || '') : '';
+            const src = l.src_type
+                ? `<div class="ao-lesson-src">출처: ${AO_FB_LABEL[l.src_type] || '💬'}${srcText ? ' "' + aoEsc(aoTrunc(srcText, 60)) + '"' : ''}${l.src_run_id ? ` <button class="ao-fb-btn ao-fb-view" onclick="aoOpenReport(${l.src_run_id})">📄 보고서</button>` : ''}</div>`
+                : '';
+            return l.status === '제안' ? `
             <div class="ao-lesson-prop">
-                <span class="ao-lesson-prop-text">🌱 [${aoEsc(l.category || '일반')}] ${aoEsc(l.lesson)}</span>
+                <span class="ao-lesson-prop-text">🌱 [${aoEsc(l.category || '일반')}] ${aoEsc(l.lesson)}${src}</span>
                 <span class="ao-lesson-btns">
                     <button class="ao-fb-btn ao-lesson-ok" onclick="aoModalLessonAct(${l.id}, 'approve', ${weekOnly})">✔ 승인</button>
                     <button class="ao-fb-btn ao-lesson-no" onclick="aoModalLessonAct(${l.id}, 'discard', ${weekOnly})">✖ 폐기</button>
                 </span>
             </div>` : `
             <div class="ao-lesson-row">✅ [${aoEsc(l.category || '일반')}] ${aoEsc(l.lesson)}
-                <span class="ao-lesson-meta">활성 · 승인 ${fmtD(l.approved_at)}</span></div>`).join('')}`).join('')
+                <span class="ao-lesson-meta">활성 · 승인 ${fmtD(l.approved_at)}</span>${src}</div>`;
+        }).join('')}`).join('')
         : `<div class="ao-empty-note">${weekOnly ? '이번 주 활성화된 교훈이 없습니다' : '등록된 교훈이 없습니다 — 피드백이 쌓이면 제안이 올라옵니다'}</div>`;
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -10497,13 +10513,8 @@ window.aoOpenFeedbackModal = async function() {
     try { data = await api('/api/agent-office/feedback'); }
     catch (e) { return alert(e.message); }
     const fb = data.feedback || [];
-    const icons = { good: '👍', edited: '✏️', bad: '👎', comment: '💬' };
     const body = fb.length
-        ? '<div class="ao-fb-history" style="max-height:60vh;">' + fb.map(f => {
-            const dt = new Date(f.created_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-            return `<div class="ao-fb-hist-item">${icons[f.feedback_type] || '💬'} <strong>${aoEsc(f.agent_name)}</strong>
-                <span class="ao-log-time">${dt}</span> ${aoEsc(aoTrunc(f.comment || f.corrected_output || '(코멘트 없음)', 120))}</div>`;
-        }).join('') + '</div>'
+        ? '<div class="ao-fb-history" style="max-height:60vh;">' + fb.map(f => aoFbLine(f, true)).join('') + '</div>'
         : '<div class="ao-empty-note">아직 피드백이 없습니다</div>';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -10520,7 +10531,7 @@ window.aoOpenFeedbackModal = async function() {
 window.aoArchiveRun = async function(runId) {
     try {
         const res = await api('/api/agent-office/runs/' + runId + '/archive', 'POST');
-        showToast('📦 ' + res.message);
+        showToast('✔ ' + res.message);
         aoLoadReports();
         aoRefreshLog();
     } catch (e) { alert(e.message); }
@@ -10642,10 +10653,10 @@ async function aoLoadReports() {
             const hasReport = r.result && r.result.report;
             const archived = !!r.is_deleted;
             const archBtn = archived
-                ? '<button class="ao-fb-btn" onclick="aoRestoreRun(' + r.id + ')">↩️ 복원</button>'
-                : '<button class="ao-fb-btn" onclick="aoArchiveRun(' + r.id + ')">📦 보관</button>';
+                ? '<button class="ao-fb-btn" onclick="aoRestoreRun(' + r.id + ')">↩️ 다시 보기</button>'
+                : '<button class="ao-fb-btn" onclick="aoArchiveRun(' + r.id + ')">✔ 확인</button>';
             return '<tr class="' + (archived ? 'ao-run-archived' : '') + '">' +
-                '<td>' + dt + (archived ? ' <span class="ao-arch-badge">보관됨</span>' : '') + '</td>' +
+                '<td>' + dt + (archived ? ' <span class="ao-arch-badge">확인함</span>' : '') + '</td>' +
                 '<td><span class="ao-ai-badge">🤖AI</span> ' + r.agent_name + '</td>' +
                 '<td>' + r.agent_team + '</td>' +
                 '<td>' + stBadge + '</td>' +
