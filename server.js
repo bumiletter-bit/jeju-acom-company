@@ -907,6 +907,12 @@ async function initDB() {
             [key, JSON.stringify(value)]);
     }
 
+    // 2차: 세미 정산 DB 연결 완료 반영 (멱등 UPDATE — 도구 활성 + 설명 갱신)
+    await pool.query(`UPDATE agent_tools SET enabled = true, config = config || '{"connected":"2차"}'::jsonb
+        WHERE tool_name = '내부 정산·품목 DB' AND is_deleted = false AND enabled = false`);
+    await pool.query(`UPDATE agents SET description = '정산현황·품목별 금액·비용 조회, 전년 동기대비 품목 매출 증감 분석 (✅ 정산 DB 연결됨 — 2차)'
+        WHERE code = 'semi' AND is_deleted = false`);
+
     console.log('DB 테이블 초기화 완료');
 }
 
@@ -5501,8 +5507,9 @@ async function agentRunAppendStep(runId, step) {
         [runId, JSON.stringify([step])]);
 }
 
-// 테스트 실행 엔진 — 지시 전달 흐름(마루→팀장→팀원→보고)을 서버가 순서대로 기록
-async function executeAgentTestRun(run, agent, managerName) {
+// 실행 엔진 — 지시 전달 흐름(마루→팀장→팀원→보고)을 서버가 순서대로 기록
+// 2차부터 runner.result()는 async 가능 + ctx(pool/params/helpers)로 실제 DB 조회 지원 (AI 호출 없음)
+async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
     const runner = loadAgentRunner(agent.name);
     const wait = (ms) => new Promise(r => setTimeout(r, ms));
     try {
@@ -5517,7 +5524,9 @@ async function executeAgentTestRun(run, agent, managerName) {
             await agentRunAppendStep(run.id, agentStep('work', agent.name, label));
         }
         await wait(600);
-        const result = typeof runner.result === 'function' ? runner.result({ agent }) : { summary: '완료' };
+        const result = typeof runner.result === 'function'
+            ? await runner.result({ agent, pool, params: runParams, helpers: { matchItemToPricing, normDateSafe } })
+            : { summary: '완료' };
         await agentRunAppendStep(run.id, agentStep('report', agent.name, '완료 보고'));
         if (managerName && managerName !== agent.name) {
             await agentRunAppendStep(run.id, agentStep('review', managerName, '검수 후 상신'));
@@ -5603,7 +5612,8 @@ app.post('/api/agent-office/agents/:id/run', authMiddleware, adminOnly, async (r
             changes: { after: { agent: agent.name, team: agent.team, mode: 'test' } },
             source: 'agent_office', actor: adminActor(req),
         });
-        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null); // 비동기 진행 — 응답은 즉시
+        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null,
+            { workplace: String(req.body?.workplace || '전체') }); // 비동기 진행 — 응답은 즉시
         res.json({ message: `${agent.name} 실행을 시작했습니다`, run });
     } catch (err) { handleAdminErr(res, err); }
 });

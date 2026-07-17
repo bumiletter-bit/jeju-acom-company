@@ -9947,7 +9947,8 @@ function aoFlyDoc(fromEl, toEl, icon = '📋') {
 // ---- 실행 ----
 window.aoRunAgent = async function(agentId) {
     try {
-        const res = await api('/api/agent-office/agents/' + agentId + '/run', 'POST');
+        // 현재 사업장 필터를 함께 전달 (세미: 법인 정산 조회 / 오션라운지는 데이터 없음 안내)
+        const res = await api('/api/agent-office/agents/' + agentId + '/run', 'POST', { workplace: aoBiz });
         showToast(res.message);
         aoActiveRun = { runId: res.run.id, agentId, stepCount: 0 };
         aoSetAgentStatus(agentId, 'running');
@@ -10261,7 +10262,7 @@ async function aoLoadReports() {
         const data = await api('/api/agent-office/runs?' + params.toString());
         const tbody = document.getElementById('ao-report-tbody');
         if (!data.runs.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>';
             return;
         }
         tbody.innerHTML = data.runs.map(r => {
@@ -10270,6 +10271,7 @@ async function aoLoadReports() {
             const stBadge = r.status === 'done' ? '<span class="ao-st-badge ao-st-badge-done">완료</span>'
                 : r.status === 'error' ? '<span class="ao-st-badge ao-st-badge-err">오류</span>'
                 : '<span class="ao-st-badge ao-st-badge-run">실행중</span>';
+            const hasReport = r.result && r.result.report;
             return '<tr>' +
                 '<td>' + dt + '</td>' +
                 '<td><span class="ao-ai-badge">🤖AI</span> ' + r.agent_name + '</td>' +
@@ -10277,7 +10279,74 @@ async function aoLoadReports() {
                 '<td>' + stBadge + '</td>' +
                 '<td>' + ((r.result && r.result.summary) || '-') + '</td>' +
                 '<td>' + dur + '</td>' +
+                '<td>' + (hasReport ? '<button class="ao-fb-btn" onclick="aoOpenReport(' + r.id + ')">📄 보고서</button>' : '-') + '</td>' +
                 '</tr>';
         }).join('');
     } catch (err) { alert(err.message); }
+}
+
+// ---- 상세 보고서 모달 (2차: 세미 정산 보고서 — 표 형태) ----
+window.aoOpenReport = async function(runId) {
+    let run;
+    try {
+        run = (await api('/api/agent-office/runs/' + runId)).run;
+    } catch (err) { return alert(err.message); }
+    const rep = run.result && run.result.report;
+    if (!rep) return alert('상세 보고서가 없는 실행입니다');
+
+    const dt = new Date(run.started_at).toLocaleString('ko-KR');
+    let body = '';
+
+    if (rep.no_data) {
+        body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.note || '데이터 없음')}</div>`;
+    } else if (rep.type === 'semi_settlement') {
+        const pctCell = (pct, diff) => {
+            if (pct === null || pct === undefined) return '<span style="color:#999;">전년 데이터 없음</span>';
+            const cls = diff >= 0 ? 'ao-up' : 'ao-down';
+            return `<span class="${cls}">${diff >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% (${diff >= 0 ? '+' : ''}${Math.round(diff).toLocaleString()}원)</span>`;
+        };
+        body = `
+        <h4 class="ao-sec-title">📊 매출 요약 (${aoEsc(rep.workplace)})</h4>
+        <div class="ao-report-table-wrap"><table class="ao-report-table">
+            <thead><tr><th>구분</th><th>기간</th><th>매출 합계</th><th>정산 건수</th></tr></thead>
+            <tbody>
+                <tr><td>이번 주</td><td>${rep.week.from} ~ ${rep.week.to}</td><td><strong>${Math.round(rep.week.total).toLocaleString()}원</strong></td><td>${rep.week.count}건</td></tr>
+                <tr><td>이번 달</td><td>${rep.month.from} ~ ${rep.month.to}</td><td><strong>${Math.round(rep.month.total).toLocaleString()}원</strong></td><td>${rep.month.count}건</td></tr>
+                <tr><td>전년 동기</td><td>${rep.prev.from} ~ ${rep.prev.to}</td><td>${Math.round(rep.prev.total).toLocaleString()}원</td><td>${rep.prev.count}건</td></tr>
+                <tr><td>증감</td><td>—</td><td colspan="2">${pctCell(rep.total_pct, rep.total_diff)}</td></tr>
+            </tbody>
+        </table></div>
+        <h4 class="ao-sec-title">🧾 품목별 금액 (이번 달)</h4>
+        ${rep.month_items.length ? `
+        <div class="ao-report-table-wrap"><table class="ao-report-table">
+            <thead><tr><th>품목</th><th>수량</th><th>금액</th></tr></thead>
+            <tbody>${rep.month_items.map(i =>
+                `<tr><td>${aoEsc(i.name)}</td><td>${i.qty.toLocaleString()}</td><td>${Math.round(i.amount).toLocaleString()}원</td></tr>`).join('')}
+            </tbody>
+        </table></div>` : '<div class="ao-empty-note">이번 달 품목 데이터가 없습니다</div>'}
+        <h4 class="ao-sec-title">📈 전년 동기대비 품목별 증감</h4>
+        ${rep.yoy_items.length ? `
+        <div class="ao-report-table-wrap"><table class="ao-report-table">
+            <thead><tr><th>품목</th><th>올해</th><th>작년</th><th>증감</th></tr></thead>
+            <tbody>${rep.yoy_items.map(i =>
+                `<tr><td>${aoEsc(i.name)}</td><td>${Math.round(i.cur_amount).toLocaleString()}원</td><td>${Math.round(i.prev_amount).toLocaleString()}원</td><td>${pctCell(i.pct, i.diff)}</td></tr>`).join('')}
+            </tbody>
+        </table></div>` : '<div class="ao-empty-note">비교할 품목 데이터가 없습니다</div>'}
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+    } else {
+        body = `<div class="ao-result-box">${((run.result && run.result.lines) || []).map(l => '<div>· ' + aoEsc(l) + '</div>').join('')}</div>`;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal ao-detail-modal" style="max-width:680px;">
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            <h3 style="margin:0 0 4px;">📄 ${aoEsc(run.agent_name)} 보고서</h3>
+            <div class="ao-detail-meta">${aoEsc(run.agent_team)} · 실행 ${dt}</div>
+            <div class="ao-result-box" style="margin-top:8px;"><strong>${aoEsc((run.result && run.result.summary) || '')}</strong></div>
+            ${body}
+        </div>`;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 }

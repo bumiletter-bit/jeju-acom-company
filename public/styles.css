@@ -4668,3 +4668,11 @@ textarea.form-input {
     .ao-order-label { display: none; }
     .ao-order-bar { bottom: 4px; padding: 8px; }
 }
+
+/* 2차: 세미 정산 보고서 모달 */
+.ao-up { color: #e03131; font-weight: 700; }
+.ao-down { color: #1971c2; font-weight: 700; }
+.ao-rep-note { font-size: 11px; color: #999; margin-top: 10px; }
+.ao-detail-modal .ao-report-table { min-width: 0; }
+.ao-detail-modal .ao-report-table th { padding: 6px 8px; font-size: 12px; }
+.ao-detail-modal .ao-report-table td { padding: 6px 8px; font-size: 12px; }
