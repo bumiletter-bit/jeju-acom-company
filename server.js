@@ -5856,6 +5856,7 @@ ${JSON.stringify(routingTable, null, 2)}
 6. 재무 지시(세미 배정)에서는 조건을 함께 추출한다:
    - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
    - period: "이번주"→this_week, "이번달"→this_month, "6월"처럼 특정 월→YYYY-MM (오늘 날짜 기준 올해, 아직 오지 않은 월이면 작년). 기간 언급 없으면 빈 문자열.
+   - target_date는 지시에 적힌 날짜를 글자 그대로 옮긴다 ("4월 5일"→"YYYY-04-05"). 하루를 더하거나 빼는 계산·조정 절대 금지.
    - 조건이 없는 재무 지시는 둘 다 빈 문자열로 두면 전체 보고서가 나간다. 조건이 없다고 clarify하지 말 것.
 7. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.
 8. 모든 문자열 필드에는 순수한 값만 넣는다. XML/태그 문법(<parameter>, </ 등)과 <, > 문자를 절대 포함하지 않는다.
@@ -5986,6 +5987,26 @@ function maruCleanDecision(raw) {
         date_note: maruCleanText(i && i.date_note),
     }));
     return d;
+}
+
+// 지시 원문에 명시된 날짜를 서버가 직접 파싱 — 모델의 날짜 하루 어긋남 방지
+// 지원: '2026-04-05', '2026년 4월 5일', '4월 5일' (연도 없으면 올해, 미래면 작년)
+function parseExplicitDate(text, todayStr) {
+    const t = String(text || '');
+    let y, mo, d;
+    let m = t.match(/(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})\s*일?/);
+    if (m) {
+        y = Number(m[1]); mo = Number(m[2]); d = Number(m[3]);
+    } else {
+        m = t.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+        if (m) {
+            mo = Number(m[1]); d = Number(m[2]); y = Number(todayStr.slice(0, 4));
+            const cand = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            if (cand > todayStr) y -= 1; // 아직 오지 않은 날짜면 작년 (마루 규칙과 동일)
+        }
+    }
+    if (!y || !mo || !d || mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
 // 접수 지시 상태 갱신 헬퍼
@@ -6341,6 +6362,14 @@ async function processOrderWithMaru(order, actor) {
             period: String(d.period || '').trim(),
             target_date: String(d.target_date || '').trim(),
         };
+        // 하루 어긋남 방지: 지시 원문에 명시적 날짜가 있으면 서버 파싱값으로 덮어씀
+        if (d.assignee === '세미' && (conditions.target_date || /\d\s*월\s*\d{1,2}\s*일|\d{4}\s*[-./년]/.test(order.content))) {
+            const explicit = parseExplicitDate(order.content, kstTodayStr());
+            if (explicit && explicit !== conditions.target_date) {
+                console.log(`날짜 보정: 마루 '${conditions.target_date || '(없음)'}' → 원문 파싱 '${explicit}'`);
+                conditions.target_date = explicit;
+            }
+        }
         const condText = [conditions.item_keyword, conditions.target_date || conditions.period].filter(Boolean).join(' · ');
         const routeInfo = {
             type: 'route', team: d.team, assignee: d.assignee, summary: d.task_summary, reason: d.reason,
