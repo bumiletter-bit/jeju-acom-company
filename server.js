@@ -6474,7 +6474,10 @@ async function maruHandleSchedule(order, d, actor) {
         const from = /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_from) ? d.schedule_from : kstTodayStr();
         const to = /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_to) ? d.schedule_to : from;
         const rows = await svcListSchedules({ from, to });
-        const lines = rows.slice(0, 30).map(s => fmtScheduleLine(s.date, s.start_time, s.title, s.user_name));
+        // 4b ②안 (2026-07-18): 보고서엔 전체 포함 (안전 상한 200건), 초과분은 생략을 명시 (정직 원칙 — 몰래 자르기 금지)
+        const CAP = 200;
+        const lines = rows.slice(0, CAP).map(s => fmtScheduleLine(s.date, s.start_time, s.title, s.user_name));
+        if (rows.length > CAP) lines.push(`… 이하 ${rows.length - CAP}건 생략 — 전체는 일정 화면에서 확인해주세요`);
         const summaryText = rows.length
             ? `완료: ${from}~${to} 일정 ${rows.length}건`
             : `${from}~${to} 등록된 일정이 없습니다`;
