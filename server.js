@@ -644,6 +644,8 @@ async function initDB() {
             responded_at TIMESTAMP
         )
     `);
+    // 지시 #10: 텔레그램 알림 기준선 (상태 변화 감지용)
+    await pool.query(`ALTER TABLE cc_instructions ADD COLUMN IF NOT EXISTS notified_status VARCHAR(10)`);
 
     // schedules: soft-delete + 관리 API용 선택 컬럼(시간/내용). 기존 화면엔 영향 없음(전부 nullable)
     await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false`);
@@ -5603,6 +5605,7 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
         await pool.query(`UPDATE agent_runs SET status='done', result=$2, finished_at=NOW() WHERE id=$1`,
             [run.id, JSON.stringify(result)]);
         await pool.query(`UPDATE agents SET status='done', last_run_at=NOW() WHERE id=$1`, [agent.id]);
+        notifyTelegram(`✅ [${agent.name}] 완료: ${(result && result.summary) || '작업 완료'}`); // 지시 #10-b (비동기, 실패 무시)
         // 완료 배지는 프론트에서 3초 표시 — 이후 대기 상태로 복귀
         setTimeout(() => {
             pool.query(`UPDATE agents SET status='idle' WHERE id=$1 AND status='done'`, [agent.id]).catch(() => {});
@@ -6554,6 +6557,7 @@ async function executeCapabilityTest(run, actor) {
     await pool.query(`UPDATE agents SET status='idle', last_run_at=NOW() WHERE id = $1`, [run.agent_id]).catch(() => {});
     await writeAudit({ action: 'capability_test', targetType: 'agent_run', targetId: run.id,
         changes: { after: { pass: passTotal, total, fails: fails.length } }, source: 'agent_office', actor });
+    notifyTelegram(`🧪 역량 점검 결과: ${passTotal}/${total}`); // 지시 #10-c (비동기, 실패 무시)
 }
 
 // ------------------------------------------------------------
@@ -6630,6 +6634,7 @@ async function maruRecordRun(opLabel, summaryText, lines, reportObj) {
         [maru.id, JSON.stringify(steps),
          JSON.stringify({ summary: summaryText, lines, report: reportObj })])).rows[0];
     await pool.query(`UPDATE agents SET last_run_at = NOW() WHERE id = $1`, [maru.id]);
+    notifyTelegram(`✅ [마루] 완료: ${summaryText}`); // 지시 #10-b (비동기, 실패 무시)
     return run;
 }
 
@@ -7356,6 +7361,89 @@ app.get('/api/agent-office/config', authMiddleware, adminOnly, async (req, res) 
         res.json({ config: Object.fromEntries(r.rows.map(row => [row.key, row.value])) });
     } catch (err) { handleAdminErr(res, err); }
 });
+
+// ============================================================
+// 지시 #10: 텔레그램 완료 알림 — 대표 본인 수신 전용 부가 기능
+// ※ 이 알림은 대표 1인의 개인 수신용이다. 손님·직원 대상 발송 기능이 아니므로
+//   '외부 행동 승인제'의 적용 대상이 아니다 (예외가 아니라 대상 자체가 아님).
+// 안전 규칙 (코드 레벨 고정):
+//  - 수신처 = TELEGRAM_CHAT_ID(env) 또는 최초 1회 확보해 DB에 고정한 chat_id 하나뿐. 다른 수신처 경로 없음
+//  - 내용 = 제목·상태·1줄 요약만. 5자리 이상 금액은 보수적으로 가림(●●●) — 금액 상세 금지 규칙
+//  - 발송 실패는 본 기능에 영향 없음 (audit_log에만 기록). 토큰 전문은 로그·코드 어디에도 출력 금지
+//  - TELEGRAM_NOTIFY=off로 전체 비활성 (기본 on)
+// ============================================================
+let _tgChatId = null;
+async function telegramChatId() {
+    if (_tgChatId) return _tgChatId;
+    if (process.env.TELEGRAM_CHAT_ID) { _tgChatId = String(process.env.TELEGRAM_CHAT_ID); return _tgChatId; }
+    const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'telegram_chat_id'`);
+    if (cfg.rows.length) { _tgChatId = String(cfg.rows[0].value).replace(/"/g, ''); return _tgChatId; }
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return null;
+    // 최초 1회: 대표가 봇에게 보낸 메시지에서 chat_id 확보 → DB 고정 (이후 변경 경로 없음)
+    try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+        const j = await res.json();
+        const msg = (j.result || []).map(u => u.message || u.edited_message).filter(Boolean).pop();
+        const id = msg && msg.chat && msg.chat.id;
+        if (!id) return null;
+        const up = await pool.query(`UPDATE agent_office_config SET value = $1, updated_at = NOW() WHERE key = 'telegram_chat_id' RETURNING key`, [JSON.stringify(String(id))]);
+        if (up.rows.length === 0) {
+            await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('telegram_chat_id', $1)`, [JSON.stringify(String(id))]);
+        }
+        await writeAudit({
+            action: 'create', targetType: 'telegram_chat_id', targetId: null,
+            changes: { after: { chat_id_last4: String(id).slice(-4), source: 'getUpdates 1회 확보' } },
+            source: 'agent_office', actor: null,
+        });
+        _tgChatId = String(id);
+        return _tgChatId;
+    } catch (e) { return null; }
+}
+function tgMask(text) {
+    // 보수적 해석: 5자리 이상 숫자(금액)는 가림 — '금액 상세 금지' 규칙 (해제는 대표 지시로)
+    return String(text || '').replace(/\d{1,3}(,\d{3}){2,}|\d{5,}/g, '●●●').slice(0, 400);
+}
+async function notifyTelegram(text) {
+    try {
+        if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off') return;
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        if (!token) return;
+        const chatId = await telegramChatId();
+        if (!chatId) return;
+        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: tgMask(text) }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (e) {
+        // 알림은 부가 기능 — 실패는 무시하고 audit에만 기록 (토큰 미포함 메시지)
+        writeAudit({
+            action: 'telegram_fail', targetType: 'notification', targetId: null,
+            changes: { after: { error: String(e.message || e).slice(0, 120) } },
+            source: 'agent_office', actor: null,
+        }).catch(() => {});
+    }
+}
+// 지시함 상태 변화 감시 → 알림 (서버가 24시간 발송 주체 — 기록 주체와 무관하게 동작)
+let _tgInboxInit = false;
+setInterval(async () => {
+    try {
+        if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off' || !process.env.TELEGRAM_BOT_TOKEN) return;
+        if (!_tgInboxInit) {
+            // 최초 1회: 기존 건은 알림 없이 기준선만 잡음 (배포 직후 알림 폭주 방지)
+            await pool.query(`UPDATE cc_instructions SET notified_status = status WHERE notified_status IS NULL`);
+            _tgInboxInit = true;
+            return;
+        }
+        const r = await pool.query(
+            `SELECT id, status FROM cc_instructions WHERE status IS DISTINCT FROM notified_status ORDER BY id ASC LIMIT 5`);
+        for (const row of r.rows) {
+            await notifyTelegram(`📮 지시 #${row.id} 보고 도착 (${row.status})`);
+            await pool.query(`UPDATE cc_instructions SET notified_status = $2 WHERE id = $1`, [row.id, row.status]);
+        }
+    } catch (e) { /* 부가 기능 — 조용히 다음 주기 */ }
+}, 60000);
 
 // ============================================================
 // === MCP 서버 (/mcp/:secret) — 3단계 ===
