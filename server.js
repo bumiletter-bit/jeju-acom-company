@@ -6168,6 +6168,13 @@ function buildCombinedOrderText(originalContent, question, answer) {
         + `[마루의 확인 질문] ${question}\n`
         + `[대표의 답변] ${answer}`;
 }
+// 지시 #7: '이번주/금주' 원문 서버 확정 — 월·특정일 패턴이 없을 때 period를 this_week로 강제
+// (지시 기간 = 산출 기간 원칙: "이번주 보내줘"가 월간 보고서·파일로 빠지던 편차 수정)
+function maruWeekPeriodOverride(period, content) {
+    if (!/이번\s*주|금주/.test(String(content || ''))) return period;
+    if (parseExplicitMonth(content, '2100-01-01') || hasExplicitDay(content)) return period; // 월·특정일 명시가 우선
+    return 'this_week';
+}
 // 지시 #6-2: 기간+재무 항목이 모두 명시된 조회는 되묻기 금지 — clarify를 세미 배정으로 서버 강제 보정
 function maruForceFinanceRoute(d, content, todayStr) {
     if (!d || d.action !== 'clarify') return null;
@@ -6339,6 +6346,12 @@ async function executeCapabilityTest(run, actor) {
             const ct = buildCombinedOrderText('이번주 결제금액 보내줘', '어떤 항목을 말씀하시는 건가요?', '전체 매출 정산');
             add('마루', '문답 결합 텍스트 (지시#6)', ct.includes('이번주 결제금액 보내줘') && ct.includes('어떤 항목') && ct.includes('전체 매출 정산'),
                 '원 지시+질문+답변 모두 포함', ct.includes('이번주') ? '3요소 포함' : '누락', '결합 재라우팅');
+            // 지시 #7 박제: 지시 기간 = 산출 기간 ('이번주' 서버 확정, 월간 편차 재발 방지)
+            const w1 = maruWeekPeriodOverride('', '이번주 결제금액 보내줘');
+            const w2 = maruWeekPeriodOverride('2026-04', '4월 정산 엑셀로 뽑아줘');
+            const w3 = maruWeekPeriodOverride('', '4월달 매출현황');
+            add('마루', '이번주 기간 서버 확정 (지시#7)', w1 === 'this_week' && w2 === '2026-04' && w3 === '',
+                "이번주→this_week / 월 지시엔 무개입", `이번주=${w1} 4월기존=${w2} 4월무기간=${w3}`, '이번주 결제금액 보내줘');
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -7066,6 +7079,13 @@ async function processOrderWithMaru(order, actor) {
                     console.log(`기간 보정: 마루 '${conditions.period || '(없음)'}' → 원문 파싱 '${em}'`);
                     conditions.period = em;
                 }
+            }
+            // 지시 #7: '이번주/금주' 원문 확정 — 지시 기간 = 산출 기간 (문구·파일 기준 통일)
+            const wk = maruWeekPeriodOverride(conditions.period, effContent);
+            if (wk !== conditions.period) {
+                console.log(`기간 보정: 마루 '${conditions.period || '(없음)'}' → 'this_week' (원문 이번주)`);
+                conditions.period = wk;
+                if (conditions.target_date && !hasExplicitDay(effContent)) conditions.target_date = '';
             }
             // 존재하지 않는 날짜 가드 (예: 4월 31일) — 억지 조회·DB 오류 대신 정직 안내
             if (conditions.target_date && /^\d{4}-\d{2}-\d{2}$/.test(conditions.target_date) && !isValidDateStr(conditions.target_date)) {
