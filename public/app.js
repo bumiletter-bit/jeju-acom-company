@@ -411,12 +411,28 @@ async function renderScheduleCalendar() {
     // 필터 상태에 따라 일정 필터링 (vacation/attendance는 항상 표시)
     const activeTypes = window._scheduleTypeFilter || new Set(['event','product','duty','normal','vacation','attendance']);
     const filteredSchedules = schedules.filter(s => activeTypes.has(s.type));
+    // 3단계 일정 카테고리 아이콘·색상 (일반은 기존 담당자 색 유지)
+    window.SCHED_CAT_ICON = window.SCHED_CAT_ICON || { '휴가': '🏖️ ', '톡톡발송': '💬 ', '문자발송': '📩 ', '할인·이벤트': '🏷️ ' };
+    window.SCHED_CAT_COLOR = window.SCHED_CAT_COLOR || { '휴가': '#1098AD', '톡톡발송': '#2F9E44', '문자발송': '#E8590C', '할인·이벤트': '#D6336C' };
+    const SCHED_CAT_ICON = window.SCHED_CAT_ICON, SCHED_CAT_COLOR = window.SCHED_CAT_COLOR;
 
-    // 일별 일정
+    // 일별 일정 — 기간형 일정(endDate, 3단계 할인·이벤트)은 기간 내 매일 표시
     const dailySchedules = {};
     filteredSchedules.forEach(s => {
-        if (!dailySchedules[s.date]) dailySchedules[s.date] = [];
-        dailySchedules[s.date].push(s);
+        const dates = [];
+        if (s.endDate && s.endDate > s.date) {
+            let d = new Date(s.date + 'T00:00:00Z');
+            const end = new Date(s.endDate + 'T00:00:00Z');
+            let guard = 0;
+            while (d <= end && guard++ < 62) {
+                dates.push(d.toISOString().slice(0, 10));
+                d = new Date(d.getTime() + 86400000);
+            }
+        } else dates.push(s.date);
+        dates.forEach(ds => {
+            if (!dailySchedules[ds]) dailySchedules[ds] = [];
+            dailySchedules[ds].push(s);
+        });
     });
 
     // 정렬 우선순위: 행사 > 상품 > 당직 > 휴가 > 근태 > 일반
@@ -478,13 +494,16 @@ async function renderScheduleCalendar() {
                             s.type === 'product' ? '📦 ' :
                             s.type === 'vacation' ? '🏖️ ' :
                             s.type === 'attendance' ? '📌 ' : '';
+                        // 3단계: 카테고리 아이콘·색상 구분 (일반은 기존 표시 유지)
+                        const catIco = SCHED_CAT_ICON[s.category] || '';
+                        const bcol = SCHED_CAT_COLOR[s.category] || s.userColor;
                         const typeClass = ` type-${s.type}`;
                         if (s.type === 'normal') {
                             const checked = s.isCompleted ? 'checked' : '';
                             const completedClass = s.isCompleted ? ' schedule-completed' : '';
-                            scheduleHtml += `<div class="day-schedule-item${typeClass}${completedClass}" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}"><label class="schedule-check" onclick="event.stopPropagation();"><input type="checkbox" ${checked} onchange="toggleScheduleComplete(${s.id}, this)"><span class="schedule-checkmark"></span></label><span class="schedule-text">${s.title}</span></div>`;
+                            scheduleHtml += `<div class="day-schedule-item${typeClass}${completedClass}" style="border-left:3px solid ${bcol};" title="${s.userName}: ${s.title}"><label class="schedule-check" onclick="event.stopPropagation();"><input type="checkbox" ${checked} onchange="toggleScheduleComplete(${s.id}, this)"><span class="schedule-checkmark"></span></label><span class="schedule-text">${catIco}${s.title}</span></div>`;
                         } else {
-                            scheduleHtml += `<div class="day-schedule-item${typeClass}" style="border-left:3px solid ${s.userColor};" title="${s.userName}: ${s.title}">${typeIcon}${s.title}</div>`;
+                            scheduleHtml += `<div class="day-schedule-item${typeClass}" style="border-left:3px solid ${bcol};" title="${s.userName}: ${s.title}">${catIco || typeIcon}${s.title}</div>`;
                         }
                     });
                     scheduleHtml += '</div>';
@@ -10351,10 +10370,21 @@ async function aoRefreshLog() {
     try {
         // [전체 보기] 켜면 확인(✔) 완료 건까지 포함 — 숨김이지 삭제 아님 (soft-delete 표시 원칙)
         const showAll = !!document.getElementById('ao-log-showall')?.checked;
-        const [data, orderData] = await Promise.all([
+        const [data, orderData, remData] = await Promise.all([
             api('/api/agent-office/runs?limit=30' + (showAll ? '&include_archived=true' : '')),
             api('/api/agent-office/orders?limit=15' + (showAll ? '&include_hidden=true' : '')),
+            api('/api/agent-office/today-reminders').catch(() => null), // 구버전 서버 호환
         ]);
+        // 3단계: 발송·할인 일정 당일/전날 리마인드 배너 (표시만 — 실제 발송은 대표 수동)
+        const remBox = document.getElementById('ao-reminders');
+        if (remBox) {
+            const rems = (remData && remData.reminders) || [];
+            if (rems.length) {
+                remBox.innerHTML = rems.map(r =>
+                    `<div class="ao-reminder-item">📣 <strong>${aoEsc(r.when)} 예정</strong> ${aoEsc(r.line)}</div>`).join('');
+                remBox.style.display = '';
+            } else remBox.style.display = 'none';
+        }
         // 보고함 뱃지: 마지막으로 보고서함을 연 이후 도착한 신규 보고만 카운트 (9차)
         const seenAt = Number(localStorage.getItem('ao_inbox_seen') || 0);
         aoSetInboxBadge(data.runs.filter(r =>

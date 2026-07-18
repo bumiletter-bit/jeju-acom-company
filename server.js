@@ -155,6 +155,9 @@ async function initDB() {
         )
     `);
     await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT false`);
+    // v5.0 3단계: 일정 카테고리 (휴가/톡톡발송/문자발송/할인·이벤트/일반) + 기간형 일정 종료일
+    await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS category VARCHAR(20) DEFAULT '일반'`);
+    await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS end_date DATE`);
 
     // notifications 테이블
     await pool.query(`
@@ -1313,7 +1316,8 @@ app.get('/api/schedules', authMiddleware, async (req, res) => {
         res.json(result.rows.map(r => ({
             id: r.id, userId: r.user_id, date: r.date, title: r.title, type: r.type,
             userName: r.user_name, userColor: r.user_color, documentId: r.document_id || null,
-            isCompleted: r.is_completed || false
+            isCompleted: r.is_completed || false,
+            category: r.category || '일반', endDate: r.end_date || null
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -5321,26 +5325,29 @@ async function writeAudit({ action, targetType, targetId = null, changes = null,
 }
 
 // --- 일정 서비스 ---
+const SCHEDULE_CATEGORIES = ['휴가', '톡톡발송', '문자발송', '할인·이벤트', '일반'];
 async function svcListSchedules({ from, to }) {
     const cond = ['s.is_deleted = false'];
     const params = [];
-    if (from) { params.push(from); cond.push(`s.date >= $${params.length}`); }
+    // 기간형(end_date) 일정은 조회 범위와 겹치면 포함 (3단계)
+    if (from) { params.push(from); cond.push(`COALESCE(s.end_date, s.date) >= $${params.length}`); }
     if (to) { params.push(to); cond.push(`s.date <= $${params.length}`); }
     const r = await pool.query(
-        `SELECT s.id, s.date, s.title, s.type, s.start_time, s.content, s.is_completed,
+        `SELECT s.id, s.date, s.end_date, s.category, s.title, s.type, s.start_time, s.content, s.is_completed,
                 s.user_id, u.name AS user_name
          FROM schedules s LEFT JOIN users u ON s.user_id = u.id
          WHERE ${cond.join(' AND ')}
          ORDER BY s.date ASC, s.id ASC`, params);
     return r.rows;
 }
-async function svcCreateSchedule({ date, title, type = 'normal', start_time = null, content = null, user_id }, actor) {
+async function svcCreateSchedule({ date, title, type = 'normal', start_time = null, content = null, user_id, category = '일반', end_date = null }, actor) {
     if (!date || !title) throw { status: 400, message: '날짜(date)와 제목(title)은 필수입니다' };
+    const cat = SCHEDULE_CATEGORIES.includes(category) ? category : '일반';
     const uid = user_id ?? actor?.id ?? null;
     const r = await pool.query(
-        `INSERT INTO schedules (user_id, date, title, type, start_time, content)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [uid, date, title, type, start_time, content]);
+        `INSERT INTO schedules (user_id, date, title, type, start_time, content, category, end_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [uid, date, title, type, start_time, content, cat, end_date || null]);
     const row = r.rows[0];
     await writeAudit({ action: 'create', targetType: 'schedule', targetId: row.id, changes: { after: row }, source: actor?.source, actor });
     return row;
@@ -5879,12 +5886,14 @@ const MARU_ROUTE_TOOL = {
                     additionalProperties: false,
                     properties: {
                         date: { type: 'string', description: 'YYYY-MM-DD — 애매한 표현은 오늘 기준 가장 가까운 미래 해당 날짜로 확정 제안' },
+                        end_date: { type: 'string', description: "기간형 일정(예: '25~27일 할인')의 종료일 YYYY-MM-DD. 하루짜리면 빈 문자열" },
                         time: { type: 'string', description: 'HH:MM, 시간 언급 없으면 빈 문자열' },
                         title: { type: 'string', description: '일정 내용' },
-                        assignee_name: { type: 'string', description: '담당자 이름 (실제 직원 명단 중에서만). 미지정이면 빈 문자열(=대표)' },
+                        category: { type: 'string', enum: ['휴가', '톡톡발송', '문자발송', '할인·이벤트', '일반'], description: '일정 카테고리 — 휴가/휴무=휴가, 톡톡 발송=톡톡발송, 문자·LMS 발송=문자발송, 할인·프로모션·이벤트=할인·이벤트, 그 외=일반' },
+                        assignee_name: { type: 'string', description: '담당자 이름 (실제 직원 명단 중에서만). 미지정이면 빈 문자열(=대표). 휴가 카테고리는 반드시 명단의 담당자 필요' },
                         date_note: { type: 'string', description: "애매한 날짜 표현이었으면 원래 표현 그대로 (예: '금요일쯤'). 명확했으면 빈 문자열" },
                     },
-                    required: ['date', 'time', 'title', 'assignee_name', 'date_note'],
+                    required: ['date', 'end_date', 'time', 'title', 'category', 'assignee_name', 'date_note'],
                 },
             },
         },
@@ -5929,6 +5938,13 @@ ${JSON.stringify(routingTable, null, 2)}
      날짜는 반드시 YYYY-MM-DD로 확정 제안 — 애매한 표현("금요일쯤", "다음주 초")은 오늘 기준 가장 가까운 미래의 해당 날짜로 제안하고 date_note에 원래 표현을 기록한다.
      담당자는 실제 직원 명단에 있는 이름일 때만 assignee_name에 넣고, 미지정이면 빈 문자열(=대표)로 둔다.
      여러 건이면 schedule_items에 전부 담는다 (한 번에 확인받기 위해).
+   - 카테고리 판별 (각 일정마다 category 지정):
+     · 휴가/휴무 → '휴가'. 휴가는 담당자가 필수 — 지시에서 사람을 찾아 실제 직원 명단과 매칭해 assignee_name에 넣는다.
+       명단과 매칭되지 않으면 등록하지 말고 clarify로 되묻는다 (질문에 직원 이름 선택지 포함).
+     · 톡톡 발송 예정 → '톡톡발송' / 문자·LMS 발송 예정 → '문자발송'
+     · 할인·프로모션·이벤트 → '할인·이벤트'. 기간형("25~27일 할인")이면 date=시작일, end_date=종료일.
+     · 그 외 → '일반'
+     발송 일정 등록은 예정 알림일 뿐이다 — 실제 발송은 대표가 수동으로 한다.
    - 삭제·수정 요구 → schedule_op='불가' (아직 말로 처리 불가 — 프로그램에서 직접).
    실제 직원 명단: ${staffNames.join(', ') || '(명단 없음)'}
 4-2. 정산현황 숫자 입력도 마루 직접: action='settlement_input'.
@@ -6103,8 +6119,10 @@ function maruCleanDecision(raw) {
     d.schedule_to = maruCleanToken(d.schedule_to);
     d.schedule_items = (Array.isArray(d.schedule_items) ? d.schedule_items : []).map(i => ({
         date: maruCleanToken(i && i.date),
+        end_date: maruCleanToken(i && i.end_date),
         time: maruCleanToken(i && i.time),
         title: maruCleanText(i && i.title),
+        category: maruCleanToken(i && i.category),
         assignee_name: maruCleanToken(i && i.assignee_name),
         date_note: maruCleanText(i && i.date_note),
     }));
@@ -6198,7 +6216,7 @@ async function executeCapabilityTest(run, actor) {
     const step = (text) => agentRunAppendStep(run.id, agentStep('work', '마루', text));
     try {
         // ===== 마루 라우팅 (Haiku 실호출) =====
-        await step('마루 라우팅 점검 중... (10문항)');
+        await step('마루 라우팅 점검 중... (13문항)');
         const rc = [
             { name: '문자→글샘', q: '카라향 마감 임박 문자 만들어줘', exp: 'route/글샘', check: d => d.action === 'route' && d.assignee === '글샘' },
             { name: '이미지→미소', q: '감귤 인스타 이미지 시안 프롬프트 뽑아줘', exp: 'route/미소', check: d => d.action === 'route' && d.assignee === '미소' },
@@ -6210,6 +6228,12 @@ async function executeCapabilityTest(run, actor) {
             { name: '정산 입력 파싱 (283만→2,830,000)', q: '오늘 정산현황 입력할게. 대성 283만', exp: 'settlement_input/daesong=2830000', check: d => d.action === 'settlement_input' && (d.settlement_entries || []).some(e => e.field === 'daesong' && Number(e.amount) === 2830000) },
             { name: '일정 삭제→불가 안내', q: '어제 일정 지워줘', exp: 'schedule/불가', check: d => d.action === 'schedule' && d.schedule_op === '불가' },
             { name: '월 단위 매출 → 세미 배정 (v5.0 사고 박제)', q: '4월달 매출현황 보고해줘', exp: 'route/세미', check: d => d.action === 'route' && d.assignee === '세미' },
+            { name: '휴가 카테고리+담당자 매칭 (3단계)', q: '다음주 금요일 민주 휴가 등록해줘', exp: 'schedule/등록 + 휴가/김민주',
+              check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '휴가' && i.assignee_name === '김민주') },
+            { name: '톡톡발송 카테고리 (3단계)', q: '토요일 톡톡으로 하우스감귤 홍보 나가는거 일정 잡아줘', exp: 'schedule/등록 + 톡톡발송',
+              check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '톡톡발송') },
+            { name: '기간형 할인 일정 (3단계)', q: '25일부터 27일까지 하우스감귤 오픈 할인 일정 등록해줘', exp: 'schedule/등록 + 할인·이벤트 + end_date',
+              check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '할인·이벤트' && /^\d{4}-\d{2}-\d{2}$/.test(i.end_date || '')) },
         ];
         for (const c of rc) {
             try {
@@ -6440,13 +6464,20 @@ function kstTodayStr() {
     return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-// 표기 규칙: 날짜(요일) 시간 — 내용 (담당자)
-function fmtScheduleLine(dateStr, time, title, assignee) {
+// 표기 규칙: 날짜(요일)[~종료일] 시간 — [카테고리] 내용 (담당자) · 일반 카테고리는 표기 생략 (3단계)
+function fmtScheduleLine(dateStr, time, title, assignee, category, endDate) {
     const ds = String(dateStr).slice(0, 10);
     const d = new Date(ds + 'T00:00:00Z');
     const day = ['일', '월', '화', '수', '목', '금', '토'][d.getUTCDay()];
     const md = `${Number(ds.slice(5, 7))}/${Number(ds.slice(8, 10))}`;
-    return `${md}(${day})${time ? ' ' + time : ''} — ${title} (${assignee || '대표'})`;
+    let range = `${md}(${day})`;
+    const ed = endDate ? String(endDate).slice(0, 10) : '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ed) && ed !== ds) {
+        const e = new Date(ed + 'T00:00:00Z');
+        range += `~${Number(ed.slice(5, 7))}/${Number(ed.slice(8, 10))}(${['일', '월', '화', '수', '목', '금', '토'][e.getUTCDay()]})`;
+    }
+    const cat = category && category !== '일반' ? `[${category}] ` : '';
+    return `${range}${time ? ' ' + time : ''} — ${cat}${title} (${assignee || '대표'})`;
 }
 
 // 마루 직접 처리 실행 기록 (보고서함/LIVE 로그용 — 완료 상태로 즉시 기록)
@@ -6476,7 +6507,7 @@ async function maruHandleSchedule(order, d, actor) {
         const rows = await svcListSchedules({ from, to });
         // 4b ②안 (2026-07-18): 보고서엔 전체 포함 (안전 상한 200건), 초과분은 생략을 명시 (정직 원칙 — 몰래 자르기 금지)
         const CAP = 200;
-        const lines = rows.slice(0, CAP).map(s => fmtScheduleLine(s.date, s.start_time, s.title, s.user_name));
+        const lines = rows.slice(0, CAP).map(s => fmtScheduleLine(s.date, s.start_time, s.title, s.user_name, s.category, s.end_date));
         if (rows.length > CAP) lines.push(`… 이하 ${rows.length - CAP}건 생략 — 전체는 일정 화면에서 확인해주세요`);
         const summaryText = rows.length
             ? `완료: ${from}~${to} 일정 ${rows.length}건`
@@ -6490,7 +6521,12 @@ async function maruHandleSchedule(order, d, actor) {
     }
     if (d.schedule_op === '등록') {
         const items = (Array.isArray(d.schedule_items) ? d.schedule_items : [])
-            .filter(i => i && /^\d{4}-\d{2}-\d{2}$/.test(i.date) && String(i.title || '').trim());
+            .filter(i => i && /^\d{4}-\d{2}-\d{2}$/.test(i.date) && String(i.title || '').trim())
+            .map(i => ({
+                ...i,
+                category: SCHEDULE_CATEGORIES.includes(i.category) ? i.category : '일반',
+                end_date: (/^\d{4}-\d{2}-\d{2}$/.test(i.end_date || '') && i.end_date > i.date && isValidDateStr(i.end_date)) ? i.end_date : null,
+            }));
         if (items.length === 0) {
             await maruFinishOrder(order.id, '질문', {
                 type: 'clarify', question: '등록할 일정의 날짜와 내용을 알려주세요 (예: "화요일 카라향 출고")',
@@ -6498,9 +6534,23 @@ async function maruHandleSchedule(order, d, actor) {
             });
             return;
         }
+        // 3단계: 휴가 카테고리는 담당자 필수 — 실제 직원(users) 명단과 매칭, 미매칭 시 선택지 포함 되묻기 (빈 되묻기 금지)
+        const vacItems = items.filter(i => i.category === '휴가');
+        if (vacItems.length) {
+            const names = (await pool.query(`SELECT name FROM users ORDER BY id`)).rows.map(r => r.name);
+            const unmatched = vacItems.filter(i => !names.includes(String(i.assignee_name || '').trim()));
+            if (unmatched.length) {
+                await maruFinishOrder(order.id, '질문', {
+                    type: 'clarify',
+                    question: `휴가 일정은 담당자가 필요해요 — 누구의 휴가인가요? (직원: ${names.join(', ')})`,
+                    summary: d.task_summary, reason: d.reason,
+                });
+                return;
+            }
+        }
         // 등록은 확인 1회 필수 — 목록 전체를 보여주고 대기 (여러 건도 확인 1회)
         const formatted = items.map(i =>
-            fmtScheduleLine(i.date, i.time, i.title, i.assignee_name)
+            fmtScheduleLine(i.date, i.time, i.title, i.assignee_name, i.category, i.end_date)
             + (i.date_note ? ` (※'${i.date_note}' → 제안한 날짜)` : ''));
         await maruFinishOrder(order.id, '질문', {
             type: 'schedule_confirm', items, formatted,
@@ -6674,9 +6724,10 @@ async function maruTryScheduleConfirm(order, actor) {
         await svcCreateSchedule({
             date: i.date, title: i.title, type: 'normal',
             start_time: i.time || null,
+            category: i.category || '일반', end_date: i.end_date || null,
             user_id: uid ?? actor?.id ?? undefined, // 담당자 미지정/미매칭 = 대표
         }, actor);
-        created.push(fmtScheduleLine(i.date, i.time, i.title, i.assignee_name));
+        created.push(fmtScheduleLine(i.date, i.time, i.title, i.assignee_name, i.category, i.end_date));
     }
     const summaryText = `✅ 일정 ${created.length}건 등록 완료`;
     const run = await maruRecordRun('일정 등록', summaryText, created.slice(0, 3),
@@ -7003,6 +7054,28 @@ app.get('/api/agent-office/misroute-stats', authMiddleware, adminOnly, async (re
             misroute_feedback: misFb.rows[0].c,      // 오배정 지적: 마루에 대한 👎/✏️ 피드백
             pollution_retries: retries.rows[0].c,    // 오염 감지: 응답에 태그 파편이 섞여 정화된 호출 수 (조건부 재시도 채택 후 재시도와 별개)
             confirm_cancels: cancels.rows[0].c,      // 복창 후 정정: 확인 단계에서 "아니" 취소
+        });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 3단계: 발송·할인 일정 당일/전날 리마인드 (LIVE 로그 상단 배너용) — 등록 ≠ 자동 발송, 표시만
+app.get('/api/agent-office/today-reminders', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const today = kstTodayStr();
+        const tomorrow = new Date(new Date(today + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
+        const r = await pool.query(
+            `SELECT s.date, s.end_date, s.category, s.title, s.start_time, u.name AS user_name
+             FROM schedules s LEFT JOIN users u ON s.user_id = u.id
+             WHERE s.is_deleted = false AND s.category IN ('톡톡발송', '문자발송', '할인·이벤트')
+               AND s.date <= $2 AND COALESCE(s.end_date, s.date) >= $1
+             ORDER BY s.date, s.id`, [today, tomorrow]);
+        res.json({
+            today,
+            reminders: r.rows.map(s => ({
+                when: String(s.date).slice(0, 10) <= today ? '오늘' : '내일',
+                category: s.category,
+                line: fmtScheduleLine(s.date, s.start_time, s.title, s.user_name, s.category, s.end_date),
+            })),
         });
     } catch (err) { handleAdminErr(res, err); }
 });

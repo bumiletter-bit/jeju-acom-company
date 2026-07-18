@@ -4727,6 +4727,10 @@ textarea.form-input {
 .ao-log-showall { float: right; font-size: 12px; font-weight: 500; color: #6B7280; cursor: pointer; user-select: none; }
 .ao-log-showall input { vertical-align: middle; margin-right: 3px; }
 .ao-log-archived { opacity: .5; }
+/* 3단계: 발송·할인 당일/전날 리마인드 배너 */
+.ao-reminders { background: #FFF8DC; border: 2px solid #F5C800; border-radius: 8px; padding: 6px 10px; margin: 6px 0; font-size: 12px; }
+.ao-reminder-item + .ao-reminder-item { margin-top: 3px; }
+
 /* 완료·미확인 "완료 카드" — 받은편지함 사양 (확인 전까지 눈에 띄게) */
 .ao-log-donecard { border: 2px solid #2F9E44; background: #F2FBF4; border-radius: 8px; margin: 5px 0; padding: 8px 10px; }
 .ao-card-confirm { float: right; margin-left: 8px; background: #E9FBEE; border-color: #2F9E44; color: #2F9E44; font-weight: 700; }

@@ -111,6 +111,22 @@ module.exports = {
         const todayStr = nowKst.toISOString().slice(0, 10);
         const dayName = ['일', '월', '화', '수', '목', '금', '토'][nowKst.getUTCDay()];
 
+        // v5.0 3단계: 활성 할인·이벤트 일정만 컨텍스트 주입 — 활성 할인 = 명분 있는 할인
+        // (지식 문서의 '명분 없는 할인 표현 금지' 규칙과 충돌하지 않게 오늘 활성인 것만 전달)
+        let discountText = '';
+        try {
+            const dr = await pool.query(
+                `SELECT date, end_date, title FROM schedules
+                 WHERE is_deleted = false AND category = '할인·이벤트'
+                   AND date <= $1 AND COALESCE(end_date, date) >= $1
+                 ORDER BY date`, [todayStr]);
+            if (dr.rows.length) {
+                discountText = '\n\n## 현재 활성 할인·이벤트 (오늘 기준 — 카피에 명분으로 활용 가능)\n'
+                    + dr.rows.map(s => `- ${String(s.date).slice(0, 10)}${s.end_date ? '~' + String(s.end_date).slice(0, 10) : ''}: ${s.title}`).join('\n')
+                    + '\n(이 목록에 없는 할인 표현은 명분 없는 할인 금지 규칙에 따라 쓰지 않는다)';
+            }
+        } catch (e) { /* 주입 실패는 카피 작성을 막지 않음 */ }
+
         const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.
 아래 지식 문서(검증된 카피 자산)를 완전히 준수해 즉시 발송 가능한 완성 카피를 작성한다.
 오늘 날짜: ${todayStr} (${dayName}요일, KST) — 본문에 날짜·마감일을 쓸 때 요일은 이 기준으로 반드시 검산할 것. 확신 없으면 요일을 빼고 날짜만 쓴다.
@@ -122,7 +138,7 @@ module.exports = {
 4. 버전: 단일·구체 지시면 1개, 열린 지시면 최대 3개(안정형/어그로형/감성형).
 5. 과장·허위 금지, 명분 없는 할인 표현 금지 (명분 라이브러리 준수).
 6. 반드시 submit_copy 도구로 제출한다. 도구 밖 텍스트 응답 금지.
-${loadKnowledge()}${lessonsText}`;
+${loadKnowledge()}${lessonsText}${discountText}`;
 
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         let msg;
