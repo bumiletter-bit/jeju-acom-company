@@ -6675,7 +6675,19 @@ async function maruHandleSchedule(order, d, actor, effContent = null) {
                 ...i,
                 category: SCHEDULE_CATEGORIES.includes(i.category) ? i.category : '일반',
                 end_date: (/^\d{4}-\d{2}-\d{2}$/.test(i.end_date || '') && i.end_date > i.date && isValidDateStr(i.end_date)) ? i.end_date : null,
-            }));
+            }))
+            // 지시 #12: 카테고리 소실 임시 가드 — 모델이 카테고리를 비웠을 때(='일반') 원문·제목의
+            // 톡톡/문자 키워드로 서버가 강제 지정. 카테고리는 원문에서 재구성할 다른 수단이 없는
+            // 유일한 실전 위험 필드 (역량 점검 #47에서 오염으로 인한 소실 실측). 모델이 특정
+            // 카테고리를 명시한 경우엔 존중 (다건 지시는 각 제목만 근거로 사용 — 교차 오염 방지)
+            .map((i, _, arr) => {
+                if (i.category !== '일반') return i;
+                const basis = arr.length === 1 ? `${i.title || ''} ${srcText}` : String(i.title || '');
+                const forced = /톡톡/.test(basis) ? '톡톡발송'
+                    : /문자|SMS|LMS/i.test(basis) ? '문자발송' : null;
+                if (forced) console.log(`카테고리 가드: '${i.title}' 일반 → ${forced} (원문 키워드)`);
+                return forced ? { ...i, category: forced } : i;
+            });
         if (items.length === 0) {
             await maruFinishOrder(order.id, '질문', {
                 type: 'clarify', question: '등록할 일정의 날짜와 내용을 알려주세요 (예: "화요일 카라향 출고")',
