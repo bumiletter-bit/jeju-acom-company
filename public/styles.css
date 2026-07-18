@@ -4489,6 +4489,10 @@ textarea.form-input {
 .ao-biz-btn, .ao-view-tab { border: none; background: transparent; padding: 6px 12px; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; color: #1B3A6B; min-height: 32px; }
 .ao-biz-btn.active, .ao-view-tab.active { background: #F5C800; color: #1B3A6B; box-shadow: inset 0 0 0 2px #1B3A6B; }
 
+/* 버전 칩 (0단계 버전 시스템 — AGENT OFFICE 제목 옆) */
+.ao-version-chip { display: inline-block; background: #EDEFF2; color: #6B7280; border: 1px solid #D5D9DF; border-radius: 10px; padding: 2px 8px; font-size: 12px; font-weight: 600; vertical-align: middle; margin-left: 6px; }
+.ao-version-chip:empty { display: none; }
+
 .ao-growth-widget { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .ao-growth-chip { background: #fff; border: 2px solid #1B3A6B; border-radius: 8px; padding: 6px 12px; font-size: 13px; color: #1B3A6B; box-shadow: 2px 2px 0 rgba(27,58,107,.25); }
 .ao-growth-chip strong { color: #E8590C; }
