@@ -9961,9 +9961,21 @@ async function aoRefreshGrowth() {
             '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenLessonsModal(false)">📚 지식 노트 <strong>' + g.lessons.total + '</strong>건</span>' +
             '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 <strong>' + g.feedback.total + '</strong>건</span>' +
             misChip +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenTestResultsModal()">🧪 성적표</span>';
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenTestResultsModal()">🧪 성적표</span>' +
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoTelegramTest()">🔔 알림 테스트</span>';
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
+
+// 지시 #11: 텔레그램 테스트 알림 (대표 폰 수신 확인용)
+window.aoTelegramTest = async function() {
+    try {
+        const res = await api('/api/agent-office/telegram-test', 'POST');
+        const d = res.diag || {};
+        showToast('🔔 ' + res.message);
+        if (!d.token_set) alert('⚠️ TELEGRAM_BOT_TOKEN이 서버에 설정되어 있지 않습니다 (Render 환경변수 확인)');
+        else if (!d.chat_resolved) alert('⚠️ 수신처(chat_id)를 아직 확보하지 못했습니다 — 봇에게 아무 메시지나 1개 보낸 뒤 다시 눌러주세요' + (d.getupdates && d.getupdates.error ? '\n(오류: ' + d.getupdates.error + ')' : ''));
+    } catch (e) { alert(e.message); }
+};
 
 // 4단계: 보고서 파일 다운로드 — 인증 토큰 포함 fetch → blob 저장 (adminOnly API)
 window.aoDownloadFile = async function(fileId) {

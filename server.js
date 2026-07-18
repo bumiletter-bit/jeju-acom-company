@@ -7425,6 +7425,44 @@ async function notifyTelegram(text) {
         }).catch(() => {});
     }
 }
+// 지시 #11: 자가점검 — 발송 경로의 각 관문 상태를 audit에 기록 (조용한 실패 사각지대 제거, 시크릿 미포함)
+async function telegramSelfcheck() {
+    const diag = {
+        notify: (process.env.TELEGRAM_NOTIFY || 'on').toLowerCase(),
+        token_set: !!process.env.TELEGRAM_BOT_TOKEN,
+        chat_env_set: !!process.env.TELEGRAM_CHAT_ID,
+        chat_db_saved: false, getupdates: null, chat_resolved: false,
+    };
+    try {
+        const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'telegram_chat_id'`);
+        diag.chat_db_saved = cfg.rows.length > 0;
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        if (token && !diag.chat_env_set && !diag.chat_db_saved) {
+            try {
+                const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+                const j = await res.json();
+                diag.getupdates = { ok: !!j.ok, updates: (j.result || []).length, error: j.ok ? null : String(j.description || 'unknown').slice(0, 80) };
+            } catch (e) { diag.getupdates = { ok: false, error: String(e.message || e).slice(0, 80) }; }
+        }
+        diag.chat_resolved = !!(await telegramChatId());
+        await writeAudit({
+            action: 'telegram_selfcheck', targetType: 'notification', targetId: null,
+            changes: { after: diag }, source: 'agent_office', actor: null,
+        });
+        console.log('텔레그램 자가점검:', JSON.stringify(diag));
+    } catch (e) { console.error('텔레그램 자가점검 실패:', e.message); }
+    return diag;
+}
+
+// 지시 #11: 테스트 알림 발송 (adminOnly) — 대표 폰 수신으로 연동 검증
+app.post('/api/agent-office/telegram-test', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const diag = await telegramSelfcheck();
+        await notifyTelegram('🔔 테스트 알림 — 아꼼이네 알림 연동 확인 (지시 #10)');
+        res.json({ message: '테스트 알림 발송을 시도했습니다 — 폰 수신을 확인해주세요', diag });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // 지시함 상태 변화 감시 → 알림 (서버가 24시간 발송 주체 — 기록 주체와 무관하게 동작)
 let _tgInboxInit = false;
 setInterval(async () => {
@@ -7631,6 +7669,8 @@ initDB().then(() => {
         console.log(`서버 실행 중: http://localhost:${PORT}`);
         // 6차: 기존 피드백 교훈 소급 추출 (미처리분만 — 멱등)
         setTimeout(() => backfillLessonsFromFeedback(), 8000);
+        // 지시 #11: 텔레그램 자가점검 — 부팅 시 발송 경로 상태를 audit에 기록 (시크릿 미포함)
+        setTimeout(() => telegramSelfcheck(), 5000);
     });
 }).catch(err => {
     console.error('DB 초기화 실패:', err);
