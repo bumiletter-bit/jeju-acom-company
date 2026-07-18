@@ -10381,7 +10381,7 @@ function aoOrderLogLine(o) {
     const time = new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
     const st = o.status || '대기';
     const stCls = st === '완료' ? 'done' : st === '오류' ? 'err' : st === '질문' ? 'ask'
-        : (st === '안내' || st === '피드백' || st === '대체됨' || st === '질문종결') ? 'info' : 'wait';
+        : (st === '안내' || st === '피드백' || st === '대체됨' || st === '질문종결' || st === '응답됨') ? 'info' : 'wait';
     const r = o.result || {};
     let extra = '';
     if (st === '피드백' && r.target) extra = `<div class="ao-log-sub">📚 마루 → ${aoEsc(r.target)} 피드백 전달 (${aoEsc(r.kind || '코멘트')})</div>`;
@@ -10398,13 +10398,13 @@ function aoOrderLogLine(o) {
     else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
     else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)}</div>`;
     const runId = o.run_id || (r && r.run_id) || null;
-    // 지시 #4: 종결된 질문(대체됨/질문종결)은 흐림+배지, 미응답 질문 카드엔 [✔확인] 종결 버튼
-    const closed = st === '대체됨' || st === '질문종결';
+    // 지시 #4·#6: 종결된 질문(대체됨/질문종결/응답됨)은 흐림+배지, 미응답 질문 카드엔 [✔확인] 종결 버튼
+    const closed = st === '대체됨' || st === '질문종결' || st === '응답됨';
     const archivedCls = (o.run_archived || closed) ? ' ao-log-archived' : '';
     const closeBtn = st === '질문'
         ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoCloseQuestion(${o.id})">✔ 확인</button>` : '';
     const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
-    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
+    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
 }
 
 async function aoRefreshLog() {

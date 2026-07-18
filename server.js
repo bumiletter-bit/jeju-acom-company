@@ -5995,6 +5995,8 @@ ${JSON.stringify(routingTable, null, 2)}
 - 되묻기 (배정 전 1회 질문): '요즘 / 최근 / 얼마 전 / 근래 / 요새 / 한동안 / 그동안 / 저번에 / 지난번' 같은 상대적·불명확 표현.
   → clarify_question 예: "어느 기간으로 볼까요? (예: 이번주 / 이번달 / 최근 30일)"
 - 기간이 아예 없는 조회 지시 (예: "매출 알려줘") → "어느 기간 매출을 볼까요? (예: 이번주 / 이번달)"로 되묻는다.
+- 기간과 조회 항목이 모두 명시된 지시는 즉시 배정한다 — 그 문장에서 더 물을 것이 없다.
+  예: "이번주 결제금액 보내줘" = 기간(이번주)+항목(결제금액=정산 조회)+파일(보내줘) → 즉시 세미 배정. '결제금액/매출/정산' 조회는 전부 재무팀 세미 담당이다.
 【B. 멀티 지시】
 - 발동 조건: 한 문장에 서로 다른 요청이 2개 이상 (판별 힌트: '그리고/랑/이랑/하고/~도' + 동사 2개 이상).
   예: "휴가 언제야? 그리고 지난달 정산도 보여줘"
@@ -6159,6 +6161,33 @@ async function maruFinishOrder(orderId, status, result, runId = null) {
         [orderId, status, JSON.stringify(result), runId]);
 }
 
+// 지시 #6-1: 원 지시 + 마루 질문 + 대표 답변을 하나의 지시로 결합 (맥락 소실 방지)
+function buildCombinedOrderText(originalContent, question, answer) {
+    return '[진행 중 문답 결합 — 아래 세 줄을 하나의 지시로 해석해 배정하라. 답변이 확인 질문과 무관한 완전히 새로운 지시라면 답변만 기준으로 배정하라]\n'
+        + `[원 지시] ${originalContent}\n`
+        + `[마루의 확인 질문] ${question}\n`
+        + `[대표의 답변] ${answer}`;
+}
+// 지시 #6-2: 기간+재무 항목이 모두 명시된 조회는 되묻기 금지 — clarify를 세미 배정으로 서버 강제 보정
+function maruForceFinanceRoute(d, content, todayStr) {
+    if (!d || d.action !== 'clarify') return null;
+    if (!/정산|매출|결제\s*금액/.test(content)) return null;
+    let period = '', target = '';
+    if (/이번\s*주|금주/.test(content)) period = 'this_week';
+    else {
+        const em = parseExplicitMonth(content, todayStr);
+        if (em) period = em;
+        else if (hasExplicitDay(content)) target = parseExplicitDate(content, todayStr);
+    }
+    if (!period && !target) return null;
+    return {
+        ...d, action: 'route', team: '재무팀', assignee: '세미',
+        task_summary: d.task_summary || '재무 조회 (서버 보정)',
+        reason: '서버 보정: 기간+재무 항목이 모두 명시된 지시 — 빈 되묻기 금지 규칙 (지시 #6)',
+        clarify_question: '', period, target_date: target || '',
+    };
+}
+
 // 마루 판단 호출 (오염 감지 → 재시도 → 정화 포함) — 실제 처리와 역량 테스트가 공용
 async function maruDecide(content) {
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -6255,6 +6284,8 @@ async function executeCapabilityTest(run, actor) {
               check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '톡톡발송') },
             { name: '기간형 할인 일정 (3단계)', q: '25일부터 27일까지 하우스감귤 오픈 할인 일정 등록해줘', exp: 'schedule/등록 + 할인·이벤트 + end_date',
               check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '할인·이벤트' && /^\d{4}-\d{2}-\d{2}$/.test(i.end_date || '')) },
+            { name: '기간+항목 완전 지시 즉답 (지시#6 사고 박제)', q: '이번주 결제금액 보내줘', exp: 'route/세미 + this_week (되묻기 = 실패)',
+              check: d => d.action === 'route' && d.assignee === '세미' && d.period === 'this_week' },
         ];
         for (const c of rc) {
             try {
@@ -6297,6 +6328,17 @@ async function executeCapabilityTest(run, actor) {
                 '3회 동일 + 시작≤종료', outs.join(' | '), q0);
             const short1 = rr('25~27일 하우스감귤 할인');
             add('마루', '기간 파싱 축약형 ("25~27일")', short1 === outs[0], '정식 표현과 동일 해석', `${short1} vs ${outs[0]}`);
+        }
+        {
+            // 지시 #6 박제: 서버 보정·문답 결합 (코드 검증 — 0원)
+            const fd = maruForceFinanceRoute(
+                { action: 'clarify', team: '', assignee: '마루', task_summary: '', reason: '', clarify_question: '어떤 항목을 말씀하시는 건가요?' },
+                '이번주 결제금액 보내줘', kstTodayStr());
+            add('마루', '재무 즉답 서버 보정 (지시#6)', !!fd && fd.action === 'route' && fd.assignee === '세미' && fd.period === 'this_week',
+                'clarify → route/세미/this_week 강제', fd ? `${fd.action}/${fd.assignee} period=${fd.period}` : '(보정 안 됨)', '이번주 결제금액 보내줘');
+            const ct = buildCombinedOrderText('이번주 결제금액 보내줘', '어떤 항목을 말씀하시는 건가요?', '전체 매출 정산');
+            add('마루', '문답 결합 텍스트 (지시#6)', ct.includes('이번주 결제금액 보내줘') && ct.includes('어떤 항목') && ct.includes('전체 매출 정산'),
+                '원 지시+질문+답변 모두 포함', ct.includes('이번주') ? '3요소 포함' : '누락', '결합 재라우팅');
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -6905,11 +6947,27 @@ async function processOrderWithMaru(order, actor) {
         await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
         if (await maruTryScheduleConfirm(order, actor)) return;
-        // 지시 #4-2: 답변이 아닌 새 지시가 들어오면 직전 미응답 질문들을 '대체됨'으로 자동 종결
-        // (soft-close — 원문·결과 보존, 전체 보기에서 계속 조회 가능. 정상 답변 흐름은 위에서 이미 처리됨)
+        // 지시 #6-1: 미응답 clarify 질문이 있으면 새 입력을 답변으로 보고 [원 지시+질문+답변] 결합 재라우팅
+        // — 답변이 독립 지시로 취급되며 맥락이 소실되던 순환 사고(#45~#56) 수정
+        let effContent = order.content;
+        let combinedFrom = null;
+        const pqRow = (await pool.query(
+            `SELECT id, content, result FROM pending_orders
+             WHERE status='질문' AND is_deleted=false AND id != $1
+               AND created_at > NOW() - interval '1 hour' AND result->>'type' = 'clarify'
+             ORDER BY id DESC LIMIT 1`, [order.id])).rows[0];
+        if (pqRow) {
+            combinedFrom = pqRow;
+            effContent = buildCombinedOrderText(pqRow.content, (pqRow.result && pqRow.result.question) || '', order.content);
+        }
+        // 결합 대상을 제외한 나머지 미응답 질문만 '대체됨' 자동 종결 (지시 #4 동작 유지)
         const superseded = await pool.query(
-            `UPDATE pending_orders SET status='대체됨', processed_at=NOW()
-             WHERE status='질문' AND is_deleted=false AND id != $1 RETURNING id`, [order.id]);
+            pqRow
+                ? `UPDATE pending_orders SET status='대체됨', processed_at=NOW()
+                   WHERE status='질문' AND is_deleted=false AND id != $1 AND id != $2 RETURNING id`
+                : `UPDATE pending_orders SET status='대체됨', processed_at=NOW()
+                   WHERE status='질문' AND is_deleted=false AND id != $1 RETURNING id`,
+            pqRow ? [order.id, pqRow.id] : [order.id]);
         for (const row of superseded.rows) {
             await writeAudit({
                 action: 'update', targetType: 'pending_order', targetId: row.id,
