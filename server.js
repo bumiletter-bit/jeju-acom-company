@@ -7186,6 +7186,10 @@ app.delete('/mcp/:secret', (req, res) => {
     res.status(405).json({ error: 'Method Not Allowed' });
 });
 
+// claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답
+// SPA 캐치올이 200+HTML을 주면 claude.ai 신규 연결 절차가 OAuth 서버로 오인해 등록 실패함 (2026-07-18 진단)
+app.all(/^\/\.well-known\/.*/, (req, res) => res.status(404).json({ error: 'Not found' }));
+
 // SPA fallback
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
