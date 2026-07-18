@@ -9965,6 +9965,15 @@ async function aoRefreshGrowth() {
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
+// 지시 #4-1: 미응답 질문 수동 종결 (soft-close — 전체 보기에서 계속 조회 가능)
+window.aoCloseQuestion = async function(orderId) {
+    try {
+        const res = await api('/api/agent-office/orders/' + orderId + '/close', 'POST');
+        showToast('✔ ' + res.message);
+        aoRefreshLog();
+    } catch (e) { alert(e.message); }
+};
+
 // ---- v5.0 1단계: 오배정 카운트 모달 (감이 아닌 숫자로) ----
 window.aoOpenMisrouteModal = async function() {
     let m;
@@ -10344,7 +10353,8 @@ function aoTrunc(s, n = 95) {
 function aoOrderLogLine(o) {
     const time = new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
     const st = o.status || '대기';
-    const stCls = st === '완료' ? 'done' : st === '오류' ? 'err' : st === '질문' ? 'ask' : (st === '안내' || st === '피드백') ? 'info' : 'wait';
+    const stCls = st === '완료' ? 'done' : st === '오류' ? 'err' : st === '질문' ? 'ask'
+        : (st === '안내' || st === '피드백' || st === '대체됨' || st === '질문종결') ? 'info' : 'wait';
     const r = o.result || {};
     let extra = '';
     if (st === '피드백' && r.target) extra = `<div class="ao-log-sub">📚 마루 → ${aoEsc(r.target)} 피드백 전달 (${aoEsc(r.kind || '코멘트')})</div>`;
@@ -10361,9 +10371,13 @@ function aoOrderLogLine(o) {
     else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
     else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)}</div>`;
     const runId = o.run_id || (r && r.run_id) || null;
-    const archivedCls = o.run_archived ? ' ao-log-archived' : '';
+    // 지시 #4: 종결된 질문(대체됨/질문종결)은 흐림+배지, 미응답 질문 카드엔 [✔확인] 종결 버튼
+    const closed = st === '대체됨' || st === '질문종결';
+    const archivedCls = (o.run_archived || closed) ? ' ao-log-archived' : '';
+    const closeBtn = st === '질문'
+        ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoCloseQuestion(${o.id})">✔ 확인</button>` : '';
     const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
-    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${extra}</div>`;
+    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
 }
 
 async function aoRefreshLog() {

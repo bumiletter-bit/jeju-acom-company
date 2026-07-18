@@ -6840,6 +6840,18 @@ async function processOrderWithMaru(order, actor) {
         await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
         if (await maruTryScheduleConfirm(order, actor)) return;
+        // 지시 #4-2: 답변이 아닌 새 지시가 들어오면 직전 미응답 질문들을 '대체됨'으로 자동 종결
+        // (soft-close — 원문·결과 보존, 전체 보기에서 계속 조회 가능. 정상 답변 흐름은 위에서 이미 처리됨)
+        const superseded = await pool.query(
+            `UPDATE pending_orders SET status='대체됨', processed_at=NOW()
+             WHERE status='질문' AND is_deleted=false AND id != $1 RETURNING id`, [order.id]);
+        for (const row of superseded.rows) {
+            await writeAudit({
+                action: 'update', targetType: 'pending_order', targetId: row.id,
+                changes: { after: { status: '대체됨', superseded_by_order: order.id } },
+                source: 'agent_office', actor,
+            });
+        }
         // 판단 호출 (오염 감지·재시도·정화 포함) — 역량 테스트와 공용 로직
         const { d, polluted, pollution } = await maruDecide(order.content);
         if (polluted) console.warn(`마루 응답 오염 감지 (지시 #${order.id}):`, JSON.stringify(pollution));
@@ -6988,6 +7000,22 @@ app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res)
     } catch (err) { handleAdminErr(res, err); }
 });
 
+// 지시 #4-1: 미응답 질문 수동 종결 — soft-close ('질문종결' 상태, 삭제 아님·audit 기록)
+app.post('/api/agent-office/orders/:id/close', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE pending_orders SET status='질문종결', processed_at=NOW()
+             WHERE id=$1 AND status='질문' AND is_deleted=false RETURNING id`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 400, message: '질문 상태인 지시만 종결할 수 있습니다' };
+        await writeAudit({
+            action: 'update', targetType: 'pending_order', targetId: r.rows[0].id,
+            changes: { after: { status: '질문종결(미응답)' } },
+            source: 'agent_office', actor: adminActor(req),
+        });
+        res.json({ message: '질문을 종결했습니다 (전체 보기에서 계속 조회 가능)' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // 쌓인 지시 재처리 (대기/오류 상태만 — 마루 상세 패널의 처리 버튼)
 app.post('/api/agent-office/orders/:id/process', authMiddleware, adminOnly, async (req, res) => {
     try {
@@ -7027,8 +7055,7 @@ app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) 
              LEFT JOIN agent_runs r ON o.run_id = r.id
              WHERE o.is_deleted = false
                AND (${showHidden ? 'TRUE' : `
-                    o.status IN ('대기', '처리중', '오류')
-                    OR (o.status = '질문' AND o.created_at > NOW() - interval '1 hour')
+                    o.status IN ('대기', '처리중', '오류', '질문')
                     OR (r.id IS NOT NULL AND r.is_deleted = false)`})
              ORDER BY o.created_at DESC LIMIT ${limit}`);
         res.json({ orders: r.rows });
