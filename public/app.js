@@ -10290,8 +10290,12 @@ function aoRunPreviewLine(r) {
     const icon = r.status === 'done' ? '✅' : '❗';
     const text = aoTrunc(`${res.summary || (r.status === 'done' ? '완료' : '오류')}${first ? ' — ' + first : ''}`);
     const archived = r.is_deleted ? ' ao-log-archived' : '';
-    return `<div class="ao-log-item ao-log-click ao-log-preview${archived}" data-run-id="${r.id}">
-        <span class="ao-log-time">${time}</span> ${icon} <strong>${aoEsc(r.agent_name || '')}</strong> ${aoEsc(text)}
+    // v5.0 UI: 완료·미확인 건은 눈에 띄는 "완료 카드" — 카드에서 바로 [✔확인] 가능 (받은편지함 사양)
+    const isDoneCard = r.status === 'done' && !r.is_deleted;
+    const confirmBtn = isDoneCard
+        ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoArchiveRun(${r.id})">✔ 확인</button>` : '';
+    return `<div class="ao-log-item ao-log-click ao-log-preview${archived}${isDoneCard ? ' ao-log-donecard' : ''}" data-run-id="${r.id}">
+        ${confirmBtn}<span class="ao-log-time">${time}</span> ${icon} <strong>${aoEsc(r.agent_name || '')}</strong> ${aoEsc(text)}
         ${r.is_deleted ? '<span class="ao-arch-badge">확인함</span> ' : ''}<span class="ao-log-open">📄 보기</span></div>`;
 }
 
@@ -11072,7 +11076,10 @@ window.aoOpenReport = async function(runId) {
     overlay.innerHTML = `
         <div class="modal ao-detail-modal" style="max-width:680px;">
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-            <h3 style="margin:0 0 4px;">📄 ${aoEsc(run.agent_name)} 보고서</h3>
+            <h3 style="margin:0 0 4px;">📄 ${aoEsc(run.agent_name)} 보고서
+                ${(!run.is_deleted && !run.is_test && run.status === 'done')
+                    ? `<button class="ao-fb-btn ao-modal-confirm" onclick="aoArchiveRun(${run.id}); this.closest('.modal-overlay').remove();">✔ 확인</button>` : ''}
+            </h3>
             <div class="ao-detail-meta">${aoEsc(run.agent_team)} · 실행 ${dt}</div>
             <div class="ao-result-box" style="margin-top:8px;"><strong>${aoEsc((run.result && run.result.summary) || '')}</strong></div>
             ${body}

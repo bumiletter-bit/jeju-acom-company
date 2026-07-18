@@ -6896,7 +6896,10 @@ app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) 
              FROM pending_orders o
              LEFT JOIN agent_runs r ON o.run_id = r.id
              WHERE o.is_deleted = false
-               AND (${showHidden ? 'TRUE' : 'r.id IS NULL OR r.is_deleted = false'})
+               AND (${showHidden ? 'TRUE' : `
+                    o.status IN ('대기', '처리중', '오류')
+                    OR (o.status = '질문' AND o.created_at > NOW() - interval '1 hour')
+                    OR (r.id IS NOT NULL AND r.is_deleted = false)`})
              ORDER BY o.created_at DESC LIMIT ${limit}`);
         res.json({ orders: r.rows });
     } catch (err) { handleAdminErr(res, err); }
