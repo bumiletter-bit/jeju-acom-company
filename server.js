@@ -5946,10 +5946,28 @@ ${JSON.stringify(routingTable, null, 2)}
    - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
    - period: "이번주"→this_week, "이번달"→this_month, "6월"처럼 특정 월→YYYY-MM (오늘 날짜 기준 올해, 아직 오지 않은 월이면 작년). 기간 언급 없으면 빈 문자열.
    - target_date는 지시에 적힌 날짜를 글자 그대로 옮긴다 ("4월 5일"→"YYYY-04-05"). 하루를 더하거나 빼는 계산·조정 절대 금지.
-   - 조건이 없는 재무 지시는 둘 다 빈 문자열로 두면 전체 보고서가 나간다. 조건이 없다고 clarify하지 말 것.
+   - 품목이 없는 재무 지시는 item_keyword를 빈 문자열로 두면 전체 품목 보고서가 나간다. 품목이 없다고 clarify하지 말 것. (기간은 아래 판단 기준표 A를 따른다)
 7. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.
-8. 모든 문자열 필드에는 순수한 값만 넣는다. XML/태그 문법(<parameter>, </ 등)과 <, > 문자를 절대 포함하지 않는다.
-   해당 없는 문자열 필드는 빈 문자열(""), 해당 없는 배열 필드는 빈 배열([])로 둔다.`;
+8. 모든 문자열 필드에는 순수한 값만 넣는다. 마크업이나 태그 문법, 꺾쇠괄호 문자를 절대 포함하지 않는다.
+   해당 없는 문자열 필드는 빈 문자열, 해당 없는 배열 필드는 빈 배열로 둔다.
+
+## 판단 기준표 (원칙: 추측 배정 금지 — 확실하면 즉답, 애매하면 1회 되묻기)
+【A. 기간 표현】
+- 즉답 (되묻기 금지 — 속도 원칙): N월 / N월달 / 지난달 / 이번달 / 저번달 / YYYY년 N월 / N월 N일 / 이번주 / 지난주 / 오늘 / 어제 / 올해.
+  이 패턴들은 서버가 날짜를 확정하므로 너는 그대로 배정만 한다.
+- 되묻기 (배정 전 1회 질문): '요즘 / 최근 / 얼마 전 / 근래 / 요새 / 한동안 / 그동안 / 저번에 / 지난번' 같은 상대적·불명확 표현.
+  → clarify_question 예: "어느 기간으로 볼까요? (예: 이번주 / 이번달 / 최근 30일)"
+- 기간이 아예 없는 조회 지시 (예: "매출 알려줘") → "어느 기간 매출을 볼까요? (예: 이번주 / 이번달)"로 되묻는다.
+【B. 멀티 지시】
+- 발동 조건: 한 문장에 서로 다른 요청이 2개 이상 (판별 힌트: '그리고/랑/이랑/하고/~도' + 동사 2개 이상).
+  예: "휴가 언제야? 그리고 지난달 정산도 보여줘"
+- 동작: 몰래 일부만 처리 금지 (절반 누락 = 실패). action='clarify'로 목록을 복창해 확인받는다.
+  → clarify_question 예: "①민주 휴가 조회 ②지난달 정산 — 두 건 맞나요? 순서대로 진행할까요?"
+- 단, 같은 대상의 단일 요청은 멀티가 아니다 (예: "4월 정산 엑셀로 보내줘" = 1건).
+【C. 공통 규칙】
+- 되묻기는 1회만. 답을 받으면 재질문 없이 진행한다.
+- 되묻기에는 반드시 구체적 선택지 예시를 포함한다. 알맹이 없는 되묻기("확인이 필요합니다" 단독)는 금지.
+- 이 판단표는 조회·등록·파일요청 등 모든 지시 유형에 적용된다.`;
 }
 
 // ------------------------------------------------------------
@@ -6124,14 +6142,26 @@ async function maruDecide(content) {
     };
     let raw = await call();
     let polluted = maruDecisionPolluted(raw);
-    // A-①: 오염 파편 실물 수집 (1차 응답 + 재시도 응답 각각) — audit 기록으로 실오염/오탐 판별
+    // A-①: 오염 파편 실물 수집 — audit 기록으로 실측 (1주 평가 근거)
     const pollution = polluted ? { first: maruPollutionSample(raw) } : null;
-    if (polluted) {
-        raw = await call('\n\n※ 경고: 직전 응답의 필드 값에 XML 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 없는 문자열 필드는 반드시 빈 문자열("")로, 배열 필드는 빈 배열로 둔다. 태그 문자(<, >)는 어떤 필드에도 절대 넣지 않는다.');
+    let d = maruCleanDecision(raw);
+    // (b) 조건부 재시도 (2026-07-18 대표 채택): 평시엔 정화기만으로 방어 (호출 1회).
+    // 정화 후 필수값이 비어 배정 불능일 때만 재호출 — 재시도가 오염을 못 없앤다는 실측(변형 태그)에 따른 비용·지연 절감.
+    if (polluted && maruDecisionUnusable(d)) {
+        raw = await call('\n\n※ 경고: 직전 응답의 필드 값에 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 없는 문자열 필드는 반드시 빈 문자열로, 배열 필드는 빈 배열로 둔다. 꺾쇠괄호와 마크업 문법은 어떤 필드에도 절대 넣지 않는다.');
         polluted = maruDecisionPolluted(raw);
         if (polluted) pollution.retry = maruPollutionSample(raw);
+        d = maruCleanDecision(raw);
     }
-    return { d: maruCleanDecision(raw), polluted, pollution };
+    return { d, polluted, pollution };
+}
+// 정화 후에도 배정을 진행할 수 없는 상태인지 (조건부 재시도 발동 기준)
+// - action 자체가 없거나, route인데 담당 요원이 비었거나, clarify인데 질문이 빈 경우(빈 되묻기 금지)
+function maruDecisionUnusable(d) {
+    if (!d || !d.action) return true;
+    if (d.action === 'route' && !String(d.assignee || '').trim()) return true;
+    if (d.action === 'clarify' && !String(d.clarify_question || '').trim()) return true;
+    return false;
 }
 
 // ============================================================
@@ -6184,7 +6214,7 @@ async function executeCapabilityTest(run, actor) {
         for (const c of rc) {
             try {
                 const { d, polluted } = await maruDecide(c.q);
-                const actual = `${d.action}/${d.assignee || d.schedule_op || ''}${polluted ? ' (오염 재시도 발생)' : ''}`;
+                const actual = `${d.action}/${d.assignee || d.schedule_op || ''}${polluted ? ' (오염 감지)' : ''}`;
                 add('마루', c.name, c.check(d) && !maruDecisionPolluted(d), c.exp, actual, c.q);
             } catch (e) { add('마루', c.name, false, c.exp, '오류: ' + e.message, c.q); }
         }
@@ -6257,7 +6287,7 @@ async function executeCapabilityTest(run, actor) {
                     const { d, polluted } = await maruDecide(c.q);
                     const actual = `${d.action}/${d.assignee || d.schedule_op || ''}`
                         + `${per(d) ? ' period=' + per(d) : ''}${String(d.target_date || '').trim() ? ' date=' + d.target_date : ''}`
-                        + `${String(d.item_keyword || '').trim() ? ' 품목=' + d.item_keyword : ''}${polluted ? ' (오염 재시도 발생)' : ''}`;
+                        + `${String(d.item_keyword || '').trim() ? ' 품목=' + d.item_keyword : ''}${polluted ? ' (오염 감지)' : ''}`;
                     add('고난도', c.name, c.check(d) && !maruDecisionPolluted(d), c.exp, actual, c.q);
                 } catch (e) { add('고난도', c.name, false, c.exp, '오류: ' + e.message, c.q); }
             }
@@ -6726,7 +6756,7 @@ async function processOrderWithMaru(order, actor) {
         if (await maruTryScheduleConfirm(order, actor)) return;
         // 판단 호출 (오염 감지·재시도·정화 포함) — 역량 테스트와 공용 로직
         const { d, polluted, pollution } = await maruDecide(order.content);
-        if (polluted) console.warn(`마루 응답 오염 잔존 (지시 #${order.id}):`, JSON.stringify(pollution));
+        if (polluted) console.warn(`마루 응답 오염 감지 (지시 #${order.id}):`, JSON.stringify(pollution));
         await writeAudit({
             action: 'maru_route', targetType: 'pending_order', targetId: order.id,
             changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted, pollution_sample: pollution } },
@@ -6968,7 +6998,7 @@ app.get('/api/agent-office/misroute-stats', authMiddleware, adminOnly, async (re
             days,
             orders_total: orders.rows[0].c,          // 기간 내 전체 지시 수 (분모용)
             misroute_feedback: misFb.rows[0].c,      // 오배정 지적: 마루에 대한 👎/✏️ 피드백
-            pollution_retries: retries.rows[0].c,    // 재시도: 응답 오염 감지 후 재호출
+            pollution_retries: retries.rows[0].c,    // 오염 감지: 응답에 태그 파편이 섞여 정화된 호출 수 (조건부 재시도 채택 후 재시도와 별개)
             confirm_cancels: cancels.rows[0].c,      // 복창 후 정정: 확인 단계에서 "아니" 취소
         });
     } catch (err) { handleAdminErr(res, err); }

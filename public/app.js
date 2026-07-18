@@ -9959,7 +9959,7 @@ window.aoOpenMisrouteModal = async function() {
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
         <h3 style="margin:0 0 8px;">🚧 마루 오배정 카운트 <small style="color:#888;">(최근 ${m.days}일 · 지시 ${m.orders_total}건)</small></h3>
         ${row('오배정 지적', m.misroute_feedback, '마루에게 준 👎/✏️ 피드백 수')}
-        ${row('응답 오염 재시도', m.pollution_retries, '마루 응답에 태그 문법이 섞여 재호출한 횟수')}
+        ${row('응답 오염 감지', m.pollution_retries, '응답에 태그 파편이 섞여 정화기가 걸러낸 호출 수 (평시 재호출 없이 정화만)')}
         ${row('복창 후 정정', m.confirm_cancels, '확인 질문에 "아니"로 취소한 횟수')}
         <div class="ao-empty-note">이 숫자는 모델 승급/복귀 판단 근거로 사용됩니다 (v5.0 2단계)</div>
     </div>`;
