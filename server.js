@@ -6128,10 +6128,11 @@ let capTestRunning = false;
 
 async function executeCapabilityTest(run, actor) {
     const t0 = Date.now();
-    const results = { '마루': [], '세미': [], '글샘': [], '미소': [] };
+    const results = { '마루': [], '고난도': [], '세미': [], '글샘': [], '미소': [] };
     const artifacts = [];
+    // 버킷 미초기화로 전체 점검이 중단되지 않게 방어 (11:28/11:31 반쪽 실행 사고 재발 방지)
     const add = (agent, name, pass, expected, actual, note) =>
-        results[agent].push({ name, pass: !!pass, expected: String(expected), actual: String(actual ?? ''), note: note || '' });
+        (results[agent] = results[agent] || []).push({ name, pass: !!pass, expected: String(expected), actual: String(actual ?? ''), note: note || '' });
     const step = (text) => agentRunAppendStep(run.id, agentStep('work', '마루', text));
     try {
         // ===== 마루 라우팅 (Haiku 실호출) =====
