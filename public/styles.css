@@ -4646,6 +4646,11 @@ textarea.form-input {
 .ao-team-tag[data-team="법무팀"] { border-color: rgba(27,58,107,.55); }
 .ao-team-tag[data-team="개발부서"] { border-color: rgba(112,72,232,.55); }
 .ao-org-members { display: flex; justify-content: center; }
+/* v5.0 UI: 팀명 라벨을 팀장 위로 (팀명→팀장→팀원 순서로 읽히게) */
+.ao-org-branch .ao-team-tag { margin-bottom: 6px; }
+/* 기획팀 라벨 (마루 위 — 조직: 대표→기획팀→4개 팀) */
+.ao-team-tag-hq { font-size: 11px; font-weight: 700; color: #1B3A6B; background: #fff; border: 2px solid rgba(245,200,0,.8);
+    border-radius: 8px; padding: 2px 10px; margin: 2px 0 4px; }
 .ao-org-member { position: relative; padding-top: 14px; }
 .ao-org-member::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 3px; height: 14px; background: rgba(27,58,107,.3); }
 .ao-org-member::after { content: ''; position: absolute; top: -2px; left: 0; right: 0; height: 3px; background: rgba(27,58,107,.3); }
@@ -4718,6 +4723,11 @@ textarea.form-input {
 @keyframes aoInboxPop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
 .ao-inbox-pop { animation: aoInboxPop .4s ease; }
 .ao-say-persist { animation: aoPulse 1.4s ease-in-out infinite; }
+/* 생각 중 말풍선 점 3개 통통 애니메이션 (v5.0 UI) */
+.ao-think-dots span { display: inline-block; font-weight: 900; animation: aoThinkBounce 1.2s ease-in-out infinite; }
+.ao-think-dots span:nth-child(2) { animation-delay: .15s; }
+.ao-think-dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes aoThinkBounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
 @keyframes aoPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 
 /* 5차-②: 미소 프롬프트 보고서 */

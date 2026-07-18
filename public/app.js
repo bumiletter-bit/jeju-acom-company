@@ -9730,7 +9730,7 @@ const AO_COLORS = {
     maru: '#F5C800', hangyeol: '#E8590C', miso: '#D6336C', geulsaem: '#7048E8', yeri: '#1098AD',
     hansu: '#2F9E44', semi: '#74B816', jiyul: '#1B3A6B', mirae: '#F76707', gian: '#0CA678',
 };
-const AO_ROLE_LABEL = { chief: '실장', manager: '팀장', worker: '요원' };
+const AO_ROLE_LABEL = { chief: '기획팀 실장', manager: '팀장', worker: '요원' };
 const AO_STATUS_LABEL = { idle: '대기', running: '실행중', done: '완료', error: '오류' };
 
 function aoPageActive() {
@@ -9803,7 +9803,7 @@ async function aoSendOrder() {
         const res = await api('/api/agent-office/orders', 'POST', { content });
         input.value = '';
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
-        aoSay('마루', '🧠 분석 중...', 0); // 결과 나올 때까지 상시 표시
+        aoSayThinking('마루', '💭', '생각 중'); // 결과 나올 때까지 상시 표시
         aoPollOrder(res.order.id);
     } catch (err) {
         alert(err.message);
@@ -9886,7 +9886,7 @@ window.aoProcessOrder = async function(orderId) {
         showToast('마루가 분석을 시작했습니다');
         const overlay = document.getElementById('ao-detail-overlay');
         if (overlay) overlay.remove();
-        aoSay('마루', '🧠 분석 중...', 0);
+        aoSayThinking('마루', '💭', '생각 중');
         aoPollOrder(orderId);
     } catch (err) { alert(err.message); }
 };
@@ -10003,6 +10003,7 @@ function aoRenderOffice() {
         <div class="ao-org">
             ${aoCeoHtml()}
             <div class="ao-vline"></div>
+            <div class="ao-team-tag ao-team-tag-hq">🏢 기획팀</div>
             ${chief ? aoCharHtml(chief, visible(chief)) : ''}
             <div class="ao-vline"></div>
             <div class="ao-org-teams">
@@ -10011,8 +10012,8 @@ function aoRenderOffice() {
                     const members = aoAgents.filter(a => a.team === t.name && a.role === 'worker');
                     return `
                     <div class="ao-org-branch">
-                        ${mgr ? aoCharHtml(mgr, visible(mgr)) : ''}
                         <div class="ao-team-tag" data-team="${t.name}">${t.emoji} ${t.name}</div>
+                        ${mgr ? aoCharHtml(mgr, visible(mgr)) : ''}
                         ${members.length ? `
                         <div class="ao-vline ao-vline-sm"></div>
                         <div class="ao-org-members">
@@ -10097,6 +10098,17 @@ function aoClearSay(name) {
     if (el) el.querySelectorAll('.ao-say').forEach(s => s.remove());
 }
 
+// 생각 중 말풍선 (💭 + 점 3개 통통 애니메이션) — 지울 때까지 상시 표시 (v5.0 UI)
+function aoSayThinking(name, icon, label) {
+    const el = aoAgentElByName(name);
+    if (!el) return;
+    el.querySelectorAll('.ao-say').forEach(s => s.remove());
+    const say = document.createElement('div');
+    say.className = 'ao-say ao-say-persist ao-say-think';
+    say.innerHTML = icon + ' ' + aoEsc(label) + ' <span class="ao-think-dots"><span>·</span><span>·</span><span>·</span></span>';
+    el.appendChild(say);
+}
+
 // 실행 진행률 바 (작업 단계 n/total)
 function aoSetProgress(agentId, done, total) {
     const el = document.querySelector(`.ao-agent[data-agent-id="${agentId}"] .ao-progress-fill`);
@@ -10175,6 +10187,9 @@ function aoStartRunPolling() {
                 aoAppendLiveLogHtml(aoRunPreviewLine(run)); // 결과 미리보기 라인 (클릭 → 보고서)
                 const finishedAgentId = aoActiveRun.agentId;
                 aoActiveRun = null;
+                // 마루(기획팀 실장) 시험 중/생각 중 말풍선 정리
+                const finishedAgent = aoAgents.find(a => a.id === finishedAgentId);
+                if (finishedAgent && finishedAgent.role === 'chief') aoClearSay(finishedAgent.name);
                 aoSetAgentStatus(finishedAgentId, run.status === 'done' ? 'done' : 'error');
                 if (run.status === 'done') setTimeout(() => aoSetAgentStatus(finishedAgentId, 'idle'), 3000);
                 aoSetProgress(finishedAgentId, 0, 3); // 진행률 초기화 (다음 실행 대비)
@@ -10623,6 +10638,7 @@ window.aoRunCapabilityTest = async function() {
         if (maru && res.run) {
             aoActiveRun = { runId: res.run.id, agentId: maru.id, stepCount: 0 };
             aoSetAgentStatus(maru.id, 'running');
+            aoSayThinking(maru.name, '📝', '시험 중'); // 점검 완료까지 상시 표시
             aoStartRunPolling();
         }
     } catch (err) { alert(err.message); }

@@ -807,7 +807,7 @@ async function initDB() {
             'marketing/검증된_카피_자산집.md', 'marketing/마케팅_전문팀_시스템.md',
         ];
         const AGENT_SEED = [
-            { code: 'maru', name: '마루', role: 'chief', team: '실장실', duty: '총괄', workplace: '공통', sort: 1,
+            { code: 'maru', name: '마루', role: 'chief', team: '기획팀', duty: '총괄', workplace: '공통', sort: 1,
               description: '오더 접수 → 담당 팀 배정 → 통합 보고 / 회사 데이터 질문 즉답',
               knowledge: ['company/운영_지시규칙.md', 'company/비전과목표.md'] },
             { code: 'hangyeol', name: '한결', role: 'manager', team: '마케팅팀', duty: '팀 관리·검수', workplace: '공통', sort: 2,
@@ -874,7 +874,7 @@ async function initDB() {
             { keywords: ['매출', '정산', '비용', '품목 금액', '동기대비', '증감'], team: '재무팀', assignee: '세미', reviewer: '한수' },
             { keywords: ['알바', '직원', '근로계약', '주휴수당', '4대보험', '노무', '법률'], team: '법무팀', assignee: '지율', reviewer: null },
             { keywords: ['미팅 정리', '기획안', '신상품', '상품 출시', '보고서'], team: '개발부서', assignee: '기안', reviewer: '미래' },
-            { keywords: ['일정', '등록', '조회'], team: '실장실', assignee: '마루', reviewer: null, note: '회사프로그램 운영 지시 — 운영 규칙(문서 I) 적용' },
+            { keywords: ['일정', '등록', '조회'], team: '기획팀', assignee: '마루', reviewer: null, note: '회사프로그램 운영 지시 — 운영 규칙(문서 I) 적용' },
             { keywords: [], team: null, assignee: '마루', reviewer: null, note: '분야 불명확 → 마루가 확인 질문' },
         ],
         // 마스터 4절: 실행 등급 + 공통 안전 규칙 (전 에이전트 공통, 문서 I 기반)
@@ -5831,7 +5831,7 @@ const MARU_ROUTE_TOOL = {
         additionalProperties: false,
         properties: {
             action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule', 'settlement_input'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물 평가/수정, schedule=일정 조회·등록(마루 직접), settlement_input=정산현황 숫자 입력(마루 직접)' },
-            team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/실장실 중 하나). clarify면 빈 문자열' },
+            team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/기획팀 중 하나). clarify면 빈 문자열' },
             assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/마루 중 하나). clarify면 빈 문자열' },
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
             reason: { type: 'string', description: '배정 근거 또는 판단 이유 한 줄' },
