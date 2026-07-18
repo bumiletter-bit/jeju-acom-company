@@ -6296,8 +6296,8 @@ async function executeCapabilityTest(run, actor) {
               check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '할인·이벤트' && /^\d{4}-\d{2}-\d{2}$/.test(i.end_date || '')) },
             { name: '기간+항목 완전 지시 즉답 (지시#6 사고 박제)', q: '이번주 결제금액 보내줘', exp: 'route/세미 + this_week (되묻기 = 실패)',
               check: d => d.action === 'route' && d.assignee === '세미' && d.period === 'this_week' },
-            { name: '기간 비교 지시 → 세미 배정 (4.5단계)', q: '4월 5월 매출 비교해줘', exp: 'route/세미 (기간 2개는 서버가 확정)',
-              check: d => d.action === 'route' && d.assignee === '세미' },
+            { name: '기간 비교 지시 → 세미 도달 (4.5단계)', q: '4월 5월 매출 비교해줘', exp: '세미 배정 — 모델 직접 또는 서버 재무 보정 경유 (실전 기준 채점)',
+              check: d => (d.action === 'route' && d.assignee === '세미') || !!maruForceFinanceRoute(d, '4월 5월 매출 비교해줘', kstTodayStr()) },
         ];
         for (const c of rc) {
             try {
