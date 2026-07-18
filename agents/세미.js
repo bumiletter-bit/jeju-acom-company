@@ -287,6 +287,27 @@ async function filteredReport({ pool, helpers, keyword, period }) {
     const periodNote = (period && !parsed) ? ` · 기간 '${period}' 해석 불가 → 이번 달 기준` : '';
     const rows = await fetchSettlements(pool, helpers, range.from, range.to);
 
+    // v5.0 1단계 1-3: 0건 가드 — 그대로 보고하지 않고 조건 복창 + 인접 데이터 힌트 (대체 조회 금지)
+    if (rows.length === 0) {
+        const near = await pool.query(
+            `SELECT to_char(date, 'YYYY-MM') AS ym FROM settlements
+             ORDER BY GREATEST(date - $1::date, $1::date - date) ASC LIMIT 1`, [range.from]);
+        const nearYm = near.rows[0]?.ym || null;
+        return {
+            summary: `『${range.label}』 조회 결과 0건입니다 — 조회 기간이 맞나요?${nearYm ? ` (데이터가 있는 가장 가까운 달: ${nearYm})` : ''}`,
+            lines: [
+                `${range.label}(${range.from}~${range.to}) 정산 데이터가 한 건도 없습니다`,
+                nearYm ? `데이터가 있는 가장 가까운 달: ${nearYm} — 그 기간으로 다시 지시하시면 조회해드립니다` : '정산 데이터가 아직 한 건도 없습니다',
+                '정직 원칙: 다른 기간 데이터로 대체하지 않습니다',
+            ],
+            report: {
+                type: 'semi_settlement_filtered', title: `${keyword || '전체'} · ${range.label}`,
+                keyword: keyword || null, period: range, zero_result: true, nearest_month: nearYm,
+                note: '조회 결과 0건 — 기간 확인 요청 (0건 가드)' + periodNote,
+            },
+        };
+    }
+
     // 품목 집계 (키워드 있으면 매칭 품목만, 없으면 전체)
     const byItem = {};
     let totalQty = 0, productTotal = 0;

@@ -9,6 +9,7 @@ const OpenAI = require('openai');
 const { GoogleGenAI } = require('@google/genai');
 const officeCrypto = require('officecrypto-tool');
 const { VERSION } = require('./version.js');
+const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm } = require('./date-utils.js');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -721,6 +722,8 @@ async function initDB() {
         )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_id, started_at DESC)`);
+    // v5.0 1단계: 역량 테스트 실행분 격리 (보고서함·피드백·통계에서 제외 — 자기오염 루프 차단)
+    await pool.query(`ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT FALSE`);
     // agent_feedback: 대표가 결과물에 준 피드백 (👍/✏️/👎/💬) — 성장 시스템 1차 구조
     await pool.query(`
         CREATE TABLE IF NOT EXISTS agent_feedback (
@@ -5581,7 +5584,7 @@ app.get('/api/agent-office/agents', authMiddleware, adminOnly, async (req, res) 
              WHERE is_deleted = false AND status = 'active' GROUP BY agent_id`)).rows;
         const lastRuns = (await pool.query(
             `SELECT DISTINCT ON (agent_id) agent_id, id, status, result, started_at, finished_at
-             FROM agent_runs WHERE is_deleted = false ORDER BY agent_id, started_at DESC`)).rows;
+             FROM agent_runs WHERE is_deleted = false AND is_test = false ORDER BY agent_id, started_at DESC`)).rows;
         const merged = agents.map(a => ({
             ...a,
             tools: tools.filter(t => t.agent_id === a.id),
@@ -5606,7 +5609,7 @@ app.get('/api/agent-office/agents/:id', authMiddleware, adminOnly, async (req, r
              WHERE agent_id = $1 AND is_deleted = false AND status != '폐기' ORDER BY created_at DESC LIMIT 20`, [agent.id])).rows;
         const runs = (await pool.query(
             `SELECT id, status, steps, result, started_at, finished_at FROM agent_runs
-             WHERE agent_id = $1 AND is_deleted = false ORDER BY started_at DESC LIMIT 5`, [agent.id])).rows;
+             WHERE agent_id = $1 AND is_deleted = false AND is_test = false ORDER BY started_at DESC LIMIT 5`, [agent.id])).rows;
         const feedback = (await pool.query(
             `SELECT f.id, f.run_id, f.feedback_type, f.comment, f.corrected_output, f.created_at,
                     r.result->>'summary' AS run_summary
@@ -5661,6 +5664,8 @@ app.get('/api/agent-office/runs/:id', authMiddleware, adminOnly, async (req, res
 app.get('/api/agent-office/runs', authMiddleware, adminOnly, async (req, res) => {
     try {
         const cond = [req.query.include_archived === 'true' ? 'TRUE' : 'r.is_deleted = false'];
+        // 1-4: 역량 테스트 실행분은 보고서함·LIVE 로그에서 제외 — 성적표 화면(only_test)에서만 조회
+        cond.push(req.query.only_test === 'true' ? 'r.is_test = true' : 'r.is_test = false');
         const params = [];
         if (req.query.agent_id) { params.push(req.query.agent_id); cond.push(`r.agent_id = $${params.length}`); }
         if (req.query.team) { params.push(req.query.team); cond.push(`a.team = $${params.length}`); }
@@ -6059,25 +6064,7 @@ function maruCleanDecision(raw) {
     return d;
 }
 
-// 지시 원문에 명시된 날짜를 서버가 직접 파싱 — 모델의 날짜 하루 어긋남 방지
-// 지원: '2026-04-05', '2026년 4월 5일', '4월 5일' (연도 없으면 올해, 미래면 작년)
-function parseExplicitDate(text, todayStr) {
-    const t = String(text || '');
-    let y, mo, d;
-    let m = t.match(/(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})\s*일?/);
-    if (m) {
-        y = Number(m[1]); mo = Number(m[2]); d = Number(m[3]);
-    } else {
-        m = t.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
-        if (m) {
-            mo = Number(m[1]); d = Number(m[2]); y = Number(todayStr.slice(0, 4));
-            const cand = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            if (cand > todayStr) y -= 1; // 아직 오지 않은 날짜면 작년 (마루 규칙과 동일)
-        }
-    }
-    if (!y || !mo || !d || mo < 1 || mo > 12 || d < 1 || d > 31) return '';
-    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-}
+// 날짜 파싱은 date-utils.js로 이동 (v5.0 1단계 — 월 단위 파싱 추가, 로컬 테스트 공용)
 
 // 접수 지시 상태 갱신 헬퍼
 async function maruFinishOrder(orderId, status, result, runId = null) {
@@ -6159,6 +6146,7 @@ async function executeCapabilityTest(run, actor) {
             { name: '피드백 문장→피드백 분류', q: '아까 글샘이 만든 문자 좋았어', exp: 'feedback/글샘', check: d => d.action === 'feedback' && d.assignee === '글샘' },
             { name: '정산 입력 파싱 (283만→2,830,000)', q: '오늘 정산현황 입력할게. 대성 283만', exp: 'settlement_input/daesong=2830000', check: d => d.action === 'settlement_input' && (d.settlement_entries || []).some(e => e.field === 'daesong' && Number(e.amount) === 2830000) },
             { name: '일정 삭제→불가 안내', q: '어제 일정 지워줘', exp: 'schedule/불가', check: d => d.action === 'schedule' && d.schedule_op === '불가' },
+            { name: '월 단위 매출 → 세미 배정 (v5.0 사고 박제)', q: '4월달 매출현황 보고해줘', exp: 'route/세미', check: d => d.action === 'route' && d.assignee === '세미' },
         ];
         for (const c of rc) {
             try {
@@ -6171,6 +6159,23 @@ async function executeCapabilityTest(run, actor) {
             const q = '4월 14일 정산현황 얼마야?';
             const explicit = parseExplicitDate(q, kstTodayStr());
             add('마루', '특정일 날짜 서버 파싱', explicit === '2026-04-14', '2026-04-14', explicit || '(파싱 실패)', q);
+        }
+        {
+            // v5.0 1단계: 월 단위 서버 파싱 박제 (2025-04 오해석 사고 재발 방지 — 회귀 검출용)
+            const today = kstTodayStr();
+            const y = Number(today.slice(0, 4)), mo = Number(today.slice(5, 7));
+            const ymOf = (yy, mm) => `${yy}-${String(mm).padStart(2, '0')}`;
+            const mcs = [
+                ['월 단위 파싱: "4월달 매출현황" (사고 재현)', '4월달 매출현황', ymOf(4 <= mo ? y : y - 1, 4)],
+                ['월 단위 파싱: "지난달 정산"', '지난달 정산 알려줘', mo === 1 ? ymOf(y - 1, 12) : ymOf(y, mo - 1)],
+                ['월 단위 파싱: "9월 매출" (미래 월=작년)', '9월 매출 얼마였지', ymOf(9 <= mo ? y : y - 1, 9)],
+                ['월 단위 파싱: "2025년 4월" (명시 연도 존중)', '2025년 4월 매출 보고', '2025-04'],
+                ['특정일 우선: "4월 14일"은 월 파싱 안 함', '4월 14일 정산현황', ''],
+            ];
+            for (const [name, q, exp] of mcs) {
+                const act = parseExplicitMonth(q, today);
+                add('마루', name, act === exp, exp || '(빈값=특정일 담당)', act || '(빈값)', q);
+            }
         }
 
         // ===== 세미 (코드 실행 — DB 계산값 대조) =====
@@ -6506,7 +6511,7 @@ async function maruTryScheduleConfirm(order, actor) {
     const pendingQ = await pool.query(
         `SELECT * FROM pending_orders
          WHERE status = '질문' AND is_deleted = false
-           AND result->>'type' IN ('schedule_confirm', 'settlement_confirm')
+           AND result->>'type' IN ('schedule_confirm', 'settlement_confirm', 'query_confirm')
            AND created_at > NOW() - interval '1 hour' AND id != $1
          ORDER BY created_at DESC LIMIT 1`, [order.id]);
     const pending = pendingQ.rows[0];
@@ -6514,16 +6519,25 @@ async function maruTryScheduleConfirm(order, actor) {
     const ptype = pending.result && pending.result.type;
 
     if (isNo) {
-        const what = ptype === 'settlement_confirm' ? '정산현황 저장' : '일정 등록';
+        const what = ptype === 'settlement_confirm' ? '정산현황 저장'
+            : ptype === 'query_confirm' ? '조회' : '일정 등록';
         await maruFinishOrder(pending.id, '안내', { type: 'confirm_cancelled', notice: `${what}을 취소했습니다` });
         await maruFinishOrder(order.id, '완료', {
-            type: ptype === 'settlement_confirm' ? 'settlement_cancelled' : 'schedule_cancelled',
-            notice: `알겠습니다 — ${what}을 취소했어요`,
+            type: ptype === 'settlement_confirm' ? 'settlement_cancelled'
+                : ptype === 'query_confirm' ? 'query_cancelled' : 'schedule_cancelled',
+            notice: `알겠습니다 — ${what}을 취소했어요${ptype === 'query_confirm' ? ' (기간을 다시 말씀해주시면 조회해드립니다)' : ''}`,
         });
         return true;
     }
     if (ptype === 'settlement_confirm') {
         await maruExecuteSettlementSave(pending, order, actor);
+        return true;
+    }
+    // 1-2: 오래된 기간 조회 복창 승인 → 저장해둔 배정·조건으로 실행
+    if (ptype === 'query_confirm') {
+        const route = pending.result.route || {};
+        const conditions = pending.result.conditions || {};
+        await dispatchLiveAgent(pending, route, conditions, actor, order.id);
         return true;
     }
     // 승인 → 실제 등록 (svcCreateSchedule 재사용: audit_log 자동 기록)
@@ -6549,6 +6563,70 @@ async function maruTryScheduleConfirm(order, actor) {
     await maruFinishOrder(pending.id, '완료', doneResult, run?.id);
     await maruFinishOrder(order.id, '완료', doneResult, run?.id);
     return true;
+}
+
+// 배정 실행 — 요원 조회 → (live면) 실제 실행, 아니면 안내 (일반 배정·조회 복창 승인 공용)
+// mirrorOrderId: 복창 승인 흐름에서 "응" 지시에도 같은 결과를 기록
+async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId = null) {
+    const finish = async (status, result, runId = null) => {
+        await maruFinishOrder(order.id, status, result, runId);
+        if (mirrorOrderId) await maruFinishOrder(mirrorOrderId, status, result, runId);
+    };
+    const agentQ = await pool.query(
+        `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [route.assignee]);
+    const agent = agentQ.rows[0] || null;
+    const condText = [conditions.item_keyword, conditions.target_date || conditions.period].filter(Boolean).join(' · ');
+    const routeInfo = {
+        type: 'route', team: route.team, assignee: route.assignee, summary: route.task_summary, reason: route.reason,
+        conditions: (conditions.item_keyword || conditions.period || conditions.target_date) ? conditions : null,
+    };
+
+    // 실전 연결된 worker만 실제 실행 (agents/{이름}.js의 live:true — 현재 세미)
+    const runner = agent ? loadAgentRunner(agent.name) : null;
+    const isLive = !!(agent && runner.live && agent.role === 'worker' && agent.is_active);
+
+    if (!isLive) {
+        await finish('안내', {
+            ...routeInfo,
+            notice: route.assignee === '마루'
+                ? '일정은 이렇게 말씀해주세요 — 조회: "이번주 일정 뭐 있어?" / 등록: "화요일 카라향 출고 등록해줘"'
+                : `${route.assignee}은(는) 아직 실전 연결 전입니다 — 배정만 기록했습니다 (해당 차수에서 실행 연결 예정)`,
+        });
+        return;
+    }
+
+    // 연결된 요원(세미) → 실제 실행 (기존 실행 파이프라인 재사용)
+    const running = await pool.query(
+        `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false LIMIT 1`, [agent.id]);
+    if (running.rows.length > 0) {
+        await finish('안내', {
+            ...routeInfo,
+            notice: `${agent.name}이(가) 이미 다른 작업을 실행 중입니다 — 완료 후 다시 지시해주세요`,
+        });
+        return;
+    }
+    const mgr = await pool.query(
+        `SELECT name FROM agents WHERE team = $1 AND role = 'manager' AND is_deleted = false AND is_active = true LIMIT 1`, [agent.team]);
+    const firstStep = agentStep('order', '마루',
+        `오더 접수 — "${route.task_summary}"${condText ? ` [조건: ${condText}]` : ''} → ${agent.team} ${agent.name} 배정`);
+    const run = (await pool.query(
+        `INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
+        [agent.id, JSON.stringify([firstStep])])).rows[0];
+    await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [agent.id]);
+    await writeAudit({
+        action: 'agent_run', targetType: 'agent_run', targetId: run.id,
+        changes: { after: { agent: agent.name, team: agent.team, mode: 'maru_routed', order_id: order.id, conditions } },
+        source: 'agent_office', actor,
+    });
+    // 마루가 추출한 조건 + 대표 지시 원문(한 글자도 자르지 않고 통째)을 요원 실행에 전달
+    executeAgentTestRun(run, agent, mgr.rows[0]?.name || null, {
+        workplace: '전체',
+        item_keyword: conditions.item_keyword,
+        period: conditions.period,
+        target_date: conditions.target_date,
+        order_content: order.content,
+    });
+    await finish('완료', { ...routeInfo, run_id: run.id }, run.id);
 }
 
 // 마루 처리 엔진: 지시 1건 분석 → 배정 → (연결된 요원이면) 실제 실행
@@ -6587,7 +6665,7 @@ async function processOrderWithMaru(order, actor) {
                 return;
             }
             const lastRun = await pool.query(
-                `SELECT id, result FROM agent_runs WHERE agent_id = $1 AND status = 'done' AND is_deleted = false
+                `SELECT id, result FROM agent_runs WHERE agent_id = $1 AND status = 'done' AND is_deleted = false AND is_test = false
                  ORDER BY started_at DESC LIMIT 1`, [target.id]);
             const kindMap = { '칭찬': 'good', '수정': 'edited', '지적': 'bad', '코멘트': 'comment' };
             const fbType = kindMap[d.feedback_kind] || 'comment';
@@ -6621,75 +6699,49 @@ async function processOrderWithMaru(order, actor) {
             return;
         }
 
-        // ② 배정 — 요원 조회
-        const agentQ = await pool.query(
-            `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [d.assignee]);
-        const agent = agentQ.rows[0] || null;
+        // ② 배정 — 조건 확정 (지시 원문 서버 파싱이 모델 추출값에 우선 — 1단계 1-1)
+        const today = kstTodayStr();
         const conditions = {
             item_keyword: String(d.item_keyword || '').trim(),
             period: String(d.period || '').trim(),
             target_date: String(d.target_date || '').trim(),
         };
-        // 하루 어긋남 방지: 지시 원문에 명시적 날짜가 있으면 서버 파싱값으로 덮어씀
-        if (d.assignee === '세미' && (conditions.target_date || /\d\s*월\s*\d{1,2}\s*일|\d{4}\s*[-./년]/.test(order.content))) {
-            const explicit = parseExplicitDate(order.content, kstTodayStr());
-            if (explicit && explicit !== conditions.target_date) {
-                console.log(`날짜 보정: 마루 '${conditions.target_date || '(없음)'}' → 원문 파싱 '${explicit}'`);
-                conditions.target_date = explicit;
+        if (d.assignee === '세미') {
+            // 특정일: 하루 어긋남 방지 (기존 핫픽스 유지)
+            if (conditions.target_date || hasExplicitDay(order.content)) {
+                const explicit = parseExplicitDate(order.content, today);
+                if (explicit && explicit !== conditions.target_date) {
+                    console.log(`날짜 보정: 마루 '${conditions.target_date || '(없음)'}' → 원문 파싱 '${explicit}'`);
+                    conditions.target_date = explicit;
+                }
+            }
+            // 월 단위: 'N월/N월달/지난달/이번달/YYYY년 N월' — 2025-04 오해석 사고 재발 방지
+            const em = parseExplicitMonth(order.content, today);
+            if (em) {
+                if (conditions.target_date && !hasExplicitDay(order.content)) {
+                    console.log(`날짜 보정: 특정일 '${conditions.target_date}' 무효화 — 원문은 월 단위 (${em})`);
+                    conditions.target_date = '';
+                }
+                if (em !== conditions.period) {
+                    console.log(`기간 보정: 마루 '${conditions.period || '(없음)'}' → 원문 파싱 '${em}'`);
+                    conditions.period = em;
+                }
+            }
+            // 1-2: 오래된 기간(3개월 이상 과거 또는 작년 이전) 조회는 복창 확인 후 실행
+            const range = periodRangeOf(conditions, today);
+            if (needsQueryConfirm(range, today)) {
+                await maruFinishOrder(order.id, '질문', {
+                    type: 'query_confirm',
+                    route: { team: d.team, assignee: d.assignee, task_summary: d.task_summary, reason: d.reason },
+                    conditions,
+                    question: `『${range.label}(${range.from}~${range.to})』 조회로 진행할까요? ("응"으로 답해주세요)`,
+                });
+                return;
             }
         }
-        const condText = [conditions.item_keyword, conditions.target_date || conditions.period].filter(Boolean).join(' · ');
-        const routeInfo = {
-            type: 'route', team: d.team, assignee: d.assignee, summary: d.task_summary, reason: d.reason,
-            conditions: (conditions.item_keyword || conditions.period) ? conditions : null,
-        };
-
-        // 실전 연결된 worker만 실제 실행 (agents/{이름}.js의 live:true — 현재 세미)
-        const runner = agent ? loadAgentRunner(agent.name) : null;
-        const isLive = !!(agent && runner.live && agent.role === 'worker' && agent.is_active);
-
-        if (!isLive) {
-            await maruFinishOrder(order.id, '안내', {
-                ...routeInfo,
-                notice: d.assignee === '마루'
-                    ? '일정은 이렇게 말씀해주세요 — 조회: "이번주 일정 뭐 있어?" / 등록: "화요일 카라향 출고 등록해줘"'
-                    : `${d.assignee}은(는) 아직 실전 연결 전입니다 — 배정만 기록했습니다 (해당 차수에서 실행 연결 예정)`,
-            });
-            return;
-        }
-
-        // ③ 연결된 요원(세미) → 실제 실행 (기존 실행 파이프라인 재사용)
-        const running = await pool.query(
-            `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false LIMIT 1`, [agent.id]);
-        if (running.rows.length > 0) {
-            await maruFinishOrder(order.id, '안내', {
-                ...routeInfo,
-                notice: `${agent.name}이(가) 이미 다른 작업을 실행 중입니다 — 완료 후 다시 지시해주세요`,
-            });
-            return;
-        }
-        const mgr = await pool.query(
-            `SELECT name FROM agents WHERE team = $1 AND role = 'manager' AND is_deleted = false AND is_active = true LIMIT 1`, [agent.team]);
-        const firstStep = agentStep('order', '마루',
-            `오더 접수 — "${d.task_summary}"${condText ? ` [조건: ${condText}]` : ''} → ${agent.team} ${agent.name} 배정`);
-        const run = (await pool.query(
-            `INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
-            [agent.id, JSON.stringify([firstStep])])).rows[0];
-        await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [agent.id]);
-        await writeAudit({
-            action: 'agent_run', targetType: 'agent_run', targetId: run.id,
-            changes: { after: { agent: agent.name, team: agent.team, mode: 'maru_routed', order_id: order.id, conditions } },
-            source: 'agent_office', actor,
-        });
-        // 마루가 추출한 조건 + 대표 지시 원문(한 글자도 자르지 않고 통째)을 요원 실행에 전달
-        executeAgentTestRun(run, agent, mgr.rows[0]?.name || null, {
-            workplace: '전체',
-            item_keyword: conditions.item_keyword,
-            period: conditions.period,
-            target_date: conditions.target_date,
-            order_content: order.content,
-        });
-        await maruFinishOrder(order.id, '완료', { ...routeInfo, run_id: run.id }, run.id);
+        await dispatchLiveAgent(order,
+            { team: d.team, assignee: d.assignee, task_summary: d.task_summary, reason: d.reason },
+            conditions, actor);
     } catch (err) {
         // 정직한 오류 표시 — 허위 응답 금지. Anthropic API 오류는 상태코드와 함께 그대로 기록.
         const errMsg = err?.status
@@ -6766,7 +6818,7 @@ app.post('/api/agent-office/capability-test', authMiddleware, adminOnly, async (
         if (!maru) throw { status: 500, message: '마루 에이전트를 찾을 수 없습니다' };
         const firstStep = agentStep('order', '마루', '🧪 역량 점검 시작 — 전 요원 자동 테스트 (마루·세미·글샘·미소)');
         const run = (await pool.query(
-            `INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
+            `INSERT INTO agent_runs (agent_id, steps, is_test) VALUES ($1, $2, TRUE) RETURNING *`,
             [maru.id, JSON.stringify([firstStep])])).rows[0];
         await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [maru.id]);
         capTestRunning = true;
@@ -6781,6 +6833,34 @@ app.post('/api/agent-office/capability-test', authMiddleware, adminOnly, async (
                 pool.query(`UPDATE agents SET status='idle' WHERE id = $1 AND status='running'`, [maru.id]).catch(() => {});
             });
         res.json({ message: '역량 점검을 시작했습니다 (약 2~3분 소요 — 완료 시 보고서함에 등록)', run });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 1-5: 마루 오배정 카운트 위젯 — 감이 아닌 숫자로 (audit_log 기반 주간 집계)
+app.get('/api/agent-office/misroute-stats', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const days = Math.min(Math.max(parseInt(req.query.days) || 7, 1), 90);
+        const [orders, retries, cancels, misFb] = await Promise.all([
+            pool.query(`SELECT COUNT(*)::int AS c FROM pending_orders
+                        WHERE is_deleted = false AND created_at > NOW() - ($1 || ' days')::interval`, [days]),
+            pool.query(`SELECT COUNT(*)::int AS c FROM audit_logs
+                        WHERE action = 'maru_route' AND (changes->'after'->>'polluted_retry') = 'true'
+                          AND created_at > NOW() - ($1 || ' days')::interval`, [days]),
+            pool.query(`SELECT COUNT(*)::int AS c FROM pending_orders
+                        WHERE is_deleted = false AND result->>'type' = 'confirm_cancelled'
+                          AND processed_at > NOW() - ($1 || ' days')::interval`, [days]),
+            pool.query(`SELECT COUNT(*)::int AS c FROM agent_feedback f
+                        JOIN agents a ON f.agent_id = a.id
+                        WHERE a.role = 'chief' AND f.feedback_type IN ('bad', 'edited')
+                          AND f.is_deleted = false AND f.created_at > NOW() - ($1 || ' days')::interval`, [days]),
+        ]);
+        res.json({
+            days,
+            orders_total: orders.rows[0].c,          // 기간 내 전체 지시 수 (분모용)
+            misroute_feedback: misFb.rows[0].c,      // 오배정 지적: 마루에 대한 👎/✏️ 피드백
+            pollution_retries: retries.rows[0].c,    // 재시도: 응답 오염 감지 후 재호출
+            confirm_cancels: cancels.rows[0].c,      // 복창 후 정정: 확인 단계에서 "아니" 취소
+        });
     } catch (err) { handleAdminErr(res, err); }
 });
 

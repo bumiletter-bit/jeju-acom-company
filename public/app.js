@@ -9927,13 +9927,67 @@ async function aoRefreshAgents() {
 
 async function aoRefreshGrowth() {
     try {
-        const g = await api('/api/agent-office/growth');
+        const [g, m] = await Promise.all([
+            api('/api/agent-office/growth'),
+            api('/api/agent-office/misroute-stats').catch(() => null), // 구버전 서버 호환
+        ]);
         aoWeekLessons = g.lessons.this_week; // 지식 노트 모달 상단 표시용
+        const misChip = m
+            ? '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenMisrouteModal()">🚧 오배정 주간 <strong>' + m.misroute_feedback + '</strong>건</span>'
+            : '';
         document.getElementById('ao-growth-widget').innerHTML =
             '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenLessonsModal(false)">📚 지식 노트 <strong>' + g.lessons.total + '</strong>건</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 <strong>' + g.feedback.total + '</strong>건</span>';
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 <strong>' + g.feedback.total + '</strong>건</span>' +
+            misChip +
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenTestResultsModal()">🧪 성적표</span>';
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
+
+// ---- v5.0 1단계: 오배정 카운트 모달 (감이 아닌 숫자로) ----
+window.aoOpenMisrouteModal = async function() {
+    let m;
+    try { m = await api('/api/agent-office/misroute-stats?days=7'); }
+    catch (e) { return alert(e.message); }
+    const row = (label, val, desc) =>
+        `<div class="ao-lesson-row"><strong>${label}: ${val}건</strong><span class="ao-lesson-meta">${desc}</span></div>`;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal ao-detail-modal">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 8px;">🚧 마루 오배정 카운트 <small style="color:#888;">(최근 ${m.days}일 · 지시 ${m.orders_total}건)</small></h3>
+        ${row('오배정 지적', m.misroute_feedback, '마루에게 준 👎/✏️ 피드백 수')}
+        ${row('응답 오염 재시도', m.pollution_retries, '마루 응답에 태그 문법이 섞여 재호출한 횟수')}
+        ${row('복창 후 정정', m.confirm_cancels, '확인 질문에 "아니"로 취소한 횟수')}
+        <div class="ao-empty-note">이 숫자는 모델 승급/복귀 판단 근거로 사용됩니다 (v5.0 2단계)</div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+
+// ---- v5.0 1단계: 역량 테스트 성적표 모달 (테스트 실행분은 보고서함에 없고 여기서만 조회) ----
+window.aoOpenTestResultsModal = async function() {
+    let data;
+    try { data = await api('/api/agent-office/runs?only_test=true&limit=20'); }
+    catch (e) { return alert(e.message); }
+    const runs = data.runs || [];
+    const body = runs.length
+        ? '<div class="ao-run-history">' + runs.map(r => {
+            const dt = new Date(r.started_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const stIcon = r.status === 'done' ? '✅' : r.status === 'error' ? '❗' : '⏳';
+            return '<div class="ao-run-item ao-chip-click" onclick="aoOpenReport(' + r.id + ')">' + stIcon + ' ' + dt + ' · '
+                + aoEsc((r.result && r.result.summary) || '진행 중') + '</div>';
+        }).join('') + '</div>'
+        : '<div class="ao-empty-note">아직 역량 테스트 기록이 없습니다 — 마루 상세에서 🧪 역량 점검을 실행해보세요</div>';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal ao-detail-modal">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 8px;">🧪 역량 테스트 성적표 <small style="color:#888;">(${runs.length}건 · 보고서함과 분리 보관)</small></h3>
+        ${body}
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
 
 // ---- 픽셀 사무실 렌더 (1.5차: 조직도형 레이아웃 + 연결선) ----
 function aoRenderOffice() {
