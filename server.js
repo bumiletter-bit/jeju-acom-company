@@ -613,6 +613,20 @@ async function initDB() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)`);
 
+    // v5.0 D: 똑똑이 직통 지시함 — 전략 Claude가 MCP로 등록, 클로드 코드가 폴링 실행·응답
+    // 전달 통로일 뿐 권한 확대 아님. 원문·응답 전문 보존 (삭제 컬럼 자체가 없음 — 삭제 불가)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS cc_instructions (
+            id SERIAL PRIMARY KEY,
+            content TEXT NOT NULL,
+            status VARCHAR(10) DEFAULT '대기',
+            source VARCHAR(50) DEFAULT '똑똑이',
+            response TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            responded_at TIMESTAMP
+        )
+    `);
+
     // schedules: soft-delete + 관리 API용 선택 컬럼(시간/내용). 기존 화면엔 영향 없음(전부 nullable)
     await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS start_time VARCHAR(10)`);
@@ -6984,8 +6998,49 @@ async function getMcpActor() {
     return _mcpActor;
 }
 
+// v5.0 D: 지시함 서비스 (똑똑이 → 클로드 코드 파이프라인)
+async function svcRegisterInstruction({ content }, actor) {
+    const text = String(content || '').trim();
+    if (!text) throw new Error('지시 내용이 비어 있습니다');
+    if (text.length > 5000) throw new Error('지시는 5000자 이내로 입력해주세요');
+    const row = (await pool.query(
+        `INSERT INTO cc_instructions (content) VALUES ($1) RETURNING id, status, created_at`, [text])).rows[0];
+    await writeAudit({
+        action: 'create', targetType: 'cc_instruction', targetId: row.id,
+        changes: { after: { content: text.slice(0, 500), status: row.status } },
+        source: 'mcp', actor,
+    });
+    return {
+        id: row.id, status: row.status, created_at: row.created_at,
+        message: `지시 #${row.id} 등록 완료 — 클로드 코드가 감지하면 상태가 진행→완료로 바뀝니다. get_instruction_status로 응답을 확인하세요.`,
+        principles: '지시함은 전달 통로일 뿐 권한 확대가 아닙니다 — 외부 행동 승인제·자동수정 금지·보고 우선 원칙이 동일하게 적용됩니다.',
+    };
+}
+async function svcInstructionStatus({ id, limit }) {
+    if (id) {
+        const r = await pool.query(`SELECT * FROM cc_instructions WHERE id = $1`, [id]);
+        if (r.rows.length === 0) throw new Error(`지시 #${id}를 찾을 수 없습니다`);
+        return r.rows[0];
+    }
+    const n = Math.min(Math.max(parseInt(limit) || 5, 1), 30);
+    const r = await pool.query(`SELECT * FROM cc_instructions ORDER BY id DESC LIMIT $1`, [n]);
+    return { count: r.rows.length, instructions: r.rows };
+}
+
 const MCP_SERVER_INFO = { name: '제주아꼼이네 관리', version: '1.0.0' };
 const MCP_TOOLS = [
+    {
+        name: 'register_instruction',
+        description: '클로드 코드 지시함에 작업 지시를 등록합니다 (대표 승인된 지시만). 클로드 코드가 폴링으로 감지해 실행하고 응답을 기록합니다. 외부 행동 승인제·자동수정 금지 등 기존 원칙이 그대로 적용되는 전달 통로입니다.',
+        inputSchema: { type: 'object', properties: { content: { type: 'string', description: '지시 내용 전문 (5000자 이내)' } }, required: ['content'] },
+        handler: async (args, actor) => svcRegisterInstruction(args, actor),
+    },
+    {
+        name: 'get_instruction_status',
+        description: '지시함의 상태·응답을 조회합니다. id 지정 시 해당 건, 생략 시 최신 N건(limit, 기본 5). 상태: 대기(미감지)/진행(실행 중)/완료(응답 기록됨).',
+        inputSchema: { type: 'object', properties: { id: { type: 'integer', description: '지시 번호' }, limit: { type: 'integer', description: '최신 N건 (기본 5, 최대 30)' } } },
+        handler: async (args) => svcInstructionStatus(args),
+    },
     {
         name: 'list_schedules',
         description: '기간별 일정을 조회합니다. from/to(YYYY-MM-DD)로 범위 지정, 생략 시 전체. 삭제된 일정은 제외됩니다.',
