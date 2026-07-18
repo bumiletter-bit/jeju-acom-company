@@ -6424,6 +6424,10 @@ async function executeCapabilityTest(run, actor) {
                 '1주차 CJ 택배비 얼마야', kstTodayStr());
             add('마루', '주차+거래처 완전 지시 보정 (지시#15)', !!fw && fw.action === 'route' && fw.assignee === '세미',
                 'clarify → route/세미 강제 (빈 되묻기 금지)', fw ? `${fw.action}/${fw.assignee}` : '(보정 안 됨)', '1주차 CJ 택배비 얼마야');
+            // 지시 #17 박제: 파일/즉답 의도 분기 — "파일 줘"가 즉답으로만 빠진 스모크 사고 재현
+            const wf = [WANT_FILE_RE.test('이번주 효돈 정산금 파일 줘'), WANT_FILE_RE.test('4월 정산 엑셀로 뽑아줘'), WANT_FILE_RE.test('지난주 대성 정산현황 얼마야')];
+            add('마루', '파일/즉답 의도 분기 (지시#17 스모크 박제)', wf[0] === true && wf[1] === true && wf[2] === false,
+                '"파일 줘"·"엑셀로"=파일 / "얼마야"=즉답만', `파일줘=${wf[0]} 엑셀로=${wf[1]} 얼마야=${wf[2]}`, '이번주 효돈 정산금 파일 줘');
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -6675,7 +6679,8 @@ async function saveReportFile(filename, buffer, runId = null, actor = null) {
     return row.id;
 }
 // 파일 요청 키워드 감지 (지시 #5: "보내줘/파일로/엑셀로/다운로드/뽑아줘")
-const WANT_FILE_RE = /엑셀|파일로|다운로드|보내\s*줘|뽑아\s*줘/;
+// 지시 #17: '파일로'만 커버하던 것을 '파일'로 확장 — 스모크 "파일 줘"가 즉답으로만 빠진 원인
+const WANT_FILE_RE = /엑셀|파일|다운로드|보내\s*줘|뽑아\s*줘/;
 
 // 일정 목록 xlsx (4단계 — 일정 보고서 "파일로 받기")
 async function buildScheduleXlsx(rows, from, to) {
