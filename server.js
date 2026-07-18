@@ -616,6 +616,21 @@ async function initDB() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)`);
 
+    // v5.0 4단계: 보고서 파일 (xlsx) — Render 디스크는 재배포 시 소실되므로 DB에 보관
+    // soft-delete 원칙 + 90일 경과분만 물리 정리 허용(purged_at 기록)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS report_files (
+            id SERIAL PRIMARY KEY,
+            filename VARCHAR(200) NOT NULL,
+            run_id INTEGER,
+            data BYTEA NOT NULL,
+            size_bytes INTEGER,
+            created_at TIMESTAMP DEFAULT NOW(),
+            is_deleted BOOLEAN DEFAULT false,
+            purged_at TIMESTAMP
+        )
+    `);
+
     // v5.0 D: 똑똑이 직통 지시함 — 전략 Claude가 MCP로 등록, 클로드 코드가 폴링 실행·응답
     // 전달 통로일 뿐 권한 확대 아님. 원문·응답 전문 보존 (삭제 컬럼 자체가 없음 — 삭제 불가)
     await pool.query(`
@@ -5571,7 +5586,14 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
         }
         await wait(600);
         const result = typeof runner.result === 'function'
-            ? await runner.result({ agent, pool, params: runParams, helpers: { matchItemToPricing, normDateSafe } })
+            ? await runner.result({
+                agent, pool, params: runParams,
+                helpers: {
+                    matchItemToPricing, normDateSafe,
+                    // 4단계: 요원이 만든 xlsx를 DB에 보관 (audit 기록 포함) — run과 연결
+                    saveReportFile: (filename, buffer) => saveReportFile(filename, buffer, run.id, null),
+                },
+            })
             : { summary: '완료' };
         await agentRunAppendStep(run.id, agentStep('report', agent.name, '완료 보고'));
         if (managerName && managerName !== agent.name) {
@@ -6492,6 +6514,39 @@ function fmtScheduleLine(dateStr, time, title, assignee, category, endDate) {
     return `${range}${time ? ' ' + time : ''} — ${cat}${title} (${assignee || '대표'})`;
 }
 
+// 4단계: 보고서 파일 저장 (DB 보관 — Render 디스크는 재배포 시 소실) + audit 기록
+const ExcelJS = require('exceljs');
+async function saveReportFile(filename, buffer, runId = null, actor = null) {
+    const row = (await pool.query(
+        `INSERT INTO report_files (filename, run_id, data, size_bytes) VALUES ($1, $2, $3, $4) RETURNING id`,
+        [filename, runId, buffer, buffer.length])).rows[0];
+    await writeAudit({
+        action: 'create', targetType: 'report_file', targetId: row.id,
+        changes: { after: { filename, size_bytes: buffer.length, run_id: runId } },
+        source: 'agent_office', actor,
+    });
+    return row.id;
+}
+// 파일 요청 키워드 감지 (지시 #5: "보내줘/파일로/엑셀로/다운로드/뽑아줘")
+const WANT_FILE_RE = /엑셀|파일로|다운로드|보내\s*줘|뽑아\s*줘/;
+
+// 일정 목록 xlsx (4단계 — 일정 보고서 "파일로 받기")
+async function buildScheduleXlsx(rows, from, to) {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('일정');
+    ws.columns = [
+        { header: '날짜', key: 'date', width: 12 }, { header: '종료일', key: 'end', width: 12 },
+        { header: '시간', key: 'time', width: 8 }, { header: '카테고리', key: 'cat', width: 12 },
+        { header: '내용', key: 'title', width: 44 }, { header: '담당', key: 'who', width: 10 },
+    ];
+    rows.forEach(s => ws.addRow({
+        date: String(s.date).slice(0, 10), end: s.end_date ? String(s.end_date).slice(0, 10) : '',
+        time: s.start_time || '', cat: s.category || '일반', title: s.title, who: s.user_name || '대표',
+    }));
+    ws.getRow(1).font = { bold: true };
+    return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
 // 마루 직접 처리 실행 기록 (보고서함/LIVE 로그용 — 완료 상태로 즉시 기록)
 async function maruRecordRun(opLabel, summaryText, lines, reportObj) {
     const maruQ = await pool.query(`SELECT id FROM agents WHERE role = 'chief' AND is_deleted = false LIMIT 1`);
@@ -6524,8 +6579,17 @@ async function maruHandleSchedule(order, d, actor) {
         const summaryText = rows.length
             ? `완료: ${from}~${to} 일정 ${rows.length}건`
             : `${from}~${to} 등록된 일정이 없습니다`;
-        const run = await maruRecordRun('일정 조회', summaryText, lines.slice(0, 3),
-            { type: 'maru_schedule', op: '조회', from, to, items: lines, count: rows.length });
+        // 4단계: "파일로 받기" — 파일 키워드 감지 시 일정 목록 xlsx 생성 (adminOnly 다운로드)
+        let fileMeta = null;
+        if (rows.length && WANT_FILE_RE.test(order.content)) {
+            const ymd = kstTodayStr().replace(/-/g, '');
+            const fname = `일정보고_${from}~${to}_${ymd}.xlsx`;
+            const buf = await buildScheduleXlsx(rows, from, to);
+            const fid = await saveReportFile(fname, buf, null, actor);
+            fileMeta = { file_id: fid, file_name: fname };
+        }
+        const run = await maruRecordRun('일정 조회', summaryText + (fileMeta ? ' · 📎 파일 생성' : ''), lines.slice(0, 3),
+            { type: 'maru_schedule', op: '조회', from, to, items: lines, count: rows.length, ...(fileMeta || {}) });
         await maruFinishOrder(order.id, '완료', {
             type: 'schedule_list', from, to, count: rows.length, items: lines.slice(0, 10), run_id: run?.id,
         }, run?.id);
@@ -6830,6 +6894,7 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         period: conditions.period,
         target_date: conditions.target_date,
         order_content: order.content,
+        want_file: WANT_FILE_RE.test(order.content), // 4단계: 엑셀 파일 생성 모드
     });
     await finish('완료', { ...routeInfo, run_id: run.id }, run.id);
 }
@@ -7114,6 +7179,18 @@ app.get('/api/agent-office/misroute-stats', authMiddleware, adminOnly, async (re
             pollution_retries: retries.rows[0].c,    // 오염 감지: 응답에 태그 파편이 섞여 정화된 호출 수 (조건부 재시도 채택 후 재시도와 별개)
             confirm_cancels: cancels.rows[0].c,      // 복창 후 정정: 확인 단계에서 "아니" 취소
         });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 4단계: 보고서 파일 다운로드 — adminOnly 전용 (무인증 401 / 비관리자 403), DB에서 직접 서빙
+app.get('/api/agent-office/files/:id/download', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT filename, data FROM report_files WHERE id = $1 AND is_deleted = false AND purged_at IS NULL`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '파일을 찾을 수 없습니다 (90일 경과 정리분은 재생성 가능 — 같은 조회를 다시 지시해주세요)' };
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(r.rows[0].filename)}`);
+        res.send(r.rows[0].data);
     } catch (err) { handleAdminErr(res, err); }
 });
 

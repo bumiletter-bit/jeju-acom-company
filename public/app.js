@@ -9965,6 +9965,33 @@ async function aoRefreshGrowth() {
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
+// 4단계: 보고서 파일 다운로드 — 인증 토큰 포함 fetch → blob 저장 (adminOnly API)
+window.aoDownloadFile = async function(fileId) {
+    try {
+        const token = localStorage.getItem('jwt_token');
+        const res = await fetch('/api/agent-office/files/' + fileId + '/download', {
+            headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || '다운로드 실패 (' + res.status + ')');
+        }
+        const disposition = res.headers.get('Content-Disposition') || '';
+        const m = disposition.match(/filename\*=UTF-8''(.+)$/);
+        const filename = m ? decodeURIComponent(m[1]) : ('보고서_' + fileId + '.xlsx');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        showToast('📎 ' + filename + ' 다운로드');
+    } catch (e) { alert(e.message); }
+};
+
 // 지시 #4-1: 미응답 질문 수동 종결 (soft-close — 전체 보기에서 계속 조회 가능)
 window.aoCloseQuestion = async function(orderId) {
     try {
@@ -10816,7 +10843,9 @@ async function aoLoadReports() {
                 '<td>' + stBadge + '</td>' +
                 '<td>' + ((r.result && r.result.summary) || '-') + '</td>' +
                 '<td>' + dur + '</td>' +
-                '<td>' + (hasReport ? '<button class="ao-fb-btn" onclick="aoOpenReport(' + r.id + ')">📄 보고서</button>' : '-') + '</td>' +
+                '<td>' + (hasReport ? '<button class="ao-fb-btn" onclick="aoOpenReport(' + r.id + ')">📄 보고서</button>' : '-')
+                    + (r.result && r.result.report && r.result.report.file_id
+                        ? ' <button class="ao-fb-btn" onclick="aoDownloadFile(' + r.result.report.file_id + ')">📎 다운로드</button>' : '') + '</td>' +
                 '<td>' + archBtn + '</td>' +
                 '</tr>';
         }).join('');
@@ -11123,6 +11152,7 @@ window.aoOpenReport = async function(runId) {
             <h3 style="margin:0 0 4px;">📄 ${aoEsc(run.agent_name)} 보고서
                 ${(!run.is_deleted && !run.is_test && run.status === 'done')
                     ? `<button class="ao-fb-btn ao-modal-confirm" onclick="aoArchiveRun(${run.id}); this.closest('.modal-overlay').remove();">✔ 확인</button>` : ''}
+                ${rep && rep.file_id ? `<button class="ao-fb-btn ao-modal-confirm" style="margin-right:6px;" onclick="aoDownloadFile(${rep.file_id})">📎 엑셀 다운로드</button>` : ''}
             </h3>
             <div class="ao-detail-meta">${aoEsc(run.agent_team)} · 실행 ${dt}</div>
             <div class="ao-result-box" style="margin-top:8px;"><strong>${aoEsc((run.result && run.result.summary) || '')}</strong></div>

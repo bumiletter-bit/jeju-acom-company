@@ -6,6 +6,7 @@
 
 const CJ_PARTNERS = ['대성(시온)', '효돈농협', '기타거래처'];
 const CJ_BOX_FEE = 3100; // 정산관리 화면과 동일 단가
+const ExcelJS = require('exceljs'); // 4단계: 보고서 xlsx 생성 (순수 코드 — AI 호출 없음)
 
 function kstNow() { return new Date(Date.now() + 9 * 3600 * 1000); }
 function ymd(d) { return d.toISOString().slice(0, 10); }
@@ -103,6 +104,70 @@ function cjBoxCount(rows) {
     return rows.reduce((s, r) => CJ_PARTNERS.includes(r.partner)
         ? s + r.items.reduce((q, it) => q + (Number(it.qty) || 0), 0) : s, 0);
 }
+
+// ===== 4단계: 정산 보고서 xlsx — 시트1 요약("상품+택배=총결제" 병기), 시트2 상세(일자·품목별) =====
+// 숫자는 화면 보고서와 동일 계산 경로를 그대로 사용 (1원 오차 없음 원칙)
+async function buildSettlementXlsx({ label, from, to, rows, productTotal, cjFee, cjCarryover, paymentTotal, keyword }) {
+    const wb = new ExcelJS.Workbook();
+    const money = n => Math.round(n || 0);
+    const s1 = wb.addWorksheet('요약');
+    s1.columns = [{ width: 26 }, { width: 20 }];
+    s1.addRow(['조회 기간', `${from} ~ ${to} (${label})`]);
+    if (keyword) s1.addRow(['품목 필터', keyword]);
+    s1.addRow(['상품 매출', money(productTotal)]);
+    if (paymentTotal != null) {
+        s1.addRow(['택배비 (박스×3,100)', money(cjFee || 0)]);
+        if (cjCarryover) s1.addRow(['택배 이월금액', money(cjCarryover)]);
+        s1.addRow(['총 결제금액 (상품+택배=총결제)', money(paymentTotal)]);
+    } else {
+        s1.addRow(['참고', '품목 필터 조회는 상품 기준 금액 (택배비 미포함)']);
+    }
+    s1.addRow([]);
+    s1.addRow(['거래처별 합계 (상품 기준)', '']);
+    const byPartner = {};
+    rows.forEach(r => { byPartner[r.partner] = (byPartner[r.partner] || 0) + r.amount; });
+    Object.entries(byPartner).sort((a, b) => b[1] - a[1]).forEach(([p, amt]) => s1.addRow([p, money(amt)]));
+    s1.addRow(['정산 건수', rows.length]);
+    s1.getColumn(1).font = { bold: false };
+    s1.getColumn(2).numFmt = '#,##0';
+    s1.getRow(1).font = { bold: true };
+
+    const s2 = wb.addWorksheet('상세');
+    s2.columns = [
+        { header: '일자', key: 'd', width: 12 }, { header: '거래처', key: 'p', width: 14 },
+        { header: '품목', key: 'n', width: 34 }, { header: '수량', key: 'q', width: 8 },
+        { header: '단가', key: 'u', width: 10 }, { header: '소계', key: 's', width: 12 },
+    ];
+    rows.forEach(r => (r.items || []).forEach(it => {
+        if (!it || !it.name) return;
+        if (keyword && !matchesKeyword(it.name, keyword)) return;
+        s2.addRow({
+            d: String(r.date).slice(0, 10), p: r.partner, n: it.name,
+            q: Number(it.qty) || 0, u: Number(it.price) || 0,
+            s: (Number(it.price) || 0) * (Number(it.qty) || 0),
+        });
+    }));
+    s2.getRow(1).font = { bold: true };
+    s2.getColumn('u').numFmt = '#,##0';
+    s2.getColumn('s').numFmt = '#,##0';
+    return Buffer.from(await wb.xlsx.writeBuffer());
+}
+// 파일 요청 시 xlsx 생성·보관 후 report에 file_id 부착 — 실패는 정직하게 file_error로 표시
+async function attachXlsx(helpers, wantFile, args, report) {
+    if (!wantFile || typeof helpers.saveReportFile !== 'function') return null;
+    try {
+        const ymd = ymd2(kstNow());
+        const fname = `정산보고_${args.from}~${args.to}_${ymd}.xlsx`;
+        const buf = await buildSettlementXlsx(args);
+        report.file_id = await helpers.saveReportFile(fname, buf);
+        report.file_name = fname;
+        return fname;
+    } catch (e) {
+        report.file_error = '파일 생성 실패: ' + e.message;
+        return null;
+    }
+}
+function ymd2(d) { return d.toISOString().slice(0, 10).replace(/-/g, ''); }
 
 // ===== 8차: 특정 일자 정산현황 조회 (settlement_status — 읽기 전용) =====
 const SS_LABELS = {
@@ -281,7 +346,7 @@ function matchesKeyword(itemName, keyword) {
 }
 
 // 조건 필터 보고서 (품목 키워드 and/or 기간)
-async function filteredReport({ pool, helpers, keyword, period }) {
+async function filteredReport({ pool, helpers, keyword, period, wantFile }) {
     const parsed = resolvePeriod(period);
     const range = parsed || resolvePeriod('this_month'); // 기간 미지정/해석불가 → 이번 달
     const periodNote = (period && !parsed) ? ` · 기간 '${period}' 해석 불가 → 이번 달 기준` : '';
@@ -361,8 +426,24 @@ async function filteredReport({ pool, helpers, keyword, period }) {
         ? `완료: ${keyword} ${range.label}: ${totalQty.toLocaleString('ko-KR')}개 / ${fmt(productTotal)}원`
         : `완료: ${range.label} 총 ${fmt(paymentTotal)}원 (상품 ${fmt(productTotal)} + 택배 ${fmt(cjFee + cjCarryover)})`;
 
+    const report = {
+        type: 'semi_settlement_filtered', title: `${keyword || '전체'} · ${range.label}`,
+        keyword: keyword || null, period: range,
+        items: items.slice(0, 60), total_qty: totalQty, product_total: productTotal,
+        cj_fee: cjFee, cj_carryover: cjCarryover, payment_total: paymentTotal,
+        note: (keyword
+            ? '품목 부분 일치 매칭 · 상품 기준 금액 (택배비 미포함)'
+            : `총 결제금액 = 상품 + 택배비(박스×${CJ_BOX_FEE.toLocaleString()}원)${cjCarryover ? ' + 이월' : ''}`)
+            + ' · 정산관리와 동일 단가 계산 · 읽기 전용' + periodNote,
+    };
+    // 4단계: 파일 요청 시 xlsx 생성 (요약+상세, 화면 숫자와 동일 경로)
+    const fname = await attachXlsx(helpers, wantFile, {
+        label: range.label, from: range.from, to: range.to, rows,
+        productTotal, cjFee, cjCarryover, paymentTotal, keyword,
+    }, report);
+
     return {
-        summary,
+        summary: summary + (fname ? ` · 📎 ${fname}` : (report.file_error ? ' · ⚠️ 파일 생성 실패' : '')),
         lines: [
             keyword
                 ? `${keyword} ${range.label}(${range.from}~${range.to}) — 규격 ${items.length}종 · ${totalQty.toLocaleString('ko-KR')}개 · ${fmt(productTotal)}원`
@@ -370,20 +451,13 @@ async function filteredReport({ pool, helpers, keyword, period }) {
             items.length
                 ? `최다: ${items[0].name} (${items[0].qty.toLocaleString('ko-KR')}개 / ${fmt(items[0].amount)}원)`
                 : '집계된 품목이 없습니다',
-            keyword
-                ? '상품 기준 금액 (택배비 미포함) · 정산관리와 동일 단가 매칭'
-                : `택배비 ${fmt(cjFee + cjCarryover)}원 포함 총 ${fmt(paymentTotal)}원`,
+            fname
+                ? `📎 ${fname} — 보고서함에서 다운로드`
+                : (keyword
+                    ? '상품 기준 금액 (택배비 미포함) · 정산관리와 동일 단가 매칭'
+                    : `택배비 ${fmt(cjFee + cjCarryover)}원 포함 총 ${fmt(paymentTotal)}원`),
         ],
-        report: {
-            type: 'semi_settlement_filtered', title: `${keyword || '전체'} · ${range.label}`,
-            keyword: keyword || null, period: range,
-            items: items.slice(0, 60), total_qty: totalQty, product_total: productTotal,
-            cj_fee: cjFee, cj_carryover: cjCarryover, payment_total: paymentTotal,
-            note: (keyword
-                ? '품목 부분 일치 매칭 · 상품 기준 금액 (택배비 미포함)'
-                : `총 결제금액 = 상품 + 택배비(박스×${CJ_BOX_FEE.toLocaleString()}원)${cjCarryover ? ' + 이월' : ''}`)
-                + ' · 정산관리와 동일 단가 계산 · 읽기 전용' + periodNote,
-        },
+        report,
     };
 }
 
@@ -420,7 +494,7 @@ module.exports = {
         const kw = String(params.item_keyword || '').trim();
         const periodRaw = String(params.period || '').trim();
         if (kw || periodRaw) {
-            return filteredReport({ pool, helpers, keyword: kw, period: periodRaw });
+            return filteredReport({ pool, helpers, keyword: kw, period: periodRaw, wantFile: !!params.want_file });
         }
 
         const now = kstNow();
@@ -477,25 +551,34 @@ module.exports = {
         const totalDiff = month.total - prev.total; // 상품 기준
         const totalPct = prev.total > 0 ? Math.round(totalDiff / prev.total * 1000) / 10 : null;
 
+        const report = {
+            type: 'semi_settlement', workplace: '법인', generated_at: new Date().toISOString(),
+            week: { from: weekFrom, to: today, product_total: week.total, cj_fee: weekCjFee, payment_total: weekPayment, count: week.count, box_count: weekBoxes },
+            month: { label: monthLabel, from: monthFrom, to: monthTo, product_total: month.total, cj_fee: monthCjFee, cj_carryover: cjCarryover, payment_total: monthPayment, count: month.count, box_count: monthBoxes },
+            prev: { from: prevFrom, to: prevTo, total: prev.total, count: prev.count },
+            total_diff: totalDiff, total_pct: totalPct,
+            partners,
+            yoy_items: yoyItems,
+            note: `단가는 품목별 금액표 기준 자동 매칭 (정산관리와 동일 계산) · 택배비 = 박스수 × ${CJ_BOX_FEE.toLocaleString()}원 + 당월 이월금액 · 읽기 전용`,
+        };
+        // 4단계: 파일 요청 시 이번 달 기준 xlsx 생성
+        const fname = await attachXlsx(helpers, !!params.want_file, {
+            label: monthLabel, from: monthFrom, to: monthTo, rows: monthRows,
+            productTotal: month.total, cjFee: monthCjFee, cjCarryover, paymentTotal: monthPayment, keyword: '',
+        }, report);
+
         return {
-            summary: `완료: ${monthLabel} 총 ${fmt(monthPayment)}원 (상품 ${fmt(month.total)} + 택배 ${fmt(monthCjFee + cjCarryover)})`,
+            summary: `완료: ${monthLabel} 총 ${fmt(monthPayment)}원 (상품 ${fmt(month.total)} + 택배 ${fmt(monthCjFee + cjCarryover)})` + (fname ? ` · 📎 ${fname}` : (report.file_error ? ' · ⚠️ 파일 생성 실패' : '')),
             lines: [
                 `이번 주(${weekFrom}~${today}) 총 ${fmt(weekPayment)}원 (상품 ${fmt(week.total)} + 택배 ${fmt(weekCjFee)})`,
                 `${monthLabel} 전체(${monthFrom}~${monthTo}) 총 ${fmt(monthPayment)}원 · 정산 ${month.count}건 · 거래처 ${partners.length}곳`,
-                prev.total > 0
-                    ? `전년 동기 상품 기준 ${fmt(prev.total)}원 → ${totalPct >= 0 ? '+' : ''}${totalPct}% (${totalDiff >= 0 ? '+' : ''}${fmt(totalDiff)}원)`
-                    : `전년 동기(${prevFrom.slice(0, 7)}) 정산 데이터 없음`,
+                fname
+                    ? `📎 ${fname} — 보고서함에서 다운로드`
+                    : (prev.total > 0
+                        ? `전년 동기 상품 기준 ${fmt(prev.total)}원 → ${totalPct >= 0 ? '+' : ''}${totalPct}% (${totalDiff >= 0 ? '+' : ''}${fmt(totalDiff)}원)`
+                        : `전년 동기(${prevFrom.slice(0, 7)}) 정산 데이터 없음`),
             ],
-            report: {
-                type: 'semi_settlement', workplace: '법인', generated_at: new Date().toISOString(),
-                week: { from: weekFrom, to: today, product_total: week.total, cj_fee: weekCjFee, payment_total: weekPayment, count: week.count, box_count: weekBoxes },
-                month: { label: monthLabel, from: monthFrom, to: monthTo, product_total: month.total, cj_fee: monthCjFee, cj_carryover: cjCarryover, payment_total: monthPayment, count: month.count, box_count: monthBoxes },
-                prev: { from: prevFrom, to: prevTo, total: prev.total, count: prev.count },
-                total_diff: totalDiff, total_pct: totalPct,
-                partners,
-                yoy_items: yoyItems,
-                note: `단가는 품목별 금액표 기준 자동 매칭 (정산관리와 동일 계산) · 택배비 = 박스수 × ${CJ_BOX_FEE.toLocaleString()}원 + 당월 이월금액 · 읽기 전용`,
-            },
+            report,
         };
     },
 };
