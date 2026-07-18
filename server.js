@@ -9,7 +9,7 @@ const OpenAI = require('openai');
 const { GoogleGenAI } = require('@google/genai');
 const officeCrypto = require('officecrypto-tool');
 const { VERSION } = require('./version.js');
-const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange, parseComparePeriods } = require('./date-utils.js');
+const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange, parseComparePeriods, parseWeekSpec } = require('./date-utils.js');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -6006,6 +6006,8 @@ ${JSON.stringify(routingTable, null, 2)}
 - 기간이 아예 없는 조회 지시 (예: "매출 알려줘") → "어느 기간 매출을 볼까요? (예: 이번주 / 이번달)"로 되묻는다.
 - 기간과 조회 항목이 모두 명시된 지시는 즉시 배정한다 — 그 문장에서 더 물을 것이 없다.
   예: "이번주 결제금액 보내줘" = 기간(이번주)+항목(결제금액=정산 조회)+파일(보내줘) → 즉시 세미 배정. '결제금액/매출/정산' 조회는 전부 재무팀 세미 담당이다.
+- 주차 표현(이번주/지난주/N월 N주차/N째주/N주차)과 거래처(효돈/대성/기타거래처/CJ)가 함께 있는 정산·택배비 조회도 즉시 세미 배정한다.
+  예: "이번주 효돈 정산금 파일 줘", "3월 셋째주 대성 정산 파일", "1주차 CJ 택배비 얼마야" — 주차 범위와 거래처는 서버가 확정하므로 너는 배정만 한다.
 【B. 멀티 지시】
 - 발동 조건: 한 문장에 서로 다른 요청이 2개 이상 (판별 힌트: '그리고/랑/이랑/하고/~도' + 동사 2개 이상).
   예: "휴가 언제야? 그리고 지난달 정산도 보여줘"
@@ -6200,16 +6202,30 @@ function maruWeekPeriodOverride(period, content) {
     if (parseExplicitMonth(content, '2100-01-01') || hasExplicitDay(content)) return period; // 월·특정일 명시가 우선
     return 'this_week';
 }
+// 지시 #15: 거래처 축약 표현 → 정산 partner 명칭 (주차 표현과 함께 있을 때만 사용 — 서버 확정 전용)
+function parsePartnerKeyword(text) {
+    const s = String(text || '');
+    if (/효돈/.test(s)) return '효돈농협';
+    if (/대성|시온/.test(s)) return '대성(시온)';
+    if (/기타\s*거래/.test(s)) return '기타거래처';
+    if (/씨제이|대한통운|CJ|택배비/i.test(s)) return 'CJ대한통운';
+    return null;
+}
 // 지시 #6-2: 기간+재무 항목이 모두 명시된 조회는 되묻기 금지 — clarify를 세미 배정으로 서버 강제 보정
 function maruForceFinanceRoute(d, content, todayStr) {
     if (!d || d.action !== 'clarify') return null;
-    if (!/정산|매출|결제\s*금액/.test(content)) return null;
+    if (!/정산|매출|결제\s*금액|택배비/.test(content)) return null;
     let period = '', target = '';
     if (/이번\s*주|금주/.test(content)) period = 'this_week';
     else {
         const em = parseExplicitMonth(content, todayStr);
         if (em) period = em;
         else if (hasExplicitDay(content)) target = parseExplicitDate(content, todayStr);
+        else if (parseWeekSpec(content, todayStr) && parsePartnerKeyword(content)) {
+            // 지시 #15: 주차+거래처 완전 지시 (예: "1주차 CJ 택배비 얼마") — 실제 범위는 조건 확정부가
+            // partner_week로 재계산·덮어쓰므로 여기서는 트리거 표시만 (임시 period, 하류에서 비워짐)
+            period = 'this_week';
+        }
     }
     if (!period && !target) return null;
     return {
@@ -6326,6 +6342,8 @@ async function executeCapabilityTest(run, actor) {
               check: d => d.action === 'route' && d.assignee === '세미' && d.period === 'this_week' },
             { name: '기간 비교 지시 → 세미 도달 (4.5단계)', q: '4월 5월 매출 비교해줘', exp: '세미 배정 — 모델 직접 또는 서버 재무 보정 경유 (실전 기준 채점)',
               check: d => (d.action === 'route' && d.assignee === '세미') || !!maruForceFinanceRoute(d, '4월 5월 매출 비교해줘', kstTodayStr()) },
+            { name: '주차×거래처 → 세미 도달 (지시#15)', q: '이번주 효돈 정산금 파일 줘', exp: '세미 배정 — 모델 직접 또는 서버 재무 보정 경유 (실전 기준 채점)',
+              check: d => (d.action === 'route' && d.assignee === '세미') || !!maruForceFinanceRoute(d, '이번주 효돈 정산금 파일 줘', kstTodayStr()) },
         ];
         for (const c of rc) {
             try {
@@ -6389,6 +6407,23 @@ async function executeCapabilityTest(run, actor) {
             const cp = parseComparePeriods('4월 5월 매출 비교해줘', kstTodayStr());
             add('마루', '비교 기간 서버 확정 (4.5단계)', !!cp && cp.a.endsWith('-04') && cp.b.endsWith('-05'),
                 '4월 vs 5월 (2026-04 vs 2026-05)', cp ? `${cp.a} vs ${cp.b}` : '(추출 실패)', '4월 5월 매출 비교해줘');
+            // 지시 #15 박제: 주차·거래처 서버 확정 (화면 주간표와 동일 경계 — 기준 이원화 금지)
+            const pw1 = parseWeekSpec('7월 2주차 대성 정산', kstTodayStr());
+            const pw2 = parseWeekSpec('3월 셋째주 대성 정산 파일 줘', kstTodayStr());
+            const pw3 = parseWeekSpec('3주 동안 진행한 이벤트', kstTodayStr());
+            add('마루', '주차 파싱 서버 확정 (지시#15)',
+                !!pw1 && pw1.from === '2026-07-06' && !!pw2 && pw2.from === '2026-03-09' && pw3 === null,
+                '7월2주차=07-06 시작 / 3월셋째주=03-09 시작 / "3주 동안"은 미발동',
+                `${pw1 ? pw1.from : 'null'} / ${pw2 ? pw2.from : 'null'} / ${pw3 === null ? '미발동' : '오발동'}`, '7월 2주차 대성 정산');
+            const pk = [parsePartnerKeyword('이번주 효돈 정산금'), parsePartnerKeyword('저번주 대성 정산현황'), parsePartnerKeyword('1주차 CJ 택배비')];
+            add('마루', '거래처 축약 매칭 (지시#15)',
+                pk[0] === '효돈농협' && pk[1] === '대성(시온)' && pk[2] === 'CJ대한통운',
+                '효돈→효돈농협 / 대성→대성(시온) / CJ→CJ대한통운', pk.join(' / '), '이번주 효돈 정산금');
+            const fw = maruForceFinanceRoute(
+                { action: 'clarify', team: '', assignee: '마루', task_summary: '', reason: '', clarify_question: '어느 기간인가요?' },
+                '1주차 CJ 택배비 얼마야', kstTodayStr());
+            add('마루', '주차+거래처 완전 지시 보정 (지시#15)', !!fw && fw.action === 'route' && fw.assignee === '세미',
+                'clarify → route/세미 강제 (빈 되묻기 금지)', fw ? `${fw.action}/${fw.assignee}` : '(보정 안 됨)', '1주차 CJ 택배비 얼마야');
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -6482,6 +6517,19 @@ async function executeCapabilityTest(run, actor) {
             { name: '4.5 품목 순위 4월 1위 (재계산 확정값)', p: { period: '2026-04', rank: { all: false, topN: 10 } }, exp: '카라향 가정용 - 5kg(40과 전후) · 4,164개 · 73,640,000원',
               check: r => r.report?.type === 'semi_rank' && r.report.rows?.[0]?.name === '카라향 가정용 - 5kg(40과 전후)' && r.report.rows[0].qty === 4164 && r.report.rows[0].amount === 73640000,
               act: r => `${r.report?.rows?.[0]?.name || '?'} · ${(r.report?.rows?.[0]?.qty || 0).toLocaleString('ko-KR')}개 · ${Math.round(r.report?.rows?.[0]?.amount || 0).toLocaleString('ko-KR')}원` },
+            // 지시 #15 박제: 주차×거래처 (화면 주간 정산 현황 실측값 대조 — 절대 주차라 회귀 검출 안정)
+            { name: '#15 7월 3주차 효돈 (화면 실측)', p: { partner_week: { partner: '효돈농협', from: '2026-07-13', to: '2026-07-19', label: '7월 3주차' } },
+              exp: '2,033,000원', check: r => r.report?.type === 'semi_partner_week' && r.report.total === 2033000,
+              act: r => Math.round(r.report?.total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '#15 7월 2주차 대성 (화면 실측)', p: { partner_week: { partner: '대성(시온)', from: '2026-07-06', to: '2026-07-12', label: '7월 2주차' } },
+              exp: '6,347,400원', check: r => r.report?.type === 'semi_partner_week' && r.report.total === 6347400,
+              act: r => Math.round(r.report?.total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '#15 7월 2주차 기타거래처 (화면 실측)', p: { partner_week: { partner: '기타거래처', from: '2026-07-06', to: '2026-07-12', label: '7월 2주차' } },
+              exp: '1,916,000원', check: r => r.report?.type === 'semi_partner_week' && r.report.total === 1916000,
+              act: r => Math.round(r.report?.total || 0).toLocaleString('ko-KR') + '원' },
+            { name: '#15 7월 1주차 CJ 택배비 (파일 없음 정직)', p: { partner_week: { partner: 'CJ대한통운', from: '2026-06-29', to: '2026-07-05', label: '7월 1주차' }, want_file: true },
+              exp: '2,951,200원 + 파일 없음 안내', check: r => r.report?.type === 'semi_partner_week' && r.report.cj === true && r.report.total === 2951200 && !!r.report.no_file,
+              act: r => `${Math.round(r.report?.total || 0).toLocaleString('ko-KR')}원 ${r.report?.no_file ? '(파일 없음 안내)' : '(안내 누락)'}` },
         ];
         for (const c of sc) {
             try { const r = await callSemi(c.p); add('세미', c.name, c.check(r), c.exp, c.act(r)); }
@@ -6958,7 +7006,10 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
     const agentQ = await pool.query(
         `SELECT * FROM agents WHERE name = $1 AND is_deleted = false LIMIT 1`, [route.assignee]);
     const agent = agentQ.rows[0] || null;
-    const condText = [conditions.item_keyword, conditions.target_date || conditions.period].filter(Boolean).join(' · ');
+    const condText = [
+        conditions.partner_week ? `${conditions.partner_week.label} ${conditions.partner_week.partner}` : '',
+        conditions.item_keyword, conditions.target_date || conditions.period,
+    ].filter(Boolean).join(' · ');
     const routeInfo = {
         type: 'route', team: route.team, assignee: route.assignee, summary: route.task_summary, reason: route.reason,
         conditions: (conditions.item_keyword || conditions.period || conditions.target_date) ? conditions : null,
@@ -7011,6 +7062,7 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         want_file: WANT_FILE_RE.test(srcText), // 4단계: 엑셀 파일 생성 모드
         compare: conditions.compare || null,   // 4.5 ⑤: 기간 비교 (서버 확정)
         rank: conditions.rank || null,         // 4.5 ⑥: 품목 순위 (서버 확정)
+        partner_week: conditions.partner_week || null, // 지시 #15: 주차×거래처 (서버 확정)
     });
     await finish('완료', { ...routeInfo, run_id: run.id }, run.id);
 }
@@ -7177,6 +7229,18 @@ async function processOrderWithMaru(order, actor) {
                 conditions.rank = { all: /전부|전체\s*품목|모든\s*품목/.test(effContent), topN: nm ? Number(nm[1]) : null };
                 console.log(`품목 순위 확정: ${conditions.rank.all ? '전체' : 'TOP ' + (conditions.rank.topN || 10)}`);
             }
+            // 지시 #15: 주차×거래처 지정형 — 주차·거래처 모두 서버가 확정 (모델 재량 없음).
+            // 거래처 무지정 주간 조회("이번주 정산 얼마야")는 기존 동작 유지 — 둘 다 있을 때만 발동
+            if (!conditions.compare) {
+                const pwSpec = parseWeekSpec(effContent, today);
+                const pwPartner = pwSpec ? parsePartnerKeyword(effContent) : null;
+                if (pwSpec && pwPartner) {
+                    conditions.partner_week = { partner: pwPartner, from: pwSpec.from, to: pwSpec.to, label: pwSpec.label };
+                    conditions.period = '';      // 주차 범위가 우선 — 월/이번주 보정과의 혼선 방지
+                    conditions.target_date = '';
+                    console.log(`주차×거래처 확정: ${pwSpec.label} × ${pwPartner}`);
+                }
+            }
             // 존재하지 않는 날짜 가드 (예: 4월 31일) — 억지 조회·DB 오류 대신 정직 안내
             if (conditions.target_date && /^\d{4}-\d{2}-\d{2}$/.test(conditions.target_date) && !isValidDateStr(conditions.target_date)) {
                 const gm = Number(conditions.target_date.slice(5, 7));
@@ -7190,7 +7254,10 @@ async function processOrderWithMaru(order, actor) {
             }
             // 1-2: 오래된 기간(3개월 이상 과거 또는 작년 이전) 조회는 복창 확인 후 실행 (비교 조회도 동일 적용)
             let confirmNeeded = false, confirmLabel = '';
-            if (conditions.compare) {
+            if (conditions.partner_week) {
+                confirmNeeded = needsQueryConfirm({ from: conditions.partner_week.from }, today);
+                confirmLabel = `『${conditions.partner_week.label} ${conditions.partner_week.partner}』 조회`;
+            } else if (conditions.compare) {
                 const ra = periodRangeOf({ period: conditions.compare.a }, today);
                 const rb = periodRangeOf({ period: conditions.compare.b }, today);
                 confirmNeeded = needsQueryConfirm(ra, today) || needsQueryConfirm(rb, today);

@@ -157,6 +157,78 @@ function parseComparePeriods(text, todayStr) {
     return { a: found[0], b: found[1] };
 }
 
+// ===== 지시 #15: 주차 파싱 =====
+// 주차 경계 = 주간 정산 현황 화면(getWeeksInMonth)과 동일 알고리즘 — 기준 이원화 금지.
+// 월요일 시작 7일 주. N월의 주차 = 1일이 속한 주(월요일이 전월일 수 있음)부터 말일이 속한 주까지.
+function weeksOfMonth(year, month /* 1~12 */) {
+    const weeks = [];
+    const first = new Date(Date.UTC(year, month - 1, 1));
+    const last = new Date(Date.UTC(year, month, 0));
+    const dow1 = first.getUTCDay(); // 0=일, 1=월
+    const monday = new Date(first);
+    if (dow1 === 0) monday.setUTCDate(first.getUTCDate() - 6);
+    else if (dow1 !== 1) monday.setUTCDate(first.getUTCDate() - (dow1 - 1));
+    const cur = new Date(monday);
+    for (;;) {
+        const s = new Date(cur), e = new Date(cur);
+        e.setUTCDate(e.getUTCDate() + 6);
+        weeks.push({ from: s.toISOString().slice(0, 10), to: e.toISOString().slice(0, 10) });
+        if (e >= last) break;
+        cur.setUTCDate(cur.getUTCDate() + 7);
+    }
+    return weeks;
+}
+
+// 주차 표현 → { from, to, label } / 해당 없으면 null (같은 입력 = 같은 결과, 서버 확정 전용)
+// 지원: 이번주/금주, 지난주/저번주/전주, (YYYY년)? N월 N주차·N째주·N번째주·첫째~여섯째주, (월 생략) N주차
+// 연도 생략 시 가장 가까운 과거의 해당 월 (parseExplicitMonth와 동일 규칙). 존재하지 않는 주차는 null
+function parseWeekSpec(text, todayStr) {
+    const s = String(text || '');
+    const weekOfDay = (dayStr, offsetWeeks) => {
+        const t = new Date(dayStr + 'T00:00:00Z');
+        const dow = (t.getUTCDay() + 6) % 7; // 월=0
+        const mon = new Date(t);
+        mon.setUTCDate(t.getUTCDate() - dow + offsetWeeks * 7);
+        const sun = new Date(mon);
+        sun.setUTCDate(mon.getUTCDate() + 6);
+        return { from: mon.toISOString().slice(0, 10), to: sun.toISOString().slice(0, 10) };
+    };
+    const short = d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+    if (/이번\s*주|금주/.test(s)) {
+        const r = weekOfDay(todayStr, 0);
+        return { ...r, label: `이번주(${short(r.from)}~${short(r.to)})` };
+    }
+    if (/지난\s*주|저번\s*주|전주/.test(s)) {
+        const r = weekOfDay(todayStr, -1);
+        return { ...r, label: `지난주(${short(r.from)}~${short(r.to)})` };
+    }
+    const ORD = { '첫': 1, '둘': 2, '셋': 3, '넷': 4, '다섯': 5, '여섯': 6 };
+    // 월 명시형: "N월 2주차" / "N월 둘째주" / "N월 2번째 주" (숫자 단독 "N월 2주"는 기간 오인 위험으로 미지원)
+    let m = s.match(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(?:([1-6])\s*(?:주차|째\s*주|번째\s*주)|(첫|둘|셋|넷|다섯|여섯)\s*째\s*주)/);
+    let year = null, month = null, n = null;
+    if (m) {
+        month = Number(m[2]);
+        n = m[3] ? Number(m[3]) : ORD[m[4]];
+        if (month < 1 || month > 12) return null;
+        if (m[1]) year = Number(m[1]);
+        else {
+            const ty = Number(todayStr.slice(0, 4)), tm = Number(todayStr.slice(5, 7));
+            year = month > tm ? ty - 1 : ty; // 가장 가까운 과거 해석 (parseExplicitMonth 동일)
+        }
+    } else {
+        // 월 생략형: "2주차" 단독 → 오늘이 속한 달 기준
+        m = s.match(/(?:^|[^\d월])([1-6])\s*주차/);
+        if (!m) return null;
+        n = Number(m[1]);
+        year = Number(todayStr.slice(0, 4));
+        month = Number(todayStr.slice(5, 7));
+    }
+    const weeks = weeksOfMonth(year, month);
+    if (n < 1 || n > weeks.length) return null;
+    const w = weeks[n - 1];
+    return { ...w, label: `${month}월 ${n}주차(${short(w.from)}~${short(w.to)})` };
+}
+
 // 실존 달력 날짜인지 검증 (예: 2026-04-31 → false) — 억지 조회 방지 가드용
 function isValidDateStr(s) {
     const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -166,4 +238,4 @@ function isValidDateStr(s) {
     return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
 }
 
-module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr, parseExplicitRange, parseComparePeriods };
+module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr, parseExplicitRange, parseComparePeriods, weeksOfMonth, parseWeekSpec };

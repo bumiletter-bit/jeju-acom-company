@@ -497,6 +497,149 @@ async function rankReport({ pool, helpers, period, topN, showAll, wantFile }) {
 
 // ===== 3.5차: 조건 필터 (마루가 추출한 품목/기간 — AI 추가 호출 없음) =====
 
+// ===== 지시 #15: 주차×거래처 정산 — 금액 즉답 + 화면 동일 양식 엑셀 =====
+// 파일 양식 = 주간 정산 현황 화면의 거래처 셀 다운로드(downloadPartnerWeeklySettlement)와 동일 재현:
+// 옵션명|단가|요일7(월~일)|총수량|금액|차감수량|차감금액|총입금금액 + 수식(차감금액=단가×차감수량,
+// 총입금=금액-차감금액, 합계 SUM). 동일 데이터 경로(fetchSettlements 재계산)라 숫자도 화면과 동일
+async function buildPartnerWeekXlsx({ partner, from, to, target }) {
+    const days = [];
+    for (let d = new Date(from + 'T00:00:00Z'); d <= new Date(to + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
+        days.push(d.toISOString().slice(0, 10));
+    }
+    const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+    const byItem = {};
+    target.forEach(s => {
+        const ds = String(s.date).slice(0, 10);
+        (s.items || []).forEach(it => {
+            const name = (it && it.name) || '(미입력)';
+            if (!byItem[name]) byItem[name] = { price: 0, qtyByDate: {}, totalQty: 0 };
+            byItem[name].qtyByDate[ds] = (byItem[name].qtyByDate[ds] || 0) + (Number(it.qty) || 0);
+            byItem[name].totalQty += (Number(it.qty) || 0);
+            if (Number(it.price) > 0) byItem[name].price = Number(it.price);
+        });
+    });
+    const names = Object.keys(byItem).sort((a, b) => a.localeCompare(b, 'ko'));
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(partner.substring(0, 30));
+    const COLS = 2 + days.length + 5; // 옵션명+단가+요일7+총수량+금액+차감수량+차감금액+총입금 = 14열
+    ws.columns = [{ width: 32 }, { width: 11 }, ...days.map(() => ({ width: 9 })), { width: 10 }, { width: 13 }, { width: 11 }, { width: 13 }, { width: 14 }];
+    ws.addRow([`${partner} — 결제금액 (${from} ~ ${to})`]);
+    ws.mergeCells(1, 1, 1, COLS);
+    ws.addRow([]);
+    ws.addRow(['옵션명', '단가',
+        ...days.map(d => `${DOW[new Date(d + 'T00:00:00Z').getUTCDay()]}\n${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`),
+        '총수량', '금액', '차감수량', '차감금액', '총 입금금액']);
+    const col = i => String.fromCharCode(64 + i); // 1→A (열 14개라 Z 이내)
+    const PRICE = 2, QTY_TOTAL = 2 + days.length + 1, AMOUNT = QTY_TOTAL + 1, DQTY = AMOUNT + 1, DAMT = DQTY + 1, FINAL = DAMT + 1;
+    const dayTotals = days.map(() => 0);
+    let grandQty = 0, grandAmount = 0;
+    names.forEach(name => {
+        const info = byItem[name];
+        const qtys = days.map(d => info.qtyByDate[d] || 0);
+        qtys.forEach((q, i) => { dayTotals[i] += q; });
+        const amt = info.price * info.totalQty;
+        grandQty += info.totalQty;
+        grandAmount += amt;
+        const row = ws.addRow([name, info.price, ...qtys, info.totalQty, amt, 0, 0, amt]);
+        const r = row.number;
+        row.getCell(DAMT).value = { formula: `${col(PRICE)}${r}*${col(DQTY)}${r}`, result: 0 };
+        row.getCell(FINAL).value = { formula: `${col(AMOUNT)}${r}-${col(DAMT)}${r}`, result: amt };
+    });
+    const dataStart = 4, dataEnd = 3 + names.length;
+    const sumRow = ws.addRow(['합계', '', ...dayTotals, grandQty, grandAmount, 0, 0, grandAmount]);
+    const sr = sumRow.number;
+    [DQTY, DAMT, FINAL].forEach((c, i) => {
+        sumRow.getCell(c).value = { formula: `SUM(${col(c)}${dataStart}:${col(c)}${dataEnd})`, result: i === 2 ? grandAmount : 0 };
+    });
+
+    // 스타일 (화면 다운로드와 동일 톤: 제목 FFE0B2 / 헤더 E6F0FA / 합계 FFF8E1, 전체 얇은 테두리)
+    const border = { top: { style: 'thin', color: { argb: 'FF999999' } }, bottom: { style: 'thin', color: { argb: 'FF999999' } }, left: { style: 'thin', color: { argb: 'FF999999' } }, right: { style: 'thin', color: { argb: 'FF999999' } } };
+    const moneyCols = [PRICE, AMOUNT, DAMT, FINAL];
+    for (let r = 1; r <= sr; r++) {
+        for (let c = 1; c <= COLS; c++) {
+            const cell = ws.getRow(r).getCell(c);
+            cell.border = border;
+            cell.alignment = { vertical: 'middle', wrapText: true };
+            if (r === 1) {
+                cell.font = { bold: true, size: 14 };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
+            } else if (r === 3) {
+                cell.font = { bold: true, size: 11 };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6F0FA' } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            } else if (r >= dataStart && r <= sr) {
+                if (r === sr) {
+                    cell.font = { bold: true };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF8E1' } };
+                }
+                if (moneyCols.includes(c)) {
+                    cell.numFmt = '#,##0';
+                    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                } else if (c > 2 || c === 1) {
+                    if (c !== 1) cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                }
+            }
+        }
+    }
+    ws.getRow(1).height = 28;
+    ws.getRow(3).height = 32;
+    return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+async function partnerWeekReport({ pool, helpers, partner, from, to, label, wantFile }) {
+    const rows = await fetchSettlements(pool, helpers, from, to);
+    // CJ대한통운: 파일 없음 — 금액만 (화면 주간표와 동일: 3거래처 박스수 × 3,100원)
+    if (partner === 'CJ대한통운') {
+        const boxes = cjBoxCount(rows);
+        const fee = boxes * 3100;
+        if (!boxes) {
+            return {
+                summary: `『${label} CJ대한통운』 해당 주차 박스 출고 기록이 없습니다`,
+                lines: [`${from} ~ ${to} 기간의 거래처 정산(박스) 기록 0건 — 택배비 계산 대상 없음`],
+                report: { type: 'semi_partner_week', partner, from, to, label, cj: true, zero_result: true },
+            };
+        }
+        const lines = [`박스 ${fmt(boxes)}개 × 3,100원 = ${fmt(fee)}원 (대성·효돈·기타 합산 — 주간 정산 현황과 동일 계산)`];
+        if (wantFile) lines.push('CJ대한통운은 거래처 정산 파일이 없어 금액만 안내드립니다');
+        return {
+            summary: `『${label} CJ대한통운』 택배비 ${fmt(fee)}원`,
+            lines,
+            report: { type: 'semi_partner_week', partner, from, to, label, cj: true, boxes, total: fee,
+                ...(wantFile ? { no_file: 'CJ대한통운은 정산 파일이 없습니다 — 금액만 안내' } : {}) },
+        };
+    }
+    const target = rows.filter(r => r.partner === partner);
+    if (!target.length) {
+        // 0건 가드 — 대체 조회 금지, 데이터가 있는 가장 가까운 날짜 힌트만
+        const near = await pool.query(
+            `SELECT date FROM settlements WHERE partner = $1 ORDER BY ABS(date - $2::date) LIMIT 1`, [partner, from]);
+        const hint = near.rows.length ? `가장 가까운 기록: ${String(near.rows[0].date).slice(0, 10)}` : '해당 거래처의 정산 기록이 없습니다';
+        return {
+            summary: `『${label} ${partner}』 정산 기록이 없습니다`,
+            lines: [`${from} ~ ${to} 기간 ${partner} 정산 0건`, hint],
+            report: { type: 'semi_partner_week', partner, from, to, label, zero_result: true, hint },
+        };
+    }
+    const total = target.reduce((s, r) => s + r.amount, 0);
+    const report = { type: 'semi_partner_week', partner, from, to, label, total, count: target.length };
+    const lines = [`정산 ${target.length}건 · 합계 ${fmt(total)}원 (주간 정산 현황 화면과 동일 계산)`];
+    if (wantFile && typeof helpers.saveReportFile === 'function') {
+        try {
+            const fname = `${partner}_결제금액_${from}~${to}.xlsx`; // 화면 다운로드와 동일 파일명
+            const buf = await buildPartnerWeekXlsx({ partner, from, to, target });
+            report.file_id = await helpers.saveReportFile(fname, buf);
+            report.file_name = fname;
+            lines.push(`📎 ${fname}`);
+        } catch (e) {
+            report.file_error = '파일 생성 실패: ' + e.message;
+            lines.push(report.file_error);
+        }
+    }
+    return { summary: `『${label} ${partner}』 정산 ${fmt(total)}원`, lines, report };
+}
+
 function monthEndStr(ym) {
     const y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7));
     return ym + '-' + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0');
@@ -681,6 +824,15 @@ module.exports = {
                     note: '오션라운지 매출 데이터 없음 — 데이터 등록 후 조회 가능',
                 },
             };
+        }
+
+        // ===== 지시 #15: 주차×거래처 정산 (서버가 주차·거래처를 확정해 전달 — 모델 재량 없음) =====
+        if (params.partner_week && params.partner_week.partner) {
+            const pw = params.partner_week;
+            return partnerWeekReport({
+                pool, helpers, partner: pw.partner, from: pw.from, to: pw.to,
+                label: pw.label || `${pw.from}~${pw.to}`, wantFile: !!params.want_file,
+            });
         }
 
         // ===== 4.5단계: 기간 비교 / 품목 순위 (서버가 의도·기간을 확정해 전달 — 모델 재량 없음) =====

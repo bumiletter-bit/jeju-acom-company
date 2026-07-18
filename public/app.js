@@ -11108,6 +11108,34 @@ window.aoOpenReport = async function(runId) {
             </table></div>` : ''}
             <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
         }
+    } else if (rep.type === 'semi_partner_week') {
+        // 지시 #15: 주차×거래처 정산 (주간 정산 현황 화면과 동일 계산)
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        if (rep.zero_result) {
+            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.label)} ${aoEsc(rep.partner)} 정산 기록이 없습니다${rep.hint ? '<br><span style="font-size:11px;color:#999;">' + aoEsc(rep.hint) + '</span>' : ''}</div>`;
+        } else if (rep.cj) {
+            body = `
+            <h4 class="ao-sec-title">🚚 ${aoEsc(rep.label)} CJ대한통운 택배비 <small style="color:#888;">(${rep.from} ~ ${rep.to})</small></h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <tbody>
+                <tr><td>박스 수 (대성·효돈·기타 합산)</td><td>${(rep.boxes || 0).toLocaleString()}개</td></tr>
+                <tr><td>택배비 (박스 × 3,100원)</td><td><strong>${won(rep.total)}</strong></td></tr>
+                </tbody>
+            </table></div>
+            ${rep.no_file ? `<p class="ao-rep-note">ℹ️ ${aoEsc(rep.no_file)}</p>` : ''}
+            <p class="ao-rep-note">ℹ️ 주간 정산 현황 화면과 동일 계산</p>`;
+        } else {
+            body = `
+            <h4 class="ao-sec-title">📅 ${aoEsc(rep.label)} ${aoEsc(rep.partner)} 정산 <small style="color:#888;">(${rep.from} ~ ${rep.to})</small></h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <tbody>
+                <tr><td>정산 건수</td><td>${rep.count || 0}건</td></tr>
+                <tr><td>결제금액 합계</td><td><strong>${won(rep.total)}</strong></td></tr>
+                </tbody>
+            </table></div>
+            ${rep.file_error ? `<p class="ao-rep-note">⚠️ ${aoEsc(rep.file_error)}</p>` : ''}
+            <p class="ao-rep-note">ℹ️ 주간 정산 현황 화면의 거래처 셀과 동일 계산·동일 양식${rep.file_name ? ' — 📎 ' + aoEsc(rep.file_name) : ''}</p>`;
+        }
     } else if (rep.type === 'semi_settlement_filtered') {
         // 3.5차: 조건 필터 보고서 (품목 키워드 · 기간)
         const won = n => Math.round(n || 0).toLocaleString() + '원';
