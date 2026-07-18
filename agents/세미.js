@@ -93,16 +93,31 @@ function groupByPartner(rows) {
             p.byItem[it.name].amount += (Number(it.price) || 0) * (Number(it.qty) || 0);
         });
     });
-    return Object.values(g).map(p => ({
-        partner: p.partner, count: p.count, total: p.total,
-        items: Object.values(p.byItem).sort((a, b) => b.amount - a.amount).slice(0, 40),
-    })).sort((a, b) => b.total - a.total);
+    return Object.values(g).map(p => {
+        const c = capList(Object.values(p.byItem).sort((a, b) => b.amount - a.amount));
+        return { partner: p.partner, count: p.count, total: p.total, items: c.list, items_omitted: c.omitted };
+    }).sort((a, b) => b.total - a.total);
 }
 
 // CJ택배비: 대성/효돈/기타 정산의 박스수(qty 합계) × 3,100원 (정산관리와 동일 계산)
 function cjBoxCount(rows) {
     return rows.reduce((s, r) => CJ_PARTNERS.includes(r.partner)
         ? s + r.items.reduce((q, it) => q + (Number(it.qty) || 0), 0) : s, 0);
+}
+
+// ===== 지시 #5-9: 보고서 목록 통일 상한 — 초과분은 '외 N종 생략' 명시 (정직 원칙) =====
+const REPORT_ITEM_CAP = 60;
+function capList(arr, cap = REPORT_ITEM_CAP) {
+    return { list: arr.slice(0, cap), omitted: Math.max(0, arr.length - cap) };
+}
+const omitNote = omitted => (omitted > 0 ? ` · 외 ${omitted}종 생략(상한 ${REPORT_ITEM_CAP})` : '');
+
+// ===== 4.5단계: 품목 계열 키 (규격 표기 제거 — 기존 토큰 매칭으로 구성원 검증) =====
+function seriesKeyOf(name) {
+    let s = String(name).replace(/\([^)]*\)/g, ' ');
+    s = s.replace(/\d+(\.\d+)?\s*(kg|g|과|입|미|번)/gi, ' ');
+    s = s.replace(/가정용|선물용|로얄|프리미엄|특품|못난이|중대과|대과|중과|소과|혼합|세트|박스|실속|한판|~|-|\/|\d+/g, ' ');
+    return s.replace(/\s+/g, ' ').trim();
 }
 
 // ===== 4단계: 정산 보고서 xlsx — 시트1 요약("상품+택배=총결제" 병기), 시트2 상세(일자·품목별) =====
@@ -299,6 +314,187 @@ async function dayReport({ pool, helpers, date }) {
     };
 }
 
+// ===== 4.5단계 ⑤: 기간 비교 보고서 (순수 코드 0원) — a=첫 언급, b=둘째 언급, 증감 = a 대비 b =====
+async function loadMonthAgg(pool, helpers, ymStr) {
+    const from = ymStr + '-01', to = monthEndStr(ymStr);
+    const rows = await fetchSettlements(pool, helpers, from, to);
+    const agg = aggregate(rows);
+    const boxes = cjBoxCount(rows);
+    const cjFee = boxes * CJ_BOX_FEE;
+    const cj = await pool.query('SELECT amount FROM cj_carryover WHERE month = $1 LIMIT 1', [ymStr]);
+    const carry = Number(cj.rows[0]?.amount) || 0;
+    const label = ymStr.slice(0, 4) + '년 ' + Number(ymStr.slice(5, 7)) + '월';
+    return { ym: ymStr, label, from, to, rows, agg, boxes, cjFee, carry, payment: agg.total + cjFee + carry };
+}
+const pctOf = (base, diff) => (base > 0 ? Math.round(diff / base * 1000) / 10 : null);
+
+async function compareReport({ pool, helpers, a, b, wantFile }) {
+    const A = await loadMonthAgg(pool, helpers, a);
+    const B = await loadMonthAgg(pool, helpers, b);
+    // 0건 가드: 양쪽 모두 없으면 정직 안내 (기존 0건 가드와 동일 형식)
+    if (A.rows.length === 0 && B.rows.length === 0) {
+        return {
+            summary: `『${A.label} vs ${B.label}』 비교 결과 양쪽 모두 0건입니다 — 조회 기간이 맞나요?`,
+            lines: [`${A.label}·${B.label} 모두 정산 데이터가 없습니다`, '정직 원칙: 다른 기간 데이터로 대체하지 않습니다'],
+            report: { type: 'semi_compare', a: { label: A.label }, b: { label: B.label }, zero_result: true, note: '비교 대상 양쪽 0건' },
+        };
+    }
+    // 품목 비교: 합집합 → 양쪽 최대 금액 기준 TOP 10 (+[신규]/[종료] — a에 없으면 신규, b에 없으면 종료)
+    const mapA = {}, mapB = {};
+    A.agg.items.forEach(i => { mapA[i.name] = i; });
+    B.agg.items.forEach(i => { mapB[i.name] = i; });
+    const names = [...new Set([...Object.keys(mapA), ...Object.keys(mapB)])];
+    const itemsAll = names.map(n => {
+        const ia = mapA[n] || { qty: 0, amount: 0 };
+        const ib = mapB[n] || { qty: 0, amount: 0 };
+        return {
+            name: n, a_qty: ia.qty, a_amount: ia.amount, b_qty: ib.qty, b_amount: ib.amount,
+            diff: ib.amount - ia.amount, pct: pctOf(ia.amount, ib.amount - ia.amount),
+            tag: !mapA[n] ? '신규' : (!mapB[n] ? '종료' : ''),
+        };
+    }).sort((x, y) => Math.max(y.a_amount, y.b_amount) - Math.max(x.a_amount, x.b_amount));
+    const itemsTop = itemsAll.slice(0, 10);
+    // 거래처 비교
+    const pA = {}, pB = {};
+    A.rows.forEach(r => { pA[r.partner] = (pA[r.partner] || 0) + r.amount; });
+    B.rows.forEach(r => { pB[r.partner] = (pB[r.partner] || 0) + r.amount; });
+    const partners = [...new Set([...Object.keys(pA), ...Object.keys(pB)])].map(p => ({
+        partner: p, a: pA[p] || 0, b: pB[p] || 0,
+        diff: (pB[p] || 0) - (pA[p] || 0), pct: pctOf(pA[p] || 0, (pB[p] || 0) - (pA[p] || 0)),
+    })).sort((x, y) => Math.max(y.a, y.b) - Math.max(x.a, x.b));
+
+    const totalDiff = B.payment - A.payment;
+    const totalPct = pctOf(A.payment, totalDiff);
+    const sideLine = S => S.rows.length
+        ? `${S.label} 총 ${fmt(S.payment)}원 (상품 ${fmt(S.agg.total)} + 택배 ${fmt(S.cjFee + S.carry)}) · ${S.agg.count}건`
+        : `${S.label} 데이터 없음`;
+
+    const report = {
+        type: 'semi_compare',
+        a: { ym: A.ym, label: A.label, from: A.from, to: A.to, product_total: A.agg.total, cj_fee: A.cjFee, cj_carryover: A.carry, payment_total: A.payment, count: A.agg.count, box_count: A.boxes, no_data: A.rows.length === 0 },
+        b: { ym: B.ym, label: B.label, from: B.from, to: B.to, product_total: B.agg.total, cj_fee: B.cjFee, cj_carryover: B.carry, payment_total: B.payment, count: B.agg.count, box_count: B.boxes, no_data: B.rows.length === 0 },
+        diff: { payment: totalDiff, payment_pct: totalPct, product: B.agg.total - A.agg.total, product_pct: pctOf(A.agg.total, B.agg.total - A.agg.total), count: B.agg.count - A.agg.count, boxes: B.boxes - A.boxes },
+        partners, items: itemsTop, items_total: itemsAll.length,
+        note: `증감 = ${A.label} 대비 ${B.label} · 한쪽 데이터 없으면 %없이 '데이터 없음' 표시 · 정산관리와 동일 단가 계산 · 읽기 전용`,
+    };
+    // 비교 xlsx (want_file)
+    let fname = null;
+    if (wantFile && typeof helpers.saveReportFile === 'function') {
+        try {
+            const wb = new ExcelJS.Workbook();
+            const ws = wb.addWorksheet('비교');
+            ws.columns = [
+                { header: '구분', key: 'k', width: 30 }, { header: A.label, key: 'a', width: 16 },
+                { header: B.label, key: 'b', width: 16 }, { header: '증감', key: 'd', width: 14 }, { header: '증감률(%)', key: 'p', width: 10 },
+            ];
+            const row = (k, av, bv, d, p) => ws.addRow({ k, a: av, b: bv, d, p: p === null ? '데이터 없음' : p });
+            row('상품 매출', A.agg.total, B.agg.total, B.agg.total - A.agg.total, pctOf(A.agg.total, B.agg.total - A.agg.total));
+            row('택배비(+이월)', A.cjFee + A.carry, B.cjFee + B.carry, (B.cjFee + B.carry) - (A.cjFee + A.carry), pctOf(A.cjFee + A.carry, (B.cjFee + B.carry) - (A.cjFee + A.carry)));
+            row('총 결제금액 (상품+택배=총결제)', A.payment, B.payment, totalDiff, totalPct);
+            row('정산 건수', A.agg.count, B.agg.count, B.agg.count - A.agg.count, null);
+            row('택배 박스', A.boxes, B.boxes, B.boxes - A.boxes, null);
+            ws.addRow({});
+            ws.addRow({ k: '── 거래처별 (상품 기준) ──' });
+            partners.forEach(p => row(p.partner, p.a, p.b, p.diff, p.pct));
+            ws.addRow({});
+            ws.addRow({ k: '── 품목 TOP ' + itemsTop.length + ' ──' });
+            itemsTop.forEach(i => row(i.name + (i.tag ? ` [${i.tag}]` : ''), i.a_amount, i.b_amount, i.diff, i.pct));
+            ws.getRow(1).font = { bold: true };
+            ['a', 'b', 'd'].forEach(k => ws.getColumn(k).numFmt = '#,##0');
+            const buf = Buffer.from(await wb.xlsx.writeBuffer());
+            fname = `정산비교_${A.ym}vs${B.ym}_${ymd2(kstNow())}.xlsx`;
+            report.file_id = await helpers.saveReportFile(fname, buf);
+            report.file_name = fname;
+        } catch (e) { report.file_error = '파일 생성 실패: ' + e.message; }
+    }
+    return {
+        summary: `완료: ${A.label} vs ${B.label} — 총결제 ${fmt(A.payment)} → ${fmt(B.payment)}원 (${totalPct === null ? '데이터 없음' : (totalDiff >= 0 ? '+' : '') + fmt(totalDiff) + '원 / ' + (totalDiff >= 0 ? '+' : '') + totalPct + '%'})` + (fname ? ` · 📎 ${fname}` : ''),
+        lines: [sideLine(A), sideLine(B), fname ? `📎 ${fname} — 보고서함에서 다운로드` : `품목 합집합 ${itemsAll.length}종 중 TOP ${itemsTop.length} 비교 (보고서에서 확인)`],
+        report,
+    };
+}
+
+// ===== 4.5단계 ⑥: 품목 매출 기여 순위 (순수 코드 0원) — 규격별 개별 + 계열 합계 별도 줄 =====
+async function rankReport({ pool, helpers, period, topN, showAll, wantFile }) {
+    const range = resolvePeriod(period || '') || resolvePeriod('this_month');
+    const rows = await fetchSettlements(pool, helpers, range.from, range.to);
+    if (rows.length === 0) {
+        const near = await pool.query(
+            `SELECT to_char(date, 'YYYY-MM') AS ym FROM settlements
+             ORDER BY GREATEST(date - $1::date, $1::date - date) ASC LIMIT 1`, [range.from]);
+        const nearYm = near.rows[0]?.ym || null;
+        return {
+            summary: `『${range.label}』 조회 결과 0건입니다 — 조회 기간이 맞나요?${nearYm ? ` (데이터가 있는 가장 가까운 달: ${nearYm})` : ''}`,
+            lines: [`${range.label}(${range.from}~${range.to}) 정산 데이터가 없습니다`, '정직 원칙: 다른 기간 데이터로 대체하지 않습니다'],
+            report: { type: 'semi_rank', period: range, zero_result: true, nearest_month: nearYm, note: '조회 결과 0건 — 기간 확인 요청' },
+        };
+    }
+    const agg = aggregate(rows);
+    const total = agg.total;
+    const ranked = agg.items.map((i, idx) => ({
+        rank: idx + 1, name: i.name, qty: i.qty, amount: i.amount,
+        share: total > 0 ? Math.round(i.amount / total * 1000) / 10 : 0,
+    }));
+    const shown = showAll ? ranked : ranked.slice(0, topN || 10);
+    // 계열 합계 (규격 2종 이상 + 토큰 매칭 검증 — '하귤' 제외 규칙 포함)
+    const groups = {};
+    ranked.forEach(i => {
+        const key = seriesKeyOf(i.name);
+        if (!key) return;
+        (groups[key] = groups[key] || []).push(i);
+    });
+    const series = Object.entries(groups)
+        .filter(([key, members]) => members.length >= 2 && members.every(m => matchesKeyword(m.name, key)))
+        .map(([key, members]) => ({
+            name: key + ' 계열 합계', members: members.length,
+            qty: members.reduce((s, m) => s + m.qty, 0),
+            amount: members.reduce((s, m) => s + m.amount, 0),
+            share: total > 0 ? Math.round(members.reduce((s, m) => s + m.amount, 0) / total * 1000) / 10 : 0,
+        }))
+        .sort((x, y) => y.amount - x.amount);
+
+    const report = {
+        type: 'semi_rank', period: range, product_total: total,
+        rows: shown, rows_total: ranked.length, shown_all: !!showAll, top_n: showAll ? ranked.length : (topN || 10),
+        series,
+        note: `상품 기준 금액·정산관리와 동일 단가 계산 · 비중 = 품목 금액 / 기간 상품 총액 · 계열 합계는 규격 2종 이상 + 토큰 매칭 검증(하귤 제외 규칙 포함)${showAll ? '' : ` · 전체 ${ranked.length}종 중 TOP ${shown.length} 표시 ("전부"라고 지시하면 전 품목)`} · 읽기 전용`,
+    };
+    let fname = null;
+    if (wantFile && typeof helpers.saveReportFile === 'function') {
+        try {
+            const wb = new ExcelJS.Workbook();
+            const ws = wb.addWorksheet('품목 순위');
+            ws.columns = [
+                { header: '순위', key: 'r', width: 6 }, { header: '품목', key: 'n', width: 34 },
+                { header: '수량', key: 'q', width: 10 }, { header: '매출액', key: 'a', width: 14 }, { header: '비중(%)', key: 's', width: 8 },
+            ];
+            ws.addRow({ r: '', n: `기간: ${range.from} ~ ${range.to} (${range.label}) · 상품 총액 ${Math.round(total)}` });
+            ranked.forEach(i => ws.addRow({ r: i.rank, n: i.name, q: i.qty, a: i.amount, s: i.share }));
+            if (series.length) {
+                ws.addRow({});
+                ws.addRow({ n: '── 계열 합계 ──' });
+                series.forEach(s => ws.addRow({ n: s.name + ` (${s.members}종)`, q: s.qty, a: s.amount, s: s.share }));
+            }
+            ws.getRow(1).font = { bold: true };
+            ws.getColumn('a').numFmt = '#,##0';
+            const buf = Buffer.from(await wb.xlsx.writeBuffer());
+            fname = `품목순위_${range.from}~${range.to}_${ymd2(kstNow())}.xlsx`;
+            report.file_id = await helpers.saveReportFile(fname, buf);
+            report.file_name = fname;
+        } catch (e) { report.file_error = '파일 생성 실패: ' + e.message; }
+    }
+    const top1 = ranked[0];
+    return {
+        summary: `완료: ${range.label} 품목 기여 순위 — 1위 ${top1.name} ${top1.qty.toLocaleString('ko-KR')}개 / ${fmt(top1.amount)}원 (${top1.share}%)` + (fname ? ` · 📎 ${fname}` : ''),
+        lines: [
+            `${range.label}(${range.from}~${range.to}) 상품 총액 ${fmt(total)}원 · 품목 ${ranked.length}종 중 ${shown.length}종 표시`,
+            `TOP3: ${ranked.slice(0, 3).map(i => `${i.rank}위 ${i.name}(${i.share}%)`).join(' / ')}`,
+            fname ? `📎 ${fname} — 보고서함에서 다운로드` : (series.length ? `계열 합계 ${series.length}건 별도 표시 (보고서에서 확인)` : '계열 합계 대상 없음 (규격 2종 이상 품목 없음)'),
+        ],
+        report,
+    };
+}
+
 // ===== 3.5차: 조건 필터 (마루가 추출한 품목/기간 — AI 추가 호출 없음) =====
 
 function monthEndStr(ym) {
@@ -391,20 +587,22 @@ async function filteredReport({ pool, helpers, keyword, period, wantFile }) {
 
     // 키워드가 어떤 품목과도 매칭 안 됨 → 정직하게 표시 (등록 품목 목록 제시)
     if (keyword && items.length === 0) {
-        const allNames = [...new Set(rows.flatMap(r => r.items.map(it => it && it.name).filter(Boolean)))].slice(0, 40);
+        const allNamesFull = [...new Set(rows.flatMap(r => r.items.map(it => it && it.name).filter(Boolean)))];
+        const cappedNames = capList(allNamesFull);
+        const allNames = cappedNames.list;
         return {
             summary: `해당 품목을 찾을 수 없습니다: "${keyword}" (${range.label})`,
             lines: [
                 `"${keyword}"와 매칭되는 품목이 ${range.label} 정산에 없습니다`,
-                allNames.length
-                    ? `해당 기간 등록 품목 ${allNames.length}종: ${allNames.slice(0, 4).join(', ')}${allNames.length > 4 ? ' 외' : ''}`
+                allNamesFull.length
+                    ? `해당 기간 등록 품목 ${allNamesFull.length}종: ${allNames.slice(0, 4).join(', ')}${allNamesFull.length > 4 ? ' 외' : ''}`
                     : '해당 기간에는 정산 데이터 자체가 없습니다',
                 '품목명을 확인해서 다시 지시해주세요',
             ],
             report: {
                 type: 'semi_settlement_filtered', title: `${keyword} · ${range.label}`,
-                keyword, period: range, no_match: true, available_items: allNames,
-                note: '요청 품목과 매칭되는 정산 품목 없음 — 등록 품목 목록 참고' + periodNote,
+                keyword, period: range, no_match: true, available_items: allNames, available_omitted: cappedNames.omitted,
+                note: '요청 품목과 매칭되는 정산 품목 없음 — 등록 품목 목록 참고' + periodNote + omitNote(cappedNames.omitted),
             },
         };
     }
@@ -426,15 +624,16 @@ async function filteredReport({ pool, helpers, keyword, period, wantFile }) {
         ? `완료: ${keyword} ${range.label}: ${totalQty.toLocaleString('ko-KR')}개 / ${fmt(productTotal)}원`
         : `완료: ${range.label} 총 ${fmt(paymentTotal)}원 (상품 ${fmt(productTotal)} + 택배 ${fmt(cjFee + cjCarryover)})`;
 
+    const cappedItems = capList(items);
     const report = {
         type: 'semi_settlement_filtered', title: `${keyword || '전체'} · ${range.label}`,
         keyword: keyword || null, period: range,
-        items: items.slice(0, 60), total_qty: totalQty, product_total: productTotal,
+        items: cappedItems.list, items_omitted: cappedItems.omitted, total_qty: totalQty, product_total: productTotal,
         cj_fee: cjFee, cj_carryover: cjCarryover, payment_total: paymentTotal,
         note: (keyword
             ? '품목 부분 일치 매칭 · 상품 기준 금액 (택배비 미포함)'
             : `총 결제금액 = 상품 + 택배비(박스×${CJ_BOX_FEE.toLocaleString()}원)${cjCarryover ? ' + 이월' : ''}`)
-            + ' · 정산관리와 동일 단가 계산 · 읽기 전용' + periodNote,
+            + ' · 정산관리와 동일 단가 계산 · 읽기 전용' + periodNote + omitNote(cappedItems.omitted),
     };
     // 4단계: 파일 요청 시 xlsx 생성 (요약+상세, 화면 숫자와 동일 경로)
     const fname = await attachXlsx(helpers, wantFile, {
@@ -482,6 +681,18 @@ module.exports = {
                     note: '오션라운지 매출 데이터 없음 — 데이터 등록 후 조회 가능',
                 },
             };
+        }
+
+        // ===== 4.5단계: 기간 비교 / 품목 순위 (서버가 의도·기간을 확정해 전달 — 모델 재량 없음) =====
+        if (params.compare && params.compare.a && params.compare.b) {
+            return compareReport({ pool, helpers, a: params.compare.a, b: params.compare.b, wantFile: !!params.want_file });
+        }
+        if (params.rank) {
+            return rankReport({
+                pool, helpers, period: String(params.period || '').trim(),
+                topN: Number(params.rank.topN) || 10, showAll: !!params.rank.all,
+                wantFile: !!params.want_file,
+            });
         }
 
         // ===== 특정 일자 통합 조회 (8차 보강: 일별 정산 + 정산현황 기록) =====
@@ -546,7 +757,8 @@ module.exports = {
             const diff = cur.amount - p.amount;
             const pct = p.amount > 0 ? Math.round(diff / p.amount * 1000) / 10 : null;
             return { name, cur_qty: cur.qty, cur_amount: cur.amount, prev_qty: p.qty, prev_amount: p.amount, diff, pct };
-        }).sort((a, b) => b.cur_amount - a.cur_amount).slice(0, 60);
+        }).sort((a, b) => b.cur_amount - a.cur_amount);
+        const cappedYoy = capList(yoyItems);
 
         const totalDiff = month.total - prev.total; // 상품 기준
         const totalPct = prev.total > 0 ? Math.round(totalDiff / prev.total * 1000) / 10 : null;
@@ -558,8 +770,10 @@ module.exports = {
             prev: { from: prevFrom, to: prevTo, total: prev.total, count: prev.count },
             total_diff: totalDiff, total_pct: totalPct,
             partners,
-            yoy_items: yoyItems,
-            note: `단가는 품목별 금액표 기준 자동 매칭 (정산관리와 동일 계산) · 택배비 = 박스수 × ${CJ_BOX_FEE.toLocaleString()}원 + 당월 이월금액 · 읽기 전용`,
+            yoy_items: cappedYoy.list, yoy_omitted: cappedYoy.omitted,
+            note: `단가는 품목별 금액표 기준 자동 매칭 (정산관리와 동일 계산) · 택배비 = 박스수 × ${CJ_BOX_FEE.toLocaleString()}원 + 당월 이월금액 · 읽기 전용`
+                + omitNote(cappedYoy.omitted)
+                + (partners.some(p => p.items_omitted > 0) ? ` · 거래처 품목 ${partners.reduce((s, p) => s + (p.items_omitted || 0), 0)}종 생략(상한 ${REPORT_ITEM_CAP})` : ''),
         };
         // 4단계: 파일 요청 시 이번 달 기준 xlsx 생성
         const fname = await attachXlsx(helpers, !!params.want_file, {

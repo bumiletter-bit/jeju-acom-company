@@ -1,6 +1,6 @@
 // 1단계 1-1 검증: 월 단위 날짜 정규식 로컬 테스트 (사고 재현 케이스 포함)
 // 실행: node scripts/test-dates.js  — 전부 PASS여야 배포 가능
-const { parseExplicitDate, parseExplicitMonth, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange } = require('../date-utils.js');
+const { parseExplicitDate, parseExplicitMonth, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange, parseComparePeriods } = require('../date-utils.js');
 
 const TODAY = '2026-07-18'; // 기준일 고정 (실서버는 kstTodayStr() 사용)
 let pass = 0, fail = 0;
@@ -58,6 +58,16 @@ t('"4월 5일부터 10일까지" (조회=과거 해석)', rangeStr('4월 5일부
 t('무효 날짜 "31일부터 32일까지" → null', rangeStr('31일부터 32일까지', { future: true }), null);
 t('기간 표현 없음 → null', rangeStr('카라향 재고 알려줘', { future: true }), null);
 t('반복 동일성: 같은 입력 3회 동일', [1,2,3].map(() => rangeStr('7월 25일부터 27일까지 등록', { future: true })).every((v, _, a) => v === a[0]), true);
+
+console.log('\n=== 비교 기간 추출 (parseComparePeriods — 4.5단계) ===');
+const cmp = q => { const r = parseComparePeriods(q, TODAY); return r ? r.a + ' vs ' + r.b : null; };
+t('"4월 5월 매출 비교해줘" → 2026-04 vs 2026-05', cmp('4월 5월 매출 비교해줘'), '2026-04 vs 2026-05');
+t('"이번달 지난달 비교" → 07 vs 06', cmp('이번달 지난달 비교'), '2026-07 vs 2026-06');
+t('"4월이랑 작년 4월 비교" → 2026-04 vs 2025-04', cmp('4월이랑 작년 4월 비교해줘'), '2026-04 vs 2025-04');
+t('"2025년 4월과 4월 비교" → 2025-04 vs 2026-04', cmp('2025년 4월과 4월 비교'), '2025-04 vs 2026-04');
+t('기간 1개뿐 → null', cmp('4월 매출 비교해줘'), null);
+t('같은 기간 2번 → null', cmp('4월 4월 비교'), null);
+t('특정일 포함 → null (미지원 정직)', cmp('4월 14일 5월 14일 비교'), null);
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

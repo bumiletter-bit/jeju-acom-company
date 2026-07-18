@@ -128,6 +128,35 @@ function parseExplicitRange(text, todayStr, { future = false } = {}) {
     return { from, to };
 }
 
+// 4.5단계: 비교 지시에서 월 단위 기간 2개 추출 ("4월 5월 비교", "이번달 지난달", "4월이랑 작년 4월")
+// → { a: 'YYYY-MM', b: 'YYYY-MM' } (등장 순서 유지) / 2개가 아니면 null
+function parseComparePeriods(text, todayStr) {
+    const t = String(text || '');
+    if (hasExplicitDay(t)) return null; // 특정일 비교는 미지원 (정직하게 단일 조회로)
+    const curY = Number(todayStr.slice(0, 4));
+    const curM = Number(todayStr.slice(5, 7));
+    const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+    const found = [];
+    // 등장 순서대로 토큰 수집: 작년 N월 | YYYY년 N월 | N월(달) | 이번달 | 지난달/저번달
+    const re = /(작년\s*(\d{1,2})\s*월)|((\d{4})\s*[년.\-\/]\s*(\d{1,2})\s*월)|((\d{1,2})\s*월\s*달?)|(이번\s*달|이달)|(지난\s*달|저번\s*달)/g;
+    let m;
+    while ((m = re.exec(t)) !== null && found.length < 3) {
+        if (m[1]) { // 작년 N월
+            const mo = Number(m[2]);
+            if (mo >= 1 && mo <= 12) found.push(ym(curY - 1, mo));
+        } else if (m[3]) { // YYYY년 N월
+            const y = Number(m[4]), mo = Number(m[5]);
+            if (y >= 2000 && y <= 2100 && mo >= 1 && mo <= 12) found.push(ym(y, mo));
+        } else if (m[6]) { // N월 — 가장 가까운 과거 해석
+            const mo = Number(m[7]);
+            if (mo >= 1 && mo <= 12) found.push(mo > curM ? ym(curY - 1, mo) : ym(curY, mo));
+        } else if (m[8]) found.push(ym(curY, curM));
+        else if (m[9]) found.push(curM === 1 ? ym(curY - 1, 12) : ym(curY, curM - 1));
+    }
+    if (found.length !== 2 || found[0] === found[1]) return null;
+    return { a: found[0], b: found[1] };
+}
+
 // 실존 달력 날짜인지 검증 (예: 2026-04-31 → false) — 억지 조회 방지 가드용
 function isValidDateStr(s) {
     const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -137,4 +166,4 @@ function isValidDateStr(s) {
     return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
 }
 
-module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr, parseExplicitRange };
+module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr, parseExplicitRange, parseComparePeriods };

@@ -11035,6 +11035,67 @@ window.aoOpenReport = async function(runId) {
             <div class="ao-prompt-ko">🇰🇷 ${aoEsc(o.prompt_ko || '')}</div>
             <div class="ao-prompt-meta">비율 <strong>${aoEsc(o.ratio || '-')}</strong> · 사용처 ${aoEsc(o.usage || '-')}</div>`).join('')}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')} · 모델 ${aoEsc(rep.model || '')}</p>`;
+    } else if (rep.type === 'semi_compare') {
+        // 4.5단계 ⑤: 기간 비교 보고서
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        const pcell = (diff, pct) => pct === null || pct === undefined
+            ? '<span style="color:#999;">데이터 없음</span>'
+            : `<span class="${diff >= 0 ? 'ao-up' : 'ao-down'}">${diff >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% (${diff >= 0 ? '+' : ''}${Math.round(diff).toLocaleString()}원)</span>`;
+        if (rep.zero_result) {
+            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.a.label)} · ${aoEsc(rep.b.label)} 모두 정산 데이터가 없습니다</div>`;
+        } else {
+            body = `
+            <h4 class="ao-sec-title">📊 총액 비교 <small style="color:#888;">(증감 = ${aoEsc(rep.a.label)} 대비 ${aoEsc(rep.b.label)})</small></h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>구분</th><th>${aoEsc(rep.a.label)}</th><th>${aoEsc(rep.b.label)}</th><th>증감</th></tr></thead>
+                <tbody>
+                    <tr><td>상품 매출</td><td>${won(rep.a.product_total)}</td><td>${won(rep.b.product_total)}</td><td>${pcell(rep.diff.product, rep.diff.product_pct)}</td></tr>
+                    <tr><td>택배(+이월)</td><td>${won(rep.a.cj_fee + rep.a.cj_carryover)}</td><td>${won(rep.b.cj_fee + rep.b.cj_carryover)}</td><td></td></tr>
+                    <tr class="ao-partner-sum"><td><strong>총 결제금액</strong></td><td><strong>${won(rep.a.payment_total)}</strong></td><td><strong>${won(rep.b.payment_total)}</strong></td><td>${pcell(rep.diff.payment, rep.diff.payment_pct)}</td></tr>
+                    <tr><td>정산 건수 · 박스</td><td>${rep.a.count}건 · ${rep.a.box_count}박스</td><td>${rep.b.count}건 · ${rep.b.box_count}박스</td><td>${rep.diff.count >= 0 ? '+' : ''}${rep.diff.count}건 · ${rep.diff.boxes >= 0 ? '+' : ''}${rep.diff.boxes}박스</td></tr>
+                </tbody>
+            </table></div>
+            <h4 class="ao-sec-title">🏪 거래처별 (상품 기준)</h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>거래처</th><th>${aoEsc(rep.a.label)}</th><th>${aoEsc(rep.b.label)}</th><th>증감</th></tr></thead>
+                <tbody>${(rep.partners || []).map(p =>
+                    `<tr><td>${aoEsc(p.partner)}</td><td>${won(p.a)}</td><td>${won(p.b)}</td><td>${pcell(p.diff, p.pct)}</td></tr>`).join('')}
+                </tbody>
+            </table></div>
+            <h4 class="ao-sec-title">📦 품목 TOP ${(rep.items || []).length} <small style="color:#888;">(합집합 ${rep.items_total}종 중)</small></h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>품목</th><th>${aoEsc(rep.a.label)}</th><th>${aoEsc(rep.b.label)}</th><th>증감</th></tr></thead>
+                <tbody>${(rep.items || []).map(i =>
+                    `<tr><td>${aoEsc(i.name)}${i.tag ? ' <span class="ao-arch-badge">' + i.tag + '</span>' : ''}</td><td>${won(i.a_amount)}</td><td>${won(i.b_amount)}</td><td>${pcell(i.diff, i.pct)}</td></tr>`).join('')}
+                </tbody>
+            </table></div>
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        }
+    } else if (rep.type === 'semi_rank') {
+        // 4.5단계 ⑥: 품목 매출 기여 순위
+        const won = n => Math.round(n || 0).toLocaleString() + '원';
+        if (rep.zero_result) {
+            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.period.label)} 정산 데이터가 없습니다${rep.nearest_month ? ' — 가장 가까운 달: ' + aoEsc(rep.nearest_month) : ''}</div>`;
+        } else {
+            body = `
+            <h4 class="ao-sec-title">🏆 ${aoEsc(rep.period.label)} 품목 기여 순위 <small style="color:#888;">(${rep.period.from} ~ ${rep.period.to} · 상품 총액 ${won(rep.product_total)})</small></h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>순위</th><th>품목</th><th>수량</th><th>매출액</th><th>비중</th></tr></thead>
+                <tbody>${(rep.rows || []).map(r =>
+                    `<tr><td>${r.rank}</td><td>${aoEsc(r.name)}</td><td>${(r.qty || 0).toLocaleString()}</td><td>${won(r.amount)}</td><td>${r.share}%</td></tr>`).join('')}
+                ${rep.shown_all || (rep.rows || []).length >= rep.rows_total ? '' : `<tr><td colspan="5" style="color:#888;">… 전체 ${rep.rows_total}종 중 TOP ${(rep.rows || []).length} 표시 — "전부"라고 지시하면 전 품목</td></tr>`}
+                </tbody>
+            </table></div>
+            ${(rep.series || []).length ? `
+            <h4 class="ao-sec-title">🧺 계열 합계 <small style="color:#888;">(규격 2종 이상)</small></h4>
+            <div class="ao-report-table-wrap"><table class="ao-report-table">
+                <thead><tr><th>계열</th><th>수량</th><th>매출액</th><th>비중</th></tr></thead>
+                <tbody>${rep.series.map(s =>
+                    `<tr><td>${aoEsc(s.name)} <small style="color:#888;">(${s.members}종)</small></td><td>${(s.qty || 0).toLocaleString()}</td><td>${won(s.amount)}</td><td>${s.share}%</td></tr>`).join('')}
+                </tbody>
+            </table></div>` : ''}
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        }
     } else if (rep.type === 'semi_settlement_filtered') {
         // 3.5차: 조건 필터 보고서 (품목 키워드 · 기간)
         const won = n => Math.round(n || 0).toLocaleString() + '원';

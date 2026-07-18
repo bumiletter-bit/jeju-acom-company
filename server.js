@@ -9,7 +9,7 @@ const OpenAI = require('openai');
 const { GoogleGenAI } = require('@google/genai');
 const officeCrypto = require('officecrypto-tool');
 const { VERSION } = require('./version.js');
-const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange } = require('./date-utils.js');
+const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange, parseComparePeriods } = require('./date-utils.js');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -6293,6 +6293,8 @@ async function executeCapabilityTest(run, actor) {
               check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '할인·이벤트' && /^\d{4}-\d{2}-\d{2}$/.test(i.end_date || '')) },
             { name: '기간+항목 완전 지시 즉답 (지시#6 사고 박제)', q: '이번주 결제금액 보내줘', exp: 'route/세미 + this_week (되묻기 = 실패)',
               check: d => d.action === 'route' && d.assignee === '세미' && d.period === 'this_week' },
+            { name: '기간 비교 지시 → 세미 배정 (4.5단계)', q: '4월 5월 매출 비교해줘', exp: 'route/세미 (기간 2개는 서버가 확정)',
+              check: d => d.action === 'route' && d.assignee === '세미' },
         ];
         for (const c of rc) {
             try {
@@ -6352,6 +6354,10 @@ async function executeCapabilityTest(run, actor) {
             const w3 = maruWeekPeriodOverride('', '4월달 매출현황');
             add('마루', '이번주 기간 서버 확정 (지시#7)', w1 === 'this_week' && w2 === '2026-04' && w3 === '',
                 "이번주→this_week / 월 지시엔 무개입", `이번주=${w1} 4월기존=${w2} 4월무기간=${w3}`, '이번주 결제금액 보내줘');
+            // 4.5단계 박제: 비교 기간 서버 확정
+            const cp = parseComparePeriods('4월 5월 매출 비교해줘', kstTodayStr());
+            add('마루', '비교 기간 서버 확정 (4.5단계)', !!cp && cp.a.endsWith('-04') && cp.b.endsWith('-05'),
+                '4월 vs 5월 (2026-04 vs 2026-05)', cp ? `${cp.a} vs ${cp.b}` : '(추출 실패)', '4월 5월 매출 비교해줘');
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -6411,7 +6417,7 @@ async function executeCapabilityTest(run, actor) {
         }
 
         // ===== 세미 (코드 실행 — DB 계산값 대조) =====
-        await step('세미 정산 점검 중... (8문항 — DB 대조)');
+        await step('세미 정산 점검 중... (10문항 — DB 대조)');
         const semiAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'semi' LIMIT 1`)).rows[0];
         const semiRunner = loadAgentRunner('세미');
         const helpers = { matchItemToPricing, normDateSafe };
@@ -6439,6 +6445,12 @@ async function executeCapabilityTest(run, actor) {
               act: r => Math.round(r.report?.product_total || 0).toLocaleString('ko-KR') + '원' },
             { name: '없는 품목 (바나나) 정직 안내', p: { item_keyword: '바나나' }, exp: '찾을 수 없음 + 등록 품목 목록',
               check: r => r.report?.no_match === true && Array.isArray(r.report?.available_items), act: r => r.summary },
+            { name: '4.5 기간 비교 4월vs5월 (지시#8 박제)', p: { compare: { a: '2026-04', b: '2026-05' } }, exp: 'A 총결제 306,076,600 / B 상품 144,129,000',
+              check: r => r.report?.type === 'semi_compare' && r.report.a?.payment_total === 306076600 && r.report.b?.product_total === 144129000,
+              act: r => `A ${Math.round(r.report?.a?.payment_total || 0).toLocaleString('ko-KR')} / B상품 ${Math.round(r.report?.b?.product_total || 0).toLocaleString('ko-KR')}` },
+            { name: '4.5 품목 순위 4월 1위 (재계산 확정값)', p: { period: '2026-04', rank: { all: false, topN: 10 } }, exp: '카라향 가정용 - 5kg(40과 전후) · 4,164개 · 73,640,000원',
+              check: r => r.report?.type === 'semi_rank' && r.report.rows?.[0]?.name === '카라향 가정용 - 5kg(40과 전후)' && r.report.rows[0].qty === 4164 && r.report.rows[0].amount === 73640000,
+              act: r => `${r.report?.rows?.[0]?.name || '?'} · ${(r.report?.rows?.[0]?.qty || 0).toLocaleString('ko-KR')}개 · ${Math.round(r.report?.rows?.[0]?.amount || 0).toLocaleString('ko-KR')}원` },
         ];
         for (const c of sc) {
             try { const r = await callSemi(c.p); add('세미', c.name, c.check(r), c.exp, c.act(r)); }
@@ -6622,7 +6634,8 @@ async function maruRecordRun(opLabel, summaryText, lines, reportObj) {
 }
 
 // 일정 지시 처리 (조회/등록 제안/불가)
-async function maruHandleSchedule(order, d, actor) {
+async function maruHandleSchedule(order, d, actor, effContent = null) {
+    const srcText = effContent || order.content; // 지시 #6: 결합 텍스트 기준 (파일 감지·기간 파싱)
     if (d.schedule_op === '조회') {
         const from = /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_from) ? d.schedule_from : kstTodayStr();
         const to = /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_to) ? d.schedule_to : from;
@@ -6636,7 +6649,7 @@ async function maruHandleSchedule(order, d, actor) {
             : `${from}~${to} 등록된 일정이 없습니다`;
         // 4단계: "파일로 받기" — 파일 키워드 감지 시 일정 목록 xlsx 생성 (adminOnly 다운로드)
         let fileMeta = null;
-        if (rows.length && WANT_FILE_RE.test(order.content)) {
+        if (rows.length && WANT_FILE_RE.test(srcText)) {
             const ymd = kstTodayStr().replace(/-/g, '');
             const fname = `일정보고_${from}~${to}_${ymd}.xlsx`;
             const buf = await buildScheduleXlsx(rows, from, to);
@@ -6668,7 +6681,7 @@ async function maruHandleSchedule(order, d, actor) {
         // 지시 #2-2: 원문의 기간 표현("7월 25일부터 27일까지", "25~27일" 등)을 서버가 직접 확정
         // — 같은 입력 = 같은 결과 (마루 재량 제거, 1단계 월 정규식과 동일 원칙). 단일 건일 때만 적용
         if (items.length === 1) {
-            const range = parseExplicitRange(order.content, kstTodayStr(), { future: true });
+            const range = parseExplicitRange(srcText, kstTodayStr(), { future: true });
             if (range && (items[0].date !== range.from || (items[0].end_date || range.from) !== range.to)) {
                 console.log(`기간 보정: 마루 '${items[0].date}${items[0].end_date ? '~' + items[0].end_date : ''}' → 원문 파싱 '${range.from}~${range.to}'`);
                 items[0].date = range.from;
@@ -6891,7 +6904,8 @@ async function maruTryScheduleConfirm(order, actor) {
 
 // 배정 실행 — 요원 조회 → (live면) 실제 실행, 아니면 안내 (일반 배정·조회 복창 승인 공용)
 // mirrorOrderId: 복창 승인 흐름에서 "응" 지시에도 같은 결과를 기록
-async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId = null) {
+async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId = null, effContent = null) {
+    const srcText = effContent || order.content; // 지시 #6: 결합 텍스트 기준 (파일 감지·요원 전달 원문)
     const finish = async (status, result, runId = null) => {
         await maruFinishOrder(order.id, status, result, runId);
         if (mirrorOrderId) await maruFinishOrder(mirrorOrderId, status, result, runId);
@@ -6948,8 +6962,10 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         item_keyword: conditions.item_keyword,
         period: conditions.period,
         target_date: conditions.target_date,
-        order_content: order.content,
-        want_file: WANT_FILE_RE.test(order.content), // 4단계: 엑셀 파일 생성 모드
+        order_content: srcText,
+        want_file: WANT_FILE_RE.test(srcText), // 4단계: 엑셀 파일 생성 모드
+        compare: conditions.compare || null,   // 4.5 ⑤: 기간 비교 (서버 확정)
+        rank: conditions.rank || null,         // 4.5 ⑥: 품목 순위 (서버 확정)
     });
     await finish('완료', { ...routeInfo, run_id: run.id }, run.id);
 }
@@ -6988,12 +7004,27 @@ async function processOrderWithMaru(order, actor) {
                 source: 'agent_office', actor,
             });
         }
-        // 판단 호출 (오염 감지·재시도·정화 포함) — 역량 테스트와 공용 로직
-        const { d, polluted, pollution } = await maruDecide(order.content);
+        // 판단 호출 (오염 감지·정화·조건부 재시도 포함) — 결합 텍스트 기준 (지시 #6-1)
+        let { d, polluted, pollution } = await maruDecide(effContent);
         if (polluted) console.warn(`마루 응답 오염 감지 (지시 #${order.id}):`, JSON.stringify(pollution));
+        // 지시 #6-2: 기간+재무 항목이 모두 명시된 지시에 빈 되묻기 금지 — 서버가 세미 배정 강제
+        const forced = maruForceFinanceRoute(d, effContent, kstTodayStr());
+        if (forced) {
+            console.log(`재무 즉답 보정 (지시 #${order.id}): clarify → route/세미 period=${forced.period || forced.target_date}`);
+            d = forced;
+        }
+        // 결합 재라우팅에 사용된 원 질문은 '응답됨'으로 종결 (soft-close, 전체 보기 조회 가능)
+        if (combinedFrom) {
+            await pool.query(`UPDATE pending_orders SET status='응답됨', processed_at=NOW() WHERE id=$1 AND status='질문'`, [combinedFrom.id]);
+            await writeAudit({
+                action: 'update', targetType: 'pending_order', targetId: combinedFrom.id,
+                changes: { after: { status: '응답됨', combined_into_order: order.id } },
+                source: 'agent_office', actor,
+            });
+        }
         await writeAudit({
             action: 'maru_route', targetType: 'pending_order', targetId: order.id,
-            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted, pollution_sample: pollution } },
+            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted, pollution_sample: pollution, combined_from: combinedFrom ? combinedFrom.id : null, forced_finance_route: !!forced } },
             source: 'agent_office', actor,
         });
 
@@ -7040,9 +7071,9 @@ async function processOrderWithMaru(order, actor) {
             return;
         }
 
-        // ①-3 일정 분야 → 마루 직접 처리 (조회 즉답 / 등록 확인 1회 / 삭제 불가)
+        // ①-3 일정 분야 → 마루 직접 처리 (조회 즉답 / 등록 확인 1회 / 삭제 불가) — 결합 텍스트 전달 (지시 #6)
         if (d.action === 'schedule') {
-            await maruHandleSchedule(order, d, actor);
+            await maruHandleSchedule(order, d, actor, effContent);
             return;
         }
 
@@ -7060,18 +7091,18 @@ async function processOrderWithMaru(order, actor) {
             target_date: String(d.target_date || '').trim(),
         };
         if (d.assignee === '세미') {
-            // 특정일: 하루 어긋남 방지 (기존 핫픽스 유지)
-            if (conditions.target_date || hasExplicitDay(order.content)) {
-                const explicit = parseExplicitDate(order.content, today);
+            // 특정일: 하루 어긋남 방지 (기존 핫픽스 유지) — 결합 텍스트 기준 (지시 #6)
+            if (conditions.target_date || hasExplicitDay(effContent)) {
+                const explicit = parseExplicitDate(effContent, today);
                 if (explicit && explicit !== conditions.target_date) {
                     console.log(`날짜 보정: 마루 '${conditions.target_date || '(없음)'}' → 원문 파싱 '${explicit}'`);
                     conditions.target_date = explicit;
                 }
             }
             // 월 단위: 'N월/N월달/지난달/이번달/YYYY년 N월' — 2025-04 오해석 사고 재발 방지
-            const em = parseExplicitMonth(order.content, today);
+            const em = parseExplicitMonth(effContent, today);
             if (em) {
-                if (conditions.target_date && !hasExplicitDay(order.content)) {
+                if (conditions.target_date && !hasExplicitDay(effContent)) {
                     console.log(`날짜 보정: 특정일 '${conditions.target_date}' 무효화 — 원문은 월 단위 (${em})`);
                     conditions.target_date = '';
                 }
@@ -7087,6 +7118,20 @@ async function processOrderWithMaru(order, actor) {
                 conditions.period = wk;
                 if (conditions.target_date && !hasExplicitDay(effContent)) conditions.target_date = '';
             }
+            // 4.5단계 ⑤: 비교 의도 — 비교 키워드 + 기간 2개를 서버가 확정 (모델 재량 없음)
+            if (/비교|대비|vs|차이/i.test(effContent)) {
+                const cp = parseComparePeriods(effContent, today);
+                if (cp) {
+                    conditions.compare = cp;
+                    console.log(`비교 조회 확정: ${cp.a} vs ${cp.b}`);
+                }
+            }
+            // 4.5단계 ⑥: 품목 순위 의도 — 순위/기여/잘 팔린/TOP N (비교와 중복 시 비교 우선)
+            if (!conditions.compare && /순위|기여|잘\s*팔(린|리)|톱\s*\d*|top\s*\d*/i.test(effContent) && /품목|상품|뭐가|무엇|어떤/.test(effContent)) {
+                const nm = effContent.match(/(?:톱|top)\s*(\d+)/i) || effContent.match(/(\d+)\s*위까지/);
+                conditions.rank = { all: /전부|전체\s*품목|모든\s*품목/.test(effContent), topN: nm ? Number(nm[1]) : null };
+                console.log(`품목 순위 확정: ${conditions.rank.all ? '전체' : 'TOP ' + (conditions.rank.topN || 10)}`);
+            }
             // 존재하지 않는 날짜 가드 (예: 4월 31일) — 억지 조회·DB 오류 대신 정직 안내
             if (conditions.target_date && /^\d{4}-\d{2}-\d{2}$/.test(conditions.target_date) && !isValidDateStr(conditions.target_date)) {
                 const gm = Number(conditions.target_date.slice(5, 7));
@@ -7098,21 +7143,31 @@ async function processOrderWithMaru(order, actor) {
                 });
                 return;
             }
-            // 1-2: 오래된 기간(3개월 이상 과거 또는 작년 이전) 조회는 복창 확인 후 실행
-            const range = periodRangeOf(conditions, today);
-            if (needsQueryConfirm(range, today)) {
+            // 1-2: 오래된 기간(3개월 이상 과거 또는 작년 이전) 조회는 복창 확인 후 실행 (비교 조회도 동일 적용)
+            let confirmNeeded = false, confirmLabel = '';
+            if (conditions.compare) {
+                const ra = periodRangeOf({ period: conditions.compare.a }, today);
+                const rb = periodRangeOf({ period: conditions.compare.b }, today);
+                confirmNeeded = needsQueryConfirm(ra, today) || needsQueryConfirm(rb, today);
+                confirmLabel = `『${ra ? ra.label : conditions.compare.a} vs ${rb ? rb.label : conditions.compare.b} 비교』`;
+            } else {
+                const range = periodRangeOf(conditions, today);
+                confirmNeeded = needsQueryConfirm(range, today);
+                if (range) confirmLabel = `『${range.label}(${range.from}~${range.to})』 조회`;
+            }
+            if (confirmNeeded) {
                 await maruFinishOrder(order.id, '질문', {
                     type: 'query_confirm',
                     route: { team: d.team, assignee: d.assignee, task_summary: d.task_summary, reason: d.reason },
                     conditions,
-                    question: `『${range.label}(${range.from}~${range.to})』 조회로 진행할까요? ("응"으로 답해주세요)`,
+                    question: `${confirmLabel}로 진행할까요? ("응"으로 답해주세요)`,
                 });
                 return;
             }
         }
         await dispatchLiveAgent(order,
             { team: d.team, assignee: d.assignee, task_summary: d.task_summary, reason: d.reason },
-            conditions, actor);
+            conditions, actor, null, effContent);
     } catch (err) {
         // 정직한 오류 표시 — 허위 응답 금지. Anthropic API 오류는 상태코드와 함께 그대로 기록.
         const errMsg = err?.status
