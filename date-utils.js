@@ -94,6 +94,40 @@ function needsQueryConfirm(range, todayStr) {
     return range.from <= threeAgo;
 }
 
+// 기간 표현 파싱 (지시 #2 — 재현성 사고 대응): "7월 25일부터 27일까지", "25~27일", "25일-27일",
+// "6월 30일부터 7월 2일까지" 등 → { from, to } / 해당 없으면 null
+// future=true(일정 등록): 가장 가까운 미래 해석 / false(조회): 가장 가까운 과거 해석
+function parseExplicitRange(text, todayStr, { future = false } = {}) {
+    const t = String(text || '');
+    const curY = Number(todayStr.slice(0, 4));
+    const curM = Number(todayStr.slice(5, 7));
+    const mk = (y, mo, d) => `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+    let m1, d1, m2, d2;
+    // A: 'M월 D일 부터/~/- (M월)? D일 (까지)?'
+    let m = t.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?\s*(?:부터|에서|~|-)\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일/);
+    if (m) { m1 = Number(m[1]); d1 = Number(m[2]); m2 = m[3] ? Number(m[3]) : m1; d2 = Number(m[4]); }
+    else {
+        // B: 'D일부터 D일까지' / 'D~D일' / 'D일~D일' / 'D일-D일' (월 생략 → 오늘 기준 해석)
+        m = t.match(/(\d{1,2})\s*일?\s*(?:부터|~|-)\s*(\d{1,2})\s*일/);
+        if (!m) return null;
+        d1 = Number(m[1]); d2 = Number(m[2]);
+        m1 = m2 = curM;
+        // 월 생략 시: 시작일이 이미 지났으면(미래 모드) 다음 달, (과거 모드) 이번 달 유지
+        if (future && mk(curY, curM, d1) < todayStr) { m1 = m2 = curM === 12 ? 1 : curM + 1; }
+    }
+    // 연도 해석: 명시 월 기준 가장 가까운 미래(등록) 또는 과거(조회)
+    let y1 = curY;
+    if (future) { if (m1 < curM || (m1 === curM && mk(curY, m1, d1) < todayStr)) y1 = curY + 1; }
+    else { if (m1 > curM || (m1 === curM && mk(curY, m1, d1) > todayStr)) y1 = curY - 1; }
+    // 월 생략 B에서 다음 달로 넘겼는데 1월이 된 경우 연도 +1
+    if (future && m1 === 1 && curM === 12) y1 = curY + 1;
+    const y2 = m2 < m1 ? y1 + 1 : y1; // '12월 30일부터 1월 2일까지' 해 넘김
+    const from = mk(y1, m1, d1), to = mk(y2, m2, d2);
+    if (!isValidDateStr(from) || !isValidDateStr(to) || to < from) return null;
+    return { from, to };
+}
+
 // 실존 달력 날짜인지 검증 (예: 2026-04-31 → false) — 억지 조회 방지 가드용
 function isValidDateStr(s) {
     const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -103,4 +137,4 @@ function isValidDateStr(s) {
     return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
 }
 
-module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr };
+module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr, parseExplicitRange };

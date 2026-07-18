@@ -9,7 +9,7 @@ const OpenAI = require('openai');
 const { GoogleGenAI } = require('@google/genai');
 const officeCrypto = require('officecrypto-tool');
 const { VERSION } = require('./version.js');
-const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr } = require('./date-utils.js');
+const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange } = require('./date-utils.js');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -5939,8 +5939,7 @@ ${JSON.stringify(routingTable, null, 2)}
      담당자는 실제 직원 명단에 있는 이름일 때만 assignee_name에 넣고, 미지정이면 빈 문자열(=대표)로 둔다.
      여러 건이면 schedule_items에 전부 담는다 (한 번에 확인받기 위해).
    - 카테고리 판별 (각 일정마다 category 지정):
-     · 휴가/휴무 → '휴가'. 휴가는 담당자가 필수 — 지시에서 사람을 찾아 실제 직원 명단과 매칭해 assignee_name에 넣는다.
-       명단과 매칭되지 않으면 등록하지 말고 clarify로 되묻는다 (질문에 직원 이름 선택지 포함).
+     · 휴가/휴무 → '휴가'. 휴가는 결재 시스템 담당이라 서버가 안내로 응답한다 — 너는 category='휴가'만 정확히 표시하면 된다.
      · 톡톡 발송 예정 → '톡톡발송' / 문자·LMS 발송 예정 → '문자발송'
      · 할인·프로모션·이벤트 → '할인·이벤트'. 기간형("25~27일 할인")이면 date=시작일, end_date=종료일.
      · 그 외 → '일반'
@@ -6228,8 +6227,8 @@ async function executeCapabilityTest(run, actor) {
             { name: '정산 입력 파싱 (283만→2,830,000)', q: '오늘 정산현황 입력할게. 대성 283만', exp: 'settlement_input/daesong=2830000', check: d => d.action === 'settlement_input' && (d.settlement_entries || []).some(e => e.field === 'daesong' && Number(e.amount) === 2830000) },
             { name: '일정 삭제→불가 안내', q: '어제 일정 지워줘', exp: 'schedule/불가', check: d => d.action === 'schedule' && d.schedule_op === '불가' },
             { name: '월 단위 매출 → 세미 배정 (v5.0 사고 박제)', q: '4월달 매출현황 보고해줘', exp: 'route/세미', check: d => d.action === 'route' && d.assignee === '세미' },
-            { name: '휴가 카테고리+담당자 매칭 (3단계)', q: '다음주 금요일 민주 휴가 등록해줘', exp: 'schedule/등록 + 휴가/김민주',
-              check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '휴가' && i.assignee_name === '김민주') },
+            { name: '휴가 의도 → 결재 안내 전환 (지시#2)', q: '다음주 금요일 민주 휴가 등록해줘', exp: "category='휴가' 정확 표시 → 서버가 결재 시스템 안내 (일정 등록 실행 = 실패)",
+              check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '휴가') },
             { name: '톡톡발송 카테고리 (3단계)', q: '토요일 톡톡으로 하우스감귤 홍보 나가는거 일정 잡아줘', exp: 'schedule/등록 + 톡톡발송',
               check: d => d.action === 'schedule' && d.schedule_op === '등록' && (d.schedule_items || []).some(i => i.category === '톡톡발송') },
             { name: '기간형 할인 일정 (3단계)', q: '25일부터 27일까지 하우스감귤 오픈 할인 일정 등록해줘', exp: 'schedule/등록 + 할인·이벤트 + end_date',
@@ -6263,6 +6262,19 @@ async function executeCapabilityTest(run, actor) {
                 const act = parseExplicitMonth(q, today);
                 add('마루', name, act === exp, exp || '(빈값=특정일 담당)', act || '(빈값)', q);
             }
+        }
+        {
+            // 지시 #2-2: 기간 표현 서버 파싱 박제 — 같은 입력 = 같은 결과 (16:06/16:08 재현성 사고 재발 방지)
+            const today = kstTodayStr();
+            const rr = q => { const r = parseExplicitRange(q, today, { future: true }); return r ? `${r.from}~${r.to}` : '(파싱 실패)'; };
+            const q0 = '7월 25일부터 27일까지 하우스감귤 오픈 할인 일정 등록해줘';
+            const outs = [rr(q0), rr(q0), rr(q0)];
+            const shapeOk = /^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$/.test(outs[0]);
+            add('마루', '기간 파싱 반복 동일성 ×3 (지시#2 사고 재현)',
+                shapeOk && outs.every(o => o === outs[0]) && outs[0].slice(0, 10) <= outs[0].slice(11),
+                '3회 동일 + 시작≤종료', outs.join(' | '), q0);
+            const short1 = rr('25~27일 하우스감귤 할인');
+            add('마루', '기간 파싱 축약형 ("25~27일")', short1 === outs[0], '정식 표현과 동일 해석', `${short1} vs ${outs[0]}`);
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -6534,9 +6546,29 @@ async function maruHandleSchedule(order, d, actor) {
             });
             return;
         }
-        // 3단계: 휴가 카테고리는 담당자 필수 — 실제 직원(users) 명단과 매칭, 미매칭 시 선택지 포함 되묻기 (빈 되묻기 금지)
+        // 지시 #2-2: 원문의 기간 표현("7월 25일부터 27일까지", "25~27일" 등)을 서버가 직접 확정
+        // — 같은 입력 = 같은 결과 (마루 재량 제거, 1단계 월 정규식과 동일 원칙). 단일 건일 때만 적용
+        if (items.length === 1) {
+            const range = parseExplicitRange(order.content, kstTodayStr(), { future: true });
+            if (range && (items[0].date !== range.from || (items[0].end_date || range.from) !== range.to)) {
+                console.log(`기간 보정: 마루 '${items[0].date}${items[0].end_date ? '~' + items[0].end_date : ''}' → 원문 파싱 '${range.from}~${range.to}'`);
+                items[0].date = range.from;
+                items[0].end_date = range.to > range.from ? range.to : null;
+            }
+        }
         const vacItems = items.filter(i => i.category === '휴가');
-        if (vacItems.length) {
+        // 지시 #2-1: 휴가는 결재 시스템 전용 — 마루 일정 등록 경로 차단 (연차 차감 이중 경로 방지)
+        // 아래 담당자 매칭 로직은 삭제하지 않고 비활성 보존 (추후 정책 변경 시 플래그만 전환)
+        const VACATION_VIA_SCHEDULE = false;
+        if (vacItems.length && !VACATION_VIA_SCHEDULE) {
+            await maruFinishOrder(order.id, '안내', {
+                type: 'vacation_redirect',
+                notice: '휴가는 결재 시스템(기안서류 → 휴가신청서)에서 신청해주세요 — 연차 차감이 자동 연동됩니다. 마루는 휴가를 일정으로 등록하지 않아요.',
+            });
+            return;
+        }
+        // (비활성 보존) 휴가 카테고리 담당자 필수 — 실제 직원(users) 명단과 매칭, 미매칭 시 선택지 포함 되묻기
+        if (vacItems.length && VACATION_VIA_SCHEDULE) {
             const names = (await pool.query(`SELECT name FROM users ORDER BY id`)).rows.map(r => r.name);
             const unmatched = vacItems.filter(i => !names.includes(String(i.assignee_name || '').trim()));
             if (unmatched.length) {

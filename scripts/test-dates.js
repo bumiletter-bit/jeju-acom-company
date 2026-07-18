@@ -1,6 +1,6 @@
 // 1단계 1-1 검증: 월 단위 날짜 정규식 로컬 테스트 (사고 재현 케이스 포함)
 // 실행: node scripts/test-dates.js  — 전부 PASS여야 배포 가능
-const { parseExplicitDate, parseExplicitMonth, periodRangeOf, needsQueryConfirm, isValidDateStr } = require('../date-utils.js');
+const { parseExplicitDate, parseExplicitMonth, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange } = require('../date-utils.js');
 
 const TODAY = '2026-07-18'; // 기준일 고정 (실서버는 kstTodayStr() 사용)
 let pass = 0, fail = 0;
@@ -46,6 +46,18 @@ t('2026-04-31 → 무효 (4월은 30일까지)', isValidDateStr('2026-04-31'), f
 t('2024-02-29 → 유효 (윤년)', isValidDateStr('2024-02-29'), true);
 t('2026-02-29 → 무효 (평년)', isValidDateStr('2026-02-29'), false);
 t('2026-13-01 → 무효', isValidDateStr('2026-13-01'), false);
+
+console.log('\n=== 기간 표현 파싱 (parseExplicitRange — 지시#2 재현성 사고) ===');
+const rangeStr = (q, opt) => { const r = parseExplicitRange(q, TODAY, opt); return r ? r.from + '~' + r.to : null; };
+t('사고 재현: "7월 25일부터 27일까지" (등록)', rangeStr('7월 25일부터 27일까지 하우스감귤 오픈 할인 일정 등록해줘', { future: true }), '2026-07-25~2026-07-27');
+t('"25~27일" (등록)', rangeStr('25~27일 하우스감귤 할인 등록', { future: true }), '2026-07-25~2026-07-27');
+t('"25일-27일" (등록)', rangeStr('25일-27일 할인 일정', { future: true }), '2026-07-25~2026-07-27');
+t('"3일부터 5일까지" (등록, 지난 날짜→다음 달)', rangeStr('3일부터 5일까지 이벤트 등록', { future: true }), '2026-08-03~2026-08-05');
+t('"6월 30일부터 7월 2일까지" (등록, 지난 월→내년)', rangeStr('6월 30일부터 7월 2일까지 할인', { future: true }), '2027-06-30~2027-07-02');
+t('"4월 5일부터 10일까지" (조회=과거 해석)', rangeStr('4월 5일부터 10일까지 매출', { future: false }), '2026-04-05~2026-04-10');
+t('무효 날짜 "31일부터 32일까지" → null', rangeStr('31일부터 32일까지', { future: true }), null);
+t('기간 표현 없음 → null', rangeStr('카라향 재고 알려줘', { future: true }), null);
+t('반복 동일성: 같은 입력 3회 동일', [1,2,3].map(() => rangeStr('7월 25일부터 27일까지 등록', { future: true })).every((v, _, a) => v === a[0]), true);
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);
