@@ -94,4 +94,13 @@ function needsQueryConfirm(range, todayStr) {
     return range.from <= threeAgo;
 }
 
-module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd };
+// 실존 달력 날짜인지 검증 (예: 2026-04-31 → false) — 억지 조회 방지 가드용
+function isValidDateStr(s) {
+    const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return false;
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    if (mo < 1 || mo > 12 || d < 1) return false;
+    return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
+}
+
+module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr };

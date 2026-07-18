@@ -1,6 +1,6 @@
 // 1단계 1-1 검증: 월 단위 날짜 정규식 로컬 테스트 (사고 재현 케이스 포함)
 // 실행: node scripts/test-dates.js  — 전부 PASS여야 배포 가능
-const { parseExplicitDate, parseExplicitMonth, periodRangeOf, needsQueryConfirm } = require('../date-utils.js');
+const { parseExplicitDate, parseExplicitMonth, periodRangeOf, needsQueryConfirm, isValidDateStr } = require('../date-utils.js');
 
 const TODAY = '2026-07-18'; // 기준일 고정 (실서버는 kstTodayStr() 사용)
 let pass = 0, fail = 0;
@@ -39,6 +39,13 @@ t('this_week → 즉답', needsQueryConfirm(rangeOf('this_week'), TODAY), false)
 t('this_month → 즉답', needsQueryConfirm(rangeOf('this_month'), TODAY), false);
 t('특정일 2025-04-14 (작년) → 복창 필요', needsQueryConfirm(rangeOf('', '2025-04-14'), TODAY), true);
 t('특정일 2026-07-01 (최근) → 즉답', needsQueryConfirm(rangeOf('', '2026-07-01'), TODAY), false);
+
+console.log('\n=== 실존 날짜 검증 (isValidDateStr — 고난도 ④ 가드) ===');
+t('2026-04-30 → 유효', isValidDateStr('2026-04-30'), true);
+t('2026-04-31 → 무효 (4월은 30일까지)', isValidDateStr('2026-04-31'), false);
+t('2024-02-29 → 유효 (윤년)', isValidDateStr('2024-02-29'), true);
+t('2026-02-29 → 무효 (평년)', isValidDateStr('2026-02-29'), false);
+t('2026-13-01 → 무효', isValidDateStr('2026-13-01'), false);
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

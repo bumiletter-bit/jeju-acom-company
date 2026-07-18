@@ -9,7 +9,7 @@ const OpenAI = require('openai');
 const { GoogleGenAI } = require('@google/genai');
 const officeCrypto = require('officecrypto-tool');
 const { VERSION } = require('./version.js');
-const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm } = require('./date-utils.js');
+const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr } = require('./date-utils.js');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -6178,6 +6178,62 @@ async function executeCapabilityTest(run, actor) {
             }
         }
 
+        // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
+        // 채점 기준: "못 하는 걸 못 한다고 정직하게 말하는 것"도 통과. 멋대로 추측 실행하면 실패.
+        // 하이쿠 vs 소넷 승급 효과를 이 섹션에서 특히 비교 (별도 집계).
+        await step('고난도 실전 점검 중... (7문항 + 날짜 검증 1)');
+        {
+            const today = kstTodayStr();
+            const y = Number(today.slice(0, 4)), mo = Number(today.slice(5, 7));
+            const ymOf = (yy, mm) => `${yy}-${String(mm).padStart(2, '0')}`;
+            const curYm = ymOf(y, mo);
+            const prevYm = mo === 1 ? ymOf(y - 1, 12) : ymOf(y, mo - 1);
+            const per = d => String(d.period || '').trim();
+            const hc = [
+                { name: '① 복합 조건 (두 품목 비교)', q: '4월에 하우스감귤이랑 미니밤호박 중에 뭐가 더 많이 팔렸어?',
+                  exp: 'clarify(정직 안내) 또는 세미 4월 전체 조회 — 한 품목만 몰래 고르면 실패',
+                  check: d => d.action === 'clarify'
+                      || (d.action === 'route' && d.assignee === '세미' && !String(d.item_keyword || '').trim()) },
+                { name: '② 멀티 지시 (조회 2건 한 문장)', q: '다음 달 민주 휴가 언제 언제 있어? 그리고 지난달 정산도 보여줘',
+                  exp: 'clarify — 한 건씩 나눠달라 안내 (절반만 몰래 처리하면 실패)',
+                  check: d => d.action === 'clarify' && !!d.clarify_question },
+                { name: '③-a 모호한 기간 ("요즘")', q: '요즘 뭐가 잘 나가?',
+                  exp: 'clarify 또는 세미 이번달/이번주 기준 명시 — 아무 기간 추측 금지',
+                  check: d => d.action === 'clarify'
+                      || (d.action === 'route' && d.assignee === '세미' && ['this_month', 'this_week', curYm].includes(per(d))) },
+                { name: '③-b 순위 정리 ("저번 달 기여 품목")', q: '저번 달 매출 중 제일 기여한 품목이 어떤건지 정리해서 보내줘',
+                  exp: `세미/지난달(${prevYm}) 또는 clarify — 기간 오해석은 실패`,
+                  check: d => d.action === 'clarify'
+                      || (d.action === 'route' && d.assignee === '세미' && per(d) === prevYm) },
+                { name: '④ 존재하지 않는 날짜 (4월 31일)', q: '4월 31일 정산 얼마야?',
+                  exp: 'clarify 또는 날짜 무보정 전달(서버 가드가 안내) — 4/30·5/1로 몰래 바꾸면 실패',
+                  check: d => {
+                      if (d.action === 'clarify') return true;
+                      const td = String(d.target_date || '').trim();
+                      return d.action === 'route' && d.assignee === '세미' && (td === '' || td.endsWith('-04-31'));
+                  } },
+                { name: '⑤ 범위 밖 (날씨)', q: '내일 날씨 어때?',
+                  exp: 'clarify — 처리 불가 정직 안내 (엉뚱한 배정 금지)',
+                  check: d => d.action === 'clarify' },
+                { name: '⑥ 맥락 참조 ("그럼 5월은?")', q: '그럼 5월은?',
+                  exp: 'clarify — 전체 문장으로 다시 안내 (미지원 맥락 추측 배정 금지)',
+                  check: d => d.action === 'clarify' },
+            ];
+            for (const c of hc) {
+                try {
+                    const { d, polluted } = await maruDecide(c.q);
+                    const actual = `${d.action}/${d.assignee || d.schedule_op || ''}`
+                        + `${per(d) ? ' period=' + per(d) : ''}${String(d.target_date || '').trim() ? ' date=' + d.target_date : ''}`
+                        + `${String(d.item_keyword || '').trim() ? ' 품목=' + d.item_keyword : ''}${polluted ? ' (오염 재시도 발생)' : ''}`;
+                    add('고난도', c.name, c.check(d) && !maruDecisionPolluted(d), c.exp, actual, c.q);
+                } catch (e) { add('고난도', c.name, false, c.exp, '오류: ' + e.message, c.q); }
+            }
+            // 서버 가드 단위 검증 (0원): 존재하지 않는 날짜 판별
+            add('고난도', '④-보조 서버 날짜 검증 (2026-04-31=무효)',
+                isValidDateStr('2026-04-30') === true && isValidDateStr('2026-04-31') === false,
+                '4-30 유효 / 4-31 무효', `4-30=${isValidDateStr('2026-04-30')} / 4-31=${isValidDateStr('2026-04-31')}`);
+        }
+
         // ===== 세미 (코드 실행 — DB 계산값 대조) =====
         await step('세미 정산 점검 중... (8문항 — DB 대조)');
         const semiAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'semi' LIMIT 1`)).rows[0];
@@ -6726,6 +6782,17 @@ async function processOrderWithMaru(order, actor) {
                     console.log(`기간 보정: 마루 '${conditions.period || '(없음)'}' → 원문 파싱 '${em}'`);
                     conditions.period = em;
                 }
+            }
+            // 존재하지 않는 날짜 가드 (예: 4월 31일) — 억지 조회·DB 오류 대신 정직 안내
+            if (conditions.target_date && /^\d{4}-\d{2}-\d{2}$/.test(conditions.target_date) && !isValidDateStr(conditions.target_date)) {
+                const gm = Number(conditions.target_date.slice(5, 7));
+                const gy = Number(conditions.target_date.slice(0, 4));
+                const lastDay = new Date(Date.UTC(gy, gm, 0)).getUTCDate();
+                await maruFinishOrder(order.id, '안내', {
+                    type: 'invalid_date',
+                    notice: `${gm}월은 ${lastDay}일까지입니다 — 『${conditions.target_date}』는 존재하지 않는 날짜예요. 날짜를 확인해서 다시 지시해주세요`,
+                });
+                return;
             }
             // 1-2: 오래된 기간(3개월 이상 과거 또는 작년 이전) 조회는 복창 확인 후 실행
             const range = periodRangeOf(conditions, today);
