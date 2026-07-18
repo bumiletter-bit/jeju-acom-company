@@ -7635,6 +7635,104 @@ async function svcInstructionStatus({ id, limit }) {
     return { count: r.rows.length, instructions: r.rows };
 }
 
+// ===== 지시 #16: 똑똑이용 읽기 전용 관측 도구 3종 =====
+// 읽기 전용 보장: 아래 3개 svc는 SELECT만 수행 — DB 쓰기는 조회 이력 audit(mcpObserveAudit) 1건뿐.
+// 마루 지시 입력 도구는 만들지 않음 (지시 입력 = 대표 전용, 결재 구조 유지)
+async function mcpObserveAudit(tool, args, actor) {
+    await writeAudit({
+        action: 'mcp_observe', targetType: 'mcp_tool',
+        changes: { after: { tool, args: args || {} } }, source: 'mcp', actor,
+    });
+}
+async function svcGetLiveLog({ limit }, actor) {
+    const n = Math.min(Math.max(parseInt(limit) || 20, 1), 100);
+    const r = await pool.query(
+        `SELECT id, content, status, result, run_id, created_at, processed_at
+         FROM pending_orders ORDER BY id DESC LIMIT $1`, [n]);
+    await mcpObserveAudit('get_live_log', { limit: n }, actor);
+    return {
+        count: r.rows.length,
+        orders: r.rows.map(o => {
+            const res = o.result || {};
+            return {
+                id: o.id, status: o.status, content: o.content,
+                response_type: res.type || null,
+                response: res.summary || res.question || res.notice || (res.route && res.route.task_summary) || null,
+                file_name: (res.report && res.report.file_name) || res.file_name || null,
+                run_id: o.run_id, created_at: o.created_at, processed_at: o.processed_at,
+            };
+        }),
+    };
+}
+async function svcGetTestResults({ run_id, limit }, actor) {
+    if (run_id) {
+        const r = await pool.query(
+            `SELECT id, status, started_at, result FROM agent_runs WHERE id = $1 AND is_test = true`, [run_id]);
+        if (!r.rows.length) throw new Error(`역량 점검 회차 #${run_id}를 찾을 수 없습니다 (is_test 회차만 조회 가능)`);
+        const row = r.rows[0];
+        const rep = (row.result && row.result.report) || {};
+        await mcpObserveAudit('get_test_results', { run_id }, actor);
+        return {
+            id: row.id, status: row.status, started_at: row.started_at,
+            summary: (row.result && row.result.summary) || null,
+            duration_s: rep.duration_s || null,
+            sections: (rep.sections || []).map(s => ({
+                agent: s.agent, pass: s.pass, total: s.total,
+                results: (s.results || []).map(q => ({
+                    name: q.name, pass: q.pass, question: q.q || null,
+                    expected: q.expected, actual: q.actual,
+                })),
+            })),
+        };
+    }
+    const n = Math.min(Math.max(parseInt(limit) || 10, 1), 30);
+    const r = await pool.query(
+        `SELECT id, status, started_at, result->>'summary' AS summary
+         FROM agent_runs WHERE is_test = true ORDER BY id DESC LIMIT $1`, [n]);
+    await mcpObserveAudit('get_test_results', { limit: n }, actor);
+    return { count: r.rows.length, runs: r.rows };
+}
+async function svcGetReports({ id, limit }, actor) {
+    if (id) {
+        const r = await pool.query(
+            `SELECT r.id, r.status, r.started_at, r.finished_at, r.result, r.is_deleted, a.name AS agent_name, a.team
+             FROM agent_runs r JOIN agents a ON a.id = r.agent_id
+             WHERE r.id = $1 AND COALESCE(r.is_test, false) = false`, [id]);
+        if (!r.rows.length) throw new Error(`보고서 #${id}를 찾을 수 없습니다`);
+        const row = r.rows[0];
+        const res = row.result || {};
+        let file = null;
+        const fid = res.report && res.report.file_id;
+        if (fid) {
+            const f = await pool.query(
+                `SELECT id, filename, size_bytes, created_at FROM report_files WHERE id = $1 AND is_deleted = false`, [fid]);
+            if (f.rows.length) file = {
+                id: f.rows[0].id, filename: f.rows[0].filename, size_bytes: f.rows[0].size_bytes,
+                created_at: f.rows[0].created_at,
+                note: '파일 바이너리는 MCP로 전송하지 않습니다 — 다운로드는 프로그램 화면에서',
+            };
+        }
+        await mcpObserveAudit('get_reports', { id }, actor);
+        return {
+            id: row.id, agent: row.agent_name, team: row.team, status: row.status,
+            confirmed_hidden: row.is_deleted, // 대표 [✔확인] 후 숨김(soft-delete) 여부 — 원본은 보존됨
+            started_at: row.started_at, finished_at: row.finished_at,
+            summary: res.summary || null, lines: res.lines || [], report: res.report || null, file,
+        };
+    }
+    const n = Math.min(Math.max(parseInt(limit) || 20, 1), 100);
+    // 확인 완료 보고서는 is_deleted=true(soft-delete·숨김)로 보존되므로 필터하지 않고 플래그로 노출
+    const r = await pool.query(
+        `SELECT r.id, a.name AS agent, r.status, r.started_at, r.result->>'summary' AS summary,
+                (r.result->'report'->>'file_id') IS NOT NULL AS has_file,
+                r.is_deleted AS confirmed_hidden
+         FROM agent_runs r JOIN agents a ON a.id = r.agent_id
+         WHERE COALESCE(r.is_test, false) = false
+         ORDER BY r.id DESC LIMIT $1`, [n]);
+    await mcpObserveAudit('get_reports', { limit: n }, actor);
+    return { count: r.rows.length, reports: r.rows };
+}
+
 const MCP_SERVER_INFO = { name: '제주아꼼이네 관리', version: '1.0.0' };
 const MCP_TOOLS = [
     {
@@ -7702,6 +7800,25 @@ const MCP_TOOLS = [
         description: '정산 내역을 조회합니다(읽기 전용). from/to(YYYY-MM-DD)로 기간 지정. 거래처/금액/품목이 반환됩니다.',
         inputSchema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
         handler: async (args) => svcGetSettlements({ from: args.from, to: args.to }),
+    },
+    // 지시 #16: 관측 도구 3종 (읽기 전용 — 조회 이력은 audit 기록)
+    {
+        name: 'get_live_log',
+        description: 'AGENT OFFICE LIVE 로그를 조회합니다(읽기 전용). 최근 지시 원문·마루 응답·상태·타임스탬프. limit 기본 20, 최대 100.',
+        inputSchema: { type: 'object', properties: { limit: { type: 'integer', description: '최근 N건 (기본 20, 최대 100)' } } },
+        handler: async (args, actor) => svcGetLiveLog(args, actor),
+    },
+    {
+        name: 'get_test_results',
+        description: '역량 점검 성적표를 조회합니다(읽기 전용). run_id 생략 시 회차 목록(limit 기본 10), run_id 지정 시 문항별 상세(요원·문항명·통과/실패·기대·실제).',
+        inputSchema: { type: 'object', properties: { run_id: { type: 'integer', description: '회차 번호 (예: 49)' }, limit: { type: 'integer', description: '목록 조회 시 최근 N건 (기본 10, 최대 30)' } } },
+        handler: async (args, actor) => svcGetTestResults(args, actor),
+    },
+    {
+        name: 'get_reports',
+        description: '보고서함을 조회합니다(읽기 전용). id 생략 시 목록(limit 기본 20, 최대 100), id 지정 시 보고 본문 전체. 첨부 파일은 메타(파일명·크기·생성일)만 — 바이너리 전송 없음.',
+        inputSchema: { type: 'object', properties: { id: { type: 'integer', description: '보고서(run) 번호' }, limit: { type: 'integer', description: '목록 조회 시 최근 N건' } } },
+        handler: async (args, actor) => svcGetReports(args, actor),
     },
 ];
 
