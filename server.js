@@ -646,6 +646,8 @@ async function initDB() {
     `);
     // 지시 #10: 텔레그램 알림 기준선 (상태 변화 감지용)
     await pool.query(`ALTER TABLE cc_instructions ADD COLUMN IF NOT EXISTS notified_status VARCHAR(10)`);
+    // b안 (대표 결정 2026-07-19): 상태 동일해도 응답 갱신 시 '경과 갱신' 알림 — 마지막 알림 시점의 응답 지문
+    await pool.query(`ALTER TABLE cc_instructions ADD COLUMN IF NOT EXISTS notified_resp_hash VARCHAR(40)`);
 
     // schedules: soft-delete + 관리 API용 선택 컬럼(시간/내용). 기존 화면엔 영향 없음(전부 nullable)
     await pool.query(`ALTER TABLE schedules ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false`);
@@ -7583,14 +7585,24 @@ setInterval(async () => {
         if (!_tgInboxInit) {
             // 최초 1회: 기존 건은 알림 없이 기준선만 잡음 (배포 직후 알림 폭주 방지)
             await pool.query(`UPDATE cc_instructions SET notified_status = status WHERE notified_status IS NULL`);
+            await pool.query(`UPDATE cc_instructions SET notified_resp_hash = md5(COALESCE(response, '')) WHERE notified_resp_hash IS NULL`);
             _tgInboxInit = true;
             return;
         }
+        // b안 (대표 결정): 상태 변화 = "보고 도착" / 상태 동일 + 응답 갱신 = "경과 갱신" — 각 1건
         const r = await pool.query(
-            `SELECT id, status FROM cc_instructions WHERE status IS DISTINCT FROM notified_status ORDER BY id ASC LIMIT 5`);
+            `SELECT id, status, notified_status, md5(COALESCE(response, '')) AS rh
+             FROM cc_instructions
+             WHERE status IS DISTINCT FROM notified_status
+                OR md5(COALESCE(response, '')) IS DISTINCT FROM notified_resp_hash
+             ORDER BY id ASC LIMIT 5`);
         for (const row of r.rows) {
-            await notifyTelegram(`📮 지시 #${row.id} 보고 도착 (${row.status})`);
-            await pool.query(`UPDATE cc_instructions SET notified_status = $2 WHERE id = $1`, [row.id, row.status]);
+            const statusChanged = row.status !== row.notified_status;
+            await notifyTelegram(statusChanged
+                ? `📮 지시 #${row.id} 보고 도착 (${row.status})`
+                : `📮 지시 #${row.id} 경과 갱신 (${row.status}) — 상세는 지시함에서`);
+            await pool.query(`UPDATE cc_instructions SET notified_status = $2, notified_resp_hash = $3 WHERE id = $1`,
+                [row.id, row.status, row.rh]);
         }
     } catch (e) { /* 부가 기능 — 조용히 다음 주기 */ }
 }, 60000);
