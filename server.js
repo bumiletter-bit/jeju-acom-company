@@ -5881,14 +5881,14 @@ const MARU_ROUTE_TOOL = {
             assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/마루 중 하나). clarify면 빈 문자열' },
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
             reason: { type: 'string', description: '배정 근거 또는 판단 이유 한 줄' },
-            clarify_question: { type: 'string', description: 'clarify일 때 대표에게 물을 질문 딱 하나. route면 빈 문자열' },
-            item_keyword: { type: 'string', description: "지시에 언급된 품목 키워드 하나 (예: '하우스감귤', '카라향', '레몬'). 품목 언급이 없으면 빈 문자열" },
-            period: { type: 'string', description: "기간 조건: '이번주'→'this_week', '이번달/이달'→'this_month', 특정 월(예: '6월')→'YYYY-MM' 형식(오늘 날짜 기준, 미래 월이면 작년으로), 기간 언급 없으면 빈 문자열" },
-            target_date: { type: 'string', description: "재무 지시에서 특정 하루를 물으면(예: '4월 14일 정산현황') 그 날짜 YYYY-MM-DD (미래면 작년). 아니면 빈 문자열" },
-            settlement_date: { type: 'string', description: 'action=settlement_input일 때 입력 대상 날짜 YYYY-MM-DD (언급 없으면 오늘). 그 외엔 빈 문자열' },
+            clarify_question: { type: 'string', description: 'action=clarify일 때만 출력 — 대표에게 물을 질문 딱 하나' },
+            item_keyword: { type: 'string', description: "지시에 언급된 품목 키워드 하나 (예: '하우스감귤', '카라향', '레몬'). 품목 언급이 없으면 출력하지 않는다" },
+            period: { type: 'string', description: "기간 조건: '이번주'→'this_week', '이번달/이달'→'this_month', 특정 월(예: '6월')→'YYYY-MM' 형식(오늘 날짜 기준, 미래 월이면 작년으로). 기간 언급 없으면 출력하지 않는다" },
+            target_date: { type: 'string', description: "재무 지시에서 특정 하루를 물으면(예: '4월 14일 정산현황') 그 날짜 YYYY-MM-DD (미래면 작년). 아니면 출력하지 않는다" },
+            settlement_date: { type: 'string', description: 'action=settlement_input일 때만 출력 — 입력 대상 날짜 YYYY-MM-DD (언급 없으면 오늘)' },
             settlement_entries: {
                 type: 'array',
-                description: 'action=settlement_input일 때 언급된 항목만 (미언급 항목은 넣지 않음). 그 외엔 빈 배열',
+                description: 'action=settlement_input일 때만 출력 — 언급된 항목만 (미언급 항목은 넣지 않음)',
                 items: {
                     type: 'object',
                     additionalProperties: false,
@@ -5899,30 +5899,33 @@ const MARU_ROUTE_TOOL = {
                     required: ['field', 'amount'],
                 },
             },
-            feedback_kind: { type: 'string', enum: ['칭찬', '수정', '지적', '코멘트'], description: "action=feedback일 때 피드백 분류. 그 외 action이면 '코멘트'로 둘 것" },
-            schedule_op: { type: 'string', enum: ['조회', '등록', '불가', '해당없음'], description: "action=schedule일 때: 조회/등록, 삭제·수정 요구면 '불가'. 그 외 action이면 '해당없음'" },
-            schedule_from: { type: 'string', description: '일정 조회 시작일 YYYY-MM-DD (조회일 때만, 아니면 빈 문자열)' },
-            schedule_to: { type: 'string', description: '일정 조회 종료일 YYYY-MM-DD (조회일 때만, 아니면 빈 문자열)' },
+            feedback_kind: { type: 'string', enum: ['칭찬', '수정', '지적', '코멘트'], description: 'action=feedback일 때만 출력 — 피드백 분류' },
+            schedule_op: { type: 'string', enum: ['조회', '등록', '불가', '해당없음'], description: "action=schedule일 때만 출력: 조회/등록, 삭제·수정 요구면 '불가'" },
+            schedule_from: { type: 'string', description: '일정 조회 시작일 YYYY-MM-DD (schedule_op=조회일 때만 출력)' },
+            schedule_to: { type: 'string', description: '일정 조회 종료일 YYYY-MM-DD (schedule_op=조회일 때만 출력)' },
             schedule_items: {
                 type: 'array',
-                description: '등록할 일정 목록 (schedule_op=등록일 때만, 아니면 빈 배열)',
+                description: '등록할 일정 목록 (schedule_op=등록일 때만 출력)',
                 items: {
                     type: 'object',
                     additionalProperties: false,
                     properties: {
                         date: { type: 'string', description: 'YYYY-MM-DD — 애매한 표현은 오늘 기준 가장 가까운 미래 해당 날짜로 확정 제안' },
-                        end_date: { type: 'string', description: "기간형 일정(예: '25~27일 할인')의 종료일 YYYY-MM-DD. 하루짜리면 빈 문자열" },
-                        time: { type: 'string', description: 'HH:MM, 시간 언급 없으면 빈 문자열' },
+                        end_date: { type: 'string', description: "기간형 일정(예: '25~27일 할인')의 종료일 YYYY-MM-DD. 하루짜리면 출력하지 않는다" },
+                        time: { type: 'string', description: 'HH:MM. 시간 언급 없으면 출력하지 않는다' },
                         title: { type: 'string', description: '일정 내용' },
                         category: { type: 'string', enum: ['휴가', '톡톡발송', '문자발송', '할인·이벤트', '일반'], description: '일정 카테고리 — 휴가/휴무=휴가, 톡톡 발송=톡톡발송, 문자·LMS 발송=문자발송, 할인·프로모션·이벤트=할인·이벤트, 그 외=일반' },
-                        assignee_name: { type: 'string', description: '담당자 이름 (실제 직원 명단 중에서만). 미지정이면 빈 문자열(=대표). 휴가 카테고리는 반드시 명단의 담당자 필요' },
-                        date_note: { type: 'string', description: "애매한 날짜 표현이었으면 원래 표현 그대로 (예: '금요일쯤'). 명확했으면 빈 문자열" },
+                        assignee_name: { type: 'string', description: '담당자 이름 (실제 직원 명단 중에서만). 미지정(=대표)이면 출력하지 않는다. 휴가 카테고리는 반드시 명단의 담당자 필요' },
+                        date_note: { type: 'string', description: "애매한 날짜 표현이었으면 원래 표현 그대로 (예: '금요일쯤'). 명확했으면 출력하지 않는다" },
                     },
-                    required: ['date', 'end_date', 'time', 'title', 'category', 'assignee_name', 'date_note'],
+                    required: ['date', 'title', 'category'],
                 },
             },
         },
-        required: ['action', 'team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword', 'period', 'target_date', 'feedback_kind', 'schedule_op', 'schedule_from', 'schedule_to', 'schedule_items', 'settlement_date', 'settlement_entries'],
+        // C안 C-2 (지시 #14): required 16→5 축소 — 어떤 지시든 16필드(대부분 빈값)를 강제 출력하던 것이
+        // 오염 파편의 착지면이었음. 생략된 필드는 서버 정규화(maruNormalizeDecision)가 빈값으로 복원해
+        // 하위 코드는 무변경. Anthropic strict 모드는 required 미포함 필드 생략을 정식 지원 (공식 문서 확인)
+        required: ['action', 'team', 'assignee', 'task_summary', 'reason'],
     },
 };
 
@@ -5989,7 +5992,10 @@ ${JSON.stringify(routingTable, null, 2)}
    - 품목이 없는 재무 지시는 item_keyword를 빈 문자열로 두면 전체 품목 보고서가 나간다. 품목이 없다고 clarify하지 말 것. (기간은 아래 판단 기준표 A를 따른다)
 7. 반드시 route_order 도구를 호출해 답한다. 다른 텍스트 응답은 하지 않는다.
 8. 모든 문자열 필드에는 순수한 값만 넣는다. 마크업이나 태그 문법, 꺾쇠괄호 문자를 절대 포함하지 않는다.
-   해당 없는 문자열 필드는 빈 문자열, 해당 없는 배열 필드는 빈 배열로 둔다.
+   해당 action에 필요한 필드만 출력하고 관계없는 필드는 아예 출력하지 않는다 —
+   route: team·assignee (+재무면 item_keyword/period/target_date 중 해당분만) / clarify: clarify_question /
+   schedule: schedule_op (조회면 schedule_from·schedule_to, 등록이면 schedule_items) /
+   settlement_input: settlement_date·settlement_entries / feedback: feedback_kind.
 
 ## 판단 기준표 (원칙: 추측 배정 금지 — 확실하면 즉답, 애매하면 1회 되묻기)
 【A. 기간 표현】
@@ -6152,7 +6158,23 @@ function maruCleanDecision(raw) {
         assignee_name: maruCleanToken(i && i.assignee_name),
         date_note: maruCleanText(i && i.date_note),
     }));
-    return d;
+    return maruNormalizeDecision(d);
+}
+// C안 C-2 (지시 #14): required 축소로 모델이 생략한 필드를 빈값으로 복원 — 하위 코드(라우팅·박제
+// 체커·audit)는 16필드가 항상 존재한다고 가정하므로 여기서 형태를 보장한다 (정화 직후 단일 관문)
+function maruNormalizeDecision(d) {
+    const out = { ...d };
+    for (const f of ['team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword',
+        'period', 'target_date', 'settlement_date', 'schedule_from', 'schedule_to']) {
+        if (typeof out[f] !== 'string') out[f] = '';
+    }
+    if (!['칭찬', '수정', '지적', '코멘트'].includes(out.feedback_kind)) out.feedback_kind = '코멘트';
+    if (!['조회', '등록', '불가', '해당없음'].includes(out.schedule_op)) {
+        out.schedule_op = out.action === 'schedule' ? '' : '해당없음'; // schedule인데 op 누락 = Unusable 판정 대상
+    }
+    if (!Array.isArray(out.schedule_items)) out.schedule_items = [];
+    if (!Array.isArray(out.settlement_entries)) out.settlement_entries = [];
+    return out;
 }
 
 // 날짜 파싱은 date-utils.js로 이동 (v5.0 1단계 — 월 단위 파싱 추가, 로컬 테스트 공용)
@@ -6226,7 +6248,7 @@ async function maruDecide(content) {
     // (b) 조건부 재시도 (2026-07-18 대표 채택): 평시엔 정화기만으로 방어 (호출 1회).
     // 정화 후 필수값이 비어 배정 불능일 때만 재호출 — 재시도가 오염을 못 없앤다는 실측(변형 태그)에 따른 비용·지연 절감.
     if (polluted && maruDecisionUnusable(d)) {
-        raw = await call('\n\n※ 경고: 직전 응답의 필드 값에 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 없는 문자열 필드는 반드시 빈 문자열로, 배열 필드는 빈 배열로 둔다. 꺾쇠괄호와 마크업 문법은 어떤 필드에도 절대 넣지 않는다.');
+        raw = await call('\n\n※ 경고: 직전 응답의 필드 값에 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 action에 필요한 필드만 출력하고 관계없는 필드는 아예 출력하지 않는다. 꺾쇠괄호와 마크업 문법은 어떤 필드에도 절대 넣지 않는다.');
         polluted = maruDecisionPolluted(raw);
         if (polluted) pollution.retry = maruPollutionSample(raw);
         d = maruCleanDecision(raw);
@@ -6235,10 +6257,16 @@ async function maruDecide(content) {
 }
 // 정화 후에도 배정을 진행할 수 없는 상태인지 (조건부 재시도 발동 기준)
 // - action 자체가 없거나, route인데 담당 요원이 비었거나, clarify인데 질문이 빈 경우(빈 되묻기 금지)
+// - C안 C-2 (지시 #14): required 축소에 따라 action별 필수 필드 누락도 판정에 추가
 function maruDecisionUnusable(d) {
     if (!d || !d.action) return true;
     if (d.action === 'route' && !String(d.assignee || '').trim()) return true;
     if (d.action === 'clarify' && !String(d.clarify_question || '').trim()) return true;
+    if (d.action === 'schedule' && !['조회', '등록', '불가'].includes(d.schedule_op)) return true;
+    if (d.action === 'schedule' && d.schedule_op === '등록'
+        && !(Array.isArray(d.schedule_items) && d.schedule_items.length)) return true;
+    if (d.action === 'settlement_input'
+        && !(Array.isArray(d.settlement_entries) && d.settlement_entries.length)) return true;
     return false;
 }
 
