@@ -8,6 +8,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { GoogleGenAI } = require('@google/genai');
 const officeCrypto = require('officecrypto-tool');
+const { VERSION } = require('./version.js');
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -957,6 +958,11 @@ app.post('/api/auth/login', async (req, res) => {
         console.error('POST /api/auth/login error:', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+// === 버전 조회 (0단계 버전 시스템) ===
+app.get('/api/version', authMiddleware, adminOnly, (req, res) => {
+    res.json({ version: VERSION });
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {

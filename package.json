@@ -4,7 +4,9 @@
   "description": "제주아꼼이네 농업회사법인 업무 프로그램",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "deploy": "node scripts/deploy.js",
+    "backup": "node scripts/db-backup.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

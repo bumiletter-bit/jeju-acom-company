@@ -191,6 +191,15 @@ function updateUserUI() {
     // 관리자 전용 📢 지시사항 버튼
     const announcementBtn = document.getElementById('announcement-btn');
     if (announcementBtn) announcementBtn.style.display = currentUser.role === 'admin' ? '' : 'none';
+
+    // 버전 표시 (0단계 버전 시스템) — 조회 API가 관리자 전용이라 관리자에게만 표시
+    const versionEl = document.getElementById('app-version');
+    if (versionEl) {
+        versionEl.textContent = '';
+        if (currentUser.role === 'admin') {
+            api('/api/version').then(d => { versionEl.textContent = d.version; }).catch(() => {});
+        }
+    }
 }
 
 document.getElementById('btn-logout').addEventListener('click', () => {
