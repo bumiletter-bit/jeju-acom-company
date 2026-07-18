@@ -6041,6 +6041,21 @@ function maruDecisionPolluted(input) {
         ? v.some(o => o && typeof o === 'object' && Object.values(o).some(bad))
         : bad(v));
 }
+// v5.0 A-①: 오염이 감지된 필드명 + 파편 원문(200자)을 수집 — audit 기록용 (실오염/오탐 판별 증거)
+function maruPollutionSample(input) {
+    const bad = v => typeof v === 'string' && /[<>]/.test(v) && /antml|parameter|invoke|function/i.test(v);
+    const out = [];
+    for (const [k, v] of Object.entries(input || {})) {
+        if (Array.isArray(v)) {
+            v.forEach((o, i) => {
+                if (o && typeof o === 'object') Object.entries(o).forEach(([k2, v2]) => {
+                    if (bad(v2)) out.push(`${k}[${i}].${k2} = ${String(v2).slice(0, 200)}`);
+                });
+            });
+        } else if (bad(v)) out.push(`${k} = ${String(v).slice(0, 200)}`);
+    }
+    return out;
+}
 function maruCleanDecision(raw) {
     const d = { ...raw };
     d.team = maruCleanToken(d.team);
@@ -6095,11 +6110,14 @@ async function maruDecide(content) {
     };
     let raw = await call();
     let polluted = maruDecisionPolluted(raw);
+    // A-①: 오염 파편 실물 수집 (1차 응답 + 재시도 응답 각각) — audit 기록으로 실오염/오탐 판별
+    const pollution = polluted ? { first: maruPollutionSample(raw) } : null;
     if (polluted) {
         raw = await call('\n\n※ 경고: 직전 응답의 필드 값에 XML 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 없는 문자열 필드는 반드시 빈 문자열("")로, 배열 필드는 빈 배열로 둔다. 태그 문자(<, >)는 어떤 필드에도 절대 넣지 않는다.');
         polluted = maruDecisionPolluted(raw);
+        if (polluted) pollution.retry = maruPollutionSample(raw);
     }
-    return { d: maruCleanDecision(raw), polluted };
+    return { d: maruCleanDecision(raw), polluted, pollution };
 }
 
 // ============================================================
@@ -6693,11 +6711,11 @@ async function processOrderWithMaru(order, actor) {
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
         if (await maruTryScheduleConfirm(order, actor)) return;
         // 판단 호출 (오염 감지·재시도·정화 포함) — 역량 테스트와 공용 로직
-        const { d, polluted } = await maruDecide(order.content);
-        if (polluted) console.warn(`마루 응답 오염 잔존 (지시 #${order.id}) — 토큰형 필드 무효화됨`);
+        const { d, polluted, pollution } = await maruDecide(order.content);
+        if (polluted) console.warn(`마루 응답 오염 잔존 (지시 #${order.id}):`, JSON.stringify(pollution));
         await writeAudit({
             action: 'maru_route', targetType: 'pending_order', targetId: order.id,
-            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted } },
+            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted, pollution_sample: pollution } },
             source: 'agent_office', actor,
         });
 
