@@ -6867,12 +6867,19 @@ app.get('/api/agent-office/orders/:id', authMiddleware, adminOnly, async (req, r
 });
 
 // 접수된 지시 목록 (LIVE 로그 병합 + 마루 패널 처리 큐)
+// v5.0 UI: 연결된 실행이 보고서함에서 [✔확인]된 지시는 기본 숨김 (include_hidden=true면 전부 — 삭제 아님, 표시만)
 app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 30, 200);
+        const showHidden = req.query.include_hidden === 'true';
         const r = await pool.query(
-            `SELECT id, content, status, result, run_id, created_at, processed_at FROM pending_orders
-             WHERE is_deleted = false ORDER BY created_at DESC LIMIT ${limit}`);
+            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at,
+                    COALESCE(r.is_deleted, false) AS run_archived
+             FROM pending_orders o
+             LEFT JOIN agent_runs r ON o.run_id = r.id
+             WHERE o.is_deleted = false
+               AND (${showHidden ? 'TRUE' : 'r.id IS NULL OR r.is_deleted = false'})
+             ORDER BY o.created_at DESC LIMIT ${limit}`);
         res.json({ orders: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });

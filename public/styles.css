@@ -4723,6 +4723,11 @@ textarea.form-input {
 @keyframes aoInboxPop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
 .ao-inbox-pop { animation: aoInboxPop .4s ease; }
 .ao-say-persist { animation: aoPulse 1.4s ease-in-out infinite; }
+/* v5.0 UI: LIVE 로그 [전체 보기] 토글 + 확인 완료 건 흐림 표시 */
+.ao-log-showall { float: right; font-size: 12px; font-weight: 500; color: #6B7280; cursor: pointer; user-select: none; }
+.ao-log-showall input { vertical-align: middle; margin-right: 3px; }
+.ao-log-archived { opacity: .5; }
+
 /* 생각 중 말풍선 점 3개 통통 애니메이션 (v5.0 UI) */
 .ao-think-dots span { display: inline-block; font-weight: 900; animation: aoThinkBounce 1.2s ease-in-out infinite; }
 .ao-think-dots span:nth-child(2) { animation-delay: .15s; }

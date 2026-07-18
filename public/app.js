@@ -9781,6 +9781,9 @@ function aoBindEventsOnce() {
         const item = e.target.closest('[data-run-id]');
         if (item) aoOpenReport(Number(item.dataset.runId));
     });
+    // v5.0 UI: [전체 보기] 토글 — 확인 완료 건 포함 표시 (기본 꺼짐 = 정리된 화면)
+    const showAllToggle = document.getElementById('ao-log-showall');
+    if (showAllToggle) showAllToggle.addEventListener('change', aoRefreshLog);
     // 상시 지시 입력바 (1.5차)
     const orderInput = document.getElementById('ao-order-input');
     document.getElementById('ao-order-send').addEventListener('click', aoSendOrder);
@@ -10286,9 +10289,10 @@ function aoRunPreviewLine(r) {
     const first = Array.isArray(res.lines) && res.lines.length ? res.lines[0] : '';
     const icon = r.status === 'done' ? '✅' : '❗';
     const text = aoTrunc(`${res.summary || (r.status === 'done' ? '완료' : '오류')}${first ? ' — ' + first : ''}`);
-    return `<div class="ao-log-item ao-log-click ao-log-preview" data-run-id="${r.id}">
+    const archived = r.is_deleted ? ' ao-log-archived' : '';
+    return `<div class="ao-log-item ao-log-click ao-log-preview${archived}" data-run-id="${r.id}">
         <span class="ao-log-time">${time}</span> ${icon} <strong>${aoEsc(r.agent_name || '')}</strong> ${aoEsc(text)}
-        <span class="ao-log-open">📄 보기</span></div>`;
+        ${r.is_deleted ? '<span class="ao-arch-badge">확인함</span> ' : ''}<span class="ao-log-open">📄 보기</span></div>`;
 }
 
 function aoAppendLiveLogHtml(html) {
@@ -10334,15 +10338,18 @@ function aoOrderLogLine(o) {
     else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
     else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)}</div>`;
     const runId = o.run_id || (r && r.run_id) || null;
+    const archivedCls = o.run_archived ? ' ao-log-archived' : '';
     const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
-    return `<div class="ao-log-item ao-log-order${clickAttr}"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${extra}</div>`;
+    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}"><span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${extra}</div>`;
 }
 
 async function aoRefreshLog() {
     try {
+        // [전체 보기] 켜면 확인(✔) 완료 건까지 포함 — 숨김이지 삭제 아님 (soft-delete 표시 원칙)
+        const showAll = !!document.getElementById('ao-log-showall')?.checked;
         const [data, orderData] = await Promise.all([
-            api('/api/agent-office/runs?limit=30'),
-            api('/api/agent-office/orders?limit=15'),
+            api('/api/agent-office/runs?limit=30' + (showAll ? '&include_archived=true' : '')),
+            api('/api/agent-office/orders?limit=15' + (showAll ? '&include_hidden=true' : '')),
         ]);
         // 보고함 뱃지: 마지막으로 보고서함을 연 이후 도착한 신규 보고만 카운트 (9차)
         const seenAt = Number(localStorage.getItem('ao_inbox_seen') || 0);
