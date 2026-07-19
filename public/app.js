@@ -10103,6 +10103,15 @@ window.aoDownloadFile = async function(fileId) {
     } catch (e) { alert(e.message); }
 };
 
+// 오류 지시 확인 종결 (대표 실사용 지적 — LIVE 오류 잔존 정리, soft-close)
+window.aoAckOrderError = async function(orderId) {
+    try {
+        const res = await api('/api/agent-office/orders/' + orderId + '/ack-error', 'POST');
+        showToast('✔ ' + res.message);
+        aoRefreshLog();
+    } catch (e) { alert(e.message); }
+};
+
 // 지시 #4-1: 미응답 질문 수동 종결 (soft-close — 전체 보기에서 계속 조회 가능)
 window.aoCloseQuestion = async function(orderId) {
     try {
@@ -10508,7 +10517,7 @@ function aoOrderLogLine(o) {
         extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.team || '')} ${aoEsc(r.assignee)} 배정${cond ? ' [조건: ' + aoEsc(cond) + ']' : ''}${r.run_id ? ' · 실행 #' + r.run_id : ''}</div>`;
     }
     else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
-    else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)}</div>`;
+    else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)} <button class="ao-fb-btn" onclick="event.stopPropagation(); aoAckOrderError(${o.id})">✔ 확인</button></div>`;
     const runId = o.run_id || (r && r.run_id) || null;
     // 지시 #4·#6: 종결된 질문(대체됨/질문종결/응답됨)은 흐림+배지, 미응답 질문 카드엔 [✔확인] 종결 버튼
     const closed = st === '대체됨' || st === '질문종결' || st === '응답됨';

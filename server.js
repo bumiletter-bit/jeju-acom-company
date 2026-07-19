@@ -6111,6 +6111,8 @@ ${JSON.stringify(routingTable, null, 2)}
 - 2단계 (대표 실사용 지적 — 절대 규칙): 결합 텍스트에 [대표 답변]이 긍정(네/맞아/응/어/그래/좋아/진행해/ㅇㅇ/오케이/ok 등 — 표현이 무엇이든 승인 의사면 전부 긍정)이면
   **action='multi' + subtasks에 확인받은 전 건을 각각 완결된 독립 지시 문장으로 분해해 출력** (조건·기간·품목을 각 문장에 전부 복사).
   한 건만 골라 route로 배정하는 것 = 나머지를 몰래 버리는 실패다. 확인받은 N건은 N개 subtask로 전부 나간다.
+  ⚠️ multi를 선언하면서 subtasks 배열을 비우는 것도 실패다 — subtasks에 문장이 2건 이상 실제로 담겨야 실행된다.
+  출력 예: subtasks: ["미니밤호박 톡톡 문구 작성 — 담주 화~목 3일, 2천원 할인쿠폰, 10+1 추첨 20명", "미니밤호박 톡톡 이미지 디자인 제작 — 같은 행사 조건", "담주 화~목 미니밤호박 행사 일정 등록"]
 - 단, 같은 대상의 단일 요청은 멀티가 아니다 (예: "4월 정산 엑셀로 보내줘" = 1건 — 기존대로 route).
 【C. 공통 규칙】
 - 되묻기는 1회만. 답을 받으면 재질문 없이 진행한다.
@@ -7626,6 +7628,25 @@ async function processOrderWithMaru(order, actor, opts = {}) {
             source: 'agent_office', actor,
         });
 
+        // ⓪-복원: 모델이 multi 선언 후 subtasks를 비워 내는 습성 대응 (order #73 실측 — 기안 deliverables와 동일 패턴)
+        //    직전 clarify 질문의 ①②③ 항목 목록에서 서버가 subtasks를 복원한다 (0원 코드 — 원지시 전문을 조건으로 첨부)
+        if (d.action === 'multi' && !opts.noMulti && (d.subtasks || []).length < 2 && combinedFrom) {
+            const q = String((combinedFrom.result && combinedFrom.result.question) || '');
+            const chunks = q.split(/(?=[①②③④⑤])/).filter(c => /^[①②③④⑤]/.test(c));
+            const items = chunks.map((c, ci) => {
+                let t = c.replace(/^[①②③④⑤]\s*/, '');
+                if (ci === chunks.length - 1) {
+                    const cut = t.search(/(모두\s*진행|전부\s*진행|맞나요|진행할까요|답해주세요|괜찮을까요)/);
+                    if (cut > 0) t = t.slice(0, cut);
+                    t = t.replace(/[—\-\s]*[두세네]?\s*(다섯)?\s*건?\s*$/, ''); // "— 세 건" 꼬리 제거
+                }
+                return t.replace(/[\s—>-]+$/g, '').trim();
+            }).filter(Boolean);
+            if (items.length >= 2) {
+                d.subtasks = items.map(t => `${t} [상세 조건은 원지시 참조: ${combinedFrom.content}]`).slice(0, 5);
+                console.log(`멀티 subtasks 서버 복원 (지시 #${order.id}): 질문 항목 ${items.length}건`);
+            }
+        }
         // ⓪ 멀티 지시 분산 실행 (대표 실사용 지적): 확인받은 N건을 각각 독립 지시로 등록해
         //    기존 단일 파이프라인에 병렬로 태운다 — 각 요원이 끝나는 순서대로 개별 보고 (대기 없음)
         if (d.action === 'multi' && !opts.noMulti && (d.subtasks || []).length >= 2) {
@@ -7885,6 +7906,22 @@ app.get('/api/agent-office/orders/:id', authMiddleware, adminOnly, async (req, r
              FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '지시를 찾을 수 없습니다' };
         res.json({ order: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 오류 지시 확인 종결 (대표 실사용 지적: LIVE에 오류가 계속 남음) — soft-close, 전체 보기에서 조회 가능
+app.post('/api/agent-office/orders/:id/ack-error', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE pending_orders SET status='오류확인', processed_at=NOW()
+             WHERE id=$1 AND status='오류' AND is_deleted=false RETURNING id`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 400, message: '오류 상태인 지시만 확인 처리할 수 있습니다' };
+        await writeAudit({
+            action: 'update', targetType: 'pending_order', targetId: r.rows[0].id,
+            changes: { after: { status: '오류확인' } },
+            source: 'agent_office', actor: adminActor(req),
+        });
+        res.json({ message: '오류를 확인 처리했습니다 (전체 보기에서 계속 조회 가능)' });
     } catch (err) { handleAdminErr(res, err); }
 });
 
