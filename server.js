@@ -5697,7 +5697,7 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
 app.get('/api/agent-office/agents', authMiddleware, adminOnly, async (req, res) => {
     try {
         const agents = (await pool.query(
-            `SELECT * FROM agents WHERE is_deleted = false ORDER BY sort_order, id`)).rows;
+            `SELECT * FROM agents WHERE is_deleted = false AND is_active = true ORDER BY sort_order, id`)).rows; // 지시 #57: 비활성(한결) 화면 미표시 — 데이터는 보관
         const tools = (await pool.query(
             `SELECT id, agent_id, tool_name, tool_type, config, enabled FROM agent_tools WHERE is_deleted = false ORDER BY id`)).rows;
         const lessonCounts = (await pool.query(
