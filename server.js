@@ -6379,6 +6379,181 @@ function capWeekdayErrors(text) {
 
 let capTestRunning = false;
 
+// ===== 지시 #51: 실전 문구 스모크 시험 — 대표 원문 5건 (한 글자도 수정 금지) =====
+// 전 문항 is_test 격리: 실제 일정 등록·발송·이미지 생성 호출 없음 (마루는 판단만, 미소는 프롬프트까지만).
+// 답변 전문(transcripts)을 성적표에 기록 — 똑똑이가 원본 대조 판독. 실행은 [#51-실행] 별도 승인.
+const SMOKE_S1 = '단골고객 문자 보낼거야 담주 화요일부터 목요일 단 3일간 2천원 할인쿠폰 10+1 추첨 20명 주문건에 동일상품으로 당첨 시 1박스 더 보낼거야(20명) 품목은 미니밤호박이고 포슬포슬에 당까지 지금이 가장 적절하고 맛있을때 강력추천해 꼬마 미니밤호박은 여기에 +특가 진행';
+const SMOKE_S2 = '스토어 톡톡 보낼거야 담주 화요일부터 목요일 단 3일간 2천원 할인쿠폰 10+1 추첨 20명 주문건에 동일상품으로 당첨 시 1박스 더 보낼거야(20명) 품목은 미니밤호박이고 포슬포슬에 당까지 지금이 가장 적절하고 맛있을때 강력추천해 꼬마 미니밤호박은 여기에 +특가 진행 톡톡 문구랑 디자인도 같이 만들어줘';
+const SMOKE_S3 = '담주 화요일부터 목요일 톡톡, 단골고객 문자 발송, 10+1행사 일정 등록해줘';
+const SMOKE_S4 = '아꼼이네 오션라운지 인스타 영상 시작하려고 해 인스타 추천 아이디 3개 해주고, 인스타 상단에 소개서도 예시로 3개 후보군 만들어줘';
+const SMOKE_S5 = '신규 품목 무늬오징어 판매할거야 결제가 kg당 3만원이고 여기에 택배비3100원+아이스박스값 포함되(2천원) 판매가 58,000원이야 거래처와 미팅 후 진행할거고 이제 직원들이 출장가서 사진 찍고 할거야 이 내용 정리해서 보고서 만들어줘 (직원들에게 보여줄 용)';
+
+// 스모크 채점 헬퍼: 핵심 정보 포함 여부 (누락 목록 반환)
+function smokeMissingInfo(text) {
+    const t = String(text || '');
+    const req = [
+        ['3일간', /3일/], ['2천원 쿠폰', /2[,.]?0?00원|2천\s*원|2천원/], ['10+1 추첨', /10\s*\+\s*1/],
+        ['20명', /20명/], ['동일상품 1박스', /1박스|한 박스/], ['미니밤호박', /미니\s*밤\s*호박|미니밤호박/],
+        ['제철·포슬·당도', /포슬|당도|당까지|달콤/], ['꼬마 +특가', /꼬마.*특가|특가.*꼬마/],
+    ];
+    return req.filter(([, re]) => !re.test(t)).map(([n]) => n);
+}
+async function executeSmokeTest(run, actor) {
+    const results = [];
+    const transcripts = [];
+    const add = (name, pass, expected, actual) => results.push({ name, pass: !!pass, expected, actual: String(actual).slice(0, 400) });
+    const keep = (name, content) => transcripts.push({ name, content: String(content).slice(0, 8000) });
+    const step = async label => agentRunAppendStep(run.id, agentStep('work', '마루', label));
+    const helpers = { matchItemToPricing, normDateSafe };
+    const hangyeol = require(path.join(__dirname, 'agents', '한결.js'));
+    const mirae = require(path.join(__dirname, 'agents', '미래.js'));
+    // 담주 화~목 (오늘 기준 다음주 월요일 +1일 ~ +3일) — 채점 기준일 (지시 #51: 실행 시점 기준 해석)
+    const today = new Date(kstTodayStr() + 'T00:00:00Z');
+    const dowN = (today.getUTCDay() + 6) % 7;
+    const nextMon = new Date(today); nextMon.setUTCDate(today.getUTCDate() - dowN + 7);
+    const dstr = off => { const d = new Date(nextMon); d.setUTCDate(nextMon.getUTCDate() + off); return d.toISOString().slice(0, 10); };
+    const TUE = dstr(1), THU = dstr(3);
+
+    try {
+        // ── S1: 문자 (글샘 → 한결) ──
+        await step('S1 실전 문자 — 글샘 생성·한결 검수 중...');
+        try {
+            const gs = loadAgentRunner('글샘');
+            const gAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'geulsaem' LIMIT 1`)).rows[0];
+            const r1 = await gs.result({ agent: gAgent, pool, params: { order_content: SMOKE_S1 }, helpers });
+            const text1 = (r1.report.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n');
+            keep('S1 글샘 답변 전문', text1);
+            const rev1 = await hangyeol.reviewContent({ contentKind: '카피', contentText: text1 });
+            keep('S1 한결 검수 전문', JSON.stringify(rev1, null, 2));
+            const miss1 = smokeMissingInfo(text1);
+            const dateOk1 = /21일|7\/21|화요일/.test(text1) && /23일|7\/23|목요일/.test(text1);
+            add('S1 3버전+채널 규격', (r1.report.versions || []).length >= 3 && /SMS|LMS/.test(r1.report.channel || ''),
+                '3버전 + SMS/LMS', `${(r1.report.versions || []).length}버전 · ${r1.report.channel}`);
+            add('S1 핵심 정보 전부 포함', miss1.length === 0, '8요소 전부', miss1.length ? '누락: ' + miss1.join(', ') : '전부 포함');
+            add('S1 날짜 해석 (담주 화~목)', dateOk1, `${TUE}(화)~${THU}(목) 반영`, dateOk1 ? '반영' : '날짜 표현 미확인 — 전문 대조 필요');
+            add('S1 한결 검수 블록', !!rev1.verdict, '검수 결과 존재 (⚠️도 정상 — 판단은 대표)', `${rev1.verdict}${rev1.comment ? ' — ' + rev1.comment.slice(0, 60) : ''}`);
+        } catch (e) { add('S1 실행', false, '글샘→한결 파이프라인', '오류: ' + e.message); }
+
+        // ── S2: 톡톡 + 디자인 (글샘 + 미소 → 한결) ──
+        await step('S2 톡톡+디자인 — 글샘·미소 생성·한결 검수 중...');
+        try {
+            const gs = loadAgentRunner('글샘');
+            const ms = loadAgentRunner('미소');
+            const gAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'geulsaem' LIMIT 1`)).rows[0];
+            const mAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'miso' LIMIT 1`)).rows[0];
+            const r2 = await gs.result({ agent: gAgent, pool, params: { order_content: SMOKE_S2 }, helpers });
+            const text2 = (r2.report.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n');
+            keep('S2 글샘(톡톡) 답변 전문', text2);
+            const m2 = await ms.result({ agent: mAgent, pool, params: { order_content: SMOKE_S2 }, helpers });
+            const o2 = (m2.report.outputs || [])[0] || {};
+            keep('S2 미소 프롬프트 전문', (m2.report.outputs || []).map(o => `[${o.label} ${o.ratio}]\n${o.prompt_en}`).join('\n\n'));
+            const rev2 = await hangyeol.reviewContent({ contentKind: '카피', contentText: text2 });
+            keep('S2 한결 검수 전문', JSON.stringify(rev2, null, 2));
+            const miss2 = smokeMissingInfo(text2);
+            add('S2 톡톡 문구 (핵심 정보+규격)', miss2.length === 0 && r2.report.channel === '톡톡',
+                '8요소 + 톡톡 채널', `${r2.report.channel} · ${miss2.length ? '누락: ' + miss2.join(', ') : '정보 전부'}`);
+            add('S2 미소 8단계·1:1·금지어 없음',
+                String(o2.prompt_en || '').length > 80 && /F5C800/i.test(o2.prompt_en || '') && !/AI generated|cartoon|cheap|discount/i.test(o2.prompt_en || ''),
+                '8단계 구조 요소 + 브랜드 컬러 + 금지어 없음 (생성 버튼 미호출)', `${o2.ratio || '?'} · ${String(o2.prompt_en || '').length}자`);
+            add('S2 한결 검수 블록', !!rev2.verdict, '검수 결과 존재', rev2.verdict);
+        } catch (e) { add('S2 실행', false, '글샘+미소→한결 파이프라인', '오류: ' + e.message); }
+
+        // ── S3: 일정 (마루 판단만 — 실제 등록 금지) ──
+        await step('S3 일정 해석 — 마루 판단 중... (실제 등록 없음)');
+        try {
+            const { d } = await maruDecide(SMOKE_S3);
+            keep('S3 마루 판단 전문', JSON.stringify(d, null, 2));
+            const items = d.schedule_items || [];
+            const cats = items.map(i => i.category);
+            const threeOk = d.action === 'schedule' && d.schedule_op === '등록' && items.length >= 3
+                && cats.includes('톡톡발송') && cats.includes('문자발송') && cats.includes('할인·이벤트')
+                && items.some(i => i.category === '할인·이벤트' && i.end_date && i.end_date > i.date);
+            const clarifyOk = d.action === 'clarify' && !!d.clarify_question; // 멀티 지시 복창도 정상 판정 (지시 #51)
+            add('S3 일정 3건 해석 또는 멀티 복창', threeOk || clarifyOk,
+                `3건(톡톡·문자·할인 기간형 ${TUE}~${THU}) 또는 나눠달라 clarify — 실제 등록 없음`,
+                threeOk ? `등록 해석 ${items.length}건 [${cats.join(',')}]` : (clarifyOk ? 'clarify: ' + d.clarify_question.slice(0, 80) : `${d.action}/${d.schedule_op || ''} — 부적합`));
+        } catch (e) { add('S3 실행', false, '마루 판단', '오류: ' + e.message); }
+
+        // ── S4: 인스타 (기안 → 미래) ──
+        await step('S4 인스타 기획 — 기안 생성·미래 검수 중...');
+        try {
+            const gi = loadAgentRunner('기안');
+            const r4 = (await gi.result({ pool, params: { order_content: SMOKE_S4 } })).report;
+            const full4 = JSON.stringify(r4, null, 2);
+            keep('S4 기안 답변 전문', full4);
+            const rev4 = await mirae.reviewContent({ contentKind: '기획안', contentText: full4 });
+            keep('S4 미래 검수 전문', JSON.stringify(rev4, null, 2));
+            const idCount = (full4.match(/@[a-z0-9._]{3,}/gi) || []).length;
+            add('S4 아이디 3개+소개글 3개', idCount >= 3 && /소개/.test(full4),
+                '아이디 후보 3+ · 소개글 후보 3 (실존 계정 지어내기 금지 — 전문 대조)', `아이디 ${idCount}개 감지 — 소개글은 전문 대조 필요`);
+            add('S4 오션라운지 컨셉 반영', /오션|라운지|ocean|lounge|카페/i.test(full4) && /제주|jeju/i.test(full4),
+                '제주·카페·오션라운지 요소', /오션|ocean/i.test(full4) ? '반영' : '미확인');
+            add('S4 미래 검수 블록', !!rev4.verdict, '검수 결과 존재', rev4.verdict);
+        } catch (e) { add('S4 실행', false, '기안→미래 파이프라인', '오류: ' + e.message); }
+
+        // ── S5: 보고서 (기안 → 미래) ──
+        await step('S5 신규 품목 보고서 — 기안 생성·미래 검수 중...');
+        try {
+            const gi = loadAgentRunner('기안');
+            const r5 = (await gi.result({ pool, params: { order_content: SMOKE_S5 } })).report;
+            const full5 = JSON.stringify(r5, null, 2);
+            keep('S5 기안 답변 전문', full5);
+            const rev5 = await mirae.reviewContent({ contentKind: '기획안', contentText: full5 });
+            keep('S5 미래 검수 전문', JSON.stringify(rev5, null, 2));
+            const nums = { 원가합: /35[,.]?100/.test(full5), 판매가: /58[,.]?000/.test(full5), 차액: /22[,.]?900/.test(full5) };
+            const numsOk = nums.원가합 && nums.판매가;
+            add('S5 7항목 구조', !!(r5.summary && r5.purpose && r5.target && (r5.steps || []).length && r5.cost && r5.metrics && (r5.risks || []).length),
+                '7항목 전부', '구조 확인');
+            add('S5 숫자 정확 (35,100·58,000·22,900)', numsOk, '원가 합 35,100 · 판매가 58,000 (차액 22,900 권장)',
+                `원가합=${nums.원가합} 판매가=${nums.판매가} 차액=${nums.차액}`);
+            add('S5 미팅·출장 촬영 포함', /미팅/.test(full5) && /출장|촬영|사진/.test(full5), '미팅 후 진행 + 직원 출장 촬영', '전문 대조');
+            add('S5 판매량 전망 없음+미래 검수', !/판매량.*(예상|전망)|월\s*\d+\s*(박스|kg).*(판매|매출)/.test(full5) && !!rev5.verdict,
+                '근거 없는 전망 금지 + 검수 블록', rev5.verdict);
+        } catch (e) { add('S5 실행', false, '기안→미래 파이프라인', '오류: ' + e.message); }
+    } catch (fatal) { console.error('스모크 시험 치명 오류:', fatal.message); }
+
+    const pass = results.filter(r => r.pass).length;
+    const summaryText = `🧪 실전 스모크: ${pass}/${results.length} 통과 (지시 #51 — 대표 원문 5건, 판독은 똑똑이·판정은 대표)`;
+    const result = {
+        summary: summaryText,
+        lines: results.map(r => `${r.pass ? '✅' : '⚠️'} ${r.name}`),
+        report: {
+            type: 'smoke_test', smoke: true, instruction_ref: '#51',
+            ran_at: new Date().toISOString(),
+            sections: [{ agent: '실전 스모크', pass, total: results.length, results }],
+            transcripts, // 답변 전문 — 똑똑이 원본 대조 판독용
+            note: '전 문항 is_test 격리 — 실제 일정 등록·발송·이미지 생성 없음. ⚠️는 자동 실패가 아니라 전문 대조 필요 표시 포함',
+        },
+    };
+    await pool.query(`UPDATE agent_runs SET status='done', result=$2, finished_at=NOW() WHERE id=$1`,
+        [run.id, JSON.stringify(result)]);
+    await writeAudit({
+        action: 'smoke_test', targetType: 'agent_run', targetId: run.id,
+        changes: { after: { pass, total: results.length } }, source: 'agent_office', actor,
+    });
+    notifyTelegram(`🧪 실전 스모크 결과: ${pass}/${results.length} — 성적표에서 전문 판독`);
+    return result;
+}
+async function svcStartSmokeTest(actor) {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다');
+    if (capTestRunning) throw new Error('점검이 이미 진행 중입니다 — 완료 후 다시 실행해주세요');
+    const maru = (await pool.query(`SELECT * FROM agents WHERE role = 'chief' AND is_deleted = false LIMIT 1`)).rows[0];
+    if (!maru) throw new Error('마루 에이전트를 찾을 수 없습니다');
+    const firstStep = agentStep('order', '마루', '🧪 실전 스모크 시작 — 대표 원문 5건 (지시 #51, 실등록·발송·생성 없음)');
+    const run = (await pool.query(
+        `INSERT INTO agent_runs (agent_id, steps, is_test) VALUES ($1, $2, TRUE) RETURNING *`,
+        [maru.id, JSON.stringify([firstStep])])).rows[0];
+    capTestRunning = true;
+    executeSmokeTest(run, actor)
+        .catch(err => {
+            console.error('스모크 시험 오류:', err.message);
+            return pool.query(`UPDATE agent_runs SET status='error', result=$2, finished_at=NOW() WHERE id=$1`,
+                [run.id, JSON.stringify({ summary: `오류: ${err.message}` })]);
+        })
+        .finally(() => { capTestRunning = false; });
+    return run;
+}
+
 async function executeCapabilityTest(run, actor) {
     const t0 = Date.now();
     const results = { '마루': [], '고난도': [], '세미': [], '글샘': [], '미소': [] };
@@ -6521,7 +6696,8 @@ async function executeCapabilityTest(run, actor) {
             // (실호출 검증은 점검 중첩·재귀가 되므로 배제 — 똑똑이 첫 호출 = 실검증, audit mcp_run_test로 사후 감사)
             const rct = MCP_TOOLS.find(t => t.name === 'run_capability_test');
             const execTools = MCP_TOOLS.filter(t => /run_|create_|update_|add_|register_/.test(t.name)).map(t => t.name);
-            const onlyAllowedExec = execTools.every(n => ['run_capability_test', 'create_schedule', 'update_schedule', 'add_item', 'update_item', 'register_instruction'].includes(n));
+            // 지시 #51: run_smoke_test 허용 목록 추가 (운영규칙 개정 — 실행 도구 2종)
+            const onlyAllowedExec = execTools.every(n => ['run_capability_test', 'run_smoke_test', 'create_schedule', 'update_schedule', 'add_item', 'update_item', 'register_instruction'].includes(n));
             add('마루', 'MCP 실행 도구 게이트 (v5.1.1 박제)',
                 !!rct && typeof rct.handler === 'function' && /승인.*ㄱ|ㄱ.*승인/.test(rct.description) && /mcp_run_test/.test(rct.description) && onlyAllowedExec && typeof svcStartCapabilityTest === 'function',
                 'run_capability_test 등록 + 승인 규칙·audit 명시 + 허용 외 실행 도구 없음',
@@ -8298,6 +8474,21 @@ const MCP_TOOLS = [
             });
             const run = await svcStartCapabilityTest(actor);
             return { run_id: run.id, message: `역량 점검 시작 (run #${run.id}, 약 3~4분) — 완료 시 텔레그램 알림, 문항 상세는 get_test_results로` };
+        },
+    },
+    // 지시 #51: 실전 스모크 실행 도구 — [#51-실행] 지시·대표 'ㄱ' 승인 후에만 호출 (실행 도구 2종째, 운영규칙 개정)
+    {
+        name: 'run_smoke_test',
+        description: "실전 문구 스모크 시험(지시 #51 — 대표 원문 5건)을 실행합니다. 운영 규칙: [#51-실행] 지시 등록 + 대표 대화 승인('ㄱ') 후에만 호출할 것 (AI 호출 약 9회 비용). 전 문항 is_test 격리 — 실제 일정 등록·발송·이미지 생성 없음. 호출은 audit(mcp_run_smoke) 기록, 결과는 텔레그램 🧪 + get_test_results(run_id)로 답변 전문 판독.",
+        inputSchema: { type: 'object', properties: {} },
+        handler: async (args, actor) => {
+            await writeAudit({
+                action: 'mcp_run_smoke', targetType: 'agent_run',
+                changes: { after: { via: 'mcp', rule: "[#51-실행] 지시 + 대표 승인(ㄱ) 전제" } },
+                source: 'mcp', actor,
+            });
+            const run = await svcStartSmokeTest(actor);
+            return { run_id: run.id, message: `실전 스모크 시작 (run #${run.id}, 약 3~5분·AI 약 9회) — 완료 시 텔레그램 🧪, 전문은 get_test_results로` };
         },
     },
 ];
