@@ -11254,6 +11254,17 @@ window.aoOpenReport = async function(runId) {
             </table></div>` : ''}
             <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
         }
+    } else if (rep.type === 'jiyul_labor') {
+        // 지시 #45: 지율 노무 자문 — 템플릿 섹션 표시 (✅결론 ⚖️근거 💰계산 ⚠️체크 ✅액션)
+        body = `
+        ${rep.pending_guide ? `<div class="ao-placeholder-box ao-soon-note">📭 지침서 대기 중 — 범위 밖 (구 기록)</div>` : `
+        <div class="ao-result-box">✅ <strong>${aoEsc(rep.conclusion || '')}</strong></div>
+        ${rep.mode === '소속확인' ? `<div class="ao-review-box ao-review-warn">❓ ${aoEsc(rep.question_back || '')} — 지시 입력바에 답해주세요</div>` : ''}
+        ${rep.legal_basis ? `<h4 class="ao-sec-title">⚖️ 법적 근거</h4><div class="ao-result-box">${aoEsc(rep.legal_basis)}</div>` : ''}
+        ${rep.calculation ? `<h4 class="ao-sec-title">💰 계산·표</h4><pre class="ao-copy-body">${aoEsc(rep.calculation)}</pre>` : ''}
+        ${(rep.checkpoints || []).length ? `<h4 class="ao-sec-title">⚠️ 노무사 체크포인트</h4>${rep.checkpoints.map(c => `<div class="ao-review-item">· ${aoEsc(c)}</div>`).join('')}` : ''}
+        ${(rep.actions || []).length ? `<h4 class="ao-sec-title">✅ 액션 아이템</h4>${rep.actions.map(c => `<div class="ao-review-item">✅ ${aoEsc(c)}</div>`).join('')}` : ''}`}
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
     } else if (rep.type === 'semi_partner_week') {
         // 지시 #15: 주차×거래처 정산 (주간 정산 현황 화면과 동일 계산)
         const won = n => Math.round(n || 0).toLocaleString() + '원';

@@ -973,6 +973,9 @@ async function initDB() {
     // 5차: 미소 프롬프트 작성 연결 반영 → v5.1: 원스톱 생성 (대표 건별 승인 게이트)
     await pool.query(`UPDATE agents SET description = '시안 방향·Gemini 프롬프트 제작 + 이미지·영상 원스톱 생성 (✅ v5.1 — 건별 대표 승인 게이트)'
         WHERE code = 'miso' AND is_deleted = false`);
+    // 지시 #45: 지율 노무 자문 가동 — 조직도 반영 (멱등)
+    await pool.query(`UPDATE agents SET description = '노무·법률 자문 — 노무지침_v1 근거 (✅ 지시 #45 가동 · 법인 5인↑/오션라운지 5인↓ 구분, 지침 밖은 노무사 안내)'
+        WHERE code = 'jiyul' AND is_deleted = false`);
     // v5.2 (지시 #38): 한결 검수 게이트 가동 — 조직도 반영 (멱등)
     await pool.query(`UPDATE agents SET duty = '팀 관리·검수 게이트',
         description = '글샘·미소 콘텐츠를 브랜드 가이드 4항목(준수·어그로·명확성·강조)으로 자동 검수해 대표 승인 전 의견 첨부 (✅ v5.2 검수 게이트 가동)'
