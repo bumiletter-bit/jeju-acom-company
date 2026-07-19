@@ -6493,7 +6493,14 @@ async function executeCapabilityTest(run, actor) {
         const semiAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'semi' LIMIT 1`)).rows[0];
         const semiRunner = loadAgentRunner('세미');
         const helpers = { matchItemToPricing, normDateSafe };
-        const callSemi = (p) => semiRunner.result({ agent: semiAgent, pool, params: { workplace: '전체', ...p }, helpers });
+        // 지시 #18: 파일 첨부 경로 검증용 목(mock) — is_test 격리 원칙에 따라 DB에 저장하지 않고
+        // xlsx 생성·첨부 호출 자체만 검증 (file_id=-1). 실전 저장 경로(saveReportFile)는 live 헬퍼 소관
+        let _testXlsx = null;
+        const semiTestHelpers = {
+            ...helpers,
+            saveReportFile: async (fname, buf) => { _testXlsx = { fname, size: (buf && buf.length) || 0 }; return -1; },
+        };
+        const callSemi = (p) => semiRunner.result({ agent: semiAgent, pool, params: { workplace: '전체', ...p }, helpers: semiTestHelpers });
         const sc = [
             { name: '4/14 일별 정산 (연속1)', p: { target_date: '2026-04-14' }, exp: '11,191,500원',
               check: r => r.report?.type === 'semi_day' && Math.abs((r.report.settlements?.total || 0) - 11191500) < 10,
@@ -6536,6 +6543,12 @@ async function executeCapabilityTest(run, actor) {
             { name: '#15 7월 1주차 CJ 택배비 (파일 없음 정직)', p: { partner_week: { partner: 'CJ대한통운', from: '2026-06-29', to: '2026-07-05', label: '7월 1주차' }, want_file: true },
               exp: '2,951,200원 + 파일 없음 안내', check: r => r.report?.type === 'semi_partner_week' && r.report.cj === true && r.report.total === 2951200 && !!r.report.no_file,
               act: r => `${Math.round(r.report?.total || 0).toLocaleString('ko-KR')}원 ${r.report?.no_file ? '(파일 없음 안내)' : '(안내 누락)'}` },
+            // 지시 #18 박제: 주차×거래처 + 파일 의도 → xlsx 생성·첨부 경로 실행 검증 (스모크 재현 케이스)
+            { name: '#18 주차×거래처 파일 첨부 (스모크 박제)', p: { partner_week: { partner: '대성(시온)', from: '2026-07-06', to: '2026-07-12', label: '7월 2주차' }, want_file: true },
+              exp: '6,347,400원 + 대성(시온)_결제금액_...xlsx 생성·첨부',
+              check: r => r.report?.type === 'semi_partner_week' && r.report.total === 6347400 && r.report.file_id === -1
+                  && !!_testXlsx && _testXlsx.fname === '대성(시온)_결제금액_2026-07-06~2026-07-12.xlsx' && _testXlsx.size > 3000,
+              act: r => `${Math.round(r.report?.total || 0).toLocaleString('ko-KR')}원 · ${_testXlsx ? `${_testXlsx.fname} (${_testXlsx.size}B)` : '(파일 미생성)'}` },
         ];
         for (const c of sc) {
             try { const r = await callSemi(c.p); add('세미', c.name, c.check(r), c.exp, c.act(r)); }
