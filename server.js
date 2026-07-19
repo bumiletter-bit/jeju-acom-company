@@ -6077,6 +6077,10 @@ ${JSON.stringify(routingTable, null, 2)}
      카드/카드이용→card_fee, 법인카드→corp_card.
    - 어느 항목인지 또는 금액 단위가 애매하면 절대 추측하지 말고 clarify로 되묻는다.
    - "정산현황 얼마야?"처럼 조회는 settlement_input이 아니라 재무팀 세미 배정(route)이다. 특정 하루 조회면 target_date를 채운다.
+   - 🚫 **정산현황 ≠ 정산관리 (7/20 실사고 박제)**: settlement_input은 자금 집계 **금액**(원 단위) 전용이다.
+     "정산관리"라는 단어가 있거나, 품목명·규격(kg·로얄과·소과)과 **수량**(4, 1, 6 같은 개수) 나열이면 정산관리 화면 입력 건 —
+     마루가 처리할 수 없으므로 settlement_input 금지. clarify로 정직 안내: "정산관리 품목·수량 입력은 아직 제가 저장할 수 없어요 — 정산관리 화면에서 직접 입력해주세요. (정산현황 자금 집계 입력이 필요하시면 '정산현황 입력'이라고 말씀해주세요)"
+     수량을 금액으로 바꿔 저장하는 것(19개→19원)은 데이터 오염 실패다.
 5. 여러 분야가 섞인 지시는 가장 핵심인 분야 하나로 배정하고 reason에 나머지를 언급한다.
 6. 재무 지시(세미 배정)에서는 조건을 함께 추출한다:
    - item_keyword: 특정 품목이 언급되면 그 키워드만 (예: "하우스감귤 매출 얼마야?" → "하우스감귤"). 품목 언급 없으면 빈 문자열.
@@ -7733,6 +7737,19 @@ async function processOrderWithMaru(order, actor, opts = {}) {
 
         // ①-4 정산현황 입력 → 마루 직접 처리 (파싱 → 확인 1회 → 부분 저장)
         if (d.action === 'settlement_input') {
+            // 서버 가드 (7/20 실사고 — 효돈 수량 19를 "19원"으로 저장): 정산관리(품목·수량) 지시는 차단.
+            // 근거: '정산관리' 단어, 또는 금액 단위(원/만/억) 없이 규격·수량 나열이면 자금 집계 입력이 아니다
+            const srcAll = effContent;
+            const looksLikeItemQty = /정산\s*관리/.test(srcAll)
+                || (!/[0-9][0-9,.]*\s*(원|만|억)/.test(srcAll) && /(kg|로얄과|소과|중대과|로얄|가정용|선물용)/.test(srcAll));
+            if (looksLikeItemQty) {
+                await maruFinishOrder(order.id, '안내', {
+                    type: 'route', notice: '정산관리 품목·수량 입력은 아직 마루가 저장할 수 없습니다 — 정산관리 화면에서 직접 입력해주세요. (정산현황 자금 집계 입력이 필요하시면 "정산현황 입력, 효돈 49만원"처럼 금액으로 말씀해주세요)',
+                    reason: '정산관리(품목·수량) ≠ 정산현황(자금 금액) — 오저장 방지 서버 가드 (7/20 사고 박제)',
+                    summary: d.task_summary,
+                });
+                return;
+            }
             await maruHandleSettlementInput(order, d, actor);
             return;
         }
