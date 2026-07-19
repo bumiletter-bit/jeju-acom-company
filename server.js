@@ -970,9 +970,13 @@ async function initDB() {
     // 4차: 글샘 카피 생성 연결 반영 (발송은 대표가 알리고에서 직접 — 자동 발송 없음)
     await pool.query(`UPDATE agents SET description = 'LMS/톡톡/상세페이지 카피 작성 (✅ 카피 생성 연결됨 — 4차 · 발송은 대표가 알리고에서 직접)'
         WHERE code = 'geulsaem' AND is_deleted = false`);
-    // 5차: 미소 프롬프트 작성 연결 반영 (이미지/영상 생성은 대표가 Gemini에서 직접 — 자동 생성 없음)
-    await pool.query(`UPDATE agents SET description = '시안 방향·Gemini 이미지/영상 프롬프트 제작 (✅ 프롬프트 작성 연결됨 — 5차 · 생성은 대표가 Gemini에서 직접)'
+    // 5차: 미소 프롬프트 작성 연결 반영 → v5.1: 원스톱 생성 (대표 건별 승인 게이트)
+    await pool.query(`UPDATE agents SET description = '시안 방향·Gemini 프롬프트 제작 + 이미지·영상 원스톱 생성 (✅ v5.1 — 건별 대표 승인 게이트)'
         WHERE code = 'miso' AND is_deleted = false`);
+    // v5.2 (지시 #38): 한결 검수 게이트 가동 — 조직도 반영 (멱등)
+    await pool.query(`UPDATE agents SET duty = '팀 관리·검수 게이트',
+        description = '글샘·미소 콘텐츠를 브랜드 가이드 4항목(준수·어그로·명확성·강조)으로 자동 검수해 대표 승인 전 의견 첨부 (✅ v5.2 검수 게이트 가동)'
+        WHERE code = 'hangyeol' AND is_deleted = false`);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -5606,7 +5610,31 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
             })
             : { summary: '완료' };
         await agentRunAppendStep(run.id, agentStep('report', agent.name, '완료 보고'));
-        if (managerName && managerName !== agent.name) {
+        // v5.2 (지시 #38): 한결 검수 게이트 — 글샘·미소 콘텐츠 산출물만 (조회·집계 보고는 미적용).
+        // 검수 시에만 소넷 1회. 실패해도 보고는 정직하게 나감 (검수 오류를 report에 표시)
+        if (['글샘', '미소'].includes(agent.name) && result && result.report
+            && ['geulsaem_copy', 'miso_prompt'].includes(result.report.type)) {
+            await agentRunAppendStep(run.id, agentStep('review', '한결', '콘텐츠 검수 중... (브랜드 가이드 4항목)'));
+            try {
+                const hangyeol = require(path.join(__dirname, 'agents', '한결.js'));
+                const contentText = result.report.type === 'geulsaem_copy'
+                    ? (result.report.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n')
+                    : (result.report.outputs || []).map(o => `[${o.label} · ${o.media} ${o.ratio}]\n${o.prompt_en}\n(해석) ${o.prompt_ko}`).join('\n\n');
+                const review = await hangyeol.reviewContent({
+                    contentKind: result.report.type === 'geulsaem_copy' ? '카피' : '시안 프롬프트',
+                    contentText,
+                });
+                result.report.review = review;
+                result.lines = [...(result.lines || []),
+                    `🔍 한결 검수: ${review.verdict === '통과' ? '✅ 통과' : '⚠️ 보완 의견'} — 상세는 보고서 카드에서`];
+                await agentRunAppendStep(run.id, agentStep('review', '한결',
+                    review.verdict === '통과' ? '검수 통과 — 상신' : '보완 의견 첨부 — 최종 판단은 대표님께'));
+            } catch (e) {
+                console.error('한결 검수 실패:', e.message);
+                result.report.review = { error: '검수 실패: ' + String(e.message).slice(0, 200) + ' — 콘텐츠는 정상 보고됨' };
+                await agentRunAppendStep(run.id, agentStep('review', '한결', '검수 실패 (콘텐츠는 정상 보고) — 사유는 카드에'));
+            }
+        } else if (managerName && managerName !== agent.name) {
             await agentRunAppendStep(run.id, agentStep('review', managerName, '검수 후 상신'));
         }
         await agentRunAppendStep(run.id, agentStep('done', '마루', '보고서함에 보고 등록'));
@@ -6660,6 +6688,26 @@ async function executeCapabilityTest(run, actor) {
                     text: outs.map(x => `[${x.label} · ${x.media} ${x.ratio}]\n${x.prompt_en}\n\n🇰🇷 ${x.prompt_ko}`).join('\n\n────────────\n\n') });
             } catch (e) { add('미소', c.name, false, '규격 전체 통과', '오류: ' + e.message, c.q); }
         }
+
+        // ===== v5.2 (지시 #38): 한결 검수 게이트 (2문항 — Sonnet 검수 실호출) =====
+        await step('한결 검수 점검 중... (2문항 — 위반 검출·정상 통과)');
+        const hangyeol = require(path.join(__dirname, 'agents', '한결.js'));
+        try {
+            const bad = await hangyeol.reviewContent({
+                contentKind: '카피',
+                contentText: '(광고)제주아꼼이네입니다^^\n지금 아무 이유 없이 전 품목 50% 파격 할인!! 오늘만!! 안 사면 손해!! 무조건 사세요!!\n무료 수신거부 080-000-0000',
+            });
+            add('한결', '규칙 위반 검출 (명분 없는 할인·과장 — 지시#38 박제)', bad.verdict === '보완',
+                '⚠️ 보완 판정 (위반을 통과시키면 실패)',
+                `${bad.verdict}${bad.items ? ` — ${bad.items.filter(i => !i.ok).length}항목 지적` : ''}`);
+        } catch (e) { add('한결', '규칙 위반 검출 (명분 없는 할인·과장 — 지시#38 박제)', false, '⚠️ 보완 판정', '오류: ' + e.message); }
+        try {
+            const good = await hangyeol.reviewContent({
+                contentKind: '카피',
+                contentText: '(광고)제주아꼼이네입니다^^\n하우스감귤이 이번 주 첫 수확을 시작했어요. 대표가 과수원에서 직접 골라 담아 보내드립니다.\n★ 첫 수확 기념 200박스 한정 · 39,900원 ★\n이번 주 일요일까지 주문하시면 월요일에 바로 출발해요.\nVIP 전용 혜택 안내: 단골 고객님께는 5% 추가 적립\n주문하기: https://smartstore.naver.com/akkome\n무료 수신거부 080-000-0000',
+            });
+            add('한결', '정상 콘텐츠 통과 (지시#38 박제)', good.verdict === '통과', '✅ 통과 판정 (트집 잡으면 실패)', good.verdict);
+        } catch (e) { add('한결', '정상 콘텐츠 통과 (지시#38 박제)', false, '✅ 통과 판정', '오류: ' + e.message); }
     } catch (fatal) {
         console.error('역량 점검 치명 오류:', fatal.message);
     }

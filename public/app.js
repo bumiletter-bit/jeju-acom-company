@@ -10963,6 +10963,17 @@ window.aoOpenReport = async function(runId) {
     if (!run.result) return alert('아직 결과가 없는 실행입니다 (진행 중이거나 기록 없음)');
 
     const dt = new Date(run.started_at).toLocaleString('ko-KR');
+    // v5.2 (지시 #38): 한결 검수 블록 — ⚠️보완이어도 숨기지 않고 표시 (최종 판단은 대표)
+    const aoReviewBlock = rev => {
+        if (!rev) return '';
+        if (rev.error) return `<div class="ao-review-box ao-review-warn">🔍 한결 검수: ${aoEsc(rev.error)}</div>`;
+        const pass = rev.verdict === '통과';
+        return `<div class="ao-review-box ${pass ? 'ao-review-ok' : 'ao-review-warn'}">
+            <div class="ao-review-head">🔍 한결 검수: ${pass ? '✅ 통과' : '⚠️ 보완 의견'} <small style="color:#888;">(최종 판단은 대표님)</small></div>
+            ${(rev.items || []).map(it => `<div class="ao-review-item">${it.ok ? '✅' : '⚠️'} <strong>${aoEsc(it.name)}</strong> — ${aoEsc(it.comment || '')}</div>`).join('')}
+            ${rev.suggestion ? `<div class="ao-review-sug">💡 수정 제안: ${aoEsc(rev.suggestion)}<br><small style="color:#888;">반영하려면 지시 입력바에 "수정 반영해줘"라고 지시해주세요 (1회 재작성)</small></div>` : ''}
+        </div>`;
+    };
     let body = '';
     if (!rep) {
         // 상세 report가 없는 실행 — 요약·결과 줄만 표시 (로그 클릭으로도 열리게)
@@ -10975,6 +10986,7 @@ window.aoOpenReport = async function(runId) {
         // 4차: 글샘 카피 보고서 — [복사] 버튼으로 알리고에 바로 붙여넣기
         const missing = rep.missing_fields || [];
         body = `
+        ${aoReviewBlock(rep.review)}
         ${missing.length ? `<div class="ao-missing-box">✏️ <strong>채워야 할 항목:</strong> ${missing.map(aoEsc).join(', ')}
             <span style="color:#888;font-size:11px;">— 본문의 [ ] 자리표시를 채운 뒤 발송하세요</span></div>` : ''}
         <h4 class="ao-sec-title">✍️ ${aoEsc(rep.channel)} 카피${rep.title ? ` · 제목안 "${aoEsc(rep.title)}"` : ''}</h4>
@@ -11146,6 +11158,7 @@ window.aoOpenReport = async function(runId) {
         const imgIds = (rep.media_files || []).filter(isImg).map(f => f.file_id);
         if (imgIds.length) setTimeout(() => imgIds.forEach(id => aoLoadThumb(id)), 80);
         body = `
+        ${aoReviewBlock(rep.review)}
         ${rep.concept_note ? `<div class="ao-result-box">🎨 ${aoEsc(rep.concept_note)}</div>` : ''}
         ${rep.media_error ? `<div class="ao-placeholder-box ao-soon-note">⚠️ ${aoEsc(rep.media_error)}</div>` : ''}
         ${(rep.outputs || []).map((o, i) => `
