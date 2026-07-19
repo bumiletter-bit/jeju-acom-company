@@ -16,7 +16,13 @@ types.setTypeParser(1082, val => val);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'jeju-acom-secret-2026';
+// 5단계 (지시 #22-2): 하드코딩 폴백 제거 — 미설정 시 기동 실패 (fail-closed).
+// 리포에 노출된 기본값으로 토큰 위조가 가능했던 구조 차단 (실서버는 환경변수 설정 확인됨 — 위조 401 실측)
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('JWT_SECRET 환경변수가 설정되지 않았습니다 — 서버를 시작할 수 없습니다 (fail-closed)');
+    process.exit(1);
+}
 
 // DB 연결
 const dbConfig = {
@@ -5760,6 +5766,13 @@ app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, re
 // 교훈 승인 — 대표 승인 시에만 '제안' → 'active' (자동 활성화 금지)
 app.post('/api/agent-office/lessons/:id/approve', authMiddleware, adminOnly, async (req, res) => {
     try {
+        // 지시 #22-6: 요원당 활성 교훈 상한 10 — 프롬프트 비대화·통제 상실 방지 (초과 시 기존 폐기 후 승인)
+        const tgt = await pool.query(`SELECT agent_id FROM agent_lessons WHERE id = $1 AND status = '제안' AND is_deleted = false`, [req.params.id]);
+        if (tgt.rows.length === 0) throw { status: 404, message: '승인 대기(제안) 상태의 교훈을 찾을 수 없습니다' };
+        const cnt = await pool.query(
+            `SELECT COUNT(*)::int AS c FROM agent_lessons WHERE agent_id = $1 AND status = 'active' AND is_deleted = false`,
+            [tgt.rows[0].agent_id]);
+        if (cnt.rows[0].c >= 10) throw { status: 409, message: `이 요원의 활성 교훈이 상한(10개)에 도달했습니다 — 기존 교훈을 폐기한 뒤 승인해주세요 (현재 ${cnt.rows[0].c}개)` };
         const r = await pool.query(
             `UPDATE agent_lessons SET status = 'active', approved_at = NOW() WHERE id = $1 AND status = '제안' AND is_deleted = false RETURNING *`,
             [req.params.id]);

@@ -99,7 +99,7 @@ module.exports = {
             const lr = await pool.query(
                 `SELECT lesson, category FROM agent_lessons
                  WHERE agent_id = $1 AND status = 'active' AND is_deleted = false
-                 ORDER BY created_at DESC LIMIT 30`, [agent.id]);
+                 ORDER BY created_at DESC LIMIT 10`, [agent.id]); // 지시 #22-6: 활성 교훈 상한 10
             if (lr.rows.length) {
                 lessonsText = '\n\n## 📚 대표님 학습 노트 — 아래 교훈이 지식 문서와 충돌하면 학습 노트를 우선 적용할 것!\n'
                     + lr.rows.map(l => `- [${l.category || '일반'}] ${l.lesson}`).join('\n');
