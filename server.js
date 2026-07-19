@@ -6519,8 +6519,11 @@ async function executeCapabilityTest(run, actor) {
             { name: '이번달 정산 (총결제 공식 검산)', p: {}, exp: '상품+택배+이월=총결제 일치',
               check: r => { const m = r.report?.month; return r.report?.type === 'semi_settlement' && m && Math.abs(m.payment_total - (m.product_total + m.cj_fee + m.cj_carryover)) < 1; },
               act: r => r.summary },
-            { name: '하우스귤 7월 (계열 매칭·하귤 제외)', p: { item_keyword: '하우스귤', period: '2026-07' }, exp: '15,779,500원 · 하귤 미포함',
-              check: r => Math.abs((r.report?.product_total || 0) - 15779500) < 10 && (r.report?.items || []).every(i => !i.name.includes('하귤')),
+            // 지시 #19: 진행 중이던 7월(15,779,500·박제 시점값) → 완결된 6월로 교체. 기대값 산출 근거:
+            // 정산 원본 독립 합산(6월 전 건 × 가격표 재계산, 하우스감귤~/하귤 제외) = 493개/14,771,000원
+            // — 세미 실경로 교차 검증 일치 (2026-07-19). 검증 의도(계열 토큰 매칭 + 하귤 제외) 유지
+            { name: '하우스귤 6월 (계열 매칭·하귤 제외 — 지시#19 확정 기간)', p: { item_keyword: '하우스귤', period: '2026-06' }, exp: '493개 / 14,771,000원 · 하귤 미포함',
+              check: r => Math.abs((r.report?.product_total || 0) - 14771000) < 10 && (r.report?.items || []).every(i => !i.name.includes('하귤')),
               act: r => Math.round(r.report?.product_total || 0).toLocaleString('ko-KR') + '원' },
             { name: '없는 품목 (바나나) 정직 안내', p: { item_keyword: '바나나' }, exp: '찾을 수 없음 + 등록 품목 목록',
               check: r => r.report?.no_match === true && Array.isArray(r.report?.available_items), act: r => r.summary },
@@ -6530,10 +6533,13 @@ async function executeCapabilityTest(run, actor) {
             { name: '4.5 품목 순위 4월 1위 (재계산 확정값)', p: { period: '2026-04', rank: { all: false, topN: 10 } }, exp: '카라향 가정용 - 5kg(40과 전후) · 4,164개 · 73,640,000원',
               check: r => r.report?.type === 'semi_rank' && r.report.rows?.[0]?.name === '카라향 가정용 - 5kg(40과 전후)' && r.report.rows[0].qty === 4164 && r.report.rows[0].amount === 73640000,
               act: r => `${r.report?.rows?.[0]?.name || '?'} · ${(r.report?.rows?.[0]?.qty || 0).toLocaleString('ko-KR')}개 · ${Math.round(r.report?.rows?.[0]?.amount || 0).toLocaleString('ko-KR')}원` },
-            // 지시 #15 박제: 주차×거래처 (화면 주간 정산 현황 실측값 대조 — 절대 주차라 회귀 검출 안정)
-            { name: '#15 7월 3주차 효돈 (화면 실측)', p: { partner_week: { partner: '효돈농협', from: '2026-07-13', to: '2026-07-19', label: '7월 3주차' } },
-              exp: '2,033,000원', check: r => r.report?.type === 'semi_partner_week' && r.report.total === 2033000,
-              act: r => Math.round(r.report?.total || 0).toLocaleString('ko-KR') + '원' },
+            // 지시 #15 박제: 주차×거래처 — 지시 #19 규칙: 박제는 완결된 확정 주차만 (진행 중 주 금지)
+            // 지시 #19: 진행 중이던 3주차(2,033,000·박제 시점값) → 완결된 2주차×효돈으로 교체 (기존 문항과
+            // 다른 조합). 기대값 산출 근거: 정산 원본 독립 합산(7/6~7/12 효돈 6건 × 가격표 재계산) =
+            // 11,865,000원 — 세미 실경로 교차 검증 일치 (2026-07-19)
+            { name: '#15 7월 2주차 효돈 (지시#19 확정 주차)', p: { partner_week: { partner: '효돈농협', from: '2026-07-06', to: '2026-07-12', label: '7월 2주차' } },
+              exp: '11,865,000원 · 6건', check: r => r.report?.type === 'semi_partner_week' && r.report.total === 11865000 && r.report.count === 6,
+              act: r => Math.round(r.report?.total || 0).toLocaleString('ko-KR') + '원 · ' + (r.report?.count || 0) + '건' },
             { name: '#15 7월 2주차 대성 (화면 실측)', p: { partner_week: { partner: '대성(시온)', from: '2026-07-06', to: '2026-07-12', label: '7월 2주차' } },
               exp: '6,347,400원', check: r => r.report?.type === 'semi_partner_week' && r.report.total === 6347400,
               act: r => Math.round(r.report?.total || 0).toLocaleString('ko-KR') + '원' },
