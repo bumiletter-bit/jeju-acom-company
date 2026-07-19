@@ -6732,9 +6732,10 @@ async function executeCapabilityTest(run, actor) {
                 `${bad.verdict}${bad.items ? ` — ${bad.items.filter(i => !i.ok).length}항목 지적` : ''}`);
         } catch (e) { add('한결', '규칙 위반 검출 (명분 없는 할인·과장 — 지시#38 박제)', false, '⚠️ 보완 판정', '오류: ' + e.message); }
         try {
+            // 지시 #50-2: 예문을 현행 검수 4문 기준 완비 카피로 교체 (마감 날짜 구체 명시·근거 없는 수치 제거·재구매 고리 포함)
             const good = await hangyeol.reviewContent({
                 contentKind: '카피',
-                contentText: '(광고)제주아꼼이네입니다^^\n하우스감귤이 이번 주 첫 수확을 시작했어요. 대표가 과수원에서 직접 골라 담아 보내드립니다.\n★ 첫 수확 기념 200박스 한정 · 39,900원 ★\n이번 주 일요일까지 주문하시면 월요일에 바로 출발해요.\nVIP 전용 혜택 안내: 단골 고객님께는 5% 추가 적립\n주문하기: https://smartstore.naver.com/akkome\n무료 수신거부 080-000-0000',
+                contentText: '(광고)제주아꼼이네입니다^^\n하우스감귤이 이번 주 첫 수확을 시작했어요. 대표가 과수원에서 직접 골라 담아 보내드립니다.\n★ 첫 수확 기념 200박스 한정 · 39,900원 ★\n⏰ 마감: 7월 26일(일) 밤 10시 — 마감 후에는 다음 수확까지 기다리셔야 해요.\n주문하기: https://smartstore.naver.com/akkome\n다음 달에는 초당옥수수 소식으로 찾아뵐게요. 늘 찾아주셔서 고맙습니다.\n무료 수신거부 080-000-0000',
             });
             // run #64 후속: 실패 시 사유를 성적표에 남겨 다음 판독 가능하게 (진단 로그 강화)
             const goodWhy = good.verdict === '통과' ? '' :
@@ -6750,11 +6751,13 @@ async function executeCapabilityTest(run, actor) {
         try {
             const j1 = await callJiyul('오션라운지 알바 주휴수당 줘야 해?');
             const all1 = [j1.conclusion, j1.legal_basis, j1.calculation].join(' ');
-            // run #64 거짓 실패 수정: "면제되지 않습니다" 같은 부정문을 면제 주장으로 오판하던 정규식 교정
-            // — 실패 조건은 '면제된다'는 긍정 주장뿐 (부정문·"면제 아님" 안내는 정답)
-            const claimsExempt = /면제/.test(j1.conclusion)
-                && !/면제(되지|가) 않|면제 (대상이 )?아니|면제 안 되|면제 없/.test(j1.conclusion);
-            const ok1 = j1.mode === '답변' && /주휴/.test(all1) && /15/.test(all1) && /(÷|\/)\s*40|40\s*[)]?\s*[×x*]\s*8|8\s*시간/.test(all1)
+            // 지시 #50-1: 채점기 오심 수정 — "면제" 단순 포함 검사 폐기, '긍정 단정'만 실패
+            // (면제입니다/면제됩니다/줄 필요 없다 류). 부정문("면제되지 않"·"면제 아님")은 정답.
+            // 통과 요건(의무+조건 15h·개근+공식)은 답변 전문(all1) 기준 — 앞부분 잘림 채점 금지
+            const claimsExempt = /면제(입니다|됩니다|예요|이에요|라서|이므로 지급.*(않|안))|줄 필요(가)? 없|지급.*(안 해도|필요 없|의무 없)/.test(all1)
+                && !/면제(되지|가) 않|면제 (대상이 )?아니|면제 안 되|면제 없/.test(all1);
+            const ok1 = j1.mode === '답변' && /주휴/.test(all1) && /15/.test(all1) && /개근/.test(all1)
+                && /(÷|\/)\s*40|40\s*[)]?\s*[×x*]\s*8|8\s*시간/.test(all1)
                 && !claimsExempt;
             add('지율', '지침 내 답변 — 5인 미만 주휴수당 의무 (지시#49)', ok1,
                 '✅의무 + 발생 조건(15h·개근) + 공식 ("면제"라 하면 실패)', `mode=${j1.mode} / ${j1.conclusion.slice(0, 80)}`, '오션라운지 알바 주휴수당 줘야 해?');
@@ -7789,24 +7792,34 @@ function tgMask(text) {
     return String(text || '').replace(/\d{1,3}(,\d{3}){2,}|\d{5,}/g, '●●●').slice(0, 400);
 }
 async function notifyTelegram(text) {
-    try {
-        if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off') return;
+    // 지시 #50-5: 일시 네트워크 오류 재시도 1회 (run #64 완료 알림이 배포 셧다운 순간 'fetch failed'로 유실된 사고 대응)
+    const sendOnce = async () => {
+        if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off') return 'off';
         const token = process.env.TELEGRAM_BOT_TOKEN;
-        if (!token) return;
+        if (!token) return 'no-token';
         const chatId = await telegramChatId();
-        if (!chatId) return;
+        if (!chatId) return 'no-chat';
         const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ chat_id: chatId, text: tgMask(text) }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-    } catch (e) {
-        // 알림은 부가 기능 — 실패는 무시하고 audit에만 기록 (토큰 미포함 메시지)
-        writeAudit({
-            action: 'telegram_fail', targetType: 'notification', targetId: null,
-            changes: { after: { error: String(e.message || e).slice(0, 120) } },
-            source: 'agent_office', actor: null,
-        }).catch(() => {});
+        return 'sent';
+    };
+    try {
+        await sendOnce();
+    } catch (e1) {
+        try {
+            await new Promise(r => setTimeout(r, 5000));
+            await sendOnce();
+        } catch (e) {
+            // 알림은 부가 기능 — 재시도까지 실패하면 무시하고 audit에만 기록 (토큰 미포함 메시지)
+            writeAudit({
+                action: 'telegram_fail', targetType: 'notification', targetId: null,
+                changes: { after: { error: String(e.message || e).slice(0, 120), retried: true, first_error: String(e1.message || e1).slice(0, 80) } },
+                source: 'agent_office', actor: null,
+            }).catch(() => {});
+        }
     }
 }
 // 지시 #11: 자가점검 — 발송 경로의 각 관문 상태를 audit에 기록 (조용한 실패 사각지대 제거, 시크릿 미포함)

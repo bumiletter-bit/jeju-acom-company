@@ -75,19 +75,26 @@ ${load(BRAND_FILE, '브랜드 가이드')}
         const tu = msg.content.find(b => b.type === 'tool_use');
         if (!tu) throw new Error('기안 응답에서 기획안(tool_use)을 찾지 못했습니다');
         const p = tu.input;
+        // 지시 #50-4: 7항목 서버 구조화 보장 — 누락·정화 후 빈 필드는 "미정 — 대표 확인 필요" 자리표시 (정직 표기, 몰래 생략 금지)
+        const HOLD = '미정 — 대표 확인 필요';
+        const or = (v, cap) => { const c = clean(v).slice(0, cap); return c || HOLD; };
+        let steps = (Array.isArray(p.steps) ? p.steps : []).map(s => ({
+            who: clean(s && s.who).slice(0, 60) || HOLD, what: clean(s && s.what).slice(0, 200), when: clean(s && s.when).slice(0, 60) || HOLD,
+        })).filter(s => s.what).slice(0, 10);
+        if (!steps.length) steps = [{ who: HOLD, what: HOLD, when: HOLD }];
+        let risks = (Array.isArray(p.risks) ? p.risks : []).map(x => clean(x).slice(0, 200)).filter(Boolean).slice(0, 6);
+        if (!risks.length) risks = [HOLD];
         const report = {
             type: 'gian_plan',
-            summary: clean(p.summary).slice(0, 200),
-            purpose: clean(p.purpose).slice(0, 400),
-            target: clean(p.target).slice(0, 200),
-            steps: (Array.isArray(p.steps) ? p.steps : []).map(s => ({
-                who: clean(s && s.who).slice(0, 60), what: clean(s && s.what).slice(0, 200), when: clean(s && s.when).slice(0, 60),
-            })).filter(s => s.what).slice(0, 10),
-            cost: clean(p.cost).slice(0, 200),
-            metrics: clean(p.metrics).slice(0, 300),
-            risks: (Array.isArray(p.risks) ? p.risks : []).map(x => clean(x).slice(0, 200)).filter(Boolean).slice(0, 6),
+            summary: or(p.summary, 200),
+            purpose: or(p.purpose, 400),
+            target: or(p.target, 200),
+            steps,
+            cost: or(p.cost, 200),
+            metrics: or(p.metrics, 300),
+            risks,
             model: GIAN_MODEL, instruction,
-            note: '기획 기준 = 비전_v1 (철학 4축·로드맵) · 미래 팀장 검수 경유 · 실행은 대표 승인 후',
+            note: '기획 기준 = 비전_v1 (철학 4축·로드맵) · 미래 팀장 검수 경유 · 실행은 대표 승인 후 · 미정 항목은 대표 확인 필요',
         };
         return {
             summary: `기획안: ${report.summary.slice(0, 60)}`,
