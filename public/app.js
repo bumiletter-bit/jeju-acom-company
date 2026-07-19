@@ -9966,6 +9966,16 @@ async function aoRefreshGrowth() {
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
+// 지시 #26·#27: 미소 생성 승인 — 건별 비용 확인 후 서버 호출 (승인 없이 생성 불가)
+window.aoGenerateMedia = async function(runId, outputIndex, grade, media, costLabel) {
+    if (!confirm(`${media} ${grade} 생성을 승인할까요?\n예상 비용: ${costLabel} (승인 시에만 과금)`)) return;
+    try {
+        const r = await api(`/api/agent-office/runs/${runId}/generate`, 'POST', { output_index: outputIndex, grade });
+        showToast('✅ ' + r.message);
+        setTimeout(() => aoOpenReport(runId), 800); // 생성 중 상태 반영해 모달 새로고침
+    } catch (e) { alert('생성 요청 실패: ' + e.message); }
+};
+
 // 지시 #11: 텔레그램 테스트 알림 (대표 폰 수신 확인용)
 window.aoTelegramTest = async function() {
     try {
@@ -11033,19 +11043,38 @@ window.aoOpenReport = async function(runId) {
         <p class="ao-rep-note">ℹ️ 표기: 날짜(요일) 시간 — 내용 (담당자) · 담당자 미지정=대표 · 삭제·수정은 프로그램 일정 화면에서 직접</p>`;
     } else if (rep.type === 'miso_prompt') {
         // 5차: 미소 프롬프트 보고서 — 영문 프롬프트(코드블록) + 한글 해석 + 비율/사용처 + [복사]
+        // 지시 #26·#27: 승인 게이트 생성 버튼 (건별 비용 표기) + 생성물 📎 + 생성 중/실패 표시
+        const genBtns = (o, i) => {
+            if (!rep.generation_available) return '';
+            if (rep.media_generating) {
+                return rep.media_generating.output_index === i
+                    ? '<div class="ao-soon-note">⏳ 생성 중... (영상은 최대 6분 — 완료 시 텔레그램 알림)</div>' : '';
+            }
+            const c = o.media === '영상' ? { b: '약 1,100원', g: '약 4,400원', ico: '🎬' } : { b: '약 92원', g: '약 185원', ico: '🎨' };
+            return `<div class="ao-gen-row">
+                <button class="ao-fb-btn" onclick="aoGenerateMedia(${run.id}, ${i}, '기본', '${o.media}', '${c.b}')">${c.ico} 기본급 생성 (${c.b})</button>
+                <button class="ao-fb-btn" onclick="aoGenerateMedia(${run.id}, ${i}, '고급', '${o.media}', '${c.g}')">✨ 고급 생성 (${c.g})</button>
+            </div>`;
+        };
+        const files = (rep.media_files || []).map(f =>
+            `<div class="ao-gen-file">📎 ${aoEsc(f.file_name)} <small style="color:#888;">(${aoEsc(f.grade)} · 약 ${(f.est_krw || 0).toLocaleString()}원)</small>
+             <button class="ao-fb-btn" onclick="aoDownloadFile(${f.file_id})">다운로드</button></div>`).join('');
         body = `
         ${rep.concept_note ? `<div class="ao-result-box">🎨 ${aoEsc(rep.concept_note)}</div>` : ''}
+        ${rep.media_error ? `<div class="ao-placeholder-box ao-soon-note">⚠️ ${aoEsc(rep.media_error)}</div>` : ''}
         ${(rep.outputs || []).map((o, i) => `
             <div class="ao-copy-head">
                 <strong>${aoEsc(o.label || ('시안 ' + (i + 1)))}</strong>
                 <span>
-                    <span class="ao-media-badge">${o.media === '영상' ? '🎬 영상 (Veo 3)' : '🖼️ 이미지 (Nano Banana Pro)'}</span>
+                    <span class="ao-media-badge">${o.media === '영상' ? '🎬 영상 (Veo 3.1)' : '🖼️ 이미지 (Nano Banana)'}</span>
                     <button class="ao-fb-btn" onclick="aoCopyText('ao-miso-${run.id}-${i}')">📋 프롬프트 복사</button>
                 </span>
             </div>
             <pre class="ao-copy-body ao-prompt-en" id="ao-miso-${run.id}-${i}">${aoEsc(o.prompt_en)}</pre>
             <div class="ao-prompt-ko">🇰🇷 ${aoEsc(o.prompt_ko || '')}</div>
-            <div class="ao-prompt-meta">비율 <strong>${aoEsc(o.ratio || '-')}</strong> · 사용처 ${aoEsc(o.usage || '-')}</div>`).join('')}
+            <div class="ao-prompt-meta">비율 <strong>${aoEsc(o.ratio || '-')}</strong> · 사용처 ${aoEsc(o.usage || '-')}</div>
+            ${genBtns(o, i)}`).join('')}
+        ${files ? `<h4 class="ao-sec-title">📎 생성물</h4>${files}` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')} · 모델 ${aoEsc(rep.model || '')}</p>`;
     } else if (rep.type === 'semi_compare') {
         // 4.5단계 ⑤: 기간 비교 보고서

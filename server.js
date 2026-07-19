@@ -6443,6 +6443,18 @@ async function executeCapabilityTest(run, actor) {
             const wf = [WANT_FILE_RE.test('이번주 효돈 정산금 파일 줘'), WANT_FILE_RE.test('4월 정산 엑셀로 뽑아줘'), WANT_FILE_RE.test('지난주 대성 정산현황 얼마야')];
             add('마루', '파일/즉답 의도 분기 (지시#17 스모크 박제)', wf[0] === true && wf[1] === true && wf[2] === false,
                 '"파일 줘"·"엑셀로"=파일 / "얼마야"=즉답만', `파일줘=${wf[0]} 엑셀로=${wf[1]} 얼마야=${wf[2]}`, '이번주 효돈 정산금 파일 줘');
+            // 지시 #26·#27 박제: 미소 생성 승인 게이트 — 무승인 호출 차단 (비용 승인제 코드 레벨 검증)
+            let gateBlocked = false;
+            try { assertMediaApproval(null); } catch (e) { gateBlocked = /승인 없음/.test(e.message); }
+            let gateBlocked2 = false;
+            try { assertMediaApproval({ approved: false, actor: { id: 1 }, run_id: 1 }); } catch (e) { gateBlocked2 = true; }
+            const mo = MEDIA_OPTIONS;
+            const pricingOk = mo['이미지']['기본'].model === 'gemini-3.1-flash-image' && mo['이미지']['고급'].model === 'gemini-3-pro-image'
+                && mo['영상']['기본'].model === 'veo-3.1-fast-generate-preview' && mo['영상']['고급'].model === 'veo-3.1-generate-preview'
+                && mo['이미지']['기본'].krw === 92 && mo['영상']['기본'].krw === 1100;
+            add('미소', '생성 승인 게이트 차단 (지시#26·#27)', gateBlocked && gateBlocked2 && pricingOk,
+                '무승인·미승인 호출 모두 차단 + 대표 선택 모델·단가 무결',
+                `무승인=${gateBlocked ? '차단' : '통과(문제)'} 미승인=${gateBlocked2 ? '차단' : '통과(문제)'} 가격표=${pricingOk ? '무결' : '불일치'}`);
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -7683,6 +7695,152 @@ async function svcInstructionStatus({ id, limit }) {
     const r = await pool.query(`SELECT * FROM cc_instructions ORDER BY id DESC LIMIT $1`, [n]);
     return { count: r.rows.length, instructions: r.rows };
 }
+
+// ===== 지시 #26·#27: 미소 원스톱 생성 — 제미나이 이미지·영상 (건별 대표 승인제) =====
+// 원칙: 승인 없이는 생성 API 호출 절대 불가 (외부 행동·비용 승인제) — 유일 호출 경로는
+// adminOnly 엔드포인트이며, 그 안에서도 assertMediaApproval 관문 + 승인 audit 선기록 후 호출.
+// 단가는 대표 선택 (지시 #27, 2026-07-19 공식 문서 기준): 이미지 기본 92원/고급 185원,
+// 영상(8초) 기본 1,100원/고급 4,400원 (환율 1,380원 가정 개략치 — 승인 문구 표기용)
+const MEDIA_OPTIONS = {
+    이미지: {
+        기본: { model: 'gemini-3.1-flash-image', label: '기본급 (Nano Banana 2 · 1K)', usd: 0.067, krw: 92 },
+        고급: { model: 'gemini-3-pro-image', label: '고급 (Nano Banana Pro · 1K)', usd: 0.134, krw: 185 },
+    },
+    영상: {
+        기본: { model: 'veo-3.1-fast-generate-preview', label: '기본급 (Veo 3.1 Fast · 720p 8초)', usd: 0.80, krw: 1100, resolution: '720p' },
+        고급: { model: 'veo-3.1-generate-preview', label: '고급 (Veo 3.1 표준 · 1080p 8초)', usd: 3.20, krw: 4400, resolution: '1080p' },
+    },
+};
+// 승인 관문 — 생성 함수의 첫 줄에서 호출 (역량 박제가 무승인 차단을 검증)
+function assertMediaApproval(approval) {
+    if (!approval || approval.approved !== true || !approval.actor || !approval.run_id) {
+        throw new Error('생성 승인 없음 — 대표 승인 없이는 생성 API를 호출할 수 없습니다 (지시 #26 비용 승인제)');
+    }
+}
+async function generateMisoMedia(approval, output, opt) {
+    assertMediaApproval(approval);
+    if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY 환경변수가 설정되지 않았습니다');
+    const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    if (output.media === '이미지') {
+        const req = { model: opt.model, contents: output.prompt_en };
+        let resp;
+        try {
+            const imageConfig = { imageSize: '1K' };
+            if (/^\d+:\d+$/.test(String(output.ratio || ''))) imageConfig.aspectRatio = output.ratio;
+            resp = await genai.models.generateContent({ ...req, config: { imageConfig } });
+        } catch (e) {
+            // 일부 모델·버전이 imageConfig 미지원일 수 있음 — 설정 없이 1회 재시도 (기본 1024px)
+            if (/imageConfig|image_config|INVALID_ARGUMENT|not supported/i.test(e?.message || '')) {
+                resp = await genai.models.generateContent(req);
+            } else throw e;
+        }
+        const parts = resp?.candidates?.[0]?.content?.parts || [];
+        const img = parts.find(pt => pt.inlineData && pt.inlineData.data);
+        if (!img) {
+            const text = parts.filter(pt => pt.text).map(pt => pt.text).join(' ').slice(0, 200);
+            throw new Error('이미지 응답에 데이터가 없습니다' + (text ? ` (모델 응답: ${text})` : ''));
+        }
+        const ext = String(img.inlineData.mimeType || 'image/png').includes('jpeg') ? 'jpg' : 'png';
+        return { buf: Buffer.from(img.inlineData.data, 'base64'), ext };
+    }
+    // 영상 (Veo 3.1) — long-running operation 폴링, 구글 서버는 2일만 보관하므로 즉시 DB 저장
+    let op = await genai.models.generateVideos({
+        model: opt.model, prompt: output.prompt_en,
+        config: {
+            resolution: opt.resolution,
+            aspectRatio: output.ratio === '9:16' ? '9:16' : '16:9',
+            durationSeconds: '8',
+        },
+    });
+    const t0 = Date.now();
+    while (!op.done) {
+        if (Date.now() - t0 > 10 * 60 * 1000) throw new Error('영상 생성 10분 초과 (문서상 최대 6분) — 시간 초과로 중단');
+        await new Promise(r => setTimeout(r, 10000));
+        op = await genai.operations.getVideosOperation({ operation: op });
+    }
+    if (op.error) throw new Error('영상 생성 실패: ' + (op.error.message || JSON.stringify(op.error).slice(0, 200)));
+    const video = op.response?.generatedVideos?.[0]?.video;
+    if (!video) throw new Error('영상 응답이 비어 있습니다');
+    const fs = require('fs');
+    const os = require('os');
+    const tmp = path.join(os.tmpdir(), `miso_video_${Date.now()}.mp4`);
+    try {
+        await genai.files.download({ file: video, downloadPath: tmp });
+        return { buf: fs.readFileSync(tmp), ext: 'mp4' };
+    } finally {
+        try { fs.unlinkSync(tmp); } catch (e) { /* 임시 파일 정리 실패 무시 */ }
+    }
+}
+// 생성 실행 (adminOnly = 건별 대표 승인 클릭) — 응답 즉시 반환, 생성은 비동기 (영상 최대 6분)
+app.post('/api/agent-office/runs/:id/generate', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { output_index = 0, grade = '기본' } = req.body || {};
+        const rr = await pool.query(`SELECT * FROM agent_runs WHERE id = $1 AND is_deleted = false`, [req.params.id]);
+        if (!rr.rows.length) throw { status: 404, message: '보고서를 찾을 수 없습니다' };
+        const run = rr.rows[0];
+        const rep = run.result && run.result.report;
+        if (!rep || rep.type !== 'miso_prompt') throw { status: 400, message: '미소 프롬프트 보고서가 아닙니다' };
+        const output = (rep.outputs || [])[output_index];
+        if (!output) throw { status: 400, message: '해당 시안을 찾을 수 없습니다' };
+        const opt = MEDIA_OPTIONS[output.media] && MEDIA_OPTIONS[output.media][grade];
+        if (!opt) throw { status: 400, message: `지원하지 않는 조합: ${output.media}/${grade}` };
+        if (rep.media_generating) throw { status: 409, message: '이미 생성 중입니다 — 완료 후 다시 시도해주세요' };
+        const approval = { approved: true, actor: adminActor(req), run_id: run.id };
+        // 승인 증거를 호출 전에 audit (비용 승인제 — 시크릿·프롬프트 전문 미포함)
+        await writeAudit({
+            action: 'media_generate_approved', targetType: 'agent_run', targetId: run.id,
+            changes: { after: { media: output.media, label: output.label, grade, model: opt.model, est_usd: opt.usd, est_krw: opt.krw, output_index } },
+            source: 'agent_office', actor: approval.actor,
+        });
+        rep.media_generating = { output_index, grade, started_at: new Date().toISOString() };
+        await pool.query(`UPDATE agent_runs SET result = $2 WHERE id = $1`, [run.id, JSON.stringify(run.result)]);
+        res.json({
+            message: output.media === '영상'
+                ? `영상 생성 시작 (${opt.label}) — 완료까지 최대 6분, 완료되면 텔레그램 알림 + 보고서함 📎`
+                : `이미지 생성 시작 (${opt.label}) — 잠시 후 보고서 카드에서 📎 확인`,
+        });
+        // ── 비동기 생성 (응답 후) ──
+        (async () => {
+            const finishUpdate = async (mutate) => {
+                const fr = await pool.query(`SELECT result FROM agent_runs WHERE id = $1`, [run.id]);
+                const result = fr.rows[0].result;
+                mutate(result.report);
+                await pool.query(`UPDATE agent_runs SET result = $2 WHERE id = $1`, [run.id, JSON.stringify(result)]);
+            };
+            try {
+                const { buf, ext } = await generateMisoMedia(approval, output, opt);
+                const safe = String(output.label || '시안').replace(/[\\/:*?"<>|]/g, '').slice(0, 30);
+                const fname = `미소생성_${safe}_${kstTodayStr().replace(/-/g, '')}.${ext}`;
+                const fid = await saveReportFile(fname, buf, run.id, approval.actor);
+                await finishUpdate(r2 => {
+                    delete r2.media_generating;
+                    r2.media_files = [...(r2.media_files || []), {
+                        file_id: fid, file_name: fname, media: output.media, grade,
+                        model: opt.model, est_krw: opt.krw, output_index, created_at: new Date().toISOString(),
+                    }];
+                });
+                await writeAudit({
+                    action: 'media_generated', targetType: 'report_file', targetId: fid,
+                    changes: { after: { file_name: fname, size_bytes: buf.length, media: output.media, grade, model: opt.model, est_usd: opt.usd, est_krw: opt.krw, run_id: run.id } },
+                    source: 'agent_office', actor: approval.actor,
+                });
+                await notifyTelegram(`🎨 미소 ${output.media} 생성 완료 (${grade}) — 보고서함 📎`);
+            } catch (e) {
+                console.error('미소 생성 실패:', e.message);
+                await finishUpdate(r2 => {
+                    delete r2.media_generating;
+                    r2.media_error = `생성 실패 (${output.media}/${grade}): ${String(e.message).slice(0, 300)} — 재시도하려면 생성 버튼을 다시 눌러주세요`;
+                }).catch(() => {});
+                await writeAudit({
+                    action: 'media_generate_failed', targetType: 'agent_run', targetId: run.id,
+                    changes: { after: { media: output.media, grade, model: opt.model, error: String(e.message).slice(0, 300) } },
+                    source: 'agent_office', actor: approval.actor,
+                });
+                await notifyTelegram('⚠️ 미소 생성 실패 — 보고서함에서 사유 확인').catch(() => {});
+            }
+        })();
+    } catch (err) { handleAdminErr(res, err); }
+});
 
 // ===== 지시 #16: 똑똑이용 읽기 전용 관측 도구 3종 =====
 // 읽기 전용 보장: 아래 3개 svc는 SELECT만 수행 — DB 쓰기는 조회 이력 audit(mcpObserveAudit) 1건뿐.

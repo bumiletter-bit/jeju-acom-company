@@ -139,13 +139,14 @@ ${loadKnowledge()}${lessonsText}`;
             lines: [
                 p.concept_note || '시안 프롬프트 작성 완료',
                 outputs.map(o => `${o.label}(${o.media} ${o.ratio} · ${o.usage})`).join(' / '),
-                '이미지·영상 생성은 대표님이 Gemini에서 직접 (자동 생성 없음)',
+                '보고서 카드의 [생성] 버튼으로 승인하시면 제미나이가 바로 생성합니다 (건별 비용 승인제)',
             ],
             report: {
                 type: 'miso_prompt',
                 outputs, concept_note: p.concept_note || '',
                 model: MISO_MODEL, instruction,
-                note: '미소는 프롬프트 작성까지만 — 생성은 Gemini(Nano Banana Pro/Veo 3)에서 대표가 직접 (자동 생성 경로 없음)',
+                generation_available: true, // 지시 #26·#27: 승인 게이트 경유 원스톱 생성
+                note: '생성은 대표 승인 시에만 실행됩니다 — 승인 없이 생성 API 호출 불가 (비용 승인제). 생성물은 보고서함 📎 (DB 보관)',
             },
         };
     },
