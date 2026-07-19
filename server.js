@@ -8566,6 +8566,23 @@ initDB().then(() => {
         setTimeout(() => backfillLessonsFromFeedback(), 8000);
         // 지시 #11: 텔레그램 자가점검 — 부팅 시 발송 경로 상태를 audit에 기록 (시크릿 미포함)
         setTimeout(() => telegramSelfcheck(), 5000);
+        // 지시 #52: 스모크 실행 요청 플래그 소비 — 지시함 경로 승인분(도구 스냅샷 부재 시)을 부팅 시 1회 실행.
+        // 플래그는 대표 승인 지시(#52 등) 근거로만 세팅되며, 소비 즉시 해제 + audit (중복 실행 방지)
+        setTimeout(async () => {
+            try {
+                const f = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'smoke_request'`);
+                if (f.rows.length && f.rows[0].value && f.rows[0].value.pending === true) {
+                    await pool.query(`UPDATE agent_office_config SET value = jsonb_set(value, '{pending}', 'false'), updated_at = NOW() WHERE key = 'smoke_request'`);
+                    await writeAudit({
+                        action: 'smoke_request_consumed', targetType: 'agent_run',
+                        changes: { after: { via: 'boot', basis: f.rows[0].value.basis || '지시 #52' } },
+                        source: 'agent_office', actor: null,
+                    });
+                    await svcStartSmokeTest(null);
+                    console.log('지시 #52: 스모크 실행 요청 플래그 소비 — 실전 스모크 시작');
+                }
+            } catch (e) { console.error('스모크 요청 플래그 처리 실패:', e.message); }
+        }, 12000);
     });
 }).catch(err => {
     console.error('DB 초기화 실패:', err);
