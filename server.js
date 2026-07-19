@@ -6736,7 +6736,11 @@ async function executeCapabilityTest(run, actor) {
                 contentKind: '카피',
                 contentText: '(광고)제주아꼼이네입니다^^\n하우스감귤이 이번 주 첫 수확을 시작했어요. 대표가 과수원에서 직접 골라 담아 보내드립니다.\n★ 첫 수확 기념 200박스 한정 · 39,900원 ★\n이번 주 일요일까지 주문하시면 월요일에 바로 출발해요.\nVIP 전용 혜택 안내: 단골 고객님께는 5% 추가 적립\n주문하기: https://smartstore.naver.com/akkome\n무료 수신거부 080-000-0000',
             });
-            add('한결', '정상 콘텐츠 통과 (지시#38 박제)', good.verdict === '통과', '✅ 통과 판정 (트집 잡으면 실패)', good.verdict);
+            // run #64 후속: 실패 시 사유를 성적표에 남겨 다음 판독 가능하게 (진단 로그 강화)
+            const goodWhy = good.verdict === '통과' ? '' :
+                ' — 사유: ' + (good.items || []).filter(i => !i.ok).map(i => `${i.name}(${(i.comment || '').slice(0, 60)})`).join(' / ')
+                + (good.suggestion ? ` / 제안: ${good.suggestion.slice(0, 80)}` : '');
+            add('한결', '정상 콘텐츠 통과 (지시#38 박제)', good.verdict === '통과', '✅ 통과 판정 (트집 잡으면 실패)', good.verdict + goodWhy);
         } catch (e) { add('한결', '정상 콘텐츠 통과 (지시#38 박제)', false, '✅ 통과 판정', '오류: ' + e.message); }
 
         // ===== 지시 #49: 신규 5명 문항 (지율 3 · 한수 2 · 미래 2 · 예리 2 · 기안 1) =====
@@ -6746,8 +6750,12 @@ async function executeCapabilityTest(run, actor) {
         try {
             const j1 = await callJiyul('오션라운지 알바 주휴수당 줘야 해?');
             const all1 = [j1.conclusion, j1.legal_basis, j1.calculation].join(' ');
+            // run #64 거짓 실패 수정: "면제되지 않습니다" 같은 부정문을 면제 주장으로 오판하던 정규식 교정
+            // — 실패 조건은 '면제된다'는 긍정 주장뿐 (부정문·"면제 아님" 안내는 정답)
+            const claimsExempt = /면제/.test(j1.conclusion)
+                && !/면제(되지|가) 않|면제 (대상이 )?아니|면제 안 되|면제 없/.test(j1.conclusion);
             const ok1 = j1.mode === '답변' && /주휴/.test(all1) && /15/.test(all1) && /(÷|\/)\s*40|40\s*[)]?\s*[×x*]\s*8|8\s*시간/.test(all1)
-                && !/면제(라|입니다|되|이므로 지급.*않|여서)/.test(j1.conclusion);
+                && !claimsExempt;
             add('지율', '지침 내 답변 — 5인 미만 주휴수당 의무 (지시#49)', ok1,
                 '✅의무 + 발생 조건(15h·개근) + 공식 ("면제"라 하면 실패)', `mode=${j1.mode} / ${j1.conclusion.slice(0, 80)}`, '오션라운지 알바 주휴수당 줘야 해?');
         } catch (e) { add('지율', '지침 내 답변 — 5인 미만 주휴수당 의무 (지시#49)', false, '✅의무+조건+공식', '오류: ' + e.message); }
@@ -6758,7 +6766,9 @@ async function executeCapabilityTest(run, actor) {
         } catch (e) { add('지율', '범위 밖 정직 정지 (지시#49)', false, '범위밖 정지', '오류: ' + e.message); }
         try {
             const j3 = await callJiyul('박서준 주휴수당 계산해줘 — 주 20시간 일해');
-            add('지율', '소속 확인 질문 (지시#49)', j3.mode === '소속확인' && !!j3.question_back,
+            // run #64 거짓 실패 수정: 확인 질문이 question_back 대신 conclusion에 담겨도 인정 (요지는 '소속 확인' 동작)
+            const askOk = !!j3.question_back || /확인이 필요|어느 (사업체|사업장|소속)|소속.*(알려|확인)/.test(j3.conclusion);
+            add('지율', '소속 확인 질문 (지시#49)', j3.mode === '소속확인' && askOk,
                 '어느 사업체 소속인지 확인 질문 (미확인 단정 답변=실패)', `mode=${j3.mode} / ${(j3.question_back || j3.conclusion).slice(0, 60)}`, '소속 불명 직원 주휴 계산');
         } catch (e) { add('지율', '소속 확인 질문 (지시#49)', false, '소속확인 질문', '오류: ' + e.message); }
 
@@ -6785,7 +6795,10 @@ async function executeCapabilityTest(run, actor) {
         } catch (e) { add('미래', '뜬구름 기획 검출 (지시#49)', false, '⚠️ 지적', '오류: ' + e.message); }
         try {
             const m2 = await miraeRunner.reviewContent({ contentKind: '기획안', contentText: '① 요약: 하우스감귤 단골 감사 리뷰 이벤트\n② 목적: 철학① 재구매 신뢰 + 로드맵 1단계 자사몰 전환 기여\n③ 대상: 최근 6개월 2회 이상 구매 단골\n④ 실행: 대표가 7/25까지 대상 추출, 글샘이 7/26 안내 문자 작성, 7/28 발송\n⑤ 비용: 리뷰 적립금 총 30만원 (100명 × 3,000원)\n⑥ 지표: 리뷰 작성 50건 이상, 재구매율 전월 대비 측정\n⑦ 리스크: 참여 저조 가능성 — 대상 축소로 대응' });
-            add('미래', '구체 기획 통과 (지시#49)', m2.verdict === '통과', '✅ 통과 (트집=실패 — #48 동일 기준)', m2.verdict);
+            const m2Why = m2.verdict === '통과' ? '' :
+                ' — 사유: ' + (m2.items || []).filter(i => !i.ok).map(i => `${i.name}(${(i.comment || '').slice(0, 60)})`).join(' / ')
+                + (m2.suggestion ? ` / 제안: ${m2.suggestion.slice(0, 80)}` : '');
+            add('미래', '구체 기획 통과 (지시#49)', m2.verdict === '통과', '✅ 통과 (트집=실패 — #48 동일 기준)', m2.verdict + m2Why);
         } catch (e) { add('미래', '구체 기획 통과 (지시#49)', false, '✅ 통과', '오류: ' + e.message); }
 
         await step('예리 분석 점검 중... (2문항 — 0원 코드)');
@@ -6805,13 +6818,16 @@ async function executeCapabilityTest(run, actor) {
         try {
             const gianRunner = loadAgentRunner('기안');
             const g1 = (await gianRunner.result({ pool, params: { order_content: '단골 손님 대상 하우스감귤 감사 이벤트 기획해줘' } })).report;
-            const has7 = !!(g1.summary && g1.purpose && g1.target && (g1.steps || []).length && g1.cost && g1.metrics && (g1.risks || []).length);
+            // run #64 후속: 7항목 누락 시 어느 필드인지 표시 (진단 로그 강화)
+            const fields7 = { 요약: g1.summary, 목적: g1.purpose, 대상: g1.target, 실행단계: (g1.steps || []).length, 비용: g1.cost, 지표: g1.metrics, 리스크: (g1.risks || []).length };
+            const missing7 = Object.entries(fields7).filter(([, v]) => !v).map(([k]) => k);
+            const has7 = missing7.length === 0;
             const mapped = /철학|로드맵|[1-4]단계|연관 없음/.test(g1.purpose || '');
             const noForecast = !/매출\s*[\d,억만]+\s*(원)?\s*(예상|전망|달성)/.test(JSON.stringify(g1));
             const whoOk = (g1.steps || []).every(s => s.who && s.who.trim());
             add('기안', '기획 7항목 출력 형식 (지시#49)', has7 && mapped && noForecast && whoOk,
                 '7항목 전부 + 로드맵 매핑 + 주체 명시 (근거 없는 매출 전망=실패)',
-                `7항목=${has7} 매핑=${mapped} 전망 없음=${noForecast} 주체=${whoOk}`, '단골 감사 이벤트 기획');
+                `7항목=${has7}${missing7.length ? `(누락: ${missing7.join(',')})` : ''} 매핑=${mapped} 전망 없음=${noForecast} 주체=${whoOk}`, '단골 감사 이벤트 기획');
         } catch (e) { add('기안', '기획 7항목 출력 형식 (지시#49)', false, '7항목+매핑', '오류: ' + e.message); }
     } catch (fatal) {
         console.error('역량 점검 치명 오류:', fatal.message);

@@ -59,7 +59,10 @@ ${load(BRAND_FILE, '브랜드 가이드')}
 ③ 정직·정확 — 근거 없는 매출 전망·주체 없는 계획 없나, 리스크가 정직하게 표기됐나
 ④ 판정 — verdict + 총평 한 줄 + [대표가 채울 항목]
 
-## 원칙: 지적에는 고치는 방법을 함께. 반드시 submit_review 도구로만 제출`;
+## 판정 원칙 (지시 #48 — 한결과 동일 기준)
+- verdict='보완'은 실제 위반·누락이 있을 때만 (①우리다움 위반 ②실행 필수 요소[목적·대상·비용·다음 액션] 누락 ③거짓·근거 없는 수치)
+- 문체 취향·사소한 개선 여지·더 좋게 만들 수 있다는 이유만으로는 verdict='통과' + 코멘트로 제안 (판정을 깎지 않는다)
+- 지적에는 고치는 방법을 함께. 반드시 submit_review 도구로만 제출`;
     const msg = await anthropic.messages.create({
         model: MIRAE_MODEL, max_tokens: 900, system: systemPrompt,
         tools: [REVIEW_TOOL], tool_choice: { type: 'tool', name: 'submit_review' },
