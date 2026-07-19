@@ -6201,6 +6201,10 @@ async function maruFinishOrder(orderId, status, result, runId = null) {
     await pool.query(
         `UPDATE pending_orders SET status=$2, result=$3, run_id=$4, processed_at=NOW() WHERE id=$1`,
         [orderId, status, JSON.stringify(result), runId]);
+    // 지시 #29-1: 되묻기(대표 답변 필요)는 ❓ 행동 안내형 알림 — 질문 내용은 미포함 (요약만)
+    if (status === '질문') {
+        notifyTelegram('❓ 마루: 대표 답변 필요 → 지시 입력바에 답해주세요');
+    }
 }
 
 // 지시 #6-1: 원 지시 + 마루 질문 + 대표 답변을 하나의 지시로 결합 (맥락 소실 방지)
@@ -7633,18 +7637,26 @@ setInterval(async () => {
             _tgInboxInit = true;
             return;
         }
-        // b안 (대표 결정): 상태 변화 = "보고 도착" / 상태 동일 + 응답 갱신 = "경과 갱신" — 각 1건
+        // 지시 #29: 행동 안내형 문구 (이모지 3색) + 제목 요약 포함. '대기'(신규 등록)는 발송 생략
         const r = await pool.query(
-            `SELECT id, status, notified_status, md5(COALESCE(response, '')) AS rh
+            `SELECT id, status, notified_status, md5(COALESCE(response, '')) AS rh, LEFT(content, 200) AS head
              FROM cc_instructions
              WHERE status IS DISTINCT FROM notified_status
                 OR md5(COALESCE(response, '')) IS DISTINCT FROM notified_resp_hash
              ORDER BY id ASC LIMIT 5`);
         for (const row of r.rows) {
             const statusChanged = row.status !== row.notified_status;
-            await notifyTelegram(statusChanged
-                ? `📮 지시 #${row.id} 보고 도착 (${row.status})`
-                : `📮 지시 #${row.id} 경과 갱신 (${row.status}) — 상세는 지시함에서`);
+            // 제목 요약: 지시 첫 줄에서 "[지시 #N]" 접두 제거 후 20자 내외 (모델 호출 없이 코드로)
+            const title = String(row.head || '').split('\n')[0].replace(/^\[[^\]]*\]\s*/, '').trim().slice(0, 22);
+            let msg = null;
+            if (statusChanged) {
+                if (row.status === '진행') msg = `⚙️ 지시 #${row.id} ${title} — 일처리 진행 중입니다 (조치 불필요)`;
+                else if (row.status === '완료') msg = `✅ 지시 #${row.id} ${title} — 완료되었습니다 → 클로드에게 'ㄱ' 보내주세요`;
+                // '대기' 등장(신규 등록)은 발송 생략 — 알림 수 절감 (지시 #29-2)
+            } else {
+                msg = `📝 지시 #${row.id} ${title} — 경과 보고 도착 → 클로드에게 'ㄱ' 보내주세요`;
+            }
+            if (msg) await notifyTelegram(msg);
             await pool.query(`UPDATE cc_instructions SET notified_status = $2, notified_resp_hash = $3 WHERE id = $1`,
                 [row.id, row.status, row.rh]);
         }
