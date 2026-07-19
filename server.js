@@ -7502,8 +7502,19 @@ app.get('/api/agent-office/files/:id/download', authMiddleware, adminOnly, async
         const r = await pool.query(
             `SELECT filename, data FROM report_files WHERE id = $1 AND is_deleted = false AND purged_at IS NULL`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '파일을 찾을 수 없습니다 (90일 경과 정리분은 재생성 가능 — 같은 조회를 다시 지시해주세요)' };
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(r.rows[0].filename)}`);
+        // 지시 #33·#34: 확장자 기반 MIME (전엔 전 파일 xlsx MIME 고정 → 모바일이 jpg를 엑셀로 인식한 원인).
+        // 이미지·영상은 inline(브라우저·OS가 이미지로 표시), ?download=1이면 강제 저장. 문서는 기존 attachment 유지
+        const fname = r.rows[0].filename;
+        const ext = String(fname.split('.').pop() || '').toLowerCase();
+        const MIME = {
+            xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+            webp: 'image/webp', mp4: 'video/mp4',
+        };
+        const isMedia = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4'].includes(ext);
+        const disposition = (isMedia && req.query.download !== '1') ? 'inline' : 'attachment';
+        res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(fname)}`);
         res.send(r.rows[0].data);
     } catch (err) { handleAdminErr(res, err); }
 });

@@ -9966,6 +9966,40 @@ async function aoRefreshGrowth() {
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
+// 지시 #33: 이미지 미리보기 — 인증 fetch → blob URL (캐시), 썸네일 로드 + 탭하면 크게 보기
+const _aoMediaUrlCache = {};
+async function aoMediaBlobUrl(fileId) {
+    if (_aoMediaUrlCache[fileId]) return _aoMediaUrlCache[fileId];
+    const token = localStorage.getItem('jwt_token');
+    const res = await fetch('/api/agent-office/files/' + fileId + '/download', {
+        headers: { 'Authorization': 'Bearer ' + token },
+    });
+    if (!res.ok) throw new Error('이미지 로드 실패 (' + res.status + ')');
+    _aoMediaUrlCache[fileId] = URL.createObjectURL(await res.blob());
+    return _aoMediaUrlCache[fileId];
+}
+window.aoLoadThumb = async function(fileId) {
+    const img = document.getElementById('ao-thumb-' + fileId);
+    if (!img || img.src) return;
+    try { img.src = await aoMediaBlobUrl(fileId); } catch (e) { img.alt = '미리보기 실패'; }
+};
+window.aoPreviewImage = async function(fileId) {
+    try {
+        const url = await aoMediaBlobUrl(fileId);
+        let ov = document.getElementById('ao-media-overlay');
+        if (!ov) {
+            ov = document.createElement('div');
+            ov.id = 'ao-media-overlay';
+            ov.className = 'ao-media-overlay';
+            ov.onclick = () => { ov.style.display = 'none'; };
+            ov.innerHTML = '<img id="ao-media-overlay-img" alt="생성 이미지 크게 보기">';
+            document.body.appendChild(ov);
+        }
+        document.getElementById('ao-media-overlay-img').src = url;
+        ov.style.display = 'flex';
+    } catch (e) { alert(e.message); }
+};
+
 // 지시 #26·#27: 미소 생성 승인 — 건별 비용 확인 후 서버 호출 (승인 없이 생성 불가)
 window.aoGenerateMedia = async function(runId, outputIndex, grade, media, costLabel) {
     if (!confirm(`${media} ${grade} 생성을 승인할까요?\n예상 비용: ${costLabel} (승인 시에만 과금)`)) return;
@@ -9991,7 +10025,8 @@ window.aoTelegramTest = async function() {
 window.aoDownloadFile = async function(fileId) {
     try {
         const token = localStorage.getItem('jwt_token');
-        const res = await fetch('/api/agent-office/files/' + fileId + '/download', {
+        // 지시 #33·#34: ?download=1 — 이미지도 저장 동작 유지 (미리보기는 aoPreviewImage 담당)
+        const res = await fetch('/api/agent-office/files/' + fileId + '/download?download=1', {
             headers: { 'Authorization': 'Bearer ' + token },
         });
         if (!res.ok) {
@@ -11056,9 +11091,16 @@ window.aoOpenReport = async function(runId) {
                 <button class="ao-fb-btn" onclick="aoGenerateMedia(${run.id}, ${i}, '고급', '${o.media}', '${c.g}')">✨ 고급 생성 (${c.g})</button>
             </div>`;
         };
+        // 지시 #33: 이미지 파일은 카드 내 썸네일(탭하면 크게 보기) — 문서·영상은 기존 다운로드 유지
+        const isImg = f => /\.(png|jpe?g|gif|webp)$/i.test(f.file_name || '');
         const files = (rep.media_files || []).map(f =>
-            `<div class="ao-gen-file">📎 ${aoEsc(f.file_name)} <small style="color:#888;">(${aoEsc(f.grade)} · 약 ${(f.est_krw || 0).toLocaleString()}원)</small>
+            `<div class="ao-gen-file${isImg(f) ? ' ao-gen-file-img' : ''}">
+             ${isImg(f) ? `<img id="ao-thumb-${f.file_id}" class="ao-media-thumb" alt="생성 이미지 (탭하면 크게)" onclick="aoPreviewImage(${f.file_id})">` : ''}
+             <span>📎 ${aoEsc(f.file_name)} <small style="color:#888;">(${aoEsc(f.grade)} · 약 ${(f.est_krw || 0).toLocaleString()}원)</small></span>
              <button class="ao-fb-btn" onclick="aoDownloadFile(${f.file_id})">다운로드</button></div>`).join('');
+        // 썸네일은 모달 삽입 직후 인증 fetch로 로드 (blob URL 캐시)
+        const imgIds = (rep.media_files || []).filter(isImg).map(f => f.file_id);
+        if (imgIds.length) setTimeout(() => imgIds.forEach(id => aoLoadThumb(id)), 80);
         body = `
         ${rep.concept_note ? `<div class="ao-result-box">🎨 ${aoEsc(rep.concept_note)}</div>` : ''}
         ${rep.media_error ? `<div class="ao-placeholder-box ao-soon-note">⚠️ ${aoEsc(rep.media_error)}</div>` : ''}

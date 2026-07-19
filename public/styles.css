@@ -4731,6 +4731,11 @@ textarea.form-input {
 /* 지시 #26·#27: 미소 생성 버튼·생성물 */
 .ao-gen-row { display: flex; gap: 6px; margin: 6px 0 14px; flex-wrap: wrap; }
 .ao-gen-file { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin: 4px 0; font-size: 13px; }
+/* 지시 #33: 이미지 미리보기 — 카드 썸네일 + 탭 확대 오버레이 */
+.ao-gen-file-img { flex-wrap: wrap; }
+.ao-media-thumb { width: 100%; max-width: 320px; max-height: 240px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; cursor: zoom-in; background: #fff; display: block; }
+.ao-media-overlay { display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.85); align-items: center; justify-content: center; cursor: zoom-out; }
+.ao-media-overlay img { max-width: 96vw; max-height: 92vh; object-fit: contain; border-radius: 6px; }
 
 .ao-reminders { background: #FFF8DC; border: 2px solid #F5C800; border-radius: 8px; padding: 6px 10px; margin: 6px 0; font-size: 12px; }
 .ao-reminder-item + .ao-reminder-item { margin-top: 3px; }
