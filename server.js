@@ -6487,6 +6487,14 @@ async function executeCapabilityTest(run, actor) {
             add('미소', '생성 승인 게이트 차단 (지시#26·#27)', gateBlocked && gateBlocked2 && pricingOk,
                 '무승인·미승인 호출 모두 차단 + 대표 선택 모델·단가 무결',
                 `무승인=${gateBlocked ? '차단' : '통과(문제)'} 미승인=${gateBlocked2 ? '차단' : '통과(문제)'} 가격표=${pricingOk ? '무결' : '불일치'}`);
+            // 지시 #39 박제: 글샘 제목 파편 정화 — run #60 실사례(태그+versions JSON 원문 유입) 재현
+            const gsClean = loadAgentRunner('글샘').cleanTitleField;
+            const frag = '</antml_parameter>\n<parameter name="versions">[\n  {\n    "label": "안정형",\n    "text": "카피 본문..."';
+            const tf = [gsClean(frag), gsClean('카라향 마감 임박!'), gsClean('')];
+            add('글샘', '제목 파편 정화 (지시#39 화면 노출 사고 박제)',
+                tf[0] === '' && tf[1] === '카라향 마감 임박!' && tf[2] === '',
+                '파편=생략(빈 값) / 정상 제목=유지 / 빈 값=빈 값',
+                `파편→'${tf[0]}' 정상→'${tf[1]}'`, 'run #60 제목 필드 재현');
             // v5.1.1 (지시 #28-2) 박제: run_capability_test 도구 등록·게이트 구조 검증
             // (실호출 검증은 점검 중첩·재귀가 되므로 배제 — 똑똑이 첫 호출 = 실검증, audit mcp_run_test로 사후 감사)
             const rct = MCP_TOOLS.find(t => t.name === 'run_capability_test');

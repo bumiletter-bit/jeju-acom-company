@@ -37,6 +37,20 @@ function loadKnowledge() {
     return _knowledgeCache;
 }
 
+// 지시 #39: 제목 필드 정화 — 오염 파편(마크업 태그·JSON 원문) 감지 시 정화, 불가 시 빈 값 반환
+// (오염 텍스트를 대표 화면에 노출 금지 + 몰래 지어내기 금지 — 정직 원칙)
+function cleanTitleField(v) {
+    if (typeof v !== 'string') return '';
+    const s = v.trim();
+    if (!s) return '';
+    if (!/[<>{}[\]]|antml|parameter/i.test(s)) return s.slice(0, 40); // 파편 없음 — 정상 제목
+    // 파편 감지 — 태그·JSON 구조 제거 후 첫 줄이 짧은 정상 제목이면 그것만 살림
+    const first = s.replace(/<[^>]*>/g, ' ').replace(/[{}[\]"\\]/g, ' ').split('\n')
+        .map(x => x.trim()).filter(Boolean)[0] || '';
+    if (first && first.length <= 30 && !/label|text|versions|parameter|antml|name=/i.test(first)) return first;
+    return ''; // 정화 불가 — 제목 생략 (title_error로 사유 표시)
+}
+
 // 강제 tool 호출로 구조화된 카피 제출 보장
 const COPY_TOOL = {
     name: 'submit_copy',
@@ -73,6 +87,7 @@ const COPY_TOOL = {
 };
 
 module.exports = {
+    cleanTitleField, // 지시 #39: 역량 박제용 export (제목 파편 정화)
     live: true, // 실전 연결됨 (4차) — 마루 라우팅 시 실제 카피 생성
     steps: ['지식 문서(10블록·검증 라임) 로드 중...', '카피 초안 작성 중...', '규격·금지사항 검수 중...'],
     stepDelayMs: 1500,
@@ -164,17 +179,21 @@ ${loadKnowledge()}${lessonsText}${discountText}`;
         const versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
         if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다');
         const missing = Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [];
+        // 지시 #39: 제목 필드 정화 — run #60에서 오염 파편(태그+versions JSON 원문 1,366자)이
+        // 제목에 유입돼 대표 화면에 노출된 첫 사례. 정화 불가 시 제목 생략 (몰래 지어내기 금지)
+        const title = cleanTitleField(c.title);
 
         return {
             summary: `완료: ${c.channel} 카피 ${versions.length}종${missing.length ? ` (채울 항목 ${missing.length}개)` : ''}`,
             lines: [
-                `채널 ${c.channel}${c.title ? ` · 제목안 "${c.title}"` : ''}${c.char_counts ? ' · ' + c.char_counts : ''}`,
+                `채널 ${c.channel}${title ? ` · 제목안 "${title}"` : ''}${c.char_counts ? ' · ' + c.char_counts : ''}`,
                 missing.length ? `✏️ 채워야 할 항목: ${missing.join(', ')}` : '누락 정보 없음 — 바로 발송 가능한 초안',
                 '발송은 대표님이 알리고에서 직접 (자동 발송 경로 없음)',
             ],
             report: {
                 type: 'geulsaem_copy',
-                channel: c.channel, title: c.title || '',
+                channel: c.channel, title,
+                title_error: (!title && c.title) ? '제목 추출 실패 (오염 파편 정화 불가 — 본문 카피는 정상)' : '',
                 versions, missing_fields: missing,
                 char_counts: c.char_counts || '', send_tip: c.send_tip || '',
                 model: GEULSAEM_MODEL, instruction,

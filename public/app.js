@@ -10989,7 +10989,14 @@ window.aoOpenReport = async function(runId) {
         ${aoReviewBlock(rep.review)}
         ${missing.length ? `<div class="ao-missing-box">✏️ <strong>채워야 할 항목:</strong> ${missing.map(aoEsc).join(', ')}
             <span style="color:#888;font-size:11px;">— 본문의 [ ] 자리표시를 채운 뒤 발송하세요</span></div>` : ''}
-        <h4 class="ao-sec-title">✍️ ${aoEsc(rep.channel)} 카피${rep.title ? ` · 제목안 "${aoEsc(rep.title)}"` : ''}</h4>
+        ${rep.title_error ? `<div class="ao-soon-note" style="margin-bottom:6px;">⚠️ ${aoEsc(rep.title_error)}</div>` : ''}
+        <h4 class="ao-sec-title">✍️ ${aoEsc(rep.channel)} 카피${(() => {
+            // 지시 #39: 구 저장분(run #60 등) 방어 — 제목에 파편 흔적이 있으면 노출하지 않고 사유 표시
+            const t = String(rep.title || '');
+            if (!t) return '';
+            if (/[<>{}[\]]|antml|parameter/i.test(t)) return ' · <small style="color:#b45309;">제목 추출 실패 (오염 파편 — 본문은 정상)</small>';
+            return ` · 제목안 "${aoEsc(t)}"`;
+        })()}</h4>
         ${(rep.versions || []).map((v, i) => `
             <div class="ao-copy-head"><strong>${aoEsc(v.label || ('버전 ' + (i + 1)))}</strong>
                 <button class="ao-fb-btn" onclick="aoCopyText('ao-copy-${run.id}-${i}')">📋 복사</button></div>
