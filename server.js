@@ -7988,6 +7988,13 @@ app.post('/api/agent-office/runs/:id/generate', authMiddleware, adminOnly, async
 // ===== 지시 #16: 똑똑이용 읽기 전용 관측 도구 3종 =====
 // 읽기 전용 보장: 아래 3개 svc는 SELECT만 수행 — DB 쓰기는 조회 이력 audit(mcpObserveAudit) 1건뿐.
 // 마루 지시 입력 도구는 만들지 않음 (지시 입력 = 대표 전용, 결재 구조 유지)
+// 지시 #47: 관측 도구 표시용 KST 변환 — 내부 기록(DB·audit)은 UTC 유지, 응답에 표시 필드만 병기
+function kstDisplay(ts) {
+    if (!ts) return null;
+    const d = ts instanceof Date ? ts : new Date(ts);
+    if (isNaN(d.getTime())) return null;
+    return new Date(d.getTime() + 9 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' KST';
+}
 async function mcpObserveAudit(tool, args, actor) {
     await writeAudit({
         action: 'mcp_observe', targetType: 'mcp_tool',
@@ -8010,6 +8017,7 @@ async function svcGetLiveLog({ limit }, actor) {
                 response: res.summary || res.question || res.notice || (res.route && res.route.task_summary) || null,
                 file_name: (res.report && res.report.file_name) || res.file_name || null,
                 run_id: o.run_id, created_at: o.created_at, processed_at: o.processed_at,
+                created_at_kst: kstDisplay(o.created_at), processed_at_kst: kstDisplay(o.processed_at), // 지시 #47
             };
         }),
     };
@@ -8024,6 +8032,7 @@ async function svcGetTestResults({ run_id, limit }, actor) {
         await mcpObserveAudit('get_test_results', { run_id }, actor);
         return {
             id: row.id, status: row.status, started_at: row.started_at,
+            started_at_kst: kstDisplay(row.started_at), // 지시 #47 — 표시는 KST 필드 사용 권장
             summary: (row.result && row.result.summary) || null,
             duration_s: rep.duration_s || null,
             sections: (rep.sections || []).map(s => ({
@@ -8040,7 +8049,7 @@ async function svcGetTestResults({ run_id, limit }, actor) {
         `SELECT id, status, started_at, result->>'summary' AS summary
          FROM agent_runs WHERE is_test = true ORDER BY id DESC LIMIT $1`, [n]);
     await mcpObserveAudit('get_test_results', { limit: n }, actor);
-    return { count: r.rows.length, runs: r.rows };
+    return { count: r.rows.length, runs: r.rows.map(x => ({ ...x, started_at_kst: kstDisplay(x.started_at) })) };
 }
 async function svcGetReports({ id, limit }, actor) {
     if (id) {
@@ -8067,6 +8076,7 @@ async function svcGetReports({ id, limit }, actor) {
             id: row.id, agent: row.agent_name, team: row.team, status: row.status,
             confirmed_hidden: row.is_deleted, // 대표 [✔확인] 후 숨김(soft-delete) 여부 — 원본은 보존됨
             started_at: row.started_at, finished_at: row.finished_at,
+            started_at_kst: kstDisplay(row.started_at), finished_at_kst: kstDisplay(row.finished_at), // 지시 #47
             summary: res.summary || null, lines: res.lines || [], report: res.report || null, file,
         };
     }

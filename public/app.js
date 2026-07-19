@@ -9967,6 +9967,16 @@ async function aoRefreshGrowth() {
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 
+// 지시 #47: 표시 시각 KST 통일 — 서버 기록(UTC)은 유지, 표시 레이어에서만 변환.
+// tz 표기 없는 문자열(naive UTC)은 Z를 붙여 UTC로 해석 (브라우저 TZ 오해석 방지)
+function aoKst(ts, opts) {
+    if (!ts) return '';
+    let s = ts;
+    if (typeof s === 'string' && !/Z$|[+-]\d{2}:?\d{2}$/.test(s)) s = s.replace(' ', 'T') + 'Z';
+    return new Date(s).toLocaleString('ko-KR', Object.assign({ timeZone: 'Asia/Seoul' },
+        opts || { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+}
+
 // 지시 #36: 통합본 아카이브 — 목록 모달 + 다운로드 (대표 전용)
 window.aoOpenArchiveModal = async function() {
     let data;
@@ -9975,7 +9985,7 @@ window.aoOpenArchiveModal = async function() {
     const files = data.files || [];
     const body = files.length
         ? '<div class="ao-run-history">' + files.map(f => {
-            const dt = new Date(f.mtime).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const dt = aoKst(f.mtime);
             const kb = Math.round((f.size || 0) / 1024 * 10) / 10;
             return '<div class="ao-run-item">📄 ' + aoEsc(f.name) + ' <small style="color:#888;">(' + kb + 'KB · ' + dt + ')</small> '
                 + '<button class="ao-fb-btn" onclick="aoDownloadArchive(\'' + encodeURIComponent(f.name) + '\')">다운로드</button></div>';
@@ -10131,7 +10141,7 @@ window.aoOpenTestResultsModal = async function() {
     const runs = data.runs || [];
     const body = runs.length
         ? '<div class="ao-run-history">' + runs.map(r => {
-            const dt = new Date(r.started_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const dt = aoKst(r.started_at);
             const stIcon = r.status === 'done' ? '✅' : r.status === 'error' ? '❗' : '⏳';
             return '<div class="ao-run-item ao-chip-click" onclick="aoOpenReport(' + r.id + ')">' + stIcon + ' ' + dt + ' · '
                 + aoEsc((r.result && r.result.summary) || '진행 중') + '</div>';
@@ -10479,7 +10489,7 @@ function aoTrunc(s, n = 95) {
 
 // 접수 지시 로그 라인 (🕐 대표 → 마루: 내용 + 마루 처리 결과)
 function aoOrderLogLine(o) {
-    const time = new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const time = aoKst(o.created_at, { hour: '2-digit', minute: '2-digit', hour12: false });
     const st = o.status || '대기';
     const stCls = st === '완료' ? 'done' : st === '오류' ? 'err' : st === '질문' ? 'ask'
         : (st === '안내' || st === '피드백' || st === '대체됨' || st === '질문종결' || st === '응답됨') ? 'info' : 'wait';
@@ -10622,7 +10632,7 @@ window.openAoDetail = async function(agentId) {
                 <div>
                     <h3 style="margin:0;"><span class="ao-ai-badge">🤖AI</span> ${agent.name} <small style="color:#888;">${AO_ROLE_LABEL[agent.role]}${agent.duty ? ' · ' + agent.duty : ''}</small></h3>
                     <div class="ao-detail-meta">${agent.team} · ${agent.workplace} · 상태: <strong class="ao-status-${agent.status}">${AO_STATUS_LABEL[agent.status] || agent.status}</strong>
-                    ${agent.last_run_at ? ' · 마지막 실행 ' + new Date(agent.last_run_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+                    ${agent.last_run_at ? ' · 마지막 실행 ' + aoKst(agent.last_run_at) : ''}</div>
                 </div>
             </div>
             <p class="ao-detail-desc">${agent.description || ''}</p>
@@ -10667,7 +10677,7 @@ window.openAoDetail = async function(agentId) {
             <h4 class="ao-sec-title">🕘 최근 실행 이력</h4>
             ${runs.length
                 ? '<div class="ao-run-history">' + runs.map(r => {
-                    const dt = new Date(r.started_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    const dt = aoKst(r.started_at);
                     const dur = r.finished_at ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + '초' : '-';
                     const stIcon = r.status === 'done' ? '✅' : r.status === 'error' ? '❗' : '⏳';
                     return '<div class="ao-run-item">' + stIcon + ' ' + dt + ' · ' + ((r.result && r.result.summary) || '진행 중') + ' <span style="color:#aaa;">(' + dur + ')</span></div>';
@@ -10705,7 +10715,7 @@ function aoFinishDetailProgress(run) {
 // 피드백 한 줄 렌더 (9.5차: 종류 라벨 + 대상 보고서 + 보기 링크)
 const AO_FB_LABEL = { good: '👍 좋음', edited: '✏️ 수정', bad: '👎 다시', comment: '💬 코멘트' };
 function aoFbLine(f, withAgent) {
-    const dt = new Date(f.created_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const dt = aoKst(f.created_at);
     const label = AO_FB_LABEL[f.feedback_type] || '💬';
     const text = f.comment || f.corrected_output || '';
     const target = f.run_id
@@ -10927,7 +10937,7 @@ async function aoLoadReports() {
             return;
         }
         tbody.innerHTML = data.runs.map(r => {
-            const dt = new Date(r.started_at).toLocaleString('ko-KR', { year: '2-digit', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const dt = aoKst(r.started_at, { year: '2-digit', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
             const dur = r.finished_at ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + '초' : '-';
             const stBadge = r.status === 'done' ? '<span class="ao-st-badge ao-st-badge-done">완료</span>'
                 : r.status === 'error' ? '<span class="ao-st-badge ao-st-badge-err">오류</span>'
@@ -10962,7 +10972,7 @@ window.aoOpenReport = async function(runId) {
     const rep = (run.result && run.result.report) || null;
     if (!run.result) return alert('아직 결과가 없는 실행입니다 (진행 중이거나 기록 없음)');
 
-    const dt = new Date(run.started_at).toLocaleString('ko-KR');
+    const dt = aoKst(run.started_at, { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
     // v5.2 (지시 #38) + 지시 #44: 팀장 검수 블록 (검수 4문) — ⚠️보완이어도 숨기지 않고 표시 (최종 판단은 대표)
     const aoReviewBlock = rev => {
         if (!rev) return '';
