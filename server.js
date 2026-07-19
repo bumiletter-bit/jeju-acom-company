@@ -5965,7 +5965,11 @@ const MARU_ROUTE_TOOL = {
         type: 'object',
         additionalProperties: false,
         properties: {
-            action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule', 'settlement_input'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물 평가/수정, schedule=일정 조회·등록(마루 직접), settlement_input=정산현황 숫자 입력(마루 직접)' },
+            action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule', 'settlement_input', 'multi'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물 평가/수정, schedule=일정 조회·등록(마루 직접), settlement_input=정산현황 숫자 입력(마루 직접), multi=멀티 지시 분산 실행(대표 확인 후 — subtasks 필수)' },
+            subtasks: {
+                type: 'array', items: { type: 'string' },
+                description: "action=multi일 때만 출력 — 각 작업을 **완결된 독립 지시 문장**으로 분해 (조건·기간·품목을 각 문장에 전부 복사해 담는다. 예: ['미니밤호박 톡톡 문구 작성 — 담주 화~목 3일, 2천원 할인쿠폰, 10+1 추첨 20명', '미니밤호박 톡톡 이미지 디자인 제작 — 담주 화~목 행사, 할인쿠폰·추첨 이벤트 강조', '담주 화~목 미니밤호박 할인 행사 일정 등록']). 2~5건",
+            },
             team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/기획팀 중 하나). clarify면 빈 문자열' },
             assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/한수/미래/마루 중 하나). clarify면 빈 문자열' },
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
@@ -6101,10 +6105,13 @@ ${JSON.stringify(routingTable, null, 2)}
 - 개발 백로그 ("백로그에 추가해줘/보여줘")·버전·변경사항 질문 → 개발부서 미래 배정 (지시 #54).
 【B. 멀티 지시】
 - 발동 조건: 한 문장에 서로 다른 요청이 2개 이상 (판별 힌트: '그리고/랑/이랑/하고/~도' + 동사 2개 이상).
-  예: "휴가 언제야? 그리고 지난달 정산도 보여줘"
-- 동작: 몰래 일부만 처리 금지 (절반 누락 = 실패). action='clarify'로 목록을 복창해 확인받는다.
-  → clarify_question 예: "①민주 휴가 조회 ②지난달 정산 — 두 건 맞나요? 순서대로 진행할까요?"
-- 단, 같은 대상의 단일 요청은 멀티가 아니다 (예: "4월 정산 엑셀로 보내줘" = 1건).
+  예: "휴가 언제야? 그리고 지난달 정산도 보여줘" / "톡톡 문구랑 디자인도 같이 만들어줘"
+- 1단계: action='clarify'로 목록을 복창해 확인받는다. 몰래 일부만 처리 금지 (절반 누락 = 실패).
+  → clarify_question 예: "①톡톡 문구(글샘) ②디자인 시안(미소) ③행사 일정 등록 — 세 건 모두 진행할까요?"
+- 2단계 (대표 실사용 지적 — 절대 규칙): 결합 텍스트에 [대표 답변]이 긍정(네/맞아/응/어/그래/좋아/진행해/ㅇㅇ/오케이/ok 등 — 표현이 무엇이든 승인 의사면 전부 긍정)이면
+  **action='multi' + subtasks에 확인받은 전 건을 각각 완결된 독립 지시 문장으로 분해해 출력** (조건·기간·품목을 각 문장에 전부 복사).
+  한 건만 골라 route로 배정하는 것 = 나머지를 몰래 버리는 실패다. 확인받은 N건은 N개 subtask로 전부 나간다.
+- 단, 같은 대상의 단일 요청은 멀티가 아니다 (예: "4월 정산 엑셀로 보내줘" = 1건 — 기존대로 route).
 【C. 공통 규칙】
 - 되묻기는 1회만. 답을 받으면 재질문 없이 진행한다.
 - 되묻기에는 반드시 구체적 선택지 예시를 포함한다. 알맹이 없는 되묻기("확인이 필요합니다" 단독)는 금지.
@@ -6251,6 +6258,8 @@ function maruCleanDecision(raw) {
         assignee_name: maruCleanToken(i && i.assignee_name),
         date_note: maruCleanText(i && i.date_note),
     }));
+    // 멀티 분산 (대표 실사용 지적): 지시 문장 배열 정화 — 최대 5건
+    d.subtasks = (Array.isArray(d.subtasks) ? d.subtasks : []).map(x => maruCleanText(x)).filter(Boolean).slice(0, 5);
     return maruNormalizeDecision(d);
 }
 // C안 C-2 (지시 #14): required 축소로 모델이 생략한 필드를 빈값으로 복원 — 하위 코드(라우팅·박제
@@ -6267,6 +6276,7 @@ function maruNormalizeDecision(d) {
     }
     if (!Array.isArray(out.schedule_items)) out.schedule_items = [];
     if (!Array.isArray(out.settlement_entries)) out.settlement_entries = [];
+    if (!Array.isArray(out.subtasks)) out.subtasks = [];
     return out;
 }
 
@@ -6378,6 +6388,8 @@ function maruDecisionUnusable(d) {
         && !(Array.isArray(d.schedule_items) && d.schedule_items.length)) return true;
     if (d.action === 'settlement_input'
         && !(Array.isArray(d.settlement_entries) && d.settlement_entries.length)) return true;
+    if (d.action === 'multi'
+        && !(Array.isArray(d.subtasks) && d.subtasks.length >= 2)) return true; // 멀티인데 분해 없음 = 재시도
     return false;
 }
 
@@ -7557,7 +7569,7 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
 }
 
 // 마루 처리 엔진: 지시 1건 분석 → 배정 → (연결된 요원이면) 실제 실행
-async function processOrderWithMaru(order, actor) {
+async function processOrderWithMaru(order, actor, opts = {}) {
     try {
         await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
@@ -7614,10 +7626,45 @@ async function processOrderWithMaru(order, actor) {
             source: 'agent_office', actor,
         });
 
+        // ⓪ 멀티 지시 분산 실행 (대표 실사용 지적): 확인받은 N건을 각각 독립 지시로 등록해
+        //    기존 단일 파이프라인에 병렬로 태운다 — 각 요원이 끝나는 순서대로 개별 보고 (대기 없음)
+        if (d.action === 'multi' && !opts.noMulti && (d.subtasks || []).length >= 2) {
+            await maruFinishOrder(order.id, '완료', {
+                type: 'multi_dispatch', summary: `멀티 지시 분산 — ${d.subtasks.length}건 동시 배정`,
+                reason: d.reason, subtasks: d.subtasks,
+            });
+            for (const [idx, sub] of d.subtasks.entries()) {
+                const subRow = (await pool.query(
+                    `INSERT INTO pending_orders (content, status) VALUES ($1, '대기') RETURNING *`,
+                    [`${sub} [멀티 ${idx + 1}/${d.subtasks.length} — 원지시 #${order.id}]`])).rows[0];
+                await writeAudit({
+                    action: 'multi_dispatch', targetType: 'pending_order', targetId: subRow.id,
+                    changes: { after: { parent_order: order.id, seq: idx + 1, of: d.subtasks.length } },
+                    source: 'agent_office', actor,
+                });
+                // 병렬 실행 (await 없음) — 각 건이 독립 run으로 돌고 각자 완료 보고. 재귀 multi는 금지(단일 강제)
+                processOrderWithMaru(subRow, actor, { noMulti: true })
+                    .catch(e => console.error(`멀티 서브태스크 #${subRow.id} 실패:`, e.message));
+            }
+            return;
+        }
+        // multi가 부적합하게 나온 경우 (1건뿐·재귀) — 첫 subtask를 본문 삼아 단일 재판단 없이 정직 질문으로 전환
+        if (d.action === 'multi') {
+            await maruFinishOrder(order.id, '질문', {
+                type: 'clarify', question: `멀티 분산 판정이 부적합했습니다 (건수 ${(d.subtasks || []).length}). 원하시는 작업을 한 건씩 나눠 지시해주세요`, summary: d.task_summary, reason: d.reason,
+            });
+            return;
+        }
+
         // ① 애매한 지시 → 되묻기 (추측 실행 금지)
         if (d.action === 'clarify') {
+            // 대표 실사용 지적: 예상 답변 형식을 질문에 명시 — "네" 한마디로 전 건 진행됨을 안내
+            const q = String(d.clarify_question || '');
+            const hasGuide = /네|아니오|답해/.test(q.slice(-30));
             await maruFinishOrder(order.id, '질문', {
-                type: 'clarify', question: d.clarify_question, summary: d.task_summary, reason: d.reason,
+                type: 'clarify',
+                question: hasGuide ? q : `${q}\n(네/아니오로 답해주세요 — "네"라고 하시면 위 작업을 전부 진행합니다)`,
+                summary: d.task_summary, reason: d.reason,
             });
             return;
         }

@@ -10501,6 +10501,7 @@ function aoOrderLogLine(o) {
     else if (st === '완료' && r.type === 'schedule_cancelled') extra = `<div class="ao-log-sub">ℹ️ 일정 등록 취소</div>`;
     else if (st === '완료' && r.type === 'settlement_saved') extra = `<div class="ao-log-sub">💾 마루 → 정산현황 저장 (${aoEsc(r.date || '')}) · 총 합계 ${Math.round(r.total || 0).toLocaleString()}원 — ${(r.items || []).slice(0, 3).map(aoEsc).join(' / ')}</div>`;
     else if (st === '완료' && r.type === 'settlement_cancelled') extra = `<div class="ao-log-sub">ℹ️ 정산현황 저장 취소</div>`;
+    else if (st === '완료' && r.type === 'multi_dispatch') extra = `<div class="ao-log-sub">🔀 마루 → 멀티 분산 ${(r.subtasks || []).length}건 동시 배정: ${(r.subtasks || []).map((s2, i2) => '①②③④⑤'[i2] + ' ' + aoEsc(aoTrunc(s2, 40))).join(' / ')}</div>`;
     else if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
     else if (st === '완료' && r.assignee) {
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
