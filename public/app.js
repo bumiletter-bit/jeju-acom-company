@@ -11264,6 +11264,28 @@ window.aoOpenReport = async function(runId) {
             </table></div>` : ''}
             <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
         }
+    } else if (rep.type === 'gian_plan') {
+        // 지시 #49: 기안 기획안 — 7항목 (미래 검수 블록은 상단 공통)
+        body = `
+        ${aoReviewBlock(rep.review)}
+        <div class="ao-result-box">📋 <strong>${aoEsc(rep.summary || '')}</strong></div>
+        <h4 class="ao-sec-title">🎯 목적 (철학 4축·로드맵 매핑)</h4><div class="ao-result-box">${aoEsc(rep.purpose || '')}</div>
+        <div class="ao-prompt-meta">대상: ${aoEsc(rep.target || '-')}</div>
+        <h4 class="ao-sec-title">🗂 실행 단계 (누가·뭘·언제)</h4>
+        <div class="ao-report-table-wrap"><table class="ao-report-table">
+            <thead><tr><th>누가</th><th>뭘</th><th>언제</th></tr></thead>
+            <tbody>${(rep.steps || []).map(s => `<tr><td>${aoEsc(s.who)}</td><td>${aoEsc(s.what)}</td><td>${aoEsc(s.when)}</td></tr>`).join('')}</tbody>
+        </table></div>
+        <div class="ao-prompt-meta">💰 비용: ${aoEsc(rep.cost || '-')} · 📈 지표: ${aoEsc(rep.metrics || '-')}</div>
+        ${(rep.risks || []).length ? `<h4 class="ao-sec-title">⚠️ 리스크</h4>${rep.risks.map(r2 => `<div class="ao-review-item">⚠️ ${aoEsc(r2)}</div>`).join('')}` : ''}
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+    } else if (rep.type === 'yeri_analysis') {
+        // 지시 #49: 예리 분석 — 데이터 없음 정직 / 표본 병기
+        body = rep.no_data
+            ? `<div class="ao-placeholder-box ao-soon-note">📭 데이터 없음 — 분석 불가 (감으로 채우지 않습니다)</div>
+               <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`
+            : `<div class="ao-result-box">📊 표본 ${rep.sample_n}건 · 상위: ${(rep.top || []).map(aoEsc).join(', ')}</div>
+               <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
     } else if (rep.type === 'jiyul_labor') {
         // 지시 #45: 지율 노무 자문 — 템플릿 섹션 표시 (✅결론 ⚖️근거 💰계산 ⚠️체크 ✅액션)
         body = `

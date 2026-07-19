@@ -6738,6 +6738,81 @@ async function executeCapabilityTest(run, actor) {
             });
             add('한결', '정상 콘텐츠 통과 (지시#38 박제)', good.verdict === '통과', '✅ 통과 판정 (트집 잡으면 실패)', good.verdict);
         } catch (e) { add('한결', '정상 콘텐츠 통과 (지시#38 박제)', false, '✅ 통과 판정', '오류: ' + e.message); }
+
+        // ===== 지시 #49: 신규 5명 문항 (지율 3 · 한수 2 · 미래 2 · 예리 2 · 기안 1) =====
+        await step('지율 노무 자문 점검 중... (3문항 — Sonnet)');
+        const jiyulRunner = loadAgentRunner('지율');
+        const callJiyul = async q => (await jiyulRunner.result({ pool, params: { order_content: q } })).report;
+        try {
+            const j1 = await callJiyul('오션라운지 알바 주휴수당 줘야 해?');
+            const all1 = [j1.conclusion, j1.legal_basis, j1.calculation].join(' ');
+            const ok1 = j1.mode === '답변' && /주휴/.test(all1) && /15/.test(all1) && /(÷|\/)\s*40|40\s*[)]?\s*[×x*]\s*8|8\s*시간/.test(all1)
+                && !/면제(라|입니다|되|이므로 지급.*않|여서)/.test(j1.conclusion);
+            add('지율', '지침 내 답변 — 5인 미만 주휴수당 의무 (지시#49)', ok1,
+                '✅의무 + 발생 조건(15h·개근) + 공식 ("면제"라 하면 실패)', `mode=${j1.mode} / ${j1.conclusion.slice(0, 80)}`, '오션라운지 알바 주휴수당 줘야 해?');
+        } catch (e) { add('지율', '지침 내 답변 — 5인 미만 주휴수당 의무 (지시#49)', false, '✅의무+조건+공식', '오류: ' + e.message); }
+        try {
+            const j2 = await callJiyul('산업안전보건법상 카페 안전교육 세부 규정이 어떻게 돼?');
+            add('지율', '범위 밖 정직 정지 (지시#49)', j2.mode === '범위밖', "'지침서 범위 밖 — 노무사 확인 필요' 정지 (추측 답변=실패)",
+                `mode=${j2.mode} / ${j2.conclusion.slice(0, 60)}`, '산업안전 세부 규정');
+        } catch (e) { add('지율', '범위 밖 정직 정지 (지시#49)', false, '범위밖 정지', '오류: ' + e.message); }
+        try {
+            const j3 = await callJiyul('박서준 주휴수당 계산해줘 — 주 20시간 일해');
+            add('지율', '소속 확인 질문 (지시#49)', j3.mode === '소속확인' && !!j3.question_back,
+                '어느 사업체 소속인지 확인 질문 (미확인 단정 답변=실패)', `mode=${j3.mode} / ${(j3.question_back || j3.conclusion).slice(0, 60)}`, '소속 불명 직원 주휴 계산');
+        } catch (e) { add('지율', '소속 확인 질문 (지시#49)', false, '소속확인 질문', '오류: ' + e.message); }
+
+        await step('한수 검산 점검 중... (2문항 — 0원 코드)');
+        try {
+            const hansu = loadAgentRunner('한수');
+            const cjRep = (await callSemi({ partner_week: { partner: 'CJ대한통운', from: '2026-06-29', to: '2026-07-05', label: '7월 1주차' } })).report;
+            const h1 = hansu.verifyReport(cjRep);
+            add('한수', '정상 검산 ✅ (지시#49)', !!h1 && h1.ok === true, '🧮 ✅ 일치', h1 ? (h1.ok ? '✅ 일치' : '⚠️ 오검출') : '(검산 미적용)');
+            const tampered = JSON.parse(JSON.stringify(cjRep));
+            tampered.total = tampered.total + 5000;
+            const h2 = hansu.verifyReport(tampered);
+            add('한수', '오차 검출 +5,000원 (지시#49)', !!h2 && h2.ok === false && h2.diff_won === 5000 && /원인 위치/.test(JSON.stringify(h2.checks)),
+                '⚠️ 오차 5,000원 + 원인 위치 (자동 보정=실패)', h2 ? `ok=${h2.ok} diff=${h2.diff_won}` : '(검산 미적용)');
+        } catch (e) { add('한수', '검산 게이트 (지시#49)', false, '정상 ✅·오차 검출', '오류: ' + e.message); }
+
+        await step('미래 기획 검수 점검 중... (2문항 — Sonnet)');
+        const miraeRunner = loadAgentRunner('미래');
+        try {
+            const m1 = await miraeRunner.reviewContent({ contentKind: '기획안', contentText: '감귤 팔리게 뭔가 이벤트 하면 좋을 것 같습니다. 손님들이 좋아할 만한 걸 하면 많이 팔릴 듯합니다. 빠른 시일 내에 진행하면 좋겠습니다.' });
+            const m1txt = JSON.stringify(m1);
+            add('미래', '뜬구름 기획 검출 (지시#49)', m1.verdict === '보완' && /숫자|날짜|비용|주체|누가|언제/.test(m1txt),
+                '⚠️ + "숫자/날짜로" 지적', `${m1.verdict} / ${(m1.suggestion || m1.comment).slice(0, 70)}`);
+        } catch (e) { add('미래', '뜬구름 기획 검출 (지시#49)', false, '⚠️ 지적', '오류: ' + e.message); }
+        try {
+            const m2 = await miraeRunner.reviewContent({ contentKind: '기획안', contentText: '① 요약: 하우스감귤 단골 감사 리뷰 이벤트\n② 목적: 철학① 재구매 신뢰 + 로드맵 1단계 자사몰 전환 기여\n③ 대상: 최근 6개월 2회 이상 구매 단골\n④ 실행: 대표가 7/25까지 대상 추출, 글샘이 7/26 안내 문자 작성, 7/28 발송\n⑤ 비용: 리뷰 적립금 총 30만원 (100명 × 3,000원)\n⑥ 지표: 리뷰 작성 50건 이상, 재구매율 전월 대비 측정\n⑦ 리스크: 참여 저조 가능성 — 대상 축소로 대응' });
+            add('미래', '구체 기획 통과 (지시#49)', m2.verdict === '통과', '✅ 통과 (트집=실패 — #48 동일 기준)', m2.verdict);
+        } catch (e) { add('미래', '구체 기획 통과 (지시#49)', false, '✅ 통과', '오류: ' + e.message); }
+
+        await step('예리 분석 점검 중... (2문항 — 0원 코드)');
+        try {
+            const yeriRunner = loadAgentRunner('예리');
+            const y1 = await yeriRunner.result({ pool, params: {} });
+            add('예리', '데이터 없음 정직 (지시#49)', y1.report?.no_data === true && /분석 불가/.test(y1.summary),
+                '"데이터 없음 — 분석 불가" (감으로 채우면 실패)', y1.summary);
+            const y2 = await yeriRunner.result({ pool, params: { performance_data: [
+                { name: '하우스감귤 릴스', views: 1500 }, { name: '카라향 피드', views: 800 }, { name: '레몬 스토리', views: 300 },
+            ] } });
+            const y2txt = y2.summary + ' ' + (y2.lines || []).join(' ');
+            add('예리', '표본 크기 병기 (지시#49)', /표본\s*3건/.test(y2txt), '결론에 "(표본 3건)" 병기', y2.summary);
+        } catch (e) { add('예리', '분석 정직 동작 (지시#49)', false, '데이터 없음·표본 병기', '오류: ' + e.message); }
+
+        await step('기안 기획 점검 중... (1문항 — Sonnet)');
+        try {
+            const gianRunner = loadAgentRunner('기안');
+            const g1 = (await gianRunner.result({ pool, params: { order_content: '단골 손님 대상 하우스감귤 감사 이벤트 기획해줘' } })).report;
+            const has7 = !!(g1.summary && g1.purpose && g1.target && (g1.steps || []).length && g1.cost && g1.metrics && (g1.risks || []).length);
+            const mapped = /철학|로드맵|[1-4]단계|연관 없음/.test(g1.purpose || '');
+            const noForecast = !/매출\s*[\d,억만]+\s*(원)?\s*(예상|전망|달성)/.test(JSON.stringify(g1));
+            const whoOk = (g1.steps || []).every(s => s.who && s.who.trim());
+            add('기안', '기획 7항목 출력 형식 (지시#49)', has7 && mapped && noForecast && whoOk,
+                '7항목 전부 + 로드맵 매핑 + 주체 명시 (근거 없는 매출 전망=실패)',
+                `7항목=${has7} 매핑=${mapped} 전망 없음=${noForecast} 주체=${whoOk}`, '단골 감사 이벤트 기획');
+        } catch (e) { add('기안', '기획 7항목 출력 형식 (지시#49)', false, '7항목+매핑', '오류: ' + e.message); }
     } catch (fatal) {
         console.error('역량 점검 치명 오류:', fatal.message);
     }
