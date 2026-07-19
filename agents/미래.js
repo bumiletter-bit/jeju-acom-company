@@ -81,4 +81,70 @@ ${load(BRAND_FILE, '브랜드 가이드')}
     };
 }
 
-module.exports = { live: false, reviewContent, REVIEW_ITEMS }; // 검수 게이트 전용 (기안 실전 연결 시 자동 작동)
+// ===== 지시 #54-3: 실무 전환 (0원 코드) — 검수 게이트 제거 (기안 = 대표 직행), reviewContent는 보관만 =====
+// ① 개발 백로그 관리: "백로그에 ~ 추가/보여줘" ② 버전·변경사항 안내: CHANGELOG 기반 조회 응답
+const VERSION_FILE = path.join(__dirname, '..', 'version.js');
+const CHANGELOG_FILE = path.join(__dirname, '..', 'CHANGELOG.md');
+
+async function backlogAdd(pool, title) {
+    const row = (await pool.query(
+        `INSERT INTO dev_backlog (title, status) VALUES ($1, '대기') RETURNING id`, [title])).rows[0];
+    return row.id;
+}
+async function backlogList(pool) {
+    return (await pool.query(
+        `SELECT id, title, status, to_char(created_at, 'MM-DD') AS d FROM dev_backlog
+         WHERE is_deleted = false ORDER BY (status = '완료'), id DESC LIMIT 30`)).rows;
+}
+
+module.exports = {
+    live: true, // 지시 #54: 실무 전환 — 백로그·버전 안내 (0원 코드)
+    reviewContent, REVIEW_ITEMS, // 보관 (검수 게이트 비활성 — 삭제 없음 원칙)
+    backlogAdd, backlogList, // 역량 박제용 export
+    steps: ['백로그·버전 정보 확인 중...'],
+    stepDelayMs: 1000,
+    async result({ pool, params = {} }) {
+        const q = String(params.order_content || '').trim();
+        // ② 버전·변경사항 안내
+        if (/버전|변경\s*사항|업데이트|뭐가 바뀌|체인지로그/i.test(q) && !/백로그/.test(q)) {
+            let ver = '?';
+            try { delete require.cache[require.resolve(VERSION_FILE)]; ver = require(VERSION_FILE).VERSION; } catch (e) { /* 무시 */ }
+            let recent = '';
+            try {
+                const log = fs.readFileSync(CHANGELOG_FILE, 'utf8');
+                const lines = log.split('\n').filter(l => l.startsWith('- [')).slice(0, 5);
+                recent = lines.join('\n');
+            } catch (e) { recent = '(CHANGELOG 로드 실패)'; }
+            return {
+                summary: `현재 버전 ${ver}`,
+                lines: [`현재 버전: ${ver}`, '최근 변경 5건은 보고서 카드에서', 'CHANGELOG 전문은 저장소 CHANGELOG.md'],
+                report: { type: 'mirae_version', version: ver, recent_changes: recent.slice(0, 2000), note: 'CHANGELOG 기반 자동 안내 (0원 코드 — 지시 #54)' },
+            };
+        }
+        // ① 백로그
+        if (/백로그/.test(q)) {
+            const addMatch = q.match(/백로그에?\s*(.+?)\s*(추가|넣어|기록|올려)/);
+            if (addMatch && addMatch[1] && addMatch[1].trim().length >= 2) {
+                const title = addMatch[1].trim().slice(0, 200);
+                const id = await backlogAdd(pool, title);
+                const list = await backlogList(pool);
+                return {
+                    summary: `백로그 #${id} 기록: ${title.slice(0, 40)}`,
+                    lines: [`"${title}" — 대기 상태로 기록했습니다`, `현재 백로그 ${list.length}건`, '구현 착수는 대표 지시로'],
+                    report: { type: 'mirae_backlog', added: { id, title }, items: list, note: '나중에 만들 항목 목록 (지시 #54 — 착수는 대표 지시)' },
+                };
+            }
+            const list = await backlogList(pool);
+            return {
+                summary: `백로그 ${list.length}건`,
+                lines: list.length ? list.slice(0, 3).map(b => `#${b.id} [${b.status}] ${b.title.slice(0, 50)}`) : ['백로그가 비어 있습니다 — "백로그에 ○○ 추가해줘"로 기록'],
+                report: { type: 'mirae_backlog', items: list, note: '나중에 만들 항목 목록 (지시 #54)' },
+            };
+        }
+        return {
+            summary: '미래 담당 업무 안내',
+            lines: ['개발 백로그 관리: "백로그에 ○○ 추가해줘" / "백로그 보여줘"', '버전·변경사항 안내: "지금 버전 뭐야" / "최근 변경사항"', '기획서 작성은 기안 담당입니다'],
+            report: { type: 'mirae_info', note: '지시 #54 실무 전환 — 백로그·버전 안내 (0원 코드)' },
+        };
+    },
+};

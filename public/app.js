@@ -11008,6 +11008,7 @@ window.aoOpenReport = async function(runId) {
         const missing = rep.missing_fields || [];
         body = `
         ${aoReviewBlock(rep.review)}
+        ${rep.date_warning ? `<div class="ao-review-box ao-review-warn">${aoEsc(rep.date_warning)}</div>` : ''}
         ${missing.length ? `<div class="ao-missing-box">✏️ <strong>채워야 할 항목:</strong> ${missing.map(aoEsc).join(', ')}
             <span style="color:#888;font-size:11px;">— 본문의 [ ] 자리표시를 채운 뒤 발송하세요</span></div>` : ''}
         ${rep.title_error ? `<div class="ao-soon-note" style="margin-bottom:6px;">⚠️ ${aoEsc(rep.title_error)}</div>` : ''}
@@ -11277,7 +11278,9 @@ window.aoOpenReport = async function(runId) {
             <tbody>${(rep.steps || []).map(s => `<tr><td>${aoEsc(s.who)}</td><td>${aoEsc(s.what)}</td><td>${aoEsc(s.when)}</td></tr>`).join('')}</tbody>
         </table></div>
         <div class="ao-prompt-meta">💰 비용: ${aoEsc(rep.cost || '-')} · 📈 지표: ${aoEsc(rep.metrics || '-')}</div>
+        ${(rep.deliverables || []).length ? `<h4 class="ao-sec-title">📦 산출물 (후보·시안)</h4>${rep.deliverables.map((d2, i2) => `<pre class="ao-copy-body" id="ao-gian-d-${run.id}-${i2}">${aoEsc(d2)}</pre>`).join('')}` : ''}
         ${(rep.risks || []).length ? `<h4 class="ao-sec-title">⚠️ 리스크</h4>${rep.risks.map(r2 => `<div class="ao-review-item">⚠️ ${aoEsc(r2)}</div>`).join('')}` : ''}
+        ${rep.date_warning ? `<div class="ao-review-box ao-review-warn">${aoEsc(rep.date_warning)}</div>` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
     } else if (rep.type === 'yeri_analysis') {
         // 지시 #49: 예리 분석 — 데이터 없음 정직 / 표본 병기

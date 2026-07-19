@@ -973,13 +973,31 @@ async function initDB() {
     // 5차: 미소 프롬프트 작성 연결 반영 → v5.1: 원스톱 생성 (대표 건별 승인 게이트)
     await pool.query(`UPDATE agents SET description = '시안 방향·Gemini 프롬프트 제작 + 이미지·영상 원스톱 생성 (✅ v5.1 — 건별 대표 승인 게이트)'
         WHERE code = 'miso' AND is_deleted = false`);
+    // 지시 #54: 개발 백로그 (미래 실무 — "나중에 만들자" 항목, soft-delete)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS dev_backlog (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR(200) NOT NULL,
+            note TEXT,
+            status VARCHAR(10) DEFAULT '대기',
+            created_at TIMESTAMP DEFAULT NOW(),
+            is_deleted BOOLEAN DEFAULT false
+        )
+    `);
+    // 지시 #54: 조직 개편 — 한결 비활성 (삭제 없음 원칙: is_active만 해제, 기록·파일 보관)
+    await pool.query(`UPDATE agents SET is_active = false,
+        description = '(비활성 — 지시 #54 조직 개편: 최종 검토는 대표가 직접. AI 검수 제거, 코드 안전망·기록은 유지)'
+        WHERE code = 'hangyeol' AND is_deleted = false`);
+    await pool.query(`UPDATE agents SET duty = '검산·재무 브리핑·마진 계산',
+        description = '세미 보고 자동 검산(🧮) + 주간 재무 브리핑(월) + 신규 품목 마진 계산 + 단가 변경 감지 (✅ 지시 #54 — 전부 0원 코드)'
+        WHERE code = 'hansu' AND is_deleted = false`);
+    await pool.query(`UPDATE agents SET duty = '백로그·버전 안내',
+        description = '개발 백로그 관리("백로그에 추가/보여줘") + 버전·변경사항 안내 (✅ 지시 #54 — 0원 코드. 기안 검수는 제거 — 대표 직행)'
+        WHERE code = 'mirae' AND is_deleted = false`);
     // 지시 #45: 지율 노무 자문 가동 — 조직도 반영 (멱등)
     await pool.query(`UPDATE agents SET description = '노무·법률 자문 — 노무지침_v1 근거 (✅ 지시 #45 가동 · 법인 5인↑/오션라운지 5인↓ 구분, 지침 밖은 노무사 안내)'
         WHERE code = 'jiyul' AND is_deleted = false`);
-    // v5.2 (지시 #38): 한결 검수 게이트 가동 — 조직도 반영 (멱등)
-    await pool.query(`UPDATE agents SET duty = '팀 관리·검수 게이트',
-        description = '글샘·미소 콘텐츠를 브랜드 가이드 4항목(준수·어그로·명확성·강조)으로 자동 검수해 대표 승인 전 의견 첨부 (✅ v5.2 검수 게이트 가동)'
-        WHERE code = 'hangyeol' AND is_deleted = false`);
+    // (구) v5.2 지시 #38 한결 검수 게이트 UPDATE — 지시 #54로 비활성 전환되며 제거 (위 #54 블록이 최종)
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -5613,31 +5631,30 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
             })
             : { summary: '완료' };
         await agentRunAppendStep(run.id, agentStep('report', agent.name, '완료 보고'));
-        // v5.2 (지시 #38) + 지시 #44: 팀장 검수·검산 게이트 레지스트리
-        // 검수(소넷 1회): 글샘·미소 → 한결 / 기안 → 미래 (콘텐츠 산출물만 — 조회·집계 미적용)
-        // 검산(0원 코드): 세미 → 한수 (자동 보정 금지 — 오차 있는 그대로 표시)
-        const REVIEW_GATES = {
-            geulsaem_copy: { reviewer: '한결', kind: '카피', text: rep => (rep.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n') },
-            miso_prompt: { reviewer: '한결', kind: '시안 프롬프트', text: rep => (rep.outputs || []).map(o => `[${o.label} · ${o.media} ${o.ratio}]\n${o.prompt_en}\n(해석) ${o.prompt_ko}`).join('\n\n') },
-            gian_plan: { reviewer: '미래', kind: '기획안', text: rep => JSON.stringify(rep).slice(0, 5000) },
-        };
-        const gate = result && result.report && REVIEW_GATES[result.report.type];
-        if (gate && ['글샘', '미소', '기안'].includes(agent.name)) {
-            await agentRunAppendStep(run.id, agentStep('review', gate.reviewer, '검수 중... (검수 4문 — 우리다움·대표 의도·정직)'));
-            try {
-                const reviewer = require(path.join(__dirname, 'agents', `${gate.reviewer}.js`));
-                const review = await reviewer.reviewContent({ contentKind: gate.kind, contentText: gate.text(result.report) });
-                result.report.review = review;
-                result.lines = [...(result.lines || []),
-                    `🔍 ${gate.reviewer} 검수: ${review.verdict === '통과' ? '✅ 통과' : '⚠️ 보완 의견'} — 상세는 보고서 카드에서`];
-                await agentRunAppendStep(run.id, agentStep('review', gate.reviewer,
-                    review.verdict === '통과' ? '검수 통과 — 상신' : '보완 의견 첨부 — 최종 판단은 대표님께'));
-            } catch (e) {
-                console.error(`${gate.reviewer} 검수 실패:`, e.message);
-                result.report.review = { error: '검수 실패: ' + String(e.message).slice(0, 200) + ' — 콘텐츠는 정상 보고됨', reviewer: gate.reviewer };
-                await agentRunAppendStep(run.id, agentStep('review', gate.reviewer, '검수 실패 (콘텐츠는 정상 보고) — 사유는 카드에'));
+        // 지시 #54: AI 검수 게이트 제거 (한결 비활성·기안 대표 직행 — 최종 검토는 대표).
+        // 코드 안전망은 유지: 파편 정화·규격/금지어 채점(시험지)·한수 검산·날짜 대조(아래).
+        // 🔴 날짜 단일 소스 (지시 #54-4): 산출물의 날짜 표기를 서버 확정값과 코드로 대조 — 불일치는 교정하지 않고 ⚠️ 표시
+        if (result && result.report && runParams.dates_range && runParams.dates_range.from) {
+            const scanText = result.report.type === 'geulsaem_copy'
+                ? (result.report.versions || []).map(v => v.text).join('\n')
+                : (result.report.type === 'gian_plan' ? JSON.stringify(result.report) : '');
+            if (scanText) {
+                const bad = [];
+                const re = /(\d{1,2})\s*[\/월]\s*(\d{1,2})일?/g;
+                let mDate;
+                while ((mDate = re.exec(scanText))) {
+                    const ds = runParams.dates_range.from.slice(0, 4) + '-' + String(mDate[1]).padStart(2, '0') + '-' + String(mDate[2]).padStart(2, '0');
+                    if (ds < runParams.dates_range.from || ds > runParams.dates_range.to) bad.push(`${Number(mDate[1])}/${Number(mDate[2])}`);
+                }
+                const uniq = [...new Set(bad)];
+                if (uniq.length) {
+                    result.report.date_warning = `⚠️ 날짜 불일치: 산출물에 ${uniq.join(', ')} — 서버 확정 ${runParams.dates_hint}와 다름. 교정하지 않았으니 대표 확인 필요`;
+                    result.lines = [...(result.lines || []), result.report.date_warning];
+                    await agentRunAppendStep(run.id, agentStep('review', '마루', '⚠️ 날짜 대조 불일치 — 대표 확인 필요 (자동 교정 없음)'));
+                }
             }
-        } else if (agent.name === '세미' && result && result.report) {
+        }
+        if (agent.name === '세미' && result && result.report) {
             // 지시 #44: 한수 검산 게이트 (0원 순수 코드 — 모델 호출 없음)
             try {
                 const hansu = require(path.join(__dirname, 'agents', '한수.js'));
@@ -5943,7 +5960,7 @@ const MARU_ROUTE_TOOL = {
         properties: {
             action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule', 'settlement_input'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물 평가/수정, schedule=일정 조회·등록(마루 직접), settlement_input=정산현황 숫자 입력(마루 직접)' },
             team: { type: 'string', description: '배정 팀 (마케팅팀/재무팀/법무팀/개발부서/기획팀 중 하나). clarify면 빈 문자열' },
-            assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/마루 중 하나). clarify면 빈 문자열' },
+            assignee: { type: 'string', description: '담당 요원 이름 (글샘/미소/예리/세미/지율/기안/한수/미래/마루 중 하나). clarify면 빈 문자열' },
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
             reason: { type: 'string', description: '배정 근거 또는 판단 이유 한 줄' },
             clarify_question: { type: 'string', description: 'action=clarify일 때만 출력 — 대표에게 물을 질문 딱 하나' },
@@ -6073,6 +6090,8 @@ ${JSON.stringify(routingTable, null, 2)}
   예: "이번주 결제금액 보내줘" = 기간(이번주)+항목(결제금액=정산 조회)+파일(보내줘) → 즉시 세미 배정. '결제금액/매출/정산' 조회는 전부 재무팀 세미 담당이다.
 - 주차 표현(이번주/지난주/N월 N주차/N째주/N주차)과 거래처(효돈/대성/기타거래처/CJ)가 함께 있는 정산·택배비 조회도 즉시 세미 배정한다.
   예: "이번주 효돈 정산금 파일 줘", "3월 셋째주 대성 정산 파일", "1주차 CJ 택배비 얼마야" — 주차 범위와 거래처는 서버가 확정하므로 너는 배정만 한다.
+- 마진·원가 계산 (예: "○○ 원가 얼마에 판매가 얼마면 마진 얼마야?") → 재무팀 한수 배정 (지시 #54).
+- 개발 백로그 ("백로그에 추가해줘/보여줘")·버전·변경사항 질문 → 개발부서 미래 배정 (지시 #54).
 【B. 멀티 지시】
 - 발동 조건: 한 문장에 서로 다른 요청이 2개 이상 (판별 힌트: '그리고/랑/이랑/하고/~도' + 동사 2개 이상).
   예: "휴가 언제야? 그리고 지난달 정산도 보여줘"
@@ -6405,14 +6424,27 @@ async function executeSmokeTest(run, actor) {
     const keep = (name, content) => transcripts.push({ name, content: String(content).slice(0, 8000) });
     const step = async label => agentRunAppendStep(run.id, agentStep('work', '마루', label));
     const helpers = { matchItemToPricing, normDateSafe };
-    const hangyeol = require(path.join(__dirname, 'agents', '한결.js'));
-    const mirae = require(path.join(__dirname, 'agents', '미래.js'));
     // 담주 화~목 (오늘 기준 다음주 월요일 +1일 ~ +3일) — 채점 기준일 (지시 #51: 실행 시점 기준 해석)
     const today = new Date(kstTodayStr() + 'T00:00:00Z');
     const dowN = (today.getUTCDay() + 6) % 7;
     const nextMon = new Date(today); nextMon.setUTCDate(today.getUTCDate() - dowN + 7);
     const dstr = off => { const d = new Date(nextMon); d.setUTCDate(nextMon.getUTCDate() + off); return d.toISOString().slice(0, 10); };
     const TUE = dstr(1), THU = dstr(3);
+    // 지시 #54·#55: 날짜 단일 소스 — 스모크도 실전과 동일하게 서버 확정 날짜 주입 + 산출물 대조·과장 검사
+    const smokeDates = { dates_hint: `${TUE}(화)~${THU}(목)`, dates_range: { from: TUE, to: THU } };
+    const HYPE_RE = /미쳤(어요|다|음)|끝판왕?|인생\s*(호박|귤|맛)|역대급/; // 지시 #55-4 과장 금지어
+    const dateCheck = text => {
+        const t = String(text || '');
+        const inR = new RegExp(`${Number(TUE.slice(5, 7))}\\s*[\\/월]\\s*${Number(TUE.slice(8, 10))}|${Number(TUE.slice(8, 10))}일`).test(t);
+        let outR = false;
+        const reD2 = /(\d{1,2})\s*[\/월]\s*(\d{1,2})일?/g;
+        let m2;
+        while ((m2 = reD2.exec(t))) {
+            const ds = TUE.slice(0, 4) + '-' + String(m2[1]).padStart(2, '0') + '-' + String(m2[2]).padStart(2, '0');
+            if (ds < TUE || ds > THU) outR = true;
+        }
+        return { inR, outR };
+    };
 
     try {
         // ── S1: 문자 (글샘 → 한결) ──
@@ -6420,18 +6452,17 @@ async function executeSmokeTest(run, actor) {
         try {
             const gs = loadAgentRunner('글샘');
             const gAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'geulsaem' LIMIT 1`)).rows[0];
-            const r1 = await gs.result({ agent: gAgent, pool, params: { order_content: SMOKE_S1 }, helpers });
+            const r1 = await gs.result({ agent: gAgent, pool, params: { order_content: SMOKE_S1, ...smokeDates }, helpers });
             const text1 = (r1.report.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n');
             keep('S1 글샘 답변 전문', text1);
-            const rev1 = await hangyeol.reviewContent({ contentKind: '카피', contentText: text1 });
-            keep('S1 한결 검수 전문', JSON.stringify(rev1, null, 2));
             const miss1 = smokeMissingInfo(text1);
-            const dateOk1 = /21일|7\/21|화요일/.test(text1) && /23일|7\/23|목요일/.test(text1);
+            const dc1 = dateCheck(text1);
             add('S1 3버전+채널 규격', (r1.report.versions || []).length >= 3 && /SMS|LMS/.test(r1.report.channel || ''),
                 '3버전 + SMS/LMS', `${(r1.report.versions || []).length}버전 · ${r1.report.channel}`);
             add('S1 핵심 정보 전부 포함', miss1.length === 0, '8요소 전부', miss1.length ? '누락: ' + miss1.join(', ') : '전부 포함');
-            add('S1 날짜 해석 (담주 화~목)', dateOk1, `${TUE}(화)~${THU}(목) 반영`, dateOk1 ? '반영' : '날짜 표현 미확인 — 전문 대조 필요');
-            add('S1 한결 검수 블록', !!rev1.verdict, '검수 결과 존재 (⚠️도 정상 — 판단은 대표)', `${rev1.verdict}${rev1.comment ? ' — ' + rev1.comment.slice(0, 60) : ''}`);
+            add('S1 날짜 = 서버 확정값 (지시#54)', dc1.inR && !dc1.outR, `${TUE}(화)~${THU}(목)만 표기 — 범위 밖 날짜 = 실패`, `범위 내=${dc1.inR} 범위 밖=${dc1.outR ? '있음(실패)' : '없음'}`);
+            add('S1 과장 금지어 없음 (지시#55)', !HYPE_RE.test(text1), '미쳤어요·끝판·인생○·역대급 없음', HYPE_RE.test(text1) ? '과장 표현 검출(실패)' : '없음');
+            // 지시 #54-1: 한결 검수 제거 — 최종 검토는 대표 (코드 검사로 대체됨)
         } catch (e) { add('S1 실행', false, '글샘→한결 파이프라인', '오류: ' + e.message); }
 
         // ── S2: 톡톡 + 디자인 (글샘 + 미소 → 한결) ──
@@ -6441,21 +6472,21 @@ async function executeSmokeTest(run, actor) {
             const ms = loadAgentRunner('미소');
             const gAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'geulsaem' LIMIT 1`)).rows[0];
             const mAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'miso' LIMIT 1`)).rows[0];
-            const r2 = await gs.result({ agent: gAgent, pool, params: { order_content: SMOKE_S2 }, helpers });
+            const r2 = await gs.result({ agent: gAgent, pool, params: { order_content: SMOKE_S2, ...smokeDates }, helpers });
             const text2 = (r2.report.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n');
             keep('S2 글샘(톡톡) 답변 전문', text2);
             const m2 = await ms.result({ agent: mAgent, pool, params: { order_content: SMOKE_S2 }, helpers });
             const o2 = (m2.report.outputs || [])[0] || {};
             keep('S2 미소 프롬프트 전문', (m2.report.outputs || []).map(o => `[${o.label} ${o.ratio}]\n${o.prompt_en}`).join('\n\n'));
-            const rev2 = await hangyeol.reviewContent({ contentKind: '카피', contentText: text2 });
-            keep('S2 한결 검수 전문', JSON.stringify(rev2, null, 2));
             const miss2 = smokeMissingInfo(text2);
             add('S2 톡톡 문구 (핵심 정보+규격)', miss2.length === 0 && r2.report.channel === '톡톡',
                 '8요소 + 톡톡 채널', `${r2.report.channel} · ${miss2.length ? '누락: ' + miss2.join(', ') : '정보 전부'}`);
             add('S2 미소 8단계·1:1·금지어 없음',
                 String(o2.prompt_en || '').length > 80 && /F5C800/i.test(o2.prompt_en || '') && !/AI generated|cartoon|cheap|discount/i.test(o2.prompt_en || ''),
                 '8단계 구조 요소 + 브랜드 컬러 + 금지어 없음 (생성 버튼 미호출)', `${o2.ratio || '?'} · ${String(o2.prompt_en || '').length}자`);
-            add('S2 한결 검수 블록', !!rev2.verdict, '검수 결과 존재', rev2.verdict);
+            const dc2 = dateCheck(text2); // 지시 #55-2: S2에도 S1 동일 날짜 검사 (설계 구멍 봉합)
+            add('S2 날짜 = 서버 확정값 (지시#55)', dc2.inR && !dc2.outR, `${TUE}~${THU}만 표기`, `범위 내=${dc2.inR} 범위 밖=${dc2.outR ? '있음(실패)' : '없음'}`);
+            add('S2 과장 금지어 없음 (지시#55)', !HYPE_RE.test(text2), '과장 표현 없음', HYPE_RE.test(text2) ? '검출(실패)' : '없음');
         } catch (e) { add('S2 실행', false, '글샘+미소→한결 파이프라인', '오류: ' + e.message); }
 
         // ── S3: 일정 (마루 판단만 — 실제 등록 금지) ──
@@ -6481,14 +6512,11 @@ async function executeSmokeTest(run, actor) {
             const r4 = (await gi.result({ pool, params: { order_content: SMOKE_S4 } })).report;
             const full4 = JSON.stringify(r4, null, 2);
             keep('S4 기안 답변 전문', full4);
-            const rev4 = await mirae.reviewContent({ contentKind: '기획안', contentText: full4 });
-            keep('S4 미래 검수 전문', JSON.stringify(rev4, null, 2));
             const idCount = (full4.match(/@[a-z0-9._]{3,}/gi) || []).length;
             add('S4 아이디 3개+소개글 3개', idCount >= 3 && /소개/.test(full4),
                 '아이디 후보 3+ · 소개글 후보 3 (실존 계정 지어내기 금지 — 전문 대조)', `아이디 ${idCount}개 감지 — 소개글은 전문 대조 필요`);
             add('S4 오션라운지 컨셉 반영', /오션|라운지|ocean|lounge|카페/i.test(full4) && /제주|jeju/i.test(full4),
                 '제주·카페·오션라운지 요소', /오션|ocean/i.test(full4) ? '반영' : '미확인');
-            add('S4 미래 검수 블록', !!rev4.verdict, '검수 결과 존재', rev4.verdict);
         } catch (e) { add('S4 실행', false, '기안→미래 파이프라인', '오류: ' + e.message); }
 
         // ── S5: 보고서 (기안 → 미래) ──
@@ -6498,8 +6526,6 @@ async function executeSmokeTest(run, actor) {
             const r5 = (await gi.result({ pool, params: { order_content: SMOKE_S5 } })).report;
             const full5 = JSON.stringify(r5, null, 2);
             keep('S5 기안 답변 전문', full5);
-            const rev5 = await mirae.reviewContent({ contentKind: '기획안', contentText: full5 });
-            keep('S5 미래 검수 전문', JSON.stringify(rev5, null, 2));
             const nums = { 원가합: /35[,.]?100/.test(full5), 판매가: /58[,.]?000/.test(full5), 차액: /22[,.]?900/.test(full5) };
             const numsOk = nums.원가합 && nums.판매가;
             add('S5 7항목 구조', !!(r5.summary && r5.purpose && r5.target && (r5.steps || []).length && r5.cost && r5.metrics && (r5.risks || []).length),
@@ -6507,8 +6533,8 @@ async function executeSmokeTest(run, actor) {
             add('S5 숫자 정확 (35,100·58,000·22,900)', numsOk, '원가 합 35,100 · 판매가 58,000 (차액 22,900 권장)',
                 `원가합=${nums.원가합} 판매가=${nums.판매가} 차액=${nums.차액}`);
             add('S5 미팅·출장 촬영 포함', /미팅/.test(full5) && /출장|촬영|사진/.test(full5), '미팅 후 진행 + 직원 출장 촬영', '전문 대조');
-            add('S5 판매량 전망 없음+미래 검수', !/판매량.*(예상|전망)|월\s*\d+\s*(박스|kg).*(판매|매출)/.test(full5) && !!rev5.verdict,
-                '근거 없는 전망 금지 + 검수 블록', rev5.verdict);
+            add('S5 판매량 전망 없음', !/판매량.*(예상|전망)|월\s*\d+\s*(박스|kg).*(판매|매출)/.test(full5),
+                '근거 없는 전망 금지 (지시 #54 — 검수 게이트 제거, 대표 직행)', '전문 대조');
         } catch (e) { add('S5 실행', false, '기안→미래 파이프라인', '오류: ' + e.message); }
     } catch (fatal) { console.error('스모크 시험 치명 오류:', fatal.message); }
 
@@ -6895,30 +6921,30 @@ async function executeCapabilityTest(run, actor) {
             } catch (e) { add('미소', c.name, false, '규격 전체 통과', '오류: ' + e.message, c.q); }
         }
 
-        // ===== v5.2 (지시 #38): 한결 검수 게이트 (2문항 — Sonnet 검수 실호출) =====
-        await step('한결 검수 점검 중... (2문항 — 위반 검출·정상 통과)');
-        const hangyeol = require(path.join(__dirname, 'agents', '한결.js'));
+        // 지시 #54-4 박제: 날짜 단일 소스 — 서버 확정값 주입 시 카피 날짜 일치 (S1 7/22 오류 재현 방지)
+        await step('글샘 날짜 단일 소스 점검 중... (1문항)');
         try {
-            const bad = await hangyeol.reviewContent({
-                contentKind: '카피',
-                contentText: '(광고)제주아꼼이네입니다^^\n지금 아무 이유 없이 전 품목 50% 파격 할인!! 오늘만!! 안 사면 손해!! 무조건 사세요!!\n무료 수신거부 080-000-0000',
-            });
-            add('한결', '규칙 위반 검출 (명분 없는 할인·과장 — 지시#38 박제)', bad.verdict === '보완',
-                '⚠️ 보완 판정 (위반을 통과시키면 실패)',
-                `${bad.verdict}${bad.items ? ` — ${bad.items.filter(i => !i.ok).length}항목 지적` : ''}`);
-        } catch (e) { add('한결', '규칙 위반 검출 (명분 없는 할인·과장 — 지시#38 박제)', false, '⚠️ 보완 판정', '오류: ' + e.message); }
-        try {
-            // 지시 #50-2: 예문을 현행 검수 4문 기준 완비 카피로 교체 (마감 날짜 구체 명시·근거 없는 수치 제거·재구매 고리 포함)
-            const good = await hangyeol.reviewContent({
-                contentKind: '카피',
-                contentText: '(광고)제주아꼼이네입니다^^\n하우스감귤이 이번 주 첫 수확을 시작했어요. 대표가 과수원에서 직접 골라 담아 보내드립니다.\n★ 첫 수확 기념 200박스 한정 · 39,900원 ★\n⏰ 마감: 7월 26일(일) 밤 10시 — 마감 후에는 다음 수확까지 기다리셔야 해요.\n주문하기: https://smartstore.naver.com/akkome\n다음 달에는 초당옥수수 소식으로 찾아뵐게요. 늘 찾아주셔서 고맙습니다.\n무료 수신거부 080-000-0000',
-            });
-            // run #64 후속: 실패 시 사유를 성적표에 남겨 다음 판독 가능하게 (진단 로그 강화)
-            const goodWhy = good.verdict === '통과' ? '' :
-                ' — 사유: ' + (good.items || []).filter(i => !i.ok).map(i => `${i.name}(${(i.comment || '').slice(0, 60)})`).join(' / ')
-                + (good.suggestion ? ` / 제안: ${good.suggestion.slice(0, 80)}` : '');
-            add('한결', '정상 콘텐츠 통과 (지시#38 박제)', good.verdict === '통과', '✅ 통과 판정 (트집 잡으면 실패)', good.verdict + goodWhy);
-        } catch (e) { add('한결', '정상 콘텐츠 통과 (지시#38 박제)', false, '✅ 통과 판정', '오류: ' + e.message); }
+            const dr = { from: '2026-07-21', to: '2026-07-23' };
+            const rD = await gRunner.result({ agent: gAgent, pool, params: {
+                order_content: '미니밤호박 행사 안내 문자 만들어줘 — 행사 기간을 본문에 꼭 넣어줘',
+                dates_hint: '2026-07-21(화)~2026-07-23(목)', dates_range: dr,
+            }, helpers });
+            const tD = (rD.report.versions || []).map(v => v.text).join('\n');
+            const inRange = /7\s*[\/월]\s*21|21일/.test(tD) && /7\s*[\/월]\s*23|23일/.test(tD);
+            let outRange = false;
+            const reD = /(\d{1,2})\s*[\/월]\s*(\d{1,2})일?/g;
+            let mD;
+            while ((mD = reD.exec(tD))) {
+                const ds = '2026-' + String(mD[1]).padStart(2, '0') + '-' + String(mD[2]).padStart(2, '0');
+                if (ds < dr.from || ds > dr.to) outRange = true;
+            }
+            const hype = /미쳤(어요|다|음)|끝판왕?|인생\s*(호박|귤|맛)|역대급/.test(tD); // 지시 #55-4 과장 금지어
+            add('글샘', '날짜 단일 소스 준수 (지시#54 S1 사고 박제)', inRange && !outRange && !hype,
+                '확정 날짜(7/21~7/23)만 표기 + 범위 밖 날짜 없음 + 과장 금지어 없음',
+                `범위 내=${inRange} 범위 밖=${outRange ? '있음(실패)' : '없음'} 과장=${hype ? '있음(실패)' : '없음'}`, '미니밤호박 행사 안내 (확정 날짜 주입)');
+        } catch (e) { add('글샘', '날짜 단일 소스 준수 (지시#54 S1 사고 박제)', false, '확정 날짜만 표기', '오류: ' + e.message); }
+
+        // 지시 #54-1: 한결 AI 검수 2문항 제거 — 최종 검토는 대표. 코드 안전망(규격·금지어·파편·핵심 정보)은 글샘·미소·스모크 문항이 유지
 
         // ===== 지시 #49: 신규 5명 문항 (지율 3 · 한수 2 · 미래 2 · 예리 2 · 기안 1) =====
         await step('지율 노무 자문 점검 중... (3문항 — Sonnet)');
@@ -6964,21 +6990,22 @@ async function executeCapabilityTest(run, actor) {
                 '⚠️ 오차 5,000원 + 원인 위치 (자동 보정=실패)', h2 ? `ok=${h2.ok} diff=${h2.diff_won}` : '(검산 미적용)');
         } catch (e) { add('한수', '검산 게이트 (지시#49)', false, '정상 ✅·오차 검출', '오류: ' + e.message); }
 
-        await step('미래 기획 검수 점검 중... (2문항 — Sonnet)');
+        // 지시 #54-3: 미래 검수 2문항 제거 → 실무(백로그·버전) 코드 문항 2개로 교체 (0원)
+        await step('미래 실무 점검 중... (2문항 — 0원 코드)');
         const miraeRunner = loadAgentRunner('미래');
         try {
-            const m1 = await miraeRunner.reviewContent({ contentKind: '기획안', contentText: '감귤 팔리게 뭔가 이벤트 하면 좋을 것 같습니다. 손님들이 좋아할 만한 걸 하면 많이 팔릴 듯합니다. 빠른 시일 내에 진행하면 좋겠습니다.' });
-            const m1txt = JSON.stringify(m1);
-            add('미래', '뜬구름 기획 검출 (지시#49)', m1.verdict === '보완' && /숫자|날짜|비용|주체|누가|언제/.test(m1txt),
-                '⚠️ + "숫자/날짜로" 지적', `${m1.verdict} / ${(m1.suggestion || m1.comment).slice(0, 70)}`);
-        } catch (e) { add('미래', '뜬구름 기획 검출 (지시#49)', false, '⚠️ 지적', '오류: ' + e.message); }
+            const bTitle = '역량 점검용 백로그 항목 (자동 삭제됨)';
+            const bId = await miraeRunner.backlogAdd(pool, bTitle);
+            const bList = await miraeRunner.backlogList(pool);
+            const found = bList.some(b => b.id === bId && b.title === bTitle && b.status === '대기');
+            await pool.query(`UPDATE dev_backlog SET is_deleted = true WHERE id = $1`, [bId]); // is_test 격리 — 시험 항목 정리 (soft)
+            add('미래', '백로그 기록·조회 (지시#54)', found, '추가 → 목록 반영 (대기 상태)', found ? `#${bId} 기록·조회 일치` : '목록 미반영');
+        } catch (e) { add('미래', '백로그 기록·조회 (지시#54)', false, '추가→목록 반영', '오류: ' + e.message); }
         try {
-            const m2 = await miraeRunner.reviewContent({ contentKind: '기획안', contentText: '① 요약: 하우스감귤 단골 감사 리뷰 이벤트\n② 목적: 철학① 재구매 신뢰 + 로드맵 1단계 자사몰 전환 기여\n③ 대상: 최근 6개월 2회 이상 구매 단골\n④ 실행: 대표가 7/25까지 대상 추출, 글샘이 7/26 안내 문자 작성, 7/28 발송\n⑤ 비용: 리뷰 적립금 총 30만원 (100명 × 3,000원)\n⑥ 지표: 리뷰 작성 50건 이상, 재구매율 전월 대비 측정\n⑦ 리스크: 참여 저조 가능성 — 대상 축소로 대응' });
-            const m2Why = m2.verdict === '통과' ? '' :
-                ' — 사유: ' + (m2.items || []).filter(i => !i.ok).map(i => `${i.name}(${(i.comment || '').slice(0, 60)})`).join(' / ')
-                + (m2.suggestion ? ` / 제안: ${m2.suggestion.slice(0, 80)}` : '');
-            add('미래', '구체 기획 통과 (지시#49)', m2.verdict === '통과', '✅ 통과 (트집=실패 — #48 동일 기준)', m2.verdict + m2Why);
-        } catch (e) { add('미래', '구체 기획 통과 (지시#49)', false, '✅ 통과', '오류: ' + e.message); }
+            const vr = (await miraeRunner.result({ pool, params: { order_content: '지금 버전 뭐야?' } })).report;
+            const verOk = vr.type === 'mirae_version' && vr.version === VERSION && String(vr.recent_changes || '').length > 10;
+            add('미래', '버전·변경사항 안내 (지시#54)', verOk, `version.js와 일치 (${VERSION}) + 최근 변경 발췌`, `${vr.type}/${vr.version}`);
+        } catch (e) { add('미래', '버전·변경사항 안내 (지시#54)', false, '버전 일치+변경 발췌', '오류: ' + e.message); }
 
         await step('예리 분석 점검 중... (2문항 — 0원 코드)');
         try {
@@ -7004,7 +7031,8 @@ async function executeCapabilityTest(run, actor) {
             const mapped = /철학|로드맵|[1-4]단계|연관 없음/.test(g1.purpose || '');
             const noForecast = !/매출\s*[\d,억만]+\s*(원)?\s*(예상|전망|달성)/.test(JSON.stringify(g1));
             const whoOk = (g1.steps || []).every(s => s.who && s.who.trim());
-            add('기안', '기획 7항목 출력 형식 (지시#49)', has7 && mapped && noForecast && whoOk,
+            const delivOk = Array.isArray(g1.deliverables); // 지시 #54-5: 산출물 칸 존재 (창작 요청 아닐 땐 빈 배열 허용)
+            add('기안', '기획 7항목 출력 형식 (지시#49)', has7 && mapped && noForecast && whoOk && delivOk,
                 '7항목 전부 + 로드맵 매핑 + 주체 명시 (근거 없는 매출 전망=실패)',
                 `7항목=${has7}${missing7.length ? `(누락: ${missing7.join(',')})` : ''} 매핑=${mapped} 전망 없음=${noForecast} 주체=${whoOk}`, '단골 감사 이벤트 기획');
         } catch (e) { add('기안', '기획 7항목 출력 형식 (지시#49)', false, '7항목+매핑', '오류: ' + e.message); }
@@ -7475,6 +7503,18 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         compare: conditions.compare || null,   // 4.5 ⑤: 기간 비교 (서버 확정)
         rank: conditions.rank || null,         // 4.5 ⑥: 품목 순위 (서버 확정)
         partner_week: conditions.partner_week || null, // 지시 #15: 주차×거래처 (서버 확정)
+        ...(() => {
+            // 🔴 지시 #54-4: 날짜 단일 소스 — 서버 확정 날짜(요일 포함)를 요원에 주입 (요원 자체 계산 금지)
+            const wr = parseWeekdayRange(srcText, kstTodayStr());
+            if (wr) return { dates_hint: wr.label, dates_range: { from: wr.from, to: wr.to } };
+            if (conditions.partner_week) {
+                const pw = conditions.partner_week;
+                return { dates_hint: `${pw.from}~${pw.to} (${pw.label})`, dates_range: { from: pw.from, to: pw.to } };
+            }
+            const rng = periodRangeOf(conditions, kstTodayStr());
+            if (rng) return { dates_hint: `${rng.from}~${rng.to} (${rng.label})`, dates_range: { from: rng.from, to: rng.to } };
+            return { dates_hint: '', dates_range: null };
+        })(),
     });
     await finish('완료', { ...routeInfo, run_id: run.id }, run.id);
 }
@@ -8035,6 +8075,60 @@ app.post('/api/agent-office/telegram-test', authMiddleware, adminOnly, async (re
         res.json({ message: '테스트 알림 발송을 시도했습니다 — 폰 수신을 확인해주세요', diag });
     } catch (err) { handleAdminErr(res, err); }
 });
+
+// ===== 지시 #54-2: 한수 자동 훅 (0원 코드) — 주간 재무 브리핑(월) + 단가 변경 감지 =====
+setInterval(async () => {
+    try {
+        // ① 주간 재무 브리핑 — 월요일, 주 1회 (기준: agent_office_config.hansu_brief_last)
+        const now = new Date(Date.now() + 9 * 3600 * 1000);
+        const todayK = now.toISOString().slice(0, 10);
+        if (now.getUTCDay() === 1) { // KST 기준 월요일
+            const last = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'hansu_brief_last'`);
+            const lastDate = last.rows.length ? last.rows[0].value.date : null;
+            if (lastDate !== todayK) {
+                await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('hansu_brief_last', $1::jsonb)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify({ date: todayK })]);
+                const hansuAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'hansu' LIMIT 1`)).rows[0];
+                const semiRunner = loadAgentRunner('세미');
+                // 지난주(월~일)·전주 — 세미 집계 재사용 (0원)
+                const t0 = new Date(todayK + 'T00:00:00Z');
+                const mkD = off => { const d = new Date(t0); d.setUTCDate(t0.getUTCDate() + off); return d.toISOString().slice(0, 10); };
+                const lw = { from: mkD(-7), to: mkD(-1) };
+                // 간이 브리핑: 거래처 3사 지난주 합계 (semi partner_week 재사용 — 효돈·대성·기타)
+                const parts = [];
+                for (const p of ['대성(시온)', '효돈농협', '기타거래처']) {
+                    try {
+                        const r = await semiRunner.result({ agent: hansuAgent, pool, params: { partner_week: { partner: p, from: lw.from, to: lw.to, label: '지난주' } }, helpers: { matchItemToPricing, normDateSafe } });
+                        parts.push({ partner: p, total: r.report.total || 0 });
+                    } catch (e) { parts.push({ partner: p, total: null }); }
+                }
+                const tot = parts.reduce((s, x) => s + (x.total || 0), 0);
+                const firstStep = agentStep('order', '한수', `🧮 주간 재무 브리핑 (${lw.from}~${lw.to}) — 자동 (지시 #54)`);
+                const bRun = (await pool.query(`INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
+                    [hansuAgent.id, JSON.stringify([firstStep])])).rows[0];
+                await pool.query(`UPDATE agent_runs SET status='done', result=$2, finished_at=NOW() WHERE id=$1`, [bRun.id, JSON.stringify({
+                    summary: `주간 브리핑: 지난주(${lw.from}~${lw.to}) 상품 ${Math.round(tot).toLocaleString('ko-KR')}원`,
+                    lines: parts.map(x => `${x.partner}: ${x.total === null ? '집계 실패' : Math.round(x.total).toLocaleString('ko-KR') + '원'}`),
+                    report: { type: 'hansu_briefing', week: lw, partners: parts, total: tot, note: '매주 월요일 자동 브리핑 (0원 코드 — 세미 집계 재사용, 지시 #54)' },
+                })]);
+                notifyTelegram('🧮 한수 주간 재무 브리핑 도착 — 보고서함에서 확인');
+            }
+        }
+        // ② 단가표 변경 감지 (10분 주기와 무관하게 이 인터벌에서 함께 — pricing max id 비교)
+        const pm = await pool.query(`SELECT COALESCE(MAX(id), 0) AS m FROM pricing`);
+        const prevRow = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'hansu_price_maxid'`);
+        const prev = prevRow.rows.length ? Number(prevRow.rows[0].value.max) : null;
+        if (prev === null) {
+            await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('hansu_price_maxid', $1::jsonb)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify({ max: pm.rows[0].m })]);
+        } else if (Number(pm.rows[0].m) > prev) {
+            const rows = await pool.query(`SELECT partner, start_date, end_date FROM pricing WHERE id > $1 ORDER BY id`, [prev]);
+            await pool.query(`UPDATE agent_office_config SET value = $1::jsonb, updated_at = NOW() WHERE key = 'hansu_price_maxid'`, [JSON.stringify({ max: pm.rows[0].m })]);
+            const desc = rows.rows.map(r => `${r.partner} ${String(r.start_date).slice(0, 10)}~${String(r.end_date).slice(0, 10)}`).join(' / ');
+            notifyTelegram(`🧮 한수: 주차 세팅 단가표 변경 감지 — ${desc.slice(0, 150)}`);
+        }
+    } catch (e) { console.error('한수 자동 훅 오류:', e.message); }
+}, 10 * 60 * 1000);
 
 // 지시함 상태 변화 감시 → 알림 (서버가 24시간 발송 주체 — 기록 주체와 무관하게 동작)
 let _tgInboxInit = false;

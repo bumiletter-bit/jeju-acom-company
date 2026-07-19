@@ -147,7 +147,18 @@ module.exports = {
         let personaText = '';
         try { personaText = '\n\n===== [글샘 특성 — 지시 #44] =====\n' + fs.readFileSync(path.join(__dirname, '..', 'docs', 'agents', '글샘_특성.md'), 'utf8'); }
         catch (e) { personaText = `\n\n(특성 파일 로드 실패: ${e.message})`; }
-        const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.${personaText}
+        // 🔴 지시 #54-4: 날짜 단일 소스 — 서버 확정값만 받아쓴다 (자체 계산·추측 절대 금지)
+        const datesLine = params.dates_hint
+            ? `
+
+## 🔴 날짜 단일 소스 (지시 #54 — 절대 규칙)
+확정 날짜: ${params.dates_hint}
+날짜·기간은 이 확정값만 그대로 받아쓴다. 요일·날짜를 스스로 계산하지 않는다.`
+            : `
+
+## 🔴 날짜 규칙 (지시 #54 — 절대 규칙)
+확정 날짜가 주입되지 않았다. 날짜가 필요하면 반드시 "00일(날짜 확인 필요)" 자리표시를 쓴다. 자체 계산·추측 금지.`;
+        const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.${personaText}${datesLine}
 아래 지식 문서(검증된 카피 자산)를 완전히 준수해 즉시 발송 가능한 완성 카피를 작성한다.
 오늘 날짜: ${todayStr} (${dayName}요일, KST) — 본문에 날짜·마감일을 쓸 때 요일은 이 기준으로 반드시 검산할 것. 확신 없으면 요일을 빼고 날짜만 쓴다.
 

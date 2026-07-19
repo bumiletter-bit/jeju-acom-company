@@ -229,6 +229,29 @@ function parseWeekSpec(text, todayStr) {
     return { ...w, label: `${month}월 ${n}주차(${short(w.from)}~${short(w.to)})` };
 }
 
+// ===== 지시 #54: 날짜 단일 소스 — 상대 요일 범위 파서 =====
+// "담주/다음주/이번주 화요일부터 목요일(까지)" → { from, to, label } (요일 포함 표기).
+// S1 스모크에서 글샘이 '담주 화요일'을 하루 밀려 계산한 사고 대응 — 날짜의 주인은 서버.
+const _DOW_MAP = { '월': 0, '화': 1, '수': 2, '목': 3, '금': 4, '토': 5, '일': 6 };
+const _DOW_KO = ['월', '화', '수', '목', '금', '토', '일'];
+function parseWeekdayRange(text, todayStr) {
+    const s = String(text || '');
+    const m = s.match(/(담주|다음\s*주|이번\s*주|금주)\s*([월화수목금토일])요일?\s*(?:부터|에서|~|-)?\s*(?:([월화수목금토일])요일?)?/);
+    if (!m) return null;
+    const nextWeek = /담주|다음/.test(m[1]);
+    const t = new Date(todayStr + 'T00:00:00Z');
+    const dow = (t.getUTCDay() + 6) % 7; // 월=0
+    const monday = new Date(t);
+    monday.setUTCDate(t.getUTCDate() - dow + (nextWeek ? 7 : 0));
+    const mk = di => { const d = new Date(monday); d.setUTCDate(monday.getUTCDate() + di); return d.toISOString().slice(0, 10); };
+    const fromIdx = _DOW_MAP[m[2]];
+    const toIdx = m[3] !== undefined && m[3] !== null && _DOW_MAP[m[3]] !== undefined ? _DOW_MAP[m[3]] : fromIdx;
+    if (toIdx < fromIdx) return null; // 역순 범위는 미지원 (오해석 방지)
+    const from = mk(fromIdx), to = mk(toIdx);
+    const fmt = (ds, di) => `${ds}(${_DOW_KO[di]})`;
+    return { from, to, label: fromIdx === toIdx ? fmt(from, fromIdx) : `${fmt(from, fromIdx)}~${fmt(to, toIdx)}` };
+}
+
 // 실존 달력 날짜인지 검증 (예: 2026-04-31 → false) — 억지 조회 방지 가드용
 function isValidDateStr(s) {
     const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -238,4 +261,4 @@ function isValidDateStr(s) {
     return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
 }
 
-module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr, parseExplicitRange, parseComparePeriods, weeksOfMonth, parseWeekSpec };
+module.exports = { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, monthEnd, isValidDateStr, parseExplicitRange, parseComparePeriods, weeksOfMonth, parseWeekSpec, parseWeekdayRange };

@@ -35,6 +35,10 @@ const PLAN_TOOL = {
             cost: { type: 'string', description: '⑤ 예상 비용 — 근거와 함께 (모르면 "미정 — 견적 필요" 정직 표기)' },
             metrics: { type: 'string', description: '⑥ 성공 지표 — 측정 가능한 숫자로. 근거 없는 매출 전망치 금지 (매출 예측 대신 측정 지표: 재구매율·클릭수·참여자 수 등)' },
             risks: { type: 'array', items: { type: 'string' }, description: '⑦ 리스크 1개 이상 정직 표기' },
+            deliverables: {
+                type: 'array', items: { type: 'string' },
+                description: '📦 산출물 (지시 #54-5): 요청받은 후보·시안·리스트의 실제 내용 전문 (예: 인스타 아이디 후보 3개 각각, 소개글 3안 각각의 전체 텍스트). 요청이 결과물 창작이면 반드시 여기에 완성본을 담는다 — 계획만 쓰고 결과물을 비우면 실패. 결과물 요청이 아니면 출력하지 않는다',
+            },
         },
         required: ['summary', 'purpose', 'target', 'steps', 'cost', 'metrics', 'risks'],
     },
@@ -48,7 +52,18 @@ module.exports = {
         if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다');
         const instruction = String(params.order_content || '').trim();
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const systemPrompt = `너는 제주아꼼이네 AGENT OFFICE 개발부서 기획 전문가 '기안'이다.
+        // 🔴 지시 #54-4: 날짜 단일 소스 — 서버 확정값만 받아쓴다 (자체 계산·추측 절대 금지)
+        const datesLine = params.dates_hint
+            ? `
+
+## 🔴 날짜 단일 소스 (지시 #54 — 절대 규칙)
+확정 날짜: ${params.dates_hint}
+날짜·기간은 이 확정값만 그대로 받아쓴다. 요일·날짜를 스스로 계산하지 않는다.`
+            : `
+
+## 🔴 날짜 규칙 (지시 #54 — 절대 규칙)
+확정 날짜가 주입되지 않았다. 날짜가 필요하면 반드시 "00일(날짜 확인 필요)" 자리표시를 쓴다. 자체 계산·추측 금지.`;
+        const systemPrompt = `너는 제주아꼼이네 AGENT OFFICE 개발부서 기획 전문가 '기안'이다.${datesLine}
 
 ===== [기안 특성 — 지시 #44·#46] =====
 ${load(PERSONA_FILE, '특성 파일')}
@@ -65,6 +80,7 @@ ${load(BRAND_FILE, '브랜드 가이드')}
 - 실행 단계는 누가·뭘·언제 — 주체 없는 계획 금지
 - 성공 지표는 측정 가능한 숫자만. **근거 없는 매출 전망치 절대 금지** (매출 예측 대신 재구매율·참여 수 등 측정 지표)
 - 비용을 모르면 "미정 — 견적 필요" 정직 표기. 리스크 1개 이상 필수
+- 📦 대표가 후보·시안·리스트 등 결과물 자체를 요청하면 (예: "아이디 3개 만들어줘") deliverables에 **완성본 전문**을 담는다 — 실행 단계에 "만들 예정"만 쓰고 결과물을 비우면 실패 (지시 #54)
 - 반드시 submit_plan 도구로 제출. 다른 텍스트 응답 금지`;
         const msg = await anthropic.messages.create({
             model: GIAN_MODEL, max_tokens: 1400,
@@ -93,6 +109,7 @@ ${load(BRAND_FILE, '브랜드 가이드')}
             cost: or(p.cost, 200),
             metrics: or(p.metrics, 300),
             risks,
+            deliverables: (Array.isArray(p.deliverables) ? p.deliverables : []).map(x => clean(x).slice(0, 1000)).filter(Boolean).slice(0, 10),
             model: GIAN_MODEL, instruction,
             note: '기획 기준 = 비전_v1 (철학 4축·로드맵) · 미래 팀장 검수 경유 · 실행은 대표 승인 후 · 미정 항목은 대표 확인 필요',
         };

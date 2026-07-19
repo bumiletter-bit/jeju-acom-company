@@ -56,4 +56,66 @@ function verifyReport(report) {
     return { ok, checks, diff_won: diff, reviewer: '한수' };
 }
 
-module.exports = { live: false, verifyReport }; // 검산 게이트 전용 (세미 보고 산출 직후 서버가 호출)
+// ===== 지시 #54-2: 실무 전환 (전부 0원 코드, AI 없음) =====
+// ② 신규 품목 마진 계산 — 지시 원문에서 판매가·원가 항목을 파싱해 마진 자동 계산 (해석 근거 명시, 모호하면 정직 표시)
+function parseWon(str) {
+    // '3만원'→30000, '3,100원'→3100, '2천원'→2000, '58,000'→58000
+    const m = String(str).replace(/,/g, '');
+    let n = 0;
+    const man = m.match(/([\d.]+)\s*만/);
+    const chon = m.match(/([\d.]+)\s*천/);
+    if (man) n += Math.round(parseFloat(man[1]) * 10000);
+    if (chon) n += Math.round(parseFloat(chon[1]) * 1000);
+    if (!man && !chon) {
+        const num = m.match(/(\d+)/);
+        if (num) n = Number(num[1]);
+    }
+    return n;
+}
+function computeMargin(text) {
+    const t = String(text || '');
+    // 판매가: '판매가 N원' 우선
+    const saleM = t.match(/판매가[는가]?\s*([\d,.]+\s*(만|천)?\s*원?)/);
+    const sale = saleM ? parseWon(saleM[1]) : 0;
+    // 원가 항목: 결제가/원가/매입가 + 택배비 + 박스/포장 (언급된 것만 — 추측 금지)
+    const items = [];
+    const grab = (label, re) => { const m = t.match(re); if (m) items.push({ label, won: parseWon(m[1]) }); };
+    grab('결제가(원가)', /(?:결제가|원가|매입가)[는가]?\s*(?:kg당\s*)?([\d,.]+\s*(?:만|천)?\s*원?)/);
+    grab('택배비', /택배비?\s*([\d,.]+\s*(?:만|천)?\s*원?)/);
+    grab('박스·포장', /(?:아이스\s*)?박스[값비]?\s*(?:포함되?)?\s*\(?([\d,.]+\s*(?:만|천)?\s*원?)/);
+    const costSum = items.reduce((s, i) => s + i.won, 0);
+    if (!sale || !items.length) return null; // 해석 불가 — 정직하게 계산하지 않음
+    return { sale, items, costSum, margin: sale - costSum, marginPct: Math.round((sale - costSum) / sale * 1000) / 10 };
+}
+
+module.exports = {
+    live: true, // 지시 #54: 실무 전환 — 마진 계산 (검산 게이트·브리핑·단가 감지는 서버 훅)
+    verifyReport, computeMargin, parseWon,
+    steps: ['금액 해석 중...', '마진 재계산 중...'],
+    stepDelayMs: 1000,
+    async result({ params = {} }) {
+        const q = String(params.order_content || '').trim();
+        const m = computeMargin(q);
+        if (!m) {
+            return {
+                summary: '금액 해석 불가 — 계산하지 않았습니다 (정직 안내)',
+                lines: [
+                    '마진 계산에는 판매가와 원가 항목(결제가·택배비·박스값 등)이 필요합니다',
+                    '예: "무늬오징어 결제가 kg당 3만원, 택배비 3,100원, 박스 2천원, 판매가 58,000원 마진 계산해줘"',
+                    '모호한 금액은 추측하지 않습니다',
+                ],
+                report: { type: 'hansu_margin', no_parse: true, note: '금액 해석 불가 — 추측 계산 금지 (지시 #54)' },
+            };
+        }
+        const won = n => Math.round(n).toLocaleString('ko-KR') + '원';
+        return {
+            summary: `마진 ${won(m.margin)} (판매가 ${won(m.sale)} − 원가 합 ${won(m.costSum)}, ${m.marginPct}%)`,
+            lines: [
+                `원가 구성: ${m.items.map(i => `${i.label} ${won(i.won)}`).join(' + ')} = ${won(m.costSum)}`,
+                `판매가 ${won(m.sale)} − 원가 ${won(m.costSum)} = 마진 ${won(m.margin)} (${m.marginPct}%)`,
+                '해석 근거는 보고서 카드에서 — 숫자가 지시와 다르면 알려주세요 (자동 보정 없음)',
+            ],
+            report: { type: 'hansu_margin', ...m, instruction: q.slice(0, 300), note: '0원 코드 계산 — 언급된 원가 항목만 합산 (추측 금지)' },
+        };
+    },
+};
