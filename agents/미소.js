@@ -12,15 +12,25 @@ const Anthropic = require('@anthropic-ai/sdk');
 const MISO_MODEL = process.env.MISO_MODEL || 'claude-sonnet-4-6';
 
 const KNOWLEDGE_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '마케팅_전문팀_시스템.md');
+// 지시 #31: 브랜드 가이드 v1 — 정적 가이드 (개정 대표 승인제). 비주얼 규칙(제주 요소·컬러·금지)을 프롬프트에 반영
+const BRAND_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '브랜드가이드_v1.md');
 let _knowledgeCache = null;
 function loadKnowledge() {
     if (_knowledgeCache) return _knowledgeCache;
+    const parts = [];
     try {
-        _knowledgeCache = '\n\n===== [지식 문서: 마케팅_전문팀_시스템.md — Gemini 프롬프트 원칙 · 브랜드] =====\n'
-            + fs.readFileSync(KNOWLEDGE_FILE, 'utf8');
+        parts.push('\n\n===== [지식 문서: 브랜드가이드_v1.md — 정체성 · 비주얼 규칙 · 채널 규격 (지시 #31)] =====\n'
+            + fs.readFileSync(BRAND_FILE, 'utf8'));
     } catch (e) {
-        _knowledgeCache = `\n\n(지식 문서 로드 실패: ${e.message})`;
+        parts.push(`\n\n(브랜드 가이드 로드 실패: ${e.message})`);
     }
+    try {
+        parts.push('\n\n===== [지식 문서: 마케팅_전문팀_시스템.md — Gemini 프롬프트 원칙 · 브랜드] =====\n'
+            + fs.readFileSync(KNOWLEDGE_FILE, 'utf8'));
+    } catch (e) {
+        parts.push(`\n\n(지식 문서 로드 실패: ${e.message})`);
+    }
+    _knowledgeCache = parts.join('');
     return _knowledgeCache;
 }
 

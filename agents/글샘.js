@@ -14,6 +14,7 @@ const GEULSAEM_MODEL = process.env.GEULSAEM_MODEL || 'claude-sonnet-4-6';
 
 const KNOWLEDGE_DIR = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing');
 const KNOWLEDGE_FILES = [
+    '브랜드가이드_v1.md',        // [A+] 브랜드 정체성 · 타겟 · 톤 (지시 #31 — 정적 가이드, 개정 대표 승인제)
     '문자톡톡_전문가_지침.md',   // [B] 10블록 구조 · 검증 라임 · 절대 금지
     '상품별_톤앤매너_가이드.md',  // [C]
     '마케팅_문자_가이드북.md',    // [D] 채널 규격 · 골든타임
