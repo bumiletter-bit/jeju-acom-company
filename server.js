@@ -6459,6 +6459,15 @@ async function executeCapabilityTest(run, actor) {
             add('미소', '생성 승인 게이트 차단 (지시#26·#27)', gateBlocked && gateBlocked2 && pricingOk,
                 '무승인·미승인 호출 모두 차단 + 대표 선택 모델·단가 무결',
                 `무승인=${gateBlocked ? '차단' : '통과(문제)'} 미승인=${gateBlocked2 ? '차단' : '통과(문제)'} 가격표=${pricingOk ? '무결' : '불일치'}`);
+            // v5.1.1 (지시 #28-2) 박제: run_capability_test 도구 등록·게이트 구조 검증
+            // (실호출 검증은 점검 중첩·재귀가 되므로 배제 — 똑똑이 첫 호출 = 실검증, audit mcp_run_test로 사후 감사)
+            const rct = MCP_TOOLS.find(t => t.name === 'run_capability_test');
+            const execTools = MCP_TOOLS.filter(t => /run_|create_|update_|add_|register_/.test(t.name)).map(t => t.name);
+            const onlyAllowedExec = execTools.every(n => ['run_capability_test', 'create_schedule', 'update_schedule', 'add_item', 'update_item', 'register_instruction'].includes(n));
+            add('마루', 'MCP 실행 도구 게이트 (v5.1.1 박제)',
+                !!rct && typeof rct.handler === 'function' && /승인.*ㄱ|ㄱ.*승인/.test(rct.description) && /mcp_run_test/.test(rct.description) && onlyAllowedExec && typeof svcStartCapabilityTest === 'function',
+                'run_capability_test 등록 + 승인 규칙·audit 명시 + 허용 외 실행 도구 없음',
+                `등록=${!!rct} 규칙 명시=${rct ? /승인/.test(rct.description) : false} 허용 외 실행 도구=${onlyAllowedExec ? '없음' : '존재(문제)'}`);
         }
 
         // ===== v5.0 고난도 실전 문항 (대표 출제 — 2026-07-18) =====
@@ -7428,30 +7437,35 @@ app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) 
 });
 
 // 10차: 역량 점검 실행 (명령 한 번 — 결과는 보고서함에 '역량 점검 보고서'로 등록)
+// v5.1.1 (지시 #28-2): 역량 점검 시작 공용 서비스 — 관리자 버튼과 MCP 도구(run_capability_test)가 공용
+async function svcStartCapabilityTest(actor) {
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다');
+    if (capTestRunning) throw new Error('역량 점검이 이미 진행 중입니다 — 완료 후 다시 실행해주세요');
+    const maru = (await pool.query(`SELECT * FROM agents WHERE role = 'chief' AND is_deleted = false LIMIT 1`)).rows[0];
+    if (!maru) throw new Error('마루 에이전트를 찾을 수 없습니다');
+    const firstStep = agentStep('order', '마루', '🧪 역량 점검 시작 — 전 요원 자동 테스트 (마루·세미·글샘·미소)');
+    const run = (await pool.query(
+        `INSERT INTO agent_runs (agent_id, steps, is_test) VALUES ($1, $2, TRUE) RETURNING *`,
+        [maru.id, JSON.stringify([firstStep])])).rows[0];
+    await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [maru.id]);
+    capTestRunning = true;
+    executeCapabilityTest(run, actor)
+        .catch(err => {
+            console.error('역량 점검 실행 오류:', err.message);
+            return pool.query(`UPDATE agent_runs SET status='error', result=$2, finished_at=NOW() WHERE id=$1`,
+                [run.id, JSON.stringify({ summary: `오류: ${err.message}` })]);
+        })
+        .finally(() => {
+            capTestRunning = false;
+            pool.query(`UPDATE agents SET status='idle' WHERE id = $1 AND status='running'`, [maru.id]).catch(() => {});
+        });
+    return run;
+}
 app.post('/api/agent-office/capability-test', authMiddleware, adminOnly, async (req, res) => {
     try {
-        if (!process.env.ANTHROPIC_API_KEY) throw { status: 500, message: 'ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다' };
-        if (capTestRunning) throw { status: 409, message: '역량 점검이 이미 진행 중입니다 — 완료 후 다시 실행해주세요' };
-        const maru = (await pool.query(`SELECT * FROM agents WHERE role = 'chief' AND is_deleted = false LIMIT 1`)).rows[0];
-        if (!maru) throw { status: 500, message: '마루 에이전트를 찾을 수 없습니다' };
-        const firstStep = agentStep('order', '마루', '🧪 역량 점검 시작 — 전 요원 자동 테스트 (마루·세미·글샘·미소)');
-        const run = (await pool.query(
-            `INSERT INTO agent_runs (agent_id, steps, is_test) VALUES ($1, $2, TRUE) RETURNING *`,
-            [maru.id, JSON.stringify([firstStep])])).rows[0];
-        await pool.query(`UPDATE agents SET status='running' WHERE id = $1`, [maru.id]);
-        capTestRunning = true;
-        executeCapabilityTest(run, adminActor(req))
-            .catch(err => {
-                console.error('역량 점검 실행 오류:', err.message);
-                return pool.query(`UPDATE agent_runs SET status='error', result=$2, finished_at=NOW() WHERE id=$1`,
-                    [run.id, JSON.stringify({ summary: `오류: ${err.message}` })]);
-            })
-            .finally(() => {
-                capTestRunning = false;
-                pool.query(`UPDATE agents SET status='idle' WHERE id = $1 AND status='running'`, [maru.id]).catch(() => {});
-            });
+        const run = await svcStartCapabilityTest(adminActor(req));
         res.json({ message: '역량 점검을 시작했습니다 (약 2~3분 소요 — 완료 시 보고서함에 등록)', run });
-    } catch (err) { handleAdminErr(res, err); }
+    } catch (err) { handleAdminErr(res, { status: /이미 진행 중/.test(err.message) ? 409 : 500, message: err.message }); }
 });
 
 // 1-5: 마루 오배정 카운트 위젯 — 감이 아닌 숫자로 (audit_log 기반 주간 집계)
@@ -8038,6 +8052,22 @@ const MCP_TOOLS = [
         description: '보고서함을 조회합니다(읽기 전용). id 생략 시 목록(limit 기본 20, 최대 100), id 지정 시 보고 본문 전체. 첨부 파일은 메타(파일명·크기·생성일)만 — 바이너리 전송 없음.',
         inputSchema: { type: 'object', properties: { id: { type: 'integer', description: '보고서(run) 번호' }, limit: { type: 'integer', description: '목록 조회 시 최근 N건' } } },
         handler: async (args, actor) => svcGetReports(args, actor),
+    },
+    // v5.1.1 (지시 #28-2): 유일한 '실행' 도구 — 역량 점검 실행 1가지만 (그 외 실행·쓰기 불가, 읽기 전용 3종과 분리)
+    {
+        name: 'run_capability_test',
+        description: "역량 점검(전 요원 자동 테스트)을 실행합니다 — 이 서버에서 유일하게 허용된 '실행' 도구이며 역량 점검 실행 1가지만 가능합니다. 운영 규칙(운영규칙_지시함.md): 대표가 대화에서 승인('ㄱ')한 후에만 호출할 것. 모든 호출은 audit(mcp_run_test)로 기록되어 사후 감사됩니다. 완료 시 텔레그램 결과 발송, 문항 상세는 get_test_results(run_id)로 조회.",
+        inputSchema: { type: 'object', properties: {} },
+        handler: async (args, actor) => {
+            // 호출 전수 audit — 시작 실패(중복 실행 등)해도 호출 시도 자체가 기록됨 (사후 감사)
+            await writeAudit({
+                action: 'mcp_run_test', targetType: 'agent_run',
+                changes: { after: { via: 'mcp', rule: '대표 대화 승인(ㄱ) 전제 — 운영규칙_지시함.md' } },
+                source: 'mcp', actor,
+            });
+            const run = await svcStartCapabilityTest(actor);
+            return { run_id: run.id, message: `역량 점검 시작 (run #${run.id}, 약 3~4분) — 완료 시 텔레그램 알림, 문항 상세는 get_test_results로` };
+        },
     },
 ];
 
