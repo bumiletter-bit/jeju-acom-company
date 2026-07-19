@@ -10963,15 +10963,26 @@ window.aoOpenReport = async function(runId) {
     if (!run.result) return alert('아직 결과가 없는 실행입니다 (진행 중이거나 기록 없음)');
 
     const dt = new Date(run.started_at).toLocaleString('ko-KR');
-    // v5.2 (지시 #38): 한결 검수 블록 — ⚠️보완이어도 숨기지 않고 표시 (최종 판단은 대표)
+    // v5.2 (지시 #38) + 지시 #44: 팀장 검수 블록 (검수 4문) — ⚠️보완이어도 숨기지 않고 표시 (최종 판단은 대표)
     const aoReviewBlock = rev => {
         if (!rev) return '';
-        if (rev.error) return `<div class="ao-review-box ao-review-warn">🔍 한결 검수: ${aoEsc(rev.error)}</div>`;
+        const who = aoEsc(rev.reviewer || '한결');
+        if (rev.error) return `<div class="ao-review-box ao-review-warn">🔍 ${who} 검수: ${aoEsc(rev.error)}</div>`;
         const pass = rev.verdict === '통과';
         return `<div class="ao-review-box ${pass ? 'ao-review-ok' : 'ao-review-warn'}">
-            <div class="ao-review-head">🔍 한결 검수: ${pass ? '✅ 통과' : '⚠️ 보완 의견'} <small style="color:#888;">(최종 판단은 대표님)</small></div>
+            <div class="ao-review-head">🔍 ${who} 검수: ${pass ? '✅ 통과' : '⚠️ 보완 의견'} <small style="color:#888;">(최종 판단은 대표님)</small></div>
+            ${rev.comment ? `<div class="ao-review-item">💬 ${aoEsc(rev.comment)}</div>` : ''}
             ${(rev.items || []).map(it => `<div class="ao-review-item">${it.ok ? '✅' : '⚠️'} <strong>${aoEsc(it.name)}</strong> — ${aoEsc(it.comment || '')}</div>`).join('')}
+            ${(rev.fill_items || []).length ? `<div class="ao-review-item">✏️ <strong>대표가 채울 항목:</strong> ${rev.fill_items.map(aoEsc).join(', ')}</div>` : ''}
             ${rev.suggestion ? `<div class="ao-review-sug">💡 수정 제안: ${aoEsc(rev.suggestion)}<br><small style="color:#888;">반영하려면 지시 입력바에 "수정 반영해줘"라고 지시해주세요 (1회 재작성)</small></div>` : ''}
+        </div>`;
+    };
+    // 지시 #44: 한수 검산 블록 (0원 코드 검산 — 자동 보정 없음, 오차 있는 그대로)
+    const aoAuditBlock = ac => {
+        if (!ac) return '';
+        return `<div class="ao-review-box ${ac.ok ? 'ao-review-ok' : 'ao-review-warn'}">
+            <div class="ao-review-head">🧮 한수 검산: ${ac.ok ? '✅ 일치' : `⚠️ 오차 ${Math.round(ac.diff_won || 0).toLocaleString()}원`} <small style="color:#888;">(순수 코드 재검산 — 자동 보정 없음)</small></div>
+            ${(ac.checks || []).map(c => `<div class="ao-review-item">${c.ok ? '✅' : '⚠️'} ${aoEsc(c.name)}${c.note ? ' — ' + aoEsc(c.note) : ''}</div>`).join('')}
         </div>`;
     };
     let body = '';
@@ -11392,6 +11403,7 @@ window.aoOpenReport = async function(runId) {
             </h3>
             <div class="ao-detail-meta">${aoEsc(run.agent_team)} · 실행 ${dt}</div>
             <div class="ao-result-box" style="margin-top:8px;"><strong>${aoEsc((run.result && run.result.summary) || '')}</strong></div>
+            ${aoAuditBlock(rep && rep.audit_check)}
             ${body}
         </div>`;
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });

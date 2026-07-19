@@ -5610,29 +5610,48 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
             })
             : { summary: '완료' };
         await agentRunAppendStep(run.id, agentStep('report', agent.name, '완료 보고'));
-        // v5.2 (지시 #38): 한결 검수 게이트 — 글샘·미소 콘텐츠 산출물만 (조회·집계 보고는 미적용).
-        // 검수 시에만 소넷 1회. 실패해도 보고는 정직하게 나감 (검수 오류를 report에 표시)
-        if (['글샘', '미소'].includes(agent.name) && result && result.report
-            && ['geulsaem_copy', 'miso_prompt'].includes(result.report.type)) {
-            await agentRunAppendStep(run.id, agentStep('review', '한결', '콘텐츠 검수 중... (브랜드 가이드 4항목)'));
+        // v5.2 (지시 #38) + 지시 #44: 팀장 검수·검산 게이트 레지스트리
+        // 검수(소넷 1회): 글샘·미소 → 한결 / 기안 → 미래 (콘텐츠 산출물만 — 조회·집계 미적용)
+        // 검산(0원 코드): 세미 → 한수 (자동 보정 금지 — 오차 있는 그대로 표시)
+        const REVIEW_GATES = {
+            geulsaem_copy: { reviewer: '한결', kind: '카피', text: rep => (rep.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n') },
+            miso_prompt: { reviewer: '한결', kind: '시안 프롬프트', text: rep => (rep.outputs || []).map(o => `[${o.label} · ${o.media} ${o.ratio}]\n${o.prompt_en}\n(해석) ${o.prompt_ko}`).join('\n\n') },
+            gian_plan: { reviewer: '미래', kind: '기획안', text: rep => JSON.stringify(rep).slice(0, 5000) },
+        };
+        const gate = result && result.report && REVIEW_GATES[result.report.type];
+        if (gate && ['글샘', '미소', '기안'].includes(agent.name)) {
+            await agentRunAppendStep(run.id, agentStep('review', gate.reviewer, '검수 중... (검수 4문 — 우리다움·대표 의도·정직)'));
             try {
-                const hangyeol = require(path.join(__dirname, 'agents', '한결.js'));
-                const contentText = result.report.type === 'geulsaem_copy'
-                    ? (result.report.versions || []).map(v => `[${v.label}]\n${v.text}`).join('\n\n')
-                    : (result.report.outputs || []).map(o => `[${o.label} · ${o.media} ${o.ratio}]\n${o.prompt_en}\n(해석) ${o.prompt_ko}`).join('\n\n');
-                const review = await hangyeol.reviewContent({
-                    contentKind: result.report.type === 'geulsaem_copy' ? '카피' : '시안 프롬프트',
-                    contentText,
-                });
+                const reviewer = require(path.join(__dirname, 'agents', `${gate.reviewer}.js`));
+                const review = await reviewer.reviewContent({ contentKind: gate.kind, contentText: gate.text(result.report) });
                 result.report.review = review;
                 result.lines = [...(result.lines || []),
-                    `🔍 한결 검수: ${review.verdict === '통과' ? '✅ 통과' : '⚠️ 보완 의견'} — 상세는 보고서 카드에서`];
-                await agentRunAppendStep(run.id, agentStep('review', '한결',
+                    `🔍 ${gate.reviewer} 검수: ${review.verdict === '통과' ? '✅ 통과' : '⚠️ 보완 의견'} — 상세는 보고서 카드에서`];
+                await agentRunAppendStep(run.id, agentStep('review', gate.reviewer,
                     review.verdict === '통과' ? '검수 통과 — 상신' : '보완 의견 첨부 — 최종 판단은 대표님께'));
             } catch (e) {
-                console.error('한결 검수 실패:', e.message);
-                result.report.review = { error: '검수 실패: ' + String(e.message).slice(0, 200) + ' — 콘텐츠는 정상 보고됨' };
-                await agentRunAppendStep(run.id, agentStep('review', '한결', '검수 실패 (콘텐츠는 정상 보고) — 사유는 카드에'));
+                console.error(`${gate.reviewer} 검수 실패:`, e.message);
+                result.report.review = { error: '검수 실패: ' + String(e.message).slice(0, 200) + ' — 콘텐츠는 정상 보고됨', reviewer: gate.reviewer };
+                await agentRunAppendStep(run.id, agentStep('review', gate.reviewer, '검수 실패 (콘텐츠는 정상 보고) — 사유는 카드에'));
+            }
+        } else if (agent.name === '세미' && result && result.report) {
+            // 지시 #44: 한수 검산 게이트 (0원 순수 코드 — 모델 호출 없음)
+            try {
+                const hansu = require(path.join(__dirname, 'agents', '한수.js'));
+                const audit = hansu.verifyReport(result.report);
+                if (audit) {
+                    result.report.audit_check = audit;
+                    result.lines = [...(result.lines || []),
+                        audit.ok ? '🧮 한수 검산 ✅' : `🧮 한수 검산 ⚠️ 오차 ${Math.round(audit.diff_won).toLocaleString('ko-KR')}원 — 상세는 보고서 카드에서`];
+                    await agentRunAppendStep(run.id, agentStep('review', '한수', audit.ok ? '검산 일치 — 상신' : '오차 발견 — 있는 그대로 보고 (자동 보정 없음)'));
+                } else if (managerName && managerName !== agent.name) {
+                    await agentRunAppendStep(run.id, agentStep('review', managerName, '검수 후 상신'));
+                }
+            } catch (e) {
+                console.error('한수 검산 실패:', e.message);
+                if (managerName && managerName !== agent.name) {
+                    await agentRunAppendStep(run.id, agentStep('review', managerName, '검수 후 상신'));
+                }
             }
         } else if (managerName && managerName !== agent.name) {
             await agentRunAppendStep(run.id, agentStep('review', managerName, '검수 후 상신'));

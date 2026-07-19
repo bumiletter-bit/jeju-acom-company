@@ -105,7 +105,11 @@ module.exports = {
         const todayStr = nowKst.toISOString().slice(0, 10);
         const dayName = ['일', '월', '화', '수', '목', '금', '토'][nowKst.getUTCDay()];
 
-        const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 비주얼 디렉터 '미소'다.
+        // 지시 #44: 특성 파일 주입 (인격·스타일 — docs/agents/미소_특성.md, 개정 대표 승인제)
+        let personaText = '';
+        try { personaText = '\n\n===== [미소 특성 — 지시 #44] =====\n' + fs.readFileSync(path.join(__dirname, '..', 'docs', 'agents', '미소_특성.md'), 'utf8'); }
+        catch (e) { personaText = `\n\n(특성 파일 로드 실패: ${e.message})`; }
+        const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 비주얼 디렉터 '미소'다.${personaText}
 아래 지식 문서의 Gemini 프롬프트 작성 원칙을 완전히 준수해 즉시 사용 가능한 프롬프트를 작성한다.
 오늘 날짜: ${todayStr} (${dayName}요일, KST) — 설명·문구에 날짜를 쓸 때 요일은 이 기준으로 반드시 검산할 것.
 

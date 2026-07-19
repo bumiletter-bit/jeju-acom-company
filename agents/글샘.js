@@ -143,7 +143,11 @@ module.exports = {
             }
         } catch (e) { /* 주입 실패는 카피 작성을 막지 않음 */ }
 
-        const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.
+        // 지시 #44: 특성 파일 주입 (인격·스타일 — docs/agents/글샘_특성.md, 개정 대표 승인제)
+        let personaText = '';
+        try { personaText = '\n\n===== [글샘 특성 — 지시 #44] =====\n' + fs.readFileSync(path.join(__dirname, '..', 'docs', 'agents', '글샘_특성.md'), 'utf8'); }
+        catch (e) { personaText = `\n\n(특성 파일 로드 실패: ${e.message})`; }
+        const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.${personaText}
 아래 지식 문서(검증된 카피 자산)를 완전히 준수해 즉시 발송 가능한 완성 카피를 작성한다.
 오늘 날짜: ${todayStr} (${dayName}요일, KST) — 본문에 날짜·마감일을 쓸 때 요일은 이 기준으로 반드시 검산할 것. 확신 없으면 요일을 빼고 날짜만 쓴다.
 
