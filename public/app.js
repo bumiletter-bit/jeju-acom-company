@@ -11279,6 +11279,7 @@ window.aoOpenReport = async function(runId) {
         </table></div>
         <div class="ao-prompt-meta">💰 비용: ${aoEsc(rep.cost || '-')} · 📈 지표: ${aoEsc(rep.metrics || '-')}</div>
         ${(rep.deliverables || []).length ? `<h4 class="ao-sec-title">📦 산출물 (후보·시안)</h4>${rep.deliverables.map((d2, i2) => `<pre class="ao-copy-body" id="ao-gian-d-${run.id}-${i2}">${aoEsc(d2)}</pre>`).join('')}` : ''}
+        ${rep.deliverables_error ? `<div class="ao-review-box ao-review-warn">📦 ${aoEsc(rep.deliverables_error)}</div>` : ''}
         ${(rep.risks || []).length ? `<h4 class="ao-sec-title">⚠️ 리스크</h4>${rep.risks.map(r2 => `<div class="ao-review-item">⚠️ ${aoEsc(r2)}</div>`).join('')}` : ''}
         ${rep.date_warning ? `<div class="ao-review-box ao-review-warn">${aoEsc(rep.date_warning)}</div>` : ''}
         <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;

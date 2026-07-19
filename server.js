@@ -5639,13 +5639,10 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
                 ? (result.report.versions || []).map(v => v.text).join('\n')
                 : (result.report.type === 'gian_plan' ? JSON.stringify(result.report) : '');
             if (scanText) {
-                const bad = [];
-                const re = /(\d{1,2})\s*[\/월]\s*(\d{1,2})일?/g;
-                let mDate;
-                while ((mDate = re.exec(scanText))) {
-                    const ds = runParams.dates_range.from.slice(0, 4) + '-' + String(mDate[1]).padStart(2, '0') + '-' + String(mDate[2]).padStart(2, '0');
-                    if (ds < runParams.dates_range.from || ds > runParams.dates_range.to) bad.push(`${Number(mDate[1])}/${Number(mDate[2])}`);
-                }
+                // 지시 #59-1: 4형식 날짜 인식 (ISO·07-21·7/21·7월 21일)
+                const bad = extractDatesISO(scanText, runParams.dates_range.from.slice(0, 4))
+                    .filter(ds => ds < runParams.dates_range.from || ds > runParams.dates_range.to)
+                    .map(ds => Number(ds.slice(5, 7)) + '/' + Number(ds.slice(8, 10)));
                 const uniq = [...new Set(bad)];
                 if (uniq.length) {
                     result.report.date_warning = `⚠️ 날짜 불일치: 산출물에 ${uniq.join(', ')} — 서버 확정 ${runParams.dates_hint}와 다름. 교정하지 않았으니 대표 확인 필요`;
@@ -6398,6 +6395,28 @@ function capWeekdayErrors(text) {
 
 let capTestRunning = false;
 
+// 지시 #59-1: 산출물 날짜 인식 공용 유틸 — 4형식("2026-07-21"·"07-21"·"7/21"·"7월 21일") 전부 ISO로 추출
+// (S1 채점기 오심 대응: 카피가 ISO로 정확히 표기했는데 채점기가 "7/21"형만 인식해 거짓 실패)
+function extractDatesISO(text, year) {
+    const t = String(text || '');
+    const y = String(year || new Date().getFullYear());
+    const out = new Set();
+    const push = (mm, dd) => {
+        const m = Number(mm), d = Number(dd);
+        if (m >= 1 && m <= 12 && d >= 1 && d <= 31) out.add(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    };
+    let m;
+    const reIso = /\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g;
+    while ((m = reIso.exec(t))) { const mm = Number(m[2]), dd = Number(m[3]); if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) out.add(`${m[1]}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`); }
+    const reMd = /(?<!\d)(\d{1,2})\s*[\/]\s*(\d{1,2})(?!\d)/g;
+    while ((m = reMd.exec(t))) push(m[1], m[2]);
+    const reKo = /(\d{1,2})월\s*(\d{1,2})일/g;
+    while ((m = reKo.exec(t))) push(m[1], m[2]);
+    const reDash = /(?<!\d)(\d{2})-(\d{2})(?!\d)(?!-)/g; // "07-21"형 — 전화번호 오탐 방지: 뒤에 -숫자 이어지면 제외
+    while ((m = reDash.exec(t))) push(m[1], m[2]);
+    return [...out];
+}
+
 // ===== 지시 #51: 실전 문구 스모크 시험 — 대표 원문 5건 (한 글자도 수정 금지) =====
 // 전 문항 is_test 격리: 실제 일정 등록·발송·이미지 생성 호출 없음 (마루는 판단만, 미소는 프롬프트까지만).
 // 답변 전문(transcripts)을 성적표에 기록 — 똑똑이가 원본 대조 판독. 실행은 [#51-실행] 별도 승인.
@@ -6435,15 +6454,10 @@ async function executeSmokeTest(run, actor, scope) {
     const smokeDates = { dates_hint: `${TUE}(화)~${THU}(목)`, dates_range: { from: TUE, to: THU } };
     const HYPE_RE = /미쳤(어요|다|음)|끝판왕?|인생\s*(호박|귤|맛)|역대급/; // 지시 #55-4 과장 금지어
     const dateCheck = text => {
-        const t = String(text || '');
-        const inR = new RegExp(`${Number(TUE.slice(5, 7))}\\s*[\\/월]\\s*${Number(TUE.slice(8, 10))}|${Number(TUE.slice(8, 10))}일`).test(t);
-        let outR = false;
-        const reD2 = /(\d{1,2})\s*[\/월]\s*(\d{1,2})일?/g;
-        let m2;
-        while ((m2 = reD2.exec(t))) {
-            const ds = TUE.slice(0, 4) + '-' + String(m2[1]).padStart(2, '0') + '-' + String(m2[2]).padStart(2, '0');
-            if (ds < TUE || ds > THU) outR = true;
-        }
+        // 지시 #59-1: 4형식 날짜 인식 (ISO·07-21·7/21·7월 21일)
+        const dates = extractDatesISO(text, TUE.slice(0, 4));
+        const inR = dates.includes(TUE) || dates.includes(THU);
+        const outR = dates.some(ds => ds < TUE || ds > THU);
         return { inR, outR };
     };
 
@@ -6947,14 +6961,10 @@ async function executeCapabilityTest(run, actor) {
                 dates_hint: '2026-07-21(화)~2026-07-23(목)', dates_range: dr,
             }, helpers });
             const tD = (rD.report.versions || []).map(v => v.text).join('\n');
-            const inRange = /7\s*[\/월]\s*21|21일/.test(tD) && /7\s*[\/월]\s*23|23일/.test(tD);
-            let outRange = false;
-            const reD = /(\d{1,2})\s*[\/월]\s*(\d{1,2})일?/g;
-            let mD;
-            while ((mD = reD.exec(tD))) {
-                const ds = '2026-' + String(mD[1]).padStart(2, '0') + '-' + String(mD[2]).padStart(2, '0');
-                if (ds < dr.from || ds > dr.to) outRange = true;
-            }
+            // 지시 #59-1: 4형식 날짜 인식 (ISO·07-21·7/21·7월 21일)
+            const dISO = extractDatesISO(tD, '2026');
+            const inRange = dISO.includes(dr.from) || dISO.includes(dr.to);
+            const outRange = dISO.some(ds => ds < dr.from || ds > dr.to);
             const hype = /미쳤(어요|다|음)|끝판왕?|인생\s*(호박|귤|맛)|역대급/.test(tD); // 지시 #55-4 과장 금지어
             add('글샘', '날짜 단일 소스 준수 (지시#54 S1 사고 박제)', inRange && !outRange && !hype,
                 '확정 날짜(7/21~7/23)만 표기 + 범위 밖 날짜 없음 + 과장 금지어 없음',

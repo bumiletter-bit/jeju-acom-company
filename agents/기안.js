@@ -82,15 +82,27 @@ ${load(BRAND_FILE, '브랜드 가이드')}
 - 비용을 모르면 "미정 — 견적 필요" 정직 표기. 리스크 1개 이상 필수
 - 📦 대표가 후보·시안·리스트 등 결과물 자체를 요청하면 (예: "아이디 3개 만들어줘") deliverables에 **완성본 전문**을 담는다 — 실행 단계에 "만들 예정"만 쓰고 결과물을 비우면 실패 (지시 #54)
 - 반드시 submit_plan 도구로 제출. 다른 텍스트 응답 금지`;
-        const msg = await anthropic.messages.create({
+        // 지시 #59-3: 창작 요청 감지 — deliverables 실물 필수 (빈 배열 = 재생성 1회 → 실패 시 정직 표기)
+        const isCreative = /만들어\s*줘|추천|후보|예시|(\d+)\s*개\s*(해|만들|뽑|제안)|시안/.test(instruction);
+        const callPlan = async extra => await anthropic.messages.create({
             model: GIAN_MODEL, max_tokens: 1400,
             system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
             tools: [PLAN_TOOL], tool_choice: { type: 'tool', name: 'submit_plan' },
-            messages: [{ role: 'user', content: `대표 기획 요청: ${instruction}` }],
+            messages: [{ role: 'user', content: `대표 기획 요청: ${instruction}${extra || ''}` }],
         });
-        const tu = msg.content.find(b => b.type === 'tool_use');
+        let msg = await callPlan();
+        let tu = msg.content.find(b => b.type === 'tool_use');
         if (!tu) throw new Error('기안 응답에서 기획안(tool_use)을 찾지 못했습니다');
-        const p = tu.input;
+        let p = tu.input;
+        let deliverablesError = '';
+        // 지시 #59-3: 창작 요청인데 산출물이 비면 재생성 1회 (경고 명시) → 그래도 비면 정직 표기
+        const delivEmpty = arr => !Array.isArray(arr) || !arr.filter(x => x && String(x).trim()).length;
+        if (isCreative && delivEmpty(p.deliverables)) {
+            msg = await callPlan('\n\n※ 경고: 직전 응답에 산출물(deliverables)이 비어 있었다. 대표가 요청한 후보·시안·예시의 **완성본 전문**을 deliverables 배열에 반드시 담아라 (예: 아이디 후보 각각, 소개글 각각의 전체 텍스트). 실행 단계에 "만들 예정"만 쓰는 것은 실패다.');
+            tu = msg.content.find(b => b.type === 'tool_use');
+            if (tu && !delivEmpty(tu.input.deliverables)) p = tu.input;
+            else deliverablesError = '산출물 생성 실패 — 재생성 1회에도 deliverables가 비어 있음 (사유: 모델이 결과물 칸을 채우지 않음). 대표 확인 필요';
+        }
         // 지시 #50-4: 7항목 서버 구조화 보장 — 누락·정화 후 빈 필드는 "미정 — 대표 확인 필요" 자리표시 (정직 표기, 몰래 생략 금지)
         const HOLD = '미정 — 대표 확인 필요';
         const or = (v, cap) => { const c = clean(v).slice(0, cap); return c || HOLD; };
@@ -110,6 +122,7 @@ ${load(BRAND_FILE, '브랜드 가이드')}
             metrics: or(p.metrics, 300),
             risks,
             deliverables: (Array.isArray(p.deliverables) ? p.deliverables : []).map(x => clean(x).slice(0, 1000)).filter(Boolean).slice(0, 10),
+            deliverables_error: deliverablesError,
             model: GIAN_MODEL, instruction,
             note: '기획 기준 = 비전_v1 (철학 4축·로드맵) · 미래 팀장 검수 경유 · 실행은 대표 승인 후 · 미정 항목은 대표 확인 필요',
         };
