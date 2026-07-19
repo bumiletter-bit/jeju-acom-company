@@ -5804,8 +5804,9 @@ app.get('/api/agent-office/runs', authMiddleware, adminOnly, async (req, res) =>
 app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res) => {
     try {
         const { agent_id, run_id = null, feedback_type, comment = '', corrected_output = '' } = req.body || {};
-        const TYPES = ['good', 'edited', 'bad', 'comment'];
-        if (!agent_id || !TYPES.includes(feedback_type)) throw { status: 400, message: 'agent_id와 feedback_type(good/edited/bad/comment)은 필수입니다' };
+        // 지시 #62-2: 'fail' = 실패 수집함 원탭 표시 — 코멘트 없이 허용, 개별 교훈 추출 없이 모아서 일괄 보강
+        const TYPES = ['good', 'edited', 'bad', 'comment', 'fail'];
+        if (!agent_id || !TYPES.includes(feedback_type)) throw { status: 400, message: 'agent_id와 feedback_type(good/edited/bad/comment/fail)은 필수입니다' };
         if (feedback_type === 'bad' && !String(comment).trim()) throw { status: 400, message: '👎 피드백은 이유 한 줄이 필요합니다 (교훈화용)' };
         let original = null;
         if (run_id) {
@@ -5822,7 +5823,16 @@ app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, re
             source: 'agent_office', actor: adminActor(req),
         });
         // 6차: ✏️/👎/💬 피드백은 교훈 후보 자동 추출 (제안 상태 — 대표 승인 후에만 활성)
-        if (feedback_type !== 'good') extractLessonFromFeedback(row, adminActor(req));
+        // 지시 #62-2: 'fail'은 개별 교훈 추출 없이 수집함에 적재 — 5건 도달 시마다 일괄 보강 검토 알림
+        if (feedback_type !== 'good' && feedback_type !== 'fail') extractLessonFromFeedback(row, adminActor(req));
+        if (feedback_type === 'fail') {
+            const failCnt = (await pool.query(
+                `SELECT COUNT(*)::int AS c FROM agent_feedback WHERE feedback_type = 'fail' AND is_deleted = false`)).rows[0].c;
+            if (failCnt > 0 && failCnt % 5 === 0) {
+                notifyTelegram(`🧰 실패 수집함 ${failCnt}건 — 일괄 보강 검토 시점입니다 (지시 #62: 똑똑이 묶음 분석 → 대표 ㄱ → 일괄 반영)`);
+            }
+            return res.json({ message: `실패 수집함에 기록되었습니다 (현재 ${failCnt}건 — 5건 단위로 일괄 보강 검토)`, feedback: row });
+        }
         res.json({ message: '피드백이 기록되었습니다 — 교훈 후보를 정리 중입니다', feedback: row });
     } catch (err) { handleAdminErr(res, err); }
 });

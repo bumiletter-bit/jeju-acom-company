@@ -10650,6 +10650,7 @@ window.openAoDetail = async function(agentId) {
                 <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'edited')">✏️ 수정</button>
                 <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'bad')">👎</button>
                 <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'comment')">💬</button>
+                <button class="ao-fb-btn ao-fail-btn" title="실패 수집함에 담기 (지시 #62)" onclick="aoMarkFail(${agent.id}, ${lastDone.id}, this)">❌</button>
             </div>` : ''}
             <h4 class="ao-sec-title">📚 학습 노트 <small style="color:#aaa;">(활성 ${activeLessons.length} · 제안 ${lessonProposals.length})</small></h4>
             ${lessonProposals.length ? lessonProposals.map(l => `
@@ -10713,7 +10714,7 @@ function aoFinishDetailProgress(run) {
 }
 
 // 피드백 한 줄 렌더 (9.5차: 종류 라벨 + 대상 보고서 + 보기 링크)
-const AO_FB_LABEL = { good: '👍 좋음', edited: '✏️ 수정', bad: '👎 다시', comment: '💬 코멘트' };
+const AO_FB_LABEL = { good: '👍 좋음', edited: '✏️ 수정', bad: '👎 다시', comment: '💬 코멘트', fail: '❌ 실패' };
 function aoFbLine(f, withAgent) {
     const dt = aoKst(f.created_at);
     const label = AO_FB_LABEL[f.feedback_type] || '💬';
@@ -10781,21 +10782,34 @@ window.aoModalLessonAct = async function(id, act, weekOnly) {
     } catch (e) { alert(e.message); }
 };
 
-// 피드백 이력 모달 (최근순)
+// 피드백 이력 모달 — 지시 #62-2: 실패 수집함 통합 뷰 (❌는 요원별·원인별 목록, 나머지는 최근순 이력)
 window.aoOpenFeedbackModal = async function() {
     let data;
     try { data = await api('/api/agent-office/feedback'); }
     catch (e) { return alert(e.message); }
-    const fb = data.feedback || [];
-    const body = fb.length
-        ? '<div class="ao-fb-history" style="max-height:60vh;">' + fb.map(f => aoFbLine(f, true)).join('') + '</div>'
+    const all = data.feedback || [];
+    const fails = all.filter(f => f.feedback_type === 'fail');
+    const fb = all.filter(f => f.feedback_type !== 'fail');
+    // 실패 수집함: 요원별 그룹 → 원인(코멘트)별 표시. 5건 단위 일괄 보강 순환 (지시 #62)
+    const failGroups = {};
+    fails.forEach(f => { (failGroups[f.agent_name] = failGroups[f.agent_name] || []).push(f); });
+    const failBody = fails.length
+        ? Object.entries(failGroups).map(([name, fs]) => `
+            <h4 class="ao-sec-title">🤖 ${aoEsc(name)} <small style="color:#aaa;">(${fs.length}건)</small></h4>
+            ${fs.map(f => `<div class="ao-fb-hist-item">❌ <span class="ao-log-time">${aoKst(f.created_at)}</span>
+                [${aoEsc(f.comment || '원인 미분류')}]${f.run_id ? ` <button class="ao-fb-btn ao-fb-view" onclick="aoOpenReport(${f.run_id})">📄 보고서</button>` : ''}</div>`).join('')}`).join('')
+        : '<div class="ao-empty-note">수집된 실패가 없습니다 — 실사용 중 아쉬운 결과에 [❌ 실패 표시]를 눌러주세요</div>';
+    const fbBody = fb.length
+        ? '<div class="ao-fb-history">' + fb.map(f => aoFbLine(f, true)).join('') + '</div>'
         : '<div class="ao-empty-note">아직 피드백이 없습니다</div>';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 8px;">💬 피드백 이력 <small style="color:#888;">(${fb.length}건)</small></h3>
-        ${body}
+        <h3 style="margin:0 0 8px;">🧰 실패 수집함 <small style="color:#888;">(${fails.length}건 — 5건 단위 일괄 보강 검토, 개별 건 반복 재검증 없음)</small></h3>
+        <div style="max-height:32vh;overflow-y:auto;">${failBody}</div>
+        <h3 style="margin:14px 0 8px;">💬 피드백 이력 <small style="color:#888;">(${fb.length}건)</small></h3>
+        <div style="max-height:32vh;overflow-y:auto;">${fbBody}</div>
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
@@ -10889,6 +10903,19 @@ window.aoSendFeedback = async function(agentId, runId, type) {
                 : '피드백 감사합니다! 교훈으로 정리해서 다음 작업부터 반영할게요 📚', 6000);
         }
         showToast(type === 'good' ? '피드백이 기록되었습니다 👍' : '피드백 기록 — 교훈 후보 정리 중 📚 (마루 패널에서 승인)');
+        aoRefreshGrowth();
+    } catch (err) { alert(err.message); }
+};
+
+// 지시 #62-2: [❌ 실패 표시] 원탭 — 실패 수집함 적재 (개별 재검증 대신 쌓이면 일괄 보강)
+window.aoMarkFail = async function(agentId, runId, btnEl) {
+    const comment = prompt('어떤 점이 실패였나요? (선택 — 비워도 등록됩니다. 원인별 분류에 사용)') || '';
+    try {
+        const res = await api('/api/agent-office/feedback', 'POST', {
+            agent_id: agentId, run_id: runId, feedback_type: 'fail', comment: comment.trim(), corrected_output: '',
+        });
+        showToast('🧰 ' + res.message);
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = '❌ 수집됨'; }
         aoRefreshGrowth();
     } catch (err) { alert(err.message); }
 };
@@ -11446,6 +11473,8 @@ window.aoOpenReport = async function(runId) {
             <h3 style="margin:0 0 4px;">📄 ${aoEsc(run.agent_name)} 보고서
                 ${(!run.is_deleted && !run.is_test && run.status === 'done')
                     ? `<button class="ao-fb-btn ao-modal-confirm" onclick="aoArchiveRun(${run.id}); this.closest('.modal-overlay').remove();">✔ 확인</button>` : ''}
+                ${(!run.is_test && run.agent_id)
+                    ? `<button class="ao-fb-btn ao-fail-btn" title="실패 수집함에 담기 (지시 #62 — 쌓이면 일괄 보강)" onclick="aoMarkFail(${run.agent_id}, ${run.id}, this)">❌ 실패 표시</button>` : ''}
                 ${rep && rep.file_id ? `<button class="ao-fb-btn ao-modal-confirm" style="margin-right:6px;" onclick="aoDownloadFile(${rep.file_id})">📎 엑셀 다운로드</button>` : ''}
             </h3>
             <div class="ao-detail-meta">${aoEsc(run.agent_team)} · 실행 ${dt}</div>
