@@ -6417,7 +6417,8 @@ function smokeMissingInfo(text) {
     ];
     return req.filter(([, re]) => !re.test(t)).map(([n]) => n);
 }
-async function executeSmokeTest(run, actor) {
+async function executeSmokeTest(run, actor, scope) {
+    const inScope = k => !Array.isArray(scope) || !scope.length || scope.includes(k); // 지시 #56: 부분 재실행
     const results = [];
     const transcripts = [];
     const add = (name, pass, expected, actual) => results.push({ name, pass: !!pass, expected, actual: String(actual).slice(0, 400) });
@@ -6448,6 +6449,8 @@ async function executeSmokeTest(run, actor) {
 
     try {
         // ── S1: 문자 (글샘 → 한결) ──
+        if (inScope('S1')) {
+
         await step('S1 실전 문자 — 글샘 생성·한결 검수 중...');
         try {
             const gs = loadAgentRunner('글샘');
@@ -6465,7 +6468,10 @@ async function executeSmokeTest(run, actor) {
             // 지시 #54-1: 한결 검수 제거 — 최종 검토는 대표 (코드 검사로 대체됨)
         } catch (e) { add('S1 실행', false, '글샘→한결 파이프라인', '오류: ' + e.message); }
 
+        }
         // ── S2: 톡톡 + 디자인 (글샘 + 미소 → 한결) ──
+        if (inScope('S2')) {
+
         await step('S2 톡톡+디자인 — 글샘·미소 생성·한결 검수 중...');
         try {
             const gs = loadAgentRunner('글샘');
@@ -6489,7 +6495,10 @@ async function executeSmokeTest(run, actor) {
             add('S2 과장 금지어 없음 (지시#55)', !HYPE_RE.test(text2), '과장 표현 없음', HYPE_RE.test(text2) ? '검출(실패)' : '없음');
         } catch (e) { add('S2 실행', false, '글샘+미소→한결 파이프라인', '오류: ' + e.message); }
 
+        }
         // ── S3: 일정 (마루 판단만 — 실제 등록 금지) ──
+        if (inScope('S3')) {
+
         await step('S3 일정 해석 — 마루 판단 중... (실제 등록 없음)');
         try {
             const { d } = await maruDecide(SMOKE_S3);
@@ -6505,7 +6514,10 @@ async function executeSmokeTest(run, actor) {
                 threeOk ? `등록 해석 ${items.length}건 [${cats.join(',')}]` : (clarifyOk ? 'clarify: ' + d.clarify_question.slice(0, 80) : `${d.action}/${d.schedule_op || ''} — 부적합`));
         } catch (e) { add('S3 실행', false, '마루 판단', '오류: ' + e.message); }
 
+        }
         // ── S4: 인스타 (기안 → 미래) ──
+        if (inScope('S4')) {
+
         await step('S4 인스타 기획 — 기안 생성·미래 검수 중...');
         try {
             const gi = loadAgentRunner('기안');
@@ -6519,7 +6531,10 @@ async function executeSmokeTest(run, actor) {
                 '제주·카페·오션라운지 요소', /오션|ocean/i.test(full4) ? '반영' : '미확인');
         } catch (e) { add('S4 실행', false, '기안→미래 파이프라인', '오류: ' + e.message); }
 
+        }
         // ── S5: 보고서 (기안 → 미래) ──
+        if (inScope('S5')) {
+
         await step('S5 신규 품목 보고서 — 기안 생성·미래 검수 중...');
         try {
             const gi = loadAgentRunner('기안');
@@ -6536,10 +6551,12 @@ async function executeSmokeTest(run, actor) {
             add('S5 판매량 전망 없음', !/판매량.*(예상|전망)|월\s*\d+\s*(박스|kg).*(판매|매출)/.test(full5),
                 '근거 없는 전망 금지 (지시 #54 — 검수 게이트 제거, 대표 직행)', '전문 대조');
         } catch (e) { add('S5 실행', false, '기안→미래 파이프라인', '오류: ' + e.message); }
+        }
     } catch (fatal) { console.error('스모크 시험 치명 오류:', fatal.message); }
 
     const pass = results.filter(r => r.pass).length;
-    const summaryText = `🧪 실전 스모크: ${pass}/${results.length} 통과 (지시 #51 — 대표 원문 5건, 판독은 똑똑이·판정은 대표)`;
+    const scopeLabel = Array.isArray(scope) && scope.length ? ` [${scope.join('·')} 부분 재실행]` : '';
+    const summaryText = `🧪 실전 스모크: ${pass}/${results.length} 통과${scopeLabel} (지시 #51 — 판독은 똑똑이·판정은 대표)`;
     const result = {
         summary: summaryText,
         lines: results.map(r => `${r.pass ? '✅' : '⚠️'} ${r.name}`),
@@ -6560,7 +6577,7 @@ async function executeSmokeTest(run, actor) {
     notifyTelegram(`🧪 실전 스모크 결과: ${pass}/${results.length} — 성적표에서 전문 판독`);
     return result;
 }
-async function svcStartSmokeTest(actor) {
+async function svcStartSmokeTest(actor, scope) {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다');
     if (capTestRunning) throw new Error('점검이 이미 진행 중입니다 — 완료 후 다시 실행해주세요');
     const maru = (await pool.query(`SELECT * FROM agents WHERE role = 'chief' AND is_deleted = false LIMIT 1`)).rows[0];
@@ -6570,7 +6587,7 @@ async function svcStartSmokeTest(actor) {
         `INSERT INTO agent_runs (agent_id, steps, is_test) VALUES ($1, $2, TRUE) RETURNING *`,
         [maru.id, JSON.stringify([firstStep])])).rows[0];
     capTestRunning = true;
-    executeSmokeTest(run, actor)
+    executeSmokeTest(run, actor, scope)
         .catch(err => {
             console.error('스모크 시험 오류:', err.message);
             return pool.query(`UPDATE agent_runs SET status='error', result=$2, finished_at=NOW() WHERE id=$1`,
@@ -8672,7 +8689,7 @@ initDB().then(() => {
                         changes: { after: { via: 'boot', basis: f.rows[0].value.basis || '지시 #52' } },
                         source: 'agent_office', actor: null,
                     });
-                    await svcStartSmokeTest(null);
+                    await svcStartSmokeTest(null, f.rows[0].value.scope || null);
                     console.log('지시 #52: 스모크 실행 요청 플래그 소비 — 실전 스모크 시작');
                 }
             } catch (e) { console.error('스모크 요청 플래그 처리 실패:', e.message); }
