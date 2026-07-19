@@ -9962,9 +9962,53 @@ async function aoRefreshGrowth() {
             '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 <strong>' + g.feedback.total + '</strong>건</span>' +
             misChip +
             '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenTestResultsModal()">🧪 성적표</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoTelegramTest()">🔔 알림 테스트</span>';
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoTelegramTest()">🔔 알림 테스트</span>' +
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenArchiveModal()">📚 아카이브</span>';
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
+
+// 지시 #36: 통합본 아카이브 — 목록 모달 + 다운로드 (대표 전용)
+window.aoOpenArchiveModal = async function() {
+    let data;
+    try { data = await api('/api/agent-office/archive'); }
+    catch (e) { return alert(e.message); }
+    const files = data.files || [];
+    const body = files.length
+        ? '<div class="ao-run-history">' + files.map(f => {
+            const dt = new Date(f.mtime).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const kb = Math.round((f.size || 0) / 1024 * 10) / 10;
+            return '<div class="ao-run-item">📄 ' + aoEsc(f.name) + ' <small style="color:#888;">(' + kb + 'KB · ' + dt + ')</small> '
+                + '<button class="ao-fb-btn" onclick="aoDownloadArchive(\'' + encodeURIComponent(f.name) + '\')">다운로드</button></div>';
+        }).join('') + '</div>'
+        : '<div class="ao-empty-note">아카이브가 비어 있습니다</div>';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal ao-detail-modal">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 8px;">📚 통합본 아카이브 <small style="color:#888;">(${files.length}건 · 영구 보관 — 언제든 재다운로드)</small></h3>
+        ${body}
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+window.aoDownloadArchive = async function(encName) {
+    try {
+        const token = localStorage.getItem('jwt_token');
+        const res = await fetch('/api/agent-office/archive/' + encName + '/download', {
+            headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || '다운로드 실패 (' + res.status + ')'); }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = decodeURIComponent(encName);
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (e) { alert(e.message); }
+};
 
 // 지시 #33: 이미지 미리보기 — 인증 fetch → blob URL (캐시), 썸네일 로드 + 탭하면 크게 보기
 const _aoMediaUrlCache = {};

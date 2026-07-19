@@ -7509,13 +7509,41 @@ app.get('/api/agent-office/files/:id/download', authMiddleware, adminOnly, async
         const MIME = {
             xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
-            webp: 'image/webp', mp4: 'video/mp4',
+            webp: 'image/webp', mp4: 'video/mp4', md: 'text/markdown; charset=utf-8',
         };
         const isMedia = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4'].includes(ext);
         const disposition = (isMedia && req.query.download !== '1') ? 'inline' : 'attachment';
         res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
         res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(fname)}`);
         res.send(r.rows[0].data);
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 지시 #36: 통합본 아카이브 목록·다운로드 (adminOnly — 대표 전용, 읽기 전용)
+const ARCHIVE_DIR = path.join(__dirname, 'docs', 'archive');
+app.get('/api/agent-office/archive', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const fs = require('fs');
+        const files = fs.readdirSync(ARCHIVE_DIR).filter(f => f.endsWith('.md') && f !== 'README.md')
+            .map(f => {
+                const st = fs.statSync(path.join(ARCHIVE_DIR, f));
+                return { name: f, size: st.size, mtime: st.mtime };
+            })
+            .sort((a, b) => b.name.localeCompare(a.name, 'ko'));
+        res.json({ count: files.length, files });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.get('/api/agent-office/archive/:name/download', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        // 경로 탈출 차단: basename 강제 + md 파일명 화이트리스트
+        const name = path.basename(String(req.params.name || ''));
+        if (!/^[\w가-힣.·-]+\.md$/.test(name)) throw { status: 400, message: '잘못된 파일명입니다' };
+        const fs = require('fs');
+        const fp = path.join(ARCHIVE_DIR, name);
+        if (!fs.existsSync(fp)) throw { status: 404, message: '아카이브 파일을 찾을 수 없습니다' };
+        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+        res.send(fs.readFileSync(fp));
     } catch (err) { handleAdminErr(res, err); }
 });
 
