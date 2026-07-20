@@ -7685,7 +7685,8 @@ async function maruSettlementOcr(order, actor) {
         const tu = msg.content.find(b => b.type === 'tool_use');
         if (!tu) throw new Error('이미지에서 품목을 읽지 못했습니다');
         const raw = tu.input;
-        const partner = normalizePartnerName(raw.partner);
+        // 거래처: 대표 지시문 우선 (예: "21일 효돈 정산관리 등록해"의 '효돈') → 없으면 이미지에서 읽은 것 (대표 7/20 지적: 지시문에 썼는데 또 묻는 문제)
+        const partner = normalizePartnerName(order.content) || normalizePartnerName(raw.partner);
         const settleDate = parseSettlementDate(order.content, kstTodayStr()); // 대표 지시 날짜 ("21일" 등) 또는 오늘
         const readItems = (Array.isArray(raw.items) ? raw.items : [])
             .map(x => ({ name: String(x.name || '').trim(), qty: Number(x.qty) || 0 }))
