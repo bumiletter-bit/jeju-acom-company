@@ -9830,12 +9830,17 @@ function aoShowSettlementConfirm(r) {
     const warn = (r.unmatched || []).length
         ? `<div style="margin:8px 0;padding:8px 10px;background:#fff3f3;border:1px solid #f5b5b5;border-radius:8px;color:#c00;font-size:13px;">⚠️ 가격 매칭 실패 ${r.unmatched.length}건 — 저장 시 0원 처리됩니다. 정산관리 화면에서 확인·수정하세요.</div>`
         : '';
+    const dupWarn = r.existing
+        ? `<div style="margin:8px 0;padding:8px 10px;background:#fffbe6;border:1px solid #f0d060;border-radius:8px;color:#a67c00;font-size:13px;">🔁 <strong>${aoEsc(r.partner)} ${aoEsc(r.date||'')}</strong> 정산이 이미 있습니다 (${r.existing.amount.toLocaleString()}원). <strong>저장하면 기존 것을 덮어씁니다</strong> (중복 추가 아님).</div>`
+        : '';
+    const saveLabel = r.existing ? '🔁 덮어쓰기 저장' : '✅ 저장하기';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay ao-settle-overlay';
     overlay.innerHTML = `<div class="modal" style="max-width:560px;width:94vw;">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
         <h3 style="margin:0 0 4px;">📋 정산관리 입력 확인</h3>
         <div style="color:#666;font-size:14px;margin-bottom:10px;"><strong style="color:#333;font-size:16px;">${aoEsc(r.partner)}</strong> · ${aoEsc(r.date || '')} · 총 ${r.box_total}박스</div>
+        ${dupWarn}
         ${warn}
         <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
         <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:420px;">
@@ -9853,7 +9858,7 @@ function aoShowSettlementConfirm(r) {
         </table>
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;">
-            <button class="btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="aoSettleConfirmAnswer(true)">✅ 저장하기</button>
+            <button class="btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="aoSettleConfirmAnswer(true)">${saveLabel}</button>
             <button class="btn-secondary" style="flex:1;padding:12px;font-size:15px;" onclick="aoSettleConfirmAnswer(false)">취소</button>
         </div>
         <div style="text-align:center;color:#999;font-size:12px;margin-top:8px;">저장하면 정산관리 화면에 ${aoEsc(r.partner)} ${r.date || '오늘'}자로 기록됩니다</div>

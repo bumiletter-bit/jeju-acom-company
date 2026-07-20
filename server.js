@@ -7587,6 +7587,27 @@ function normalizePartnerName(raw) {
     return null; // 미매칭 — 확인표에 경고 표시
 }
 
+// 정산 날짜 파싱 (대표 7/20): "21일"(일만·이번달)·"7/21"·"7월 21일"·"내일/어제"·없으면 오늘
+function parseSettlementDate(text, todayStr) {
+    const t = String(text || '');
+    const y = +todayStr.slice(0, 4);
+    const pad = n => String(n).padStart(2, '0');
+    const ok = (mo, d) => mo >= 1 && mo <= 12 && d >= 1 && d <= 31;
+    const shift = n => { const dt = new Date(todayStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n); return dt.toISOString().slice(0, 10); };
+    if (/내일/.test(t)) return shift(1);
+    if (/어제/.test(t)) return shift(-1);
+    // 정산은 미래 날짜여도 올해 기준 (조회용 parseExplicitDate의 "작년" 규칙 미적용)
+    let m = t.match(/(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/); // YYYY-MM-DD
+    if (m && ok(+m[2], +m[3])) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
+    m = t.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/); // M월 D일 (올해)
+    if (m && ok(+m[1], +m[2])) return `${y}-${pad(+m[1])}-${pad(+m[2])}`;
+    m = t.match(/(?<!\d)(\d{1,2})\s*\/\s*(\d{1,2})(?!\d)/); // M/D (올해)
+    if (m && ok(+m[1], +m[2])) return `${y}-${pad(+m[1])}-${pad(+m[2])}`;
+    m = t.match(/(?<![\/\-\d])(\d{1,2})\s*일(?!\s*(전|후|간|째|동안|치))/); // D일 (이번달)
+    if (m && +m[1] >= 1 && +m[1] <= 31) return `${todayStr.slice(0, 7)}-${pad(+m[1])}`;
+    return todayStr;
+}
+
 // 이미지 품목명 → 가격표 품목 정확 매칭 (대표 7/20).
 // matchItemToPricing(유사매칭)은 2.5kg↔4.5kg을 구분 못해 오금액 발생 → 정산관리(돈)는 정확 이름 대조 사용.
 // 이미지 품목명은 "...: 하우스감귤 가정용 - 2.5kg(로얄과)"처럼 가격표 이름을 그대로 포함하므로 substring 대조.
@@ -7665,6 +7686,7 @@ async function maruSettlementOcr(order, actor) {
         if (!tu) throw new Error('이미지에서 품목을 읽지 못했습니다');
         const raw = tu.input;
         const partner = normalizePartnerName(raw.partner);
+        const settleDate = parseSettlementDate(order.content, kstTodayStr()); // 대표 지시 날짜 ("21일" 등) 또는 오늘
         const readItems = (Array.isArray(raw.items) ? raw.items : [])
             .map(x => ({ name: String(x.name || '').trim(), qty: Number(x.qty) || 0 }))
             .filter(x => x.name && x.qty > 0);
@@ -7672,7 +7694,7 @@ async function maruSettlementOcr(order, actor) {
             // 거래처만 못 읽음 — 읽은 품목은 보관하고 거래처만 물어본다 (파편 노출 금지, 대표 답변으로 이어감)
             await maruFinishOrder(order.id, '질문', {
                 type: 'settlement_ocr_need_partner',
-                read_items: readItems, // 보관 — "효돈" 답변 시 재사용
+                read_items: readItems, date: settleDate, // 보관 — "효돈" 답변 시 재사용
                 question: `이미지에서 품목 ${readItems.length}개(${readItems.reduce((s, x) => s + x.qty, 0)}박스)는 읽었는데 거래처명이 이미지에 없네요. 어느 거래처인가요?\n(효돈농협 / 대성(시온) / 기타거래처 중 하나로 답해주세요)`,
                 summary: `정산관리 이미지 — 거래처 확인 필요 (${readItems.length}품목)`,
             }, run.id);
@@ -7680,7 +7702,7 @@ async function maruSettlementOcr(order, actor) {
             await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW() WHERE id=$1`, [run.id]);
             return;
         }
-        await settlementOcrBuildConfirm(order, partner, readItems, run.id);
+        await settlementOcrBuildConfirm(order, partner, readItems, run.id, settleDate);
     } catch (err) {
         const em = err?.status ? `Anthropic API 오류 (${err.status}): ${err.message}` : (err?.message || String(err));
         console.error('정산관리 OCR 오류:', em);
@@ -7703,14 +7725,14 @@ async function maruTrySettlementPartnerReply(order, actor) {
     if (!pend) return false;
     const readItems = (pend.result && pend.result.read_items) || [];
     if (!readItems.length) return false;
-    await settlementOcrBuildConfirm(order, partner, readItems, null); // 확인표는 order에 붙음 (run 없이)
+    await settlementOcrBuildConfirm(order, partner, readItems, null, pend.result.date); // 보관 날짜로 확인표 (run 없이)
     await pool.query(`UPDATE pending_orders SET status='응답됨', processed_at=NOW() WHERE id=$1`, [pend.id]);
     return true;
 }
 
 // 거래처 확정 후 품목 매칭 + 확인표 생성 (OCR 직후 또는 대표가 거래처 답변한 뒤 공용)
-async function settlementOcrBuildConfirm(order, partner, readItems, runId) {
-    const todayStr = kstTodayStr();
+async function settlementOcrBuildConfirm(order, partner, readItems, runId, settleDate) {
+    const todayStr = settleDate || kstTodayStr();
     const priceMap = await buildPriceMapFor(partner, todayStr);
     // 품목 매칭 + 금액 계산 (정확 이름 대조 — 무게·등급 구분)
     let total = 0; const rows = []; const unmatched = [];
@@ -7720,11 +7742,16 @@ async function settlementOcrBuildConfirm(order, partner, readItems, runId) {
         else { const sub = hit.price * it.qty; total += sub; rows.push({ name: it.name, matched: hit.name, qty: it.qty, price: hit.price, subtotal: sub }); }
     }
     const boxTotal = readItems.reduce((s, x) => s + x.qty, 0);
-    // 확인표 — 저장 안 함. 대표 "응" 후 maruTrySettlementOcrConfirm이 저장
+    // 중복 확인 (대표 7/20): 같은 날짜·거래처 정산이 이미 있으면 덮어쓰기 (중복 INSERT 방지 — 매출 2배 집계 사고 예방)
+    const dup = (await pool.query(
+        `SELECT id, amount FROM settlements WHERE partner = $1 AND date::text = $2 ORDER BY id DESC LIMIT 1`,
+        [partner, todayStr])).rows[0];
+    const existing = dup ? { id: dup.id, amount: Number(dup.amount) } : null;
+    // 확인표 — 저장 안 함. 대표 "응"/버튼 후 maruTrySettlementOcrConfirm이 저장
     await maruFinishOrder(order.id, '질문', {
         type: 'settlement_ocr_confirm',
-        partner, date: todayStr, rows, total, box_total: boxTotal, unmatched,
-        question: `${partner} 정산관리에 ${rows.length}개 품목(${boxTotal}박스, 합계 ${total.toLocaleString()}원)을 저장할까요?`,
+        partner, date: todayStr, rows, total, box_total: boxTotal, unmatched, existing,
+        question: `${partner} ${todayStr} 정산관리에 ${rows.length}개 품목(${boxTotal}박스, 합계 ${total.toLocaleString()}원)을 저장할까요?${existing ? `\n⚠️ 이 날짜·거래처 정산이 이미 있습니다 (${existing.amount.toLocaleString()}원) — 저장하면 덮어씁니다` : ''}`,
         summary: `${partner} 정산관리 입력 확인 (${boxTotal}박스)`,
     }, runId);
     if (runId) {
@@ -7753,23 +7780,25 @@ async function maruTrySettlementOcrConfirm(order, actor) {
         await pool.query(`UPDATE pending_orders SET status='취소' WHERE id=$1`, [pend.id]);
         return true;
     }
-    // 저장 실행 — settlements INSERT (정산관리)
-    // 저장 시 품목명은 가격표 정식명(matched)을 우선 사용 — 정산관리 화면·집계와 일치
+    // 저장 실행 — 정산관리 화면과 동일 경로. 품목명은 가격표 정식명(matched) 우선 (집계 일치)
     const items = (r.rows || []).map(x => ({ name: x.matched || x.name, qty: x.qty, price: x.price || 0, subtotal: x.subtotal || 0 }));
+    // 중복 방지 (대표 7/20): 같은 날짜·거래처 기존 정산이 있으면 삭제 후 저장 = 덮어쓰기 (매출 2배 집계 예방)
+    const delDup = await pool.query(`DELETE FROM settlements WHERE partner = $1 AND date::text = $2 RETURNING id`, [r.partner, r.date]);
+    const overwrote = delDup.rows.length;
     await pool.query(
         `INSERT INTO settlements (date, partner, amount, items, from_pricing) VALUES ($1, $2, $3, $4, TRUE)`,
         [r.date, r.partner, r.total || 0, JSON.stringify(items)]);
     await writeAudit({
-        action: 'create', targetType: 'settlement', targetId: null,
-        changes: { after: { via: 'image_ocr', partner: r.partner, date: r.date, box_total: r.box_total, amount: r.total } },
+        action: overwrote ? 'update' : 'create', targetType: 'settlement', targetId: null,
+        changes: { after: { via: 'image_ocr', partner: r.partner, date: r.date, box_total: r.box_total, amount: r.total, overwrote } },
         source: 'agent_office', actor,
     });
     await pool.query(`UPDATE pending_orders SET status='응답됨', processed_at=NOW() WHERE id=$1`, [pend.id]);
     await maruFinishOrder(order.id, '완료', {
-        type: 'settlement_saved_ocr', partner: r.partner, date: r.date, total: r.total, box_total: r.box_total,
-        notice: `${r.partner} 정산관리에 저장 완료 (${r.box_total}박스, ${(r.total || 0).toLocaleString()}원) — 정산관리 화면에서 확인·수정 가능`,
+        type: 'settlement_saved_ocr', partner: r.partner, date: r.date, total: r.total, box_total: r.box_total, overwrote,
+        notice: `${r.partner} ${r.date} 정산관리에 ${overwrote ? '덮어쓰기' : '저장'} 완료 (${r.box_total}박스, ${(r.total || 0).toLocaleString()}원) — 정산관리 화면에서 확인·수정 가능`,
     });
-    notifyTelegram(`✅ 정산관리 입력 — ${r.partner} (${r.box_total}박스)`);
+    notifyTelegram(`✅ 정산관리 입력 — ${r.partner} ${r.date} (${r.box_total}박스)${overwrote ? ' [덮어씀]' : ''}`);
     return true;
 }
 
