@@ -5211,18 +5211,31 @@ const PRODUCT_CATALOG = new Set([
 // 송장변환 품목 매칭 = 오늘 품목별 금액(pricing) 기반 (대표 7/20)
 // matchProductRaw(정교한 옵션 파서)로 표준 품목명 생성 → 오늘 pricing 품목과 특징 매칭 →
 // pricing에 있으면 그 품목명, 없으면 [미매칭]. pricing 미로드 시 표준명 폴백. 중간발주도 공유.
-let aoInvoicePricingNames = []; // 오늘 유효 pricing 품목명
+let aoInvoicePricingNames = []; // 오늘 유효 pricing 품목명 (전체)
+let aoInvoicePricingByPartner = {}; // 거래처별 품목명 Set (대표 7/21 — 중간발주 필터·엑셀 색상)
 async function aoLoadInvoicePricing() {
     try {
         const data = await api('/api/pricing');
         const today = new Date();
         const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
         const names = new Set();
+        aoInvoicePricingByPartner = {};
         data.forEach(p => {
-            if (String(p.startDate) <= todayStr && todayStr <= String(p.endDate)) (p.items||[]).forEach(it => it.name && names.add(it.name));
+            if (String(p.startDate) <= todayStr && todayStr <= String(p.endDate)) {
+                const set = aoInvoicePricingByPartner[p.partner] = aoInvoicePricingByPartner[p.partner] || new Set();
+                (p.items || []).forEach(it => { if (it.name) { names.add(it.name); set.add(it.name); } });
+            }
         });
         aoInvoicePricingNames = [...names];
-    } catch (e) { aoInvoicePricingNames = []; console.error('송장변환 pricing 로드 실패:', e); }
+    } catch (e) { aoInvoicePricingNames = []; aoInvoicePricingByPartner = {}; console.error('송장변환 pricing 로드 실패:', e); }
+}
+// 품목명 → 거래처 판정 (매칭된 pricing 이름 기준, 미매칭이면 null) — 대표 7/21
+function aoItemPartner(name) {
+    if (!name || String(name).startsWith('[미매칭]')) return null;
+    for (const [partner, set] of Object.entries(aoInvoicePricingByPartner)) {
+        if (set.has(name)) return partner;
+    }
+    return null;
 }
 // 품목명 → 특징(과일·용도·중량·등급) 추출 (정산 matchItemToPricing과 같은 개념, 송장변환용 프론트 판)
 function aoInvoiceFeat(name) {
@@ -5509,6 +5522,9 @@ function exportInvoiceExcel(converted) {
     const dStyle = { border: thinBorder, font: { name: '맑은 고딕', sz: 11 }, alignment: { vertical: 'center' } };
     const dRed = { border: thinBorder, font: { name: '맑은 고딕', sz: 11, color: { rgb: 'FF0000' }, bold: true }, fill: { fgColor: { rgb: 'FFC7CE' } }, alignment: { vertical: 'center' } };
     const dYellow = { border: thinBorder, font: { name: '맑은 고딕', sz: 11 }, fill: { fgColor: { rgb: 'FFFF00' } }, alignment: { vertical: 'center' } };
+    // 거래처별 색상 (대표 7/21 — 품목명 셀 E열): 효돈=아주 연한 파랑, 시온=아주 연한 보라, 기타=아주 연한 갈색
+    const mkPartnerStyle = rgb => ({ border: thinBorder, font: { name: '맑은 고딕', sz: 11 }, fill: { fgColor: { rgb } }, alignment: { vertical: 'center' } });
+    const AO_PARTNER_XLS = { '효돈농협': mkPartnerStyle('E8F1FB'), '대성(시온)': mkPartnerStyle('F0EAF8'), '기타거래처': mkPartnerStyle('F2EBE3') };
 
     function hasDateRequest(msg) {
         if (!msg) return false;
@@ -5525,10 +5541,12 @@ function exportInvoiceExcel(converted) {
         const isJeju = /제주/.test(addrVal);
         const optVal = ws['E' + r] ? String(ws['E' + r].v || '') : '';
         const isUnmatched = optVal.startsWith('[미매칭]');
+        const partnerStyle = isUnmatched ? null : AO_PARTNER_XLS[aoItemPartner(optVal)]; // 거래처별 품목 셀 색상 (대표 7/21)
         cols.forEach(col => {
             const ref = col + r;
             let style = dStyle;
             if (isUnmatched && col === 'E') style = dRed;
+            else if (col === 'E' && partnerStyle) style = partnerStyle; // 매칭 품목 = 거래처 색
             else if (isDateReq && col === 'J') style = dRed;
             else if (isJeju && col === 'I') style = dYellow;
             if (ws[ref]) ws[ref].s = style;
@@ -5704,15 +5722,30 @@ function confirmAddItem() {
 }
 window.confirmAddItem = confirmAddItem;
 
+// 중간발주 거래처 필터 (대표 7/21): 품목추가 옆 — 전체보기/효돈농협/대성(시온)/기타거래처
+let aoQtyPartnerFilter = '전체';
+const AO_QTY_PARTNERS = ['전체', '효돈농협', '대성(시온)', '기타거래처'];
+function aoRenderQtyPartnerFilter() {
+    const box = document.getElementById('qty-partner-filter');
+    if (!box) return;
+    box.innerHTML = AO_QTY_PARTNERS.map(p =>
+        `<button class="btn-sm ${p === aoQtyPartnerFilter ? 'btn-primary' : 'btn-outline'}" style="margin-right:4px;" onclick="aoSetQtyPartnerFilter('${p === '전체' ? '전체' : p.replace(/'/g,"\\'")}')">${p === '전체' ? '전체보기' : p}</button>`
+    ).join('');
+}
+window.aoSetQtyPartnerFilter = function(p) { aoQtyPartnerFilter = p; renderQtyList(); };
 function renderQtyList() {
+    aoRenderQtyPartnerFilter();
     const list = document.getElementById('invoice-qty-list');
-    list.innerHTML = qtyAggregated.map((it, i) => `
+    list.innerHTML = qtyAggregated.map((it, i) => {
+        // 거래처 필터 (전체보기면 전부, 아니면 해당 거래처 품목만)
+        if (aoQtyPartnerFilter !== '전체' && aoItemPartner(it.name) !== aoQtyPartnerFilter) return '';
+        return `
         <div class="qty-row qty-cat-${it.cat} ${it.checked ? '' : 'unchecked'} ${it.cat === 'none' ? 'unmatched' : ''}" onclick="toggleQtyRow(${i})">
             <input type="checkbox" ${it.checked ? 'checked' : ''} onclick="event.stopPropagation(); toggleQtyRow(${i})">
             <span class="qty-name">${it.name}</span>
             <input type="number" class="qty-num-input" value="${it.qty}" min="0" onclick="event.stopPropagation()" onchange="editQtyNum(${i}, this.value)">
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
     updateQtySummary();
 }
 
