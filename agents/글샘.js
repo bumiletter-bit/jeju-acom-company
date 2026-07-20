@@ -21,6 +21,7 @@ const KNOWLEDGE_FILES = [
     '명분_라이브러리.md',        // [E] 명분 없는 할인 금지
     '검증된_카피_자산집.md',     // [F] 킬러 카피
     '마케팅_전문팀_시스템.md',    // [G] 비전 · 출력 규칙
+    '톡톡_실전사례_v1.md',       // [H] 1년치 발송 실물 15건 분석 (대표 제공 7/20 — 참고·발전, 고정 금지)
 ];
 let _knowledgeCache = null;
 function loadKnowledge() {

@@ -30,6 +30,13 @@ function loadKnowledge() {
     } catch (e) {
         parts.push(`\n\n(지식 문서 로드 실패: ${e.message})`);
     }
+    // 지시(대표 7/20): 1년치 톡톡 발송 실물 15건 분석 — 배너 글씨 위계·쿠폰 스티커·시즌 컬러·아꼼이 캐릭터 연출 (참고·발전, 고정 금지)
+    try {
+        parts.push('\n\n===== [지식 문서: 톡톡_실전사례_v1.md — 실전 배너 구조 분석 (대표 제공)] =====\n'
+            + fs.readFileSync(path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '톡톡_실전사례_v1.md'), 'utf8'));
+    } catch (e) {
+        parts.push(`\n\n(톡톡 실전사례 로드 실패: ${e.message})`);
+    }
     _knowledgeCache = parts.join('');
     return _knowledgeCache;
 }
