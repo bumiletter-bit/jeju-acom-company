@@ -5215,19 +5215,16 @@ let aoInvoicePricingNames = []; // 오늘 유효 pricing 품목명 (전체)
 let aoInvoicePricingByPartner = {}; // 거래처별 품목명 Set (대표 7/21 — 중간발주 필터·엑셀 색상)
 async function aoLoadInvoicePricing() {
     try {
-        const data = await api('/api/pricing');
-        const today = new Date();
-        const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        // 대표 7/21: 직원도 쓸 수 있는 경량 카탈로그 API (품목명·거래처만, 단가 제외) — 권한(adminOnly) 문제로 직원 화면에 매칭·색상·필터 안 되던 것 수정
+        const data = await api('/api/invoice/catalog');
         const names = new Set();
         aoInvoicePricingByPartner = {};
-        data.forEach(p => {
-            if (String(p.startDate) <= todayStr && todayStr <= String(p.endDate)) {
-                const set = aoInvoicePricingByPartner[p.partner] = aoInvoicePricingByPartner[p.partner] || new Set();
-                (p.items || []).forEach(it => { if (it.name) { names.add(it.name); set.add(it.name); } });
-            }
+        Object.entries(data.byPartner || {}).forEach(([partner, arr]) => {
+            const set = aoInvoicePricingByPartner[partner] = new Set();
+            (arr || []).forEach(n => { if (n) { names.add(n); set.add(n); } });
         });
         aoInvoicePricingNames = [...names];
-    } catch (e) { aoInvoicePricingNames = []; aoInvoicePricingByPartner = {}; console.error('송장변환 pricing 로드 실패:', e); }
+    } catch (e) { aoInvoicePricingNames = []; aoInvoicePricingByPartner = {}; console.error('송장변환 카탈로그 로드 실패:', e); }
 }
 // 품목명 → 거래처 판정 (매칭된 pricing 이름 기준, 미매칭이면 null) — 대표 7/21
 function aoItemPartner(name) {

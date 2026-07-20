@@ -3990,6 +3990,21 @@ function matchItemToPricing(itemName, priceMap) {
     return bestMatch ? bestMatch.price : undefined;
 }
 
+// 송장변환·중간발주용 품목 카탈로그 (대표 7/21): 품목명·거래처만 (단가 제외) — 직원도 매칭·색상·필터 쓸 수 있게 authMiddleware만
+app.get('/api/invoice/catalog', authMiddleware, async (req, res) => {
+    try {
+        const date = String(req.query.date || kstTodayStr()).slice(0, 10);
+        const r = await pool.query(
+            `SELECT partner, items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date`, [date]);
+        const byPartner = {};
+        r.rows.forEach(row => {
+            const s = byPartner[row.partner] = byPartner[row.partner] || [];
+            (row.items || []).forEach(it => { if (it && it.name && !s.includes(it.name)) s.push(it.name); });
+        });
+        res.json({ byPartner });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 app.get('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM pricing ORDER BY start_date DESC, id DESC');
