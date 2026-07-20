@@ -10126,6 +10126,7 @@ async function aoSendOrder() {
             const res = await api('/api/agent-office/orders', 'POST', { content });
             input.value = '';
             aoAppendLiveLogHtml(aoOrderLogLine(res.order));
+            aoSay('대표', '📢 내 오더: ' + aoTrunc(content, 24), 0); // 대표 머리말 — 답변/작업 시작까지 유지 (7/20)
             aoSayThinking('마루', '💭', '생각 중');
             aoPollOrder(res.order.id);
         }
@@ -10158,10 +10159,16 @@ window.aoOpenMaruQuestion = function() {
 };
 
 // 마루 질문에 네/아니오 빠른 답변 (대표 7/20 — 로그 버튼·마루 클릭으로 진행)
+const aoAnsweredQ = new Set(); // 답변한 질문 order id — 폴링 재표시 억제
 window.aoQuickAnswer = async function(yes) {
+    // 즉시 정리 (대표 7/20): 마루·대표 머리말, LIVE 네/아니오 버튼 동시 제거 + 재표시 억제
+    if (aoPendingMaruQ) aoAnsweredQ.add(aoPendingMaruQ.id);
+    aoPendingMaruQ = null;
+    aoClearSay('마루');
+    aoClearSay('대표');
+    document.querySelectorAll('.ao-maruq-btns').forEach(e => e.remove());
     try {
         const res = await api('/api/agent-office/orders', 'POST', { content: yes ? '네' : '아니오' });
-        aoClearSay('마루');
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
         aoSayThinking('마루', '💭', '처리 중');
         aoPollOrder(res.order.id);
@@ -10188,6 +10195,8 @@ function aoPollOrder(orderId) {
 function aoHandleOrderResult(order) {
     const r = order.result || {};
     aoClearSay('마루'); // '분석 중...' 상시 말풍선 제거
+    // 대표 7/20: 질문이 아니면(작업 시작·완료) 대표 머리말 제거. 질문이면 답변까지 유지
+    if (order.status !== '질문') aoClearSay('대표');
     if (order.status === '질문' && r.type === 'settlement_ocr_confirm') {
         // 정산관리 확인표 → 모달 (다중 이미지면 이미 열린 모달 뒤로 큐잉)
         if (aoSettleModalData) aoSettleQueue.push(r);
@@ -10613,6 +10622,7 @@ function aoSetAgentStatus(agentId, status) {
 }
 
 function aoAgentElByName(name) {
+    if (name === '대표' || name === '전승범') return document.getElementById('ao-ceo-node'); // 대표 머리말 지원 (7/20)
     const agent = aoAgents.find(a => a.name === name);
     return agent ? document.querySelector(`.ao-agent[data-agent-id="${agent.id}"]`) : null;
 }
@@ -10933,10 +10943,11 @@ async function aoRefreshLog() {
         log.innerHTML = lines.length
             ? lines.slice(0, 60).map(l => l.html).join('')
             : '<div class="ao-log-empty">아직 실행 로그가 없습니다</div>';
-        // ③ 마루 머리 위 질문 말풍선 (대표 7/20): 미응답 질문이 있으면 마루가 "❓ 질문 있어요!" 표시
-        aoPendingMaruQ = (orderData.orders || []).find(o => o.status === '질문' && o.result && o.result.question) || null;
+        // ③ 마루 머리 위 질문 말풍선 (대표 7/20): 미응답 질문이 있으면 마루가 "❓ 확인해주세요!" 표시
+        //    답변한 질문(aoAnsweredQ)은 서버 반영 전이라도 재표시하지 않음 (즉시 사라짐 유지)
+        aoPendingMaruQ = (orderData.orders || []).find(o => o.status === '질문' && o.result && o.result.question && !aoAnsweredQ.has(o.id)) || null;
         if (aoPendingMaruQ) aoSay('마루', '❓ 확인해주세요! (눌러서 답변)', 0);
-        else aoClearSay('마루');
+        else if (!aoActiveRun) aoClearSay('마루'); // 실행 중이면 '생각 중' 유지
     } catch (e) { console.error('로그 조회 실패:', e); }
 }
 let aoPendingMaruQ = null;
