@@ -1340,7 +1340,9 @@ window.showSettlementItemsModal = function(settlementId) {
                 <tbody>${rowsHtml}</tbody>
                 <tfoot>
                     <tr style="background:#FFF8E1;font-weight:700;">
-                        <td colspan="3" style="text-align:right;">총 합계</td>
+                        <td style="text-align:right;">총 합계</td>
+                        <td id="si-qty-total" style="text-align:center;color:#0066CC;"></td>
+                        <td></td>
                         <td id="si-total" style="text-align:right;color:#0066CC;">${initialTotal.toLocaleString()}원</td>
                     </tr>
                 </tfoot>
@@ -1353,7 +1355,7 @@ window.showSettlementItemsModal = function(settlementId) {
     `;
 
     const recalc = () => {
-        let total = 0;
+        let total = 0, qtyTotal = 0;
         overlay.querySelectorAll('.si-qty-input').forEach(inp => {
             const idx = Number(inp.dataset.idx);
             const qty = Number(inp.value) || 0;
@@ -1361,11 +1363,15 @@ window.showSettlementItemsModal = function(settlementId) {
             const sub = qty * price;
             overlay.querySelector(`.si-subtotal[data-idx="${idx}"]`).textContent = sub.toLocaleString() + '원';
             total += sub;
+            qtyTotal += qty;
         });
         overlay.querySelector('#si-total').textContent = total.toLocaleString() + '원';
+        const qtyCell = overlay.querySelector('#si-qty-total'); // 대표 7/20: 박스 수량 총합계 표시
+        if (qtyCell) qtyCell.textContent = qtyTotal + '박스';
         return total;
     };
     overlay.querySelectorAll('.si-qty-input').forEach(inp => inp.addEventListener('input', recalc));
+    recalc(); // 초기 박스 수량 총합계 표시 (대표 7/20)
 
     overlay.querySelector('#si-save').addEventListener('click', async () => {
         const btn = overlay.querySelector('#si-save');
