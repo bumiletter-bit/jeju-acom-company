@@ -10143,18 +10143,34 @@ async function aoRefreshGrowth() {
             api('/api/agent-office/misroute-stats').catch(() => null), // 구버전 서버 호환
         ]);
         aoWeekLessons = g.lessons.this_week; // 지식 노트 모달 상단 표시용
-        const misChip = m
-            ? '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenMisrouteModal()">🚧 오배정 주간 <strong>' + m.misroute_feedback + '</strong>건</span>'
-            : '';
+        // 화면 정리 (대표 7/20): 자주 쓰는 실패 수집함만 바깥, 나머지는 ⚙️ 관리로 묶음. 성적표는 시험 폐지로 제거
+        aoManageStats = { lessons: g.lessons.total, misroute: m ? m.misroute_feedback : null };
         document.getElementById('ao-growth-widget').innerHTML =
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenLessonsModal(false)">📚 지식 노트 <strong>' + g.lessons.total + '</strong>건</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">💬 피드백 <strong>' + g.feedback.total + '</strong>건</span>' +
-            misChip +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenTestResultsModal()">🧪 성적표</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoTelegramTest()">🔔 알림 테스트</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenArchiveModal()">📚 아카이브</span>';
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">🧰 실패 수집함 <strong>' + g.feedback.total + '</strong>건</span>' +
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenManageMenu()">⚙️ 관리</span>';
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
+let aoManageStats = {};
+// ⚙️ 관리 메뉴 — 가끔 쓰는 관리 기능 모음 (대표 7/20 화면 정리)
+window.aoOpenManageMenu = function() {
+    document.querySelectorAll('.ao-manage-overlay').forEach(e => e.remove());
+    const misLine = aoManageStats.misroute != null
+        ? `<button class="ao-manage-item" onclick="this.closest('.modal-overlay').remove();aoOpenMisrouteModal()">🚧 마루 오배정 <small>(주간 ${aoManageStats.misroute}건)</small></button>` : '';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay ao-manage-overlay';
+    overlay.innerHTML = `<div class="modal" style="max-width:360px;">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 12px;">⚙️ 관리</h3>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+            <button class="ao-manage-item" onclick="this.closest('.modal-overlay').remove();aoOpenLessonsModal(false)">📚 지식 노트 <small>(${aoManageStats.lessons || 0}건)</small></button>
+            ${misLine}
+            <button class="ao-manage-item" onclick="this.closest('.modal-overlay').remove();aoOpenArchiveModal()">🗂 통합본 아카이브</button>
+            <button class="ao-manage-item" onclick="this.closest('.modal-overlay').remove();aoTelegramTest()">🔔 텔레그램 알림 테스트</button>
+        </div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
 
 // 지시 #47: 표시 시각 KST 통일 — 서버 기록(UTC)은 유지, 표시 레이어에서만 변환.
 // tz 표기 없는 문자열(naive UTC)은 Z를 붙여 UTC로 해석 (브라우저 TZ 오해석 방지)

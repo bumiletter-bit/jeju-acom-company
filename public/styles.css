@@ -4496,6 +4496,9 @@ textarea.form-input {
 .ao-growth-widget { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .ao-growth-chip { background: #fff; border: 2px solid #1B3A6B; border-radius: 8px; padding: 6px 12px; font-size: 13px; color: #1B3A6B; box-shadow: 2px 2px 0 rgba(27,58,107,.25); }
 .ao-growth-chip strong { color: #E8590C; }
+.ao-manage-item { display: block; width: 100%; text-align: left; padding: 12px 14px; border: 1.5px solid #e5e7eb; border-radius: 8px; background: #fff; font-size: 14px; color: #1B3A6B; cursor: pointer; }
+.ao-manage-item:hover { background: #f7f9fc; border-color: #1B3A6B; }
+.ao-manage-item small { color: #9ca3af; }
 
 .ao-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
 
