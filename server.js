@@ -7669,40 +7669,68 @@ async function maruSettlementOcr(order, actor) {
             .map(x => ({ name: String(x.name || '').trim(), qty: Number(x.qty) || 0 }))
             .filter(x => x.name && x.qty > 0);
         if (!partner) {
+            // 거래처만 못 읽음 — 읽은 품목은 보관하고 거래처만 물어본다 (파편 노출 금지, 대표 답변으로 이어감)
             await maruFinishOrder(order.id, '질문', {
-                type: 'settlement_ocr_fail',
-                question: `이미지에서 거래처를 확정하지 못했습니다 (읽은 이름: "${raw.partner || '없음'}"). 효돈농협·대성(시온)·기타거래처 중 어디인지 알려주시거나 정산관리 화면에서 직접 입력해주세요`,
-                summary: '정산관리 이미지 — 거래처 미확정',
+                type: 'settlement_ocr_need_partner',
+                read_items: readItems, // 보관 — "효돈" 답변 시 재사용
+                question: `이미지에서 품목 ${readItems.length}개(${readItems.reduce((s, x) => s + x.qty, 0)}박스)는 읽었는데 거래처명이 이미지에 없네요. 어느 거래처인가요?\n(효돈농협 / 대성(시온) / 기타거래처 중 하나로 답해주세요)`,
+                summary: `정산관리 이미지 — 거래처 확인 필요 (${readItems.length}품목)`,
             }, run.id);
-            await agentRunAppendStep(run.id, agentStep('work', '마루', '⚠️ 거래처 미확정 — 대표 확인 요청'));
+            await agentRunAppendStep(run.id, agentStep('work', '마루', `📦 품목 ${readItems.length}개 읽음 — 거래처만 대표 확인 요청`));
             await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW() WHERE id=$1`, [run.id]);
             return;
         }
-        const todayStr = kstTodayStr();
-        const priceMap = await buildPriceMapFor(partner, todayStr);
-        // 품목 매칭 + 금액 계산 (matchItemToPricing — 정산관리 화면과 동일)
-        let total = 0; const rows = []; const unmatched = [];
-        for (const it of readItems) {
-            const hit = matchSettlementItemExact(it.name, priceMap); // 정확 이름 대조 (무게·등급 구분)
-            if (!hit) { unmatched.push(it.name); rows.push({ name: it.name, matched: null, qty: it.qty, price: null, subtotal: null }); }
-            else { const sub = hit.price * it.qty; total += sub; rows.push({ name: it.name, matched: hit.name, qty: it.qty, price: hit.price, subtotal: sub }); }
-        }
-        const boxTotal = readItems.reduce((s, x) => s + x.qty, 0);
-        // 확인표 — 저장 안 함. 대표 "응" 후 maruTrySettlementOcrConfirm이 저장
-        await maruFinishOrder(order.id, '질문', {
-            type: 'settlement_ocr_confirm',
-            partner, date: todayStr, rows, total, box_total: boxTotal, unmatched,
-            question: `${partner} 정산관리에 ${rows.length}개 품목(${boxTotal}박스, 합계 ${total.toLocaleString()}원)을 저장할까요? ("응"으로 답해주세요)${unmatched.length ? `\n⚠️ 가격 매칭 실패 ${unmatched.length}건 — 저장 시 0원 처리되니 확인 필요` : ''}`,
-            summary: `${partner} 정산관리 입력 확인 (${boxTotal}박스)`,
-        }, run.id);
-        await agentRunAppendStep(run.id, agentStep('work', '마루', `📋 ${partner} — ${rows.length}품목 ${boxTotal}박스, 합계 ${total.toLocaleString()}원 (확인 대기)`));
-        await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW(), result=$2 WHERE id=$1`,
-            [run.id, JSON.stringify({ summary: `정산관리 판독 — ${partner} ${boxTotal}박스`, report: { type: 'settlement_ocr', partner, rows, total, unmatched } })]);
+        await settlementOcrBuildConfirm(order, partner, readItems, run.id);
     } catch (err) {
         const em = err?.status ? `Anthropic API 오류 (${err.status}): ${err.message}` : (err?.message || String(err));
         console.error('정산관리 OCR 오류:', em);
         await maruFinishOrder(order.id, '오류', { type: 'error', error: em }, run.id);
         await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW() WHERE id=$1`, [run.id]).catch(() => {});
+    }
+}
+
+// 거래처 미확정 질문에 대한 대표 답변("효돈이야") → 보관 품목 + 거래처로 확인표 진행 (AI 재호출 없음)
+async function maruTrySettlementPartnerReply(order, actor) {
+    const content = String(order.content || '').trim();
+    if (!content || content.length > 30) return false;
+    const partner = normalizePartnerName(content);
+    if (!partner) return false; // 거래처 키워드 없으면 패스 (다른 지시일 수 있음)
+    const pend = (await pool.query(
+        `SELECT * FROM pending_orders WHERE status='질문' AND is_deleted=false
+           AND result->>'type' = 'settlement_ocr_need_partner'
+           AND created_at > NOW() - interval '1 hour' AND id != $1
+         ORDER BY created_at DESC LIMIT 1`, [order.id])).rows[0];
+    if (!pend) return false;
+    const readItems = (pend.result && pend.result.read_items) || [];
+    if (!readItems.length) return false;
+    await settlementOcrBuildConfirm(order, partner, readItems, null); // 확인표는 order에 붙음 (run 없이)
+    await pool.query(`UPDATE pending_orders SET status='응답됨', processed_at=NOW() WHERE id=$1`, [pend.id]);
+    return true;
+}
+
+// 거래처 확정 후 품목 매칭 + 확인표 생성 (OCR 직후 또는 대표가 거래처 답변한 뒤 공용)
+async function settlementOcrBuildConfirm(order, partner, readItems, runId) {
+    const todayStr = kstTodayStr();
+    const priceMap = await buildPriceMapFor(partner, todayStr);
+    // 품목 매칭 + 금액 계산 (정확 이름 대조 — 무게·등급 구분)
+    let total = 0; const rows = []; const unmatched = [];
+    for (const it of readItems) {
+        const hit = matchSettlementItemExact(it.name, priceMap);
+        if (!hit) { unmatched.push(it.name); rows.push({ name: it.name, matched: null, qty: it.qty, price: null, subtotal: null }); }
+        else { const sub = hit.price * it.qty; total += sub; rows.push({ name: it.name, matched: hit.name, qty: it.qty, price: hit.price, subtotal: sub }); }
+    }
+    const boxTotal = readItems.reduce((s, x) => s + x.qty, 0);
+    // 확인표 — 저장 안 함. 대표 "응" 후 maruTrySettlementOcrConfirm이 저장
+    await maruFinishOrder(order.id, '질문', {
+        type: 'settlement_ocr_confirm',
+        partner, date: todayStr, rows, total, box_total: boxTotal, unmatched,
+        question: `${partner} 정산관리에 ${rows.length}개 품목(${boxTotal}박스, 합계 ${total.toLocaleString()}원)을 저장할까요?`,
+        summary: `${partner} 정산관리 입력 확인 (${boxTotal}박스)`,
+    }, runId);
+    if (runId) {
+        await agentRunAppendStep(runId, agentStep('work', '마루', `📋 ${partner} — ${rows.length}품목 ${boxTotal}박스, 합계 ${total.toLocaleString()}원 (확인 대기)`));
+        await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW(), result=$2 WHERE id=$1`,
+            [runId, JSON.stringify({ summary: `정산관리 판독 — ${partner} ${boxTotal}박스`, report: { type: 'settlement_ocr', partner, rows, total, unmatched } })]);
     }
 }
 
@@ -7749,6 +7777,8 @@ async function maruTrySettlementOcrConfirm(order, actor) {
 async function processOrderWithMaru(order, actor, opts = {}) {
     try {
         await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
+        // 거래처 미확정 질문에 "효돈이야" 답변 → 보관 품목으로 확인표 (AI 호출 없음)
+        if (await maruTrySettlementPartnerReply(order, actor)) return;
         // 정산관리 이미지 저장 확인 대기 중이면 "응" 답변을 여기서 처리 (AI 호출 없음 — settlements 저장)
         if (await maruTrySettlementOcrConfirm(order, actor)) return;
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
