@@ -4579,19 +4579,22 @@ async function loadBoxHistoryAll() {
         const typeMeta = {
             order:    { label: '📥 업체 입고', color: '#16a34a' },
             transfer: { label: '🚚 시온 이동', color: '#0066CC' },
+            transfer_hyodon: { label: '🚚 효돈 이동', color: '#F5A623' }, // 대표 7/20
             consume:  { label: '📤 정산 차감', color: '#dc2626' }
         };
 
         // 요약 (필터 반영)
-        let sOrder = 0, sTransfer = 0, sConsume = 0;
+        let sOrder = 0, sTransfer = 0, sHyodon = 0, sConsume = 0;
         events.forEach(e => {
             if (e.type === 'order') sOrder += e.qty;
             else if (e.type === 'transfer') sTransfer += e.qty;
+            else if (e.type === 'transfer_hyodon') sHyodon += e.qty;
             else if (e.type === 'consume') sConsume += e.qty;
         });
         summaryEl.innerHTML = `<div style="background:#F0F7FF;padding:10px 14px;border-radius:6px;display:flex;gap:18px;flex-wrap:wrap;font-size:13px;">
             <span><strong style="color:#16a34a;">📥 업체 입고:</strong> +${sOrder}</span>
             <span><strong style="color:#0066CC;">🚚 시온 이동:</strong> ${sTransfer}</span>
+            <span><strong style="color:#F5A623;">🚚 효돈 이동:</strong> ${sHyodon}</span>
             <span><strong style="color:#dc2626;">📤 정산 차감:</strong> −${sConsume}</span>
             <span style="color:#9ca3af;">건수: ${events.length}</span>
         </div>`;
@@ -4883,17 +4886,21 @@ document.getElementById('box-movement-btn')?.addEventListener('click', () => {
             <h3 style="margin-bottom:14px;">📥 박스 입고/이동 등록</h3>
             <div style="font-size:12px;color:#6b7280;margin-bottom:12px;line-height:1.5;">
                 💡 <strong>업체 입고</strong>: 제작 업체에서 박스가 들어옴 → <strong>업체재고 +</strong><br>
-                💡 <strong>시온 이동</strong>: 업체재고에서 대성으로 배달 → <strong>업체재고 - / 대성재고 +</strong>
+                💡 <strong>시온 이동</strong>: 업체재고에서 대성으로 배달 → <strong>업체재고 - / 대성재고 +</strong><br>
+                💡 <strong>효돈 이동</strong>: 업체재고에서 효돈으로 배달 → <strong>업체재고 - / 효돈재고 +</strong>
             </div>
             <div style="display:flex;flex-direction:column;gap:10px;">
                 <div>
                     <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">구분</label>
-                    <div style="display:flex;gap:8px;">
-                        <label style="flex:1;padding:10px;border:2px solid #16a34a;border-radius:6px;cursor:pointer;text-align:center;background:#f0fdf4;">
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <label style="flex:1;min-width:120px;padding:10px;border:2px solid #16a34a;border-radius:6px;cursor:pointer;text-align:center;background:#f0fdf4;">
                             <input type="radio" name="mov-type" value="order" checked style="margin-right:6px;">📥 업체 입고
                         </label>
-                        <label style="flex:1;padding:10px;border:2px solid #0066CC;border-radius:6px;cursor:pointer;text-align:center;background:#F0F7FF;">
+                        <label style="flex:1;min-width:120px;padding:10px;border:2px solid #0066CC;border-radius:6px;cursor:pointer;text-align:center;background:#F0F7FF;">
                             <input type="radio" name="mov-type" value="transfer" style="margin-right:6px;">🚚 시온 이동
+                        </label>
+                        <label style="flex:1;min-width:120px;padding:10px;border:2px solid #F5A623;border-radius:6px;cursor:pointer;text-align:center;background:#fffdf5;">
+                            <input type="radio" name="mov-type" value="transfer_hyodon" style="margin-right:6px;">🚚 효돈 이동
                         </label>
                     </div>
                 </div>

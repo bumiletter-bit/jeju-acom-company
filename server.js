@@ -2615,6 +2615,9 @@ async function computeBoxStocks() {
         const q = Number(m.qty) || 0;
         if (m.movement_type === 'order') {
             box.company += q;          // 업체 입고
+        } else if (m.movement_type === 'transfer_hyodon') { // 효돈 이동 (대표 7/20)
+            box.company -= q;
+            box.hyodon += q;
         } else {                       // transfer: 시온 이동
             box.company -= q;
             box.daesong += q;
@@ -2760,7 +2763,7 @@ app.post('/api/box-movements', authMiddleware, adminOnly, async (req, res) => {
         const { productName, movementType, qty, date, note } = req.body;
         const q = Number(qty) || 0;
         if (!productName) return res.status(400).json({ error: 'productName 필요' });
-        if (!['order', 'transfer'].includes(movementType)) return res.status(400).json({ error: 'movementType은 order 또는 transfer' });
+        if (!['order', 'transfer', 'transfer_hyodon'].includes(movementType)) return res.status(400).json({ error: 'movementType은 order/transfer/transfer_hyodon' });
         if (q <= 0) return res.status(400).json({ error: 'qty는 양수여야 합니다' });
         if (!date) return res.status(400).json({ error: 'date 필요' });
 
@@ -2899,10 +2902,10 @@ app.get('/api/box-inventory/history', authMiddleware, async (req, res) => {
                 events.push({
                     date: dateStr,
                     productName: m.product_name,
-                    type: 'transfer',             // 업체 → 대성 이동
+                    type: m.movement_type === 'transfer_hyodon' ? 'transfer_hyodon' : 'transfer', // 업체→대성/효돈 이동 (대표 7/20)
                     qty: Number(m.qty) || 0,
                     sign: 0,                      // 회사 전체 합은 변동 없음 (재배치)
-                    stockTarget: 'transfer',
+                    stockTarget: m.movement_type === 'transfer_hyodon' ? 'transfer_hyodon' : 'transfer',
                     note: m.note || '',
                     refId: m.id
                 });
