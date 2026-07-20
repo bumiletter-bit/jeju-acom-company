@@ -5777,7 +5777,8 @@ function updateQtySummary() {
 
 // 선택된 품목으로 중간발주표 이미지 생성 → 자동 다운로드
 async function saveQtyImage() {
-    const sel = qtyAggregated.filter(it => it.checked);
+    // 거래처 필터 적용 (대표 7/21): 화면에 보이는 것만 저장 — 거래처 선택 시 미매칭·타 거래처 제외
+    const sel = qtyAggregated.filter(it => it.checked && (aoQtyPartnerFilter === '전체' || aoItemPartner(it.name) === aoQtyPartnerFilter));
     if (sel.length === 0) { alert('선택된 품목이 없습니다.'); return; }
     const total = sel.reduce((s, it) => s + it.qty, 0);
 
