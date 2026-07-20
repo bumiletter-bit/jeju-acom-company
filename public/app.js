@@ -2264,7 +2264,7 @@ async function renderPricingList() {
                 const colorClass = item.partner === '대성(시온)' ? 'pricing-daesung' : (item.partner === '효돈농협' ? 'pricing-hyodon' : 'pricing-aewol');
                 items.forEach((it, idx) => {
                     rows += `<tr class="${colorClass}">
-                        ${idx === 0 ? `<td rowspan="${items.length}">${item.startDate} ~ ${item.endDate}<br><button class="btn-danger" style="margin-top:6px" onclick="deletePricing(${item.id})">삭제</button></td>` : ''}
+                        ${idx === 0 ? `<td rowspan="${items.length}">${item.startDate} ~ ${item.endDate}<br><button class="btn-outline" style="margin-top:6px" onclick="editPricing(${item.id})">✏️ 수정</button><br><button class="btn-danger" style="margin-top:6px" onclick="deletePricing(${item.id})">삭제</button></td>` : ''}
                         ${idx === 0 ? `<td rowspan="${items.length}">${item.partner}</td>` : ''}
                         <td>${it.name}</td>
                         <td>${(it.price || 0).toLocaleString()} 원</td>
@@ -2280,6 +2280,69 @@ async function renderPricingList() {
 window.deletePricing = async function(id) {
     if (!confirm('삭제하시겠습니까?')) return;
     try { await api(`/api/pricing/${id}`, 'DELETE'); await renderPricingList(); } catch (err) { alert('삭제 실패: ' + err.message); }
+};
+
+// 품목별 금액 수정 (대표 7/20): 품목명·단가·박스 편집 모달
+window.editPricing = function(id) {
+    const entry = (pricingCache || []).find(p => p.id === id);
+    if (!entry) return alert('항목을 찾을 수 없습니다');
+    document.querySelectorAll('.ao-pricing-edit-overlay').forEach(e => e.remove());
+    const boxOpts = (cur) => BOX_OPTIONS.map(o => `<option value="${aoEsc(o.value)}"${o.value === (cur || '해당없음') ? ' selected' : ''}>${aoEsc(o.label)}</option>`).join('');
+    const rowHtml = (it, i) => `<tr data-prow="${i}">
+        <td><input class="form-input pe-name" value="${aoEsc(it.name || '')}" style="width:100%;min-width:200px;font-size:13px;"></td>
+        <td><input class="form-input pe-price" type="number" value="${Number(it.price) || 0}" style="width:100px;font-size:13px;text-align:right;"></td>
+        <td><select class="form-input pe-box" style="font-size:13px;">${boxOpts(it.boxType)}</select></td>
+        <td><button class="btn-danger" style="padding:4px 8px;font-size:12px;" onclick="this.closest('tr').remove()">✕</button></td>
+    </tr>`;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay ao-pricing-edit-overlay';
+    overlay.innerHTML = `<div class="modal" style="max-width:720px;width:96vw;">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 4px;">✏️ 품목별 금액 수정</h3>
+        <div style="color:#666;font-size:13px;margin-bottom:12px;">${aoEsc(entry.startDate)} ~ ${aoEsc(entry.endDate)} · <strong>${aoEsc(entry.partner)}</strong></div>
+        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="background:#f7f7f7;"><th style="padding:6px;text-align:left;">품목명</th><th style="padding:6px;">단가(원)</th><th style="padding:6px;">박스</th><th style="padding:6px;"></th></tr></thead>
+            <tbody id="pe-rows">${(entry.items || []).map(rowHtml).join('')}</tbody>
+        </table>
+        </div>
+        <button class="btn-outline" style="margin-top:10px;font-size:13px;" onclick="aoPricingAddRow()">+ 품목 추가</button>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+            <button class="btn-primary" style="flex:1;padding:12px;" onclick="aoPricingSaveEdit(${id})">💾 저장</button>
+            <button class="btn-outline" style="flex:1;padding:12px;" onclick="this.closest('.modal-overlay').remove()">취소</button>
+        </div>
+    </div>`;
+    overlay._boxOpts = boxOpts;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+window.aoPricingAddRow = function() {
+    const tbody = document.getElementById('pe-rows');
+    const boxOpts = BOX_OPTIONS.map(o => `<option value="${aoEsc(o.value)}"${o.value === '해당없음' ? ' selected' : ''}>${aoEsc(o.label)}</option>`).join('');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input class="form-input pe-name" value="" style="width:100%;min-width:200px;font-size:13px;"></td>
+        <td><input class="form-input pe-price" type="number" value="0" style="width:100px;font-size:13px;text-align:right;"></td>
+        <td><select class="form-input pe-box" style="font-size:13px;">${boxOpts}</select></td>
+        <td><button class="btn-danger" style="padding:4px 8px;font-size:12px;" onclick="this.closest('tr').remove()">✕</button></td>`;
+    tbody.appendChild(tr);
+};
+window.aoPricingSaveEdit = async function(id) {
+    const entry = (pricingCache || []).find(p => p.id === id);
+    if (!entry) return;
+    const items = [];
+    document.querySelectorAll('#pe-rows tr').forEach(tr => {
+        const name = tr.querySelector('.pe-name').value.trim();
+        const price = Number(tr.querySelector('.pe-price').value) || 0;
+        const boxType = tr.querySelector('.pe-box').value;
+        if (name) items.push({ name, price, boxType });
+    });
+    if (!items.length) return alert('품목이 하나 이상 필요합니다');
+    try {
+        await api(`/api/pricing/${id}`, 'PUT', { startDate: entry.startDate, endDate: entry.endDate, partner: entry.partner, items });
+        document.querySelectorAll('.ao-pricing-edit-overlay').forEach(e => e.remove());
+        await renderPricingList();
+        showToast('✅ 품목별 금액이 수정되었습니다');
+    } catch (err) { alert('저장 실패: ' + err.message); }
 };
 
 // =============================================
