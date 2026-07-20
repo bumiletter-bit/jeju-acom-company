@@ -831,6 +831,9 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS result JSONB`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS run_id INTEGER`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP`);
+    // 정산관리 이미지 자동 입력 (대표 7/20 지시): 지시에 첨부된 이미지 (base64 data URL) — 마루 비전 판독용
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_data TEXT`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_mime VARCHAR(40)`);
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
 
@@ -7574,12 +7577,184 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
     await finish('완료', { ...routeInfo, run_id: run.id }, run.id);
 }
 
+// ===== 정산관리 이미지 자동 입력 (대표 7/20 지시) =====
+// 거래처 별칭 → 정식 거래처명 (pricing/settlements 기준: 효돈농협 / 대성(시온) / 기타거래처)
+function normalizePartnerName(raw) {
+    const s = String(raw || '').replace(/\s/g, '');
+    if (/효돈|효도|효돈농협|효돈농협유통/.test(s)) return '효돈농협';
+    if (/시온|대성|시온감귤|시온감귤랜드/.test(s)) return '대성(시온)';
+    if (/기타|애월|취나물/.test(s)) return '기타거래처';
+    return null; // 미매칭 — 확인표에 경고 표시
+}
+
+// 이미지 품목명 → 가격표 품목 정확 매칭 (대표 7/20).
+// matchItemToPricing(유사매칭)은 2.5kg↔4.5kg을 구분 못해 오금액 발생 → 정산관리(돈)는 정확 이름 대조 사용.
+// 이미지 품목명은 "...: 하우스감귤 가정용 - 2.5kg(로얄과)"처럼 가격표 이름을 그대로 포함하므로 substring 대조.
+function matchSettlementItemExact(imgName, priceMap) {
+    const norm = s => String(s || '').replace(/\s+/g, '').replace(/[·]/g, '');
+    const imgN = norm(imgName);
+    // 긴(구체적) 이름부터 — 2.5kg이 4.5kg보다 먼저 잡히는 부분일치 오류 방지
+    const names = Object.keys(priceMap).sort((a, b) => norm(b).length - norm(a).length);
+    for (const pn of names) {
+        if (imgN.includes(norm(pn))) return { name: pn, price: priceMap[pn] };
+    }
+    return null;
+}
+
+// 지정 날짜·거래처의 최신 가격표(pricing)에서 품목→가격 맵 구성 (정산관리 화면과 동일 로직)
+async function buildPriceMapFor(partner, dateStr) {
+    const r = await pool.query(
+        `SELECT items FROM pricing WHERE partner = $1
+           AND (start_date IS NULL OR start_date <= $2)
+           AND (end_date IS NULL OR end_date >= $2)
+         ORDER BY start_date DESC NULLS LAST, id DESC LIMIT 1`, [partner, dateStr]);
+    const map = {};
+    if (r.rows[0] && Array.isArray(r.rows[0].items)) {
+        for (const it of r.rows[0].items) if (it && it.name) map[it.name] = Number(it.price) || 0;
+    }
+    return map;
+}
+
+// 마루 비전 판독: 발송목록 이미지 → { partner, items:[{name, qty}] }
+const SETTLE_OCR_TOOL = {
+    name: 'read_settlement_image',
+    description: '거래처 발송목록(택배 접수용) 이미지에서 거래처명과 품목별 박스 수량을 읽는다.',
+    strict: true,
+    input_schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+            partner: { type: 'string', description: '거래처명 (이미지 상단 제목·헤더에서. 예: 시온감귤랜드, 효돈농협유통센터). 없으면 빈 문자열' },
+            items: {
+                type: 'array', description: '품목별 수량 목록 (합계 행은 제외)',
+                items: {
+                    type: 'object', additionalProperties: false,
+                    properties: {
+                        name: { type: 'string', description: '품목명 전체 — 이미지 텍스트 그대로 (예: "고당도 하우스감귤 / 상품 및 과수: 하우스감귤 가정용 - 2.5kg(로얄과)")' },
+                        qty: { type: 'integer', description: '박스 수량 (숫자만)' },
+                    },
+                    required: ['name', 'qty'],
+                },
+            },
+        },
+        required: ['partner', 'items'],
+    },
+};
+
+async function maruSettlementOcr(order, actor) {
+    const step = agentStep('order', '마루', '📷 정산관리 이미지 판독 — 발송목록에서 거래처·품목·수량 읽는 중...');
+    const maru = (await pool.query(`SELECT * FROM agents WHERE role='chief' AND is_deleted=false LIMIT 1`)).rows[0];
+    const run = (await pool.query(
+        `INSERT INTO agent_runs (agent_id, steps, is_test) VALUES ($1, $2, FALSE) RETURNING *`,
+        [maru ? maru.id : null, JSON.stringify([step])])).rows[0];
+    try {
+        if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY 미설정');
+        const m = String(order.image_data).match(/^data:([^;]+);base64,(.+)$/s);
+        if (!m) throw new Error('이미지 형식을 인식할 수 없습니다 (base64 data URL 필요)');
+        const mime = order.image_mime || m[1] || 'image/png';
+        const b64 = m[2];
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const msg = await anthropic.messages.create({
+            model: MARU_MODEL, max_tokens: 1500,
+            tools: [SETTLE_OCR_TOOL], tool_choice: { type: 'tool', name: 'read_settlement_image' },
+            messages: [{ role: 'user', content: [
+                { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
+                { type: 'text', text: '이 거래처 발송목록 이미지에서 거래처명과 각 품목의 박스 수량을 정확히 읽어라. 맨 아래 합계 행(총 개수)은 items에 넣지 마라. 품목명은 이미지에 적힌 텍스트를 그대로 옮겨라.' },
+            ] }],
+        });
+        const tu = msg.content.find(b => b.type === 'tool_use');
+        if (!tu) throw new Error('이미지에서 품목을 읽지 못했습니다');
+        const raw = tu.input;
+        const partner = normalizePartnerName(raw.partner);
+        const readItems = (Array.isArray(raw.items) ? raw.items : [])
+            .map(x => ({ name: String(x.name || '').trim(), qty: Number(x.qty) || 0 }))
+            .filter(x => x.name && x.qty > 0);
+        if (!partner) {
+            await maruFinishOrder(order.id, '질문', {
+                type: 'settlement_ocr_fail',
+                question: `이미지에서 거래처를 확정하지 못했습니다 (읽은 이름: "${raw.partner || '없음'}"). 효돈농협·대성(시온)·기타거래처 중 어디인지 알려주시거나 정산관리 화면에서 직접 입력해주세요`,
+                summary: '정산관리 이미지 — 거래처 미확정',
+            }, run.id);
+            await agentRunAppendStep(run.id, agentStep('work', '마루', '⚠️ 거래처 미확정 — 대표 확인 요청'));
+            await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW() WHERE id=$1`, [run.id]);
+            return;
+        }
+        const todayStr = kstTodayStr();
+        const priceMap = await buildPriceMapFor(partner, todayStr);
+        // 품목 매칭 + 금액 계산 (matchItemToPricing — 정산관리 화면과 동일)
+        let total = 0; const rows = []; const unmatched = [];
+        for (const it of readItems) {
+            const hit = matchSettlementItemExact(it.name, priceMap); // 정확 이름 대조 (무게·등급 구분)
+            if (!hit) { unmatched.push(it.name); rows.push({ name: it.name, matched: null, qty: it.qty, price: null, subtotal: null }); }
+            else { const sub = hit.price * it.qty; total += sub; rows.push({ name: it.name, matched: hit.name, qty: it.qty, price: hit.price, subtotal: sub }); }
+        }
+        const boxTotal = readItems.reduce((s, x) => s + x.qty, 0);
+        // 확인표 — 저장 안 함. 대표 "응" 후 maruTrySettlementOcrConfirm이 저장
+        await maruFinishOrder(order.id, '질문', {
+            type: 'settlement_ocr_confirm',
+            partner, date: todayStr, rows, total, box_total: boxTotal, unmatched,
+            question: `${partner} 정산관리에 ${rows.length}개 품목(${boxTotal}박스, 합계 ${total.toLocaleString()}원)을 저장할까요? ("응"으로 답해주세요)${unmatched.length ? `\n⚠️ 가격 매칭 실패 ${unmatched.length}건 — 저장 시 0원 처리되니 확인 필요` : ''}`,
+            summary: `${partner} 정산관리 입력 확인 (${boxTotal}박스)`,
+        }, run.id);
+        await agentRunAppendStep(run.id, agentStep('work', '마루', `📋 ${partner} — ${rows.length}품목 ${boxTotal}박스, 합계 ${total.toLocaleString()}원 (확인 대기)`));
+        await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW(), result=$2 WHERE id=$1`,
+            [run.id, JSON.stringify({ summary: `정산관리 판독 — ${partner} ${boxTotal}박스`, report: { type: 'settlement_ocr', partner, rows, total, unmatched } })]);
+    } catch (err) {
+        const em = err?.status ? `Anthropic API 오류 (${err.status}): ${err.message}` : (err?.message || String(err));
+        console.error('정산관리 OCR 오류:', em);
+        await maruFinishOrder(order.id, '오류', { type: 'error', error: em }, run.id);
+        await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW() WHERE id=$1`, [run.id]).catch(() => {});
+    }
+}
+
+// "응" 답변 → 직전 settlement_ocr_confirm 확정 저장 (settlements INSERT — 정산관리 화면과 동일 경로)
+async function maruTrySettlementOcrConfirm(order, actor) {
+    const content = String(order.content || '').trim();
+    if (content.length > 12) return false;
+    const isYes = MARU_YES_RE.test(content);
+    const isNo = MARU_NO_RE.test(content);
+    if (!isYes && !isNo) return false;
+    const pend = (await pool.query(
+        `SELECT * FROM pending_orders WHERE status='질문' AND is_deleted=false
+           AND result->>'type' = 'settlement_ocr_confirm'
+           AND created_at > NOW() - interval '1 hour' AND id != $1
+         ORDER BY created_at DESC LIMIT 1`, [order.id])).rows[0];
+    if (!pend) return false;
+    const r = pend.result;
+    if (isNo) {
+        await maruFinishOrder(order.id, '안내', { type: 'route', notice: '정산관리 저장을 취소했습니다 — 필요하면 이미지를 다시 올려주세요' });
+        await pool.query(`UPDATE pending_orders SET status='취소' WHERE id=$1`, [pend.id]);
+        return true;
+    }
+    // 저장 실행 — settlements INSERT (정산관리)
+    // 저장 시 품목명은 가격표 정식명(matched)을 우선 사용 — 정산관리 화면·집계와 일치
+    const items = (r.rows || []).map(x => ({ name: x.matched || x.name, qty: x.qty, price: x.price || 0, subtotal: x.subtotal || 0 }));
+    await pool.query(
+        `INSERT INTO settlements (date, partner, amount, items, from_pricing) VALUES ($1, $2, $3, $4, TRUE)`,
+        [r.date, r.partner, r.total || 0, JSON.stringify(items)]);
+    await writeAudit({
+        action: 'create', targetType: 'settlement', targetId: null,
+        changes: { after: { via: 'image_ocr', partner: r.partner, date: r.date, box_total: r.box_total, amount: r.total } },
+        source: 'agent_office', actor,
+    });
+    await pool.query(`UPDATE pending_orders SET status='응답됨', processed_at=NOW() WHERE id=$1`, [pend.id]);
+    await maruFinishOrder(order.id, '완료', {
+        type: 'settlement_saved_ocr', partner: r.partner, date: r.date, total: r.total, box_total: r.box_total,
+        notice: `${r.partner} 정산관리에 저장 완료 (${r.box_total}박스, ${(r.total || 0).toLocaleString()}원) — 정산관리 화면에서 확인·수정 가능`,
+    });
+    notifyTelegram(`✅ 정산관리 입력 — ${r.partner} (${r.box_total}박스)`);
+    return true;
+}
+
 // 마루 처리 엔진: 지시 1건 분석 → 배정 → (연결된 요원이면) 실제 실행
 async function processOrderWithMaru(order, actor, opts = {}) {
     try {
         await pool.query(`UPDATE pending_orders SET status='처리중' WHERE id=$1`, [order.id]);
+        // 정산관리 이미지 저장 확인 대기 중이면 "응" 답변을 여기서 처리 (AI 호출 없음 — settlements 저장)
+        if (await maruTrySettlementOcrConfirm(order, actor)) return;
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
         if (await maruTryScheduleConfirm(order, actor)) return;
+        // 정산관리 이미지 첨부 지시 → 마루 비전 판독 → 확인표 (저장 안 함, 대표 승인 후 저장)
+        if (order.image_data) { await maruSettlementOcr(order, actor); return; }
         // 지시 #6-1: 미응답 clarify 질문이 있으면 새 입력을 답변으로 보고 [원 지시+질문+답변] 결합 재라우팅
         // — 답변이 독립 지시로 취급되며 맥락이 소실되던 순환 사고(#45~#56) 수정
         let effContent = order.content;
@@ -7870,13 +8045,19 @@ async function processOrderWithMaru(order, actor, opts = {}) {
 app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
     try {
         const content = String(req.body?.content || '').trim();
-        if (!content) throw { status: 400, message: '지시 내용을 입력해주세요' };
+        // 정산관리 이미지 첨부 (대표 7/20): 이미지가 있으면 content는 비어도 허용 (기본 지시문 대체)
+        const imageData = typeof req.body?.image_data === 'string' ? req.body.image_data : '';
+        const imageMime = String(req.body?.image_mime || '').slice(0, 40);
+        if (!content && !imageData) throw { status: 400, message: '지시 내용을 입력해주세요' };
         if (content.length > 500) throw { status: 400, message: '지시는 500자 이내로 입력해주세요' };
+        if (imageData && imageData.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
+        const effText = content || (imageData ? '[이미지 첨부] 오늘 정산관리에 올려줘' : '');
         const row = (await pool.query(
-            `INSERT INTO pending_orders (content) VALUES ($1) RETURNING *`, [content])).rows[0];
+            `INSERT INTO pending_orders (content, image_data, image_mime) VALUES ($1, $2, $3) RETURNING *`,
+            [effText, imageData || null, imageData ? imageMime : null])).rows[0];
         await writeAudit({
             action: 'create', targetType: 'pending_order', targetId: row.id,
-            changes: { after: { content, status: row.status } },
+            changes: { after: { content: effText, status: row.status, has_image: !!imageData } }, // 이미지 원문은 audit 미기록 (용량)
             source: 'agent_office', actor: adminActor(req),
         });
         processOrderWithMaru(row, adminActor(req)); // 비동기 — 응답은 즉시, 결과는 폴링

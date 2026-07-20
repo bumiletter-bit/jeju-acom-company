@@ -9806,6 +9806,7 @@ function aoBindEventsOnce() {
     // 상시 지시 입력바 (1.5차)
     const orderInput = document.getElementById('ao-order-input');
     document.getElementById('ao-order-send').addEventListener('click', aoSendOrder);
+    aoSetupOrderImage(); // 정산관리 이미지 첨부 (대표 7/20)
     orderInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); aoSendOrder(); }
     });
@@ -9815,15 +9816,46 @@ function aoBindEventsOnce() {
 let aoOrderPollTimer = null;
 let aoWeekLessons = 0;
 
+// 정산관리 이미지 첨부 상태 (대표 7/20)
+let aoOrderImage = null; // { data: dataURL, mime, name }
+function aoSetupOrderImage() {
+    const fileInput = document.getElementById('ao-order-image');
+    const pickBtn = document.getElementById('ao-order-image-btn');
+    const preview = document.getElementById('ao-order-image-preview');
+    if (!fileInput || !pickBtn) return;
+    pickBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        if (f.size > 10 * 1024 * 1024) { alert('이미지가 너무 큽니다 (10MB 이내)'); fileInput.value = ''; return; }
+        const reader = new FileReader();
+        reader.onload = () => {
+            aoOrderImage = { data: reader.result, mime: f.type, name: f.name };
+            preview.style.display = '';
+            preview.innerHTML = `📷 <strong>${aoEsc(f.name)}</strong> 첨부됨 — "오늘 정산관리에 올려줘" 처럼 지시하거나 바로 전송하세요 <button class="ao-fb-btn" id="ao-order-image-clear">✕ 제거</button>`;
+            document.getElementById('ao-order-image-clear').addEventListener('click', aoClearOrderImage);
+        };
+        reader.readAsDataURL(f);
+    });
+}
+function aoClearOrderImage() {
+    aoOrderImage = null;
+    const fi = document.getElementById('ao-order-image'); if (fi) fi.value = '';
+    const pv = document.getElementById('ao-order-image-preview'); if (pv) { pv.style.display = 'none'; pv.innerHTML = ''; }
+}
+
 async function aoSendOrder() {
     const input = document.getElementById('ao-order-input');
     const content = input.value.trim();
-    if (!content) return;
+    if (!content && !aoOrderImage) return; // 이미지 없이 빈 지시는 무시
     const btn = document.getElementById('ao-order-send');
     btn.disabled = true;
     try {
-        const res = await api('/api/agent-office/orders', 'POST', { content });
+        const body = { content };
+        if (aoOrderImage) { body.image_data = aoOrderImage.data; body.image_mime = aoOrderImage.mime; }
+        const res = await api('/api/agent-office/orders', 'POST', body);
         input.value = '';
+        aoClearOrderImage();
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
         aoSayThinking('마루', '💭', '생각 중'); // 결과 나올 때까지 상시 표시
         aoPollOrder(res.order.id);
@@ -10511,6 +10543,17 @@ function aoOrderLogLine(o) {
     else if (st === '완료' && r.type === 'settlement_saved') extra = `<div class="ao-log-sub">💾 마루 → 정산현황 저장 (${aoEsc(r.date || '')}) · 총 합계 ${Math.round(r.total || 0).toLocaleString()}원 — ${(r.items || []).slice(0, 3).map(aoEsc).join(' / ')}</div>`;
     else if (st === '완료' && r.type === 'settlement_cancelled') extra = `<div class="ao-log-sub">ℹ️ 정산현황 저장 취소</div>`;
     else if (st === '완료' && r.type === 'multi_dispatch') extra = `<div class="ao-log-sub">🔀 마루 → 멀티 분산 ${(r.subtasks || []).length}건 동시 배정: ${(r.subtasks || []).map((s2, i2) => '①②③④⑤'[i2] + ' ' + aoEsc(aoTrunc(s2, 40))).join(' / ')}</div>`;
+    else if (st === '질문' && r.type === 'settlement_ocr_confirm') {
+        const tbl = (r.rows || []).map(x => `<tr><td>${aoEsc(x.name)}</td><td style="text-align:right">${x.qty}박스</td><td style="text-align:right">${x.price != null ? x.price.toLocaleString() + '원' : '<span style="color:#e00">가격 없음</span>'}</td><td style="text-align:right">${x.subtotal != null ? x.subtotal.toLocaleString() + '원' : '-'}</td></tr>`).join('');
+        extra = `<div class="ao-log-sub">📋 <strong>${aoEsc(r.partner)}</strong> 정산관리 입력 확인 (${r.box_total}박스)
+            <div class="ao-report-table-wrap"><table class="ao-report-table" style="font-size:12px;margin-top:4px;">
+            <thead><tr><th>품목</th><th>수량</th><th>단가</th><th>소계</th></tr></thead><tbody>${tbl}</tbody>
+            <tfoot><tr><td colspan="3" style="text-align:right"><strong>합계</strong></td><td style="text-align:right"><strong>${(r.total||0).toLocaleString()}원</strong></td></tr></tfoot></table></div>
+            ${(r.unmatched||[]).length ? `<div style="color:#e00;font-size:12px">⚠️ 가격 매칭 실패 ${r.unmatched.length}건 (0원 처리됨 — 확인 필요)</div>` : ''}
+            <div style="margin-top:4px;color:#0a0;">👉 저장하려면 "응", 취소하려면 "아니오"</div></div>`;
+    }
+    else if (st === '완료' && r.type === 'settlement_saved_ocr') extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.partner)} 정산관리 저장 완료 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원)</div>`;
+    else if ((st === '질문') && r.type === 'settlement_ocr_fail') extra = `<div class="ao-log-sub">⚠️ ${aoEsc(r.question || '정산관리 이미지 판독 실패')}</div>`;
     else if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
     else if (st === '완료' && r.assignee) {
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
