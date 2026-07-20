@@ -6139,6 +6139,7 @@ ${JSON.stringify(routingTable, null, 2)}
 - 2단계 (대표 실사용 지적 — 절대 규칙): 결합 텍스트에 [대표 답변]이 긍정(네/맞아/응/어/그래/좋아/진행해/ㅇㅇ/오케이/ok 등 — 표현이 무엇이든 승인 의사면 전부 긍정)이면
   **action='multi' + subtasks에 확인받은 전 건을 각각 완결된 독립 지시 문장으로 분해해 출력** (조건·기간·품목을 각 문장에 전부 복사).
   한 건만 골라 route로 배정하는 것 = 나머지를 몰래 버리는 실패다. 확인받은 N건은 N개 subtask로 전부 나간다.
+  🚫 대표가 **명시적으로 요청한 작업만** subtask로 분해한다. 원문에 없는 작업을 추론으로 추가 금지 (예: "톡톡 문구·이미지·문자 준비해줘"는 3건 — 행사 기간이 있어도 대표가 '일정 등록'을 말하지 않았으면 일정 등록을 넣지 않는다). 대표가 만든 목록보다 늘리지 않는다.
   ⚠️ multi를 선언하면서 subtasks 배열을 비우는 것도 실패다 — subtasks에 문장이 2건 이상 실제로 담겨야 실행된다.
   출력 예: subtasks: ["미니밤호박 톡톡 문구 작성 — 담주 화~목 3일, 2천원 할인쿠폰, 10+1 추첨 20명", "미니밤호박 톡톡 이미지 디자인 제작 — 같은 행사 조건", "담주 화~목 미니밤호박 행사 일정 등록"]
 - 단, 같은 대상의 단일 요청은 멀티가 아니다 (예: "4월 정산 엑셀로 보내줘" = 1건 — 기존대로 route).
@@ -7516,7 +7517,7 @@ async function maruTryScheduleConfirm(order, actor) {
 
 // 배정 실행 — 요원 조회 → (live면) 실제 실행, 아니면 안내 (일반 배정·조회 복창 승인 공용)
 // mirrorOrderId: 복창 승인 흐름에서 "응" 지시에도 같은 결과를 기록
-async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId = null, effContent = null) {
+async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId = null, effContent = null, opts = {}) {
     const srcText = effContent || order.content; // 지시 #6: 결합 텍스트 기준 (파일 감지·요원 전달 원문)
     const finish = async (status, result, runId = null) => {
         await maruFinishOrder(order.id, status, result, runId);
@@ -7572,7 +7573,7 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         source: 'agent_office', actor,
     });
     // 마루가 추출한 조건 + 대표 지시 원문(한 글자도 자르지 않고 통째)을 요원 실행에 전달
-    executeAgentTestRun(run, agent, mgr.rows[0]?.name || null, {
+    const execPromise = executeAgentTestRun(run, agent, mgr.rows[0]?.name || null, {
         workplace: '전체',
         item_keyword: conditions.item_keyword,
         period: conditions.period,
@@ -7596,6 +7597,8 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         })(),
     });
     await finish('완료', { ...routeInfo, run_id: run.id }, run.id);
+    // 멀티 순차 실행 (대표 7/20): 같은 요원 동시 배정 충돌 방지 — 요원 실행 완료까지 대기 후 다음 서브태스크
+    if (opts.awaitExec) await execPromise.catch(e => console.error('멀티 순차 실행 오류:', e?.message));
 }
 
 // ===== 정산관리 이미지 자동 입력 (대표 7/20 지시) =====
@@ -7908,26 +7911,30 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 console.log(`멀티 subtasks 서버 복원 (지시 #${order.id}): 질문 항목 ${items.length}건`);
             }
         }
-        // ⓪ 멀티 지시 분산 실행 (대표 실사용 지적): 확인받은 N건을 각각 독립 지시로 등록해
-        //    기존 단일 파이프라인에 병렬로 태운다 — 각 요원이 끝나는 순서대로 개별 보고 (대기 없음)
+        // ⓪ 멀티 지시 분산 실행 (대표 실사용 지적): 확인받은 N건을 각각 독립 지시로 등록해 순차 실행
+        //    대표 7/20: 같은 요원(글샘 톡톡+문자)에 동시 배정하면 "이미 실행 중"으로 하나가 유실됨 → 순차로 처리
+        //    (각 서브태스크의 요원 실행 완료까지 기다린 후 다음 — multiSeq→awaitExec). 각자 끝나는 순서대로 보고
         if (d.action === 'multi' && !opts.noMulti && (d.subtasks || []).length >= 2) {
             await maruFinishOrder(order.id, '완료', {
-                type: 'multi_dispatch', summary: `멀티 지시 분산 — ${d.subtasks.length}건 동시 배정`,
+                type: 'multi_dispatch', summary: `멀티 지시 분산 — ${d.subtasks.length}건 순차 배정`,
                 reason: d.reason, subtasks: d.subtasks,
             });
-            for (const [idx, sub] of d.subtasks.entries()) {
-                const subRow = (await pool.query(
-                    `INSERT INTO pending_orders (content, status) VALUES ($1, '대기') RETURNING *`,
-                    [`${sub} [멀티 ${idx + 1}/${d.subtasks.length} — 원지시 #${order.id}]`])).rows[0];
-                await writeAudit({
-                    action: 'multi_dispatch', targetType: 'pending_order', targetId: subRow.id,
-                    changes: { after: { parent_order: order.id, seq: idx + 1, of: d.subtasks.length } },
-                    source: 'agent_office', actor,
-                });
-                // 병렬 실행 (await 없음) — 각 건이 독립 run으로 돌고 각자 완료 보고. 재귀 multi는 금지(단일 강제)
-                processOrderWithMaru(subRow, actor, { noMulti: true })
-                    .catch(e => console.error(`멀티 서브태스크 #${subRow.id} 실패:`, e.message));
-            }
+            // 서브태스크를 백그라운드에서 순차 실행 (원 order 응답은 즉시 반환)
+            (async () => {
+                for (const [idx, sub] of d.subtasks.entries()) {
+                    try {
+                        const subRow = (await pool.query(
+                            `INSERT INTO pending_orders (content, status) VALUES ($1, '대기') RETURNING *`,
+                            [`${sub} [멀티 ${idx + 1}/${d.subtasks.length} — 원지시 #${order.id}]`])).rows[0];
+                        await writeAudit({
+                            action: 'multi_dispatch', targetType: 'pending_order', targetId: subRow.id,
+                            changes: { after: { parent_order: order.id, seq: idx + 1, of: d.subtasks.length } },
+                            source: 'agent_office', actor,
+                        });
+                        await processOrderWithMaru(subRow, actor, { noMulti: true, multiSeq: true }); // 요원 완료까지 대기
+                    } catch (e) { console.error(`멀티 서브태스크 ${idx + 1} 실패:`, e?.message); }
+                }
+            })();
             return;
         }
         // multi가 부적합하게 나온 경우 (1건뿐·재귀) — 첫 subtask를 본문 삼아 단일 재판단 없이 정직 질문으로 전환
@@ -8110,7 +8117,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         }
         await dispatchLiveAgent(order,
             { team: d.team, assignee: d.assignee, task_summary: d.task_summary, reason: d.reason },
-            conditions, actor, null, effContent);
+            conditions, actor, null, effContent, { awaitExec: !!opts.multiSeq }); // 멀티 서브면 실행 완료까지 대기
     } catch (err) {
         // 정직한 오류 표시 — 허위 응답 금지. Anthropic API 오류는 상태코드와 함께 그대로 기록.
         const errMsg = err?.status
