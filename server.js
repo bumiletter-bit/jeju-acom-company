@@ -7911,6 +7911,12 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 console.log(`멀티 subtasks 서버 복원 (지시 #${order.id}): 질문 항목 ${items.length}건`);
             }
         }
+        // 멀티 서브태스크(noMulti)가 또 multi로 재판단되는 문제 (대표 7/20): subtask content에 [상세 조건: 원지시]가
+        // 붙어 마루가 원지시의 여러 작업을 보고 재분해 시도 → subtasks 비면 clarify로 빠져 그 작업 유실(톡톡문구 실종).
+        // 서브태스크는 이미 요원이 정해져 있으므로, multi로 나와도 assignee route로 강제 (재분해·재질문 차단).
+        if (d.action === 'multi' && opts.noMulti) {
+            if (String(d.assignee || '').trim()) { d.action = 'route'; }
+        }
         // ⓪ 멀티 지시 분산 실행 (대표 실사용 지적): 확인받은 N건을 각각 독립 지시로 등록해 순차 실행
         //    대표 7/20: 같은 요원(글샘 톡톡+문자)에 동시 배정하면 "이미 실행 중"으로 하나가 유실됨 → 순차로 처리
         //    (각 서브태스크의 요원 실행 완료까지 기다린 후 다음 — multiSeq→awaitExec). 각자 끝나는 순서대로 보고
