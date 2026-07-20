@@ -4518,7 +4518,8 @@ async function renderBoxInventory() {
         const isAdmin = currentUser?.role === 'admin';
 
         grid.innerHTML = data.map(item => {
-            const total = item.companyStock + item.daesongStock;
+            const hyodon = item.hyodonStock || 0;
+            const total = item.companyStock + item.daesongStock + hyodon;
             return `
                 <div class="leave-summary-card box-card-clickable" onclick="showBoxHistoryModal('${item.productName.replace(/'/g, "\\'")}')">
                     <div class="emp-name">${item.productName} <span style="color:#9ca3af;font-size:11px;font-weight:400;">📊 클릭하면 차감 이력</span></div>
@@ -4526,6 +4527,7 @@ async function renderBoxInventory() {
                         <div>총 재고<span class="num">${total}</span></div>
                         <div>업체재고<span class="num used ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="event.stopPropagation();editBoxStock(${item.id},'company')"` : ''} data-box-id="${item.id}" data-box-field="company">${item.companyStock}</span></div>
                         <div>대성(시온)<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="event.stopPropagation();editBoxStock(${item.id},'daesong')"` : ''} data-box-id="${item.id}" data-box-field="daesong">${item.daesongStock}</span></div>
+                        <div>효돈<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="event.stopPropagation();editBoxStock(${item.id},'hyodon')"` : ''} data-box-id="${item.id}" data-box-field="hyodon">${hyodon}</span></div>
                     </div>
                 </div>
             `;
@@ -4685,22 +4687,25 @@ document.getElementById('box-hist-excel-btn')?.addEventListener('click', downloa
 window.editBoxStock = function(id, field) {
     const item = boxInventoryData.find(i => i.id === id);
     if (!item) return;
-    const label = field === 'company' ? '업체재고' : '대성(시온)재고';
-    const current = field === 'company' ? item.companyStock : item.daesongStock;
+    const label = field === 'company' ? '업체재고' : field === 'daesong' ? '대성(시온)재고' : '효돈재고';
+    const current = field === 'company' ? item.companyStock : field === 'daesong' ? item.daesongStock : (item.hyodonStock || 0);
     const val = prompt(`${item.productName} - ${label} 실재고 입력\n(오늘 기준 실제 재고 수량 → 내일부터 입출고 자동 반영):`, current);
     if (val === null) return;
     const num = parseInt(val);
     if (isNaN(num) || num < 0) { alert('올바른 숫자를 입력해주세요.'); return; }
 
     if (field === 'company') item.companyStock = num;
-    else item.daesongStock = num;
+    else if (field === 'daesong') item.daesongStock = num;
+    else item.hyodonStock = num;
 
     // UI 즉시 반영
-    const total = item.companyStock + item.daesongStock;
+    const total = item.companyStock + item.daesongStock + (item.hyodonStock || 0);
     const card = document.querySelector(`[data-box-id="${id}"][data-box-field="company"]`).closest('.leave-summary-card');
     card.querySelector('.num:first-of-type').textContent = total;
     card.querySelector('[data-box-field="company"]').textContent = item.companyStock;
     card.querySelector('[data-box-field="daesong"]').textContent = item.daesongStock;
+    const hyoCell = card.querySelector('[data-box-field="hyodon"]');
+    if (hyoCell) hyoCell.textContent = item.hyodonStock || 0;
 
     document.getElementById('box-inventory-save-row').style.display = '';
 };
@@ -4710,7 +4715,8 @@ window.saveBoxInventory = async function() {
         for (const item of boxInventoryData) {
             await api(`/api/box-inventory/${item.id}`, 'PUT', {
                 companyStock: item.companyStock,
-                daesongStock: item.daesongStock
+                daesongStock: item.daesongStock,
+                hyodonStock: item.hyodonStock || 0
             });
         }
         alert('저장되었습니다.');

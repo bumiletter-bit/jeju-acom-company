@@ -376,6 +376,8 @@ async function initDB() {
     await pool.query(`ALTER TABLE box_inventory ADD COLUMN IF NOT EXISTS base_date DATE`);
     // 기존 행: 현재 컬럼값을 '오늘 기준값'으로 고정 (오늘 이전 이력은 이미 컬럼값에 반영된 상태 → 보존)
     await pool.query(`UPDATE box_inventory SET base_date = CURRENT_DATE WHERE base_date IS NULL`);
+    // 효돈 박스재고 (대표 7/20): 대성(시온) 외 거래처도 자체 박스 차감 지원 — 효돈 정산의 박스 세팅 품목 차감용
+    await pool.query(`ALTER TABLE box_inventory ADD COLUMN IF NOT EXISTS hyodon_stock INTEGER DEFAULT 0`);
     // 키워드 순위 (네이버 쇼핑/광고/파워링크 추이)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS keyword_rankings (
@@ -2589,7 +2591,7 @@ app.get('/api/card-transactions/link-candidates', authMiddleware, adminOnly, asy
 //  - base_date NULL = 처음부터 전체 재계산(기준값 0인 신규 박스)
 // 입출고현황(/api/box-inventory/history)과 동일 원본을 사용하므로 두 화면이 항상 일치.
 async function computeBoxStocks() {
-    const invRes = await pool.query('SELECT id, product_name, company_stock, daesong_stock, base_date, updated_at FROM box_inventory ORDER BY id');
+    const invRes = await pool.query('SELECT id, product_name, company_stock, daesong_stock, hyodon_stock, base_date, updated_at FROM box_inventory ORDER BY id');
     const byName = {};
     invRes.rows.forEach(r => {
         byName[r.product_name] = {
@@ -2597,6 +2599,7 @@ async function computeBoxStocks() {
             productName: r.product_name,
             company: Number(r.company_stock) || 0,
             daesong: Number(r.daesong_stock) || 0,
+            hyodon: Number(r.hyodon_stock) || 0, // 효돈 재고 (대표 7/20)
             baseDate: r.base_date ? normDateSafe(r.base_date) : null,
             updatedAt: r.updated_at
         };
@@ -2618,22 +2621,29 @@ async function computeBoxStocks() {
         }
     }
 
-    // 정산 차감 (대성 정산) — 기준일 이후만, 날짜별 박스타입 매핑 (history와 동일 로직)
-    const setts = await pool.query('SELECT date, items FROM settlements WHERE partner = $1 ORDER BY date', ['대성(시온)']);
-    const mapCache = {};
-    for (const s of setts.rows) {
-        const d = normDateSafe(s.date);
-        const items = (typeof s.items === 'string' ? JSON.parse(s.items) : s.items) || [];
-        if (items.length === 0) continue;
-        if (!(d in mapCache)) mapCache[d] = (await getDaesongBoxTypeMap(d)).boxTypeMap;
-        const btMap = mapCache[d];
-        for (const it of items) {
-            const bt = btMap[it.name];
-            if (!bt) continue;
-            const box = byName[bt];
-            if (!box) continue;
-            if (box.baseDate && !(d > box.baseDate)) continue;
-            box.daesong -= (Number(it.qty) || 0);
+    // 정산 차감 — 거래처별 자체 박스 (대성=daesong, 효돈=hyodon). 기준일 이후만, 날짜별 박스타입 매핑
+    // 대표 7/20: 대성 전용에서 거래처별로 일반화. 각 거래처 pricing에 박스 세팅된 품목만 차감
+    const DEDUCT_PARTNERS = [
+        { partner: '대성(시온)', field: 'daesong' },
+        { partner: '효돈농협', field: 'hyodon' },
+    ];
+    for (const { partner, field } of DEDUCT_PARTNERS) {
+        const setts = await pool.query('SELECT date, items FROM settlements WHERE partner = $1 ORDER BY date', [partner]);
+        const mapCache = {};
+        for (const s of setts.rows) {
+            const d = normDateSafe(s.date);
+            const items = (typeof s.items === 'string' ? JSON.parse(s.items) : s.items) || [];
+            if (items.length === 0) continue;
+            if (!(d in mapCache)) mapCache[d] = (await getBoxTypeMapFor(partner, d)).boxTypeMap;
+            const btMap = mapCache[d];
+            for (const it of items) {
+                const bt = btMap[it.name];
+                if (!bt) continue;
+                const box = byName[bt];
+                if (!box) continue;
+                if (box.baseDate && !(d > box.baseDate)) continue;
+                box[field] -= (Number(it.qty) || 0);
+            }
         }
     }
 
@@ -2648,6 +2658,7 @@ app.get('/api/box-inventory', authMiddleware, async (req, res) => {
             productName: b.productName,
             companyStock: b.company,
             daesongStock: b.daesong,
+            hyodonStock: b.hyodon, // 효돈 재고 (대표 7/20)
             baseDate: b.baseDate,
             updatedAt: b.updatedAt
         })));
@@ -2658,11 +2669,16 @@ app.get('/api/box-inventory', authMiddleware, async (req, res) => {
 
 app.put('/api/box-inventory/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { companyStock, daesongStock } = req.body;
+        const { companyStock, daesongStock, hyodonStock } = req.body;
         // [A안] 수동 수정 = 기준값(base) 재설정 + 기준일을 오늘로 → 이후 입출고만 자동 반영
+        // 효돈 재고(대표 7/20): 전달된 필드만 갱신 (미전달 시 기존값 유지 — COALESCE)
         await pool.query(
-            'UPDATE box_inventory SET company_stock = $1, daesong_stock = $2, base_date = CURRENT_DATE, updated_by = $3, updated_at = NOW() WHERE id = $4',
-            [companyStock, daesongStock, req.user.id, req.params.id]
+            `UPDATE box_inventory SET
+               company_stock = COALESCE($1, company_stock),
+               daesong_stock = COALESCE($2, daesong_stock),
+               hyodon_stock = COALESCE($3, hyodon_stock),
+               base_date = CURRENT_DATE, updated_by = $4, updated_at = NOW() WHERE id = $5`,
+            [companyStock ?? null, daesongStock ?? null, hyodonStock ?? null, req.user.id, req.params.id]
         );
         res.json({ success: true });
     } catch (err) {
@@ -3322,12 +3338,13 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
 // 특정 날짜에 적용되는 대성 박스타입 맵 — 같은 기간 중복 단가표가 여러 개일 수 있어 모두 병합
 // (예: 06-08~06-14 기간에 단가표 2개 — 한쪽은 미니밤호박만, 한쪽은 레몬/세미놀 등. 둘 다 합쳐야 정상 차감)
 // 박스 매칭 전용. 단가/금액 조회는 별개(getPricingForDate)이며 여기서 건드리지 않음.
-async function getDaesongBoxTypeMap(dateStr) {
+// 거래처별 박스타입 맵 (품목명 → 박스종류) — 대표 7/20: 대성 전용에서 거래처 일반화
+async function getBoxTypeMapFor(partner, dateStr) {
     const pr = await pool.query(
         `SELECT items FROM pricing
          WHERE partner = $1 AND start_date <= $2::date AND end_date >= $2::date
          ORDER BY id ASC`,
-        ['대성(시온)', dateStr]
+        [partner, dateStr]
     );
     const boxTypeMap = {};
     pr.rows.forEach(r => (r.items || []).forEach(p => {
@@ -3335,6 +3352,7 @@ async function getDaesongBoxTypeMap(dateStr) {
     }));
     return { boxTypeMap, count: pr.rows.length };
 }
+async function getDaesongBoxTypeMap(dateStr) { return getBoxTypeMapFor('대성(시온)', dateStr); } // 하위호환
 
 // [A안 폐기] 박스재고 자동 차감/복구 헬퍼 — 더 이상 호출되지 않음 (표시 시점 재계산으로 대체).
 // settlement: { id, date, partner, items, box_adjusted_at? }, delta: +1 = 차감, -1 = 복구
