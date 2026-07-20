@@ -9816,68 +9816,119 @@ function aoBindEventsOnce() {
 let aoOrderPollTimer = null;
 let aoWeekLessons = 0;
 
-// 정산관리 확인표 캐시 (LIVE 로그에서 다시 열기용) + 모달 (대표 7/20 — 모바일·PC 반응형)
+// 정산관리 확인표 캐시 + 모달 (대표 7/20 — 거래처 드롭다운 수정, 다중 이미지 큐, 모바일·PC 반응형)
 const aoSettleCache = {};
+const AO_SETTLE_PARTNERS = ['효돈농협', '대성(시온)', '기타거래처'];
+let aoSettleModalData = null; // 현재 열린 확인표
+const aoSettleQueue = []; // 다중 이미지 — 확인표 순차 표시
 window.aoOpenSettleCache = id => { if (aoSettleCache[id]) aoShowSettlementConfirm(aoSettleCache[id]); };
-function aoShowSettlementConfirm(r) {
-    document.querySelectorAll('.ao-settle-overlay').forEach(e => e.remove());
-    const rows = (r.rows || []).map(x => `<tr>
+
+// 선택 거래처의 표+합계 HTML (candidates 있으면 그걸, 없으면 구버전 r 직접)
+function aoSettleBodyHtml(r, partner) {
+    const c = (r.candidates && r.candidates[partner]) ? r.candidates[partner] : r;
+    const rows = (c.rows || []).map(x => `<tr>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;">${aoEsc(x.name)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${x.qty}박스</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${x.price != null ? x.price.toLocaleString() + '원' : '<span style="color:#e00;">가격없음</span>'}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:600;">${x.subtotal != null ? x.subtotal.toLocaleString() + '원' : '-'}</td>
     </tr>`).join('');
-    const warn = (r.unmatched || []).length
-        ? `<div style="margin:8px 0;padding:8px 10px;background:#fff3f3;border:1px solid #f5b5b5;border-radius:8px;color:#c00;font-size:13px;">⚠️ 가격 매칭 실패 ${r.unmatched.length}건 — 저장 시 0원 처리됩니다. 정산관리 화면에서 확인·수정하세요.</div>`
+    const warn = (c.unmatched || []).length
+        ? `<div style="margin:8px 0;padding:8px 10px;background:#fff3f3;border:1px solid #f5b5b5;border-radius:8px;color:#c00;font-size:13px;">⚠️ 이 거래처 가격표에 없는 품목 ${c.unmatched.length}건 (0원 처리) — 거래처가 맞는지 확인하거나 정산관리 화면에서 수정하세요.</div>`
         : '';
-    const dupWarn = r.existing
-        ? `<div style="margin:8px 0;padding:8px 10px;background:#fffbe6;border:1px solid #f0d060;border-radius:8px;color:#a67c00;font-size:13px;">🔁 <strong>${aoEsc(r.partner)} ${aoEsc(r.date||'')}</strong> 정산이 이미 있습니다 (${r.existing.amount.toLocaleString()}원). <strong>저장하면 기존 것을 덮어씁니다</strong> (중복 추가 아님).</div>`
+    const dupWarn = c.existing
+        ? `<div style="margin:8px 0;padding:8px 10px;background:#fffbe6;border:1px solid #f0d060;border-radius:8px;color:#a67c00;font-size:13px;">🔁 <strong>${aoEsc(partner)} ${aoEsc(r.date||'')}</strong> 정산이 이미 있습니다 (${c.existing.amount.toLocaleString()}원). <strong>저장하면 덮어씁니다</strong>.</div>`
         : '';
-    const saveLabel = r.existing ? '🔁 덮어쓰기 저장' : '✅ 저장하기';
+    return `${dupWarn}${warn}
+        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:420px;">
+            <thead><tr style="background:#f7f7f7;">
+                <th style="padding:8px;text-align:left;">품목</th><th style="padding:8px;text-align:right;">수량</th>
+                <th style="padding:8px;text-align:right;">단가</th><th style="padding:8px;text-align:right;">소계</th>
+            </tr></thead><tbody>${rows}</tbody>
+            <tfoot><tr style="border-top:2px solid #333;">
+                <td colspan="3" style="padding:8px;text-align:right;font-weight:700;">합계</td>
+                <td style="padding:8px;text-align:right;font-weight:700;font-size:15px;color:#0a6;">${(c.total||0).toLocaleString()}원</td>
+            </tr></tfoot>
+        </table></div>`;
+}
+function aoShowSettlementConfirm(r) {
+    document.querySelectorAll('.ao-settle-overlay').forEach(e => e.remove());
+    aoSettleModalData = r;
+    const partner = r.partner;
+    const hasCand = !!r.candidates;
+    // 거래처 드롭다운 (자동 인식된 값 기본 선택, 대표가 수정 가능)
+    const partnerSelect = hasCand
+        ? `<select id="ao-settle-partner-sel" onchange="aoSettleChangePartner(this.value)" style="font-size:15px;font-weight:600;padding:6px 10px;border-radius:8px;border:1.5px solid #F5A623;background:#fffdf5;">
+            ${AO_SETTLE_PARTNERS.map(p => `<option value="${aoEsc(p)}"${p===partner?' selected':''}>${aoEsc(p)}${r.candidates[p] && r.candidates[p].matched ? ` (품목 ${r.candidates[p].matched}개 일치)` : ' (일치 없음)'}</option>`).join('')}
+        </select>${r.auto_detected ? ' <span style="font-size:12px;color:#F5A623;">🔍 품목으로 자동 인식 — 다르면 바꿔주세요</span>' : ''}`
+        : `<strong style="color:#333;font-size:16px;">${aoEsc(partner)}</strong>`;
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay ao-settle-overlay';
     overlay.innerHTML = `<div class="modal" style="max-width:560px;width:94vw;">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 4px;">📋 정산관리 입력 확인</h3>
-        <div style="color:#666;font-size:14px;margin-bottom:10px;"><strong style="color:#333;font-size:16px;">${aoEsc(r.partner)}</strong> · ${aoEsc(r.date || '')} · 총 ${r.box_total}박스</div>
-        ${dupWarn}
-        ${warn}
-        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
-        <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:420px;">
-            <thead><tr style="background:#f7f7f7;">
-                <th style="padding:8px;text-align:left;">품목</th>
-                <th style="padding:8px;text-align:right;">수량</th>
-                <th style="padding:8px;text-align:right;">단가</th>
-                <th style="padding:8px;text-align:right;">소계</th>
-            </tr></thead>
-            <tbody>${rows}</tbody>
-            <tfoot><tr style="border-top:2px solid #333;">
-                <td colspan="3" style="padding:8px;text-align:right;font-weight:700;">합계</td>
-                <td style="padding:8px;text-align:right;font-weight:700;font-size:15px;color:#0a6;">${(r.total||0).toLocaleString()}원</td>
-            </tr></tfoot>
-        </table>
+        <h3 style="margin:0 0 8px;">📋 정산관리 입력 확인</h3>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">거래처: ${partnerSelect}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+            날짜: <input type="date" id="ao-settle-date" value="${aoEsc(r.date||'')}" onchange="aoSettleChangeDate(this.value)" style="font-size:14px;padding:5px 8px;border-radius:8px;border:1.5px solid #F5A623;background:#fffdf5;">
+            <span style="color:#888;font-size:12px;">틀리면 바꿔주세요</span> · <span style="color:#666;font-size:13px;">총 ${r.box_total}박스</span>
         </div>
+        <div id="ao-settle-body">${aoSettleBodyHtml(r, partner)}</div>
         <div style="display:flex;gap:8px;margin-top:16px;">
-            <button class="btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="aoSettleConfirmAnswer(true)">${saveLabel}</button>
-            <button class="btn-secondary" style="flex:1;padding:12px;font-size:15px;" onclick="aoSettleConfirmAnswer(false)">취소</button>
+            <button class="btn-primary" id="ao-settle-save" style="flex:1;padding:12px;font-size:15px;" onclick="aoSettleSaveOcr()">✅ 저장하기</button>
+            <button class="btn-secondary" style="flex:1;padding:12px;font-size:15px;" onclick="aoSettleCloseModal()">취소</button>
         </div>
-        <div style="text-align:center;color:#999;font-size:12px;margin-top:8px;">저장하면 정산관리 화면에 ${aoEsc(r.partner)} ${r.date || '오늘'}자로 기록됩니다</div>
     </div>`;
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.addEventListener('click', e => { if (e.target === overlay) aoSettleCloseModal(); });
     document.body.appendChild(overlay);
+    aoSettleUpdateSaveLabel(partner);
 }
-// 확인표 버튼 → "응"/"아니오" 지시 자동 전송 (채팅 입력과 동일 경로)
-window.aoSettleConfirmAnswer = async function(yes) {
-    document.querySelectorAll('.ao-settle-overlay').forEach(e => e.remove());
-    try {
-        const res = await api('/api/agent-office/orders', 'POST', { content: yes ? '응' : '아니오' });
-        aoAppendLiveLogHtml(aoOrderLogLine(res.order));
-        aoPollOrder(res.order.id);
-    } catch (err) { alert(err.message); }
+window.aoSettleChangePartner = function(partner) {
+    if (!aoSettleModalData) return;
+    aoSettleModalData.partner = partner;
+    document.getElementById('ao-settle-body').innerHTML = aoSettleBodyHtml(aoSettleModalData, partner);
+    aoSettleUpdateSaveLabel(partner);
 };
+// 날짜 수정 (대표 7/20 — 잘못 인식된 날짜 교정, 실수 방지)
+window.aoSettleChangeDate = function(date) {
+    if (!aoSettleModalData || !date) return;
+    aoSettleModalData.date = date; // 저장 시 이 날짜 사용 (같은 주 가격 동일 — 저장은 항상 덮어쓰기라 안전)
+};
+function aoSettleUpdateSaveLabel(partner) {
+    const btn = document.getElementById('ao-settle-save');
+    if (!btn) return;
+    const c = (aoSettleModalData.candidates && aoSettleModalData.candidates[partner]) ? aoSettleModalData.candidates[partner] : aoSettleModalData;
+    btn.textContent = c.existing ? '🔁 덮어쓰기 저장' : '✅ 저장하기';
+}
+window.aoSettleCloseModal = function() {
+    document.querySelectorAll('.ao-settle-overlay').forEach(e => e.remove());
+    aoSettleModalData = null;
+    aoSettleShowNextInQueue(); // 다중 이미지 — 다음 확인표
+};
+// 확인표 저장 → 전용 API (선택 거래처 반영, 중복 덮어쓰기)
+window.aoSettleSaveOcr = async function() {
+    const r = aoSettleModalData;
+    if (!r) return;
+    const btn = document.getElementById('ao-settle-save');
+    if (btn) btn.disabled = true;
+    try {
+        // candidates 있으면 전용 API, 없으면 구버전 "응" 경로
+        if (r.candidates && r.order_id) {
+            const res = await api('/api/agent-office/settlement-ocr-save', 'POST', { order_id: r.order_id, partner: r.partner, date: r.date });
+            showToast('✅ ' + res.message);
+        } else {
+            const res = await api('/api/agent-office/orders', 'POST', { content: '응' });
+            aoPollOrder(res.order.id);
+        }
+        aoRefreshLog();
+        aoSettleCloseModal();
+    } catch (err) { alert(err.message); if (btn) btn.disabled = false; }
+};
+function aoSettleShowNextInQueue() {
+    if (aoSettleQueue.length) { const next = aoSettleQueue.shift(); setTimeout(() => aoShowSettlementConfirm(next), 300); }
+}
 
-// 정산관리 이미지 첨부 상태 (대표 7/20)
-let aoOrderImage = null; // { data: dataURL, mime, name }
+// 정산관리 이미지 첨부 (대표 7/20 — 여러 장 가능, 각 장이 독립 거래처로 처리)
+let aoOrderImages = []; // [{ data, mime, name }]
 function aoSetupOrderImage() {
     const fileInput = document.getElementById('ao-order-image');
     const pickBtn = document.getElementById('ao-order-image-btn');
@@ -9885,21 +9936,29 @@ function aoSetupOrderImage() {
     if (!fileInput || !pickBtn) return;
     pickBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', () => {
-        const f = fileInput.files && fileInput.files[0];
-        if (!f) return;
-        if (f.size > 10 * 1024 * 1024) { alert('이미지가 너무 큽니다 (10MB 이내)'); fileInput.value = ''; return; }
-        const reader = new FileReader();
-        reader.onload = () => {
-            aoOrderImage = { data: reader.result, mime: f.type, name: f.name };
-            preview.style.display = '';
-            preview.innerHTML = `📷 <strong>${aoEsc(f.name)}</strong> 첨부됨 — "오늘 정산관리에 올려줘" 처럼 지시하거나 바로 전송하세요 <button class="ao-fb-btn" id="ao-order-image-clear">✕ 제거</button>`;
-            document.getElementById('ao-order-image-clear').addEventListener('click', aoClearOrderImage);
-        };
-        reader.readAsDataURL(f);
+        const files = Array.from(fileInput.files || []);
+        if (!files.length) return;
+        aoOrderImages = [];
+        let pending = files.length;
+        files.forEach(f => {
+            if (f.size > 10 * 1024 * 1024) { alert(`${f.name}: 이미지가 너무 큽니다 (10MB 이내)`); pending--; return; }
+            const reader = new FileReader();
+            reader.onload = () => { aoOrderImages.push({ data: reader.result, mime: f.type, name: f.name }); if (--pending <= 0) aoRenderImagePreview(); };
+            reader.readAsDataURL(f);
+        });
     });
 }
+function aoRenderImagePreview() {
+    const pv = document.getElementById('ao-order-image-preview');
+    if (!pv) return;
+    if (!aoOrderImages.length) { pv.style.display = 'none'; pv.innerHTML = ''; return; }
+    pv.style.display = '';
+    const names = aoOrderImages.map(x => aoEsc(x.name)).join(', ');
+    pv.innerHTML = `📷 <strong>${aoOrderImages.length}장</strong> 첨부됨 (${names}) — 각 이미지의 품목으로 거래처를 자동 인식합니다. "정산관리 올려줘" 지시하거나 바로 전송 <button class="ao-fb-btn" id="ao-order-image-clear">✕ 제거</button>`;
+    document.getElementById('ao-order-image-clear').addEventListener('click', aoClearOrderImage);
+}
 function aoClearOrderImage() {
-    aoOrderImage = null;
+    aoOrderImages = [];
     const fi = document.getElementById('ao-order-image'); if (fi) fi.value = '';
     const pv = document.getElementById('ao-order-image-preview'); if (pv) { pv.style.display = 'none'; pv.innerHTML = ''; }
 }
@@ -9907,18 +9966,28 @@ function aoClearOrderImage() {
 async function aoSendOrder() {
     const input = document.getElementById('ao-order-input');
     const content = input.value.trim();
-    if (!content && !aoOrderImage) return; // 이미지 없이 빈 지시는 무시
+    if (!content && !aoOrderImages.length) return;
     const btn = document.getElementById('ao-order-send');
     btn.disabled = true;
     try {
-        const body = { content };
-        if (aoOrderImage) { body.image_data = aoOrderImage.data; body.image_mime = aoOrderImage.mime; }
-        const res = await api('/api/agent-office/orders', 'POST', body);
-        input.value = '';
-        aoClearOrderImage();
-        aoAppendLiveLogHtml(aoOrderLogLine(res.order));
-        aoSayThinking('마루', '💭', '생각 중'); // 결과 나올 때까지 상시 표시
-        aoPollOrder(res.order.id);
+        if (aoOrderImages.length) {
+            // 이미지 여러 장 → 각각 독립 order (각자 판독·거래처 자동 인식·확인표). 지시문(날짜 등)은 공통 적용
+            const imgs = aoOrderImages.slice();
+            input.value = '';
+            aoClearOrderImage();
+            for (const img of imgs) {
+                const res = await api('/api/agent-office/orders', 'POST', { content: content || '정산관리에 올려줘', image_data: img.data, image_mime: img.mime });
+                aoAppendLiveLogHtml(aoOrderLogLine(res.order));
+                aoPollOrder(res.order.id);
+            }
+            aoSayThinking('마루', '💭', `이미지 ${imgs.length}장 판독 중`);
+        } else {
+            const res = await api('/api/agent-office/orders', 'POST', { content });
+            input.value = '';
+            aoAppendLiveLogHtml(aoOrderLogLine(res.order));
+            aoSayThinking('마루', '💭', '생각 중');
+            aoPollOrder(res.order.id);
+        }
     } catch (err) {
         alert(err.message);
     } finally {
@@ -9947,9 +10016,10 @@ function aoHandleOrderResult(order) {
     const r = order.result || {};
     aoClearSay('마루'); // '분석 중...' 상시 말풍선 제거
     if (order.status === '질문' && r.type === 'settlement_ocr_confirm') {
-        // 정산관리 확인표 → 모달로 크게 (모바일·PC 반응형) + 저장/취소 버튼
-        aoShowSettlementConfirm(r);
-        showToast('정산관리 확인표 — 내용 확인 후 저장');
+        // 정산관리 확인표 → 모달 (다중 이미지면 이미 열린 모달 뒤로 큐잉)
+        if (aoSettleModalData) aoSettleQueue.push(r);
+        else aoShowSettlementConfirm(r);
+        showToast('정산관리 확인표 — 거래처 확인 후 저장');
     } else if (order.status === '질문') {
         // 애매한 지시 → 마루가 되묻기 (추측 실행 금지 원칙)
         aoSay('마루', '🤔 ' + (r.question || '확인이 필요합니다'), 9000);
