@@ -7798,7 +7798,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 }
             }
             // 4.5단계 ⑥: 품목 순위 의도 — 순위/기여/잘 팔린/TOP N (비교와 중복 시 비교 우선)
-            if (!conditions.compare && /순위|기여|잘\s*팔(린|리)|톱\s*\d*|top\s*\d*/i.test(effContent) && /품목|상품|뭐가|무엇|어떤/.test(effContent)) {
+            if (!conditions.compare && /순위|기여|잘\s*팔(린|리)|많이\s*(팔(린|려|리)|판매|나(간|가))|가장\s*많이|베스트|best|1위|일위|톱\s*\d*|top\s*\d*/i.test(effContent) && /품목|상품|뭐가|무엇|무엇|어떤|뭘|게\s*뭐|것\s*뭐/.test(effContent)) {
                 const nm = effContent.match(/(?:톱|top)\s*(\d+)/i) || effContent.match(/(\d+)\s*위까지/);
                 conditions.rank = { all: /전부|전체\s*품목|모든\s*품목/.test(effContent), topN: nm ? Number(nm[1]) : null };
                 console.log(`품목 순위 확정: ${conditions.rank.all ? '전체' : 'TOP ' + (conditions.rank.topN || 10)}`);
