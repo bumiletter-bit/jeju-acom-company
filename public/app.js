@@ -295,6 +295,7 @@ function switchPage(pageName) {
     }
     if (pageName === 'worklog') renderWorklogPage().catch(console.error);
     if (pageName === 'pricing') renderPricingList().catch(console.error);
+    if (pageName === 'invoice') aoRenderInvoiceCatalog().catch(console.error); // 송장변환: 오늘 판매 품목 로드·표시 (대표 7/20)
     if (pageName === 'lunch') renderLunchPage().catch(console.error);
     if (pageName === 'planner') renderPlannerPage().catch(console.error);
     if (pageName === 'inventory') renderBoxInventory().catch(console.error);
@@ -5207,8 +5208,66 @@ const PRODUCT_CATALOG = new Set([
     '최상품 청귤(풋귤) 10kg',
 ]);
 
-// 상품 카탈로그 매칭
+// 송장변환 품목 매칭 = 오늘 품목별 금액(pricing) 기반 (대표 7/20)
+// matchProductRaw(정교한 옵션 파서)로 표준 품목명 생성 → 오늘 pricing 품목과 특징 매칭 →
+// pricing에 있으면 그 품목명, 없으면 [미매칭]. pricing 미로드 시 표준명 폴백. 중간발주도 공유.
+let aoInvoicePricingNames = []; // 오늘 유효 pricing 품목명
+async function aoLoadInvoicePricing() {
+    try {
+        const data = await api('/api/pricing');
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const names = new Set();
+        data.forEach(p => {
+            if (String(p.startDate) <= todayStr && todayStr <= String(p.endDate)) (p.items||[]).forEach(it => it.name && names.add(it.name));
+        });
+        aoInvoicePricingNames = [...names];
+    } catch (e) { aoInvoicePricingNames = []; console.error('송장변환 pricing 로드 실패:', e); }
+}
+// 품목명 → 특징(과일·용도·중량·등급) 추출 (정산 matchItemToPricing과 같은 개념, 송장변환용 프론트 판)
+function aoInvoiceFeat(name) {
+    const t = String(name || '').replace(/\s/g, '');
+    const fruit = (t.match(/하우스감귤|미니밤호박|한입밤호박|황금향|한라봉|천혜향|새콤달콤카라향|카라향|레드향|세미놀귤|자몽|레몬|블러드오렌지|수라향|하귤|청귤|풋귤|초당옥수수|취나물/) || [])[0] || '';
+    const use = (t.match(/특품|못난이|한입|가정용|선물용|프리미엄/) || [])[0] || '';
+    const weight = ((t.match(/(\d+(?:\.\d+)?)kg/) || [])[1]) || '';
+    const grade = (t.match(/로얄과|중대과|소과|랜덤과|중소과|대과/) || [])[0] || '';
+    return { fruit, use, weight, grade };
+}
+function aoMatchToPricing(standardName, pricingNames) {
+    const s = aoInvoiceFeat(standardName);
+    if (!s.fruit || !s.weight) return null;
+    for (const pn of pricingNames) {
+        const p = aoInvoiceFeat(pn);
+        if (p.fruit === s.fruit && p.weight === s.weight
+            && (p.use === s.use || (!s.use && !p.use))
+            && (p.grade === s.grade || (!s.grade && !p.grade))) return pn;
+    }
+    return null;
+}
+// 송장변환 화면: 오늘 판매 품목 목록 로드·표시 (읽기 전용 — 품목별 금액과 동일)
+async function aoRenderInvoiceCatalog() {
+    await aoLoadInvoicePricing();
+    const box = document.getElementById('invoice-catalog-list');
+    if (!box) return;
+    if (!aoInvoicePricingNames.length) {
+        box.innerHTML = '<div style="color:#9ca3af;font-size:13px;">오늘 기준 품목별 금액이 없습니다 — 품목별 금액 메뉴에서 이번 기간을 등록하세요.</div>';
+        return;
+    }
+    box.innerHTML = `<div style="color:#666;font-size:13px;margin-bottom:8px;">총 <strong>${aoInvoicePricingNames.length}</strong>개 품목</div>`
+        + '<div style="display:flex;flex-direction:column;gap:4px;">'
+        + aoInvoicePricingNames.map(n => `<div style="padding:6px 10px;background:#f7f9fc;border-radius:6px;font-size:13px;">${aoEsc(n)}</div>`).join('')
+        + '</div>';
+}
 function matchProduct(rawText) {
+    const std = matchProductRaw(rawText);
+    if (typeof std !== 'string' || std.startsWith('[미매칭]')) return std;
+    if (!aoInvoicePricingNames.length) return std; // pricing 미로드 시 표준명 폴백 (안전)
+    const matched = aoMatchToPricing(std, aoInvoicePricingNames);
+    return matched || ('[미매칭] ' + String(rawText || '').trim());
+}
+
+// 상품 카탈로그 매칭 (정교한 옵션정보 파서 → 표준 품목명)
+function matchProductRaw(rawText) {
     const t = rawText || '';
     // 초당옥수수: kg가 아닌 '개입(개수)' 단위라 중량 매칭 전에 처리
     if (/옥수수/.test(t)) {
