@@ -3307,7 +3307,12 @@ app.get('/api/settlements', authMiddleware, adminOnly, async (req, res) => {
                         const newPrice = priceMap[mappedName];
                         return { ...item, price: newPrice, subtotal: newPrice * (item.qty || 0) };
                     }
-                    // 3차: 특징 기반 매칭 (과일명+용도+중량+꼬마여부)
+                    // 3차: 정확 substring 매칭 (무게·등급 구분) — 대표 7/21: 품목명 변경 시 특징매칭이 2.5kg↔4.5kg 뒤섞던 버그 방지
+                    const exactHit = matchSettlementItemExact(item.name, priceMap);
+                    if (exactHit) {
+                        return { ...item, price: exactHit.price, subtotal: exactHit.price * (item.qty || 0) };
+                    }
+                    // 4차: 특징 기반 매칭 (fallback)
                     const featurePrice = matchItemToPricing(item.name, priceMap);
                     if (featurePrice !== undefined) {
                         return { ...item, price: featurePrice, subtotal: featurePrice * (item.qty || 0) };
@@ -3618,7 +3623,12 @@ app.get('/api/settlements/total-unpaid', authMiddleware, adminOnly, async (req, 
                     if (mappedName && priceMap[mappedName] !== undefined) {
                         return sum + priceMap[mappedName] * (item.qty || 0);
                     }
-                    // 3차: 특징 기반 매칭 (과일명+용도+중량+꼬마여부)
+                    // 3차: 정확 substring 매칭 (무게·등급 구분) — 대표 7/21: 품목명 변경 시 2.5kg↔4.5kg 뒤섞임 방지
+                    const exactHit = matchSettlementItemExact(item.name, priceMap);
+                    if (exactHit) {
+                        return sum + exactHit.price * (item.qty || 0);
+                    }
+                    // 4차: 특징 기반 매칭 (fallback)
                     const featurePrice = matchItemToPricing(item.name, priceMap);
                     if (featurePrice !== undefined) {
                         return sum + featurePrice * (item.qty || 0);
@@ -3943,7 +3953,7 @@ function extractFeatures(text) {
     if (/꼬마/.test(t)) size = '꼬마';
 
     let weight = null;
-    const wMatch = t.match(/(\d+)\s*kg/i);
+    const wMatch = t.match(/(\d+(?:\.\d+)?)\s*kg/i); // 대표 7/21: 소수점 허용 — "2.5kg"/"4.5kg"이 둘 다 "5kg"으로 뭉개져 단가 뒤섞이던 버그 수정
     if (wMatch) weight = wMatch[1] + 'kg';
 
     return { fruit, grade, weight, growType, size };
