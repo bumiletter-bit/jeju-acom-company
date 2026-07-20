@@ -9997,16 +9997,17 @@ async function aoSendOrder() {
 }
 
 // 마루 처리 결과 폴링 (질문/완료/안내/오류가 될 때까지)
+// 대표 7/20: order마다 독립 타이머 — 다중 이미지처럼 여러 order를 동시에 폴링해도 서로 죽이지 않음
+// (기존엔 aoOrderPollTimer 하나를 공유해 2번째 폴링이 1번째를 clearInterval로 꺼버려 대성 확인표가 안 떴음)
 function aoPollOrder(orderId) {
-    clearInterval(aoOrderPollTimer);
     let tries = 0;
-    aoOrderPollTimer = setInterval(async () => {
-        if (++tries > 40) { clearInterval(aoOrderPollTimer); return; }
+    const timer = setInterval(async () => {
+        if (++tries > 40) { clearInterval(timer); return; }
         try {
             const data = await api('/api/agent-office/orders/' + orderId);
             const order = data.order;
             if (order.status === '대기' || order.status === '처리중') return;
-            clearInterval(aoOrderPollTimer);
+            clearInterval(timer);
             aoHandleOrderResult(order);
         } catch (e) { console.error('지시 폴링 실패:', e); }
     }, 1500);
