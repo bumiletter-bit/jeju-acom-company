@@ -7755,7 +7755,9 @@ async function settlementCalcForPartner(partner, readItems, dateStr) {
         else { matched++; const sub = hit.price * it.qty; total += sub; rows.push({ name: it.name, matched: hit.name, qty: it.qty, price: hit.price, subtotal: sub }); }
     }
     const dup = (await pool.query(`SELECT id, amount FROM settlements WHERE partner=$1 AND date::text=$2 ORDER BY id DESC LIMIT 1`, [partner, dateStr])).rows[0];
-    return { rows, total, matched, unmatched, existing: dup ? { id: dup.id, amount: Number(dup.amount) } : null };
+    // 수동 매칭용 품목 목록 (대표 7/20): 미매칭 품목을 대표가 직접 pricing 상품으로 고를 수 있게 확인표에 첨부
+    const catalog = Object.entries(priceMap).map(([name, price]) => ({ name, price: Number(price) || 0 }));
+    return { rows, total, matched, unmatched, existing: dup ? { id: dup.id, amount: Number(dup.amount) } : null, catalog };
 }
 // 확인표 생성 — 3개 거래처 전부 계산(candidates) + 품목 최다 매칭으로 자동 인식. 대표가 드롭다운으로 수정 가능
 async function settlementOcrBuildConfirm(order, partnerHint, readItems, runId, settleDate) {
@@ -8205,26 +8207,30 @@ app.get('/api/agent-office/orders/:id', authMiddleware, adminOnly, async (req, r
 // 정산관리 확인표 → 대표가 선택한 거래처로 저장 (대표 7/20: 드롭다운 수정 반영). 중복은 덮어쓰기
 app.post('/api/agent-office/settlement-ocr-save', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { order_id, partner, date } = req.body || {};
+        const { order_id, partner, date, rows: editedRows } = req.body || {};
         if (!order_id || !partner || !date) throw { status: 400, message: 'order_id·partner·date가 필요합니다' };
         const ord = (await pool.query(`SELECT result FROM pending_orders WHERE id=$1 AND is_deleted=false`, [order_id])).rows[0];
         if (!ord || !ord.result || ord.result.type !== 'settlement_ocr_confirm') throw { status: 404, message: '확인표를 찾을 수 없습니다 (이미 처리됐거나 만료)' };
         const cand = ord.result.candidates && ord.result.candidates[partner];
         if (!cand) throw { status: 400, message: `거래처 '${partner}' 계산 결과가 없습니다` };
-        const items = (cand.rows || []).map(x => ({ name: x.matched || x.name, qty: x.qty, price: x.price || 0, subtotal: x.subtotal || 0 }));
+        // 대표 7/20: 프론트에서 수동 매칭한 rows가 오면 그걸 우선 (미매칭 품목을 대표가 직접 pricing 상품에 맞춘 결과)
+        const srcRows = (Array.isArray(editedRows) && editedRows.length) ? editedRows : (cand.rows || []);
+        const items = srcRows.map(x => ({ name: x.matched || x.name, qty: Number(x.qty) || 0, price: Number(x.price) || 0, subtotal: Number(x.subtotal) || (Number(x.price) || 0) * (Number(x.qty) || 0) }));
+        const total = items.reduce((s, it) => s + it.subtotal, 0);
+        const boxTotal = items.reduce((s, it) => s + it.qty, 0);
         const del = await pool.query(`DELETE FROM settlements WHERE partner=$1 AND date::text=$2 RETURNING id`, [partner, date]);
         await pool.query(`INSERT INTO settlements (date, partner, amount, items, from_pricing) VALUES ($1,$2,$3,$4,TRUE)`,
-            [date, partner, cand.total || 0, JSON.stringify(items)]);
+            [date, partner, total, JSON.stringify(items)]);
         await writeAudit({
             action: del.rows.length ? 'update' : 'create', targetType: 'settlement', targetId: null,
-            changes: { after: { via: 'image_ocr', partner, date, box_total: cand.box_total, amount: cand.total, overwrote: del.rows.length } },
+            changes: { after: { via: 'image_ocr', partner, date, box_total: boxTotal, amount: total, overwrote: del.rows.length, manual_match: !!(editedRows && editedRows.length) } },
             source: 'agent_office', actor: adminActor(req),
         });
         await pool.query(`UPDATE pending_orders SET status='완료', processed_at=NOW(),
             result = jsonb_set(jsonb_set(result, '{type}', '"settlement_saved_ocr"'), '{saved_partner}', $2) WHERE id=$1`,
             [order_id, JSON.stringify(partner)]);
-        notifyTelegram(`✅ 정산관리 입력 — ${partner} ${date} (${cand.box_total}박스)${del.rows.length ? ' [덮어씀]' : ''}`);
-        res.json({ message: `${partner} ${date} 정산관리에 ${del.rows.length ? '덮어쓰기' : '저장'} 완료 (${cand.box_total}박스, ${(cand.total || 0).toLocaleString()}원)`, partner, total: cand.total, overwrote: del.rows.length });
+        notifyTelegram(`✅ 정산관리 입력 — ${partner} ${date} (${boxTotal}박스)${del.rows.length ? ' [덮어씀]' : ''}`);
+        res.json({ message: `${partner} ${date} 정산관리에 ${del.rows.length ? '덮어쓰기' : '저장'} 완료 (${boxTotal}박스, ${total.toLocaleString()}원)`, partner, total, overwrote: del.rows.length });
     } catch (err) { handleAdminErr(res, err); }
 });
 

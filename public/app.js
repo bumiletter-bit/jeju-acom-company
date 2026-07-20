@@ -9967,12 +9967,18 @@ window.aoOpenSettleCache = id => { if (aoSettleCache[id]) aoShowSettlementConfir
 // 선택 거래처의 표+합계 HTML (candidates 있으면 그걸, 없으면 구버전 r 직접)
 function aoSettleBodyHtml(r, partner) {
     const c = (r.candidates && r.candidates[partner]) ? r.candidates[partner] : r;
-    const rows = (c.rows || []).map(x => `<tr>
-        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${aoEsc(x.name)}</td>
+    // 대표 7/20: 미매칭 품목은 소계 클릭 시 pricing 상품 선택(수동 매칭). 매칭된 것도 소계 클릭으로 변경 가능
+    const rows = (c.rows || []).map((x, i) => {
+        const unmatched = x.price == null;
+        const subCell = unmatched
+            ? `<span class="ao-settle-pick" style="color:#e00;font-weight:700;cursor:pointer;text-decoration:underline;" onclick="aoSettlePickItem(${i})">🔗 매칭하기</span>`
+            : `<span class="ao-settle-pick" style="cursor:pointer;" onclick="aoSettlePickItem(${i})">${x.subtotal.toLocaleString()}원 ✏️</span>`;
+        return `<tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;">${aoEsc(x.matched || x.name)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${x.qty}박스</td>
         <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${x.price != null ? x.price.toLocaleString() + '원' : '<span style="color:#e00;">가격없음</span>'}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:600;">${x.subtotal != null ? x.subtotal.toLocaleString() + '원' : '-'}</td>
-    </tr>`).join('');
+        <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:600;">${subCell}</td>
+    </tr>`; }).join('');
     const warn = (c.unmatched || []).length
         ? `<div style="margin:8px 0;padding:8px 10px;background:#fff3f3;border:1px solid #f5b5b5;border-radius:8px;color:#c00;font-size:13px;">⚠️ 이 거래처 가격표에 없는 품목 ${c.unmatched.length}건 (0원 처리) — 거래처가 맞는지 확인하거나 정산관리 화면에서 수정하세요.</div>`
         : '';
@@ -10029,6 +10035,44 @@ window.aoSettleChangePartner = function(partner) {
     document.getElementById('ao-settle-body').innerHTML = aoSettleBodyHtml(aoSettleModalData, partner);
     aoSettleUpdateSaveLabel(partner);
 };
+// 수동 매칭 (대표 7/20): 소계 클릭 → 해당 거래처 pricing 품목 선택 → 행 갱신
+window.aoSettlePickItem = function(rowIdx) {
+    const r = aoSettleModalData;
+    if (!r) return;
+    const partner = r.partner;
+    const c = (r.candidates && r.candidates[partner]) ? r.candidates[partner] : r;
+    const catalog = c.catalog || [];
+    const row = c.rows[rowIdx];
+    if (!catalog.length) return alert('이 거래처의 품목별 금액이 없습니다 — 품목별 금액을 먼저 등록하세요.');
+    document.querySelectorAll('.ao-pick-overlay').forEach(e => e.remove());
+    const opts = catalog.map(p => `<button class="ao-manage-item" onclick="aoSettleApplyPick(${rowIdx}, ${JSON.stringify(p.name).replace(/"/g,'&quot;')}, ${p.price})">${aoEsc(p.name)} <small>(${p.price.toLocaleString()}원)</small></button>`).join('');
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay ao-pick-overlay';
+    overlay.innerHTML = `<div class="modal" style="max-width:520px;width:94vw;">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 4px;">🔗 품목 매칭</h3>
+        <div style="color:#666;font-size:13px;margin-bottom:6px;">읽은 품목: <strong>${aoEsc(row.name)}</strong> (${row.qty}박스)</div>
+        <div style="color:#888;font-size:12px;margin-bottom:12px;">아래 품목별 금액 상품 중 맞는 것을 누르세요</div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;">${opts}</div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+window.aoSettleApplyPick = function(rowIdx, name, price) {
+    const r = aoSettleModalData;
+    const partner = r.partner;
+    const c = (r.candidates && r.candidates[partner]) ? r.candidates[partner] : r;
+    const row = c.rows[rowIdx];
+    row.matched = name;
+    row.price = price;
+    row.subtotal = price * (row.qty || 0);
+    // 미매칭 목록에서 제거 + 합계 재계산
+    c.unmatched = (c.unmatched || []).filter(n => n !== row.name);
+    c.total = c.rows.reduce((s, x) => s + (x.subtotal || 0), 0);
+    document.querySelectorAll('.ao-pick-overlay').forEach(e => e.remove());
+    document.getElementById('ao-settle-body').innerHTML = aoSettleBodyHtml(r, partner);
+    aoSettleUpdateSaveLabel(partner);
+};
 // 날짜 수정 (대표 7/20 — 잘못 인식된 날짜 교정, 실수 방지)
 window.aoSettleChangeDate = function(date) {
     if (!aoSettleModalData || !date) return;
@@ -10052,9 +10096,10 @@ window.aoSettleSaveOcr = async function() {
     const btn = document.getElementById('ao-settle-save');
     if (btn) btn.disabled = true;
     try {
-        // candidates 있으면 전용 API, 없으면 구버전 "응" 경로
+        // candidates 있으면 전용 API, 없으면 구버전 "응" 경로. 수동 매칭한 rows도 함께 전송 (대표 7/20)
         if (r.candidates && r.order_id) {
-            const res = await api('/api/agent-office/settlement-ocr-save', 'POST', { order_id: r.order_id, partner: r.partner, date: r.date });
+            const c = r.candidates[r.partner] || {};
+            const res = await api('/api/agent-office/settlement-ocr-save', 'POST', { order_id: r.order_id, partner: r.partner, date: r.date, rows: c.rows || [] });
             showToast('✅ ' + res.message);
         } else {
             const res = await api('/api/agent-office/orders', 'POST', { content: '응' });
