@@ -10137,6 +10137,37 @@ async function aoSendOrder() {
     }
 }
 
+// 마루 질문 답변 모달 (대표 7/20 — 마루 클릭 시): 질문 전문 + 네/아니오
+window.aoOpenMaruQuestion = function() {
+    if (!aoPendingMaruQ) return;
+    const q = (aoPendingMaruQ.result && aoPendingMaruQ.result.question) || '확인이 필요합니다';
+    document.querySelectorAll('.ao-maruq-overlay').forEach(e => e.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay ao-maruq-overlay';
+    overlay.innerHTML = `<div class="modal" style="max-width:440px;">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 10px;">🤔 마루의 질문</h3>
+        <div style="background:#FFF7E6;border:2px solid #F5A623;border-radius:10px;padding:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;">${aoEsc(q)}</div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+            <button class="btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="this.closest('.modal-overlay').remove(); aoQuickAnswer(true)">✅ 네, 진행</button>
+            <button class="btn-outline" style="flex:1;padding:12px;font-size:15px;" onclick="this.closest('.modal-overlay').remove(); aoQuickAnswer(false)">✕ 아니오</button>
+        </div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
+
+// 마루 질문에 네/아니오 빠른 답변 (대표 7/20 — 로그 버튼·마루 클릭으로 진행)
+window.aoQuickAnswer = async function(yes) {
+    try {
+        const res = await api('/api/agent-office/orders', 'POST', { content: yes ? '네' : '아니오' });
+        aoClearSay('마루');
+        aoAppendLiveLogHtml(aoOrderLogLine(res.order));
+        aoSayThinking('마루', '💭', '처리 중');
+        aoPollOrder(res.order.id);
+    } catch (err) { alert(err.message); }
+};
+
 // 마루 처리 결과 폴링 (질문/완료/안내/오류가 될 때까지)
 // 대표 7/20: order마다 독립 타이머 — 다중 이미지처럼 여러 order를 동시에 폴링해도 서로 죽이지 않음
 // (기존엔 aoOrderPollTimer 하나를 공유해 2번째 폴링이 1번째를 clearInterval로 꺼버려 대성 확인표가 안 떴음)
@@ -10841,7 +10872,13 @@ function aoOrderLogLine(o) {
     else if (st === '질문' && r.type === 'settlement_ocr_confirm') { aoSettleCache[o.id] = r; extra = `<div class="ao-log-sub">📋 <strong>${aoEsc(r.partner)}</strong> 정산관리 입력 확인 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원) <button class="ao-fb-btn" onclick="event.stopPropagation(); aoOpenSettleCache(${o.id})">확인표 열기</button></div>`; }
     else if (st === '완료' && r.type === 'settlement_saved_ocr') extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.partner)} 정산관리 저장 완료 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원)</div>`;
     else if (st === '질문' && r.type === 'settlement_ocr_need_partner') extra = `<div class="ao-log-sub">📦 품목 읽음 — 거래처만 확인 필요: "효돈농협 / 대성(시온) / 기타거래처" 중 답해주세요</div>`;
-    else if (st === '질문' && r.question) extra = `<div class="ao-log-sub">🤔 마루 → 대표: ${aoEsc(r.question)}</div>`;
+    else if (r.question && (st === '질문' || st === '응답됨' || st === '대체됨' || st === '질문종결')) {
+        // 마루 질문 — 튀는 테두리로 대표 질문과 구분 (대표 7/20). 미응답(질문)이면 네/아니오 버튼
+        const btns = st === '질문'
+            ? `<div class="ao-maruq-btns"><button class="ao-maruq-yes" onclick="event.stopPropagation(); aoQuickAnswer(true)">✅ 네</button><button class="ao-maruq-no" onclick="event.stopPropagation(); aoQuickAnswer(false)">✕ 아니오</button></div>`
+            : '';
+        extra = `<div class="ao-log-sub ao-log-maruq">🤔 <strong>마루의 질문</strong>: ${aoEsc(r.question)}${btns}</div>`;
+    }
     else if (st === '완료' && r.assignee) {
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
         extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.team || '')} ${aoEsc(r.assignee)} 배정${cond ? ' [조건: ' + aoEsc(cond) + ']' : ''}${r.run_id ? ' · 실행 #' + r.run_id : ''}</div>`;
@@ -10896,8 +10933,13 @@ async function aoRefreshLog() {
         log.innerHTML = lines.length
             ? lines.slice(0, 60).map(l => l.html).join('')
             : '<div class="ao-log-empty">아직 실행 로그가 없습니다</div>';
+        // ③ 마루 머리 위 질문 말풍선 (대표 7/20): 미응답 질문이 있으면 마루가 "❓ 질문 있어요!" 표시
+        aoPendingMaruQ = (orderData.orders || []).find(o => o.status === '질문' && o.result && o.result.question) || null;
+        if (aoPendingMaruQ) aoSay('마루', '❓ 확인해주세요! (눌러서 답변)', 0);
+        else aoClearSay('마루');
     } catch (e) { console.error('로그 조회 실패:', e); }
 }
+let aoPendingMaruQ = null;
 
 function aoStartLogPolling() {
     clearInterval(aoLogPollTimer);
@@ -10922,6 +10964,9 @@ async function aoRefreshAgentsStatusOnly() {
 
 // ---- 에이전트 상세 패널 ----
 window.openAoDetail = async function(agentId) {
+    // ④ 마루 클릭 시 미응답 질문이 있으면 답변 모달 먼저 (대표 7/20)
+    const clicked = aoAgents.find(a => a.id === agentId);
+    if (clicked && clicked.role === 'chief' && aoPendingMaruQ) { aoOpenMaruQuestion(); return; }
     let data;
     try {
         data = await api('/api/agent-office/agents/' + agentId);

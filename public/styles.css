@@ -4669,7 +4669,14 @@ textarea.form-input {
 .ao-order-label { color: #F5C800; font-weight: 700; font-size: 13px; white-space: nowrap; }
 .ao-order-bar .form-input { flex: 1; min-height: 42px; border: none; font-size: 14px; }
 #ao-order-send { min-height: 44px; padding: 0 18px; font-weight: 700; flex-shrink: 0; }
-.ao-log-order { background: #FFFBEA; border-left: 3px solid #F5C800; }
+.ao-log-order { background: #fff; border-left: 3px solid #d1d5db; }
+/* 마루 질문 — 대표 질문과 구분되는 튀는 테두리 (대표 7/20) */
+.ao-log-maruq { margin-top: 8px; padding: 10px 12px; background: #FFF7E6; border: 2px solid #F5A623; border-radius: 10px; color: #333; font-size: 13px; line-height: 1.5; }
+.ao-log-maruq strong { color: #E8590C; }
+.ao-maruq-btns { display: flex; gap: 8px; margin-top: 10px; }
+.ao-maruq-btns button { flex: 1; padding: 8px; border-radius: 8px; border: none; font-size: 14px; font-weight: 700; cursor: pointer; }
+.ao-maruq-yes { background: #16a34a; color: #fff; }
+.ao-maruq-no { background: #fff; color: #666; border: 1.5px solid #d1d5db !important; }
 .ao-order-status { font-size: 10px; color: #e67700; font-weight: 700; }
 
 /* 모바일: 세로 조직도 (대표 → 마루 → 팀장+팀원 그룹 순서) */
