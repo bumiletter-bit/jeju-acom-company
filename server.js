@@ -7251,17 +7251,21 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 if (conditions.target_date && !hasExplicitDay(effContent)) conditions.target_date = '';
             }
             // 4.5단계 ⑤: 비교 의도 — 비교 키워드 + 기간 2개를 서버가 확정 (모델 재량 없음)
-            if (/비교|대비|vs|차이/i.test(effContent)) {
-                const cp = parseComparePeriods(effContent, today);
+            // 🔴 대표 7/21: 조회 '종류'(비교·순위)는 이번 새 질문(order.content)에서만 판단한다.
+            //    맥락 이어가기(effContent)로 옛 질문의 '기여/순위' 단어가 새 질문에 붙어 세미가 같은 순위표를 반복하던 버그 수정.
+            //    (비-이어가기 단일 질문은 effContent===order.content라 동작 동일 — 회귀 없음)
+            const typeSrc = order.content || effContent;
+            if (/비교|대비|vs|차이/i.test(typeSrc)) {
+                const cp = parseComparePeriods(typeSrc, today);
                 if (cp) {
                     conditions.compare = cp;
                     console.log(`비교 조회 확정: ${cp.a} vs ${cp.b}`);
                 }
             }
-            // 4.5단계 ⑥: 품목 순위 의도 — 순위/기여/잘 팔린/TOP N (비교와 중복 시 비교 우선)
-            if (!conditions.compare && /순위|기여|잘\s*팔(린|리)|많이\s*(팔(린|려|리)|판매|나(간|가))|가장\s*많이|베스트|best|1위|일위|톱\s*\d*|top\s*\d*/i.test(effContent) && /품목|상품|뭐가|무엇|무엇|어떤|뭘|게\s*뭐|것\s*뭐/.test(effContent)) {
-                const nm = effContent.match(/(?:톱|top)\s*(\d+)/i) || effContent.match(/(\d+)\s*위까지/);
-                conditions.rank = { all: /전부|전체\s*품목|모든\s*품목/.test(effContent), topN: nm ? Number(nm[1]) : null };
+            // 4.5단계 ⑥: 품목 순위 의도 — 순위/기여/잘 팔린/TOP N (비교와 중복 시 비교 우선). 새 질문 기준(typeSrc)
+            if (!conditions.compare && /순위|기여|잘\s*팔(린|리)|많이\s*(팔(린|려|리)|판매|나(간|가))|가장\s*많이|베스트|best|1위|일위|톱\s*\d*|top\s*\d*/i.test(typeSrc) && /품목|상품|뭐가|무엇|무엇|어떤|뭘|게\s*뭐|것\s*뭐/.test(typeSrc)) {
+                const nm = typeSrc.match(/(?:톱|top)\s*(\d+)/i) || typeSrc.match(/(\d+)\s*위까지/);
+                conditions.rank = { all: /전부|전체\s*품목|모든\s*품목/.test(typeSrc), topN: nm ? Number(nm[1]) : null };
                 console.log(`품목 순위 확정: ${conditions.rank.all ? '전체' : 'TOP ' + (conditions.rank.topN || 10)}`);
             }
             // 지시 #15: 주차×거래처 지정형 — 주차·거래처 모두 서버가 확정 (모델 재량 없음).
