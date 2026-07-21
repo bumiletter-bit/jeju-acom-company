@@ -5775,8 +5775,9 @@ app.get('/api/agent-office/agents/:id', authMiddleware, adminOnly, async (req, r
             `SELECT id, lesson, category, status, created_at FROM agent_lessons
              WHERE agent_id = $1 AND is_deleted = false AND status != '폐기' ORDER BY created_at DESC LIMIT 20`, [agent.id])).rows;
         const runs = (await pool.query(
-            `SELECT id, status, steps, result, started_at, finished_at FROM agent_runs
-             WHERE agent_id = $1 AND is_deleted = false AND is_test = false ORDER BY started_at DESC LIMIT 5`, [agent.id])).rows;
+            `SELECT id, status, steps, result, started_at, finished_at, COALESCE(is_deleted, false) AS is_deleted
+             FROM agent_runs
+             WHERE agent_id = $1 AND is_test = false ORDER BY started_at DESC LIMIT 8`, [agent.id])).rows;
         const feedback = (await pool.query(
             `SELECT f.id, f.run_id, f.feedback_type, f.comment, f.corrected_output, f.created_at,
                     r.result->>'summary' AS run_summary

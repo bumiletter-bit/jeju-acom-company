@@ -11112,6 +11112,23 @@ async function aoRefreshAgentsStatusOnly() {
 }
 
 // ---- 에이전트 상세 패널 ----
+// 대표 7/21: 직원별 특징을 같은 형식으로. 큐레이션 1줄 (요원 성격·강점)
+const AO_TRAIT = {
+    maru: '지시를 정확히 이해해 담당 요원에게 배정하는 AI 실장. 애매하면 추측하지 않고 되물으며, 확인 안 된 답변엔 대화를 이어 배정합니다.',
+    semi: '정산현황·품목별 금액·매출을 0원 코드로 정확히 집계하는 회계 조회 담당. 없는 데이터는 지어내지 않습니다.',
+    hansu: '세미의 집계를 다시 검산하고 마진을 따지는 재무팀장. 오차는 자동 보정 없이 있는 그대로 🧮로 보고합니다.',
+    geulsaem: '문자·톡톡·상세페이지 카피를 쓰는 카피라이터. 대표 지시가 최우선 근거이며, "다시 써줘"에 새 안을 재생성합니다.',
+    miso: '이미지·영상 시안과 프롬프트를 만들고 Gemini로 직접 생성하는 디자이너. 생성은 건별 대표 승인 후에만.',
+    yeri: '인스타 성과·경쟁사를 분석하는 분석가. 표본이 없으면 정직하게 "데이터 없음"으로 답합니다.',
+    jiyul: '노무·법률을 노무지침만 근거로 자문하는 법무팀장. 법인(5인↑)/오션라운지(5인↓)를 구분하고, 지침 밖은 노무사 확인을 안내합니다.',
+    gian: '대표 미팅 내용을 7항목 기획 보고서로 정리하는 기획자. 실물 산출물을 함께 냅니다.',
+    mirae: '개발 백로그와 버전 변경사항을 관리하는 개발팀장.',
+    hangyeol: '(보관) 마케팅 검수 팀장 — 현재 비활성입니다. 최종 검토는 대표가 직접 합니다.',
+};
+// 실제로 연결된(작동하는) 도구만 표기 — 없으면 도구 섹션 미표기 (대표 7/21)
+const AO_LIVE_TOOLS = {
+    miso: ['🎨 Gemini 이미지 생성', '🎬 Veo 영상 생성'],
+};
 window.openAoDetail = async function(agentId) {
     // ④ 마루 클릭 시 미응답 질문이 있으면 답변 모달 먼저 (대표 7/20)
     const clicked = aoAgents.find(a => a.id === agentId);
@@ -11130,31 +11147,16 @@ window.openAoDetail = async function(agentId) {
         (lastDone && lastDone.result && lastDone.result.summary ? [lastDone.result.summary] : []);
     const isRunning = agent.status === 'running' || (aoActiveRun && aoActiveRun.agentId === agent.id);
 
-    // 역할별 실행 영역
-    let actionHtml = '';
-    if (agent.role === 'worker') {
-        actionHtml = `<button class="btn-primary ao-run-btn" id="ao-detail-run-btn" onclick="aoRunAgent(${agent.id})" ${isRunning ? 'disabled' : ''}>
-            ${isRunning ? '⏳ 실행 중...' : '▶ 지금 실행'}</button>`;
-    } else if (agent.role === 'chief') {
-        actionHtml = `
-            <div class="ao-placeholder-box">
-                <div style="font-weight:600;font-size:13px;margin-bottom:6px;">💬 하단 입력바로 지시하면 마루가 즉시 분석·배정합니다
-                    <span class="ao-soon-badge" style="background:#2F9E44;color:#fff;">🤖 AI 연결됨</span></div>
-                <div id="ao-maru-orders" style="font-size:12px;color:#888;">대기 지시 확인 중...</div>
-            </div>
-            <button class="btn-primary ao-run-btn" style="margin-top:8px;" onclick="aoRunCapabilityTest()">🧪 역량 점검 (전 요원 자동 테스트)</button>`;
-    } else {
-        actionHtml = `<div class="ao-placeholder-box ao-soon-note">🔒 팀장 실행은 다음 업데이트에서 연결 예정입니다</div>`;
-    }
-    if (agent.code === 'gian') {
-        actionHtml += `
-            <div class="ao-placeholder-box" style="margin-top:8px;">
-                <label style="font-weight:600;font-size:13px;">📝 미팅 내용 입력 <span class="ao-soon-badge">다음 업데이트 예정</span></label>
-                <textarea class="form-input" rows="2" disabled placeholder="거래처 미팅 내용을 넣으면 기획 보고서가 생성됩니다 (AI 연결 후)"></textarea>
-            </div>`;
-    }
+    // 대표 7/21: 역량 점검·지금 실행·"팀장 실행 예정"·미팅 입력 제거 (불필요). 마루만 지시 안내 박스, 나머지는 배정 안내 1줄
+    const actionHtml = agent.role === 'chief'
+        ? `<div class="ao-placeholder-box">
+                <div style="font-weight:600;font-size:13px;">💬 하단 입력바로 지시하면 마루가 즉시 분석·배정합니다 <span class="ao-soon-badge" style="background:#2F9E44;color:#fff;">🤖 AI 연결됨</span></div>
+                <div id="ao-maru-orders" style="font-size:12px;color:#888;margin-top:4px;">대기 지시 확인 중...</div>
+            </div>`
+        : `<div class="ao-placeholder-box ao-soon-note">💬 대표가 지시하면 마루가 이 요원에게 배정합니다</div>`;
 
     const knowledge = agent.knowledge_files || [];
+    const liveTools = AO_LIVE_TOOLS[agent.code] || [];
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'ao-detail-overlay';
@@ -11169,23 +11171,17 @@ window.openAoDetail = async function(agentId) {
                     ${agent.last_run_at ? ' · 마지막 실행 ' + aoKst(agent.last_run_at) : ''}</div>
                 </div>
             </div>
-            <p class="ao-detail-desc">${agent.description || ''}</p>
+            <h4 class="ao-sec-title">🧑‍💼 특징</h4>
+            <div class="ao-result-box">${aoEsc(AO_TRAIT[agent.code] || agent.description || '')}</div>
+            ${knowledge.length ? `<h4 class="ao-sec-title">📖 지식 문서</h4>
+            <div class="ao-tool-list">${knowledge.map(k => '<span class="ao-knowledge-badge">' + aoEsc(k) + '</span>').join('')}</div>` : ''}
+            ${liveTools.length ? `<h4 class="ao-sec-title">🛠 도구</h4>
+            <div class="ao-tool-list">${liveTools.map(t => '<span class="ao-tool-badge">' + aoEsc(t) + '</span>').join('')}</div>` : ''}
             ${actionHtml}
             <div id="ao-detail-progress" style="display:${isRunning ? '' : 'none'};">
                 <h4 class="ao-sec-title">⚙️ 진행상황</h4>
                 <div class="ao-prog-list"></div>
             </div>
-            ${resultLines.length ? `
-            <h4 class="ao-sec-title">📋 최근 결과 요약</h4>
-            <div class="ao-result-box">${resultLines.slice(0, 3).map(l => '<div>· ' + l + '</div>').join('')}</div>
-            <div class="ao-feedback-row">
-                <span style="font-size:12px;color:#888;">피드백:</span>
-                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'good')">👍</button>
-                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'edited')">✏️ 수정</button>
-                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'bad')">👎</button>
-                <button class="ao-fb-btn" onclick="aoSendFeedback(${agent.id}, ${lastDone.id}, 'comment')">💬</button>
-                <button class="ao-fb-btn ao-fail-btn" title="실패 수집함에 담기 (지시 #62)" onclick="aoMarkFail(${agent.id}, ${lastDone.id}, this)">❌</button>
-            </div>` : ''}
             <h4 class="ao-sec-title">📚 학습 노트 <small style="color:#aaa;">(활성 ${activeLessons.length} · 제안 ${lessonProposals.length})</small></h4>
             ${lessonProposals.length ? lessonProposals.map(l => `
                 <div class="ao-lesson-prop">
@@ -11197,25 +11193,14 @@ window.openAoDetail = async function(agentId) {
                 </div>`).join('') : ''}
             ${activeLessons.length
                 ? '<ul class="ao-lesson-list">' + activeLessons.map(l => '<li>[' + aoEsc(l.category || '일반') + '] ' + aoEsc(l.lesson) + '</li>').join('') + '</ul>'
-                : (lessonProposals.length ? '' : '<div class="ao-empty-note">아직 학습 노트가 없습니다 — 피드백이 쌓이면 교훈이 제안됩니다</div>')}
-            <h4 class="ao-sec-title">💬 받은 피드백 <small style="color:#aaa;">(${feedbackList.length}건)</small></h4>
-            ${feedbackList.length
-                ? '<div class="ao-fb-history">' + feedbackList.map(f => aoFbLine(f, false)).join('') + '</div>'
-                : '<div class="ao-empty-note">아직 받은 피드백이 없습니다</div>'}
-            <h4 class="ao-sec-title">🛠 도구</h4>
-            ${tools.length
-                ? '<div class="ao-tool-list">' + tools.map(t => '<span class="ao-tool-badge ' + (t.enabled ? '' : 'ao-tool-planned') + '">' + t.tool_name + (t.enabled ? '' : ' (예정)') + '</span>').join('') + '</div>'
-                : '<div class="ao-empty-note">등록된 도구가 없습니다</div>'}
-            ${knowledge.length ? `
-            <h4 class="ao-sec-title">📖 지식 문서</h4>
-            <div class="ao-tool-list">${knowledge.map(k => '<span class="ao-knowledge-badge">' + k + '</span>').join('')}</div>` : ''}
+                : (lessonProposals.length ? '' : '<div class="ao-empty-note">아직 학습 노트가 없습니다 — 실패 수집함을 함께 정리하면 교훈이 등록됩니다</div>')}
             <h4 class="ao-sec-title">🕘 최근 실행 이력</h4>
             ${runs.length
                 ? '<div class="ao-run-history">' + runs.map(r => {
                     const dt = aoKst(r.started_at);
                     const dur = r.finished_at ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + '초' : '-';
                     const stIcon = r.status === 'done' ? '✅' : r.status === 'error' ? '❗' : '⏳';
-                    return '<div class="ao-run-item">' + stIcon + ' ' + dt + ' · ' + ((r.result && r.result.summary) || '진행 중') + ' <span style="color:#aaa;">(' + dur + ')</span></div>';
+                    return '<div class="ao-run-item">' + stIcon + ' ' + dt + ' · ' + aoEsc((r.result && r.result.summary) || '진행 중') + ' <span style="color:#aaa;">(' + dur + ')</span>' + (r.is_deleted ? ' <span class="ao-arch-badge">확인함</span>' : '') + '</div>';
                 }).join('') + '</div>'
                 : '<div class="ao-empty-note">아직 실행 이력이 없습니다</div>'}
         </div>`;
