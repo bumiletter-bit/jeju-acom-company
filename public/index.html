@@ -140,14 +140,6 @@
                     <span class="nav-icon">🚚</span>
                     <span class="nav-text">송장변환</span>
                 </a>
-                <a href="#" class="nav-item" data-page="lunch">
-                    <span class="nav-icon">🍽️</span>
-                    <span class="nav-text">점심메뉴</span>
-                </a>
-                <a href="#" class="nav-item" data-page="ai-workspace">
-                    <span class="nav-icon">🤖</span>
-                    <span class="nav-text">AI 작업방</span>
-                </a>
                 <a href="#" class="nav-item" data-page="cs-room">
                     <span class="nav-icon">💬</span>
                     <span class="nav-text">CS처리방</span>
@@ -1716,121 +1708,6 @@
                             </div>
                         </div>
                         <div id="invoice-qty-list"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 점심메뉴 페이지 -->
-            <div id="page-lunch" class="page">
-                <h1>점심메뉴</h1>
-
-                <!-- 섹션1: 랜덤 추천 -->
-                <div class="card">
-                    <div class="card-header-row">
-                        <h2>랜덤 추천</h2>
-                        <button class="btn-lunch-recommend" id="btn-lunch-random" onclick="handleLunchRandom()">🎰 랜덤 돌리기</button>
-                        <button class="btn-sm btn-outline" onclick="resetLunchRandom()" style="font-size:12px;">초기화</button>
-                    </div>
-                    <div id="lunch-slot-area" style="display:none;">
-                        <div class="lunch-slot-machine">
-                            <div class="lunch-slot-window">
-                                <div class="lunch-slot-reel" id="lunch-slot-reel"></div>
-                            </div>
-                        </div>
-                    </div>
-                    <div id="lunch-random-result" style="display:none;">
-                        <div class="lunch-random-result-card">
-                            <div class="lunch-random-emoji">🍽️</div>
-                            <div class="lunch-random-label">오늘의 점심은</div>
-                            <div class="lunch-random-name" id="lunch-random-name"></div>
-                        </div>
-                    </div>
-                    <div id="lunch-random-empty" class="placeholder-content" style="padding:30px 20px;">
-                        <p>🎰 랜덤 돌리기를 눌러 오늘의 식당을 뽑아보세요!</p>
-                    </div>
-                </div>
-
-                <!-- 섹션2: 오늘의 주인공?! (사다리 게임) -->
-                <div class="card">
-                    <div class="card-header-row">
-                        <h2>오늘의 주인공?!</h2>
-                        <button class="btn-sm btn-outline" onclick="resetLadderGame()" style="margin-left:auto; font-size:12px;">초기화</button>
-                    </div>
-                    <p style="color:#64748b; font-size:13px; margin-bottom:12px;">참여할 멤버를 추가하고 사다리를 타보세요! 당첨자가 밥값을 쏩니다!</p>
-                    <div style="display:flex; gap:8px; margin-bottom:10px;">
-                        <select id="ladder-user-select" class="form-input" style="flex:1; width:auto;">
-                            <option value="">-- 멤버 선택 --</option>
-                        </select>
-                        <button class="btn-primary" style="white-space:nowrap;" onclick="addLadderMember()">추가</button>
-                    </div>
-                    <div id="ladder-members" class="ladder-members"></div>
-                    <button class="btn-primary" id="btn-ladder-start" onclick="startLadderGame()" style="width:100%; margin-top:12px;">사다리 타기!</button>
-                    <div id="ladder-canvas-wrap" style="margin-top:16px; display:none; position:relative;">
-                        <canvas id="ladder-canvas" width="600" height="400"></canvas>
-                        <div id="ladder-cover" class="ladder-cover" onclick="revealLadder()">
-                            <span>터치하여 사다리 공개!</span>
-                        </div>
-                    </div>
-                    <div id="ladder-result" style="display:none;"></div>
-                </div>
-
-                <!-- 섹션3: 오늘의 투표 -->
-                <div class="card">
-                    <div class="card-header-row">
-                        <h2 style="font-size:18px;">투표하세요!</h2>
-                        <span id="lunch-vote-status" class="lunch-vote-status"></span>
-                        <button class="btn-sm btn-outline" onclick="resetLunchVotes()" style="margin-left:auto; font-size:12px;">초기화</button>
-                    </div>
-                    <div id="lunch-vote-grid" class="lunch-vote-grid"></div>
-                    <div id="lunch-vote-empty" class="placeholder-content" style="padding:30px 20px; display:none;">
-                        <p>등록된 식당이 없습니다. 관리자에게 식당 등록을 요청하세요.</p>
-                    </div>
-                    <div id="lunch-vote-result" style="display:none;"></div>
-                </div>
-
-                <!-- 섹션3: 식당 관리 (관리자 전용) -->
-                <div class="card" id="lunch-admin-card" style="display:none;">
-                    <h2>식당 관리</h2>
-                    <div class="form-row" style="align-items:flex-end; gap:12px; margin-bottom:16px;">
-                        <div class="form-group" style="flex:1; margin-bottom:0;">
-                            <label>식당 이름</label>
-                            <input type="text" id="lunch-restaurant-name" class="form-input" placeholder="식당 이름을 입력하세요">
-                        </div>
-                        <button class="btn-primary" style="margin-top:0;" onclick="addLunchRestaurant()">추가</button>
-                    </div>
-                    <div id="lunch-restaurant-list" class="lunch-restaurant-list"></div>
-                </div>
-            </div>
-
-            <!-- AI 작업방 페이지 -->
-            <div id="page-ai-workspace" class="page">
-                <h1>AI 작업방 <span style="font-size:14px; font-weight:normal; color:var(--text-light); margin-left:8px;">작업방에 오신 것을 환영합니다.</span></h1>
-                <div class="ai-workspace-container">
-                    <div class="ai-conv-panel">
-                        <button class="btn-primary ai-new-conv-btn" onclick="createNewConversation()">+ 작업하기</button>
-                        <div id="ai-conv-list" class="ai-conv-list"></div>
-                    </div>
-                    <div class="ai-chat-panel">
-                        <div id="ai-chat-messages" class="ai-chat-messages">
-                            <div class="ai-chat-empty" id="ai-chat-empty">
-                                <div style="font-size:48px; margin-bottom:16px;">🤖</div>
-                                <p>새 대화를 시작하거나 기존 대화를 선택하세요</p>
-                                <p style="font-size:13px; color:#999; margin-top:8px;">마케팅 문구, 홍보 콘텐츠 등을 요청해보세요</p>
-                            </div>
-                        </div>
-                        <div class="ai-input-area" id="ai-input-area" style="display:none;">
-                            <div class="ai-image-preview" id="ai-image-preview" style="display:none;">
-                                <img id="ai-preview-img" src="" alt="미리보기">
-                                <button class="ai-preview-remove" onclick="removeAttachedImage()" title="이미지 제거">&times;</button>
-                            </div>
-                            <div class="ai-input-row">
-                                <button class="ai-attach-btn" id="ai-attach-btn" onclick="document.getElementById('ai-file-input').click()" title="이미지 첨부">📎</button>
-                                <input type="file" id="ai-file-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;" onchange="handleImageAttach(event)">
-                                <textarea id="ai-message-input" class="ai-message-input" placeholder="메시지를 입력하세요... (문구 생성 시 &quot;전송&quot;, 이미지 생성을 원할 시 &quot;이미지&quot;를 눌러주세요)" rows="1"></textarea>
-                                <button class="ai-send-btn" id="ai-send-btn" onclick="sendAIMessage()">전송</button>
-                                <button class="ai-image-btn" id="ai-image-btn" onclick="sendAIImage()">🎨 이미지</button>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
