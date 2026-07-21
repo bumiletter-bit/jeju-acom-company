@@ -8020,6 +8020,22 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 source: 'agent_office', actor,
             });
             if (fbType !== 'good') extractLessonFromFeedback(fbRow, actor); // 비동기 — 교훈 후보 추출
+            // 대표가 수정·지적 피드백을 주면 live 요원이 그 피드백을 반영해 1회 재자문/재작성 (문서화된 '수정 시 1회' 경로 — 이전엔 미구현이라 '피드백 감사'만 나가던 것).
+            // 창작 요원(글샘·미소)은 명시적 '수정'일 때만 재작성(자동 재작성 금지 원칙). 자문·조회 요원(지율·세미·한수·미래)은 지적·코멘트에도 재답변(정확성 우선).
+            const fbRunner = loadAgentRunner(target.name);
+            const creativeAgent = ['글샘', '미소'].includes(target.name);
+            const redoTrigger = creativeAgent ? (fbType === 'edited') : (fbType !== 'good');
+            if (redoTrigger && fbRunner.live && target.is_active) {
+                const prevConcl = lastRun.rows[0]?.result?.report?.conclusion
+                    || lastRun.rows[0]?.result?.summary || '';
+                const redoContent = `${effContent}\n\n[재자문 요청 — 대표 피드백 반영] 직전 답변 결론: "${String(prevConcl).slice(0, 200)}". 위 대표 지적을 반영해 처음부터 다시 정확히 계산·작성하라. 결론의 수치는 반드시 계산 과정에서 도출된 값과 일치시킬 것.`;
+                const redoRoute = {
+                    team: target.team, assignee: target.name,
+                    task_summary: `${target.name} 재자문 (대표 피드백 반영)`, reason: '대표 수정·지적 피드백 1회 반영',
+                };
+                await dispatchLiveAgent(order, redoRoute, {}, actor, null, redoContent);
+                return;
+            }
             await maruFinishOrder(order.id, '피드백', {
                 type: 'feedback', target: target.name, kind: d.feedback_kind || '코멘트',
                 feedback_id: fbRow.id, summary: d.task_summary, reason: d.reason,
