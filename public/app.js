@@ -10519,8 +10519,49 @@ window.aoGenerateMedia = async function(runId, outputIndex, grade, media, costLa
     try {
         const r = await api(`/api/agent-office/runs/${runId}/generate`, 'POST', { output_index: outputIndex, grade });
         showToast('✅ ' + r.message);
-        setTimeout(() => aoOpenReport(runId), 800); // 생성 중 상태 반영해 모달 새로고침
+        aoOpenReport(runId); // 생성 중 상태 + 진행바로 즉시 재렌더 (모달이 자동으로 폴링 시작 → 완료 시 이미지 자동 표시)
     } catch (e) { alert('생성 요청 실패: ' + e.message); }
+};
+
+// 대표 7/21: 미소 생성 진행률 + 완료 자동 표시 — 생성 중이면 진행바를 0→85% 크리핑,
+//   완료(서버가 media_generating 해제)되면 모달을 자동 재렌더해 이미지/영상을 그 자리에 바로 표시 (나갔다 다시 클릭 불필요).
+window._aoMediaTimers = window._aoMediaTimers || {};
+window.aoPollMediaGen = function(runId, outputIndex, media) {
+    if (window._aoMediaTimers[runId]) return; // 이미 폴링 중이면 중복 시작 안 함 (진행바 연속성 유지)
+    const expected = media === '영상' ? 180000 : 14000; // 예상 소요(ms) — 진행바 속도 기준(실제 완료는 서버 폴링으로 확정)
+    const maxMs = media === '영상' ? 7 * 60 * 1000 : 90 * 1000; // 안전 타임아웃
+    const t0 = Date.now();
+    let lastFetch = 0, done = false;
+    const timer = setInterval(async () => {
+        const elapsed = Date.now() - t0;
+        const fill = document.getElementById('ao-mgfill-' + outputIndex);
+        const pct = document.getElementById('ao-mgpct-' + outputIndex);
+        if (fill && !done) { // 진행바 크리핑 (완료 전엔 85% 상한)
+            const p = Math.min(85, Math.round((elapsed / expected) * 85));
+            fill.style.width = p + '%';
+            if (pct) pct.textContent = p + '%';
+        }
+        if (Date.now() - lastFetch >= 2000) { // 서버 폴링 2초마다
+            lastFetch = Date.now();
+            try {
+                const run = (await api('/api/agent-office/runs/' + runId)).run;
+                const rep = (run.result && run.result.report) || {};
+                const stillGen = rep.media_generating && rep.media_generating.output_index === outputIndex;
+                if (!stillGen) { // 완료(성공/실패) — 서버가 플래그 해제함
+                    done = true;
+                    clearInterval(timer); delete window._aoMediaTimers[runId];
+                    if (fill) { fill.style.width = '100%'; if (pct) pct.textContent = '100%'; }
+                    setTimeout(() => {
+                        // 이 생성 보고 모달이 아직 열려 있으면(진행바 존재) 완료 상태로 재렌더 → 이미지/영상 그 자리에 표시
+                        if (document.getElementById('ao-mgfill-' + outputIndex)) aoOpenReport(runId);
+                        showToast(rep.media_error ? '⚠️ 생성 실패 — 보고서 확인' : '✅ 생성 완료!');
+                    }, 400);
+                }
+            } catch (e) { /* 폴링 실패는 다음 회차 재시도 */ }
+        }
+        if (elapsed > maxMs) { clearInterval(timer); delete window._aoMediaTimers[runId]; } // 안전 중단
+    }, 700);
+    window._aoMediaTimers[runId] = timer;
 };
 
 // 지시 #11: 텔레그램 테스트 알림 (대표 폰 수신 확인용)
@@ -11683,8 +11724,15 @@ window.aoOpenReport = async function(runId) {
         const genBtns = (o, i) => {
             if (!rep.generation_available) return '';
             if (rep.media_generating) {
+                // 대표 7/21: '생성 중' 텍스트 → 진행바(0→85% 크리핑, 완료 시 100%+이미지 자동 표시). 폴링은 aoPollMediaGen이 담당
                 return rep.media_generating.output_index === i
-                    ? '<div class="ao-soon-note">⏳ 생성 중... (영상은 최대 6분 — 완료 시 텔레그램 알림)</div>' : '';
+                    ? `<div class="ao-gen-row" style="flex-direction:column;align-items:stretch;gap:6px;margin-top:6px;">
+                         <div style="font-size:13px;color:#e67700;font-weight:600;">⏳ ${aoEsc(o.media)} 생성 중... <span id="ao-mgpct-${i}">0%</span></div>
+                         <div style="height:10px;background:#eee;border-radius:6px;overflow:hidden;">
+                           <div id="ao-mgfill-${i}" style="height:100%;width:0%;background:linear-gradient(90deg,#F5C800,#e67700);transition:width .5s ease;"></div>
+                         </div>
+                         <div style="font-size:11px;color:#999;">${o.media === '영상' ? '영상은 최대 6분 걸려요 — 완료되면 여기 바로 나옵니다 (나가지 않으셔도 돼요)' : '잠시만요 — 완료되면 이미지가 여기 바로 나옵니다 (나가지 않으셔도 돼요)'}</div>
+                       </div>` : '';
             }
             const c = o.media === '영상' ? { b: '약 1,100원', g: '약 4,400원', ico: '🎬' } : { b: '약 92원', g: '약 185원', ico: '🎨' };
             return `<div class="ao-gen-row">
@@ -11702,6 +11750,12 @@ window.aoOpenReport = async function(runId) {
         // 썸네일은 모달 삽입 직후 인증 fetch로 로드 (blob URL 캐시)
         const imgIds = (rep.media_files || []).filter(isImg).map(f => f.file_id);
         if (imgIds.length) setTimeout(() => imgIds.forEach(id => aoLoadThumb(id)), 80);
+        // 대표 7/21: 생성 중 상태로 모달이 열리면(생성 시작 직후 or 재열기) 진행률 폴러 자동 가동 — 완료 시 이미지 자동 표시
+        if (rep.media_generating) {
+            const gi = rep.media_generating.output_index;
+            const gmedia = ((rep.outputs || [])[gi] || {}).media || '이미지';
+            setTimeout(() => aoPollMediaGen(run.id, gi, gmedia), 120);
+        }
         body = `
         ${aoReviewBlock(rep.review)}
         ${rep.concept_note ? `<div class="ao-result-box">🎨 ${aoEsc(rep.concept_note)}</div>` : ''}
