@@ -5149,6 +5149,25 @@ async function maruBuildSystemPrompt() {
     const orgLines = agentsQ.rows.map(a =>
         `- ${a.name} (${a.role === 'chief' ? '실장' : a.role === 'manager' ? '팀장' : '요원'} · ${a.team}${a.duty ? ' · ' + a.duty : ''}): ${a.description}`).join('\n');
     const todayKst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    // 대표 7/21: 회사 프로그램 메뉴 용어집 — 마루가 6개 메뉴를 정확히 구분하도록 두뇌에 주입
+    const menuGlossary = `
+
+## 회사 프로그램 메뉴 용어집 (혼동 절대 금지 — 대표 지시)
+- **정산관리**: 거래처별 품목·수량·금액(매출 원본). 품목·규격·수량 나열이면 정산관리 (마루 저장 불가, 화면/이미지 경로).
+- **정산현황**: 일자별 자금 집계(현금·미정산·거래처 입금 등 금액). "원/만" 금액 입력이면 정산현황(settlement_input).
+- **품목별 금액**: 거래처별 '오늘 단가표'(pricing). "단가·가격표"는 품목별 금액, "얼마 팔렸어·매출"은 세미 조회.
+- **박스재고**: 거래처별(업체·대성·효돈) 박스 재고. "재고" 물으면 박스재고.
+- **송장변환**: 플랫폼마다 따로 다운받은 주문 양식을 하나의 통일 양식으로 변환하는 메뉴 — 품목별 금액의 판매상품 이름으로 통일해 발송 작업을 편리하게 해준다.
+- **지출결의**: 비용 지출 결재(화면에서 처리). 마루가 저장 못 하니 "지출결의 화면에서 처리해주세요" 안내.
+- **일정**: 마루가 직접 처리(조회 즉답/등록 확인 1회). 매출·정산 조회는 세미에게 배정.`;
+    // 대표 7/21: 마루도 활성 학습 노트를 읽게 함 (기존엔 워커만 반영 — 마루 라우팅엔 미적용이던 것)
+    const maruLessonsRows = (await pool.query(
+        `SELECT l.lesson, l.category FROM agent_lessons l JOIN agents a ON l.agent_id = a.id
+         WHERE a.code = 'maru' AND l.status = 'active' AND l.is_deleted = false
+         ORDER BY l.created_at DESC LIMIT 10`)).rows;
+    const maruLessonText = maruLessonsRows.length
+        ? '\n\n## 📚 대표님 학습 노트 (최우선 — 위 규칙과 충돌하면 이걸 우선 적용)\n' + maruLessonsRows.map(l => `- [${l.category || '일반'}] ${l.lesson}`).join('\n')
+        : '';
     return `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE의 실장 '마루'다.
 범 대표님(전승범)의 지시를 접수해 담당 팀·요원을 배정하는 것이 너의 유일한 임무다.
 오늘 날짜: ${todayKst} (KST)
@@ -5234,7 +5253,7 @@ ${JSON.stringify(routingTable, null, 2)}
 【C. 공통 규칙】
 - 되묻기는 1회만. 답을 받으면 재질문 없이 진행한다.
 - 되묻기에는 반드시 구체적 선택지 예시를 포함한다. 알맹이 없는 되묻기("확인이 필요합니다" 단독)는 금지.
-- 이 판단표는 조회·등록·파일요청 등 모든 지시 유형에 적용된다.`;
+- 이 판단표는 조회·등록·파일요청 등 모든 지시 유형에 적용된다.${menuGlossary}${maruLessonText}`;
 }
 
 // ------------------------------------------------------------
@@ -7850,12 +7869,34 @@ function assertMediaApproval(approval) {
         throw new Error('생성 승인 없음 — 대표 승인 없이는 생성 API를 호출할 수 없습니다 (지시 #26 비용 승인제)');
     }
 }
+// 브랜드 캐릭터 '아꼼이' 참조 이미지 로드 (대표 7/21) — use_character면 실제 캐릭터를 참조로 넣어 생김새 고정
+function loadBrandCharacterParts() {
+    const fsx = require('fs');
+    const parts = [];
+    for (const f of ['acom-character-a.png', 'acom-character-b.png']) {
+        try {
+            const data = fsx.readFileSync(path.join(__dirname, 'assets', 'brand', f)).toString('base64');
+            parts.push({ inlineData: { mimeType: 'image/png', data } });
+        } catch (e) { /* 파일 없으면 스킵 */ }
+    }
+    return parts;
+}
 async function generateMisoMedia(approval, output, opt) {
     assertMediaApproval(approval);
     if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY 환경변수가 설정되지 않았습니다');
     const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     if (output.media === '이미지') {
-        const req = { model: opt.model, contents: output.prompt_en };
+        // 대표 7/21: 아꼼이 캐릭터가 들어가는 이미지는 실제 캐릭터 이미지를 참조로 넣어 생김새를 고정 (AI가 캐릭터를 새로 상상하지 않도록)
+        let contents = output.prompt_en;
+        if (output.use_character) {
+            const refParts = loadBrandCharacterParts();
+            if (refParts.length) {
+                contents = [{
+                    text: '아래 참조 이미지는 제주아꼼이네 브랜드 캐릭터 "아꼼이"다. 참조 이미지의 배경색과 "제주아꼼이네" 글자는 무시하고, 아기 캐릭터의 얼굴·헤어스타일(양갈래+노란 머리끈)·공갈젖꼭지·비율·디자인만 그대로 유지해 새 이미지를 만들어라. 배경·포즈·상황·구도는 아래 프롬프트대로 바꿔도 되지만 캐릭터 외형은 참조와 동일해야 한다. 다른 캐릭터를 새로 만들지 말 것.\n\n[생성 프롬프트]\n' + output.prompt_en,
+                }, ...refParts];
+            }
+        }
+        const req = { model: opt.model, contents };
         let resp;
         try {
             const imageConfig = { imageSize: '1K' };

@@ -63,8 +63,9 @@ const PROMPT_TOOL = {
                         prompt_ko: { type: 'string', description: '영문 프롬프트의 한글 해석' },
                         ratio: { type: 'string', description: "추천 비율 (예: '1:1', '9:16', '16:9', '4:5')" },
                         usage: { type: 'string', description: "추천 사용처 (예: '인스타 피드', '톡톡 카드', '자사몰 배너', '상세페이지')" },
+                        use_character: { type: 'boolean', description: '제주아꼼이네 브랜드 캐릭터(아꼼이)가 들어가야 하면 true. 톡톡·이벤트·발송 배너는 대부분 true, 순수 상품컷은 false. 캐릭터 외형은 서버가 실제 이미지를 참조로 넣으니 생김새를 새로 상상하지 말 것.' },
                     },
-                    required: ['label', 'media', 'prompt_en', 'prompt_ko', 'ratio', 'usage'],
+                    required: ['label', 'media', 'prompt_en', 'prompt_ko', 'ratio', 'usage', 'use_character'],
                 },
             },
             concept_note: { type: 'string', description: '시안 방향 설명 한두 줄 (대표 보고용)' },
@@ -140,7 +141,8 @@ module.exports = {
 5. 비율 추천: 1:1 인스타·톡톡 / 9:16 쇼츠·릴스 / 16:9 자사몰 배너 / 4:5 상세페이지 — 사용처에 맞게.
 6. 시안 수: 단일·구체 지시면 1개, 열린 지시면 2~3개 방향 제안.
 7. 브랜드 톤앤매너(친근함·따뜻함·제주 감성·정성, 30-50대 여성 타겟) 반영. 과장·저가 느낌 금지.
-8. 반드시 submit_prompts 도구로 제출한다. 도구 밖 텍스트 응답 금지.
+8. 🧒 **브랜드 캐릭터 '아꼼이'**: 제주아꼼이네 마스코트는 양갈래로 묶은 머리·노란 머리끈·공갈젖꼭지를 문 귤 든 아기다. 아꼼이가 들어가야 하는 이미지(톡톡·이벤트·발송 배너 등)는 use_character=true로 표시한다. **캐릭터 생김새는 절대 새로 상상하지 말 것 — 서버가 실제 아꼼이 캐릭터 이미지를 참조로 넣어 생성한다.** prompt_en에는 배경·포즈·상황만 묘사하고 캐릭터는 "the 제주아꼼이네 mascot character (reference image provided), same face and design, background/pose may change"처럼 참조 유지를 명시한다. 순수 상품컷만 필요하면 use_character=false.
+9. 반드시 submit_prompts 도구로 제출한다. 도구 밖 텍스트 응답 금지.
 ${loadKnowledge()}${lessonsText}`;
 
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
