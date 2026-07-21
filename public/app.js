@@ -12008,8 +12008,10 @@ window.aoOpenReport = async function(runId) {
         body = `<div class="ao-result-box">${((run.result && run.result.lines) || []).map(l => '<div>· ' + aoEsc(l) + '</div>').join('')}</div>`;
     }
 
+    // 대표 7/21: 재렌더 시 보고서 모달이 겹겹이 쌓여 확인을 여러 번 눌러야 하던 것 — 기존 보고서 모달을 먼저 제거(전용 클래스, 다른 모달 무영향)
+    document.querySelectorAll('.ao-report-overlay').forEach(e => e.remove());
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'modal-overlay ao-report-overlay';
     overlay.innerHTML = `
         <div class="modal ao-detail-modal" style="max-width:680px;">
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
