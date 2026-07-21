@@ -10397,11 +10397,11 @@ async function aoRefreshGrowth() {
             api('/api/agent-office/misroute-stats').catch(() => null), // 구버전 서버 호환
         ]);
         aoWeekLessons = g.lessons.this_week; // 지식 노트 모달 상단 표시용
-        // 화면 정리 (대표 7/20): 자주 쓰는 실패 수집함만 바깥, 나머지는 ⚙️ 관리로 묶음. 성적표는 시험 폐지로 제거
-        aoManageStats = { lessons: g.lessons.total, misroute: m ? m.misroute_feedback : null };
+        // 화면 정리 (대표 7/21): 실패 수집함을 ⚙️ 관리 안으로 이동 (바깥 칩은 관리 1개). 실패가 쌓이면 관리 칩에 건수 배지 표시
+        aoManageStats = { lessons: g.lessons.total, misroute: m ? m.misroute_feedback : null, fails: (g.feedback && g.feedback.fails) || 0 };
+        const failBadge = aoManageStats.fails > 0 ? ` <strong style="color:#e03131;">🧰${aoManageStats.fails}</strong>` : '';
         document.getElementById('ao-growth-widget').innerHTML =
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenFeedbackModal()">🧰 실패 수집함 <strong>' + g.feedback.total + '</strong>건</span>' +
-            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenManageMenu()">⚙️ 관리</span>';
+            '<span class="ao-growth-chip ao-chip-click" onclick="aoOpenManageMenu()">⚙️ 관리' + failBadge + '</span>';
     } catch (e) { console.error('growth 조회 실패:', e); }
 }
 let aoManageStats = {};
@@ -10416,6 +10416,7 @@ window.aoOpenManageMenu = function() {
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
         <h3 style="margin:0 0 12px;">⚙️ 관리</h3>
         <div style="display:flex;flex-direction:column;gap:8px;">
+            <button class="ao-manage-item" onclick="this.closest('.modal-overlay').remove();aoOpenFeedbackModal()">🧰 실패 수집함 <small>(${aoManageStats.fails || 0}건)</small></button>
             <button class="ao-manage-item" onclick="this.closest('.modal-overlay').remove();aoOpenLessonsModal(false)">📚 지식 노트 <small>(${aoManageStats.lessons || 0}건)</small></button>
             ${misLine}
             <button class="ao-manage-item" onclick="this.closest('.modal-overlay').remove();aoOpenArchiveModal()">🗂 통합본 아카이브</button>
@@ -11035,8 +11036,11 @@ function aoOrderLogLine(o) {
     const archivedCls = (o.run_archived || closed) ? ' ao-log-archived' : '';
     const closeBtn = (st === '질문' && !aoAnsweredQ.has(o.id))
         ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoCloseQuestion(${o.id})">✔ 확인</button>` : '';
+    // 대표 7/21: 마루/요원 답변이 이상하면 이 지시를 실패 수집함에 담기 (처리 끝난 건만 — 대기·처리중 제외)
+    const failBtn = (st !== '대기' && st !== '처리중')
+        ? `<button class="ao-fb-btn ao-fail-btn" title="이 답변을 실패 수집함에 담기" onclick="event.stopPropagation(); aoMarkOrderFail(${o.id}, this)">❌ 실패</button>` : '';
     const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
-    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
+    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}${failBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
 }
 
 async function aoRefreshLog() {
@@ -11312,37 +11316,75 @@ window.aoModalLessonAct = async function(id, act, weekOnly) {
     } catch (e) { alert(e.message); }
 };
 
-// 피드백 이력 모달 — 지시 #62-2: 실패 수집함 통합 뷰 (❌는 요원별·원인별 목록, 나머지는 최근순 이력)
+// 실패 수집함 모달 (대표 7/21 전면 개편): 실패(fail)만 표시 — 내 질문 + 마루/요원 답변, 길면 …+클릭 전체보기, 항목별 삭제.
+//   피드백 이력(칭찬·수정·코멘트)은 제거 (현재 불필요). 쌓이면 대표가 "실패수집함 정리하자"로 함께 학습.
+let aoFailData = {};
+window.aoExtractAnswer = function(orig) {
+    if (!orig) return '';
+    const s = String(orig);
+    if (s[0] === '{') { // 구버전은 run 결과 JSON일 수 있음 — 요약만 추출
+        try { const o = JSON.parse(s); return (o.report && (o.report.conclusion || o.summary)) || o.summary || (Array.isArray(o.lines) ? o.lines.join(' / ') : '') || ''; }
+        catch (e) { return s; }
+    }
+    return s;
+};
 window.aoOpenFeedbackModal = async function() {
     let data;
     try { data = await api('/api/agent-office/feedback'); }
     catch (e) { return alert(e.message); }
-    const all = data.feedback || [];
-    const fails = all.filter(f => f.feedback_type === 'fail');
-    const fb = all.filter(f => f.feedback_type !== 'fail');
-    // 실패 수집함: 요원별 그룹 → 원인(코멘트)별 표시. 5건 단위 일괄 보강 순환 (지시 #62)
-    const failGroups = {};
-    fails.forEach(f => { (failGroups[f.agent_name] = failGroups[f.agent_name] || []).push(f); });
-    const failBody = fails.length
-        ? Object.entries(failGroups).map(([name, fs]) => `
-            <h4 class="ao-sec-title">🤖 ${aoEsc(name)} <small style="color:#aaa;">(${fs.length}건)</small></h4>
-            ${fs.map(f => `<div class="ao-fb-hist-item">❌ <span class="ao-log-time">${aoKst(f.created_at)}</span>
-                [${aoEsc(f.comment || '원인 미분류')}]${f.run_id ? ` <button class="ao-fb-btn ao-fb-view" onclick="aoOpenReport(${f.run_id})">📄 보고서</button>` : ''}</div>`).join('')}`).join('')
-        : '<div class="ao-empty-note">수집된 실패가 없습니다 — 실사용 중 아쉬운 결과에 [❌ 실패 표시]를 눌러주세요</div>';
-    const fbBody = fb.length
-        ? '<div class="ao-fb-history">' + fb.map(f => aoFbLine(f, true)).join('') + '</div>'
-        : '<div class="ao-empty-note">아직 피드백이 없습니다</div>';
+    const fails = (data.feedback || []).filter(f => f.feedback_type === 'fail');
+    aoFailData = {};
+    const itemHtml = f => {
+        const q = (f.comment || '').trim();
+        const a = (aoExtractAnswer(f.original_output) || f.run_summary || '').trim();
+        aoFailData[f.id] = { q, a };
+        const full = `Q. ${q || '(질문 기록 없음)'}\nA. ${a || '(답변 기록 없음)'}`;
+        const isLong = full.length > 90;
+        const short = isLong ? full.slice(0, 90) + ' …' : full;
+        return `<div class="ao-fb-hist-item" style="display:flex;gap:8px;align-items:flex-start;">
+            <span style="flex:1;min-width:0;">
+                ❌ <span class="ao-log-time">${aoKst(f.created_at)}</span> <strong>${aoEsc(f.agent_name)}</strong>
+                <div id="ao-failtxt-${f.id}" style="white-space:pre-wrap;word-break:break-word;margin-top:2px;${isLong ? 'cursor:pointer;' : ''}" data-open="0" ${isLong ? `onclick="aoToggleFailText(${f.id}, this)"` : ''}>${aoEsc(short)}${isLong ? ' <span style="color:#3b82f6;font-size:12px;">[전체보기]</span>' : ''}</div>
+            </span>
+            <button class="ao-fb-btn" style="flex-shrink:0;" title="이 실패 항목 삭제" onclick="aoDeleteFail(${f.id})">🗑</button>
+        </div>`;
+    };
+    const body = fails.length
+        ? fails.map(itemHtml).join('')
+        : '<div class="ao-empty-note">수집된 실패가 없습니다 — 마루 답변이 이상하면 라이브 로그의 [❌ 실패] 또는 보고서의 [❌ 실패 표시]를 눌러주세요</div>';
+    document.querySelectorAll('.ao-feedback-overlay').forEach(e => e.remove());
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'modal-overlay ao-feedback-overlay';
     overlay.innerHTML = `<div class="modal ao-detail-modal">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-        <h3 style="margin:0 0 8px;">🧰 실패 수집함 <small style="color:#888;">(${fails.length}건 — 5건 단위 일괄 보강 검토, 개별 건 반복 재검증 없음)</small></h3>
-        <div style="max-height:32vh;overflow-y:auto;">${failBody}</div>
-        <h3 style="margin:14px 0 8px;">💬 피드백 이력 <small style="color:#888;">(${fb.length}건)</small></h3>
-        <div style="max-height:32vh;overflow-y:auto;">${fbBody}</div>
+        <h3 style="margin:0 0 8px;">🧰 실패 수집함 <small style="color:#888;">(${fails.length}건 — 쌓이면 "실패수집함 정리하자"로 함께 학습)</small></h3>
+        <div style="max-height:64vh;overflow-y:auto;">${body}</div>
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
+};
+// 길면 …접힘 ↔ 전체보기 토글 (대표 7/21)
+window.aoToggleFailText = function(id, el) {
+    const d = aoFailData[id]; if (!d) return;
+    const full = `Q. ${d.q || '(질문 기록 없음)'}\nA. ${d.a || '(답변 기록 없음)'}`;
+    if (el.dataset.open === '1') {
+        const short = full.length > 90 ? full.slice(0, 90) + ' …' : full;
+        el.innerHTML = aoEsc(short) + ' <span style="color:#3b82f6;font-size:12px;">[전체보기]</span>';
+        el.dataset.open = '0';
+    } else {
+        el.innerHTML = aoEsc(full) + ' <span style="color:#888;font-size:12px;">[접기]</span>';
+        el.dataset.open = '1';
+    }
+};
+// 실패 항목 삭제 (대표 7/21: 잘못 눌렸거나 필요 없어진 건 제거)
+window.aoDeleteFail = async function(id) {
+    if (!confirm('이 실패 항목을 삭제할까요?')) return;
+    try {
+        await api('/api/agent-office/feedback/' + id + '/delete', 'POST');
+        showToast('🗑 삭제했습니다');
+        aoOpenFeedbackModal();
+        aoRefreshGrowth();
+    } catch (e) { alert(e.message); }
 };
 
 // ---- 9차: 보고서 보관/복원 (soft-delete — 피드백·학습 노트 무영향) ----
@@ -11437,15 +11479,23 @@ window.aoSendFeedback = async function(agentId, runId, type) {
     } catch (err) { alert(err.message); }
 };
 
-// 지시 #62-2: [❌ 실패 표시] 원탭 — 실패 수집함 적재 (개별 재검증 대신 쌓이면 일괄 보강)
+// [❌ 실패 표시] 원탭 — 실패 수집함 적재 (대표 7/21: 사유 프롬프트 제거, 질문+답변 자동 캡처. 나중에 함께 정리·학습)
 window.aoMarkFail = async function(agentId, runId, btnEl) {
-    const comment = prompt('어떤 점이 실패였나요? (선택 — 비워도 등록됩니다. 원인별 분류에 사용)') || '';
     try {
         const res = await api('/api/agent-office/feedback', 'POST', {
-            agent_id: agentId, run_id: runId, feedback_type: 'fail', comment: comment.trim(), corrected_output: '',
+            agent_id: agentId, run_id: runId, feedback_type: 'fail',
         });
         showToast('🧰 ' + res.message);
         if (btnEl) { btnEl.disabled = true; btnEl.textContent = '❌ 수집됨'; }
+        aoRefreshGrowth();
+    } catch (err) { alert(err.message); }
+};
+// [❌ 실패] 라이브 로그용 — 마루/요원 답변(오더)을 질문+답변째 실패 수집함에 담기 (대표 7/21)
+window.aoMarkOrderFail = async function(orderId, btnEl) {
+    try {
+        const res = await api('/api/agent-office/feedback', 'POST', { order_id: orderId, feedback_type: 'fail' });
+        showToast('🧰 ' + res.message);
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = '❌ 담김'; }
         aoRefreshGrowth();
     } catch (err) { alert(err.message); }
 };

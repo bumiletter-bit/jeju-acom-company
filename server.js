@@ -5850,25 +5850,69 @@ app.get('/api/agent-office/runs', authMiddleware, adminOnly, async (req, res) =>
 });
 
 // 피드백 기록 (👍 good / ✏️ edited / 👎 bad / 💬 comment) — 성장 시스템 1차
+// 실패 수집함용 (대표 7/21): 오더의 '마루/요원 답변'을 사람이 읽을 텍스트로 뽑는다
+async function orderAnswerText(order) {
+    const r = order.result || {};
+    if (order.run_id) {
+        try {
+            const rq = await pool.query(`SELECT result FROM agent_runs WHERE id = $1`, [order.run_id]);
+            const rr = rq.rows[0]?.result || {};
+            const t = (rr.report && (rr.report.conclusion || rr.summary)) || rr.summary
+                || (Array.isArray(rr.lines) ? rr.lines.join(' / ') : '');
+            if (t) return t;
+        } catch (e) { /* 폴백 아래 */ }
+    }
+    return r.question || r.notice || r.summary || r.error
+        || (Array.isArray(r.subtasks) ? '멀티 분산: ' + r.subtasks.join(' / ') : '') || '(응답 없음)';
+}
 app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { agent_id, run_id = null, feedback_type, comment = '', corrected_output = '' } = req.body || {};
+        const { agent_id = null, run_id = null, order_id = null, feedback_type, comment = '', corrected_output = '' } = req.body || {};
         // 지시 #62-2: 'fail' = 실패 수집함 원탭 표시 — 코멘트 없이 허용, 개별 교훈 추출 없이 모아서 일괄 보강
         const TYPES = ['good', 'edited', 'bad', 'comment', 'fail'];
-        if (!agent_id || !TYPES.includes(feedback_type)) throw { status: 400, message: 'agent_id와 feedback_type(good/edited/bad/comment/fail)은 필수입니다' };
+        if (!TYPES.includes(feedback_type)) throw { status: 400, message: 'feedback_type(good/edited/bad/comment/fail)은 필수입니다' };
+        // 실패 수집함 (대표 7/21): order_id면 질문(오더 내용)+답변(마루/요원 응답)을 캡처. 요원은 오더 배정 요원(없으면 마루)로 자동 귀속
+        let question = '', answerText = '', resolvedAgentId = agent_id;
+        if (order_id) {
+            const oq = await pool.query(`SELECT content, result, run_id FROM pending_orders WHERE id = $1`, [order_id]);
+            const ord = oq.rows[0];
+            if (ord) {
+                question = ord.content || '';
+                answerText = await orderAnswerText(ord);
+                if (!resolvedAgentId) {
+                    const assignee = ord.result && ord.result.assignee;
+                    const aq = assignee
+                        ? await pool.query(`SELECT id FROM agents WHERE name = $1 AND is_deleted=false LIMIT 1`, [assignee])
+                        : await pool.query(`SELECT id FROM agents WHERE role='chief' AND is_deleted=false LIMIT 1`);
+                    resolvedAgentId = aq.rows[0]?.id;
+                }
+            }
+        }
+        if (!resolvedAgentId) throw { status: 400, message: 'agent_id 또는 order_id가 필요합니다' };
         if (feedback_type === 'bad' && !String(comment).trim()) throw { status: 400, message: '👎 피드백은 이유 한 줄이 필요합니다 (교훈화용)' };
         let original = null;
-        if (run_id) {
+        if (run_id && !order_id) {
             const runQ = await pool.query(`SELECT result FROM agent_runs WHERE id = $1`, [run_id]);
-            original = runQ.rows[0]?.result ? JSON.stringify(runQ.rows[0].result) : null;
+            const rr = runQ.rows[0]?.result;
+            original = rr ? JSON.stringify(rr) : null;
+            if (feedback_type === 'fail') { // 실패 표시는 사람이 읽을 답변 텍스트로 저장
+                const rro = rr || {};
+                answerText = (rro.report && (rro.report.conclusion || rro.summary)) || rro.summary
+                    || (Array.isArray(rro.lines) ? rro.lines.join(' / ') : '') || '(응답 없음)';
+                const oq2 = await pool.query(`SELECT content FROM pending_orders WHERE run_id = $1 ORDER BY id DESC LIMIT 1`, [run_id]);
+                question = oq2.rows[0]?.content || '';
+            }
         }
+        // 실패 항목: comment=질문, original_output=답변 (표시용). 그 외 피드백은 기존 유지
+        const storedComment = feedback_type === 'fail' ? (question || comment) : comment;
+        if (feedback_type === 'fail') original = answerText || original;
         const row = (await pool.query(
             `INSERT INTO agent_feedback (agent_id, run_id, feedback_type, original_output, corrected_output, comment)
              VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-            [agent_id, run_id, feedback_type, original, corrected_output, comment])).rows[0];
+            [resolvedAgentId, run_id, feedback_type, original, corrected_output, storedComment])).rows[0];
         await writeAudit({
             action: 'create', targetType: 'agent_feedback', targetId: row.id,
-            changes: { after: { agent_id, run_id, feedback_type, comment } },
+            changes: { after: { agent_id: resolvedAgentId, run_id, order_id, feedback_type, comment: storedComment } },
             source: 'agent_office', actor: adminActor(req),
         });
         // 6차: ✏️/👎/💬 피드백은 교훈 후보 자동 추출 (제안 상태 — 대표 승인 후에만 활성)
@@ -5951,7 +5995,7 @@ app.get('/api/agent-office/lessons', authMiddleware, adminOnly, async (req, res)
 app.get('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT f.id, f.feedback_type, f.comment, f.corrected_output, f.created_at, f.run_id,
+            `SELECT f.id, f.feedback_type, f.comment, f.original_output, f.corrected_output, f.created_at, f.run_id,
                     a.name AS agent_name, a.team AS agent_team,
                     r.result->>'summary' AS run_summary
              FROM agent_feedback f
@@ -5959,6 +6003,17 @@ app.get('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res
              LEFT JOIN agent_runs r ON f.run_id = r.id
              WHERE f.is_deleted = false ORDER BY f.created_at DESC LIMIT 100`);
         res.json({ feedback: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 실패 수집함 항목 삭제 (대표 7/21: 잘못 눌렸거나 필요 없어진 건 삭제 — soft-delete)
+app.post('/api/agent-office/feedback/:id/delete', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `UPDATE agent_feedback SET is_deleted = true WHERE id = $1 AND is_deleted = false RETURNING id`, [req.params.id]);
+        if (r.rows.length === 0) throw { status: 404, message: '삭제할 항목을 찾을 수 없습니다' };
+        await writeAudit({ action: 'delete', targetType: 'agent_feedback', targetId: r.rows[0].id, source: 'agent_office', actor: adminActor(req) });
+        res.json({ message: '삭제했습니다' });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -5991,6 +6046,7 @@ app.get('/api/agent-office/growth', authMiddleware, adminOnly, async (req, res) 
              FROM agent_lessons WHERE is_deleted = false AND status = 'active'`);
         const feedback = await pool.query(
             `SELECT COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE feedback_type = 'fail')::int AS fails,
                     COUNT(*) FILTER (WHERE created_at >= date_trunc('week', NOW()))::int AS this_week
              FROM agent_feedback WHERE is_deleted = false`);
         res.json({ lessons: lessons.rows[0], feedback: feedback.rows[0] });
