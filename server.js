@@ -7923,7 +7923,7 @@ async function generateMisoMedia(approval, output, opt) {
         config: {
             resolution: opt.resolution,
             aspectRatio: output.ratio === '9:16' ? '9:16' : '16:9',
-            durationSeconds: '8',
+            durationSeconds: 8, // 대표 7/21: 문자열 '8'→숫자 8 (Veo API가 number 요구 — 400 INVALID_ARGUMENT 원인)
         },
     });
     const t0 = Date.now();
