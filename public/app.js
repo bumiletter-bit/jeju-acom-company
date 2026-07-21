@@ -10156,13 +10156,28 @@ function aoSetupOrderImage() {
         const files = Array.from(fileInput.files || []);
         if (!files.length) return;
         aoOrderImages = [];
-        let pending = files.length;
-        files.forEach(f => {
-            if (f.size > 10 * 1024 * 1024) { alert(`${f.name}: 이미지가 너무 큽니다 (10MB 이내)`); pending--; return; }
-            const reader = new FileReader();
-            reader.onload = () => { aoOrderImages.push({ data: reader.result, mime: f.type, name: f.name }); if (--pending <= 0) aoRenderImagePreview(); };
-            reader.readAsDataURL(f);
+        aoAddImageFiles(files);
+    });
+    // 대표 7/21: 입력란에 이미지 복사→붙여넣기(Ctrl+V) 첨부 지원
+    const orderInput = document.getElementById('ao-order-input');
+    if (orderInput) {
+        orderInput.addEventListener('paste', (e) => {
+            const items = (e.clipboardData && e.clipboardData.items) || [];
+            const imgs = [];
+            for (const it of items) { if (it.type && it.type.indexOf('image') === 0) { const f = it.getAsFile(); if (f) imgs.push(f); } }
+            if (imgs.length) { e.preventDefault(); aoAddImageFiles(imgs); showToast(`📷 이미지 ${imgs.length}장 붙여넣기 — 전송하면 마루가 판독합니다`); }
         });
+    }
+}
+// 파일 목록을 aoOrderImages에 추가 (파일 선택·붙여넣기 공용) — 대표 7/21
+function aoAddImageFiles(files) {
+    let pending = files.length;
+    if (!pending) return;
+    files.forEach((f, i) => {
+        if (f.size > 10 * 1024 * 1024) { alert(`이미지가 너무 큽니다 (10MB 이내)`); if (--pending <= 0) aoRenderImagePreview(); return; }
+        const reader = new FileReader();
+        reader.onload = () => { aoOrderImages.push({ data: reader.result, mime: f.type || 'image/png', name: f.name || `붙여넣기_${Date.now()}_${i}.png` }); if (--pending <= 0) aoRenderImagePreview(); };
+        reader.readAsDataURL(f);
     });
 }
 function aoRenderImagePreview() {
