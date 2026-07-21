@@ -259,8 +259,10 @@ async function initDB() {
     // 잘못 생성된 ceo 계정 정리
     await pool.query("DELETE FROM users WHERE username = 'ceo' AND (SELECT COUNT(*) FROM users WHERE username = 'admin') > 0");
 
-    // 품목별 금액 저장 시 잘못 생성된 정산 데이터 삭제
-    await pool.query("DELETE FROM settlements WHERE from_pricing = true");
+    // 🔴 [제거됨 2026-07-22 — 심각한 데이터 손실 버그] 아래 일회성 정리 코드가 initDB()(매 부팅) 안에 있어
+    //    서버 재시작·배포 때마다 정산관리(from_pricing=true) 데이터를 전부 삭제하고 있었음.
+    //    → 대표가 올린 정산관리 매출이 배포할 때마다 사라짐. 절대 되살리지 말 것.
+    // (구 코드: await pool.query("DELETE FROM settlements WHERE from_pricing = true");)
 
     // 초기 관리자 계정 생성
     const adminCheck = await pool.query("SELECT id FROM users WHERE username = 'admin'");
