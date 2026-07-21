@@ -8087,7 +8087,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
             // 자문·조회 요원(지율·세미·한수·미래)은 지적·코멘트에도 재답변(정확성 우선).
             const fbRunner = loadAgentRunner(target.name);
             const creativeAgent = ['글샘', '미소'].includes(target.name);
-            const isRework = /다시|재작성|새로|다른\s*안|한\s*번\s*더|바꿔|고쳐|수정|보완/.test(order.content);
+            const isRework = /다시|재작성|새로|다른\s*안|한\s*번\s*더|바꿔|고쳐|수정|보완|만들|그려|제작|생성|작성/.test(order.content);
             const redoTrigger = creativeAgent ? (fbType === 'edited' || isRework) : (fbType !== 'good');
             if (redoTrigger && fbRunner.live && target.is_active) {
                 const prevConcl = lastRun.rows[0]?.result?.report?.conclusion
