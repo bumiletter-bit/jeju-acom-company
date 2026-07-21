@@ -9301,6 +9301,19 @@ function aoPollOrder(orderId) {
     }, 1500);
 }
 
+// 대표 7/22: 마루 직접 답변 모달 (개념·설명·이미지 뜻 등 — 읽기 좋게 표시)
+window.aoShowMaruAnswer = function(text) {
+    document.querySelectorAll('.ao-answer-overlay').forEach(e => e.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay ao-answer-overlay';
+    overlay.innerHTML = `<div class="modal" style="max-width:520px;">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+        <h3 style="margin:0 0 10px;">💬 마루</h3>
+        <div style="white-space:pre-wrap;word-break:break-word;line-height:1.65;font-size:14px;max-height:70vh;overflow-y:auto;">${aoEsc(text || '')}</div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+};
 function aoHandleOrderResult(order) {
     const r = order.result || {};
     aoClearSay('마루'); // '분석 중...' 상시 말풍선 제거
@@ -9315,6 +9328,11 @@ function aoHandleOrderResult(order) {
         // 애매한 지시 → 마루가 되묻기 (추측 실행 금지 원칙)
         aoSay('마루', '🤔 ' + (r.question || '확인이 필요합니다'), 9000);
         showToast('마루의 확인 질문 — 입력바로 답해주세요');
+    } else if (order.status === '완료' && r.type === 'answer') {
+        // 대표 7/22: 마루 직접 답변 (개념·설명·이미지 뜻) — 읽기 좋게 모달
+        aoClearSay('마루');
+        aoShowMaruAnswer(r.text || '');
+        showToast('💬 마루 답변');
     } else if (order.status === '완료' && r.type === 'settlement_saved_ocr') {
         aoSay('마루', `✅ ${r.partner} 정산관리 저장 완료 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원)`, 9000);
         showToast('✅ 정산관리 저장 완료');
@@ -10030,6 +10048,7 @@ function aoOrderLogLine(o) {
     else if (st === '완료' && r.type === 'settlement_saved') extra = `<div class="ao-log-sub">💾 마루 → 정산현황 저장 (${aoEsc(r.date || '')}) · 총 합계 ${Math.round(r.total || 0).toLocaleString()}원 — ${(r.items || []).slice(0, 3).map(aoEsc).join(' / ')}</div>`;
     else if (st === '완료' && r.type === 'settlement_cancelled') extra = `<div class="ao-log-sub">ℹ️ 정산현황 저장 취소</div>`;
     else if (st === '완료' && r.type === 'multi_dispatch') extra = `<div class="ao-log-sub">🔀 마루 → 멀티 분산 ${(r.subtasks || []).length}건 동시 배정: ${(r.subtasks || []).map((s2, i2) => '①②③④⑤'[i2] + ' ' + aoEsc(aoTrunc(s2, 40))).join(' / ')}</div>`;
+    else if (st === '완료' && r.type === 'answer') extra = `<div class="ao-log-sub">💬 마루: ${aoEsc(r.text || '')}</div>`;
     else if (st === '질문' && r.type === 'settlement_ocr_confirm') { aoSettleCache[o.id] = r; extra = `<div class="ao-log-sub">📋 <strong>${aoEsc(r.partner)}</strong> 정산관리 입력 확인 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원) <button class="ao-fb-btn" onclick="event.stopPropagation(); aoOpenSettleCache(${o.id})">확인표 열기</button></div>`; }
     else if (st === '완료' && r.type === 'settlement_saved_ocr') extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.partner)} 정산관리 저장 완료 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원)</div>`;
     else if (st === '질문' && r.type === 'settlement_ocr_need_partner') extra = `<div class="ao-log-sub">📦 품목 읽음 — 거래처만 확인 필요: "효돈농협 / 대성(시온) / 기타거래처" 중 답해주세요</div>`;

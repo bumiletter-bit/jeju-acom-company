@@ -5079,7 +5079,8 @@ const MARU_ROUTE_TOOL = {
         type: 'object',
         additionalProperties: false,
         properties: {
-            action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule', 'settlement_input', 'multi'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물 평가/수정, schedule=일정 조회·등록(마루 직접), settlement_input=정산현황 숫자 입력(마루 직접), multi=멀티 지시 분산 실행(대표 확인 후 — subtasks 필수)' },
+            action: { type: 'string', enum: ['route', 'clarify', 'feedback', 'schedule', 'settlement_input', 'multi', 'answer'], description: 'route=새 작업 배정, clarify=애매해서 되묻기, feedback=기존 결과물 평가/수정, schedule=일정 조회·등록(마루 직접), settlement_input=정산현황 숫자 입력(마루 직접), multi=멀티 지시 분산 실행(대표 확인 후 — subtasks 필수), answer=개념·용어 설명·이미지 뜻 묻기 등 일반 질문에 마루가 직접 답변(배정 안 함)' },
+            answer_text: { type: 'string', description: "action=answer일 때만 출력 — 대표 질문에 대한 마루의 직접 답변. 개념·용어 뜻(예: '계열합계가 뭐야'), 첨부 이미지가 무엇인지 설명, 프로그램 사용법 등 '작업 배정'이 아닌 물음에 아는 선에서 정확히 답한다. 모르면 모른다고 정직하게" },
             subtasks: {
                 type: 'array', items: { type: 'string' },
                 description: "action=multi일 때만 출력 — 각 작업을 **완결된 독립 지시 문장**으로 분해 (조건·기간·품목을 각 문장에 전부 복사해 담는다. 예: ['미니밤호박 톡톡 문구 작성 — 담주 화~목 3일, 2천원 할인쿠폰, 10+1 추첨 20명', '미니밤호박 톡톡 이미지 디자인 제작 — 담주 화~목 행사, 할인쿠폰·추첨 이벤트 강조', '담주 화~목 미니밤호박 할인 행사 일정 등록']). 2~5건",
@@ -5185,6 +5186,8 @@ ${JSON.stringify(routingTable, null, 2)}
 2. 지시가 새 작업이 아니라 **기존 결과물에 대한 평가·수정 요구**면 (예: "아까 그 문자 요일 틀렸어", "방금 카피 너무 좋았어", "프롬프트에 돌담 빼줘") action='feedback'으로 분류한다.
    assignee=그 결과물을 만든 요원(문자·카피→글샘, 이미지·영상 프롬프트→미소, 정산 보고→세미), feedback_kind=칭찬/수정/지적/코멘트.
    어느 요원의 결과물인지 불명확하면 clarify로 되묻는다.
+2-2. **작업 배정이 아니라 '설명·질문'이면 action='answer'로 네가 직접 답한다** (대표 7/22): 용어·개념 뜻("계열합계가 뭐야?", "매출 기여가 무슨 의미야?"), 첨부 이미지가 무엇인지 설명("이 이미지 무슨 뜻이야?", "이거 뭐야?"), 프로그램 사용법·일반 질문 등. answer_text에 아는 선에서 정확히 답하고, 모르면 정직하게 모른다고 한다. **단 '데이터 조회'(매출·정산·품목 금액·순위·비교 등 실제 수치가 필요한 것)는 answer가 아니라 세미에게 route** 한다 — 수치는 네가 지어내지 말 것.
+2-3. **이미지가 첨부됐을 때**: 지시에 '정산관리/정산 등록/올려줘' 같은 정산 등록 의도가 있으면 서버가 정산 OCR로 처리하니 너는 관여하지 않는다. 그 외(예: "이 이미지 무슨 뜻이야?", "이거 설명해줘")로 이미지가 오면 **첨부 이미지를 직접 보고** action='answer'로 설명하거나, 작업 지시면 해당 요원에게 route 한다.
 3. 분야가 불명확하거나 여러 해석이 가능하면 절대 추측하지 말고 action='clarify'로 되묻는다. 질문은 한 번에 딱 하나만.
 4. 일정 분야는 팀 배정 없이 마루(너)가 직접 처리한다: action='schedule'.
    - 조회 ("이번주 일정 뭐 있어?", "내일 일정") → schedule_op='조회', schedule_from/to를 YYYY-MM-DD로 채운다 (이번주=오늘 기준 이번 월요일~일요일, 오늘/내일은 해당 하루).
@@ -5406,7 +5409,7 @@ function maruCleanDecision(raw) {
 // 체커·audit)는 16필드가 항상 존재한다고 가정하므로 여기서 형태를 보장한다 (정화 직후 단일 관문)
 function maruNormalizeDecision(d) {
     const out = { ...d };
-    for (const f of ['team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'item_keyword',
+    for (const f of ['team', 'assignee', 'task_summary', 'reason', 'clarify_question', 'answer_text', 'item_keyword',
         'period', 'target_date', 'settlement_date', 'schedule_from', 'schedule_to']) {
         if (typeof out[f] !== 'string') out[f] = '';
     }
@@ -5501,12 +5504,19 @@ function maruForceFinanceRoute(d, content, todayStr) {
 }
 
 // 마루 판단 호출 (오염 감지 → 재시도 → 정화 포함) — 실제 처리와 역량 테스트가 공용
-async function maruDecide(content) {
+async function maruDecide(content, image = null) {
     if (!process.env.ANTHROPIC_API_KEY) {
         throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다 (Render 환경변수 확인 필요)');
     }
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const systemPrompt = await maruBuildSystemPrompt();
+    // 대표 7/22: 이미지가 첨부되면 마루가 직접 보고 판단(answer/route) — 정산 등록 이미지는 서버가 미리 걸러 여기 안 옴
+    const userContent = (image && image.data)
+        ? [
+            { type: 'image', source: { type: 'base64', media_type: image.mime || 'image/png', data: image.data } },
+            { type: 'text', text: `대표 지시(이미지 첨부됨): ${content}` },
+          ]
+        : `대표 지시: ${content}`;
     const call = async (extraNote) => {
         const msg = await anthropic.messages.create({
             model: MARU_MODEL,
@@ -5514,7 +5524,7 @@ async function maruDecide(content) {
             system: systemPrompt + (extraNote || ''),
             tools: [MARU_ROUTE_TOOL],
             tool_choice: { type: 'tool', name: 'route_order' },
-            messages: [{ role: 'user', content: `대표 지시: ${content}` }],
+            messages: [{ role: 'user', content: userContent }],
         });
         const tu = msg.content.find(b => b.type === 'tool_use');
         if (!tu) throw new Error('마루 응답에서 배정 결과(tool_use)를 찾지 못했습니다');
@@ -5542,6 +5552,7 @@ function maruDecisionUnusable(d) {
     if (!d || !d.action) return true;
     if (d.action === 'route' && !String(d.assignee || '').trim()) return true;
     if (d.action === 'clarify' && !String(d.clarify_question || '').trim()) return true;
+    if (d.action === 'answer' && !String(d.answer_text || '').trim()) return true;
     if (d.action === 'schedule' && !['조회', '등록', '불가'].includes(d.schedule_op)) return true;
     if (d.action === 'schedule' && d.schedule_op === '등록'
         && !(Array.isArray(d.schedule_items) && d.schedule_items.length)) return true;
@@ -6969,8 +6980,12 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         if (await maruTrySettlementOcrConfirm(order, actor)) return;
         // 일정 등록 확인 대기 중이면 "응/등록해" 답변을 여기서 처리 (AI 호출 없음)
         if (await maruTryScheduleConfirm(order, actor)) return;
-        // 정산관리 이미지 첨부 지시 → 마루 비전 판독 → 확인표 (저장 안 함, 대표 승인 후 저장)
-        if (order.image_data) { await maruSettlementOcr(order, actor); return; }
+        // 정산관리 이미지 첨부 → 정산 OCR 확인표 (저장 안 함, 대표 승인 후 저장).
+        // 🔴 대표 7/22: 정산·등록·올려 등 '정산 등록 의도'가 있을 때만 OCR로 간다 (매일 쓰는 핵심 경로 보존).
+        //    그 외 이미지("이 이미지 무슨 뜻이야?" 등)는 아래 maruDecide에 이미지를 넘겨 마루가 직접 보고 답/배정한다.
+        if (order.image_data && /정산|등록|올려|발송\s*목록|입력/.test(order.content || '')) {
+            await maruSettlementOcr(order, actor); return;
+        }
         // 지시 #6-1: 미응답 clarify 질문이 있으면 새 입력을 답변으로 보고 [원 지시+질문+답변] 결합 재라우팅
         // — 답변이 독립 지시로 취급되며 맥락이 소실되던 순환 사고(#45~#56) 수정
         let effContent = order.content;
@@ -7032,7 +7047,8 @@ async function processOrderWithMaru(order, actor, opts = {}) {
             });
         }
         // 판단 호출 (오염 감지·정화·조건부 재시도 포함) — 결합 텍스트 기준 (지시 #6-1)
-        let { d, polluted, pollution } = await maruDecide(effContent);
+        let { d, polluted, pollution } = await maruDecide(effContent,
+            order.image_data ? { data: order.image_data, mime: order.image_mime } : null); // 대표 7/22: 정산 아닌 이미지는 마루가 직접 봄
         if (polluted) console.warn(`마루 응답 오염 감지 (지시 #${order.id}):`, JSON.stringify(pollution));
         // 지시 #6-2: 기간+재무 항목이 모두 명시된 지시에 빈 되묻기 금지 — 서버가 세미 배정 강제
         const forced = maruForceFinanceRoute(d, effContent, kstTodayStr());
@@ -7124,6 +7140,15 @@ async function processOrderWithMaru(order, actor, opts = {}) {
             return;
         }
 
+        // 대표 7/22: 마루 직접 답변 (개념·용어 설명·이미지 뜻 등 일반 질문) — 배정 없이 즉답
+        if (d.action === 'answer') {
+            await maruFinishOrder(order.id, '완료', {
+                type: 'answer',
+                text: String(d.answer_text || '').trim() || '답변을 생성하지 못했습니다',
+                summary: d.task_summary || '마루 직접 답변', reason: d.reason,
+            });
+            return;
+        }
         // ① 애매한 지시 → 되묻기 (추측 실행 금지)
         if (d.action === 'clarify') {
             // 대표 실사용 지적: 예상 답변 형식을 질문에 명시 — "네" 한마디로 전 건 진행됨을 안내
