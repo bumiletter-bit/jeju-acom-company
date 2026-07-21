@@ -6364,6 +6364,17 @@ function buildFollowUpText(originalContent, agentName, prevAnswer, followUp) {
         + `[${agentName}의 이전 답변] ${prevAnswer}\n`
         + `[대표의 후속] ${followUp}`;
 }
+// 멀티(대표 7/21): 확인 안 된 열린 작업이 여러 개면(예: 글샘 문구·미소 이미지 동시) 목록을 마루에게 보여주고
+//   후속이 어느 요원 것인지 고르게 한다. 마루가 고른 요원의 '자기 스레드'로는 이후 buildFollowUpText로 좁힌다.
+function buildMultiFollowUpText(threads, followUp) {
+    const list = threads.map((t, i) => {
+        const label = String(t.content).split(/\s*\[(?:상세 조건|멀티)/)[0].slice(0, 60);
+        return `  ${i + 1}. [${t.assignee}] ${label} — 결과 요약: ${String(t.prevAns).slice(0, 80)}`;
+    }).join('\n');
+    return '[진행 중 대화 이어가기 — 대표가 아직 "확인"하지 않은 열린 작업이 여러 개다. 아래 목록에서 대표의 후속이 어느 작업(요원)에 대한 것인지 판단해 그 요원에게 다시 배정하라(assignee=그 요원). 어디에도 해당하지 않는 완전히 새 지시면 새로 배정하라]\n'
+        + '[열린 작업들]\n' + list + '\n'
+        + `[대표의 후속] ${followUp}`;
+}
 // 지시 #7: '이번주/금주' 원문 서버 확정 — 월·특정일 패턴이 없을 때 period를 this_week로 강제
 // (지시 기간 = 산출 기간 원칙: "이번주 보내줘"가 월간 보고서·파일로 빠지던 편차 수정)
 function maruWeekPeriodOverride(period, content) {
@@ -7881,6 +7892,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         let effContent = order.content;
         let combinedFrom = null;
         let followUpFrom = null;
+        let openThreads = []; // 확인 안 된(열린) 요원 답변들 — 멀티면 여러 개
         const pqRow = (await pool.query(
             `SELECT id, content, result FROM pending_orders
              WHERE status='질문' AND is_deleted=false AND id != $1
@@ -7891,24 +7903,33 @@ async function processOrderWithMaru(order, actor, opts = {}) {
             effContent = buildCombinedOrderText(pqRow.content, (pqRow.result && pqRow.result.question) || '', order.content);
         } else if (!opts.noMulti) {
             // 맥락 이어가기 (대표 지적 7/21): 직전에 요원이 답을 냈고 대표가 아직 '확인'(보고 보관 = run archive) 안 한
-            //   '열린' 상태면, 새 메시지를 그 답변의 후속으로 보고 [원지시+요원답변+후속]을 결합해 재라우팅한다.
-            //   확인(archive)된 상태면 이 블록을 건너뛰어 마루가 새로 판단 (대표 정의: 확인 누른 상태=처음부터 / 안 누른 상태=이어가기).
+            //   '열린' 상태면, 새 메시지를 그 답변의 후속으로 보고 이어서 배정한다.
+            //   확인(archive)된 상태면 이 블록을 건너뛰어 마루가 새로 판단 (대표 정의: 확인=처음부터 / 미확인=이어가기).
+            //   멀티(글샘 문구·미소 이미지 등 동시 배정)면 열린 스레드가 여러 개 → 마루가 후속 내용을 보고 맞는 요원을 고른다.
             //   서브태스크(noMulti) 실행에는 적용하지 않는다 (내부 순차 처리 오염 방지).
-            const openAns = (await pool.query(
+            const openRows = (await pool.query(
                 `SELECT o.id, o.content, o.result, r.result AS run_result
                  FROM pending_orders o JOIN agent_runs r ON o.run_id = r.id
                  WHERE o.is_deleted=false AND o.status='완료' AND o.id != $1
                    AND o.created_at > NOW() - interval '1 hour'
                    AND r.is_deleted = false AND r.status='done'
                    AND o.result->>'type' = 'route'
-                 ORDER BY o.id DESC LIMIT 1`, [order.id])).rows[0];
-            if (openAns) {
-                followUpFrom = openAns;
-                const rr = openAns.run_result || {};
+                 ORDER BY o.id DESC LIMIT 8`, [order.id])).rows;
+            const seenAgent = new Set();
+            for (const row of openRows) {
+                const nm = row.result && row.result.assignee;
+                if (!nm || seenAgent.has(nm)) continue; // 같은 요원은 최신 1건만
+                seenAgent.add(nm);
+                const rr = row.run_result || {};
                 const prevAns = (rr.report && (rr.report.conclusion || rr.summary)) || rr.summary
-                    || (openAns.result && openAns.result.summary) || '(이전 답변)';
-                const agentName = (openAns.result && openAns.result.assignee) || '담당 요원';
-                effContent = buildFollowUpText(openAns.content, agentName, String(prevAns).slice(0, 300), order.content);
+                    || (row.result && row.result.summary) || '(이전 답변)';
+                openThreads.push({ order_id: row.id, content: row.content, assignee: nm, prevAns: String(prevAns).slice(0, 300) });
+            }
+            if (openThreads.length === 1) {
+                followUpFrom = openThreads[0];
+                effContent = buildFollowUpText(openThreads[0].content, openThreads[0].assignee, openThreads[0].prevAns, order.content);
+            } else if (openThreads.length > 1) {
+                effContent = buildMultiFollowUpText(openThreads, order.content); // 마루가 맞는 요원 선택 (아래에서 그 요원 스레드로 좁힘)
             }
         }
         // 결합 대상을 제외한 나머지 미응답 질문만 '대체됨' 자동 종결 (지시 #4 동작 유지)
@@ -7934,6 +7955,16 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         if (forced) {
             console.log(`재무 즉답 보정 (지시 #${order.id}): clarify → route/세미 period=${forced.period || forced.target_date}`);
             d = forced;
+        }
+        // 멀티 이어가기 (대표 7/21): 마루가 고른 요원이 열린 스레드 중 하나면, 그 요원 '자기 스레드'로 맥락을 좁혀
+        //   해당 요원의 이전 답변을 참조로 넘긴다 (route든 feedback이든 아래 경로에서 그 요원이 자기 결과물 기준으로 이어 작업).
+        if (openThreads.length > 1 && d.assignee) {
+            const matched = openThreads.find(t => t.assignee === d.assignee);
+            if (matched) {
+                followUpFrom = matched;
+                effContent = buildFollowUpText(matched.content, matched.assignee, matched.prevAns, order.content);
+                console.log(`멀티 이어가기 매칭 (지시 #${order.id}): 후속 → ${matched.assignee} (열린 ${openThreads.length}건 중)`);
+            }
         }
         // 결합 재라우팅에 사용된 원 질문은 '응답됨'으로 종결 (soft-close, 전체 보기 조회 가능)
         if (combinedFrom) {
@@ -8050,18 +8081,22 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 source: 'agent_office', actor,
             });
             if (fbType !== 'good') extractLessonFromFeedback(fbRow, actor); // 비동기 — 교훈 후보 추출
-            // 대표가 수정·지적 피드백을 주면 live 요원이 그 피드백을 반영해 1회 재자문/재작성 (문서화된 '수정 시 1회' 경로 — 이전엔 미구현이라 '피드백 감사'만 나가던 것).
-            // 창작 요원(글샘·미소)은 명시적 '수정'일 때만 재작성(자동 재작성 금지 원칙). 자문·조회 요원(지율·세미·한수·미래)은 지적·코멘트에도 재답변(정확성 우선).
+            // 대표가 수정·지적 피드백을 주면 live 요원이 그 피드백을 반영해 재작업/재자문 (문서화된 '수정 시 재작업' 경로).
+            // 창작 요원(글샘·미소, 대표 7/21): "다시 써줘/다시 만들어줘/수정해서/다른 안" 같은 명시적 재작업 요청이면 새 안 1라운드 재생성
+            //   (문구·이미지 안 3개 → 피드백 반영해 한 번 더 생성. 단순 칭찬은 재작업 안 함 — 무한 자동 재작성이 아니라 대표 요청 시마다 1회).
+            // 자문·조회 요원(지율·세미·한수·미래)은 지적·코멘트에도 재답변(정확성 우선).
             const fbRunner = loadAgentRunner(target.name);
             const creativeAgent = ['글샘', '미소'].includes(target.name);
-            const redoTrigger = creativeAgent ? (fbType === 'edited') : (fbType !== 'good');
+            const isRework = /다시|재작성|새로|다른\s*안|한\s*번\s*더|바꿔|고쳐|수정|보완/.test(order.content);
+            const redoTrigger = creativeAgent ? (fbType === 'edited' || isRework) : (fbType !== 'good');
             if (redoTrigger && fbRunner.live && target.is_active) {
                 const prevConcl = lastRun.rows[0]?.result?.report?.conclusion
                     || lastRun.rows[0]?.result?.summary || '';
-                const redoContent = `${effContent}\n\n[재자문 요청 — 대표 피드백 반영] 직전 답변 결론: "${String(prevConcl).slice(0, 200)}". 위 대표 지적을 반영해 처음부터 다시 정확히 계산·작성하라. 결론의 수치는 반드시 계산 과정에서 도출된 값과 일치시킬 것.`;
+                const redoVerb = creativeAgent ? '대표 피드백을 반영해 새 안을 한 번 더(1라운드) 만들어라' : '대표 지적을 반영해 처음부터 다시 정확히 계산·작성하라';
+                const redoContent = `${effContent}\n\n[재작업 요청 — 대표 피드백 반영] 직전 결과: "${String(prevConcl).slice(0, 200)}". ${redoVerb}. (창작이면 결론 수치가 아니라 새 안 자체를 만들고, 자문이면 결론 수치는 계산값과 일치시킬 것)`;
                 const redoRoute = {
                     team: target.team, assignee: target.name,
-                    task_summary: `${target.name} 재자문 (대표 피드백 반영)`, reason: '대표 수정·지적 피드백 1회 반영',
+                    task_summary: `${target.name} 재작업 (대표 피드백 반영)`, reason: '대표 수정·지적·재작업 요청 반영',
                 };
                 await dispatchLiveAgent(order, redoRoute, {}, actor, null, redoContent);
                 return;
