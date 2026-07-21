@@ -7917,42 +7917,24 @@ async function generateMisoMedia(approval, output, opt) {
         const ext = String(img.inlineData.mimeType || 'image/png').includes('jpeg') ? 'jpg' : 'png';
         return { buf: Buffer.from(img.inlineData.data, 'base64'), ext };
     }
-    // 영상 (Veo 3.1) — long-running operation 폴링. durationSeconds는 숫자 8 (문자열이면 400). 구글 내부 오류("internal server issue")는 일시적이라 자동 1회 재시도 (대표 7/21).
-    const isTransientErr = (m) => /internal|try again|unavailable|deadline|temporar|backend|500|503/i.test(String(m || ''));
-    const startVeo = (withRes) => {
-        const config = { aspectRatio: output.ratio === '9:16' ? '9:16' : '16:9', durationSeconds: 8 };
-        if (withRes && opt.resolution) config.resolution = opt.resolution; // 2차 시도는 resolution 제외 (혹시 이 설정이 원인일 때 폴백)
-        return genai.models.generateVideos({ model: opt.model, prompt: output.prompt_en, config });
-    };
-    const pollVeo = async (opv) => {
-        const t0 = Date.now();
-        while (!opv.done) {
-            if (Date.now() - t0 > 6 * 60 * 1000) throw new Error('영상 생성 6분 초과 — 시간 초과로 중단');
-            await new Promise(r => setTimeout(r, 10000));
-            opv = await genai.operations.getVideosOperation({ operation: opv });
-        }
-        return opv;
-    };
-    let op = null, lastErr = '';
-    for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-            op = await pollVeo(await startVeo(attempt === 1)); // 1차: resolution 포함 / 2차: 제외
-            if (op.error) { lastErr = op.error.message || JSON.stringify(op.error); throw new Error(lastErr); }
-            break; // 성공
-        } catch (e) {
-            lastErr = (e && e.message) || String(e);
-            op = null;
-            if (attempt < 2 && isTransientErr(lastErr)) {
-                console.warn(`Veo 일시 오류 — 15초 후 재시도 (${lastErr.slice(0, 120)})`);
-                await new Promise(r => setTimeout(r, 15000));
-                continue;
-            }
-            throw new Error(isTransientErr(lastErr)
-                ? `구글 Veo 서버 일시 오류로 실패 (자동 재시도도 실패) — 몇 분 뒤 다시 시도해주세요. (원문: ${lastErr.slice(0, 150)})`
-                : '영상 생성 실패: ' + lastErr);
-        }
+    // 영상 (Veo 3.1) — long-running operation 폴링. durationSeconds는 숫자 8 (문자열이면 400).
+    // 🚫 대표 7/21: 자동 재시도 안 함 — 재시도도 과금이 걸릴 수 있으므로, 실패하면 대표가 직접 [생성]을 다시 눌러 결정한다 (건별 승인제).
+    const config = { aspectRatio: output.ratio === '9:16' ? '9:16' : '16:9', durationSeconds: 8 };
+    if (opt.resolution) config.resolution = opt.resolution;
+    let op = await genai.models.generateVideos({ model: opt.model, prompt: output.prompt_en, config });
+    const t0 = Date.now();
+    while (!op.done) {
+        if (Date.now() - t0 > 6 * 60 * 1000) throw new Error('영상 생성 6분 초과 — 시간 초과로 중단');
+        await new Promise(r => setTimeout(r, 10000));
+        op = await genai.operations.getVideosOperation({ operation: op });
     }
-    const video = op && op.response?.generatedVideos?.[0]?.video;
+    if (op.error) {
+        const em = op.error.message || JSON.stringify(op.error).slice(0, 200);
+        throw new Error(/internal|try again|unavailable|temporar|backend|500|503/i.test(em)
+            ? `구글 Veo 서버 일시 오류로 실패했습니다 — 잠시 후 [생성]을 다시 눌러 재시도해주세요 (자동 재시도 안 함 · 과금은 대표님이 직접 결정). 원문: ${em.slice(0, 150)}`
+            : '영상 생성 실패: ' + em);
+    }
+    const video = op.response?.generatedVideos?.[0]?.video;
     if (!video) throw new Error('영상 응답이 비어 있습니다');
     const fs = require('fs');
     const os = require('os');
