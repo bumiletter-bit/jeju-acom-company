@@ -7560,9 +7560,10 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         conditions: (conditions.item_keyword || conditions.period || conditions.target_date) ? conditions : null,
     };
 
-    // 실전 연결된 worker만 실제 실행 (agents/{이름}.js의 live:true — 현재 세미)
+    // 실전 연결된 요원(agents/{이름}.js의 live:true)이면 role 무관하게 실제 실행.
+    // (구 버그: role==='worker' 요구 → 매니저인 지율·한수·미래가 live:true인데도 '안내'로 빠짐 — 세미만 live였던 초기 잔재)
     const runner = agent ? loadAgentRunner(agent.name) : null;
-    const isLive = !!(agent && runner.live && agent.role === 'worker' && agent.is_active);
+    const isLive = !!(agent && runner.live && agent.is_active);
 
     if (!isLive) {
         await finish('안내', {
