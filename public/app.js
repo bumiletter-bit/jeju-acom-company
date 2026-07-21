@@ -9250,6 +9250,15 @@ async function aoSendOrder() {
 window.aoOpenMaruQuestion = function() {
     if (!aoPendingMaruQ) return;
     const q = (aoPendingMaruQ.result && aoPendingMaruQ.result.question) || '확인이 필요합니다';
+    // 대표 7/22: 선택지가 있으면 각 선택지를 버튼으로 (없으면 네/아니오). 자유 입력도 가능.
+    const choices = (aoPendingMaruQ.result && Array.isArray(aoPendingMaruQ.result.choices)) ? aoPendingMaruQ.result.choices.filter(Boolean) : [];
+    const btnsHtml = choices.length
+        ? `<div style="font-size:12px;color:#e67700;margin:14px 0 6px;">선택지 — 눌러서 고르거나 입력창에 말로 답해도 됩니다</div>
+           <div style="display:flex;flex-direction:column;gap:8px;">${choices.map((c, i) => `<button class="btn-primary" style="padding:12px;font-size:15px;text-align:left;" onclick="this.closest('.modal-overlay').remove(); aoAnswerChoice(decodeURIComponent('${encodeURIComponent(c)}'))">${i + 1}. ${aoEsc(c)}</button>`).join('')}</div>`
+        : `<div style="display:flex;gap:8px;margin-top:16px;">
+            <button class="btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="this.closest('.modal-overlay').remove(); aoQuickAnswer(true)">✅ 네, 진행</button>
+            <button class="btn-outline" style="flex:1;padding:12px;font-size:15px;" onclick="this.closest('.modal-overlay').remove(); aoQuickAnswer(false)">✕ 아니오</button>
+        </div>`;
     document.querySelectorAll('.ao-maruq-overlay').forEach(e => e.remove());
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay ao-maruq-overlay';
@@ -9257,10 +9266,7 @@ window.aoOpenMaruQuestion = function() {
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
         <h3 style="margin:0 0 10px;">🤔 마루의 질문</h3>
         <div style="background:#FFF7E6;border:2px solid #F5A623;border-radius:10px;padding:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;">${aoEsc(q)}</div>
-        <div style="display:flex;gap:8px;margin-top:16px;">
-            <button class="btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="this.closest('.modal-overlay').remove(); aoQuickAnswer(true)">✅ 네, 진행</button>
-            <button class="btn-outline" style="flex:1;padding:12px;font-size:15px;" onclick="this.closest('.modal-overlay').remove(); aoQuickAnswer(false)">✕ 아니오</button>
-        </div>
+        ${btnsHtml}
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
@@ -9278,6 +9284,23 @@ window.aoQuickAnswer = async function(yes) {
     document.querySelectorAll('.ao-maruq-btns').forEach(e => e.remove());
     try {
         const res = await api('/api/agent-office/orders', 'POST', { content: yes ? '네' : '아니오' });
+        aoAppendLiveLogHtml(aoOrderLogLine(res.order));
+        aoSayThinking('마루', '💭', '처리 중');
+        aoPollOrder(res.order.id);
+    } catch (err) { alert(err.message); }
+};
+
+// 대표 7/22: 선택지 버튼 답변 — 고른 선택지 텍스트를 그대로 답으로 전송 (자유 입력과 동일 경로)
+window.aoAnswerChoice = async function(text) {
+    if (!aoPendingMaruQ) return; // 중복 클릭 방어
+    aoAnsweredQ.add(aoPendingMaruQ.id);
+    aoPendingMaruQ = null;
+    aoClearSay('마루');
+    aoClearSay('대표');
+    document.querySelectorAll('.ao-maruq-btns').forEach(e => e.remove());
+    document.querySelectorAll('.ao-maruq-overlay').forEach(e => e.remove());
+    try {
+        const res = await api('/api/agent-office/orders', 'POST', { content: String(text || '').trim() });
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
         aoSayThinking('마루', '💭', '처리 중');
         aoPollOrder(res.order.id);
@@ -10055,10 +10078,15 @@ function aoOrderLogLine(o) {
     else if (r.question && (st === '질문' || st === '응답됨' || st === '대체됨' || st === '질문종결')) {
         // 마루 질문 — 튀는 테두리로 대표 질문과 구분 (대표 7/20). 미응답(질문)이면 네/아니오 버튼
         // 대표 7/21: 이미 답변한 질문(aoAnsweredQ)은 버튼 재표시 억제 — 답변 후 폴링에 버튼이 다시 그려져 "안 사라짐"·중복 클릭 유발하던 것
+        // 대표 7/22: 선택지가 2개 이상이면 [1. …][2. …] 버튼으로, 아니면 네/아니오
+        const choices = Array.isArray(r.choices) ? r.choices.filter(Boolean) : [];
         const btns = (st === '질문' && !aoAnsweredQ.has(o.id))
-            ? `<div class="ao-maruq-btns"><button class="ao-maruq-yes" onclick="event.stopPropagation(); aoQuickAnswer(true)">✅ 네</button><button class="ao-maruq-no" onclick="event.stopPropagation(); aoQuickAnswer(false)">✕ 아니오</button></div>`
+            ? (choices.length
+                ? `<div class="ao-maruq-btns">${choices.map((c, i) => `<button class="ao-maruq-choice" onclick="event.stopPropagation(); aoAnswerChoice(decodeURIComponent('${encodeURIComponent(c)}'))">${i + 1}. ${aoEsc(c)}</button>`).join('')}</div>`
+                : `<div class="ao-maruq-btns"><button class="ao-maruq-yes" onclick="event.stopPropagation(); aoQuickAnswer(true)">✅ 네</button><button class="ao-maruq-no" onclick="event.stopPropagation(); aoQuickAnswer(false)">✕ 아니오</button></div>`)
             : '';
-        extra = `<div class="ao-log-sub ao-log-maruq">🤔 <strong>마루의 질문</strong>: ${aoEsc(r.question)}${btns}</div>`;
+        const choiceLabel = (st === '질문' && choices.length) ? ' <span style="color:#e67700;font-size:12px;">(선택지 — 눌러서 고르거나 말로 답해도 됩니다)</span>' : '';
+        extra = `<div class="ao-log-sub ao-log-maruq">🤔 <strong>마루의 질문</strong>: ${aoEsc(r.question)}${choiceLabel}${btns}</div>`;
     }
     else if (st === '완료' && r.assignee) {
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';

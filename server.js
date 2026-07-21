@@ -5090,6 +5090,7 @@ const MARU_ROUTE_TOOL = {
             task_summary: { type: 'string', description: '지시 내용 한 줄 요약' },
             reason: { type: 'string', description: '배정 근거 또는 판단 이유 한 줄' },
             clarify_question: { type: 'string', description: 'action=clarify일 때만 출력 — 대표에게 물을 질문 딱 하나' },
+            clarify_choices: { type: 'array', items: { type: 'string' }, description: "action=clarify이고 **선택지가 2개 이상**일 때만 출력 — 각 선택지를 짧은 라벨로 (예: ['단가표 1번', '단가표 2번', '둘 다']). 대표가 버튼으로 고른다. 단순 예/아니오 질문이면 출력하지 않는다 (그때는 네/아니오 버튼이 나감)" },
             item_keyword: { type: 'string', description: "지시에 언급된 품목 키워드 하나 (예: '하우스감귤', '카라향', '레몬'). 품목 언급이 없으면 출력하지 않는다" },
             period: { type: 'string', description: "기간 조건: '이번주'→'this_week', '이번달/이달'→'this_month', 특정 월(예: '6월')→'YYYY-MM' 형식(오늘 날짜 기준, 미래 월이면 작년으로). 기간 언급 없으면 출력하지 않는다" },
             target_date: { type: 'string', description: "재무 지시에서 특정 하루를 물으면(예: '4월 14일 정산현황') 그 날짜 YYYY-MM-DD (미래면 작년). 아니면 출력하지 않는다" },
@@ -5189,6 +5190,7 @@ ${JSON.stringify(routingTable, null, 2)}
 2-2. **작업 배정이 아니라 '설명·질문'이면 action='answer'로 네가 직접 답한다** (대표 7/22): 용어·개념 뜻("계열합계가 뭐야?", "매출 기여가 무슨 의미야?"), 첨부 이미지가 무엇인지 설명("이 이미지 무슨 뜻이야?", "이거 뭐야?"), 프로그램 사용법·일반 질문 등. answer_text에 아는 선에서 정확히 답하고, 모르면 정직하게 모른다고 한다. **단 '데이터 조회'(매출·정산·품목 금액·순위·비교 등 실제 수치가 필요한 것)는 answer가 아니라 세미에게 route** 한다 — 수치는 네가 지어내지 말 것.
 2-3. **이미지가 첨부됐을 때**: 지시에 '정산관리/정산 등록/올려줘' 같은 정산 등록 의도가 있으면 서버가 정산 OCR로 처리하니 너는 관여하지 않는다. 그 외(예: "이 이미지 무슨 뜻이야?", "이거 설명해줘")로 이미지가 오면 **첨부 이미지를 직접 보고** action='answer'로 설명하거나, 작업 지시면 해당 요원에게 route 한다.
 3. 분야가 불명확하거나 여러 해석이 가능하면 절대 추측하지 말고 action='clarify'로 되묻는다. 질문은 한 번에 딱 하나만.
+   🔘 **선택지가 2개 이상인 되묻기**(예: "단가표 1번이요 2번이요?", 여러 옵션 중 택1/택다)는 clarify_choices에 각 선택지를 짧은 라벨로 담는다(대표가 버튼으로 고름 — '둘 다' 같은 옵션도 필요하면 포함). 단순 예/아니오면 clarify_choices를 비운다(네/아니오 버튼이 나감). 어느 경우든 대표는 말로도 답할 수 있다.
 4. 일정 분야는 팀 배정 없이 마루(너)가 직접 처리한다: action='schedule'.
    - 조회 ("이번주 일정 뭐 있어?", "내일 일정") → schedule_op='조회', schedule_from/to를 YYYY-MM-DD로 채운다 (이번주=오늘 기준 이번 월요일~일요일, 오늘/내일은 해당 하루).
    - 등록 ("화요일 카라향 출고 등록해줘") → schedule_op='등록', schedule_items에 각 건을 채운다.
@@ -5420,6 +5422,7 @@ function maruNormalizeDecision(d) {
     if (!Array.isArray(out.schedule_items)) out.schedule_items = [];
     if (!Array.isArray(out.settlement_entries)) out.settlement_entries = [];
     if (!Array.isArray(out.subtasks)) out.subtasks = [];
+    if (!Array.isArray(out.clarify_choices)) out.clarify_choices = [];
     return out;
 }
 
@@ -7151,12 +7154,15 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         }
         // ① 애매한 지시 → 되묻기 (추측 실행 금지)
         if (d.action === 'clarify') {
-            // 대표 실사용 지적: 예상 답변 형식을 질문에 명시 — "네" 한마디로 전 건 진행됨을 안내
+            // 대표 7/22: 선택지가 2개 이상이면 버튼으로 고르게 (네/아니오 안내 생략). 자유 입력도 가능.
+            const choices = (Array.isArray(d.clarify_choices) ? d.clarify_choices : [])
+                .map(c => String(c || '').trim()).filter(Boolean).slice(0, 6);
             const q = String(d.clarify_question || '');
             const hasGuide = /네|아니오|답해/.test(q.slice(-30));
             await maruFinishOrder(order.id, '질문', {
                 type: 'clarify',
-                question: hasGuide ? q : `${q}\n(네/아니오로 답해주세요 — "네"라고 하시면 위 작업을 전부 진행합니다)`,
+                question: choices.length ? q : (hasGuide ? q : `${q}\n(네/아니오로 답해주세요 — "네"라고 하시면 위 작업을 전부 진행합니다)`),
+                choices,
                 summary: d.task_summary, reason: d.reason,
             });
             return;
