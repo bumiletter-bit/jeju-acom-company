@@ -10252,8 +10252,9 @@ window.aoOpenMaruQuestion = function() {
 // 마루 질문에 네/아니오 빠른 답변 (대표 7/20 — 로그 버튼·마루 클릭으로 진행)
 const aoAnsweredQ = new Set(); // 답변한 질문 order id — 폴링 재표시 억제
 window.aoQuickAnswer = async function(yes) {
+    if (!aoPendingMaruQ) return; // 대표 7/21: 중복 클릭 방어 — 버튼이 즉시 안 사라져 두 번 눌려 '네'가 2번 전송되던 것 차단
     // 즉시 정리 (대표 7/20): 마루·대표 머리말, LIVE 네/아니오 버튼 동시 제거 + 재표시 억제
-    if (aoPendingMaruQ) aoAnsweredQ.add(aoPendingMaruQ.id);
+    aoAnsweredQ.add(aoPendingMaruQ.id);
     aoPendingMaruQ = null;
     aoClearSay('마루');
     aoClearSay('대표');
@@ -10975,7 +10976,8 @@ function aoOrderLogLine(o) {
     else if (st === '질문' && r.type === 'settlement_ocr_need_partner') extra = `<div class="ao-log-sub">📦 품목 읽음 — 거래처만 확인 필요: "효돈농협 / 대성(시온) / 기타거래처" 중 답해주세요</div>`;
     else if (r.question && (st === '질문' || st === '응답됨' || st === '대체됨' || st === '질문종결')) {
         // 마루 질문 — 튀는 테두리로 대표 질문과 구분 (대표 7/20). 미응답(질문)이면 네/아니오 버튼
-        const btns = st === '질문'
+        // 대표 7/21: 이미 답변한 질문(aoAnsweredQ)은 버튼 재표시 억제 — 답변 후 폴링에 버튼이 다시 그려져 "안 사라짐"·중복 클릭 유발하던 것
+        const btns = (st === '질문' && !aoAnsweredQ.has(o.id))
             ? `<div class="ao-maruq-btns"><button class="ao-maruq-yes" onclick="event.stopPropagation(); aoQuickAnswer(true)">✅ 네</button><button class="ao-maruq-no" onclick="event.stopPropagation(); aoQuickAnswer(false)">✕ 아니오</button></div>`
             : '';
         extra = `<div class="ao-log-sub ao-log-maruq">🤔 <strong>마루의 질문</strong>: ${aoEsc(r.question)}${btns}</div>`;
@@ -10990,7 +10992,7 @@ function aoOrderLogLine(o) {
     // 지시 #4·#6: 종결된 질문(대체됨/질문종결/응답됨)은 흐림+배지, 미응답 질문 카드엔 [✔확인] 종결 버튼
     const closed = st === '대체됨' || st === '질문종결' || st === '응답됨';
     const archivedCls = (o.run_archived || closed) ? ' ao-log-archived' : '';
-    const closeBtn = st === '질문'
+    const closeBtn = (st === '질문' && !aoAnsweredQ.has(o.id))
         ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoCloseQuestion(${o.id})">✔ 확인</button>` : '';
     const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
     return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;

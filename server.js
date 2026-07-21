@@ -6356,6 +6356,14 @@ function buildCombinedOrderText(originalContent, question, answer) {
         + `[마루의 확인 질문] ${question}\n`
         + `[대표의 답변] ${answer}`;
 }
+// 대표 지적(7/21): 요원이 답을 낸 뒤 대표가 아직 '확인'(보고 보관) 안 한 열린 상태에서 이어 물으면,
+// 마루가 처음부터 다시 생각(맥락 소실)하지 말고 이전에 답한 요원에게 후속을 이어 배정하도록 결합 텍스트를 만든다.
+function buildFollowUpText(originalContent, agentName, prevAnswer, followUp) {
+    return '[진행 중 대화 이어가기 — 대표가 이전 답변을 아직 "확인"하지 않은 열린 상태다. 아래를 하나의 흐름으로 이어서 해석하고, 이전에 답한 요원에게 다시 배정하라. 단 후속 메시지가 이전 답변과 명백히 무관한 완전히 새로운 지시면 후속 메시지만 기준으로 배정하라]\n'
+        + `[원 지시] ${originalContent}\n`
+        + `[${agentName}의 이전 답변] ${prevAnswer}\n`
+        + `[대표의 후속] ${followUp}`;
+}
 // 지시 #7: '이번주/금주' 원문 서버 확정 — 월·특정일 패턴이 없을 때 period를 this_week로 강제
 // (지시 기간 = 산출 기간 원칙: "이번주 보내줘"가 월간 보고서·파일로 빠지던 편차 수정)
 function maruWeekPeriodOverride(period, content) {
@@ -7872,6 +7880,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         // — 답변이 독립 지시로 취급되며 맥락이 소실되던 순환 사고(#45~#56) 수정
         let effContent = order.content;
         let combinedFrom = null;
+        let followUpFrom = null;
         const pqRow = (await pool.query(
             `SELECT id, content, result FROM pending_orders
              WHERE status='질문' AND is_deleted=false AND id != $1
@@ -7880,6 +7889,27 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         if (pqRow) {
             combinedFrom = pqRow;
             effContent = buildCombinedOrderText(pqRow.content, (pqRow.result && pqRow.result.question) || '', order.content);
+        } else if (!opts.noMulti) {
+            // 맥락 이어가기 (대표 지적 7/21): 직전에 요원이 답을 냈고 대표가 아직 '확인'(보고 보관 = run archive) 안 한
+            //   '열린' 상태면, 새 메시지를 그 답변의 후속으로 보고 [원지시+요원답변+후속]을 결합해 재라우팅한다.
+            //   확인(archive)된 상태면 이 블록을 건너뛰어 마루가 새로 판단 (대표 정의: 확인 누른 상태=처음부터 / 안 누른 상태=이어가기).
+            //   서브태스크(noMulti) 실행에는 적용하지 않는다 (내부 순차 처리 오염 방지).
+            const openAns = (await pool.query(
+                `SELECT o.id, o.content, o.result, r.result AS run_result
+                 FROM pending_orders o JOIN agent_runs r ON o.run_id = r.id
+                 WHERE o.is_deleted=false AND o.status='완료' AND o.id != $1
+                   AND o.created_at > NOW() - interval '1 hour'
+                   AND r.is_deleted = false AND r.status='done'
+                   AND o.result->>'type' = 'route'
+                 ORDER BY o.id DESC LIMIT 1`, [order.id])).rows[0];
+            if (openAns) {
+                followUpFrom = openAns;
+                const rr = openAns.run_result || {};
+                const prevAns = (rr.report && (rr.report.conclusion || rr.summary)) || rr.summary
+                    || (openAns.result && openAns.result.summary) || '(이전 답변)';
+                const agentName = (openAns.result && openAns.result.assignee) || '담당 요원';
+                effContent = buildFollowUpText(openAns.content, agentName, String(prevAns).slice(0, 300), order.content);
+            }
         }
         // 결합 대상을 제외한 나머지 미응답 질문만 '대체됨' 자동 종결 (지시 #4 동작 유지)
         const superseded = await pool.query(
@@ -7916,7 +7946,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         }
         await writeAudit({
             action: 'maru_route', targetType: 'pending_order', targetId: order.id,
-            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted, pollution_sample: pollution, combined_from: combinedFrom ? combinedFrom.id : null, forced_finance_route: !!forced } },
+            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted, pollution_sample: pollution, combined_from: combinedFrom ? combinedFrom.id : null, follow_up_from: followUpFrom ? followUpFrom.id : null, forced_finance_route: !!forced } },
             source: 'agent_office', actor,
         });
 
