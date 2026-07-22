@@ -7011,7 +7011,11 @@ async function processOrderWithMaru(order, actor, opts = {}) {
              ORDER BY id DESC LIMIT 1`, [order.id])).rows[0];
         if (pqRow) {
             combinedFrom = pqRow;
-            effContent = buildCombinedOrderText(pqRow.content, (pqRow.result && pqRow.result.question) || '', order.content);
+            // 🔴 대표 7/22: 연속 되묻기(되묻기→"네"→또 되묻기)에서 뿌리 원지시가 소실되던 버그 수정.
+            //   pqRow.content가 직전 답변("네")이면 원래 요청이 사라져 마루가 "맥락 불명확"으로 되묻던 것.
+            //   되묻기 result에 실어둔 root_content(뿌리 원지시)를 우선 사용한다 (없으면 기존대로 content).
+            const rootContent = (pqRow.result && pqRow.result.root_content) || pqRow.content;
+            effContent = buildCombinedOrderText(rootContent, (pqRow.result && pqRow.result.question) || '', order.content);
         } else if (!opts.noMulti) {
             // 맥락 이어가기 (대표 지적 7/21): 직전에 요원이 답을 냈고 대표가 아직 '확인'(보고 보관 = run archive) 안 한
             //   '열린' 상태면, 새 메시지를 그 답변의 후속으로 보고 이어서 배정한다.
@@ -7182,6 +7186,11 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 question: choices.length ? q : (hasGuide ? q : `${q}\n(네/아니오로 답해주세요 — "네"라고 하시면 위 작업을 전부 진행합니다)`),
                 choices,
                 summary: d.task_summary, reason: d.reason,
+                // 🔴 대표 7/22: 되묻기 체인의 '뿌리 원지시'를 실어둔다 — 다음 답변("네") 결합 시 원래 요청 유지.
+                //   이 되묻기가 이전 되묻기의 답변이면 그 뿌리를 그대로 승계, 아니면 이번 지시가 뿌리.
+                root_content: combinedFrom
+                    ? ((combinedFrom.result && combinedFrom.result.root_content) || combinedFrom.content)
+                    : order.content,
             });
             return;
         }
