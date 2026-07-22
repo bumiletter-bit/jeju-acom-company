@@ -1935,7 +1935,7 @@ window.viewSettlementItems = function(id) {
                 return `<tr>
                     <td>${i.name}</td>
                     <td style="text-align:right">${price.toLocaleString()} 원</td>
-                    <td style="text-align:center"><input type="number" class="settlement-qty-input" data-idx="${idx}" value="${qty}" min="0" style="width:70px;text-align:center;padding:4px 6px;border:1px solid #F5A623;border-radius:4px;font-size:14px;"></td>
+                    <td style="text-align:center"><input type="number" class="settlement-qty-input" data-idx="${idx}" value="${qty}" min="0" style="width:70px;text-align:center;padding:4px 6px;border:1px solid #4F46E5;border-radius:4px;font-size:14px;"></td>
                     <td style="text-align:right" class="settlement-subtotal" data-idx="${idx}">${subtotal.toLocaleString()} 원</td>
                 </tr>`;
             }
@@ -1956,7 +1956,7 @@ window.viewSettlementItems = function(id) {
 
         overlay.querySelector('.modal').innerHTML = `
             <button class="modal-close" id="settlement-x-btn">×</button>
-            <h3>${item.date} - ${item.partner} 상세${isEditMode ? ' <span style="color:#F5A623;font-size:14px;">[수정모드]</span>' : ''}</h3>
+            <h3>${item.date} - ${item.partner} 상세${isEditMode ? ' <span style="color:#4F46E5;font-size:14px;">[수정모드]</span>' : ''}</h3>
             <table class="data-table">
                 <thead><tr><th>품목명</th><th style="text-align:right">단가</th><th style="text-align:center">수량</th><th style="text-align:right">소계</th></tr></thead>
                 <tbody>${rows}</tbody>
@@ -4961,7 +4961,7 @@ document.getElementById('box-movement-btn')?.addEventListener('click', () => {
                         <label style="flex:1;min-width:120px;padding:10px;border:2px solid #0066CC;border-radius:6px;cursor:pointer;text-align:center;background:#F0F7FF;">
                             <input type="radio" name="mov-type" value="transfer" style="margin-right:6px;">🚚 시온 이동
                         </label>
-                        <label style="flex:1;min-width:120px;padding:10px;border:2px solid #F5A623;border-radius:6px;cursor:pointer;text-align:center;background:#fffdf5;">
+                        <label style="flex:1;min-width:120px;padding:10px;border:2px solid #4F46E5;border-radius:6px;cursor:pointer;text-align:center;background:#EEF0FF;">
                             <input type="radio" name="mov-type" value="transfer_hyodon" style="margin-right:6px;">🚚 효돈 이동
                         </label>
                     </div>
@@ -9056,9 +9056,9 @@ function aoShowSettlementConfirm(r) {
     const hasCand = !!r.candidates;
     // 거래처 드롭다운 (자동 인식된 값 기본 선택, 대표가 수정 가능)
     const partnerSelect = hasCand
-        ? `<select id="ao-settle-partner-sel" onchange="aoSettleChangePartner(this.value)" style="font-size:15px;font-weight:600;padding:6px 10px;border-radius:8px;border:1.5px solid #F5A623;background:#fffdf5;">
+        ? `<select id="ao-settle-partner-sel" onchange="aoSettleChangePartner(this.value)" style="font-size:15px;font-weight:600;padding:6px 10px;border-radius:8px;border:1.5px solid #4F46E5;background:#EEF0FF;">
             ${AO_SETTLE_PARTNERS.map(p => `<option value="${aoEsc(p)}"${p===partner?' selected':''}>${aoEsc(p)}${r.candidates[p] && r.candidates[p].matched ? ` (품목 ${r.candidates[p].matched}개 일치)` : ' (일치 없음)'}</option>`).join('')}
-        </select>${r.auto_detected ? ' <span style="font-size:12px;color:#F5A623;">🔍 품목으로 자동 인식 — 다르면 바꿔주세요</span>' : ''}`
+        </select>${r.auto_detected ? ' <span style="font-size:12px;color:#4F46E5;">🔍 품목으로 자동 인식 — 다르면 바꿔주세요</span>' : ''}`
         : `<strong style="color:#333;font-size:16px;">${aoEsc(partner)}</strong>`;
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay ao-settle-overlay';
@@ -9067,7 +9067,7 @@ function aoShowSettlementConfirm(r) {
         <h3 style="margin:0 0 8px;">📋 정산관리 입력 확인</h3>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">거래처: ${partnerSelect}</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-            날짜: <input type="date" id="ao-settle-date" value="${aoEsc(r.date||'')}" onchange="aoSettleChangeDate(this.value)" style="font-size:14px;padding:5px 8px;border-radius:8px;border:1.5px solid #F5A623;background:#fffdf5;">
+            날짜: <input type="date" id="ao-settle-date" value="${aoEsc(r.date||'')}" onchange="aoSettleChangeDate(this.value)" style="font-size:14px;padding:5px 8px;border-radius:8px;border:1.5px solid #4F46E5;background:#EEF0FF;">
             <span style="color:#888;font-size:12px;">틀리면 바꿔주세요</span> · <span style="color:#666;font-size:13px;">총 ${r.box_total}박스</span>
         </div>
         <div id="ao-settle-body">${aoSettleBodyHtml(r, partner)}</div>
@@ -9268,7 +9268,7 @@ window.aoOpenMaruQuestion = function() {
     overlay.innerHTML = `<div class="modal" style="max-width:440px;">
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
         <h3 style="margin:0 0 10px;">🤔 마루의 질문</h3>
-        <div style="background:#FFF7E6;border:2px solid #F5A623;border-radius:10px;padding:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;">${aoEsc(q)}</div>
+        <div style="background:#EEF0FF;border:2px solid #4F46E5;border-radius:10px;padding:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;">${aoEsc(q)}</div>
         ${btnsHtml}
     </div>`;
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
