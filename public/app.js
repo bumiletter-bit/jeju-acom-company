@@ -10183,7 +10183,7 @@ const AO_TRAIT = {
     hansu: '세미의 집계를 다시 검산하고 마진을 따지는 재무팀장. 오차는 자동 보정 없이 있는 그대로 🧮로 보고합니다.',
     geulsaem: '문자·톡톡·상세페이지 카피를 쓰는 카피라이터. 대표 지시가 최우선 근거이며, "다시 써줘"에 새 안을 재생성합니다.',
     miso: '이미지·영상 시안과 프롬프트를 만들고 Gemini로 직접 생성하는 디자이너. 생성은 건별 대표 승인 후에만.',
-    yeri: '인스타 성과·경쟁사를 분석하는 분석가. 표본이 없으면 정직하게 "데이터 없음"으로 답합니다.',
+    yeri: '인스타그램 전담 — 계정 아이디 추천·첫 영상 방향·릴스 대본·게시물 문구·해시태그를 만듭니다. 성과 분석은 대표가 준 데이터가 있을 때만 (수치는 지어내지 않음). 실제 이미지·영상 생성은 미소.',
     jiyul: '노무·법률을 노무지침만 근거로 자문하는 법무팀장. 법인(5인↑)/오션라운지(5인↓)를 구분하고, 지침 밖은 노무사 확인을 안내합니다.',
     gian: '대표 미팅 내용을 7항목 기획 보고서로 정리하는 기획자. 실물 산출물을 함께 냅니다.',
     mirae: '개발 백로그와 버전 변경사항을 관리하는 개발팀장.',
@@ -10959,6 +10959,15 @@ window.aoOpenReport = async function(runId) {
                <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`
             : `<div class="ao-result-box">📊 표본 ${rep.sample_n}건 · 상위: ${(rep.top || []).map(aoEsc).join(', ')}</div>
                <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+    } else if (rep.type === 'yeri_insta') {
+        // 대표 7/22: 예리 인스타 결과물 (아이디·영상방향·대본·문구·분석)
+        const kindLabel = { 아이디추천: '📛 계정 아이디 추천', 영상방향: '🎬 영상 방향·컨셉', 대본: '📝 릴스 대본', 게시물문구: '✍️ 게시물 문구', 성과분석: '📊 성과 분석' }[rep.kind] || '📱 인스타';
+        body = `
+        <h4 class="ao-sec-title">${kindLabel}${rep.business && rep.business !== '미정' ? ` <small style="color:#888;">(${aoEsc(rep.business)})</small>` : ''}</h4>
+        <pre class="ao-copy-body" id="ao-yeri-${run.id}" style="white-space:pre-wrap;word-break:break-word;">${aoEsc(rep.body || '')}</pre>
+        <button class="ao-fb-btn" onclick="aoCopyText('ao-yeri-${run.id}')">📋 복사</button>
+        ${rep.hashtags ? `<h4 class="ao-sec-title">🏷 해시태그</h4><div class="ao-result-box" style="word-break:break-word;">${aoEsc(rep.hashtags)}</div>` : ''}
+        <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
     } else if (rep.type === 'jiyul_labor') {
         // 지시 #45: 지율 노무 자문 — 템플릿 섹션 표시 (✅결론 ⚖️근거 💰계산 ⚠️체크 ✅액션)
         body = `

@@ -61,17 +61,17 @@ const COPY_TOOL = {
         type: 'object',
         additionalProperties: false,
         properties: {
-            channel: { type: 'string', enum: ['LMS', 'SMS', '톡톡', '인스타', '릴스'], description: '작성한 채널. 문자=LMS/SMS, 네이버 톡톡=톡톡, 인스타 게시물=인스타, 인스타/유튜브 영상 대본=릴스 (대표 7/22)' },
-            title: { type: 'string', description: 'LMS 제목 또는 인스타 캡션/제목 제안. 해당 없으면 빈 문자열' },
+            channel: { type: 'string', enum: ['LMS', 'SMS', '톡톡'], description: '작성한 채널' },
+            title: { type: 'string', description: 'LMS 제목 제안 (한글 13자 이내). 해당 없으면 빈 문자열' },
             versions: {
                 type: 'array',
-                description: '카피/대본 버전 1~3개. 단일·구체 지시면 1개, 열린 지시면 방향 2~3개. 릴스/영상 대본이면 장면별 구성(후킹→자막→해시태그→CTA)을 text에 그대로 담는다',
+                description: '카피 버전 1~3개. 단일 지시면 1개, 열린 지시면 안정형/어그로형/감성형 3개',
                 items: {
                     type: 'object',
                     additionalProperties: false,
                     properties: {
-                        label: { type: 'string', description: '버전 이름 (예: 기본 / 안정형 / 감성형 / 릴스 대본)' },
-                        text: { type: 'string', description: '즉시 사용 가능한 완성 카피 본문 또는 대본 전체' },
+                        label: { type: 'string', description: '버전 이름 (예: 기본 / 안정형 / 어그로형 / 감성형)' },
+                        text: { type: 'string', description: '즉시 발송 가능한 완성 카피 본문 전체' },
                     },
                     required: ['label', 'text'],
                 },
@@ -167,8 +167,6 @@ module.exports = {
 
 ## 작업 규칙 (반드시 준수)
 1. 채널 판단: 지시에 채널 언급이 없으면 알리고 LMS(1,000자 이내) 기본. "톡톡"이라 하면 네이버 톡톡 규격, "짧게"/"문자 90자"면 SMS.
-1-2. 📸 **인스타 릴스·게시물 대본**도 작성한다 (지시에 "인스타/릴스/쇼츠/대본/게시물/피드"가 있으면): ①후킹 첫 문장(1~2초 스톱) → ②장면별 자막·나레이션(장면 번호로 구분, 릴스는 15~30초·3~6컷) → ③캡션 → ④해시태그 → ⑤CTA. **대상 사업체를 구분한다**: 「제주아꼼이네 농업회사법인」(감귤·호박 등 농산물, 30-50대 여성, 제주 감성·정성·산지직송)과 「제주아꼼이네 오션라운지 카페」(카페·디저트·바다뷰, 감성·방문 유도·인증샷)는 톤·소재가 다르니 지시가 가리키는 쪽으로 쓴다.
-   🔴 **대본일 때 출력 형식** (대표 7/22 — 반드시 지킬 것): channel은 영상 대본이면 '릴스', 인스타 게시물이면 '인스타'로 한다(LMS/SMS/톡톡 아님). **대본 전체를 versions[].text에 장면 구성 그대로** 담는다(빈 versions로 내지 말 것 — 반드시 최소 1개 채운다). 발송 전용 필드(title·char_counts·send_tip)는 대본에 해당 없으면 빈 문자열/간단히. 계정명·아이디 추천도 versions[].text에 목록으로 담는다.
 1-2. 어그로(강한 후킹)는 **허용한다** (대표 7/20): 전환을 부르고 **그 내용이 사실이면** 강하게 어필해도 된다. 최종 판단은 대표가 한다. 단 **명백한 거짓·근거 없는 수치**만 금지 (예: 판매량·순위·효능을 지어내기). "미쳤어요/끝판/인생○/역대급" 같은 표현도 사실 기반이면 어그로형에서 쓸 수 있다 — 다만 남발하지 말고 상품 강점이 실제로 뒷받침될 때 쓴다.
 2. 알리고(LMS/SMS) 절대 위반 금지: 이모지 사용 금지(★ ▶ ◆ ━ ─ 기호만), 첫 줄 "(광고)제주아꼼이네입니다^^" 고정, 표준 10블록 순서 유지, VIP 혜택 블록 + 수신거부 안내 고정. 톡톡은 이모지 허용.
 3. 누락 정보 처리: 가격·쿠폰·마감일·수량·링크가 지시에 없으면 절대 지어내지 말고 [가격 입력], [마감일 입력], [링크 입력] 같은 대괄호 자리표시로 초안을 완성한 뒤 missing_fields에 나열한다. 되묻느라 멈추지 말고 초안을 먼저 완성한다.
@@ -178,37 +176,27 @@ module.exports = {
 ${loadKnowledge()}${lessonsText}${discountText}`;
 
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        // 대표 7/22: 한 번 호출해 카피 결과를 파싱하는 헬퍼 (빈 결과 시 1회 재시도용). max_tokens 여유(긴 인스타 대본 잘림 방지)
-        const genOnce = async () => {
-            const msg = await anthropic.messages.create({
+        let msg;
+        try {
+            msg = await anthropic.messages.create({
                 model: GEULSAEM_MODEL,
-                max_tokens: 5000,
+                max_tokens: 4000,
                 system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
                 tools: [COPY_TOOL],
                 tool_choice: { type: 'tool', name: 'submit_copy' },
                 messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
             });
-            const tu = msg.content.find(b => b.type === 'tool_use');
-            const inp = tu ? tu.input : null;
-            const vs = (inp && Array.isArray(inp.versions)) ? inp.versions.filter(v => v && v.text) : [];
-            return { inp, vs };
-        };
-        let c, versions;
-        try {
-            let r = await genOnce();
-            if (r.vs.length === 0) { // 빈 결과(응답 잘림·일시적)면 1회 재시도 — 텍스트 호출이라 저비용
-                console.warn('글샘 빈 결과 — 1회 재시도');
-                r = await genOnce();
-            }
-            if (!r.inp) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
-            if (r.vs.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다 (재시도에도 빈 결과 — 지시를 조금 더 구체적으로 주시거나 다시 시도해주세요)');
-            c = r.inp; versions = r.vs;
         } catch (err) {
             // 오류 정직 표시 — 허위 카피 생성 금지
             throw new Error(err && err.status
                 ? `Anthropic API 오류 (${err.status}): ${err.message}`
                 : (err && err.message) || String(err));
         }
+        const toolUse = msg.content.find(b => b.type === 'tool_use');
+        if (!toolUse) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
+        const c = toolUse.input;
+        const versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
+        if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다');
         const missing = Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [];
         // 지시 #39: 제목 필드 정화 — run #60에서 오염 파편(태그+versions JSON 원문 1,366자)이
         // 제목에 유입돼 대표 화면에 노출된 첫 사례. 정화 불가 시 제목 생략 (몰래 지어내기 금지)
