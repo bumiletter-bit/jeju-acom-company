@@ -11047,6 +11047,25 @@ window.aoOpenReport = async function(runId) {
             ${rep.file_error ? `<p class="ao-rep-note">⚠️ ${aoEsc(rep.file_error)}</p>` : ''}
             <p class="ao-rep-note">ℹ️ 주간 정산 현황 화면의 거래처 셀과 동일 계산·동일 양식${rep.file_name ? ' — 📎 ' + aoEsc(rep.file_name) : ''}</p>`;
         }
+    } else if (rep.type === 'semi_price_history') {
+        // 대표 7/22: 품목별 결제가(단가) 이력 — 거래처별 · 주(날짜범위)별 단가 그리드 (매출 아님)
+        const wonCell = n => (n === null || n === undefined) ? '<span style="color:#bbb;">—</span>' : `${Math.round(n).toLocaleString()}원`;
+        if (rep.zero_result) {
+            body = `<div class="ao-placeholder-box ao-soon-note">📭 ${aoEsc(rep.period.label)}${rep.partner ? ' · ' + aoEsc(rep.partner) : ''} 품목별 결제가(단가) 이력이 없습니다${rep.nearest_month ? '<br><span style="font-size:11px;color:#999;">단가가 등록된 가장 가까운 달: ' + aoEsc(rep.nearest_month) + '</span>' : ''}</div>`;
+        } else {
+            body = `
+            <div class="ao-result-box" style="background:#f0f7ff;border-left:3px solid #4c6ef5;">💰 <strong>결제가(단가) 이력</strong> — 매출액이 아니라 그 시기의 <strong>단가</strong>입니다. 결제가는 주마다 변동돼요.</div>
+            ${(rep.partners || []).map(p => `
+                <h4 class="ao-sec-title" style="margin-top:14px;">🏪 ${aoEsc(p.partner)} <small style="color:#888;">(${p.weeks.length}주)</small></h4>
+                <div class="ao-report-table-wrap"><table class="ao-report-table">
+                    <thead><tr><th>품목</th>${p.weeks.map(w => `<th>${aoEsc(w.label)}</th>`).join('')}</tr></thead>
+                    <tbody>
+                    ${p.items.map(it => `<tr><td>${aoEsc(it.name)}</td>${it.prices.map(pr => `<td>${wonCell(pr)}</td>`).join('')}</tr>`).join('')}
+                    </tbody>
+                </table></div>
+                ${p.items_omitted ? `<div class="ao-empty-note">… 외 ${p.items_omitted}종 생략</div>` : ''}`).join('')}
+            <p class="ao-rep-note">ℹ️ ${aoEsc(rep.note || '')}</p>`;
+        }
     } else if (rep.type === 'semi_settlement_filtered') {
         // 3.5차: 조건 필터 보고서 (품목 키워드 · 기간)
         const won = n => Math.round(n || 0).toLocaleString() + '원';

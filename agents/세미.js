@@ -507,6 +507,79 @@ async function rankReport({ pool, helpers, period, topN, showAll, partner, wantF
     };
 }
 
+// ===== 대표 7/22: 품목별 결제가(단가) 이력 조회 =====
+// "그때 결제가가 얼마였는지" — 매출(settlements)이 아니라 pricing(품목별 금액) 테이블의 주간 단가 이력.
+// 결제가는 주마다 변동되므로, 거래처별·주(날짜범위)별로 각 품목의 결제가를 그리드로 보여준다.
+// pricing 행 자체가 '주(날짜범위)' 단위라 별도 주차 계산 불필요 (품목별 금액 화면과 완전 동일 데이터).
+async function priceHistoryReport({ pool, period, partner, keyword }) {
+    const range = resolvePeriod(period || '') || resolvePeriod('this_month');
+    const short = d => String(d).slice(5, 10); // MM-DD
+    const params = [range.from, range.to];
+    let where = 'start_date <= $2::date AND end_date >= $1::date';
+    if (partner) { params.push(partner); where += ` AND partner = $${params.length}`; }
+    const pr = await pool.query(
+        `SELECT partner, start_date, end_date, items FROM pricing
+         WHERE ${where} ORDER BY partner, start_date`, params);
+    if (pr.rows.length === 0) {
+        // 정직 원칙: 다른 기간으로 대체하지 않고, 가장 가까운 단가 등록 달만 안내
+        const near = await pool.query(
+            `SELECT to_char(start_date, 'YYYY-MM') AS ym FROM pricing
+             ORDER BY GREATEST(start_date - $1::date, $1::date - start_date) ASC LIMIT 1`, [range.from]);
+        const nearYm = near.rows[0]?.ym || null;
+        return {
+            summary: `『${range.label}${partner ? ' ' + partner : ''}』 품목별 결제가(단가) 이력이 없습니다${nearYm ? ` (단가가 등록된 가장 가까운 달: ${nearYm})` : ''}`,
+            lines: [
+                `${range.label}(${range.from}~${range.to})에 저장된 품목별 금액(단가표)이 없습니다`,
+                '품목별 금액 메뉴에 해당 기간 단가가 등록돼 있어야 조회됩니다',
+            ],
+            report: { type: 'semi_price_history', period: range, partner: partner || null, zero_result: true, nearest_month: nearYm },
+        };
+    }
+    const kwNorm = keyword ? String(keyword).replace(/\s+/g, '').toLowerCase() : '';
+    const matchKw = nm => !kwNorm || String(nm).replace(/\s+/g, '').toLowerCase().includes(kwNorm);
+    const partners = {};
+    pr.rows.forEach(row => {
+        const p = partners[row.partner] || (partners[row.partner] = { partner: row.partner, weeks: [], byItem: {} });
+        const wkKey = `${String(row.start_date).slice(0, 10)}~${String(row.end_date).slice(0, 10)}`;
+        if (!p.weeks.find(w => w.key === wkKey)) {
+            p.weeks.push({ key: wkKey, label: `${short(row.start_date)}~${short(row.end_date)}`, from: String(row.start_date).slice(0, 10), to: String(row.end_date).slice(0, 10) });
+        }
+        safeItems(row.items).forEach(it => {
+            if (!it || !it.name || !matchKw(it.name)) return;
+            if (!p.byItem[it.name]) p.byItem[it.name] = { name: it.name, prices: {} };
+            p.byItem[it.name].prices[wkKey] = Number(it.price) || 0;
+        });
+    });
+    const partnerSections = Object.values(partners).map(p => {
+        p.weeks.sort((a, b) => (a.from < b.from ? -1 : 1));
+        const items = Object.values(p.byItem).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+        const capped = capList(items);
+        return {
+            partner: p.partner,
+            weeks: p.weeks,
+            items: capped.list.map(it => ({
+                name: it.name,
+                prices: p.weeks.map(w => (it.prices[w.key] !== undefined ? it.prices[w.key] : null)),
+            })),
+            items_omitted: capped.omitted,
+        };
+    }).sort((a, b) => a.partner.localeCompare(b.partner, 'ko'));
+    const maxWeeks = Math.max(...partnerSections.map(s => s.weeks.length));
+    return {
+        summary: `완료: ${range.label} 품목별 결제가(단가) 이력 — 거래처 ${partnerSections.length}곳 · 주 최대 ${maxWeeks}개 (결제가는 주마다 변동)`,
+        lines: [
+            `${range.label}(${range.from}~${range.to}) 품목별 금액(단가표) 기준 · 결제가(단가) 조회 · 매출액 아님 · 읽기 전용`,
+            `거래처: ${partnerSections.map(s => `${s.partner}(${s.weeks.length}주)`).join(' / ')}`,
+            '셀이 비면 그 주에 해당 품목 단가가 등록되지 않은 것 — 내년 동기 비교용',
+        ],
+        report: {
+            type: 'semi_price_history', period: range, partner: partner || null, keyword: keyword || null,
+            partners: partnerSections,
+            note: '품목별 금액(pricing) 주간 단가 이력 · 결제가(단가)이며 매출액이 아님 · 주마다 변동 · 읽기 전용',
+        },
+    };
+}
+
 // ===== 3.5차: 조건 필터 (마루가 추출한 품목/기간 — AI 추가 호출 없음) =====
 
 // ===== 지시 #15: 주차×거래처 정산 — 금액 즉답 + 화면 동일 양식 엑셀 =====
@@ -857,6 +930,17 @@ module.exports = {
                     note: '오션라운지 매출 데이터 없음 — 데이터 등록 후 조회 가능',
                 },
             };
+        }
+
+        // ===== 대표 7/22: 품목별 결제가(단가) 이력 — pricing(품목별 금액) 주간 단가 그리드 =====
+        // 매출 조회보다 먼저 분기 (결제가 의도가 확정되면 매출 리포트로 새지 않게)
+        if (params.price_history) {
+            return priceHistoryReport({
+                pool,
+                period: String(params.period || '').trim(),
+                partner: String(params.partner || '').trim() || null,
+                keyword: String(params.item_keyword || '').trim() || null,
+            });
         }
 
         // ===== 지시 #15: 주차×거래처 정산 (서버가 주차·거래처를 확정해 전달 — 모델 재량 없음) =====

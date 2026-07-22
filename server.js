@@ -5163,7 +5163,7 @@ async function maruBuildSystemPrompt() {
 ## 회사 프로그램 메뉴 용어집 (혼동 절대 금지 — 대표 지시)
 - **정산관리**: 거래처별 품목·수량·금액(매출 원본). 품목·규격·수량 나열이면 정산관리 (마루 저장 불가, 화면/이미지 경로).
 - **정산현황**: 일자별 자금 집계(현금·미정산·거래처 입금 등 금액). "원/만" 금액 입력이면 정산현황(settlement_input).
-- **품목별 금액**: 거래처별 '오늘 단가표'(pricing). "단가·가격표"는 품목별 금액, "얼마 팔렸어·매출"은 세미 조회.
+- **품목별 금액**: 거래처별 주간 단가표(pricing). "지금 단가표 어디서 고쳐"처럼 화면 위치를 물으면 품목별 금액 메뉴 안내. **단, "○월 품목별 결제가/단가가 얼마였어"처럼 과거 시기의 결제가(단가) 조회는 세미에게 route** — 세미가 그 시기 주간 단가 이력을 그리드로 뽑아준다(매출액과 구분: '결제가·단가'는 단가 이력, '얼마 팔렸어·매출'은 매출 집계, 둘 다 세미).
 - **박스재고**: 거래처별(업체·대성·효돈) 박스 재고. "재고" 물으면 박스재고.
 - **송장변환**: 플랫폼마다 따로 다운받은 주문 양식을 하나의 통일 양식으로 변환하는 메뉴 — 품목별 금액의 판매상품 이름으로 통일해 발송 작업을 편리하게 해준다.
 - **지출결의**: 비용 지출 결재(화면에서 처리). 마루가 저장 못 하니 "지출결의 화면에서 처리해주세요" 안내.
@@ -6734,6 +6734,7 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         rank: conditions.rank || null,         // 4.5 ⑥: 품목 순위 (서버 확정)
         partner_week: conditions.partner_week || null, // 지시 #15: 주차×거래처 (서버 확정)
         partner: conditions.partner || null, // 대표 7/22: 거래처별 월/기간 매출 필터
+        price_history: conditions.price_history || null, // 대표 7/22: 품목별 결제가(단가) 이력 (매출 아님)
         ...(() => {
             // 🔴 지시 #54-4: 날짜 단일 소스 — 서버 확정 날짜(요일 포함)를 요원에 주입 (요원 자체 계산 금지)
             const wr = parseWeekdayRange(srcText, kstTodayStr());
@@ -7318,9 +7319,22 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 conditions.rank = { all: /전부|전체\s*품목|모든\s*품목/.test(typeSrc), topN: nm ? Number(nm[1]) : null };
                 console.log(`품목 순위 확정: ${conditions.rank.all ? '전체' : 'TOP ' + (conditions.rank.topN || 10)}`);
             }
+            // 🔴 대표 7/22: 품목별 '결제가(단가) 이력' 조회 — 매출액이 아니라 그 시기 단가(품목별 금액 화면 데이터).
+            //   결제가는 주마다 변동 → 거래처별·주별 단가 그리드로 조회 (내년에 작년 동기 단가 비교용).
+            //   판단: '결제가/단가' 명시 OR (품목 + 주마다/주차별) 이고, '매출/판매액/팔린'이 아닐 때. 새 질문(typeSrc) 기준.
+            if (!conditions.compare && !conditions.rank) {
+                const priceWord = /결제가|단가/.test(typeSrc);
+                const weeklyItem = /품목/.test(typeSrc) && /주\s*마다|주차\s*별|주\s*별|매주|주간\s*별/.test(typeSrc);
+                const salesWord = /매출|판매액|팔(린|려|았)|얼마\s*(나\s*)?팔|매상/.test(typeSrc);
+                if ((priceWord || weeklyItem) && !salesWord) {
+                    conditions.price_history = true;
+                    console.log(`품목 결제가(단가) 이력 확정: 주간 단가 그리드 (매출 아님)`);
+                }
+            }
             // 지시 #15: 주차×거래처 지정형 — 주차·거래처 모두 서버가 확정 (모델 재량 없음).
             // 거래처 무지정 주간 조회("이번주 정산 얼마야")는 기존 동작 유지 — 둘 다 있을 때만 발동
-            if (!conditions.compare) {
+            // (결제가 이력이면 이 주차×거래처 매출 경로로 새지 않게 제외)
+            if (!conditions.compare && !conditions.price_history) {
                 const pwSpec = parseWeekSpec(effContent, today);
                 const pwPartner = pwSpec ? parsePartnerKeyword(effContent) : null;
                 if (pwSpec && pwPartner) {
