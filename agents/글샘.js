@@ -177,27 +177,37 @@ module.exports = {
 ${loadKnowledge()}${lessonsText}${discountText}`;
 
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        let msg;
-        try {
-            msg = await anthropic.messages.create({
+        // 대표 7/22: 한 번 호출해 카피 결과를 파싱하는 헬퍼 (빈 결과 시 1회 재시도용). max_tokens 여유(긴 인스타 대본 잘림 방지)
+        const genOnce = async () => {
+            const msg = await anthropic.messages.create({
                 model: GEULSAEM_MODEL,
-                max_tokens: 4000,
+                max_tokens: 5000,
                 system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
                 tools: [COPY_TOOL],
                 tool_choice: { type: 'tool', name: 'submit_copy' },
                 messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
             });
+            const tu = msg.content.find(b => b.type === 'tool_use');
+            const inp = tu ? tu.input : null;
+            const vs = (inp && Array.isArray(inp.versions)) ? inp.versions.filter(v => v && v.text) : [];
+            return { inp, vs };
+        };
+        let c, versions;
+        try {
+            let r = await genOnce();
+            if (r.vs.length === 0) { // 빈 결과(응답 잘림·일시적)면 1회 재시도 — 텍스트 호출이라 저비용
+                console.warn('글샘 빈 결과 — 1회 재시도');
+                r = await genOnce();
+            }
+            if (!r.inp) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
+            if (r.vs.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다 (재시도에도 빈 결과 — 지시를 조금 더 구체적으로 주시거나 다시 시도해주세요)');
+            c = r.inp; versions = r.vs;
         } catch (err) {
             // 오류 정직 표시 — 허위 카피 생성 금지
             throw new Error(err && err.status
                 ? `Anthropic API 오류 (${err.status}): ${err.message}`
                 : (err && err.message) || String(err));
         }
-        const toolUse = msg.content.find(b => b.type === 'tool_use');
-        if (!toolUse) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
-        const c = toolUse.input;
-        const versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
-        if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다');
         const missing = Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [];
         // 지시 #39: 제목 필드 정화 — run #60에서 오염 파편(태그+versions JSON 원문 1,366자)이
         // 제목에 유입돼 대표 화면에 노출된 첫 사례. 정화 불가 시 제목 생략 (몰래 지어내기 금지)
