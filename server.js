@@ -7058,8 +7058,17 @@ async function processOrderWithMaru(order, actor, opts = {}) {
             });
         }
         // 판단 호출 (오염 감지·정화·조건부 재시도 포함) — 결합 텍스트 기준 (지시 #6-1)
-        let { d, polluted, pollution } = await maruDecide(effContent,
-            order.image_data ? { data: order.image_data, mime: order.image_mime } : null); // 대표 7/22: 정산 아닌 이미지는 마루가 직접 봄
+        // 🔴 대표 7/22 버그수정: 프론트가 보낸 image_data는 'data:image/png;base64,...' 전체 data URL.
+        //    Anthropic 비전 API는 순수 base64만 받으므로 접두사를 벗겨서 넘긴다 (정산 OCR 경로와 동일 처리).
+        //    이 처리가 없어 이미지+질문 지시가 'invalid base64'로 오류나던 것.
+        let maruImage = null;
+        if (order.image_data) {
+            const mm = String(order.image_data).match(/^data:([^;]+);base64,(.+)$/s);
+            maruImage = mm
+                ? { data: mm[2], mime: order.image_mime || mm[1] }
+                : { data: order.image_data, mime: order.image_mime }; // 접두사 없이 순수 base64로 온 경우 그대로
+        }
+        let { d, polluted, pollution } = await maruDecide(effContent, maruImage); // 대표 7/22: 정산 아닌 이미지는 마루가 직접 봄
         if (polluted) console.warn(`마루 응답 오염 감지 (지시 #${order.id}):`, JSON.stringify(pollution));
         // 지시 #6-2: 기간+재무 항목이 모두 명시된 지시에 빈 되묻기 금지 — 서버가 세미 배정 강제
         const forced = maruForceFinanceRoute(d, effContent, kstTodayStr());

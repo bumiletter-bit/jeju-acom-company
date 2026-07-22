@@ -8992,6 +8992,9 @@ function aoBindEventsOnce() {
     // v5.0 UI: [전체 보기] 토글 — 확인 완료 건 포함 표시 (기본 꺼짐 = 정리된 화면)
     const showAllToggle = document.getElementById('ao-log-showall');
     if (showAllToggle) showAllToggle.addEventListener('change', aoRefreshLog);
+    // 대표 7/22: [🧹 로그 비우기] — 완료·오류 실행을 한 번에 확인 처리 (soft-delete, 전체 보기서 복구 가능)
+    const clearBtn = document.getElementById('ao-log-clear');
+    if (clearBtn) clearBtn.addEventListener('click', aoClearLog);
     // 상시 지시 입력바 (1.5차)
     const orderInput = document.getElementById('ao-order-input');
     document.getElementById('ao-order-send').addEventListener('click', aoSendOrder);
@@ -10026,8 +10029,10 @@ function aoRunPreviewLine(r) {
     const text = aoTrunc(`${res.summary || (r.status === 'done' ? '완료' : '오류')}${first ? ' — ' + first : ''}`);
     const archived = r.is_deleted ? ' ao-log-archived' : '';
     // v5.0 UI: 완료·미확인 건은 눈에 띄는 "완료 카드" — 카드에서 바로 [✔확인] 가능 (받은편지함 사양)
+    // 대표 7/22: 오류(error) 실행도 ✔확인으로 로그에서 치울 수 있게 (전엔 완료만 확인 가능 → 오류 로그가 영영 안 지워짐)
     const isDoneCard = r.status === 'done' && !r.is_deleted;
-    const confirmBtn = isDoneCard
+    const canArchive = (r.status === 'done' || r.status === 'error') && !r.is_deleted;
+    const confirmBtn = canArchive
         ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoArchiveRun(${r.id})">✔ 확인</button>` : '';
     return `<div class="ao-log-item ao-log-click ao-log-preview${archived}${isDoneCard ? ' ao-log-donecard' : ''}" data-run-id="${r.id}">
         ${confirmBtn}<span class="ao-log-time">${time}</span> ${icon} <strong>${aoEsc(r.agent_name || '')}</strong> ${aoEsc(text)}
@@ -10459,6 +10464,23 @@ window.aoArchiveRun = async function(runId) {
     try {
         const res = await api('/api/agent-office/runs/' + runId + '/archive', 'POST');
         showToast('✔ ' + res.message);
+        aoLoadReports();
+        aoRefreshLog();
+    } catch (e) { alert(e.message); }
+};
+// 대표 7/22: LIVE 로그 일괄 정리 — 현재 로그의 완료·오류 실행을 모두 확인 처리(숨김, 삭제 아님)
+window.aoClearLog = async function() {
+    try {
+        const data = await api('/api/agent-office/runs?limit=100');
+        const targets = (data.runs || []).filter(r => (r.status === 'done' || r.status === 'error') && !r.is_deleted);
+        if (!targets.length) { showToast('정리할 완료·오류 기록이 없습니다'); return; }
+        if (!confirm(`완료·오류 기록 ${targets.length}건을 로그에서 치울까요?\n(삭제가 아니라 숨김입니다 — "전체 보기"에서 다시 볼 수 있어요)`)) return;
+        // 순차 처리 (서버 부담 최소화). 실패 건은 건너뜀
+        let ok = 0;
+        for (const r of targets) {
+            try { await api('/api/agent-office/runs/' + r.id + '/archive', 'POST'); ok++; } catch (e) { /* 개별 실패 무시 */ }
+        }
+        showToast(`🧹 ${ok}건 정리 완료`);
         aoLoadReports();
         aoRefreshLog();
     } catch (e) { alert(e.message); }
