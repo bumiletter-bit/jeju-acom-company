@@ -417,9 +417,19 @@ async function compareReport({ pool, helpers, a, b, wantFile }) {
 }
 
 // ===== 4.5단계 ⑥: 품목 매출 기여 순위 (순수 코드 0원) — 규격별 개별 + 계열 합계 별도 줄 =====
-async function rankReport({ pool, helpers, period, topN, showAll, wantFile }) {
+async function rankReport({ pool, helpers, period, topN, showAll, partner, wantFile }) {
     const range = resolvePeriod(period || '') || resolvePeriod('this_month');
-    const rows = await fetchSettlements(pool, helpers, range.from, range.to);
+    const allRows = await fetchSettlements(pool, helpers, range.from, range.to);
+    const rows = partner ? allRows.filter(r => r.partner === partner) : allRows; // 대표 7/22: 거래처별 순위
+    const scopeLabel = partner ? `${partner} · ${range.label}` : range.label;
+    if (rows.length === 0 && partner && allRows.length > 0) {
+        const partners = [...new Set(allRows.map(r => r.partner))];
+        return {
+            summary: `${range.label}에 '${partner}' 정산이 없습니다`,
+            lines: [`${range.label}(${range.from}~${range.to})에 거래처 '${partner}' 정산 데이터가 없습니다`, `이 기간 정산이 있는 거래처: ${partners.join(', ')}`, '거래처명을 확인해 다시 지시해주세요'],
+            report: { type: 'semi_rank', period: range, partner, no_match: true, note: `거래처 '${partner}' 필터 결과 0건 (기간엔 다른 거래처 있음)` },
+        };
+    }
     if (rows.length === 0) {
         const near = await pool.query(
             `SELECT to_char(date, 'YYYY-MM') AS ym FROM settlements
@@ -456,7 +466,7 @@ async function rankReport({ pool, helpers, period, topN, showAll, wantFile }) {
         .sort((x, y) => y.amount - x.amount);
 
     const report = {
-        type: 'semi_rank', period: range, product_total: total,
+        type: 'semi_rank', period: range, partner: partner || null, product_total: total,
         rows: shown, rows_total: ranked.length, shown_all: !!showAll, top_n: showAll ? ranked.length : (topN || 10),
         series,
         note: `상품 기준 금액·정산관리와 동일 단가 계산 · 비중 = 품목 금액 / 기간 상품 총액 · 계열 합계는 규격 2종 이상 + 토큰 매칭 검증(하귤 제외 규칙 포함)${showAll ? '' : ` · 전체 ${ranked.length}종 중 TOP ${shown.length} 표시 ("전부"라고 지시하면 전 품목)`} · 읽기 전용`,
@@ -487,9 +497,9 @@ async function rankReport({ pool, helpers, period, topN, showAll, wantFile }) {
     }
     const top1 = ranked[0];
     return {
-        summary: `완료: ${range.label} 품목 기여 순위 — 1위 ${top1.name} ${top1.qty.toLocaleString('ko-KR')}개 / ${fmt(top1.amount)}원 (${top1.share}%)` + (fname ? ` · 📎 ${fname}` : ''),
+        summary: `완료: ${scopeLabel} 품목 기여 순위 — 1위 ${top1.name} ${top1.qty.toLocaleString('ko-KR')}개 / ${fmt(top1.amount)}원 (${top1.share}%)` + (fname ? ` · 📎 ${fname}` : ''),
         lines: [
-            `${range.label}(${range.from}~${range.to}) 상품 총액 ${fmt(total)}원 · 품목 ${ranked.length}종 중 ${shown.length}종 표시`,
+            `${scopeLabel}(${range.from}~${range.to}) 상품 총액 ${fmt(total)}원 · 품목 ${ranked.length}종 중 ${shown.length}종 표시`,
             `TOP3: ${ranked.slice(0, 3).map(i => `${i.rank}위 ${i.name}(${i.share}%)`).join(' / ')}`,
             fname ? `📎 ${fname} — 보고서함에서 다운로드` : (series.length ? `계열 합계 ${series.length}건 별도 표시 (보고서에서 확인)` : '계열 합계 대상 없음 (규격 2종 이상 품목 없음)'),
         ],
@@ -866,6 +876,7 @@ module.exports = {
             return rankReport({
                 pool, helpers, period: String(params.period || '').trim(),
                 topN: Number(params.rank.topN) || 10, showAll: !!params.rank.all,
+                partner: String(params.partner || '').trim(), // 대표 7/22: 거래처별 순위
                 wantFile: !!params.want_file,
             });
         }

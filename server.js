@@ -7333,6 +7333,9 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 return;
             }
             // 1-2: 오래된 기간(3개월 이상 과거 또는 작년 이전) 조회는 복창 확인 후 실행 (비교 조회도 동일 적용)
+            // 🔴 대표 7/22: 단, 대표가 월/날짜를 명확히 말했으면("4월", "4월 14일") 확인 없이 바로 조회 —
+            //   확인 복창은 '기간 미명시·기본값'으로 빠진 오래된 조회의 오해석 방지용이지, 명시한 월엔 오해석이 없어 마찰만 됨.
+            const explicitPeriodStated = !!(parseExplicitMonth(order.content || effContent, today) || hasExplicitDay(order.content || effContent));
             let confirmNeeded = false, confirmLabel = '';
             if (conditions.partner_week) {
                 confirmNeeded = needsQueryConfirm({ from: conditions.partner_week.from }, today);
@@ -7347,6 +7350,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 confirmNeeded = needsQueryConfirm(range, today);
                 if (range) confirmLabel = `『${range.label}(${range.from}~${range.to})』 조회`;
             }
+            if (explicitPeriodStated) confirmNeeded = false; // 명시한 월/날짜는 확인 없이 바로 조회 (대표 7/22)
             if (confirmNeeded) {
                 await maruFinishOrder(order.id, '질문', {
                     type: 'query_confirm',
