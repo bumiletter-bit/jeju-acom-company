@@ -280,26 +280,34 @@ input:focus, textarea:focus, select:focus {
 /* ================= 조직도 배정 흐름 모션 (대표 7/22) ================= */
 /* 지시하면 대표→마루→해당 팀→담당 요원까지 연결선이 진한 보라색으로 흐름.
    작업(running)이 끝나면(.ao-flow 제거) 모션 사라짐. app.js aoRefreshOrgFlow가 클래스 관리. */
-@keyframes aoFlowDown { to { background-position: 0 20px; } }
-@keyframes aoFlowRight { to { background-position: 20px 0; } }
-.ao-vline.ao-flow, .ao-vline-sm.ao-flow {
-    background: repeating-linear-gradient(180deg, #6D28D9 0 5px, #C4B5FD 5px 10px);
-    background-size: 100% 20px;
-    animation: aoFlowDown 0.5s linear infinite;
-    box-shadow: 0 0 6px rgba(109, 40, 217, 0.5);
-}
+/* 진한 보라 실선 + 밝은 하이라이트가 흐르는 느낌 (점선 아님 — 짤림 없음) */
+@keyframes aoSweepDown { 0% { background-position: 50% -40%; } 100% { background-position: 50% 140%; } }
+@keyframes aoSweepRight { 0% { background-position: -40% 50%; } 100% { background-position: 140% 50%; } }
+/* 세로 연결선: 상단 세로선 · 담당 팀 드롭 · 팀장→요원 · 요원 드롭 */
+.ao-vline.ao-flow, .ao-vline-sm.ao-flow,
 .ao-org-branch.ao-flow::before,
 .ao-org-member.ao-flow::before {
-    background: repeating-linear-gradient(180deg, #6D28D9 0 5px, #C4B5FD 5px 10px);
-    background-size: 100% 20px;
-    animation: aoFlowDown 0.5s linear infinite;
-    box-shadow: 0 0 6px rgba(109, 40, 217, 0.5);
+    width: 5px;
+    background-color: #6D28D9;
+    background-image: linear-gradient(180deg, transparent 0%, #EDE4FF 50%, transparent 100%);
+    background-size: 100% 50%;
+    background-repeat: no-repeat;
+    animation: aoSweepDown 0.9s linear infinite;
+    box-shadow: 0 0 9px rgba(109, 40, 217, 0.7);
+    border-radius: 3px;
 }
+/* 가로 버스: 담당 팀 세그먼트(::after) + 중앙~담당팀 사이 브랜치(::after) */
 .ao-org-branch.ao-flow::after,
+.ao-org-branch.ao-flow-bus::after,
 .ao-org-member.ao-flow::after {
-    background: repeating-linear-gradient(90deg, #6D28D9 0 5px, #C4B5FD 5px 10px);
-    background-size: 20px 100%;
-    animation: aoFlowRight 0.5s linear infinite;
+    height: 5px;
+    background-color: #6D28D9;
+    background-image: linear-gradient(90deg, transparent 0%, #EDE4FF 50%, transparent 100%);
+    background-size: 50% 100%;
+    background-repeat: no-repeat;
+    animation: aoSweepRight 0.9s linear infinite;
+    box-shadow: 0 0 9px rgba(109, 40, 217, 0.7);
+    border-radius: 3px;
 }
 /* 흐름이 도착한 담당 요원 살짝 강조 */
 .ao-agent.st-running .ao-nametag { color: #6D28D9; font-weight: 800; }

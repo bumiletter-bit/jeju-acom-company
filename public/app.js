@@ -9824,21 +9824,33 @@ function aoSetAgentStatus(agentId, status) {
 function aoRefreshOrgFlow() {
     const org = document.querySelector('.ao-org');
     if (!org) return;
-    org.querySelectorAll('.ao-flow').forEach(e => e.classList.remove('ao-flow'));
+    org.querySelectorAll('.ao-flow, .ao-flow-bus').forEach(e => e.classList.remove('ao-flow', 'ao-flow-bus'));
     const running = org.querySelectorAll('.ao-agent.st-running');
     if (!running.length) return;
     // 대표→마루→팀 상단 세로선 (ao-org 직계 vline)은 무언가 실행 중이면 흐름
     org.querySelectorAll(':scope > .ao-vline').forEach(v => v.classList.add('ao-flow'));
+    const branches = Array.from(org.querySelectorAll('.ao-org-teams > .ao-org-branch'));
+    const N = branches.length;
+    const centerLeft = Math.floor(N / 2) - 1;  // 마루 세로선 도착점(중앙) 왼쪽 브랜치
+    const centerRight = Math.floor(N / 2);      // 중앙 오른쪽 브랜치
     running.forEach(el => {
         const branch = el.closest('.ao-org-branch');
-        if (branch) {
-            branch.classList.add('ao-flow');
-            const member = el.closest('.ao-org-member');
-            if (member) {
-                member.classList.add('ao-flow');
-                const vsm = branch.querySelector('.ao-vline-sm');
-                if (vsm) vsm.classList.add('ao-flow');
-            }
+        if (!branch) return; // 마루 자신 실행 등 — 상단 세로선만 흐름
+        const ti = branches.indexOf(branch);
+        // 담당 팀 세로 드롭(::before) + 그 팀의 가로 세그먼트(::after)
+        branch.classList.add('ao-flow');
+        // 담당 요원(팀원) 경로
+        const member = el.closest('.ao-org-member');
+        if (member) {
+            member.classList.add('ao-flow');
+            const vsm = branch.querySelector('.ao-vline-sm');
+            if (vsm) vsm.classList.add('ao-flow');
+        }
+        // 대표 7/22: 중앙에서 담당 팀까지 '사이 브랜치들의 가로선(::after)'도 흐르게 (선이 쭉 이어지도록)
+        if (ti <= centerLeft) {
+            for (let i = ti + 1; i <= centerLeft; i++) branches[i].classList.add('ao-flow-bus');
+        } else if (ti >= centerRight) {
+            for (let i = centerRight; i < ti; i++) branches[i].classList.add('ao-flow-bus');
         }
     });
 }

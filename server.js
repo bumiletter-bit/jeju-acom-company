@@ -6391,7 +6391,27 @@ async function maruRecordRun(opLabel, summaryText, lines, reportObj) {
 }
 
 // 일정 지시 처리 (조회/등록 제안/불가)
-async function maruHandleSchedule(order, d, actor, effContent = null) {
+// 일정 항목 실제 등록 (확인 승인 경로와 멀티 자동등록 경로 공용) — svcCreateSchedule 재사용, audit 자동
+async function maruRegisterScheduleItems(items, actor) {
+    const created = [];
+    for (const i of items) {
+        let uid = null;
+        if (i.assignee_name) {
+            const u = await pool.query('SELECT id FROM users WHERE name = $1 LIMIT 1', [i.assignee_name]);
+            uid = u.rows[0]?.id || null;
+        }
+        await svcCreateSchedule({
+            date: i.date, title: i.title, type: 'normal',
+            start_time: i.time || null,
+            category: i.category || '일반', end_date: i.end_date || null,
+            user_id: uid ?? actor?.id ?? undefined, // 담당자 미지정/미매칭 = 대표
+        }, actor);
+        created.push(fmtScheduleLine(i.date, i.time, i.title, i.assignee_name, i.category, i.end_date));
+    }
+    return created;
+}
+
+async function maruHandleSchedule(order, d, actor, effContent = null, opts = {}) {
     const srcText = effContent || order.content; // 지시 #6: 결합 텍스트 기준 (파일 감지·기간 파싱)
     if (d.schedule_op === '조회') {
         const from = /^\d{4}-\d{2}-\d{2}$/.test(d.schedule_from) ? d.schedule_from : kstTodayStr();
@@ -6480,6 +6500,18 @@ async function maruHandleSchedule(order, d, actor, effContent = null) {
                 });
                 return;
             }
+        }
+        // 🔴 대표 7/22: 멀티 지시(대표가 이미 "네"로 전체 승인)의 일정 서브태스크는 재확인 없이 바로 등록.
+        //   기존엔 각 일정이 "이대로 등록할까요?"로 또 물어 → 순차 실행 중 서로 '대체됨'으로 밀려 3건 다 미등록되던 버그.
+        //   단일 일정 등록(멀티 아님)은 기존대로 확인 1회 유지(회귀 없음).
+        if (opts.autoRegister) {
+            const created = await maruRegisterScheduleItems(items, actor);
+            const summaryText = `✅ 일정 ${created.length}건 등록 완료`;
+            const run = await maruRecordRun('일정 등록', summaryText, created.slice(0, 3),
+                { type: 'maru_schedule', op: '등록', items: created, count: created.length });
+            await maruFinishOrder(order.id, '완료',
+                { type: 'schedule_created', count: created.length, items: created, run_id: run?.id }, run?.id);
+            return;
         }
         // 등록은 확인 1회 필수 — 목록 전체를 보여주고 대기 (여러 건도 확인 1회)
         const formatted = items.map(i =>
@@ -6645,23 +6677,9 @@ async function maruTryScheduleConfirm(order, actor) {
         await dispatchLiveAgent(pending, route, conditions, actor, order.id);
         return true;
     }
-    // 승인 → 실제 등록 (svcCreateSchedule 재사용: audit_log 자동 기록)
+    // 승인 → 실제 등록 (공용 헬퍼 재사용: svcCreateSchedule + audit 자동)
     const items = (pending.result && pending.result.items) || [];
-    const created = [];
-    for (const i of items) {
-        let uid = null;
-        if (i.assignee_name) {
-            const u = await pool.query('SELECT id FROM users WHERE name = $1 LIMIT 1', [i.assignee_name]);
-            uid = u.rows[0]?.id || null;
-        }
-        await svcCreateSchedule({
-            date: i.date, title: i.title, type: 'normal',
-            start_time: i.time || null,
-            category: i.category || '일반', end_date: i.end_date || null,
-            user_id: uid ?? actor?.id ?? undefined, // 담당자 미지정/미매칭 = 대표
-        }, actor);
-        created.push(fmtScheduleLine(i.date, i.time, i.title, i.assignee_name, i.category, i.end_date));
-    }
+    const created = await maruRegisterScheduleItems(items, actor);
     const summaryText = `✅ 일정 ${created.length}건 등록 완료`;
     const run = await maruRecordRun('일정 등록', summaryText, created.slice(0, 3),
         { type: 'maru_schedule', op: '등록', items: created, count: created.length });
@@ -7259,7 +7277,8 @@ async function processOrderWithMaru(order, actor, opts = {}) {
 
         // ①-3 일정 분야 → 마루 직접 처리 (조회 즉답 / 등록 확인 1회 / 삭제 불가) — 결합 텍스트 전달 (지시 #6)
         if (d.action === 'schedule') {
-            await maruHandleSchedule(order, d, actor, effContent);
+            // 멀티 서브태스크(대표가 "네"로 전체 승인)면 일정 재확인 없이 바로 등록
+            await maruHandleSchedule(order, d, actor, effContent, { autoRegister: !!opts.multiSeq });
             return;
         }
 
