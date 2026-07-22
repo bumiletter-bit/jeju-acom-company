@@ -10056,6 +10056,14 @@ function aoTrunc(s, n = 95) {
     return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
+// 대표 7/22: LIVE 로그에 대표 지시를 '원문 그대로' 깔끔하게 — 서브태스크/멀티 래퍼 문구 제거
+function aoCleanContent(s) {
+    return String(s || '')
+        .replace(/\s*\[상세\s*조건[\s\S]*$/, '')      // "[상세 조건은 원지시 참조: ...]" 및 그 뒤 전부
+        .replace(/\s*\[멀티\s*\d+\s*\/\s*\d+[\s\S]*$/, '') // "[멀티 1/3 — 원지시 #N]"
+        .trim();
+}
+
 // 접수 지시 로그 라인 (🕐 대표 → 마루: 내용 + 마루 처리 결과)
 function aoOrderLogLine(o) {
     const time = aoKst(o.created_at, { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -10071,7 +10079,7 @@ function aoOrderLogLine(o) {
     else if (st === '완료' && r.type === 'settlement_saved') extra = `<div class="ao-log-sub">💾 마루 → 정산현황 저장 (${aoEsc(r.date || '')}) · 총 합계 ${Math.round(r.total || 0).toLocaleString()}원 — ${(r.items || []).slice(0, 3).map(aoEsc).join(' / ')}</div>`;
     else if (st === '완료' && r.type === 'settlement_cancelled') extra = `<div class="ao-log-sub">ℹ️ 정산현황 저장 취소</div>`;
     else if (st === '완료' && r.type === 'multi_dispatch') extra = `<div class="ao-log-sub">🔀 마루 → 멀티 분산 ${(r.subtasks || []).length}건 동시 배정: ${(r.subtasks || []).map((s2, i2) => '①②③④⑤'[i2] + ' ' + aoEsc(aoTrunc(s2, 40))).join(' / ')}</div>`;
-    else if (st === '완료' && r.type === 'answer') extra = `<div class="ao-log-sub">💬 마루: ${aoEsc(r.text || '')}</div>`;
+    else if (st === '완료' && r.type === 'answer') extra = `<div class="ao-log-sub">💬 마루: ${aoEsc(aoTrunc(r.text || '', 140))}</div>`;
     else if (st === '질문' && r.type === 'settlement_ocr_confirm') { aoSettleCache[o.id] = r; extra = `<div class="ao-log-sub">📋 <strong>${aoEsc(r.partner)}</strong> 정산관리 입력 확인 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원) <button class="ao-fb-btn" onclick="event.stopPropagation(); aoOpenSettleCache(${o.id})">확인표 열기</button></div>`; }
     else if (st === '완료' && r.type === 'settlement_saved_ocr') extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.partner)} 정산관리 저장 완료 (${r.box_total}박스 · ${(r.total||0).toLocaleString()}원)</div>`;
     else if (st === '질문' && r.type === 'settlement_ocr_need_partner') extra = `<div class="ao-log-sub">📦 품목 읽음 — 거래처만 확인 필요: "효돈농협 / 대성(시온) / 기타거래처" 중 답해주세요</div>`;
@@ -10088,9 +10096,10 @@ function aoOrderLogLine(o) {
         const choiceLabel = (st === '질문' && choices.length) ? ' <span style="color:#e67700;font-size:12px;">(선택지 — 눌러서 고르거나 말로 답해도 됩니다)</span>' : '';
         extra = `<div class="ao-log-sub ao-log-maruq">🤔 <strong>마루의 질문</strong>: ${aoEsc(r.question)}${choiceLabel}${btns}</div>`;
     }
-    else if (st === '완료' && r.assignee) {
+    else if (st === '완료' && r.type === 'route' && r.assignee) {
+        // 대표 7/22: 흐름 한눈에 — 마루 → 팀 → 요원 배정 (짧게)
         const cond = r.conditions ? [r.conditions.item_keyword, r.conditions.period].filter(Boolean).join(' · ') : '';
-        extra = `<div class="ao-log-sub">✅ 마루 → ${aoEsc(r.team || '')} ${aoEsc(r.assignee)} 배정${cond ? ' [조건: ' + aoEsc(cond) + ']' : ''}${r.run_id ? ' · 실행 #' + r.run_id : ''}</div>`;
+        extra = `<div class="ao-log-sub">🔧 마루 → ${aoEsc(r.team || '팀')} → <strong>${aoEsc(r.assignee)}</strong> 배정${cond ? ' [' + aoEsc(cond) + ']' : ''}</div>`;
     }
     else if (st === '안내' && r.notice) extra = `<div class="ao-log-sub">ℹ️ ${aoEsc(r.notice)}</div>`;
     else if (st === '오류' && r.error) extra = `<div class="ao-log-sub ao-log-suberr">⚠️ ${aoEsc(r.error)} <button class="ao-fb-btn" onclick="event.stopPropagation(); aoAckOrderError(${o.id})">✔ 확인</button></div>`;
@@ -10104,7 +10113,7 @@ function aoOrderLogLine(o) {
     const failBtn = (st !== '대기' && st !== '처리중')
         ? `<button class="ao-fb-btn ao-fail-btn" title="이 답변을 실패 수집함에 담기" onclick="event.stopPropagation(); aoMarkOrderFail(${o.id}, this)">❌ 실패</button>` : '';
     const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
-    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}${failBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(o.content)} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
+    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}${failBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(aoCleanContent(o.content))} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
 }
 
 async function aoRefreshLog() {
@@ -10134,13 +10143,21 @@ async function aoRefreshLog() {
         if (!log) return;
         const lines = [];
         data.runs.forEach(r => {
-            (r.steps || []).forEach(s => lines.push({ t: s.t, html: aoStepLogLine(s) })); // 중간 로그는 클릭 불가
-            // 완료/오류 실행만 결과 미리보기 라인 (📄 클릭 → 보고서 모달)
-            if (r.status === 'done' || r.status === 'error') {
+            // 대표 7/22: 스텝 도배 제거 — 진행중이면 최신 1줄만(작업중), 완료/오류면 미리보기(클릭→보고서)
+            if (r.status === 'running') {
+                const steps = r.steps || [];
+                const last = steps[steps.length - 1];
+                if (last) lines.push({ t: last.t, html: aoStepLogLine(last) });
+            } else if (r.status === 'done' || r.status === 'error') {
                 lines.push({ t: r.finished_at || r.started_at, html: aoRunPreviewLine(r) });
             }
         });
-        orderData.orders.forEach(o => lines.push({ t: o.created_at, html: aoOrderLogLine(o) }));
+        // 대표 7/22: 완료 문서 클릭 시 '나의 질문 원본'을 함께 띄우기 위한 run_id→지시 매핑
+        aoOrderByRun = {};
+        orderData.orders.forEach(o => {
+            if (o.run_id) aoOrderByRun[o.run_id] = o.content;
+            lines.push({ t: o.created_at, html: aoOrderLogLine(o) });
+        });
         lines.sort((a, b) => new Date(b.t) - new Date(a.t));
         log.innerHTML = lines.length
             ? lines.slice(0, 60).map(l => l.html).join('')
@@ -10153,6 +10170,7 @@ async function aoRefreshLog() {
     } catch (e) { console.error('로그 조회 실패:', e); }
 }
 let aoPendingMaruQ = null;
+let aoOrderByRun = {}; // run_id → 대표 지시 원문 (보고서 모달에서 원본 질문 표시용)
 
 function aoStartLogPolling() {
     clearInterval(aoLogPollTimer);
@@ -11131,6 +11149,7 @@ window.aoOpenReport = async function(runId) {
                 ${rep && rep.file_id ? `<button class="ao-fb-btn ao-modal-confirm" style="margin-right:6px;" onclick="aoDownloadFile(${rep.file_id})">📎 엑셀 다운로드</button>` : ''}
             </h3>
             <div class="ao-detail-meta">${aoEsc(run.agent_team)} · 실행 ${dt}</div>
+            ${aoOrderByRun[run.id] ? `<div class="ao-result-box" style="margin-top:8px;background:#f5f7fb;border-left:3px solid #4c6ef5;">🕐 <strong>대표님 질문</strong>: ${aoEsc(aoCleanContent(aoOrderByRun[run.id]))}</div>` : ''}
             <div class="ao-result-box" style="margin-top:8px;"><strong>${aoEsc((run.result && run.result.summary) || '')}</strong></div>
             ${aoAuditBlock(rep && rep.audit_check)}
             ${body}
