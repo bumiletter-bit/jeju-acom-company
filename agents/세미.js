@@ -687,12 +687,33 @@ function matchesKeyword(itemName, keyword) {
 }
 
 // 조건 필터 보고서 (품목 키워드 and/or 기간)
-async function filteredReport({ pool, helpers, keyword, period, wantFile }) {
+async function filteredReport({ pool, helpers, keyword, partner, period, wantFile }) {
     const parsed = resolvePeriod(period);
     const range = parsed || resolvePeriod('this_month'); // 기간 미지정/해석불가 → 이번 달
     const periodNote = (period && !parsed) ? ` · 기간 '${period}' 해석 불가 → 이번 달 기준` : '';
-    const rows = await fetchSettlements(pool, helpers, range.from, range.to);
+    const allRows = await fetchSettlements(pool, helpers, range.from, range.to);
+    // 🔴 대표 7/22: 거래처(효돈농협/대성(시온)/기타거래처) 지정 시 그 거래처만 필터.
+    //    기존엔 월/기간 매출에 거래처 필터가 없어 "효돈 4월 매출"이 회사 전체(306,076,600)로 나왔음.
+    const rows = partner ? allRows.filter(r => r.partner === partner) : allRows;
+    const scope = [partner, keyword].filter(Boolean).join(' ') || '전체';
 
+    // 거래처 필터 결과 0건인데 기간엔 데이터가 있으면 → 그 거래처만 없다고 정직 안내 (전체 0건과 구분)
+    if (rows.length === 0 && partner && allRows.length > 0) {
+        const partners = [...new Set(allRows.map(r => r.partner))];
+        return {
+            summary: `${range.label}에 '${partner}' 정산이 없습니다`,
+            lines: [
+                `${range.label}(${range.from}~${range.to})에 거래처 '${partner}' 정산 데이터가 없습니다`,
+                `이 기간 정산이 있는 거래처: ${partners.join(', ')}`,
+                '거래처명을 확인해서 다시 지시해주세요',
+            ],
+            report: {
+                type: 'semi_settlement_filtered', title: `${scope} · ${range.label}`,
+                keyword: keyword || null, partner, period: range, no_match: true,
+                note: `거래처 '${partner}' 필터 결과 0건 (기간엔 다른 거래처 데이터 있음)`,
+            },
+        };
+    }
     // v5.0 1단계 1-3: 0건 가드 — 그대로 보고하지 않고 조건 복창 + 인접 데이터 힌트 (대체 조회 금지)
     if (rows.length === 0) {
         const near = await pool.query(
@@ -766,13 +787,13 @@ async function filteredReport({ pool, helpers, keyword, period, wantFile }) {
     }
 
     const summary = keyword
-        ? `완료: ${keyword} ${range.label}: ${totalQty.toLocaleString('ko-KR')}개 / ${fmt(productTotal)}원`
-        : `완료: ${range.label} 총 ${fmt(paymentTotal)}원 (상품 ${fmt(productTotal)} + 택배 ${fmt(cjFee + cjCarryover)})`;
+        ? `완료: ${scope} ${range.label}: ${totalQty.toLocaleString('ko-KR')}개 / ${fmt(productTotal)}원`
+        : `완료: ${partner ? partner + ' ' : ''}${range.label} 총 ${fmt(paymentTotal)}원 (상품 ${fmt(productTotal)} + 택배 ${fmt(cjFee + cjCarryover)})`;
 
     const cappedItems = capList(items);
     const report = {
-        type: 'semi_settlement_filtered', title: `${keyword || '전체'} · ${range.label}`,
-        keyword: keyword || null, period: range,
+        type: 'semi_settlement_filtered', title: `${scope} · ${range.label}`,
+        keyword: keyword || null, partner: partner || null, period: range,
         items: cappedItems.list, items_omitted: cappedItems.omitted, total_qty: totalQty, product_total: productTotal,
         cj_fee: cjFee, cj_carryover: cjCarryover, payment_total: paymentTotal,
         note: (keyword
@@ -790,8 +811,8 @@ async function filteredReport({ pool, helpers, keyword, period, wantFile }) {
         summary: summary + (fname ? ` · 📎 ${fname}` : (report.file_error ? ' · ⚠️ 파일 생성 실패' : '')),
         lines: [
             keyword
-                ? `${keyword} ${range.label}(${range.from}~${range.to}) — 규격 ${items.length}종 · ${totalQty.toLocaleString('ko-KR')}개 · ${fmt(productTotal)}원`
-                : `${range.label}(${range.from}~${range.to}) 상품 ${fmt(productTotal)}원 · 정산 ${rows.length}건`,
+                ? `${scope} ${range.label}(${range.from}~${range.to}) — 규격 ${items.length}종 · ${totalQty.toLocaleString('ko-KR')}개 · ${fmt(productTotal)}원`
+                : `${partner ? partner + ' ' : ''}${range.label}(${range.from}~${range.to}) 상품 ${fmt(productTotal)}원 · 정산 ${rows.length}건`,
             items.length
                 ? `최다: ${items[0].name} (${items[0].qty.toLocaleString('ko-KR')}개 / ${fmt(items[0].amount)}원)`
                 : '집계된 품목이 없습니다',
@@ -857,9 +878,10 @@ module.exports = {
 
         // ===== 조건 필터 모드 — 마루가 추출한 품목/기간 조건 (없으면 기존 전체 보고서) =====
         const kw = String(params.item_keyword || '').trim();
+        const partner = String(params.partner || '').trim(); // 대표 7/22: 거래처별 월/기간 매출
         const periodRaw = String(params.period || '').trim();
-        if (kw || periodRaw) {
-            return filteredReport({ pool, helpers, keyword: kw, period: periodRaw, wantFile: !!params.want_file });
+        if (kw || partner || periodRaw) {
+            return filteredReport({ pool, helpers, keyword: kw, partner, period: periodRaw, wantFile: !!params.want_file });
         }
 
         const now = kstNow();

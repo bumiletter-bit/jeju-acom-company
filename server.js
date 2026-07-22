@@ -6726,6 +6726,7 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
         compare: conditions.compare || null,   // 4.5 ⑤: 기간 비교 (서버 확정)
         rank: conditions.rank || null,         // 4.5 ⑥: 품목 순위 (서버 확정)
         partner_week: conditions.partner_week || null, // 지시 #15: 주차×거래처 (서버 확정)
+        partner: conditions.partner || null, // 대표 7/22: 거래처별 월/기간 매출 필터
         ...(() => {
             // 🔴 지시 #54-4: 날짜 단일 소스 — 서버 확정 날짜(요일 포함)를 요원에 주입 (요원 자체 계산 금지)
             const wr = parseWeekdayRange(srcText, kstTodayStr());
@@ -7312,6 +7313,13 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                     conditions.target_date = '';
                     console.log(`주차×거래처 확정: ${pwSpec.label} × ${pwPartner}`);
                 }
+            }
+            // 🔴 대표 7/22: 거래처만 지정한 월/기간 매출("효돈 4월 매출")도 그 거래처만 필터.
+            //   주차 없이 거래처만 있을 때 발동 (주차×거래처는 위에서 처리). 필터는 새 질문(order.content) 기준 — 이어가기 결합의 옛 거래처 오염 방지(v5.9.24 교훈).
+            if (!conditions.compare && !conditions.partner_week) {
+                const p = parsePartnerKeyword(order.content || effContent);
+                // CJ(택배)는 거래처 매출 필터 대상 아님 — "택배비 얼마야"가 CJ 0건으로 빠지는 것 방지. 정산 거래처(효돈·대성·기타)만 필터.
+                if (p && p !== 'CJ대한통운') { conditions.partner = p; console.log(`거래처 필터 확정: ${p} · ${conditions.period || conditions.target_date || '이번달'}`); }
             }
             // 존재하지 않는 날짜 가드 (예: 4월 31일) — 억지 조회·DB 오류 대신 정직 안내
             if (conditions.target_date && /^\d{4}-\d{2}-\d{2}$/.test(conditions.target_date) && !isValidDateStr(conditions.target_date)) {
