@@ -3,16 +3,14 @@
    참고: 디자인/제주아꼼이네 오피스 (완성본).html
    방식: styles.css 뒤에 로드되어 색·폰트·모양만 덮어씀 (기능/HTML/JS 무변경).
          문제 시 index.html에서 이 파일 <link> 한 줄만 빼면 즉시 원복.
-   구성: ① 폰트  ② 라이트 팔레트(변수)  ③ 다크 팔레트  ④ 사이드바 화이트화
-         ⑤ 카드/버튼/입력  ⑥ 조직도(AGENT OFFICE) 새 톤  ⑦ 다크모드 컴포넌트
-         ⑧ 다크모드 토글 버튼  ⑨ 반응형 보강
+   버전: 라이트 단일(다크모드 제거 — 대표 지시) · 사이드바 SVG 아이콘 + 아꼼이 로고
    ============================================================ */
 
 :root {
     /* 폰트 — Pretendard 우선, 실패 시 시스템 폰트로 폴백 */
     --font-app: 'Pretendard', 'Pretendard Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
 
-    /* ② 라이트 팔레트 (인디고 + 화이트) */
+    /* 인디고 + 화이트 팔레트 */
     --primary: #4F46E5;
     --primary-dark: #4338CA;
     --primary-light: #EEF0FF;
@@ -23,7 +21,6 @@
     --bg: #F5F6F8;
     --bg-soft: #EDEFF3;
 
-    /* 사이드바 → 화이트 */
     --sidebar-bg: #FFFFFF;
     --sidebar-text: #667085;
     --sidebar-hover: #F4F5F8;
@@ -45,39 +42,7 @@
     --shadow-primary: 0 6px 16px -6px rgba(79, 70, 229, 0.55);
 }
 
-/* ③ 다크 팔레트 */
-:root[data-theme="dark"] {
-    --primary: #6366F1;
-    --primary-dark: #818CF8;
-    --primary-light: #232A44;
-    --primary-ring: rgba(99, 102, 241, 0.28);
-    --accent-blue: #6366F1;
-    --accent-blue-light: #232A44;
-
-    --bg: #0F1117;
-    --bg-soft: #171A21;
-
-    --sidebar-bg: #161922;
-    --sidebar-text: #9AA1AD;
-    --sidebar-hover: #1E2230;
-    --sidebar-active-bg: #232A44;
-
-    --text-dark: #E7E9EE;
-    --text-mid: #9AA1AD;
-    --text-light: #6B7280;
-    --border: #262B36;
-    --border-soft: #222630;
-    --card-bg: #1B1F29;
-
-    --danger: #F87171;
-    --success: #34D399;
-
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 6px 20px -6px rgba(0, 0, 0, 0.55);
-    --shadow-primary: 0 6px 16px -6px rgba(99, 102, 241, 0.6);
-}
-
-/* ① 폰트 전역 적용 */
+/* 폰트 전역 적용 */
 body,
 input, button, textarea, select,
 .main-content, .sidebar, .card, .modal, .page,
@@ -87,22 +52,36 @@ table, .ao-office, .ao-log-card {
 body { background: var(--bg); color: var(--text-dark); }
 .main-content { background: var(--bg); }
 
-/* ================= ④ 사이드바 화이트화 ================= */
+/* ================= 사이드바 (화이트 + 브랜드 + SVG 아이콘) ================= */
 .sidebar {
     background: var(--sidebar-bg);
     border-right: 1px solid var(--border);
     box-shadow: none;
 }
 .sidebar-header {
+    padding: 18px 16px 14px;
     border-bottom: 1px solid var(--border-soft);
 }
-.sidebar-header h2 {
-    color: var(--text-dark);
-    font-weight: 800;
+/* 좌측 상단: 아꼼이 캐릭터 로고 + 회사명 (참고 디자인과 동일 배치·크기) */
+.brand-row { display: flex; align-items: center; gap: 11px; }
+.brand-logo {
+    width: 42px; height: 42px; flex-shrink: 0;
+    border-radius: 12px; overflow: hidden;
+    background: var(--primary-light);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.5);
+}
+.brand-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.brand-name { font-size: 15px; font-weight: 800; color: var(--text-dark); line-height: 1.25; }
+.brand-sub { font-size: 12px; font-weight: 500; color: var(--text-light); line-height: 1.3; }
+
+.nav-section-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.4px;
+    color: var(--text-light); padding: 16px 18px 6px;
 }
 
-/* 네비 — 둥근 아이템 + 좌측 인디고 액센트 바 */
-.sidebar-nav { padding: 8px 10px; gap: 2px; }
+/* 네비 — 둥근 아이템 + 좌측 인디고 액센트 바 + SVG 아이콘 */
+.sidebar-nav { padding: 2px 10px 8px; gap: 2px; }
 .nav-item {
     color: var(--sidebar-text);
     border-left: none;
@@ -112,10 +91,7 @@ body { background: var(--bg); color: var(--text-dark); }
     font-weight: 500;
     position: relative;
 }
-.nav-item:hover {
-    background: var(--sidebar-hover);
-    color: var(--text-dark);
-}
+.nav-item:hover { background: var(--sidebar-hover); color: var(--text-dark); }
 .nav-item.active {
     background: var(--sidebar-active-bg);
     color: var(--primary);
@@ -129,7 +105,11 @@ body { background: var(--bg); color: var(--text-dark); }
     width: 3px; border-radius: 0 3px 3px 0;
     background: var(--primary);
 }
-.nav-icon { color: inherit; }
+.nav-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; color: inherit;
+}
+.nav-icon svg { width: 20px; height: 20px; display: block; }
 
 .sidebar-footer { border-top: 1px solid var(--border-soft); }
 .user-info { color: var(--text-light); }
@@ -139,18 +119,16 @@ body { background: var(--bg); color: var(--text-dark); }
     color: var(--text-mid);
     border-radius: 11px;
 }
+.btn-logout .nav-icon svg { width: 17px; height: 17px; }
 .btn-logout:hover {
     background: rgba(240, 68, 56, 0.08);
     color: var(--danger);
     border-color: var(--danger);
 }
-.sidebar-close-btn {
-    background: var(--bg-soft);
-    color: var(--text-mid);
-}
+.sidebar-close-btn { background: var(--bg-soft); color: var(--text-mid); }
 .sidebar-close-btn:hover { background: var(--border); }
 
-/* ================= ⑤ 카드 / 버튼 / 입력 ================= */
+/* ================= 카드 / 버튼 / 입력 ================= */
 .card {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -159,37 +137,28 @@ body { background: var(--bg); color: var(--text-dark); }
 }
 .card h2, .card h3, .page > h1, .page-header h1 { color: var(--text-dark); }
 
-/* 주 버튼(주황→인디고) — 라운드 + 은은한 그림자 */
-.btn-primary,
-button.btn-primary,
-.btn-save, .btn-add, .btn-submit {
+.btn-primary, button.btn-primary, .btn-save, .btn-add, .btn-submit {
     background: var(--primary);
     border-color: var(--primary);
     color: #fff;
     border-radius: 11px;
     box-shadow: var(--shadow-primary);
 }
-.btn-primary:hover,
-.btn-save:hover, .btn-add:hover, .btn-submit:hover {
+.btn-primary:hover, .btn-save:hover, .btn-add:hover, .btn-submit:hover {
     background: var(--primary-dark);
     border-color: var(--primary-dark);
 }
-
-/* 입력류 — 포커스 링 인디고 */
 input:focus, textarea:focus, select:focus {
     outline: none;
     border-color: var(--primary) !important;
     box-shadow: 0 0 0 3px var(--primary-ring) !important;
 }
-
-/* 스크롤바 */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 9px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-light); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ================= ⑥ 조직도(AGENT OFFICE) 새 톤 ================= */
-/* 크림/네이비 게임풍 → 화이트/인디고 모던. 픽셀 캐릭터·팀색은 유지(정체성) */
+/* ================= 조직도(AGENT OFFICE) 새 톤 — 픽셀 게임 캐릭터는 유지 ================= */
 .ao-office {
     border: 1px solid var(--border);
     background-color: var(--card-bg);
@@ -200,104 +169,40 @@ input:focus, textarea:focus, select:focus {
     box-shadow: var(--shadow-md);
     border-radius: var(--radius);
 }
-.ao-chief-zone {
-    background: var(--primary-light);
-    border: 1px solid var(--primary);
-    border-radius: 12px;
-}
-.ao-inbox {
-    background: var(--card-bg);
-    border: 2px dashed var(--primary);
-    border-radius: 12px;
-}
+.ao-chief-zone { background: var(--primary-light); border: 1px solid var(--primary); border-radius: 12px; }
+.ao-inbox { background: var(--card-bg); border: 2px dashed var(--primary); border-radius: 12px; }
 .ao-inbox-label { color: var(--primary); }
 .ao-team-zone { border: 1px solid var(--border); border-radius: 12px; }
-.ao-zone-label,
-.ao-team-tag, .ao-team-tag-hq {
-    color: var(--text-dark);
-    background: var(--card-bg);
-    border: 1.5px solid var(--border);
-    border-radius: 8px;
-    box-shadow: none;
+.ao-zone-label, .ao-team-tag, .ao-team-tag-hq {
+    color: var(--text-dark); background: var(--card-bg);
+    border: 1.5px solid var(--border); border-radius: 8px; box-shadow: none;
 }
 .ao-log-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-md);
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-md);
 }
 .ao-desk { background: var(--primary); box-shadow: 0 3px 0 rgba(79, 70, 229, 0.4); }
-
-/* 조직도 연결선 — 은은한 인디고 */
 .ao-org-branch::before, .ao-org-branch::after,
-.ao-org-member::before, .ao-org-member::after {
-    background: rgba(79, 70, 229, 0.28);
-}
-
-/* ================= ⑦ 다크모드 컴포넌트 보정 ================= */
-/* 셸(사이드바·카드·조직도)은 변수로 자동 전환. 흰색 하드코딩 위주만 추가 보정 */
-:root[data-theme="dark"] .ao-inbox,
-:root[data-theme="dark"] .ao-zone-label,
-:root[data-theme="dark"] .ao-team-tag,
-:root[data-theme="dark"] .ao-team-tag-hq { color: var(--text-dark); }
-:root[data-theme="dark"] .ao-office {
-    background-image:
-        linear-gradient(rgba(99, 102, 241, 0.08) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(99, 102, 241, 0.08) 1px, transparent 1px);
-}
-:root[data-theme="dark"] .ao-face,
-:root[data-theme="dark"] .ao-arm { background: #E8C9A8; }
-:root[data-theme="dark"] img.logo-img,
-:root[data-theme="dark"] .login-container { filter: none; }
-
-/* ================= ⑧ 다크모드 토글 버튼 ================= */
-#theme-toggle {
-    position: fixed;
-    right: 18px; bottom: 18px;
-    width: 46px; height: 46px;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    background: var(--card-bg);
-    box-shadow: var(--shadow-md);
-    cursor: pointer;
-    z-index: 3000;
-    font-size: 20px;
-    display: flex; align-items: center; justify-content: center;
-    transition: transform 0.15s, background 0.2s;
-}
-#theme-toggle:hover { transform: translateY(-2px) scale(1.05); }
-#theme-toggle .tt-moon { display: none; }
-#theme-toggle .tt-sun { display: inline; }
-:root[data-theme="dark"] #theme-toggle .tt-sun { display: none; }
-:root[data-theme="dark"] #theme-toggle .tt-moon { display: inline; }
+.ao-org-member::before, .ao-org-member::after { background: rgba(79, 70, 229, 0.28); }
 
 /* 남은 주황 액센트 통일 (styles.css 하드코딩분) */
 .btn-install-app {
-    background: var(--primary-light);
-    border: 1px solid var(--primary);
-    color: var(--primary);
-    border-radius: 11px;
+    background: var(--primary-light); border: 1px solid var(--primary);
+    color: var(--primary); border-radius: 11px;
 }
+.btn-install-app .nav-icon svg { width: 17px; height: 17px; }
 .noti-toast-announcement { border-left-color: var(--primary) !important; }
 .sch-flt-btn.sch-flt-rank { border-color: var(--primary); color: var(--primary); }
 .sch-flt-btn.sch-flt-rank:hover { background: var(--primary); color: #fff; }
-.ao-log-maruq {
-    background: var(--primary-light);
-    border: 1.5px solid var(--primary);
-    color: var(--text-dark);
-}
+.ao-log-maruq { background: var(--primary-light); border: 1.5px solid var(--primary); color: var(--text-dark); }
 
-/* 로그인 화면 — 다크 네이비 → 인디고 그라디언트(브랜드 통일) */
+/* 로그인 화면 — 인디고 그라디언트(브랜드 통일) */
 .login-container {
     background: linear-gradient(135deg, #4F46E5 0%, #4338CA 55%, #312E81 100%) !important;
 }
 
-/* ================= ⑨ 반응형 보강 (모바일 편의) ================= */
+/* ================= 반응형 보강 (모바일) ================= */
 @media (max-width: 768px) {
-    #theme-toggle {
-        right: 14px; bottom: 76px;   /* 하단 지시바/버튼과 겹치지 않게 */
-        width: 42px; height: 42px; font-size: 18px;
-    }
     .card { border-radius: 12px; }
     .ao-office { border-radius: 12px; }
 }
