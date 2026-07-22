@@ -316,4 +316,7 @@ input:focus, textarea:focus, select:focus {
 @media (max-width: 768px) {
     .card { border-radius: 12px; }
     .ao-office { border-radius: 12px; }
+    /* 햄버거(삼단바) 버튼이 아꼼이 캐릭터·회사명을 가리지 않도록 우측으로 이동 */
+    .sidebar-header { padding: 14px 16px 14px 66px; transition: padding 0.3s ease; }
+    .brand-row { align-items: center; }
 }
