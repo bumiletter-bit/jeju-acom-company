@@ -201,6 +201,75 @@ input:focus, textarea:focus, select:focus {
     background: linear-gradient(135deg, #4F46E5 0%, #4338CA 55%, #312E81 100%) !important;
 }
 
+/* ================= AGENT OFFICE 헤더 · 로그 · 지시바 (참고 디자인) ================= */
+/* 타이틀 + 봇 배지 + 버전 칩 */
+.ao-topbar h1 {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 24px; font-weight: 800; letter-spacing: -0.4px; color: var(--text-dark);
+}
+.ao-bot-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; border-radius: 12px; background: #101828; flex-shrink: 0;
+}
+.ao-bot-badge svg { width: 22px; height: 22px; }
+.ao-version-chip {
+    background: var(--bg-soft); color: var(--text-mid); border: none;
+    border-radius: 7px; padding: 3px 8px; font-size: 12px; font-weight: 700;
+}
+
+/* 세그먼트 토글 (전체/법인/오션라운지 · 사무실/보고서함) */
+.ao-biz-filter, .ao-view-tabs {
+    background: var(--bg-soft); border: none; border-radius: 12px; padding: 4px; gap: 4px;
+}
+.ao-biz-btn, .ao-view-tab {
+    color: var(--text-mid); font-weight: 600; border-radius: 9px;
+    min-height: 34px; padding: 7px 15px;
+}
+.ao-biz-btn:hover, .ao-view-tab:hover { color: var(--text-dark); background: transparent; }
+.ao-biz-btn.active { background: #fff; color: var(--text-dark); box-shadow: var(--shadow-sm); }
+.ao-view-tab.active { background: var(--primary); color: #fff; box-shadow: var(--shadow-primary); }
+
+/* 헤더/카드 버튼 → 깔끔한 아웃라인 */
+.ao-fb-btn { border: 1px solid var(--border); background: var(--card-bg); color: var(--text-mid); border-radius: 10px; }
+.ao-fb-btn:hover { background: var(--bg-soft); color: var(--text-dark); }
+
+/* LIVE 로그 카드 + 헤더(빨간 점) */
+.ao-log-head {
+    background: var(--card-bg); color: var(--text-dark);
+    border-bottom: 1px solid var(--border-soft); padding: 14px 16px;
+    display: flex; align-items: center; gap: 8px; font-size: 15px;
+}
+.ao-log-head::before {
+    content: ''; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--danger); box-shadow: 0 0 0 3px rgba(240, 68, 56, 0.15); flex-shrink: 0;
+}
+.ao-log-item { border-bottom: 1px solid var(--border-soft); }
+.ao-log-item strong { color: var(--text-dark); }
+.ao-log-time { color: var(--text-light); }
+
+/* 상태 배지 — 완료 초록 / 대기·진행 주황 / 오류 빨강 */
+.ao-ord-done, .ao-st-badge-done { background: #E6F7EE; color: #128A5B; }
+.ao-ord-ask, .ao-st-badge-run { background: #FFF3E0; color: #C77700; }
+.ao-st-badge-err { background: #FDE7E7; color: #DA3B3B; }
+.ao-ord-wait { background: var(--bg-soft); color: var(--text-mid); }
+
+/* 지시 입력바 — 화이트 라운드 + 인디고 라벨/전송 */
+.ao-order-bar {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 10px 12px;
+}
+.ao-order-label { color: var(--primary); }
+.ao-order-bar .form-input { background: transparent; color: var(--text-dark); }
+#ao-order-send { border-radius: 11px; }
+
+/* 세미 보고서 등 네이비/골드 잔재 → 인디고 톤 */
+.ao-sec-title { color: var(--text-dark); border-bottom-color: var(--primary); }
+.ao-grand-total { background: var(--primary); }
+.ao-grand-total strong { color: #fff; }
+.ao-partner-head td { background: var(--primary-light); color: var(--primary); border-top-color: var(--border); }
+.ao-partner-sum td { background: #F6FBF8; border-bottom-color: var(--success); }
+.ao-detail-desc { background: var(--primary-light); border-color: var(--primary); color: var(--text-mid); }
+
 /* ================= 반응형 보강 (모바일) ================= */
 @media (max-width: 768px) {
     .card { border-radius: 12px; }

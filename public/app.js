@@ -9932,7 +9932,8 @@ function aoStartRunPolling() {
                 const finishedAgent = aoAgents.find(a => a.id === finishedAgentId);
                 if (finishedAgent && finishedAgent.role === 'chief') aoClearSay(finishedAgent.name);
                 aoSetAgentStatus(finishedAgentId, run.status === 'done' ? 'done' : 'error');
-                if (run.status === 'done') setTimeout(() => aoSetAgentStatus(finishedAgentId, 'idle'), 3000);
+                // 대표 7/22: 완료·오류 모두 잠시 표시 후 대기(idle)로 복귀 — 오류 마크가 조직도에 계속 남던 것 해소
+                setTimeout(() => aoSetAgentStatus(finishedAgentId, 'idle'), run.status === 'done' ? 3000 : 6000);
                 aoSetProgress(finishedAgentId, 0, 3); // 진행률 초기화 (다음 실행 대비)
                 aoRefreshGrowth();
                 aoFinishDetailProgress(run);

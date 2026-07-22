@@ -756,7 +756,9 @@ async function initDB() {
     await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW(),
         result=COALESCE(result, '{"summary":"서버 재시작으로 실행이 중단되었습니다"}'::jsonb)
         WHERE status='running'`);
-    await pool.query(`UPDATE agents SET status='idle' WHERE status='running'`);
+    // 대표 7/22: 부팅 시 남아있던 running뿐 아니라 done/error 상태도 대기(idle)로 초기화
+    //   (오류 상태가 조직도에 영영 남아 '오류 마크'가 안 사라지던 것 해소 — 오류 기록은 실행 이력에 그대로 남음)
+    await pool.query(`UPDATE agents SET status='idle' WHERE status IN ('running','done','error')`);
 
     // 조직도 시드 (비어있을 때만) — 마스터 지시문 1절 확정 조직 10명
     const agentCount = await pool.query('SELECT COUNT(*)::int AS c FROM agents');
@@ -4748,6 +4750,11 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
         await pool.query(`UPDATE agent_runs SET status='error', result=$2, finished_at=NOW() WHERE id=$1`,
             [run.id, JSON.stringify({ summary: `오류: ${err.message}` })]).catch(() => {});
         await pool.query(`UPDATE agents SET status='error' WHERE id=$1`, [agent.id]).catch(() => {});
+        // 대표 7/22: 오류 상태도 완료처럼 잠시 표시 후 대기(idle)로 복귀 — 조직도에 오류 마크가 영영 남던 것 해소
+        //   (오류 자체는 agent_runs·LIVE 로그에 그대로 기록되어 사라지지 않음)
+        setTimeout(() => {
+            pool.query(`UPDATE agents SET status='idle' WHERE id=$1 AND status='error'`, [agent.id]).catch(() => {});
+        }, 6000);
     }
 }
 
