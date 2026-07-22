@@ -233,16 +233,23 @@ input:focus, textarea:focus, select:focus {
 .ao-fb-btn { border: 1px solid var(--border); background: var(--card-bg); color: var(--text-mid); border-radius: 10px; }
 .ao-fb-btn:hover { background: var(--bg-soft); color: var(--text-dark); }
 
-/* LIVE 로그 카드 + 헤더(빨간 점) */
+/* LIVE 로그 카드 + 헤더(빨간 점) — 대표 7/22: 한 줄 가로 고정(줄바꿈 방지) */
 .ao-log-head {
     background: var(--card-bg); color: var(--text-dark);
-    border-bottom: 1px solid var(--border-soft); padding: 14px 16px;
-    display: flex; align-items: center; gap: 8px; font-size: 15px;
+    border-bottom: 1px solid var(--border-soft); padding: 12px 14px;
+    display: flex; align-items: center; gap: 8px; font-size: 14px;
+    flex-wrap: nowrap; white-space: nowrap;
 }
 .ao-log-head::before {
     content: ''; width: 8px; height: 8px; border-radius: 50%;
     background: var(--danger); box-shadow: 0 0 0 3px rgba(240, 68, 56, 0.15); flex-shrink: 0;
 }
+.ao-log-title { font-weight: 700; flex-shrink: 0; }
+.ao-log-head #ao-log-clear {
+    margin-left: auto; flex-shrink: 0;
+    padding: 5px 9px; font-size: 12px; min-height: 0; white-space: nowrap;
+}
+.ao-log-showall { float: none; flex-shrink: 0; white-space: nowrap; margin: 0; }
 .ao-log-item { border-bottom: 1px solid var(--border-soft); }
 .ao-log-item strong { color: var(--text-dark); }
 .ao-log-time { color: var(--text-light); }
@@ -269,6 +276,33 @@ input:focus, textarea:focus, select:focus {
 .ao-partner-head td { background: var(--primary-light); color: var(--primary); border-top-color: var(--border); }
 .ao-partner-sum td { background: #F6FBF8; border-bottom-color: var(--success); }
 .ao-detail-desc { background: var(--primary-light); border-color: var(--primary); color: var(--text-mid); }
+
+/* ================= 조직도 배정 흐름 모션 (대표 7/22) ================= */
+/* 지시하면 대표→마루→해당 팀→담당 요원까지 연결선이 진한 보라색으로 흐름.
+   작업(running)이 끝나면(.ao-flow 제거) 모션 사라짐. app.js aoRefreshOrgFlow가 클래스 관리. */
+@keyframes aoFlowDown { to { background-position: 0 20px; } }
+@keyframes aoFlowRight { to { background-position: 20px 0; } }
+.ao-vline.ao-flow, .ao-vline-sm.ao-flow {
+    background: repeating-linear-gradient(180deg, #6D28D9 0 5px, #C4B5FD 5px 10px);
+    background-size: 100% 20px;
+    animation: aoFlowDown 0.5s linear infinite;
+    box-shadow: 0 0 6px rgba(109, 40, 217, 0.5);
+}
+.ao-org-branch.ao-flow::before,
+.ao-org-member.ao-flow::before {
+    background: repeating-linear-gradient(180deg, #6D28D9 0 5px, #C4B5FD 5px 10px);
+    background-size: 100% 20px;
+    animation: aoFlowDown 0.5s linear infinite;
+    box-shadow: 0 0 6px rgba(109, 40, 217, 0.5);
+}
+.ao-org-branch.ao-flow::after,
+.ao-org-member.ao-flow::after {
+    background: repeating-linear-gradient(90deg, #6D28D9 0 5px, #C4B5FD 5px 10px);
+    background-size: 20px 100%;
+    animation: aoFlowRight 0.5s linear infinite;
+}
+/* 흐름이 도착한 담당 요원 살짝 강조 */
+.ao-agent.st-running .ao-nametag { color: #6D28D9; font-weight: 800; }
 
 /* ================= 반응형 보강 (모바일) ================= */
 @media (max-width: 768px) {

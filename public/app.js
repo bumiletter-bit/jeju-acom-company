@@ -9764,6 +9764,7 @@ function aoRenderOffice() {
             </div>
         </div>
         <div class="ao-doc-fly" id="ao-doc-fly" style="display:none;">📋</div>`;
+    aoRefreshOrgFlow(); // 재렌더 후 실행 중 요원의 배정 흐름 모션 복원
 }
 
 // 대표 노드 (실제 사람 — AI 배지 없음, 왕관 표시)
@@ -9814,6 +9815,32 @@ function aoSetAgentStatus(agentId, status) {
         el.classList.remove('st-idle', 'st-running', 'st-done', 'st-error');
         el.classList.add('st-' + status);
     }
+    aoRefreshOrgFlow(); // 대표 7/22: 배정 흐름 모션 갱신
+}
+
+// 대표 7/22: 지시 → 담당 요원까지 조직도 연결선을 진한 보라색으로 흐르게 (작업 중에만).
+//   현재 running인 요원들의 경로(상단 세로선 + 해당 팀 브랜치 + 요원 멤버선)에 .ao-flow 부여,
+//   나머지는 제거 → 작업이 끝나면(running 해제) 모션 자동 소멸.
+function aoRefreshOrgFlow() {
+    const org = document.querySelector('.ao-org');
+    if (!org) return;
+    org.querySelectorAll('.ao-flow').forEach(e => e.classList.remove('ao-flow'));
+    const running = org.querySelectorAll('.ao-agent.st-running');
+    if (!running.length) return;
+    // 대표→마루→팀 상단 세로선 (ao-org 직계 vline)은 무언가 실행 중이면 흐름
+    org.querySelectorAll(':scope > .ao-vline').forEach(v => v.classList.add('ao-flow'));
+    running.forEach(el => {
+        const branch = el.closest('.ao-org-branch');
+        if (branch) {
+            branch.classList.add('ao-flow');
+            const member = el.closest('.ao-org-member');
+            if (member) {
+                member.classList.add('ao-flow');
+                const vsm = branch.querySelector('.ao-vline-sm');
+                if (vsm) vsm.classList.add('ao-flow');
+            }
+        }
+    });
 }
 
 function aoAgentElByName(name) {
