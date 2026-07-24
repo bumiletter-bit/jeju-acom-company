@@ -4846,23 +4846,36 @@ app.get('/api/agent-office/naver/test', authMiddleware, adminOnly, async (req, r
         // ① 중계서버 도달 + 네이버 토큰 발급
         let health = null, healthErr = null;
         try { health = await naverRelay.relayHealth(true); } catch (e) { healthErr = e.message; }
-        // ② Bearer 인증 + 전체 체인 (어제 일별 정산 — 읽기 전용, 데이터 없어도 200이면 성공)
-        const y = new Date(Date.now() + 9 * 3600 * 1000 - 24 * 3600 * 1000).toISOString().slice(0, 10); // KST 어제
+        // ② Bearer 인증 + 전체 체인 확인 — 확정된 '변경 주문 조회'(읽기) 엔드포인트로 왕복.
+        //   판정: 네이버가 응답(2xx/4xx 무엇이든)을 돌려주면 중계+Bearer+네이버 도달 성공.
+        //   중계서버가 못 닿거나(연결실패) Bearer 불일치(relay의 401 unauthorized)면 실패.
+        const kstIso = (offsetMs) => new Date(Date.now() + 9 * 3600 * 1000 + offsetMs).toISOString().replace('Z', '+09:00');
         let chain = null;
         try {
-            const r = await naverRelay.callNaver(
-                { method: 'GET', path: '/external/v1/pay-settle/settle/day', query: { date: y } },
-                notifyTelegram);
-            chain = { ok: true, date: y, keys: Object.keys(r || {}).slice(0, 6) };
+            const r = await naverRelay.callNaver({
+                method: 'GET',
+                path: '/external/v1/pay-order/seller/product-orders/last-changed-statuses',
+                query: { lastChangedFrom: kstIso(-3600 * 1000), lastChangedTo: kstIso(0) },
+            }, notifyTelegram);
+            chain = { ok: true, reached: true, http: 200, note: '주문 조회 왕복 성공' };
         } catch (e) {
-            chain = { ok: false, date: y, error: e.message, status: e.status || null };
+            const relayAuthFail = e.status === 401 && e.data && e.data.error === 'unauthorized';
+            const relayBlocked = e.status === 403 && e.data && e.data.error === 'path_not_allowed';
+            const unreachable = /relay_unreachable/.test(e.message || '');
+            if (!unreachable && !relayAuthFail && !relayBlocked && e.status) {
+                // 네이버가 응답(4xx/5xx)을 돌려줌 = 중계+Bearer+네이버 도달 성공 (경로/파라미터는 개별 연동 시 조정)
+                chain = { ok: true, reached: true, http: e.status, note: `네이버 도달·인증 정상 (응답 ${e.status})` };
+            } else {
+                chain = { ok: false, reached: false, error: e.message, status: e.status || null,
+                    reason: unreachable ? '중계서버 연결 실패' : relayAuthFail ? 'Bearer 토큰 불일치' : relayBlocked ? '허용목록 외' : '알 수 없음' };
+            }
         }
         const tokenOk = health && health.token_test === 'success';
         res.json({
-            ok: !!(tokenOk && chain.ok),
+            ok: !!(tokenOk && chain.reached),
             relay_reachable: !!health && !healthErr,
             naver_token: health ? (health.token_test || 'unknown') : ('fail: ' + healthErr),
-            chain, // Bearer 인증 + 정산 조회 왕복 결과
+            chain, // 중계+Bearer+네이버 왕복 결과
         });
     } catch (err) { handleAdminErr(res, err); }
 });

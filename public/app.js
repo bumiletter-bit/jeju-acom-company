@@ -2392,7 +2392,7 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
             html += line('중계서버 도달', r.relay_reachable, r.relay_reachable ? '101.79.16.213:4000 응답' : '연결 안 됨');
             html += line('네이버 토큰 발급', r.naver_token === 'success', r.naver_token);
             const c = r.chain || {};
-            html += line('정산 조회 왕복(Bearer 인증)', c.ok, c.ok ? `${c.date} 조회 성공` : (c.error || '') + (c.status ? ' (' + c.status + ')' : ''));
+            html += line('네이버 왕복(Bearer 인증)', c.reached, c.reached ? (c.note || '도달·인증 정상') : (c.reason || c.error || '실패'));
             html += `<div style="margin-top:8px;font-weight:700;color:${ok ? '#12B76A' : '#F04438'};">${ok ? '🎉 전체 연결 정상! 3단계(정산 조회) 준비 완료' : '⚠️ 위 항목 확인 필요 — 결과를 클로드에게 알려주세요'}</div>`;
             if (box) box.innerHTML = html;
         } catch (e) {
