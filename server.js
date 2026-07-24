@@ -750,6 +750,28 @@ async function initDB() {
     // 정산관리 이미지 자동 입력 (대표 7/20 지시): 지시에 첨부된 이미지 (base64 data URL) — 마루 비전 판독용
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_data TEXT`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_mime VARCHAR(40)`);
+    // 대표 7/24: 네이버 송장변환 자동업로드 중복방지 — 이미 자동업로드한 상품주문번호 기록
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_invoice_uploaded (
+            product_order_id VARCHAR(50) PRIMARY KEY,
+            uploaded_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // 대표 7/24: 네이버 자동수집 설정(타이머) — 기능별 on/off·주기(분). 화면에서 관리(코드에 안 박음)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_auto_collect (
+            key VARCHAR(30) PRIMARY KEY,
+            enabled BOOLEAN DEFAULT false,
+            interval_min INTEGER NOT NULL,
+            last_run_at TIMESTAMP,
+            last_status VARCHAR(20),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // 기본값 시드(전부 OFF) — 정산 하루1번(1440), 주문 60, 취소반품 90, 문의 30
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES
+        ('settlement', false, 1440), ('order', false, 60), ('claim', false, 90), ('inquiry', false, 30)
+        ON CONFLICT (key) DO NOTHING`);
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
 
@@ -4918,6 +4940,84 @@ app.get('/api/agent-office/naver/settlements', authMiddleware, adminOnly, async 
             elements,
             raw_keys: firstRawKeys,
         });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 대표 7/24: [4단계 A] 배송준비(PAYED + 발주확인 OK) 주문을 조건형 조회로 취합 → 송장변환용 스마트스토어 컬럼으로 매핑.
+//   변환 로직(convertDataSmart)은 프론트 그대로. 여기선 스마트스토어 엑셀과 '같은 키'의 행 배열만 만들어 반환.
+//   중복방지: 이미 자동업로드한 productOrderId는 제외 + 신규분 기록. (발송처리 시 PAYED에서 빠져 자연 제외되는 것과 이중 안전)
+async function naverFetchInvoiceOrders(days, { excludeUploaded = true } = {}) {
+    const now = Date.now();
+    const isoKst = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
+    const pick = (o, ...ks) => { for (const k of ks) { if (o && o[k] != null) return o[k]; } return undefined; };
+    let raws = [];
+    for (let d = 0; d < days; d++) {                    // 최근 days일을 24시간 단위로 순회(조회 범위 안전)
+        const to = now - d * 24 * 3600 * 1000;
+        const from = to - 24 * 3600 * 1000;
+        let page = 1, totalPages = 1;
+        do {
+            const r = await naverRelay.callNaver({
+                method: 'GET', path: '/external/v1/pay-order/seller/product-orders',
+                query: {
+                    from: isoKst(from), to: isoKst(to),
+                    rangeType: 'PAYED_DATETIME', productOrderStatuses: 'PAYED', placeOrderStatusType: 'OK',
+                    pageSize: 300, page,
+                },
+            }, notifyTelegram);
+            const body = (r && r.data) ? r.data : r;
+            const items = pick(body, 'contents', 'data', 'elements', 'list') || (Array.isArray(body) ? body : []);
+            raws = raws.concat(Array.isArray(items) ? items : []);
+            const pg = pick(body, 'pagination') || body || {};
+            totalPages = Number(pick(pg, 'totalPages')) || 1;
+            page++;
+        } while (page <= totalPages && page <= 20);
+    }
+    let uploaded = new Set();
+    if (excludeUploaded) {
+        const up = await pool.query(`SELECT product_order_id FROM naver_invoice_uploaded`);
+        uploaded = new Set(up.rows.map(x => x.product_order_id));
+    }
+    const seen = new Set(); const rows = []; const newIds = []; let rawKeys = null;
+    for (const it of raws) {
+        const po = it.productOrder || it;
+        const od = it.order || po.order || {};
+        const sa = po.shippingAddress || {};
+        const pid = String(po.productOrderId || it.productOrderId || '');
+        if (!pid || seen.has(pid)) continue;
+        seen.add(pid);
+        if (!rawKeys) rawKeys = Object.keys(it);
+        if (uploaded.has(pid)) continue;
+        const addr = [sa.baseAddress, sa.detailedAddress].filter(Boolean).join(' ').trim();
+        rows.push({
+            '구매자명': od.ordererName || '', '구매자연락처': od.ordererTel || '',
+            '수취인명': sa.name || '',
+            '옵션정보': [po.productName, po.productOption].filter(Boolean).join(' ').trim(),
+            '수량': po.quantity || 1,
+            '수취인연락처1': sa.tel1 || '', '수취인연락처2': sa.tel2 || '',
+            '통합배송지': addr, '배송메세지': po.shippingMemo || '',
+            _pid: pid,
+        });
+        newIds.push(pid);
+    }
+    if (newIds.length && excludeUploaded) {
+        const vals = newIds.map((_, i) => `($${i + 1})`).join(',');
+        await pool.query(`INSERT INTO naver_invoice_uploaded (product_order_id) VALUES ${vals} ON CONFLICT DO NOTHING`, newIds);
+    }
+    return { fetched: seen.size, rows, rawKeys };
+}
+
+app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
+        const days = Math.min(Math.max(parseInt(req.query.days) || 3, 1), 31);
+        const includeAll = req.query.all === '1'; // 이미 올린 것도 포함(전체 다시 불러오기)
+        const r = await naverFetchInvoiceOrders(days, { excludeUploaded: !includeAll });
+        await writeAudit({
+            action: 'naver_invoice_fetch', targetType: 'naver_order', targetId: null,
+            changes: { after: { days, fetched: r.fetched, new: r.rows.length, includeAll } },
+            source: 'naver-api', actor: adminActor(req),
+        });
+        res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys });
     } catch (err) { handleAdminErr(res, err); }
 });
 

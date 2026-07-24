@@ -6,6 +6,13 @@
 
 ---
 
+## v5.9.47 (2026-07-24 — 네이버 4단계[A]: 송장변환 자동 불러오기)
+- [신규] **송장변환 스마트스토어 카드에 [🛰️ 네이버 자동 불러오기]** — 배송준비 주문(productOrderStatus=PAYED + placeOrderStatus=OK, 문서 확인값)을 조건형 조회(`GET /external/v1/pay-order/seller/product-orders`, rangeType=PAYED_DATETIME, 24h 순회·페이지네이션)로 가져와 **스마트스토어 엑셀과 동일 컬럼**으로 매핑 → `invoiceDataSmart` 주입 → 기존 [통합 변환] 그대로 동작
+- [원칙 준수] **변환 로직(convertDataSmart) 무수정**, **수동 엑셀 업로드 유지**. 옵션정보=productName+productOption(퍼지 매처가 파싱), 배송지=baseAddress+detailedAddress 등 구조체 필드 매핑(문서 확정)
+- [중복방지] 이미 자동업로드한 productOrderId는 `naver_invoice_uploaded` 테이블로 제외+기록. 발송처리 시 PAYED에서 빠지는 것과 이중 안전
+- [안전] 발주확인·발송처리는 자동화 안 함(대표 수동). 매핑 로직 로컬 7/7 검증. 중계 허용목록에 조건형 조회 경로 추가 → **install.sh 재실행 필요**
+- ⏳ 다음: [B] 타이머 자동수집 (실제 주문 응답 구조 확인 후 취소·반품 재확인까지 정확히)
+
 ## v5.9.46 (2026-07-24 — 네이버 중계 HTTPS 적용 (주문 PII 대비))
 - [보안] **Render ↔ 중계서버 HTTPS 암호화** — 주문 상세엔 고객 이름·전화·주소(PII)가 있어 HTTP 평문 금지(대표 원칙). 중계서버가 자체서명 인증서로 HTTPS 서빙, 회사프로그램은 그 인증서를 **핀(고정, NAVER_RELAY_CA)**해 검증 → 도청·중간자 차단
 - [구현] 새 의존성 없이 내장 http/https 모듈로 구현(naver-relay.js). install.sh가 자체서명 인증서(SAN=고정IP) 자동 생성·출력, relay는 인증서 있으면 HTTPS·없으면 HTTP(하위호환). 로컬 검증 4/4(올바른CA 연결·틀린CA 거부·CA없이 암호화)

@@ -5632,6 +5632,37 @@ setupInvoiceArea('invoice-upload-smart', 'invoice-file-smart', 'invoice-filename
 setupInvoiceArea('invoice-upload-jasamol', 'invoice-file-jasamol', 'invoice-filename-jasamol', 0, convertDataJasamol, 'jasamol');
 setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-filename-coupang', 0, convertDataCoupang, 'coupang');
 
+// 대표 7/24: [4단계 A] 네이버 자동 불러오기 — 배송준비 주문을 API로 가져와 스마트스토어 데이터로 주입.
+//   변환/다운로드는 기존 그대로(통합 변환 버튼). 수동 엑셀 업로드도 유지.
+(function () {
+    const btn = document.getElementById('invoice-auto-smart');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const msg = document.getElementById('invoice-auto-smart-msg');
+        const area = document.getElementById('invoice-upload-smart');
+        const fnEl = document.getElementById('invoice-filename-smart');
+        btn.disabled = true;
+        if (msg) msg.textContent = '⏳ 네이버에서 배송준비 주문을 가져오는 중...';
+        try {
+            const r = await api('/api/agent-office/naver/invoice-orders?days=3');
+            if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
+            if (!r.count) {
+                if (msg) msg.innerHTML = `📭 새로 올릴 배송준비 주문이 없습니다 (조회 ${r.fetched || 0}건, 이미 올린 건 제외).`
+                    + (r.raw_keys ? '' : '<br><span style="color:#999;">배송준비 주문이 있는데도 0이면 발주확인 여부를 확인해주세요.</span>');
+                return;
+            }
+            invoiceDataSmart = r.rows;              // 스마트스토어 데이터로 주입 (기존 변환 로직이 그대로 처리)
+            if (fnEl) fnEl.textContent = `🛰️ 네이버 자동 ${r.count}건`;
+            if (area) area.classList.add('has-file');
+            updateInvoiceMergeBtn();
+            showInvoiceMergedPreview();
+            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 불러왔습니다 (조회 ${r.fetched}건 중 신규). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.`;
+        } catch (e) {
+            if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
+        } finally { btn.disabled = false; }
+    });
+})();
+
 // 송장변환 초기화
 function resetInvoice() {
     invoiceDataSmart = null;
