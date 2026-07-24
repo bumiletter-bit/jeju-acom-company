@@ -67,7 +67,7 @@ async function getAccessToken() {
 
 // ── 허용 경로 (1차: 읽기 전용. 쓰기 전면 차단) ──
 const ALLOW = [
-    { m: 'GET',  re: /^\/external\/v1\/pay-settle\/settle\/(day|case)$/ },                       // 정산: 일별/건별
+    { m: 'GET',  re: /^\/external\/v1\/pay-settle\/settle\/[a-z-]+$/ },                           // 정산: 일별(daily)·건별(case)·수수료 등 읽기 전용
     { m: 'GET',  re: /^\/external\/v1\/pay-order\/seller\/product-orders\/last-changed-statuses$/ }, // 주문: 변경목록
     { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/query$/ },              // 주문: 상세조회(POST지만 읽기)
     { m: 'GET',  re: /^\/external\/v1\/pay-order\/seller\/product-orders\/[A-Za-z0-9_-]+$/ },     // 주문: 단건 상세

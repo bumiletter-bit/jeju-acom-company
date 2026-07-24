@@ -4880,6 +4880,47 @@ app.get('/api/agent-office/naver/test', authMiddleware, adminOnly, async (req, r
     } catch (err) { handleAdminErr(res, err); }
 });
 
+// 대표 7/24: 3단계 — 네이버 '일별 정산 내역' 조회 (읽기 전용·PII 없음·집계금액)
+//   GET /external/v1/pay-settle/settle/daily (필수 startDate·endDate·pageNumber·pageSize). 페이지 순회 취합.
+//   세미(거래처 결제가 정산)와 별개인 '네이버 정산' 영역. 응답 구조를 그대로 취합해 화면에 표시.
+app.get('/api/agent-office/naver/settlements', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
+        const from = String(req.query.from || '').slice(0, 10);
+        const to = String(req.query.to || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+            throw { status: 400, message: 'from·to를 YYYY-MM-DD 형식으로 주세요' };
+        }
+        const pick = (o, ...ks) => { for (const k of ks) { if (o && o[k] != null) return o[k]; } return undefined; };
+        const pageSize = 1000;
+        let pageNumber = 1, totalPages = 1, elements = [], firstRawKeys = [];
+        do {
+            const r = await naverRelay.callNaver({
+                method: 'GET', path: '/external/v1/pay-settle/settle/daily',
+                query: { startDate: from, endDate: to, pageNumber, pageSize },
+            }, notifyTelegram);
+            if (pageNumber === 1) firstRawKeys = r ? Object.keys(r) : [];
+            const body = (r && r.data) ? r.data : r;                 // 네이버 래퍼(data) 방어
+            const els = pick(body, 'elements', 'contents', 'list') || [];
+            elements = elements.concat(Array.isArray(els) ? els : []);
+            const pg = pick(body, 'pagination') || body || {};
+            totalPages = Number(pick(pg, 'totalPages')) || 1;
+            pageNumber++;
+        } while (pageNumber <= totalPages && pageNumber <= 40);        // 안전 상한
+        await writeAudit({
+            action: 'naver_settle_query', targetType: 'naver_settlement', targetId: null,
+            changes: { after: { from, to, count: elements.length } },
+            source: 'naver-api', actor: adminActor(req),
+        });
+        res.json({
+            ok: true, from, to, count: elements.length,
+            columns: elements[0] ? Object.keys(elements[0]) : [],   // 실제 응답 필드(동적 표시용)
+            elements,
+            raw_keys: firstRawKeys,
+        });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // 실행 상태 조회 (폴링용)
 app.get('/api/agent-office/runs/:id', authMiddleware, adminOnly, async (req, res) => {
     try {

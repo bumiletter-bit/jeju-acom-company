@@ -2401,6 +2401,49 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
     });
 })();
 
+// 대표 7/24: 네이버 일별 정산 조회 (3단계) — 세미와 별개 '네이버 정산' 영역
+(function () {
+    const btn = document.getElementById('btn-naver-settle');
+    if (!btn) return;
+    // 기본값: 이번 달 1일 ~ 오늘 (KST)
+    const kst = new Date(Date.now() + 9 * 3600 * 1000);
+    const ymd = d => d.toISOString().slice(0, 10);
+    const fromEl = document.getElementById('naver-settle-from');
+    const toEl = document.getElementById('naver-settle-to');
+    if (fromEl && !fromEl.value) fromEl.value = ymd(new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), 1)));
+    if (toEl && !toEl.value) toEl.value = ymd(kst);
+    const won = n => (Number(n) || 0).toLocaleString('ko-KR') + '원';
+    btn.addEventListener('click', async () => {
+        const box = document.getElementById('naver-settle-result');
+        const from = fromEl.value, to = toEl.value;
+        if (!from || !to) { if (box) box.innerHTML = '⚠️ 시작·종료일을 선택하세요'; return; }
+        btn.disabled = true;
+        if (box) box.innerHTML = '⏳ 네이버에서 정산 내역을 가져오는 중...';
+        try {
+            const r = await api(`/api/agent-office/naver/settlements?from=${from}&to=${to}`);
+            if (!r.ok) { if (box) box.innerHTML = '⚠️ ' + aoEsc(r.message || '조회 실패'); return; }
+            if (!r.count) {
+                if (box) box.innerHTML = `📭 ${aoEsc(from)} ~ ${aoEsc(to)} 정산 내역이 없습니다 (응답 필드: ${(r.raw_keys || []).join(', ') || '-'})`;
+                return;
+            }
+            const cols = r.columns || [];
+            // 금액으로 보이는 컬럼은 원화 포맷
+            const isAmt = c => /amount|금액|amt/i.test(c);
+            let html = `<div style="margin-bottom:6px;font-weight:600;">📅 ${aoEsc(from)} ~ ${aoEsc(to)} · ${r.count}건</div>`;
+            html += '<div style="overflow-x:auto;"><table class="data-table" style="font-size:12px;min-width:600px;"><thead><tr>'
+                + cols.map(c => `<th>${aoEsc(c)}</th>`).join('') + '</tr></thead><tbody>';
+            html += (r.elements || []).slice(0, 100).map(row =>
+                '<tr>' + cols.map(c => `<td>${isAmt(c) ? won(row[c]) : aoEsc(String(row[c] == null ? '' : row[c]))}</td>`).join('') + '</tr>'
+            ).join('');
+            html += '</tbody></table></div>';
+            html += `<div class="text-muted" style="margin-top:6px;font-size:12px;">네이버 실입금 기준 집계 · 거래처 결제가(세미)와 별개 · 최대 100행 표시</div>`;
+            if (box) box.innerHTML = html;
+        } catch (e) {
+            if (box) box.innerHTML = '❌ 조회 실패: ' + aoEsc(e.message || String(e));
+        } finally { btn.disabled = false; }
+    });
+})();
+
 window.openUserModal = async function(userId) {
     let user = null;
     if (userId) {

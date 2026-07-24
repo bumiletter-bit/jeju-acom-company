@@ -1833,6 +1833,19 @@
                         중계서버(NCP) → 네이버 왕복 연결을 확인합니다.<br>
                         <span class="text-muted">Render 환경변수 <code>NAVER_RELAY_URL</code> / <code>NAVER_RELAY_TOKEN</code> 설정 후 눌러주세요.</span>
                     </div>
+
+                    <!-- 대표 7/24: 3단계 — 네이버 일별 정산 조회 (세미와 별개 '네이버 정산' 영역) -->
+                    <div style="margin-top:18px; padding-top:14px; border-top:1px solid var(--border,#eee);">
+                        <div class="card-header-row" style="margin-bottom:8px;">
+                            <h3 style="margin:0; font-size:15px;">📅 네이버 일별 정산 조회 <span class="text-muted" style="font-size:12px; font-weight:400;">(네이버 실입금 기준 · 거래처 결제가와 별개)</span></h3>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <label style="font-size:13px;">시작 <input type="date" id="naver-settle-from" style="padding:5px 8px; border:1px solid var(--border,#ccc); border-radius:8px;"></label>
+                            <label style="font-size:13px;">종료 <input type="date" id="naver-settle-to" style="padding:5px 8px; border:1px solid var(--border,#ccc); border-radius:8px;"></label>
+                            <button class="btn-primary" id="btn-naver-settle" style="padding:7px 15px;">정산 조회</button>
+                        </div>
+                        <div id="naver-settle-result" style="margin-top:12px; font-size:13px;"></div>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -1987,6 +2000,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=253"></script>
+    <script src="app.js?v=254"></script>
 </body>
 </html>
