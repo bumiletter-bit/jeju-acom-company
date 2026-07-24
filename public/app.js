@@ -172,6 +172,8 @@ function updateUserUI() {
 
     const userCard = document.getElementById('user-management-card');
     if (userCard) userCard.style.display = currentUser.role === 'admin' ? '' : 'none';
+    const naverCard = document.getElementById('naver-connect-card'); // 대표 7/24: 네이버 연동(관리자만)
+    if (naverCard) naverCard.style.display = currentUser.role === 'admin' ? '' : 'none';
 
     // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
     const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
@@ -2372,6 +2374,32 @@ async function renderUserList() {
 }
 
 document.getElementById('btn-add-user').addEventListener('click', () => openUserModal());
+
+// 대표 7/24: 네이버 커머스API 중계서버 연결 테스트 (2단계)
+(function () {
+    const btn = document.getElementById('btn-naver-test');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const box = document.getElementById('naver-test-result');
+        btn.disabled = true;
+        if (box) box.innerHTML = '⏳ 확인 중... (중계서버 → 네이버 왕복)';
+        try {
+            const r = await api('/api/agent-office/naver/test');
+            const ok = r.ok;
+            const line = (label, good, detail) =>
+                `<div>${good ? '✅' : '❌'} <strong>${label}</strong>${detail ? ' — ' + aoEsc(String(detail)) : ''}</div>`;
+            let html = '';
+            html += line('중계서버 도달', r.relay_reachable, r.relay_reachable ? '101.79.16.213:4000 응답' : '연결 안 됨');
+            html += line('네이버 토큰 발급', r.naver_token === 'success', r.naver_token);
+            const c = r.chain || {};
+            html += line('정산 조회 왕복(Bearer 인증)', c.ok, c.ok ? `${c.date} 조회 성공` : (c.error || '') + (c.status ? ' (' + c.status + ')' : ''));
+            html += `<div style="margin-top:8px;font-weight:700;color:${ok ? '#12B76A' : '#F04438'};">${ok ? '🎉 전체 연결 정상! 3단계(정산 조회) 준비 완료' : '⚠️ 위 항목 확인 필요 — 결과를 클로드에게 알려주세요'}</div>`;
+            if (box) box.innerHTML = html;
+        } catch (e) {
+            if (box) box.innerHTML = '❌ 테스트 실패: ' + aoEsc(e.message || String(e));
+        } finally { btn.disabled = false; }
+    });
+})();
 
 window.openUserModal = async function(userId) {
     let user = null;

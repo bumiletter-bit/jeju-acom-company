@@ -44,8 +44,6 @@ NAVER_CLIENT_ID=여기에_애플리케이션ID_붙여넣기
 NAVER_CLIENT_SECRET=여기에_애플리케이션시크릿_붙여넣기
 NAVER_TYPE=SELF
 RELAY_AUTH_TOKEN=$GEN_TOKEN
-TELEGRAM_BOT_TOKEN=여기에_기존_텔레그램봇토큰_붙여넣기
-TELEGRAM_CHAT_ID=여기에_기존_챗ID_붙여넣기
 ENV
   chmod 600 .env
   echo ""
@@ -87,7 +85,7 @@ echo "   상태: $(systemctl is-active akkome-relay)"
 echo ""
 echo "   다음 순서로 진행하세요:"
 echo "   (1) 네이버 값 채우기:   sudo nano /opt/akkome-relay/.env"
-echo "        → NAVER_CLIENT_ID / NAVER_CLIENT_SECRET / TELEGRAM 두 개 를 실제 값으로"
+echo "        → NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 두 개를 실제 값으로 (텔레그램은 회사프로그램이 담당 — 불필요)"
 echo "        → Ctrl+O, Enter(저장), Ctrl+X(나가기)"
 echo "   (2) 재시작:            sudo systemctl restart akkome-relay"
 echo "   (3) 동작 확인:         curl -s localhost:4000/health"

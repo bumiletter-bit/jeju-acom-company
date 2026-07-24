@@ -16,12 +16,12 @@ const {
     NAVER_CLIENT_SECRET,
     NAVER_TYPE = 'SELF',
     RELAY_AUTH_TOKEN,
-    TELEGRAM_BOT_TOKEN,
-    TELEGRAM_CHAT_ID,
     NAVER_API_BASE = 'https://api.commerce.naver.com',
 } = process.env;
 
 // ── 로그 (시크릿·토큰 마스킹) ──
+// 대표 7/24 설계: 이 서버는 텔레그램을 직접 부르지 않는다. 오류는 (1)journalctl 로그 (2)HTTP 응답으로만
+//   돌려주고, 알림은 회사프로그램(텔레그램 시크릿 보유처)이 담당 → 시크릿이 한 곳에만 존재.
 function mask(s) {
     return String(s == null ? '' : s)
         .replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi, '$1***')
@@ -29,18 +29,6 @@ function mask(s) {
         .slice(0, 800);
 }
 function log(...a) { console.log(new Date().toISOString(), ...a.map(x => (typeof x === 'string' ? mask(x) : x))); }
-
-// ── 텔레그램 에러 알림 (실패 무시) ──
-async function alertTG(text) {
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-    try {
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: '🛰️ [네이버 중계서버] ' + text }),
-        });
-    } catch (_) { /* 알림 실패는 무시 */ }
-}
 
 // ── 네이버 인증 토큰 발급 + 캐싱 ──
 // 서명: bcrypt(`clientId_timestamp`, salt=client_secret) → base64. (네이버 표준)
@@ -69,7 +57,7 @@ async function getAccessToken() {
     const text = await res.text();
     let data; try { data = JSON.parse(text); } catch { data = {}; }
     if (!res.ok || !data.access_token) {
-        await alertTG(`토큰 발급 실패 (${res.status}) — IP 화이트리스트/시크릿 확인 필요\n${mask(text)}`);
+        log('토큰 발급 실패', res.status, mask(text)); // 알림은 회사프로그램이 응답 보고 발송
         const e = new Error('token_issue_failed'); e.status = res.status; e.body = data; throw e;
     }
     tokenCache = { value: data.access_token, exp: now + (Number(data.expires_in) || 10800) * 1000 };
@@ -131,16 +119,10 @@ app.post('/naver', async (req, res) => {
         const nres = await fetch(`${NAVER_API_BASE}${path}${qs}`, opt);
         const text = await nres.text();
         let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
-        if (!nres.ok) {
-            log('네이버 응답 오류', method, path, nres.status);
-            if ([401, 403, 429].includes(nres.status)) {
-                await alertTG(`네이버 API ${nres.status} — ${method} ${path}\n${mask(text)}`);
-            }
-        }
+        if (!nres.ok) log('네이버 응답 오류', method, path, nres.status); // 알림은 회사프로그램이 담당
         res.status(nres.status).json(json);
     } catch (e) {
         log('중계 예외', method, path, e.message);
-        await alertTG(`중계 예외 — ${method} ${path}: ${e.message}`);
         res.status(e.status || 500).json({ error: 'relay_error', message: e.message, body: e.body });
     }
 });

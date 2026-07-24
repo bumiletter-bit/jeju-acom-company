@@ -10,6 +10,7 @@ const { GoogleGenAI } = require('@google/genai');
 const officeCrypto = require('officecrypto-tool');
 const { VERSION } = require('./version.js');
 const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange, parseComparePeriods, parseWeekSpec, parseWeekdayRange } = require('./date-utils.js');
+const naverRelay = require('./naver-relay.js'); // 대표 7/24: 네이버 커머스API 중계서버 호출 클라이언트
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -4832,6 +4833,37 @@ app.post('/api/agent-office/agents/:id/run', authMiddleware, adminOnly, async (r
         executeAgentTestRun(run, agent, mgr.rows[0]?.name || null,
             { workplace: String(req.body?.workplace || '전체') }); // 비동기 진행 — 응답은 즉시
         res.json({ message: `${agent.name} 실행을 시작했습니다`, run });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 대표 7/24: 네이버 중계서버 연결 테스트 (2단계) — 회사프로그램 → 중계서버 → 네이버 왕복 확인
+//   ① 중계서버 헬스+네이버 토큰(/health?token=1)  ② Bearer 전체 체인(어제 일별 정산 1건 조회, 읽기)
+app.get('/api/agent-office/naver/test', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) {
+            return res.json({ ok: false, step: 'config', message: 'Render 환경변수 NAVER_RELAY_URL / NAVER_RELAY_TOKEN 미설정' });
+        }
+        // ① 중계서버 도달 + 네이버 토큰 발급
+        let health = null, healthErr = null;
+        try { health = await naverRelay.relayHealth(true); } catch (e) { healthErr = e.message; }
+        // ② Bearer 인증 + 전체 체인 (어제 일별 정산 — 읽기 전용, 데이터 없어도 200이면 성공)
+        const y = new Date(Date.now() + 9 * 3600 * 1000 - 24 * 3600 * 1000).toISOString().slice(0, 10); // KST 어제
+        let chain = null;
+        try {
+            const r = await naverRelay.callNaver(
+                { method: 'GET', path: '/external/v1/pay-settle/settle/day', query: { date: y } },
+                notifyTelegram);
+            chain = { ok: true, date: y, keys: Object.keys(r || {}).slice(0, 6) };
+        } catch (e) {
+            chain = { ok: false, date: y, error: e.message, status: e.status || null };
+        }
+        const tokenOk = health && health.token_test === 'success';
+        res.json({
+            ok: !!(tokenOk && chain.ok),
+            relay_reachable: !!health && !healthErr,
+            naver_token: health ? (health.token_test || 'unknown') : ('fail: ' + healthErr),
+            chain, // Bearer 인증 + 정산 조회 왕복 결과
+        });
     } catch (err) { handleAdminErr(res, err); }
 });
 
