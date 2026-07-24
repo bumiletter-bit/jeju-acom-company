@@ -6,6 +6,12 @@
 
 ---
 
+## v5.9.46 (2026-07-24 — 네이버 중계 HTTPS 적용 (주문 PII 대비))
+- [보안] **Render ↔ 중계서버 HTTPS 암호화** — 주문 상세엔 고객 이름·전화·주소(PII)가 있어 HTTP 평문 금지(대표 원칙). 중계서버가 자체서명 인증서로 HTTPS 서빙, 회사프로그램은 그 인증서를 **핀(고정, NAVER_RELAY_CA)**해 검증 → 도청·중간자 차단
+- [구현] 새 의존성 없이 내장 http/https 모듈로 구현(naver-relay.js). install.sh가 자체서명 인증서(SAN=고정IP) 자동 생성·출력, relay는 인증서 있으면 HTTPS·없으면 HTTP(하위호환). 로컬 검증 4/4(올바른CA 연결·틀린CA 거부·CA없이 암호화)
+- ⏳ 대표 조치: 중계 install.sh 재실행(→HTTPS 전환·인증서 출력) → Render 환경변수 NAVER_RELAY_CA(인증서 붙여넣기)+NAVER_RELAY_URL을 https로 → 연결 테스트. 이후 4단계(주문 수집→송장변환)
+- 참고: 네이버 호출 한도는 '하루 총량'이 아니라 **초당 rate limit(토큰버킷·계층별)** — 자동수집 시 간격만 두면 됨(자동수집·캘린더는 대표 요청으로 보류)
+
 ## v5.9.45 (2026-07-24 — 네이버 커머스API 3단계: 일별 정산 조회)
 - [신규] **네이버 일별 정산 조회**(읽기 전용·PII 없음) — 공식문서 확인한 정확한 스펙: `GET /external/v1/pay-settle/settle/daily`, 필수 파라미터 startDate·endDate(yyyy-MM-dd)·pageNumber·pageSize. 이전 404는 경로가 `/settle/day`가 아니라 `/settle/daily`였고 필수 파라미터 누락이 원인
 - [신규] 백엔드 `GET /api/agent-office/naver/settlements?from&to`(adminOnly, 페이지 순회 취합, audit 출처 naver-api) + 데이터관리 화면 **📅 네이버 일별 정산 조회**(기간 선택→표, 응답 필드 동적 표시, 금액 원화 포맷)

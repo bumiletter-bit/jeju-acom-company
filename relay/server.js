@@ -9,6 +9,9 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const https = require('https');
+const path = require('path');
 
 const {
     PORT = 4000,
@@ -127,4 +130,13 @@ app.post('/naver', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => log(`akkome-relay 시작 :${PORT} · type=${NAVER_TYPE} · base=${NAVER_API_BASE}`));
+// 대표 7/24: 인증서(cert.pem/key.pem)가 있으면 HTTPS로, 없으면 HTTP로 (하위호환).
+//   주문 상세 등 고객정보(PII)가 오가므로 HTTPS 필수 — install.sh가 자체서명 인증서 생성.
+const CERT = path.join(__dirname, 'cert.pem');
+const KEY = path.join(__dirname, 'key.pem');
+if (fs.existsSync(CERT) && fs.existsSync(KEY)) {
+    https.createServer({ key: fs.readFileSync(KEY), cert: fs.readFileSync(CERT) }, app)
+        .listen(PORT, () => log(`akkome-relay HTTPS 시작 :${PORT} · type=${NAVER_TYPE}`));
+} else {
+    app.listen(PORT, () => log(`akkome-relay HTTP 시작 :${PORT} · type=${NAVER_TYPE} (인증서 없음 — HTTP)`));
+}

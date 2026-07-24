@@ -56,6 +56,18 @@ else
   echo "④ .env 이미 존재 — 값 보존(덮어쓰지 않음)"
 fi
 
+# ④-2 HTTPS 자체서명 인증서 (없을 때만 생성). SAN=고정 공인IP → IP로 접속해도 검증 통과.
+if [ ! -f cert.pem ] || [ ! -f key.pem ]; then
+  echo "④-2 HTTPS 인증서 생성 (자체서명, 10년)..."
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 3650 \
+    -subj "/CN=akkome-relay" -addext "subjectAltName=IP:101.79.16.213" >/dev/null 2>&1
+  chmod 600 key.pem
+  NEW_CERT=1
+else
+  echo "④-2 HTTPS 인증서 이미 존재 — 유지"
+  NEW_CERT=0
+fi
+
 # ⑤ 자동실행 등록 (재부팅 후에도 자동 시작)
 echo "⑤ 자동실행(systemd) 등록..."
 cat > /etc/systemd/system/akkome-relay.service <<'SVC'
@@ -80,14 +92,16 @@ systemctl restart akkome-relay
 sleep 1
 
 echo ""
-echo "✅ 설치 완료!"
-echo "   상태: $(systemctl is-active akkome-relay)"
+echo "✅ 설치 완료!  상태: $(systemctl is-active akkome-relay)  (이제 HTTPS로 동작)"
 echo ""
-echo "   다음 순서로 진행하세요:"
-echo "   (1) 네이버 값 채우기:   sudo nano /opt/akkome-relay/.env"
-echo "        → NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 두 개를 실제 값으로 (텔레그램은 회사프로그램이 담당 — 불필요)"
-echo "        → Ctrl+O, Enter(저장), Ctrl+X(나가기)"
-echo "   (2) 재시작:            sudo systemctl restart akkome-relay"
-echo "   (3) 동작 확인:         curl -s localhost:4000/health"
-echo "   (4) 토큰 발급 확인:    curl -s 'localhost:4000/health?token=1'"
-echo "        → token_test:\"success\" 가 나오면 네이버 인증 성공!"
+echo "   ▶ 동작 확인:        curl -sk https://localhost:4000/health"
+echo "   ▶ 토큰 발급 확인:   curl -sk 'https://localhost:4000/health?token=1'"
+echo "        → token_test:\"success\" 나오면 네이버 인증 정상"
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "  🔐 HTTPS 인증서 (아래 -----BEGIN~END----- 전체를 복사해"
+echo "     Render 환경변수  NAVER_RELAY_CA  에 붙여넣으세요)"
+echo "     그리고  NAVER_RELAY_URL 을  https://101.79.16.213:4000  으로 변경"
+echo "════════════════════════════════════════════════════════════════"
+cat /opt/akkome-relay/cert.pem
+echo "════════════════════════════════════════════════════════════════"
