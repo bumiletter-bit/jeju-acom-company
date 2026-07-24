@@ -13,6 +13,9 @@ const fs = require('fs');
 const https = require('https');
 const path = require('path');
 
+// 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
+const RELAY_VERSION = '2026-07-24.2'; // 읽기 전체 허용 + 버전 노출
+
 const {
     PORT = 4000,
     NAVER_CLIENT_ID,
@@ -69,11 +72,14 @@ async function getAccessToken() {
 }
 
 // ── 허용 경로 (1차: 읽기 전용. 쓰기 전면 차단) ──
+// 대표 7/24: 읽기(GET) 전체 허용 — 정산·주문·문의·판매자정보 조회. 앞으로 새 '조회' 기능마다 재실행 불필요.
+//   쓰기(발송처리·답변등록 등 POST/PUT/DELETE)는 전면 차단(상세조회 query만 예외적 POST 허용). 5차+ 쓰기는 명시적으로 추가.
 const ALLOW = [
-    { m: 'GET',  re: /^\/external\/v1\/pay-settle\/settle\/[a-z-]+$/ },                                // 정산: 일별·건별·수수료 등 읽기
-    { m: 'GET',  re: /^\/external\/v1\/pay-order\/seller\/product-orders(\/[A-Za-z0-9_-]+)?$/ },       // 주문: 조건형 조회·변경목록·단건 상세(모두 GET 읽기)
-    { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/query$/ },                   // 주문: 상세조회(POST지만 읽기)
-    { m: 'GET',  re: /^\/external\/v1\/seller\/.+$/ },                                                 // 판매자정보 조회
+    { m: 'GET',  re: /^\/external\/v1\/pay-settle\// },                            // 정산 조회 전체
+    { m: 'GET',  re: /^\/external\/v1\/pay-order\/seller\// },                     // 주문 조회 전체(조건형·변경목록·단건·취소/반품 상태)
+    { m: 'GET',  re: /^\/external\/v1\/pay-user\// },                              // 문의 조회 등
+    { m: 'GET',  re: /^\/external\/v1\/seller\// },                                // 판매자정보 조회
+    { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/query$/ }, // 상품주문 상세조회(POST지만 읽기)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 
@@ -82,7 +88,7 @@ app.use(express.json({ limit: '2mb' }));
 
 // 헬스체크 (인증 불필요) — 토큰 발급까지 시험하려면 ?token=1
 app.get('/health', async (req, res) => {
-    const base = { ok: true, time: new Date().toISOString(), token_cached: !!tokenCache.value };
+    const base = { ok: true, version: RELAY_VERSION, time: new Date().toISOString(), token_cached: !!tokenCache.value };
     if (req.query.token === '1') {
         try { await getAccessToken(); base.token_test = 'success'; }
         catch (e) { base.token_test = 'fail'; base.token_error = e.status || e.message; }

@@ -4896,6 +4896,7 @@ app.get('/api/agent-office/naver/test', authMiddleware, adminOnly, async (req, r
         res.json({
             ok: !!(tokenOk && chain.reached),
             relay_reachable: !!health && !healthErr,
+            relay_version: health ? (health.version || '(구버전 — install.sh 재실행 권장)') : null,
             naver_token: health ? (health.token_test || 'unknown') : ('fail: ' + healthErr),
             chain, // 중계+Bearer+네이버 왕복 결과
         });
@@ -4940,7 +4941,7 @@ app.get('/api/agent-office/naver/settlements', authMiddleware, adminOnly, async 
             elements,
             raw_keys: firstRawKeys,
         });
-    } catch (err) { handleAdminErr(res, err); }
+    } catch (err) { res.json(naverFriendlyError(err)); }
 });
 
 // 대표 7/24: [4단계 A] 배송준비(PAYED + 발주확인 OK) 주문을 조건형 조회로 취합 → 송장변환용 스마트스토어 컬럼으로 매핑.
@@ -5018,8 +5019,31 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, asy
             source: 'naver-api', actor: adminActor(req),
         });
         res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys });
-    } catch (err) { handleAdminErr(res, err); }
+    } catch (err) {
+        res.json(naverFriendlyError(err));
+    }
 });
+
+// 네이버 중계 오류를 대표가 이해할 메시지로 변환 (403 원인 구분: 중계 재실행 필요 vs 네이버 권한/IP)
+function naverFriendlyError(err) {
+    const status = err.status || null;
+    const data = err.data || {};
+    if (/relay_unreachable/.test(err.message || '')) {
+        return { ok: false, message: '중계서버에 연결할 수 없습니다 (서버 꺼짐/방화벽 확인).', detail: err.message };
+    }
+    if (status === 403 && data.error === 'path_not_allowed') {
+        return { ok: false, need_relay_update: true,
+            message: '중계서버가 이 경로를 아직 허용하지 않습니다 → 중계서버에서 install.sh를 한 번 더 실행해주세요(허용목록 갱신).',
+            detail: `path_not_allowed: ${data.method || ''} ${data.path || ''}` };
+    }
+    if (status === 401 && data.error === 'unauthorized') {
+        return { ok: false, message: 'Bearer 토큰 불일치 — Render의 NAVER_RELAY_TOKEN과 중계 .env RELAY_AUTH_TOKEN이 같은지 확인.' };
+    }
+    if (status) {
+        return { ok: false, message: `네이버 API 오류 ${status} (경로/권한/IP 확인).`, detail: JSON.stringify(data).slice(0, 300) };
+    }
+    return { ok: false, message: '오류: ' + (err.message || String(err)) };
+}
 
 // 실행 상태 조회 (폴링용)
 app.get('/api/agent-office/runs/:id', authMiddleware, adminOnly, async (req, res) => {

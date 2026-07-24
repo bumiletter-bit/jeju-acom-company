@@ -6,6 +6,13 @@
 
 ---
 
+## v5.9.48 (2026-07-24 — 네이버 중계 견고화: 403 원인 구분 + 읽기 전체 허용 + 버전 노출)
+- [수정] 자동 불러오기 `naver_relay_error_403` — 원인은 중계 허용목록에 조건형 주문조회 경로가 아직 없었음(install.sh 미재실행). **중계 허용목록을 '읽기(GET) 전체'로 확대**(pay-settle·pay-order/seller·pay-user·seller) → 앞으로 새 조회 기능마다 재실행 불필요. 쓰기(발송처리 등)는 여전히 차단(상세조회 query POST만 예외)
+- [개선] **403 원인 구분** — 중계 허용목록(재실행 필요) vs 네이버 권한/IP vs Bearer 불일치 vs 연결불가를 각각 명확한 한국어 메시지로(naverFriendlyError). 정산·주문 조회 공통 적용
+- [개선] **중계서버 버전(/health)** 노출 + 연결 테스트 화면에 표시 → install.sh 재실행 반영 여부 확인 가능(현재 2026-07-24.2)
+- [검증] 로컬: 조건형 주문조회 허용·쓰기 차단·버전 노출·에러매핑 4/4 통과
+- ⏳ 대표: install.sh 한 번 더 재실행 → 연결 테스트에서 '중계버전 2026-07-24.2' 확인 → 자동 불러오기 재시도
+
 ## v5.9.47 (2026-07-24 — 네이버 4단계[A]: 송장변환 자동 불러오기)
 - [신규] **송장변환 스마트스토어 카드에 [🛰️ 네이버 자동 불러오기]** — 배송준비 주문(productOrderStatus=PAYED + placeOrderStatus=OK, 문서 확인값)을 조건형 조회(`GET /external/v1/pay-order/seller/product-orders`, rangeType=PAYED_DATETIME, 24h 순회·페이지네이션)로 가져와 **스마트스토어 엑셀과 동일 컬럼**으로 매핑 → `invoiceDataSmart` 주입 → 기존 [통합 변환] 그대로 동작
 - [원칙 준수] **변환 로직(convertDataSmart) 무수정**, **수동 엑셀 업로드 유지**. 옵션정보=productName+productOption(퍼지 매처가 파싱), 배송지=baseAddress+detailedAddress 등 구조체 필드 매핑(문서 확정)

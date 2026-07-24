@@ -2389,7 +2389,7 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
             const line = (label, good, detail) =>
                 `<div>${good ? '✅' : '❌'} <strong>${label}</strong>${detail ? ' — ' + aoEsc(String(detail)) : ''}</div>`;
             let html = '';
-            html += line('중계서버 도달', r.relay_reachable, r.relay_reachable ? '101.79.16.213:4000 응답' : '연결 안 됨');
+            html += line('중계서버 도달', r.relay_reachable, r.relay_reachable ? ('101.79.16.213:4000 · 중계버전 ' + (r.relay_version || '?')) : '연결 안 됨');
             html += line('네이버 토큰 발급', r.naver_token === 'success', r.naver_token);
             const c = r.chain || {};
             html += line('네이버 왕복(Bearer 인증)', c.reached, c.reached ? (c.note || '도달·인증 정상') : (c.reason || c.error || '실패'));
