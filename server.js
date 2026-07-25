@@ -4954,20 +4954,36 @@ async function naverFetchInvoiceOrders(days) {
     const now = Date.now();
     const isoKst = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
     const pick = (o, ...ks) => { for (const k of ks) { if (o && o[k] != null) return o[k]; } return undefined; };
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    // 대표 7/25: 네이버 초당(token bucket) rate limit — 40일치 연속 호출 시 429 발생.
+    //   대응: ①호출 사이 350ms 간격 ②429면 점점 길게 기다렸다 재시도(1s→2s→4s→8s, 최대 5회).
+    async function callWithRetry(req) {
+        for (let attempt = 0; ; attempt++) {
+            try {
+                // 재시도 중엔 알림 없이(스팸 방지) — 최종 실패 때만 아래서 1번 알림
+                return await naverRelay.callNaver(req, null);
+            } catch (e) {
+                if (e && e.status === 429 && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
+                try { await notifyTelegram(`🛰️ 네이버 주문 수집 실패 — ${e.status || ''} ${e.message || e}`); } catch (_) {}
+                throw e;
+            }
+        }
+    }
     let raws = [];
     for (let d = 0; d < days; d++) {                    // 최근 days일을 24시간 단위로 순회(조회 범위 안전)
         const to = now - d * 24 * 3600 * 1000;
         const from = to - 24 * 3600 * 1000;
         let page = 1, totalPages = 1;
         do {
-            const r = await naverRelay.callNaver({
+            if (d > 0 || page > 1) await sleep(350);    // 초당 제한 완화용 호출 간격
+            const r = await callWithRetry({
                 method: 'GET', path: '/external/v1/pay-order/seller/product-orders',
                 query: {
                     from: isoKst(from), to: isoKst(to),
                     rangeType: 'PAYED_DATETIME', productOrderStatuses: 'PAYED', placeOrderStatusType: 'OK',
                     pageSize: 300, page,
                 },
-            }, notifyTelegram);
+            });
             const body = (r && r.data) ? r.data : r;
             const items = pick(body, 'contents', 'data', 'elements', 'list') || (Array.isArray(body) ? body : []);
             raws = raws.concat(Array.isArray(items) ? items : []);
@@ -5051,6 +5067,9 @@ function naverFriendlyError(err) {
     }
     if (status === 401 && data.error === 'unauthorized') {
         return { ok: false, message: 'Bearer 토큰 불일치 — Render의 NAVER_RELAY_TOKEN과 중계 .env RELAY_AUTH_TOKEN이 같은지 확인.' };
+    }
+    if (status === 429) {
+        return { ok: false, message: '네이버 호출 제한(429) — 자동 재시도까지 실패했습니다. 1~2분 뒤 다시 눌러주세요.' };
     }
     if (status) {
         return { ok: false, message: `네이버 API 오류 ${status} (경로/권한/IP 확인).`, detail: JSON.stringify(data).slice(0, 300) };
