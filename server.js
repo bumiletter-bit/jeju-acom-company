@@ -4970,10 +4970,12 @@ async function naverFetchInvoiceOrders(days) {
         }
     }
     let raws = [];
+    let pageInfo = null; // 진단용: 첫 응답의 페이지 관련 필드(어떤 이름인지 확인)
+    const PAGE_SIZE = 300;
     for (let d = 0; d < days; d++) {                    // 최근 days일을 24시간 단위로 순회(조회 범위 안전)
         const to = now - d * 24 * 3600 * 1000;
         const from = to - 24 * 3600 * 1000;
-        let page = 1, totalPages = 1;
+        let page = 1, got = 0;
         do {
             if (d > 0 || page > 1) await sleep(350);    // 초당 제한 완화용 호출 간격
             const r = await callWithRetry({
@@ -4981,16 +4983,22 @@ async function naverFetchInvoiceOrders(days) {
                 query: {
                     from: isoKst(from), to: isoKst(to),
                     rangeType: 'PAYED_DATETIME', productOrderStatuses: 'PAYED', placeOrderStatusType: 'OK',
-                    pageSize: 300, page,
+                    pageSize: PAGE_SIZE, page,
                 },
             });
             const body = (r && r.data) ? r.data : r;
             const items = pick(body, 'contents', 'data', 'elements', 'list') || (Array.isArray(body) ? body : []);
-            raws = raws.concat(Array.isArray(items) ? items : []);
-            const pg = pick(body, 'pagination') || body || {};
-            totalPages = Number(pick(pg, 'totalPages')) || 1;
+            got = Array.isArray(items) ? items.length : 0;
+            if (got) raws = raws.concat(items);
+            if (!pageInfo && got) {                     // 진단: 페이지 필드명 확인용(항목 제외 상위 키만, PII 없음)
+                const top = {}; for (const k of Object.keys(body || {})) { if (!Array.isArray(body[k])) top[k] = body[k]; }
+                pageInfo = naverMaskPII(top);
+            }
             page++;
-        } while (page <= totalPages && page <= 20);
+            // 대표 7/25: 응답의 totalPages 필드명을 믿지 않는다 — 이름이 다르면 1페이지로 오판해 하루 300건에서 잘림
+            //   (배송준비 1298건 중 999건만 오던 원인 추정: 예약주문 몰린 날 2페이지 이상이 버려짐).
+            //   → "꽉 채워(300건) 왔으면 다음 페이지가 있다"로 판단. 덜 채워 오면 그 날은 끝. 상한 50p(=하루 15,000건).
+        } while (got === PAGE_SIZE && page <= 50);
     }
     const seen = new Set(); const rows = []; let rawKeys = null;
     for (const it of raws) {
@@ -5018,7 +5026,7 @@ async function naverFetchInvoiceOrders(days) {
     }
     // 진단용: 첫 응답 항목을 개인정보 가림 처리해 구조만 노출(품목 필드는 보이게 — 미매칭 원인 파악용)
     const sample = raws.length ? naverMaskPII(raws[0]) : null;
-    return { fetched: seen.size, rows, rawKeys, sample };
+    return { fetched: seen.size, rows, rawKeys, sample, pageInfo };
 }
 
 // 진단 샘플용 개인정보 마스킹 (품목명·옵션·수량 등은 유지, 이름·연락처·주소·메모는 *** )
@@ -5047,7 +5055,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, asy
             source: 'naver-api', actor: adminActor(req),
         });
         res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys, sample: r.sample,
-            sample_option: r.rows[0] ? r.rows[0]['옵션정보'] : null });
+            sample_option: r.rows[0] ? r.rows[0]['옵션정보'] : null, page_info: r.pageInfo });
     } catch (err) {
         res.json(naverFriendlyError(err));
     }

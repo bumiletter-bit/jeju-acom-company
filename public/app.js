@@ -5662,6 +5662,7 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
             if (r.sample_option != null || r.raw_keys) {
                 dbg = `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#888;font-size:11px;">🔧 진단(구조 보기)</summary>`
                     + `<div style="font-size:11px;color:#666;"><b>옵션정보 예시:</b> ${aoEsc(String(r.sample_option || '(없음)')).slice(0, 120)}</div>`
+                    + (r.page_info ? `<div style="font-size:11px;color:#666;"><b>페이지 정보:</b> ${aoEsc(JSON.stringify(r.page_info)).slice(0, 300)}</div>` : '')
                     + `<pre style="font-size:10px;max-height:160px;overflow:auto;background:#f6f6f8;padding:6px;border-radius:6px;">${aoEsc(JSON.stringify(r.sample || {}, null, 1)).slice(0, 1500)}</pre></details>`;
             }
             if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
