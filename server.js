@@ -4025,6 +4025,7 @@ app.post('/api/pricing', authMiddleware, adminOnly, async (req, res) => {
             [startDate, endDate, partner, JSON.stringify(items || [])]
         );
         const row = result.rows[0];
+        await syncPricingToBotProducts(items, adminActor(req)); // 대표 7/25: 새 품목명 → 판매현황 '준비중' 자동 등록 (실패해도 저장 정상)
 
         res.json({
             id: row.id, startDate: normDateSafe(row.start_date), endDate: normDateSafe(row.end_date),
@@ -4051,6 +4052,7 @@ app.put('/api/pricing/:id', authMiddleware, adminOnly, async (req, res) => {
         );
         if (result.rows.length === 0) return res.status(404).json({ error: '해당 단가표가 없습니다.' });
         const row = result.rows[0];
+        if (items) await syncPricingToBotProducts(items, adminActor(req)); // 수정으로 품목이 늘어난 경우도 연동
         res.json({
             id: row.id, startDate: normDateSafe(row.start_date), endDate: normDateSafe(row.end_date),
             partner: row.partner, items: row.items
@@ -4673,13 +4675,32 @@ async function svcSoftDeleteScenario(id, actor) {
 
 // --- 판매현황(bot_products) 서비스 (설계 2026-07-25 — 스마트스토어 판매가, 품목별 금액과 별개) ---
 //   톡톡봇이 1분 캐시로 읽어가므로 저장만 하면 자동 반영. 삭제 반영은 봇 정리 배포(deleted_at 필터) 후.
-const BOT_PRODUCT_STATUSES = ['판매중', '품절', '시즌종료'];
+// '준비중' = 봇 미노출 상태 (봇 판매현황·가격표는 판매중/품절/시즌종료만 표시) — 품목별금액 연동 신규 품목의 기본 상태
+const BOT_PRODUCT_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
 async function svcListBotProducts() {
     const r = await pool.query(
         `SELECT id, name, status, price, updated_by, updated_at FROM bot_products
          WHERE deleted_at IS NULL
-         ORDER BY CASE status WHEN '판매중' THEN 0 WHEN '품절' THEN 1 ELSE 2 END, name`);
+         ORDER BY CASE status WHEN '준비중' THEN 0 WHEN '판매중' THEN 1 WHEN '품절' THEN 2 ELSE 3 END, name`);
     return r.rows;
+}
+// 대표 7/25: 품목별 금액(결제가) 저장 → 판매현황(판매가)에 '같은 품목명'만 자동 등록.
+//   ⚠️ 결제가·판매가는 절대 복사·계산하지 않음(이름만 공유). 판매가는 직원이 수기 세팅 후 [판매중] 전환 시 봇 노출.
+//   ON CONFLICT DO NOTHING — 기존 품목·삭제(soft-delete)된 품목은 건드리지 않음(주간 단가 재등록으로 부활 금지).
+async function syncPricingToBotProducts(items, actor) {
+    try {
+        const names = [...new Set((items || []).map(it => (it && it.name != null) ? String(it.name).trim() : '').filter(Boolean))];
+        for (const name of names) {
+            const r = await pool.query(
+                `INSERT INTO bot_products (name, status, price, updated_by) VALUES ($1, '준비중', '', $2)
+                 ON CONFLICT (name) DO NOTHING RETURNING *`, [name, actor?.name || '품목별금액연동']);
+            if (r.rows.length) {
+                await writeAudit({ action: 'auto_add', targetType: 'bot_product', targetId: r.rows[0].id,
+                    changes: { after: r.rows[0], note: '품목별 금액 저장 시 자동 등록 (준비중 · 판매가 미세팅 · 봇 미노출)' },
+                    source: 'pricing-sync', actor });
+            }
+        }
+    } catch (e) { console.error('판매현황 자동 연동 실패(품목별 금액 저장은 정상):', e.message); }
 }
 async function svcCreateBotProduct({ name, price = '', status = '판매중' }, actor) {
     const nm = String(name || '').trim();

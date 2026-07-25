@@ -11468,14 +11468,15 @@ window.switchInquiryTab = function(name) {
     if (name === 'products') renderBotProducts().catch(console.error);
     else renderInquiryLogs().catch(console.error);
 };
-const BOTPROD_STATUSES = ['판매중', '품절', '시즌종료'];
+// '준비중' = 봇 미노출 (판매가 세팅 전 상태 — 품목별 금액 연동으로 자동 등록된 신규 품목)
+const BOTPROD_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
 async function renderBotProducts() {
     const d = await api('/api/agent-office/bot-products');
     botProducts = d.products || [];
     const isAdmin = currentUser?.role === 'admin';
     const rows = botProducts.map(p => `
         <tr>
-            <td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span style="font-size:11px; color:#b45309; background:#fef3c7; border-radius:99px; padding:2px 8px; white-space:nowrap;">가격 미세팅 · 봇 미노출</span>' : ''}</td>
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
                 `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" onclick="setBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
