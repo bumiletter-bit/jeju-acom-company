@@ -4678,6 +4678,30 @@ app.get('/api/admin/settlements', authMiddleware, adminOnly, async (req, res) =>
     try { res.json({ settlements: await svcGetSettlements({ from: req.query.from, to: req.query.to }) }); }
     catch (err) { handleAdminErr(res, err); }
 });
+// 문의시나리오: 톡톡봇 조회용 (설계 2026-07-25) — 신규 Bearer(SCENARIO_API_TOKEN, 양쪽 Render env로만 보관)
+//   PII 없음(시나리오 문구뿐). 사용중·미삭제만 번호순. auto_reply='off'면 봇이 시나리오 응답 중단.
+app.get('/api/scenarios', async (req, res) => {
+    try {
+        const need = process.env.SCENARIO_API_TOKEN;
+        if (!need) return res.status(503).json({ error: 'SCENARIO_API_TOKEN 미설정 (Render 환경변수)' });
+        const got = (req.headers.authorization || '').replace('Bearer ', '');
+        if (got !== need) return res.status(401).json({ error: 'unauthorized' });
+        const channel = String(req.query.channel || 'talktalk');
+        const chs = channel === 'talktalk' ? ['톡톡', '공통']
+                  : channel === 'product' ? ['상품문의', '공통'] : ['톡톡', '상품문의', '공통'];
+        const r = await pool.query(
+            `SELECT scenario_no, name, keywords, response, action, channel, updated_at
+             FROM inquiry_scenarios
+             WHERE enabled = true AND deleted_at IS NULL AND channel = ANY($1)
+             ORDER BY scenario_no ASC, id ASC`, [chs]);
+        const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inquiry_auto_reply'`);
+        const autoReply = cfg.rows.length ? cfg.rows[0].value : 'on';
+        res.json({
+            ok: true, auto_reply: autoReply, count: r.rows.length, scenarios: r.rows,
+            updated_max: r.rows.reduce((m, x) => (!m || x.updated_at > m) ? x.updated_at : m, null),
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // ============================================================
 // === AGENT OFFICE API (/api/agent-office/*) — 1차: 대표 전용 ===
