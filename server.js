@@ -4600,6 +4600,60 @@ async function svcDeactivateItem(id, actor) {
     return r.rows[0];
 }
 
+// --- 문의시나리오 서비스 (설계 2026-07-25 — 추가·수정은 직원 가능, 삭제·전체스위치는 대표 전용) ---
+const SCENARIO_ACTIONS = ['자동응답', '담당자연결'];
+const SCENARIO_CHANNELS = ['톡톡', '상품문의', '공통'];
+async function svcListScenarios() {
+    const r = await pool.query(
+        `SELECT id, scenario_no, name, keywords, response, action, enabled, channel, updated_by, updated_at
+         FROM inquiry_scenarios WHERE deleted_at IS NULL ORDER BY scenario_no ASC, id ASC`);
+    return r.rows;
+}
+async function svcCreateScenario({ name, keywords = [], response, action = '자동응답', channel = '톡톡', enabled = true }, actor) {
+    if (!name || !String(name).trim()) throw { status: 400, message: '시나리오명(name)은 필수입니다' };
+    if (!response || !String(response).trim()) throw { status: 400, message: '답변문구(response)는 필수입니다' };
+    if (!SCENARIO_ACTIONS.includes(action)) throw { status: 400, message: '동작은 자동응답/담당자연결 중 하나여야 합니다' };
+    if (!SCENARIO_CHANNELS.includes(channel)) throw { status: 400, message: '채널은 톡톡/상품문의/공통 중 하나여야 합니다' };
+    const kw = Array.isArray(keywords) ? keywords.map(k => String(k).trim()).filter(Boolean) : [];
+    const no = (await pool.query(`SELECT COALESCE(MAX(scenario_no), 0) + 1 AS n FROM inquiry_scenarios`)).rows[0].n;
+    const r = await pool.query(
+        `INSERT INTO inquiry_scenarios (scenario_no, name, keywords, response, action, channel, enabled, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [no, String(name).trim(), JSON.stringify(kw), response, action, channel, enabled !== false, actor?.name || null]);
+    const row = r.rows[0];
+    await writeAudit({ action: 'create', targetType: 'inquiry_scenario', targetId: row.id, changes: { after: row }, source: 'inquiry-scenario', actor });
+    return row;
+}
+async function svcUpdateScenario(id, patch, actor) {
+    const cur = await pool.query('SELECT * FROM inquiry_scenarios WHERE id=$1 AND deleted_at IS NULL', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '시나리오를 찾을 수 없습니다' };
+    const before = cur.rows[0];
+    if (patch.action !== undefined && !SCENARIO_ACTIONS.includes(patch.action)) throw { status: 400, message: '동작 값이 잘못되었습니다' };
+    if (patch.channel !== undefined && !SCENARIO_CHANNELS.includes(patch.channel)) throw { status: 400, message: '채널 값이 잘못되었습니다' };
+    const sets = ['updated_at = NOW()']; const params = [];
+    for (const f of ['name', 'response', 'action', 'channel', 'enabled']) {
+        if (patch[f] !== undefined) { params.push(patch[f]); sets.push(`${f}=$${params.length}`); }
+    }
+    if (patch.keywords !== undefined) {
+        const kw = Array.isArray(patch.keywords) ? patch.keywords.map(k => String(k).trim()).filter(Boolean) : [];
+        params.push(JSON.stringify(kw)); sets.push(`keywords=$${params.length}`);
+    }
+    if (params.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
+    params.push(actor?.name || null); sets.push(`updated_by=$${params.length}`);
+    params.push(id);
+    const r = await pool.query(`UPDATE inquiry_scenarios SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
+    const after = r.rows[0];
+    await writeAudit({ action: 'update', targetType: 'inquiry_scenario', targetId: Number(id), changes: { before, after }, source: 'inquiry-scenario', actor });
+    return after;
+}
+async function svcSoftDeleteScenario(id, actor) {
+    const cur = await pool.query('SELECT * FROM inquiry_scenarios WHERE id=$1 AND deleted_at IS NULL', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '시나리오를 찾을 수 없습니다' };
+    const r = await pool.query(`UPDATE inquiry_scenarios SET deleted_at=NOW(), updated_by=$2, updated_at=NOW() WHERE id=$1 RETURNING *`, [id, actor?.name || null]);
+    await writeAudit({ action: 'delete', targetType: 'inquiry_scenario', targetId: Number(id), changes: { before: cur.rows[0] }, source: 'inquiry-scenario', actor });
+    return r.rows[0];
+}
+
 // --- 정산 서비스 (읽기 전용) ---
 async function svcGetSettlements({ from, to }) {
     const cond = []; const params = [];
@@ -4678,6 +4732,44 @@ app.post('/api/admin/items/:id/deactivate', authMiddleware, adminOnly, async (re
 app.get('/api/admin/settlements', authMiddleware, adminOnly, async (req, res) => {
     try { res.json({ settlements: await svcGetSettlements({ from: req.query.from, to: req.query.to }) }); }
     catch (err) { handleAdminErr(res, err); }
+});
+// --- 문의시나리오 관리 라우트 (직원 가능 / 삭제·전체스위치만 대표 전용) ---
+app.get('/api/agent-office/scenarios', authMiddleware, async (req, res) => {
+    try {
+        const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inquiry_auto_reply'`);
+        res.json({ scenarios: await svcListScenarios(), auto_reply: cfg.rows.length ? cfg.rows[0].value : 'on' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/scenarios', authMiddleware, async (req, res) => {
+    try { res.json({ message: '시나리오가 추가되었습니다', scenario: await svcCreateScenario(req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/scenarios/:id', authMiddleware, async (req, res) => {
+    try { res.json({ message: '시나리오가 수정되었습니다', scenario: await svcUpdateScenario(req.params.id, req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.delete('/api/agent-office/scenarios/:id', authMiddleware, adminOnly, async (req, res) => {
+    if (!requireConfirm(req, res)) return;
+    try { res.json({ message: '시나리오가 삭제되었습니다(복구 가능)', scenario: await svcSoftDeleteScenario(req.params.id, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/scenarios-auto-reply', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const value = req.body?.value === 'off' ? 'off' : 'on';
+        await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('inquiry_auto_reply', $1::jsonb)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(value)]);
+        await writeAudit({ action: 'auto_reply_' + value, targetType: 'inquiry_scenario', targetId: null,
+            changes: { after: { auto_reply: value } }, source: 'inquiry-scenario', actor: adminActor(req) });
+        res.json({ message: `전체 자동응답을 ${value === 'on' ? '켰습니다' : '껐습니다'}`, auto_reply: value });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.get('/api/agent-office/scenario-logs', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+             WHERE target_type = 'inquiry_scenario' ORDER BY id DESC LIMIT 100`);
+        res.json({ logs: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
 });
 // 문의시나리오: 톡톡봇 조회용 (설계 2026-07-25) — 신규 Bearer(SCENARIO_API_TOKEN, 양쪽 Render env로만 보관)
 //   PII 없음(시나리오 문구뿐). 사용중·미삭제만 번호순. auto_reply='off'면 봇이 시나리오 응답 중단.
