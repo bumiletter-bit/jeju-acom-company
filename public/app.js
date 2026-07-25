@@ -11445,6 +11445,7 @@ function setupInquiryPage() {
 }
 async function renderInquiryLogs() {
     const d = await api('/api/agent-office/scenario-logs');
+    if (inquiryActiveTab !== 'scenario') return; // 이력 카드 공용 — 활성 탭 이력만 표시(늦게 온 응답이 덮어쓰는 경합 방지)
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || (l.action.startsWith('auto_reply') ? '전체 자동응답' : '');
         const act = { create: '추가', update: '수정', delete: '삭제', auto_reply_on: '전체 ON', auto_reply_off: '전체 OFF' }[l.action] || l.action;
@@ -11507,6 +11508,7 @@ window.deleteBotProd = async function(id) {
 };
 async function renderBotProductLogs() {
     const d = await api('/api/agent-office/bot-product-logs');
+    if (inquiryActiveTab !== 'products') return; // 이력 카드 공용 — 활성 탭 이력만 표시(경합 방지)
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || '';
         const act = { create: '추가', restore: '복구', update: '수정', delete: '삭제' }[l.action] || l.action;
