@@ -4882,10 +4882,10 @@ app.put('/api/agent-office/bot-products/:id', authMiddleware, async (req, res) =
     try { res.json({ message: '저장되었습니다 (봇 답변에 1분 내 반영)', product: await svcUpdateBotProduct(req.params.id, req.body || {}, adminActor(req)) }); }
     catch (err) { handleAdminErr(res, err); }
 });
+// 대표 7/25: 판매현황 품목 삭제 금지 — 실판매 상품이므로 상태(품절/시즌종료)로만 관리. 라우트는 정책 안내만 반환.
+//   (svcSoftDeleteBotProduct는 관리 목적 보존 — 화면·API 경로에서는 사용 안 함)
 app.delete('/api/agent-office/bot-products/:id', authMiddleware, adminOnly, async (req, res) => {
-    if (!requireConfirm(req, res)) return;
-    try { res.json({ message: '품목이 삭제되었습니다(복구 가능)', product: await svcSoftDeleteBotProduct(req.params.id, adminActor(req)) }); }
-    catch (err) { handleAdminErr(res, err); }
+    res.status(400).json({ error: '판매현황 품목은 삭제할 수 없습니다 — 판매를 멈추려면 상태를 품절 또는 시즌종료로 바꿔주세요.' });
 });
 app.get('/api/agent-office/bot-product-logs', authMiddleware, async (req, res) => {
     try {

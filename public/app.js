@@ -11473,7 +11473,6 @@ const BOTPROD_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
 async function renderBotProducts() {
     const d = await api('/api/agent-office/bot-products');
     botProducts = d.products || [];
-    const isAdmin = currentUser?.role === 'admin';
     const rows = botProducts.map(p => `
         <tr>
             <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span style="font-size:11px; color:#b45309; background:#fef3c7; border-radius:99px; padding:2px 8px; white-space:nowrap;">가격 미세팅 · 봇 미노출</span>' : ''}</td>
@@ -11482,7 +11481,6 @@ async function renderBotProducts() {
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
             <td style="white-space:nowrap;">
                 <button class="btn-sm btn-outline" onclick="saveBotProdPrice(${p.id})">저장</button>
-                ${isAdmin ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
             </td>
         </tr>`).join('');
     document.getElementById('botprod-list').innerHTML = `
@@ -11500,13 +11498,7 @@ window.saveBotProdPrice = async function(id) {
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
-window.deleteBotProd = async function(id) {
-    const p = botProducts.find(x => x.id === id);
-    if (!p || !confirm(`"${p.name}" 품목을 삭제할까요? (복구 가능)`)) return;
-    try { await api('/api/agent-office/bot-products/' + id, 'DELETE', { confirm: true }); }
-    catch (e) { alert(e.message); }
-    renderBotProducts().catch(console.error);
-};
+// 대표 7/25: 삭제 기능 제거 — 판매현황 품목은 실판매 상품이므로 삭제 불가. 상태(품절/시즌종료)로만 관리.
 async function renderBotProductLogs() {
     const d = await api('/api/agent-office/bot-product-logs');
     if (inquiryActiveTab !== 'products') return; // 이력 카드 공용 — 활성 탭 이력만 표시(경합 방지)
