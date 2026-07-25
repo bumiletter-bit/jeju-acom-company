@@ -301,6 +301,7 @@ function switchPage(pageName) {
     if (pageName === 'planner') renderPlannerPage().catch(console.error);
     if (pageName === 'inventory') renderBoxInventory().catch(console.error);
     if (pageName === 'cs-room') renderCsTemplates().catch(console.error);
+    if (pageName === 'inquiry') renderInquiryPage().catch(console.error);
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
     if (pageName === 'myinfo') renderMyInfoPage();
     if (pageName === 'agent-office') renderAgentOffice().catch(console.error);
@@ -11340,3 +11341,114 @@ window.aoOpenReport = async function(runId) {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
 }
+
+// =============================================
+// 문의 관리 (문의시나리오 DB 통합 2026-07-25)
+// 직원: 추가·수정·개별 ON/OFF / 대표만: 삭제·전체 자동응답 스위치
+// =============================================
+let inquiryScenarios = [];
+async function renderInquiryPage() {
+    const d = await api('/api/agent-office/scenarios');
+    inquiryScenarios = d.scenarios || [];
+    const isAdmin = currentUser?.role === 'admin';
+    document.getElementById('inquiry-count').textContent = `(${inquiryScenarios.length}건)`;
+    const wrap = document.getElementById('inquiry-auto-reply-wrap');
+    wrap.style.display = isAdmin ? 'inline-flex' : 'none';
+    document.getElementById('inquiry-auto-reply-toggle').checked = d.auto_reply !== 'off';
+    const rows = inquiryScenarios.map(s => `
+        <tr>
+            <td>${s.scenario_no}</td>
+            <td>${escapeHtml(s.name)}</td>
+            <td>${escapeHtml(s.channel)}</td>
+            <td>${escapeHtml(s.action)}</td>
+            <td><input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)"></td>
+            <td><button class="btn-sm btn-outline" onclick="openScenarioEdit(${s.id})">수정</button></td>
+        </tr>`).join('');
+    document.getElementById('inquiry-list').innerHTML = `
+        <table class="data-table"><thead><tr><th>번호</th><th>시나리오명</th><th>채널</th><th>동작</th><th>사용</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    renderInquiryLogs().catch(console.error);
+}
+window.toggleScenario = async function(id, enabled) {
+    try { await api(`/api/agent-office/scenarios/${id}`, 'PUT', { enabled }); }
+    catch (e) { alert(e.message); }
+    renderInquiryPage().catch(console.error);
+};
+window.openScenarioEdit = function(id) {
+    const s = inquiryScenarios.find(x => x.id === id);
+    if (!s) return;
+    document.getElementById('inquiry-edit-card').style.display = '';
+    document.getElementById('inquiry-edit-title').textContent = `시나리오 수정 — #${s.scenario_no} ${s.name}`;
+    document.getElementById('inquiry-edit-id').value = s.id;
+    document.getElementById('inquiry-edit-name').value = s.name;
+    document.getElementById('inquiry-edit-keywords').value = (s.keywords || []).join(', ');
+    document.getElementById('inquiry-edit-response').value = s.response;
+    document.getElementById('inquiry-edit-action').value = s.action;
+    document.getElementById('inquiry-edit-channel').value = s.channel;
+    document.getElementById('inquiry-edit-enabled').checked = !!s.enabled;
+    document.getElementById('btn-inquiry-delete').style.display = currentUser?.role === 'admin' ? '' : 'none';
+    updateInquiryPreview();
+    document.getElementById('inquiry-edit-card').scrollIntoView({ behavior: 'smooth' });
+};
+function updateInquiryPreview() {
+    document.getElementById('inquiry-preview').textContent = document.getElementById('inquiry-edit-response').value;
+}
+function setupInquiryPage() {
+    document.getElementById('btn-inquiry-add').addEventListener('click', () => {
+        document.getElementById('inquiry-edit-card').style.display = '';
+        document.getElementById('inquiry-edit-title').textContent = '새 시나리오';
+        document.getElementById('inquiry-edit-id').value = '';
+        ['inquiry-edit-name', 'inquiry-edit-keywords', 'inquiry-edit-response'].forEach(i => document.getElementById(i).value = '');
+        document.getElementById('inquiry-edit-action').value = '자동응답';
+        document.getElementById('inquiry-edit-channel').value = '톡톡';
+        document.getElementById('inquiry-edit-enabled').checked = true;
+        document.getElementById('btn-inquiry-delete').style.display = 'none';
+        updateInquiryPreview();
+    });
+    document.getElementById('inquiry-edit-response').addEventListener('input', updateInquiryPreview);
+    document.getElementById('btn-inquiry-cancel').addEventListener('click', () => {
+        document.getElementById('inquiry-edit-card').style.display = 'none';
+    });
+    document.getElementById('btn-inquiry-save').addEventListener('click', async () => {
+        const id = document.getElementById('inquiry-edit-id').value;
+        const body = {
+            name: document.getElementById('inquiry-edit-name').value.trim(),
+            keywords: document.getElementById('inquiry-edit-keywords').value.split(',').map(s => s.trim()).filter(Boolean),
+            response: document.getElementById('inquiry-edit-response').value,
+            action: document.getElementById('inquiry-edit-action').value,
+            channel: document.getElementById('inquiry-edit-channel').value,
+            enabled: document.getElementById('inquiry-edit-enabled').checked,
+        };
+        try {
+            if (id) await api(`/api/agent-office/scenarios/${id}`, 'PUT', body);
+            else await api('/api/agent-office/scenarios', 'POST', body);
+            document.getElementById('inquiry-edit-card').style.display = 'none';
+            renderInquiryPage().catch(console.error);
+        } catch (e) { alert(e.message); }
+    });
+    document.getElementById('btn-inquiry-delete').addEventListener('click', async () => {
+        const id = document.getElementById('inquiry-edit-id').value;
+        if (!id || !confirm('이 시나리오를 삭제할까요? (복구는 대표에게 요청)')) return;
+        try {
+            await api(`/api/agent-office/scenarios/${id}`, 'DELETE', { confirm: true });
+            document.getElementById('inquiry-edit-card').style.display = 'none';
+            renderInquiryPage().catch(console.error);
+        } catch (e) { alert(e.message); }
+    });
+    document.getElementById('inquiry-auto-reply-toggle').addEventListener('change', async (e) => {
+        try { await api('/api/agent-office/scenarios-auto-reply', 'PUT', { value: e.target.checked ? 'on' : 'off' }); }
+        catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
+    });
+}
+async function renderInquiryLogs() {
+    const d = await api('/api/agent-office/scenario-logs');
+    const rows = (d.logs || []).map(l => {
+        const name = l.changes?.after?.name || l.changes?.before?.name || (l.action.startsWith('auto_reply') ? '전체 자동응답' : '');
+        const act = { create: '추가', update: '수정', delete: '삭제', auto_reply_on: '전체 ON', auto_reply_off: '전체 OFF' }[l.action] || l.action;
+        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${act}</td><td>${escapeHtml(name)}</td></tr>`;
+    }).join('');
+    document.getElementById('inquiry-logs').innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<p class="text-muted">이력이 없습니다</p>';
+}
+setupInquiryPage();
