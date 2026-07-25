@@ -11445,7 +11445,7 @@ async function renderInquiryLogs() {
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || (l.action.startsWith('auto_reply') ? '전체 자동응답' : '');
         const act = { create: '추가', update: '수정', delete: '삭제', auto_reply_on: '전체 ON', auto_reply_off: '전체 OFF' }[l.action] || l.action;
-        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${act}</td><td>${escapeHtml(name)}</td></tr>`;
+        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(name)}</td></tr>`;
     }).join('');
     document.getElementById('inquiry-logs').innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
