@@ -11473,6 +11473,7 @@ const BOTPROD_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
 async function renderBotProducts() {
     const d = await api('/api/agent-office/bot-products');
     botProducts = d.products || [];
+    const isAdmin = currentUser?.role === 'admin';
     const rows = botProducts.map(p => `
         <tr>
             <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span style="font-size:11px; color:#b45309; background:#fef3c7; border-radius:99px; padding:2px 8px; white-space:nowrap;">가격 미세팅 · 봇 미노출</span>' : ''}</td>
@@ -11481,6 +11482,7 @@ async function renderBotProducts() {
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
             <td style="white-space:nowrap;">
                 <button class="btn-sm btn-outline" onclick="saveBotProdPrice(${p.id})">저장</button>
+                ${(isAdmin && p.deletable) ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
             </td>
         </tr>`).join('');
     document.getElementById('botprod-list').innerHTML = `
@@ -11498,7 +11500,14 @@ window.saveBotProdPrice = async function(id) {
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
-// 대표 7/25: 삭제 기능 제거 — 판매현황 품목은 실판매 상품이므로 삭제 불가. 상태(품절/시즌종료)로만 관리.
+// 대표 7/25(2차): 삭제는 '예외·수동 추가 품목'만(대표 전용) — 품목별 금액 매칭(연동) 품목은 삭제 버튼 자체가 없음(상태로만 관리)
+window.deleteBotProd = async function(id) {
+    const p = botProducts.find(x => x.id === id);
+    if (!p || !confirm(`"${p.name}" 품목을 삭제할까요? (예외 품목 — 복구 가능)`)) return;
+    try { await api('/api/agent-office/bot-products/' + id, 'DELETE', { confirm: true }); }
+    catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
 async function renderBotProductLogs() {
     const d = await api('/api/agent-office/bot-product-logs');
     if (inquiryActiveTab !== 'products') return; // 이력 카드 공용 — 활성 탭 이력만 표시(경합 방지)
@@ -11511,6 +11520,22 @@ async function renderBotProductLogs() {
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">이력이 없습니다</p>';
 }
-// 대표 7/25: 수동 [품목 추가] UI 제거 — 품목명은 품목별 금액 저장 시 자동 등록(준비중)으로만 유입.
-//   (POST API·복구 로직은 존치 — 삭제 품목 복구 등 필요 시 사용)
+// 대표 7/25(2차): 예외 품목(사전예약특가 등 단가표에 없는 상품)용 [품목 추가] 부활 — 이렇게 추가한 것만 삭제 가능
+function setupBotProductsTab() {
+    document.getElementById('btn-botprod-add-toggle').addEventListener('click', () => {
+        const f = document.getElementById('botprod-add-form');
+        f.style.display = f.style.display === 'none' ? 'flex' : 'none';
+    });
+    document.getElementById('btn-botprod-add').addEventListener('click', async () => {
+        const name = document.getElementById('botprod-add-name').value.trim();
+        if (!name) return alert('품목명을 입력하세요');
+        try {
+            await api('/api/agent-office/bot-products', 'POST', { name, price: document.getElementById('botprod-add-price').value });
+            document.getElementById('botprod-add-name').value = '';
+            document.getElementById('botprod-add-price').value = '';
+            renderBotProducts().catch(console.error);
+        } catch (e) { alert(e.message); }
+    });
+}
 setupInquiryPage();
+setupBotProductsTab();

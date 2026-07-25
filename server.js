@@ -4677,12 +4677,27 @@ async function svcSoftDeleteScenario(id, actor) {
 //   톡톡봇이 1분 캐시로 읽어가므로 저장만 하면 자동 반영. 삭제 반영은 봇 정리 배포(deleted_at 필터) 후.
 // '준비중' = 봇 미노출 상태 (봇 판매현황·가격표는 판매중/품절/시즌종료만 표시) — 품목별금액 연동 신규 품목의 기본 상태
 const BOT_PRODUCT_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
+// 오늘 유효한 품목별 금액의 품목명 집합 — 이 이름과 매칭되면 '연동 품목'(삭제 불가, 상태로만 관리)
+async function todayLinkedBotProductNames() {
+    const kstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const pr = await pool.query('SELECT items FROM pricing WHERE start_date <= $1 AND end_date >= $1', [kstToday]);
+    const linked = new Set();
+    for (const row of pr.rows) {
+        for (const it of (Array.isArray(row.items) ? row.items : [])) {
+            const n = (it && it.name != null) ? String(it.name).trim() : '';
+            if (n) linked.add(n);
+        }
+    }
+    return linked;
+}
 async function svcListBotProducts() {
+    const linked = await todayLinkedBotProductNames();
     const r = await pool.query(
         `SELECT id, name, status, price, updated_by, updated_at FROM bot_products
          WHERE deleted_at IS NULL
          ORDER BY CASE status WHEN '준비중' THEN 0 WHEN '판매중' THEN 1 WHEN '품절' THEN 2 ELSE 3 END, name`);
-    return r.rows;
+    // 대표 7/25: 품목별 금액 매칭 품목은 삭제 불가 — 예외(사전예약특가 등)·수동 추가 품목만 삭제 허용
+    return r.rows.map(p => ({ ...p, deletable: !linked.has(p.name) }));
 }
 // 대표 7/25: 품목별 금액(결제가) 저장 → 판매현황(판매가)에 '같은 품목명'만 자동 등록.
 //   ⚠️ 결제가·판매가는 절대 복사·계산하지 않음(이름만 공유). 판매가는 직원이 수기 세팅 후 [판매중] 전환 시 봇 노출.
@@ -4882,10 +4897,19 @@ app.put('/api/agent-office/bot-products/:id', authMiddleware, async (req, res) =
     try { res.json({ message: '저장되었습니다 (봇 답변에 1분 내 반영)', product: await svcUpdateBotProduct(req.params.id, req.body || {}, adminActor(req)) }); }
     catch (err) { handleAdminErr(res, err); }
 });
-// 대표 7/25: 판매현황 품목 삭제 금지 — 실판매 상품이므로 상태(품절/시즌종료)로만 관리. 라우트는 정책 안내만 반환.
-//   (svcSoftDeleteBotProduct는 관리 목적 보존 — 화면·API 경로에서는 사용 안 함)
+// 대표 7/25(2차): 품목별 금액과 매칭되는 연동 품목은 삭제 불가(상태로만 관리).
+//   예외 품목(사전예약특가 등 단가표에 없는 것)·수동 추가 품목만 대표가 삭제 가능.
 app.delete('/api/agent-office/bot-products/:id', authMiddleware, adminOnly, async (req, res) => {
-    res.status(400).json({ error: '판매현황 품목은 삭제할 수 없습니다 — 판매를 멈추려면 상태를 품절 또는 시즌종료로 바꿔주세요.' });
+    if (!requireConfirm(req, res)) return;
+    try {
+        const cur = await pool.query('SELECT name FROM bot_products WHERE id=$1 AND deleted_at IS NULL', [req.params.id]);
+        if (cur.rows.length === 0) throw { status: 404, message: '품목을 찾을 수 없습니다' };
+        const linked = await todayLinkedBotProductNames();
+        if (linked.has(cur.rows[0].name)) {
+            throw { status: 400, message: '품목별 금액과 연동된 품목은 삭제할 수 없습니다 — 판매를 멈추려면 상태를 품절/시즌종료로 바꿔주세요.' };
+        }
+        res.json({ message: '품목이 삭제되었습니다(복구 가능)', product: await svcSoftDeleteBotProduct(req.params.id, adminActor(req)) });
+    } catch (err) { handleAdminErr(res, err); }
 });
 app.get('/api/agent-office/bot-product-logs', authMiddleware, async (req, res) => {
     try {

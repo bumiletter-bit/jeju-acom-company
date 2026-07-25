@@ -1857,9 +1857,14 @@
                     <div class="card">
                         <div class="card-header-row">
                             <h2>🏷️ 판매현황·가격 <span class="text-muted" style="font-size:13px; font-weight:400;">스마트스토어 판매가 — 품목별 금액(거래처 결제가)과 다른 데이터입니다</span></h2>
+                            <button class="btn-primary" id="btn-botprod-add-toggle">+ 품목 추가 (예외)</button>
                         </div>
-                        <!-- 대표 7/25: 수동 [품목 추가] 제거 — 품목명은 품목별 금액 저장 시 자동 등록(준비중)으로만 유입 -->
-                        <p class="text-muted" style="font-size:13px; margin:4px 0 10px;">저장하면 톡톡봇 답변({{가격표}}·{{판매현황}})에 1분 내 자동 반영됩니다.<br>품목은 <b>품목별 금액에 저장하면 자동 등록</b>됩니다(<b>준비중 = 봇 미노출</b>) — 판매가 입력 후 [판매중]을 누르면 손님에게 보입니다.</p>
+                        <p class="text-muted" style="font-size:13px; margin:4px 0 10px;">저장하면 톡톡봇 답변({{가격표}}·{{판매현황}})에 1분 내 자동 반영됩니다.<br>품목은 <b>품목별 금액에 저장하면 자동 등록</b>됩니다(<b>준비중 = 봇 미노출</b>) — 판매가 입력 후 [판매중]을 누르면 손님에게 보입니다.<br>[+ 품목 추가]는 <b>단가표에 없는 예외 상품</b>(사전예약특가 등)용 — 예외·수동 추가 품목만 삭제할 수 있고, 품목별 금액과 매칭되는 품목은 삭제 불가(상태로만 관리)입니다.</p>
+                        <div id="botprod-add-form" style="display:none; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                            <input type="text" id="botprod-add-name" placeholder="품목명 (예: ★사전예약특가★ 청귤(풋귤) 5kg)" style="flex:1; min-width:180px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="botprod-add-price" placeholder="판매가 (예: 18,800원)" style="width:140px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <button class="btn-primary" id="btn-botprod-add">추가</button>
+                        </div>
                         <div id="botprod-list" style="overflow-x:auto;"></div>
                     </div>
                 </div>
@@ -2074,6 +2079,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=265"></script>
+    <script src="app.js?v=266"></script>
 </body>
 </html>
