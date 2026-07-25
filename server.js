@@ -4630,6 +4630,9 @@ async function svcUpdateScenario(id, patch, actor) {
     const before = cur.rows[0];
     if (patch.action !== undefined && !SCENARIO_ACTIONS.includes(patch.action)) throw { status: 400, message: '동작 값이 잘못되었습니다' };
     if (patch.channel !== undefined && !SCENARIO_CHANNELS.includes(patch.channel)) throw { status: 400, message: '채널 값이 잘못되었습니다' };
+    // 빈값 방어: 이름·답변문구를 빈 문자열로 덮어쓰는 실수 차단 (봇이 빈 응답을 보내는 사고 방지)
+    if (patch.name !== undefined && !String(patch.name).trim()) throw { status: 400, message: '시나리오명은 비울 수 없습니다' };
+    if (patch.response !== undefined && !String(patch.response).trim()) throw { status: 400, message: '답변문구는 비울 수 없습니다' };
     const sets = ['updated_at = NOW()']; const params = [];
     for (const f of ['name', 'response', 'action', 'channel', 'enabled']) {
         if (patch[f] !== undefined) { params.push(patch[f]); sets.push(`${f}=$${params.length}`); }
