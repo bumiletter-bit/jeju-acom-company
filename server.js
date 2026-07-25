@@ -4947,7 +4947,10 @@ app.get('/api/agent-office/naver/settlements', authMiddleware, adminOnly, async 
 // 대표 7/24: [4단계 A] 배송준비(PAYED + 발주확인 OK) 주문을 조건형 조회로 취합 → 송장변환용 스마트스토어 컬럼으로 매핑.
 //   변환 로직(convertDataSmart)은 프론트 그대로. 여기선 스마트스토어 엑셀과 '같은 키'의 행 배열만 만들어 반환.
 //   중복방지: 이미 자동업로드한 productOrderId는 제외 + 신규분 기록. (발송처리 시 PAYED에서 빠져 자연 제외되는 것과 이중 안전)
-async function naverFetchInvoiceOrders(days, { excludeUploaded = true } = {}) {
+// 대표 7/25: 네이버는 '현재 배송준비 상태 전체'를 한 번에 주는 API가 없음(상태 목록조회 불가).
+//   결제일(PAYED_DATETIME) 기준으로만 조회 가능 · 1회 최대 24시간 · 최대 180일. → days일을 24h씩 훑어 취합.
+//   중복방지(이미 올림 기록)는 제거 — 중간발주 연동상 매번 '배송준비 전체'를 그대로 넘겨야 함(신규주문은 수기 발주확인).
+async function naverFetchInvoiceOrders(days) {
     const now = Date.now();
     const isoKst = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
     const pick = (o, ...ks) => { for (const k of ks) { if (o && o[k] != null) return o[k]; } return undefined; };
@@ -4973,12 +4976,7 @@ async function naverFetchInvoiceOrders(days, { excludeUploaded = true } = {}) {
             page++;
         } while (page <= totalPages && page <= 20);
     }
-    let uploaded = new Set();
-    if (excludeUploaded) {
-        const up = await pool.query(`SELECT product_order_id FROM naver_invoice_uploaded`);
-        uploaded = new Set(up.rows.map(x => x.product_order_id));
-    }
-    const seen = new Set(); const rows = []; const newIds = []; let rawKeys = null;
+    const seen = new Set(); const rows = []; let rawKeys = null;
     for (const it of raws) {
         // 대표 7/24: 네이버 응답 중첩 방어 — 항목이 content 래퍼 안에 있을 수 있음(data[].content.{order,productOrder})
         const c = it.content || it;
@@ -4986,10 +4984,9 @@ async function naverFetchInvoiceOrders(days, { excludeUploaded = true } = {}) {
         const od = c.order || it.order || po.order || {};
         const sa = po.shippingAddress || {};
         const pid = String(po.productOrderId || c.productOrderId || it.productOrderId || '');
-        if (!pid || seen.has(pid)) continue;
+        if (!pid || seen.has(pid)) continue;   // 같은 조회창 내 중복만 제거(24h 경계 겹침 방지)
         seen.add(pid);
         if (!rawKeys) rawKeys = Object.keys(it);
-        if (uploaded.has(pid)) continue;
         const addr = [sa.baseAddress, sa.detailedAddress].filter(Boolean).join(' ').trim();
         rows.push({
             '구매자명': od.ordererName || '', '구매자연락처': od.ordererTel || '',
@@ -5002,11 +4999,6 @@ async function naverFetchInvoiceOrders(days, { excludeUploaded = true } = {}) {
             '통합배송지': addr, '배송메세지': po.shippingMemo || '',
             _pid: pid,
         });
-        newIds.push(pid);
-    }
-    if (newIds.length && excludeUploaded) {
-        const vals = newIds.map((_, i) => `($${i + 1})`).join(',');
-        await pool.query(`INSERT INTO naver_invoice_uploaded (product_order_id) VALUES ${vals} ON CONFLICT DO NOTHING`, newIds);
     }
     // 진단용: 첫 응답 항목을 개인정보 가림 처리해 구조만 노출(품목 필드는 보이게 — 미매칭 원인 파악용)
     const sample = raws.length ? naverMaskPII(raws[0]) : null;
@@ -5030,12 +5022,12 @@ function naverMaskPII(v, depth = 0) {
 app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
     try {
         if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
-        const days = Math.min(Math.max(parseInt(req.query.days) || 3, 1), 31);
-        const includeAll = req.query.all === '1'; // 이미 올린 것도 포함(전체 다시 불러오기)
-        const r = await naverFetchInvoiceOrders(days, { excludeUploaded: !includeAll });
+        // 대표 7/25: 기본 40일(청귤 예약주문 성수기 — 결제일 한 달 이내분까지 커버). 화면에서 조절 가능(상한 180일).
+        const days = Math.min(Math.max(parseInt(req.query.days) || 40, 1), 180);
+        const r = await naverFetchInvoiceOrders(days);
         await writeAudit({
             action: 'naver_invoice_fetch', targetType: 'naver_order', targetId: null,
-            changes: { after: { days, fetched: r.fetched, new: r.rows.length, includeAll } },
+            changes: { after: { days, fetched: r.fetched, count: r.rows.length } },
             source: 'naver-api', actor: adminActor(req),
         });
         res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys, sample: r.sample,

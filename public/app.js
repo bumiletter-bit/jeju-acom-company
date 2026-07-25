@@ -5636,24 +5636,25 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
 //   변환/다운로드는 기존 그대로(통합 변환 버튼). 수동 엑셀 업로드도 유지.
 (function () {
     const btn = document.getElementById('invoice-auto-smart');
-    const btnAll = document.getElementById('invoice-auto-smart-all');
     if (!btn) return;
-    async function loadNaver(all) {
+    async function loadNaver() {
         const msg = document.getElementById('invoice-auto-smart-msg');
         const area = document.getElementById('invoice-upload-smart');
         const fnEl = document.getElementById('invoice-filename-smart');
-        btn.disabled = true; if (btnAll) btnAll.disabled = true;
-        if (msg) msg.textContent = '⏳ 네이버에서 배송준비 주문을 가져오는 중...';
+        const daysEl = document.getElementById('invoice-auto-smart-days');
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 40, 1), 180);
+        btn.disabled = true;
+        if (msg) msg.textContent = `⏳ 네이버에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 최대 1~2분 걸릴 수 있어요)`;
         try {
-            const r = await api('/api/agent-office/naver/invoice-orders?days=3' + (all ? '&all=1' : ''));
+            const r = await api('/api/agent-office/naver/invoice-orders?days=' + days);
             if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
             if (!r.count) {
-                if (msg) msg.innerHTML = `📭 새로 올릴 배송준비 주문이 없습니다 (조회 ${r.fetched || 0}건, 이미 올린 건 제외).`
-                    + (r.raw_keys ? '' : '<br><span style="color:#999;">배송준비 주문이 있는데도 0이면 발주확인 여부를 확인해주세요.</span>');
+                if (msg) msg.innerHTML = `📭 배송준비 주문이 없습니다 (조회 ${r.fetched || 0}건).`
+                    + '<br><span style="color:#999;">배송준비가 있는데도 0이면 ①조회 기간을 늘려보거나 ②발주확인 여부를 확인해주세요.</span>';
                 return;
             }
             invoiceDataSmart = r.rows;              // 스마트스토어 데이터로 주입 (기존 변환 로직이 그대로 처리)
-            if (fnEl) fnEl.textContent = `🛰️ 네이버 자동 ${r.count}건`;
+            if (fnEl) fnEl.textContent = `🛰️ 네이버 배송준비 ${r.count}건`;
             if (area) area.classList.add('has-file');
             updateInvoiceMergeBtn();
             showInvoiceMergedPreview();
@@ -5663,13 +5664,12 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
                     + `<div style="font-size:11px;color:#666;"><b>옵션정보 예시:</b> ${aoEsc(String(r.sample_option || '(없음)')).slice(0, 120)}</div>`
                     + `<pre style="font-size:10px;max-height:160px;overflow:auto;background:#f6f6f8;padding:6px;border-radius:6px;">${aoEsc(JSON.stringify(r.sample || {}, null, 1)).slice(0, 1500)}</pre></details>`;
             }
-            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 불러왔습니다 (조회 ${r.fetched}건${all ? '' : ' 중 신규'}). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
+            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
-        } finally { btn.disabled = false; if (btnAll) btnAll.disabled = false; }
+        } finally { btn.disabled = false; }
     }
-    btn.addEventListener('click', () => loadNaver(false));
-    if (btnAll) btnAll.addEventListener('click', () => loadNaver(true));
+    btn.addEventListener('click', loadNaver);
 })();
 
 // 송장변환 초기화

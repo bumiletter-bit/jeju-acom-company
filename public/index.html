@@ -1622,8 +1622,12 @@
                         </div>
                         <input type="file" id="invoice-file-smart" accept=".xlsx,.xls" hidden>
                         <!-- 대표 7/24: 네이버 API 자동 업로드 (배송준비 주문) — 수동 업로드와 병행 -->
-                        <button class="btn-primary" id="invoice-auto-smart" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🛰️ 네이버 자동 불러오기 (배송준비)</button>
-                        <button class="btn-secondary" id="invoice-auto-smart-all" style="width:100%; margin-top:5px; font-size:12px; padding:6px;">🔄 전체 다시 불러오기 (이미 올린 것 포함)</button>
+                        <button class="btn-primary" id="invoice-auto-smart" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🛰️ 네이버 배송준비 전체 불러오기</button>
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
+                            <span>조회 기간</span>
+                            <input type="number" id="invoice-auto-smart-days" value="40" min="1" max="180" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
+                            <span>일 (결제일 기준·최대 180)</span>
+                        </div>
                         <div id="invoice-auto-smart-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
                     </div>
 
@@ -2004,6 +2008,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=257"></script>
+    <script src="app.js?v=258"></script>
 </body>
 </html>
