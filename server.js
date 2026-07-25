@@ -5000,7 +5000,7 @@ async function naverFetchInvoiceOrders(days) {
             //   → "꽉 채워(300건) 왔으면 다음 페이지가 있다"로 판단. 덜 채워 오면 그 날은 끝. 상한 50p(=하루 15,000건).
         } while (got === PAGE_SIZE && page <= 50);
     }
-    const seen = new Set(); const rows = []; let rawKeys = null;
+    const seen = new Set(); const rows = []; let rawKeys = null; let partialAdjusted = 0;
     for (const it of raws) {
         // 대표 7/24: 네이버 응답 중첩 방어 — 항목이 content 래퍼 안에 있을 수 있음(data[].content.{order,productOrder})
         const c = it.content || it;
@@ -5011,6 +5011,12 @@ async function naverFetchInvoiceOrders(days) {
         if (!pid || seen.has(pid)) continue;   // 같은 조회창 내 중복만 제거(24h 경계 겹침 방지)
         seen.add(pid);
         if (!rawKeys) rawKeys = Object.keys(it);
+        // 대표 7/25: 부분취소 반영 — quantity는 '최초 주문 수량'이라 4박스 주문→2박스 취소여도 4로 나옴(김혜경 사례).
+        //   공식 구조체의 remainQuantity(남은 수량)가 있으면 그걸 사용, 없으면 quantity. 남은 수량 0이면 주문 제외.
+        const remainQ = Number(po.remainQuantity);
+        const qty = (Number.isFinite(remainQ) && remainQ >= 0) ? remainQ : (Number(po.quantity) || 1);
+        if (qty === 0) continue;               // 전량 취소돼 남은 수량 0 → 배송할 게 없음
+        if (Number.isFinite(remainQ) && remainQ !== Number(po.quantity)) partialAdjusted++;
         const addr = [sa.baseAddress, sa.detailedAddress].filter(Boolean).join(' ').trim();
         rows.push({
             '구매자명': od.ordererName || '', '구매자연락처': od.ordererTel || '',
@@ -5018,7 +5024,7 @@ async function naverFetchInvoiceOrders(days) {
             // 대표 7/25: 수동 엑셀의 '옵션정보(8열)'와 동일하게 = 옵션(productOption)만 사용(상품명은 매칭에 안 씀).
             //   옵션이 비면 상품명으로 폴백. 매칭기(matchProduct)가 옵션 문자열에서 과일·중량·등급을 파싱.
             '옵션정보': String(po.productOption || po.productName || '').trim(),
-            '수량': po.quantity || 1,
+            '수량': qty,
             '수취인연락처1': sa.tel1 || '', '수취인연락처2': sa.tel2 || '',
             '통합배송지': addr, '배송메세지': po.shippingMemo || '',
             _pid: pid,
@@ -5026,7 +5032,7 @@ async function naverFetchInvoiceOrders(days) {
     }
     // 진단용: 첫 응답 항목을 개인정보 가림 처리해 구조만 노출(품목 필드는 보이게 — 미매칭 원인 파악용)
     const sample = raws.length ? naverMaskPII(raws[0]) : null;
-    return { fetched: seen.size, rows, rawKeys, sample, pageInfo };
+    return { fetched: seen.size, rows, rawKeys, sample, pageInfo, partialAdjusted };
 }
 
 // 진단 샘플용 개인정보 마스킹 (품목명·옵션·수량 등은 유지, 이름·연락처·주소·메모는 *** )
@@ -5055,7 +5061,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, asy
             source: 'naver-api', actor: adminActor(req),
         });
         res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys, sample: r.sample,
-            sample_option: r.rows[0] ? r.rows[0]['옵션정보'] : null, page_info: r.pageInfo });
+            sample_option: r.rows[0] ? r.rows[0]['옵션정보'] : null, page_info: r.pageInfo, partial_adjusted: r.partialAdjusted });
     } catch (err) {
         res.json(naverFriendlyError(err));
     }

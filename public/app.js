@@ -5665,7 +5665,8 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
                     + (r.page_info ? `<div style="font-size:11px;color:#666;"><b>페이지 정보:</b> ${aoEsc(JSON.stringify(r.page_info)).slice(0, 300)}</div>` : '')
                     + `<pre style="font-size:10px;max-height:160px;overflow:auto;background:#f6f6f8;padding:6px;border-radius:6px;">${aoEsc(JSON.stringify(r.sample || {}, null, 1)).slice(0, 1500)}</pre></details>`;
             }
-            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
+            const partial = r.partial_adjusted ? ` · 부분취소 수량 반영 <strong>${r.partial_adjusted}건</strong>` : '';
+            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일${partial}). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
         } finally { btn.disabled = false; }
@@ -5779,7 +5780,8 @@ function parseInvoiceRows(data) {
             qtyRowsMain = r.rows;               // 기존 합산 로직이 그대로 처리(matchProduct가 옵션정보 파싱)
             recomputeQtyAggregate();
             document.getElementById('invoice-qty-result').style.display = '';
-            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 기준으로 집계했습니다 (최근 ${days}일).`;
+            const partial = r.partial_adjusted ? ` · 부분취소 수량 반영 <strong>${r.partial_adjusted}건</strong>` : '';
+            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 기준으로 집계했습니다 (최근 ${days}일${partial}).`;
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
         } finally { btn.disabled = false; }
