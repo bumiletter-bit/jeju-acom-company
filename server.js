@@ -5438,14 +5438,28 @@ async function naverCfgSet(key, value) {
 }
 
 // 변경분 조회 (PII 없음) — 항목 배열 반환. 24시간 제약 대비 시작 시각 클램프는 호출부에서.
+//   응답이 1회 상한(약 300건)을 넘으면 more.moreFrom/moreSequence로 이어받음(공식 배치 가이드 discussion #9) — 주문 몰린 날 누락 방지.
 async function naverFetchChanges(fromIso, toIso) {
-    const r = await naverCallWithRetry({
-        method: 'GET', path: '/external/v1/pay-order/seller/product-orders/last-changed-statuses',
-        query: { lastChangedFrom: fromIso, lastChangedTo: toIso },
-    });
-    const body = (r && r.data) ? r.data : r;
-    const list = body?.lastChangeStatuses || body?.data?.lastChangeStatuses || [];
-    return Array.isArray(list) ? list : [];
+    const out = [];
+    let from = fromIso, moreSeq = null;
+    for (let page = 0; page < 10; page++) {
+        if (page > 0) await new Promise(r => setTimeout(r, 350));
+        const query = { lastChangedFrom: from, lastChangedTo: toIso };
+        if (moreSeq != null) query.moreSequence = moreSeq;
+        const r = await naverCallWithRetry({
+            method: 'GET', path: '/external/v1/pay-order/seller/product-orders/last-changed-statuses',
+            query,
+        });
+        const body = (r && r.data) ? r.data : r;
+        const inner = body?.data || body;
+        const list = inner?.lastChangeStatuses || [];
+        if (Array.isArray(list)) out.push(...list);
+        const more = inner?.more;
+        if (!more || !more.moreFrom) break;
+        from = more.moreFrom;
+        moreSeq = (more.moreSequence != null) ? more.moreSequence : null;
+    }
+    return out;
 }
 
 async function collectSettlement() {
@@ -5488,7 +5502,8 @@ async function collectClaim() {
     const cp = await naverCfgGet('naver_claim_checkpoint');
     const fromMs = Math.max(cp ? Date.parse(cp) : now - 3600 * 1000, now - 23.5 * 3600 * 1000);
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
-    const claims = list.filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.lastChangedType || '')));
+    // 🔴 취소·반품·교환은 lastChangedType이 아니라 claimType/claimStatus 필드로 옴 (CLAIM_REQUESTED 등 — 개발자포럼 #701·#1431)
+    const claims = list.filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '')));
     await naverCfgSet('naver_claim_checkpoint', new Date(now).toISOString());
     if (claims.length > 0) notifyTelegram(`⚠️ 취소·반품·교환 변화 ${claims.length}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)`);
     return `취소·반품·교환 ${claims.length}건 (변경 ${list.length}건 검사)`;
@@ -5553,8 +5568,10 @@ app.get('/api/agent-office/naver/canceled-since', authMiddleware, adminOnly, asy
         const now = Date.now();
         const fromMs = Math.max(sinceMs, now - 23.5 * 3600 * 1000); // 24h 제약 클램프
         const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
+        // 🔴 취소·반품은 claimType/claimStatus로 판정 (lastChangedType은 CLAIM_REQUESTED 등 — 포럼 #701).
+        //   교환(EXCHANGE)은 새 상품 발송이 필요할 수 있어 제외하지 않음(취소·반품만 송장에서 뺌). lastChangedType도 함께 검사(CANCELED 계열 방어).
         const canceled = [...new Set(list
-            .filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.lastChangedType || '')))
+            .filter(x => /CANCEL|RETURN/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '') + ' ' + String(x.lastChangedType || '')))
             .map(x => String(x.productOrderId || '')).filter(Boolean))];
         res.json({ ok: true, canceled, checked_from: new Date(fromMs).toISOString(), checked_to: new Date(now).toISOString() });
     } catch (err) { res.json(naverFriendlyError(err)); }
