@@ -5171,29 +5171,9 @@ function showInvoiceMergedPreview() {
     showInvoicePreview(converted);
 }
 
-// 대표 7/25: 변환 직전 취소·반품 재확인 — 불러오기~변환 사이에 취소된 주문을 자동 제외 (핵심 안전장치)
-//   변환 로직(convertDataSmart)은 무수정 — 입력 데이터(invoiceDataSmart)만 필터. 재확인 실패 시엔 변환을 막지 않고 경고만.
-let naverInvoiceLoadedAt = null; // loadNaver 성공 시 기록 (네이버발 데이터일 때만 재확인 수행)
-async function recheckNaverCancellations() {
-    if (!naverInvoiceLoadedAt || !invoiceDataSmart || !invoiceDataSmart.length) return;
-    const msg = document.getElementById('invoice-auto-smart-msg');
-    try {
-        const r = await api('/api/agent-office/naver/canceled-since?since=' + encodeURIComponent(naverInvoiceLoadedAt));
-        if (!r.ok) throw new Error(r.message || '재확인 실패');
-        const canceled = new Set(r.canceled || []);
-        if (canceled.size) {
-            const before = invoiceDataSmart.length;
-            invoiceDataSmart = invoiceDataSmart.filter(row => !canceled.has(String(row._pid || '')));
-            const removed = before - invoiceDataSmart.length;
-            if (removed > 0 && msg) msg.innerHTML = `🛡️ 변환 직전 재확인: 그 사이 취소·반품 <strong>${removed}건</strong>을 자동 제외했습니다.`;
-        }
-        naverInvoiceLoadedAt = new Date().toISOString(); // 같은 데이터로 재변환 시 새 구간만 재확인
-    } catch (e) {
-        if (msg) msg.innerHTML = `⚠️ 취소 재확인 실패(${aoEsc(String(e.message || e))}) — 변환은 진행합니다. 취소 여부를 판매자센터에서 수동 확인해주세요.`;
-    }
-}
-document.getElementById('invoice-merge-btn').addEventListener('click', async () => {
-    await recheckNaverCancellations(); // 네이버발 데이터일 때만 동작, 실패해도 변환 진행
+// 대표 7/25(확정): 변환 직전 취소 재확인은 넣지 않는다 — 취소·반품은 배송준비와 무관(취소는 PAYED에서 자동 이탈).
+//   안전장치 = [자동 불러오기]가 항상 실행 시점에 새로 조회(타이머 수집분을 변환에 재사용하지 않음 — 현황·통계용).
+document.getElementById('invoice-merge-btn').addEventListener('click', () => {
     const converted = getMergedConverted();
     if (converted.length === 0) return alert('업로드된 파일이 없습니다.');
     exportInvoiceExcel(converted);
@@ -5685,7 +5665,6 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
                 return;
             }
             invoiceDataSmart = r.rows;              // 스마트스토어 데이터로 주입 (기존 변환 로직이 그대로 처리)
-            naverInvoiceLoadedAt = new Date().toISOString(); // 변환 직전 취소 재확인 기준 시각 (대표 지시 2026-07-25)
             if (fnEl) fnEl.textContent = `🛰️ 네이버 배송준비 ${r.count}건`;
             if (area) area.classList.add('has-file');
             updateInvoiceMergeBtn();
@@ -5708,7 +5687,6 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
 
 // 송장변환 초기화
 function resetInvoice() {
-    naverInvoiceLoadedAt = null; // 네이버발 데이터 초기화 시 재확인 기준도 리셋
     invoiceDataSmart = null;
     invoiceDataJasamol = null;
     invoiceDataCoupang = null;

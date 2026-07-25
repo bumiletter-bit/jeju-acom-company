@@ -5558,24 +5558,8 @@ async function naverAutoCollectTick() {
 }
 setInterval(naverAutoCollectTick, 60 * 1000);
 
-// 송장변환 직전 취소 재확인 (대표 지시 2026-07-25 — 불러오기~변환 사이 시간차 취소를 걸러내는 핵심 안전장치)
-//   PII 없음(주문번호만). 변환 로직은 무수정 — 프론트가 이 목록으로 입력 데이터만 필터.
-app.get('/api/agent-office/naver/canceled-since', authMiddleware, adminOnly, async (req, res) => {
-    try {
-        if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
-        const sinceMs = Date.parse(String(req.query.since || ''));
-        if (!Number.isFinite(sinceMs)) throw { status: 400, message: 'since를 ISO 시각으로 주세요' };
-        const now = Date.now();
-        const fromMs = Math.max(sinceMs, now - 23.5 * 3600 * 1000); // 24h 제약 클램프
-        const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
-        // 🔴 취소·반품은 claimType/claimStatus로 판정 (lastChangedType은 CLAIM_REQUESTED 등 — 포럼 #701).
-        //   교환(EXCHANGE)은 새 상품 발송이 필요할 수 있어 제외하지 않음(취소·반품만 송장에서 뺌). lastChangedType도 함께 검사(CANCELED 계열 방어).
-        const canceled = [...new Set(list
-            .filter(x => /CANCEL|RETURN/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '') + ' ' + String(x.lastChangedType || '')))
-            .map(x => String(x.productOrderId || '')).filter(Boolean))];
-        res.json({ ok: true, canceled, checked_from: new Date(fromMs).toISOString(), checked_to: new Date(now).toISOString() });
-    } catch (err) { res.json(naverFriendlyError(err)); }
-});
+// 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).
+//   안전장치 = [자동 불러오기]가 항상 실행 시점 신규 조회. 타이머 수집분은 현황·통계용(변환 재사용 안 함).
 
 // 네이버 중계 오류를 대표가 이해할 메시지로 변환 (403 원인 구분: 중계 재실행 필요 vs 네이버 권한/IP)
 function naverFriendlyError(err) {
