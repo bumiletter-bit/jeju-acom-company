@@ -1694,14 +1694,14 @@
                 <!-- ===== 현재까지 수량 모드 ===== -->
                 <div id="invoice-qty-mode" style="display:none;">
                     <div class="card">
-                        <p style="font-size:13px;color:#666;margin-bottom:12px;">스마트스토어 발주 파일(비번 걸린 원본 그대로 4031)을 올리면 품목별 합계 수량이 나와요. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
-                        <div class="invoice-upload-area" id="invoice-qty-upload">
-                            <div class="upload-icon">📦</div>
-                            <p>네이버 스마트스토어 배송준비(신규주문 발주후) 파일을 업로드하세요</p>
-                            <div class="invoice-file-name" id="invoice-qty-filename"></div>
+                        <p style="font-size:13px;color:#666;margin-bottom:12px;">현재 스마트스토어 배송준비로 중간발주를 진행합니다. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
+                        <button class="btn-primary" id="invoice-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 시작하기</button>
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--text-mid,#666);">
+                            <span>조회 기간</span>
+                            <input type="number" id="invoice-qty-days" value="40" min="1" max="180" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
+                            <span>일 (결제일 기준·최대 180)</span>
                         </div>
-                        <input type="file" id="invoice-qty-file" accept=".xlsx,.xls" hidden>
-                        <div id="invoice-qty-loading" style="display:none;text-align:center;padding:16px;color:#666;">⏳ 파일 처리 중...</div>
+                        <div id="invoice-qty-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:6px; line-height:1.5;"></div>
                     </div>
 
                     <!-- 결과 -->
@@ -2008,6 +2008,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=259"></script>
+    <script src="app.js?v=260"></script>
 </body>
 </html>

@@ -5761,34 +5761,30 @@ function parseInvoiceRows(data) {
     return XLSX.utils.sheet_to_json(ws, { range: hdrIdx, defval: '' });
 }
 
-// 발주 파일 업로드 → (필요 시 서버 복호화) → 파싱 → 재합산
-async function handleQtyUpload(file) {
-    document.getElementById('invoice-qty-filename').textContent = file.name;
-    document.getElementById('invoice-qty-upload').classList.add('has-file');
-    const loading = document.getElementById('invoice-qty-loading');
-    loading.style.display = '';
-    try {
-        const buf = await file.arrayBuffer();
-        // 먼저 그대로 읽어보고(암호화 X), 실패하거나 빈 결과면 서버 복호화
-        let rows = parseInvoiceRows(buf);
-        if (!rows || rows.length === 0) {
-            const resp = await api('/api/invoice/decrypt', 'POST', { fileBase64: arrayBufferToBase64(buf) });
-            rows = parseInvoiceRows(base64ToArrayBuffer(resp.fileBase64));
-        }
-        rows = rows || [];
-        if (rows.length === 0) {
-            alert('품목 데이터를 찾을 수 없습니다. 올바른 파일인지 확인해주세요.');
-            return;
-        }
-        qtyRowsMain = rows;
-        recomputeQtyAggregate();
-        document.getElementById('invoice-qty-result').style.display = '';
-    } catch (err) {
-        alert('파일 처리 오류: ' + err.message);
-    } finally {
-        loading.style.display = 'none';
-    }
-}
+// 대표 7/25: 중간발주 — 파일 업로드(비번 4031) 대신 네이버 배송준비 전체를 API로 바로 불러옴.
+//   API rows가 이미 옵션정보·수량 키라 기존 합산(recomputeQtyAggregate)·거래처필터·이미지저장 그대로 동작.
+(function setupQtyStart() {
+    const btn = document.getElementById('invoice-qty-start');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const msg = document.getElementById('invoice-qty-msg');
+        const daysEl = document.getElementById('invoice-qty-days');
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 40, 1), 180);
+        btn.disabled = true;
+        if (msg) msg.textContent = `⏳ 네이버에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 1~2분 걸릴 수 있어요)`;
+        try {
+            const r = await api('/api/agent-office/naver/invoice-orders?days=' + days);
+            if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
+            if (!r.count) { if (msg) msg.textContent = `📭 배송준비 주문이 없습니다 (조회 ${r.fetched || 0}건). 조회 기간을 늘려보세요.`; return; }
+            qtyRowsMain = r.rows;               // 기존 합산 로직이 그대로 처리(matchProduct가 옵션정보 파싱)
+            recomputeQtyAggregate();
+            document.getElementById('invoice-qty-result').style.display = '';
+            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 기준으로 집계했습니다 (최근 ${days}일).`;
+        } catch (e) {
+            if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
+        } finally { btn.disabled = false; }
+    });
+})();
 
 // 발주 파일 + 수기 추가 품목을 합쳐 품목별 합산 (수기 수정은 재합산 시 초기화됨)
 function recomputeQtyAggregate() {
@@ -5922,34 +5918,16 @@ async function saveQtyImage() {
 }
 window.saveQtyImage = saveQtyImage;
 
-// 초기화 (파일/목록/결과/수기품목 비우기)
+// 초기화 (목록/결과/수기품목 비우기)
 function resetInvoiceQty() {
     qtyAggregated = []; qtyRowsMain = []; qtyManual = [];
-    const f = document.getElementById('invoice-qty-file'); if (f) f.value = '';
-    document.getElementById('invoice-qty-filename').textContent = '';
-    document.getElementById('invoice-qty-upload').classList.remove('has-file');
-    document.getElementById('invoice-qty-loading').style.display = 'none';
+    const msg = document.getElementById('invoice-qty-msg'); if (msg) msg.textContent = '';
     document.getElementById('invoice-qty-result').style.display = 'none';
     document.getElementById('invoice-qty-list').innerHTML = '';
     const addform = document.getElementById('invoice-qty-addform');
     if (addform) addform.style.display = 'none';
 }
 window.resetInvoiceQty = resetInvoiceQty;
-
-// 업로드 영역 이벤트 (발주 파일)
-(function setupQtyArea() {
-    const area = document.getElementById('invoice-qty-upload');
-    const input = document.getElementById('invoice-qty-file');
-    if (!area || !input) return;
-    area.addEventListener('click', () => input.click());
-    area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('dragover'); });
-    area.addEventListener('dragleave', () => area.classList.remove('dragover'));
-    area.addEventListener('drop', e => {
-        e.preventDefault(); area.classList.remove('dragover');
-        if (e.dataTransfer.files.length) handleQtyUpload(e.dataTransfer.files[0]);
-    });
-    input.addEventListener('change', e => { if (e.target.files.length) handleQtyUpload(e.target.files[0]); });
-})();
 
 // =============================================
 // Utility
