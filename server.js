@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool, types } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -4685,7 +4686,10 @@ app.get('/api/scenarios', async (req, res) => {
         const need = process.env.SCENARIO_API_TOKEN;
         if (!need) return res.status(503).json({ error: 'SCENARIO_API_TOKEN 미설정 (Render 환경변수)' });
         const got = (req.headers.authorization || '').replace('Bearer ', '');
-        if (got !== need) return res.status(401).json({ error: 'unauthorized' });
+        const gotBuf = Buffer.from(got), needBuf = Buffer.from(need);
+        // 타이밍 공격 방지: 길이가 같을 때만 상수시간 비교 (외부 공개 엔드포인트)
+        const tokenOk = gotBuf.length === needBuf.length && crypto.timingSafeEqual(gotBuf, needBuf);
+        if (!tokenOk) return res.status(401).json({ error: 'unauthorized' });
         const channel = String(req.query.channel || 'talktalk');
         const chs = channel === 'talktalk' ? ['톡톡', '공통']
                   : channel === 'product' ? ['상품문의', '공통'] : ['톡톡', '상품문의', '공통'];
