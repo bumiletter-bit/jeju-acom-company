@@ -11519,21 +11519,6 @@ async function renderBotProductLogs() {
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">이력이 없습니다</p>';
 }
-function setupBotProductsTab() {
-    document.getElementById('btn-botprod-add-toggle').addEventListener('click', () => {
-        const f = document.getElementById('botprod-add-form');
-        f.style.display = f.style.display === 'none' ? 'flex' : 'none';
-    });
-    document.getElementById('btn-botprod-add').addEventListener('click', async () => {
-        const name = document.getElementById('botprod-add-name').value.trim();
-        if (!name) return alert('품목명을 입력하세요');
-        try {
-            await api('/api/agent-office/bot-products', 'POST', { name, price: document.getElementById('botprod-add-price').value });
-            document.getElementById('botprod-add-name').value = '';
-            document.getElementById('botprod-add-price').value = '';
-            renderBotProducts().catch(console.error);
-        } catch (e) { alert(e.message); }
-    });
-}
+// 대표 7/25: 수동 [품목 추가] UI 제거 — 품목명은 품목별 금액 저장 시 자동 등록(준비중)으로만 유입.
+//   (POST API·복구 로직은 존치 — 삭제 품목 복구 등 필요 시 사용)
 setupInquiryPage();
-setupBotProductsTab();
