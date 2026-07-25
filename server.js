@@ -772,6 +772,26 @@ async function initDB() {
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES
         ('settlement', false, 1440), ('order', false, 60), ('claim', false, 90), ('inquiry', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // 문의시나리오 DB 통합 (2026-07-25 설계문서): 톡톡봇 시나리오 단일 출처 — 물리삭제 금지(deleted_at)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS inquiry_scenarios (
+            id SERIAL PRIMARY KEY,
+            scenario_no INTEGER NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            keywords JSONB NOT NULL DEFAULT '[]',
+            response TEXT NOT NULL,
+            action VARCHAR(20) NOT NULL DEFAULT '자동응답',
+            enabled BOOLEAN NOT NULL DEFAULT true,
+            channel VARCHAR(20) NOT NULL DEFAULT '톡톡',
+            updated_by VARCHAR(50),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            deleted_at TIMESTAMP
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_inquiry_scenarios_no ON inquiry_scenarios(scenario_no)`);
+    // 전체 자동응답 스위치 (대표 전용 토글) — 기본 on
+    await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('inquiry_auto_reply', '"on"'::jsonb)
+        ON CONFLICT (key) DO NOTHING`);
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
 
