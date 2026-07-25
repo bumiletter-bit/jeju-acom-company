@@ -4937,6 +4937,43 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, async (req, res) =
         res.json({ logs: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+app.get('/api/agent-office/naver/auto-collect', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT key, enabled, interval_min, run_at_time, last_run_at, last_status, last_error FROM naver_auto_collect ORDER BY key`);
+        res.json({ timers: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/naver/auto-collect/:key', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const cur = await pool.query('SELECT * FROM naver_auto_collect WHERE key=$1', [req.params.key]);
+        if (cur.rows.length === 0) throw { status: 404, message: '해당 타이머가 없습니다' };
+        const before = cur.rows[0];
+        const sets = ['updated_at = NOW()']; const params = [];
+        if (req.body.enabled !== undefined) { params.push(!!req.body.enabled); sets.push(`enabled=$${params.length}`); }
+        if (req.body.interval_min !== undefined) {
+            const m = parseInt(req.body.interval_min);
+            if (!Number.isFinite(m) || m < 5 || m > 1440) throw { status: 400, message: '주기는 5~1440분 사이로 입력하세요' };
+            params.push(m); sets.push(`interval_min=$${params.length}`);
+        }
+        if (req.body.run_at_time !== undefined) {
+            if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(req.body.run_at_time))) throw { status: 400, message: '실행 시각은 HH:MM(24시간) 형식으로 입력하세요' };
+            params.push(String(req.body.run_at_time)); sets.push(`run_at_time=$${params.length}`);
+        }
+        if (params.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
+        params.push(req.params.key);
+        const r = await pool.query(`UPDATE naver_auto_collect SET ${sets.join(', ')} WHERE key=$${params.length} RETURNING *`, params);
+        await writeAudit({ action: 'update', targetType: 'naver_auto_collect', targetId: null, changes: { before, after: r.rows[0] }, source: 'naver-timer', actor: adminActor(req) });
+        res.json({ message: '저장되었습니다', timer: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/naver/auto-collect-all', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const on = !!req.body.enabled;
+        await pool.query('UPDATE naver_auto_collect SET enabled=$1, updated_at=NOW()', [on]);
+        await writeAudit({ action: on ? 'all_on' : 'all_off', targetType: 'naver_auto_collect', targetId: null, changes: { after: { enabled: on } }, source: 'naver-timer', actor: adminActor(req) });
+        res.json({ message: on ? '전체 타이머를 켰습니다' : '전체 타이머를 껐습니다' });
+    } catch (err) { handleAdminErr(res, err); }
+});
 
 // 문의시나리오: 톡톡봇 조회용 (설계 2026-07-25) — 신규 Bearer(SCENARIO_API_TOKEN, 양쪽 Render env로만 보관)
 //   PII 없음(시나리오 문구뿐). 사용중·미삭제만 번호순. auto_reply='off'면 봇이 시나리오 응답 중단.
