@@ -773,6 +773,24 @@ async function initDB() {
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES
         ('settlement', false, 1440), ('order', false, 60), ('claim', false, 90), ('inquiry', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // 자동수집 타이머 (설계 2026-07-25): 정산 실행 시각 앵커 + 실패 사유 표시용 컬럼
+    await pool.query(`ALTER TABLE naver_auto_collect ADD COLUMN IF NOT EXISTS run_at_time VARCHAR(5)`);
+    await pool.query(`ALTER TABLE naver_auto_collect ADD COLUMN IF NOT EXISTS last_error TEXT`);
+    await pool.query(`UPDATE naver_auto_collect SET run_at_time = '09:30' WHERE key = 'settlement' AND run_at_time IS NULL`);
+    // 정산 자동수집 스냅샷 (원본은 네이버에 있으므로 30개 초과분 물리 정리 허용)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_settle_snapshot (
+            id SERIAL PRIMARY KEY, from_date DATE, to_date DATE, count INTEGER,
+            elements JSONB, collected_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // 문의 수집 저장소 (향후 자동답변 재료 — 3번 프로젝트)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_inquiries (
+            inquiry_id VARCHAR(50) PRIMARY KEY, raw JSONB, answered BOOLEAN,
+            collected_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
     // 문의시나리오 DB 통합 (2026-07-25 설계문서): 톡톡봇 시나리오 단일 출처 — 물리삭제 금지(deleted_at)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS inquiry_scenarios (
@@ -5354,6 +5372,155 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, asy
     } catch (err) {
         res.json(naverFriendlyError(err));
     }
+});
+
+// === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
+//   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '취소·반품', inquiry: '문의' };
+const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
+
+// 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
+async function naverCallWithRetry(reqObj) {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    for (let attempt = 0; ; attempt++) {
+        try { return await naverRelay.callNaver(reqObj, null); }
+        catch (e) {
+            if (e && e.status === 429 && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
+            throw e;
+        }
+    }
+}
+
+async function naverCfgGet(key) {
+    const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
+    return r.rows.length ? r.rows[0].value : null;
+}
+async function naverCfgSet(key, value) {
+    await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, JSON.stringify(value)]);
+}
+
+// 변경분 조회 (PII 없음) — 항목 배열 반환. 24시간 제약 대비 시작 시각 클램프는 호출부에서.
+async function naverFetchChanges(fromIso, toIso) {
+    const r = await naverCallWithRetry({
+        method: 'GET', path: '/external/v1/pay-order/seller/product-orders/last-changed-statuses',
+        query: { lastChangedFrom: fromIso, lastChangedTo: toIso },
+    });
+    const body = (r && r.data) ? r.data : r;
+    const list = body?.lastChangeStatuses || body?.data?.lastChangeStatuses || [];
+    return Array.isArray(list) ? list : [];
+}
+
+async function collectSettlement() {
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
+    const from = d(-3), to = d(0);
+    let pageNumber = 1, totalPages = 1, elements = [];
+    do {
+        if (pageNumber > 1) await new Promise(r => setTimeout(r, 350));
+        const r = await naverCallWithRetry({
+            method: 'GET', path: '/external/v1/pay-settle/settle/daily',
+            query: { startDate: from, endDate: to, pageNumber, pageSize: 1000 },
+        });
+        const body = (r && r.data) ? r.data : r;
+        const els = body?.elements || body?.contents || body?.list || [];
+        elements = elements.concat(Array.isArray(els) ? els : []);
+        totalPages = Number(body?.pagination?.totalPages ?? body?.totalPages) || 1;
+        pageNumber++;
+    } while (pageNumber <= totalPages && pageNumber <= 10);
+    await pool.query(`INSERT INTO naver_settle_snapshot (from_date, to_date, count, elements) VALUES ($1,$2,$3,$4)`,
+        [from, to, elements.length, JSON.stringify(elements)]);
+    await pool.query(`DELETE FROM naver_settle_snapshot WHERE id NOT IN (SELECT id FROM naver_settle_snapshot ORDER BY id DESC LIMIT 30)`);
+    notifyTelegram(`🛰️ 정산 자동수집 완료 — ${from}~${to} ${elements.length}건. 데이터관리 > 정산 조회에서 확인하세요`);
+    return `정산 ${from}~${to} ${elements.length}건`;
+}
+
+async function collectOrderNew() {
+    const now = Date.now();
+    const cp = await naverCfgGet('naver_order_checkpoint');
+    const fromMs = Math.max(cp ? Date.parse(cp) : now - 3600 * 1000, now - 23.5 * 3600 * 1000); // 24h 제약 클램프
+    const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
+    const paid = list.filter(x => String(x.lastChangedType || '') === 'PAYED');
+    await naverCfgSet('naver_order_checkpoint', new Date(now).toISOString());
+    if (paid.length > 0) notifyTelegram(`🛰️ 신규 주문 ${paid.length}건 (자동수집 — 발주확인은 수기)`);
+    return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
+}
+
+async function collectClaim() {
+    const now = Date.now();
+    const cp = await naverCfgGet('naver_claim_checkpoint');
+    const fromMs = Math.max(cp ? Date.parse(cp) : now - 3600 * 1000, now - 23.5 * 3600 * 1000);
+    const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
+    const claims = list.filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.lastChangedType || '')));
+    await naverCfgSet('naver_claim_checkpoint', new Date(now).toISOString());
+    if (claims.length > 0) notifyTelegram(`⚠️ 취소·반품·교환 변화 ${claims.length}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)`);
+    return `취소·반품·교환 ${claims.length}건 (변경 ${list.length}건 검사)`;
+}
+
+async function collectInquiry() {
+    // pay-user/inquiries 엔드포인트는 확인됨(개발자포럼 #2166) — 쿼리 파라미터가 공식문서(SPA·로그인)로만 확인 가능해
+    // 추측 호출(probe) 금지 원칙에 따라 파라미터 확정 전까지 '지원 예정'. 확정되면 이 함수만 채우면 됨.
+    throw new Error('문의 수집은 API 파라미터 문서 확정 후 지원 예정입니다 — 이 타이머는 꺼 두세요');
+}
+
+let _naverTickBusy = false;
+async function naverAutoCollectTick() {
+    if (_naverTickBusy) return;
+    _naverTickBusy = true;
+    try {
+        if (!naverRelay.configured()) return;
+        const rows = (await pool.query('SELECT * FROM naver_auto_collect')).rows.filter(r => r.enabled);
+        if (!rows.length) return;
+        const now = Date.now();
+        const kstNow = new Date(now + 9 * 3600 * 1000);
+        const due = [];
+        for (const r of rows) {
+            const last = r.last_run_at ? new Date(r.last_run_at).getTime() : 0;
+            if (r.key === 'settlement') {
+                // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due
+                const [hh, mm] = String(r.run_at_time || '09:30').split(':').map(Number);
+                const anchor = Date.UTC(kstNow.getUTCFullYear(), kstNow.getUTCMonth(), kstNow.getUTCDate(), hh, mm) - 9 * 3600 * 1000;
+                if (now >= anchor && last < anchor) due.push({ r, waited: now - anchor });
+            } else {
+                const iv = Math.max(Number(r.interval_min) || 60, 5) * 60 * 1000;
+                if (now - last >= iv) due.push({ r, waited: now - last - iv });
+            }
+        }
+        if (!due.length) return;
+        due.sort((a, b) => b.waited - a.waited);
+        const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
+        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry }[r.key];
+        let status = 'ok', errMsg = null, summary = '';
+        try { summary = await fn(); }
+        catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
+        await pool.query(`UPDATE naver_auto_collect SET last_run_at=NOW(), last_status=$2, last_error=$3, updated_at=NOW() WHERE key=$1`,
+            [r.key, status, errMsg]);
+        if (status === 'fail' && r.last_status !== 'fail') {
+            // 연속 실패 스팸 방지 — 정상→실패 전환 시에만 1회 알림
+            notifyTelegram(`🛰️ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 실패 — ${errMsg}`);
+        }
+        console.log(`[자동수집] ${r.key}: ${status}${summary ? ' — ' + summary : ''}${errMsg ? ' — ' + errMsg : ''}`);
+    } catch (e) {
+        console.error('[자동수집] 틱 오류:', e.message);
+    } finally { _naverTickBusy = false; }
+}
+setInterval(naverAutoCollectTick, 60 * 1000);
+
+// 송장변환 직전 취소 재확인 (대표 지시 2026-07-25 — 불러오기~변환 사이 시간차 취소를 걸러내는 핵심 안전장치)
+//   PII 없음(주문번호만). 변환 로직은 무수정 — 프론트가 이 목록으로 입력 데이터만 필터.
+app.get('/api/agent-office/naver/canceled-since', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
+        const sinceMs = Date.parse(String(req.query.since || ''));
+        if (!Number.isFinite(sinceMs)) throw { status: 400, message: 'since를 ISO 시각으로 주세요' };
+        const now = Date.now();
+        const fromMs = Math.max(sinceMs, now - 23.5 * 3600 * 1000); // 24h 제약 클램프
+        const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
+        const canceled = [...new Set(list
+            .filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.lastChangedType || '')))
+            .map(x => String(x.productOrderId || '')).filter(Boolean))];
+        res.json({ ok: true, canceled, checked_from: new Date(fromMs).toISOString(), checked_to: new Date(now).toISOString() });
+    } catch (err) { res.json(naverFriendlyError(err)); }
 });
 
 // 네이버 중계 오류를 대표가 이해할 메시지로 변환 (403 원인 구분: 중계 재실행 필요 vs 네이버 권한/IP)
