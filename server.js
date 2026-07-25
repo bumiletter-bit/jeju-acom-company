@@ -793,6 +793,20 @@ async function initDB() {
     // 전체 자동응답 스위치 (대표 전용 토글) — 기본 on
     await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('inquiry_auto_reply', '"on"'::jsonb)
         ON CONFLICT (key) DO NOTHING`);
+    // 판매현황 탭 이전 (2026-07-25 설계): bot_products(톡톡봇 가격표·판매현황, 같은 DB 공유)에 관리 컬럼 추가
+    //   테이블 자체는 톡톡봇 products-store.js가 생성 — 없을 수도 있으므로 동일 DDL로 보장 후 ALTER
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS bot_products (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            status TEXT NOT NULL DEFAULT '판매중',
+            price TEXT DEFAULT '',
+            memo TEXT DEFAULT '',
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    `);
+    await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50)`);
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
 
@@ -4657,6 +4671,65 @@ async function svcSoftDeleteScenario(id, actor) {
     return r.rows[0];
 }
 
+// --- 판매현황(bot_products) 서비스 (설계 2026-07-25 — 스마트스토어 판매가, 품목별 금액과 별개) ---
+//   톡톡봇이 1분 캐시로 읽어가므로 저장만 하면 자동 반영. 삭제 반영은 봇 정리 배포(deleted_at 필터) 후.
+const BOT_PRODUCT_STATUSES = ['판매중', '품절', '시즌종료'];
+async function svcListBotProducts() {
+    const r = await pool.query(
+        `SELECT id, name, status, price, updated_by, updated_at FROM bot_products
+         WHERE deleted_at IS NULL
+         ORDER BY CASE status WHEN '판매중' THEN 0 WHEN '품절' THEN 1 ELSE 2 END, name`);
+    return r.rows;
+}
+async function svcCreateBotProduct({ name, price = '', status = '판매중' }, actor) {
+    const nm = String(name || '').trim();
+    if (!nm) throw { status: 400, message: '품목명(name)은 필수입니다' };
+    if (!BOT_PRODUCT_STATUSES.includes(status)) throw { status: 400, message: '상태는 판매중/품절/시즌종료 중 하나여야 합니다' };
+    const cur = await pool.query('SELECT * FROM bot_products WHERE name = $1', [nm]);
+    if (cur.rows.length && cur.rows[0].deleted_at === null) throw { status: 409, message: '이미 등록된 품목입니다 (목록에서 수정하세요)' };
+    let row;
+    if (cur.rows.length) {
+        // soft-delete된 동명 품목 → 복구 + 덮어쓰기 (name UNIQUE 대응, 설계 2절)
+        const r = await pool.query(
+            `UPDATE bot_products SET deleted_at = NULL, status = $2, price = $3, updated_by = $4, updated_at = now()
+             WHERE id = $1 RETURNING *`, [cur.rows[0].id, status, String(price || '').trim(), actor?.name || null]);
+        row = r.rows[0];
+        await writeAudit({ action: 'restore', targetType: 'bot_product', targetId: row.id, changes: { before: cur.rows[0], after: row }, source: 'bot-product', actor });
+    } else {
+        const r = await pool.query(
+            `INSERT INTO bot_products (name, status, price, updated_by) VALUES ($1,$2,$3,$4) RETURNING *`,
+            [nm, status, String(price || '').trim(), actor?.name || null]);
+        row = r.rows[0];
+        await writeAudit({ action: 'create', targetType: 'bot_product', targetId: row.id, changes: { after: row }, source: 'bot-product', actor });
+    }
+    return row;
+}
+async function svcUpdateBotProduct(id, patch, actor) {
+    const cur = await pool.query('SELECT * FROM bot_products WHERE id=$1 AND deleted_at IS NULL', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '품목을 찾을 수 없습니다' };
+    const before = cur.rows[0];
+    if (patch.status !== undefined && !BOT_PRODUCT_STATUSES.includes(patch.status)) throw { status: 400, message: '상태 값이 잘못되었습니다' };
+    if (patch.name !== undefined && !String(patch.name).trim()) throw { status: 400, message: '품목명은 비울 수 없습니다' };
+    const sets = ['updated_at = now()']; const params = [];
+    if (patch.name !== undefined) { params.push(String(patch.name).trim()); sets.push(`name=$${params.length}`); }
+    if (patch.status !== undefined) { params.push(patch.status); sets.push(`status=$${params.length}`); }
+    if (patch.price !== undefined) { params.push(String(patch.price || '').trim()); sets.push(`price=$${params.length}`); }
+    if (params.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
+    params.push(actor?.name || null); sets.push(`updated_by=$${params.length}`);
+    params.push(id);
+    const r = await pool.query(`UPDATE bot_products SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
+    const after = r.rows[0];
+    await writeAudit({ action: 'update', targetType: 'bot_product', targetId: Number(id), changes: { before, after }, source: 'bot-product', actor });
+    return after;
+}
+async function svcSoftDeleteBotProduct(id, actor) {
+    const cur = await pool.query('SELECT * FROM bot_products WHERE id=$1 AND deleted_at IS NULL', [id]);
+    if (cur.rows.length === 0) throw { status: 404, message: '품목을 찾을 수 없습니다' };
+    const r = await pool.query(`UPDATE bot_products SET deleted_at=now(), updated_by=$2, updated_at=now() WHERE id=$1 RETURNING *`, [id, actor?.name || null]);
+    await writeAudit({ action: 'delete', targetType: 'bot_product', targetId: Number(id), changes: { before: cur.rows[0] }, source: 'bot-product', actor });
+    return r.rows[0];
+}
+
 // --- 정산 서비스 (읽기 전용) ---
 async function svcGetSettlements({ from, to }) {
     const cond = []; const params = [];
@@ -4774,6 +4847,34 @@ app.get('/api/agent-office/scenario-logs', authMiddleware, async (req, res) => {
         res.json({ logs: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+
+// --- 판매현황(bot_products) 관리 라우트 (직원 가능 / 삭제만 대표 전용) ---
+app.get('/api/agent-office/bot-products', authMiddleware, async (req, res) => {
+    try { res.json({ products: await svcListBotProducts() }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/bot-products', authMiddleware, async (req, res) => {
+    try { res.json({ message: '품목이 추가되었습니다', product: await svcCreateBotProduct(req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/bot-products/:id', authMiddleware, async (req, res) => {
+    try { res.json({ message: '저장되었습니다 (봇 답변에 1분 내 반영)', product: await svcUpdateBotProduct(req.params.id, req.body || {}, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.delete('/api/agent-office/bot-products/:id', authMiddleware, adminOnly, async (req, res) => {
+    if (!requireConfirm(req, res)) return;
+    try { res.json({ message: '품목이 삭제되었습니다(복구 가능)', product: await svcSoftDeleteBotProduct(req.params.id, adminActor(req)) }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.get('/api/agent-office/bot-product-logs', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+             WHERE target_type = 'bot_product' ORDER BY id DESC LIMIT 100`);
+        res.json({ logs: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // 문의시나리오: 톡톡봇 조회용 (설계 2026-07-25) — 신규 Bearer(SCENARIO_API_TOKEN, 양쪽 Render env로만 보관)
 //   PII 없음(시나리오 문구뿐). 사용중·미삭제만 번호순. auto_reply='off'면 봇이 시나리오 응답 중단.
 app.get('/api/scenarios', async (req, res) => {
