@@ -174,6 +174,8 @@ function updateUserUI() {
     if (userCard) userCard.style.display = currentUser.role === 'admin' ? '' : 'none';
     const naverCard = document.getElementById('naver-connect-card'); // 대표 7/24: 네이버 연동(관리자만)
     if (naverCard) naverCard.style.display = currentUser.role === 'admin' ? '' : 'none';
+    const naverTimerCard = document.getElementById('naver-timer-card'); // 자동수집 타이머(관리자만)
+    if (naverTimerCard) naverTimerCard.style.display = currentUser.role === 'admin' ? '' : 'none';
 
     // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
     const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
@@ -305,7 +307,10 @@ function switchPage(pageName) {
         renderInquiryPage().catch(console.error);
         if (inquiryActiveTab === 'products') renderBotProducts().catch(console.error);
     }
-    if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
+    if (pageName === 'data' && currentUser?.role === 'admin') {
+        renderUserList().catch(console.error);
+        renderNaverTimers().catch(console.error);
+    }
     if (pageName === 'myinfo') renderMyInfoPage();
     if (pageName === 'agent-office') renderAgentOffice().catch(console.error);
 }
@@ -11539,3 +11544,57 @@ function setupBotProductsTab() {
 }
 setupInquiryPage();
 setupBotProductsTab();
+
+// === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
+const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '취소·반품 (알림)', inquiry: '문의' };
+async function renderNaverTimers() {
+    const d = await api('/api/agent-office/naver/auto-collect');
+    const rows = (d.timers || []).map(t => {
+        const label = NAVER_TIMER_LABELS_UI[t.key] || t.key;
+        const cycle = t.key === 'settlement'
+            ? `실행시각 <input type="text" id="naver-timer-time-${t.key}" value="${escapeHtml(t.run_at_time || '09:30')}" style="width:64px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`
+            : `주기(분) <input type="number" min="5" max="1440" id="naver-timer-min-${t.key}" value="${Number(t.interval_min) || 60}" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`;
+        const last = t.last_run_at ? new Date(t.last_run_at).toLocaleString('ko-KR') : '-';
+        const st = !t.last_status ? '-' : (t.last_status === 'ok' ? '✅ 성공' : `❌ 실패`);
+        const err = (t.last_status === 'fail' && t.last_error) ? `<div class="text-muted" style="font-size:11px; max-width:260px;">${escapeHtml(String(t.last_error).slice(0, 120))}</div>` : '';
+        return `<tr>
+            <td>${escapeHtml(label)}</td>
+            <td><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleNaverTimer('${t.key}', this.checked)"></td>
+            <td style="white-space:nowrap;">${cycle} <button class="btn-sm btn-outline" onclick="saveNaverTimer('${t.key}')">저장</button></td>
+            <td style="white-space:nowrap;">${last}</td>
+            <td>${st}${err}</td>
+        </tr>`;
+    }).join('');
+    document.getElementById('naver-timer-list').innerHTML = `
+        <table class="data-table"><thead><tr><th>수집</th><th>ON</th><th>주기/시각</th><th>마지막 수집</th><th>상태</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+}
+window.toggleNaverTimer = async function(key, enabled) {
+    try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', { enabled }); }
+    catch (e) { alert(e.message); }
+    renderNaverTimers().catch(console.error);
+};
+window.saveNaverTimer = async function(key) {
+    const body = {};
+    const timeEl = document.getElementById('naver-timer-time-' + key);
+    const minEl = document.getElementById('naver-timer-min-' + key);
+    if (timeEl) body.run_at_time = timeEl.value.trim();
+    if (minEl) body.interval_min = parseInt(minEl.value);
+    try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', body); }
+    catch (e) { alert(e.message); }
+    renderNaverTimers().catch(console.error);
+};
+function setupNaverTimerCard() {
+    const on = document.getElementById('btn-naver-timer-all-on'), off = document.getElementById('btn-naver-timer-all-off');
+    if (!on || !off) return;
+    on.addEventListener('click', async () => {
+        if (!confirm('타이머 4종을 전부 켤까요?')) return;
+        try { await api('/api/agent-office/naver/auto-collect-all', 'PUT', { enabled: true }); } catch (e) { alert(e.message); }
+        renderNaverTimers().catch(console.error);
+    });
+    off.addEventListener('click', async () => {
+        try { await api('/api/agent-office/naver/auto-collect-all', 'PUT', { enabled: false }); } catch (e) { alert(e.message); }
+        renderNaverTimers().catch(console.error);
+    });
+}
+setupNaverTimerCard();
