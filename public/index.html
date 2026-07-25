@@ -1811,6 +1811,11 @@
             <div class="page" id="page-inquiry">
                 <h1>문의 관리</h1>
                 <p class="text-muted" style="font-size:13px; margin:4px 0 16px;">여기서 저장하면 톡톡봇에 5분 내 자동 반영됩니다. ⚠️ 답변문구에 고객 개인정보(이름·연락처·주소)를 넣지 마세요.</p>
+                <div style="display:flex; gap:6px; margin-bottom:14px;">
+                    <button class="btn-sm" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">💬 시나리오</button>
+                    <button class="btn-sm btn-outline" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
+                </div>
+                <div id="inquiry-tab-scenario">
                 <div class="card">
                     <div class="card-header-row">
                         <h2>📋 시나리오 목록 <span id="inquiry-count" class="text-muted" style="font-size:13px; font-weight:400;"></span></h2>
@@ -1845,6 +1850,22 @@
                             <button class="btn-sm btn-outline" id="btn-inquiry-cancel">취소</button>
                             <button class="btn-sm btn-outline" id="btn-inquiry-delete" style="display:none; color:#c0392b;">삭제 (대표 전용)</button>
                         </div>
+                    </div>
+                </div>
+                </div>
+                <div id="inquiry-tab-products" style="display:none;">
+                    <div class="card">
+                        <div class="card-header-row">
+                            <h2>🏷️ 판매현황·가격 <span class="text-muted" style="font-size:13px; font-weight:400;">스마트스토어 판매가 — 품목별 금액(거래처 결제가)과 다른 데이터입니다</span></h2>
+                            <button class="btn-primary" id="btn-botprod-add-toggle">+ 품목 추가</button>
+                        </div>
+                        <p class="text-muted" style="font-size:13px; margin:4px 0 10px;">저장하면 톡톡봇 답변({{가격표}}·{{판매현황}})에 1분 내 자동 반영됩니다.</p>
+                        <div id="botprod-add-form" style="display:none; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                            <input type="text" id="botprod-add-name" placeholder="품목명 (예: 카라향 3kg)" style="flex:1; min-width:180px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="botprod-add-price" placeholder="가격 (예: 19,900원)" style="width:140px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <button class="btn-primary" id="btn-botprod-add">추가</button>
+                        </div>
+                        <div id="botprod-list" style="overflow-x:auto;"></div>
                     </div>
                 </div>
                 <div class="card">

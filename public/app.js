@@ -301,7 +301,10 @@ function switchPage(pageName) {
     if (pageName === 'planner') renderPlannerPage().catch(console.error);
     if (pageName === 'inventory') renderBoxInventory().catch(console.error);
     if (pageName === 'cs-room') renderCsTemplates().catch(console.error);
-    if (pageName === 'inquiry') renderInquiryPage().catch(console.error);
+    if (pageName === 'inquiry') {
+        renderInquiryPage().catch(console.error);
+        if (inquiryActiveTab === 'products') renderBotProducts().catch(console.error);
+    }
     if (pageName === 'data' && currentUser?.role === 'admin') renderUserList().catch(console.error);
     if (pageName === 'myinfo') renderMyInfoPage();
     if (pageName === 'agent-office') renderAgentOffice().catch(console.error);
@@ -11451,4 +11454,83 @@ async function renderInquiryLogs() {
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">이력이 없습니다</p>';
 }
+// --- 판매현황·가격 탭 (bot_products — 스마트스토어 판매가, 봇 1분 캐시 자동 반영) ---
+let botProducts = [];
+let inquiryActiveTab = 'scenario';
+window.switchInquiryTab = function(name) {
+    inquiryActiveTab = name;
+    document.getElementById('inquiry-tab-scenario').style.display = name === 'scenario' ? '' : 'none';
+    document.getElementById('inquiry-tab-products').style.display = name === 'products' ? '' : 'none';
+    const bS = document.getElementById('inquiry-tab-btn-scenario'), bP = document.getElementById('inquiry-tab-btn-products');
+    bS.className = name === 'scenario' ? 'btn-sm' : 'btn-sm btn-outline';
+    bP.className = name === 'products' ? 'btn-sm' : 'btn-sm btn-outline';
+    if (name === 'products') renderBotProducts().catch(console.error);
+    else renderInquiryLogs().catch(console.error);
+};
+const BOTPROD_STATUSES = ['판매중', '품절', '시즌종료'];
+async function renderBotProducts() {
+    const d = await api('/api/agent-office/bot-products');
+    botProducts = d.products || [];
+    const isAdmin = currentUser?.role === 'admin';
+    const rows = botProducts.map(p => `
+        <tr>
+            <td>${escapeHtml(p.name)}</td>
+            <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
+                `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" onclick="setBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
+            <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
+            <td style="white-space:nowrap;">
+                <button class="btn-sm btn-outline" onclick="saveBotProdPrice(${p.id})">저장</button>
+                ${isAdmin ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
+            </td>
+        </tr>`).join('');
+    document.getElementById('botprod-list').innerHTML = `
+        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    renderBotProductLogs().catch(console.error);
+}
+window.setBotProdStatus = async function(id, status) {
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { status }); }
+    catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
+window.saveBotProdPrice = async function(id) {
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { price: document.getElementById('botprod-price-' + id).value }); }
+    catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
+window.deleteBotProd = async function(id) {
+    const p = botProducts.find(x => x.id === id);
+    if (!p || !confirm(`"${p.name}" 품목을 삭제할까요? (복구 가능)`)) return;
+    try { await api('/api/agent-office/bot-products/' + id, 'DELETE', { confirm: true }); }
+    catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
+async function renderBotProductLogs() {
+    const d = await api('/api/agent-office/bot-product-logs');
+    const rows = (d.logs || []).map(l => {
+        const name = l.changes?.after?.name || l.changes?.before?.name || '';
+        const act = { create: '추가', restore: '복구', update: '수정', delete: '삭제' }[l.action] || l.action;
+        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(name)}</td></tr>`;
+    }).join('');
+    document.getElementById('inquiry-logs').innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<p class="text-muted">이력이 없습니다</p>';
+}
+function setupBotProductsTab() {
+    document.getElementById('btn-botprod-add-toggle').addEventListener('click', () => {
+        const f = document.getElementById('botprod-add-form');
+        f.style.display = f.style.display === 'none' ? 'flex' : 'none';
+    });
+    document.getElementById('btn-botprod-add').addEventListener('click', async () => {
+        const name = document.getElementById('botprod-add-name').value.trim();
+        if (!name) return alert('품목명을 입력하세요');
+        try {
+            await api('/api/agent-office/bot-products', 'POST', { name, price: document.getElementById('botprod-add-price').value });
+            document.getElementById('botprod-add-name').value = '';
+            document.getElementById('botprod-add-price').value = '';
+            renderBotProducts().catch(console.error);
+        } catch (e) { alert(e.message); }
+    });
+}
 setupInquiryPage();
+setupBotProductsTab();
