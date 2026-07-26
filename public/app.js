@@ -2433,7 +2433,10 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
         returnCareSettleAmount: '반품안심케어 정산', normalSettleAmount: '일반 정산 금액',
         quickSettleAmount: '빠른정산 금액', preferentialCommissionAmount: '우대 수수료 환급',
         settlementLimitAmount: '한도 보류/해제 금액', settleMethodType: '정산 방법', bankType: '은행',
+        depositorName: '예금주', accountNo: '계좌번호', merchantId: '가맹점 ID', merchantName: '가맹점명',
     };
+    // 대표 7/26: 안 쓰는 칸 숨김 (정산 예정일·가맹점/계좌/예금주/은행/정산방법 — 매 행 동일한 우리 정보. 필요 시 여기서 빼면 다시 표시)
+    const SETTLE_HIDE = ['settleExpectDate', 'merchantId', 'accountNo', 'merchantName', 'depositorName', 'bankType', 'settleMethodType'];
     const colKo = c => SETTLE_KO[c] || c;
     const SETTLE_VAL_KO = { ACCOUNT: '계좌 이체', CHARGE_AMT: '충전금' };
     const BANK_KO = { NH: 'NH농협', LNH: '지역농·축협', KB: 'KB국민', SHINHAN: '신한', WOORI: '우리', KEB_HANA: '하나',
@@ -2457,21 +2460,42 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
             // 금액으로 보이는 컬럼은 원화 포맷
             const isAmt = c => /amount|금액|amt/i.test(c);
             const shown = (r.elements || []).slice(0, 100);
-            // 대표 7/26: 값이 전부 0원/빈값인 칸은 자동 숨김 (칸 낭비 정리 — 값이 생기면 다시 나타남)
+            // 대표 7/26: 값이 전부 0원/빈값인 칸 자동 숨김 + 지정 칸(예정일·가맹점/계좌) 숨김
             const isEmptyCol = c => shown.every(row => {
                 const v = row[c];
                 return v == null || v === '' || (isAmt(c) && Number(v) === 0);
             });
-            const visCols = cols.filter(c => !isEmptyCol(c));
-            const hiddenCnt = cols.length - visCols.length;
+            let visCols = cols.filter(c => !SETTLE_HIDE.includes(c) && !isEmptyCol(c));
+            // 정산 기준 시작일=종료일(일별)이면 한 칸으로 병합해 '정산 기준일'로 표시
+            const mergeBasis = visCols.includes('settleBasisStartDate') && visCols.includes('settleBasisEndDate')
+                && shown.every(row => row.settleBasisStartDate === row.settleBasisEndDate);
+            if (mergeBasis) visCols = visCols.filter(c => c !== 'settleBasisEndDate');
+            const headKo = c => (mergeBasis && c === 'settleBasisStartDate') ? '정산 기준일' : colKo(c);
+            const hiddenCnt = cols.length - visCols.length - (mergeBasis ? 1 : 0);
+            // 합계 행 (금액 칸만)
+            const sums = {};
+            for (const c of visCols) if (isAmt(c)) sums[c] = shown.reduce((s, row) => s + (Number(row[c]) || 0), 0);
+            const amtCell = (v, strong) => {
+                const n = Number(v) || 0;
+                return `<td style="text-align:right; white-space:nowrap;${n < 0 ? ' color:#dc2626;' : ''}${strong ? ' font-weight:700;' : ''}">${won(n)}</td>`;
+            };
             let html = `<div style="margin-bottom:6px;font-weight:600;">📅 ${aoEsc(from)} ~ ${aoEsc(to)} · ${r.count}건</div>`;
-            html += '<div style="overflow-x:auto;"><table class="data-table" style="font-size:12px;min-width:600px;"><thead><tr>'
-                + visCols.map(c => `<th>${aoEsc(colKo(c))}</th>`).join('') + '</tr></thead><tbody>';
-            html += shown.map(row =>
-                '<tr>' + visCols.map(c => `<td>${isAmt(c) ? won(row[c]) : aoEsc(String(valKo(c, row[c] == null ? '' : row[c])))}</td>`).join('') + '</tr>'
+            html += '<div style="overflow-x:auto; border:1px solid var(--border,#e5e7eb); border-radius:12px;">'
+                + '<table class="data-table" style="font-size:12px; min-width:600px; border-collapse:collapse; width:100%;"><thead><tr>'
+                + visCols.map(c => `<th style="background:var(--bg-soft,#eef2ff); white-space:nowrap; position:sticky; top:0;${isAmt(c) ? ' text-align:right;' : ''}">${aoEsc(headKo(c))}</th>`).join('')
+                + '</tr></thead><tbody>';
+            html += shown.map((row, i) =>
+                `<tr${i % 2 ? ' style="background:var(--bg-soft,#fafafa);"' : ''}>` + visCols.map(c =>
+                    isAmt(c) ? amtCell(row[c], c === 'settleAmount')
+                        : `<td style="white-space:nowrap;">${aoEsc(String(valKo(c, row[c] == null ? '' : row[c])))}</td>`
+                ).join('') + '</tr>'
             ).join('');
+            // 합계 행
+            html += '<tr style="border-top:2px solid var(--border,#c7d2fe); background:var(--bg-soft,#eef2ff);">'
+                + visCols.map((c, idx) => idx === 0 ? '<td style="font-weight:700;">합계</td>'
+                    : isAmt(c) ? amtCell(sums[c], c === 'settleAmount') : '<td></td>').join('') + '</tr>';
             html += '</tbody></table></div>';
-            html += `<div class="text-muted" style="margin-top:6px;font-size:12px;">네이버 실입금 기준 집계 · 거래처 결제가(세미)와 별개 · 최대 100행 표시${hiddenCnt ? ` · 전부 0원/빈값인 항목 ${hiddenCnt}개 숨김` : ''}</div>`;
+            html += `<div class="text-muted" style="margin-top:6px;font-size:12px;">네이버 실입금 기준 집계 · 거래처 결제가(세미)와 별개 · 최대 100행 표시${hiddenCnt > 0 ? ` · 숨긴 항목 ${hiddenCnt}개(0원·가맹점 정보 등)` : ''}</div>`;
             if (box) box.innerHTML = html;
         } catch (e) {
             if (box) box.innerHTML = '❌ 조회 실패: ' + aoEsc(e.message || String(e));
