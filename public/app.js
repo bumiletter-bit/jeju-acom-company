@@ -5244,9 +5244,29 @@ function showInvoiceMergedPreview() {
     showInvoicePreview(converted);
 }
 
-// 대표 7/25(확정): 변환 직전 취소 재확인은 넣지 않는다 — 취소·반품은 배송준비와 무관(취소는 PAYED에서 자동 이탈).
-//   안전장치 = [자동 불러오기]가 항상 실행 시점에 새로 조회(타이머 수집분을 변환에 재사용하지 않음 — 현황·통계용).
-document.getElementById('invoice-merge-btn').addEventListener('click', () => {
+// 대표 7/25(확정): 네이버는 변환 직전 취소 재확인 없음 — 취소는 PAYED에서 자동 이탈, 항상 신규 조회가 안전장치.
+// 대표 7/26(쿠팡 지시문 §5): 쿠팡은 상품준비중에도 취소요청(출고중지요청)이 존재 → 변환 직전 쿠팡분만 재확인·자동 제외.
+//   변환 로직(convertDataCoupang)은 무수정 — 입력 데이터(invoiceDataCoupang)만 필터. 재확인 실패 시 변환은 진행+경고.
+async function recheckCoupangCancellations() {
+    if (!coupangInvoiceLoadedAt || !invoiceDataCoupang || !invoiceDataCoupang.length) return;
+    const msg = document.getElementById('invoice-auto-coupang-msg');
+    try {
+        const r = await api('/api/agent-office/coupang/canceled-since?since=' + encodeURIComponent(coupangInvoiceLoadedAt));
+        if (!r.ok) throw new Error(r.message || '재확인 실패');
+        const canceled = new Set(r.canceled || []);
+        if (canceled.size) {
+            const before = invoiceDataCoupang.length;
+            invoiceDataCoupang = invoiceDataCoupang.filter(row => !canceled.has(String(row._orderId || '')));
+            const removed = before - invoiceDataCoupang.length;
+            if (removed > 0 && msg) msg.innerHTML = `🛡️ 변환 직전 재확인: 쿠팡 취소 요청 <strong>${removed}건</strong>을 자동 제외했습니다.`;
+        }
+        coupangInvoiceLoadedAt = new Date().toISOString(); // 재변환 시 새 구간만 재확인
+    } catch (e) {
+        if (msg) msg.innerHTML = `⚠️ 쿠팡 취소 재확인 실패(${aoEsc(String(e.message || e))}) — 변환은 진행합니다. Wing에서 취소 여부를 확인해주세요.`;
+    }
+}
+document.getElementById('invoice-merge-btn').addEventListener('click', async () => {
+    await recheckCoupangCancellations(); // 쿠팡발 데이터일 때만 동작, 실패해도 변환 진행
     const converted = getMergedConverted();
     if (converted.length === 0) return alert('업로드된 파일이 없습니다.');
     exportInvoiceExcel(converted);
