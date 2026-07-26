@@ -310,3 +310,91 @@ input:focus, textarea:focus, select:focus {
     .sidebar-header { padding: 14px 16px 14px 66px; transition: padding 0.3s ease; }
     .brand-row { align-items: center; }
 }
+
+/* ================= 정산현황(ss-) — 구 남색/골드 → 인디고 테마 통일 (v5.9.85) ================= */
+/* 원본(styles.css)은 그대로 두고 색·그림자만 덮어씀 — 원복은 이 블록 삭제만 하면 됨. 기능 무관. */
+
+/* 헤더 바 */
+.ss-header { background: linear-gradient(135deg, #4F46E5, #6366F1); box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
+.ss-logo { background: #fff; color: var(--primary); }
+.ss-header-title b { color: #fff; }
+
+/* 달력 */
+.ss-cal-wrap { border-bottom: 1px solid var(--border); }
+.ss-cal-title { color: var(--text-dark); }
+.ss-cal-nav { background: var(--card-bg); border: 1px solid var(--border); color: var(--text-mid); }
+.ss-cal-nav:hover { background: var(--primary); border-color: var(--primary); color: #fff; }
+.ss-cal-cell:hover { background: var(--primary-light); border-color: #C9CDFF; }
+.ss-cal-cell.ss-cal-has { border-color: var(--border); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); }
+.ss-cal-cell.ss-cal-has:hover { border-color: var(--primary); box-shadow: 0 4px 16px -6px rgba(16, 24, 40, 0.12); }
+.ss-cal-cell.ss-cal-sel { background: var(--primary) !important; border-color: var(--primary) !important; box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
+.ss-cal-cell.ss-cal-sel .ss-cal-amt { color: #fff !important; }
+.ss-cal-cell.ss-cal-has::after { background: var(--primary); }
+.ss-cal-amt-pos { color: var(--success); }
+.ss-cal-amt-neg { color: var(--danger); }
+
+/* 날짜 배너 (히어로 — C-1 정산 히어로 카드와 동일 톤) */
+.ss-date-banner { background: linear-gradient(135deg, #4F46E5, #6366F1); box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
+.ss-date-banner::before { background: rgba(255, 255, 255, 0.08); }
+.ss-date-banner-title span { color: #C9CDFF; }
+.ss-date-banner-badge { background: #fff; color: var(--primary); }
+
+/* 요약 카드 */
+.ss-sc { border-top-color: var(--primary); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); }
+.ss-sc:hover { box-shadow: 0 4px 16px -6px rgba(16, 24, 40, 0.12); }
+.ss-sc.y { border-top-color: #F59E0B; }
+.ss-sc.g { border-top-color: var(--success); }
+.ss-sc.r { border-top-color: var(--danger); }
+.ss-sc-val { color: var(--text-dark); }
+.ss-sc-val.g { color: var(--success); }
+.ss-sc-val.r { color: var(--danger); }
+.ss-sc.total { background: linear-gradient(135deg, #4F46E5, #6366F1); box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
+.ss-sc.total .ss-sc-lbl { color: #E0E2FF; }
+.ss-sc.total .ss-sc-sub { color: #C9CDFF; }
+.ss-sc.total .ss-sc-val-total.r { color: #FFB4B4; }
+
+/* 섹션 라벨·카드·카드 헤더 */
+.ss-slbl { color: var(--primary); }
+.ss-card { border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); }
+.ss-ch { background: linear-gradient(#FBFBFD, #F4F5F8); color: var(--text-dark); border-bottom: 1px solid var(--border); }
+.ss-ch-link { background: var(--primary-light); color: var(--primary); }
+.ss-ch-link:hover { background: #E0E2FF; }
+
+/* 테이블 */
+.ss-tbl th { background: #FBFBFD; color: var(--text-mid); }
+.ss-tbl tr:hover td, .ss-tbl tr:hover th { background: #F8F9FC; }
+.ss-tbl .ss-hl th { background: var(--primary-light); color: var(--primary); }
+.ss-tbl .ss-hl td { background: #F5F6FF; }
+.ss-tbl .ss-tr th { background: var(--primary); color: #fff; }
+.ss-tbl .ss-tr td { background: var(--primary-light); }
+.ss-tbl .ss-total-final th { background: var(--primary-dark); }
+.ss-tbl .ss-total-final td { background: var(--primary-dark); }
+.ss-cmp.ss-total-yellow { color: #fff; }
+
+/* 입력·계산값·뱃지 */
+.ss-ni { color: var(--text-dark); }
+.ss-ni:focus { background: var(--primary-light); }
+.ss-pos { color: var(--success); }
+.ss-neg { color: var(--danger); }
+.ss-badge-plus { background: #E6F7EE; color: var(--success); }
+.ss-badge-minus { background: #FEE4E2; color: var(--danger); }
+.ss-memo:focus { background: var(--primary-light); }
+
+/* 버튼 */
+.ss-bn { background: var(--primary); }
+.ss-bn:hover { background: var(--primary-dark); }
+.ss-by { background: var(--primary); color: #fff; box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55); }
+.ss-by:hover { background: var(--primary-dark); }
+.ss-bg { background: var(--success); }
+.ss-bg:hover { background: #0E9F5C; }
+.ss-br { background: #FEE4E2; color: var(--danger); }
+.ss-br:hover { background: #FDD8D6; }
+.ss-bh { background: var(--card-bg); color: var(--text-mid); border: 1px solid var(--border); }
+.ss-bh:hover { background: var(--primary-light); color: var(--primary); border-color: #C9CDFF; }
+
+/* 모달·토스트 */
+.ss-mo { background: rgba(16, 24, 40, 0.5); }
+.ss-mbox { box-shadow: 0 4px 16px -6px rgba(16, 24, 40, 0.12); }
+.ss-mh { background: var(--primary); }
+.ss-finp:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+.ss-toast { background: var(--text-dark); }

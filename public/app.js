@@ -12034,9 +12034,9 @@ window.switchInquiryTab = function(name) {
     document.getElementById('inquiry-tab-products').style.display = name === 'products' ? '' : 'none';
     document.getElementById('inquiry-tab-unanswered').style.display = name === 'unanswered' ? '' : 'none';
     const bS = document.getElementById('inquiry-tab-btn-scenario'), bP = document.getElementById('inquiry-tab-btn-products'), bU = document.getElementById('inquiry-tab-btn-unanswered');
-    bS.className = name === 'scenario' ? 'btn-sm' : 'btn-sm btn-outline';
-    bP.className = name === 'products' ? 'btn-sm' : 'btn-sm btn-outline';
-    bU.className = name === 'unanswered' ? 'btn-sm' : 'btn-sm btn-outline';
+    bS.className = name === 'scenario' ? 'settlement-tab active' : 'settlement-tab';
+    bP.className = name === 'products' ? 'settlement-tab active' : 'settlement-tab';
+    bU.className = name === 'unanswered' ? 'settlement-tab active' : 'settlement-tab';
     if (name === 'products') renderBotProducts().catch(console.error);
     else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
     else renderInquiryLogs().catch(console.error);

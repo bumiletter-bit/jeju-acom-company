@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
     <link rel="stylesheet" href="styles.css?v=117">
-    <link rel="stylesheet" href="theme.css?v=9">
+    <link rel="stylesheet" href="theme.css?v=10">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1858,10 +1858,11 @@
             <div class="page" id="page-inquiry">
                 <h1>문의 관리</h1>
                 <p class="text-muted" style="font-size:13px; margin:4px 0 16px;">여기서 저장하면 톡톡봇에 5분 내 자동 반영됩니다. ⚠️ 답변문구에 고객 개인정보(이름·연락처·주소)를 넣지 마세요.</p>
-                <div style="display:flex; gap:6px; margin-bottom:14px;">
-                    <button class="btn-sm" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">💬 시나리오</button>
-                    <button class="btn-sm btn-outline" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
-                    <button class="btn-sm btn-outline" id="inquiry-tab-btn-unanswered" onclick="switchInquiryTab('unanswered')">📭 무응답 현황</button>
+                <!-- 디자인 v5.9.85: 정산관리와 동일한 탭바 컴포넌트 재사용 (클릭 시 인디고 활성) -->
+                <div class="settlement-tab-bar">
+                    <button class="settlement-tab active" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">💬 시나리오</button>
+                    <button class="settlement-tab" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
+                    <button class="settlement-tab" id="inquiry-tab-btn-unanswered" onclick="switchInquiryTab('unanswered')">📭 무응답 현황</button>
                 </div>
                 <div id="inquiry-tab-scenario">
                 <!-- 대표 7/26: 편집 카드를 목록 위로 — [새 시나리오]가 맨 위에서 열리도록 -->
@@ -2201,6 +2202,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=283"></script>
+    <script src="app.js?v=284"></script>
 </body>
 </html>
