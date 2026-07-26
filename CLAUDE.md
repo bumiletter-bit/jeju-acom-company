@@ -229,4 +229,5 @@ NAVER_RELAY_CA    = (중계서버 자체서명 cert.pem 내용 — 인증서 고
 | 연결테스트/정산 | `server.js` `/api/agent-office/naver/test`, `/api/agent-office/naver/settlements` |
 | 자동수집 테이블 | `naver_auto_collect` (server.js initDB, 시드 완료) |
 | 최초 설계 인수인계 | `NCP인증키/네이버커머스API_연동_인수인계서.md` |
+| 🎨 디자인 가이드 (**디자인 작업 전 필독**) | `디자인/디자인_가이드.md` — 인디고 테마 확정·토큰·공통 컴포넌트·노랑 리테마 금지 |
 | 버전 | `version.js` (현재 v5.9.50), `public/index.html` app.js 캐시(현재 v=258) |
