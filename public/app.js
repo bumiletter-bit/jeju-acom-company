@@ -561,11 +561,11 @@ window.openScheduleModal = function(dateStr) {
             <div style="display:flex;gap:12px;">
                 <div class="form-group" style="flex:1;">
                     <label>시작일</label>
-                    <input type="date" id="modal-schedule-start" class="form-input" value="${dateStr}">
+                    <input type="text" id="modal-schedule-start" class="form-input akm-date" value="${dateStr}" readonly autocomplete="off" placeholder="날짜 선택">
                 </div>
                 <div class="form-group" style="flex:1;">
                     <label>종료일</label>
-                    <input type="date" id="modal-schedule-end" class="form-input" value="${dateStr}">
+                    <input type="text" id="modal-schedule-end" class="form-input akm-date" value="${dateStr}" readonly autocomplete="off" placeholder="날짜 선택">
                 </div>
             </div>
             <button class="btn-primary" id="modal-schedule-save" style="width:100%;">저장</button>
@@ -3118,11 +3118,11 @@ async function showEditDocModal(doc) {
             <div class="form-row" style="gap:12px;">
                 <div class="form-group">
                     <label>시작일</label>
-                    <input type="date" id="edit-doc-start" class="form-input" value="${doc.startDate}">
+                    <input type="text" id="edit-doc-start" class="form-input akm-date" value="${doc.startDate}" readonly autocomplete="off" placeholder="날짜 선택">
                 </div>
                 <div class="form-group" id="edit-doc-end-group" style="${showEndDate ? '' : 'display:none;'}">
                     <label>종료일</label>
-                    <input type="date" id="edit-doc-end" class="form-input" value="${doc.endDate || doc.startDate}">
+                    <input type="text" id="edit-doc-end" class="form-input akm-date" value="${doc.endDate || doc.startDate}" readonly autocomplete="off" placeholder="날짜 선택">
                 </div>
             </div>
             <div class="form-group">
@@ -5129,7 +5129,7 @@ document.getElementById('box-movement-btn')?.addEventListener('click', () => {
                     </div>
                     <div style="flex:1;">
                         <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">날짜</label>
-                        <input type="date" id="mov-date" class="form-input" value="${todayStr}" style="width:100%;">
+                        <input type="text" id="mov-date" class="form-input akm-date" value="${todayStr}" style="width:100%;" readonly autocomplete="off" placeholder="날짜 선택">
                     </div>
                 </div>
                 <div>
@@ -6081,10 +6081,6 @@ window.resetInvoiceQty = resetInvoiceQty;
 function formatDate(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
-
-document.querySelectorAll('input[type="date"]').forEach(input => {
-    input.addEventListener('click', () => { if (input.showPicker) input.showPicker(); });
-});
 
 // =============================================
 // Init
@@ -9259,17 +9255,19 @@ const AkmCal = (() => {
         pop.style.visibility = 'visible';
     }
 
-    function attach(ids) {
-        ids.forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.addEventListener('click', () => open(el));
-            el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(el); } });
-        });
-    }
-    return { attach };
+    // 문서 전체 위임 — class="akm-date" 입력이면 정적/동적(모달 포함) 어디든 자동 작동
+    document.addEventListener('click', e => {
+        const el = e.target.closest && e.target.closest('input.akm-date');
+        if (el) open(el);
+    });
+    document.addEventListener('keydown', e => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.matches && e.target.matches('input.akm-date')) {
+            e.preventDefault();
+            open(e.target);
+        }
+    });
+    return { open, close };
 })();
-AkmCal.attach(['rank-input-date', 'rank-range-start', 'rank-range-end']);
 
 // =============================================
 // 🎮 AGENT OFFICE (대표 전용) — 픽셀 사무실 + 실행/로그
@@ -9420,7 +9418,7 @@ function aoShowSettlementConfirm(r) {
         <h3 style="margin:0 0 8px;">📋 정산관리 입력 확인</h3>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">거래처: ${partnerSelect}</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-            날짜: <input type="date" id="ao-settle-date" value="${aoEsc(r.date||'')}" onchange="aoSettleChangeDate(this.value)" style="font-size:14px;padding:5px 8px;border-radius:8px;border:1.5px solid #4F46E5;background:#EEF0FF;">
+            날짜: <input class="akm-date" type="text" id="ao-settle-date" value="${aoEsc(r.date||'')}" onchange="aoSettleChangeDate(this.value)" style="font-size:14px;padding:5px 8px;border-radius:8px;border:1.5px solid #4F46E5;background:#EEF0FF;" readonly autocomplete="off" placeholder="날짜 선택">
             <span style="color:#888;font-size:12px;">틀리면 바꿔주세요</span> · <span style="color:#666;font-size:13px;">총 ${r.box_total}박스</span>
         </div>
         <div id="ao-settle-body">${aoSettleBodyHtml(r, partner)}</div>

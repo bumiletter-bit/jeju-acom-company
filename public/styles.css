@@ -1633,38 +1633,61 @@ input[type="date"].form-input::-webkit-datetime-edit {
 }
 
 /* ========================================
-   Data Table
+   Data Table — 공통 디자인 (인디고/화이트 테마)
+   둥근 테두리 + 은은한 그림자 + 그라데이션 헤더 + 행 호버
    ======================================== */
 .table-scroll-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    border: 1px solid #ECEDF1;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 4px 12px -8px rgba(16, 24, 40, 0.10);
 }
 .data-table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: #fff;
+    border: 1px solid #ECEDF1;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 4px 12px -8px rgba(16, 24, 40, 0.10);
 }
+/* 스크롤 래퍼 안에서는 래퍼가 박스 역할 → 표 자체 테두리 제거(이중 방지) */
+.table-scroll-wrapper .data-table { border: none; border-radius: 0; box-shadow: none; }
 
 .data-table thead th {
     padding: 12px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #666;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #667085;
     text-align: left;
-    border-bottom: 2px solid #e8e8e8;
+    background: linear-gradient(#FBFBFD, #F4F5F8);
+    border-bottom: 1px solid #E4E6EB;
 }
+.data-table thead th:first-child { border-top-left-radius: 12px; }
+.data-table thead th:last-child { border-top-right-radius: 12px; }
 
 .data-table tbody td {
     padding: 12px 16px;
     font-size: 14px;
     color: #333;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid #F1F2F5;
 }
+.data-table tbody tr:hover td { background: #F8F9FC; }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr:last-child td:first-child { border-bottom-left-radius: 12px; }
+.data-table tbody tr:last-child td:last-child { border-bottom-right-radius: 12px; }
 
 .data-table tfoot td {
     padding: 12px 16px;
     font-size: 14px;
-    border-top: 2px solid #e8e8e8;
+    border-top: 2px solid #E4E6EB;
+    background: #FBFBFD;
 }
+.data-table tfoot tr:last-child td:first-child { border-bottom-left-radius: 12px; }
+.data-table tfoot tr:last-child td:last-child { border-bottom-right-radius: 12px; }
 
 .empty-row td {
     text-align: center;
@@ -1676,12 +1699,7 @@ input[type="date"].form-input::-webkit-datetime-edit {
    순위관리 — 일자별 기록 표
    (테마: 인디고/화이트, theme.css 팔레트와 동일 색상)
    ======================================== */
-.rank-log-wrap {
-    border: 1px solid #ECEDF1;
-    border-radius: 12px;
-    background: #fff;
-    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 4px 12px -8px rgba(16, 24, 40, 0.10);
-}
+/* (박스 스타일은 공통 .table-scroll-wrapper 가 담당) */
 .rank-log-table {
     table-layout: fixed;
     min-width: 560px;
@@ -1729,11 +1747,6 @@ input[type="date"].form-input::-webkit-datetime-edit {
 .rank-diff.same { color: #98A0AE; font-weight: 400; }
 .rank-cell .rank-none { color: #C4C9D2; }
 .rank-del-btn { padding: 3px 10px; font-size: 11px; }
-@media (max-width: 768px) {
-    /* 전역 full-bleed(margin/padding) 해제 — 테두리 박스 유지 */
-    .table-scroll-wrapper.rank-log-wrap { margin: 0; padding: 0; }
-}
-
 /* ========================================
    커스텀 달력 (akm-cal) — 순위관리 날짜 입력
    (테마: 인디고/화이트, theme.css 팔레트와 동일 색상)
@@ -1803,8 +1816,9 @@ input[type="date"].form-input::-webkit-datetime-edit {
 }
 .akm-cal-today-btn:hover { background: #4F46E5; color: #fff; }
 
-/* 품목별 금액 목록 */
-#pricing-list td { border: 1px solid #d0d0d0; padding: 10px 16px; }
+/* 품목별 금액 목록 — 격자 유지(분리 테두리 모델에서 이중선 방지: 아래/오른쪽만) */
+#pricing-list td { border: none; border-bottom: 1px solid #E4E6EB; border-right: 1px solid #ECEDF1; padding: 10px 16px; }
+#pricing-list td:last-child { border-right: none; }
 #page-pricing .data-table th:nth-child(1), #page-pricing .data-table td:nth-child(1) { width: 15%; }
 #page-pricing .data-table th:nth-child(2), #page-pricing .data-table td:nth-child(2) { width: 12%; }
 #page-pricing .data-table th:nth-child(3), #page-pricing .data-table td:nth-child(3) { width: 50%; }
@@ -3100,8 +3114,8 @@ textarea.form-input {
     .schedule-checkmark { width: 10px; height: 10px; border-width: 1px; }
     .schedule-check input:checked + .schedule-checkmark::after { font-size: 8px; }
 
-    /* -- 정산관리 -- */
-    .table-scroll-wrapper { margin: 0 -14px; padding: 0 14px; }
+    /* -- 정산관리 -- (표가 테두리 박스가 되면서 full-bleed 해제) */
+    .table-scroll-wrapper { margin: 0; padding: 0; }
 
     /* -- 기안서류 -- */
     .form-row { flex-direction: column; gap: 8px; }
