@@ -6019,6 +6019,13 @@ setupInvoiceArea('invoice-upload-smart', 'invoice-file-smart', 'invoice-filename
 setupInvoiceArea('invoice-upload-jasamol', 'invoice-file-jasamol', 'invoice-filename-jasamol', 0, convertDataJasamol, 'jasamol');
 setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-filename-coupang', 0, convertDataCoupang, 'coupang');
 
+// 완료 표시 (대표 7/26): 자동 불러오기 성공 시 업로드 안내 문구 자리에 "N건 완료되었습니다!" 크게 표시
+const INVOICE_AREA_DEFAULT_P = '엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드';
+function setInvoiceAreaDone(area, count, label) {
+    const p = area && area.querySelector('p');
+    if (p) p.innerHTML = `✅ <strong style="font-size:15px;">${label} ${count}건 완료되었습니다!</strong>`;
+}
+
 // 진행 표시 헬퍼 (대표 7/26): 단계·경과초 표시만 — 처리 로직(서버 조회·변환)은 무수정.
 //   서버가 페이지 순회를 한 번의 요청으로 처리하므로 페이지 단위 실시간 표시는 불가 → 경과초+단계로 표시.
 function aoProgressTicker(el, textFn) {
@@ -6056,6 +6063,7 @@ function aoProgressTicker(el, textFn) {
             invoiceDataSmart = r.rows;              // 스마트스토어 데이터로 주입 (기존 변환 로직이 그대로 처리)
             if (fnEl) fnEl.textContent = `🛰️ 네이버 배송준비 ${r.count}건`;
             if (area) area.classList.add('has-file');
+            setInvoiceAreaDone(area, r.count, '배송준비');
             updateInvoiceMergeBtn();
             showInvoiceMergedPreview();
             let dbg = '';
@@ -6099,6 +6107,7 @@ function aoProgressTicker(el, textFn) {
             coupangInvoiceLoadedAt = new Date().toISOString(); // 변환 직전 취소 재확인 기준 시각 (Task 4)
             if (fnEl) fnEl.textContent = `🛒 쿠팡 상품준비중 ${r.count}건`;
             if (area) area.classList.add('has-file');
+            setInvoiceAreaDone(area, r.count, '상품준비중');
             updateInvoiceMergeBtn();
             showInvoiceMergedPreview();
             const partial = r.partial_adjusted ? ` · 부분취소 수량 반영 <strong>${r.partial_adjusted}건</strong>` : '';
@@ -6139,6 +6148,7 @@ function aoProgressTicker(el, textFn) {
             invoiceDataJasamol = r.rows;            // 자사몰 데이터 주입 (기존 변환 로직이 그대로 처리)
             if (fnEl) fnEl.textContent = `🏠 자사몰 배송준비중 ${r.count}건`;
             if (area) area.classList.add('has-file');
+            setInvoiceAreaDone(area, r.count, '배송준비중');
             updateInvoiceMergeBtn();
             showInvoiceMergedPreview();
             const partial = r.partial_adjusted ? ` · 취소요청 수량 반영 <strong>${r.partial_adjusted}건</strong>` : '';
@@ -6168,7 +6178,11 @@ function resetInvoice() {
         const area = document.getElementById(`invoice-upload-${ch}`);
         if (fileInput) fileInput.value = '';
         if (fileName) fileName.textContent = '';
-        if (area) area.classList.remove('has-file');
+        if (area) {
+            area.classList.remove('has-file');
+            const p = area.querySelector('p');
+            if (p) p.innerHTML = INVOICE_AREA_DEFAULT_P; // 완료 문구 → 기본 업로드 안내로 복원
+        }
     });
 
     document.getElementById('invoice-merge-btn').disabled = true;
@@ -6301,7 +6315,7 @@ function parseInvoiceRows(data) {
             const partialSum = (nv.ok ? nv.partial_adjusted || 0 : 0) + (cp.ok ? cp.partial_adjusted || 0 : 0) + (cf.ok ? cf.partial_adjusted || 0 : 0);
             const partial = partialSum ? ` · 부분취소 수량 반영 <strong>${partialSum}건</strong>` : '';
             const failNote = [!nv.ok && `네이버: ${aoEsc(nv.message)}`, !cp.ok && `쿠팡: ${aoEsc(cp.message)}`, !cf.ok && `자사몰: ${aoEsc(cf.message)}`].filter(Boolean).join(' / ');
-            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${rows.length}건</strong> 기준으로 집계했습니다 — 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)} (최근 ${days}일${partial})`
+            if (msg) msg.innerHTML = `✅ <strong style="font-size:15px;">준비 완료되었습니다!</strong> 배송준비 <strong>${rows.length}건</strong> 집계 — 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)} (최근 ${days}일${partial})`
                 + (failNote ? `<br><span style="color:var(--danger,#F04438);">⚠️ 실패 채널 제외하고 집계됨 — ${failNote}</span>` : '');
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
@@ -12353,7 +12367,7 @@ window.saveSessionIdle = async function() {
     catch (e) { alert(e.message); }
 };
 window.saveAlertSetting = async function(key, enabled) {
-    try { await api('/api/agent-office/naver/alert-settings', 'PUT', { [key]: enabled }); }
+    try { await api('/api/agent-office/naver/alert-settings', 'PUT', { [key]: enabled }); showToast('✅ 알림 설정이 저장되었습니다'); }
     catch (e) { alert(e.message); }
     renderNaverTimers().catch(console.error);
 };
@@ -12368,7 +12382,7 @@ window.saveAlertTemplate = async function(key, reset) {
     renderNaverTimers().catch(console.error);
 };
 window.toggleNaverTimer = async function(key, enabled) {
-    try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', { enabled }); }
+    try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', { enabled }); showToast(enabled ? '✅ 켰습니다 — 자동 수집 시작' : '⏸ 껐습니다'); }
     catch (e) { alert(e.message); }
     renderNaverTimers().catch(console.error);
 };
@@ -12378,7 +12392,7 @@ window.saveNaverTimer = async function(key) {
     const minEl = document.getElementById('naver-timer-min-' + key);
     if (timeEl) body.run_at_time = timeEl.value.trim();
     if (minEl) body.interval_min = parseInt(minEl.value);
-    try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', body); }
+    try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', body); showToast('✅ 저장되었습니다'); }
     catch (e) { alert(e.message); }
     renderNaverTimers().catch(console.error);
 };
