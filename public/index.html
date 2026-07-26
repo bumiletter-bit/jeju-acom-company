@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
     <link rel="stylesheet" href="styles.css?v=117">
-    <link rel="stylesheet" href="theme.css?v=11">
+    <link rel="stylesheet" href="theme.css?v=12">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1924,7 +1924,7 @@
                             <h2>📭 무응답 현황</h2>
                             <div style="display:flex; gap:8px; align-items:center;">
                                 <button class="btn-sm btn-outline" id="btn-unans-excel">📥 엑셀</button>
-                                <button class="btn-sm" id="btn-unans-refresh">🔄 새로고침</button>
+                                <button class="btn-sm btn-outline" id="btn-unans-refresh">🔄 새로고침</button>
                             </div>
                         </div>
                         <div id="unans-stats" style="font-size:13px; margin:4px 0 10px;"></div>
@@ -1948,7 +1948,8 @@
                         <div id="unans-list" class="table-scroll-wrapper"></div>
                     </div>
                 </div>
-                <div class="card">
+                <!-- 대표 7/26: 수정 이력은 관리자만 (직원에겐 카드 숨김) -->
+                <div class="card" id="inquiry-history-card" style="display:none;">
                     <h2>🕓 수정 이력</h2>
                     <div id="inquiry-logs" style="font-size:13px; overflow-x:auto;"></div>
                 </div>
@@ -2202,6 +2203,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=290"></script>
+    <script src="app.js?v=291"></script>
 </body>
 </html>

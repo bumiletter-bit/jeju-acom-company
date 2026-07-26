@@ -4984,7 +4984,7 @@ app.put('/api/agent-office/scenarios-auto-reply', authMiddleware, adminOnly, asy
         res.json({ message: `전체 자동응답을 ${value === 'on' ? '켰습니다' : '껐습니다'}`, auto_reply: value });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.get('/api/agent-office/scenario-logs', authMiddleware, async (req, res) => {
+app.get('/api/agent-office/scenario-logs', authMiddleware, adminOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
     try {
         const r = await pool.query(
             `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
@@ -5058,7 +5058,7 @@ app.delete('/api/agent-office/bot-products/:id', authMiddleware, adminOnly, asyn
         res.json({ message: '품목이 삭제되었습니다(복구 가능)', product: await svcSoftDeleteBotProduct(req.params.id, adminActor(req)) });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.get('/api/agent-office/bot-product-logs', authMiddleware, async (req, res) => {
+app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
     try {
         const r = await pool.query(
             `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs

@@ -180,6 +180,8 @@ function updateUserUI() {
     if (coupangCard) coupangCard.style.display = currentUser.role === 'admin' ? '' : 'none';
     const cafe24Card = document.getElementById('cafe24-connect-card'); // 대표 7/26: 카페24 연동(관리자만)
     if (cafe24Card) cafe24Card.style.display = currentUser.role === 'admin' ? '' : 'none';
+    const inqHistCard = document.getElementById('inquiry-history-card'); // 대표 7/26: 문의 관리 수정 이력(관리자만)
+    if (inqHistCard) inqHistCard.style.display = currentUser.role === 'admin' ? '' : 'none';
 
     // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
     const adminOnlyPages = ['settlement', 'pricing', 'data']; // 대표 7/26 A: agent-office 직원 개방 (관리 기능은 화면 안에서 대표 전용)
@@ -12100,6 +12102,7 @@ function setupInquiryPage() {
     });
 }
 async function renderInquiryLogs() {
+    if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
     const d = await api('/api/agent-office/scenario-logs');
     if (inquiryActiveTab !== 'scenario') return; // 이력 카드 공용 — 활성 탭 이력만 표시(늦게 온 응답이 덮어쓰는 경합 방지)
     const rows = (d.logs || []).map(l => {
@@ -12168,6 +12171,7 @@ window.deleteBotProd = async function(id) {
     renderBotProducts().catch(console.error);
 };
 async function renderBotProductLogs() {
+    if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
     const d = await api('/api/agent-office/bot-product-logs');
     if (inquiryActiveTab !== 'products') return; // 이력 카드 공용 — 활성 탭 이력만 표시(경합 방지)
     const rows = (d.logs || []).map(l => {

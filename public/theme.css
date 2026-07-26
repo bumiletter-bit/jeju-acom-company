@@ -266,7 +266,11 @@ input:focus, textarea:focus, select:focus {
     border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 10px 12px;
 }
 .ao-order-label { color: var(--primary); }
-.ao-order-bar .form-input { background: transparent; color: var(--text-dark); }
+/* 대표 7/26: 입력칸이 호버 전엔 안 보이던 문제 — 테두리·배경 상시 표시 (직원 지시 진입점 가시화) */
+.ao-order-bar .form-input {
+    background: #fff; color: var(--text-dark);
+    border: 1px solid var(--border); border-radius: 10px; padding-left: 12px;
+}
 #ao-order-send { border-radius: 11px; }
 
 /* 세미 보고서 등 네이비/골드 잔재 → 인디고 톤 */
