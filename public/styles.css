@@ -4500,3 +4500,6 @@ input.ui-switch:focus-visible { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15); }
 .data-table thead th { position: sticky; top: 0; z-index: 5; }
 /* 긴 표는 래퍼 안에서 세로 스크롤 (화면 72% 높이) — 짧은 표는 변화 없음 */
 .table-scroll-wrapper { max-height: 72vh; overflow: auto; }
+
+/* 표 래퍼가 비어있을 땐 테두리 박스 숨김 (데이터 로드 전) */
+.table-scroll-wrapper:empty { display: none; }
