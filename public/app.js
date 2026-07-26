@@ -12133,10 +12133,15 @@ async function renderUnansweredLogs() {
     const w = d.week || {};
     const total = w.total || 0, answered = w.answered || 0, skipped = w.skipped || 0;
     const rate = total ? Math.round(answered / total * 100) : 0;
-    let statsHtml = `📊 최근 7일 문의 <b>${total}건</b> · 자동응답률 <b>${rate}%</b> · 미매칭 <b>${skipped}건</b>`;
+    // 디자인 가이드: 브리핑 스트립(sch-brief) + 칩(sch-b-chip) 재사용
+    let statsHtml = `<div class="sch-brief" style="margin-bottom:10px;">`
+        + `<span class="sch-b-chip">📊 7일 문의 <b>${total}건</b></span>`
+        + `<span class="sch-b-chip">자동응답률 <b>${rate}%</b></span>`
+        + `<span class="sch-b-chip">미매칭 <b>${skipped}건</b></span>`;
     if ((d.top_unmatched || []).length) {
-        statsHtml += `<br>미매칭 TOP: ` + d.top_unmatched.map(t => `${aoEsc(t.item)} ${t.n}건`).join(' · ');
+        statsHtml += `<span style="color:var(--text-mid,#667085);">TOP: ` + d.top_unmatched.map(t => `${aoEsc(t.item)} ${t.n}건`).join(' · ') + `</span>`;
     }
+    statsHtml += `</div>`;
     document.getElementById('unans-stats').innerHTML = statsHtml;
 
     const itemSel = document.getElementById('unans-item');
@@ -12144,8 +12149,11 @@ async function renderUnansweredLogs() {
     itemSel.innerHTML = '<option value="">전체 품목</option>' + (d.items || []).map(it => `<option value="${aoEsc(it)}">${aoEsc(it)}</option>`).join('');
     itemSel.value = curItem;
 
+    const unansThead = '<thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>봇 응답</th><th>시나리오</th><th>직원 답변</th></tr></thead>';
     if (!unansRows.length) {
-        document.getElementById('unans-list').innerHTML = '<p class="text-muted">표시할 문의가 없습니다</p>';
+        // 디자인 가이드: 빈 화면은 empty-row 컴포넌트
+        document.getElementById('unans-list').innerHTML =
+            `<table class="data-table">${unansThead}<tbody><tr class="empty-row"><td colspan="6">표시할 문의가 없습니다</td></tr></tbody></table>`;
         return;
     }
     const rows = unansRows.map(r => {
@@ -12166,7 +12174,7 @@ async function renderUnansweredLogs() {
         </tr>`;
     }).join('');
     document.getElementById('unans-list').innerHTML = `
-        <table class="data-table"><thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>봇 응답</th><th>시나리오</th><th>직원 답변</th></tr></thead>
+        <table class="data-table">${unansThead}
         <tbody>${rows}</tbody></table>`;
 }
 function setupUnansweredTab() {

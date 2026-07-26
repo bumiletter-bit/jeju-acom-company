@@ -1929,21 +1929,21 @@
                         </div>
                         <div id="unans-stats" style="font-size:13px; margin:4px 0 10px;"></div>
                         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:13px; margin-bottom:10px;">
-                            <label>보기 <select id="unans-view">
+                            <label>보기 <select id="unans-view" class="form-input" style="width:auto; padding:7px 10px; font-size:13px;">
                                 <option value="skip" selected>미매칭 SKIP만</option>
                                 <option value="all">전체</option>
                                 <option value="unanswered">미답변 전체</option>
                                 <option value="answered">답변 완료</option>
                             </select></label>
-                            <label>기간 <select id="unans-period">
+                            <label>기간 <select id="unans-period" class="form-input" style="width:auto; padding:7px 10px; font-size:13px;">
                                 <option value="1m" selected>최근 1개월</option>
                                 <option value="3m">최근 3개월</option>
                                 <option value="6m">최근 6개월</option>
                                 <option value="1y">최근 1년</option>
                             </select></label>
-                            <label>날짜 <input class="akm-date" id="unans-date" placeholder="YYYY-MM-DD" readonly autocomplete="off" style="width:110px;"></label>
-                            <label>품목 <select id="unans-item"><option value="">전체 품목</option></select></label>
-                            <label>검색 <input type="text" id="unans-q" placeholder="메시지 검색" style="width:140px;"></label>
+                            <label>날짜 <input class="akm-date form-input" id="unans-date" placeholder="YYYY-MM-DD" readonly autocomplete="off" style="width:136px; padding:7px 10px; font-size:13px;"></label>
+                            <label>품목 <select id="unans-item" class="form-input" style="width:auto; max-width:280px; padding:7px 10px; font-size:13px;"><option value="">전체 품목</option></select></label>
+                            <label>검색 <input type="text" id="unans-q" class="form-input" placeholder="메시지 검색" style="width:150px; padding:7px 10px; font-size:13px;"></label>
                         </div>
                         <div id="unans-list" class="table-scroll-wrapper"></div>
                     </div>
