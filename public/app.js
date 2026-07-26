@@ -12288,17 +12288,33 @@ async function renderNaverTimers() {
         </tr>`;
     }).join('');
     // 대표 7/26 작업5: 텔레그램 알림 종류별 ON/OFF (수집과 별개로 알림만 제어, 오류 알림은 항상 ON)
-    let alerts = null;
-    try { alerts = (await api('/api/agent-office/naver/alert-settings')).settings; } catch (_) { /* 실패 시 블록 생략 */ }
+    //   + 문구 템플릿 편집 (시나리오 답변문구와 같은 방식 — DB 저장, {{변수}} 치환, 빈칸 저장 = 기본 문구 복원)
+    let alertData = null;
+    try { alertData = await api('/api/agent-office/naver/alert-settings'); } catch (_) { /* 실패 시 블록 생략 */ }
+    const alerts = alertData && alertData.settings;
     const ALERT_LABELS = [['order', '신규주문'], ['claim', '취소·반품·교환'], ['inquiry', '문의'], ['settlement', '정산']];
+    const tplEditors = alerts ? ALERT_LABELS.map(([k, label]) => {
+        const tpl = (alertData.templates && alertData.templates[k]) || '';
+        const vars = ((alertData.variables && alertData.variables[k]) || []).map(v => `{{${v}}}`).join(' ');
+        return `<details style="margin-top:6px;">
+            <summary style="cursor:pointer; font-size:12px; color:var(--text-mid,#667085);">✏️ ${label} 문구 편집</summary>
+            <div style="margin:6px 0 2px;">
+                <textarea id="alert-tpl-${k}" rows="2" class="form-input" style="font-size:12px;">${aoEsc(tpl)}</textarea>
+                <div class="text-muted" style="font-size:11px; margin:3px 0;">사용 가능 변수: ${aoEsc(vars)} — 발송 시 실제 값으로 치환됩니다</div>
+                <button class="btn-sm btn-outline" onclick="saveAlertTemplate('${k}', false)">저장</button>
+                <button class="btn-sm btn-outline" onclick="saveAlertTemplate('${k}', true)">기본 문구로 복원</button>
+            </div>
+        </details>`;
+    }).join('') : '';
     const alertBlock = alerts ? `
         <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border,#eee); font-size:13px;">
-            <b>🔔 텔레그램 알림 설정</b> <span class="text-muted" style="font-size:12px;">수집이 켜져 있어도 알림만 끌 수 있습니다 (설정은 DB 저장)</span>
+            <b>🔔 텔레그램 알림 설정</b> <span class="text-muted" style="font-size:12px;">수집이 켜져 있어도 알림만 끌 수 있습니다 (설정·문구는 DB 저장)</span>
             <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:6px;">
                 ${ALERT_LABELS.map(([k, label]) =>
                     `<label style="white-space:nowrap; display:flex; align-items:center; gap:5px;"><input type="checkbox" class="ui-switch" ${alerts[k] ? 'checked' : ''} onchange="saveAlertSetting('${k}', this.checked)"> ${label}</label>`).join('')}
-                <label style="white-space:nowrap; display:flex; align-items:center; gap:5px; opacity:.6;" title="안전상 항상 발송됩니다"><input type="checkbox" class="ui-switch" checked disabled> 오류 <span class="text-muted" style="font-size:11px;">(항상 ON)</span></label>
+                <label style="white-space:nowrap; display:flex; align-items:center; gap:5px; opacity:.6;" title="안전상 항상 발송됩니다"><input type="checkbox" class="ui-switch" checked disabled> 오류 <span class="text-muted" style="font-size:11px;">(항상 ON — 문구 편집 대상 아님)</span></label>
             </div>
+            ${tplEditors}
         </div>` : '';
     document.getElementById('naver-timer-list').innerHTML = `
         <table class="data-table"><thead><tr><th>수집</th><th>ON</th><th>주기/시각</th><th>마지막 수집</th><th>상태</th></tr></thead>
@@ -12307,6 +12323,16 @@ async function renderNaverTimers() {
 window.saveAlertSetting = async function(key, enabled) {
     try { await api('/api/agent-office/naver/alert-settings', 'PUT', { [key]: enabled }); }
     catch (e) { alert(e.message); }
+    renderNaverTimers().catch(console.error);
+};
+window.saveAlertTemplate = async function(key, reset) {
+    const el = document.getElementById('alert-tpl-' + key);
+    const value = reset ? '' : (el ? el.value.trim() : '');
+    if (!reset && !value) { alert('문구가 비어 있습니다. 기본 문구로 되돌리려면 [기본 문구로 복원]을 눌러주세요.'); return; }
+    try {
+        await api('/api/agent-office/naver/alert-settings', 'PUT', { templates: { [key]: value } });
+        alert(reset ? '기본 문구로 복원했습니다' : '알림 문구를 저장했습니다');
+    } catch (e) { alert(e.message); }
     renderNaverTimers().catch(console.error);
 };
 window.toggleNaverTimer = async function(key, enabled) {

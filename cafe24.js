@@ -85,21 +85,31 @@ async function notifyOnce(state, text) {
     try { if (_notify) await _notify(text); } catch (_) { /* 무시 */ }
 }
 
+// 🔴 카페24 시각 파싱 (2026-07-26 실장애 수정): expires_at 등이 타임존 표기 없는 KST 문자열
+//   ("2026-07-26T16:23:00.000")로 옴 → 그대로 Date.parse 하면 UTC 서버(Render)에서 9시간 미래로
+//   오인해 만료를 감지 못하고 만료된 토큰으로 호출(401)했음. 표기 없으면 +09:00으로 해석한다.
+function parseKstTs(s) {
+    if (!s) return NaN;
+    const str = String(s).trim();
+    return Date.parse(/[zZ]$|[+-]\d\d:?\d\d$/.test(str) ? str : str + '+09:00');
+}
+
 // access 만료 60초 전이면 refresh 갱신(락). 실패 → reauth_required.
-async function getToken() {
+//   force=true(401 수신 후 재시도)면 만료 판정과 무관하게 무조건 갱신.
+async function getToken(force = false) {
     if (!secretSet()) { const e = new Error('cafe24_secret_not_set'); e.code = 'secret'; throw e; }
     let t = await loadTokens();
     if (!t) { const e = new Error('cafe24_reauth_required'); e.code = 'reauth'; throw e; }
-    const expMs = Date.parse(t.expires_at);
-    if (Number.isFinite(expMs) && Date.now() < expMs - 60_000) { _lastState = 'ok'; return t.access_token; }
+    const expMs = parseKstTs(t.expires_at);
+    if (!force && Number.isFinite(expMs) && Date.now() < expMs - 60_000) { _lastState = 'ok'; return t.access_token; }
     // 갱신 필요 — 동시 1회만
     if (!_refreshLock) {
         _refreshLock = (async () => {
             try {
                 const cur = await loadTokens();                     // 락 대기 중 다른 갱신 반영 방어
                 if (cur) {
-                    const curExp = Date.parse(cur.expires_at);
-                    if (Number.isFinite(curExp) && Date.now() < curExp - 60_000) return cur.access_token;
+                    const curExp = parseKstTs(cur.expires_at);
+                    if (!force && Number.isFinite(curExp) && Date.now() < curExp - 60_000) return cur.access_token;
                     const data = await tokenRequest({ grant_type: 'refresh_token', refresh_token: cur.refresh_token });
                     await saveTokens(data);
                     _lastState = 'ok';
@@ -119,12 +129,15 @@ async function getToken() {
 // ── 주문 조회 (유일한 API 호출 — 429/5xx 백오프 + 호출 간 600ms) ──
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function apiGet(path, query) {
-    const token = await getToken();
+    let token = await getToken();
     const qs = query ? '?' + new URLSearchParams(query).toString() : '';
+    let retried401 = false;
     for (let attempt = 0; ; attempt++) {
         const res = await fetch(`${API_BASE}${path}${qs}`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         });
+        // 401(토큰 만료·무효) → 강제 갱신 후 정확히 1회 재시도 (2026-07-26 실장애 수정의 2중 방어)
+        if (res.status === 401 && !retried401) { retried401 = true; token = await getToken(true); continue; }
         if ((res.status === 429 || res.status >= 500) && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
         const text = await res.text();
         let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
@@ -191,8 +204,8 @@ async function getStatus() {
     if (!t) { out.token_state = 'reauth_required'; return out; }
     out.expires_at = t.expires_at || null;
     out.refresh_expires_at = t.refresh_token_expires_at || null;
-    const refExp = Date.parse(t.refresh_token_expires_at);
-    const accExp = Date.parse(t.expires_at);
+    const refExp = parseKstTs(t.refresh_token_expires_at);
+    const accExp = parseKstTs(t.expires_at);
     if (Number.isFinite(refExp) && Date.now() > refExp) out.token_state = 'reauth_required';
     else if (Number.isFinite(refExp) && refExp - Date.now() < 2 * 24 * 3600 * 1000) out.token_state = 'expiring'; // 리프레시 만료 2일 전
     else out.token_state = 'ok';
