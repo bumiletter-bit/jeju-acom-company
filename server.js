@@ -6090,7 +6090,7 @@ app.get('/api/agent-office/runs/:id', authMiddleware, /* 직원 가능 (대표 7
             `SELECT r.*, a.name AS agent_name, a.team AS agent_team,
                     (SELECT p.content FROM pending_orders p WHERE p.run_id = r.id ORDER BY p.id DESC LIMIT 1) AS question
              FROM agent_runs r JOIN agents a ON r.agent_id = a.id
-             WHERE r.id = $1 AND r.is_deleted = false`, [req.params.id]);
+             WHERE r.id = $1`, [req.params.id]); // 대표 7/26: 확인함(보관) 건도 [보고서]로 바로 열람 — is_deleted 필터 제거 (열람은 읽기 전용, 다시 보기 불필요)
         if (r.rows.length === 0) throw { status: 404, message: '실행 기록을 찾을 수 없습니다' };
         res.json({ run: r.rows[0] });
     } catch (err) { handleAdminErr(res, err); }
