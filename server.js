@@ -792,10 +792,15 @@ async function initDB() {
         )
     `);
     // 쿠팡 API 키 만료(2027-01-21) 재발급 알림 일정 — 1회 시드 (지시문_쿠팡_송장변환_연동 §5)
-    const cpKeySched = await pool.query(`SELECT id FROM schedules WHERE title LIKE '%쿠팡 API 키 재발급%' LIMIT 1`);
+    //   ⚠️ 메인 달력(/api/schedules)은 users INNER JOIN이라 user_id 필수 → 대표(admin) 계정으로 등록 (리뷰 지적 반영)
+    const cpAdmin = await pool.query(`SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1`);
+    const cpAdminId = cpAdmin.rows.length ? cpAdmin.rows[0].id : null;
+    const cpKeySched = await pool.query(`SELECT id, user_id FROM schedules WHERE title LIKE '%쿠팡 API 키 재발급%' LIMIT 1`);
     if (cpKeySched.rows.length === 0) {
-        await pool.query(`INSERT INTO schedules (date, title, type, category)
-            VALUES ('2027-01-07', '🛒 쿠팡 API 키 재발급 (1/21 만료 2주 전)', 'normal', '일반')`);
+        await pool.query(`INSERT INTO schedules (user_id, date, title, type, category)
+            VALUES ($1, '2027-01-07', '🛒 쿠팡 API 키 재발급 (1/21 만료 2주 전)', 'normal', '일반')`, [cpAdminId]);
+    } else if (cpKeySched.rows[0].user_id == null && cpAdminId != null) {
+        await pool.query(`UPDATE schedules SET user_id = $2 WHERE id = $1`, [cpKeySched.rows[0].id, cpAdminId]); // 기존 NULL 시드 보정
     }
     // 문의시나리오 DB 통합 (2026-07-25 설계문서): 톡톡봇 시나리오 단일 출처 — 물리삭제 금지(deleted_at)
     await pool.query(`
