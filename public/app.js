@@ -12223,10 +12223,28 @@ async function renderNaverTimers() {
             <td>${st}${err}</td>
         </tr>`;
     }).join('');
+    // 대표 7/26 작업5: 텔레그램 알림 종류별 ON/OFF (수집과 별개로 알림만 제어, 오류 알림은 항상 ON)
+    let alerts = null;
+    try { alerts = (await api('/api/agent-office/naver/alert-settings')).settings; } catch (_) { /* 실패 시 블록 생략 */ }
+    const ALERT_LABELS = [['order', '신규주문'], ['claim', '취소·반품·교환'], ['inquiry', '문의'], ['settlement', '정산']];
+    const alertBlock = alerts ? `
+        <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border,#eee); font-size:13px;">
+            <b>🔔 텔레그램 알림 설정</b> <span class="text-muted" style="font-size:12px;">수집이 켜져 있어도 알림만 끌 수 있습니다 (설정은 DB 저장)</span>
+            <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:6px;">
+                ${ALERT_LABELS.map(([k, label]) =>
+                    `<label style="white-space:nowrap; display:flex; align-items:center; gap:5px;"><input type="checkbox" class="ui-switch" ${alerts[k] ? 'checked' : ''} onchange="saveAlertSetting('${k}', this.checked)"> ${label}</label>`).join('')}
+                <label style="white-space:nowrap; display:flex; align-items:center; gap:5px; opacity:.6;" title="안전상 항상 발송됩니다"><input type="checkbox" class="ui-switch" checked disabled> 오류 <span class="text-muted" style="font-size:11px;">(항상 ON)</span></label>
+            </div>
+        </div>` : '';
     document.getElementById('naver-timer-list').innerHTML = `
         <table class="data-table"><thead><tr><th>수집</th><th>ON</th><th>주기/시각</th><th>마지막 수집</th><th>상태</th></tr></thead>
-        <tbody>${rows}</tbody></table>`;
+        <tbody>${rows}</tbody></table>` + alertBlock;
 }
+window.saveAlertSetting = async function(key, enabled) {
+    try { await api('/api/agent-office/naver/alert-settings', 'PUT', { [key]: enabled }); }
+    catch (e) { alert(e.message); }
+    renderNaverTimers().catch(console.error);
+};
 window.toggleNaverTimer = async function(key, enabled) {
     try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', { enabled }); }
     catch (e) { alert(e.message); }

@@ -5003,6 +5003,39 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, async (req, res) =
         res.json({ logs: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+// 텔레그램 알림 설정 (대표 7/26 작업5): 종류별 ON/OFF를 DB(agent_office_config)에 저장 — 코드 하드코딩 금지
+//   수집 ON/OFF와 별개로 "알림만" 끄고 켤 수 있음. 오류 알림은 설정 대상 아님(안전상 항상 발송).
+//   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'inquiry', 'settlement'];
+async function telegramAlertSettings() {
+    const out = {};
+    for (const k of TELEGRAM_ALERT_KEYS) out[k] = true;
+    try {
+        const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'telegram_alert_settings'`);
+        const v = (r.rows[0] && r.rows[0].value) || {};
+        for (const k of TELEGRAM_ALERT_KEYS) if (v[k] === false) out[k] = false;
+    } catch (_) { /* 조회 실패 → 전부 ON */ }
+    return out;
+}
+async function alertEnabled(kind) { return (await telegramAlertSettings())[kind] !== false; }
+
+app.get('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, async (req, res) => {
+    try { res.json({ ok: true, settings: await telegramAlertSettings() }); }
+    catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const cur = await telegramAlertSettings();
+        const next = { ...cur };
+        for (const k of TELEGRAM_ALERT_KEYS) if (typeof (req.body || {})[k] === 'boolean') next[k] = req.body[k];
+        await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('telegram_alert_settings', $1::jsonb)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(next)]);
+        await writeAudit({ action: 'alert_settings', targetType: 'telegram_alert', targetId: null,
+            changes: { before: cur, after: next }, source: 'naver-api', actor: adminActor(req) });
+        res.json({ ok: true, settings: next });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 app.get('/api/agent-office/naver/auto-collect', authMiddleware, adminOnly, async (req, res) => {
     try {
         const r = await pool.query(`SELECT key, enabled, interval_min, run_at_time, last_run_at, last_status, last_error FROM naver_auto_collect ORDER BY key`);
@@ -5548,7 +5581,7 @@ async function collectSettlement() {
     await pool.query(`INSERT INTO naver_settle_snapshot (from_date, to_date, count, elements) VALUES ($1,$2,$3,$4)`,
         [from, to, elements.length, JSON.stringify(elements)]);
     await pool.query(`DELETE FROM naver_settle_snapshot WHERE id NOT IN (SELECT id FROM naver_settle_snapshot ORDER BY id DESC LIMIT 30)`);
-    notifyTelegram(`🛰️ 정산 자동수집 완료 — ${from}~${to} ${elements.length}건. 데이터관리 > 정산 조회에서 확인하세요`);
+    if (await alertEnabled('settlement')) notifyTelegram(`🛰️ 정산 자동수집 완료 — ${from}~${to} ${elements.length}건. 데이터관리 > 정산 조회에서 확인하세요`);
     return `정산 ${from}~${to} ${elements.length}건`;
 }
 
@@ -5559,7 +5592,7 @@ async function collectOrderNew() {
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     const paid = list.filter(x => String(x.lastChangedType || '') === 'PAYED');
     await naverCfgSet('naver_order_checkpoint', new Date(now).toISOString());
-    if (paid.length > 0) notifyTelegram(`🛰️ 신규 주문 ${paid.length}건 (자동수집 — 발주확인은 수기)`);
+    if (paid.length > 0 && await alertEnabled('order')) notifyTelegram(`🛰️ 신규 주문 ${paid.length}건 (자동수집 — 발주확인은 수기)`);
     return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
 }
 
@@ -5571,7 +5604,7 @@ async function collectClaim() {
     // 🔴 취소·반품·교환은 lastChangedType이 아니라 claimType/claimStatus 필드로 옴 (CLAIM_REQUESTED 등 — 개발자포럼 #701·#1431)
     const claims = list.filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '')));
     await naverCfgSet('naver_claim_checkpoint', new Date(now).toISOString());
-    if (claims.length > 0) notifyTelegram(`⚠️ 취소·반품·교환 변화 ${claims.length}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)`);
+    if (claims.length > 0 && await alertEnabled('claim')) notifyTelegram(`⚠️ 취소·반품·교환 변화 ${claims.length}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)`);
     return `취소·반품·교환 ${claims.length}건 (변경 ${list.length}건 검사)`;
 }
 
@@ -5633,7 +5666,7 @@ async function collectInquiry() {
         const catStr = Object.entries(byCat).map(([c, n]) => `${c} ${n}`).join('·');
         const claimTail = Object.keys(byCat).some(c => /반품|교환|환불/.test(c))
             ? '\n※ 반품·교환·환불 유형은 클레임 관련 "문의 글"입니다 (취소·반품 타이머 알림과 별개)' : '';
-        notifyTelegram(`💬 고객문의 미답변 신규 ${newUnanswered.length}건 (${catStr}) — 답변은 판매자센터에서${claimTail}`);
+        if (await alertEnabled('inquiry')) notifyTelegram(`💬 고객문의 미답변 신규 ${newUnanswered.length}건 (${catStr}) — 답변은 판매자센터에서${claimTail}`);
     }
     return `문의 신규 ${added}(미답변 ${newUnanswered.length})·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
 }
