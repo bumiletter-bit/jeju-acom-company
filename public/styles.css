@@ -26,7 +26,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif;
+    font-family: 'Pretendard', 'Pretendard Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', 'Malgun Gothic', sans-serif;
     background: var(--bg);
     color: #333;
     line-height: 1.6;
@@ -3477,7 +3477,7 @@ textarea.form-input {
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: all .15s;
-    font-family: 'Noto Sans KR', sans-serif;
+    font-family: var(--font-app, 'Pretendard', 'Malgun Gothic', sans-serif);
 }
 .ss-cal-nav:hover { background: #1B3A6B; color: #fff; }
 .ss-cal-grid {
@@ -3669,7 +3669,7 @@ textarea.form-input {
 /* 입력 */
 .ss-ni {
     width: 100%; border: none; background: transparent;
-    font-family: 'Noto Sans KR', sans-serif; font-size: 13.5px; font-weight: 500;
+    font-family: var(--font-app, 'Pretendard', 'Malgun Gothic', sans-serif); font-size: 13.5px; font-weight: 500;
     color: #0f2347; text-align: right; padding: 2px 4px; outline: none;
     cursor: pointer; border-radius: 4px; transition: background .15s;
 }
@@ -3699,7 +3699,7 @@ textarea.form-input {
 
 /* 메모 */
 .ss-memo {
-    width: 100%; border: none; font-family: 'Noto Sans KR', sans-serif;
+    width: 100%; border: none; font-family: var(--font-app, 'Pretendard', 'Malgun Gothic', sans-serif);
     font-size: 13px; color: #6c757d; resize: none;
     padding: 12px 18px; outline: none; background: #fafbfd; min-height: 52px;
 }
@@ -3716,7 +3716,7 @@ textarea.form-input {
 .ss-btn {
     display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px;
     border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer;
-    border: none; font-family: 'Noto Sans KR', sans-serif; transition: all .15s;
+    border: none; font-family: var(--font-app, 'Pretendard', 'Malgun Gothic', sans-serif); transition: all .15s;
 }
 .ss-bn { background: #1B3A6B; color: #fff; }
 .ss-bn:hover { background: #2a5298; }
@@ -3742,7 +3742,7 @@ textarea.form-input {
 .ss-flbl { font-size: 12px; font-weight: 600; color: #6c757d; margin-bottom: 5px; display: block; }
 .ss-finp {
     width: 100%; border: 1.5px solid #dee2e6; border-radius: 6px;
-    padding: 8px 12px; font-family: 'Noto Sans KR', sans-serif;
+    padding: 8px 12px; font-family: var(--font-app, 'Pretendard', 'Malgun Gothic', sans-serif);
     font-size: 13.5px; color: #0f2347; outline: none; transition: border-color .15s;
 }
 .ss-finp:focus { border-color: #2a5298; }
@@ -4298,3 +4298,30 @@ textarea.form-input {
     .sch-wchip { font-size: 11.5px; padding: 3px 7px 3px 6px; }
     .sch-year { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
+
+/* ========================================
+   버튼 위계 — Outline/Secondary 정의 (v5.9.73)
+   ⚠️ 지금까지 .btn-outline(54곳)·.btn-secondary(6곳)가 CSS 정의 없이
+   브라우저 기본 모양으로 렌더링되던 문제 수정 (엑셀 다운로드 버튼 등)
+   ======================================== */
+.btn-outline, .btn-secondary {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 8px 16px;
+    background: #fff;
+    color: #101828;
+    border: 1.5px solid #ECEDF1;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.4;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+    transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.btn-outline:hover, .btn-secondary:hover {
+    border-color: #4F46E5;
+    color: #4F46E5;
+    background: #FAFAFF;
+}
+.btn-outline:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
