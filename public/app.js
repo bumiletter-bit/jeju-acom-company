@@ -12032,10 +12032,13 @@ window.switchInquiryTab = function(name) {
     inquiryActiveTab = name;
     document.getElementById('inquiry-tab-scenario').style.display = name === 'scenario' ? '' : 'none';
     document.getElementById('inquiry-tab-products').style.display = name === 'products' ? '' : 'none';
-    const bS = document.getElementById('inquiry-tab-btn-scenario'), bP = document.getElementById('inquiry-tab-btn-products');
+    document.getElementById('inquiry-tab-unanswered').style.display = name === 'unanswered' ? '' : 'none';
+    const bS = document.getElementById('inquiry-tab-btn-scenario'), bP = document.getElementById('inquiry-tab-btn-products'), bU = document.getElementById('inquiry-tab-btn-unanswered');
     bS.className = name === 'scenario' ? 'btn-sm' : 'btn-sm btn-outline';
     bP.className = name === 'products' ? 'btn-sm' : 'btn-sm btn-outline';
+    bU.className = name === 'unanswered' ? 'btn-sm' : 'btn-sm btn-outline';
     if (name === 'products') renderBotProducts().catch(console.error);
+    else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
     else renderInquiryLogs().catch(console.error);
 };
 // '준비중' = 봇 미노출 (판매가 세팅 전 상태 — 품목별 금액 연동으로 자동 등록된 신규 품목)
@@ -12107,8 +12110,95 @@ function setupBotProductsTab() {
         } catch (e) { alert(e.message); }
     });
 }
+// --- 무응답 현황 탭 (톡톡봇 /unmatched 이관 2026-07-26, 조회 전용) ---
+let unansRows = [];
+async function renderUnansweredLogs() {
+    const view = document.getElementById('unans-view').value;
+    const period = document.getElementById('unans-period').value;
+    const date = document.getElementById('unans-date').value.trim();
+    const item = document.getElementById('unans-item').value;
+    const q = document.getElementById('unans-q').value.trim();
+    const params = new URLSearchParams();
+    if (view === 'skip') params.set('skip', '1');
+    else if (view === 'unanswered') params.set('answered', '0');
+    else if (view === 'answered') params.set('answered', '1');
+    if (item) params.set('item', item);
+    if (q) params.set('q', q);
+    if (date) params.set('date', date);
+    else params.set('period', period);
+    const d = await api('/api/agent-office/inquiry-messages?' + params.toString());
+    if (inquiryActiveTab !== 'unanswered') return; // 늦게 온 응답이 다른 탭을 덮어쓰는 경합 방지
+    unansRows = d.rows || [];
+
+    const w = d.week || {};
+    const total = w.total || 0, answered = w.answered || 0, skipped = w.skipped || 0;
+    const rate = total ? Math.round(answered / total * 100) : 0;
+    let statsHtml = `📊 최근 7일 문의 <b>${total}건</b> · 자동응답률 <b>${rate}%</b> · 미매칭 <b>${skipped}건</b>`;
+    if ((d.top_unmatched || []).length) {
+        statsHtml += `<br>미매칭 TOP: ` + d.top_unmatched.map(t => `${aoEsc(t.item)} ${t.n}건`).join(' · ');
+    }
+    document.getElementById('unans-stats').innerHTML = statsHtml;
+
+    const itemSel = document.getElementById('unans-item');
+    const curItem = itemSel.value;
+    itemSel.innerHTML = '<option value="">전체 품목</option>' + (d.items || []).map(it => `<option value="${aoEsc(it)}">${aoEsc(it)}</option>`).join('');
+    itemSel.value = curItem;
+
+    if (!unansRows.length) {
+        document.getElementById('unans-list').innerHTML = '<p class="text-muted">표시할 문의가 없습니다</p>';
+        return;
+    }
+    const rows = unansRows.map(r => {
+        const dt = new Date(r.received_at).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const respRaw = String(r.bot_response || '');
+        const isTag = /^\[.*\]$/.test(respRaw.trim());
+        const respHtml = isTag
+            ? `<span style="color:#c0392b;">${aoEsc(respRaw)}</span>`
+            : `<span title="${aoEsc(respRaw)}">${aoEsc(aoTrunc(respRaw, 80))}</span>`;
+        const scenario = r.scenario_name ? aoEsc(r.scenario_name) + (r.response_source === 'price_direct' ? ' (가격즉답)' : '') : '-';
+        return `<tr>
+            <td style="white-space:nowrap;">${dt}</td>
+            <td>${aoEsc(r.item || '-')}</td>
+            <td style="white-space:pre-wrap; max-width:320px;">${aoEsc(r.message || '')}</td>
+            <td>${respHtml}</td>
+            <td>${scenario}</td>
+            <td>${aoEsc(r.staff_response || '-')}</td>
+        </tr>`;
+    }).join('');
+    document.getElementById('unans-list').innerHTML = `
+        <table class="data-table"><thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>봇 응답</th><th>시나리오</th><th>직원 답변</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+}
+function setupUnansweredTab() {
+    document.getElementById('btn-unans-refresh').addEventListener('click', () => renderUnansweredLogs().catch(console.error));
+    ['unans-view', 'unans-period', 'unans-item'].forEach(id => {
+        document.getElementById(id).addEventListener('change', () => renderUnansweredLogs().catch(console.error));
+    });
+    document.getElementById('unans-date').addEventListener('change', () => renderUnansweredLogs().catch(console.error));
+    document.getElementById('unans-q').addEventListener('keydown', e => {
+        if (e.key === 'Enter') renderUnansweredLogs().catch(console.error);
+    });
+    document.getElementById('btn-unans-excel').addEventListener('click', () => {
+        if (!unansRows.length) return alert('내보낼 데이터가 없습니다');
+        const data = unansRows.map(r => ({
+            '시각': new Date(r.received_at).toLocaleString('ko-KR'),
+            '품목': r.item || '-',
+            '고객 메시지': r.message || '',
+            '봇 응답': r.bot_response || '',
+            '시나리오': r.scenario_name ? r.scenario_name + (r.response_source === 'price_direct' ? ' (가격즉답)' : '') : '-',
+            '직원 답변': r.staff_response || '-',
+        }));
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(data, { header: ['시각', '품목', '고객 메시지', '봇 응답', '시나리오', '직원 답변'] });
+        XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+        const today = new Date();
+        const dateStr = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');
+        XLSX.writeFile(wb, `무응답현황_${dateStr}.xlsx`);
+    });
+}
 setupInquiryPage();
 setupBotProductsTab();
+setupUnansweredTab();
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
 const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '취소·반품 (알림)', inquiry: '문의' };

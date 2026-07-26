@@ -1861,6 +1861,7 @@
                 <div style="display:flex; gap:6px; margin-bottom:14px;">
                     <button class="btn-sm" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">💬 시나리오</button>
                     <button class="btn-sm btn-outline" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
+                    <button class="btn-sm btn-outline" id="inquiry-tab-btn-unanswered" onclick="switchInquiryTab('unanswered')">📭 무응답 현황</button>
                 </div>
                 <div id="inquiry-tab-scenario">
                 <!-- 대표 7/26: 편집 카드를 목록 위로 — [새 시나리오]가 맨 위에서 열리도록 -->
@@ -1914,6 +1915,36 @@
                             <button class="btn-primary" id="btn-botprod-add">추가</button>
                         </div>
                         <div id="botprod-list" class="table-scroll-wrapper"></div>
+                    </div>
+                </div>
+                <div id="inquiry-tab-unanswered" style="display:none;">
+                    <div class="card">
+                        <div class="card-header-row">
+                            <h2>📭 무응답 현황</h2>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <button class="btn-sm btn-outline" id="btn-unans-excel">📥 엑셀</button>
+                                <button class="btn-sm" id="btn-unans-refresh">🔄 새로고침</button>
+                            </div>
+                        </div>
+                        <div id="unans-stats" style="font-size:13px; margin:4px 0 10px;"></div>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:13px; margin-bottom:10px;">
+                            <label>보기 <select id="unans-view">
+                                <option value="skip" selected>미매칭 SKIP만</option>
+                                <option value="all">전체</option>
+                                <option value="unanswered">미답변 전체</option>
+                                <option value="answered">답변 완료</option>
+                            </select></label>
+                            <label>기간 <select id="unans-period">
+                                <option value="1m" selected>최근 1개월</option>
+                                <option value="3m">최근 3개월</option>
+                                <option value="6m">최근 6개월</option>
+                                <option value="1y">최근 1년</option>
+                            </select></label>
+                            <label>날짜 <input class="akm-date" id="unans-date" placeholder="YYYY-MM-DD" style="width:110px;"></label>
+                            <label>품목 <select id="unans-item"><option value="">전체 품목</option></select></label>
+                            <label>검색 <input type="text" id="unans-q" placeholder="메시지 검색" style="width:140px;"></label>
+                        </div>
+                        <div id="unans-list" class="table-scroll-wrapper"></div>
                     </div>
                 </div>
                 <div class="card">
