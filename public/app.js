@@ -176,6 +176,8 @@ function updateUserUI() {
     if (naverCard) naverCard.style.display = currentUser.role === 'admin' ? '' : 'none';
     const naverTimerCard = document.getElementById('naver-timer-card'); // 자동수집 타이머(관리자만)
     if (naverTimerCard) naverTimerCard.style.display = currentUser.role === 'admin' ? '' : 'none';
+    const coupangCard = document.getElementById('coupang-connect-card'); // 대표 7/26: 쿠팡 연동(관리자만)
+    if (coupangCard) coupangCard.style.display = currentUser.role === 'admin' ? '' : 'none';
 
     // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
     const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
@@ -2407,6 +2409,26 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
         } catch (e) {
             if (box) box.innerHTML = '❌ 테스트 실패: ' + aoEsc(e.message || String(e));
         } finally { btn.disabled = false; }
+    });
+})();
+
+// 대표 7/26: 쿠팡 OPEN API 중계서버 연결 테스트
+(function () {
+    const btn = document.getElementById('btn-coupang-test');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const box = document.getElementById('coupang-test-result');
+        btn.disabled = true;
+        if (box) box.innerHTML = '⏳ 확인 중...';
+        try {
+            const r = await api('/api/agent-office/coupang/test');
+            const line = (ok, label, extra) => `<div>${ok ? '🟢' : '🔴'} ${label}${extra ? ' — ' + aoEsc(String(extra)) : ''}</div>`;
+            let html = line(r.relay_reachable, '중계서버 연결', r.relay_version || '');
+            html += line(r.coupang_keys_set, '쿠팡 키 설정(NCP)', r.coupang_keys_set ? '' : '키 미입력 — 절차서 참고');
+            html += line(r.chain && r.chain.ok, '쿠팡 API 왕복', r.chain ? (r.chain.note || r.chain.reason || '') : '');
+            if (box) box.innerHTML = html;
+        } catch (e) { if (box) box.innerHTML = '❌ ' + aoEsc(e.message || String(e)); }
+        finally { btn.disabled = false; }
     });
 })();
 
@@ -5151,6 +5173,7 @@ document.getElementById('box-movement-btn')?.addEventListener('click', () => {
 let invoiceDataSmart = null;
 let invoiceDataJasamol = null;
 let invoiceDataCoupang = null;
+let coupangInvoiceLoadedAt = null; // 대표 7/26: 쿠팡 자동 불러오기 시각 (변환 직전 취소 재확인 기준 — Task 4)
 
 function setupInvoiceArea(areaId, inputId, fileNameId, headerRange, convertFn, storeKey) {
     const area = document.getElementById(areaId);
@@ -5735,11 +5758,51 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
     btn.addEventListener('click', loadNaver);
 })();
 
+// 대표 7/26: 쿠팡 상품준비중 자동 불러오기 — 데이터 주입만, 변환 로직(convertDataCoupang)은 그대로 (지시문 v2)
+(function () {
+    const btn = document.getElementById('invoice-auto-coupang');
+    if (!btn) return;
+    async function loadCoupang() {
+        const msg = document.getElementById('invoice-auto-coupang-msg');
+        const area = document.getElementById('invoice-upload-coupang');
+        const fnEl = document.getElementById('invoice-filename-coupang');
+        const daysEl = document.getElementById('invoice-auto-coupang-days');
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 3, 1), 31);
+        btn.disabled = true;
+        if (msg) msg.textContent = `⏳ 쿠팡에서 상품준비중 주문을 가져오는 중... (최근 ${days}일)`;
+        try {
+            const r = await api('/api/agent-office/coupang/invoice-orders?days=' + days);
+            if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
+            if (!r.count) {
+                if (msg) msg.innerHTML = `📭 상품준비중 주문이 없습니다 (조회 ${r.fetched || 0}건). Wing에서 발주확인을 먼저 해주세요.`;
+                return;
+            }
+            invoiceDataCoupang = r.rows;            // 쿠팡 데이터 주입 (기존 변환 로직이 그대로 처리)
+            coupangInvoiceLoadedAt = new Date().toISOString(); // 변환 직전 취소 재확인 기준 시각 (Task 4)
+            if (fnEl) fnEl.textContent = `🛒 쿠팡 상품준비중 ${r.count}건`;
+            if (area) area.classList.add('has-file');
+            updateInvoiceMergeBtn();
+            showInvoiceMergedPreview();
+            const partial = r.partial_adjusted ? ` · 부분취소 수량 반영 <strong>${r.partial_adjusted}건</strong>` : '';
+            let dbg = '';
+            if (r.sample) {
+                dbg = `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#888;font-size:11px;">🔧 진단(구조 보기)</summary>`
+                    + `<pre style="font-size:10px;max-height:160px;overflow:auto;background:#f6f6f8;padding:6px;border-radius:6px;">${aoEsc(JSON.stringify(r.sample, null, 1)).slice(0, 1500)}</pre></details>`;
+            }
+            if (msg) msg.innerHTML = `✅ 상품준비중 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일${partial}). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
+        } catch (e) {
+            if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
+        } finally { btn.disabled = false; }
+    }
+    btn.addEventListener('click', loadCoupang);
+})();
+
 // 송장변환 초기화
 function resetInvoice() {
     invoiceDataSmart = null;
     invoiceDataJasamol = null;
     invoiceDataCoupang = null;
+    coupangInvoiceLoadedAt = null;
 
     ['smart', 'jasamol', 'coupang'].forEach(ch => {
         const fileInput = document.getElementById(`invoice-file-${ch}`);

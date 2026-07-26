@@ -1653,6 +1653,14 @@
                             <div class="invoice-file-name" id="invoice-filename-coupang"></div>
                         </div>
                         <input type="file" id="invoice-file-coupang" accept=".xlsx,.xls" hidden>
+                        <!-- 대표 7/26: 쿠팡 API 자동 불러오기 (상품준비중 주문) — 수동 업로드와 병행 -->
+                        <button class="btn-primary" id="invoice-auto-coupang" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🛒 쿠팡 자동 불러오기(상품준비중)</button>
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
+                            <span>조회 기간</span>
+                            <input type="number" id="invoice-auto-coupang-days" value="3" min="1" max="31" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
+                            <span>일 (발주일 기준·최대 31)</span>
+                        </div>
+                        <div id="invoice-auto-coupang-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
                     </div>
                 </div>
 
@@ -1926,6 +1934,16 @@
                         </div>
                         <div id="naver-settle-result" style="margin-top:12px; font-size:13px;"></div>
                     </div>
+                </div>
+
+                <!-- 대표 7/26: 쿠팡 OPEN API 연동 (연결 확인 카드) -->
+                <div class="card" id="coupang-connect-card" style="display:none;">
+                    <div class="card-header-row">
+                        <h2>🛒 쿠팡 OPEN API 연동</h2>
+                        <button class="btn-primary" id="btn-coupang-test">연결 테스트</button>
+                    </div>
+                    <p class="text-muted" style="font-size:13px;">중계서버(NCP) → 쿠팡 왕복 연결을 확인합니다. 키는 NCP에만 저장됩니다 (docs/쿠팡_키입력_절차.md).</p>
+                    <div id="coupang-test-result" style="font-size:13px;"></div>
                 </div>
 
                 <!-- 자동수집 타이머 (설계v2 T3) -->
