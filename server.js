@@ -9317,9 +9317,11 @@ async function generateMisoMedia(approval, output, opt) {
     }
 }
 // 생성 실행 (adminOnly = 건별 대표 승인 클릭) — 응답 즉시 반환, 생성은 비동기 (영상 최대 6분)
-app.post('/api/agent-office/runs/:id/generate', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/runs/:id/generate', authMiddleware, async (req, res) => { // 기본급 생성 전원 허용 (대표 7/26 — 계정·비용은 audit 기록)
     try {
         const { output_index = 0, grade = '기본' } = req.body || {};
+        // 대표 7/26: [고급 생성] 비활성 — 기본급과 품질 차이 체감 안 됨. 코드·경로는 보존(고급 모델 개선 시 이 줄만 제거하면 재활성)
+        if (grade !== '기본') throw { status: 403, message: '고급 생성은 현재 사용하지 않습니다 (기본급으로 생성해주세요)' };
         const rr = await pool.query(`SELECT * FROM agent_runs WHERE id = $1 AND is_deleted = false`, [req.params.id]);
         if (!rr.rows.length) throw { status: 404, message: '보고서를 찾을 수 없습니다' };
         const run = rr.rows[0];

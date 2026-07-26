@@ -10823,22 +10823,6 @@ function aoRunPreviewLine(r) {
         ${r.is_deleted ? '<span class="ao-arch-badge">확인함</span> ' : ''}<span class="ao-log-open">📄 보기</span></div>`;
 }
 
-// 리마인더 닫기 (대표 7/26) — 기기별·오늘 하루. 일정 삭제 아님(표시만)
-let aoRemindersCache = [], aoRemTodayK = '';
-window.aoDismissReminder = function(idx, btn) {
-    const r = aoRemindersCache[idx];
-    if (!r) return;
-    let dis = {};
-    try { dis = JSON.parse(localStorage.getItem('ao_rem_dismissed') || '{}'); } catch (_) {}
-    if (dis._d !== aoRemTodayK) dis = { _d: aoRemTodayK };
-    dis[r.when + '|' + r.line] = 1;
-    localStorage.setItem('ao_rem_dismissed', JSON.stringify(dis));
-    const item = btn.closest('.ao-reminder-item');
-    if (item) item.remove();
-    const box = document.getElementById('ao-reminders');
-    if (box && !box.querySelector('.ao-reminder-item')) box.style.display = 'none';
-};
-
 function aoAppendLiveLogHtml(html) {
     const log = document.getElementById('ao-live-log');
     if (!log) return;
@@ -10934,18 +10918,9 @@ async function aoRefreshLog() {
         const remBox = document.getElementById('ao-reminders');
         if (remBox) {
             const rems = (remData && remData.reminders) || [];
-            // 대표 7/26: 리마인더 ✕ 닫기 — 이 기기에서 오늘 하루 숨김 (일정 자체는 일정 메뉴에서 관리).
-            //   '내일 예정'을 닫아도 당일이 되면 '오늘 예정'으로 다시 표시(키가 달라짐 — 당일 재알림 보장)
-            aoRemTodayK = (remData && remData.today) || '';
-            let remDis = {};
-            try { remDis = JSON.parse(localStorage.getItem('ao_rem_dismissed') || '{}'); } catch (_) {}
-            if (remDis._d !== aoRemTodayK) remDis = { _d: aoRemTodayK }; // 날짜 바뀌면 초기화
-            aoRemindersCache = rems;
-            const visible = rems.map((r, i) => ({ r, i })).filter(x => !remDis[x.r.when + '|' + x.r.line]);
-            if (visible.length) {
-                remBox.innerHTML = visible.map(x =>
-                    `<div class="ao-reminder-item">📣 <strong>${aoEsc(x.r.when)} 예정</strong> ${aoEsc(x.r.line)}
-                     <button class="ao-fb-btn" style="float:right;" title="이 기기에서 오늘 하루 숨김 (일정은 일정 메뉴에서 관리)" onclick="aoDismissReminder(${x.i}, this)">✕ 닫기</button></div>`).join('');
+            if (rems.length) {
+                remBox.innerHTML = rems.map(r =>
+                    `<div class="ao-reminder-item">📣 <strong>${aoEsc(r.when)} 예정</strong> ${aoEsc(r.line)}</div>`).join('');
                 remBox.style.display = '';
             } else remBox.style.display = 'none';
         }
@@ -11684,8 +11659,9 @@ window.aoOpenReport = async function(runId) {
             }
             const c = o.media === '영상' ? { b: '약 1,100원', g: '약 4,400원', ico: '🎬' } : { b: '약 92원', g: '약 185원', ico: '🎨' };
             return `<div class="ao-gen-row">
-                <button class="ao-fb-btn" onclick="aoGenerateMedia(${run.id}, ${i}, '기본', '${o.media}', '${c.b}')">${c.ico} 기본급 생성 (${c.b})</button>
-                <button class="ao-fb-btn" onclick="aoGenerateMedia(${run.id}, ${i}, '고급', '${o.media}', '${c.g}')">✨ 고급 생성 (${c.g})</button>
+                <button class="ao-fb-btn" onclick="aoGenerateMedia(${run.id}, ${i}, '기본', '${o.media}', '${c.b}')">${c.ico} 생성 (${c.b})</button>
+                <!-- 대표 7/26: [고급 생성] 버튼 제거(비활성) — 기본급과 품질 차이 체감 안 됨. 재활성 시 아래 주석 해제 + 서버 generate의 고급 차단 줄 제거
+                <button class="ao-fb-btn" onclick="aoGenerateMedia(${run.id}, ${i}, '고급', '${o.media}', '${c.g}')">✨ 고급 생성 (${c.g})</button> -->
             </div>`;
         };
         // 지시 #33: 이미지 파일은 카드 내 썸네일(탭하면 크게 보기) — 문서·영상은 기존 다운로드 유지
