@@ -4914,6 +4914,44 @@ app.get('/api/agent-office/scenario-logs', authMiddleware, async (req, res) => {
     } catch (err) { handleAdminErr(res, err); }
 });
 
+// --- 무응답 현황: 톡톡봇 message_logs 조회 (봇 /unmatched 화면의 이관 — 대표 7/26) ---
+//     같은 DB의 message_logs를 읽기만 함(봇 무수정). 필터·주간 통계·미매칭 TOP은 봇 화면과 동등.
+app.get('/api/agent-office/inquiry-messages', authMiddleware, async (req, res) => {
+    try {
+        const { skip, answered, item, q, date, period } = req.query || {};
+        const conditions = [], params = [];
+        const P = { '1m': '1 month', '3m': '3 months', '6m': '6 months', '1y': '1 year' };
+        if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            params.push(date); conditions.push(`(received_at + interval '9 hours')::date = $${params.length}::date`);
+        } else if (P[period]) {
+            conditions.push(`received_at >= NOW() - interval '${P[period]}'`);
+        } else {
+            conditions.push(`received_at >= NOW() - interval '1 month'`); // 기본 최근 1개월
+        }
+        if (item) { params.push(item); conditions.push(`item = $${params.length}`); }
+        if (q) { params.push(`%${q}%`); conditions.push(`(message ILIKE $${params.length} OR bot_response ILIKE $${params.length} OR staff_response ILIKE $${params.length})`); }
+        if (skip === '1') conditions.push(`bot_response = '[SKIP-무응답]'`);
+        else if (answered === '1') conditions.push(`answered = true`);
+        else if (answered === '0') conditions.push(`answered = false`);
+        const where = 'WHERE ' + conditions.join(' AND ');
+        const rows = (await pool.query(
+            `SELECT id, user_id, item, message, answered, bot_response, staff_response, scenario_name, response_source, received_at
+             FROM message_logs ${where} ORDER BY received_at DESC LIMIT 500`, params)).rows;
+        const [wk, top, items] = await Promise.all([
+            pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE answered)::int AS answered,
+                COUNT(*) FILTER (WHERE bot_response = '[SKIP-무응답]')::int AS skipped
+                FROM message_logs WHERE received_at >= NOW() - interval '7 days'`),
+            pool.query(`SELECT item, COUNT(*)::int AS n FROM message_logs
+                WHERE received_at >= NOW() - interval '7 days' AND bot_response = '[SKIP-무응답]'
+                GROUP BY item ORDER BY n DESC LIMIT 5`),
+            pool.query(`SELECT DISTINCT item FROM message_logs
+                WHERE received_at >= NOW() - interval '3 months' AND item IS NOT NULL AND item <> '' ORDER BY item`),
+        ]);
+        res.json({ ok: true, rows, count: rows.length, week: wk.rows[0], top_unmatched: top.rows,
+            items: items.rows.map(r => r.item) });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // --- 판매현황(bot_products) 관리 라우트 (직원 가능 / 삭제만 대표 전용) ---
 app.get('/api/agent-office/bot-products', authMiddleware, async (req, res) => {
     try { res.json({ products: await svcListBotProducts() }); }
