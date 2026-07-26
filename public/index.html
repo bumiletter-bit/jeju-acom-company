@@ -1656,6 +1656,14 @@
                             <div class="invoice-file-name" id="invoice-filename-jasamol"></div>
                         </div>
                         <input type="file" id="invoice-file-jasamol" accept=".xlsx,.xls" hidden>
+                        <!-- 대표 7/26: 카페24(자사몰) API 자동 불러오기 (배송준비중 주문) — 수동 업로드와 병행 -->
+                        <button class="btn-primary" id="invoice-auto-jasamol" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🏠 자사몰 자동 불러오기(배송준비중)</button>
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
+                            <span>조회 기간</span>
+                            <input type="number" id="invoice-auto-jasamol-days" value="3" min="1" max="90" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
+                            <span>일 (최대 90)</span>
+                        </div>
+                        <div id="invoice-auto-jasamol-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
                     </div>
 
                     <div class="card invoice-upload-card">
@@ -1957,6 +1965,19 @@
                     </div>
                     <p class="text-muted" style="font-size:13px;">중계서버(NCP) → 쿠팡 왕복 연결을 확인합니다. 키는 NCP에만 저장됩니다 (docs/쿠팡_키입력_절차.md).</p>
                     <div id="coupang-test-result" style="font-size:13px;"></div>
+                </div>
+
+                <!-- 대표 7/26: 카페24(자사몰) 연동 (연결 확인 카드) -->
+                <div class="card" id="cafe24-connect-card" style="display:none;">
+                    <div class="card-header-row">
+                        <h2>🏠 카페24(자사몰) 연동</h2>
+                        <div style="display:flex; gap:6px;">
+                            <button class="btn-sm btn-outline" id="btn-cafe24-auth">연동 승인</button>
+                            <button class="btn-primary" id="btn-cafe24-test">연결 테스트</button>
+                        </div>
+                    </div>
+                    <p class="text-muted" style="font-size:13px;">최초 1회 [연동 승인]에서 카페24 로그인 후 [동의]를 눌러주세요. 이후 토큰은 자동 갱신됩니다.</p>
+                    <div id="cafe24-test-result" style="font-size:13px;"></div>
                 </div>
 
                 <!-- 자동수집 타이머 (설계v2 T3) -->

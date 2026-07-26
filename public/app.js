@@ -178,6 +178,8 @@ function updateUserUI() {
     if (naverTimerCard) naverTimerCard.style.display = currentUser.role === 'admin' ? '' : 'none';
     const coupangCard = document.getElementById('coupang-connect-card'); // 대표 7/26: 쿠팡 연동(관리자만)
     if (coupangCard) coupangCard.style.display = currentUser.role === 'admin' ? '' : 'none';
+    const cafe24Card = document.getElementById('cafe24-connect-card'); // 대표 7/26: 카페24 연동(관리자만)
+    if (cafe24Card) cafe24Card.style.display = currentUser.role === 'admin' ? '' : 'none';
 
     // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
     const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
@@ -2635,6 +2637,36 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
             if (box) box.innerHTML = html;
         } catch (e) { if (box) box.innerHTML = '❌ ' + aoEsc(e.message || String(e)); }
         finally { btn.disabled = false; }
+    });
+})();
+
+// 카페24 연동 카드 (승인 새 창 + 연결 테스트 — 토큰 값은 표시하지 않음, 상태·만료시각만)
+(function () {
+    const authBtn = document.getElementById('btn-cafe24-auth');
+    const testBtn = document.getElementById('btn-cafe24-test');
+    if (!authBtn || !testBtn) return;
+    authBtn.addEventListener('click', async () => {
+        const box = document.getElementById('cafe24-test-result');
+        try {
+            const r = await api('/api/cafe24/auth-url');
+            window.open(r.url, '_blank');
+            if (box) box.innerHTML = '🔑 새 창에서 카페24 로그인 후 <strong>[동의]</strong>를 눌러주세요. "연동 완료" 창이 뜨면 [연결 테스트]로 확인하세요.';
+        } catch (e) { if (box) box.innerHTML = '❌ ' + aoEsc(e.message || String(e)); }
+    });
+    testBtn.addEventListener('click', async () => {
+        const box = document.getElementById('cafe24-test-result');
+        testBtn.disabled = true;
+        if (box) box.innerHTML = '⏳ 확인 중...';
+        try {
+            const r = await api('/api/agent-office/cafe24/test');
+            const line = (ok, label, extra) => `<div>${ok ? '🟢' : '🔴'} ${label}${extra ? ' — ' + aoEsc(String(extra)) : ''}</div>`;
+            const stateKo = { ok: '정상', expiring: '만료 임박(재승인 권장)', reauth_required: '재승인 필요 — [연동 승인] 클릭', none: '미연동 — [연동 승인] 클릭' }[r.token_state] || r.token_state;
+            let html = line(r.secret_set, 'Secret 설정(Render)', r.secret_set ? '' : 'CAFE24_CLIENT_SECRET 입력 필요');
+            html += line(r.token_state === 'ok', '토큰 상태', stateKo + (r.expires_at ? ` (access 만료 ${new Date(r.expires_at).toLocaleString('ko-KR')})` : ''));
+            html += line(r.chain && r.chain.ok, '주문 API 왕복', r.chain ? (r.chain.note || r.chain.reason || '') : '');
+            if (box) box.innerHTML = html;
+        } catch (e) { if (box) box.innerHTML = '❌ ' + aoEsc(e.message || String(e)); }
+        finally { testBtn.disabled = false; }
     });
 })();
 
@@ -6021,6 +6053,44 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
         } finally { btn.disabled = false; }
     }
     btn.addEventListener('click', loadCoupang);
+})();
+
+// 대표 7/26: 자사몰(카페24) 배송준비중 자동 불러오기 — 데이터 주입만, 변환 로직(convertDataJasamol) 무수정
+(function () {
+    const btn = document.getElementById('invoice-auto-jasamol');
+    if (!btn) return;
+    async function loadJasamol() {
+        const msg = document.getElementById('invoice-auto-jasamol-msg');
+        const area = document.getElementById('invoice-upload-jasamol');
+        const fnEl = document.getElementById('invoice-filename-jasamol');
+        const daysEl = document.getElementById('invoice-auto-jasamol-days');
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 3, 1), 90);
+        btn.disabled = true;
+        if (msg) msg.textContent = `⏳ 자사몰에서 배송준비중 주문을 가져오는 중... (최근 ${days}일)`;
+        try {
+            const r = await api('/api/agent-office/cafe24/invoice-orders?days=' + days);
+            if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
+            if (!r.count) {
+                if (msg) msg.innerHTML = `📭 배송준비중 주문이 없습니다 (조회 ${r.fetched || 0}건).`;
+                return;
+            }
+            invoiceDataJasamol = r.rows;            // 자사몰 데이터 주입 (기존 변환 로직이 그대로 처리)
+            if (fnEl) fnEl.textContent = `🏠 자사몰 배송준비중 ${r.count}건`;
+            if (area) area.classList.add('has-file');
+            updateInvoiceMergeBtn();
+            showInvoiceMergedPreview();
+            const partial = r.partial_adjusted ? ` · 취소요청 수량 반영 <strong>${r.partial_adjusted}건</strong>` : '';
+            let dbg = '';
+            if (r.sample) {
+                dbg = `<details style="margin-top:6px;"><summary style="cursor:pointer;color:#888;font-size:11px;">🔧 진단(구조 보기)</summary>`
+                    + `<pre style="font-size:10px;max-height:160px;overflow:auto;background:#f6f6f8;padding:6px;border-radius:6px;">${aoEsc(JSON.stringify(r.sample, null, 1)).slice(0, 1500)}</pre></details>`;
+            }
+            if (msg) msg.innerHTML = `✅ 배송준비중 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일${partial}). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
+        } catch (e) {
+            if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
+        } finally { btn.disabled = false; }
+    }
+    btn.addEventListener('click', loadJasamol);
 })();
 
 // 송장변환 초기화
