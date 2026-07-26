@@ -39,15 +39,42 @@ app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // === JWT 인증 미들웨어 ===
-function authMiddleware(req, res, next) {
+// 대표 7/26 B: 유휴 자동 로그아웃 — 마지막 요청 기준 N시간(기본 3, DB 설정 session_idle_hours) 지나면 401.
+//   이용 중이면 매 요청마다 자동 연장(sliding). 추적은 메모리라 서버 재시작 시 초기화 = 전원 유예(끊기지 않는 방향).
+const _sessionLastSeen = new Map(); // 토큰 서명 조각 → 마지막 요청 시각
+setInterval(() => { // 25시간 지난 항목 정리 (JWT 절대만료 7일과 별개 — 메모리 누수 방지)
+    const now = Date.now();
+    for (const [k, t] of _sessionLastSeen) if (now - t > 25 * 3600 * 1000) _sessionLastSeen.delete(k);
+}, 3600 * 1000);
+let _idleCache = { at: 0, ms: 3 * 3600 * 1000 };
+async function sessionIdleMs() {
+    if (Date.now() - _idleCache.at < 60_000) return _idleCache.ms; // 1분 캐시
+    try {
+        const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'session_idle_hours'`);
+        const h = parseFloat(r.rows[0] && r.rows[0].value);
+        _idleCache = { at: Date.now(), ms: (Number.isFinite(h) && h >= 0.5 && h <= 24 ? h : 3) * 3600 * 1000 };
+    } catch (_) { _idleCache.at = Date.now(); } // 조회 실패 → 기존값 유지
+    return _idleCache.ms;
+}
+
+async function authMiddleware(req, res, next) {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) return res.status(401).json({ error: '인증이 필요합니다' });
     try {
         req.user = jwt.verify(token, JWT_SECRET);
-        next();
     } catch (err) {
         return res.status(401).json({ error: '토큰이 만료되었거나 유효하지 않습니다' });
     }
+    try {
+        const sig = token.slice(-40);
+        const last = _sessionLastSeen.get(sig);
+        if (last && Date.now() - last > await sessionIdleMs()) {
+            _sessionLastSeen.delete(sig);
+            return res.status(401).json({ error: '오랫동안 사용하지 않아 자동 로그아웃되었습니다. 다시 로그인해주세요' });
+        }
+        _sessionLastSeen.set(sig, Date.now());
+    } catch (_) { /* 유휴 추적 실패는 통과 (로그인 자체를 막지 않음) */ }
+    next();
 }
 
 function adminOnly(req, res, next) {
@@ -94,6 +121,8 @@ async function initDB() {
     await pool.query(`ALTER TABLE cj_carryover ADD COLUMN IF NOT EXISTS end_date DATE`);
     // 결재 도장/사인 이미지
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_image TEXT`);
+    // 대표 7/26 C: 직원 퇴사 = soft-delete (기안서류 FK 때문에 물리 삭제 불가 — 기록 보존 원칙)
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
     // 정산 결제완료 상태 컬럼 추가
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS is_paid BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE settlements ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`);
@@ -748,6 +777,8 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS result JSONB`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS run_id INTEGER`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP`);
+    // 대표 7/26 A: 지시 주체 기록 (직원 공유 — 누가 지시했는지·계정별 호출량 집계용. 요원 실행은 run_id로 연결)
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by TEXT`);
     // 정산관리 이미지 자동 입력 (대표 7/20 지시): 지시에 첨부된 이미지 (base64 data URL) — 마루 비전 판독용
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_data TEXT`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_mime VARCHAR(40)`);
@@ -1034,7 +1065,7 @@ async function initDB() {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        const result = await pool.query('SELECT * FROM users WHERE username = $1 AND deleted_at IS NULL', [username]); // 퇴사자는 로그인 불가
         if (result.rows.length === 0) return res.status(401).json({ error: '아이디 또는 비밀번호가 올바르지 않습니다' });
 
         const user = result.rows[0];
@@ -1144,10 +1175,15 @@ app.get('/api/users/:id/signature', authMiddleware, async (req, res) => {
 
 app.get('/api/users', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, username, name, position, color, role, annual_leave, created_at FROM users ORDER BY id');
+        // 기본 재직자만. ?include_retired=1 이면 퇴사자 포함(사용자 관리의 복구용 — retired 표시)
+        const withRetired = req.query.include_retired === '1';
+        const result = await pool.query(
+            `SELECT id, username, name, position, color, role, annual_leave, created_at, deleted_at FROM users
+             ${withRetired ? '' : 'WHERE deleted_at IS NULL'} ORDER BY (deleted_at IS NOT NULL), id`);
         res.json(result.rows.map(u => ({
             id: u.id, username: u.username, name: u.name, position: u.position,
-            color: u.color, role: u.role, annualLeave: Number(u.annual_leave)
+            color: u.color, role: u.role, annualLeave: Number(u.annual_leave),
+            retired: !!u.deleted_at, retiredAt: u.deleted_at
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1216,7 +1252,7 @@ app.get('/api/users/ceo', authMiddleware, async (req, res) => {
 // 직원 이름 목록 (사다리 게임용)
 app.get('/api/users/names', authMiddleware, async (req, res) => {
     try {
-        const result = await pool.query("SELECT id, name, position, color FROM users ORDER BY id");
+        const result = await pool.query("SELECT id, name, position, color FROM users WHERE deleted_at IS NULL ORDER BY id"); // 퇴사자 제외 (선택 목록·조직도 원천)
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1234,6 +1270,7 @@ app.get('/api/users/leave-summary', authMiddleware, adminOnly, async (req, res) 
                        THEN d.deducted_leave ELSE 0 END), 0) as pending_leave
             FROM users u
             LEFT JOIN documents d ON u.id = d.applicant_id
+            WHERE u.deleted_at IS NULL
             GROUP BY u.id, u.name, u.position, u.annual_leave
             ORDER BY u.name
         `);
@@ -1278,14 +1315,36 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// 대표 7/26 C: 물리 삭제 → 퇴사 처리(soft-delete). 기안서류·audit의 이름 기록은 그대로 보존 (FK 오류 근본 해결)
 app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const check = await pool.query('SELECT username FROM users WHERE id = $1', [req.params.id]);
-        if (check.rows.length > 0 && check.rows[0].username === 'admin') {
-            return res.status(400).json({ error: '기본 관리자 계정은 삭제할 수 없습니다' });
+        const check = await pool.query('SELECT username, name, deleted_at FROM users WHERE id = $1', [req.params.id]);
+        if (check.rows.length === 0) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+        if (check.rows[0].username === 'admin') {
+            return res.status(400).json({ error: '기본 관리자 계정은 퇴사 처리할 수 없습니다' });
         }
-        await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
-        res.json({ success: true });
+        if (Number(req.params.id) === Number(req.user.id)) {
+            return res.status(400).json({ error: '본인 계정은 퇴사 처리할 수 없습니다' });
+        }
+        if (check.rows[0].deleted_at) return res.status(400).json({ error: '이미 퇴사 처리된 계정입니다' });
+        await pool.query('UPDATE users SET deleted_at = NOW() WHERE id = $1', [req.params.id]);
+        await writeAudit({ action: 'retire', targetType: 'user', targetId: Number(req.params.id),
+            changes: { after: { name: check.rows[0].name, retired: true } }, source: 'admin_api', actor: adminActor(req) });
+        res.json({ success: true, message: `${check.rows[0].name} 님을 퇴사 처리했습니다 (기록 보존·복구 가능)` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 재입사(복구) — 대표 전용
+app.post('/api/users/:id/restore', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(
+            'UPDATE users SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING name', [req.params.id]);
+        if (r.rows.length === 0) return res.status(400).json({ error: '퇴사 상태인 계정만 복구할 수 있습니다' });
+        await writeAudit({ action: 'restore', targetType: 'user', targetId: Number(req.params.id),
+            changes: { after: { name: r.rows[0].name, retired: false } }, source: 'admin_api', actor: adminActor(req) });
+        res.json({ success: true, message: `${r.rows[0].name} 님을 재입사 처리했습니다 (다시 로그인 가능)` });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1357,7 +1416,7 @@ app.post('/api/notifications/announcement', authMiddleware, async (req, res) => 
 
         let targetIds = [];
         if (target === 'all') {
-            const result = await pool.query('SELECT id FROM users WHERE id != $1', [req.user.id]);
+            const result = await pool.query('SELECT id FROM users WHERE id != $1 AND deleted_at IS NULL', [req.user.id]);
             targetIds = result.rows.map(r => r.id);
         } else if (user_ids && user_ids.length > 0) {
             targetIds = user_ids;
@@ -5041,6 +5100,27 @@ async function telegramAlertSettings() {
 }
 async function alertEnabled(kind) { return (await telegramAlertSettings())[kind] !== false; }
 
+// 자동 로그아웃 유휴 시간 설정 (대표 7/26 B — DB 저장, 기본 3시간, 0.5~24시간)
+app.get('/api/agent-office/session-idle', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'session_idle_hours'`);
+        const h = parseFloat(r.rows[0] && r.rows[0].value);
+        res.json({ ok: true, hours: Number.isFinite(h) && h >= 0.5 && h <= 24 ? h : 3 });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/session-idle', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const h = parseFloat((req.body || {}).hours);
+        if (!Number.isFinite(h) || h < 0.5 || h > 24) throw { status: 400, message: '유휴 시간은 0.5~24시간 사이로 입력하세요' };
+        await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('session_idle_hours', $1::jsonb)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(h)]);
+        _idleCache = { at: 0, ms: _idleCache.ms }; // 캐시 무효화 — 다음 요청부터 즉시 반영
+        await writeAudit({ action: 'session_idle', targetType: 'session', targetId: null,
+            changes: { after: { hours: h } }, source: 'admin_api', actor: adminActor(req) });
+        res.json({ ok: true, hours: h });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 app.get('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, async (req, res) => {
     try {
         res.json({ ok: true, settings: await telegramAlertSettings(), templates: await telegramAlertTemplates(),
@@ -5261,7 +5341,7 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
 }
 
 // 에이전트 목록 (사무실 렌더용 — 도구/학습노트 수/최근 실행 포함)
-app.get('/api/agent-office/agents', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/agents', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const agents = (await pool.query(
             `SELECT * FROM agents WHERE is_deleted = false AND is_active = true ORDER BY sort_order, id`)).rows; // 지시 #57: 비활성(한결) 화면 미표시 — 데이터는 보관
@@ -5284,7 +5364,7 @@ app.get('/api/agent-office/agents', authMiddleware, adminOnly, async (req, res) 
 });
 
 // 에이전트 상세 (패널용 — 학습 노트 + 최근 실행 5건)
-app.get('/api/agent-office/agents/:id', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/agents/:id', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(`SELECT * FROM agents WHERE id = $1 AND is_deleted = false`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '에이전트를 찾을 수 없습니다' };
@@ -6000,7 +6080,7 @@ function naverFriendlyError(err) {
 }
 
 // 실행 상태 조회 (폴링용)
-app.get('/api/agent-office/runs/:id', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/runs/:id', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
             `SELECT r.*, a.name AS agent_name, a.team AS agent_team
@@ -6012,7 +6092,7 @@ app.get('/api/agent-office/runs/:id', authMiddleware, adminOnly, async (req, res
 });
 
 // 실행 로그 목록 (LIVE 로그 + 보고서함 — 에이전트/팀/기간 필터)
-app.get('/api/agent-office/runs', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/runs', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const cond = [req.query.include_archived === 'true' ? 'TRUE' : 'r.is_deleted = false'];
         // 1-4: 역량 테스트 실행분은 보고서함·LIVE 로그에서 제외 — 성적표 화면(only_test)에서만 조회
@@ -8606,7 +8686,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
 }
 
 // 지시 접수 (상시 입력바) — 저장 즉시 마루가 비동기 처리
-app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const content = String(req.body?.content || '').trim();
         // 정산관리 이미지 첨부 (대표 7/20): 이미지가 있으면 content는 비어도 허용 (기본 지시문 대체)
@@ -8617,8 +8697,9 @@ app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res)
         if (imageData && imageData.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
         const effText = content || (imageData ? '[이미지 첨부] 오늘 정산관리에 올려줘' : '');
         const row = (await pool.query(
-            `INSERT INTO pending_orders (content, image_data, image_mime) VALUES ($1, $2, $3) RETURNING *`,
-            [effText, imageData || null, imageData ? imageMime : null])).rows[0];
+            `INSERT INTO pending_orders (content, image_data, image_mime, created_by) VALUES ($1, $2, $3, $4) RETURNING *`,
+            [effText, imageData || null, imageData ? imageMime : null,
+             `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`])).rows[0];
         await writeAudit({
             action: 'create', targetType: 'pending_order', targetId: row.id,
             changes: { after: { content: effText, status: row.status, has_image: !!imageData } }, // 이미지 원문은 audit 미기록 (용량)
@@ -8630,7 +8711,7 @@ app.post('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res)
 });
 
 // 지시 #4-1: 미응답 질문 수동 종결 — soft-close ('질문종결' 상태, 삭제 아님·audit 기록)
-app.post('/api/agent-office/orders/:id/close', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/orders/:id/close', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
             `UPDATE pending_orders SET status='질문종결', processed_at=NOW()
@@ -8661,10 +8742,10 @@ app.post('/api/agent-office/orders/:id/process', authMiddleware, adminOnly, asyn
 });
 
 // 지시 1건 상태 조회 (프론트 폴링용)
-app.get('/api/agent-office/orders/:id', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/orders/:id', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT id, content, status, result, run_id, created_at, processed_at
+            `SELECT id, content, status, result, run_id, created_at, processed_at, created_by
              FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '지시를 찾을 수 없습니다' };
         res.json({ order: r.rows[0] });
@@ -8702,7 +8783,7 @@ app.post('/api/agent-office/settlement-ocr-save', authMiddleware, adminOnly, asy
 });
 
 // 오류 지시 확인 종결 (대표 실사용 지적: LIVE에 오류가 계속 남음) — soft-close, 전체 보기에서 조회 가능
-app.post('/api/agent-office/orders/:id/ack-error', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/orders/:id/ack-error', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
             `UPDATE pending_orders SET status='오류확인', processed_at=NOW()
@@ -8719,12 +8800,12 @@ app.post('/api/agent-office/orders/:id/ack-error', authMiddleware, adminOnly, as
 
 // 접수된 지시 목록 (LIVE 로그 병합 + 마루 패널 처리 큐)
 // v5.0 UI: 연결된 실행이 보고서함에서 [✔확인]된 지시는 기본 숨김 (include_hidden=true면 전부 — 삭제 아님, 표시만)
-app.get('/api/agent-office/orders', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 30, 200);
         const showHidden = req.query.include_hidden === 'true';
         const r = await pool.query(
-            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at,
+            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by,
                     COALESCE(r.is_deleted, false) AS run_archived
              FROM pending_orders o
              LEFT JOIN agent_runs r ON o.run_id = r.id
@@ -8798,7 +8879,7 @@ app.get('/api/agent-office/misroute-stats', authMiddleware, adminOnly, async (re
 });
 
 // 4단계: 보고서 파일 다운로드 — adminOnly 전용 (무인증 401 / 비관리자 403), DB에서 직접 서빙
-app.get('/api/agent-office/files/:id/download', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/files/:id/download', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
             `SELECT filename, data FROM report_files WHERE id = $1 AND is_deleted = false AND purged_at IS NULL`, [req.params.id]);
@@ -8822,7 +8903,7 @@ app.get('/api/agent-office/files/:id/download', authMiddleware, adminOnly, async
 
 // 지시 #36: 통합본 아카이브 목록·다운로드 (adminOnly — 대표 전용, 읽기 전용)
 const ARCHIVE_DIR = path.join(__dirname, 'docs', 'archive');
-app.get('/api/agent-office/archive', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/archive', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const fs = require('fs');
         const files = fs.readdirSync(ARCHIVE_DIR).filter(f => f.endsWith('.md') && f !== 'README.md')
@@ -8834,7 +8915,7 @@ app.get('/api/agent-office/archive', authMiddleware, adminOnly, async (req, res)
         res.json({ count: files.length, files });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.get('/api/agent-office/archive/:name/download', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/archive/:name/download', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         // 경로 탈출 차단: basename 강제 + md 파일명 화이트리스트
         const name = path.basename(String(req.params.name || ''));
@@ -8849,7 +8930,7 @@ app.get('/api/agent-office/archive/:name/download', authMiddleware, adminOnly, a
 });
 
 // 3단계: 발송·할인 일정 당일/전날 리마인드 (LIVE 로그 상단 배너용) — 등록 ≠ 자동 발송, 표시만
-app.get('/api/agent-office/today-reminders', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/today-reminders', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const today = kstTodayStr();
         const tomorrow = new Date(new Date(today + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
@@ -9314,7 +9395,7 @@ async function mcpObserveAudit(tool, args, actor) {
 async function svcGetLiveLog({ limit }, actor) {
     const n = Math.min(Math.max(parseInt(limit) || 20, 1), 100);
     const r = await pool.query(
-        `SELECT id, content, status, result, run_id, created_at, processed_at
+        `SELECT id, content, status, result, run_id, created_at, processed_at, created_by
          FROM pending_orders ORDER BY id DESC LIMIT $1`, [n]);
     await mcpObserveAudit('get_live_log', { limit: n }, actor);
     return {

@@ -182,7 +182,7 @@ function updateUserUI() {
     if (cafe24Card) cafe24Card.style.display = currentUser.role === 'admin' ? '' : 'none';
 
     // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
-    const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
+    const adminOnlyPages = ['settlement', 'pricing', 'data']; // 대표 7/26 A: agent-office 직원 개방 (관리 기능은 화면 안에서 대표 전용)
     adminOnlyPages.forEach(page => {
         const navEl = document.querySelector(`.nav-item[data-page="${page}"]`);
         if (navEl) navEl.style.display = currentUser.role === 'admin' ? '' : 'none';
@@ -261,7 +261,7 @@ window.closeMobileSidebar = function() {
 
 function switchPage(pageName) {
     // 관리자 전용 페이지 접근 차단
-    const adminOnlyPages = ['settlement', 'pricing', 'data', 'agent-office'];
+    const adminOnlyPages = ['settlement', 'pricing', 'data']; // 대표 7/26 A: agent-office 직원 개방 (관리 기능은 화면 안에서 대표 전용)
     if (adminOnlyPages.includes(pageName) && currentUser?.role !== 'admin') {
         pageName = 'schedule';
     }
@@ -2584,26 +2584,34 @@ window.aoPricingSaveEdit = async function(id) {
 
 async function renderUserList() {
     try {
-        const users = await api('/api/users');
+        // 대표 7/26 C: 퇴사자 포함 조회 — 재직자는 [퇴사 처리], 퇴사자는 회색 표시 + [재입사]
+        const users = await api('/api/users?include_retired=1');
         const tbody = document.getElementById('user-list');
         if (users.length === 0) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="7">사용자가 없습니다.</td></tr>';
         } else {
-            tbody.innerHTML = users.map(u => `<tr>
+            tbody.innerHTML = users.map(u => `<tr${u.retired ? ' style="opacity:.55;"' : ''}>
                 <td>${u.username}</td>
-                <td>${u.name}</td>
+                <td>${u.name}${u.retired ? ' <span class="pill pill-off">퇴사</span>' : ''}</td>
                 <td>${u.position || '-'}</td>
                 <td><span class="user-color-dot" style="background:${u.color};display:inline-block;"></span> ${u.color}</td>
                 <td>${u.role === 'admin' ? '관리자' : u.role === 'accountant' ? '세무사' : '직원'}</td>
                 <td>${u.annualLeave}</td>
                 <td>
-                    <button class="btn-view-items" onclick="openUserModal(${u.id})">수정</button>
-                    ${u.username !== 'admin' ? `<button class="btn-danger" onclick="deleteUser(${u.id})">삭제</button>` : ''}
+                    ${u.retired
+                        ? `<button class="btn-view-items" onclick="restoreUser(${u.id})">재입사</button>`
+                        : `<button class="btn-view-items" onclick="openUserModal(${u.id})">수정</button>
+                    ${u.username !== 'admin' ? `<button class="btn-danger" onclick="deleteUser(${u.id})">퇴사 처리</button>` : ''}`}
                 </td>
             </tr>`).join('');
         }
     } catch (err) { console.error('renderUserList error:', err); }
 }
+window.restoreUser = async function(id) {
+    if (!confirm('이 계정을 재입사 처리할까요? (다시 로그인 가능해집니다)')) return;
+    try { const r = await api(`/api/users/${id}/restore`, 'POST'); alert(r.message || '복구 완료'); await renderUserList(); }
+    catch (err) { alert('복구 실패: ' + err.message); }
+};
 
 document.getElementById('btn-add-user').addEventListener('click', () => openUserModal());
 
@@ -2873,8 +2881,9 @@ window.openUserModal = async function(userId) {
 };
 
 window.deleteUser = async function(id) {
-    if (!confirm('정말 삭제하시겠습니까?')) return;
-    try { await api(`/api/users/${id}`, 'DELETE'); await renderUserList(); } catch (err) { alert('삭제 실패: ' + err.message); }
+    if (!confirm('이 직원을 퇴사 처리할까요?\n· 로그인 불가 + 목록·조직도에서 숨김\n· 과거 기안서류·기록의 이름은 그대로 보존\n· [재입사]로 복구 가능')) return;
+    try { const r = await api(`/api/users/${id}`, 'DELETE'); alert(r.message || '퇴사 처리 완료'); await renderUserList(); }
+    catch (err) { alert('퇴사 처리 실패: ' + err.message); }
 };
 
 // =============================================
@@ -10149,7 +10158,7 @@ async function aoLoadMaruOrders() {
             pending.map(o => `<div class="ao-maru-order-item">
                 <span class="ao-ord-badge ao-ord-${o.status === '오류' ? 'err' : 'wait'}">[${o.status}]</span>
                 <span class="ao-maru-order-text">${aoEsc(o.content)}</span>
-                <button class="ao-fb-btn ao-maru-order-btn" onclick="aoProcessOrder(${o.id})">▶ 처리</button>
+                ${currentUser?.role === 'admin' ? `<button class="ao-fb-btn ao-maru-order-btn" onclick="aoProcessOrder(${o.id})">▶ 처리</button>` : ''}
             </div>`).join('');
     } catch (e) { box.textContent = '지시 목록 조회 실패: ' + e.message; }
 }
@@ -10171,6 +10180,12 @@ async function aoRefreshAgents() {
 }
 
 async function aoRefreshGrowth() {
+    // 대표 7/26 A: ⚙️ 관리(성장·교훈·실패수집함)는 대표 전용 — 직원에겐 칩 자체를 표시하지 않음
+    if (currentUser?.role !== 'admin') {
+        const w = document.getElementById('ao-growth-widget');
+        if (w) w.innerHTML = '';
+        return;
+    }
     try {
         const [g, m] = await Promise.all([
             api('/api/agent-office/growth'),
@@ -10498,8 +10513,8 @@ function aoCeoHtml() {
             <div class="ao-arms"><span class="ao-arm"></span><span class="ao-arm"></span></div>
             <div class="ao-desk"><span class="ao-monitor"></span></div>
         </div>
-        <div class="ao-nametag">전승범</div>
-        <div class="ao-roletag">대표</div>
+        <div class="ao-nametag">${aoEsc((typeof currentUser === 'object' && currentUser && currentUser.name) || '전승범')}</div>
+        <div class="ao-roletag">${aoEsc((typeof currentUser === 'object' && currentUser && currentUser.position) || '대표')}</div>
     </div>`;
 }
 
@@ -10585,7 +10600,7 @@ if (!window.__aoFlowResizeBound) {
 }
 
 function aoAgentElByName(name) {
-    if (name === '대표' || name === '전승범') return document.getElementById('ao-ceo-node'); // 대표 머리말 지원 (7/20)
+    if (name === '대표' || name === '전승범' || (currentUser && name === currentUser.name)) return document.getElementById('ao-ceo-node'); // 상단 인물 = 로그인 사용자 (대표 7/26 A)
     const agent = aoAgents.find(a => a.name === name);
     return agent ? document.querySelector(`.ao-agent[data-agent-id="${agent.id}"]`) : null;
 }
@@ -10800,7 +10815,7 @@ function aoRunPreviewLine(r) {
     // v5.0 UI: 완료·미확인 건은 눈에 띄는 "완료 카드" — 카드에서 바로 [✔확인] 가능 (받은편지함 사양)
     // 대표 7/22: 오류(error) 실행도 ✔확인으로 로그에서 치울 수 있게 (전엔 완료만 확인 가능 → 오류 로그가 영영 안 지워짐)
     const isDoneCard = r.status === 'done' && !r.is_deleted;
-    const canArchive = (r.status === 'done' || r.status === 'error') && !r.is_deleted;
+    const canArchive = (r.status === 'done' || r.status === 'error') && !r.is_deleted && currentUser?.role === 'admin'; // ✔ 확인(보관)은 대표 전용
     const confirmBtn = canArchive
         ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoArchiveRun(${r.id})">✔ 확인</button>` : '';
     return `<div class="ao-log-item ao-log-click ao-log-preview${archived}${isDoneCard ? ' ao-log-donecard' : ''}" data-run-id="${r.id}">
@@ -10887,7 +10902,7 @@ function aoOrderLogLine(o) {
     const failBtn = (st !== '대기' && st !== '처리중')
         ? `<button class="ao-fb-btn ao-fail-btn" title="이 답변을 실패 수집함에 담기" onclick="event.stopPropagation(); aoMarkOrderFail(${o.id}, this)">❌ 실패</button>` : '';
     const clickAttr = runId ? ` ao-log-click" data-run-id="${runId}` : '';
-    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}${failBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>대표</strong> → 마루: ${aoEsc(aoCleanContent(o.content))} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
+    return `<div class="ao-log-item ao-log-order${archivedCls}${clickAttr}">${closeBtn}${failBtn}<span class="ao-log-time">${time}</span> 🕐 <strong>${aoEsc(o.created_by || '대표')}</strong> → 마루: ${aoEsc(aoCleanContent(o.content))} <span class="ao-ord-badge ao-ord-${stCls}">[${st}]</span>${o.run_archived ? ' <span class="ao-arch-badge">확인함</span>' : ''}${closed ? ' <span class="ao-arch-badge">' + (st === '대체됨' ? '새 지시로 대체' : st === '응답됨' ? '답변으로 이어짐' : '미응답 종결') + '</span>' : ''}${extra}</div>`;
 }
 
 async function aoRefreshLog() {
@@ -12316,10 +12331,26 @@ async function renderNaverTimers() {
             </div>
             ${tplEditors}
         </div>` : '';
+    // 대표 7/26 B: 자동 로그아웃 유휴 시간 (기본 3시간 — 이용 중이면 자동 연장)
+    let idleH = null;
+    try { idleH = (await api('/api/agent-office/session-idle')).hours; } catch (_) {}
+    const idleBlock = idleH !== null ? `
+        <div style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border,#eee); font-size:13px;">
+            <b>🔒 자동 로그아웃</b> <span class="text-muted" style="font-size:12px;">아무 이용 없이 이 시간이 지나면 자동 로그아웃 (이용 중이면 자동 연장)</span>
+            <input type="number" id="session-idle-hours" value="${idleH}" min="0.5" max="24" step="0.5" class="form-input" style="width:70px; padding:5px 6px; text-align:center; font-size:13px; margin:0 4px;">시간
+            <button class="btn-sm btn-outline" onclick="saveSessionIdle()">저장</button>
+        </div>` : '';
     document.getElementById('naver-timer-list').innerHTML = `
         <table class="data-table"><thead><tr><th>수집</th><th>ON</th><th>주기/시각</th><th>마지막 수집</th><th>상태</th></tr></thead>
-        <tbody>${rows}</tbody></table>` + alertBlock;
+        <tbody>${rows}</tbody></table>` + alertBlock + idleBlock;
 }
+window.saveSessionIdle = async function() {
+    const el = document.getElementById('session-idle-hours');
+    const hours = parseFloat(el && el.value);
+    if (!Number.isFinite(hours) || hours < 0.5 || hours > 24) { alert('0.5~24시간 사이로 입력해주세요'); return; }
+    try { await api('/api/agent-office/session-idle', 'PUT', { hours }); alert(`자동 로그아웃을 ${hours}시간으로 저장했습니다`); }
+    catch (e) { alert(e.message); }
+};
 window.saveAlertSetting = async function(key, enabled) {
     try { await api('/api/agent-office/naver/alert-settings', 'PUT', { [key]: enabled }); }
     catch (e) { alert(e.message); }
