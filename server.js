@@ -822,6 +822,22 @@ async function initDB() {
     // 전체 자동응답 스위치 (대표 전용 토글) — 기본 on
     await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('inquiry_auto_reply', '"on"'::jsonb)
         ON CONFLICT (key) DO NOTHING`);
+    // 무응답 현황 탭 이관 (2026-07-26): message_logs(톡톡봇 메시지 로그, 같은 DB 공유) 시나리오명·출처 컬럼
+    //   테이블·컬럼 자체는 톡톡봇 server.js도 생성 — 봇/회사프로그램 어느 쪽이 먼저 배포돼도 되도록 양쪽에서 멱등 보장
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS message_logs (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT,
+            item TEXT,
+            message TEXT,
+            answered BOOLEAN DEFAULT false,
+            bot_response TEXT,
+            staff_response TEXT,
+            received_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS scenario_name TEXT`);
+    await pool.query(`ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS response_source TEXT`);
     // 판매현황 탭 이전 (2026-07-25 설계): bot_products(톡톡봇 가격표·판매현황, 같은 DB 공유)에 관리 컬럼 추가
     //   테이블 자체는 톡톡봇 products-store.js가 생성 — 없을 수도 있으므로 동일 DDL로 보장 후 ALTER
     await pool.query(`
