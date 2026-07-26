@@ -33,7 +33,8 @@ npm run deploy
 - 동작: DB 백업 → git tag → git push (main). push되면 Render가 자동 재배포(~2분).
 - ⚠️ **DB 백업이 오래 걸림(3분+ 가능)** → Bash 타임아웃 **9분(540000ms)** 이상으로 실행할 것.
 - 배포 전 반드시: `node --check server.js`, `node --check public/app.js`, `version.js`의 VERSION 상향, `public/index.html`의 `app.js?v=NNN` 캐시버전 상향, `CHANGELOG.md` 갱신.
-- **현재 버전: v5.9.54 / app.js 캐시 v=261.** 다음 배포는 v5.9.55 / (프론트 변경 시) v=262.
+- **현재 버전: v5.9.74 / app.js 캐시 v=278** (2026-07-26 기준 — 배포 전 `version.js`·`index.html` 실값 재확인, 병행 세션이 올렸을 수 있음).
+- ⚠️ **병행 세션 주의**: 같은 작업폴더에서 세션 2개가 동시에 커밋하면 배포 준비 `git add`에 상대 세션의 미커밋 변경이 쓸려 들어감(2026-07-26 실사례 — 무해 확인 후 병합 배포). **핵심 로직 작업 2개가 겹칠 땐 반드시 따로 배포**(대표 확정 원칙). 배포 직전 `git log`·`git status`로 상대 세션 커밋 확인.
 - git commit 메시지 끝에 Co-Authored-By / Claude-Session 푸터 붙이기(기존 커밋 참고).
 
 ---
@@ -190,8 +191,13 @@ NAVER_RELAY_CA    = (중계서버 자체서명 cert.pem 내용 — 인증서 고
 - 중계서버 `/coupang`(조회 2종만·vendorId 강제·RELAY_VERSION 2026-07-26.1 — **install.sh 재실행 필요**), 회사프로그램 `callCoupang`+수집기+연결테스트+취소재확인, [쿠팡 자동 불러오기] 버튼. 변환 로직·네이버 코드 무수정.
 - 대표 절차: `docs/쿠팡_키입력_절차.md` (SSH 키 입력 → 연결테스트 → 실주문 검증 체크리스트 §⑥ — 부분취소·보내는사람연락처 대조 포함). 키 만료 2027-01-21, 재발급 일정 2027-01-07 자동 등록.
 
-### 4-3. 카페24(자사몰) 연동 — 나중에
-- 스마트스토어·쿠팡 이후. 아직 착수 안 함.
+### 4-3. 🏠 카페24(자사몰) 송장변환 연동 — ✅ 시공 완료·배포됨 (2026-07-26, v5.9.73) · 대표 검증 대기
+- **3채널 완성** (스마트스토어·쿠팡·자사몰). 스펙 `docs/superpowers/specs/2026-07-26-cafe24-invoice-design.md` (공식 문서 전 스펙 확정 — 추측 없음).
+- 구조: **IP 제한 없음 → Render 직접 호출**(중계서버 불필요). 신규 모듈 `cafe24.js` + server.js 라우트 4종(`/api/cafe24/auth-url`·`/api/cafe24/callback`(공개, state 검증)·`/api/agent-office/cafe24/test`·`/api/agent-office/cafe24/invoice-orders?days=1~90`).
+- OAuth: Authorization Code, mall `akkome`, Client ID `mMdlm3cHGZwkVaem7wGDIB`(공개값, 코드 상수), scope `mall.read_order`. **Secret = Render env `CAFE24_CLIENT_SECRET`**(대표 직접 입력, 열람 금지). 토큰 AES-256-GCM 암호화 저장(`agent_office_config` 'cafe24_tokens', 키=sha256(Secret)) — Secret 변경 시 재승인 1회. access 2h/refresh 2주, 만료 60초 전 자동 갱신(**동시 갱신 락** — 갱신 시 refresh도 교체되므로 필수). 갱신 실패 → 텔레그램 1회 + "재승인 필요".
+- 취소 방어: akkome 몰은 **결제 즉시 N20(배송준비중) 자동 진입**(발주확인 없음) → **품목 단위 `items[].order_status==='N20'`만 채택**(취소신청 품목은 C코드로 변경돼 자연 제외) + **수량 = quantity − claim_quantity**(0 이하 제외). 반품 로직 없음.
+- 🔴 **대표 검증 5단계 대기**: ①Render `CAFE24_CLIENT_SECRET` 입력 ②[데이터관리]>카페24 연동 [연동 승인]→카페24 로그인→[동의]→[연결 테스트] 3줄 🟢 ③자사몰 [자동 불러오기](9건)→변환→**수기 다운로드 대조** ④취소신청 건 제외 확인 ⑤2시간 후 재승인 없이 조회(자동 갱신 확인).
+- ⚠️ 수기 파일의 주문상품명 옵션 표기 형식에 따라 매핑(product_name+option_value ' ' 연결) 미세 조정 가능성 — 대조에서 어긋나면 수기 파일 받아 조정.
 
 ### 4-4. (보류) 입금예정 캘린더
 - 대표가 별도로 작업 중이라 클로드는 손대지 않음.
