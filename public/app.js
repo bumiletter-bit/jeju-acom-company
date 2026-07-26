@@ -6010,6 +6010,17 @@ setupInvoiceArea('invoice-upload-smart', 'invoice-file-smart', 'invoice-filename
 setupInvoiceArea('invoice-upload-jasamol', 'invoice-file-jasamol', 'invoice-filename-jasamol', 0, convertDataJasamol, 'jasamol');
 setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-filename-coupang', 0, convertDataCoupang, 'coupang');
 
+// 진행 표시 헬퍼 (대표 7/26): 단계·경과초 표시만 — 처리 로직(서버 조회·변환)은 무수정.
+//   서버가 페이지 순회를 한 번의 요청으로 처리하므로 페이지 단위 실시간 표시는 불가 → 경과초+단계로 표시.
+function aoProgressTicker(el, textFn) {
+    if (!el) return () => {};
+    const t0 = Date.now();
+    const tick = () => { el.innerHTML = textFn(Math.round((Date.now() - t0) / 1000)); };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+}
+
 // 대표 7/24: [4단계 A] 네이버 자동 불러오기 — 배송준비 주문을 API로 가져와 스마트스토어 데이터로 주입.
 //   변환/다운로드는 기존 그대로(통합 변환 버튼). 수동 엑셀 업로드도 유지.
 (function () {
@@ -6022,9 +6033,11 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
         const daysEl = document.getElementById('invoice-auto-smart-days');
         const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 180);
         btn.disabled = true;
-        if (msg) msg.textContent = `⏳ 네이버에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 최대 1~2분 걸릴 수 있어요)`;
+        const stopTick = aoProgressTicker(msg, s => `⏳ <b>1/2 조회 중</b> — 네이버 배송준비 (최근 ${days}일 · 하루 단위 ${days}구간 순회 · <b>${s}초</b> 경과, 보통 1~2분)`);
         try {
             const r = await api('/api/agent-office/naver/invoice-orders?days=' + days);
+            stopTick();
+            if (msg) msg.innerHTML = '🔄 <b>2/2 변환·주입 중...</b>';
             if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
             if (!r.count) {
                 if (msg) msg.innerHTML = `📭 배송준비 주문이 없습니다 (조회 ${r.fetched || 0}건).`
@@ -6047,7 +6060,7 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
             if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일${partial}). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
-        } finally { btn.disabled = false; }
+        } finally { stopTick(); btn.disabled = false; }
     }
     btn.addEventListener('click', loadNaver);
 })();
@@ -6063,9 +6076,11 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
         const daysEl = document.getElementById('invoice-auto-coupang-days');
         const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 31, 1), 31);
         btn.disabled = true;
-        if (msg) msg.textContent = `⏳ 쿠팡에서 상품준비중 주문을 가져오는 중... (최근 ${days}일)`;
+        const stopTick = aoProgressTicker(msg, s => `⏳ <b>1/2 조회 중</b> — 쿠팡 상품준비중 (최근 ${days}일 · <b>${s}초</b> 경과)`);
         try {
             const r = await api('/api/agent-office/coupang/invoice-orders?days=' + days);
+            stopTick();
+            if (msg) msg.innerHTML = '🔄 <b>2/2 변환·주입 중...</b>';
             if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
             if (!r.count) {
                 if (msg) msg.innerHTML = `📭 상품준비중 주문이 없습니다 (조회 ${r.fetched || 0}건). Wing에서 발주확인을 먼저 해주세요.`;
@@ -6086,7 +6101,7 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
             if (msg) msg.innerHTML = `✅ 상품준비중 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일${partial}). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
-        } finally { btn.disabled = false; }
+        } finally { stopTick(); btn.disabled = false; }
     }
     btn.addEventListener('click', loadCoupang);
 })();
@@ -6102,9 +6117,11 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
         const daysEl = document.getElementById('invoice-auto-jasamol-days');
         const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 90);
         btn.disabled = true;
-        if (msg) msg.textContent = `⏳ 자사몰에서 배송준비중 주문을 가져오는 중... (최근 ${days}일)`;
+        const stopTick = aoProgressTicker(msg, s => `⏳ <b>1/2 조회 중</b> — 자사몰 배송준비중 (최근 ${days}일 · <b>${s}초</b> 경과)`);
         try {
             const r = await api('/api/agent-office/cafe24/invoice-orders?days=' + days);
+            stopTick();
+            if (msg) msg.innerHTML = '🔄 <b>2/2 변환·주입 중...</b>';
             if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
             if (!r.count) {
                 if (msg) msg.innerHTML = `📭 배송준비중 주문이 없습니다 (조회 ${r.fetched || 0}건).`;
@@ -6124,7 +6141,7 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
             if (msg) msg.innerHTML = `✅ 배송준비중 <strong>${r.count}건</strong> 불러왔습니다 (최근 ${days}일${partial}). 아래 <strong>[통합 변환 및 다운로드]</strong>를 눌러주세요.` + dbg;
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
-        } finally { btn.disabled = false; }
+        } finally { stopTick(); btn.disabled = false; }
     }
     btn.addEventListener('click', loadJasamol);
 })();
@@ -6233,13 +6250,22 @@ function parseInvoiceRows(data) {
         const daysCp = Math.min(days, 31);  // 쿠팡 API 상한(31일) — 임의 초과 호출 금지
         const daysCf = Math.min(days, 90);  // 카페24 상한(3개월)
         btn.disabled = true;
-        if (msg) msg.textContent = `⏳ 3채널(네이버·쿠팡·자사몰)에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 1~2분 걸릴 수 있어요)`;
+        // 채널별 진행 표시 (대표 7/26): 세 채널 동시 조회 — 각 채널이 끝나는 즉시 ✅/⚠️로 갱신 (표시만, 조회 로직 무수정)
+        const chState = { nv: '⏳ 조회 중', cp: '⏳ 조회 중', cf: '⏳ 조회 중' };
+        const stopTick = aoProgressTicker(msg, s =>
+            `⏳ <b>1/2 3채널 조회 중</b> (<b>${s}초</b> 경과 · 네이버는 보통 1~2분)<br>`
+            + `🛰️ 네이버: ${chState.nv} · 🛒 쿠팡: ${chState.cp} · 🏠 자사몰: ${chState.cf}`);
+        const track = (p, key) => p.then(
+            v => { chState[key] = (v && v.ok) ? `✅ ${v.count || 0}건` : '⚠️ 실패'; return v; },
+            e => { chState[key] = '⚠️ 실패'; throw e; });
         try {
             const [rvNaver, rvCp, rvCf] = await Promise.allSettled([
-                api('/api/agent-office/naver/invoice-orders?days=' + days),
-                api('/api/agent-office/coupang/invoice-orders?days=' + daysCp),
-                api('/api/agent-office/cafe24/invoice-orders?days=' + daysCf),
+                track(api('/api/agent-office/naver/invoice-orders?days=' + days), 'nv'),
+                track(api('/api/agent-office/coupang/invoice-orders?days=' + daysCp), 'cp'),
+                track(api('/api/agent-office/cafe24/invoice-orders?days=' + daysCf), 'cf'),
             ]);
+            stopTick();
+            if (msg) msg.innerHTML = '🔄 <b>2/2 변환·합산 중...</b>';
             const chan = (rv) => rv.status === 'fulfilled' && rv.value && rv.value.ok ? rv.value
                 : { ok: false, message: rv.status === 'fulfilled' ? (rv.value && rv.value.message) || '불러오기 실패' : (rv.reason && rv.reason.message) || String(rv.reason) };
             const nv = chan(rvNaver), cp = chan(rvCp), cf = chan(rvCf);
@@ -6270,7 +6296,7 @@ function parseInvoiceRows(data) {
                 + (failNote ? `<br><span style="color:var(--danger,#F04438);">⚠️ 실패 채널 제외하고 집계됨 — ${failNote}</span>` : '');
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
-        } finally { btn.disabled = false; }
+        } finally { stopTick(); btn.disabled = false; }
     });
 })();
 

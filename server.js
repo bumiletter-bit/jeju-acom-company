@@ -5492,7 +5492,8 @@ function naverMaskPII(v, depth = 0) {
     return v;
 }
 
-app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
+// 대표 7/26: 송장변환 조회 4종은 직원도 사용(조회·변환뿐 — 발주·발송은 판매자센터에서 수기). 연동 승인·연결테스트·설정은 관리자 유지.
+app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, res) => {
     try {
         if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
         // 대표 7/25: 기본 40일(청귤 예약주문 성수기 — 결제일 한 달 이내분까지 커버). 화면에서 조절 가능(상한 180일).
@@ -5777,7 +5778,7 @@ async function coupangFetchInvoiceOrders(days) {
     return { fetched: fetchedSheets, rows, sample, partialAdjusted };
 }
 
-app.get('/api/agent-office/coupang/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/coupang/invoice-orders', authMiddleware, async (req, res) => { // 직원 가능 (대표 7/26)
     try {
         if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
         const days = Math.min(Math.max(parseInt(req.query.days) || 31, 1), 31); // 쿠팡 조회 상한 31일
@@ -5853,7 +5854,7 @@ app.get('/api/agent-office/cafe24/test', authMiddleware, adminOnly, async (req, 
 });
 
 // 배송준비중(N20) 불러오기 — 항상 실행 시점 신규 조회 (3채널 공통 원칙)
-app.get('/api/agent-office/cafe24/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/cafe24/invoice-orders', authMiddleware, async (req, res) => { // 직원 가능 (대표 7/26)
     try {
         const days = Math.min(Math.max(parseInt(req.query.days) || 50, 1), 90);
         const r = await cafe24.fetchInvoiceOrders(days);
@@ -5912,7 +5913,7 @@ app.get('/api/agent-office/coupang/test', authMiddleware, adminOnly, async (req,
 });
 
 // 변환 직전 취소 재확인 (쿠팡 — 상품준비중에도 취소요청(출고중지요청)이 존재하므로 필요, 지시문 §5)
-app.get('/api/agent-office/coupang/canceled-since', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/coupang/canceled-since', authMiddleware, async (req, res) => { // 직원 가능 — 변환 직전 취소 재확인도 조회뿐 (대표 7/26)
     try {
         if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
         const sinceMs = Date.parse(String(req.query.since || ''));
