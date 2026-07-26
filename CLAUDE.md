@@ -184,7 +184,8 @@ NAVER_RELAY_CA    = (중계서버 자체서명 cert.pem 내용 — 인증서 고
 - 실패 시 텔레그램 알림(회사프로그램의 기존 텔레그램 사용).
 - 변경 감지엔 `GET /external/v1/pay-order/seller/product-orders/last-changed-statuses`(PII 없음) 활용 가능.
 
-### 4-2. 🛒 쿠팡 송장변환 연동 — 구현 완료 (v5.9.68, 배포·키 입력 대기)
+### 4-2. 🛒 쿠팡 송장변환 연동 — ✅ 완료·검증 통과 (2026-07-26, v5.9.70 태그로 배포)
+- **대표 검증 완료**: 키 입력(NCP) → 연결 3줄 초록불 → 자동 불러오기(3일 조회·발주서 1건) → 통합변환 → **수기 Wing 다운로드 변환과 완전 동일 대조 확인**. 취소 재확인·부분취소 공식 탑재.
 - 지시문 `지시문_쿠팡_송장변환_연동.md` v2 기준. 스펙 `docs/superpowers/specs/2026-07-26-coupang-invoice-design.md`(공식 문서 확정 — v5 ordersheets/INSTRUCT·v6 returnRequests/cancelType=CANCEL·HMAC CEA·**수량=shippingCount−(hold+cancel)**).
 - 중계서버 `/coupang`(조회 2종만·vendorId 강제·RELAY_VERSION 2026-07-26.1 — **install.sh 재실행 필요**), 회사프로그램 `callCoupang`+수집기+연결테스트+취소재확인, [쿠팡 자동 불러오기] 버튼. 변환 로직·네이버 코드 무수정.
 - 대표 절차: `docs/쿠팡_키입력_절차.md` (SSH 키 입력 → 연결테스트 → 실주문 검증 체크리스트 §⑥ — 부분취소·보내는사람연락처 대조 포함). 키 만료 2027-01-21, 재발급 일정 2027-01-07 자동 등록.
