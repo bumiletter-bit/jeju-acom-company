@@ -9160,6 +9160,118 @@ function drawRankChart() {
 
 
 // =============================================
+// 📅 커스텀 달력 (순위관리 날짜 입력 — 브라우저 기본 달력 대체)
+// 값은 기존과 동일한 YYYY-MM-DD 문자열 → 저장/조회 로직 무수정
+// =============================================
+const AkmCal = (() => {
+    let pop = null, curInput = null, viewY = 0, viewM = 0;
+    const pad = n => String(n).padStart(2, '0');
+    const isoOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+
+    function ensurePop() {
+        if (pop) return;
+        pop = document.createElement('div');
+        pop.className = 'akm-cal';
+        pop.style.display = 'none';
+        document.body.appendChild(pop);
+        pop.addEventListener('click', e => {
+            const nav = e.target.closest('[data-nav]');
+            if (nav) {
+                viewM += parseInt(nav.dataset.nav, 10);
+                while (viewM < 0) { viewM += 12; viewY--; }
+                while (viewM > 11) { viewM -= 12; viewY++; }
+                render();
+                return;
+            }
+            if (e.target.closest('[data-today]')) { pick(_rankFmtToday()); return; }
+            const day = e.target.closest('[data-date]');
+            if (day) pick(day.dataset.date);
+        });
+        document.addEventListener('mousedown', e => {
+            if (!isOpen()) return;
+            if (pop.contains(e.target) || e.target === curInput) return;
+            close();
+        });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+        window.addEventListener('resize', close);
+        window.addEventListener('scroll', e => { if (isOpen() && !pop.contains(e.target)) close(); }, true);
+    }
+
+    function render() {
+        const t = new Date();
+        const todayIso = isoOf(t.getFullYear(), t.getMonth(), t.getDate());
+        const sel = (curInput && curInput.value) || '';
+        const startDow = new Date(viewY, viewM, 1).getDay();
+        let cells = '';
+        for (let i = 0; i < 42; i++) {
+            const dt = new Date(viewY, viewM, i - startDow + 1);
+            const dIso = isoOf(dt.getFullYear(), dt.getMonth(), dt.getDate());
+            const cls = ['akm-cal-day'];
+            if (dt.getMonth() !== viewM) cls.push('out');
+            const dow = i % 7;
+            if (dow === 0) cls.push('sun'); else if (dow === 6) cls.push('sat');
+            if (dIso === todayIso) cls.push('today');
+            if (dIso === sel) cls.push('sel');
+            cells += `<button type="button" class="${cls.join(' ')}" data-date="${dIso}">${dt.getDate()}</button>`;
+        }
+        pop.innerHTML = `
+            <div class="akm-cal-head">
+                <button type="button" class="akm-cal-nav" data-nav="-12" title="이전 해">«</button>
+                <button type="button" class="akm-cal-nav" data-nav="-1" title="이전 달">‹</button>
+                <div class="akm-cal-title">${viewY}년 ${viewM + 1}월</div>
+                <button type="button" class="akm-cal-nav" data-nav="1" title="다음 달">›</button>
+                <button type="button" class="akm-cal-nav" data-nav="12" title="다음 해">»</button>
+            </div>
+            <div class="akm-cal-week"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+            <div class="akm-cal-grid">${cells}</div>
+            <div class="akm-cal-foot"><button type="button" class="akm-cal-today-btn" data-today="1">오늘</button></div>`;
+    }
+
+    function pick(d) {
+        if (curInput) {
+            curInput.value = d;
+            curInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        close();
+    }
+    function isOpen() { return !!pop && pop.style.display !== 'none'; }
+    function close() { if (pop) pop.style.display = 'none'; curInput = null; }
+
+    function open(input) {
+        ensurePop();
+        if (curInput === input && isOpen()) { close(); return; }
+        curInput = input;
+        const v = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.value || '');
+        const base = v ? new Date(+v[1], +v[2] - 1, +v[3]) : new Date();
+        viewY = base.getFullYear(); viewM = base.getMonth();
+        render();
+        // 화면 밖으로 나가지 않게 위치 계산 (기본: 입력칸 아래, 부족하면 위)
+        pop.style.visibility = 'hidden';
+        pop.style.display = 'block';
+        const r = input.getBoundingClientRect();
+        const pw = pop.offsetWidth, ph = pop.offsetHeight;
+        let left = r.left;
+        let top = r.bottom + 6;
+        if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);
+        if (top + ph > window.innerHeight - 8 && r.top - ph - 6 > 0) top = r.top - ph - 6;
+        pop.style.left = `${left + window.scrollX}px`;
+        pop.style.top = `${top + window.scrollY}px`;
+        pop.style.visibility = 'visible';
+    }
+
+    function attach(ids) {
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('click', () => open(el));
+            el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(el); } });
+        });
+    }
+    return { attach };
+})();
+AkmCal.attach(['rank-input-date', 'rank-range-start', 'rank-range-end']);
+
+// =============================================
 // 🎮 AGENT OFFICE (대표 전용) — 픽셀 사무실 + 실행/로그
 // =============================================
 let aoAgents = [];
