@@ -4372,3 +4372,84 @@ textarea.form-input {
 }
 @keyframes skel-sh { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .skel-line { animation: none; } }
+
+/* ========================================
+   디자인 3차 — 메뉴별 (v5.9.75)
+   C-1 정산 스탯 카드 · C-3 기안 스텝퍼 · C-4 박스 분포 바
+   C-5 CS 말풍선 · C-6 토글 스위치
+   ======================================== */
+/* C-1. 정산 요약 스탯 카드 — 총 결제예정금액은 인디고 히어로 */
+.stat-card {
+    border-radius: 12px;
+    border: 1px solid #ECEDF1;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 4px 12px -8px rgba(16, 24, 40, 0.10);
+}
+.stat-value { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.stat-card.expected {
+    background: linear-gradient(135deg, #4F46E5, #6366F1);
+    border: none;
+    box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.55);
+}
+.stat-card.expected .stat-label { color: #E0E2FF; }
+.stat-card.expected .stat-value { color: #fff; }
+.stat-card.expected .stat-sub { color: #C9CDFF; }
+
+/* C-3. 기안서류 결재 스텝퍼 */
+.doc-steps { display: flex; align-items: center; justify-content: center; gap: 0; margin-bottom: 14px; flex-wrap: wrap; }
+.dstep { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: #667085; }
+.dstep i {
+    width: 24px; height: 24px; border-radius: 50%; font-style: normal;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800;
+    background: #F2F4F7; color: #98A0AE;
+}
+.dstep.done { color: #101828; }
+.dstep.done i { background: #4F46E5; color: #fff; }
+.dstep.rejected { color: #B42318; }
+.dstep.rejected i { background: #F04438; color: #fff; }
+.dline { width: 28px; height: 2px; background: #ECEDF1; margin: 0 8px; }
+.dline.done { background: #4F46E5; }
+
+/* C-4. 박스재고 — 보관처 분포 바 */
+.bx-bar {
+    display: flex; height: 8px; border-radius: 999px; overflow: hidden;
+    background: #F1F2F6; margin-top: 12px;
+}
+.bx-seg { display: block; height: 100%; }
+.bx-seg.c { background: #F04438; }
+.bx-seg.d { background: #12B76A; }
+.bx-seg.h { background: #F59E0B; }
+.bx-legend { display: flex; gap: 10px; margin-top: 6px; font-size: 10.5px; color: #98A0AE; }
+.bx-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.bx-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.bx-dot.c { background: #F04438; }
+.bx-dot.d { background: #12B76A; }
+.bx-dot.h { background: #F59E0B; }
+
+/* C-5. CS처리방 — 템플릿 내용을 고객이 받는 말풍선 모양으로 */
+.cs-card-content {
+    background: #EEF0FF;
+    border-radius: 12px 12px 12px 4px;
+    padding: 10px 14px;
+    color: #101828;
+    margin-top: 8px;
+}
+
+/* C-6. 토글 스위치 (문의 시나리오·자동수집 타이머 ON/OFF) */
+input.ui-switch {
+    appearance: none; -webkit-appearance: none;
+    width: 38px; height: 21px; border-radius: 999px;
+    background: #D6DAE1; position: relative; cursor: pointer;
+    outline: none; border: none; vertical-align: middle;
+    margin-right: 5px; flex-shrink: 0;
+    transition: background 0.15s;
+}
+input.ui-switch::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(16, 24, 40, 0.25);
+    transition: left 0.15s;
+}
+input.ui-switch:checked { background: #12B76A; }
+input.ui-switch:checked::after { left: 19px; }
+input.ui-switch:focus-visible { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15); }

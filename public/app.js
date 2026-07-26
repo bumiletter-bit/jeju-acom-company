@@ -3773,6 +3773,9 @@ window.viewDocDetail = async function(id) {
             <div class="modal" style="max-width:520px;">
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
                 <h3 style="text-align:center;margin-bottom:12px;">기안서류 상세</h3>
+                ${d.status === 'approved'
+                    ? '<div class="doc-steps"><span class="dstep done"><i>✓</i>작성</span><span class="dline done"></span><span class="dstep done"><i>✓</i>대표 승인</span><span class="dline done"></span><span class="dstep done"><i>✓</i>완료</span></div>'
+                    : '<div class="doc-steps"><span class="dstep done"><i>✓</i>작성</span><span class="dline done"></span><span class="dstep rejected"><i>✕</i>반려</span></div>'}
                 ${approvalHtml}
                 <div style="margin:16px 0;line-height:2;">
                     <div><strong>유형:</strong> ${typeLabel}</div>
@@ -4986,6 +4989,12 @@ async function renderBoxInventory() {
                         <div>대성(시온)<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="event.stopPropagation();editBoxStock(${item.id},'daesong')"` : ''} data-box-id="${item.id}" data-box-field="daesong">${item.daesongStock}</span></div>
                         <div>효돈<span class="num remaining ${isAdmin ? 'box-editable' : ''}" ${isAdmin ? `onclick="event.stopPropagation();editBoxStock(${item.id},'hyodon')"` : ''} data-box-id="${item.id}" data-box-field="hyodon">${hyodon}</span></div>
                     </div>
+                    ${total > 0 ? `<div class="bx-bar" title="업체 ${item.companyStock} · 대성(시온) ${item.daesongStock} · 효돈 ${hyodon}">${
+                        [[item.companyStock, 'c'], [item.daesongStock, 'd'], [hyodon, 'h']]
+                            .filter(([v]) => v > 0)
+                            .map(([v, cls]) => `<i class="bx-seg ${cls}" style="width:${(v / total * 100).toFixed(1)}%"></i>`).join('')
+                    }</div>
+                    <div class="bx-legend"><span><i class="bx-dot c"></i>업체</span><span><i class="bx-dot d"></i>대성(시온)</span><span><i class="bx-dot h"></i>효돈</span></div>` : ''}
                 </div>
             `;
         }).join('');
@@ -11900,7 +11909,7 @@ async function renderInquiryPage() {
             <td>${escapeHtml(s.name)}</td>
             <td>${escapeHtml(s.channel)}</td>
             <td>${escapeHtml(s.action)}</td>
-            <td style="white-space:nowrap;"><input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)">
+            <td style="white-space:nowrap;"><input type="checkbox" class="ui-switch" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)">
                 ${s.enabled
                     ? '<span class="pill pill-ok">🟢 사용중</span>'
                     : '<span class="pill pill-off">⏸ 꺼짐</span>'}</td>
@@ -12093,7 +12102,7 @@ async function renderNaverTimers() {
         const err = (t.last_status === 'fail' && t.last_error) ? `<div class="text-muted" style="font-size:11px; max-width:260px;">${escapeHtml(String(t.last_error).slice(0, 120))}</div>` : '';
         return `<tr>
             <td>${escapeHtml(label)}</td>
-            <td style="white-space:nowrap;"><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleNaverTimer('${t.key}', this.checked)">
+            <td style="white-space:nowrap;"><input type="checkbox" class="ui-switch" ${t.enabled ? 'checked' : ''} onchange="toggleNaverTimer('${t.key}', this.checked)">
                 ${t.enabled
                     ? '<span class="pill pill-ok">🟢 작동중</span>'
                     : '<span class="pill pill-off">⏸ 꺼짐</span>'}</td>
