@@ -4453,3 +4453,50 @@ input.ui-switch::after {
 input.ui-switch:checked { background: #12B76A; }
 input.ui-switch:checked::after { left: 19px; }
 input.ui-switch:focus-visible { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15); }
+
+/* ========================================
+   디자인 보완 (v5.9.76 — 대표 피드백)
+   ① 일정 주간/연간 글씨 확대 + 월간 소폭 확대
+   ② 모든 표 헤더 고정 (스크롤해도 제목줄 유지)
+   ======================================== */
+/* ① 주간 뷰 — 시원하게 확대 */
+.sch-wday { padding: 14px 18px; gap: 16px; }
+.sch-wdate { width: 66px; }
+.sch-wdate .n { font-size: 26px; }
+.sch-wdate .w { font-size: 12.5px; }
+.sch-witems { gap: 7px; padding-top: 4px; min-height: 30px; }
+.sch-wchip { font-size: 14.5px; padding: 6px 12px 6px 10px; border-left-width: 4px; border-radius: 9px; }
+.sch-wchip input { width: 15px; height: 15px; }
+.sch-wempty { font-size: 13.5px; padding-top: 8px; }
+/* ① 연간 뷰 — 확대 */
+.sch-year { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.sch-ymon { padding: 12px 13px 13px; }
+.sch-ymon h5 { font-size: 14.5px; margin-bottom: 8px; }
+.sch-ymon h5 span { font-size: 12px; }
+.sch-ygrid { gap: 3px; }
+.sch-yd { height: 19px; font-size: 10.5px; }
+.sch-yd i { width: 5px; height: 5px; bottom: 0; }
+/* ① 월간 — 일정 칩 조금만 확대 */
+.day-schedule-item { font-size: 12px; padding: 2px 6px; line-height: 1.4; }
+.day-schedules { gap: 3px; max-height: 150px; }
+.day-more { font-size: 10.5px; }
+/* 모바일 보정 (위 확대값이 기존 모바일 축소 규칙을 덮지 않게 재지정) */
+@media (max-width: 768px) {
+    .sch-wday { padding: 11px 13px; gap: 11px; }
+    .sch-wdate { width: 52px; }
+    .sch-wdate .n { font-size: 20px; }
+    .sch-wchip { font-size: 13px; padding: 4px 9px 4px 8px; }
+    .sch-year { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); }
+    .sch-yd { height: 16px; font-size: 9px; }
+    .day-schedule-item { font-size: 10.5px; padding: 1px 4px; }
+    .day-schedules { max-height: 96px; }
+}
+@media (max-width: 480px) {
+    .day-schedule-item { font-size: 9.5px; }
+    .day-schedules { max-height: 64px; }
+}
+
+/* ② 표 헤더 고정 — 엑셀 틀고정처럼 제목줄이 따라옴 */
+.data-table thead th { position: sticky; top: 0; z-index: 5; }
+/* 긴 표는 래퍼 안에서 세로 스크롤 (화면 72% 높이) — 짧은 표는 변화 없음 */
+.table-scroll-wrapper { max-height: 72vh; overflow: auto; }
