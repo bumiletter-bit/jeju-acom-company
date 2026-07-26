@@ -6006,7 +6006,7 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
         const area = document.getElementById('invoice-upload-smart');
         const fnEl = document.getElementById('invoice-filename-smart');
         const daysEl = document.getElementById('invoice-auto-smart-days');
-        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 40, 1), 180);
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 180);
         btn.disabled = true;
         if (msg) msg.textContent = `⏳ 네이버에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 최대 1~2분 걸릴 수 있어요)`;
         try {
@@ -6047,7 +6047,7 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
         const area = document.getElementById('invoice-upload-coupang');
         const fnEl = document.getElementById('invoice-filename-coupang');
         const daysEl = document.getElementById('invoice-auto-coupang-days');
-        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 3, 1), 31);
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 31, 1), 31);
         btn.disabled = true;
         if (msg) msg.textContent = `⏳ 쿠팡에서 상품준비중 주문을 가져오는 중... (최근 ${days}일)`;
         try {
@@ -6086,7 +6086,7 @@ setupInvoiceArea('invoice-upload-coupang', 'invoice-file-coupang', 'invoice-file
         const area = document.getElementById('invoice-upload-jasamol');
         const fnEl = document.getElementById('invoice-filename-jasamol');
         const daysEl = document.getElementById('invoice-auto-jasamol-days');
-        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 3, 1), 90);
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 90);
         btn.disabled = true;
         if (msg) msg.textContent = `⏳ 자사몰에서 배송준비중 주문을 가져오는 중... (최근 ${days}일)`;
         try {
@@ -6212,7 +6212,7 @@ function parseInvoiceRows(data) {
     btn.addEventListener('click', async () => {
         const msg = document.getElementById('invoice-qty-msg');
         const daysEl = document.getElementById('invoice-qty-days');
-        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 40, 1), 180);
+        const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 180);
         btn.disabled = true;
         if (msg) msg.textContent = `⏳ 네이버에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 1~2분 걸릴 수 있어요)`;
         try {

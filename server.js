@@ -5409,7 +5409,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, adminOnly, asy
     try {
         if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
         // 대표 7/25: 기본 40일(청귤 예약주문 성수기 — 결제일 한 달 이내분까지 커버). 화면에서 조절 가능(상한 180일).
-        const days = Math.min(Math.max(parseInt(req.query.days) || 40, 1), 180);
+        const days = Math.min(Math.max(parseInt(req.query.days) || 50, 1), 180);
         const r = await naverFetchInvoiceOrders(days);
         await writeAudit({
             action: 'naver_invoice_fetch', targetType: 'naver_order', targetId: null,
@@ -5693,7 +5693,7 @@ async function coupangFetchInvoiceOrders(days) {
 app.get('/api/agent-office/coupang/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
     try {
         if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
-        const days = Math.min(Math.max(parseInt(req.query.days) || 3, 1), 31); // 쿠팡 조회 상한 31일
+        const days = Math.min(Math.max(parseInt(req.query.days) || 31, 1), 31); // 쿠팡 조회 상한 31일
         const r = await coupangFetchInvoiceOrders(days);
         await writeAudit({
             action: 'coupang_invoice_fetch', targetType: 'coupang_order', targetId: null,
@@ -5768,7 +5768,7 @@ app.get('/api/agent-office/cafe24/test', authMiddleware, adminOnly, async (req, 
 // 배송준비중(N20) 불러오기 — 항상 실행 시점 신규 조회 (3채널 공통 원칙)
 app.get('/api/agent-office/cafe24/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const days = Math.min(Math.max(parseInt(req.query.days) || 3, 1), 90);
+        const days = Math.min(Math.max(parseInt(req.query.days) || 50, 1), 90);
         const r = await cafe24.fetchInvoiceOrders(days);
         await writeAudit({
             action: 'cafe24_invoice_fetch', targetType: 'cafe24_order', targetId: null,
