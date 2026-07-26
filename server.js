@@ -5705,6 +5705,85 @@ app.get('/api/agent-office/coupang/invoice-orders', authMiddleware, adminOnly, a
     } catch (err) { res.json(naverFriendlyError(err)); }
 });
 
+// ══════════════ 카페24(자사몰) 송장변환 연동 (2026-07-26 — 지시문 카페24 v1) ══════════════
+//   스펙: docs/superpowers/specs/2026-07-26-cafe24-invoice-design.md · 모듈: cafe24.js (주문 조회만, 토큰 암호화 저장)
+const cafe24 = require('./cafe24.js');
+cafe24.init({ pool, notify: notifyTelegram });
+
+// 연동 승인 URL 발급 — state를 config에 저장(10분 유효, 위변조 검증용)
+app.get('/api/cafe24/auth-url', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!process.env.CAFE24_CLIENT_SECRET) return res.status(503).json({ error: 'Render 환경변수 CAFE24_CLIENT_SECRET 미설정 — 절차서대로 입력해주세요' });
+        const state = crypto.randomUUID();
+        await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('cafe24_oauth_state', $1::jsonb)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+            [JSON.stringify({ state, at: new Date().toISOString() })]);
+        res.json({ ok: true, url: cafe24.getAuthUrl(state) });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// OAuth 콜백 — 카페24가 리다이렉트 (공개 경로, state로 위변조 검증. 코드는 1분 유효·1회용)
+app.get('/api/cafe24/callback', async (req, res) => {
+    const page = (title, body) => res.send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${title}</title></head>
+<body style="font-family:sans-serif; text-align:center; padding:60px 20px;"><h2>${title}</h2><p>${body}</p></body></html>`);
+    try {
+        const { code, state } = req.query || {};
+        const saved = await pool.query(`SELECT value, updated_at FROM agent_office_config WHERE key = 'cafe24_oauth_state'`);
+        const sv = saved.rows.length ? saved.rows[0] : null;
+        const fresh = sv && (Date.now() - new Date(sv.updated_at).getTime() < 10 * 60 * 1000);
+        if (!code || !sv || !fresh || String(state || '') !== String(sv.value.state || '')) {
+            return page('❌ 카페24 연동 실패', '요청이 유효하지 않습니다(state 불일치 또는 만료). 회사프로그램에서 [연동 승인]을 다시 눌러주세요.');
+        }
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'cafe24_oauth_state'`); // state 1회용
+        await cafe24.exchangeCode(String(code));
+        await writeAudit({ action: 'cafe24_oauth', targetType: 'cafe24', targetId: null,
+            changes: { after: { linked: true } }, source: 'cafe24', actor: null });
+        return page('✅ 카페24 연동 완료', '이 창을 닫고 회사프로그램에서 [연결 테스트]를 눌러 확인해주세요.');
+    } catch (e) {
+        console.error('카페24 콜백 오류:', e.reason || e.message); // 토큰 값 미출력
+        return page('❌ 카페24 연동 실패', `토큰 발급에 실패했습니다 (${aoSafe(e.reason || e.message)}). [연동 승인]을 다시 눌러주세요.`);
+    }
+});
+function aoSafe(s) { return String(s || '').replace(/[<>&"]/g, '').slice(0, 120); }
+
+// 연결 테스트 — Secret·토큰 상태(값 미노출)·주문 API 왕복
+app.get('/api/agent-office/cafe24/test', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const st = await cafe24.getStatus();
+        let chain = null;
+        if (st.secret_set && st.token_state !== 'reauth_required' && st.token_state !== 'none') {
+            try {
+                await cafe24.fetchInvoiceOrders(1);
+                chain = { ok: true, note: '주문 조회 왕복 성공' };
+            } catch (e) {
+                chain = { ok: false, reason: e.code === 'reauth' ? '재승인 필요' : `API 오류 (${e.status || ''} ${aoSafe(e.reason || e.message)})` };
+            }
+        } else {
+            chain = { ok: false, reason: !st.secret_set ? 'Secret 미설정' : '연동 승인 필요' };
+        }
+        res.json({ ok: !!(st.secret_set && st.token_state === 'ok' && chain.ok), ...st, chain });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 배송준비중(N20) 불러오기 — 항상 실행 시점 신규 조회 (3채널 공통 원칙)
+app.get('/api/agent-office/cafe24/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const days = Math.min(Math.max(parseInt(req.query.days) || 3, 1), 90);
+        const r = await cafe24.fetchInvoiceOrders(days);
+        await writeAudit({
+            action: 'cafe24_invoice_fetch', targetType: 'cafe24_order', targetId: null,
+            changes: { after: { days, fetched: r.fetched, count: r.rows.length } },
+            source: 'cafe24', actor: adminActor(req),
+        });
+        res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows,
+            sample: r.sampleRaw ? naverMaskPII(r.sampleRaw) : null, partial_adjusted: r.partialAdjusted });
+    } catch (err) {
+        if (err && err.code === 'secret') return res.json({ ok: false, message: 'CAFE24_CLIENT_SECRET 미설정 — 절차서대로 Render에 입력해주세요' });
+        if (err && err.code === 'reauth') return res.json({ ok: false, message: '카페24 재승인 필요 — [데이터관리] > 카페24 연동에서 [연동 승인]을 눌러주세요' });
+        res.json({ ok: false, message: `카페24 조회 실패 (${err.status || ''} ${aoSafe(err.reason || err.message)})` });
+    }
+});
+
 // 연결 테스트: ①중계 도달+쿠팡 키 설정 ②쿠팡 왕복(오늘 1일 INSTRUCT 조회 — 2xx/4xx 응답이면 도달 성공)
 app.get('/api/agent-office/coupang/test', authMiddleware, adminOnly, async (req, res) => {
     try {
