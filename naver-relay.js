@@ -77,4 +77,29 @@ async function callNaver(opts, notify) {
     return data;
 }
 
-module.exports = { callNaver, relayHealth, configured };
+// 쿠팡 OPEN API 호출 (같은 중계서버 경유 — 엔드포인트만 /coupang). 쿠팡 키는 중계서버(NCP)에만 존재.
+async function callCoupang(opts, notify) {
+    const { method = 'GET', path, query = null } = opts || {};
+    if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
+    if (!path) throw new Error('path 필요');
+    const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
+    let r;
+    try {
+        r = await rawRequest(relayBase() + '/coupang', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
+            body: JSON.stringify({ method, path, query }),
+        });
+    } catch (e) {
+        await notifySafe(`🛒 쿠팡 중계서버 연결 실패 — ${method} ${path}\n${e.message}`);
+        const err = new Error('relay_unreachable: ' + e.message); err.cause = e; throw err;
+    }
+    let data; try { data = JSON.parse(r.text); } catch { data = { raw: r.text }; }
+    if (r.status < 200 || r.status >= 300) {
+        await notifySafe(`🛒 쿠팡 API 오류 ${r.status} — ${method} ${path}\n${JSON.stringify(data).slice(0, 300)}`);
+        const err = new Error('coupang_relay_error_' + r.status); err.status = r.status; err.data = data; throw err;
+    }
+    return data;
+}
+
+module.exports = { callNaver, callCoupang, relayHealth, configured };

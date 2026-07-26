@@ -791,6 +791,12 @@ async function initDB() {
             collected_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 쿠팡 API 키 만료(2027-01-21) 재발급 알림 일정 — 1회 시드 (지시문_쿠팡_송장변환_연동 §5)
+    const cpKeySched = await pool.query(`SELECT id FROM schedules WHERE title LIKE '%쿠팡 API 키 재발급%' LIMIT 1`);
+    if (cpKeySched.rows.length === 0) {
+        await pool.query(`INSERT INTO schedules (date, title, type, category)
+            VALUES ('2027-01-07', '🛒 쿠팡 API 키 재발급 (1/21 만료 2주 전)', 'normal', '일반')`);
+    }
     // 문의시나리오 DB 통합 (2026-07-25 설계문서): 톡톡봇 시나리오 단일 출처 — 물리삭제 금지(deleted_at)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS inquiry_scenarios (
@@ -5618,6 +5624,148 @@ setInterval(naverAutoCollectTick, 60 * 1000);
 
 // 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).
 //   안전장치 = [자동 불러오기]가 항상 실행 시점 신규 조회. 타이머 수집분은 현황·통계용(변환 재사용 안 함).
+
+// ══════════════ 쿠팡 송장변환 연동 (2026-07-26 — 지시문_쿠팡_송장변환_연동 v2) ══════════════
+//   스펙: docs/superpowers/specs/2026-07-26-coupang-invoice-design.md (공식 문서 확정본)
+//   원칙: 조회 2종만(ordersheets·returnRequests) · 발주확인/발송처리 수동 · 변환 로직 무수정(9키 주입만)
+const COUPANG_ORDERSHEETS_PATH = '/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets';
+const COUPANG_RETURNREQ_PATH = '/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests';
+
+async function coupangCallWithRetry(reqObj) {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    for (let attempt = 0; ; attempt++) {
+        try { return await naverRelay.callCoupang(reqObj, null); }
+        catch (e) {
+            const st = e && e.status;
+            if ((st === 429 || st === 500 || st === 502 || st === 503) && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
+            throw e;
+        }
+    }
+}
+
+// 상품준비중(INSTRUCT) 주문 조회 → convertDataCoupang이 읽는 9키로 매핑 (변환 로직 무수정)
+async function coupangFetchInvoiceOrders(days) {
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
+    const from = d(-(Math.max(1, days) - 1)), to = d(0);
+    let nextToken = '', rows = [], fetchedSheets = 0, partialAdjusted = 0, sample = null;
+    for (let page = 0; page < 20; page++) {
+        if (page > 0) await new Promise(r => setTimeout(r, 350));
+        const query = { createdAtFrom: from + '+09:00', createdAtTo: to + '+09:00', status: 'INSTRUCT', maxPerPage: 50 };
+        if (nextToken) query.nextToken = nextToken;
+        const body = await coupangCallWithRetry({ method: 'GET', path: COUPANG_ORDERSHEETS_PATH, query });
+        const list = Array.isArray(body && body.data) ? body.data : [];
+        for (const sheet of list) {
+            fetchedSheets++;
+            const o = sheet.orderer || {}, rc = sheet.receiver || {};
+            for (const it of (sheet.orderItems || [])) {
+                // 🔴 문서 명시: 발주 가능 수량 = shippingCount − (holdCountForCancel + cancelCount) — 부분취소 반영
+                const shipping = Number(it.shippingCount) || 0;
+                const qty = shipping - ((Number(it.holdCountForCancel) || 0) + (Number(it.cancelCount) || 0));
+                if (qty !== shipping) partialAdjusted++;
+                if (qty <= 0) continue;               // 전량 취소(예정 포함) → 발주 대상 아님
+                rows.push({
+                    '구매자': o.name || '',
+                    '구매자전화번호': o.ordererNumber || o.safeNumber || '',
+                    '수취인이름': rc.name || '',
+                    '수취인전화번호': rc.safeNumber || rc.receiverNumber || '',
+                    '수취인 주소': [rc.addr1, rc.addr2].filter(Boolean).join(' ').trim(),
+                    '배송메세지': sheet.parcelPrintMessage || '',
+                    '등록상품명': it.sellerProductName || '',
+                    '노출상품명(옵션명)': it.vendorItemName || '',
+                    '구매수(수량)': qty,
+                    _orderId: String(sheet.orderId || ''),
+                });
+            }
+        }
+        if (!sample && list.length) sample = naverMaskPII(list[0]);
+        nextToken = String((body && body.nextToken) || '');
+        if (!nextToken) break;
+    }
+    return { fetched: fetchedSheets, rows, sample, partialAdjusted };
+}
+
+app.get('/api/agent-office/coupang/invoice-orders', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
+        const days = Math.min(Math.max(parseInt(req.query.days) || 3, 1), 31); // 쿠팡 조회 상한 31일
+        const r = await coupangFetchInvoiceOrders(days);
+        await writeAudit({
+            action: 'coupang_invoice_fetch', targetType: 'coupang_order', targetId: null,
+            changes: { after: { days, fetched: r.fetched, count: r.rows.length } },
+            source: 'naver-api', actor: adminActor(req),
+        });
+        res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows,
+            sample: r.sample, partial_adjusted: r.partialAdjusted });
+    } catch (err) { res.json(naverFriendlyError(err)); }
+});
+
+// 연결 테스트: ①중계 도달+쿠팡 키 설정 ②쿠팡 왕복(오늘 1일 INSTRUCT 조회 — 2xx/4xx 응답이면 도달 성공)
+app.get('/api/agent-office/coupang/test', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) {
+            return res.json({ ok: false, step: 'config', message: 'Render 환경변수 NAVER_RELAY_URL / NAVER_RELAY_TOKEN 미설정' });
+        }
+        let health = null, healthErr = null;
+        try { health = await naverRelay.relayHealth(false); } catch (e) { healthErr = e.message; }
+        const keysSet = !!(health && health.coupang_keys_set);
+        const kstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        let chain = null;
+        try {
+            await naverRelay.callCoupang({
+                method: 'GET', path: COUPANG_ORDERSHEETS_PATH,
+                query: { createdAtFrom: kstToday + '+09:00', createdAtTo: kstToday + '+09:00', status: 'INSTRUCT', maxPerPage: 50 },
+            }, notifyTelegram);
+            chain = { ok: true, reached: true, http: 200, note: '쿠팡 왕복 성공' };
+        } catch (e) {
+            const relayAuthFail = e.status === 401 && e.data && e.data.error === 'unauthorized';
+            const relayBlocked = e.status === 403 && e.data && e.data.error === 'path_not_allowed';
+            const keysNotSet = e.status === 503 && e.data && e.data.error === 'coupang_keys_not_set';
+            const unreachable = /relay_unreachable/.test(e.message || '');
+            if (!unreachable && !relayAuthFail && !relayBlocked && !keysNotSet && e.status) {
+                chain = { ok: true, reached: true, http: e.status, note: `쿠팡 도달·서명 확인 필요 (응답 ${e.status})` };
+            } else {
+                chain = { ok: false, reached: false, error: e.message, status: e.status || null,
+                    reason: unreachable ? '중계서버 연결 실패' : relayAuthFail ? 'Bearer 토큰 불일치'
+                        : relayBlocked ? '허용목록 외' : keysNotSet ? '쿠팡 키 미입력(NCP .env)' : '알 수 없음' };
+            }
+        }
+        res.json({
+            ok: !!(keysSet && chain.ok),
+            relay_reachable: !!health && !healthErr,
+            relay_version: health ? (health.version || '(구버전 — install.sh 재실행 필요)') : null,
+            coupang_keys_set: keysSet,
+            chain,
+        });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 변환 직전 취소 재확인 (쿠팡 — 상품준비중에도 취소요청(출고중지요청)이 존재하므로 필요, 지시문 §5)
+app.get('/api/agent-office/coupang/canceled-since', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
+        const sinceMs = Date.parse(String(req.query.since || ''));
+        if (!Number.isFinite(sinceMs)) throw { status: 400, message: 'since를 ISO 시각으로 주세요' };
+        const now = Date.now();
+        const fromMs = Math.max(sinceMs, now - 23.5 * 3600 * 1000);
+        const kstMin = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 16); // yyyy-MM-ddTHH:mm (KST)
+        let nextToken = '';
+        const canceled = new Set();
+        for (let page = 0; page < 5; page++) {
+            if (page > 0) await new Promise(r => setTimeout(r, 350));
+            const query = { searchType: 'timeFrame', createdAtFrom: kstMin(fromMs), createdAtTo: kstMin(now),
+                cancelType: 'CANCEL', maxPerPage: 50 };
+            if (nextToken) query.nextToken = nextToken;
+            const body = await coupangCallWithRetry({ method: 'GET', path: COUPANG_RETURNREQ_PATH, query });
+            const list = Array.isArray(body && body.data) ? body.data : [];
+            for (const x of list) { const id = String(x.orderId || ''); if (id) canceled.add(id); }
+            nextToken = String((body && body.nextToken) || '');
+            if (!nextToken) break;
+        }
+        res.json({ ok: true, canceled: [...canceled],
+            checked_from: new Date(fromMs).toISOString(), checked_to: new Date(now).toISOString() });
+    } catch (err) { res.json(naverFriendlyError(err)); }
+});
 
 // 네이버 중계 오류를 대표가 이해할 메시지로 변환 (403 원인 구분: 중계 재실행 필요 vs 네이버 권한/IP)
 function naverFriendlyError(err) {
