@@ -6028,14 +6028,24 @@ function setInvoiceAreaDone(area, count, label) {
     if (p) p.innerHTML = `✅ <strong style="font-size:15px;">${label} ${count}건 완료되었습니다!</strong>`;
 }
 
-// 진행 표시 헬퍼 (대표 7/26): 단계·경과초 표시만 — 처리 로직(서버 조회·변환)은 무수정.
-//   서버가 페이지 순회를 한 번의 요청으로 처리하므로 페이지 단위 실시간 표시는 불가 → 경과초+단계로 표시.
-function aoProgressTicker(el, textFn) {
+// 진행바 헬퍼 (대표 7/26): 미소 이미지 생성 진행바와 같은 스타일 — 예상 소요시간 기반 %.
+//   서버가 페이지 순회를 한 요청으로 처리해 실제 진행률은 알 수 없음 → 추정치로 95%까지 차오르고, 완료되면 결과 문구로 교체.
+//   extraFn(s)이 있으면 게이지 아래 한 줄 추가(중간발주 채널별 상태용). 표시만 — 처리 로직 무수정.
+function aoProgressBarTicker(el, estSec, label, extraFn) {
     if (!el) return () => {};
     const t0 = Date.now();
-    const tick = () => { el.innerHTML = textFn(Math.round((Date.now() - t0) / 1000)); };
-    tick();
-    const iv = setInterval(tick, 1000);
+    const render = () => {
+        const s = Math.round((Date.now() - t0) / 1000);
+        const pct = Math.min(95, Math.round((s / Math.max(estSec, 3)) * 100));
+        el.innerHTML = `<div style="font-size:13px;color:#e67700;font-weight:600;">⏳ ${label} <strong>${pct}%</strong> <span style="color:#999;font-weight:400;">(${s}초 경과)</span></div>
+            <div style="height:10px;background:#eee;border-radius:6px;overflow:hidden;margin-top:4px;">
+              <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#F5C800,#e67700);transition:width .5s ease;"></div>
+            </div>`
+            + (extraFn ? `<div style="font-size:12px;color:var(--text-mid,#667085);margin-top:4px;">${extraFn(s)}</div>` : '')
+            + `<div style="font-size:11px;color:#999;margin-top:2px;">잠시만요 — 완료되면 여기 바로 표시됩니다 (나가지 않으셔도 돼요)</div>`;
+    };
+    render();
+    const iv = setInterval(render, 1000);
     return () => clearInterval(iv);
 }
 
@@ -6051,7 +6061,7 @@ function aoProgressTicker(el, textFn) {
         const daysEl = document.getElementById('invoice-auto-smart-days');
         const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 180);
         btn.disabled = true;
-        const stopTick = aoProgressTicker(msg, s => `⏳ <b>1/2 조회 중</b> — 네이버 배송준비 (최근 ${days}일 · 하루 단위 ${days}구간 순회 · <b>${s}초</b> 경과, 보통 1~2분)`);
+        const stopTick = aoProgressBarTicker(msg, days * 1.3 + 8, `네이버 배송준비 조회 중... (최근 ${days}일)`);
         try {
             const r = await api('/api/agent-office/naver/invoice-orders?days=' + days);
             stopTick();
@@ -6095,7 +6105,7 @@ function aoProgressTicker(el, textFn) {
         const daysEl = document.getElementById('invoice-auto-coupang-days');
         const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 31, 1), 31);
         btn.disabled = true;
-        const stopTick = aoProgressTicker(msg, s => `⏳ <b>1/2 조회 중</b> — 쿠팡 상품준비중 (최근 ${days}일 · <b>${s}초</b> 경과)`);
+        const stopTick = aoProgressBarTicker(msg, 10, `쿠팡 상품준비중 조회 중... (최근 ${days}일)`);
         try {
             const r = await api('/api/agent-office/coupang/invoice-orders?days=' + days);
             stopTick();
@@ -6137,7 +6147,7 @@ function aoProgressTicker(el, textFn) {
         const daysEl = document.getElementById('invoice-auto-jasamol-days');
         const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 90);
         btn.disabled = true;
-        const stopTick = aoProgressTicker(msg, s => `⏳ <b>1/2 조회 중</b> — 자사몰 배송준비중 (최근 ${days}일 · <b>${s}초</b> 경과)`);
+        const stopTick = aoProgressBarTicker(msg, 8, `자사몰 배송준비중 조회 중... (최근 ${days}일)`);
         try {
             const r = await api('/api/agent-office/cafe24/invoice-orders?days=' + days);
             stopTick();
@@ -6277,9 +6287,8 @@ function parseInvoiceRows(data) {
         btn.disabled = true;
         // 채널별 진행 표시 (대표 7/26): 세 채널 동시 조회 — 각 채널이 끝나는 즉시 ✅/⚠️로 갱신 (표시만, 조회 로직 무수정)
         const chState = { nv: '⏳ 조회 중', cp: '⏳ 조회 중', cf: '⏳ 조회 중' };
-        const stopTick = aoProgressTicker(msg, s =>
-            `⏳ <b>1/2 3채널 조회 중</b> (<b>${s}초</b> 경과 · 네이버는 보통 1~2분)<br>`
-            + `🛰️ 네이버: ${chState.nv} · 🛒 쿠팡: ${chState.cp} · 🏠 자사몰: ${chState.cf}`);
+        const stopTick = aoProgressBarTicker(msg, days * 1.3 + 10, `3채널 배송준비 조회 중... (최근 ${days}일)`,
+            () => `🛰️ 네이버: ${chState.nv} · 🛒 쿠팡: ${chState.cp} · 🏠 자사몰: ${chState.cf}`);
         const track = (p, key) => p.then(
             v => { chState[key] = (v && v.ok) ? `✅ ${v.count || 0}건` : '⚠️ 실패'; return v; },
             e => { chState[key] = '⚠️ 실패'; throw e; });
