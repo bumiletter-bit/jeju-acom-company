@@ -5525,6 +5525,7 @@ async function collectInquiry() {
     const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
     const startSearchDate = d(-2), endSearchDate = d(0);   // 최근 3일 창 (30분 주기라 충분한 겹침)
     let added = 0, updatedCnt = 0, total = 0;
+    const newUnanswered = [];                              // 대표 7/26: 알림은 '미답변 신규'만 (저장은 전체 유지)
     for (let page = 1; page <= 5; page++) {
         if (page > 1) await new Promise(r => setTimeout(r, 350));
         const r = await naverCallWithRetry({
@@ -5549,15 +5550,26 @@ async function collectInquiry() {
                 `INSERT INTO naver_inquiries (inquiry_id, raw, answered) VALUES ($1, $2, $3)
                  ON CONFLICT (inquiry_id) DO UPDATE SET raw = EXCLUDED.raw, answered = EXCLUDED.answered
                  RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
-            if (res.rows[0] && res.rows[0].inserted) added++; else updatedCnt++;
+            if (res.rows[0] && res.rows[0].inserted) {
+                added++;
+                if (!q.answered) newUnanswered.push(item.category || '기타');
+            } else updatedCnt++;
         }
         const totalPages = Number(body?.totalPages) || 1;
         if (page >= totalPages) break;
     }
     // 90일 경과분 물리 정리 (A안 승인 — 원본은 네이버에 있음)
     await pool.query(`DELETE FROM naver_inquiries WHERE collected_at < NOW() - INTERVAL '90 days'`);
-    if (added > 0) notifyTelegram(`💬 새 고객문의 ${added}건 수집 — 내용은 DB에만 저장(개인정보 보호, 건수만 알림)`);
-    return `문의 신규 ${added}·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
+    // 대표 7/26 승인(1+2+3): 미답변 신규만 알림 + 유형 분해 표기 + 클레임 유형 꼬리표. 이미 답변된 옛 문의는 저장만.
+    if (newUnanswered.length > 0) {
+        const byCat = {};
+        for (const c of newUnanswered) byCat[c] = (byCat[c] || 0) + 1;
+        const catStr = Object.entries(byCat).map(([c, n]) => `${c} ${n}`).join('·');
+        const claimTail = Object.keys(byCat).some(c => /반품|교환|환불/.test(c))
+            ? '\n※ 반품·교환·환불 유형은 클레임 관련 "문의 글"입니다 (취소·반품 타이머 알림과 별개)' : '';
+        notifyTelegram(`💬 고객문의 미답변 신규 ${newUnanswered.length}건 (${catStr}) — 답변은 판매자센터에서${claimTail}`);
+    }
+    return `문의 신규 ${added}(미답변 ${newUnanswered.length})·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
 }
 
 let _naverTickBusy = false;
