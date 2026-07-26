@@ -4325,3 +4325,50 @@ textarea.form-input {
     background: #FAFAFF;
 }
 .btn-outline:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ========================================
+   디자인 2차 — 공통 시스템 (v5.9.74)
+   B-1 상태 배지 · B-3 빈 화면 · B-4 로딩 스켈레톤
+   ======================================== */
+/* B-1a. 기안서류 status-badge → 파스텔+점 배지로 통일 */
+.status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 700;
+}
+.status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.status-pending { background: #FFFAEB; color: #B54708; border: none; }
+.status-pending::before { background: #F59E0B; }
+.status-approved { background: #ECFDF3; color: #067647; border: none; }
+.status-approved::before { background: #12B76A; }
+.status-rejected { background: #FEF3F2; color: #B42318; border: none; }
+.status-rejected::before { background: #F04438; }
+
+/* B-1b. 공통 pill 배지 (사용중/작동중/꺼짐/준비중 등 — 인라인 스타일 대체) */
+.pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; font-weight: 700;
+    border-radius: 999px; padding: 2px 10px; white-space: nowrap;
+}
+.pill-ok { background: #ECFDF3; color: #067647; }
+.pill-off { background: #F2F4F7; color: #667085; font-weight: 600; }
+.pill-wait { background: #FFFAEB; color: #B54708; }
+
+/* B-3. 빈 화면 — 아이콘 + 안내 */
+.empty-row td {
+    text-align: center; color: #98A0AE !important;
+    padding: 34px 16px !important; font-size: 13px;
+}
+.empty-row td::before { content: '🗂'; display: block; font-size: 24px; margin-bottom: 6px; opacity: 0.75; }
+.noti-empty { color: #98A0AE; padding: 26px 12px; font-size: 13px; }
+
+/* B-4. 로딩 스켈레톤 유틸 */
+.skel-line {
+    height: 13px; border-radius: 6px;
+    background: linear-gradient(90deg, #EEF0F4 25%, #F7F8FA 45%, #EEF0F4 65%);
+    background-size: 300% 100%;
+    animation: skel-sh 1.4s infinite;
+    margin-bottom: 8px;
+}
+@keyframes skel-sh { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .skel-line { animation: none; } }

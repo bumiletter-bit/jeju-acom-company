@@ -699,7 +699,12 @@ async function renderScheduleYear() {
     if (!wrap) return;
     document.getElementById('schedule-calendar-title').textContent = `${scheduleYear}년`;
     renderScheduleTypeFilter();
-    if (!wrap.innerHTML) wrap.innerHTML = '<div class="sch-year-loading">연간 일정을 불러오는 중...</div>';
+    if (!wrap.innerHTML) {
+        wrap.innerHTML = '<div style="grid-column:1/-1;">' +
+            '<div class="skel-line" style="width:38%;"></div>' +
+            '<div class="skel-line"></div><div class="skel-line"></div>' +
+            '<div class="skel-line" style="width:72%;"></div></div>';
+    }
 
     const monthStrs = Array.from({ length: 12 }, (_, i) => `${scheduleYear}-${String(i + 1).padStart(2, '0')}`);
     const lists = await Promise.all(monthStrs.map(m => api(`/api/schedules?month=${m}`).catch(() => [])));
@@ -11897,8 +11902,8 @@ async function renderInquiryPage() {
             <td>${escapeHtml(s.action)}</td>
             <td style="white-space:nowrap;"><input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)">
                 ${s.enabled
-                    ? '<span style="font-size:12px; color:#15803d; background:#dcfce7; border-radius:99px; padding:2px 10px; font-weight:600;">🟢 사용중</span>'
-                    : '<span style="font-size:12px; color:#6b7280; background:#f3f4f6; border-radius:99px; padding:2px 10px;">⏸ 꺼짐</span>'}</td>
+                    ? '<span class="pill pill-ok">🟢 사용중</span>'
+                    : '<span class="pill pill-off">⏸ 꺼짐</span>'}</td>
             <td><button class="btn-sm btn-outline" onclick="openScenarioEdit(${s.id})">수정</button></td>
         </tr>`).join('');
     document.getElementById('inquiry-list').innerHTML = `
@@ -12010,7 +12015,7 @@ async function renderBotProducts() {
     const isAdmin = currentUser?.role === 'admin';
     const rows = botProducts.map(p => `
         <tr>
-            <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span style="font-size:11px; color:#b45309; background:#fef3c7; border-radius:99px; padding:2px 8px; white-space:nowrap;">가격 미세팅 · 봇 미노출</span>' : ''}</td>
+            <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span class="pill pill-wait" style="font-size:11px;">가격 미세팅 · 봇 미노출</span>' : ''}</td>
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
                 `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" onclick="setBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
@@ -12090,8 +12095,8 @@ async function renderNaverTimers() {
             <td>${escapeHtml(label)}</td>
             <td style="white-space:nowrap;"><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleNaverTimer('${t.key}', this.checked)">
                 ${t.enabled
-                    ? '<span style="font-size:12px; color:#15803d; background:#dcfce7; border-radius:99px; padding:2px 10px; font-weight:600;">🟢 작동중</span>'
-                    : '<span style="font-size:12px; color:#6b7280; background:#f3f4f6; border-radius:99px; padding:2px 10px;">⏸ 꺼짐</span>'}</td>
+                    ? '<span class="pill pill-ok">🟢 작동중</span>'
+                    : '<span class="pill pill-off">⏸ 꺼짐</span>'}</td>
             <td style="white-space:nowrap;">${cycle} <button class="btn-sm btn-outline" onclick="saveNaverTimer('${t.key}')">저장</button></td>
             <td style="white-space:nowrap;">${last}</td>
             <td>${st}${err}</td>
