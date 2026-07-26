@@ -10815,13 +10815,29 @@ function aoRunPreviewLine(r) {
     // v5.0 UI: 완료·미확인 건은 눈에 띄는 "완료 카드" — 카드에서 바로 [✔확인] 가능 (받은편지함 사양)
     // 대표 7/22: 오류(error) 실행도 ✔확인으로 로그에서 치울 수 있게 (전엔 완료만 확인 가능 → 오류 로그가 영영 안 지워짐)
     const isDoneCard = r.status === 'done' && !r.is_deleted;
-    const canArchive = (r.status === 'done' || r.status === 'error') && !r.is_deleted && currentUser?.role === 'admin'; // ✔ 확인(보관)은 대표 전용
+    const canArchive = (r.status === 'done' || r.status === 'error') && !r.is_deleted; // ✔ 확인 — 직원 가능 (누가 확인했는지 기록, 대표 7/26)
     const confirmBtn = canArchive
         ? `<button class="ao-fb-btn ao-card-confirm" onclick="event.stopPropagation(); aoArchiveRun(${r.id})">✔ 확인</button>` : '';
     return `<div class="ao-log-item ao-log-click ao-log-preview${archived}${isDoneCard ? ' ao-log-donecard' : ''}" data-run-id="${r.id}">
         ${confirmBtn}<span class="ao-log-time">${time}</span> ${icon} <strong>${aoEsc(r.agent_name || '')}</strong> ${aoEsc(text)}
         ${r.is_deleted ? '<span class="ao-arch-badge">확인함</span> ' : ''}<span class="ao-log-open">📄 보기</span></div>`;
 }
+
+// 리마인더 닫기 (대표 7/26) — 기기별·오늘 하루. 일정 삭제 아님(표시만)
+let aoRemindersCache = [], aoRemTodayK = '';
+window.aoDismissReminder = function(idx, btn) {
+    const r = aoRemindersCache[idx];
+    if (!r) return;
+    let dis = {};
+    try { dis = JSON.parse(localStorage.getItem('ao_rem_dismissed') || '{}'); } catch (_) {}
+    if (dis._d !== aoRemTodayK) dis = { _d: aoRemTodayK };
+    dis[r.when + '|' + r.line] = 1;
+    localStorage.setItem('ao_rem_dismissed', JSON.stringify(dis));
+    const item = btn.closest('.ao-reminder-item');
+    if (item) item.remove();
+    const box = document.getElementById('ao-reminders');
+    if (box && !box.querySelector('.ao-reminder-item')) box.style.display = 'none';
+};
 
 function aoAppendLiveLogHtml(html) {
     const log = document.getElementById('ao-live-log');
@@ -10918,9 +10934,18 @@ async function aoRefreshLog() {
         const remBox = document.getElementById('ao-reminders');
         if (remBox) {
             const rems = (remData && remData.reminders) || [];
-            if (rems.length) {
-                remBox.innerHTML = rems.map(r =>
-                    `<div class="ao-reminder-item">📣 <strong>${aoEsc(r.when)} 예정</strong> ${aoEsc(r.line)}</div>`).join('');
+            // 대표 7/26: 리마인더 ✕ 닫기 — 이 기기에서 오늘 하루 숨김 (일정 자체는 일정 메뉴에서 관리).
+            //   '내일 예정'을 닫아도 당일이 되면 '오늘 예정'으로 다시 표시(키가 달라짐 — 당일 재알림 보장)
+            aoRemTodayK = (remData && remData.today) || '';
+            let remDis = {};
+            try { remDis = JSON.parse(localStorage.getItem('ao_rem_dismissed') || '{}'); } catch (_) {}
+            if (remDis._d !== aoRemTodayK) remDis = { _d: aoRemTodayK }; // 날짜 바뀌면 초기화
+            aoRemindersCache = rems;
+            const visible = rems.map((r, i) => ({ r, i })).filter(x => !remDis[x.r.when + '|' + x.r.line]);
+            if (visible.length) {
+                remBox.innerHTML = visible.map(x =>
+                    `<div class="ao-reminder-item">📣 <strong>${aoEsc(x.r.when)} 예정</strong> ${aoEsc(x.r.line)}
+                     <button class="ao-fb-btn" style="float:right;" title="이 기기에서 오늘 하루 숨김 (일정은 일정 메뉴에서 관리)" onclick="aoDismissReminder(${x.i}, this)">✕ 닫기</button></div>`).join('');
                 remBox.style.display = '';
             } else remBox.style.display = 'none';
         }
@@ -11199,7 +11224,7 @@ window.aoOpenFeedbackModal = async function() {
         const short = isLong ? full.slice(0, 90) + ' …' : full;
         return `<div class="ao-fb-hist-item" style="display:flex;gap:8px;align-items:flex-start;">
             <span style="flex:1;min-width:0;">
-                ❌ <span class="ao-log-time">${aoKst(f.created_at)}</span> <strong>${aoEsc(f.agent_name)}</strong>
+                ❌ <span class="ao-log-time">${aoKst(f.created_at)}</span> <strong>${aoEsc(f.agent_name)}</strong>${f.created_by ? ` <span class="text-muted" style="font-size:11px;">표시: ${aoEsc(f.created_by)}</span>` : ''}
                 <div id="ao-failtxt-${f.id}" style="white-space:pre-wrap;word-break:break-word;margin-top:2px;${isLong ? 'cursor:pointer;' : ''}" data-open="0" ${isLong ? `onclick="aoToggleFailText(${f.id}, this)"` : ''}>${aoEsc(short)}${isLong ? ' <span style="color:#3b82f6;font-size:12px;">[전체보기]</span>' : ''}</div>
             </span>
             <button class="ao-fb-btn" style="flex-shrink:0;" title="이 실패 항목 삭제" onclick="aoDeleteFail(${f.id})">🗑</button>
@@ -11425,10 +11450,10 @@ async function aoLoadReports() {
             const hasReport = r.result && r.result.report;
             const archived = !!r.is_deleted;
             const archBtn = archived
-                ? '<button class="ao-fb-btn" onclick="aoRestoreRun(' + r.id + ')">↩️ 다시 보기</button>'
+                ? (currentUser?.role === 'admin' ? '<button class="ao-fb-btn" onclick="aoRestoreRun(' + r.id + ')">↩️ 다시 보기</button>' : '-')
                 : '<button class="ao-fb-btn" onclick="aoArchiveRun(' + r.id + ')">✔ 확인</button>';
             return '<tr class="' + (archived ? 'ao-run-archived' : '') + '">' +
-                '<td>' + dt + (archived ? ' <span class="ao-arch-badge">확인함</span>' : '') + '</td>' +
+                '<td>' + dt + (archived ? ' <span class="ao-arch-badge">확인함' + (r.archived_by ? '·' + aoEsc(r.archived_by) : '') + '</span>' : '') + '</td>' +
                 '<td><span class="ao-ai-badge">🤖AI</span> ' + r.agent_name + '</td>' +
                 '<td>' + r.agent_team + '</td>' +
                 '<td>' + stBadge + '</td>' +

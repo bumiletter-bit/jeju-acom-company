@@ -712,6 +712,8 @@ async function initDB() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_id, started_at DESC)`);
     // v5.0 1단계: 역량 테스트 실행분 격리 (보고서함·피드백·통계에서 제외 — 자기오염 루프 차단)
     await pool.query(`ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT FALSE`);
+    // 대표 7/26: 보고서 [확인] 직원 개방 — 누가 확인했는지 기록·표시
+    await pool.query(`ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS archived_by TEXT`);
     // agent_feedback: 대표가 결과물에 준 피드백 (👍/✏️/👎/💬) — 성장 시스템 1차 구조
     await pool.query(`
         CREATE TABLE IF NOT EXISTS agent_feedback (
@@ -726,6 +728,8 @@ async function initDB() {
             created_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 대표 7/26: [실패 표시] 직원 개방 — 누가 표시했는지 기록 (요원 개선 재료 수집)
+    await pool.query(`ALTER TABLE agent_feedback ADD COLUMN IF NOT EXISTS created_by TEXT`);
     // agent_lessons: 요원별 학습 노트 (교훈) — AI 연결 차수에서 실동작
     await pool.query(`
         CREATE TABLE IF NOT EXISTS agent_lessons (
@@ -6104,7 +6108,7 @@ app.get('/api/agent-office/runs', authMiddleware, /* 직원 가능 (대표 7/26 
         if (req.query.to) { params.push(req.query.to); cond.push(`r.started_at < ($${params.length}::date + 1)`); }
         const limit = Math.min(parseInt(req.query.limit) || 50, 300);
         const r = await pool.query(
-            `SELECT r.id, r.agent_id, r.status, r.steps, r.result, r.started_at, r.finished_at, r.is_deleted,
+            `SELECT r.id, r.agent_id, r.status, r.steps, r.result, r.started_at, r.finished_at, r.is_deleted, r.archived_by,
                     a.name AS agent_name, a.team AS agent_team, a.role AS agent_role
              FROM agent_runs r JOIN agents a ON r.agent_id = a.id
              WHERE ${cond.join(' AND ')}
@@ -6129,9 +6133,13 @@ async function orderAnswerText(order) {
     return r.question || r.notice || r.summary || r.error
         || (Array.isArray(r.subtasks) ? '멀티 분산: ' + r.subtasks.join(' / ') : '') || '(응답 없음)';
 }
-app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/feedback', authMiddleware, async (req, res) => {
     try {
         const { agent_id = null, run_id = null, order_id = null, feedback_type, comment = '', corrected_output = '' } = req.body || {};
+        // 대표 7/26: 직원은 [실패 표시](fail)만 가능 — 👍/✏️/👎/💬 평가·교훈은 성장 시스템(대표 전용) 유지
+        if (req.user.role !== 'admin' && String(feedback_type) !== 'fail') {
+            return res.status(403).json({ error: '실패 표시 외 피드백은 관리자 전용입니다' });
+        }
         // 지시 #62-2: 'fail' = 실패 수집함 원탭 표시 — 코멘트 없이 허용, 개별 교훈 추출 없이 모아서 일괄 보강
         const TYPES = ['good', 'edited', 'bad', 'comment', 'fail'];
         if (!TYPES.includes(feedback_type)) throw { status: 400, message: 'feedback_type(good/edited/bad/comment/fail)은 필수입니다' };
@@ -6171,9 +6179,10 @@ app.post('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, re
         const storedComment = feedback_type === 'fail' ? (question || comment) : comment;
         if (feedback_type === 'fail') original = answerText || original;
         const row = (await pool.query(
-            `INSERT INTO agent_feedback (agent_id, run_id, feedback_type, original_output, corrected_output, comment)
-             VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-            [resolvedAgentId, run_id, feedback_type, original, corrected_output, storedComment])).rows[0];
+            `INSERT INTO agent_feedback (agent_id, run_id, feedback_type, original_output, corrected_output, comment, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+            [resolvedAgentId, run_id, feedback_type, original, corrected_output, storedComment,
+             `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`])).rows[0];
         await writeAudit({
             action: 'create', targetType: 'agent_feedback', targetId: row.id,
             changes: { after: { agent_id: resolvedAgentId, run_id, order_id, feedback_type, comment: storedComment } },
@@ -6259,7 +6268,7 @@ app.get('/api/agent-office/lessons', authMiddleware, adminOnly, async (req, res)
 app.get('/api/agent-office/feedback', authMiddleware, adminOnly, async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT f.id, f.feedback_type, f.comment, f.original_output, f.corrected_output, f.created_at, f.run_id,
+            `SELECT f.id, f.feedback_type, f.comment, f.original_output, f.corrected_output, f.created_at, f.run_id, f.created_by,
                     a.name AS agent_name, a.team AS agent_team,
                     r.result->>'summary' AS run_summary
              FROM agent_feedback f
@@ -6282,10 +6291,12 @@ app.post('/api/agent-office/feedback/:id/delete', authMiddleware, adminOnly, asy
 });
 
 // 9차: 보고서 보관/복원 (soft-delete — 진짜 삭제 없음, 피드백·학습 노트 무영향)
-app.post('/api/agent-office/runs/:id/archive', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/runs/:id/archive', authMiddleware, async (req, res) => { // 직원 가능 + 누가 확인했는지 기록 (대표 7/26)
     try {
+        const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
         const r = await pool.query(
-            `UPDATE agent_runs SET is_deleted = true WHERE id = $1 AND is_deleted = false RETURNING id`, [req.params.id]);
+            `UPDATE agent_runs SET is_deleted = true, archived_by = $2 WHERE id = $1 AND is_deleted = false RETURNING id`,
+            [req.params.id, who]);
         if (r.rows.length === 0) throw { status: 404, message: '보관할 보고서를 찾을 수 없습니다' };
         await writeAudit({ action: 'archive', targetType: 'agent_run', targetId: r.rows[0].id, source: 'agent_office', actor: adminActor(req) });
         res.json({ message: '확인 처리했습니다 — "확인한 보고 포함"으로 다시 볼 수 있어요' });
