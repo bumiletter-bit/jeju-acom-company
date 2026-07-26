@@ -1472,6 +1472,7 @@ window.showSettlementDayModal = function(dateStr) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'settlement-day-modal';
+    overlay.dataset.date = dateStr;
     overlay.innerHTML = `
         <div class="modal" style="max-width:480px;">
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
@@ -1494,10 +1495,12 @@ window.toggleSettlementPaid = async function(id) {
     try {
         await api(`/api/settlements/${id}/toggle-paid`, 'PUT');
         const modal = document.getElementById('settlement-day-modal');
-        if (modal) modal.remove();
+        const dateStr = modal ? modal.dataset.date : null;
         await renderSettlementCalendar();
         await renderSettlementList();
         await renderWeeklySettlement();
+        // 창 유지(대표 지시): 갱신된 데이터로 같은 날짜 모달을 다시 그림 — 여러 건 연속 체크 후 닫기 가능
+        if (modal) { modal.remove(); if (dateStr) showSettlementDayModal(dateStr); }
     } catch (err) {
         alert('결제완료 처리 실패: ' + err.message);
     }
@@ -1507,9 +1510,10 @@ window.toggleCjDailyPaid = async function(date, amount) {
     try {
         await api('/api/cj-daily-payments/toggle-paid', 'POST', { date, amount });
         const modal = document.getElementById('settlement-day-modal');
-        if (modal) modal.remove();
         await renderSettlementCalendar();
         await renderWeeklySettlement();
+        // 창 유지(대표 지시): 갱신된 데이터로 같은 날짜 모달을 다시 그림
+        if (modal) { modal.remove(); showSettlementDayModal(date); }
     } catch (err) {
         alert('CJ 결제완료 처리 실패: ' + err.message);
     }
@@ -2169,6 +2173,7 @@ window.viewSettlementItems = function(id) {
         }).join('');
 
         const total = displayItems.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
+        const totalQty = displayItems.reduce((sum, i) => sum + (Number(i.qty) || 1), 0);
 
         const editBtn = isEditMode
             ? `<div style="display:flex;gap:8px;justify-content:center;margin-top:16px;">
@@ -2186,7 +2191,7 @@ window.viewSettlementItems = function(id) {
             <table class="data-table">
                 <thead><tr><th>품목명</th><th style="text-align:right">단가</th><th style="text-align:center">수량</th><th style="text-align:right">소계</th></tr></thead>
                 <tbody>${rows}</tbody>
-                <tfoot><tr><td colspan="3"><strong>합계</strong></td><td style="text-align:right" id="settlement-total"><strong>${total.toLocaleString()} 원</strong></td></tr></tfoot>
+                <tfoot><tr><td colspan="2"><strong>합계</strong></td><td style="text-align:center" id="settlement-total-qty"><strong>${totalQty.toLocaleString()}</strong></td><td style="text-align:right" id="settlement-total"><strong>${total.toLocaleString()} 원</strong></td></tr></tfoot>
             </table>
             ${editBtn}
         `;
@@ -2242,6 +2247,9 @@ window.viewSettlementItems = function(id) {
                 overlay.querySelector(`.settlement-subtotal[data-idx="${idx}"]`).textContent = subtotal.toLocaleString() + ' 원';
                 const total = editItems.reduce((sum, i) => sum + (i.price || 0) * (i.qty || 1), 0);
                 overlay.querySelector('#settlement-total').innerHTML = `<strong>${total.toLocaleString()} 원</strong>`;
+                const liveQty = editItems.reduce((sum, i) => sum + (Number(i.qty) || 1), 0);
+                const qtyEl = overlay.querySelector('#settlement-total-qty');
+                if (qtyEl) qtyEl.innerHTML = `<strong>${liveQty.toLocaleString()}</strong>`;
             });
         });
     }
