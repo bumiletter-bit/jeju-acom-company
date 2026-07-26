@@ -2422,6 +2422,17 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
     if (fromEl && !fromEl.value) fromEl.value = ymd(new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), 1)));
     if (toEl && !toEl.value) toEl.value = ymd(kst);
     const won = n => (Number(n) || 0).toLocaleString('ko-KR') + '원';
+    // 대표 7/26: 정산 응답 필드명 한글 표기 (모르는 필드는 원문 유지 — 응답 구조가 동적이라 폴백 필요)
+    const SETTLE_KO = {
+        settleBasisStartDate: '정산 기준 시작일', settleBasisEndDate: '정산 기준 종료일',
+        settleExpectDate: '정산 예정일', settleCompleteDate: '정산 완료일',
+        settleAmount: '정산 금액', paySettleAmount: '결제 정산 금액',
+        commissionSettleAmount: '수수료 (차감)', benefitSettleAmount: '혜택·할인 부담 (차감)',
+        deliverySettleAmount: '배송비 정산 금액', sellerBurdenDiscountAmount: '판매자 부담 할인',
+        commissionPaymentMethod: '수수료 결제 방식', settleType: '정산 유형',
+        totalPayAmount: '총 결제 금액', totalSettleAmount: '총 정산 금액',
+    };
+    const colKo = c => SETTLE_KO[c] || c;
     btn.addEventListener('click', async () => {
         const box = document.getElementById('naver-settle-result');
         const from = fromEl.value, to = toEl.value;
@@ -2440,7 +2451,7 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
             const isAmt = c => /amount|금액|amt/i.test(c);
             let html = `<div style="margin-bottom:6px;font-weight:600;">📅 ${aoEsc(from)} ~ ${aoEsc(to)} · ${r.count}건</div>`;
             html += '<div style="overflow-x:auto;"><table class="data-table" style="font-size:12px;min-width:600px;"><thead><tr>'
-                + cols.map(c => `<th>${aoEsc(c)}</th>`).join('') + '</tr></thead><tbody>';
+                + cols.map(c => `<th>${aoEsc(colKo(c))}</th>`).join('') + '</tr></thead><tbody>';
             html += (r.elements || []).slice(0, 100).map(row =>
                 '<tr>' + cols.map(c => `<td>${isAmt(c) ? won(row[c]) : aoEsc(String(row[c] == null ? '' : row[c]))}</td>`).join('') + '</tr>'
             ).join('');
@@ -11561,7 +11572,10 @@ async function renderNaverTimers() {
         const err = (t.last_status === 'fail' && t.last_error) ? `<div class="text-muted" style="font-size:11px; max-width:260px;">${escapeHtml(String(t.last_error).slice(0, 120))}</div>` : '';
         return `<tr>
             <td>${escapeHtml(label)}</td>
-            <td><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleNaverTimer('${t.key}', this.checked)"></td>
+            <td style="white-space:nowrap;"><input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleNaverTimer('${t.key}', this.checked)">
+                ${t.enabled
+                    ? '<span style="font-size:12px; color:#15803d; background:#dcfce7; border-radius:99px; padding:2px 10px; font-weight:600;">🟢 작동중</span>'
+                    : '<span style="font-size:12px; color:#6b7280; background:#f3f4f6; border-radius:99px; padding:2px 10px;">⏸ 꺼짐</span>'}</td>
             <td style="white-space:nowrap;">${cycle} <button class="btn-sm btn-outline" onclick="saveNaverTimer('${t.key}')">저장</button></td>
             <td style="white-space:nowrap;">${last}</td>
             <td>${st}${err}</td>
