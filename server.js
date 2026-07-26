@@ -4695,10 +4695,11 @@ async function svcSoftDeleteScenario(id, actor) {
 //   톡톡봇이 1분 캐시로 읽어가므로 저장만 하면 자동 반영. 삭제 반영은 봇 정리 배포(deleted_at 필터) 후.
 // '준비중' = 봇 미노출 상태 (봇 판매현황·가격표는 판매중/품절/시즌종료만 표시) — 품목별금액 연동 신규 품목의 기본 상태
 const BOT_PRODUCT_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
-// 오늘 유효한 품목별 금액의 품목명 집합 — 이 이름과 매칭되면 '연동 품목'(삭제 불가, 상태로만 관리)
+// 품목별 금액과 매칭되는 품목명 집합 — 매칭되면 '연동 품목'(삭제 불가, 상태로만 관리)
+//   대표 7/26: '오늘 유효'만 보던 것을 '오늘+미래 유효'로 확대 — 다음 주 단가표에 올린 품목도 바로 보호(테스트 사례)
 async function todayLinkedBotProductNames() {
     const kstToday = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
-    const pr = await pool.query('SELECT items FROM pricing WHERE start_date <= $1 AND end_date >= $1', [kstToday]);
+    const pr = await pool.query('SELECT items FROM pricing WHERE end_date >= $1', [kstToday]);
     const linked = new Set();
     for (const row of pr.rows) {
         for (const it of (Array.isArray(row.items) ? row.items : [])) {
