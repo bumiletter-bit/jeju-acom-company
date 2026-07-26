@@ -11397,7 +11397,10 @@ async function renderInquiryPage() {
             <td>${escapeHtml(s.name)}</td>
             <td>${escapeHtml(s.channel)}</td>
             <td>${escapeHtml(s.action)}</td>
-            <td><input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)"></td>
+            <td style="white-space:nowrap;"><input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)">
+                ${s.enabled
+                    ? '<span style="font-size:12px; color:#15803d; background:#dcfce7; border-radius:99px; padding:2px 10px; font-weight:600;">🟢 사용중</span>'
+                    : '<span style="font-size:12px; color:#6b7280; background:#f3f4f6; border-radius:99px; padding:2px 10px;">⏸ 꺼짐</span>'}</td>
             <td><button class="btn-sm btn-outline" onclick="openScenarioEdit(${s.id})">수정</button></td>
         </tr>`).join('');
     document.getElementById('inquiry-list').innerHTML = `

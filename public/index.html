@@ -1816,18 +1816,7 @@
                     <button class="btn-sm btn-outline" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
                 </div>
                 <div id="inquiry-tab-scenario">
-                <div class="card">
-                    <div class="card-header-row">
-                        <h2>📋 시나리오 목록 <span id="inquiry-count" class="text-muted" style="font-size:13px; font-weight:400;"></span></h2>
-                        <div style="display:flex; gap:8px; align-items:center;">
-                            <label id="inquiry-auto-reply-wrap" style="display:none; font-size:13px; gap:4px; align-items:center;">
-                                전체 자동응답 <input type="checkbox" id="inquiry-auto-reply-toggle">
-                            </label>
-                            <button class="btn-primary" id="btn-inquiry-add">+ 새 시나리오</button>
-                        </div>
-                    </div>
-                    <div id="inquiry-list" style="overflow-x:auto;"></div>
-                </div>
+                <!-- 대표 7/26: 편집 카드를 목록 위로 — [새 시나리오]가 맨 위에서 열리도록 -->
                 <div class="card" id="inquiry-edit-card" style="display:none;">
                     <h2 id="inquiry-edit-title">시나리오 수정</h2>
                     <input type="hidden" id="inquiry-edit-id">
@@ -1851,6 +1840,18 @@
                             <button class="btn-sm btn-outline" id="btn-inquiry-delete" style="display:none; color:#c0392b;">삭제 (대표 전용)</button>
                         </div>
                     </div>
+                </div>
+                <div class="card">
+                    <div class="card-header-row">
+                        <h2>📋 시나리오 목록 <span id="inquiry-count" class="text-muted" style="font-size:13px; font-weight:400;"></span></h2>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <label id="inquiry-auto-reply-wrap" style="display:none; font-size:13px; gap:4px; align-items:center;">
+                                전체 자동응답 <input type="checkbox" id="inquiry-auto-reply-toggle">
+                            </label>
+                            <button class="btn-primary" id="btn-inquiry-add">+ 새 시나리오</button>
+                        </div>
+                    </div>
+                    <div id="inquiry-list" style="overflow-x:auto;"></div>
                 </div>
                 </div>
                 <div id="inquiry-tab-products" style="display:none;">
@@ -2091,6 +2092,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=269"></script>
+    <script src="app.js?v=270"></script>
 </body>
 </html>
