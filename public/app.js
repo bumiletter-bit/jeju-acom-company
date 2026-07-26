@@ -2422,17 +2422,24 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
     if (fromEl && !fromEl.value) fromEl.value = ymd(new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), 1)));
     if (toEl && !toEl.value) toEl.value = ymd(kst);
     const won = n => (Number(n) || 0).toLocaleString('ko-KR') + '원';
-    // 대표 7/26: 정산 응답 필드명 한글 표기 (모르는 필드는 원문 유지 — 응답 구조가 동적이라 폴백 필요)
+    // 대표 7/26: 정산 응답 필드명 한글 표기 — 공식 문서(find-daily-settle) title 전체 매핑. 모르는 필드는 원문 폴백.
     const SETTLE_KO = {
         settleBasisStartDate: '정산 기준 시작일', settleBasisEndDate: '정산 기준 종료일',
         settleExpectDate: '정산 예정일', settleCompleteDate: '정산 완료일',
         settleAmount: '정산 금액', paySettleAmount: '결제 정산 금액',
-        commissionSettleAmount: '수수료 (차감)', benefitSettleAmount: '혜택·할인 부담 (차감)',
-        deliverySettleAmount: '배송비 정산 금액', sellerBurdenDiscountAmount: '판매자 부담 할인',
-        commissionPaymentMethod: '수수료 결제 방식', settleType: '정산 유형',
-        totalPayAmount: '총 결제 금액', totalSettleAmount: '총 정산 금액',
+        commissionSettleAmount: '수수료 정산 금액', benefitSettleAmount: '혜택 정산 금액',
+        deductionRestoreSettleAmount: '공제 환급 정산 금액', payHoldbackAmount: '지급 보류 금액',
+        minusChargeAmount: '마이너스 충전금 상계', differenceSettleAmount: '차액 정산 금액',
+        returnCareSettleAmount: '반품안심케어 정산', normalSettleAmount: '일반 정산 금액',
+        quickSettleAmount: '빠른정산 금액', preferentialCommissionAmount: '우대 수수료 환급',
+        settlementLimitAmount: '한도 보류/해제 금액', settleMethodType: '정산 방법', bankType: '은행',
     };
     const colKo = c => SETTLE_KO[c] || c;
+    const SETTLE_VAL_KO = { ACCOUNT: '계좌 이체', CHARGE_AMT: '충전금' };
+    const BANK_KO = { NH: 'NH농협', LNH: '지역농·축협', KB: 'KB국민', SHINHAN: '신한', WOORI: '우리', KEB_HANA: '하나',
+        IBK: '기업', SC: 'SC제일', CITI: '씨티', POST: '우체국', KKOBANK: '카카오뱅크', TOSS: '토스뱅크', KBANK: '케이뱅크',
+        BUSAN: '부산', JEJU: '제주', SAEMAUL: '새마을금고', SHINHYUP: '신협', KDB: '산업', SUHYUP: '수협' };
+    const valKo = (c, v) => c === 'settleMethodType' ? (SETTLE_VAL_KO[v] || v) : c === 'bankType' ? (BANK_KO[v] || v) : v;
     btn.addEventListener('click', async () => {
         const box = document.getElementById('naver-settle-result');
         const from = fromEl.value, to = toEl.value;
@@ -2449,14 +2456,22 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
             const cols = r.columns || [];
             // 금액으로 보이는 컬럼은 원화 포맷
             const isAmt = c => /amount|금액|amt/i.test(c);
+            const shown = (r.elements || []).slice(0, 100);
+            // 대표 7/26: 값이 전부 0원/빈값인 칸은 자동 숨김 (칸 낭비 정리 — 값이 생기면 다시 나타남)
+            const isEmptyCol = c => shown.every(row => {
+                const v = row[c];
+                return v == null || v === '' || (isAmt(c) && Number(v) === 0);
+            });
+            const visCols = cols.filter(c => !isEmptyCol(c));
+            const hiddenCnt = cols.length - visCols.length;
             let html = `<div style="margin-bottom:6px;font-weight:600;">📅 ${aoEsc(from)} ~ ${aoEsc(to)} · ${r.count}건</div>`;
             html += '<div style="overflow-x:auto;"><table class="data-table" style="font-size:12px;min-width:600px;"><thead><tr>'
-                + cols.map(c => `<th>${aoEsc(colKo(c))}</th>`).join('') + '</tr></thead><tbody>';
-            html += (r.elements || []).slice(0, 100).map(row =>
-                '<tr>' + cols.map(c => `<td>${isAmt(c) ? won(row[c]) : aoEsc(String(row[c] == null ? '' : row[c]))}</td>`).join('') + '</tr>'
+                + visCols.map(c => `<th>${aoEsc(colKo(c))}</th>`).join('') + '</tr></thead><tbody>';
+            html += shown.map(row =>
+                '<tr>' + visCols.map(c => `<td>${isAmt(c) ? won(row[c]) : aoEsc(String(valKo(c, row[c] == null ? '' : row[c])))}</td>`).join('') + '</tr>'
             ).join('');
             html += '</tbody></table></div>';
-            html += `<div class="text-muted" style="margin-top:6px;font-size:12px;">네이버 실입금 기준 집계 · 거래처 결제가(세미)와 별개 · 최대 100행 표시</div>`;
+            html += `<div class="text-muted" style="margin-top:6px;font-size:12px;">네이버 실입금 기준 집계 · 거래처 결제가(세미)와 별개 · 최대 100행 표시${hiddenCnt ? ` · 전부 0원/빈값인 항목 ${hiddenCnt}개 숨김` : ''}</div>`;
             if (box) box.innerHTML = html;
         } catch (e) {
             if (box) box.innerHTML = '❌ 조회 실패: ' + aoEsc(e.message || String(e));
