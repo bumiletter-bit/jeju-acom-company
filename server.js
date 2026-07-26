@@ -5509,10 +5509,55 @@ async function collectClaim() {
     return `취소·반품·교환 ${claims.length}건 (변경 ${list.length}건 검사)`;
 }
 
+// 개인정보 마스킹 (A안 — 대표 승인 2026-07-26): 문의 제목·내용의 연락처/이메일 패턴 치환. 이름·ID는 아예 저장 안 함.
+function naverMaskContact(s) {
+    return String(s || '')
+        .replace(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g, '(연락처)')
+        .replace(/\d{2,4}[-\s.]\d{3,4}[-\s.]\d{4}/g, '(연락처)')
+        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '(이메일)');
+}
+
+// 고객문의 수집 (공식문서 확정 2026-07-26: GET /v1/pay-user/inquiries — startSearchDate/endSearchDate 필수 yyyy-MM-dd,
+//   page 1~, size 10~200, 최대 365일. 응답 content[].inquiryNo가 고유키)
+//   A안: 최소 필드만 저장(유형·제목·내용[마스킹]·상품정보·등록일·답변여부) — customerId/customerName은 저장하지 않음.
 async function collectInquiry() {
-    // pay-user/inquiries 엔드포인트는 확인됨(개발자포럼 #2166) — 쿼리 파라미터가 공식문서(SPA·로그인)로만 확인 가능해
-    // 추측 호출(probe) 금지 원칙에 따라 파라미터 확정 전까지 '지원 예정'. 확정되면 이 함수만 채우면 됨.
-    throw new Error('문의 수집은 API 파라미터 문서 확정 후 지원 예정입니다 — 이 타이머는 꺼 두세요');
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
+    const startSearchDate = d(-2), endSearchDate = d(0);   // 최근 3일 창 (30분 주기라 충분한 겹침)
+    let added = 0, updatedCnt = 0, total = 0;
+    for (let page = 1; page <= 5; page++) {
+        if (page > 1) await new Promise(r => setTimeout(r, 350));
+        const r = await naverCallWithRetry({
+            method: 'GET', path: '/external/v1/pay-user/inquiries',
+            query: { startSearchDate, endSearchDate, page, size: 200 },
+        });
+        const body = (r && r.data) ? r.data : r;
+        const list = Array.isArray(body?.content) ? body.content : [];
+        total = Number(body?.totalElements) || list.length;
+        for (const q of list) {
+            const id = String(q.inquiryNo || '');
+            if (!id) continue;
+            const item = {
+                category: q.category || '', title: naverMaskContact(q.title),
+                content: naverMaskContact(q.inquiryContent),
+                product_no: String(q.productNo || ''), product_name: q.productName || '',
+                product_option: q.productOrderOption || '',
+                registered_at: q.inquiryRegistrationDateTime || '',
+                answered: !!q.answered,
+            };
+            const res = await pool.query(
+                `INSERT INTO naver_inquiries (inquiry_id, raw, answered) VALUES ($1, $2, $3)
+                 ON CONFLICT (inquiry_id) DO UPDATE SET raw = EXCLUDED.raw, answered = EXCLUDED.answered
+                 RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
+            if (res.rows[0] && res.rows[0].inserted) added++; else updatedCnt++;
+        }
+        const totalPages = Number(body?.totalPages) || 1;
+        if (page >= totalPages) break;
+    }
+    // 90일 경과분 물리 정리 (A안 승인 — 원본은 네이버에 있음)
+    await pool.query(`DELETE FROM naver_inquiries WHERE collected_at < NOW() - INTERVAL '90 days'`);
+    if (added > 0) notifyTelegram(`💬 새 고객문의 ${added}건 수집 — 내용은 DB에만 저장(개인정보 보호, 건수만 알림)`);
+    return `문의 신규 ${added}·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
 }
 
 let _naverTickBusy = false;
