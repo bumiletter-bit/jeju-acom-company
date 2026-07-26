@@ -2694,6 +2694,20 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
     const toEl = document.getElementById('naver-settle-to');
     if (fromEl && !fromEl.value) fromEl.value = ymd(new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), 1)));
     if (toEl && !toEl.value) toEl.value = ymd(kst);
+    // 당일/일주일/한달 빠른 조회 (대표 지시) — 기간 채우고 바로 조회
+    document.querySelectorAll('#naver-settle-quick .btn-toggle').forEach(qb => {
+        qb.addEventListener('click', () => {
+            document.querySelectorAll('#naver-settle-quick .btn-toggle').forEach(b => b.classList.remove('active'));
+            qb.classList.add('active');
+            const now = new Date(Date.now() + 9 * 3600 * 1000);
+            const start = new Date(now);
+            if (qb.dataset.range === 'week') start.setUTCDate(start.getUTCDate() - 6);
+            if (qb.dataset.range === 'month') { start.setUTCMonth(start.getUTCMonth() - 1); start.setUTCDate(start.getUTCDate() + 1); }
+            if (fromEl) fromEl.value = ymd(start);
+            if (toEl) toEl.value = ymd(now);
+            btn.click();
+        });
+    });
     const won = n => (Number(n) || 0).toLocaleString('ko-KR') + '원';
     // 대표 7/26: 정산 응답 필드명 한글 표기 — 공식 문서(find-daily-settle) title 전체 매핑. 모르는 필드는 원문 폴백.
     const SETTLE_KO = {

@@ -4503,3 +4503,43 @@ input.ui-switch:focus-visible { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15); }
 
 /* 표 래퍼가 비어있을 땐 테두리 박스 숨김 (데이터 로드 전) */
 .table-scroll-wrapper:empty { display: none; }
+
+/* ========================================
+   모바일 정리 (v5.9.79 — 대표 스크린샷 피드백)
+   월간 상단 2줄 정리 · 주간 칸 맞춤 · 표 높이 60%
+   ======================================== */
+/* 주간: 긴 일정 제목이 카드 폭을 밀어내지 않게 (데스크톱 포함 안전망) */
+.sch-witems { flex: 1; min-width: 0; }
+
+@media (max-width: 768px) {
+    /* 환영 영역 — 잔여연차·당직일수 배지를 한 줄로 */
+    .welcome-section { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .welcome-section h1 { flex-basis: 100%; }
+
+    /* 일정 헤더 — 1줄: 제목+새로고침 / 2줄: 토글·오늘·이동 */
+    #page-schedule .card-header-row { flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    #page-schedule .calendar-title-group { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    #schedule-calendar-title { font-size: 16.5px; white-space: nowrap; }
+    .sch-head-controls { width: 100%; justify-content: space-between; flex-wrap: nowrap; gap: 6px; }
+    .sch-vtoggle button { padding: 8px 11px; font-size: 12px; }
+    .sch-today-btn { min-height: 40px; padding: 6px 11px; font-size: 12px; }
+    #page-schedule .month-nav .btn-nav { min-height: 40px; }
+
+    /* 유형 필터 알약 컴팩트 */
+    .sch-flt-btn { padding: 4px 9px; font-size: 11px; margin-right: 4px; margin-bottom: 3px; }
+
+    /* 주간 뷰 — 글씨 줄여서 칸에 맞추고, 긴 제목은 줄바꿈 */
+    .sch-wday { padding: 9px 11px; gap: 9px; }
+    .sch-wdate { width: 44px; }
+    .sch-wdate .n { font-size: 18px; }
+    .sch-wdate .w { font-size: 10.5px; }
+    .sch-wchip { font-size: 12px; padding: 3px 8px 3px 7px; white-space: normal; }
+    .sch-wchip .schedule-text { white-space: normal; overflow: visible; text-overflow: clip; }
+
+    /* 표 안쪽 스크롤 — 폰에서는 화면 60% (필터·요약이 더 보이게) */
+    .table-scroll-wrapper { max-height: 60vh; }
+}
+@media (max-width: 400px) {
+    .sch-vtoggle button { padding: 7px 8px; }
+    .sch-today-btn { padding: 6px 8px; }
+}
