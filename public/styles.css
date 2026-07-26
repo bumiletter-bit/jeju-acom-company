@@ -4170,3 +4170,131 @@ textarea.form-input {
 
 /* 10차-1: 지식 노트 모달 이번 주 표시 */
 .ao-week-line { font-size: 12px; color: #2b8a3e; background: #F3FAF3; border: 1px dashed #2F9E44; border-radius: 6px; padding: 5px 10px; margin-bottom: 8px; }
+
+/* ========================================
+   일정 — 오늘 브리핑 · 뷰 토글 · 월간 스킨 · 주간/연간 뷰 (v5.9.72)
+   (테마: 인디고/화이트 — theme.css 팔레트와 동일 색상)
+   ======================================== */
+/* 오늘 브리핑 스트립 */
+.sch-brief {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: linear-gradient(90deg, #EEF0FF, #F7F8FF);
+    border: 1px solid #DDE1FF; border-radius: 12px;
+    padding: 9px 13px; margin-bottom: 14px; font-size: 13px;
+}
+.sch-b-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #fff; border: 1px solid #E4E6F5; border-radius: 999px;
+    padding: 3px 11px; font-weight: 600; color: #101828;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+.sch-b-chip b { color: #4F46E5; font-weight: 800; }
+
+/* 뷰 전환 토글 + 오늘 버튼 */
+.sch-head-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sch-vtoggle { display: inline-flex; background: #F1F2F6; border-radius: 10px; padding: 3px; gap: 2px; }
+.sch-vtoggle button {
+    border: 0; background: transparent; font-family: inherit;
+    font-size: 13px; font-weight: 700; color: #667085;
+    padding: 6px 14px; border-radius: 8px; cursor: pointer;
+}
+.sch-vtoggle button.on { background: #fff; color: #4F46E5; box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08); }
+.sch-today-btn { padding: 6px 13px; font-size: 12.5px; }
+
+/* 월간 달력 스킨 — 헤더·보더·오늘 셀 (다른 화면의 calendar-table도 같은 톤으로 통일) */
+.calendar-table th {
+    border: 1px solid #ECEDF1;
+    background: linear-gradient(#FBFBFD, #F4F5F8);
+    color: #667085; font-size: 13px; letter-spacing: 0.02em;
+}
+.calendar-table td { border-color: #ECEDF1; }
+.calendar-table td.today { background: #FAFAFF; box-shadow: inset 0 0 0 1.5px #4F46E5; }
+.calendar-table td.today .day-number {
+    border-radius: 999px; padding: 2px 10px;
+    box-shadow: 0 4px 10px -4px rgba(79, 70, 229, 0.6);
+}
+.day-schedule-item { border-radius: 5px; }
+.day-schedule-item.type-vacation { background: #E6FBF7; color: #087F5B !important; border-left-color: #0CA678 !important; }
+.day-schedule-item.type-attendance { background: #FFF4E6; color: #B45309 !important; }
+.day-more {
+    align-self: flex-start; margin-top: 1px;
+    font-size: 9.5px; font-weight: 800; color: #4F46E5;
+    background: #EEF0FF; border-radius: 999px; padding: 1px 7px;
+}
+.duty-badge { background: #EEF0FF; border-color: #4F46E5; }
+.duty-label { color: #4338CA; }
+
+/* 주간 뷰 */
+.sch-week { display: flex; flex-direction: column; gap: 8px; }
+.sch-wday {
+    display: flex; gap: 12px; align-items: flex-start;
+    border: 1px solid #ECEDF1; border-radius: 12px;
+    padding: 10px 14px; background: #fff; cursor: pointer;
+    transition: box-shadow 0.12s, border-color 0.12s;
+}
+.sch-wday:hover { border-color: #DDE1FF; box-shadow: 0 4px 16px -6px rgba(16, 24, 40, 0.12); }
+.sch-wday.today { border: 1.5px solid #4F46E5; background: #FAFAFF; box-shadow: 0 4px 16px -6px rgba(79, 70, 229, 0.25); }
+.sch-wdate { width: 56px; flex-shrink: 0; text-align: center; }
+.sch-wdate .n { font-size: 19px; font-weight: 800; line-height: 1.1; color: #101828; }
+.sch-wdate .w { font-size: 11px; color: #98A0AE; font-weight: 700; white-space: nowrap; }
+.sch-wdate.su .n { color: #F04438; }
+.sch-wdate.sa .n { color: #3B82F6; }
+.sch-wday.today .sch-wdate .n, .sch-wday.today .sch-wdate .w { color: #4F46E5; }
+.sch-witems { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding-top: 3px; min-height: 24px; }
+.sch-wchip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12.5px; font-weight: 600; border-radius: 7px;
+    padding: 4px 9px 4px 8px; border-left: 3px solid #C7CBD4;
+    background: #F4F5F8; color: #374151; max-width: 100%;
+}
+.sch-wchip .schedule-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-wchip.type-event { background: linear-gradient(90deg, #f3e8ff, #faf5ff); color: #6b21a8; border-left-color: #9333ea; font-weight: 700; }
+.sch-wchip.type-product { background: #ecfdf5; color: #065f46; border-left-color: #10b981; }
+.sch-wchip.type-duty { background: #EEF0FF; color: #4338CA; border-left-color: #4F46E5; }
+.sch-wchip.type-vacation { background: #E6FBF7; color: #087F5B; border-left-color: #0CA678; }
+.sch-wchip.type-attendance { background: #FFF4E6; color: #B45309; border-left-color: #E8590C; }
+.sch-wchip.schedule-completed .schedule-text { text-decoration: line-through; color: #adb5bd; }
+.sch-wempty { color: #C9CED8; font-size: 12.5px; padding-top: 4px; }
+
+/* 연간 뷰 */
+.sch-year { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.sch-year-loading { grid-column: 1 / -1; text-align: center; color: #98A0AE; font-size: 13px; padding: 30px 0; }
+.sch-ymon {
+    border: 1px solid #ECEDF1; border-radius: 10px;
+    padding: 9px 10px 10px; background: #fff; cursor: pointer;
+    transition: box-shadow 0.12s, transform 0.12s, border-color 0.12s;
+}
+.sch-ymon:hover { box-shadow: 0 4px 16px -6px rgba(16, 24, 40, 0.14); transform: translateY(-1px); border-color: #DDE1FF; }
+.sch-ymon.cur { border: 1.5px solid #4F46E5; }
+.sch-ymon h5 { margin: 0 0 6px; font-size: 12.5px; color: #101828; }
+.sch-ymon.cur h5 { color: #4F46E5; }
+.sch-ymon h5 span { color: #98A0AE; font-weight: 600; font-size: 10.5px; margin-left: 5px; }
+.sch-ygrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.sch-yd {
+    height: 14px; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; color: #B6BCC8;
+}
+.sch-yd.td { color: #fff; background: #4F46E5; border-radius: 4px; font-weight: 800; }
+.sch-yd i { position: absolute; bottom: -1px; width: 4px; height: 4px; border-radius: 50%; }
+.sch-yd i.dt-event { background: #9333ea; }
+.sch-yd i.dt-product { background: #10b981; }
+.sch-yd i.dt-duty { background: #4F46E5; }
+.sch-yd i.dt-vacation { background: #0CA678; }
+.sch-yd i.dt-attendance { background: #E8590C; }
+.sch-yd i.dt-normal { background: #98A0AE; }
+.sch-yd.td i { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+    .sch-ymon:hover { transform: none; }
+}
+@media (max-width: 768px) {
+    .calendar-table th { font-size: 12px; }
+    .sch-brief { font-size: 12px; padding: 8px 10px; gap: 6px; }
+    .sch-b-chip { padding: 3px 9px; }
+    .sch-vtoggle button { padding: 6px 11px; font-size: 12px; }
+    .sch-wdate { width: 46px; }
+    .sch-wdate .n { font-size: 16px; }
+    .sch-wchip { font-size: 11.5px; padding: 3px 7px 3px 6px; }
+    .sch-year { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}

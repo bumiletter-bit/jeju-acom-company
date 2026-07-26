@@ -322,16 +322,40 @@ function switchPage(pageName) {
 // =============================================
 let scheduleYear = new Date().getFullYear();
 let scheduleMonth = new Date().getMonth();
+let scheduleView = 'month';                 // 'week' | 'month' | 'year'
+let scheduleWeekAnchor = new Date();        // 주간 뷰 기준 날짜
 
-document.getElementById('schedule-prev-month').addEventListener('click', () => {
-    scheduleMonth--;
-    if (scheduleMonth < 0) { scheduleMonth = 11; scheduleYear--; }
+// < > 이동 — 현재 뷰에 따라 주/월/년 단위
+function schedNav(dir) {
+    if (scheduleView === 'week') {
+        scheduleWeekAnchor = new Date(scheduleWeekAnchor.getTime() + dir * 7 * 86400000);
+    } else if (scheduleView === 'year') {
+        scheduleYear += dir;
+    } else {
+        scheduleMonth += dir;
+        if (scheduleMonth < 0) { scheduleMonth = 11; scheduleYear--; }
+        if (scheduleMonth > 11) { scheduleMonth = 0; scheduleYear++; }
+    }
     renderScheduleCalendar().catch(console.error);
+}
+document.getElementById('schedule-prev-month').addEventListener('click', () => schedNav(-1));
+document.getElementById('schedule-next-month').addEventListener('click', () => schedNav(1));
+
+// 주간|월간|연간 토글
+document.querySelectorAll('#schedule-view-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (scheduleView === btn.dataset.view) return;
+        scheduleView = btn.dataset.view;
+        if (scheduleView === 'week') scheduleWeekAnchor = new Date();
+        document.querySelectorAll('#schedule-view-toggle button').forEach(b => b.classList.toggle('on', b.dataset.view === scheduleView));
+        renderScheduleCalendar().catch(console.error);
+    });
 });
 
-document.getElementById('schedule-next-month').addEventListener('click', () => {
-    scheduleMonth++;
-    if (scheduleMonth > 11) { scheduleMonth = 0; scheduleYear++; }
+// [오늘] — 어떤 뷰에서든 오늘 위치로 복귀
+document.getElementById('schedule-today-btn')?.addEventListener('click', () => {
+    const t = new Date();
+    scheduleYear = t.getFullYear(); scheduleMonth = t.getMonth(); scheduleWeekAnchor = t;
     renderScheduleCalendar().catch(console.error);
 });
 
@@ -401,7 +425,21 @@ function renderScheduleTypeFilter() {
     });
 }
 
+// 뷰 디스패처 — 기존 호출부(저장·새로고침·필터 등)는 전부 이 함수를 부르므로 현재 뷰가 다시 그려짐
 async function renderScheduleCalendar() {
+    const mv = document.getElementById('schedule-month-view');
+    const wv = document.getElementById('schedule-week-view');
+    const yv = document.getElementById('schedule-year-view');
+    if (mv) mv.style.display = scheduleView === 'month' ? '' : 'none';
+    if (wv) wv.style.display = scheduleView === 'week' ? '' : 'none';
+    if (yv) yv.style.display = scheduleView === 'year' ? '' : 'none';
+    renderScheduleBrief().catch(() => {});
+    if (scheduleView === 'week' && wv) return renderScheduleWeek();
+    if (scheduleView === 'year' && yv) return renderScheduleYear();
+    return renderScheduleMonth();
+}
+
+async function renderScheduleMonth() {
     const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
     document.getElementById('schedule-calendar-title').textContent = `${scheduleYear}년 ${monthNames[scheduleMonth]}`;
 
@@ -499,8 +537,10 @@ async function renderScheduleCalendar() {
 
                 let scheduleHtml = '';
                 if (normalSchedules.length > 0) {
+                    const MAX_VISIBLE = 4;   // 넘치면 +N건 (셀 클릭 시 기존 모달에서 전체 확인)
+                    const visibleSchedules = normalSchedules.slice(0, MAX_VISIBLE);
                     scheduleHtml = '<div class="day-schedules">';
-                    normalSchedules.forEach(s => {
+                    visibleSchedules.forEach(s => {
                         const typeIcon =
                             s.type === 'event' ? '🎉 ' :
                             s.type === 'product' ? '📦 ' :
@@ -518,6 +558,9 @@ async function renderScheduleCalendar() {
                             scheduleHtml += `<div class="day-schedule-item${typeClass}" style="border-left:3px solid ${bcol};" title="${s.userName}: ${s.title}">${catIco || typeIcon}${s.title}</div>`;
                         }
                     });
+                    if (normalSchedules.length > MAX_VISIBLE) {
+                        scheduleHtml += `<div class="day-more" title="클릭해서 전체 보기">+${normalSchedules.length - MAX_VISIBLE}건 더보기</div>`;
+                    }
                     scheduleHtml += '</div>';
                 }
 
@@ -533,6 +576,169 @@ async function renderScheduleCalendar() {
 
     document.getElementById('schedule-calendar-body').innerHTML = html;
 }
+
+// ---------- 공통 헬퍼 (주간·연간·브리핑) ----------
+const SCHED_TYPE_ORDER = { event: 0, product: 1, duty: 2, vacation: 3, attendance: 4, normal: 5 };
+
+function schedFmtDate(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// 기간형 일정(endDate) → 날짜 배열 (월간 렌더러와 동일 로직·62일 가드)
+function schedExpandDates(s) {
+    const dates = [];
+    if (s.endDate && s.endDate > s.date) {
+        let d = new Date(s.date + 'T00:00:00Z');
+        const end = new Date(s.endDate + 'T00:00:00Z');
+        let guard = 0;
+        while (d <= end && guard++ < 62) {
+            dates.push(d.toISOString().slice(0, 10));
+            d = new Date(d.getTime() + 86400000);
+        }
+    } else dates.push(s.date);
+    return dates;
+}
+
+// 여러 달 일정을 중복 없이 합쳐서 조회
+async function schedFetchMonths(monthStrs) {
+    const lists = await Promise.all(monthStrs.map(m => api(`/api/schedules?month=${m}`).catch(() => [])));
+    const seen = new Set();
+    const all = [];
+    lists.flat().forEach(s => { if (!seen.has(s.id)) { seen.add(s.id); all.push(s); } });
+    return all;
+}
+
+// ---------- 오늘 브리핑 스트립 ----------
+let _schedBriefAt = 0;
+async function renderScheduleBrief() {
+    const box = document.getElementById('schedule-brief');
+    if (!box) return;
+    if (Date.now() - _schedBriefAt < 60000 && box.innerHTML) { box.style.display = 'flex'; return; }
+    const t = new Date();
+    const todayStr = schedFmtDate(t);
+    const ws = new Date(t); ws.setDate(t.getDate() - t.getDay());       // 이번 주 일요일
+    const we = new Date(ws); we.setDate(ws.getDate() + 6);              // 이번 주 토요일
+    const wsStr = schedFmtDate(ws), weStr = schedFmtDate(we);
+    const months = [...new Set([todayStr.slice(0, 7), wsStr.slice(0, 7), weStr.slice(0, 7)])];
+    const all = await schedFetchMonths(months);
+    const inRange = (s, from, to) => {
+        const ed = (s.endDate && s.endDate > s.date) ? s.endDate : s.date;
+        return s.date <= to && ed >= from;
+    };
+    const todayList = all.filter(s => inRange(s, todayStr, todayStr));
+    const todayCnt = todayList.filter(s => s.type !== 'duty').length;
+    const dutyNames = todayList.filter(s => s.type === 'duty').map(s => s.userName).filter(Boolean);
+    const weekEvents = all.filter(s => s.type === 'event' && inRange(s, wsStr, weStr)).length;
+    box.innerHTML =
+        `<span class="sch-b-chip">📌 오늘 일정 <b>${todayCnt}건</b></span>` +
+        `<span class="sch-b-chip">🎉 이번 주 행사 <b>${weekEvents}건</b></span>` +
+        (dutyNames.length ? `<span class="sch-b-chip">🌙 오늘 당직 <b>${dutyNames.join('·')}</b></span>` : '');
+    box.style.display = 'flex';
+    _schedBriefAt = Date.now();
+}
+
+// ---------- 주간 뷰 ----------
+async function renderScheduleWeek() {
+    const wrap = document.getElementById('schedule-week-view');
+    if (!wrap) return;
+    const ws = new Date(scheduleWeekAnchor); ws.setHours(0, 0, 0, 0);
+    ws.setDate(ws.getDate() - ws.getDay());                             // 일요일 시작
+    const days = Array.from({ length: 7 }, (_, i) => new Date(ws.getTime() + i * 86400000));
+    const we = days[6];
+    document.getElementById('schedule-calendar-title').textContent =
+        `${ws.getFullYear()}년 ${ws.getMonth() + 1}월 ${ws.getDate()}일 ~ ${we.getMonth() + 1}월 ${we.getDate()}일`;
+    renderScheduleTypeFilter();
+
+    const months = [...new Set(days.map(d => schedFmtDate(d).slice(0, 7)))];
+    const schedules = await schedFetchMonths(months);
+    const activeTypes = window._scheduleTypeFilter || new Set(['event', 'product', 'duty', 'normal', 'vacation', 'attendance']);
+    const daily = {};
+    schedules.filter(s => activeTypes.has(s.type)).forEach(s => {
+        schedExpandDates(s).forEach(ds => {
+            if (!daily[ds]) daily[ds] = [];
+            daily[ds].push(s);
+        });
+    });
+
+    const CAT_ICO = window.SCHED_CAT_ICON || {};
+    const CAT_COL = window.SCHED_CAT_COLOR || {};
+    const todayStr = schedFmtDate(new Date());
+    const wnames = ['일', '월', '화', '수', '목', '금', '토'];
+    wrap.innerHTML = days.map((d, i) => {
+        const ds = schedFmtDate(d);
+        const items = (daily[ds] || []).slice().sort((a, b) =>
+            ((SCHED_TYPE_ORDER[a.type] ?? 99) - (SCHED_TYPE_ORDER[b.type] ?? 99)) || ((a.id || 0) - (b.id || 0)));
+        const isToday = ds === todayStr;
+        const chips = items.map(s => {
+            if (s.type === 'duty') {
+                return `<span class="sch-wchip type-duty" title="${s.userName} 당직">🌙 당직 — ${s.userName}</span>`;
+            }
+            const ico = CAT_ICO[s.category] ||
+                (s.type === 'event' ? '🎉 ' : s.type === 'product' ? '📦 ' : s.type === 'vacation' ? '🏖️ ' : s.type === 'attendance' ? '📌 ' : '');
+            const bcol = CAT_COL[s.category] || s.userColor || '#C7CBD4';
+            if (s.type === 'normal') {
+                const checked = s.isCompleted ? 'checked' : '';
+                const doneCls = s.isCompleted ? ' schedule-completed' : '';
+                return `<span class="sch-wchip type-normal${doneCls}" style="border-left-color:${bcol};" title="${s.userName}: ${s.title}">` +
+                    `<label class="schedule-check" onclick="event.stopPropagation();"><input type="checkbox" ${checked} onchange="toggleScheduleComplete(${s.id}, this)"><span class="schedule-checkmark"></span></label>` +
+                    `<span class="schedule-text">${ico}${s.title}</span></span>`;
+            }
+            return `<span class="sch-wchip type-${s.type}" title="${s.userName}: ${s.title}">${ico}${s.title}</span>`;
+        }).join('');
+        return `<div class="sch-wday${isToday ? ' today' : ''}" onclick="openScheduleModal('${ds}')">` +
+            `<div class="sch-wdate ${i === 0 ? 'su' : i === 6 ? 'sa' : ''}"><div class="n">${d.getDate()}</div><div class="w">${wnames[i]}${isToday ? ' · 오늘' : ''}</div></div>` +
+            `<div class="sch-witems">${chips || '<span class="sch-wempty">일정 없음</span>'}</div></div>`;
+    }).join('');
+}
+
+// ---------- 연간 뷰 ----------
+async function renderScheduleYear() {
+    const wrap = document.getElementById('schedule-year-view');
+    if (!wrap) return;
+    document.getElementById('schedule-calendar-title').textContent = `${scheduleYear}년`;
+    renderScheduleTypeFilter();
+    if (!wrap.innerHTML) wrap.innerHTML = '<div class="sch-year-loading">연간 일정을 불러오는 중...</div>';
+
+    const monthStrs = Array.from({ length: 12 }, (_, i) => `${scheduleYear}-${String(i + 1).padStart(2, '0')}`);
+    const lists = await Promise.all(monthStrs.map(m => api(`/api/schedules?month=${m}`).catch(() => [])));
+    const activeTypes = window._scheduleTypeFilter || new Set(['event', 'product', 'duty', 'normal', 'vacation', 'attendance']);
+    const t = new Date();
+
+    let html = '';
+    for (let m = 0; m < 12; m++) {
+        const filtered = lists[m].filter(s => activeTypes.has(s.type));
+        const dayType = {};
+        const idSet = new Set();
+        filtered.forEach(s => {
+            idSet.add(s.id);
+            schedExpandDates(s).forEach(ds => {
+                if (ds.slice(0, 7) !== monthStrs[m]) return;
+                const cur = dayType[ds];
+                if (cur == null || (SCHED_TYPE_ORDER[s.type] ?? 99) < (SCHED_TYPE_ORDER[cur] ?? 99)) dayType[ds] = s.type;
+            });
+        });
+        const dim = new Date(scheduleYear, m + 1, 0).getDate();
+        let grid = '';
+        for (let d = 1; d <= dim; d++) {
+            const ds = `${monthStrs[m]}-${String(d).padStart(2, '0')}`;
+            const tp = dayType[ds];
+            const isT = scheduleYear === t.getFullYear() && m === t.getMonth() && d === t.getDate();
+            grid += `<span class="sch-yd${isT ? ' td' : ''}">${d}${tp ? `<i class="dt-${tp}"></i>` : ''}</span>`;
+        }
+        const cur = scheduleYear === t.getFullYear() && m === t.getMonth();
+        html += `<div class="sch-ymon${cur ? ' cur' : ''}" onclick="schedGotoMonth(${m})" title="${m + 1}월 월간 보기">` +
+            `<h5>${m + 1}월<span>${idSet.size ? idSet.size + '건' : ''}</span></h5><div class="sch-ygrid">${grid}</div></div>`;
+    }
+    wrap.innerHTML = html;
+}
+
+// 연간 뷰에서 월 클릭 → 해당 월 월간 뷰로
+window.schedGotoMonth = function (m) {
+    scheduleMonth = m;
+    scheduleView = 'month';
+    document.querySelectorAll('#schedule-view-toggle button').forEach(b => b.classList.toggle('on', b.dataset.view === 'month'));
+    renderScheduleCalendar().catch(console.error);
+};
 
 // 일정 추가 모달
 window.openScheduleModal = function(dateStr) {

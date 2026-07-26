@@ -13,7 +13,7 @@
     <!-- Pretendard 웹폰트 (실패해도 시스템 폰트로 폴백 — 하드 의존 없음) -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
-    <link rel="stylesheet" href="styles.css?v=110">
+    <link rel="stylesheet" href="styles.css?v=111">
     <link rel="stylesheet" href="theme.css?v=6">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -222,6 +222,7 @@
                 </div>
 
                 <div class="card">
+                    <div class="sch-brief" id="schedule-brief" style="display:none;"></div>
                     <div class="card-header-row">
                         <div class="calendar-title-group">
                             <h2 id="schedule-calendar-title">2026년 3월</h2>
@@ -232,21 +233,33 @@
                             </button>
                             <span id="schedule-refresh-time" class="refresh-time"></span>
                         </div>
-                        <div class="month-nav">
-                            <button id="schedule-prev-month" class="btn-nav">&lt;</button>
-                            <button id="schedule-next-month" class="btn-nav">&gt;</button>
+                        <div class="sch-head-controls">
+                            <div class="sch-vtoggle" id="schedule-view-toggle">
+                                <button data-view="week">주간</button>
+                                <button data-view="month" class="on">월간</button>
+                                <button data-view="year">연간</button>
+                            </div>
+                            <button class="btn-outline sch-today-btn" id="schedule-today-btn">오늘</button>
+                            <div class="month-nav">
+                                <button id="schedule-prev-month" class="btn-nav">&lt;</button>
+                                <button id="schedule-next-month" class="btn-nav">&gt;</button>
+                            </div>
                         </div>
                     </div>
                     <div class="calendar-section" style="border:none;padding:0;">
                         <div class="calendar-legend" id="schedule-legend"></div>
-                        <table class="calendar-table">
-                            <thead>
-                                <tr>
-                                    <th class="sun">일</th><th>월</th><th>화</th><th>수</th><th>목</th><th>금</th><th class="sat">토</th>
-                                </tr>
-                            </thead>
-                            <tbody id="schedule-calendar-body"></tbody>
-                        </table>
+                        <div id="schedule-month-view">
+                            <table class="calendar-table">
+                                <thead>
+                                    <tr>
+                                        <th class="sun">일</th><th>월</th><th>화</th><th>수</th><th>목</th><th>금</th><th class="sat">토</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="schedule-calendar-body"></tbody>
+                            </table>
+                        </div>
+                        <div id="schedule-week-view" class="sch-week" style="display:none;"></div>
+                        <div id="schedule-year-view" class="sch-year" style="display:none;"></div>
                     </div>
                 </div>
             </div>
@@ -2110,6 +2123,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=275"></script>
+    <script src="app.js?v=276"></script>
 </body>
 </html>
