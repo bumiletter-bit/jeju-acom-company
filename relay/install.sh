@@ -56,6 +56,19 @@ else
   echo "④ .env 이미 존재 — 값 보존(덮어쓰지 않음)"
 fi
 
+# ④-3 쿠팡 키 항목 추가 (이름만 — 없을 때만 append. 값은 대표가 직접 입력, 스크립트는 값 미접촉)
+echo "④-3 쿠팡 키 항목 확인..."
+for K in COUPANG_ACCESS_KEY COUPANG_SECRET_KEY COUPANG_VENDOR_ID; do
+  if ! grep -q "^$K=" .env; then
+    if [ "$K" = "COUPANG_VENDOR_ID" ]; then
+      echo "$K=A01600270" >> .env
+    else
+      echo "$K=" >> .env
+    fi
+    echo "   + $K 항목 추가됨 (값 비어있음 — 절차서대로 직접 입력하세요)"
+  fi
+done
+
 # ④-2 HTTPS 자체서명 인증서 (없을 때만 생성). SAN=고정 공인IP → IP로 접속해도 검증 통과.
 if [ ! -f cert.pem ] || [ ! -f key.pem ]; then
   echo "④-2 HTTPS 인증서 생성 (자체서명, 10년)..."

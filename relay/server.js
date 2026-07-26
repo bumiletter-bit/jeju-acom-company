@@ -9,12 +9,13 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-24.2'; // 읽기 전체 허용 + 버전 노출
+const RELAY_VERSION = '2026-07-26.1'; // 쿠팡 /coupang 경로 추가 (HMAC·조회 2종만)
 
 const {
     PORT = 4000,
@@ -23,6 +24,10 @@ const {
     NAVER_TYPE = 'SELF',
     RELAY_AUTH_TOKEN,
     NAVER_API_BASE = 'https://api.commerce.naver.com',
+    COUPANG_ACCESS_KEY,
+    COUPANG_SECRET_KEY,
+    COUPANG_VENDOR_ID,
+    COUPANG_API_BASE = 'https://api-gateway.coupang.com',
 } = process.env;
 
 // ── 로그 (시크릿·토큰 마스킹) ──
@@ -88,7 +93,10 @@ app.use(express.json({ limit: '2mb' }));
 
 // 헬스체크 (인증 불필요) — 토큰 발급까지 시험하려면 ?token=1
 app.get('/health', async (req, res) => {
-    const base = { ok: true, version: RELAY_VERSION, time: new Date().toISOString(), token_cached: !!tokenCache.value };
+    const base = {
+        ok: true, version: RELAY_VERSION, time: new Date().toISOString(), token_cached: !!tokenCache.value,
+        coupang_keys_set: !!(COUPANG_ACCESS_KEY && COUPANG_SECRET_KEY && COUPANG_VENDOR_ID), // 값 노출 없음
+    };
     if (req.query.token === '1') {
         try { await getAccessToken(); base.token_test = 'success'; }
         catch (e) { base.token_test = 'fail'; base.token_error = e.status || e.message; }
@@ -132,6 +140,60 @@ app.post('/naver', async (req, res) => {
     } catch (e) {
         log('중계 예외', method, path, e.message);
         res.status(e.status || 500).json({ error: 'relay_error', message: e.message, body: e.body });
+    }
+});
+
+// ══════════════ 쿠팡 OPEN API 중계 (2026-07-26 — 지시문_쿠팡_송장변환_연동 v2) ══════════════
+// 원칙: 배송/주문 '조회' 2종만 허용(상품·가격 API 호출 코드 자체 없음). 쿠팡 키는 이 서버 .env에만.
+// HMAC 서명 (쿠팡 공식 문서 PHP/Java 예제 그대로):
+//   datetime(UTC yyMMdd'T'HHmmss'Z') + METHOD + path + query → HMAC-SHA256(hex, secret)
+//   Authorization: CEA algorithm=HmacSHA256, access-key=…, signed-date=…, signature=…
+function coupangSign(method, urlPath, queryString) {
+    const now = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    const dt = String(now.getUTCFullYear()).slice(2) + p(now.getUTCMonth() + 1) + p(now.getUTCDate())
+        + 'T' + p(now.getUTCHours()) + p(now.getUTCMinutes()) + p(now.getUTCSeconds()) + 'Z';
+    const message = dt + method + urlPath + queryString;
+    const signature = crypto.createHmac('sha256', COUPANG_SECRET_KEY).update(message).digest('hex');
+    return `CEA algorithm=HmacSHA256, access-key=${COUPANG_ACCESS_KEY}, signed-date=${dt}, signature=${signature}`;
+}
+
+// 허용목록: 경로 '템플릿'과 정확 일치해야 하며, {vendorId}는 서버가 .env 값으로 강제 치환(경로 위조 차단).
+const COUPANG_ALLOW = [
+    { m: 'GET', tpl: '/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets' },     // 발주서(상품준비중) 목록
+    { m: 'GET', tpl: '/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests' },  // 반품/취소 요청 목록
+];
+
+// 쿠팡 호출 중계: POST /coupang  { method, path(템플릿 그대로), query? }
+app.post('/coupang', async (req, res) => {
+    const method = String((req.body && req.body.method) || 'GET').toUpperCase();
+    const reqPath = String((req.body && req.body.path) || '');
+    const query = (req.body && req.body.query) || null;
+    if (!COUPANG_ACCESS_KEY || !COUPANG_SECRET_KEY || !COUPANG_VENDOR_ID) {
+        return res.status(503).json({ error: 'coupang_keys_not_set' });
+    }
+    const rule = COUPANG_ALLOW.find(a => a.m === method && a.tpl === reqPath);
+    if (!rule) {
+        log('쿠팡 차단(허용목록 외)', method, reqPath);
+        return res.status(403).json({ error: 'path_not_allowed', method, path: reqPath });
+    }
+    const realPath = rule.tpl.replace('{vendorId}', COUPANG_VENDOR_ID);
+    try {
+        // 서명과 실제 요청의 쿼리 문자열은 반드시 동일 바이트 — 같은 문자열을 두 곳에 사용
+        const qs = query && typeof query === 'object' ? new URLSearchParams(query).toString() : '';
+        const auth = coupangSign(method, realPath, qs);
+        const url = `${COUPANG_API_BASE}${realPath}${qs ? '?' + qs : ''}`;
+        const cres = await fetch(url, {
+            method,
+            headers: { Authorization: auth, 'Content-Type': 'application/json;charset=UTF-8' },
+        });
+        const text = await cres.text();
+        let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+        if (!cres.ok) log('쿠팡 응답 오류', method, realPath, cres.status); // 알림은 회사프로그램이 담당
+        res.status(cres.status).json(json);
+    } catch (e) {
+        log('쿠팡 중계 예외', method, reqPath, e.message);
+        res.status(e.status || 500).json({ error: 'relay_error', message: e.message });
     }
 });
 
