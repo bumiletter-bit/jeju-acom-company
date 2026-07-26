@@ -1672,6 +1672,68 @@ input[type="date"].form-input::-webkit-datetime-edit {
     padding: 30px 16px !important;
 }
 
+/* ========================================
+   순위관리 — 일자별 기록 표
+   (테마: 인디고/화이트, theme.css 팔레트와 동일 색상)
+   ======================================== */
+.rank-log-wrap {
+    border: 1px solid #ECEDF1;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 4px 12px -8px rgba(16, 24, 40, 0.10);
+}
+.rank-log-table {
+    table-layout: fixed;
+    min-width: 560px;
+}
+.rank-log-table thead th {
+    background: linear-gradient(#FBFBFD, #F4F5F8);
+    color: #667085;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-align: center;
+    padding: 11px 12px;
+    border-bottom: 1px solid #E4E6EB;
+}
+.rank-log-table thead th:nth-child(1),
+.rank-log-table thead th:nth-child(2) { text-align: left; }
+.rank-log-table thead th:first-child { border-top-left-radius: 12px; }
+.rank-log-table thead th:last-child { border-top-right-radius: 12px; }
+/* 열 폭 고정 — 헤더·본문이 항상 같은 위치 */
+.rank-log-table th:nth-child(1), .rank-log-table td:nth-child(1) { width: 16%; }
+.rank-log-table th:nth-child(2), .rank-log-table td:nth-child(2) { width: 24%; }
+.rank-log-table th:nth-child(3), .rank-log-table td:nth-child(3),
+.rank-log-table th:nth-child(4), .rank-log-table td:nth-child(4),
+.rank-log-table th:nth-child(5), .rank-log-table td:nth-child(5) { width: 16%; }
+.rank-log-table th:nth-child(6), .rank-log-table td:nth-child(6) { width: 12%; }
+.rank-log-table tbody td {
+    text-align: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid #F1F2F5;
+    vertical-align: middle;
+}
+.rank-log-table tbody td:nth-child(1) { text-align: left; color: #667085; font-size: 13px; white-space: nowrap; }
+.rank-log-table tbody td:nth-child(2) { text-align: left; color: #101828; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-log-table tbody tr:hover td { background: #F8F9FC; }
+.rank-log-table tbody tr:last-child td { border-bottom: none; }
+.rank-log-table tbody tr:last-child td:first-child { border-bottom-left-radius: 12px; }
+.rank-log-table tbody tr:last-child td:last-child { border-bottom-right-radius: 12px; }
+/* 순위 셀: 숫자는 오른쪽·증감은 왼쪽 고정폭 → 세로로 딱 맞게 정렬 */
+.rank-cell { display: inline-flex; align-items: baseline; justify-content: center; gap: 4px; }
+.rank-cell .rank-val { min-width: 36px; text-align: right; font-weight: 700; color: #101828; font-variant-numeric: tabular-nums; }
+.rank-cell.rank-sub .rank-val { font-weight: 600; color: #667085; }
+.rank-cell .rank-diff { min-width: 32px; text-align: left; font-size: 11px; font-weight: 700; }
+.rank-diff.up { color: #4F46E5; }
+.rank-diff.down { color: #F04438; }
+.rank-diff.same { color: #98A0AE; font-weight: 400; }
+.rank-cell .rank-none { color: #C4C9D2; }
+.rank-del-btn { padding: 3px 10px; font-size: 11px; }
+@media (max-width: 768px) {
+    /* 전역 full-bleed(margin/padding) 해제 — 테두리 박스 유지 */
+    .table-scroll-wrapper.rank-log-wrap { margin: 0; padding: 0; }
+}
+
 /* 품목별 금액 목록 */
 #pricing-list td { border: 1px solid #d0d0d0; padding: 10px 16px; }
 #page-pricing .data-table th:nth-child(1), #page-pricing .data-table td:nth-child(1) { width: 15%; }

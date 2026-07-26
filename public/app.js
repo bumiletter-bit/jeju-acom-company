@@ -9079,10 +9079,15 @@ function renderRankTable() {
     // 화면에 보여줄 순서는 최신순
     const sorted = _rankData.slice().sort((a,b) => a.date < b.date ? 1 : -1);
     const diffHtml = (cur, prev) => {
-        if (cur == null || prev == null) return '';
-        if (cur === prev) return ' <span style="color:#9ca3af;font-size:11px;">−</span>';
-        if (cur < prev) return ` <span style="color:#0066CC;font-size:11px;font-weight:700;">▲${prev - cur}</span>`;
-        return ` <span style="color:#dc2626;font-size:11px;font-weight:700;">▼${cur - prev}</span>`;
+        if (cur == null || prev == null) return '<span class="rank-diff"></span>';
+        if (cur === prev) return '<span class="rank-diff same">−</span>';
+        if (cur < prev) return `<span class="rank-diff up">▲${prev - cur}</span>`;
+        return `<span class="rank-diff down">▼${cur - prev}</span>`;
+    };
+    // 순위 셀: 숫자(오른쪽 정렬)·증감(왼쪽 정렬) 폭을 고정해 행마다 밀리지 않게
+    const rankCell = (cur, prevRow, key, sub) => {
+        const val = cur == null ? '<span class="rank-none">-</span>' : `${cur}위`;
+        return `<span class="rank-cell${sub ? ' rank-sub' : ''}"><span class="rank-val">${val}</span>${diffHtml(cur, prevRow ? prevRow[key] : null)}</span>`;
     };
     tbody.innerHTML = sorted.map(r => {
         const list = byKw[r.keyword] || [];
@@ -9091,10 +9096,10 @@ function renderRankTable() {
         return `<tr>
             <td>${r.date}</td>
             <td><strong>${r.keyword}</strong></td>
-            <td style="text-align:center;font-weight:700;">${r.shoppingRank ?? '-'}위${prev ? diffHtml(r.shoppingRank, prev.shoppingRank) : ''}</td>
-            <td style="text-align:center;color:#6b7280;">${r.adRank ?? '-'}위${prev ? diffHtml(r.adRank, prev.adRank) : ''}</td>
-            <td style="text-align:center;color:#6b7280;">${r.powerlinkRank ?? '-'}위${prev ? diffHtml(r.powerlinkRank, prev.powerlinkRank) : ''}</td>
-            <td><button class="btn-danger" style="padding:3px 10px;font-size:11px;" onclick="deleteRanking(${r.id})">삭제</button></td>
+            <td>${rankCell(r.shoppingRank, prev, 'shoppingRank', false)}</td>
+            <td>${rankCell(r.adRank, prev, 'adRank', true)}</td>
+            <td>${rankCell(r.powerlinkRank, prev, 'powerlinkRank', true)}</td>
+            <td><button class="btn-danger rank-del-btn" onclick="deleteRanking(${r.id})">삭제</button></td>
         </tr>`;
     }).join('');
 }
