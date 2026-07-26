@@ -393,3 +393,26 @@ input:focus, textarea:focus, select:focus {
 /* 배지·필터 */
 .sch-flt-btn:hover { border-color: var(--brand-blue); }
 .tag { background: var(--brand-ink); }
+
+/* ── 🍋 스킨 2탄: AGENT OFFICE + 라인 전체 노랑 버전 (v5.9.82) ── */
+/* 사이드바 활성 왼쪽 바 */
+.nav-item.active::before { background: var(--brand-yellow-deep); }
+/* 사무실 요소 — 대장존·수신함·책상 */
+.ao-chief-zone { background: var(--brand-yellow-soft); border-color: #C9C000; }
+.ao-inbox { border-color: var(--brand-yellow-deep); }
+.ao-inbox-label { color: #8A8200; }
+.ao-desk { background: var(--brand-yellow); box-shadow: 0 3px 0 rgba(201, 192, 0, 0.55); }
+/* 조직도 흐름선·실행 강조 — 짙은 노랑(가시성 확보) */
+.ao-flow-line, .ao-office svg path { stroke: #DBA800; }
+.ao-agent.st-running .ao-nametag { color: #B08900; }
+/* 상단 탭·관리 칩·로그 카드 */
+.ao-view-tab.active { background: var(--brand-yellow); color: var(--brand-ink); box-shadow: 0 6px 16px -6px rgba(222, 213, 0, 0.6); }
+.ao-growth-chip { background: var(--brand-yellow-soft); border-color: #C9C000; color: #8A6D00; }
+.ao-log-maruq { background: var(--brand-yellow-soft); border-color: var(--brand-yellow-deep); }
+.noti-toast-announcement { border-left-color: var(--brand-yellow) !important; }
+/* 보고서·정산 검수 화면 */
+.ao-order-label { color: #8A8200; }
+.ao-sec-title { border-bottom-color: var(--brand-yellow); }
+.ao-grand-total { background: var(--brand-ink); }
+.ao-partner-head td { background: var(--brand-yellow-soft); color: #8A6D00; }
+.ao-detail-desc { background: var(--brand-yellow-soft); border-color: var(--brand-yellow-line); }
