@@ -6220,6 +6220,9 @@ function parseInvoiceRows(data) {
 
 // 대표 7/25: 중간발주 — 파일 업로드(비번 4031) 대신 네이버 배송준비 전체를 API로 바로 불러옴.
 //   API rows가 이미 옵션정보·수량 키라 기존 합산(recomputeQtyAggregate)·거래처필터·이미지저장 그대로 동작.
+// 대표 7/26: 3채널 확장 — 쿠팡·자사몰 배송준비도 같은 API(자동 불러오기와 동일·실행 시점 조회·읽기 전용)로
+//   불러와 옵션정보·수량 키로 변환해 합산에 합침. 네이버 호출·합산·매칭 로직은 무수정.
+//   한 채널이 실패해도 나머지로 진행(실패 채널은 ⚠️ 표시) — 전 채널 실패 시에만 중단.
 (function setupQtyStart() {
     const btn = document.getElementById('invoice-qty-start');
     if (!btn) return;
@@ -6227,17 +6230,44 @@ function parseInvoiceRows(data) {
         const msg = document.getElementById('invoice-qty-msg');
         const daysEl = document.getElementById('invoice-qty-days');
         const days = Math.min(Math.max(parseInt(daysEl && daysEl.value) || 50, 1), 180);
+        const daysCp = Math.min(days, 31);  // 쿠팡 API 상한(31일) — 임의 초과 호출 금지
+        const daysCf = Math.min(days, 90);  // 카페24 상한(3개월)
         btn.disabled = true;
-        if (msg) msg.textContent = `⏳ 네이버에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 1~2분 걸릴 수 있어요)`;
+        if (msg) msg.textContent = `⏳ 3채널(네이버·쿠팡·자사몰)에서 배송준비 주문을 가져오는 중... (최근 ${days}일, 1~2분 걸릴 수 있어요)`;
         try {
-            const r = await api('/api/agent-office/naver/invoice-orders?days=' + days);
-            if (!r.ok) { if (msg) msg.textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
-            if (!r.count) { if (msg) msg.textContent = `📭 배송준비 주문이 없습니다 (조회 ${r.fetched || 0}건). 조회 기간을 늘려보세요.`; return; }
-            qtyRowsMain = r.rows;               // 기존 합산 로직이 그대로 처리(matchProduct가 옵션정보 파싱)
+            const [rvNaver, rvCp, rvCf] = await Promise.allSettled([
+                api('/api/agent-office/naver/invoice-orders?days=' + days),
+                api('/api/agent-office/coupang/invoice-orders?days=' + daysCp),
+                api('/api/agent-office/cafe24/invoice-orders?days=' + daysCf),
+            ]);
+            const chan = (rv) => rv.status === 'fulfilled' && rv.value && rv.value.ok ? rv.value
+                : { ok: false, message: rv.status === 'fulfilled' ? (rv.value && rv.value.message) || '불러오기 실패' : (rv.reason && rv.reason.message) || String(rv.reason) };
+            const nv = chan(rvNaver), cp = chan(rvCp), cf = chan(rvCf);
+            if (!nv.ok && !cp.ok && !cf.ok) {
+                if (msg) msg.textContent = '⚠️ 3채널 모두 불러오기 실패 — 네이버: ' + nv.message + ' / 쿠팡: ' + cp.message + ' / 자사몰: ' + cf.message;
+                return;
+            }
+            // 채널별 rows → 합산이 읽는 공통 키(옵션정보·수량)로 변환. 네이버는 원래 그 키라 그대로.
+            const rows = [];
+            if (nv.ok) rows.push(...(nv.rows || []));
+            if (cp.ok) (cp.rows || []).forEach(r => rows.push({
+                '옵션정보': r['노출상품명(옵션명)'] || r['등록상품명'] || '',
+                '수량': r['구매수(수량)'],
+            }));
+            if (cf.ok) (cf.rows || []).forEach(r => rows.push({
+                '옵션정보': r['주문상품명(세트상품 포함)'] || '',
+                '수량': r['수량'],
+            }));
+            if (!rows.length) { if (msg) msg.textContent = `📭 3채널 모두 배송준비 주문이 없습니다. 조회 기간을 늘려보세요.`; return; }
+            qtyRowsMain = rows;                 // 기존 합산 로직이 그대로 처리(matchProduct가 옵션정보 파싱)
             recomputeQtyAggregate();
             document.getElementById('invoice-qty-result').style.display = '';
-            const partial = r.partial_adjusted ? ` · 부분취소 수량 반영 <strong>${r.partial_adjusted}건</strong>` : '';
-            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${r.count}건</strong> 기준으로 집계했습니다 (최근 ${days}일${partial}).`;
+            const cnt = (r) => r.ok ? `<strong>${r.count || 0}건</strong>` : '<span style="color:var(--danger,#F04438);">⚠️ 실패</span>';
+            const partialSum = (nv.ok ? nv.partial_adjusted || 0 : 0) + (cp.ok ? cp.partial_adjusted || 0 : 0) + (cf.ok ? cf.partial_adjusted || 0 : 0);
+            const partial = partialSum ? ` · 부분취소 수량 반영 <strong>${partialSum}건</strong>` : '';
+            const failNote = [!nv.ok && `네이버: ${aoEsc(nv.message)}`, !cp.ok && `쿠팡: ${aoEsc(cp.message)}`, !cf.ok && `자사몰: ${aoEsc(cf.message)}`].filter(Boolean).join(' / ');
+            if (msg) msg.innerHTML = `✅ 배송준비 <strong>${rows.length}건</strong> 기준으로 집계했습니다 — 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)} (최근 ${days}일${partial})`
+                + (failNote ? `<br><span style="color:var(--danger,#F04438);">⚠️ 실패 채널 제외하고 집계됨 — ${failNote}</span>` : '');
         } catch (e) {
             if (msg) msg.textContent = '❌ 실패: ' + (e.message || String(e));
         } finally { btn.disabled = false; }

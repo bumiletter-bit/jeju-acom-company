@@ -1745,12 +1745,12 @@
                 <!-- ===== 현재까지 수량 모드 ===== -->
                 <div id="invoice-qty-mode" style="display:none;">
                     <div class="card">
-                        <p style="font-size:13px;color:#666;margin-bottom:12px;">현재 스마트스토어 배송준비로 중간발주를 진행합니다. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
-                        <button class="btn-primary" id="invoice-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 시작하기</button>
-                        <div style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--text-mid,#666);">
+                        <p style="font-size:13px;color:var(--text-mid,#667085);margin-bottom:12px;">스마트스토어 + 쿠팡 + 자사몰 <b>3채널 배송준비</b>로 중간발주를 진행합니다. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
+                        <button class="btn-primary" id="invoice-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 시작하기 (3채널)</button>
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--text-mid,#667085);">
                             <span>조회 기간</span>
-                            <input type="number" id="invoice-qty-days" value="50" min="1" max="180" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
-                            <span>일 (결제일 기준·최대 180)</span>
+                            <input type="number" id="invoice-qty-days" value="50" min="1" max="180" class="form-input" style="width:64px; padding:5px 6px; text-align:center; font-size:13px;">
+                            <span>일 (네이버 최대 180 · 쿠팡은 31일·자사몰은 90일까지만 조회)</span>
                         </div>
                         <div id="invoice-qty-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:6px; line-height:1.5;"></div>
                     </div>
@@ -2202,6 +2202,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=284"></script>
+    <script src="app.js?v=285"></script>
 </body>
 </html>
