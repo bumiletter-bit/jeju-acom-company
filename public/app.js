@@ -10862,6 +10862,19 @@ function aoTrunc(s, n = 95) {
 }
 
 // 대표 7/22: LIVE 로그에 대표 지시를 '원문 그대로' 깔끔하게 — 서브태스크/멀티 래퍼 문구 제거
+// 대표 7/26: 멀티 배정 건은 배정 요약("톡톡 이미지(미소)")이 아니라 원지시(첫 질문)를 보여줌
+function aoOriginalQuestion(s) {
+    const m = String(s || '').match(/\[상세\s*조건은?\s*원지시\s*참조:\s*([\s\S]*?)\]\s*(?=\[멀티|$)/);
+    return m ? m[1].trim() : aoCleanContent(s);
+}
+// 대표 7/26: 보고서함 질문 열 — 길면 잘라 보여주고 클릭하면 전체 펼침
+window.aoToggleRunQ = function(el) {
+    const full = el.getAttribute('data-full');
+    if (!full) return;
+    const open = el.getAttribute('data-open') === '1';
+    el.textContent = open ? full.slice(0, 30) + '…' : full;
+    el.setAttribute('data-open', open ? '0' : '1');
+};
 function aoCleanContent(s) {
     return String(s || '')
         .replace(/\s*\[상세\s*조건[\s\S]*$/, '')      // "[상세 조건은 원지시 참조: ...]" 및 그 뒤 전부
@@ -11429,7 +11442,7 @@ async function aoLoadReports() {
         const data = await api('/api/agent-office/runs?' + params.toString());
         const tbody = document.getElementById('ao-report-tbody');
         if (!data.runs.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="ao-log-empty">조회된 실행 이력이 없습니다</td></tr>';
             return;
         }
         tbody.innerHTML = data.runs.map(r => {
@@ -11443,11 +11456,17 @@ async function aoLoadReports() {
             const archBtn = archived
                 ? (currentUser?.role === 'admin' ? '<button class="ao-fb-btn" onclick="aoRestoreRun(' + r.id + ')">↩️ 다시 보기</button>' : '-')
                 : '<button class="ao-fb-btn" onclick="aoArchiveRun(' + r.id + ')">✔ 확인</button>';
+            // 대표 7/26: 질문 열 — 30자 넘으면 잘라 표시, 클릭하면 전체 펼침
+            const q = aoOriginalQuestion(r.question || '');
+            const qCell = !q ? '-'
+                : q.length <= 30 ? aoEsc(q)
+                : '<span style="cursor:pointer;" title="클릭하면 전체 질문 표시" data-full="' + aoEsc(q) + '" data-open="0" onclick="aoToggleRunQ(this)">' + aoEsc(q.slice(0, 30)) + '…</span>';
             return '<tr class="' + (archived ? 'ao-run-archived' : '') + '">' +
                 '<td>' + dt + (archived ? ' <span class="ao-arch-badge">확인함' + (r.archived_by ? '·' + aoEsc(r.archived_by) : '') + '</span>' : '') + '</td>' +
                 '<td><span class="ao-ai-badge">🤖AI</span> ' + r.agent_name + '</td>' +
                 '<td>' + r.agent_team + '</td>' +
                 '<td>' + stBadge + '</td>' +
+                '<td style="max-width:220px;white-space:pre-wrap;word-break:break-word;">' + qCell + '</td>' +
                 '<td>' + ((r.result && r.result.summary) || '-') + '</td>' +
                 '<td>' + dur + '</td>' +
                 '<td>' + (hasReport ? '<button class="ao-fb-btn" onclick="aoOpenReport(' + r.id + ')">📄 보고서</button>' : '-')
@@ -11991,7 +12010,7 @@ window.aoOpenReport = async function(runId) {
                 ${rep && rep.file_id ? `<button class="ao-fb-btn ao-modal-confirm" style="margin-right:6px;" onclick="aoDownloadFile(${rep.file_id})">📎 엑셀 다운로드</button>` : ''}
             </h3>
             <div class="ao-detail-meta">${aoEsc(run.agent_team)} · 실행 ${dt}</div>
-            ${aoOrderByRun[run.id] ? `<div class="ao-result-box" style="margin-top:8px;background:#f5f7fb;border-left:3px solid #4c6ef5;">🕐 <strong>대표님 질문</strong>: ${aoEsc(aoCleanContent(aoOrderByRun[run.id]))}</div>` : ''}
+            ${(run.question || aoOrderByRun[run.id]) ? `<div class="ao-result-box" style="margin-top:8px;background:#f5f7fb;border-left:3px solid #4c6ef5;">🕐 <strong>대표님 질문</strong>: ${aoEsc(aoOriginalQuestion(run.question || aoOrderByRun[run.id]))}</div>` : ''}
             <div class="ao-result-box" style="margin-top:8px;"><strong>${aoEsc((run.result && run.result.summary) || '')}</strong></div>
             ${aoAuditBlock(rep && rep.audit_check)}
             ${body}

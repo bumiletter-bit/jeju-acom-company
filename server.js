@@ -6087,7 +6087,8 @@ function naverFriendlyError(err) {
 app.get('/api/agent-office/runs/:id', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT r.*, a.name AS agent_name, a.team AS agent_team
+            `SELECT r.*, a.name AS agent_name, a.team AS agent_team,
+                    (SELECT p.content FROM pending_orders p WHERE p.run_id = r.id ORDER BY p.id DESC LIMIT 1) AS question
              FROM agent_runs r JOIN agents a ON r.agent_id = a.id
              WHERE r.id = $1 AND r.is_deleted = false`, [req.params.id]);
         if (r.rows.length === 0) throw { status: 404, message: '실행 기록을 찾을 수 없습니다' };
@@ -6109,7 +6110,8 @@ app.get('/api/agent-office/runs', authMiddleware, /* 직원 가능 (대표 7/26 
         const limit = Math.min(parseInt(req.query.limit) || 50, 300);
         const r = await pool.query(
             `SELECT r.id, r.agent_id, r.status, r.steps, r.result, r.started_at, r.finished_at, r.is_deleted, r.archived_by,
-                    a.name AS agent_name, a.team AS agent_team, a.role AS agent_role
+                    a.name AS agent_name, a.team AS agent_team, a.role AS agent_role,
+                    (SELECT p.content FROM pending_orders p WHERE p.run_id = r.id ORDER BY p.id DESC LIMIT 1) AS question
              FROM agent_runs r JOIN agents a ON r.agent_id = a.id
              WHERE ${cond.join(' AND ')}
              ORDER BY r.started_at DESC LIMIT ${limit}`, params);
