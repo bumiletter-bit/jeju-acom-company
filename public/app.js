@@ -12274,7 +12274,7 @@ async function renderUserInqTab() {
                 <td style="overflow:hidden;">${aoEsc(raw.category || '')}</td>
                 <td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(raw.product_name || '')}">${aoEsc(raw.product_name || '')}</div></td>
                 <td style="overflow:hidden;">${qnaClipHtml([raw.title, raw.content].filter(Boolean).join('\n'))}</td>
-                <td style="overflow:hidden;">${qnaClipHtml(r.ai_draft || '(판매자센터에서 답변)')}</td>
+                <td style="overflow:hidden;">${qnaClipHtml(raw.answer_content || r.ai_draft || '(판매자센터에서 답변 — 답변 본문은 다음 수집 때 반영)')}</td>
                 <td>${by}<div class="text-muted" style="font-size:11px;">${scenLinksFromNames(r.scenario_name, scenMap) || '기록 없음'}</div></td>
             </tr>`;
         }).join('')}</tbody></table>` : '<p class="text-muted">아직 답변된 문의가 없습니다</p>';
@@ -12554,7 +12554,8 @@ async function renderUnansweredLogs() {
         + (r.response_source === 'price_direct' ? ' <span class="text-muted" style="font-size:11px;">(가격즉답)</span>' : '');
     // 품목: 한 줄 말줄임 (전체 이름은 마우스오버 툴팁)
     const itemCell = (v) => `<td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(v || '-')}">${aoEsc(v || '-')}</div></td>`;
-    const ansCols = '<colgroup><col style="width:132px"><col style="width:150px"><col style="width:26%"><col><col style="width:130px"><col style="width:20%"></colgroup>';
+    // 대표 7/28: 고정 열폭 합계가 min-width(680px)를 초과해 auto(답변) 열이 모바일에서 0px로 압착되던 버그 수정 — 재배분+min-width 상향
+    const ansCols = '<colgroup><col style="width:96px"><col style="width:140px"><col style="width:26%"><col><col style="width:110px"><col style="width:130px"></colgroup>';
     const ansThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
@@ -12564,7 +12565,7 @@ async function renderUnansweredLogs() {
             <td>${scenCell(r)}</td>
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="6">봇 답변 기록이 없습니다</td></tr>`;
-    const pendCols = '<colgroup><col style="width:132px"><col style="width:150px"><col><col style="width:150px"><col style="width:24%"></colgroup>';
+    const pendCols = '<colgroup><col style="width:96px"><col style="width:140px"><col><col style="width:140px"><col style="width:160px"></colgroup>';
     const pendThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
@@ -12574,7 +12575,7 @@ async function renderUnansweredLogs() {
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="5">무응답 문의가 없습니다 🎉</td></tr>`;
     const tbl = (cols, thead, body) =>
-        `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%; min-width:680px;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
+        `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%; min-width:880px;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
     // 서브탭별 단일 목록 (대표 7/27 2차 — 상품문의 라임) + 미매칭 엑셀 버튼은 미매칭 서브탭에서만
     unansPendRows = pendRows;
     const excelBtn = document.getElementById('btn-unans-excel');

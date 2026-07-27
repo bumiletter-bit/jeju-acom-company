@@ -6031,6 +6031,8 @@ async function collectInquiry() {
                 product_option: q.productOrderOption || '',
                 registered_at: q.inquiryRegistrationDateTime || '',
                 answered: !!q.answered,
+                // 대표 7/28: 판매자센터·자동 게시 답변 본문 — 조회 응답 content[].answerContent (개발자포럼 #3161 확정). 마스킹 동일 적용
+                answer_content: naverMaskContact(q.answerContent || ''),
             };
             const res = await pool.query(
                 `INSERT INTO naver_inquiries (inquiry_id, raw, answered) VALUES ($1, $2, $3)
