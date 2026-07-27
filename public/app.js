@@ -12261,18 +12261,21 @@ async function renderUserInqTab() {
             <div style="margin-top:6px;"><button class="btn-primary" onclick="postInquiryAnswer('${r.inquiry_id}')">📤 답변 등록</button></div>
         </div>`;
     }).join('') : '<p class="text-muted">답변 대기 중인 문의가 없습니다 🎉</p>';
+    // 대표 7/27 2차: 톡톡·상품문의와 동일 규격 (고정 열폭·상품 말줄임·min-width 가로 스크롤)
     const doneHtml = done.length ? `
-        <table class="data-table"><thead><tr><th>일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>등록</th></tr></thead><tbody>
+        <table class="data-table" style="table-layout:fixed; width:100%; min-width:720px;">
+        <colgroup><col style="width:132px"><col style="width:70px"><col style="width:150px"><col style="width:28%"><col><col style="width:120px"></colgroup>
+        <thead><tr><th>일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>등록</th></tr></thead><tbody>
         ${done.map(r => {
             const raw = r.raw || {};
             const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
             return `<tr>
                 <td style="white-space:nowrap;">${fmtDt(r.posted_at || raw.registered_at)}</td>
-                <td style="white-space:nowrap;">${aoEsc(raw.category || '')}</td>
-                <td>${aoEsc(raw.product_name || '')}</td>
-                <td style="max-width:260px;">${qnaClipHtml([raw.title, raw.content].filter(Boolean).join('\n'))}</td>
-                <td style="max-width:300px;">${qnaClipHtml(r.ai_draft || '(판매자센터에서 답변)')}</td>
-                <td style="white-space:nowrap;">${by}<div class="text-muted" style="font-size:11px;">${scenLinksFromNames(r.scenario_name, scenMap) || '기록 없음'}</div></td>
+                <td>${aoEsc(raw.category || '')}</td>
+                <td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(raw.product_name || '')}">${aoEsc(raw.product_name || '')}</div></td>
+                <td style="overflow:hidden;">${qnaClipHtml([raw.title, raw.content].filter(Boolean).join('\n'))}</td>
+                <td style="overflow:hidden;">${qnaClipHtml(r.ai_draft || '(판매자센터에서 답변)')}</td>
+                <td>${by}<div class="text-muted" style="font-size:11px;">${scenLinksFromNames(r.scenario_name, scenMap) || '기록 없음'}</div></td>
             </tr>`;
         }).join('')}</tbody></table>` : '<p class="text-muted">아직 답변된 문의가 없습니다</p>';
     box.innerHTML = `
@@ -12353,18 +12356,21 @@ async function renderQnaTab() {
             <div style="margin-top:6px;"><button class="btn-primary" onclick="postQnaAnswer('${r.question_id}')">📤 게시</button></div>
         </div>`;
     }).join('') : '<p class="text-muted">답변 대기 중인 문의가 없습니다 🎉</p>';
+    // 대표 7/27 2차: 톡톡 문의와 동일 규격 — 고정 열폭·상품 말줄임·모바일은 표만 가로 스크롤(min-width)
     const doneHtml = done.length ? `
-        <table class="data-table"><thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
+        <table class="data-table" style="table-layout:fixed; width:100%; min-width:680px;">
+        <colgroup><col style="width:132px"><col style="width:150px"><col style="width:30%"><col><col style="width:120px"></colgroup>
+        <thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
         ${done.map(r => {
             const raw = r.raw || {};
             const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
             const ans = r.ai_draft || raw.answer || '';
             return `<tr>
                 <td style="white-space:nowrap;">${fmtDt(r.posted_at || raw.create_date)}</td>
-                <td>${aoEsc(raw.product_name || '')}</td>
-                <td style="max-width:260px;">${qnaClipHtml(raw.question || '')}</td>
-                <td style="max-width:300px;">${qnaClipHtml(ans)}</td>
-                <td style="white-space:nowrap;">${by}<div class="text-muted" style="font-size:11px;">${scenLinksFromNames(r.scenario_name, scenMap) || '기록 없음'}</div></td>
+                <td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(raw.product_name || '')}">${aoEsc(raw.product_name || '')}</div></td>
+                <td style="overflow:hidden;">${qnaClipHtml(raw.question || '')}</td>
+                <td style="overflow:hidden;">${qnaClipHtml(ans)}</td>
+                <td>${by}<div class="text-muted" style="font-size:11px;">${scenLinksFromNames(r.scenario_name, scenMap) || '기록 없음'}</div></td>
             </tr>`;
         }).join('')}</tbody></table>` : '<p class="text-muted">아직 게시된 답변이 없습니다</p>';
     box.innerHTML = `
@@ -12388,9 +12394,10 @@ async function renderQnaTab() {
         </div>`;
 }
 // 긴 질문·답변 접기/펼치기 — 잘라 보여주지 않고 전체를 담되 접어둠, 누르면 전체 (대표 7/27)
+// 기준 60자 (7/27 2차 — 모바일 좁은 칸에서 90자 질문이 15줄로 늘어지던 것 방지)
 function qnaClipHtml(text) {
     const t = String(text || '');
-    if (t.length <= 130) return `<div style="white-space:pre-wrap;">${aoEsc(t)}</div>`;
+    if (t.length <= 60) return `<div style="white-space:pre-wrap;">${aoEsc(t)}</div>`;
     return `<div onclick="qnaClipToggle(this)" style="cursor:pointer;" title="누르면 전체 보기/접기">
         <div class="qna-clip">${aoEsc(t)}</div>
         <div class="qna-clip-hint" style="color:var(--primary,#4f46e5); font-size:11px; margin-top:3px;">▼ 눌러서 전체 보기</div>
@@ -12567,7 +12574,7 @@ async function renderUnansweredLogs() {
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="5">무응답 문의가 없습니다 🎉</td></tr>`;
     const tbl = (cols, thead, body) =>
-        `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
+        `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%; min-width:680px;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
     // 서브탭별 단일 목록 (대표 7/27 2차 — 상품문의 라임) + 미매칭 엑셀 버튼은 미매칭 서브탭에서만
     unansPendRows = pendRows;
     const excelBtn = document.getElementById('btn-unans-excel');
