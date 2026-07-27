@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-27.2'; // 🔴 PUT 바디 전달 수정 (POST만 바디 싣던 조건 → GET 외 전부. 상품문의 답변 400 원인)
+const RELAY_VERSION = '2026-07-27.3'; // 고객문의 답변 등록 POST 허용 추가 (pay-merchant — 쓰기 2번째)
 
 const {
     PORT = 4000,
@@ -86,7 +86,8 @@ const ALLOW = [
     { m: 'GET',  re: /^\/external\/v1\/seller\// },                                // 판매자정보 조회
     { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/query$/ }, // 상품주문 상세조회(POST지만 읽기)
     { m: 'GET',  re: /^\/external\/v1\/contents\/qnas$/ },                         // 상품문의(Q&A) 목록 조회 (STEP E)
-    { m: 'PUT',  re: /^\/external\/v1\/contents\/qnas\/\d+$/ },                    // 상품문의 답변 등록/수정 — 유일한 쓰기 (STEP E, questionId 숫자 정확일치만)
+    { m: 'PUT',  re: /^\/external\/v1\/contents\/qnas\/\d+$/ },                    // 상품문의 답변 등록/수정 (STEP E, questionId 숫자 정확일치만)
+    { m: 'POST', re: /^\/external\/v1\/pay-merchant\/inquiries\/\d+\/answer$/ },   // 고객문의 답변 등록 — 쓰기 2번째 (inquiryNo 숫자 정확일치만)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 

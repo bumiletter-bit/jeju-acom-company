@@ -12153,14 +12153,108 @@ let botProducts = [];
 let inquiryActiveTab = 'scenario';
 window.switchInquiryTab = function(name) {
     inquiryActiveTab = name;
-    for (const t of ['scenario', 'products', 'unanswered', 'qna']) {
+    for (const t of ['scenario', 'products', 'unanswered', 'qna', 'userinq']) {
         document.getElementById('inquiry-tab-' + t).style.display = name === t ? '' : 'none';
         document.getElementById('inquiry-tab-btn-' + t).className = name === t ? 'settlement-tab active' : 'settlement-tab';
     }
     if (name === 'products') renderBotProducts().catch(console.error);
     else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
     else if (name === 'qna') renderQnaTab().catch(console.error);
+    else if (name === 'userinq') renderUserInqTab().catch(console.error);
     else renderInquiryLogs().catch(console.error);
+};
+// --- 고객문의(문의하기) 탭 (대표 7/27 — 상품문의 탭 구조 재사용. 1:1 비공개·반품/교환/환불은 무조건 직원) ---
+async function renderUserInqTab() {
+    const box = document.getElementById('inquiry-tab-userinq');
+    box.innerHTML = '<div class="card"><p class="text-muted">불러오는 중...</p></div>';
+    let d;
+    try { d = await api('/api/agent-office/naver/inquiries'); }
+    catch (e) {
+        box.innerHTML = `<div class="card"><p class="text-muted">목록을 불러오지 못했습니다 — ${aoEsc(e.message)}</p></div>`;
+        return;
+    }
+    if (inquiryActiveTab !== 'userinq') return;
+    const rows = d.rows || [];
+    const isAdmin = currentUser?.role === 'admin';
+    const pending = rows.filter(r => !r.posted_at && !r.answered);
+    const done = rows.filter(r => r.posted_at || r.answered);
+    const fmtDt = (s) => { const t = s ? new Date(s) : null; return (t && !isNaN(t)) ? t.toLocaleString('ko-KR') : '-'; };
+    const toggle = isAdmin ? `
+        <label style="white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:13px;">
+            <input type="checkbox" class="ui-switch" ${d.auto_post ? 'checked' : ''} onchange="toggleInquiryAutoPost(this.checked)">
+            🤖 자동 답변 ${d.auto_post ? '<span class="pill pill-ok">ON</span>' : '<span class="pill pill-off">OFF (승인 모드)</span>'}
+        </label>` : (d.auto_post ? '<span class="pill pill-ok">🤖 자동 답변 ON</span>' : '<span class="pill pill-off">🤖 자동 답변 OFF (승인 모드)</span>');
+    const pendingHtml = pending.length ? pending.map(r => {
+        const raw = r.raw || {};
+        const badge = r.post_error ? '<span class="pill pill-off" style="color:#c0392b;">⚠️ 답변 실패</span>'
+            : r.ai_status === 'claim' ? '<span class="pill pill-off">🧾 클레임 — 직원 처리</span>'
+            : r.ai_status === 'draft' ? '<span class="pill pill-wait">🤖 AI 초안 (대기)</span>'
+            : '<span class="pill pill-off">✍️ 직원 답변 필요</span>';
+        return `
+        <div style="border:1px solid var(--border,#e2e2e6); border-radius:10px; padding:12px; margin-bottom:10px;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:13px;">
+                ${badge}
+                <span class="pill pill-wait" style="font-size:11px;">${aoEsc(raw.category || '기타')}</span>
+                <b>${aoEsc(raw.product_name || '(상품 없음)')}</b>
+                <span class="text-muted">${fmtDt(raw.registered_at)}</span>
+                ${r.scenario_name ? `<span class="text-muted">재료 시나리오: ${aoEsc(r.scenario_name)}</span>` : ''}
+            </div>
+            <div style="white-space:pre-wrap; background:var(--bg-soft,#f7f7f9); border-radius:8px; padding:10px; margin:8px 0; font-size:13px;">${aoEsc([raw.title, raw.content].filter(Boolean).join('\n'))}</div>
+            ${r.post_error ? `<div style="color:#c0392b; font-size:12px; margin-bottom:6px;">실패 사유: ${aoEsc(r.post_error)}</div>` : ''}
+            <div class="text-muted" style="font-size:12px; margin-bottom:4px;">1:1 문의 답변입니다 — 고객 이름·연락처·주문번호를 넣지 마세요 (걸리면 차단됩니다)</div>
+            <textarea id="inq-answer-${r.inquiry_id}" rows="5" class="form-input" style="font-size:13px;" placeholder="답변을 작성하세요">${aoEsc(r.ai_draft || '')}</textarea>
+            <div style="margin-top:6px;"><button class="btn-primary" onclick="postInquiryAnswer('${r.inquiry_id}')">📤 답변 등록</button></div>
+        </div>`;
+    }).join('') : '<p class="text-muted">답변 대기 중인 문의가 없습니다 🎉</p>';
+    const doneHtml = done.length ? `
+        <table class="data-table"><thead><tr><th>일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>등록</th></tr></thead><tbody>
+        ${done.map(r => {
+            const raw = r.raw || {};
+            const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
+            return `<tr>
+                <td style="white-space:nowrap;">${fmtDt(r.posted_at || raw.registered_at)}</td>
+                <td style="white-space:nowrap;">${aoEsc(raw.category || '')}</td>
+                <td>${aoEsc(raw.product_name || '')}</td>
+                <td style="max-width:260px;">${qnaClipHtml([raw.title, raw.content].filter(Boolean).join('\n'))}</td>
+                <td style="max-width:300px;">${qnaClipHtml(r.ai_draft || '(판매자센터에서 답변)')}</td>
+                <td style="white-space:nowrap;">${by}${r.scenario_name ? `<div class="text-muted" style="font-size:11px;">${aoEsc(r.scenario_name)}</div>` : ''}</td>
+            </tr>`;
+        }).join('')}</tbody></table>` : '<p class="text-muted">아직 답변된 문의가 없습니다</p>';
+    box.innerHTML = `
+        <div class="card">
+            <div class="card-header-row">
+                <h2>📮 고객문의 자동답변 <span class="text-muted" style="font-size:13px; font-weight:400;">30분마다 수집 · 1:1 비공개 답변 · 반품·교환·환불은 항상 직원 처리</span></h2>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    ${toggle}
+                    <button class="btn-sm btn-outline" onclick="renderUserInqTab()">🔄 새로고침</button>
+                </div>
+            </div>
+            <div class="sch-brief" style="margin:4px 0 12px;">
+                <span class="sch-b-chip">✍️ 대기 <b>${pending.length}건</b></span>
+                <span class="sch-b-chip">✅ 답변됨 <b>${done.length}건</b></span>
+                <span style="color:var(--text-mid,#667085); font-size:12px;">등록된 답변 수정은 판매자센터에서 해주세요</span>
+            </div>
+            <h3 style="font-size:14px; margin:6px 0;">✍️ 직원 답변 필요</h3>
+            ${pendingHtml}
+            <h3 style="font-size:14px; margin:14px 0 6px;">✅ 답변 완료 <span class="text-muted" style="font-size:12px; font-weight:400;">(자동 답변분을 확인해주세요)</span></h3>
+            <div class="table-scroll-wrapper">${doneHtml}</div>
+        </div>`;
+}
+window.postInquiryAnswer = async function(id) {
+    const el = document.getElementById('inq-answer-' + id);
+    const content = el ? el.value.trim() : '';
+    if (!content) return showToast('⚠️ 답변 내용을 입력해주세요');
+    if (!confirm('이 답변을 고객문의에 등록할까요? (문의 고객에게 바로 전달됩니다)')) return;
+    try { await api('/api/agent-office/naver/inquiries/' + id + '/answer', 'POST', { content }); showToast('✅ 답변 등록 완료 — 고객에게 전달되었습니다', 'lime'); }
+    catch (e) { showToast('❌ 답변 실패 — ' + String(e.message || '').slice(0, 80)); }
+    renderUserInqTab().catch(console.error);
+};
+window.toggleInquiryAutoPost = async function(enabled) {
+    try {
+        await api('/api/agent-office/naver/inquiry-auto-post', 'PUT', { enabled });
+        showToast(enabled ? '🤖 고객문의 자동 답변 켬 완료' : '⏸ 자동 답변 끔 완료 — 승인 모드', 'lime');
+    } catch (e) { alert(e.message); }
+    renderUserInqTab().catch(console.error);
 };
 // --- 상품문의(Q&A) 탭 (STEP E v2 — 자동 게시·직원 폴백. 게시된 답변 수정은 판매자센터에서) ---
 async function renderQnaTab() {
@@ -12465,7 +12559,7 @@ async function renderNaverTimers() {
     let alertData = null;
     try { alertData = await api('/api/agent-office/naver/alert-settings'); } catch (_) { /* 실패 시 블록 생략 */ }
     const alerts = alertData && alertData.settings;
-    const ALERT_LABELS = [['order', '신규주문'], ['claim', '취소·반품·교환'], ['inquiry', '문의'], ['settlement', '정산'], ['qna', '상품문의']];
+    const ALERT_LABELS = [['order', '신규주문'], ['claim', '취소·반품·교환'], ['inquiry', '문의'], ['settlement', '정산'], ['qna', '상품문의'], ['inqanswer', '고객문의 답변']];
     const tplEditors = alerts ? ALERT_LABELS.map(([k, label]) => {
         const tpl = (alertData.templates && alertData.templates[k]) || '';
         const vars = ((alertData.variables && alertData.variables[k]) || []).map(v => `{{${v}}}`).join(' ');

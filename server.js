@@ -846,6 +846,12 @@ async function initDB() {
         ON CONFLICT (key) DO NOTHING`);
     // 설계 변경(대표 7/27): 배정→시나리오 기반 생성 — 사용된 시나리오명(복수) 기록
     await pool.query(`ALTER TABLE naver_qnas ADD COLUMN IF NOT EXISTS ai_scenarios JSONB`);
+    // 고객문의(문의하기) 자동답변 (대표 7/27 — 상품문의 구조 재사용): 초안·게시 기록 컬럼 + 스위치(기본 OFF — SSH·첫 검증 후 ON)
+    for (const col of ['ai_status VARCHAR(10)', 'ai_scenarios JSONB', 'ai_draft TEXT', 'posted_at TIMESTAMP', 'posted_by VARCHAR(50)', 'post_error TEXT']) {
+        await pool.query(`ALTER TABLE naver_inquiries ADD COLUMN IF NOT EXISTS ${col}`);
+    }
+    await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('inquiry_auto_post', '"off"'::jsonb)
+        ON CONFLICT (key) DO NOTHING`);
     // 자동 게시 스위치 (대표 전용 토글, 기본 ON — OFF면 승인 모드: 초안 대기)
     await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('qna_auto_post', '"on"'::jsonb)
         ON CONFLICT (key) DO NOTHING`);
@@ -5092,7 +5098,7 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
 // 텔레그램 알림 설정 (대표 7/26 작업5): 종류별 ON/OFF를 DB(agent_office_config)에 저장 — 코드 하드코딩 금지
 //   수집 ON/OFF와 별개로 "알림만" 끄고 켤 수 있음. 오류 알림은 설정 대상 아님(안전상 항상 발송).
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
-const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'inquiry', 'settlement', 'qna'];
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'inquiry', 'settlement', 'qna', 'inqanswer'];
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
@@ -5100,9 +5106,10 @@ const TELEGRAM_ALERT_DEFAULTS = {
     claim: '⚠️ 취소·반품·교환 변화 {{건수}}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)',
     inquiry: '💬 고객문의 미답변 신규 {{건수}}건 ({{유형}}) — 답변은 판매자센터에서{{클레임꼬리}}',
     settlement: '🛰️ 정산 자동수집 완료 — {{시작일}}~{{종료일}} {{건수}}건. 데이터관리 > 정산 조회에서 확인하세요',
-    qna: '🛒 상품문의 신규 {{건수}}건 — 🤖 자동 게시 {{게시}}건 · ✍️ 직원 답변 필요 {{직접}}건',
+    qna: '🛒 상품문의 신규 {{건수}}건 — 🤖 자동 게시 {{게시}}건 · ✍️ 직원 답변 필요 {{직접}}건\n게시된 답변은 [문의 관리 > 상품문의]에서 확인해주세요',
+    inqanswer: '📮 고객문의 자동 답변 {{게시}}건 완료 · ✍️ 직원 답변 필요 {{직접}}건 — [문의 관리 > 고객문의]에서 답변을 확인해주세요',
 };
-const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], inquiry: ['건수', '유형', '클레임꼬리'], settlement: ['건수', '시작일', '종료일'], qna: ['건수', '게시', '직접'] };
+const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], inquiry: ['건수', '유형', '클레임꼬리'], settlement: ['건수', '시작일', '종료일'], qna: ['건수', '게시', '직접'], inqanswer: ['게시', '직접'] };
 async function telegramAlertTemplates() {
     const out = { ...TELEGRAM_ALERT_DEFAULTS };
     try {
@@ -5247,6 +5254,35 @@ app.post('/api/agent-office/naver/qnas/:id/answer', authMiddleware, async (req, 
         const id = Number(req.params.id);
         if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: '잘못된 문의 번호' });
         await naverPostQnaAnswer(id, (req.body || {}).content, adminActor(req));
+        res.json({ ok: true });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// --- 고객문의(문의하기) 자동답변 라우트 (대표 7/27) — 목록·수동 답변은 직원 가능, 자동 스위치는 대표 전용 ---
+app.get('/api/agent-office/naver/inquiries', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT inquiry_id, raw, answered, ai_status, ai_scenarios, ai_draft, posted_at, posted_by, post_error, collected_at
+             FROM naver_inquiries ORDER BY (raw->>'registered_at') DESC NULLS LAST, inquiry_id DESC LIMIT 300`);
+        const auto = (await naverCfgGet('inquiry_auto_post')) === 'on';
+        res.json({ ok: true, auto_post: auto, rows: r.rows.map(x => ({ ...x,
+            scenario_name: (Array.isArray(x.ai_scenarios) && x.ai_scenarios.length) ? x.ai_scenarios.join(' + ') : null })) });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/naver/inquiry-auto-post', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const value = (req.body && req.body.enabled === true) ? 'on' : 'off';
+        await naverCfgSet('inquiry_auto_post', value);
+        await writeAudit({ action: 'inquiry_auto_post_' + value, targetType: 'naver_inquiry', targetId: null,
+            changes: { after: { auto_post: value } }, source: 'naver-inquiry', actor: adminActor(req) });
+        res.json({ ok: true, auto_post: value === 'on' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/naver/inquiries/:id/answer', authMiddleware, async (req, res) => {
+    try {
+        const id = String(req.params.id || '').trim();
+        if (!/^\d+$/.test(id)) return res.status(400).json({ error: '잘못된 문의 번호' });
+        await naverPostInquiryAnswer(id, (req.body || {}).content, adminActor(req));
         res.json({ ok: true });
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -5803,6 +5839,7 @@ async function collectInquiry() {
     const startSearchDate = d(-2), endSearchDate = d(0);   // 최근 3일 창 (30분 주기라 충분한 겹침)
     let added = 0, updatedCnt = 0, total = 0;
     const newUnanswered = [];                              // 대표 7/26: 알림은 '미답변 신규'만 (저장은 전체 유지)
+    const freshItems = [];                                 // 대표 7/27: 신규 미답변 → 자동답변 처리 대상
     for (let page = 1; page <= 5; page++) {
         if (page > 1) await new Promise(r => setTimeout(r, 350));
         const r = await naverCallWithRetry({
@@ -5829,11 +5866,48 @@ async function collectInquiry() {
                  RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
             if (res.rows[0] && res.rows[0].inserted) {
                 added++;
-                if (!q.answered) newUnanswered.push(item.category || '기타');
+                if (!q.answered) { newUnanswered.push(item.category || '기타'); freshItems.push({ id, item }); }
             } else updatedCnt++;
         }
         const totalPages = Number(body?.totalPages) || 1;
         if (page >= totalPages) break;
+    }
+    // 대표 7/27: 신규 미답변 → 생성 → 자동 답변(inquiry_auto_post ON일 때만·기본 OFF). 반품·교환·환불 카테고리는 무조건 직원(클레임).
+    let inqPosted = 0, inqStaff = 0, inqFailed = 0;
+    if (freshItems.length) {
+        const autoOn = (await naverCfgGet('inquiry_auto_post')) === 'on';
+        for (const f of freshItems) {
+            if (/반품|교환|환불/.test(String(f.item.category || ''))) {
+                await pool.query(`UPDATE naver_inquiries SET ai_status='claim' WHERE inquiry_id=$1`, [f.id]);
+                inqStaff++;
+                continue;
+            }
+            let gen = null;
+            try { gen = await inquiryGenerate(f.item); }
+            catch (e) { console.error('[고객문의] 생성 오류(SKIP):', e.message); }
+            if (!gen) {
+                await pool.query(`UPDATE naver_inquiries SET ai_status='skip' WHERE inquiry_id=$1`, [f.id]);
+                inqStaff++;
+                continue;
+            }
+            await pool.query(`UPDATE naver_inquiries SET ai_status='draft', ai_scenarios=$2, ai_draft=$3 WHERE inquiry_id=$1`,
+                [f.id, JSON.stringify(gen.used), gen.answer]);
+            if (!autoOn) { inqStaff++; continue; }              // 승인 모드(기본): 초안 대기
+            try {
+                await naverPostInquiryAnswer(f.id, gen.answer, { name: 'auto' });
+                inqPosted++;
+            } catch (e) {
+                inqFailed++;
+                inqStaff++;
+                await pool.query(`UPDATE naver_inquiries SET post_error=$2 WHERE inquiry_id=$1`,
+                    [f.id, String((e && e.message) || e).slice(0, 300)]);
+            }
+            await new Promise(r => setTimeout(r, 350));
+        }
+        if ((inqPosted || inqStaff) && await alertEnabled('inqanswer')) {
+            notifyTelegram(await alertText('inqanswer', { '게시': inqPosted, '직접': inqStaff }));
+        }
+        if (inqFailed) notifyTelegram(`⚠️ 고객문의 자동 답변 실패 ${inqFailed}건 — [문의 관리 > 고객문의]에서 사유를 확인해주세요`);
     }
     // 90일 경과분 물리 정리 (A안 승인 — 원본은 네이버에 있음)
     await pool.query(`DELETE FROM naver_inquiries WHERE collected_at < NOW() - INTERVAL '90 days'`);
@@ -5846,7 +5920,7 @@ async function collectInquiry() {
             ? '\n※ 반품·교환·환불 유형은 클레임 관련 "문의 글"입니다 (취소·반품 타이머 알림과 별개)' : '';
         if (await alertEnabled('inquiry')) notifyTelegram(await alertText('inquiry', { '건수': newUnanswered.length, '유형': catStr, '클레임꼬리': claimTail }));
     }
-    return `문의 신규 ${added}(미답변 ${newUnanswered.length})·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
+    return `문의 신규 ${added}(미답변 ${newUnanswered.length}·자동답변 ${inqPosted}·직원필요 ${inqStaff})·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
 }
 
 // ══════════════ 상품문의(Q&A) 자동답변 (STEP E 설계 v2 — docs/superpowers/specs/2026-07-26-naver-qna-autoreply-design.md) ══════════════
@@ -6141,6 +6215,111 @@ async function collectQna() {
     }
     if (failed) notifyTelegram(`⚠️ 상품문의 자동 게시 실패 ${failed}건 — [문의 관리 > 상품문의]에서 사유를 확인해주세요`);
     return `상품문의 신규 ${added}(자동게시 ${posted}·직원필요 ${needStaff})·갱신 ${updatedCnt} (창 내 총 ${total}건)`;
+}
+
+// ══════════════ 고객문의(문의하기) 자동답변 (대표 7/27 — 상품문의 v2 구조 재사용) ══════════════
+//   비공개 1:1 게시판(구매자↔판매자). 반품·교환·환불 카테고리는 코드에서 무조건 직원(클레임 — 생성 호출 자체 안 함).
+//   쓰기: POST /external/v1/pay-merchant/inquiries/{inquiryNo}/answer  body {answerComment} — 공식 문서 확정.
+//   등록만 사용(네이버가 기답변 건 ERR-NC-101010으로 재차단) · 정정은 판매자센터. 재료·치환·PII·꼬리는 상품문의와 공용.
+function inquiryBuildSystem(scenarios) {
+    return `당신은 제주 농산물 스마트스토어 "제주아꼼이네"의 AI 고객상담 담당자입니다.
+지금부터 스마트스토어 "고객문의(문의하기)" — 문의를 남긴 그 고객에게만 보이는 1:1 문의 게시판 — 의 답변을 작성합니다.
+아래 "회사 확정 답변자료(시나리오)"만을 재료로 사용합니다.
+
+## 철칙 — 사실은 재료에 있는 것만 (가장 중요한 규칙)
+1. 가격·배송 기간·판매 시기·구성·수량·사이즈·보관법·정책(반품/환불/교환)·연락처·링크 등 모든 '사실 정보'는 아래 재료에 적힌 값 그대로만 사용하세요. 재료에 없는 사실은 한 줄도, 한 단어도 지어내면 안 됩니다.
+2. 문의에 답하려면 재료에 없는 사실이 필요한 경우 → 반드시 SKIP 하세요.
+3. 환불·보상·반품 여부를 새로 결정하거나 새로운 약속을 만들지 마세요. 재료에 적힌 처리 안내 문구의 범위 안에서만 안내하세요.
+
+## 답변 작성 방법
+- 해당하는 시나리오가 1개면 그것을 기반으로 질문 맥락에 맞게 자연스럽게, 여러 개면 조합해 하나의 완전한 답변으로 작성하세요.
+- 말투는 재료의 말투 그대로: 밝고 공손한 존댓말 + 🍊 이모지. "안녕하세요 고객님, 제주아꼼이네입니다 🍊"로 시작하세요.
+- 답변의 마지막 줄은 반드시 이 문구 그대로 넣으세요: "${QNA_TAIL}"
+- {{가격표}}, {{판매현황}} 표시와 "(예시)"로 시작하는 줄이 재료에 있으면 지우거나 채우지 말고 그대로 두세요. 발송 전에 시스템이 실제 데이터로 교체합니다.
+
+## 고객문의 전용 규칙 (1:1 게시판)
+- 문의 첫 줄에 "[상품: OO]" 표시가 있으면 그 상품 기준으로 답하세요. 다른 품목 재료를 섞어 쓰면 안 됩니다.
+- 이 시스템은 개별 주문을 조회할 수 없습니다. 주문 확인·변경·발송일 확인 등 개별 처리가 필요한 요청은 확정 약속("맞춰 발송하겠습니다") 대신, 방법을 안내한 뒤 "스토어 톡톡 또는 📞 010-6687-4031 고객센터로 말씀 주시면 확인 후 진행해드리겠습니다"로 안내하세요.
+- 이 게시판으로는 사진을 받을 수 없습니다. 사진 확인이 필요한 내용은 톡톡·고객센터로 유도하세요.
+- 고객이 문의에 적은 이름·연락처·주소를 답변에 반복하지 마세요.
+
+## SKIP — 아래 경우에는 답변을 작성하지 말고 SKIP만 출력
+- 재료로 답할 수 없는 문의 (재료에 없는 상품·사실이 필요한 경우)
+- 파손·부패·오배송 등 사진 확인이나 개별 보상 판단이 필요한 클레임성 문의
+- 개인 취향 판단·추천을 요구하는 문의 (재료의 사실 안내만으로 충분한 경우는 답변 가능)
+- 의미를 파악할 수 없는 문의 · 조금이라도 애매하면 SKIP이 정답입니다.
+
+## 출력 형식 (정확히 지키세요)
+- 답변하는 경우: 첫 줄에 "사용시나리오: 이름1 | 이름2" (재료 목록의 이름 그대로), 둘째 줄부터 답변 본문만.
+- SKIP하는 경우: "SKIP" 한 단어만 출력.
+
+## 회사 확정 답변자료 (시나리오)
+${scenarios.map(s => `### ${s.name}\n${s.response}`).join('\n\n')}`;
+}
+async function inquiryGenerate(item) {
+    if (!process.env.ANTHROPIC_API_KEY) return null;
+    const scenarios = await qnaScenarios();                       // 재료 공용: 채널 상품문의·공통
+    if (!scenarios.length) return null;
+    let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
+    try {
+        const { statusText } = await qnaStoreData();
+        if (statusText) storeBlock = `## 현재 스토어 판매현황\n${statusText}\n\n- 품절/시즌종료 상품 구매 문의 → 품절·재입고 관련 재료로 답하세요.\n- 판매현황과 재료에 없는 상품 문의 → SKIP 하세요.`;
+    } catch (_) { /* 조회 실패 → 보수적 안내 유지 */ }
+    const question = [item.title, item.content].filter(Boolean).join('\n');
+    const userContent = item.product_name ? `[상품: ${item.product_name}]\n${question}` : question;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+        model: QNA_MODEL, max_tokens: 2048,
+        system: [
+            { type: 'text', text: inquiryBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: storeBlock },
+        ],
+        messages: [{ role: 'user', content: userContent }],
+    });
+    const raw = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    if (!raw || /^SKIP\b/.test(raw)) return null;
+    let used = [], answer = raw;
+    const m = raw.match(/^사용시나리오\s*[:：]\s*(.+)\r?\n?/);
+    if (m) {
+        used = m[1].split('|').map(s => s.trim()).filter(Boolean);
+        answer = raw.slice(m[0].length).trim();
+    }
+    answer = answer.split('\n').filter(l => !l.trim().startsWith('###')).join('\n').trim();
+    if (!answer || /^SKIP\b/.test(answer)) return null;
+    used = used.filter(n => scenarios.some(s => s.name === n));
+    if (!answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;
+    const filterText = (question + ' ' + String(item.product_name || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
+    answer = await qnaRenderPlaceholders(answer, filterText);
+    return { answer, used };
+}
+
+// 🔴 고객문의 쓰기 함수 — PII·미답변 검증·audit 내장. 호출 지점: collectInquiry 자동·수동 게시 라우트 2곳뿐.
+async function naverPostInquiryAnswer(inquiryNo, content, actor) {
+    let text = String(content || '').trim();
+    if (!text) throw { status: 400, message: '답변 내용이 비어 있습니다' };
+    text = await qnaRenderPlaceholders(text, text);
+    if (text.length > 2000) throw { status: 400, message: '답변이 2,000자를 넘습니다 — 줄여주세요' };
+    const pii = qnaPiiCheck(text);
+    if (!pii.ok) throw { status: 403, message: pii.reason };
+    const cur = await pool.query('SELECT answered, posted_at FROM naver_inquiries WHERE inquiry_id=$1', [String(inquiryNo)]);
+    if (!cur.rows.length) throw { status: 404, message: '해당 문의를 찾을 수 없습니다 (수집 후 다시 시도해주세요)' };
+    if (cur.rows[0].answered || cur.rows[0].posted_at) throw { status: 409, message: '이미 답변된 문의입니다 — 수정은 판매자센터에서 해주세요' };
+    try {
+        await naverCallWithRetry({ method: 'POST', path: `/external/v1/pay-merchant/inquiries/${Number(inquiryNo)}/answer`, body: { answerComment: text } });
+    } catch (e) {
+        const detail = (e && e.data) ? ' — ' + JSON.stringify(e.data).slice(0, 200) : '';
+        throw { status: (e && e.status) || 500, message: String((e && e.message) || e) + detail };
+    }
+    const by = (actor && actor.name) || 'auto';
+    await pool.query(
+        `UPDATE naver_inquiries SET answered=true, posted_at=NOW(), posted_by=$2, post_error=NULL, ai_draft=$3,
+             ai_status=CASE WHEN $4 THEN 'posted' ELSE ai_status END
+         WHERE inquiry_id=$1`, [String(inquiryNo), by, text, by === 'auto']);
+    await writeAudit({
+        action: 'post_answer', targetType: 'naver_inquiry', targetId: null,
+        changes: { after: { inquiry_id: String(inquiryNo), by, length: text.length } },
+        source: 'naver-inquiry', actor: (actor && actor.id) ? actor : null,
+    });
 }
 
 let _naverTickBusy = false;
