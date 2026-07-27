@@ -10,7 +10,8 @@ const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // 카피 품질이 중요해서 Haiku가 아닌 Sonnet급 기본 (환경변수로 교체 가능)
-const GEULSAEM_MODEL = process.env.GEULSAEM_MODEL || 'claude-sonnet-4-6';
+// 대표 7/27: claude-sonnet-4-6에서 상향 — 구형이 본문 필드에 "test"만 넣는 사고(run#219)·제목 오염 파편(run#60) 반복 → 톡톡봇과 동일 모델로 통일
+const GEULSAEM_MODEL = process.env.GEULSAEM_MODEL || 'claude-sonnet-5';
 
 const KNOWLEDGE_DIR = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing');
 const KNOWLEDGE_FILES = [
@@ -234,30 +235,40 @@ module.exports = {
 4. 버전: 단일·구체 지시면 1개, 열린 지시면 최대 3개(안정형/어그로형/감성형).
 5. 과장·허위 금지, 명분 없는 할인 표현 금지 (명분 라이브러리 준수).
 6. 반드시 submit_copy 도구로 제출한다. 도구 밖 텍스트 응답 금지.
+7. 🔴 versions[].text에는 **즉시 사용 가능한 완성 본문 전체**를 넣는다 — "test"·요약·자리 텍스트·제목만 넣는 것은 실패다 (char_counts에 적은 글자 수와 본문 실제 길이가 일치해야 한다).
 ${loadKnowledge()}${lessonsText}${discountText}${inquiryMaterials}`;
 
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        let msg;
-        try {
-            msg = await anthropic.messages.create({
-                model: GEULSAEM_MODEL,
-                max_tokens: 4000,
-                system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-                tools: [COPY_TOOL],
-                tool_choice: { type: 'tool', name: 'submit_copy' },
-                messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
-            });
-        } catch (err) {
-            // 오류 정직 표시 — 허위 카피 생성 금지
-            throw new Error(err && err.status
-                ? `Anthropic API 오류 (${err.status}): ${err.message}`
-                : (err && err.message) || String(err));
+        const callModel = async (extraNote) => {
+            let msg;
+            try {
+                msg = await anthropic.messages.create({
+                    model: GEULSAEM_MODEL,
+                    max_tokens: 4000,
+                    system: [{ type: 'text', text: systemPrompt + (extraNote || ''), cache_control: { type: 'ephemeral' } }],
+                    tools: [COPY_TOOL],
+                    tool_choice: { type: 'tool', name: 'submit_copy' },
+                    messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
+                });
+            } catch (err) {
+                // 오류 정직 표시 — 허위 카피 생성 금지
+                throw new Error(err && err.status
+                    ? `Anthropic API 오류 (${err.status}): ${err.message}`
+                    : (err && err.message) || String(err));
+            }
+            const toolUse = msg.content.find(b => b.type === 'tool_use');
+            if (!toolUse) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
+            return toolUse.input;
+        };
+        // 본문 실물 검증 (대표 7/27 — run#219에서 본문에 "test" 4자만 담긴 사고): 전 버전이 40자 미만이면 1회 재시도, 그래도 실패면 정직 오류
+        let c = await callModel();
+        let versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
+        if (versions.length === 0 || versions.every(v => String(v.text).trim().length < 40)) {
+            c = await callModel('\n\n※ 경고: 직전 응답의 versions[].text에 완성 본문이 없었다. 각 버전 text에 즉시 사용 가능한 완성 본문 전체를 반드시 담아라. 자리 텍스트·요약 금지.');
+            versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
         }
-        const toolUse = msg.content.find(b => b.type === 'tool_use');
-        if (!toolUse) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
-        const c = toolUse.input;
-        const versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
         if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다');
+        if (versions.every(v => String(v.text).trim().length < 40)) throw new Error('글샘이 완성 본문 대신 자리 텍스트만 제출했습니다 (재시도 후에도 실패 — 허위 보고 방지 차단)');
         const missing = Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [];
         // 지시 #39: 제목 필드 정화 — run #60에서 오염 파편(태그+versions JSON 원문 1,366자)이
         // 제목에 유입돼 대표 화면에 노출된 첫 사례. 정화 불가 시 제목 생략 (몰래 지어내기 금지)

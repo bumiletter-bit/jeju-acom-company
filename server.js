@@ -6974,7 +6974,7 @@ async function maruBuildSystemPrompt() {
         const swv = Object.fromEntries(sw.map(x => [x.key, x.value]));
         inquirySnapshot = `
 
-## 문의 현황 스냅샷 (실시간 DB — 이 범위의 질문은 action='answer'로 즉답. 여기 없는 상세 수치는 지어내지 말고 [문의 관리] 화면 안내)
+## 문의 현황 스냅샷 (실시간 DB — 이 범위의 질문은 action='answer'로 즉답하되, 🔴 답 내용을 반드시 answer_text 필드에 아래 수치 그대로 담아라. answer_text를 비우는 것 = 실패. 여기 없는 상세 수치는 지어내지 말고 [문의 관리] 화면 안내)
 - 답변 시나리오(사용중): ${sc.map(x => `${x.channel} ${x.n}건`).join(' · ') || '없음'}
 - 최근 7일 고객문의 수집: ${cat.length ? cat.map(x => `${x.c || '기타'} ${x.n}건`).join(' · ') : '없음'}
 - 답변 대기: 상품문의 ${qnaPend}건 · 고객문의 ${inqPend}건 (담당 직원이 [문의 관리]에서 처리)
@@ -7358,11 +7358,14 @@ async function maruDecide(content, image = null) {
     const pollution = polluted ? { first: maruPollutionSample(raw) } : null;
     let d = maruCleanDecision(raw);
     // (b) 조건부 재시도 (2026-07-18 대표 채택): 평시엔 정화기만으로 방어 (호출 1회).
-    // 정화 후 필수값이 비어 배정 불능일 때만 재호출 — 재시도가 오염을 못 없앤다는 실측(변형 태그)에 따른 비용·지연 절감.
-    if (polluted && maruDecisionUnusable(d)) {
-        raw = await call('\n\n※ 경고: 직전 응답의 필드 값에 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 action에 필요한 필드만 출력하고 관계없는 필드는 아예 출력하지 않는다. 꺾쇠괄호와 마크업 문법은 어떤 필드에도 절대 넣지 않는다.');
+    // 정화 후 필수값이 비어 배정 불능이면 재호출 — 대표 7/27 확장: 오염 없이 필수 필드만 빈 경우(answer_text 누락 #300·#301)도
+    // 어차피 실패 확정이므로 1회 재시도한다 (기존엔 오염 감지 시에만 재시도해 빈 answer가 그대로 나감).
+    if (maruDecisionUnusable(d)) {
+        raw = await call(polluted
+            ? '\n\n※ 경고: 직전 응답의 필드 값에 태그 문법이 섞여 있었다. 각 필드에는 순수한 값만 넣어라. 해당 action에 필요한 필드만 출력하고 관계없는 필드는 아예 출력하지 않는다. 꺾쇠괄호와 마크업 문법은 어떤 필드에도 절대 넣지 않는다.'
+            : '\n\n※ 경고: 직전 응답에서 action에 필요한 필수 필드가 비어 있었다 (answer면 answer_text, route면 assignee, clarify면 clarify_question). 해당 필드에 실제 내용을 반드시 채워서 다시 출력하라.');
         polluted = maruDecisionPolluted(raw);
-        if (polluted) pollution.retry = maruPollutionSample(raw);
+        if (polluted) { if (pollution) pollution.retry = maruPollutionSample(raw); }
         d = maruCleanDecision(raw);
     }
     return { d, polluted, pollution };
