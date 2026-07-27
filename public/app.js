@@ -12559,7 +12559,9 @@ async function renderNaverTimers() {
     let alertData = null;
     try { alertData = await api('/api/agent-office/naver/alert-settings'); } catch (_) { /* 실패 시 블록 생략 */ }
     const alerts = alertData && alertData.settings;
-    const ALERT_LABELS = [['order', '신규주문'], ['claim', '취소·반품·교환'], ['inquiry', '문의'], ['settlement', '정산'], ['qna', '상품문의'], ['inqanswer', '고객문의 답변']];
+    // 대표 7/27 알림 개선: 문의 알림을 상황별 4종으로 재편 (답변완료 확인 / 직접 처리 필요 / 미처리 리마인더 / 아침 브리핑)
+    const ALERT_LABELS = [['order', '신규주문'], ['claim', '취소·반품·교환'], ['settlement', '정산'],
+        ['autodone', '문의 답변완료(확인)'], ['staffneed', '직접 처리 필요'], ['reminder', '미처리 리마인더'], ['briefing', '아침 브리핑']];
     const tplEditors = alerts ? ALERT_LABELS.map(([k, label]) => {
         const tpl = (alertData.templates && alertData.templates[k]) || '';
         const vars = ((alertData.variables && alertData.variables[k]) || []).map(v => `{{${v}}}`).join(' ');
@@ -12582,6 +12584,18 @@ async function renderNaverTimers() {
                 <label style="white-space:nowrap; display:flex; align-items:center; gap:5px; opacity:.6;" title="안전상 항상 발송됩니다"><input type="checkbox" class="ui-switch" checked disabled> 오류 <span class="text-muted" style="font-size:11px;">(항상 ON — 문구 편집 대상 아님)</span></label>
             </div>
             ${tplEditors}
+            ${alertData.quiet ? `
+            <div style="margin-top:10px; padding-top:8px; border-top:1px dashed var(--border,#eee); font-size:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <b>🌙 야간 조용</b>
+                <input type="text" id="alert-q-start" value="${aoEsc(alertData.quiet.night_start)}" style="width:52px; padding:4px; border:1px solid var(--border,#ccc); border-radius:6px; text-align:center;"> ~
+                <input type="text" id="alert-q-end" value="${aoEsc(alertData.quiet.night_end)}" style="width:52px; padding:4px; border:1px solid var(--border,#ccc); border-radius:6px; text-align:center;">
+                <b>🌅 브리핑</b>
+                <input type="text" id="alert-q-brief" value="${aoEsc(alertData.quiet.briefing_time)}" style="width:52px; padding:4px; border:1px solid var(--border,#ccc); border-radius:6px; text-align:center;">
+                <b>⏰ 리마인더 간격(분)</b>
+                <input type="number" id="alert-q-remind" value="${Number(alertData.quiet.reminder_min) || 120}" min="15" max="720" style="width:60px; padding:4px; border:1px solid var(--border,#ccc); border-radius:6px; text-align:center;">
+                <button class="btn-sm btn-outline" onclick="saveAlertQuiet()">저장</button>
+                <span class="text-muted" style="font-size:11px;">야간엔 문의 알림만 조용 — 수집·자동답변은 계속 · 오류 알림은 항상 발송</span>
+            </div>` : ''}
         </div>` : '';
     // 대표 7/26 B: 자동 로그아웃 유휴 시간 (기본 3시간 — 이용 중이면 자동 연장)
     let idleH = null;
@@ -12602,6 +12616,21 @@ window.saveSessionIdle = async function() {
     if (!Number.isFinite(hours) || hours < 0.5 || hours > 24) { alert('0.5~24시간 사이로 입력해주세요'); return; }
     try { await api('/api/agent-office/session-idle', 'PUT', { hours }); alert(`자동 로그아웃을 ${hours}시간으로 저장했습니다`); }
     catch (e) { alert(e.message); }
+};
+window.saveAlertQuiet = async function() {
+    const v = (id) => (document.getElementById(id) || {}).value || '';
+    const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (!hhmm.test(v('alert-q-start')) || !hhmm.test(v('alert-q-end')) || !hhmm.test(v('alert-q-brief'))) {
+        return showToast('⚠️ 시각은 HH:MM 형식으로 입력해주세요 (예: 21:30)');
+    }
+    try {
+        await api('/api/agent-office/naver/alert-settings', 'PUT', { quiet: {
+            night_start: v('alert-q-start'), night_end: v('alert-q-end'),
+            briefing_time: v('alert-q-brief'), reminder_min: parseInt(v('alert-q-remind')) || 120,
+        } });
+        showToast('✅ 야간·브리핑·리마인더 설정 저장 완료', 'lime');
+    } catch (e) { alert(e.message); }
+    renderNaverTimers().catch(console.error);
 };
 window.saveAlertSetting = async function(key, enabled) {
     try { await api('/api/agent-office/naver/alert-settings', 'PUT', { [key]: enabled }); showToast('✅ 알림 설정이 저장되었습니다'); }

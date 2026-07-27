@@ -5098,18 +5098,22 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
 // 텔레그램 알림 설정 (대표 7/26 작업5): 종류별 ON/OFF를 DB(agent_office_config)에 저장 — 코드 하드코딩 금지
 //   수집 ON/OFF와 별개로 "알림만" 끄고 켤 수 있음. 오류 알림은 설정 대상 아님(안전상 항상 발송).
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
-const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'inquiry', 'settlement', 'qna', 'inqanswer'];
+// 대표 7/27 알림 개선: 문의 3채널 알림을 상황별 4종(answered/staffneed/reminder/briefing)으로 재편 —
+//   구 'inquiry'(미답변 신규)·'qna'(신규+게시 혼합)·'inqanswer' 키는 은퇴 (DB에 남은 옛 문구 오버라이드는 무해)
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing'];
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
     order: '🛰️ 신규 주문 {{건수}}건 (자동수집 — 발주확인은 수기)',
     claim: '⚠️ 취소·반품·교환 변화 {{건수}}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)',
-    inquiry: '💬 고객문의 미답변 신규 {{건수}}건 ({{유형}}) — 답변은 판매자센터에서{{클레임꼬리}}',
     settlement: '🛰️ 정산 자동수집 완료 — {{시작일}}~{{종료일}} {{건수}}건. 데이터관리 > 정산 조회에서 확인하세요',
-    qna: '🛒 상품문의 신규 {{건수}}건 — 🤖 자동 게시 {{게시}}건 · ✍️ 직원 답변 필요 {{직접}}건\n게시된 답변은 [문의 관리 > 상품문의]에서 확인해주세요',
-    inqanswer: '📮 고객문의 자동 답변 {{게시}}건 완료 · ✍️ 직원 답변 필요 {{직접}}건 — [문의 관리 > 고객문의]에서 답변을 확인해주세요',
+    autodone: '📮 {{채널}} 답변완료 {{건수}}건 — 확인바람 ([문의 관리]에서 답변 내용 확인)',
+    staffneed: '✍️ 직접 처리해야 할 문의가 있습니다 {{건수}}건 ({{채널}}) — [문의 관리]에서 답변해주세요',
+    reminder: '⏰ 미처리 문의 {{건수}}건 — 가장 오래된 건 {{경과}}시간 경과. [문의 관리]에서 처리해주세요',
+    briefing: '🌅 밤사이 문의 현황 ({{시작}}~{{종료}})\n{{내용}}',
 };
-const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], inquiry: ['건수', '유형', '클레임꼬리'], settlement: ['건수', '시작일', '종료일'], qna: ['건수', '게시', '직접'], inqanswer: ['게시', '직접'] };
+const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], settlement: ['건수', '시작일', '종료일'],
+    autodone: ['채널', '건수'], staffneed: ['건수', '채널'], reminder: ['건수', '경과'], briefing: ['시작', '종료', '내용'] };
 async function telegramAlertTemplates() {
     const out = { ...TELEGRAM_ALERT_DEFAULTS };
     try {
@@ -5135,6 +5139,83 @@ async function telegramAlertSettings() {
 }
 async function alertEnabled(kind) { return (await telegramAlertSettings())[kind] !== false; }
 
+// ── 문의 알림 야간 모드·리마인더·아침 브리핑 (대표 7/27) — 시각·간격은 전부 DB(agent_office_config 'alert_quiet'), 코드 하드코딩 없음
+//    야간에도 수집·자동답변은 평소대로 — "알림만" 조용. 오류 알림은 기존 원칙대로 항상 발송.
+const ALERT_QUIET_DEFAULT = { night_start: '21:30', night_end: '07:30', briefing_time: '07:30', reminder_min: 120 };
+async function alertQuietCfg() {
+    try {
+        const v = await naverCfgGet('alert_quiet');
+        return { ...ALERT_QUIET_DEFAULT, ...(v && typeof v === 'object' ? v : {}) };
+    } catch (_) { return { ...ALERT_QUIET_DEFAULT }; }
+}
+function kstHHMM() {
+    const k = new Date(Date.now() + 9 * 3600 * 1000);
+    return String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0');
+}
+function inQuietWindow(cfg, hhmm) {
+    const s = cfg.night_start, e = cfg.night_end;
+    return s <= e ? (hhmm >= s && hhmm < e) : (hhmm >= s || hhmm < e);   // 자정 걸침(21:30~07:30) 지원
+}
+async function alertQuietNow() { return inQuietWindow(await alertQuietCfg(), kstHHMM()); }
+// 직원 답변 대기(미답변·미게시) 건수 + 가장 오래된 경과시간 — 발송 시점 DB 실계산 (답변되면 자동 제외)
+async function inquiryStaffPending() {
+    const q = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(collected_at) AS o FROM naver_qnas WHERE answered IS NOT TRUE AND posted_at IS NULL`)).rows[0];
+    const i = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(collected_at) AS o FROM naver_inquiries WHERE answered IS NOT TRUE AND posted_at IS NULL`)).rows[0];
+    const oldest = [q.o, i.o].filter(Boolean).map(x => new Date(x).getTime()).sort()[0] || null;
+    return { n: q.n + i.n, hours: oldest ? Math.max(0, Math.floor((Date.now() - oldest) / 3600000)) : 0 };
+}
+let _inqAlertBusy = false;
+async function inquiryAlertTick() {
+    if (_inqAlertBusy) return;
+    _inqAlertBusy = true;
+    try {
+        const cfg = await alertQuietCfg();
+        const hhmm = kstHHMM();
+        const todayKst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        // ① 아침 브리핑 — 하루 1회 (첫 가동 날은 발송 없이 기준일만 기록: 배포 직후 오후에 '밤사이' 오발송 방지)
+        if (hhmm >= cfg.briefing_time) {
+            const st = await naverCfgGet('alert_briefing_state');
+            if (!st || !st.date) {
+                await naverCfgSet('alert_briefing_state', { date: todayKst });
+            } else if (st.date !== todayKst && await alertEnabled('briefing')) {
+                const [sh, sm] = String(cfg.night_start).split(':').map(Number);
+                const k = new Date(Date.now() + 9 * 3600 * 1000);
+                let startUtc = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate(), sh, sm) - 9 * 3600 * 1000;
+                if (startUtc > Date.now()) startUtc -= 86400 * 1000;   // 가장 최근의 야간 시작 시각
+                const w = new Date(startUtc);
+                const aq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
+                const ai = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_inquiries WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
+                const nq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE collected_at >= $1`, [w])).rows[0].n;
+                const ni = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_inquiries WHERE collected_at >= $1`, [w])).rows[0].n;
+                const p = await inquiryStaffPending();
+                const lines = [];
+                if (aq + ai > 0) lines.push(`📮 자동 답변완료 ${aq + ai}건 (상품문의 ${aq}·고객문의 ${ai}) — 확인바람`);
+                if (p.n > 0) lines.push(`✍️ 직접 처리 필요 ${p.n}건 (가장 오래된 건 ${p.hours}시간 경과)`);
+                if (!lines.length) lines.push(nq + ni > 0 ? `신규 ${nq + ni}건 수집 — 전부 처리됨` : '밤사이 신규 문의 없음');
+                notifyTelegram(await alertText('briefing', { '시작': cfg.night_start, '종료': cfg.briefing_time, '내용': lines.join('\n') }));
+                await naverCfgSet('alert_briefing_state', { date: todayKst });
+            } else if (st.date !== todayKst) {
+                await naverCfgSet('alert_briefing_state', { date: todayKst });   // 브리핑 OFF여도 기준일은 갱신
+            }
+        }
+        // ② 미처리 리마인더 — 주간(야간 창 밖)만, 대기 있을 때만, 설정 간격마다 (처리되면 자동 중단)
+        if (!inQuietWindow(cfg, hhmm) && await alertEnabled('reminder')) {
+            const p = await inquiryStaffPending();
+            if (p.n > 0) {
+                const st = await naverCfgGet('alert_reminder_state');
+                const last = st && st.last ? Date.parse(st.last) : 0;
+                const gapMs = Math.max(15, Number(cfg.reminder_min) || 120) * 60 * 1000;
+                if (Date.now() - last >= gapMs) {
+                    notifyTelegram(await alertText('reminder', { '건수': p.n, '경과': p.hours }));
+                    await naverCfgSet('alert_reminder_state', { last: new Date().toISOString() });
+                }
+            }
+        }
+    } catch (e) { console.error('[문의알림 틱] 오류:', e.message); }
+    finally { _inqAlertBusy = false; }
+}
+setInterval(inquiryAlertTick, 60 * 1000);
+
 // 자동 로그아웃 유휴 시간 설정 (대표 7/26 B — DB 저장, 기본 3시간, 0.5~24시간)
 app.get('/api/agent-office/session-idle', authMiddleware, adminOnly, async (req, res) => {
     try {
@@ -5159,7 +5240,7 @@ app.put('/api/agent-office/session-idle', authMiddleware, adminOnly, async (req,
 app.get('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, async (req, res) => {
     try {
         res.json({ ok: true, settings: await telegramAlertSettings(), templates: await telegramAlertTemplates(),
-            defaults: TELEGRAM_ALERT_DEFAULTS, variables: TELEGRAM_ALERT_VARS });
+            defaults: TELEGRAM_ALERT_DEFAULTS, variables: TELEGRAM_ALERT_VARS, quiet: await alertQuietCfg() });
     } catch (err) { handleAdminErr(res, err); }
 });
 app.put('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, async (req, res) => {
@@ -5181,8 +5262,21 @@ app.put('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, asy
             await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('telegram_alert_templates', $1::jsonb)
                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(tpl)]);
         }
+        // 야간·브리핑·리마인더 설정 (대표 7/27 — 전부 DB, 코드 하드코딩 없음)
+        if (req.body && typeof req.body.quiet === 'object' && req.body.quiet) {
+            const qIn = req.body.quiet;
+            const cur2 = await alertQuietCfg();
+            const hhmmOk = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || ''));
+            const nextQ = {
+                night_start: hhmmOk(qIn.night_start) ? qIn.night_start : cur2.night_start,
+                night_end: hhmmOk(qIn.night_end) ? qIn.night_end : cur2.night_end,
+                briefing_time: hhmmOk(qIn.briefing_time) ? qIn.briefing_time : cur2.briefing_time,
+                reminder_min: Math.min(720, Math.max(15, parseInt(qIn.reminder_min) || cur2.reminder_min)),
+            };
+            await naverCfgSet('alert_quiet', nextQ);
+        }
         await writeAudit({ action: 'alert_settings', targetType: 'telegram_alert', targetId: null,
-            changes: { before: cur, after: next, templates: (req.body || {}).templates || null }, source: 'naver-api', actor: adminActor(req) });
+            changes: { before: cur, after: next, templates: (req.body || {}).templates || null, quiet: (req.body || {}).quiet || null }, source: 'naver-api', actor: adminActor(req) });
         res.json({ ok: true, settings: next, templates: await telegramAlertTemplates() });
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -5904,22 +5998,16 @@ async function collectInquiry() {
             }
             await new Promise(r => setTimeout(r, 350));
         }
-        if ((inqPosted || inqStaff) && await alertEnabled('inqanswer')) {
-            notifyTelegram(await alertText('inqanswer', { '게시': inqPosted, '직접': inqStaff }));
+        // 대표 7/27 알림 개선: 상황별 분리 + 야간 조용 (오류 알림은 항상)
+        if (!(await alertQuietNow())) {
+            if (inqPosted > 0 && await alertEnabled('autodone')) notifyTelegram(await alertText('autodone', { '채널': '고객문의', '건수': inqPosted }));
+            if (inqStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': inqStaff, '채널': '고객문의' }));
         }
         if (inqFailed) notifyTelegram(`⚠️ 고객문의 자동 답변 실패 ${inqFailed}건 — [문의 관리 > 고객문의]에서 사유를 확인해주세요`);
     }
     // 90일 경과분 물리 정리 (A안 승인 — 원본은 네이버에 있음)
     await pool.query(`DELETE FROM naver_inquiries WHERE collected_at < NOW() - INTERVAL '90 days'`);
-    // 대표 7/26 승인(1+2+3): 미답변 신규만 알림 + 유형 분해 표기 + 클레임 유형 꼬리표. 이미 답변된 옛 문의는 저장만.
-    if (newUnanswered.length > 0) {
-        const byCat = {};
-        for (const c of newUnanswered) byCat[c] = (byCat[c] || 0) + 1;
-        const catStr = Object.entries(byCat).map(([c, n]) => `${c} ${n}`).join('·');
-        const claimTail = Object.keys(byCat).some(c => /반품|교환|환불/.test(c))
-            ? '\n※ 반품·교환·환불 유형은 클레임 관련 "문의 글"입니다 (취소·반품 타이머 알림과 별개)' : '';
-        if (await alertEnabled('inquiry')) notifyTelegram(await alertText('inquiry', { '건수': newUnanswered.length, '유형': catStr, '클레임꼬리': claimTail }));
-    }
+    // 대표 7/27 알림 개선: 구 '미답변 신규' 통합 알림 은퇴 — 위의 답변완료/직접필요 분리 알림이 대체 (0건=무알림 유지)
     return `문의 신규 ${added}(미답변 ${newUnanswered.length}·자동답변 ${inqPosted}·직원필요 ${inqStaff})·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
 }
 
@@ -6210,8 +6298,10 @@ async function collectQna() {
     }
     // 90일 경과분 물리 정리 (원본은 네이버에 있음 — 고객문의와 동일 정책)
     await pool.query(`DELETE FROM naver_qnas WHERE collected_at < NOW() - INTERVAL '90 days'`);
-    if (fresh.length && await alertEnabled('qna')) {
-        notifyTelegram(await alertText('qna', { '건수': fresh.length, '게시': posted, '직접': needStaff }));
+    // 대표 7/27 알림 개선: 상황별 분리 (0건=무알림·자동처리=확인바람·직원필요=별도) + 야간엔 조용 (오류 알림은 항상)
+    if (!(await alertQuietNow())) {
+        if (posted > 0 && await alertEnabled('autodone')) notifyTelegram(await alertText('autodone', { '채널': '상품문의', '건수': posted }));
+        if (needStaff > 0 && await alertEnabled('staffneed')) notifyTelegram(await alertText('staffneed', { '건수': needStaff, '채널': '상품문의' }));
     }
     if (failed) notifyTelegram(`⚠️ 상품문의 자동 게시 실패 ${failed}건 — [문의 관리 > 상품문의]에서 사유를 확인해주세요`);
     return `상품문의 신규 ${added}(자동게시 ${posted}·직원필요 ${needStaff})·갱신 ${updatedCnt} (창 내 총 ${total}건)`;
