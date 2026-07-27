@@ -1924,11 +1924,16 @@
                 <div id="inquiry-tab-unanswered" style="display:none;">
                     <div class="card">
                         <div class="card-header-row">
-                            <h2>💬 톡톡 문의 <span class="text-muted" style="font-size:13px; font-weight:400;">봇 답변·무응답 한눈에 (실시간 자동응답 — 재료 번호 클릭 시 편집)</span></h2>
+                            <h2>💬 톡톡 문의 <span class="text-muted" style="font-size:13px; font-weight:400;">실시간 자동응답 · 재료 번호 클릭 시 시나리오 편집</span></h2>
                             <div style="display:flex; gap:8px; align-items:center;">
-                                <button class="btn-sm btn-outline" id="btn-unans-excel">📥 엑셀</button>
+                                <button class="btn-sm btn-outline" id="btn-unans-excel" style="display:none;">📥 미매칭 엑셀</button>
                                 <button class="btn-sm btn-outline" id="btn-unans-refresh">🔄 새로고침</button>
                             </div>
+                        </div>
+                        <!-- 대표 7/27: 상품문의 라임 — 자동답변/미매칭 2칸 서브탭 -->
+                        <div class="settlement-tab-bar" style="margin:2px 0 10px;">
+                            <button class="settlement-tab active" id="unans-sub-btn-auto" onclick="switchUnansSub('auto')">🤖 톡톡문의 자동답변</button>
+                            <button class="settlement-tab" id="unans-sub-btn-skip" onclick="switchUnansSub('skip')">📭 미매칭·무응답</button>
                         </div>
                         <div id="unans-stats" style="font-size:13px; margin:4px 0 10px;"></div>
                         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:13px; margin-bottom:10px;">
@@ -2204,6 +2209,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=308"></script>
+    <script src="app.js?v=309"></script>
 </body>
 </html>

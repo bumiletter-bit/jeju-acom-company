@@ -12491,7 +12491,15 @@ function setupBotProductsTab() {
 }
 // --- 무응답 현황 탭 (톡톡봇 /unmatched 이관 2026-07-26, 조회 전용) ---
 let unansRows = [];
-// 대표 7/27 개편: 무응답 현황 → "💬 톡톡 문의" — 봇 답변/무응답 2섹션 상시 표시 (상품문의 탭의 대기/완료 구분처럼)
+let unansPendRows = [];   // 미매칭·무응답 (엑셀 다운로드 대상)
+// 대표 7/27 2차 개편: 상품문의 라임 — "🤖 자동답변 / 📭 미매칭·무응답" 2칸 서브탭
+let unansSubTab = 'auto';
+window.switchUnansSub = function(name) {
+    unansSubTab = name;
+    document.getElementById('unans-sub-btn-auto').className = name === 'auto' ? 'settlement-tab active' : 'settlement-tab';
+    document.getElementById('unans-sub-btn-skip').className = name === 'skip' ? 'settlement-tab active' : 'settlement-tab';
+    renderUnansweredLogs().catch(console.error);
+};
 async function renderUnansweredLogs() {
     const period = document.getElementById('unans-period').value;
     const date = document.getElementById('unans-date').value.trim();
@@ -12508,15 +12516,19 @@ async function renderUnansweredLogs() {
     unansRows = d.rows || [];
 
     const w = d.week || {};
-    const total = w.total || 0, answered = w.answered || 0, skipped = w.skipped || 0;
-    const rate = total ? Math.round(answered / total * 100) : 0;
-    // 디자인 가이드: 브리핑 스트립(sch-brief) + 칩(sch-b-chip) 재사용
-    let statsHtml = `<div class="sch-brief" style="margin-bottom:10px;">`
-        + `<span class="sch-b-chip">📊 7일 문의 <b>${total}건</b></span>`
-        + `<span class="sch-b-chip">자동응답률 <b>${rate}%</b></span>`
-        + `<span class="sch-b-chip">미매칭 <b>${skipped}건</b></span>`;
-    if ((d.top_unmatched || []).length) {
-        statsHtml += `<span style="color:var(--text-mid,#667085);">TOP: ` + d.top_unmatched.map(t => `${aoEsc(t.item)} ${t.n}건`).join(' · ') + `</span>`;
+    const total = w.total || 0, wAnswered = w.answered || 0, skipped = w.skipped || 0;
+    const rate = total ? Math.round(wAnswered / total * 100) : 0;
+    // 디자인 가이드: 브리핑 스트립(sch-brief) + 칩(sch-b-chip) 재사용 — 서브탭별 맞춤 칩 (대표 7/27 2차)
+    let statsHtml = `<div class="sch-brief" style="margin-bottom:10px;">`;
+    if (unansSubTab === 'skip') {
+        statsHtml += `<span class="sch-b-chip">📭 7일 미매칭 <b>${skipped}건</b></span>`;
+        if ((d.top_unmatched || []).length) {
+            statsHtml += `<span style="color:var(--text-mid,#667085);">TOP: ` + d.top_unmatched.map(t => `${aoEsc(t.item)} ${t.n}건`).join(' · ') + `</span>`;
+        }
+    } else {
+        statsHtml += `<span class="sch-b-chip">📊 7일 문의 <b>${total}건</b></span>`
+            + `<span class="sch-b-chip">자동응답률 <b>${rate}%</b></span>`
+            + `<span class="sch-b-chip">🤖 봇 답변 <b>${wAnswered}건</b></span>`;
     }
     statsHtml += `</div>`;
     document.getElementById('unans-stats').innerHTML = statsHtml;
@@ -12556,11 +12568,13 @@ async function renderUnansweredLogs() {
         </tr>`).join('') : `<tr class="empty-row"><td colspan="5">무응답 문의가 없습니다 🎉</td></tr>`;
     const tbl = (cols, thead, body) =>
         `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
-    document.getElementById('unans-list').innerHTML = `
-        <h3 style="font-size:14px; margin:6px 0;">📭 무응답·미매칭 <b>${pendRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(직원 확인 필요 — 자주 나오는 유형은 시나리오로 등록)</span></h3>
-        ${tbl(pendCols, pendThead, pendBody)}
-        <h3 style="font-size:14px; margin:14px 0 6px;">✅ 봇 답변 <b>${answeredRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(재료 번호 클릭 → 시나리오 편집)</span></h3>
-        ${tbl(ansCols, ansThead, ansBody)}`;
+    // 서브탭별 단일 목록 (대표 7/27 2차 — 상품문의 라임) + 미매칭 엑셀 버튼은 미매칭 서브탭에서만
+    unansPendRows = pendRows;
+    const excelBtn = document.getElementById('btn-unans-excel');
+    if (excelBtn) excelBtn.style.display = unansSubTab === 'skip' ? '' : 'none';
+    document.getElementById('unans-list').innerHTML = unansSubTab === 'skip'
+        ? `<h3 style="font-size:14px; margin:6px 0;">📭 미매칭·무응답 <b>${pendRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(직원 확인 필요 — 자주 나오는 유형은 시나리오로 등록 · 우측 상단 [📥 미매칭 엑셀]로 다운로드)</span></h3>${tbl(pendCols, pendThead, pendBody)}`
+        : `<h3 style="font-size:14px; margin:6px 0;">🤖 봇 답변 <b>${answeredRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(재료 번호 클릭 → 시나리오 편집)</span></h3>${tbl(ansCols, ansThead, ansBody)}`;
 }
 function setupUnansweredTab() {
     document.getElementById('btn-unans-refresh').addEventListener('click', () => renderUnansweredLogs().catch(console.error));
@@ -12572,8 +12586,9 @@ function setupUnansweredTab() {
         if (e.key === 'Enter') renderUnansweredLogs().catch(console.error);
     });
     document.getElementById('btn-unans-excel').addEventListener('click', () => {
-        if (!unansRows.length) return alert('내보낼 데이터가 없습니다');
-        const data = unansRows.map(r => ({
+        // 대표 7/27 2차: 엑셀 = 미매칭·무응답 목록 다운로드 (미매칭 서브탭 전용 버튼)
+        if (!unansPendRows.length) return alert('내보낼 미매칭·무응답 데이터가 없습니다');
+        const data = unansPendRows.map(r => ({
             '시각': new Date(r.received_at).toLocaleString('ko-KR'),
             '답변여부': r.answered ? '봇 답변' : '무응답',
             '품목': r.item || '-',
