@@ -7252,6 +7252,20 @@ function maruNormalizeDecision(d) {
 
 // 날짜 파싱은 date-utils.js로 이동 (v5.0 1단계 — 월 단위 파싱 추가, 로컬 테스트 공용)
 
+// 🔴 7/27 실측(audit #2073, stop_reason=tool_use): 도구 JSON 생성 중 태그 오염("</antml_parameter>")으로
+//   긴 자유 텍스트 필드(answer_text)가 소실되는 고질 — 답변만은 도구 없이 평문 재질의로 복구한다 (오염 원천 불가 경로).
+async function maruPlainAnswer(question) {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const sys = await maruBuildSystemPrompt();
+    const msg = await anthropic.messages.create({
+        model: MARU_MODEL, max_tokens: 1500,
+        system: sys + '\n\n※ 지금은 배정 도구를 쓰지 않는다. 아래 대표 질문에 대한 답변 본문만 평문으로 출력하라 (태그·마크업·JSON 금지). 문의 현황 스냅샷 범위면 그 수치를 그대로 사용하고, 모르는 수치는 지어내지 말고 정직하게 모른다고 한다.',
+        messages: [{ role: 'user', content: `대표 질문: ${question}` }],
+    });
+    const text = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    return maruCleanText(text);
+}
+
 // 접수 지시 상태 갱신 헬퍼
 async function maruFinishOrder(orderId, status, result, runId = null) {
     await pool.query(
@@ -9009,9 +9023,15 @@ async function processOrderWithMaru(order, actor, opts = {}) {
 
         // 대표 7/22: 마루 직접 답변 (개념·용어 설명·이미지 뜻 등 일반 질문) — 배정 없이 즉답
         if (d.action === 'answer') {
+            let answerText = String(d.answer_text || '').trim();
+            if (!answerText) {
+                // 도구 JSON 오염으로 answer_text 소실 시 평문 폴백 (7/27 — #300~#316 연쇄 실사고의 최종 방어)
+                try { answerText = await maruPlainAnswer(effContent); }
+                catch (e) { console.error('[마루] 평문 답변 폴백 실패:', e.message); }
+            }
             await maruFinishOrder(order.id, '완료', {
                 type: 'answer',
-                text: String(d.answer_text || '').trim() || '답변을 생성하지 못했습니다',
+                text: answerText || '답변을 생성하지 못했습니다',
                 summary: d.task_summary || '마루 직접 답변', reason: d.reason,
             });
             return;
