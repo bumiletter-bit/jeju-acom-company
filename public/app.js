@@ -73,10 +73,16 @@ if (!isStandalone) {
 }
 
 // ---- API Helper (JWT 자동 첨부) ----
+// 대표 7/27: 자동 로그아웃 '이용' 판정 — 실제 사용자 행동(클릭·입력·터치·스크롤) 후 30초 이내의 요청에만
+//   X-User-Active 헤더를 붙인다. 알림 30초 폴링 같은 자동 요청은 헤더가 없어 세션을 연장하지 못한다.
+let _lastUserAct = Date.now();
+['click', 'keydown', 'touchstart', 'scroll'].forEach(ev =>
+    window.addEventListener(ev, () => { _lastUserAct = Date.now(); }, { passive: true, capture: true }));
 async function api(url, method = 'GET', body = null) {
     const options = { method, headers: {} };
     const token = localStorage.getItem('jwt_token');
     if (token) options.headers['Authorization'] = `Bearer ${token}`;
+    if (Date.now() - _lastUserAct < 30000) options.headers['X-User-Active'] = '1';
     if (body) {
         options.headers['Content-Type'] = 'application/json';
         options.body = JSON.stringify(body);
@@ -2595,7 +2601,7 @@ async function renderUserList() {
         } else {
             tbody.innerHTML = users.map(u => `<tr${u.retired ? ' style="opacity:.55;"' : ''}>
                 <td>${u.username}</td>
-                <td>${u.name}${u.retired ? ' <span class="pill pill-off">퇴사</span>' : ''}</td>
+                <td>${u.name}${u.retired ? ' <span class="pill pill-off">퇴사</span>' : ''}${u.idleHours ? ` <span class="pill pill-wait" style="font-size:11px;" title="자동 로그아웃 예외 — 전체 설정 대신 이 시간 적용">🔒 ${u.idleHours}h</span>` : ''}</td>
                 <td>${u.position || '-'}</td>
                 <td><span class="user-color-dot" style="background:${u.color};display:inline-block;"></span> ${u.color}</td>
                 <td>${u.role === 'admin' ? '관리자' : u.role === 'accountant' ? '세무사' : '직원'}</td>
@@ -2848,6 +2854,10 @@ window.openUserModal = async function(userId) {
                 <label>잔여연차</label>
                 <input type="number" id="modal-user-annual" class="form-input" value="${user ? user.annualLeave : 15}" min="0">
             </div>
+            <div class="form-group">
+                <label>자동 로그아웃 예외 (시간) <span style="color:#98a2b3; font-weight:400;">— 비우면 전체 설정을 따름 · 예: 발주컴퓨터 12</span></label>
+                <input type="number" id="modal-user-idle" class="form-input" value="${user && user.idleHours != null ? user.idleHours : ''}" min="0.5" max="24" step="0.5" placeholder="비움 = 전체 설정">
+            </div>
             <button class="btn-primary" id="modal-user-save" style="width:100%;">저장</button>
         </div>
     `;
@@ -2862,7 +2872,8 @@ window.openUserModal = async function(userId) {
                 position: overlay.querySelector('#modal-user-position').value.trim(),
                 color: overlay.querySelector('#modal-user-color').value,
                 role: overlay.querySelector('#modal-user-role').value,
-                annualLeave: Number(overlay.querySelector('#modal-user-annual').value) || 0
+                annualLeave: Number(overlay.querySelector('#modal-user-annual').value) || 0,
+                idleHours: (() => { const v = overlay.querySelector('#modal-user-idle').value.trim(); return v === '' ? null : Number(v); })()
             };
             const pw = overlay.querySelector('#modal-user-password').value;
 

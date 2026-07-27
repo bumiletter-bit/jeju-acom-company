@@ -46,15 +46,24 @@ setInterval(() => { // 25시간 지난 항목 정리 (JWT 절대만료 7일과 �
     const now = Date.now();
     for (const [k, t] of _sessionLastSeen) if (now - t > 25 * 3600 * 1000) _sessionLastSeen.delete(k);
 }, 3600 * 1000);
-let _idleCache = { at: 0, ms: 3 * 3600 * 1000 };
-async function sessionIdleMs() {
-    if (Date.now() - _idleCache.at < 60_000) return _idleCache.ms; // 1분 캐시
+// 대표 7/27: ①'이용'을 실제 사용자 행동으로 한정 — 프론트가 클릭·입력·스크롤 후 30초 내 요청에만 X-User-Active:1 헤더를
+//   붙이고, 서버는 만료 검사는 모든 요청에·연장 갱신은 그 헤더가 있을 때만 (알림 30초 폴링이 세션을 무한 연장하던 버그 수정)
+//   ②계정별 예외 시간(users.idle_hours — 비면 전체 설정) 지원. 예: 발주컴퓨터 12시간.
+let _idleCache = { at: 0, ms: 3 * 3600 * 1000, users: {} };
+async function sessionIdleInfo() {
+    if (Date.now() - _idleCache.at < 60_000) return _idleCache; // 1분 캐시
     try {
         const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'session_idle_hours'`);
         const h = parseFloat(r.rows[0] && r.rows[0].value);
-        _idleCache = { at: Date.now(), ms: (Number.isFinite(h) && h >= 0.5 && h <= 24 ? h : 3) * 3600 * 1000 };
+        const u = await pool.query(`SELECT id, idle_hours FROM users WHERE idle_hours IS NOT NULL AND deleted_at IS NULL`);
+        const users = {};
+        for (const row of u.rows) {
+            const uh = parseFloat(row.idle_hours);
+            if (Number.isFinite(uh) && uh >= 0.5 && uh <= 24) users[row.id] = uh * 3600 * 1000;
+        }
+        _idleCache = { at: Date.now(), ms: (Number.isFinite(h) && h >= 0.5 && h <= 24 ? h : 3) * 3600 * 1000, users };
     } catch (_) { _idleCache.at = Date.now(); } // 조회 실패 → 기존값 유지
-    return _idleCache.ms;
+    return _idleCache;
 }
 
 async function authMiddleware(req, res, next) {
@@ -67,12 +76,15 @@ async function authMiddleware(req, res, next) {
     }
     try {
         const sig = token.slice(-40);
+        const info = await sessionIdleInfo();
+        const idleMs = (req.user && info.users[req.user.id]) || info.ms;   // 계정별 예외 우선, 없으면 전체 설정
         const last = _sessionLastSeen.get(sig);
-        if (last && Date.now() - last > await sessionIdleMs()) {
+        if (last && Date.now() - last > idleMs) {
             _sessionLastSeen.delete(sig);
             return res.status(401).json({ error: '오랫동안 사용하지 않아 자동 로그아웃되었습니다. 다시 로그인해주세요' });
         }
-        _sessionLastSeen.set(sig, Date.now());
+        // 연장은 실제 사용자 행동(X-User-Active) 요청만 — 자동 폴링은 만료 검사만 받고 연장 못 함. 최초 1회는 기준 시각 시딩.
+        if (!last || req.headers['x-user-active'] === '1') _sessionLastSeen.set(sig, Date.now());
     } catch (_) { /* 유휴 추적 실패는 통과 (로그인 자체를 막지 않음) */ }
     next();
 }
@@ -918,6 +930,8 @@ async function initDB() {
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50)`);
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
+    // 계정별 자동 로그아웃 예외 시간 (대표 7/27 — NULL=전체 설정 따름, 예: 발주컴퓨터 12시간)
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS idle_hours NUMERIC`);
 
     // 서버 재시작으로 중단된 실행 정리 ('실행중'으로 남은 기록 → 오류 처리)
     await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW(),
@@ -1211,11 +1225,12 @@ app.get('/api/users', authMiddleware, adminOnly, async (req, res) => {
         // 기본 재직자만. ?include_retired=1 이면 퇴사자 포함(사용자 관리의 복구용 — retired 표시)
         const withRetired = req.query.include_retired === '1';
         const result = await pool.query(
-            `SELECT id, username, name, position, color, role, annual_leave, created_at, deleted_at FROM users
+            `SELECT id, username, name, position, color, role, annual_leave, idle_hours, created_at, deleted_at FROM users
              ${withRetired ? '' : 'WHERE deleted_at IS NULL'} ORDER BY (deleted_at IS NOT NULL), id`);
         res.json(result.rows.map(u => ({
             id: u.id, username: u.username, name: u.name, position: u.position,
             color: u.color, role: u.role, annualLeave: Number(u.annual_leave),
+            idleHours: u.idle_hours != null ? Number(u.idle_hours) : null,   // 계정별 자동 로그아웃 예외 (NULL=전체 설정)
             retired: !!u.deleted_at, retiredAt: u.deleted_at
         })));
     } catch (err) {
@@ -1322,7 +1337,7 @@ app.get('/api/users/leave-summary', authMiddleware, adminOnly, async (req, res) 
 
 app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { name, position, color, role, annualLeave, password } = req.body;
+        const { name, position, color, role, annualLeave, idleHours, password } = req.body;
         const fields = [];
         const values = [];
         let idx = 1;
@@ -1332,6 +1347,14 @@ app.put('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
         if (color !== undefined) { fields.push(`color = $${idx++}`); values.push(color); }
         if (role !== undefined) { fields.push(`role = $${idx++}`); values.push(role); }
         if (annualLeave !== undefined) { fields.push(`annual_leave = $${idx++}`); values.push(annualLeave); }
+        if (idleHours !== undefined) {   // 계정별 자동 로그아웃 예외 (대표 7/27): null/빈값 = 전체 설정 따름
+            const ih = idleHours === null || idleHours === '' ? null : parseFloat(idleHours);
+            if (ih !== null && (!Number.isFinite(ih) || ih < 0.5 || ih > 24)) {
+                return res.status(400).json({ error: '자동 로그아웃 예외 시간은 0.5~24시간 사이거나 비워두세요' });
+            }
+            fields.push(`idle_hours = $${idx++}`); values.push(ih);
+            _idleCache.at = 0;   // 캐시 무효화 — 다음 요청부터 즉시 반영
+        }
         if (password) { fields.push(`password_hash = $${idx++}`); values.push(await bcrypt.hash(password, 10)); }
 
         if (fields.length === 0) return res.status(400).json({ error: '수정할 항목이 없습니다' });
@@ -5230,7 +5253,7 @@ app.put('/api/agent-office/session-idle', authMiddleware, adminOnly, async (req,
         if (!Number.isFinite(h) || h < 0.5 || h > 24) throw { status: 400, message: '유휴 시간은 0.5~24시간 사이로 입력하세요' };
         await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('session_idle_hours', $1::jsonb)
             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(h)]);
-        _idleCache = { at: 0, ms: _idleCache.ms }; // 캐시 무효화 — 다음 요청부터 즉시 반영
+        _idleCache = { at: 0, ms: _idleCache.ms, users: _idleCache.users || {} }; // 캐시 무효화 — 다음 요청부터 즉시 반영
         await writeAudit({ action: 'session_idle', targetType: 'session', targetId: null,
             changes: { after: { hours: h } }, source: 'admin_api', actor: adminActor(req) });
         res.json({ ok: true, hours: h });
