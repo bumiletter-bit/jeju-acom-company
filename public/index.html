@@ -1863,6 +1863,7 @@
                     <button class="settlement-tab active" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">💬 시나리오</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-unanswered" onclick="switchInquiryTab('unanswered')">📭 무응답 현황</button>
+                    <button class="settlement-tab" id="inquiry-tab-btn-qna" onclick="switchInquiryTab('qna')">🛰️ 상품문의</button>
                 </div>
                 <div id="inquiry-tab-scenario">
                 <!-- 대표 7/26: 편집 카드를 목록 위로 — [새 시나리오]가 맨 위에서 열리도록 -->
@@ -1948,6 +1949,8 @@
                         <div id="unans-list" class="table-scroll-wrapper"></div>
                     </div>
                 </div>
+                <!-- 상품문의(Q&A) 자동답변 (STEP E v2 — 자동 게시·직원 폴백) : 목록은 JS 렌더 -->
+                <div id="inquiry-tab-qna" style="display:none;"></div>
                 <!-- 대표 7/26: 수정 이력은 관리자만 (직원에겐 카드 숨김) -->
                 <div class="card" id="inquiry-history-card" style="display:none;">
                     <h2>🕓 수정 이력</h2>
@@ -2203,6 +2206,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=293"></script>
+    <script src="app.js?v=294"></script>
 </body>
 </html>

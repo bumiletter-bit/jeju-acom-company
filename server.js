@@ -826,6 +826,27 @@ async function initDB() {
             collected_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 상품문의(Q&A) 저장소 (STEP E 설계 v2 — docs/superpowers/specs/2026-07-26-naver-qna-autoreply-design.md)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_qnas (
+            question_id BIGINT PRIMARY KEY,
+            raw JSONB,
+            answered BOOLEAN,
+            ai_status VARCHAR(10),
+            ai_scenario_id INTEGER,
+            ai_draft TEXT,
+            posted_at TIMESTAMP,
+            posted_by VARCHAR(50),
+            post_error TEXT,
+            collected_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    // qna 수집 타이머 시드 (기본 OFF — 중계서버 ALLOW 반영 전 켜면 403 실패 표시됨)
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('qna', false, 30)
+        ON CONFLICT (key) DO NOTHING`);
+    // 자동 게시 스위치 (대표 전용 토글, 기본 ON — OFF면 승인 모드: 초안 대기)
+    await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('qna_auto_post', '"on"'::jsonb)
+        ON CONFLICT (key) DO NOTHING`);
     // 쿠팡 API 키 만료(2027-01-21) 재발급 알림 일정 — 1회 시드 (지시문_쿠팡_송장변환_연동 §5)
     //   ⚠️ 메인 달력(/api/schedules)은 users INNER JOIN이라 user_id 필수 → 대표(admin) 계정으로 등록 (리뷰 지적 반영)
     const cpAdmin = await pool.query(`SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1`);
@@ -5069,7 +5090,7 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
 // 텔레그램 알림 설정 (대표 7/26 작업5): 종류별 ON/OFF를 DB(agent_office_config)에 저장 — 코드 하드코딩 금지
 //   수집 ON/OFF와 별개로 "알림만" 끄고 켤 수 있음. 오류 알림은 설정 대상 아님(안전상 항상 발송).
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
-const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'inquiry', 'settlement'];
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'inquiry', 'settlement', 'qna'];
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
@@ -5077,8 +5098,9 @@ const TELEGRAM_ALERT_DEFAULTS = {
     claim: '⚠️ 취소·반품·교환 변화 {{건수}}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)',
     inquiry: '💬 고객문의 미답변 신규 {{건수}}건 ({{유형}}) — 답변은 판매자센터에서{{클레임꼬리}}',
     settlement: '🛰️ 정산 자동수집 완료 — {{시작일}}~{{종료일}} {{건수}}건. 데이터관리 > 정산 조회에서 확인하세요',
+    qna: '🛒 상품문의 신규 {{건수}}건 — 🤖 자동 게시 {{게시}}건 · ✍️ 직원 답변 필요 {{직접}}건',
 };
-const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], inquiry: ['건수', '유형', '클레임꼬리'], settlement: ['건수', '시작일', '종료일'] };
+const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], inquiry: ['건수', '유형', '클레임꼬리'], settlement: ['건수', '시작일', '종료일'], qna: ['건수', '게시', '직접'] };
 async function telegramAlertTemplates() {
     const out = { ...TELEGRAM_ALERT_DEFAULTS };
     try {
@@ -5191,6 +5213,37 @@ app.put('/api/agent-office/naver/auto-collect-all', authMiddleware, adminOnly, a
         await pool.query('UPDATE naver_auto_collect SET enabled=$1, updated_at=NOW()', [on]);
         await writeAudit({ action: on ? 'all_on' : 'all_off', targetType: 'naver_auto_collect', targetId: null, changes: { after: { enabled: on } }, source: 'naver-timer', actor: adminActor(req) });
         res.json({ message: on ? '전체 타이머를 켰습니다' : '전체 타이머를 껐습니다' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// --- 상품문의(Q&A) 라우트 (STEP E) — 목록·수동 게시는 직원 가능, 자동 게시 스위치는 대표 전용 ---
+app.get('/api/agent-office/naver/qnas', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT question_id, raw, answered, ai_status, ai_scenario_id, ai_draft, posted_at, posted_by, post_error, collected_at
+             FROM naver_qnas ORDER BY (raw->>'create_date') DESC NULLS LAST, question_id DESC LIMIT 300`);
+        const auto = (await naverCfgGet('qna_auto_post')) !== 'off';
+        const scen = await pool.query(`SELECT id, name FROM inquiry_scenarios`);   // 이름 표기용 (삭제분 포함 — 과거 기록 표시)
+        const names = Object.fromEntries(scen.rows.map(s => [s.id, s.name]));
+        res.json({ ok: true, auto_post: auto, rows: r.rows.map(x => ({ ...x, scenario_name: names[x.ai_scenario_id] || null })) });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/naver/qna-auto-post', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const value = (req.body && req.body.enabled === false) ? 'off' : 'on';
+        await naverCfgSet('qna_auto_post', value);
+        await writeAudit({ action: 'qna_auto_post_' + value, targetType: 'naver_qna', targetId: null,
+            changes: { after: { auto_post: value } }, source: 'naver-qna', actor: adminActor(req) });
+        res.json({ ok: true, auto_post: value === 'on' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+// 수동 게시 (SKIP 건 직원 작성·승인 모드 초안 게시 겸용) — 쓰기는 naverPostQnaAnswer 공용 함수 경유
+app.post('/api/agent-office/naver/qnas/:id/answer', authMiddleware, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: '잘못된 문의 번호' });
+        await naverPostQnaAnswer(id, (req.body || {}).content, adminActor(req));
+        res.json({ ok: true });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -5633,7 +5686,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
-const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '취소·반품', inquiry: '문의' };
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '취소·반품', inquiry: '문의', qna: '상품문의' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -5792,6 +5845,214 @@ async function collectInquiry() {
     return `문의 신규 ${added}(미답변 ${newUnanswered.length})·갱신 ${updatedCnt} (${startSearchDate}~${endSearchDate}, 창 내 총 ${total}건)`;
 }
 
+// ══════════════ 상품문의(Q&A) 자동답변 (STEP E 설계 v2 — docs/superpowers/specs/2026-07-26-naver-qna-autoreply-design.md) ══════════════
+//   수집(30분) → 배정(배정만 — AI 문장 생성 금지·확정 문구 그대로) → 확신 건 자동 게시(qna_auto_post, 기본 ON) → SKIP은 직원 대기.
+//   쓰기(PUT contents/qnas/{id})는 naverPostQnaAnswer() 한 함수로만 — PII 검사·미답변 검증·audit 내장(호출자 우회 불가).
+
+// 공개 게시판 게시 차단 검사 — 회사 공개 연락처만 예외
+const QNA_PII_WHITELIST = ['010-6687-4031', '010 6687 4031', 'bumiletter@naver.com'];
+function qnaPiiCheck(text) {
+    let t = String(text || '');
+    for (const w of QNA_PII_WHITELIST) t = t.split(w).join(' ');
+    const rules = [
+        [/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/, '전화번호로 보이는 숫자'],
+        [/\d{2,4}[-\s.]\d{3,4}[-\s.]\d{4}/, '전화번호로 보이는 숫자'],
+        [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/, '이메일 주소'],
+        [/\d{14,}/, '주문번호로 보이는 긴 숫자'],
+        [/(시|군|구)\s?\S{0,12}(로|길)\s?\d/, '주소로 보이는 문구'],
+        [/\d+동\s?\d+호/, '주소(동·호)로 보이는 문구'],
+    ];
+    for (const [re, why] of rules) {
+        const m = t.match(re);
+        if (m) return { ok: false, reason: `개인정보 의심(${why}: "${m[0]}") — 공개 게시판에 게시할 수 없습니다. 해당 부분을 지우고 다시 시도해주세요.` };
+    }
+    return { ok: true };
+}
+
+// {{가격표}}/{{판매현황}} 서버 렌더 — 톡톡봇 products-store.js와 동일 규칙(그룹·용량순, 준비중 미노출)
+async function qnaRenderPlaceholders(text) {
+    if (!/\{\{(가격표|판매현황)\}\}/.test(String(text || ''))) return text;
+    const { rows } = await pool.query(`SELECT name, status, price FROM bot_products WHERE deleted_at IS NULL`);
+    const groupOf = (name) => {
+        if (/청귤|풋귤/.test(name)) return 0;
+        if (/감귤|하우스귤|타이벡|노지/.test(name)) return 1;
+        if (/황금향/.test(name)) return 2;
+        if (/밤호박|단호박/.test(name)) return 3;
+        return 4;
+    };
+    const sizeKg = (name) => { const m = String(name).match(/(\d+(?:\.\d+)?)\s*kg/i); return m ? parseFloat(m[1]) : 999; };
+    const sortProducts = (arr) => [...arr].sort((a, b) =>
+        groupOf(a.name) - groupOf(b.name) || sizeKg(a.name) - sizeKg(b.name) || a.name.localeCompare(b.name, 'ko'));
+    const selling = sortProducts(rows.filter(r => r.status === '판매중'));
+    const soldout = sortProducts(rows.filter(r => r.status === '품절'));
+    const closed = sortProducts(rows.filter(r => r.status === '시즌종료'));
+    const statusText = [
+        ...selling.map(r => `- ${r.name}: 판매중${r.price ? ` (${r.price})` : ''}`),
+        ...soldout.map(r => `- ${r.name}: 품절`),
+        ...closed.map(r => `- ${r.name}: 시즌종료`),
+    ].join('\n');
+    const priceLines = [];
+    let prevGroup = null;
+    for (const r of selling) {
+        if (!r.price) continue;
+        const g = groupOf(r.name);
+        if (prevGroup !== null && g !== prevGroup) priceLines.push('');
+        prevGroup = g;
+        priceLines.push(`🍊 ${r.name} — ${r.price}`);
+    }
+    const priceText = priceLines.join('\n') || '(가격이 입력된 판매중 상품이 없어요 — 스토어에서 확인해주세요!)';
+    return String(text).replace(/\{\{가격표\}\}/g, priceText).replace(/\{\{판매현황\}\}/g, statusText);
+}
+
+// 배정 대상 시나리오 (채널 상품문의·공통만 — 시나리오 0건이면 전부 SKIP = 단계적 가동)
+async function qnaScenarios() {
+    const r = await pool.query(
+        `SELECT id, scenario_no, name, keywords, response FROM inquiry_scenarios
+         WHERE enabled = true AND deleted_at IS NULL AND channel IN ('상품문의','공통')
+         ORDER BY scenario_no ASC, id ASC`);
+    return r.rows.map(s => ({ ...s, keywords: Array.isArray(s.keywords) ? s.keywords : [] }));
+}
+// 1차: 키워드 매칭 (톡톡봇 findScenario와 동일한 정규화 — 소문자·공백 제거 포함 매칭)
+function qnaKeywordHits(question, scenarios) {
+    const normalized = String(question || '').toLowerCase().replace(/\s/g, '');
+    const hits = [];
+    for (const s of scenarios) {
+        let count = 0;
+        for (const k of s.keywords) {
+            const kk = String(k || '').toLowerCase().replace(/\s/g, '');
+            if (kk && normalized.includes(kk)) count++;
+        }
+        if (count > 0) hits.push(s);
+    }
+    return hits;
+}
+// 2차: LLM 판정 (배정만 — 번호 또는 SKIP만 출력. 형식 위반·불확실·오류 = SKIP)
+async function qnaLlmPick(question, candidates) {
+    if (!process.env.ANTHROPIC_API_KEY) return null;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const list = candidates.map(s => `${s.scenario_no}. ${s.name} (키워드: ${(s.keywords || []).join(', ')})`).join('\n');
+    const msg = await anthropic.messages.create({
+        model: MARU_MODEL, max_tokens: 50, temperature: 0,
+        system: '너는 스마트스토어 상품문의(공개 게시판) 답변 시나리오 배정기다. 문의 내용에 정확히 들어맞는 시나리오가 확실할 때만 그 번호를 고른다. 여러 개에 걸치거나, 개별 주문 확인이 필요하거나, 조금이라도 애매하면 SKIP. 답은 {"pick":번호} 또는 {"pick":"SKIP"} JSON 하나만 출력한다.',
+        messages: [{ role: 'user', content: `[시나리오 목록]\n${list}\n\n[고객 문의]\n${question}\n\nJSON만 출력:` }],
+    });
+    const txt = ((msg.content && msg.content[0] && msg.content[0].text) || '').trim();
+    const m = txt.match(/\{[^}]*\}/);
+    if (!m) return null;
+    try {
+        const no = Number(JSON.parse(m[0]).pick);
+        if (!Number.isFinite(no)) return null;
+        return candidates.find(s => s.scenario_no === no) || null;
+    } catch (_) { return null; }
+}
+async function qnaAssign(question) {
+    const scenarios = await qnaScenarios();
+    if (!scenarios.length) return null;
+    const hits = qnaKeywordHits(question, scenarios);
+    if (hits.length === 1) return hits[0];                       // 확신: 단일 시나리오만 매칭
+    try { return await qnaLlmPick(question, hits.length ? hits : scenarios); }
+    catch (e) { console.error('[상품문의] LLM 배정 실패(SKIP):', e.message); return null; }
+}
+
+// 🔴 유일한 쓰기 함수 — PII 검사·미답변 검증·audit 내장. 호출 지점은 collectQna(자동)와 수동 게시 라우트 2곳뿐.
+async function naverPostQnaAnswer(questionId, content, actor) {
+    const text = String(content || '').trim();
+    if (!text) throw { status: 400, message: '답변 내용이 비어 있습니다' };
+    if (text.length > 2000) throw { status: 400, message: '답변이 2,000자를 넘습니다 — 줄여주세요' };
+    const pii = qnaPiiCheck(text);
+    if (!pii.ok) throw { status: 403, message: pii.reason };
+    const cur = await pool.query('SELECT answered, posted_at FROM naver_qnas WHERE question_id=$1', [questionId]);
+    if (!cur.rows.length) throw { status: 404, message: '해당 문의를 찾을 수 없습니다 (수집 후 다시 시도해주세요)' };
+    if (cur.rows[0].answered || cur.rows[0].posted_at) throw { status: 409, message: '이미 답변된 문의입니다 — 수정은 판매자센터에서 해주세요' };
+    await naverCallWithRetry({ method: 'PUT', path: `/external/v1/contents/qnas/${questionId}`, body: { commentContent: text } });
+    const by = (actor && actor.name) || 'auto';
+    await pool.query(
+        `UPDATE naver_qnas SET answered=true, posted_at=NOW(), posted_by=$2, post_error=NULL, ai_draft=$3,
+             ai_status=CASE WHEN $2='auto' THEN 'posted' ELSE ai_status END
+         WHERE question_id=$1`, [questionId, by, text]);
+    await writeAudit({
+        action: 'post_answer', targetType: 'naver_qna', targetId: null,
+        changes: { after: { question_id: String(questionId), by, length: text.length } },
+        source: 'naver-qna', actor: (actor && actor.id) ? actor : null,
+    });
+}
+
+// qna 수집기 — 최근 3일 창(30분 주기, 충분한 겹침). 배정·자동 게시는 '신규 미답변' 건에 1회만.
+async function collectQna() {
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
+    const fromDate = d(-2) + 'T00:00:00.000+09:00', toDate = d(0) + 'T23:59:59.999+09:00';
+    let added = 0, updatedCnt = 0, total = 0;
+    const fresh = [];
+    for (let page = 1; page <= 10; page++) {
+        if (page > 1) await new Promise(r => setTimeout(r, 350));
+        const r = await naverCallWithRetry({
+            method: 'GET', path: '/external/v1/contents/qnas',
+            query: { fromDate, toDate, page, size: 100 },
+        });
+        const body = (r && r.data) ? r.data : r;
+        const list = Array.isArray(body?.contents) ? body.contents : [];
+        total = Number(body?.totalElements) || list.length;
+        for (const q of list) {
+            const id = Number(q.questionId);
+            if (!id) continue;
+            const item = {
+                product_id: String(q.productId || ''), product_name: q.productName || '',
+                question: naverMaskContact(q.question), answer: q.answer ? naverMaskContact(q.answer) : '',
+                masked_writer_id: q.maskedWriterId || '', create_date: q.createDate || '',
+            };
+            const res = await pool.query(
+                `INSERT INTO naver_qnas (question_id, raw, answered) VALUES ($1, $2, $3)
+                 ON CONFLICT (question_id) DO UPDATE SET raw = EXCLUDED.raw,
+                     answered = naver_qnas.answered OR EXCLUDED.answered
+                 RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
+            if (res.rows[0] && res.rows[0].inserted) {
+                added++;
+                if (!q.answered) fresh.push({ id, question: item.question });
+            } else updatedCnt++;
+        }
+        const totalPages = Number(body?.totalPages) || 1;
+        if (page >= totalPages) break;
+    }
+    // 신규 미답변 → 배정 → 자동 게시(스위치 ON일 때만). 실패·SKIP·스위치 OFF = 직원 답변 대기.
+    let posted = 0, needStaff = 0, failed = 0;
+    if (fresh.length) {
+        const autoOn = (await naverCfgGet('qna_auto_post')) !== 'off';   // 미설정도 ON (기본 ON — 대표 지시)
+        for (const q of fresh) {
+            let scen = null;
+            try { scen = await qnaAssign(q.question); }
+            catch (e) { console.error('[상품문의] 배정 오류(SKIP):', e.message); }
+            if (!scen) {
+                await pool.query(`UPDATE naver_qnas SET ai_status='skip' WHERE question_id=$1`, [q.id]);
+                needStaff++;
+                continue;
+            }
+            let draft = scen.response;
+            try { draft = await qnaRenderPlaceholders(scen.response); } catch (_) { /* 치환 실패 시 원문 유지 */ }
+            await pool.query(`UPDATE naver_qnas SET ai_status='draft', ai_scenario_id=$2, ai_draft=$3 WHERE question_id=$1`,
+                [q.id, scen.id, draft]);
+            if (!autoOn) { needStaff++; continue; }              // 승인 모드: 초안 대기
+            try {
+                await naverPostQnaAnswer(q.id, draft, { name: 'auto' });
+                posted++;
+            } catch (e) {
+                failed++;
+                needStaff++;
+                await pool.query(`UPDATE naver_qnas SET post_error=$2 WHERE question_id=$1`,
+                    [q.id, String((e && e.message) || e).slice(0, 300)]);
+            }
+            await new Promise(r => setTimeout(r, 350));           // 쓰기 호출 간격 (rate limit)
+        }
+    }
+    // 90일 경과분 물리 정리 (원본은 네이버에 있음 — 고객문의와 동일 정책)
+    await pool.query(`DELETE FROM naver_qnas WHERE collected_at < NOW() - INTERVAL '90 days'`);
+    if (fresh.length && await alertEnabled('qna')) {
+        notifyTelegram(await alertText('qna', { '건수': fresh.length, '게시': posted, '직접': needStaff }));
+    }
+    if (failed) notifyTelegram(`⚠️ 상품문의 자동 게시 실패 ${failed}건 — [문의 관리 > 상품문의]에서 사유를 확인해주세요`);
+    return `상품문의 신규 ${added}(자동게시 ${posted}·직원필요 ${needStaff})·갱신 ${updatedCnt} (창 내 총 ${total}건)`;
+}
+
 let _naverTickBusy = false;
 async function naverAutoCollectTick() {
     if (_naverTickBusy) return;
@@ -5818,7 +6079,7 @@ async function naverAutoCollectTick() {
         if (!due.length) return;
         due.sort((a, b) => b.waited - a.waited);
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
-        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry }[r.key];
+        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna }[r.key];
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }

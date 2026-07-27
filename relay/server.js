@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-26.1'; // 쿠팡 /coupang 경로 추가 (HMAC·조회 2종만)
+const RELAY_VERSION = '2026-07-27.1'; // 상품문의(Q&A) 조회 GET + 답변 등록/수정 PUT 허용 (STEP E — 첫 쓰기 1줄)
 
 const {
     PORT = 4000,
@@ -85,6 +85,8 @@ const ALLOW = [
     { m: 'GET',  re: /^\/external\/v1\/pay-user\// },                              // 문의 조회 등
     { m: 'GET',  re: /^\/external\/v1\/seller\// },                                // 판매자정보 조회
     { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/query$/ }, // 상품주문 상세조회(POST지만 읽기)
+    { m: 'GET',  re: /^\/external\/v1\/contents\/qnas$/ },                         // 상품문의(Q&A) 목록 조회 (STEP E)
+    { m: 'PUT',  re: /^\/external\/v1\/contents\/qnas\/\d+$/ },                    // 상품문의 답변 등록/수정 — 유일한 쓰기 (STEP E, questionId 숫자 정확일치만)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 
