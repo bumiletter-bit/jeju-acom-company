@@ -12042,17 +12042,18 @@ async function renderInquiryPage() {
     const wrap = document.getElementById('inquiry-auto-reply-wrap');
     wrap.style.display = isAdmin ? 'inline-flex' : 'none';
     document.getElementById('inquiry-auto-reply-toggle').checked = d.auto_reply !== 'off';
+    // 대표 7/27: 행 아무 데나 눌러도 수정 화면이 열리게 (하나하나 보기 편하도록) — 사용 토글 칸만 행 클릭과 분리
     const rows = inquiryScenarios.map(s => `
-        <tr>
+        <tr onclick="openScenarioEdit(${s.id})" style="cursor:pointer;" title="누르면 이 시나리오의 수정 화면이 열립니다">
             <td>${s.scenario_no}</td>
             <td>${escapeHtml(s.name)}</td>
             <td>${escapeHtml(s.channel)}</td>
             <td>${escapeHtml(s.action)}</td>
-            <td style="white-space:nowrap;"><input type="checkbox" class="ui-switch" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)">
+            <td style="white-space:nowrap;" onclick="event.stopPropagation()"><input type="checkbox" class="ui-switch" ${s.enabled ? 'checked' : ''} onchange="toggleScenario(${s.id}, this.checked)">
                 ${s.enabled
                     ? '<span class="pill pill-ok">🟢 사용중</span>'
                     : '<span class="pill pill-off">⏸ 꺼짐</span>'}</td>
-            <td><button class="btn-sm btn-outline" onclick="openScenarioEdit(${s.id})">수정</button></td>
+            <td><button class="btn-sm btn-outline" onclick="event.stopPropagation(); openScenarioEdit(${s.id})">수정</button></td>
         </tr>`).join('');
     document.getElementById('inquiry-list').innerHTML = `
         <table class="data-table"><thead><tr><th>번호</th><th>시나리오명</th><th>채널</th><th>동작</th><th>사용</th><th></th></tr></thead>
