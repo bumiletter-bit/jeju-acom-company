@@ -5133,7 +5133,7 @@ const TELEGRAM_ALERT_DEFAULTS = {
     autodone: '📮 {{채널}} 답변완료 {{건수}}건 — 확인바람 ([문의 관리]에서 답변 내용 확인)',
     staffneed: '✍️ 직접 처리해야 할 문의가 있습니다 {{건수}}건 ({{채널}}) — [문의 관리]에서 답변해주세요',
     reminder: '⏰ 미처리 문의 {{건수}}건 — 가장 오래된 건 {{경과}}시간 경과. [문의 관리]에서 처리해주세요',
-    briefing: '🌅 밤사이 문의 현황 ({{시작}}~{{종료}})\n{{내용}}',
+    briefing: '🌅 밤사이 현황 ({{시작}}~{{종료}})\n{{내용}}',
 };
 const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], settlement: ['건수', '시작일', '종료일'],
     autodone: ['채널', '건수'], staffneed: ['건수', '채널'], reminder: ['건수', '경과'], briefing: ['시작', '종료', '내용'] };
@@ -5180,6 +5180,14 @@ function inQuietWindow(cfg, hhmm) {
     return s <= e ? (hhmm >= s && hhmm < e) : (hhmm >= s || hhmm < e);   // 자정 걸침(21:30~07:30) 지원
 }
 async function alertQuietNow() { return inQuietWindow(await alertQuietCfg(), kstHHMM()); }
+// 야간 억제분 누적 (대표 7/27 확장) — 신규주문·취소반품·정산은 이벤트성이라 브리핑용으로 DB에 카운트(재시작 안전), 브리핑 발송 시 리셋
+async function alertNightAcc(kind, n) {
+    try {
+        const v = (await naverCfgGet('alert_night_acc')) || {};
+        v[kind] = (Number(v[kind]) || 0) + (Number(n) || 0);
+        await naverCfgSet('alert_night_acc', v);
+    } catch (e) { console.error('[야간누적] 실패:', e.message); }
+}
 // 직원 답변 대기(미답변·미게시) 건수 + 가장 오래된 경과시간 — 발송 시점 DB 실계산 (답변되면 자동 제외)
 async function inquiryStaffPending() {
     const q = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(collected_at) AS o FROM naver_qnas WHERE answered IS NOT TRUE AND posted_at IS NULL`)).rows[0];
@@ -5201,24 +5209,33 @@ async function inquiryAlertTick() {
             if (!st || !st.date) {
                 await naverCfgSet('alert_briefing_state', { date: todayKst });
             } else if (st.date !== todayKst && await alertEnabled('briefing')) {
+                // 대표 7/27 확장: 밤사이 종합 상황판 — ON인 알림 종류만 집계, 0건 항목 줄 생략, 전부 없으면 한 줄
                 const [sh, sm] = String(cfg.night_start).split(':').map(Number);
                 const k = new Date(Date.now() + 9 * 3600 * 1000);
                 let startUtc = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate(), sh, sm) - 9 * 3600 * 1000;
                 if (startUtc > Date.now()) startUtc -= 86400 * 1000;   // 가장 최근의 야간 시작 시각
                 const w = new Date(startUtc);
-                const aq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
-                const ai = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_inquiries WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
-                const nq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE collected_at >= $1`, [w])).rows[0].n;
-                const ni = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_inquiries WHERE collected_at >= $1`, [w])).rows[0].n;
-                const p = await inquiryStaffPending();
+                const acc = (await naverCfgGet('alert_night_acc')) || {};   // 야간 억제분 (주문·취소반품·정산)
                 const lines = [];
-                if (aq + ai > 0) lines.push(`📮 자동 답변완료 ${aq + ai}건 (상품문의 ${aq}·고객문의 ${ai}) — 확인바람`);
-                if (p.n > 0) lines.push(`✍️ 직접 처리 필요 ${p.n}건 (가장 오래된 건 ${p.hours}시간 경과)`);
-                if (!lines.length) lines.push(nq + ni > 0 ? `신규 ${nq + ni}건 수집 — 전부 처리됨` : '밤사이 신규 문의 없음');
+                if (await alertEnabled('order') && Number(acc.order) > 0) lines.push(`🚚 신규 주문 ${acc.order}건 (발주확인은 수기)`);
+                if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 취소·반품·교환 변화 ${acc.claim}건`);
+                if (await alertEnabled('settlement') && Number(acc.settlement) > 0) lines.push(`🛰️ 정산 자동수집 완료 (데이터관리 > 정산 조회)`);
+                if (await alertEnabled('autodone')) {
+                    const aq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
+                    const ai = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_inquiries WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
+                    if (aq + ai > 0) lines.push(`📮 자동 답변완료 ${aq + ai}건 (상품문의 ${aq}·고객문의 ${ai}) — 확인바람`);
+                }
+                if (await alertEnabled('staffneed')) {
+                    const p = await inquiryStaffPending();
+                    if (p.n > 0) lines.push(`✍️ 직접 처리 필요 ${p.n}건 (가장 오래된 건 ${p.hours}시간 경과)`);
+                }
+                if (!lines.length) lines.push('밤사이 특이사항 없음');
                 notifyTelegram(await alertText('briefing', { '시작': cfg.night_start, '종료': cfg.briefing_time, '내용': lines.join('\n') }));
+                await naverCfgSet('alert_night_acc', {});   // 브리핑 발송 = 야간 누적 리셋
                 await naverCfgSet('alert_briefing_state', { date: todayKst });
             } else if (st.date !== todayKst) {
-                await naverCfgSet('alert_briefing_state', { date: todayKst });   // 브리핑 OFF여도 기준일은 갱신
+                await naverCfgSet('alert_briefing_state', { date: todayKst });   // 브리핑 OFF여도 기준일 갱신 + 누적 리셋(무한 누적 방지)
+                await naverCfgSet('alert_night_acc', {});
             }
         }
         // ② 미처리 리마인더 — 주간(야간 창 밖)만, 대기 있을 때만, 설정 간격마다 (처리되면 자동 중단)
@@ -5912,7 +5929,11 @@ async function collectSettlement() {
     await pool.query(`INSERT INTO naver_settle_snapshot (from_date, to_date, count, elements) VALUES ($1,$2,$3,$4)`,
         [from, to, elements.length, JSON.stringify(elements)]);
     await pool.query(`DELETE FROM naver_settle_snapshot WHERE id NOT IN (SELECT id FROM naver_settle_snapshot ORDER BY id DESC LIMIT 30)`);
-    if (await alertEnabled('settlement')) notifyTelegram(await alertText('settlement', { '건수': elements.length, '시작일': from, '종료일': to }));
+    // 대표 7/27 야간 확장: 야간엔 발송 대신 브리핑 누적 (수집·기록은 평소대로)
+    if (await alertEnabled('settlement')) {
+        if (await alertQuietNow()) await alertNightAcc('settlement', elements.length || 1);
+        else notifyTelegram(await alertText('settlement', { '건수': elements.length, '시작일': from, '종료일': to }));
+    }
     return `정산 ${from}~${to} ${elements.length}건`;
 }
 
@@ -5923,7 +5944,10 @@ async function collectOrderNew() {
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     const paid = list.filter(x => String(x.lastChangedType || '') === 'PAYED');
     await naverCfgSet('naver_order_checkpoint', new Date(now).toISOString());
-    if (paid.length > 0 && await alertEnabled('order')) notifyTelegram(await alertText('order', { '건수': paid.length }));
+    if (paid.length > 0 && await alertEnabled('order')) {
+        if (await alertQuietNow()) await alertNightAcc('order', paid.length);   // 대표 7/27: 야간엔 아침 브리핑으로 모아서
+        else notifyTelegram(await alertText('order', { '건수': paid.length }));
+    }
     return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
 }
 
@@ -5935,7 +5959,10 @@ async function collectClaim() {
     // 🔴 취소·반품·교환은 lastChangedType이 아니라 claimType/claimStatus 필드로 옴 (CLAIM_REQUESTED 등 — 개발자포럼 #701·#1431)
     const claims = list.filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '')));
     await naverCfgSet('naver_claim_checkpoint', new Date(now).toISOString());
-    if (claims.length > 0 && await alertEnabled('claim')) notifyTelegram(await alertText('claim', { '건수': claims.length }));
+    if (claims.length > 0 && await alertEnabled('claim')) {
+        if (await alertQuietNow()) await alertNightAcc('claim', claims.length);  // 대표 7/27: 야간엔 아침 브리핑으로 모아서
+        else notifyTelegram(await alertText('claim', { '건수': claims.length }));
+    }
     return `취소·반품·교환 ${claims.length}건 (변경 ${list.length}건 검사)`;
 }
 

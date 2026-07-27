@@ -12605,7 +12605,7 @@ async function renderNaverTimers() {
                 <b>⏰ 리마인더 간격(분)</b>
                 <input type="number" id="alert-q-remind" value="${Number(alertData.quiet.reminder_min) || 120}" min="15" max="720" style="width:60px; padding:4px; border:1px solid var(--border,#ccc); border-radius:6px; text-align:center;">
                 <button class="btn-sm btn-outline" onclick="saveAlertQuiet()">저장</button>
-                <span class="text-muted" style="font-size:11px;">야간엔 문의 알림만 조용 — 수집·자동답변은 계속 · 오류 알림은 항상 발송</span>
+                <span class="text-muted" style="font-size:11px;">야간엔 ON인 알림 전체 조용 → 아침 브리핑으로 종합 (수집·자동답변은 계속 · 오류 알림은 항상 발송)</span>
             </div>` : ''}
         </div>` : '';
     // 대표 7/26 B: 자동 로그아웃 유휴 시간 (기본 3시간 — 이용 중이면 자동 연장)
