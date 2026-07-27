@@ -12233,7 +12233,7 @@ async function renderUserInqTab() {
     const isAdmin = currentUser?.role === 'admin';
     const pending = rows.filter(r => !r.posted_at && !r.answered);
     const done = rows.filter(r => r.posted_at || r.answered);
-    const fmtDt = (s) => { const t = s ? new Date(s) : null; return (t && !isNaN(t)) ? t.toLocaleString('ko-KR') : '-'; };
+    const fmtDt = (s) => { const t = s ? new Date(s) : null; return (t && !isNaN(t)) ? t.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'; };
     const toggle = isAdmin ? `
         <label style="white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:13px;">
             <input type="checkbox" class="ui-switch" ${d.auto_post ? 'checked' : ''} onchange="toggleInquiryAutoPost(this.checked)">
@@ -12264,14 +12264,14 @@ async function renderUserInqTab() {
     // 대표 7/27 2차: 톡톡·상품문의와 동일 규격 (고정 열폭·상품 말줄임·min-width 가로 스크롤)
     const doneHtml = done.length ? `
         <table class="data-table" style="table-layout:fixed; width:100%; min-width:720px;">
-        <colgroup><col style="width:132px"><col style="width:70px"><col style="width:150px"><col style="width:28%"><col><col style="width:120px"></colgroup>
+        <colgroup><col style="width:96px"><col style="width:60px"><col style="width:130px"><col style="width:28%"><col><col style="width:110px"></colgroup>
         <thead><tr><th>일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>등록</th></tr></thead><tbody>
         ${done.map(r => {
             const raw = r.raw || {};
             const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
             return `<tr>
-                <td style="white-space:nowrap;">${fmtDt(r.posted_at || raw.registered_at)}</td>
-                <td>${aoEsc(raw.category || '')}</td>
+                <td style="overflow:hidden;">${fmtDt(r.posted_at || raw.registered_at)}</td>
+                <td style="overflow:hidden;">${aoEsc(raw.category || '')}</td>
                 <td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(raw.product_name || '')}">${aoEsc(raw.product_name || '')}</div></td>
                 <td style="overflow:hidden;">${qnaClipHtml([raw.title, raw.content].filter(Boolean).join('\n'))}</td>
                 <td style="overflow:hidden;">${qnaClipHtml(r.ai_draft || '(판매자센터에서 답변)')}</td>
@@ -12330,7 +12330,7 @@ async function renderQnaTab() {
     const isAdmin = currentUser?.role === 'admin';
     const pending = rows.filter(r => !r.posted_at && !r.answered);          // 직원 답변 필요 (SKIP·초안 대기·실패)
     const done = rows.filter(r => r.posted_at || r.answered);
-    const fmtDt = (s) => { const t = s ? new Date(s) : null; return (t && !isNaN(t)) ? t.toLocaleString('ko-KR') : '-'; };
+    const fmtDt = (s) => { const t = s ? new Date(s) : null; return (t && !isNaN(t)) ? t.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'; };
     const toggle = isAdmin ? `
         <label style="white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:13px;">
             <input type="checkbox" class="ui-switch" ${d.auto_post ? 'checked' : ''} onchange="toggleQnaAutoPost(this.checked)">
@@ -12359,14 +12359,14 @@ async function renderQnaTab() {
     // 대표 7/27 2차: 톡톡 문의와 동일 규격 — 고정 열폭·상품 말줄임·모바일은 표만 가로 스크롤(min-width)
     const doneHtml = done.length ? `
         <table class="data-table" style="table-layout:fixed; width:100%; min-width:680px;">
-        <colgroup><col style="width:132px"><col style="width:150px"><col style="width:30%"><col><col style="width:120px"></colgroup>
+        <colgroup><col style="width:96px"><col style="width:140px"><col style="width:30%"><col><col style="width:110px"></colgroup>
         <thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
         ${done.map(r => {
             const raw = r.raw || {};
             const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
             const ans = r.ai_draft || raw.answer || '';
             return `<tr>
-                <td style="white-space:nowrap;">${fmtDt(r.posted_at || raw.create_date)}</td>
+                <td style="overflow:hidden;">${fmtDt(r.posted_at || raw.create_date)}</td>
                 <td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(raw.product_name || '')}">${aoEsc(raw.product_name || '')}</div></td>
                 <td style="overflow:hidden;">${qnaClipHtml(raw.question || '')}</td>
                 <td style="overflow:hidden;">${qnaClipHtml(ans)}</td>
