@@ -12585,7 +12585,7 @@ async function renderNaverTimers() {
         const label = NAVER_TIMER_LABELS_UI[t.key] || t.key;
         const cycle = t.key === 'settlement'
             ? `실행시각 <input type="text" id="naver-timer-time-${t.key}" value="${escapeHtml(t.run_at_time || '09:30')}" style="width:64px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`
-            : `주기(분) <input type="number" min="5" max="1440" id="naver-timer-min-${t.key}" value="${Number(t.interval_min) || 60}" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`;
+            : `주기(분) <input type="number" min="3" max="1440" id="naver-timer-min-${t.key}" value="${Number(t.interval_min) || 60}" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`;
         const last = t.last_run_at ? new Date(t.last_run_at).toLocaleString('ko-KR') : '-';
         const st = !t.last_status ? '-' : (t.last_status === 'ok' ? '✅ 성공' : `❌ 실패`);
         const err = (t.last_status === 'fail' && t.last_error) ? `<div class="text-muted" style="font-size:11px; max-width:260px;">${escapeHtml(String(t.last_error).slice(0, 120))}</div>` : '';

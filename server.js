@@ -5336,7 +5336,7 @@ app.put('/api/agent-office/naver/auto-collect/:key', authMiddleware, adminOnly, 
         if (req.body.enabled !== undefined) { params.push(!!req.body.enabled); sets.push(`enabled=$${params.length}`); }
         if (req.body.interval_min !== undefined) {
             const m = parseInt(req.body.interval_min);
-            if (!Number.isFinite(m) || m < 5 || m > 1440) throw { status: 400, message: '주기는 5~1440분 사이로 입력하세요' };
+            if (!Number.isFinite(m) || m < 3 || m > 1440) throw { status: 400, message: '주기는 3~1440분 사이로 입력하세요' };  // 대표 7/27: 하한 5→3분 (3분 주기 = 하루 480회, rate limit 여유 확인)
             params.push(m); sets.push(`interval_min=$${params.length}`);
         }
         if (req.body.run_at_time !== undefined) {
@@ -6483,7 +6483,7 @@ async function naverAutoCollectTick() {
                 const anchor = Date.UTC(kstNow.getUTCFullYear(), kstNow.getUTCMonth(), kstNow.getUTCDate(), hh, mm) - 9 * 3600 * 1000;
                 if (now >= anchor && last < anchor) due.push({ r, waited: now - anchor });
             } else {
-                const iv = Math.max(Number(r.interval_min) || 60, 5) * 60 * 1000;
+                const iv = Math.max(Number(r.interval_min) || 60, 3) * 60 * 1000;  // 하한 3분 (대표 7/27)
                 if (now - last >= iv) due.push({ r, waited: now - last - iv });
             }
         }
