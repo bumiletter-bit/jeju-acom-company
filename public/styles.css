@@ -4553,39 +4553,40 @@ input.ui-switch:focus-visible { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15); }
 }
 
 /* ========================================
-   문의 관리 서브탭 세그먼트 (v5.9.125)
-   대표 7/27: 톡톡 문의 서브탭(자동답변/미매칭)이 비선택 시 클릭 가능한 버튼으로 안 보임
-   → 일정 .sch-vtoggle 세그먼트 톤 재사용 (회색 트랙 + 선택 흰 알약 + 인디고)
+   문의 관리 서브탭 (v5.9.125 세그먼트 → v5.9.126 개별 버튼)
+   대표 7/28: 자동답변/미매칭 2개를 각각 구분선·테두리로 잘 보이게
+   → .btn-outline 토큰 재사용(흰 배경+1.5px 테두리+그림자), 선택 = 연인디고 배경+인디고 테두리
    settlement-tab-bar에 .inq-subtab-bar를 추가하면 이 스타일로 전환 (JS 무수정 — active 클래스 그대로)
    ======================================== */
 .inq-subtab-bar {
     display: inline-flex;
-    background: #F1F2F6;
-    border-radius: 10px;
-    padding: 3px;
-    gap: 2px;
+    background: transparent;
+    padding: 0;
+    gap: 8px;
     border-bottom: none;
 }
 .inq-subtab-bar .settlement-tab {
-    border: 0;
-    border-bottom: none;
-    background: transparent;
+    border: 1.5px solid #ECEDF1;
+    background: #fff;
     font-size: 13.5px;
     font-weight: 700;
     color: #667085;
-    padding: 7px 16px;
-    border-radius: 8px;
+    padding: 8px 18px;
+    border-radius: 10px;
     margin-bottom: 0;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+    transition: border-color 0.12s, background 0.12s, color 0.12s;
 }
 .inq-subtab-bar .settlement-tab:hover {
     color: var(--primary);
-    background: #E9EAF2;
+    border-color: var(--primary);
+    background: #FAFAFF;
 }
 .inq-subtab-bar .settlement-tab.active {
-    background: #fff;
+    background: var(--primary-light, #EEF0FF);
     color: var(--primary);
-    border-bottom: none;
-    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
+    border: 1.5px solid var(--primary);
+    box-shadow: 0 1px 3px rgba(79, 70, 229, 0.18);
 }
 @media (max-width: 768px) {
     .inq-subtab-bar .settlement-tab { padding: 8px 12px; font-size: 12.5px; min-height: 40px; }

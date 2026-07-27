@@ -12265,7 +12265,7 @@ async function renderUserInqTab() {
     const doneHtml = done.length ? `
         <table class="data-table" style="table-layout:fixed; width:100%; min-width:720px;">
         <colgroup><col style="width:96px"><col style="width:60px"><col style="width:130px"><col style="width:28%"><col><col style="width:110px"></colgroup>
-        <thead><tr><th>일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>등록</th></tr></thead><tbody>
+        <thead><tr><th>일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
         ${done.map(r => {
             const raw = r.raw || {};
             const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
@@ -12555,7 +12555,7 @@ async function renderUnansweredLogs() {
     // 품목: 한 줄 말줄임 (전체 이름은 마우스오버 툴팁)
     const itemCell = (v) => `<td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(v || '-')}">${aoEsc(v || '-')}</div></td>`;
     const ansCols = '<colgroup><col style="width:132px"><col style="width:150px"><col style="width:26%"><col><col style="width:130px"><col style="width:20%"></colgroup>';
-    const ansThead = '<thead><tr><th>시각</th><th>품목</th><th>손님 질문</th><th>봇 답변</th><th>재료</th><th>직원 답변</th></tr></thead>';
+    const ansThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
             ${itemCell(r.item)}
@@ -12565,7 +12565,7 @@ async function renderUnansweredLogs() {
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="6">봇 답변 기록이 없습니다</td></tr>`;
     const pendCols = '<colgroup><col style="width:132px"><col style="width:150px"><col><col style="width:150px"><col style="width:24%"></colgroup>';
-    const pendThead = '<thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>상태</th><th>직원 답변</th></tr></thead>';
+    const pendThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
             ${itemCell(r.item)}
