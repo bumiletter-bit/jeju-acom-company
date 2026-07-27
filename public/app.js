@@ -12234,10 +12234,11 @@ async function renderQnaTab() {
 window.postQnaAnswer = async function(id) {
     const el = document.getElementById('qna-answer-' + id);
     const content = el ? el.value.trim() : '';
-    if (!content) return alert('답변 내용을 입력해주세요');
+    if (!content) return showToast('⚠️ 답변 내용을 입력해주세요');
     if (!confirm('이 답변을 네이버 상품문의에 게시할까요? (공개 게시판에 즉시 노출됩니다)')) return;
-    try { await api('/api/agent-office/naver/qnas/' + id + '/answer', 'POST', { content }); showToast('✅ 게시되었습니다'); }
-    catch (e) { alert(e.message); }
+    // 디자인 가이드: 성공·실패 모두 토스트 (원시 브라우저 alert 금지 — 대표 7/27). 상세 사유는 목록의 실패 표시로
+    try { await api('/api/agent-office/naver/qnas/' + id + '/answer', 'POST', { content }); showToast('✅ 게시 등록 완료 — 판매자센터에 반영되었습니다'); }
+    catch (e) { showToast('❌ 게시 실패 — ' + String(e.message || '').slice(0, 80)); }
     renderQnaTab().catch(console.error);
 };
 window.toggleQnaAutoPost = async function(enabled) {

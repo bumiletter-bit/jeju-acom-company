@@ -6055,10 +6055,12 @@ async function naverPostQnaAnswer(questionId, content, actor) {
         throw { status: (e && e.status) || 500, message: String((e && e.message) || e) + detail };
     }
     const by = (actor && actor.name) || 'auto';
+    // 🔴 7/27 첫 수동 게시에서 발견: $2를 varchar 대입과 텍스트 비교에 겹쳐 쓰면 pg가
+    //   "inconsistent types deduced for parameter $2"로 거부 (PUT 성공 후 기록만 실패) → 비교는 $4 boolean으로 분리
     await pool.query(
         `UPDATE naver_qnas SET answered=true, posted_at=NOW(), posted_by=$2, post_error=NULL, ai_draft=$3,
-             ai_status=CASE WHEN $2='auto' THEN 'posted' ELSE ai_status END
-         WHERE question_id=$1`, [questionId, by, text]);
+             ai_status=CASE WHEN $4 THEN 'posted' ELSE ai_status END
+         WHERE question_id=$1`, [questionId, by, text, by === 'auto']);
     await writeAudit({
         action: 'post_answer', targetType: 'naver_qna', targetId: null,
         changes: { after: { question_id: String(questionId), by, length: text.length } },
