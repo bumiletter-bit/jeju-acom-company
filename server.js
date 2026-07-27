@@ -6961,7 +6961,25 @@ async function maruBuildSystemPrompt() {
 - **박스재고**: 거래처별(업체·대성·효돈) 박스 재고. "재고" 물으면 박스재고.
 - **송장변환**: 플랫폼마다 따로 다운받은 주문 양식을 하나의 통일 양식으로 변환하는 메뉴 — 품목별 금액의 판매상품 이름으로 통일해 발송 작업을 편리하게 해준다.
 - **지출결의**: 비용 지출 결재(화면에서 처리). 마루가 저장 못 하니 "지출결의 화면에서 처리해주세요" 안내.
-- **일정**: 마루가 직접 처리(조회 즉답/등록 확인 1회). 매출·정산 조회는 세미에게 배정.`;
+- **일정**: 마루가 직접 처리(조회 즉답/등록 확인 1회). 매출·정산 조회는 세미에게 배정.
+- **문의 관리**: 톡톡·상품문의·고객문의 자동답변 시나리오와 수집 문의를 관리하는 메뉴. 시나리오 등록·수정은 이 화면에서 **사람만** 한다(요원이 직접 등록·수정 불가 — 초안은 글샘이 보고서로만). "문의 답변 문구 써줘"는 글샘 route, 문의 현황·시나리오 개수 등 질문은 아래 문의 현황 스냅샷으로 마루가 즉답.`;
+    // 대표 7/27: 문의 현황 스냅샷 (읽기 전용) — 마루가 "요즘 문의 뭐 많아?"·"시나리오 몇 개야?"·"자동답변 켜져 있어?"에 즉답
+    let inquirySnapshot = '';
+    try {
+        const sc = (await pool.query(`SELECT channel, COUNT(*) AS n FROM inquiry_scenarios WHERE deleted_at IS NULL AND enabled = true GROUP BY channel`)).rows;
+        const cat = (await pool.query(`SELECT raw->>'category' AS c, COUNT(*) AS n FROM naver_inquiries WHERE collected_at > NOW() - INTERVAL '7 days' GROUP BY 1 ORDER BY n DESC LIMIT 6`)).rows;
+        const qnaPend = (await pool.query(`SELECT COUNT(*) AS n FROM naver_qnas WHERE answered IS NOT TRUE AND posted_at IS NULL`)).rows[0].n;
+        const inqPend = (await pool.query(`SELECT COUNT(*) AS n FROM naver_inquiries WHERE answered IS NOT TRUE AND posted_at IS NULL`)).rows[0].n;
+        const sw = (await pool.query(`SELECT key, value FROM agent_office_config WHERE key IN ('qna_auto_post','inquiry_auto_post','inquiry_auto_reply')`)).rows;
+        const swv = Object.fromEntries(sw.map(x => [x.key, x.value]));
+        inquirySnapshot = `
+
+## 문의 현황 스냅샷 (실시간 DB — 이 범위의 질문은 action='answer'로 즉답. 여기 없는 상세 수치는 지어내지 말고 [문의 관리] 화면 안내)
+- 답변 시나리오(사용중): ${sc.map(x => `${x.channel} ${x.n}건`).join(' · ') || '없음'}
+- 최근 7일 고객문의 수집: ${cat.length ? cat.map(x => `${x.c || '기타'} ${x.n}건`).join(' · ') : '없음'}
+- 답변 대기: 상품문의 ${qnaPend}건 · 고객문의 ${inqPend}건 (담당 직원이 [문의 관리]에서 처리)
+- 자동답변 스위치: 톡톡 ${swv.inquiry_auto_reply === 'off' ? 'OFF' : 'ON'} · 상품문의 ${swv.qna_auto_post === 'off' ? 'OFF(승인 모드)' : 'ON'} · 고객문의 ${swv.inquiry_auto_post === 'on' ? 'ON' : 'OFF(승인 모드)'}`;
+    } catch (e) { /* 스냅샷 실패는 라우팅을 막지 않음 */ }
     // 대표 7/21: 마루도 활성 학습 노트를 읽게 함 (기존엔 워커만 반영 — 마루 라우팅엔 미적용이던 것)
     const maruLessonsRows = (await pool.query(
         `SELECT l.lesson, l.category FROM agent_lessons l JOIN agents a ON l.agent_id = a.id
@@ -7061,7 +7079,7 @@ ${JSON.stringify(routingTable, null, 2)}
 【C. 공통 규칙】
 - 되묻기는 1회만. 답을 받으면 재질문 없이 진행한다.
 - 되묻기에는 반드시 구체적 선택지 예시를 포함한다. 알맹이 없는 되묻기("확인이 필요합니다" 단독)는 금지.
-- 이 판단표는 조회·등록·파일요청 등 모든 지시 유형에 적용된다.${menuGlossary}${maruLessonText}`;
+- 이 판단표는 조회·등록·파일요청 등 모든 지시 유형에 적용된다.${menuGlossary}${inquirySnapshot}${maruLessonText}`;
 }
 
 // ------------------------------------------------------------

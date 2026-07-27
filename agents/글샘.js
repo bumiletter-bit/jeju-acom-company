@@ -38,6 +38,63 @@ function loadKnowledge() {
     return _knowledgeCache;
 }
 
+// ── 문의 답변 재료 (대표 7/27 — 전부 기존 DB 읽기 전용. 시나리오=톤 교과서, bot_products=사실 출처, 수집 문의=유형 참고)
+//    PII 원칙: 고객문의 본문은 수집 시 마스킹본이지만, 직원 실답변(message_logs)은 원문이므로 주입 전 마스킹 재적용.
+function maskContact(s) {
+    return String(s || '')
+        .replace(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g, '(연락처)')
+        .replace(/\d{2,4}[-\s.]\d{3,4}[-\s.]\d{4}/g, '(연락처)')
+        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '(이메일)')
+        .replace(/010-6687-4031|\(연락처\) 고객센터/g, '📞 010-6687-4031'); // 회사 공개 번호는 복원 (꼬리 문구 학습용)
+}
+const INQUIRY_TRIGGER = /문의|답변|시나리오|Q&A|QnA|톡톡.{0,6}(문구|답)|고객.{0,6}(질문|물어)|물어(봐|보는|보나)/i;
+async function loadInquiryMaterials(pool, instruction) {
+    if (!INQUIRY_TRIGGER.test(String(instruction || ''))) return '';
+    const parts = [];
+    try {
+        const sc = await pool.query(
+            `SELECT scenario_no, name, channel, response FROM inquiry_scenarios
+             WHERE deleted_at IS NULL AND enabled = true ORDER BY scenario_no ASC, id ASC`);
+        parts.push(`\n\n===== [문의 답변 시나리오 — 우리 답변의 톤·구조 교과서 (${sc.rows.length}건, DB 실시간)] =====\n`
+            + sc.rows.map(s => `### [${s.scenario_no}·${s.channel}] ${s.name}\n${s.response}`).join('\n\n'));
+    } catch (e) { parts.push(`\n\n(시나리오 로드 실패: ${e.message})`); }
+    try {
+        const bp = await pool.query(`SELECT name, status, price FROM bot_products WHERE deleted_at IS NULL ORDER BY status, name`);
+        parts.push('\n\n===== [판매현황·판매가 — 사실 정보의 유일한 출처 (bot_products, DB 실시간)] =====\n'
+            + bp.rows.map(r => `- ${r.name}: ${r.status}${r.price ? ` (${r.price})` : ''}`).join('\n'));
+    } catch (e) { /* 생략 */ }
+    try {
+        const cat = await pool.query(
+            `SELECT raw->>'category' AS c, COUNT(*) AS n FROM naver_inquiries
+             WHERE collected_at > NOW() - INTERVAL '30 days' GROUP BY 1 ORDER BY n DESC`);
+        const skipQ = await pool.query(
+            `SELECT raw->>'question' AS q FROM naver_qnas WHERE ai_status IN ('skip') ORDER BY collected_at DESC LIMIT 8`);
+        const skipI = await pool.query(
+            `SELECT raw->>'title' AS t, raw->>'content' AS c FROM naver_inquiries
+             WHERE ai_status IN ('skip','claim') ORDER BY collected_at DESC LIMIT 8`);
+        parts.push('\n\n===== [최근 실제 고객 질문 동향 (30일 수집분 — 마스킹본)] =====\n'
+            + '유형별 건수: ' + (cat.rows.map(x => `${x.c || '기타'} ${x.n}건`).join(' · ') || '(수집분 없음)') + '\n'
+            + '자동답변이 SKIP한(=시나리오가 못 받은) 최근 질문 예:\n'
+            + [...skipQ.rows.map(x => `- (상품문의) ${String(x.q || '').replace(/\s+/g, ' ').slice(0, 100)}`),
+               ...skipI.rows.map(x => `- (고객문의) ${String((x.t || '') + ' ' + (x.c || '')).replace(/\s+/g, ' ').slice(0, 100)}`)].join('\n'));
+    } catch (e) { /* 생략 */ }
+    try {
+        const st = await pool.query(
+            `SELECT message, staff_response FROM message_logs
+             WHERE staff_response IS NOT NULL AND staff_response <> '' AND LENGTH(staff_response) > 60
+             ORDER BY id DESC LIMIT 8`);
+        if (st.rows.length) parts.push('\n\n===== [직원 실답변 사례 (톡톡 최근 — 마스킹 적용)] =====\n'
+            + st.rows.map(x => `Q: ${maskContact(x.message).replace(/\s+/g, ' ').slice(0, 80)}\nA: ${maskContact(x.staff_response).replace(/\s+/g, ' ').slice(0, 200)}`).join('\n---\n'));
+    } catch (e) { /* 생략 */ }
+    return parts.join('') + `
+
+## 문의 답변 문구 모드 (위 재료가 주입된 경우 — 반드시 준수)
+- 대표가 "OO 문의 답변 문구 써줘" 류를 지시하면 channel='문의답변'으로 제출한다. 이 채널은 알리고 규칙(이모지 금지·10블록·(광고) 머리말) **미적용** — 시나리오 재료의 라임을 그대로 따른다: "안녕하세요 고객님, 제주아꼼이네입니다 🍊" 인사, 존댓말+이모지, 마지막 줄 "*추가 문의사항 있으시다면 언제든지 톡톡 또는 📞 010-6687-4031 고객센터 번호로 연락주시면 빠른 상담 도와드리겠습니다." 꼬리까지.
+- 사실 정보(가격·기간·구성·정책)는 위 재료(시나리오·판매현황)에 있는 값만 쓴다. 재료에 없는 사실이 필요하면 본문에 "⚠️ 대표님 확인 필요: OO" 표시를 넣고 missing_fields에 나열한다 — 지어내기 절대 금지.
+- "요즘 손님들 뭐 많이 물어봐?" 류 동향 질문이면 channel='문의요약'으로, versions 1개(label '문의 동향')에 위 동향 재료 기반 요약 보고를 담는다. 재료에 없는 수치는 만들지 않는다.
+- 이 모드의 결과물도 초안일 뿐이다 — 시나리오 등록·수정은 사람이 [문의 관리]에서 한다는 안내를 send_tip에 남긴다.`;
+}
+
 // 지시 #39: 제목 필드 정화 — 오염 파편(마크업 태그·JSON 원문) 감지 시 정화, 불가 시 빈 값 반환
 // (오염 텍스트를 대표 화면에 노출 금지 + 몰래 지어내기 금지 — 정직 원칙)
 function cleanTitleField(v) {
@@ -61,7 +118,7 @@ const COPY_TOOL = {
         type: 'object',
         additionalProperties: false,
         properties: {
-            channel: { type: 'string', enum: ['LMS', 'SMS', '톡톡'], description: '작성한 채널' },
+            channel: { type: 'string', enum: ['LMS', 'SMS', '톡톡', '문의답변', '문의요약'], description: '작성한 채널 (고객 문의 답변 문구=문의답변, 문의 동향 요약=문의요약)' },
             title: { type: 'string', description: 'LMS 제목 제안 (한글 13자 이내). 해당 없으면 빈 문자열' },
             versions: {
                 type: 'array',
@@ -160,6 +217,10 @@ module.exports = {
 
 ## 🔴 날짜 규칙 (지시 #54 — 절대 규칙)
 확정 날짜가 주입되지 않았다. 날짜가 필요하면 반드시 "00일(날짜 확인 필요)" 자리표시를 쓴다. 자체 계산·추측 금지.`;
+        // 대표 7/27: 문의 관련 지시면 문의 DB 재료(시나리오·판매현황·수집 문의·실답변) 주입 — 전부 읽기 전용
+        let inquiryMaterials = '';
+        try { inquiryMaterials = await loadInquiryMaterials(pool, instruction); }
+        catch (e) { /* 재료 로드 실패는 카피 작성을 막지 않음 */ }
         const systemPrompt = `너는 제주아꼼이네 농업회사법인(주) AGENT OFFICE 마케팅팀의 카피라이터 '글샘'이다.${personaText}${datesLine}
 아래 지식 문서는 **참고용 카피 자산**이다 (톤·구조·표현 예시). 절대 규칙이 아니다.
 🎯 **대표 지시 내용이 최우선 근거다** (대표 7/20): 대표가 이번 지시에서 준 정보·강점(예: "지금 맛이 아주 좋다")을 카피의 중심으로 삼는다. 지식 문서에 적힌 셀링포인트(예: "초반 호박이 1년 중 가장 포슬")는 대표가 그 내용을 말했을 때만 쓴다 — 대표가 언급하지 않은 특성(초반/후반/특정 시기 등)을 임의로 지어내 강조하지 않는다.
@@ -173,7 +234,7 @@ module.exports = {
 4. 버전: 단일·구체 지시면 1개, 열린 지시면 최대 3개(안정형/어그로형/감성형).
 5. 과장·허위 금지, 명분 없는 할인 표현 금지 (명분 라이브러리 준수).
 6. 반드시 submit_copy 도구로 제출한다. 도구 밖 텍스트 응답 금지.
-${loadKnowledge()}${lessonsText}${discountText}`;
+${loadKnowledge()}${lessonsText}${discountText}${inquiryMaterials}`;
 
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         let msg;
