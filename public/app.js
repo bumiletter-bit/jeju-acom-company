@@ -12535,7 +12535,7 @@ async function renderUnansweredLogs() {
         + (r.response_source === 'price_direct' ? ' <span class="text-muted" style="font-size:11px;">(가격즉답)</span>' : '');
     // 품목: 한 줄 말줄임 (전체 이름은 마우스오버 툴팁)
     const itemCell = (v) => `<td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(v || '-')}">${aoEsc(v || '-')}</div></td>`;
-    const ansCols = '<colgroup><col style="width:112px"><col style="width:150px"><col style="width:26%"><col><col style="width:130px"><col style="width:20%"></colgroup>';
+    const ansCols = '<colgroup><col style="width:132px"><col style="width:150px"><col style="width:26%"><col><col style="width:130px"><col style="width:20%"></colgroup>';
     const ansThead = '<thead><tr><th>시각</th><th>품목</th><th>손님 질문</th><th>봇 답변</th><th>재료</th><th>직원 답변</th></tr></thead>';
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
@@ -12545,7 +12545,7 @@ async function renderUnansweredLogs() {
             <td>${scenCell(r)}</td>
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="6">봇 답변 기록이 없습니다</td></tr>`;
-    const pendCols = '<colgroup><col style="width:112px"><col style="width:150px"><col><col style="width:150px"><col style="width:24%"></colgroup>';
+    const pendCols = '<colgroup><col style="width:132px"><col style="width:150px"><col><col style="width:150px"><col style="width:24%"></colgroup>';
     const pendThead = '<thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>상태</th><th>직원 답변</th></tr></thead>';
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
