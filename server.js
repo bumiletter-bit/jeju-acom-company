@@ -6866,7 +6866,10 @@ app.get('/api/agent-office/growth', authMiddleware, adminOnly, async (req, res) 
 //       애매한 지시는 추측 실행 금지(clarify로 되묻기, 질문은 하나만),
 //       API 오류는 정직하게 '오류' 상태로 기록 (허위 응답 금지).
 // ------------------------------------------------------------
-const MARU_MODEL = process.env.MARU_MODEL || 'claude-haiku-4-5';
+// 대표 7/27: Render env MARU_MODEL=claude-sonnet-4-6이 돌고 있었음 — 이 구형은 필드 오염·answer_text 누락 고질(#300~#304 실측, audit 2023~2035).
+//   env 정리 전 임시 격상 매핑: 구형 지정이면 sonnet-5로 올린다. (정석은 Render env MARU_MODEL 삭제 또는 claude-sonnet-5로 변경 — 대표)
+const MARU_MODEL_RAW = process.env.MARU_MODEL || 'claude-haiku-4-5';
+const MARU_MODEL = /sonnet-4-6/.test(MARU_MODEL_RAW) ? 'claude-sonnet-5' : MARU_MODEL_RAW;
 
 // 강제 tool 호출로 구조화된 배정 결과를 보장
 const MARU_ROUTE_TOOL = {
@@ -7207,6 +7210,7 @@ function maruCleanDecision(raw) {
     d.task_summary = maruCleanText(d.task_summary);
     d.reason = maruCleanText(d.reason);
     d.clarify_question = maruCleanText(d.clarify_question);
+    d.answer_text = maruCleanText(d.answer_text);   // 대표 7/27: answer_text도 정화 대상에 포함 (오염 시 태그만 제거 — 통째 무효화 안 함)
     d.item_keyword = maruCleanToken(d.item_keyword);
     d.period = maruCleanToken(d.period);
     d.target_date = maruCleanToken(d.target_date);
@@ -7342,7 +7346,7 @@ async function maruDecide(content, image = null) {
     const call = async (extraNote) => {
         const msg = await anthropic.messages.create({
             model: MARU_MODEL,
-            max_tokens: 800,
+            max_tokens: 1200, // 대표 7/27: 800에서 상향 — 문의 현황 스냅샷 즉답(answer_text 수치 나열)이 잘리지 않게
             system: systemPrompt + (extraNote || ''),
             tools: [MARU_ROUTE_TOOL],
             tool_choice: { type: 'tool', name: 'route_order' },
