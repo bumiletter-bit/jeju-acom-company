@@ -11,7 +11,7 @@
 - 이 폴더는 **OneDrive 동기화** 폴더 → PC가 죽어도 OneDrive(클라우드)에 사본이 있다.
   PC를 잃어버린 경우: 다른 PC에서 OneDrive 로그인 → 같은 폴더에서 백업 파일 확보.
 - 보조 수단: **Render Postgres 자체 복구(PITR)** — 유료 인스턴스는 최근 며칠(워크스페이스 플랜에 따라 Hobby 3일 / Pro 7일)의 아무 시점으로 되돌릴 수 있다. Render 대시보드 → 해당 Postgres → Recovery 메뉴. (지원팀 문의도 가능)
-- **우리 인스턴스 (2026-07-28 대표 대시보드 확인)**: 이름 "제주아꼼이네 프로그램" · PostgreSQL **18** · Singapore · **Basic-256mb**(256MB RAM·0.1 CPU·1GB 스토리지, 13.58% 사용) · HA 없음. 복구창(3일/7일)은 인스턴스 타입이 아니라 **워크스페이스 플랜**으로 정해짐 — 정확한 일수는 **Recovery 메뉴에 들어가면 "past N days"로 바로 표시**된다(그게 실값). 논리 백업(Export)은 플랜 무관 7일 보관.
+- **우리 인스턴스 (2026-07-28 대표 대시보드 확인·확정)**: 이름 "제주아꼼이네 프로그램" · PostgreSQL **18** · Singapore · **Basic-256mb**(256MB RAM·0.1 CPU·1GB 스토리지, 13.58% 사용) · HA 없음 · Service ID `dpg-d6hp71t6ubrc73bvugsg-a`. **PITR 복구창 = 3일 확정** (Recovery 화면 "past 3 days" 실측 — Hobby 워크스페이스. Pro 업그레이드 시 7일). 논리 백업(Export)은 플랜 무관 7일 보관. → 3일보다 오래된 시점 복구는 우리 자체 백업(배포 시마다 + 매일 07:00, OneDrive)으로 — 이쪽이 주 수단.
 
 ## 1. 상황 A — DB는 살아있는데 데이터가 잘못됐다 (실수 삭제·오염)
 
