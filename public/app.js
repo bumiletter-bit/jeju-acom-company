@@ -12053,18 +12053,29 @@ async function scenNoMap() {
         const d = await api('/api/agent-office/scenarios');
         inquiryScenarios = d.scenarios || inquiryScenarios;
         _scenNoMap = {};
-        for (const s of (d.scenarios || [])) _scenNoMap[s.name] = { id: s.id, no: s.scenario_no };
+        for (const s of (d.scenarios || [])) {
+            _scenNoMap[s.name] = { id: s.id, no: s.scenario_no, name: s.name };
+            _scenNoMap['#' + s.scenario_no] = { id: s.id, no: s.scenario_no, name: s.name };   // 번호 인덱스 (개명 안전 — 대표 7/27)
+        }
     } catch (_) { _scenNoMap = {}; }
     return _scenNoMap;
 }
-// 'a + b' / 'a+b' 형태의 재료 시나리오 이름을 번호 링크로 (목록에 없는 이름은 이름 그대로 — 개명·삭제분)
-function scenLinksFromNames(nameStr, map) {
+// 재료 시나리오 → 번호 링크. nosStr('40+50', 봇 신규 기록)이 있으면 번호로 연결(개명 안전),
+// 없으면 이름('a + b') 매칭 폴백 — 둘 다 안 되면 이름 그대로/기록 없음 (과거 건)
+function scenLinksFromNames(nameStr, map, nosStr) {
+    const link = (m, label, tip) => `<a href="javascript:void(0)" onclick="gotoScenario(${m.id})" style="color:var(--primary,#4f46e5); font-weight:600; text-decoration:underline;" title="${aoEsc(tip)} — 클릭하면 시나리오 편집으로 이동">${label}</a>`;
+    const nos = String(nosStr || '').split(/\s*\+\s*/).map(s => s.trim()).filter(Boolean);
+    if (nos.length) {
+        return nos.map(no => {
+            const m = map && map['#' + no];
+            return m ? link(m, `시나리오 ${no}`, m.name) : `<span title="삭제된 시나리오일 수 있음">시나리오 ${aoEsc(no)}</span>`;
+        }).join(', ');
+    }
     const names = String(nameStr || '').split(/\s*\+\s*/).map(s => s.trim()).filter(Boolean);
     if (!names.length) return null;
     return names.map(n => {
         const m = map && map[n];
-        return m
-            ? `<a href="javascript:void(0)" onclick="gotoScenario(${m.id})" style="color:var(--primary,#4f46e5); font-weight:600; text-decoration:underline;" title="${aoEsc(n)} — 클릭하면 시나리오 편집으로 이동">시나리오 ${m.no}</a>`
+        return m ? link(m, `시나리오 ${m.no}`, n)
             : `<span title="현재 시나리오 목록에 없음 (개명·삭제됐을 수 있음)">${aoEsc(n)}</span>`;
     }).join(', ');
 }
@@ -12520,7 +12531,7 @@ async function renderUnansweredLogs() {
     const fmtDtS = (s) => new Date(s).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     const answeredRows = unansRows.filter(r => r.answered);
     const pendRows = unansRows.filter(r => !r.answered);
-    const scenCell = (r) => (scenLinksFromNames(r.scenario_name, scenMap) || '<span class="text-muted">기록 없음</span>')
+    const scenCell = (r) => (scenLinksFromNames(r.scenario_name, scenMap, r.scenario_nos) || '<span class="text-muted">기록 없음</span>')
         + (r.response_source === 'price_direct' ? ' <span class="text-muted" style="font-size:11px;">(가격즉답)</span>' : '');
     // 품목: 한 줄 말줄임 (전체 이름은 마우스오버 툴팁)
     const itemCell = (v) => `<td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(v || '-')}">${aoEsc(v || '-')}</div></td>`;

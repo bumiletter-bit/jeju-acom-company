@@ -858,6 +858,8 @@ async function initDB() {
         ON CONFLICT (key) DO NOTHING`);
     // 설계 변경(대표 7/27): 배정→시나리오 기반 생성 — 사용된 시나리오명(복수) 기록
     await pool.query(`ALTER TABLE naver_qnas ADD COLUMN IF NOT EXISTS ai_scenarios JSONB`);
+    // 톡톡 로그 시나리오 번호 컬럼 (대표 7/27 — 봇과 양쪽 멱등 보장: 어느 쪽이 먼저 배포돼도 안전)
+    await pool.query(`ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS scenario_nos TEXT`);
     // 고객문의(문의하기) 자동답변 (대표 7/27 — 상품문의 구조 재사용): 초안·게시 기록 컬럼 + 스위치(기본 OFF — SSH·첫 검증 후 ON)
     for (const col of ['ai_status VARCHAR(10)', 'ai_scenarios JSONB', 'ai_draft TEXT', 'posted_at TIMESTAMP', 'posted_by VARCHAR(50)', 'post_error TEXT']) {
         await pool.query(`ALTER TABLE naver_inquiries ADD COLUMN IF NOT EXISTS ${col}`);
@@ -5066,7 +5068,7 @@ app.get('/api/agent-office/inquiry-messages', authMiddleware, async (req, res) =
         else if (answered === '0') conditions.push(`answered = false`);
         const where = 'WHERE ' + conditions.join(' AND ');
         const rows = (await pool.query(
-            `SELECT id, user_id, item, message, answered, bot_response, staff_response, scenario_name, response_source, received_at
+            `SELECT id, user_id, item, message, answered, bot_response, staff_response, scenario_name, scenario_nos, response_source, received_at
              FROM message_logs ${where} ORDER BY received_at DESC LIMIT 500`, params)).rows;
         const [wk, top, items] = await Promise.all([
             pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE answered)::int AS answered,
