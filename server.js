@@ -7344,15 +7344,19 @@ async function maruDecide(content, image = null) {
             { type: 'text', text: `대표 지시(이미지 첨부됨): ${content}` },
           ]
         : `대표 지시: ${content}`;
+    let lastStop = null; // 대표 7/27: answer_text 실종 진단용 — max_tokens 잘림(stop_reason) 실측 기록
     const call = async (extraNote) => {
         const msg = await anthropic.messages.create({
             model: MARU_MODEL,
-            max_tokens: 1200, // 대표 7/27: 800에서 상향 — 문의 현황 스냅샷 즉답(answer_text 수치 나열)이 잘리지 않게
+            // 대표 7/27: 800→1200→4000 — sonnet-5는 내부 사고(adaptive thinking)가 max_tokens를 잠식해
+            //   마지막 긴 필드(answer_text)가 예산 부족으로 통째 실종되던 것 (글샘 2048·4000과 동일 사유)
+            max_tokens: 4000,
             system: systemPrompt + (extraNote || ''),
             tools: [MARU_ROUTE_TOOL],
             tool_choice: { type: 'tool', name: 'route_order' },
             messages: [{ role: 'user', content: userContent }],
         });
+        lastStop = msg.stop_reason || null;
         const tu = msg.content.find(b => b.type === 'tool_use');
         if (!tu) throw new Error('마루 응답에서 배정 결과(tool_use)를 찾지 못했습니다');
         return tu.input;
@@ -7373,7 +7377,7 @@ async function maruDecide(content, image = null) {
         if (polluted) { if (pollution) pollution.retry = maruPollutionSample(raw); }
         d = maruCleanDecision(raw);
     }
-    return { d, polluted, pollution };
+    return { d, polluted, pollution, stop: lastStop };
 }
 // 정화 후에도 배정을 진행할 수 없는 상태인지 (조건부 재시도 발동 기준)
 // - action 자체가 없거나, route인데 담당 요원이 비었거나, clarify인데 질문이 빈 경우(빈 되묻기 금지)
@@ -8911,7 +8915,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 ? { data: mm[2], mime: order.image_mime || mm[1] }
                 : { data: order.image_data, mime: order.image_mime }; // 접두사 없이 순수 base64로 온 경우 그대로
         }
-        let { d, polluted, pollution } = await maruDecide(effContent, maruImage); // 대표 7/22: 정산 아닌 이미지는 마루가 직접 봄
+        let { d, polluted, pollution, stop } = await maruDecide(effContent, maruImage); // 대표 7/22: 정산 아닌 이미지는 마루가 직접 봄
         if (polluted) console.warn(`마루 응답 오염 감지 (지시 #${order.id}):`, JSON.stringify(pollution));
         // 지시 #6-2: 기간+재무 항목이 모두 명시된 지시에 빈 되묻기 금지 — 서버가 세미 배정 강제
         const forced = maruForceFinanceRoute(d, effContent, kstTodayStr());
@@ -8940,7 +8944,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         }
         await writeAudit({
             action: 'maru_route', targetType: 'pending_order', targetId: order.id,
-            changes: { after: { decision: d, model: MARU_MODEL, polluted_retry: polluted, pollution_sample: pollution, combined_from: combinedFrom ? combinedFrom.id : null, follow_up_from: followUpFrom ? followUpFrom.id : null, forced_finance_route: !!forced } },
+            changes: { after: { decision: d, model: MARU_MODEL, stop_reason: stop, polluted_retry: polluted, pollution_sample: pollution, combined_from: combinedFrom ? combinedFrom.id : null, follow_up_from: followUpFrom ? followUpFrom.id : null, forced_finance_route: !!forced } },
             source: 'agent_office', actor,
         });
 
