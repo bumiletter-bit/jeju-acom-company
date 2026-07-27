@@ -883,9 +883,10 @@ window.toggleScheduleComplete = async function(id, checkbox) {
     }
 };
 
-function showToast(msg) {
+function showToast(msg, type) {
+    // type 'lime' = 저장·완료 성공 표기 (대표 7/27 — 문의 관리·판매현황 등 변경 성공 시 라임 토스트)
     const toast = document.createElement('div');
-    toast.className = 'toast-message';
+    toast.className = 'toast-message' + (type ? ' toast-' + type : '');
     toast.textContent = msg;
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('show'));
@@ -12059,7 +12060,7 @@ async function renderInquiryPage() {
     renderInquiryLogs().catch(console.error);
 }
 window.toggleScenario = async function(id, enabled) {
-    try { await api(`/api/agent-office/scenarios/${id}`, 'PUT', { enabled }); }
+    try { await api(`/api/agent-office/scenarios/${id}`, 'PUT', { enabled }); showToast(enabled ? '✅ 사용 켬 완료' : '⏸ 사용 끔 완료', 'lime'); }
     catch (e) { alert(e.message); }
     renderInquiryPage().catch(console.error);
 };
@@ -12112,6 +12113,7 @@ function setupInquiryPage() {
             if (id) await api(`/api/agent-office/scenarios/${id}`, 'PUT', body);
             else await api('/api/agent-office/scenarios', 'POST', body);
             document.getElementById('inquiry-edit-card').style.display = 'none';
+            showToast(id ? '✅ 수정 완료 — 톡톡봇에 5분 내 반영됩니다' : '✅ 시나리오 등록 완료', 'lime');
             renderInquiryPage().catch(console.error);
         } catch (e) { alert(e.message); }
     });
@@ -12121,12 +12123,15 @@ function setupInquiryPage() {
         try {
             await api(`/api/agent-office/scenarios/${id}`, 'DELETE', { confirm: true });
             document.getElementById('inquiry-edit-card').style.display = 'none';
+            showToast('🗑 삭제 완료 (복구는 대표에게)', 'lime');
             renderInquiryPage().catch(console.error);
         } catch (e) { alert(e.message); }
     });
     document.getElementById('inquiry-auto-reply-toggle').addEventListener('change', async (e) => {
-        try { await api('/api/agent-office/scenarios-auto-reply', 'PUT', { value: e.target.checked ? 'on' : 'off' }); }
-        catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
+        try {
+            await api('/api/agent-office/scenarios-auto-reply', 'PUT', { value: e.target.checked ? 'on' : 'off' });
+            showToast(e.target.checked ? '✅ 전체 자동응답 켬 완료' : '⏸ 전체 자동응답 끔 완료', 'lime');
+        } catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
     });
 }
 async function renderInquiryLogs() {
@@ -12206,8 +12211,8 @@ async function renderQnaTab() {
             return `<tr>
                 <td style="white-space:nowrap;">${fmtDt(r.posted_at || raw.create_date)}</td>
                 <td>${aoEsc(raw.product_name || '')}</td>
-                <td style="max-width:260px; white-space:pre-wrap;">${aoEsc(String(raw.question || '').slice(0, 120))}</td>
-                <td style="max-width:300px; white-space:pre-wrap;">${aoEsc(String(ans).slice(0, 150))}${String(ans).length > 150 ? '…' : ''}</td>
+                <td style="max-width:260px;">${qnaClipHtml(raw.question || '')}</td>
+                <td style="max-width:300px;">${qnaClipHtml(ans)}</td>
                 <td style="white-space:nowrap;">${by}${r.scenario_name ? `<div class="text-muted" style="font-size:11px;">${aoEsc(r.scenario_name)}</div>` : ''}</td>
             </tr>`;
         }).join('')}</tbody></table>` : '<p class="text-muted">아직 게시된 답변이 없습니다</p>';
@@ -12231,20 +12236,34 @@ async function renderQnaTab() {
             <div class="table-scroll-wrapper">${doneHtml}</div>
         </div>`;
 }
+// 긴 질문·답변 접기/펼치기 — 잘라 보여주지 않고 전체를 담되 접어둠, 누르면 전체 (대표 7/27)
+function qnaClipHtml(text) {
+    const t = String(text || '');
+    if (t.length <= 130) return `<div style="white-space:pre-wrap;">${aoEsc(t)}</div>`;
+    return `<div onclick="qnaClipToggle(this)" style="cursor:pointer;" title="누르면 전체 보기/접기">
+        <div class="qna-clip">${aoEsc(t)}</div>
+        <div class="qna-clip-hint" style="color:var(--primary,#4f46e5); font-size:11px; margin-top:3px;">▼ 눌러서 전체 보기</div>
+    </div>`;
+}
+window.qnaClipToggle = function(el) {
+    const c = el.querySelector('.qna-clip'), h = el.querySelector('.qna-clip-hint');
+    const open = c.classList.toggle('open');
+    if (h) h.textContent = open ? '▲ 접기' : '▼ 눌러서 전체 보기';
+};
 window.postQnaAnswer = async function(id) {
     const el = document.getElementById('qna-answer-' + id);
     const content = el ? el.value.trim() : '';
     if (!content) return showToast('⚠️ 답변 내용을 입력해주세요');
     if (!confirm('이 답변을 네이버 상품문의에 게시할까요? (공개 게시판에 즉시 노출됩니다)')) return;
     // 디자인 가이드: 성공·실패 모두 토스트 (원시 브라우저 alert 금지 — 대표 7/27). 상세 사유는 목록의 실패 표시로
-    try { await api('/api/agent-office/naver/qnas/' + id + '/answer', 'POST', { content }); showToast('✅ 게시 등록 완료 — 판매자센터에 반영되었습니다'); }
+    try { await api('/api/agent-office/naver/qnas/' + id + '/answer', 'POST', { content }); showToast('✅ 게시 등록 완료 — 판매자센터에 반영되었습니다', 'lime'); }
     catch (e) { showToast('❌ 게시 실패 — ' + String(e.message || '').slice(0, 80)); }
     renderQnaTab().catch(console.error);
 };
 window.toggleQnaAutoPost = async function(enabled) {
     try {
         await api('/api/agent-office/naver/qna-auto-post', 'PUT', { enabled });
-        showToast(enabled ? '🤖 자동 게시를 켰습니다' : '⏸ 자동 게시를 껐습니다 — 승인 모드 (초안이 대기 목록에 쌓입니다)');
+        showToast(enabled ? '🤖 자동 게시 켬 완료' : '⏸ 자동 게시 끔 완료 — 승인 모드 (초안이 대기 목록에 쌓입니다)', 'lime');
     } catch (e) { alert(e.message); }
     renderQnaTab().catch(console.error);
 };
@@ -12271,12 +12290,12 @@ async function renderBotProducts() {
     renderBotProductLogs().catch(console.error);
 }
 window.setBotProdStatus = async function(id, status) {
-    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { status }); }
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { status }); showToast(`✅ '${status}' 변경 완료 — 봇 답변에 1분 내 반영`, 'lime'); }
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
 window.saveBotProdPrice = async function(id) {
-    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { price: document.getElementById('botprod-price-' + id).value }); }
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { price: document.getElementById('botprod-price-' + id).value }); showToast('✅ 가격 저장 완료 — 봇 답변에 1분 내 반영', 'lime'); }
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
@@ -12284,7 +12303,7 @@ window.saveBotProdPrice = async function(id) {
 window.deleteBotProd = async function(id) {
     const p = botProducts.find(x => x.id === id);
     if (!p || !confirm(`"${p.name}" 품목을 삭제할까요? (예외 품목 — 복구 가능)`)) return;
-    try { await api('/api/agent-office/bot-products/' + id, 'DELETE', { confirm: true }); }
+    try { await api('/api/agent-office/bot-products/' + id, 'DELETE', { confirm: true }); showToast('🗑 품목 삭제 완료 (복구 가능)', 'lime'); }
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
@@ -12314,6 +12333,7 @@ function setupBotProductsTab() {
             await api('/api/agent-office/bot-products', 'POST', { name, price: document.getElementById('botprod-add-price').value });
             document.getElementById('botprod-add-name').value = '';
             document.getElementById('botprod-add-price').value = '';
+            showToast('✅ 품목 추가 완료', 'lime');
             renderBotProducts().catch(console.error);
         } catch (e) { alert(e.message); }
     });

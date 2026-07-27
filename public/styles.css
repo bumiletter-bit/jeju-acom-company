@@ -1193,6 +1193,14 @@ body {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
 }
+/* 저장·완료 성공 토스트 — 라임 (대표 7/27) */
+.toast-message.toast-lime {
+    background: linear-gradient(135deg, #84cc16, #4d7c0f);
+    color: #fff;
+}
+/* 상품문의 게시·답변 완료 목록 — 긴 질문·답변 접기/펼치기 (누르면 전체 보기) */
+.qna-clip { white-space: pre-wrap; max-height: 76px; overflow: hidden; }
+.qna-clip.open { max-height: none; }
 
 /* 알림 토스트 (오른쪽 상단) */
 .noti-toast {
