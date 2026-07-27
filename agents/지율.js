@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const JIYUL_MODEL = process.env.JIYUL_MODEL || 'claude-sonnet-4-6';
+const JIYUL_MODEL = process.env.JIYUL_MODEL || 'claude-sonnet-5';
 const GUIDE_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'legal', '노무지침_v1.md');
 const PERSONA_FILE = path.join(__dirname, '..', 'docs', 'agents', '지율_특성.md');
 const load = (fp, label) => { try { return fs.readFileSync(fp, 'utf8'); } catch (e) { return `(${label} 로드 실패: ${e.message})`; } };

@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const MIRAE_MODEL = process.env.MIRAE_MODEL || 'claude-sonnet-4-6';
+const MIRAE_MODEL = process.env.MIRAE_MODEL || 'claude-sonnet-5';
 const PERSONA_FILE = path.join(__dirname, '..', 'docs', 'agents', '미래_특성.md');
 const BRAND_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '브랜드가이드_v1.md');
 const load = (fp, label) => { try { return fs.readFileSync(fp, 'utf8'); } catch (e) { return `(${label} 로드 실패: ${e.message})`; } };

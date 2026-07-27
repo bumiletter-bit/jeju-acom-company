@@ -9,7 +9,7 @@ const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // 프롬프트 품질 우선 — Sonnet급 기본 (환경변수로 교체 가능)
-const MISO_MODEL = process.env.MISO_MODEL || 'claude-sonnet-4-6';
+const MISO_MODEL = process.env.MISO_MODEL || 'claude-sonnet-5';
 
 const KNOWLEDGE_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '마케팅_전문팀_시스템.md');
 // 지시 #31: 브랜드 가이드 v1 — 정적 가이드 (개정 대표 승인제). 비주얼 규칙(제주 요소·컬러·금지)을 프롬프트에 반영

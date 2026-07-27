@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const GIAN_MODEL = process.env.GIAN_MODEL || 'claude-sonnet-4-6';
+const GIAN_MODEL = process.env.GIAN_MODEL || 'claude-sonnet-5';
 const VISION_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'planning', '비전_v1.md');
 const PERSONA_FILE = path.join(__dirname, '..', 'docs', 'agents', '기안_특성.md');
 const BRAND_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '브랜드가이드_v1.md');

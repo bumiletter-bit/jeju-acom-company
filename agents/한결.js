@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const HANGYEOL_MODEL = process.env.HANGYEOL_MODEL || 'claude-sonnet-4-6';
+const HANGYEOL_MODEL = process.env.HANGYEOL_MODEL || 'claude-sonnet-5';
 const BRAND_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '브랜드가이드_v1.md');
 const PERSONA_FILE = path.join(__dirname, '..', 'docs', 'agents', '한결_특성.md'); // 지시 #44
 let _brandCache = null;

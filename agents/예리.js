@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const YERI_MODEL = process.env.YERI_MODEL || 'claude-sonnet-4-6';
+const YERI_MODEL = process.env.YERI_MODEL || 'claude-sonnet-5';
 const BRAND_FILE = path.join(__dirname, '..', 'docs', 'knowledge', 'marketing', '브랜드가이드_v1.md');
 const load = (fp) => { try { return fs.readFileSync(fp, 'utf8'); } catch (e) { return `(로드 실패: ${e.message})`; } };
 const clean = v => String(v || '').replace(/<[^>]*>/g, '').trim();
