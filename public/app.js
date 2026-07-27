@@ -12188,7 +12188,7 @@ async function renderQnaTab() {
                 ${badge}
                 <b>${aoEsc(raw.product_name || '(상품명 없음)')}</b>
                 <span class="text-muted">${aoEsc(raw.masked_writer_id || '')} · ${fmtDt(raw.create_date)}</span>
-                ${r.scenario_name ? `<span class="text-muted">배정: ${aoEsc(r.scenario_name)}</span>` : ''}
+                ${r.scenario_name ? `<span class="text-muted">재료 시나리오: ${aoEsc(r.scenario_name)}</span>` : ''}
             </div>
             <div style="white-space:pre-wrap; background:var(--bg-soft,#f7f7f9); border-radius:8px; padding:10px; margin:8px 0; font-size:13px;">${aoEsc(raw.question || '')}</div>
             ${r.post_error ? `<div style="color:#c0392b; font-size:12px; margin-bottom:6px;">실패 사유: ${aoEsc(r.post_error)}</div>` : ''}
@@ -12214,7 +12214,7 @@ async function renderQnaTab() {
     box.innerHTML = `
         <div class="card">
             <div class="card-header-row">
-                <h2>🛰️ 상품문의 자동답변 <span class="text-muted" style="font-size:13px; font-weight:400;">30분마다 수집 · 시나리오 확신 건만 자동 게시 · 나머지는 아래에서 직접</span></h2>
+                <h2>🛰️ 상품문의 자동답변 <span class="text-muted" style="font-size:13px; font-weight:400;">30분마다 수집 · AI가 시나리오를 재료로 답변 작성(재료에 없는 내용은 SKIP) · 나머지는 아래에서 직접</span></h2>
                 <div style="display:flex; gap:10px; align-items:center;">
                     ${toggle}
                     <button class="btn-sm btn-outline" onclick="renderQnaTab()">🔄 새로고침</button>
