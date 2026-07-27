@@ -260,33 +260,50 @@ ${loadKnowledge()}${lessonsText}${discountText}${inquiryMaterials}`;
             if (!toolUse) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
             return toolUse.input;
         };
-        // 본문 실물 검증 (대표 7/27 — run#219에서 본문에 "test" 4자만 담긴 사고): 전 버전이 40자 미만이면 1회 재시도, 그래도 실패면 정직 오류
+        // 본문 실물 검증 (대표 7/27 — run#219에서 본문에 "test" 4자만 담긴 사고): 전 버전이 40자 미만이면 1회 재시도
         let c = await callModel();
         let versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
         if (versions.length === 0 || versions.every(v => String(v.text).trim().length < 40)) {
             c = await callModel('\n\n※ 경고: 직전 응답의 versions[].text에 완성 본문이 없었다. 각 버전 text에 즉시 사용 가능한 완성 본문 전체를 반드시 담아라. 자리 텍스트·요약 금지.');
             versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
         }
-        if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다');
+        // 평문 폴백 (7/27 3연타 재테스트 실측 run#226: 도구 JSON 태그 오염으로 versions 본문이 재시도까지 2회 연속 전멸)
+        //   마루 v5.9.110과 같은 해법 — 본문만은 도구 없이 평문 재질의(오염 원천 불가 경로). 제출 부가 필드(제목·채널)는 포기하고 본문 확보 우선.
+        let plainFallback = false;
+        if (versions.length === 0 || versions.every(v => String(v.text).trim().length < 40)) {
+            const msg2 = await anthropic.messages.create({
+                model: GEULSAEM_MODEL, max_tokens: 4000,
+                system: [{ type: 'text', text: systemPrompt + '\n\n※ 지금은 submit_copy 도구를 쓰지 않는다. 지시에 맞는 완성 카피 본문 1종만 평문으로 출력하라 — 제목·설명·JSON·태그 없이, 즉시 사용 가능한 본문 텍스트만.', cache_control: { type: 'ephemeral' } }],
+                messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
+            });
+            const plain = (msg2.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+            if (plain.length >= 40) { versions = [{ text: plain, label: '기본 (평문 폴백)' }]; plainFallback = true; }
+        }
+        if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다 (평문 폴백 포함 3회 실패)');
         if (versions.every(v => String(v.text).trim().length < 40)) throw new Error('글샘이 완성 본문 대신 자리 텍스트만 제출했습니다 (재시도 후에도 실패 — 허위 보고 방지 차단)');
         const missing = Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [];
+        // 채널·글자수 표기도 오염 방어: 파편 감지 시 안전값 (본문과 달리 표기용이라 생략해도 무해)
+        const channelSafe = (typeof c.channel === 'string' && c.channel.trim() && !/[<>{}]|antml|parameter/i.test(c.channel))
+            ? c.channel.trim().slice(0, 20) : '카피';
+        const charCounts = plainFallback ? `본문 약 ${versions[0].text.length}자 (평문 폴백)` : (c.char_counts || '');
         // 지시 #39: 제목 필드 정화 — run #60에서 오염 파편(태그+versions JSON 원문 1,366자)이
         // 제목에 유입돼 대표 화면에 노출된 첫 사례. 정화 불가 시 제목 생략 (몰래 지어내기 금지)
         const title = cleanTitleField(c.title);
 
         return {
-            summary: `완료: ${c.channel} 카피 ${versions.length}종${missing.length ? ` (채울 항목 ${missing.length}개)` : ''}`,
+            summary: `완료: ${channelSafe} 카피 ${versions.length}종${missing.length ? ` (채울 항목 ${missing.length}개)` : ''}${plainFallback ? ' — 평문 폴백' : ''}`,
             lines: [
-                `채널 ${c.channel}${title ? ` · 제목안 "${title}"` : ''}${c.char_counts ? ' · ' + c.char_counts : ''}`,
+                `채널 ${channelSafe}${title ? ` · 제목안 "${title}"` : ''}${charCounts ? ' · ' + charCounts : ''}`,
                 missing.length ? `✏️ 채워야 할 항목: ${missing.join(', ')}` : '누락 정보 없음 — 바로 발송 가능한 초안',
                 '발송은 대표님이 알리고에서 직접 (자동 발송 경로 없음)',
             ],
             report: {
                 type: 'geulsaem_copy',
-                channel: c.channel, title,
+                channel: channelSafe, title,
                 title_error: (!title && c.title) ? '제목 추출 실패 (오염 파편 정화 불가 — 본문 카피는 정상)' : '',
+                fallback: plainFallback ? 'plain' : '',
                 versions, missing_fields: missing,
-                char_counts: c.char_counts || '', send_tip: c.send_tip || '',
+                char_counts: charCounts, send_tip: c.send_tip || '',
                 model: GEULSAEM_MODEL, instruction,
                 note: '글샘은 카피 생성까지만 — 발송은 알리고에서 대표가 직접 (자동 발송 경로 없음)',
             },

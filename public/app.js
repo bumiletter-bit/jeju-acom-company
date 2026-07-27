@@ -12646,8 +12646,9 @@ async function renderNaverTimers() {
     const alerts = alertData && alertData.settings;
     // 대표 7/27 알림 개선: 문의 알림을 상황별 4종으로 재편 (답변완료 확인 / 직접 처리 필요 / 미처리 리마인더 / 아침 브리핑)
     const ALERT_LABELS = [['order', '신규주문'], ['claim', '반품·교환'], ['settlement', '정산'],
-        ['autodone', '문의 답변완료(확인)'], ['staffneed', '직접 처리 필요'], ['reminder', '미처리 리마인더'], ['briefing', '아침 브리핑']];
-    const tplEditors = alerts ? ALERT_LABELS.map(([k, label]) => {
+        ['autodone', '문의 답변완료(확인)'], ['staffneed', '직접 처리 필요'], ['reminder', '미처리 리마인더'], ['briefing', '아침 브리핑'],
+        ['office', 'AGENT OFFICE 완료·질문']]; // 대표 7/27: 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성) — 기본 OFF, 문구 편집 없음
+    const tplEditors = alerts ? ALERT_LABELS.filter(([k]) => k !== 'office').map(([k, label]) => {
         const tpl = (alertData.templates && alertData.templates[k]) || '';
         const vars = ((alertData.variables && alertData.variables[k]) || []).map(v => `{{${v}}}`).join(' ');
         return `<details style="margin-top:6px;">

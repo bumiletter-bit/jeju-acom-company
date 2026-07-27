@@ -5125,7 +5125,9 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
 // 대표 7/27 알림 개선: 문의 3채널 알림을 상황별 4종(answered/staffneed/reminder/briefing)으로 재편 —
 //   구 'inquiry'(미답변 신규)·'qna'(신규+게시 혼합)·'inqanswer' 키는 은퇴 (DB에 남은 옛 문구 오버라이드는 무해)
-const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing'];
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing', 'office'];
+// office = AGENT OFFICE 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성 완료) — 대표 7/27 지시로 기본 OFF (오류·실패 알림은 이 키와 무관하게 항상 발송)
+const TELEGRAM_ALERT_DEFAULT_OFF = ['office'];
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
@@ -5154,12 +5156,12 @@ async function alertText(kind, vars) {
 }
 async function telegramAlertSettings() {
     const out = {};
-    for (const k of TELEGRAM_ALERT_KEYS) out[k] = true;
+    for (const k of TELEGRAM_ALERT_KEYS) out[k] = !TELEGRAM_ALERT_DEFAULT_OFF.includes(k);
     try {
         const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'telegram_alert_settings'`);
         const v = (r.rows[0] && r.rows[0].value) || {};
-        for (const k of TELEGRAM_ALERT_KEYS) if (v[k] === false) out[k] = false;
-    } catch (_) { /* 조회 실패 → 전부 ON */ }
+        for (const k of TELEGRAM_ALERT_KEYS) if (typeof v[k] === 'boolean') out[k] = v[k]; // DB 저장값이 기본값보다 우선 (office도 화면에서 다시 켤 수 있음)
+    } catch (_) { /* 조회 실패 → 기본값 */ }
     return out;
 }
 async function alertEnabled(kind) { return (await telegramAlertSettings())[kind] !== false; }
@@ -5555,7 +5557,7 @@ async function executeAgentTestRun(run, agent, managerName, runParams = {}) {
         await pool.query(`UPDATE agent_runs SET status='done', result=$2, finished_at=NOW() WHERE id=$1`,
             [run.id, JSON.stringify(result)]);
         await pool.query(`UPDATE agents SET status='done', last_run_at=NOW() WHERE id=$1`, [agent.id]);
-        notifyTelegram(`✅ [${agent.name}] 완료: ${(result && result.summary) || '작업 완료'}`); // 지시 #10-b (비동기, 실패 무시)
+        if (await alertEnabled('office')) notifyTelegram(`✅ [${agent.name}] 완료: ${(result && result.summary) || '작업 완료'}`); // 지시 #10-b (대표 7/27: office 스위치, 기본 OFF)
         // 완료 배지는 프론트에서 3초 표시 — 이후 대기 상태로 복귀
         setTimeout(() => {
             pool.query(`UPDATE agents SET status='idle' WHERE id=$1 AND status='done'`, [agent.id]).catch(() => {});
@@ -7417,7 +7419,7 @@ async function maruFinishOrder(orderId, status, result, runId = null) {
         [orderId, status, JSON.stringify(result), runId]);
     // 지시 #29-1: 되묻기(대표 답변 필요)는 ❓ 행동 안내형 알림 — 질문 내용은 미포함 (요약만)
     if (status === '질문') {
-        notifyTelegram('❓ 마루: 대표 답변 필요 → 지시 입력바에 답해주세요');
+        if (await alertEnabled('office')) notifyTelegram('❓ 마루: 대표 답변 필요 → 지시 입력바에 답해주세요'); // 대표 7/27: office 스위치, 기본 OFF
     }
 }
 
@@ -8361,7 +8363,7 @@ async function maruRecordRun(opLabel, summaryText, lines, reportObj) {
         [maru.id, JSON.stringify(steps),
          JSON.stringify({ summary: summaryText, lines, report: reportObj })])).rows[0];
     await pool.query(`UPDATE agents SET last_run_at = NOW() WHERE id = $1`, [maru.id]);
-    notifyTelegram(`✅ [마루] 완료: ${summaryText}`); // 지시 #10-b (비동기, 실패 무시)
+    if (await alertEnabled('office')) notifyTelegram(`✅ [마루] 완료: ${summaryText}`); // 지시 #10-b (대표 7/27: office 스위치, 기본 OFF)
     return run;
 }
 
@@ -10097,7 +10099,7 @@ app.post('/api/agent-office/runs/:id/generate', authMiddleware, async (req, res)
                     changes: { after: { file_name: fname, size_bytes: buf.length, media: output.media, grade, model: opt.model, est_usd: opt.usd, est_krw: opt.krw, run_id: run.id } },
                     source: 'agent_office', actor: approval.actor,
                 });
-                await notifyTelegram(`🎨 미소 ${output.media} 생성 완료 (${grade}) — 보고서함 📎`);
+                if (await alertEnabled('office')) await notifyTelegram(`🎨 미소 ${output.media} 생성 완료 (${grade}) — 보고서함 📎`); // 대표 7/27: office 스위치 (실패 알림은 항상)
             } catch (e) {
                 console.error('미소 생성 실패:', e.message);
                 await finishUpdate(r2 => {
