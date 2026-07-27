@@ -6,6 +6,10 @@
 
 ---
 
+## v5.9.108 (2026-07-27 — 🔴 마루 answer_text 공백의 진짜 원인: 규칙 8 목록에서 answer 누락)
+- [🔴 원인 최종 확정] sonnet-5로 바꿔도 answer_text 공백 재현(#305·audit 2042) → 모델 문제가 아니라 **마루 프롬프트 규칙 8("해당 action에 필요한 필드만 출력") 목록에 route·clarify·schedule 등은 있는데 answer: answer_text만 빠져 있었음** — 규칙을 충실히 따를수록 answer_text를 생략하는 구조. 목록에 answer 추가(실사고 박제 주석 포함)
+- [정리] `.claude/worktrees` 옛 세션 워크트리 3개(prunable — 구버전 server.js 사본에 sonnet-4-6 잔존) 제거. 실코드 4-6 잔존 0건 확인(마루 격상 매핑 1줄만 의도적 존치)
+
 ## v5.9.107 (2026-07-27 — 전 요원 기본 모델 sonnet-5 통일)
 - [모델] 기안·미래·미소·예리·지율·한결 코드 기본값 claude-sonnet-4-6 → **claude-sonnet-5** 일괄 상향 (구형의 필드 오염·본문 누락 고질 원천 차단 — 글샘·마루는 v5.9.105~106에서 완료. 세미·한수는 AI 미사용이라 무관. env `*_MODEL`로 개별 교체 여전히 가능)
 

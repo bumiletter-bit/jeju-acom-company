@@ -7051,6 +7051,7 @@ ${JSON.stringify(routingTable, null, 2)}
 8. 모든 문자열 필드에는 순수한 값만 넣는다. 마크업이나 태그 문법, 꺾쇠괄호 문자를 절대 포함하지 않는다.
    해당 action에 필요한 필드만 출력하고 관계없는 필드는 아예 출력하지 않는다 —
    route: team·assignee (+재무면 item_keyword/period/target_date 중 해당분만) / clarify: clarify_question /
+   **answer: answer_text (질문에 대한 답 전문 — 이 필드를 비우면 실패다. 🔴 7/27 실사고: 이 목록에 answer가 빠져 있어 모델이 규칙을 따를수록 answer_text를 생략함 #300~#305)** /
    schedule: schedule_op (조회면 schedule_from·schedule_to, 등록이면 schedule_items) /
    settlement_input: settlement_date·settlement_entries / feedback: feedback_kind.
 
