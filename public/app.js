@@ -12480,16 +12480,13 @@ function setupBotProductsTab() {
 }
 // --- 무응답 현황 탭 (톡톡봇 /unmatched 이관 2026-07-26, 조회 전용) ---
 let unansRows = [];
+// 대표 7/27 개편: 무응답 현황 → "💬 톡톡 문의" — 봇 답변/무응답 2섹션 상시 표시 (상품문의 탭의 대기/완료 구분처럼)
 async function renderUnansweredLogs() {
-    const view = document.getElementById('unans-view').value;
     const period = document.getElementById('unans-period').value;
     const date = document.getElementById('unans-date').value.trim();
     const item = document.getElementById('unans-item').value;
     const q = document.getElementById('unans-q').value.trim();
-    const params = new URLSearchParams();
-    if (view === 'skip') params.set('skip', '1');
-    else if (view === 'unanswered') params.set('answered', '0');
-    else if (view === 'answered') params.set('answered', '1');
+    const params = new URLSearchParams();   // 보기 필터 없이 전체 조회 → 클라이언트에서 답변/무응답 분리
     if (item) params.set('item', item);
     if (q) params.set('q', q);
     if (date) params.set('date', date);
@@ -12518,37 +12515,38 @@ async function renderUnansweredLogs() {
     itemSel.innerHTML = '<option value="">전체 품목</option>' + (d.items || []).map(it => `<option value="${aoEsc(it)}">${aoEsc(it)}</option>`).join('');
     itemSel.value = curItem;
 
-    const unansThead = '<thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>봇 응답</th><th>시나리오</th><th>직원 답변</th></tr></thead>';
-    if (!unansRows.length) {
-        // 디자인 가이드: 빈 화면은 empty-row 컴포넌트
-        document.getElementById('unans-list').innerHTML =
-            `<table class="data-table">${unansThead}<tbody><tr class="empty-row"><td colspan="6">표시할 문의가 없습니다</td></tr></tbody></table>`;
-        return;
-    }
-    const rows = unansRows.map(r => {
-        const dt = new Date(r.received_at).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-        const respRaw = String(r.bot_response || '');
-        const isTag = /^\[.*\]$/.test(respRaw.trim());
-        const respHtml = isTag
-            ? `<span style="color:#c0392b;">${aoEsc(respRaw)}</span>`
-            : `<span title="${aoEsc(respRaw)}">${aoEsc(aoTrunc(respRaw, 80))}</span>`;
-        const scenario = (scenLinksFromNames(r.scenario_name, scenMap) || '-') + (r.response_source === 'price_direct' ? ' (가격즉답)' : '');
-        return `<tr>
-            <td style="white-space:nowrap;">${dt}</td>
+    // 2섹션 분리: ✅ 봇 답변(answered=true) / 📭 무응답·미매칭(answered=false — SKIP·쿨다운 등 태그 표시)
+    const fmtDtS = (s) => new Date(s).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const answeredRows = unansRows.filter(r => r.answered);
+    const pendRows = unansRows.filter(r => !r.answered);
+    const scenCell = (r) => (scenLinksFromNames(r.scenario_name, scenMap) || '<span class="text-muted">기록 없음</span>')
+        + (r.response_source === 'price_direct' ? ' <span class="text-muted" style="font-size:11px;">(가격즉답)</span>' : '');
+    const ansThead = '<thead><tr><th>시각</th><th>품목</th><th>손님 질문</th><th>봇 답변</th><th>재료</th><th>직원 답변</th></tr></thead>';
+    const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
+            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
             <td>${aoEsc(r.item || '-')}</td>
-            <td style="white-space:pre-wrap; max-width:320px;">${aoEsc(r.message || '')}</td>
-            <td>${respHtml}</td>
-            <td>${scenario}</td>
-            <td>${aoEsc(r.staff_response || '-')}</td>
-        </tr>`;
-    }).join('');
+            <td style="max-width:280px;">${qnaClipHtml(r.message || '')}</td>
+            <td style="max-width:320px;">${qnaClipHtml(r.bot_response || '')}</td>
+            <td style="white-space:nowrap;">${scenCell(r)}</td>
+            <td style="max-width:200px;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
+        </tr>`).join('') : `<tr class="empty-row"><td colspan="6">봇 답변 기록이 없습니다</td></tr>`;
+    const pendThead = '<thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>상태</th><th>직원 답변</th></tr></thead>';
+    const pendBody = pendRows.length ? pendRows.map(r => `<tr>
+            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
+            <td>${aoEsc(r.item || '-')}</td>
+            <td style="max-width:340px;">${qnaClipHtml(r.message || '')}</td>
+            <td style="white-space:nowrap;"><span style="color:#c0392b;">${aoEsc(r.bot_response || '[무응답]')}</span></td>
+            <td style="max-width:220px;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
+        </tr>`).join('') : `<tr class="empty-row"><td colspan="5">무응답 문의가 없습니다 🎉</td></tr>`;
     document.getElementById('unans-list').innerHTML = `
-        <table class="data-table">${unansThead}
-        <tbody>${rows}</tbody></table>`;
+        <h3 style="font-size:14px; margin:6px 0;">📭 무응답·미매칭 <b>${pendRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(직원 확인 필요 — 자주 나오는 유형은 시나리오로 등록)</span></h3>
+        <div class="table-scroll-wrapper"><table class="data-table">${pendThead}<tbody>${pendBody}</tbody></table></div>
+        <h3 style="font-size:14px; margin:14px 0 6px;">✅ 봇 답변 <b>${answeredRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(재료 번호 클릭 → 시나리오 편집)</span></h3>
+        <div class="table-scroll-wrapper"><table class="data-table">${ansThead}<tbody>${ansBody}</tbody></table></div>`;
 }
 function setupUnansweredTab() {
     document.getElementById('btn-unans-refresh').addEventListener('click', () => renderUnansweredLogs().catch(console.error));
-    ['unans-view', 'unans-period', 'unans-item'].forEach(id => {
+    ['unans-period', 'unans-item'].forEach(id => {   // 대표 7/27 개편: 보기 필터 제거 (2섹션 상시)
         document.getElementById(id).addEventListener('change', () => renderUnansweredLogs().catch(console.error));
     });
     document.getElementById('unans-date').addEventListener('change', () => renderUnansweredLogs().catch(console.error));
@@ -12559,6 +12557,7 @@ function setupUnansweredTab() {
         if (!unansRows.length) return alert('내보낼 데이터가 없습니다');
         const data = unansRows.map(r => ({
             '시각': new Date(r.received_at).toLocaleString('ko-KR'),
+            '답변여부': r.answered ? '봇 답변' : '무응답',
             '품목': r.item || '-',
             '고객 메시지': r.message || '',
             '봇 응답': r.bot_response || '',
@@ -12566,7 +12565,7 @@ function setupUnansweredTab() {
             '직원 답변': r.staff_response || '-',
         }));
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(data, { header: ['시각', '품목', '고객 메시지', '봇 응답', '시나리오', '직원 답변'] });
+        const ws = XLSX.utils.json_to_sheet(data, { header: ['시각', '답변여부', '품목', '고객 메시지', '봇 응답', '시나리오', '직원 답변'] });
         XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
         const today = new Date();
         const dateStr = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');

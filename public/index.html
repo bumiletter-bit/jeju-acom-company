@@ -1859,10 +1859,11 @@
                 <h1>문의 관리</h1>
                 <p class="text-muted" style="font-size:13px; margin:4px 0 16px;">여기서 저장하면 톡톡봇에 5분 내 자동 반영됩니다. ⚠️ 답변문구에 고객 개인정보(이름·연락처·주소)를 넣지 마세요.</p>
                 <!-- 디자인 v5.9.85: 정산관리와 동일한 탭바 컴포넌트 재사용 (클릭 시 인디고 활성) -->
+                <!-- 대표 7/27 개편: 탭 순서 판매현황 → 시나리오 → 톡톡 문의 → 상품문의 → 고객문의 (초기 활성은 시나리오 유지) -->
                 <div class="settlement-tab-bar">
-                    <button class="settlement-tab active" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">💬 시나리오</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
-                    <button class="settlement-tab" id="inquiry-tab-btn-unanswered" onclick="switchInquiryTab('unanswered')">📭 무응답 현황</button>
+                    <button class="settlement-tab active" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">📝 시나리오</button>
+                    <button class="settlement-tab" id="inquiry-tab-btn-unanswered" onclick="switchInquiryTab('unanswered')">💬 톡톡 문의</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-qna" onclick="switchInquiryTab('qna')">🛰️ 상품문의</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-userinq" onclick="switchInquiryTab('userinq')">📮 고객문의</button>
                 </div>
@@ -1923,7 +1924,7 @@
                 <div id="inquiry-tab-unanswered" style="display:none;">
                     <div class="card">
                         <div class="card-header-row">
-                            <h2>📭 무응답 현황</h2>
+                            <h2>💬 톡톡 문의 <span class="text-muted" style="font-size:13px; font-weight:400;">봇 답변·무응답 한눈에 (실시간 자동응답 — 재료 번호 클릭 시 편집)</span></h2>
                             <div style="display:flex; gap:8px; align-items:center;">
                                 <button class="btn-sm btn-outline" id="btn-unans-excel">📥 엑셀</button>
                                 <button class="btn-sm btn-outline" id="btn-unans-refresh">🔄 새로고침</button>
@@ -1931,12 +1932,6 @@
                         </div>
                         <div id="unans-stats" style="font-size:13px; margin:4px 0 10px;"></div>
                         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:13px; margin-bottom:10px;">
-                            <label>보기 <select id="unans-view" class="form-input" style="width:auto; padding:7px 10px; font-size:13px;">
-                                <option value="skip" selected>미매칭 SKIP만</option>
-                                <option value="all">전체</option>
-                                <option value="unanswered">미답변 전체</option>
-                                <option value="answered">답변 완료</option>
-                            </select></label>
                             <label>기간 <select id="unans-period" class="form-input" style="width:auto; padding:7px 10px; font-size:13px;">
                                 <option value="1m" selected>최근 1개월</option>
                                 <option value="3m">최근 3개월</option>
@@ -2209,6 +2204,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=304"></script>
+    <script src="app.js?v=305"></script>
 </body>
 </html>
