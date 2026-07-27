@@ -4551,3 +4551,42 @@ input.ui-switch:focus-visible { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15); }
     .sch-vtoggle button { padding: 7px 8px; }
     .sch-today-btn { padding: 6px 8px; }
 }
+
+/* ========================================
+   문의 관리 서브탭 세그먼트 (v5.9.125)
+   대표 7/27: 톡톡 문의 서브탭(자동답변/미매칭)이 비선택 시 클릭 가능한 버튼으로 안 보임
+   → 일정 .sch-vtoggle 세그먼트 톤 재사용 (회색 트랙 + 선택 흰 알약 + 인디고)
+   settlement-tab-bar에 .inq-subtab-bar를 추가하면 이 스타일로 전환 (JS 무수정 — active 클래스 그대로)
+   ======================================== */
+.inq-subtab-bar {
+    display: inline-flex;
+    background: #F1F2F6;
+    border-radius: 10px;
+    padding: 3px;
+    gap: 2px;
+    border-bottom: none;
+}
+.inq-subtab-bar .settlement-tab {
+    border: 0;
+    border-bottom: none;
+    background: transparent;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #667085;
+    padding: 7px 16px;
+    border-radius: 8px;
+    margin-bottom: 0;
+}
+.inq-subtab-bar .settlement-tab:hover {
+    color: var(--primary);
+    background: #E9EAF2;
+}
+.inq-subtab-bar .settlement-tab.active {
+    background: #fff;
+    color: var(--primary);
+    border-bottom: none;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
+}
+@media (max-width: 768px) {
+    .inq-subtab-bar .settlement-tab { padding: 8px 12px; font-size: 12.5px; min-height: 40px; }
+}
