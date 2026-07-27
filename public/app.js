@@ -12045,9 +12045,41 @@ window.aoOpenReport = async function(runId) {
 // 직원: 추가·수정·개별 ON/OFF / 대표만: 삭제·전체 자동응답 스위치
 // =============================================
 let inquiryScenarios = [];
+// 대표 7/27 작업B: 답변의 재료 시나리오를 번호로 표시 + 클릭 시 편집 화면으로 (계절 문구 즉시 수정 동선)
+let _scenNoMap = null;   // 시나리오 이름 → {id, no} (지연 로드 캐시 — 시나리오 저장 시 무효화)
+async function scenNoMap() {
+    if (_scenNoMap) return _scenNoMap;
+    try {
+        const d = await api('/api/agent-office/scenarios');
+        inquiryScenarios = d.scenarios || inquiryScenarios;
+        _scenNoMap = {};
+        for (const s of (d.scenarios || [])) _scenNoMap[s.name] = { id: s.id, no: s.scenario_no };
+    } catch (_) { _scenNoMap = {}; }
+    return _scenNoMap;
+}
+// 'a + b' / 'a+b' 형태의 재료 시나리오 이름을 번호 링크로 (목록에 없는 이름은 이름 그대로 — 개명·삭제분)
+function scenLinksFromNames(nameStr, map) {
+    const names = String(nameStr || '').split(/\s*\+\s*/).map(s => s.trim()).filter(Boolean);
+    if (!names.length) return null;
+    return names.map(n => {
+        const m = map && map[n];
+        return m
+            ? `<a href="javascript:void(0)" onclick="gotoScenario(${m.id})" style="color:var(--primary,#4f46e5); font-weight:600; text-decoration:underline;" title="${aoEsc(n)} — 클릭하면 시나리오 편집으로 이동">시나리오 ${m.no}</a>`
+            : `<span title="현재 시나리오 목록에 없음 (개명·삭제됐을 수 있음)">${aoEsc(n)}</span>`;
+    }).join(', ');
+}
+window.gotoScenario = async function(id) {
+    switchInquiryTab('scenario');
+    try {
+        if (!Array.isArray(inquiryScenarios) || !inquiryScenarios.find(s => s.id === id)) await renderInquiryPage();
+    } catch (_) { /* 목록 갱신 실패해도 아래에서 처리 */ }
+    if (Array.isArray(inquiryScenarios) && inquiryScenarios.find(s => s.id === id)) openScenarioEdit(id);
+    else showToast('⚠️ 해당 시나리오를 찾을 수 없습니다 (삭제되었을 수 있음)');
+};
 async function renderInquiryPage() {
     const d = await api('/api/agent-office/scenarios');
     inquiryScenarios = d.scenarios || [];
+    _scenNoMap = null;   // 이름→번호 캐시 무효화 (저장·삭제 후 최신 반영)
     const isAdmin = currentUser?.role === 'admin';
     document.getElementById('inquiry-count').textContent = `(${inquiryScenarios.length}건)`;
     const wrap = document.getElementById('inquiry-auto-reply-wrap');
@@ -12185,6 +12217,7 @@ async function renderUserInqTab() {
         return;
     }
     if (inquiryActiveTab !== 'userinq') return;
+    const scenMap = await scenNoMap();   // 작업B: 재료 시나리오 번호 링크용
     const rows = d.rows || [];
     const isAdmin = currentUser?.role === 'admin';
     const pending = rows.filter(r => !r.posted_at && !r.answered);
@@ -12208,7 +12241,7 @@ async function renderUserInqTab() {
                 <span class="pill pill-wait" style="font-size:11px;">${aoEsc(raw.category || '기타')}</span>
                 <b>${aoEsc(raw.product_name || '(상품 없음)')}</b>
                 <span class="text-muted">${fmtDt(raw.registered_at)}</span>
-                ${r.scenario_name ? `<span class="text-muted">재료 시나리오: ${aoEsc(r.scenario_name)}</span>` : ''}
+                ${(() => { const l = scenLinksFromNames(r.scenario_name, scenMap); return l ? `<span class="text-muted">재료: ${l}</span>` : ''; })()}
             </div>
             <div style="white-space:pre-wrap; background:var(--bg-soft,#f7f7f9); border-radius:8px; padding:10px; margin:8px 0; font-size:13px;">${aoEsc([raw.title, raw.content].filter(Boolean).join('\n'))}</div>
             ${r.post_error ? `<div style="color:#c0392b; font-size:12px; margin-bottom:6px;">실패 사유: ${aoEsc(r.post_error)}</div>` : ''}
@@ -12228,7 +12261,7 @@ async function renderUserInqTab() {
                 <td>${aoEsc(raw.product_name || '')}</td>
                 <td style="max-width:260px;">${qnaClipHtml([raw.title, raw.content].filter(Boolean).join('\n'))}</td>
                 <td style="max-width:300px;">${qnaClipHtml(r.ai_draft || '(판매자센터에서 답변)')}</td>
-                <td style="white-space:nowrap;">${by}${r.scenario_name ? `<div class="text-muted" style="font-size:11px;">${aoEsc(r.scenario_name)}</div>` : ''}</td>
+                <td style="white-space:nowrap;">${by}<div class="text-muted" style="font-size:11px;">${scenLinksFromNames(r.scenario_name, scenMap) || '기록 없음'}</div></td>
             </tr>`;
         }).join('')}</tbody></table>` : '<p class="text-muted">아직 답변된 문의가 없습니다</p>';
     box.innerHTML = `
@@ -12278,6 +12311,7 @@ async function renderQnaTab() {
         return;
     }
     if (inquiryActiveTab !== 'qna') return; // 늦게 온 응답이 다른 탭을 덮어쓰는 경합 방지
+    const scenMap = await scenNoMap();   // 작업B: 재료 시나리오 번호 링크용
     const rows = d.rows || [];
     const isAdmin = currentUser?.role === 'admin';
     const pending = rows.filter(r => !r.posted_at && !r.answered);          // 직원 답변 필요 (SKIP·초안 대기·실패)
@@ -12299,7 +12333,7 @@ async function renderQnaTab() {
                 ${badge}
                 <b>${aoEsc(raw.product_name || '(상품명 없음)')}</b>
                 <span class="text-muted">${aoEsc(raw.masked_writer_id || '')} · ${fmtDt(raw.create_date)}</span>
-                ${r.scenario_name ? `<span class="text-muted">재료 시나리오: ${aoEsc(r.scenario_name)}</span>` : ''}
+                ${(() => { const l = scenLinksFromNames(r.scenario_name, scenMap); return l ? `<span class="text-muted">재료: ${l}</span>` : ''; })()}
             </div>
             <div style="white-space:pre-wrap; background:var(--bg-soft,#f7f7f9); border-radius:8px; padding:10px; margin:8px 0; font-size:13px;">${aoEsc(raw.question || '')}</div>
             ${r.post_error ? `<div style="color:#c0392b; font-size:12px; margin-bottom:6px;">실패 사유: ${aoEsc(r.post_error)}</div>` : ''}
@@ -12319,7 +12353,7 @@ async function renderQnaTab() {
                 <td>${aoEsc(raw.product_name || '')}</td>
                 <td style="max-width:260px;">${qnaClipHtml(raw.question || '')}</td>
                 <td style="max-width:300px;">${qnaClipHtml(ans)}</td>
-                <td style="white-space:nowrap;">${by}${r.scenario_name ? `<div class="text-muted" style="font-size:11px;">${aoEsc(r.scenario_name)}</div>` : ''}</td>
+                <td style="white-space:nowrap;">${by}<div class="text-muted" style="font-size:11px;">${scenLinksFromNames(r.scenario_name, scenMap) || '기록 없음'}</div></td>
             </tr>`;
         }).join('')}</tbody></table>` : '<p class="text-muted">아직 게시된 답변이 없습니다</p>';
     box.innerHTML = `
@@ -12462,6 +12496,7 @@ async function renderUnansweredLogs() {
     else params.set('period', period);
     const d = await api('/api/agent-office/inquiry-messages?' + params.toString());
     if (inquiryActiveTab !== 'unanswered') return; // 늦게 온 응답이 다른 탭을 덮어쓰는 경합 방지
+    const scenMap = await scenNoMap();   // 작업B: 시나리오 번호 링크용 (톡톡 로그도 동일 동선)
     unansRows = d.rows || [];
 
     const w = d.week || {};
@@ -12497,7 +12532,7 @@ async function renderUnansweredLogs() {
         const respHtml = isTag
             ? `<span style="color:#c0392b;">${aoEsc(respRaw)}</span>`
             : `<span title="${aoEsc(respRaw)}">${aoEsc(aoTrunc(respRaw, 80))}</span>`;
-        const scenario = r.scenario_name ? aoEsc(r.scenario_name) + (r.response_source === 'price_direct' ? ' (가격즉답)' : '') : '-';
+        const scenario = (scenLinksFromNames(r.scenario_name, scenMap) || '-') + (r.response_source === 'price_direct' ? ' (가격즉답)' : '');
         return `<tr>
             <td style="white-space:nowrap;">${dt}</td>
             <td>${aoEsc(r.item || '-')}</td>
@@ -12543,7 +12578,7 @@ setupBotProductsTab();
 setupUnansweredTab();
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
-const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '취소·반품 (알림)', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)' };
+const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)' };
 async function renderNaverTimers() {
     const d = await api('/api/agent-office/naver/auto-collect');
     const rows = (d.timers || []).map(t => {
@@ -12571,7 +12606,7 @@ async function renderNaverTimers() {
     try { alertData = await api('/api/agent-office/naver/alert-settings'); } catch (_) { /* 실패 시 블록 생략 */ }
     const alerts = alertData && alertData.settings;
     // 대표 7/27 알림 개선: 문의 알림을 상황별 4종으로 재편 (답변완료 확인 / 직접 처리 필요 / 미처리 리마인더 / 아침 브리핑)
-    const ALERT_LABELS = [['order', '신규주문'], ['claim', '취소·반품·교환'], ['settlement', '정산'],
+    const ALERT_LABELS = [['order', '신규주문'], ['claim', '반품·교환'], ['settlement', '정산'],
         ['autodone', '문의 답변완료(확인)'], ['staffneed', '직접 처리 필요'], ['reminder', '미처리 리마인더'], ['briefing', '아침 브리핑']];
     const tplEditors = alerts ? ALERT_LABELS.map(([k, label]) => {
         const tpl = (alertData.templates && alertData.templates[k]) || '';

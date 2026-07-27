@@ -5128,7 +5128,7 @@ const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffn
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
     order: '🛰️ 신규 주문 {{건수}}건 (자동수집 — 발주확인은 수기)',
-    claim: '⚠️ 취소·반품·교환 변화 {{건수}}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음)',
+    claim: '⚠️ 반품·교환 {{건수}}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음 · 취소는 알림 제외)',
     settlement: '🛰️ 정산 자동수집 완료 — {{시작일}}~{{종료일}} {{건수}}건. 데이터관리 > 정산 조회에서 확인하세요',
     autodone: '📮 {{채널}} 답변완료 {{건수}}건 — 확인바람 ([문의 관리]에서 답변 내용 확인)',
     staffneed: '✍️ 직접 처리해야 할 문의가 있습니다 {{건수}}건 ({{채널}}) — [문의 관리]에서 답변해주세요',
@@ -5218,7 +5218,7 @@ async function inquiryAlertTick() {
                 const acc = (await naverCfgGet('alert_night_acc')) || {};   // 야간 억제분 (주문·취소반품·정산)
                 const lines = [];
                 if (await alertEnabled('order') && Number(acc.order) > 0) lines.push(`🚚 신규 주문 ${acc.order}건 (발주확인은 수기)`);
-                if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 취소·반품·교환 변화 ${acc.claim}건`);
+                if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 반품·교환 ${acc.claim}건`);
                 if (await alertEnabled('settlement') && Number(acc.settlement) > 0) lines.push(`🛰️ 정산 자동수집 완료 (데이터관리 > 정산 조회)`);
                 if (await alertEnabled('autodone')) {
                     const aq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
@@ -5860,7 +5860,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
-const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '취소·반품', inquiry: '문의', qna: '상품문의' };
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -5959,11 +5959,13 @@ async function collectClaim() {
     // 🔴 취소·반품·교환은 lastChangedType이 아니라 claimType/claimStatus 필드로 옴 (CLAIM_REQUESTED 등 — 개발자포럼 #701·#1431)
     const claims = list.filter(x => /CANCEL|RETURN|EXCHANGE/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '')));
     await naverCfgSet('naver_claim_checkpoint', new Date(now).toISOString());
-    if (claims.length > 0 && await alertEnabled('claim')) {
-        if (await alertQuietNow()) await alertNightAcc('claim', claims.length);  // 대표 7/27: 야간엔 아침 브리핑으로 모아서
-        else notifyTelegram(await alertText('claim', { '건수': claims.length }));
+    // 대표 7/27 재편: 알림은 반품·교환만 (취소는 스토어가 자동 처리 → 즉시 확인 불필요 — 수집·기록은 전체 유지)
+    const returnsEx = list.filter(x => /RETURN|EXCHANGE/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '')));
+    if (returnsEx.length > 0 && await alertEnabled('claim')) {
+        if (await alertQuietNow()) await alertNightAcc('claim', returnsEx.length);  // 야간엔 아침 브리핑으로
+        else notifyTelegram(await alertText('claim', { '건수': returnsEx.length }));
     }
-    return `취소·반품·교환 ${claims.length}건 (변경 ${list.length}건 검사)`;
+    return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·변경 ${list.length}건 검사)`;
 }
 
 // 개인정보 마스킹 (A안 — 대표 승인 2026-07-26): 문의 제목·내용의 연락처/이메일 패턴 치환. 이름·ID는 아예 저장 안 함.
