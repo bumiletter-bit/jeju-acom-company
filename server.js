@@ -831,6 +831,15 @@ async function initDB() {
             elements JSONB, collected_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 반품·교환 알림 이력 (대표 7/27: 같은 클레임 건의 후속 상태 변경 재알림 금지 — 건당 최초 1회만.
+    //   알림 dedup용 내부 상태라 오래된 기록은 물리 정리 허용 — 클레임 수명 종료 후 무의미)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_claim_alerted (
+            product_order_id VARCHAR(50) NOT NULL, claim_kind VARCHAR(20) NOT NULL,
+            alerted_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (product_order_id, claim_kind)
+        )
+    `);
     // 문의 수집 저장소 (향후 자동답변 재료 — 3번 프로젝트)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_inquiries (
@@ -5965,11 +5974,24 @@ async function collectClaim() {
     await naverCfgSet('naver_claim_checkpoint', new Date(now).toISOString());
     // 대표 7/27 재편: 알림은 반품·교환만 (취소는 스토어가 자동 처리 → 즉시 확인 불필요 — 수집·기록은 전체 유지)
     const returnsEx = list.filter(x => /RETURN|EXCHANGE/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '')));
-    if (returnsEx.length > 0 && await alertEnabled('claim')) {
-        if (await alertQuietNow()) await alertNightAcc('claim', returnsEx.length);  // 야간엔 아침 브리핑으로
-        else notifyTelegram(await alertText('claim', { '건수': returnsEx.length }));
+    // 대표 7/27 지시 2: 같은 클레임 건의 후속 상태 변경(수거·환불·재배송 등)은 재알림 금지 — 건당 최초 1회만.
+    //   감지 범위는 그대로(놓침 방지), 알림만 naver_claim_alerted로 중복 제거. id 없으면 안전 쪽(알림)으로.
+    const claimKindOf = x => /RETURN/i.test(String(x.claimType || '') + ' ' + String(x.claimStatus || '')) ? 'RETURN' : 'EXCHANGE';
+    const fresh = [];
+    for (const x of returnsEx) {
+        const poid = String(x.productOrderId || '').slice(0, 50);
+        if (!poid) { fresh.push(x); continue; }
+        const ins = await pool.query(
+            `INSERT INTO naver_claim_alerted (product_order_id, claim_kind) VALUES ($1, $2)
+             ON CONFLICT DO NOTHING RETURNING 1`, [poid, claimKindOf(x)]);
+        if (ins.rows.length) fresh.push(x);
     }
-    return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·변경 ${list.length}건 검사)`;
+    await pool.query(`DELETE FROM naver_claim_alerted WHERE alerted_at < NOW() - INTERVAL '180 days'`);
+    if (fresh.length > 0 && await alertEnabled('claim')) {
+        if (await alertQuietNow()) await alertNightAcc('claim', fresh.length);  // 야간엔 아침 브리핑으로
+        else notifyTelegram(await alertText('claim', { '건수': fresh.length }));
+    }
+    return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·첫 알림 ${fresh.length}·변경 ${list.length}건 검사)`;
 }
 
 // 개인정보 마스킹 (A안 — 대표 승인 2026-07-26): 문의 제목·내용의 연락처/이메일 패턴 치환. 이름·ID는 아예 저장 안 함.
