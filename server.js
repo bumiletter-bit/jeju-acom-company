@@ -6047,7 +6047,13 @@ async function naverPostQnaAnswer(questionId, content, actor) {
     const cur = await pool.query('SELECT answered, posted_at FROM naver_qnas WHERE question_id=$1', [questionId]);
     if (!cur.rows.length) throw { status: 404, message: '해당 문의를 찾을 수 없습니다 (수집 후 다시 시도해주세요)' };
     if (cur.rows[0].answered || cur.rows[0].posted_at) throw { status: 409, message: '이미 답변된 문의입니다 — 수정은 판매자센터에서 해주세요' };
-    await naverCallWithRetry({ method: 'PUT', path: `/external/v1/contents/qnas/${questionId}`, body: { commentContent: text } });
+    try {
+        await naverCallWithRetry({ method: 'PUT', path: `/external/v1/contents/qnas/${questionId}`, body: { commentContent: text } });
+    } catch (e) {
+        // 네이버 거절 사유(응답 본문·invalidInputs)를 메시지에 포함 — post_error 저장·화면 표시용 (7/27 400 조사 후속)
+        const detail = (e && e.data) ? ' — ' + JSON.stringify(e.data).slice(0, 200) : '';
+        throw { status: (e && e.status) || 500, message: String((e && e.message) || e) + detail };
+    }
     const by = (actor && actor.name) || 'auto';
     await pool.query(
         `UPDATE naver_qnas SET answered=true, posted_at=NOW(), posted_by=$2, post_error=NULL, ai_draft=$3,

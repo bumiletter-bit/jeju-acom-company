@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-27.1'; // 상품문의(Q&A) 조회 GET + 답변 등록/수정 PUT 허용 (STEP E — 첫 쓰기 1줄)
+const RELAY_VERSION = '2026-07-27.2'; // 🔴 PUT 바디 전달 수정 (POST만 바디 싣던 조건 → GET 외 전부. 상품문의 답변 400 원인)
 
 const {
     PORT = 4000,
@@ -133,7 +133,7 @@ app.post('/naver', async (req, res) => {
             method,
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
         };
-        if (method === 'POST' && body) opt.body = JSON.stringify(body);
+        if (body && method !== 'GET') opt.body = JSON.stringify(body);   // PUT(답변 등록)도 바디 전달 — POST 한정이던 버그 수정 (2026-07-27 실검증 #683035819)
         const nres = await fetch(`${NAVER_API_BASE}${path}${qs}`, opt);
         const text = await nres.text();
         let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
