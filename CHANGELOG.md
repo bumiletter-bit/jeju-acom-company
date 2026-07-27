@@ -6,6 +6,10 @@
 
 ---
 
+## v5.9.109 (2026-07-27 — 마루 max_tokens 4000 + stop_reason 실측 기록)
+- [🔴 계속 조사] 규칙8 수정(v5.9.108)·sonnet-5 후에도 answer_text 공백 재현(#309·#310, audit 2053~2054) — 스키마 차단설은 기각(같은 선택 필드인 clarify_question·subtasks는 정상 출력). 유력 원인: **sonnet-5 내부 사고(adaptive thinking)가 max_tokens(1200)를 잠식 → 마지막 긴 필드 answer_text가 예산 부족으로 실종** (글샘이 2048~4000 쓰는 사유와 동일 — 코드 주석에 이미 박제돼 있던 특성)
+- [수정] 마루 max_tokens 1200→**4000** + **stop_reason을 audit에 기록**(다음 실행에서 가설 실측 확인용)
+
 ## v5.9.108 (2026-07-27 — 🔴 마루 answer_text 공백의 진짜 원인: 규칙 8 목록에서 answer 누락)
 - [🔴 원인 최종 확정] sonnet-5로 바꿔도 answer_text 공백 재현(#305·audit 2042) → 모델 문제가 아니라 **마루 프롬프트 규칙 8("해당 action에 필요한 필드만 출력") 목록에 route·clarify·schedule 등은 있는데 answer: answer_text만 빠져 있었음** — 규칙을 충실히 따를수록 answer_text를 생략하는 구조. 목록에 answer 추가(실사고 박제 주석 포함)
 - [정리] `.claude/worktrees` 옛 세션 워크트리 3개(prunable — 구버전 server.js 사본에 sonnet-4-6 잔존) 제거. 실코드 4-6 잔존 0건 확인(마루 격상 매핑 1줄만 의도적 존치)
