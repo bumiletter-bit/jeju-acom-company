@@ -12516,33 +12516,40 @@ async function renderUnansweredLogs() {
     itemSel.value = curItem;
 
     // 2섹션 분리: ✅ 봇 답변(answered=true) / 📭 무응답·미매칭(answered=false — SKIP·쿨다운 등 태그 표시)
+    // 대표 7/27 규격 정리: table-layout:fixed + 열 너비 고정 — 긴 품목명 세로 꺾임·직원답변 열 화면 밖 밀림 해소
     const fmtDtS = (s) => new Date(s).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     const answeredRows = unansRows.filter(r => r.answered);
     const pendRows = unansRows.filter(r => !r.answered);
     const scenCell = (r) => (scenLinksFromNames(r.scenario_name, scenMap) || '<span class="text-muted">기록 없음</span>')
         + (r.response_source === 'price_direct' ? ' <span class="text-muted" style="font-size:11px;">(가격즉답)</span>' : '');
+    // 품목: 한 줄 말줄임 (전체 이름은 마우스오버 툴팁)
+    const itemCell = (v) => `<td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(v || '-')}">${aoEsc(v || '-')}</div></td>`;
+    const ansCols = '<colgroup><col style="width:96px"><col style="width:150px"><col style="width:26%"><col><col style="width:130px"><col style="width:20%"></colgroup>';
     const ansThead = '<thead><tr><th>시각</th><th>품목</th><th>손님 질문</th><th>봇 답변</th><th>재료</th><th>직원 답변</th></tr></thead>';
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
-            <td>${aoEsc(r.item || '-')}</td>
-            <td style="max-width:280px;">${qnaClipHtml(r.message || '')}</td>
-            <td style="max-width:320px;">${qnaClipHtml(r.bot_response || '')}</td>
-            <td style="white-space:nowrap;">${scenCell(r)}</td>
-            <td style="max-width:200px;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
+            ${itemCell(r.item)}
+            <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
+            <td style="overflow:hidden;">${qnaClipHtml(r.bot_response || '')}</td>
+            <td>${scenCell(r)}</td>
+            <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="6">봇 답변 기록이 없습니다</td></tr>`;
+    const pendCols = '<colgroup><col style="width:96px"><col style="width:150px"><col><col style="width:150px"><col style="width:24%"></colgroup>';
     const pendThead = '<thead><tr><th>시각</th><th>품목</th><th>고객 메시지</th><th>상태</th><th>직원 답변</th></tr></thead>';
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
             <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
-            <td>${aoEsc(r.item || '-')}</td>
-            <td style="max-width:340px;">${qnaClipHtml(r.message || '')}</td>
-            <td style="white-space:nowrap;"><span style="color:#c0392b;">${aoEsc(r.bot_response || '[무응답]')}</span></td>
-            <td style="max-width:220px;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
+            ${itemCell(r.item)}
+            <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
+            <td><span style="color:#c0392b; font-size:12px;">${aoEsc(r.bot_response || '[무응답]')}</span></td>
+            <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="5">무응답 문의가 없습니다 🎉</td></tr>`;
+    const tbl = (cols, thead, body) =>
+        `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
     document.getElementById('unans-list').innerHTML = `
         <h3 style="font-size:14px; margin:6px 0;">📭 무응답·미매칭 <b>${pendRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(직원 확인 필요 — 자주 나오는 유형은 시나리오로 등록)</span></h3>
-        <div class="table-scroll-wrapper"><table class="data-table">${pendThead}<tbody>${pendBody}</tbody></table></div>
+        ${tbl(pendCols, pendThead, pendBody)}
         <h3 style="font-size:14px; margin:14px 0 6px;">✅ 봇 답변 <b>${answeredRows.length}건</b> <span class="text-muted" style="font-size:12px; font-weight:400;">(재료 번호 클릭 → 시나리오 편집)</span></h3>
-        <div class="table-scroll-wrapper"><table class="data-table">${ansThead}<tbody>${ansBody}</tbody></table></div>`;
+        ${tbl(ansCols, ansThead, ansBody)}`;
 }
 function setupUnansweredTab() {
     document.getElementById('btn-unans-refresh').addEventListener('click', () => renderUnansweredLogs().catch(console.error));
