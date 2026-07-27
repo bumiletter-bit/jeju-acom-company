@@ -5906,15 +5906,38 @@ async function qnaStoreData() {
     const priceText = priceLines.join('\n') || '(가격이 입력된 판매중 상품이 없어요 — 스토어에서 확인해주세요!)';
     return { statusText, priceText };
 }
-// {{가격표}}/{{판매현황}} 치환 — 공개 게시판은 글이 계속 남으므로 "N-N 기준" 날짜를 붙여 시점을 명시
-async function qnaRenderPlaceholders(text) {
+// 품목 필터 — 톡톡봇 ai-handler.js filterStoreLines 이식(동일 스톱워드): 문의한 품목 라인만 표시, 못 찾으면 전체
+const QNA_FILTER_STOPWORDS = ['얼마', '얼마예요', '얼마에요', '얼마인가요', '얼마죠', '가격', '가격표', '금액',
+    '비용', '할인', '배송', '배송비', '택배', '택배비', '주문', '구매', '문의', '안녕', '안녕하세요',
+    '하나', '한개', '박스', '지금', '혹시', '그리고', '있나요', '인가요', '얼만가요', '알려주세요',
+    '판매', '판매중', '품절', '메시지', '메세지', '상품', '상품을', '문의합니다', '문의드립니다', '과수',
+    '선물용', '가정용', '하우스', '제주', '산지직송', '당일수확'];
+function qnaFilterStoreLines(text, message) {
+    if (!text || !message) return text;
+    const lines = text.split('\n');
+    if (lines.length <= 1) return text;
+    const msgNorm = message.toLowerCase().replace(/\s/g, '');
+    const tokens = message.replace(/[^가-힣a-zA-Z0-9]/g, ' ').split(/\s+/)
+        .filter(t => t.length >= 2 && !QNA_FILTER_STOPWORDS.includes(t));
+    if (msgNorm.replace(/청귤|풋귤|귤즙|금귤/g, '').includes('귤')) tokens.push('감귤');
+    const matched = lines.filter(line => {
+        const lineNorm = line.toLowerCase().replace(/\s/g, '');
+        const chunks = line.replace(/[^가-힣a-zA-Z0-9]/g, ' ').split(/\s+/).filter(c => c.length >= 2 && !QNA_FILTER_STOPWORDS.includes(c));
+        return chunks.some(c => msgNorm.includes(c.toLowerCase())) ||
+               tokens.some(t => lineNorm.includes(t.toLowerCase()));
+    });
+    return matched.length > 0 ? matched.join('\n') : text;
+}
+// {{가격표}}/{{판매현황}} 치환 — 공개 게시판은 글이 계속 남으므로 "N/N 기준" 날짜를 붙여 시점을 명시
+//   filterText(질문+상품명)가 있으면 문의한 품목 라인만 골라 표시 (봇과 동일 규칙)
+async function qnaRenderPlaceholders(text, filterText) {
     if (!/\{\{(가격표|판매현황)\}\}/.test(String(text || ''))) return text;
     const { statusText, priceText } = await qnaStoreData();
     const kst = new Date(Date.now() + 9 * 3600 * 1000);
     const stamp = `(${kst.getUTCMonth() + 1}/${kst.getUTCDate()} 기준)`;
     return String(text)
-        .replace(/\{\{가격표\}\}/g, `${stamp}\n${priceText}`)
-        .replace(/\{\{판매현황\}\}/g, `${stamp}\n${statusText}`);
+        .replace(/\{\{가격표\}\}/g, `${stamp}\n${qnaFilterStoreLines(priceText, filterText)}`)
+        .replace(/\{\{판매현황\}\}/g, `${stamp}\n${qnaFilterStoreLines(statusText, filterText)}`);
 }
 
 // 생성 재료 시나리오 (채널 상품문의·공통만 — 재료 0건이면 전부 SKIP = 단계적 가동)
@@ -5946,6 +5969,16 @@ function qnaBuildSystem(scenarios) {
 - 답변의 마지막 줄은 반드시 이 문구 그대로 넣으세요: "${QNA_TAIL}"
 - {{가격표}}, {{판매현황}} 표시와 "(예시)"로 시작하는 줄이 재료에 있으면 지우거나 채우지 말고 그대로 두세요. 발송 전에 시스템이 실제 데이터로 교체합니다.
 
+## 상품 맥락 (중요)
+- 문의 첫 줄에 "[상품: OO]" 표시가 있으면, 이 문의는 그 상품 페이지에 달린 문의입니다. 반드시 그 상품 기준으로 답하세요.
+- 그 상품에 해당하는 품목 재료(품목-OO 등)를 우선 사용하고, 다른 품목의 재료를 섞어 쓰면 절대 안 됩니다.
+- 문의 내용이 "이 상품", "이거"처럼 상품을 지칭하면 [상품: OO]의 상품을 말하는 것입니다.
+
+## 답변 스타일 원칙
+- 맛·품질·상태를 걱정하는 문의에는, 재료에 맛 보증·무료수거 반품 안내가 있으면 그 안내를 한두 문장 곁들여 안심시켜 주세요 (예: "입맛에 안 맞으시면 무료수거 반품 가능하니 믿고 드셔보세요").
+- 고객이 문의한 구성·옵션·용량이 재료·판매현황에 없으면, "없다"고 단정하지 말고 "지금은 이렇게 판매하고 있어요"라며 {{가격표}}(현재 판매 구성·가격) 안내로 자연스럽게 전환하세요.
+- 개별 실행이 필요한 요청(특정일 도착 희망, 이미 주문한 건의 사이즈 지정·변경 등)은 이 게시판에서 확정 약속("맞춰 발송하겠습니다")을 하지 마세요. 방법을 안내한 뒤 "스토어 톡톡 또는 고객센터로 말씀 주시면 확인 후 진행해드리겠습니다"로 안내하세요.
+
 ## 공개 게시판 규칙 (상품문의 전용)
 - 고객 이름·주문번호·주소·연락처 등 개인정보를 답변에 쓰지 마세요. 고객이 문의에 적었더라도 답변에서 반복하지 마세요.
 - 이 게시판에서는 개별 주문 조회·사진 확인이 불가능합니다. 개별 확인이 필요한 문의(내 주문 언제 오나요, 파손됐어요 등)는 재료의 처리 안내를 기반으로 "스토어 톡톡 또는 📞 010-6687-4031 고객센터로 연락 주시면 바로 확인·처리해드린다"는 방향으로 안내하세요.
@@ -5965,7 +5998,7 @@ function qnaBuildSystem(scenarios) {
 ## 회사 확정 답변자료 (시나리오)
 ${scenarios.map(s => `### ${s.name}\n${s.response}`).join('\n\n')}`;
 }
-async function qnaGenerate(question) {
+async function qnaGenerate(question, productName) {
     if (!process.env.ANTHROPIC_API_KEY) return null;             // 키 없으면 전부 SKIP (침묵)
     const scenarios = await qnaScenarios();
     if (!scenarios.length) return null;
@@ -5975,13 +6008,15 @@ async function qnaGenerate(question) {
         if (statusText) storeBlock = `## 현재 스토어 판매현황\n${statusText}\n\n- 품절/시즌종료 상품 구매 문의 → 품절·재입고 관련 재료로 답하세요.\n- 판매현황과 재료에 없는 상품 문의 → SKIP 하세요.`;
     } catch (_) { /* 조회 실패 → 보수적 안내 유지 */ }
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // 상품 맥락: 어느 상품 페이지에 달린 문의인지 AI에게 전달 (대표 7/27 보강)
+    const userContent = productName ? `[상품: ${productName}]\n${String(question || '')}` : String(question || '');
     const msg = await anthropic.messages.create({
         model: QNA_MODEL, max_tokens: 2048,
         system: [
             { type: 'text', text: qnaBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
             { type: 'text', text: storeBlock },
         ],
-        messages: [{ role: 'user', content: String(question || '') }],
+        messages: [{ role: 'user', content: userContent }],
     });
     const raw = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
     if (!raw || /^SKIP\b/.test(raw)) return null;
@@ -5995,14 +6030,17 @@ async function qnaGenerate(question) {
     if (!answer || /^SKIP\b/.test(answer)) return null;
     used = used.filter(n => scenarios.some(s => s.name === n));   // 재료 목록에 있는 이름만 기록
     if (!answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;   // 고객센터 안내 항상 유지 (안전망)
-    answer = await qnaRenderPlaceholders(answer);
+    // 품목 필터용 텍스트: 질문 + 상품명(용량 숫자는 다른 품목까지 매칭시키므로 제거 — 봇과 동일)
+    const filterText = (String(question || '') + ' ' + String(productName || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
+    answer = await qnaRenderPlaceholders(answer, filterText);
     return { answer, used };
 }
 
 // 🔴 유일한 쓰기 함수 — PII 검사·미답변 검증·audit 내장. 호출 지점은 collectQna(자동)와 수동 게시 라우트 2곳뿐.
 async function naverPostQnaAnswer(questionId, content, actor) {
-    const text = String(content || '').trim();
+    let text = String(content || '').trim();
     if (!text) throw { status: 400, message: '답변 내용이 비어 있습니다' };
+    text = await qnaRenderPlaceholders(text, text);   // 직원 작성분의 {{가격표}}/{{판매현황}}도 치환 (이미 치환된 초안은 무변화)
     if (text.length > 2000) throw { status: 400, message: '답변이 2,000자를 넘습니다 — 줄여주세요' };
     const pii = qnaPiiCheck(text);
     if (!pii.ok) throw { status: 403, message: pii.reason };
@@ -6053,7 +6091,7 @@ async function collectQna() {
                  RETURNING (xmax = 0) AS inserted`, [id, JSON.stringify(item), !!q.answered]);
             if (res.rows[0] && res.rows[0].inserted) {
                 added++;
-                if (!q.answered) fresh.push({ id, question: item.question });
+                if (!q.answered) fresh.push({ id, question: item.question, product: item.product_name });
             } else updatedCnt++;
         }
         const totalPages = Number(body?.totalPages) || 1;
@@ -6065,7 +6103,7 @@ async function collectQna() {
         const autoOn = (await naverCfgGet('qna_auto_post')) !== 'off';   // 미설정도 ON (기본 ON — 대표 지시)
         for (const q of fresh) {
             let gen = null;
-            try { gen = await qnaGenerate(q.question); }
+            try { gen = await qnaGenerate(q.question, q.product); }
             catch (e) { console.error('[상품문의] 생성 오류(SKIP):', e.message); }
             if (!gen) {
                 await pool.query(`UPDATE naver_qnas SET ai_status='skip' WHERE question_id=$1`, [q.id]);
