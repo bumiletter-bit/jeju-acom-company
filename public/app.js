@@ -12457,7 +12457,36 @@ async function renderBotProducts() {
     renderBotProductLogs().catch(console.error);
     renderSeasonWaitlist().catch(console.error);   // 지시 #68 C5 — 같은 탭 하단 섹션
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
+    renderLmsGuideLogs().catch(console.error);     // 지시 #76 — 발송 안내(LMS) 이력
 }
+// --- 발송 안내(LMS) 이력 (지시 #76) — dry-run 문면 확인 + 수동 재발송(대표 전용) ---
+async function renderLmsGuideLogs() {
+    const el = document.getElementById('lms-guide-list');
+    if (!el) return;
+    const d = await api('/api/agent-office/lms-guide-logs');
+    const isAdmin = currentUser?.role === 'admin';
+    const stLabel = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)', 'skip-no-guide': '안내문 없음 — 건너뜀', 'sent': '✅ 발송됨', 'failed': '❌ 실패', 'build-failed': '❌ 생성 실패' };
+    const rows = (d.rows || []).map(r => `
+        <tr>
+            <td style="white-space:nowrap;">${new Date(r.created_at).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+            <td style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}</td>
+            <td style="white-space:nowrap;">${escapeHtml(r.receiver_masked || '-')}</td>
+            <td>${escapeHtml(stLabel[r.status] || r.status || '-')}${r.error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.error).slice(0, 60))}</div>` : ''}</td>
+            <td>${r.message ? `<details><summary style="cursor:pointer; font-size:12px;">문면 보기</summary><pre style="white-space:pre-wrap; font:inherit; font-size:12px; margin:4px 0;">${escapeHtml(r.message)}</pre></details>` : '-'}</td>
+            <td>${isAdmin ? `<button class="btn-sm btn-outline" onclick="sendLmsGuide('${escapeHtml(r.order_key)}')">발송 안내 보내기</button>` : ''}</td>
+        </tr>`).join('');
+    el.innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th>일시</th><th>품목</th><th>수신</th><th>상태</th><th>문면</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<p class="text-muted">기록이 없습니다 — [데이터관리] 타이머에서 "문자 발송 안내"를 켜면 발송처리 감지 시 dry-run 문면이 여기에 쌓입니다.</p>';
+}
+window.sendLmsGuide = async function(orderKey) {
+    if (!confirm('이 주문에 발송 안내 문자를 보낼까요?\n(발송 기능이 꺼져 있으면 dry-run 문면만 다시 기록됩니다)')) return;
+    try {
+        const r = await api('/api/agent-office/lms-guide/' + encodeURIComponent(orderKey) + '/send', 'POST', {});
+        showToast(r.mode === 'real' && r.status === 'sent' ? '✅ 발송 완료' : 'ℹ️ dry-run 기록 완료 (발송 기능 OFF)', 'lime');
+    } catch (e) { alert(e.message); }
+    renderLmsGuideLogs().catch(console.error);
+};
 // --- 시즌 오픈 대기 신청 (지시 #68 C5) — 연락처는 서버가 마스킹해서 내려줌 ---
 async function renderSeasonWaitlist() {
     const el = document.getElementById('season-wait-list');
@@ -12582,6 +12611,8 @@ function setupBotProductsTab() {
             renderBotProducts().catch(console.error);
         } catch (e) { alert(e.message); }
     });
+    // 지시 #76: LMS 이력 새로고침
+    document.getElementById('btn-lms-guide-refresh')?.addEventListener('click', () => renderLmsGuideLogs().catch(console.error));
     // 지시 #69·#73: 발송 휴무일 추가 (기간·안내 문구 지원)
     document.getElementById('btn-ship-holiday-add')?.addEventListener('click', async () => {
         const date = document.getElementById('ship-holiday-date').value.trim();
@@ -12733,7 +12764,7 @@ setupBotProductsTab();
 setupUnansweredTab();
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
-const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)', kakao_notify: '📨 알림톡 주문 안내 (준비 중 — 켜도 dry-run만)' };
+const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)', kakao_notify: '📨 알림톡 주문 안내 (준비 중 — 켜도 dry-run만)', lms_guide: '📦 문자 발송 안내 (발송처리 감지 — 켜도 dry-run만)' };
 async function renderNaverTimers() {
     const d = await api('/api/agent-office/naver/auto-collect');
     const rows = (d.timers || []).map(t => {

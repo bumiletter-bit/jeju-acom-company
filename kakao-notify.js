@@ -6,7 +6,8 @@ const https = require('https');
 const querystring = require('querystring');
 
 const ALIGO_HOST = 'kakaoapi.aligo.in';        // 알림톡 API
-const ALIGO_SMS_HOST = 'apisms.aligo.in';      // 문자(SMS/LMS) API — ⚠️ 실가동 전 공식 문서 스펙 재확인(지시 #74 [불확실] 항목)
+const ALIGO_SMS_HOST = 'apis.aligo.in';        // 문자(SMS/LMS) API — 공식 스펙 확정(지시 #76 재검증: smartsms.aligo.in/admin/api/spec.html)
+                                               //   토큰 불필요(key+user_id만), msg 1~2000byte, title 1~44byte(LMS만), result_code 양수=성공
 
 function switchOn() { return String(process.env.KAKAO_NOTIFY || 'off').toLowerCase() === 'on'; }
 function configured() {
@@ -97,16 +98,18 @@ async function sendLms({ receiver, subject, message }) {
     if (!process.env.ALIGO_API_KEY || !process.env.ALIGO_USER_ID || !process.env.ALIGO_SENDER) {
         return { mode: 'dry-run', status: 'keys-missing', message };
     }
-    const r = await aligoPost('/send/', {
+    const form = {
         key: process.env.ALIGO_API_KEY,
-        user_id: process.env.ALIGO_USER_ID,
+        user_id: process.env.ALIGO_USER_ID,     // 공식 표기 user_id (언더스코어 — 알림톡의 userid와 다름)
         sender: process.env.ALIGO_SENDER,
         receiver: String(receiver || '').replace(/[^0-9]/g, ''),
         msg: message,
         msg_type: 'LMS',
-        title: subject || '제주아꼼이네 배송 안내',
-    }, ALIGO_SMS_HOST);
-    const ok = r && Number(r.result_code) > 0;   // 문자 API는 result_code 양수 = 성공
+        title: (subject || '제주아꼼이네 배송 안내').slice(0, 20),   // 제목 1~44byte 제한 — 한글 20자 상한으로 방어
+    };
+    if (String(process.env.ALIGO_TEST || '').toUpperCase() === 'Y') form.testmode_yn = 'Y';   // 연동 테스트: 과금·실발송 없이 검증
+    const r = await aligoPost('/send/', form, ALIGO_SMS_HOST);
+    const ok = r && Number(r.result_code) > 0;   // 공식 스펙: result_code 양수(1)=성공, 음수=실패 (문자열로 올 수 있어 Number 판정)
     return { mode: 'real', status: ok ? 'sent' : 'failed', error: ok ? null : JSON.stringify(r).slice(0, 300), mid: r && r.msg_id };
 }
 

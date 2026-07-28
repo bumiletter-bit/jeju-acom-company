@@ -884,6 +884,22 @@ async function initDB() {
     `);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('kakao_notify', false, 60)
         ON CONFLICT (key) DO NOTHING`);
+    // ── 지시 #76: 발송 안내(LMS) 이력 — 주문번호 UNIQUE = 같은 주문 중복 발송 방지. 알림톡 이력과 분리(완전 additive)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS lms_guide_log (
+            id SERIAL PRIMARY KEY,
+            order_key VARCHAR(50) UNIQUE,
+            product_name TEXT,
+            receiver_masked VARCHAR(30),
+            message TEXT,
+            mode VARCHAR(10),
+            status VARCHAR(30),
+            error TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
+        ON CONFLICT (key) DO NOTHING`);
     // ── 지시 #68 C5: 시즌 오픈 대기 신청 (연락처는 발송 목적상 원문 저장 — 화면 표시는 마스킹, soft-delete)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS season_waitlist (
@@ -5288,6 +5304,42 @@ app.delete('/api/agent-office/shipping-holidays/:id', authMiddleware, async (req
         res.json({ ok: true });
     } catch (err) { handleAdminErr(res, err); }
 });
+// ── 지시 #76: 발송 안내(LMS) 이력 조회 + 수동 [발송 안내 보내기] (관리자 전용 — 발송 행위는 대표)
+app.get('/api/agent-office/lms-guide-logs', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, order_key, product_name, receiver_masked, message, mode, status, error, created_at
+             FROM lms_guide_log ORDER BY id DESC LIMIT 50`);
+        res.json({ rows: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const orderKey = String(req.params.orderKey || '').slice(0, 50);
+        // 수신번호는 이력에 원문 미저장 → 네이버 상세조회(허용된 읽기)로 재취득 후 발송 (스위치 OFF면 dry-run)
+        const r = await naverCallWithRetry({
+            method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query',
+            body: { productOrderIds: [orderKey] },
+        });
+        const body = (r && r.data) ? r.data : r;
+        const items = body?.data || body?.list || (Array.isArray(body) ? body : []) || [];
+        const it = (Array.isArray(items) ? items : [])[0];
+        if (!it) throw { status: 404, message: '네이버에서 해당 주문을 찾을 수 없습니다' };
+        const c = it.content || it;
+        const po = c.productOrder || it.productOrder || c;
+        const od = c.order || it.order || po.order || {};
+        const bp = (await pool.query(`SELECT name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
+        const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, await loadShippingHolidayInfo());
+        if (out.skip) throw { status: 400, message: '이 품목에는 발송 안내문이 없습니다 — 판매현황·가격 탭에서 안내문을 먼저 등록해주세요' };
+        await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
+            VALUES ($1,$2,$3,$4,$5,$6,$7)
+            ON CONFLICT (order_key) DO UPDATE SET message=EXCLUDED.message, mode=EXCLUDED.mode, status=EXCLUDED.status, error=EXCLUDED.error, created_at=NOW()`,
+            [orderKey, out.matched.name, kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
+        await writeAudit({ action: 'manual_send', targetType: 'lms_guide', targetId: null,
+            changes: { after: { order_key: orderKey, mode: out.res.mode, status: out.res.status } }, source: 'lms-guide', actor: adminActor(req) });
+        res.json({ ok: true, mode: out.res.mode, status: out.res.status });
+    } catch (err) { handleAdminErr(res, err); }
+});
 // 텔레그램 알림 설정 (대표 7/26 작업5): 종류별 ON/OFF를 DB(agent_office_config)에 저장 — 코드 하드코딩 금지
 //   수집 ON/OFF와 별개로 "알림만" 끄고 켤 수 있음. 오류 알림은 설정 대상 아님(안전상 항상 발송).
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
@@ -6035,7 +6087,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
-const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)' };
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -6225,6 +6277,74 @@ async function collectKakaoNotify() {
     }
     const mode = kakaoNotify.switchOn() ? '실발송' : 'dry-run';
     return `알림톡 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·신규결제 ${paidIds.length}건)`;
+}
+
+// ── 지시 #76: 발송 안내(LMS) 자동 감지기 — DISPATCHED(발송처리) 감지 → shipping_guide LMS (기본 OFF·dry-run)
+//    기존 수집기 무영향(별도 타이머 키·별도 체크포인트·별도 이력). 중복 방지 = lms_guide_log.order_key UNIQUE.
+async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo) {
+    const optText = `${po.productName || ''} ${po.productOption || ''}`;
+    const matched = kakaoNotify.matchNotifyProduct(optText, bp);
+    if (!matched || !matched.shipping_guide || !String(matched.shipping_guide).trim()) {
+        return { skip: true, matched, message: null };   // 안내문 없는 품목 = SKIP (기록만)
+    }
+    const message = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set);
+    const res = await kakaoNotify.sendLms({ receiver: od.ordererTel || '', subject: '제주아꼼이네 배송 안내', message });
+    return { skip: false, matched, message, res };
+}
+async function collectLmsGuide() {
+    const now = Date.now();
+    const cp = await naverCfgGet('lms_guide_checkpoint');
+    const fromMs = Math.max(cp ? Date.parse(cp) : now - 3600 * 1000, now - 23.5 * 3600 * 1000);
+    const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
+    await naverCfgSet('lms_guide_checkpoint', new Date(now).toISOString());
+    const shippedIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'DISPATCHED')
+        .map(x => String(x.productOrderId || '')).filter(Boolean))];
+    if (shippedIds.length === 0) return '발송처리 0건 — 안내 문자 대상 없음';
+    const seen = await pool.query(`SELECT order_key FROM lms_guide_log WHERE order_key = ANY($1)`, [shippedIds]);
+    const seenSet = new Set(seen.rows.map(r => r.order_key));
+    const targets = shippedIds.filter(id => !seenSet.has(id));
+    if (targets.length === 0) return `발송처리 ${shippedIds.length}건 — 전부 처리 이력 있음`;
+    const bp = (await pool.query(`SELECT name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const hinfo = await loadShippingHolidayInfo();
+    let done = 0, failed = 0, skipped = 0;
+    for (let i = 0; i < targets.length; i += 100) {
+        if (i > 0) await new Promise(r => setTimeout(r, 350));
+        const r = await naverCallWithRetry({
+            method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query',
+            body: { productOrderIds: targets.slice(i, i + 100) },
+        });
+        const body = (r && r.data) ? r.data : r;
+        const items = body?.data || body?.list || (Array.isArray(body) ? body : []) || [];
+        for (const it of (Array.isArray(items) ? items : [])) {
+            const c = it.content || it;
+            const po = c.productOrder || it.productOrder || c;
+            const od = c.order || it.order || po.order || {};
+            const orderKey = String(po.productOrderId || od.productOrderId || '').slice(0, 50);
+            if (!orderKey) continue;
+            try {
+                const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, hinfo);
+                if (out.skip) {
+                    skipped++;
+                    await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
+                        VALUES ($1,$2,$3,'dry-run','skip-no-guide') ON CONFLICT (order_key) DO NOTHING`,
+                        [orderKey, (out.matched ? out.matched.name : (po.productName || '')).slice(0, 200), kakaoNotify.maskPhone(od.ordererTel)]);
+                } else {
+                    await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
+                        [orderKey, out.matched.name, kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
+                    if (out.res.status === 'sent') done++;
+                    else if (out.res.mode === 'real') failed++;
+                }
+            } catch (e) {
+                failed++;
+                await pool.query(`INSERT INTO lms_guide_log (order_key, mode, status, error)
+                    VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+            }
+        }
+    }
+    const mode = kakaoNotify.switchOn() ? '실발송' : 'dry-run';
+    return `발송 안내 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·안내문 없음 ${skipped}·발송처리 ${shippedIds.length}건)`;
 }
 
 // 개인정보 마스킹 (A안 — 대표 승인 2026-07-26): 문의 제목·내용의 연락처/이메일 패턴 치환. 이름·ID는 아예 저장 안 함.
@@ -6751,7 +6871,7 @@ async function naverAutoCollectTick() {
         if (!due.length) return;
         due.sort((a, b) => b.waited - a.waited);
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
-        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify }[r.key];
+        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide }[r.key];
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
