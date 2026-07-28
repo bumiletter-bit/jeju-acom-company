@@ -5345,9 +5345,9 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
 // 대표 7/27 알림 개선: 문의 3채널 알림을 상황별 4종(answered/staffneed/reminder/briefing)으로 재편 —
 //   구 'inquiry'(미답변 신규)·'qna'(신규+게시 혼합)·'inqanswer' 키는 은퇴 (DB에 남은 옛 문구 오버라이드는 무해)
-const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing', 'office', 'kakaosend'];
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing', 'office', 'kakaosend', 'ccbox'];
 // office = AGENT OFFICE 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성 완료) — 대표 7/27 지시로 기본 OFF (오류·실패 알림은 이 키와 무관하게 항상 발송)
-const TELEGRAM_ALERT_DEFAULT_OFF = ['office', 'kakaosend'];   // kakaosend = 알림톡 발송 결과 (지시 #68 C6 — 발송 기능 자체가 OFF라 기본 OFF)
+const TELEGRAM_ALERT_DEFAULT_OFF = ['office', 'kakaosend', 'ccbox'];   // kakaosend = 알림톡 발송 결과 (지시 #68 C6) / ccbox = 지시함 상태 알림 (지시 #84 — CS폰 공유 소음 방지, 평시 침묵·화면에서 재조정 가능)
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
@@ -10245,6 +10245,18 @@ let _tgInboxInit = false;
 setInterval(async () => {
     try {
         if ((process.env.TELEGRAM_NOTIFY || 'on').toLowerCase() === 'off' || !process.env.TELEGRAM_BOT_TOKEN) return;
+        // 지시 #84 변경2: 긴급 호출 "🚨 똑똑확인요청" — DB 플래그(agent_office_config 'urgent_call_request') 감지 시 1회 발송 후 제거.
+        //   야간 모드와 무관하게 항상 발송(긴급 = 오류 알림과 동일 취급). 발동은 클로드 코드가 긴급 상황에서만 플래그 기록.
+        try {
+            const uc = await naverCfgGet('urgent_call_request');
+            if (uc != null) {   // QA 결함1 수정: 오형 플래그도 무음 잔존 금지 — 긴급은 오발송이 무발송보다 안전
+                await pool.query(`DELETE FROM agent_office_config WHERE key = 'urgent_call_request'`);   // 선제거 — 반복 발송 방지 (텔레그램 장애 시 유실 리스크는 대표 확인 항목)
+                const reason = (typeof uc === 'string') ? uc
+                    : (uc && typeof uc.reason === 'string' && uc.reason.trim()) ? uc.reason
+                    : JSON.stringify(uc);   // QA 결함2 수정: 객체 reason도 "[object Object]" 대신 내용 표시
+                await notifyTelegram(`🚨 똑똑확인요청 — ${String(reason).slice(0, 200)}. 똑똑이 채팅에서 상황을 확인해주세요.`);
+            }
+        } catch (_) { /* 긴급 호출 실패는 다음 주기 영향 없음 */ }
         if (!_tgInboxInit) {
             // 최초 1회: 기존 건은 알림 없이 기준선만 잡음 (배포 직후 알림 폭주 방지)
             await pool.query(`UPDATE cc_instructions SET notified_status = status WHERE notified_status IS NULL`);
@@ -10271,7 +10283,9 @@ setInterval(async () => {
             } else {
                 msg = `📝 지시 #${row.id} ${title} — 경과 보고 도착 → 클로드에게 'ㄱ' 보내주세요`;
             }
-            if (msg) await notifyTelegram(msg);
+            // 지시 #84 변경1: 지시함 상태 알림은 'ccbox' 스위치(기본 OFF — CS폰 소음 방지)가 켜진 경우에만 발송.
+            //   OFF여도 기준선(notified_*)은 계속 전진 — 나중에 켰을 때 과거 건 알림 폭주 방지.
+            if (msg && await alertEnabled('ccbox')) await notifyTelegram(msg);
             await pool.query(`UPDATE cc_instructions SET notified_status = $2, notified_resp_hash = $3 WHERE id = $1`,
                 [row.id, row.status, row.rh]);
         }

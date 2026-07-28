@@ -12795,8 +12795,9 @@ async function renderNaverTimers() {
     const ALERT_LABELS = [['order', '신규주문'], ['claim', '반품·교환'], ['settlement', '정산'],
         ['autodone', '문의 답변완료(확인)'], ['staffneed', '직접 처리 필요'], ['reminder', '미처리 리마인더'], ['briefing', '아침 브리핑'],
         ['office', 'AGENT OFFICE 완료·질문'], // 대표 7/27: 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성) — 기본 OFF, 문구 편집 없음
-        ['kakaosend', '알림톡 발송 결과']]; // 지시 #68 C6: 기본 OFF — 발송 기능 가동 전까지 알림 없음
-    const tplEditors = alerts ? ALERT_LABELS.filter(([k]) => k !== 'office').map(([k, label]) => {
+        ['kakaosend', '알림톡 발송 결과'], // 지시 #68 C6: 기본 OFF — 발송 기능 가동 전까지 알림 없음
+        ['ccbox', '지시함 알림']]; // 지시 #84: 기본 OFF — CS폰 공유 소음 방지 (긴급 🚨 똑똑확인요청은 이 스위치와 무관하게 발송), 문구 편집 없음
+    const tplEditors = alerts ? ALERT_LABELS.filter(([k]) => k !== 'office' && k !== 'ccbox').map(([k, label]) => {   // ccbox도 문구 편집 없음 (지시 #84 — 폴러가 자체 문구 생성)
         const tpl = (alertData.templates && alertData.templates[k]) || '';
         const vars = ((alertData.variables && alertData.variables[k]) || []).map(v => `{{${v}}}`).join(' ');
         return `<details style="margin-top:6px;">
