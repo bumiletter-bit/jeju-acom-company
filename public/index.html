@@ -1933,6 +1933,18 @@
                         </div>
                         <div id="season-wait-list" class="table-scroll-wrapper"></div>
                     </div>
+                    <!-- 지시 #69: 발송 휴무일 관리 — 발송일 안내 계산에서 이 날짜들은 발송 불가일로 제외 (직원 추가/삭제 가능) -->
+                    <div class="card" style="margin-top:14px;">
+                        <div class="card-header-row">
+                            <h2>🚫 발송 휴무일 관리 <span class="text-muted" style="font-size:13px; font-weight:400;">공휴일·명절 임시휴무·태풍 결항 등 — 주문 안내 발송일 계산에서 제외됩니다</span></h2>
+                        </div>
+                        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                            <input type="text" id="ship-holiday-date" class="akm-date" readonly autocomplete="off" placeholder="날짜 선택" style="width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="ship-holiday-reason" placeholder="사유 (예: 태풍 결항)" style="flex:1; min-width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <button class="btn-primary" id="btn-ship-holiday-add">추가</button>
+                        </div>
+                        <div id="ship-holiday-list" class="table-scroll-wrapper"></div>
+                    </div>
                 </div>
                 <div id="inquiry-tab-unanswered" style="display:none;">
                     <div class="card">
@@ -2222,6 +2234,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=315"></script>
+    <script src="app.js?v=316"></script>
 </body>
 </html>

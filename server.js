@@ -897,6 +897,21 @@ async function initDB() {
             deleted_at TIMESTAMP
         )
     `);
+    // ── 지시 #69: 발송 휴무일 DB 승격 ("자주 바뀌는 값은 화면에서") — 명절 임시휴무·태풍 결항 등 직원이 즉시 추가
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS shipping_holidays (
+            id SERIAL PRIMARY KEY,
+            holiday_date DATE UNIQUE NOT NULL,
+            reason TEXT,
+            created_by VARCHAR(50),
+            created_at TIMESTAMP DEFAULT NOW(),
+            deleted_at TIMESTAMP
+        )
+    `);
+    for (const [d, reason] of shippingSchedule.HOLIDAYS) {   // 2026 공휴일 초기 시드 (멱등 — 이미 있으면 무시, 삭제분 부활 없음)
+        await pool.query(`INSERT INTO shipping_holidays (holiday_date, reason, created_by) VALUES ($1, $2, '시드')
+            ON CONFLICT (holiday_date) DO NOTHING`, [d, reason]);
+    }
     // 설계 변경(대표 7/27): 배정→시나리오 기반 생성 — 사용된 시나리오명(복수) 기록
     await pool.query(`ALTER TABLE naver_qnas ADD COLUMN IF NOT EXISTS ai_scenarios JSONB`);
     // 톡톡 로그 시나리오 번호 컬럼 (대표 7/27 — 봇과 양쪽 멱등 보장: 어느 쪽이 먼저 배포돼도 안전)
@@ -5203,6 +5218,45 @@ app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, adminOnly, a
         res.json({ ok: true });
     } catch (err) { handleAdminErr(res, err); }
 });
+// ── 지시 #69: 발송 휴무일 관리 — 추가·삭제 직원 가능 (자주 바뀌는 값은 화면에서 · audit 기록 · soft-delete)
+async function loadShippingHolidaySet() {
+    const r = await pool.query(`SELECT to_char(holiday_date, 'YYYY-MM-DD') AS d FROM shipping_holidays WHERE deleted_at IS NULL`);
+    return new Set(r.rows.map(x => x.d));
+}
+app.get('/api/agent-office/shipping-holidays', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, reason, created_by FROM shipping_holidays
+             WHERE deleted_at IS NULL AND holiday_date >= CURRENT_DATE - 30 ORDER BY holiday_date LIMIT 200`);
+        res.json({ rows: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/shipping-holidays', authMiddleware, async (req, res) => {
+    try {
+        const date = String((req.body || {}).date || '').trim();
+        const reason = String((req.body || {}).reason || '').trim().slice(0, 100);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw { status: 400, message: '날짜는 YYYY-MM-DD 형식으로 입력해주세요' };
+        if (!reason) throw { status: 400, message: '사유를 입력해주세요 (예: 태풍 결항, 명절 임시휴무)' };
+        const r = await pool.query(
+            `INSERT INTO shipping_holidays (holiday_date, reason, created_by) VALUES ($1,$2,$3)
+             ON CONFLICT (holiday_date) DO UPDATE SET deleted_at = NULL, reason = EXCLUDED.reason, created_by = EXCLUDED.created_by
+             RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason`,
+            [date, reason, adminActor(req)?.name || null]);
+        await writeAudit({ action: 'create', targetType: 'shipping_holiday', targetId: r.rows[0].id,
+            changes: { after: r.rows[0] }, source: 'shipping-holiday', actor: adminActor(req) });
+        res.json({ ok: true, row: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.delete('/api/agent-office/shipping-holidays/:id', authMiddleware, async (req, res) => {
+    try {
+        const cur = await pool.query(`SELECT id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason FROM shipping_holidays WHERE id=$1 AND deleted_at IS NULL`, [req.params.id]);
+        if (!cur.rows.length) throw { status: 404, message: '휴무일을 찾을 수 없습니다' };
+        await pool.query(`UPDATE shipping_holidays SET deleted_at=now() WHERE id=$1`, [req.params.id]);
+        await writeAudit({ action: 'delete', targetType: 'shipping_holiday', targetId: Number(req.params.id),
+            changes: { before: cur.rows[0] }, source: 'shipping-holiday', actor: adminActor(req) });
+        res.json({ ok: true });
+    } catch (err) { handleAdminErr(res, err); }
+});
 // 텔레그램 알림 설정 (대표 7/26 작업5): 종류별 ON/OFF를 DB(agent_office_config)에 저장 — 코드 하드코딩 금지
 //   수집 ON/OFF와 별개로 "알림만" 끄고 켤 수 있음. 오류 알림은 설정 대상 아님(안전상 항상 발송).
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
@@ -6088,8 +6142,9 @@ async function collectKakaoNotify() {
     const seenSet = new Set(seen.rows.map(r => r.order_key));
     const targets = paidIds.filter(id => !seenSet.has(id));
     if (targets.length === 0) return `신규 결제 ${paidIds.length}건 — 전부 처리 이력 있음`;
-    // 판매현황 품목(안내문 포함) 1회 로드
+    // 판매현황 품목(안내문 포함)·휴무일 1회 로드 (지시 #69: 휴무일은 DB — 화면 관리)
     const bp = (await pool.query(`SELECT name, notify_message FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const holidaySet = await loadShippingHolidaySet();
     let done = 0, failed = 0;
     for (let i = 0; i < targets.length; i += 100) {   // 상세조회 100건 단위 (rate limit 간격 — 기존 패턴)
         if (i > 0) await new Promise(r => setTimeout(r, 350));
@@ -6108,7 +6163,7 @@ async function collectKakaoNotify() {
             try {
                 const optText = `${po.productName || ''} ${po.productOption || ''}`;
                 const matched = kakaoNotify.matchNotifyProduct(optText, bp);
-                const ship = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now);
+                const ship = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, holidaySet);
                 const message = kakaoNotify.buildMessage({
                     '고객명': od.ordererName || '고객',
                     '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
