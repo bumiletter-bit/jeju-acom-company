@@ -12437,16 +12437,47 @@ async function renderBotProducts() {
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
                 `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" onclick="setBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
+            <td>
+                <textarea id="botprod-notify-${p.id}" rows="2" placeholder="알림톡 개별 안내문 (비면 공통 템플릿)" style="width:200px; min-width:160px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.notify_message || '')}</textarea>
+                <button class="btn-sm btn-outline" onclick="saveBotProdNotify(${p.id})" style="vertical-align:top;">저장</button>
+            </td>
             <td style="white-space:nowrap;">
                 <button class="btn-sm btn-outline" onclick="saveBotProdPrice(${p.id})">저장</button>
                 ${(isAdmin && p.deletable) ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
             </td>
         </tr>`).join('');
     document.getElementById('botprod-list').innerHTML = `
-        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th></th></tr></thead>
-        <tbody>${rows}</tbody></table>`;
+        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡에 들어갈 품목별 개별 문구입니다 (예: 청귤 예약 배송 안내). 비워두면 공통 템플릿을 사용합니다. 아직 발송 기능은 꺼져 있어 저장만 됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
+    renderSeasonWaitlist().catch(console.error);   // 지시 #68 C5 — 같은 탭 하단 섹션
 }
+// --- 시즌 오픈 대기 신청 (지시 #68 C5) — 연락처는 서버가 마스킹해서 내려줌 ---
+async function renderSeasonWaitlist() {
+    const el = document.getElementById('season-wait-list');
+    if (!el) return;
+    const d = await api('/api/agent-office/season-waitlist');
+    const isAdmin = currentUser?.role === 'admin';
+    const rows = (d.rows || []).map(r => `
+        <tr>
+            <td>${escapeHtml(r.item)}</td>
+            <td>${escapeHtml(r.contact)}</td>
+            <td>${escapeHtml(r.memo || '')}</td>
+            <td>${r.notified ? '✅ 발송됨' : '대기'}</td>
+            <td style="white-space:nowrap;">${new Date(r.created_at).toLocaleDateString('ko-KR')}</td>
+            <td>${isAdmin ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteSeasonWait(${r.id})">삭제</button>` : ''}</td>
+        </tr>`).join('');
+    el.innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th>품목</th><th>연락처</th><th>메모</th><th>발송</th><th>신청일</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<p class="text-muted">대기 신청이 없습니다 — 품절·시즌 문의 손님을 등록해두면 오픈 때 한 번에 안내할 수 있습니다.</p>';
+}
+window.deleteSeasonWait = async function(id) {
+    if (!confirm('이 대기 신청을 삭제할까요?')) return;
+    try { await api('/api/agent-office/season-waitlist/' + id, 'DELETE', { confirm: true }); showToast('🗑 삭제 완료', 'lime'); }
+    catch (e) { alert(e.message); }
+    renderSeasonWaitlist().catch(console.error);
+};
 window.setBotProdStatus = async function(id, status) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { status }); showToast(`✅ '${status}' 변경 완료 — 봇 답변에 1분 내 반영`, 'lime'); }
     catch (e) { alert(e.message); }
@@ -12454,6 +12485,12 @@ window.setBotProdStatus = async function(id, status) {
 };
 window.saveBotProdPrice = async function(id) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { price: document.getElementById('botprod-price-' + id).value }); showToast('✅ 가격 저장 완료 — 봇 답변에 1분 내 반영', 'lime'); }
+    catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
+// 알림톡 품목별 안내문 저장 (지시 #68 C2) — 발송 기능 OFF 상태에서도 문구는 미리 관리
+window.saveBotProdNotify = async function(id) {
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { notify_message: document.getElementById('botprod-notify-' + id).value }); showToast('✅ 알림톡 안내문 저장 완료', 'lime'); }
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
@@ -12493,6 +12530,20 @@ function setupBotProductsTab() {
             document.getElementById('botprod-add-price').value = '';
             showToast('✅ 품목 추가 완료', 'lime');
             renderBotProducts().catch(console.error);
+        } catch (e) { alert(e.message); }
+    });
+    // 지시 #68 C5: 시즌 오픈 대기 신청 등록
+    document.getElementById('btn-season-wait-add')?.addEventListener('click', async () => {
+        const item = document.getElementById('season-wait-item').value.trim();
+        const contact = document.getElementById('season-wait-contact').value.trim();
+        if (!item || !contact) return alert('품목과 연락처를 입력하세요');
+        try {
+            await api('/api/agent-office/season-waitlist', 'POST', { item, contact, memo: document.getElementById('season-wait-memo').value });
+            document.getElementById('season-wait-item').value = '';
+            document.getElementById('season-wait-contact').value = '';
+            document.getElementById('season-wait-memo').value = '';
+            showToast('✅ 대기 신청 등록 완료', 'lime');
+            renderSeasonWaitlist().catch(console.error);
         } catch (e) { alert(e.message); }
     });
 }
@@ -12618,7 +12669,7 @@ setupBotProductsTab();
 setupUnansweredTab();
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
-const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)' };
+const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)', kakao_notify: '📨 알림톡 주문 안내 (준비 중 — 켜도 dry-run만)' };
 async function renderNaverTimers() {
     const d = await api('/api/agent-office/naver/auto-collect');
     const rows = (d.timers || []).map(t => {
@@ -12648,7 +12699,8 @@ async function renderNaverTimers() {
     // 대표 7/27 알림 개선: 문의 알림을 상황별 4종으로 재편 (답변완료 확인 / 직접 처리 필요 / 미처리 리마인더 / 아침 브리핑)
     const ALERT_LABELS = [['order', '신규주문'], ['claim', '반품·교환'], ['settlement', '정산'],
         ['autodone', '문의 답변완료(확인)'], ['staffneed', '직접 처리 필요'], ['reminder', '미처리 리마인더'], ['briefing', '아침 브리핑'],
-        ['office', 'AGENT OFFICE 완료·질문']]; // 대표 7/27: 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성) — 기본 OFF, 문구 편집 없음
+        ['office', 'AGENT OFFICE 완료·질문'], // 대표 7/27: 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성) — 기본 OFF, 문구 편집 없음
+        ['kakaosend', '알림톡 발송 결과']]; // 지시 #68 C6: 기본 OFF — 발송 기능 가동 전까지 알림 없음
     const tplEditors = alerts ? ALERT_LABELS.filter(([k]) => k !== 'office').map(([k, label]) => {
         const tpl = (alertData.templates && alertData.templates[k]) || '';
         const vars = ((alertData.variables && alertData.variables[k]) || []).map(v => `{{${v}}}`).join(' ');

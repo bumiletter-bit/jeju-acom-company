@@ -1920,6 +1920,19 @@
                         </div>
                         <div id="botprod-list" class="table-scroll-wrapper"></div>
                     </div>
+                    <!-- 지시 #68 C5: 시즌 오픈 대기 신청 — 저장소·화면까지만 (알림톡 발송 연동은 향후) -->
+                    <div class="card" style="margin-top:14px;">
+                        <div class="card-header-row">
+                            <h2>⏰ 시즌 오픈 대기 신청 <span class="text-muted" style="font-size:13px; font-weight:400;">품절·시즌 대기 손님 명단 — 오픈 시 안내 발송용(발송 기능은 준비 중)</span></h2>
+                        </div>
+                        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                            <input type="text" id="season-wait-item" placeholder="품목 (예: 청귤 5kg)" style="flex:1; min-width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="season-wait-contact" placeholder="연락처 (숫자만)" style="width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="season-wait-memo" placeholder="메모 (선택)" style="width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <button class="btn-primary" id="btn-season-wait-add">등록</button>
+                        </div>
+                        <div id="season-wait-list" class="table-scroll-wrapper"></div>
+                    </div>
                 </div>
                 <div id="inquiry-tab-unanswered" style="display:none;">
                     <div class="card">
@@ -2209,6 +2222,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=314"></script>
+    <script src="app.js?v=315"></script>
 </body>
 </html>

@@ -12,6 +12,8 @@ const officeCrypto = require('officecrypto-tool');
 const { VERSION } = require('./version.js');
 const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange, parseComparePeriods, parseWeekSpec, parseWeekdayRange } = require('./date-utils.js');
 const naverRelay = require('./naver-relay.js'); // 대표 7/24: 네이버 커머스API 중계서버 호출 클라이언트
+const kakaoNotify = require('./kakao-notify.js');       // 지시 #68 C4: 알림톡 뼈대 (KAKAO_NOTIFY=off 기본 — dry-run만)
+const shippingSchedule = require('./shipping-schedule.js'); // 지시 #68 C3: 발송일·도착예정일 계산 (독립 모듈)
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
 types.setTypeParser(1082, val => val);
@@ -865,6 +867,36 @@ async function initDB() {
     // qna 수집 타이머 시드 (기본 OFF — 중계서버 ALLOW 반영 전 켜면 403 실패 표시됨)
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('qna', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // ── 지시 #68 C4: 알림톡 발송 이력 (dry-run 문면이 검증 재료) + 수집 타이머 키 (기본 OFF — 대표 승인 전 실동작 금지)
+    //    수신번호는 마스킹만 저장(원문 미저장) — 발송은 수집 시점 메모리 값으로만, 이력은 문면 검증·중복 방지용
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS kakao_notify_log (
+            id SERIAL PRIMARY KEY,
+            order_key VARCHAR(50) UNIQUE,
+            product_name TEXT,
+            receiver_masked VARCHAR(30),
+            message TEXT,
+            mode VARCHAR(10),
+            status VARCHAR(30),
+            error TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('kakao_notify', false, 60)
+        ON CONFLICT (key) DO NOTHING`);
+    // ── 지시 #68 C5: 시즌 오픈 대기 신청 (연락처는 발송 목적상 원문 저장 — 화면 표시는 마스킹, soft-delete)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS season_waitlist (
+            id SERIAL PRIMARY KEY,
+            item TEXT NOT NULL,
+            contact VARCHAR(30) NOT NULL,
+            memo TEXT,
+            notified BOOLEAN DEFAULT false,
+            created_by VARCHAR(50),
+            created_at TIMESTAMP DEFAULT NOW(),
+            deleted_at TIMESTAMP
+        )
+    `);
     // 설계 변경(대표 7/27): 배정→시나리오 기반 생성 — 사용된 시나리오명(복수) 기록
     await pool.query(`ALTER TABLE naver_qnas ADD COLUMN IF NOT EXISTS ai_scenarios JSONB`);
     // 톡톡 로그 시나리오 번호 컬럼 (대표 7/27 — 봇과 양쪽 멱등 보장: 어느 쪽이 먼저 배포돼도 안전)
@@ -939,6 +971,8 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50)`);
+    // 알림톡 품목별 안내문 (지시 #68 C2): 비어 있으면 공통 템플릿 사용 — 봇은 이 컬럼을 읽지 않음(회사프로그램 전용)
+    await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS notify_message TEXT`);
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
     // 계정별 자동 로그아웃 예외 시간 (대표 7/27 — NULL=전체 설정 따름, 예: 발주컴퓨터 12시간)
@@ -4865,7 +4899,7 @@ async function todayLinkedBotProductNames() {
 async function svcListBotProducts() {
     const linked = await todayLinkedBotProductNames();
     const r = await pool.query(
-        `SELECT id, name, status, price, updated_by, updated_at FROM bot_products
+        `SELECT id, name, status, price, notify_message, updated_by, updated_at FROM bot_products
          WHERE deleted_at IS NULL
          ORDER BY CASE status WHEN '준비중' THEN 0 WHEN '판매중' THEN 1 WHEN '품절' THEN 2 ELSE 3 END, name`);
     // 대표 7/25: 품목별 금액 매칭 품목은 삭제 불가 — 예외(사전예약특가 등)·수동 추가 품목만 삭제 허용
@@ -4922,6 +4956,8 @@ async function svcUpdateBotProduct(id, patch, actor) {
     if (patch.name !== undefined) { params.push(String(patch.name).trim()); sets.push(`name=$${params.length}`); }
     if (patch.status !== undefined) { params.push(patch.status); sets.push(`status=$${params.length}`); }
     if (patch.price !== undefined) { params.push(String(patch.price || '').trim()); sets.push(`price=$${params.length}`); }
+    // 알림톡 안내문 (지시 #68 C2) — 빈 문자열 저장 = 공통 템플릿 사용으로 복귀
+    if (patch.notify_message !== undefined) { params.push(String(patch.notify_message || '').trim() || null); sets.push(`notify_message=$${params.length}`); }
     if (params.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
     params.push(actor?.name || null); sets.push(`updated_by=$${params.length}`);
     params.push(id);
@@ -5129,14 +5165,52 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
         res.json({ logs: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+// ── 지시 #68 C5: 시즌 오픈 대기 신청 — 직원 등록·조회, 삭제는 대표 전용 (soft-delete·audit)
+//    연락처는 발송 목적상 원문 저장, 응답·화면에는 마스킹만 노출. 알림톡 발송 연동은 향후(지금은 저장소·화면까지)
+const maskWaitContact = (t) => { const s = String(t || '').replace(/[^0-9]/g, ''); return s.length >= 7 ? s.slice(0, 3) + '****' + s.slice(-4) : '***'; };
+app.get('/api/agent-office/season-waitlist', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, item, contact, memo, notified, created_by, created_at FROM season_waitlist
+             WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 500`);
+        res.json({ rows: r.rows.map(x => ({ ...x, contact: maskWaitContact(x.contact) })) });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/season-waitlist', authMiddleware, async (req, res) => {
+    try {
+        const item = String((req.body || {}).item || '').trim();
+        const contact = String((req.body || {}).contact || '').replace(/[^0-9]/g, '');
+        const memo = String((req.body || {}).memo || '').trim().slice(0, 200);
+        if (!item) throw { status: 400, message: '품목을 입력해주세요' };
+        if (contact.length < 10 || contact.length > 11) throw { status: 400, message: '연락처는 숫자 10~11자리로 입력해주세요' };
+        const dup = await pool.query(`SELECT id FROM season_waitlist WHERE item=$1 AND contact=$2 AND deleted_at IS NULL`, [item, contact]);
+        if (dup.rows.length) throw { status: 409, message: '같은 품목에 이미 등록된 연락처입니다' };
+        const r = await pool.query(
+            `INSERT INTO season_waitlist (item, contact, memo, created_by) VALUES ($1,$2,$3,$4) RETURNING id, item, notified, created_at`,
+            [item, contact, memo, adminActor(req)?.name || null]);
+        await writeAudit({ action: 'create', targetType: 'season_waitlist', targetId: r.rows[0].id,
+            changes: { after: { item, contact: maskWaitContact(contact), memo } }, source: 'season-waitlist', actor: adminActor(req) });
+        res.json({ ok: true, row: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const cur = await pool.query(`SELECT * FROM season_waitlist WHERE id=$1 AND deleted_at IS NULL`, [req.params.id]);
+        if (!cur.rows.length) throw { status: 404, message: '신청 건을 찾을 수 없습니다' };
+        await pool.query(`UPDATE season_waitlist SET deleted_at=now() WHERE id=$1`, [req.params.id]);
+        await writeAudit({ action: 'delete', targetType: 'season_waitlist', targetId: Number(req.params.id),
+            changes: { before: { ...cur.rows[0], contact: maskWaitContact(cur.rows[0].contact) } }, source: 'season-waitlist', actor: adminActor(req) });
+        res.json({ ok: true });
+    } catch (err) { handleAdminErr(res, err); }
+});
 // 텔레그램 알림 설정 (대표 7/26 작업5): 종류별 ON/OFF를 DB(agent_office_config)에 저장 — 코드 하드코딩 금지
 //   수집 ON/OFF와 별개로 "알림만" 끄고 켤 수 있음. 오류 알림은 설정 대상 아님(안전상 항상 발송).
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
 // 대표 7/27 알림 개선: 문의 3채널 알림을 상황별 4종(answered/staffneed/reminder/briefing)으로 재편 —
 //   구 'inquiry'(미답변 신규)·'qna'(신규+게시 혼합)·'inqanswer' 키는 은퇴 (DB에 남은 옛 문구 오버라이드는 무해)
-const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing', 'office'];
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing', 'office', 'kakaosend'];
 // office = AGENT OFFICE 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성 완료) — 대표 7/27 지시로 기본 OFF (오류·실패 알림은 이 키와 무관하게 항상 발송)
-const TELEGRAM_ALERT_DEFAULT_OFF = ['office'];
+const TELEGRAM_ALERT_DEFAULT_OFF = ['office', 'kakaosend'];   // kakaosend = 알림톡 발송 결과 (지시 #68 C6 — 발송 기능 자체가 OFF라 기본 OFF)
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
@@ -5147,9 +5221,11 @@ const TELEGRAM_ALERT_DEFAULTS = {
     staffneed: '✍️ 직접 처리해야 할 문의가 있습니다 {{건수}}건 ({{채널}}) — [문의 관리]에서 답변해주세요',
     reminder: '⏰ 미처리 문의 {{건수}}건 — 가장 오래된 건 {{경과}}시간 경과. [문의 관리]에서 처리해주세요',
     briefing: '🌅 밤사이 현황 ({{시작}}~{{종료}})\n{{내용}}',
+    kakaosend: '📨 주문 안내 알림톡 {{건수}}건 발송 (실패 {{실패건수}}건→SMS 대체)',
 };
 const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], settlement: ['건수', '시작일', '종료일'],
-    autodone: ['채널', '건수'], staffneed: ['건수', '채널'], reminder: ['건수', '경과'], briefing: ['시작', '종료', '내용'] };
+    autodone: ['채널', '건수'], staffneed: ['건수', '채널'], reminder: ['건수', '경과'], briefing: ['시작', '종료', '내용'],
+    kakaosend: ['건수', '실패건수'] };
 async function telegramAlertTemplates() {
     const out = { ...TELEGRAM_ALERT_DEFAULTS };
     try {
@@ -5232,6 +5308,7 @@ async function inquiryAlertTick() {
                 const lines = [];
                 if (await alertEnabled('order') && Number(acc.order) > 0) lines.push(`🚚 신규 주문 ${acc.order}건 (발주확인은 수기)`);
                 if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 반품·교환 ${acc.claim}건`);
+                if (await alertEnabled('kakaosend') && Number(acc.kakaosend) > 0) lines.push(`📨 주문 안내 알림톡 ${acc.kakaosend}건 발송`);   // 지시 #68 C6
                 if (await alertEnabled('settlement') && Number(acc.settlement) > 0) lines.push(`🛰️ 정산 자동수집 완료 (데이터관리 > 정산 조회)`);
                 if (await alertEnabled('autodone')) {
                     const aq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
@@ -5873,7 +5950,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
-const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의' };
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -5992,6 +6069,76 @@ async function collectClaim() {
         else notifyTelegram(await alertText('claim', { '건수': fresh.length }));
     }
     return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·첫 알림 ${fresh.length}·변경 ${list.length}건 검사)`;
+}
+
+// ── 지시 #68 C4: 주문 안내 알림톡 수집기 (기본 OFF — naver_auto_collect 'kakao_notify')
+//    흐름: 신규 결제 감지 → 상세조회(허용된 읽기 POST) → 품목 판별 → 품목별 안내문 우선 → 변수 치환 → [발송 — KAKAO_NOTIFY=off면 dry-run] → 이력 기록
+//    🔴 실발송 이중 차단은 kakao-notify.js 안에 (env 스위치 + 알리고 키 부재). OFF 상태 = "발송했을 문면"만 kakao_notify_log에 남김 (검증 재료)
+async function collectKakaoNotify() {
+    const now = Date.now();
+    const cp = await naverCfgGet('kakao_notify_checkpoint');
+    const fromMs = Math.max(cp ? Date.parse(cp) : now - 3600 * 1000, now - 23.5 * 3600 * 1000);
+    const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
+    await naverCfgSet('kakao_notify_checkpoint', new Date(now).toISOString());
+    const paidIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'PAYED')
+        .map(x => String(x.productOrderId || '')).filter(Boolean))];
+    if (paidIds.length === 0) return '신규 결제 0건 — 알림톡 대상 없음';
+    // 이미 이력에 있는 주문 제외 (재시작·중복 감지 안전)
+    const seen = await pool.query(`SELECT order_key FROM kakao_notify_log WHERE order_key = ANY($1)`, [paidIds]);
+    const seenSet = new Set(seen.rows.map(r => r.order_key));
+    const targets = paidIds.filter(id => !seenSet.has(id));
+    if (targets.length === 0) return `신규 결제 ${paidIds.length}건 — 전부 처리 이력 있음`;
+    // 판매현황 품목(안내문 포함) 1회 로드
+    const bp = (await pool.query(`SELECT name, notify_message FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    let done = 0, failed = 0;
+    for (let i = 0; i < targets.length; i += 100) {   // 상세조회 100건 단위 (rate limit 간격 — 기존 패턴)
+        if (i > 0) await new Promise(r => setTimeout(r, 350));
+        const r = await naverCallWithRetry({
+            method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query',
+            body: { productOrderIds: targets.slice(i, i + 100) },
+        });
+        const body = (r && r.data) ? r.data : r;
+        const items = body?.data || body?.list || (Array.isArray(body) ? body : []) || [];
+        for (const it of (Array.isArray(items) ? items : [])) {
+            const c = it.content || it;
+            const po = c.productOrder || it.productOrder || c;
+            const od = c.order || it.order || po.order || {};
+            const orderKey = String(po.productOrderId || od.productOrderId || '').slice(0, 50);
+            if (!orderKey) continue;
+            try {
+                const optText = `${po.productName || ''} ${po.productOption || ''}`;
+                const matched = kakaoNotify.matchNotifyProduct(optText, bp);
+                const ship = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now);
+                const message = kakaoNotify.buildMessage({
+                    '고객명': od.ordererName || '고객',
+                    '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
+                    '발송안내': ship.text,
+                    '품목안내': matched && matched.notify_message ? matched.notify_message : '',
+                });
+                const res = await kakaoNotify.sendAlimtalk({
+                    receiver: od.ordererTel || '', subject: '주문 안내', message, failoverMessage: message,
+                });
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel),
+                     message, res.mode, res.status, res.error || null]);
+                if (res.status === 'sent') done++;
+                else if (res.mode === 'real') failed++;
+            } catch (e) {
+                failed++;
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, error)
+                    VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+            }
+        }
+    }
+    // C6: 발송 결과 알림 — 실발송이 있었을 때만 (dry-run 단계에선 무알림 · 0건 무알림 원칙 유지)
+    if (done > 0 && await alertEnabled('kakaosend')) {
+        if (await alertQuietNow()) await alertNightAcc('kakaosend', done);
+        else notifyTelegram(await alertText('kakaosend', { '건수': done, '실패건수': failed }));
+    }
+    const mode = kakaoNotify.switchOn() ? '실발송' : 'dry-run';
+    return `알림톡 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·신규결제 ${paidIds.length}건)`;
 }
 
 // 개인정보 마스킹 (A안 — 대표 승인 2026-07-26): 문의 제목·내용의 연락처/이메일 패턴 치환. 이름·ID는 아예 저장 안 함.
@@ -6518,7 +6665,7 @@ async function naverAutoCollectTick() {
         if (!due.length) return;
         due.sort((a, b) => b.waited - a.waited);
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
-        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna }[r.key];
+        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify }[r.key];
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
