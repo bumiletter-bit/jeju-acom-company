@@ -71,4 +71,22 @@ function computeShipping(orderAt, holidaySet, noticeByDate) {
     return { shipDate: ymd(shipDay), arriveStart: ymd(arrive1), arriveEnd: ymd(arrive2), text, override: false };
 }
 
-module.exports = { computeShipping, isShipDay, isDeliveryDay, HOLIDAYS };
+/**
+ * 발송 안내문 요일 플레이스홀더 치환 (지시 #74) — 발송 당일 기준
+ * {{내일요일}} = 발송일 이후 첫 배달 가능일 요일, {{모레요일}} = 둘째 배달 가능일 요일
+ * (배달 가능일 = 월~토, 일요일·휴무일 제외 — computeShipping 도착 규칙과 동일 기준)
+ * @param {string} text 안내문 원문 ({{내일요일}}·{{모레요일}} 포함 가능)
+ * @param {Date|number|string} baseAt 발송(출발) 일시 — 기본: 현재
+ * @param {Set<string>|null} holidaySet 휴무일 집합 (DB — 미주입 시 시드 폴백)
+ */
+function renderGuidePlaceholders(text, baseAt, holidaySet) {
+    const ms = baseAt ? new Date(baseAt).getTime() : Date.now();
+    const base = kstDay(ms);
+    const d1 = nextMatching(base, d => isDeliveryDay(d, holidaySet));
+    const d2 = nextMatching(d1, d => isDeliveryDay(d, holidaySet));
+    return String(text || '')
+        .replace(/\{\{내일요일\}\}/g, DAY_KO[d1.getUTCDay()])
+        .replace(/\{\{모레요일\}\}/g, DAY_KO[d2.getUTCDay()]);
+}
+
+module.exports = { computeShipping, renderGuidePlaceholders, isShipDay, isDeliveryDay, HOLIDAYS };

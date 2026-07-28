@@ -12441,15 +12441,19 @@ async function renderBotProducts() {
                 <textarea id="botprod-notify-${p.id}" rows="2" placeholder="알림톡 개별 안내문 (비면 공통 템플릿)" style="width:200px; min-width:160px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.notify_message || '')}</textarea>
                 <button class="btn-sm btn-outline" onclick="saveBotProdNotify(${p.id})" style="vertical-align:top;">저장</button>
             </td>
+            <td>
+                <textarea id="botprod-guide-${p.id}" rows="2" placeholder="발송 안내문 (LMS 장문 — 먹는법·보관법. {{내일요일}}·{{모레요일}} = 발송 시 요일 자동 치환)" style="width:230px; min-width:180px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.shipping_guide || '')}</textarea>
+                <button class="btn-sm btn-outline" onclick="saveBotProdGuide(${p.id})" style="vertical-align:top;">저장</button>
+            </td>
             <td style="white-space:nowrap;">
                 <button class="btn-sm btn-outline" onclick="saveBotProdPrice(${p.id})">저장</button>
                 ${(isAdmin && p.deletable) ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
             </td>
         </tr>`).join('');
     document.getElementById('botprod-list').innerHTML = `
-        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th></th></tr></thead>
+        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th>📦 발송 안내문(LMS)</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡에 들어갈 품목별 개별 문구입니다 (예: 청귤 예약 배송 안내). 비워두면 공통 템플릿을 사용합니다. 아직 발송 기능은 꺼져 있어 저장만 됩니다.</p>`;
+        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). 아직 발송 기능은 꺼져 있어 저장만 됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
     renderSeasonWaitlist().catch(console.error);   // 지시 #68 C5 — 같은 탭 하단 섹션
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
@@ -12531,6 +12535,12 @@ window.saveBotProdPrice = async function(id) {
 // 알림톡 품목별 안내문 저장 (지시 #68 C2) — 발송 기능 OFF 상태에서도 문구는 미리 관리
 window.saveBotProdNotify = async function(id) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { notify_message: document.getElementById('botprod-notify-' + id).value }); showToast('✅ 알림톡 안내문 저장 완료', 'lime'); }
+    catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
+// 발송 안내문(LMS 장문) 저장 (지시 #74)
+window.saveBotProdGuide = async function(id) {
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { shipping_guide: document.getElementById('botprod-guide-' + id).value }); showToast('✅ 발송 안내문 저장 완료', 'lime'); }
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };

@@ -990,6 +990,18 @@ async function initDB() {
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50)`);
     // 알림톡 품목별 안내문 (지시 #68 C2): 비어 있으면 공통 템플릿 사용 — 봇은 이 컬럼을 읽지 않음(회사프로그램 전용)
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS notify_message TEXT`);
+    // 발송 안내문 장문 (지시 #74): 발송 시점 LMS용 — 먹는법·보관법·후숙 팁. {{내일요일}}·{{모레요일}}은 발송 시 요일 자동 치환
+    await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS shipping_guide TEXT`);
+    // 시드 3종 (대표 원문 — 지시 #74 첨부. shipping_guide IS NULL인 품목만 = 직원 편집분 보존·멱등)
+    const GUIDE_COMMON_TAIL = `\n\n꼼꼼히 포장하여 보내드렸지만, 혹시 받아보신 상품에 문제가 있거나 궁금한 점이 있으시면 언제든 연락주세요!\n\n앞으로도 배송 소식과 제철 상품 안내연락 드리겠습니다. (수신거부 원하시면 연락주세요)\n\n제주의 풍요롭고 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요♥\n\n-제주아꼼이네 드림-`;
+    const GUIDE_SEEDS = [
+        ['미니밤호박%', `○제주아꼼이네 배송 안내○\n\n안녕하세요! 믿고 구매해주셔서 진심으로 감사드립니다.^^\n\n현재 미니밤호박은 초반의 포슬포슬한 밤맛에서 촉촉하고 달콤하게 익어가고 있어요. 아이도 어르신도 참 좋아할 맛입니다.\n\n♥ 배송 현황: 오늘 출발하여 내일({{내일요일}}) ~ 모레({{모레요일}}) 도착 예정입니다.\n\n♥ 맛있게 드시는 법 & 보관 TIP:\n후숙 — 갓 수확 후 보내드린거라 실온에서 열흘 정도 후숙하시면 당도가 올라가 더욱 달콤하고 부드럽게 즐기실 수 있습니다.\n보관 — 받으시면 즉시 박스를 열어 바람이 잘 통하는 그늘지고 서늘한 곳에 보관해 주세요. (수분 제거를 위해 펼쳐두시면 더 좋습니다.)\n\n♥ 레시피: https://blog.naver.com/bumiletter/223133891502` + GUIDE_COMMON_TAIL],
+        ['고당도 하우스감귤%', `○제주아꼼이네 배송 안내○\n\n안녕하세요! 믿고 구매해주셔서 진심으로 감사드립니다.^^\n\n하우스귤은 하우스시설재배 상품으로 수확 초기의 새콤달콤한 맛이 매력이에요. 강제 착색하지 않아 표면이 초록초록할 수 있습니다.\n\n♥ 배송 현황: 오늘 출발하여 내일({{내일요일}}) ~ 모레({{모레요일}}) 도착 예정입니다.\n\n♥ 맛있게 드시는 법 & 보관 TIP:\n먹는법 — 상온에서 2~3일 후숙하시면 새콤함이 달콤함으로 변해요. 장기보관은 냉장을 권장드립니다.\n보관 — 무른 과일은 먼저 빼내주시고, 통풍이 잘 되는 선선한 곳 또는 냉장 보관해 주세요.` + GUIDE_COMMON_TAIL],
+        ['과즙팡팡 황금향%', `○제주아꼼이네 배송 안내○\n\n안녕하세요! 믿고 구매해주셔서 진심으로 감사드립니다.^^\n\n황금향은 부드러운 향과 풍부한 과즙이 매력이에요. 강제 착색하지 않아 표면에 푸른끼가 있을 수 있습니다.\n\n♥ 배송 현황: 오늘 출발하여 내일({{내일요일}}) ~ 모레({{모레요일}}) 도착 예정입니다.\n\n♥ 맛있게 드시는 법 & 보관 TIP:\n먹는법 — 수령 후 냉장보관을 권장드리며, 새콤하게 느껴지면 상온에서 2~3일 후숙 후 드시면 더 달콤해요.` + GUIDE_COMMON_TAIL],
+    ];
+    for (const [pattern, guide] of GUIDE_SEEDS) {
+        await pool.query(`UPDATE bot_products SET shipping_guide = $2 WHERE name LIKE $1 AND deleted_at IS NULL AND shipping_guide IS NULL`, [pattern, guide]);
+    }
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
     // 계정별 자동 로그아웃 예외 시간 (대표 7/27 — NULL=전체 설정 따름, 예: 발주컴퓨터 12시간)
@@ -4916,7 +4928,7 @@ async function todayLinkedBotProductNames() {
 async function svcListBotProducts() {
     const linked = await todayLinkedBotProductNames();
     const r = await pool.query(
-        `SELECT id, name, status, price, notify_message, updated_by, updated_at FROM bot_products
+        `SELECT id, name, status, price, notify_message, shipping_guide, updated_by, updated_at FROM bot_products
          WHERE deleted_at IS NULL
          ORDER BY CASE status WHEN '준비중' THEN 0 WHEN '판매중' THEN 1 WHEN '품절' THEN 2 ELSE 3 END, name`);
     // 대표 7/25: 품목별 금액 매칭 품목은 삭제 불가 — 예외(사전예약특가 등)·수동 추가 품목만 삭제 허용
@@ -4975,6 +4987,8 @@ async function svcUpdateBotProduct(id, patch, actor) {
     if (patch.price !== undefined) { params.push(String(patch.price || '').trim()); sets.push(`price=$${params.length}`); }
     // 알림톡 안내문 (지시 #68 C2) — 빈 문자열 저장 = 공통 템플릿 사용으로 복귀
     if (patch.notify_message !== undefined) { params.push(String(patch.notify_message || '').trim() || null); sets.push(`notify_message=$${params.length}`); }
+    // 발송 안내문 장문 (지시 #74) — LMS용, 요일 플레이스홀더 {{내일요일}}·{{모레요일}} 허용
+    if (patch.shipping_guide !== undefined) { params.push(String(patch.shipping_guide || '').trim() || null); sets.push(`shipping_guide=$${params.length}`); }
     if (params.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
     params.push(actor?.name || null); sets.push(`updated_by=$${params.length}`);
     params.push(id);

@@ -5,7 +5,8 @@
 const https = require('https');
 const querystring = require('querystring');
 
-const ALIGO_HOST = 'kakaoapi.aligo.in';
+const ALIGO_HOST = 'kakaoapi.aligo.in';        // 알림톡 API
+const ALIGO_SMS_HOST = 'apisms.aligo.in';      // 문자(SMS/LMS) API — ⚠️ 실가동 전 공식 문서 스펙 재확인(지시 #74 [불확실] 항목)
 
 function switchOn() { return String(process.env.KAKAO_NOTIFY || 'off').toLowerCase() === 'on'; }
 function configured() {
@@ -48,11 +49,11 @@ function matchNotifyProduct(optionText, botProducts) {
     return best;   // { name, notify_message } | null
 }
 
-function aligoPost(path, form) {
+function aligoPost(path, form, host) {
     return new Promise((resolve, reject) => {
         const body = querystring.stringify(form);
         const req = https.request({
-            host: ALIGO_HOST, path, method: 'POST', timeout: 20000,
+            host: host || ALIGO_HOST, path, method: 'POST', timeout: 20000,
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) },
         }, (res) => {
             let data = '';
@@ -89,4 +90,24 @@ async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessa
     return { mode: 'real', status: ok ? 'sent' : 'failed', error: ok ? null : JSON.stringify(r).slice(0, 300), mid: r && r.info && r.info.mid };
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, DEFAULT_TEMPLATE };
+// LMS(알리고 문자) 발송 뼈대 (지시 #74) — 품목별 발송 안내문용: 자유 문안·템플릿 심사 불필요.
+// 🔴 알림톡과 동일 이중 차단(KAKAO_NOTIFY=on + 키 필요). 문자 API는 senderkey 불필요 — key·user_id·sender만.
+async function sendLms({ receiver, subject, message }) {
+    if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', message };
+    if (!process.env.ALIGO_API_KEY || !process.env.ALIGO_USER_ID || !process.env.ALIGO_SENDER) {
+        return { mode: 'dry-run', status: 'keys-missing', message };
+    }
+    const r = await aligoPost('/send/', {
+        key: process.env.ALIGO_API_KEY,
+        user_id: process.env.ALIGO_USER_ID,
+        sender: process.env.ALIGO_SENDER,
+        receiver: String(receiver || '').replace(/[^0-9]/g, ''),
+        msg: message,
+        msg_type: 'LMS',
+        title: subject || '제주아꼼이네 배송 안내',
+    }, ALIGO_SMS_HOST);
+    const ok = r && Number(r.result_code) > 0;   // 문자 API는 result_code 양수 = 성공
+    return { mode: 'real', status: ok ? 'sent' : 'failed', error: ok ? null : JSON.stringify(r).slice(0, 300), mid: r && r.msg_id };
+}
+
+module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendLms, DEFAULT_TEMPLATE };
