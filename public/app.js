@@ -322,6 +322,7 @@ function switchPage(pageName) {
     if (pageName === 'data' && currentUser?.role === 'admin') {
         renderUserList().catch(console.error);
         renderNaverTimers().catch(console.error);
+        renderMallGameConfig().catch(console.error);   // 지시 #85 STEP3 — 게임 운영 설정
     }
     if (pageName === 'myinfo') renderMyInfoPage();
     if (pageName === 'agent-office') renderAgentOffice().catch(console.error);
@@ -12762,6 +12763,62 @@ function setupUnansweredTab() {
 setupInquiryPage();
 setupBotProductsTab();
 setupUnansweredTab();
+
+// === 게임 운영 설정 (데이터관리, 지시 #85 STEP3) — 확률·한도는 전부 DB, 코드 수정 없이 조정 ===
+async function renderMallGameConfig() {
+    const card = document.getElementById('mall-game-card');
+    const el = document.getElementById('mall-game-config');
+    if (!card || !el) return;
+    const d = await api('/api/agent-office/mall-game-config');
+    card.style.display = '';
+    const c = d.config;
+    const probRows = (c.probabilities || []).map((p, i) => `
+        <tr>
+            <td><input type="text" id="mg-label-${i}" value="${escapeHtml(p.label || '')}" style="width:110px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
+            <td><input type="number" id="mg-points-${i}" value="${Number(p.points) || 0}" min="0" step="1" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
+            <td><input type="number" id="mg-weight-${i}" value="${Number(p.weight) || 1}" min="1" step="1" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
+            <td class="text-muted" style="font-size:12px;">${escapeHtml(p.key || '')}</td>
+        </tr>`).join('');
+    el.innerHTML = `
+        <p class="text-muted" style="margin:0 0 8px;">자사몰 API 상태: <b>${d.mall_api === 'on' ? '🟢 가동' : '⚪ 준비 중 (MALL_API=off)'}</b> — 꺼져 있는 동안은 설정만 미리 준비됩니다. ⚠️ 확률·한도 실서비스 값은 대표 확정 필요(현재는 프로토타입 수치)</p>
+        <table class="data-table" style="max-width:480px;"><thead><tr><th>룰렛 칸</th><th>물방울</th><th>가중치</th><th>키</th></tr></thead><tbody>${probRows}</tbody></table>
+        <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; align-items:center;">
+            <label>물주기 비용 <input type="number" id="mg-water-cost" value="${Number(c.water_cost) || 10}" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;"></label>
+            <label title="roulette_spins 1일 1회 DB 제약 — 변경은 테이블 개편 필요">룰렛 1일 횟수 <input type="number" id="mg-spin-limit" value="1" disabled style="width:60px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px; background:var(--bg,#f5f6f8);"> <span class="text-muted" style="font-size:11px;">(1회 고정)</span></label>
+            <label>실물 보상 월 한도 <input type="number" id="mg-phys-limit" value="${Number(c.physical_monthly_limit) || 30}" min="0" step="1" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;"></label>
+            <button class="btn-primary btn-sm" onclick="saveMallGameConfig(${(c.probabilities || []).length})">저장</button>
+            <button class="btn-sm btn-outline" onclick="resetMallGameConfig()">기본값 복원</button>
+        </div>
+        <p class="text-muted" style="font-size:12px; margin-top:6px;">한도 소진 시 쿠폰 자동 전환은 API 가동 단계에서 활성화됩니다. 저장은 audit 기록됩니다.</p>`;
+    window._mgConfigBase = c;   // 저장 시 미노출 필드(level_thresholds 등) 보존용
+}
+window.saveMallGameConfig = async function(n) {
+    try {
+        const base = window._mgConfigBase || {};
+        const probabilities = [];
+        for (let i = 0; i < n; i++) {
+            const src = (base.probabilities || [])[i] || {};
+            probabilities.push({ key: src.key || ('k' + i), label: document.getElementById('mg-label-' + i).value.trim(),
+                points: Number(document.getElementById('mg-points-' + i).value) || 0,
+                weight: Number(document.getElementById('mg-weight-' + i).value) || 0 });
+        }
+        const config = { ...base, probabilities,
+            water_cost: Number(document.getElementById('mg-water-cost').value) || 10,
+            daily_spin_limit: 1,   // QA D3: 구조상 1 고정 — 입력도 disabled
+            physical_monthly_limit: Number(document.getElementById('mg-phys-limit').value) || 30 };
+        await api('/api/agent-office/mall-game-config', 'PUT', { config });
+        showToast('✅ 게임 설정 저장 완료', 'lime');
+        renderMallGameConfig().catch(console.error);   // QA D5: 성공 시에만 재렌더 — 실패 시 입력값 보존
+    } catch (e) { alert(e.message); }
+};
+window.resetMallGameConfig = async function() {
+    if (!confirm('게임 설정을 기본값(프로토타입 수치)으로 복원할까요?')) return;
+    try {
+        await api('/api/agent-office/mall-game-config', 'PUT', { reset: true });
+        showToast('✅ 기본값 복원 완료', 'lime');
+        renderMallGameConfig().catch(console.error);
+    } catch (e) { alert(e.message); }
+};
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
 const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)', kakao_notify: '📨 알림톡 주문 안내 (준비 중 — 켜도 dry-run만)', lms_guide: '📦 문자 발송 안내 (발송처리 감지 — 켜도 dry-run만)' };

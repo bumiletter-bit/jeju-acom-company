@@ -13,6 +13,7 @@ const { VERSION } = require('./version.js');
 const { parseExplicitDate, parseExplicitMonth, hasExplicitDay, periodRangeOf, needsQueryConfirm, isValidDateStr, parseExplicitRange, parseComparePeriods, parseWeekSpec, parseWeekdayRange } = require('./date-utils.js');
 const naverRelay = require('./naver-relay.js'); // 대표 7/24: 네이버 커머스API 중계서버 호출 클라이언트
 const kakaoNotify = require('./kakao-notify.js');       // 지시 #68 C4: 알림톡 뼈대 (KAKAO_NOTIFY=off 기본 — dry-run만)
+const mallApi = require('./mall-api.js');               // 지시 #85: 자사몰 게임 백엔드 (MALL_API=off 기본 — 전 라우트 503)
 const shippingSchedule = require('./shipping-schedule.js'); // 지시 #68 C3: 발송일·도착예정일 계산 (독립 모듈)
 
 // DATE 타입을 문자열로 반환 (타임존 이슈 방지)
@@ -900,6 +901,62 @@ async function initDB() {
     `);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // ── 지시 #85: 자사몰 게임 백엔드 테이블 5종 (설계서 §2-1 — 전부 additive, MALL_API=off 기본이라 무동작)
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS mall_members (
+            id SERIAL PRIMARY KEY,
+            member_key VARCHAR(100) UNIQUE NOT NULL,
+            nickname VARCHAR(50),
+            created_at TIMESTAMP DEFAULT NOW(),
+            deleted_at TIMESTAMP
+        )
+    `);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS points_ledger (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL,
+            delta INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL,
+            reason VARCHAR(100),
+            ref_type VARCHAR(30),
+            ref_id VARCHAR(80),
+            idem_key VARCHAR(120) UNIQUE,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);   // append-only 원장: UPDATE/DELETE 금지 (앱 규약)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_points_ledger_member ON points_ledger (member_id, id DESC)`);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS roulette_spins (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL,
+            spin_date DATE NOT NULL,
+            result_key VARCHAR(30),
+            points INTEGER,
+            created_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE (member_id, spin_date)
+        )
+    `);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS tree_state (
+            member_id INTEGER PRIMARY KEY,
+            level INTEGER DEFAULT 1,
+            water_count INTEGER DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS reward_grants (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL,
+            kind VARCHAR(20),
+            amount INTEGER,
+            status VARCHAR(20) DEFAULT 'pending',
+            month_key VARCHAR(7),
+            idem_key VARCHAR(120) UNIQUE,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_reward_grants_month ON reward_grants (month_key, kind)`);
     // ── 지시 #68 C5: 시즌 오픈 대기 신청 (연락처는 발송 목적상 원문 저장 — 화면 표시는 마스킹, soft-delete)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS season_waitlist (
@@ -5304,6 +5361,65 @@ app.delete('/api/agent-office/shipping-holidays/:id', authMiddleware, async (req
         res.json({ ok: true });
     } catch (err) { handleAdminErr(res, err); }
 });
+// ── 지시 #85 STEP3: 게임 운영 설정 (확률·한도 — 자주 바뀌는 값은 화면에서, 코드에 박지 않음)
+//    편집은 대표 전용(확률·실물 보상 한도 = 비용 관련). MALL_API=off여도 설정 관리는 가능(선행 준비).
+const MALL_GAME_CONFIG_DEFAULT = {
+    probabilities: [
+        { key: 'w10', label: '물방울 10', points: 10, weight: 34 },
+        { key: 'w30', label: '물방울 30', points: 30, weight: 25 },
+        { key: 'w50', label: '물방울 50', points: 50, weight: 15 },
+        { key: 'lose', label: '꽝', points: 0, weight: 15 },
+        { key: 'w100', label: '물방울 100', points: 100, weight: 8 },
+        { key: 'coupon', label: '귤 1개 쿠폰', points: 0, weight: 3 },
+    ],   // ⚠️ 프로토타입 데모 수치 — 실서비스 확률·원가는 대표 확정 필요
+    water_cost: 10, level_thresholds: [0, 5, 15, 30, 50], daily_spin_limit: 1, physical_monthly_limit: 30,
+};
+app.get('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (req, res) => {   // QA D7: 확률·한도 = 비용 정보 — 대표 전용
+    try {
+        const v = await naverCfgGet('mall_game_config');
+        res.json({ config: { ...MALL_GAME_CONFIG_DEFAULT, ...(v && typeof v === 'object' && !Array.isArray(v) ? v : {}) }, mall_api: String(process.env.MALL_API || 'off') });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.put('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const before = await naverCfgGet('mall_game_config');
+        // 기본값 복원 (QA D6 — 잘못 저장돼도 화면에서 복구 가능)
+        if ((req.body || {}).reset === true) {
+            await naverCfgSet('mall_game_config', MALL_GAME_CONFIG_DEFAULT);
+            await writeAudit({ action: 'reset', targetType: 'mall_game_config', targetId: null,
+                changes: { before, after: MALL_GAME_CONFIG_DEFAULT }, source: 'mall-game', actor: adminActor(req) });
+            return res.json({ ok: true, config: MALL_GAME_CONFIG_DEFAULT });
+        }
+        const c = (req.body || {}).config;
+        if (!c || typeof c !== 'object') throw { status: 400, message: '설정 객체가 필요합니다' };
+        // QA D1·D2: mall-api normalizeConfig와 동일 규칙으로 행 단위 검증 — 불일치 값은 저장 거부(무언 폴백 금지)
+        if (!Array.isArray(c.probabilities) || c.probabilities.length === 0) throw { status: 400, message: '확률표(probabilities)가 비어 있습니다' };
+        for (const p of c.probabilities) {
+            if (!p || typeof p !== 'object' || !String(p.label || '').trim()) throw { status: 400, message: '칸 이름이 비어 있습니다' };
+            if (!Number.isInteger(Number(p.points)) || Number(p.points) < 0) throw { status: 400, message: `'${p.label}' 물방울은 0 이상 정수여야 합니다` };
+            if (!Number.isInteger(Number(p.weight)) || Number(p.weight) < 1) throw { status: 400, message: `'${p.label}' 가중치는 1 이상 정수여야 합니다 (칸 제외는 [기본값 복원] 후 대표 지시로)` };
+        }
+        // 검증 통과분만 정규화해 저장 (원본 오염 값 저장 금지 — 검증 대상 = 저장 대상)
+        const clean = {
+            probabilities: c.probabilities.map((p, i) => ({
+                key: String(p.key || ('k' + i)).slice(0, 30), label: String(p.label).trim().slice(0, 50),
+                points: Number(p.points), weight: Number(p.weight) })),
+            water_cost: (Number.isInteger(Number(c.water_cost)) && Number(c.water_cost) >= 1) ? Number(c.water_cost) : MALL_GAME_CONFIG_DEFAULT.water_cost,
+            level_thresholds: (Array.isArray(c.level_thresholds) && c.level_thresholds.every(n => Number.isInteger(Number(n)) && Number(n) >= 0))
+                ? c.level_thresholds.map(Number) : MALL_GAME_CONFIG_DEFAULT.level_thresholds,
+            daily_spin_limit: 1,   // QA D3: roulette_spins UNIQUE(member_id, spin_date) 구조상 1 고정 — 변경은 테이블 개편 필요
+            physical_monthly_limit: (Number.isInteger(Number(c.physical_monthly_limit)) && Number(c.physical_monthly_limit) >= 0) ? Number(c.physical_monthly_limit) : MALL_GAME_CONFIG_DEFAULT.physical_monthly_limit,
+        };
+        await naverCfgSet('mall_game_config', clean);
+        await writeAudit({ action: 'update', targetType: 'mall_game_config', targetId: null,
+            changes: { before, after: clean }, source: 'mall-game', actor: adminActor(req) });
+        res.json({ ok: true, config: clean });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// ── 지시 #85 STEP2: 자사몰 게임 API 결선 — 게이트(MALL_API=on + MALL_API_TOKEN)는 모듈 내부, 기본 전면 503
+app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit }));
+
 // ── 지시 #76: 발송 안내(LMS) 이력 조회 + 수동 [발송 안내 보내기] (관리자 전용 — 발송 행위는 대표)
 app.get('/api/agent-office/lms-guide-logs', authMiddleware, async (req, res) => {
     try {
