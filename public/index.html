@@ -1938,10 +1938,15 @@
                         <div class="card-header-row">
                             <h2>🚫 발송 휴무일 관리 <span class="text-muted" style="font-size:13px; font-weight:400;">공휴일·명절 임시휴무·태풍 결항 등 — 주문 안내 발송일 계산에서 제외됩니다</span></h2>
                         </div>
-                        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-                            <input type="text" id="ship-holiday-date" class="akm-date" readonly autocomplete="off" placeholder="날짜 선택" style="width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="ship-holiday-reason" placeholder="사유 (예: 태풍 결항)" style="flex:1; min-width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                        <div style="display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
+                            <input type="text" id="ship-holiday-date" class="akm-date" readonly autocomplete="off" placeholder="시작일" style="width:130px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <span style="color:var(--text-mid,#667085);">~</span>
+                            <input type="text" id="ship-holiday-end" class="akm-date" readonly autocomplete="off" placeholder="종료일(선택)" style="width:130px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="ship-holiday-reason" placeholder="사유 (예: 설 연휴 발송 마감)" style="flex:1; min-width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
                             <button class="btn-primary" id="btn-ship-holiday-add">추가</button>
+                        </div>
+                        <div style="display:flex; gap:8px; margin-bottom:10px;">
+                            <input type="text" id="ship-holiday-notice" placeholder="안내 문구 (선택 — 넣으면 이 기간 주문의 알림톡 발송안내가 이 문구로 대체됩니다. 예: 설 연휴로 2월 19일(목)부터 주문 순서대로 순차 발송될 예정입니다)" style="flex:1; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
                         </div>
                         <div id="ship-holiday-list" class="table-scroll-wrapper"></div>
                     </div>
@@ -2234,6 +2239,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=316"></script>
+    <script src="app.js?v=317"></script>
 </body>
 </html>

@@ -12479,29 +12479,43 @@ window.deleteSeasonWait = async function(id) {
     catch (e) { alert(e.message); }
     renderSeasonWaitlist().catch(console.error);
 };
-// --- 발송 휴무일 관리 (지시 #69) — 발송일 안내 계산의 발송 불가일 (직원 추가/삭제) ---
+// --- 발송 휴무일 관리 (지시 #69·#73) — 발송 불가일 + 명절 마감 기간·안내 문구 (직원 추가/삭제) ---
+//   같은 사유·문구의 연속 날짜는 한 줄(기간)로 묶어 표시 (지시 #73 — 일자 분해 저장·기간 표시)
 async function renderShippingHolidays() {
     const el = document.getElementById('ship-holiday-list');
     if (!el) return;
     const d = await api('/api/agent-office/shipping-holidays');
     const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
-    const rows = (d.rows || []).map(r => {
-        const dow = DAY_KO[new Date(r.holiday_date + 'T00:00:00').getDay()];
-        return `<tr>
-            <td style="white-space:nowrap;">${r.holiday_date} (${dow})</td>
-            <td>${escapeHtml(r.reason || '')}</td>
-            <td>${escapeHtml(r.created_by || '-')}</td>
-            <td><button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteShipHoliday(${r.id})">삭제</button></td>
-        </tr>`;
-    }).join('');
+    const fmt = (s) => `${s.slice(5).replace('-', '/')} (${DAY_KO[new Date(s + 'T00:00:00').getDay()]})`;
+    const groups = [];
+    for (const r of (d.rows || [])) {   // 날짜 오름차순 응답 전제 — 연속일+같은 사유·문구면 묶기
+        const g = groups[groups.length - 1];
+        const prevNext = g && new Date(new Date(g.end + 'T00:00:00').getTime() + 86400000).toISOString().slice(0, 10);
+        if (g && prevNext === r.holiday_date && g.reason === (r.reason || '') && g.notice === (r.notice || '')) {
+            g.end = r.holiday_date; g.ids.push(r.id);
+        } else {
+            groups.push({ start: r.holiday_date, end: r.holiday_date, reason: r.reason || '', notice: r.notice || '', created_by: r.created_by, ids: [r.id] });
+        }
+    }
+    const rows = groups.map(g => `
+        <tr>
+            <td style="white-space:nowrap;">${fmt(g.start)}${g.end !== g.start ? ' ~ ' + fmt(g.end) : ''}</td>
+            <td>${escapeHtml(g.reason)}${g.notice ? `<div class="text-muted" style="font-size:12px; margin-top:2px;">📨 ${escapeHtml(g.notice)}</div>` : ''}</td>
+            <td>${escapeHtml(g.created_by || '-')}</td>
+            <td><button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteShipHolidayGroup('${g.ids.join(',')}')">삭제</button></td>
+        </tr>`).join('');
     el.innerHTML = rows
-        ? `<table class="data-table"><thead><tr><th>날짜</th><th>사유</th><th>등록자</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        ? `<table class="data-table"><thead><tr><th>기간</th><th>사유 · 안내 문구</th><th>등록자</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+           <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 안내 문구가 있는 기간에 들어온 주문은 알림톡 발송 안내가 자동 계산 대신 그 문구로 나갑니다 (발송 기능 가동 후).</p>`
         : '<p class="text-muted">등록된 휴무일이 없습니다</p>';
 }
-window.deleteShipHoliday = async function(id) {
-    if (!confirm('이 휴무일을 삭제할까요? (발송일 계산에 즉시 반영)')) return;
-    try { await api('/api/agent-office/shipping-holidays/' + id, 'DELETE', { confirm: true }); showToast('🗑 휴무일 삭제 완료', 'lime'); }
-    catch (e) { alert(e.message); }
+window.deleteShipHolidayGroup = async function(idsCsv) {
+    const ids = String(idsCsv).split(',').filter(Boolean);
+    if (!confirm(`이 휴무 ${ids.length > 1 ? '기간(' + ids.length + '일)' : '일'}을 삭제할까요? (발송일 계산에 즉시 반영)`)) return;
+    try {
+        for (const id of ids) await api('/api/agent-office/shipping-holidays/' + id, 'DELETE', { confirm: true });
+        showToast('🗑 휴무일 삭제 완료', 'lime');
+    } catch (e) { alert(e.message); }
     renderShippingHolidays().catch(console.error);
 };
 window.setBotProdStatus = async function(id, status) {
@@ -12558,15 +12572,16 @@ function setupBotProductsTab() {
             renderBotProducts().catch(console.error);
         } catch (e) { alert(e.message); }
     });
-    // 지시 #69: 발송 휴무일 추가
+    // 지시 #69·#73: 발송 휴무일 추가 (기간·안내 문구 지원)
     document.getElementById('btn-ship-holiday-add')?.addEventListener('click', async () => {
         const date = document.getElementById('ship-holiday-date').value.trim();
+        const end = document.getElementById('ship-holiday-end').value.trim();
         const reason = document.getElementById('ship-holiday-reason').value.trim();
-        if (!date || !reason) return alert('날짜와 사유를 입력하세요');
+        const notice = document.getElementById('ship-holiday-notice').value.trim();
+        if (!date || !reason) return alert('시작일과 사유를 입력하세요');
         try {
-            await api('/api/agent-office/shipping-holidays', 'POST', { date, reason });
-            document.getElementById('ship-holiday-date').value = '';
-            document.getElementById('ship-holiday-reason').value = '';
+            await api('/api/agent-office/shipping-holidays', 'POST', { date, end, reason, notice });
+            ['ship-holiday-date', 'ship-holiday-end', 'ship-holiday-reason', 'ship-holiday-notice'].forEach(id => document.getElementById(id).value = '');
             showToast('✅ 휴무일 등록 완료 — 발송일 계산에 즉시 반영', 'lime');
             renderShippingHolidays().catch(console.error);
         } catch (e) { alert(e.message); }

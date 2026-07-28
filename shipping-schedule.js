@@ -52,16 +52,23 @@ function shipPhrase(orderDay, shipDay) {
  * 주문일시 → 발송·도착 안내 계산
  * @param {Date|number|string} orderAt 주문일시 (기본: 현재)
  * @param {Set<string>|null} holidaySet 휴무일 'YYYY-MM-DD' 집합 (DB shipping_holidays — 미주입 시 시드 폴백)
- * @returns {{shipDate:string, arriveStart:string, arriveEnd:string, text:string}}
+ * @param {Map<string,string>|null} noticeByDate 휴무일별 안내 문구 (지시 #73 — 주문일이 문구 있는 휴무일이면
+ *        자동 계산 대신 그 문구를 #{발송안내}로 사용. 예: 명절 발송 마감 기간)
+ * @returns {{shipDate:string|null, arriveStart:string|null, arriveEnd:string|null, text:string, override:boolean}}
  */
-function computeShipping(orderAt, holidaySet) {
+function computeShipping(orderAt, holidaySet, noticeByDate) {
     const ms = orderAt ? new Date(orderAt).getTime() : Date.now();
     const orderDay = kstDay(ms);
+    // 지시 #73: 주문일이 안내 문구가 등록된 휴무 기간이면 문구로 대체 (자동 계산 생략)
+    const notice = noticeByDate && noticeByDate.get ? noticeByDate.get(ymd(orderDay)) : null;
+    if (notice && String(notice).trim()) {
+        return { shipDate: null, arriveStart: null, arriveEnd: null, text: String(notice).trim(), override: true };
+    }
     const shipDay = nextMatching(orderDay, d => isShipDay(d, holidaySet));         // 규칙2: 다음날, 토·휴무일이면 밀기
     const arrive1 = nextMatching(shipDay, d => isDeliveryDay(d, holidaySet));      // 규칙6: 발송 후 첫 배달 가능일
     const arrive2 = nextMatching(arrive1, d => isDeliveryDay(d, holidaySet));      //        ~ 둘째 배달 가능일
     const text = `${shipPhrase(orderDay, shipDay)} 오전 발송, ${DAY_KO[arrive1.getUTCDay()]}~${DAY_KO[arrive2.getUTCDay()]} 도착 예정`;
-    return { shipDate: ymd(shipDay), arriveStart: ymd(arrive1), arriveEnd: ymd(arrive2), text };
+    return { shipDate: ymd(shipDay), arriveStart: ymd(arrive1), arriveEnd: ymd(arrive2), text, override: false };
 }
 
 module.exports = { computeShipping, isShipDay, isDeliveryDay, HOLIDAYS };

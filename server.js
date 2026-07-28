@@ -912,6 +912,8 @@ async function initDB() {
         await pool.query(`INSERT INTO shipping_holidays (holiday_date, reason, created_by) VALUES ($1, $2, '시드')
             ON CONFLICT (holiday_date) DO NOTHING`, [d, reason]);
     }
+    // 지시 #73: 휴무 기간 안내 문구 — 있으면 그 기간 주문의 알림톡 #{발송안내}를 자동 계산 대신 이 문구로 대체
+    await pool.query(`ALTER TABLE shipping_holidays ADD COLUMN IF NOT EXISTS notice TEXT`);
     // 설계 변경(대표 7/27): 배정→시나리오 기반 생성 — 사용된 시나리오명(복수) 기록
     await pool.query(`ALTER TABLE naver_qnas ADD COLUMN IF NOT EXISTS ai_scenarios JSONB`);
     // 톡톡 로그 시나리오 번호 컬럼 (대표 7/27 — 봇과 양쪽 멱등 보장: 어느 쪽이 먼저 배포돼도 안전)
@@ -5219,14 +5221,16 @@ app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, adminOnly, a
     } catch (err) { handleAdminErr(res, err); }
 });
 // ── 지시 #69: 발송 휴무일 관리 — 추가·삭제 직원 가능 (자주 바뀌는 값은 화면에서 · audit 기록 · soft-delete)
-async function loadShippingHolidaySet() {
-    const r = await pool.query(`SELECT to_char(holiday_date, 'YYYY-MM-DD') AS d FROM shipping_holidays WHERE deleted_at IS NULL`);
-    return new Set(r.rows.map(x => x.d));
+async function loadShippingHolidayInfo() {   // 지시 #73: 휴무일 집합 + 날짜별 안내 문구 맵
+    const r = await pool.query(`SELECT to_char(holiday_date, 'YYYY-MM-DD') AS d, notice FROM shipping_holidays WHERE deleted_at IS NULL`);
+    const set = new Set(); const notices = new Map();
+    for (const x of r.rows) { set.add(x.d); if (x.notice && String(x.notice).trim()) notices.set(x.d, String(x.notice).trim()); }
+    return { set, notices };
 }
 app.get('/api/agent-office/shipping-holidays', authMiddleware, async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, reason, created_by FROM shipping_holidays
+            `SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, reason, notice, created_by FROM shipping_holidays
              WHERE deleted_at IS NULL AND holiday_date >= CURRENT_DATE - 30 ORDER BY holiday_date LIMIT 200`);
         res.json({ rows: r.rows });
     } catch (err) { handleAdminErr(res, err); }
@@ -5234,17 +5238,30 @@ app.get('/api/agent-office/shipping-holidays', authMiddleware, async (req, res) 
 app.post('/api/agent-office/shipping-holidays', authMiddleware, async (req, res) => {
     try {
         const date = String((req.body || {}).date || '').trim();
+        const end = String((req.body || {}).end || '').trim() || date;   // 지시 #73: 기간 등록 (미입력 = 하루)
         const reason = String((req.body || {}).reason || '').trim().slice(0, 100);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw { status: 400, message: '날짜는 YYYY-MM-DD 형식으로 입력해주세요' };
-        if (!reason) throw { status: 400, message: '사유를 입력해주세요 (예: 태풍 결항, 명절 임시휴무)' };
-        const r = await pool.query(
-            `INSERT INTO shipping_holidays (holiday_date, reason, created_by) VALUES ($1,$2,$3)
-             ON CONFLICT (holiday_date) DO UPDATE SET deleted_at = NULL, reason = EXCLUDED.reason, created_by = EXCLUDED.created_by
-             RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason`,
-            [date, reason, adminActor(req)?.name || null]);
-        await writeAudit({ action: 'create', targetType: 'shipping_holiday', targetId: r.rows[0].id,
-            changes: { after: r.rows[0] }, source: 'shipping-holiday', actor: adminActor(req) });
-        res.json({ ok: true, row: r.rows[0] });
+        const notice = String((req.body || {}).notice || '').trim().slice(0, 300) || null;   // 지시 #73: 안내 문구 (선택)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) throw { status: 400, message: '날짜는 YYYY-MM-DD 형식으로 입력해주세요' };
+        if (end < date) throw { status: 400, message: '종료일이 시작일보다 빠릅니다' };
+        if (!reason) throw { status: 400, message: '사유를 입력해주세요 (예: 태풍 결항, 설 연휴 발송 마감)' };
+        // 일자 분해 저장 (최대 31일) — 화면에선 같은 사유·문구의 연속 날짜를 한 줄로 묶어 표시
+        const days = [];
+        for (let t = Date.parse(date + 'T00:00:00Z'); t <= Date.parse(end + 'T00:00:00Z'); t += 86400000) {
+            days.push(new Date(t).toISOString().slice(0, 10));
+            if (days.length > 31) throw { status: 400, message: '기간은 최대 31일까지 등록할 수 있습니다' };
+        }
+        const rows = [];
+        for (const d of days) {
+            const r = await pool.query(
+                `INSERT INTO shipping_holidays (holiday_date, reason, notice, created_by) VALUES ($1,$2,$3,$4)
+                 ON CONFLICT (holiday_date) DO UPDATE SET deleted_at = NULL, reason = EXCLUDED.reason, notice = EXCLUDED.notice, created_by = EXCLUDED.created_by
+                 RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason, notice`,
+                [d, reason, notice, adminActor(req)?.name || null]);
+            rows.push(r.rows[0]);
+        }
+        await writeAudit({ action: 'create', targetType: 'shipping_holiday', targetId: rows[0].id,
+            changes: { after: { from: date, to: end, days: rows.length, reason, notice } }, source: 'shipping-holiday', actor: adminActor(req) });
+        res.json({ ok: true, rows });
     } catch (err) { handleAdminErr(res, err); }
 });
 app.delete('/api/agent-office/shipping-holidays/:id', authMiddleware, async (req, res) => {
@@ -6142,9 +6159,9 @@ async function collectKakaoNotify() {
     const seenSet = new Set(seen.rows.map(r => r.order_key));
     const targets = paidIds.filter(id => !seenSet.has(id));
     if (targets.length === 0) return `신규 결제 ${paidIds.length}건 — 전부 처리 이력 있음`;
-    // 판매현황 품목(안내문 포함)·휴무일 1회 로드 (지시 #69: 휴무일은 DB — 화면 관리)
+    // 판매현황 품목(안내문 포함)·휴무일 1회 로드 (지시 #69·#73: 휴무일·안내 문구는 DB — 화면 관리)
     const bp = (await pool.query(`SELECT name, notify_message FROM bot_products WHERE deleted_at IS NULL`)).rows;
-    const holidaySet = await loadShippingHolidaySet();
+    const hinfo = await loadShippingHolidayInfo();
     let done = 0, failed = 0;
     for (let i = 0; i < targets.length; i += 100) {   // 상세조회 100건 단위 (rate limit 간격 — 기존 패턴)
         if (i > 0) await new Promise(r => setTimeout(r, 350));
@@ -6163,7 +6180,7 @@ async function collectKakaoNotify() {
             try {
                 const optText = `${po.productName || ''} ${po.productOption || ''}`;
                 const matched = kakaoNotify.matchNotifyProduct(optText, bp);
-                const ship = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, holidaySet);
+                const ship = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.notices);
                 const message = kakaoNotify.buildMessage({
                     '고객명': od.ordererName || '고객',
                     '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
