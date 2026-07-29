@@ -229,6 +229,10 @@ async function registerTemplates({ audit } = {}) {
         try {
             const add = await aligoPost('/akv10/template/add/', {
                 ...base, tpl_name: t.name, tpl_content: t.content,
+                // 🔴 AC(채널 추가) 버튼은 채널추가형에서만 허용 — tpl_type=AD 미지정이 2026-07-29 510 실패 원인.
+                //    tpl_advert = 채널추가 안내 문구(카카오 고정 문구 — AD형 필수 파라미터).
+                ...(t.tpl_type ? { tpl_type: t.tpl_type } : {}),
+                ...(t.tpl_type === 'AD' ? { tpl_advert: '채널 추가하고 이 채널의 마케팅 메시지 등을 카카오톡으로 받기' } : {}),
                 ...(t.button ? { tpl_button: JSON.stringify(toRegButton(t.button)) } : {}),
             });
             r.add = { code: add && add.code, message: String((add && add.message) || '').slice(0, 200) };

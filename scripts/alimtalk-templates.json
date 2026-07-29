@@ -1,5 +1,5 @@
 {
-  "_설명": "알림톡 템플릿 4장 문안 단일 소스 (대표 확정 2026-07-29 — 지시 #90 3장 → #93·#94 4장 → #96 버튼 체계 확정). C(배송완료)는 폐기 유지(docs/백로그_배송완료_트리거조사.md). status='confirmed'지만 실행 차단 2겹(알리고 키·ALIMTALK_REGISTER_GO+--confirm-go) 유지 — 등록·검수 신청은 대표 최종 GO로만. 버튼(#96): A·B=AC+WL(다른 상품 구경하기→자사몰 상품목록) / D=AC+WL(제주아꼼이네 바로가기→자사몰 홈) / E=WL(안내 페이지). 버튼명 전부 14자 이내 실측. 버튼 링크는 심사 대상 — 변경 시 재심사(akkome.com 도메인 유지 전제).",
+  "_설명": "알림톡 템플릿 4장 문안 단일 소스 (대표 확정 2026-07-29 — #90→#93·94→#96→#99 E 버튼 3개 체제). 전 장 채널추가(AC) 포함 = tpl_type AD(채널추가형) 필수 — 2026-07-29 등록 실패(510) 원인이 유형 미지정이었음. E는 1버튼판(UJ_9082)이 심사 중·수정 불가라 새 이름(발송안내2)으로 신규 등록. status confirmed·실행 차단 2겹 유지. 등록·검수 신청은 대표 GO로만.",
   "status": "confirmed",
   "confirmed_at": "2026-07-29",
   "templates": [
@@ -8,44 +8,122 @@
       "name": "제주아꼼이네_주문완료_일반",
       "env_key": "ALIGO_TPL_CODE",
       "content": "제주아꼼이네입니다~! 🍊\n저희 아꼼이네를 찾아주시고 주문해주셔서 진심으로 감사드립니다!^^\n\n#{고객명}님이 주문해주신 [#{상품명}] 배송일정 안내드립니다.\n▶ #{발송안내}\n\n주문에 보답드리도록 신선하고 좋은 상품으로 정성껏 준비하여 보내드리겠습니다. 발송 후 안내 다시 드리겠습니다!\n\n즐거운 하루 되세요!\n📞 010-6687-4031",
-      "button": { "button": [
-        { "name": "채널 추가", "linkType": "AC", "linkTypeName": "채널 추가" },
-        { "name": "다른 상품 구경하기", "linkType": "WL", "linkTypeName": "웹링크", "linkMo": "https://akkome.com/product/list.html", "linkPc": "https://akkome.com/product/list.html" }
-      ] },
-      "변수예시": { "고객명": "김제주", "상품명": "제주 하우스감귤 3kg", "발송안내": "내일 수요일 오전 발송, 목~금 도착 예정" }
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "다른 상품 구경하기",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://akkome.com/product/list.html",
+            "linkPc": "https://akkome.com/product/list.html"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주",
+        "상품명": "제주 하우스감귤 3kg",
+        "발송안내": "내일 수요일 오전 발송, 목~금 도착 예정"
+      },
+      "tpl_type": "AD"
     },
     {
       "key": "order_reserve",
       "name": "제주아꼼이네_주문완료_예약",
       "env_key": "ALIGO_TPL_CODE_RESERVE",
       "content": "제주아꼼이네입니다~! 🍊\n저희 아꼼이네를 찾아주시고 주문해주셔서 진심으로 감사드립니다!^^\n\n#{고객명}님이 주문해주신 [#{상품명}] 배송일정 안내드립니다.\n▶ #{발송안내}\n\n기다려주시는 주문에 보답드리도록, 신선하고 좋은 상품으로 정성껏 준비하여 보내드리겠습니다. 발송이 시작되면 안내 다시 드리겠습니다!\n\n즐거운 하루 되세요!\n📞 010-6687-4031",
-      "button": { "button": [
-        { "name": "채널 추가", "linkType": "AC", "linkTypeName": "채널 추가" },
-        { "name": "다른 상품 구경하기", "linkType": "WL", "linkTypeName": "웹링크", "linkMo": "https://akkome.com/product/list.html", "linkPc": "https://akkome.com/product/list.html" }
-      ] },
-      "변수예시": { "고객명": "김제주", "상품명": "제주 청귤(풋귤) 5kg", "발송안내": "9월 중순 수확 시작 후 순차 발송" },
-      "_주의": "발송안내 예시 실값은 등록 전 재확인 (docs/알림톡_템플릿_문안.md)"
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "다른 상품 구경하기",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://akkome.com/product/list.html",
+            "linkPc": "https://akkome.com/product/list.html"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주",
+        "상품명": "제주 청귤(풋귤) 5kg",
+        "발송안내": "9월 중순 수확 시작 후 순차 발송"
+      },
+      "_주의": "발송안내 예시 실값은 등록 전 재확인 (docs/알림톡_템플릿_문안.md)",
+      "tpl_type": "AD"
     },
     {
       "key": "welcome",
       "name": "제주아꼼이네_회원가입환영",
       "env_key": "ALIGO_TPL_CODE_WELCOME",
       "content": "제주아꼼이네입니다~! 🍊\n#{고객명}님, 제주아꼼이네 회원가입이 완료되었습니다.\n\n찾아주셔서 진심으로 감사드립니다!^^\n가입 혜택은 마이페이지에서 확인하실 수 있으며, 고객님 가입에 만족하시도록 최선을 다하겠습니다.\n\n궁금하신 점이 있으시면 언제든 연락주세요.\n📞 010-6687-4031",
-      "button": { "button": [
-        { "name": "채널 추가", "linkType": "AC", "linkTypeName": "채널 추가" },
-        { "name": "제주아꼼이네 바로가기", "linkType": "WL", "linkTypeName": "웹링크", "linkMo": "https://akkome.com/", "linkPc": "https://akkome.com/" }
-      ] },
-      "변수예시": { "고객명": "김제주" },
-      "_주의": "발송 대상 = 자사몰(카페24) 직접 가입자 한정 (대표 확정). 등록 전 마이페이지 실존 '가입 혜택' 확인 — 없으면 해당 줄 통삭(보수안)"
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "제주아꼼이네 바로가기",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://akkome.com/",
+            "linkPc": "https://akkome.com/"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주"
+      },
+      "_주의": "발송 대상 = 자사몰(카페24) 직접 가입자 한정 (대표 확정). 등록 전 마이페이지 실존 '가입 혜택' 확인 — 없으면 해당 줄 통삭(보수안)",
+      "tpl_type": "AD"
     },
     {
       "key": "ship_guide",
-      "name": "제주아꼼이네_발송안내",
+      "name": "제주아꼼이네_발송안내2",
       "env_key": "ALIGO_TPL_CODE_GUIDE",
       "content": "제주아꼼이네입니다~! 🍊\n#{고객명}님이 주문하신 [#{상품명}]이 오늘 출발했습니다!\n▶ 도착 예정: #{도착안내}\n\n상품별 맛있게 드시는 법과 보관·후숙 방법은 아래 버튼에서 확인하실 수 있어요!\n\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031",
-      "button": { "button": [{ "name": "맛있게 드시는 법·보관법", "linkType": "WL", "linkTypeName": "웹링크", "linkMo": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}", "linkPc": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}" }] },
-      "변수예시": { "고객명": "김제주", "상품명": "제주 하우스감귤 3kg", "도착안내": "내일 수요일~모레 목요일 사이 도착 예정", "상품코드": "12" },
-      "_주의": "버튼명 14자 제한 → 이모지 제거 13자. 버튼명 변수 금지(가이드) — 링크 내 #{상품코드} 변수는 금지 조항 없음[추정·배송조회 버튼 관행]. 심사 반려 시 폴백 = 고정 링크 /guide (파라미터 제거). 발송 시 failover=Y로 SMS 대체(문면=기존 LMS 전문)"
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "택배 배송조회",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://jeju-acom-company.onrender.com/track?n=#{송장번호}",
+            "linkPc": "https://jeju-acom-company.onrender.com/track?n=#{송장번호}"
+          },
+          {
+            "name": "맛있게 드시는 법·보관법",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}",
+            "linkPc": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주",
+        "상품명": "제주 하우스감귤 3kg",
+        "도착안내": "내일 수요일~모레 목요일 사이 도착 예정",
+        "상품코드": "12",
+        "송장번호": "123456789012"
+      },
+      "_주의": "E 버튼 3개(#99 대표 확정 — AC 최상단 규격). 1버튼 구본(제주아꼼이네_발송안내, UJ_9082)은 심사 중·수정 불가 → 이 신규판으로 대체(구본은 승인돼도 미사용·추후 삭제). 발송 시 failover=Y SMS 대체(기존 LMS 전문)",
+      "tpl_type": "AD"
     }
   ]
 }

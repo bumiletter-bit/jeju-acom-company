@@ -5479,6 +5479,13 @@ app.get('/guide', async (req, res) => {
     }
 });
 
+// ── 지시 #99: 택배 조회 중계 — /track?n=송장번호 → 주 택배사(CJ대한통운) 조회 페이지 리다이렉트.
+//    알림톡 E 버튼 URL을 자체 주소로 고정 → 택배사·조회 URL이 바뀌어도 템플릿 무변경(재심사 없음). PII 0(송장번호만·숫자 필터).
+app.get('/track', (req, res) => {
+    const n = String(req.query.n || '').replace(/[^0-9]/g, '').slice(0, 20);
+    res.redirect('https://www.cjlogistics.com/ko/tool/parcel/tracking' + (n ? ('?gnbInvcNo=' + n) : ''));
+});
+
 // ── 지시 #92: 주문 알림톡·발주확인 이력 조회 — ?filter=manual 이면 수기 발주확인 필요 건만
 app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) => {
     try {
@@ -5518,7 +5525,8 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
         const po = c.productOrder || it.productOrder || c;
         const od = c.order || it.order || po.order || {};
         const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
-        const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, await loadShippingHolidayInfo());
+        const tracking = (c.delivery && c.delivery.trackingNumber) || (po.delivery && po.delivery.trackingNumber) || po.trackingNumber || '';
+        const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, await loadShippingHolidayInfo(), tracking);
         if (out.skip) throw { status: 400, message: '이 품목에는 발송 안내문이 없습니다 — 판매현황·가격 탭에서 안내문을 먼저 등록해주세요' };
         await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
             VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -6545,7 +6553,7 @@ async function collectKakaoNotify() {
 
 // ── 지시 #76: 발송 안내(LMS) 자동 감지기 — DISPATCHED(발송처리) 감지 → shipping_guide LMS (기본 OFF·dry-run)
 //    기존 수집기 무영향(별도 타이머 키·별도 체크포인트·별도 이력). 중복 방지 = lms_guide_log.order_key UNIQUE.
-async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo) {
+async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingNumber) {
     const optText = `${po.productName || ''} ${po.productOption || ''}`;
     const matched = kakaoNotify.matchNotifyProduct(optText, bp);
     if (!matched || !matched.shipping_guide || !String(matched.shipping_guide).trim()) {
@@ -6562,6 +6570,7 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo) {
             '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
             '도착안내': 도착안내,
             '상품코드': String(matched.id || ''),          // 버튼 링크 /guide?p=상품코드 (지시 #94)
+            '송장번호': String(trackingNumber || '').replace(/[^0-9]/g, ''),   // 버튼 링크 /track?n=송장번호 (지시 #99 — 없으면 빈값=조회 홈)
         },
         fallback: { subject: '제주아꼼이네 배송 안내', message: lmsMessage },
     });
@@ -6598,7 +6607,9 @@ async function collectLmsGuide() {
             const orderKey = String(po.productOrderId || od.productOrderId || '').slice(0, 50);
             if (!orderKey) continue;
             try {
-                const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, hinfo);
+                // 송장번호(지시 #99): 상세조회 응답 배송 정보에서 방어적 추출 — 발송처리(DISPATCHED) 주문은 송장 보유
+                const tracking = (c.delivery && c.delivery.trackingNumber) || (po.delivery && po.delivery.trackingNumber) || po.trackingNumber || '';
+                const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, hinfo, tracking);
                 if (out.skip) {
                     skipped++;
                     await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
