@@ -214,12 +214,22 @@ async function registerTemplates({ audit } = {}) {
     const token = tok && (tok.token || tok.urlencode || (tok.data && tok.data.token));
     if (!token) return { ...out, error: 'token-failed: ' + JSON.stringify(tok).slice(0, 200) };
     const base = { ...auth, token, senderkey: process.env.ALIGO_SENDER_KEY };
+    // 🔴 필드명 차이 (2026-07-29 실패 실측·공식 문서 확인): 등록 API 버튼 링크는 linkM/linkP, 발송 API는 linkMo/linkPc.
+    //    JSON 단일 소스는 발송용(linkMo/linkPc)으로 유지 — 등록 시에만 여기서 매핑 (버튼 내용 무변경).
+    const toRegButton = (btn) => ({
+        button: (btn.button || []).map(b => {
+            const o = { name: b.name, linkType: b.linkType, linkTypeName: b.linkTypeName };
+            if (b.linkMo) o.linkM = b.linkMo;
+            if (b.linkPc) o.linkP = b.linkPc;
+            return o;
+        }),
+    });
     for (const t of TEMPLATES_JSON.templates) {
         const r = { key: t.key, name: t.name, env_key: t.env_key };
         try {
             const add = await aligoPost('/akv10/template/add/', {
                 ...base, tpl_name: t.name, tpl_content: t.content,
-                ...(t.button ? { tpl_button: JSON.stringify(t.button) } : {}),
+                ...(t.button ? { tpl_button: JSON.stringify(toRegButton(t.button)) } : {}),
             });
             r.add = { code: add && add.code, message: String((add && add.message) || '').slice(0, 200) };
             const tplCode = add && ((add.data && add.data.templtCode) || add.templtCode);
