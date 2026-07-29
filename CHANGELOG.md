@@ -6,6 +6,14 @@
 
 ---
 
+## v5.9.136 (2026-07-29 — 발송 성공→발주확인 자동 실행, 지시 #92 — 대표 철칙 공식 변경·스위치 OFF·실상태변경 0건)
+- [철칙 변경(대표 확정)] "발주확인 수기" → 알림톡 가동 시: 주문 수집 → 알림톡/SMS **발송 성공 시에만** 네이버 발주확인 자동(신규주문→배송준비중). 실패·미발송 건은 상태 유지 + 수기 목록 + 텔레그램. 자사몰은 예외(원래 N20 진입), 쿠팡은 주문 수집기 신설과 함께 2차(설계 주석만)
+- [API] `naverConfirmOrders()` — 공식 스펙 실판독(POST /external/v1/pay-order/seller/product-orders/confirm·1회 30개·success/failProductOrderInfos). 105306(이미 확인됨)='already' 무해 처리·응답 무언 통과 금지·350ms 간격+기존 백오프. **KAKAO_NOTIFY=off면 실호출 0건(confirm_status='dry-run' 시뮬레이션만)**. 🔴 릴레이 ALLOW에 confirm POST 미허용(403) — 가동 전 릴레이 갱신 필요(대표 확인 후 별도)
+- [DB] kakao_notify_log에 confirm_status·confirm_error·confirmed_at (additive·기존 행 NULL)
+- [화면] [문의 관리] 판매현황 탭 "📱 주문 알림톡·발주확인 이력" — 발주확인 상태 열 + "수기 처리 필요만" 필터. GET /api/agent-office/kakao-notify-logs(?filter=manual)
+- [알림] 신규 키 `confirmneed`(기본 ON·야간 모드 준수) — "알림톡 발송 실패 N건 — 수기 발주확인 필요" (실발송 모드에서만)
+- [안전] 전부 additive·스위치 OFF 상태 실상태변경 0건. 주기 60→3분은 화면 조정만(하한 3분 기존 지원·코드 무변경). app.js v=322
+
 ## v5.9.135 (2026-07-29 — 알리고 연동 자가진단, 지시 #91 — 과금·실발송·등록·검수 신청 없음)
 - [모듈] `kakao-notify.js`에 `selftest()` 추가 — 무해한 '읽기' 호출 3종만: 알림톡 토큰 발급(키·ID 인증 검증)·템플릿 목록 조회(발신프로필 senderkey 검증)·문자 잔여건수 조회(과금 없음). **등록(template/add)·검수(template/request)·발송(send) API 미호출.** 키 값은 마스킹(존재·길이·앞2자)만 기록, 발신번호는 형식 확인만
 - [서버] 독립 60초 폴러 — DB 플래그 `aligo_selftest_request` 감지 시 1회 실행(선제거로 반복 방지) → 결과를 `aligo_selftest_result`(agent_office_config)에 기록. 텔레그램 게이트와 무관·기존 코드 무접촉(additive)

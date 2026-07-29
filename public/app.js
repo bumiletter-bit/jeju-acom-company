@@ -12459,6 +12459,28 @@ async function renderBotProducts() {
     renderSeasonWaitlist().catch(console.error);   // 지시 #68 C5 — 같은 탭 하단 섹션
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
     renderLmsGuideLogs().catch(console.error);     // 지시 #76 — 발송 안내(LMS) 이력
+    renderKakaoNotifyLogs().catch(console.error);  // 지시 #92 — 주문 알림톡·발주확인 이력
+}
+// --- 주문 알림톡·발주확인 이력 (지시 #92) — 발송 성공 건만 발주확인 자동, 실패는 수기 처리 목록 ---
+async function renderKakaoNotifyLogs() {
+    const el = document.getElementById('kakao-notify-list');
+    if (!el) return;
+    const manualOnly = document.getElementById('kakao-notify-manual-only')?.checked;
+    const d = await api('/api/agent-office/kakao-notify-logs' + (manualOnly ? '?filter=manual' : ''));
+    const stLabel = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)', 'sent': '✅ 발송됨', 'failed': '❌ 실패', 'token-failed': '❌ 토큰 실패', 'build-failed': '❌ 생성 실패' };
+    const cfLabel = { 'confirmed': '✅ 발주확인 완료', 'already': '✅ 이미 확인됨', 'dry-run': '시뮬레이션 (실행 안 함)', 'failed': '❌ 실패 — 수기 필요', 'manual-needed': '✍️ 수기 처리 필요' };
+    const rows = (d.rows || []).map(r => `
+        <tr>
+            <td style="white-space:nowrap;">${new Date(r.created_at).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+            <td style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}</td>
+            <td style="white-space:nowrap;">${escapeHtml(r.receiver_masked || '-')}</td>
+            <td>${escapeHtml(stLabel[r.status] || r.status || '-')}${r.error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.error).slice(0, 60))}</div>` : ''}</td>
+            <td>${escapeHtml(cfLabel[r.confirm_status] || r.confirm_status || '-')}${r.confirm_error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.confirm_error).slice(0, 60))}</div>` : ''}</td>
+            <td>${r.message ? `<details><summary style="cursor:pointer; font-size:12px;">문면 보기</summary><pre style="white-space:pre-wrap; font:inherit; font-size:12px; margin:4px 0;">${escapeHtml(r.message)}</pre></details>` : '-'}</td>
+        </tr>`).join('');
+    el.innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th>일시</th><th>품목</th><th>수신</th><th>발송</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<p class="text-muted">${manualOnly ? '수기 처리 필요 건이 없습니다.' : '기록이 없습니다 — [데이터관리] 타이머에서 "주문 안내 알림톡"을 켜면 신규 결제 감지 시 dry-run 문면이 여기에 쌓입니다.'}</p>`;
 }
 // --- 발송 안내(LMS) 이력 (지시 #76) — dry-run 문면 확인 + 수동 재발송(대표 전용) ---
 async function renderLmsGuideLogs() {
@@ -12614,6 +12636,8 @@ function setupBotProductsTab() {
     });
     // 지시 #76: LMS 이력 새로고침
     document.getElementById('btn-lms-guide-refresh')?.addEventListener('click', () => renderLmsGuideLogs().catch(console.error));
+    document.getElementById('btn-kakao-notify-refresh')?.addEventListener('click', () => renderKakaoNotifyLogs().catch(console.error));   // 지시 #92
+    document.getElementById('kakao-notify-manual-only')?.addEventListener('change', () => renderKakaoNotifyLogs().catch(console.error));
     // 지시 #69·#73: 발송 휴무일 추가 (기간·안내 문구 지원)
     document.getElementById('btn-ship-holiday-add')?.addEventListener('click', async () => {
         const date = document.getElementById('ship-holiday-date').value.trim();

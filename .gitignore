@@ -3,3 +3,4 @@ node_modules/
 .env
 _참고자료/
 NCP인증키/
+.playwright-mcp/

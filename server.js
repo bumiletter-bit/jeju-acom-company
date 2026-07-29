@@ -885,6 +885,10 @@ async function initDB() {
     `);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('kakao_notify', false, 60)
         ON CONFLICT (key) DO NOTHING`);
+    // ── 지시 #92: 발송 성공 → 발주확인 자동 실행 결과 기록 (additive 컬럼 — 기존 행은 NULL 유지)
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS confirm_status VARCHAR(20)`);
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS confirm_error TEXT`);
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP`);
     // ── 지시 #76: 발송 안내(LMS) 이력 — 주문번호 UNIQUE = 같은 주문 중복 발송 방지. 알림톡 이력과 분리(완전 additive)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS lms_guide_log (
@@ -5420,6 +5424,20 @@ app.put('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (
 // ── 지시 #85 STEP2: 자사몰 게임 API 결선 — 게이트(MALL_API=on + MALL_API_TOKEN)는 모듈 내부, 기본 전면 503
 app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit }));
 
+// ── 지시 #92: 주문 알림톡·발주확인 이력 조회 — ?filter=manual 이면 수기 발주확인 필요 건만
+app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) => {
+    try {
+        const manualOnly = String(req.query.filter || '') === 'manual';
+        const r = await pool.query(
+            `SELECT id, order_key, product_name, receiver_masked, message, mode, status, error,
+                    confirm_status, confirm_error, confirmed_at, created_at
+             FROM kakao_notify_log
+             ${manualOnly ? `WHERE confirm_status IN ('manual-needed','failed')` : ''}
+             ORDER BY id DESC LIMIT 50`);
+        res.json({ rows: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // ── 지시 #76: 발송 안내(LMS) 이력 조회 + 수동 [발송 안내 보내기] (관리자 전용 — 발송 행위는 대표)
 app.get('/api/agent-office/lms-guide-logs', authMiddleware, async (req, res) => {
     try {
@@ -5461,7 +5479,7 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
 //   기본값 전부 ON — 명시적으로 false 저장된 것만 OFF (설정 조회 실패 시에도 발송하는 안전 방향).
 // 대표 7/27 알림 개선: 문의 3채널 알림을 상황별 4종(answered/staffneed/reminder/briefing)으로 재편 —
 //   구 'inquiry'(미답변 신규)·'qna'(신규+게시 혼합)·'inqanswer' 키는 은퇴 (DB에 남은 옛 문구 오버라이드는 무해)
-const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing', 'office', 'kakaosend', 'ccbox'];
+const TELEGRAM_ALERT_KEYS = ['order', 'claim', 'settlement', 'autodone', 'staffneed', 'reminder', 'briefing', 'office', 'kakaosend', 'ccbox', 'confirmneed'];
 // office = AGENT OFFICE 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성 완료) — 대표 7/27 지시로 기본 OFF (오류·실패 알림은 이 키와 무관하게 항상 발송)
 const TELEGRAM_ALERT_DEFAULT_OFF = ['office', 'kakaosend', 'ccbox'];   // kakaosend = 알림톡 발송 결과 (지시 #68 C6) / ccbox = 지시함 상태 알림 (지시 #84 — CS폰 공유 소음 방지, 평시 침묵·화면에서 재조정 가능)
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
@@ -5475,10 +5493,11 @@ const TELEGRAM_ALERT_DEFAULTS = {
     reminder: '⏰ 미처리 문의 {{건수}}건 — 가장 오래된 건 {{경과}}시간 경과. [문의 관리]에서 처리해주세요',
     briefing: '🌅 밤사이 현황 ({{시작}}~{{종료}})\n{{내용}}',
     kakaosend: '📨 주문 안내 알림톡 {{건수}}건 발송 (실패 {{실패건수}}건→SMS 대체)',
+    confirmneed: '🛒 알림톡 발송 실패 {{건수}}건 — 수기 발주확인 필요 ([문의 관리] 판매현황 탭 알림톡 이력에서 확인)',   // 지시 #92 — 기본 ON·야간 모드 준수
 };
 const TELEGRAM_ALERT_VARS = { order: ['건수'], claim: ['건수'], settlement: ['건수', '시작일', '종료일'],
     autodone: ['채널', '건수'], staffneed: ['건수', '채널'], reminder: ['건수', '경과'], briefing: ['시작', '종료', '내용'],
-    kakaosend: ['건수', '실패건수'] };
+    kakaosend: ['건수', '실패건수'], confirmneed: ['건수'] };
 async function telegramAlertTemplates() {
     const out = { ...TELEGRAM_ALERT_DEFAULTS };
     try {
@@ -5562,6 +5581,7 @@ async function inquiryAlertTick() {
                 if (await alertEnabled('order') && Number(acc.order) > 0) lines.push(`🚚 신규 주문 ${acc.order}건 (발주확인은 수기)`);
                 if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 반품·교환 ${acc.claim}건`);
                 if (await alertEnabled('kakaosend') && Number(acc.kakaosend) > 0) lines.push(`📨 주문 안내 알림톡 ${acc.kakaosend}건 발송`);   // 지시 #68 C6
+                if (await alertEnabled('confirmneed') && Number(acc.confirmneed) > 0) lines.push(`🛒 알림톡 발송 실패 ${acc.confirmneed}건 — 수기 발주확인 필요`);   // 지시 #92
                 if (await alertEnabled('settlement') && Number(acc.settlement) > 0) lines.push(`🛰️ 정산 자동수집 완료 (데이터관리 > 정산 조회)`);
                 if (await alertEnabled('autodone')) {
                     const aq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
@@ -6324,9 +6344,41 @@ async function collectClaim() {
     return `취소·반품·교환 ${claims.length}건 (반품·교환 ${returnsEx.length}·첫 알림 ${fresh.length}·변경 ${list.length}건 검사)`;
 }
 
+// ── 지시 #92: 발주 확인 처리 API (공식 스펙 2026-07-29 실판독: POST /external/v1/pay-order/seller/product-orders/confirm,
+//    body {productOrderIds:[]} 1회 최대 30개, 응답 data.successProductOrderInfos/failProductOrderInfos(code·message)).
+//    🔴 릴레이 ALLOW에 이 POST가 열려 있어야 실호출 가능 — 현재 차단(403) 상태. 릴레이 갱신은 대표 확인 후 별도.
+//    오류 코드 105306 = "변경을 요청한 상태가 기존과 동일"(이미 발주확인됨) → 'already'로 무해 처리.
+async function naverConfirmOrders(ids) {
+    const success = [], fail = [];
+    for (let i = 0; i < ids.length; i += 30) {
+        if (i > 0) await new Promise(r => setTimeout(r, 350));   // rate limit 간격 — 기존 패턴 유지
+        const chunk = ids.slice(i, i + 30);
+        try {
+            const r = await naverCallWithRetry({
+                method: 'POST', path: '/external/v1/pay-order/seller/product-orders/confirm',
+                body: { productOrderIds: chunk },
+            });
+            const body = (r && r.data) ? r.data : r;
+            const d = (body && body.data) ? body.data : (body || {});
+            for (const s of (d.successProductOrderInfos || [])) success.push(String(s.productOrderId || ''));
+            for (const f of (d.failProductOrderInfos || [])) fail.push({
+                id: String(f.productOrderId || ''), code: String(f.code || ''), message: String(f.message || '').slice(0, 200) });
+            // 응답 성공/실패 어디에도 없는 id는 실패로 기록 — 무언 통과 금지 (#83)
+            const covered = new Set([...success, ...fail.map(x => x.id)]);
+            for (const id of chunk) if (!covered.has(id)) fail.push({ id, code: '', message: '응답에 처리 결과 없음' });
+        } catch (e) {
+            for (const id of chunk) fail.push({ id, code: '', message: String(e.message || e).slice(0, 200) });
+        }
+    }
+    return { success, fail };
+}
+
 // ── 지시 #68 C4: 주문 안내 알림톡 수집기 (기본 OFF — naver_auto_collect 'kakao_notify')
 //    흐름: 신규 결제 감지 → 상세조회(허용된 읽기 POST) → 품목 판별 → 품목별 안내문 우선 → 변수 치환 → [발송 — KAKAO_NOTIFY=off면 dry-run] → 이력 기록
 //    🔴 실발송 이중 차단은 kakao-notify.js 안에 (env 스위치 + 알리고 키 부재). OFF 상태 = "발송했을 문면"만 kakao_notify_log에 남김 (검증 재료)
+//    지시 #92 (대표 철칙 공식 변경): 발송 '성공' 건만 네이버 발주확인 자동 실행 — KAKAO_NOTIFY 스위치 종속(OFF=시뮬레이션만·실상태변경 0건).
+//      발송 실패·미발송 건은 상태 유지(수기 발주확인) + confirm_status='manual-needed' + 텔레그램 통지(confirmneed·야간 준수).
+//      자사몰(카페24)은 결제 즉시 N20 배송준비중 자동 진입이라 발주확인 개념 없음 — 예외. 쿠팡은 쿠팡 주문 수집기 신설과 함께 2차(이번 범위 아님).
 async function collectKakaoNotify() {
     const now = Date.now();
     const cp = await naverCfgGet('kakao_notify_checkpoint');
@@ -6345,6 +6397,7 @@ async function collectKakaoNotify() {
     const bp = (await pool.query(`SELECT name, notify_message FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     let done = 0, failed = 0;
+    const sentReal = [], manualKeys = [], simulated = [];   // 지시 #92: 발주확인 대상 분류
     for (let i = 0; i < targets.length; i += 100) {   // 상세조회 100건 단위 (rate limit 간격 — 기존 패턴)
         if (i > 0) await new Promise(r => setTimeout(r, 350));
         const r = await naverCallWithRetry({
@@ -6378,8 +6431,13 @@ async function collectKakaoNotify() {
                      message, res.mode, res.status, res.error || null]);
                 if (res.status === 'sent') done++;
                 else if (res.mode === 'real') failed++;
+                // 지시 #92 분류: 실발송 성공 → 발주확인 대상 / 실발송 실패 → 수기 / dry-run → 시뮬레이션 표기
+                if (res.mode === 'real' && res.status === 'sent') sentReal.push(orderKey);
+                else if (res.mode === 'real') manualKeys.push(orderKey);
+                else simulated.push(orderKey);
             } catch (e) {
                 failed++;
+                manualKeys.push(orderKey);   // 문면 생성 실패 = 발송 없음 → 수기 발주확인 필요 (#92)
                 await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, error)
                     VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
                     [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
@@ -6391,8 +6449,43 @@ async function collectKakaoNotify() {
         if (await alertQuietNow()) await alertNightAcc('kakaosend', done);
         else notifyTelegram(await alertText('kakaosend', { '건수': done, '실패건수': failed }));
     }
+    // ── 지시 #92: 발송 성공 → 발주확인 자동 실행 (실패·미발송은 상태 유지 = 현행 수기) ──
+    let confirmed = 0, confirmFailed = 0;
+    if (simulated.length) {   // dry-run = 발주확인도 시뮬레이션만 (실제 상태 변경 0건)
+        await pool.query(`UPDATE kakao_notify_log SET confirm_status='dry-run' WHERE order_key = ANY($1) AND confirm_status IS NULL`, [simulated]).catch(() => {});
+    }
+    if (manualKeys.length) {
+        await pool.query(`UPDATE kakao_notify_log SET confirm_status='manual-needed' WHERE order_key = ANY($1) AND confirm_status IS NULL`, [manualKeys]).catch(() => {});
+    }
+    if (sentReal.length) {
+        if (kakaoNotify.switchOn()) {
+            const cr = await naverConfirmOrders(sentReal);
+            const already = cr.fail.filter(f => f.code === '105306');           // 이미 발주확인된 주문 — 무해
+            const realFail = cr.fail.filter(f => f.code !== '105306');
+            confirmed = cr.success.length; confirmFailed = realFail.length;
+            if (cr.success.length) {
+                await pool.query(`UPDATE kakao_notify_log SET confirm_status='confirmed', confirmed_at=NOW() WHERE order_key = ANY($1)`, [cr.success]).catch(() => {});
+            }
+            for (const f of already) {
+                await pool.query(`UPDATE kakao_notify_log SET confirm_status='already', confirm_error=$2 WHERE order_key=$1`,
+                    [f.id, `${f.code} ${f.message}`.slice(0, 250)]).catch(() => {});
+            }
+            for (const f of realFail) {
+                await pool.query(`UPDATE kakao_notify_log SET confirm_status='failed', confirm_error=$2 WHERE order_key=$1`,
+                    [f.id, `${f.code} ${f.message}`.trim().slice(0, 250)]).catch(() => {});
+            }
+        } else {   // 방어: 발송 후 스위치가 꺼진 극단 경합 — 실호출 없이 시뮬레이션 표기
+            await pool.query(`UPDATE kakao_notify_log SET confirm_status='dry-run' WHERE order_key = ANY($1) AND confirm_status IS NULL`, [sentReal]).catch(() => {});
+        }
+    }
+    // 수기 발주확인 필요 통지 — 실발송 모드에서만 (발송 실패 + 발주확인 실패 합산 · 기본 ON · 야간 준수)
+    const manualTotal = kakaoNotify.switchOn() ? manualKeys.length + confirmFailed : 0;
+    if (manualTotal > 0 && await alertEnabled('confirmneed')) {
+        if (await alertQuietNow()) await alertNightAcc('confirmneed', manualTotal);
+        else notifyTelegram(await alertText('confirmneed', { '건수': manualTotal }));
+    }
     const mode = kakaoNotify.switchOn() ? '실발송' : 'dry-run';
-    return `알림톡 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·신규결제 ${paidIds.length}건)`;
+    return `알림톡 ${mode} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·발주확인 ${confirmed}·확인실패 ${confirmFailed}·신규결제 ${paidIds.length}건)`;
 }
 
 // ── 지시 #76: 발송 안내(LMS) 자동 감지기 — DISPATCHED(발송처리) 감지 → shipping_guide LMS (기본 OFF·dry-run)
