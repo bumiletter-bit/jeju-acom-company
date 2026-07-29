@@ -6,6 +6,10 @@
 
 ---
 
+## v5.9.141 (2026-07-30 — 알림톡 이미지 실물 배치(게이트① 충족) + 릴레이 버전 확인 플래그, 지시 #100 STEP2 진입 — 실발송 0)
+- [자산] `assets/alimtalk_image.jpg` 실물 배치(대표 제공 알림톡이미지_v2_spoqa) — 규격 실측 합격: **800×400·50KB(상한 500KB)·JPEG**
+- [실행기] `relay_health_request` 플래그 신설 — relayHealth()(인증 불필요 읽기) 호출해 RELAY_VERSION을 `relay_health_result`에 기록. 이미지형 등록 전 릴레이 갱신(2026-07-29.2) 여부 자율 검증용 (등록·발송 호출 없음)
+
 ## v5.9.140 (2026-07-29 — 이미지형 알림톡 본판 준비, 지시 #100 STEP1 — 등록은 게이트 대기·실발송 0)
 - [문안] templates_image 4장 신설 — 본문 확정본 그대로 + **전 장 [문의하기] 버튼**(WL→카카오 채널 채팅 pf.kakao.com/_lbJLs/chat) + tpl_emtype=IMAGE·공용 이미지 1장. E 이미지판 = 4버튼(규격 최대 5개 내). 텍스트형 4장(UJ_9084~9087 심사 중)은 폴백 백업
 - [릴레이] /aligo 이미지 업로드 지원 — image_b64 수신 → Node 내장 FormData로 multipart 재조립(1MB 상한·JSON 한도 4mb). RELAY_VERSION **2026-07-29.2** (🔴 대표 SSH 갱신 필요)

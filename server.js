@@ -10593,6 +10593,21 @@ setInterval(async () => {
     }
 }, 60000);
 
+// 지시 #100: 중계서버 버전 확인 — DB 플래그(relay_health_request) 감지 시 relayHealth()(인증 불필요 읽기)만 호출,
+// RELAY_VERSION을 relay_health_result에 기록. 이미지형 등록 전 릴레이 갱신(2026-07-29.2) 여부를 자율 검증하는 용도.
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('relay_health_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'relay_health_request'`);   // 선제거 — 반복 실행 방지
+        let result;
+        try { result = await naverRelay.relayHealth(false); } catch (e) { result = { error: String(e.message || e).slice(0, 200) }; }
+        await naverCfgSet('relay_health_result', { at: new Date().toISOString(), version: result.version || null, health: result });
+    } catch (e) {
+        try { await naverCfgSet('relay_health_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // 지시 #98: 알림톡 템플릿 등록·검수 신청 실행기 — 대표 최종 GO 전용 (실발송 아님 — 등록·심사 신청만).
 // 발동 = 플래그 aligo_register_request {go:'yes', audit:true|false}. go 플래그 없으면 거부 기록만.
 setInterval(async () => {
