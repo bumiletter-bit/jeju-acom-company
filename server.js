@@ -10582,6 +10582,24 @@ setInterval(async () => {
     }
 }, 60000);
 
+// 지시 #98: 알림톡 템플릿 등록·검수 신청 실행기 — 대표 최종 GO 전용 (실발송 아님 — 등록·심사 신청만).
+// 발동 = 플래그 aligo_register_request {go:'yes', audit:true|false}. go 플래그 없으면 거부 기록만.
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('aligo_register_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_register_request'`);   // 선제거 — 반복 실행 방지
+        if (!req || req.go !== 'yes') { await naverCfgSet('aligo_register_result', { error: 'go-flag-missing — {go:"yes"} 필요' }); return; }
+        const result = await kakaoNotify.registerTemplates({ audit: req.audit === true });
+        await naverCfgSet('aligo_register_result', result);
+        await writeAudit({ action: 'alimtalk_template_register', targetType: 'aligo', targetId: null,
+            changes: { after: { audit: req.audit === true, results: (result.results || []).map(r => ({ name: r.name, tpl_code: r.tpl_code || null, add_code: r.add && r.add.code })) } },
+            source: 'naver-api', actor: { id: null, name: 'cc-#98(대표GO)' } });
+    } catch (e) {
+        try { await naverCfgSet('aligo_register_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // ============================================================
 // === MCP 서버 (/mcp/:secret) — 3단계 ===
 // authless 커넥터 + URL 시크릿 인증. Streamable HTTP(stateless, JSON 응답).

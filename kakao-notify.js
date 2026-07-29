@@ -184,7 +184,11 @@ async function selftest() {
             const list = await aligoPost('/akv10/template/list/', { ...auth, token, senderkey: process.env.ALIGO_SENDER_KEY });
             const ok = list && Number(list.code) === 0;
             out.checks.senderkey_template_list = ok
-                ? { ok: true, template_count: Array.isArray(list.list) ? list.list.length : null }
+                ? { ok: true, template_count: Array.isArray(list.list) ? list.list.length : null,
+                    // 지시 #98: 심사 상태 추적 — 템플릿별 상태(응답 필드명 방어적 수집, 문안 원문은 미수집)
+                    templates: (Array.isArray(list.list) ? list.list : []).slice(0, 12).map(x => ({
+                        code: x.templtCode || x.tpl_code || null, name: x.templtName || x.tpl_name || null,
+                        status: x.status != null ? x.status : null, inspStatus: x.inspStatus != null ? x.inspStatus : null })) }
                 : { ok: false, error: JSON.stringify(list).slice(0, 200) };
         }
     } catch (e) { out.checks.token = { ok: false, error: String(e.message || e).slice(0, 200) }; }
@@ -198,4 +202,37 @@ async function selftest() {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, DEFAULT_TEMPLATE };
+// ── 템플릿 등록·검수 신청 실행기 (지시 #98 — 대표 최종 GO 전용, 서버 측 실행: 알리고 키가 Render env에만 있으므로)
+//    발동은 server.js 플래그 폴러(aligo_register_request {go:'yes'})로만. 실발송 아님 — 등록(template/add)·검수 신청(template/request)만.
+//    문안·버튼 = alimtalk-templates.json 그대로(임의 수정 금지·status='confirmed' 필수). 텍스트형(tpl_emtype 미지정=NONE) — 이미지형은 별도 트랙.
+async function registerTemplates({ audit } = {}) {
+    const out = { at: new Date().toISOString(), audit: audit === true, results: [] };
+    if (!configured()) return { ...out, error: 'keys-missing — 알리고 키 미설정' };
+    if (!TEMPLATES_JSON || TEMPLATES_JSON.status !== 'confirmed') return { ...out, error: `templates-not-confirmed (status=${TEMPLATES_JSON && TEMPLATES_JSON.status})` };
+    const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
+    const tok = await aligoPost('/akv10/token/create/5/m', auth);   // 4장 순차 등록 여유분 5분 토큰
+    const token = tok && (tok.token || tok.urlencode || (tok.data && tok.data.token));
+    if (!token) return { ...out, error: 'token-failed: ' + JSON.stringify(tok).slice(0, 200) };
+    const base = { ...auth, token, senderkey: process.env.ALIGO_SENDER_KEY };
+    for (const t of TEMPLATES_JSON.templates) {
+        const r = { key: t.key, name: t.name, env_key: t.env_key };
+        try {
+            const add = await aligoPost('/akv10/template/add/', {
+                ...base, tpl_name: t.name, tpl_content: t.content,
+                ...(t.button ? { tpl_button: JSON.stringify(t.button) } : {}),
+            });
+            r.add = { code: add && add.code, message: String((add && add.message) || '').slice(0, 200) };
+            const tplCode = add && ((add.data && add.data.templtCode) || add.templtCode);
+            r.tpl_code = tplCode || null;
+            if (tplCode && audit === true) {
+                const rq = await aligoPost('/akv10/template/request/', { ...base, tpl_code: tplCode });
+                r.audit_request = { code: rq && rq.code, message: String((rq && rq.message) || '').slice(0, 200) };
+            }
+        } catch (e) { r.error = String(e.message || e).slice(0, 200); }
+        await new Promise(res => setTimeout(res, 500));
+        out.results.push(r);
+    }
+    return out;
+}
+
+module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, DEFAULT_TEMPLATE };
