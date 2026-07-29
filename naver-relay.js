@@ -102,4 +102,31 @@ async function callCoupang(opts, notify) {
     return data;
 }
 
-module.exports = { callNaver, callCoupang, relayHealth, configured };
+// 알리고 API 호출 (같은 중계서버 경유 — 엔드포인트 /aligo). 지시 #95: 알리고는 등록된 발송 서버 IP에서만
+// 호출 허용 — Render 유동 IP 불가 → 중계서버 고정 IP(101.79.16.213)를 알리고에 등록해 경유.
+// 알리고 키는 Render(회사프로그램)가 보관 — 중계서버는 form을 전달만 함(키 미보관, 네이버·쿠팡과 반대 구조).
+async function callAligo(opts, notify) {
+    const { host, path, form } = opts || {};
+    if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
+    if (!host || !path) throw new Error('host·path 필요');
+    const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
+    let r;
+    try {
+        r = await rawRequest(relayBase() + '/aligo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
+            body: JSON.stringify({ host, path, form }),
+        });
+    } catch (e) {
+        await notifySafe(`📨 알리고 중계서버 연결 실패 — ${host}${path}\n${e.message}`);
+        const err = new Error('relay_unreachable: ' + e.message); err.cause = e; throw err;
+    }
+    let data; try { data = JSON.parse(r.text); } catch { data = { raw: r.text }; }
+    if (r.status < 200 || r.status >= 300) {
+        // 알리고 오류 응답은 자체 코드로 판단 — 중계 계층 오류(401/403/404/5xx)만 예외
+        const err = new Error('aligo_relay_error_' + r.status); err.status = r.status; err.data = data; throw err;
+    }
+    return data;
+}
+
+module.exports = { callNaver, callCoupang, callAligo, relayHealth, configured };

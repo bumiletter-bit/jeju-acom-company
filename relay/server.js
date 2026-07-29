@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-27.3'; // 고객문의 답변 등록 POST 허용 추가 (pay-merchant — 쓰기 2번째)
+const RELAY_VERSION = '2026-07-29.1'; // 지시 #92·#95: 네이버 발주확인 POST 허용(쓰기 3번째) + 알리고 중계(/aligo — 알리고 IP 인증은 이 서버 고정 IP 등록으로 해결)
 
 const {
     PORT = 4000,
@@ -88,6 +88,7 @@ const ALLOW = [
     { m: 'GET',  re: /^\/external\/v1\/contents\/qnas$/ },                         // 상품문의(Q&A) 목록 조회 (STEP E)
     { m: 'PUT',  re: /^\/external\/v1\/contents\/qnas\/\d+$/ },                    // 상품문의 답변 등록/수정 (STEP E, questionId 숫자 정확일치만)
     { m: 'POST', re: /^\/external\/v1\/pay-merchant\/inquiries\/\d+\/answer$/ },   // 고객문의 답변 등록 — 쓰기 2번째 (inquiryNo 숫자 정확일치만)
+    { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/confirm$/ }, // 발주확인 — 쓰기 3번째 (지시 #92: 알림톡 발송 성공 건만, 회사프로그램 KAKAO_NOTIFY 스위치 종속)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 
@@ -196,6 +197,41 @@ app.post('/coupang', async (req, res) => {
         res.status(cres.status).json(json);
     } catch (e) {
         log('쿠팡 중계 예외', method, reqPath, e.message);
+        res.status(e.status || 500).json({ error: 'relay_error', message: e.message });
+    }
+});
+
+// ══════════════ 알리고 API 중계 (지시 #95 — 2026-07-29) ══════════════
+// 알리고는 등록된 발송 서버 IP에서만 호출 허용 → Render(유동 IP) 불가.
+// 이 서버의 고정 IP(101.79.16.213)를 대표가 알리고 관리자에 등록하고, 회사프로그램이 여기를 경유한다.
+// 알리고 키는 회사프로그램(Render env)이 보관 — 이 서버는 form을 전달만 함(키 미보관, 네이버·쿠팡과 반대 구조).
+// 허용목록: 알림톡(토큰·템플릿 목록/등록/검수·발송) + 문자(발송·잔여건수)만. 그 외 경로 차단.
+const ALIGO_ALLOW = [
+    { host: 'kakaoapi.aligo.in', re: /^\/akv10\/(token\/create\/\d+\/[sm]|template\/(list|add|request)\/?|alimtalk\/send\/?)$/ },
+    { host: 'apis.aligo.in', re: /^\/(send|remain)\/?$/ },
+];
+// 알리고 호출 중계: POST /aligo  { host, path, form }
+app.post('/aligo', async (req, res) => {
+    const host = String((req.body && req.body.host) || '');
+    const reqPath = String((req.body && req.body.path) || '');
+    const form = (req.body && req.body.form) || {};
+    if (!ALIGO_ALLOW.some(a => a.host === host && a.re.test(reqPath))) {
+        log('알리고 차단(허용목록 외)', host, reqPath);
+        return res.status(403).json({ error: 'path_not_allowed', host, path: reqPath });
+    }
+    try {
+        const body = new URLSearchParams(form).toString();
+        const ares = await fetch(`https://${host}${reqPath}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+        });
+        const text = await ares.text();
+        let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+        if (!ares.ok) log('알리고 응답 오류', host, reqPath, ares.status); // 알림은 회사프로그램이 담당
+        res.status(ares.status).json(json);
+    } catch (e) {
+        log('알리고 중계 예외', host, reqPath, e.message);
         res.status(e.status || 500).json({ error: 'relay_error', message: e.message });
     }
 });

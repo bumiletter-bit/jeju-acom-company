@@ -1,5 +1,5 @@
-// scripts/register-alimtalk-templates.js — 알림톡 템플릿 3종(A·B·D) 알리고 등록 스크립트 (지시 #88 STEP4 · #90 3장 확정)
-// C(배송완료)는 폐기(#90 대표 확정) — 조사 결과는 docs/백로그_배송완료_트리거조사.md 보존.
+// scripts/register-alimtalk-templates.js — 알림톡 템플릿 4장(A·B·D·E) 알리고 등록 스크립트 (지시 #88 STEP4 · #90 3장 → #93·#94 4장 확정)
+// C(배송완료)는 폐기(#90 대표 확정) — 조사 결과는 docs/백로그_배송완료_트리거조사.md 보존. E = 발송 안내(버튼+안내 페이지 /guide, #94).
 // 🔴🔴 실행 조건: ①알리고 키 투입(Render env 아님 — 이 스크립트는 로컬 실행이므로 셸 환경변수로 주입)
 //              ②대표 최종 GO 후에만. 검수 신청(--request-audit)은 별도 대표 GO가 또 필요 (#75 원칙).
 // 차단: 알리고 키 3종 없으면 즉시 종료 + env ALIMTALK_REGISTER_GO=yes 와 --confirm-go 플래그 둘 다 있어야 등록 호출.
@@ -11,11 +11,16 @@
 const https = require('https');
 const querystring = require('querystring');
 const path = require('path');
+const relay = require(path.join(__dirname, '..', 'naver-relay.js'));   // 지시 #95: 알리고 IP 인증 — 릴레이(고정 IP) 경유
 
 const TEMPLATES = require(path.join(__dirname, 'alimtalk-templates.json'));   // 문안 단일 소스 (대표 확정본만 등록)
 
 const HOST = 'kakaoapi.aligo.in';
+// 지시 #95: 알리고는 등록된 발송 서버 IP에서만 호출 허용 — 로컬 PC IP는 미등록.
+//   셸에 NAVER_RELAY_URL·NAVER_RELAY_TOKEN 주입 시 릴레이(101.79.16.213 — 알리고 등록 IP) 경유(정식 경로),
+//   미주입이면 직접 호출(IP 오류 -99 가능 — 진단용).
 function post(pathName, form) {
+    if (relay.configured()) return relay.callAligo({ host: HOST, path: pathName, form });
     return new Promise((resolve, reject) => {
         const body = querystring.stringify(form);
         const req = https.request({ host: HOST, path: pathName, method: 'POST', timeout: 20000,

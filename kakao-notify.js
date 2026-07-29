@@ -2,12 +2,23 @@
 // 🔴 실발송 이중 차단: ① env KAKAO_NOTIFY=on 이 아니면 무조건 dry-run ② 알리고 키(ALIGO_*) 미설정 시 차단.
 //    현재 발신프로필 미등록 상태 — 어떤 경우에도 실발송 금지(지시 #68 철칙 2). OFF 상태에선 "발송했을 문면"만 이력 기록.
 // API 스펙 근거: 지시 #67 조사1 (알리고 공식 문서 alimapi.html + 공식 Node.js 예제 — 토큰 필수·failover 규칙)
+// 🛰️ 경로(지시 #95 — 2026-07-29 실측 정정): 알리고는 등록된 발송 서버 IP에서만 호출 허용(#91 실측: -99/-101 IP 오류).
+//    Render 유동 IP 불가 → NCP 릴레이(101.79.16.213, 알리고에 등록) 경유. 릴레이 미설정(로컬 등) 시에만 직접 호출 폴백.
 const https = require('https');
 const querystring = require('querystring');
+const path = require('path');
+const relay = require('./naver-relay.js');
 
 const ALIGO_HOST = 'kakaoapi.aligo.in';        // 알림톡 API
 const ALIGO_SMS_HOST = 'apis.aligo.in';        // 문자(SMS/LMS) API — 공식 스펙 확정(지시 #76 재검증: smartsms.aligo.in/admin/api/spec.html)
                                                //   토큰 불필요(key+user_id만), msg 1~2000byte, title 1~44byte(LMS만), result_code 양수=성공
+
+// 문안 단일 소스 (등록 스크립트와 동일 JSON — 발송 문면·버튼을 승인 템플릿과 일치시키기 위한 공유 소스)
+let TEMPLATES_JSON = null;
+try { TEMPLATES_JSON = require(path.join(__dirname, 'scripts', 'alimtalk-templates.json')); } catch (_) { /* 없으면 뼈대 폴백 */ }
+function templateByKey(key) {
+    return (TEMPLATES_JSON && Array.isArray(TEMPLATES_JSON.templates)) ? TEMPLATES_JSON.templates.find(t => t.key === key) || null : null;
+}
 
 function switchOn() { return String(process.env.KAKAO_NOTIFY || 'off').toLowerCase() === 'on'; }
 function configured() {
@@ -50,11 +61,12 @@ function matchNotifyProduct(optionText, botProducts) {
     return best;   // { name, notify_message } | null
 }
 
-function aligoPost(path, form, host) {
+// 직접 호출 (릴레이 미설정 시 폴백 전용 — 지시 #95 이후 정식 경로는 릴레이)
+function aligoDirectPost(reqPath, form, host) {
     return new Promise((resolve, reject) => {
         const body = querystring.stringify(form);
         const req = https.request({
-            host: host || ALIGO_HOST, path, method: 'POST', timeout: 20000,
+            host: host || ALIGO_HOST, path: reqPath, method: 'POST', timeout: 20000,
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) },
         }, (res) => {
             let data = '';
@@ -66,10 +78,15 @@ function aligoPost(path, form, host) {
         req.end(body);
     });
 }
+// 알리고 호출 — 릴레이(고정 IP) 경유가 정식 경로 (지시 #95). 시그니처는 기존과 동일 유지.
+async function aligoPost(reqPath, form, host) {
+    if (relay.configured()) return relay.callAligo({ host: host || ALIGO_HOST, path: reqPath, form });
+    return aligoDirectPost(reqPath, form, host);
+}
 
 // 실발송 경로 (조사1 스펙: 토큰 발급 → alimtalk/send, failover=Y 시 fsubject/fmessage 필수)
 // ⚠️ 호출돼도 switchOn()·configured() 둘 다 통과해야만 실제 API에 닿음.
-async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessage }) {
+async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessage, buttons }) {
     if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', message };
     if (!configured()) return { mode: 'dry-run', status: 'keys-missing', message };
     const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
@@ -86,9 +103,38 @@ async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessa
         message_1: message,
     };
     if (failoverMessage) { form.failover = 'Y'; form.fsubject_1 = subject || '주문 안내'; form.fmessage_1 = failoverMessage; }
+    if (buttons) form.button_1 = JSON.stringify(buttons);                                     // 승인 템플릿과 동일 구성이어야 함 (공식 button_1 JSON)
+    if (String(process.env.ALIGO_TEST || '').toUpperCase() === 'Y') form.testMode = 'Y';      // 알림톡 API 공식 testMode — 과금·실발송 없는 연동 테스트
     const r = await aligoPost('/akv10/alimtalk/send/', form);
     const ok = r && Number(r.code) === 0;
     return { mode: 'real', status: ok ? 'sent' : 'failed', error: ok ? null : JSON.stringify(r).slice(0, 300), mid: r && r.info && r.info.mid };
+}
+
+// ── 발송 안내 알림톡 E (지시 #93·#94) — "알림톡 우선 → 실패 시 SMS 대체(failover, 문면=기존 LMS 전문)"
+//    문면·버튼 = 문안 단일 소스(alimtalk-templates.json 'ship_guide')에서 생성 — 승인 템플릿과 자동 일치.
+//    버튼 링크의 #{상품코드}만 발송 시 실값 치환(버튼명은 변수 금지 — 가이드). E 코드 미투입·템플릿 부재 시 SMS(기존 LMS) 직행.
+async function sendShippingGuideAlimtalk({ receiver, vars, fallback }) {
+    const tpl = templateByKey('ship_guide');
+    const messageText = tpl ? buildMessage(vars || {}, tpl.content) : ((fallback && fallback.message) || '');
+    if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', via: 'alimtalk-e', messageText };
+    if (!configured()) return { mode: 'dry-run', status: 'keys-missing', via: 'alimtalk-e', messageText };
+    const tplCode = process.env.ALIGO_TPL_CODE_GUIDE || '';
+    if (!tpl || !tplCode) {   // E 미승인 단계 — 기존 LMS 경로로 직행 (안내 공백 방지)
+        const r = await sendLms({ receiver, subject: (fallback && fallback.subject) || '제주아꼼이네 배송 안내', message: (fallback && fallback.message) || '' });
+        return { ...r, via: 'sms-direct', messageText: (fallback && fallback.message) || '' };
+    }
+    let buttons = null;
+    if (tpl.button) {
+        buttons = JSON.parse(JSON.stringify(tpl.button));
+        if (Array.isArray(buttons.button)) for (const b of buttons.button) {
+            for (const k of ['linkMo', 'linkPc']) if (b[k]) b[k] = String(b[k]).replace(/#\{(.+?)\}/g, (m, key) => (vars && vars[key] != null) ? String(vars[key]) : m);
+        }
+    }
+    const r = await sendAlimtalk({
+        receiver, subject: '배송 안내', message: messageText, tplCode,
+        failoverMessage: (fallback && fallback.message) || undefined, buttons,
+    });
+    return { ...r, via: 'alimtalk-e', messageText };
 }
 
 // LMS(알리고 문자) 발송 뼈대 (지시 #74) — 품목별 발송 안내문용: 자유 문안·템플릿 심사 불필요.
@@ -152,4 +198,4 @@ async function selftest() {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendLms, selftest, DEFAULT_TEMPLATE };
+module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, DEFAULT_TEMPLATE };

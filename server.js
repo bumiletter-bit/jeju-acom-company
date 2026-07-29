@@ -5424,6 +5424,61 @@ app.put('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (
 // ── 지시 #85 STEP2: 자사몰 게임 API 결선 — 게이트(MALL_API=on + MALL_API_TOKEN)는 모듈 내부, 기본 전면 503
 app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit }));
 
+// ── 지시 #94: 공개 안내 페이지 /guide — 알림톡 E 버튼 착지 (인증 불필요·PII 0·모바일 퍼스트)
+//    콘텐츠 = bot_products.shipping_guide (판매현황 탭에서 수정하면 즉시 반영). ?p=상품id 이면 그 상품이 최상단.
+//    전 판매중 상품 안내 함께 노출 = 크로스셀 동선 (#94). 디자인은 구조·틀 수준 — 인디고 토큰 (#81).
+function guideEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+app.get('/guide', async (req, res) => {
+    try {
+        const pid = parseInt(req.query.p, 10) || 0;
+        const rows = (await pool.query(
+            `SELECT id, name, shipping_guide FROM bot_products
+             WHERE deleted_at IS NULL AND status = '판매중' AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> ''
+             ORDER BY name`)).rows;
+        const hinfo = await loadShippingHolidayInfo();
+        const now = Date.now();
+        // {{내일요일}}/{{모레요일}}은 열람 시점 기준 치환 (발송 당일 열람이 정상 동선 — 오차 무해)
+        const renderGuide = (g) => guideEsc(shippingSchedule.renderGuidePlaceholders(g, now, hinfo.set)).replace(/\n/g, '<br>');
+        const picked = rows.find(r => r.id === pid) || null;
+        const others = rows.filter(r => !picked || r.id !== picked.id);
+        const card = (r, open) => `
+            <details class="item"${open ? ' open' : ''}>
+                <summary>${guideEsc(r.name)}</summary>
+                <div class="guide-body">${renderGuide(r.shipping_guide)}
+                    <div class="buy-slot">구매처 링크 준비 중</div><!-- 구매 링크 자리: 스마트스토어·자사몰 URL 확정 시 여기에 (#94 크로스셀) -->
+                </div>
+            </details>`;
+        res.set('Content-Type', 'text/html; charset=utf-8').send(`<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>제주아꼼이네 — 맛있게 드시는 법·보관법</title>
+<style>
+  :root { --primary:#4F46E5; --primary-dark:#4338CA; --primary-light:#EEF0FF; }
+  * { box-sizing:border-box; } body { margin:0; font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif; background:#F8F9FC; color:#1f2430; }
+  .wrap { max-width:640px; margin:0 auto; padding:16px 14px 40px; }
+  .hd { background:var(--primary); color:#fff; border-radius:14px; padding:18px 16px; margin-bottom:14px; }
+  .hd h1 { margin:0 0 4px; font-size:19px; } .hd p { margin:0; font-size:13px; opacity:.85; }
+  .sec-title { font-size:13px; color:#767a83; margin:18px 4px 8px; }
+  details.item { background:#fff; border:1px solid #e4e7ee; border-radius:12px; margin-bottom:10px; overflow:hidden; }
+  details.item[open] { border-color:var(--primary); }
+  details.item summary { list-style:none; cursor:pointer; padding:14px 16px; font-weight:600; font-size:15px; display:flex; justify-content:space-between; align-items:center; }
+  details.item summary::-webkit-details-marker { display:none; }
+  details.item summary::after { content:'▾'; color:var(--primary); }
+  details.item[open] summary { background:var(--primary-light); }
+  .guide-body { padding:12px 16px 16px; font-size:14px; line-height:1.75; border-top:1px solid #eef0f5; white-space:normal; }
+  .buy-slot { margin-top:12px; font-size:12px; color:#9aa0ab; border-top:1px dashed #e4e7ee; padding-top:10px; }
+  .ft { text-align:center; font-size:12px; color:#9aa0ab; margin-top:24px; }
+</style></head><body><div class="wrap">
+    <div class="hd"><h1>🍊 제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p></div>
+    ${picked ? `<div class="sec-title">주문하신 상품</div>${card(picked, true)}` : ''}
+    ${others.length ? `<div class="sec-title">${picked ? '아꼼이네의 다른 상품들도 만나보세요' : '판매 상품 안내'}</div>${others.map(r => card(r, !picked && rows.length === 1)).join('')}` : ''}
+    ${rows.length === 0 ? '<p style="text-align:center; color:#767a83;">등록된 안내가 아직 없습니다.</p>' : ''}
+    <div class="ft">문의 📞 010-6687-4031 · 제주아꼼이네</div>
+</div></body></html>`);
+    } catch (err) {
+        res.status(500).set('Content-Type', 'text/html; charset=utf-8').send('<p style="font-family:sans-serif; text-align:center; margin-top:40px;">잠시 후 다시 시도해주세요.</p>');
+    }
+});
+
 // ── 지시 #92: 주문 알림톡·발주확인 이력 조회 — ?filter=manual 이면 수기 발주확인 필요 건만
 app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) => {
     try {
@@ -5462,7 +5517,7 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
         const c = it.content || it;
         const po = c.productOrder || it.productOrder || c;
         const od = c.order || it.order || po.order || {};
-        const bp = (await pool.query(`SELECT name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
+        const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
         const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, await loadShippingHolidayInfo());
         if (out.skip) throw { status: 400, message: '이 품목에는 발송 안내문이 없습니다 — 판매현황·가격 탭에서 안내문을 먼저 등록해주세요' };
         await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
@@ -6496,9 +6551,21 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo) {
     if (!matched || !matched.shipping_guide || !String(matched.shipping_guide).trim()) {
         return { skip: true, matched, message: null };   // 안내문 없는 품목 = SKIP (기록만)
     }
-    const message = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set);
-    const res = await kakaoNotify.sendLms({ receiver: od.ordererTel || '', subject: '제주아꼼이네 배송 안내', message });
-    return { skip: false, matched, message, res };
+    // 지시 #93·#94 (대표 확정 — LMS 단독 번복): 알림톡 E 우선 → 실패 시 SMS 대체(failover, 문면=기존 LMS 전문 그대로).
+    //   E 미승인·코드 미투입 동안은 SMS 직행(sendShippingGuideAlimtalk 내부 판단). 스위치 OFF·dry-run 원칙 동일.
+    const lmsMessage = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set);
+    const 도착안내 = shippingSchedule.renderGuidePlaceholders('내일 {{내일요일}}요일~모레 {{모레요일}}요일 사이 도착 예정', Date.now(), holidayInfo.set);
+    const res = await kakaoNotify.sendShippingGuideAlimtalk({
+        receiver: od.ordererTel || '',
+        vars: {
+            '고객명': od.ordererName || '고객',
+            '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
+            '도착안내': 도착안내,
+            '상품코드': String(matched.id || ''),          // 버튼 링크 /guide?p=상품코드 (지시 #94)
+        },
+        fallback: { subject: '제주아꼼이네 배송 안내', message: lmsMessage },
+    });
+    return { skip: false, matched, message: res.messageText || lmsMessage, res };
 }
 async function collectLmsGuide() {
     const now = Date.now();
@@ -6513,7 +6580,7 @@ async function collectLmsGuide() {
     const seenSet = new Set(seen.rows.map(r => r.order_key));
     const targets = shippedIds.filter(id => !seenSet.has(id));
     if (targets.length === 0) return `발송처리 ${shippedIds.length}건 — 전부 처리 이력 있음`;
-    const bp = (await pool.query(`SELECT name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     let done = 0, failed = 0, skipped = 0;
     for (let i = 0; i < targets.length; i += 100) {
