@@ -6,6 +6,11 @@
 
 ---
 
+## v5.9.135 (2026-07-29 — 알리고 연동 자가진단, 지시 #91 — 과금·실발송·등록·검수 신청 없음)
+- [모듈] `kakao-notify.js`에 `selftest()` 추가 — 무해한 '읽기' 호출 3종만: 알림톡 토큰 발급(키·ID 인증 검증)·템플릿 목록 조회(발신프로필 senderkey 검증)·문자 잔여건수 조회(과금 없음). **등록(template/add)·검수(template/request)·발송(send) API 미호출.** 키 값은 마스킹(존재·길이·앞2자)만 기록, 발신번호는 형식 확인만
+- [서버] 독립 60초 폴러 — DB 플래그 `aligo_selftest_request` 감지 시 1회 실행(선제거로 반복 방지) → 결과를 `aligo_selftest_result`(agent_office_config)에 기록. 텔레그램 게이트와 무관·기존 코드 무접촉(additive)
+- [안전] 프론트 무변경(app.js v=321 유지). 실발송 0건
+
 ## v5.9.134 (2026-07-29 — 자사몰 게임 백엔드 선행 시공, 지시 #85 — MALL_API=off 전면 잠금)
 - [테이블] 신규 5종(additive): mall_members·points_ledger(append-only 원장·idem_key UNIQUE)·roulette_spins(**1일 1회 = DB UNIQUE 원자 보장**)·tree_state·reward_grants(+인덱스 2종)
 - [API] 신규 모듈 `mall-api.js` → `/api/mall/*` 13종 결선: 회원 resolve·룰렛 spin/status(서버 가중치 추첨·트랜잭션 원자성)·포인트 balance/ledger/earn/redeem(멱등키 필수·음수 잔액 불가)·나무 tree/water·products(bot_products 읽기)·season-waitlist(기존 재사용)·rewards 스텁(카페24 scope 재동의 후 개방). **전면 게이트: env MALL_API=on + MALL_API_TOKEN 없으면 전 라우트 503** — 현재 둘 다 미설정 = 완전 잠금. 동시성=회원 행 FOR UPDATE 직렬화, KST 자정 경계, IP 레이트리밋, 어뷰징 시나리오 7종 방어 문서화

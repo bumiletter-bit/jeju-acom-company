@@ -10408,6 +10408,20 @@ setInterval(async () => {
     } catch (e) { /* 부가 기능 — 조용히 다음 주기 */ }
 }, 60000);
 
+// 지시 #91: 알리고 연동 자가진단 — DB 플래그(aligo_selftest_request) 감지 시 kakao-notify.selftest()의
+// 무해한 읽기 호출만 수행(토큰 발급·템플릿 목록·문자 잔여건수 — 등록·검수·발송 없음), 마스킹 결과를 aligo_selftest_result에 기록.
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('aligo_selftest_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_selftest_request'`);   // 선제거 — 반복 실행 방지
+        const result = await kakaoNotify.selftest();
+        await naverCfgSet('aligo_selftest_result', result);
+    } catch (e) {
+        try { await naverCfgSet('aligo_selftest_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // ============================================================
 // === MCP 서버 (/mcp/:secret) — 3단계 ===
 // authless 커넥터 + URL 시크릿 인증. Streamable HTTP(stateless, JSON 응답).

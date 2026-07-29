@@ -113,4 +113,43 @@ async function sendLms({ receiver, subject, message }) {
     return { mode: 'real', status: ok ? 'sent' : 'failed', error: ok ? null : JSON.stringify(r).slice(0, 300), mid: r && r.msg_id };
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendLms, DEFAULT_TEMPLATE };
+// ── 연동 자가진단 (지시 #91) — 무해한 '읽기' 호출만: 토큰 발급(키·ID 인증)·템플릿 목록(발신프로필 검증)·문자 잔여건수(과금 없음).
+//    등록(template/add)·검수(template/request)·발송(send) API는 절대 호출하지 않음. 키 값은 마스킹(길이+앞2자)만 기록.
+function maskEnv(name) {
+    const s = String(process.env[name] || '');
+    return s ? { set: true, len: s.length, head2: s.slice(0, 2) } : { set: false };
+}
+async function selftest() {
+    const out = { at: new Date().toISOString(), env: {}, checks: {} };
+    for (const k of ['ALIGO_API_KEY', 'ALIGO_USER_ID', 'ALIGO_SENDER_KEY', 'ALIGO_SENDER']) out.env[k] = maskEnv(k);
+    const senderDigits = String(process.env.ALIGO_SENDER || '').replace(/[^0-9]/g, '');
+    // 발신번호는 검증용 무해 API가 없어 형식 확인만 (실검증은 실발송 리허설 단계에서)
+    out.checks.sender_format = { ok: senderDigits.length >= 8 && senderDigits.length <= 11, digits_len: senderDigits.length };
+    if (!out.env.ALIGO_API_KEY.set || !out.env.ALIGO_USER_ID.set) {
+        out.checks.token = { ok: false, error: 'ALIGO_API_KEY 또는 ALIGO_USER_ID 미설정' };
+        return out;
+    }
+    const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
+    try {
+        const tok = await aligoPost('/akv10/token/create/30/s', auth);
+        const token = tok && (tok.token || tok.urlencode || (tok.data && tok.data.token));
+        out.checks.token = token ? { ok: true } : { ok: false, error: JSON.stringify(tok).slice(0, 200) };
+        if (token && process.env.ALIGO_SENDER_KEY) {
+            const list = await aligoPost('/akv10/template/list/', { ...auth, token, senderkey: process.env.ALIGO_SENDER_KEY });
+            const ok = list && Number(list.code) === 0;
+            out.checks.senderkey_template_list = ok
+                ? { ok: true, template_count: Array.isArray(list.list) ? list.list.length : null }
+                : { ok: false, error: JSON.stringify(list).slice(0, 200) };
+        }
+    } catch (e) { out.checks.token = { ok: false, error: String(e.message || e).slice(0, 200) }; }
+    try {
+        const remain = await aligoPost('/remain/', { key: process.env.ALIGO_API_KEY, user_id: process.env.ALIGO_USER_ID }, ALIGO_SMS_HOST);
+        const ok = remain && Number(remain.result_code) > 0;
+        out.checks.sms_remain = ok
+            ? { ok: true, SMS_CNT: remain.SMS_CNT, LMS_CNT: remain.LMS_CNT, MMS_CNT: remain.MMS_CNT }
+            : { ok: false, error: JSON.stringify(remain).slice(0, 200) };
+    } catch (e) { out.checks.sms_remain = { ok: false, error: String(e.message || e).slice(0, 200) }; }
+    return out;
+}
+
+module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendLms, selftest, DEFAULT_TEMPLATE };
