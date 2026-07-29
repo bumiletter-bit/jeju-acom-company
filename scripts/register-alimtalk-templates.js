@@ -1,7 +1,8 @@
-// scripts/register-alimtalk-templates.js — 알림톡 템플릿 4종 알리고 등록 스크립트 (지시 #88 STEP4)
+// scripts/register-alimtalk-templates.js — 알림톡 템플릿 3종(A·B·D) 알리고 등록 스크립트 (지시 #88 STEP4 · #90 3장 확정)
+// C(배송완료)는 폐기(#90 대표 확정) — 조사 결과는 docs/백로그_배송완료_트리거조사.md 보존.
 // 🔴🔴 실행 조건: ①알리고 키 투입(Render env 아님 — 이 스크립트는 로컬 실행이므로 셸 환경변수로 주입)
 //              ②대표 최종 GO 후에만. 검수 신청(--request-audit)은 별도 대표 GO가 또 필요 (#75 원칙).
-// 이중 차단: 키 4종 없으면 즉시 종료 + env ALIMTALK_REGISTER_GO=yes 와 --confirm-go 플래그 둘 다 있어야 등록 호출.
+// 차단: 알리고 키 3종 없으면 즉시 종료 + env ALIMTALK_REGISTER_GO=yes 와 --confirm-go 플래그 둘 다 있어야 등록 호출.
 // 사용법 (대표 GO 후):
 //   $env:ALIGO_API_KEY='...'; $env:ALIGO_USER_ID='...'; $env:ALIGO_SENDER_KEY='...'; $env:ALIMTALK_REGISTER_GO='yes'
 //   node scripts/register-alimtalk-templates.js --confirm-go            # 등록만 (검수 신청 안 함)
