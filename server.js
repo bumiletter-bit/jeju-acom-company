@@ -10601,7 +10601,7 @@ setInterval(async () => {
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_register_request'`);   // 선제거 — 반복 실행 방지
         if (!req || req.go !== 'yes') { await naverCfgSet('aligo_register_result', { error: 'go-flag-missing — {go:"yes"} 필요' }); return; }
-        const result = await kakaoNotify.registerTemplates({ audit: req.audit === true });
+        const result = await kakaoNotify.registerTemplates({ audit: req.audit === true, set: req.set || undefined });   // set='image' → 이미지형 4장 (지시 #100)
         await naverCfgSet('aligo_register_result', result);
         await writeAudit({ action: 'alimtalk_template_register', targetType: 'aligo', targetId: null,
             changes: { after: { audit: req.audit === true, results: (result.results || []).map(r => ({ name: r.name, tpl_code: r.tpl_code || null, add_code: r.add && r.add.code })) } },

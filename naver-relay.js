@@ -106,7 +106,7 @@ async function callCoupang(opts, notify) {
 // 호출 허용 — Render 유동 IP 불가 → 중계서버 고정 IP(101.79.16.213)를 알리고에 등록해 경유.
 // 알리고 키는 Render(회사프로그램)가 보관 — 중계서버는 form을 전달만 함(키 미보관, 네이버·쿠팡과 반대 구조).
 async function callAligo(opts, notify) {
-    const { host, path, form } = opts || {};
+    const { host, path, form, imageB64 = null, imageName = null } = opts || {};   // 지시 #100: 이미지형 템플릿 등록용
     if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
     if (!host || !path) throw new Error('host·path 필요');
     const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
@@ -115,7 +115,8 @@ async function callAligo(opts, notify) {
         r = await rawRequest(relayBase() + '/aligo', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
-            body: JSON.stringify({ host, path, form }),
+            body: JSON.stringify({ host, path, form, ...(imageB64 ? { image_b64: imageB64, image_name: imageName || 'image.jpg' } : {}) }),
+            timeoutMs: imageB64 ? 60000 : 20000,   // 이미지 업로드는 여유 타임아웃
         });
     } catch (e) {
         await notifySafe(`📨 알리고 중계서버 연결 실패 — ${host}${path}\n${e.message}`);

@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-29.1'; // 지시 #92·#95: 네이버 발주확인 POST 허용(쓰기 3번째) + 알리고 중계(/aligo — 알리고 IP 인증은 이 서버 고정 IP 등록으로 해결)
+const RELAY_VERSION = '2026-07-29.2'; // 지시 #100: /aligo 이미지 업로드 지원(image_b64 → multipart — 이미지형 템플릿 등록용) + JSON 한도 4mb
 
 const {
     PORT = 4000,
@@ -93,7 +93,7 @@ const ALLOW = [
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '4mb' }));   // 지시 #100: 알림톡 이미지(≤500KB, base64 ~680KB) 수용 여유분
 
 // 헬스체크 (인증 불필요) — 토큰 발급까지 시험하려면 ?token=1
 app.get('/health', async (req, res) => {
@@ -210,22 +210,36 @@ const ALIGO_ALLOW = [
     { host: 'kakaoapi.aligo.in', re: /^\/akv10\/(token\/create\/\d+\/[sm]|template\/(list|add|request)\/?|alimtalk\/send\/?)$/ },
     { host: 'apis.aligo.in', re: /^\/(send|remain)\/?$/ },
 ];
-// 알리고 호출 중계: POST /aligo  { host, path, form }
+// 알리고 호출 중계: POST /aligo  { host, path, form, image_b64?, image_name? }
+// 지시 #100: image_b64가 오면 multipart/form-data로 전송(이미지형 템플릿 등록 — image 파일 필드). 없으면 기존 urlencoded.
 app.post('/aligo', async (req, res) => {
     const host = String((req.body && req.body.host) || '');
     const reqPath = String((req.body && req.body.path) || '');
     const form = (req.body && req.body.form) || {};
+    const imageB64 = (req.body && req.body.image_b64) || null;
+    const imageName = String((req.body && req.body.image_name) || 'image.jpg').replace(/[^\w.\-]/g, '_').slice(0, 60);
     if (!ALIGO_ALLOW.some(a => a.host === host && a.re.test(reqPath))) {
         log('알리고 차단(허용목록 외)', host, reqPath);
         return res.status(403).json({ error: 'path_not_allowed', host, path: reqPath });
     }
     try {
-        const body = new URLSearchParams(form).toString();
-        const ares = await fetch(`https://${host}${reqPath}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body,
-        });
+        let fetchOpts;
+        if (imageB64) {
+            const buf = Buffer.from(String(imageB64), 'base64');
+            if (buf.length > 1024 * 1024) return res.status(413).json({ error: 'image_too_large' });   // 알리고 규격 500KB — 여유 상한 1MB
+            const fd = new FormData();   // Node 20 내장 (undici) — multipart 경계·인코딩 자동
+            for (const [k, v] of Object.entries(form)) fd.append(k, String(v));
+            const mime = imageName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+            fd.append('image', new Blob([buf], { type: mime }), imageName);
+            fetchOpts = { method: 'POST', body: fd };
+        } else {
+            fetchOpts = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams(form).toString(),
+            };
+        }
+        const ares = await fetch(`https://${host}${reqPath}`, fetchOpts);
         const text = await ares.text();
         let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
         if (!ares.ok) log('알리고 응답 오류', host, reqPath, ares.status); // 알림은 회사프로그램이 담당

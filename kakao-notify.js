@@ -78,9 +78,10 @@ function aligoDirectPost(reqPath, form, host) {
         req.end(body);
     });
 }
-// 알리고 호출 — 릴레이(고정 IP) 경유가 정식 경로 (지시 #95). 시그니처는 기존과 동일 유지.
-async function aligoPost(reqPath, form, host) {
-    if (relay.configured()) return relay.callAligo({ host: host || ALIGO_HOST, path: reqPath, form });
+// 알리고 호출 — 릴레이(고정 IP) 경유가 정식 경로 (지시 #95). extra = {imageB64, imageName} (지시 #100 이미지형 등록 — 릴레이 전용).
+async function aligoPost(reqPath, form, host, extra) {
+    if (relay.configured()) return relay.callAligo({ host: host || ALIGO_HOST, path: reqPath, form, ...(extra || {}) });
+    if (extra && extra.imageB64) throw new Error('이미지 업로드는 릴레이 경유에서만 지원');
     return aligoDirectPost(reqPath, form, host);
 }
 
@@ -205,10 +206,13 @@ async function selftest() {
 // ── 템플릿 등록·검수 신청 실행기 (지시 #98 — 대표 최종 GO 전용, 서버 측 실행: 알리고 키가 Render env에만 있으므로)
 //    발동은 server.js 플래그 폴러(aligo_register_request {go:'yes'})로만. 실발송 아님 — 등록(template/add)·검수 신청(template/request)만.
 //    문안·버튼 = alimtalk-templates.json 그대로(임의 수정 금지·status='confirmed' 필수). 텍스트형(tpl_emtype 미지정=NONE) — 이미지형은 별도 트랙.
-async function registerTemplates({ audit } = {}) {
-    const out = { at: new Date().toISOString(), audit: audit === true, results: [] };
+async function registerTemplates({ audit, set } = {}) {
+    const out = { at: new Date().toISOString(), audit: audit === true, set: set || 'text', results: [] };
     if (!configured()) return { ...out, error: 'keys-missing — 알리고 키 미설정' };
     if (!TEMPLATES_JSON || TEMPLATES_JSON.status !== 'confirmed') return { ...out, error: `templates-not-confirmed (status=${TEMPLATES_JSON && TEMPLATES_JSON.status})` };
+    // 지시 #100: set='image' → 이미지형 4장(templates_image — 문의하기 버튼 포함·같은 이미지 파일). 기본 = 텍스트형(templates).
+    const list = set === 'image' ? (TEMPLATES_JSON.templates_image || []) : TEMPLATES_JSON.templates;
+    if (!list.length) return { ...out, error: `템플릿 세트 비어있음 (set=${set || 'text'})` };
     const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
     const tok = await aligoPost('/akv10/token/create/5/m', auth);   // 4장 순차 등록 여유분 5분 토큰
     const token = tok && (tok.token || tok.urlencode || (tok.data && tok.data.token));
@@ -224,17 +228,28 @@ async function registerTemplates({ audit } = {}) {
             return o;
         }),
     });
-    for (const t of TEMPLATES_JSON.templates) {
+    for (const t of list) {
         const r = { key: t.key, name: t.name, env_key: t.env_key };
         try {
+            // 지시 #100: 이미지형 — 파일 존재·규격(≤500KB) 실측 후 base64 전달 (릴레이가 multipart 재조립)
+            let extra = null;
+            if (t.tpl_emtype === 'IMAGE') {
+                const imgPath = path.join(__dirname, t.image_file || 'assets/alimtalk_image.jpg');
+                if (!require('fs').existsSync(imgPath)) { r.error = `이미지 파일 없음: ${t.image_file}`; out.results.push(r); continue; }
+                const buf = require('fs').readFileSync(imgPath);
+                if (buf.length > 500 * 1024) { r.error = `이미지 500KB 초과 (${Math.round(buf.length / 1024)}KB)`; out.results.push(r); continue; }
+                extra = { imageB64: buf.toString('base64'), imageName: path.basename(imgPath) };
+                r.image = { file: t.image_file, kb: Math.round(buf.length / 1024) };
+            }
             const add = await aligoPost('/akv10/template/add/', {
                 ...base, tpl_name: t.name, tpl_content: t.content,
                 // 🔴 AC(채널 추가) 버튼은 채널추가형에서만 허용 — tpl_type=AD 미지정이 2026-07-29 510 실패 원인.
                 //    tpl_advert = 채널추가 안내 문구(카카오 고정 문구 — AD형 필수 파라미터).
                 ...(t.tpl_type ? { tpl_type: t.tpl_type } : {}),
                 ...(t.tpl_type === 'AD' ? { tpl_advert: '채널 추가하고 이 채널의 마케팅 메시지 등을 카카오톡으로 받기' } : {}),
+                ...(t.tpl_emtype ? { tpl_emtype: t.tpl_emtype } : {}),
                 ...(t.button ? { tpl_button: JSON.stringify(toRegButton(t.button)) } : {}),
-            });
+            }, undefined, extra);
             r.add = { code: add && add.code, message: String((add && add.message) || '').slice(0, 200) };
             const tplCode = add && ((add.data && add.data.templtCode) || add.templtCode);
             r.tpl_code = tplCode || null;
