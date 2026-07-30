@@ -12457,6 +12457,7 @@ async function renderBotProducts() {
         <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). 아직 발송 기능은 꺼져 있어 저장만 됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
     renderSeasonWaitlist().catch(console.error);   // 지시 #68 C5 — 같은 탭 하단 섹션
+    renderSeasonKnowledge().catch(console.error);  // 지시 #108 — 시기별 상품 지식
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
     renderLmsGuideLogs().catch(console.error);     // 지시 #76 — 발송 안내(LMS) 이력
     renderKakaoNotifyLogs().catch(console.error);  // 지시 #92 — 주문 알림톡·발주확인 이력
@@ -12511,6 +12512,55 @@ window.sendLmsGuide = async function(orderKey) {
     renderLmsGuideLogs().catch(console.error);
 };
 // --- 시즌 오픈 대기 신청 (지시 #68 C5) — 연락처는 서버가 마스킹해서 내려줌 ---
+// 지시 #108: 시기별 상품 지식 — 오늘 구간은 초록 표시. 직원 편집 가능(soft delete)
+async function renderSeasonKnowledge() {
+    const el = document.getElementById('season-knowledge-list');
+    if (!el) return;
+    const d = await api('/api/agent-office/season-knowledge');
+    const today = new Date();
+    const md = String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const inR = (m, s, e) => (s <= e) ? (m >= s && m <= e) : (m >= s || m <= e);
+    const rows = (d.rows || []).map(r => {
+        const now = inR(md, r.start_md, r.end_md);
+        return `
+        <tr${now ? ' style="background:#F3FAEA;"' : ''}>
+            <td style="white-space:nowrap;">${escapeHtml(r.item_key)}${now ? ' <span class="pill" style="font-size:10px; background:#8CC63E; color:#fff;">오늘</span>' : ''}</td>
+            <td><input type="text" id="sk-label-${r.id}" value="${escapeHtml(r.label)}" style="width:110px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;"></td>
+            <td style="white-space:nowrap;">
+                <input type="text" id="sk-start-${r.id}" value="${r.start_md}" style="width:64px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;"> ~
+                <input type="text" id="sk-end-${r.id}" value="${r.end_md}" style="width:64px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;">
+            </td>
+            <td><textarea id="sk-know-${r.id}" rows="2" style="width:300px; min-width:220px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(r.knowledge)}</textarea></td>
+            <td style="white-space:nowrap;">
+                <button class="btn-sm btn-outline" onclick="saveSeasonKnow(${r.id})">저장</button>
+                <button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteSeasonKnow(${r.id})">삭제</button>
+            </td>
+        </tr>`;
+    }).join('');
+    el.innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th>품목</th><th>구간</th><th>기간(월-일)</th><th>이 시기의 맛·상태·안내</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+           <p class="text-muted" style="font-size:12px; margin-top:6px;">초록 행 = 오늘 날짜 구간 (지금 AI 답변에 들어가는 내용). 저장 즉시 3채널 반영(톡톡은 봇 캐시 최대 5분).</p>`
+        : '<p class="text-muted">등록된 시기 지식이 없습니다.</p>';
+}
+window.saveSeasonKnow = async function(id) {
+    try {
+        await api('/api/agent-office/season-knowledge/' + id, 'PUT', {
+            label: document.getElementById('sk-label-' + id).value,
+            start_md: document.getElementById('sk-start-' + id).value.trim(),
+            end_md: document.getElementById('sk-end-' + id).value.trim(),
+            knowledge: document.getElementById('sk-know-' + id).value,
+        });
+        showToast('✅ 시기 지식 저장 완료 — AI 답변에 반영됩니다', 'lime');
+    } catch (e) { showToast('저장 실패: ' + e.message, 'error'); }
+    renderSeasonKnowledge().catch(console.error);
+};
+window.deleteSeasonKnow = async function(id) {
+    if (!confirm('이 구간을 삭제할까요? (soft delete — 복구는 대표에게 요청)')) return;
+    try { await api('/api/agent-office/season-knowledge/' + id, 'DELETE'); showToast('🗑 삭제 완료', 'lime'); }
+    catch (e) { showToast('삭제 실패: ' + e.message, 'error'); }
+    renderSeasonKnowledge().catch(console.error);
+};
+
 async function renderSeasonWaitlist() {
     const el = document.getElementById('season-wait-list');
     if (!el) return;
@@ -12664,6 +12714,21 @@ function setupBotProductsTab() {
             document.getElementById('season-wait-memo').value = '';
             showToast('✅ 대기 신청 등록 완료', 'lime');
             renderSeasonWaitlist().catch(console.error);
+        } catch (e) { alert(e.message); }
+    });
+    // 지시 #108: 시기별 상품 지식 구간 추가
+    document.getElementById('btn-sk-add')?.addEventListener('click', async () => {
+        const item_key = document.getElementById('sk-item').value.trim();
+        const label = document.getElementById('sk-label').value.trim();
+        const start_md = document.getElementById('sk-start').value.trim();
+        const end_md = document.getElementById('sk-end').value.trim();
+        const knowledge = document.getElementById('sk-knowledge').value.trim();
+        if (!item_key || !label || !start_md || !end_md || !knowledge) return alert('품목·구간 이름·기간(MM-DD)·내용을 모두 입력하세요');
+        try {
+            await api('/api/agent-office/season-knowledge', 'POST', { item_key, label, start_md, end_md, knowledge });
+            ['sk-item', 'sk-label', 'sk-start', 'sk-end', 'sk-knowledge'].forEach(id => document.getElementById(id).value = '');
+            showToast('✅ 시기 지식 등록 완료 — AI 답변에 반영됩니다', 'lime');
+            renderSeasonKnowledge().catch(console.error);
         } catch (e) { alert(e.message); }
     });
 }

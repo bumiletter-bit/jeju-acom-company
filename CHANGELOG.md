@@ -6,6 +6,12 @@
 
 ---
 
+## v5.9.145 (2026-07-30 — 지시 #108: 시기별 상품 지식 시스템 — "포슬한가요" 오답 해결)
+- [DB] `product_season_knowledge` (additive·soft delete·audit) + 시드 12구간(미니밤호박 3·청귤 5·황금향 2·하우스감귤 2 — 대표 원문)
+- [주입] `seasonScenariosToday()` — 오늘 날짜(KST) 구간을 "[오늘 시기] 품목—구간" 가상 시나리오 재료로 변환, **3채널 공용 주입**(qnaGenerate·inquiryGenerate·봇 /api/scenarios — 봇 무수정). 경계 3일 전 전환기 뉘앙스 자동 부가. 시기 지식 없으면 기존과 완전 동일(변화 0)
+- [화면] 판매현황 탭 "📅 시기별 상품 지식" 섹션 — 구간 목록(오늘 구간 초록 표시)·추가/수정/삭제(직원 가능·soft) (app.js v=325)
+- [검증] `qna_sim_request` 플래그 — 생성만 하는 재현 테스트(게시·발송 0) — STEP4 게이트용
+
 ## v5.9.144 (2026-07-30 — 지시 #107 STEP3: 일일 상품 스냅샷 수집기 — 자사몰 동기화 1단계·기본 OFF)
 - [타이머] `product_snapshot` 신설 (naver_auto_collect 시드 — **기본 OFF**·하루 1회·새벽 04:30 앵커·화면 타이머 카드에서 관리). 기존 타이머 무접촉
 - [수집기] collectProductSnapshot — 공식 상품 API(릴레이) 목록 조회(100건×최대 5p·350ms 간격·429 재시도)→ `naver_product_snapshot` 저장(최근 30회 보존). ⚠️ 앱 '상품' API 권한 필요(GW.AUTHN 시 실패 기록 — 권한 개통 후 ON)

@@ -1084,6 +1084,43 @@ async function initDB() {
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS shipping_guide TEXT`);
     // 지시 #107: 네이버 채널상품번호 (자동 동기화 기초 — 매칭은 번호 우선·이름 폴백. 화면은 읽기 표시만)
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS naver_product_no BIGINT`);
+    // 지시 #108: 시기별 상품 지식 — 농산물은 날짜 따라 변함("포슬한가요" 오답 방지). 매년 반복(월-일 구간)·soft delete
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS product_season_knowledge (
+            id SERIAL PRIMARY KEY,
+            item_key VARCHAR(40) NOT NULL,
+            label VARCHAR(80) NOT NULL,
+            start_md CHAR(5) NOT NULL,
+            end_md CHAR(5) NOT NULL,
+            knowledge TEXT NOT NULL,
+            sort INT DEFAULT 0,
+            enabled BOOLEAN DEFAULT true,
+            deleted_at TIMESTAMPTZ,
+            updated_by VARCHAR(50),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    `);
+    // 시드 (대표 원문 #108 — 테이블 비어있을 때 1회만. 이후 수정은 화면에서)
+    const skCnt = await pool.query(`SELECT COUNT(*)::int AS n FROM product_season_knowledge`);
+    if (skCnt.rows[0].n === 0) {
+        const SK_SEED = [
+            ['미니밤호박', '포슬 최적기', '06-10', '07-15', '밤맛에 퍽퍽하고 포슬한 식감이 좋은 시기예요. 포슬포슬한 식감을 즐기기 최적기입니다.', 1],
+            ['미니밤호박', '촉촉 전환기', '07-16', '07-31', "당도가 계속 오르는 중이에요. 포슬함은 점점 줄고 촉촉한 밤단호박으로 먹기 좋은 시기 — '포슬하기보다는 촉촉+단맛으로 가는 중'으로 안내해주세요.", 2],
+            ['미니밤호박', '당도 절정', '08-01', '09-10', '당도 절정 시기예요. 포슬하기보다는 촉촉하고 당도가 높아 요리·식단용으로 추천드리기 좋은 시기입니다.', 3],
+            ['청귤(풋귤)', '첫 출하', '08-01', '08-14', '크기가 작고 속은 라임색, 아주 단단하고 산도가 아주 강한 시기예요 → 청 담그기 최적기(손질은 조금 힘들 수 있어요). 설탕 비율은 1:1을 권장드려요.', 1],
+            ['청귤(풋귤)', '중기', '08-15', '08-24', '속이 살짝 노란빛을 띠고 크기가 조금 커진 시기예요.', 2],
+            ['청귤(풋귤)', '후기 진입', '08-25', '08-31', '속에 주황빛이 돌기 시작하고 크기가 커지며, 산도는 내려가고 당도가 올라가는 시기예요.', 3],
+            ['청귤(풋귤)', '마감기', '09-01', '09-15', '속이 완전히 주황색이고 크기가 커요. 산도는 있지만 당도가 오른 시기 — 설탕 비율은 1:0.8~0.7을 권장드려요.', 4],
+            ['청귤(풋귤)', '공통', '08-01', '09-15', '달달한 청귤청이 목적이라면 첫 출하 시기부터가 최적이에요.', 9],
+            ['황금향', '하우스황금향', '05-01', '11-30', '하우스황금향 시기예요(5~12월). 5~8월엔 겉에 푸른끼가 있어도 다 익은 거예요. 과즙이 많아 냉장 후 시원하게 드시면 좋아요.', 1],
+            ['황금향', '노지황금향', '12-01', '12-31', '노지황금향 시기예요(12월 약 한 달). 하우스보다 크기는 작아도 맛이 진하고 살짝 새콤해요.', 2],
+            ['하우스감귤', '초기(푸른끼)', '05-01', '07-31', '푸른끼가 많은 시기예요 — 푸른끼가 있어도 다 익은 것이니 안심하시라고 안내해주세요(강제 착색 없이 신선하게 발송하는 것이 장점). 맛은 새콤달콤해요. 여름 과일이라 냉장보관 후 시원하게 드시는 걸 추천해요.', 1],
+            ['하우스감귤', '후기(단맛)', '08-01', '10-15', '단맛이 우세해지고 겉색이 일반 귤색이 되는 시기예요(맛이 더 올라옴). 시설재배 물조절로 당도를 높인 것이 하우스귤의 장점이에요. 여름 과일이라 냉장보관 후 시원하게 드시는 걸 추천해요.', 2],
+        ];
+        for (const [k, l, s, e, kn, so] of SK_SEED) {
+            await pool.query(`INSERT INTO product_season_knowledge (item_key, label, start_md, end_md, knowledge, sort, updated_by) VALUES ($1,$2,$3,$4,$5,$6,'시드 #108')`, [k, l, s, e, kn, so]);
+        }
+    }
     // 시드 3종 (대표 원문 — 지시 #74 첨부. shipping_guide IS NULL인 품목만 = 직원 편집분 보존·멱등)
     const GUIDE_COMMON_TAIL = `\n\n꼼꼼히 포장하여 보내드렸지만, 혹시 받아보신 상품에 문제가 있거나 궁금한 점이 있으시면 언제든 연락주세요!\n\n앞으로도 배송 소식과 제철 상품 안내연락 드리겠습니다. (수신거부 원하시면 연락주세요)\n\n제주의 풍요롭고 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요♥\n\n-제주아꼼이네 드림-`;
     const GUIDE_SEEDS = [
@@ -5291,6 +5328,64 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
 // ── 지시 #68 C5: 시즌 오픈 대기 신청 — 직원 등록·조회, 삭제는 대표 전용 (soft-delete·audit)
 //    연락처는 발송 목적상 원문 저장, 응답·화면에는 마스킹만 노출. 알림톡 발송 연동은 향후(지금은 저장소·화면까지)
 const maskWaitContact = (t) => { const s = String(t || '').replace(/[^0-9]/g, ''); return s.length >= 7 ? s.slice(0, 3) + '****' + s.slice(-4) : '***'; };
+// ── 지시 #108: 시기별 상품 지식 관리 (직원 편집 가능 — 매년 날짜 조정. soft delete·audit)
+app.get('/api/agent-office/season-knowledge', authMiddleware, async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT id, item_key, label, start_md, end_md, knowledge, sort, enabled, updated_by, updated_at
+                                    FROM product_season_knowledge WHERE deleted_at IS NULL ORDER BY item_key, sort, id`);
+        res.json({ rows: r.rows });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/agent-office/season-knowledge', authMiddleware, async (req, res) => {
+    try {
+        const { item_key, label, start_md, end_md, knowledge, sort } = req.body || {};
+        const mdOk = (v) => /^\d{2}-\d{2}$/.test(String(v || ''));
+        if (!item_key || !label || !mdOk(start_md) || !mdOk(end_md) || !knowledge) {
+            return res.status(400).json({ error: '품목·구간 이름·기간(MM-DD)·내용을 모두 입력해주세요' });
+        }
+        const r = await pool.query(
+            `INSERT INTO product_season_knowledge (item_key, label, start_md, end_md, knowledge, sort, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+            [String(item_key).slice(0, 40), String(label).slice(0, 80), start_md, end_md, String(knowledge), Number(sort) || 0, adminActor(req)?.name || null]);
+        await writeAudit({ action: 'create', targetType: 'season_knowledge', targetId: r.rows[0].id,
+            changes: { after: r.rows[0] }, source: 'season-knowledge', actor: adminActor(req) });
+        res.json({ row: r.rows[0] });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.put('/api/agent-office/season-knowledge/:id', authMiddleware, async (req, res) => {
+    try {
+        const cur = await pool.query(`SELECT * FROM product_season_knowledge WHERE id=$1 AND deleted_at IS NULL`, [req.params.id]);
+        if (!cur.rows.length) return res.status(404).json({ error: '해당 구간이 없습니다' });
+        const b = req.body || {};
+        const mdOk = (v) => /^\d{2}-\d{2}$/.test(String(v || ''));
+        const next = {
+            item_key: b.item_key != null ? String(b.item_key).slice(0, 40) : cur.rows[0].item_key,
+            label: b.label != null ? String(b.label).slice(0, 80) : cur.rows[0].label,
+            start_md: mdOk(b.start_md) ? b.start_md : cur.rows[0].start_md,
+            end_md: mdOk(b.end_md) ? b.end_md : cur.rows[0].end_md,
+            knowledge: b.knowledge != null ? String(b.knowledge) : cur.rows[0].knowledge,
+            sort: b.sort != null ? Number(b.sort) || 0 : cur.rows[0].sort,
+            enabled: b.enabled != null ? !!b.enabled : cur.rows[0].enabled,
+        };
+        const r = await pool.query(
+            `UPDATE product_season_knowledge SET item_key=$2, label=$3, start_md=$4, end_md=$5, knowledge=$6, sort=$7, enabled=$8, updated_by=$9, updated_at=now() WHERE id=$1 RETURNING *`,
+            [req.params.id, next.item_key, next.label, next.start_md, next.end_md, next.knowledge, next.sort, next.enabled, adminActor(req)?.name || null]);
+        await writeAudit({ action: 'update', targetType: 'season_knowledge', targetId: r.rows[0].id,
+            changes: { before: cur.rows[0], after: r.rows[0] }, source: 'season-knowledge', actor: adminActor(req) });
+        res.json({ row: r.rows[0] });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/agent-office/season-knowledge/:id', authMiddleware, async (req, res) => {
+    try {
+        const cur = await pool.query(`SELECT * FROM product_season_knowledge WHERE id=$1 AND deleted_at IS NULL`, [req.params.id]);
+        if (!cur.rows.length) return res.status(404).json({ error: '해당 구간이 없습니다' });
+        await pool.query(`UPDATE product_season_knowledge SET deleted_at=now(), updated_by=$2, updated_at=now() WHERE id=$1`,
+            [req.params.id, adminActor(req)?.name || null]);
+        await writeAudit({ action: 'delete', targetType: 'season_knowledge', targetId: Number(req.params.id),
+            changes: { before: cur.rows[0] }, source: 'season-knowledge', actor: adminActor(req) });
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/agent-office/season-waitlist', authMiddleware, async (req, res) => {
     try {
         const r = await pool.query(
@@ -5883,9 +5978,11 @@ app.get('/api/scenarios', async (req, res) => {
              ORDER BY scenario_no ASC, id ASC`, [chs]);
         const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inquiry_auto_reply'`);
         const autoReply = cfg.rows.length ? cfg.rows[0].value : 'on';
+        const season = await seasonScenariosToday();   // 지시 #108: 톡톡봇에도 오늘 시기 지식 주입 (가상 시나리오 — 봇 무수정, updated_at은 당일 00시 고정)
+        const all = [...r.rows, ...season];
         res.json({
-            ok: true, auto_reply: autoReply, count: r.rows.length, scenarios: r.rows,
-            updated_max: r.rows.reduce((m, x) => (!m || x.updated_at > m) ? x.updated_at : m, null),
+            ok: true, auto_reply: autoReply, count: all.length, scenarios: all,
+            updated_max: all.reduce((m, x) => (!m || x.updated_at > m) ? x.updated_at : m, null),
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -6846,8 +6943,36 @@ async function qnaScenarios() {
     return r.rows.map(s => ({ ...s, keywords: Array.isArray(s.keywords) ? s.keywords : [] }));
 }
 
+// ── 지시 #108: 시기별 상품 지식 → 오늘 날짜 구간을 "가상 시나리오 재료"로 변환 (3채널 공용 주입)
+//    시기 지식 없는 품목·실패 시 = 빈 배열 → 기존과 완전 동일(변화 0). 경계 3일 전이면 전환기 뉘앙스 자동 부가.
+async function seasonScenariosToday(dateOverride) {
+    try {
+        const now = dateOverride ? new Date(dateOverride + 'T12:00:00+09:00') : new Date(Date.now() + 9 * 3600 * 1000);
+        const md = String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
+        const inRange = (m, s, e) => (s <= e) ? (m >= s && m <= e) : (m >= s || m <= e);
+        const mdDiff = (a, b) => {   // a→b 일수 차이 (월일 근사 — 전환기 판정용이라 31일 캘린더 근사면 충분)
+            const [am, ad] = a.split('-').map(Number), [bm, bd] = b.split('-').map(Number);
+            return (bm * 31 + bd) - (am * 31 + ad);
+        };
+        const r = await pool.query(`SELECT * FROM product_season_knowledge WHERE enabled = true AND deleted_at IS NULL ORDER BY item_key, sort, id`);
+        const out = [];
+        for (const row of r.rows) {
+            if (!inRange(md, row.start_md, row.end_md)) continue;
+            let text = `(오늘 ${md.replace('-', '/')} 기준 — 이 상품 문의에는 이 '오늘 상태'를 다른 재료보다 우선 반영하세요)\n${row.knowledge}`;
+            const gap = mdDiff(md, row.end_md);
+            if (gap >= 0 && gap <= 3 && row.label !== '공통') {
+                const next = r.rows.find(x => x.item_key === row.item_key && x.id !== row.id && x.label !== '공통'
+                    && mdDiff(row.end_md, x.start_md) >= 0 && mdDiff(row.end_md, x.start_md) <= 3);
+                if (next) text += `\n(참고: 지금은 '${next.label}' 시기로 넘어가는 전환기예요 — "~로 넘어가는 시기"처럼 부드럽게 안내해주세요)`;
+            }
+            out.push({ scenario_no: 900 + row.id, name: `[오늘 시기] ${row.item_key} — ${row.label}`, keywords: [row.item_key], response: text, action: null, channel: '공통', updated_at: new Date(now.toISOString().slice(0, 10)) });
+        }
+        return out;
+    } catch (e) { console.error('[시기지식] 조회 실패(주입 생략):', e.message); return []; }
+}
+
 // ── 시나리오 기반 생성 (설계 변경 대표 7/27 — "배정(복사)"→"생성". 철칙: 재료에 없는 사실 금지·부족하면 SKIP)
-const QNA_TAIL = '*추가 문의사항 있으시다면 언제든지 톡톡 또는 📞 010-6687-4031 고객센터 번호로 연락주시면 빠른 상담 도와드리겠습니다.';
+const QNA_TAIL ='*추가 문의사항 있으시다면 언제든지 톡톡 또는 📞 010-6687-4031 고객센터 번호로 연락주시면 빠른 상담 도와드리겠습니다.';
 const QNA_MODEL = process.env.QNA_MODEL || 'claude-sonnet-5';   // 톡톡봇과 동일 모델
 function qnaBuildSystem(scenarios) {
     return `당신은 제주 농산물 스마트스토어 "제주아꼼이네"의 AI 고객상담 담당자입니다.
@@ -6895,10 +7020,11 @@ function qnaBuildSystem(scenarios) {
 ## 회사 확정 답변자료 (시나리오)
 ${scenarios.map(s => `### ${s.name}\n${s.response}`).join('\n\n')}`;
 }
-async function qnaGenerate(question, productName) {
+async function qnaGenerate(question, productName, simDate) {   // simDate = 지시 #108 재현 테스트 전용(날짜 시뮬레이션 — 실운영 호출은 2인자)
     if (!process.env.ANTHROPIC_API_KEY) return null;             // 키 없으면 전부 SKIP (침묵)
-    const scenarios = await qnaScenarios();
-    if (!scenarios.length) return null;
+    const baseScenarios = await qnaScenarios();
+    if (!baseScenarios.length) return null;
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate))];   // 지시 #108: 오늘 시기 지식 주입 (없으면 기존 동일)
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
@@ -7083,8 +7209,9 @@ ${scenarios.map(s => `### ${s.name}\n${s.response}`).join('\n\n')}`;
 }
 async function inquiryGenerate(item) {
     if (!process.env.ANTHROPIC_API_KEY) return null;
-    const scenarios = await qnaScenarios();                       // 재료 공용: 채널 상품문의·공통
-    if (!scenarios.length) return null;
+    const baseScenarios = await qnaScenarios();                   // 재료 공용: 채널 상품문의·공통
+    if (!baseScenarios.length) return null;
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday())];   // 지시 #108: 오늘 시기 지식 주입
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
@@ -10677,6 +10804,27 @@ setInterval(async () => {
         await naverCfgSet('naver_query_result', { at: new Date().toISOString(), count: results.length, results });
     } catch (e) {
         try { await naverCfgSet('naver_query_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
+// 지시 #108: 답변 생성 재현 테스트 — DB 플래그(qna_sim_request {cases:[{q,product,date}]}) 감지 시 qnaGenerate만 호출
+// (생성만 — 게시·발송·기록 없음. 시기 지식 STEP4 검증용. 결과 = qna_sim_result)
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('qna_sim_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'qna_sim_request'`);   // 선제거 — 반복 실행 방지
+        const cases = Array.isArray(req.cases) ? req.cases.slice(0, 6) : [];
+        const results = [];
+        for (const cse of cases) {
+            try {
+                const r = await qnaGenerate(String(cse.q || ''), cse.product || null, cse.date || undefined);
+                results.push({ q: cse.q, date: cse.date || 'today', skip: !r, used: r && r.used, answer: r ? String(r.answer).slice(0, 1200) : null });
+            } catch (e) { results.push({ q: cse.q, error: String(e.message || e).slice(0, 200) }); }
+        }
+        await naverCfgSet('qna_sim_result', { at: new Date().toISOString(), results });
+    } catch (e) {
+        try { await naverCfgSet('qna_sim_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
     }
 }, 60000);
 
