@@ -12434,7 +12434,7 @@ async function renderBotProducts() {
     const isAdmin = currentUser?.role === 'admin';
     const rows = botProducts.map(p => `
         <tr>
-            <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span class="pill pill-wait" style="font-size:11px;">가격 미세팅 · 봇 미노출</span>' : ''}</td>
+            <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span class="pill pill-wait" style="font-size:11px;">가격 미세팅 · 봇 미노출</span>' : ''}${p.naver_product_no ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px;">🛰️ 네이버 ${p.naver_product_no}</div>` : ''}</td>
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
                 `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" onclick="setBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>

@@ -1069,6 +1069,8 @@ async function initDB() {
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS notify_message TEXT`);
     // 발송 안내문 장문 (지시 #74): 발송 시점 LMS용 — 먹는법·보관법·후숙 팁. {{내일요일}}·{{모레요일}}은 발송 시 요일 자동 치환
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS shipping_guide TEXT`);
+    // 지시 #107: 네이버 채널상품번호 (자동 동기화 기초 — 매칭은 번호 우선·이름 폴백. 화면은 읽기 표시만)
+    await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS naver_product_no BIGINT`);
     // 시드 3종 (대표 원문 — 지시 #74 첨부. shipping_guide IS NULL인 품목만 = 직원 편집분 보존·멱등)
     const GUIDE_COMMON_TAIL = `\n\n꼼꼼히 포장하여 보내드렸지만, 혹시 받아보신 상품에 문제가 있거나 궁금한 점이 있으시면 언제든 연락주세요!\n\n앞으로도 배송 소식과 제철 상품 안내연락 드리겠습니다. (수신거부 원하시면 연락주세요)\n\n제주의 풍요롭고 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요♥\n\n-제주아꼼이네 드림-`;
     const GUIDE_SEEDS = [
@@ -5005,7 +5007,7 @@ async function todayLinkedBotProductNames() {
 async function svcListBotProducts() {
     const linked = await todayLinkedBotProductNames();
     const r = await pool.query(
-        `SELECT id, name, status, price, notify_message, shipping_guide, updated_by, updated_at FROM bot_products
+        `SELECT id, name, status, price, notify_message, shipping_guide, naver_product_no, updated_by, updated_at FROM bot_products
          WHERE deleted_at IS NULL
          ORDER BY CASE status WHEN '준비중' THEN 0 WHEN '판매중' THEN 1 WHEN '품절' THEN 2 ELSE 3 END, name`);
     // 대표 7/25: 품목별 금액 매칭 품목은 삭제 불가 — 예외(사전예약특가 등)·수동 추가 품목만 삭제 허용
@@ -10612,7 +10614,7 @@ setInterval(async () => {
                 let s = JSON.stringify(data);
                 if (s.length > 900000) s = s.slice(0, 900000);   // 결과 캡(상세 HTML 대비) — jsonb 아닌 문자열로 보관
                 results.push({ path: call.path, ok: true, size: s.length, data_str: s });
-            } catch (e) { results.push({ path: call.path, error: String(e.message || e).slice(0, 300) }); }
+            } catch (e) { results.push({ path: call.path, error: String(e.message || e).slice(0, 300), error_data: e.data ? JSON.stringify(e.data).slice(0, 400) : null }); }
             await new Promise(r => setTimeout(r, 400));   // 호출 간격(429 방어 — 기존 패턴)
         }
         await naverCfgSet('naver_query_result', { at: new Date().toISOString(), count: results.length, results });
