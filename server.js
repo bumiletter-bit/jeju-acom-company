@@ -5729,6 +5729,41 @@ async function inquiryStaffPending() {
     const oldest = [q.o, i.o].filter(Boolean).map(x => new Date(x).getTime()).sort()[0] || null;
     return { n: q.n + i.n, hours: oldest ? Math.max(0, Math.floor((Date.now() - oldest) / 3600000)) : 0 };
 }
+// ── 지시 #111: 톡톡 요청형 문의(배송지·옵션·연락처 변경, 취소 등) 직원 인계 알림 ──
+//    봇이 접수 안내(자동응답)를 해도 요청 건이 직원 눈에 확실히 잡히게 — message_logs 감지 → 텔레그램.
+//    야간(alert_quiet)엔 보류 큐에 쌓았다가 야간 종료 후 몰아서 발송(아침 브리핑 로직 무수정).
+const TALKTALK_REQUEST_RE = /(배송지|주소|옵션|연락처|받는\s*분|수취인).{0,14}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정).{0,14}(배송지|주소|옵션|연락처)|주문.{0,10}취소|취소.{0,10}(해\s*주|부탁|요청|하고\s*싶)/;
+let _ttReqBusy = false;
+setInterval(async () => {
+    if (_ttReqBusy) return;
+    _ttReqBusy = true;
+    try {
+        const st = (await naverCfgGet('talktalk_request_state')) || {};
+        if (st.last_id == null) {   // 첫 가동 — 현재 최신 id를 기준점으로만 기록 (과거분 폭주 방지)
+            const mx = await pool.query(`SELECT COALESCE(MAX(id),0)::int AS m FROM message_logs`);
+            await naverCfgSet('talktalk_request_state', { last_id: mx.rows[0].m, queue: [] });
+            return;
+        }
+        const r = await pool.query(
+            `SELECT id, message, bot_response FROM message_logs
+             WHERE id > $1 AND bot_response IS NOT NULL AND bot_response NOT IN ('[직원응답]','[직원 직접답변]')
+             ORDER BY id ASC LIMIT 50`, [st.last_id]);
+        if (!r.rows.length) { /* 신규 없음 — 야간 보류분 방출만 검사 */ }
+        const hits = r.rows.filter(x => TALKTALK_REQUEST_RE.test(String(x.message || '')));
+        let queue = Array.isArray(st.queue) ? st.queue : [];
+        for (const h of hits) queue.push(String(h.message || '').slice(0, 60));
+        const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
+        const quiet = await alertQuietNow();
+        if (!quiet && queue.length) {
+            const lines = queue.slice(0, 8).map(m => `· "${m}"`).join('\n');
+            await notifyTelegram(`📮 톡톡 요청형 문의 ${queue.length}건 — 직원 확인 필요\n${lines}\n(봇은 접수 안내만 했습니다 — 실제 변경·취소 처리는 [문의 관리]>톡톡 탭·판매자센터에서 직원이 진행해주세요)`);
+            queue = [];
+        }
+        await naverCfgSet('talktalk_request_state', { last_id: lastId, queue });
+    } catch (e) { console.error('[요청형알림] 오류:', e.message); }
+    finally { _ttReqBusy = false; }
+}, 3 * 60 * 1000);
+
 let _inqAlertBusy = false;
 async function inquiryAlertTick() {
     if (_inqAlertBusy) return;
@@ -6984,6 +7019,17 @@ function qnaBuildSystem(scenarios) {
 2. 문의에 답하려면 재료에 없는 사실이 필요한 경우 → 반드시 SKIP 하세요.
 3. 환불·보상·반품 여부를 새로 결정하거나 새로운 약속을 만들지 마세요. 재료에 적힌 처리 안내 문구의 범위 안에서만 안내하세요.
 
+## 응대 톤 원칙 — 정직한 사실 + 현재의 장점 (지시 #110 — 전 채널 공통)
+- 사실은 정직하게 답하세요. 단점·불리한 사실의 회피·얼버무림·과장은 금지입니다.
+- 사실을 말한 뒤, 재료 안에 있는 그 상품·그 시기의 장점으로 자연스럽게 연결하세요 (사실 인정 → 장점 재조명 → 안심 흐름). 예: "초반엔 크기가 작은 편이에요! 대신 이 시기가 산도가 가장 강해서 청 담그기엔 제일 좋은 때라, 일부러 이 시기를 찾으시는 분들이 많답니다."
+- 단, 장점도 재료(시나리오·[오늘 시기] 지식·판매현황)에 있는 것만 쓰세요. 재료 밖 장점을 지어내는 것은 철칙 위반입니다. 연결할 장점이 재료에 없으면 사실만 정직하게 안내하세요.
+
+## 요청형 문의 응대 — 접수는 여기서, 실행은 직원이 (지시 #111)
+- 배송지·옵션·연락처 변경, 취소, 추가 요청처럼 고객이 무언가를 바꿔달라고 요청+정보를 주는 문의에 적용:
+- 고객이 변경 정보(주소 등)를 함께 남겼으면 그 정보를 그대로 복창해 확인하세요 — 예: "○○아파트 101동 주소로 변경 요청 확인했습니다! 이 주소로 진행하면 될까요? 확인해주시면 저희가 바로 처리 도와드리겠습니다."
+- "변경해드렸습니다"처럼 완료를 단정하는 표현은 절대 금지 — 실제 처리는 직원 확인 후에 이뤄집니다. "확인 후 변경 도와드리겠습니다" 흐름을 유지하세요.
+- 발송 임박이거나 이미 발송된 주문의 변경 요청은 재료의 처리 안내대로 고객센터(직원) 연결을 안내하세요.
+
 ## 답변 작성 방법
 - 해당하는 시나리오가 1개면: 그 시나리오를 기반으로 질문 맥락에 맞게 자연스럽게 작성하세요. 질문과 무관한 부분은 빼도 됩니다.
 - 여러 시나리오에 걸치면: 해당 시나리오들을 조합해 하나의 완전한 답변으로 작성하세요.
@@ -7181,6 +7227,17 @@ function inquiryBuildSystem(scenarios) {
 1. 가격·배송 기간·판매 시기·구성·수량·사이즈·보관법·정책(반품/환불/교환)·연락처·링크 등 모든 '사실 정보'는 아래 재료에 적힌 값 그대로만 사용하세요. 재료에 없는 사실은 한 줄도, 한 단어도 지어내면 안 됩니다.
 2. 문의에 답하려면 재료에 없는 사실이 필요한 경우 → 반드시 SKIP 하세요.
 3. 환불·보상·반품 여부를 새로 결정하거나 새로운 약속을 만들지 마세요. 재료에 적힌 처리 안내 문구의 범위 안에서만 안내하세요.
+
+## 응대 톤 원칙 — 정직한 사실 + 현재의 장점 (지시 #110 — 전 채널 공통)
+- 사실은 정직하게 답하세요. 단점·불리한 사실의 회피·얼버무림·과장은 금지입니다.
+- 사실을 말한 뒤, 재료 안에 있는 그 상품·그 시기의 장점으로 자연스럽게 연결하세요 (사실 인정 → 장점 재조명 → 안심 흐름).
+- 단, 장점도 재료(시나리오·[오늘 시기] 지식·판매현황)에 있는 것만 쓰세요. 재료 밖 장점을 지어내는 것은 철칙 위반입니다. 연결할 장점이 재료에 없으면 사실만 정직하게 안내하세요.
+
+## 요청형 문의 응대 — 접수는 여기서, 실행은 직원이 (지시 #111)
+- 배송지·옵션·연락처 변경, 취소, 추가 요청처럼 고객이 무언가를 바꿔달라고 요청+정보를 주는 문의에 적용:
+- 고객이 변경 정보(주소 등)를 함께 남겼으면 그 정보를 그대로 복창해 확인하세요 — "○○ 주소로 변경 요청 확인했습니다! 이 주소로 진행하면 될까요?"
+- "변경해드렸습니다"처럼 완료를 단정하는 표현은 절대 금지 — 실제 처리는 직원 확인 후에 이뤄집니다. "확인 후 변경 도와드리겠습니다" 흐름을 유지하세요.
+- 발송 임박이거나 이미 발송된 주문의 변경 요청은 재료의 처리 안내대로 고객센터(직원) 연결을 안내하세요.
 
 ## 답변 작성 방법
 - 해당하는 시나리오가 1개면 그것을 기반으로 질문 맥락에 맞게 자연스럽게, 여러 개면 조합해 하나의 완전한 답변으로 작성하세요.
