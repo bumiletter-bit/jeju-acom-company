@@ -5732,7 +5732,8 @@ async function inquiryStaffPending() {
 // ── 지시 #111: 톡톡 요청형 문의(배송지·옵션·연락처 변경, 취소 등) 직원 인계 알림 ──
 //    봇이 접수 안내(자동응답)를 해도 요청 건이 직원 눈에 확실히 잡히게 — message_logs 감지 → 텔레그램.
 //    야간(alert_quiet)엔 보류 큐에 쌓았다가 야간 종료 후 몰아서 발송(아침 브리핑 로직 무수정).
-const TALKTALK_REQUEST_RE = /(배송지|주소|옵션|연락처|받는\s*분|수취인).{0,14}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정).{0,14}(배송지|주소|옵션|연락처)|주문.{0,10}취소|취소.{0,10}(해\s*주|부탁|요청|하고\s*싶)/;
+// 지시 #113: 간격 상한 14→40자 확대 — 실제 주소가 끼면("배송지를 서귀포시 화순로 101로 변경") 14자를 넘어 미감지되던 결함 수정
+const TALKTALK_REQUEST_RE = /(배송지|주소|옵션|연락처|받는\s*분|수취인)[\s\S]{0,40}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정)[\s\S]{0,40}(배송지|주소|옵션|연락처)|주문[\s\S]{0,20}취소|취소[\s\S]{0,20}(해\s*주|부탁|요청|하고\s*싶)/;
 let _ttReqBusy = false;
 setInterval(async () => {
     if (_ttReqBusy) return;
@@ -5754,12 +5755,15 @@ setInterval(async () => {
         for (const h of hits) queue.push(String(h.message || '').slice(0, 60));
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
         const quiet = await alertQuietNow();
+        let lastAlert = st.last_alert || null;
         if (!quiet && queue.length) {
             const lines = queue.slice(0, 8).map(m => `· "${m}"`).join('\n');
-            await notifyTelegram(`📮 톡톡 요청형 문의 ${queue.length}건 — 직원 확인 필요\n${lines}\n(봇은 접수 안내만 했습니다 — 실제 변경·취소 처리는 [문의 관리]>톡톡 탭·판매자센터에서 직원이 진행해주세요)`);
-            queue = [];
+            // 지시 #113: 발송 결과를 상태에 기록 — 'sent'일 때만 비움(실패 시 큐 유지·다음 틱 재시도). 실물 수신 확인은 대표 몫.
+            const result = await notifyTelegram(`📮 톡톡 요청형 문의 ${queue.length}건 — 직원 확인 필요\n${lines}\n(봇은 접수 안내만 했습니다 — 실제 변경·취소 처리는 [문의 관리]>톡톡 탭·판매자센터에서 직원이 진행해주세요)`);
+            lastAlert = { at: new Date().toISOString(), count: queue.length, result };
+            if (result === 'sent') queue = [];
         }
-        await naverCfgSet('talktalk_request_state', { last_id: lastId, queue });
+        await naverCfgSet('talktalk_request_state', { last_id: lastId, queue, last_alert: lastAlert });
     } catch (e) { console.error('[요청형알림] 오류:', e.message); }
     finally { _ttReqBusy = false; }
 }, 3 * 60 * 1000);
@@ -10663,11 +10667,11 @@ async function notifyTelegram(text) {
         return 'sent';
     };
     try {
-        await sendOnce();
+        return await sendOnce();   // 지시 #113: 결과 반환('sent'/'off'/'no-token'/'no-chat') — 호출부가 발송 여부를 검증 가능(기존 호출부는 반환 무시라 무영향)
     } catch (e1) {
         try {
             await new Promise(r => setTimeout(r, 5000));
-            await sendOnce();
+            return await sendOnce();
         } catch (e) {
             // 알림은 부가 기능 — 재시도까지 실패하면 무시하고 audit에만 기록 (토큰 미포함 메시지)
             writeAudit({
@@ -10675,6 +10679,7 @@ async function notifyTelegram(text) {
                 changes: { after: { error: String(e.message || e).slice(0, 120), retried: true, first_error: String(e1.message || e1).slice(0, 80) } },
                 source: 'agent_office', actor: null,
             }).catch(() => {});
+            return 'failed';
         }
     }
 }
