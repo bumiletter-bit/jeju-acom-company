@@ -7370,13 +7370,21 @@ async function collectProductSnapshot() {
     try {
         const live = items.filter(i => i.statusType === 'SALE' || (i.statusType == null && Number(i.stock) > 0)).slice(0, 10);
         const collected = {};
+        const revFetch = async (p) => fetch('https://brand.naver.com/n/v1/contents/reviews/query-pages', {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json', accept: 'application/json',
+                // 429 완화(2026-07-30 실측: Render IP 첫 콜부터 429) — 브라우저형 헤더 + referer
+                'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+                'referer': `https://brand.naver.com/jejuakkome/products/${p.no}`,
+            },
+            body: JSON.stringify({ checkoutMerchantNo: 510497562, originProductNo: Number(p.originNo), page: 1, pageSize: 5, reviewSearchSortType: 'REVIEW_RANKING' }),
+        });
         for (const p of live) {
             if (!p.originNo || !p.no) continue;
-            await new Promise(r => setTimeout(r, 400));
-            const resp = await fetch('https://brand.naver.com/n/v1/contents/reviews/query-pages', {
-                method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
-                body: JSON.stringify({ checkoutMerchantNo: 510497562, originProductNo: Number(p.originNo), page: 1, pageSize: 5, reviewSearchSortType: 'REVIEW_RANKING' }),
-            });
+            await new Promise(r => setTimeout(r, 1500));
+            let resp = await revFetch(p);
+            if (resp.status === 429) { await new Promise(r => setTimeout(r, 8000)); resp = await revFetch(p); }   // 1회 백오프 재시도
             if (!resp.ok) throw new Error('리뷰 HTTP ' + resp.status);
             const j = await resp.json();
             collected[String(p.no)] = (j.contents || []).slice(0, 5).map(rv => ({
