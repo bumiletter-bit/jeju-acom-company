@@ -12628,8 +12628,7 @@ async function renderSeasonKnowledge() {
             return `
         <tr style="background:#F5F6FB;">
             <td style="white-space:nowrap;">${itemCell}</td>
-            <td style="white-space:nowrap;">${skPhaseSelect('sk-phase-' + r.id, p.phase || '초기')}
-                <input type="text" id="sk-extra-${r.id}" value="${escapeHtml(p.phase ? p.extra : String(r.label))}" placeholder="보조 설명(선택)" style="width:100px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;"></td>
+            <td style="white-space:nowrap;">${skPhaseSelect('sk-phase-' + r.id, p.phase || '초기')}</td>
             <td style="white-space:nowrap;">
                 <input type="text" class="akm-md" id="sk-start-${r.id}" value="${skMdShow(r.start_md)}" autocomplete="off" style="width:66px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;"> ~
                 <input type="text" class="akm-md" id="sk-end-${r.id}" value="${skMdShow(r.end_md)}" autocomplete="off" style="width:66px; padding:5px; border:1px solid var(--border,#ccc); border-radius:7px;">
@@ -12661,15 +12660,14 @@ async function renderSeasonKnowledge() {
 window.editSeasonKnow = function(id) { skEditingId = id; renderSeasonKnowledge().catch(console.error); };
 window.cancelSeasonKnow = function() { skEditingId = null; renderSeasonKnowledge().catch(console.error); };
 window.saveSeasonKnow = async function(id) {
-    const phase = document.getElementById('sk-phase-' + id).value;
-    const extra = document.getElementById('sk-extra-' + id).value.trim();
+    const phase = document.getElementById('sk-phase-' + id).value;   // #116: 보조 설명 제거 — 구간은 선택값만
     const mdOk = (v) => /^\d{2}-\d{2}$/.test(v);
     const s = skMdSave(document.getElementById('sk-start-' + id).value);
     const e2 = skMdSave(document.getElementById('sk-end-' + id).value);
     if (!mdOk(s) || !mdOk(e2)) return showToast('기간은 월/일 형식(예: 05/01)으로 입력하세요', 'error');
     try {
         await api('/api/agent-office/season-knowledge/' + id, 'PUT', {
-            label: extra ? `${phase} (${extra})` : phase,
+            label: phase,
             start_md: s, end_md: e2,
             knowledge: document.getElementById('sk-know-' + id).value,
         });
@@ -12843,16 +12841,15 @@ function setupBotProductsTab() {
     // 지시 #108·#114: 시기별 상품 지식 구간 추가 (선택형 구간 + 월/일 픽커)
     document.getElementById('btn-sk-add')?.addEventListener('click', async () => {
         const item_key = document.getElementById('sk-item').value.trim();
-        const phase = document.getElementById('sk-phase').value;
-        const extra = document.getElementById('sk-label-extra').value.trim();
+        const phase = document.getElementById('sk-phase').value;   // #116: 보조 설명 제거
         const start_md = skMdSave(document.getElementById('sk-start').value);
         const end_md = skMdSave(document.getElementById('sk-end').value);
         const knowledge = document.getElementById('sk-knowledge').value.trim();
         if (!item_key || !start_md || !end_md || !knowledge) return alert('품목·기간(월/일)·내용을 모두 입력하세요');
         if (!/^\d{2}-\d{2}$/.test(start_md) || !/^\d{2}-\d{2}$/.test(end_md)) return alert('기간은 달력에서 선택하거나 05/01 형식으로 입력하세요');
         try {
-            await api('/api/agent-office/season-knowledge', 'POST', { item_key, label: extra ? `${phase} (${extra})` : phase, start_md, end_md, knowledge });
-            ['sk-item', 'sk-label-extra', 'sk-start', 'sk-end', 'sk-knowledge'].forEach(id => document.getElementById(id).value = '');
+            await api('/api/agent-office/season-knowledge', 'POST', { item_key, label: phase, start_md, end_md, knowledge });
+            ['sk-item', 'sk-start', 'sk-end', 'sk-knowledge'].forEach(id => document.getElementById(id).value = '');
             showToast('✅ 시기 지식 등록 완료 — AI 답변에 반영됩니다', 'lime');
             renderSeasonKnowledge().catch(console.error);
         } catch (e) { alert(e.message); }
