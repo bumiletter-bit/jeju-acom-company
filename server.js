@@ -10593,6 +10593,34 @@ setInterval(async () => {
     }
 }, 60000);
 
+// 지시 #103·#104: 상품 조회 실행기 — DB 플래그(naver_query_request) 감지 시 읽기 전용 상품 API만 호출,
+// 결과를 naver_query_result에 기록 (자사몰 프로토타입 실데이터 스냅샷용 — PII 없음·쓰기 불가).
+// 허용 = ①POST /external/v1/products/search(목록, 읽기 성격) ②GET /external/v2/products/*(단건 — 이미지·가격·옵션·상세).
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('naver_query_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'naver_query_request'`);   // 선제거 — 반복 실행 방지
+        const calls = Array.isArray(req.calls) ? req.calls.slice(0, 20) : [];   // 1회 최대 20콜 (rate limit 방어)
+        const okCall = (c) => c && ((c.method === 'POST' && c.path === '/external/v1/products/search')
+            || (c.method === 'GET' && typeof c.path === 'string' && c.path.startsWith('/external/v2/products/')));
+        const results = [];
+        for (const call of calls) {
+            if (!okCall(call)) { results.push({ path: call && call.path, error: 'not-allowed(읽기 상품 조회만)' }); continue; }
+            try {
+                const data = await naverRelay.callNaver({ method: call.method, path: call.path, query: call.query || null, body: call.body || null });
+                let s = JSON.stringify(data);
+                if (s.length > 900000) s = s.slice(0, 900000);   // 결과 캡(상세 HTML 대비) — jsonb 아닌 문자열로 보관
+                results.push({ path: call.path, ok: true, size: s.length, data_str: s });
+            } catch (e) { results.push({ path: call.path, error: String(e.message || e).slice(0, 300) }); }
+            await new Promise(r => setTimeout(r, 400));   // 호출 간격(429 방어 — 기존 패턴)
+        }
+        await naverCfgSet('naver_query_result', { at: new Date().toISOString(), count: results.length, results });
+    } catch (e) {
+        try { await naverCfgSet('naver_query_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // 지시 #100: 중계서버 버전 확인 — DB 플래그(relay_health_request) 감지 시 relayHealth()(인증 불필요 읽기)만 호출,
 // RELAY_VERSION을 relay_health_result에 기록. 이미지형 등록 전 릴레이 갱신(2026-07-29.2) 여부를 자율 검증하는 용도.
 setInterval(async () => {

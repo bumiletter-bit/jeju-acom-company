@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-29.2'; // 지시 #100: /aligo 이미지 업로드 지원(image_b64 → multipart — 이미지형 템플릿 등록용) + JSON 한도 4mb
+const RELAY_VERSION = '2026-07-30.1'; // 지시 #103·#104: 상품 조회 읽기 2종 ALLOW 추가(목록 search POST·v2 단건 GET — 자사몰 프로토타입 실데이터용, 쓰기 아님)
 
 const {
     PORT = 4000,
@@ -89,6 +89,8 @@ const ALLOW = [
     { m: 'PUT',  re: /^\/external\/v1\/contents\/qnas\/\d+$/ },                    // 상품문의 답변 등록/수정 (STEP E, questionId 숫자 정확일치만)
     { m: 'POST', re: /^\/external\/v1\/pay-merchant\/inquiries\/\d+\/answer$/ },   // 고객문의 답변 등록 — 쓰기 2번째 (inquiryNo 숫자 정확일치만)
     { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/confirm$/ }, // 발주확인 — 쓰기 3번째 (지시 #92: 알림톡 발송 성공 건만, 회사프로그램 KAKAO_NOTIFY 스위치 종속)
+    { m: 'POST', re: /^\/external\/v1\/products\/search$/ },                       // 상품 목록 조회 (POST지만 읽기 — 지시 #103·#104 자사몰 실데이터)
+    { m: 'GET',  re: /^\/external\/v2\/products\// },                              // 원상품·채널상품 단건 조회 (대표이미지·가격·옵션·상세 — 읽기)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 
