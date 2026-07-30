@@ -7370,6 +7370,49 @@ async function collectProductSnapshot() {
     return `상품 ${items.length}건 스냅샷 저장`;
 }
 
+// 지시 #118: [🔄 상세 다시 불러오기] — 판매중 상품의 상세페이지 이미지 URL 재수집 (읽기 전용·수동 버튼 전용)
+//   결과 = agent_office_config 'product_detail_snapshot' {at, count, items:{no:{name, count, imgs[≤10]}}}
+//   호출 예절: 350ms 간격·429 재시도(naverCallWithRetry) — 본업 수집기와 한도 공유. 중복 실행 락.
+let _detailRefreshBusy = false;
+async function collectProductDetails() {
+    const search = await naverCallWithRetry({ method: 'POST', path: '/external/v1/products/search', body: { page: 1, size: 100 } });
+    const contents = (search && (search.contents || [])).slice(0, 100);
+    const live = contents.map(c => {
+        const ch = (c.channelProducts && c.channelProducts[0]) || c;
+        return { originNo: c.originProductNo || ch.originProductNo, no: ch.channelProductNo || ch.id, name: ch.name, statusType: ch.statusType, stock: ch.stockQuantity };
+    }).filter(p => p.originNo && (p.statusType === 'SALE' || (p.statusType == null && Number(p.stock) > 0))).slice(0, 10);
+    const items = {};
+    for (const p of live) {
+        await new Promise(r => setTimeout(r, 350));
+        const o = await naverCallWithRetry({ method: 'GET', path: `/external/v2/products/origin-products/${p.originNo}` });
+        const op = (o && (o.originProduct || o)) || {};
+        const html = String(op.detailContent || '');
+        const imgs = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map(m => m[1]).filter(u => /^https:\/\/shop-phinf\.pstatic\.net/.test(u));
+        items[String(p.no)] = { name: p.name, count: imgs.length, imgs: imgs.slice(0, 10) };
+    }
+    const snap = { at: new Date().toISOString(), count: Object.keys(items).length, items };
+    await naverCfgSet('product_detail_snapshot', snap);
+    return snap;
+}
+app.post('/api/agent-office/naver/refresh-details', authMiddleware, async (req, res) => {
+    if (_detailRefreshBusy) return res.status(409).json({ error: '이미 실행 중입니다 — 잠시 후 다시 확인해주세요' });
+    _detailRefreshBusy = true;
+    try {
+        const snap = await collectProductDetails();
+        await writeAudit({ action: 'refresh_details', targetType: 'naver_product', targetId: null,
+            changes: { after: { count: snap.count } }, source: 'naver-api', actor: adminActor(req) });
+        res.json({ ok: true, at: snap.at, count: snap.count });
+    } catch (e) {
+        res.status(500).json({ error: String(e.message || e).slice(0, 300) });   // #113 규약: 실패를 성공으로 표기 금지
+    } finally { _detailRefreshBusy = false; }
+});
+app.get('/api/agent-office/naver/detail-snapshot-info', authMiddleware, async (req, res) => {
+    try {
+        const v = await naverCfgGet('product_detail_snapshot');
+        res.json(v ? { at: v.at, count: v.count } : { at: null, count: 0 });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 지시 #107: 스냅샷 공개 조회 (자사몰 프로토타입·실서비스가 읽는 지점 — 공개 상품 정보만·PII 없음·최신 1건)
 app.get('/api/public/store-snapshot', async (req, res) => {
     try {

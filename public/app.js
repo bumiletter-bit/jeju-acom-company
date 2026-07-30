@@ -13110,10 +13110,37 @@ async function renderNaverTimers() {
             <input type="number" id="session-idle-hours" value="${idleH}" min="0.5" max="24" step="0.5" class="form-input" style="width:70px; padding:5px 6px; text-align:center; font-size:13px; margin:0 4px;">시간
             <button class="btn-sm btn-outline" onclick="saveSessionIdle()">저장</button>
         </div>` : '';
+    // 지시 #118: 상세 다시 불러오기 — 판매중 상품 상세 이미지 재수집 (스냅샷 저장까지·v5 프로토타입 즉시 반영 아님을 정직 표기)
+    let detailInfo = null;
+    try { detailInfo = await api('/api/agent-office/naver/detail-snapshot-info'); } catch (_) {}
+    const detailBlock = `
+        <div style="margin-top:10px; padding-top:8px; border-top:1px dashed var(--border,#eee); font-size:13px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button class="btn-sm btn-outline" id="btn-refresh-details" onclick="refreshProductDetails()">🔄 상세 다시 불러오기</button>
+            <span id="detail-refresh-status" class="text-muted" style="font-size:12px;">${detailInfo && detailInfo.at ? `마지막 갱신: ${new Date(detailInfo.at).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} · ${detailInfo.count}종` : '아직 갱신 이력 없음'}</span>
+            <span class="text-muted" style="font-size:11px;">네이버에서 상세페이지 수정 후 클릭 — 자사몰 반영은 실서비스 연동 후 자동 (현재는 스냅샷 저장까지)</span>
+        </div>`;
     document.getElementById('naver-timer-list').innerHTML = `
         <table class="data-table"><thead><tr><th>수집</th><th>ON</th><th>주기/시각</th><th>마지막 수집</th><th>상태</th></tr></thead>
-        <tbody>${rows}</tbody></table>` + alertBlock + idleBlock;
+        <tbody>${rows}</tbody></table>` + detailBlock + alertBlock + idleBlock;
 }
+window.refreshProductDetails = async function() {
+    const btn = document.getElementById('btn-refresh-details');
+    const st = document.getElementById('detail-refresh-status');
+    if (btn.disabled) return;   // 중복 클릭 방지
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = '⏳ 불러오는 중...';
+    st.textContent = '판매중 상품 상세를 다시 수집하고 있습니다 (10~30초)';
+    try {
+        const r = await api('/api/agent-office/naver/refresh-details', 'POST', {});
+        const hhmm = new Date(r.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        st.textContent = `✅ 상세 갱신 완료 — ${r.count}종 · ${hhmm}`;
+        showToast(`✅ 상세 갱신 완료 — ${r.count}종`, 'lime');
+    } catch (e) {
+        st.textContent = `❌ 갱신 실패 — ${e.message}`;   // #113 규약: 실패를 성공으로 표기 금지
+        showToast('❌ 상세 갱신 실패: ' + e.message, 'error');
+    } finally { btn.disabled = false; btn.textContent = orig; }
+};
 window.saveSessionIdle = async function() {
     const el = document.getElementById('session-idle-hours');
     const hours = parseFloat(el && el.value);
