@@ -905,6 +905,19 @@ async function initDB() {
     `);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // ── 지시 #107: 일일 상품 스냅샷 (자사몰 실서비스 동기화 1단계 — 읽기 전용·기본 OFF·새벽 04:30 앵커)
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('product_snapshot', false, 1440)
+        ON CONFLICT (key) DO NOTHING`);
+    await pool.query(`UPDATE naver_auto_collect SET run_at_time = '04:30' WHERE key = 'product_snapshot' AND run_at_time IS NULL`);
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_product_snapshot (
+            id SERIAL PRIMARY KEY,
+            run_at TIMESTAMPTZ DEFAULT now(),
+            total INT,
+            items JSONB,
+            note TEXT
+        )
+    `);
     // ── 지시 #85: 자사몰 게임 백엔드 테이블 5종 (설계서 §2-1 — 전부 additive, MALL_API=off 기본이라 무동작)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS mall_members (
@@ -6288,7 +6301,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
-const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)' };
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -7134,6 +7147,50 @@ async function naverPostInquiryAnswer(inquiryNo, content, actor) {
     });
 }
 
+// 지시 #107: 일일 상품 스냅샷 수집기 — 자사몰 실서비스 동기화 1단계 (읽기 전용·기본 OFF·04:30 앵커).
+//   공식 상품 API(1순위 네이버 — 릴레이 경유) 목록 조회 → naver_product_snapshot에 저장.
+//   ⚠️ 앱에 '상품' API 권한 필요(GW.AUTHN이면 실패로 기록됨 — 대표가 커머스API센터에서 권한 추가 후 ON).
+//   응답 필드는 방어적 매핑(문서 실측 전) — 권한 개통 후 1회 실행하며 필드 확정.
+async function collectProductSnapshot() {
+    const items = [];
+    let raw0 = null;
+    for (let page = 1; page <= 5; page++) {
+        const res = await naverCallWithRetry({ method: 'POST', path: '/external/v1/products/search', body: { page, size: 100 } });
+        const contents = res && (res.contents || res.content || res.list || []);
+        if (page === 1) raw0 = res && { totalElements: res.totalElements, keys: Object.keys(res || {}).slice(0, 10) };
+        if (!Array.isArray(contents) || !contents.length) break;
+        for (const c of contents) {
+            const ch = (c.channelProducts && c.channelProducts[0]) || c;
+            items.push({
+                originNo: c.originProductNo || ch.originProductNo || null,
+                no: ch.channelProductNo || ch.id || null,
+                name: ch.name || null,
+                salePrice: ch.salePrice != null ? ch.salePrice : null,
+                discPrice: ch.discountedPrice != null ? ch.discountedPrice : (ch.mobileDiscountedPrice != null ? ch.mobileDiscountedPrice : null),
+                statusType: ch.statusType || null,
+                stock: ch.stockQuantity != null ? ch.stockQuantity : null,
+                img: (ch.representativeImage && ch.representativeImage.url) || ch.representativeImageUrl || null,
+            });
+        }
+        if (contents.length < 100) break;
+        await new Promise(r => setTimeout(r, 350));   // 호출 간격 규칙 (v5.9.51 패턴)
+    }
+    await pool.query(`INSERT INTO naver_product_snapshot (total, items, note) VALUES ($1, $2, $3)`,
+        [items.length, JSON.stringify(items), raw0 ? JSON.stringify(raw0).slice(0, 300) : null]);
+    // 보존 정책: 최근 30회만 유지 (하루 1회 = 한 달)
+    await pool.query(`DELETE FROM naver_product_snapshot WHERE id NOT IN (SELECT id FROM naver_product_snapshot ORDER BY id DESC LIMIT 30)`);
+    return `상품 ${items.length}건 스냅샷 저장`;
+}
+
+// 지시 #107: 스냅샷 공개 조회 (자사몰 프로토타입·실서비스가 읽는 지점 — 공개 상품 정보만·PII 없음·최신 1건)
+app.get('/api/public/store-snapshot', async (req, res) => {
+    try {
+        const r = await pool.query(`SELECT run_at, total, items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
+        if (!r.rows.length) return res.status(404).json({ error: 'no-snapshot — 수집기 미실행 (타이머 product_snapshot OFF 또는 권한 대기)' });
+        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items });
+    } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
+});
+
 let _naverTickBusy = false;
 async function naverAutoCollectTick() {
     if (_naverTickBusy) return;
@@ -7147,9 +7204,9 @@ async function naverAutoCollectTick() {
         const due = [];
         for (const r of rows) {
             const last = r.last_run_at ? new Date(r.last_run_at).getTime() : 0;
-            if (r.key === 'settlement') {
-                // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due
-                const [hh, mm] = String(r.run_at_time || '09:30').split(':').map(Number);
+            if (r.key === 'settlement' || r.key === 'product_snapshot') {
+                // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due (product_snapshot 기본 04:30)
+                const [hh, mm] = String(r.run_at_time || (r.key === 'product_snapshot' ? '04:30' : '09:30')).split(':').map(Number);
                 const anchor = Date.UTC(kstNow.getUTCFullYear(), kstNow.getUTCMonth(), kstNow.getUTCDate(), hh, mm) - 9 * 3600 * 1000;
                 if (now >= anchor && last < anchor) due.push({ r, waited: now - anchor });
             } else {
@@ -7160,7 +7217,7 @@ async function naverAutoCollectTick() {
         if (!due.length) return;
         due.sort((a, b) => b.waited - a.waited);
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
-        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide }[r.key];
+        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot }[r.key];
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
