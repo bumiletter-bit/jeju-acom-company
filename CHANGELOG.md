@@ -6,6 +6,10 @@
 
 ---
 
+## v5.9.152 (2026-07-30 — 지시 #122: 리뷰 일일 갱신 포함)
+- [수집기] product_snapshot에 판매중 상품 공개 리뷰(상품별 5건·마스킹형) 추가 — brand.naver.com 공개 경로 직접 fetch(IP 제한 없음). **실패 시 직전 스냅샷 리뷰 유지(자동 폴백)·note에 실패 기록**. naver_product_snapshot.reviews 컬럼(additive)·/api/public/store-snapshot에 reviews 포함
+- [프로토타입(리포 밖)] v5 숏클립 섹션에 영상 GIF 썸네일 카드 4종(실영상 배지·클릭 시 스토어 상품 페이지·videos 필드 자동 확장)
+
 ## v5.9.151 (2026-07-30 — 지시 #118: [🔄 상세 다시 불러오기] 버튼)
 - [서버] collectProductDetails — 판매중 상품(search SALE 필터) 상세 이미지 URL 재수집(350ms 간격·429 재시도·중복 실행 락) → config 'product_detail_snapshot'. POST /refresh-details·GET /detail-snapshot-info (authMiddleware·audit)
 - [화면] 데이터관리 타이머 카드에 버튼+마지막 갱신 시각 상시 표시·진행/실패 정직 표기(#113 규약)·"자사몰 반영은 실서비스 연동 후 자동 — 현재는 스냅샷 저장까지" 명기 (app.js v=329)

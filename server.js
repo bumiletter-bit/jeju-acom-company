@@ -918,6 +918,7 @@ async function initDB() {
             note TEXT
         )
     `);
+    await pool.query(`ALTER TABLE naver_product_snapshot ADD COLUMN IF NOT EXISTS reviews JSONB`);   // 지시 #122: 리뷰 일일 갱신(실패 시 직전분 유지)
     // ── 지시 #85: 자사몰 게임 백엔드 테이블 5종 (설계서 §2-1 — 전부 additive, MALL_API=off 기본이라 무동작)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS mall_members (
@@ -7363,11 +7364,42 @@ async function collectProductSnapshot() {
         if (contents.length < 100) break;
         await new Promise(r => setTimeout(r, 350));   // 호출 간격 규칙 (v5.9.51 패턴)
     }
-    await pool.query(`INSERT INTO naver_product_snapshot (total, items, note) VALUES ($1, $2, $3)`,
-        [items.length, JSON.stringify(items), raw0 ? JSON.stringify(raw0).slice(0, 300) : null]);
+    // 지시 #122: 판매중 상품 공개 리뷰(상품별 5건) — 공개 경로(brand.naver.com, IP 제한 없음 → 직접 fetch).
+    //   🔴 자동 폴백: 어떤 이유로든 실패하면 직전 스냅샷의 리뷰를 그대로 유지(리뷰만 구버전·다른 데이터는 정상 갱신) — 실패 사실은 note에 기록.
+    let reviews = null, reviewNote = '';
+    try {
+        const live = items.filter(i => i.statusType === 'SALE' || (i.statusType == null && Number(i.stock) > 0)).slice(0, 10);
+        const collected = {};
+        for (const p of live) {
+            if (!p.originNo || !p.no) continue;
+            await new Promise(r => setTimeout(r, 400));
+            const resp = await fetch('https://brand.naver.com/n/v1/contents/reviews/query-pages', {
+                method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
+                body: JSON.stringify({ checkoutMerchantNo: 510497562, originProductNo: Number(p.originNo), page: 1, pageSize: 5, reviewSearchSortType: 'REVIEW_RANKING' }),
+            });
+            if (!resp.ok) throw new Error('리뷰 HTTP ' + resp.status);
+            const j = await resp.json();
+            collected[String(p.no)] = (j.contents || []).slice(0, 5).map(rv => ({
+                score: rv.reviewScore, labels: rv.labels || [],
+                text: String(rv.reviewContent || '').slice(0, 300),
+                date: String(rv.createDate || '').slice(0, 10),
+                writer: rv.maskedWriterId,   // 네이버 마스킹형 그대로 (PII 원문 미수집)
+                opt: String(rv.productOptionContent || '').slice(0, 120), source: 'nstore',
+            }));
+        }
+        if (!Object.keys(collected).length) throw new Error('리뷰 0건 (구조 변경 가능성)');
+        reviews = collected;
+        reviewNote = ' | 리뷰 ' + Object.values(collected).reduce((s, a) => s + a.length, 0) + '건';
+    } catch (e) {
+        const prev = await pool.query(`SELECT reviews FROM naver_product_snapshot WHERE reviews IS NOT NULL ORDER BY id DESC LIMIT 1`);
+        reviews = prev.rows.length ? prev.rows[0].reviews : null;
+        reviewNote = ' | 리뷰 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
+    }
+    await pool.query(`INSERT INTO naver_product_snapshot (total, items, note, reviews) VALUES ($1, $2, $3, $4)`,
+        [items.length, JSON.stringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote, reviews ? JSON.stringify(reviews) : null]);
     // 보존 정책: 최근 30회만 유지 (하루 1회 = 한 달)
     await pool.query(`DELETE FROM naver_product_snapshot WHERE id NOT IN (SELECT id FROM naver_product_snapshot ORDER BY id DESC LIMIT 30)`);
-    return `상품 ${items.length}건 스냅샷 저장`;
+    return `상품 ${items.length}건 스냅샷 저장${reviewNote}`;
 }
 
 // 지시 #118: [🔄 상세 다시 불러오기] — 판매중 상품의 상세페이지 이미지 URL 재수집 (읽기 전용·수동 버튼 전용)
@@ -7416,9 +7448,9 @@ app.get('/api/agent-office/naver/detail-snapshot-info', authMiddleware, async (r
 // 지시 #107: 스냅샷 공개 조회 (자사몰 프로토타입·실서비스가 읽는 지점 — 공개 상품 정보만·PII 없음·최신 1건)
 app.get('/api/public/store-snapshot', async (req, res) => {
     try {
-        const r = await pool.query(`SELECT run_at, total, items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
+        const r = await pool.query(`SELECT run_at, total, items, reviews FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
         if (!r.rows.length) return res.status(404).json({ error: 'no-snapshot — 수집기 미실행 (타이머 product_snapshot OFF 또는 권한 대기)' });
-        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items });
+        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items, reviews: r.rows[0].reviews || null });
     } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
 });
 
