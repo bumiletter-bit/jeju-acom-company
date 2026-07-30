@@ -12208,11 +12208,12 @@ let botProducts = [];
 let inquiryActiveTab = 'scenario';
 window.switchInquiryTab = function(name) {
     inquiryActiveTab = name;
-    for (const t of ['scenario', 'products', 'unanswered', 'qna', 'userinq']) {
+    for (const t of ['scenario', 'products', 'season', 'unanswered', 'qna', 'userinq']) {
         document.getElementById('inquiry-tab-' + t).style.display = name === t ? '' : 'none';
         document.getElementById('inquiry-tab-btn-' + t).className = name === t ? 'settlement-tab active' : 'settlement-tab';
     }
     if (name === 'products') renderBotProducts().catch(console.error);
+    else if (name === 'season') { renderSeasonKnowledge().catch(console.error); renderSeasonWaitlist().catch(console.error); }   // 지시 #112 — 독립 탭 승격
     else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
     else if (name === 'qna') renderQnaTab().catch(console.error);
     else if (name === 'userinq') renderUserInqTab().catch(console.error);
@@ -12456,8 +12457,7 @@ async function renderBotProducts() {
         <tbody>${rows}</tbody></table>
         <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). 아직 발송 기능은 꺼져 있어 저장만 됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
-    renderSeasonWaitlist().catch(console.error);   // 지시 #68 C5 — 같은 탭 하단 섹션
-    renderSeasonKnowledge().catch(console.error);  // 지시 #108 — 시기별 상품 지식
+    // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
     renderLmsGuideLogs().catch(console.error);     // 지시 #76 — 발송 안내(LMS) 이력
     renderKakaoNotifyLogs().catch(console.error);  // 지시 #92 — 주문 알림톡·발주확인 이력

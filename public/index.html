@@ -1863,6 +1863,7 @@
                 <div class="settlement-tab-bar">
                     <button class="settlement-tab" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
                     <button class="settlement-tab active" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">📝 시나리오</button>
+                    <button class="settlement-tab" id="inquiry-tab-btn-season" onclick="switchInquiryTab('season')">📅 시기별 상품 지식</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-unanswered" onclick="switchInquiryTab('unanswered')">💬 톡톡 문의</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-qna" onclick="switchInquiryTab('qna')">🛰️ 상품문의</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-userinq" onclick="switchInquiryTab('userinq')">📮 고객문의</button>
@@ -1920,34 +1921,7 @@
                         </div>
                         <div id="botprod-list" class="table-scroll-wrapper"></div>
                     </div>
-                    <!-- 지시 #68 C5: 시즌 오픈 대기 신청 — 저장소·화면까지만 (알림톡 발송 연동은 향후) -->
-                    <div class="card" style="margin-top:14px;">
-                        <div class="card-header-row">
-                            <h2>⏰ 시즌 오픈 대기 신청 <span class="text-muted" style="font-size:13px; font-weight:400;">품절·시즌 대기 손님 명단 — 오픈 시 안내 발송용(발송 기능은 준비 중)</span></h2>
-                        </div>
-                        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-                            <input type="text" id="season-wait-item" placeholder="품목 (예: 청귤 5kg)" style="flex:1; min-width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="season-wait-contact" placeholder="연락처 (숫자만)" style="width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="season-wait-memo" placeholder="메모 (선택)" style="width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <button class="btn-primary" id="btn-season-wait-add">등록</button>
-                        </div>
-                        <div id="season-wait-list" class="table-scroll-wrapper"></div>
-                    </div>
-                    <!-- 지시 #108: 시기별 상품 지식 — 날짜 구간별 맛·상태 안내 (3채널 AI 답변에 '오늘 상태'로 주입. 직원 편집 가능) -->
-                    <div class="card" style="margin-top:14px;">
-                        <div class="card-head">
-                            <h2>📅 시기별 상품 지식 <span class="text-muted" style="font-size:13px; font-weight:400;">농산물은 날짜 따라 맛·상태가 변해요 — 오늘 날짜 구간의 내용이 톡톡·상품문의·고객문의 AI 답변에 자동 반영됩니다 (매년 반복, 연도 없이 월-일)</span></h2>
-                        </div>
-                        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-                            <input type="text" id="sk-item" placeholder="품목 (예: 미니밤호박)" style="width:140px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="sk-label" placeholder="구간 이름 (예: 포슬 최적기)" style="width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="sk-start" placeholder="시작 MM-DD" style="width:100px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="sk-end" placeholder="종료 MM-DD" style="width:100px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="sk-knowledge" placeholder="이 시기의 맛·상태·안내 포인트" style="flex:1; min-width:200px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <button class="btn-primary" id="btn-sk-add">구간 추가</button>
-                        </div>
-                        <div id="season-knowledge-list" class="table-scroll-wrapper"></div>
-                    </div>
+                    <!-- (지시 #112) 시즌 대기 신청·시기별 상품 지식 카드는 "📅 시기별 상품 지식" 독립 탭으로 이동 -->
                     <!-- 지시 #69: 발송 휴무일 관리 — 발송일 안내 계산에서 이 날짜들은 발송 불가일로 제외 (직원 추가/삭제 가능) -->
                     <div class="card" style="margin-top:14px;">
                         <div class="card-header-row">
@@ -1985,6 +1959,38 @@
                         <div id="kakao-notify-list" class="table-scroll-wrapper"></div>
                     </div>
                 </div>
+                <!-- 지시 #112: 시기별 상품 지식 독립 탭 (판매현황 탭 하단 섹션에서 승격 — 기능 무변경·이동만. 시즌 대기 신청도 같은 맥락이라 함께 이동) -->
+                <div id="inquiry-tab-season" style="display:none;">
+                    <!-- 지시 #108: 시기별 상품 지식 — 날짜 구간별 맛·상태 안내 (3채널 AI 답변에 '오늘 상태'로 주입. 직원 편집 가능) -->
+                    <div class="card">
+                        <div class="card-head">
+                            <h2>📅 시기별 상품 지식 <span class="text-muted" style="font-size:13px; font-weight:400;">농산물은 날짜 따라 맛·상태가 변해요 — 오늘 날짜 구간의 내용이 톡톡·상품문의·고객문의 AI 답변에 자동 반영됩니다 (매년 반복, 연도 없이 월-일)</span></h2>
+                        </div>
+                        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                            <input type="text" id="sk-item" placeholder="품목 (예: 미니밤호박)" style="width:140px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="sk-label" placeholder="구간 이름 (예: 포슬 최적기)" style="width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="sk-start" placeholder="시작 MM-DD" style="width:100px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="sk-end" placeholder="종료 MM-DD" style="width:100px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="sk-knowledge" placeholder="이 시기의 맛·상태·안내 포인트" style="flex:1; min-width:200px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <button class="btn-primary" id="btn-sk-add">구간 추가</button>
+                        </div>
+                        <div id="season-knowledge-list" class="table-scroll-wrapper"></div>
+                    </div>
+                    <!-- 지시 #68 C5: 시즌 오픈 대기 신청 — 저장소·화면까지만 (알림톡 발송 연동은 향후) -->
+                    <div class="card" style="margin-top:14px;">
+                        <div class="card-header-row">
+                            <h2>⏰ 시즌 오픈 대기 신청 <span class="text-muted" style="font-size:13px; font-weight:400;">품절·시즌 대기 손님 명단 — 오픈 시 안내 발송용(발송 기능은 준비 중)</span></h2>
+                        </div>
+                        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                            <input type="text" id="season-wait-item" placeholder="품목 (예: 청귤 5kg)" style="flex:1; min-width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="season-wait-contact" placeholder="연락처 (숫자만)" style="width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <input type="text" id="season-wait-memo" placeholder="메모 (선택)" style="width:160px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                            <button class="btn-primary" id="btn-season-wait-add">등록</button>
+                        </div>
+                        <div id="season-wait-list" class="table-scroll-wrapper"></div>
+                    </div>
+                </div>
+
                 <div id="inquiry-tab-unanswered" style="display:none;">
                     <div class="card">
                         <div class="card-header-row">
@@ -2281,6 +2287,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=325"></script>
+    <script src="app.js?v=326"></script>
 </body>
 </html>
