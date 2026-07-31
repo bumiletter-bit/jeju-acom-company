@@ -274,4 +274,31 @@ async function registerTemplates({ audit, set } = {}) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };
+// ── 템플릿 삭제 실행기 (지시 #138 — 대표 확정 정리 전용: 구본 9082 + 반려 이미지형 4종만)
+//    🔴 실전 승인 4종(UJ_9084~9087)은 화이트리스트 밖 — 요청에 섞여 와도 하드 차단. 발동은 server.js 플래그 러너로만.
+const DELETABLE_TPL = ['UJ_9082', 'UJ_9135', 'UJ_9136', 'UJ_9137', 'UJ_9138'];
+async function deleteTemplates(codes) {
+    const out = { at: new Date().toISOString(), results: [] };
+    if (!configured()) return { ...out, error: 'keys-missing — 알리고 키 미설정' };
+    const targets = (Array.isArray(codes) ? codes : []).map(String);
+    const blocked = targets.filter(c => !DELETABLE_TPL.includes(c));
+    if (blocked.length) return { ...out, error: `화이트리스트 밖 코드 차단: ${blocked.join(',')} (허용: ${DELETABLE_TPL.join(',')})` };
+    if (!targets.length) return { ...out, error: 'codes 비어있음' };
+    const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
+    const tok = await aligoPost('/akv10/token/create/5/m', auth);
+    const token = tok && (tok.token || tok.urlencode || (tok.data && tok.data.token));
+    if (!token) return { ...out, error: 'token-failed: ' + JSON.stringify(tok).slice(0, 200) };
+    for (const code of targets) {
+        const r = { tpl_code: code };
+        try {
+            const del = await aligoPost('/akv10/template/del/', { ...auth, token, senderkey: process.env.ALIGO_SENDER_KEY, tpl_code: code });
+            r.code = del && del.code; r.message = String((del && del.message) || '').slice(0, 200);
+            r.ok = del && Number(del.code) === 0;
+        } catch (e) { r.error = String(e.message || e).slice(0, 200); }
+        await new Promise(res => setTimeout(res, 400));
+        out.results.push(r);
+    }
+    return out;
+}
+
+module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };

@@ -11009,6 +11009,24 @@ setInterval(async () => {
     }
 }, 60000);
 
+// 지시 #138: 템플릿 삭제 실행기 — 대표 확정 정리 전용 (구본 9082·반려 이미지형 4종만, 화이트리스트는 kakao-notify.js).
+// 발동 = 플래그 aligo_template_del_request {go:'yes', codes:[...]}. 실전 승인 4종(9084~9087)은 모듈에서 하드 차단.
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('aligo_template_del_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_template_del_request'`);   // 선제거 — 반복 실행 방지
+        if (!req || req.go !== 'yes') { await naverCfgSet('aligo_template_del_result', { error: 'go-flag-missing — {go:"yes"} 필요' }); return; }
+        const result = await kakaoNotify.deleteTemplates(req.codes);
+        await naverCfgSet('aligo_template_del_result', result);
+        await writeAudit({ action: 'alimtalk_template_delete', targetType: 'aligo', targetId: null,
+            changes: { after: { codes: req.codes, results: (result.results || []).map(r => ({ tpl_code: r.tpl_code, ok: r.ok === true, code: r.code })) , error: result.error || null } },
+            source: 'naver-api', actor: { id: null, name: 'cc-#138(대표확정)' } });
+    } catch (e) {
+        try { await naverCfgSet('aligo_template_del_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // ============================================================
 // === MCP 서버 (/mcp/:secret) — 3단계 ===
 // authless 커넥터 + URL 시크릿 인증. Streamable HTTP(stateless, JSON 응답).
