@@ -20,6 +20,16 @@ function templateByKey(key) {
     return (TEMPLATES_JSON && Array.isArray(TEMPLATES_JSON.templates)) ? TEMPLATES_JSON.templates.find(t => t.key === key) || null : null;
 }
 
+// 지시 #137: 승인 확정 템플릿 코드 (2026-07-31 알리고 실물 검수 — 대표 확인). env가 있으면 env 우선(운영 교체 대비).
+//   이미지형(UJ_9135~9138)은 반려 확정 — 어떤 경로에도 투입 금지. 발송안내 = UJ_9087(발송안내2·3버튼 실전판 — ship_guide 문안·버튼과 일치, 초판 9082는 #138로 폐기).
+const APPROVED_TPL = { order: 'UJ_9084', order_reserve: 'UJ_9085', welcome: 'UJ_9086', guide: 'UJ_9087' };
+// 주문 안내 템플릿 선택 (지시 #137 — 예약 상품이면 B(order_reserve), 아니면 A(order_normal)) — 문면·버튼·코드가 세트로 일치해야 함
+function orderTemplate(isReserve) { return templateByKey(isReserve ? 'order_reserve' : 'order_normal'); }
+function orderTplCode(isReserve) {
+    return isReserve ? (process.env.ALIGO_TPL_CODE_RESERVE || APPROVED_TPL.order_reserve)
+                     : (process.env.ALIGO_TPL_CODE || APPROVED_TPL.order);
+}
+
 function switchOn() { return String(process.env.KAKAO_NOTIFY || 'off').toLowerCase() === 'on'; }
 function configured() {
     return Boolean(process.env.ALIGO_API_KEY && process.env.ALIGO_USER_ID && process.env.ALIGO_SENDER_KEY && process.env.ALIGO_SENDER);
@@ -97,7 +107,7 @@ async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessa
     const form = {
         ...auth, token,
         senderkey: process.env.ALIGO_SENDER_KEY,
-        tpl_code: tplCode || process.env.ALIGO_TPL_CODE || '',
+        tpl_code: tplCode || process.env.ALIGO_TPL_CODE || APPROVED_TPL.order,   // #137: 승인 기본값 투입
         sender: process.env.ALIGO_SENDER,
         receiver_1: String(receiver || '').replace(/[^0-9]/g, ''),
         subject_1: subject || '주문 안내',
@@ -119,7 +129,7 @@ async function sendShippingGuideAlimtalk({ receiver, vars, fallback }) {
     const messageText = tpl ? buildMessage(vars || {}, tpl.content) : ((fallback && fallback.message) || '');
     if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', via: 'alimtalk-e', messageText };
     if (!configured()) return { mode: 'dry-run', status: 'keys-missing', via: 'alimtalk-e', messageText };
-    const tplCode = process.env.ALIGO_TPL_CODE_GUIDE || '';
+    const tplCode = process.env.ALIGO_TPL_CODE_GUIDE || APPROVED_TPL.guide;   // #137: 발송안내 = UJ_9087(발송안내2 실전판)
     if (!tpl || !tplCode) {   // E 미승인 단계 — 기존 LMS 경로로 직행 (안내 공백 방지)
         const r = await sendLms({ receiver, subject: (fallback && fallback.subject) || '제주아꼼이네 배송 안내', message: (fallback && fallback.message) || '' });
         return { ...r, via: 'sms-direct', messageText: (fallback && fallback.message) || '' };
@@ -264,4 +274,4 @@ async function registerTemplates({ audit, set } = {}) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, DEFAULT_TEMPLATE };
+module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };

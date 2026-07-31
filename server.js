@@ -6631,14 +6631,17 @@ async function collectKakaoNotify() {
                 const optText = `${po.productName || ''} ${po.productOption || ''}`;
                 const matched = kakaoNotify.matchNotifyProduct(optText, bp);
                 const ship = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.notices);
+                // 지시 #137: 문면·버튼·TPL 코드를 승인 템플릿(JSON 단일 소스)과 세트로 일치 — 예약 상품(옵션·상품명에 '예약')이면 B(UJ_9085), 아니면 A(UJ_9084)
+                const isReserve = /예약/.test(optText);
+                const tplDef = kakaoNotify.orderTemplate(isReserve);   // 부재 시 buildMessage가 뼈대 폴백(dry-run 검수에서 노출됨)
                 const message = kakaoNotify.buildMessage({
                     '고객명': od.ordererName || '고객',
                     '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
                     '발송안내': ship.text,
-                    '품목안내': matched && matched.notify_message ? matched.notify_message : '',
-                });
+                }, tplDef && tplDef.content);
                 const res = await kakaoNotify.sendAlimtalk({
                     receiver: od.ordererTel || '', subject: '주문 안내', message, failoverMessage: message,
+                    tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
                 });
                 await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error)
                     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
