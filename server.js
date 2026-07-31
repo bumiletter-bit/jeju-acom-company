@@ -7438,11 +7438,19 @@ async function collectProductSnapshot() {
         [items.length, JSON.stringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote, reviews ? JSON.stringify(reviews) : null]);
     // 보존 정책: 최근 30회만 유지 (하루 1회 = 한 달)
     await pool.query(`DELETE FROM naver_product_snapshot WHERE id NOT IN (SELECT id FROM naver_product_snapshot ORDER BY id DESC LIMIT 30)`);
-    return `상품 ${items.length}건 스냅샷 저장${reviewNote}`;
+    // 지시 #149-5: 상세이미지 전량 스냅샷도 매일 함께 갱신 — 실패해도 본 스냅샷은 유지(직전 상세분 그대로), 실패 사유만 note에 기록.
+    let detailNote = '';
+    if (!_detailRefreshBusy) {
+        _detailRefreshBusy = true;
+        try { const d = await collectProductDetails(); detailNote = ` | 상세 ${d.count}종 전량 갱신`; }
+        catch (e) { detailNote = ' | 상세 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120); }
+        finally { _detailRefreshBusy = false; }
+    }
+    return `상품 ${items.length}건 스냅샷 저장${reviewNote}${detailNote}`;
 }
 
-// 지시 #118: [🔄 상세 다시 불러오기] — 판매중 상품의 상세페이지 이미지 URL 재수집 (읽기 전용·수동 버튼 전용)
-//   결과 = agent_office_config 'product_detail_snapshot' {at, count, items:{no:{name, count, imgs[≤10]}}}
+// 지시 #118→#149: 상세페이지 이미지 URL 수집 — 전 상품·전량(무상한). 수동 버튼 + 플래그 러너 + 일일 스냅샷(04:30) 동반 실행.
+//   결과 = agent_office_config 'product_detail_snapshot' {at, count, items:{no:{name, count, imgs[전량], dropped}}}
 //   호출 예절: 350ms 간격·429 재시도(naverCallWithRetry) — 본업 수집기와 한도 공유. 중복 실행 락.
 let _detailRefreshBusy = false;
 async function collectProductDetails() {
