@@ -65,15 +65,16 @@
 
 const crypto = require('crypto');
 
-// ── 안전 기본값 (cfgGet('mall_game_config') 없거나 오염 시 폴백) — 데모 수치
+// ── 안전 기본값 (cfgGet('mall_game_config') 없거나 오염 시 폴백)
+//    지시 #148(대표 확정): 꽝 없음(0%) 확정 — lose 제거. weight는 임시값(실확률은 오픈 전 대표 확정·운영 화면 편집이 최종).
 const DEFAULT_CONFIG = Object.freeze({
     probabilities: [
-        { key: 'w10',    label: '물방울 10',    points: 10,  weight: 34 },
-        { key: 'w30',    label: '물방울 30',    points: 30,  weight: 25 },
-        { key: 'w50',    label: '물방울 50',    points: 50,  weight: 15 },
-        { key: 'lose',   label: '꽝',           points: 0,   weight: 15 },
-        { key: 'w100',   label: '물방울 100',   points: 100, weight: 8 },
-        { key: 'coupon', label: '귤 1개 쿠폰',  points: 0,   weight: 3 }
+        { key: 'box',      label: '제주 감귤 1박스',   points: 0,   weight: 1 },
+        { key: 'upgrade',  label: '업그레이드 이용권', points: 0,   weight: 4 },
+        { key: 'coupon10', label: '10% 할인 쿠폰',     points: 0,   weight: 10 },
+        { key: 'coupon5',  label: '5% 할인 쿠폰',      points: 0,   weight: 25 },
+        { key: 'w50',      label: '물방울 +50',        points: 50,  weight: 30 },
+        { key: 'w100',     label: '물방울 +100',       points: 100, weight: 30 }
     ],
     water_cost: 10,
     level_thresholds: [0, 5, 15, 30, 50],
@@ -361,13 +362,13 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit }) {
                     idemKey: 'spin:' + spinId
                 });
             }
-            if (prize.key === 'coupon') {
-                // 실발급 아님 — pending 기록만 (개방은 카페24 scope 재동의 후, 대표 확인 5번)
+            if (/^coupon/.test(prize.key) || prize.key === 'box' || prize.key === 'upgrade') {
+                // 실발급 아님 — pending 기록만 (개방은 카페24 scope 재동의 후, 대표 확인 5번). #148: 실물성 경품(box·upgrade·쿠폰 등급) 전부 원장 기록.
                 await client.query(
                     `INSERT INTO reward_grants (member_id, kind, amount, status, month_key, idem_key)
-                     VALUES ($1,'coupon',1,'pending',$2,$3)
+                     VALUES ($1,$4,1,'pending',$2,$3)
                      ON CONFLICT (idem_key) DO NOTHING`,
-                    [member.id, kstMonthKey(), 'spin-coupon:' + spinId]);
+                    [member.id, kstMonthKey(), 'spin-' + prize.key + ':' + spinId, prize.key]);
             }
             return { spinId, prize, ledger };
         });
