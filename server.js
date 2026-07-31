@@ -7453,6 +7453,54 @@ async function collectProductSnapshot() {
 //   결과 = agent_office_config 'product_detail_snapshot' {at, count, items:{no:{name, count, imgs[전량], dropped}}}
 //   호출 예절: 350ms 간격·429 재시도(naverCallWithRetry) — 본업 수집기와 한도 공유. 중복 실행 락.
 let _detailRefreshBusy = false;
+// 지시 #150: 상세 본문 sanitize — 태그·스타일 화이트리스트 방식(XSS 차단 겸용). 스마트에디터 클래스(se-fsNN·align-*)를 인라인 스타일로 변환해 위계 보존.
+function sanitizeDetailHtml(frag) {
+    const ALLOW = { b: 1, strong: 1, i: 1, em: 1, u: 1, br: 1, p: 1, div: 1, span: 1, h1: 1, h2: 1, h3: 1, h4: 1 };
+    let s = String(frag);
+    s = s.replace(/<([a-zA-Z0-9]+)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g, (all, tag, attrs) => {
+        tag = tag.toLowerCase();
+        if (!ALLOW[tag]) return '';
+        if (tag === 'br') return '<br>';
+        const cls = (attrs.match(/class="([^"]*)"/i) || [])[1] || '';
+        const styRaw = (attrs.match(/style="([^"]*)"/i) || [])[1] || '';
+        const sty = [];
+        const fsz = (cls.match(/se-fs(\d{2})/) || [])[1];
+        if (fsz) sty.push('font-size:' + fsz + 'px');
+        const al = (cls.match(/align-(center|right|justify)/) || [])[1];
+        if (al) sty.push('text-align:' + al);
+        styRaw.split(';').forEach(kv => {
+            const mm = kv.match(/^\s*(font-size|font-weight|color|text-align|line-height)\s*:\s*([^;"'<>]{1,60})\s*$/i);
+            if (mm && !/expression|url\s*\(|javascript/i.test(mm[2])) sty.push(mm[1].toLowerCase() + ':' + mm[2].trim());
+        });
+        return '<' + tag + (sty.length ? ' style="' + sty.join(';') + '"' : '') + '>';
+    });
+    s = s.replace(/<\/([a-zA-Z0-9]+)>/g, (all, tag) => ALLOW[tag.toLowerCase()] && tag.toLowerCase() !== 'br' ? '</' + tag.toLowerCase() + '>' : '');
+    s = s.replace(/<!--[\s\S]*?-->/g, '').replace(/javascript:/gi, '').replace(/on[a-z]+\s*=/gi, 'data-x=');
+    return s.trim();
+}
+// 지시 #150: 상세 본문 → 블록 시퀀스 [{t:'i',src}|{t:'x',html}] — 이미지·텍스트를 원본 등장 순서 그대로.
+function parseDetailBlocks(html) {
+    let s = String(html || '');
+    // 위험 태그는 내용째 제거 (텍스트 추출 전 — script/style 내부 텍스트 유입 방지)
+    s = s.replace(/<(script|style|iframe|object|embed|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+         .replace(/<(script|style|iframe|object|embed|link|meta|form|input|button)\b[^>]*\/?>/gi, '');
+    const blocks = [];
+    const pushText = (frag) => {
+        const clean = sanitizeDetailHtml(frag);
+        const plain = clean.replace(/<[^>]+>/g, '').replace(/&nbsp;|&#160;/g, ' ').replace(/[​﻿]/g, '').replace(/\s+/g, ' ').trim();
+        if (plain) blocks.push({ t: 'x', html: clean });
+    };
+    const re = /<img\b[^>]*>/gi;
+    let last = 0, m;
+    while ((m = re.exec(s))) {
+        pushText(s.slice(last, m.index));
+        const src = (m[0].match(/src="([^"]+)"/i) || [])[1];
+        if (src && /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(src)) blocks.push({ t: 'i', src });
+        last = re.lastIndex;
+    }
+    pushText(s.slice(last));
+    return blocks;
+}
 async function collectProductDetails() {
     // 지시 #149(대표 확정): 전량 수집 — ①품절 포함 전 상품(판매중 10종 한정 제거) ②이미지 상한(10장) 제거 ③호스트 필터를 pstatic.net 계열 전반으로 완화(shop-phinf 한정이 뒷부분 이미지를 놓치던 원인 후보).
     //   저장은 URL 참조 방식 유지(네이버 CDN 핫링크 — 현행 표시로 가용 실증. 종당 URL 수십 건 = 용량 무리 없음).
@@ -7470,7 +7518,9 @@ async function collectProductDetails() {
         const html = String(op.detailContent || '');
         const rawImgs = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map(m => m[1]);
         const imgs = rawImgs.filter(u => /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(u));
-        items[String(p.no)] = { name: p.name, count: rawImgs.length, imgs, dropped: rawImgs.length - imgs.length };
+        const blocks = parseDetailBlocks(html);   // #150: 이미지+텍스트 블록 시퀀스(원본 순서·sanitize 완료)
+        items[String(p.no)] = { name: p.name, count: rawImgs.length, imgs, dropped: rawImgs.length - imgs.length,
+            blocks, textBlocks: blocks.filter(b => b.t === 'x').length };
     }
     const snap = { at: new Date().toISOString(), count: Object.keys(items).length, items };
     await naverCfgSet('product_detail_snapshot', snap);
