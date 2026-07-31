@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-30.1'; // 지시 #103·#104: 상품 조회 읽기 2종 ALLOW 추가(목록 search POST·v2 단건 GET — 자사몰 프로토타입 실데이터용, 쓰기 아님)
+const RELAY_VERSION = '2026-07-31.1'; // 지시 #103·#104: 상품 조회 읽기 2종 ALLOW 추가(목록 search POST·v2 단건 GET — 자사몰 프로토타입 실데이터용, 쓰기 아님)
 
 const {
     PORT = 4000,
@@ -209,7 +209,7 @@ app.post('/coupang', async (req, res) => {
 // 알리고 키는 회사프로그램(Render env)이 보관 — 이 서버는 form을 전달만 함(키 미보관, 네이버·쿠팡과 반대 구조).
 // 허용목록: 알림톡(토큰·템플릿 목록/등록/검수·발송) + 문자(발송·잔여건수)만. 그 외 경로 차단.
 const ALIGO_ALLOW = [
-    { host: 'kakaoapi.aligo.in', re: /^\/akv10\/(token\/create\/\d+\/[sm]|template\/(list|add|request)\/?|alimtalk\/send\/?)$/ },
+    { host: 'kakaoapi.aligo.in', re: /^\/akv10\/(token\/create\/\d+\/[sm]|template\/(list|add|request|del)\/?|alimtalk\/send\/?)$/ },   // #138: template/del 추가(폐기 정리 전용)
     { host: 'apis.aligo.in', re: /^\/(send|remain)\/?$/ },
 ];
 // 알리고 호출 중계: POST /aligo  { host, path, form, image_b64?, image_name? }
