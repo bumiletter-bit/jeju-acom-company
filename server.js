@@ -6627,6 +6627,17 @@ async function collectKakaoNotify() {
             const od = c.order || it.order || po.order || {};
             const orderKey = String(po.productOrderId || od.productOrderId || '').slice(0, 50);
             if (!orderKey) continue;
+            // 지시 #141: 결제~수집 사이 취소·클레임 레이스 방어 — 상세조회 시점 상태 재확인.
+            //   PAYED가 아니거나(즉시취소 = CANCELED 계열) 클레임 필드가 붙은 건(취소요청 등 — 상태는 PAYED 유지)은 발송 대상에서 제외 + 이력에 사유 기록.
+            const poStatus = String(po.productOrderStatus || '');
+            const claimMark = (String(po.claimType || '') + ' ' + String(po.claimStatus || '')).trim();
+            if ((poStatus && poStatus !== 'PAYED') || claimMark) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, mode, status, error)
+                    VALUES ($1,$2,'skip','canceled-excluded',$3) ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, (po.productName || '').slice(0, 200),
+                     `취소·클레임으로 제외 (상태 ${poStatus || '-'}${claimMark ? ' · 클레임 ' + claimMark : ''})`]).catch(() => {});
+                continue;   // 발송·발주확인 분류 전부 미포함 (취소 건은 수기 영역)
+            }
             try {
                 const optText = `${po.productName || ''} ${po.productOption || ''}`;
                 const matched = kakaoNotify.matchNotifyProduct(optText, bp);

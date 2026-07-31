@@ -1,3 +1,6 @@
+## v5.9.156 (2026-07-31)
+- 지시 #141: 주문 알림톡 취소·클레임 제외 로직 보강 — 상세조회 시점 productOrderStatus·claimType/claimStatus 재확인, PAYED 외·클레임 건은 skip(canceled-excluded 이력). 주기 60→3분은 DB 설정(naver_auto_collect)으로 변경. 실발송 무영향(dry-run 유지).
+
 ## v5.9.155 (2026-07-31)
 - 지시 #138: 템플릿 삭제 실행기(aligo_template_del_request 플래그 러너) — 화이트리스트(구본 UJ_9082·반려 이미지형 UJ_9135~9138)만 허용, 실전 승인 4종(9084~9087) 하드 차단. 구본 문안 원문은 docs/알림톡_템플릿_문안.md에 백업. 실발송 무관(삭제 API만).
 
