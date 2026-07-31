@@ -7446,25 +7446,39 @@ async function collectProductSnapshot() {
 //   호출 예절: 350ms 간격·429 재시도(naverCallWithRetry) — 본업 수집기와 한도 공유. 중복 실행 락.
 let _detailRefreshBusy = false;
 async function collectProductDetails() {
+    // 지시 #149(대표 확정): 전량 수집 — ①품절 포함 전 상품(판매중 10종 한정 제거) ②이미지 상한(10장) 제거 ③호스트 필터를 pstatic.net 계열 전반으로 완화(shop-phinf 한정이 뒷부분 이미지를 놓치던 원인 후보).
+    //   저장은 URL 참조 방식 유지(네이버 CDN 핫링크 — 현행 표시로 가용 실증. 종당 URL 수십 건 = 용량 무리 없음).
     const search = await naverCallWithRetry({ method: 'POST', path: '/external/v1/products/search', body: { page: 1, size: 100 } });
     const contents = (search && (search.contents || [])).slice(0, 100);
-    const live = contents.map(c => {
+    const all = contents.map(c => {
         const ch = (c.channelProducts && c.channelProducts[0]) || c;
-        return { originNo: c.originProductNo || ch.originProductNo, no: ch.channelProductNo || ch.id, name: ch.name, statusType: ch.statusType, stock: ch.stockQuantity };
-    }).filter(p => p.originNo && (p.statusType === 'SALE' || (p.statusType == null && Number(p.stock) > 0))).slice(0, 10);
+        return { originNo: c.originProductNo || ch.originProductNo, no: ch.channelProductNo || ch.id, name: ch.name };
+    }).filter(p => p.originNo && p.no);
     const items = {};
-    for (const p of live) {
+    for (const p of all) {
         await new Promise(r => setTimeout(r, 350));
         const o = await naverCallWithRetry({ method: 'GET', path: `/external/v2/products/origin-products/${p.originNo}` });
         const op = (o && (o.originProduct || o)) || {};
         const html = String(op.detailContent || '');
-        const imgs = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map(m => m[1]).filter(u => /^https:\/\/shop-phinf\.pstatic\.net/.test(u));
-        items[String(p.no)] = { name: p.name, count: imgs.length, imgs: imgs.slice(0, 10) };
+        const rawImgs = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map(m => m[1]);
+        const imgs = rawImgs.filter(u => /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(u));
+        items[String(p.no)] = { name: p.name, count: rawImgs.length, imgs, dropped: rawImgs.length - imgs.length };
     }
     const snap = { at: new Date().toISOString(), count: Object.keys(items).length, items };
     await naverCfgSet('product_detail_snapshot', snap);
     return snap;
 }
+// 지시 #149: 상세 전량 수집 플래그 러너 — product_detail_request {go:'yes'} (읽기 전용·중복 락 공유)
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('product_detail_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'product_detail_request'`);
+        if (!req || req.go !== 'yes' || _detailRefreshBusy) return;
+        _detailRefreshBusy = true;
+        try { await collectProductDetails(); } finally { _detailRefreshBusy = false; }
+    } catch (e) { _detailRefreshBusy = false; }
+}, 60000);
 app.post('/api/agent-office/naver/refresh-details', authMiddleware, async (req, res) => {
     if (_detailRefreshBusy) return res.status(409).json({ error: '이미 실행 중입니다 — 잠시 후 다시 확인해주세요' });
     _detailRefreshBusy = true;
