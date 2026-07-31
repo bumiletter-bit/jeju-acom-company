@@ -30,6 +30,17 @@ function orderTplCode(isReserve) {
                      : (process.env.ALIGO_TPL_CODE || APPROVED_TPL.order);
 }
 
+// 지시 #146(A안): 알림톡 상품명 정제 — 네이버 옵션 원문의 시스템 문구 제거. 하드코딩 문자열 아닌 구조 규칙:
+//   ① '…선택:' 접두부(콜론 앞 30자 내 '선택') ② ' / ' 세그먼트별 번호('1. ')·짧은 라벨('상품 및 과수:') 제거 후 재조합.
+//   폴백: 결과가 비거나 과잘림(2자 미만)·비정상(100자 초과)이면 원문 유지 (잘못 자르느니 원문 — dry-run 21종 전수 시뮬 부작용 0 확인).
+function cleanProductName(s) {
+    const raw = String(s || '').trim();
+    let t = raw.replace(/^[^:/]{0,30}선택\s*:\s*/, '');
+    const segs = t.split(/\s*\/\s*/).map(g => g.replace(/^\d+\.\s*/, '').replace(/^[^:()]{1,20}:\s*/, '').trim()).filter(Boolean);
+    const out = segs.join(' ').replace(/\s{2,}/g, ' ').trim();
+    return (out.length >= 2 && out.length <= 100) ? out : raw;
+}
+
 function switchOn() { return String(process.env.KAKAO_NOTIFY || 'off').toLowerCase() === 'on'; }
 function configured() {
     return Boolean(process.env.ALIGO_API_KEY && process.env.ALIGO_USER_ID && process.env.ALIGO_SENDER_KEY && process.env.ALIGO_SENDER);
@@ -301,4 +312,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };
+module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };

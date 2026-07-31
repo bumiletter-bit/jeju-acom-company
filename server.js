@@ -6664,7 +6664,7 @@ async function collectKakaoNotify() {
                 const tplDef = kakaoNotify.orderTemplate(isReserve);   // 부재 시 buildMessage가 뼈대 폴백(dry-run 검수에서 노출됨)
                 const message = kakaoNotify.buildMessage({
                     '고객명': od.ordererName || '고객',
-                    '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
+                    '상품명': kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품').slice(0, 80),   // #146: A안 정제(폴백 내장)
                     '발송안내': shipLine,
                 }, tplDef && tplDef.content);
                 const res = await kakaoNotify.sendAlimtalk({
