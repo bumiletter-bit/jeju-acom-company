@@ -1,3 +1,6 @@
+## v5.9.157 (2026-07-31)
+- 지시 #143: 공개 조회 GET /api/public/roulette-winners — 당일 실물성 룰렛 당첨(물방울·꽝 제외) 상위 2건, 닉네임 서버 측 마스킹(김*수·s**fklaks형), 경품 라벨=게임 운영 설정 매핑, CORS 허용. MALL_API 게이트 무관 읽기 전용(PII 없음) — 홈 상단 바 타이머↔당첨자 로테이션 데이터 소스.
+
 ## v5.9.156 (2026-07-31)
 - 지시 #141: 주문 알림톡 취소·클레임 제외 로직 보강 — 상세조회 시점 productOrderStatus·claimType/claimStatus 재확인, PAYED 외·클레임 건은 skip(canceled-excluded 이력). 주기 60→3분은 DB 설정(naver_auto_collect)으로 변경. 실발송 무영향(dry-run 유지).
 

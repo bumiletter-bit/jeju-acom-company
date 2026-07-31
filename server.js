@@ -7468,6 +7468,40 @@ app.get('/api/agent-office/naver/detail-snapshot-info', authMiddleware, async (r
 });
 
 // 지시 #107: 스냅샷 공개 조회 (자사몰 프로토타입·실서비스가 읽는 지점 — 공개 상품 정보만·PII 없음·최신 1건)
+// 지시 #143: 오늘의 룰렛 당첨자 공개 조회 — 홈 상단 바 로테이션용 (읽기 전용·마스킹 닉+경품명만 노출 — PII 없음, CORS 허용)
+//   실물성 당첨만(물방울 바닥상·꽝 제외). MALL_API 게이트와 무관(원장에 데이터가 없으면 자연히 빈 배열 = 룰렛 오픈 전 상태).
+function maskWinnerName(name) {
+    const s = String(name || '').trim();
+    if (!s) return '고객';
+    if (s.length <= 1) return s + '*';
+    if (s.length === 2) return s[0] + '*';
+    if (/^[가-힣]+$/.test(s) && s.length <= 4) return s[0] + '*'.repeat(s.length - 2) + s[s.length - 1];
+    return s.slice(0, 1) + '**' + s.slice(3);   // 영문 닉 등: s**fklaks 형태
+}
+app.get('/api/public/roulette-winners', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    try {
+        // 우선순위(#143-4): 감귤 박스 > 업그레이드권 > 쿠폰 — 미래 확률표 키를 패턴으로 포괄. 물방울(w*)·꽝은 발표 제외.
+        const rank = `CASE WHEN s.result_key ILIKE '%box%' OR s.result_key ILIKE '%감귤%' THEN 1
+                           WHEN s.result_key ILIKE '%upgrade%' OR s.result_key ILIKE '%업그레이드%' THEN 2
+                           WHEN s.result_key ILIKE '%coupon%' THEN 3 ELSE 4 END`;
+        const r = await pool.query(`
+            SELECT m.nickname, s.result_key, s.created_at
+            FROM roulette_spins s JOIN mall_members m ON m.id = s.member_id AND m.deleted_at IS NULL
+            WHERE s.spin_date = (NOW() AT TIME ZONE 'Asia/Seoul')::date
+              AND s.result_key IS NOT NULL AND s.result_key NOT ILIKE 'w%' AND s.result_key <> 'lose'
+            ORDER BY ${rank}, s.created_at DESC LIMIT 2`);
+        // 경품 라벨 = 게임 운영 설정(확률표)의 label 매핑 — 하드코딩 금지(#143-2)
+        let labels = {};
+        try {
+            const cfg = await naverCfgGet('mall_game_config');
+            for (const p of ((cfg && cfg.probabilities) || [])) labels[p.key] = p.label;
+        } catch (_) { /* 설정 없으면 키 그대로 */ }
+        res.json({ date: new Date().toISOString().slice(0, 10),
+            winners: r.rows.map(x => ({ name: maskWinnerName(x.nickname), prize: labels[x.result_key] || x.result_key })) });
+    } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
+});
+
 app.get('/api/public/store-snapshot', async (req, res) => {
     try {
         const r = await pool.query(`SELECT run_at, total, items, reviews FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
