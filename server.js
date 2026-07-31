@@ -7476,7 +7476,23 @@ function sanitizeDetailHtml(frag) {
     });
     s = s.replace(/<\/([a-zA-Z0-9]+)>/g, (all, tag) => ALLOW[tag.toLowerCase()] && tag.toLowerCase() !== 'br' ? '</' + tag.toLowerCase() + '>' : '');
     s = s.replace(/<!--[\s\S]*?-->/g, '').replace(/javascript:/gi, '').replace(/on[a-z]+\s*=/gi, 'data-x=');
-    return s.trim();
+    // 태그 밸런싱 — 블록 단위 innerHTML 삽입 시 미쌍 닫는 태그가 부모 컨테이너를 닫아버리는 것 방지(#150 실측 결함).
+    const tokens = s.match(/<[^>]+>|[^<]+/g) || [];
+    const out = [], stack = [];
+    for (const tk of tokens) {
+        const m = tk.match(/^<(\/?)([a-z0-9]+)/i);
+        if (!m) { out.push(tk); continue; }
+        const closing = m[1] === '/', tag = m[2].toLowerCase();
+        if (tag === 'br') { out.push('<br>'); continue; }
+        if (!closing) { stack.push(tag); out.push(tk); }
+        else {
+            const idx = stack.lastIndexOf(tag);
+            if (idx === -1) continue;   // 짝 없는 닫는 태그 버림
+            while (stack.length > idx) out.push('</' + stack.pop() + '>');
+        }
+    }
+    while (stack.length) out.push('</' + stack.pop() + '>');
+    return out.join('').trim();
 }
 // 지시 #150: 상세 본문 → 블록 시퀀스 [{t:'i',src}|{t:'x',html}] — 이미지·텍스트를 원본 등장 순서 그대로.
 function parseDetailBlocks(html) {
