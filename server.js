@@ -1085,6 +1085,7 @@ async function initDB() {
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS shipping_guide TEXT`);
     // 지시 #107: 네이버 채널상품번호 (자동 동기화 기초 — 매칭은 번호 우선·이름 폴백. 화면은 읽기 표시만)
     await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS naver_product_no BIGINT`);
+    await pool.query(`ALTER TABLE bot_products ADD COLUMN IF NOT EXISTS reserve_ship_start DATE`);   // 지시 #144: 예약 상품 발송 시작일 (화면 편집)
     // 지시 #108: 시기별 상품 지식 — 농산물은 날짜 따라 변함("포슬한가요" 오답 방지). 매년 반복(월-일 구간)·soft delete
     await pool.query(`
         CREATE TABLE IF NOT EXISTS product_season_knowledge (
@@ -5058,7 +5059,7 @@ async function todayLinkedBotProductNames() {
 async function svcListBotProducts() {
     const linked = await todayLinkedBotProductNames();
     const r = await pool.query(
-        `SELECT id, name, status, price, notify_message, shipping_guide, naver_product_no, updated_by, updated_at FROM bot_products
+        `SELECT id, name, status, price, notify_message, shipping_guide, naver_product_no, reserve_ship_start, updated_by, updated_at FROM bot_products
          WHERE deleted_at IS NULL
          ORDER BY CASE status WHEN '준비중' THEN 0 WHEN '판매중' THEN 1 WHEN '품절' THEN 2 ELSE 3 END, name`);
     // 대표 7/25: 품목별 금액 매칭 품목은 삭제 불가 — 예외(사전예약특가 등)·수동 추가 품목만 삭제 허용
@@ -5119,6 +5120,12 @@ async function svcUpdateBotProduct(id, patch, actor) {
     if (patch.notify_message !== undefined) { params.push(String(patch.notify_message || '').trim() || null); sets.push(`notify_message=$${params.length}`); }
     // 발송 안내문 장문 (지시 #74) — LMS용, 요일 플레이스홀더 {{내일요일}}·{{모레요일}} 허용
     if (patch.shipping_guide !== undefined) { params.push(String(patch.shipping_guide || '').trim() || null); sets.push(`shipping_guide=$${params.length}`); }
+    // 예약 발송 시작일 (지시 #144) — YYYY-MM-DD만 허용, 빈값 = 미설정(폴백 문구)
+    if (patch.reserve_ship_start !== undefined) {
+        const v = String(patch.reserve_ship_start || '').trim();
+        if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw { status: 400, message: '발송 시작일은 YYYY-MM-DD 형식으로 입력하세요' };
+        params.push(v || null); sets.push(`reserve_ship_start=$${params.length}`);
+    }
     if (params.length === 0) throw { status: 400, message: '수정할 내용이 없습니다' };
     params.push(actor?.name || null); sets.push(`updated_by=$${params.length}`);
     params.push(id);
@@ -6609,7 +6616,7 @@ async function collectKakaoNotify() {
     const targets = paidIds.filter(id => !seenSet.has(id));
     if (targets.length === 0) return `신규 결제 ${paidIds.length}건 — 전부 처리 이력 있음`;
     // 판매현황 품목(안내문 포함)·휴무일 1회 로드 (지시 #69·#73: 휴무일·안내 문구는 DB — 화면 관리)
-    const bp = (await pool.query(`SELECT name, notify_message FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const bp = (await pool.query(`SELECT name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     let done = 0, failed = 0;
     const sentReal = [], manualKeys = [], simulated = [];   // 지시 #92: 발주확인 대상 분류
@@ -6641,14 +6648,24 @@ async function collectKakaoNotify() {
             try {
                 const optText = `${po.productName || ''} ${po.productOption || ''}`;
                 const matched = kakaoNotify.matchNotifyProduct(optText, bp);
-                const ship = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.notices);
                 // 지시 #137: 문면·버튼·TPL 코드를 승인 템플릿(JSON 단일 소스)과 세트로 일치 — 예약 상품(옵션·상품명에 '예약')이면 B(UJ_9085), 아니면 A(UJ_9084)
                 const isReserve = /예약/.test(optText);
+                // 지시 #144(🚨 발사 게이트): 예약 건은 일반 발송일 계산 금지 — 품목별 발송 시작일(DB·화면 편집) 안내로 교체.
+                //   시작일 미설정·품목 미매칭 예약 건은 날짜 없는 폴백 문구. 일반 건만 기존 computeShipping.
+                let shipLine;
+                if (isReserve) {
+                    const rs = matched && matched.reserve_ship_start ? new Date(matched.reserve_ship_start) : null;
+                    shipLine = (rs && !isNaN(rs))
+                        ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
+                        : '시즌 시작 시 주문 순서대로 발송해 드려요';
+                } else {
+                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.notices).text;
+                }
                 const tplDef = kakaoNotify.orderTemplate(isReserve);   // 부재 시 buildMessage가 뼈대 폴백(dry-run 검수에서 노출됨)
                 const message = kakaoNotify.buildMessage({
                     '고객명': od.ordererName || '고객',
                     '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
-                    '발송안내': ship.text,
+                    '발송안내': shipLine,
                 }, tplDef && tplDef.content);
                 const res = await kakaoNotify.sendAlimtalk({
                     receiver: od.ordererTel || '', subject: '주문 안내', message, failoverMessage: message,

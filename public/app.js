@@ -12533,14 +12533,18 @@ async function renderBotProducts() {
                 <button class="btn-sm btn-outline" onclick="saveBotProdGuide(${p.id})" style="vertical-align:top;">저장</button>
             </td>
             <td style="white-space:nowrap;">
+                <input type="text" id="botprod-rss-${p.id}" value="${escapeHtml(p.reserve_ship_start ? String(p.reserve_ship_start).slice(0, 10) : '')}" placeholder="YYYY-MM-DD" style="width:105px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:12px;">
+                <button class="btn-sm btn-outline" onclick="saveBotProdReserveStart(${p.id})">저장</button>
+            </td>
+            <td style="white-space:nowrap;">
                 <button class="btn-sm btn-outline" onclick="saveBotProdPrice(${p.id})">저장</button>
                 ${(isAdmin && p.deletable) ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
             </td>
         </tr>`).join('');
     document.getElementById('botprod-list').innerHTML = `
-        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th>📦 발송 안내문(LMS)</th><th></th></tr></thead>
+        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th>📦 발송 안내문(LMS)</th><th>📅 예약 발송 시작일</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). 아직 발송 기능은 꺼져 있어 저장만 됩니다.</p>`;
+        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). 아직 발송 기능은 꺼져 있어 저장만 됩니다. · 📅 예약 발송 시작일(#144): 사전예약 상품의 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다 — 비우면 "시즌 시작 시 주문 순서대로" 문구.</p>`;
     renderBotProductLogs().catch(console.error);
     // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
@@ -12759,6 +12763,12 @@ window.saveBotProdPrice = async function(id) {
 // 알림톡 품목별 안내문 저장 (지시 #68 C2) — 발송 기능 OFF 상태에서도 문구는 미리 관리
 window.saveBotProdNotify = async function(id) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { notify_message: document.getElementById('botprod-notify-' + id).value }); showToast('✅ 알림톡 안내문 저장 완료', 'lime'); }
+    catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
+// 예약 발송 시작일 저장 (지시 #144)
+window.saveBotProdReserveStart = async function(id) {
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', { reserve_ship_start: document.getElementById('botprod-rss-' + id).value }); showToast('✅ 예약 발송 시작일 저장 완료', 'lime'); }
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
