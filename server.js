@@ -7401,7 +7401,7 @@ async function collectProductSnapshot() {
     //   🔴 자동 폴백: 어떤 이유로든 실패하면 직전 스냅샷의 리뷰를 그대로 유지(리뷰만 구버전·다른 데이터는 정상 갱신) — 실패 사실은 note에 기록.
     let reviews = null, reviewNote = '';
     try {
-        const live = items.filter(i => i.statusType === 'SALE' || (i.statusType == null && Number(i.stock) > 0)).slice(0, 10);
+        const live = items.filter(i => i.originNo && i.no);   // 대표 지시(8/1): 리뷰·배지를 품절 포함 전 상품으로 — 상세 리뷰 탭 재료
         const collected = {};
         const revFetch = async (p) => fetch('https://brand.naver.com/n/v1/contents/reviews/query-pages', {
             method: 'POST',
@@ -7411,7 +7411,7 @@ async function collectProductSnapshot() {
                 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
                 'referer': `https://brand.naver.com/jejuakkome/products/${p.no}`,
             },
-            body: JSON.stringify({ checkoutMerchantNo: 510497562, originProductNo: Number(p.originNo), page: 1, pageSize: 5, reviewSearchSortType: 'REVIEW_RANKING' }),
+            body: JSON.stringify({ checkoutMerchantNo: 510497562, originProductNo: Number(p.originNo), page: 1, pageSize: 20, reviewSearchSortType: 'REVIEW_RANKING' }),   // 5→20건(상품별 리뷰 탭)
         });
         for (const p of live) {
             if (!p.originNo || !p.no) continue;
@@ -7428,7 +7428,7 @@ async function collectProductSnapshot() {
             if (resp.status === 429) { await new Promise(r => setTimeout(r, 8000)); resp = await revFetch(p); }   // 1회 백오프 재시도
             if (!resp.ok) throw new Error('리뷰 HTTP ' + resp.status);
             const j = await resp.json();
-            collected[String(p.no)] = (j.contents || []).slice(0, 5).map(rv => ({
+            collected[String(p.no)] = (j.contents || []).slice(0, 20).map(rv => ({
                 score: rv.reviewScore, labels: rv.labels || [],
                 text: String(rv.reviewContent || '').slice(0, 300),
                 date: String(rv.createDate || '').slice(0, 10),
