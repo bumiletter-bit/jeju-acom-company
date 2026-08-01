@@ -12525,10 +12525,14 @@ async function renderBotProducts() {
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
                 `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" data-bp-status="${s}" onclick="pickBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" oninput="markBotProdDirty(${p.id})" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
-            <td>
-                <textarea id="botprod-notify-${p.id}" rows="2" placeholder="알림톡 개별 안내문 (비면 공통 템플릿)" oninput="markBotProdDirty(${p.id})" style="width:200px; min-width:160px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.notify_message || '')}</textarea>
-                <button class="btn-sm btn-outline" onclick="toggleBotProdMore('botprod-notify-${p.id}', this)" style="vertical-align:top; font-size:11px;">펼치기</button>
-            </td>
+            <td style="white-space:nowrap;">${(() => {   /* 지시 #156: 입력칸 → 템플릿 상태 뱃지 (판정: 판매중 + 발송 안내문 존재. 예약 O+날짜는 #152 저장 게이트로 보장) */
+                const miss = [];
+                if (p.status !== '판매중') miss.push('상태가 판매중이 아님');
+                if (!String(p.shipping_guide || '').trim()) miss.push('발송 안내문(LMS) 미입력 — 발송안내 알림톡·문자 재료');
+                return miss.length
+                    ? `<span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px; cursor:help;" title="미비: ${escapeHtml(miss.join(' · '))}">⚠️ 미설정</span>`
+                    : `<span class="pill" style="background:#E8F8EF; color:#1E8E4E; font-size:11px;" title="주문·발송 알림톡은 승인 템플릿(알리고)으로 자동 발송됩니다">✅ 알림톡 템플릿 설정완료</span>`;
+            })()}</td>
             <td>
                 <textarea id="botprod-guide-${p.id}" rows="2" placeholder="발송 안내문 (LMS 장문 — 먹는법·보관법. {{내일요일}}·{{모레요일}} = 발송 시 요일 자동 치환)" oninput="markBotProdDirty(${p.id})" style="width:230px; min-width:180px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.shipping_guide || '')}</textarea>
                 <button class="btn-sm btn-outline" onclick="toggleBotProdMore('botprod-guide-${p.id}', this)" style="vertical-align:top; font-size:11px;">펼치기</button>
@@ -12546,9 +12550,9 @@ async function renderBotProducts() {
             </td>
         </tr>`).join('');
     document.getElementById('botprod-list').innerHTML = `
-        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th>📦 발송 안내문(LMS)</th><th>📅 예약발송 여부</th><th></th></tr></thead>
+        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡</th><th>📦 발송 안내문(LMS)</th><th>📅 예약발송 여부</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). · 📅 예약발송(#152): 체크하면 날짜칸이 열리고, 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다. 체크 해제 = 일반 자동 발송일 계산으로 복귀. · 변경한 행만 [저장] 버튼이 켜지며, 행의 상태·가격·안내문·예약발송이 한 번에 저장됩니다.</p>`;
+        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡(#156): 카카오 승인 템플릿(알리고)으로만 발송되므로 품목별 문구 입력이 아니라 준비 상태 뱃지로 표시 — ⚠️ 미설정에 마우스를 올리면 미비 항목이 보입니다. · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). · 📅 예약발송(#152): 체크하면 날짜칸이 열리고, 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다. 체크 해제 = 일반 자동 발송일 계산으로 복귀. · 변경한 행만 [저장] 버튼이 켜지며, 행의 상태·가격·안내문·예약발송이 한 번에 저장됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
     // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
@@ -12793,9 +12797,8 @@ window.saveBotProdRow = async function(id) {
     const rsvOn = document.getElementById('botprod-rsvon-' + id).checked;
     const rss = document.getElementById('botprod-rss-' + id).value.trim();
     if (rsvOn && !/^\d{4}-\d{2}-\d{2}$/.test(rss)) return showToast('⚠️ 예약발송이 켜져 있습니다 — 발송 시작일(YYYY-MM-DD)을 입력해주세요');
-    const patch = {
+    const patch = {   // #156: notify_message 칸 제거 — 알림톡은 승인 템플릿으로만 (DB 값은 보존·미전송)
         price: document.getElementById('botprod-price-' + id).value,
-        notify_message: document.getElementById('botprod-notify-' + id).value,
         shipping_guide: document.getElementById('botprod-guide-' + id).value,
         reserve_ship_start: rsvOn ? rss : '',   // X = 빈값 저장 → 일반 발송일 계산 복귀
     };
