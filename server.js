@@ -11096,7 +11096,7 @@ setInterval(async () => {
         const req = await naverCfgGet('aligo_selftest_request');
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_selftest_request'`);   // 선제거 — 반복 실행 방지
-        const result = await kakaoNotify.selftest();
+        const result = await kakaoNotify.selftest({ full: !!(req && req.full) });   // #153: full=문안 원문·버튼 포함(읽기 전용)
         await naverCfgSet('aligo_selftest_result', result);
     } catch (e) {
         try { await naverCfgSet('aligo_selftest_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }

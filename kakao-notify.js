@@ -187,7 +187,8 @@ function maskEnv(name) {
     const s = String(process.env[name] || '');
     return s ? { set: true, len: s.length, head2: s.slice(0, 2) } : { set: false };
 }
-async function selftest() {
+async function selftest(opts) {
+    const full = !!(opts && opts.full);   // 지시 #153: full=true 시 템플릿 문안 원문·버튼 구성까지 수집(이모지 저장 상태 판정용 — 읽기 전용)
     const out = { at: new Date().toISOString(), env: {}, checks: {} };
     for (const k of ['ALIGO_API_KEY', 'ALIGO_USER_ID', 'ALIGO_SENDER_KEY', 'ALIGO_SENDER']) out.env[k] = maskEnv(k);
     const senderDigits = String(process.env.ALIGO_SENDER || '').replace(/[^0-9]/g, '');
@@ -210,7 +211,9 @@ async function selftest() {
                     // 지시 #98: 심사 상태 추적 — 템플릿별 상태(응답 필드명 방어적 수집, 문안 원문은 미수집)
                     templates: (Array.isArray(list.list) ? list.list : []).slice(0, 12).map(x => ({
                         code: x.templtCode || x.tpl_code || null, name: x.templtName || x.tpl_name || null,
-                        status: x.status != null ? x.status : null, inspStatus: x.inspStatus != null ? x.inspStatus : null })) }
+                        status: x.status != null ? x.status : null, inspStatus: x.inspStatus != null ? x.inspStatus : null,
+                        ...(full ? { content: x.templtContent || x.tpl_content || null,
+                            buttons: x.buttons || x.templtButton || x.button || null } : {}) })) }
                 : { ok: false, error: JSON.stringify(list).slice(0, 200) };
         }
     } catch (e) { out.checks.token = { ok: false, error: String(e.message || e).slice(0, 200) }; }
