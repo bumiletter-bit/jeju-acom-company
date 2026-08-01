@@ -12525,13 +12525,12 @@ async function renderBotProducts() {
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
                 `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" data-bp-status="${s}" onclick="pickBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
             <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" oninput="markBotProdDirty(${p.id})" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
-            <td style="white-space:nowrap;">${(() => {   /* 지시 #156: 입력칸 → 템플릿 상태 뱃지 (판정: 판매중 + 발송 안내문 존재. 예약 O+날짜는 #152 저장 게이트로 보장) */
-                const miss = [];
-                if (p.status !== '판매중') miss.push('상태가 판매중이 아님');
-                if (!String(p.shipping_guide || '').trim()) miss.push('발송 안내문(LMS) 미입력 — 발송안내 알림톡·문자 재료');
-                return miss.length
-                    ? `<span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px; cursor:help;" title="미비: ${escapeHtml(miss.join(' · '))}">⚠️ 미설정</span>`
-                    : `<span class="pill" style="background:#E8F8EF; color:#1E8E4E; font-size:11px;" title="주문·발송 알림톡은 승인 템플릿(알리고)으로 자동 발송됩니다">✅ 알림톡 템플릿 설정완료</span>`;
+            <td style="white-space:nowrap;">${(() => {   /* 지시 #156→#160: 단계형 뱃지 — ✅ 전부 준비 / 🔵 주문톡 OK·발송안내문 필요(정상 중간 상태) / ⚠️ 실제 결함만 / 회색 발송 대상 아님 */
+                const hasGuide = !!String(p.shipping_guide || '').trim();
+                if (!BOTPROD_STATUSES.includes(p.status)) return `<span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px; cursor:help;" title="상태값 이상(${escapeHtml(String(p.status))}) — 주문 알림톡 처리 불가, 상태를 다시 지정해주세요">⚠️ 미설정</span>`;
+                if (p.status !== '판매중') return `<span class="pill" style="background:#EEF0F4; color:#767A83; font-size:11px; cursor:help;" title="판매중이 아니라 주문·알림톡 발송 대상이 아닙니다 (판매중 전환 시 자동 판정)">— 발송 대상 아님</span>`;
+                if (!hasGuide) return `<span class="pill" style="background:#EAF1FD; color:#1D5BBF; font-size:11px; cursor:help;" title="주문완료 알림톡(승인 템플릿)은 정상 발송되는 상태입니다. 발송 시점 안내문(LMS·발송안내 알림톡 재료)이 아직 없습니다${p.reserve_ship_start ? ' — 예약 상품은 시즌 전 정상, 발송 시작 전까지 안내문 입력 권장' : ''}">🔵 주문톡 OK · 발송안내문 필요</span>`;
+                return `<span class="pill" style="background:#E8F8EF; color:#1E8E4E; font-size:11px;" title="주문·발송 알림톡 전부 준비 완료 (승인 템플릿 자동 발송)">✅ 알림톡 템플릿 설정완료</span>`;
             })()}</td>
             <td>
                 <textarea id="botprod-guide-${p.id}" rows="2" placeholder="발송 안내문 (LMS 장문 — 먹는법·보관법. {{내일요일}}·{{모레요일}} = 발송 시 요일 자동 치환)" oninput="markBotProdDirty(${p.id})" style="width:230px; min-width:180px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.shipping_guide || '')}</textarea>
