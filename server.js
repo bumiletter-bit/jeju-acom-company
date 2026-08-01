@@ -7416,6 +7416,14 @@ async function collectProductSnapshot() {
         for (const p of live) {
             if (!p.originNo || !p.no) continue;
             await new Promise(r => setTimeout(r, 1500));
+            // 지시 #168: 구매 배지(네이버 marketing-message — "오늘 N명 구매" 등 네이버 산출 실수치) 동반 수집.
+            //   실패해도 무시(배지는 부가 정보 — 리뷰·본 스냅샷에 영향 없음). 결과는 items[].buyBadge.
+            try {
+                const bres = await fetch(`https://brand.naver.com/n/v1/marketing-message/${p.originNo}?currentPurchaseType=Paid&usePurchased=true&basisPurchased=10&usePurchasedIn2Y=true&useRepurchased=true&basisRepurchased=10&useBestProduct=true&useNewProduct=true`, {
+                    headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1', referer: `https://brand.naver.com/jejuakkome/products/${p.no}` },
+                });
+                if (bres.ok) { const bj = await bres.json(); if (bj && bj.mainPhrase) p.buyBadge = { prefix: bj.prefix || '', mainPhrase: bj.mainPhrase }; }
+            } catch (_) { /* 배지 실패 무시 */ }
             let resp = await revFetch(p);
             if (resp.status === 429) { await new Promise(r => setTimeout(r, 8000)); resp = await revFetch(p); }   // 1회 백오프 재시도
             if (!resp.ok) throw new Error('리뷰 HTTP ' + resp.status);
