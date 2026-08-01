@@ -12518,33 +12518,37 @@ async function renderBotProducts() {
     const d = await api('/api/agent-office/bot-products');
     botProducts = d.products || [];
     const isAdmin = currentUser?.role === 'admin';
+    // 지시 #152: 행 일괄 저장(변경 행만 활성)·예약발송 토글(O일 때만 날짜칸)·안내문 펼치기
     const rows = botProducts.map(p => `
-        <tr>
+        <tr id="botprod-row-${p.id}">
             <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span class="pill pill-wait" style="font-size:11px;">가격 미세팅 · 봇 미노출</span>' : ''}${p.naver_product_no ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px;">🛰️ 네이버 ${p.naver_product_no}</div>` : ''}</td>
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
-                `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" onclick="setBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
-            <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
+                `<button class="btn-sm ${p.status === s ? 'btn-primary' : 'btn-outline'}" data-bp-status="${s}" onclick="pickBotProdStatus(${p.id}, '${s}')">${s}</button>`).join(' ')}</td>
+            <td><input type="text" id="botprod-price-${p.id}" value="${escapeHtml(p.price || '')}" placeholder="가격" oninput="markBotProdDirty(${p.id})" style="width:110px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px;"></td>
             <td>
-                <textarea id="botprod-notify-${p.id}" rows="2" placeholder="알림톡 개별 안내문 (비면 공통 템플릿)" style="width:200px; min-width:160px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.notify_message || '')}</textarea>
-                <button class="btn-sm btn-outline" onclick="saveBotProdNotify(${p.id})" style="vertical-align:top;">저장</button>
+                <textarea id="botprod-notify-${p.id}" rows="2" placeholder="알림톡 개별 안내문 (비면 공통 템플릿)" oninput="markBotProdDirty(${p.id})" style="width:200px; min-width:160px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.notify_message || '')}</textarea>
+                <button class="btn-sm btn-outline" onclick="toggleBotProdMore('botprod-notify-${p.id}', this)" style="vertical-align:top; font-size:11px;">펼치기</button>
             </td>
             <td>
-                <textarea id="botprod-guide-${p.id}" rows="2" placeholder="발송 안내문 (LMS 장문 — 먹는법·보관법. {{내일요일}}·{{모레요일}} = 발송 시 요일 자동 치환)" style="width:230px; min-width:180px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.shipping_guide || '')}</textarea>
-                <button class="btn-sm btn-outline" onclick="saveBotProdGuide(${p.id})" style="vertical-align:top;">저장</button>
+                <textarea id="botprod-guide-${p.id}" rows="2" placeholder="발송 안내문 (LMS 장문 — 먹는법·보관법. {{내일요일}}·{{모레요일}} = 발송 시 요일 자동 치환)" oninput="markBotProdDirty(${p.id})" style="width:230px; min-width:180px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font:inherit; font-size:12px; resize:vertical;">${escapeHtml(p.shipping_guide || '')}</textarea>
+                <button class="btn-sm btn-outline" onclick="toggleBotProdMore('botprod-guide-${p.id}', this)" style="vertical-align:top; font-size:11px;">펼치기</button>
             </td>
             <td style="white-space:nowrap;">
-                <input type="text" id="botprod-rss-${p.id}" value="${escapeHtml(p.reserve_ship_start ? String(p.reserve_ship_start).slice(0, 10) : '')}" placeholder="YYYY-MM-DD" style="width:105px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:12px;">
-                <button class="btn-sm btn-outline" onclick="saveBotProdReserveStart(${p.id})">저장</button>
+                <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" id="botprod-rsvon-${p.id}" ${p.reserve_ship_start ? 'checked' : ''} onchange="toggleBotProdReserve(${p.id})"> 예약발송
+                </label>
+                <input type="text" id="botprod-rss-${p.id}" value="${escapeHtml(p.reserve_ship_start ? String(p.reserve_ship_start).slice(0, 10) : '')}" placeholder="YYYY-MM-DD" oninput="markBotProdDirty(${p.id})"
+                    style="width:105px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:12px; ${p.reserve_ship_start ? '' : 'display:none;'}">
             </td>
             <td style="white-space:nowrap;">
-                <button class="btn-sm btn-outline" onclick="saveBotProdPrice(${p.id})">저장</button>
+                <button class="btn-sm btn-outline" id="botprod-save-${p.id}" onclick="saveBotProdRow(${p.id})" disabled style="opacity:.45;">저장</button>
                 ${(isAdmin && p.deletable) ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
             </td>
         </tr>`).join('');
     document.getElementById('botprod-list').innerHTML = `
-        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th>📦 발송 안내문(LMS)</th><th>📅 예약 발송 시작일</th><th></th></tr></thead>
+        <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡 안내문</th><th>📦 발송 안내문(LMS)</th><th>📅 예약발송 여부</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). 아직 발송 기능은 꺼져 있어 저장만 됩니다. · 📅 예약 발송 시작일(#144): 사전예약 상품의 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다 — 비우면 "시즌 시작 시 주문 순서대로" 문구.</p>`;
+        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡 안내문: 주문 안내 알림톡용 품목별 짧은 문구 (비면 공통 템플릿) · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). · 📅 예약발송(#152): 체크하면 날짜칸이 열리고, 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다. 체크 해제 = 일반 자동 발송일 계산으로 복귀. · 변경한 행만 [저장] 버튼이 켜지며, 행의 상태·가격·안내문·예약발송이 한 번에 저장됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
     // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
     renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
@@ -12753,6 +12757,51 @@ window.deleteShipHolidayGroup = async function(idsCsv) {
 window.setBotProdStatus = async function(id, status) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { status }); showToast(`✅ '${status}' 변경 완료 — 봇 답변에 1분 내 반영`, 'lime'); }
     catch (e) { alert(e.message); }
+    renderBotProducts().catch(console.error);
+};
+// ── 지시 #152: 행 일괄 저장 체계 ──
+window.markBotProdDirty = function(id) {
+    const btn = document.getElementById('botprod-save-' + id);
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.classList.remove('btn-outline'); btn.classList.add('btn-primary'); }
+};
+window.pickBotProdStatus = function(id, status) {   // 로컬 선택만 — 저장은 행 [저장]에서 일괄
+    const row = document.getElementById('botprod-row-' + id);
+    if (!row) return;
+    row.querySelectorAll('[data-bp-status]').forEach(b => {
+        const on = b.getAttribute('data-bp-status') === status;
+        b.classList.toggle('btn-primary', on); b.classList.toggle('btn-outline', !on);
+    });
+    row.dataset.pickedStatus = status;
+    markBotProdDirty(id);
+};
+window.toggleBotProdReserve = function(id) {   // O→날짜칸 노출 / X→날짜 클리어(저장 시 일반 문면 복귀)
+    const on = document.getElementById('botprod-rsvon-' + id).checked;
+    const d = document.getElementById('botprod-rss-' + id);
+    if (on) { d.style.display = ''; d.focus(); }
+    else { d.value = ''; d.style.display = 'none'; }
+    markBotProdDirty(id);
+};
+window.toggleBotProdMore = function(taId, btn) {   // 안내문 펼치기/접기 (크기만 — 값 무변경)
+    const ta = document.getElementById(taId);
+    if (!ta) return;
+    const expanded = ta.rows > 2;
+    ta.rows = expanded ? 2 : 14;
+    btn.textContent = expanded ? '펼치기' : '접기';
+};
+window.saveBotProdRow = async function(id) {
+    const row = document.getElementById('botprod-row-' + id);
+    const rsvOn = document.getElementById('botprod-rsvon-' + id).checked;
+    const rss = document.getElementById('botprod-rss-' + id).value.trim();
+    if (rsvOn && !/^\d{4}-\d{2}-\d{2}$/.test(rss)) return showToast('⚠️ 예약발송이 켜져 있습니다 — 발송 시작일(YYYY-MM-DD)을 입력해주세요');
+    const patch = {
+        price: document.getElementById('botprod-price-' + id).value,
+        notify_message: document.getElementById('botprod-notify-' + id).value,
+        shipping_guide: document.getElementById('botprod-guide-' + id).value,
+        reserve_ship_start: rsvOn ? rss : '',   // X = 빈값 저장 → 일반 발송일 계산 복귀
+    };
+    if (row && row.dataset.pickedStatus) patch.status = row.dataset.pickedStatus;
+    try { await api('/api/agent-office/bot-products/' + id, 'PUT', patch); showToast('✅ 행 저장 완료 — 봇 답변에 1분 내 반영', 'lime'); }
+    catch (e) { return showToast('❌ 저장 실패 — ' + String(e.message || '').slice(0, 80)); }
     renderBotProducts().catch(console.error);
 };
 window.saveBotProdPrice = async function(id) {

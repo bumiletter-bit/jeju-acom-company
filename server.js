@@ -11103,6 +11103,21 @@ setInterval(async () => {
     }
 }, 60000);
 
+// 지시 #153-4: 단건 테스트 실발송 러너 — 🔴 대표 GO 후에만 플래그(aligo_test_send_request {go:'yes', to, key}) 투입.
+//    수신번호는 kakao-notify 화이트리스트(대표 번호)로 하드 제한 — 스위치 전체 ON 없이 이모지 실물 확정용 1건.
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('aligo_test_send_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_test_send_request'`);
+        if (!req || req.go !== 'yes') return;
+        const r = await kakaoNotify.sendTestOne({ to: req.to, key: req.key });
+        await naverCfgSet('aligo_test_send_result', { at: new Date().toISOString(), key: req.key || 'welcome', ...r });
+    } catch (e) {
+        try { await naverCfgSet('aligo_test_send_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // 지시 #103·#104: 상품 조회 실행기 — DB 플래그(naver_query_request) 감지 시 읽기 전용 상품 API만 호출,
 // 결과를 naver_query_result에 기록 (자사몰 프로토타입 실데이터 스냅샷용 — PII 없음·쓰기 불가).
 // 허용 = ①POST /external/v1/products/search(목록, 읽기 성격) ②GET /external/v2/products/*(단건 — 이미지·가격·옵션·상세).

@@ -227,6 +227,41 @@ async function selftest(opts) {
     return out;
 }
 
+// ── 지시 #153-4: 단건 테스트 실발송 — 이모지 실물 확정용. 🔴 대표 GO 후 플래그(aligo_test_send_request)로만 발동.
+//    KAKAO_NOTIFY 스위치와 무관하게 지정 번호 1건만 발송(스위치 전체 ON 없이 검증). 수신번호는 화이트리스트(대표 번호)로 하드 제한.
+const TEST_SEND_ALLOW = ['01066874031'];
+async function sendTestOne({ to, key }) {
+    const receiver = String(to || '').replace(/[^0-9]/g, '');
+    if (!TEST_SEND_ALLOW.includes(receiver)) return { status: 'blocked', error: '허용 수신번호(대표) 아님' };
+    if (!configured()) return { status: 'keys-missing' };
+    const KEYMAP = { order: 'order_normal', order_reserve: 'order_reserve', welcome: 'welcome', guide: 'ship_guide' };   // APPROVED_TPL 별칭 → 문안 JSON key
+    const tpl = templateByKey(KEYMAP[key || 'welcome'] || key);
+    if (!tpl) return { status: 'no-template', key };
+    const vars = { '고객명': '전승범', '상품명': '미니밤호박 특품최상급 특품 5kg(10~20개)', '발송안내': '내일 오전 발송 예정입니다.', '도착안내': '내일 (토) 도착 예정', '송장번호': '123456789012', '상품코드': '216' };
+    const message = buildMessage(vars, tpl.content);
+    let buttons = null;
+    if (tpl.button) {
+        buttons = JSON.parse(JSON.stringify(tpl.button));
+        if (Array.isArray(buttons.button)) for (const b of buttons.button) {
+            for (const k of ['linkMo', 'linkPc']) if (b[k]) b[k] = String(b[k]).replace(/#\{(.+?)\}/g, (m, kk) => vars[kk] != null ? String(vars[kk]) : m);
+        }
+    }
+    const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
+    const tok = await aligoPost('/akv10/token/create/30/s', auth);
+    const token = tok && (tok.token || tok.urlencode || (tok.data && tok.data.token));
+    if (!token) return { status: 'token-failed', error: JSON.stringify(tok).slice(0, 200) };
+    const form = {
+        ...auth, token, senderkey: process.env.ALIGO_SENDER_KEY,
+        tpl_code: APPROVED_TPL[key || 'welcome'] || APPROVED_TPL.welcome,
+        sender: process.env.ALIGO_SENDER, receiver_1: receiver,
+        subject_1: '테스트', message_1: message,
+    };
+    if (buttons) form.button_1 = JSON.stringify(buttons);
+    const r = await aligoPost('/akv10/alimtalk/send/', form);
+    const ok = r && Number(r.code) === 0;
+    return { status: ok ? 'sent' : 'failed', error: ok ? null : JSON.stringify(r).slice(0, 300), message, tpl_code: form.tpl_code };
+}
+
 // ── 템플릿 등록·검수 신청 실행기 (지시 #98 — 대표 최종 GO 전용, 서버 측 실행: 알리고 키가 Render env에만 있으므로)
 //    발동은 server.js 플래그 폴러(aligo_register_request {go:'yes'})로만. 실발송 아님 — 등록(template/add)·검수 신청(template/request)만.
 //    문안·버튼 = alimtalk-templates.json 그대로(임의 수정 금지·status='confirmed' 필수). 텍스트형(tpl_emtype 미지정=NONE) — 이미지형은 별도 트랙.
@@ -315,4 +350,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };
+module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };
