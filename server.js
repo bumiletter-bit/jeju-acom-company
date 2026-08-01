@@ -7494,9 +7494,35 @@ function sanitizeDetailHtml(frag) {
     while (stack.length) out.push('</' + stack.pop() + '>');
     return out.join('').trim();
 }
+// 지시 #151: 네이버 지도 플레이스 위젯(oglink 컴포넌트) 통째 제거 — 이미지+텍스트+링크 묶음 단위.
+//   식별: se-oglink 컨테이너 내부에 map.naver.com 링크 또는 dthumb 프록시 썸네일이 있는 것만 제거(다른 링크 카드는 보존 — 과잘림 금지).
+function stripMapWidgets(html) {
+    let s = String(html || '');
+    const re = /<div[^>]*class="[^"]*\bse-(?:component\s[^"]*se-oglink|oglink)\b[^"]*"[^>]*>/g;
+    let guard = 0;
+    let m;
+    while ((m = re.exec(s)) && guard++ < 50) {
+        // 컨테이너 끝을 div 균형 매칭으로 탐색
+        let depth = 1, j = m.index + m[0].length;
+        const tagRe = /<\/?div\b[^>]*>/g;
+        tagRe.lastIndex = j;
+        let t, end = -1;
+        while ((t = tagRe.exec(s))) {
+            depth += t[0][1] === '/' ? -1 : 1;
+            if (depth === 0) { end = tagRe.lastIndex; break; }
+        }
+        if (end < 0) break;
+        const inner = s.slice(m.index, end);
+        if (/map\.naver\.com|dthumb-phinf\.pstatic\.net/.test(inner)) {
+            s = s.slice(0, m.index) + s.slice(end);
+            re.lastIndex = m.index;   // 삭제분만큼 되감기
+        }
+    }
+    return s;
+}
 // 지시 #150: 상세 본문 → 블록 시퀀스 [{t:'i',src}|{t:'x',html}] — 이미지·텍스트를 원본 등장 순서 그대로.
 function parseDetailBlocks(html) {
-    let s = String(html || '');
+    let s = stripMapWidgets(html);
     // 위험 태그는 내용째 제거 (텍스트 추출 전 — script/style 내부 텍스트 유입 방지)
     s = s.replace(/<(script|style|iframe|object|embed|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
          .replace(/<(script|style|iframe|object|embed|link|meta|form|input|button)\b[^>]*\/?>/gi, '');
@@ -7531,7 +7557,7 @@ async function collectProductDetails() {
         await new Promise(r => setTimeout(r, 350));
         const o = await naverCallWithRetry({ method: 'GET', path: `/external/v2/products/origin-products/${p.originNo}` });
         const op = (o && (o.originProduct || o)) || {};
-        const html = String(op.detailContent || '');
+        const html = stripMapWidgets(String(op.detailContent || ''));   // #151: 지도 위젯 제거 후 기준으로 count·imgs·blocks 산출(3자 일치)
         const rawImgs = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map(m => m[1]);
         const imgs = rawImgs.filter(u => /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(u));
         const blocks = parseDetailBlocks(html);   // #150: 이미지+텍스트 블록 시퀀스(원본 순서·sanitize 완료)
