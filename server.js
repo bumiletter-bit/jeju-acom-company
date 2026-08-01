@@ -7464,12 +7464,14 @@ function sanitizeDetailHtml(frag) {
         const cls = (attrs.match(/class="([^"]*)"/i) || [])[1] || '';
         const styRaw = (attrs.match(/style="([^"]*)"/i) || [])[1] || '';
         const sty = [];
-        const fsz = (cls.match(/se-fs(\d{2})/) || [])[1];
+        const fsz = (cls.match(/se-fs-?(?:fs)?(\d{2})/) || [])[1];   // #155: 실물 클래스는 se-fs-fsNN 형태 — 구정규식(se-fsNN) 미매치 수정
         if (fsz) sty.push('font-size:' + fsz + 'px');
         const al = (cls.match(/align-(center|right|justify)/) || [])[1];
         if (al) sty.push('text-align:' + al);
+        if (/\bse-caption\b/.test(cls)) sty.push('font-size:12.5px', 'color:#888', 'text-align:center');   // #155: 이미지 캡션 힌트
         styRaw.split(';').forEach(kv => {
-            const mm = kv.match(/^\s*(font-size|font-weight|color|text-align|line-height)\s*:\s*([^;"'<>]{1,60})\s*$/i);
+            // #155: 밑줄·형광펜(배경색)·이탤릭 보존 — background-color 소실이 "흰 글자+색 배경" 문장 실종의 원인이었음
+            const mm = kv.match(/^\s*(font-size|font-weight|color|text-align|line-height|background-color|text-decoration|text-decoration-line|font-style)\s*:\s*([^;"'<>]{1,60})\s*$/i);
             if (mm && !/expression|url\s*\(|javascript/i.test(mm[2])) sty.push(mm[1].toLowerCase() + ':' + mm[2].trim());
         });
         return '<' + tag + (sty.length ? ' style="' + sty.join(';') + '"' : '') + '>';
@@ -7520,17 +7522,47 @@ function stripMapWidgets(html) {
     }
     return s;
 }
-// 지시 #150: 상세 본문 → 블록 시퀀스 [{t:'i',src}|{t:'x',html}] — 이미지·텍스트를 원본 등장 순서 그대로.
+// 지시 #150→#155: 상세 본문 → 블록 시퀀스 [{t:'i',src}|{t:'ig',cols,srcs}|{t:'x',html}] — 원본 등장 순서 그대로.
+//   #155: 스마트에디터 imageStrip(이미지 N열 병렬)을 ig 블록으로 보존 — 1열 세로 나열로 뭉개지던 결손 수정.
 function parseDetailBlocks(html) {
     let s = stripMapWidgets(html);
     // 위험 태그는 내용째 제거 (텍스트 추출 전 — script/style 내부 텍스트 유입 방지)
     s = s.replace(/<(script|style|iframe|object|embed|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
          .replace(/<(script|style|iframe|object|embed|link|meta|form|input|button)\b[^>]*\/?>/gi, '');
+    // imageStrip 컨테이너를 마커로 치환해 병렬 그룹 보존 (div 균형 매칭)
+    const strips = [];
+    {
+        const sre = /<div[^>]*class="[^"]*se-imageStrip-container[^"]*se-imageStrip-col-(\d)[^"]*"[^>]*>/g;
+        let sm, guard = 0;
+        while ((sm = sre.exec(s)) && guard++ < 200) {
+            let depth = 1, j = sm.index + sm[0].length;
+            const tagRe = /<\/?div\b[^>]*>/g;
+            tagRe.lastIndex = j;
+            let t, end = -1;
+            while ((t = tagRe.exec(s))) {
+                depth += t[0][1] === '/' ? -1 : 1;
+                if (depth === 0) { end = tagRe.lastIndex; break; }
+            }
+            if (end < 0) break;
+            const inner = s.slice(sm.index, end);
+            const srcs = [...inner.matchAll(/<img[^>]+src="([^"]+)"/g)].map(x => x[1])
+                .filter(u => /^https:\/\/[a-z0-9-]+\.pstatic\.net\//.test(u));
+            const idx = strips.length;
+            strips.push({ t: 'ig', cols: Math.max(2, parseInt(sm[1], 10) || 2), srcs });
+            s = s.slice(0, sm.index) + `IG${idx}` + s.slice(end);
+            sre.lastIndex = sm.index + 8;
+        }
+    }
     const blocks = [];
     const pushText = (frag) => {
-        const clean = sanitizeDetailHtml(frag);
-        const plain = clean.replace(/<[^>]+>/g, '').replace(/&nbsp;|&#160;/g, ' ').replace(/[​﻿]/g, '').replace(/\s+/g, ' ').trim();
-        if (plain) blocks.push({ t: 'x', html: clean });
+        // 마커 기준 분할 — ig 블록을 원위치에 삽입
+        const parts = frag.split(/IG(\d+)/);
+        for (let k = 0; k < parts.length; k++) {
+            if (k % 2 === 1) { const st = strips[parseInt(parts[k], 10)]; if (st && st.srcs.length) blocks.push(st); continue; }
+            const clean = sanitizeDetailHtml(parts[k]);
+            const plain = clean.replace(/<[^>]+>/g, '').replace(/&nbsp;|&#160;/g, ' ').replace(/[​﻿]/g, '').replace(/\s+/g, ' ').trim();
+            if (plain) blocks.push({ t: 'x', html: clean });
+        }
     };
     const re = /<img\b[^>]*>/gi;
     let last = 0, m;
