@@ -12541,8 +12541,9 @@ async function renderBotProducts() {
                 <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;">
                     <input type="checkbox" id="botprod-rsvon-${p.id}" ${p.reserve_ship_start ? 'checked' : ''} onchange="toggleBotProdReserve(${p.id})"> 예약발송
                 </label>
-                <input type="text" id="botprod-rss-${p.id}" value="${escapeHtml(p.reserve_ship_start ? String(p.reserve_ship_start).slice(0, 10) : '')}" placeholder="YYYY-MM-DD" oninput="markBotProdDirty(${p.id})"
-                    style="width:105px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:12px; ${p.reserve_ship_start ? '' : 'display:none;'}">
+                <input type="text" id="botprod-rss-${p.id}" class="akm-date" value="${escapeHtml(p.reserve_ship_start ? String(p.reserve_ship_start).slice(0, 10) : '')}" placeholder="날짜 선택" readonly autocomplete="off"
+                    oninput="markBotProdDirty(${p.id})" onchange="markBotProdDirty(${p.id})"
+                    style="width:105px; padding:6px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:12px; cursor:pointer; ${p.reserve_ship_start ? '' : 'display:none;'}">
             </td>
             <td style="white-space:nowrap;">
                 <button class="btn-sm btn-outline" id="botprod-save-${p.id}" onclick="saveBotProdRow(${p.id})" disabled style="opacity:.45;">저장</button>
