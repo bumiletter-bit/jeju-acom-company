@@ -5556,7 +5556,9 @@ app.get('/guide', async (req, res) => {
         const hinfo = await loadShippingHolidayInfo();
         const now = Date.now();
         // {{내일요일}}/{{모레요일}}은 열람 시점 기준 치환 (발송 당일 열람이 정상 동선 — 오차 무해)
-        const renderGuide = (g) => guideEsc(shippingSchedule.renderGuidePlaceholders(g, now, hinfo.set)).replace(/\n/g, '<br>');
+        const renderGuide = (g) => guideEsc(shippingSchedule.renderGuidePlaceholders(g, now, hinfo.set))
+            .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--primary); word-break:break-all;">$1</a>')   // #164: 안내문 내 URL 클릭 가능 링크
+            .replace(/\n/g, '<br>');
         const picked = rows.find(r => r.id === pid) || null;
         const others = rows.filter(r => !picked || r.id !== picked.id);
         const card = (r, open) => `
