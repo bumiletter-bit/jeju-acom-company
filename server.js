@@ -11143,7 +11143,7 @@ setInterval(async () => {
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'aligo_test_send_request'`);
         if (!req || req.go !== 'yes') return;
-        const r = await kakaoNotify.sendTestOne({ to: req.to, key: req.key });
+        const r = await kakaoNotify.sendTestOne({ to: req.to, key: req.key, vars: req.vars });   // #161: 변수 오버라이드
         await naverCfgSet('aligo_test_send_result', { at: new Date().toISOString(), key: req.key || 'welcome', ...r });
     } catch (e) {
         try { await naverCfgSet('aligo_test_send_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }

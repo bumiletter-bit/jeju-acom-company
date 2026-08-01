@@ -229,15 +229,15 @@ async function selftest(opts) {
 
 // ── 지시 #153-4: 단건 테스트 실발송 — 이모지 실물 확정용. 🔴 대표 GO 후 플래그(aligo_test_send_request)로만 발동.
 //    KAKAO_NOTIFY 스위치와 무관하게 지정 번호 1건만 발송(스위치 전체 ON 없이 검증). 수신번호는 화이트리스트(대표 번호)로 하드 제한.
-const TEST_SEND_ALLOW = ['01066874031'];
-async function sendTestOne({ to, key }) {
+const TEST_SEND_ALLOW = ['01066874031', '01065594031'];   // #161: 회사 + 대표 개인 — 이 2개 외 하드 차단
+async function sendTestOne({ to, key, vars: extVars }) {
     const receiver = String(to || '').replace(/[^0-9]/g, '');
     if (!TEST_SEND_ALLOW.includes(receiver)) return { status: 'blocked', error: '허용 수신번호(대표) 아님' };
     if (!configured()) return { status: 'keys-missing' };
     const KEYMAP = { order: 'order_normal', order_reserve: 'order_reserve', welcome: 'welcome', guide: 'ship_guide' };   // APPROVED_TPL 별칭 → 문안 JSON key
     const tpl = templateByKey(KEYMAP[key || 'welcome'] || key);
     if (!tpl) return { status: 'no-template', key };
-    const vars = { '고객명': '전승범', '상품명': '미니밤호박 특품최상급 특품 5kg(10~20개)', '발송안내': '내일 오전 발송 예정입니다.', '도착안내': '내일 (토) 도착 예정', '송장번호': '123456789012', '상품코드': '216' };
+    const vars = Object.assign({ '고객명': '전승범', '상품명': '미니밤호박 특품최상급 특품 5kg(10~20개)', '발송안내': '내일 오전 발송 예정입니다.', '도착안내': '내일 (토) 도착 예정', '송장번호': '123456789012', '상품코드': '216' }, extVars || {});   // #161: 플래그의 실감 변수로 오버라이드
     const message = buildMessage(vars, tpl.content);
     let buttons = null;
     if (tpl.button) {
