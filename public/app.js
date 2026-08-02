@@ -12614,7 +12614,7 @@ async function renderNotifyLogs() {
             <td>${cell(r, 'order')}</td>
             <td>${cell(r, 'ship')}</td>
             <td>${escapeHtml(cfLabel[r.confirm_status] || r.confirm_status || '-')}${r.confirm_error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.confirm_error).slice(0, 60))}</div>` : ''}</td>
-            <td>${msgs.length ? `<details><summary style="cursor:pointer; font-size:12px;">문면 보기</summary>${msgs.join('')}</details>` : '-'}</td>
+            <td>${msgs.length ? `<details><summary style="cursor:pointer; font-size:12px;">문면 보기</summary>${msgs.join('')}${r.order_key ? `<button class="btn-sm btn-outline" style="margin-top:6px;" onclick="sendLmsGuide('${escapeHtml(r.order_key)}')">발송안내 수동 재발송</button>` : ''}</details>` : '-'}</td>
         </tr>`;
     }).join('');
     el.innerHTML = rows
