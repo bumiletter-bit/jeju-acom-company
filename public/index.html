@@ -1939,24 +1939,21 @@
                         </div>
                         <div id="ship-holiday-list" class="table-scroll-wrapper"></div>
                     </div>
-                    <!-- 지시 #76: 발송 안내(LMS) 이력 — 자동 감지기(발송처리 감지)의 dry-run/발송 기록 + 수동 재발송(대표 전용) -->
+                    <!-- 지시 #176: [알림 발송 이력] 통합 — 주문 단위 한 줄(주문안내·발송안내 두 칸). 구 2화면(#76 발송 안내 이력·#92 주문 알림톡 이력) 흡수 -->
                     <div class="card" style="margin-top:14px;">
                         <div class="card-header-row">
-                            <h2>📨 발송 안내 이력 (LMS) <span class="text-muted" style="font-size:13px; font-weight:400;">발송처리 감지 시 품목별 안내문 문자 — 지금은 dry-run(문면 기록만)</span></h2>
-                            <button class="btn-sm btn-outline" id="btn-lms-guide-refresh">🔄 새로고침</button>
-                        </div>
-                        <div id="lms-guide-list" class="table-scroll-wrapper"></div>
-                    </div>
-                    <!-- 지시 #92: 주문 알림톡·발주확인 이력 — 발송 성공 시에만 발주확인 자동(스위치 OFF면 시뮬레이션), 실패는 수기 -->
-                    <div class="card" style="margin-top:14px;">
-                        <div class="card-header-row">
-                            <h2>📱 주문 알림톡·발주확인 이력 <span class="text-muted" style="font-size:13px; font-weight:400;">발송 성공 건만 발주확인 자동 — 지금은 dry-run(시뮬레이션)</span></h2>
+                            <h2>📬 알림 발송 이력 <span class="text-muted" style="font-size:13px; font-weight:400;">한 줄 = 한 주문 · 알림톡 우선 발송 → 실패 시 문자(LMS) 자동 대체 — 지금은 dry-run(문면 기록만)</span></h2>
                             <div style="display:flex; gap:8px; align-items:center;">
-                                <label style="font-size:13px; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="kakao-notify-manual-only"> 수기 처리 필요만</label>
-                                <button class="btn-sm btn-outline" id="btn-kakao-notify-refresh">🔄 새로고침</button>
+                                <select id="notify-log-filter" style="padding:6px 8px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
+                                    <option value="all">전체</option>
+                                    <option value="pending">발송안내 미도래</option>
+                                    <option value="issue">실패·보류만</option>
+                                </select>
+                                <button class="btn-sm btn-outline" id="btn-notify-log-refresh">🔄 새로고침</button>
                             </div>
                         </div>
-                        <div id="kakao-notify-list" class="table-scroll-wrapper"></div>
+                        <div id="notify-log-summary" class="text-muted" style="font-size:12.5px; margin:2px 0 8px;"></div>
+                        <div id="notify-log-list" class="table-scroll-wrapper"></div>
                     </div>
                 </div>
                 <!-- 지시 #112: 시기별 상품 지식 독립 탭 (판매현황 탭 하단 섹션에서 승격 — 기능 무변경·이동만. 시즌 대기 신청도 같은 맥락이라 함께 이동) -->
@@ -2289,6 +2286,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=335"></script>
+    <script src="app.js?v=336"></script>
 </body>
 </html>

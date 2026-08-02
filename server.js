@@ -903,6 +903,9 @@ async function initDB() {
             created_at TIMESTAMP DEFAULT NOW()
         )
     `);
+    // 지시 #176: 재발송 횟수 표기 (통합 이력 — additive)
+    await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS resend_count INT DEFAULT 0`);
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS resend_count INT DEFAULT 0`);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
         ON CONFLICT (key) DO NOTHING`);
     // ── 지시 #107: 일일 상품 스냅샷 (자사몰 실서비스 동기화 1단계 — 읽기 전용·기본 OFF·새벽 04:30 앵커)
@@ -5619,6 +5622,43 @@ app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) 
         res.json({ rows: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+// ── 지시 #176: [알림 발송 이력] 통합 조회 — 주문 단위 한 줄(주문안내·발송안내 두 칸).
+//    원본 테이블은 그대로 두고 조회 계층에서 order_key FULL OUTER JOIN (한쪽만 있는 건도 단독 행으로 표시).
+app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
+    try {
+        const filter = String(req.query.filter || 'all');
+        const rows = (await pool.query(
+            `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
+                    COALESCE(k.created_at, l.created_at) AS at_main,
+                    COALESCE(k.product_name, l.product_name) AS product_name,
+                    COALESCE(k.receiver_masked, l.receiver_masked) AS receiver_masked,
+                    k.id AS k_id, k.created_at AS k_at, k.mode AS k_mode, k.status AS k_status, k.error AS k_error,
+                    k.message AS k_message, k.resend_count AS k_resend,
+                    k.confirm_status, k.confirm_error, k.confirmed_at,
+                    l.id AS l_id, l.created_at AS l_at, l.mode AS l_mode, l.status AS l_status, l.error AS l_error,
+                    l.message AS l_message, l.resend_count AS l_resend, l.product_name AS l_product
+             FROM kakao_notify_log k
+             FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
+             ORDER BY COALESCE(k.created_at, l.created_at) DESC LIMIT 120`)).rows;
+        const isIssue = (r) => ['failed', 'token-failed', 'build-failed', 'hold-0809'].includes(r.k_status)
+            || ['failed', 'build-failed'].includes(r.l_status)
+            || ['manual-needed', 'failed'].includes(r.confirm_status);
+        const filtered = filter === 'issue' ? rows.filter(isIssue)
+            : filter === 'pending' ? rows.filter(r => !r.l_id && r.k_status !== 'canceled-excluded')   // 발송안내 미도래
+            : rows;
+        // 당일(KST) 요약 — 원본 기준 집계
+        const sum = (await pool.query(
+            `SELECT
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status NOT IN ('hold-0809','canceled-excluded')) AS order_notice,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'hold-0809') AS hold,
+               (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status <> 'skip-no-guide') AS ship_notice,
+               (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'skip-no-guide') AS skipped,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','token-failed','build-failed'))
+             + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed`)).rows[0];
+        res.json({ rows: filtered, summary: sum, total: rows.length });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // ── 지시 #171: 08~09시 보류 건 [수기 발송] — 대표가 오늘/내일 안내 선택. 멱등(보류 상태에서만 1회)·스위치 OFF면 dry-run.
 app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, adminOnly, async (req, res) => {
     try {
@@ -5691,11 +5731,13 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
         const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
         const tracking = (c.delivery && c.delivery.trackingNumber) || (po.delivery && po.delivery.trackingNumber) || po.trackingNumber || '';
         const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, await loadShippingHolidayInfo(), tracking);
-        if (out.skip) throw { status: 400, message: '이 품목에는 발송 안내문이 없습니다 — 판매현황·가격 탭에서 안내문을 먼저 등록해주세요' };
-        await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
-            VALUES ($1,$2,$3,$4,$5,$6,$7)
-            ON CONFLICT (order_key) DO UPDATE SET message=EXCLUDED.message, mode=EXCLUDED.mode, status=EXCLUDED.status, error=EXCLUDED.error, created_at=NOW()`,
-            [orderKey, out.matched.name, kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
+        // 지시 #173·#176: 안내문 없어도 발송안내 알림톡은 정상 발송 — 구 skip 차단 제거. 재발송 횟수 누적(#176-8).
+        await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error, resend_count)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,0)
+            ON CONFLICT (order_key) DO UPDATE SET message=EXCLUDED.message, mode=EXCLUDED.mode, status=EXCLUDED.status, error=EXCLUDED.error,
+                created_at=NOW(), resend_count=COALESCE(lms_guide_log.resend_count,0)+1`,
+            [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
+             kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
         await writeAudit({ action: 'manual_send', targetType: 'lms_guide', targetId: null,
             changes: { after: { order_key: orderKey, mode: out.res.mode, status: out.res.status } }, source: 'lms-guide', actor: adminActor(req) });
         res.json({ ok: true, mode: out.res.mode, status: out.res.status });
