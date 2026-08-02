@@ -42,6 +42,7 @@ function nextMatching(d, pred) { let x = addDays(d, 1); for (let i = 0; i < 30; 
 function shipPhrase(orderDay, shipDay) {
     const diff = Math.round((shipDay - orderDay) / 86400000);
     const dow = DAY_KO[shipDay.getUTCDay()];
+    if (diff === 0) return `오늘 ${dow}요일`;   // #171: 8시 前 주문 = 당일 발송
     if (diff === 1) return `내일 ${dow}요일`;
     if (diff === 2) return `모레 ${dow}요일`;
     if (diff <= 7) return `${dow}요일(${shipDay.getUTCMonth() + 1}/${shipDay.getUTCDate()})`;
@@ -56,7 +57,7 @@ function shipPhrase(orderDay, shipDay) {
  *        자동 계산 대신 그 문구를 #{발송안내}로 사용. 예: 명절 발송 마감 기간)
  * @returns {{shipDate:string|null, arriveStart:string|null, arriveEnd:string|null, text:string, override:boolean}}
  */
-function computeShipping(orderAt, holidaySet, noticeByDate) {
+function computeShipping(orderAt, holidaySet, noticeByDate, opts) {
     const ms = orderAt ? new Date(orderAt).getTime() : Date.now();
     const orderDay = kstDay(ms);
     // 지시 #73: 주문일이 안내 문구가 등록된 휴무 기간이면 문구로 대체 (자동 계산 생략)
@@ -64,7 +65,13 @@ function computeShipping(orderAt, holidaySet, noticeByDate) {
     if (notice && String(notice).trim()) {
         return { shipDate: null, arriveStart: null, arriveEnd: null, text: String(notice).trim(), override: true };
     }
-    const shipDay = nextMatching(orderDay, d => isShipDay(d, holidaySet));         // 규칙2: 다음날, 토·휴무일이면 밀기
+    // 지시 #171(대표 확정 — 8시 마감 컷오프): 주문 ~07:59 = 당일 발송 후보, 09:00~ = 익일 후보.
+    //   (08시대 주문은 홀드 구간 — 호출부(collectKakaoNotify)에서 보류. 이 함수가 직접 받으면 익일 기본)
+    //   opts.forceDay: 'today'|'tomorrow' — 보류 건 [수기 발송] 시 대표 선택으로 강제.
+    const kstHour = new Date(ms + KST_MS).getUTCHours();
+    const force = opts && opts.forceDay;
+    const cand = (force === 'today' || (!force && kstHour < 8)) ? orderDay : addDays(orderDay, 1);
+    const shipDay = isShipDay(cand, holidaySet) ? cand : nextMatching(cand, d => isShipDay(d, holidaySet));   // 후보일 포함, 토·휴무일이면 밀기
     const arrive1 = nextMatching(shipDay, d => isDeliveryDay(d, holidaySet));      // 규칙6: 발송 후 첫 배달 가능일
     const arrive2 = nextMatching(arrive1, d => isDeliveryDay(d, holidaySet));      //        ~ 둘째 배달 가능일
     const text = `${shipPhrase(orderDay, shipDay)} 오전 발송, ${DAY_KO[arrive1.getUTCDay()]}~${DAY_KO[arrive2.getUTCDay()]} 도착 예정`;

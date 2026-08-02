@@ -5619,6 +5619,50 @@ app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) 
         res.json({ rows: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+// ── 지시 #171: 08~09시 보류 건 [수기 발송] — 대표가 오늘/내일 안내 선택. 멱등(보류 상태에서만 1회)·스위치 OFF면 dry-run.
+app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const day = String((req.body || {}).day || '');
+        if (day !== 'today' && day !== 'tomorrow') return res.status(400).json({ error: "day는 'today' 또는 'tomorrow'여야 합니다" });
+        const row = (await pool.query(`SELECT id, order_key, status FROM kakao_notify_log WHERE id=$1`, [req.params.id])).rows[0];
+        if (!row) return res.status(404).json({ error: '기록을 찾을 수 없습니다' });
+        if (row.status !== 'hold-0809') return res.status(409).json({ error: '보류 상태가 아닙니다 (이미 처리됨)' });
+        // 주문 상세 재조회로 수신번호·문면 재료 재구성 (원번호 미저장 원칙 — 재조회 방식)
+        const r = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: [row.order_key] } });
+        const body = (r && r.data) ? r.data : r;
+        const items = body?.data || body?.list || (Array.isArray(body) ? body : []) || [];
+        const it = (Array.isArray(items) ? items : [])[0];
+        if (!it) return res.status(404).json({ error: '네이버 주문 상세를 찾을 수 없습니다' });
+        const c = it.content || it;
+        const po = c.productOrder || it.productOrder || c;
+        const od = c.order || it.order || po.order || {};
+        const bp = (await pool.query(`SELECT id, name, notify_message, shipping_guide, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
+        const hinfo = await loadShippingHolidayInfo();
+        const optText = `${po.productName || ''} ${po.productOption || ''}`;
+        const matched = kakaoNotify.matchNotifyProduct(optText, bp);
+        const isReserve = /예약/.test(optText);
+        let shipLine;
+        if (isReserve) {
+            const rs = matched && matched.reserve_ship_start ? new Date(matched.reserve_ship_start) : null;
+            shipLine = (rs && !isNaN(rs)) ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)` : '시즌 시작 시 주문 순서대로 발송해 드려요';
+        } else {
+            shipLine = shippingSchedule.computeShipping(Date.now(), hinfo.set, hinfo.notices, { forceDay: day }).text;   // 클릭 시점 기준 재계산
+        }
+        const tplDef = kakaoNotify.orderTemplate(isReserve);
+        const message = kakaoNotify.buildMessage({
+            '고객명': od.ordererName || '고객',
+            '상품명': kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품').slice(0, 80),
+            '발송안내': shipLine,
+        }, tplDef && tplDef.content);
+        const out = await kakaoNotify.sendAlimtalk({
+            receiver: od.ordererTel || '', subject: '주문 안내', message, failoverMessage: message,
+            tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
+        });
+        await pool.query(`UPDATE kakao_notify_log SET message=$1, mode=$2, status=$3, error=$4, confirm_status='manual-needed' WHERE id=$5 AND status='hold-0809'`,
+            [message, out.mode, out.status, out.error || null, row.id]);
+        res.json({ message: out.mode === 'dry-run' ? '수기 발송 처리(dry-run — 스위치 OFF라 문면 기록만)' : (out.status === 'sent' ? '알림톡 발송 완료' : '발송 실패 — 이력 확인'), result: out.status, mode: out.mode });
+    } catch (err) { handleAdminErr(res, err); }
+});
 
 // ── 지시 #76: 발송 안내(LMS) 이력 조회 + 수동 [발송 안내 보내기] (관리자 전용 — 발송 행위는 대표)
 app.get('/api/agent-office/lms-guide-logs', authMiddleware, async (req, res) => {
@@ -6648,6 +6692,18 @@ async function collectKakaoNotify() {
                 continue;   // 발송·발주확인 분류 전부 미포함 (취소 건은 수기 영역)
             }
             try {
+                // 지시 #171(대표 확정): 주문(결제) 시각이 KST 08:00~08:59면 자동 발송 보류 — 발주 작업 시간(당일 발송 편입 여부 대표 판단).
+                //   보류 건은 이력 화면 [수기 발송] 버튼으로 대표가 오늘/내일 안내 선택 발송. 발송안내(송장 트리거) 라인은 무관.
+                {
+                    const payMs = Date.parse(od.paymentDate || od.orderDate || '') || Date.now();
+                    const payHourKst = new Date(payMs + 9 * 3600 * 1000).getUTCHours();
+                    if (payHourKst === 8) {
+                        await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                            VALUES ($1,$2,$3,'hold','hold-0809','manual-needed') ON CONFLICT (order_key) DO NOTHING`,
+                            [orderKey, (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel)]).catch(() => {});
+                        continue;
+                    }
+                }
                 const optText = `${po.productName || ''} ${po.productOption || ''}`;
                 const matched = kakaoNotify.matchNotifyProduct(optText, bp);
                 // 지시 #137: 문면·버튼·TPL 코드를 승인 템플릿(JSON 단일 소스)과 세트로 일치 — 예약 상품(옵션·상품명에 '예약')이면 B(UJ_9085), 아니면 A(UJ_9084)
@@ -6741,12 +6797,12 @@ async function collectKakaoNotify() {
 async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingNumber) {
     const optText = `${po.productName || ''} ${po.productOption || ''}`;
     const matched = kakaoNotify.matchNotifyProduct(optText, bp);
-    if (!matched || !matched.shipping_guide || !String(matched.shipping_guide).trim()) {
-        return { skip: true, matched, message: null };   // 안내문 없는 품목 = SKIP (기록만)
-    }
+    // 지시 #173(대표 확정 — skip 구멍 교정): 발송안내 알림톡(E)은 승인 공통 템플릿이라 품목·안내문과 무관하게 전 건 발송.
+    //   품목별 안내문(shipping_guide)은 SMS 대체 문면·먹는법 버튼 내용만 좌우 — 없으면 알림톡만 발송(대체 문면은 E 문면 그대로).
+    const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
     // 지시 #93·#94 (대표 확정 — LMS 단독 번복): 알림톡 E 우선 → 실패 시 SMS 대체(failover, 문면=기존 LMS 전문 그대로).
     //   E 미승인·코드 미투입 동안은 SMS 직행(sendShippingGuideAlimtalk 내부 판단). 스위치 OFF·dry-run 원칙 동일.
-    const lmsMessage = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set);
+    const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set) : null;
     const 도착안내 = shippingSchedule.renderGuidePlaceholders('내일 {{내일요일}}요일~모레 {{모레요일}}요일 사이 도착 예정', Date.now(), holidayInfo.set);
     const res = await kakaoNotify.sendShippingGuideAlimtalk({
         receiver: od.ordererTel || '',
@@ -6754,12 +6810,12 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
             '고객명': od.ordererName || '고객',
             '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
             '도착안내': 도착안내,
-            '상품코드': String(matched.id || ''),          // 버튼 링크 /guide?p=상품코드 (지시 #94)
+            '상품코드': String((matched && matched.id) || ''),   // 버튼 링크 /guide?p=상품코드 (지시 #94 — 미매칭이면 빈값=가이드 홈)
             '송장번호': String(trackingNumber || '').replace(/[^0-9]/g, ''),   // 버튼 링크 /track?n=송장번호 (지시 #99 — 없으면 빈값=조회 홈)
         },
-        fallback: { subject: '제주아꼼이네 배송 안내', message: lmsMessage },
+        fallback: lmsMessage ? { subject: '제주아꼼이네 배송 안내', message: lmsMessage } : undefined,   // #173: 안내문 없으면 SMS 대체 문면은 E 문면 그대로(sendShippingGuideAlimtalk 내부)
     });
-    return { skip: false, matched, message: res.messageText || lmsMessage, res };
+    return { skip: false, matched, noGuide: !hasGuide, message: res.messageText || lmsMessage, res };
 }
 async function collectLmsGuide() {
     const now = Date.now();
@@ -6803,7 +6859,8 @@ async function collectLmsGuide() {
                 } else {
                     await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
                         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
-                        [orderKey, out.matched.name, kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
+                        [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
+                         kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
                     if (out.res.status === 'sent') done++;
                     else if (out.res.mode === 'real') failed++;
                 }
