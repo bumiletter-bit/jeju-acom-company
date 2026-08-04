@@ -5348,6 +5348,21 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
         res.json({ logs: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+// 지시 #181-1: 시기별 상품 지식 수정 이력 — 전용 라우트가 없어 이 탭에서 [조회]를 누르면 시나리오 이력이 나오던 문제 교정.
+//   서버는 원래도 target_type으로 분리 저장 중이었음(혼입은 프론트 매핑·초기화 누락 탓).
+app.get('/api/agent-office/season-knowledge-logs', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
+        const useRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);
+        const r = await pool.query(useRange
+            ? `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+               WHERE target_type = 'season_knowledge' AND (created_at + interval '9 hours')::date BETWEEN $1::date AND $2::date
+               ORDER BY id DESC LIMIT 300`
+            : `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+               WHERE target_type = 'season_knowledge' ORDER BY id DESC LIMIT 100`, useRange ? [from, to] : []);
+        res.json({ logs: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
 // ── 지시 #68 C5: 시즌 오픈 대기 신청 — 직원 등록·조회, 삭제는 대표 전용 (soft-delete·audit)
 //    연락처는 발송 목적상 원문 저장, 응답·화면에는 마스킹만 노출. 알림톡 발송 연동은 향후(지금은 저장소·화면까지)
 const maskWaitContact = (t) => { const s = String(t || '').replace(/[^0-9]/g, ''); return s.length >= 7 ? s.slice(0, 3) + '****' + s.slice(-4) : '***'; };
@@ -5660,7 +5675,22 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                 conds.push(`(k.receiver_masked LIKE $${params.length} OR l.receiver_masked LIKE $${params.length})`);
             } else { params.push('%' + qRaw + '%'); conds.push(`(k.product_name ILIKE $${params.length} OR l.product_name ILIKE $${params.length})`); }
         }
+        // 지시 #180-A1: 필터(미도래·실패/보류)를 페이지 내 후처리 → SQL 조건으로 승격.
+        //   후처리로 두면 "100건 뽑아서 거른 뒤 남은 것"이 페이지마다 달라져 페이징·총건수가 어긋난다.
+        if (filter === 'issue') {
+            conds.push(`(k.status IN ('failed','token-failed','build-failed','hold-0809')
+                      OR l.status IN ('failed','build-failed')
+                      OR k.confirm_status IN ('manual-needed','failed'))`);
+        } else if (filter === 'pending') {
+            conds.push(`(l.id IS NULL AND (k.status IS NULL OR k.status <> 'canceled-excluded'))`);   // 발송안내 미도래
+        }
         const whereSql = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+        // 지시 #180-A1: 표시 상한(300) 하드컷 폐지 → 100건씩 offset/limit 페이징. 무제한 전량 로드는 금지(한 번에 최대 100).
+        //   total은 같은 조건으로 별도 COUNT — 요약 줄은 '조회 조건 전체 기준'을 유지해야 하므로 표시분 개수와 분리한다.
+        const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 100);
+        const offset = Math.max(Number(req.query.offset) || 0, 0);
+        const total = Number((await pool.query(
+            `SELECT count(*) n FROM kakao_notify_log k FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key ${whereSql}`, params)).rows[0].n);
         const rows = (await pool.query(
             `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
                     COALESCE(k.created_at, l.created_at) AS at_main,
@@ -5674,7 +5704,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
              FROM kakao_notify_log k
              FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
              ${whereSql}
-             ORDER BY COALESCE(k.created_at, l.created_at) DESC LIMIT ${useRange || qRaw ? 300 : 120}`, params)).rows;
+             ORDER BY COALESCE(k.created_at, l.created_at) DESC, COALESCE(k.id, 0) DESC, COALESCE(l.id, 0) DESC
+             LIMIT ${limit} OFFSET ${offset}`, params)).rows;   /* 동일 시각 행의 순서 고정(타이브레이커) — 없으면 페이지 경계에서 중복·누락 발생 */
         // 지시 #177: 수신 풀번호 표시 — DB엔 마스킹만 저장(원칙 유지), 표시 시점에 네이버 상세조회로 재취득.
         //   대표(admin)에게만 내려줌 · 배치 100건 · 5분 메모리 캐시 · 실패 시 마스킹 폴백.
         if (String(req.user?.role || '') === 'admin' && rows.length) {
@@ -5699,12 +5730,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
             const fmt = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
             for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) r.receiver_full = fmt(hit.tel); }
         }
-        const isIssue = (r) => ['failed', 'token-failed', 'build-failed', 'hold-0809'].includes(r.k_status)
-            || ['failed', 'build-failed'].includes(r.l_status)
-            || ['manual-needed', 'failed'].includes(r.confirm_status);
-        const filtered = filter === 'issue' ? rows.filter(isIssue)
-            : filter === 'pending' ? rows.filter(r => !r.l_id && r.k_status !== 'canceled-excluded')   // 발송안내 미도래
-            : rows;
+        // (필터는 위에서 SQL 조건으로 처리됨 — 후처리 제거: 이중 적용·페이지별 개수 불일치 방지)
         // 당일(KST) 요약 — 원본 기준 집계
         const sum = (await pool.query(
             `SELECT
@@ -5714,7 +5740,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'skip-no-guide') AS skipped,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','token-failed','build-failed'))
              + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed`)).rows[0];
-        res.json({ rows: filtered, summary: sum, total: rows.length });
+        res.json({ rows, summary: sum, total, offset, limit });   // #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
     } catch (err) { handleAdminErr(res, err); }
 });
 

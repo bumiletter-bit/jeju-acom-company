@@ -1958,6 +1958,8 @@
                         </div>
                         <div id="notify-log-summary" class="text-muted" style="font-size:12.5px; margin:2px 0 8px;"></div>
                         <div id="notify-log-list" class="table-scroll-wrapper"></div>
+                        <!-- 지시 #180-A1: 100건씩 [더보기] 페이징 -->
+                        <div id="notify-log-more" style="margin-top:10px; text-align:center;"></div>
                     </div>
                 </div>
                 <!-- 지시 #112: 시기별 상품 지식 독립 탭 (판매현황 탭 하단 섹션에서 승격 — 기능 무변경·이동만. 시즌 대기 신청도 같은 맥락이라 함께 이동) -->
@@ -2041,6 +2043,8 @@
                         <button class="btn-outline btn-sm" id="btn-inq-log-today">오늘</button>
                         <button class="btn-outline btn-sm" id="btn-inq-log-week">최근 7일</button>
                     </div>
+                    <!-- 지시 #181-2: 조회가 실행된 사실이 화면에 드러나게 (0건이어도 조건·건수 표시) -->
+                    <div id="inq-log-summary" class="text-muted" style="font-size:12.5px; margin:0 0 8px;"></div>
                     <div id="inquiry-logs" style="font-size:13px; overflow-x:auto;"></div>
                 </div>
             </div>
@@ -2301,6 +2305,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=342"></script>
+    <script src="app.js?v=343"></script>
 </body>
 </html>

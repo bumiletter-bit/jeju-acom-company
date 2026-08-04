@@ -12285,8 +12285,10 @@ function setupInquiryPage() {
 async function renderInquiryLogs(range) {
     if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
     if (!range) return showInqLogPrompt();   // #178-2: 기본 비표시 — 기간 선택 후 [조회]
+    const seq = inqLogBegin(range);
     const d = await api('/api/agent-office/scenario-logs?from=' + range.from + '&to=' + range.to);
     if (inquiryActiveTab !== 'scenario') return; // 이력 카드 공용 — 활성 탭 이력만 표시(늦게 온 응답이 덮어쓰는 경합 방지)
+    if (!inqLogFinish(seq, (d.logs || []).length, range)) return;
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || (l.action.startsWith('auto_reply') ? '전체 자동응답' : '');
         const act = { create: '추가', update: '수정', delete: '삭제', auto_reply_on: '전체 ON', auto_reply_off: '전체 OFF' }[l.action] || l.action;
@@ -12294,7 +12296,7 @@ async function renderInquiryLogs(range) {
     }).join('');
     document.getElementById('inquiry-logs').innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<p class="text-muted">이력이 없습니다</p>';
+        : inqLogEmptyHtml(range);
 }
 // --- 판매현황·가격 탭 (bot_products — 스마트스토어 판매가, 봇 1분 캐시 자동 반영) ---
 let botProducts = [];
@@ -12305,12 +12307,12 @@ window.switchInquiryTab = function(name) {
         document.getElementById('inquiry-tab-' + t).style.display = name === t ? '' : 'none';
         document.getElementById('inquiry-tab-btn-' + t).className = name === t ? 'settlement-tab active' : 'settlement-tab';
     }
+    syncInqLogCard();   // 지시 #181-1: 이력 카드 대상 전환·초기화(이전 탭 이력 잔류 차단) — 조회는 [조회] 눌렀을 때만
     if (name === 'products') renderBotProducts().catch(console.error);
     else if (name === 'season') { renderSeasonKnowledge().catch(console.error); renderSeasonWaitlist().catch(console.error); }   // 지시 #112 — 독립 탭 승격
     else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
     else if (name === 'qna') renderQnaTab().catch(console.error);
     else if (name === 'userinq') renderUserInqTab().catch(console.error);
-    else renderInquiryLogs().catch(console.error);
 };
 // --- 고객문의(문의하기) 탭 (대표 7/27 — 상품문의 탭 구조 재사용. 1:1 비공개·반품/교환/환불은 무조건 직원) ---
 async function renderUserInqTab() {
@@ -12569,7 +12571,12 @@ async function renderBotProducts() {
 // --- 📬 알림 발송 이력 통합 (지시 #176) — 한 줄 = 한 주문. 주문안내·발송안내 두 칸이 각각 채워짐 ---
 //     구 2화면(#92 주문 알림톡·발주확인 이력 / #76 발송 안내 이력) 기능 전수 흡수: 발주확인 표기·수기 처리 필요만(→실패·보류 필터)·
 //     문면 보기(종류+템플릿 코드)·수동 재발송(구 [발송 안내 보내기])·새로고침·건너뜀 표기·보류 [오늘]/[내일](#171).
-async function renderNotifyLogs() {
+// 지시 #180-A1: 100건씩 [더보기] 페이징 — 표시 상한(300) 폐지. 조건이 바뀌면 1페이지부터, [더보기]는 누적.
+let notifyLogShown = 0;    // 현재 화면에 쌓인 행 수
+let notifyLogTotal = 0;    // 조회 조건 전체 건수(요약 줄 기준 — 표시분과 분리)
+const NOTIFY_PAGE = 100;
+async function renderNotifyLogs(opts) {
+    const append = !!(opts && opts.append);
     const el = document.getElementById('notify-log-list');
     if (!el) return;
     const filter = document.getElementById('notify-log-filter')?.value || 'all';
@@ -12577,19 +12584,21 @@ async function renderNotifyLogs() {
     const from = document.getElementById('notify-log-from')?.value.trim() || '';
     const to = document.getElementById('notify-log-to')?.value.trim() || '';
     const q = document.getElementById('notify-log-q')?.value.trim() || '';
-    const qs = ['filter=' + encodeURIComponent(filter)];
+    if (!append) notifyLogShown = 0;   // 조건 변경·재조회 = 1페이지부터
+    const qs = ['filter=' + encodeURIComponent(filter), 'limit=' + NOTIFY_PAGE, 'offset=' + notifyLogShown];
     if (from && to) qs.push('from=' + encodeURIComponent(from), 'to=' + encodeURIComponent(to));
     if (q) qs.push('q=' + encodeURIComponent(q));
     const d = await api('/api/agent-office/notify-logs?' + qs.join('&'));
+    notifyLogTotal = Number(d.total || 0);
     const s = d.summary || {};
     const sumEl = document.getElementById('notify-log-summary');
     if (sumEl) {
         const cond = (from && to) ? `${from} ~ ${to}` : '오늘';
         const searched = q ? ` · 검색 "${q}"` : '';
-        // #179: 조회 상한(300건) 도달 시 잘렸다는 사실을 숨기지 않고 안내 — 전체 건수로 오인 방지
-        const capped = ((from && to) || q) && (d.rows || []).length >= 300 ? ' ⚠️ 표시 상한 300건 도달 — 기간을 좁혀 조회하세요' : '';
+        // #180-A1: 요약 줄은 '조회 조건 전체(total)' 기준 — [더보기]로 표시분이 늘어도 이 숫자는 바뀌지 않는다.
+        //   (#179의 "상한 300건 도달" 경고는 페이징 도입으로 불필요해져 제거)
         sumEl.textContent = (from && to) || q
-            ? `조회 결과 ${(d.rows || []).length}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${capped}`
+            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}`
             : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0} · 건너뜀 ${s.skipped || 0}`;
     }
     const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)' };
@@ -12640,9 +12649,28 @@ async function renderNotifyLogs() {
             <td>${msgs.length ? `<details><summary style="cursor:pointer; font-size:12px;">문면 보기</summary>${msgs.join('')}${r.order_key ? `<button class="btn-sm btn-outline" style="margin-top:6px;" onclick="sendLmsGuide('${escapeHtml(r.order_key)}')">발송안내 수동 재발송</button>` : ''}</details>` : '-'}</td>
         </tr>`;
     }).join('');
-    el.innerHTML = rows
+    // #180-A1: [더보기]는 기존 행을 유지한 채 tbody에만 이어 붙인다(화면 리셋 금지).
+    const tbody = el.querySelector('tbody');
+    if (append && tbody) tbody.insertAdjacentHTML('beforeend', rows);
+    else el.innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시(주문)</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">기록이 없습니다 — [데이터관리] 타이머에서 "주문 안내 알림톡"·"문자 발송 안내"를 켜면 감지 시 dry-run 문면이 여기에 쌓입니다.</p>';
+    notifyLogShown += (d.rows || []).length;
+    renderNotifyMoreBtn();
+}
+// #180-A1: [더보기] 버튼 — 남은 건수 표기, 전부 표시되면 안내로 대체
+function renderNotifyMoreBtn() {
+    const box = document.getElementById('notify-log-more');
+    if (!box) return;
+    if (!notifyLogTotal) { box.innerHTML = ''; return; }
+    box.innerHTML = notifyLogShown < notifyLogTotal
+        ? `<button class="btn-outline btn-sm" id="btn-notify-log-more">더보기 (${notifyLogShown} / ${notifyLogTotal}건)</button>`
+        : `<span class="text-muted" style="font-size:12.5px;">모두 표시됨 (${notifyLogShown} / ${notifyLogTotal}건)</span>`;
+    const b = document.getElementById('btn-notify-log-more');   // 매 렌더마다 새 노드 — 여기서 즉시 바인딩(detached 노드 참조 금지)
+    if (b) b.addEventListener('click', () => {
+        b.disabled = true; b.textContent = '불러오는 중...';
+        renderNotifyLogs({ append: true }).catch(e => { console.error(e); renderNotifyMoreBtn(); });
+    });
 }
 // 지시 #171: 보류 건 수기 발송 (오늘/내일 안내 선택 — 멱등·확인 1회)
 window.manualSendHold = async function(id, day, btn) {
@@ -12813,7 +12841,7 @@ async function renderShippingHolidays() {
         <b>${y}년 ${m + 1}월</b>
         <button class="btn-sm btn-outline" data-shcal-mv="1">▶</button>
         <button class="btn-sm btn-outline" data-shcal-mv="0" style="margin-left:6px;">오늘</button>
-        <span class="text-muted" style="font-size:12px; margin-left:auto;">${shipHolPick ? `${shipHolPick} 부터 — 종료일을 클릭하세요 (같은 날 다시 클릭 = 하루만)` : '날짜를 클릭하면 휴무 지정 · 휴무일 클릭하면 해제'}</span>
+        <span class="shcal-hint" style="margin-left:auto;">${shipHolPick ? `📌 ${shipHolPick} 부터 — 종료일을 클릭하세요 (같은 날 다시 클릭 = 하루만)` : '👆 날짜를 클릭하면 휴무 지정 · 휴무일 클릭하면 해제'}</span>
       </div>
       <div class="shcal-grid shcal-dow">${DAY_KO.map((x, i) => `<div class="shcal-dowc${i === 0 ? ' sun' : (i === 6 ? ' sat' : '')}">${x}</div>`).join('')}</div>
       <div class="shcal-grid">${cells}</div>
@@ -12825,8 +12853,11 @@ async function renderShippingHolidays() {
         /* 지시 #179-5: 카드 폭 활용 + 가운데 정렬 · 셀/글자 확대(클릭 편의). 색은 디자인 가이드 토큰(인디고·토요일 파랑·danger)만 사용 */
         .shcal-wrap{ border:1px solid var(--border,#ECEDF1); border-radius:14px; padding:14px 16px 16px; background:var(--card-bg,#fff);
                      width:100%; max-width:780px; margin:0 auto; box-shadow:0 1px 3px rgba(16,24,40,.06); }
-        .shcal-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+        .shcal-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
         .shcal-head b{ font-size:17px; }
+        /* 지시 #180-A2: 조작 안내를 한눈에 — danger 토큰 기반 포인트(임의 색 신설 없음) */
+        .shcal-hint{ font-size:13.5px; font-weight:700; color:var(--danger,#F04438);
+                     background:#FDECEA; border:1px solid #F6C9C4; border-radius:999px; padding:4px 11px; }
         .shcal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:5px; }
         .shcal-dow{ margin-bottom:5px; }
         .shcal-dowc{ text-align:center; font-size:13px; font-weight:700; color:var(--text-mid,#667085); padding:4px 0; }
@@ -13011,8 +13042,10 @@ window.deleteBotProd = async function(id) {
 async function renderBotProductLogs(range) {
     if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
     if (!range) return showInqLogPrompt();   // #178-2: 기본 비표시
+    const seq = inqLogBegin(range);
     const d = await api('/api/agent-office/bot-product-logs?from=' + range.from + '&to=' + range.to);
     if (inquiryActiveTab !== 'products') return; // 이력 카드 공용 — 활성 탭 이력만 표시(경합 방지)
+    if (!inqLogFinish(seq, (d.logs || []).length, range)) return;
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || '';
         const act = { create: '추가', restore: '복구', update: '수정', delete: '삭제' }[l.action] || l.action;
@@ -13020,20 +13053,78 @@ async function renderBotProductLogs(range) {
     }).join('');
     document.getElementById('inquiry-logs').innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<p class="text-muted">이력이 없습니다</p>';
+        : inqLogEmptyHtml(range);
+}
+// 지시 #181-2: 수정 이력 조회 — ①요청 순번으로 응답 경합 차단(늦게 온 이전 요청이 최신 화면을 덮지 않게)
+//   ②조회가 실행된 사실을 요약 줄로 표기. 오늘·최근 7일은 실제로 0건인 날이 많아, 표시가 없으면 "재조회가 안 된다"고 보인다.
+let inqLogSeq = 0;
+function inqLogBegin(range) {
+    const el = document.getElementById('inq-log-summary');
+    if (el && range) el.textContent = `조회 중... (${range.from} ~ ${range.to})`;
+    return ++inqLogSeq;
+}
+function inqLogFinish(seq, count, range) {
+    if (seq !== inqLogSeq) return false;   // 더 최신 조회가 이미 나갔음 → 이 응답은 버림
+    const el = document.getElementById('inq-log-summary');
+    const t = INQ_LOG_TARGETS[inquiryActiveTab];
+    if (el && range) el.textContent = `조회 결과 ${count}건 · ${range.from} ~ ${range.to}${t ? ' · ' + t.label : ''}`;
+    return true;
+}
+function inqLogEmptyHtml(range) {
+    return `<p class="text-muted">${range ? `${escapeHtml(range.from)} ~ ${escapeHtml(range.to)} 기간에는 수정 이력이 없습니다` : '이력이 없습니다'}</p>`;
+}
+// 지시 #181-1: 시기별 상품 지식 수정 이력 — 전용 라우트로 조회(이 탭에서 시나리오 이력이 나오던 혼입 교정)
+async function renderSeasonKnowledgeLogs(range) {
+    if (currentUser?.role !== 'admin') return;
+    if (!range) return showInqLogPrompt();
+    const seq = inqLogBegin(range);
+    const d = await api('/api/agent-office/season-knowledge-logs?from=' + range.from + '&to=' + range.to);
+    if (inquiryActiveTab !== 'season') return;   // 응답 도착 전 탭이 바뀌었으면 그리지 않음(경합 방지)
+    if (!inqLogFinish(seq, (d.logs || []).length, range)) return;
+    const rows = (d.logs || []).map(l => {
+        const a = l.changes?.after || {}, b = l.changes?.before || {};
+        const name = a.item_key || b.item_key || a.fix || a.migration || Object.values(a)[0] || '-';
+        const act = { create: '추가', restore: '복구', update: '수정', delete: '삭제' }[l.action] || l.action;
+        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(String(name).slice(0, 60))}</td></tr>`;
+    }).join('');
+    document.getElementById('inquiry-logs').innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
+        : inqLogEmptyHtml(range);
 }
 // 지시 #178-2: 수정 이력 조회식 — 기본 안내 문구 + [조회] 실행기
+// 지시 #181-1: 탭별 대상 매핑 — 이 표가 없어 season 탭에서도 시나리오 이력이 조회됐었음
+const INQ_LOG_TARGETS = {
+    scenario: { label: '문의 시나리오', render: (r) => renderInquiryLogs(r) },
+    products: { label: '판매현황·가격', render: (r) => renderBotProductLogs(r) },
+    season:   { label: '시기별 상품 지식', render: (r) => renderSeasonKnowledgeLogs(r) },
+};
 function showInqLogPrompt() {
     const el = document.getElementById('inquiry-logs');
-    if (el) el.innerHTML = '<p class="text-muted" style="font-size:13px;">📅 날짜를 선택하고 [조회]를 누르면 해당 기간의 수정 이력이 표시됩니다.</p>';
+    const t = INQ_LOG_TARGETS[inquiryActiveTab];
+    if (el) el.innerHTML = `<p class="text-muted" style="font-size:13px;">📅 날짜를 선택하고 [조회]를 누르면 <b>${t ? escapeHtml(t.label) : '해당 탭'}</b>의 수정 이력이 표시됩니다.</p>`;
+    const sum = document.getElementById('inq-log-summary');
+    if (sum) sum.textContent = '';   // 탭 전환 시 이전 조회 요약도 함께 비움
+    inqLogSeq++;                     // 진행 중이던 응답이 뒤늦게 그리는 것 차단
+}
+// 지시 #181-1: 탭 전환 시 이력 카드 초기화 + 지금 무엇의 이력인지 제목에 명시(이전 탭 결과가 남아 섞여 보이던 문제)
+function syncInqLogCard() {
+    const card = document.getElementById('inquiry-history-card');
+    const t = INQ_LOG_TARGETS[inquiryActiveTab];
+    if (!card) return;
+    const canShow = !!t && currentUser?.role === 'admin';
+    card.style.display = canShow ? '' : 'none';   // 이력 대상이 없는 탭(톡톡/상품문의/고객문의)에서는 카드 자체를 숨김
+    const h = card.querySelector('h2');
+    if (h && t) h.innerHTML = `🕓 ${escapeHtml(t.label)} 수정 이력 <span class="text-muted" style="font-size:13px; font-weight:400;">기간을 선택해 조회하세요</span>`;
+    if (canShow) showInqLogPrompt();   // 이전 탭 결과 잔류 방지
 }
 function runInqLogSearch() {
     const from = document.getElementById('inq-log-from')?.value.trim();
     const to = document.getElementById('inq-log-to')?.value.trim();
     if (!from || !to) return showToast('⚠️ 시작일과 종료일을 선택해주세요');
     if (from > to) return showToast('⚠️ 시작일이 종료일보다 늦습니다');
-    const range = { from, to };
-    (inquiryActiveTab === 'products' ? renderBotProductLogs(range) : renderInquiryLogs(range)).catch(console.error);
+    const t = INQ_LOG_TARGETS[inquiryActiveTab];
+    if (!t) return showToast('⚠️ 이 탭에는 수정 이력이 없습니다');
+    t.render({ from, to }).catch(console.error);
 }
 // 대표 7/25(2차): 예외 품목(사전예약특가 등 단가표에 없는 상품)용 [품목 추가] 부활 — 이렇게 추가한 것만 삭제 가능
 function setupBotProductsTab() {
