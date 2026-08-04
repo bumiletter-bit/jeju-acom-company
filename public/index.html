@@ -1927,17 +1927,9 @@
                         <div class="card-header-row">
                             <h2>🚫 발송 휴무일 관리 <span class="text-muted" style="font-size:13px; font-weight:400;">공휴일·명절 임시휴무·태풍 결항 등 — 주문 안내 발송일 계산에서 제외됩니다</span></h2>
                         </div>
-                        <div style="display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
-                            <input type="text" id="ship-holiday-date" class="akm-date" readonly autocomplete="off" placeholder="시작일" style="width:130px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <span style="color:var(--text-mid,#667085);">~</span>
-                            <input type="text" id="ship-holiday-end" class="akm-date" readonly autocomplete="off" placeholder="종료일(선택)" style="width:130px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <input type="text" id="ship-holiday-reason" placeholder="사유 (예: 설 연휴 발송 마감)" style="flex:1; min-width:150px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
-                            <button class="btn-primary" id="btn-ship-holiday-add">추가</button>
-                        </div>
-                        <div style="display:flex; gap:8px; margin-bottom:10px;">
-                            <input type="text" id="ship-holiday-notice" placeholder="안내 문구 (선택 — 넣으면 이 기간 주문의 알림톡 발송안내가 이 문구로 대체됩니다. 예: 설 연휴로 2월 19일(목)부터 주문 순서대로 순차 발송될 예정입니다)" style="flex:1; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
-                        </div>
-                        <div id="ship-holiday-list" class="table-scroll-wrapper"></div>
+                        <!-- 지시 #178-1: 목록 나열 → 월 달력. 날짜 클릭으로 휴무 지정/해제·기간은 시작→종료 클릭 -->
+                        <div id="ship-holiday-cal"></div>
+                        <div id="ship-holiday-list" class="table-scroll-wrapper" style="margin-top:10px;"></div>
                     </div>
                     <!-- 지시 #176: [알림 발송 이력] 통합 — 주문 단위 한 줄(주문안내·발송안내 두 칸). 구 2화면(#76 발송 안내 이력·#92 주문 알림톡 이력) 흡수 -->
                     <div class="card" style="margin-top:14px;">
@@ -1951,6 +1943,15 @@
                                 </select>
                                 <button class="btn-sm btn-outline" id="btn-notify-log-refresh">🔄 새로고침</button>
                             </div>
+                        </div>
+                        <!-- 지시 #178-3: 날짜 조회 + 연락처(뒷자리)·품목 검색 -->
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:2px 0 8px;">
+                            <input type="text" id="notify-log-from" class="akm-date" readonly autocomplete="off" placeholder="시작일" style="width:126px; padding:7px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
+                            <span style="color:var(--text-mid,#667085);">~</span>
+                            <input type="text" id="notify-log-to" class="akm-date" readonly autocomplete="off" placeholder="종료일" style="width:126px; padding:7px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
+                            <input type="text" id="notify-log-q" placeholder="연락처 뒷자리 또는 품목명 검색" style="flex:1; min-width:180px; padding:7px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
+                            <button class="btn-primary btn-sm" id="btn-notify-log-search">조회</button>
+                            <button class="btn-outline btn-sm" id="btn-notify-log-reset">초기화</button>
                         </div>
                         <div id="notify-log-summary" class="text-muted" style="font-size:12.5px; margin:2px 0 8px;"></div>
                         <div id="notify-log-list" class="table-scroll-wrapper"></div>
@@ -2025,7 +2026,18 @@
                 <div id="inquiry-tab-userinq" style="display:none;"></div>
                 <!-- 대표 7/26: 수정 이력은 관리자만 (직원에겐 카드 숨김) -->
                 <div class="card" id="inquiry-history-card" style="display:none;">
-                    <h2>🕓 수정 이력</h2>
+                    <div class="card-header-row">
+                        <h2>🕓 수정 이력 <span class="text-muted" style="font-size:13px; font-weight:400;">기간을 선택해 조회하세요</span></h2>
+                    </div>
+                    <!-- 지시 #178-2: 항상 나열 → 조회식(기본 비표시) -->
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+                        <input type="text" id="inq-log-from" class="akm-date" readonly autocomplete="off" placeholder="시작일" style="width:130px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                        <span style="color:var(--text-mid,#667085);">~</span>
+                        <input type="text" id="inq-log-to" class="akm-date" readonly autocomplete="off" placeholder="종료일" style="width:130px; padding:8px; border:1px solid var(--border,#ccc); border-radius:8px;">
+                        <button class="btn-primary btn-sm" id="btn-inq-log-search">조회</button>
+                        <button class="btn-outline btn-sm" id="btn-inq-log-today">오늘</button>
+                        <button class="btn-outline btn-sm" id="btn-inq-log-week">최근 7일</button>
+                    </div>
                     <div id="inquiry-logs" style="font-size:13px; overflow-x:auto;"></div>
                 </div>
             </div>
@@ -2286,6 +2298,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=338"></script>
+    <script src="app.js?v=339"></script>
 </body>
 </html>

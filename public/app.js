@@ -12275,9 +12275,10 @@ function setupInquiryPage() {
         } catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
     });
 }
-async function renderInquiryLogs() {
+async function renderInquiryLogs(range) {
     if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
-    const d = await api('/api/agent-office/scenario-logs');
+    if (!range) return showInqLogPrompt();   // #178-2: 기본 비표시 — 기간 선택 후 [조회]
+    const d = await api('/api/agent-office/scenario-logs?from=' + range.from + '&to=' + range.to);
     if (inquiryActiveTab !== 'scenario') return; // 이력 카드 공용 — 활성 탭 이력만 표시(늦게 온 응답이 덮어쓰는 경합 방지)
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || (l.action.startsWith('auto_reply') ? '전체 자동응답' : '');
@@ -12565,10 +12566,23 @@ async function renderNotifyLogs() {
     const el = document.getElementById('notify-log-list');
     if (!el) return;
     const filter = document.getElementById('notify-log-filter')?.value || 'all';
-    const d = await api('/api/agent-office/notify-logs?filter=' + encodeURIComponent(filter));
+    // 지시 #178-3: 날짜 구간·검색어(연락처 뒷자리/품목) 파라미터
+    const from = document.getElementById('notify-log-from')?.value.trim() || '';
+    const to = document.getElementById('notify-log-to')?.value.trim() || '';
+    const q = document.getElementById('notify-log-q')?.value.trim() || '';
+    const qs = ['filter=' + encodeURIComponent(filter)];
+    if (from && to) qs.push('from=' + encodeURIComponent(from), 'to=' + encodeURIComponent(to));
+    if (q) qs.push('q=' + encodeURIComponent(q));
+    const d = await api('/api/agent-office/notify-logs?' + qs.join('&'));
     const s = d.summary || {};
     const sumEl = document.getElementById('notify-log-summary');
-    if (sumEl) sumEl.textContent = `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0} · 건너뜀 ${s.skipped || 0}`;
+    if (sumEl) {
+        const cond = (from && to) ? `${from} ~ ${to}` : '오늘';
+        const searched = q ? ` · 검색 "${q}"` : '';
+        sumEl.textContent = (from && to) || q
+            ? `조회 결과 ${(d.rows || []).length}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}`
+            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0} · 건너뜀 ${s.skipped || 0}`;
+    }
     const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)' };
     // 한 칸(주문안내/발송안내) 상태 표기 — 최종 경로 기준
     const cell = (row, kind) => {
@@ -12750,21 +12764,94 @@ window.deleteSeasonWait = async function(id) {
 };
 // --- 발송 휴무일 관리 (지시 #69·#73) — 발송 불가일 + 명절 마감 기간·안내 문구 (직원 추가/삭제) ---
 //   같은 사유·문구의 연속 날짜는 한 줄(기간)로 묶어 표시 (지시 #73 — 일자 분해 저장·기간 표시)
+// ── 지시 #178-1: 발송 휴무일 = 월 달력 UI (날짜 클릭 → 휴무 지정/해제 · 기간은 시작→종료 클릭) ──
+//     데이터·API·발송일 계산 엔진 무접촉 — 화면 계층만 교체. 하단에 등록 현황 요약표 유지.
+let shipHolCursor = null;      // 표시 중인 달 (Date, KST 기준 1일)
+let shipHolRows = [];          // 최근 조회분
+let shipHolPick = null;        // 기간 선택 시작일(YYYY-MM-DD)
+function shipHolKstToday() { const d = new Date(Date.now() + 9 * 3600 * 1000); return d.toISOString().slice(0, 10); }
 async function renderShippingHolidays() {
+    const cal = document.getElementById('ship-holiday-cal');
+    if (!cal) return;
+    const d = await api('/api/agent-office/shipping-holidays');
+    shipHolRows = d.rows || [];
+    const byDate = new Map(shipHolRows.map(r => [String(r.holiday_date).slice(0, 10), r]));
+    const today = shipHolKstToday();
+    if (!shipHolCursor) shipHolCursor = today.slice(0, 7) + '-01';
+    const cur = new Date(shipHolCursor + 'T00:00:00Z');
+    const y = cur.getUTCFullYear(), m = cur.getUTCMonth();
+    const first = new Date(Date.UTC(y, m, 1)), last = new Date(Date.UTC(y, m + 1, 0));
+    const lead = first.getUTCDay(), days = last.getUTCDate();
+    const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+    let cells = '';
+    for (let i = 0; i < lead; i++) cells += '<div class="shcal-cell shcal-empty"></div>';
+    for (let dd = 1; dd <= days; dd++) {
+        const ymd = `${y}-${String(m + 1).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+        const hit = byDate.get(ymd);
+        const dow = new Date(ymd + 'T00:00:00Z').getUTCDay();
+        const cls = ['shcal-cell'];
+        if (hit) cls.push('shcal-off');
+        if (ymd === today) cls.push('shcal-today');
+        if (dow === 6) cls.push('shcal-sat');          // 토요일 = 상시 발송 불가(규칙)
+        if (shipHolPick === ymd) cls.push('shcal-pick');
+        cells += `<div class="${cls.join(' ')}" data-shcal="${ymd}" title="${hit ? escapeHtml((hit.reason || '휴무') + (hit.notice ? ' · 📨 안내문구 있음' : '')) : (dow === 6 ? '토요일 — 상시 발송 불가' : '클릭하면 휴무일로 지정')}">
+            <span class="d">${dd}</span>${hit ? `<span class="r">${escapeHtml(String(hit.reason || '휴무').slice(0, 6))}</span>${hit.notice ? '<span class="nt">📨</span>' : ''}` : ''}</div>`;
+    }
+    cal.innerHTML = `
+    <div class="shcal-wrap">
+      <div class="shcal-head">
+        <button class="btn-sm btn-outline" data-shcal-mv="-1">◀</button>
+        <b>${y}년 ${m + 1}월</b>
+        <button class="btn-sm btn-outline" data-shcal-mv="1">▶</button>
+        <button class="btn-sm btn-outline" data-shcal-mv="0" style="margin-left:6px;">오늘</button>
+        <span class="text-muted" style="font-size:12px; margin-left:auto;">${shipHolPick ? `${shipHolPick} 부터 — 종료일을 클릭하세요 (같은 날 다시 클릭 = 하루만)` : '날짜를 클릭하면 휴무 지정 · 휴무일 클릭하면 해제'}</span>
+      </div>
+      <div class="shcal-grid shcal-dow">${DAY_KO.map((x, i) => `<div class="shcal-dowc${i === 0 ? ' sun' : (i === 6 ? ' sat' : '')}">${x}</div>`).join('')}</div>
+      <div class="shcal-grid">${cells}</div>
+      <div class="shcal-legend"><span class="lg off"></span> 발송 휴무 <span class="lg sat"></span> 토요일(상시 불가) <span class="lg today"></span> 오늘 · 📨 = 안내 문구 등록됨</div>
+    </div>`;
+    if (!document.getElementById('shcal-style')) {
+        const st = document.createElement('style'); st.id = 'shcal-style';
+        st.textContent = `
+        .shcal-wrap{ border:1px solid var(--border,#e4e7ee); border-radius:12px; padding:10px 12px 12px; background:#fff; max-width:560px; }
+        .shcal-head{ display:flex; align-items:center; gap:6px; margin-bottom:8px; }
+        .shcal-head b{ font-size:15px; }
+        .shcal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
+        .shcal-dow{ margin-bottom:3px; }
+        .shcal-dowc{ text-align:center; font-size:11.5px; font-weight:700; color:var(--text-mid,#667085); padding:2px 0; }
+        .shcal-dowc.sun{ color:#E5484D; } .shcal-dowc.sat{ color:#3E63DD; }
+        .shcal-cell{ position:relative; min-height:44px; border:1px solid #EEF0F4; border-radius:8px; padding:3px 4px; cursor:pointer; background:#fff; }
+        .shcal-cell:hover{ border-color:var(--primary,#8CC63E); background:#FAFDF5; }
+        .shcal-cell .d{ font-size:12px; font-weight:700; color:#15181C; }
+        .shcal-cell .r{ display:block; font-size:10px; line-height:1.2; color:#C0392B; margin-top:1px; word-break:keep-all; }
+        .shcal-cell .nt{ position:absolute; right:3px; bottom:2px; font-size:10px; }
+        .shcal-empty{ border:none; background:transparent; cursor:default; }
+        .shcal-off{ background:#FDECEA; border-color:#F6C9C4; }
+        .shcal-sat{ background:#F4F6FB; }
+        .shcal-today{ box-shadow:inset 0 0 0 2px var(--primary,#8CC63E); }
+        .shcal-pick{ box-shadow:inset 0 0 0 2px #3E63DD; }
+        .shcal-legend{ margin-top:8px; font-size:11.5px; color:var(--text-mid,#667085); display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+        .shcal-legend .lg{ width:11px; height:11px; border-radius:3px; display:inline-block; }
+        .shcal-legend .lg.off{ background:#FDECEA; border:1px solid #F6C9C4; }
+        .shcal-legend .lg.sat{ background:#F4F6FB; border:1px solid #E4E7EE; }
+        .shcal-legend .lg.today{ background:#fff; border:2px solid var(--primary,#8CC63E); }`;
+        document.head.appendChild(st);
+    }
+    renderShipHolidaySummary();
+}
+// 하단 요약표(기존 목록 계승 — 연속일 묶음·안내 문구·삭제)
+function renderShipHolidaySummary() {
     const el = document.getElementById('ship-holiday-list');
     if (!el) return;
-    const d = await api('/api/agent-office/shipping-holidays');
     const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
-    const fmt = (s) => `${s.slice(5).replace('-', '/')} (${DAY_KO[new Date(s + 'T00:00:00').getDay()]})`;
+    const fmt = (s) => `${s.slice(5).replace('-', '/')} (${DAY_KO[new Date(s + 'T00:00:00Z').getUTCDay()]})`;
     const groups = [];
-    for (const r of (d.rows || [])) {   // 날짜 오름차순 응답 전제 — 연속일+같은 사유·문구면 묶기
+    for (const r of shipHolRows) {
+        const ymd = String(r.holiday_date).slice(0, 10);
         const g = groups[groups.length - 1];
-        const prevNext = g && new Date(new Date(g.end + 'T00:00:00').getTime() + 86400000).toISOString().slice(0, 10);
-        if (g && prevNext === r.holiday_date && g.reason === (r.reason || '') && g.notice === (r.notice || '')) {
-            g.end = r.holiday_date; g.ids.push(r.id);
-        } else {
-            groups.push({ start: r.holiday_date, end: r.holiday_date, reason: r.reason || '', notice: r.notice || '', created_by: r.created_by, ids: [r.id] });
-        }
+        const prevNext = g && new Date(new Date(g.end + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
+        if (g && prevNext === ymd && g.reason === (r.reason || '') && g.notice === (r.notice || '')) { g.end = ymd; g.ids.push(r.id); }
+        else groups.push({ start: ymd, end: ymd, reason: r.reason || '', notice: r.notice || '', created_by: r.created_by, ids: [r.id] });
     }
     const rows = groups.map(g => `
         <tr>
@@ -12774,10 +12861,46 @@ async function renderShippingHolidays() {
             <td><button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteShipHolidayGroup('${g.ids.join(',')}')">삭제</button></td>
         </tr>`).join('');
     el.innerHTML = rows
-        ? `<table class="data-table"><thead><tr><th>기간</th><th>사유 · 안내 문구</th><th>등록자</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-           <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 안내 문구가 있는 기간에 들어온 주문은 알림톡 발송 안내가 자동 계산 대신 그 문구로 나갑니다 (발송 기능 가동 후).</p>`
-        : '<p class="text-muted">등록된 휴무일이 없습니다</p>';
+        ? `<details><summary style="cursor:pointer; font-size:13px; font-weight:700; margin-bottom:6px;">등록 현황 목록 (${groups.length}건)</summary>
+           <table class="data-table"><thead><tr><th>기간</th><th>사유 · 안내 문구</th><th>등록자</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+           <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 안내 문구가 있는 기간에 들어온 주문은 알림톡 발송 안내가 자동 계산 대신 그 문구로 나갑니다 (발송 기능 가동 후).</p></details>`
+        : '<p class="text-muted" style="font-size:13px;">등록된 휴무일이 없습니다 — 달력에서 날짜를 클릭해 지정하세요</p>';
 }
+// 달력 클릭 위임 (월 이동 · 날짜 토글/기간)
+document.addEventListener('click', async (e) => {
+    const mv = e.target.closest('[data-shcal-mv]');
+    if (mv) {
+        const step = Number(mv.getAttribute('data-shcal-mv'));
+        if (step === 0) shipHolCursor = shipHolKstToday().slice(0, 7) + '-01';
+        else { const d = new Date(shipHolCursor + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + step); shipHolCursor = d.toISOString().slice(0, 8) + '01'; }
+        shipHolPick = null;
+        renderShippingHolidays().catch(console.error);
+        return;
+    }
+    const cell = e.target.closest('[data-shcal]');
+    if (!cell) return;
+    const ymd = cell.getAttribute('data-shcal');
+    const hit = shipHolRows.find(r => String(r.holiday_date).slice(0, 10) === ymd);
+    if (hit) {   // 휴무일 클릭 = 해제
+        if (!confirm(`${ymd} 휴무 지정을 해제할까요? (발송일 계산에 즉시 반영)`)) return;
+        try { await api('/api/agent-office/shipping-holidays/' + hit.id, 'DELETE', { confirm: true }); showToast('🗑 휴무 해제 완료', 'lime'); }
+        catch (err) { showToast('❌ ' + String(err.message || '').slice(0, 60)); }
+        renderShippingHolidays().catch(console.error);
+        return;
+    }
+    if (!shipHolPick) { shipHolPick = ymd; renderShippingHolidays().catch(console.error); return; }   // 시작일 선택
+    const start = shipHolPick <= ymd ? shipHolPick : ymd;
+    const end = shipHolPick <= ymd ? ymd : shipHolPick;
+    shipHolPick = null;
+    const reason = prompt(`휴무 사유를 입력하세요 (${start}${end !== start ? ' ~ ' + end : ''})`, '임시 휴무');
+    if (reason === null) { renderShippingHolidays().catch(console.error); return; }
+    const notice = prompt('안내 문구 (선택 — 이 기간 주문의 알림톡 발송안내를 이 문구로 대체. 비우면 자동 계산)', '');
+    try {
+        await api('/api/agent-office/shipping-holidays', 'POST', { date: start, end: end, reason: reason.trim() || '휴무', notice: (notice || '').trim() || '' });
+        showToast('✅ 휴무일 등록 완료 — 발송일 계산에 즉시 반영', 'lime');
+    } catch (err) { showToast('❌ ' + String(err.message || '').slice(0, 60)); }
+    renderShippingHolidays().catch(console.error);
+});
 window.deleteShipHolidayGroup = async function(idsCsv) {
     const ids = String(idsCsv).split(',').filter(Boolean);
     if (!confirm(`이 휴무 ${ids.length > 1 ? '기간(' + ids.length + '일)' : '일'}을 삭제할까요? (발송일 계산에 즉시 반영)`)) return;
@@ -12867,9 +12990,10 @@ window.deleteBotProd = async function(id) {
     catch (e) { alert(e.message); }
     renderBotProducts().catch(console.error);
 };
-async function renderBotProductLogs() {
+async function renderBotProductLogs(range) {
     if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
-    const d = await api('/api/agent-office/bot-product-logs');
+    if (!range) return showInqLogPrompt();   // #178-2: 기본 비표시
+    const d = await api('/api/agent-office/bot-product-logs?from=' + range.from + '&to=' + range.to);
     if (inquiryActiveTab !== 'products') return; // 이력 카드 공용 — 활성 탭 이력만 표시(경합 방지)
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || '';
@@ -12879,6 +13003,19 @@ async function renderBotProductLogs() {
     document.getElementById('inquiry-logs').innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">이력이 없습니다</p>';
+}
+// 지시 #178-2: 수정 이력 조회식 — 기본 안내 문구 + [조회] 실행기
+function showInqLogPrompt() {
+    const el = document.getElementById('inquiry-logs');
+    if (el) el.innerHTML = '<p class="text-muted" style="font-size:13px;">📅 날짜를 선택하고 [조회]를 누르면 해당 기간의 수정 이력이 표시됩니다.</p>';
+}
+function runInqLogSearch() {
+    const from = document.getElementById('inq-log-from')?.value.trim();
+    const to = document.getElementById('inq-log-to')?.value.trim();
+    if (!from || !to) return showToast('⚠️ 시작일과 종료일을 선택해주세요');
+    if (from > to) return showToast('⚠️ 시작일이 종료일보다 늦습니다');
+    const range = { from, to };
+    (inquiryActiveTab === 'products' ? renderBotProductLogs(range) : renderInquiryLogs(range)).catch(console.error);
 }
 // 대표 7/25(2차): 예외 품목(사전예약특가 등 단가표에 없는 상품)용 [품목 추가] 부활 — 이렇게 추가한 것만 삭제 가능
 function setupBotProductsTab() {
@@ -12900,20 +13037,7 @@ function setupBotProductsTab() {
     // 지시 #76: LMS 이력 새로고침
     document.getElementById('btn-notify-log-refresh')?.addEventListener('click', () => renderNotifyLogs().catch(console.error));   // 지시 #176 통합 이력
     document.getElementById('notify-log-filter')?.addEventListener('change', () => renderNotifyLogs().catch(console.error));
-    // 지시 #69·#73: 발송 휴무일 추가 (기간·안내 문구 지원)
-    document.getElementById('btn-ship-holiday-add')?.addEventListener('click', async () => {
-        const date = document.getElementById('ship-holiday-date').value.trim();
-        const end = document.getElementById('ship-holiday-end').value.trim();
-        const reason = document.getElementById('ship-holiday-reason').value.trim();
-        const notice = document.getElementById('ship-holiday-notice').value.trim();
-        if (!date || !reason) return alert('시작일과 사유를 입력하세요');
-        try {
-            await api('/api/agent-office/shipping-holidays', 'POST', { date, end, reason, notice });
-            ['ship-holiday-date', 'ship-holiday-end', 'ship-holiday-reason', 'ship-holiday-notice'].forEach(id => document.getElementById(id).value = '');
-            showToast('✅ 휴무일 등록 완료 — 발송일 계산에 즉시 반영', 'lime');
-            renderShippingHolidays().catch(console.error);
-        } catch (e) { alert(e.message); }
-    });
+    // 지시 #178-1: 휴무일 등록/해제는 달력 클릭 위임으로 대체 — 구 [추가] 폼 바인딩 제거(마크업도 제거됨)
     // 지시 #68 C5: 시즌 오픈 대기 신청 등록
     document.getElementById('btn-season-wait-add')?.addEventListener('click', async () => {
         const item = document.getElementById('season-wait-item').value.trim();

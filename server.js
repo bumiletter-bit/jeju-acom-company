@@ -5256,9 +5256,15 @@ app.put('/api/agent-office/scenarios-auto-reply', authMiddleware, adminOnly, asy
 });
 app.get('/api/agent-office/scenario-logs', authMiddleware, adminOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
     try {
-        const r = await pool.query(
-            `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
-             WHERE target_type = 'inquiry_scenario' ORDER BY id DESC LIMIT 100`);
+        // 지시 #178-2: 조회식 전환 — 날짜 구간(KST) 파라미터
+        const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
+        const useRange = /^d{4}-d{2}-d{2}$/.test(from) && /^d{4}-d{2}-d{2}$/.test(to);
+        const r = await pool.query(useRange
+            ? `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+               WHERE target_type = 'inquiry_scenario' AND (created_at + interval '9 hours')::date BETWEEN $1::date AND $2::date
+               ORDER BY id DESC LIMIT 300`
+            : `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+               WHERE target_type = 'inquiry_scenario' ORDER BY id DESC LIMIT 100`, useRange ? [from, to] : []);
         res.json({ logs: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -5330,9 +5336,15 @@ app.delete('/api/agent-office/bot-products/:id', authMiddleware, adminOnly, asyn
 });
 app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
     try {
-        const r = await pool.query(
-            `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
-             WHERE target_type = 'bot_product' ORDER BY id DESC LIMIT 100`);
+        // 지시 #178-2: 조회식 전환 — 날짜 구간(KST) 파라미터. 미지정 시 기존 동작(최근 100).
+        const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
+        const useRange = /^d{4}-d{2}-d{2}$/.test(from) && /^d{4}-d{2}-d{2}$/.test(to);
+        const r = await pool.query(useRange
+            ? `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+               WHERE target_type = 'bot_product' AND (created_at + interval '9 hours')::date BETWEEN $1::date AND $2::date
+               ORDER BY id DESC LIMIT 300`
+            : `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
+               WHERE target_type = 'bot_product' ORDER BY id DESC LIMIT 100`, useRange ? [from, to] : []);
         res.json({ logs: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -5629,6 +5641,18 @@ const _telCache = new Map();
 app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
     try {
         const filter = String(req.query.filter || 'all');
+        // 지시 #178-3: 날짜 구간(KST)·검색어(연락처 뒷자리 / 품목명). 미지정 시 기존 동작(최근 120).
+        const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
+        const useRange = /^d{4}-d{2}-d{2}$/.test(from) && /^d{4}-d{2}-d{2}$/.test(to);
+        const qRaw = String(req.query.q || '').trim().slice(0, 40);
+        const qDigits = qRaw.replace(/[^0-9]/g, '');
+        const conds = [], params = [];
+        if (useRange) { params.push(from, to); conds.push(`(COALESCE(k.created_at, l.created_at) + interval '9 hours')::date BETWEEN ${params.length - 1}::date AND ${params.length}::date`); }
+        if (qRaw) {
+            if (qDigits.length >= 4) { params.push('%' + qDigits.slice(-4)); conds.push(`(k.receiver_masked LIKE ${params.length} OR l.receiver_masked LIKE ${params.length})`); }
+            else { params.push('%' + qRaw + '%'); conds.push(`(k.product_name ILIKE ${params.length} OR l.product_name ILIKE ${params.length})`); }
+        }
+        const whereSql = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
         const rows = (await pool.query(
             `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
                     COALESCE(k.created_at, l.created_at) AS at_main,
@@ -5641,7 +5665,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                     l.message AS l_message, l.resend_count AS l_resend, l.product_name AS l_product
              FROM kakao_notify_log k
              FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
-             ORDER BY COALESCE(k.created_at, l.created_at) DESC LIMIT 120`)).rows;
+             ${whereSql}
+             ORDER BY COALESCE(k.created_at, l.created_at) DESC LIMIT ${useRange || qRaw ? 300 : 120}`, params)).rows;
         // 지시 #177: 수신 풀번호 표시 — DB엔 마스킹만 저장(원칙 유지), 표시 시점에 네이버 상세조회로 재취득.
         //   대표(admin)에게만 내려줌 · 배치 100건 · 5분 메모리 캐시 · 실패 시 마스킹 폴백.
         if (String(req.user?.role || '') === 'admin' && rows.length) {
