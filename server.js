@@ -7981,7 +7981,13 @@ app.post('/api/public/shop-chat', async (req, res) => {
         const out = await qnaGenerate(question, productName || null);
         if (!out || !out.answer) {
             // 재료 부족·SKIP — 가짜 답변 금지(#189 원칙). 사람 연결 안내로 넘긴다.
-            return res.json({ answered: false, reason: 'no-material',
+            // 진단용 사유 구분(고객 문구는 동일 — 운영자가 원인을 알 수 있게 reason만 세분화)
+            let reason = 'skip';
+            try {
+                if (!process.env.ANTHROPIC_API_KEY) reason = 'no-ai-key';
+                else if (!(await qnaScenarios()).length) reason = 'no-scenarios';
+            } catch (_) { /* 진단 실패는 무시 */ }
+            return res.json({ answered: false, reason,
                 message: '이 질문은 담당자가 직접 확인해서 답변드릴게요. 카카오톡 채널이나 전화(010-6687-4031)로 문의해주세요.' });
         }
         res.json({ answered: true, answer: out.answer, scenarios: out.used || [] });
