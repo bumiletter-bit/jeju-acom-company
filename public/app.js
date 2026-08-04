@@ -12574,6 +12574,7 @@ async function renderBotProducts() {
 // 지시 #180-A1: 100건씩 [더보기] 페이징 — 표시 상한(300) 폐지. 조건이 바뀌면 1페이지부터, [더보기]는 누적.
 let notifyLogShown = 0;    // 현재 화면에 쌓인 행 수
 let notifyLogTotal = 0;    // 조회 조건 전체 건수(요약 줄 기준 — 표시분과 분리)
+let notifyLogSeq = 0;      // #204-2: 요청 순번 — 겹친 조회에서 늦게 온 응답을 버리기 위한 가드
 const NOTIFY_PAGE = 100;
 async function renderNotifyLogs(opts) {
     const append = !!(opts && opts.append);
@@ -12588,7 +12589,13 @@ async function renderNotifyLogs(opts) {
     const qs = ['filter=' + encodeURIComponent(filter), 'limit=' + NOTIFY_PAGE, 'offset=' + notifyLogShown];
     if (from && to) qs.push('from=' + encodeURIComponent(from), 'to=' + encodeURIComponent(to));
     if (q) qs.push('q=' + encodeURIComponent(q));
+    /* 🔴 지시 #204-2: "모두 표시됨 (60 / 30건)" — 분자가 분모를 넘던 원인.
+       조회가 두 번 겹치면(필터 전환 직후 재조회, [재조회] 성공 후 자동 갱신 등)
+       두 응답이 각각 notifyLogShown 에 더해져 표시분이 실제의 2배로 부풀었다(DB는 30/30 정상).
+       늦게 도착한 응답은 폐기하고, 표시분은 누적이 아니라 append 여부로 확정한다. (#181 요청 순번 가드와 같은 방식) */
+    const mySeq = ++notifyLogSeq;
     const d = await api('/api/agent-office/notify-logs?' + qs.join('&'));
+    if (mySeq !== notifyLogSeq) return;   // 그 사이 새 조회가 시작됨 → 이 응답은 버린다(화면·카운터 오염 방지)
     notifyLogTotal = Number(d.total || 0);
     const s = d.summary || {};
     const sumEl = document.getElementById('notify-log-summary');
@@ -12675,7 +12682,8 @@ async function renderNotifyLogs(opts) {
     else el.innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시(주문)</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">기록이 없습니다 — [데이터관리] 타이머에서 "주문 안내 알림톡"·"문자 발송 안내"를 켜면 감지 시 dry-run 문면이 여기에 쌓입니다.</p>';
-    notifyLogShown += (d.rows || []).length;
+    // #204-2: 누적(+=)이 아니라 append 여부로 확정 — 응답이 겹쳐도 표시분이 부풀지 않는다.
+    notifyLogShown = append ? notifyLogShown + (d.rows || []).length : (d.rows || []).length;
     renderNotifyMoreBtn();
 }
 // 지시 #193 C: 수신번호 미확보 건 그 자리에서 재조회 (성공 시 목록 갱신)

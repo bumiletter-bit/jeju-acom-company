@@ -5821,6 +5821,25 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
              + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***') AS no_tel,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'gift-masked') AS gift`)).rows[0];   /* #193 C: 수신번호 미확보 = 수동 연락 필요 */
+        /* 🔴 지시 #204-1: 요약 줄과 행 표시가 서로 다른 기준을 봐서 갈라졌던 것을 통일한다.
+           원인 — 행 표시는 "재조회한 실번호에 *가 있으면 선물하기"로 판정하는데(receiver_full),
+                  요약은 DB의 status='gift-masked'만 셌다. 그 상태는 실제로 0건이라 gift는 늘 0,
+                  선물하기 건이 전부 '⚠️ 수동 연락'에 남아 조치 불요 건이 경고로 잡혔다.
+           교정 — 요약도 같은 소스(재조회 결과)로 판정한다. 오늘 '***' 건만 대상이라 호출량은 미미(5분 캐시).
+                  재조회 실패 시에는 안전하게 no_tel(경고)로 남긴다 — 경고를 임의로 지우지 않는다. */
+        const maskedToday = (await pool.query(
+            `SELECT order_key FROM kakao_notify_log
+              WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***'`)).rows;
+        let giftCnt = Number(sum.gift) || 0, noTelCnt = Number(sum.no_tel) || 0;
+        for (const m of maskedToday) {
+            /* 표시(행)와 같은 소스를 본다 — 위에서 rows용으로 이미 재조회해 둔 _telCache를 우선 재사용하고,
+               그 페이지에 안 걸린 건만 개별 재조회한다(추가 호출 최소화). */
+            const hit = _telCache.get(m.order_key);
+            let full = (hit && hit.tel) ? String(hit.tel) : '';
+            if (!full) { try { full = await refetchReceiverTel(m.order_key); } catch (e) { full = ''; } }
+            if (full && /[*]/.test(full)) { giftCnt++; noTelCnt--; }   // 네이버가 마스킹해 준 번호 = 선물하기(조치 불요)
+        }
+        sum.gift = giftCnt; sum.no_tel = Math.max(noTelCnt, 0);
         res.json({ rows, summary: sum, total, offset, limit });   // #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
     } catch (err) { handleAdminErr(res, err); }
 });
