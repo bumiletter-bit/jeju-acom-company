@@ -5742,7 +5742,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
             conds.push(`(k.status IN ('failed','token-failed','build-failed','hold-0809')
                       OR l.status IN ('failed','build-failed')
                       OR k.confirm_status IN ('manual-needed','failed')
-                      OR k.receiver_masked = '***' OR l.receiver_masked = '***')`);   /* #193 C: 수신번호 미확보(수동 연락 필요)도 '실패·보류만' 필터에 포함 */
+                      OR ((k.receiver_masked = '***' OR l.receiver_masked = '***')
+                          AND COALESCE(k.status,'') <> 'gift-masked' AND COALESCE(l.status,'') <> 'gift-masked'))   /* #199: 선물하기(번호 비공개)는 조치 불요라 제외 */`);   /* #193 C: 수신번호 미확보(수동 연락 필요)도 '실패·보류만' 필터에 포함 */
         } else if (filter === 'pending') {
             conds.push(`(l.id IS NULL AND (k.status IS NULL OR k.status <> 'canceled-excluded'))`);   // 발송안내 미도래
         }
@@ -5818,7 +5819,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'skip-no-guide') AS skipped,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','token-failed','build-failed'))
              + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed,
-               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***') AS no_tel`)).rows[0];   /* #193 C: 수신번호 미확보 = 수동 연락 필요 */
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***') AS no_tel,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'gift-masked') AS gift`)).rows[0];   /* #193 C: 수신번호 미확보 = 수동 연락 필요 */
         res.json({ rows, summary: sum, total, offset, limit });   // #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -6720,6 +6722,14 @@ async function naverCallWithRetry(reqObj) {
 //     · 실패해도 예외를 던지지 않는다 → 해당 건만 건너뛰고 발송 파이프라인 전체는 계속 돈다
 //     · 재시도는 naverCallWithRetry의 429 백오프에만 의존(여기서 별도 무한 재시도 없음)
 //     · 취득한 번호는 **DB에 저장하지 않는다**(미저장 원칙 유지 — 발송에만 쓰고 버림)
+// 지시 #199: 발송에 실제로 쓸 수 있는 번호인지 판정. 마스킹(*·x 포함)이거나 자릿수가 안 맞으면 사용 불가.
+//   네이버 선물하기 주문은 수령자 번호가 010-9***-7*** 형태로 마스킹되어 오며, 이는 결함이 아니라 사양이다.
+function isUsableTel(tel) {
+    const s = String(tel || '');
+    if (/[*xX]/.test(s)) return false;                    // 마스킹 문자 포함 = 실번호 아님
+    const d = s.replace(/[^0-9]/g, '');
+    return d.length === 10 || d.length === 11;            // 국내 휴대폰 자릿수
+}
 async function refetchReceiverTel(orderKey) {
     if (!orderKey) return '';
     try {
@@ -6735,17 +6745,24 @@ async function refetchReceiverTel(orderKey) {
             const od = cc.order || it.order || po.order || {};
             const sa = po.shippingAddress || {};
             const tel = od.ordererTel || sa.tel1 || sa.tel2 || '';   // #177 폴백 순서 그대로 계승
+            // 🚨 지시 #199: 네이버 **선물하기 주문은 수령자 번호를 마스킹해서 준다**(예: 010-9***-7***).
+            //   이걸 그대로 쓰면 숫자만 남겨 "01097" 같은 엉터리 번호로 발송을 시도하게 된다 → 사용 불가로 판정.
+            if (tel && !isUsableTel(tel)) return '__MASKED__';   // 호출부가 '번호 비공개'로 분류하도록 신호
             if (tel) return String(tel);
         }
     } catch (e) { /* 재조회 실패 = 구제 못 함. 발송 흐름은 계속된다(호출부에서 '수동 연락 필요'로 분류) */ }
     return '';
 }
 // 발송 직전 최종 수신번호 결정 — 있으면 그대로, 비었을 때만 재조회.
+//   반환: 정상 번호 문자열 / '' (못 구함) / '__MASKED__' (선물하기 등 번호 비공개 — #199)
 async function resolveReceiver(primaryTel, orderKey) {
-    const t = String(primaryTel || '').replace(/[^0-9]/g, '');
-    if (t) return String(primaryTel);      // ✅ 정상 건: 추가 API 호출 없음
+    if (primaryTel && isUsableTel(primaryTel)) return String(primaryTel);   // ✅ 정상 건: 추가 API 호출 없음
+    if (primaryTel && String(primaryTel).replace(/[^0-9]/g, '') && !isUsableTel(primaryTel)) return '__MASKED__';   // 수집분이 이미 마스킹
     return await refetchReceiverTel(orderKey);
 }
+// 발송 직전 최종 처리 — 마스킹 건은 발송하지 않고 상태만 남긴다(빈 번호로 발송 시도해 실패 로그만 쌓는 일 방지).
+function telOrNull(v) { return (v && v !== '__MASKED__') ? v : ''; }
+function isMaskedTel(v) { return v === '__MASKED__'; }
 
 async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
@@ -6971,6 +6988,13 @@ async function collectKakaoNotify() {
                 // #193 A: 비어 있을 때만 발송 직전 재조회(정상 건은 추가 호출 없음)
                 const recvTel = await resolveReceiver(
                     od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', orderKey);
+                // 지시 #199: 선물하기 등 번호 비공개 건은 발송 시도 자체를 하지 않는다(엉터리 번호 발송·실패 로그 방지)
+                if (isMaskedTel(recvTel)) {
+                    await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                        VALUES ($1,$2,'gift-masked','skip','gift-masked','none') ON CONFLICT (order_key) DO NOTHING`,
+                        [orderKey, (po.productName || '').slice(0, 200)]);
+                    continue;
+                }
                 const res = await kakaoNotify.sendAlimtalk({
                     receiver: recvTel, subject: '주문 안내', message, failoverMessage: message,
                     tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
@@ -7053,6 +7077,11 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
     // #193 A: 발송안내도 동일 — 번호가 비어 있을 때만 발송 직전 재조회(정상 건은 추가 호출 0)
     const guideRecvTel = await resolveReceiver(
         od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', orderKey);
+    // 지시 #199: 발송안내도 동일하게 — 번호 비공개(선물하기) 건은 발송 시도 없이 상태만 남긴다(주문안내와 일관)
+    if (isMaskedTel(guideRecvTel)) {
+        return { skip: false, matched, noGuide: !hasGuide, message: null, giftMasked: true,
+                 res: { mode: 'skip', status: 'gift-masked', error: null }, recvTel: '' };
+    }
     const res = await kakaoNotify.sendShippingGuideAlimtalk({
         receiver: guideRecvTel,   // #177: 주문자 미제공 시 수취인 폴백 → #193: 그래도 비면 재조회로 구제
         vars: {

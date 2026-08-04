@@ -12598,8 +12598,8 @@ async function renderNotifyLogs(opts) {
         // #180-A1: 요약 줄은 '조회 조건 전체(total)' 기준 — [더보기]로 표시분이 늘어도 이 숫자는 바뀌지 않는다.
         //   (#179의 "상한 300건 도달" 경고는 페이징 도입으로 불필요해져 제거)
         sumEl.textContent = (from && to) || q
-            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}`
-            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""} · 건너뜀 ${s.skipped || 0}`;
+            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}`
+            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""} · 건너뜀 ${s.skipped || 0}`;
     }
     const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)' };
     // 한 칸(주문안내/발송안내) 상태 표기 — 최종 경로 기준
@@ -12618,8 +12618,17 @@ async function renderNotifyLogs(opts) {
             }
             return '<span class="text-muted" style="font-size:12px;">— 기록 없음</span>';
         }
-        if (st === 'hold-0809') return badge('#FDF3E2', '#B26A00', '⏸ 보류 (8~9시)',
-            `<div style="margin-top:5px; white-space:nowrap;"><button class="btn-sm btn-primary" onclick="manualSendHold(${row.k_id}, 'today', this)">오늘 발송으로 안내</button> <button class="btn-sm btn-outline" onclick="manualSendHold(${row.k_id}, 'tomorrow', this)">내일 발송으로 안내</button></div>`);
+        if (st === 'hold-0809') {
+            // 지시 #198: 그 주문의 **발송안내가 이미 나갔으면** 주문안내는 보낼 이유가 없다
+            //   (손님이 "발송했습니다"를 받은 뒤에 "오늘 발송 예정입니다"가 또 가는 상황 방지).
+            //   → 버튼을 숨기고 자동 종결로 표기. 판정은 같은 행의 발송안내 상태로 자동 수행.
+            const shipDone = row.l_status === 'sent' || row.l_mode === 'real' || row.l_mode === 'sms'
+                             || (!!row.l_id && ['sent', 'dry-run'].includes(String(row.l_status || '')));
+            if (shipDone) return badge('#F1F2F5', '#767A83', '⏸ 보류 → 발송안내 완료 (주문안내 불요)');
+            return badge('#FDF3E2', '#B26A00', '⏸ 보류 (8~9시)',
+                `<div style="margin-top:5px; white-space:nowrap;"><button class="btn-sm btn-primary" onclick="manualSendHold(${row.k_id}, 'today', this)">오늘 발송으로 안내</button> <button class="btn-sm btn-outline" onclick="manualSendHold(${row.k_id}, 'tomorrow', this)">내일 발송으로 안내</button></div>`);
+        }
+        if (st === 'gift-masked') return badge('#F1F2F5', '#767A83', '🎁 선물하기 (번호 비공개)');   // #199
         if (st === 'canceled-excluded') return badge('#F1F2F5', '#767A83', '🚫 취소·클레임 제외');
         if (st === 'skip-no-guide') return badge('#F1F2F5', '#767A83', '건너뜀 (구버전 기록)');
         if (st === 'sent') return badge('#E8F8EF', '#1E8E4E', mode === 'sms' ? '🔁 문자(LMS) 대체' : '✅ 알림톡');
@@ -12642,11 +12651,17 @@ async function renderNotifyLogs(opts) {
         <tr>
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
             <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? '<div class="text-muted" style="font-size:11px;">주문 기록 밖 (발송만 감지)</div>' : ''}</td>
-            <td style="white-space:nowrap;">${escapeHtml(r.receiver_full || r.receiver_masked || '-')}${r.receiver_full ? '' : (r.receiver_masked === '***'
+            <td style="white-space:nowrap;">${
+              /* 지시 #199: 선물하기(번호 비공개)는 정상 상태 — 경고가 아닌 중립 표기로 구분한다.
+                 네이버가 수령자 번호를 마스킹해 주는 사양이라 재조회해도 풀번호를 얻을 수 없다. */
+              (r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || '')))
+                ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">🎁 선물하기 (번호 비공개)</span>`
+                : escapeHtml(r.receiver_full || r.receiver_masked || '-')
+            }${(r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || ''))) ? '' : (r.receiver_full ? '' : (r.receiver_masked === '***'
                 /* 지시 #193 C: ***로 조용히 묻히지 않게 — 경고 뱃지 + 그 자리에서 다시 조회(시간이 지나면 네이버가 채워주는 특성 활용) */
                 ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:var(--danger,#F04438); font-size:11px;">⚠️ 수동 연락 필요</span>
                      <button class="btn-sm btn-outline" style="margin-left:4px; padding:2px 8px; font-size:11px;" onclick="retryReceiverTel('${escapeHtml(r.order_key || '')}', this)">재조회</button></div>`
-                : '')}</td>
+                : ''))}</td>
             <td>${cell(r, 'order')}</td>
             <td>${cell(r, 'ship')}</td>
             <td>${escapeHtml(cfLabel[r.confirm_status] || r.confirm_status || '-')}${r.confirm_error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.confirm_error).slice(0, 60))}</div>` : ''}</td>
