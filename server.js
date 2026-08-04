@@ -7952,6 +7952,7 @@ app.get('/api/public/roulette-winners', async (req, res) => {
 });
 
 app.get('/api/public/store-snapshot', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');   // 지시 #192-1: 자사몰(다른 도메인)에서 fetch — 헤더가 없어 CORS로 막혀 있었음
     try {
         const r = await pool.query(`SELECT run_at, total, items, reviews FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
         if (!r.rows.length) return res.status(404).json({ error: 'no-snapshot — 수집기 미실행 (타이머 product_snapshot OFF 또는 권한 대기)' });
