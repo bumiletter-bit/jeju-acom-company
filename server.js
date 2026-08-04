@@ -5622,6 +5622,8 @@ app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) 
         res.json({ rows: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+// 지시 #177: 수신 풀번호 표시용 단기 캐시 (메모리·5분 — DB 저장 안 함)
+const _telCache = new Map();
 // ── 지시 #176: [알림 발송 이력] 통합 조회 — 주문 단위 한 줄(주문안내·발송안내 두 칸).
 //    원본 테이블은 그대로 두고 조회 계층에서 order_key FULL OUTER JOIN (한쪽만 있는 건도 단독 행으로 표시).
 app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
@@ -5640,6 +5642,30 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
              FROM kakao_notify_log k
              FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
              ORDER BY COALESCE(k.created_at, l.created_at) DESC LIMIT 120`)).rows;
+        // 지시 #177: 수신 풀번호 표시 — DB엔 마스킹만 저장(원칙 유지), 표시 시점에 네이버 상세조회로 재취득.
+        //   대표(admin)에게만 내려줌 · 배치 100건 · 5분 메모리 캐시 · 실패 시 마스킹 폴백.
+        if (String(req.user?.role || '') === 'admin' && rows.length) {
+            try {
+                const need = rows.map(r => r.order_key).filter(k => k && !(_telCache.has(k) && Date.now() - _telCache.get(k).at < 300000));
+                for (let i = 0; i < need.length && i < 200; i += 100) {
+                    if (i > 0) await new Promise(r2 => setTimeout(r2, 350));
+                    const q = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: need.slice(i, i + 100) } });
+                    const b = (q && q.data) ? q.data : q;
+                    const arr = b?.data || b?.list || (Array.isArray(b) ? b : []) || [];
+                    for (const it of (Array.isArray(arr) ? arr : [])) {
+                        const cc = it.content || it;
+                        const po = cc.productOrder || it.productOrder || cc;
+                        const od = cc.order || it.order || po.order || {};
+                        const sa = po.shippingAddress || {};
+                        const tel = od.ordererTel || sa.tel1 || sa.tel2 || '';   // 주문자 없으면 수취인 연락처 폴백(*** 케이스 교정)
+                        const key = String(po.productOrderId || od.productOrderId || '');
+                        if (key) _telCache.set(key, { tel: String(tel), at: Date.now() });
+                    }
+                }
+            } catch (_) { /* 재조회 실패 = 마스킹 표시 유지 */ }
+            const fmt = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
+            for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) r.receiver_full = fmt(hit.tel); }
+        }
         const isIssue = (r) => ['failed', 'token-failed', 'build-failed', 'hold-0809'].includes(r.k_status)
             || ['failed', 'build-failed'].includes(r.l_status)
             || ['manual-needed', 'failed'].includes(r.confirm_status);
@@ -11241,6 +11267,34 @@ setInterval(async () => {
         await naverCfgSet('aligo_selftest_result', result);
     } catch (e) {
         try { await naverCfgSet('aligo_selftest_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
+// 지시 #177: 주문 역조회 진단 러너 — order_probe_request {orderKeys:[...]}. 읽기 전용·PII 미수집(날짜·상태만) — "발송만 감지" 원인 판정용.
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('order_probe_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'order_probe_request'`);
+        const keys = Array.isArray(req.orderKeys) ? req.orderKeys.slice(0, 100) : [];
+        if (!keys.length) return;
+        const r = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: keys } });
+        const b = (r && r.data) ? r.data : r;
+        const arr = b?.data || b?.list || (Array.isArray(b) ? b : []) || [];
+        const out = (Array.isArray(arr) ? arr : []).map(it => {
+            const cc = it.content || it;
+            const po = cc.productOrder || it.productOrder || cc;
+            const od = cc.order || it.order || po.order || {};
+            return {
+                key: String(po.productOrderId || od.productOrderId || ''),
+                orderDate: od.orderDate || null, paymentDate: od.paymentDate || null,
+                status: po.productOrderStatus || null, claim: po.claimStatus || null,
+                hasOrdererTel: !!od.ordererTel, hasShipTel: !!(po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)),
+            };
+        });
+        await naverCfgSet('order_probe_result', { at: new Date().toISOString(), asked: keys.length, got: out.length, items: out });
+    } catch (e) {
+        try { await naverCfgSet('order_probe_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
     }
 }, 60000);
 

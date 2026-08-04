@@ -12610,7 +12610,7 @@ async function renderNotifyLogs() {
         <tr>
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
             <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? '<div class="text-muted" style="font-size:11px;">주문 기록 밖 (발송만 감지)</div>' : ''}</td>
-            <td style="white-space:nowrap;">${escapeHtml(r.receiver_masked || '-')}</td>
+            <td style="white-space:nowrap;">${escapeHtml(r.receiver_full || r.receiver_masked || '-')}${r.receiver_full ? '' : (r.receiver_masked === '***' ? '<div class="text-muted" style="font-size:11px;">번호 조회 실패</div>' : '')}</td>
             <td>${cell(r, 'order')}</td>
             <td>${cell(r, 'ship')}</td>
             <td>${escapeHtml(cfLabel[r.confirm_status] || r.confirm_status || '-')}${r.confirm_error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.confirm_error).slice(0, 60))}</div>` : ''}</td>
