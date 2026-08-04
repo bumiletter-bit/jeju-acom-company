@@ -5695,6 +5695,21 @@ app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) 
         res.json({ rows: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
+// 지시 #193 C: 수신번호 미확보 건 [재조회] — 네이버가 나중에 채워주는 특성상 시간이 지나면 구제되는 경우가 많다.
+//   성공 시 마스킹만 갱신(원번호 미저장 원칙 유지). 발송은 하지 않는다(소급 발송 금지).
+app.post('/api/agent-office/notify-logs/retry-tel', authMiddleware, async (req, res) => {
+    try {
+        const orderKey = String((req.body || {}).orderKey || '').slice(0, 50);
+        if (!orderKey) throw { status: 400, message: 'orderKey가 필요합니다' };
+        const tel = await refetchReceiverTel(orderKey);
+        if (!tel) return res.json({ ok: false, message: '아직 연락처가 없습니다 — 잠시 후 다시 시도하거나 네이버에서 직접 확인해주세요' });
+        const masked = kakaoNotify.maskPhone(tel);
+        await pool.query(`UPDATE kakao_notify_log SET receiver_masked=$2 WHERE order_key=$1 AND receiver_masked='***'`, [orderKey, masked]);
+        await pool.query(`UPDATE lms_guide_log   SET receiver_masked=$2 WHERE order_key=$1 AND receiver_masked='***'`, [orderKey, masked]);
+        res.json({ ok: true, masked, message: '연락처를 확보했습니다' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 // 지시 #177: 수신 풀번호 표시용 단기 캐시 (메모리·5분 — DB 저장 안 함)
 const _telCache = new Map();
 // ── 지시 #176: [알림 발송 이력] 통합 조회 — 주문 단위 한 줄(주문안내·발송안내 두 칸).
@@ -5726,7 +5741,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         if (filter === 'issue') {
             conds.push(`(k.status IN ('failed','token-failed','build-failed','hold-0809')
                       OR l.status IN ('failed','build-failed')
-                      OR k.confirm_status IN ('manual-needed','failed'))`);
+                      OR k.confirm_status IN ('manual-needed','failed')
+                      OR k.receiver_masked = '***' OR l.receiver_masked = '***')`);   /* #193 C: 수신번호 미확보(수동 연락 필요)도 '실패·보류만' 필터에 포함 */
         } else if (filter === 'pending') {
             conds.push(`(l.id IS NULL AND (k.status IS NULL OR k.status <> 'canceled-excluded'))`);   // 발송안내 미도래
         }
@@ -5801,7 +5817,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status <> 'skip-no-guide') AS ship_notice,
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'skip-no-guide') AS skipped,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','token-failed','build-failed'))
-             + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed`)).rows[0];
+             + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***') AS no_tel`)).rows[0];   /* #193 C: 수신번호 미확보 = 수동 연락 필요 */
         res.json({ rows, summary: sum, total, offset, limit });   // #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -5884,7 +5901,7 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
             ON CONFLICT (order_key) DO UPDATE SET message=EXCLUDED.message, mode=EXCLUDED.mode, status=EXCLUDED.status, error=EXCLUDED.error,
                 created_at=NOW(), resend_count=COALESCE(lms_guide_log.resend_count,0)+1`,
             [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
-             kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
+             kakaoNotify.maskPhone((out && out.recvTel) || od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
         await writeAudit({ action: 'manual_send', targetType: 'lms_guide', targetId: null,
             changes: { after: { order_key: orderKey, mode: out.res.mode, status: out.res.status } }, source: 'lms-guide', actor: adminActor(req) });
         res.json({ ok: true, mode: out.res.mode, status: out.res.status });
@@ -6695,6 +6712,41 @@ async function naverCallWithRetry(reqObj) {
     }
 }
 
+// ── 지시 #193/#194 A: 발송 직전 수신번호 재조회 ───────────────────────────────
+//   배경(#190 실측): 네이버가 결제 직후엔 연락처를 안 주고 나중에 채우는 지연이 있다. 수집 순간 빈 값이면
+//   그대로 발송 시도 → 번호가 없어 조용히 안 나간다(하루 0~2건). 발송 직전에 한 번 더 조회해 구제한다.
+//   🔴 안전 원칙:
+//     · **번호가 비어 있는 건에만** 호출한다(정상 건은 추가 호출 0 — 아래 가드가 그 판정을 맡는다)
+//     · 실패해도 예외를 던지지 않는다 → 해당 건만 건너뛰고 발송 파이프라인 전체는 계속 돈다
+//     · 재시도는 naverCallWithRetry의 429 백오프에만 의존(여기서 별도 무한 재시도 없음)
+//     · 취득한 번호는 **DB에 저장하지 않는다**(미저장 원칙 유지 — 발송에만 쓰고 버림)
+async function refetchReceiverTel(orderKey) {
+    if (!orderKey) return '';
+    try {
+        const r = await naverCallWithRetry({
+            method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query',
+            body: { productOrderIds: [String(orderKey)] },
+        });
+        const b = (r && r.data) ? r.data : r;
+        const arr = b?.data || b?.list || (Array.isArray(b) ? b : []) || [];
+        for (const it of (Array.isArray(arr) ? arr : [])) {
+            const cc = it.content || it;
+            const po = cc.productOrder || it.productOrder || cc;
+            const od = cc.order || it.order || po.order || {};
+            const sa = po.shippingAddress || {};
+            const tel = od.ordererTel || sa.tel1 || sa.tel2 || '';   // #177 폴백 순서 그대로 계승
+            if (tel) return String(tel);
+        }
+    } catch (e) { /* 재조회 실패 = 구제 못 함. 발송 흐름은 계속된다(호출부에서 '수동 연락 필요'로 분류) */ }
+    return '';
+}
+// 발송 직전 최종 수신번호 결정 — 있으면 그대로, 비었을 때만 재조회.
+async function resolveReceiver(primaryTel, orderKey) {
+    const t = String(primaryTel || '').replace(/[^0-9]/g, '');
+    if (t) return String(primaryTel);      // ✅ 정상 건: 추가 API 호출 없음
+    return await refetchReceiverTel(orderKey);
+}
+
 async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
     return r.rows.length ? r.rows[0].value : null;
@@ -6916,13 +6968,16 @@ async function collectKakaoNotify() {
                     '상품명': kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품').slice(0, 80),   // #146: A안 정제(폴백 내장)
                     '발송안내': shipLine,
                 }, tplDef && tplDef.content);
+                // #193 A: 비어 있을 때만 발송 직전 재조회(정상 건은 추가 호출 없음)
+                const recvTel = await resolveReceiver(
+                    od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', orderKey);
                 const res = await kakaoNotify.sendAlimtalk({
-                    receiver: od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', subject: '주문 안내', message, failoverMessage: message,
+                    receiver: recvTel, subject: '주문 안내', message, failoverMessage: message,
                     tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
                 });
                 await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error)
                     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
-                    [orderKey, matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''),
+                    [orderKey, matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(recvTel || ''),   /* #193: 재조회로 구제된 번호도 마스킹 기록(원번호 미저장 원칙 유지) */
                      message, res.mode, res.status, res.error || null]);
                 if (res.status === 'sent') done++;
                 else if (res.mode === 'real') failed++;
@@ -6995,8 +7050,11 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
     //   E 미승인·코드 미투입 동안은 SMS 직행(sendShippingGuideAlimtalk 내부 판단). 스위치 OFF·dry-run 원칙 동일.
     const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set) : null;
     const 도착안내 = shippingSchedule.renderGuidePlaceholders('내일 {{내일요일}}요일~모레 {{모레요일}}요일 사이 도착 예정', Date.now(), holidayInfo.set);
+    // #193 A: 발송안내도 동일 — 번호가 비어 있을 때만 발송 직전 재조회(정상 건은 추가 호출 0)
+    const guideRecvTel = await resolveReceiver(
+        od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', orderKey);
     const res = await kakaoNotify.sendShippingGuideAlimtalk({
-        receiver: od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '',   // #177: 주문자 미제공 시 수취인 폴백
+        receiver: guideRecvTel,   // #177: 주문자 미제공 시 수취인 폴백 → #193: 그래도 비면 재조회로 구제
         vars: {
             '고객명': od.ordererName || '고객',
             '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
@@ -7006,7 +7064,7 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
         },
         fallback: lmsMessage ? { subject: '제주아꼼이네 배송 안내', message: lmsMessage } : undefined,   // #173: 안내문 없으면 SMS 대체 문면은 E 문면 그대로(sendShippingGuideAlimtalk 내부)
     });
-    return { skip: false, matched, noGuide: !hasGuide, message: res.messageText || lmsMessage, res };
+    return { skip: false, matched, noGuide: !hasGuide, message: res.messageText || lmsMessage, res, recvTel: guideRecvTel };   /* #193: 기록부가 재조회 결과를 쓰도록 반환 */
 }
 async function collectLmsGuide() {
     const now = Date.now();
@@ -7047,12 +7105,12 @@ async function collectLmsGuide() {
                     skipped++;
                     await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
                         VALUES ($1,$2,$3,'dry-run','skip-no-guide') ON CONFLICT (order_key) DO NOTHING`,
-                        [orderKey, (out.matched ? out.matched.name : (po.productName || '')).slice(0, 200), kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '')]);
+                        [orderKey, (out.matched ? out.matched.name : (po.productName || '')).slice(0, 200), kakaoNotify.maskPhone((out && out.recvTel) || od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '')]);
                 } else {
                     await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
                         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
                         [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
-                         kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
+                         kakaoNotify.maskPhone((out && out.recvTel) || od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
                     if (out.res.status === 'sent') done++;
                     else if (out.res.mode === 'real') failed++;
                 }

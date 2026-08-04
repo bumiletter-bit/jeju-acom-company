@@ -12598,8 +12598,8 @@ async function renderNotifyLogs(opts) {
         // #180-A1: 요약 줄은 '조회 조건 전체(total)' 기준 — [더보기]로 표시분이 늘어도 이 숫자는 바뀌지 않는다.
         //   (#179의 "상한 300건 도달" 경고는 페이징 도입으로 불필요해져 제거)
         sumEl.textContent = (from && to) || q
-            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}`
-            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0} · 건너뜀 ${s.skipped || 0}`;
+            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}`
+            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""} · 건너뜀 ${s.skipped || 0}`;
     }
     const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)' };
     // 한 칸(주문안내/발송안내) 상태 표기 — 최종 경로 기준
@@ -12642,7 +12642,11 @@ async function renderNotifyLogs(opts) {
         <tr>
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
             <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? '<div class="text-muted" style="font-size:11px;">주문 기록 밖 (발송만 감지)</div>' : ''}</td>
-            <td style="white-space:nowrap;">${escapeHtml(r.receiver_full || r.receiver_masked || '-')}${r.receiver_full ? '' : (r.receiver_masked === '***' ? '<div class="text-muted" style="font-size:11px;">번호 조회 실패</div>' : '')}</td>
+            <td style="white-space:nowrap;">${escapeHtml(r.receiver_full || r.receiver_masked || '-')}${r.receiver_full ? '' : (r.receiver_masked === '***'
+                /* 지시 #193 C: ***로 조용히 묻히지 않게 — 경고 뱃지 + 그 자리에서 다시 조회(시간이 지나면 네이버가 채워주는 특성 활용) */
+                ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:var(--danger,#F04438); font-size:11px;">⚠️ 수동 연락 필요</span>
+                     <button class="btn-sm btn-outline" style="margin-left:4px; padding:2px 8px; font-size:11px;" onclick="retryReceiverTel('${escapeHtml(r.order_key || '')}', this)">재조회</button></div>`
+                : '')}</td>
             <td>${cell(r, 'order')}</td>
             <td>${cell(r, 'ship')}</td>
             <td>${escapeHtml(cfLabel[r.confirm_status] || r.confirm_status || '-')}${r.confirm_error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.confirm_error).slice(0, 60))}</div>` : ''}</td>
@@ -12658,6 +12662,17 @@ async function renderNotifyLogs(opts) {
     notifyLogShown += (d.rows || []).length;
     renderNotifyMoreBtn();
 }
+// 지시 #193 C: 수신번호 미확보 건 그 자리에서 재조회 (성공 시 목록 갱신)
+window.retryReceiverTel = async function(orderKey, btn) {
+    if (!orderKey) return;
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = '조회 중...';
+    try {
+        const r = await api('/api/agent-office/notify-logs/retry-tel', 'POST', { orderKey });
+        if (r.ok) { showToast('✅ ' + (r.message || '연락처 확보'), 'lime'); renderNotifyLogs().catch(console.error); }
+        else { showToast('⚠️ ' + (r.message || '아직 연락처가 없습니다')); btn.disabled = false; btn.textContent = old; }
+    } catch (e) { showToast('❌ ' + String(e.message || '').slice(0, 60)); btn.disabled = false; btn.textContent = old; }
+};
 // #180-A1: [더보기] 버튼 — 남은 건수 표기, 전부 표시되면 안내로 대체
 function renderNotifyMoreBtn() {
     const box = document.getElementById('notify-log-more');
