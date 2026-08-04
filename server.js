@@ -922,6 +922,18 @@ async function initDB() {
         )
     `);
     await pool.query(`ALTER TABLE naver_product_snapshot ADD COLUMN IF NOT EXISTS reviews JSONB`);   // 지시 #122: 리뷰 일일 갱신(실패 시 직전분 유지)
+    // 지시 #190-2: 수신 풀번호 조회 접근 기록 — 계정·날짜·건수만. 🔴 번호(PII)는 저장하지 않는다.
+    //   화면 열 때마다 발생하므로 하루 1행(계정별) 누적 방식 — 행 폭증·성능 부담 없음.
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS phone_view_log (
+            viewed_date DATE NOT NULL,
+            user_id INT,
+            actor_name TEXT,
+            view_count INT DEFAULT 0,
+            last_at TIMESTAMPTZ DEFAULT now(),
+            PRIMARY KEY (viewed_date, user_id)
+        )
+    `);
     // ── 지시 #85: 자사몰 게임 백엔드 테이블 5종 (설계서 §2-1 — 전부 additive, MALL_API=off 기본이라 무동작)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS mall_members (
@@ -5741,8 +5753,11 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
              ORDER BY COALESCE(k.created_at, l.created_at) DESC, COALESCE(k.id, 0) DESC, COALESCE(l.id, 0) DESC
              LIMIT ${limit} OFFSET ${offset}`, params)).rows;   /* 동일 시각 행의 순서 고정(타이브레이커) — 없으면 페이지 경계에서 중복·누락 발생 */
         // 지시 #177: 수신 풀번호 표시 — DB엔 마스킹만 저장(원칙 유지), 표시 시점에 네이버 상세조회로 재취득.
-        //   대표(admin)에게만 내려줌 · 배치 100건 · 5분 메모리 캐시 · 실패 시 마스킹 폴백.
-        if (String(req.user?.role || '') === 'admin' && rows.length) {
+        //   배치 100건 · 5분 메모리 캐시 · 실패 시 마스킹 폴백.
+        // 지시 #190(대표 확정): admin 전용 → **로그인한 전 계정**으로 확대.
+        //   근거 = 문의관리 화면은 직원(민주·승협 등) 공용이고, 네이버 판매자센터에서도 직원이 같은 번호를 보므로
+        //   우리 화면만 가리면 주문 대조 업무가 불가능해진다. 저장은 여전히 마스킹만(재조회 방식 유지).
+        if (rows.length) {
             try {
                 const need = rows.map(r => r.order_key).filter(k => k && !(_telCache.has(k) && Date.now() - _telCache.get(k).at < 300000));
                 for (let i = 0; i < need.length && i < 200; i += 100) {
@@ -5762,7 +5777,20 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                 }
             } catch (_) { /* 재조회 실패 = 마스킹 표시 유지 */ }
             const fmt = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
-            for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) r.receiver_full = fmt(hit.tel); }
+            let shown = 0;
+            for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) { r.receiver_full = fmt(hit.tel); shown++; } }
+            // 지시 #190-2: 풀번호 조회 접근 기록 — 계정·시각·건수만. 🔴 번호 자체는 절대 남기지 않는다(로그에 PII 저장 금지).
+            //   화면을 열 때마다 쌓이므로 audit_logs 대신 하루 1행 누적(계정별)으로 부담을 줄인다.
+            if (shown) {
+                try {
+                    await pool.query(
+                        `INSERT INTO phone_view_log (viewed_date, user_id, actor_name, view_count, last_at)
+                         VALUES ((now() AT TIME ZONE 'Asia/Seoul')::date, $1, $2, $3, NOW())
+                         ON CONFLICT (viewed_date, user_id)
+                         DO UPDATE SET view_count = phone_view_log.view_count + EXCLUDED.view_count, last_at = NOW()`,
+                        [req.user?.id || null, String(req.user?.name || req.user?.username || '-').slice(0, 50), shown]);
+                } catch (_) { /* 기록 실패가 조회를 막지 않는다 */ }
+            }
         }
         // (필터는 위에서 SQL 조건으로 처리됨 — 후처리 제거: 이중 적용·페이지별 개수 불일치 방지)
         // 당일(KST) 요약 — 원본 기준 집계
