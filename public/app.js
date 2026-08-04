@@ -5913,6 +5913,13 @@ function addSizeSuffix(optionInfo, msg) {
     return optionInfo;
 }
 
+// 보내는사람연락처: 마스킹(*) 또는 더미번호(010-0000-0000) → 대표 번호로 대체
+function senderTel(tel) {
+    const t = (tel || '').trim();
+    if (t.includes('*') || t.replace(/[^0-9]/g, '') === '01000000000') return '010-6687-4031';
+    return t;
+}
+
 // 스마트스토어 변환
 function convertDataSmart(data) {
     const addr = document.getElementById('invoice-sender-address').value.trim();
@@ -5922,7 +5929,7 @@ function convertDataSmart(data) {
         opt = addSizeSuffix(opt, (row['배송메세지'] || '').trim());
         return {
             '보내는사람': buyer ? buyer + '(제주아꼼이네)' : '',
-            '보내는사람연락처': (row['구매자연락처'] || '').includes('*') ? '010-6687-4031' : (row['구매자연락처'] || ''),
+            '보내는사람연락처': senderTel(row['구매자연락처']),
             '출고지': addr,
             '수취인명': ((row['수취인명'] || '').trim().length === 1) ? row['수취인명'].trim() + '*' : (row['수취인명'] || ''),
             '옵션정보': opt, '수량': parseInt(row['수량']) || 1,
@@ -5942,7 +5949,7 @@ function convertDataJasamol(data) {
         const recip = (row['수령인'] || '').trim();
         return {
             '보내는사람': buyer ? buyer + '(제주아꼼이네 자사몰)' : '',
-            '보내는사람연락처': (row['주문자 휴대전화'] || '').includes('*') ? '010-6687-4031' : (row['주문자 휴대전화'] || ''),
+            '보내는사람연락처': senderTel(row['주문자 휴대전화']),
             '출고지': addr,
             '수취인명': (recip.length === 1) ? recip + '*' : recip,
             '옵션정보': opt, '수량': parseInt(row['수량']) || 1,
@@ -5963,7 +5970,7 @@ function convertDataCoupang(data) {
         const recip = (row['수취인이름'] || '').trim();
         return {
             '보내는사람': buyer ? buyer + '(제주아꼼이네 쿠팡)' : '',
-            '보내는사람연락처': (row['구매자전화번호'] || '').includes('*') ? '010-6687-4031' : (row['구매자전화번호'] || ''),
+            '보내는사람연락처': senderTel(row['구매자전화번호']),
             '출고지': addr,
             '수취인명': (recip.length === 1) ? recip + '*' : recip,
             '옵션정보': opt, '수량': parseInt(row['구매수(수량)']) || 1,
