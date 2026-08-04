@@ -13037,6 +13037,24 @@ function setupBotProductsTab() {
     // 지시 #76: LMS 이력 새로고침
     document.getElementById('btn-notify-log-refresh')?.addEventListener('click', () => renderNotifyLogs().catch(console.error));   // 지시 #176 통합 이력
     document.getElementById('notify-log-filter')?.addEventListener('change', () => renderNotifyLogs().catch(console.error));
+    // 지시 #178: 조회 버튼 바인딩 (수정 이력 조회식 · 발송 이력 검색) — 8/4 누락분 복구
+    document.getElementById('btn-inq-log-search')?.addEventListener('click', runInqLogSearch);
+    document.getElementById('btn-inq-log-today')?.addEventListener('click', () => {
+        const t = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        document.getElementById('inq-log-from').value = t; document.getElementById('inq-log-to').value = t; runInqLogSearch();
+    });
+    document.getElementById('btn-inq-log-week')?.addEventListener('click', () => {
+        const now = Date.now() + 9 * 3600 * 1000;
+        document.getElementById('inq-log-from').value = new Date(now - 6 * 86400000).toISOString().slice(0, 10);
+        document.getElementById('inq-log-to').value = new Date(now).toISOString().slice(0, 10);
+        runInqLogSearch();
+    });
+    document.getElementById('btn-notify-log-search')?.addEventListener('click', () => renderNotifyLogs().catch(console.error));
+    document.getElementById('btn-notify-log-reset')?.addEventListener('click', () => {
+        ['notify-log-from', 'notify-log-to', 'notify-log-q'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        renderNotifyLogs().catch(console.error);
+    });
+    document.getElementById('notify-log-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') renderNotifyLogs().catch(console.error); });
     // 지시 #178-1: 휴무일 등록/해제는 달력 클릭 위임으로 대체 — 구 [추가] 폼 바인딩 제거(마크업도 제거됨)
     // 지시 #68 C5: 시즌 오픈 대기 신청 등록
     document.getElementById('btn-season-wait-add')?.addEventListener('click', async () => {
