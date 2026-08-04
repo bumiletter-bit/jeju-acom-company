@@ -12622,8 +12622,9 @@ async function renderNotifyLogs(opts) {
             // 지시 #198: 그 주문의 **발송안내가 이미 나갔으면** 주문안내는 보낼 이유가 없다
             //   (손님이 "발송했습니다"를 받은 뒤에 "오늘 발송 예정입니다"가 또 가는 상황 방지).
             //   → 버튼을 숨기고 자동 종결로 표기. 판정은 같은 행의 발송안내 상태로 자동 수행.
-            const shipDone = row.l_status === 'sent' || row.l_mode === 'real' || row.l_mode === 'sms'
-                             || (!!row.l_id && ['sent', 'dry-run'].includes(String(row.l_status || '')));
+            //   판정 기준: **실제로 나간 것만** 종결로 본다. dry-run/switch-off(스위치 OFF 기록)는 아직 안 나간 것이므로
+            //   버튼을 남긴다 — 그렇지 않으면 발사 전 dry-run 기록만으로 버튼이 사라져 대표가 안내를 못 보낸다.
+            const shipDone = row.l_status === 'sent' || row.l_mode === 'real' || row.l_mode === 'sms';
             if (shipDone) return badge('#F1F2F5', '#767A83', '⏸ 보류 → 발송안내 완료 (주문안내 불요)');
             return badge('#FDF3E2', '#B26A00', '⏸ 보류 (8~9시)',
                 `<div style="margin-top:5px; white-space:nowrap;"><button class="btn-sm btn-primary" onclick="manualSendHold(${row.k_id}, 'today', this)">오늘 발송으로 안내</button> <button class="btn-sm btn-outline" onclick="manualSendHold(${row.k_id}, 'tomorrow', this)">내일 발송으로 안내</button></div>`);
