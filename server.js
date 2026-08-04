@@ -7007,11 +7007,18 @@ async function collectKakaoNotify() {
                 // #193 A: 비어 있을 때만 발송 직전 재조회(정상 건은 추가 호출 없음)
                 const recvTel = await resolveReceiver(
                     od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', orderKey);
-                // 지시 #199: 선물하기 등 번호 비공개 건은 발송 시도 자체를 하지 않는다(엉터리 번호 발송·실패 로그 방지)
-                if (isMaskedTel(recvTel)) {
+                /* 지시 #199: 선물하기 등 번호 비공개 건은 발송 시도 자체를 하지 않는다(엉터리 번호 발송·실패 로그 방지)
+                   🔴 지시 #208-1(대표 확정 "빈 번호는 발송 안 하는 게 맞다"): 빈 번호도 같은 지점에서 막는다.
+                      기존 가드는 마스킹(`__MASKED__`)만 걸러 빈값('')은 그대로 통과 → 발사 후 알리고에 빈 번호로 요청이 나가
+                      실패 응답만 매일 쌓일 자리였다(#207에서 실DB로 확인 — 6건 전부 이 경로였다).
+                   상태는 원인이 다르므로 구분한다: gift-masked(네이버가 가려서 줌) / no-tel(애초에 오지 않음).
+                      화면 표기도 이미 갈려 있다 — 마스킹은 「🎁 선물하기」, 빈값은 「⚠️ 수동 연락 필요」+[재조회].
+                      그래서 빈값 건의 receiver_masked 는 '***' 로 남겨 [재조회] 대상이 되게 한다(시간이 지나면 네이버가 채워주는 특성). */
+                if (isMaskedTel(recvTel) || !recvTel) {
+                    const noTel = !isMaskedTel(recvTel);
                     await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
-                        VALUES ($1,$2,'gift-masked','skip','gift-masked','none') ON CONFLICT (order_key) DO NOTHING`,
-                        [orderKey, (po.productName || '').slice(0, 200)]);
+                        VALUES ($1,$2,$3,'skip',$4,'none') ON CONFLICT (order_key) DO NOTHING`,
+                        [orderKey, (po.productName || '').slice(0, 200), noTel ? '***' : 'gift-masked', noTel ? 'no-tel' : 'gift-masked']);
                     continue;
                 }
                 const res = await kakaoNotify.sendAlimtalk({
@@ -7096,10 +7103,12 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
     // #193 A: 발송안내도 동일 — 번호가 비어 있을 때만 발송 직전 재조회(정상 건은 추가 호출 0)
     const guideRecvTel = await resolveReceiver(
         od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', orderKey);
-    // 지시 #199: 발송안내도 동일하게 — 번호 비공개(선물하기) 건은 발송 시도 없이 상태만 남긴다(주문안내와 일관)
-    if (isMaskedTel(guideRecvTel)) {
-        return { skip: false, matched, noGuide: !hasGuide, message: null, giftMasked: true,
-                 res: { mode: 'skip', status: 'gift-masked', error: null }, recvTel: '' };
+    /* 지시 #199: 발송안내도 동일하게 — 번호 비공개(선물하기) 건은 발송 시도 없이 상태만 남긴다(주문안내와 일관)
+       🔴 지시 #208-1: 빈 번호도 같은 지점에서 차단(주문안내와 완전 동일한 조건·구분). */
+    if (isMaskedTel(guideRecvTel) || !guideRecvTel) {
+        const noTel = !isMaskedTel(guideRecvTel);
+        return { skip: false, matched, noGuide: !hasGuide, message: null, giftMasked: !noTel, noTel,
+                 res: { mode: 'skip', status: noTel ? 'no-tel' : 'gift-masked', error: null }, recvTel: '' };
     }
     const res = await kakaoNotify.sendShippingGuideAlimtalk({
         receiver: guideRecvTel,   // #177: 주문자 미제공 시 수취인 폴백 → #193: 그래도 비면 재조회로 구제
