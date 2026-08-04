@@ -5515,16 +5515,30 @@ app.delete('/api/agent-office/shipping-holidays/:id', authMiddleware, async (req
 });
 // ── 지시 #85 STEP3: 게임 운영 설정 (확률·한도 — 자주 바뀌는 값은 화면에서, 코드에 박지 않음)
 //    편집은 대표 전용(확률·실물 보상 한도 = 비용 관련). MALL_API=off여도 설정 관리는 가능(선행 준비).
+//    지시 #184(2026-08-04 대표 최종 확정값): 꽝 없음·합계 100%. percent가 정본이고 weight는 추첨용 파생값(percent×10 정수).
+//    ⚠️ 이 값들은 전부 화면([게임 설정])에서 편집 — 코드 수정·배포 없이 바뀌어야 하는 값이므로 여기 값은 '초기 시드/복원용'일 뿐이다.
 const MALL_GAME_CONFIG_DEFAULT = {
     probabilities: [
-        { key: 'w10', label: '물방울 10', points: 10, weight: 34 },
-        { key: 'w30', label: '물방울 30', points: 30, weight: 25 },
-        { key: 'w50', label: '물방울 50', points: 50, weight: 15 },
-        { key: 'lose', label: '꽝', points: 0, weight: 15 },
-        { key: 'w100', label: '물방울 100', points: 100, weight: 8 },
-        { key: 'coupon', label: '귤 1개 쿠폰', points: 0, weight: 3 },
-    ],   // ⚠️ 프로토타입 데모 수치 — 실서비스 확률·원가는 대표 확정 필요
-    water_cost: 10, level_thresholds: [0, 5, 15, 30, 50], daily_spin_limit: 1, physical_monthly_limit: 30,
+        { key: 'w1',       label: '물 1개',                   points: 1, percent: 50,  weight: 500 },
+        { key: 'w3',       label: '물 3개',                   points: 3, percent: 8,   weight: 80 },
+        { key: 'coupon5',  label: '쿠폰 5%',                  points: 0, percent: 28,  weight: 280, coupon_rate: 5 },
+        { key: 'coupon10', label: '쿠폰 10%',                 points: 0, percent: 10,  weight: 100, coupon_rate: 10 },
+        { key: 'upgrade',  label: '업그레이드 이용권',         points: 0, percent: 3.5, weight: 35 },
+        { key: 'box',      label: '하우스귤 3kg 선물용 1박스', points: 0, percent: 0.5, weight: 5 },
+    ],
+    tree_goal_water: 100,        // 물 100개 = 하우스귤 3kg 선물용 1박스
+    water_per_krw: 10000,        // 구매 금액당 물 지급 단위 (1만원 = 1개)
+    water_per_unit: 1,
+    water_attendance: 1,         // 매일 출석 물 개수
+    attendance_cap: 0,           // 0 = 누적 상한 없음 (대표 확정 — 회원 확보 목적)
+    coupon_valid_days: 30,       // 쿠폰 유효기간
+    spin_per_order: 1,           // 주문 1건당 룰렛 참여권 (기존 '매일 1회 무료'는 폐지)
+    upgrade_map: [               // 업그레이드 이용권 = 상위 중량 상향 발송
+        { from: '미니밤호박 3kg', to: '미니밤호박 5kg' },
+        { from: '하우스귤 2.5kg', to: '하우스귤 4.5kg' },
+    ],
+    water_cost: 10, level_thresholds: [0, 5, 15, 30, 50],   // (구 필드 — mall-api 호환용 존치)
+    daily_spin_limit: 1, physical_monthly_limit: 30,
 };
 app.get('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (req, res) => {   // QA D7: 확률·한도 = 비용 정보 — 대표 전용
     try {
@@ -5548,19 +5562,39 @@ app.put('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (
         if (!Array.isArray(c.probabilities) || c.probabilities.length === 0) throw { status: 400, message: '확률표(probabilities)가 비어 있습니다' };
         for (const p of c.probabilities) {
             if (!p || typeof p !== 'object' || !String(p.label || '').trim()) throw { status: 400, message: '칸 이름이 비어 있습니다' };
-            if (!Number.isInteger(Number(p.points)) || Number(p.points) < 0) throw { status: 400, message: `'${p.label}' 물방울은 0 이상 정수여야 합니다` };
-            if (!Number.isInteger(Number(p.weight)) || Number(p.weight) < 1) throw { status: 400, message: `'${p.label}' 가중치는 1 이상 정수여야 합니다 (칸 제외는 [기본값 복원] 후 대표 지시로)` };
+            if (!Number.isInteger(Number(p.points)) || Number(p.points) < 0) throw { status: 400, message: `'${p.label}' 물 개수는 0 이상 정수여야 합니다` };
+            const pc = Number(p.percent);
+            if (!Number.isFinite(pc) || pc < 0 || pc > 100) throw { status: 400, message: `'${p.label}' 확률은 0~100 사이여야 합니다` };
+            if (Math.round(pc * 10) !== pc * 10) throw { status: 400, message: `'${p.label}' 확률은 소수점 첫째 자리까지만 입력할 수 있습니다` };
         }
+        // 지시 #184-3: 합계 100% 검증 — 미달·초과 시 저장 차단(부동소수 오차 방지 위해 ×10 정수로 비교)
+        const sum10 = c.probabilities.reduce((s, p) => s + Math.round(Number(p.percent) * 10), 0);
+        if (sum10 !== 1000) throw { status: 400, message: `확률 합계가 ${(sum10 / 10).toFixed(1)}% 입니다 — 100.0%가 되어야 저장됩니다` };
+        const posInt = (v, def, min) => (Number.isInteger(Number(v)) && Number(v) >= (min == null ? 1 : min)) ? Number(v) : def;
         // 검증 통과분만 정규화해 저장 (원본 오염 값 저장 금지 — 검증 대상 = 저장 대상)
+        const D = MALL_GAME_CONFIG_DEFAULT;
         const clean = {
             probabilities: c.probabilities.map((p, i) => ({
                 key: String(p.key || ('k' + i)).slice(0, 30), label: String(p.label).trim().slice(0, 50),
-                points: Number(p.points), weight: Number(p.weight) })),
-            water_cost: (Number.isInteger(Number(c.water_cost)) && Number(c.water_cost) >= 1) ? Number(c.water_cost) : MALL_GAME_CONFIG_DEFAULT.water_cost,
+                points: Number(p.points), percent: Number(p.percent),
+                weight: Math.round(Number(p.percent) * 10),   // 추첨용 파생값 — percent가 정본
+                ...(p.coupon_rate != null && Number(p.coupon_rate) > 0 ? { coupon_rate: Number(p.coupon_rate) } : {}) })),
+            tree_goal_water: posInt(c.tree_goal_water, D.tree_goal_water),
+            water_per_krw: posInt(c.water_per_krw, D.water_per_krw),
+            water_per_unit: posInt(c.water_per_unit, D.water_per_unit),
+            water_attendance: posInt(c.water_attendance, D.water_attendance, 0),
+            attendance_cap: posInt(c.attendance_cap, D.attendance_cap, 0),      // 0 = 상한 없음
+            coupon_valid_days: posInt(c.coupon_valid_days, D.coupon_valid_days),
+            spin_per_order: posInt(c.spin_per_order, D.spin_per_order, 0),
+            upgrade_map: Array.isArray(c.upgrade_map)
+                ? c.upgrade_map.filter(m => m && String(m.from || '').trim() && String(m.to || '').trim())
+                    .map(m => ({ from: String(m.from).trim().slice(0, 60), to: String(m.to).trim().slice(0, 60) }))
+                : D.upgrade_map,
+            water_cost: posInt(c.water_cost, D.water_cost),
             level_thresholds: (Array.isArray(c.level_thresholds) && c.level_thresholds.every(n => Number.isInteger(Number(n)) && Number(n) >= 0))
-                ? c.level_thresholds.map(Number) : MALL_GAME_CONFIG_DEFAULT.level_thresholds,
-            daily_spin_limit: 1,   // QA D3: roulette_spins UNIQUE(member_id, spin_date) 구조상 1 고정 — 변경은 테이블 개편 필요
-            physical_monthly_limit: (Number.isInteger(Number(c.physical_monthly_limit)) && Number(c.physical_monthly_limit) >= 0) ? Number(c.physical_monthly_limit) : MALL_GAME_CONFIG_DEFAULT.physical_monthly_limit,
+                ? c.level_thresholds.map(Number) : D.level_thresholds,
+            daily_spin_limit: 1,   // QA D3: roulette_spins UNIQUE(member_id, spin_date) 구조상 1 고정 — 참여권은 spin_per_order로 운용
+            physical_monthly_limit: posInt(c.physical_monthly_limit, D.physical_monthly_limit, 0),
         };
         await naverCfgSet('mall_game_config', clean);
         await writeAudit({ action: 'update', targetType: 'mall_game_config', targetId: null,
