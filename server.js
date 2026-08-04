@@ -5765,7 +5765,7 @@ app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, 
         const hinfo = await loadShippingHolidayInfo();
         const optText = `${po.productName || ''} ${po.productOption || ''}`;
         const matched = kakaoNotify.matchNotifyProduct(optText, bp);
-        const isReserve = /예약/.test(optText);
+        const isReserve = kakaoNotify.isReserveOrder(optText, matched);   // #182: '예약' 문자열 + 품목 예약 발송 시작일(미래)로 판정
         let shipLine;
         if (isReserve) {
             const rs = matched && matched.reserve_ship_start ? new Date(matched.reserve_ship_start) : null;
@@ -6836,7 +6836,7 @@ async function collectKakaoNotify() {
                 const optText = `${po.productName || ''} ${po.productOption || ''}`;
                 const matched = kakaoNotify.matchNotifyProduct(optText, bp);
                 // 지시 #137: 문면·버튼·TPL 코드를 승인 템플릿(JSON 단일 소스)과 세트로 일치 — 예약 상품(옵션·상품명에 '예약')이면 B(UJ_9085), 아니면 A(UJ_9084)
-                const isReserve = /예약/.test(optText);
+                const isReserve = kakaoNotify.isReserveOrder(optText, matched);   // #182: '예약' 문자열이 빠진 예약 상품 주문이 일반으로 새던 결함 교정
                 // 지시 #144(🚨 발사 게이트): 예약 건은 일반 발송일 계산 금지 — 품목별 발송 시작일(DB·화면 편집) 안내로 교체.
                 //   시작일 미설정·품목 미매칭 예약 건은 날짜 없는 폴백 문구. 일반 건만 기존 computeShipping.
                 let shipLine;

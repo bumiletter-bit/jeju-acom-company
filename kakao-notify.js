@@ -24,6 +24,23 @@ function templateByKey(key) {
 //   이미지형(UJ_9135~9138)은 반려 확정 — 어떤 경로에도 투입 금지. 발송안내 = UJ_9087(발송안내2·3버튼 실전판 — ship_guide 문안·버튼과 일치, 초판 9082는 #138로 폐기).
 const APPROVED_TPL = { order: 'UJ_9084', order_reserve: 'UJ_9085', welcome: 'UJ_9086', guide: 'UJ_9087' };
 // 주문 안내 템플릿 선택 (지시 #137 — 예약 상품이면 B(order_reserve), 아니면 A(order_normal)) — 문면·버튼·코드가 세트로 일치해야 함
+// 지시 #182(🚨 발사 게이트): 예약 판정 보강 — 기존엔 상품명·옵션의 '예약' 문자열만 봤다.
+//   같은 청귤이라도 네이버 옵션 표기에 '예약'이 빠진 주문은 일반으로 새어나가, 실제 8/10 발송인데
+//   "오늘/내일 오전 발송"으로 오안내됐다(dry-run 이력 13건 실측). → 품목에 등록된 예약 발송 시작일(reserve_ship_start)이
+//   아직 오지 않았으면 예약 건으로 판정한다. 시작일이 지난 뒤에는 실제 순차 발송이 시작되므로 일반 계산으로 돌아간다.
+function ymdOf(d) {
+    const t = new Date(d);
+    if (isNaN(t)) return null;
+    return new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);   // DATE 컬럼(로컬 자정) → YYYY-MM-DD
+}
+function isReserveOrder(optText, matched, nowMs) {
+    if (/예약/.test(String(optText || ''))) return true;
+    const rs = matched && matched.reserve_ship_start;
+    if (!rs) return false;
+    const rsYmd = ymdOf(rs);
+    const todayKst = new Date((nowMs || Date.now()) + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    return !!rsYmd && rsYmd >= todayKst;
+}
 function orderTemplate(isReserve) { return templateByKey(isReserve ? 'order_reserve' : 'order_normal'); }
 function orderTplCode(isReserve) {
     return isReserve ? (process.env.ALIGO_TPL_CODE_RESERVE || APPROVED_TPL.order_reserve)
@@ -350,4 +367,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode };
+module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder };
