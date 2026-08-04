@@ -7964,6 +7964,14 @@ function maskWinnerName(name) {
 //   · 답을 못 만들면(SKIP·키 미설정) **지어내지 않고** answered:false로 내려보내 화면이 "연결 안 됨"을 표기하게 한다.
 //   · 쓰기 없음(네이버 게시 안 함) · PII 미수집 · 남용 방지를 위해 길이 제한과 분당 상한만 둔다.
 const _chatRate = new Map();   // ip → { n, at } (분당 상한 — 프로토타입 수준)
+// POST + application/json은 브라우저가 preflight(OPTIONS)를 먼저 보낸다 — 이걸 허용하지 않으면 CORS로 막힌다(실측으로 확인).
+app.options('/api/public/shop-chat', (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Max-Age', '86400');
+    res.sendStatus(204);
+});
 app.post('/api/public/shop-chat', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     try {
