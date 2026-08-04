@@ -8688,7 +8688,7 @@ document.querySelectorAll('.settlement-tab').forEach(tab => {
         document.querySelectorAll('.settlement-tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.settlement-tab-content').forEach(c => c.classList.remove('active'));
         tab.classList.add('active');
-        document.getElementById(tab.dataset.tab).classList.add('active');
+        document.getElementById(tab.dataset.tab)?.classList.add('active');   // #179 부수 교정: 문의관리 서브탭이 .settlement-tab 클래스를 재사용해 이 핸들러가 같이 실행됨(data-tab 없음) → 콘솔 TypeError. 기능 영향은 없었으나 가드 추가
         // 정산현황 탭 처음 열 때 초기화
         if (tab.dataset.tab === 'settlement-status' && !window._ssInitialized) {
             ssInit();
@@ -12586,8 +12586,10 @@ async function renderNotifyLogs() {
     if (sumEl) {
         const cond = (from && to) ? `${from} ~ ${to}` : '오늘';
         const searched = q ? ` · 검색 "${q}"` : '';
+        // #179: 조회 상한(300건) 도달 시 잘렸다는 사실을 숨기지 않고 안내 — 전체 건수로 오인 방지
+        const capped = ((from && to) || q) && (d.rows || []).length >= 300 ? ' ⚠️ 표시 상한 300건 도달 — 기간을 좁혀 조회하세요' : '';
         sumEl.textContent = (from && to) || q
-            ? `조회 결과 ${(d.rows || []).length}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}`
+            ? `조회 결과 ${(d.rows || []).length}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${capped}`
             : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0} · 건너뜀 ${s.skipped || 0}`;
     }
     const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)' };
@@ -12820,28 +12822,37 @@ async function renderShippingHolidays() {
     if (!document.getElementById('shcal-style')) {
         const st = document.createElement('style'); st.id = 'shcal-style';
         st.textContent = `
-        .shcal-wrap{ border:1px solid var(--border,#e4e7ee); border-radius:12px; padding:10px 12px 12px; background:#fff; max-width:560px; }
-        .shcal-head{ display:flex; align-items:center; gap:6px; margin-bottom:8px; }
-        .shcal-head b{ font-size:15px; }
-        .shcal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
-        .shcal-dow{ margin-bottom:3px; }
-        .shcal-dowc{ text-align:center; font-size:11.5px; font-weight:700; color:var(--text-mid,#667085); padding:2px 0; }
-        .shcal-dowc.sun{ color:#E5484D; } .shcal-dowc.sat{ color:#3E63DD; }
-        .shcal-cell{ position:relative; min-height:44px; border:1px solid #EEF0F4; border-radius:8px; padding:3px 4px; cursor:pointer; background:#fff; }
-        .shcal-cell:hover{ border-color:var(--primary,#8CC63E); background:#FAFDF5; }
-        .shcal-cell .d{ font-size:12px; font-weight:700; color:#15181C; }
-        .shcal-cell .r{ display:block; font-size:10px; line-height:1.2; color:#C0392B; margin-top:1px; word-break:keep-all; }
-        .shcal-cell .nt{ position:absolute; right:3px; bottom:2px; font-size:10px; }
+        /* 지시 #179-5: 카드 폭 활용 + 가운데 정렬 · 셀/글자 확대(클릭 편의). 색은 디자인 가이드 토큰(인디고·토요일 파랑·danger)만 사용 */
+        .shcal-wrap{ border:1px solid var(--border,#ECEDF1); border-radius:14px; padding:14px 16px 16px; background:var(--card-bg,#fff);
+                     width:100%; max-width:780px; margin:0 auto; box-shadow:0 1px 3px rgba(16,24,40,.06); }
+        .shcal-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+        .shcal-head b{ font-size:17px; }
+        .shcal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:5px; }
+        .shcal-dow{ margin-bottom:5px; }
+        .shcal-dowc{ text-align:center; font-size:13px; font-weight:700; color:var(--text-mid,#667085); padding:4px 0; }
+        .shcal-dowc.sun{ color:var(--danger,#F04438); } .shcal-dowc.sat{ color:#3B82F6; }
+        .shcal-cell{ position:relative; min-height:62px; border:1px solid var(--border,#ECEDF1); border-radius:10px; padding:6px 7px; cursor:pointer; background:#fff; transition:background .12s, border-color .12s; }
+        .shcal-cell:hover{ border-color:var(--primary,#4F46E5); background:var(--primary-light,#EEF0FF); }
+        .shcal-cell .d{ font-size:14px; font-weight:700; color:var(--text-dark,#101828); }
+        .shcal-cell .r{ display:block; font-size:11px; line-height:1.25; color:#C0392B; margin-top:2px; word-break:keep-all; }
+        .shcal-cell .nt{ position:absolute; right:5px; bottom:4px; font-size:11px; }
         .shcal-empty{ border:none; background:transparent; cursor:default; }
         .shcal-off{ background:#FDECEA; border-color:#F6C9C4; }
         .shcal-sat{ background:#F4F6FB; }
-        .shcal-today{ box-shadow:inset 0 0 0 2px var(--primary,#8CC63E); }
-        .shcal-pick{ box-shadow:inset 0 0 0 2px #3E63DD; }
-        .shcal-legend{ margin-top:8px; font-size:11.5px; color:var(--text-mid,#667085); display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
-        .shcal-legend .lg{ width:11px; height:11px; border-radius:3px; display:inline-block; }
+        .shcal-today{ box-shadow:inset 0 0 0 2px var(--primary,#4F46E5); }
+        .shcal-pick{ box-shadow:inset 0 0 0 2px #3B82F6; }
+        .shcal-legend{ margin-top:10px; font-size:12px; color:var(--text-mid,#667085); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .shcal-legend .lg{ width:12px; height:12px; border-radius:3px; display:inline-block; }
         .shcal-legend .lg.off{ background:#FDECEA; border:1px solid #F6C9C4; }
-        .shcal-legend .lg.sat{ background:#F4F6FB; border:1px solid #E4E7EE; }
-        .shcal-legend .lg.today{ background:#fff; border:2px solid var(--primary,#8CC63E); }`;
+        .shcal-legend .lg.sat{ background:#F4F6FB; border:1px solid var(--border,#E4E7EE); }
+        .shcal-legend .lg.today{ background:#fff; border:2px solid var(--primary,#4F46E5); }
+        @media (max-width:768px){   /* 모바일: 칸 우선 — 여백만 줄이고 터치 영역은 유지 */
+            .shcal-wrap{ padding:10px 10px 12px; }
+            .shcal-grid{ gap:3px; }
+            .shcal-cell{ min-height:52px; padding:4px 5px; }
+            .shcal-cell .d{ font-size:13px; }
+            .shcal-cell .r{ font-size:10px; }
+        }`;
         document.head.appendChild(st);
     }
     renderShipHolidaySummary();
@@ -13057,6 +13068,19 @@ function setupBotProductsTab() {
         runInqLogSearch();
     });
     document.getElementById('btn-notify-log-search')?.addEventListener('click', () => renderNotifyLogs().catch(console.error));
+    // 지시 #179-3: 빠른 기간 버튼 — 날짜 구간 자동 채움 + 즉시 조회 (KST 기준·오늘 포함 N일)
+    const notifyQuickRange = (days) => {
+        const now = Date.now() + 9 * 3600 * 1000;
+        const ymd = (t) => new Date(t).toISOString().slice(0, 10);
+        const f = document.getElementById('notify-log-from'), t2 = document.getElementById('notify-log-to');
+        if (!f || !t2) return;
+        f.value = ymd(now - (days - 1) * 86400000);
+        t2.value = ymd(now);
+        renderNotifyLogs().catch(console.error);
+    };
+    document.getElementById('btn-notify-log-today')?.addEventListener('click', () => notifyQuickRange(1));
+    document.getElementById('btn-notify-log-week')?.addEventListener('click', () => notifyQuickRange(7));
+    document.getElementById('btn-notify-log-month')?.addEventListener('click', () => notifyQuickRange(30));
     document.getElementById('btn-notify-log-reset')?.addEventListener('click', () => {
         ['notify-log-from', 'notify-log-to', 'notify-log-q'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         renderNotifyLogs().catch(console.error);

@@ -1944,12 +1944,15 @@
                                 <button class="btn-sm btn-outline" id="btn-notify-log-refresh">🔄 새로고침</button>
                             </div>
                         </div>
-                        <!-- 지시 #178-3: 날짜 조회 + 연락처(뒷자리)·품목 검색 -->
+                        <!-- 지시 #178-3 · #179-3·4: 날짜 조회 + 빠른 기간 버튼 + 연락처 검색 -->
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:2px 0 8px;">
                             <input type="text" id="notify-log-from" class="akm-date" readonly autocomplete="off" placeholder="시작일" style="width:126px; padding:7px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
                             <span style="color:var(--text-mid,#667085);">~</span>
                             <input type="text" id="notify-log-to" class="akm-date" readonly autocomplete="off" placeholder="종료일" style="width:126px; padding:7px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
-                            <input type="text" id="notify-log-q" placeholder="연락처 뒷자리 또는 품목명 검색" style="flex:1; min-width:180px; padding:7px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
+                            <button class="btn-outline btn-sm" id="btn-notify-log-today">오늘</button>
+                            <button class="btn-outline btn-sm" id="btn-notify-log-week">최근 7일</button>
+                            <button class="btn-outline btn-sm" id="btn-notify-log-month">최근 30일</button>
+                            <input type="text" id="notify-log-q" placeholder="연락처로 검색" style="flex:1; min-width:180px; padding:7px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
                             <button class="btn-primary btn-sm" id="btn-notify-log-search">조회</button>
                             <button class="btn-outline btn-sm" id="btn-notify-log-reset">초기화</button>
                         </div>
@@ -2298,6 +2301,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=341"></script>
+    <script src="app.js?v=342"></script>
 </body>
 </html>

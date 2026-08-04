@@ -5258,7 +5258,7 @@ app.get('/api/agent-office/scenario-logs', authMiddleware, adminOnly, async (req
     try {
         // 지시 #178-2: 조회식 전환 — 날짜 구간(KST) 파라미터
         const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
-        const useRange = /^d{4}-d{2}-d{2}$/.test(from) && /^d{4}-d{2}-d{2}$/.test(to);
+        const useRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);   // #179-1: \d 백슬래시 소실로 항상 false였음(날짜 필터 통째 무시) — 교정
         const r = await pool.query(useRange
             ? `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
                WHERE target_type = 'inquiry_scenario' AND (created_at + interval '9 hours')::date BETWEEN $1::date AND $2::date
@@ -5338,7 +5338,7 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
     try {
         // 지시 #178-2: 조회식 전환 — 날짜 구간(KST) 파라미터. 미지정 시 기존 동작(최근 100).
         const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
-        const useRange = /^d{4}-d{2}-d{2}$/.test(from) && /^d{4}-d{2}-d{2}$/.test(to);
+        const useRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);   // #179-1: \d 백슬래시 소실로 항상 false였음(날짜 필터 통째 무시) — 교정
         const r = await pool.query(useRange
             ? `SELECT id, action, target_id, changes, actor_name, created_at FROM audit_logs
                WHERE target_type = 'bot_product' AND (created_at + interval '9 hours')::date BETWEEN $1::date AND $2::date
@@ -5643,14 +5643,22 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         const filter = String(req.query.filter || 'all');
         // 지시 #178-3: 날짜 구간(KST)·검색어(연락처 뒷자리 / 품목명). 미지정 시 기존 동작(최근 120).
         const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
-        const useRange = /^d{4}-d{2}-d{2}$/.test(from) && /^d{4}-d{2}-d{2}$/.test(to);
+        const useRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);   // #179-1: \d 백슬래시 소실로 항상 false였음(날짜 필터 통째 무시) — 교정
         const qRaw = String(req.query.q || '').trim().slice(0, 40);
         const qDigits = qRaw.replace(/[^0-9]/g, '');
         const conds = [], params = [];
-        if (useRange) { params.push(from, to); conds.push(`(COALESCE(k.created_at, l.created_at) + interval '9 hours')::date BETWEEN ${params.length - 1}::date AND ${params.length}::date`); }
+        // #179-2: 아래 3줄은 SQL 파라미터 참조($1·$2…)의 '$'가 소실돼 정수 리터럴로 박혔었음(1::date → 캐스팅 오류 500) — 교정
+        if (useRange) { params.push(from, to); conds.push(`(COALESCE(k.created_at, l.created_at) + interval '9 hours')::date BETWEEN $${params.length - 1}::date AND $${params.length}::date`); }
         if (qRaw) {
-            if (qDigits.length >= 4) { params.push('%' + qDigits.slice(-4)); conds.push(`(k.receiver_masked LIKE ${params.length} OR l.receiver_masked LIKE ${params.length})`); }
-            else { params.push('%' + qRaw + '%'); conds.push(`(k.product_name ILIKE ${params.length} OR l.product_name ILIKE ${params.length})`); }
+            // #179-4: 연락처 검색 — 풀번호(하이픈 유무 무관)·뒷자리 부분검색 모두 수용. DB는 마스킹(010****4031)만 보관하므로
+            //   앞 3자리 + 뒷 4자리로 대조(풀번호 입력 시 오탐 축소), 4자리만 넣으면 뒷자리 대조. 숫자가 아니면 품목명 검색(기존 기능 유지).
+            if (qDigits.length >= 7) {
+                params.push(qDigits.slice(0, 3) + '%' + qDigits.slice(-4));
+                conds.push(`(k.receiver_masked LIKE $${params.length} OR l.receiver_masked LIKE $${params.length})`);
+            } else if (qDigits.length >= 4) {
+                params.push('%' + qDigits.slice(-4));
+                conds.push(`(k.receiver_masked LIKE $${params.length} OR l.receiver_masked LIKE $${params.length})`);
+            } else { params.push('%' + qRaw + '%'); conds.push(`(k.product_name ILIKE $${params.length} OR l.product_name ILIKE $${params.length})`); }
         }
         const whereSql = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
         const rows = (await pool.query(
