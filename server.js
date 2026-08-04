@@ -7900,6 +7900,33 @@ function maskWinnerName(name) {
     if (/^[가-힣]+$/.test(s) && s.length <= 4) return s[0] + '*'.repeat(s.length - 2) + s[s.length - 1];
     return s.slice(0, 1) + '**' + s.slice(3);   // 영문 닉 등: s**fklaks 형태
 }
+// 지시 #192-2: 자사몰 발송일 안내용 공개 API.
+//   🔴 핵심 = **계산 이중화 금지**. 자사몰이 자체 로직을 새로 만들면 회사프로그램과 갈라져(#185 교훈)
+//   알림톡과 자사몰이 서로 다른 발송일을 안내하는 사고가 난다. 여기서 computeShipping을 그대로 호출해 결과만 내려준다.
+//   PII·비용 정보 없음(발송일 텍스트·컷오프 시각만) — 공개 가능.
+app.get('/api/public/shipping-eta', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    try {
+        const hinfo = await loadShippingHolidayInfo();
+        const now = Date.now();
+        const r = shippingSchedule.computeShipping(now, hinfo.set, hinfo.notices);
+        // 컷오프(#171): ~07:59 당일 발송 · 08:00~08:59 보류 · 09:00~ 익일. 다음 마감(=다음 08:00) 시각을 함께 준다.
+        const k = new Date(now + 9 * 3600 * 1000);
+        const hh = k.getUTCHours();
+        const cutoffUtcMs = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate() + (hh < 8 ? 0 : 1), 8, 0, 0) - 9 * 3600 * 1000;
+        res.json({
+            at: new Date(now).toISOString(),
+            text: r.text,                       // 예: "내일 수요일 오전 발송, 목~금 도착 예정"
+            shipDate: r.shipDate || null,
+            arriveStart: r.arriveStart || null,
+            arriveEnd: r.arriveEnd || null,
+            override: !!r.override,             // 휴무 안내 문구로 대체된 경우
+            cutoffAt: new Date(cutoffUtcMs).toISOString(),   // 다음 발송 마감(오전 8시)
+            holdWindow: hh === 8,               // 08:00~08:59 = 발주 확인 후 안내 구간
+        });
+    } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
+});
+
 app.get('/api/public/roulette-winners', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     try {
