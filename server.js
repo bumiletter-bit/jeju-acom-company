@@ -5763,7 +5763,7 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
             ON CONFLICT (order_key) DO UPDATE SET message=EXCLUDED.message, mode=EXCLUDED.mode, status=EXCLUDED.status, error=EXCLUDED.error,
                 created_at=NOW(), resend_count=COALESCE(lms_guide_log.resend_count,0)+1`,
             [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
-             kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
+             kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
         await writeAudit({ action: 'manual_send', targetType: 'lms_guide', targetId: null,
             changes: { after: { order_key: orderKey, mode: out.res.mode, status: out.res.status } }, source: 'lms-guide', actor: adminActor(req) });
         res.json({ ok: true, mode: out.res.mode, status: out.res.status });
@@ -6718,7 +6718,9 @@ async function naverConfirmOrders(ids) {
 async function collectKakaoNotify() {
     const now = Date.now();
     const cp = await naverCfgGet('kakao_notify_checkpoint');
-    const fromMs = Math.max(cp ? Date.parse(cp) : now - 3600 * 1000, now - 23.5 * 3600 * 1000);
+    // 지시 #177: 네이버 변경분이 뒤늦게 노출되는 건(실측 누락 1건 — 8/3 11:24 결제)을 잡기 위해 체크포인트에서 15분 되감아 조회.
+    //   중복분은 아래 seen(order_key) 필터에서 제거되므로 재발송 위험 없음.
+    const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 15 * 60 * 1000, now - 23.5 * 3600 * 1000);
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     await naverCfgSet('kakao_notify_checkpoint', new Date(now).toISOString());
     const paidIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'PAYED')
@@ -6768,7 +6770,7 @@ async function collectKakaoNotify() {
                     if (payHourKst === 8) {
                         await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
                             VALUES ($1,$2,$3,'hold','hold-0809','manual-needed') ON CONFLICT (order_key) DO NOTHING`,
-                            [orderKey, (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel)]).catch(() => {});
+                            [orderKey, (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '')]).catch(() => {});
                         continue;
                     }
                 }
@@ -6794,12 +6796,12 @@ async function collectKakaoNotify() {
                     '발송안내': shipLine,
                 }, tplDef && tplDef.content);
                 const res = await kakaoNotify.sendAlimtalk({
-                    receiver: od.ordererTel || '', subject: '주문 안내', message, failoverMessage: message,
+                    receiver: od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', subject: '주문 안내', message, failoverMessage: message,
                     tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
                 });
                 await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error)
                     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
-                    [orderKey, matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel),
+                    [orderKey, matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''),
                      message, res.mode, res.status, res.error || null]);
                 if (res.status === 'sent') done++;
                 else if (res.mode === 'real') failed++;
@@ -6873,7 +6875,7 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
     const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set) : null;
     const 도착안내 = shippingSchedule.renderGuidePlaceholders('내일 {{내일요일}}요일~모레 {{모레요일}}요일 사이 도착 예정', Date.now(), holidayInfo.set);
     const res = await kakaoNotify.sendShippingGuideAlimtalk({
-        receiver: od.ordererTel || '',
+        receiver: od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '',   // #177: 주문자 미제공 시 수취인 폴백
         vars: {
             '고객명': od.ordererName || '고객',
             '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
@@ -6888,7 +6890,8 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
 async function collectLmsGuide() {
     const now = Date.now();
     const cp = await naverCfgGet('lms_guide_checkpoint');
-    const fromMs = Math.max(cp ? Date.parse(cp) : now - 3600 * 1000, now - 23.5 * 3600 * 1000);
+    // 지시 #177: 발송처리 변경분도 동일 취약점 — 15분 되감기(중복은 lms_guide_log.order_key UNIQUE·seen 필터로 제거)
+    const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 15 * 60 * 1000, now - 23.5 * 3600 * 1000);
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     await naverCfgSet('lms_guide_checkpoint', new Date(now).toISOString());
     const shippedIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'DISPATCHED')
@@ -6923,12 +6926,12 @@ async function collectLmsGuide() {
                     skipped++;
                     await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
                         VALUES ($1,$2,$3,'dry-run','skip-no-guide') ON CONFLICT (order_key) DO NOTHING`,
-                        [orderKey, (out.matched ? out.matched.name : (po.productName || '')).slice(0, 200), kakaoNotify.maskPhone(od.ordererTel)]);
+                        [orderKey, (out.matched ? out.matched.name : (po.productName || '')).slice(0, 200), kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '')]);
                 } else {
                     await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
                         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
                         [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
-                         kakaoNotify.maskPhone(od.ordererTel), out.message, out.res.mode, out.res.status, out.res.error || null]);
+                         kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
                     if (out.res.status === 'sent') done++;
                     else if (out.res.mode === 'real') failed++;
                 }
