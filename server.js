@@ -7958,6 +7958,38 @@ function maskWinnerName(name) {
     if (/^[가-힣]+$/.test(s) && s.length <= 4) return s[0] + '*'.repeat(s.length - 2) + s[s.length - 1];
     return s.slice(0, 1) + '**' + s.slice(3);   // 영문 닉 등: s**fklaks 형태
 }
+// ── 지시 #195-3: 자사몰 챗 → CS 시나리오 DB 동일 응대 ─────────────────────────
+//   🔴 원천 하나 원칙: 톡톡봇·상품문의·고객문의가 쓰는 **qnaGenerate()를 그대로** 호출한다.
+//   자사몰용 별도 응답 세트를 만들지 않는다(만들면 채널마다 답이 갈라진다).
+//   · 답을 못 만들면(SKIP·키 미설정) **지어내지 않고** answered:false로 내려보내 화면이 "연결 안 됨"을 표기하게 한다.
+//   · 쓰기 없음(네이버 게시 안 함) · PII 미수집 · 남용 방지를 위해 길이 제한과 분당 상한만 둔다.
+const _chatRate = new Map();   // ip → { n, at } (분당 상한 — 프로토타입 수준)
+app.post('/api/public/shop-chat', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    try {
+        const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+        const now = Date.now();
+        const cur = _chatRate.get(ip) || { n: 0, at: now };
+        if (now - cur.at > 60000) { cur.n = 0; cur.at = now; }
+        cur.n++; _chatRate.set(ip, cur);
+        if (cur.n > 20) return res.status(429).json({ answered: false, reason: 'rate-limited', message: '잠시 후 다시 시도해주세요' });
+
+        const question = String((req.body || {}).question || '').trim().slice(0, 500);
+        const productName = String((req.body || {}).productName || '').trim().slice(0, 120);
+        if (!question) return res.status(400).json({ answered: false, reason: 'empty', message: '질문을 입력해주세요' });
+
+        const out = await qnaGenerate(question, productName || null);
+        if (!out || !out.answer) {
+            // 재료 부족·SKIP — 가짜 답변 금지(#189 원칙). 사람 연결 안내로 넘긴다.
+            return res.json({ answered: false, reason: 'no-material',
+                message: '이 질문은 담당자가 직접 확인해서 답변드릴게요. 카카오톡 채널이나 전화(010-6687-4031)로 문의해주세요.' });
+        }
+        res.json({ answered: true, answer: out.answer, scenarios: out.used || [] });
+    } catch (e) {
+        res.status(500).json({ answered: false, reason: 'error', message: '지금은 답변을 준비하지 못했어요. 전화(010-6687-4031)로 문의해주세요.' });
+    }
+});
+
 // 지시 #192-2: 자사몰 발송일 안내용 공개 API.
 //   🔴 핵심 = **계산 이중화 금지**. 자사몰이 자체 로직을 새로 만들면 회사프로그램과 갈라져(#185 교훈)
 //   알림톡과 자사몰이 서로 다른 발송일을 안내하는 사고가 난다. 여기서 computeShipping을 그대로 호출해 결과만 내려준다.
