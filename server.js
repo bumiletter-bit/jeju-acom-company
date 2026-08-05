@@ -6852,9 +6852,37 @@ async function collectOrderNew() {
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     const paid = list.filter(x => String(x.lastChangedType || '') === 'PAYED');
     await naverCfgSet('naver_order_checkpoint', new Date(now).toISOString());
-    if (paid.length > 0 && await alertEnabled('order')) {
-        if (await alertQuietNow()) await alertNightAcc('order', paid.length);   // 대표 7/27: 야간엔 아침 브리핑으로 모아서
-        else notifyTelegram(await alertText('order', { '건수': paid.length }));
+    // 지시 #215: 직전 1시간 알림톡 결과 요약을 신규주문 알림에 병기 — 시간당 1통. kakaosend 토글 ON=요약 포함 / OFF=신규주문만.
+    let kakaoLines = [], kakaoSentN = 0;
+    if (await alertEnabled('kakaosend')) {
+        try {
+            const ks = (await pool.query(`SELECT status, COUNT(*)::int AS n FROM kakao_notify_log
+                WHERE created_at >= NOW() - interval '60 minutes' AND mode IN ('real','hold','skip') GROUP BY status`)).rows;
+            const g = {}; for (const row of ks) g[row.status] = row.n;
+            kakaoSentN = g['sent'] || 0;
+            const failedN = (g['failed'] || 0) + (g['token-failed'] || 0);
+            const holdN = g['hold-0809'] || 0;
+            const blockN = (g['no-tel'] || 0) + (g['gift-masked'] || 0);
+            if (kakaoSentN + failedN + holdN + blockN > 0) {   // 0건 시간대는 알림톡 줄 생략 (#215)
+                kakaoLines.push(`📨 알림톡(1시간): 성공 ${kakaoSentN} · 실패 ${failedN} · 보류 ${holdN} · 차단 ${blockN}`);
+                if (failedN > 0) {
+                    const fr = (await pool.query(`SELECT receiver_masked, error FROM kakao_notify_log
+                        WHERE created_at >= NOW() - interval '60 minutes' AND mode='real' AND status IN ('failed','token-failed')
+                        ORDER BY id DESC LIMIT 5`)).rows;
+                    for (const f of fr) kakaoLines.push(`  ❌ ${f.receiver_masked || '-'} ${String(f.error || '').slice(0, 80)}`);
+                }
+            }
+        } catch (_) { /* 요약 집계 실패해도 신규주문 알림은 정상 발송 (무회귀) */ }
+    }
+    if (await alertQuietNow()) {   // 대표 7/27: 야간엔 아침 브리핑으로 모아서
+        if (paid.length > 0 && await alertEnabled('order')) await alertNightAcc('order', paid.length);
+        if (kakaoSentN > 0) await alertNightAcc('kakaosend', kakaoSentN);   // 아침 브리핑 줄 유지 (#215 — 건별 즉시 알림의 야간 누적 대체)
+    } else if (paid.length > 0 && await alertEnabled('order')) {
+        const base = await alertText('order', { '건수': paid.length });
+        notifyTelegram(kakaoLines.length ? `${base}\n${kakaoLines.join('\n')}` : base);
+    } else if (kakaoLines.length > 0) {
+        // 신규 결제 0건이어도 알림톡 결과가 있으면(소급 발송 시간대 등) 요약만 발송 — 시간당 1통 원칙 유지
+        notifyTelegram(`📨 알림톡 결과 (직전 1시간)\n${kakaoLines.join('\n')}`);
     }
     return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
 }
@@ -7044,10 +7072,11 @@ async function collectKakaoNotify() {
             }
         }
     }
-    // C6: 발송 결과 알림 — 실발송이 있었을 때만 (dry-run 단계에선 무알림 · 0건 무알림 원칙 유지)
-    if (done > 0 && await alertEnabled('kakaosend')) {
-        if (await alertQuietNow()) await alertNightAcc('kakaosend', done);
-        else notifyTelegram(await alertText('kakaosend', { '건수': done, '실패건수': failed }));
+    // C6 → 지시 #215: 3분 주기 건별(묶음) 즉시 알림 제거 — 60분 신규주문 알림(collectOrderNew)에 직전 1시간 요약으로 병기.
+    //   야간 억제 누적(kakaosend)도 60분 지점에서 일괄 처리(이중 집계 방지). 아래는 #215 예외 라인만 유지:
+    //   "문제는 시끄럽게" — 실패가 성공을 넘는 폭주(실패 5건+)는 60분 기다리지 않고 즉시 오류 알림.
+    if (kakaoNotify.switchOn() && failed >= 5 && failed > done) {
+        notifyTelegram(`🚨 알림톡 실패 폭주 감지 — 이번 주기 실패 ${failed}건 / 성공 ${done}건. 알림 발송 이력 화면 확인 요망 (#214 롤백 기준 검토)`);
     }
     // ── 지시 #92: 발송 성공 → 발주확인 자동 실행 (실패·미발송은 상태 유지 = 현행 수기) ──
     let confirmed = 0, confirmFailed = 0;
@@ -11623,6 +11652,110 @@ setInterval(async () => {
         await naverCfgSet('aligo_test_send_result', { at: new Date().toISOString(), key: req.key || 'welcome', ...r });
     } catch (e) {
         try { await naverCfgSet('aligo_test_send_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
+// 지시 #216·#217 (발사 당일 1회성 소급): 오늘 dry-run(switch-off)으로 지나간 주문안내를 시스템 경유로 소급 발송.
+//   kakao_backfill_request {mode:'preview'} = 발송 0건 — 대상 전수 + 네이버 발주확인(placeOrderStatus) 판정만 기록.
+//   kakao_backfill_request {mode:'send', order_keys:[...]} = 지정 건만 발송. 이중 안전: ①행 상태 switch-off 재확인(멱등)
+//   ②네이버 재조회로 발주확인 미완(NOT_YET)·PAYED·무클레임 재검증 — 발주확인 완료 건은 대표가 이미 수동 안내한 손님(#217)이라 제외.
+//   발송 성공 건은 #92 철칙대로 발주확인 자동 실행. 문면·차단 가드(gift-masked·no-tel)는 수집기와 동일 함수 재사용(파이프라인 무변경).
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('kakao_backfill_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'kakao_backfill_request'`);   // 선제거 — 반복 실행 방지
+        const mode = req.mode === 'send' ? 'send' : 'preview';
+        const rows = (await pool.query(`SELECT id, order_key FROM kakao_notify_log
+            WHERE mode='dry-run' AND status='switch-off'
+              AND (created_at + interval '9 hours')::date = ((NOW() + interval '9 hours')::date)
+            ORDER BY id`)).rows;
+        const wanted = (mode === 'send' && Array.isArray(req.order_keys)) ? new Set(req.order_keys.map(String)) : null;
+        const targets = wanted ? rows.filter(r => wanted.has(r.order_key)) : rows;
+        const bp = (await pool.query(`SELECT name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
+        const hinfo = await loadShippingHolidayInfo();
+        const out = [], toConfirm = [];
+        for (let i = 0; i < targets.length; i += 100) {
+            if (i > 0) await new Promise(r => setTimeout(r, 350));
+            const keys = targets.slice(i, i + 100).map(r => r.order_key);
+            const r = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: keys } });
+            const body = (r && r.data) ? r.data : r;
+            const items = body?.data || body?.list || (Array.isArray(body) ? body : []) || [];
+            const byKey = new Map();
+            for (const it of (Array.isArray(items) ? items : [])) {
+                const cc = it.content || it;
+                const po = cc.productOrder || it.productOrder || cc;
+                const od = cc.order || it.order || po.order || {};
+                byKey.set(String(po.productOrderId || od.productOrderId || ''), { po, od });
+            }
+            for (const t of targets.slice(i, i + 100)) {
+                const hit = byKey.get(t.order_key);
+                if (!hit) { out.push({ key: t.order_key, verdict: 'unknown', why: '네이버 조회 무응답 — 발송 안 함' }); continue; }
+                const { po, od } = hit;
+                const place = String(po.placeOrderStatus || '');
+                const poStatus = String(po.productOrderStatus || '');
+                const claimMark = (String(po.claimType || '') + ' ' + String(po.claimStatus || '')).trim();
+                let verdict = 'eligible', why = '';
+                if (poStatus !== 'PAYED') { verdict = 'excluded'; why = '상태 ' + (poStatus || '-'); }
+                else if (claimMark) { verdict = 'excluded'; why = '클레임 ' + claimMark; }
+                else if (place === 'OK') { verdict = 'excluded-placed'; why = '발주확인 완료 — 수동 안내 기수신(#217)'; }
+                else if (place && place !== 'NOT_YET') { verdict = 'unknown'; why = 'placeOrderStatus=' + place + ' — 판정 불가, 발송 안 함'; }
+                if (mode === 'preview' || verdict !== 'eligible') {
+                    out.push({ key: t.order_key, verdict, why, place: place || '-', paymentDate: od.paymentDate || od.orderDate || null, product: (po.productName || '').slice(0, 60) });
+                    continue;
+                }
+                const cur = (await pool.query(`SELECT status FROM kakao_notify_log WHERE id=$1`, [t.id])).rows[0];
+                if (!cur || cur.status !== 'switch-off') { out.push({ key: t.order_key, verdict: 'skipped', why: '행 상태 변경됨(' + (cur && cur.status) + ') — 중복 방지' }); continue; }
+                const optText = `${po.productName || ''} ${po.productOption || ''}`;
+                const matched = kakaoNotify.matchNotifyProduct(optText, bp);
+                const isReserve = kakaoNotify.isReserveOrder(optText, matched);
+                let shipLine;
+                if (isReserve) {
+                    const rs = matched && matched.reserve_ship_start ? new Date(matched.reserve_ship_start) : null;
+                    shipLine = (rs && !isNaN(rs))
+                        ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
+                        : '시즌 시작 시 주문 순서대로 발송해 드려요';
+                } else {
+                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || Date.now(), hinfo.set, hinfo.notices).text;
+                }
+                const tplDef = kakaoNotify.orderTemplate(isReserve);
+                const message = kakaoNotify.buildMessage({
+                    '고객명': od.ordererName || '고객',
+                    '상품명': kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품').slice(0, 80),
+                    '발송안내': shipLine,
+                }, tplDef && tplDef.content);
+                const recvTel = await resolveReceiver(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', t.order_key);
+                if (isMaskedTel(recvTel) || !recvTel) { out.push({ key: t.order_key, verdict: 'excluded', why: recvTel ? 'gift-masked' : 'no-tel' }); continue; }
+                const res = await kakaoNotify.sendAlimtalk({
+                    receiver: recvTel, subject: '주문 안내', message, failoverMessage: message,
+                    tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
+                });
+                await pool.query(`UPDATE kakao_notify_log SET product_name=$1, receiver_masked=$2, message=$3, mode=$4, status=$5, error=$6, resend_count=COALESCE(resend_count,0)+1 WHERE id=$7`,
+                    [matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(recvTel || ''), message, res.mode, res.status, res.error || null, t.id]);
+                if (res.mode === 'real' && res.status === 'sent') toConfirm.push(t.order_key);
+                else await pool.query(`UPDATE kakao_notify_log SET confirm_status='manual-needed' WHERE id=$1`, [t.id]).catch(() => {});
+                out.push({ key: t.order_key, verdict: 'sent-attempt', status: res.status, mode: res.mode, error: res.error || null, masked: kakaoNotify.maskPhone(recvTel || '') });
+                await new Promise(r2 => setTimeout(r2, 700));   // 발송 간격 (알리고 대량 방어)
+            }
+        }
+        let confirmedN = 0, confirmFailedN = 0;
+        if (toConfirm.length && kakaoNotify.switchOn()) {   // #92 철칙: 발송 성공 건만 발주확인
+            const cr = await naverConfirmOrders(toConfirm);
+            const already = cr.fail.filter(f => f.code === '105306');
+            const realFail = cr.fail.filter(f => f.code !== '105306');
+            confirmedN = cr.success.length; confirmFailedN = realFail.length;
+            if (cr.success.length) await pool.query(`UPDATE kakao_notify_log SET confirm_status='confirmed', confirmed_at=NOW() WHERE order_key = ANY($1)`, [cr.success]).catch(() => {});
+            for (const f of already) await pool.query(`UPDATE kakao_notify_log SET confirm_status='already', confirm_error=$2 WHERE order_key=$1`, [f.id, `${f.code} ${f.message}`.slice(0, 250)]).catch(() => {});
+            for (const f of realFail) await pool.query(`UPDATE kakao_notify_log SET confirm_status='failed', confirm_error=$2 WHERE order_key=$1`, [f.id, `${f.code} ${f.message}`.trim().slice(0, 250)]).catch(() => {});
+        }
+        await naverCfgSet('kakao_backfill_result', {
+            at: new Date().toISOString(), mode, total: targets.length,
+            confirmed: confirmedN, confirm_failed: confirmFailedN, items: out,
+        });
+        await writeAudit({ action: 'kakao_backfill', targetType: 'kakao_notify', targetId: null,
+            changes: { after: { mode, total: targets.length, sent: out.filter(x => x.verdict === 'sent-attempt' && x.status === 'sent').length } } }).catch(() => {});
+    } catch (e) {
+        try { await naverCfgSet('kakao_backfill_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
     }
 }, 60000);
 
