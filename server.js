@@ -8163,6 +8163,12 @@ app.get('/api/public/roulette-winners', async (req, res) => {
     } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
 });
 
+// 지시 #228-④ (대표 확정): 공개 버전 엔드포인트 — 배포 반영 확인용. 버전 문자열만(인증 불요·다른 정보 0).
+app.get('/api/public/version', (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.json({ version: VERSION });
+});
+
 app.get('/api/public/store-snapshot', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');   // 지시 #192-1: 자사몰(다른 도메인)에서 fetch — 헤더가 없어 CORS로 막혀 있었음
     try {
