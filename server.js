@@ -5624,6 +5624,8 @@ app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgG
 //    콘텐츠 = bot_products.shipping_guide (판매현황 탭에서 수정하면 즉시 반영). ?p=상품id 이면 그 상품이 최상단.
 //    전 판매중 상품 안내 함께 노출 = 크로스셀 동선 (#94). 디자인은 구조·틀 수준 — 인디고 토큰 (#81).
 function guideEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+// 지시 #235: "다른 상품들" 섹션 비노출 (대표 확정 — 옵션 나열이 뒤엉켜 혼동) — 숏클립과 동일한 플래그 OFF 방식(마크업·로직 보존, 정리 후 true로 재활성)
+const GUIDE_SHOW_OTHERS = false;
 app.get('/guide', async (req, res) => {
     try {
         const pid = parseInt(req.query.p, 10) || 0;
@@ -5655,7 +5657,8 @@ app.get('/guide', async (req, res) => {
   * { box-sizing:border-box; } body { margin:0; font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif; background:#F2F3F5; color:#101828; }
   .wrap { max-width:640px; margin:0 auto; padding:16px 14px 40px; }
   .hd { background:linear-gradient(135deg, var(--yellow-soft) 0%, #FFF 55%, var(--primary-light) 100%); color:#101828; border:1px solid #ECEDF1; border-radius:16px; padding:20px 18px; margin-bottom:14px; }
-  .hd h1 { margin:0 0 4px; font-size:20px; letter-spacing:-.02em; } .hd p { margin:0; font-size:13px; color:#667085; font-weight:600; }
+  .hd h1 { margin:0 0 4px; font-size:20px; letter-spacing:-.02em; display:flex; align-items:center; gap:10px; } .hd p { margin:0; font-size:13px; color:#667085; font-weight:600; }
+  .hd .hd-logo { width:44px; height:44px; border-radius:50%; background:#fff; border:2px solid var(--yellow); object-fit:cover; flex:0 0 auto; }
   .hd .hd-badge { display:inline-block; margin-top:10px; background:var(--yellow); color:var(--navy); font-size:11px; font-weight:800; padding:3px 12px; border-radius:999px; }
   .sec-title { font-size:13px; color:#767a83; margin:18px 4px 8px; }
   details.item { background:#fff; border:1px solid #e4e7ee; border-radius:12px; margin-bottom:10px; overflow:hidden; }
@@ -5668,10 +5671,10 @@ app.get('/guide', async (req, res) => {
   .buy-slot { margin-top:12px; font-size:12px; color:#9aa0ab; border-top:1px dashed #e4e7ee; padding-top:10px; }
   .ft { text-align:center; font-size:12px; color:#9aa0ab; margin-top:24px; }
 </style></head><body><div class="wrap">
-    <div class="hd"><h1>🍊 제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p><span class="hd-badge">제주에서 우리집까지, 사랑스러운 제주 속으로</span></div>
+    <div class="hd"><h1><img class="hd-logo" src="/akkomi.png" alt="아꼼이">제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p><span class="hd-badge">제주에서 우리집까지, 사랑스러운 제주 속으로</span></div>
     ${picked ? `<div class="sec-title">주문하신 상품</div>${card(picked, true)}` : ''}
-    ${others.length ? `<div class="sec-title">${picked ? '아꼼이네의 다른 상품들도 만나보세요' : '판매 상품 안내'}</div>${others.map(r => card(r, !picked && rows.length === 1)).join('')}` : ''}
-    ${rows.length === 0 ? '<p style="text-align:center; color:#767a83;">등록된 안내가 아직 없습니다.</p>' : ''}
+    ${GUIDE_SHOW_OTHERS && others.length ? `<div class="sec-title">${picked ? '아꼼이네의 다른 상품들도 만나보세요' : '판매 상품 안내'}</div>${others.map(r => card(r, !picked && rows.length === 1)).join('')}` : ''}
+    ${!picked ? '<p style="text-align:center; color:#767a83; font-size:14px; line-height:1.7; margin-top:28px;">주문 알림톡의 「맛있게 드시는 법」 버튼으로 접속하시면<br>주문하신 상품의 안내를 보실 수 있습니다 🍊</p>' : ''}
     <div class="ft">문의 📞 010-6687-4031 · 제주아꼼이네</div>
 </div></body></html>`);
     } catch (err) {
