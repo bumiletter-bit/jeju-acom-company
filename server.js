@@ -7828,9 +7828,10 @@ async function collectProductSnapshot() {
             },
             body: JSON.stringify({ checkoutMerchantNo: 510497562, originProductNo: Number(p.originNo), page: 1, pageSize: 20, reviewSearchSortType: 'REVIEW_RANKING' }),   // 5→20건(상품별 리뷰 탭)
         });
+        let failCnt = 0;   // 지시 #231-①ⓑ: 부분 성공 허용 — 일부 상품 429여도 나머지는 저장(전체 폐기 금지)
         for (const p of live) {
             if (!p.originNo || !p.no) continue;
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 3000));   // #231: 1.5s→3s (5일 연속 429 실측 — 완화)
             // 지시 #168: 구매 배지(네이버 marketing-message — "오늘 N명 구매" 등 네이버 산출 실수치) 동반 수집.
             //   실패해도 무시(배지는 부가 정보 — 리뷰·본 스냅샷에 영향 없음). 결과는 items[].buyBadge.
             try {
@@ -7839,9 +7840,14 @@ async function collectProductSnapshot() {
                 });
                 if (bres.ok) { const bj = await bres.json(); if (bj && bj.mainPhrase) p.buyBadge = { prefix: bj.prefix || '', mainPhrase: bj.mainPhrase }; }
             } catch (_) { /* 배지 실패 무시 */ }
+            // #231-①ⓑ: 429 지수 백오프 3회(15s→30s→60s — 기존 8s 1회로는 5일 연속 실패 실측) + 실패 상품은 스킵(부분 성공)
             let resp = await revFetch(p);
-            if (resp.status === 429) { await new Promise(r => setTimeout(r, 8000)); resp = await revFetch(p); }   // 1회 백오프 재시도
-            if (!resp.ok) throw new Error('리뷰 HTTP ' + resp.status);
+            for (const waitMs of [15000, 30000, 60000]) {
+                if (resp.status !== 429) break;
+                await new Promise(r => setTimeout(r, waitMs));
+                resp = await revFetch(p);
+            }
+            if (!resp.ok) { failCnt++; continue; }
             const j = await resp.json();
             collected[String(p.no)] = (j.contents || []).slice(0, 20).map(rv => ({
                 score: rv.reviewScore, labels: rv.labels || [],
@@ -7851,9 +7857,9 @@ async function collectProductSnapshot() {
                 opt: String(rv.productOptionContent || '').slice(0, 120), source: 'nstore',
             }));
         }
-        if (!Object.keys(collected).length) throw new Error('리뷰 0건 (구조 변경 가능성)');
+        if (!Object.keys(collected).length) throw new Error('리뷰 0건 (전 상품 실패 ' + failCnt + '건 — 429 지속 또는 구조 변경)');
         reviews = collected;
-        reviewNote = ' | 리뷰 ' + Object.values(collected).reduce((s, a) => s + a.length, 0) + '건';
+        reviewNote = ' | 리뷰 ' + Object.values(collected).reduce((s, a) => s + a.length, 0) + '건' + (failCnt ? ` (실패 상품 ${failCnt} — 부분 성공)` : '');
     } catch (e) {
         const prev = await pool.query(`SELECT reviews FROM naver_product_snapshot WHERE reviews IS NOT NULL ORDER BY id DESC LIMIT 1`);
         reviews = prev.rows.length ? prev.rows[0].reviews : null;
