@@ -5820,7 +5820,9 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','token-failed','build-failed'))
              + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***') AS no_tel,
-               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'gift-masked') AS gift`)).rows[0];   /* #193 C: 수신번호 미확보 = 수동 연락 필요 */
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'gift-masked') AS gift,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'bad-tel')
+             + (SELECT count(*) FROM lms_guide_log  WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'bad-tel') AS bad_tel`)).rows[0];   /* #193 C: 수신번호 미확보 = 수동 연락 필요 / #219: bad-tel = 유선 등 번호 오류(조치 불요) */
         /* 🔴 지시 #204-1: 요약 줄과 행 표시가 서로 다른 기준을 봐서 갈라졌던 것을 통일한다.
            원인 — 행 표시는 "재조회한 실번호에 *가 있으면 선물하기"로 판정하는데(receiver_full),
                   요약은 DB의 status='gift-masked'만 셌다. 그 상태는 실제로 0건이라 gift는 늘 0,
@@ -5830,16 +5832,21 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         const maskedToday = (await pool.query(
             `SELECT order_key FROM kakao_notify_log
               WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***'`)).rows;
-        let giftCnt = Number(sum.gift) || 0, noTelCnt = Number(sum.no_tel) || 0;
+        let giftCnt = Number(sum.gift) || 0, noTelCnt = Number(sum.no_tel) || 0, badTelCnt = Number(sum.bad_tel) || 0;
         for (const m of maskedToday) {
             /* 표시(행)와 같은 소스를 본다 — 위에서 rows용으로 이미 재조회해 둔 _telCache를 우선 재사용하고,
                그 페이지에 안 걸린 건만 개별 재조회한다(추가 호출 최소화). */
             const hit = _telCache.get(m.order_key);
             let full = (hit && hit.tel) ? String(hit.tel) : '';
             if (!full) { try { full = await refetchReceiverTel(m.order_key); } catch (e) { full = ''; } }
-            if (full && /[*]/.test(full)) { giftCnt++; noTelCnt--; }   // 네이버가 마스킹해 준 번호 = 선물하기(조치 불요)
+            if (full && /[*]/.test(full)) {
+                /* #219: 마스킹 형태여도 앞자리가 01이 아니면(02·070·15xx…) 유선 = 번호 오류로 분류 — 행 표시와 같은 판정 */
+                const lead = String(full).replace(/[^0-9*]/g, '');
+                if (/^0(?!1)|^1[5-9]/.test(lead)) { badTelCnt++; noTelCnt--; }
+                else { giftCnt++; noTelCnt--; }   // 네이버가 마스킹해 준 휴대폰 번호 = 선물하기(조치 불요)
+            }
         }
-        sum.gift = giftCnt; sum.no_tel = Math.max(noTelCnt, 0);
+        sum.gift = giftCnt; sum.no_tel = Math.max(noTelCnt, 0); sum.bad_tel = badTelCnt;
         res.json({ rows, summary: sum, total, offset, limit });   // #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -6782,6 +6789,9 @@ async function resolveReceiver(primaryTel, orderKey) {
 // 발송 직전 최종 처리 — 마스킹 건은 발송하지 않고 상태만 남긴다(빈 번호로 발송 시도해 실패 로그만 쌓는 일 방지).
 function telOrNull(v) { return (v && v !== '__MASKED__') ? v : ''; }
 function isMaskedTel(v) { return v === '__MASKED__'; }
+// 지시 #219 (대표 확정): 알림톡 불가 번호 판정 — 휴대폰(01x)만 발송 가능. 유선(02~09권)·인터넷(070)·대표번호(15xx~18xx)는
+//   발송 시도 없이 'bad-tel'로 기록하고 재안내하지 않는다(화면 「번호 오류」 — 조치 불요·중립 표기).
+function isBadTel(v) { const d = String(v || '').replace(/[^0-9]/g, ''); return d.length >= 8 && !/^01/.test(d); }
 
 async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
@@ -7049,6 +7059,12 @@ async function collectKakaoNotify() {
                         [orderKey, (po.productName || '').slice(0, 200), noTel ? '***' : 'gift-masked', noTel ? 'no-tel' : 'gift-masked']);
                     continue;
                 }
+                if (isBadTel(recvTel)) {   // 지시 #219: 유선번호 등 알림톡 불가 — 발송 시도 없이 기록만(재안내 없음)
+                    await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                        VALUES ($1,$2,$3,'skip','bad-tel','none') ON CONFLICT (order_key) DO NOTHING`,
+                        [orderKey, (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(recvTel)]);
+                    continue;
+                }
                 const res = await kakaoNotify.sendAlimtalk({
                     receiver: recvTel, subject: '주문 안내', message, failoverMessage: message,
                     tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
@@ -7138,6 +7154,10 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
         const noTel = !isMaskedTel(guideRecvTel);
         return { skip: false, matched, noGuide: !hasGuide, message: null, giftMasked: !noTel, noTel,
                  res: { mode: 'skip', status: noTel ? 'no-tel' : 'gift-masked', error: null }, recvTel: '' };
+    }
+    if (isBadTel(guideRecvTel)) {   // 지시 #219: 유선번호 등 알림톡 불가 — 주문안내와 동일 지점·동일 상태(bad-tel)
+        return { skip: false, matched, noGuide: !hasGuide, message: null, badTel: true,
+                 res: { mode: 'skip', status: 'bad-tel', error: null }, recvTel: '' };
     }
     const res = await kakaoNotify.sendShippingGuideAlimtalk({
         receiver: guideRecvTel,   // #177: 주문자 미제공 시 수취인 폴백 → #193: 그래도 비면 재조회로 구제
@@ -11726,6 +11746,10 @@ setInterval(async () => {
                 }, tplDef && tplDef.content);
                 const recvTel = await resolveReceiver(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', t.order_key);
                 if (isMaskedTel(recvTel) || !recvTel) { out.push({ key: t.order_key, verdict: 'excluded', why: recvTel ? 'gift-masked' : 'no-tel' }); continue; }
+                if (isBadTel(recvTel)) {   // 지시 #219: 유선번호 — 소급에서도 발송 없이 bad-tel로 재분류
+                    await pool.query(`UPDATE kakao_notify_log SET receiver_masked=$1, mode='skip', status='bad-tel' WHERE id=$2 AND status='switch-off'`, [kakaoNotify.maskPhone(recvTel), t.id]).catch(() => {});
+                    out.push({ key: t.order_key, verdict: 'excluded', why: 'bad-tel(유선 — 재안내 없음)' }); continue;
+                }
                 const res = await kakaoNotify.sendAlimtalk({
                     receiver: recvTel, subject: '주문 안내', message, failoverMessage: message,
                     tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,

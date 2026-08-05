@@ -12576,6 +12576,9 @@ let notifyLogShown = 0;    // 현재 화면에 쌓인 행 수
 let notifyLogTotal = 0;    // 조회 조건 전체 건수(요약 줄 기준 — 표시분과 분리)
 let notifyLogSeq = 0;      // #204-2: 요청 순번 — 겹친 조회에서 늦게 온 응답을 버리기 위한 가드
 const NOTIFY_PAGE = 100;
+// 지시 #219: 유선번호(02~09권·070·15xx~18xx) 판정 — 재조회 번호가 마스킹(별표) 형태여도 앞자리로 판정 가능.
+//   휴대폰(01x)만 알림톡 가능 → 그 외는 「번호 오류」(중립·조치 불요·재안내 없음).
+function akmIsBadTelStr(s) { const t = String(s || '').replace(/[^0-9*]/g, ''); return t.length >= 4 && (/^0(?!1)/.test(t) || /^1[5-9]/.test(t)); }
 async function renderNotifyLogs(opts) {
     const append = !!(opts && opts.append);
     const el = document.getElementById('notify-log-list');
@@ -12605,8 +12608,8 @@ async function renderNotifyLogs(opts) {
         // #180-A1: 요약 줄은 '조회 조건 전체(total)' 기준 — [더보기]로 표시분이 늘어도 이 숫자는 바뀌지 않는다.
         //   (#179의 "상한 300건 도달" 경고는 페이징 도입으로 불필요해져 제거)
         sumEl.textContent = (from && to) || q
-            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}`
-            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""} · 건너뜀 ${s.skipped || 0}`;
+            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}${Number(s.bad_tel)>0 ? " · 📵 번호 오류 "+s.bad_tel : ""}`
+            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}${Number(s.bad_tel)>0 ? " · 📵 번호 오류 "+s.bad_tel : ""} · 건너뜀 ${s.skipped || 0}`;
     }
     const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)' };
     // 한 칸(주문안내/발송안내) 상태 표기 — 최종 경로 기준
@@ -12637,6 +12640,7 @@ async function renderNotifyLogs(opts) {
                 `<div style="margin-top:5px; white-space:nowrap;"><button class="btn-sm btn-primary" onclick="manualSendHold(${row.k_id}, 'today', this)">오늘 발송으로 안내</button> <button class="btn-sm btn-outline" onclick="manualSendHold(${row.k_id}, 'tomorrow', this)">내일 발송으로 안내</button></div>`);
         }
         if (st === 'gift-masked') return badge('#F1F2F5', '#767A83', '🎁 선물하기 (번호 비공개)');   // #199
+        if (st === 'bad-tel') return badge('#F1F2F5', '#767A83', '📵 번호 오류 (유선 — 재안내 없음)');   // #219: 중립 회색 — 조치 불요
         if (st === 'canceled-excluded') return badge('#F1F2F5', '#767A83', '🚫 취소·클레임 제외');
         if (st === 'skip-no-guide') return badge('#F1F2F5', '#767A83', '건너뜀 (구버전 기록)');
         if (st === 'sent') return badge('#E8F8EF', '#1E8E4E', mode === 'sms' ? '🔁 문자(LMS) 대체' : '✅ 알림톡');
@@ -12660,12 +12664,16 @@ async function renderNotifyLogs(opts) {
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
             <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? '<div class="text-muted" style="font-size:11px;">주문 기록 밖 (발송만 감지)</div>' : ''}</td>
             <td style="white-space:nowrap;">${
+              /* 지시 #219: 유선번호(02-…)는 「번호 오류」 — 선물하기 판정보다 먼저 검사(기존 오표기 교정).
+                 재조회해도 유선은 그대로이므로 [재조회] 버튼 미노출·조치 불요(중립 톤). */
+              (r.k_status === 'bad-tel' || r.l_status === 'bad-tel' || akmIsBadTelStr(r.receiver_full))
+                ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">📵 번호 오류 (유선)</span>`
               /* 지시 #199: 선물하기(번호 비공개)는 정상 상태 — 경고가 아닌 중립 표기로 구분한다.
                  네이버가 수령자 번호를 마스킹해 주는 사양이라 재조회해도 풀번호를 얻을 수 없다. */
-              (r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || '')))
+              : (r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || '')))
                 ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">🎁 선물하기 (번호 비공개)</span>`
                 : escapeHtml(r.receiver_full || r.receiver_masked || '-')
-            }${(r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || ''))) ? '' : (r.receiver_full ? '' : (r.receiver_masked === '***'
+            }${(r.k_status === 'bad-tel' || r.l_status === 'bad-tel' || akmIsBadTelStr(r.receiver_full) || r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || ''))) ? '' : (r.receiver_full ? '' : (r.receiver_masked === '***'
                 /* 지시 #193 C: ***로 조용히 묻히지 않게 — 경고 뱃지 + 그 자리에서 다시 조회(시간이 지나면 네이버가 채워주는 특성 활용) */
                 ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:var(--danger,#F04438); font-size:11px;">⚠️ 수동 연락 필요</span>
                      <button class="btn-sm btn-outline" style="margin-left:4px; padding:2px 8px; font-size:11px;" onclick="retryReceiverTel('${escapeHtml(r.order_key || '')}', this)">재조회</button></div>`
