@@ -12619,7 +12619,12 @@ async function renderNotifyLogs(opts) {
         const err = kind === 'order' ? row.k_error : row.l_error;
         const resend = (kind === 'order' ? row.k_resend : row.l_resend) || 0;
         const tip = err ? ` title="${escapeHtml(String(err).slice(0, 120))}"` : '';
-        const badge = (bg, color, text, extra) => `<span class="pill" style="background:${bg}; color:${color}; font-size:11px;"${tip}>${text}</span>${extra || ''}${resend ? `<span class="text-muted" style="font-size:11px; margin-left:4px;">재발송 ${resend}회</span>` : ''}`;
+        /* 지시 #221 (대표 확정): dry-run→실발송 소급 전환은 「소급 발송」 — 진짜 재발송(실발송 2회+)과 구분.
+           소급 후 추가 재발송이 생기면 「소급 발송 · 재발송 N회」로 병기(카운터에서 소급 1회분 제외). */
+        const resendLabel = !resend ? '' : ((kind === 'order' && row.k_backfill)
+            ? (resend > 1 ? `소급 발송 · 재발송 ${resend - 1}회` : '소급 발송')
+            : `재발송 ${resend}회`);
+        const badge = (bg, color, text, extra) => `<span class="pill" style="background:${bg}; color:${color}; font-size:11px;"${tip}>${text}</span>${extra || ''}${resendLabel ? `<span class="text-muted" style="font-size:11px; margin-left:4px;">${resendLabel}</span>` : ''}`;
         if (!st) {   // 미도래 — 예약 상품이면 안내 문구로 구분
             if (kind === 'ship') {
                 const reserve = /순차 발송|시즌 시작/.test(row.k_message || '');

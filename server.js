@@ -906,6 +906,8 @@ async function initDB() {
     // 지시 #176: 재발송 횟수 표기 (통합 이력 — additive)
     await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS resend_count INT DEFAULT 0`);
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS resend_count INT DEFAULT 0`);
+    // 지시 #221 (대표 확정): dry-run→실발송 소급 전환 건 표기 구분 — 「소급 발송」 라벨용 플래그 (표기 계층 전용·additive)
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS backfill BOOLEAN DEFAULT FALSE`);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
         ON CONFLICT (key) DO NOTHING`);
     // ── 지시 #107: 일일 상품 스냅샷 (자사몰 실서비스 동기화 1단계 — 읽기 전용·기본 OFF·새벽 04:30 앵커)
@@ -5760,7 +5762,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                     COALESCE(k.product_name, l.product_name) AS product_name,
                     COALESCE(k.receiver_masked, l.receiver_masked) AS receiver_masked,
                     k.id AS k_id, k.created_at AS k_at, k.mode AS k_mode, k.status AS k_status, k.error AS k_error,
-                    k.message AS k_message, k.resend_count AS k_resend,
+                    k.message AS k_message, k.resend_count AS k_resend, k.backfill AS k_backfill,
                     k.confirm_status, k.confirm_error, k.confirmed_at,
                     l.id AS l_id, l.created_at AS l_at, l.mode AS l_mode, l.status AS l_status, l.error AS l_error,
                     l.message AS l_message, l.resend_count AS l_resend, l.product_name AS l_product
@@ -11754,8 +11756,8 @@ setInterval(async () => {
                     receiver: recvTel, subject: '주문 안내', message, failoverMessage: message,
                     tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
                 });
-                await pool.query(`UPDATE kakao_notify_log SET product_name=$1, receiver_masked=$2, message=$3, mode=$4, status=$5, error=$6, resend_count=COALESCE(resend_count,0)+1 WHERE id=$7`,
-                    [matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(recvTel || ''), message, res.mode, res.status, res.error || null, t.id]);
+                await pool.query(`UPDATE kakao_notify_log SET product_name=$1, receiver_masked=$2, message=$3, mode=$4, status=$5, error=$6, resend_count=COALESCE(resend_count,0)+1, backfill=TRUE WHERE id=$7`,
+                    [matched ? matched.name : (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(recvTel || ''), message, res.mode, res.status, res.error || null, t.id]);   /* #221: 소급 전환 = backfill 마킹(「소급 발송」 표기) */
                 if (res.mode === 'real' && res.status === 'sent') toConfirm.push(t.order_key);
                 else await pool.query(`UPDATE kakao_notify_log SET confirm_status='manual-needed' WHERE id=$1`, [t.id]).catch(() => {});
                 out.push({ key: t.order_key, verdict: 'sent-attempt', status: res.status, mode: res.mode, error: res.error || null, masked: kakaoNotify.maskPhone(recvTel || '') });
