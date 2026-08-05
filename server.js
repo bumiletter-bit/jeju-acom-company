@@ -5650,11 +5650,13 @@ app.get('/guide', async (req, res) => {
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>제주아꼼이네 — 맛있게 드시는 법·보관법</title>
 <style>
-  :root { --primary:#4F46E5; --primary-dark:#4338CA; --primary-light:#EEF0FF; }
-  * { box-sizing:border-box; } body { margin:0; font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif; background:#F8F9FC; color:#1f2430; }
+  /* 지시 #228-①·#234-⑤ (대표 확정 ⓐ안): 자사몰 v5 디자인 토큰으로 리뉴얼 — URL·로직·데이터 무변경(스타일 계층만) */
+  :root { --primary:#8CC63E; --primary-dark:#5F9E1F; --primary-light:#F1F8E4; --yellow:#FFD400; --yellow-soft:#FFF6D0; --navy:#3A4A2B; }
+  * { box-sizing:border-box; } body { margin:0; font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif; background:#F2F3F5; color:#101828; }
   .wrap { max-width:640px; margin:0 auto; padding:16px 14px 40px; }
-  .hd { background:var(--primary); color:#fff; border-radius:14px; padding:18px 16px; margin-bottom:14px; }
-  .hd h1 { margin:0 0 4px; font-size:19px; } .hd p { margin:0; font-size:13px; opacity:.85; }
+  .hd { background:linear-gradient(135deg, var(--yellow-soft) 0%, #FFF 55%, var(--primary-light) 100%); color:#101828; border:1px solid #ECEDF1; border-radius:16px; padding:20px 18px; margin-bottom:14px; }
+  .hd h1 { margin:0 0 4px; font-size:20px; letter-spacing:-.02em; } .hd p { margin:0; font-size:13px; color:#667085; font-weight:600; }
+  .hd .hd-badge { display:inline-block; margin-top:10px; background:var(--yellow); color:var(--navy); font-size:11px; font-weight:800; padding:3px 12px; border-radius:999px; }
   .sec-title { font-size:13px; color:#767a83; margin:18px 4px 8px; }
   details.item { background:#fff; border:1px solid #e4e7ee; border-radius:12px; margin-bottom:10px; overflow:hidden; }
   details.item[open] { border-color:var(--primary); }
@@ -5666,7 +5668,7 @@ app.get('/guide', async (req, res) => {
   .buy-slot { margin-top:12px; font-size:12px; color:#9aa0ab; border-top:1px dashed #e4e7ee; padding-top:10px; }
   .ft { text-align:center; font-size:12px; color:#9aa0ab; margin-top:24px; }
 </style></head><body><div class="wrap">
-    <div class="hd"><h1>🍊 제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p></div>
+    <div class="hd"><h1>🍊 제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p><span class="hd-badge">제주에서 우리집까지, 사랑스러운 제주 속으로</span></div>
     ${picked ? `<div class="sec-title">주문하신 상품</div>${card(picked, true)}` : ''}
     ${others.length ? `<div class="sec-title">${picked ? '아꼼이네의 다른 상품들도 만나보세요' : '판매 상품 안내'}</div>${others.map(r => card(r, !picked && rows.length === 1)).join('')}` : ''}
     ${rows.length === 0 ? '<p style="text-align:center; color:#767a83;">등록된 안내가 아직 없습니다.</p>' : ''}
