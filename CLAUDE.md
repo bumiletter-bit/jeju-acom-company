@@ -33,7 +33,31 @@
 - **poll-light**: `node "%LOCALAPPDATA%\Temp\claude\...\scratchpad\poll-light.js"` (세션 스크래치 — 새 세션이면 cc_instructions 직접 조회 스크립트 재작성: '대기·진행중' 전건+본문, 첫 줄 verdict).
 - 기존 속도 규칙 B(5분 폴링)는 이 체제로 대체. 규칙 A(메인 단독)·품질 그물망·보고 규약(#113)은 유지.
 
-## ★★★ 8/4 밤~8/5 세션 인수인계 (지시 #200~#210 전건 완료 — v5.9.198 라이브) ← 최신, 여기부터 읽기
+## ★★★★ 8/5 종일 세션 인수인계 (지시 #211~#234 — 야간 자율 큐 진행 중) ← 최신, 여기부터 읽기
+
+**버전: 회사 v5.9.204**(공개 확인 = `GET /api/public/version` — #228-④ 신설, 배포 검증 표준) / **톡톡봇 320148b**(2026-08-05.1+라임 설정화) / **🚀 알림톡 발사 ON**(8/5 10:06~ — KAKAO_NOTIFY=on, 첫날 실패 0·전건 sent, #214 저녁 종합 보고 대기) / **홈 대표 합격**(#233 — skin6 ?v=13 = 회귀 기준점).
+
+### 🌙 #234 야간 자율 큐 현황 (대표 퇴근 — 결정 불요 건 연속 처리·건별 지시함 보고)
+- ✅ 완료: ②(#232 설계 보고 — 승인 대기) ③(서브페이지 = "이식 잔여 없음" 판정 — 해시 오버레이가 정본·기포함) ④(캘린더 실페이지 이식 — skin6/calendar.html·진입점 실링크 전환) ⑤(/guide v5 리뉴얼 — v5.9.204·URL 무변경) ⑥(#219 기완료 확인) ⑦(라임 설정화 — 톡톡봇 320148b·bot_timing DB 로드·기본값 무변경. **잔여: 봇 /health로 재배포 반영 확인 1건**)
+- ⏳ 남음: **①(#214 저녁 관찰 종합 보고 — 19~20시 시점)** · **⑧(챗봇 배포 준비 문서화 — 배포 실행 금지)** · **⑨(04:30 리뷰 수집기 복구 판정 — v5.9.203 교정분: 429 백오프 3회·부분 성공)**
+- 보류(대표 결정 대기): #232 시공 승인·클릭 4건(MALL_API env·챗 GO·게임 GO·scope) / 서브 합격 판정 / 카탈로그 이원 통합(네이버 데모 20종 vs 카페24 실상품 — 상품 매핑) / 카카오 봇 배포 / 대표 디자인 전환 / 앱 팝업 정리(A안)
+
+### 🏗️ 카페24 skin6 작업 체계 (홈 합격 상태 — 절대 회귀 금지)
+- **미리보기 = https://akkome.cafe24.com/skin-skin6** (skin_no=11·skin_code=skin6 — URL은 skin_code 기준. 캐시 회피는 ?v=N 증가). 실서비스 아모르2 무접촉 원칙(현재까지 오염 0 — 매 시공 확인).
+- **파이프라인**: 정본 = akkome-website 리포 **v5-preview 브랜치**(로컬 플랫폼본은 구판 — 사용 금지) → `transform-v5.js` 변환(치환 카운트 검증) → SFTP 업로드. **핵심 스크립트·최종 작업본 전부 `_참고자료\카페24스킨백업\scripts\` 보존**(스크래치 소실 대비 — transform-v5/calendar·upload/backup/tree·poll-light/respond/append-report/get-instruction·스냅샷·skin6-work-final 30개).
+- **SFTP**: akkome.ftp.cafe24.com:3822(SFTP)·계정 akkome·비번 .env(CAFE24_FTP_*). 업로드 가드 = /sde_design/skin6/ 한정.
+- **변환 내용(transform-v5.js — 홈)**: 게임 링크→준비중 모달(data-modal)·캘린더→실페이지·물방울 "곧 열려요"(실수치 미연동)·에셋 assets2/(CDN 캐시 키)·no-referrer·**실드 스크립트**(앱 오버레이 `[class^="app-smart-popup"]`+캠페인+TALK **상시 display:none** — 모바일 전용 딤이 터치 흡수하던 실폰 결함의 근본, #230)·data-modal 위임 핸들러·장바구니 뱃지 실연동(치환코드 모듈 hidden 패턴 — #232 실증).
+- **검증 표준(무회귀 4종 — #230 확립)**: 12항목 스모크 + 아이콘 정본 diff 0 + **터치 시퀀스**(touchscreen.tap — 좌표 클릭은 거짓 합격 이력) + 실서비스 무변경. 스크립트: verify-*·final-smoke·touch-test(scripts 폴더).
+- 교훈: PowerShell `>`/Set-Content는 바이너리·한글 오염(git archive/tar·Write 도구 사용) · 검증은 데스크톱+모바일 양 조건 · CDN 캐시는 ?v= 우회 · "HTTP 200"이 아니라 naturalWidth 렌더 실측.
+
+### 📌 주요 라이브 상태
+- **카카오 스킬 서버**: 톡톡봇 `/kakao-skill` 라이브(무언 대기 — 톡톡 완전 동일 라임·#228 확정). 봇 배포·블록 생성 = 대표 확정 대기. 스킬 URL = `https://jeju-akkomene-talktalk-bot.onrender.com/kakao-skill`.
+- **발사 관찰(#214)**: 기준선 10:09(switch-off 40·hold 7) → 저녁까지 전건 sent·실패 0·보류 0 소진. 스냅샷 = scripts\snapshot2-214.js. 저녁 보고에 알리고 잔여(aligo-remain.js request→result)·60분 텔레그램 실물(대표 확인 항목) 포함.
+- **소급(#216·#217)**: 14/14 sent·발주확인 자동(러너 kakao_backfill_request — 1회성 종료). 라벨 「소급 발송」(#221·backfill 플래그).
+- **리뷰 스냅샷**: 수집기 429 5일 연속 → v5.9.203 교정(백오프 15/30/60×부분 성공) — **내일 04:30 수집분으로 판정**(naver_product_snapshot.reviews not null 여부·note).
+- 지시함 스크립트: scripts\poll-light.js 등 — DB 접속 문자열 내장(.env DATABASE_URL 동일). 폴링 3분 체제(#197) 유지.
+
+## ★★★ 8/4 밤~8/5 세션 인수인계 (지시 #200~#210 전건 완료 — v5.9.198 라이브)
 
 **현재 버전: v5.9.198 / app.js 캐시 v=348** (커밋: `1abdef4` v5.9.197 → `2c5c2c4` v5.9.198 → `2eac703` CLAUDE.md 무회귀 원칙). KAKAO_NOTIFY=off·실발송 0 유지.
 
