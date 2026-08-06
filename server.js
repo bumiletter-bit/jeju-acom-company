@@ -11694,13 +11694,23 @@ setInterval(async () => {
             } catch (e) { out.read = { ok: false, status: e.status, reason: e.reason }; }
             try {
                 const created = await cafe24.apiReq('POST', '/api/v2/admin/products', {
-                    request: { product: {
+                    request: {   // 카페24 스키마: request 바로 아래 필드(product 래퍼 없음 — 422 실측 교정)
                         product_name: '[테스트] 아꼼 B안 API 확증용 — 삭제 예정',
                         price: '100', display: 'F', selling: 'F',
                         summary_description: 'write_product 확증 테스트 (진열·판매 안함)',
-                    } } });
+                    } });
                 out.write = { ok: true, product_no: created?.product?.product_no || null };
             } catch (e) { out.write = { ok: false, status: e.status, reason: e.reason, detail: JSON.stringify(e.detail || {}).slice(0, 300) }; }
+        } else if (req.action === 'raw' && req.path) {
+            // 스키마 실험용(#248-③ — 옵션 API 문서 불충분) — 안전 가드: products 경로 한정·DELETE 금지·진열안함 원칙은 호출 측 준수
+            try {
+                const method = String(req.method || 'GET').toUpperCase();
+                if (!/^\/api\/v2\/admin\/products/.test(String(req.path))) throw new Error('가드: products 경로만 허용');
+                if (method === 'DELETE') throw new Error('가드: DELETE는 delete-test 액션만');
+                const r2 = method === 'GET' ? await cafe24.apiGet(req.path, req.query || undefined)
+                                            : await cafe24.apiReq(method, req.path, req.body || undefined);
+                out.raw = { ok: true, data: JSON.parse(JSON.stringify(r2)) };
+            } catch (e) { out.raw = { ok: false, status: e.status, reason: e.reason || String(e.message).slice(0, 150), detail: JSON.stringify(e.detail || {}).slice(0, 500) }; }
         } else if (req.action === 'delete-test' && req.product_no) {
             // 확증용 테스트 상품 정리(해당 번호만 — 안전 가드: 이름에 '테스트' 포함 확인)
             try {
