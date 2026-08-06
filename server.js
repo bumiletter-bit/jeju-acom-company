@@ -7837,7 +7837,9 @@ async function collectProductSnapshot() {
     // 지시 #122: 판매중 상품 공개 리뷰(상품별 5건) — 공개 경로(brand.naver.com, IP 제한 없음 → 직접 fetch).
     //   🔴 자동 폴백: 어떤 이유로든 실패하면 직전 스냅샷의 리뷰를 그대로 유지(리뷰만 구버전·다른 데이터는 정상 갱신) — 실패 사실은 note에 기록.
     let reviews = null, reviewNote = '';
+    const REVIEW_FETCH_OFF = true;   // 지시 #247-① (대표 확정): 네이버 리뷰 엔드포인트 원천 봉쇄(로컬 IP 첫 콜도 429 실측) — 매일 37분 백오프 낭비 제거. 재개 시 false.
     try {
+        if (REVIEW_FETCH_OFF) throw new Error('리뷰 갱신 중단(#247 — 원천 봉쇄·직전분 유지)');
         const live = items.filter(i => i.originNo && i.no);   // 대표 지시(8/1): 리뷰·배지를 품절 포함 전 상품으로 — 상세 리뷰 탭 재료
         const collected = {};
         const revFetch = async (p) => fetch('https://brand.naver.com/n/v1/contents/reviews/query-pages', {
@@ -8202,7 +8204,16 @@ app.get('/api/public/store-snapshot', async (req, res) => {
     try {
         const r = await pool.query(`SELECT run_at, total, items, reviews FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
         if (!r.rows.length) return res.status(404).json({ error: 'no-snapshot — 수집기 미실행 (타이머 product_snapshot OFF 또는 권한 대기)' });
-        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items, reviews: r.rows[0].reviews || null });
+        // 지시 #247-①: 리뷰의 "실제 마지막 성공 수집 시각" — 직전분 유지 체인의 원본 행(실패·중단 note가 없는 마지막 리뷰 보유 행)으로 산출.
+        //   표기 정직화 재료: 화면이 스냅샷 시각(at — 매일 갱신)을 리뷰 기준일로 오표기하지 않게 분리 제공.
+        let reviewsFreshAt = null;
+        try {
+            const f = await pool.query(`SELECT run_at FROM naver_product_snapshot
+                WHERE reviews IS NOT NULL AND note NOT LIKE '%리뷰 갱신 실패%' AND note NOT LIKE '%리뷰 갱신 중단%'
+                ORDER BY id DESC LIMIT 1`);
+            reviewsFreshAt = f.rows.length ? f.rows[0].run_at : null;
+        } catch (_) { /* 산출 실패 시 null — 화면은 '수집 기준일 확인 불가' 폴백 */ }
+        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt });
     } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
 });
 
