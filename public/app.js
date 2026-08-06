@@ -12666,6 +12666,7 @@ async function renderNotifyLogs(opts) {
         if (r.l_message) msgs.push(`<div class="text-muted" style="font-size:11px; margin:4px 0 2px;">발송안내 · 템플릿 UJ_9087 (알림톡 우선 → 실패 시 문자 대체)</div><pre style="white-space:pre-wrap; font:inherit; font-size:12px; margin:0;">${escapeHtml(r.l_message)}</pre>`);
         return `
         <tr>
+            <td style="width:30px; text-align:center;">${r.k_id ? `<input type="checkbox" class="nlog-chk" data-kid="${r.k_id}" data-kstatus="${escapeHtml(r.k_status || '')}" onchange="nlogUpdateBar()">` : ''}</td>
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
             <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? '<div class="text-muted" style="font-size:11px;">주문 기록 밖 (발송만 감지)</div>' : ''}</td>
             <td style="white-space:nowrap;">${
@@ -12693,7 +12694,13 @@ async function renderNotifyLogs(opts) {
     const tbody = el.querySelector('tbody');
     if (append && tbody) tbody.insertAdjacentHTML('beforeend', rows);
     else el.innerHTML = rows
-        ? `<table class="data-table"><thead><tr><th>일시(주문)</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
+        ? `<div id="nlogBulkBar" style="display:none; align-items:center; gap:8px; margin:0 0 8px; padding:8px 12px; background:var(--bg,#F2F3F5); border-radius:10px; flex-wrap:wrap;">
+             <b style="font-size:13px;">선택 <span id="nlogSelCnt">0</span>건</b>
+             <button class="btn-sm btn-primary" onclick="nlogBulkSend('today', this)">보류 → 오늘 발송으로 안내</button>
+             <button class="btn-sm btn-outline" onclick="nlogBulkSend('tomorrow', this)">보류 → 내일 발송으로 안내</button>
+             <button class="btn-sm btn-outline" style="color:var(--danger,#F04438); border-color:var(--danger,#F04438); margin-left:auto;" onclick="nlogBulkDelete(this)">🗑 선택 삭제</button>
+           </div>
+           <table class="data-table"><thead><tr><th style="width:30px; text-align:center;"><input type="checkbox" id="nlogChkAll" onchange="nlogToggleAll(this)"></th><th>일시(주문)</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">기록이 없습니다 — [데이터관리] 타이머에서 "주문 안내 알림톡"·"문자 발송 안내"를 켜면 감지 시 dry-run 문면이 여기에 쌓입니다.</p>';
     // #204-2: 누적(+=)이 아니라 append 여부로 확정 — 응답이 겹쳐도 표시분이 부풀지 않는다.
     notifyLogShown = append ? notifyLogShown + (d.rows || []).length : (d.rows || []).length;
@@ -12730,6 +12737,45 @@ window.manualSendHold = async function(id, day, btn) {
     btn.disabled = true;
     try { const r = await api('/api/agent-office/kakao-notify-logs/' + id + '/manual-send', 'POST', { day }); showToast('✅ ' + (r.message || '처리 완료'), 'lime'); }
     catch (e) { showToast('❌ ' + String(e.message || '').slice(0, 80)); btn.disabled = false; return; }
+    renderNotifyLogs().catch(console.error);
+};
+// ── 지시 #245(대표, 8/6): 체크바 일괄 처리 — 보류 다건 오늘/내일 발송 + 취소 건 수기 삭제(soft-delete)
+window.nlogToggleAll = function(box) {
+    document.querySelectorAll('.nlog-chk').forEach(c => { c.checked = box.checked; });
+    nlogUpdateBar();
+};
+window.nlogUpdateBar = function() {
+    const n = document.querySelectorAll('.nlog-chk:checked').length;
+    const bar = document.getElementById('nlogBulkBar');
+    if (bar) bar.style.display = n ? 'flex' : 'none';
+    const cnt = document.getElementById('nlogSelCnt');
+    if (cnt) cnt.textContent = n;
+};
+window.nlogBulkSend = async function(day, btn) {
+    const checked = [...document.querySelectorAll('.nlog-chk:checked')];
+    const holds = checked.filter(c => c.dataset.kstatus === 'hold-0809');
+    const skip = checked.length - holds.length;
+    if (!holds.length) { showToast('보류(8~9시) 상태인 건이 선택되지 않았어요 — 일괄 발송은 보류 건만 대상이에요'); return; }
+    if (!confirm(`보류 ${holds.length}건을 「${day === 'today' ? '오늘' : '내일'} 발송」 안내로 지금 발송할까요?` + (skip ? `\n(보류가 아닌 ${skip}건은 건너뜁니다)` : ''))) return;
+    btn.disabled = true;
+    let ok = 0, fail = 0;
+    for (const c of holds) {
+        try { await api('/api/agent-office/kakao-notify-logs/' + c.dataset.kid + '/manual-send', 'POST', { day }); ok++; }
+        catch (e) { fail++; }
+        await new Promise(r => setTimeout(r, 700));   // 발송 간격(#216 소급 패턴)
+    }
+    showToast(`✅ 발송 ${ok}건` + (fail ? ` · ❌ 실패 ${fail}건` : '') + (skip ? ` · 건너뜀 ${skip}건` : ''), fail ? undefined : 'lime');
+    btn.disabled = false;
+    renderNotifyLogs().catch(console.error);
+};
+window.nlogBulkDelete = async function(btn) {
+    const ids = [...document.querySelectorAll('.nlog-chk:checked')].map(c => Number(c.dataset.kid)).filter(Boolean);
+    if (!ids.length) { showToast('선택된 항목이 없어요'); return; }
+    if (!confirm(`선택한 ${ids.length}건을 이력에서 삭제할까요?\n(취소된 주문 등 조치가 필요 없는 건 정리용 — 기록은 감사 로그에 남아요)`)) return;
+    btn.disabled = true;
+    try { const r = await api('/api/agent-office/kakao-notify-logs/delete', 'POST', { ids }); showToast('🗑 ' + (r.message || '삭제 완료'), 'lime'); }
+    catch (e) { showToast('❌ ' + String(e.message || '').slice(0, 80)); }
+    btn.disabled = false;
     renderNotifyLogs().catch(console.error);
 };
 window.sendLmsGuide = async function(orderKey) {

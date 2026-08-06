@@ -906,6 +906,7 @@ async function initDB() {
     // 지시 #176: 재발송 횟수 표기 (통합 이력 — additive)
     await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS resend_count INT DEFAULT 0`);
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS resend_count INT DEFAULT 0`);
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);   // 지시 #245: 이력 수기 삭제(soft-delete — 물리삭제 금지 원칙)
     // 지시 #221 (대표 확정): dry-run→실발송 소급 전환 건 표기 구분 — 「소급 발송」 라벨용 플래그 (표기 계층 전용·additive)
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS backfill BOOLEAN DEFAULT FALSE`);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
@@ -5697,7 +5698,7 @@ app.get('/api/agent-office/kakao-notify-logs', authMiddleware, async (req, res) 
             `SELECT id, order_key, product_name, receiver_masked, message, mode, status, error,
                     confirm_status, confirm_error, confirmed_at, created_at
              FROM kakao_notify_log
-             ${manualOnly ? `WHERE confirm_status IN ('manual-needed','failed')` : ''}
+             WHERE deleted_at IS NULL ${manualOnly ? `AND confirm_status IN ('manual-needed','failed')` : ''}
              ORDER BY id DESC LIMIT 50`);
         res.json({ rows: r.rows });
     } catch (err) { handleAdminErr(res, err); }
@@ -5730,6 +5731,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         const qRaw = String(req.query.q || '').trim().slice(0, 40);
         const qDigits = qRaw.replace(/[^0-9]/g, '');
         const conds = [], params = [];
+        conds.push(`(k.id IS NULL OR k.deleted_at IS NULL)`);   // 지시 #245: 수기 삭제 건 비표시(soft-delete — 발송안내만 있는 행은 k.id IS NULL이라 통과)
         // #179-2: 아래 3줄은 SQL 파라미터 참조($1·$2…)의 '$'가 소실돼 정수 리터럴로 박혔었음(1::date → 캐스팅 오류 500) — 교정
         if (useRange) { params.push(from, to); conds.push(`(COALESCE(k.created_at, l.created_at) + interval '9 hours')::date BETWEEN $${params.length - 1}::date AND $${params.length}::date`); }
         if (qRaw) {
@@ -5820,11 +5822,11 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         // 당일(KST) 요약 — 원본 기준 집계
         const sum = (await pool.query(
             `SELECT
-               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status NOT IN ('hold-0809','canceled-excluded')) AS order_notice,
-               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'hold-0809') AS hold,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status NOT IN ('hold-0809','canceled-excluded')) AS order_notice,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status = 'hold-0809') AS hold,
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status <> 'skip-no-guide') AS ship_notice,
                (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'skip-no-guide') AS skipped,
-               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','token-failed','build-failed'))
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL AND status IN ('failed','token-failed','build-failed'))
              + (SELECT count(*) FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status IN ('failed','build-failed')) AS failed,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***') AS no_tel,
                (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'gift-masked') AS gift,
@@ -5858,6 +5860,20 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
     } catch (err) { handleAdminErr(res, err); }
 });
 
+// ── 지시 #245(대표, 8/6): 이력 수기 삭제 — 취소된 주문 등 조치 불요 건을 화면에서 정리(soft-delete·물리삭제 금지·audit 기록).
+//    수집기는 order_key UNIQUE ON CONFLICT DO NOTHING이라 삭제(soft) 후에도 재수집 재등장 없음. 전 직원 사용 가능(문의 관리 공용 원칙).
+app.post('/api/agent-office/kakao-notify-logs/delete', authMiddleware, async (req, res) => {
+    try {
+        const ids = (Array.isArray((req.body || {}).ids) ? req.body.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 200);
+        if (!ids.length) return res.status(400).json({ error: '삭제할 항목(ids)이 없습니다' });
+        const before = (await pool.query(`SELECT id, order_key, product_name, status FROM kakao_notify_log WHERE id = ANY($1) AND deleted_at IS NULL`, [ids])).rows;
+        if (!before.length) return res.status(404).json({ error: '삭제 가능한 항목이 없습니다 (이미 삭제됐거나 없는 id)' });
+        await pool.query(`UPDATE kakao_notify_log SET deleted_at = now() WHERE id = ANY($1) AND deleted_at IS NULL`, [before.map(r => r.id)]);
+        await writeAudit({ action: 'soft-delete', targetType: 'kakao_notify_log', targetId: before.map(r => r.id).join(','),
+            changes: { rows: before }, source: 'notify-history', actor: adminActor(req) }).catch(() => {});
+        res.json({ ok: true, deleted: before.length, message: `${before.length}건을 이력에서 정리했습니다` });
+    } catch (err) { handleAdminErr(res, err); }
+});
 // ── 지시 #171: 08~09시 보류 건 [수기 발송] — 오늘/내일 안내 선택. 멱등(보류 상태에서만 1회)·스위치 OFF면 dry-run.
 //    지시 #245(대표, 8/6): 문의 관리는 전 직원 공용 — adminOnly 해제(로그인 직원 전원 사용 가능). 발송 로직 무변경.
 app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, async (req, res) => {
