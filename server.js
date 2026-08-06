@@ -5858,8 +5858,9 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
     } catch (err) { handleAdminErr(res, err); }
 });
 
-// ── 지시 #171: 08~09시 보류 건 [수기 발송] — 대표가 오늘/내일 안내 선택. 멱등(보류 상태에서만 1회)·스위치 OFF면 dry-run.
-app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, adminOnly, async (req, res) => {
+// ── 지시 #171: 08~09시 보류 건 [수기 발송] — 오늘/내일 안내 선택. 멱등(보류 상태에서만 1회)·스위치 OFF면 dry-run.
+//    지시 #245(대표, 8/6): 문의 관리는 전 직원 공용 — adminOnly 해제(로그인 직원 전원 사용 가능). 발송 로직 무변경.
+app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, async (req, res) => {
     try {
         const day = String((req.body || {}).day || '');
         if (day !== 'today' && day !== 'tomorrow') return res.status(400).json({ error: "day는 'today' 또는 'tomorrow'여야 합니다" });
