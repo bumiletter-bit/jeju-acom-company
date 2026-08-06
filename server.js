@@ -11701,6 +11701,45 @@ setInterval(async () => {
                     } });
                 out.write = { ok: true, product_no: created?.product?.product_no || null };
             } catch (e) { out.write = { ok: false, status: e.status, reason: e.reason, detail: JSON.stringify(e.detail || {}).slice(0, 300) }; }
+        } else if (req.action === 'bulk-create' && Array.isArray(req.items)) {
+            // #248-③ B안: 네이버 정본 → 카페24 신규 등록(진열·판매 안함 — 실서비스 노출 0). 스키마 = raw 실험으로 확정분.
+            const results = [];
+            for (const it of req.items.slice(0, 25)) {
+                const row = { naver_no: it.no, name: String(it.name || '').slice(0, 30) };
+                try {
+                    const cr = await cafe24.apiReq('POST', '/api/v2/admin/products', { shop_no: 1, request: {
+                        product_name: String(it.name || '').slice(0, 250),
+                        price: String(it.price), supply_price: String(it.price),
+                        display: 'F', selling: 'F',
+                        summary_description: '네이버 정본 이관(B안) — 오픈 전 진열·판매 안함',
+                    } });
+                    row.c24_no = cr?.product?.product_no || null;
+                    const opts = Array.isArray(it.opts) ? it.opts.slice(0, 100) : [];
+                    if (row.c24_no && opts.length) {
+                        await cafe24.apiReq('POST', `/api/v2/admin/products/${row.c24_no}/options`, { shop_no: 1, request: {
+                            has_option: 'T', option_type: 'T', option_list_type: 'S',
+                            options: [{ option_name: '상품 선택', option_value: opts.map(o => ({ option_text: String(o.text).slice(0, 100) })) }],
+                        } });
+                        const vs = await cafe24.apiGet(`/api/v2/admin/products/${row.c24_no}/variants`);
+                        const variants = vs.variants || [];
+                        let priced = 0, missed = 0;
+                        for (const o of opts) {
+                            const add = String(o.add || '0');
+                            if (add === '0') continue;
+                            // 텍스트 매칭 우선(순서 가정 배제) — variants[].options[].value 에서 옵션 텍스트 대조
+                            const v = variants.find(vv => (vv.options || []).some(x => String(x.value) === String(o.text)));
+                            if (!v) { missed++; continue; }
+                            await cafe24.apiReq('PUT', `/api/v2/admin/products/${row.c24_no}/variants/${v.variant_code}`, { shop_no: 1, request: { additional_amount: add } });
+                            priced++;
+                            await new Promise(r => setTimeout(r, 250));
+                        }
+                        row.opts = opts.length; row.priced = priced; if (missed) row.missed = missed;
+                    }
+                } catch (e) { row.error = String(e.reason || e.message).slice(0, 120); }
+                results.push(row);
+                await new Promise(r => setTimeout(r, 500));
+            }
+            out.bulk = results;
         } else if (req.action === 'raw' && req.path) {
             // 스키마 실험용(#248-③ — 옵션 API 문서 불충분) — 안전 가드: products 경로 한정·DELETE 금지·진열안함 원칙은 호출 측 준수
             try {
