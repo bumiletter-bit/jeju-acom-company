@@ -11668,6 +11668,44 @@ setInterval(async () => {
     }
 }, 60000);
 
+// 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.
+//   verify = read_product 1콜 + write_product 확증(테스트 상품 1건 — display:F·selling:F 진열·판매 안함, 실서비스 노출 0).
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('cafe24_product_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'cafe24_product_request'`);   // 선제거 — 반복 실행 방지
+        const out = { action: req.action, at: new Date().toISOString() };
+        if (req.action === 'verify') {
+            try {
+                const list = await cafe24.apiGet('/api/v2/admin/products', { limit: 1, fields: 'product_no,product_name' });
+                out.read = { ok: true, sample: (list.products || [])[0] || null, count: (list.products || []).length };
+            } catch (e) { out.read = { ok: false, status: e.status, reason: e.reason }; }
+            try {
+                const created = await cafe24.apiReq('POST', '/api/v2/admin/products', {
+                    request: { product: {
+                        product_name: '[테스트] 아꼼 B안 API 확증용 — 삭제 예정',
+                        price: '100', display: 'F', selling: 'F',
+                        summary_description: 'write_product 확증 테스트 (진열·판매 안함)',
+                    } } });
+                out.write = { ok: true, product_no: created?.product?.product_no || null };
+            } catch (e) { out.write = { ok: false, status: e.status, reason: e.reason, detail: JSON.stringify(e.detail || {}).slice(0, 300) }; }
+        } else if (req.action === 'delete-test' && req.product_no) {
+            // 확증용 테스트 상품 정리(해당 번호만 — 안전 가드: 이름에 '테스트' 포함 확인)
+            try {
+                const p = await cafe24.apiGet(`/api/v2/admin/products/${Number(req.product_no)}`, { fields: 'product_no,product_name' });
+                const nm = p?.product?.product_name || '';
+                if (!/테스트/.test(nm)) throw new Error('안전 가드: 테스트 상품이 아님 — ' + nm.slice(0, 40));
+                await cafe24.apiReq('DELETE', `/api/v2/admin/products/${Number(req.product_no)}`);
+                out.deleted = { ok: true, product_no: Number(req.product_no), name: nm.slice(0, 40) };
+            } catch (e) { out.deleted = { ok: false, reason: String(e.reason || e.message).slice(0, 150) }; }
+        } else out.error = '지원하지 않는 action';
+        await naverCfgSet('cafe24_product_result', out);
+    } catch (e) {
+        try { await naverCfgSet('cafe24_product_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // 지시 #177: 주문 역조회 진단 러너 — order_probe_request {orderKeys:[...]}. 읽기 전용·PII 미수집(날짜·상태만) — "발송만 감지" 원인 판정용.
 setInterval(async () => {
     try {

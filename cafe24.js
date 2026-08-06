@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const MALL_ID = 'akkome';
 const CLIENT_ID = 'mMdlm3cHGZwkVaem7wGDIB';                                  // 공개값 (Secret은 env)
 const REDIRECT_URI = 'https://jeju-acom-company.onrender.com/api/cafe24/callback'; // 앱 등록값과 한 글자도 다르면 실패
-const SCOPE = 'mall.read_order';
+const SCOPE = 'mall.read_order,mall.read_product,mall.write_product';   // #248-③: 상품 읽기·쓰기 추가(대표 개발자센터 권한 추가·재동의 완료 — 재승인 URL도 동일 scope)
 const API_BASE = `https://${MALL_ID}.cafe24api.com`;
 
 let _pool = null;
@@ -150,6 +150,30 @@ async function apiGet(path, query) {
     }
 }
 
+// #248-③: 쓰기 겸용 요청 — apiGet과 동일한 401 갱신·429/5xx 백오프 2중 방어
+async function apiReq(method, path, body) {
+    let token = await getToken();
+    let retried401 = false;
+    for (let attempt = 0; ; attempt++) {
+        const res = await fetch(`${API_BASE}${path}`, {
+            method,
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: body != null ? JSON.stringify(body) : undefined,
+        });
+        if (res.status === 401 && !retried401) { retried401 = true; token = await getToken(true); continue; }
+        if ((res.status === 429 || res.status >= 500) && attempt < 5) { await sleep(1000 * Math.pow(2, attempt)); continue; }
+        const text = await res.text();
+        let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
+        if (!res.ok) {
+            const e = new Error('cafe24_api_' + res.status); e.status = res.status;
+            e.reason = (data.error && data.error.message) || data.error_description || 'api_failed';
+            e.detail = data;
+            throw e;
+        }
+        return data;
+    }
+}
+
 // 배송준비중(N20) 조회 → convertDataJasamol 8키 매핑 (변환 로직 무수정)
 //   품목 채택 = items[].order_status === 'N20' (취소신청 품목은 C코드로 바뀌어 자연 제외 — 대표 확인 요구사항)
 //   수량 = quantity − claim_quantity (취소'요청' 수량 차감, 0 이하 제외 — 쿠팡 발주가능수량과 동일 사상)
@@ -213,4 +237,4 @@ async function getStatus() {
     return out;
 }
 
-module.exports = { init, getAuthUrl, exchangeCode, getToken, fetchInvoiceOrders, getStatus, REDIRECT_URI };
+module.exports = { init, getAuthUrl, exchangeCode, getToken, fetchInvoiceOrders, getStatus, REDIRECT_URI, apiGet, apiReq };
