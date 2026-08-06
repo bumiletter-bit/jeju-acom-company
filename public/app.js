@@ -12693,15 +12693,21 @@ async function renderNotifyLogs(opts) {
     // #180-A1: [더보기]는 기존 행을 유지한 채 tbody에만 이어 붙인다(화면 리셋 금지).
     const tbody = el.querySelector('tbody');
     if (append && tbody) tbody.insertAdjacentHTML('beforeend', rows);
-    else el.innerHTML = rows
-        ? `<div id="nlogBulkBar" style="display:none; align-items:center; gap:8px; margin:0 0 8px; padding:8px 12px; background:var(--bg,#F2F3F5); border-radius:10px; flex-wrap:wrap;">
+    else {
+        // #245-2: 액션 바는 스크롤 래퍼(overflow-x:auto — sticky 무효화) 바깥에 렌더해야 화면 스크롤에 고정된다.
+        document.getElementById('nlogBulkBar')?.remove();
+        if (rows) el.insertAdjacentHTML('beforebegin',
+          `<div id="nlogBulkBar" style="display:none; align-items:center; gap:8px; margin:0 0 8px; padding:8px 12px; background:#fff; border:1px solid var(--border,#ECEDF1); border-radius:10px; flex-wrap:wrap; position:sticky; top:8px; z-index:30; box-shadow:0 2px 10px rgba(16,24,40,.10);">
              <b style="font-size:13px;">선택 <span id="nlogSelCnt">0</span>건</b>
              <button class="btn-sm btn-primary" onclick="nlogBulkSend('today', this)">보류 → 오늘 발송으로 안내</button>
              <button class="btn-sm btn-outline" onclick="nlogBulkSend('tomorrow', this)">보류 → 내일 발송으로 안내</button>
+             <span class="text-muted" style="font-size:11.5px;">💡 일괄 발송은 <b>⏸ 보류(8~9시)</b> 건에만 적용돼요 — 보류가 아닌 건은 자동으로 건너뜁니다</span>
              <button class="btn-sm btn-outline" style="color:var(--danger,#F04438); border-color:var(--danger,#F04438); margin-left:auto;" onclick="nlogBulkDelete(this)">🗑 선택 삭제</button>
-           </div>
-           <table class="data-table"><thead><tr><th style="width:30px; text-align:center;"><input type="checkbox" id="nlogChkAll" onchange="nlogToggleAll(this)"></th><th>일시(주문)</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
+           </div>`);
+        el.innerHTML = rows
+        ? `<table class="data-table"><thead><tr><th style="width:30px; text-align:center;"><input type="checkbox" id="nlogChkAll" onchange="nlogToggleAll(this)"></th><th>일시(주문)</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">기록이 없습니다 — [데이터관리] 타이머에서 "주문 안내 알림톡"·"문자 발송 안내"를 켜면 감지 시 dry-run 문면이 여기에 쌓입니다.</p>';
+    }
     // #204-2: 누적(+=)이 아니라 append 여부로 확정 — 응답이 겹쳐도 표시분이 부풀지 않는다.
     notifyLogShown = append ? notifyLogShown + (d.rows || []).length : (d.rows || []).length;
     renderNotifyMoreBtn();
