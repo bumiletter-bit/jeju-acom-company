@@ -332,13 +332,37 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         res.json({ ok: true, replayed: out.replayed, balance: out.balance });
     }));
 
-    // 후기 물방울 +1 — 상한 = 실주문 수(대표 확정: 사진·중복 무관, 주문 1건당 1회)
+    // 후기 실작성 수 — 카페24 상품후기 게시판(board 4) 대조. #259(대표): 후기를 실제로 써야 지급.
+    //   scope mall.read_community 미개통이면 null 반환 → 검증 생략(주문 상한만 — 재동의 전 폴백).
+    const reviewCntCache = new Map();
+    async function countReviews(memberKey) {
+        if (!cafe24 || typeof cafe24.apiGet !== 'function') return null;
+        const c = reviewCntCache.get(memberKey);
+        if (c && Date.now() - c.at < 30000) return c.n;
+        try {
+            const r = await cafe24.apiGet('/api/v2/admin/boards/4/articles', { member_id: memberKey, limit: 100 });
+            const arr = (r && r.articles) || [];
+            // member_id 파라미터가 무시될 가능성 방어: 응답에 작성자 필드가 있으면 그걸로 대조, 없으면 파라미터 필터를 신뢰
+            const hasIdField = arr.some(a => a.member_id != null || a.writer_id != null);
+            const n = hasIdField
+                ? arr.filter(a => String(a.member_id || '') === memberKey || String(a.writer_id || '') === memberKey).length
+                : arr.length;
+            reviewCntCache.set(memberKey, { n, at: Date.now() });
+            return n;
+        } catch (e) { return null; }
+    }
+
+    // 후기 물방울 +1 — 대표 확정(#259): 사진 무관·주문 1건당 1회·"실제 후기 작성" 확인 후 지급
     router.post('/pub/review-claim', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid((req.body || {}).mid);
         const member = await resolveMember(mid, null);
         const orders = await countPaidOrders(mid);
         const claimed = await ledgerCountByReason(member.id, '후기 물방울');
         if (claimed >= orders) return res.status(403).json({ error: '지급 가능한 후기 횟수를 모두 받았어요 (주문 1건당 1회)' });
+        const reviews = await countReviews(mid);
+        if (reviews !== null && claimed >= reviews) {
+            return res.status(403).json({ error: '후기를 먼저 작성해 주세요 🍊 작성 후 이 버튼을 누르면 물방울 1개를 드려요!' });
+        }
         const out = await pubGrant(member, 1, '후기 물방울', 'review:' + member.id + ':' + (claimed + 1));
         res.json({ ok: true, replayed: out.replayed, balance: out.balance, review_left: Math.max(0, orders - claimed - 1) });
     }));
