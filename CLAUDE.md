@@ -38,17 +38,23 @@
 **버전: 회사 v5.9.205**(#235 — /guide 아꼼이 로고 실이미지(`public/akkomi.png`)+다른상품 섹션 `GUIDE_SHOW_OTHERS=false` OFF) / **톡톡봇 320148b** / **🚀 알림톡 발사 첫날 무사고 마감**(sent 128=자동114+소급14·실패0·보류 전량 소진·포인트 832원≈128×6.5 정합 — #214 저녁 보고 완료. ⚠️보류 7건 발주확인 manual-needed 잔존·"주문기록밖" 8/5 신규 1건=선물하기 skip) / **홈 대표 합격 유지**(skin6 — 야간 시공 후 스모크 전 회 통과).
 
 ### 🚀 8/7 오전 세션 종료 인계 (컨텍스트 만석 — 새 세션은 여기부터) ← 최신
-**운용**: 폴링 OFF(대표 지시 8/7 10:30 — 직접 오더 체제. "지시함 확인" 입력 시에만 poll-light 조회). **버전: 회사 v5.9.213 / app.js v=352 / skin6 재검 캐시 ?v=72.**
+**운용**: 폴링 OFF(대표 지시 8/7 10:30 — 직접 오더 체제. "지시함 확인" 입력 시에만 poll-light 조회). **버전: 회사 v5.9.214 / app.js v=353 / skin6 재검 캐시 ?v=72.**
+
+### ✅ 8/7 오전 후속 — 동기화 파이프라인 시공 완료 (v5.9.214)
+- **#246 판정2 시공 완료**: 수집기 `cafe24_sync`(naver_auto_collect — **기본 OFF**·05:10 앵커, 04:30 스냅샷 직후) = 네이버 스냅샷(정본) ↔ 카페24 신규 세트 기본가·품절 대조. **등록식 실검산: 기본가 = 네이버 할인가 + min(옵션 증감액) — 실등록가 19/19 일치**(옵션 정본 = 7/30 STORE_DATA). 매핑+minAdd = DB `cafe24_sync_map`(시드 완료·보존본 `_참고자료\카페24스킨백업\scripts\c24-sync-map-246.json`).
+- **가드 4종 전부 실측 검증**(결함 주입 테스트 — minAdd 조작 후 원복): ①기본 dry(`cafe24_sync_mode`='fix'일 때만 실보정) — dry에서 무쓰기 확인 ②±50% 초과 = blocked 분류·fix에서도 무쓰기 확인(c105 주입 99500 차단) ③차이·보정 시 텔레그램 보고(quiet 옵션 — 러너 테스트는 기본 억제) ④품절 동기는 display=T만(오픈 전 세트 무조작·statusType SALE/OUTOFSTOCK 기준). **fix 실PUT 경로도 실측**: c91 주입 드리프트 15800 → fix가 스스로 14800 복원(카페24 API 재조회 확인). ⚠️ 카페24 GET 가격 응답에 **단기 캐시(~1분) 실측** — 보정 직후 재조회는 구값 가능(일 1회 운용엔 무영향·PUT은 절대값이라 무해).
+- **수동 실행** = 러너 `{action:'sync', mode:'dry'|'fix', telegram:'yes'(선택)}` → 결과 `cafe24_product_result`(요약+`cafe24_sync_last` 상세). 러너 폴러 **60초→10초 단축**(대표 지시 8/7).
+- **가동 대기(대표/똑똑이 GO)**: ①타이머 `cafe24_sync` ON(dry — 차이 감지 시 텔레그램만) ②`cafe24_sync_mode`='fix' 투입(자동 보정 활성). 오픈 전환과 무관하게 ON 가능 — 전환 후에도 매핑 무수정(신규 번호 기준이라 그대로 유효).
 
 **🎯 핵심 현황 — B안 신규 세트 = 네이버 100% 완전체·오픈 전환만 남음**
 - 카페24 신규 상품 **91~109(19종·전부 진열/판매 안함)**: 가격(전수 일치 검산)+옵션 108종(추가금 정합·천혜향 14/14 표본검증)+**상세페이지 19/19 이관 완료**(bulk-detail — CDN+no-referrer). 매핑표 = `_참고자료\카페24스킨백업\scripts\c24-map-new-246.json`.
 - **오픈 전환 절차(대표 "전환 GO" 시 실행)**: ①기존 겹침 상품 판매안함(⚠️실서비스 아모르2에서 팔리는 상품 꺼짐 — 시점 대표 결정) ②신규 91~109 진열·판매 ON(raw 액션으로 display/selling T PUT) ③skin6 index의 `AKM_C24MAP`을 신규 번호로 교체(매핑표 JSON) ④전환 직후 재검(화면 정합·원터치 구매 — #249 옵션 텍스트가 신규 표기와 동일 조립이라 확인 레이어 자동 소멸).
-- **카페24 API 도구(재사용)**: 러너 `cafe24_product_request`(60초 폴러) — verify / bulk-create / bulk-detail / raw{method,path,body — products 한정·DELETE 금지} / delete-test. 결과 = `cafe24_product_result`. 실행 스크립트 = scratchpad `c24-raw.js`(새 세션은 재작성: 플래그 INSERT→15초 폴링 회수). **스키마(실측 확정)**: 상품 POST `{shop_no:1,request:{product_name,price,supply_price,display,selling}}` / 옵션 POST `{...request:{has_option:'T',option_type:'T',option_list_type:'S',options:[{option_name,option_value:[{option_text}]}]}}` / 추가금 `PUT variants/{code} {request:{additional_amount}}` / 상세 `PUT products/{no} {request:{description}}`.
+- **카페24 API 도구(재사용)**: 러너 `cafe24_product_request`(10초 폴러 — v5.9.214에서 60초→10초) — verify / bulk-create / bulk-detail / **sync(동기화 1회)** / raw{method,path,body — products 한정·DELETE 금지} / delete-test. 결과 = `cafe24_product_result`. 실행 스크립트 = scratchpad `c24-raw.js`(새 세션은 재작성: 플래그 INSERT→15초 폴링 회수). **스키마(실측 확정)**: 상품 POST `{shop_no:1,request:{product_name,price,supply_price,display,selling}}` / 옵션 POST `{...request:{has_option:'T',option_type:'T',option_list_type:'S',options:[{option_name,option_value:[{option_text}]}]}}` / 추가금 `PUT variants/{code} {request:{additional_amount}}` / 상세 `PUT products/{no} {request:{description}}`.
 - **#249(완료)**: v5 상세 옵션 행 클릭 선택+[구매하기] 실진행(정확 일치=자동 담기→장바구니 / 불일치=확인 레이어). 담기·구매 공용 = index 내 `akmC24Flow`.
 
 **남은 단계(우선순위순)**
 1. **오픈 전환**(위 절차 — 대표 GO 대기) → 전환 후 원터치 구매 실측.
-2. **동기화 파이프라인**(#246 판정2 설계 승인분): 04:30 스냅샷 후 신규 세트 가격·품절 자동 대조→보정(가드: 테스트 후 활성·±50% 상한·텔레그램 보고) — 시공 미착수.
+2. ✅ **동기화 파이프라인 시공 완료**(8/7 오전 후속 — 위 절 참조): 가동 스위치(타이머 ON·fix 모드)만 대표/똑똑이 GO 대기.
 3. #236 4단계 게임 결선 — 인증 구조 (a)공개 라우트+서버 대사(권고)/(b)브릿지 대표 확정 대기.
 4. 대표 재검 대기: #238(주문내역 실카드 로그인 재검)·#242(순회 결함 0 재검)·#232(종결 정리).
 5. 백로그: 리뷰 대체 경로 조사(원천 봉쇄 — (b)) · 가입 폼 최종 재검 · #241/#245 시공분 실물 재검.
