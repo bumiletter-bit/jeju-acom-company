@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const MALL_ID = 'akkome';
 const CLIENT_ID = 'mMdlm3cHGZwkVaem7wGDIB';                                  // 공개값 (Secret은 env)
 const REDIRECT_URI = 'https://jeju-acom-company.onrender.com/api/cafe24/callback'; // 앱 등록값과 한 글자도 다르면 실패
-const SCOPE = 'mall.read_order,mall.read_product,mall.write_product,mall.read_store,mall.write_store,mall.read_community';   // #248-③ 상품 + 8/7 상점(store — mains) + 게시판 읽기(community — 후기 실작성 검증 #259. 대표: 개발자센터 권한 추가 → 데이터관리 카드 재동의 1회로 셋 다)
+const SCOPE = 'mall.read_order,mall.read_product,mall.write_product,mall.read_store,mall.write_store,mall.read_community,mall.write_community';   // #248-③ 상품 + 8/7 상점(mains) + 게시판 읽기(후기 실작성 검증 #259)·쓰기(대표 승인 — 향후 자사몰 게시판 자동답변용 선확보·현재 쓰기 호출 코드 없음)
 const API_BASE = `https://${MALL_ID}.cafe24api.com`;
 
 let _pool = null;
