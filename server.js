@@ -976,6 +976,9 @@ async function initDB() {
             UNIQUE (member_id, spin_date)
         )
     `);
+    // #256(대표 확정): 룰렛 = "주문 1건당 1번" — 1일 1회 UNIQUE 제거(공개 spin이 하루 다회 가능해야 함)
+    await pool.query(`ALTER TABLE roulette_spins DROP CONSTRAINT IF EXISTS roulette_spins_member_id_spin_date_key`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_roulette_spins_member ON roulette_spins (member_id)`);
     await pool.query(`
         CREATE TABLE IF NOT EXISTS tree_state (
             member_id INTEGER PRIMARY KEY,
@@ -5623,7 +5626,7 @@ app.put('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (
 });
 
 // ── 지시 #85 STEP2: 자사몰 게임 API 결선 — 게이트(MALL_API=on + MALL_API_TOKEN)는 모듈 내부, 기본 전면 503
-app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit }));
+app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit, cafe24, notify: notifyTelegram }));   /* #256: 공개 게임 API — 주문 대사(cafe24)·수확/실물 당첨 알림(notify) 주입 */
 
 // ── 지시 #94: 공개 안내 페이지 /guide — 알림톡 E 버튼 착지 (인증 불필요·PII 0·모바일 퍼스트)
 //    콘텐츠 = bot_products.shipping_guide (판매현황 탭에서 수정하면 즉시 반영). ?p=상품id 이면 그 상품이 최상단.

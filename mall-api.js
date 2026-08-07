@@ -182,7 +182,7 @@ function isUniqueViolation(err, constraintIncludes) {
 }
 
 // ============================================================================
-function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit }) {
+function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, notify }) {
     if (!pool || !express || typeof cfgGet !== 'function' || typeof writeAudit !== 'function') {
         throw new Error('createMallRouter: pool/express/cfgGet/writeAudit 주입 필수');
     }
@@ -190,6 +190,225 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit }) {
 
     const router = express.Router();
     router.use(express.json({ limit: '50kb' })); // 메인 앱에 이미 있어도 무해(중복 파싱 안전)
+
+    // ════════════════════════════════════════════════════════════
+    // 0. 공개 게임 API (#256 — 대표 (a)안 승인 2026-08-07)
+    //    스킨(akkome.cafe24.com/akkome.com)에서 직접 호출 — 무토큰.
+    //    신뢰 모델: member_id 사칭은 가능하나 실익 차단 — 티켓·후기 지급은 "카페24 실주문 대사"로 상한,
+    //    가입 +5·출석 +1은 소액(콘텐츠 재미 수준). 게이트 = DB 스위치 cfg 'mall_pub' {on:true}.
+    //    ⚠️ 이 섹션은 전역 게이트(토큰)보다 앞에 있어야 한다.
+    // ════════════════════════════════════════════════════════════
+    const PUB_ORIGINS = ['https://akkome.cafe24.com', 'https://akkome.com', 'https://www.akkome.com'];
+    const pubRl = new Map();
+    router.use('/pub', (req, res, next) => {
+        const org = String(req.headers.origin || '');
+        if (PUB_ORIGINS.indexOf(org) !== -1) {
+            res.set('Access-Control-Allow-Origin', org);
+            res.set('Vary', 'Origin');
+            res.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+            res.set('Access-Control-Allow-Headers', 'Content-Type');
+        }
+        if (req.method === 'OPTIONS') return res.status(204).end();
+        // 레이트리밋 (인메모리)
+        const now = Date.now();
+        const ip = req.ip || req.socket?.remoteAddress || '?';
+        let b = pubRl.get(ip);
+        if (!b || now > b.reset) { b = { n: 0, reset: now + 60000 }; pubRl.set(ip, b); }
+        if (++b.n > 120) return res.status(429).json({ error: '요청이 너무 잦습니다' });
+        if (pubRl.size > 5000) { for (const [k, v] of pubRl) if (now > v.reset) pubRl.delete(k); }
+        next();
+    });
+    const pubGate = async (req, res, next) => {
+        try {
+            const sw = await cfgGet('mall_pub');
+            if (!sw || sw.on !== true) return res.status(503).json({ error: '준비 중' });
+            next();
+        } catch (e) { res.status(503).json({ error: '준비 중' }); }
+    };
+    const pubWrap = fn => (req, res) => Promise.resolve(fn(req, res)).catch(err => {
+        const status = (err && err.status) || 500;
+        if (status >= 500) console.error('[mall-pub] 오류:', err && err.message);
+        res.status(status).json({ error: status >= 500 ? '서버 오류' : (err.message || '오류') });
+    });
+
+    // ── 주문 대사: 카페24 실주문 수(최근 180일·배송 계열 상태) — 60초 캐시 ──
+    const orderCntCache = new Map();   // member_key → {n, at}
+    async function countPaidOrders(memberKey) {
+        if (!cafe24 || typeof cafe24.apiGet !== 'function') return 0;
+        const c = orderCntCache.get(memberKey);
+        if (c && Date.now() - c.at < 60000) return c.n;
+        let total = 0;
+        const now = new Date(Date.now() + 9 * 3600 * 1000);
+        const fmt = d => d.toISOString().slice(0, 10);
+        for (let seg = 0; seg < 2; seg++) {
+            const end = new Date(now.getTime() - seg * 90 * 86400000);
+            const start = new Date(end.getTime() - 89 * 86400000);
+            try {
+                const r = await cafe24.apiGet('/api/v2/admin/orders/count', {
+                    start_date: fmt(start), end_date: fmt(end), member_id: memberKey,
+                    order_status: 'N10,N20,N21,N22,N30,N40',   // 입금완료~배송완료(취소·반품 제외)
+                });
+                total += Number(r && r.count) || 0;
+            } catch (e) { /* 구간 실패 = 그 구간 0 (부분 성공) */ }
+        }
+        orderCntCache.set(memberKey, { n: total, at: Date.now() });
+        if (orderCntCache.size > 2000) orderCntCache.clear();
+        return total;
+    }
+    async function ledgerCountByReason(memberId, reasonPrefix) {
+        const r = await pool.query(
+            `SELECT COUNT(*)::int AS n FROM points_ledger WHERE member_id=$1 AND reason LIKE $2`,
+            [memberId, reasonPrefix + '%']);
+        return r.rows[0].n;
+    }
+    async function currentBalance(memberId) {
+        const r = await pool.query(
+            `SELECT balance_after FROM points_ledger WHERE member_id=$1 ORDER BY id DESC LIMIT 1`, [memberId]);
+        return r.rows.length ? Number(r.rows[0].balance_after) : 0;
+    }
+    // 지급 공통 (idem — 재클릭·재로드 무해)
+    async function pubGrant(member, delta, reason, idemKey) {
+        const prior = await findLedgerByIdem(idemKey);
+        if (prior) return { replayed: true, balance: Number(prior.balance_after) };
+        try {
+            const out = await withTx(async (client) => {
+                await lockMember(client, member.id);
+                return insertLedger(client, { memberId: member.id, delta, reason, refType: 'pub', refId: null, idemKey });
+            });
+            return { replayed: false, balance: Number(out.balance_after) };
+        } catch (err) {
+            if (isUniqueViolation(err, 'idem')) {
+                const again = await findLedgerByIdem(idemKey);
+                if (again) return { replayed: true, balance: Number(again.balance_after) };
+            }
+            throw err;
+        }
+    }
+    function pubMid(v) {
+        const s = String(v || '').trim();
+        if (!s || s.length > 40 || /[^A-Za-z0-9_@.\-]/.test(s)) { const e = new Error('잘못된 회원 식별자'); e.status = 400; throw e; }
+        return s;
+    }
+
+    // 지갑 종합 (자동 회원 생성)
+    router.get('/pub/wallet', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid(req.query.mid);
+        const member = await resolveMember(mid, null);
+        const [balance, tree, orders, spins, reviews, attend] = await Promise.all([
+            currentBalance(member.id),
+            pool.query(`SELECT water_count FROM tree_state WHERE member_id=$1`, [member.id]),
+            countPaidOrders(mid),
+            pool.query(`SELECT COUNT(*)::int AS n FROM roulette_spins WHERE member_id=$1`, [member.id]),
+            ledgerCountByReason(member.id, '후기 물방울'),
+            pool.query(`SELECT 1 FROM points_ledger WHERE member_id=$1 AND reason='출석 체크' AND idem_key=$2`,
+                [member.id, 'attend:' + member.id + ':' + kstDateStr()]),
+        ]);
+        const joined = !!(await findLedgerByIdem('join:' + member.id));
+        res.json({
+            water: balance,
+            given: tree.rows.length ? Number(tree.rows[0].water_count) : 0,
+            goal: (await loadConfig()).level_thresholds.slice(-1)[0] || 100,
+            tickets: Math.max(0, orders - spins.rows[0].n),
+            review_left: Math.max(0, orders - reviews),
+            attend_today: attend.rows.length > 0,
+            join_bonus: joined,
+        });
+    }));
+
+    // 가입 혜택 +5 (1회)
+    router.post('/pub/join-bonus', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid((req.body || {}).mid);
+        const member = await resolveMember(mid, null);
+        const out = await pubGrant(member, 5, '회원가입 혜택', 'join:' + member.id);
+        if (!out.replayed) await audit('grant', 'mall_member', member.id, { kind: 'join-bonus', delta: 5 });
+        res.json({ ok: true, replayed: out.replayed, balance: out.balance });
+    }));
+
+    // 출석 +1 (KST 1일 1회)
+    router.post('/pub/attend', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid((req.body || {}).mid);
+        const member = await resolveMember(mid, null);
+        const out = await pubGrant(member, 1, '출석 체크', 'attend:' + member.id + ':' + kstDateStr());
+        res.json({ ok: true, replayed: out.replayed, balance: out.balance });
+    }));
+
+    // 후기 물방울 +1 — 상한 = 실주문 수(대표 확정: 사진·중복 무관, 주문 1건당 1회)
+    router.post('/pub/review-claim', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid((req.body || {}).mid);
+        const member = await resolveMember(mid, null);
+        const orders = await countPaidOrders(mid);
+        const claimed = await ledgerCountByReason(member.id, '후기 물방울');
+        if (claimed >= orders) return res.status(403).json({ error: '지급 가능한 후기 횟수를 모두 받았어요 (주문 1건당 1회)' });
+        const out = await pubGrant(member, 1, '후기 물방울', 'review:' + member.id + ':' + (claimed + 1));
+        res.json({ ok: true, replayed: out.replayed, balance: out.balance, review_left: Math.max(0, orders - claimed - 1) });
+    }));
+
+    // 나무 물주기 −1 (+수확 알림)
+    router.post('/pub/tree-water', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid((req.body || {}).mid);
+        const idem = 'pubwater:' + checkIdemKey(String((req.body || {}).idem_key || ''));
+        const cfg = await loadConfig();
+        const member = await resolveMember(mid, null);
+        const prior = await findLedgerByIdem(idem);
+        if (prior) {
+            const t = await pool.query(`SELECT water_count FROM tree_state WHERE member_id=$1`, [member.id]);
+            return res.json({ ok: true, replayed: true, balance: Number(prior.balance_after), given: t.rows[0]?.water_count ?? 0 });
+        }
+        const out = await withTx(async (client) => {
+            await lockMember(client, member.id);
+            const ledger = await insertLedger(client, { memberId: member.id, delta: -cfg.water_cost, reason: '나무 물주기', refType: 'tree', refId: null, idemKey: idem });
+            const up = await client.query(
+                `INSERT INTO tree_state (member_id, water_count, level, updated_at) VALUES ($1, 1, 1, now())
+                 ON CONFLICT (member_id) DO UPDATE SET water_count = tree_state.water_count + 1, updated_at = now()
+                 RETURNING water_count`, [member.id]);
+            return { ledger, waterCount: Number(up.rows[0].water_count) };
+        });
+        const goal = cfg.level_thresholds.slice(-1)[0] || 100;
+        if (out.waterCount === goal && typeof notify === 'function') {
+            notify(`🌳 [귤나무 수확!] 회원 ${mid} — 물 ${goal}개 달성. 하우스귤 3kg 선물용 발송 안내 필요(배송지 확인)`);
+        }
+        res.json({ ok: true, replayed: false, balance: Number(out.ledger.balance_after), given: out.waterCount });
+    }));
+
+    // 룰렛 — 티켓(실주문 대사) 검증 → 서버 추첨 → 지급/기록
+    router.post('/pub/spin', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid((req.body || {}).mid);
+        const cfg = await loadConfig();
+        const member = await resolveMember(mid, null);
+        const orders = await countPaidOrders(mid);
+        const used = await pool.query(`SELECT COUNT(*)::int AS n FROM roulette_spins WHERE member_id=$1`, [member.id]);
+        if (used.rows[0].n >= orders) return res.status(403).json({ error: '룰렛 이용권이 없어요 — 주문 1건당 1번 드려요 🍊' });
+        const out = await withTx(async (client) => {
+            await lockMember(client, member.id);
+            const prize = weightedDraw(cfg.probabilities);
+            const ins = await client.query(
+                `INSERT INTO roulette_spins (member_id, spin_date, result_key, points) VALUES ($1,$2,$3,$4) RETURNING id`,
+                [member.id, kstDateStr(), prize.key, prize.points]);
+            const spinId = ins.rows[0].id;
+            let ledger = null;
+            if (prize.points > 0) {
+                ledger = await insertLedger(client, {
+                    memberId: member.id, delta: prize.points,
+                    reason: `룰렛 당첨(${prize.label})`, refType: 'roulette', refId: String(spinId), idemKey: 'spin:' + spinId });
+            }
+            if (/^coupon/.test(prize.key) || prize.key === 'box' || prize.key === 'upgrade') {
+                await client.query(
+                    `INSERT INTO reward_grants (member_id, kind, amount, status, month_key, idem_key)
+                     VALUES ($1,$4,1,'pending',$2,$3) ON CONFLICT (idem_key) DO NOTHING`,
+                    [member.id, kstMonthKey(), 'spin-' + prize.key + ':' + spinId, prize.key]);
+            }
+            return { spinId, prize, ledger };
+        });
+        if (/^coupon/.test(out.prize.key) || out.prize.key === 'box' || out.prize.key === 'upgrade') {
+            if (typeof notify === 'function') notify(`🎡 [룰렛 실물 당첨] 회원 ${mid} — ${out.prize.label} (수동 발급 필요 · 데이터관리 게임 운영 참조)`);
+        }
+        await audit('create', 'roulette_spin', out.spinId, { member_id: member.id, result: out.prize.key, pub: true });
+        res.json({
+            ok: true, result: { key: out.prize.key, label: out.prize.label, points: out.prize.points },
+            balance: out.ledger ? Number(out.ledger.balance_after) : (await currentBalance(member.id)),
+            tickets: Math.max(0, orders - used.rows[0].n - 1),
+        });
+    }));
 
     // ── 전역 게이트 ──────────────────────────────────────────────
     // 🔴 프로토타입 인증: 단일 서버 토큰 — member_key 신원 위조는 못 막음.
@@ -346,13 +565,16 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit }) {
         const out = await withTx(async (client) => {
             await lockMember(client, member.id); // [함정 2] 잔액 직렬화
             const prize = weightedDraw(cfg.probabilities);
+            /* #256: UNIQUE(member,spin_date) 제약은 "주문 1건당 1회" 정책으로 제거됨(마이그레이션) —
+               이 구(토큰) 라우트의 1일 1회는 사전 SELECT로 유지(레거시 호환·미가동 경로) */
+            const dup = await client.query(
+                `SELECT 1 FROM roulette_spins WHERE member_id=$1 AND spin_date=$2 LIMIT 1`, [member.id, today]);
+            if (dup.rows.length) return { already: true };
             const ins = await client.query(
                 `INSERT INTO roulette_spins (member_id, spin_date, result_key, points)
                  VALUES ($1,$2,$3,$4)
-                 ON CONFLICT (member_id, spin_date) DO NOTHING
                  RETURNING id`,
                 [member.id, today, prize.key, prize.points]);
-            if (!ins.rows.length) return { already: true };   // 오늘 이미 참여 → 트랜잭션은 그대로 COMMIT(무변경)
             const spinId = ins.rows[0].id;
             let ledger = null;
             if (prize.points > 0) {
