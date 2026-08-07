@@ -915,6 +915,10 @@ async function initDB() {
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('product_snapshot', false, 1440)
         ON CONFLICT (key) DO NOTHING`);
     await pool.query(`UPDATE naver_auto_collect SET run_at_time = '04:30' WHERE key = 'product_snapshot' AND run_at_time IS NULL`);
+    // ── 지시 #246 판정2: 카페24 신규 세트 가격·품절 동기화 (기본 OFF·05:10 앵커 — 04:30 스냅샷 직후)
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('cafe24_sync', false, 1440)
+        ON CONFLICT (key) DO NOTHING`);
+    await pool.query(`UPDATE naver_auto_collect SET run_at_time = '05:10' WHERE key = 'cafe24_sync' AND run_at_time IS NULL`);
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_product_snapshot (
             id SERIAL PRIMARY KEY,
@@ -6749,7 +6753,7 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
-const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)' };
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)', cafe24_sync: '카페24 동기화(신규 세트)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -8230,9 +8234,9 @@ async function naverAutoCollectTick() {
         const due = [];
         for (const r of rows) {
             const last = r.last_run_at ? new Date(r.last_run_at).getTime() : 0;
-            if (r.key === 'settlement' || r.key === 'product_snapshot') {
-                // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due (product_snapshot 기본 04:30)
-                const [hh, mm] = String(r.run_at_time || (r.key === 'product_snapshot' ? '04:30' : '09:30')).split(':').map(Number);
+            if (r.key === 'settlement' || r.key === 'product_snapshot' || r.key === 'cafe24_sync') {
+                // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due (product_snapshot 기본 04:30 · cafe24_sync 05:10)
+                const [hh, mm] = String(r.run_at_time || ({ product_snapshot: '04:30', cafe24_sync: '05:10' }[r.key] || '09:30')).split(':').map(Number);
                 const anchor = Date.UTC(kstNow.getUTCFullYear(), kstNow.getUTCMonth(), kstNow.getUTCDate(), hh, mm) - 9 * 3600 * 1000;
                 if (now >= anchor && last < anchor) due.push({ r, waited: now - anchor });
             } else {
@@ -8243,7 +8247,7 @@ async function naverAutoCollectTick() {
         if (!due.length) return;
         due.sort((a, b) => b.waited - a.waited);
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
-        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot }[r.key];
+        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot, cafe24_sync: collectCafe24Sync }[r.key];
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
@@ -11679,6 +11683,83 @@ setInterval(async () => {
     }
 }, 60000);
 
+// ══════════════ 지시 #246 판정2: 카페24 신규 세트 동기화 파이프라인 (설계 승인분 시공) ══════════════
+//   네이버 04:30 스냅샷(정본) ↔ 카페24 신규 세트(91~109) 기본가·품절 자동 대조 → 보정.
+//   등록식(#248 실측 확정 — 2026-08-07 실등록가 19/19 검산 통과): 카페24 기본가 = 네이버 할인가 + min(옵션 증감액) [양수화 — 결제가 불변].
+//   매핑·minAdd = agent_office_config 'cafe24_sync_map' {map:{네이버no:{c24,minAdd}}} — 옵션 정본(7/30 STORE_DATA) 기준 고정.
+//   가드(#246 승인 설계): ①기본 dry-run — 'cafe24_sync_mode'='fix'일 때만 실보정(전환은 대표 GO로만)
+//                        ②±50% 초과 변동은 자동 보정 금지·알림만 ③차이·보정 발생 시 텔레그램 보고
+//                        ④품절 동기화는 진열중(display=T) 상품만 — 오픈 전 신규 세트(진열안함) 오조작 방지
+async function collectCafe24Sync(modeOverride, opt) {
+    const quiet = !!(opt && opt.quiet);   // 수동 러너 테스트용 — 텔레그램 억제
+    const mapCfg = await naverCfgGet('cafe24_sync_map');
+    if (!mapCfg || !mapCfg.map || !Object.keys(mapCfg.map).length) return '매핑 미설정(cafe24_sync_map) — 건너뜀';
+    const mode = (modeOverride || await naverCfgGet('cafe24_sync_mode')) === 'fix' ? 'fix' : 'dry';
+    const snapQ = await pool.query(`SELECT run_at, items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
+    if (!snapQ.rows.length) throw new Error('네이버 스냅샷 없음 — product_snapshot 수집기 선행 필요');
+    if (Date.now() - new Date(snapQ.rows[0].run_at).getTime() > 36 * 3600 * 1000) throw new Error('네이버 스냅샷 36시간 초과 — 구데이터 동기화 방지로 중단');
+    const snapBy = {};
+    for (const it of (snapQ.rows[0].items || [])) snapBy[String(it.no)] = it;
+    const entries = Object.entries(mapCfg.map);
+    const list = await cafe24.apiGet('/api/v2/admin/products', {
+        product_no: entries.map(([, m]) => m.c24).join(','),
+        fields: 'product_no,product_name,price,display,selling', limit: 100,
+    });
+    const curBy = {};
+    for (const p of (list.products || [])) curBy[String(p.product_no)] = p;
+    const rep = { mode, checked: 0, diffs: [], fixed: [], blocked: [], sellState: [], missing: [], errors: [] };
+    for (const [nno, m] of entries) {
+        const sn = snapBy[nno], cp = curBy[String(m.c24)];
+        const tag = `c${m.c24}(n${nno})`;
+        if (!sn) { rep.missing.push(tag + ' 스냅샷에 없음'); continue; }
+        if (!cp) { rep.missing.push(tag + ' 카페24 조회 안 됨'); continue; }
+        rep.checked++;
+        // ── 기본가 대조
+        const disc = sn.discPrice != null ? Number(sn.discPrice) : Number(sn.salePrice);
+        const expected = disc + (Number(m.minAdd) || 0);
+        const current = Math.round(Number(cp.price));
+        if (!Number.isFinite(expected) || expected <= 0) { rep.errors.push(tag + ` 계산가 비정상(${expected})`); }
+        else if (expected !== current) {
+            const item = { tag, name: String(cp.product_name || '').slice(0, 20), current, expected };
+            if (Math.abs(expected - current) > current * 0.5) rep.blocked.push(item);   // 가드② — 비정상 변동은 사람 확인
+            else if (mode === 'fix') {
+                try {
+                    await cafe24.apiReq('PUT', `/api/v2/admin/products/${m.c24}`, { shop_no: 1, request: { price: String(expected), supply_price: String(expected) } });
+                    rep.fixed.push(item);
+                    await new Promise(r => setTimeout(r, 300));
+                } catch (e) { rep.errors.push(tag + ' 가격 보정 실패: ' + String(e.reason || e.message).slice(0, 80)); }
+            } else rep.diffs.push(item);
+        }
+        // ── 품절 동기 (가드④: 진열중만 — 오픈 전 세트는 무조작)
+        if (cp.display === 'T') {
+            const soldout = (sn.statusType && sn.statusType !== 'SALE') || Number(sn.stock) === 0;
+            const want = soldout ? 'F' : 'T';
+            if (cp.selling !== want) {
+                const item = { tag, name: String(cp.product_name || '').slice(0, 20), selling: cp.selling, want, reason: soldout ? '네이버 품절' : '네이버 판매 재개' };
+                if (mode === 'fix') {
+                    try {
+                        await cafe24.apiReq('PUT', `/api/v2/admin/products/${m.c24}`, { shop_no: 1, request: { selling: want } });
+                        item.applied = true;
+                        await new Promise(r => setTimeout(r, 300));
+                    } catch (e) { rep.errors.push(tag + ' 품절 동기 실패: ' + String(e.reason || e.message).slice(0, 80)); }
+                }
+                rep.sellState.push(item);
+            }
+        }
+    }
+    await naverCfgSet('cafe24_sync_last', { at: new Date().toISOString(), snapshot_at: snapQ.rows[0].run_at, ...rep });
+    const fmtP = i => `${i.name} ${i.current}→${i.expected}원`;
+    const parts = [];
+    if (rep.fixed.length) parts.push(`✅ 가격 보정 ${rep.fixed.length}건: ` + rep.fixed.map(fmtP).join(', '));
+    if (rep.diffs.length) parts.push(`📋 가격 차이(dry — 미보정) ${rep.diffs.length}건: ` + rep.diffs.map(fmtP).join(', '));
+    if (rep.blocked.length) parts.push(`🚫 ±50% 초과 — 자동 보정 보류 ${rep.blocked.length}건: ` + rep.blocked.map(fmtP).join(', ') + ' (대표 확인 필요)');
+    if (rep.sellState.length) parts.push(`📦 품절 동기${mode === 'fix' ? '' : '(dry)'} ${rep.sellState.length}건: ` + rep.sellState.map(i => `${i.name} ${i.reason}→판매 ${i.want === 'F' ? '중지' : '재개'}`).join(', '));
+    if (rep.errors.length) parts.push(`⚠️ 오류 ${rep.errors.length}건: ` + rep.errors.join(' / '));
+    if (rep.missing.length) parts.push(`❓ 대조 불가 ${rep.missing.length}건: ` + rep.missing.join(', '));
+    if (parts.length && !quiet) notifyTelegram(`🔄 [카페24 동기화 · ${mode}] 신규 세트 ${rep.checked}종 대조\n` + parts.join('\n'));
+    return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
+}
+
 // 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.
 //   verify = read_product 1콜 + write_product 확증(테스트 상품 1건 — display:F·selling:F 진열·판매 안함, 실서비스 노출 0).
 setInterval(async () => {
@@ -11766,6 +11847,11 @@ setInterval(async () => {
                 await new Promise(r => setTimeout(r, 500));
             }
             out.detail = results;
+        } else if (req.action === 'sync') {
+            // #246 판정2: 동기화 1회 수동 실행 — mode 'dry'(기본)|'fix'. 테스트 실행은 텔레그램 억제(telegram:'yes'로만 발송).
+            try {
+                out.sync = { summary: await collectCafe24Sync(req.mode, { quiet: req.telegram !== 'yes' }), detail: await naverCfgGet('cafe24_sync_last') };
+            } catch (e) { out.sync = { ok: false, reason: String(e.reason || e.message).slice(0, 200) }; }
         } else if (req.action === 'raw' && req.path) {
             // 스키마 실험용(#248-③ — 옵션 API 문서 불충분) — 안전 가드: products 경로 한정·DELETE 금지·진열안함 원칙은 호출 측 준수
             try {
@@ -11790,7 +11876,7 @@ setInterval(async () => {
     } catch (e) {
         try { await naverCfgSet('cafe24_product_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
     }
-}, 60000);
+}, 10000);   // 대표 지시(8/7): 60초→10초 — 러너 응답 대기 단축 (플래그 없으면 SELECT 1회뿐 — 부하 미미)
 
 // 지시 #177: 주문 역조회 진단 러너 — order_probe_request {orderKeys:[...]}. 읽기 전용·PII 미수집(날짜·상태만) — "발송만 감지" 원인 판정용.
 setInterval(async () => {
