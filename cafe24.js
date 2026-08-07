@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const MALL_ID = 'akkome';
 const CLIENT_ID = 'mMdlm3cHGZwkVaem7wGDIB';                                  // 공개값 (Secret은 env)
 const REDIRECT_URI = 'https://jeju-acom-company.onrender.com/api/cafe24/callback'; // 앱 등록값과 한 글자도 다르면 실패
-const SCOPE = 'mall.read_order,mall.read_product,mall.write_product';   // #248-③: 상품 읽기·쓰기 추가(대표 개발자센터 권한 추가·재동의 완료 — 재승인 URL도 동일 scope)
+const SCOPE = 'mall.read_order,mall.read_product,mall.write_product,mall.read_store,mall.write_store';   // #248-③ 상품 + 8/7 상점(store — 메인 진열 mains API용. 대표: 개발자센터 권한 추가 → 데이터관리 카드 재동의)
 const API_BASE = `https://${MALL_ID}.cafe24api.com`;
 
 let _pool = null;
