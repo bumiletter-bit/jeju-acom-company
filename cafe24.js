@@ -228,6 +228,7 @@ async function getStatus() {
     if (!t) { out.token_state = 'reauth_required'; return out; }
     out.expires_at = t.expires_at || null;
     out.refresh_expires_at = t.refresh_token_expires_at || null;
+    out.scopes = Array.isArray(t.scopes) ? t.scopes : null;   // 승인된 권한 목록(메타데이터 — 토큰 값 아님). 재동의가 실제 반영됐는지 판별용(8/7 store 403 진단)
     const refExp = parseKstTs(t.refresh_token_expires_at);
     const accExp = parseKstTs(t.expires_at);
     if (Number.isFinite(refExp) && Date.now() > refExp) out.token_state = 'reauth_required';

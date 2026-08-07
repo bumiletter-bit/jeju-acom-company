@@ -11772,8 +11772,11 @@ setInterval(async () => {
         const req = await naverCfgGet('cafe24_product_request');
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'cafe24_product_request'`);   // 선제거 — 반복 실행 방지
-        const out = { action: req.action, at: new Date().toISOString() };
-        if (req.action === 'verify') {
+        const out = { action: req.action, at: new Date().toISOString(), server_version: VERSION };
+        if (req.action === 'status') {
+            // 재동의 반영 판별용 — 토큰 상태·만료시각·승인 스코프 목록만(토큰 값 미노출)
+            try { out.status = await cafe24.getStatus(); } catch (e) { out.status = { error: String(e.message || e).slice(0, 150) }; }
+        } else if (req.action === 'verify') {
             try {
                 const list = await cafe24.apiGet('/api/v2/admin/products', { limit: 1, fields: 'product_no,product_name' });
                 out.read = { ok: true, sample: (list.products || [])[0] || null, count: (list.products || []).length };
