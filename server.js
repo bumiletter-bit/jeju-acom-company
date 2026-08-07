@@ -11871,14 +11871,20 @@ setInterval(async () => {
                     if (!resp.ok) throw new Error('CDN ' + resp.status);
                     const buf = Buffer.from(await resp.arrayBuffer());
                     const b64 = buf.toString('base64');
-                    let up = null;
-                    try { up = await cafe24.apiReq('POST', `/api/v2/admin/products/${Number(c24no)}/images`, { request: { image: b64 } }); }
-                    catch (e1) { row.try1 = String(e1.status || '') + ' ' + String(e1.reason || '').slice(0, 60); up = await cafe24.apiReq('POST', '/api/v2/admin/products/images', { request: { image: b64 } }); }
-                    const im = up && (up.images || up.image);
-                    const path0 = Array.isArray(im) ? (im[0] && (im[0].path || im[0].url)) : (im && (im.path || im.url));
-                    if (!path0) { throw new Error('업로드 응답 경로 없음: ' + JSON.stringify(up).slice(0, 150)); }
-                    await cafe24.apiReq('PUT', `/api/v2/admin/products/${Number(c24no)}`, { shop_no: 1, request: { image_upload_type: 'A', detail_image: path0 } });
-                    row.ok = true; row.kb = Math.round(buf.length / 1024); row.path = String(path0).slice(0, 100);
+                    // 422 실측("image_upload_type is required") 교정: ①상품 PUT에 base64 직접(image_upload_type 'A' = 대표이미지 등록·자동 리사이즈) ②실패 시 images POST(같은 필드) 후 경로 지정
+                    try {
+                        const pr = await cafe24.apiReq('PUT', `/api/v2/admin/products/${Number(c24no)}`, { shop_no: 1, request: { image_upload_type: 'A', detail_image: b64 } });
+                        row.via = 'put'; row.path = String((pr && pr.product && pr.product.detail_image) || '').slice(0, 100);
+                    } catch (e1) {
+                        row.try1 = String(e1.status || '') + ' ' + String(e1.reason || '').slice(0, 80);
+                        const up = await cafe24.apiReq('POST', `/api/v2/admin/products/${Number(c24no)}/images`, { shop_no: 1, request: { image_upload_type: 'A', detail_image: b64 } });
+                        const im = up && (up.images || up.image);
+                        const path0 = Array.isArray(im) ? (im[0] && (im[0].path || im[0].url)) : (im && (im.path || im.url));
+                        if (!path0) { throw new Error('업로드 응답 경로 없음: ' + JSON.stringify(up).slice(0, 150)); }
+                        await cafe24.apiReq('PUT', `/api/v2/admin/products/${Number(c24no)}`, { shop_no: 1, request: { image_upload_type: 'A', detail_image: path0 } });
+                        row.via = 'post+put'; row.path = String(path0).slice(0, 100);
+                    }
+                    row.ok = true; row.kb = Math.round(buf.length / 1024);
                     await new Promise(r => setTimeout(r, 400));
                 } catch (e) { row.error = String(e.reason || e.message).slice(0, 150); if (e.detail) row.detail = JSON.stringify(e.detail).slice(0, 250); }
                 results.push(row);
