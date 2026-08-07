@@ -1,3 +1,6 @@
+## v5.9.227 (2026-08-07)
+- 러너 raw 가드에 boards **GET 전용** 허용 — 재동의(community) 반영 후 후기 게시판(board 4) 읽기 실측용(#259). 쓰기는 계속 차단.
+
 ## v5.9.226 (2026-08-07)
 - 카페24 SCOPE에 `mall.read_category`·`mall.write_category` 추가 — **mains(메인 진열)의 요구 스코프는 store가 아니라 category**(재동의 후에도 403 지속 → 공식 문서로 확정). 대표 재동의 1회 더 필요.
 

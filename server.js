@@ -11909,8 +11909,9 @@ setInterval(async () => {
                 const method = String(req.method || 'GET').toUpperCase();
                 // #246 오픈 전환: 분류 배정 = categories/{no}/products · 메인 진열 = mains(대표 지시 8/7) — 공식 문서 확인분만 추가 허용
                 const rp = String(req.path);
-                const okPath = /^\/api\/v2\/admin\/products/.test(rp) || /^\/api\/v2\/admin\/categories\/\d+\/products$/.test(rp) || /^\/api\/v2\/admin\/mains/.test(rp);
-                if (!okPath) throw new Error('가드: products·categories/{no}/products·mains 경로만 허용');
+                const okPath = /^\/api\/v2\/admin\/products/.test(rp) || /^\/api\/v2\/admin\/categories\/\d+\/products$/.test(rp) || /^\/api\/v2\/admin\/mains/.test(rp)
+                    || (method === 'GET' && /^\/api\/v2\/admin\/boards/.test(rp));   // 8/7: 후기 검증(#259) 스코프 실측용 — 게시판은 읽기 전용만
+                if (!okPath) throw new Error('가드: products·categories/{no}/products·mains·boards(GET) 경로만 허용');
                 if (method === 'DELETE' && !/^\/api\/v2\/admin\/mains/.test(rp)) throw new Error('가드: DELETE는 mains(메인 진열 제외)·delete-test 액션만');
                 const r2 = method === 'GET' ? await cafe24.apiGet(req.path, req.query || undefined)
                                             : await cafe24.apiReq(method, req.path, req.body || undefined);
