@@ -11831,15 +11831,23 @@ setInterval(async () => {
                 try {
                     const d = snap && snap.items && snap.items[nno];
                     if (!d || !Array.isArray(d.blocks) || !d.blocks.length) { row.skip = '상세 블록 없음'; results.push(row); continue; }
-                    const html = d.blocks.map(b => {
-                        if (b.t === 'i' && b.src) return `<img src="${b.src}" referrerpolicy="no-referrer" style="max-width:100%; display:block; margin:0 auto;">`;
+                    // 대표 지시(8/7): 텍스트 블록이 네이버처럼 보이도록 — v5 렌더러(.pd-txt) 규칙을 description 스코프 스타일로 동봉
+                    //   (줄간격 1.8·문단 여백·keep-all·중앙정렬 기본 — 원문 인라인 스타일이 있으면 그쪽이 우선)
+                    const style = '<style>.akm-det{max-width:860px;margin:0 auto;}'
+                        + '.akm-det img{max-width:100%;display:block;margin:0 auto;}'
+                        + '.akm-det .akm-ig{display:flex;flex-wrap:wrap;}'
+                        + '.akm-det .akm-txt{font-size:16px;line-height:1.8;color:#333;padding:16px 10px 20px;word-break:keep-all;overflow-wrap:break-word;text-align:center;}'
+                        + '.akm-det .akm-txt p{margin:0 0 6px;}'
+                        + '.akm-det .akm-txt b,.akm-det .akm-txt strong{font-weight:800;}</style>';
+                    const html = style + '<div class="akm-det">' + d.blocks.map(b => {
+                        if (b.t === 'i' && b.src) return `<img src="${b.src}" referrerpolicy="no-referrer">`;
                         if (b.t === 'ig' && Array.isArray(b.srcs)) {
                             const w = Math.floor(100 / Math.max(1, Number(b.cols) || b.srcs.length));
-                            return `<div style="display:flex; flex-wrap:wrap;">` + b.srcs.map(u => `<img src="${u}" referrerpolicy="no-referrer" style="width:${w}%; display:block;">`).join('') + `</div>`;
+                            return `<div class="akm-ig">` + b.srcs.map(u => `<img src="${u}" referrerpolicy="no-referrer" style="width:${w}%; margin:0;">`).join('') + `</div>`;
                         }
-                        if (b.t === 'x' && b.html) return b.html;
+                        if (b.t === 'x' && b.html) return '<div class="akm-txt">' + b.html + '</div>';
                         return '';
-                    }).join('\n');
+                    }).join('\n') + '</div>';
                     await cafe24.apiReq('PUT', `/api/v2/admin/products/${Number(c24no)}`, { shop_no: 1, request: { description: html } });
                     row.ok = true; row.blocks = d.blocks.length; row.kb = Math.round(html.length / 1024);
                 } catch (e) { row.error = String(e.reason || e.message).slice(0, 120); }
@@ -11847,6 +11855,35 @@ setInterval(async () => {
                 await new Promise(r => setTimeout(r, 500));
             }
             out.detail = results;
+        } else if (req.action === 'bulk-image' && req.map) {
+            // 대표 지시(8/7): 신규 세트 대표(목록) 이미지 이식 — 네이버 스냅샷 img → base64 → 카페24 업로드 → 대표 지정.
+            //   업로드 스키마는 문서 불충분 → 실험 폴백: ⓐ products/{no}/images 실패 시 ⓑ products/images. 응답 경로 필드도 다중 방어.
+            const snapQ2 = await pool.query(`SELECT items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
+            const byNo2 = {};
+            for (const it of (snapQ2.rows.length ? snapQ2.rows[0].items : [])) byNo2[String(it.no)] = it;
+            const results = [];
+            for (const [nno, c24no] of Object.entries(req.map)) {
+                const row = { naver_no: nno, c24_no: c24no };
+                try {
+                    const it = byNo2[nno];
+                    if (!it || !it.img) { row.skip = '스냅샷 대표 이미지 없음'; results.push(row); continue; }
+                    const resp = await fetch(it.img, { headers: { 'user-agent': 'Mozilla/5.0' } });
+                    if (!resp.ok) throw new Error('CDN ' + resp.status);
+                    const buf = Buffer.from(await resp.arrayBuffer());
+                    const b64 = buf.toString('base64');
+                    let up = null;
+                    try { up = await cafe24.apiReq('POST', `/api/v2/admin/products/${Number(c24no)}/images`, { request: { image: b64 } }); }
+                    catch (e1) { row.try1 = String(e1.status || '') + ' ' + String(e1.reason || '').slice(0, 60); up = await cafe24.apiReq('POST', '/api/v2/admin/products/images', { request: { image: b64 } }); }
+                    const im = up && (up.images || up.image);
+                    const path0 = Array.isArray(im) ? (im[0] && (im[0].path || im[0].url)) : (im && (im.path || im.url));
+                    if (!path0) { throw new Error('업로드 응답 경로 없음: ' + JSON.stringify(up).slice(0, 150)); }
+                    await cafe24.apiReq('PUT', `/api/v2/admin/products/${Number(c24no)}`, { shop_no: 1, request: { image_upload_type: 'A', detail_image: path0 } });
+                    row.ok = true; row.kb = Math.round(buf.length / 1024); row.path = String(path0).slice(0, 100);
+                    await new Promise(r => setTimeout(r, 400));
+                } catch (e) { row.error = String(e.reason || e.message).slice(0, 150); if (e.detail) row.detail = JSON.stringify(e.detail).slice(0, 250); }
+                results.push(row);
+            }
+            out.images = results;
         } else if (req.action === 'sync') {
             // #246 판정2: 동기화 1회 수동 실행 — mode 'dry'(기본)|'fix'. 테스트 실행은 텔레그램 억제(telegram:'yes'로만 발송).
             try {
@@ -11856,10 +11893,11 @@ setInterval(async () => {
             // 스키마 실험용(#248-③ — 옵션 API 문서 불충분) — 안전 가드: products 경로 한정·DELETE 금지·진열안함 원칙은 호출 측 준수
             try {
                 const method = String(req.method || 'GET').toUpperCase();
-                // #246 오픈 전환: 분류 배정은 별도 리소스(categories/{no}/products — 공식 문서 확인) → 해당 경로만 추가 허용
-                const okPath = /^\/api\/v2\/admin\/products/.test(String(req.path)) || /^\/api\/v2\/admin\/categories\/\d+\/products$/.test(String(req.path));
-                if (!okPath) throw new Error('가드: products·categories/{no}/products 경로만 허용');
-                if (method === 'DELETE') throw new Error('가드: DELETE는 delete-test 액션만');
+                // #246 오픈 전환: 분류 배정 = categories/{no}/products · 메인 진열 = mains(대표 지시 8/7) — 공식 문서 확인분만 추가 허용
+                const rp = String(req.path);
+                const okPath = /^\/api\/v2\/admin\/products/.test(rp) || /^\/api\/v2\/admin\/categories\/\d+\/products$/.test(rp) || /^\/api\/v2\/admin\/mains/.test(rp);
+                if (!okPath) throw new Error('가드: products·categories/{no}/products·mains 경로만 허용');
+                if (method === 'DELETE' && !/^\/api\/v2\/admin\/mains/.test(rp)) throw new Error('가드: DELETE는 mains(메인 진열 제외)·delete-test 액션만');
                 const r2 = method === 'GET' ? await cafe24.apiGet(req.path, req.query || undefined)
                                             : await cafe24.apiReq(method, req.path, req.body || undefined);
                 out.raw = { ok: true, data: JSON.parse(JSON.stringify(r2)) };
