@@ -5626,7 +5626,9 @@ app.put('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (
 });
 
 // ── 지시 #85 STEP2: 자사몰 게임 API 결선 — 게이트(MALL_API=on + MALL_API_TOKEN)는 모듈 내부, 기본 전면 503
-app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit, cafe24, notify: notifyTelegram }));   /* #256: 공개 게임 API — 주문 대사(cafe24)·수확/실물 당첨 알림(notify) 주입 */
+app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit,
+    cafe24: { apiGet: (...a) => require('./cafe24.js').apiGet(...a) },   /* #256: 지연 참조 — const cafe24(8350행)가 이 마운트보다 뒤라 직접 참조 시 TDZ 기동 실패(v5.9.220 배포 실패 원인) */
+    notify: (...a) => notifyTelegram(...a) }));
 
 // ── 지시 #94: 공개 안내 페이지 /guide — 알림톡 E 버튼 착지 (인증 불필요·PII 0·모바일 퍼스트)
 //    콘텐츠 = bot_products.shipping_guide (판매현황 탭에서 수정하면 즉시 반영). ?p=상품id 이면 그 상품이 최상단.
