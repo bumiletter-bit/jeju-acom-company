@@ -11740,6 +11740,32 @@ setInterval(async () => {
                 await new Promise(r => setTimeout(r, 500));
             }
             out.bulk = results;
+        } else if (req.action === 'bulk-detail' && req.map) {
+            // #246 B안 상세 이관: product_detail_snapshot(네이버 상세 정본 — 이미지·텍스트 블록 원순서) → 카페24 description PUT.
+            //   이미지 = 네이버 CDN 참조 + referrerpolicy=no-referrer(핫링크 차단 회피 — skin6 실측 검증된 방식).
+            const snap = await naverCfgGet('product_detail_snapshot');
+            const results = [];
+            for (const [nno, c24no] of Object.entries(req.map)) {
+                const row = { naver_no: nno, c24_no: c24no };
+                try {
+                    const d = snap && snap.items && snap.items[nno];
+                    if (!d || !Array.isArray(d.blocks) || !d.blocks.length) { row.skip = '상세 블록 없음'; results.push(row); continue; }
+                    const html = d.blocks.map(b => {
+                        if (b.t === 'i' && b.src) return `<img src="${b.src}" referrerpolicy="no-referrer" style="max-width:100%; display:block; margin:0 auto;">`;
+                        if (b.t === 'ig' && Array.isArray(b.srcs)) {
+                            const w = Math.floor(100 / Math.max(1, Number(b.cols) || b.srcs.length));
+                            return `<div style="display:flex; flex-wrap:wrap;">` + b.srcs.map(u => `<img src="${u}" referrerpolicy="no-referrer" style="width:${w}%; display:block;">`).join('') + `</div>`;
+                        }
+                        if (b.t === 'x' && b.html) return b.html;
+                        return '';
+                    }).join('\n');
+                    await cafe24.apiReq('PUT', `/api/v2/admin/products/${Number(c24no)}`, { shop_no: 1, request: { description: html } });
+                    row.ok = true; row.blocks = d.blocks.length; row.kb = Math.round(html.length / 1024);
+                } catch (e) { row.error = String(e.reason || e.message).slice(0, 120); }
+                results.push(row);
+                await new Promise(r => setTimeout(r, 500));
+            }
+            out.detail = results;
         } else if (req.action === 'raw' && req.path) {
             // 스키마 실험용(#248-③ — 옵션 API 문서 불충분) — 안전 가드: products 경로 한정·DELETE 금지·진열안함 원칙은 호출 측 준수
             try {
