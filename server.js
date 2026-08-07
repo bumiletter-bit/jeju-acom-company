@@ -11856,7 +11856,9 @@ setInterval(async () => {
             // 스키마 실험용(#248-③ — 옵션 API 문서 불충분) — 안전 가드: products 경로 한정·DELETE 금지·진열안함 원칙은 호출 측 준수
             try {
                 const method = String(req.method || 'GET').toUpperCase();
-                if (!/^\/api\/v2\/admin\/products/.test(String(req.path))) throw new Error('가드: products 경로만 허용');
+                // #246 오픈 전환: 분류 배정은 별도 리소스(categories/{no}/products — 공식 문서 확인) → 해당 경로만 추가 허용
+                const okPath = /^\/api\/v2\/admin\/products/.test(String(req.path)) || /^\/api\/v2\/admin\/categories\/\d+\/products$/.test(String(req.path));
+                if (!okPath) throw new Error('가드: products·categories/{no}/products 경로만 허용');
                 if (method === 'DELETE') throw new Error('가드: DELETE는 delete-test 액션만');
                 const r2 = method === 'GET' ? await cafe24.apiGet(req.path, req.query || undefined)
                                             : await cafe24.apiReq(method, req.path, req.body || undefined);
