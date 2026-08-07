@@ -13545,7 +13545,7 @@ window.resetMallGameConfig = async function() {
 };
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
-const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)', kakao_notify: '📨 알림톡 주문 안내 (준비 중 — 켜도 dry-run만)', lms_guide: '📦 문자 발송 안내 (발송처리 감지 — 켜도 dry-run만)', product_snapshot: '🛒 상품 스냅샷 — 자사몰 일일 갱신 (새벽 04:30 · 상품 API 권한 필요)', cafe24_sync: '🔄 카페24 동기화 — 신규 세트 가격·품절 (05:10 · 기본 dry-run)' };
+const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)', kakao_notify: '📨 알림톡 주문 안내 (🚀 실발송 가동 중)', lms_guide: '📦 문자 발송 안내 (발송처리 감지 — 🚀 실발송 가동 중)', product_snapshot: '🛒 상품 스냅샷 — 네이버 정본 일일 수집 (새벽 04:30)', cafe24_sync: '🔄 카페24 동기화 — 신규 세트 가격·품절 (05:10 · 기본 dry-run)' };
 async function renderNaverTimers() {
     const d = await api('/api/agent-office/naver/auto-collect');
     const rows = (d.timers || []).map(t => {
