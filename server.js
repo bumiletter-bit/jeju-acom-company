@@ -5559,7 +5559,7 @@ const MALL_GAME_CONFIG_DEFAULT = {
         { from: '미니밤호박 3kg', to: '미니밤호박 5kg' },
         { from: '하우스귤 2.5kg', to: '하우스귤 4.5kg' },
     ],
-    water_cost: 10, level_thresholds: [0, 5, 15, 30, 50],   // (구 필드 — mall-api 호환용 존치)
+    water_cost: 1, level_thresholds: [10, 50, 100],   // #259: 정책 확정값 — 물 1개=1회·마지막(100)=수확. ⚠️화면 저장 시 미전송 필드가 이 기본값으로 리셋되므로(라우트 구조) 여기 값이 곧 운영값 — 데모값(10·[..50]) 금지
     daily_spin_limit: 1, physical_monthly_limit: 30,
 };
 app.get('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (req, res) => {   // QA D7: 확률·한도 = 비용 정보 — 대표 전용
