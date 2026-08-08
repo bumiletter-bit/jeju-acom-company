@@ -10970,6 +10970,16 @@ function aoEsc(s) {
     return String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 }
 
+/* #283(대표 실물): 문의 표 「일시」가 잘려 분이 안 보이던 문제 —
+   ko-KR toLocaleString은 "08. 08. 오후 01:23"(17자)라 좁은 열에서 넘친다.
+   3개 문의 표(톡톡·상품문의·고객문의) 공용 짧은 표기로 통일: "08-08 13:23"(11자·24시간·정렬 일관) */
+function aoFmtDtShort(s) {
+    const t = s ? new Date(s) : null;
+    if (!t || isNaN(t)) return '-';
+    const p = n => String(n).padStart(2, '0');
+    return `${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
+}
+
 function aoTrunc(s, n = 95) {
     s = String(s || '');
     return s.length > n ? s.slice(0, n) + '...' : s;
@@ -12330,7 +12340,7 @@ async function renderUserInqTab() {
     const isAdmin = currentUser?.role === 'admin';
     const pending = rows.filter(r => !r.posted_at && !r.answered);
     const done = rows.filter(r => r.posted_at || r.answered);
-    const fmtDt = (s) => { const t = s ? new Date(s) : null; return (t && !isNaN(t)) ? t.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'; };
+    const fmtDt = aoFmtDtShort;   /* #283: "08-08 13:23" 짧은 표기 — 좁은 열에서 분이 잘리지 않게 */
     const toggle = isAdmin ? `
         <label style="white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:13px;">
             <input type="checkbox" class="ui-switch" ${d.auto_post ? 'checked' : ''} onchange="toggleInquiryAutoPost(this.checked)">
@@ -12362,12 +12372,12 @@ async function renderUserInqTab() {
     const doneHtml = done.length ? `
         <table class="data-table" style="table-layout:fixed; width:100%; min-width:720px;">
         <colgroup><col style="width:96px"><col style="width:60px"><col style="width:130px"><col style="width:28%"><col><col style="width:110px"></colgroup>
-        <thead><tr><th>일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
+        <thead><tr><th class="cell-dt">일시</th><th>유형</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
         ${done.map(r => {
             const raw = r.raw || {};
             const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
             return `<tr>
-                <td style="overflow:hidden;">${fmtDt(r.posted_at || raw.registered_at)}</td>
+                <td class="cell-dt">${fmtDt(r.posted_at || raw.registered_at)}</td>
                 <td style="overflow:hidden;">${aoEsc(raw.category || '')}</td>
                 <td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(raw.product_name || '')}">${aoEsc(raw.product_name || '')}</div></td>
                 <td style="overflow:hidden;">${qnaClipHtml([raw.title, raw.content].filter(Boolean).join('\n'))}</td>
@@ -12427,7 +12437,7 @@ async function renderQnaTab() {
     const isAdmin = currentUser?.role === 'admin';
     const pending = rows.filter(r => !r.posted_at && !r.answered);          // 직원 답변 필요 (SKIP·초안 대기·실패)
     const done = rows.filter(r => r.posted_at || r.answered);
-    const fmtDt = (s) => { const t = s ? new Date(s) : null; return (t && !isNaN(t)) ? t.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'; };
+    const fmtDt = aoFmtDtShort;   /* #283: "08-08 13:23" 짧은 표기 — 좁은 열에서 분이 잘리지 않게 */
     const toggle = isAdmin ? `
         <label style="white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:13px;">
             <input type="checkbox" class="ui-switch" ${d.auto_post ? 'checked' : ''} onchange="toggleQnaAutoPost(this.checked)">
@@ -12457,13 +12467,13 @@ async function renderQnaTab() {
     const doneHtml = done.length ? `
         <table class="data-table" style="table-layout:fixed; width:100%; min-width:680px;">
         <colgroup><col style="width:96px"><col style="width:140px"><col style="width:30%"><col><col style="width:110px"></colgroup>
-        <thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
+        <thead><tr><th class="cell-dt">일시</th><th>상품</th><th>질문</th><th>답변</th><th>게시</th></tr></thead><tbody>
         ${done.map(r => {
             const raw = r.raw || {};
             const by = r.posted_by === 'auto' ? '🤖 자동' : (r.posted_by ? '✍️ ' + aoEsc(r.posted_by) : '판매자센터');
             const ans = r.ai_draft || raw.answer || '';
             return `<tr>
-                <td style="overflow:hidden;">${fmtDt(r.posted_at || raw.create_date)}</td>
+                <td class="cell-dt">${fmtDt(r.posted_at || raw.create_date)}</td>
                 <td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(raw.product_name || '')}">${aoEsc(raw.product_name || '')}</div></td>
                 <td style="overflow:hidden;">${qnaClipHtml(raw.question || '')}</td>
                 <td style="overflow:hidden;">${qnaClipHtml(ans)}</td>
@@ -13364,14 +13374,14 @@ async function renderUnansweredLogs() {
 
     // 2섹션 분리: ✅ 봇 답변(answered=true) / 📭 무응답·미매칭(answered=false — SKIP·쿨다운 등 태그 표시)
     // 대표 7/27 규격 정리: table-layout:fixed + 열 너비 고정 — 긴 품목명 세로 꺾임·직원답변 열 화면 밖 밀림 해소
-    const fmtDtS = (s) => new Date(s).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const fmtDtS = aoFmtDtShort;   /* #283: "08-08 13:23" 짧은 표기 */
     // #275(대표): 3채널(네이버톡톡·카카오채널·자사몰)이 한 표에 모이므로 **채널 열**로 출처 표시 — user_id 프리픽스로 판별
     //   디자인 가이드의 .pill 컴포넌트 계승(인디고 테마 — 자사몰=주색상 인디고, 카카오=옐로, 톡톡=그린)
     const chanCell = (uid) => {
         const u = String(uid || '');
-        if (u.startsWith('kakao:')) return `<td><span class="pill pill-ch pill-ch-kakao">카카오채널</span></td>`;
-        if (u.startsWith('mall:')) return `<td><span class="pill pill-ch pill-ch-mall">자사몰</span></td>`;
-        return `<td><span class="pill pill-ch pill-ch-talk">네이버톡톡</span></td>`;
+        if (u.startsWith('kakao:')) return `<td class="cell-ch"><span class="pill pill-ch pill-ch-kakao">카카오채널</span></td>`;
+        if (u.startsWith('mall:')) return `<td class="cell-ch"><span class="pill pill-ch pill-ch-mall">자사몰</span></td>`;
+        return `<td class="cell-ch"><span class="pill pill-ch pill-ch-talk">네이버톡톡</span></td>`;
     };
     const answeredRows = unansRows.filter(r => r.answered);
     const pendRows = unansRows.filter(r => !r.answered);
@@ -13381,10 +13391,10 @@ async function renderUnansweredLogs() {
     const itemCell = (v) => `<td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(v || '-')}">${aoEsc(v || '-')}</div></td>`;
     // 대표 7/28: 고정 열폭 합계가 min-width(680px)를 초과해 auto(답변) 열이 모바일에서 0px로 압착되던 버그 수정 — 재배분+min-width 상향
     // #275: 채널 열 신설(일시 다음) — 폭은 기존 합계를 유지하도록 재배분
-    const ansCols = '<colgroup><col style="width:92px"><col style="width:92px"><col style="width:126px"><col style="width:24%"><col><col style="width:104px"><col style="width:120px"></colgroup>';
-    const ansThead = '<thead><tr><th>일시</th><th>채널</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
+    const ansCols = '<colgroup><col style="width:100px"><col style="width:92px"><col style="width:124px"><col style="width:24%"><col><col style="width:100px"><col style="width:116px"></colgroup>';
+    const ansThead = '<thead><tr><th class="cell-dt">일시</th><th class="cell-ch">채널</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
-            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
+            <td class="cell-dt">${fmtDtS(r.received_at)}</td>
             ${chanCell(r.user_id)}
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
@@ -13392,10 +13402,10 @@ async function renderUnansweredLogs() {
             <td>${scenCell(r)}</td>
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
         </tr>`).join('') : `<tr class="empty-row"><td colspan="7">봇 답변 기록이 없습니다</td></tr>`;
-    const pendCols = '<colgroup><col style="width:92px"><col style="width:92px"><col style="width:130px"><col><col style="width:130px"><col style="width:150px"></colgroup>';
-    const pendThead = '<thead><tr><th>일시</th><th>채널</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
+    const pendCols = '<colgroup><col style="width:100px"><col style="width:92px"><col style="width:126px"><col><col style="width:128px"><col style="width:146px"></colgroup>';
+    const pendThead = '<thead><tr><th class="cell-dt">일시</th><th class="cell-ch">채널</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
-            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
+            <td class="cell-dt">${fmtDtS(r.received_at)}</td>
             ${chanCell(r.user_id)}
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>

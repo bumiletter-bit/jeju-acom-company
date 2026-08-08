@@ -4367,6 +4367,19 @@ textarea.form-input {
 .pill-ch-kakao { background: #FEF6C8; color: #8A6D00; }     /* 카카오채널 — 카카오 옐로 계열 */
 .pill-ch-mall { background: var(--primary-light, #EEF0FF); color: var(--primary, #4F46E5); }   /* 자사몰 — 회사프로그램 주색상(인디고) */
 
+/* #283(대표 실물): 문의 표 「일시」가 잘려 분이 안 보이던 문제 —
+   기본 셀 패딩(좌우 16px)이 좁은 열에서 글자 자리를 잡아먹는다. 일시·채널 열만 패딩을 줄이고
+   일시는 숫자 폭 고정(tabular-nums)으로 어느 기기에서나 같은 폭이 되게 한다. */
+.data-table th.cell-dt, .data-table td.cell-dt { padding-left: 12px; padding-right: 6px; }
+.data-table td.cell-dt {
+    white-space: nowrap;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: #475467;
+}
+.data-table th.cell-ch, .data-table td.cell-ch { padding-left: 8px; padding-right: 8px; }
+.data-table td.cell-ch { white-space: nowrap; }
+
 /* B-3. 빈 화면 — 아이콘 + 안내 */
 .empty-row td {
     text-align: center; color: #98A0AE !important;
