@@ -13365,6 +13365,14 @@ async function renderUnansweredLogs() {
     // 2섹션 분리: ✅ 봇 답변(answered=true) / 📭 무응답·미매칭(answered=false — SKIP·쿨다운 등 태그 표시)
     // 대표 7/27 규격 정리: table-layout:fixed + 열 너비 고정 — 긴 품목명 세로 꺾임·직원답변 열 화면 밖 밀림 해소
     const fmtDtS = (s) => new Date(s).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    // #275: 3채널(톡톡·카카오·자사몰)이 한 표에 모이므로 출처 배지를 붙인다 — user_id 프리픽스로 판별
+    const chanChip = (uid) => {
+        const u = String(uid || '');
+        const base = 'display:inline-block; font-size:10px; font-weight:800; padding:1px 6px; border-radius:999px; margin-bottom:2px;';
+        if (u.startsWith('kakao:')) return `<span style="${base} background:#FEE500; color:#3C1E1E;">카카오</span><br>`;
+        if (u.startsWith('mall:')) return `<span style="${base} background:#F1F8E4; color:#5F9E1F; border:1px solid #CDE3A6;">자사몰</span><br>`;
+        return `<span style="${base} background:#E7F7EE; color:#03A65A;">톡톡</span><br>`;
+    };
     const answeredRows = unansRows.filter(r => r.answered);
     const pendRows = unansRows.filter(r => !r.answered);
     const scenCell = (r) => (scenLinksFromNames(r.scenario_name, scenMap, r.scenario_nos) || '<span class="text-muted">기록 없음</span>')
@@ -13375,7 +13383,7 @@ async function renderUnansweredLogs() {
     const ansCols = '<colgroup><col style="width:96px"><col style="width:140px"><col style="width:26%"><col><col style="width:110px"><col style="width:130px"></colgroup>';
     const ansThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
-            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
+            <td style="white-space:nowrap;">${chanChip(r.user_id)}${fmtDtS(r.received_at)}</td>
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
             <td style="overflow:hidden;">${qnaClipHtml(r.bot_response || '')}</td>
@@ -13385,7 +13393,7 @@ async function renderUnansweredLogs() {
     const pendCols = '<colgroup><col style="width:96px"><col style="width:140px"><col><col style="width:140px"><col style="width:160px"></colgroup>';
     const pendThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
-            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
+            <td style="white-space:nowrap;">${chanChip(r.user_id)}${fmtDtS(r.received_at)}</td>
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
             <td><span style="color:#c0392b; font-size:12px;">${aoEsc(r.bot_response || '[무응답]')}</span></td>
