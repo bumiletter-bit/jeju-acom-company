@@ -13365,13 +13365,13 @@ async function renderUnansweredLogs() {
     // 2섹션 분리: ✅ 봇 답변(answered=true) / 📭 무응답·미매칭(answered=false — SKIP·쿨다운 등 태그 표시)
     // 대표 7/27 규격 정리: table-layout:fixed + 열 너비 고정 — 긴 품목명 세로 꺾임·직원답변 열 화면 밖 밀림 해소
     const fmtDtS = (s) => new Date(s).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-    // #275: 3채널(톡톡·카카오·자사몰)이 한 표에 모이므로 출처 배지를 붙인다 — user_id 프리픽스로 판별
-    const chanChip = (uid) => {
+    // #275(대표): 3채널(네이버톡톡·카카오채널·자사몰)이 한 표에 모이므로 **채널 열**로 출처 표시 — user_id 프리픽스로 판별
+    //   디자인 가이드의 .pill 컴포넌트 계승(인디고 테마 — 자사몰=주색상 인디고, 카카오=옐로, 톡톡=그린)
+    const chanCell = (uid) => {
         const u = String(uid || '');
-        const base = 'display:inline-block; font-size:10px; font-weight:800; padding:1px 6px; border-radius:999px; margin-bottom:2px;';
-        if (u.startsWith('kakao:')) return `<span style="${base} background:#FEE500; color:#3C1E1E;">카카오</span><br>`;
-        if (u.startsWith('mall:')) return `<span style="${base} background:#F1F8E4; color:#5F9E1F; border:1px solid #CDE3A6;">자사몰</span><br>`;
-        return `<span style="${base} background:#E7F7EE; color:#03A65A;">톡톡</span><br>`;
+        if (u.startsWith('kakao:')) return `<td><span class="pill pill-ch pill-ch-kakao">카카오채널</span></td>`;
+        if (u.startsWith('mall:')) return `<td><span class="pill pill-ch pill-ch-mall">자사몰</span></td>`;
+        return `<td><span class="pill pill-ch pill-ch-talk">네이버톡톡</span></td>`;
     };
     const answeredRows = unansRows.filter(r => r.answered);
     const pendRows = unansRows.filter(r => !r.answered);
@@ -13380,27 +13380,30 @@ async function renderUnansweredLogs() {
     // 품목: 한 줄 말줄임 (전체 이름은 마우스오버 툴팁)
     const itemCell = (v) => `<td style="overflow:hidden;"><div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${aoEsc(v || '-')}">${aoEsc(v || '-')}</div></td>`;
     // 대표 7/28: 고정 열폭 합계가 min-width(680px)를 초과해 auto(답변) 열이 모바일에서 0px로 압착되던 버그 수정 — 재배분+min-width 상향
-    const ansCols = '<colgroup><col style="width:96px"><col style="width:140px"><col style="width:26%"><col><col style="width:110px"><col style="width:130px"></colgroup>';
-    const ansThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
+    // #275: 채널 열 신설(일시 다음) — 폭은 기존 합계를 유지하도록 재배분
+    const ansCols = '<colgroup><col style="width:92px"><col style="width:92px"><col style="width:126px"><col style="width:24%"><col><col style="width:104px"><col style="width:120px"></colgroup>';
+    const ansThead = '<thead><tr><th>일시</th><th>채널</th><th>상품</th><th>질문</th><th>답변</th><th>재료</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const ansBody = answeredRows.length ? answeredRows.map(r => `<tr>
-            <td style="white-space:nowrap;">${chanChip(r.user_id)}${fmtDtS(r.received_at)}</td>
+            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
+            ${chanCell(r.user_id)}
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
             <td style="overflow:hidden;">${qnaClipHtml(r.bot_response || '')}</td>
             <td>${scenCell(r)}</td>
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
-        </tr>`).join('') : `<tr class="empty-row"><td colspan="6">봇 답변 기록이 없습니다</td></tr>`;
-    const pendCols = '<colgroup><col style="width:96px"><col style="width:140px"><col><col style="width:140px"><col style="width:160px"></colgroup>';
-    const pendThead = '<thead><tr><th>일시</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
+        </tr>`).join('') : `<tr class="empty-row"><td colspan="7">봇 답변 기록이 없습니다</td></tr>`;
+    const pendCols = '<colgroup><col style="width:92px"><col style="width:92px"><col style="width:130px"><col><col style="width:130px"><col style="width:150px"></colgroup>';
+    const pendThead = '<thead><tr><th>일시</th><th>채널</th><th>상품</th><th>질문</th><th>상태</th><th>직원 답변</th></tr></thead>'; // 대표 7/28: 상품문의 라임으로 열 이름 통일
     const pendBody = pendRows.length ? pendRows.map(r => `<tr>
-            <td style="white-space:nowrap;">${chanChip(r.user_id)}${fmtDtS(r.received_at)}</td>
+            <td style="white-space:nowrap;">${fmtDtS(r.received_at)}</td>
+            ${chanCell(r.user_id)}
             ${itemCell(r.item)}
             <td style="overflow:hidden;">${qnaClipHtml(r.message || '')}</td>
             <td><span style="color:#c0392b; font-size:12px;">${aoEsc(r.bot_response || '[무응답]')}</span></td>
             <td style="overflow:hidden;">${r.staff_response ? qnaClipHtml(r.staff_response) : '-'}</td>
-        </tr>`).join('') : `<tr class="empty-row"><td colspan="5">무응답 문의가 없습니다 🎉</td></tr>`;
+        </tr>`).join('') : `<tr class="empty-row"><td colspan="6">무응답 문의가 없습니다 🎉</td></tr>`;
     const tbl = (cols, thead, body) =>
-        `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%; min-width:880px;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
+        `<div class="table-scroll-wrapper"><table class="data-table" style="table-layout:fixed; width:100%; min-width:940px;">${cols}${thead}<tbody>${body}</tbody></table></div>`;
     // 서브탭별 단일 목록 (대표 7/27 2차 — 상품문의 라임) + 미매칭 엑셀 버튼은 미매칭 서브탭에서만
     unansPendRows = pendRows;
     const excelBtn = document.getElementById('btn-unans-excel');

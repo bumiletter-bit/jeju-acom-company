@@ -8202,8 +8202,8 @@ app.post('/api/public/shop-chat', async (req, res) => {
         let answer = out.answer;
         const turns = (_chatTurns.get(logUser) || 0) + 1;
         _chatTurns.set(logUser, turns);
-        if (turns > 6 && !/카카오/.test(answer)) {
-            answer += '\n\n더 자세한 상담은 카카오톡 채널 「제주아꼼이네」에서 담당자가 도와드릴게요 🍊';
+        if (turns > 3 && !/카카오/.test(answer)) {   // #275-b(대표 8/8): 6턴 → 3턴
+            answer += '\n\n더 궁금하신 점은 카카오톡 채널 「제주아꼼이네」 또는 고객센터 010-6687-4031로 연락주세요 🍊';
         }
         if (tm.cooldownMs > 0) _chatCooldown.set(logUser, Date.now());
         await logMallChat(logUser, question, productName, out, answer);

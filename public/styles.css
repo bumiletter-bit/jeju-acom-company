@@ -4361,6 +4361,11 @@ textarea.form-input {
 .pill-ok { background: #ECFDF3; color: #067647; }
 .pill-off { background: #F2F4F7; color: #667085; font-weight: 600; }
 .pill-wait { background: #FFFAEB; color: #B54708; }
+/* 문의 채널 배지 (톡톡·카카오·자사몰 3채널이 한 표에 모이므로 출처 구분) — .pill 규격 계승 */
+.pill-ch { padding: 2px 8px; font-size: 11.5px; }
+.pill-ch-talk { background: #E7F7EE; color: #03A65A; }      /* 네이버톡톡 — 네이버 그린 계열 */
+.pill-ch-kakao { background: #FEF6C8; color: #8A6D00; }     /* 카카오채널 — 카카오 옐로 계열 */
+.pill-ch-mall { background: var(--primary-light, #EEF0FF); color: var(--primary, #4F46E5); }   /* 자사몰 — 회사프로그램 주색상(인디고) */
 
 /* B-3. 빈 화면 — 아이콘 + 안내 */
 .empty-row td {
