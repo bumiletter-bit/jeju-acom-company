@@ -8111,6 +8111,42 @@ function maskWinnerName(name) {
 //   · 답을 못 만들면(SKIP·키 미설정) **지어내지 않고** answered:false로 내려보내 화면이 "연결 안 됨"을 표기하게 한다.
 //   · 쓰기 없음(네이버 게시 안 함) · PII 미수집 · 남용 방지를 위해 길이 제한과 분당 상한만 둔다.
 const _chatRate = new Map();   // ip → { n, at } (분당 상한 — 프로토타입 수준)
+const _chatCooldown = new Map();   // #275: 손님키 → 마지막 답변 시각(쿨다운 설정 시에만 사용)
+const _chatTurns = new Map();      // #275: 손님키 → 누적 턴 수(장문 상담 유도용)
+// #275: 라임 설정 — 톡톡·카카오와 같은 키(agent_office_config 'bot_timing')를 읽되 자사몰 전용 값만 사용.
+//   mall_buffer_sec / mall_cooldown_min 이 없으면 자사몰 기본 = 0(즉답·연속답변).
+//   ★ 대표가 "톡톡과 완전 동일"을 원하면 이 두 값을 30 / 30 으로 넣으면 코드 수정 없이 그대로 적용된다.
+async function mallChatTiming() {
+    try {
+        const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'bot_timing'`);
+        const v = (r.rows[0] && r.rows[0].value) || {};
+        const b = Number(v.mall_buffer_sec); const c = Number(v.mall_cooldown_min);
+        return {
+            bufferMs: (Number.isFinite(b) && b >= 0 && b <= 120) ? b * 1000 : 0,
+            cooldownMs: (Number.isFinite(c) && c >= 0 && c <= 180) ? c * 60000 : 0,
+        };
+    } catch (_) { return { bufferMs: 0, cooldownMs: 0 }; }
+}
+// #275: 자사몰 챗 로그 — 톡톡('없음')·카카오('kakao:')와 같은 message_logs에 'mall:' 프리픽스로 기록.
+//   문의 관리 > 💬 톡톡 문의 화면에서 3채널을 한 곳에서 볼 수 있게 한다. 실패해도 응답은 정상 진행(로그는 부가).
+async function logMallChat(userKey, question, productName, out, botResponse) {
+    try {
+        let nos = null, name = null;
+        if (out && Array.isArray(out.used) && out.used.length) {
+            name = out.used[0];
+            try {
+                const all = await qnaScenarios();
+                const hit = out.used.map(n => (all.find(s => s.name === n) || {}).scenario_no).filter(x => x != null);
+                if (hit.length) nos = hit.join(',');
+            } catch (_) { /* 번호 매핑 실패는 무시 */ }
+        }
+        await pool.query(
+            `INSERT INTO message_logs (user_id, item, message, answered, bot_response, scenario_name, response_source, scenario_nos)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [userKey, productName || '기타', question, !!(out && out.answer), botResponse || null,
+             name, out && out.answer ? 'ai' : null, nos]);
+    } catch (_) { /* 로그 실패가 응대를 막지 않는다 */ }
+}
 // POST + application/json은 브라우저가 preflight(OPTIONS)를 먼저 보낸다 — 이걸 허용하지 않으면 CORS로 막힌다(실측으로 확인).
 app.options('/api/public/shop-chat', (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
@@ -8133,6 +8169,22 @@ app.post('/api/public/shop-chat', async (req, res) => {
         const productName = String((req.body || {}).productName || '').trim().slice(0, 120);
         if (!question) return res.status(400).json({ answered: false, reason: 'empty', message: '질문을 입력해주세요' });
 
+        // #275: 손님 식별 — 로그인 회원(mid) 우선, 없으면 브라우저 세션 키(sid). 둘 다 없으면 IP 해시.
+        const rawWho = String((req.body || {}).mid || (req.body || {}).sid || '').trim().slice(0, 60);
+        const who = /^[A-Za-z0-9@._:-]{3,60}$/.test(rawWho) ? rawWho : ('ip' + require('crypto').createHash('sha1').update(ip || 'x').digest('hex').slice(0, 10));
+        const logUser = 'mall:' + who;
+
+        // #275: 라임 — 톡톡·카카오와 같은 설정 키. 자사몰은 mall_* 로 따로 조절(기본 즉답·연속답변).
+        const tm = await mallChatTiming();
+        if (tm.cooldownMs > 0) {
+            const last = _chatCooldown.get(logUser) || 0;
+            if (last && now - last < tm.cooldownMs) {
+                await logMallChat(logUser, question, productName, null, '[쿨다운-무응답]');
+                return res.json({ answered: false, reason: 'cooldown',
+                    message: '문의를 접수했어요! 담당자가 확인 후 답변드릴게요 🍊 급하시면 카카오톡 채널이나 전화(010-6687-4031)로 연락 주세요.' });
+            }
+        }
+
         const out = await qnaGenerate(question, productName || null);
         if (!out || !out.answer) {
             // 재료 부족·SKIP — 가짜 답변 금지(#189 원칙). 사람 연결 안내로 넘긴다.
@@ -8142,10 +8194,20 @@ app.post('/api/public/shop-chat', async (req, res) => {
                 if (!process.env.ANTHROPIC_API_KEY) reason = 'no-ai-key';
                 else if (!(await qnaScenarios()).length) reason = 'no-scenarios';
             } catch (_) { /* 진단 실패는 무시 */ }
+            await logMallChat(logUser, question, productName, null, null);
             return res.json({ answered: false, reason,
                 message: '이 질문은 담당자가 직접 확인해서 답변드릴게요. 카카오톡 채널이나 전화(010-6687-4031)로 문의해주세요.' });
         }
-        res.json({ answered: true, answer: out.answer, scenarios: out.used || [] });
+        // #275: 연속 대화가 길어지면 직원 응대 체계가 있는 카카오채널로 자연 유도
+        let answer = out.answer;
+        const turns = (_chatTurns.get(logUser) || 0) + 1;
+        _chatTurns.set(logUser, turns);
+        if (turns > 6 && !/카카오/.test(answer)) {
+            answer += '\n\n더 자세한 상담은 카카오톡 채널 「제주아꼼이네」에서 담당자가 도와드릴게요 🍊';
+        }
+        if (tm.cooldownMs > 0) _chatCooldown.set(logUser, Date.now());
+        await logMallChat(logUser, question, productName, out, answer);
+        res.json({ answered: true, answer, scenarios: out.used || [] });
     } catch (e) {
         res.status(500).json({ answered: false, reason: 'error', message: '지금은 답변을 준비하지 못했어요. 전화(010-6687-4031)로 문의해주세요.' });
     }
