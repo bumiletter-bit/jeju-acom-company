@@ -8213,6 +8213,49 @@ app.post('/api/public/shop-chat', async (req, res) => {
     }
 });
 
+// ── #278(대표 지시): 자사몰 시즌 오픈 대기 신청 (공개) ─────────────────────────
+//   품절·시즌 대기 손님이 자사몰에서 직접 연락처를 남기면 대기 명단에 등록된다.
+//   화면(문의 관리 > 시즌 오픈 대기 신청)은 기존 것을 그대로 쓴다 — 저장 경로만 공개로 하나 더 여는 것.
+const _waitRate = new Map();   // ip → { n, at }
+app.options('/api/public/season-waitlist', (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Max-Age', '86400');
+    res.sendStatus(204);
+});
+app.post('/api/public/season-waitlist', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    try {
+        const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+        const now = Date.now();
+        const cur = _waitRate.get(ip) || { n: 0, at: now };
+        if (now - cur.at > 60000) { cur.n = 0; cur.at = now; }
+        cur.n++; _waitRate.set(ip, cur);
+        if (cur.n > 6) return res.status(429).json({ ok: false, message: '잠시 후 다시 시도해주세요' });
+
+        const item = String((req.body || {}).item || '').trim().slice(0, 60);
+        const contact = String((req.body || {}).contact || '').replace(/[^0-9]/g, '');
+        const memo = String((req.body || {}).memo || '').trim().slice(0, 100);
+        if (!item) return res.status(400).json({ ok: false, message: '상품 정보가 없어요' });
+        if (contact.length < 10 || contact.length > 11) return res.status(400).json({ ok: false, message: '연락처를 숫자 10~11자리로 입력해주세요' });
+
+        const dup = await pool.query(`SELECT id FROM season_waitlist WHERE item=$1 AND contact=$2 AND deleted_at IS NULL`, [item, contact]);
+        if (dup.rows.length) return res.json({ ok: true, dup: true, message: '이미 신청하셨어요! 오픈하면 가장 먼저 알려드릴게요 🍊' });
+
+        const r = await pool.query(
+            `INSERT INTO season_waitlist (item, contact, memo, created_by) VALUES ($1,$2,$3,'자사몰') RETURNING id`,
+            [item, contact, memo || null]);
+        try {
+            await writeAudit({ action: 'create', targetType: 'season_waitlist', targetId: r.rows[0].id,
+                changes: { after: { item, contact: maskWaitContact(contact), memo, from: 'mall' } }, source: 'season-waitlist-public', actor: null });
+        } catch (_) { /* 감사 실패가 접수를 막지 않는다 */ }
+        res.json({ ok: true, message: '신청 완료! 시즌이 열리면 문자로 알려드릴게요 🍊' });
+    } catch (e) {
+        res.status(500).json({ ok: false, message: '지금은 신청이 어려워요. 잠시 후 다시 시도해주세요' });
+    }
+});
+
 // 지시 #192-2: 자사몰 발송일 안내용 공개 API.
 //   🔴 핵심 = **계산 이중화 금지**. 자사몰이 자체 로직을 새로 만들면 회사프로그램과 갈라져(#185 교훈)
 //   알림톡과 자사몰이 서로 다른 발송일을 안내하는 사고가 난다. 여기서 computeShipping을 그대로 호출해 결과만 내려준다.

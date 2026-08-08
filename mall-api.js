@@ -233,9 +233,12 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
 
     // ── 주문 대사: 카페24 실주문 수(최근 180일·배송 계열 상태) — 60초 캐시 ──
     const orderCntCache = new Map();   // member_key → {n, at}
-    async function countPaidOrders(memberKey) {
+    // #277: statuses 파라미터화 — 룰렛권은 배송완료(N40)만, 후기 상한은 종전(입금완료~배송완료) 그대로.
+    async function countPaidOrders(memberKey, statuses) {
+        const ST = statuses || 'N10,N20,N21,N22,N30,N40';
         if (!cafe24 || typeof cafe24.apiGet !== 'function') return 0;
-        const c = orderCntCache.get(memberKey);
+        const ck = memberKey + '|' + ST;
+        const c = orderCntCache.get(ck);
         if (c && Date.now() - c.at < 60000) return c.n;
         let total = 0;
         const now = new Date(Date.now() + 9 * 3600 * 1000);
@@ -246,15 +249,17 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             try {
                 const r = await cafe24.apiGet('/api/v2/admin/orders/count', {
                     start_date: fmt(start), end_date: fmt(end), member_id: memberKey,
-                    order_status: 'N10,N20,N21,N22,N30,N40',   // 입금완료~배송완료(취소·반품 제외)
+                    order_status: ST,
                 });
                 total += Number(r && r.count) || 0;
             } catch (e) { /* 구간 실패 = 그 구간 0 (부분 성공) */ }
         }
-        orderCntCache.set(memberKey, { n: total, at: Date.now() });
+        orderCntCache.set(ck, { n: total, at: Date.now() });
         if (orderCntCache.size > 2000) orderCntCache.clear();
         return total;
     }
+    // #277(대표 확정): 룰렛 이용권 = 배송완료 주문 수. 배송 전/취소·반품 건은 티켓이 생기지 않는다.
+    const countDeliveredOrders = (memberKey) => countPaidOrders(memberKey, 'N40');
     async function ledgerCountByReason(memberId, reasonPrefix) {
         const r = await pool.query(
             `SELECT COUNT(*)::int AS n FROM points_ledger WHERE member_id=$1 AND reason LIKE $2`,
@@ -294,7 +299,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
     router.get('/pub/wallet', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid(req.query.mid);
         const member = await resolveMember(mid, null);
-        const [balance, tree, orders, spins, reviews, attend] = await Promise.all([
+        const [balance, tree, orders, spins, reviews, attend, delivered] = await Promise.all([
             currentBalance(member.id),
             pool.query(`SELECT water_count FROM tree_state WHERE member_id=$1`, [member.id]),
             countPaidOrders(mid),
@@ -302,13 +307,15 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             ledgerCountByReason(member.id, '후기 물방울'),
             pool.query(`SELECT 1 FROM points_ledger WHERE member_id=$1 AND reason='출석 체크' AND idem_key=$2`,
                 [member.id, 'attend:' + member.id + ':' + kstDateStr()]),
+            countDeliveredOrders(mid),   // #277: 룰렛권 = 배송완료 기준
         ]);
         const joined = !!(await findLedgerByIdem('join:' + member.id));
         res.json({
             water: balance,
             given: tree.rows.length ? Number(tree.rows[0].water_count) : 0,
             goal: (await loadConfig()).level_thresholds.slice(-1)[0] || 100,
-            tickets: Math.max(0, orders - spins.rows[0].n),
+            tickets: Math.max(0, delivered - spins.rows[0].n),   // #277: 배송완료 1건당 1회
+            delivered,
             review_left: Math.max(0, orders - reviews),
             attend_today: attend.rows.length > 0,
             join_bonus: joined,
@@ -389,7 +396,7 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         });
         const goal = cfg.level_thresholds.slice(-1)[0] || 100;
         if (out.waterCount === goal && typeof notify === 'function') {
-            notify(`🌳 [귤나무 수확!] 회원 ${mid} — 물 ${goal}개 달성. 하우스귤 3kg 선물용 발송 안내 필요(배송지 확인)`);
+            notify(`🌳 [귤나무 수확!] 회원 ${mid} — 물 ${goal}개 달성. **지금 제일 싱싱한 제철 귤 4.5kg** 발송 안내 필요(배송지 확인)`);
         }
         res.json({ ok: true, replayed: false, balance: Number(out.ledger.balance_after), given: out.waterCount });
     }));
@@ -399,9 +406,9 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         const mid = pubMid((req.body || {}).mid);
         const cfg = await loadConfig();
         const member = await resolveMember(mid, null);
-        const orders = await countPaidOrders(mid);
+        const orders = await countDeliveredOrders(mid);   // #277: 배송완료 기준
         const used = await pool.query(`SELECT COUNT(*)::int AS n FROM roulette_spins WHERE member_id=$1`, [member.id]);
-        if (used.rows[0].n >= orders) return res.status(403).json({ error: '룰렛 이용권이 없어요 — 주문 1건당 1번 드려요 🍊' });
+        if (used.rows[0].n >= orders) return res.status(403).json({ error: '룰렛 이용권이 없어요 — 배송이 완료되면 1건당 1번 드려요 🍊' });
         const out = await withTx(async (client) => {
             await lockMember(client, member.id);
             const prize = weightedDraw(cfg.probabilities);
