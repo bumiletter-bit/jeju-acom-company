@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-08-09.1'; // 지시 #310: 네이버 공개 지표 수집 라우트 /naver-public 신설(실브라우저 경유 — 관심고객·평점·상품 리뷰수 매일 갱신용)
+const RELAY_VERSION = '2026-08-09.2'; // #310-b: 스토어 지표 추출을 '관심고객수' 주변 창으로 한정(상품 카드 숫자 오인식 교정 — 대표 실행 결과 반영)
 
 const {
     PORT = 4000,
@@ -297,13 +297,19 @@ app.post('/naver-public', async (req, res) => {
             await page.waitForTimeout(4000);
             const out = await page.evaluate(() => {
                 const t = document.body.innerText.replace(/\s+/g, ' ');
+                // 🔴 실측 교정(#310-b): 스토어 홈엔 「현재 판매 순위」 상품 카드가 함께 뜨고, 렌더가 느린 서버에서는
+                //    문서 전체 첫 매치가 **상품 리뷰수/평점**으로 잡힌다(대표 실행 결과 리뷰 12,657 = 청귤 1개 값).
+                //    → 평점·리뷰는 **「관심고객수」 주변 창(±220자)** 안에서만 찾는다. 못 찾으면 null(추측 금지).
+                const i = t.search(/관심고객수?\s*[\d,]+/);
+                const win = i >= 0 ? t.slice(Math.max(0, i - 220), i + 220) : '';
                 return {
                     interest: (t.match(/관심고객수?\s*[\d,]+/) || [''])[0],
-                    score: (t.match(/평점\s*[\d.]+/) || [''])[0],
-                    review: (t.match(/리뷰\s*[\d,]+/) || [''])[0],
+                    score: (win.match(/평점\s*[\d.]+/) || [''])[0],
+                    review: (win.match(/리뷰\s*[\d,]+/) || [''])[0],
+                    window: win.slice(0, 260),   // 진단용 — 값이 이상하면 이 문맥을 보고 판정
                 };
             });
-            const body = { interestCount: num(out.interest), avgScore: num(out.score), reviewCount: num(out.review), ms: Date.now() - t0 };
+            const body = { interestCount: num(out.interest), avgScore: num(out.score), reviewCount: num(out.review), context: out.window, ms: Date.now() - t0 };
             if (body.interestCount == null) throw Object.assign(new Error('interest_not_found'), { status: 502 });
             log('공개지표 store', JSON.stringify(body));
             return res.json(body);
