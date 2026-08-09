@@ -6059,6 +6059,10 @@ async function inquiryStaffPending() {
 const TALKTALK_REQUEST_RE = /(배송지|주소|옵션|연락처|받는\s*분|수취인)[\s\S]{0,40}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정)[\s\S]{0,40}(배송지|주소|옵션|연락처)|주문[\s\S]{0,20}취소|취소[\s\S]{0,20}(해\s*주|부탁|요청|하고\s*싶|가능|되나|되요|될까|하려|할래|하고싶)|(반품|환불|교환)[\s\S]{0,20}(해\s*주|부탁|요청|가능|되나|될까|하려)/;
 // 채널 표기 — message_logs.user_id 프리픽스(톡톡=없음·카카오=kakao:·자사몰=mall:)
 const chLabel = (uid) => { const u = String(uid || ''); return u.startsWith('kakao:') ? '카카오' : (u.startsWith('mall:') ? '자사몰' : '톡톡'); };
+/* 🔴 #298-b: 봇 미답변(SKIP)이라고 전부 알리면 **인사·덕담까지 폰이 울린다**
+   (실측 최근 SKIP = "감사합니다 시원하고 행복한날되세요~", "…좋은 귤 기대해봅니다").
+   → 미답변 중에서도 **직원 답변이 필요한 신호**(질문·요청·불만)가 있는 것만 알린다. */
+const NEEDS_STAFF_RE = /\?|？|나요|까요|가요|는지|어떻게|언제|얼마|되나|될까|알려|문의|해\s*주|부탁|안\s*왔|파손|불량|물러|상했|썩|이상|잘못|누락|빠졌|바꿔|변경|취소|반품|환불|교환/;
 let _ttReqBusy = false;
 setInterval(async () => {
     if (_ttReqBusy) return;
@@ -6081,7 +6085,7 @@ setInterval(async () => {
            카카오 「챗봇 채팅」은 카카오 앱 알림·상담 목록에 뜨지 않으므로(구조), 이 텔레그램 알림이 유일한 실시간 통로다. */
         const hits = r.rows.filter(x =>
             TALKTALK_REQUEST_RE.test(String(x.message || '')) ||
-            String(x.bot_response || '') === '[SKIP-무응답]');
+            (String(x.bot_response || '') === '[SKIP-무응답]' && NEEDS_STAFF_RE.test(String(x.message || ''))));
         let queue = Array.isArray(st.queue) ? st.queue : [];
         for (const h of hits) {
             const 미답 = String(h.bot_response || '') === '[SKIP-무응답]';
