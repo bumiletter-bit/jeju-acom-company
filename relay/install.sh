@@ -34,6 +34,24 @@ curl -fsSL -o package.json "$RAW/package.json"
 echo "③ 의존성 설치 중..."
 npm install --omit=dev --no-audit --no-fund
 
+# ③-2 헤드리스 브라우저 (지시 #310 — 네이버 공개 지표 수집용)
+#   네이버 공개 스토어는 일반 요청을 429로 막고 실제 브라우저만 통과시킨다(2026-08-09 실측).
+#   ⚠️ 다운로드 ~170MB·설치 몇 분 소요. 이미 있으면 건너뜀. 실패해도 설치는 계속 진행(중계 본기능 무영향).
+echo "③-2 헤드리스 브라우저(Chromium) 확인..."
+MEM_MB="$(free -m | awk '/^Mem:/{print $2}')"
+echo "   서버 메모리: ${MEM_MB}MB"
+if [ "${MEM_MB:-0}" -lt 1500 ] && [ ! -f /swapfile ]; then
+  echo "   메모리가 넉넉지 않아 스왑 2GB를 만듭니다(브라우저 안정용)..."
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile || true
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+if [ -d /root/.cache/ms-playwright ] && [ -n "$(ls -A /root/.cache/ms-playwright 2>/dev/null)" ]; then
+  echo "   Chromium 이미 설치됨 — 건너뜀"
+else
+  echo "   Chromium 내려받는 중... (몇 분 걸립니다)"
+  npx --yes playwright install --with-deps chromium || echo "   ⚠️ 브라우저 설치 실패 — 공개 지표 수집만 비활성(중계 본기능은 정상)"
+fi
+
 # ④ .env 생성 (없을 때만 — 재실행해도 채운 값 보존). 자체 인증 토큰은 자동 생성.
 if [ ! -f .env ]; then
   echo "④ .env 생성 + 자체 인증 토큰 자동 생성..."
@@ -110,6 +128,11 @@ echo ""
 echo "   ▶ 동작 확인:        curl -sk https://localhost:4000/health"
 echo "   ▶ 토큰 발급 확인:   curl -sk 'https://localhost:4000/health?token=1'"
 echo "        → token_test:\"success\" 나오면 네이버 인증 정상"
+echo "   ▶ 공개 지표 확인(#310):"
+echo "        source /opt/akkome-relay/.env && curl -sk -X POST https://localhost:4000/naver-public \\"
+echo "          -H \"Authorization: Bearer \$RELAY_AUTH_TOKEN\" -H 'Content-Type: application/json' \\"
+echo "          -d '{\"action\":\"store\"}'"
+echo "        → {\"interestCount\":19xxxx,...} 나오면 성공 (관심고객·평점 매일 갱신 가능)"
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "  🔐 HTTPS 인증서 (아래 -----BEGIN~END----- 전체를 복사해"

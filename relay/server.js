@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-07-31.1'; // 지시 #103·#104: 상품 조회 읽기 2종 ALLOW 추가(목록 search POST·v2 단건 GET — 자사몰 프로토타입 실데이터용, 쓰기 아님)
+const RELAY_VERSION = '2026-08-09.1'; // 지시 #310: 네이버 공개 지표 수집 라우트 /naver-public 신설(실브라우저 경유 — 관심고객·평점·상품 리뷰수 매일 갱신용)
 
 const {
     PORT = 4000,
@@ -249,6 +249,97 @@ app.post('/aligo', async (req, res) => {
     } catch (e) {
         log('알리고 중계 예외', host, reqPath, e.message);
         res.status(e.status || 500).json({ error: 'relay_error', message: e.message });
+    }
+});
+
+// ══════════════ 네이버 공개 지표 수집 (지시 #310 — 2026-08-09) ══════════════
+// 🔴 배경: brand.naver.com(공개 스토어)은 일반 HTTP 요청을 **429로 차단**한다. 2026-08-09 실측 결과
+//    같은 IP에서도 [일반 fetch = 429] / [실제 브라우저 = 200] → IP 차단이 아니라 **봇 지문 차단**이었다.
+//    (#234·#247에서 "원천 봉쇄"로 판정하고 리뷰 갱신을 껐던 것의 진짜 원인.)
+// → 이 서버에서 헤드리스 브라우저로 **공개 화면만** 열어 지표를 읽는다.
+//    로그인·주문·개인정보는 일절 건드리지 않는다(공개 페이지의 숫자만 추출).
+// 사용: POST /naver-public  { action:'store' }                        → { interestCount, avgScore, reviewCount }
+//       POST /naver-public  { action:'products', products:[번호,...] } → [{ no, reviewCount, score, buyBadge }]
+const NP_STORE = 'jejuakkome';
+let _npBusy = false;
+app.post('/naver-public', async (req, res) => {
+    const action = String((req.body && req.body.action) || 'store');
+    const products = Array.isArray(req.body && req.body.products) ? req.body.products.slice(0, 30) : [];
+    if (_npBusy) return res.status(429).json({ error: 'busy', message: '이미 수집 중입니다(동시 실행 금지 — 메모리 보호)' });
+    let pw;
+    try { pw = require('playwright'); }
+    catch (e) { return res.status(501).json({ error: 'playwright_missing', message: 'install.sh 재실행으로 브라우저를 설치하세요' }); }
+
+    _npBusy = true;
+    let browser = null;
+    const t0 = Date.now();
+    try {
+        browser = await pw.chromium.launch({
+            headless: true,
+            // 메모리 적은 서버(1GB급) 보호 — 공유메모리 대신 임시파일 사용 + 불필요 기능 차단
+            args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions', '--js-flags=--max-old-space-size=256'],
+        });
+        const ctx = await browser.newContext({
+            userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+            viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'ko-KR',
+        });
+        // 이미지·폰트·영상은 받지 않는다(숫자만 필요 — 메모리·시간 절감)
+        await ctx.route('**/*', (route) => {
+            const t = route.request().resourceType();
+            return (t === 'image' || t === 'media' || t === 'font') ? route.abort() : route.continue();
+        });
+        const page = await ctx.newPage();
+        const num = (s) => { const m = String(s || '').replace(/,/g, '').match(/[\d.]+/); return m ? Number(m[0]) : null; };
+
+        if (action === 'store') {
+            const r = await page.goto(`https://brand.naver.com/${NP_STORE}`, { waitUntil: 'domcontentloaded', timeout: 40000 });
+            if (!r || r.status() !== 200) throw Object.assign(new Error('store_page_' + (r ? r.status() : 'null')), { status: 502 });
+            await page.waitForTimeout(4000);
+            const out = await page.evaluate(() => {
+                const t = document.body.innerText.replace(/\s+/g, ' ');
+                return {
+                    interest: (t.match(/관심고객수?\s*[\d,]+/) || [''])[0],
+                    score: (t.match(/평점\s*[\d.]+/) || [''])[0],
+                    review: (t.match(/리뷰\s*[\d,]+/) || [''])[0],
+                };
+            });
+            const body = { interestCount: num(out.interest), avgScore: num(out.score), reviewCount: num(out.review), ms: Date.now() - t0 };
+            if (body.interestCount == null) throw Object.assign(new Error('interest_not_found'), { status: 502 });
+            log('공개지표 store', JSON.stringify(body));
+            return res.json(body);
+        }
+
+        if (action === 'products') {
+            const rows = [];
+            for (const no of products) {
+                const pno = String(no).replace(/[^0-9]/g, '');
+                if (!pno) continue;
+                try {
+                    const r = await page.goto(`https://brand.naver.com/${NP_STORE}/products/${pno}`, { waitUntil: 'domcontentloaded', timeout: 40000 });
+                    await page.waitForTimeout(2500);
+                    const o = await page.evaluate(() => {
+                        const t = document.body.innerText.replace(/\s+/g, ' ');
+                        return {
+                            review: (t.match(/리뷰\s*[\d,]+/) || [''])[0],
+                            score: (t.match(/평점\s*[\d.]+/) || [''])[0],
+                            badge: (t.match(/오늘\s*[\d,]+명\s*구매|최근 \d+일간[^가-힣]{0,4}[가-힣 ]{0,12}/) || [''])[0],
+                        };
+                    });
+                    rows.push({ no: pno, status: r ? r.status() : null, reviewCount: num(o.review), score: num(o.score), buyBadge: o.badge || null });
+                } catch (e) { rows.push({ no: pno, error: String(e.message).slice(0, 60) }); }
+                await new Promise(s => setTimeout(s, 1200));   // 예의상 간격(차단 유발 방지)
+            }
+            log('공개지표 products', rows.length + '건 ' + (Date.now() - t0) + 'ms');
+            return res.json({ items: rows, ms: Date.now() - t0 });
+        }
+
+        return res.status(400).json({ error: 'unknown_action', action });
+    } catch (e) {
+        log('공개지표 실패', action, e.message);
+        return res.status(e.status || 500).json({ error: 'public_fetch_error', message: String(e.message).slice(0, 160) });
+    } finally {
+        try { if (browser) await browser.close(); } catch (_) { }
+        _npBusy = false;
     }
 });
 
