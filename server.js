@@ -6920,9 +6920,13 @@ async function collectOrderNew() {
     let kakaoLines = [], kakaoSentN = 0, kakaoWinLabel = '';
     if (await alertEnabled('kakaosend')) {
         try {
-            const t = (await pool.query(`SELECT interval_min, last_run_at FROM naver_auto_collect WHERE key='order'`)).rows[0] || {};
+            // 🔴 경과 분은 반드시 DB에서 계산할 것 — last_run_at은 timestamp WITHOUT time zone이라
+            //    JS로 `new Date(last_run_at)`을 하면 Node 프로세스 시간대로 해석돼 9시간 어긋난다(KST 환경에서 실측).
+            const t = (await pool.query(`SELECT interval_min,
+                ROUND(EXTRACT(EPOCH FROM (NOW() - last_run_at)) / 60)::int AS since_min
+                FROM naver_auto_collect WHERE key='order'`)).rows[0] || {};
             const ivMin = Math.min(Math.max(Number(t.interval_min) || 60, 3), 1440);
-            const sinceLast = t.last_run_at ? (now - new Date(t.last_run_at).getTime()) / 60000 : 0;
+            const sinceLast = Math.max(0, Number(t.since_min) || 0);
             // 타이머를 껐다 켰거나 장기 정지 후 재개한 경우 과거분이 통째로 딸려오지 않게 주기의 2배로 클램프
             const winMin = Math.round(Math.min(Math.max(sinceLast, ivMin), ivMin * 2));
             const winLabel = winMin >= 60 ? `${Math.round(winMin / 6) / 10}시간` : `${winMin}분`;
