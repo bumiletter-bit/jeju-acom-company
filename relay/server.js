@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-08-09.2'; // #310-b: 스토어 지표 추출을 '관심고객수' 주변 창으로 한정(상품 카드 숫자 오인식 교정 — 대표 실행 결과 반영)
+const RELAY_VERSION = '2026-08-09.3'; // #312: 리뷰 본문 수집 action 추가(브라우저 안에서 리뷰 API 호출 — 서버 직접 호출은 429)
 
 const {
     PORT = 4000,
@@ -337,6 +337,50 @@ app.post('/naver-public', async (req, res) => {
             }
             log('공개지표 products', rows.length + '건 ' + (Date.now() - t0) + 'ms');
             return res.json({ items: rows, ms: Date.now() - t0 });
+        }
+
+        // ── #312: 리뷰 본문 수집 (지시 #234·#247에서 429로 6일 연속 실패 후 중단됐던 것) ──
+        //   🔴 핵심: 리뷰 API를 **브라우저 안에서** 호출한다(같은 출처·쿠키·지문 보유) → 서버에서 직접 부르면 429.
+        //   products = [{ no: 채널상품번호, originNo: 원상품번호 }] — originNo가 있어야 리뷰 조회가 된다.
+        if (action === 'reviews') {
+            const merchantNo = Number(req.body && req.body.merchantNo) || 510497562;
+            const perProduct = Math.min(Math.max(Number(req.body && req.body.perProduct) || 20, 1), 20);
+            const out = {}; const fails = [];
+            for (const it of products) {
+                const pno = String((it && it.no) || it).replace(/[^0-9]/g, '');
+                const ono = String((it && it.originNo) || '').replace(/[^0-9]/g, '');
+                if (!pno || !ono) { fails.push({ no: pno, why: 'originNo 없음' }); continue; }
+                try {
+                    await page.goto(`https://brand.naver.com/${NP_STORE}/products/${pno}`, { waitUntil: 'domcontentloaded', timeout: 40000 });
+                    await page.waitForTimeout(1500);
+                    const j = await page.evaluate(async (a) => {
+                        try {
+                            const r2 = await fetch('/n/v1/contents/reviews/query-pages', {
+                                method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
+                                body: JSON.stringify({ checkoutMerchantNo: a.m, originProductNo: Number(a.o), page: 1, pageSize: a.n, reviewSearchSortType: 'REVIEW_RANKING' }),
+                            });
+                            if (r2.status !== 200) return { status: r2.status };
+                            const d = await r2.json().catch(() => null);
+                            return {
+                                status: 200,
+                                rows: ((d && d.contents) || []).map(x => ({
+                                    score: x.reviewScore,
+                                    content: String(x.reviewContent || '').replace(/\s+/g, ' ').slice(0, 400),
+                                    date: String(x.createDate || '').slice(0, 10),
+                                    writer: x.maskedWriterId,          // 네이버 마스킹형 그대로 — 원문 PII 미수집
+                                    opt: String(x.productOptionContent || '').slice(0, 120),
+                                })),
+                            };
+                        } catch (e) { return { status: -1, err: String(e).slice(0, 60) }; }
+                    }, { m: merchantNo, o: ono, n: perProduct });
+                    if (j && j.status === 200 && j.rows && j.rows.length) out[pno] = j.rows;
+                    else fails.push({ no: pno, why: 'http_' + (j && j.status) });
+                } catch (e) { fails.push({ no: pno, why: String(e.message).slice(0, 50) }); }
+                await new Promise(s => setTimeout(s, 1500));
+            }
+            const total = Object.values(out).reduce((s, a) => s + a.length, 0);
+            log('공개지표 reviews', Object.keys(out).length + '종 ' + total + '건 (실패 ' + fails.length + ') ' + (Date.now() - t0) + 'ms');
+            return res.json({ reviews: out, products: Object.keys(out).length, total, fails, ms: Date.now() - t0 });
         }
 
         return res.status(400).json({ error: 'unknown_action', action });

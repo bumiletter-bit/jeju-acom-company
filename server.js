@@ -7864,8 +7864,32 @@ async function collectProductSnapshot() {
     // 지시 #122: 판매중 상품 공개 리뷰(상품별 5건) — 공개 경로(brand.naver.com, IP 제한 없음 → 직접 fetch).
     //   🔴 자동 폴백: 어떤 이유로든 실패하면 직전 스냅샷의 리뷰를 그대로 유지(리뷰만 구버전·다른 데이터는 정상 갱신) — 실패 사실은 note에 기록.
     let reviews = null, reviewNote = '';
+    // 🟢 지시 #312(대표 확정 8/9): **리뷰 본문 갱신 재개** — 중계서버의 실브라우저 안에서 리뷰 API를 호출한다.
+    //    (#234·#247에서 "원천 봉쇄"로 판정하고 껐던 것의 진짜 원인은 IP가 아니라 **봇 지문**이었다 — 브라우저 안에서는 통과.)
+    //    실패하면 종전대로 **직전분 유지**(화면 무영향)하고 사유만 note에 남긴다.
+    try {
+        const revTargets = items.filter(i => i.no && i.originNo).map(i => ({ no: i.no, originNo: i.originNo }));
+        if (!revTargets.length) throw new Error('originNo 있는 상품 0건');
+        const rr = await naverRelay.callNaverPublic({ action: 'reviews', products: revTargets, perProduct: 20 });
+        const got = (rr && rr.reviews) || {};
+        const cnt = Object.values(got).reduce((s, a) => s + a.length, 0);
+        if (!cnt) throw new Error('리뷰 0건 (실패 ' + ((rr && rr.fails || []).length) + '종)');
+        // 화면이 쓰는 형태로 정규화(기존 스키마 유지 — source:'nstore')
+        const norm = {};
+        Object.entries(got).forEach(([no, arr]) => {
+            norm[no] = arr.map(x => ({ score: x.score, content: x.content, date: x.date, writer: x.writer, opt: x.opt, source: 'nstore' }));
+        });
+        reviews = norm;
+        reviewNote = ' | 리뷰 ' + cnt + '건 (' + Object.keys(norm).length + '종, 브라우저 경유)';
+    } catch (e) {
+        const prev = await pool.query(`SELECT reviews FROM naver_product_snapshot WHERE reviews IS NOT NULL ORDER BY id DESC LIMIT 1`);
+        reviews = prev.rows.length ? prev.rows[0].reviews : null;
+        reviewNote = ' | 리뷰 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
+    }
+    // ── (보존) 구 직접 호출 경로 — #312에서 브라우저 경유로 대체됐다. 되돌릴 일이 있으면 아래 블록을 다시 쓰면 된다. ──
     const REVIEW_FETCH_OFF = true;   // 지시 #247-① (대표 확정): 네이버 리뷰 엔드포인트 원천 봉쇄(로컬 IP 첫 콜도 429 실측) — 매일 37분 백오프 낭비 제거. 재개 시 false.
     try {
+        if (reviews) throw new Error('브라우저 경유(#312)로 이미 갱신 — 구 경로 건너뜀');   // ⚠️ 이 줄이 없으면 아래 catch가 새 결과를 직전분으로 덮어쓴다
         if (REVIEW_FETCH_OFF) throw new Error('리뷰 갱신 중단(#247 — 원천 봉쇄·직전분 유지)');
         const live = items.filter(i => i.originNo && i.no);   // 대표 지시(8/1): 리뷰·배지를 품절 포함 전 상품으로 — 상세 리뷰 탭 재료
         const collected = {};
@@ -7912,9 +7936,11 @@ async function collectProductSnapshot() {
         reviews = collected;
         reviewNote = ' | 리뷰 ' + Object.values(collected).reduce((s, a) => s + a.length, 0) + '건' + (failCnt ? ` (실패 상품 ${failCnt} — 부분 성공)` : '');
     } catch (e) {
-        const prev = await pool.query(`SELECT reviews FROM naver_product_snapshot WHERE reviews IS NOT NULL ORDER BY id DESC LIMIT 1`);
-        reviews = prev.rows.length ? prev.rows[0].reviews : null;
-        reviewNote = ' | 리뷰 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
+        if (!reviews) {   // ⚠️ #312: 새 경로가 이미 받아왔으면 절대 덮어쓰지 않는다(구 경로의 폴백이 신규 결과를 지우던 함정)
+            const prev = await pool.query(`SELECT reviews FROM naver_product_snapshot WHERE reviews IS NOT NULL ORDER BY id DESC LIMIT 1`);
+            reviews = prev.rows.length ? prev.rows[0].reviews : null;
+            reviewNote = ' | 리뷰 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
+        }
     }
     // ── 지시 #310: 스토어 공개 지표(관심고객수·상품별 리뷰수/평점) — 중계서버의 실브라우저 경유 ──
     //   🔴 근거: brand.naver.com은 일반 요청을 429로 막고 실제 브라우저만 통과시킨다(2026-08-09 같은 IP 실측).
