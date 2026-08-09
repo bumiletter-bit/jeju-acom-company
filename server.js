@@ -6131,7 +6131,19 @@ async function inquiryAlertTick() {
                 const lines = [];
                 if (await alertEnabled('order') && Number(acc.order) > 0) lines.push(`🚚 신규 주문 ${acc.order}건 (발주확인은 수기)`);
                 if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 반품·교환 ${acc.claim}건`);
-                if (await alertEnabled('kakaosend') && Number(acc.kakaosend) > 0) lines.push(`📨 주문 안내 알림톡 ${acc.kakaosend}건 발송`);   // 지시 #68 C6
+                if (await alertEnabled('kakaosend')) {   // 지시 #68 C6 → #334: 실패·보류·차단도 함께 (종전엔 성공 건수만 떠서 밤사이 실패를 놓쳤음)
+                    if (Number(acc.kakaosend) > 0) lines.push(`📨 주문 안내 알림톡 ${acc.kakaosend}건 발송`);
+                    const kf = Number(acc.kakaosend_fail) || 0, kh = Number(acc.kakaosend_hold) || 0, kb = Number(acc.kakaosend_block) || 0;
+                    if (kf + kh + kb > 0) {
+                        const sub = [];
+                        if (kf > 0) sub.push(`❌ 실패 ${kf}건`);
+                        if (kh > 0) sub.push(`⏸ 보류 ${kh}건`);
+                        if (kb > 0) sub.push(`🚫 번호없음 ${kb}건`);
+                        lines.push(`📨 알림톡 ${sub.join(' · ')} — [알림 발송 이력]에서 확인·재발송`);
+                        const fails = (await naverCfgGet('alert_night_kakao_fail')) || [];
+                        for (const f of fails) lines.push(`   ❌ ${f}`);
+                    }
+                }
                 if (await alertEnabled('confirmneed') && Number(acc.confirmneed) > 0) lines.push(`🛒 알림톡 발송 실패 ${acc.confirmneed}건 — 수기 발주확인 필요`);   // 지시 #92
                 if (await alertEnabled('settlement') && Number(acc.settlement) > 0) lines.push(`🛰️ 정산 자동수집 완료 (데이터관리 > 정산 조회)`);
                 if (await alertEnabled('autodone')) {
@@ -6146,10 +6158,12 @@ async function inquiryAlertTick() {
                 if (!lines.length) lines.push('밤사이 특이사항 없음');
                 notifyTelegram(await alertText('briefing', { '시작': cfg.night_start, '종료': cfg.briefing_time, '내용': lines.join('\n') }));
                 await naverCfgSet('alert_night_acc', {});   // 브리핑 발송 = 야간 누적 리셋
+                await naverCfgSet('alert_night_kakao_fail', []);   // #334: 실패 상세도 함께 리셋(무한 누적 방지)
                 await naverCfgSet('alert_briefing_state', { date: todayKst });
             } else if (st.date !== todayKst) {
                 await naverCfgSet('alert_briefing_state', { date: todayKst });   // 브리핑 OFF여도 기준일 갱신 + 누적 리셋(무한 누적 방지)
                 await naverCfgSet('alert_night_acc', {});
+                await naverCfgSet('alert_night_kakao_fail', []);   // #334
             }
         }
         // ② 미처리 리마인더 — 주간(야간 창 밖)만, 대기 있을 때만, 설정 간격마다 (처리되면 자동 중단)
@@ -6917,7 +6931,10 @@ async function collectOrderNew() {
     // 지시 #333(대표 8/10): 집계 구간 60분 고정을 폐기하고 이 타이머 주기에 자동 연동.
     //   기준 = 직전 실행 시각(last_run_at) 이후 전부 → 주기를 몇 분으로 바꾸든 누락·중복 0.
     //   (틱은 60초 단위라 실제 간격이 주기보다 최대 1분 길다 — 고정 창이면 그만큼 매번 새어나감)
+    // #334(대표 8/10): 야간 실패·보류·차단도 아침 브리핑에 실으려면 이 값들이 함수 스코프에 있어야 한다
+    //   (종전엔 try 블록 지역변수라 야간엔 sent 건수만 누적 → 밤사이 실패가 아침에 안 보였음)
     let kakaoLines = [], kakaoSentN = 0, kakaoWinLabel = '';
+    let kakaoFailN = 0, kakaoHoldN = 0, kakaoBlockN = 0, kakaoFailRows = [];
     if (await alertEnabled('kakaosend')) {
         try {
             // 🔴 경과 분은 반드시 DB에서 계산할 것 — last_run_at은 timestamp WITHOUT time zone이라
@@ -6938,13 +6955,15 @@ async function collectOrderNew() {
             const failedN = (g['failed'] || 0) + (g['token-failed'] || 0);
             const holdN = g['hold-0809'] || 0;
             const blockN = (g['no-tel'] || 0) + (g['gift-masked'] || 0);
+            kakaoFailN = failedN; kakaoHoldN = holdN; kakaoBlockN = blockN;
             if (kakaoSentN + failedN + holdN + blockN > 0) {   // 0건 구간은 알림톡 줄 생략 (#215)
                 kakaoLines.push(`📨 알림톡(${winLabel}): 성공 ${kakaoSentN} · 실패 ${failedN} · 보류 ${holdN} · 차단 ${blockN}`);
                 if (failedN > 0) {
                     const fr = (await pool.query(`SELECT receiver_masked, error FROM kakao_notify_log
                         WHERE created_at >= NOW() - make_interval(mins => $1) AND mode='real' AND status IN ('failed','token-failed')
                         ORDER BY id DESC LIMIT 5`, [winMin])).rows;
-                    for (const f of fr) kakaoLines.push(`  ❌ ${f.receiver_masked || '-'} ${String(f.error || '').slice(0, 80)}`);
+                    kakaoFailRows = fr.map(f => `${f.receiver_masked || '-'} ${String(f.error || '').slice(0, 80)}`);
+                    for (const line of kakaoFailRows) kakaoLines.push(`  ❌ ${line}`);
                 }
             }
         } catch (_) { /* 요약 집계 실패해도 신규주문 알림은 정상 발송 (무회귀) */ }
@@ -6952,6 +6971,17 @@ async function collectOrderNew() {
     if (await alertQuietNow()) {   // 대표 7/27: 야간엔 아침 브리핑으로 모아서
         if (paid.length > 0 && await alertEnabled('order')) await alertNightAcc('order', paid.length);
         if (kakaoSentN > 0) await alertNightAcc('kakaosend', kakaoSentN);   // 아침 브리핑 줄 유지 (#215 — 건별 즉시 알림의 야간 누적 대체)
+        // #334(대표): 밤사이 실패·보류·차단도 아침에 보이게 — 건수 누적 + 실패 사유 최대 5건 보관.
+        //   카운터 누적 방식이라 시간대 변환이 개입하지 않는다(#333에서 데인 함정 회피).
+        if (kakaoFailN > 0) await alertNightAcc('kakaosend_fail', kakaoFailN);
+        if (kakaoHoldN > 0) await alertNightAcc('kakaosend_hold', kakaoHoldN);
+        if (kakaoBlockN > 0) await alertNightAcc('kakaosend_block', kakaoBlockN);
+        if (kakaoFailRows.length) {
+            try {
+                const prev = (await naverCfgGet('alert_night_kakao_fail')) || [];
+                await naverCfgSet('alert_night_kakao_fail', prev.concat(kakaoFailRows).slice(0, 5));
+            } catch (_) { /* 상세 보관 실패해도 건수는 남는다 */ }
+        }
     } else if (paid.length > 0 && await alertEnabled('order')) {
         const base = await alertText('order', { '건수': paid.length });
         notifyTelegram(kakaoLines.length ? `${base}\n${kakaoLines.join('\n')}` : base);
