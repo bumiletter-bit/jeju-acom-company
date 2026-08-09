@@ -6913,23 +6913,33 @@ async function collectOrderNew() {
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     const paid = list.filter(x => String(x.lastChangedType || '') === 'PAYED');
     await naverCfgSet('naver_order_checkpoint', new Date(now).toISOString());
-    // 지시 #215: 직전 1시간 알림톡 결과 요약을 신규주문 알림에 병기 — 시간당 1통. kakaosend 토글 ON=요약 포함 / OFF=신규주문만.
-    let kakaoLines = [], kakaoSentN = 0;
+    // 지시 #215: 알림톡 결과 요약을 신규주문 알림에 병기 — 1회 1통. kakaosend 토글 ON=요약 포함 / OFF=신규주문만.
+    // 지시 #333(대표 8/10): 집계 구간 60분 고정을 폐기하고 이 타이머 주기에 자동 연동.
+    //   기준 = 직전 실행 시각(last_run_at) 이후 전부 → 주기를 몇 분으로 바꾸든 누락·중복 0.
+    //   (틱은 60초 단위라 실제 간격이 주기보다 최대 1분 길다 — 고정 창이면 그만큼 매번 새어나감)
+    let kakaoLines = [], kakaoSentN = 0, kakaoWinLabel = '';
     if (await alertEnabled('kakaosend')) {
         try {
+            const t = (await pool.query(`SELECT interval_min, last_run_at FROM naver_auto_collect WHERE key='order'`)).rows[0] || {};
+            const ivMin = Math.min(Math.max(Number(t.interval_min) || 60, 3), 1440);
+            const sinceLast = t.last_run_at ? (now - new Date(t.last_run_at).getTime()) / 60000 : 0;
+            // 타이머를 껐다 켰거나 장기 정지 후 재개한 경우 과거분이 통째로 딸려오지 않게 주기의 2배로 클램프
+            const winMin = Math.round(Math.min(Math.max(sinceLast, ivMin), ivMin * 2));
+            const winLabel = winMin >= 60 ? `${Math.round(winMin / 6) / 10}시간` : `${winMin}분`;
+            kakaoWinLabel = winLabel;
             const ks = (await pool.query(`SELECT status, COUNT(*)::int AS n FROM kakao_notify_log
-                WHERE created_at >= NOW() - interval '60 minutes' AND mode IN ('real','hold','skip') GROUP BY status`)).rows;
+                WHERE created_at >= NOW() - make_interval(mins => $1) AND mode IN ('real','hold','skip') GROUP BY status`, [winMin])).rows;
             const g = {}; for (const row of ks) g[row.status] = row.n;
             kakaoSentN = g['sent'] || 0;
             const failedN = (g['failed'] || 0) + (g['token-failed'] || 0);
             const holdN = g['hold-0809'] || 0;
             const blockN = (g['no-tel'] || 0) + (g['gift-masked'] || 0);
-            if (kakaoSentN + failedN + holdN + blockN > 0) {   // 0건 시간대는 알림톡 줄 생략 (#215)
-                kakaoLines.push(`📨 알림톡(1시간): 성공 ${kakaoSentN} · 실패 ${failedN} · 보류 ${holdN} · 차단 ${blockN}`);
+            if (kakaoSentN + failedN + holdN + blockN > 0) {   // 0건 구간은 알림톡 줄 생략 (#215)
+                kakaoLines.push(`📨 알림톡(${winLabel}): 성공 ${kakaoSentN} · 실패 ${failedN} · 보류 ${holdN} · 차단 ${blockN}`);
                 if (failedN > 0) {
                     const fr = (await pool.query(`SELECT receiver_masked, error FROM kakao_notify_log
-                        WHERE created_at >= NOW() - interval '60 minutes' AND mode='real' AND status IN ('failed','token-failed')
-                        ORDER BY id DESC LIMIT 5`)).rows;
+                        WHERE created_at >= NOW() - make_interval(mins => $1) AND mode='real' AND status IN ('failed','token-failed')
+                        ORDER BY id DESC LIMIT 5`, [winMin])).rows;
                     for (const f of fr) kakaoLines.push(`  ❌ ${f.receiver_masked || '-'} ${String(f.error || '').slice(0, 80)}`);
                 }
             }
@@ -6942,8 +6952,8 @@ async function collectOrderNew() {
         const base = await alertText('order', { '건수': paid.length });
         notifyTelegram(kakaoLines.length ? `${base}\n${kakaoLines.join('\n')}` : base);
     } else if (kakaoLines.length > 0) {
-        // 신규 결제 0건이어도 알림톡 결과가 있으면(소급 발송 시간대 등) 요약만 발송 — 시간당 1통 원칙 유지
-        notifyTelegram(`📨 알림톡 결과 (직전 1시간)\n${kakaoLines.join('\n')}`);
+        // 신규 결제 0건이어도 알림톡 결과가 있으면(소급 발송 시간대 등) 요약만 발송 — 1회 1통 원칙 유지
+        notifyTelegram(`📨 알림톡 결과 (직전 ${kakaoWinLabel || '1시간'})\n${kakaoLines.join('\n')}`);
     }
     return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
 }
