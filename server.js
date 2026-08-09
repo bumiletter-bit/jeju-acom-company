@@ -7938,7 +7938,8 @@ async function collectProductSnapshot() {
         let sum = 0, hit = 0, capped = 0, kept = 0;
         for (const it of items) {
             const m = byNo[String(it.no)];
-            const prevR = prevByNo[String(it.no)] && prevByNo[String(it.no)].reviewCount != null ? Number(prevByNo[String(it.no)].reviewCount) : null;
+            let prevR = prevByNo[String(it.no)] && prevByNo[String(it.no)].reviewCount != null ? Number(prevByNo[String(it.no)].reviewCount) : null;
+            if (prevR === 99999) prevR = null;   // 직전 스냅샷에 상한값이 이미 섞여 들어간 경우까지 차단(교정 전 1회분 존재)
             let r = (m && m.reviewCount != null) ? Number(m.reviewCount) : null;
             if (r === 99999) { r = null; capped++; }                      // ① 상한 표기 — 실수치 아님
             if (r != null && prevR != null && r < prevR) { r = null; }     // 역행(리뷰는 줄지 않는다) = 수집 오류로 간주
