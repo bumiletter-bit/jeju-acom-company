@@ -7877,7 +7877,12 @@ async function collectProductSnapshot() {
         // 화면이 쓰는 형태로 정규화(기존 스키마 유지 — source:'nstore')
         const norm = {};
         Object.entries(got).forEach(([no, arr]) => {
-            norm[no] = arr.map(x => ({ score: x.score, content: x.content, date: x.date, writer: x.writer, opt: x.opt, source: 'nstore' }));
+            // ⚠️ 화면 정본 스키마 = { score, labels, text, date, writer, opt, source } — 필드명이 하나만 어긋나도 본문이 undefined로 렌더된다.
+            norm[no] = arr.map(x => ({
+                score: x.score, labels: x.labels || [],
+                text: String(x.text != null ? x.text : (x.content || '')).slice(0, 300),
+                date: x.date, writer: x.writer, opt: x.opt, source: 'nstore',
+            }));
         });
         reviews = norm;
         reviewNote = ' | 리뷰 ' + cnt + '건 (' + Object.keys(norm).length + '종, 브라우저 경유)';

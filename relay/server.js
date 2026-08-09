@@ -365,7 +365,8 @@ app.post('/naver-public', async (req, res) => {
                                 status: 200,
                                 rows: ((d && d.contents) || []).map(x => ({
                                     score: x.reviewScore,
-                                    content: String(x.reviewContent || '').replace(/\s+/g, ' ').slice(0, 400),
+                                    labels: x.labels || [],        // BEST·재구매 — 화면 뱃지 + 롤링 우선순위 재료(빠뜨리면 엄선이 무력화됨)
+                                    text: String(x.reviewContent || '').replace(/\s+/g, ' ').slice(0, 300),   // ⚠️ 화면이 읽는 정본 필드명은 text (content 아님)
                                     date: String(x.createDate || '').slice(0, 10),
                                     writer: x.maskedWriterId,          // 네이버 마스킹형 그대로 — 원문 PII 미수집
                                     opt: String(x.productOptionContent || '').slice(0, 120),
