@@ -6054,7 +6054,11 @@ async function inquiryStaffPending() {
 //    봇이 접수 안내(자동응답)를 해도 요청 건이 직원 눈에 확실히 잡히게 — message_logs 감지 → 텔레그램.
 //    야간(alert_quiet)엔 보류 큐에 쌓았다가 야간 종료 후 몰아서 발송(아침 브리핑 로직 무수정).
 // 지시 #113: 간격 상한 14→40자 확대 — 실제 주소가 끼면("배송지를 서귀포시 화순로 101로 변경") 14자를 넘어 미감지되던 결함 수정
-const TALKTALK_REQUEST_RE = /(배송지|주소|옵션|연락처|받는\s*분|수취인)[\s\S]{0,40}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정)[\s\S]{0,40}(배송지|주소|옵션|연락처)|주문[\s\S]{0,20}취소|취소[\s\S]{0,20}(해\s*주|부탁|요청|하고\s*싶)/;
+// 🔴 #298(대표 실물): "지금 청귤 발송 문자를 받았는데 … 취소가능할까요?!" 가 **미감지**였다 —
+//    기존 식은 "취소해주세요/부탁"류만 잡고 "취소 가능할까요·취소 되나요·취소 하려면"을 놓쳤다. 어미 확장.
+const TALKTALK_REQUEST_RE = /(배송지|주소|옵션|연락처|받는\s*분|수취인)[\s\S]{0,40}(변경|바꿔|바꾸|수정)|(변경|바꿔|바꾸|수정)[\s\S]{0,40}(배송지|주소|옵션|연락처)|주문[\s\S]{0,20}취소|취소[\s\S]{0,20}(해\s*주|부탁|요청|하고\s*싶|가능|되나|되요|될까|하려|할래|하고싶)|(반품|환불|교환)[\s\S]{0,20}(해\s*주|부탁|요청|가능|되나|될까|하려)/;
+// 채널 표기 — message_logs.user_id 프리픽스(톡톡=없음·카카오=kakao:·자사몰=mall:)
+const chLabel = (uid) => { const u = String(uid || ''); return u.startsWith('kakao:') ? '카카오' : (u.startsWith('mall:') ? '자사몰' : '톡톡'); };
 let _ttReqBusy = false;
 setInterval(async () => {
     if (_ttReqBusy) return;
@@ -6067,27 +6071,36 @@ setInterval(async () => {
             return;
         }
         const r = await pool.query(
-            `SELECT id, message, bot_response FROM message_logs
+            `SELECT id, user_id, message, bot_response FROM message_logs
              WHERE id > $1 AND bot_response IS NOT NULL AND bot_response NOT IN ('[직원응답]','[직원 직접답변]')
              ORDER BY id ASC LIMIT 50`, [st.last_id]);
         if (!r.rows.length) { /* 신규 없음 — 야간 보류분 방출만 검사 */ }
-        const hits = r.rows.filter(x => TALKTALK_REQUEST_RE.test(String(x.message || '')));
+        /* 🔴 #298(대표 실물 "알림이 안 와서 직접 처리를 못 한다"): 알림 대상을 2종으로 넓힌다.
+           ① 요청형(변경·취소·반품 등) ② **AI가 답하지 못한 문의([SKIP-무응답])** —
+           봇이 침묵한 건은 정의상 직원이 봐야 하는 건인데 그동안 아무 신호도 없었다.
+           카카오 「챗봇 채팅」은 카카오 앱 알림·상담 목록에 뜨지 않으므로(구조), 이 텔레그램 알림이 유일한 실시간 통로다. */
+        const hits = r.rows.filter(x =>
+            TALKTALK_REQUEST_RE.test(String(x.message || '')) ||
+            String(x.bot_response || '') === '[SKIP-무응답]');
         let queue = Array.isArray(st.queue) ? st.queue : [];
-        for (const h of hits) queue.push(String(h.message || '').slice(0, 60));
+        for (const h of hits) {
+            const 미답 = String(h.bot_response || '') === '[SKIP-무응답]';
+            queue.push(`[${chLabel(h.user_id)}${미답 ? '·봇 미답변' : ''}] ` + String(h.message || '').replace(/\s+/g, ' ').slice(0, 60));
+        }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
         const quiet = await alertQuietNow();
         let lastAlert = st.last_alert || null;
         if (!quiet && queue.length) {
             const lines = queue.slice(0, 8).map(m => `· "${m}"`).join('\n');
             // 지시 #113: 발송 결과를 상태에 기록 — 'sent'일 때만 비움(실패 시 큐 유지·다음 틱 재시도). 실물 수신 확인은 대표 몫.
-            const result = await notifyTelegram(`📮 톡톡 요청형 문의 ${queue.length}건 — 직원 확인 필요\n${lines}\n(봇은 접수 안내만 했습니다 — 실제 변경·취소 처리는 [문의 관리]>톡톡 탭·판매자센터에서 직원이 진행해주세요)`);
+            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘봇 미답변’ = AI가 답하지 못한 건 — 카카오는 챗봇 대화라 카카오 앱에는 알림이 오지 않습니다. [문의 관리]>💬 톡톡 문의 또는 해당 채널에서 직접 답변해주세요)`);
             lastAlert = { at: new Date().toISOString(), count: queue.length, result };
             if (result === 'sent') queue = [];
         }
         await naverCfgSet('talktalk_request_state', { last_id: lastId, queue, last_alert: lastAlert });
     } catch (e) { console.error('[요청형알림] 오류:', e.message); }
     finally { _ttReqBusy = false; }
-}, 3 * 60 * 1000);
+}, 60 * 1000);   /* #298: 상담 실시간성 — 3분 → 1분(카카오는 이 알림이 유일한 통로라 지연을 줄인다) */
 
 let _inqAlertBusy = false;
 async function inquiryAlertTick() {
