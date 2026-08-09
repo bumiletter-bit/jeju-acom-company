@@ -929,6 +929,7 @@ async function initDB() {
         )
     `);
     await pool.query(`ALTER TABLE naver_product_snapshot ADD COLUMN IF NOT EXISTS reviews JSONB`);   // 지시 #122: 리뷰 일일 갱신(실패 시 직전분 유지)
+    await pool.query(`ALTER TABLE naver_product_snapshot ADD COLUMN IF NOT EXISTS store_meta JSONB`);   // 지시 #310: 스토어 공개 지표(관심고객수·리뷰 합계·가중 평점) 일일 갱신
     // 지시 #190-2: 수신 풀번호 조회 접근 기록 — 계정·날짜·건수만. 🔴 번호(PII)는 저장하지 않는다.
     //   화면 열 때마다 발생하므로 하루 1행(계정별) 누적 방식 — 행 폭증·성능 부담 없음.
     await pool.query(`
@@ -7915,8 +7916,42 @@ async function collectProductSnapshot() {
         reviews = prev.rows.length ? prev.rows[0].reviews : null;
         reviewNote = ' | 리뷰 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
     }
-    await pool.query(`INSERT INTO naver_product_snapshot (total, items, note, reviews) VALUES ($1, $2, $3, $4)`,
-        [items.length, JSON.stringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote, reviews ? JSON.stringify(reviews) : null]);
+    // ── 지시 #310: 스토어 공개 지표(관심고객수·상품별 리뷰수/평점) — 중계서버의 실브라우저 경유 ──
+    //   🔴 근거: brand.naver.com은 일반 요청을 429로 막고 실제 브라우저만 통과시킨다(2026-08-09 같은 IP 실측).
+    //   ⚠️ 실패해도 본 스냅샷(가격·재고)은 그대로 저장한다 — 지표는 직전분 유지, 사유는 note에 남김.
+    //   ⚠️ 스토어 홈에는 '스토어 전체 평점'이 텍스트로 없다(상품 카드 숫자가 섞여 오인식됨 — 대표 실행으로 확인).
+    //      → **평점·누적 리뷰는 상품별 실값에서 산출**한다: 합계 = Σ리뷰수, 평점 = 리뷰수 가중평균. 근거가 명확한 값만 쓴다.
+    let storeMeta = null, publicNote = '';
+    try {
+        const st = await naverRelay.callNaverPublic({ action: 'store' });
+        const nos = items.filter(i => i.no).map(i => i.no);
+        const pr = await naverRelay.callNaverPublic({ action: 'products', products: nos });
+        const byNo = {};
+        (pr && pr.items || []).forEach(x => { if (x && x.no) byNo[String(x.no)] = x; });
+        let sum = 0, wsum = 0, hit = 0;
+        for (const it of items) {
+            const m = byNo[String(it.no)];
+            if (!m) continue;
+            if (m.reviewCount != null) { it.reviewCount = m.reviewCount; sum += m.reviewCount; if (m.score != null) wsum += m.score * m.reviewCount; }
+            if (m.score != null) it.score = m.score;
+            if (m.buyBadge) it.buyBadge = m.buyBadge;
+            hit++;
+        }
+        storeMeta = {
+            interestCount: (st && st.interestCount != null) ? st.interestCount : null,
+            reviewTotal: sum || null,
+            avgScore: sum ? Math.round((wsum / sum) * 100) / 100 : null,
+            products: hit,
+            at: new Date().toISOString(),
+        };
+        publicNote = ` | 공개지표 관심고객 ${storeMeta.interestCount} · 상품 ${hit}종 · 리뷰합 ${sum} · 평점 ${storeMeta.avgScore}`;
+    } catch (e) {
+        const prev = await pool.query(`SELECT store_meta FROM naver_product_snapshot WHERE store_meta IS NOT NULL ORDER BY id DESC LIMIT 1`);
+        storeMeta = prev.rows.length ? prev.rows[0].store_meta : null;
+        publicNote = ' | 공개지표 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
+    }
+    await pool.query(`INSERT INTO naver_product_snapshot (total, items, note, reviews, store_meta) VALUES ($1, $2, $3, $4, $5)`,
+        [items.length, JSON.stringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote + publicNote, reviews ? JSON.stringify(reviews) : null, storeMeta ? JSON.stringify(storeMeta) : null]);
     // 보존 정책: 최근 30회만 유지 (하루 1회 = 한 달)
     await pool.query(`DELETE FROM naver_product_snapshot WHERE id NOT IN (SELECT id FROM naver_product_snapshot ORDER BY id DESC LIMIT 30)`);
     // 지시 #149-5: 상세이미지 전량 스냅샷도 매일 함께 갱신 — 실패해도 본 스냅샷은 유지(직전 상세분 그대로), 실패 사유만 note에 기록.
@@ -8333,7 +8368,7 @@ app.get('/api/public/version', (req, res) => {
 app.get('/api/public/store-snapshot', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');   // 지시 #192-1: 자사몰(다른 도메인)에서 fetch — 헤더가 없어 CORS로 막혀 있었음
     try {
-        const r = await pool.query(`SELECT run_at, total, items, reviews FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
+        const r = await pool.query(`SELECT run_at, total, items, reviews, store_meta FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
         if (!r.rows.length) return res.status(404).json({ error: 'no-snapshot — 수집기 미실행 (타이머 product_snapshot OFF 또는 권한 대기)' });
         // 지시 #247-①: 리뷰의 "실제 마지막 성공 수집 시각" — 직전분 유지 체인의 원본 행(실패·중단 note가 없는 마지막 리뷰 보유 행)으로 산출.
         //   표기 정직화 재료: 화면이 스냅샷 시각(at — 매일 갱신)을 리뷰 기준일로 오표기하지 않게 분리 제공.
@@ -8344,7 +8379,7 @@ app.get('/api/public/store-snapshot', async (req, res) => {
                 ORDER BY id DESC LIMIT 1`);
             reviewsFreshAt = f.rows.length ? f.rows[0].run_at : null;
         } catch (_) { /* 산출 실패 시 null — 화면은 '수집 기준일 확인 불가' 폴백 */ }
-        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt });
+        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt, store: r.rows[0].store_meta || null });   // 지시 #310: store = 관심고객수·누적 리뷰·가중 평점(매일 갱신)
     } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
 });
 

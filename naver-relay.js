@@ -130,4 +130,31 @@ async function callAligo(opts, notify) {
     return data;
 }
 
-module.exports = { callNaver, callCoupang, callAligo, relayHealth, configured };
+// 네이버 공개 지표 수집 (지시 #310 — 2026-08-09).
+//   brand.naver.com은 일반 요청을 429로 차단하고 **실제 브라우저만** 통과시킨다(같은 IP에서 실측 확인).
+//   → 중계서버가 헤드리스 브라우저로 공개 화면만 열어 숫자를 읽어온다(로그인·개인정보 무관).
+//   action:'store'    → { interestCount, avgScore, reviewCount, context }
+//   action:'products' → { items: [{ no, reviewCount, score, buyBadge }] }
+async function callNaverPublic(body, notify) {
+    if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
+    const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
+    let r;
+    try {
+        r = await rawRequest(relayBase() + '/naver-public', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
+            body: JSON.stringify(body || { action: 'store' }),
+            timeoutMs: 240000,   // 브라우저 기동 + 상품 순회(최대 30종) 여유 — 하루 1회만 호출
+        });
+    } catch (e) {
+        await notifySafe(`🔎 공개 지표 수집 실패(중계서버 연결) — ${e.message}`);
+        const err = new Error('relay_unreachable: ' + e.message); err.cause = e; throw err;
+    }
+    let data; try { data = JSON.parse(r.text); } catch { data = { raw: r.text }; }
+    if (r.status < 200 || r.status >= 300) {
+        const err = new Error('naver_public_error_' + r.status); err.status = r.status; err.data = data; throw err;
+    }
+    return data;
+}
+
+module.exports = { callNaver, callCoupang, callAligo, callNaverPublic, relayHealth, configured };
