@@ -7928,23 +7928,33 @@ async function collectProductSnapshot() {
         const pr = await naverRelay.callNaverPublic({ action: 'products', products: nos });
         const byNo = {};
         (pr && pr.items || []).forEach(x => { if (x && x.no) byNo[String(x.no)] = x; });
-        let sum = 0, wsum = 0, hit = 0;
+        // 🔴 실측 검산(#310-c)으로 드러난 네이버 표기 한계 2가지 — 신뢰할 수 있는 값만 채택한다.
+        //   ① 리뷰수가 아주 많은 상품은 상품 페이지에 **「리뷰 99,999+」 상한**으로 뜬다(감귤 실측: 실제 136,029인데 99999로 수집됨).
+        //   ② 상품 페이지의 「평점 N」은 **정수 반올림**이다(전 상품이 4 또는 5로 수집 — 가중평균 4.92라는 엉뚱한 값이 나옴).
+        //   → 상한값·역행값은 버리고 **직전 스냅샷 값을 유지**하고, 평점은 아예 채택하지 않는다(정확한 소스 확보 전까지 화면은 기존 값 유지).
+        const prevSnap = await pool.query(`SELECT items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`);
+        const prevByNo = {};
+        (prevSnap.rows.length && Array.isArray(prevSnap.rows[0].items) ? prevSnap.rows[0].items : []).forEach(x => { if (x && x.no != null) prevByNo[String(x.no)] = x; });
+        let sum = 0, hit = 0, capped = 0, kept = 0;
         for (const it of items) {
             const m = byNo[String(it.no)];
-            if (!m) continue;
-            if (m.reviewCount != null) { it.reviewCount = m.reviewCount; sum += m.reviewCount; if (m.score != null) wsum += m.score * m.reviewCount; }
-            if (m.score != null) it.score = m.score;
-            if (m.buyBadge) it.buyBadge = m.buyBadge;
-            hit++;
+            const prevR = prevByNo[String(it.no)] && prevByNo[String(it.no)].reviewCount != null ? Number(prevByNo[String(it.no)].reviewCount) : null;
+            let r = (m && m.reviewCount != null) ? Number(m.reviewCount) : null;
+            if (r === 99999) { r = null; capped++; }                      // ① 상한 표기 — 실수치 아님
+            if (r != null && prevR != null && r < prevR) { r = null; }     // 역행(리뷰는 줄지 않는다) = 수집 오류로 간주
+            if (r == null && prevR != null) { r = prevR; kept++; }         // 직전값 유지
+            if (r != null) { it.reviewCount = r; sum += r; }
+            if (m && m.buyBadge) it.buyBadge = m.buyBadge;
+            if (m) hit++;
         }
         storeMeta = {
             interestCount: (st && st.interestCount != null) ? st.interestCount : null,
             reviewTotal: sum || null,
-            avgScore: sum ? Math.round((wsum / sum) * 100) / 100 : null,
-            products: hit,
+            avgScore: null,      // ② 정확한 스토어 평점 소스 미확보 — 화면은 기존 값 유지(추측 금지)
+            products: hit, capped, kept,
             at: new Date().toISOString(),
         };
-        publicNote = ` | 공개지표 관심고객 ${storeMeta.interestCount} · 상품 ${hit}종 · 리뷰합 ${sum} · 평점 ${storeMeta.avgScore}`;
+        publicNote = ` | 공개지표 관심고객 ${storeMeta.interestCount} · 상품 ${hit}종 · 리뷰합 ${sum}${capped ? ` (상한표기 ${capped}종 제외)` : ''}${kept ? ` · 직전값 유지 ${kept}종` : ''}`;
     } catch (e) {
         const prev = await pool.query(`SELECT store_meta FROM naver_product_snapshot WHERE store_meta IS NOT NULL ORDER BY id DESC LIMIT 1`);
         storeMeta = prev.rows.length ? prev.rows[0].store_meta : null;
