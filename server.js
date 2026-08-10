@@ -8538,10 +8538,11 @@ app.put('/api/agent-office/reward-grants/:id', authMiddleware, async (req, res) 
         if (!cur.rows.length) throw { status: 404, message: '해당 당첨 건을 찾을 수 없습니다' };
         const before = cur.rows[0];
         const r = await pool.query(
-            `UPDATE reward_grants SET status=$2,
-                    granted_at = CASE WHEN $2='granted' THEN NOW() ELSE NULL END,
-                    granted_by = CASE WHEN $2='granted' THEN $3 ELSE NULL END
-             WHERE id=$1 RETURNING *`,
+            // 🔴 $2를 값·비교 양쪽에 쓰면 PostgreSQL이 타입을 못 정한다(inconsistent types deduced) → 명시 캐스팅 필수
+            `UPDATE reward_grants SET status = $2::text,
+                    granted_at = CASE WHEN $2::text = 'granted' THEN NOW() ELSE NULL END,
+                    granted_by = CASE WHEN $2::text = 'granted' THEN $3::text ELSE NULL END
+             WHERE id = $1 RETURNING *`,
             [Number(req.params.id), want, (adminActor(req) || {}).name || null]);
         await writeAudit({ action: 'update', targetType: 'reward_grant', targetId: Number(req.params.id),
             changes: { before: { status: before.status }, after: { status: want, member_key: before.member_key, kind: before.kind } },
