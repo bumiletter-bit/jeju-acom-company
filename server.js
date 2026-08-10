@@ -7163,8 +7163,16 @@ async function collectKakaoNotify() {
                 //   보류 건은 이력 화면 [수기 발송] 버튼으로 대표가 오늘/내일 안내 선택 발송. 발송안내(송장 트리거) 라인은 무관.
                 {
                     const payMs = Date.parse(od.paymentDate || od.orderDate || '') || Date.now();
-                    const payHourKst = new Date(payMs + 9 * 3600 * 1000).getUTCHours();
-                    if (payHourKst === 8) {
+                    const _kst = new Date(payMs + 9 * 3600 * 1000);
+                    const payHourKst = _kst.getUTCHours();
+                    /* 🔴 #353(대표 실물 8/11): 이 보류는 **"오늘 출고가 있을 수도 있으니 사람이 판단"** 하려는 장치다.
+                       그런데 **토요일·발송휴무일은 애초에 출고가 없어** 판단할 것이 없는데도 보류돼,
+                       그 시간대 주문이 자동 안내를 못 받고 수기로 남아 있었다(대표: "토요일 8~9시 건이 안 나간다").
+                       → 주문일이 **실제 출고하는 날일 때만** 보류한다. 출고가 없는 날이면 종전처럼 자동 계산으로 흘려보낸다
+                         — 계산이 어차피 다음 출고 가능일로 밀어주므로 결과가 명확하다
+                         (예: 8/13 08:05 주문 → 8/13~16 발송휴무 → **8/17 발송**, 8/12 오후 주문과 같은 안내). */
+                    const payDayKst = new Date(Date.UTC(_kst.getUTCFullYear(), _kst.getUTCMonth(), _kst.getUTCDate()));
+                    if (payHourKst === 8 && shippingSchedule.isShipDay(payDayKst, hinfo.set)) {
                         await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
                             VALUES ($1,$2,$3,'hold','hold-0809','manual-needed') ON CONFLICT (order_key) DO NOTHING`,
                             [orderKey, (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '')]).catch(() => {});
