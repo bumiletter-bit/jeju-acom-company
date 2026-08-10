@@ -234,10 +234,28 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
     // ── 주문 대사: 카페24 실주문 수(최근 180일·배송 계열 상태) — 60초 캐시 ──
     const orderCntCache = new Map();   // member_key → {n, at}
     // #277: statuses 파라미터화 — 룰렛권은 배송완료(N40)만, 후기 상한은 종전(입금완료~배송완료) 그대로.
+    // #343(대표 확정 2026-08-10): 게임 티켓 산정은 **자사몰 리뉴얼 이후 주문**만 인정한다.
+    //   그 전(4~7월) 배송완료건까지 세면 리뉴얼 전 고객에게 소급 지급이 되어버린다(실측: 한 회원 7장).
+    //   기준일은 DB 설정 mall_ticket_since — 코드에 박지 않는다.
+    let _ticketSince = null, _ticketSinceAt = 0;
+    async function ticketSince() {
+        if (_ticketSince && Date.now() - _ticketSinceAt < 300000) return _ticketSince;
+        let v = '2026-08-01';
+        try {
+            const r = await pool.query("SELECT value FROM agent_office_config WHERE key='mall_ticket_since'");
+            if (r.rows.length) {
+                const raw = typeof r.rows[0].value === 'string' ? JSON.parse(r.rows[0].value) : r.rows[0].value;
+                if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) v = raw;
+            }
+        } catch (_) { /* 설정 없으면 기본값 */ }
+        _ticketSince = v; _ticketSinceAt = Date.now();
+        return v;
+    }
     async function countPaidOrders(memberKey, statuses) {
         const ST = statuses || 'N10,N20,N21,N22,N30,N40';
         if (!cafe24 || typeof cafe24.apiGet !== 'function') return 0;
-        const ck = memberKey + '|' + ST;
+        const since = await ticketSince();
+        const ck = memberKey + '|' + ST + '|' + since;
         const c = orderCntCache.get(ck);
         if (c && Date.now() - c.at < 60000) return c.n;
         let total = 0;
@@ -245,7 +263,10 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         const fmt = d => d.toISOString().slice(0, 10);
         for (let seg = 0; seg < 2; seg++) {
             const end = new Date(now.getTime() - seg * 90 * 86400000);
-            const start = new Date(end.getTime() - 89 * 86400000);
+            let start = new Date(end.getTime() - 89 * 86400000);
+            // 🔴 기준일 이전은 세지 않는다. 구간 전체가 기준일 이전이면 그 구간은 건너뛴다.
+            if (fmt(end) < since) continue;
+            if (fmt(start) < since) start = new Date(since + 'T00:00:00Z');
             try {
                 const r = await cafe24.apiGet('/api/v2/admin/orders/count', {
                     start_date: fmt(start), end_date: fmt(end), member_id: memberKey,

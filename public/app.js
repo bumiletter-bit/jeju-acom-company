@@ -12325,48 +12325,116 @@ window.switchInquiryTab = function(name) {
     else if (name === 'userinq') renderUserInqTab().catch(console.error);
     else if (name === 'reward') renderRewardTab().catch(console.error);
 };
-// --- #340: 룰렛 실물 당첨 지급 관리 ---
+// --- #340/#342: 룰렛 실물 당첨 지급 관리 ---
 //   쿠폰·귤박스·업그레이드권은 자동 발급 수단이 없어(쿠폰 API 스코프 미보유) 사람이 직접 준다.
-//   종전엔 이 목록을 볼 화면이 없어 텔레그램 알림에만 의존했고, 그 알림의 회원ID가 금액 마스킹에 걸려
-//   누구인지 확인조차 못 했다(2026-08-10 대표 실사고). 그래서 이 탭을 만든다.
+//   종전엔 목록 화면이 없어 텔레그램 알림에만 의존했고, 그 알림의 회원ID가 금액 마스킹에 걸려
+//   누구인지 확인조차 못 했다(2026-08-10 대표 실사고). → 이 탭에서 조회·지급 처리한다.
+//   디자인·필터 규격은 [톡톡 문의] 탭과 동일(기간 select + akm-date + 검색 + .data-table).
 const REWARD_LABEL = { coupon5: '5% 할인 쿠폰', coupon10: '10% 할인 쿠폰', box: '제철 귤 4.5kg', upgrade: '업그레이드 이용권' };
-let rewardShowAll = false;
+let rewardFilter = { status: 'pending', period: '1m', date: '', q: '' };
+let _rewardBound = false;
+
 async function renderRewardTab() {
     const box = document.getElementById('inquiry-tab-reward');
-    box.innerHTML = '<div class="card"><p class="text-muted">불러오는 중...</p></div>';
+    if (!box.querySelector('#reward-list')) {
+        box.innerHTML = `
+        <div class="card">
+            <div class="card-header-row">
+                <h2>🎁 룰렛 실물 당첨 지급 <span class="text-muted" style="font-size:13px; font-weight:400;">쿠폰·귤박스·업그레이드권은 자동 발급이 안 돼 직접 드려야 합니다 — 카페24 관리자에서 회원ID로 찾아 발급하세요</span></h2>
+                <div class="row" style="gap:6px;">
+                    <button class="btn-sm btn-outline" id="btn-reward-refresh">🔄 새로고침</button>
+                </div>
+            </div>
+            <div class="settlement-tab-bar inq-subtab-bar" style="margin:2px 0 10px;">
+                <button class="settlement-tab active" id="reward-sub-btn-pending" onclick="switchRewardSub('pending')">⏳ 미지급</button>
+                <button class="settlement-tab" id="reward-sub-btn-all" onclick="switchRewardSub('all')">📋 전체 이력</button>
+            </div>
+            <div id="reward-stats" style="font-size:13px; margin:4px 0 10px;"></div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:13px; margin-bottom:10px;">
+                <label>기간 <select id="reward-period" class="form-input" style="width:auto; padding:7px 10px; font-size:13px;">
+                    <option value="1m" selected>최근 1개월</option>
+                    <option value="3m">최근 3개월</option>
+                    <option value="6m">최근 6개월</option>
+                    <option value="1y">최근 1년</option>
+                    <option value="all">전체</option>
+                </select></label>
+                <label>날짜 <input class="akm-date form-input" id="reward-date" placeholder="YYYY-MM-DD" readonly autocomplete="off" style="width:136px; padding:7px 10px; font-size:13px;"></label>
+                <label>검색 <input type="text" id="reward-q" class="form-input" placeholder="회원ID·경품 검색" style="width:170px; padding:7px 10px; font-size:13px;"></label>
+            </div>
+            <div id="reward-list" class="table-scroll-wrapper"></div>
+        </div>`;
+        if (typeof initAkmDates === 'function') { try { initAkmDates(box); } catch (e) {} }
+        if (!_rewardBound) {
+            _rewardBound = true;
+            box.addEventListener('change', (e) => {
+                if (e.target.id === 'reward-period') { rewardFilter.period = e.target.value; rewardFilter.date = ''; const d = document.getElementById('reward-date'); if (d) d.value = ''; loadRewardList(); }
+                if (e.target.id === 'reward-date') { rewardFilter.date = e.target.value; loadRewardList(); }
+            });
+            box.addEventListener('input', (e) => {
+                if (e.target.id === 'reward-q') { rewardFilter.q = e.target.value; clearTimeout(window._rewardQT); window._rewardQT = setTimeout(loadRewardList, 250); }
+            });
+            box.addEventListener('click', (e) => {
+                if (e.target.id === 'btn-reward-refresh') loadRewardList();
+            });
+        }
+    }
+    await loadRewardList();
+}
+window.switchRewardSub = function (v) {
+    rewardFilter.status = v;
+    for (const t of ['pending', 'all']) {
+        const b = document.getElementById('reward-sub-btn-' + t);
+        if (b) b.className = t === v ? 'settlement-tab active' : 'settlement-tab';
+    }
+    loadRewardList();
+};
+async function loadRewardList() {
+    const list = document.getElementById('reward-list');
+    if (!list) return;
+    list.innerHTML = '<p class="text-muted" style="padding:14px">불러오는 중...</p>';
     let d;
-    try { d = await api('/api/agent-office/reward-grants?status=' + (rewardShowAll ? 'all' : 'pending')); }
-    catch (e) { box.innerHTML = `<div class="card"><p class="text-muted">목록을 불러오지 못했습니다 — ${aoEsc(e.message)}</p></div>`; return; }
-    const rows = d.grants || [];
+    try { d = await api('/api/agent-office/reward-grants?status=' + encodeURIComponent(rewardFilter.status)); }
+    catch (e) { list.innerHTML = `<p class="text-muted" style="padding:14px">목록을 불러오지 못했습니다 — ${aoEsc(e.message)}</p>`; return; }
+
+    let rows = d.grants || [];
+    // 기간·날짜·검색 필터 (톡톡 문의와 동일 규격)
+    if (rewardFilter.date) {
+        rows = rows.filter(g => aoKstDate(g.created_at) === rewardFilter.date);
+    } else if (rewardFilter.period !== 'all') {
+        const days = { '1m': 31, '3m': 92, '6m': 183, '1y': 366 }[rewardFilter.period] || 31;
+        const from = Date.now() - days * 86400000;
+        rows = rows.filter(g => new Date(g.created_at).getTime() >= from);
+    }
+    const q = (rewardFilter.q || '').trim().toLowerCase();
+    if (q) rows = rows.filter(g => ((g.member_key || '') + ' ' + (g.nickname || '') + ' ' + (REWARD_LABEL[g.kind] || g.kind)).toLowerCase().includes(q));
+
     aoRewardBadge(d.pending);
+    const stats = document.getElementById('reward-stats');
+    if (stats) stats.innerHTML = `<span class="pill ${d.pending ? 'pill-wait' : 'pill-ok'}">⏳ 미지급 ${d.pending}건</span>
+        <span class="pill" style="margin-left:6px">📋 조회 ${rows.length}건</span>`;
+
     const body = rows.length ? rows.map(g => {
         const done = g.status === 'granted';
         return `<tr>
             <td class="cell-dt">${aoEsc(aoFmtDtShort(g.created_at))}</td>
-            <td><span class="pill ${done ? '' : 'pill-wait'}">${done ? '지급완료' : '미지급'}</span></td>
+            <td><span class="pill ${done ? 'pill-ok' : 'pill-wait'}">${done ? '지급완료' : '미지급'}</span></td>
             <td><b>${aoEsc(REWARD_LABEL[g.kind] || g.kind)}</b></td>
             <td style="font-variant-numeric:tabular-nums"><b>${aoEsc(g.member_key)}</b>${g.nickname ? ' <span class="text-muted">(' + aoEsc(g.nickname) + ')</span>' : ''}</td>
             <td class="text-muted">${done ? aoEsc(aoFmtDtShort(g.granted_at)) + (g.granted_by ? ' · ' + aoEsc(g.granted_by) : '') : '-'}</td>
-            <td><button class="btn ${done ? 'btn-ghost' : 'btn-primary'} btn-sm" onclick="aoRewardMark(${g.id}, '${done ? 'pending' : 'granted'}')">${done ? '되돌리기' : '지급완료'}</button></td>
+            <td><button class="btn-sm ${done ? 'btn-outline' : 'btn-primary'}" onclick="aoRewardMark(${g.id}, '${done ? 'pending' : 'granted'}')">${done ? '되돌리기' : '지급완료'}</button></td>
         </tr>`;
-    }).join('') : '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:18px">' + (rewardShowAll ? '당첨 기록이 없습니다' : '미지급 당첨이 없습니다 🎉') + '</td></tr>';
-    box.innerHTML = `
-        <div class="card">
-            <h2>🎁 룰렛 실물 당첨 지급 <span class="text-muted" style="font-size:13px;font-weight:400">쿠폰·귤박스·업그레이드권은 자동 발급이 안 돼 직접 드려야 합니다 — 카페24 관리자에서 회원ID로 찾아 발급하세요</span></h2>
-            <div class="row" style="gap:8px;margin:10px 0">
-                <span class="pill ${d.pending ? 'pill-wait' : ''}">미지급 ${d.pending}건</span>
-                <button class="btn btn-ghost btn-sm" onclick="rewardShowAll=!rewardShowAll;renderRewardTab()">${rewardShowAll ? '미지급만 보기' : '전체 보기'}</button>
-                <button class="btn btn-ghost btn-sm" onclick="renderRewardTab()">새로고침</button>
-            </div>
-            <div style="overflow-x:auto">
-            <table class="data-table" style="min-width:820px">
-                <thead><tr>
-                    <th style="width:110px">당첨 일시</th><th style="width:84px">상태</th><th style="width:150px">경품</th>
-                    <th>회원ID</th><th style="width:150px">지급 처리</th><th style="width:96px"></th>
-                </tr></thead>
-                <tbody>${body}</tbody>
-            </table></div>
-        </div>`;
+    }).join('') : `<tr><td colspan="6" class="text-muted" style="text-align:center;padding:18px">${rewardFilter.status === 'pending' ? '미지급 당첨이 없습니다 🎉' : '조회된 당첨 기록이 없습니다'}</td></tr>`;
+
+    list.innerHTML = `<table class="data-table" style="min-width:860px">
+        <thead><tr>
+            <th style="width:100px">당첨 일시</th><th style="width:84px">상태</th><th style="width:150px">경품</th>
+            <th>회원ID</th><th style="width:150px">지급 처리</th><th style="width:96px"></th>
+        </tr></thead>
+        <tbody>${body}</tbody></table>`;
+}
+// KST 기준 YYYY-MM-DD (날짜 필터 대조용 — UTC 변환으로 하루 밀리는 함정 방지)
+function aoKstDate(t) {
+    return new Date(new Date(t).getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 }
 function aoRewardBadge(n) {
     const b = document.getElementById('rewardPendBadge');
@@ -12375,9 +12443,10 @@ function aoRewardBadge(n) {
 }
 window.aoRewardMark = async function (id, status) {
     try {
-        const r = await api('/api/agent-office/reward-grants/' + id, { method: 'PUT', body: JSON.stringify({ status }) });
+        // ⚠️ api(url, method, body) — 위치 인자다. 옵션 객체로 넘기면 method가 객체가 되어 실패한다(#342 오류 원인)
+        const r = await api('/api/agent-office/reward-grants/' + id, 'PUT', { status });
         showToast(r.message || '처리되었습니다', 'lime');
-        renderRewardTab().catch(console.error);
+        loadRewardList();
     } catch (e) { showToast('실패 — ' + e.message); }
 };
 
