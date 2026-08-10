@@ -38,6 +38,20 @@ function isShipDay(d, set) { return d.getUTCDay() !== 6 && !isHoliday(d, set); }
 function isDeliveryDay(d, set) { return d.getUTCDay() !== 0 && !isHoliday(d, set); }                   // 배달: 일요일·휴무일만 불가(토 가능)
 function nextMatching(d, pred) { let x = addDays(d, 1); for (let i = 0; i < 30; i++) { if (pred(x)) return x; x = addDays(x, 1); } return x; }
 
+// 도착 표현 (#335, 2026-08-10 — 대표 실물 "수~월 도착으로 뜬다"):
+//   종전엔 "배달 가능일 1~2번째"를 무조건 `수~월`처럼 범위로 붙였다. 연휴가 끼면 두 후보가 6일씩 벌어져
+//   손님에게 "도착까지 일주일"로 읽힌다(실측: 8/13~8/17 택배사 휴무 등록 → `수~화`).
+//   → 두 후보가 **연속일 때만** 범위로 표기하고, 사이에 휴무가 끼면 **가장 빠른 도착일 하나만** 적는다.
+//   → 첫 도착일이 발송 다음날이 아니면(연휴로 밀린 경우) **날짜를 함께** 적어 요일만 보고 오해하지 않게 한다.
+function arrivePhrase(shipDay, a1, a2) {
+    const md = d => `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+    const gapShip = Math.round((a1 - shipDay) / 86400000);   // 발송 → 첫 도착
+    const gapArr = Math.round((a2 - a1) / 86400000);         // 첫 도착 → 둘째 도착
+    const d1 = DAY_KO[a1.getUTCDay()], d2 = DAY_KO[a2.getUTCDay()];
+    if (gapArr === 1) return gapShip > 1 ? `${d1}(${md(a1)})~${d2} 도착 예정` : `${d1}~${d2} 도착 예정`;
+    return gapShip > 1 ? `${d1}요일(${md(a1)}) 도착 예정` : `${d1}요일 도착 예정`;
+}
+
 // 발송일 상대 표현: 내일/모레/그 이후는 요일+날짜
 function shipPhrase(orderDay, shipDay) {
     const diff = Math.round((shipDay - orderDay) / 86400000);
@@ -74,7 +88,7 @@ function computeShipping(orderAt, holidaySet, noticeByDate, opts) {
     const shipDay = isShipDay(cand, holidaySet) ? cand : nextMatching(cand, d => isShipDay(d, holidaySet));   // 후보일 포함, 토·휴무일이면 밀기
     const arrive1 = nextMatching(shipDay, d => isDeliveryDay(d, holidaySet));      // 규칙6: 발송 후 첫 배달 가능일
     const arrive2 = nextMatching(arrive1, d => isDeliveryDay(d, holidaySet));      //        ~ 둘째 배달 가능일
-    const text = `${shipPhrase(orderDay, shipDay)} 오전 발송, ${DAY_KO[arrive1.getUTCDay()]}~${DAY_KO[arrive2.getUTCDay()]} 도착 예정`;
+    const text = `${shipPhrase(orderDay, shipDay)} 오전 발송, ${arrivePhrase(shipDay, arrive1, arrive2)}`;
     return { shipDate: ymd(shipDay), arriveStart: ymd(arrive1), arriveEnd: ymd(arrive2), text, override: false };
 }
 
