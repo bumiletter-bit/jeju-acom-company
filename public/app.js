@@ -12940,13 +12940,21 @@ async function renderShippingHolidays() {
         const ymd = `${y}-${String(m + 1).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
         const hit = byDate.get(ymd);
         const dow = new Date(ymd + 'T00:00:00Z').getUTCDay();
+        // #336: 한 날짜에 「발송휴무」와 「도착불가」가 독립으로 붙는다 (둘 다일 수도, 하나만일 수도)
+        const noShip = hit ? hit.no_ship !== false : false;
+        const noArr = hit ? hit.no_arrive === true : false;
         const cls = ['shcal-cell'];
-        if (hit) cls.push('shcal-off');
+        if (noShip) cls.push('shcal-off');
+        if (noArr) cls.push('shcal-noarr');
         if (ymd === today) cls.push('shcal-today');
         if (dow === 6) cls.push('shcal-sat');          // 토요일 = 상시 발송 불가(규칙)
         if (shipHolPick === ymd) cls.push('shcal-pick');
-        cells += `<div class="${cls.join(' ')}" data-shcal="${ymd}" title="${hit ? escapeHtml((hit.reason || '휴무') + (hit.notice ? ' · 📨 안내문구 있음' : '')) : (dow === 6 ? '토요일 — 상시 발송 불가' : '클릭하면 휴무일로 지정')}">
-            <span class="d">${dd}</span>${hit ? `<span class="r">${escapeHtml(String(hit.reason || '휴무').slice(0, 6))}</span>${hit.notice ? '<span class="nt">📨</span>' : ''}` : ''}</div>`;
+        const state = hit ? (noShip && noArr ? '발송휴무 · 도착불가' : (noShip ? '발송휴무 (도착은 가능)' : '도착불가 (발송은 함)')) : '';
+        const tip = hit ? `${state}\n${hit.reason || ''}\n\n클릭하면 다음 상태로 바뀝니다`
+                        : (dow === 6 ? '토요일 — 상시 발송 불가' : '클릭하면 발송 휴무로 지정');
+        const tags = hit ? `<span class="tg">${noShip ? '<i class="t-off">발송휴무</i>' : ''}${noArr ? '<i class="t-arr">도착불가</i>' : ''}</span>` : '';
+        cells += `<div class="${cls.join(' ')}" data-shcal="${ymd}" title="${escapeHtml(tip)}">
+            <span class="d">${dd}</span>${tags}${hit && hit.reason ? `<span class="r">${escapeHtml(String(hit.reason).slice(0, 18))}</span>` : ''}</div>`;
     }
     cal.innerHTML = `
     <div class="shcal-wrap">
@@ -12955,48 +12963,65 @@ async function renderShippingHolidays() {
         <b>${y}년 ${m + 1}월</b>
         <button class="btn-sm btn-outline" data-shcal-mv="1">▶</button>
         <button class="btn-sm btn-outline" data-shcal-mv="0" style="margin-left:6px;">오늘</button>
-        <span class="shcal-hint" style="margin-left:auto;">${shipHolPick ? `📌 ${shipHolPick} 부터 — 종료일을 클릭하세요 (같은 날 다시 클릭 = 하루만)` : '👆 날짜를 클릭하면 휴무 지정 · 휴무일 클릭하면 해제'}</span>
+        <span class="shcal-hint" style="margin-left:auto;">${shipHolPick ? `📌 ${shipHolPick} 부터 — 종료일을 클릭하세요 (같은 날 다시 클릭 = 하루만)` : '👆 빈 날짜 = 발송 휴무 지정 · 지정된 날짜를 누를 때마다 발송휴무 → +도착불가 → 도착불가만 → 해제'}</span>
       </div>
       <div class="shcal-grid shcal-dow">${DAY_KO.map((x, i) => `<div class="shcal-dowc${i === 0 ? ' sun' : (i === 6 ? ' sat' : '')}">${x}</div>`).join('')}</div>
       <div class="shcal-grid">${cells}</div>
-      <div class="shcal-legend"><span class="lg off"></span> 발송 휴무 <span class="lg sat"></span> 토요일(상시 불가) <span class="lg today"></span> 오늘 · 📨 = 안내 문구 등록됨</div>
+      <div class="shcal-legend">
+        <span class="lg off"></span> 발송 휴무 <span class="lgx">우리가 출고하지 않는 날 (택배 배달은 됨)</span>
+        <span class="lg arr"></span> 도착 불가 <span class="lgx">택배가 배달되지 않는 날 (명절·공휴일 등)</span>
+        <span class="lg sat"></span> 토요일(상시 발송 불가) <span class="lg today"></span> 오늘
+      </div>
     </div>`;
     if (!document.getElementById('shcal-style')) {
         const st = document.createElement('style'); st.id = 'shcal-style';
         st.textContent = `
-        /* 지시 #179-5: 카드 폭 활용 + 가운데 정렬 · 셀/글자 확대(클릭 편의). 색은 디자인 가이드 토큰(인디고·토요일 파랑·danger)만 사용 */
-        .shcal-wrap{ border:1px solid var(--border,#ECEDF1); border-radius:14px; padding:14px 16px 16px; background:var(--card-bg,#fff);
-                     width:100%; max-width:780px; margin:0 auto; box-shadow:0 1px 3px rgba(16,24,40,.06); }
+        /* 지시 #179-5: 카드 폭 활용 · 셀/글자 확대(클릭 편의). 색은 디자인 가이드 토큰(인디고·토요일 파랑·danger·앰버)만 사용
+           #336(대표): 780px 중앙 고정이라 카드 안에서 작아 보였다 → 카드 틀 전체를 쓰도록 폭 제한 해제 */
+        .shcal-wrap{ border:1px solid var(--border,#ECEDF1); border-radius:14px; padding:16px 18px 18px; background:var(--card-bg,#fff);
+                     width:100%; box-shadow:0 1px 3px rgba(16,24,40,.06); }
         .shcal-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
         .shcal-head b{ font-size:17px; }
         /* 지시 #180-A2: 조작 안내를 한눈에 — danger 토큰 기반 포인트(임의 색 신설 없음) */
         .shcal-hint{ font-size:13.5px; font-weight:700; color:var(--danger,#F04438);
                      background:#FDECEA; border:1px solid #F6C9C4; border-radius:999px; padding:4px 11px; }
-        .shcal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:5px; }
+        /* minmax(0,1fr) + min-width:0 — 없으면 칸 안 긴 사유 텍스트가 grid 칸을 밀어 페이지 가로 넘침이 난다(디자인 가이드 §6) */
+        .shcal-grid{ display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:5px; }
         .shcal-dow{ margin-bottom:5px; }
         .shcal-dowc{ text-align:center; font-size:13px; font-weight:700; color:var(--text-mid,#667085); padding:4px 0; }
         .shcal-dowc.sun{ color:var(--danger,#F04438); } .shcal-dowc.sat{ color:#3B82F6; }
-        .shcal-cell{ position:relative; min-height:62px; border:1px solid var(--border,#ECEDF1); border-radius:10px; padding:6px 7px; cursor:pointer; background:#fff; transition:background .12s, border-color .12s; }
+        .shcal-cell{ position:relative; min-width:0; min-height:86px; border:1px solid var(--border,#ECEDF1); border-radius:10px; padding:7px 8px; cursor:pointer; background:#fff; transition:background .12s, border-color .12s; }
         .shcal-cell:hover{ border-color:var(--primary,#4F46E5); background:var(--primary-light,#EEF0FF); }
-        .shcal-cell .d{ font-size:14px; font-weight:700; color:var(--text-dark,#101828); }
-        .shcal-cell .r{ display:block; font-size:11px; line-height:1.25; color:#C0392B; margin-top:2px; word-break:keep-all; }
-        .shcal-cell .nt{ position:absolute; right:5px; bottom:4px; font-size:11px; }
+        .shcal-cell .d{ font-size:15px; font-weight:700; color:var(--text-dark,#101828); }
+        /* 사유는 두 줄까지만 — 넘치면 …로 줄여 칸 폭을 침범하지 않게(전문은 칸 title에) */
+        .shcal-cell .r{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+                        font-size:11px; line-height:1.3; color:var(--text-mid,#667085); margin-top:3px; word-break:break-all; }
+        /* #336: 상태 배지 — 발송휴무(danger) / 도착불가(앰버). 한 칸에 둘 다 붙을 수 있다 */
+        .shcal-cell .tg{ display:flex; flex-wrap:wrap; gap:3px; margin-top:3px; }
+        .shcal-cell .tg i{ font-style:normal; font-size:10.5px; font-weight:700; line-height:1; padding:3px 6px; border-radius:999px; white-space:nowrap; }
+        .shcal-cell .tg .t-off{ background:#FDECEA; color:#C0392B; border:1px solid #F6C9C4; }
+        .shcal-cell .tg .t-arr{ background:#FEF3E2; color:#B4690E; border:1px solid #F7D9A8; }
         .shcal-empty{ border:none; background:transparent; cursor:default; }
         .shcal-off{ background:#FDECEA; border-color:#F6C9C4; }
+        .shcal-noarr{ background:#FEF3E2; border-color:#F7D9A8; }
+        .shcal-off.shcal-noarr{ background:linear-gradient(135deg,#FDECEA 0 50%,#FEF3E2 50% 100%); border-color:#F0BFA8; }
         .shcal-sat{ background:#F4F6FB; }
         .shcal-today{ box-shadow:inset 0 0 0 2px var(--primary,#4F46E5); }
         .shcal-pick{ box-shadow:inset 0 0 0 2px #3B82F6; }
-        .shcal-legend{ margin-top:10px; font-size:12px; color:var(--text-mid,#667085); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .shcal-legend{ margin-top:12px; font-size:12px; color:var(--text-mid,#667085); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
         .shcal-legend .lg{ width:12px; height:12px; border-radius:3px; display:inline-block; }
+        .shcal-legend .lgx{ color:var(--text-light,#98A0AE); margin-right:10px; }
         .shcal-legend .lg.off{ background:#FDECEA; border:1px solid #F6C9C4; }
+        .shcal-legend .lg.arr{ background:#FEF3E2; border:1px solid #F7D9A8; }
         .shcal-legend .lg.sat{ background:#F4F6FB; border:1px solid var(--border,#E4E7EE); }
         .shcal-legend .lg.today{ background:#fff; border:2px solid var(--primary,#4F46E5); }
         @media (max-width:768px){   /* 모바일: 칸 우선 — 여백만 줄이고 터치 영역은 유지 */
             .shcal-wrap{ padding:10px 10px 12px; }
             .shcal-grid{ gap:3px; }
-            .shcal-cell{ min-height:52px; padding:4px 5px; }
+            .shcal-cell{ min-height:68px; padding:4px 5px; }
             .shcal-cell .d{ font-size:13px; }
-            .shcal-cell .r{ font-size:10px; }
+            .shcal-cell .r{ display:none; }                       /* 좁은 화면에선 배지만 — 사유는 길게 눌러 title로 확인 */
+            .shcal-cell .tg i{ font-size:9.5px; padding:2px 4px; }
         }`;
         document.head.appendChild(st);
     }
@@ -13011,22 +13036,27 @@ function renderShipHolidaySummary() {
     const groups = [];
     for (const r of shipHolRows) {
         const ymd = String(r.holiday_date).slice(0, 10);
+        const ns = r.no_ship !== false, na = r.no_arrive === true;
         const g = groups[groups.length - 1];
         const prevNext = g && new Date(new Date(g.end + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
-        if (g && prevNext === ymd && g.reason === (r.reason || '') && g.notice === (r.notice || '')) { g.end = ymd; g.ids.push(r.id); }
-        else groups.push({ start: ymd, end: ymd, reason: r.reason || '', notice: r.notice || '', created_by: r.created_by, ids: [r.id] });
+        // #336: 상태(발송휴무·도착불가)가 다르면 같은 사유여도 다른 묶음으로 — 표에서 구분되어야 하므로
+        if (g && prevNext === ymd && g.reason === (r.reason || '') && g.ns === ns && g.na === na) { g.end = ymd; g.ids.push(r.id); }
+        else groups.push({ start: ymd, end: ymd, reason: r.reason || '', ns, na, created_by: r.created_by, ids: [r.id] });
     }
+    const badge = (g) => (g.ns ? '<span class="pill pill-off">발송휴무</span> ' : '')
+        + (g.na ? '<span class="pill pill-wait">도착불가</span>' : (g.ns ? '<span class="pill pill-ok">도착 가능</span>' : ''));
     const rows = groups.map(g => `
         <tr>
             <td style="white-space:nowrap;">${fmt(g.start)}${g.end !== g.start ? ' ~ ' + fmt(g.end) : ''}</td>
-            <td>${escapeHtml(g.reason)}${g.notice ? `<div class="text-muted" style="font-size:12px; margin-top:2px;">📨 ${escapeHtml(g.notice)}</div>` : ''}</td>
+            <td style="white-space:nowrap;">${badge(g)}</td>
+            <td>${escapeHtml(g.reason)}</td>
             <td>${escapeHtml(g.created_by || '-')}</td>
             <td><button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteShipHolidayGroup('${g.ids.join(',')}')">삭제</button></td>
         </tr>`).join('');
     el.innerHTML = rows
         ? `<details><summary style="cursor:pointer; font-size:13px; font-weight:700; margin-bottom:6px;">등록 현황 목록 (${groups.length}건)</summary>
-           <table class="data-table"><thead><tr><th>기간</th><th>사유 · 안내 문구</th><th>등록자</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-           <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 안내 문구가 있는 기간에 들어온 주문은 알림톡 발송 안내가 자동 계산 대신 그 문구로 나갑니다 (발송 기능 가동 후).</p></details>`
+           <table class="data-table"><thead><tr><th>기간</th><th>구분</th><th>사유 (고객 안내 문구)</th><th>등록자</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+           <p class="text-muted" style="font-size:12px; margin-top:6px;">발송이 휴무로 밀리면 알림톡 발송 안내 뒤에 이 <b>사유가 그대로 병기</b>됩니다 — 예: 「월요일(8/17) 오전 발송, 화~수 도착 예정 (택배사 휴무)」</p></details>`
         : '<p class="text-muted" style="font-size:13px;">등록된 휴무일이 없습니다 — 달력에서 날짜를 클릭해 지정하세요</p>';
 }
 // 달력 클릭 위임 (월 이동 · 날짜 토글/기간)
@@ -13044,10 +13074,24 @@ document.addEventListener('click', async (e) => {
     if (!cell) return;
     const ymd = cell.getAttribute('data-shcal');
     const hit = shipHolRows.find(r => String(r.holiday_date).slice(0, 10) === ymd);
-    if (hit) {   // 휴무일 클릭 = 해제
-        if (!confirm(`${ymd} 휴무 지정을 해제할까요? (발송일 계산에 즉시 반영)`)) return;
-        try { await api('/api/agent-office/shipping-holidays/' + hit.id, 'DELETE', { confirm: true }); showToast('🗑 휴무 해제 완료', 'lime'); }
-        catch (err) { showToast('❌ ' + String(err.message || '').slice(0, 60)); }
+    /* #336(대표): 지정된 날짜를 다시 누르면 곧바로 삭제되던 것을 **상태 순환**으로 바꾼다.
+       발송휴무 → 발송휴무+도착불가 → 도착불가만(발송은 함) → 해제.
+       「발송휴무」= 우리가 출고 안 하는 날 · 「도착불가」= 택배가 배달되지 않는 날 — 둘은 별개다. */
+    if (hit) {
+        const noShip = hit.no_ship !== false, noArr = hit.no_arrive === true;
+        try {
+            if (noShip && !noArr) {
+                await api('/api/agent-office/shipping-holidays/' + hit.id, 'PATCH', { no_ship: true, no_arrive: true });
+                showToast('📦 발송휴무 + 도착불가 — 택배 배달도 안 되는 날', 'lime');
+            } else if (noShip && noArr) {
+                await api('/api/agent-office/shipping-holidays/' + hit.id, 'PATCH', { no_ship: false, no_arrive: true });
+                showToast('🚚 도착불가만 — 발송은 하지만 배달은 안 되는 날', 'lime');
+            } else {
+                if (!confirm(`${ymd} 지정을 해제할까요? (발송일 계산에 즉시 반영)`)) return;
+                await api('/api/agent-office/shipping-holidays/' + hit.id, 'DELETE', { confirm: true });
+                showToast('🗑 해제 완료', 'lime');
+            }
+        } catch (err) { showToast('❌ ' + String(err.message || '').slice(0, 60)); }
         renderShippingHolidays().catch(console.error);
         return;
     }
@@ -13055,12 +13099,12 @@ document.addEventListener('click', async (e) => {
     const start = shipHolPick <= ymd ? shipHolPick : ymd;
     const end = shipHolPick <= ymd ? ymd : shipHolPick;
     shipHolPick = null;
-    const reason = prompt(`휴무 사유를 입력하세요 (${start}${end !== start ? ' ~ ' + end : ''})`, '임시 휴무');
+    /* #336(대표): 입력창을 사유 하나로 통일 — 이 사유가 그대로 고객 알림톡에 병기된다(별도 안내 문구 칸 폐지). */
+    const reason = prompt(`휴무 사유를 입력하세요 (${start}${end !== start ? ' ~ ' + end : ''})\n\n※ 이 문구가 고객 알림톡에 그대로 안내됩니다.\n   예: 택배사 휴무 · 명절 연휴 휴무`, '임시 휴무');
     if (reason === null) { renderShippingHolidays().catch(console.error); return; }
-    const notice = prompt('안내 문구 (선택 — 이 기간 주문의 알림톡 발송안내를 이 문구로 대체. 비우면 자동 계산)', '');
     try {
-        await api('/api/agent-office/shipping-holidays', 'POST', { date: start, end: end, reason: reason.trim() || '휴무', notice: (notice || '').trim() || '' });
-        showToast('✅ 휴무일 등록 완료 — 발송일 계산에 즉시 반영', 'lime');
+        await api('/api/agent-office/shipping-holidays', 'POST', { date: start, end: end, reason: reason.trim() || '휴무', no_ship: true, no_arrive: false });
+        showToast('✅ 발송 휴무 등록 — 택배 배달도 안 되는 날이면 그 날짜를 한 번 더 누르세요', 'lime');
     } catch (err) { showToast('❌ ' + String(err.message || '').slice(0, 60)); }
     renderShippingHolidays().catch(console.error);
 });

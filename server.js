@@ -1029,8 +1029,20 @@ async function initDB() {
         await pool.query(`INSERT INTO shipping_holidays (holiday_date, reason, created_by) VALUES ($1, $2, '시드')
             ON CONFLICT (holiday_date) DO NOTHING`, [d, reason]);
     }
-    // 지시 #73: 휴무 기간 안내 문구 — 있으면 그 기간 주문의 알림톡 #{발송안내}를 자동 계산 대신 이 문구로 대체
+    // 지시 #73: 휴무 기간 안내 문구 — (#336에서 폐지: 발송일이 사라져 고객이 언제 받는지 알 수 없었음. 컬럼은 이력 보존용으로만 존치)
     await pool.query(`ALTER TABLE shipping_holidays ADD COLUMN IF NOT EXISTS notice TEXT`);
+    // ── #336(대표 확정 2026-08-10): 「발송휴무」와 「도착불가」 분리.
+    //   달력 체크의 정체 = "우리가 출고하지 않는 날"이지 "택배가 안 가는 날"이 아니다(대표 실물 지적).
+    //   기존 행은 전부 발송휴무로 승계하고, **공휴일 시드만 도착불가도 함께** 표시한다(공휴일엔 택배 배달이 없다 = 종전 동작 유지 = 무회귀).
+    //   직원이 손으로 넣은 임시 휴무(태풍·자체 휴무 등)는 도착불가 아님 — 그날도 택배는 배달되므로.
+    //   🔴 DEFAULT를 걸지 않는다 — 걸면 기존 행이 즉시 그 값으로 채워져 아래 "미설정(NULL)만 채우기"가 한 건도 안 걸린다
+    //      (첫 시도에서 실제로 밟은 함정: 시드 공휴일이 전부 도착가능으로 남아 설날·추석 배달 계산이 뒤집힐 뻔했다).
+    //      NULL 허용으로 두고 값은 아래 UPDATE·INSERT에서 명시 지정 → 멱등하며 대표가 화면에서 바꾼 값도 덮지 않는다.
+    await pool.query(`ALTER TABLE shipping_holidays ADD COLUMN IF NOT EXISTS no_ship BOOLEAN`);
+    await pool.query(`ALTER TABLE shipping_holidays ADD COLUMN IF NOT EXISTS no_arrive BOOLEAN`);
+    await pool.query(`UPDATE shipping_holidays SET no_ship = TRUE WHERE no_ship IS NULL`);
+    await pool.query(`UPDATE shipping_holidays SET no_arrive = TRUE WHERE no_arrive IS NULL AND created_by = '시드'`);
+    await pool.query(`UPDATE shipping_holidays SET no_arrive = FALSE WHERE no_arrive IS NULL`);
     // 설계 변경(대표 7/27): 배정→시나리오 기반 생성 — 사용된 시나리오명(복수) 기록
     await pool.query(`ALTER TABLE naver_qnas ADD COLUMN IF NOT EXISTS ai_scenarios JSONB`);
     // 톡톡 로그 시나리오 번호 컬럼 (대표 7/27 — 봇과 양쪽 멱등 보장: 어느 쪽이 먼저 배포돼도 안전)
@@ -5483,26 +5495,65 @@ app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, adminOnly, a
     } catch (err) { handleAdminErr(res, err); }
 });
 // ── 지시 #69: 발송 휴무일 관리 — 추가·삭제 직원 가능 (자주 바뀌는 값은 화면에서 · audit 기록 · soft-delete)
-async function loadShippingHolidayInfo() {   // 지시 #73: 휴무일 집합 + 날짜별 안내 문구 맵
-    const r = await pool.query(`SELECT to_char(holiday_date, 'YYYY-MM-DD') AS d, notice FROM shipping_holidays WHERE deleted_at IS NULL`);
-    const set = new Set(); const notices = new Map();
-    for (const x of r.rows) { set.add(x.d); if (x.notice && String(x.notice).trim()) notices.set(x.d, String(x.notice).trim()); }
-    return { set, notices };
+// #336: 발송휴무 집합 / 도착불가 집합 / 날짜별 사유 — 세 갈래로 나눠 돌려준다.
+//   set(발송휴무)과 arriveOff(도착불가)는 **서로 독립**이다(한 날짜가 둘 다일 수도, 하나만일 수도 있다).
+//   reasons = 고객 안내에 병기할 사유(종전 notice override 대체 — 대표 "휴무사유 하나만 나가면 된다").
+async function loadShippingHolidayInfo() {
+    const r = await pool.query(
+        `SELECT to_char(holiday_date, 'YYYY-MM-DD') AS d, reason,
+                COALESCE(no_ship, TRUE) AS no_ship, COALESCE(no_arrive, FALSE) AS no_arrive
+         FROM shipping_holidays WHERE deleted_at IS NULL`);
+    const set = new Set(); const arriveOff = new Set(); const reasons = new Map();
+    for (const x of r.rows) {
+        if (x.no_ship) set.add(x.d);
+        if (x.no_arrive) arriveOff.add(x.d);
+        if (x.reason && String(x.reason).trim()) reasons.set(x.d, String(x.reason).trim());
+    }
+    return { set, arriveOff, reasons, notices: reasons };   // notices = 구 호출부 하위호환 별칭(사유 병기로 동작)
 }
 app.get('/api/agent-office/shipping-holidays', authMiddleware, async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, reason, notice, created_by FROM shipping_holidays
+            `SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, reason, notice, created_by,
+                    COALESCE(no_ship, TRUE) AS no_ship, COALESCE(no_arrive, FALSE) AS no_arrive
+             FROM shipping_holidays
              WHERE deleted_at IS NULL AND holiday_date >= CURRENT_DATE - 30 ORDER BY holiday_date LIMIT 200`);
         res.json({ rows: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+// #336: 달력에서 칸을 눌러 상태만 바꾸는 경로 (발송휴무 ↔ 발송휴무+도착불가 ↔ 도착불가만).
+//   대표 "수정할 게 있으면 우리가 직접 탭 눌러서 여기는 도착불가 이렇게 수정할게" — 삭제 후 재등록 없이 즉시 전환.
+app.patch('/api/agent-office/shipping-holidays/:id', authMiddleware, async (req, res) => {
+    try {
+        const b = req.body || {};
+        const noShip = b.no_ship === undefined ? null : !!b.no_ship;
+        const noArrive = b.no_arrive === undefined ? null : !!b.no_arrive;
+        if (noShip === null && noArrive === null) throw { status: 400, message: '변경할 값이 없습니다' };
+        if (noShip === false && noArrive === false) throw { status: 400, message: '둘 다 해제하려면 휴무를 삭제해 주세요' };
+        const cur = await pool.query(
+            `SELECT id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason,
+                    COALESCE(no_ship,TRUE) AS no_ship, COALESCE(no_arrive,FALSE) AS no_arrive
+             FROM shipping_holidays WHERE id=$1 AND deleted_at IS NULL`, [req.params.id]);
+        if (!cur.rows.length) throw { status: 404, message: '휴무일을 찾을 수 없습니다' };
+        const r = await pool.query(
+            `UPDATE shipping_holidays SET no_ship = COALESCE($2, no_ship), no_arrive = COALESCE($3, no_arrive)
+             WHERE id=$1 RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason, no_ship, no_arrive`,
+            [req.params.id, noShip, noArrive]);
+        await writeAudit({ action: 'update', targetType: 'shipping_holiday', targetId: Number(req.params.id),
+            changes: { before: cur.rows[0], after: r.rows[0] }, source: 'shipping-holiday', actor: adminActor(req) });
+        res.json({ ok: true, row: r.rows[0] });
     } catch (err) { handleAdminErr(res, err); }
 });
 app.post('/api/agent-office/shipping-holidays', authMiddleware, async (req, res) => {
     try {
         const date = String((req.body || {}).date || '').trim();
         const end = String((req.body || {}).end || '').trim() || date;   // 지시 #73: 기간 등록 (미입력 = 하루)
-        const reason = String((req.body || {}).reason || '').trim().slice(0, 100);
-        const notice = String((req.body || {}).notice || '').trim().slice(0, 300) || null;   // 지시 #73: 안내 문구 (선택)
+        // #336: 사유 = 고객 안내에도 그대로 병기되는 문구(대표 확정 — 안내문구 칸 폐지·사유 하나로 통일).
+        //   손님이 읽는 문장이 되므로 상한을 100 → 200자로 넓힌다.
+        const reason = String((req.body || {}).reason || '').trim().slice(0, 200);
+        const noShip = (req.body || {}).no_ship === undefined ? true : !!(req.body || {}).no_ship;
+        const noArrive = !!(req.body || {}).no_arrive;
+        if (!noShip && !noArrive) throw { status: 400, message: '발송휴무 또는 도착불가 중 하나는 지정해야 합니다' };
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) throw { status: 400, message: '날짜는 YYYY-MM-DD 형식으로 입력해주세요' };
         if (end < date) throw { status: 400, message: '종료일이 시작일보다 빠릅니다' };
         if (!reason) throw { status: 400, message: '사유를 입력해주세요 (예: 태풍 결항, 설 연휴 발송 마감)' };
@@ -5515,14 +5566,15 @@ app.post('/api/agent-office/shipping-holidays', authMiddleware, async (req, res)
         const rows = [];
         for (const d of days) {
             const r = await pool.query(
-                `INSERT INTO shipping_holidays (holiday_date, reason, notice, created_by) VALUES ($1,$2,$3,$4)
-                 ON CONFLICT (holiday_date) DO UPDATE SET deleted_at = NULL, reason = EXCLUDED.reason, notice = EXCLUDED.notice, created_by = EXCLUDED.created_by
-                 RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason, notice`,
-                [d, reason, notice, adminActor(req)?.name || null]);
+                `INSERT INTO shipping_holidays (holiday_date, reason, no_ship, no_arrive, created_by) VALUES ($1,$2,$3,$4,$5)
+                 ON CONFLICT (holiday_date) DO UPDATE SET deleted_at = NULL, reason = EXCLUDED.reason,
+                     no_ship = EXCLUDED.no_ship, no_arrive = EXCLUDED.no_arrive, created_by = EXCLUDED.created_by
+                 RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, reason, no_ship, no_arrive`,
+                [d, reason, noShip, noArrive, adminActor(req)?.name || null]);
             rows.push(r.rows[0]);
         }
         await writeAudit({ action: 'create', targetType: 'shipping_holiday', targetId: rows[0].id,
-            changes: { after: { from: date, to: end, days: rows.length, reason, notice } }, source: 'shipping-holiday', actor: adminActor(req) });
+            changes: { after: { from: date, to: end, days: rows.length, reason, no_ship: noShip, no_arrive: noArrive } }, source: 'shipping-holiday', actor: adminActor(req) });
         res.json({ ok: true, rows });
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -5647,7 +5699,7 @@ app.get('/guide', async (req, res) => {
         const hinfo = await loadShippingHolidayInfo();
         const now = Date.now();
         // {{내일요일}}/{{모레요일}}은 열람 시점 기준 치환 (발송 당일 열람이 정상 동선 — 오차 무해)
-        const renderGuide = (g) => guideEsc(shippingSchedule.renderGuidePlaceholders(g, now, hinfo.set))
+        const renderGuide = (g) => guideEsc(shippingSchedule.renderGuidePlaceholders(g, now, hinfo.arriveOff))   /* #336: 요일 치환은 도착불가 기준 */
             .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--primary); word-break:break-all;">$1</a>')   // #164: 안내문 내 URL 클릭 가능 링크
             .replace(/\n/g, '<br>');
         const picked = rows.find(r => r.id === pid) || null;
@@ -5912,7 +5964,7 @@ app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, 
             const rs = matched && matched.reserve_ship_start ? new Date(matched.reserve_ship_start) : null;
             shipLine = (rs && !isNaN(rs)) ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)` : '시즌 시작 시 주문 순서대로 발송해 드려요';
         } else {
-            shipLine = shippingSchedule.computeShipping(Date.now(), hinfo.set, hinfo.notices, { forceDay: day }).text;   // 클릭 시점 기준 재계산
+            shipLine = shippingSchedule.computeShipping(Date.now(), hinfo.set, hinfo.reasons, { forceDay: day, arriveOff: hinfo.arriveOff }).text;   // 클릭 시점 기준 재계산
         }
         const tplDef = kakaoNotify.orderTemplate(isReserve);
         const message = kakaoNotify.buildMessage({
@@ -7129,7 +7181,7 @@ async function collectKakaoNotify() {
                         ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
                         : '시즌 시작 시 주문 순서대로 발송해 드려요';
                 } else {
-                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.notices).text;
+                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
                 }
                 const tplDef = kakaoNotify.orderTemplate(isReserve);   // 부재 시 buildMessage가 뼈대 폴백(dry-run 검수에서 노출됨)
                 const message = kakaoNotify.buildMessage({
@@ -7238,8 +7290,11 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
     const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
     // 지시 #93·#94 (대표 확정 — LMS 단독 번복): 알림톡 E 우선 → 실패 시 SMS 대체(failover, 문면=기존 LMS 전문 그대로).
     //   E 미승인·코드 미투입 동안은 SMS 직행(sendShippingGuideAlimtalk 내부 판단). 스위치 OFF·dry-run 원칙 동일.
-    const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.set) : null;
-    const 도착안내 = shippingSchedule.renderGuidePlaceholders('내일 {{내일요일}}요일~모레 {{모레요일}}요일 사이 도착 예정', Date.now(), holidayInfo.set);
+    const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), holidayInfo.arriveOff) : null;
+    /* 🔴 #336: 종전엔 '내일 {{내일요일}}요일~모레 {{모레요일}}요일'을 문자열로 박고 요일만 갈아끼웠다.
+       도착불가일이 끼어 실제로는 닷새 뒤 도착인 건에도 "내일"이 그대로 붙어 나갔다(대표 지적).
+       → computeArrival이 실제 간격을 재서 "내일"이 맞을 때만 "내일"이라 쓰고, 밀렸으면 요일+날짜와 사유를 적는다. */
+    const 도착안내 = shippingSchedule.computeArrival(Date.now(), holidayInfo.arriveOff, holidayInfo.reasons).text;
     // #193 A: 발송안내도 동일 — 번호가 비어 있을 때만 발송 직전 재조회(정상 건은 추가 호출 0)
     const guideRecvTel = await resolveReceiver(
         od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '', orderKey);
@@ -8403,7 +8458,7 @@ app.get('/api/public/shipping-eta', async (req, res) => {
     try {
         const hinfo = await loadShippingHolidayInfo();
         const now = Date.now();
-        const r = shippingSchedule.computeShipping(now, hinfo.set, hinfo.notices);
+        const r = shippingSchedule.computeShipping(now, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff });
         // 컷오프(#171): ~07:59 당일 발송 · 08:00~08:59 보류 · 09:00~ 익일. 다음 마감(=다음 08:00) 시각을 함께 준다.
         const k = new Date(now + 9 * 3600 * 1000);
         const hh = k.getUTCHours();
@@ -12280,7 +12335,7 @@ setInterval(async () => {
                         ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
                         : '시즌 시작 시 주문 순서대로 발송해 드려요';
                 } else {
-                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || Date.now(), hinfo.set, hinfo.notices).text;
+                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || Date.now(), hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
                 }
                 const tplDef = kakaoNotify.orderTemplate(isReserve);
                 const message = kakaoNotify.buildMessage({
