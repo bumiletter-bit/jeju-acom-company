@@ -343,6 +343,81 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         });
     }));
 
+    /* ══════ #355(대표 8/11): 마이 > 「시즌 대기 목록」·「리뷰 관리」 실목록 ══════
+       둘 다 **내 것이 있으면 목록, 없으면 빈 배열**(화면이 "없습니다"를 표시). */
+
+    /* 시즌 대기 — 내가 신청한 것만.
+       🔴 연락처로는 조회하지 않는다(남의 번호를 넣으면 남의 신청이 보인다) — **회원ID 기준만**.
+          응답에도 연락처를 담지 않는다(PII 최소). 회원 연결 없이 접수된 옛 건은 뜨지 않는다. */
+    router.get('/pub/waitlist', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid(req.query.mid);
+        const r = await pool.query(
+            `SELECT id, item, notified, to_char(created_at + interval '9 hours', 'YYYY-MM-DD') AS at
+               FROM season_waitlist
+              WHERE member_key = $1 AND deleted_at IS NULL
+              ORDER BY id DESC LIMIT 50`, [mid]);
+        res.json({ ok: true, items: r.rows });
+    }));
+
+    /* 리뷰 관리 — **아직 후기를 안 쓴 배송완료 주문**만.
+       ⚠️ 카페24 주문 조회는 구간 3개월 제한이라 90일씩 2구간으로 돈다(countPaidOrders와 같은 방식).
+       ⚠️ PII 최소: 주문번호·주문일·상품명만 담는다(수취인·연락처·주소는 담지 않는다). */
+    async function deliveredOrderList(memberKey) {
+        if (!cafe24 || typeof cafe24.apiGet !== 'function') return [];
+        const since = await ticketSince();
+        const out = [];
+        const now = new Date(Date.now() + 9 * 3600 * 1000);
+        const fmt = d => d.toISOString().slice(0, 10);
+        for (let seg = 0; seg < 2; seg++) {
+            const end = new Date(now.getTime() - seg * 90 * 86400000);
+            let start = new Date(end.getTime() - 89 * 86400000);
+            if (fmt(end) < since) continue;
+            if (fmt(start) < since) start = new Date(since + 'T00:00:00Z');
+            try {
+                const r = await cafe24.apiGet('/api/v2/admin/orders', {
+                    start_date: fmt(start), end_date: fmt(end), member_id: memberKey,
+                    order_status: 'N40', limit: 50, embed: 'items',
+                });
+                ((r && r.orders) || []).forEach(o => {
+                    const names = ((o.items) || []).map(i => i && i.product_name).filter(Boolean);
+                    out.push({
+                        order_id: String(o.order_id || ''),
+                        date: String(o.order_date || '').slice(0, 10),
+                        name: names[0] || '주문 상품',
+                        more: Math.max(0, names.length - 1),
+                    });
+                });
+            } catch (e) { /* 구간 실패 = 그 구간 없음(부분 성공) */ }
+        }
+        return out;
+    }
+    /* 이 회원이 이미 후기를 쓴 주문번호 집합 — 카페24 상품후기 게시판(board 4).
+       scope 미개통·실패 시 null → 화면은 "판정 불가"로 보고 전체를 보여준다(#259와 같은 안전 폴백). */
+    async function reviewedOrderIds(memberKey) {
+        if (!cafe24 || typeof cafe24.apiGet !== 'function') return null;
+        try {
+            const r = await cafe24.apiGet('/api/v2/admin/boards/4/articles', { member_id: memberKey, limit: 100 });
+            const s = new Set();
+            ((r && r.articles) || []).forEach(a => { if (a && a.order_id) s.add(String(a.order_id)); });
+            return s;
+        } catch (e) { return null; }
+    }
+    router.get('/pub/reviewable', pubGate, pubWrap(async (req, res) => {
+        const mid = pubMid(req.query.mid);
+        const member = await resolveMember(mid, null);
+        const [list, done, claimed, orderCnt] = await Promise.all([
+            deliveredOrderList(mid),
+            reviewedOrderIds(mid),
+            ledgerCountByReason(member.id, '후기 물방울'),
+            countPaidOrders(mid),
+        ]);
+        const items = list.filter(o => !(done && done.has(o.order_id)));
+        const written = done ? (list.length - items.length) : null;
+        /* 물방울 지급 가능 횟수 = review-claim과 **같은 계산**(주문 수 상한 · 실제 후기 수 상한 · 이미 받은 수 차감) */
+        const cap = (written === null) ? orderCnt : Math.min(orderCnt, written);
+        res.json({ ok: true, items, written, claimed, claimable: Math.max(0, cap - claimed) });
+    }));
+
     // 가입 혜택 +5 (1회)
     router.post('/pub/join-bonus', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid((req.body || {}).mid);

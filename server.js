@@ -1017,6 +1017,12 @@ async function initDB() {
             deleted_at TIMESTAMP
         )
     `);
+    /* #355(대표 8/11): 마이 > 「시즌 대기 목록」에서 **본인 신청분만** 보여주려면 회원 연결이 필요하다.
+       종전엔 연락처만 저장해 누구 것인지 알 수 없었다(연락처로 조회하면 남의 번호를 넣어 볼 수 있어 위험 — 회원ID 기준만 허용).
+       🔴 DEFAULT를 주지 않는다 — `ADD COLUMN ... DEFAULT`는 기존 행을 즉시 그 값으로 채운다(#336에서 데인 함정).
+          기존 신청분은 NULL(회원 불명)이 정답이고, 그 건들은 마이 화면에 뜨지 않는다. */
+    await pool.query(`ALTER TABLE season_waitlist ADD COLUMN IF NOT EXISTS member_key VARCHAR(60)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_season_waitlist_member ON season_waitlist (member_key) WHERE member_key IS NOT NULL`);
     // ── 지시 #69: 발송 휴무일 DB 승격 ("자주 바뀌는 값은 화면에서") — 명절 임시휴무·태풍 결항 등 직원이 즉시 추가
     await pool.query(`
         CREATE TABLE IF NOT EXISTS shipping_holidays (
@@ -8478,9 +8484,13 @@ app.post('/api/public/season-waitlist', async (req, res) => {
         const dup = await pool.query(`SELECT id FROM season_waitlist WHERE item=$1 AND contact=$2 AND deleted_at IS NULL`, [item, contact]);
         if (dup.rows.length) return res.json({ ok: true, dup: true, message: '이미 신청하셨어요! 오픈하면 가장 먼저 알려드릴게요 🍊' });
 
+        /* #355: 로그인 회원이 신청했으면 회원ID를 함께 남긴다 — 마이 > 시즌 대기 목록에서 **본인 것만** 보여주기 위함.
+           비로그인 신청은 종전대로 NULL(연락처만) — 기능은 그대로 동작한다(무회귀). */
+        const midRaw = String((req.body || {}).mid || '').trim();
+        const memberKey = /^[A-Za-z0-9@._-]{3,60}$/.test(midRaw) ? midRaw : null;
         const r = await pool.query(
-            `INSERT INTO season_waitlist (item, contact, memo, created_by) VALUES ($1,$2,$3,'자사몰') RETURNING id`,
-            [item, contact, memo || null]);
+            `INSERT INTO season_waitlist (item, contact, memo, created_by, member_key) VALUES ($1,$2,$3,'자사몰',$4) RETURNING id`,
+            [item, contact, memo || null, memberKey]);
         try {
             await writeAudit({ action: 'create', targetType: 'season_waitlist', targetId: r.rows[0].id,
                 changes: { after: { item, contact: maskWaitContact(contact), memo, from: 'mall' } }, source: 'season-waitlist-public', actor: null });
