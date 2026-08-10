@@ -7960,6 +7960,31 @@ async function collectProductSnapshot() {
         if (contents.length < 100) break;
         await new Promise(r => setTimeout(r, 350));   // 호출 간격 규칙 (v5.9.51 패턴)
     }
+    // ── #338: 상품별 옵션 수집 (목록 API 응답에 옵션이 없다 — 실측. 단건 조회 ${items.length}콜, 400ms 간격)
+    //   🔴 목적: 카페24 기본가 공식 「기본가 = 네이버 최종가 + min(옵션 증감액)」의 min값을 매일 자동 갱신.
+    //      종전엔 이 값을 7/30 시점으로 고정 저장해 써서, 옵션이 바뀌면 다음날 가격이 잘못 보정될 위험이 있었다
+    //      (2026-08-10 실측: 밤호박 특품 종료 → 그대로 뒀으면 14,800원이 8,800원으로 내려갈 뻔).
+    //   🔴 실패한 상품은 opts를 **비워두지 않고 아예 넣지 않는다** — 동기화 쪽에서 "재료 없음"으로 보고 보정을 건너뛰게 하기 위함.
+    let optOk = 0, optFail = 0;
+    for (const it of items) {
+        if (!it.originNo) { optFail++; continue; }
+        try {
+            const d = await naverCallWithRetry({ method: 'GET', path: '/external/v2/products/origin-products/' + it.originNo });
+            const op = (d && d.originProduct) || d || {};
+            const combos = (op.detailAttribute && op.detailAttribute.optionInfo && op.detailAttribute.optionInfo.optionCombinations) || [];
+            if (combos.length) {
+                it.opts = combos.map(c => ({
+                    n1: c.optionName1 || null, n2: c.optionName2 || null,
+                    price: Number(c.price) || 0, stock: c.stockQuantity != null ? Number(c.stockQuantity) : null,
+                    usable: c.usable !== false,
+                }));
+                optOk++;
+            } else { it.optsNone = true; optOk++; }   // 옵션 없는 단일 상품 — 정상
+        } catch (e) { optFail++; }
+        await new Promise(r => setTimeout(r, 400));   // 호출 간격(429 방어 — 기존 패턴)
+    }
+    const optNote = ' | 옵션 ' + optOk + '종 수집' + (optFail ? ' (실패 ' + optFail + '종 — 해당 상품 가격보정 건너뜀)' : '');
+
     // 지시 #122: 판매중 상품 공개 리뷰(상품별 5건) — 공개 경로(brand.naver.com, IP 제한 없음 → 직접 fetch).
     //   🔴 자동 폴백: 어떤 이유로든 실패하면 직전 스냅샷의 리뷰를 그대로 유지(리뷰만 구버전·다른 데이터는 정상 갱신) — 실패 사실은 note에 기록.
     let reviews = null, reviewNote = '';
@@ -8092,7 +8117,7 @@ async function collectProductSnapshot() {
         publicNote = ' | 공개지표 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
     }
     await pool.query(`INSERT INTO naver_product_snapshot (total, items, note, reviews, store_meta) VALUES ($1, $2, $3, $4, $5)`,
-        [items.length, JSON.stringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote + publicNote, reviews ? JSON.stringify(reviews) : null, storeMeta ? JSON.stringify(storeMeta) : null]);
+        [items.length, JSON.stringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote + optNote + publicNote, reviews ? JSON.stringify(reviews) : null, storeMeta ? JSON.stringify(storeMeta) : null]);
     // 보존 정책: 최근 30회만 유지 (하루 1회 = 한 달)
     await pool.query(`DELETE FROM naver_product_snapshot WHERE id NOT IN (SELECT id FROM naver_product_snapshot ORDER BY id DESC LIMIT 30)`);
     // 지시 #149-5: 상세이미지 전량 스냅샷도 매일 함께 갱신 — 실패해도 본 스냅샷은 유지(직전 상세분 그대로), 실패 사유만 note에 기록.
@@ -8103,7 +8128,13 @@ async function collectProductSnapshot() {
         catch (e) { detailNote = ' | 상세 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120); }
         finally { _detailRefreshBusy = false; }
     }
-    return `상품 ${items.length}건 스냅샷 저장${reviewNote}${detailNote}`;
+    // #338: 보관 정리 — 90일 지난 스냅샷 삭제(자동 삭제가 없어 무한 증가하던 것). 실패해도 수집 결과엔 영향 없음.
+    let purged = 0;
+    try {
+        const del = await pool.query(`DELETE FROM naver_product_snapshot WHERE run_at < NOW() - interval '90 days'`);
+        purged = del.rowCount || 0;
+    } catch (e) { /* 정리 실패는 무해 — 다음 회차 */ }
+    return `상품 ${items.length}건 스냅샷 저장${optNote}${reviewNote}${detailNote}${purged ? ` · 90일 경과 ${purged}행 정리` : ''}`;
 }
 
 // 지시 #118→#149: 상세페이지 이미지 URL 수집 — 전 상품·전량(무상한). 수동 버튼 + 플래그 러너 + 일일 스냅샷(04:30) 동반 실행.
@@ -12010,7 +12041,8 @@ async function collectCafe24Sync(modeOverride, opt) {
     });
     const curBy = {};
     for (const p of (list.products || [])) curBy[String(p.product_no)] = p;
-    const rep = { mode, checked: 0, diffs: [], fixed: [], blocked: [], sellState: [], missing: [], errors: [] };
+    const rep = { mode, checked: 0, diffs: [], fixed: [], blocked: [], sellState: [], missing: [], errors: [],
+        baseMoved: [], optSkip: [] };   // #338: 기준값 변경 이력 · 옵션 미수집으로 건너뛴 상품
     for (const [nno, m] of entries) {
         const sn = snapBy[nno], cp = curBy[String(m.c24)];
         const tag = `c${m.c24}(n${nno})`;
@@ -12019,7 +12051,30 @@ async function collectCafe24Sync(modeOverride, opt) {
         rep.checked++;
         // ── 기본가 대조
         const disc = sn.discPrice != null ? Number(sn.discPrice) : Number(sn.salePrice);
-        const expected = disc + (Number(m.minAdd) || 0);
+        // #338: 기준값(min 옵션 증감액)을 **오늘 스냅샷 옵션**에서 계산한다. 저장된 값은 폴백·비교용일 뿐.
+        //   🔴 옵션을 못 받은 상품은 보정을 건너뛴다 — 낡은 기준값으로 가격을 내리는 사고(2026-08-10 실측)를 원천 차단.
+        const savedMin = Number(m.minAdd) || 0;
+        let liveMin = null;
+        if (Array.isArray(sn.opts) && sn.opts.length) {
+            const sellable = sn.opts.filter(o => o.usable !== false);
+            const pool_ = sellable.length ? sellable : sn.opts;
+            liveMin = Math.min(...pool_.map(o => Number(o.price) || 0));
+        } else if (sn.optsNone) {
+            liveMin = 0;   // 옵션 없는 단일 상품
+        }
+        if (liveMin === null) {
+            rep.optSkip.push(tag + ' 옵션 미수집 — 가격 보정 건너뜀');
+        } else {
+        if (liveMin !== savedMin) {
+            rep.baseMoved.push({ tag, name: String(cp.product_name || '').slice(0, 20), from: savedMin, to: liveMin });
+            if (mode === 'fix') {   // 매핑표도 최신값으로 갱신 — 다음 회차부터 일관
+                try {
+                    mapCfg.map[nno].minAdd = liveMin;
+                    await naverCfgSet('cafe24_sync_map', mapCfg);
+                } catch (e) { rep.errors.push(tag + ' 기준값 저장 실패: ' + String(e.message).slice(0, 60)); }
+            }
+        }
+        const expected = disc + liveMin;
         const current = Math.round(Number(cp.price));
         if (!Number.isFinite(expected) || expected <= 0) { rep.errors.push(tag + ` 계산가 비정상(${expected})`); }
         else if (expected !== current) {
@@ -12033,6 +12088,7 @@ async function collectCafe24Sync(modeOverride, opt) {
                 } catch (e) { rep.errors.push(tag + ' 가격 보정 실패: ' + String(e.reason || e.message).slice(0, 80)); }
             } else rep.diffs.push(item);
         }
+        }   // #338: 옵션 미수집 건너뛰기 블록 끝
         // ── 품절 동기 (가드④: 진열중만 — 오픈 전 세트는 무조작)
         if (cp.display === 'T') {
             const soldout = (sn.statusType && sn.statusType !== 'SALE') || Number(sn.stock) === 0;
@@ -12057,10 +12113,12 @@ async function collectCafe24Sync(modeOverride, opt) {
     if (rep.diffs.length) parts.push(`📋 가격 차이(dry — 미보정) ${rep.diffs.length}건: ` + rep.diffs.map(fmtP).join(', '));
     if (rep.blocked.length) parts.push(`🚫 ±50% 초과 — 자동 보정 보류 ${rep.blocked.length}건: ` + rep.blocked.map(fmtP).join(', ') + ' (대표 확인 필요)');
     if (rep.sellState.length) parts.push(`📦 품절 동기${mode === 'fix' ? '' : '(dry)'} ${rep.sellState.length}건: ` + rep.sellState.map(i => `${i.name} ${i.reason}→판매 ${i.want === 'F' ? '중지' : '재개'}`).join(', '));
+    if (rep.baseMoved.length) parts.push(`🧮 기준값 자동 갱신 ${rep.baseMoved.length}건: ` + rep.baseMoved.map(i => `${i.name} ${i.from}→${i.to}`).join(', ') + '  (옵션 구성이 바뀐 상품 — 가격은 위 항목대로 맞춰짐)');
+    if (rep.optSkip.length) parts.push(`⏭ 옵션 미수집으로 보정 건너뜀 ${rep.optSkip.length}건: ` + rep.optSkip.join(', ') + '  (낡은 기준값으로 가격을 건드리지 않음)');
     if (rep.errors.length) parts.push(`⚠️ 오류 ${rep.errors.length}건: ` + rep.errors.join(' / '));
     if (rep.missing.length) parts.push(`❓ 대조 불가 ${rep.missing.length}건: ` + rep.missing.join(', '));
     if (parts.length && !quiet) notifyTelegram(`🔄 [카페24 동기화 · ${mode}] 신규 세트 ${rep.checked}종 대조\n` + parts.join('\n'));
-    return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
+    return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건 · 기준값 갱신 ${rep.baseMoved.length}건${rep.optSkip.length ? ` · 옵션미수집 ${rep.optSkip.length}` : ''}${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
 }
 
 // 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.
