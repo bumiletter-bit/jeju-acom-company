@@ -1001,6 +1001,9 @@ async function initDB() {
         )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_reward_grants_month ON reward_grants (month_key, kind)`);
+    // #340: 지급 처리 이력 컬럼(누가·언제 줬는지)
+    await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_by TEXT`);
     // ── 지시 #68 C5: 시즌 오픈 대기 신청 (연락처는 발송 목적상 원문 저장 — 화면 표시는 마스킹, soft-delete)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS season_waitlist (
@@ -8507,6 +8510,46 @@ app.get('/api/public/shipping-eta', async (req, res) => {
     } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
 });
 
+// ══════ #340: 룰렛 실물 당첨 지급 관리 (문의 관리 > 🎁 당첨 지급) ══════
+//   쿠폰·귤박스·업그레이드권은 자동 발급 수단이 없어(쿠폰 API 스코프 미보유) 사람이 직접 준다.
+//   종전엔 목록 화면이 없어 텔레그램 알림에만 의존했고, 그 알림의 회원ID가 금액 마스킹에 걸려
+//   **누구인지 확인 자체가 불가능**했다(대표 실사고). → 조회·지급완료 처리 화면을 만든다.
+app.get('/api/agent-office/reward-grants', authMiddleware, async (req, res) => {
+    try {
+        const status = String(req.query.status || 'pending');
+        const cond = status === 'all' ? '' : 'WHERE g.status = $1';
+        const params = status === 'all' ? [] : [status];
+        const r = await pool.query(`
+            SELECT g.id, g.kind, g.amount, g.status, g.created_at, g.granted_at, g.granted_by,
+                   m.member_key, m.nickname, m.id AS member_id
+            FROM reward_grants g JOIN mall_members m ON m.id = g.member_id
+            ${cond}
+            ORDER BY (g.status = 'pending') DESC, g.created_at DESC LIMIT 200`, params);
+        const pend = await pool.query(`SELECT COUNT(*)::int AS n FROM reward_grants WHERE status='pending'`);
+        res.json({ grants: r.rows, pending: pend.rows[0].n });
+    } catch (err) { handleAdminErr(res, err); }
+});
+// 지급완료 처리 — 되돌리기(pending 복귀)도 허용(오클릭 구제). 물리삭제 없음.
+app.put('/api/agent-office/reward-grants/:id', authMiddleware, async (req, res) => {
+    try {
+        const want = String((req.body || {}).status || 'granted');
+        if (!['granted', 'pending'].includes(want)) throw { status: 400, message: '상태는 granted 또는 pending만 가능합니다' };
+        const cur = await pool.query(`SELECT g.*, m.member_key FROM reward_grants g JOIN mall_members m ON m.id=g.member_id WHERE g.id=$1`, [Number(req.params.id)]);
+        if (!cur.rows.length) throw { status: 404, message: '해당 당첨 건을 찾을 수 없습니다' };
+        const before = cur.rows[0];
+        const r = await pool.query(
+            `UPDATE reward_grants SET status=$2,
+                    granted_at = CASE WHEN $2='granted' THEN NOW() ELSE NULL END,
+                    granted_by = CASE WHEN $2='granted' THEN $3 ELSE NULL END
+             WHERE id=$1 RETURNING *`,
+            [Number(req.params.id), want, (adminActor(req) || {}).name || null]);
+        await writeAudit({ action: 'update', targetType: 'reward_grant', targetId: Number(req.params.id),
+            changes: { before: { status: before.status }, after: { status: want, member_key: before.member_key, kind: before.kind } },
+            source: 'reward-grant', actor: adminActor(req) });
+        res.json({ message: want === 'granted' ? '지급 완료로 표시했습니다' : '미지급으로 되돌렸습니다', grant: r.rows[0] });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
 app.get('/api/public/roulette-winners', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     try {
@@ -11824,8 +11867,13 @@ async function telegramChatId() {
     } catch (e) { return null; }
 }
 function tgMask(text) {
-    // 보수적 해석: 5자리 이상 숫자(금액)는 가림 — '금액 상세 금지' 규칙 (해제는 대표 지시로)
-    return String(text || '').replace(/\d{1,3}(,\d{3}){2,}|\d{5,}/g, '●●●').slice(0, 400);
+    // 보수적 해석: 5자리 이상 숫자(금액)는 가림 — '금액 상세 금지' 규칙
+    // 🔴 #340(대표 지시 2026-08-10): 회원ID처럼 **글자·@·.·_·-에 붙은 숫자는 식별자**이므로 가리지 않는다.
+    //    종전엔 룰렛 당첨 알림의 회원ID(4790625123@k)가 통째로 ●●●가 되어 누구에게 쿠폰을 줘야 하는지
+    //    알 수 없었다(실사고). 금액(19800원·1,234,567)·전화번호(01012345678)는 그대로 가려진다.
+    return String(text || '')
+        .replace(/(?<![A-Za-z@._\-0-9])(?:\d{1,3}(?:,\d{3}){2,}|\d{5,})(?![A-Za-z@._\-0-9])/g, '●●●')
+        .slice(0, 400);
 }
 async function notifyTelegram(text) {
     // 지시 #50-5: 일시 네트워크 오류 재시도 1회 (run #64 완료 알림이 배포 셧다운 순간 'fetch failed'로 유실된 사고 대응)

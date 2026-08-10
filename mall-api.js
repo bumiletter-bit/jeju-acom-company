@@ -431,7 +431,15 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             return { spinId, prize, ledger };
         });
         if (/^coupon/.test(out.prize.key) || out.prize.key === 'box' || out.prize.key === 'upgrade') {
-            if (typeof notify === 'function') notify(`🎡 [룰렛 실물 당첨] 회원 ${mid} — ${out.prize.label} (수동 발급 필요 · 데이터관리 게임 운영 참조)`);
+            if (typeof notify === 'function') {
+                // #340: 대표가 이 메시지만 보고 바로 지급할 수 있어야 한다 — 회원ID·이름·미지급 누계·처리 위치.
+                let pend = '';
+                try {
+                    const q = await pool.query("SELECT COUNT(*)::int AS n FROM reward_grants WHERE status='pending'");
+                    pend = ' · 미지급 누적 ' + q.rows[0].n + '건';
+                } catch (_) { /* 집계 실패는 알림에 영향 없음 */ }
+                notify(`🎡 [룰렛 실물 당첨] ${out.prize.label}\n회원ID ${member.member_key}${member.nickname ? ' (' + member.nickname + ')' : ''}${pend}\n→ 카페24 관리자에서 회원ID로 찾아 발급 후, 문의 관리 > 🎁 당첨 지급에서 [지급완료]`);
+            }
         }
         await audit('create', 'roulette_spin', out.spinId, { member_id: member.id, result: out.prize.key, pub: true });
         res.json({

@@ -12313,7 +12313,7 @@ let botProducts = [];
 let inquiryActiveTab = 'scenario';
 window.switchInquiryTab = function(name) {
     inquiryActiveTab = name;
-    for (const t of ['scenario', 'products', 'season', 'unanswered', 'qna', 'userinq']) {
+    for (const t of ['scenario', 'products', 'season', 'unanswered', 'qna', 'userinq', 'reward']) {
         document.getElementById('inquiry-tab-' + t).style.display = name === t ? '' : 'none';
         document.getElementById('inquiry-tab-btn-' + t).className = name === t ? 'settlement-tab active' : 'settlement-tab';
     }
@@ -12323,7 +12323,64 @@ window.switchInquiryTab = function(name) {
     else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
     else if (name === 'qna') renderQnaTab().catch(console.error);
     else if (name === 'userinq') renderUserInqTab().catch(console.error);
+    else if (name === 'reward') renderRewardTab().catch(console.error);
 };
+// --- #340: 룰렛 실물 당첨 지급 관리 ---
+//   쿠폰·귤박스·업그레이드권은 자동 발급 수단이 없어(쿠폰 API 스코프 미보유) 사람이 직접 준다.
+//   종전엔 이 목록을 볼 화면이 없어 텔레그램 알림에만 의존했고, 그 알림의 회원ID가 금액 마스킹에 걸려
+//   누구인지 확인조차 못 했다(2026-08-10 대표 실사고). 그래서 이 탭을 만든다.
+const REWARD_LABEL = { coupon5: '5% 할인 쿠폰', coupon10: '10% 할인 쿠폰', box: '제철 귤 4.5kg', upgrade: '업그레이드 이용권' };
+let rewardShowAll = false;
+async function renderRewardTab() {
+    const box = document.getElementById('inquiry-tab-reward');
+    box.innerHTML = '<div class="card"><p class="text-muted">불러오는 중...</p></div>';
+    let d;
+    try { d = await api('/api/agent-office/reward-grants?status=' + (rewardShowAll ? 'all' : 'pending')); }
+    catch (e) { box.innerHTML = `<div class="card"><p class="text-muted">목록을 불러오지 못했습니다 — ${aoEsc(e.message)}</p></div>`; return; }
+    const rows = d.grants || [];
+    aoRewardBadge(d.pending);
+    const body = rows.length ? rows.map(g => {
+        const done = g.status === 'granted';
+        return `<tr>
+            <td class="cell-dt">${aoEsc(aoFmtDtShort(g.created_at))}</td>
+            <td><span class="pill ${done ? '' : 'pill-wait'}">${done ? '지급완료' : '미지급'}</span></td>
+            <td><b>${aoEsc(REWARD_LABEL[g.kind] || g.kind)}</b></td>
+            <td style="font-variant-numeric:tabular-nums"><b>${aoEsc(g.member_key)}</b>${g.nickname ? ' <span class="text-muted">(' + aoEsc(g.nickname) + ')</span>' : ''}</td>
+            <td class="text-muted">${done ? aoEsc(aoFmtDtShort(g.granted_at)) + (g.granted_by ? ' · ' + aoEsc(g.granted_by) : '') : '-'}</td>
+            <td><button class="btn ${done ? 'btn-ghost' : 'btn-primary'} btn-sm" onclick="aoRewardMark(${g.id}, '${done ? 'pending' : 'granted'}')">${done ? '되돌리기' : '지급완료'}</button></td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:18px">' + (rewardShowAll ? '당첨 기록이 없습니다' : '미지급 당첨이 없습니다 🎉') + '</td></tr>';
+    box.innerHTML = `
+        <div class="card">
+            <h2>🎁 룰렛 실물 당첨 지급 <span class="text-muted" style="font-size:13px;font-weight:400">쿠폰·귤박스·업그레이드권은 자동 발급이 안 돼 직접 드려야 합니다 — 카페24 관리자에서 회원ID로 찾아 발급하세요</span></h2>
+            <div class="row" style="gap:8px;margin:10px 0">
+                <span class="pill ${d.pending ? 'pill-wait' : ''}">미지급 ${d.pending}건</span>
+                <button class="btn btn-ghost btn-sm" onclick="rewardShowAll=!rewardShowAll;renderRewardTab()">${rewardShowAll ? '미지급만 보기' : '전체 보기'}</button>
+                <button class="btn btn-ghost btn-sm" onclick="renderRewardTab()">새로고침</button>
+            </div>
+            <div style="overflow-x:auto">
+            <table class="data-table" style="min-width:820px">
+                <thead><tr>
+                    <th style="width:110px">당첨 일시</th><th style="width:84px">상태</th><th style="width:150px">경품</th>
+                    <th>회원ID</th><th style="width:150px">지급 처리</th><th style="width:96px"></th>
+                </tr></thead>
+                <tbody>${body}</tbody>
+            </table></div>
+        </div>`;
+}
+function aoRewardBadge(n) {
+    const b = document.getElementById('rewardPendBadge');
+    if (!b) return;
+    if (n > 0) { b.textContent = n; b.style.display = ''; } else { b.style.display = 'none'; }
+}
+window.aoRewardMark = async function (id, status) {
+    try {
+        const r = await api('/api/agent-office/reward-grants/' + id, { method: 'PUT', body: JSON.stringify({ status }) });
+        showToast(r.message || '처리되었습니다', 'lime');
+        renderRewardTab().catch(console.error);
+    } catch (e) { showToast('실패 — ' + e.message); }
+};
+
 // --- 고객문의(문의하기) 탭 (대표 7/27 — 상품문의 탭 구조 재사용. 1:1 비공개·반품/교환/환불은 무조건 직원) ---
 async function renderUserInqTab() {
     const box = document.getElementById('inquiry-tab-userinq');
