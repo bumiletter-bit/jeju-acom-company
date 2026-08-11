@@ -320,12 +320,11 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
     router.get('/pub/wallet', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid(req.query.mid);
         const member = await resolveMember(mid, null);
-        const [balance, tree, orders, spins, reviews, attend, delivered] = await Promise.all([
+        const [balance, tree, quota, spins, attend, delivered] = await Promise.all([
             currentBalance(member.id),
             pool.query(`SELECT water_count FROM tree_state WHERE member_id=$1`, [member.id]),
-            countPaidOrders(mid),
+            reviewQuota(mid, member.id),   // #381: 리뷰 관리·퀘스트와 같은 계산(배송완료 30일 이내 기준)
             pool.query(`SELECT COUNT(*)::int AS n FROM roulette_spins WHERE member_id=$1`, [member.id]),
-            ledgerCountByReason(member.id, '후기 물방울'),
             pool.query(`SELECT 1 FROM points_ledger WHERE member_id=$1 AND reason='출석 체크' AND idem_key=$2`,
                 [member.id, 'attend:' + member.id + ':' + kstDateStr()]),
             countDeliveredOrders(mid),   // #277: 룰렛권 = 배송완료 기준
@@ -337,7 +336,9 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
             goal: (await loadConfig()).level_thresholds.slice(-1)[0] || 100,
             tickets: Math.max(0, delivered - spins.rows[0].n),   // #277: 배송완료 1건당 1회
             delivered,
-            review_left: Math.max(0, orders - reviews),
+            review_left: quota.claimable,          // #381: 실제로 지금 받을 수 있는 수
+            review_pending: quota.items.length,    // 후기를 아직 안 쓴 주문 수(30일 이내)
+            review_window_days: REVIEW_WINDOW_DAYS,
             attend_today: attend.rows.length > 0,
             join_bonus: joined,
         });
@@ -362,12 +363,23 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
     /* 리뷰 관리 — **아직 후기를 안 쓴 배송완료 주문**만.
        ⚠️ 카페24 주문 조회는 구간 3개월 제한이라 90일씩 2구간으로 돈다(countPaidOrders와 같은 방식).
        ⚠️ PII 최소: 주문번호·주문일·상품명만 담는다(수취인·연락처·주소는 담지 않는다). */
+    /* #381(대표 8/12): 후기 물방울 대상 = **배송완료 후 30일 이내** 주문만.
+       🔴 카페24에는 「배송완료일」 필드가 없다(실측). 있는 것은 items[].shipped_date = **출고일**이고,
+          상태 N40이면 이미 배송이 끝난 건이다. 우리 배송은 출고 다음날~이틀 도착이므로
+          **출고일 + 32일**을 경계로 잡으면 손님 기준 "받은 날로부터 30일"이 확실히 보장된다
+          (짧게 잡아 손님이 손해 보는 쪽을 피한다 — 화면 문구는 "배송완료 후 30일 이내"). */
+    const REVIEW_WINDOW_DAYS = 30;
+    const REVIEW_ARRIVE_PAD = 2;      // 출고 → 도착 여유
+    const deliveredListCache = new Map();   // 지갑·리뷰 관리가 같은 값을 쓰도록 60초 공유(카페24 호출 절감)
     async function deliveredOrderList(memberKey) {
         if (!cafe24 || typeof cafe24.apiGet !== 'function') return [];
+        const cc = deliveredListCache.get(memberKey);
+        if (cc && Date.now() - cc.at < 60000) return cc.list;
         const since = await ticketSince();
         const out = [];
         const now = new Date(Date.now() + 9 * 3600 * 1000);
         const fmt = d => d.toISOString().slice(0, 10);
+        const limitMs = (REVIEW_WINDOW_DAYS + REVIEW_ARRIVE_PAD) * 86400000;
         for (let seg = 0; seg < 2; seg++) {
             const end = new Date(now.getTime() - seg * 90 * 86400000);
             let start = new Date(end.getTime() - 89 * 86400000);
@@ -379,43 +391,79 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
                     order_status: 'N40', limit: 50, embed: 'items',
                 });
                 ((r && r.orders) || []).forEach(o => {
-                    const names = ((o.items) || []).map(i => i && i.product_name).filter(Boolean);
+                    const items = (o.items) || [];
+                    const names = items.map(i => i && i.product_name).filter(Boolean);
+                    // 출고일 = items 중 가장 늦은 shipped_date (없으면 주문일로 폴백 — 판정 자체가 막히지 않게)
+                    const shipped = items.map(i => i && i.shipped_date).filter(Boolean).sort().slice(-1)[0]
+                        || o.shipped_date || o.order_date;
+                    const shippedMs = shipped ? new Date(shipped).getTime() : NaN;
+                    if (Number.isFinite(shippedMs) && (Date.now() - shippedMs) > limitMs) return;   // 30일 지난 건 대상 아님
                     out.push({
                         order_id: String(o.order_id || ''),
                         date: String(o.order_date || '').slice(0, 10),
+                        shipped: String(shipped || '').slice(0, 10),
                         name: names[0] || '주문 상품',
                         more: Math.max(0, names.length - 1),
                     });
                 });
             } catch (e) { /* 구간 실패 = 그 구간 없음(부분 성공) */ }
         }
+        deliveredListCache.set(memberKey, { list: out, at: Date.now() });
+        if (deliveredListCache.size > 500) deliveredListCache.clear();
         return out;
     }
     /* 이 회원이 이미 후기를 쓴 주문번호 집합 — 카페24 상품후기 게시판(board 4).
-       scope 미개통·실패 시 null → 화면은 "판정 불가"로 보고 전체를 보여준다(#259와 같은 안전 폴백). */
-    async function reviewedOrderIds(memberKey) {
+       scope 미개통·실패 시 null → 화면은 "판정 불가"로 보고 전체를 보여준다(#259와 같은 안전 폴백).
+       🔴 #381: 조회를 **300건(100 × 3페이지)** 으로 확대 — 카페24는 1회 limit 100이 상한이라(실측 422)
+          offset으로 이어 부른다. 자사몰 주문이 늘면 최근 100건만으로는 회원 후기가 밀려날 수 있다.
+          ⚠️ member_id 파라미터는 카페24가 **무시**한다(실측: 지정해도 전체가 온다) → 응답에서 직접 거른다. */
+    const REVIEW_PAGES = 3, REVIEW_PAGE_SIZE = 100;
+    const reviewArtCache = new Map();
+    async function reviewArticles(memberKey) {
         if (!cafe24 || typeof cafe24.apiGet !== 'function') return null;
+        const c = reviewArtCache.get(memberKey);
+        if (c && Date.now() - c.at < 30000) return c.arr;
+        const all = [];
+        for (let p = 0; p < REVIEW_PAGES; p++) {
+            const r = await cafe24.apiGet('/api/v2/admin/boards/4/articles',
+                { member_id: memberKey, limit: REVIEW_PAGE_SIZE, offset: p * REVIEW_PAGE_SIZE });
+            const arr = (r && r.articles) || [];
+            all.push(...arr);
+            if (arr.length < REVIEW_PAGE_SIZE) break;   // 마지막 페이지
+        }
+        reviewArtCache.set(memberKey, { arr: all, at: Date.now() });
+        if (reviewArtCache.size > 500) reviewArtCache.clear();
+        return all;
+    }
+    async function reviewedOrderIds(memberKey) {
         try {
-            const r = await cafe24.apiGet('/api/v2/admin/boards/4/articles', { member_id: memberKey, limit: 100 });
+            const arr = await reviewArticles(memberKey);
+            if (!arr) return null;
             const s = new Set();
-            ((r && r.articles) || []).forEach(a => { if (a && a.order_id) s.add(String(a.order_id)); });
+            arr.forEach(a => { if (a && a.order_id) s.add(String(a.order_id)); });
             return s;
         } catch (e) { return null; }
+    }
+    /* #381: 「받을 수 있는 후기 물방울」 계산을 **한 곳으로 통일**.
+       🔴 종전엔 리뷰 관리(order_id 대조)와 귤나무 퀘스트(member_id 대조)가 **서로 다른 기준**으로 세고 있었다.
+          같은 사실을 두 곳에서 각자 계산하면 반드시 어긋난다(#379 교훈) → 이 함수 하나만 쓴다.
+       판정 = 「30일 이내 배송완료 주문」 중 후기를 실제로 쓴 건수 − 이미 받은 수. */
+    async function reviewQuota(memberKey, memberId) {
+        const [list, done, claimed] = await Promise.all([
+            deliveredOrderList(memberKey),
+            reviewedOrderIds(memberKey),
+            ledgerCountByReason(memberId, '후기 물방울'),
+        ]);
+        const pending = list.filter(o => !(done && done.has(o.order_id)));   // 아직 후기 안 쓴 주문
+        const written = done ? (list.length - pending.length) : null;        // null = 게시판 조회 실패(판정 불가)
+        const cap = (written === null) ? list.length : written;              // 조회 실패 시 폴백 = 주문 수 상한
+        return { items: pending, orders: list.length, written, claimed, claimable: Math.max(0, cap - claimed) };
     }
     router.get('/pub/reviewable', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid(req.query.mid);
         const member = await resolveMember(mid, null);
-        const [list, done, claimed, orderCnt] = await Promise.all([
-            deliveredOrderList(mid),
-            reviewedOrderIds(mid),
-            ledgerCountByReason(member.id, '후기 물방울'),
-            countPaidOrders(mid),
-        ]);
-        const items = list.filter(o => !(done && done.has(o.order_id)));
-        const written = done ? (list.length - items.length) : null;
-        /* 물방울 지급 가능 횟수 = review-claim과 **같은 계산**(주문 수 상한 · 실제 후기 수 상한 · 이미 받은 수 차감) */
-        const cap = (written === null) ? orderCnt : Math.min(orderCnt, written);
-        res.json({ ok: true, items, written, claimed, claimable: Math.max(0, cap - claimed) });
+        const q = await reviewQuota(mid, member.id);      // #381: review-claim과 **같은 함수**
+        res.json({ ok: true, items: q.items, written: q.written, claimed: q.claimed, claimable: q.claimable, window_days: REVIEW_WINDOW_DAYS });
     }));
 
     // 가입 혜택 +5 (1회)
@@ -435,39 +483,24 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         res.json({ ok: true, replayed: out.replayed, balance: out.balance });
     }));
 
-    // 후기 실작성 수 — 카페24 상품후기 게시판(board 4) 대조. #259(대표): 후기를 실제로 써야 지급.
-    //   scope mall.read_community 미개통이면 null 반환 → 검증 생략(주문 상한만 — 재동의 전 폴백).
-    const reviewCntCache = new Map();
-    async function countReviews(memberKey) {
-        if (!cafe24 || typeof cafe24.apiGet !== 'function') return null;
-        const c = reviewCntCache.get(memberKey);
-        if (c && Date.now() - c.at < 30000) return c.n;
-        try {
-            const r = await cafe24.apiGet('/api/v2/admin/boards/4/articles', { member_id: memberKey, limit: 100 });
-            const arr = (r && r.articles) || [];
-            // member_id 파라미터가 무시될 가능성 방어: 응답에 작성자 필드가 있으면 그걸로 대조, 없으면 파라미터 필터를 신뢰
-            const hasIdField = arr.some(a => a.member_id != null || a.writer_id != null);
-            const n = hasIdField
-                ? arr.filter(a => String(a.member_id || '') === memberKey || String(a.writer_id || '') === memberKey).length
-                : arr.length;
-            reviewCntCache.set(memberKey, { n, at: Date.now() });
-            return n;
-        } catch (e) { return null; }
-    }
-
-    // 후기 물방울 +1 — 대표 확정(#259): 사진 무관·주문 1건당 1회·"실제 후기 작성" 확인 후 지급
+    /* 후기 물방울 +1 — 대표 확정: 사진 무관(#259) · 주문 1건당 1회 · 실제 후기 작성 확인
+       #381(대표 8/12): 대상 = **배송완료 후 30일 이내** 주문. 판정은 reviewQuota 하나로 통일
+       (리뷰 관리 화면과 같은 함수 — 두 곳이 다른 기준으로 세면 반드시 어긋난다). */
     router.post('/pub/review-claim', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid((req.body || {}).mid);
         const member = await resolveMember(mid, null);
-        const orders = await countPaidOrders(mid);
-        const claimed = await ledgerCountByReason(member.id, '후기 물방울');
-        if (claimed >= orders) return res.status(403).json({ error: '지급 가능한 후기 횟수를 모두 받았어요 (주문 1건당 1회)' });
-        const reviews = await countReviews(mid);
-        if (reviews !== null && claimed >= reviews) {
-            return res.status(403).json({ error: '후기를 먼저 작성해 주세요 🍊 작성 후 이 버튼을 누르면 물방울 1개를 드려요!' });
+        const q = await reviewQuota(mid, member.id);
+        if (!q.orders) {
+            return res.status(403).json({ error: `후기 물방울은 배송완료 후 ${REVIEW_WINDOW_DAYS}일 이내 주문만 받을 수 있어요 🍊` });
         }
-        const out = await pubGrant(member, 1, '후기 물방울', 'review:' + member.id + ':' + (claimed + 1));
-        res.json({ ok: true, replayed: out.replayed, balance: out.balance, review_left: Math.max(0, orders - claimed - 1) });
+        if (q.claimable <= 0) {
+            const msg = (q.written !== null && q.claimed >= q.written)
+                ? '후기를 먼저 작성해 주세요 🍊 작성 후 이 버튼을 누르면 물방울 1개를 드려요!'
+                : '지급 가능한 후기 물방울을 모두 받았어요 (주문 1건당 1회)';
+            return res.status(403).json({ error: msg });
+        }
+        const out = await pubGrant(member, 1, '후기 물방울', 'review:' + member.id + ':' + (q.claimed + 1));
+        res.json({ ok: true, replayed: out.replayed, balance: out.balance, review_left: Math.max(0, q.claimable - 1) });
     }));
 
     // 나무 물주기 −1 (+수확 알림)
