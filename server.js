@@ -7735,6 +7735,10 @@ async function qnaGenerate(question, productName, simDate) {   // simDate = 지�
     }
     answer = answer.split('\n').filter(l => !l.trim().startsWith('###')).join('\n').trim();
     if (!answer || /^SKIP\b/.test(answer)) return null;
+    /* 🔴 #375(8/11 실측): SKIP을 **맨 앞에서만** 봤더니, AI가 답을 쓰다 뒤늦게 "…정책상 SKIP 처리해야 합니다. / SKIP"을
+       본문 끝에 붙인 경우 **내부 판정 문구가 손님에게 그대로 노출**됐다(자사몰 실재현 — message_logs id=1509).
+       재료(시나리오·시기지식)에 'SKIP' 문자열은 0건이라 오탐 위험 없음 → 본문 어디든 있으면 답변하지 않는다. */
+    if (/SKIP/.test(answer)) { console.error('[문의생성] 본문에 SKIP 판정 혼입 → 답변 보류'); return null; }
     used = used.filter(n => scenarios.some(s => s.name === n));   // 재료 목록에 있는 이름만 기록
     if (!answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;   // 고객센터 안내 항상 유지 (안전망)
     // 품목 필터용 텍스트: 질문 + 상품명(용량 숫자는 다른 품목까지 매칭시키므로 제거 — 봇과 동일)
@@ -7938,6 +7942,8 @@ async function inquiryGenerate(item) {
     }
     answer = answer.split('\n').filter(l => !l.trim().startsWith('###')).join('\n').trim();
     if (!answer || /^SKIP\b/.test(answer)) return null;
+    // 🔴 #375: 본문 중간·끝에 섞인 SKIP 판정도 차단 (위 qnaGenerate와 같은 사유 — 내부 문구 손님 노출 방지)
+    if (/SKIP/.test(answer)) { console.error('[고객문의생성] 본문에 SKIP 판정 혼입 → 답변 보류'); return null; }
     used = used.filter(n => scenarios.some(s => s.name === n));
     if (!answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;
     const filterText = (question + ' ' + String(item.product_name || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
