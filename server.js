@@ -6149,9 +6149,14 @@ setInterval(async () => {
            봇이 침묵한 건은 정의상 직원이 봐야 하는 건인데 그동안 아무 신호도 없었다.
            ※ #301에서 카카오 챗봇을 끄고 상담 채팅으로 돌렸으므로 카카오는 [내 채팅]에서도 보인다.
              그래도 네이버톡톡·자사몰은 이 알림이 가장 빠른 통로다. */
+        /* 🔴 #374(대표 8/11): **자사몰 챗은 미답변이면 전건 알린다.** 톡톡·카카오는 직원이 볼 화면이 각각 있지만
+           (판매자센터·[내 채팅]) **자사몰 웹챗에는 직원 응대 화면이 자체가 없다** — 손님이 안내를 보고 카카오·전화로
+           오지 않으면 그 문의는 아무도 모르는 채 끝난다. 빈도도 낮아(30일 2건) 전건 알려도 폰이 울리지 않는다.
+           톡톡·카카오는 종전 그대로 NEEDS_STAFF_RE 선별 유지(인사·덕담까지 울리는 것 방지 — #298-b). */
         const hits = r.rows.filter(x =>
             TALKTALK_REQUEST_RE.test(String(x.message || '')) ||
-            (String(x.bot_response || '') === '[SKIP-무응답]' && NEEDS_STAFF_RE.test(String(x.message || ''))));
+            (String(x.bot_response || '') === '[SKIP-무응답]' &&
+             (String(x.user_id || '').startsWith('mall:') || NEEDS_STAFF_RE.test(String(x.message || '')))));
         let queue = Array.isArray(st.queue) ? st.queue : [];
         for (const h of hits) {
             const 미답 = String(h.bot_response || '') === '[SKIP-무응답]';
@@ -6166,7 +6171,7 @@ setInterval(async () => {
             /* 🔴 #371(대표 실물): 안내 문구가 낡아 있었다 — #301에서 카카오 챗봇을 끄고 상담 채팅으로 돌린 뒤에도
                "카카오는 챗봇 대화라 알림이 오지 않습니다"가 그대로 나갔다(대표가 받은 건 네이버톡톡 건인데도 그 문장이 붙었다).
                지금은 채널마다 답변 창구가 있으므로 그대로 안내한다. */
-            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘봇 미답변’ = AI가 답하지 못한 건입니다. [문의 관리] > 💬 톡톡 문의에서 3채널을 함께 볼 수 있고, 답변은 네이버톡톡은 판매자센터·카카오는 채널 [내 채팅]에서 해주세요)`);
+            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘봇 미답변’ = AI가 답하지 못한 건입니다. [문의 관리] > 💬 톡톡 문의에서 3채널을 함께 볼 수 있어요.\n답변은 네이버톡톡=판매자센터 · 카카오=채널 [내 채팅]에서 하시면 되고, 🛒자사몰은 직원이 답할 창구가 없어 손님께 카카오채널·전화로 안내해 둔 상태입니다 — 연락이 오면 응대해주세요)`);
             lastAlert = { at: new Date().toISOString(), count: queue.length, result };
             if (result === 'sent') queue = [];
         }
@@ -8455,9 +8460,14 @@ app.post('/api/public/shop-chat', async (req, res) => {
                 if (!process.env.ANTHROPIC_API_KEY) reason = 'no-ai-key';
                 else if (!(await qnaScenarios()).length) reason = 'no-scenarios';
             } catch (_) { /* 진단 실패는 무시 */ }
-            await logMallChat(logUser, question, productName, null, null);
+            /* 🔴 #374(대표 실물 8/11 "자사몰 미답변이 우리에게 오는 게 없다"): 종전엔 bot_response를 **null**로 남겼다.
+               직원 알림 폴러는 `bot_response IS NOT NULL AND = '[SKIP-무응답]'` 조건이라 **자사몰 미답변만 통째로 알림에서 빠졌다**
+               (실측 30일 2건 — 그중 1건이 대표가 직접 겪은 그 문의). 톡톡과 같은 표기로 통일해 기존 알림·통계·화면이 그대로 잡게 한다. */
+            await logMallChat(logUser, question, productName, null, '[SKIP-무응답]');
+            /* 🔴 문구 정직화: 자사몰 챗에는 **직원이 답할 화면이 없다** — "답변드릴게요"만 두면 손님이 이 창에서 기다리다 끝난다.
+               답을 받을 수 있는 창구(카카오채널·전화)로 분명히 넘긴다(#307 원칙: 못 지킬 안내는 하지 않는다). */
             return res.json({ answered: false, reason,
-                message: '이 질문은 담당자가 직접 확인해서 답변드릴게요. 카카오톡 채널이나 전화(010-6687-4031)로 문의해주세요.' });
+                message: '이 질문은 담당자가 직접 확인해드릴게요 🍊 답변은 이 창이 아니라 카카오톡 채널 「제주아꼼이네」 또는 전화(010-6687-4031)로 드리니, 둘 중 편하신 곳으로 문의 남겨주세요!' });
         }
         // #275: 연속 대화가 길어지면 직원 응대 체계가 있는 카카오채널로 자연 유도
         let answer = out.answer;
