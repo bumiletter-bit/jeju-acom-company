@@ -8482,7 +8482,12 @@ app.post('/api/public/season-waitlist', async (req, res) => {
         const contact = String((req.body || {}).contact || '').replace(/[^0-9]/g, '');
         const memo = String((req.body || {}).memo || '').trim().slice(0, 100);
         if (!item) return res.status(400).json({ ok: false, message: '상품 정보가 없어요' });
-        if (contact.length < 10 || contact.length > 11) return res.status(400).json({ ok: false, message: '연락처를 숫자 10~11자리로 입력해주세요' });
+        /* 🔴 #357(대표 8/11): 종전엔 10~11자리면 통과라 **한 자리를 빠뜨려도 접수**됐다(실제로 010 10자리가 3건 쌓였다).
+           이 명단은 시즌 오픈 때 **알림톡·문자를 보내는 용도**라 잘못된 번호는 그때 조용히 실패한다 → 접수 단계에서 막는다.
+           규칙: 휴대폰만 허용 · **010은 11자리 필수**(011·016~019는 옛 번호라 10자리도 정상). */
+        if (!/^01[016789]\d{7,8}$/.test(contact) || (contact.startsWith('010') && contact.length !== 11)) {
+            return res.status(400).json({ ok: false, message: '휴대폰 번호를 정확히 입력해주세요 (예: 01012345678)' });
+        }
 
         const dup = await pool.query(`SELECT id FROM season_waitlist WHERE item=$1 AND contact=$2 AND deleted_at IS NULL`, [item, contact]);
         if (dup.rows.length) return res.json({ ok: true, dup: true, message: '이미 신청하셨어요! 오픈하면 가장 먼저 알려드릴게요 🍊' });
