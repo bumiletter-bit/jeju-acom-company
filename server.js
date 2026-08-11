@@ -6444,9 +6444,12 @@ app.get('/api/scenarios', async (req, res) => {
         const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inquiry_auto_reply'`);
         const autoReply = cfg.rows.length ? cfg.rows[0].value : 'on';
         const season = await seasonScenariosToday();   // 지시 #108: 톡톡봇에도 오늘 시기 지식 주입 (가상 시나리오 — 봇 무수정, updated_at은 당일 00시 고정)
-        const all = [...r.rows, ...season];
+        const ship = await shippingScenarioToday();    // #379: 발송 휴무일 반영 발송·도착 예정표 (알림톡과 같은 계산기)
+        const all = [...r.rows, ...season, ...ship];
         res.json({
             ok: true, auto_reply: autoReply, count: all.length, scenarios: all,
+            // #379: 봇의 "(예시)" 줄 치환용 — 봇 자체 계산기는 휴무일을 모르므로 이 값을 우선 쓰게 한다(없으면 봇이 기존 계산으로 폴백)
+            delivery_today: await shippingNowPhrase(),
             updated_max: all.reduce((m, x) => (!m || x.updated_at > m) ? x.updated_at : m, null),
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -7636,6 +7639,79 @@ async function seasonScenariosToday(dateOverride) {
     } catch (e) { console.error('[시기지식] 조회 실패(주입 생략):', e.message); return []; }
 }
 
+// ── #379(대표 8/11): 발송 휴무일을 AI 답변 재료로 주입 — 4채널 공용
+//   🔴 배경(대표 실물): 톡톡봇·상품문의·자사몰챗의 재료는 「시나리오 + 판매현황」뿐이라 shipping_holidays를
+//      전혀 몰랐다. 그래서 8/13~16이 발송 휴무인데도 시나리오 「배송 일정 안내」의 고정 문구
+//      ("오전 8시 이내 주문 시 당일 발송 · 토요일만 배송휴무")를 그대로 안내했다(실제 발송일은 8/17).
+//      알림톡·문자는 computeShipping을 써서 정확했으므로 **같은 손님이 채널마다 다른 안내**를 받고 있었다.
+//   방식 = #108(시기 지식)과 같은 「가상 시나리오 주입」 — 톡톡봇 프롬프트 구조는 손대지 않는다.
+//      알림톡과 **같은 계산기·같은 DB**를 쓰므로 두 안내가 구조적으로 어긋날 수 없다.
+//   🔵 상대 표현("내일")을 쓰지 않고 절대 날짜로 적는다 — 표의 각 행은 '그 날짜에 주문했을 때'가 기준이라
+//      상대 표현을 쓰면 손님(오늘 기준)과 AI가 서로 다른 날을 가리키게 된다.
+//   무회귀: 조회·계산이 실패하면 빈 배열 → 재료 0건 추가 = 종전과 완전히 동일.
+const SHIP_GUIDE_DAYS = 14;                                    // 표에 담을 일수(그 밖의 날짜는 확답 금지 지시)
+const SHIP_DOW = ['일', '월', '화', '수', '목', '금', '토'];
+function shipDayLabel(ymd) {                                    // 'YYYY-MM-DD' → { md:'8/17', dow:'월' }
+    const [y, m, d] = String(ymd).split('-').map(Number);
+    return { md: `${m}/${d}`, dow: SHIP_DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] };
+}
+async function shippingScenarioToday(dateOverride) {
+    try {
+        const hinfo = await loadShippingHolidayInfo();
+        const kstNow = dateOverride ? new Date(dateOverride + 'T12:00:00+09:00') : new Date(Date.now() + 9 * 3600 * 1000);
+        const y0 = kstNow.getUTCFullYear(), m0 = kstNow.getUTCMonth(), d0 = kstNow.getUTCDate();
+        const today = kstNow.toISOString().slice(0, 10);
+        // 한 날짜의 주문 → 발송·도착을 절대 날짜 문장으로 (계산은 알림톡과 동일한 computeShipping)
+        const calc = (ymd, hh) => {
+            const r = shippingSchedule.computeShipping(
+                new Date(`${ymd}T${hh}:00:00+09:00`), hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff });
+            const s = shipDayLabel(r.shipDate), a1 = shipDayLabel(r.arriveStart), a2 = shipDayLabel(r.arriveEnd);
+            // 도착 표기 규칙은 arrivePhrase와 동일 — 두 후보가 연속일 때만 범위, 사이에 배달 없는 날이 끼면 최단일만
+            const straight = (new Date(r.arriveEnd) - new Date(r.arriveStart)) === 86400000;
+            const arr = straight ? `${a1.md}(${a1.dow})~${a2.md}(${a2.dow})` : `${a1.md}(${a1.dow})`;
+            return `${s.md}(${s.dow}) 오전 발송 · ${arr} 도착 예정` + (r.reason ? ` [${r.reason}]` : '');
+        };
+        const lines = [], offLines = [];
+        for (let i = 0; i < SHIP_GUIDE_DAYS; i++) {
+            const ymd = new Date(Date.UTC(y0, m0, d0 + i)).toISOString().slice(0, 10);
+            const p = shipDayLabel(ymd);
+            if (hinfo.set.has(ymd)) offLines.push(`${p.md}(${p.dow}) — ${hinfo.reasons.get(ymd) || '발송 휴무'}`);
+            const early = calc(ymd, '07'), late = calc(ymd, '15');   // 8시 컷오프(#171) 전·후
+            // 발송·도착이 같으면 한 줄로 합친다. 비교는 [사유] 꼬리를 뗀 본문으로 —
+            //   8시 前은 그날(휴무일)이 후보라 사유가 붙고 8시 後는 안 붙는 경우가 있어(예: 휴무 다음날이 발송일),
+            //   그대로 두면 실제로 같은 일정인데 두 줄로 갈려 AI가 다른 안내로 읽는다.
+            const bare = s => s.replace(/\s*\[[^\]]*\]$/, '');
+            lines.push(bare(early) === bare(late)
+                ? `- ${p.md}(${p.dow}) 주문 → ${early.length >= late.length ? early : late}`
+                : `- ${p.md}(${p.dow}) 주문 → [오전 8시 이내] ${early} / [8시 이후] ${late}`);
+        }
+        const t = shipDayLabel(today);
+        const last = shipDayLabel(new Date(Date.UTC(y0, m0, d0 + SHIP_GUIDE_DAYS)).toISOString().slice(0, 10));   // 표의 마지막 날 '다음' 날
+        const text = `(오늘 ${t.md}(${t.dow}) 기준 · 회사 「발송 휴무일 관리」에 등록된 값으로 매일 자동 계산됩니다)
+
+⚠️ 배송·발송·도착 일정 문의에는 다른 재료보다 **이 표를 먼저** 사용하세요.
+⚠️ 「배송 일정 안내」 시나리오의 일반 설명(오전 8시 이내 주문 시 당일 발송 · 토요일만 배송휴무)과 이 표가 다르면 **이 표가 정확합니다** — 표에 적힌 날짜 그대로 안내하고, 일반 설명은 쓰지 마세요.
+⚠️ 청귤 등 사전예약 상품은 이 표와 무관합니다(수확 후 순차 발송) — 예약 상품 문의는 예약 관련 재료로 답하세요.
+⚠️ 표에 없는 날짜(${last.md} 이후)는 발송일을 확답하지 말고, 일반 안내 후 고객센터(📞 010-6687-4031) 확인을 권해주세요.
+${offLines.length ? `\n🚫 이 기간 중 발송 휴무일\n${offLines.map(x => `- ${x}`).join('\n')}\n` : ''}
+📦 주문일별 발송·도착 예정
+${lines.join('\n')}`;
+        return [{
+            scenario_no: 890, name: '[오늘 발송 일정] 주문일별 발송·도착 예정표',
+            keywords: [], response: text, action: null, channel: '공통',
+            updated_at: new Date(today),   // 날짜 단위 고정 — 봇 프롬프트 캐시가 하루 한 번만 갱신되게(#108과 동일)
+        }];
+    } catch (e) { console.error('[발송일정] 계산 실패(주입 생략):', e.message); return []; }
+}
+// 톡톡봇의 "(예시)" 줄 치환용 — "지금" 주문 기준 한 문장 (봇 자체 계산기는 휴무일을 모른다 → 이 값으로 대체)
+async function shippingNowPhrase() {
+    try {
+        const hinfo = await loadShippingHolidayInfo();
+        const r = shippingSchedule.computeShipping(Date.now(), hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff });
+        return `지금 주문 시 ${r.text}입니다.`;
+    } catch (e) { console.error('[발송일정] 현재 문구 계산 실패:', e.message); return null; }
+}
+
 // ── 시나리오 기반 생성 (설계 변경 대표 7/27 — "배정(복사)"→"생성". 철칙: 재료에 없는 사실 금지·부족하면 SKIP)
 const QNA_TAIL ='*추가 문의사항 있으시다면 언제든지 톡톡 또는 📞 010-6687-4031 고객센터 번호로 연락주시면 빠른 상담 도와드리겠습니다.';
 const QNA_MODEL = process.env.QNA_MODEL || 'claude-sonnet-5';   // 톡톡봇과 동일 모델
@@ -7700,7 +7776,7 @@ async function qnaGenerate(question, productName, simDate) {   // simDate = 지�
     if (!process.env.ANTHROPIC_API_KEY) return null;             // 키 없으면 전부 SKIP (침묵)
     const baseScenarios = await qnaScenarios();
     if (!baseScenarios.length) return null;
-    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate))];   // 지시 #108: 오늘 시기 지식 주입 (없으면 기존 동일)
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate))];   // 지시 #108: 오늘 시기 지식 + #379: 발송 일정표 (없으면 기존 동일)
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
@@ -7910,7 +7986,7 @@ async function inquiryGenerate(item) {
     if (!process.env.ANTHROPIC_API_KEY) return null;
     const baseScenarios = await qnaScenarios();                   // 재료 공용: 채널 상품문의·공통
     if (!baseScenarios.length) return null;
-    const scenarios = [...baseScenarios, ...(await seasonScenariosToday())];   // 지시 #108: 오늘 시기 지식 주입
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday()), ...(await shippingScenarioToday())];   // 지시 #108: 오늘 시기 지식 + #379: 발송 일정표
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
