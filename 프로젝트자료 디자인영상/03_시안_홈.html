@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제주아꼼이네 홈 시안</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Pretendard','Noto Sans KR','Malgun Gothic',sans-serif;
+       background:#EDEFF2;display:flex;justify-content:center;padding:24px 12px;color:#1B2A3D}
+  .phone{width:390px;background:#F7F8FA;border-radius:22px;overflow:hidden;
+         box-shadow:0 8px 40px rgba(20,40,70,.14)}
+
+  /* 타이머 */
+  .timer{background:#F5C800;padding:9px 14px;display:flex;align-items:center;
+         justify-content:center;gap:8px;font-size:12px;font-weight:800;color:#6B5200}
+  .timer .t{font-size:14px;font-weight:900;color:#0F2B54;letter-spacing:.5px}
+
+  /* 헤더 */
+  .hd{background:#fff;padding:13px 16px 12px}
+  .hd .row{display:flex;align-items:center;gap:10px}
+  .av{width:42px;height:42px;border-radius:50%;background:#FFF4CC;border:2.5px solid #F5C800;
+      flex:none;display:flex;align-items:center;justify-content:center;font-size:20px}
+  .hd .nm{font-size:15.5px;font-weight:800}
+  .hd .sb{font-size:11.5px;color:#8A93A0;font-weight:600;margin-top:2px}
+  .hd .ic{margin-left:auto;display:flex;gap:9px}
+  .hd .ic i{width:36px;height:36px;border-radius:11px;background:#F7F8FA;font-style:normal;
+            display:flex;align-items:center;justify-content:center;font-size:17px;position:relative}
+  .hd .ic i b{position:absolute;top:-3px;right:-3px;background:#E0483C;color:#fff;
+              font-size:10px;width:17px;height:17px;border-radius:50%;
+              display:flex;align-items:center;justify-content:center;font-weight:800}
+  .srch{margin-top:11px;background:#F4F6F8;border-radius:11px;padding:11px 13px;
+        display:flex;align-items:center;gap:8px;font-size:13.5px;color:#A0A9B4;font-weight:600}
+
+  /* 히어로 */
+  .hero{margin:12px 16px 0;border-radius:16px;overflow:hidden;position:relative;
+        aspect-ratio:16/10;background:#DDE3EA}
+  .hero img{width:100%;height:100%;object-fit:cover;display:block}
+  .hero .sh{position:absolute;inset:0;
+            background:linear-gradient(90deg,rgba(8,25,15,.72) 0%,rgba(8,25,15,.35) 45%,transparent 72%)}
+  .hero .tx{position:absolute;left:18px;bottom:18px;right:40%}
+  .hero .t1{font-size:21px;font-weight:900;color:#fff;letter-spacing:-.6px;
+            text-shadow:0 2px 10px rgba(0,0,0,.4)}
+  .hero .t2{margin-top:5px;font-size:12.5px;color:#F0E6C8;font-weight:700;line-height:1.5}
+  .dots{position:absolute;left:18px;bottom:8px;display:flex;gap:4px}
+  .dots i{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.45)}
+  .dots i.on{width:15px;border-radius:3px;background:#F5C800}
+
+  /* 물방울 */
+  .drop{margin:11px 16px 0;background:#fff;border-radius:14px;padding:13px 14px;
+        display:flex;align-items:center;gap:11px;box-shadow:0 2px 10px rgba(20,50,90,.06)}
+  .drop .ic{width:40px;height:40px;border-radius:12px;background:#E8F1FB;flex:none;
+            display:flex;align-items:center;justify-content:center;font-size:20px}
+  .drop .l{font-size:11px;color:#98A2AF;font-weight:700}
+  .drop .b{font-size:15px;font-weight:900;margin-top:1px}
+  .drop .go{margin-left:auto;background:#F5C800;color:#6B5200;border:0;border-radius:20px;
+            padding:9px 14px;font-size:12.5px;font-weight:800;font-family:inherit}
+
+  /* 탭 */
+  .tabs{background:#fff;margin-top:12px;display:flex;padding:0 8px;border-bottom:1px solid #EEF0F3}
+  .tab{flex:1;text-align:center;padding:13px 0 11px;font-size:14px;font-weight:700;
+       color:#98A2AF;border-bottom:3px solid transparent;position:relative}
+  .tab.on{color:#0F2B54;font-weight:800;border-bottom-color:#F5C800}
+  .tab .n{position:absolute;top:7px;margin-left:2px;background:#E0483C;color:#fff;
+          font-size:9px;width:14px;height:14px;border-radius:50%;
+          display:inline-flex;align-items:center;justify-content:center;font-weight:800}
+
+  /* 아이콘 그리드 */
+  .grid{background:#fff;padding:16px 12px 18px;display:grid;
+        grid-template-columns:repeat(5,1fr);gap:16px 4px}
+  .gi{text-align:center}
+  .gi .b{width:46px;height:46px;border-radius:15px;margin:0 auto 6px;
+         display:flex;align-items:center;justify-content:center;font-size:23px}
+  .y{background:#FFF4CC} .n{background:#EDF1F7} .r{background:#FDE8E3}
+  .gi span{font-size:10.5px;color:#4A5561;font-weight:700}
+  .gi.hot span{color:#C0392B;font-weight:800}
+
+  /* 섹션 제목 */
+  .sec{margin:16px 16px 0}
+  .sec h3{font-size:16.5px;font-weight:900;letter-spacing:-.5px;display:flex;
+          align-items:center;gap:6px}
+  .sec h3 em{font-style:normal;background:linear-gradient(transparent 58%,#FFE88A 58%)}
+  .sec .more{margin-left:auto;font-size:12px;color:#98A2AF;font-weight:700}
+
+  /* 추천 pick */
+  .pick{margin:11px 16px 0;background:#fff;border-radius:16px;overflow:hidden;
+        box-shadow:0 2px 12px rgba(20,50,90,.08)}
+  .pick .im{height:150px;background:#FFF4CC;position:relative;
+            display:flex;align-items:center;justify-content:center;font-size:56px}
+  .pick .rk{position:absolute;top:11px;left:11px;background:#0F2B54;color:#F5C800;
+            font-size:11.5px;font-weight:900;padding:5px 11px;border-radius:20px}
+  .pick .bd{padding:14px 15px 15px}
+  .pick .tag{font-size:11px;font-weight:800;color:#8A6D14;background:#FFF4CC;
+             padding:4px 9px;border-radius:6px}
+  .pick .nm{margin-top:8px;font-size:17px;font-weight:900;letter-spacing:-.5px}
+  .pick .st{margin-top:5px;font-size:12px;color:#8A93A0;font-weight:600}
+  .pick .st b{color:#F5B400}
+  .pick .pr{margin-top:9px;display:flex;align-items:baseline;gap:7px}
+  .pick .pr .dc{font-size:16px;font-weight:900;color:#E0483C}
+  .pick .pr .v{font-size:19px;font-weight:900;letter-spacing:-.5px}
+  .pick .pr .go{margin-left:auto;background:#F5C800;color:#6B5200;border:0;border-radius:10px;
+                padding:10px 18px;font-size:13.5px;font-weight:900;font-family:inherit}
+
+  /* 상품 2단 그리드 — 정보 압축 */
+  .pg{margin:11px 16px 0;display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .pd{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(20,50,90,.06)}
+  .pd .im{height:106px;background:#FFF4CC;position:relative;
+          display:flex;align-items:center;justify-content:center;font-size:40px}
+  .pd .bg{position:absolute;top:8px;left:8px;background:rgba(15,43,84,.86);color:#fff;
+          font-size:10px;font-weight:800;padding:3px 8px;border-radius:5px}
+  .pd .bd{padding:11px 12px 12px}
+  .pd .nm{font-size:13px;font-weight:800;letter-spacing:-.4px;line-height:1.35;
+          height:35px;overflow:hidden}
+  .pd .pr{margin-top:7px;display:flex;align-items:baseline;gap:5px}
+  .pd .dc{font-size:13px;font-weight:900;color:#E0483C}
+  .pd .v{font-size:14.5px;font-weight:900;letter-spacing:-.5px}
+  .pd .st{margin-top:5px;font-size:11px;color:#98A2AF;font-weight:600}
+  .pd .st b{color:#F5B400}
+  .pd .dl{margin-top:8px;font-size:10.5px;font-weight:800;color:#3F7A2A;
+          background:#F0F7EC;padding:5px 8px;border-radius:6px;text-align:center}
+
+  /* 후기 통계 — 개선판 */
+  .rv{margin:11px 16px 0}
+  .rv .big{background:#fff;border-radius:14px;padding:17px 16px;text-align:center;
+           box-shadow:0 2px 10px rgba(20,50,90,.06)}
+  .rv .stars{font-size:17px;letter-spacing:3px;color:#F5C800;margin-bottom:5px}
+  .rv .sc{display:flex;align-items:baseline;justify-content:center;gap:4px}
+  .rv .sc .n{font-size:38px;font-weight:900;color:#0F2B54;line-height:1;letter-spacing:-1.5px}
+  .rv .sc .o{font-size:14px;color:#98A2AF;font-weight:700}
+  .rv .lb{margin-top:7px;font-size:12px;color:#5A6675;font-weight:700}
+  .rv .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .rv .two div{background:#fff;border-radius:13px;padding:13px 10px;text-align:center;
+               box-shadow:0 2px 10px rgba(20,50,90,.06)}
+  .rv .two .n{font-size:20px;font-weight:900;color:#0F2B54;letter-spacing:-.8px}
+  .rv .two .l{margin-top:4px;font-size:11px;color:#8A93A0;font-weight:700}
+  .rv .note{margin-top:10px;background:#FFF9E0;border-radius:10px;padding:10px 12px;
+            display:flex;align-items:center;gap:8px;font-size:11.5px;color:#8A6D14;
+            font-weight:600;line-height:1.5}
+  .rv .note b{font-weight:900}
+
+  .foot{text-align:center;padding:20px;font-size:11.5px;color:#A9B2BD;font-weight:600}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="timer">🚚 오전 8시 마감까지 <span class="t">20 : 45 : 33</span> · 내일 수요일 오전 발송</div>
+
+  <div class="hd">
+    <div class="row">
+      <div class="av">🍊</div>
+      <div>
+        <div class="nm">제주에서 우리집까지 ▾</div>
+        <div class="sb">제주의 신선함을 그대로, 제주아꼼이네</div>
+      </div>
+      <div class="ic"><i>🔔<b>1</b></i><i>🛒<b>2</b></i></div>
+    </div>
+    <div class="srch">💬 궁금한 건 언제나 물어보세요!</div>
+  </div>
+
+  <div class="hero">
+    <img src="https://d8j0ntlcm91z4.cloudfront.net/user_3HfatmDcFC12WxdTrdrtkIkhUi1/hf_20260811_022215_121a5910-a24f-4a8c-8db2-2b48e553e536.png" alt="">
+    <div class="sh"></div>
+    <div class="tx">
+      <div class="t1">제주에서 우리집까지</div>
+      <div class="t2">아꼼이네가 직접 키우고,<br>직접 보냅니다</div>
+    </div>
+    <div class="dots"><i></i><i class="on"></i><i></i></div>
+  </div>
+
+  <div class="drop">
+    <div class="ic">💧</div>
+    <div>
+      <div class="l">오늘의 물방울</div>
+      <div class="b">물방울 모으러 가기</div>
+    </div>
+    <button class="go">받으러 가기</button>
+  </div>
+
+  <div class="tabs">
+    <div class="tab on">추천</div>
+    <div class="tab">특가<span class="n">N</span></div>
+    <div class="tab">베스트</div>
+    <div class="tab">스토리</div>
+    <div class="tab">혜택</div>
+  </div>
+
+  <div class="grid">
+    <div class="gi"><div class="b y">🍊</div><span>감귤류</span></div>
+    <div class="gi"><div class="b y">🎃</div><span>채소·호박</span></div>
+    <div class="gi"><div class="b y">🎁</div><span>선물세트</span></div>
+    <div class="gi hot"><div class="b r">⚡</div><span>특가할인</span></div>
+    <div class="gi"><div class="b n">💬</div><span>리뷰보기</span></div>
+    <div class="gi"><div class="b n">🧺</div><span>감귤체험</span></div>
+    <div class="gi"><div class="b n">🌊</div><span>오션라운지</span></div>
+    <div class="gi"><div class="b n">📅</div><span>시즌캘린더</span></div>
+    <div class="gi"><div class="b y">🧭</div><span>나침반</span></div>
+    <div class="gi"><div class="b y">🌳</div><span>귤나무</span></div>
+  </div>
+
+  <div class="sec"><h3>🍊 <em>제철 아꼼이 추천 pick</em></h3></div>
+
+  <div class="pick">
+    <div class="im">🍊<span class="rk">👑 1위</span></div>
+    <div class="bd">
+      <span class="tag">지금 제철</span>
+      <div class="nm">고당도 하우스감귤 · 황금향</div>
+      <div class="st"><b>★ 4.76</b> · 리뷰 136,029</div>
+      <div class="pr">
+        <span class="dc">47%</span>
+        <span class="v">26,800원~</span>
+        <button class="go">주문</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec"><h3><em>지금 맛있는 제철</em><span class="more">전체보기 ›</span></h3></div>
+
+  <div class="pg">
+    <div class="pd">
+      <div class="im">🍊<span class="bg">47% 할인</span></div>
+      <div class="bd">
+        <div class="nm">고당도 하우스감귤 · 황금향</div>
+        <div class="pr"><span class="dc">47%</span><span class="v">26,800원~</span></div>
+        <div class="st"><b>★4.76</b> · 리뷰 136,029</div>
+        <div class="dl">🚚 무료배송 · 내일 도착</div>
+      </div>
+    </div>
+    <div class="pd">
+      <div class="im">🟢<span class="bg">46% 할인</span></div>
+      <div class="bd">
+        <div class="nm">제주 청귤(풋귤) 사전예약</div>
+        <div class="pr"><span class="dc">46%</span><span class="v">18,800원~</span></div>
+        <div class="st"><b>★4.79</b> · 리뷰 12,697</div>
+        <div class="dl">🚚 무료배송 · 8/18 발송</div>
+      </div>
+    </div>
+    <div class="pd">
+      <div class="im">🎃<span class="bg">48% 할인</span></div>
+      <div class="bd">
+        <div class="nm">미니밤호박 꼬마·못난이</div>
+        <div class="pr"><span class="dc">48%</span><span class="v">14,800원~</span></div>
+        <div class="st"><b>★4.78</b> · 리뷰 8,850</div>
+        <div class="dl">🚚 무료배송 · 내일 도착</div>
+      </div>
+    </div>
+    <div class="pd">
+      <div class="im">🎁<span class="bg">47% 할인</span></div>
+      <div class="bd">
+        <div class="nm">혼합 과일 선물세트</div>
+        <div class="pr"><span class="dc">47%</span><span class="v">38,800원~</span></div>
+        <div class="st"><b>★4.84</b> · 리뷰 5,010</div>
+        <div class="dl">🚚 무료배송 · 내일 도착</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec"><h3><em>고객님들의 생생한 후기</em></h3></div>
+
+  <div class="rv">
+    <div class="big">
+      <div class="stars">★★★★★</div>
+      <div class="sc"><span class="n">4.77</span><span class="o">/ 5.0</span></div>
+      <div class="lb">네이버 스토어 평점</div>
+    </div>
+    <div class="two">
+      <div><div class="n">229,561</div><div class="l">누적 리뷰</div></div>
+      <div><div class="n">190,375</div><div class="l">관심고객</div></div>
+    </div>
+    <div class="note">✅ 네이버 스토어 <b>실제 구매 고객</b>이 남긴 리뷰입니다 · 8.11 수집 기준</div>
+  </div>
+
+  <div class="foot">제주아꼼이네 농업회사법인(주) · 064-805-9181</div>
+
+</div>
+</body>
+</html>

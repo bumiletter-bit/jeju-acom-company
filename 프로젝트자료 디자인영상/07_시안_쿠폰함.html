@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제주아꼼이네 쿠폰함 시안</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Pretendard','Noto Sans KR','Malgun Gothic',sans-serif;
+       background:#EDEFF2;display:flex;justify-content:center;padding:24px 12px;color:#1B2A3D}
+  .phone{width:390px;background:#F7F8FA;border-radius:22px;overflow:hidden;
+         box-shadow:0 8px 40px rgba(20,40,70,.14)}
+
+  .top{background:#fff;display:flex;align-items:center;padding:15px 18px;
+       border-bottom:1px solid #EEF0F3}
+  .top .back{font-size:21px;color:#5A6675;width:26px}
+  .top .ttl{flex:1;text-align:center;font-size:16px;font-weight:800;margin-right:26px}
+
+  .hero{background:linear-gradient(180deg,#FFF7DC 0%,#FFFCF1 100%);padding:18px 20px 20px}
+  .hero-art{width:100%;aspect-ratio:16/9;border-radius:14px;overflow:hidden;
+            background:#FFF4CC;margin-bottom:15px;
+            background-image:url('https://d8j0ntlcm91z4.cloudfront.net/user_3HfatmDcFC12WxdTrdrtkIkhUi1/hf_20260811_010559_c2826d00-8c97-4c20-b995-28a70ff6dbb0.png');background-size:cover;background-position:center}
+  .cnt{display:flex;align-items:baseline;gap:6px}
+  .cnt .n{font-size:34px;font-weight:900;color:#0F2B54;line-height:1}
+  .cnt .u{font-size:17px;font-weight:800;color:#0F2B54}
+  .cnt .sub{margin-left:auto;font-size:12.5px;font-weight:800;color:#9C6B00;
+            background:#FFEFB8;padding:6px 11px;border-radius:20px}
+  .lead{margin-top:6px;font-size:13.5px;color:#7C8794;font-weight:600}
+
+  .list{padding:16px 16px 4px;display:flex;flex-direction:column;gap:11px}
+  .cp{background:#fff;border-radius:14px;display:flex;overflow:hidden;
+      box-shadow:0 2px 10px rgba(20,50,90,.06);position:relative}
+  .cp:after{content:'';position:absolute;left:104px;top:14px;bottom:14px;
+            border-left:2px dashed #E6EAEF}
+  .cp .amt{width:104px;flex:none;background:#FFFBE8;
+           display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+  .cp .amt .v{font-size:25px;font-weight:900;color:#0F2B54;letter-spacing:-1px;line-height:1}
+  .cp .amt .w{font-size:12px;font-weight:800;color:#0F2B54}
+  .cp .info{flex:1;padding:14px 15px 13px 18px;min-width:0}
+  .cp .nm{font-size:15.5px;font-weight:800;letter-spacing:-.4px}
+  .cp .scope{margin-top:5px;font-size:12.5px;color:#5A6675;font-weight:600}
+  .cp .exp{margin-top:8px;font-size:12px;color:#98A2AF;font-weight:600}
+  .cp .exp b{color:#D9534F;font-weight:800}
+  .tagline{position:absolute;top:10px;right:11px;font-size:10.5px;font-weight:800;
+           padding:3px 8px;border-radius:20px}
+  .t-new{background:#E8F5E2;color:#3F7A2A}
+  .t-soon{background:#FDE9E8;color:#C0392B}
+
+  .reg{margin:13px 16px 0;background:#fff;border-radius:14px;padding:15px 16px}
+  .reg h4{font-size:13.5px;font-weight:800;margin-bottom:10px}
+  .reg .row{display:flex;gap:8px}
+  .reg input{flex:1;border:2px solid #E3E8EE;border-radius:10px;padding:12px 13px;
+             font-size:14px;font-family:inherit;background:#FBFCFD;min-width:0}
+  .reg input::placeholder{color:#AEB7C2}
+  .reg button{background:#0F2B54;color:#fff;border:0;border-radius:10px;
+              padding:0 17px;font-size:14px;font-weight:800;font-family:inherit;
+              white-space:nowrap;cursor:pointer}
+  .reg .hint{margin-top:8px;font-size:11.5px;color:#98A2AF;font-weight:600;line-height:1.55}
+
+  .guide{margin:12px 16px 0;background:#fff;border-radius:14px;padding:15px 16px}
+  .guide h4{font-size:13.5px;font-weight:800;margin-bottom:9px}
+  .guide li{list-style:none;font-size:12.5px;color:#6E7B8A;line-height:1.7;
+            padding-left:12px;position:relative;font-weight:500}
+  .guide li:before{content:'·';position:absolute;left:2px;color:#B7C0CB;font-weight:900}
+
+  .cta{margin:16px;background:#F5C800;color:#0F2B54;border:0;border-radius:13px;
+       width:calc(100% - 32px);padding:16px;font-size:16px;font-weight:900;
+       font-family:inherit;cursor:pointer}
+  .foot{text-align:center;padding:0 20px 22px;font-size:12px;color:#A9B2BD;font-weight:600}
+
+  /* 쿠폰 없을 때 */
+  .empty{padding:26px 20px 30px;text-align:center;background:#fff;margin:16px;border-radius:14px}
+  .empty img{width:150px;height:150px;object-fit:contain;margin-bottom:6px}
+  .empty .t{font-size:16px;font-weight:800}
+  .empty .d{margin-top:7px;font-size:13px;color:#7C8794;font-weight:600;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="top"><span class="back">‹</span><span class="ttl">쿠폰함</span></div>
+
+  <div class="hero">
+    <div class="hero-art"></div>
+    <div class="cnt">
+      <span class="n">3</span><span class="u">장</span>
+      <span class="sub">최대 4,500원 절약</span>
+    </div>
+    <div class="lead">지금 바로 쓸 수 있는 쿠폰이에요</div>
+  </div>
+
+  <div class="list">
+
+    <div class="cp">
+      <span class="tagline t-new">NEW</span>
+      <div class="amt"><span class="v">2,000</span><span class="w">원</span></div>
+      <div class="info">
+        <div class="nm">회원가입 축하 쿠폰</div>
+        <div class="scope">전체상품 사용가능</div>
+        <div class="exp">~ 2026.08.31 · <b>D-21</b></div>
+      </div>
+    </div>
+
+    <div class="cp">
+      <div class="amt"><span class="v">2,000</span><span class="w">원</span></div>
+      <div class="info">
+        <div class="nm">하우스감귤 전용쿠폰</div>
+        <div class="scope">하우스감귤 상품만 사용가능</div>
+        <div class="exp">~ 2026.08.31 · <b>D-21</b></div>
+      </div>
+    </div>
+
+    <div class="cp">
+      <span class="tagline t-soon">곧 만료</span>
+      <div class="amt"><span class="v">10<span style="font-size:17px">%</span></span><span class="w">할인</span></div>
+      <div class="info">
+        <div class="nm">행운 나침반 할인쿠폰</div>
+        <div class="scope">전체상품 사용가능</div>
+        <div class="exp">~ 2026.08.14 · <b>D-4</b></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="reg">
+    <h4>🎫 쿠폰번호 등록</h4>
+    <div class="row">
+      <input placeholder="쿠폰번호를 입력해 주세요">
+      <button>등록</button>
+    </div>
+    <div class="hint">'-' 없이 입력해 주세요 · 아꼼이네에서 발행한 쿠폰만 등록됩니다</div>
+  </div>
+
+  <div class="guide">
+    <h4>알아두면 좋아요</h4>
+    <ul>
+      <li>쿠폰은 주문 1건당 1장만 사용할 수 있어요</li>
+      <li>전용쿠폰은 해당 상품을 담아야 적용돼요</li>
+      <li>한 번 사용한 쿠폰은 다시 쓸 수 없어요</li>
+      <li>배송비 쿠폰은 기본배송 상품에만 적용돼요</li>
+    </ul>
+  </div>
+
+  <button class="cta">쿠폰 쓰러 가기 🍊</button>
+  <div class="foot">후기 쓰면 500원 쿠폰이 또 쌓여요</div>
+
+  <!-- ===== 쿠폰 없을 때 (참고용) ===== -->
+  <div class="empty">
+    <img src="https://d8j0ntlcm91z4.cloudfront.net/user_3HfatmDcFC12WxdTrdrtkIkhUi1/hf_20260811_010559_67d5f68d-8e20-4c30-9334-c1a22ee3b158.png" alt="">
+    <div class="t">아직 쿠폰이 없어요</div>
+    <div class="d">후기를 남기거나 나침반을 돌리면<br>쿠폰이 쌓여요 🍊</div>
+  </div>
+
+</div>
+</body>
+</html>

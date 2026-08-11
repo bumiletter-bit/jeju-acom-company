@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>제주아꼼이네 오션라운지 메뉴판</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#0d1b2e}
+  #fit{position:absolute;top:50%;left:50%;transform-origin:center center}
+
+  #stage{
+    width:1920px;height:1080px;position:relative;
+    font-family:'Pretendard','Noto Sans KR','Malgun Gothic',sans-serif;
+    color:#0F2B54;
+    background:linear-gradient(180deg,#CFE7F2 0%,#E4F1F6 26%,#F4F8F6 58%,#FCF8EC 100%);
+    padding:34px 40px 30px;
+    display:flex;flex-direction:column;gap:20px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .card{background:rgba(255,255,255,.93);border-radius:22px;
+        border:3px solid rgba(255,255,255,.9);
+        box-shadow:0 10px 36px rgba(20,60,105,.13)}
+
+  /* ══ 상단: 음료 3단 ══ */
+  .drinks{flex:1;min-height:0;padding:28px 38px 24px;
+          display:grid;grid-template-columns:1fr 1fr 1fr;gap:46px;overflow:hidden}
+  .col{display:flex;flex-direction:column;min-height:0}
+  .list{flex:1;display:flex;flex-direction:column;justify-content:space-between;min-height:0}
+
+  .sec-head{flex:none;display:flex;align-items:center;gap:12px;
+            border-bottom:6px solid #F5C800;padding-bottom:9px;margin-bottom:18px}
+  .sec-head h2{font-size:44px;font-weight:900;letter-spacing:-.5px;line-height:1.1}
+  .pill{font-size:17px;font-weight:800;color:#fff;background:#E0483C;
+        padding:5px 14px;border-radius:20px}
+
+  .item{flex:none}
+  .row{display:flex;align-items:baseline;gap:11px}
+  .nm{font-size:34px;font-weight:800;white-space:nowrap;letter-spacing:-.5px;line-height:1.15}
+  .tag{font-size:16px;font-weight:800;color:#fff;padding:3px 10px;border-radius:6px;
+       position:relative;top:-4px}
+  .hot{background:#E0483C}
+  .ice{background:#2F7DD1}
+  .dots{flex:1;border-bottom:3px dotted #C3D0E0;position:relative;top:-9px}
+  .pr{font-size:34px;font-weight:900;white-space:nowrap;letter-spacing:-.5px;line-height:1.15}
+  .pr small{font-size:20px;font-weight:800;margin-left:2px}
+  .en{font-size:17px;font-style:italic;font-weight:600;color:#8397AF;margin-top:3px;line-height:1.15}
+  .star{color:#F5B400;font-size:29px}
+
+  /* ══ 하단: 특별 메뉴 3박스 ══ */
+  .specials{flex:none;height:300px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px}
+  .box{border-radius:20px;padding:22px 26px;display:flex;flex-direction:column;
+       border:3px solid}
+  .b-ice{background:#EAF3FC;border-color:#B6D2EE}
+  .b-season{background:#FFF7DC;border-color:#EFD98F}
+  .b-dess{background:#FDEEEE;border-color:#F0C7C7}
+
+  .box-head{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .box-head h3{font-size:32px;font-weight:900}
+  .box-head .sub{font-size:18px;color:#8397AF;font-style:italic;font-weight:600}
+  .box-head .amt{margin-left:auto;font-size:32px;font-weight:900}
+  .box-head .amt small{font-size:18px}
+  .badge{font-size:16px;font-weight:800;padding:4px 12px;border-radius:20px;
+         background:#F5C800;color:#5E4700}
+  .badge-pink{background:#F0C7C7;color:#8C3B3B}
+
+  .brow{display:flex;align-items:baseline;gap:10px;margin-bottom:14px}
+  .brow:last-child{margin-bottom:0}
+  .brow .nm{font-size:27px}
+  .brow .pr{font-size:27px}
+  .brow .pr small{font-size:16px}
+  .brow .star{font-size:23px}
+  .brow .dots{top:-7px;border-bottom-width:3px}
+
+  .flavors{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px}
+  .chip{background:#fff;border:3px solid #CFDEEF;border-radius:11px;
+        text-align:center;padding:11px 0;font-size:20px;font-weight:800}
+
+  .addon{margin-top:auto;padding-top:14px;border-top:3px dashed #E3CE86;
+         display:flex;align-items:baseline;gap:10px}
+  .addon .plus{background:#F5C800;color:#5E4700;font-weight:900;font-size:20px;
+               width:28px;height:28px;border-radius:50%;flex:none;
+               display:flex;align-items:center;justify-content:center;
+               position:relative;top:4px}
+  .addon .nm{font-size:26px}
+  .addon .pr{font-size:26px}
+  .addon .pr small{font-size:16px}
+
+  /* ══ EXTRA ══ */
+  .extra{flex:none;background:#12305C;border-radius:18px;padding:18px 30px;
+         display:flex;align-items:center;gap:28px;color:#fff}
+  .extra .lbl{background:#F5C800;color:#12305C;font-weight:900;font-size:22px;
+              padding:8px 20px;border-radius:10px;letter-spacing:1px;flex:none}
+  .ex-item{display:flex;align-items:center;gap:13px}
+  .ex-item .cir{background:#F5C800;color:#12305C;font-weight:900;font-size:23px;
+                width:34px;height:34px;border-radius:50%;flex:none;
+                display:flex;align-items:center;justify-content:center}
+  .ex-item .t1{font-size:28px;font-weight:900;white-space:nowrap}
+  .ex-item .t2{font-size:15px;color:#AFC4E0;margin-top:3px;font-weight:600}
+  .ex-item .amt{font-size:31px;font-weight:900;color:#F5C800;margin-left:8px;white-space:nowrap}
+  .ex-item .amt small{font-size:18px}
+  .divider{width:3px;height:52px;background:#33538A;flex:none}
+  .hours{margin-left:auto;font-size:17px;letter-spacing:3px;color:#9DB4D4;font-weight:800;
+         white-space:nowrap}
+</style>
+</head>
+<body>
+<div id="fit"><div id="stage">
+
+  <!-- ══ 음료 ══ -->
+  <div class="card drinks">
+
+    <div class="col">
+      <div class="sec-head"><h2>COFFEE</h2></div>
+      <div class="list">
+      <div class="item"><div class="row"><span class="nm">한라봉봉카노</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">5,800<small>원</small></span></div><div class="en">Hallabong Americano</div></div>
+      <div class="item"><div class="row"><span class="nm">아메리카노</span><span class="tag hot">HOT</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">3,800/4,200<small>원</small></span></div><div class="en">Americano</div></div>
+      <div class="item"><div class="row"><span class="nm">카페라떼</span><span class="tag hot">HOT</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">4,500/4,800<small>원</small></span></div><div class="en">Cafe Latte</div></div>
+      <div class="item"><div class="row"><span class="nm">바닐라라떼</span><span class="tag hot">HOT</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">5,500/5,800<small>원</small></span></div><div class="en">Vanilla Latte</div></div>
+      <div class="item"><div class="row"><span class="nm">아포가토</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">4,800<small>원</small></span></div><div class="en">Affogato</div></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="sec-head"><h2>NON-COFFEE</h2></div>
+      <div class="list">
+      <div class="item"><div class="row"><span class="nm">초코라떼</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">5,300<small>원</small></span></div><div class="en">Iced Chocolate Latte</div></div>
+      <div class="item"><div class="row"><span class="nm">말차라떼</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">5,800<small>원</small></span></div><div class="en">Iced Matcha Latte</div></div>
+      <div class="item"><div class="row"><span class="nm">복숭아 아이스티</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">3,500<small>원</small></span></div><div class="en">Peach Iced Tea</div></div>
+      <div class="item"><div class="row"><span class="star">★</span><span class="nm">에이드 (자몽/레몬)</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">5,500<small>원</small></span></div><div class="en">Ade (Grapefruit/Lemon)</div></div>
+      <div class="item"><div class="row"><span class="nm">감귤주스</span><span class="tag ice">ICE</span><span class="dots"></span><span class="pr">2,500<small>원</small></span></div><div class="en">Tangerine Juice</div></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="sec-head"><h2>TEA</h2><span class="pill">HOT only</span></div>
+      <div class="list">
+      <div class="item"><div class="row"><span class="nm">자몽차</span><span class="dots"></span><span class="pr">5,000<small>원</small></span></div><div class="en">Hot Grapefruit Tea</div></div>
+      <div class="item"><div class="row"><span class="nm">레몬차</span><span class="dots"></span><span class="pr">5,000<small>원</small></span></div><div class="en">Hot Lemon Tea</div></div>
+      <div class="item"><div class="row"><span class="nm">캐모마일</span><span class="dots"></span><span class="pr">4,000<small>원</small></span></div><div class="en">Chamomile</div></div>
+      <div class="item"><div class="row"><span class="nm">페퍼민트</span><span class="dots"></span><span class="pr">4,000<small>원</small></span></div><div class="en">Peppermint</div></div>
+      <div class="item"><div class="row"><span class="nm">얼그레이 / 히비스커스</span><span class="dots"></span><span class="pr">4,000<small>원</small></span></div><div class="en">Earl Grey / Hibiscus</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ 특별 메뉴 ══ -->
+  <div class="specials">
+
+    <div class="box b-ice">
+      <div class="box-head"><h3>🍦 ICE CREAM</h3><span class="sub">Häagen-Dazs</span><span class="amt">3,800<small>원</small></span></div>
+      <span class="badge" style="align-self:flex-start">6가지 맛 中 택 1</span>
+      <div class="flavors">
+        <div class="chip">바닐라</div><div class="chip">초코</div><div class="chip">딸기</div>
+        <div class="chip">그린티</div><div class="chip">망고소르베</div><div class="chip">레몬소르베</div>
+      </div>
+    </div>
+
+    <div class="box b-season">
+      <div class="box-head"><h3>🍧 SEASON</h3><span class="badge">한정 메뉴</span></div>
+      <div class="brow"><span class="nm">팥빙수</span><span class="dots"></span><span class="pr">11,500<small>원</small></span></div>
+      <div class="brow"><span class="star">★</span><span class="nm">초코빙수</span><span class="dots"></span><span class="pr">12,500<small>원</small></span></div>
+      <div class="brow"><span class="star">★</span><span class="nm">말차빙수</span><span class="dots"></span><span class="pr">12,500<small>원</small></span></div>
+      <div class="addon"><span class="plus">+</span><span class="nm">팥 추가</span><span class="dots"></span><span class="pr">1,000<small>원</small></span></div>
+    </div>
+
+    <div class="box b-dess">
+      <div class="box-head"><h3>🍰 DESSERT</h3><span class="badge badge-pink">디저트</span></div>
+      <div class="brow"><span class="nm">인절미 하겐다즈 크로플</span><span class="dots"></span><span class="pr">6,500<small>원</small></span></div>
+      <div class="brow"><span class="nm">아꼼이네 하겐다즈 크로플</span><span class="dots"></span><span class="pr">5,800<small>원</small></span></div>
+      <div class="brow"><span class="star">★</span><span class="nm">현무암 하겐모찌</span><span class="dots"></span><span class="pr">5,800<small>원</small></span></div>
+    </div>
+
+  </div>
+
+  <!-- ══ EXTRA ══ -->
+  <div class="extra">
+    <span class="lbl">EXTRA</span>
+    <div class="ex-item">
+      <span class="cir">+</span>
+      <div>
+        <div class="t1">샷 추가</div>
+        <div class="t2">한라봉봉카노, 아메리카노, 카페라떼, 바닐라라떼, 아포가토, 초코라떼, 말차라떼</div>
+      </div>
+      <span class="amt">1,000<small>원</small></span>
+    </div>
+    <div class="divider"></div>
+    <div class="ex-item">
+      <span class="cir">+</span>
+      <div>
+        <div class="t1">아이스크림 추가</div>
+        <div class="t2">모든 음료에 추가 가능</div>
+      </div>
+      <span class="amt">2,000<small>원</small></span>
+    </div>
+    <span class="hours">OPEN 09:00 — CLOSE 20:00</span>
+  </div>
+
+</div></div>
+
+<script>
+(function(){
+  var fit=document.getElementById('fit');
+  function r(){
+    var s=Math.min(window.innerWidth/1920,window.innerHeight/1080);
+    fit.style.transform='translate(-50%,-50%) scale('+s+')';
+  }
+  window.addEventListener('resize',r);r();
+})();
+</script>
+</body>
+</html>

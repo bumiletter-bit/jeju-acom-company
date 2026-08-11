@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<title>제주아꼼이네 오피스 — 디자인 시안 v1</title>
+<meta name="color-scheme" content="light">
+<style>
+:root {
+    --primary: #4F46E5; --primary-dark: #4338CA; --primary-light: #EEF0FF;
+    --bg: #F5F6F8; --card: #FFFFFF;
+    --ink: #101828; --mid: #667085; --faint: #98A0AE;
+    --border: #ECEDF1; --border-soft: #F1F2F5;
+    --danger: #F04438; --success: #12B76A; --amber: #F59E0B; --pink: #EC4899; --sat: #3B82F6;
+    --shadow-sm: 0 1px 3px rgba(16,24,40,.06);
+    --shadow-md: 0 4px 16px -6px rgba(16,24,40,.12);
+    --font: 'Pretendard', 'Pretendard Variable', -apple-system, 'Segoe UI', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body { margin: 0; font-family: var(--font); color: var(--ink); background: var(--bg); line-height: 1.55; }
+.wrap { max-width: 1060px; margin: 0 auto; padding: 36px 20px 80px; }
+
+/* ---- 문서 헤더 ---- */
+.doc-head { margin-bottom: 34px; }
+.doc-head h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
+.doc-head p { margin: 0; color: var(--mid); font-size: 14px; }
+.lock-note {
+    display: inline-flex; align-items: center; gap: 8px; margin-top: 14px;
+    background: #ECFDF3; color: #067647; border: 1px solid #ABEFC6;
+    font-size: 13px; font-weight: 700; padding: 8px 14px; border-radius: 10px;
+}
+.howto {
+    margin-top: 10px; font-size: 13px; color: var(--mid);
+    background: var(--primary-light); border: 1px solid #DDE1FF; border-radius: 10px; padding: 10px 14px;
+}
+.howto b { color: var(--primary); }
+
+/* ---- 섹션/아이템 ---- */
+.sec { margin-top: 46px; }
+.sec > h2 { font-size: 19px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.sec > .sec-sub { color: var(--mid); font-size: 13.5px; margin: 0 0 18px; }
+.item { background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-sm); padding: 22px; margin-bottom: 22px; }
+.item-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.tag { flex-shrink: 0; background: var(--primary); color: #fff; font-size: 12px; font-weight: 800; padding: 3px 10px; border-radius: 999px; letter-spacing: .04em; }
+.item-head h3 { font-size: 16px; margin: 0; }
+.item-desc { color: var(--mid); font-size: 13.5px; margin: 2px 0 16px; }
+
+/* 비교 패널 */
+.cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .cmp { grid-template-columns: 1fr; } }
+.panel { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fff; }
+.panel-label { font-size: 11.5px; font-weight: 800; letter-spacing: .06em; padding: 7px 12px; border-bottom: 1px solid var(--border-soft); }
+.panel-label.now { background: #F8F9FB; color: var(--faint); }
+.panel-label.new { background: var(--primary-light); color: var(--primary); }
+.panel-body { padding: 14px; }
+.solo { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: #fff; }
+
+/* ============ A. 일정 목업 부품 ============ */
+/* 브리핑 스트립 */
+.brief {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: linear-gradient(90deg, #EEF0FF, #F7F8FF);
+    border: 1px solid #DDE1FF; border-radius: 12px; padding: 10px 14px; font-size: 13.5px;
+}
+.brief .b-chip { display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid #E4E6F5; border-radius: 999px; padding: 4px 11px; font-weight: 600; color: var(--ink); box-shadow: var(--shadow-sm); }
+.brief .b-num { color: var(--primary); font-weight: 800; }
+.brief .b-dday { background: var(--primary); color: #fff; border: none; }
+/* 뷰 토글 */
+.vtoggle { display: inline-flex; background: #F1F2F6; border-radius: 10px; padding: 3px; gap: 2px; }
+.vtoggle button { border: 0; background: transparent; font-family: inherit; font-size: 13px; font-weight: 700; color: var(--mid); padding: 6px 16px; border-radius: 8px; cursor: pointer; }
+.vtoggle button.on { background: #fff; color: var(--primary); box-shadow: var(--shadow-sm); }
+/* 달력 공통 */
+.cal { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 11px; }
+.cal th { font-size: 10.5px; color: var(--faint); font-weight: 700; padding: 5px 2px; border-bottom: 1px solid var(--border-soft); }
+.cal th.su { color: var(--danger); } .cal th.sa { color: var(--sat); }
+.cal td { vertical-align: top; height: 64px; padding: 3px; border-bottom: 1px solid var(--border-soft); border-right: 1px solid var(--border-soft); }
+.cal td:last-child { border-right: 0; }
+.cal tr:last-child td { border-bottom: 0; }
+.d { font-size: 10.5px; font-weight: 700; margin-bottom: 2px; }
+.d.su { color: var(--danger); } .d.sa { color: var(--sat); } .d.dim { color: #C9CED8; }
+/* BEFORE 아이템(지금 느낌: 밋밋한 텍스트) */
+.oldit { font-size: 9.5px; color: #4b5563; background: #F3F4F6; border-radius: 3px; padding: 1px 3px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* AFTER 칩(유형색 + 좌측 컬러바) */
+.chip { font-size: 9.5px; font-weight: 600; border-radius: 5px; padding: 1.5px 4px 1.5px 6px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid; }
+.chip.ev { background: #FDF2F8; color: #BE185D; border-color: var(--pink); }
+.chip.pr { background: #FFFBEB; color: #B45309; border-color: var(--amber); }
+.chip.du { background: var(--primary-light); color: var(--primary-dark); border-color: var(--primary); }
+.chip.no { background: #F4F5F8; color: #4b5563; border-color: #C7CBD4; }
+.chip.va { background: #ECFDF3; color: #067647; border-color: var(--success); }
+.more { display: inline-block; font-size: 9px; font-weight: 800; color: var(--primary); background: var(--primary-light); border-radius: 999px; padding: 1px 6px; }
+.today-old { background: #FFFDE7; }
+.today-new .d-badge { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--primary); color: #fff; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; }
+.today-new { background: #FAFAFF; box-shadow: inset 0 0 0 1.5px var(--primary); border-radius: 8px; }
+/* 주간 뷰 */
+.week { display: flex; flex-direction: column; gap: 8px; }
+.wday { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; background: #fff; }
+.wday.today { border: 1.5px solid var(--primary); background: #FAFAFF; box-shadow: var(--shadow-md); }
+.wd-date { width: 52px; flex-shrink: 0; text-align: center; }
+.wd-date .n { font-size: 19px; font-weight: 800; line-height: 1.1; }
+.wd-date .w { font-size: 11px; color: var(--faint); font-weight: 700; }
+.wday.today .wd-date .n, .wday.today .wd-date .w { color: var(--primary); }
+.wd-date.su .n { color: var(--danger); } .wd-date.sa .n { color: var(--sat); }
+.wd-items { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding-top: 3px; }
+.wchip { font-size: 12px; font-weight: 600; border-radius: 7px; padding: 4px 9px 4px 8px; border-left: 3px solid; display: inline-flex; align-items: center; gap: 5px; }
+.wchip input { accent-color: var(--primary); margin: 0; width: 13px; height: 13px; }
+.wchip.ev { background: #FDF2F8; color: #BE185D; border-color: var(--pink); }
+.wchip.pr { background: #FFFBEB; color: #B45309; border-color: var(--amber); }
+.wchip.du { background: var(--primary-light); color: var(--primary-dark); border-color: var(--primary); }
+.wchip.no { background: #F4F5F8; color: #4b5563; border-color: #C7CBD4; }
+.wchip.va { background: #ECFDF3; color: #067647; border-color: var(--success); }
+.wd-empty { color: #C9CED8; font-size: 12px; padding-top: 6px; }
+/* 연간 뷰 */
+.year { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+@media (max-width: 760px) { .year { grid-template-columns: repeat(2, 1fr); } }
+.ymon { border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px 10px; background: #fff; cursor: pointer; transition: box-shadow .12s, transform .12s; }
+.ymon:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); border-color: #DDE1FF; }
+.ymon h5 { margin: 0 0 6px; font-size: 12px; color: var(--ink); }
+.ymon h5 .cnt { color: var(--faint); font-weight: 600; font-size: 10.5px; margin-left: 4px; }
+.ymon.cur { border: 1.5px solid var(--primary); }
+.ymon.cur h5 { color: var(--primary); }
+.ygrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.yd { height: 13px; display: flex; align-items: center; justify-content: center; font-size: 7.5px; color: #B6BCC8; position: relative; }
+.yd i { position: absolute; bottom: 0; width: 4px; height: 4px; border-radius: 50%; }
+.yd i.ev { background: var(--pink); } .yd i.pr { background: var(--amber); } .yd i.du { background: var(--primary); } .yd i.va { background: var(--success); }
+/* ============ B. 공통 부품 ============ */
+.badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; border-radius: 999px; padding: 4px 12px; }
+.badge i { width: 6px; height: 6px; border-radius: 50%; }
+.bg-ok { background: #ECFDF3; color: #067647; } .bg-ok i { background: var(--success); }
+.bg-wait { background: #FFFAEB; color: #B54708; } .bg-wait i { background: var(--amber); }
+.bg-no { background: #FEF3F2; color: #B42318; } .bg-no i { background: var(--danger); }
+.bg-off { background: #F2F4F7; color: #667085; } .bg-off i { background: #98A0AE; }
+.btnrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn-p { background: var(--primary); color: #fff; border: 0; font-family: inherit; font-size: 13.5px; font-weight: 700; padding: 9px 18px; border-radius: 10px; box-shadow: 0 6px 16px -6px rgba(79,70,229,.55); cursor: pointer; }
+.btn-o { background: #fff; color: var(--ink); border: 1.5px solid var(--border); font-family: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 16px; border-radius: 10px; cursor: pointer; }
+.btn-t { background: transparent; color: var(--mid); border: 0; font-family: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 10px; cursor: pointer; }
+.empty-mock { text-align: center; padding: 26px 10px; }
+.empty-mock .ic { width: 44px; height: 44px; border-radius: 50%; background: var(--primary-light); display: inline-flex; align-items: center; justify-content: center; font-size: 20px; margin-bottom: 8px; }
+.empty-mock .t1 { font-weight: 700; font-size: 14px; }
+.empty-mock .t2 { color: var(--faint); font-size: 12.5px; margin: 2px 0 12px; }
+.skel { display: flex; flex-direction: column; gap: 8px; }
+.sk { height: 14px; border-radius: 6px; background: linear-gradient(90deg, #EEF0F4 25%, #F7F8FA 45%, #EEF0F4 65%); background-size: 300% 100%; animation: sh 1.4s infinite; }
+@keyframes sh { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .sk { animation: none; } .ymon:hover { transform: none; } }
+/* ============ C. 메뉴별 부품 ============ */
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 640px) { .stats { grid-template-columns: 1fr; } }
+.stat { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: #fff; box-shadow: var(--shadow-sm); }
+.stat .l { font-size: 12px; color: var(--mid); font-weight: 700; }
+.stat .v { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.stat .v small { font-size: 13px; font-weight: 700; color: var(--faint); }
+.stat.hero { background: linear-gradient(135deg, var(--primary), #6366F1); border: 0; color: #fff; }
+.stat.hero .l, .stat.hero .v small { color: #E0E2FF; }
+.stat .sub { font-size: 11.5px; color: var(--faint); margin-top: 2px; }
+.stat.hero .sub { color: #C9CDFF; }
+/* 스텝퍼 */
+.steps { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+.step { display: flex; align-items: center; gap: 8px; }
+.step .c { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 800; }
+.step.done .c { background: var(--primary); color: #fff; }
+.step.now .c { background: #fff; color: var(--primary); box-shadow: inset 0 0 0 2px var(--primary); }
+.step.todo .c { background: #F2F4F7; color: var(--faint); }
+.step .t { font-size: 12.5px; font-weight: 700; }
+.step.todo .t { color: var(--faint); }
+.step-line { width: 34px; height: 2px; background: var(--border); margin: 0 8px; }
+.step-line.done { background: var(--primary); }
+/* 게이지 */
+.gauges { display: flex; flex-direction: column; gap: 12px; }
+.g-row { display: grid; grid-template-columns: 120px 1fr 70px; gap: 12px; align-items: center; font-size: 13px; }
+.g-name { font-weight: 700; }
+.g-bar { height: 9px; border-radius: 999px; background: #F1F2F6; overflow: hidden; }
+.g-fill { height: 100%; border-radius: 999px; }
+.g-num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.g-num small { color: var(--faint); font-weight: 600; }
+/* 말풍선 */
+.chat { display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
+.bub { max-width: 85%; padding: 9px 13px; border-radius: 14px; font-size: 13px; line-height: 1.5; }
+.bub.cust { align-self: flex-start; background: #F2F4F7; color: var(--ink); border-bottom-left-radius: 4px; }
+.bub.bot { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+.bub.bot b { color: #DDE1FF; }
+/* 토글 스위치 카드 */
+.tcards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .tcards { grid-template-columns: 1fr; } }
+.tcard { border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; display: flex; align-items: center; gap: 12px; background: #fff; }
+.tcard .ti { font-size: 20px; }
+.tcard .tt { flex: 1; }
+.tcard .tt .n { font-weight: 700; font-size: 13.5px; }
+.tcard .tt .s { font-size: 11.5px; color: var(--faint); }
+.sw { width: 40px; height: 22px; border-radius: 999px; position: relative; flex-shrink: 0; }
+.sw::after { content: ''; position: absolute; top: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); }
+.sw.on { background: var(--success); } .sw.on::after { right: 2px; }
+.sw.off { background: #D6DAE1; } .sw.off::after { left: 2px; }
+/* 피드백 푸터 */
+.foot { margin-top: 50px; background: var(--card); border: 1.5px solid var(--primary); border-radius: 16px; padding: 22px; }
+.foot h2 { margin: 0 0 8px; font-size: 17px; color: var(--primary); }
+.foot p { margin: 0 0 4px; font-size: 14px; }
+.foot code { background: var(--primary-light); color: var(--primary-dark); padding: 2px 8px; border-radius: 6px; font-family: inherit; font-weight: 700; font-size: 13px; }
+</style>
+
+<div class="wrap">
+    <div class="doc-head">
+        <h1>제주아꼼이네 오피스 — 디자인 시안 <span style="color:var(--primary)">v1</span></h1>
+        <p>2026-07-26 · 아래는 전부 <b>완성 예상 모습(목업)</b>입니다. 실제 프로그램은 아직 아무것도 바뀌지 않았습니다.</p>
+        <div class="lock-note">🔒 기능 무변경 — 등록·저장·변환·정산·체크 로직은 일절 건드리지 않고, '보이는 방식'만 바꿉니다</div>
+        <div class="howto">보시고 항목 번호로 말씀해 주세요 — 예: <b>"A-1, A-3 콜! C-2는 다르게 가자"</b></div>
+    </div>
+
+    <!-- ================= A. 일정 ================= -->
+    <div class="sec">
+        <h2>A. 일정 메뉴</h2>
+        <p class="sec-sub">대표님 아이디어(주간/월간/연간)를 그대로 시각화했습니다.</p>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">A-1</span><h3>오늘 브리핑 스트립 + 뷰 전환 토글</h3></div>
+            <p class="item-desc">환영 인사 아래 한 줄 요약 + 달력 제목 옆 [주간|월간|연간] 토글. 달력을 안 훑어도 아침 상황 파악이 끝납니다.</p>
+            <div class="solo" style="display:flex;flex-direction:column;gap:12px;">
+                <div class="brief">
+                    <span class="b-chip">📌 오늘 일정 <span class="b-num">3건</span></span>
+                    <span class="b-chip">🎉 이번 주 행사 <span class="b-num">1건</span></span>
+                    <span class="b-chip">🌙 오늘 당직 <span class="b-num">미소</span></span>
+                    <span class="b-chip b-dday">⏳ 청귤 예약 오픈 D-5</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                    <strong style="font-size:16px;">2026년 7월</strong>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <div class="vtoggle"><button>주간</button><button class="on">월간</button><button>연간</button></div>
+                        <button class="btn-o" style="padding:5px 12px;font-size:12.5px;">오늘</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">A-2</span><h3>월간 달력 스킨 — 지금 vs 제안</h3></div>
+            <p class="item-desc">오늘 날짜 인디고 배지, 일정은 유형색 칩(행사 핑크·상품 앰버·당직 인디고·휴가 초록), 넘치면 +N 더보기. 달력 구조·체크 기능은 그대로입니다.</p>
+            <div class="cmp">
+                <div class="panel">
+                    <div class="panel-label now">지금</div>
+                    <div class="panel-body"><table class="cal" id="cal-before"></table></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-label new">제안</div>
+                    <div class="panel-body"><table class="cal" id="cal-after"></table></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">A-3</span><h3>주간 뷰 (신규)</h3></div>
+            <p class="item-desc">이번 주 7일을 세로 카드로. 오늘은 인디고로 확 띄우고, 월간의 좁은 칸에 눌려 잘리던 일정이 전부 펼쳐집니다. 체크박스도 그대로. 모바일에서 특히 좋습니다.</p>
+            <div class="solo week">
+                <div class="wday"><div class="wd-date su"><div class="n">26</div><div class="w">일</div></div><div class="wd-items"><span class="wchip du">🌙 당직 — 글샘</span></div></div>
+                <div class="wday today"><div class="wd-date"><div class="n">27</div><div class="w">월 · 오늘</div></div><div class="wd-items"><span class="wchip ev">🎉 청귤 상세페이지 오픈 준비</span><span class="wchip pr"><input type="checkbox" checked> 미니밤호박 발송 시작</span><span class="wchip du">🌙 당직 — 미소</span></div></div>
+                <div class="wday"><div class="wd-date"><div class="n">28</div><div class="w">화</div></div><div class="wd-items"><span class="wchip pr"><input type="checkbox"> 초당옥수수 물량 확인</span><span class="wchip no">거래처 미팅 14:00</span></div></div>
+                <div class="wday"><div class="wd-date"><div class="n">29</div><div class="w">수</div></div><div class="wd-items"><span class="wchip va">🌴 연차 — 글샘</span></div></div>
+                <div class="wday"><div class="wd-date"><div class="n">30</div><div class="w">목</div></div><div class="wd-items"><span class="wd-empty">일정 없음</span></div></div>
+                <div class="wday"><div class="wd-date"><div class="n">31</div><div class="w">금</div></div><div class="wd-items"><span class="wchip ev">🎉 청귤 예약 오픈 D-day</span><span class="wchip du">🌙 당직 — 승범</span></div></div>
+                <div class="wday"><div class="wd-date sa"><div class="n">1</div><div class="w">토</div></div><div class="wd-items"><span class="wchip no">택배 마감 점검</span></div></div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">A-4</span><h3>연간 뷰 (신규)</h3></div>
+            <p class="item-desc">12개월을 한 화면에 — 일정 있는 날은 유형색 점으로만. 행사·상품 몰린 달(성수기 리듬)이 한눈에 보이고, 월을 클릭하면 그 달 월간으로 이동합니다.</p>
+            <div class="solo year" id="year-grid"></div>
+        </div>
+    </div>
+
+    <!-- ================= B. 공통 ================= -->
+    <div class="sec">
+        <h2>B. 공통 디자인 시스템</h2>
+        <p class="sec-sub">전 메뉴에 똑같이 깔리는 규칙 — "화면마다 조금씩 다른 느낌"이 사라집니다.</p>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">B-1</span><h3>상태 배지 통일</h3></div>
+            <p class="item-desc">승인/대기/반려, 사용중/꺼짐, 판매중/준비중… 전 화면의 상태 표시를 이 한 세트로.</p>
+            <div class="solo badges">
+                <span class="badge bg-ok"><i></i>승인</span>
+                <span class="badge bg-wait"><i></i>대기중</span>
+                <span class="badge bg-no"><i></i>반려</span>
+                <span class="badge bg-ok"><i></i>🟢 작동중</span>
+                <span class="badge bg-off"><i></i>⏸ 꺼짐</span>
+                <span class="badge bg-ok"><i></i>판매중</span>
+                <span class="badge bg-wait"><i></i>준비중</span>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">B-2</span><h3>버튼 위계 3단계</h3></div>
+            <p class="item-desc">화면당 '진짜 눌러야 할 버튼'은 인디고 하나만. 나머지는 아웃라인/텍스트로 한 발 물러납니다.</p>
+            <div class="solo btnrow">
+                <button class="btn-p">💾 저장</button>
+                <button class="btn-o">미리보기</button>
+                <button class="btn-t">초기화</button>
+                <span style="color:var(--faint);font-size:12.5px;margin-left:6px;">← 주인공 / 조연 / 단역</span>
+            </div>
+        </div>
+
+        <div class="cmp" style="margin-bottom:22px;">
+            <div class="item" style="margin:0;">
+                <div class="item-head"><span class="tag">B-3</span><h3>빈 화면</h3></div>
+                <p class="item-desc">"기록이 없습니다" 한 줄 → 안내+행동 유도로.</p>
+                <div class="solo empty-mock">
+                    <div class="ic">📋</div>
+                    <div class="t1">아직 기록이 없어요</div>
+                    <div class="t2">카톡 순위 텍스트를 붙여넣으면 자동으로 정리됩니다</div>
+                    <button class="btn-p" style="font-size:12.5px;padding:7px 14px;">🔍 붙여넣기 정리</button>
+                </div>
+            </div>
+            <div class="item" style="margin:0;">
+                <div class="item-head"><span class="tag">B-4</span><h3>로딩 스켈레톤</h3></div>
+                <p class="item-desc">"불러오는 중..." 텍스트 → 은은한 뼈대 애니메이션.</p>
+                <div class="solo skel">
+                    <div class="sk" style="width:40%"></div>
+                    <div class="sk" style="width:100%"></div>
+                    <div class="sk" style="width:100%"></div>
+                    <div class="sk" style="width:75%"></div>
+                    <div class="sk" style="width:90%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= C. 메뉴별 ================= -->
+    <div class="sec">
+        <h2>C. 메뉴별 하이라이트</h2>
+        <p class="sec-sub">체감이 큰 것부터 — 전부 이미 있는 데이터를 다르게 '그리는' 것뿐입니다.</p>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">C-1</span><h3>정산관리 — 요약 스탯 카드</h3></div>
+            <p class="item-desc">표 위에 이번 달 핵심 숫자 3장. 표를 안 읽어도 결론부터 보입니다.</p>
+            <div class="solo stats">
+                <div class="stat hero"><div class="l">7월 정산 완료</div><div class="v">42,180,000<small> 원</small></div><div class="sub">전월 대비 +12%</div></div>
+                <div class="stat"><div class="l">미정산</div><div class="v">3<small> 건</small></div><div class="sub">대성·효돈 각 1건 외</div></div>
+                <div class="stat"><div class="l">이번 주 입금 예정</div><div class="v">8,640,000<small> 원</small></div><div class="sub">7/29(수) CJ 정산 포함</div></div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">C-2</span><h3>송장변환 — 진행 단계 표시</h3></div>
+            <p class="item-desc">버튼 많은 화면 상단에 지금 어느 단계인지 항상 표시 — 순서 실수가 줄어듭니다.</p>
+            <div class="solo steps">
+                <div class="step done"><div class="c">✓</div><div class="t">① 주문 불러오기</div></div>
+                <div class="step-line done"></div>
+                <div class="step now"><div class="c">2</div><div class="t">② 미리보기 확인</div></div>
+                <div class="step-line"></div>
+                <div class="step todo"><div class="c">3</div><div class="t">③ 변환·다운로드</div></div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">C-3</span><h3>기안서류 — 결재 스텝퍼 + 상태 배지</h3></div>
+            <p class="item-desc">서류가 지금 어디까지 왔는지 흐름으로 보입니다.</p>
+            <div class="solo" style="display:flex;flex-direction:column;gap:14px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <strong style="font-size:14px;">연차 신청서 — 글샘 (7/29)</strong>
+                    <span class="badge bg-wait"><i></i>대기중</span>
+                </div>
+                <div class="steps">
+                    <div class="step done"><div class="c">✓</div><div class="t">작성</div></div>
+                    <div class="step-line done"></div>
+                    <div class="step now"><div class="c">2</div><div class="t">대표 승인 대기</div></div>
+                    <div class="step-line"></div>
+                    <div class="step todo"><div class="c">3</div><div class="t">완료</div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">C-4</span><h3>박스재고 — 잔여 게이지</h3></div>
+            <p class="item-desc">숫자 대신 눈으로 — 안전(초록)/주의(앰버)/부족(빨강)이 바로 보입니다.</p>
+            <div class="solo gauges">
+                <div class="g-row"><span class="g-name">5kg 박스</span><div class="g-bar"><div class="g-fill" style="width:78%;background:var(--success);"></div></div><span class="g-num">312<small> 개</small></span></div>
+                <div class="g-row"><span class="g-name">10kg 박스</span><div class="g-bar"><div class="g-fill" style="width:34%;background:var(--amber);"></div></div><span class="g-num">86<small> 개</small></span></div>
+                <div class="g-row"><span class="g-name">아이스팩</span><div class="g-bar"><div class="g-fill" style="width:9%;background:var(--danger);"></div></div><span class="g-num">23<small> 개</small></span></div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">C-5</span><h3>CS처리방·문의 관리 — 말풍선 미리보기</h3></div>
+            <p class="item-desc">시나리오·템플릿을 고객이 실제로 보는 모습(채팅)으로 미리보기.</p>
+            <div class="solo chat">
+                <div class="bub cust">배송 언제 오나요?</div>
+                <div class="bub bot">안녕하세요, 제주아꼼이네입니다 🍊<br><b>주문하신 상품은 오늘 발송</b>되어 내일 도착 예정이에요. 송장번호는 문자로 안내드렸습니다!</div>
+            </div>
+        </div>
+
+        <div class="item">
+            <div class="item-head"><span class="tag">C-6</span><h3>데이터관리 — 연결·타이머 카드 통일</h3></div>
+            <p class="item-desc">네이버/쿠팡 연결, 자동수집 타이머를 같은 규격 카드 + 토글 스위치로.</p>
+            <div class="solo tcards">
+                <div class="tcard"><span class="ti">🛰️</span><div class="tt"><div class="n">네이버 정산 자동수집</div><div class="s">매일 09:30 · 마지막 수집 오늘 09:31</div></div><span class="sw on"></span></div>
+                <div class="tcard"><span class="ti">💬</span><div class="tt"><div class="n">고객문의 수집</div><div class="s">30분 주기 · 마지막 수집 10:02</div></div><span class="sw on"></span></div>
+                <div class="tcard"><span class="ti">🛒</span><div class="tt"><div class="n">쿠팡 연결</div><div class="s">API 키 만료 2027-01-21</div></div><span class="badge bg-ok" style="flex-shrink:0;"><i></i>정상</span></div>
+                <div class="tcard"><span class="ti">↩️</span><div class="tt"><div class="n">취소·반품 알림</div><div class="s">90분 주기</div></div><span class="sw off"></span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="foot">
+        <h2>피드백은 번호로 편하게!</h2>
+        <p>예) <code>A-1 A-3 콜</code> · <code>A-2는 칩 색을 더 연하게</code> · <code>C-4는 다르게 가자</code></p>
+        <p style="color:var(--mid);font-size:13px;margin-top:8px;">콜 주신 항목부터 실제 프로그램에 반영합니다. 🔒 기능(등록·저장·변환·정산 로직)은 어떤 항목에서도 건드리지 않습니다.</p>
+    </div>
+</div>
+
+<script>
+// A-2 월간 달력 목업 (2026년 7월: 수요일 시작, 31일)
+(function () {
+    const days = ['일','월','화','수','목','금','토'];
+    const head = '<tr>' + days.map((d,i)=>`<th class="${i===0?'su':i===6?'sa':''}">${d}</th>`).join('') + '</tr>';
+    // 일정 데이터 (목업)
+    const ev = {
+        3:[['no','시온 이동']], 6:[['du','당직 미소']],
+        10:[['pr','옥수수 마감'],['du','당직 글샘']],
+        15:[['ev','라이브 방송'],['no','거래처 미팅']],
+        20:[['va','연차 미소']],
+        27:[['ev','청귤 준비'],['pr','밤호박 발송'],['du','당직 미소'],['no','미팅'],['no','점검']],
+        31:[['ev','청귤 오픈'],['du','당직 승범']]
+    };
+    const oldLbl = { ev:'', pr:'', du:'', no:'', va:'' };
+    function build(mode) {
+        let html = head, day = 1;
+        for (let r = 0; r < 5; r++) {
+            html += '<tr>';
+            for (let c = 0; c < 7; c++) {
+                const idx = r*7+c;
+                if (idx < 3 || day > 31) {
+                    const n = idx < 3 ? 28+idx : day++ - 31;
+                    html += `<td><div class="d dim">${idx<3?28+idx:n}</div></td>`;
+                    continue;
+                }
+                const isToday = day === 27;
+                const items = ev[day] || [];
+                let cell = '';
+                if (mode === 'old') {
+                    cell = items.slice(0,3).map(it=>`<div class="oldit">${it[1]}</div>`).join('');
+                    if (items.length > 3) cell += `<div class="oldit">${items[3][1]}</div>`;
+                    html += `<td class="${isToday?'today-old':''}"><div class="d ${c===0?'su':c===6?'sa':''}">${day}</div>${cell}</td>`;
+                } else {
+                    cell = items.slice(0,3).map(it=>`<div class="chip ${it[0]}">${it[1]}</div>`).join('');
+                    if (items.length > 3) cell += `<span class="more">+${items.length-3}건</span>`;
+                    const dnum = isToday ? `<span class="d-badge">${day}</span>` : `<div class="d ${c===0?'su':c===6?'sa':''}">${day}</div>`;
+                    html += `<td class="${isToday?'today-new':''}">${dnum}${cell}</td>`;
+                }
+                day++;
+            }
+            html += '</tr>';
+            if (day > 31 && r >= 4) break;
+        }
+        return html;
+    }
+    document.getElementById('cal-before').innerHTML = build('old');
+    document.getElementById('cal-after').innerHTML = build('new');
+})();
+
+// A-4 연간 뷰 목업
+(function () {
+    const dots = {
+        1:{9:'du',23:'du'}, 2:{5:'ev',14:'du'}, 3:{3:'pr',17:'du',25:'pr'}, 4:{8:'ev',20:'du'},
+        5:{2:'pr',11:'ev',24:'du'}, 6:{2:'ev',9:'pr',16:'du',27:'pr'},
+        7:{6:'du',10:'pr',15:'ev',20:'va',27:'ev',31:'ev'},
+        8:{4:'ev',12:'pr',19:'du',26:'ev'}, 9:{3:'ev',10:'ev',17:'pr',24:'du'},
+        10:{8:'pr',15:'ev',22:'du'}, 11:{5:'pr',19:'du'}, 12:{10:'ev',24:'du',30:'ev'}
+    };
+    const dim = [31,28,31,30,31,30,31,31,30,31,30,31];
+    const cnt = m => Object.keys(dots[m]||{}).length;
+    let html = '';
+    for (let m = 1; m <= 12; m++) {
+        let g = '';
+        for (let d = 1; d <= dim[m-1]; d++) {
+            const t = (dots[m]||{})[d];
+            g += `<span class="yd">${d}${t?`<i class="${t}"></i>`:''}</span>`;
+        }
+        html += `<div class="ymon ${m===7?'cur':''}"><h5>${m}월<span class="cnt">${cnt(m)}건</span></h5><div class="ygrid">${g}</div></div>`;
+    }
+    document.getElementById('year-grid').innerHTML = html;
+})();
+</script>
+
+</body>
+</html>

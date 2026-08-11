@@ -6147,7 +6147,8 @@ setInterval(async () => {
         /* 🔴 #298(대표 실물 "알림이 안 와서 직접 처리를 못 한다"): 알림 대상을 2종으로 넓힌다.
            ① 요청형(변경·취소·반품 등) ② **AI가 답하지 못한 문의([SKIP-무응답])** —
            봇이 침묵한 건은 정의상 직원이 봐야 하는 건인데 그동안 아무 신호도 없었다.
-           카카오 「챗봇 채팅」은 카카오 앱 알림·상담 목록에 뜨지 않으므로(구조), 이 텔레그램 알림이 유일한 실시간 통로다. */
+           ※ #301에서 카카오 챗봇을 끄고 상담 채팅으로 돌렸으므로 카카오는 [내 채팅]에서도 보인다.
+             그래도 네이버톡톡·자사몰은 이 알림이 가장 빠른 통로다. */
         const hits = r.rows.filter(x =>
             TALKTALK_REQUEST_RE.test(String(x.message || '')) ||
             (String(x.bot_response || '') === '[SKIP-무응답]' && NEEDS_STAFF_RE.test(String(x.message || ''))));
@@ -6162,7 +6163,10 @@ setInterval(async () => {
         if (!quiet && queue.length) {
             const lines = queue.slice(0, 8).map(m => `· "${m}"`).join('\n');
             // 지시 #113: 발송 결과를 상태에 기록 — 'sent'일 때만 비움(실패 시 큐 유지·다음 틱 재시도). 실물 수신 확인은 대표 몫.
-            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘봇 미답변’ = AI가 답하지 못한 건 — 카카오는 챗봇 대화라 카카오 앱에는 알림이 오지 않습니다. [문의 관리]>💬 톡톡 문의 또는 해당 채널에서 직접 답변해주세요)`);
+            /* 🔴 #371(대표 실물): 안내 문구가 낡아 있었다 — #301에서 카카오 챗봇을 끄고 상담 채팅으로 돌린 뒤에도
+               "카카오는 챗봇 대화라 알림이 오지 않습니다"가 그대로 나갔다(대표가 받은 건 네이버톡톡 건인데도 그 문장이 붙었다).
+               지금은 채널마다 답변 창구가 있으므로 그대로 안내한다. */
+            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘봇 미답변’ = AI가 답하지 못한 건입니다. [문의 관리] > 💬 톡톡 문의에서 3채널을 함께 볼 수 있고, 답변은 네이버톡톡은 판매자센터·카카오는 채널 [내 채팅]에서 해주세요)`);
             lastAlert = { at: new Date().toISOString(), count: queue.length, result };
             if (result === 'sent') queue = [];
         }

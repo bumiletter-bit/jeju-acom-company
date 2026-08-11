@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제주아꼼이네 장바구니 시안</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Pretendard','Noto Sans KR','Malgun Gothic',sans-serif;
+       background:#EDEFF2;display:flex;justify-content:center;padding:24px 12px;color:#1B2A3D}
+  .phone{width:390px;background:#F7F8FA;border-radius:22px;overflow:hidden;position:relative;
+         box-shadow:0 8px 40px rgba(20,40,70,.14);padding-bottom:190px}
+
+  .top{background:#fff;display:flex;align-items:center;padding:15px 18px;
+       border-bottom:1px solid #EEF0F3}
+  .top .back{font-size:21px;color:#5A6675;width:26px}
+  .top .ttl{flex:1;text-align:center;font-size:16px;font-weight:800;margin-right:26px}
+
+  /* 무료배송 진행 */
+  .ship{background:#FFF7DC;padding:13px 16px 14px;border-bottom:1px solid #F2E7C0}
+  .ship .txt{font-size:13.5px;font-weight:700;color:#8A6D14}
+  .ship .txt b{color:#0F2B54;font-weight:900}
+  .bar{margin-top:8px;height:7px;border-radius:5px;background:#F2E3B0;overflow:hidden}
+  .bar i{display:block;height:100%;width:100%;background:#F5C800;border-radius:5px}
+
+  /* 선택 바 */
+  .selbar{background:#fff;display:flex;align-items:center;padding:12px 16px;
+          border-bottom:1px solid #EEF0F3}
+  .selbar .all{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700}
+  .cbx{width:22px;height:22px;border-radius:7px;background:#7BAE3F;color:#fff;flex:none;
+       display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900}
+  .selbar .del{margin-left:auto;font-size:13px;color:#98A2AF;font-weight:700;cursor:pointer}
+  .keep{padding:9px 16px 0;font-size:12px;color:#A9B2BD;font-weight:600}
+
+  /* 상품 카드 */
+  .list{padding:12px 16px 4px;display:flex;flex-direction:column;gap:11px}
+  .it{background:#fff;border-radius:16px;padding:14px;box-shadow:0 2px 10px rgba(20,50,90,.06)}
+  .it-top{display:flex;gap:11px}
+  .it .cbx{margin-top:2px}
+  .thumb{width:74px;height:74px;border-radius:11px;flex:none;object-fit:cover;
+         background:#FFF4CC;display:flex;align-items:center;justify-content:center;font-size:32px}
+  .it .mid{flex:1;min-width:0}
+  .it .nm{font-size:15px;font-weight:800;letter-spacing:-.4px;padding-right:18px}
+  .it .op{margin-top:5px;font-size:12px;color:#8A93A0;font-weight:600;line-height:1.5}
+  .it .x{position:absolute;color:#C3CBD5;font-size:18px}
+  .it-top{position:relative}
+  .it .x{top:0;right:0}
+
+  .it-bot{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;
+          border-top:1px solid #F2F4F7}
+  .qty{display:flex;align-items:center;border:1.5px solid #E3E8EE;border-radius:9px;overflow:hidden}
+  .qty button{width:32px;height:32px;border:0;background:#fff;font-size:16px;font-weight:800;
+              color:#5A6675;font-family:inherit;cursor:pointer}
+  .qty span{width:34px;text-align:center;font-size:14px;font-weight:800}
+  .opbtn{border:1.5px solid #E3E8EE;background:#fff;border-radius:9px;padding:8px 12px;
+         font-size:12.5px;font-weight:700;color:#5A6675;font-family:inherit;cursor:pointer}
+  .it .price{margin-left:auto;text-align:right}
+  .it .price .p{font-size:17px;font-weight:900;color:#0F2B54;letter-spacing:-.5px}
+  .it .price .free{font-size:11px;color:#3F7A2A;font-weight:800;margin-top:2px}
+
+  /* 추천 */
+  .rec{margin:14px 16px 0;background:#fff;border-radius:16px;padding:15px 16px}
+  .rec h4{font-size:14px;font-weight:800;margin-bottom:11px}
+  .rec .r{display:flex;align-items:center;gap:11px}
+  .rec .r .tb{width:52px;height:52px;border-radius:10px;background:#FFF4CC;flex:none;
+              display:flex;align-items:center;justify-content:center;font-size:24px}
+  .rec .r .nm{font-size:13.5px;font-weight:800}
+  .rec .r .pp{margin-top:3px;font-size:13px;font-weight:900;color:#0F2B54}
+  .rec .r button{margin-left:auto;border:1.5px solid #F5C800;background:#FFFBE8;color:#8A6D14;
+                 border-radius:9px;padding:9px 14px;font-size:12.5px;font-weight:800;
+                 font-family:inherit;cursor:pointer;white-space:nowrap}
+
+  .tip{margin:12px 16px 0;background:#FFFBE8;border:1.5px dashed #EFD98F;border-radius:13px;
+       padding:12px 14px;display:flex;align-items:center;gap:9px}
+  .tip .em{font-size:19px}
+  .tip p{font-size:12.5px;font-weight:700;color:#8A6D14;line-height:1.5}
+
+  .note{margin:12px 16px 0;font-size:11.5px;color:#A9B2BD;font-weight:600;line-height:1.7}
+
+  /* 하단 고정 결제 바 */
+  .paybar{position:absolute;left:0;right:0;bottom:0;background:#fff;
+          border-top:1px solid #EEF0F3;padding:13px 16px 16px;
+          box-shadow:0 -4px 20px rgba(20,50,90,.07)}
+  .sum{display:flex;align-items:baseline;margin-bottom:11px}
+  .sum .lb{font-size:13.5px;font-weight:700;color:#5A6675}
+  .sum .lb small{color:#98A2AF;font-weight:600;margin-left:5px;font-size:12px}
+  .sum .v{margin-left:auto;font-size:23px;font-weight:900;color:#0F2B54;letter-spacing:-1px}
+  .sum .v span{font-size:14px;font-weight:800;margin-left:1px}
+  .paybar .go{width:100%;background:#5A8A2E;color:#fff;border:0;border-radius:13px;
+              padding:16px;font-size:16.5px;font-weight:900;font-family:inherit;cursor:pointer}
+  .paybar .sel{width:100%;margin-top:8px;background:#fff;color:#5A6675;
+               border:1.5px solid #E3E8EE;border-radius:12px;padding:13px;
+               font-size:14px;font-weight:800;font-family:inherit;cursor:pointer}
+
+  /* 빈 화면 */
+  .empty{margin:16px;background:#fff;border-radius:16px;padding:26px 20px 28px;text-align:center}
+  .empty img{width:158px;height:158px;object-fit:contain;margin-bottom:4px}
+  .empty .t{font-size:16.5px;font-weight:800}
+  .empty .d{margin-top:7px;font-size:13px;color:#7C8794;font-weight:600;line-height:1.6}
+  .empty{margin-bottom:24px}
+  .empty button{margin-top:16px;background:#F5C800;color:#0F2B54;border:0;border-radius:12px;
+                padding:14px 30px;font-size:15px;font-weight:900;font-family:inherit;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="top"><span class="back">‹</span><span class="ttl">장바구니 2</span></div>
+
+  <div class="ship">
+    <div class="txt">🚚 <b>무료배송</b> 적용됐어요!</div>
+    <div class="bar"><i></i></div>
+  </div>
+
+  <div class="selbar">
+    <div class="all"><span class="cbx">✓</span> 전체선택 (2/2)</div>
+    <span class="del">선택삭제</span>
+  </div>
+  <div class="keep">담긴 상품은 7일 동안 보관돼요</div>
+
+  <div class="list">
+
+    <div class="it">
+      <div class="it-top">
+        <span class="cbx">✓</span>
+        <div class="thumb">🍊</div>
+        <div class="mid">
+          <div class="nm">혼합 과일 선물세트</div>
+          <div class="op">과즙팡팡 황금향 선물용 5kg (대과 13~23과)</div>
+        </div>
+        <span class="x">✕</span>
+      </div>
+      <div class="it-bot">
+        <div class="qty"><button>−</button><span>1</span><button>+</button></div>
+        <button class="opbtn">옵션변경</button>
+        <div class="price"><div class="p">62,800원</div><div class="free">무료배송</div></div>
+      </div>
+    </div>
+
+    <div class="it">
+      <div class="it-top">
+        <span class="cbx">✓</span>
+        <div class="thumb">🎃</div>
+        <div class="mid">
+          <div class="nm">제주 미니밤호박</div>
+          <div class="op">★행사★ 미니밤호박 꼬마 · 한입밤호박 5kg (25과 전후)</div>
+        </div>
+        <span class="x">✕</span>
+      </div>
+      <div class="it-bot">
+        <div class="qty"><button>−</button><span>1</span><button>+</button></div>
+        <button class="opbtn">옵션변경</button>
+        <div class="price"><div class="p">19,800원</div><div class="free">무료배송</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="rec">
+    <h4>🍊 이것도 같이 담아보세요</h4>
+    <div class="r">
+      <div class="tb">🟢</div>
+      <div>
+        <div class="nm">사전예약 최상품 청귤 5kg</div>
+        <div class="pp">18,800원</div>
+      </div>
+      <button>담기</button>
+    </div>
+  </div>
+
+  <div class="tip">
+    <span class="em">🍊</span>
+    <p>주문 전에 <b>수량과 옵션</b>을 한 번 더 확인해 주세요</p>
+  </div>
+
+  <div class="note">
+    · 쿠폰 할인은 다음 단계 주문서에서 적용돼요<br>
+    · 상품별 배송비는 상품금액 옆에 표시돼요
+  </div>
+
+  <!-- ===== 장바구니 비었을 때 (참고용) ===== -->
+  <div class="empty">
+    <img src="https://d8j0ntlcm91z4.cloudfront.net/user_3HfatmDcFC12WxdTrdrtkIkhUi1/hf_20260811_020221_5dc622cf-952a-42c1-8d8a-94abe68cac5b.png" alt="">
+    <div class="t">장바구니가 비어있어요</div>
+    <div class="d">제주의 제철 상품,<br>아꼼이가 골라둘게요</div>
+    <button>제철 상품 보러가기 🍊</button>
+  </div>
+
+  <!-- 하단 고정 -->
+  <div class="paybar">
+    <div class="sum">
+      <span class="lb">결제예정금액 <small>배송비 0원</small></span>
+      <span class="v">82,600<span>원</span></span>
+    </div>
+    <button class="go">전체상품 주문하기</button>
+    <button class="sel">선택상품만 주문</button>
+  </div>
+
+</div>
+</body>
+</html>

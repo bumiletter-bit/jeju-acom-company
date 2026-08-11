@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제주아꼼이네 주문내역 시안</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Pretendard','Noto Sans KR','Malgun Gothic',sans-serif;
+       background:#EDEFF2;display:flex;justify-content:center;padding:24px 12px;color:#1B2A3D}
+  .phone{width:390px;background:#F7F8FA;border-radius:22px;overflow:hidden;
+         box-shadow:0 8px 40px rgba(20,40,70,.14)}
+
+  .top{background:#fff;display:flex;align-items:center;padding:15px 18px;
+       border-bottom:1px solid #EEF0F3}
+  .top .back{font-size:21px;color:#5A6675;width:26px}
+  .top .ttl{flex:1;text-align:center;font-size:16px;font-weight:800;margin-right:26px}
+
+  /* 탭 */
+  .tabs{background:#fff;display:flex;padding:0 16px;border-bottom:1px solid #EEF0F3}
+  .tab{flex:1;text-align:center;padding:13px 0 11px;font-size:14.5px;font-weight:700;
+       color:#98A2AF;border-bottom:3px solid transparent;cursor:pointer}
+  .tab.on{color:#0F2B54;font-weight:800;border-bottom-color:#F5C800}
+
+  /* 기간 필터 — 한 줄로 압축 */
+  .filter{background:#fff;padding:12px 16px 13px;display:flex;gap:7px;
+          overflow-x:auto;border-bottom:1px solid #EEF0F3}
+  .filter::-webkit-scrollbar{display:none}
+  .chip{flex:none;border:1.5px solid #E3E8EE;background:#fff;border-radius:20px;
+        padding:8px 14px;font-size:13px;font-weight:700;color:#5A6675;
+        font-family:inherit;cursor:pointer;white-space:nowrap}
+  .chip.on{background:#0F2B54;border-color:#0F2B54;color:#fff}
+  .chip.more{color:#98A2AF}
+
+  /* 주문 카드 */
+  .list{padding:14px 16px 4px;display:flex;flex-direction:column;gap:12px}
+  .od{background:#fff;border-radius:16px;overflow:hidden;
+      box-shadow:0 2px 10px rgba(20,50,90,.06)}
+
+  .od-head{display:flex;align-items:center;gap:9px;padding:14px 16px 12px}
+  .st{font-size:12.5px;font-weight:800;padding:5px 11px;border-radius:20px}
+  .st-ship{background:#E4F0FB;color:#1A5C9E}
+  .st-done{background:#E8F5E2;color:#3F7A2A}
+  .st-cancel{background:#F2F4F7;color:#8A93A0}
+  .od-head .dt{margin-left:auto;font-size:12px;color:#98A2AF;font-weight:600}
+  .od-head .arw{color:#C3CBD5;font-size:15px}
+
+  .od-body{display:flex;gap:12px;padding:0 16px 14px}
+  .thumb{width:66px;height:66px;border-radius:11px;flex:none;
+         background:#FFF4CC;display:flex;align-items:center;justify-content:center;font-size:30px}
+  .od-body .nm{font-size:15px;font-weight:800;letter-spacing:-.4px}
+  .od-body .op{margin-top:4px;font-size:12px;color:#8A93A0;font-weight:600;line-height:1.45}
+  .od-body .pr{margin-top:6px;font-size:16px;font-weight:900;color:#0F2B54}
+  .od-body .pr span{font-size:12.5px;font-weight:700;color:#8A93A0;margin-left:3px}
+
+  /* 배송 진행바 */
+  .track{margin:0 16px 14px;background:#F8FAFC;border-radius:12px;padding:13px 14px}
+  .track .inv{font-size:12px;color:#5A6675;font-weight:700;margin-bottom:10px}
+  .track .inv b{color:#0F2B54;font-weight:800}
+  .steps{display:flex;align-items:center}
+  .stp{flex:1;text-align:center;position:relative}
+  .stp .dot{width:11px;height:11px;border-radius:50%;background:#DDE3EA;margin:0 auto 6px;
+            position:relative;z-index:2}
+  .stp.act .dot{background:#F5C800;box-shadow:0 0 0 4px rgba(245,200,0,.22)}
+  .stp.pass .dot{background:#F5C800}
+  .stp .lb{font-size:10.5px;color:#A9B2BD;font-weight:700}
+  .stp.act .lb,.stp.pass .lb{color:#0F2B54}
+  .stp:before{content:'';position:absolute;top:5px;left:-50%;width:100%;height:2px;
+              background:#DDE3EA;z-index:1}
+  .stp:first-child:before{display:none}
+  .stp.pass:before,.stp.act:before{background:#F5C800}
+
+  /* 액션 버튼 */
+  .acts{display:flex;gap:8px;padding:0 16px 15px}
+  .bt{flex:1;border-radius:10px;padding:12px;font-size:13.5px;font-weight:800;
+      font-family:inherit;cursor:pointer;border:1.5px solid #E3E8EE;background:#fff;color:#5A6675}
+  .bt.main{background:#0F2B54;border-color:#0F2B54;color:#fff}
+  .bt.gold{background:#F5C800;border-color:#F5C800;color:#0F2B54}
+
+  /* 빈 화면 */
+  .empty{margin:16px;background:#fff;border-radius:16px;padding:26px 20px 28px;text-align:center}
+  .empty img{width:158px;height:158px;object-fit:contain;margin-bottom:4px}
+  .empty .t{font-size:16.5px;font-weight:800}
+  .empty .d{margin-top:7px;font-size:13px;color:#7C8794;font-weight:600;line-height:1.6}
+  .empty button{margin-top:16px;background:#F5C800;color:#0F2B54;border:0;border-radius:12px;
+                padding:14px 30px;font-size:15px;font-weight:900;font-family:inherit;cursor:pointer}
+
+  .note{margin:4px 16px 0;font-size:11.5px;color:#A9B2BD;font-weight:600;line-height:1.7}
+  .foot{text-align:center;padding:18px 20px 22px;font-size:12px;color:#A9B2BD;font-weight:600}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="top"><span class="back">‹</span><span class="ttl">주문내역</span></div>
+
+  <div class="tabs">
+    <div class="tab on">주문내역 3</div>
+    <div class="tab">취소·반품·교환 3</div>
+  </div>
+
+  <div class="filter">
+    <button class="chip">오늘</button>
+    <button class="chip">1개월</button>
+    <button class="chip on">3개월</button>
+    <button class="chip">6개월</button>
+    <button class="chip more">기간 직접선택</button>
+  </div>
+
+  <div class="list">
+
+    <!-- 배송중 -->
+    <div class="od">
+      <div class="od-head">
+        <span class="st st-ship">배송중</span>
+        <span class="dt">2026.08.08</span>
+        <span class="arw">›</span>
+      </div>
+      <div class="od-body">
+        <div class="thumb">🍊</div>
+        <div>
+          <div class="nm">제주 감귤</div>
+          <div class="op">과즙팡팡 황금향 가정용 5kg (중소과 27과)</div>
+          <div class="pr">57,800원 <span>1개</span></div>
+        </div>
+      </div>
+      <div class="track">
+        <div class="inv">CJ대한통운 <b>123456789012</b></div>
+        <div class="steps">
+          <div class="stp pass"><div class="dot"></div><div class="lb">결제완료</div></div>
+          <div class="stp pass"><div class="dot"></div><div class="lb">상품준비</div></div>
+          <div class="stp act"><div class="dot"></div><div class="lb">배송중</div></div>
+          <div class="stp"><div class="dot"></div><div class="lb">배송완료</div></div>
+        </div>
+      </div>
+      <div class="acts">
+        <button class="bt main">배송 조회</button>
+        <button class="bt">주문 상세</button>
+      </div>
+    </div>
+
+    <!-- 배송완료 -->
+    <div class="od">
+      <div class="od-head">
+        <span class="st st-done">배송완료</span>
+        <span class="dt">2026.08.07</span>
+        <span class="arw">›</span>
+      </div>
+      <div class="od-body">
+        <div class="thumb">🟢</div>
+        <div>
+          <div class="nm">제주 청귤 풋귤</div>
+          <div class="op">★사전예약특가★ 최상품 청귤(풋귤) 5kg</div>
+          <div class="pr">18,800원 <span>1개</span></div>
+        </div>
+      </div>
+      <div class="track">
+        <div class="inv">CJ대한통운 <b>987654321098</b></div>
+        <div class="steps">
+          <div class="stp pass"><div class="dot"></div><div class="lb">결제완료</div></div>
+          <div class="stp pass"><div class="dot"></div><div class="lb">상품준비</div></div>
+          <div class="stp pass"><div class="dot"></div><div class="lb">배송중</div></div>
+          <div class="stp act"><div class="dot"></div><div class="lb">배송완료</div></div>
+        </div>
+      </div>
+      <div class="acts">
+        <button class="bt gold">후기 쓰고 500원 받기</button>
+        <button class="bt">재구매</button>
+      </div>
+    </div>
+
+    <!-- 취소완료 -->
+    <div class="od">
+      <div class="od-head">
+        <span class="st st-cancel">취소완료</span>
+        <span class="dt">2026.08.07</span>
+        <span class="arw">›</span>
+      </div>
+      <div class="od-body">
+        <div class="thumb">🎁</div>
+        <div>
+          <div class="nm">혼합 과일 선물세트</div>
+          <div class="op">과즙팡팡 황금향 선물용 5kg (대과 13~23과)</div>
+          <div class="pr">62,800원 <span>1개</span></div>
+        </div>
+      </div>
+      <div class="acts">
+        <button class="bt">취소 상세</button>
+        <button class="bt main">다시 주문하기</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    · 기본으로 최근 3개월 주문이 보여요. 기간을 바꾸면 지난 주문도 확인할 수 있어요 🍊<br>
+    · 취소·교환·반품 신청은 배송완료일 기준 30일까지 가능해요
+  </div>
+
+  <!-- ===== 주문 없을 때 (참고용) ===== -->
+  <div class="empty">
+    <img src="https://d8j0ntlcm91z4.cloudfront.net/user_3HfatmDcFC12WxdTrdrtkIkhUi1/hf_20260811_015215_b068f572-39cd-465b-91bd-285b229899ac.png" alt="">
+    <div class="t">아직 주문 내역이 없어요</div>
+    <div class="d">제주의 제철 상품,<br>지금 만나러 가볼까요?</div>
+    <button>제철 상품 보러가기 🍊</button>
+  </div>
+
+  <div class="foot">문의 064-805-9181 (토·일 휴무)</div>
+
+</div>
+</body>
+</html>
