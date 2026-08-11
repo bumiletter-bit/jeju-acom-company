@@ -13025,11 +13025,19 @@ async function renderSeasonWaitlist() {
     if (!el) return;
     const d = await api('/api/agent-office/season-waitlist');
     const isAdmin = currentUser?.role === 'admin';
+    /* #356(대표): 전화번호는 하이픈을 넣어 읽기 쉽게 — 보고 바로 걸거나 옮겨 적는 용도라 한 줄로 붙여 보이면 실수가 난다.
+       숫자 폭이 들쭉날쭉하지 않게 tabular-nums로 표시(표에서 자릿수가 흔들리지 않는다). */
+    const fmtWaitTel = (t) => {
+        const s = String(t || '').replace(/[^0-9]/g, '');
+        if (s.length === 11) return s.slice(0, 3) + '-' + s.slice(3, 7) + '-' + s.slice(7);
+        if (s.length === 10) return s.slice(0, 3) + '-' + s.slice(3, 6) + '-' + s.slice(6);
+        return String(t || '');
+    };
     const rows = (d.rows || []).map(r => `
         <tr>
             <td>${escapeHtml(r.item)}</td>
-            <td>${escapeHtml(r.contact)}</td>
-            <td>${escapeHtml(r.memo || '')}</td>
+            <td style="white-space:nowrap; font-variant-numeric:tabular-nums; padding-left:12px; padding-right:12px;">${escapeHtml(fmtWaitTel(r.contact))}</td>
+            <td style="white-space:nowrap; padding-left:10px; padding-right:10px;">${escapeHtml(r.memo || '')}</td>
             <td>${r.notified ? '✅ 발송됨' : '대기'}</td>
             <td style="white-space:nowrap;">${new Date(r.created_at).toLocaleDateString('ko-KR')}</td>
             <td>${isAdmin ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteSeasonWait(${r.id})">삭제</button>` : ''}</td>

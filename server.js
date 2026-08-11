@@ -5473,7 +5473,10 @@ app.get('/api/agent-office/season-waitlist', authMiddleware, async (req, res) =>
         const r = await pool.query(
             `SELECT id, item, contact, memo, notified, created_by, created_at FROM season_waitlist
              WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 500`);
-        res.json({ rows: r.rows.map(x => ({ ...x, contact: maskWaitContact(x.contact) })) });
+        /* 🔴 #356(대표 8/11 "번호가 가려져 있어 그때마다 연락을 못 드린다"): 전체 번호 표시.
+           이 명단의 존재 이유가 **시즌 오픈 시 알림톡·문자 발송**이라 가려두면 쓸 수가 없다(손님이 그 목적으로 직접 남긴 번호).
+           ⚠️ 감사 로그(audit_logs)에는 **종전대로 마스킹만** 남긴다 — 로그에 원문을 쌓지 않는 원칙은 유지(#177). */
+        res.json({ rows: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });
 app.post('/api/agent-office/season-waitlist', authMiddleware, async (req, res) => {
