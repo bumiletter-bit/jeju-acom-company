@@ -6444,7 +6444,7 @@ app.get('/api/scenarios', async (req, res) => {
         const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inquiry_auto_reply'`);
         const autoReply = cfg.rows.length ? cfg.rows[0].value : 'on';
         const season = await seasonScenariosToday();   // 지시 #108: 톡톡봇에도 오늘 시기 지식 주입 (가상 시나리오 — 봇 무수정, updated_at은 당일 00시 고정)
-        const ship = await shippingScenarioToday();    // #379: 발송 휴무일 반영 발송·도착 예정표 (알림톡과 같은 계산기)
+        const ship = [...(await shippingScenarioToday()), ...(await citrusNamingToday())];    // #379 발송 일정표 + #380 감귤 이름 규칙
         const all = [...r.rows, ...season, ...ship];
         res.json({
             ok: true, auto_reply: autoReply, count: all.length, scenarios: all,
@@ -7703,6 +7703,42 @@ ${lines.join('\n')}`;
         }];
     } catch (e) { console.error('[발송일정] 계산 실패(주입 생략):', e.message); return []; }
 }
+// ── #380(대표 실물 8/11): 지금 팔지 않는 재배방식 이름으로 손님에게 안내하던 결함
+//   🔴 네이버 상품명은 검색용이라 재배방식이 전부 적혀 있다 — "제주 노지 감귤 타이벡 하우스 …".
+//      그 상품 페이지에서 문의가 들어오면 상품 맥락에 '타이벡'이 실리고, AI가 시나리오
+//      「품목-타이벡·노지감귤」을 재료로 골라 **"타이벡 감귤은 지금 당도가 한창"** 이라고 답했다.
+//      실제 판매중인 감귤은 「고당도 하우스감귤」뿐이고 타이벡·노지는 제철(11~1월)이 아니다.
+//   대표 지시 = **"타이벡감귤이 아닌 그냥 감귤이라고 해야 한다"**.
+//   🔵 하드코딩하지 않는다 — 판매현황(bot_products)에서 매번 판정하므로 11월에 타이벡이 다시
+//      판매중이 되면 규칙이 저절로 풀린다. 감귤을 하나도 안 파는 시기엔 주입 자체를 생략.
+const CITRUS_WAYS = ['타이벡', '노지', '비가림', '하우스'];   // 감귤 재배방식 표기
+async function citrusNamingToday() {
+    try {
+        const r = await pool.query(
+            `SELECT name FROM bot_products WHERE deleted_at IS NULL AND status = '판매중'`);
+        // 청귤(풋귤)은 다른 품목이라 제외 — 재배방식 표기를 쓰지 않는다
+        const citrus = r.rows.map(x => String(x.name || '')).filter(n => /감귤|귤/.test(n) && !/청귤|풋귤/.test(n));
+        if (!citrus.length) return [];                                    // 감귤 미판매 시기 → 종전과 동일(주입 0)
+        const on = CITRUS_WAYS.filter(w => citrus.some(n => n.includes(w)));
+        const off = CITRUS_WAYS.filter(w => !on.includes(w));
+        if (!off.length) return [];                                       // 전부 판매중이면 제한할 것이 없다
+        const text = `(판매현황에서 자동 생성 — 지금 실제로 판매 중인 것만 반영됩니다)
+
+⚠️ 손님께 감귤을 안내할 때는 **그냥 「감귤」** 이라고 불러주세요.
+⚠️ **${off.join('·')}** 는 지금 판매하지 않습니다 — 이 단어를 답변에 쓰지 마세요.
+⚠️ 네이버 상품명에는 검색을 위해 재배방식이 여러 개 함께 적혀 있습니다(예: "제주 노지 감귤 타이벡 하우스 …").
+   **상품명이나 문의에 그 단어가 들어 있어도, 지금 판매 중이 아니면 그 이름으로 부르지 마세요.**
+   (해당 재배방식 전용 재료가 있어도 지금 판매 중이 아니면 그 재료를 쓰지 마세요 — 손님이 그 품목을 직접 물으면 "지금은 제철이 아니라 판매하지 않는다"고 안내하세요.)
+- 지금 판매 중인 감귤: ${on.length ? on.join('·') + ' 재배' : '판매현황 참조'}
+- 지금 판매하지 않는 감귤: ${off.join('·')}`;
+        const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+        return [{
+            scenario_no: 891, name: '[오늘 판매 품목] 감귤 이름 부르는 법',
+            keywords: [], response: text, action: null, channel: '공통', updated_at: new Date(today),
+        }];
+    } catch (e) { console.error('[품목표기] 계산 실패(주입 생략):', e.message); return []; }
+}
+
 // 톡톡봇의 "(예시)" 줄 치환용 — "지금" 주문 기준 한 문장 (봇 자체 계산기는 휴무일을 모른다 → 이 값으로 대체)
 async function shippingNowPhrase() {
     try {
@@ -7776,7 +7812,7 @@ async function qnaGenerate(question, productName, simDate) {   // simDate = 지�
     if (!process.env.ANTHROPIC_API_KEY) return null;             // 키 없으면 전부 SKIP (침묵)
     const baseScenarios = await qnaScenarios();
     if (!baseScenarios.length) return null;
-    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate))];   // 지시 #108: 오늘 시기 지식 + #379: 발송 일정표 (없으면 기존 동일)
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday())];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
@@ -7986,7 +8022,7 @@ async function inquiryGenerate(item) {
     if (!process.env.ANTHROPIC_API_KEY) return null;
     const baseScenarios = await qnaScenarios();                   // 재료 공용: 채널 상품문의·공통
     if (!baseScenarios.length) return null;
-    const scenarios = [...baseScenarios, ...(await seasonScenariosToday()), ...(await shippingScenarioToday())];   // 지시 #108: 오늘 시기 지식 + #379: 발송 일정표
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday()), ...(await shippingScenarioToday()), ...(await citrusNamingToday())];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
