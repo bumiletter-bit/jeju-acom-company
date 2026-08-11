@@ -7705,13 +7705,21 @@ async function qnaGenerate(question, productName, simDate) {   // simDate = 지�
     // 상품 맥락: 어느 상품 페이지에 달린 문의인지 AI에게 전달 (대표 7/27 보강)
     const userContent = productName ? `[상품: ${productName}]\n${String(question || '')}` : String(question || '');
     const msg = await anthropic.messages.create({
-        model: QNA_MODEL, max_tokens: 2048,
+        // 대표 8/11: 2048 → 4000. sonnet-5는 답을 쓰기 전 내부 사고(adaptive thinking)에 같은 예산을 쓰는데,
+        //   판단이 복잡한 문의는 그 사고가 예산을 잠식해 본문이 중간에 잘린다(톡톡 실사고 1건 — 마루 v5.9.109와 같은 원인).
+        //   ⚠️ 상한일 뿐 목표가 아니다 — 답변 길이·구성은 시스템 프롬프트가 정하므로 평소 답변은 변하지 않는다.
+        model: QNA_MODEL, max_tokens: 4000,
         system: [
             { type: 'text', text: qnaBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
     });
+    // 🔴 절단 방어: 잘린 답변은 게시·발송하지 않는다(상품문의·자사몰 챗 공용 — 기존 SKIP 경로로 빠져 직원이 처리).
+    if (msg.stop_reason === 'max_tokens') {
+        console.error(`[문의생성] ⚠️ 답변이 길이 상한에서 잘림 → 게시 보류(SKIP): "${String(question || '').slice(0, 40)}..."`);
+        return null;
+    }
     const raw = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
     if (!raw || /^SKIP\b/.test(raw)) return null;
     let used = [], answer = raw;
@@ -7903,13 +7911,18 @@ async function inquiryGenerate(item) {
     const userContent = item.product_name ? `[상품: ${item.product_name}]\n${question}` : question;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const msg = await anthropic.messages.create({
-        model: QNA_MODEL, max_tokens: 2048,
+        model: QNA_MODEL, max_tokens: 4000,   // 대표 8/11: 2048 → 4000 (qnaGenerate와 같은 사유 — 위 주석 참조)
         system: [
             { type: 'text', text: inquiryBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
     });
+    // 🔴 절단 방어: 잘린 답변은 등록하지 않는다(고객문의 1:1 — 기존 SKIP 경로로 빠져 직원이 처리).
+    if (msg.stop_reason === 'max_tokens') {
+        console.error(`[고객문의생성] ⚠️ 답변이 길이 상한에서 잘림 → 등록 보류(SKIP): "${String(question || '').slice(0, 40)}..."`);
+        return null;
+    }
     const raw = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
     if (!raw || /^SKIP\b/.test(raw)) return null;
     let used = [], answer = raw;
