@@ -138,23 +138,35 @@ async function callAligo(opts, notify) {
 async function callNaverPublic(body, notify) {
     if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
     const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
-    let r;
-    try {
-        r = await rawRequest(relayBase() + '/naver-public', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
-            body: JSON.stringify(body || { action: 'store' }),
-            timeoutMs: 240000,   // 브라우저 기동 + 상품 순회(최대 30종) 여유 — 하루 1회만 호출
-        });
-    } catch (e) {
-        await notifySafe(`🔎 공개 지표 수집 실패(중계서버 연결) — ${e.message}`);
-        const err = new Error('relay_unreachable: ' + e.message); err.cause = e; throw err;
+    /* 지시 #384(2026-08-12): 여기서 만나는 429는 네이버가 아니라 **중계서버의 동시 실행 잠금(_npBusy)** 이다.
+       중계서버는 응답을 먼저 보내고 → 브라우저를 닫고 → 그 다음에 잠금을 푼다. 그래서 새벽 수집이
+       [리뷰 → 지표]를 연달아 부르면, 앞 작업의 Chromium 정리(1GB 서버·스왑이라 수 초~수십 초)가
+       끝나기 전에 다음 호출이 도착해 자기 잠금에 걸린다 — 8/10~8/12 새벽 3회 연속 실측(관심고객이 8/10에 멈춘 원인).
+       잠금은 정리가 끝나면 풀리므로 **429에 한해** 15초 간격 최대 3회 재시도한다.
+       그 외 상태·연결 오류는 종전대로 즉시 실패(동작 무변경). */
+    for (let attempt = 0; ; attempt++) {
+        let r;
+        try {
+            r = await rawRequest(relayBase() + '/naver-public', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
+                body: JSON.stringify(body || { action: 'store' }),
+                timeoutMs: 240000,   // 브라우저 기동 + 상품 순회(최대 30종) 여유 — 하루 1회만 호출
+            });
+        } catch (e) {
+            await notifySafe(`🔎 공개 지표 수집 실패(중계서버 연결) — ${e.message}`);
+            const err = new Error('relay_unreachable: ' + e.message); err.cause = e; throw err;
+        }
+        if (r.status === 429 && attempt < 3) {
+            await new Promise(s => setTimeout(s, 15000));   // 브라우저 정리가 끝나 잠금이 풀릴 시간
+            continue;
+        }
+        let data; try { data = JSON.parse(r.text); } catch { data = { raw: r.text }; }
+        if (r.status < 200 || r.status >= 300) {
+            const err = new Error('naver_public_error_' + r.status); err.status = r.status; err.data = data; throw err;
+        }
+        return data;
     }
-    let data; try { data = JSON.parse(r.text); } catch { data = { raw: r.text }; }
-    if (r.status < 200 || r.status >= 300) {
-        const err = new Error('naver_public_error_' + r.status); err.status = r.status; err.data = data; throw err;
-    }
-    return data;
 }
 
 module.exports = { callNaver, callCoupang, callAligo, callNaverPublic, relayHealth, configured };
