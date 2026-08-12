@@ -1928,7 +1928,10 @@
                         <div class="card-header-row">
                             <h2>🚫 발송 휴무일 관리 <span class="text-muted" style="font-size:13px; font-weight:400;">공휴일·명절 임시휴무·태풍 결항 등 — 주문 안내 발송일 계산에서 제외됩니다</span></h2>
                         </div>
-                        <!-- 지시 #178-1: 목록 나열 → 월 달력. 날짜 클릭으로 휴무 지정/해제·기간은 시작→종료 클릭 -->
+                        <!-- 지시 #178-1: 목록 나열 → 월 달력.
+                             지시 #383(대표 2026-08-12): 날짜를 누르면 편집 창이 열려 기간·구분(발송휴무/도착불가)·사유를
+                             한 번에 정한다. 「누를 때마다 상태 순환」·「시작→종료 2회 클릭 등록」 방식은 폐지. -->
+                        <!-- 커스텀 달력(.akm-cal z-index:5000)이 모달(1000) 위에 뜨므로 기간 선택이 가려지지 않는다 -->
                         <div id="ship-holiday-cal"></div>
                         <div id="ship-holiday-list" class="table-scroll-wrapper" style="margin-top:10px;"></div>
                     </div>
@@ -2308,6 +2311,6 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=362"></script>
+    <script src="app.js?v=363"></script>
 </body>
 </html>
