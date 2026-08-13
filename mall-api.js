@@ -457,9 +457,20 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         const pending = list.filter(o => !(done && done.has(o.order_id)));   // 아직 후기 안 쓴 주문
         const written = done ? (list.length - pending.length) : null;        // null = 게시판 조회 실패(판정 불가)
         const cap = (written === null) ? list.length : written;              // 조회 실패 시 폴백 = 주문 수 상한
-        /* #386-c: 작성완료 주문번호 목록 — 주문내역 카드가 「후기 작성완료 ✓」 표시에 쓴다.
-           done 집합 전체를 준다(30일 창과 무관 — 옛 주문에 쓴 후기도 완료 표시가 맞다). */
-        return { items: pending, reviewed: done ? Array.from(done) : [], orders: list.length, written, claimed, claimable: Math.max(0, cap - claimed) };
+        /* #386-c: 작성완료 주문번호 목록 — 주문내역 카드가 「후기 작성완료 ✓」 표시에 쓴다(30일 창과 무관).
+           🔴 done 집합은 게시판 300건 전체(다른 회원 후기 포함)라 그대로 내보내면 **남의 주문번호가 공개 응답에 실린다**
+              → 게시글 member_id가 본인인 것만 추린다(v5.9.268에서 교정 — 267은 전체가 나갔음). */
+        let reviewed = [];
+        if (done) {
+            try {
+                const arts = await reviewArticles(memberKey);   // 30초 캐시라 추가 호출 비용 0
+                const mk = String(memberKey).toLowerCase();
+                reviewed = [...new Set((arts || [])
+                    .filter(a => a && a.order_id && String(a.member_id || '').toLowerCase() === mk)
+                    .map(a => String(a.order_id)))];
+            } catch (e) { reviewed = []; }
+        }
+        return { items: pending, reviewed, orders: list.length, written, claimed, claimable: Math.max(0, cap - claimed) };
     }
     router.get('/pub/reviewable', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid(req.query.mid);
