@@ -457,13 +457,15 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
         const pending = list.filter(o => !(done && done.has(o.order_id)));   // 아직 후기 안 쓴 주문
         const written = done ? (list.length - pending.length) : null;        // null = 게시판 조회 실패(판정 불가)
         const cap = (written === null) ? list.length : written;              // 조회 실패 시 폴백 = 주문 수 상한
-        return { items: pending, orders: list.length, written, claimed, claimable: Math.max(0, cap - claimed) };
+        /* #386-c: 작성완료 주문번호 목록 — 주문내역 카드가 「후기 작성완료 ✓」 표시에 쓴다.
+           done 집합 전체를 준다(30일 창과 무관 — 옛 주문에 쓴 후기도 완료 표시가 맞다). */
+        return { items: pending, reviewed: done ? Array.from(done) : [], orders: list.length, written, claimed, claimable: Math.max(0, cap - claimed) };
     }
     router.get('/pub/reviewable', pubGate, pubWrap(async (req, res) => {
         const mid = pubMid(req.query.mid);
         const member = await resolveMember(mid, null);
         const q = await reviewQuota(mid, member.id);      // #381: review-claim과 **같은 함수**
-        res.json({ ok: true, items: q.items, written: q.written, claimed: q.claimed, claimable: q.claimable, window_days: REVIEW_WINDOW_DAYS });
+        res.json({ ok: true, items: q.items, reviewed: q.reviewed, written: q.written, claimed: q.claimed, claimable: q.claimable, window_days: REVIEW_WINDOW_DAYS });
     }));
 
     // 가입 혜택 +5 (1회)
