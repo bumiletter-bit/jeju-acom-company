@@ -12250,6 +12250,97 @@ setInterval(async () => {
     }
 }, 60000);
 
+// ══════════════ 지시 #395: 주문 정리기 (현금·단체주문 주소 정리 → CJ 발송 엑셀) ══════════════
+//   juso 프록시: 승인키 = env JUSO_API_KEY만 (코드·화면·브라우저 노출 0). 같은 검색어 5분 캐시 + 과호출 가드(대표 조건 4).
+//   vendor 서빙: pako(HWP)·tesseract(OCR) — 외부 CDN 장애와 무관하게 동작(대표 조건 1). OCR은 화면에서 lazy-load라 첫 로딩 무증가.
+
+// --- vendor 정적 서빙 (node_modules에서 해당 패키지 dist만 노출 — 전체 노출 금지) ---
+app.get('/vendor/pako-inflate.min.js', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.join(__dirname, 'node_modules', 'pako', 'dist', 'pako_inflate.min.js'));
+});
+app.use('/vendor/tess', express.static(path.join(__dirname, 'node_modules', 'tesseract.js', 'dist'), { maxAge: '1d' }));
+app.use('/vendor/tess-core', express.static(path.join(__dirname, 'node_modules', 'tesseract.js-core'), { maxAge: '1d' }));
+app.get('/vendor/tess-lang/:file', (req, res) => {
+    const LANG_FILES = {
+        'kor.traineddata.gz': ['@tesseract.js-data', 'kor', '4.0.0_best_int', 'kor.traineddata.gz'],
+        'eng.traineddata.gz': ['@tesseract.js-data', 'eng', '4.0.0_best_int', 'eng.traineddata.gz'],
+    };
+    const p = LANG_FILES[req.params.file];
+    if (!p) return res.status(404).end();
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.join(__dirname, 'node_modules', ...p));
+});
+
+// --- 도로명주소 검색 프록시 (직원 공용 — 원본 JSONP를 서버 fetch로 전환, 응답 형식은 juso API 원형 그대로) ---
+const _jusoCache = new Map();          // keyword → { at, data } — 같은 검색어 5분 캐시
+let _jusoWindow = { start: 0, count: 0 };   // 과호출 가드 (분당 상한)
+app.get('/api/agent-office/juso', authMiddleware, async (req, res) => {
+    try {
+        const key = process.env.JUSO_API_KEY;
+        if (!key) return res.json({ error: 'NOKEY' });   // 화면이 "대표에게 문의" 안내 (정리·엑셀은 정상 동작)
+        const keyword = String(req.query.keyword || '').trim().slice(0, 200);
+        if (!keyword) return res.status(400).json({ error: 'EMPTY' });
+        const hit = _jusoCache.get(keyword);
+        if (hit && Date.now() - hit.at < 5 * 60 * 1000) return res.json(hit.data);
+        const now = Date.now();
+        if (now - _jusoWindow.start > 60000) _jusoWindow = { start: now, count: 0 };
+        if (++_jusoWindow.count > 400) return res.status(429).json({ error: 'RATE' });   // 전체 검증(150ms 간격 순차)과 정합한 여유 상한
+        const url = 'https://business.juso.go.kr/addrlink/addrLinkApi.do?confmKey=' + encodeURIComponent(key)
+            + '&currentPage=1&countPerPage=7&resultType=json&keyword=' + encodeURIComponent(keyword);
+        const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        const data = await r.json();
+        if (_jusoCache.size > 500) _jusoCache.clear();   // 메모리 상한 가드
+        _jusoCache.set(keyword, { at: Date.now(), data });
+        res.json(data);
+    } catch (e) {
+        res.status(502).json({ error: String(e.message || e).slice(0, 120) });
+    }
+});
+
+// --- 주문 정리기 공용 설정 (출고지·기본 배송메세지·주문경로만 — 보내는이 3칸은 건별 입력이라 저장하지 않음, 대표 조건 3) ---
+app.get('/api/agent-office/organizer-settings', authMiddleware, async (req, res) => {
+    try { res.json({ ...((await naverCfgGet('order_organizer_settings')) || {}), _jusoKey: !!process.env.JUSO_API_KEY }); }
+    catch (e) { res.status(500).json({ error: 'DB' }); }
+});
+app.put('/api/agent-office/organizer-settings', authMiddleware, async (req, res) => {
+    try {
+        const b = req.body || {};
+        const val = {
+            origin: String(b.origin || '').slice(0, 200),
+            memo: String(b.memo || '').slice(0, 300),
+            channel: String(b.channel || '').slice(0, 100),
+        };
+        await naverCfgSet('order_organizer_settings', val);
+        await writeAudit({ action: 'update', targetType: 'order_organizer_settings', changes: val,
+            source: 'order-organizer', actor: { id: req.user?.id, name: req.user?.name } });
+        res.json({ ok: true, settings: val });
+    } catch (e) { res.status(500).json({ error: 'DB' }); }
+});
+
+// --- juso 연동 자가진단 러너 (지시 #395 검증용 — DB 플래그 juso_test_request {keywords:[...]} 감지 시 실검색, 결과 juso_test_result) ---
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('juso_test_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'juso_test_request'`);   // 선제거 — 반복 실행 방지
+        const kws = (Array.isArray(req.keywords) ? req.keywords : []).slice(0, 10);
+        const out = { at: new Date().toISOString(), hasKey: !!process.env.JUSO_API_KEY, results: [] };
+        for (const kw of kws) {
+            try {
+                const url = 'https://business.juso.go.kr/addrlink/addrLinkApi.do?confmKey=' + encodeURIComponent(process.env.JUSO_API_KEY || '')
+                    + '&currentPage=1&countPerPage=7&resultType=json&keyword=' + encodeURIComponent(String(kw).slice(0, 200));
+                const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+                out.results.push({ keyword: kw, data: await r.json() });
+            } catch (e) { out.results.push({ keyword: kw, error: String(e.message || e).slice(0, 150) }); }
+            await new Promise(r => setTimeout(r, 200));
+        }
+        await naverCfgSet('juso_test_result', out);
+    } catch (e) {
+        try { await naverCfgSet('juso_test_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
 // ══════════════ 지시 #246 판정2: 카페24 신규 세트 동기화 파이프라인 (설계 승인분 시공) ══════════════
 //   네이버 04:30 스냅샷(정본) ↔ 카페24 신규 세트(91~109) 기본가·품절 자동 대조 → 보정.
 //   등록식(#248 실측 확정 — 2026-08-07 실등록가 19/19 검산 통과): 카페24 기본가 = 네이버 할인가 + min(옵션 증감액) [양수화 — 결제가 불변].

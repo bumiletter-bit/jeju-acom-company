@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
     <link rel="stylesheet" href="styles.css?v=121">
     <link rel="stylesheet" href="theme.css?v=12">
+    <link rel="stylesheet" href="order-organizer.css?v=1">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -151,6 +152,10 @@
                 <a href="#" class="nav-item" data-page="invoice">
                     <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5h11v9h-11z"/><path d="M13.5 10h4l3 3v2.5h-7z"/><circle cx="6.5" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/></svg></span>
                     <span class="nav-text">송장변환</span>
+                </a>
+                <a href="#" class="nav-item" data-page="organizer">
+                    <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg></span>
+                    <span class="nav-text">주문 정리기</span>
                 </a>
                 <a href="#" class="nav-item" data-page="cs-room">
                     <span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.3 9.3 9.3 0 0 1-4-1L3 20l1.3-3.9A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 12 3a8.5 8.5 0 0 1 9 8.5Z"/></svg></span>
@@ -1783,6 +1788,138 @@
                 </div>
             </div>
 
+            <!-- 주문 정리기 페이지 (지시 #395 — 원본: 주문정리기/app_template.html v2.4 이식) -->
+            <div id="page-organizer" class="page">
+                <div class="card-header-row" style="margin-bottom:20px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                    <h1>주문 정리기 <span style="font-size:12.5px; font-weight:500; color:var(--text-mid);">현금·단체주문 주소 자동 정리 → CJ대한통운 발송 엑셀</span></h1>
+                    <div class="oo-row-flex">
+                        <button class="oo-btn" id="ooBtnReset">↺ 초기화</button>
+                        <button class="oo-btn" id="ooBtnSample">예시 넣어보기</button>
+                        <button class="oo-btn" id="ooBtnSettings">⚙ 설정</button>
+                    </div>
+                </div>
+
+                <!-- 설정 -->
+                <div class="card oo-settings" id="ooSettingsPanel">
+                    <h2 class="oo-h2">⚙️ 기본 설정 <span style="font-weight:400; font-size:11.5px; color:var(--text-mid);">(전 직원 공용으로 저장됩니다 — 주소 검증 승인키는 서버에서 관리해요)</span></h2>
+                    <div class="set-grid">
+                        <label>출고지</label>
+                        <input id="ooSetOrigin">
+                        <label>기본 배송메세지</label>
+                        <input id="ooSetMemo">
+                        <label>주문경로 표기</label>
+                        <input id="ooSetChannel">
+                    </div>
+                    <div class="oo-row-flex oo-mt10">
+                        <button class="oo-btn primary" id="ooBtnSaveSettings">저장</button>
+                        <button class="oo-btn" id="ooBtnResetSettings">기본값으로</button>
+                    </div>
+                </div>
+
+                <!-- 1단계: 붙여넣기 -->
+                <div class="card">
+                    <h2 class="oo-h2"><span class="oo-step">1단계</span> 주문 내용 붙여넣기 <span style="font-weight:400; font-size:11.5px; color:var(--text-mid);">카톡·문자 그대로, 여러 건 한꺼번에 OK</span></h2>
+                    <textarea id="ooRawInput" placeholder="예)
+받는분: 김영희  010-5554-1234
+서울 마포구 월드컵북로 400, 101동 202호
+미니밤호박 5kg 1박스  문앞에 놓아주세요
+
+박철수 010-2222-3333 경기도 성남시 분당구 판교역로 235, 606동 1503호 한라봉 5kg 2박스"></textarea>
+                    <div class="upload-zone" id="ooDropZone">
+                        <button class="oo-btn" id="ooBtnFile">파일 올리기</button>
+                        <button class="oo-btn" id="ooBtnImage">이미지 올리기</button>
+                        <span class="hint">엑셀(xlsx·xls)·CSV·한글(hwp·hwpx)·워드(docx)·텍스트 지원 / 파일을 여기로 끌어다 놓아도 되고, <b>주문 이미지는 이 화면에서 Ctrl+V 붙여넣기</b>하면 글자를 읽어와요</span>
+                        <div id="ooFileStatus"></div>
+                    </div>
+                    <input type="file" id="ooFileInput" hidden multiple accept=".xlsx,.xls,.csv,.tsv,.txt,.hwp,.hwpx,.docx">
+                    <input type="file" id="ooImgInput" hidden multiple accept="image/*">
+                    <div class="orderer-box">
+                        <label>보내는이</label>
+                        <input id="ooOrdererName" placeholder="이름" style="width:140px">
+                        <input id="ooOrdererPhone" placeholder="연락처" style="width:160px">
+                        <input id="ooOrdererAddr" placeholder="보내는이 변경주소 (비우면 기존 그대로)" style="flex:1; min-width:280px">
+                    </div>
+                    <div class="oo-row-flex oo-mt10">
+                        <button class="oo-btn primary" id="ooBtnParse">주문 정리하기</button>
+                        <button class="oo-btn" id="ooBtnAddRow">+ 빈 줄 추가</button>
+                    </div>
+                </div>
+
+                <!-- 2단계: 확인/검증 -->
+                <div class="card">
+                    <h2 class="oo-h2"><span class="oo-step">2단계</span> 확인하고 주소 검증하기 <span style="font-weight:400; font-size:11.5px; color:var(--text-mid);">표를 클릭하면 바로 수정할 수 있어요</span></h2>
+                    <div class="apikey-warn" id="ooApikeyWarn">⚠️ 주소 검증 승인키가 서버에 등록되지 않았어요 — 대표에게 문의해주세요. (정리·엑셀은 그대로 사용 가능)</div>
+                    <div class="oo-row-flex" style="margin-bottom:10px;">
+                        <button class="oo-btn primary" id="ooBtnVerifyAll">전체 주소 검증</button>
+                        <span style="font-size:12px; color:var(--text-mid);">노란 <b>선택필요</b>·빨간 <b>확인필요</b> 배지를 누르면 후보 주소를 고를 수 있어요</span>
+                    </div>
+                    <div class="oo-table-scroll">
+                        <table id="ooOrdersTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:36px;">#</th>
+                                    <th style="width:90px;">상태</th>
+                                    <th>수취인명</th>
+                                    <th>연락처1</th>
+                                    <th>연락처2</th>
+                                    <th style="min-width:280px;">배송지</th>
+                                    <th style="min-width:180px;">옵션정보(상품)</th>
+                                    <th style="width:50px;">수량</th>
+                                    <th style="min-width:150px;">배송메세지</th>
+                                    <th>보내는사람</th>
+                                    <th>보내는사람연락처</th>
+                                    <th style="width:36px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="ooTbody">
+                                <tr><td colspan="12" class="empty-note">위에 주문 내용을 붙여넣고 <b>주문 정리하기</b>를 눌러주세요</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="oo-stats" id="ooStats"></div>
+                </div>
+
+                <!-- 3단계: 내보내기 -->
+                <div class="card">
+                    <h2 class="oo-h2"><span class="oo-step">3단계</span> CJ대한통운 양식으로 내보내기</h2>
+                    <div class="oo-row-flex">
+                        <button class="oo-btn primary" id="ooBtnExcel">아꼼이네 CJ양식 엑셀 다운로드</button>
+                        <button class="oo-btn" id="ooBtnCopy">표 복사 (엑셀에 붙여넣기)</button>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-mid); margin-top:8px;">엑셀 컬럼: 보내는사람 · 보내는사람연락처 · 출고지 · 수취인명 · 옵션정보 · 수량 · 수취인연락처1 · 수취인연락처2 · 배송지 · 배송메세지 · 구매자연락처 · 주문경로 · 보내는이 변경주소</div>
+                </div>
+
+                <!-- 후보 선택 모달 (✕/취소로만 닫힘 — 바깥 클릭 닫기 없음) -->
+                <div id="ooModalBack" class="oo-modal-back">
+                    <div class="oo-modal-box">
+                        <button class="oo-modal-x" id="ooModalX" title="닫기">✕</button>
+                        <h3 id="ooModalTitle">주소 후보 선택</h3>
+                        <div class="oo-modal-sub" id="ooModalOrig"></div>
+                        <div id="ooModalCands"></div>
+                        <label style="font-size:12px; font-weight:700; color:var(--text-mid); display:block; margin-top:10px;">상세주소 (동·호수 등)</label>
+                        <input class="detail-edit" id="ooModalDetail" placeholder="예: 109동 1402호">
+                        <div class="oo-row-flex oo-mt10" style="justify-content:flex-end;">
+                            <button class="oo-btn" id="ooModalKeep">원본 그대로 두기</button>
+                            <button class="oo-btn ghost" id="ooModalClose">취소</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 시트 선택 모달 -->
+                <div id="ooSheetBack" class="oo-modal-back">
+                    <div class="oo-modal-box">
+                        <button class="oo-modal-x" id="ooSheetX" title="닫기">✕</button>
+                        <h3 id="ooSheetTitle">시트 선택</h3>
+                        <div class="oo-modal-sub">불러올 표(시트)를 선택해주세요. 행 순서는 원본 그대로 유지됩니다.</div>
+                        <div id="ooSheetList"></div>
+                        <div class="oo-row-flex oo-mt10" style="justify-content:flex-end;">
+                            <button class="oo-btn primary" id="ooSheetOk">선택한 시트 불러오기</button>
+                            <button class="oo-btn ghost" id="ooSheetClose">취소</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- CS처리방 페이지 -->
             <div id="page-cs-room" class="page">
                 <div class="card-header-row" style="margin-bottom:20px;">
@@ -2311,6 +2448,10 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=364"></script>
+    <script src="app.js?v=365"></script>
+    <!-- 지시 #395: 주문 정리기 (파서·추출기 = 원형 이식, organizer = 앱 로직. OCR·pako는 화면에서 lazy-load) -->
+    <script src="order-parser.js?v=1"></script>
+    <script src="order-extract.js?v=1"></script>
+    <script src="order-organizer.js?v=1"></script>
 </body>
 </html>

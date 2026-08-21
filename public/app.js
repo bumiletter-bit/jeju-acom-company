@@ -317,6 +317,7 @@ function switchPage(pageName) {
     if (pageName === 'worklog') renderWorklogPage().catch(console.error);
     if (pageName === 'pricing') renderPricingList().catch(console.error);
     if (pageName === 'invoice') aoRenderInvoiceCatalog().catch(console.error); // 송장변환: 오늘 판매 품목 로드·표시 (대표 7/20)
+    if (pageName === 'organizer') window.ooInitOrganizer?.();   // 지시 #395: 주문 정리기 — 첫 진입 시 공용 설정 로드
     if (pageName === 'planner') renderPlannerPage().catch(console.error);
     if (pageName === 'inventory') renderBoxInventory().catch(console.error);
     if (pageName === 'cs-room') renderCsTemplates().catch(console.error);

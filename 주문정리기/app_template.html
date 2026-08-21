@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>제주아꼼이네 주문 정리기</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+/* ===== 제주아꼼이네 오피스 디자인 가이드 (인디고/화이트 확정 테마) ===== */
+:root{
+  --primary:#4F46E5; --primary-dark:#4338CA; --primary-light:#EEF0FF; --primary-ring:rgba(79,70,229,.15);
+  --bg:#F5F6F8; --card-bg:#FFFFFF;
+  --text-dark:#101828; --text-mid:#667085; --text-light:#98A0AE;
+  --border:#ECEDF1; --border-soft:#F1F2F5;
+  --danger:#F04438; --success:#12B76A; --amber:#F59E0B;
+  --shadow-sm:0 1px 3px rgba(16,24,40,.06);
+  --shadow-float:0 4px 16px -6px rgba(16,24,40,.12);
+  --shadow-primary:0 6px 16px -6px rgba(79,70,229,.55);
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif;
+  background:var(--bg); color:var(--text-dark); font-size:14px; line-height:1.55;}
+.wrap{max-width:1280px; margin:0 auto; padding:18px 16px 8px;}
+header{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:16px;}
+header h1{font-size:19px; font-weight:800; color:var(--text-dark); display:flex; align-items:center; gap:9px;}
+.logo-dot{width:12px; height:12px; border-radius:4px; background:var(--primary); box-shadow:var(--shadow-primary); display:inline-block;}
+header h1 .sub{font-size:12px; font-weight:500; color:var(--text-mid);}
+
+/* 버튼 위계 */
+.btn{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); background:#fff; color:var(--text-dark);
+  border-radius:10px; padding:9px 15px; font-size:13px; font-weight:600; cursor:pointer; transition:.15s; font-family:inherit; box-shadow:var(--shadow-sm);}
+.btn:hover{border-color:var(--primary); color:var(--primary); background:var(--primary-light);}
+.btn.primary{background:var(--primary); border-color:var(--primary); color:#fff; box-shadow:var(--shadow-primary);}
+.btn.primary:hover{background:var(--primary-dark); color:#fff;}
+.btn.green{background:var(--primary); border-color:var(--primary); color:#fff; box-shadow:var(--shadow-primary);}
+.btn.green:hover{background:var(--primary-dark);}
+.btn.ghost{background:transparent; box-shadow:none;}
+.btn:disabled{opacity:.5; cursor:not-allowed;}
+#btnReset:hover{border-color:var(--danger); color:var(--danger); background:#FEF3F2;}
+
+/* 카드 */
+.card{background:var(--card-bg); border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:14px; box-shadow:var(--shadow-sm);}
+.card h2{font-size:14px; font-weight:700; margin-bottom:12px; display:flex; align-items:center; gap:8px;}
+.card h2 .step{background:var(--primary); color:#fff; border-radius:999px; font-size:11px; padding:3px 11px; font-weight:700;}
+
+textarea#rawInput{width:100%; min-height:170px; border:1.5px dashed var(--border); border-radius:12px; padding:13px; font-size:13.5px;
+  font-family:inherit; resize:vertical; background:#FBFBFD; color:var(--text-dark);}
+textarea#rawInput:focus{outline:none; border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-ring); background:#fff;}
+.row-flex{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+.mt10{margin-top:10px;}
+
+.upload-zone{display:flex; gap:8px; flex-wrap:wrap; align-items:center; border:1.5px dashed var(--border); border-radius:12px;
+  padding:11px 13px; margin-top:10px; background:#FBFBFD; transition:.15s;}
+.upload-zone.drag{border-color:var(--primary); background:var(--primary-light);}
+.upload-zone .hint{font-size:11.5px; color:var(--text-mid);}
+#fileStatus{width:100%; font-size:12.5px; color:var(--primary); font-weight:600; display:none;}
+#fileStatus.show{display:block;}
+.progress-bar{height:6px; background:var(--border-soft); border-radius:4px; overflow:hidden; margin-top:5px;}
+.progress-bar > div{height:100%; background:var(--primary); width:0%; transition:width .3s; border-radius:4px;}
+
+.orderer-box{display:flex; gap:9px; flex-wrap:wrap; align-items:center; background:var(--primary-light);
+  border:1px solid #DDE1FF; border-radius:12px; padding:11px 14px; margin-top:10px;}
+.orderer-box label{font-size:13px; font-weight:700; color:var(--primary);}
+.orderer-box input{border:1px solid var(--border); border-radius:10px; padding:8px 11px; font-size:13px; font-family:inherit;}
+.orderer-box input:focus{outline:none; border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-ring);}
+
+/* 설정 */
+#settingsPanel{display:none;}
+#settingsPanel.open{display:block;}
+.set-grid{display:grid; grid-template-columns:170px 1fr; gap:9px 12px; align-items:center;}
+.set-grid label{font-size:12.5px; font-weight:700; color:var(--text-mid);}
+.set-grid input{border:1px solid var(--border); border-radius:10px; padding:8px 11px; font-size:13px; font-family:inherit; width:100%;}
+.set-grid input:focus{outline:none; border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-ring);}
+.set-grid .note{grid-column:2; font-size:11.5px; color:var(--text-light); margin-top:-4px;}
+
+/* 표 — 헤더 고정 + 래퍼 스크롤 */
+.table-scroll{overflow:auto; border:1px solid var(--border); border-radius:12px; max-height:72vh; box-shadow:var(--shadow-sm);}
+table{border-collapse:separate; border-spacing:0; width:100%; min-width:1100px; font-size:13px;}
+thead th{background:linear-gradient(#FBFBFD,#F4F5F8); color:var(--text-mid); font-weight:700; font-size:12px; padding:10px 9px;
+  text-align:left; white-space:nowrap; border-bottom:1px solid var(--border); position:sticky; top:0; z-index:2;}
+tbody td{border-bottom:1px solid var(--border-soft); padding:8px 9px; vertical-align:top;}
+tbody tr:hover{background:#F8F9FC;}
+tbody tr:last-child td{border-bottom:none;}
+td[contenteditable]{outline:none; border-radius:6px; min-width:60px;}
+td[contenteditable]:focus{background:var(--primary-light); box-shadow:0 0 0 2px var(--primary);}
+td.missing{background:#FEF3F2; box-shadow:inset 0 0 0 1px #FECDCA;}
+td.missing::after{content:'비어있음'; color:#F04438; font-size:11px; opacity:.7;}
+td.missing:focus::after{content:'';}
+td[data-f="qty"]{text-align:center; font-variant-numeric:tabular-nums;}
+
+/* 상태 배지: 파스텔 배경 + 색점 */
+.chip{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; border-radius:999px; padding:3px 10px; white-space:nowrap; cursor:default;}
+.chip::before{content:''; width:6px; height:6px; border-radius:50%; background:currentColor; flex:none;}
+.chip.idle{background:#F2F4F7; color:#667085; cursor:pointer;}
+.chip.idle:hover{background:var(--primary-light); color:var(--primary);}
+.modal-x{position:absolute; top:14px; right:14px; border:none; background:#F2F4F7; color:#667085; width:30px; height:30px; border-radius:8px; font-size:15px; cursor:pointer; line-height:1;}
+.modal-x:hover{background:#FEF3F2; color:var(--danger);}
+.chip.ok{background:#ECFDF3; color:var(--success);}
+.chip.multi{background:#FFFAEB; color:var(--amber); cursor:pointer;}
+.chip.fail{background:#FEF3F2; color:var(--danger); cursor:pointer;}
+.chip.checking{background:var(--primary-light); color:var(--primary);}
+.zip{font-size:11px; color:var(--text-light); display:block; margin-top:3px; font-variant-numeric:tabular-nums;}
+.del-btn{border:none; background:none; color:#C9CDD4; cursor:pointer; font-size:15px; border-radius:6px; padding:2px 5px;}
+.del-btn:hover{color:var(--danger); background:#FEF3F2;}
+.stats{display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:var(--text-mid); margin:11px 2px 0; font-variant-numeric:tabular-nums;}
+.stats b{color:var(--text-dark);}
+.stats .g{color:var(--success); font-weight:700;}
+.stats .y{color:var(--amber); font-weight:700;}
+.stats .r{color:var(--danger); font-weight:700;}
+
+/* 모달 */
+#modalBack, .modal-back{display:none; position:fixed; inset:0; background:rgba(16,24,40,.4); z-index:50; align-items:center; justify-content:center; padding:16px;}
+#modalBack.open, .modal-back.open{display:flex;}
+#modal, .modal-box{background:#fff; border-radius:14px; max-width:560px; width:100%; max-height:80vh; overflow-y:auto; padding:20px; box-shadow:var(--shadow-float); position:relative;}
+#modal h3, .modal-box h3{font-size:15px; margin-bottom:5px; font-weight:700;}
+#modal .orig, .modal-sub{font-size:12.5px; color:var(--text-mid); margin-bottom:12px; word-break:break-all;}
+.cand{border:1px solid var(--border); border-radius:12px; padding:11px 13px; margin-bottom:8px; cursor:pointer; transition:.12s;}
+.cand:hover{border-color:var(--primary); background:var(--primary-light);}
+.cand .road{font-weight:700; font-size:13.5px;}
+.cand .jibun{font-size:12px; color:var(--text-mid); margin-top:2px;}
+.cand .zipn{display:inline-block; font-size:11px; background:#F2F4F7; border-radius:6px; padding:1px 8px; margin-top:5px; color:var(--text-mid); font-variant-numeric:tabular-nums;}
+.detail-edit{width:100%; border:1px solid var(--border); border-radius:10px; padding:8px 11px; font-size:13px; font-family:inherit; margin-top:6px;}
+.detail-edit:focus{outline:none; border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-ring);}
+.sheet-item{display:flex; align-items:center; gap:10px; width:100%; border:1px solid var(--border); background:#fff;
+  border-radius:12px; padding:12px 14px; margin-bottom:8px; cursor:pointer; font-size:13.5px; transition:.12s;}
+.sheet-item:hover{border-color:var(--primary); background:var(--primary-light);}
+.sheet-item:has(input:checked){border-color:var(--primary); background:var(--primary-light); box-shadow:0 0 0 1px var(--primary);}
+.sheet-item input{width:17px; height:17px; accent-color:var(--primary); cursor:pointer;}
+.sheet-item span{font-size:12px; color:var(--text-mid); margin-left:auto;}
+.sheet-item.all b{color:var(--primary);}
+
+#toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#101828; color:#fff; padding:11px 21px;
+  border-radius:999px; font-size:13px; opacity:0; pointer-events:none; transition:.3s; z-index:99; max-width:90vw; text-align:center; box-shadow:var(--shadow-float);}
+#toast.show{opacity:1;}
+.empty-row, .empty-note{text-align:center; color:var(--text-light); padding:34px 10px; font-size:13px;}
+.apikey-warn{background:#FFFAEB; border:1px solid #FEDF89; color:#B54708; border-radius:12px; padding:10px 13px; font-size:12.5px; margin-bottom:10px; display:none;}
+.apikey-warn.show{display:block;}
+footer{text-align:center; color:var(--text-light); font-size:11.5px; padding:12px 0 30px;}
+@media (max-width:768px){
+  .set-grid{grid-template-columns:1fr;}
+  .set-grid .note{grid-column:1;}
+  .table-scroll{max-height:60vh;}
+  .btn{min-height:40px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="logo-dot"></span>제주아꼼이네 주문 정리기 <span class="sub">현금·단체주문 주소 자동 정리</span></h1>
+    <div class="row-flex">
+      <button class="btn" id="btnReset">↺ 초기화</button>
+      <button class="btn" id="btnSample">예시 넣어보기</button>
+      <button class="btn" id="btnSettings">⚙ 설정</button>
+    </div>
+  </header>
+
+  <!-- 설정 -->
+  <div class="card" id="settingsPanel">
+    <h2>⚙️ 기본 설정 <span style="font-weight:400; font-size:11.5px; color:var(--text-mid);">(이 브라우저에 자동 저장됩니다)</span></h2>
+    <div class="set-grid">
+      <label>도로명주소 API 키</label>
+      <input id="setApiKey" placeholder="www.juso.go.kr 에서 무료 발급한 승인키 붙여넣기">
+      <div class="note">발급: juso.go.kr → 주소기반산업지원서비스 → 개발자센터 → 검색API 신청 (무료·즉시발급). 키가 없어도 정리·엑셀은 사용 가능하고, 주소 검증만 안 됩니다.</div>
+      <label>출고지</label>
+      <input id="setOrigin">
+      <label>기본 배송메세지</label>
+      <input id="setMemo">
+      <label>주문경로 표기</label>
+      <input id="setChannel">
+    </div>
+    <div class="row-flex mt10">
+      <button class="btn primary" id="btnSaveSettings">저장</button>
+      <button class="btn" id="btnResetSettings">기본값으로</button>
+    </div>
+  </div>
+
+  <!-- 1단계: 붙여넣기 -->
+  <div class="card">
+    <h2><span class="step">1단계</span> 주문 내용 붙여넣기 <span style="font-weight:400; font-size:11.5px; color:var(--text-mid);">카톡·문자 그대로, 여러 건 한꺼번에 OK</span></h2>
+    <textarea id="rawInput" placeholder="예)
+받는분: 김영희  010-5554-1234
+서울 마포구 월드컵북로 400, 101동 202호
+미니밤호박 5kg 1박스  문앞에 놓아주세요
+
+박철수 010-2222-3333 경기도 성남시 분당구 판교역로 235, 606동 1503호 한라봉 5kg 2박스"></textarea>
+    <div class="upload-zone" id="dropZone">
+      <button class="btn" id="btnFile">파일 올리기</button>
+      <button class="btn" id="btnImage">이미지 올리기</button>
+      <span class="hint">엑셀(xlsx·xls)·CSV·한글(hwp·hwpx)·워드(docx)·텍스트 지원 / 파일을 여기로 끌어다 놓아도 되고, <b>주문 이미지는 이 화면에서 Ctrl+V 붙여넣기</b>하면 글자를 읽어와요</span>
+      <div id="fileStatus"></div>
+    </div>
+    <input type="file" id="fileInput" hidden multiple accept=".xlsx,.xls,.csv,.tsv,.txt,.hwp,.hwpx,.docx">
+    <input type="file" id="imgInput" hidden multiple accept="image/*">
+    <div class="orderer-box">
+      <label>보내는이</label>
+      <input id="ordererName" placeholder="이름" style="width:140px">
+      <input id="ordererPhone" placeholder="연락처" style="width:160px">
+      <input id="ordererAddr" placeholder="보내는이 변경주소 (비우면 기존 그대로)" style="flex:1; min-width:280px">
+    </div>
+    <div class="row-flex mt10">
+      <button class="btn primary" id="btnParse">주문 정리하기</button>
+      <button class="btn" id="btnAddRow">+ 빈 줄 추가</button>
+    </div>
+  </div>
+
+  <!-- 2단계: 확인/검증 -->
+  <div class="card">
+    <h2><span class="step">2단계</span> 확인하고 주소 검증하기 <span style="font-weight:400; font-size:11.5px; color:var(--text-mid);">표를 클릭하면 바로 수정할 수 있어요</span></h2>
+    <div class="apikey-warn" id="apikeyWarn">⚠️ 주소 검증을 쓰려면 <b>설정 ⚙️</b>에서 도로명주소 API 키를 넣어주세요. (juso.go.kr 무료 발급)</div>
+    <div class="row-flex" style="margin-bottom:10px;">
+      <button class="btn green" id="btnVerifyAll">전체 주소 검증</button>
+      <span style="font-size:12px; color:var(--text-mid);">노란 <b>선택필요</b>·빨간 <b>확인필요</b> 배지를 누르면 후보 주소를 고를 수 있어요</span>
+    </div>
+    <div class="table-scroll">
+      <table id="ordersTable">
+        <thead>
+          <tr>
+            <th style="width:36px;">#</th>
+            <th style="width:90px;">상태</th>
+            <th>수취인명</th>
+            <th>연락처1</th>
+            <th>연락처2</th>
+            <th style="min-width:280px;">배송지</th>
+            <th style="min-width:180px;">옵션정보(상품)</th>
+            <th style="width:50px;">수량</th>
+            <th style="min-width:150px;">배송메세지</th>
+            <th>보내는사람</th>
+            <th>보내는사람연락처</th>
+            <th style="width:36px;"></th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="12" class="empty-note">위에 주문 내용을 붙여넣고 <b>주문 정리하기</b>를 눌러주세요</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <!-- 3단계: 내보내기 -->
+  <div class="card">
+    <h2><span class="step">3단계</span> CJ대한통운 양식으로 내보내기</h2>
+    <div class="row-flex">
+      <button class="btn primary" id="btnExcel">아꼼이네 CJ양식 엑셀 다운로드</button>
+      <button class="btn" id="btnCopy">표 복사 (엑셀에 붙여넣기)</button>
+    </div>
+    <div style="font-size:12px; color:var(--text-mid); margin-top:8px;">엑셀 컬럼: 보내는사람 · 보내는사람연락처 · 출고지 · 수취인명 · 옵션정보 · 수량 · 수취인연락처1 · 수취인연락처2 · 배송지 · 배송메세지 · 구매자연락처 · 주문경로 · 보내는이 변경주소</div>
+  </div>
+
+  <footer>제주아꼼이네 농업회사법인 · 주문 정리기 v2.4 · 주소 검증: 행정안전부 도로명주소 API</footer>
+</div>
+
+<!-- 후보 선택 모달 -->
+<div id="modalBack">
+  <div id="modal">
+    <button class="modal-x" id="modalX" title="닫기">✕</button>
+    <h3 id="modalTitle">주소 후보 선택</h3>
+    <div class="orig" id="modalOrig"></div>
+    <div id="modalCands"></div>
+    <label style="font-size:12px; font-weight:700; color:var(--text-mid); display:block; margin-top:10px;">상세주소 (동·호수 등)</label>
+    <input class="detail-edit" id="modalDetail" placeholder="예: 109동 1402호">
+    <div class="row-flex mt10" style="justify-content:flex-end;">
+      <button class="btn" id="modalKeep">원본 그대로 두기</button>
+      <button class="btn ghost" id="modalClose">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- 시트 선택 모달 -->
+<div id="sheetBack" class="modal-back">
+  <div class="modal-box">
+    <button class="modal-x" id="sheetX" title="닫기">✕</button>
+    <h3 id="sheetTitle">시트 선택</h3>
+    <div class="modal-sub">불러올 표(시트)를 선택해주세요. 행 순서는 원본 그대로 유지됩니다.</div>
+    <div id="sheetList"></div>
+    <div class="row-flex mt10" style="justify-content:flex-end;">
+      <button class="btn primary" id="sheetOk">선택한 시트 불러오기</button>
+      <button class="btn ghost" id="sheetClose">취소</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>/*XLSX_LIB*/</script>
+<script>/*PAKO_LIB*/</script>
+<script>/*TESSERACT_LIB*/</script>
+<script>/*OCR_ASSETS*/</script>
+<script>/*PARSER_LIB*/</script>
+<script>/*EXTRACT_LIB*/</script>
+<script>
+/* ===================== 앱 ===================== */
+const $ = s => document.querySelector(s);
+const DEFAULTS = {
+  apiKey: '',
+  origin: '제주특별자치도 제주시 연삼로 1066-31, 제주아꼼이네',
+  memo: '고객님의 소중한 물건으로 파손주의 부탁드리겠습니다.!',
+  channel: '현금/단체주문',
+};
+/* 안전한 저장소 (미지원 환경에서도 동작) */
+const store = {
+  get(k){ try { return localStorage.getItem('akkom_'+k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem('akkom_'+k, v); } catch(e){} },
+};
+let settings = {...DEFAULTS};
+for (const k of Object.keys(DEFAULTS)){ const v = store.get(k); if (v !== null) settings[k] = v; }
+
+let rows = []; // {name, phone, phone2, addr, product, qty, memo, sender, senderPhone, status, zip, candidates, detail}
+
+/* ---------- 설정 UI ---------- */
+function loadSettingsUI(){
+  $('#setApiKey').value = settings.apiKey;
+  $('#setOrigin').value = settings.origin;
+  $('#setMemo').value = settings.memo;
+  $('#setChannel').value = settings.channel;
+  $('#apikeyWarn').classList.toggle('show', !settings.apiKey);
+}
+$('#btnSettings').onclick = ()=> $('#settingsPanel').classList.toggle('open');
+$('#btnSaveSettings').onclick = ()=>{
+  settings.apiKey = $('#setApiKey').value.trim();
+  settings.origin = $('#setOrigin').value.trim() || DEFAULTS.origin;
+  settings.memo = $('#setMemo').value.trim();
+  settings.channel = $('#setChannel').value.trim();
+  for (const k of Object.keys(DEFAULTS)) store.set(k, settings[k]);
+  loadSettingsUI();
+  toast('설정을 저장했어요 ✅');
+  $('#settingsPanel').classList.remove('open');
+};
+$('#btnResetSettings').onclick = ()=>{ settings = {...DEFAULTS, apiKey: settings.apiKey}; loadSettingsUI(); };
+
+/* ---------- 주문 추가 공통 ---------- */
+function addOrders(orders, opts={}){
+  const oName = $('#ordererName').value.trim();
+  const oPhone = $('#ordererPhone').value.trim();
+  const newRows = orders.map(o=>{
+    let senderName, senderPhone;
+    if (opts.senderComplete && o.sender){        // 파일·표에 보내는사람이 이미 있으면 그대로
+      senderName = o.sender; senderPhone = o.senderPhone || oPhone || '';
+    } else if (oName){                           // 보내는이 입력값 그대로 (자동으로 아무것도 안 붙임)
+      senderName = oName; senderPhone = oPhone || o.senderPhone || '';
+    } else if (o.sender){                        // 텍스트에서 찾은 입금자도 그대로
+      senderName = o.sender; senderPhone = o.senderPhone || '';
+    } else {
+      senderName = ''; senderPhone = '';       // 보내는이 미입력 시 공란
+    }
+    return {
+      name: o.name || '', phone: o.phone || '', phone2: o.phone2 || '',
+      addr: o.addr || '', product: o.product || '', qty: o.qty || '1',
+      memo: o.memo || '', sender: senderName, senderPhone: senderPhone,
+      status: 'idle', zip: '', candidates: null,
+    };
+  });
+  rows = rows.filter(r=>r.addr||r.name||r.phone).concat(newRows);
+  render();
+  return newRows.length;
+}
+
+/* ---------- 텍스트 파싱 ---------- */
+/* 엑셀에서 복사한 표(탭 구분)는 열 기준으로 정확히 해석 */
+function tryParseTSV(text){
+  const lines = text.replace(/\r/g,'').split('\n').filter(l=>l.trim());
+  const tabbed = lines.filter(l=>l.split('\t').length >= 3);
+  if (tabbed.length < 2 || tabbed.length < lines.length * 0.6) return null;
+  try {
+    const orders = akParseAoa(lines.map(l=>l.split('\t').map(c=>c.trim())));
+    return orders.length ? orders : null;
+  } catch(e){ return null; }
+}
+function parseText(raw, {silent}={}){
+  if (!raw.trim()){ toast('주문 내용을 먼저 붙여넣어주세요'); return 0; }
+  const tsv = tryParseTSV(raw);
+  if (tsv){
+    const n = addOrders(tsv, {senderComplete:true});
+    toast(`표 형태로 인식해서 ${n}건 정리했어요! 열이 잘 들어갔는지 확인해주세요`);
+    return n;
+  }
+  const { orders, context } = akParseOrders(raw);
+  if (!orders.length){ if(!silent) toast('주문을 찾지 못했어요. 형식을 확인해주세요 🥲'); return 0; }
+  if (context.sender && !$('#ordererName').value) $('#ordererName').value = context.sender;
+  if (context.senderPhone && !$('#ordererPhone').value) $('#ordererPhone').value = context.senderPhone;
+  const n = addOrders(orders);
+  toast(`${n}건 정리 완료! 이제 [전체 주소 검증]을 눌러주세요`);
+  return n;
+}
+$('#btnParse').onclick = ()=> parseText($('#rawInput').value);
+
+/* 보내는이 연락처: 하이픈 자동 입력 (010-XXXX-XXXX / 016-XXX-XXXX / 02-XXX-XXXX 모두 지원) */
+function fmtPhoneLive(v){
+  const d = v.replace(/\D/g,'').slice(0,11);
+  if (d.startsWith('02')){
+    if (d.length <= 2) return d;
+    if (d.length <= 5) return d.slice(0,2)+'-'+d.slice(2);
+    if (d.length <= 9) return d.slice(0,2)+'-'+d.slice(2,5)+'-'+d.slice(5);
+    return d.slice(0,2)+'-'+d.slice(2,6)+'-'+d.slice(6,10);
+  }
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return d.slice(0,3)+'-'+d.slice(3);
+  if (d.length <= 10) return d.slice(0,3)+'-'+d.slice(3,6)+'-'+d.slice(6);
+  return d.slice(0,3)+'-'+d.slice(3,7)+'-'+d.slice(7);
+}
+$('#ordererPhone').addEventListener('input', e=>{ e.target.value = fmtPhoneLive(e.target.value); });
+$('#btnAddRow').onclick = ()=>{
+  rows.push({name:'',phone:'',phone2:'',addr:'',product:'',qty:'1',memo:'',sender:'',senderPhone:'',status:'idle',zip:'',candidates:null});
+  render();
+};
+$('#btnSample').onclick = ()=>{
+  $('#rawInput').value = `한라봉 선물용 5kg씩 보내주세요. 입금자 정만웅 010-9402-0886
+
+1. 정진영 010-8887-3813 경기도 화성시 향남읍 발안로 440-19, 진영화학
+2. 오승영 010-5271-3790
+경기도 화성시 향남읍 동오1길 19-9 정우테크닉스
+3. 김영자 01046127618 전라남도 장성군 북하면 약수리 545-4
+
+받는분 : 박순자
+연락처 : 010-4157-3577
+서울 강북구 수유동 408-28 3층
+문앞에 놓아주세요`;
+  toast('예시를 넣었어요. 주문 정리하기를 눌러보세요!');
+};
+
+/* ---------- 표 렌더 ---------- */
+const FIELDS = ['name','phone','phone2','addr','product','qty','memo','sender','senderPhone'];
+function chipHtml(r, i){
+  switch(r.status){
+    case 'ok': return `<span class="chip ok">확인됨</span>${r.zip?`<span class="zip">우편번호 ${r.zip}</span>`:''}`;
+    case 'warn': return `<span class="chip multi" onclick="openModal(${i})">동·호수 확인</span>${r.zip?`<span class="zip">우편번호 ${r.zip}</span>`:''}`;
+    case 'multi': return `<span class="chip multi" onclick="openModal(${i})">선택필요</span>`;
+    case 'fail': return `<span class="chip fail" onclick="openModal(${i})">확인필요</span>`;
+    case 'checking': return `<span class="chip checking">검증중</span>`;
+    default: return `<span class="chip idle" onclick="verifyOne(${i})" title="클릭하면 이 주문만 검증해요">미검증 ▶</span>`;
+  }
+}
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function render(){
+  const tb = $('#tbody');
+  if (!rows.length){
+    tb.innerHTML = '<tr><td colspan="12" class="empty-note">위에 주문 내용을 붙여넣고 <b>주문 정리하기</b>를 눌러주세요</td></tr>';
+    $('#stats').innerHTML=''; return;
+  }
+  tb.innerHTML = rows.map((r,i)=>`<tr data-i="${i}">
+    <td style="color:var(--text-mid)">${i+1}</td>
+    <td>${chipHtml(r,i)}</td>
+    ${FIELDS.map(f=>`<td contenteditable data-f="${f}" class="${(f==='name'||f==='phone'||f==='addr') && !String(r[f]||'').trim() ? 'missing' : ''}" ${f==='addr'?'style="min-width:280px"':''}>${esc(r[f])}</td>`).join('')}
+    <td><button class="del-btn" onclick="delRow(${i})" title="삭제">✕</button></td>
+  </tr>`).join('');
+  // 편집 반영
+  tb.querySelectorAll('td[contenteditable]').forEach(td=>{
+    td.addEventListener('blur', e=>{
+      const tr = e.target.closest('tr'); const i = +tr.dataset.i; const f = e.target.dataset.f;
+      const v = e.target.innerText.trim();
+      if (rows[i][f] !== v){
+        rows[i][f] = v;
+        if (f === 'addr'){ rows[i].status='idle'; rows[i].zip=''; renderStats(); tr.children[1].innerHTML = chipHtml(rows[i], i); }
+      }
+    });
+  });
+  renderStats();
+}
+function renderStats(){
+  const n = rows.length;
+  const ok = rows.filter(r=>r.status==='ok').length;
+  const multi = rows.filter(r=>r.status==='multi'||r.status==='warn').length;
+  const fail = rows.filter(r=>r.status==='fail').length;
+  $('#stats').innerHTML = `<span>총 <b>${n}</b>건</span><span class="g">확인 ${ok}</span><span class="y">선택필요 ${multi}</span><span class="r">확인필요 ${fail}</span><span>미검증 ${n-ok-multi-fail}</span>`;
+}
+window.delRow = i => { rows.splice(i,1); render(); };
+
+/* ---------- 주소 검증 (도로명주소 JSONP) ---------- */
+let jsonpSeq = 0;
+function jusoSearch(keyword){
+  return new Promise((resolve,reject)=>{
+    if (!settings.apiKey){ reject(new Error('NOKEY')); return; }
+    const cb = 'akJusoCb' + (++jsonpSeq);
+    const sc = document.createElement('script');
+    const timer = setTimeout(()=>{ cleanup(); reject(new Error('TIMEOUT')); }, 8000);
+    function cleanup(){ delete window[cb]; sc.remove(); clearTimeout(timer); }
+    window[cb] = data => { cleanup(); resolve(data); };
+    sc.onerror = ()=>{ cleanup(); reject(new Error('NETWORK')); };
+    sc.src = 'https://business.juso.go.kr/addrlink/addrLinkApiJsonp.do?confmKey=' + encodeURIComponent(settings.apiKey)
+      + '&currentPage=1&countPerPage=7&resultType=json&keyword=' + encodeURIComponent(keyword) + '&callback=' + cb;
+    document.body.appendChild(sc);
+  });
+}
+/* 상세주소 띄어쓰기 정돈: "롯데골드로즈2차1108호" → "롯데골드로즈2차 1108호" */
+function tidyDetail(d){
+  return (d||'').replace(/([가-힣)])(\d+(?:동|호|층|번지))/g, '$1 $2')
+                .replace(/(\d+동)(\d+호)/g, '$1 $2')
+                .replace(/\s{2,}/g,' ').trim();
+}
+/* 주소에서 (검색용 본체, 상세) 분리 — 붙여쓴 주소도 처리 */
+function splitAddr(addr){
+  let a = addr.trim();
+  // 콤마가 있으면: 첫 콤마 뒤가 상세일 확률 높음
+  const ci = a.indexOf(',');
+  if (ci > 0){
+    const head = a.slice(0,ci).trim(), tail = a.slice(ci+1).trim();
+    if (/(로|길)\s*\d|(읍|면|동|리|가)\s*\d/.test(head)) return [head, tidyDetail(tail)];
+  }
+  // 도로명 + 건물번호 추출 ("X로N길" 형태 우선, 띄어쓰기 없어도 인식)
+  let m = a.match(/^(.*?)([가-힣A-Za-z0-9·]+로\s*\d+\s*번?길|[가-힣A-Za-z0-9·]+(?:로|길))\s*(\d+(?:-\d+)?)(.*)$/);
+  if (m){
+    const head = (m[1].trim() + ' ' + m[2].replace(/\s+/g,'') + ' ' + m[3]).trim();
+    const tail = (m[4]||'').replace(/^[,\s]+/,'').trim();
+    return [head.replace(/\s{2,}/g,' '), tidyDetail(tail)];
+  }
+  // 지번 뒤를 상세로
+  m = a.match(/^(.*?(?:읍|면|동|리|가)\s*\d+(?:-\d+)?)(.*)$/);
+  if (m) return [m[1].trim(), tidyDetail((m[2]||'').replace(/^[,\s]+/,''))];
+  return [a, ''];
+}
+async function verifyRow(i){
+  const r = rows[i];
+  if (!r.addr) { r.status='fail'; r.candidates=[]; return; }
+  r.status = 'checking'; render();
+  const [body, detail] = splitAddr(r.addr);
+  r.detail = detail;
+  const tries = [body];
+  const words = body.split(/\s+/);
+  if (words.length > 2) tries.push(words.slice(1).join(' '));    // 첫 단어(이름 오인 등) 제거 재시도
+  if (words.length > 3) tries.push(words.slice(0, words.length-1).join(' ')); // 끝 단어 제거 재시도
+  let res = null, errorMsg = '', usedFallback = false;
+  for (let t = 0; t < tries.length; t++){
+    try {
+      const data = await jusoSearch(tries[t]);
+      const c = data && data.results && data.results.common;
+      if (!c) continue;
+      if (c.errorCode !== '0'){ errorMsg = c.errorMessage || c.errorCode; continue; }
+      const list = (data.results.juso||[]);
+      if (list.length){ res = list; usedFallback = t > 0; break; }
+    } catch(e){
+      if (e.message === 'NOKEY'){ r.status='idle'; toast('설정에서 API 키를 먼저 넣어주세요'); render(); throw e; }
+      errorMsg = e.message;
+    }
+  }
+  // 원칙: 애매하면 자동 확정하지 않는다. 원문 그대로 검색해 정확히 1건일 때만 자동 확정.
+  if (!res){ r.status='fail'; r.candidates=[]; r.errorMsg = errorMsg; }
+  else if (usedFallback){ r.status='multi'; r.candidates = res; }   // 주소를 잘라서 찾은 것 → 사람이 확인
+  else if (res.length === 1){ applyCandidate(i, res[0], detail); }
+  else {
+    const uniq = [...new Set(res.map(x=>x.roadAddrPart1 + '|' + x.zipNo))];
+    if (uniq.length === 1) applyCandidate(i, res[0], detail);
+    else { r.status='multi'; r.candidates = res; }
+  }
+  render();
+}
+const RE_APT = /아파트|APT|apt|빌라|빌리지|오피스텔|주공|자이|푸르지오|래미안|e편한|이편한|힐스테이트|캐슬|아이파크|위브|더샵|리슈빌|스위첸|해모로|팰리스|파크뷰|그로브|맨션|타운|APT/;
+function applyCandidate(i, j, detail){
+  const r = rows[i];
+  const d = tidyDetail((detail !== undefined ? detail : r.detail) || '');
+  r.addr = j.roadAddrPart1 + (d ? ', ' + d : '');
+  r.zip = j.zipNo; r.candidates = null;
+  // 아파트·빌라인데 동·호수가 빠졌으면 확인요망
+  const full = d + ' ' + (j.bdNm || '');
+  const hasHo = /\d+\s*호/.test(d) || /\d{2,4}\s*-\s*\d{2,4}\s*$/.test(d) || /\d+\s*층/.test(d);
+  const hasDong = /\d+\s*동(?![가-힣0-9])/.test(d);
+  if (!hasHo && (hasDong || RE_APT.test(full))){
+    r.status = 'warn'; r.candidates = [j];
+  } else {
+    r.status = 'ok';
+  }
+}
+window.verifyOne = async i => {
+  if (!settings.apiKey){ toast('설정 ⚙에서 도로명주소 API 키를 넣어주세요'); $('#settingsPanel').classList.add('open'); return; }
+  try { await verifyRow(i); } catch(e){}
+};
+$('#btnVerifyAll').onclick = async ()=>{
+  if (!rows.length){ toast('먼저 주문을 정리해주세요'); return; }
+  if (!settings.apiKey){ toast('설정 ⚙️에서 도로명주소 API 키를 넣어주세요'); $('#settingsPanel').classList.add('open'); return; }
+  $('#btnVerifyAll').disabled = true;
+  try {
+    for (let i=0;i<rows.length;i++){
+      if (rows[i].status === 'ok' || rows[i].status === 'warn') continue;
+      await verifyRow(i);
+      await new Promise(r=>setTimeout(r,150));
+    }
+    const bad = rows.filter(r=>r.status!=='ok').length;
+    toast(bad ? `검증 완료! ${bad}건은 배지를 눌러 확인해주세요` : '모든 주소 확인 완료! ✅');
+  } catch(e){ /* NOKEY 등 */ }
+  $('#btnVerifyAll').disabled = false;
+};
+
+/* ---------- 후보 모달 ---------- */
+let modalIdx = -1;
+window.openModal = async i => {
+  modalIdx = i;
+  const r = rows[i];
+  $('#modalOrig').textContent = r.status==='warn'
+    ? '주소는 확인됐지만 동·호수가 빠진 것 같아요. 아래 상세주소 칸에 동·호수를 채운 뒤 주소를 클릭하면 확정됩니다. (문제없으면 "원본 그대로 두기")'
+    : '입력된 주소: ' + r.addr + (r.errorMsg && r.status==='fail' ? '  (오류: '+r.errorMsg+')' : '');
+  $('#modalDetail').value = r.detail || '';
+  const box = $('#modalCands');
+  if (r.status === 'fail'){
+    box.innerHTML = `<div style="font-size:13px; color:var(--text-mid); margin-bottom:10px;">주소를 찾지 못했어요. 아래에 주소를 다시 입력하고 검색해보세요.</div>
+      <input class="detail-edit" id="modalRetry" value="${esc(splitAddr(r.addr)[0])}">
+      <button class="btn primary mt10" style="margin-top:8px" onclick="retrySearch()">🔍 다시 검색</button>
+      <div id="modalRetryResults" style="margin-top:10px;"></div>`;
+  } else {
+    box.innerHTML = (r.candidates||[]).map((c,k)=>candHtml(c,k)).join('');
+  }
+  $('#modalBack').classList.add('open');
+};
+function candHtml(c,k){
+  return `<div class="cand" onclick="pickCand(${k})">
+    <div class="road">${esc(c.roadAddrPart1)}</div>
+    <div class="jibun">지번: ${esc(c.jibunAddr||'')}</div>
+    <span class="zipn">우편번호 ${esc(c.zipNo)}</span>${c.bdNm?` <span class="zipn">${esc(c.bdNm)}</span>`:''}
+  </div>`;
+}
+window.retrySearch = async ()=>{
+  const q = $('#modalRetry').value.trim();
+  if (!q) return;
+  const out = $('#modalRetryResults');
+  out.innerHTML = '<div style="font-size:12px;color:var(--text-mid)">검색 중…</div>';
+  try {
+    const data = await jusoSearch(q);
+    const list = (data.results && data.results.juso) || [];
+    if (!list.length){ out.innerHTML = '<div style="font-size:12px;color:var(--red)">결과가 없어요. 도로명+건물번호(예: 연삼로 1066-31)나 동+지번으로 검색해보세요.</div>'; return; }
+    rows[modalIdx].candidates = list;
+    rows[modalIdx].status = 'multi';
+    out.innerHTML = list.map((c,k)=>candHtml(c,k)).join('');
+  } catch(e){ out.innerHTML = '<div style="font-size:12px;color:var(--red)">검색 실패: '+esc(e.message)+'</div>'; }
+};
+window.pickCand = k => {
+  const r = rows[modalIdx];
+  applyCandidate(modalIdx, r.candidates[k], $('#modalDetail').value.trim());
+  $('#modalBack').classList.remove('open');
+  render();
+};
+$('#modalKeep').onclick = ()=>{
+  // 원본 그대로 두기: 주소도, 상태(확인필요/선택필요)도 그대로 유지
+  $('#modalBack').classList.remove('open');
+  render();
+};
+$('#modalClose').onclick = ()=> $('#modalBack').classList.remove('open');
+$('#modalX').onclick = ()=> $('#modalBack').classList.remove('open');
+/* 실수 방지: 모달 바깥을 눌러도 창이 닫히지 않음 (X 또는 취소로만 닫기) */
+
+/* ---------- 내보내기 ---------- */
+const HEADER = ['보내는사람','보내는사람연락처','출고지','수취인명','옵션정보','수량','수취인연락처1','수취인연락처2','배송지','배송메세지','구매자연락처','주문경로','보내는이 변경주소'];
+function exportRows(){
+  const oPhone = $('#ordererPhone').value.trim();
+  return rows.map(r=>[
+    r.sender || '',
+    r.senderPhone || '',
+    settings.origin,
+    r.name || '',
+    r.product || '',
+    Number(r.qty) || 1,
+    r.phone || '',
+    r.phone2 || '',
+    r.addr || '',
+    r.memo || settings.memo,
+    oPhone || r.senderPhone || r.phone || '',
+    settings.channel,
+    $('#ordererAddr').value.trim(),        // 보내는이 변경주소 (비우면 공란)
+  ]);
+}
+function checkBeforeExport(){
+  if (!rows.length){ toast('내보낼 주문이 없어요'); return false; }
+  const noAddr = rows.filter(r=>!String(r.addr||'').trim()).length;
+  if (noAddr){ toast(`주소가 비어있는 주문이 ${noAddr}건 있어요!`); return false; }
+  const unverified = rows.filter(r=>r.status!=='ok').length;
+  const noName = rows.filter(r=>!String(r.name||'').trim()).length;
+  const noPhone = rows.filter(r=>!String(r.phone||'').trim()).length;
+  const problems = [];
+  if (unverified) problems.push(`주소 미확정 ${unverified}건`);
+  if (noName) problems.push(`수취인명 없음 ${noName}건`);
+  if (noPhone) problems.push(`연락처 없음 ${noPhone}건`);
+  if (problems.length){
+    if (!confirm(`확인이 필요한 주문이 있어요:\n· ${problems.join('\n· ')}\n\n해당 칸은 엑셀에서 노랑으로 표시됩니다.\n그래도 내보낼까요?`)) return false;
+  }
+  return true;
+}
+$('#btnExcel').onclick = ()=>{
+  if (!checkBeforeExport()) return;
+  const data = exportRows();
+  const ws = XLSX.utils.aoa_to_sheet([HEADER, ...data]);
+  // ── 아꼼이네 원본 양식 그대로: 열 너비 · 색 · 테두리 · 정렬 ──
+  ws['!cols'] = [31.1,15.5,51.9,24.1,61.5,6.8,15.9,15.5,74.4,73.1,14.3,15.6,17.9].map(w=>({wch:w}));
+  const BORDER = {top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
+  const HEAD_FILL = {0:'CCCCFF',2:'CCCCFF',3:'FFFF00',4:'FFFF00',5:'FFFF00',6:'FFFF00',7:'FFFF00',8:'FFFF00',9:'FFFF00',12:'FFFF00'};
+  for (let c = 0; c < HEADER.length; c++){
+    // 헤더 행
+    const hc = ws[XLSX.utils.encode_cell({r:0,c})];
+    if (hc){
+      hc.s = { font:{name:'맑은 고딕',sz:11,bold:true},
+               alignment:{horizontal:'center',vertical:'center'},
+               border:BORDER };
+      if (HEAD_FILL[c] !== undefined) hc.s.fill = {patternType:'solid', fgColor:{rgb:HEAD_FILL[c]}};
+    }
+    // 데이터 행
+    for (let r = 1; r <= data.length; r++){
+      const ref = XLSX.utils.encode_cell({r,c});
+      if (!ws[ref]) ws[ref] = {t:'s', v:''};
+      ws[ref].s = { font:{name:'맑은 고딕',sz:11},
+                    alignment:{vertical:'center', horizontal: c===5 ? 'center' : undefined},
+                    border:BORDER };
+    }
+  }
+  // 확인이 필요한 셀은 노랑으로 표시: 미확정 주소(배송지), 빈 수취인명, 빈 연락처
+  const YELLOW = {patternType:'solid', fgColor:{rgb:'FFFF00'}};
+  for (let r = 1; r <= data.length; r++){
+    const row = rows[r-1];
+    if (!row) continue;
+    const mark = c => { const ref = XLSX.utils.encode_cell({r, c}); if (ws[ref]) ws[ref].s = Object.assign({}, ws[ref].s, {fill:YELLOW}); };
+    if (row.status !== 'ok') mark(8);                       // 배송지
+    if (!String(row.name||'').trim()) mark(3);              // 수취인명
+    if (!String(row.phone||'').trim()) mark(6);             // 수취인연락처1
+  }
+  ws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:data.length, c:HEADER.length-1}});
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  const d = new Date();
+  const fname = `아꼼이네_CJ발송_${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+  toast('엑셀 파일을 내려받았어요 ⬇️');
+};
+$('#btnCopy').onclick = async ()=>{
+  if (!checkBeforeExport()) return;
+  const tsv = [HEADER, ...exportRows()].map(r=>r.join('\t')).join('\n');
+  try { await navigator.clipboard.writeText(tsv); toast('복사 완료! 엑셀에 붙여넣기(Ctrl+V) 하세요'); }
+  catch(e){
+    const ta = document.createElement('textarea'); ta.value = tsv; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+    toast('복사 완료! 엑셀에 붙여넣기(Ctrl+V) 하세요');
+  }
+};
+
+/* ---------- 파일 업로드 ---------- */
+function fileStatus(msg, progress){
+  const el = $('#fileStatus');
+  if (msg === null){ el.classList.remove('show'); el.innerHTML=''; return; }
+  el.classList.add('show');
+  el.innerHTML = msg + (progress!==undefined ? `<div class="progress-bar"><div style="width:${Math.round(progress*100)}%"></div></div>` : '');
+}
+async function handleFiles(fileList){
+  const files = [...fileList];
+  for (const f of files){
+    if (f.type.startsWith('image/')){ await handleImage(f); continue; }
+    fileStatus(`📄 ${f.name} 읽는 중…`);
+    try {
+      const res = await akExtractFile(f);
+      if (res.type === 'sheet'){
+        const sheets = res.sheets.filter(s=>s.orders.length);
+        if (sheets.length <= 1){
+          const n = addOrders(sheets[0].orders, {senderComplete:true});
+          toast(`${f.name}에서 ${n}건 불러왔어요! 표를 확인해주세요`);
+        } else {
+          openSheetChooser(f.name, sheets);   // 시트가 여러 개면 선택
+        }
+      } else {
+        const ta = $('#rawInput');
+        ta.value = (ta.value.trim() ? ta.value.trim() + '\n\n' : '') + res.text.trim();
+        const n = parseText(res.text, {silent:true});
+        if (n) toast(`${f.name}에서 ${n}건 정리했어요! 표를 확인해주세요`);
+        else toast(`${f.name}의 내용을 입력칸에 넣었어요. 내용 확인 후 주문 정리하기를 눌러주세요`);
+      }
+      fileStatus(null);
+    } catch(e){
+      console.error(e);
+      fileStatus(null);
+      toast(`${f.name}: ${e.message || '파일을 읽지 못했어요'}`);
+    }
+  }
+}
+$('#btnFile').onclick = ()=> $('#fileInput').click();
+$('#fileInput').onchange = e => { handleFiles(e.target.files); e.target.value=''; };
+
+/* 드래그&드롭 */
+['dragenter','dragover'].forEach(ev=> document.addEventListener(ev, e=>{ e.preventDefault(); $('#dropZone').classList.add('drag'); }));
+['dragleave','drop'].forEach(ev=> document.addEventListener(ev, e=>{ e.preventDefault(); if(ev==='drop'||e.target===document.documentElement) $('#dropZone').classList.remove('drag'); }));
+document.addEventListener('drop', e=>{ e.preventDefault(); $('#dropZone').classList.remove('drag'); if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+
+/* ---------- 이미지 OCR (인식 엔진 내장 · 인터넷 불필요) ---------- */
+let ocrWorker = null, ocrPromise = null;
+function b64ToU8(b64){ const bin=atob(b64); const u8=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i); return u8; }
+async function ensureOcr(onProgress){
+  if (ocrWorker) return ocrWorker;
+  if (ocrPromise) return ocrPromise;
+  ocrPromise = (async ()=>{
+    if (typeof AK_OCR_B64 === 'undefined' || !AK_OCR_B64 || !AK_OCR_B64.worker){
+      // 가벼운 버전: 인식 데이터를 인터넷에서 내려받아 사용
+      if (!navigator.onLine) throw new Error('가벼운 버전의 이미지 인식은 인터넷 연결이 필요해요');
+      const w = await Tesseract.createWorker('kor+eng', 1, {
+        logger: m => { if (m.status==='recognizing text' && onProgress) onProgress(m.progress); },
+      });
+      await w.setParameters({tessedit_pageseg_mode:'3'});
+      ocrWorker = w;
+      return w;
+    }
+    // 워커 래퍼 하나에 전부 내장 (file:// 환경에서 blob 간 참조가 막히므로)
+    const dec = new TextDecoder('utf-8');
+    const coreSrc = dec.decode(b64ToU8(AK_OCR_B64.core));
+    const workerSrc = dec.decode(b64ToU8(AK_OCR_B64.worker));
+    const wrapper = 'self.AK_LANGS_B64={kor:' + JSON.stringify(AK_OCR_B64.kor) + ',eng:' + JSON.stringify(AK_OCR_B64.eng||'') + '};\n' +
+      '(function(){var of_=self.fetch?self.fetch.bind(self):null;\n' +
+      'self.fetch=function(u,o){if(typeof u==="string"&&u.indexOf("akkom-offline")!==-1){\n' +
+      'var key=u.indexOf("eng.traineddata")!==-1?"eng":"kor";\n' +
+      'var b=atob(self.AK_LANGS_B64[key]),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);\n' +
+      'return Promise.resolve(new Response(a,{status:200}));}\n' +
+      'return of_(u,o);};})();\n' +
+      coreSrc + '\n;\n' + workerSrc;
+    const wrapperURL = URL.createObjectURL(new Blob([wrapper], {type:'text/javascript'}));
+    const w = await Tesseract.createWorker(AK_OCR_B64.eng ? 'kor+eng' : 'kor', 1, {
+      workerPath: wrapperURL,
+      workerBlobURL: false,
+      corePath: 'https://akkom-offline.invalid/core.wasm.js',
+      langPath: 'https://akkom-offline.invalid',
+      cacheMethod: 'none',
+      gzip: true,
+      logger: m => { if (m.status==='recognizing text' && onProgress) onProgress(m.progress); },
+    });
+    await w.setParameters({tessedit_pageseg_mode:'3'});
+    ocrWorker = w;
+    return w;
+  })();
+  try { return await ocrPromise; }
+  catch(e){ ocrPromise = null; throw e; }
+}
+/* 이미지 전처리: 표 격자선 제거 + 작은 글씨 확대 → 인식률 대폭 향상 */
+async function preprocessImage(blob){
+  try {
+    const img = await createImageBitmap(blob);
+    const W = img.width, H = img.height;
+    const c0 = document.createElement('canvas');
+    c0.width = W; c0.height = H;
+    const x0 = c0.getContext('2d', {willReadFrequently:true});
+    x0.drawImage(img, 0, 0);
+    if (W*H <= 8_000_000){
+      const id = x0.getImageData(0,0,W,H);
+      const d = id.data;
+      const dark = i => (d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11) < 120;
+      for (let y=0;y<H;y++){                                  // 가로 격자선
+        let cnt=0; for (let x=0;x<W;x++) if (dark((y*W+x)*4)) cnt++;
+        if (cnt > W*0.5) for (let x=0;x<W;x++){ const i=(y*W+x)*4; d[i]=d[i+1]=d[i+2]=255; }
+      }
+      for (let x=0;x<W;x++){                                  // 세로 격자선
+        let cnt=0; for (let y=0;y<H;y++) if (dark((y*W+x)*4)) cnt++;
+        if (cnt > H*0.5) for (let y=0;y<H;y++){ const i=(y*W+x)*4; d[i]=d[i+1]=d[i+2]=255; }
+      }
+      x0.putImageData(id,0,0);
+    }
+    const scale = Math.min(3, Math.max(1, 1800 / W));          // 작은 이미지는 확대
+    if (scale === 1) return await new Promise(r=>c0.toBlob(r,'image/png'));
+    const c = document.createElement('canvas');
+    c.width = Math.round(W*scale); c.height = Math.round(H*scale);
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(c0, 0, 0, c.width, c.height);
+    return await new Promise(r=>c.toBlob(r,'image/png'));
+  } catch(e){ return blob; }
+}
+/* 줄 좌표(bbox)로 표의 행을 재조립 — 열이 분리되어도 같은 줄끼리 합침 */
+function ocrRowsFromLines(data){
+  const lines = (data.lines||[]).map(l=>({text:(l.text||'').replace(/\n/g,' ').trim(), y:(l.bbox.y0+l.bbox.y1)/2, x:l.bbox.x0, h:l.bbox.y1-l.bbox.y0})).filter(l=>l.text);
+  if (!lines.length) return '';
+  lines.sort((a,b)=>a.y-b.y);
+  const rowsArr = [];
+  for (const l of lines){
+    const last = rowsArr[rowsArr.length-1];
+    if (last && Math.abs(l.y - last.y) < Math.max(l.h, last.h) * 0.6){ last.items.push(l); last.y = (last.y+l.y)/2; }
+    else rowsArr.push({y:l.y, h:l.h, items:[l]});
+  }
+  return rowsArr.map(r=>r.items.sort((a,b)=>a.x-b.x).map(i=>i.text).join(' ')).join('\n');
+}
+async function handleImage(blob){
+  try {
+    fileStatus('🖼️ 이미지 인식 준비 중… (처음 한 번은 몇 초 걸려요)', 0);
+    const worker = await ensureOcr(p=> fileStatus('🖼️ 이미지에서 글자를 읽는 중…', p));
+    fileStatus('🖼️ 이미지 다듬는 중…', 0.03);
+    const prepped = await preprocessImage(blob);
+    fileStatus('🖼️ 이미지에서 글자를 읽는 중…', 0.05);
+    const { data } = await worker.recognize(prepped);
+    let text = (ocrRowsFromLines(data) || data.text || '').trim();
+    // OCR 흔한 오류 보정
+    text = text.replace(/(?<=\d)[oO](?=\d)/g,'0').replace(/(?<=\d)[lI](?=\d)/g,'1')
+               .replace(/&(?=\s?동)/g,'A')                       // "&동" → "A동"
+               .replace(/[|｜]/g,' ');
+    // 깨져 읽힌 앞부분 정리: 한글 시작 전에 기호 섞인 긴 잡음이 있으면 잘라냄 (전화번호는 보존)
+    text = text.split('\n').map(l=>{
+      l = l.trim();
+      const ki = l.search(/[가-힣]/);
+      if (ki > 6){
+        const pre = l.slice(0, ki);
+        const junk = pre.replace(/[\d\s.\-()]/g,'');
+        const hasPhone = /01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}|0\d{1,2}[-.\s]\d{3,4}[-.\s]\d{4}/.test(pre);
+        if (!hasPhone && (junk.length > 3 || /[=@~#*±§]/.test(pre))) l = l.slice(ki);
+      }
+      return l;
+    }).filter(l=>l).join('\n');
+    fileStatus(null);
+    if (!text){ toast('이미지에서 글자를 찾지 못했어요 🥲 더 선명한 이미지로 해보세요'); return; }
+    const ta = $('#rawInput');
+    ta.value = (ta.value.trim() ? ta.value.trim() + '\n\n' : '') + text;
+    const n = parseText(text, {silent:true});
+    if (n) toast(`이미지에서 ${n}건 읽었어요! 인식이 정확한지 꼭 확인해주세요 👀`);
+    else toast('이미지 글자를 입력칸에 넣었어요. 오타를 고친 뒤 주문 정리하기를 눌러주세요');
+  } catch(e){
+    console.error(e);
+    fileStatus(null);
+    toast(e.message || '이미지 인식에 실패했어요');
+  }
+}
+$('#btnImage').onclick = ()=> $('#imgInput').click();
+$('#imgInput').onchange = e => { handleFiles(e.target.files); e.target.value=''; };
+
+/* ---------- 시트 선택 (체크박스 다중 선택) ---------- */
+let pendingSheets = null;
+function escHtml(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function openSheetChooser(fname, sheets){
+  pendingSheets = sheets;
+  $('#sheetTitle').textContent = `"${fname}"에 표가 여러 개 있어요`;
+  const total = sheets.reduce((a,s)=>a+s.orders.length,0);
+  $('#sheetList').innerHTML =
+    `<label class="sheet-item all"><input type="checkbox" id="sheetAll"><b>전체 선택</b><span>총 ${total}건</span></label>` +
+    sheets.map((s,i)=>
+      `<label class="sheet-item"><input type="checkbox" class="sheet-chk" data-i="${i}"><b>${escHtml(s.name)}</b><span>${s.orders.length}건</span></label>`
+    ).join('');
+  const all = $('#sheetAll');
+  const chks = () => [...document.querySelectorAll('.sheet-chk')];
+  all.addEventListener('change', ()=> chks().forEach(c=>{ c.checked = all.checked; }));
+  chks().forEach(c=>c.addEventListener('change', ()=>{ all.checked = chks().every(x=>x.checked); }));
+  $('#sheetBack').classList.add('open');
+}
+$('#sheetOk').onclick = ()=>{
+  if (!pendingSheets) return;
+  const idxs = [...document.querySelectorAll('.sheet-chk:checked')].map(c=>+c.dataset.i).sort((a,b)=>a-b);
+  if (!idxs.length){ toast('불러올 시트를 체크해주세요'); return; }
+  const orders = [].concat(...idxs.map(i=>pendingSheets[i].orders));
+  const n = addOrders(orders, {senderComplete:true});
+  $('#sheetBack').classList.remove('open');
+  pendingSheets = null;
+  toast(`${idxs.length}개 시트에서 ${n}건 불러왔어요! 표를 확인해주세요`);
+};
+$('#sheetClose').onclick = ()=>{ $('#sheetBack').classList.remove('open'); pendingSheets = null; };
+$('#sheetX').onclick = ()=>{ $('#sheetBack').classList.remove('open'); pendingSheets = null; };
+
+/* ---------- 초기화 ---------- */
+$('#btnReset').onclick = ()=>{
+  if (rows.length && !confirm('작성 중인 내용을 모두 지우고 처음부터 시작할까요?')) return;
+  rows = [];
+  $('#rawInput').value = '';
+  $('#ordererName').value = '';
+  $('#ordererPhone').value = '';
+  render();
+  toast('초기화했어요. 새 주문을 넣어주세요!');
+};
+
+/* Ctrl+V 붙여넣기: 글자가 있으면 글자 우선(엑셀 셀 복사 = 100% 정확), 없을 때만 이미지 인식 */
+document.addEventListener('paste', e=>{
+  const cd = e.clipboardData;
+  if (!cd) return;
+  const text = cd.getData('text/plain');
+  const t = e.target;
+  const isEditable = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  if (text && text.trim().length > 1){
+    if (!isEditable){                     // 빈 화면에 붙여넣으면 입력칸으로 넣고 바로 정리
+      e.preventDefault();
+      const ta = $('#rawInput');
+      ta.value = (ta.value.trim() ? ta.value.trim() + '\n\n' : '') + text.trim();
+      parseText(text, {silent:true});
+    }
+    return;                               // 입력칸에서는 기본 붙여넣기 동작
+  }
+  for (const it of cd.items){
+    if (it.type.startsWith('image/')){
+      e.preventDefault();
+      handleImage(it.getAsFile());
+      return;
+    }
+  }
+});
+
+/* ---------- 토스트 ---------- */
+let toastTimer;
+function toast(msg){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2600);
+}
+
+loadSettingsUI();
+</script>
+</body>
+</html>
