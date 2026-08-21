@@ -10,13 +10,13 @@ const path = require('path');
 let pass = 0, fail = 0;
 const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + t + (d != null ? ' — ' + String(d).slice(0, 140) : '')); };
 
-/* juso 공식 응답 스키마 재생기 */
+/* juso 응답 재생기 — 값은 2026-08-21 juso 실API 러너(verify-395-juso-live.js) 실응답 그대로 */
 const J = (list) => ({ results: { common: { errorCode: '0', errorMessage: '정상', totalCount: String(list.length) }, juso: list } });
 const JUSO_DB = {
-  '선릉로86길 31': J([{ roadAddrPart1: '서울특별시 강남구 선릉로86길 31', jibunAddr: '서울특별시 강남구 대치동 890-38', zipNo: '06202', bdNm: '' }]),
-  '서울 마포구 월드컵북로 400': J([{ roadAddrPart1: '서울특별시 마포구 월드컵북로 400', jibunAddr: '서울특별시 마포구 상암동 1602', zipNo: '03925', bdNm: '월드컵파크아파트' }]),
-  '제주특별자치도 제주시 연삼로 1066-31': J([{ roadAddrPart1: '제주특별자치도 제주시 연삼로 1066-31', jibunAddr: '제주특별자치도 제주시 도련일동 2172-10', zipNo: '63328', bdNm: '' }]),
-  '서울 강남구 테헤란로 1': J([   // 후보 2건 — 자동확정 금지 케이스
+  '선릉로86길 31': J([{ roadAddrPart1: '서울특별시 강남구 선릉로86길 31', jibunAddr: '서울특별시 강남구 대치동 890-38', zipNo: '06193', bdNm: '선릉역 롯데골드로즈2' }]),
+  '서울 마포구 상암산로1길 24': J([{ roadAddrPart1: '서울특별시 마포구 상암산로1길 24', jibunAddr: '서울특별시 마포구 상암동 1652', zipNo: '03907', bdNm: '상암 월드컵파크 4단지' }]),
+  '제주특별자치도 제주시 연삼로 1066-31': J([{ roadAddrPart1: '제주특별자치도 제주시 연삼로 1066-31', jibunAddr: '제주특별자치도 제주시 도련일동', zipNo: '63326', bdNm: '' }]),
+  '서울 강남구 테헤란로 1': J([   // 후보 2건 — 자동확정 금지 케이스(합성 — 실API는 단건이라)
     { roadAddrPart1: '서울특별시 강남구 테헤란로 1', jibunAddr: '서울특별시 강남구 역삼동 1', zipNo: '06110', bdNm: 'A빌딩' },
     { roadAddrPart1: '서울특별시 서초구 테헤란로 1', jibunAddr: '서울특별시 서초구 서초동 2', zipNo: '06600', bdNm: 'B빌딩' },
   ]),
@@ -82,9 +82,9 @@ const EMPTY = { results: { common: { errorCode: '0', errorMessage: '정상', tot
   const st1 = await pg.evaluate(() => ({ chip: document.querySelector('#ooTbody .chip').textContent, addr: document.querySelector('#ooTbody td[data-f="addr"]').innerText, zip: (document.querySelector('#ooTbody .zip') || {}).textContent }));
   ok(st1.chip === '확인됨' && st1.addr === '서울특별시 강남구 선릉로86길 31, 롯데골드로즈2차 1108호', '③ 원문 1건 = 자동 확정 + 상세 결합', JSON.stringify(st1));
 
-  // ④ 케이스6: 아파트 + 동만 있고 호수 없음 → "동·호수 확인" (자동 확정 금지)
+  // ④ 케이스6: 아파트 + 동만 있고 호수 없음 → "동·호수 확인" (자동 확정 금지 — 실아파트 단지 실응답 기반)
   await pg.click('#ooBtnReset'); await pg.waitForTimeout(300);
-  await pg.evaluate(() => { document.getElementById('ooRawInput').value = '김영희 010-5554-1234 서울 마포구 월드컵북로 400, 101동'; });
+  await pg.evaluate(() => { document.getElementById('ooRawInput').value = '김영희 010-5554-1234 서울 마포구 상암산로1길 24, 101동'; });
   await pg.click('#ooBtnParse'); await pg.waitForTimeout(300);
   await pg.click('#ooBtnVerifyAll'); await pg.waitForTimeout(1200);
   const chip6 = await pg.evaluate(() => document.querySelector('#ooTbody .chip').textContent);
