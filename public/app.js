@@ -304,6 +304,11 @@ function switchPage(pageName) {
         initExpensePage();
     }
     if (pageName === 'settlement') {
+        /* #394 이중 안전: 어떤 경로로든 탭 본문 active가 전부 꺼진 채 진입하면 기본 탭 복구(빈 화면 방지) */
+        if (!document.querySelector('.settlement-tab-content.active')) {
+            document.querySelectorAll('.settlement-tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab === 'settlement-main'));
+            document.getElementById('settlement-main')?.classList.add('active');
+        }
         renderSettlementCalendar().catch(console.error);
         renderSettlementList().catch(console.error);
         renderWeeklySettlement().catch(console.error);
@@ -8690,10 +8695,15 @@ window.toggleCardProcessed = async function(id, nextValue) {
 // ============================================================
 document.querySelectorAll('.settlement-tab').forEach(tab => {
     tab.addEventListener('click', () => {
+        /* 🔴 #394(대표 실물 8/21 "정산관리가 가끔 빈 창"): 문의 관리 탭·서브탭이 .settlement-tab 클래스를
+           스타일로 재사용하는데 data-tab이 없다 — 이 핸들러가 정산 본문 active를 전부 꺼놓고(아래 두 줄)
+           아무것도 다시 켜지 못해, 다음 정산관리 진입이 빈 화면이 됐다(#179는 TypeError만 막았던 것).
+           data-tab 없는 버튼은 정산 탭이 아니므로 여기서 끝낸다(각자의 onclick이 전담). */
+        if (!tab.dataset.tab) return;
         document.querySelectorAll('.settlement-tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.settlement-tab-content').forEach(c => c.classList.remove('active'));
         tab.classList.add('active');
-        document.getElementById(tab.dataset.tab)?.classList.add('active');   // #179 부수 교정: 문의관리 서브탭이 .settlement-tab 클래스를 재사용해 이 핸들러가 같이 실행됨(data-tab 없음) → 콘솔 TypeError. 기능 영향은 없었으나 가드 추가
+        document.getElementById(tab.dataset.tab)?.classList.add('active');
         // 정산현황 탭 처음 열 때 초기화
         if (tab.dataset.tab === 'settlement-status' && !window._ssInitialized) {
             ssInit();
