@@ -7687,11 +7687,23 @@ async function shippingScenarioToday(dateOverride) {
         }
         const t = shipDayLabel(today);
         const last = shipDayLabel(new Date(Date.UTC(y0, m0, d0 + SHIP_GUIDE_DAYS)).toISOString().slice(0, 10));   // 표의 마지막 날 '다음' 날
+        // #392(대표 8/21): 예약 예외 줄은 「지금 예약 판매 중인 품목이 실제로 있을 때만」 그 품목 이름으로 붙인다.
+        //   종전엔 "청귤 등 사전예약 상품은 이 표와 무관"이 하드코딩돼, 청귤이 일반 전환된 뒤에도 봇이 청귤 배송
+        //   문의에 이 표를 쓰지 않으려 했다. 판정 = 판매중 + reserve_ship_start가 오늘(KST) 이후(알림톡 isReserveOrder와 동일 기준).
+        //   조회 실패 시엔 종전 문구 유지(예약 시즌에 예외 줄이 빠지는 사고 쪽이 더 위험 — 무회귀).
+        let reserveLine = '';
+        try {
+            const { rows: rsv } = await pool.query(
+                `SELECT name FROM bot_products
+                  WHERE deleted_at IS NULL AND status = '판매중'
+                    AND reserve_ship_start IS NOT NULL
+                    AND reserve_ship_start >= ((NOW() AT TIME ZONE 'Asia/Seoul')::date)`);
+            if (rsv.length) reserveLine = `\n⚠️ ${rsv.map(r => r.name).join(' · ')}은(는) 사전예약 상품이라 이 표와 무관합니다(발송 시작일부터 순차 발송) — 예약 상품 문의는 예약 관련 재료로 답하세요.`;
+        } catch (e) { reserveLine = '\n⚠️ 사전예약 상품은 이 표와 무관합니다(수확 후 순차 발송) — 예약 상품 문의는 예약 관련 재료로 답하세요.'; }
         const text = `(오늘 ${t.md}(${t.dow}) 기준 · 회사 「발송 휴무일 관리」에 등록된 값으로 매일 자동 계산됩니다)
 
 ⚠️ 배송·발송·도착 일정 문의에는 다른 재료보다 **이 표를 먼저** 사용하세요.
-⚠️ 「배송 일정 안내」 시나리오의 일반 설명(오전 8시 이내 주문 시 당일 발송 · 토요일만 배송휴무)과 이 표가 다르면 **이 표가 정확합니다** — 표에 적힌 날짜 그대로 안내하고, 일반 설명은 쓰지 마세요.
-⚠️ 청귤 등 사전예약 상품은 이 표와 무관합니다(수확 후 순차 발송) — 예약 상품 문의는 예약 관련 재료로 답하세요.
+⚠️ 「배송 일정 안내」 시나리오의 일반 설명(오전 8시 이내 주문 시 당일 발송 · 토요일만 배송휴무)과 이 표가 다르면 **이 표가 정확합니다** — 표에 적힌 날짜 그대로 안내하고, 일반 설명은 쓰지 마세요.${reserveLine}
 ⚠️ 표에 없는 날짜(${last.md} 이후)는 발송일을 확답하지 말고, 일반 안내 후 고객센터(📞 010-6687-4031) 확인을 권해주세요.
 ${offLines.length ? `\n🚫 이 기간 중 발송 휴무일\n${offLines.map(x => `- ${x}`).join('\n')}\n` : ''}
 📦 주문일별 발송·도착 예정
