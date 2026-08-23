@@ -11154,6 +11154,28 @@ const SETTLE_OCR_TOOL = {
     },
 };
 
+// #396: 비전 판독 1회 호출 (maruSettlementOcr·진단 러너 공용) — stop_reason·usage를 함께 반환해 잘림을 숨기지 않는다
+async function settleOcrReadOnce(mime, b64, maxTokens) {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+        model: MARU_MODEL, max_tokens: maxTokens,
+        tools: [SETTLE_OCR_TOOL], tool_choice: { type: 'tool', name: 'read_settlement_image' },
+        messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
+            { type: 'text', text: '이 거래처 발송목록 이미지에서 거래처명과 각 품목의 박스 수량을 정확히 읽어라. 맨 아래 합계 행(총 개수)은 items에 넣지 마라. 품목명은 이미지에 적힌 텍스트를 그대로 옮겨라.' },
+        ] }],
+    });
+    const tu = msg.content.find(b => b.type === 'tool_use');
+    return { raw: tu ? tu.input : null, stop: msg.stop_reason || null, usage: msg.usage || {} };
+}
+
+// #396: 도구 응답 → 유효 품목 목록 (이름·수량 있는 행만)
+function settleOcrNormalizeItems(raw) {
+    return (raw && Array.isArray(raw.items) ? raw.items : [])
+        .map(x => ({ name: String(x.name || '').trim(), qty: Number(x.qty) || 0 }))
+        .filter(x => x.name && x.qty > 0);
+}
+
 async function maruSettlementOcr(order, actor) {
     const step = agentStep('order', '마루', '📷 정산관리 이미지 판독 — 발송목록에서 거래처·품목·수량 읽는 중...');
     const maru = (await pool.query(`SELECT * FROM agents WHERE role='chief' AND is_deleted=false LIMIT 1`)).rows[0];
@@ -11166,25 +11188,22 @@ async function maruSettlementOcr(order, actor) {
         if (!m) throw new Error('이미지 형식을 인식할 수 없습니다 (base64 data URL 필요)');
         const mime = order.image_mime || m[1] || 'image/png';
         const b64 = m[2];
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const msg = await anthropic.messages.create({
-            model: MARU_MODEL, max_tokens: 1500,
-            tools: [SETTLE_OCR_TOOL], tool_choice: { type: 'tool', name: 'read_settlement_image' },
-            messages: [{ role: 'user', content: [
-                { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
-                { type: 'text', text: '이 거래처 발송목록 이미지에서 거래처명과 각 품목의 박스 수량을 정확히 읽어라. 맨 아래 합계 행(총 개수)은 items에 넣지 마라. 품목명은 이미지에 적힌 텍스트를 그대로 옮겨라.' },
-            ] }],
-        });
-        const tu = msg.content.find(b => b.type === 'tool_use');
-        if (!tu) throw new Error('이미지에서 품목을 읽지 못했습니다');
-        const raw = tu.input;
+        // #396: max_tokens 1500 → 4000 (#373 계열 — sonnet-5는 내부 사고가 같은 예산을 잠식해 도구 JSON이
+        // 잘리면 input이 빈 객체로 와 "품목 0건"이 됐다. 8/11~8/23 간헐→다발 실측). 잘림·빈 결과는 1회 재시도.
+        let att = await settleOcrReadOnce(mime, b64, 4000);
+        let readItems = settleOcrNormalizeItems(att.raw);
+        if (att.stop === 'max_tokens' || !readItems.length) {
+            console.warn(`정산 OCR 1차 실패 → 재시도: stop=${att.stop} items=${readItems.length} out_tokens=${att.usage.output_tokens ?? '?'}`);
+            att = await settleOcrReadOnce(mime, b64, 4000);
+            readItems = settleOcrNormalizeItems(att.raw);
+        }
+        // 🔴 잘린 판독은 채택 금지 — 정산(돈) 표가 불완전할 수 있다. 부분 품목으로 진행하지 않는다.
+        if (att.stop === 'max_tokens') throw new Error(`이미지 판독이 길이 제한에 잘렸습니다 (out_tokens=${att.usage.output_tokens ?? '?'} — 한 번 더 시도해주세요)`);
+        if (!readItems.length) throw new Error('이미지에서 품목을 하나도 읽지 못했습니다 (발송목록 이미지가 맞는지 확인해주세요)');
+        const raw = att.raw;
         // 거래처: 지시문 우선(예: "21일 효돈…") → 이미지 헤더 → 없으면 품목 구성으로 자동 인식(settlementOcrBuildConfirm 내부)
         const partnerHint = normalizePartnerName(order.content) || normalizePartnerName(raw.partner);
         const settleDate = parseSettlementDate(order.content, kstTodayStr()); // 대표 지시 날짜 ("21일" 등) 또는 오늘
-        const readItems = (Array.isArray(raw.items) ? raw.items : [])
-            .map(x => ({ name: String(x.name || '').trim(), qty: Number(x.qty) || 0 }))
-            .filter(x => x.name && x.qty > 0);
-        if (!readItems.length) throw new Error('이미지에서 품목을 하나도 읽지 못했습니다 (발송목록 이미지가 맞는지 확인해주세요)');
         await settlementOcrBuildConfirm(order, partnerHint, readItems, run.id, settleDate);
     } catch (err) {
         const em = err?.status ? `Anthropic API 오류 (${err.status}): ${err.message}` : (err?.message || String(err));
@@ -12844,6 +12863,39 @@ setInterval(async () => {
             source: 'naver-api', actor: { id: null, name: 'cc-#98(대표GO)' } });
     } catch (e) {
         try { await naverCfgSet('aligo_register_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
+// #396 진단 러너: 정산 OCR 재현 — settle_ocr_probe_request {ids:[pending_orders id...], max_tokens?:N}
+// 보관된 실패 이미지로 비전 호출만 재실행해 stop_reason·토큰 사용량·품목 수를 기록 (확인표·정산 쓰기 없음. PII 미포함)
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('settle_ocr_probe_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'settle_ocr_probe_request'`);   // 선제거 — 반복 실행 방지
+        const ids = Array.isArray(req.ids) ? req.ids.slice(0, 6) : [];
+        const mt = Math.min(Math.max(Number(req.max_tokens) || 4000, 200), 8000);
+        const results = [];
+        for (const id of ids) {
+            try {
+                const row = (await pool.query(`SELECT id, image_data, image_mime FROM pending_orders WHERE id=$1`, [id])).rows[0];
+                if (!row || !row.image_data) { results.push({ id, error: '이미지 없음' }); continue; }
+                const m = String(row.image_data).match(/^data:([^;]+);base64,(.+)$/s);
+                if (!m) { results.push({ id, error: 'data URL 아님' }); continue; }
+                const att = await settleOcrReadOnce(row.image_mime || m[1] || 'image/png', m[2], mt);
+                const items = settleOcrNormalizeItems(att.raw);
+                results.push({
+                    id, max_tokens: mt, stop: att.stop,
+                    in_tokens: att.usage.input_tokens ?? null, out_tokens: att.usage.output_tokens ?? null,
+                    items: items.length, raw_items: att.raw && Array.isArray(att.raw.items) ? att.raw.items.length : null,
+                    partner: att.raw ? String(att.raw.partner || '').slice(0, 30) : null,
+                    first_name: items[0] ? items[0].name.slice(0, 50) : null,
+                });
+            } catch (e) { results.push({ id, error: String(e.message || e).slice(0, 200) }); }
+        }
+        await naverCfgSet('settle_ocr_probe_result', { at: new Date().toISOString(), model: MARU_MODEL, results });
+    } catch (e) {
+        try { await naverCfgSet('settle_ocr_probe_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
     }
 }, 60000);
 
