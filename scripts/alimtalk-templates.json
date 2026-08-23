@@ -126,6 +126,119 @@
       "tpl_type": "AD"
     }
   ],
+  "templates_md": [
+    {
+      "key": "order_normal_md",
+      "name": "제주아꼼이네_주문완료_일반2",
+      "env_key": "ALIGO_TPL_CODE",
+      "content": "제주아꼼이네입니다~! 🍊\n저희 아꼼이네를 찾아주시고 주문해주셔서 진심으로 감사드립니다!^^\n\n#{고객명}님이 주문해주신 [#{상품명}] 배송일정 안내드립니다.\n▶ #{발송안내}\n\n주문에 보답드리도록 신선하고 좋은 상품으로 정성껏 준비하여 보내드리겠습니다. 발송 후 안내 다시 드리겠습니다!\n\n즐거운 하루 되세요!\n📞 010-6687-4031",
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "다른 상품 구경하기",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://akkome.com/product/list.html",
+            "linkPc": "https://akkome.com/product/list.html"
+          },
+          {
+            "name": "문의하기",
+            "linkType": "MD",
+            "linkTypeName": "메시지전달"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주",
+        "상품명": "제주 하우스감귤 3kg",
+        "발송안내": "내일 수요일 오전 발송, 목~금 도착 예정"
+      },
+      "tpl_type": "AD",
+      "_주의": "#398 MD(메시지전달) 버튼판 — 손님이 [문의하기]를 누르면 이 알림톡 원문(고객명·상품명 포함)이 채널 상담 채팅에 첨부됨 = 고객 특정. 승인 시 env ALIGO_TPL_CODE 교체 + templates(발송용 단일 소스)의 해당 버튼 구성도 이 버튼으로 동기화할 것(발송 button_1은 승인 구성과 일치해야 함)"
+    },
+    {
+      "key": "order_reserve_md",
+      "name": "제주아꼼이네_주문완료_예약2",
+      "env_key": "ALIGO_TPL_CODE_RESERVE",
+      "content": "제주아꼼이네입니다~! 🍊\n저희 아꼼이네를 찾아주시고 주문해주셔서 진심으로 감사드립니다!^^\n\n#{고객명}님이 주문해주신 [#{상품명}] 배송일정 안내드립니다.\n▶ #{발송안내}\n\n기다려주시는 주문에 보답드리도록, 신선하고 좋은 상품으로 정성껏 준비하여 보내드리겠습니다. 발송이 시작되면 안내 다시 드리겠습니다!\n\n즐거운 하루 되세요!\n📞 010-6687-4031",
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "다른 상품 구경하기",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://akkome.com/product/list.html",
+            "linkPc": "https://akkome.com/product/list.html"
+          },
+          {
+            "name": "문의하기",
+            "linkType": "MD",
+            "linkTypeName": "메시지전달"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주",
+        "상품명": "제주 청귤(풋귤) 5kg",
+        "발송안내": "9월 중순 수확 시작 후 순차 발송"
+      },
+      "tpl_type": "AD",
+      "_주의": "#398 MD 버튼판 (위 order_normal_md 주의 동일)"
+    },
+    {
+      "key": "ship_guide_md",
+      "name": "제주아꼼이네_발송안내3",
+      "env_key": "ALIGO_TPL_CODE_GUIDE",
+      "content": "제주아꼼이네입니다~! 🍊\n#{고객명}님이 주문하신 [#{상품명}]이 오늘 출발했습니다!\n▶ 도착 예정: #{도착안내}\n\n상품별 맛있게 드시는 법과 보관·후숙 방법은 아래 버튼에서 확인하실 수 있어요!\n\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031",
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "택배 배송조회",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://jeju-acom-company.onrender.com/track?n=#{송장번호}",
+            "linkPc": "https://jeju-acom-company.onrender.com/track?n=#{송장번호}"
+          },
+          {
+            "name": "맛있게 드시는 법·보관법",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}",
+            "linkPc": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}"
+          },
+          {
+            "name": "문의하기",
+            "linkType": "MD",
+            "linkTypeName": "메시지전달"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주",
+        "상품명": "제주 하우스감귤 3kg",
+        "도착안내": "내일 수요일~모레 목요일 사이 도착 예정",
+        "상품코드": "12",
+        "송장번호": "123456789012"
+      },
+      "tpl_type": "AD",
+      "_주의": "#398 MD 버튼판(발송안내2 승인 문안 + [문의하기] MD) — 버튼 4개(AC 최상단 규격 유지). 승인 시 env 교체 + templates 버튼 동기화. failover SMS 동일"
+    }
+  ],
   "templates_image": [
     {
       "key": "order_normal_img",

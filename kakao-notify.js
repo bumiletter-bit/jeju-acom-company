@@ -287,7 +287,10 @@ async function registerTemplates({ audit, set } = {}) {
     if (!configured()) return { ...out, error: 'keys-missing — 알리고 키 미설정' };
     if (!TEMPLATES_JSON || TEMPLATES_JSON.status !== 'confirmed') return { ...out, error: `templates-not-confirmed (status=${TEMPLATES_JSON && TEMPLATES_JSON.status})` };
     // 지시 #100: set='image' → 이미지형 4장(templates_image — 문의하기 버튼 포함·같은 이미지 파일). 기본 = 텍스트형(templates).
-    const list = set === 'image' ? (TEMPLATES_JSON.templates_image || []) : TEMPLATES_JSON.templates;
+    // 지시 #398: set='md' → MD(메시지전달) 버튼판 3장(templates_md — [문의하기] 탭 시 알림톡 원문이 상담 채팅에 첨부 = 고객 특정).
+    const list = set === 'image' ? (TEMPLATES_JSON.templates_image || [])
+        : set === 'md' ? (TEMPLATES_JSON.templates_md || [])
+        : TEMPLATES_JSON.templates;
     if (!list.length) return { ...out, error: `템플릿 세트 비어있음 (set=${set || 'text'})` };
     const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
     const tok = await aligoPost('/akv10/token/create/5/m', auth);   // 4장 순차 등록 여유분 5분 토큰
