@@ -11195,19 +11195,20 @@ async function settleOcrPlainRead(mime, b64) {
 }
 
 // #396-b: 판독 본선 (maruSettlementOcr·진단 러너 공용) — 도구 경로 → 이상 시 평문 폴백.
-// 이상 판정 = 잘림 · 품목 0건 · items 안 태그 오염(부분 품목만 남아 정산 표가 모자랄 수 있어 채택 금지).
-// partner만 오염된 경우는 무해 — 거래처는 지시문·품목 구성으로 자동 인식되므로 도구 결과를 그대로 쓴다.
+// 이상 판정 = 잘림 · 품목 0건 · 응답 어디든 태그 오염. 🔴 오염 범위는 응답 전체다 — full 검증 실측(id=397):
+// partner만 오염 마커가 남고 items는 마커 없이 "깨진 품목 1건"으로 줄어든 채 통과할 뻔했다(실제 12품목·479박스).
+// 오염 = 그 생성 전체가 탈선한 신호이므로 items가 몇 건 남았어도 믿지 않는다 (정산=돈 표).
 async function settleOcrRead(mime, b64) {
     let att = await settleOcrReadOnce(mime, b64, 4000);
     let readItems = settleOcrNormalizeItems(att.raw);
-    const polluted = /antml|<\s*\/?\s*parameter/i.test(JSON.stringify((att.raw && att.raw.items) || ''));
+    const polluted = /antml|<\s*\/?\s*parameter/i.test(JSON.stringify(att.raw || ''));
     let path = 'tool';
     if (att.stop === 'max_tokens' || !readItems.length || polluted) {
         console.warn(`정산 OCR 도구 경로 이상 → 평문 폴백: stop=${att.stop} items=${readItems.length} polluted=${polluted} out_tokens=${att.usage.output_tokens ?? '?'}`);
         const plain = await settleOcrPlainRead(mime, b64);
         const plainItems = plain ? settleOcrNormalizeItems(plain.raw) : [];
         if (plain && plain.stop !== 'max_tokens' && plainItems.length) { att = plain; readItems = plainItems; path = 'plain'; }
-        // 🔴 items가 오염됐는데 폴백도 실패 = 의심 데이터 — 정산(돈)에 채택 금지, 빈 결과로 돌려 오류 처리
+        // 🔴 오염됐는데 폴백도 실패 = 의심 데이터 — 정산(돈)에 채택 금지, 빈 결과로 돌려 오류 처리
         else if (polluted) readItems = [];
     }
     return { att, readItems, path };
