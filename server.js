@@ -11176,6 +11176,43 @@ function settleOcrNormalizeItems(raw) {
         .filter(x => x.name && x.qty > 0);
 }
 
+// #396-b: 평문 JSON 폴백 — 도구 JSON 태그 오염(#9716 계열, 실측 재현: partner="</antml…parameter>")이
+// items를 통째로 삼키면 도구 없이 평문으로 재질의한다 (maruPlainAnswer와 같은 원리 — 오염 원천 불가 경로)
+async function settleOcrPlainRead(mime, b64) {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+        model: MARU_MODEL, max_tokens: 4000,
+        messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
+            { type: 'text', text: '이 거래처 발송목록 이미지에서 거래처명과 각 품목의 박스 수량을 정확히 읽어라. 맨 아래 합계 행(총 개수)은 items에 넣지 마라. 품목명은 이미지에 적힌 텍스트를 그대로 옮겨라.\n다른 설명·마크업 없이 아래 형식의 JSON 객체 하나만 출력하라:\n{"partner":"거래처명(없으면 빈 문자열)","items":[{"name":"품목명 전체","qty":숫자}]}' },
+        ] }],
+    });
+    const text = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+    const jm = text.match(/\{[\s\S]*\}/);   // 코드펜스·앞뒤 설명 방어 — 첫 { ~ 마지막 }
+    if (!jm) return null;
+    try { return { raw: JSON.parse(jm[0]), stop: msg.stop_reason || null, usage: msg.usage || {} }; }
+    catch (_) { return null; }
+}
+
+// #396-b: 판독 본선 (maruSettlementOcr·진단 러너 공용) — 도구 경로 → 이상 시 평문 폴백.
+// 이상 판정 = 잘림 · 품목 0건 · items 안 태그 오염(부분 품목만 남아 정산 표가 모자랄 수 있어 채택 금지).
+// partner만 오염된 경우는 무해 — 거래처는 지시문·품목 구성으로 자동 인식되므로 도구 결과를 그대로 쓴다.
+async function settleOcrRead(mime, b64) {
+    let att = await settleOcrReadOnce(mime, b64, 4000);
+    let readItems = settleOcrNormalizeItems(att.raw);
+    const polluted = /antml|<\s*\/?\s*parameter/i.test(JSON.stringify((att.raw && att.raw.items) || ''));
+    let path = 'tool';
+    if (att.stop === 'max_tokens' || !readItems.length || polluted) {
+        console.warn(`정산 OCR 도구 경로 이상 → 평문 폴백: stop=${att.stop} items=${readItems.length} polluted=${polluted} out_tokens=${att.usage.output_tokens ?? '?'}`);
+        const plain = await settleOcrPlainRead(mime, b64);
+        const plainItems = plain ? settleOcrNormalizeItems(plain.raw) : [];
+        if (plain && plain.stop !== 'max_tokens' && plainItems.length) { att = plain; readItems = plainItems; path = 'plain'; }
+        // 🔴 items가 오염됐는데 폴백도 실패 = 의심 데이터 — 정산(돈)에 채택 금지, 빈 결과로 돌려 오류 처리
+        else if (polluted) readItems = [];
+    }
+    return { att, readItems, path };
+}
+
 async function maruSettlementOcr(order, actor) {
     const step = agentStep('order', '마루', '📷 정산관리 이미지 판독 — 발송목록에서 거래처·품목·수량 읽는 중...');
     const maru = (await pool.query(`SELECT * FROM agents WHERE role='chief' AND is_deleted=false LIMIT 1`)).rows[0];
@@ -11188,15 +11225,10 @@ async function maruSettlementOcr(order, actor) {
         if (!m) throw new Error('이미지 형식을 인식할 수 없습니다 (base64 data URL 필요)');
         const mime = order.image_mime || m[1] || 'image/png';
         const b64 = m[2];
-        // #396: max_tokens 1500 → 4000 (#373 계열 — sonnet-5는 내부 사고가 같은 예산을 잠식해 도구 JSON이
-        // 잘리면 input이 빈 객체로 와 "품목 0건"이 됐다. 8/11~8/23 간헐→다발 실측). 잘림·빈 결과는 1회 재시도.
-        let att = await settleOcrReadOnce(mime, b64, 4000);
-        let readItems = settleOcrNormalizeItems(att.raw);
-        if (att.stop === 'max_tokens' || !readItems.length) {
-            console.warn(`정산 OCR 1차 실패 → 재시도: stop=${att.stop} items=${readItems.length} out_tokens=${att.usage.output_tokens ?? '?'}`);
-            att = await settleOcrReadOnce(mime, b64, 4000);
-            readItems = settleOcrNormalizeItems(att.raw);
-        }
+        // #396: 실측 원인 = 도구 JSON 태그 오염(#9716 계열)이 items를 통째로 삼켜 "품목 0건"으로 위장 (8/11~8/23 다발).
+        // 도구 경로 → 이상(잘림·0건·오염) 시 평문 JSON 폴백 (settleOcrRead — 진단 러너와 공용).
+        const read = await settleOcrRead(mime, b64);
+        const att = read.att, readItems = read.readItems;
         // 🔴 잘린 판독은 채택 금지 — 정산(돈) 표가 불완전할 수 있다. 부분 품목으로 진행하지 않는다.
         if (att.stop === 'max_tokens') throw new Error(`이미지 판독이 길이 제한에 잘렸습니다 (out_tokens=${att.usage.output_tokens ?? '?'} — 한 번 더 시도해주세요)`);
         if (!readItems.length) throw new Error('이미지에서 품목을 하나도 읽지 못했습니다 (발송목록 이미지가 맞는지 확인해주세요)');
@@ -12866,8 +12898,9 @@ setInterval(async () => {
     }
 }, 60000);
 
-// #396 진단 러너: 정산 OCR 재현 — settle_ocr_probe_request {ids:[pending_orders id...], max_tokens?:N}
-// 보관된 실패 이미지로 비전 호출만 재실행해 stop_reason·토큰 사용량·품목 수를 기록 (확인표·정산 쓰기 없음. PII 미포함)
+// #396 진단 러너: 정산 OCR 재현 — settle_ocr_probe_request {ids:[pending_orders id...], max_tokens?:N, mode?:'tool'|'plain'|'full'}
+// 보관 이미지로 판독만 재실행해 stop_reason·토큰 사용량·품목 수를 기록 (확인표·정산 쓰기 없음. PII 미포함)
+// mode: tool=도구 경로 1회(종전 재현) / plain=평문 폴백 단독 / full=실제 본선(settleOcrRead — 도구→폴백)
 setInterval(async () => {
     try {
         const req = await naverCfgGet('settle_ocr_probe_request');
@@ -12875,6 +12908,7 @@ setInterval(async () => {
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'settle_ocr_probe_request'`);   // 선제거 — 반복 실행 방지
         const ids = Array.isArray(req.ids) ? req.ids.slice(0, 6) : [];
         const mt = Math.min(Math.max(Number(req.max_tokens) || 4000, 200), 8000);
+        const mode = ['tool', 'plain', 'full'].includes(req.mode) ? req.mode : 'tool';
         const results = [];
         for (const id of ids) {
             try {
@@ -12882,16 +12916,21 @@ setInterval(async () => {
                 if (!row || !row.image_data) { results.push({ id, error: '이미지 없음' }); continue; }
                 const m = String(row.image_data).match(/^data:([^;]+);base64,(.+)$/s);
                 if (!m) { results.push({ id, error: 'data URL 아님' }); continue; }
-                const att = await settleOcrReadOnce(row.image_mime || m[1] || 'image/png', m[2], mt);
-                const items = settleOcrNormalizeItems(att.raw);
+                const mime = row.image_mime || m[1] || 'image/png';
+                let att, items, path = mode;
+                if (mode === 'full') { const r2 = await settleOcrRead(mime, m[2]); att = r2.att; items = r2.readItems; path = r2.path; }
+                else if (mode === 'plain') { att = await settleOcrPlainRead(mime, m[2]); items = att ? settleOcrNormalizeItems(att.raw) : []; }
+                else { att = await settleOcrReadOnce(mime, m[2], mt); items = settleOcrNormalizeItems(att.raw); }
+                if (!att) { results.push({ id, mode, error: '평문 JSON 파싱 실패' }); continue; }
                 results.push({
-                    id, max_tokens: mt, stop: att.stop,
+                    id, mode, path, max_tokens: mt, stop: att.stop,
                     in_tokens: att.usage.input_tokens ?? null, out_tokens: att.usage.output_tokens ?? null,
                     items: items.length, raw_items: att.raw && Array.isArray(att.raw.items) ? att.raw.items.length : null,
+                    qty_sum: items.reduce((a, b) => a + b.qty, 0),
                     partner: att.raw ? String(att.raw.partner || '').slice(0, 30) : null,
                     first_name: items[0] ? items[0].name.slice(0, 50) : null,
                 });
-            } catch (e) { results.push({ id, error: String(e.message || e).slice(0, 200) }); }
+            } catch (e) { results.push({ id, mode, error: String(e.message || e).slice(0, 200) }); }
         }
         await naverCfgSet('settle_ocr_probe_result', { at: new Date().toISOString(), model: MARU_MODEL, results });
     } catch (e) {
