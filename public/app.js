@@ -9144,6 +9144,10 @@ function ssInp(field, val) {
     const si = document.getElementById('ss_sc_items');
     if (si) { si.textContent = ssFmt(itemsTot); si.className = 'ss-sc-val ' + (itemsTot >= 0 ? 'g' : 'r'); }
 
+    // #397(대표 8/23): 달력도 입력 즉시 갱신 — 종전엔 날짜 선택/새로고침 때만 그려져 금액·전일대비가 낡아 보였다.
+    // 달력은 #ss-cal-wrap 순수 재생성이라 입력 폼(#ss-wrap) 포커스에 영향 없음.
+    ssRenderCalendar();
+
     clearTimeout(_ssSaveTimer);
     _ssSaveTimer = setTimeout(ssPersist, 600);
 }
