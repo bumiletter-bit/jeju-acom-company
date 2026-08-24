@@ -911,6 +911,10 @@ async function initDB() {
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS backfill BOOLEAN DEFAULT FALSE`);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // #401: 다채널 알림톡 수집기 5종 — 기본 OFF (가동 = 대표 GO 후 타이머 ON + notify_channel_mode live 전환 2겹)
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES
+        ('cafe24_notify', false, 3), ('cafe24_guide', false, 30), ('coupang_notify', false, 10), ('coupang_guide', false, 30), ('welcome_notify', false, 30)
+        ON CONFLICT (key) DO NOTHING`);
     // ── 지시 #107: 일일 상품 스냅샷 (자사몰 실서비스 동기화 1단계 — 읽기 전용·기본 OFF·새벽 04:30 앵커)
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('product_snapshot', false, 1440)
         ON CONFLICT (key) DO NOTHING`);
@@ -5859,7 +5863,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         //   우리 화면만 가리면 주문 대조 업무가 불가능해진다. 저장은 여전히 마스킹만(재조회 방식 유지).
         if (rows.length) {
             try {
-                const need = rows.map(r => r.order_key).filter(k => k && !(_telCache.has(k) && Date.now() - _telCache.get(k).at < 300000));
+                // #401: 새 채널 키(c24:/cp:/join:)는 네이버 재조회 대상 아님 — 무의미한 호출·실패 방지
+                const need = rows.map(r => r.order_key).filter(k => k && !/^(c24|cp|join):/.test(k) && !(_telCache.has(k) && Date.now() - _telCache.get(k).at < 300000));
                 for (let i = 0; i < need.length && i < 200; i += 100) {
                     if (i > 0) await new Promise(r2 => setTimeout(r2, 350));
                     const q = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: need.slice(i, i + 100) } });
@@ -5957,6 +5962,51 @@ app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, 
         const row = (await pool.query(`SELECT id, order_key, status FROM kakao_notify_log WHERE id=$1`, [req.params.id])).rows[0];
         if (!row) return res.status(404).json({ error: '기록을 찾을 수 없습니다' });
         if (row.status !== 'hold-0809') return res.status(409).json({ error: '보류 상태가 아닙니다 (이미 처리됨)' });
+        // #401: 새 채널(자사몰·쿠팡) 보류 건 — 채널별 재조회로 재료 재구성(원번호 미저장 원칙 동일)
+        if (/^(c24|cp):/.test(String(row.order_key))) {
+            const isC24 = row.order_key.startsWith('c24:');
+            const bp2 = (await pool.query(`SELECT id, name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
+            const hinfo2 = await loadShippingHolidayInfo();
+            let name2 = '고객', optText2 = '', recvTel2 = '';
+            if (isC24) {
+                const oid = row.order_key.slice(4);
+                const r2 = await cafe24.apiGet('/api/v2/admin/orders', { order_id: oid, embed: 'items,buyer', fields: 'order_id,order_date,buyer,items', limit: 1,
+                    start_date: oid.slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'), end_date: oid.slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') });
+                const o2 = ((r2 && r2.orders) || []).find(x => x.order_id === oid);
+                if (!o2) return res.status(404).json({ error: '자사몰 주문을 찾을 수 없습니다' });
+                const it2 = ((o2.items || []).filter(it => /^N[2-4]/.test(String(it.order_status || '')) && !it.claim_code)[0]) || (o2.items || [])[0] || {};
+                name2 = (o2.buyer && o2.buyer.name) || '고객';
+                optText2 = `${it2.product_name || ''} ${it2.option_value || ''}`;
+                recvTel2 = String((o2.buyer && (o2.buyer.cellphone || o2.buyer.phone)) || '').trim();
+            } else {
+                const oid = row.order_key.slice(3);
+                const pools = [...await coupangFetchSheets(31, 'ACCEPT'), ...await coupangFetchSheets(31, 'INSTRUCT'), ...await coupangFetchSheets(31, 'DEPARTURE')];
+                const s2 = pools.find(x => String(x.orderId) === oid);
+                if (!s2) return res.status(404).json({ error: '쿠팡 주문을 찾을 수 없습니다 (조회 31일 범위 밖일 수 있음)' });
+                const it2 = (s2.orderItems || [])[0] || {};
+                name2 = (s2.orderer && s2.orderer.name) || '고객';
+                optText2 = String(it2.vendorItemName || it2.sellerProductName || '');
+                recvTel2 = coupangRecvTel(s2);
+            }
+            if (!recvTel2) return res.status(409).json({ error: '수신번호를 확인할 수 없습니다' });
+            const matched2 = kakaoNotify.matchNotifyProductLoose(optText2, bp2);
+            const isReserve2 = kakaoNotify.isReserveOrder(optText2, matched2);
+            const shipLine2 = isReserve2 ? buildShipLineFor(true, matched2, Date.now(), hinfo2)
+                : shippingSchedule.computeShipping(Date.now(), hinfo2.set, hinfo2.reasons, { forceDay: day, arriveOff: hinfo2.arriveOff }).text;
+            const tplDef2 = kakaoNotify.orderTemplate(isReserve2);
+            const message2 = kakaoNotify.buildMessage({
+                '고객명': name2, '상품명': kakaoNotify.cleanProductName(optText2 || '주문 상품').slice(0, 80), '발송안내': shipLine2,
+            }, tplDef2 && tplDef2.content);
+            const live2 = await notifyChannelLive(isC24 ? 'c24' : 'cp');
+            let out2;
+            if (!live2) out2 = { mode: 'dry-run', status: 'dry-run', error: null };
+            else if (isC24) out2 = await kakaoNotify.sendAlimtalk({ receiver: recvTel2, subject: '주문 안내', message: message2, failoverMessage: message2,
+                tplCode: kakaoNotify.orderTplCode(isReserve2), buttons: (tplDef2 && tplDef2.button) || undefined });
+            else out2 = await kakaoNotify.sendLms({ receiver: recvTel2, subject: '주문 안내', message: message2 });
+            await pool.query(`UPDATE kakao_notify_log SET message=$1, mode=$2, status=$3, error=$4, receiver_masked=$5 WHERE id=$6 AND status='hold-0809'`,
+                [message2, out2.mode, out2.status, out2.error || null, kakaoNotify.maskPhone(recvTel2), row.id]);
+            return res.json({ message: out2.mode === 'dry-run' ? '수기 발송 처리(dry — 채널 실발송 전환 전이라 문면 기록만)' : (out2.status === 'sent' ? (isC24 ? '알림톡 발송 완료' : '문자(LMS) 발송 완료') : '발송 실패 — 이력 확인'), result: out2.status, mode: out2.mode });
+        }
         // 주문 상세 재조회로 수신번호·문면 재료 재구성 (원번호 미저장 원칙 — 재조회 방식)
         const r = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: [row.order_key] } });
         const body = (r && r.data) ? r.data : r;
@@ -6866,7 +6916,8 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
-const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)', cafe24_sync: '카페24 동기화(신규 세트)' };
+const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)', cafe24_sync: '카페24 동기화(신규 세트)',
+    cafe24_notify: '자사몰 주문안내(#401)', cafe24_guide: '자사몰 발송안내(#401)', coupang_notify: '쿠팡 주문안내(#401·LMS)', coupang_guide: '쿠팡 발송안내(#401·LMS)', welcome_notify: '자사몰 가입환영(#401)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -8809,7 +8860,8 @@ async function naverAutoCollectTick() {
         if (!due.length) return;
         due.sort((a, b) => b.waited - a.waited);
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
-        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot, cafe24_sync: collectCafe24Sync }[r.key];
+        const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot, cafe24_sync: collectCafe24Sync,
+            cafe24_notify: collectCafe24Notify, cafe24_guide: collectCafe24Guide, coupang_notify: collectCoupangNotify, coupang_guide: collectCoupangGuide, welcome_notify: collectWelcomeNotify }[r.key];   // #401 다채널
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
@@ -8908,6 +8960,407 @@ app.get('/api/agent-office/coupang/invoice-orders', authMiddleware, async (req, 
 //   스펙: docs/superpowers/specs/2026-07-26-cafe24-invoice-design.md · 모듈: cafe24.js (주문 조회만, 토큰 암호화 저장)
 const cafe24 = require('./cafe24.js');
 cafe24.init({ pool, notify: notifyTelegram });
+
+// ══════════════ #401: 다채널 알림톡 (쿠팡·자사몰 주문/발송 안내 + 가입 환영) — 2026-08-24 대표 GO ══════════════
+//   스펙: docs/superpowers/specs/2026-08-24-multichannel-alimtalk-design.md
+//   원칙: 네이버 파이프라인 무수정(공용 프리미티브만 재사용) · 이력 재사용(order_key 프리픽스 c24:/cp:/join:) ·
+//         8시 보류(hold-0809)·발송휴무 달력·예약 판정·번호 가드·마스킹 저장 전부 네이버와 동일(대표 확정).
+//   🔴 채널 실발송 게이트: 전역 KAKAO_NOTIFY가 이미 ON이므로, 새 채널은 notify_channel_mode[ch]==='live'여야
+//      실발송한다(기본 dry — 문면만 이력에 기록해 검수). live 전환은 대표 GO 후 DB 값 변경으로만.
+async function notifyChannelLive(ch) {
+    try { const v = await naverCfgGet('notify_channel_mode'); return !!(v && v[ch] === 'live'); } catch (_) { return false; }
+}
+// 8시 보류 판정 (collectKakaoNotify #171·#353과 동일 규칙 — 출고하는 날의 08시대만 보류)
+function holdWindow0809(paidMs, hset) {
+    const _kst = new Date(paidMs + 9 * 3600 * 1000);
+    if (_kst.getUTCHours() !== 8) return false;
+    const payDayKst = new Date(Date.UTC(_kst.getUTCFullYear(), _kst.getUTCMonth(), _kst.getUTCDate()));
+    return shippingSchedule.isShipDay(payDayKst, hset);
+}
+// 발송 안내줄 (collectKakaoNotify #144·#182와 동일 — 예약은 품목 발송 시작일, 일반은 computeShipping)
+function buildShipLineFor(isReserve, matched, paidAt, hinfo) {
+    if (isReserve) {
+        const rs = matched && matched.reserve_ship_start ? new Date(matched.reserve_ship_start) : null;
+        return (rs && !isNaN(rs)) ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
+                                  : '시즌 시작 시 주문 순서대로 발송해 드려요';
+    }
+    return shippingSchedule.computeShipping(paidAt, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
+}
+// 카페24 주문 기간 조회 (읽기 전용 — PII는 메모리에서만 사용·저장은 마스킹)
+async function cafe24FetchOrdersRange(days, embed) {
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
+    const out = [];
+    for (let offset = 0; offset < 500; offset += 100) {
+        const r = await cafe24.apiGet('/api/v2/admin/orders', {
+            start_date: d(-(Math.max(1, days) - 1)), end_date: d(0), embed, limit: 100, offset,
+            fields: 'order_id,order_date,payment_date,buyer,items' });
+        const list = (r && r.orders) || [];
+        out.push(...list);
+        if (list.length < 100) break;
+    }
+    return out;
+}
+// ── 자사몰 주문 안내 (A/B 알림톡 — 실번호라 정상 경로. 발주확인 개념 없음 = 상태 변경 액션 0)
+async function collectCafe24Notify() {
+    const orders = await cafe24FetchOrdersRange(2, 'items,buyer');
+    if (!orders.length) return '자사몰 주문 0건 — 알림톡 대상 없음';
+    const keys = orders.map(o => 'c24:' + o.order_id);
+    const seen = new Set((await pool.query(`SELECT order_key FROM kakao_notify_log WHERE order_key = ANY($1)`, [keys])).rows.map(r => r.order_key));
+    const targets = orders.filter(o => !seen.has('c24:' + o.order_id));
+    if (!targets.length) return `자사몰 주문 ${orders.length}건 — 전부 처리 이력 있음`;
+    const bp = (await pool.query(`SELECT name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const hinfo = await loadShippingHolidayInfo();
+    const live = await notifyChannelLive('c24');
+    let done = 0, failed = 0, held = 0;
+    for (const o of targets) {
+        const orderKey = ('c24:' + o.order_id).slice(0, 50);
+        try {
+            // 결제 확인·취소 방어: N2x~N4x(결제 후) 품목만 대상. 입금 대기(N0x·N1x)는 기록 없이 다음 주기 재평가.
+            const allItems = o.items || [];
+            const paidItems = allItems.filter(it => /^N[2-4]/.test(String(it.order_status || '')) && !it.claim_code);
+            if (!paidItems.length) {
+                const anyPending = allItems.some(it => /^N[01]/.test(String(it.order_status || '')));
+                if (anyPending) continue;   // 입금 전 — 입금되면 다음 주기에 대상
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, mode, status, confirm_status, error)
+                    VALUES ($1,$2,'skip','canceled-excluded','none','자사몰: 전 품목 취소·클레임') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String((allItems[0] && allItems[0].product_name) || '').slice(0, 200)]).catch(() => {});
+                continue;
+            }
+            const first = paidItems[0];
+            const optText = `${first.product_name || ''} ${first.option_value || ''}`;
+            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            const isReserve = kakaoNotify.isReserveOrder(optText, matched);
+            const paidAt = o.payment_date || o.order_date || Date.now();
+            const paidMs = Date.parse(paidAt) || Date.now();
+            if (holdWindow0809(paidMs, hinfo.set)) {
+                held++;
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                    VALUES ($1,$2,$3,'hold','hold-0809','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String(first.product_name || '').slice(0, 200),
+                     kakaoNotify.maskPhone((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '')]).catch(() => {});
+                continue;
+            }
+            const shipLine = buildShipLineFor(isReserve, matched, paidAt, hinfo);
+            const extra = paidItems.length > 1 ? ` 외 ${paidItems.length - 1}건` : '';
+            const tplDef = kakaoNotify.orderTemplate(isReserve);
+            const message = kakaoNotify.buildMessage({
+                '고객명': (o.buyer && o.buyer.name) || '고객',
+                '상품명': (kakaoNotify.cleanProductName(first.option_value || first.product_name || '주문 상품') + extra).slice(0, 80),
+                '발송안내': shipLine,
+            }, tplDef && tplDef.content);
+            const recvTel = String((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '').trim();
+            if (!recvTel) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                    VALUES ($1,$2,'***','skip','no-tel','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String(first.product_name || '').slice(0, 200)]); continue;
+            }
+            if (isBadTel(recvTel)) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                    VALUES ($1,$2,$3,'skip','bad-tel','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String(first.product_name || '').slice(0, 200), kakaoNotify.maskPhone(recvTel)]); continue;
+            }
+            if (!live) {   // 채널 dry 게이트 — 발송 함수 자체를 호출하지 않음(전역 스위치가 ON이므로)
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, confirm_status)
+                    VALUES ($1,$2,$3,$4,'dry-run','dry-run','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, (matched ? matched.name : first.product_name || '').slice(0, 200), kakaoNotify.maskPhone(recvTel), message]);
+                continue;
+            }
+            const res = await kakaoNotify.sendAlimtalk({
+                receiver: recvTel, subject: '주문 안내', message, failoverMessage: message,
+                tplCode: kakaoNotify.orderTplCode(isReserve), buttons: (tplDef && tplDef.button) || undefined,
+            });
+            await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error, confirm_status)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,'none') ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, (matched ? matched.name : first.product_name || '').slice(0, 200), kakaoNotify.maskPhone(recvTel), message, res.mode, res.status, res.error || null]);
+            if (res.status === 'sent') done++; else if (res.mode === 'real') failed++;
+        } catch (e) {
+            failed++;
+            await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, confirm_status, error)
+                VALUES ($1,'dry-run','build-failed','none',$2) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        }
+    }
+    return `자사몰 주문안내 ${live ? '실발송' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·보류 ${held})`;
+}
+// ── 자사몰 발송 안내 (E 알림톡 — 송장 등록(tracking_no+shipped_date) 감지)
+async function collectCafe24Guide() {
+    const orders = await cafe24FetchOrdersRange(7, 'items,buyer');
+    const shipped = orders.filter(o => (o.items || []).some(it => it.tracking_no && it.shipped_date && !it.claim_code));
+    if (!shipped.length) return '자사몰 발송 감지 0건';
+    const keys = shipped.map(o => 'c24:' + o.order_id);
+    const seen = new Set((await pool.query(`SELECT order_key FROM lms_guide_log WHERE order_key = ANY($1)`, [keys])).rows.map(r => r.order_key));
+    const targets = shipped.filter(o => !seen.has('c24:' + o.order_id));
+    if (!targets.length) return `자사몰 발송 ${shipped.length}건 — 전부 처리 이력 있음`;
+    const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const hinfo = await loadShippingHolidayInfo();
+    const live = await notifyChannelLive('c24');
+    let done = 0, failed = 0;
+    for (const o of targets) {
+        const orderKey = ('c24:' + o.order_id).slice(0, 50);
+        try {
+            const it0 = (o.items || []).find(it => it.tracking_no && it.shipped_date && !it.claim_code);
+            const optText = `${it0.product_name || ''} ${it0.option_value || ''}`;
+            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
+            const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), hinfo.arriveOff) : null;
+            const 도착안내 = shippingSchedule.computeArrival(Date.now(), hinfo.arriveOff, hinfo.reasons).text;
+            const vars = {
+                '고객명': (o.buyer && o.buyer.name) || '고객',
+                '상품명': (it0.option_value || it0.product_name || '주문 상품').slice(0, 80),
+                '도착안내': 도착안내,
+                '상품코드': String((matched && matched.id) || ''),
+                '송장번호': String(it0.tracking_no || '').replace(/[^0-9]/g, ''),
+            };
+            const recvTel = String((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '').trim();
+            if (!recvTel || isBadTel(recvTel)) {
+                await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
+                    VALUES ($1,$2,$3,'skip',$4) ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, (matched ? matched.name : it0.product_name || '').slice(0, 200),
+                     recvTel ? kakaoNotify.maskPhone(recvTel) : '***', recvTel ? 'bad-tel' : 'no-tel']); continue;
+            }
+            if (!live) {
+                const tplE = kakaoNotify.templateByKey('ship_guide');
+                const preview = tplE ? kakaoNotify.buildMessage(vars, tplE.content) : (lmsMessage || '');
+                await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status)
+                    VALUES ($1,$2,$3,$4,'dry-run','dry-run') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, ((matched ? matched.name : it0.product_name || '') + (hasGuide ? '' : ' (안내문 미등록)')).slice(0, 200),
+                     kakaoNotify.maskPhone(recvTel), preview]);
+                continue;
+            }
+            const res = await kakaoNotify.sendShippingGuideAlimtalk({
+                receiver: recvTel, vars,
+                fallback: lmsMessage ? { subject: '제주아꼼이네 배송 안내', message: lmsMessage } : undefined,
+            });
+            await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
+                VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, ((matched ? matched.name : it0.product_name || '') + (hasGuide ? '' : ' (안내문 미등록)')).slice(0, 200),
+                 kakaoNotify.maskPhone(recvTel), res.messageText || lmsMessage, res.mode, res.status, res.error || null]);
+            if (res.status === 'sent') done++; else if (res.mode === 'real') failed++;
+        } catch (e) {
+            failed++;
+            await pool.query(`INSERT INTO lms_guide_log (order_key, mode, status, error)
+                VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        }
+    }
+    return `자사몰 발송안내 ${live ? '실발송' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed})`;
+}
+// ── 쿠팡 시트 조회 (상태 지정 — coupangFetchInvoiceOrders 원함수 무수정·시트 원형 반환)
+async function coupangFetchSheets(days, status) {
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
+    let nextToken = '', out = [];
+    for (let page = 0; page < 20; page++) {
+        if (page > 0) await new Promise(r => setTimeout(r, 350));
+        const query = { createdAtFrom: d(-(Math.max(1, days) - 1)) + '+09:00', createdAtTo: d(0) + '+09:00', status, maxPerPage: 50 };
+        if (nextToken) query.nextToken = nextToken;
+        const body = await coupangCallWithRetry({ method: 'GET', path: COUPANG_ORDERSHEETS_PATH, query });
+        out.push(...(Array.isArray(body && body.data) ? body.data : []));
+        nextToken = String((body && body.nextToken) || '');
+        if (!nextToken) break;
+    }
+    return out;
+}
+// 쿠팡 수신번호 — 주문자 우선·수취인 폴백(네이버 원칙). 🔴 쿠팡은 안심번호(0505)라 알림톡 불가 → LMS 직행.
+//   isBadTel은 050을 차단하므로 쿠팡 경로 한정으로 050 허용(문자 수신 중계됨).
+function coupangRecvTel(sheet) {
+    const o = sheet.orderer || {}, rc = sheet.receiver || {};
+    return String(o.ordererNumber || o.safeNumber || rc.safeNumber || rc.receiverNumber || '').trim();
+}
+function coupangBadTel(v) { const d = String(v || '').replace(/[^0-9]/g, ''); return isBadTel(v) && !/^050/.test(d); }
+// ── 쿠팡 주문 안내 (A/B 문면 그대로 LMS — 결제완료(ACCEPT)·상품준비중(INSTRUCT) 신규 감지)
+async function collectCoupangNotify() {
+    const sheets = [...await coupangFetchSheets(2, 'ACCEPT'), ...await coupangFetchSheets(2, 'INSTRUCT')];
+    const uniq = new Map();
+    for (const s of sheets) { const id = String(s.orderId || ''); if (id && !uniq.has(id)) uniq.set(id, s); }
+    if (!uniq.size) return '쿠팡 주문 0건 — 안내 대상 없음';
+    const keys = [...uniq.keys()].map(id => 'cp:' + id);
+    const seen = new Set((await pool.query(`SELECT order_key FROM kakao_notify_log WHERE order_key = ANY($1)`, [keys])).rows.map(r => r.order_key));
+    const targets = [...uniq.values()].filter(s => !seen.has('cp:' + s.orderId));
+    if (!targets.length) return `쿠팡 주문 ${uniq.size}건 — 전부 처리 이력 있음`;
+    const bp = (await pool.query(`SELECT name, notify_message, reserve_ship_start FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const hinfo = await loadShippingHolidayInfo();
+    const live = await notifyChannelLive('cp');
+    let done = 0, failed = 0, held = 0;
+    for (const s of targets) {
+        const orderKey = ('cp:' + s.orderId).slice(0, 50);
+        try {
+            const items = (s.orderItems || []).filter(it => {
+                const qty = (Number(it.shippingCount) || 0) - ((Number(it.holdCountForCancel) || 0) + (Number(it.cancelCount) || 0));
+                return qty > 0;
+            });
+            if (!items.length) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, mode, status, confirm_status, error)
+                    VALUES ($1,$2,'skip','canceled-excluded','none','쿠팡: 전 품목 취소(예정 포함)') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String(((s.orderItems || [])[0] || {}).vendorItemName || '').slice(0, 200)]).catch(() => {});
+                continue;
+            }
+            const first = items[0];
+            const optText = String(first.vendorItemName || first.sellerProductName || '');
+            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            const isReserve = kakaoNotify.isReserveOrder(optText, matched);
+            const paidAt = s.paidAt || s.orderedAt || Date.now();
+            const paidMs = Date.parse(paidAt) || Date.now();
+            if (holdWindow0809(paidMs, hinfo.set)) {
+                held++;
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                    VALUES ($1,$2,$3,'hold','hold-0809','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, optText.slice(0, 200), kakaoNotify.maskPhone(coupangRecvTel(s))]).catch(() => {});
+                continue;
+            }
+            const shipLine = buildShipLineFor(isReserve, matched, paidAt, hinfo);
+            const extra = items.length > 1 ? ` 외 ${items.length - 1}건` : '';
+            const tplDef = kakaoNotify.orderTemplate(isReserve);
+            const message = kakaoNotify.buildMessage({
+                '고객명': (s.orderer && s.orderer.name) || '고객',
+                '상품명': (kakaoNotify.cleanProductName(optText || '주문 상품') + extra).slice(0, 80),
+                '발송안내': shipLine,
+            }, tplDef && tplDef.content);
+            const recvTel = coupangRecvTel(s);
+            if (!recvTel) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                    VALUES ($1,$2,'***','skip','no-tel','none') ON CONFLICT (order_key) DO NOTHING`, [orderKey, optText.slice(0, 200)]); continue;
+            }
+            if (coupangBadTel(recvTel)) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                    VALUES ($1,$2,$3,'skip','bad-tel','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, optText.slice(0, 200), kakaoNotify.maskPhone(recvTel)]); continue;
+            }
+            if (!live) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, confirm_status)
+                    VALUES ($1,$2,$3,$4,'dry-run','dry-run','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, (matched ? matched.name : optText).slice(0, 200), kakaoNotify.maskPhone(recvTel), message]);
+                continue;
+            }
+            const res = await kakaoNotify.sendLms({ receiver: recvTel, subject: '주문 안내', message });
+            await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error, confirm_status)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,'none') ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, (matched ? matched.name : optText).slice(0, 200), kakaoNotify.maskPhone(recvTel), message, res.mode, res.status, res.error || null]);
+            if (res.status === 'sent') done++; else if (res.mode === 'real') failed++;
+        } catch (e) {
+            failed++;
+            await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, confirm_status, error)
+                VALUES ($1,'dry-run','build-failed','none',$2) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        }
+    }
+    return `쿠팡 주문안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·보류 ${held})`;
+}
+// ── 쿠팡 발송 안내 (LMS — DEPARTURE 감지. 품목 안내문 있으면 그 전문, 없으면 E 문면 기반 + 링크 텍스트)
+async function collectCoupangGuide() {
+    const sheets = await coupangFetchSheets(7, 'DEPARTURE');
+    const uniq = new Map();
+    for (const s of sheets) { const id = String(s.orderId || ''); if (id && !uniq.has(id)) uniq.set(id, s); }
+    if (!uniq.size) return '쿠팡 발송 감지 0건';
+    const keys = [...uniq.keys()].map(id => 'cp:' + id);
+    const seen = new Set((await pool.query(`SELECT order_key FROM lms_guide_log WHERE order_key = ANY($1)`, [keys])).rows.map(r => r.order_key));
+    const targets = [...uniq.values()].filter(s => !seen.has('cp:' + s.orderId));
+    if (!targets.length) return `쿠팡 발송 ${uniq.size}건 — 전부 처리 이력 있음`;
+    const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
+    const hinfo = await loadShippingHolidayInfo();
+    const live = await notifyChannelLive('cp');
+    let done = 0, failed = 0;
+    for (const s of targets) {
+        const orderKey = ('cp:' + s.orderId).slice(0, 50);
+        try {
+            const first = (s.orderItems || [])[0] || {};
+            const optText = String(first.vendorItemName || first.sellerProductName || '');
+            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
+            const tracking = String(first.invoiceNumber || s.invoiceNumber || '').replace(/[^0-9]/g, '');
+            let message;
+            if (hasGuide) message = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), hinfo.arriveOff);
+            else {
+                // 안내문 미등록 폴백 = E 문면 기반(버튼 없는 LMS라 링크를 본문 텍스트로)
+                const 도착안내 = shippingSchedule.computeArrival(Date.now(), hinfo.arriveOff, hinfo.reasons).text;
+                const nm = (s.orderer && s.orderer.name) || '고객';
+                message = `제주아꼼이네입니다~! 🍊\n${nm}님이 주문하신 [${(optText || '주문 상품').slice(0, 60)}]이 오늘 출발했습니다!\n▶ 도착 예정: ${도착안내}\n\n맛있게 드시는 법·보관법: https://jeju-acom-company.onrender.com/guide${matched ? '?p=' + matched.id : ''}\n${tracking ? '택배 배송조회: https://jeju-acom-company.onrender.com/track?n=' + tracking + '\n' : ''}\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031`;
+            }
+            const recvTel = coupangRecvTel(s);
+            if (!recvTel || coupangBadTel(recvTel)) {
+                await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
+                    VALUES ($1,$2,$3,'skip',$4) ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, (matched ? matched.name : optText).slice(0, 200), recvTel ? kakaoNotify.maskPhone(recvTel) : '***', recvTel ? 'bad-tel' : 'no-tel']); continue;
+            }
+            if (!live) {
+                await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status)
+                    VALUES ($1,$2,$3,$4,'dry-run','dry-run') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, ((matched ? matched.name : optText) + (hasGuide ? '' : ' (안내문 미등록)')).slice(0, 200), kakaoNotify.maskPhone(recvTel), message]);
+                continue;
+            }
+            const res = await kakaoNotify.sendLms({ receiver: recvTel, subject: '제주아꼼이네 배송 안내', message });
+            await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, message, mode, status, error)
+                VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, ((matched ? matched.name : optText) + (hasGuide ? '' : ' (안내문 미등록)')).slice(0, 200), kakaoNotify.maskPhone(recvTel), message, res.mode, res.status, res.error || null]);
+            if (res.status === 'sent') done++; else if (res.mode === 'real') failed++;
+        } catch (e) {
+            failed++;
+            await pool.query(`INSERT INTO lms_guide_log (order_key, mode, status, error)
+                VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        }
+    }
+    return `쿠팡 발송안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed})`;
+}
+// ── 자사몰 가입 환영 (D 알림톡) — 🔴 mall.read_privacy 스코프 필요(현재 미보유·재동의 대기): 403이면 무해 대기.
+async function collectWelcomeNotify() {
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
+    let list;
+    try {
+        const r = await cafe24.apiGet('/api/v2/admin/customersprivacy', {
+            created_start_date: d(-1), created_end_date: d(0), limit: 100 });
+        list = (r && (r.customersprivacy || r.customers)) || [];
+    } catch (e) {
+        const msg = String((e && (e.reason || e.message)) || '');
+        if ((e && (e.status === 401 || e.status === 403)) || /scope|권한|unauthorized/i.test(msg))
+            return '권한 대기 — mall.read_privacy 재동의 필요 (가입 환영 D)';
+        throw e;
+    }
+    if (!list.length) return '신규 가입 0명';
+    const keys = list.map(m => 'join:' + (m.member_id || '')).filter(k => k !== 'join:');
+    if (!keys.length) return '신규 가입 0명 (member_id 없음)';
+    const seen = new Set((await pool.query(`SELECT order_key FROM kakao_notify_log WHERE order_key = ANY($1)`, [keys])).rows.map(r => r.order_key));
+    const targets = list.filter(m => m.member_id && !seen.has('join:' + m.member_id));
+    if (!targets.length) return `신규 가입 ${list.length}명 — 전부 처리 이력 있음`;
+    const live = await notifyChannelLive('join');
+    const tpl = kakaoNotify.templateByKey('welcome');
+    const tplCode = process.env.ALIGO_TPL_CODE_WELCOME || kakaoNotify.APPROVED_TPL.welcome;
+    let done = 0, failed = 0;
+    for (const m of targets) {
+        const orderKey = ('join:' + m.member_id).slice(0, 50);
+        try {
+            const message = kakaoNotify.buildMessage({ '고객명': m.name || m.member_id || '고객' }, tpl && tpl.content);
+            const recvTel = String(m.cellphone || m.phone || '').trim();
+            if (!recvTel || isBadTel(recvTel)) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                    VALUES ($1,'회원가입 환영',$2,'skip',$3,'none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, recvTel ? kakaoNotify.maskPhone(recvTel) : '***', recvTel ? 'bad-tel' : 'no-tel']); continue;
+            }
+            if (!live) {
+                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, confirm_status)
+                    VALUES ($1,'회원가입 환영',$2,$3,'dry-run','dry-run','none') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, kakaoNotify.maskPhone(recvTel), message]);
+                continue;
+            }
+            const res = await kakaoNotify.sendAlimtalk({
+                receiver: recvTel, subject: '가입 환영', message, failoverMessage: message,
+                tplCode, buttons: (tpl && tpl.button) || undefined,
+            });
+            await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error, confirm_status)
+                VALUES ($1,'회원가입 환영',$2,$3,$4,$5,$6,'none') ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, kakaoNotify.maskPhone(recvTel), message, res.mode, res.status, res.error || null]);
+            if (res.status === 'sent') done++; else if (res.mode === 'real') failed++;
+        } catch (e) {
+            failed++;
+            await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, mode, status, confirm_status, error)
+                VALUES ($1,'회원가입 환영','dry-run','build-failed','none',$2) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        }
+    }
+    return `가입 환영 ${live ? '실발송' : 'dry'} 처리 ${targets.length}명 (발송 ${done}·실패 ${failed})`;
+}
 
 // 연동 승인 URL 발급 — state를 config에 저장(10분 유효, 위변조 검증용)
 app.get('/api/cafe24/auth-url', authMiddleware, adminOnly, async (req, res) => {

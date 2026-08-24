@@ -12804,15 +12804,22 @@ async function renderNotifyLogs(opts) {
         if (st === 'bad-tel') return badge('#F1F2F5', '#767A83', '📵 번호 오류 (유선 — 재안내 없음)');   // #219: 중립 회색 — 조치 불요
         if (st === 'canceled-excluded') return badge('#F1F2F5', '#767A83', '🚫 취소·클레임 제외');
         if (st === 'skip-no-guide') return badge('#F1F2F5', '#767A83', '건너뜀 (구버전 기록)');
-        if (st === 'sent') return badge('#E8F8EF', '#1E8E4E', mode === 'sms' ? '🔁 문자(LMS) 대체' : '✅ 알림톡');
-        if (DRY[st]) return badge('#EEF1F6', '#5A616B', 'dry-run (스위치 OFF)');
+        if (st === 'sent') return badge('#E8F8EF', '#1E8E4E', mode === 'sms' ? '🔁 문자(LMS) 대체' : (String(row.order_key || '').startsWith('cp:') ? '✅ 문자(LMS)' : '✅ 알림톡'));   /* #401: 쿠팡=안심번호라 LMS 직행 — 알림톡 오표기 방지 */
+        if (DRY[st]) return badge('#EEF1F6', '#5A616B', /^(c24|cp|join):/.test(String(row.order_key || '')) ? 'dry (실발송 전환 전 — 문면 검수)' : 'dry-run (스위치 OFF)');
         // 실패류 — 발송안내는 수동 재발송 제공(주문안내 재발송은 보류 버튼 경로로만)
         return badge('#FDECEA', '#C0392B', '❌ 실패',
             kind === 'ship' && row.order_key ? ` <button class="btn-sm btn-outline" onclick="sendLmsGuide('${escapeHtml(row.order_key)}')">수동 재발송</button>` : '');
     };
     const kindLabel = (row) => {
+        if (String(row.order_key || '').startsWith('join:')) return row.k_id ? ['가입 환영', 'UJ_9086'] : ['—', ''];   // #401
         const reserve = /순차 발송|시즌 시작/.test(row.k_message || '');
         return row.k_id ? (reserve ? ['주문완료·예약', 'UJ_9085'] : ['주문완료·일반', 'UJ_9084']) : ['—', ''];
+    };
+    // #401: 채널 표기 — order_key 프리픽스로 판별(네이버는 무표기 = 종전 화면 그대로)
+    const chBadge = (row) => {
+        const k = String(row.order_key || '');
+        const m = k.startsWith('c24:') ? ['🏠 자사몰', '#EEF2FF', '#4F46E5'] : k.startsWith('cp:') ? ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'] : k.startsWith('join:') ? ['👋 가입', '#E8F8EF', '#1E8E4E'] : null;
+        return m ? `<div style="margin-top:3px;"><span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px;">${m[0]}</span></div>` : '';
     };
     const cfLabel = { 'confirmed': '✅ 발주확인 완료', 'already': '✅ 이미 확인됨', 'dry-run': '시뮬레이션 (실행 안 함)', 'failed': '❌ 실패 — 수기 필요', 'manual-needed': '✍️ 수기 처리 필요' };
     const rows = (d.rows || []).map(r => {
@@ -12823,7 +12830,7 @@ async function renderNotifyLogs(opts) {
         return `
         <tr>
             <td style="width:30px; text-align:center;">${r.k_id ? `<input type="checkbox" class="nlog-chk" data-kid="${r.k_id}" data-kstatus="${escapeHtml(r.k_status || '')}" onchange="nlogUpdateBar()">` : ''}</td>
-            <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+            <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}${chBadge(r)}</td>
             <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? '<div class="text-muted" style="font-size:11px;">주문 기록 밖 (발송만 감지)</div>' : ''}</td>
             <td style="white-space:nowrap;">${
               /* 지시 #219: 유선번호(02-…)는 「번호 오류」 — 선물하기 판정보다 먼저 검사(기존 오표기 교정).

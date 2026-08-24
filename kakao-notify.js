@@ -99,6 +99,28 @@ function matchNotifyProduct(optionText, botProducts) {
     return best;   // { name, notify_message } | null
 }
 
+// #401: 새 채널(자사몰·쿠팡)용 보조 매칭 — 옵션 문자열 형식이 네이버와 달라(구분자 「·」 vs 「/ 상품 및 과수:」)
+//   exact includes가 미매칭이던 것. 1차 = 종전 exact → 2차 = 품목명 토큰(2자+·조사어 제외)이 **전부** 포함될 때만 채택
+//   (오매칭>미매칭 원칙 #350 — 일부 일치로 단정 금지). 후보 여러 개면 이름이 긴(구체적인) 쪽.
+//   🔴 네이버 경로는 종전 matchNotifyProduct 그대로 사용 — 이 함수는 새 채널 전용(무회귀).
+function matchNotifyProductLoose(optionText, botProducts) {
+    const exact = matchNotifyProduct(optionText, botProducts);
+    if (exact) return exact;
+    const norm = (s) => String(s || '').normalize('NFC').replace(/\s+/g, '');
+    const hay = norm(optionText);
+    if (!hay) return null;
+    let best = null;
+    for (const p of botProducts || []) {
+        const tokens = String(p.name || '').normalize('NFC').split(/[\s/·:()\-]+/)
+            .map(t => t.trim()).filter(t => t.length >= 2 && !/^(상품|및|과수|선택)$/.test(t));
+        if (!tokens.length) continue;
+        if (tokens.every(t => hay.includes(norm(t)))) {
+            if (!best || String(p.name).length > String(best.name).length) best = p;
+        }
+    }
+    return best;
+}
+
 // 직접 호출 (릴레이 미설정 시 폴백 전용 — 지시 #95 이후 정식 경로는 릴레이)
 function aligoDirectPost(reqPath, form, host) {
     return new Promise((resolve, reject) => {
@@ -288,8 +310,10 @@ async function registerTemplates({ audit, set } = {}) {
     if (!TEMPLATES_JSON || TEMPLATES_JSON.status !== 'confirmed') return { ...out, error: `templates-not-confirmed (status=${TEMPLATES_JSON && TEMPLATES_JSON.status})` };
     // 지시 #100: set='image' → 이미지형 4장(templates_image — 문의하기 버튼 포함·같은 이미지 파일). 기본 = 텍스트형(templates).
     // 지시 #398: set='md' → MD(메시지전달) 버튼판 3장(templates_md — [문의하기] 탭 시 알림톡 원문이 상담 채팅에 첨부 = 고객 특정).
+    // 지시 #401: set='welcome2' → 가입환영 혜택 문구판 1장(templates_welcome2 — 자사몰 가입 환영 가동용).
     const list = set === 'image' ? (TEMPLATES_JSON.templates_image || [])
         : set === 'md' ? (TEMPLATES_JSON.templates_md || [])
+        : set === 'welcome2' ? (TEMPLATES_JSON.templates_welcome2 || [])
         : TEMPLATES_JSON.templates;
     if (!list.length) return { ...out, error: `템플릿 세트 비어있음 (set=${set || 'text'})` };
     const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
@@ -370,4 +394,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder };
+module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder };

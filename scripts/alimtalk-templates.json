@@ -126,6 +126,40 @@
       "tpl_type": "AD"
     }
   ],
+  "templates_welcome2": [
+    {
+      "key": "welcome2",
+      "name": "제주아꼼이네_회원가입환영2",
+      "env_key": "ALIGO_TPL_CODE_WELCOME",
+      "content": "제주아꼼이네입니다~! 🍊\n#{고객명}님, 제주아꼼이네 회원가입이 완료되었습니다.\n찾아주셔서 진심으로 감사드립니다!^^\n\n🎁 지금 받으실 수 있는 가입 혜택\n· 회원가입 축하 쿠폰 2,000원 (발급일로부터 14일)\n· 물방울 5개 — 로그인하면 자동 지급 (귤나무 키우기)\n· 생일 축하 쿠폰 2,000원 (생일에 자동 지급)\n\n혜택은 마이페이지와 쿠폰함에서 확인하실 수 있습니다.\n궁금하신 점이 있으시면 언제든 연락주세요.\n📞 010-6687-4031",
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "제주아꼼이네 바로가기",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://akkome.com/",
+            "linkPc": "https://akkome.com/"
+          },
+          {
+            "name": "문의하기",
+            "linkType": "MD",
+            "linkTypeName": "메시지전달"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주"
+      },
+      "tpl_type": "AD",
+      "_주의": "#401 가입환영 혜택 문구판(대표 지시 — 가입자가 혜택을 알 수 있게) + MD 문의하기. 혜택 3종 = #346-c 대표 캡처 실확인분과 1:1(회원가입 쿠폰 2,000원·물방울 5·생일 쿠폰). 승인 시 env ALIGO_TPL_CODE_WELCOME 교체 + templates의 welcome 버튼·문면 동기화. 승인 전엔 기존 UJ_9086 사용"
+    }
+  ],
   "templates_md": [
     {
       "key": "order_normal_md",
