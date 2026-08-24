@@ -75,7 +75,7 @@ async function tokenRequest(form) {
 async function exchangeCode(code) {
     const data = await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI });
     await saveTokens(data);
-    _lastState = 'ok';
+    await markOk();   // #408: 재승인 완주도 회복 알림 대상(직전 상태가 실패였을 때만 1회)
     return true;
 }
 
@@ -83,6 +83,13 @@ async function notifyOnce(state, text) {
     if (_lastState === state) return;
     _lastState = state;
     try { if (_notify) await _notify(text); } catch (_) { /* 무시 */ }
+}
+// #408: 실패 상태에서 정상으로 돌아오면 회복 알림 1회 — 새벽 오탐(8/25) 때 대표가 "회복됐는지"를 알 길이 없던 것 보완.
+//   첫 성공(_lastState null)·연속 정상은 무알림.
+async function markOk() {
+    const prev = _lastState;
+    _lastState = 'ok';
+    if (prev && prev !== 'ok') { try { if (_notify) await _notify('🏠 카페24 토큰 갱신 회복 — 자사몰 자동수집 정상 재개 (조치 불필요)'); } catch (_) { /* 무시 */ } }
 }
 
 // 🔴 카페24 시각 파싱 (2026-07-26 실장애 수정): expires_at 등이 타임존 표기 없는 KST 문자열
@@ -101,7 +108,7 @@ async function getToken(force = false) {
     let t = await loadTokens();
     if (!t) { const e = new Error('cafe24_reauth_required'); e.code = 'reauth'; throw e; }
     const expMs = parseKstTs(t.expires_at);
-    if (!force && Number.isFinite(expMs) && Date.now() < expMs - 60_000) { _lastState = 'ok'; return t.access_token; }
+    if (!force && Number.isFinite(expMs) && Date.now() < expMs - 60_000) { await markOk(); return t.access_token; }
     // 갱신 필요 — 동시 1회만
     if (!_refreshLock) {
         _refreshLock = (async () => {
@@ -112,7 +119,7 @@ async function getToken(force = false) {
                     if (!force && Number.isFinite(curExp) && Date.now() < curExp - 60_000) return cur.access_token;
                     const data = await tokenRequest({ grant_type: 'refresh_token', refresh_token: cur.refresh_token });
                     await saveTokens(data);
-                    _lastState = 'ok';
+                    await markOk();   // #408: 실패→정상 전환이면 회복 알림 1회
                     return data.access_token;
                 }
                 const e = new Error('cafe24_reauth_required'); e.code = 'reauth'; throw e;
@@ -121,8 +128,17 @@ async function getToken(force = false) {
     }
     try { return await _refreshLock; }
     catch (e) {
-        await notifyOnce('reauth', '🏠 카페24 토큰 갱신 실패 — [데이터관리] > 카페24 연동에서 [연동 승인]을 다시 눌러주세요');
-        const err = new Error('cafe24_reauth_required'); err.code = 'reauth'; err.reason = e.reason || e.message; throw err;
+        /* #408(대표 GO 8/25): 갱신 실패를 원인별로 구분 — 종전엔 전부 「재승인 필요」로 표기돼
+           8/25 새벽 카페24 인증 서버 일시 장애(이후 같은 토큰으로 자동 회복)에도 오탐 알림 3연발.
+           · 진짜 재승인 필요 = 토큰 없음/복호 불가(code 'reauth') 또는 카페24가 400/401로 거부(invalid_grant 등 — 토큰 사망)
+           · 그 외(5xx·429·네트워크·타임아웃 = status 없음 또는 402+) = 일시 오류 → 다음 호출에서 자동 재시도 */
+        const real = e.code === 'reauth' || e.status === 400 || e.status === 401;
+        if (real) {
+            await notifyOnce('reauth', '🏠 카페24 토큰 갱신 실패(재승인 필요) — [데이터관리] > 카페24 연동에서 [연동 승인]을 다시 눌러주세요');
+            const err = new Error('cafe24_reauth_required'); err.code = 'reauth'; err.reason = e.reason || e.message; throw err;
+        }
+        await notifyOnce('temp', '🏠 카페24 토큰 갱신 일시 오류 — 자동 재시도 중 (재승인 불필요 · 회복 시 알림 드려요)');
+        const err = new Error('cafe24_token_temp (일시 오류 — 자동 재시도 중·재승인 불필요)'); err.code = 'temp'; err.reason = e.reason || e.message; throw err;
     }
 }
 
