@@ -1,3 +1,6 @@
+## v5.9.283 (2026-08-24) — 서버만·app.js 무변경
+- 🔑 **#401 SCOPE 교정: read_privacy → read_customer** — 개발자센터 앱 권한 선택지에 privacy 분류가 **존재하지 않음을 실측**(회원=read_customer·개인화정보=좋아요/장바구니). 개발자센터 앱 권한에 회원(읽기)+프로모션(읽기+쓰기) 추가·저장 완료(클코 브라우저 — 대표 로그인·알림창 확인). 재동의 후 customers API로 가입 감지 가능 여부 실측 예정(불가 시 대안 보고).
+
 ## v5.9.282 (2026-08-24) — 서버만·app.js 무변경
 - 🔑 **#401 카페24 재동의 준비: OAuth SCOPE 확장** — `mall.read_privacy`(가입 환영 — customersprivacy 공식 문서 확인) + `mall.read_promotion`·`mall.write_promotion`(#341 룰렛 쿠폰 자동발급 대비 — 재동의 1회에 묶음·코드 미사용). 절차 = 개발자센터 앱 권한 추가 → 배포본 [데이터관리] 카페24 재동의 클릭 → status 러너로 scopes 실확인.
 
