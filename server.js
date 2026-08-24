@@ -915,6 +915,9 @@ async function initDB() {
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES
         ('cafe24_notify', false, 3), ('cafe24_guide', false, 30), ('coupang_notify', false, 10), ('coupang_guide', false, 30), ('welcome_notify', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // #401-c(대표): 「일시(주문)」 = 실제 주문 시각 — 이력에 order_at 신설(additive·기존 행 NULL = 종전 표시 유지)
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS order_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS order_at TIMESTAMP`);
     // ── 지시 #107: 일일 상품 스냅샷 (자사몰 실서비스 동기화 1단계 — 읽기 전용·기본 OFF·새벽 04:30 앵커)
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('product_snapshot', false, 1440)
         ON CONFLICT (key) DO NOTHING`);
@@ -5843,7 +5846,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
             `SELECT count(*) n FROM kakao_notify_log k FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key ${whereSql}`, params)).rows[0].n);
         const rows = (await pool.query(
             `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
-                    COALESCE(k.created_at, l.created_at) AS at_main,
+                    COALESCE(k.order_at, l.order_at, k.created_at, l.created_at) AS at_main,   /* #401-c(대표): 일시(주문) = 실제 주문 시각 우선 — 없으면 종전(수집 시각) */
                     COALESCE(k.product_name, l.product_name) AS product_name,
                     COALESCE(k.receiver_masked, l.receiver_masked) AS receiver_masked,
                     k.id AS k_id, k.created_at AS k_at, k.mode AS k_mode, k.status AS k_status, k.error AS k_error,
@@ -5881,6 +5884,19 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                     }
                 }
             } catch (_) { /* 재조회 실패 = 마스킹 표시 유지 */ }
+            // #401-c(대표 "쿠팡·자사몰도 다 보이도록"): 자사몰 풀번호 — order_id 일괄 재조회(같은 캐시·저장은 계속 마스킹만).
+            //   쿠팡은 단건 재조회 API가 없어(기간 스캔뿐) 수집 시점 캐시로 표시 — 서버 재시작 후 옛 행은 마스킹 폴백(한계 기록).
+            try {
+                const c24Need = rows.map(r => r.order_key).filter(k => /^c24:/.test(String(k)) && !(_telCache.has(k) && _telCache.get(k).tel));
+                for (let i = 0; i < c24Need.length && i < 180; i += 90) {
+                    const ids = c24Need.slice(i, i + 90).map(k => k.slice(4));
+                    const r3 = await cafe24.apiGet('/api/v2/admin/orders', { order_id: ids.join(','), embed: 'buyer', fields: 'order_id,buyer', limit: 100 });
+                    for (const o of ((r3 && r3.orders) || [])) {
+                        const tel = (o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '';
+                        if (o.order_id && tel) _telCache.set('c24:' + o.order_id, { tel: String(tel), at: Date.now() });
+                    }
+                }
+            } catch (_) { /* 자사몰 재조회 실패 = 마스킹 표시 유지 */ }
             const fmt = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
             let shown = 0;
             for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) { r.receiver_full = fmt(hit.tel); shown++; } }
@@ -9017,6 +9033,9 @@ async function collectCafe24Notify() {
     let done = 0, failed = 0, held = 0;
     for (const o of targets) {
         const orderKey = ('c24:' + o.order_id).slice(0, 50);
+        // #401-c: 실제 주문 시각(표시용) + 풀번호 캐시 시딩(표시는 재조회 원칙 — 저장은 계속 마스킹만)
+        const orderAtMs = Date.parse(o.payment_date || o.order_date || '') || null;
+        let telSeed = String((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '').trim();
         try {
             // 결제 확인·취소 방어: N2x~N4x(결제 후) 품목만 대상. 입금 대기(N0x·N1x)는 기록 없이 다음 주기 재평가.
             const allItems = o.items || [];
@@ -9081,6 +9100,11 @@ async function collectCafe24Notify() {
             await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, confirm_status, error)
                 VALUES ($1,'dry-run','build-failed','none',$2) ON CONFLICT (order_key) DO NOTHING`,
                 [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        } finally {
+            try {
+                if (orderAtMs) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+            } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
     return `자사몰 주문안내 ${live ? '실발송' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·보류 ${held})`;
@@ -9100,6 +9124,8 @@ async function collectCafe24Guide() {
     let done = 0, failed = 0;
     for (const o of targets) {
         const orderKey = ('c24:' + o.order_id).slice(0, 50);
+        const orderAtMs = Date.parse(o.order_date || '') || null;   // #401-c: 일시(주문) 표시용
+        let telSeed = String((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '').trim();
         try {
             const it0 = (o.items || []).find(it => it.tracking_no && it.shipped_date && !it.claim_code);
             // 안전망: 발송한 지 48시간이 지난 건은 "오늘 출발" 안내가 거짓이 됨(수집 공백 복구 시) — 발송 없이 기록만
@@ -9152,6 +9178,11 @@ async function collectCafe24Guide() {
             await pool.query(`INSERT INTO lms_guide_log (order_key, mode, status, error)
                 VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
                 [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        } finally {
+            try {
+                if (orderAtMs) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+            } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
     return `자사몰 발송안내 ${live ? '실발송' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed})`;
@@ -9195,6 +9226,8 @@ async function collectCoupangNotify() {
     let done = 0, failed = 0, held = 0;
     for (const s of targets) {
         const orderKey = ('cp:' + s.orderId).slice(0, 50);
+        const orderAtMs = Date.parse(s.paidAt || s.orderedAt || '') || null;   // #401-c
+        let telSeed = coupangRecvTel(s);
         try {
             const items = (s.orderItems || []).filter(it => {
                 const qty = (Number(it.shippingCount) || 0) - ((Number(it.holdCountForCancel) || 0) + (Number(it.cancelCount) || 0));
@@ -9253,6 +9286,11 @@ async function collectCoupangNotify() {
             await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, confirm_status, error)
                 VALUES ($1,'dry-run','build-failed','none',$2) ON CONFLICT (order_key) DO NOTHING`,
                 [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        } finally {
+            try {
+                if (orderAtMs) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+            } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
     return `쿠팡 주문안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·보류 ${held})`;
@@ -9273,6 +9311,8 @@ async function collectCoupangGuide() {
     let done = 0, failed = 0;
     for (const s of targets) {
         const orderKey = ('cp:' + s.orderId).slice(0, 50);
+        const orderAtMs = Date.parse(s.paidAt || s.orderedAt || '') || null;   // #401-c
+        let telSeed = coupangRecvTel(s);
         try {
             const first = (s.orderItems || [])[0] || {};
             const optText = String(first.vendorItemName || first.sellerProductName || '');
@@ -9309,6 +9349,11 @@ async function collectCoupangGuide() {
             await pool.query(`INSERT INTO lms_guide_log (order_key, mode, status, error)
                 VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
                 [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        } finally {
+            try {
+                if (orderAtMs) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+            } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
     return `쿠팡 발송안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed})`;
@@ -9340,6 +9385,8 @@ async function collectWelcomeNotify() {
     let done = 0, failed = 0;
     for (const m of targets) {
         const orderKey = ('join:' + m.member_id).slice(0, 50);
+        const orderAtMs = Date.parse(m.created_date || '') || null;   // #401-c: 가입 시각
+        let telSeed = String(m.cellphone || m.phone || '').trim();
         try {
             const message = kakaoNotify.buildMessage({ '고객명': m.name || m.member_id || '고객' }, tpl && tpl.content);
             const recvTel = String(m.cellphone || m.phone || '').trim();
@@ -9367,6 +9414,11 @@ async function collectWelcomeNotify() {
             await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, mode, status, confirm_status, error)
                 VALUES ($1,'회원가입 환영','dry-run','build-failed','none',$2) ON CONFLICT (order_key) DO NOTHING`,
                 [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+        } finally {
+            try {
+                if (orderAtMs) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+            } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
     return `가입 환영 ${live ? '실발송' : 'dry'} 처리 ${targets.length}명 (발송 ${done}·실패 ${failed})`;

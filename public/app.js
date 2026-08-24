@@ -12767,7 +12767,7 @@ async function renderNotifyLogs(opts) {
             ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}${Number(s.bad_tel)>0 ? " · 📵 번호 오류 "+s.bad_tel : ""}`
             : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}${Number(s.bad_tel)>0 ? " · 📵 번호 오류 "+s.bad_tel : ""} · 건너뜀 ${s.skipped || 0}`;
     }
-    const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)' };
+    const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)', 'dry-run': 'dry-run' };   /* #401-c: 새 채널 dry 상태값 — 없어서 ❌실패로 오표기됐던 것(대표 실물) */
     // 한 칸(주문안내/발송안내) 상태 표기 — 최종 경로 기준
     const cell = (row, kind) => {
         const st = kind === 'order' ? row.k_status : row.l_status;
@@ -12805,7 +12805,7 @@ async function renderNotifyLogs(opts) {
         if (st === 'canceled-excluded') return badge('#F1F2F5', '#767A83', '🚫 취소·클레임 제외');
         if (st === 'skip-no-guide') return badge('#F1F2F5', '#767A83', '건너뜀 (구버전 기록)');
         if (st === 'sent') return badge('#E8F8EF', '#1E8E4E', mode === 'sms' ? '🔁 문자(LMS) 대체' : (String(row.order_key || '').startsWith('cp:') ? '✅ 문자(LMS)' : '✅ 알림톡'));   /* #401: 쿠팡=안심번호라 LMS 직행 — 알림톡 오표기 방지 */
-        if (DRY[st]) return badge('#EEF1F6', '#5A616B', /^(c24|cp|join):/.test(String(row.order_key || '')) ? 'dry (실발송 전환 전 — 문면 검수)' : 'dry-run (스위치 OFF)');
+        if (DRY[st]) return badge('#EEF1F6', '#5A616B', /^(c24|cp|join):/.test(String(row.order_key || '')) ? '🧪 검수중 (미발송 — 문면만 기록)' : DRY[st]);
         // 실패류 — 발송안내는 수동 재발송 제공(주문안내 재발송은 보류 버튼 경로로만)
         return badge('#FDECEA', '#C0392B', '❌ 실패',
             kind === 'ship' && row.order_key ? ` <button class="btn-sm btn-outline" onclick="sendLmsGuide('${escapeHtml(row.order_key)}')">수동 재발송</button>` : '');
@@ -12831,7 +12831,7 @@ async function renderNotifyLogs(opts) {
         <tr>
             <td style="width:30px; text-align:center;">${r.k_id ? `<input type="checkbox" class="nlog-chk" data-kid="${r.k_id}" data-kstatus="${escapeHtml(r.k_status || '')}" onchange="nlogUpdateBar()">` : ''}</td>
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}${chBadge(r)}</td>
-            <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? '<div class="text-muted" style="font-size:11px;">주문 기록 밖 (발송만 감지)</div>' : ''}</td>
+            <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? ('<div class="text-muted" style="font-size:11px;">' + (/^(c24|cp):/.test(String(r.order_key || '')) ? '알림톡 도입 전 주문 (발송 안내만)' : '주문 기록 밖 (발송만 감지)') + '</div>') : ''}</td>
             <td style="white-space:nowrap;">${
               /* 지시 #219: 유선번호(02-…)는 「번호 오류」 — 선물하기 판정보다 먼저 검사(기존 오표기 교정).
                  재조회해도 유선은 그대로이므로 [재조회] 버튼 미노출·조치 불요(중립 톤). */
