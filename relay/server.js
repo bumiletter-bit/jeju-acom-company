@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-08-09.3'; // #312: 리뷰 본문 수집 action 추가(브라우저 안에서 리뷰 API 호출 — 서버 직접 호출은 429)
+const RELAY_VERSION = '2026-08-24.1'; // #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -168,13 +168,17 @@ function coupangSign(method, urlPath, queryString) {
 const COUPANG_ALLOW = [
     { m: 'GET', tpl: '/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets' },     // 발주서(상품준비중) 목록
     { m: 'GET', tpl: '/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests' },  // 반품/취소 요청 목록
+    // #402(2026-08-24 대표 확정): 발주확인 = 결제완료 → 상품준비중 (알림 발송 성공 건 한정 — 회사프로그램이 판단).
+    //   공식 스펙: PATCH·body {vendorId, shipmentBoxIds[]} 최대 50개·결제완료 상태만 적용.
+    { m: 'PATCH', tpl: '/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement' },
 ];
 
-// 쿠팡 호출 중계: POST /coupang  { method, path(템플릿 그대로), query? }
+// 쿠팡 호출 중계: POST /coupang  { method, path(템플릿 그대로), query?, body? }
 app.post('/coupang', async (req, res) => {
     const method = String((req.body && req.body.method) || 'GET').toUpperCase();
     const reqPath = String((req.body && req.body.path) || '');
     const query = (req.body && req.body.query) || null;
+    const reqBody = (req.body && req.body.body) || null;   // #402: 쓰기(PATCH) body — 허용목록 경로에서만 사용됨
     if (!COUPANG_ACCESS_KEY || !COUPANG_SECRET_KEY || !COUPANG_VENDOR_ID) {
         return res.status(503).json({ error: 'coupang_keys_not_set' });
     }
@@ -189,9 +193,13 @@ app.post('/coupang', async (req, res) => {
         const qs = query && typeof query === 'object' ? new URLSearchParams(query).toString() : '';
         const auth = coupangSign(method, realPath, qs);
         const url = `${COUPANG_API_BASE}${realPath}${qs ? '?' + qs : ''}`;
+        // #402: body의 vendorId는 경로와 동일하게 .env 값으로 강제(위조 차단) — GET은 body 없음(종전 동일)
+        const safeBody = (method !== 'GET' && reqBody && typeof reqBody === 'object')
+            ? JSON.stringify({ ...reqBody, vendorId: COUPANG_VENDOR_ID }) : undefined;
         const cres = await fetch(url, {
             method,
             headers: { Authorization: auth, 'Content-Type': 'application/json;charset=UTF-8' },
+            ...(safeBody ? { body: safeBody } : {}),
         });
         const text = await cres.text();
         let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }

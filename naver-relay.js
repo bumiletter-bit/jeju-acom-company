@@ -79,7 +79,7 @@ async function callNaver(opts, notify) {
 
 // 쿠팡 OPEN API 호출 (같은 중계서버 경유 — 엔드포인트만 /coupang). 쿠팡 키는 중계서버(NCP)에만 존재.
 async function callCoupang(opts, notify) {
-    const { method = 'GET', path, query = null } = opts || {};
+    const { method = 'GET', path, query = null, body = null } = opts || {};   // #402: body = 발주확인(PATCH) 등 쓰기용 — 구 릴레이는 무시(무해)
     if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
     if (!path) throw new Error('path 필요');
     const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
@@ -88,7 +88,7 @@ async function callCoupang(opts, notify) {
         r = await rawRequest(relayBase() + '/coupang', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
-            body: JSON.stringify({ method, path, query }),
+            body: JSON.stringify({ method, path, query, body }),
         });
     } catch (e) {
         await notifySafe(`🛒 쿠팡 중계서버 연결 실패 — ${method} ${path}\n${e.message}`);

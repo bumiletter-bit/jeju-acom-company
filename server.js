@@ -9215,6 +9215,33 @@ async function coupangFetchSheets(days, status) {
     }
     return out;
 }
+// ── #402(대표 확정 8/24): 쿠팡 발주확인 — LMS 발송 성공 건을 결제완료(ACCEPT) → 상품준비중으로 자동 전환 (네이버 #92 동일 구조)
+//    공식 스펙(문서 확인): PATCH /v4/.../ordersheets/acknowledgement · body {vendorId, shipmentBoxIds[]} · 1회 최대 50개 ·
+//    결제완료 상태 박스만 적용(부분취소 진행 건 포함 시 오류). 🔴 릴레이 ALLOW에 PATCH가 열려 있어야 실호출(2026-08-24.1 — 대표 SSH 갱신 필요).
+const COUPANG_ACK_PATH = '/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement';
+async function coupangConfirmSheets(boxIds) {
+    const success = [], fail = [];
+    for (let i = 0; i < boxIds.length; i += 50) {
+        if (i > 0) await new Promise(r => setTimeout(r, 350));
+        const chunk = boxIds.slice(i, i + 50);
+        try {
+            const r = await coupangCallWithRetry({ method: 'PATCH', path: COUPANG_ACK_PATH,
+                body: { shipmentBoxIds: chunk } });   // vendorId는 릴레이가 강제 주입
+            const d = (r && r.data) || {};
+            const list = Array.isArray(d.responseList) ? d.responseList : [];
+            for (const x of list) {
+                if (x.succeed) success.push(String(x.shipmentBoxId));
+                else fail.push({ id: String(x.shipmentBoxId), code: String(x.resultCode || ''), message: String(x.resultMessage || '').slice(0, 200) });
+            }
+            // 응답에 없는 박스 = 실패로 기록 (무언 통과 금지 #83)
+            const covered = new Set([...success, ...fail.map(f => f.id)]);
+            for (const id of chunk) if (!covered.has(String(id))) fail.push({ id: String(id), code: '', message: '응답에 처리 결과 없음' });
+        } catch (e) {
+            for (const id of chunk) fail.push({ id: String(id), code: String(e.status || ''), message: String(e.message || e).slice(0, 200) });
+        }
+    }
+    return { success, fail };
+}
 // 쿠팡 수신번호 — 주문자 우선·수취인 폴백(네이버 원칙). 🔴 쿠팡은 안심번호(0505)라 알림톡 불가 → LMS 직행.
 //   isBadTel은 050을 차단하므로 쿠팡 경로 한정으로 050 허용(문자 수신 중계됨).
 function coupangRecvTel(sheet) {
@@ -9226,7 +9253,17 @@ function coupangBadTel(v) { const d = String(v || '').replace(/[^0-9]/g, ''); re
 async function collectCoupangNotify() {
     const sheets = [...await coupangFetchSheets(2, 'ACCEPT'), ...await coupangFetchSheets(2, 'INSTRUCT')];
     const uniq = new Map();
-    for (const s of sheets) { const id = String(s.orderId || ''); if (id && !uniq.has(id)) uniq.set(id, s); }
+    // #402: 주문별 결제완료(ACCEPT) 박스 목록 — 발송 성공 시 이 박스들을 발주확인(같은 주문 멀티박스 포함)
+    const acceptBoxes = new Map();
+    for (const s of sheets) {
+        const id = String(s.orderId || '');
+        if (!id) continue;
+        if (!uniq.has(id)) uniq.set(id, s);
+        if (String(s.status || '') === 'ACCEPT' && s.shipmentBoxId != null) {
+            if (!acceptBoxes.has(id)) acceptBoxes.set(id, []);
+            acceptBoxes.get(id).push(s.shipmentBoxId);
+        }
+    }
     if (!uniq.size) return '쿠팡 주문 0건 — 안내 대상 없음';
     const keys = [...uniq.keys()].map(id => 'cp:' + id);
     const seen = new Set((await pool.query(`SELECT order_key FROM kakao_notify_log WHERE order_key = ANY($1)`, [keys])).rows.map(r => r.order_key));
@@ -9236,6 +9273,7 @@ async function collectCoupangNotify() {
     const hinfo = await loadShippingHolidayInfo();
     const live = await notifyChannelLive('cp');
     let done = 0, failed = 0, held = 0;
+    const sentOrders = [];   // #402: 실발송 성공 주문 — 발주확인 대상
     for (const s of targets) {
         const orderKey = ('cp:' + s.orderId).slice(0, 50);
         const orderAtMs = Date.parse(s.paidAt || s.orderedAt || '') || null;   // #401-c
@@ -9284,15 +9322,17 @@ async function collectCoupangNotify() {
             }
             if (!live) {
                 await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, confirm_status)
-                    VALUES ($1,$2,$3,$4,'dry-run','dry-run','none') ON CONFLICT (order_key) DO NOTHING`,
+                    VALUES ($1,$2,$3,$4,'dry-run','dry-run','dry-run') ON CONFLICT (order_key) DO NOTHING`,   /* #402: 발주확인도 시뮬레이션 표기(네이버 동일) */
                     [orderKey, (matched ? matched.name : optText).slice(0, 200), kakaoNotify.maskPhone(recvTel), message]);
                 continue;
             }
             const res = await kakaoNotify.sendLms({ receiver: recvTel, subject: '주문 안내', message });
             await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error, confirm_status)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,'none') ON CONFLICT (order_key) DO NOTHING`,
-                [orderKey, (matched ? matched.name : optText).slice(0, 200), kakaoNotify.maskPhone(recvTel), message, res.mode, res.status, res.error || null]);
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, (matched ? matched.name : optText).slice(0, 200), kakaoNotify.maskPhone(recvTel), message, res.mode, res.status, res.error || null,
+                 (res.mode === 'real' && res.status !== 'sent') ? 'manual-needed' : 'none']);   /* #402: 발송 실패 = 수기 발주확인(네이버 #92 동일) */
             if (res.status === 'sent') done++; else if (res.mode === 'real') failed++;
+            if (res.mode === 'real' && res.status === 'sent') sentOrders.push({ orderKey, orderId: String(s.orderId) });   // #402
         } catch (e) {
             failed++;
             await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, confirm_status, error)
@@ -9305,7 +9345,38 @@ async function collectCoupangNotify() {
             } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
-    return `쿠팡 주문안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·보류 ${held})`;
+    // ── #402: 발송 성공 → 발주확인(결제완료 → 상품준비중) — 네이버 #92 동일 원칙(실패·미발송은 수기)
+    let confirmed = 0, confirmFailed = 0;
+    if (sentOrders.length) {
+        const boxToOrder = new Map(); const allBoxes = [];
+        for (const so of sentOrders) {
+            const boxes = acceptBoxes.get(so.orderId) || [];
+            if (!boxes.length) {   // ACCEPT 박스 없음 = 이미 상품준비중(INSTRUCT)에서 감지된 주문 — 확인 불필요
+                await pool.query(`UPDATE kakao_notify_log SET confirm_status='already' WHERE order_key=$1 AND confirm_status='none'`, [so.orderKey]).catch(() => {});
+                continue;
+            }
+            for (const b of boxes) { boxToOrder.set(String(b), so.orderKey); allBoxes.push(b); }
+        }
+        if (allBoxes.length) {
+            const cr = await coupangConfirmSheets(allBoxes);
+            const failByOrder = new Map();
+            for (const f of cr.fail) {
+                const ok2 = boxToOrder.get(String(f.id));
+                if (ok2) failByOrder.set(ok2, `${f.code} ${f.message}`.trim().slice(0, 250));
+            }
+            const okOrders = new Set();
+            for (const b of cr.success) { const ok2 = boxToOrder.get(String(b)); if (ok2 && !failByOrder.has(ok2)) okOrders.add(ok2); }
+            for (const okKey of okOrders) {
+                confirmed++;
+                await pool.query(`UPDATE kakao_notify_log SET confirm_status='confirmed', confirmed_at=NOW() WHERE order_key=$1`, [okKey]).catch(() => {});
+            }
+            for (const [fk, ferr] of failByOrder) {
+                confirmFailed++;
+                await pool.query(`UPDATE kakao_notify_log SET confirm_status='failed', confirm_error=$2 WHERE order_key=$1`, [fk, ferr]).catch(() => {});
+            }
+        }
+    }
+    return `쿠팡 주문안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed}·보류 ${held}·발주확인 ${confirmed}·확인실패 ${confirmFailed})`;
 }
 // ── 쿠팡 발송 안내 (LMS — DEPARTURE 감지. 품목 안내문 있으면 그 전문, 없으면 E 문면 기반 + 링크 텍스트)
 async function collectCoupangGuide() {
