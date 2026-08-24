@@ -12740,12 +12740,13 @@ async function renderNotifyLogs(opts) {
     const el = document.getElementById('notify-log-list');
     if (!el) return;
     const filter = document.getElementById('notify-log-filter')?.value || 'all';
+    const chSel = document.getElementById('notify-log-ch')?.value || 'all';   // 지시 #405: 채널(플랫폼) 필터
     // 지시 #178-3: 날짜 구간·검색어(연락처 뒷자리/품목) 파라미터
     const from = document.getElementById('notify-log-from')?.value.trim() || '';
     const to = document.getElementById('notify-log-to')?.value.trim() || '';
     const q = document.getElementById('notify-log-q')?.value.trim() || '';
     if (!append) notifyLogShown = 0;   // 조건 변경·재조회 = 1페이지부터
-    const qs = ['filter=' + encodeURIComponent(filter), 'limit=' + NOTIFY_PAGE, 'offset=' + notifyLogShown];
+    const qs = ['filter=' + encodeURIComponent(filter), 'ch=' + encodeURIComponent(chSel), 'limit=' + NOTIFY_PAGE, 'offset=' + notifyLogShown];
     if (from && to) qs.push('from=' + encodeURIComponent(from), 'to=' + encodeURIComponent(to));
     if (q) qs.push('q=' + encodeURIComponent(q));
     /* 🔴 지시 #204-2: "모두 표시됨 (60 / 30건)" — 분자가 분모를 넘던 원인.
@@ -12815,23 +12816,32 @@ async function renderNotifyLogs(opts) {
         const reserve = /순차 발송|시즌 시작/.test(row.k_message || '');
         return row.k_id ? (reserve ? ['주문완료·예약', 'UJ_9085'] : ['주문완료·일반', 'UJ_9084']) : ['—', ''];
     };
-    // #401: 채널 표기 — order_key 프리픽스로 판별(네이버는 무표기 = 종전 화면 그대로)
-    const chBadge = (row) => {
+    // #401→#405: 채널 표기 — 별도 [플랫폼] 컬럼으로 승격(네이버 포함 전 행 표기·#404 타이머 라벨과 동일 채널 아이콘)
+    const chCell = (row) => {
         const k = String(row.order_key || '');
-        const m = k.startsWith('c24:') ? ['🏠 자사몰', '#EEF2FF', '#4F46E5'] : k.startsWith('cp:') ? ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'] : k.startsWith('join:') ? ['👋 가입', '#E8F8EF', '#1E8E4E'] : null;
-        return m ? `<div style="margin-top:3px;"><span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px;">${m[0]}</span></div>` : '';
+        const m = k.startsWith('c24:') ? ['🏠 자사몰', '#EEF2FF', '#4F46E5'] : k.startsWith('cp:') ? ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'] : k.startsWith('join:') ? ['👋 가입', '#FDF2F8', '#BE185D'] : ['🛒 네이버', '#E8F8EF', '#1E8E4E'];
+        return `<span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px; white-space:nowrap;">${m[0]}</span>`;
     };
-    const cfLabel = { 'confirmed': '✅ 발주확인 완료', 'already': '✅ 이미 확인됨', 'dry-run': '시뮬레이션 (실행 안 함)', 'failed': '❌ 실패 — 수기 필요', 'manual-needed': '✍️ 수기 처리 필요' };
+    /* 지시 #405(대표): [발주확인] 컬럼 폐지 — 주문안내 발송 성공 = 발주확인 완료가 원칙이라 정상 건 표기는 불요.
+       단, 예외(발주확인 실패·수기 필요)만은 놓치면 실물 사고라 주문안내 칸에 경고 뱃지로 유지(실패·보류 필터도 이 상태를 계속 잡는다). */
     const rows = (d.rows || []).map(r => {
         const kl = kindLabel(r);
-        const msgs = [];
-        if (r.k_message) msgs.push(`<div class="text-muted" style="font-size:11px; margin:4px 0 2px;">${kl[0]}${kl[1] ? ' · 템플릿 ' + kl[1] : ''}</div><pre style="white-space:pre-wrap; font:inherit; font-size:12px; margin:0 0 8px;">${escapeHtml(r.k_message)}</pre>`);
-        if (r.l_message) msgs.push(`<div class="text-muted" style="font-size:11px; margin:4px 0 2px;">발송안내 · 템플릿 UJ_9087 (알림톡 우선 → 실패 시 문자 대체)</div><pre style="white-space:pre-wrap; font:inherit; font-size:12px; margin:0;">${escapeHtml(r.l_message)}</pre>`);
+        /* 지시 #405: 문면은 각 칸(주문안내/발송안내) 아래에서 바로 펼쳐본다 — 우측 [문면] 컬럼 폐지.
+           구 [문면] 컬럼의 [발송안내 수동 재발송] 버튼은 기능 유지: 발송안내 문면이 있으면 그 안에,
+           아직 발송 전이면(주문안내 문면 안에 '수동 발송'으로) — 기능 삭제 없음(confirm 가드는 sendLmsGuide 내장). */
+        const msgDetails = (label, text, extraHtml) => `<details style="margin-top:4px;"><summary style="cursor:pointer; font-size:11.5px; color:var(--text-mid,#667085);">📄 문면 보기</summary><div class="text-muted" style="font-size:11px; margin:4px 0 2px;">${label}</div><pre style="white-space:pre-wrap; font:inherit; font-size:12px; margin:0; max-width:360px;">${escapeHtml(text)}</pre>${extraHtml || ''}</details>`;
+        const resendBtn = (label) => r.order_key ? `<button class="btn-sm btn-outline" style="margin-top:6px;" onclick="sendLmsGuide('${escapeHtml(r.order_key)}')">${label}</button>` : '';
+        const kMsg = r.k_message ? msgDetails(`${kl[0]}${kl[1] ? ' · 템플릿 ' + kl[1] : ''}`, r.k_message, r.l_message ? '' : resendBtn('발송안내 수동 발송')) : '';
+        const lMsg = r.l_message ? msgDetails('발송안내 · 템플릿 UJ_9087 (알림톡 우선 → 실패 시 문자 대체)', r.l_message, resendBtn('발송안내 수동 재발송')) : '';
+        const cfWarn = (r.confirm_status === 'failed' || r.confirm_status === 'manual-needed')
+            ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px;" title="${escapeHtml(String(r.confirm_error || '').slice(0, 120))}">✍️ 발주확인 수기 필요</span></div>` : '';
         return `
         <tr>
             <td style="width:30px; text-align:center;">${r.k_id ? `<input type="checkbox" class="nlog-chk" data-kid="${r.k_id}" data-kstatus="${escapeHtml(r.k_status || '')}" onchange="nlogUpdateBar()">` : ''}</td>
-            <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}${chBadge(r)}</td>
-            <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? ('<div class="text-muted" style="font-size:11px;">' + (/^(c24|cp):/.test(String(r.order_key || '')) ? '알림톡 도입 전 주문 (발송 안내만)' : '주문 기록 밖 (발송만 감지)') + '</div>') : ''}</td>
+            <td style="white-space:nowrap;">${chCell(r)}</td>
+            <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+            <td style="white-space:nowrap; max-width:90px; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(r.buyer_name || '')}">${escapeHtml(r.buyer_name || '-')}</td>
+            <td style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? ('<div class="text-muted" style="font-size:11px;">' + (/^(c24|cp):/.test(String(r.order_key || '')) ? '알림톡 도입 전 주문 (발송 안내만)' : '주문 기록 밖 (발송만 감지)') + '</div>') : ''}</td>
             <td style="white-space:nowrap;">${
               /* 지시 #219: 유선번호(02-…)는 「번호 오류」 — 선물하기 판정보다 먼저 검사(기존 오표기 교정).
                  재조회해도 유선은 그대로이므로 [재조회] 버튼 미노출·조치 불요(중립 톤). */
@@ -12847,10 +12857,8 @@ async function renderNotifyLogs(opts) {
                 ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:var(--danger,#F04438); font-size:11px;">⚠️ 수동 연락 필요</span>
                      <button class="btn-sm btn-outline" style="margin-left:4px; padding:2px 8px; font-size:11px;" onclick="retryReceiverTel('${escapeHtml(r.order_key || '')}', this)">재조회</button></div>`
                 : ''))}</td>
-            <td>${cell(r, 'order')}</td>
-            <td>${cell(r, 'ship')}</td>
-            <td>${escapeHtml(cfLabel[r.confirm_status] || r.confirm_status || '-')}${r.confirm_error ? `<div class="text-muted" style="font-size:11px;">${escapeHtml(String(r.confirm_error).slice(0, 60))}</div>` : ''}</td>
-            <td>${msgs.length ? `<details><summary style="cursor:pointer; font-size:12px;">문면 보기</summary>${msgs.join('')}${r.order_key ? `<button class="btn-sm btn-outline" style="margin-top:6px;" onclick="sendLmsGuide('${escapeHtml(r.order_key)}')">발송안내 수동 재발송</button>` : ''}</details>` : '-'}</td>
+            <td>${cell(r, 'order')}${cfWarn}${kMsg}</td>
+            <td>${cell(r, 'ship')}${lMsg}</td>
         </tr>`;
     }).join('');
     // #180-A1: [더보기]는 기존 행을 유지한 채 tbody에만 이어 붙인다(화면 리셋 금지).
@@ -12868,7 +12876,7 @@ async function renderNotifyLogs(opts) {
              <button class="btn-sm btn-outline" style="color:var(--danger,#F04438); border-color:var(--danger,#F04438); margin-left:auto;" onclick="nlogBulkDelete(this)">🗑 선택 삭제</button>
            </div>`);
         el.innerHTML = rows
-        ? `<table class="data-table"><thead><tr><th style="width:30px; text-align:center;"><input type="checkbox" id="nlogChkAll" onchange="nlogToggleAll(this)"></th><th>일시(주문)</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th><th>발주확인</th><th>문면</th></tr></thead><tbody>${rows}</tbody></table>`
+        ? `<table class="data-table"><thead><tr><th style="width:30px; text-align:center;"><input type="checkbox" id="nlogChkAll" onchange="nlogToggleAll(this)"></th><th>플랫폼</th><th>일시(주문)</th><th>구매자</th><th>품목</th><th>수신</th><th>주문안내</th><th>발송안내</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<p class="text-muted">기록이 없습니다 — [데이터관리] 타이머에서 "주문 안내 알림톡"·"문자 발송 안내"를 켜면 감지 시 dry-run 문면이 여기에 쌓입니다.</p>';
     }
     // #204-2: 누적(+=)이 아니라 append 여부로 확정 — 응답이 겹쳐도 표시분이 부풀지 않는다.
@@ -13594,6 +13602,7 @@ function setupBotProductsTab() {
     // 지시 #76: LMS 이력 새로고침
     document.getElementById('btn-notify-log-refresh')?.addEventListener('click', () => renderNotifyLogs().catch(console.error));   // 지시 #176 통합 이력
     document.getElementById('notify-log-filter')?.addEventListener('change', () => renderNotifyLogs().catch(console.error));
+    document.getElementById('notify-log-ch')?.addEventListener('change', () => renderNotifyLogs().catch(console.error));   // 지시 #405: 채널(플랫폼) 필터
     // 지시 #178: 조회 버튼 바인딩 (수정 이력 조회식 · 발송 이력 검색) — 8/4 누락분 복구
     document.getElementById('btn-inq-log-search')?.addEventListener('click', runInqLogSearch);
     document.getElementById('btn-inq-log-today')?.addEventListener('click', () => {
@@ -13622,6 +13631,7 @@ function setupBotProductsTab() {
     document.getElementById('btn-notify-log-month')?.addEventListener('click', () => notifyQuickRange(30));
     document.getElementById('btn-notify-log-reset')?.addEventListener('click', () => {
         ['notify-log-from', 'notify-log-to', 'notify-log-q'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        const chEl = document.getElementById('notify-log-ch'); if (chEl) chEl.value = 'all';   // 지시 #405: 초기화 시 채널 필터도 전체로
         renderNotifyLogs().catch(console.error);
     });
     document.getElementById('notify-log-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') renderNotifyLogs().catch(console.error); });

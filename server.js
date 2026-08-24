@@ -5826,6 +5826,10 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                 conds.push(`(k.receiver_masked LIKE $${params.length} OR l.receiver_masked LIKE $${params.length})`);
             } else { params.push('%' + qRaw + '%'); conds.push(`(k.product_name ILIKE $${params.length} OR l.product_name ILIKE $${params.length})`); }
         }
+        // 지시 #405: 채널(플랫폼) 필터 — order_key 프리픽스로 판별(네이버 = 프리픽스 없음). 상태 필터와 AND 결합.
+        const ch = String(req.query.ch || 'all');
+        if (ch === 'naver') conds.push(`COALESCE(k.order_key, l.order_key) !~ '^(c24|cp|join):'`);
+        else if (ch === 'c24' || ch === 'cp' || ch === 'join') { params.push(ch + ':%'); conds.push(`COALESCE(k.order_key, l.order_key) LIKE $${params.length}`); }
         // 지시 #180-A1: 필터(미도래·실패/보류)를 페이지 내 후처리 → SQL 조건으로 승격.
         //   후처리로 두면 "100건 뽑아서 거른 뒤 남은 것"이 페이지마다 달라져 페이징·총건수가 어긋난다.
         if (filter === 'issue') {
@@ -5880,26 +5884,26 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                         const sa = po.shippingAddress || {};
                         const tel = od.ordererTel || sa.tel1 || sa.tel2 || '';   // 주문자 없으면 수취인 연락처 폴백(*** 케이스 교정)
                         const key = String(po.productOrderId || od.productOrderId || '');
-                        if (key) _telCache.set(key, { tel: String(tel), at: Date.now() });
+                        if (key) _telCache.set(key, { tel: String(tel), name: String(od.ordererName || sa.name || ''), at: Date.now() });   /* #405: 구매자 성함 — 번호와 동일 원칙(표시 시점 재조회만·DB 저장 안 함) */
                     }
                 }
             } catch (_) { /* 재조회 실패 = 마스킹 표시 유지 */ }
             // #401-c(대표 "쿠팡·자사몰도 다 보이도록"): 자사몰 풀번호 — order_id 일괄 재조회(같은 캐시·저장은 계속 마스킹만).
             //   쿠팡은 단건 재조회 API가 없어(기간 스캔뿐) 수집 시점 캐시로 표시 — 서버 재시작 후 옛 행은 마스킹 폴백(한계 기록).
             try {
-                const c24Need = rows.map(r => r.order_key).filter(k => /^c24:/.test(String(k)) && !(_telCache.has(k) && _telCache.get(k).tel));
+                const c24Need = rows.map(r => r.order_key).filter(k => /^c24:/.test(String(k)) && !(_telCache.has(k) && _telCache.get(k).tel && _telCache.get(k).name !== undefined));   /* #405: 성함 없는 옛 캐시는 1회 재조회 */
                 for (let i = 0; i < c24Need.length && i < 180; i += 90) {
                     const ids = c24Need.slice(i, i + 90).map(k => k.slice(4));
                     const r3 = await cafe24.apiGet('/api/v2/admin/orders', { order_id: ids.join(','), embed: 'buyer', fields: 'order_id,buyer', limit: 100 });
                     for (const o of ((r3 && r3.orders) || [])) {
                         const tel = (o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '';
-                        if (o.order_id && tel) _telCache.set('c24:' + o.order_id, { tel: String(tel), at: Date.now() });
+                        if (o.order_id && tel) _telCache.set('c24:' + o.order_id, { tel: String(tel), name: String((o.buyer && o.buyer.name) || ''), at: Date.now() });   /* #405 */
                     }
                 }
             } catch (_) { /* 자사몰 재조회 실패 = 마스킹 표시 유지 */ }
             const fmt = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
             let shown = 0;
-            for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) { r.receiver_full = fmt(hit.tel); shown++; } }
+            for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) { r.receiver_full = fmt(hit.tel); shown++; } if (hit && hit.name) r.buyer_name = String(hit.name).slice(0, 30); }   /* #405: 구매자 성함(캐시 있을 때만 — 없으면 화면 '-') */
             // 지시 #190-2: 풀번호 조회 접근 기록 — 계정·시각·건수만. 🔴 번호 자체는 절대 남기지 않는다(로그에 PII 저장 금지).
             //   화면을 열 때마다 쌓이므로 audit_logs 대신 하루 1행 누적(계정별)으로 부담을 줄인다.
             if (shown) {
@@ -9117,7 +9121,7 @@ async function collectCafe24Notify() {
         } finally {
             try {
                 if (orderAtMs) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
-                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((o.buyer && o.buyer.name) || ''), at: Date.now() });   /* #405: 성함 동봉(표시 보조) */
             } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
@@ -9195,7 +9199,7 @@ async function collectCafe24Guide() {
         } finally {
             try {
                 if (orderAtMs) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
-                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((o.buyer && o.buyer.name) || ''), at: Date.now() });   /* #405 */
             } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
@@ -9343,7 +9347,7 @@ async function collectCoupangNotify() {
         } finally {
             try {
                 if (orderAtMs) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
-                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((s.orderer && s.orderer.name) || ''), at: Date.now() });   /* #405 */
             } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
@@ -9437,7 +9441,7 @@ async function collectCoupangGuide() {
         } finally {
             try {
                 if (orderAtMs) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
-                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
+                if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((s.orderer && s.orderer.name) || ''), at: Date.now() });   /* #405 */
             } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
@@ -9504,7 +9508,7 @@ app.post('/api/public/welcome-signup', async (req, res) => {
         }
         try {
             await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(joinedMs)]);
-            _telCache.set(orderKey, { tel, at: Date.now() });
+            _telCache.set(orderKey, { tel, name: name || '', at: Date.now() });   /* #405 */
         } catch (_) { /* 표시 보조 */ }
         res.json({ ok: true, mode: out.mode });
     } catch (e) {
