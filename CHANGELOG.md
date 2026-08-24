@@ -1,3 +1,7 @@
+## v5.9.285 (2026-08-24) — 서버만·app.js 무변경 / 스킨 join_result.html
+- 👋🔴 **#401-d: 가입 환영 = 이벤트형 전환 (폴링 불가 실측 확정)** — customers API는 cellphone/member_id 지정 필수(가입일 목록 조회 미지원·member→cellphone 미제공·privacy 스코프는 개발자센터 선택지 부재). **cellphone 역검색은 성립**(하이픈 포맷·같은 번호 복수 계정 반환 실측).
+- 신설 `POST /api/public/welcome-signup`: 가입완료 페이지(join_result — 회원ID·이름 실렌더 실증 + 휴대폰 치환자 후보 4종 자동 채택)가 신호 → 서버가 **카페24 정본 역검증**(제출 번호의 실제 주인 목록에 그 회원이 있는가 + 가입 48h 이내)한 것만 D 발송. 레이트리밋 6/분·join: UNIQUE 멱등·채널 dry 게이트·마스킹 저장·order_at=가입 시각. welcome_notify 폴링 타이머는 은퇴(OFF·함수는 안내 반환).
+
 ## v5.9.284 (2026-08-24) — 서버만·app.js 무변경
 - 🔎 **#401 러너 가드에 customers GET 허용** — 재동의 완료(스코프 12종 실확인) 후 customers API 스펙 실측용(가입일 검색·cellphone 필드 확인 — 문서 잘림으로 실측 필수). 읽기 전용·결과 즉시 삭제 원칙.
 

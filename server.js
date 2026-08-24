@@ -9441,71 +9441,74 @@ async function collectCoupangGuide() {
     }
     return `쿠팡 발송안내 ${live ? '실발송(LMS)' : 'dry'} 처리 ${targets.length}건 (발송 ${done}·실패 ${failed})`;
 }
-// ── 자사몰 가입 환영 (D 알림톡) — 🔴 mall.read_privacy 스코프 필요(현재 미보유·재동의 대기): 403이면 무해 대기.
+// ── 자사몰 가입 환영 (D 알림톡) — 🔴 #401-d(8/24 실측): 폴링 불가 확정 — customers API는 cellphone/member_id 지정 필수
+//    (가입일 목록 조회 미지원·member→cellphone 미제공·privacy 스코프는 개발자센터 선택지에 부재).
+//    → **이벤트형 전환**: 가입완료 페이지(join_result)가 회원ID+휴대폰을 신호 → 아래 공개 라우트가
+//    카페24 정본으로 역검증(그 번호의 실제 주인 = 그 회원·가입 48h 이내)한 것만 발송. 타이머는 은퇴(OFF).
 async function collectWelcomeNotify() {
-    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
-    const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
-    let list;
+    return '이벤트형 전환(#401-d) — 가입완료 페이지 신호(/api/public/welcome-signup)로 발송. 이 타이머는 꺼두세요';
+}
+const _wsigRate = new Map();
+app.options('/api/public/welcome-signup', (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Max-Age', '86400');
+    res.sendStatus(204);
+});
+app.post('/api/public/welcome-signup', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
     try {
-        const r = await cafe24.apiGet('/api/v2/admin/customersprivacy', {
-            created_start_date: d(-1), created_end_date: d(0), limit: 100 });
-        list = (r && (r.customersprivacy || r.customers)) || [];
-    } catch (e) {
-        const msg = String((e && (e.reason || e.message)) || '');
-        if ((e && (e.status === 401 || e.status === 403)) || /scope|권한|unauthorized/i.test(msg))
-            return '권한 대기 — mall.read_privacy 재동의 필요 (가입 환영 D)';
-        throw e;
-    }
-    if (!list.length) return '신규 가입 0명';
-    const keys = list.map(m => 'join:' + (m.member_id || '')).filter(k => k !== 'join:');
-    if (!keys.length) return '신규 가입 0명 (member_id 없음)';
-    const seen = new Set((await pool.query(`SELECT order_key FROM kakao_notify_log WHERE order_key = ANY($1)`, [keys])).rows.map(r => r.order_key));
-    const targets = list.filter(m => m.member_id && !seen.has('join:' + m.member_id));
-    if (!targets.length) return `신규 가입 ${list.length}명 — 전부 처리 이력 있음`;
-    const live = await notifyChannelLive('join');
-    const tpl = kakaoNotify.templateByKey('welcome');
-    const tplCode = process.env.ALIGO_TPL_CODE_WELCOME || kakaoNotify.APPROVED_TPL.welcome;
-    let done = 0, failed = 0;
-    for (const m of targets) {
-        const orderKey = ('join:' + m.member_id).slice(0, 50);
-        const orderAtMs = Date.parse(m.created_date || '') || null;   // #401-c: 가입 시각
-        let telSeed = String(m.cellphone || m.phone || '').trim();
-        try {
-            const message = kakaoNotify.buildMessage({ '고객명': m.name || m.member_id || '고객' }, tpl && tpl.content);
-            const recvTel = String(m.cellphone || m.phone || '').trim();
-            if (!recvTel || isBadTel(recvTel)) {
-                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
-                    VALUES ($1,'회원가입 환영',$2,'skip',$3,'none') ON CONFLICT (order_key) DO NOTHING`,
-                    [orderKey, recvTel ? kakaoNotify.maskPhone(recvTel) : '***', recvTel ? 'bad-tel' : 'no-tel']); continue;
-            }
-            if (!live) {
-                await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, confirm_status)
-                    VALUES ($1,'회원가입 환영',$2,$3,'dry-run','dry-run','none') ON CONFLICT (order_key) DO NOTHING`,
-                    [orderKey, kakaoNotify.maskPhone(recvTel), message]);
-                continue;
-            }
-            const res = await kakaoNotify.sendAlimtalk({
-                receiver: recvTel, subject: '가입 환영', message, failoverMessage: message,
+        const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+        const now = Date.now();
+        const cur = _wsigRate.get(ip) || { n: 0, at: now };
+        if (now - cur.at > 60000) { cur.n = 0; cur.at = now; }
+        cur.n++; _wsigRate.set(ip, cur);
+        if (cur.n > 6) return res.status(429).json({ ok: false });
+        const mid = String((req.body || {}).mid || '').trim();
+        const tel = String((req.body || {}).tel || '').replace(/[^0-9]/g, '');
+        const name = String((req.body || {}).name || '').trim().slice(0, 30);   // 인사말 표시용(검증 대상 아님 — 번호·ID가 정본 대조됨)
+        if (!/^[A-Za-z0-9@._-]{3,60}$/.test(mid)) return res.status(400).json({ ok: false });
+        if (!/^01[016789]\d{7,8}$/.test(tel) || (tel.startsWith('010') && tel.length !== 11)) return res.status(400).json({ ok: false });
+        const orderKey = ('join:' + mid).slice(0, 50);
+        const seen = await pool.query(`SELECT id FROM kakao_notify_log WHERE order_key=$1`, [orderKey]);
+        if (seen.rows.length) return res.json({ ok: true, dup: true });
+        // 🔴 카페24 정본 역검증 — 제출 번호의 실제 주인 목록에 제출 회원이 있는가 (위조 원천 차단·하이픈 포맷 실측 확정)
+        const telHy = tel.length === 11 ? `${tel.slice(0, 3)}-${tel.slice(3, 7)}-${tel.slice(7)}` : `${tel.slice(0, 3)}-${tel.slice(3, 6)}-${tel.slice(6)}`;
+        const r2 = await cafe24.apiGet('/api/v2/admin/customers', { cellphone: telHy, fields: 'member_id,created_date' });
+        const hit = ((r2 && r2.customers) || []).find(c => String(c.member_id) === mid);
+        if (!hit) return res.status(403).json({ ok: false });
+        const joinedMs = Date.parse(hit.created_date || '') || 0;
+        if (!joinedMs || now - joinedMs > 48 * 3600 * 1000) return res.status(403).json({ ok: false });   // 가입 직후(48h)만
+        const live = await notifyChannelLive('join');
+        const tpl = kakaoNotify.templateByKey('welcome');
+        const tplCode = process.env.ALIGO_TPL_CODE_WELCOME || kakaoNotify.APPROVED_TPL.welcome;
+        const message = kakaoNotify.buildMessage({ '고객명': name || '고객' }, tpl && tpl.content);
+        let out;
+        if (!live) {
+            out = { mode: 'dry-run', status: 'dry-run' };
+            await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, confirm_status)
+                VALUES ($1,'회원가입 환영',$2,$3,'dry-run','dry-run','none') ON CONFLICT (order_key) DO NOTHING`,
+                [orderKey, kakaoNotify.maskPhone(tel), message]);
+        } else {
+            out = await kakaoNotify.sendAlimtalk({
+                receiver: tel, subject: '가입 환영', message, failoverMessage: message,
                 tplCode, buttons: (tpl && tpl.button) || undefined,
             });
             await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error, confirm_status)
                 VALUES ($1,'회원가입 환영',$2,$3,$4,$5,$6,'none') ON CONFLICT (order_key) DO NOTHING`,
-                [orderKey, kakaoNotify.maskPhone(recvTel), message, res.mode, res.status, res.error || null]);
-            if (res.status === 'sent') done++; else if (res.mode === 'real') failed++;
-        } catch (e) {
-            failed++;
-            await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, mode, status, confirm_status, error)
-                VALUES ($1,'회원가입 환영','dry-run','build-failed','none',$2) ON CONFLICT (order_key) DO NOTHING`,
-                [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
-        } finally {
-            try {
-                if (orderAtMs) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
-                if (telSeed) _telCache.set(orderKey, { tel: telSeed, at: Date.now() });
-            } catch (_) { /* 표시 보조 — 실패 무해 */ }
+                [orderKey, kakaoNotify.maskPhone(tel), message, out.mode, out.status, out.error || null]);
         }
+        try {
+            await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(joinedMs)]);
+            _telCache.set(orderKey, { tel, at: Date.now() });
+        } catch (_) { /* 표시 보조 */ }
+        res.json({ ok: true, mode: out.mode });
+    } catch (e) {
+        console.error('welcome-signup 오류:', String(e.message || e).slice(0, 200));
+        res.status(500).json({ ok: false });
     }
-    return `가입 환영 ${live ? '실발송' : 'dry'} 처리 ${targets.length}명 (발송 ${done}·실패 ${failed})`;
-}
+});
 
 // 연동 승인 URL 발급 — state를 config에 저장(10분 유효, 위변조 검증용)
 app.get('/api/cafe24/auth-url', authMiddleware, adminOnly, async (req, res) => {
