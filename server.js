@@ -9467,7 +9467,8 @@ app.post('/api/public/welcome-signup', async (req, res) => {
         if (cur.n > 6) return res.status(429).json({ ok: false });
         const mid = String((req.body || {}).mid || '').trim();
         const tel = String((req.body || {}).tel || '').replace(/[^0-9]/g, '');
-        const name = String((req.body || {}).name || '').trim().slice(0, 30);   // 인사말 표시용(검증 대상 아님 — 번호·ID가 정본 대조됨)
+        let name = String((req.body || {}).name || '').trim().slice(0, 30);   // 인사말 표시용(검증 대상 아님 — 번호·ID가 정본 대조됨)
+        if (/[*<>{}$]/.test(name)) name = '';   // join_result 이름 dd는 마스킹(*****) 렌더 실측 — 문면에 그대로 들어가는 것 차단(→'고객' 폴백)
         if (!/^[A-Za-z0-9@._-]{3,60}$/.test(mid)) return res.status(400).json({ ok: false });
         if (!/^01[016789]\d{7,8}$/.test(tel) || (tel.startsWith('010') && tel.length !== 11)) return res.status(400).json({ ok: false });
         const orderKey = ('join:' + mid).slice(0, 50);
