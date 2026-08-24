@@ -1,3 +1,6 @@
+## v5.9.282 (2026-08-24) — 서버만·app.js 무변경
+- 🔑 **#401 카페24 재동의 준비: OAuth SCOPE 확장** — `mall.read_privacy`(가입 환영 — customersprivacy 공식 문서 확인) + `mall.read_promotion`·`mall.write_promotion`(#341 룰렛 쿠폰 자동발급 대비 — 재동의 1회에 묶음·코드 미사용). 절차 = 개발자센터 앱 권한 추가 → 배포본 [데이터관리] 카페24 재동의 클릭 → status 러너로 scopes 실확인.
+
 ## v5.9.281 (2026-08-24) — 서버만·app.js 무변경
 - 🛍️ **#402(대표 GO): 쿠팡도 「LMS 발송 성공 → 자동 발주확인(결제완료→상품준비중)」** — 네이버 #92 동일 원칙(발송 실패·미발송 = 수기 manual-needed·dry = 시뮬레이션 표기).
 - 공식 스펙 문서 확인: **PATCH** /v4/.../ordersheets/acknowledgement · body {vendorId, shipmentBoxIds[]} · 1회 50개 · 결제완료 박스만. 같은 주문 멀티박스 전부 확인·INSTRUCT에서 감지된 주문(이미 발주확인됨)은 'already'.
