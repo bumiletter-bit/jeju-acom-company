@@ -7331,6 +7331,12 @@ async function collectKakaoNotify() {
                 await pool.query(`INSERT INTO kakao_notify_log (order_key, mode, status, error)
                     VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
                     [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+            } finally {
+                // #401-e(대표): 일시(주문) = 실제 결제 시각 — 표시 전용 기록(발송 로직 무접촉·실패 무해·hold/skip 포함 전 경로)
+                try {
+                    const _oa = Date.parse(od.paymentDate || od.orderDate || '');
+                    if (_oa) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(_oa)]);
+                } catch (_) { /* 표시 보조 — 실패 무해 */ }
             }
         }
     }
@@ -7474,6 +7480,12 @@ async function collectLmsGuide() {
                 await pool.query(`INSERT INTO lms_guide_log (order_key, mode, status, error)
                     VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
                     [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
+            } finally {
+                // #401-e: 일시(주문) = 결제 시각 기록 (주문안내와 동일 — 표시 전용)
+                try {
+                    const _oa = Date.parse(od.paymentDate || od.orderDate || '');
+                    if (_oa) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(_oa)]);
+                } catch (_) { /* 표시 보조 — 실패 무해 */ }
             }
         }
     }
