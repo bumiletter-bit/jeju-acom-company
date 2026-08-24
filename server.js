@@ -5976,7 +5976,7 @@ app.post('/api/agent-office/kakao-notify-logs/:id/manual-send', authMiddleware, 
                 if (!o2) return res.status(404).json({ error: '자사몰 주문을 찾을 수 없습니다' });
                 const it2 = ((o2.items || []).filter(it => /^N[2-4]/.test(String(it.order_status || '')) && !it.claim_code)[0]) || (o2.items || [])[0] || {};
                 name2 = (o2.buyer && o2.buyer.name) || '고객';
-                optText2 = `${it2.product_name || ''} ${it2.option_value || ''}`;
+                optText2 = `${it2.product_name || ''} ${c24OptClean(it2.option_value)}`;
                 recvTel2 = String((o2.buyer && (o2.buyer.cellphone || o2.buyer.phone)) || '').trim();
             } else {
                 const oid = row.order_key.slice(3);
@@ -8986,6 +8986,8 @@ function buildShipLineFor(isReserve, matched, paidAt, hinfo) {
     }
     return shippingSchedule.computeShipping(paidAt, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
 }
+// 카페24 옵션 표기 정제 — option_value가 "상품 선택=1. (제철)…" 형태(dry 실측)라 시스템 접두어를 벗긴다
+function c24OptClean(v) { return String(v || '').replace(/^[^=]{0,20}=\s*/, '').trim(); }
 // 카페24 주문 기간 조회 (읽기 전용 — PII는 메모리에서만 사용·저장은 마스킹)
 async function cafe24FetchOrdersRange(days, embed) {
     const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
@@ -9046,7 +9048,7 @@ async function collectCafe24Notify() {
             const tplDef = kakaoNotify.orderTemplate(isReserve);
             const message = kakaoNotify.buildMessage({
                 '고객명': (o.buyer && o.buyer.name) || '고객',
-                '상품명': (kakaoNotify.cleanProductName(first.option_value || first.product_name || '주문 상품') + extra).slice(0, 80),
+                '상품명': (kakaoNotify.cleanProductName(c24OptClean(first.option_value) || first.product_name || '주문 상품') + extra).slice(0, 80),
                 '발송안내': shipLine,
             }, tplDef && tplDef.content);
             const recvTel = String((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '').trim();
@@ -9100,6 +9102,14 @@ async function collectCafe24Guide() {
         const orderKey = ('c24:' + o.order_id).slice(0, 50);
         try {
             const it0 = (o.items || []).find(it => it.tracking_no && it.shipped_date && !it.claim_code);
+            // 안전망: 발송한 지 48시간이 지난 건은 "오늘 출발" 안내가 거짓이 됨(수집 공백 복구 시) — 발송 없이 기록만
+            const shippedMs = Date.parse(it0.shipped_date || '') || 0;
+            if (shippedMs && Date.now() - shippedMs > 48 * 3600 * 1000) {
+                await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, mode, status)
+                    VALUES ($1,$2,'skip','stale-skip') ON CONFLICT (order_key) DO NOTHING`,
+                    [orderKey, String(it0.product_name || '').slice(0, 200)]).catch(() => {});
+                continue;
+            }
             const optText = `${it0.product_name || ''} ${it0.option_value || ''}`;
             const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
             const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
@@ -9107,7 +9117,7 @@ async function collectCafe24Guide() {
             const 도착안내 = shippingSchedule.computeArrival(Date.now(), hinfo.arriveOff, hinfo.reasons).text;
             const vars = {
                 '고객명': (o.buyer && o.buyer.name) || '고객',
-                '상품명': (it0.option_value || it0.product_name || '주문 상품').slice(0, 80),
+                '상품명': (c24OptClean(it0.option_value) || it0.product_name || '주문 상품').slice(0, 80),
                 '도착안내': 도착안내,
                 '상품코드': String((matched && matched.id) || ''),
                 '송장번호': String(it0.tracking_no || '').replace(/[^0-9]/g, ''),
