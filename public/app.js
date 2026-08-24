@@ -150,6 +150,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 
         localStorage.setItem('jwt_token', data.token);
         localStorage.setItem('jwt_user', JSON.stringify(data.user));
+        try { localStorage.removeItem('akm_last_page'); } catch (_) {}   // 지시 #407: 수동 로그인은 종전대로 메인에서 시작(복원은 새로고침 자동 로그인만)
         currentUser = data.user;
         errorEl.style.display = 'none';
         document.getElementById('login-username').value = '';
@@ -221,6 +222,7 @@ function updateUserUI() {
 document.getElementById('btn-logout').addEventListener('click', () => {
     localStorage.removeItem('jwt_token');
     localStorage.removeItem('jwt_user');
+    try { localStorage.removeItem('akm_last_page'); } catch (_) {}   // 지시 #407: 로그아웃 후 재로그인은 종전대로 메인에서 시작
     currentUser = null;
     showLoginPage();
 });
@@ -234,6 +236,19 @@ function checkAuth() {
             currentUser = user;
             localStorage.setItem('jwt_user', JSON.stringify(user));
             onLoginSuccess();
+            // 지시 #407(대표 8/24 · 확장): 새로고침하면 「지금 보던 메뉴」로 복원 — 전 메뉴 공통.
+            //   문의 관리는 내부 탭(알림 이력·휴무일 등)까지 복원. 자동 로그인(새로고침) 경로에서만 —
+            //   수동 로그인·로그아웃 후 재로그인은 종전대로 메인에서 시작. 권한 밖 메뉴는 switchPage의 기존 가드가 처리.
+            try {
+                const savedPage = localStorage.getItem('akm_last_page');
+                if (savedPage && document.getElementById('page-' + savedPage)) {
+                    switchPage(savedPage);
+                    if (savedPage === 'inquiry') {
+                        const t = localStorage.getItem('akm_inq_tab');
+                        if (t && document.getElementById('inquiry-tab-btn-' + t)) switchInquiryTab(t);
+                    }
+                }
+            } catch (_) { /* 복원 실패 = 종전 동작(메인) */ }
         }).catch(() => {
             showLoginPage();
         });
@@ -283,6 +298,9 @@ function switchPage(pageName) {
 
     document.querySelector(`[data-page="${pageName}"]`).classList.add('active');
     document.getElementById(`page-${pageName}`).classList.add('active');
+
+    // 지시 #407(대표 확장 지시): 새로고침 시 「지금 보던 메뉴」로 복원 — 전 메뉴 공통(문의 관리는 내부 탭까지)
+    try { localStorage.setItem('akm_last_page', pageName); } catch (_) {}
 
     if (pageName === 'schedule') renderScheduleCalendar().catch(console.error);
     if (pageName === 'rankings') renderRankingsPage().catch(console.error);
@@ -12348,12 +12366,15 @@ let botProducts = [];
 let inquiryActiveTab = 'scenario';
 window.switchInquiryTab = function(name) {
     inquiryActiveTab = name;
-    for (const t of ['scenario', 'products', 'season', 'unanswered', 'qna', 'userinq', 'reward']) {
+    try { localStorage.setItem('akm_inq_tab', name); } catch (_) {}   // 지시 #407: 새로고침 복원용(문의 관리 한정)
+    for (const t of ['scenario', 'products', 'notify', 'holiday', 'season', 'unanswered', 'qna', 'userinq', 'reward']) {   /* #407: 알림 이력·발송 휴무일 독립 탭 */
         document.getElementById('inquiry-tab-' + t).style.display = name === t ? '' : 'none';
         document.getElementById('inquiry-tab-btn-' + t).className = name === t ? 'settlement-tab active' : 'settlement-tab';
     }
     syncInqLogCard();   // 지시 #181-1: 이력 카드 대상 전환·초기화(이전 탭 이력 잔류 차단) — 조회는 [조회] 눌렀을 때만
     if (name === 'products') renderBotProducts().catch(console.error);
+    else if (name === 'notify') renderNotifyLogs().catch(console.error);            // 지시 #407 — 판매현황 탭에서 분리
+    else if (name === 'holiday') renderShippingHolidays().catch(console.error);     // 지시 #407 — 판매현황 탭에서 분리
     else if (name === 'season') { renderSeasonKnowledge().catch(console.error); renderSeasonWaitlist().catch(console.error); }   // 지시 #112 — 독립 탭 승격
     else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
     else if (name === 'qna') renderQnaTab().catch(console.error);
@@ -12736,8 +12757,7 @@ async function renderBotProducts() {
         <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡(#156): 카카오 승인 템플릿(알리고)으로만 발송되므로 품목별 문구 입력이 아니라 준비 상태 뱃지로 표시 — ⚠️ 미설정에 마우스를 올리면 미비 항목이 보입니다. · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). · 📅 예약발송(#152): 체크하면 날짜칸이 열리고, 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다. 체크 해제 = 일반 자동 발송일 계산으로 복귀. · 변경한 행만 [저장] 버튼이 켜지며, 행의 상태·가격·안내문·예약발송이 한 번에 저장됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
     // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
-    renderShippingHolidays().catch(console.error); // 지시 #69 — 발송 휴무일 관리
-    renderNotifyLogs().catch(console.error);       // 지시 #176 — 알림 발송 이력(통합)
+    // (지시 #407) 발송 휴무일·알림 발송 이력도 독립 탭으로 분리 — 각 탭 진입 시 switchInquiryTab이 렌더
 }
 // --- 📬 알림 발송 이력 통합 (지시 #176) — 한 줄 = 한 주문. 주문안내·발송안내 두 칸이 각각 채워짐 ---
 //     구 2화면(#92 주문 알림톡·발주확인 이력 / #76 발송 안내 이력) 기능 전수 흡수: 발주확인 표기·수기 처리 필요만(→실패·보류 필터)·

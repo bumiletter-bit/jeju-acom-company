@@ -1997,7 +1997,10 @@
                 <p class="text-muted" style="font-size:13px; margin:4px 0 16px;">여기서 저장하면 톡톡봇에 5분 내 자동 반영됩니다. ⚠️ 답변문구에 고객 개인정보(이름·연락처·주소)를 넣지 마세요.</p>
                 <!-- 디자인 v5.9.85: 정산관리와 동일한 탭바 컴포넌트 재사용 (클릭 시 인디고 활성) -->
                 <!-- 대표 7/27 개편: 탭 순서 판매현황 → 시나리오 → 톡톡 문의 → 상품문의 → 고객문의 (초기 활성은 시나리오 유지) -->
+                <!-- 지시 #407(대표 8/24): 판매현황·가격 탭에 뭉쳐 있던 3개 섹션을 독립 탭으로 분리 — 순서 ①알림 발송 이력 ②발송 휴무일 ③판매현황·가격, 나머지는 종전 순서 그대로 -->
                 <div class="settlement-tab-bar">
+                    <button class="settlement-tab" id="inquiry-tab-btn-notify" onclick="switchInquiryTab('notify')">📬 알림 발송 이력</button>
+                    <button class="settlement-tab" id="inquiry-tab-btn-holiday" onclick="switchInquiryTab('holiday')">🚫 발송 휴무일</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-products" onclick="switchInquiryTab('products')">🏷️ 판매현황·가격</button>
                     <button class="settlement-tab active" id="inquiry-tab-btn-scenario" onclick="switchInquiryTab('scenario')">📝 시나리오</button>
                     <button class="settlement-tab" id="inquiry-tab-btn-season" onclick="switchInquiryTab('season')">📅 시기별 상품 지식</button>
@@ -2060,8 +2063,11 @@
                         <div id="botprod-list" class="table-scroll-wrapper"></div>
                     </div>
                     <!-- (지시 #112) 시즌 대기 신청·시기별 상품 지식 카드는 "📅 시기별 상품 지식" 독립 탭으로 이동 -->
+                    <!-- 지시 #407: 발송 휴무일 관리·알림 발송 이력 카드는 아래 독립 탭으로 분리 (내용 무변경·이동만) -->
+                </div>
+                <div id="inquiry-tab-holiday" style="display:none;">
                     <!-- 지시 #69: 발송 휴무일 관리 — 발송일 안내 계산에서 이 날짜들은 발송 불가일로 제외 (직원 추가/삭제 가능) -->
-                    <div class="card" style="margin-top:14px;">
+                    <div class="card">
                         <div class="card-header-row">
                             <h2>🚫 발송 휴무일 관리 <span class="text-muted" style="font-size:13px; font-weight:400;">공휴일·명절 임시휴무·태풍 결항 등 — 주문 안내 발송일 계산에서 제외됩니다</span></h2>
                         </div>
@@ -2072,10 +2078,12 @@
                         <div id="ship-holiday-cal"></div>
                         <div id="ship-holiday-list" class="table-scroll-wrapper" style="margin-top:10px;"></div>
                     </div>
+                </div>
+                <div id="inquiry-tab-notify" style="display:none;">
                     <!-- 지시 #176: [알림 발송 이력] 통합 — 주문 단위 한 줄(주문안내·발송안내 두 칸). 구 2화면(#76 발송 안내 이력·#92 주문 알림톡 이력) 흡수 -->
-                    <div class="card" style="margin-top:14px;">
+                    <div class="card">
                         <div class="card-header-row">
-                            <h2>📬 알림 발송 이력 <span class="text-muted" style="font-size:13px; font-weight:400;">한 줄 = 한 주문 · 알림톡 우선 발송 → 실패 시 문자(LMS) 자동 대체 — 지금은 dry-run(문면 기록만)</span></h2>
+                            <h2>📬 알림 발송 이력 <span class="text-muted" style="font-size:13px; font-weight:400;">한 줄 = 한 주문 · 알림톡 우선 발송 → 실패 시 문자(LMS) 자동 대체</span></h2><!-- 지시 #407: 「지금은 dry-run」 낡은 문구 제거 — 8/24 live 전환(#215 계열 낡은 라벨 방지) -->
                             <div style="display:flex; gap:8px; align-items:center;">
                                 <!-- 지시 #405: 채널(플랫폼) 필터 — 상태 필터와 조합 가능(예: 자사몰 + 발송안내 미도래) -->
                                 <select id="notify-log-ch" style="padding:6px 8px; border:1px solid var(--border,#ccc); border-radius:8px; font-size:13px;">
@@ -2456,7 +2464,7 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=371"></script>
+    <script src="app.js?v=372"></script>
     <!-- 지시 #395: 주문 정리기 (파서·추출기 = 원형 이식, organizer = 앱 로직. OCR·pako는 화면에서 lazy-load) -->
     <script src="order-parser.js?v=1"></script>
     <script src="order-extract.js?v=1"></script>
