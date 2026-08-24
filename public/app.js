@@ -13900,11 +13900,35 @@ window.resetMallGameConfig = async function() {
 };
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
-const NAVER_TIMER_LABELS_UI = { settlement: '정산 (하루 1회)', order: '주문 (신규 알림)', claim: '반품·교환 알림', inquiry: '문의', qna: '상품문의 Q&A (수집+자동 게시)', kakao_notify: '📨 알림톡 주문 안내 (🚀 실발송 가동 중)', lms_guide: '📦 문자 발송 안내 (발송처리 감지 — 🚀 실발송 가동 중)', product_snapshot: '🛒 상품 스냅샷 — 네이버 정본 일일 수집 (새벽 04:30)', cafe24_sync: '🔄 카페24 동기화 — 신규 세트 가격·품절 (05:10 · 기본 dry-run)' };
+// #404: 채널(네이버🛒/자사몰🏠/쿠팡🛍️)별 그룹 정렬(o) + 발송 상태는 하드코딩하지 않고 서버 channel_mode로 자동 표기
+//   live:true = 네이버 전역 실발송(KAKAO_NOTIFY on) · ch = notify_channel_mode 게이트 채널 · hide = 은퇴 타이머(화면 숨김)
+const NAVER_TIMER_LABELS_UI = {
+    order:            { o: 1,  t: '🛒 네이버 · 신규 주문 알림 (대표 폰 보고)' },
+    kakao_notify:     { o: 2,  t: '🛒 네이버 · 주문 안내 알림톡', live: true },
+    lms_guide:        { o: 3,  t: '🛒 네이버 · 발송 안내 문자 (발송처리 감지)', live: true },
+    claim:            { o: 4,  t: '🛒 네이버 · 반품·교환 알림' },
+    inquiry:          { o: 5,  t: '🛒 네이버 · 고객문의 수집' },
+    qna:              { o: 6,  t: '🛒 네이버 · 상품문의 수집·자동 게시' },
+    settlement:       { o: 7,  t: '🛒 네이버 · 정산 수집 (하루 1회)' },
+    product_snapshot: { o: 8,  t: '🛒 네이버 · 상품 스냅샷 일일 수집 (새벽 04:30)' },
+    cafe24_notify:    { o: 10, t: '🏠 자사몰 · 주문 안내 알림톡', ch: 'c24' },
+    cafe24_guide:     { o: 11, t: '🏠 자사몰 · 발송 안내 알림톡', ch: 'c24' },
+    cafe24_sync:      { o: 12, t: '🏠 자사몰 · 가격·품절 동기화 (05:10 · 네이버 기준)' },
+    coupang_notify:   { o: 20, t: '🛍️ 쿠팡 · 주문 안내 문자(LMS)', ch: 'cp' },
+    coupang_guide:    { o: 21, t: '🛍️ 쿠팡 · 발송 안내 문자(LMS)', ch: 'cp' },
+    welcome_notify:   { o: 90, t: '👋 가입 환영 (은퇴)', hide: true },   // #401-d 이벤트형 전환 — 가입완료 페이지가 자동 처리
+};
 async function renderNaverTimers() {
     const d = await api('/api/agent-office/naver/auto-collect');
-    const rows = (d.timers || []).map(t => {
-        const label = NAVER_TIMER_LABELS_UI[t.key] || t.key;
+    const cm = d.channel_mode || {};
+    const rows = (d.timers || [])
+        .filter(t => !(NAVER_TIMER_LABELS_UI[t.key] || {}).hide)
+        .slice().sort((a, b) => (((NAVER_TIMER_LABELS_UI[a.key] || {}).o) || 50) - (((NAVER_TIMER_LABELS_UI[b.key] || {}).o) || 50))
+        .map(t => {
+        const meta = NAVER_TIMER_LABELS_UI[t.key];
+        let label = meta ? meta.t : t.key;
+        if (meta && meta.live) label += ' — 🚀 실발송 가동 중';
+        else if (meta && meta.ch) label += (cm[meta.ch] === 'live' ? ' — 🚀 실발송 가동 중' : ' — 🧪 검수중 (문면만 기록)');
         const cycle = t.key === 'settlement'
             ? `실행시각 <input type="text" id="naver-timer-time-${t.key}" value="${escapeHtml(t.run_at_time || '09:30')}" style="width:64px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`
             : `주기(분) <input type="number" min="3" max="1440" id="naver-timer-min-${t.key}" value="${Number(t.interval_min) || 60}" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`;

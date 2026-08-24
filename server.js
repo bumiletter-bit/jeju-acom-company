@@ -6391,7 +6391,9 @@ app.put('/api/agent-office/naver/alert-settings', authMiddleware, adminOnly, asy
 app.get('/api/agent-office/naver/auto-collect', authMiddleware, adminOnly, async (req, res) => {
     try {
         const r = await pool.query(`SELECT key, enabled, interval_min, run_at_time, last_run_at, last_status, last_error FROM naver_auto_collect ORDER BY key`);
-        res.json({ timers: r.rows });
+        let channelMode = {};   // #404: 화면 라벨의 검수중/실발송 표기를 실제 게이트 상태와 동기(라벨 하드코딩이 낡는 것 방지 — #215 계열)
+        try { channelMode = (await naverCfgGet('notify_channel_mode')) || {}; } catch (_) {}
+        res.json({ timers: r.rows, channel_mode: channelMode });
     } catch (err) { handleAdminErr(res, err); }
 });
 app.put('/api/agent-office/naver/auto-collect/:key', authMiddleware, adminOnly, async (req, res) => {
