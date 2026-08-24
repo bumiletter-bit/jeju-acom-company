@@ -5634,6 +5634,8 @@ const PRODUCT_CATALOG = new Set([
     '과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 5kg(중소과 27과 전후)',
     '과즙팡팡 황금향 / 상품 및 과수: 황금향 선물용 - 3kg(대과 7~15과)',
     '과즙팡팡 황금향 / 상품 및 과수: 황금향 선물용 - 5kg(대과 13~23과)',
+    '과즙팡팡 황금향 / 상품 및 과수: 황금향 못난이 - 5kg(랜덤과)',    /* 지시 #406: 8월 신규 옵션 — 누락으로 가정용 오매칭됐던 것 */
+    '과즙팡팡 황금향 / 상품 및 과수: 황금향 못난이 - 10kg(랜덤과)',   /* 지시 #406 */
     '하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 3kg(중소과 18과 전후)',
     '하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 5kg(중소과 28과 전후)',
     '하우스 한라봉 / 상품 및 과수: 한라봉 가정용 - 10kg(중소과 55과 전후)',
@@ -5746,6 +5748,17 @@ async function aoRenderInvoiceCatalog() {
         + '</div>';
 }
 function matchProduct(rawText) {
+    /* 지시 #406(대표 8/24): pricing(품목별 금액) 정식 품목명이 옵션 문자열에 「통째로」 들어 있으면 최우선 채택.
+       — 대표 운용 모델 그대로: 신규 네이버 옵션은 품목별 금액에 등록만 하면 송장변환·중간발주 매칭이 자동 연동(규칙 파서 수정 불요).
+       전체 이름 일치만 인정(부분·토큰 매칭 아님·복수 후보면 긴 이름)이라 오매칭>미매칭 원칙에 안전.
+       실사고: 황금향 못난이 5kg(신규 옵션)가 규칙 파서에 분기가 없어 「가정용 5kg」로 조용히 오매칭 집계.
+       ⚠️ 중량up 행사 옵션은 원래 중량 이름이 문자열에 통째로 남아 옛 중량을 집을 수 있어 종전 규칙 경로 우선. */
+    const raw = String(rawText || '');
+    if (aoInvoicePricingNames.length && !/중량\s*(?:up|업)/i.test(raw)) {
+        let hit = null;
+        for (const nm of aoInvoicePricingNames) { if (nm && raw.includes(nm) && (!hit || nm.length > hit.length)) hit = nm; }
+        if (hit) return hit;
+    }
     const std = matchProductRaw(rawText);
     if (typeof std !== 'string' || std.startsWith('[미매칭]')) return std;
     if (!aoInvoicePricingNames.length) return std; // pricing 미로드 시 표준명 폴백 (안전)
@@ -5862,7 +5875,9 @@ function matchProductRaw(rawText) {
             result = '맛이진한 세미놀귤 / 세미놀귤 가정용 - ' + wStr + '(랜덤과)';
         }
     } else if (/황금향/.test(t)) {
-        if (/선물/.test(t)) {
+        if (/못난이/.test(t)) {   /* 지시 #406: 못난이 분기 부재로 아래 else(가정용)에 조용히 오매칭되던 실사고(8/24 대표 발견) */
+            result = '과즙팡팡 황금향 / 상품 및 과수: 황금향 못난이 - ' + wStr + '(랜덤과)';
+        } else if (/선물/.test(t)) {
             const detail = w === 3 ? '대과 7~15과' : w === 5 ? '대과 13~23과' : '';
             result = '과즙팡팡 황금향 / 상품 및 과수: 황금향 선물용 - ' + wStr + '(' + detail + ')';
         } else {
