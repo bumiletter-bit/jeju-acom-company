@@ -12937,7 +12937,7 @@ async function renderNotifyLogs(opts) {
         /* #412: 수신 칸 로직은 nlogRecvHtml로 이동(후채움 패치가 같은 함수로 다시 그림 — #409 안심번호·#219·#199·#193 규칙 그대로) */
         _nlogRowByKey[r.order_key] = r;
         return `
-        <tr data-okey="${escapeHtml(String(r.order_key || ''))}"
+        <tr data-okey="${escapeHtml(String(r.order_key || ''))}">
             <td style="width:30px; text-align:center;">${r.k_id ? `<input type="checkbox" class="nlog-chk" data-kid="${r.k_id}" data-kstatus="${escapeHtml(r.k_status || '')}" onchange="nlogUpdateBar()">` : ''}</td>
             <td style="white-space:nowrap;">${chCell(r)}</td>
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>

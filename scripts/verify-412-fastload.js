@@ -38,12 +38,19 @@ const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  �
   ok(st1.rows > 0, '① 목록 즉시 렌더(선표시)', st1.rows + '행 · 첫 표시 ' + firstPaintMs + 'ms');
   ok(/조회 결과 \d+건/.test(st1.sum), '① 요약 줄 형식(기간 조회)', st1.sum.slice(0, 60));
 
-  // ② 행 구조 — data-okey·후채움 대상 셀
+  // ② 행 구조 — data-okey·후채움 대상 셀 + 🔴 표 밖으로 밀린(foster) 노드 0 (8/26 실사고: tr 닫는 > 소실로 체크박스 100개가 표 위로 탈출)
   const st2 = await pg.evaluate(() => {
     const trs = [...document.querySelectorAll('#notify-log-list tbody tr')];
-    return { okey: trs.every(tr => tr.getAttribute('data-okey')), recv: trs.every(tr => tr.querySelector('td.nlog-recv')), buyer: trs.every(tr => tr.querySelector('td.nlog-buyer')) };
+    const list = document.getElementById('notify-log-list');
+    const table = list.querySelector('table');
+    const stray = [...list.childNodes].filter(n => n !== table && !(n.nodeType === 3 && !n.textContent.trim())).length;
+    return { okey: trs.every(tr => tr.getAttribute('data-okey')), recv: trs.every(tr => tr.querySelector('td.nlog-recv')), buyer: trs.every(tr => tr.querySelector('td.nlog-buyer')),
+      stray, rowChk: document.querySelectorAll('#notify-log-list tbody tr td .nlog-chk').length, rows: trs.length,
+      firstTd: trs[0] ? trs[0].querySelector('td') && trs[0].querySelector('td').getAttribute('style') : null };
   });
   ok(st2.okey && st2.recv && st2.buyer, '② 전 행 data-okey·nlog-recv·nlog-buyer 구조', '');
+  ok(st2.stray === 0, '② 표 밖 탈출(foster) 노드 0', st2.stray + '개');
+  ok(st2.rowChk > 0 && st2.rowChk <= st2.rows, '② 행 체크박스 = 셀 안에 정위치', st2.rowChk + '/' + st2.rows);
 
   // ③ 후채움 API 실호출(로컬 = 재조회 폴백으로 tels 빈 것 허용 · 형태 검증)
   const en = await pg.evaluate(async () => {
