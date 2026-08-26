@@ -17,12 +17,21 @@ const ALIGO_SMS_HOST = 'apis.aligo.in';        // 문자(SMS/LMS) API — 공식
 let TEMPLATES_JSON = null;
 try { TEMPLATES_JSON = require(path.join(__dirname, 'scripts', 'alimtalk-templates.json')); } catch (_) { /* 없으면 뼈대 폴백 */ }
 function templateByKey(key) {
-    return (TEMPLATES_JSON && Array.isArray(TEMPLATES_JSON.templates)) ? TEMPLATES_JSON.templates.find(t => t.key === key) || null : null;
+    if (!TEMPLATES_JSON) return null;
+    const pools = [].concat(Array.isArray(TEMPLATES_JSON.templates) ? TEMPLATES_JSON.templates : [],
+                            Array.isArray(TEMPLATES_JSON.templates_md) ? TEMPLATES_JSON.templates_md : []);   /* #414: MD판도 조회 대상 */
+    return pools.find(t => t.key === key) || null;
 }
 
 // 지시 #137: 승인 확정 템플릿 코드 (2026-07-31 알리고 실물 검수 — 대표 확인). env가 있으면 env 우선(운영 교체 대비).
-//   이미지형(UJ_9135~9138)은 반려 확정 — 어떤 경로에도 투입 금지. 발송안내 = UJ_9087(발송안내2·3버튼 실전판 — ship_guide 문안·버튼과 일치, 초판 9082는 #138로 폐기).
-const APPROVED_TPL = { order: 'UJ_9084', order_reserve: 'UJ_9085', welcome: 'UJ_9086', guide: 'UJ_9087' };
+//   이미지형(UJ_9135~9138)은 반려 확정 — 어떤 경로에도 투입 금지.
+// 지시 #414(대표 GO 8/26): MD([문의하기]) 버튼판 3장 검수 승인(UK_5754·5755·5756 — 8/26 selftest 실측 APR) → 기본 투입.
+//   손님이 [문의하기]를 누르면 알림톡 원문이 채널 상담 채팅에 첨부 = 카카오 문의 고객 즉시 특정(#398).
+//   롤백 = env(또는 이 표)를 구코드(order UJ_9084 · order_reserve UJ_9085 · guide UJ_9087)로 — 아래 MD_TPL_KEY 자동 일치로 버튼까지 함께 복귀.
+const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UJ_9086', guide: 'UK_5756' };
+// #414 🔴 문면·버튼·코드는 세트(불일치 = 알리고 발송 거부): 최종 결정된 tpl_code가 MD판이면 문안·버튼도 templates_md에서 취한다.
+//   env가 구코드(UJ)를 가리키면 자동으로 구버튼 세트 사용 — 어떤 env 상태에서도 코드↔버튼 불일치가 생기지 않는다.
+const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md' };
 // 주문 안내 템플릿 선택 (지시 #137 — 예약 상품이면 B(order_reserve), 아니면 A(order_normal)) — 문면·버튼·코드가 세트로 일치해야 함
 // 지시 #182(🚨 발사 게이트): 예약 판정 보강 — 기존엔 상품명·옵션의 '예약' 문자열만 봤다.
 //   같은 청귤이라도 네이버 옵션 표기에 '예약'이 빠진 주문은 일반으로 새어나가, 실제 8/10 발송인데
@@ -41,7 +50,10 @@ function isReserveOrder(optText, matched, nowMs) {
     const todayKst = new Date((nowMs || Date.now()) + 9 * 3600 * 1000).toISOString().slice(0, 10);
     return !!rsYmd && rsYmd >= todayKst;
 }
-function orderTemplate(isReserve) { return templateByKey(isReserve ? 'order_reserve' : 'order_normal'); }
+function orderTemplate(isReserve) {
+    const code = orderTplCode(isReserve);   /* #414: 최종 코드 기준으로 문안·버튼 세트 자동 일치 */
+    return templateByKey(MD_TPL_KEY[code] || (isReserve ? 'order_reserve' : 'order_normal'));
+}
 function orderTplCode(isReserve) {
     return isReserve ? (process.env.ALIGO_TPL_CODE_RESERVE || APPROVED_TPL.order_reserve)
                      : (process.env.ALIGO_TPL_CODE || APPROVED_TPL.order);
@@ -175,11 +187,11 @@ async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessa
 //    문면·버튼 = 문안 단일 소스(alimtalk-templates.json 'ship_guide')에서 생성 — 승인 템플릿과 자동 일치.
 //    버튼 링크의 #{상품코드}만 발송 시 실값 치환(버튼명은 변수 금지 — 가이드). E 코드 미투입·템플릿 부재 시 SMS(기존 LMS) 직행.
 async function sendShippingGuideAlimtalk({ receiver, vars, fallback }) {
-    const tpl = templateByKey('ship_guide');
+    const tplCode = process.env.ALIGO_TPL_CODE_GUIDE || APPROVED_TPL.guide;   // #137 env 우선 → #414 기본 = UK_5756(발송안내3·MD판)
+    const tpl = templateByKey(MD_TPL_KEY[tplCode] || 'ship_guide');           /* #414: 코드↔문안·버튼 자동 일치 */
     const messageText = tpl ? buildMessage(vars || {}, tpl.content) : ((fallback && fallback.message) || '');
     if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', via: 'alimtalk-e', messageText };
     if (!configured()) return { mode: 'dry-run', status: 'keys-missing', via: 'alimtalk-e', messageText };
-    const tplCode = process.env.ALIGO_TPL_CODE_GUIDE || APPROVED_TPL.guide;   // #137: 발송안내 = UJ_9087(발송안내2 실전판)
     if (!tpl || !tplCode) {   // E 미승인 단계 — 기존 LMS 경로로 직행 (안내 공백 방지)
         const r = await sendLms({ receiver, subject: (fallback && fallback.subject) || '제주아꼼이네 배송 안내', message: (fallback && fallback.message) || '' });
         return { ...r, via: 'sms-direct', messageText: (fallback && fallback.message) || '' };
@@ -229,7 +241,8 @@ function maskEnv(name) {
 async function selftest(opts) {
     const full = !!(opts && opts.full);   // 지시 #153: full=true 시 템플릿 문안 원문·버튼 구성까지 수집(이모지 저장 상태 판정용 — 읽기 전용)
     const out = { at: new Date().toISOString(), env: {}, checks: {} };
-    for (const k of ['ALIGO_API_KEY', 'ALIGO_USER_ID', 'ALIGO_SENDER_KEY', 'ALIGO_SENDER']) out.env[k] = maskEnv(k);
+    for (const k of ['ALIGO_API_KEY', 'ALIGO_USER_ID', 'ALIGO_SENDER_KEY', 'ALIGO_SENDER',
+        'ALIGO_TPL_CODE', 'ALIGO_TPL_CODE_RESERVE', 'ALIGO_TPL_CODE_GUIDE', 'ALIGO_TPL_CODE_WELCOME']) out.env[k] = maskEnv(k);   /* #414: env가 코드 기본값을 덮는지 판별용(head2로 UJ/UK 식별) */
     const senderDigits = String(process.env.ALIGO_SENDER || '').replace(/[^0-9]/g, '');
     // 발신번호는 검증용 무해 API가 없어 형식 확인만 (실검증은 실발송 리허설 단계에서)
     out.checks.sender_format = { ok: senderDigits.length >= 8 && senderDigits.length <= 11, digits_len: senderDigits.length };
@@ -274,7 +287,8 @@ async function sendTestOne({ to, key, vars: extVars }) {
     if (!TEST_SEND_ALLOW.includes(receiver)) return { status: 'blocked', error: '허용 수신번호(대표) 아님' };
     if (!configured()) return { status: 'keys-missing' };
     const KEYMAP = { order: 'order_normal', order_reserve: 'order_reserve', welcome: 'welcome', guide: 'ship_guide' };   // APPROVED_TPL 별칭 → 문안 JSON key
-    const tpl = templateByKey(KEYMAP[key || 'welcome'] || key);
+    const testTplCode = APPROVED_TPL[key || 'welcome'] || APPROVED_TPL.welcome;
+    const tpl = templateByKey(MD_TPL_KEY[testTplCode] || KEYMAP[key || 'welcome'] || key);   /* #414: 테스트도 코드↔버튼 자동 일치 */
     if (!tpl) return { status: 'no-template', key };
     const vars = Object.assign({ '고객명': '전승범', '상품명': '미니밤호박 특품최상급 특품 5kg(10~20개)', '발송안내': '내일 오전 발송 예정입니다.', '도착안내': '내일 (토) 도착 예정', '송장번호': '123456789012', '상품코드': '216' }, extVars || {});   // #161: 플래그의 실감 변수로 오버라이드
     const message = buildMessage(vars, tpl.content);
@@ -291,7 +305,7 @@ async function sendTestOne({ to, key, vars: extVars }) {
     if (!token) return { status: 'token-failed', error: JSON.stringify(tok).slice(0, 200) };
     const form = {
         ...auth, token, senderkey: process.env.ALIGO_SENDER_KEY,
-        tpl_code: APPROVED_TPL[key || 'welcome'] || APPROVED_TPL.welcome,
+        tpl_code: testTplCode,
         sender: process.env.ALIGO_SENDER, receiver_1: receiver,
         subject_1: '테스트', message_1: message,
     };

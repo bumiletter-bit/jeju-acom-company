@@ -12913,7 +12913,7 @@ async function renderNotifyLogs(opts) {
     const kindLabel = (row) => {
         if (String(row.order_key || '').startsWith('join:')) return row.k_id ? ['가입 환영', 'UJ_9086'] : ['—', ''];   // #401
         const reserve = /순차 발송|시즌 시작/.test(row.k_message || '');
-        return row.k_id ? (reserve ? ['주문완료·예약', 'UJ_9085'] : ['주문완료·일반', 'UJ_9084']) : ['—', ''];
+        return row.k_id ? (reserve ? ['주문완료·예약', 'UK_5755'] : ['주문완료·일반', 'UK_5754']) : ['—', ''];   /* #414: MD([문의하기]) 버튼판 투입 — 현행 설정 기준 표기 */
     };
     // #401→#405: 채널 표기 — 별도 [플랫폼] 컬럼으로 승격(네이버 포함 전 행 표기·#404 타이머 라벨과 동일 채널 아이콘)
     const chCell = (row) => {
@@ -12931,7 +12931,7 @@ async function renderNotifyLogs(opts) {
         const msgDetails = (label, text, extraHtml) => `<details style="margin-top:4px;"><summary style="cursor:pointer; font-size:11.5px; color:var(--text-mid,#667085);">📄 문면 보기</summary><div class="text-muted" style="font-size:11px; margin:4px 0 2px;">${label}</div><pre style="white-space:pre-wrap; font:inherit; font-size:12px; margin:0; max-width:360px;">${escapeHtml(text)}</pre>${extraHtml || ''}</details>`;
         const resendBtn = (label) => r.order_key ? `<button class="btn-sm btn-outline" style="margin-top:6px;" onclick="sendLmsGuide('${escapeHtml(r.order_key)}')">${label}</button>` : '';
         const kMsg = r.k_message ? msgDetails(`${kl[0]}${kl[1] ? ' · 템플릿 ' + kl[1] : ''}`, r.k_message, r.l_message ? '' : resendBtn('발송안내 수동 발송')) : '';
-        const lMsg = r.l_message ? msgDetails('발송안내 · 템플릿 UJ_9087 (알림톡 우선 → 실패 시 문자 대체)', r.l_message, resendBtn('발송안내 수동 재발송')) : '';
+        const lMsg = r.l_message ? msgDetails('발송안내 · 템플릿 UK_5756 (알림톡 우선 → 실패 시 문자 대체)', r.l_message, resendBtn('발송안내 수동 재발송')) : '';   /* #414 */
         const cfWarn = (r.confirm_status === 'failed' || r.confirm_status === 'manual-needed')
             ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px;" title="${escapeHtml(String(r.confirm_error || '').slice(0, 120))}">✍️ 발주확인 수기 필요</span></div>` : '';
         /* #412: 수신 칸 로직은 nlogRecvHtml로 이동(후채움 패치가 같은 함수로 다시 그림 — #409 안심번호·#219·#199·#193 규칙 그대로) */
