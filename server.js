@@ -911,6 +911,9 @@ async function initDB() {
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS backfill BOOLEAN DEFAULT FALSE`);
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('lms_guide', false, 30)
         ON CONFLICT (key) DO NOTHING`);
+    // #412: 알림 이력 날짜 조회·당일 집계용 인덱스(additive — 성수기 수십만 행 대비)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kakao_notify_log_created ON kakao_notify_log (created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_lms_guide_log_created ON lms_guide_log (created_at DESC)`);
     // #401: 다채널 알림톡 수집기 5종 — 기본 OFF (가동 = 대표 GO 후 타이머 ON + notify_channel_mode live 전환 2겹)
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES
         ('cafe24_notify', false, 3), ('cafe24_guide', false, 30), ('coupang_notify', false, 10), ('coupang_guide', false, 30), ('welcome_notify', false, 30)
@@ -5801,6 +5804,43 @@ app.post('/api/agent-office/notify-logs/retry-tel', authMiddleware, async (req, 
 
 // 지시 #177: 수신 풀번호 표시용 단기 캐시 (메모리·5분 — DB 저장 안 함)
 const _telCache = new Map();
+// #412(대표 GO 8/26): 풀번호·성함 재조회(네이버 배치 + 자사몰 배치 → _telCache 채움).
+//   GET(종전 동기 경로 — 무회귀)과 POST /notify-logs/enrich(후채움 경로)가 공용. 실패 = 마스킹 유지(종전 폴백).
+async function nlogFetchTels(orderKeys) {
+    try {
+        // #401: 새 채널 키(c24:/cp:/join:)는 네이버 재조회 대상 아님 — 무의미한 호출·실패 방지
+        const need = orderKeys.filter(k => k && !/^(c24|cp|join):/.test(k) && !(_telCache.has(k) && Date.now() - _telCache.get(k).at < 300000));
+        for (let i = 0; i < need.length && i < 200; i += 100) {
+            if (i > 0) await new Promise(r2 => setTimeout(r2, 350));
+            const q = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: need.slice(i, i + 100) } });
+            const b = (q && q.data) ? q.data : q;
+            const arr = b?.data || b?.list || (Array.isArray(b) ? b : []) || [];
+            for (const it of (Array.isArray(arr) ? arr : [])) {
+                const cc = it.content || it;
+                const po = cc.productOrder || it.productOrder || cc;
+                const od = cc.order || it.order || po.order || {};
+                const sa = po.shippingAddress || {};
+                const tel = od.ordererTel || sa.tel1 || sa.tel2 || '';   // 주문자 없으면 수취인 연락처 폴백(*** 케이스 교정)
+                const key = String(po.productOrderId || od.productOrderId || '');
+                if (key) _telCache.set(key, { tel: String(tel), name: String(od.ordererName || sa.name || ''), at: Date.now() });   /* #405: 구매자 성함 — 번호와 동일 원칙(표시 시점 재조회만·DB 저장 안 함) */
+            }
+        }
+    } catch (_) { /* 재조회 실패 = 마스킹 표시 유지 */ }
+    // #401-c(대표 "쿠팡·자사몰도 다 보이도록"): 자사몰 풀번호 — order_id 일괄 재조회(같은 캐시·저장은 계속 마스킹만).
+    //   쿠팡은 단건 재조회 API가 없어(기간 스캔뿐) 수집 시점 캐시로 표시 — 서버 재시작 후 옛 행은 마스킹 폴백(한계 기록).
+    try {
+        const c24Need = orderKeys.filter(k => /^c24:/.test(String(k)) && !(_telCache.has(k) && _telCache.get(k).tel && _telCache.get(k).name !== undefined));   /* #405: 성함 없는 옛 캐시는 1회 재조회 */
+        for (let i = 0; i < c24Need.length && i < 180; i += 90) {
+            const ids = c24Need.slice(i, i + 90).map(k => k.slice(4));
+            const r3 = await cafe24.apiGet('/api/v2/admin/orders', { order_id: ids.join(','), embed: 'buyer', fields: 'order_id,buyer', limit: 100 });
+            for (const o of ((r3 && r3.orders) || [])) {
+                const tel = (o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '';
+                if (o.order_id && tel) _telCache.set('c24:' + o.order_id, { tel: String(tel), name: String((o.buyer && o.buyer.name) || ''), at: Date.now() });   /* #405 */
+            }
+        }
+    } catch (_) { /* 자사몰 재조회 실패 = 마스킹 표시 유지 */ }
+}
+const nlogFmtTel = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
 // ── 지시 #176: [알림 발송 이력] 통합 조회 — 주문 단위 한 줄(주문안내·발송안내 두 칸).
 //    원본 테이블은 그대로 두고 조회 계층에서 order_key FULL OUTER JOIN (한쪽만 있는 건도 단독 행으로 표시).
 app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
@@ -5868,40 +5908,13 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         // 지시 #190(대표 확정): admin 전용 → **로그인한 전 계정**으로 확대.
         //   근거 = 문의관리 화면은 직원(민주·승협 등) 공용이고, 네이버 판매자센터에서도 직원이 같은 번호를 보므로
         //   우리 화면만 가리면 주문 대조 업무가 불가능해진다. 저장은 여전히 마스킹만(재조회 방식 유지).
+        /* #412(대표 GO 8/26): fast=1 = 선표시 모드 — 네트워크 재조회 없이 즉시 응답(캐시 히트만 채움).
+           풀번호·성함·선물하기 보정은 화면이 POST /notify-logs/enrich로 뒤에서 받아 채운다.
+           fast 미지정 = 종전 동작 그대로(무회귀 — 구 화면·외부 호출 호환). */
+        const fastMode = String(req.query.fast || '') === '1';
         if (rows.length) {
-            try {
-                // #401: 새 채널 키(c24:/cp:/join:)는 네이버 재조회 대상 아님 — 무의미한 호출·실패 방지
-                const need = rows.map(r => r.order_key).filter(k => k && !/^(c24|cp|join):/.test(k) && !(_telCache.has(k) && Date.now() - _telCache.get(k).at < 300000));
-                for (let i = 0; i < need.length && i < 200; i += 100) {
-                    if (i > 0) await new Promise(r2 => setTimeout(r2, 350));
-                    const q = await naverCallWithRetry({ method: 'POST', path: '/external/v1/pay-order/seller/product-orders/query', body: { productOrderIds: need.slice(i, i + 100) } });
-                    const b = (q && q.data) ? q.data : q;
-                    const arr = b?.data || b?.list || (Array.isArray(b) ? b : []) || [];
-                    for (const it of (Array.isArray(arr) ? arr : [])) {
-                        const cc = it.content || it;
-                        const po = cc.productOrder || it.productOrder || cc;
-                        const od = cc.order || it.order || po.order || {};
-                        const sa = po.shippingAddress || {};
-                        const tel = od.ordererTel || sa.tel1 || sa.tel2 || '';   // 주문자 없으면 수취인 연락처 폴백(*** 케이스 교정)
-                        const key = String(po.productOrderId || od.productOrderId || '');
-                        if (key) _telCache.set(key, { tel: String(tel), name: String(od.ordererName || sa.name || ''), at: Date.now() });   /* #405: 구매자 성함 — 번호와 동일 원칙(표시 시점 재조회만·DB 저장 안 함) */
-                    }
-                }
-            } catch (_) { /* 재조회 실패 = 마스킹 표시 유지 */ }
-            // #401-c(대표 "쿠팡·자사몰도 다 보이도록"): 자사몰 풀번호 — order_id 일괄 재조회(같은 캐시·저장은 계속 마스킹만).
-            //   쿠팡은 단건 재조회 API가 없어(기간 스캔뿐) 수집 시점 캐시로 표시 — 서버 재시작 후 옛 행은 마스킹 폴백(한계 기록).
-            try {
-                const c24Need = rows.map(r => r.order_key).filter(k => /^c24:/.test(String(k)) && !(_telCache.has(k) && _telCache.get(k).tel && _telCache.get(k).name !== undefined));   /* #405: 성함 없는 옛 캐시는 1회 재조회 */
-                for (let i = 0; i < c24Need.length && i < 180; i += 90) {
-                    const ids = c24Need.slice(i, i + 90).map(k => k.slice(4));
-                    const r3 = await cafe24.apiGet('/api/v2/admin/orders', { order_id: ids.join(','), embed: 'buyer', fields: 'order_id,buyer', limit: 100 });
-                    for (const o of ((r3 && r3.orders) || [])) {
-                        const tel = (o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '';
-                        if (o.order_id && tel) _telCache.set('c24:' + o.order_id, { tel: String(tel), name: String((o.buyer && o.buyer.name) || ''), at: Date.now() });   /* #405 */
-                    }
-                }
-            } catch (_) { /* 자사몰 재조회 실패 = 마스킹 표시 유지 */ }
-            const fmt = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
+            if (!fastMode) await nlogFetchTels(rows.map(r => r.order_key));   // 종전 경로 — 응답 전 동기 재조회(#177·#401-c 로직을 공용 함수로 이동)
+            const fmt = nlogFmtTel;
             let shown = 0;
             for (const r of rows) { const hit = _telCache.get(r.order_key); if (hit && hit.tel) { r.receiver_full = fmt(hit.tel); shown++; } if (hit && hit.name) r.buyer_name = String(hit.name).slice(0, 30); }   /* #405: 구매자 성함(캐시 있을 때만 — 없으면 화면 '-') */
             // 지시 #190-2: 풀번호 조회 접근 기록 — 계정·시각·건수만. 🔴 번호 자체는 절대 남기지 않는다(로그에 PII 저장 금지).
@@ -5937,7 +5950,8 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
                   선물하기 건이 전부 '⚠️ 수동 연락'에 남아 조치 불요 건이 경고로 잡혔다.
            교정 — 요약도 같은 소스(재조회 결과)로 판정한다. 오늘 '***' 건만 대상이라 호출량은 미미(5분 캐시).
                   재조회 실패 시에는 안전하게 no_tel(경고)로 남긴다 — 경고를 임의로 지우지 않는다. */
-        const maskedToday = (await pool.query(
+        /* #412: fast 모드는 보정 루프 생략(건별 재조회가 지연 주범) — /enrich가 배치 재조회 후 절대값으로 교체 공급 */
+        const maskedToday = fastMode ? [] : (await pool.query(
             `SELECT order_key FROM kakao_notify_log
               WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***'`)).rows;
         let giftCnt = Number(sum.gift) || 0, noTelCnt = Number(sum.no_tel) || 0, badTelCnt = Number(sum.bad_tel) || 0;
@@ -5956,6 +5970,57 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         }
         sum.gift = giftCnt; sum.no_tel = Math.max(noTelCnt, 0); sum.bad_tel = badTelCnt;
         res.json({ rows, summary: sum, total, offset, limit });   // #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// #412(대표 GO 8/26): 알림 이력 후채움 — fast=1로 즉시 뜬 목록에 풀번호·성함·선물하기 보정을 뒤에서 공급.
+//   선물하기 보정은 종전 건별 순차 재조회 → 배치 재조회(성수기 하루 수십 건 대비). 저장은 계속 마스킹만(원칙 유지).
+app.post('/api/agent-office/notify-logs/enrich', authMiddleware, async (req, res) => {
+    try {
+        const keys = (Array.isArray((req.body || {}).orderKeys) ? req.body.orderKeys : []).map(k => String(k).slice(0, 50)).filter(Boolean).slice(0, 200);
+        if (keys.length) await nlogFetchTels(keys);
+        const tels = {};
+        let shown = 0;
+        for (const k of keys) {
+            const hit = _telCache.get(k);
+            if (hit && (hit.tel || hit.name)) {
+                tels[k] = { tel: hit.tel ? nlogFmtTel(hit.tel) : null, name: hit.name ? String(hit.name).slice(0, 30) : null };
+                if (hit.tel) shown++;
+            }
+        }
+        // 오늘 선물하기(***) 보정 — 절대값으로 계산해 통째로 교체(부분 합산 이중계산 방지)
+        const masked = (await pool.query(
+            `SELECT order_key FROM kakao_notify_log
+              WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***'`)).rows
+            .map(r => r.order_key).filter(k => k && !/^(c24|cp|join):/.test(k));
+        await nlogFetchTels(masked);
+        const raw = (await pool.query(
+            `SELECT
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND receiver_masked = '***') AS no_tel,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'gift-masked') AS gift,
+               (SELECT count(*) FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'bad-tel')
+             + (SELECT count(*) FROM lms_guide_log  WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND status = 'bad-tel') AS bad_tel`)).rows[0];
+        let giftCnt = Number(raw.gift) || 0, noTelCnt = Number(raw.no_tel) || 0, badTelCnt = Number(raw.bad_tel) || 0;
+        for (const k of masked) {
+            const hit = _telCache.get(k);
+            const full = (hit && hit.tel) ? String(hit.tel) : '';
+            if (full && /[*]/.test(full)) {   /* #204-1·#219와 동일 판정 */
+                const lead = full.replace(/[^0-9*]/g, '');
+                if (/^0(?!1)|^1[5-9]/.test(lead)) { badTelCnt++; noTelCnt--; }
+                else { giftCnt++; noTelCnt--; }
+            }
+        }
+        if (shown) {   /* 지시 #190-2: 풀번호 접근 기록 — 번호 자체는 남기지 않음 */
+            try {
+                await pool.query(
+                    `INSERT INTO phone_view_log (viewed_date, user_id, actor_name, view_count, last_at)
+                     VALUES ((now() AT TIME ZONE 'Asia/Seoul')::date, $1, $2, $3, NOW())
+                     ON CONFLICT (viewed_date, user_id)
+                     DO UPDATE SET view_count = phone_view_log.view_count + EXCLUDED.view_count, last_at = NOW()`,
+                    [req.user?.id || null, String(req.user?.name || req.user?.username || '-').slice(0, 50), shown]);
+            } catch (_) { /* 기록 실패가 조회를 막지 않는다 */ }
+        }
+        res.json({ tels, summary_fix: { gift: giftCnt, no_tel: Math.max(noTelCnt, 0), bad_tel: badTelCnt } });
     } catch (err) { handleAdminErr(res, err); }
 });
 

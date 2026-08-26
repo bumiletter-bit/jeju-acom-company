@@ -12373,7 +12373,19 @@ window.switchInquiryTab = function(name) {
     }
     syncInqLogCard();   // 지시 #181-1: 이력 카드 대상 전환·초기화(이전 탭 이력 잔류 차단) — 조회는 [조회] 눌렀을 때만
     if (name === 'products') renderBotProducts().catch(console.error);
-    else if (name === 'notify') renderNotifyLogs().catch(console.error);            // 지시 #407 — 판매현황 탭에서 분리
+    else if (name === 'notify') {                                                    // 지시 #407 — 판매현황 탭에서 분리
+        /* #412: 기본 기간 = 오늘(첫 진입 1회만 자동 세팅) — 성수기에 데이터가 쌓여도 기본 화면이 가볍게.
+           과거 조회 = 기간 버튼/[초기화] 그대로. 사용자가 이미 기간·검색을 만졌으면 건드리지 않는다. */
+        if (!window._nlogDefTodayDone) {
+            window._nlogDefTodayDone = true;
+            const f = document.getElementById('notify-log-from'), t2 = document.getElementById('notify-log-to');
+            if (f && t2 && !f.value && !t2.value) {
+                const ymd = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+                f.value = ymd; t2.value = ymd;
+            }
+        }
+        renderNotifyLogs().catch(console.error);
+    }
     else if (name === 'holiday') renderShippingHolidays().catch(console.error);     // 지시 #407 — 판매현황 탭에서 분리
     else if (name === 'season') { renderSeasonKnowledge().catch(console.error); renderSeasonWaitlist().catch(console.error); }   // 지시 #112 — 독립 탭 승격
     else if (name === 'unanswered') renderUnansweredLogs().catch(console.error);
@@ -12770,6 +12782,64 @@ const NOTIFY_PAGE = 100;
 // 지시 #219: 유선번호(02~09권·070·15xx~18xx) 판정 — 재조회 번호가 마스킹(별표) 형태여도 앞자리로 판정 가능.
 //   휴대폰(01x)만 알림톡 가능 → 그 외는 「번호 오류」(중립·조치 불요·재안내 없음).
 function akmIsBadTelStr(s) { const t = String(s || '').replace(/[^0-9*]/g, ''); return t.length >= 4 && (/^0(?!1)/.test(t) || /^1[5-9]/.test(t)); }
+// ── #412(대표 GO 8/26): 선표시·후채움 — 목록은 fast=1로 즉시 그리고(마스킹 번호), 풀번호·성함·선물하기 보정은
+//    POST /notify-logs/enrich가 뒤에서 공급해 그 자리에서 채운다(굼뜬 느낌의 주범 = 응답 전 동기 재조회 대기 제거).
+let _nlogRowByKey = {};      // 현재 화면 행 데이터(order_key → row) — 후채움 패치용
+let _nlogSumCtx = null;      // 요약 줄 재렌더 재료
+let _nlogFixSeq = -1;        // summary_fix 중복 적용 방지(조회 순번당 1회)
+function nlogRecvHtml(r) {
+    /* 지시 #409: 쿠팡 안심번호(050) — 유선 판정보다 먼저 검사(정상 수신처·중립 표기) */
+    const cpSafeTel = String(r.order_key || '').startsWith('cp:') && r.k_status !== 'bad-tel' && r.l_status !== 'bad-tel'
+        && /^050/.test(String(r.receiver_full || r.receiver_masked || '').replace(/[^0-9*]/g, ''))
+        ? (r.receiver_full || r.receiver_masked) : null;
+    /* 지시 #219: 유선번호 「번호 오류」 — 선물하기 판정보다 먼저 / 지시 #199: 선물하기 = 중립 표기 */
+    const isBad = r.k_status === 'bad-tel' || r.l_status === 'bad-tel' || akmIsBadTelStr(r.receiver_full);
+    const isGift = r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || ''));
+    const main = cpSafeTel
+        ? `${escapeHtml(cpSafeTel)} <span class="pill" style="background:#EEF1F6; color:#5A616B; font-size:11px;">🛡️ 안심번호</span>`
+        : isBad ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">📵 번호 오류 (유선)</span>`
+        : isGift ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">🎁 선물하기 (번호 비공개)</span>`
+        : escapeHtml(r.receiver_full || r.receiver_masked || '-');
+    /* 지시 #193 C: *** 건 = 경고 뱃지 + [재조회] — 종전 조건 그대로 */
+    const addon = (cpSafeTel || isBad || isGift) ? '' : (r.receiver_full ? '' : (r.receiver_masked === '***'
+        ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:var(--danger,#F04438); font-size:11px;">⚠️ 수동 연락 필요</span>
+             <button class="btn-sm btn-outline" style="margin-left:4px; padding:2px 8px; font-size:11px;" onclick="retryReceiverTel('${escapeHtml(r.order_key || '')}', this)">재조회</button></div>`
+        : ''));
+    return main + addon;
+}
+function nlogRenderSummary() {
+    const sumEl = document.getElementById('notify-log-summary');
+    if (!sumEl || !_nlogSumCtx) return;
+    const { s, cond, searched, ranged } = _nlogSumCtx;
+    const tail = `주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel) > 0 ? " · ⚠️ 수동 연락 " + s.no_tel : ""}${Number(s.gift) > 0 ? " · 🎁 선물하기 " + s.gift : ""}${Number(s.bad_tel) > 0 ? " · 📵 번호 오류 " + s.bad_tel : ""}`;
+    sumEl.textContent = ranged
+        ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: ${tail}`
+        : `오늘: ${tail} · 건너뜀 ${s.skipped || 0}`;
+}
+function nlogApplyTels(tels, summaryFix, seq) {
+    if (seq !== notifyLogSeq) return;   // 그 사이 새 조회가 시작됨 — 이 후채움은 폐기(#204-2 순번 가드와 동일)
+    for (const k of Object.keys(tels || {})) {
+        const r = _nlogRowByKey[k]; if (!r) continue;
+        if (tels[k].tel) r.receiver_full = tels[k].tel;
+        if (tels[k].name) r.buyer_name = tels[k].name;
+        const tr = document.querySelector('#notify-log-list tr[data-okey="' + String(k).replace(/"/g, '\\"') + '"]');
+        if (!tr) continue;
+        const bt = tr.querySelector('td.nlog-buyer'); if (bt) { bt.textContent = r.buyer_name || '-'; bt.title = r.buyer_name || ''; }
+        const rt = tr.querySelector('td.nlog-recv'); if (rt) rt.innerHTML = nlogRecvHtml(r);
+    }
+    if (summaryFix && _nlogSumCtx && _nlogFixSeq !== seq) {   // 절대값 교체(서버가 전체 재계산) — 이중 합산 없음
+        _nlogFixSeq = seq;
+        _nlogSumCtx.s.gift = summaryFix.gift; _nlogSumCtx.s.no_tel = summaryFix.no_tel; _nlogSumCtx.s.bad_tel = summaryFix.bad_tel;
+        nlogRenderSummary();
+    }
+}
+async function nlogEnrich(keys, seq) {
+    if (!keys.length) return;
+    try {
+        const d = await api('/api/agent-office/notify-logs/enrich', 'POST', { orderKeys: keys });
+        nlogApplyTels(d.tels || {}, d.summary_fix || null, seq);
+    } catch (_) { /* 후채움 실패 = 마스킹 표시 유지(종전 재조회 실패 폴백과 동일) */ }
+}
 async function renderNotifyLogs(opts) {
     const append = !!(opts && opts.append);
     const el = document.getElementById('notify-log-list');
@@ -12781,7 +12851,8 @@ async function renderNotifyLogs(opts) {
     const to = document.getElementById('notify-log-to')?.value.trim() || '';
     const q = document.getElementById('notify-log-q')?.value.trim() || '';
     if (!append) notifyLogShown = 0;   // 조건 변경·재조회 = 1페이지부터
-    const qs = ['filter=' + encodeURIComponent(filter), 'ch=' + encodeURIComponent(chSel), 'limit=' + NOTIFY_PAGE, 'offset=' + notifyLogShown];
+    if (!append) _nlogRowByKey = {};   // #412: 새 조회 = 후채움 행맵 리셋
+    const qs = ['filter=' + encodeURIComponent(filter), 'ch=' + encodeURIComponent(chSel), 'fast=1', 'limit=' + NOTIFY_PAGE, 'offset=' + notifyLogShown];   /* #412: 선표시 모드 */
     if (from && to) qs.push('from=' + encodeURIComponent(from), 'to=' + encodeURIComponent(to));
     if (q) qs.push('q=' + encodeURIComponent(q));
     /* 🔴 지시 #204-2: "모두 표시됨 (60 / 30건)" — 분자가 분모를 넘던 원인.
@@ -12793,16 +12864,9 @@ async function renderNotifyLogs(opts) {
     if (mySeq !== notifyLogSeq) return;   // 그 사이 새 조회가 시작됨 → 이 응답은 버린다(화면·카운터 오염 방지)
     notifyLogTotal = Number(d.total || 0);
     const s = d.summary || {};
-    const sumEl = document.getElementById('notify-log-summary');
-    if (sumEl) {
-        const cond = (from && to) ? `${from} ~ ${to}` : '오늘';
-        const searched = q ? ` · 검색 "${q}"` : '';
-        // #180-A1: 요약 줄은 '조회 조건 전체(total)' 기준 — [더보기]로 표시분이 늘어도 이 숫자는 바뀌지 않는다.
-        //   (#179의 "상한 300건 도달" 경고는 페이징 도입으로 불필요해져 제거)
-        sumEl.textContent = (from && to) || q
-            ? `조회 결과 ${notifyLogTotal}건 (${cond}${searched}) — 당일 집계: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}${Number(s.bad_tel)>0 ? " · 📵 번호 오류 "+s.bad_tel : ""}`
-            : `오늘: 주문안내 ${s.order_notice || 0} · 발송안내 ${s.ship_notice || 0} · 실패 ${s.failed || 0} · 보류 ${s.hold || 0}${Number(s.no_tel)>0 ? " · ⚠️ 수동 연락 "+s.no_tel : ""}${Number(s.gift)>0 ? " · 🎁 선물하기 "+s.gift : ""}${Number(s.bad_tel)>0 ? " · 📵 번호 오류 "+s.bad_tel : ""} · 건너뜀 ${s.skipped || 0}`;
-    }
+    // #412: 요약 줄 재료를 보관하고 함수로 렌더 — 후채움(summary_fix)이 오면 같은 형식으로 다시 그린다(#180-A1 형식 유지)
+    _nlogSumCtx = { s, cond: (from && to) ? `${from} ~ ${to}` : '오늘', searched: q ? ` · 검색 "${q}"` : '', ranged: !!((from && to) || q) };
+    nlogRenderSummary();
     const DRY = { 'switch-off': 'dry-run (스위치 OFF)', 'keys-missing': 'dry-run (키 미설정)', 'dry-run': 'dry-run' };   /* #401-c: 새 채널 dry 상태값 — 없어서 ❌실패로 오표기됐던 것(대표 실물) */
     // 한 칸(주문안내/발송안내) 상태 표기 — 최종 경로 기준
     const cell = (row, kind) => {
@@ -12870,37 +12934,16 @@ async function renderNotifyLogs(opts) {
         const lMsg = r.l_message ? msgDetails('발송안내 · 템플릿 UJ_9087 (알림톡 우선 → 실패 시 문자 대체)', r.l_message, resendBtn('발송안내 수동 재발송')) : '';
         const cfWarn = (r.confirm_status === 'failed' || r.confirm_status === 'manual-needed')
             ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px;" title="${escapeHtml(String(r.confirm_error || '').slice(0, 120))}">✍️ 발주확인 수기 필요</span></div>` : '';
-        /* 지시 #409(대표 8/26): 쿠팡 안심번호(050)는 유선이 아니다 — 「📵 번호 오류 (유선)」 오표기 교정.
-           #219 판정식(01x 외 전부 유선)이 쿠팡 안심번호에 걸리던 것. 발송 경로는 이미 050 허용(coupangBadTel)이라
-           실발송 정상 — 표기만 「🛡️ 안심번호」 중립 뱃지로. 서버가 bad-tel로 판정한 건(진짜 유선)은 종전 표기 유지. */
-        const cpSafeTel = String(r.order_key || '').startsWith('cp:') && r.k_status !== 'bad-tel' && r.l_status !== 'bad-tel'
-            && /^050/.test(String(r.receiver_full || r.receiver_masked || '').replace(/[^0-9*]/g, ''))
-            ? (r.receiver_full || r.receiver_masked) : null;
+        /* #412: 수신 칸 로직은 nlogRecvHtml로 이동(후채움 패치가 같은 함수로 다시 그림 — #409 안심번호·#219·#199·#193 규칙 그대로) */
+        _nlogRowByKey[r.order_key] = r;
         return `
-        <tr>
+        <tr data-okey="${escapeHtml(String(r.order_key || ''))}"
             <td style="width:30px; text-align:center;">${r.k_id ? `<input type="checkbox" class="nlog-chk" data-kid="${r.k_id}" data-kstatus="${escapeHtml(r.k_status || '')}" onchange="nlogUpdateBar()">` : ''}</td>
             <td style="white-space:nowrap;">${chCell(r)}</td>
             <td style="white-space:nowrap;">${new Date(r.at_main).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
-            <td style="white-space:nowrap; max-width:90px; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(r.buyer_name || '')}">${escapeHtml(r.buyer_name || '-')}</td>
+            <td class="nlog-buyer" style="white-space:nowrap; max-width:90px; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(r.buyer_name || '')}">${escapeHtml(r.buyer_name || '-')}</td>
             <td style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? ('<div class="text-muted" style="font-size:11px;">' + (/^(c24|cp):/.test(String(r.order_key || '')) ? '알림톡 도입 전 주문 (발송 안내만)' : '주문 기록 밖 (발송만 감지)') + '</div>') : ''}</td>
-            <td style="white-space:nowrap;">${
-              /* 지시 #409: 쿠팡 안심번호(050) — 유선 판정보다 먼저 검사(정상 수신처·중립 표기) */
-              cpSafeTel
-                ? `${escapeHtml(cpSafeTel)} <span class="pill" style="background:#EEF1F6; color:#5A616B; font-size:11px;">🛡️ 안심번호</span>`
-              /* 지시 #219: 유선번호(02-…)는 「번호 오류」 — 선물하기 판정보다 먼저 검사(기존 오표기 교정).
-                 재조회해도 유선은 그대로이므로 [재조회] 버튼 미노출·조치 불요(중립 톤). */
-              : (r.k_status === 'bad-tel' || r.l_status === 'bad-tel' || akmIsBadTelStr(r.receiver_full))
-                ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">📵 번호 오류 (유선)</span>`
-              /* 지시 #199: 선물하기(번호 비공개)는 정상 상태 — 경고가 아닌 중립 표기로 구분한다.
-                 네이버가 수령자 번호를 마스킹해 주는 사양이라 재조회해도 풀번호를 얻을 수 없다. */
-              : (r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || '')))
-                ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">🎁 선물하기 (번호 비공개)</span>`
-                : escapeHtml(r.receiver_full || r.receiver_masked || '-')
-            }${(r.k_status === 'bad-tel' || r.l_status === 'bad-tel' || akmIsBadTelStr(r.receiver_full) || r.k_status === 'gift-masked' || r.l_status === 'gift-masked' || /[*]/.test(String(r.receiver_full || ''))) ? '' : (r.receiver_full ? '' : (r.receiver_masked === '***'
-                /* 지시 #193 C: ***로 조용히 묻히지 않게 — 경고 뱃지 + 그 자리에서 다시 조회(시간이 지나면 네이버가 채워주는 특성 활용) */
-                ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:var(--danger,#F04438); font-size:11px;">⚠️ 수동 연락 필요</span>
-                     <button class="btn-sm btn-outline" style="margin-left:4px; padding:2px 8px; font-size:11px;" onclick="retryReceiverTel('${escapeHtml(r.order_key || '')}', this)">재조회</button></div>`
-                : ''))}</td>
+            <td class="nlog-recv" style="white-space:nowrap;">${nlogRecvHtml(r)}</td>
             <td>${cell(r, 'order')}${cfWarn}${kMsg}</td>
             <td>${cell(r, 'ship')}${lMsg}</td>
         </tr>`;
@@ -12926,6 +12969,8 @@ async function renderNotifyLogs(opts) {
     // #204-2: 누적(+=)이 아니라 append 여부로 확정 — 응답이 겹쳐도 표시분이 부풀지 않는다.
     notifyLogShown = append ? notifyLogShown + (d.rows || []).length : (d.rows || []).length;
     renderNotifyMoreBtn();
+    // #412: 후채움 — 목록은 이미 떠 있고, 이 페이지 키의 풀번호·성함·선물하기 보정을 뒤에서 받아 그 자리에서 채움
+    nlogEnrich((d.rows || []).map(r => r.order_key).filter(Boolean), mySeq);
 }
 // 지시 #193 C: 수신번호 미확보 건 그 자리에서 재조회 (성공 시 목록 갱신)
 window.retryReceiverTel = async function(orderKey, btn) {
