@@ -12870,6 +12870,12 @@ async function renderNotifyLogs(opts) {
         const lMsg = r.l_message ? msgDetails('발송안내 · 템플릿 UJ_9087 (알림톡 우선 → 실패 시 문자 대체)', r.l_message, resendBtn('발송안내 수동 재발송')) : '';
         const cfWarn = (r.confirm_status === 'failed' || r.confirm_status === 'manual-needed')
             ? `<div style="margin-top:3px;"><span class="pill" style="background:#FDECEA; color:#C0392B; font-size:11px;" title="${escapeHtml(String(r.confirm_error || '').slice(0, 120))}">✍️ 발주확인 수기 필요</span></div>` : '';
+        /* 지시 #409(대표 8/26): 쿠팡 안심번호(050)는 유선이 아니다 — 「📵 번호 오류 (유선)」 오표기 교정.
+           #219 판정식(01x 외 전부 유선)이 쿠팡 안심번호에 걸리던 것. 발송 경로는 이미 050 허용(coupangBadTel)이라
+           실발송 정상 — 표기만 「🛡️ 안심번호」 중립 뱃지로. 서버가 bad-tel로 판정한 건(진짜 유선)은 종전 표기 유지. */
+        const cpSafeTel = String(r.order_key || '').startsWith('cp:') && r.k_status !== 'bad-tel' && r.l_status !== 'bad-tel'
+            && /^050/.test(String(r.receiver_full || r.receiver_masked || '').replace(/[^0-9*]/g, ''))
+            ? (r.receiver_full || r.receiver_masked) : null;
         return `
         <tr>
             <td style="width:30px; text-align:center;">${r.k_id ? `<input type="checkbox" class="nlog-chk" data-kid="${r.k_id}" data-kstatus="${escapeHtml(r.k_status || '')}" onchange="nlogUpdateBar()">` : ''}</td>
@@ -12878,9 +12884,12 @@ async function renderNotifyLogs(opts) {
             <td style="white-space:nowrap; max-width:90px; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(r.buyer_name || '')}">${escapeHtml(r.buyer_name || '-')}</td>
             <td style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.product_name || '')}">${escapeHtml(r.product_name || '-')}${!r.k_id ? ('<div class="text-muted" style="font-size:11px;">' + (/^(c24|cp):/.test(String(r.order_key || '')) ? '알림톡 도입 전 주문 (발송 안내만)' : '주문 기록 밖 (발송만 감지)') + '</div>') : ''}</td>
             <td style="white-space:nowrap;">${
+              /* 지시 #409: 쿠팡 안심번호(050) — 유선 판정보다 먼저 검사(정상 수신처·중립 표기) */
+              cpSafeTel
+                ? `${escapeHtml(cpSafeTel)} <span class="pill" style="background:#EEF1F6; color:#5A616B; font-size:11px;">🛡️ 안심번호</span>`
               /* 지시 #219: 유선번호(02-…)는 「번호 오류」 — 선물하기 판정보다 먼저 검사(기존 오표기 교정).
                  재조회해도 유선은 그대로이므로 [재조회] 버튼 미노출·조치 불요(중립 톤). */
-              (r.k_status === 'bad-tel' || r.l_status === 'bad-tel' || akmIsBadTelStr(r.receiver_full))
+              : (r.k_status === 'bad-tel' || r.l_status === 'bad-tel' || akmIsBadTelStr(r.receiver_full))
                 ? `<span class="pill" style="background:var(--bg,#F2F3F5); color:var(--text-mid,#667085); font-size:11px;">📵 번호 오류 (유선)</span>`
               /* 지시 #199: 선물하기(번호 비공개)는 정상 상태 — 경고가 아닌 중립 표기로 구분한다.
                  네이버가 수령자 번호를 마스킹해 주는 사양이라 재조회해도 풀번호를 얻을 수 없다. */
