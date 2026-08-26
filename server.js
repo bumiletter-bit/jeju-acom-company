@@ -9479,7 +9479,7 @@ async function collectCoupangGuide() {
                 // 안내문 미등록 폴백 = E 문면 기반(버튼 없는 LMS라 링크를 본문 텍스트로)
                 const 도착안내 = shippingSchedule.computeArrival(Date.now(), hinfo.arriveOff, hinfo.reasons).text;
                 const nm = (s.orderer && s.orderer.name) || '고객';
-                message = `제주아꼼이네입니다~! 🍊\n${nm}님이 주문하신 [${(optText || '주문 상품').slice(0, 60)}]이 오늘 출발했습니다!\n▶ 도착 예정: ${도착안내}\n\n맛있게 드시는 법·보관법: https://jeju-acom-company.onrender.com/guide${matched ? '?p=' + matched.id : ''}\n${tracking ? '택배 배송조회: https://jeju-acom-company.onrender.com/track?n=' + tracking + '\n' : ''}\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031`;
+                message = `제주아꼼이네입니다~! 🍊\n${nm}님이 주문하신 [${kakaoNotify.cleanProductName(optText || '주문 상품').slice(0, 60)}]이 오늘 출발했습니다!\n▶ 도착 예정: ${도착안내}\n\n맛있게 드시는 법·보관법: https://jeju-acom-company.onrender.com/guide${matched ? '?p=' + matched.id : ''}\n${tracking ? '택배 배송조회: https://jeju-acom-company.onrender.com/track?n=' + tracking + '\n' : ''}\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031`;
             }
             const recvTel = coupangRecvTel(s);
             if (!recvTel || coupangBadTel(recvTel)) {

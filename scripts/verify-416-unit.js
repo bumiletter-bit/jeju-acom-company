@@ -41,5 +41,34 @@ ok(eN, '④ 네이버 E 조립부 실삽입');
 ok(eC, '④ 자사몰 E 조립부 실삽입');
 ok((src.match(/#416/g) || []).length === 2, '④ 변경 = 정확히 2곳(무회귀)', (src.match(/#416/g) || []).length + '곳');
 
-console.log('\n═══ 결과: ' + pass + '/' + (pass + fail) + (fail ? ' ❌ 실패 ' + fail : ' ✅ 전항목 통과'));
-process.exit(fail ? 1 : 0);
+// ⑤ 🔴 전 경로 전수 검산(재발 방지의 핵심) — server.js의 모든 '상품명': 조립부는 cleanProductName을 거쳐야 한다.
+//    새 채널·새 발송 경로가 추가되면 이 검사가 자동으로 잡는다(새 "품목"은 정제기가 구조 규칙이라 원래 자동 커버).
+const lines = src.split('\n');
+const spots = lines.map((l, i) => ({ l, n: i + 1 })).filter(x => x.l.includes("'상품명':"));
+const bad = spots.filter(x => !x.l.includes('kakaoNotify.cleanProductName(') && !x.l.includes('cleanProductName('));
+ok(spots.length >= 8 && bad.length === 0, `⑤ 상품명 조립부 전수(${spots.length}곳) = 정제기 통과`, bad.map(x => x.n).join(',') || '누락 0');
+const inlineBad = lines.map((l, i) => ({ l, n: i + 1 })).filter(x => /님이 주문하신 \[\$\{/.test(x.l) && !x.l.includes('cleanProductName'));
+ok(inlineBad.length === 0, '⑤ 인라인 [상품명] 삽입부(쿠팡 폴백 등)도 정제 통과', inlineBad.map(x => x.n).join(',') || '누락 0');
+// ⑥ 쿠팡 실이름 = 무변형(자연 형식 보존 — 정제기가 멀쩡한 이름을 건드리지 않음)
+const cpName = '제주아꼼이네 제철 고당도 하우스감귤, 1박스, 가정용 4.5kg(로얄과)';
+ok(K.cleanProductName(cpName) === cpName, '⑥ 쿠팡 자연 형식 무변형', '');
+
+// ⑦ 실DB 스캔 — 최근 실발송 주문안내(전 채널 30건) 문면 [상품명] 잔재 0
+(async () => {
+  try {
+    require(PROJ + '\\node_modules\\dotenv').config({ path: PROJ + '\\.env' });
+    const { Client } = require(PROJ + '\\node_modules\\pg');
+    const c = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    await c.connect();
+    const r = await c.query(`SELECT order_key, message FROM kakao_notify_log
+      WHERE mode='real' AND status='sent' AND message IS NOT NULL AND order_key NOT LIKE 'join:%' ORDER BY id DESC LIMIT 30`);
+    await c.end();
+    const dirty = r.rows.filter(x => {
+      const m = String(x.message).match(/\[([^\]]+)\]/); const nm = m ? m[1] : '';
+      return /상품선택|상품 선택=|상품 및 과수/.test(nm) || /^\d+\.\s/.test(nm);
+    });
+    ok(dirty.length === 0, '⑦ 최근 실발송 주문안내 30건(전 채널) 문면 잔재 0', dirty.length ? dirty.map(d => d.order_key).join(',') : '클린');
+  } catch (e) { ok(false, '⑦ DB 스캔 실패', String(e.message).slice(0, 80)); }
+  console.log('\n═══ 결과: ' + pass + '/' + (pass + fail) + (fail ? ' ❌ 실패 ' + fail : ' ✅ 전항목 통과'));
+  process.exit(fail ? 1 : 0);
+})();
