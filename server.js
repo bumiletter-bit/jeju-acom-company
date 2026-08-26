@@ -7489,7 +7489,7 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
         receiver: guideRecvTel,   // #177: 주문자 미제공 시 수취인 폴백 → #193: 그래도 비면 재조회로 구제
         vars: {
             '고객명': od.ordererName || '고객',
-            '상품명': (po.productOption || po.productName || '주문 상품').slice(0, 80),
+            '상품명': kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품').slice(0, 80),   /* #416(대표 8/26): 발송안내도 주문안내(#146)와 동일 정제 — 「아꼼이네 상품선택: 1. …」 원문 통째 노출 교정 */
             '도착안내': 도착안내,
             '상품코드': String((matched && matched.id) || ''),   // 버튼 링크 /guide?p=상품코드 (지시 #94 — 미매칭이면 빈값=가이드 홈)
             '송장번호': String(trackingNumber || '').replace(/[^0-9]/g, ''),   // 버튼 링크 /track?n=송장번호 (지시 #99 — 없으면 빈값=조회 홈)
@@ -9226,7 +9226,7 @@ async function collectCafe24Guide() {
             const 도착안내 = shippingSchedule.computeArrival(Date.now(), hinfo.arriveOff, hinfo.reasons).text;
             const vars = {
                 '고객명': (o.buyer && o.buyer.name) || '고객',
-                '상품명': (c24OptClean(it0.option_value) || it0.product_name || '주문 상품').slice(0, 80),
+                '상품명': kakaoNotify.cleanProductName(c24OptClean(it0.option_value) || it0.product_name || '주문 상품').slice(0, 80),   /* #416: 「1. 」 번호 접두 제거 — 자사몰 주문안내(#401-278)와 동일 정제 */
                 '도착안내': 도착안내,
                 '상품코드': String((matched && matched.id) || ''),
                 '송장번호': String(it0.tracking_no || '').replace(/[^0-9]/g, ''),
