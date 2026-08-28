@@ -9553,8 +9553,8 @@ app.post('/api/public/welcome-signup', async (req, res) => {
         const joinedMs = Date.parse(hit.created_date || '') || 0;
         if (!joinedMs || now - joinedMs > 48 * 3600 * 1000) return res.status(403).json({ ok: false });   // 가입 직후(48h)만
         const live = await notifyChannelLive('join');
-        const tpl = kakaoNotify.templateByKey('welcome');
-        const tplCode = process.env.ALIGO_TPL_CODE_WELCOME || kakaoNotify.APPROVED_TPL.welcome;
+        const tpl = kakaoNotify.welcomeTemplate();   /* #417: 코드↔문안·버튼 자동 일치(#414 구조) — 기본 = UK_5877(가입환영2·혜택 문구+MD) */
+        const tplCode = kakaoNotify.welcomeTplCode();
         const message = kakaoNotify.buildMessage({ '고객명': name || '고객' }, tpl && tpl.content);
         let out;
         if (!live) {

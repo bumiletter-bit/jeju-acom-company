@@ -12911,7 +12911,7 @@ async function renderNotifyLogs(opts) {
             kind === 'ship' && row.order_key ? ` <button class="btn-sm btn-outline" onclick="sendLmsGuide('${escapeHtml(row.order_key)}')">수동 재발송</button>` : '');
     };
     const kindLabel = (row) => {
-        if (String(row.order_key || '').startsWith('join:')) return row.k_id ? ['가입 환영', 'UJ_9086'] : ['—', ''];   // #401
+        if (String(row.order_key || '').startsWith('join:')) return row.k_id ? ['가입 환영', 'UK_5877'] : ['—', ''];   // #401 → #417 가입환영2 투입
         const reserve = /순차 발송|시즌 시작/.test(row.k_message || '');
         return row.k_id ? (reserve ? ['주문완료·예약', 'UK_5755'] : ['주문완료·일반', 'UK_5754']) : ['—', ''];   /* #414: MD([문의하기]) 버튼판 투입 — 현행 설정 기준 표기 */
     };

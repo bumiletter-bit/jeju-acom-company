@@ -19,7 +19,8 @@ try { TEMPLATES_JSON = require(path.join(__dirname, 'scripts', 'alimtalk-templat
 function templateByKey(key) {
     if (!TEMPLATES_JSON) return null;
     const pools = [].concat(Array.isArray(TEMPLATES_JSON.templates) ? TEMPLATES_JSON.templates : [],
-                            Array.isArray(TEMPLATES_JSON.templates_md) ? TEMPLATES_JSON.templates_md : []);   /* #414: MD판도 조회 대상 */
+                            Array.isArray(TEMPLATES_JSON.templates_md) ? TEMPLATES_JSON.templates_md : [],
+                            Array.isArray(TEMPLATES_JSON.templates_welcome2) ? TEMPLATES_JSON.templates_welcome2 : []);   /* #414 MD판 · #417 가입환영2도 조회 대상 */
     return pools.find(t => t.key === key) || null;
 }
 
@@ -28,10 +29,14 @@ function templateByKey(key) {
 // 지시 #414(대표 GO 8/26): MD([문의하기]) 버튼판 3장 검수 승인(UK_5754·5755·5756 — 8/26 selftest 실측 APR) → 기본 투입.
 //   손님이 [문의하기]를 누르면 알림톡 원문이 채널 상담 채팅에 첨부 = 카카오 문의 고객 즉시 특정(#398).
 //   롤백 = env(또는 이 표)를 구코드(order UJ_9084 · order_reserve UJ_9085 · guide UJ_9087)로 — 아래 MD_TPL_KEY 자동 일치로 버튼까지 함께 복귀.
-const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UJ_9086', guide: 'UK_5756' };
+// #417(대표 GO 8/28): 가입환영2(UK_5877 — 혜택 3종 문구+[문의하기]) 검수 승인 실측 → 기본 투입. 롤백 = welcome을 UJ_9086으로.
+const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UK_5877', guide: 'UK_5756' };
 // #414 🔴 문면·버튼·코드는 세트(불일치 = 알리고 발송 거부): 최종 결정된 tpl_code가 MD판이면 문안·버튼도 templates_md에서 취한다.
 //   env가 구코드(UJ)를 가리키면 자동으로 구버튼 세트 사용 — 어떤 env 상태에서도 코드↔버튼 불일치가 생기지 않는다.
-const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md' };
+const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md', 'UK_5877': 'welcome2' };   /* #417 */
+// #417: 가입 환영 — 코드↔문안·버튼 자동 일치 (welcome-signup·테스트 발송 공용)
+function welcomeTplCode() { return process.env.ALIGO_TPL_CODE_WELCOME || APPROVED_TPL.welcome; }
+function welcomeTemplate() { const code = welcomeTplCode(); return templateByKey(MD_TPL_KEY[code] || 'welcome'); }
 // 주문 안내 템플릿 선택 (지시 #137 — 예약 상품이면 B(order_reserve), 아니면 A(order_normal)) — 문면·버튼·코드가 세트로 일치해야 함
 // 지시 #182(🚨 발사 게이트): 예약 판정 보강 — 기존엔 상품명·옵션의 '예약' 문자열만 봤다.
 //   같은 청귤이라도 네이버 옵션 표기에 '예약'이 빠진 주문은 일반으로 새어나가, 실제 8/10 발송인데
@@ -383,7 +388,8 @@ async function registerTemplates({ audit, set } = {}) {
 
 // ── 템플릿 삭제 실행기 (지시 #138 — 대표 확정 정리 전용: 구본 9082 + 반려 이미지형 4종만)
 //    🔴 실전 승인 4종(UJ_9084~9087)은 화이트리스트 밖 — 요청에 섞여 와도 하드 차단. 발동은 server.js 플래그 러너로만.
-const DELETABLE_TPL = ['UJ_9082', 'UJ_9135', 'UJ_9136', 'UJ_9137', 'UJ_9138'];
+const DELETABLE_TPL = ['UJ_9082', 'UJ_9135', 'UJ_9136', 'UJ_9137', 'UJ_9138',
+    'UK_5750', 'UK_5751', 'UK_5752', 'UK_5753'];   /* #418(대표 GO 8/28): #398 배포 롤링 사고로 오등록된 중복본 4장 — 심사 종료(8/28 실측) 후 정리. 발송 코드 어디서도 미참조 */
 async function deleteTemplates(codes) {
     const out = { at: new Date().toISOString(), results: [] };
     if (!configured()) return { ...out, error: 'keys-missing — 알리고 키 미설정' };
@@ -408,4 +414,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder };
+module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate };   /* #417 */
