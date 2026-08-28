@@ -921,6 +921,12 @@ async function initDB() {
     // #401-c(대표): 「일시(주문)」 = 실제 주문 시각 — 이력에 order_at 신설(additive·기존 행 NULL = 종전 표시 유지)
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS order_at TIMESTAMP`);
     await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS order_at TIMESTAMP`);
+    // #419(대표 GO 8/28): 쿠팡만 성함·안심번호 DB 저장(대표 확정 예외 — 단건 재조회 API 부재·050 안심번호는 기간 후 회수라 노출 위험 낮음).
+    //   네이버·자사몰은 종전 원칙(마스킹만 저장·표시 시점 재조회) 그대로 — cp: 행 외에는 이 컬럼을 쓰지 않는다.
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS cp_name VARCHAR(50)`);
+    await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS cp_tel VARCHAR(30)`);
+    await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS cp_name VARCHAR(50)`);
+    await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS cp_tel VARCHAR(30)`);
     // ── 지시 #107: 일일 상품 스냅샷 (자사몰 실서비스 동기화 1단계 — 읽기 전용·기본 OFF·새벽 04:30 앵커)
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min) VALUES ('product_snapshot', false, 1440)
         ON CONFLICT (key) DO NOTHING`);
@@ -5839,8 +5845,24 @@ async function nlogFetchTels(orderKeys) {
             }
         }
     } catch (_) { /* 자사몰 재조회 실패 = 마스킹 표시 유지 */ }
+    // #419(대표 GO 8/28): 쿠팡 — 단건 재조회 API가 없어 수집 시점 DB 저장분(cp_name·cp_tel)을 캐시에 시딩(재시작 후에도 표시).
+    //   수집 직후 캐시(tel 보유)가 있으면 그대로 쓰고, 없는 키만 DB에서 읽는다. 네이버·자사몰 경로 무접촉.
+    try {
+        const cpNeed = orderKeys.filter(k => /^cp:/.test(String(k)) && !(_telCache.has(k) && _telCache.get(k).tel));
+        if (cpNeed.length) {
+            const r4 = await pool.query(
+                `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
+                        COALESCE(k.cp_name, l.cp_name) AS cp_name,
+                        COALESCE(k.cp_tel,  l.cp_tel)  AS cp_tel
+                   FROM kakao_notify_log k FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
+                  WHERE COALESCE(k.order_key, l.order_key) = ANY($1)`, [cpNeed.slice(0, 200)]);
+            for (const row of r4.rows) if (row.cp_tel || row.cp_name)
+                _telCache.set(row.order_key, { tel: String(row.cp_tel || ''), name: String(row.cp_name || ''), at: Date.now() });
+        }
+    } catch (_) { /* 쿠팡 DB 시딩 실패 = 종전(캐시 없으면 마스킹 표시) 유지 */ }
 }
-const nlogFmtTel = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : String(t)); };
+/* #419: 12자리(0505-xxxx-xxxx 안심번호) 포맷 추가 — 10·11자리 기존 동작 무변경 */
+const nlogFmtTel = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : (d2.length === 12 ? `${d2.slice(0,4)}-${d2.slice(4,8)}-${d2.slice(8)}` : String(t))); };
 // ── 지시 #176: [알림 발송 이력] 통합 조회 — 주문 단위 한 줄(주문안내·발송안내 두 칸).
 //    원본 테이블은 그대로 두고 조회 계층에서 order_key FULL OUTER JOIN (한쪽만 있는 건도 단독 행으로 표시).
 app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
@@ -9413,6 +9435,10 @@ async function collectCoupangNotify() {
             try {
                 if (orderAtMs) await pool.query(`UPDATE kakao_notify_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
                 if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((s.orderer && s.orderer.name) || ''), at: Date.now() });   /* #405 */
+                /* #419: 쿠팡은 단건 재조회 불가 → 수집 시점에 성함·안심번호를 DB에도 저장(재시작 후에도 표시 유지 — 대표 확정 예외) */
+                const cpNm419 = String((s.orderer && s.orderer.name) || '').slice(0, 50);
+                if (telSeed || cpNm419) await pool.query(`UPDATE kakao_notify_log SET cp_name=COALESCE(cp_name,$2), cp_tel=COALESCE(cp_tel,$3) WHERE order_key=$1`,
+                    [orderKey, cpNm419 || null, telSeed ? String(telSeed).slice(0, 30) : null]);
             } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
@@ -9507,6 +9533,10 @@ async function collectCoupangGuide() {
             try {
                 if (orderAtMs) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
                 if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((s.orderer && s.orderer.name) || ''), at: Date.now() });   /* #405 */
+                /* #419: 성함·안심번호 DB 저장(주문안내 쪽과 동일 — 재시작 후 표시 유지) */
+                const cpNm419g = String((s.orderer && s.orderer.name) || '').slice(0, 50);
+                if (telSeed || cpNm419g) await pool.query(`UPDATE lms_guide_log SET cp_name=COALESCE(cp_name,$2), cp_tel=COALESCE(cp_tel,$3) WHERE order_key=$1`,
+                    [orderKey, cpNm419g || null, telSeed ? String(telSeed).slice(0, 30) : null]);
             } catch (_) { /* 표시 보조 — 실패 무해 */ }
         }
     }
@@ -13552,6 +13582,46 @@ setInterval(async () => {
         await naverCfgSet('relay_health_result', { at: new Date().toISOString(), version: result.version || null, health: result });
     } catch (e) {
         try { await naverCfgSet('relay_health_result', { error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
+
+// #419 1회성 백필 러너: cp_name_backfill_request {days?:N} — 기존 cp: 행 중 성함·번호 미저장분을
+// 쿠팡 기간 조회(읽기 전용)로 찾아 cp_name·cp_tel 채움. 발송·발주확인 쓰기 없음. 결과에 PII 미포함(order_key만).
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('cp_name_backfill_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'cp_name_backfill_request'`);   // 선제거 — 반복 실행 방지
+        const needRows = (await pool.query(
+            `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
+                    COALESCE(k.order_at, l.order_at, k.created_at, l.created_at) AS at
+               FROM kakao_notify_log k FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
+              WHERE COALESCE(k.order_key, l.order_key) LIKE 'cp:%'
+                AND COALESCE(k.cp_tel, l.cp_tel) IS NULL AND COALESCE(k.cp_name, l.cp_name) IS NULL`)).rows;
+        if (!needRows.length) { await naverCfgSet('cp_name_backfill_result', { at: new Date().toISOString(), msg: '대상 0건' }); return; }
+        const oldest = Math.min(...needRows.map(r => +new Date(r.at || Date.now())));
+        const days = Math.min(Math.max(Math.ceil((Date.now() - oldest) / 86400000) + 1, 2), Math.min(Number(req.days) || 30, 30));
+        const found = new Map(); const errs = [];
+        for (const st of ['ACCEPT', 'INSTRUCT', 'DEPARTURE', 'DELIVERING', 'FINAL_DELIVERY']) {
+            try {
+                for (const s of await coupangFetchSheets(days, st)) { const k = 'cp:' + String(s.orderId || ''); if (s.orderId && !found.has(k)) found.set(k, s); }
+            } catch (e) { errs.push(st + ':' + String(e.message || e).slice(0, 80)); }
+            await new Promise(r => setTimeout(r, 350));
+        }
+        let filled = 0; const missing = [];
+        for (const r of needRows) {
+            const s = found.get(r.order_key);
+            const nm = s ? String((s.orderer && s.orderer.name) || '').slice(0, 50) : '';
+            const tel = s ? String(coupangRecvTel(s) || '').slice(0, 30) : '';
+            if (nm || tel) {
+                await pool.query(`UPDATE kakao_notify_log SET cp_name=COALESCE(cp_name,$2), cp_tel=COALESCE(cp_tel,$3) WHERE order_key=$1`, [r.order_key, nm || null, tel || null]);
+                await pool.query(`UPDATE lms_guide_log SET cp_name=COALESCE(cp_name,$2), cp_tel=COALESCE(cp_tel,$3) WHERE order_key=$1`, [r.order_key, nm || null, tel || null]);
+                filled++;
+            } else missing.push(r.order_key);
+        }
+        await naverCfgSet('cp_name_backfill_result', { at: new Date().toISOString(), target: needRows.length, filled, missing: missing.slice(0, 30), days, errors: errs.slice(0, 5) });
+    } catch (e) {
+        try { await naverCfgSet('cp_name_backfill_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
     }
 }, 60000);
 
