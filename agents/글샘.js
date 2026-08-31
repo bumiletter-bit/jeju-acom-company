@@ -110,6 +110,23 @@ function cleanTitleField(v) {
     return ''; // 정화 불가 — 제목 생략 (title_error로 사유 표시)
 }
 
+// #421(대표 8/31 "원래 잘 되던 문구가 안 된다"): 도구 JSON 태그 오염 대비 강화 — #396 정산 OCR 검증 해법의 글샘판.
+//   ① 오염 검사는 응답 "전체"로 (#396 교훈: 부분 오염 시 남은 필드도 불신 — run#319에서 send_tip에 파편 실저장)
+//   ② 오염·본문 전멸 시 평문 JSON 재질의(오염 원천 불가 경로)로 제목·3종·부가 필드까지 온전히 복구
+//   ③ 그래도 실패면 종전 평문 본문 폴백(1종) 유지 — 종전 동작이 최후 안전망(무회귀)
+const CONTAM_RE = /antml|<\/?\s*parameter|<\/?\s*invoke|<\/?\s*function_call/i;
+function hasContamination(obj) { try { return CONTAM_RE.test(JSON.stringify(obj)); } catch (_) { return false; } }
+// 표기용 짧은 필드 세척 — 오염 파편의 대표 화면 노출 차단 (정상 텍스트는 무변형 통과 = 무회귀)
+function cleanShortField(v, max) {
+    if (typeof v !== 'string') return '';
+    let s = v.trim();
+    if (!s) return '';
+    if (!CONTAM_RE.test(s) && !/[<>{}]/.test(s)) return s.slice(0, max || 300);
+    s = s.replace(/<[^>]*>/g, ' ').replace(/antml[\w-]*/gi, ' ').replace(/[{}"\\<>]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!s || CONTAM_RE.test(s) || /parameter|invoke/i.test(s)) return '';
+    return s.slice(0, max || 300);
+}
+
 // 강제 tool 호출로 구조화된 카피 제출 보장
 const COPY_TOOL = {
     name: 'submit_copy',
@@ -147,6 +164,7 @@ const COPY_TOOL = {
 
 module.exports = {
     cleanTitleField, // 지시 #39: 역량 박제용 export (제목 파편 정화)
+    cleanShortField, hasContamination, // #421: 검증용 export (오염 검사·표기 필드 세척)
     live: true, // 실전 연결됨 (4차) — 마루 라우팅 시 실제 카피 생성
     steps: ['지식 문서(10블록·검증 라임) 로드 중...', '카피 초안 작성 중...', '규격·금지사항 검수 중...'],
     stepDelayMs: 1500,
@@ -260,6 +278,21 @@ ${loadKnowledge()}${lessonsText}${discountText}${inquiryMaterials}`;
             if (!toolUse) throw new Error('글샘 응답에서 카피 결과(tool_use)를 찾지 못했습니다');
             return toolUse.input;
         };
+        // #421: 평문 JSON 폴백 — 도구 없이 JSON 텍스트로 전체 구조를 받는다(태그 오염 원천 불가 — #396 검증 해법)
+        const callPlainJson = async () => {
+            const msg3 = await anthropic.messages.create({
+                model: GEULSAEM_MODEL, max_tokens: 4000,
+                system: [{ type: 'text', text: systemPrompt + '\n\n※ 지금은 submit_copy 도구를 쓰지 않는다. 아래 형식의 JSON만 출력하라 — 앞뒤 설명·코드펜스·태그 절대 금지.\n{"channel":"LMS|SMS|톡톡|문의답변|문의요약","title":"LMS 제목 제안(한글 13자 이내, 해당 없으면 빈 문자열)","versions":[{"label":"기본|안정형|어그로형|감성형","text":"즉시 발송 가능한 완성 카피 본문 전체"}],"missing_fields":["지시에 없어 자리표시로 남긴 항목"],"char_counts":"버전별 글자 수 요약","send_tip":"추천 발송 타이밍·후속 전략 한두 줄"}', cache_control: { type: 'ephemeral' } }],
+                messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
+            });
+            const raw = (msg3.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+            const m = raw.replace(/^```(json)?\s*/i, '').replace(/\s*```\s*$/, '').match(/\{[\s\S]*\}/);
+            if (!m) return null;
+            let p; try { p = JSON.parse(m[0]); } catch (_) { return null; }
+            const vs = Array.isArray(p.versions) ? p.versions.filter(v => v && typeof v.text === 'string' && v.text.trim().length >= 40) : [];
+            if (!vs.length) return null;
+            return { ...p, versions: vs };
+        };
         // 본문 실물 검증 (대표 7/27 — run#219에서 본문에 "test" 4자만 담긴 사고): 전 버전이 40자 미만이면 1회 재시도
         let c = await callModel();
         let versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
@@ -267,9 +300,15 @@ ${loadKnowledge()}${lessonsText}${discountText}${inquiryMaterials}`;
             c = await callModel('\n\n※ 경고: 직전 응답의 versions[].text에 완성 본문이 없었다. 각 버전 text에 즉시 사용 가능한 완성 본문 전체를 반드시 담아라. 자리 텍스트·요약 금지.');
             versions = Array.isArray(c.versions) ? c.versions.filter(v => v && v.text) : [];
         }
-        // 평문 폴백 (7/27 3연타 재테스트 실측 run#226: 도구 JSON 태그 오염으로 versions 본문이 재시도까지 2회 연속 전멸)
-        //   마루 v5.9.110과 같은 해법 — 본문만은 도구 없이 평문 재질의(오염 원천 불가 경로). 제출 부가 필드(제목·채널)는 포기하고 본문 확보 우선.
-        let plainFallback = false;
+        // #421: 본문 전멸 "또는" 응답 어디든 오염이면(부분 오염 = 남은 필드도 불신 — #396) 평문 JSON으로 전체 재확보
+        let fallbackMode = '';
+        if (versions.length === 0 || versions.every(v => String(v.text).trim().length < 40) || hasContamination(c)) {
+            try {
+                const pj = await callPlainJson();
+                if (pj) { c = pj; versions = pj.versions; fallbackMode = 'plain-json'; }
+            } catch (e) { /* 폴백 실패 = 아래 종전 경로가 안전망 */ }
+        }
+        // 평문 폴백 (7/27 3연타 재테스트 실측 run#226 — 종전 최후 안전망 그대로 유지, 무회귀)
         if (versions.length === 0 || versions.every(v => String(v.text).trim().length < 40)) {
             const msg2 = await anthropic.messages.create({
                 model: GEULSAEM_MODEL, max_tokens: 4000,
@@ -277,21 +316,25 @@ ${loadKnowledge()}${lessonsText}${discountText}${inquiryMaterials}`;
                 messages: [{ role: 'user', content: `범 대표님 지시 (원문 그대로):\n${instruction}` }],
             });
             const plain = (msg2.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-            if (plain.length >= 40) { versions = [{ text: plain, label: '기본 (평문 폴백)' }]; plainFallback = true; }
+            if (plain.length >= 40) { versions = [{ text: plain, label: '기본 (평문 폴백)' }]; fallbackMode = 'plain'; }
         }
+        const plainFallback = fallbackMode === 'plain';
         if (versions.length === 0) throw new Error('글샘이 카피 본문을 생성하지 못했습니다 (평문 폴백 포함 3회 실패)');
         if (versions.every(v => String(v.text).trim().length < 40)) throw new Error('글샘이 완성 본문 대신 자리 텍스트만 제출했습니다 (재시도 후에도 실패 — 허위 보고 방지 차단)');
-        const missing = Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [];
+        // #421: 표기용 필드 전수 세척 — 부분 오염 파편이 화면에 노출되지 않게 (정상 텍스트는 무변형)
+        const missing = (Array.isArray(c.missing_fields) ? c.missing_fields.filter(Boolean) : [])
+            .map(x => cleanShortField(String(x), 60)).filter(Boolean);
+        versions = versions.map(v => ({ text: v.text, label: cleanShortField(String(v.label || ''), 24) || '기본' }));
         // 채널·글자수 표기도 오염 방어: 파편 감지 시 안전값 (본문과 달리 표기용이라 생략해도 무해)
         const channelSafe = (typeof c.channel === 'string' && c.channel.trim() && !/[<>{}]|antml|parameter/i.test(c.channel))
             ? c.channel.trim().slice(0, 20) : '카피';
-        const charCounts = plainFallback ? `본문 약 ${versions[0].text.length}자 (평문 폴백)` : (c.char_counts || '');
+        const charCounts = plainFallback ? `본문 약 ${versions[0].text.length}자 (평문 폴백)` : cleanShortField(c.char_counts || '', 200);
         // 지시 #39: 제목 필드 정화 — run #60에서 오염 파편(태그+versions JSON 원문 1,366자)이
         // 제목에 유입돼 대표 화면에 노출된 첫 사례. 정화 불가 시 제목 생략 (몰래 지어내기 금지)
         const title = cleanTitleField(c.title);
 
         return {
-            summary: `완료: ${channelSafe} 카피 ${versions.length}종${missing.length ? ` (채울 항목 ${missing.length}개)` : ''}${plainFallback ? ' — 평문 폴백' : ''}`,
+            summary: `완료: ${channelSafe} 카피 ${versions.length}종${missing.length ? ` (채울 항목 ${missing.length}개)` : ''}${fallbackMode === 'plain' ? ' — 평문 폴백' : (fallbackMode === 'plain-json' ? ' — 평문 JSON 폴백' : '')}`,
             lines: [
                 `채널 ${channelSafe}${title ? ` · 제목안 "${title}"` : ''}${charCounts ? ' · ' + charCounts : ''}`,
                 missing.length ? `✏️ 채워야 할 항목: ${missing.join(', ')}` : '누락 정보 없음 — 바로 발송 가능한 초안',
@@ -301,9 +344,9 @@ ${loadKnowledge()}${lessonsText}${discountText}${inquiryMaterials}`;
                 type: 'geulsaem_copy',
                 channel: channelSafe, title,
                 title_error: (!title && c.title) ? '제목 추출 실패 (오염 파편 정화 불가 — 본문 카피는 정상)' : '',
-                fallback: plainFallback ? 'plain' : '',
+                fallback: fallbackMode,
                 versions, missing_fields: missing,
-                char_counts: charCounts, send_tip: c.send_tip || '',
+                char_counts: charCounts, send_tip: cleanShortField(c.send_tip || '', 300),   /* #421: run#319 실사고(파편 저장) 차단 */
                 model: GEULSAEM_MODEL, instruction,
                 note: '글샘은 카피 생성까지만 — 발송은 알리고에서 대표가 직접 (자동 발송 경로 없음)',
             },
