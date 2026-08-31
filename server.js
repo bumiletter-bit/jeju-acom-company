@@ -3011,12 +3011,19 @@ async function computeBoxStocks() {
     });
 
     // 입고/이동 (box_movements) — 기준일 이후만 반영
-    const movs = await pool.query('SELECT product_name, movement_type, qty, date FROM box_movements');
+    // #422(대표 8/31 실물 "입고 등록했는데 총 재고 0"): 기준일 "당일" 건도 수기 수정(기준 설정) 시각 "이후" 등록분은 반영.
+    //   같은 날 「수기 수정 → 입고 등록」 흐름이 통째로 무시되던 결함 교정. 수정 "전" 등록분은 종전대로 제외(스냅샷에 이미 포함 = 이중 계산 방지)
+    //   — 나중에 다시 수기 수정하면 updated_at이 갱신돼 그 이전 당일 입고는 자동으로 다시 제외된다(의미 일관). 정산 차감 규칙은 무접촉.
+    const movs = await pool.query('SELECT product_name, movement_type, qty, date, created_at FROM box_movements');
     for (const m of movs.rows) {
         const box = byName[m.product_name];
         if (!box) continue;
         const d = normDateSafe(m.date);
-        if (box.baseDate && !(d > box.baseDate)) continue;
+        if (box.baseDate && !(d > box.baseDate)) {
+            const sameDayAfterEdit = d === box.baseDate && m.created_at && box.updatedAt
+                && new Date(m.created_at) > new Date(box.updatedAt);
+            if (!sameDayAfterEdit) continue;
+        }
         const q = Number(m.qty) || 0;
         if (m.movement_type === 'order') {
             box.company += q;          // 업체 입고
