@@ -408,7 +408,7 @@ async function initDB() {
         )
     `);
     // 초기 데이터 삽입 (이미 있으면 무시)
-    const boxProducts = ['귤 박스 3kg', '귤 박스 5kg', '귤 박스 10kg', '만감 박스 3kg', '만감 박스 5kg', '만감 박스 10kg'];
+    const boxProducts = ['귤 박스 3kg', '귤 박스 5kg', '귤 박스 10kg', '만감 박스 3kg', '만감 박스 5kg', '만감 박스 10kg', '선물용 박스 3kg', '선물용 박스 5kg'];   /* #420(대표 8/31): 선물용 2종 추가 */
     for (const name of boxProducts) {
         await pool.query('INSERT INTO box_inventory (product_name) VALUES ($1) ON CONFLICT (product_name) DO NOTHING', [name]);
     }

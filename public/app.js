@@ -2423,7 +2423,9 @@ const BOX_OPTIONS = [
     { value: '귤 박스 10kg', label: '귤박스 10kg' },
     { value: '만감 박스 3kg', label: '만감박스 3kg' },
     { value: '만감 박스 5kg', label: '만감박스 5kg' },
-    { value: '만감 박스 10kg', label: '만감박스 10kg' }
+    { value: '만감 박스 10kg', label: '만감박스 10kg' },
+    { value: '선물용 박스 3kg', label: '선물용박스 3kg' },   /* #420(대표 8/31): 선물용 2종 추가 — 값은 box_inventory.product_name과 일치 */
+    { value: '선물용 박스 5kg', label: '선물용박스 5kg' }
 ];
 let _pricingRowUid = 0;
 
@@ -2507,10 +2509,11 @@ function pricingBoxBadge(boxType) {
     if (!boxType || boxType === '해당없음') return '<span style="color:#9ca3af;font-size:12px;">해당없음</span>';
     const opt = BOX_OPTIONS.find(o => o.value === boxType);
     const label = opt ? opt.label : boxType;
-    // 귤박스=주황, 만감박스=초록 톤
+    // 귤박스=주황, 만감박스=초록, 선물용=보라 톤 (#420)
     const isGyul = boxType.indexOf('귤') === 0;
-    const bg = isGyul ? '#FFF3E0' : '#E8F5E9';
-    const color = isGyul ? '#E65100' : '#2E7D32';
+    const isGift = boxType.indexOf('선물') === 0;
+    const bg = isGyul ? '#FFF3E0' : (isGift ? '#EDE7F6' : '#E8F5E9');
+    const color = isGyul ? '#E65100' : (isGift ? '#4527A0' : '#2E7D32');
     return `<span style="background:${bg};color:${color};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">📦 ${label}</span>`;
 }
 
