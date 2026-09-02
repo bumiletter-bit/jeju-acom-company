@@ -947,10 +947,13 @@
 
                 <!-- 결재 대기 탭 -->
                 <div id="expense-section-pending" class="card" style="display:none;">
-                    <h2>결재 대기 목록</h2>
+                    <div class="card-header-row">
+                        <h2>결재 대기 목록</h2>
+                        <button class="btn-primary" id="expense-pending-batch-approve" type="button" style="padding:8px 20px;display:none;background:#16a34a;border-color:#16a34a;">✅ 선택 승인</button>
+                    </div>
                     <div class="table-scroll-wrapper">
                         <table class="data-table">
-                            <thead><tr><th>제목</th><th>신청자</th><th>금액</th><th>신청일</th><th>상태</th><th>처리</th></tr></thead>
+                            <thead><tr><th style="width:36px;text-align:center;"><input type="checkbox" id="expense-pending-check-all" title="전체 선택" style="display:none;"></th><th>제목</th><th>신청자</th><th>금액</th><th>신청일</th><th>상태</th><th>처리</th></tr></thead>
                             <tbody id="expense-pending-list"></tbody>
                         </table>
                     </div>
@@ -2464,7 +2467,7 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=378"></script>
+    <script src="app.js?v=379"></script>
     <!-- 지시 #395: 주문 정리기 (파서·추출기 = 원형 이식, organizer = 앱 로직. OCR·pako는 화면에서 lazy-load) -->
     <script src="order-parser.js?v=1"></script>
     <script src="order-extract.js?v=1"></script>

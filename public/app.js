@@ -7884,11 +7884,18 @@ async function renderExpensePendingList() {
     try {
         const data = await api('/api/expense-reports/pending');
         const tbody = document.getElementById('expense-pending-list');
+        // #423(대표 9/2): 체크박스 일괄 승인 — 이력 탭(expense-history-batch-approve)과 동일 패턴.
+        //   /pending은 서버가 "지금 이 사용자가 결재할 차례인 건"만 주므로 전 행 체크 가능(권한은 승인 API가 재검증).
+        const batchBtn = document.getElementById('expense-pending-batch-approve');
+        const checkAll = document.getElementById('expense-pending-check-all');
         if (data.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">결재 대기 건이 없습니다.</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="7">결재 대기 건이 없습니다.</td></tr>';
+            if (batchBtn) batchBtn.style.display = 'none';
+            if (checkAll) checkAll.style.display = 'none';
             return;
         }
         tbody.innerHTML = data.map(d => `<tr>
+            <td style="text-align:center;"><input type="checkbox" class="expense-pending-check" value="${d.id}"></td>
             <td>${d.title}</td>
             <td>${d.applicant_position} ${d.applicant_name}</td>
             <td>${Number(d.total_amount).toLocaleString()} 원</td>
@@ -7900,8 +7907,34 @@ async function renderExpensePendingList() {
                 <button class="btn-danger" onclick="rejectExpense(${d.id})">반려</button>
             </td>
         </tr>`).join('');
+        if (batchBtn) batchBtn.style.display = '';
+        if (checkAll) {
+            checkAll.style.display = '';
+            checkAll.checked = false;
+            checkAll.onchange = () => {
+                tbody.querySelectorAll('.expense-pending-check').forEach(cb => { cb.checked = checkAll.checked; });
+            };
+        }
     } catch (err) { console.error('결재 대기 목록 로드 오류:', err); }
 }
+
+// #423: 결재 대기 탭 선택 일괄 승인 — 이력 탭 핸들러와 동일 방식(건별 순차 승인·실패 건 개별 보고)
+document.getElementById('expense-pending-batch-approve')?.addEventListener('click', async () => {
+    const checked = Array.from(document.querySelectorAll('#expense-pending-list .expense-pending-check:checked')).map(cb => Number(cb.value));
+    if (checked.length === 0) { alert('승인할 항목을 선택해주세요.'); return; }
+    if (!confirm(`선택한 ${checked.length}건을 승인하시겠습니까?`)) return;
+    let ok = 0, fail = 0;
+    const errs = [];
+    for (const id of checked) {
+        try { await api(`/api/expense-reports/${id}/approve`, 'PUT'); ok++; }
+        catch (err) { fail++; errs.push(`#${id}: ${err.message}`); }
+    }
+    let msg = `승인 완료: ${ok}건`;
+    if (fail > 0) msg += `\n실패: ${fail}건\n${errs.slice(0, 5).join('\n')}`;
+    alert(msg);
+    renderExpensePendingList().catch(console.error);
+    renderExpenseHistoryList().catch(console.error);
+});
 
 // 전체 이력
 async function renderExpenseHistoryList() {
