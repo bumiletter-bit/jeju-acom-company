@@ -13110,6 +13110,16 @@ setInterval(async () => {
 //   가드(#246 승인 설계): ①기본 dry-run — 'cafe24_sync_mode'='fix'일 때만 실보정(전환은 대표 GO로만)
 //                        ②±50% 초과 변동은 자동 보정 금지·알림만 ③차이·보정 발생 시 텔레그램 보고
 //                        ④품절 동기화는 진열중(display=T) 상품만 — 오픈 전 신규 세트(진열안함) 오조작 방지
+// #427(대표 GO 9/6): 옵션 이름 → 비교 키(과일+용도+중량+등급). 프리픽스·(특가)·(제철)·행사문구를 무시하고 실옵션만 추출.
+//   카페24(「·」)·네이버(「/」) 형식이 달라도 같은 옵션이면 같은 키가 나온다. 한쪽에만 있는 옵션(못난이 등)은 매칭 안 되어 비교에서 자연 제외.
+function cafe24OptKey(s) {
+    const t = String(s || '').replace(/\s+/g, '');
+    const fruit = (t.match(/하우스감귤|황금향|한라봉|천혜향|레드향|청귤|풋귤|미니밤호박|밤호박|카라향|수라향|세미놀|자몽|레몬|블러드오렌지|하귤|취나물|옥수수/) || [])[0] || '';
+    const use = (t.match(/가정용|선물용|못난이|특품|프리미엄|한입/) || [])[0] || '';
+    const weight = (t.match(/\d+\.?\d*kg/) || [])[0] || (t.match(/\d+\+\d+개/) || [])[0] || '';
+    const grade = (t.match(/로얄과|중소과|중대과|소과|대과|랜덤과/) || [])[0] || '';
+    return (fruit || use || weight) ? [fruit, use, weight, grade].join('|') : '';
+}
 async function collectCafe24Sync(modeOverride, opt) {
     const quiet = !!(opt && opt.quiet);   // 수동 러너 테스트용 — 텔레그램 억제
     const mapCfg = await naverCfgGet('cafe24_sync_map');
@@ -13192,6 +13202,38 @@ async function collectCafe24Sync(modeOverride, opt) {
             }
         }
     }
+    // #427(대표 GO 9/6): 옵션별 결제가 감지 — 기본가만 자동 동기화되는 한계 보완(감지형·읽기 전용·비파괴).
+    //   카페24 결제가(기본가+추가금) vs 네이버 옵션 결제가(discPrice+opt.price)를 옵션 키로 대조.
+    //   공통 옵션만 비교(한쪽에만 있는 옵션=구성 차이라 제외) · 불일치는 텔레그램 경보만(값 교정은 사람이 — 안전).
+    //   전 구간 try/catch·읽기 전용이라 실패해도 위의 기본가/품절 동기화에 영향 0.
+    rep.optMismatch = [];
+    try {
+        for (const [nno, m] of entries) {
+            const sn = snapBy[nno], cp = curBy[String(m.c24)];
+            if (!sn || !cp || cp.display !== 'T') continue;
+            const nOpts = {};
+            for (const o of (sn.opts || [])) {
+                if (o.usable === false) continue;
+                const k = cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || ''));
+                if (k) nOpts[k] = Number(sn.discPrice) + Number(o.price || 0);
+            }
+            if (!Object.keys(nOpts).length) continue;   // 옵션 미수집 상품 건너뜀(낡은 데이터로 오경보 방지)
+            let vr;
+            try { vr = await cafe24.apiGet(`/api/v2/admin/products/${m.c24}/variants`, { limit: 100 }); }
+            catch (e) { rep.errors.push(`c${m.c24} variant 조회 실패(옵션감지): ` + String(e.reason || e.message).slice(0, 50)); continue; }
+            const base = Math.round(Number(cp.price));
+            for (const v of (vr.variants || [])) {
+                if (v.display !== 'T' || v.selling !== 'T') continue;
+                const k = cafe24OptKey((v.options || []).map(o => o.value).join(' '));
+                if (!k || nOpts[k] == null) continue;   // 공통 옵션만
+                const c24pay = base + Number(v.additional_amount);
+                if (c24pay !== nOpts[k]) rep.optMismatch.push({
+                    name: String((v.options || [])[0]?.value || k).replace(/^\d+\.\s*/, '').replace(/\(제철\)|고당도|과즙팡팡/g, '').trim().slice(-22),
+                    c24: c24pay, naver: nOpts[k], diff: c24pay - nOpts[k] });
+            }
+            await new Promise(r => setTimeout(r, 300));
+        }
+    } catch (e) { rep.errors.push('옵션 결제가 감지 실패: ' + String(e.message).slice(0, 80)); }
     await naverCfgSet('cafe24_sync_last', { at: new Date().toISOString(), snapshot_at: snapQ.rows[0].run_at, ...rep });
     const fmtP = i => `${i.name} ${i.current}→${i.expected}원`;
     const parts = [];
@@ -13201,10 +13243,11 @@ async function collectCafe24Sync(modeOverride, opt) {
     if (rep.sellState.length) parts.push(`📦 품절 동기${mode === 'fix' ? '' : '(dry)'} ${rep.sellState.length}건: ` + rep.sellState.map(i => `${i.name} ${i.reason}→판매 ${i.want === 'F' ? '중지' : '재개'}`).join(', '));
     if (rep.baseMoved.length) parts.push(`🧮 기준값 자동 갱신 ${rep.baseMoved.length}건: ` + rep.baseMoved.map(i => `${i.name} ${i.from}→${i.to}`).join(', ') + '  (옵션 구성이 바뀐 상품 — 가격은 위 항목대로 맞춰짐)');
     if (rep.optSkip.length) parts.push(`⏭ 옵션 미수집으로 보정 건너뜀 ${rep.optSkip.length}건: ` + rep.optSkip.join(', ') + '  (낡은 기준값으로 가격을 건드리지 않음)');
+    if (rep.optMismatch && rep.optMismatch.length) parts.push(`🔴 [옵션 결제가 불일치 ${rep.optMismatch.length}건 — 화면가≠실결제가! 수동 교정 필요] ` + rep.optMismatch.map(i => `${i.name} 결제 ${i.c24.toLocaleString()}≠네이버 ${i.naver.toLocaleString()}(${i.diff > 0 ? '+' : ''}${i.diff.toLocaleString()})`).join(' · ') + '  → docs/자사몰_판매가_동기화_점검_인수인계.md 절차로 카페24 추가금 교정');
     if (rep.errors.length) parts.push(`⚠️ 오류 ${rep.errors.length}건: ` + rep.errors.join(' / '));
     if (rep.missing.length) parts.push(`❓ 대조 불가 ${rep.missing.length}건: ` + rep.missing.join(', '));
     if (parts.length && !quiet) notifyTelegram(`🔄 [카페24 동기화 · ${mode}] 신규 세트 ${rep.checked}종 대조\n` + parts.join('\n'));
-    return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건 · 기준값 갱신 ${rep.baseMoved.length}건${rep.optSkip.length ? ` · 옵션미수집 ${rep.optSkip.length}` : ''}${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
+    return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건 · 기준값 갱신 ${rep.baseMoved.length}건${rep.optSkip.length ? ` · 옵션미수집 ${rep.optSkip.length}` : ''}${rep.optMismatch && rep.optMismatch.length ? ` · 🔴옵션결제가불일치 ${rep.optMismatch.length}` : ''}${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
 }
 
 // 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.
