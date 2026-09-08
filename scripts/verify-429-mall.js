@@ -1,0 +1,30 @@
+/* #429 검증 — 자사몰 청귤 실화면: 옵션 표기 「(★라스트특가)」 · 18,800/29,800 · 홈 카드 가격대 · 잔재(옛 19,800/31,800) 0 · 에러 0 */
+const PROJ = 'C:\\Users\\전승범\\OneDrive\\문서\\★제주아꼼이네 회사프로그램';
+const { chromium } = require(PROJ + '\\node_modules\\playwright');
+let pass = 0, fail = 0;
+const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + t + (d != null ? ' — ' + d : '')); };
+const V = 'm429' + (Date.now() % 9973);
+(async () => {
+  const br = await chromium.launch();
+  const pg = await br.newPage({ viewport: { width: 390, height: 844 } });
+  const errs = []; pg.on('pageerror', e => errs.push(String(e).slice(0, 90)));
+  await pg.goto(`https://akkome.com/?v=${V}#p/5731582511`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pg.waitForFunction(() => document.querySelector('.pd-dim.show'), null, { timeout: 30000 });
+  await pg.waitForTimeout(1500);
+  const head = await pg.evaluate(() => (document.querySelector('.pd-dim.show').innerText || '').replace(/\s+/g, ' ').slice(0, 400));
+  await pg.evaluate(() => new Promise(r => { const t = [...document.querySelectorAll('.pd-dim.show button, .pd-dim.show .pd-tab')].find(x => /옵션 선택/.test(x.textContent || '')); if (t) t.click(); setTimeout(r, 700); }));
+  const rows = await pg.evaluate(() => [...document.querySelectorAll('.pd-dim.show .opt-row')].map(x => ({ t: x.innerText.replace(/\s+/g, ' ').trim(), key: x.getAttribute('data-opt-text') || '', price: x.getAttribute('data-opt-price') || '' })));
+  const r5 = rows.find(r => /풋귤\) 5kg/.test(r.key)), r10 = rows.find(r => /풋귤\) 10kg/.test(r.key));
+  ok(!!r5 && r5.key === '(★라스트특가)최상품 청귤(풋귤) 5kg' && r5.price === '18800', '① 청귤 5kg 표기 「(★라스트특가)…」 · 18,800 · 담기 문자열 = 카페24', r5 && (r5.key + ' ' + r5.price));
+  ok(!!r10 && r10.key === '(★라스트특가)최상품 청귤(풋귤) 10kg' && r10.price === '29800', '① 청귤 10kg 표기 · 29,800', r10 && (r10.key + ' ' + r10.price));
+  ok(rows.length === 2 && !rows.some(r => /사전예약/.test(r.key)), '① 옵션 2행 · 사전예약 잔재 0', rows.length + '행');
+  ok(/18,800원\s*~\s*29,800원/.test(head) && !/19,800|31,800/.test(head), '② 상세 상단 가격대 18,800원~29,800원 (옛 19,800/31,800 잔재 0)', (head.match(/[\d,]+원\s*~\s*[\d,]+원/) || [''])[0]);
+  await pg.goto(`https://akkome.com/?v=${V}home`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pg.waitForTimeout(3500);
+  const card = await pg.evaluate(() => { const c = [...document.querySelectorAll('[data-pd]')].find(x => /청귤/.test(x.textContent || '')); return c ? c.innerText.replace(/\s+/g, ' ').slice(0, 200) : ''; });
+  ok(/18,800/.test(card) && !/19,800/.test(card), '③ 홈 청귤 카드 가격 18,800 (옛 19,800 잔재 0)', card.slice(0, 120));
+  ok(errs.length === 0, '④ pageerror 0', errs.join(' | ') || '없음');
+  console.log(`\n결과: ${pass}/${pass + fail}`);
+  await br.close();
+  process.exit(fail === 0 ? 0 : 1);
+})().catch(e => { console.error('ERR', e.message); process.exit(1); });

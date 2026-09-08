@@ -8,8 +8,9 @@ const fs = require('fs');
 const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 const FILE = '_참고자료/카페24스킨백업/scripts/skin6-work-final/index.html';
-const BACKUP = '_참고자료/카페24스킨백업/scripts/skin6-work-final/index_pre428_backup.html';
-const TARGET_NOS = ['11126666859', '6400134206', '10801253976'];   // c94 황금향 · c92 타이벡(황금향 옵션 포함) · c100 VIP
+const BACKUP = '_참고자료/카페24스킨백업/scripts/skin6-work-final/index_pre' + (process.argv[3] || '428') + '_backup.html';   // 3번째 인자 = 백업 태그(예: 429)
+// 대상 상품번호 = 인자(쉼표 구분) · 미지정 시 #428 기본 3종. 예) node scripts/apply-428-skin.js 5731582511   (#429 청귤)
+const TARGET_NOS = process.argv[2] ? process.argv[2].split(',') : ['11126666859', '6400134206', '10801253976'];   // c94 황금향 · c92 타이벡(황금향 옵션 포함) · c100 VIP
 (async () => {
   const src = fs.readFileSync(FILE, 'utf8');
   const lines = src.split('\n');
