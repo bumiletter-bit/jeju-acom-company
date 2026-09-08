@@ -7305,7 +7305,9 @@ async function collectKakaoNotify() {
     const cp = await naverCfgGet('kakao_notify_checkpoint');
     // 지시 #177: 네이버 변경분이 뒤늦게 노출되는 건(실측 누락 1건 — 8/3 11:24 결제)을 잡기 위해 체크포인트에서 15분 되감아 조회.
     //   중복분은 아래 seen(order_key) 필터에서 제거되므로 재발송 위험 없음.
-    const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 15 * 60 * 1000, now - 23.5 * 3600 * 1000);
+    // #430(대표 9/8): 되감기 15분→60분 — 14:12 결제(PAYED·정상) 건이 네이버 변경목록에 15분 넘게 늦게 노출돼 통째로 누락(천소미 건 실측·#177 유형 재발).
+    //   중복 방지 = 아래 seen(order_key)·UNIQUE 그대로라 재발송 위험 0. 호출 수 동일(구간만 확장·페이지네이션 10p×300건 상한 내).
+    const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 60 * 60 * 1000, now - 23.5 * 3600 * 1000);
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     await naverCfgSet('kakao_notify_checkpoint', new Date(now).toISOString());
     const paidIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'PAYED')
@@ -7531,7 +7533,9 @@ async function collectLmsGuide() {
     const now = Date.now();
     const cp = await naverCfgGet('lms_guide_checkpoint');
     // 지시 #177: 발송처리 변경분도 동일 취약점 — 15분 되감기(중복은 lms_guide_log.order_key UNIQUE·seen 필터로 제거)
-    const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 15 * 60 * 1000, now - 23.5 * 3600 * 1000);
+    // #430(대표 9/8): 되감기 15분→60분 — 14:12 결제(PAYED·정상) 건이 네이버 변경목록에 15분 넘게 늦게 노출돼 통째로 누락(천소미 건 실측·#177 유형 재발).
+    //   중복 방지 = 아래 seen(order_key)·UNIQUE 그대로라 재발송 위험 0. 호출 수 동일(구간만 확장·페이지네이션 10p×300건 상한 내).
+    const fromMs = Math.max((cp ? Date.parse(cp) : now - 3600 * 1000) - 60 * 60 * 1000, now - 23.5 * 3600 * 1000);
     const list = await naverFetchChanges(naverKstIso(fromMs), naverKstIso(now));
     await naverCfgSet('lms_guide_checkpoint', new Date(now).toISOString());
     const shippedIds = [...new Set(list.filter(x => String(x.lastChangedType || '') === 'DISPATCHED')
