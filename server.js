@@ -7749,7 +7749,9 @@ async function qnaStoreData() {
         priceLines.push(`🍊 ${r.name} — ${r.price}`);
     }
     const priceText = priceLines.join('\n') || '(가격이 입력된 판매중 상품이 없어요 — 스토어에서 확인해주세요!)';
-    return { statusText, priceText };
+    // #432(대표 9/11): 손님에게 보이는 {{판매현황}} = 판매중만. statusText(품절·시즌종료 포함)는 AI 판단 재료(storeBlock)로만 쓴다.
+    const sellingText = selling.map(r => `- ${r.name}: 판매중${r.price ? ` (${r.price})` : ''}`).join('\n') || '(지금 판매중인 상품이 없어요 — 스토어에서 확인해주세요!)';
+    return { statusText, priceText, sellingText };
 }
 // 품목 필터 — 톡톡봇 ai-handler.js filterStoreLines 이식(동일 스톱워드): 문의한 품목 라인만 표시, 못 찾으면 전체
 const QNA_FILTER_STOPWORDS = ['얼마', '얼마예요', '얼마에요', '얼마인가요', '얼마죠', '가격', '가격표', '금액',
@@ -7777,12 +7779,12 @@ function qnaFilterStoreLines(text, message) {
 //   filterText(질문+상품명)가 있으면 문의한 품목 라인만 골라 표시 (봇과 동일 규칙)
 async function qnaRenderPlaceholders(text, filterText) {
     if (!/\{\{(가격표|판매현황)\}\}/.test(String(text || ''))) return text;
-    const { statusText, priceText } = await qnaStoreData();
+    const { priceText, sellingText } = await qnaStoreData();   // #432: {{판매현황}}은 판매중만(품절·시즌종료 나열 금지 — 대표 9/11)
     const kst = new Date(Date.now() + 9 * 3600 * 1000);
     const stamp = `(${kst.getUTCMonth() + 1}/${kst.getUTCDate()} 기준)`;
     return String(text)
         .replace(/\{\{가격표\}\}/g, `${stamp}\n${qnaFilterStoreLines(priceText, filterText)}`)
-        .replace(/\{\{판매현황\}\}/g, `${stamp}\n${qnaFilterStoreLines(statusText, filterText)}`);
+        .replace(/\{\{판매현황\}\}/g, `${stamp}\n${qnaFilterStoreLines(sellingText, filterText)}`);
 }
 
 // 생성 재료 시나리오 (채널 상품문의·공통만 — 재료 0건이면 전부 SKIP = 단계적 가동)
@@ -7832,7 +7834,7 @@ async function seasonScenariosToday(dateOverride) {
 //   🔵 상대 표현("내일")을 쓰지 않고 절대 날짜로 적는다 — 표의 각 행은 '그 날짜에 주문했을 때'가 기준이라
 //      상대 표현을 쓰면 손님(오늘 기준)과 AI가 서로 다른 날을 가리키게 된다.
 //   무회귀: 조회·계산이 실패하면 빈 배열 → 재료 0건 추가 = 종전과 완전히 동일.
-const SHIP_GUIDE_DAYS = 14;                                    // 표에 담을 일수(그 밖의 날짜는 확답 금지 지시)
+const SHIP_GUIDE_DAYS = 21;                                    // 표에 담을 일수(그 밖의 날짜는 확답 금지 지시) — #432(9/11): 14→21, 추석처럼 5일 연휴가 2주 뒤에 있으면 휴무 뒷부분이 표 밖으로 잘려 AI가 "휴무 9/22~24"로 축소 안내하던 것
 const SHIP_DOW = ['일', '월', '화', '수', '목', '금', '토'];
 function shipDayLabel(ymd) {                                    // 'YYYY-MM-DD' → { md:'8/17', dow:'월' }
     const [y, m, d] = String(ymd).split('-').map(Number);
