@@ -7883,7 +7883,18 @@ async function shippingScenarioToday(dateOverride) {
                     AND reserve_ship_start >= ((NOW() AT TIME ZONE 'Asia/Seoul')::date)`);
             if (rsv.length) reserveLine = `\n⚠️ ${rsv.map(r => r.name).join(' · ')}은(는) 사전예약 상품이라 이 표와 무관합니다(발송 시작일부터 순차 발송) — 예약 상품 문의는 예약 관련 재료로 답하세요.`;
         } catch (e) { reserveLine = '\n⚠️ 사전예약 상품은 이 표와 무관합니다(수확 후 순차 발송) — 예약 상품 문의는 예약 관련 재료로 답하세요.'; }
+        // #431(대표 실물 9/11 09:42): 표는 「8시 이내/이후」 두 줄을 다 주는데 AI가 **지금이 몇 시인지 몰라** 8시가 지난 뒤에도
+        //   "지금 서둘러 주문하시면 오늘 바로 발송 가능"이라고 답했다(오전 8시 당일발송 마감 위반). → 현재 시각·마감 경과 여부를 재료에 명시해
+        //   지금 주문하는 손님에게 적용되는 줄을 단정해 준다. dateOverride(재현 테스트)는 정오 기준(마감 경과)으로 계산된다.
+        const nowHH = kstNow.getUTCHours(), nowMM = kstNow.getUTCMinutes();
+        const nowLabel = `${nowHH}:${String(nowMM).padStart(2, '0')}`;
+        const todayEarly = calc(today, '07'), todayLate = calc(today, '15');
+        const nowLine = nowHH >= 8
+            ? `⏰ 현재 시각 ${t.md}(${t.dow}) ${nowLabel} — 오늘 **오전 8시 주문 마감이 이미 지났습니다**. 지금 주문하는 손님은 「${todayLate}」로 안내하세요. "지금 주문하면 오늘 발송", "서둘러 주문하시면 오늘 출발" 같은 표현은 절대 쓰지 마세요(8시 이후 주문은 오늘 발송 불가).`
+            : `⏰ 현재 시각 ${t.md}(${t.dow}) ${nowLabel} — 오늘 오전 8시 마감까지 ${(8 * 60) - (nowHH * 60 + nowMM)}분 남았습니다. 8시 전에 결제까지 완료된 주문만 「${todayEarly}」이고, 8시가 지나면 「${todayLate}」입니다 — 시간이 촉박하면 두 경우를 함께 안내하세요.`;
         const text = `(오늘 ${t.md}(${t.dow}) 기준 · 회사 「발송 휴무일 관리」에 등록된 값으로 매일 자동 계산됩니다)
+
+${nowLine}
 
 ⚠️ 배송·발송·도착 일정 문의에는 다른 재료보다 **이 표를 먼저** 사용하세요.
 ⚠️ 「배송 일정 안내」 시나리오의 일반 설명(오전 8시 이내 주문 시 당일 발송 · 토요일만 배송휴무)과 이 표가 다르면 **이 표가 정확합니다** — 표에 적힌 날짜 그대로 안내하고, 일반 설명은 쓰지 마세요.${reserveLine}
