@@ -25,8 +25,11 @@ const listCoupons = async () => { let all = []; for (const offset of [0, 100]) {
         await new Promise(r => setTimeout(r, 30000));
     }
     if (!lc.all) throw new Error('쿠폰 목록 조회 실패');
-    // 1) 정의 — 있으면 재사용
-    let def = lc.all.find(c => c.coupon_name === NAME && c.available_period_type === 'R' && c.deleted !== 'T');
+    // 1) 정의 — 있으면 재사용. 🔴 9/12 실측: 생성 직후 목록 조회에 즉시 안 잡힘(지연) → 생성된 번호를 고정(KNOWN)해 중복 생성 방지
+    const KNOWN = '6086230051600000967';   // 2026-09-12 07:55 생성 성공 응답의 coupon_no
+    let def = lc.all.find(c => String(c.coupon_no) === KNOWN) || lc.all.find(c => c.coupon_name === NAME && c.available_period_type === 'R' && c.deleted !== 'T');
+    if (!def) { const one = await runner({ action: 'raw', method: 'GET', path: '/api/v2/admin/coupons', query: { coupon_no: KNOWN } }); def = ((((one.raw || {}).data || {}).coupons) || [])[0]; }
+    if (!def) throw new Error('KNOWN 정의(' + KNOWN + ') 조회 불가 — 중복 생성 방지로 중단');
     if (def) console.log('기존 정의 재사용:', def.coupon_no, `${def.available_day_from_issued}일`);
     else {
         const body = { shop_no: 1, request: {
@@ -34,7 +37,7 @@ const listCoupons = async () => { let all = []; for (const offset of [0, 100]) {
             available_period_type: 'R', available_day_from_issued: DAYS, available_begin_datetime: null, available_end_datetime: null,
             available_site: ['W', 'M', 'P'], available_scope: 'O', available_product: 'U', available_category: 'U',
             available_amount_type: 'E', available_coupon_count_by_order: 1, available_price_type: 'U',
-            discount_rate: { benefit_percentage: '5.0', benefit_percentage_round_unit: '0.1', benefit_percentage_max_price: '0.00' },
+            discount_rate: { benefit_percentage: 5, benefit_percentage_round_unit: '0.1', benefit_percentage_max_price: 0 },   // 422 실측: max_price는 정수(0 = 상한 없음) — 문자열 '0.00' 거부
             issue_reserved: 'F', same_user_reissue: 'F', include_regional_shipping_rate: 'F', include_foreign_delivery: 'F', show_product_detail: 'F',
         } };
         const cr = await runner({ action: 'raw', method: 'POST', path: '/api/v2/admin/coupons', body });
