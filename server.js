@@ -7105,9 +7105,16 @@ async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
     return r.rows.length ? r.rows[0].value : null;
 }
+// #434(대표 실물 9/13 "상품 스냅샷 자동수집 실패 — invalid input syntax for type json"): jsonb는 「짝 잃은 서로게이트」(이모지 반쪽)를 거부한다
+//   (실DB 재현: '\ud83c' 단독 → 같은 메시지 + detail "Unicode low surrogate must follow a high surrogate"). 원인 = 리뷰 본문 slice(0,300)·옵션 slice(0,120)이
+//   이모지(UTF-16 2단위)를 반으로 자름 → 그 회차 스냅샷 전체 INSERT 실패(자사몰 화면은 전날분 유지). 문자열 값의 짝 잃은 반쪽만 제거하고 나머지는 그대로.
+const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+function jsonSafeStringify(value) {
+    return JSON.stringify(value, (k, v) => typeof v === 'string' ? v.replace(LONE_SURROGATE_RE, '') : v);   // g 플래그 정규식은 .test()와 섞지 말 것(lastIndex 함정) — replace만 사용
+}
 async function naverCfgSet(key, value) {
     await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb)
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, JSON.stringify(value)]);
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, jsonSafeStringify(value)]);   // #434: 상세 스냅샷(리뷰·본문)도 같은 위험
 }
 
 // 변경분 조회 (PII 없음) — 항목 배열 반환. 24시간 제약 대비 시작 시각 클램프는 호출부에서.
@@ -8485,7 +8492,7 @@ async function collectProductSnapshot() {
         publicNote = ' | 공개지표 갱신 실패→직전분 유지: ' + String(e.message || e).slice(0, 120);
     }
     await pool.query(`INSERT INTO naver_product_snapshot (total, items, note, reviews, store_meta) VALUES ($1, $2, $3, $4, $5)`,
-        [items.length, JSON.stringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote + optNote + publicNote, reviews ? JSON.stringify(reviews) : null, storeMeta ? JSON.stringify(storeMeta) : null]);
+        [items.length, jsonSafeStringify(items), (raw0 ? JSON.stringify(raw0).slice(0, 200) : '') + reviewNote + optNote + publicNote, reviews ? jsonSafeStringify(reviews) : null, storeMeta ? jsonSafeStringify(storeMeta) : null]);   // #434: 이모지 반쪽(짝 잃은 서로게이트) 세척 — 9/13 04:39 회차 실패 원인
     // 보존 정책: 최근 30회만 유지 (하루 1회 = 한 달)
     await pool.query(`DELETE FROM naver_product_snapshot WHERE id NOT IN (SELECT id FROM naver_product_snapshot ORDER BY id DESC LIMIT 30)`);
     // 지시 #149-5: 상세이미지 전량 스냅샷도 매일 함께 갱신 — 실패해도 본 스냅샷은 유지(직전 상세분 그대로), 실패 사유만 note에 기록.

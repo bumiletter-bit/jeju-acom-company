@@ -1,3 +1,7 @@
+## v5.9.312 (2026-09-13) — 서버만(app.js 무변경 v=381)
+- 🛰️ **#434-a(대표 실물 9/13 "상품 스냅샷 자동수집 실패 — invalid input syntax for type json")**: 원인 = **jsonb가 「짝 잃은 서로게이트」(이모지 반쪽)를 거부** — 리뷰 본문 `slice(0,300)`·옵션 `slice(0,120)`이 UTF-16 2단위 이모지를 반으로 자르면 `\ud83c` 단독 이스케이프가 되어 그 회차 스냅샷 INSERT 전체 실패(9/13 04:39 회차 — 자사몰 화면은 전날분 유지·주문 무영향). 실DB 재현: `'\ud83c'` 단독 → 같은 메시지 + detail "Unicode low surrogate must follow a high surrogate". 교정 = `jsonSafeStringify`(문자열 값의 짝 잃은 반쪽만 제거·정상 이모지 보존)를 스냅샷 INSERT(items·reviews·store_meta)와 `naverCfgSet`(상세 스냅샷 등 jsonb 전반)에 적용. 실DB 검산: 세척 전 실패 재현 → 세척 후 통과·🍊 보존. ⚠️ g 플래그 정규식은 `.test()`와 섞지 않음(lastIndex 함정).
+- 🗣️ **#434-b(DB만 — 대표 "고쳐줘")**: ①품절·재입고 시나리오 #31 — 물어본 품목이 판매중에 없으면 `{{판매현황}}`이 전체(14줄)로 폴백하던 것 → 나열 제거·전체상품 링크 1줄(결론 「시즌종료+알림받기」가 앞에) ②레몬 = 판매현황에 「제주 레몬·시즌종료」 복원(bot_products 28) + 시기 지식 「레몬 비시즌 1/1~9/30」(id 15) → 상품문의·자사몰챗도 침묵 대신 4채널 일관 "시즌종료·가을 그린레몬부터" ③#39 회피형 문구 교정. `scripts/apply-434-scenarios.js`. 검증 = 스냅샷 재수집 성공 + `verify-434-qnasim.js`.
+
 ## v5.9.311 (2026-09-12) — 서버만(app.js 무변경 v=381)
 - 🎁 **#433-b(대표 GO): 러너에 쿠폰 「정의」 생성(POST /api/v2/admin/coupons) 허용** — 선례 「5% 할인쿠폰」이 고정기간(8/13~9/12 23:00 = 당일 만료)이라 발급 시 즉시 무용 → 안전 정지 후 대표 GO로 **발급일 기준 30일 5% 쿠폰(「5% 할인쿠폰(룰렛)」)을 선례 설정 그대로 복제 생성**(공식 문서 「Create a coupon」 실브라우저 확인 — discount_rate{benefit_percentage, round_unit, max_price} 필수). 생성만으로는 발급 0. 실행 = `scripts/apply-433-coupon.js`(정의 생성(멱등: 같은 이름·R형 있으면 재사용) → 회원 1명 발급 → 보유 검산 → reward_grants 지급완료·audit).
 
