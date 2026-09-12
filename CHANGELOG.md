@@ -1,3 +1,7 @@
+## v5.9.310 (2026-09-12) — 서버만(app.js 무변경 v=381)
+- 🎁 **#433(대표 9/12 "룰렛 당첨 쿠폰 5% — 니가 직접 지급"): 카페24 raw 러너에 쿠폰 API 최소 허용** — `GET /api/v2/admin/coupons*`(정의 조회) + `POST /api/v2/admin/coupons/{no}/issues`(발급). 🔴 발급은 **issued_member_scope 'M' + member_id(특정 회원 1명)일 때만** 통과 — 전체(A)·그룹(G) 대량 발급은 가드 차단. 대표 지시 건별 수동 실행 전용(자동 발급 아님 — 룰렛 당첨은 계속 「🎁 당첨 지급」 탭 수기 확인 흐름). 스펙 = 공식 문서 「Create coupon issuance history」 실브라우저 확인(`{shop_no, request:{issued_member_scope:'M', member_id, send_sms_for_issue, allow_duplication, single_issue_per_once}}` · 40회/시간 · write_promotion).
+- 실행 기록: `scripts/apply-433-coupon.js`(정의 조회 → 발급 → 회원 보유 쿠폰 재조회 검산 → reward_grants 지급완료 + audit).
+
 ## v5.9.309 (2026-09-11) — 서버만(app.js 무변경 v=381) + 톡톡봇 리포 커밋(대표 push)
 - 🍊 **#432-a(대표 9/11 "품절은 나오지 않도록"): `{{판매현황}}` 치환 = 판매중만** — `qnaStoreData`에 `sellingText` 추가·`qnaRenderPlaceholders`가 그것을 사용(상품문의·자사몰챗). AI 판단 재료(storeBlock)는 종전 statusText(품절·시즌종료 포함) 그대로 → 「밤호박 살 수 있어요?」에는 계속 시즌종료로 정확히 답함. 톡톡봇 리포도 동일(`products-store.js` sellingText · `ai-handler.js` 치환 — 구버전 store면 statusText 폴백).
 - 📅 **#432-b: 발송 일정표 재료 `SHIP_GUIDE_DAYS` 14→21** — 추석처럼 2주 뒤 5일 연휴가 표 밖으로 잘려 AI가 "휴무 9/22~24"로 축소 안내하던 것(달력은 정확 — 재료 요약 범위 문제). 재료 7줄 증가·계산 무변경.

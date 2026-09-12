@@ -13414,8 +13414,13 @@ setInterval(async () => {
                 const okPath = /^\/api\/v2\/admin\/products/.test(rp) || /^\/api\/v2\/admin\/categories\/\d+\/products$/.test(rp) || /^\/api\/v2\/admin\/mains/.test(rp)
                     || (method === 'GET' && /^\/api\/v2\/admin\/boards/.test(rp))   // 8/7: 후기 검증(#259) 스코프 실측용 — 게시판은 읽기 전용만
                     || (method === 'GET' && /^\/api\/v2\/admin\/orders/.test(rp))   // #341: 룰렛 티켓 근거(배송완료 주문) 추적 — 읽기 전용. 🔴 호출 시 fields로 PII 제외할 것
-                    || (method === 'GET' && /^\/api\/v2\/admin\/customers/.test(rp));   // #401: 가입 환영 — customers API 스펙 실측용(read_customer 재동의 8/24). 읽기 전용·결과는 확인 후 즉시 삭제
-                if (!okPath) throw new Error('가드: products·categories/{no}/products·mains·boards(GET)·orders(GET) 경로만 허용');
+                    || (method === 'GET' && /^\/api\/v2\/admin\/customers/.test(rp))   // #401: 가입 환영 — customers API 스펙 실측용(read_customer 재동의 8/24). 읽기 전용·결과는 확인 후 즉시 삭제
+                    // #433(대표 9/12 "룰렛 당첨 쿠폰 니가 직접 지급"): 쿠폰 정의 조회(GET) + 발급(POST /coupons/{no}/issues) — write_promotion(8/24 재동의).
+                    //   🔴 발급은 「특정 회원 1명(issued_member_scope 'M' + member_id)」만 허용 — 전체(A)·그룹(G) 대량 발급은 가드에서 차단. 대표 지시 건별 수동 실행 전용(자동화 아님).
+                    || (method === 'GET' && /^\/api\/v2\/admin\/coupons/.test(rp))
+                    || (method === 'POST' && /^\/api\/v2\/admin\/coupons\/\d+\/issues$/.test(rp)
+                        && req.body && req.body.request && req.body.request.issued_member_scope === 'M' && String(req.body.request.member_id || '').trim());
+                if (!okPath) throw new Error('가드: products·categories/{no}/products·mains·boards(GET)·orders(GET)·customers(GET)·coupons(GET·회원1명 발급 POST) 경로만 허용');
                 if (method === 'DELETE' && !/^\/api\/v2\/admin\/mains/.test(rp)) throw new Error('가드: DELETE는 mains(메인 진열 제외)·delete-test 액션만');
                 const r2 = method === 'GET' ? await cafe24.apiGet(req.path, req.query || undefined)
                                             : await cafe24.apiReq(method, req.path, req.body || undefined);
