@@ -13418,6 +13418,8 @@ setInterval(async () => {
                     // #433(대표 9/12 "룰렛 당첨 쿠폰 니가 직접 지급"): 쿠폰 정의 조회(GET) + 발급(POST /coupons/{no}/issues) — write_promotion(8/24 재동의).
                     //   🔴 발급은 「특정 회원 1명(issued_member_scope 'M' + member_id)」만 허용 — 전체(A)·그룹(G) 대량 발급은 가드에서 차단. 대표 지시 건별 수동 실행 전용(자동화 아님).
                     || (method === 'GET' && /^\/api\/v2\/admin\/coupons/.test(rp))
+                    // #433-b(대표 GO 9/12): 쿠폰 「정의」 생성(POST /coupons) — 선례 5% 쿠폰이 고정기간(9/12 만료)이라 발급일 기준 쿠폰을 새로 만들어야 했음. 생성만으로는 발급 0(무해).
+                    || (method === 'POST' && /^\/api\/v2\/admin\/coupons$/.test(rp) && req.body && req.body.request && req.body.request.coupon_name)
                     || (method === 'POST' && /^\/api\/v2\/admin\/coupons\/\d+\/issues$/.test(rp)
                         && req.body && req.body.request && req.body.request.issued_member_scope === 'M' && String(req.body.request.member_id || '').trim());
                 if (!okPath) throw new Error('가드: products·categories/{no}/products·mains·boards(GET)·orders(GET)·customers(GET)·coupons(GET·회원1명 발급 POST) 경로만 허용');

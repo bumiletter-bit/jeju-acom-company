@@ -1,3 +1,6 @@
+## v5.9.311 (2026-09-12) — 서버만(app.js 무변경 v=381)
+- 🎁 **#433-b(대표 GO): 러너에 쿠폰 「정의」 생성(POST /api/v2/admin/coupons) 허용** — 선례 「5% 할인쿠폰」이 고정기간(8/13~9/12 23:00 = 당일 만료)이라 발급 시 즉시 무용 → 안전 정지 후 대표 GO로 **발급일 기준 30일 5% 쿠폰(「5% 할인쿠폰(룰렛)」)을 선례 설정 그대로 복제 생성**(공식 문서 「Create a coupon」 실브라우저 확인 — discount_rate{benefit_percentage, round_unit, max_price} 필수). 생성만으로는 발급 0. 실행 = `scripts/apply-433-coupon.js`(정의 생성(멱등: 같은 이름·R형 있으면 재사용) → 회원 1명 발급 → 보유 검산 → reward_grants 지급완료·audit).
+
 ## v5.9.310 (2026-09-12) — 서버만(app.js 무변경 v=381)
 - 🎁 **#433(대표 9/12 "룰렛 당첨 쿠폰 5% — 니가 직접 지급"): 카페24 raw 러너에 쿠폰 API 최소 허용** — `GET /api/v2/admin/coupons*`(정의 조회) + `POST /api/v2/admin/coupons/{no}/issues`(발급). 🔴 발급은 **issued_member_scope 'M' + member_id(특정 회원 1명)일 때만** 통과 — 전체(A)·그룹(G) 대량 발급은 가드 차단. 대표 지시 건별 수동 실행 전용(자동 발급 아님 — 룰렛 당첨은 계속 「🎁 당첨 지급」 탭 수기 확인 흐름). 스펙 = 공식 문서 「Create coupon issuance history」 실브라우저 확인(`{shop_no, request:{issued_member_scope:'M', member_id, send_sms_for_issue, allow_duplication, single_issue_per_once}}` · 40회/시간 · write_promotion).
 - 실행 기록: `scripts/apply-433-coupon.js`(정의 조회 → 발급 → 회원 보유 쿠폰 재조회 검산 → reward_grants 지급완료 + audit).
