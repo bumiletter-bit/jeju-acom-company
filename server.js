@@ -6324,7 +6324,8 @@ setInterval(async () => {
         let queue = Array.isArray(st.queue) ? st.queue : [];
         for (const h of hits) {
             const 미답 = String(h.bot_response || '') === '[SKIP-무응답]';
-            queue.push(`[${chLabel(h.user_id)}${미답 ? '·봇 미답변' : ''}] ` + String(h.message || '').replace(/\s+/g, ' ').slice(0, 60));
+            // #435(대표 9/13): 요청형(봇은 답했지만 변경·취소 등 실제 처리 필요)과 봇 미답변을 라벨로 구분 — 대표가 "봇이 답했는데 왜 미답변?"으로 혼동(실물 9/13 주소 변경 건)
+            queue.push(`[${chLabel(h.user_id)}${미답 ? '·봇 미답변' : '·요청형(봇 답변함)'}] ` + String(h.message || '').replace(/\s+/g, ' ').slice(0, 60));
         }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
         const quiet = await alertQuietNow();
@@ -6335,7 +6336,7 @@ setInterval(async () => {
             /* 🔴 #371(대표 실물): 안내 문구가 낡아 있었다 — #301에서 카카오 챗봇을 끄고 상담 채팅으로 돌린 뒤에도
                "카카오는 챗봇 대화라 알림이 오지 않습니다"가 그대로 나갔다(대표가 받은 건 네이버톡톡 건인데도 그 문장이 붙었다).
                지금은 채널마다 답변 창구가 있으므로 그대로 안내한다. */
-            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘봇 미답변’ = AI가 답하지 못한 건입니다. [문의 관리] > 💬 톡톡 문의에서 3채널을 함께 볼 수 있고, 답변은 네이버톡톡은 판매자센터·카카오는 채널 [내 채팅]에서 해주세요)`);
+            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘요청형(봇 답변함)’ = 봇은 답했지만 주소·옵션 변경·취소 등 실제 처리가 필요한 건 / ‘봇 미답변’ = AI가 답하지 못한 건. [문의 관리] > 💬 톡톡 문의에서 3채널을 함께 볼 수 있고, 답변은 네이버톡톡은 판매자센터·카카오는 채널 [내 채팅]에서 해주세요)`);
             lastAlert = { at: new Date().toISOString(), count: queue.length, result };
             if (result === 'sent') queue = [];
         }
