@@ -155,7 +155,10 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         errorEl.style.display = 'none';
         document.getElementById('login-username').value = '';
         document.getElementById('login-password').value = '';
-        onLoginSuccess();
+        // #440(대표 9/14 "재로그인 후 중간발주에 옛 것이 뜬다"): 수동 로그인은 종전엔 화면만 다시 그려 이전 세션의 메모리 상태(중간발주 집계·불러온 주문·단가표 품목명 캐시)가 남았다.
+        //   → 토큰 저장 후 **페이지를 새로 불러와** 상태를 전면 초기화한다(새로고침 자동 로그인 경로 checkAuth → onLoginSuccess로 이어짐 · #407 규칙대로 메인에서 시작).
+        location.reload();
+        return;
     } catch (err) {
         errorEl.textContent = '서버 연결에 실패했습니다.';
         errorEl.style.display = 'block';
@@ -6133,6 +6136,7 @@ function aoProgressBarTicker(el, estSec, label, extraFn) {
         btn.disabled = true;
         const stopTick = aoProgressBarTicker(msg, days * 1.3 + 8, `네이버 배송준비 조회 중... (최근 ${days}일)`);
         try {
+            await aoLoadInvoicePricing();   // #440: 매칭 품목명(단가표) 매 클릭 새로 읽기 — 페이지 진입 시 1회 캐시가 주중 단가표 변경·재로그인 뒤 낡던 것
             const r = await api('/api/agent-office/naver/invoice-orders?days=' + days);
             stopTick();
             if (msg) msg.innerHTML = '🔄 <b>2/2 변환·주입 중...</b>';
@@ -6177,6 +6181,7 @@ function aoProgressBarTicker(el, estSec, label, extraFn) {
         btn.disabled = true;
         const stopTick = aoProgressBarTicker(msg, 10, `쿠팡 상품준비중 조회 중... (최근 ${days}일)`);
         try {
+            await aoLoadInvoicePricing();   // #440: 단가표 품목명 매 클릭 새로 읽기
             const r = await api('/api/agent-office/coupang/invoice-orders?days=' + days);
             stopTick();
             if (msg) msg.innerHTML = '🔄 <b>2/2 변환·주입 중...</b>';
@@ -6219,6 +6224,7 @@ function aoProgressBarTicker(el, estSec, label, extraFn) {
         btn.disabled = true;
         const stopTick = aoProgressBarTicker(msg, 8, `자사몰 배송준비중 조회 중... (최근 ${days}일)`);
         try {
+            await aoLoadInvoicePricing();   // #440: 단가표 품목명 매 클릭 새로 읽기
             const r = await api('/api/agent-office/cafe24/invoice-orders?days=' + days);
             stopTick();
             if (msg) msg.innerHTML = '🔄 <b>2/2 변환·주입 중...</b>';
@@ -6363,6 +6369,7 @@ function parseInvoiceRows(data) {
             v => { chState[key] = (v && v.ok) ? `✅ ${v.count || 0}건` : '⚠️ 실패'; return v; },
             e => { chState[key] = '⚠️ 실패'; throw e; });
         try {
+            await aoLoadInvoicePricing();   // #440: 중간발주도 매 클릭 단가표 품목명 새로 읽기(주중 이름 변경·주 바뀜·재로그인 뒤 낡은 캐시로 매칭되던 것)
             const [rvNaver, rvCp, rvCf] = await Promise.allSettled([
                 track(api('/api/agent-office/naver/invoice-orders?days=' + days), 'nv'),
                 track(api('/api/agent-office/coupang/invoice-orders?days=' + daysCp), 'cp'),
