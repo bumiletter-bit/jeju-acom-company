@@ -1,0 +1,53 @@
+/* 회사프로그램 전체 가동 점검(읽기 전용) — 대표 9/14 "알림톡부터 전체적으로 잘 작동되는지 검토". 수정 0. */
+require('dotenv').config();
+const { Pool } = require('pg');
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const J = o => JSON.stringify(o);
+(async () => {
+    console.log('=== ① 자동수집 타이머 (KST 기준 마지막 실행·상태) ===');
+    const t = await pool.query(`SELECT key, enabled, interval_min, run_at_time, last_status, left(last_error,80) err,
+        to_char(last_run_at + interval '9 hours','MM-DD HH24:MI') last_kst, EXTRACT(EPOCH FROM (now() - last_run_at))/60 AS min_ago FROM naver_auto_collect ORDER BY key`);
+    for (const r of t.rows) { const late = r.enabled && r.interval_min < 600 && r.min_ago > r.interval_min * 3; console.log(`  ${late ? '⚠️' : (r.last_status === 'ok' ? '✅' : (r.enabled ? '❌' : '⏸'))} ${r.key.padEnd(18)} ${r.enabled ? 'ON ' : 'OFF'} ${String(r.interval_min).padStart(5)}분${r.run_at_time ? '@' + r.run_at_time : ''} | ${r.last_kst} (${Math.round(r.min_ago)}분 전) ${r.last_status || '-'} ${r.err || ''}`); }
+    console.log('=== ② 알림톡·발송안내 오늘(KST) 집계 ===');
+    const k = await pool.query(`SELECT status, mode, count(*)::int n FROM kakao_notify_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' AND deleted_at IS NULL GROUP BY 1,2 ORDER BY n DESC`);
+    console.log('  주문안내:', k.rows.map(r => `${r.status}/${r.mode}=${r.n}`).join(' · '));
+    const l = await pool.query(`SELECT status, mode, count(*)::int n FROM lms_guide_log WHERE created_at > (now() AT TIME ZONE 'Asia/Seoul')::date - interval '9 hours' GROUP BY 1,2 ORDER BY n DESC`);
+    console.log('  발송안내:', l.rows.map(r => `${r.status}/${r.mode}=${r.n}`).join(' · ') || '(오늘 0건)');
+    const kf = await pool.query(`SELECT order_key, left(error,60) e FROM kakao_notify_log WHERE created_at > now() - interval '3 days' AND status IN ('failed','token-failed','build-failed') AND deleted_at IS NULL ORDER BY id DESC LIMIT 5`);
+    console.log('  최근 3일 발송 실패:', kf.rows.length ? J(kf.rows) : '0건');
+    const hold = await pool.query(`SELECT count(*)::int n FROM kakao_notify_log WHERE status='hold-0809' AND deleted_at IS NULL AND created_at > now() - interval '7 days'`);
+    const cf = await pool.query(`SELECT count(*)::int n FROM kakao_notify_log WHERE confirm_status IN ('failed','manual-needed') AND deleted_at IS NULL AND created_at > now() - interval '3 days'`);
+    console.log('  보류(수기 대기, 7일):', hold.rows[0].n, '건 · 발주확인 실패/수기(3일):', cf.rows[0].n, '건');
+    const mode = (await pool.query(`SELECT value FROM agent_office_config WHERE key='notify_channel_mode'`)).rows[0];
+    console.log('  채널 실발송 모드:', J(mode && mode.value));
+    console.log('=== ③ 카페24 동기화·스냅샷 ===');
+    const cs = (await pool.query(`SELECT value FROM agent_office_config WHERE key='cafe24_sync_last'`)).rows[0].value;
+    console.log('  cafe24_sync 마지막:', cs.at, '| mode', cs.mode, '| 대조', cs.checked, '| 차이', (cs.diffs || []).length, '| 보정', (cs.fixed || []).length, '| 차단', (cs.blocked || []).length, '| 품절동기', (cs.sellState || []).length, '| 옵션가 불일치', (cs.optMismatch || []).length, '| 오류', (cs.errors || []).length, (cs.errors || []).slice(0, 2).join(' / '));
+    const sn = (await pool.query(`SELECT id, run_at, total, left(note, 120) note FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`)).rows[0];
+    console.log('  상품 스냅샷 최신 #' + sn.id, sn.run_at, sn.total + '종', '|', sn.note.replace(/^\{[^}]*\}\s*\|?/, '').trim());
+    const ds = (await pool.query(`SELECT value->>'at' AS at, value->>'count' AS cnt FROM agent_office_config WHERE key='product_detail_snapshot'`)).rows[0];
+    console.log('  상세 스냅샷:', ds.at, ds.cnt + '종');
+    console.log('=== ④ 문의 관제 ===');
+    const st = (await pool.query(`SELECT value FROM agent_office_config WHERE key='talktalk_request_state'`)).rows[0].value;
+    console.log('  요청형 알림 큐:', (st.queue || []).length, '| 마지막 알림', st.last_alert && st.last_alert.at, st.last_alert && st.last_alert.result);
+    const ml = await pool.query(`SELECT count(*)::int n, sum(CASE WHEN bot_response='[SKIP-무응답]' THEN 1 ELSE 0 END)::int skip FROM message_logs WHERE received_at > now() - interval '24 hours'`);
+    console.log('  톡톡/챗 24h:', ml.rows[0].n, '건 · 봇 무응답', ml.rows[0].skip, '건');
+    const qn = await pool.query(`SELECT count(*)::int n FROM naver_qnas WHERE created_at > now() - interval '24 hours'`).catch(() => ({ rows: [{ n: '?' }] }));
+    console.log('  상품문의 24h 수집:', qn.rows[0].n, '건');
+    console.log('=== ⑤ 데이터 정합 ===');
+    const bx = await pool.query(`SELECT product_name, company_stock, daesong_stock, hyodon_stock FROM box_inventory ORDER BY id`);
+    console.log('  박스재고 기준값(음수 있으면 ⚠️):', bx.rows.map(r => `${r.product_name}=${r.company_stock}/${r.daesong_stock}/${r.hyodon_stock}`).join(' · '));
+    const pr = await pool.query(`SELECT partner, to_char(start_date,'MM-DD') s, to_char(end_date,'MM-DD') e, jsonb_array_length(items) n FROM pricing WHERE end_date >= (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY start_date DESC, partner`);
+    console.log('  유효 단가표:', pr.rows.map(r => `${r.partner} ${r.s}~${r.e}(${r.n}종)`).join(' · ') || '⚠️ 없음');
+    const rg = await pool.query(`SELECT count(*)::int n FROM reward_grants WHERE status='pending'`);
+    console.log('  룰렛 미지급:', rg.rows[0].n, '건');
+    const sc = await pool.query(`SELECT count(*)::int n FROM inquiry_scenarios WHERE deleted_at IS NULL AND enabled`);
+    const ar = (await pool.query(`SELECT value FROM agent_office_config WHERE key='inquiry_auto_reply'`)).rows[0];
+    console.log('  시나리오 활성:', sc.rows[0].n, '건 · 자동응답 스위치:', ar && ar.value);
+    const hol = await pool.query(`SELECT to_char(holiday_date,'MM-DD') d, no_ship, no_arrive, reason FROM shipping_holidays WHERE deleted_at IS NULL AND holiday_date BETWEEN now() AND now() + interval '21 days' ORDER BY holiday_date`);
+    console.log('  3주 내 휴무:', hol.rows.map(r => `${r.d}${r.no_ship ? '발송X' : ''}${r.no_arrive ? '도착X' : ''}`).join(' · '));
+    console.log('=== ⑥ 오류 로그(최근 24h audit error류) ===');
+    const er = await pool.query(`SELECT action, target_type, count(*)::int n FROM audit_logs WHERE created_at > now() - interval '24 hours' AND (action ~ 'fail|error' OR changes::text ~ '"error"') GROUP BY 1,2 ORDER BY n DESC LIMIT 5`);
+    console.log('  ', er.rows.length ? J(er.rows) : '없음');
+    await pool.end();
+})().catch(e => { console.error('ERR', e.message); process.exit(1); });
