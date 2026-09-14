@@ -66,6 +66,15 @@ const ok = (name, c, note) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' :
         await pg.click('#invoice-auto-smart', { force: true }); await pg.waitForTimeout(4000);
         const c2 = catalogReq;
         ok('② [네이버 배송준비 불러오기] 클릭 → 카탈로그 재요청', c2 > c1, `${c1}→${c2}`);
+        // ── ④ #441 로그아웃 즉시 재로드 — 앱 상태 마커 심고 로그아웃 → navigation + 로그인 화면 + 마커 소멸
+        await pg.evaluate(() => { window.__appMarker = 'LIVE'; });
+        const navL = navs;
+        await Promise.all([pg.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null), pg.click('#btn-logout', { force: true })]);
+        await pg.waitForTimeout(2500);
+        const loginAgain = await pg.evaluate(() => { const l = document.getElementById('login-page'); return !!l && l.style.display !== 'none'; });
+        const markerL = await pg.evaluate(() => window.__appMarker || null);
+        const tokenGone = await pg.evaluate(() => localStorage.getItem('jwt_token') === null);
+        ok('④ 로그아웃 클릭 = 페이지 재로드 + 로그인 화면 + 메모리 마커 소멸 + 토큰 제거', navs > navL && loginAgain && markerL === null && tokenGone, `navigation ${navs - navL}회 · 마커 ${markerL}`);
         ok('③ pageerror 0', errs.length === 0, errs.join(' | ') || '없음');
     } catch (e) { ok('예외 없음', false, e.message.slice(0, 160)); }
     finally { if (browser) await browser.close().catch(() => {}); if (srv) srv.kill(); }

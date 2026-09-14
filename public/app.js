@@ -227,7 +227,9 @@ document.getElementById('btn-logout').addEventListener('click', () => {
     localStorage.removeItem('jwt_user');
     try { localStorage.removeItem('akm_last_page'); } catch (_) {}   // 지시 #407: 로그아웃 후 재로그인은 종전대로 메인에서 시작
     currentUser = null;
-    showLoginPage();
+    // #441(대표 9/14 "나갔다 오면 화면 자체가 초기화돼야"): 로그아웃 즉시 페이지 새로 불러오기 — 로그인 화면 뒤에 이전 세션 표(중간발주 집계 등)가 남지 않게.
+    //   토큰은 이미 지웠으므로 재로드 후 checkAuth가 로그인 화면을 띄운다(#440 로그인 재로드와 짝).
+    location.reload();
 });
 
 function checkAuth() {
