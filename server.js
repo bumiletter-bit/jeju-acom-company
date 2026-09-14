@@ -13231,7 +13231,9 @@ async function collectCafe24Sync(modeOverride, opt) {
     //   카페24 결제가(기본가+추가금) vs 네이버 옵션 결제가(discPrice+opt.price)를 옵션 키로 대조.
     //   공통 옵션만 비교(한쪽에만 있는 옵션=구성 차이라 제외) · 불일치는 텔레그램 경보만(값 교정은 사람이 — 안전).
     //   전 구간 try/catch·읽기 전용이라 실패해도 위의 기본가/품절 동기화에 영향 0.
-    rep.optMismatch = [];
+    rep.optMismatch = []; rep.optMissing = [];   // #442: optMissing = 네이버엔 있는데 카페24 판매 variant에 이름으로 없는 옵션
+    let ignoreKeys = new Set();
+    try { const ig = await naverCfgGet('cafe24_sync_ignore_opts'); ignoreKeys = new Set(Array.isArray(ig && ig.keys) ? ig.keys : []); } catch (_) { /* 없으면 전부 감지 */ }
     try {
         for (const [nno, m] of entries) {
             const sn = snapBy[nno], cp = curBy[String(m.c24)];
@@ -13247,15 +13249,23 @@ async function collectCafe24Sync(modeOverride, opt) {
             try { vr = await cafe24.apiGet(`/api/v2/admin/products/${m.c24}/variants`, { limit: 100 }); }
             catch (e) { rep.errors.push(`c${m.c24} variant 조회 실패(옵션감지): ` + String(e.reason || e.message).slice(0, 50)); continue; }
             const base = Math.round(Number(cp.price));
+            const c24Keys = new Set();
             for (const v of (vr.variants || [])) {
                 if (v.display !== 'T' || v.selling !== 'T') continue;
                 const k = cafe24OptKey((v.options || []).map(o => o.value).join(' '));
+                if (k) c24Keys.add(k);
                 if (!k || nOpts[k] == null) continue;   // 공통 옵션만
                 const c24pay = base + Number(v.additional_amount);
                 if (c24pay !== nOpts[k]) rep.optMismatch.push({
                     name: String((v.options || [])[0]?.value || k).replace(/^\d+\.\s*/, '').replace(/\(제철\)|고당도|과즙팡팡/g, '').trim().slice(-22),
                     c24: c24pay, naver: nOpts[k], diff: c24pay - nOpts[k] });
             }
+            // #442(대표 9/14 실사고): 네이버 판매 옵션이 카페24(판매중 variant)에 **이름으로 없으면** 경보 — 대용량 페이지(12957301776→c97)를 레몬→황금향 못난이 10kg로
+            //   바꿔 쓰는데 카페24 옵션은 「제주레몬 10kg」 그대로라, 자사몰 화면은 못난이·결제는 레몬으로 붙어 손님 1건 취소. 이름 불일치는 #427(가격)로는 못 잡는다.
+            //   알려진 구성 차이(못난이 5kg = 네이버만 등)는 agent_office_config 'cafe24_sync_ignore_opts' {keys:[...]}로 제외(매일 오경보 방지). 감지만 — 이름 변경은 관리자(API 불가 422).
+            const naverOnly = Object.keys(nOpts).filter(k => !c24Keys.has(k) && !ignoreKeys.has(k));
+            if (naverOnly.length) rep.optMissing.push({ tag, name: String(cp.product_name || '').slice(0, 14),
+                opts: naverOnly.map(k => { const o = (sn.opts || []).find(x => cafe24OptKey((x.n1 || '') + ' ' + (x.n2 || '')) === k); return o ? String(o.n2 || o.n1).slice(0, 26) : k; }) });
             await new Promise(r => setTimeout(r, 300));
         }
     } catch (e) { rep.errors.push('옵션 결제가 감지 실패: ' + String(e.message).slice(0, 80)); }
@@ -13269,10 +13279,11 @@ async function collectCafe24Sync(modeOverride, opt) {
     if (rep.baseMoved.length) parts.push(`🧮 기준값 자동 갱신 ${rep.baseMoved.length}건: ` + rep.baseMoved.map(i => `${i.name} ${i.from}→${i.to}`).join(', ') + '  (옵션 구성이 바뀐 상품 — 가격은 위 항목대로 맞춰짐)');
     if (rep.optSkip.length) parts.push(`⏭ 옵션 미수집으로 보정 건너뜀 ${rep.optSkip.length}건: ` + rep.optSkip.join(', ') + '  (낡은 기준값으로 가격을 건드리지 않음)');
     if (rep.optMismatch && rep.optMismatch.length) parts.push(`🔴 [옵션 결제가 불일치 ${rep.optMismatch.length}건 — 화면가≠실결제가! 수동 교정 필요] ` + rep.optMismatch.map(i => `${i.name} 결제 ${i.c24.toLocaleString()}≠네이버 ${i.naver.toLocaleString()}(${i.diff > 0 ? '+' : ''}${i.diff.toLocaleString()})`).join(' · ') + '  → docs/자사몰_판매가_동기화_점검_인수인계.md 절차로 카페24 추가금 교정');
+    if (rep.optMissing && rep.optMissing.length) parts.push(`🟠 [옵션명 불일치 ${rep.optMissing.length}상품 — 네이버 옵션이 카페24 판매 옵션에 없음: 자사몰 담기가 확인창으로 빠지거나 다른 옵션으로 결제될 수 있음] ` + rep.optMissing.map(i => `${i.tag} ${i.name}: 「${i.opts.join('」「')}」`).join(' · ') + '  → 카페24 관리자에서 해당 상품 옵션명을 네이버와 동일하게(구성 차이가 맞으면 cafe24_sync_ignore_opts에 등록)');
     if (rep.errors.length) parts.push(`⚠️ 오류 ${rep.errors.length}건: ` + rep.errors.join(' / '));
     if (rep.missing.length) parts.push(`❓ 대조 불가 ${rep.missing.length}건: ` + rep.missing.join(', '));
     if (parts.length && !quiet) notifyTelegram(`🔄 [카페24 동기화 · ${mode}] 신규 세트 ${rep.checked}종 대조\n` + parts.join('\n'));
-    return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건 · 기준값 갱신 ${rep.baseMoved.length}건${rep.optSkip.length ? ` · 옵션미수집 ${rep.optSkip.length}` : ''}${rep.optMismatch && rep.optMismatch.length ? ` · 🔴옵션결제가불일치 ${rep.optMismatch.length}` : ''}${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
+    return `${mode} — ${rep.checked}종 대조 · 가격 차이 ${rep.diffs.length + rep.fixed.length + rep.blocked.length}건(보정 ${rep.fixed.length}·보류 ${rep.blocked.length}) · 품절 대상 ${rep.sellState.length}건 · 기준값 갱신 ${rep.baseMoved.length}건${rep.optSkip.length ? ` · 옵션미수집 ${rep.optSkip.length}` : ''}${rep.optMismatch && rep.optMismatch.length ? ` · 🔴옵션결제가불일치 ${rep.optMismatch.length}` : ''}${rep.optMissing && rep.optMissing.length ? ` · 🟠옵션명불일치 ${rep.optMissing.length}` : ''}${rep.errors.length ? ` · 오류 ${rep.errors.length}` : ''}`;
 }
 
 // 지시 #248-③: 카페24 상품 API 러너 — cafe24_product_request {action:'verify'|...}.
