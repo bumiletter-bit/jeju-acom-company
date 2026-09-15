@@ -157,6 +157,8 @@ function chipHtml(r, i){
   }
 }
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+/* #444: 연락처 형식 경고 — 자릿수가 맞지 않는 번호(예: 0110-3614-5889 12자리)는 표에 「번호 확인」·엑셀 노랑. 값은 손대지 않는다 */
+function badPhoneFmt(v){ const s = String(v||'').trim(); return !!s && !/^0\d{1,2}-\d{3,4}-\d{4}$/.test(s); }
 function render(){
   const tb = $('#ooTbody');
   if (!rows.length){
@@ -166,7 +168,7 @@ function render(){
   tb.innerHTML = rows.map((r,i)=>`<tr data-i="${i}">
     <td style="color:var(--text-mid)">${i+1}</td>
     <td>${chipHtml(r,i)}</td>
-    ${FIELDS.map(f=>`<td contenteditable data-f="${f}" class="${(f==='name'||f==='phone'||f==='addr') && !String(r[f]||'').trim() ? 'missing' : ''}" ${f==='addr'?'style="min-width:280px"':''}>${esc(r[f])}</td>`).join('')}
+    ${FIELDS.map(f=>`<td contenteditable data-f="${f}" class="${(f==='name'||f==='phone'||f==='addr') && !String(r[f]||'').trim() ? 'missing' : ''}${f==='phone' && badPhoneFmt(r[f]) ? ' warnfmt' : ''}" ${f==='addr'?'style="min-width:280px"':''}>${esc(r[f])}</td>`).join('')}
     <td><button class="del-btn" onclick="ooDelRow(${i})" title="삭제">✕</button></td>
   </tr>`).join('');
   // 편집 반영
@@ -207,24 +209,60 @@ function tidyDetail(d){
 }
 /* 주소에서 (검색용 본체, 상세) 분리 — 붙여쓴 주소도 처리 (원형) */
 function splitAddr(addr){
-  let a = addr.trim();
-  // 콤마가 있으면: 첫 콤마 뒤가 상세일 확률 높음
-  const ci = a.indexOf(',');
+  let a = addr.trim().replace(/(\d)\s*~\s*(\d)/g, '$1-$2');   // #444: 「1109~7」처럼 하이픈 대신 물결을 친 번지 → 하이픈
+  // 콤마가 있으면: 첫 콤마 뒤가 상세일 확률 높음 — #444: 괄호 안 콤마(「(신현동, 루원…)」)는 제외
+  let ci = -1, depth = 0;
+  for (let k = 0; k < a.length; k++){ const ch = a[k]; if (ch === '(') depth++; else if (ch === ')') depth = Math.max(0, depth-1); else if (ch === ',' && depth === 0){ ci = k; break; } }
   if (ci > 0){
     const head = a.slice(0,ci).trim(), tail = a.slice(ci+1).trim();
     if (/(로|길)\s*\d|(읍|면|동|리|가)\s*\d/.test(head)) return [head, tidyDetail(tail)];
   }
-  // 도로명 + 건물번호 추출 ("X로N길" 형태 우선, 띄어쓰기 없어도 인식)
-  let m = a.match(/^(.*?)([가-힣A-Za-z0-9·]+로\s*\d+\s*번?길|[가-힣A-Za-z0-9·]+(?:로|길))\s*(\d+(?:-\d+)?)(.*)$/);
+  // 도로명 + 건물번호 추출 ("X로N길" 형태 우선, 띄어쓰기 없어도 인식 — #444: 「도봉로20가길」 같은 「N○길」도)
+  let m = a.match(/^(.*?)([가-힣A-Za-z0-9·]+로\s*\d+\s*(?:번|[가-힣])?길|[가-힣A-Za-z0-9·]+(?:로|길))\s*(\d+(?:-\d+)?)(.*)$/);
   if (m){
     const head = (m[1].trim() + ' ' + m[2].replace(/\s+/g,'') + ' ' + m[3]).trim();
     const tail = (m[4]||'').replace(/^[,\s]+/,'').trim();
     return [head.replace(/\s{2,}/g,' '), tidyDetail(tail)];
   }
-  // 지번 뒤를 상세로
-  m = a.match(/^(.*?(?:읍|면|동|리|가)\s*\d+(?:-\d+)?)(.*)$/);
+  // 지번 뒤를 상세로 — #444: 「313동 1201호」(아파트 동·호)를 지번으로 오인하지 않게: 숫자 뒤의 「동」 제외 + 번호 뒤에 「호」가 오면 제외
+  //   「상대원3동」·「신월1동」처럼 이름에 숫자가 붙은 법정동은 그대로 지번으로 인정(숫자만으로 된 「313동」만 제외)
+  m = a.match(/^(.*?(?:읍|면|리|가|(?<!(?:^|\s)\d+)동)\s*\d+(?:-\d+)?)(?!\d|\s*호)(.*)$/);
   if (m) return [m[1].trim(), tidyDetail((m[2]||'').replace(/^[,\s]+/,''))];
+  // #444: 도로명·지번이 없고 건물명 뒤에 동·호·층만 있는 주소(「중앙동 롯데캐슬 105동 1403호」) — 동·호는 상세로 떼어 보존(검색은 건물명까지)
+  m = a.match(/^(.+?)\s+((?:[A-Za-z가-힣]?\d*\s*동\s*)?\d+\s*(?:호|층)(?![가-힣]).*)$/);
+  if (m && m[1].trim().split(/\s+/).length >= 2) return [m[1].trim(), tidyDetail(m[2])];
   return [a, ''];
+}
+/* #444: 검색 본체에서 괄호 묶음 제거 (juso 검색어용 — 상세 표기는 원문 유지) */
+function searchBody(body){ return body.replace(/\([^()]*\)/g,' ').replace(/\s{2,}/g,' ').trim(); }
+/* #444: juso 후보 중 「검색한 도로명+건물번호(또는 법정동+지번)와 정확히 같은 것」만 남긴다.
+   juso는 「벚꽃로 40」 검색에 「벚꽃로56길 40」·「호구포로 294-1」처럼 비슷한 것도 섞어 주므로, 정확히 같은 후보가 1건뿐이면 그것이 곧 원문 검색 1건.
+   같은 단지 안에서 여러 후보가 남으면 상세의 「N동」이 후보의 상세건물명 목록에 있는 것으로 좁힌다(대표 GO 9/15 — 규칙 1 「원문 그대로 1건」의 정밀화). */
+function exactMatches(body, list, detail){
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const b = searchBody(body);
+  let exact = [];
+  const lastMatch = re => { let m = null, x; const g = new RegExp(re.source, 'g'); while ((x = g.exec(b))) m = x; return m; };   // 검색어 안의 마지막 「도로명 번호」/「법정동 지번」(뒤에 건물명이 붙어 있어도)
+  let m = lastMatch(/([가-힣A-Za-z0-9·]+(?:로|길))\s*(\d+(?:-\d+)?)(?!\S)/);
+  if (m){
+    const re = new RegExp('(^|\\s)' + esc(m[1]) + '\\s*' + esc(m[2]) + '$');
+    exact = list.filter(j => re.test(String(j.roadAddrPart1||'').trim()));
+  } else {
+    m = lastMatch(/([가-힣]+(?:읍|면|동|리|가))\s*(\d+(?:-\d+)?)(?!\S)/);
+    if (m){
+      const re = new RegExp('(^|\\s)' + esc(m[1]) + '\\s*' + esc(m[2]) + '(\\s|$)');
+      exact = list.filter(j => re.test(String(j.jibunAddr||'')));
+    }
+  }
+  if (exact.length > 1 && detail){
+    const dm = detail.match(/(\d+|[A-Za-z가-힣])\s*동(?![가-힣0-9])/);
+    if (dm){
+      const dong = (dm[1] + '동');
+      const byDong = exact.filter(j => String(j.detBdNmList||'').split(',').map(x=>x.replace(/\s/g,'')).some(x => x === dong || x.endsWith(dong)));
+      if (byDong.length === 1) return byDong;
+    }
+  }
+  return exact;
 }
 async function verifyRow(i){
   const r = rows[i];
@@ -236,6 +274,12 @@ async function verifyRow(i){
   const words = body.split(/\s+/);
   if (words.length > 2) tries.push(words.slice(1).join(' '));    // 첫 단어(이름 오인 등) 제거 재시도
   if (words.length > 3) tries.push(words.slice(0, words.length-1).join(' ')); // 끝 단어 제거 재시도
+  // #444 추가 재시도(전부 폴백 = 찾아도 「선택필요」로 사람이 확인): 괄호 제거 · 「어신2리」→「어신리」 · 붙여쓴 주소 띄우기 · 아파트명까지만
+  const pushTry = t => { t = (t||'').replace(/\s{2,}/g,' ').trim(); if (t && !tries.includes(t)) tries.push(t); };
+  pushTry(searchBody(body));
+  if (/[가-힣]\d+리(\s|$)/.test(body)) pushTry(body.replace(/([가-힣])\d+리(\s|$)/g, '$1리$2'));
+  if (words.length <= 2) pushTry(body.replace(/(특별자치도|특별시|광역시|자치시|자치도|도|시|군|구|읍|면|동|리)(?=[가-힣])/g, '$1 '));
+  { const stripped = body.replace(/(\s+(?:\d+\s*(?:단지|동|호|층)|[A-Za-z]\s*동|[가-힣]동\s*\d*호?))+\s*$/,'').trim(); if (stripped && stripped !== body && stripped.split(/\s+/).length >= 2) pushTry(stripped); }
   let res = null, errorMsg = '', usedFallback = false;
   for (let t = 0; t < tries.length; t++){
     try {
@@ -257,7 +301,12 @@ async function verifyRow(i){
   else {
     const uniq = [...new Set(res.map(x=>x.roadAddrPart1 + '|' + x.zipNo))];
     if (uniq.length === 1) applyCandidate(i, res[0], detail);
-    else { r.status='multi'; r.candidates = res; }
+    else {
+      // #444: 비슷한 후보가 섞여 왔을 때 「검색한 도로명+번호와 정확히 같은 후보」가 1건뿐이면 그것으로 확정(원문 1건과 동일 취급). 0건·2건 이상은 종전대로 선택필요
+      const ex = exactMatches(tries[0], res, detail);
+      if (ex.length === 1) applyCandidate(i, ex[0], detail);
+      else { r.status='multi'; r.candidates = res; }
+    }
   }
   render();
 }
@@ -384,6 +433,8 @@ function checkBeforeExport(){
   if (unverified) problems.push(`주소 미확정 ${unverified}건`);
   if (noName) problems.push(`수취인명 없음 ${noName}건`);
   if (noPhone) problems.push(`연락처 없음 ${noPhone}건`);
+  const badFmt = rows.filter(r=>badPhoneFmt(r.phone)).length;   // #444
+  if (badFmt) problems.push(`연락처 형식 확인 ${badFmt}건`);
   if (problems.length){
     if (!confirm(`확인이 필요한 주문이 있어요:\n· ${problems.join('\n· ')}\n\n해당 칸은 엑셀에서 노랑으로 표시됩니다.\n그래도 내보낼까요?`)) return false;
   }
@@ -424,6 +475,7 @@ $('#ooBtnExcel').onclick = ()=>{
     if (row.status !== 'ok') mark(8);                       // 배송지
     if (!String(row.name||'').trim()) mark(3);              // 수취인명
     if (!String(row.phone||'').trim()) mark(6);             // 수취인연락처1
+    if (badPhoneFmt(row.phone)) mark(6);                    // #444: 자릿수 이상 번호
   }
   ws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:data.length, c:HEADER.length-1}});
   const wb = XLSX.utils.book_new();
@@ -477,6 +529,7 @@ async function handleFiles(fileList){
       if (res.type === 'sheet'){
         const sheets = res.sheets.filter(s=>s.orders.length);
         if (sheets.length <= 1){
+          applySheetContext(sheets[0].orders.context);   // #444: 서문 「보내는사람 : ○○」 → 보내는이 칸(비어 있을 때만)
           const n = addOrders(sheets[0].orders, {senderComplete:true});
           toast(`${f.name}에서 ${n}건 불러왔어요! 표를 확인해주세요`);
         } else {
@@ -496,6 +549,12 @@ async function handleFiles(fileList){
       toast(`${f.name}: ${e.message || '파일을 읽지 못했어요'}`);
     }
   }
+}
+/* #444: 시트 서문에서 찾은 보내는이(이름·연락처)를 입력칸에 채움 — 이미 입력돼 있으면 손대지 않음(대표 입력 우선) */
+function applySheetContext(ctx){
+  if (!ctx) return;
+  if (ctx.sender && !$('#ooOrdererName').value.trim()) $('#ooOrdererName').value = ctx.sender;
+  if (ctx.senderPhone && !$('#ooOrdererPhone').value.trim()) $('#ooOrdererPhone').value = fmtPhoneLive(ctx.senderPhone);
 }
 $('#ooBtnFile').onclick = ()=> $('#ooFileInput').click();
 $('#ooFileInput').onchange = e => { handleFiles(e.target.files); e.target.value=''; };
@@ -635,6 +694,7 @@ $('#ooSheetOk').onclick = ()=>{
   const idxs = [...document.querySelectorAll('.oo-sheet-chk:checked')].map(c=>+c.dataset.i).sort((a,b)=>a-b);
   if (!idxs.length){ toast('불러올 시트를 체크해주세요'); return; }
   const orders = [].concat(...idxs.map(i=>pendingSheets[i].orders));
+  applySheetContext(pendingSheets[idxs[0]].orders.context);   // #444
   const n = addOrders(orders, {senderComplete:true});
   $('#ooSheetBack').classList.remove('open');
   pendingSheets = null;
@@ -683,5 +743,5 @@ document.addEventListener('paste', e=>{
 });
 
 /* 검증용 내부 노출 (Playwright 회귀 — 운영 동작 무영향) */
-window.__ooTest = { splitAddr, tidyDetail, fmtPhoneLive, getRows: ()=>rows, exportRows, parseText };
+window.__ooTest = { splitAddr, tidyDetail, fmtPhoneLive, getRows: ()=>rows, exportRows, parseText, exactMatches, searchBody, badPhoneFmt, verifyRow: i => verifyRow(i) };
 })();
