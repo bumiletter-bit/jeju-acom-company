@@ -29,7 +29,7 @@ const EMPTY = { results: { common: { errorCode: '0', errorMessage: '정상', tot
   await pg.click('.nav-item[data-page="organizer"]'); await pg.waitForTimeout(900);
   ok(await pg.evaluate(() => document.getElementById('page-organizer').classList.contains('active')), '진입: 주문 정리기 페이지 active');
   const bundle = await pg.evaluate(() => [...document.scripts].map(s => s.src).filter(s => /order-/.test(s)).map(s => s.split('/').pop()).join(','));
-  ok(/order-extract\.js\?v=2/.test(bundle) && /order-organizer\.js\?v=2/.test(bundle), '진입: 신번들(v=2) 로드', bundle);
+  ok(/order-extract\.js\?v=2/.test(bundle) && /order-organizer\.js\?v=[3-9]/.test(bundle), '진입: 신번들(extract v=2 · organizer v≥3) 로드', bundle);
   const rows = () => pg.evaluate(() => window.__ooTest.getRows().map(r => ({ name: r.name, phone: r.phone, addr: r.addr, product: r.product, qty: r.qty, memo: r.memo, sender: r.sender, senderPhone: r.senderPhone, status: r.status })));
   const reset = async () => { await pg.click('#ooBtnReset'); await pg.waitForTimeout(300); await pg.evaluate(() => { document.getElementById('ooOrdererName').value = ''; document.getElementById('ooOrdererPhone').value = ''; }); };
   const upload = async (file) => { await pg.setInputFiles('#ooFileInput', path.join(DL, file)); await pg.waitForTimeout(1500); };

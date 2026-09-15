@@ -215,7 +215,12 @@ function splitAddr(addr){
   for (let k = 0; k < a.length; k++){ const ch = a[k]; if (ch === '(') depth++; else if (ch === ')') depth = Math.max(0, depth-1); else if (ch === ',' && depth === 0){ ci = k; break; } }
   if (ci > 0){
     const head = a.slice(0,ci).trim(), tail = a.slice(ci+1).trim();
-    if (/(로|길)\s*\d|(읍|면|동|리|가)\s*\d/.test(head)) return [head, tidyDetail(tail)];
+    if (/(로|길)\s*\d|(읍|면|동|리|가)\s*\d/.test(head)){
+      // #444(대표 9/15 "손님이 쓴 아파트명·동호수는 절대 바뀌면 안 된다"): 콤마 앞 번호 뒤에 붙은 건물명(「초지동 730 그린빌,」)은 검색어에서 빼고 상세로 보존
+      const hm = head.match(/^(.*?(?:(?:로|길)\s*\d+(?:-\d+)?|(?:읍|면|리|가|(?<!(?:^|\s)\d+)동)\s*\d+(?:-\d+)?))(?!\d)\s+([^\d\s][^,]*)$/);
+      if (hm && hm[2].trim()) return [hm[1].trim(), tidyDetail(hm[2].trim() + ', ' + tail)];
+      return [head, tidyDetail(tail)];
+    }
   }
   // 도로명 + 건물번호 추출 ("X로N길" 형태 우선, 띄어쓰기 없어도 인식 — #444: 「도봉로20가길」 같은 「N○길」도)
   let m = a.match(/^(.*?)([가-힣A-Za-z0-9·]+로\s*\d+\s*(?:번|[가-힣])?길|[가-힣A-Za-z0-9·]+(?:로|길))\s*(\d+(?:-\d+)?)(.*)$/);

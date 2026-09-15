@@ -137,7 +137,8 @@ if (OLD) {
   const addrs = []; for (const k of Object.keys(all)) for (const s of all[k]) for (const o of s.orders) if (o.addr) addrs.push(o.addr);
   const diffs = [];
   if (OLD) for (const a of addrs) { const n = NEW.f.splitAddr(a), o = OLD.f.splitAddr(a); if (n[0] !== o[0] || n[1] !== o[1]) diffs.push({ a, o, n }); }
-  const intended = d => /~/.test(d.a) || /\([^)]*,/.test(d.a) || /\d+[가-힣]길/.test(d.a) || /\d+\s*동\s*\d+\s*호/.test(d.a) || /[A-Za-z]동/.test(d.a);
+  const intended = d => /~/.test(d.a) || /\([^)]*,/.test(d.a) || /\d+[가-힣]길/.test(d.a) || /\d+\s*동\s*\d+\s*호/.test(d.a) || /[A-Za-z]동/.test(d.a)
+    || (/,/.test(d.a) && d.n[1].indexOf(d.o[0].slice(d.n[0].length).trim()) === 0);   // 콤마 앞 건물명이 검색어에서 상세로 이동(글자 보존)
   const unexpected = diffs.filter(d => !intended(d));
   ok(unexpected.length === 0, `splitAddr 전수 대조 ${addrs.length}주소: 차이 ${diffs.length}건 전부 의도한 유형(물결·괄호콤마·N가길·아파트 동호)`, JSON.stringify(unexpected.slice(0, 3)));
   const sp = NEW.f.splitAddr;
@@ -153,6 +154,9 @@ if (OLD) {
   ok(sp('경기도 성남시 중원구 상대원3동 2968-1번지 화성빌라 302호')[0] === '경기도 성남시 중원구 상대원3동 2968-1', 'splitAddr: 「상대원3동」 숫자 붙은 법정동 유지', sp('경기도 성남시 중원구 상대원3동 2968-1번지 화성빌라 302호').join(' | '));
   ok(sp('괴정동 동주아파트 다동 101호').join('|') === '괴정동 동주아파트|다동 101호', 'splitAddr: 「다동 101호」 숫자 역추적 없음 · 건물명까지 검색/동호 상세', sp('괴정동 동주아파트 다동 101호').join(' | '));
   ok(NEW.f.searchBody('서울특별시 영등포구 국제금융로8길 34(여의도동,오륜빌딩 709호)') === '서울특별시 영등포구 국제금융로8길 34', 'searchBody: 괄호 제거');
+  ok(sp('경기도 안산시 단원구 초지동 730 그린빌, 1203동 1201호').join('|') === '경기도 안산시 단원구 초지동 730|그린빌, 1203동 1201호', 'splitAddr: 콤마 앞 건물명 보존(검색어는 지번까지·상세에 그린빌 유지)', sp('경기도 안산시 단원구 초지동 730 그린빌, 1203동 1201호').join(' | '));
+  ok(sp('충북 청주시 청원구 율봉로 8, 남광하우스토리 202-1203').join('|') === '충북 청주시 청원구 율봉로 8|남광하우스토리 202-1203', 'splitAddr: 콤마 분리 종전 케이스 유지');
+  ok(sp('서울 강북구 오현로 31길 85-7, 102동 1206호 (번동 금호어울림)').join('|') === '서울 강북구 오현로 31길 85-7|102동 1206호 (번동 금호어울림)', 'splitAddr: 콤마 분리 종전 케이스 유지 2');
   ok(sp('경기도 성남시 중원구 중앙동 롯데캐슬 105동 1403호').join('|') === '경기도 성남시 중원구 중앙동 롯데캐슬|105동 1403호' && sp('서울 강서구 한강자이타워 A동 505호').join('|') === '서울 강서구 한강자이타워|A동 505호', 'splitAddr: 도로명·지번 없는 건물명+동호 → 상세 보존(검색은 건물명까지)', sp('서울 강서구 한강자이타워 A동 505호').join(' | '));
   ok(sp('경기도 부천시 오정동 휴먼시아 3단지 313동 1201호').join('|') === '경기도 부천시 오정동 휴먼시아 3단지|313동 1201호', 'splitAddr: 「3단지 313동 1201호」 → 단지까지 검색·동호 상세', sp('경기도 부천시 오정동 휴먼시아 3단지 313동 1201호').join(' | '));
 }
