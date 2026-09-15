@@ -74,6 +74,7 @@ function addOrders(orders, opts={}){
       addr: o.addr || '', product: o.product || '', qty: o.qty || '1',
       memo: o.memo || '', sender: senderName, senderPhone: senderPhone,
       status: 'idle', zip: '', candidates: null,
+      zipHint: o.zip || '',   // #447: 파일에 우편번호 열이 있으면 검증 때 후보 좁히기 힌트(주소 글자엔 안 섞음)
     };
   });
   rows = rows.filter(r=>r.addr||r.name||r.phone).concat(newRows);
@@ -310,7 +311,12 @@ async function verifyRow(i){
       // #444: 비슷한 후보가 섞여 왔을 때 「검색한 도로명+번호와 정확히 같은 후보」가 1건뿐이면 그것으로 확정(원문 1건과 동일 취급). 0건·2건 이상은 종전대로 선택필요
       const ex = exactMatches(tries[0], res, detail);
       if (ex.length === 1) applyCandidate(i, ex[0], detail);
-      else { r.status='multi'; r.candidates = res; }
+      else {
+        // #447: 파일의 우편번호(손님이 적어준 값)와 우편번호가 같은 후보가 정확히 1건이면 그것으로 확정 — 없거나 2건 이상이면 종전대로 선택필요
+        const byZip = r.zipHint ? (ex.length ? ex : res).filter(j => String(j.zipNo||'') === String(r.zipHint)) : [];
+        if (byZip.length === 1) applyCandidate(i, byZip[0], detail);
+        else { r.status='multi'; r.candidates = res; }
+      }
     }
   }
   render();

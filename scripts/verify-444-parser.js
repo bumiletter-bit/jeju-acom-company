@@ -38,6 +38,7 @@ const FILES = {
   bulk: '26년 추석 선물 대량주문양식 최종_(0911).xlsx',
   yu: '유찬숙-주소록-추석선물셋트.xlsx',
   chuseok2026: '2026년 추석 선물.xlsx',
+  upseon: '주문자 강병철_추석 업선 대상 List.xls',   // #447: 2줄 헤더(.xls)·「대상」·우편번호/도로명/상세·발송인 이하동일·총액 줄
 };
 const sheetsOf = (file, impl) => {
   const wb = XLSX.read(new Uint8Array(fs.readFileSync(path.join(DL, file))), { type: 'array', codepage: 949 });
@@ -102,6 +103,18 @@ if (all.chuseok2026) {
   ok(o.some(x => /판교로 20/.test(x.addr) && /301동 503호$/.test(x.addr)) && o.some(x => /뚝섬로34길 67/.test(x.addr) && /A동 902호$/.test(x.addr)), '2026년 추석 선물: 전화 열에 적힌 「301동 503호」·「A동 902호」 → 같은 행 주소 뒤에', o.filter(x => /판교로 20|뚝섬로34길/.test(x.addr)).map(x => x.addr).join(' | '));
   ok(!o.some(x => /^0\d{1,2}-\d{3,4}-\d{4}$/.test(x.product)), '2026년 추석 선물: 상품 칸에 전화번호 없음', [...new Set(o.map(x => x.product))].slice(0, 4).join('|'));
   const bad = rowIntegrity(s.aoa, o); ok(bad.length === 0, '🔴 2026년 추석 선물 줄 정합', JSON.stringify(bad.slice(0, 3)));
+}
+if (all.upseon) {
+  const s = all.upseon[0]; const o = s.orders;
+  ok(o.length === 22, '#447 업선 List(.xls, 2줄 헤더): 22행(소제목 줄·총액 줄 제외)', o.length);
+  ok(o.every(x => x.name && x.phone && x.addr), '#447 업선: 22행 이름(「대상」)·전화·주소 전부 채움', o.filter(x => !x.name).length + '/' + o.filter(x => !x.addr).length);
+  ok(/^인천광역시 서구 가정로 406 신영루원지웰시티 푸르지오 101동 2803호$/.test(o[0].addr) && o[0].zip === '22775', '#447 업선: 주소 = 도로명 + 상세(원문 그대로) · 우편번호 힌트', o[0].addr + ' / ' + o[0].zip);
+  ok(o[0].name === '권영상 센터장 (KSA KS교육인증운영센터)' && o[0].phone === '010-5557-4187', '#447 업선: 첫 행 이름·전화', o[0].name + ' ' + o[0].phone);
+  ok(o.every(x => /황금향 5kg/.test(x.product)), '#447 업선: 물품명 「황금향 5kg (제주아꼼이네)」 이하 동일(「업선 물품명」 열 아님)', [...new Set(o.map(x => x.product))].join(' | '));
+  ok(/이찬우/.test(o[0].sender) && o[0].senderPhone === '010-3321-9827' && /이찬우/.test(o[17].sender) && /김정훈/.test(o[18].sender) && o[18].senderPhone === '010-6208-9178' && /김정훈/.test(o[21].sender), '#447 업선: 발송인 이하 동일(1~18 이찬우 · 19~22 김정훈) + 번호 분리', o[0].sender + ' / ' + o[18].sender);
+  ok(!o.some(x => /\n/.test(x.product + x.sender + x.name)), '#447 업선: 셀 줄바꿈 → 공백');
+  ok(/강병철/.test(o.context.sender), '#447 업선: 서문 「주문자 : 강병철」 → 보내는이 후보', o.context.sender);
+  const bad = rowIntegrity(s.aoa, o); ok(bad.length === 0, '🔴 #447 업선 줄 정합(이름·전화·주소 = 같은 원본 행)', JSON.stringify(bad.slice(0, 3)));
 }
 if (all.chuseokList) {
   const s1 = all.chuseokList.find(x => x.name === '1');

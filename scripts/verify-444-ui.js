@@ -29,7 +29,7 @@ const EMPTY = { results: { common: { errorCode: '0', errorMessage: '정상', tot
   await pg.click('.nav-item[data-page="organizer"]'); await pg.waitForTimeout(900);
   ok(await pg.evaluate(() => document.getElementById('page-organizer').classList.contains('active')), '진입: 주문 정리기 페이지 active');
   const bundle = await pg.evaluate(() => [...document.scripts].map(s => s.src).filter(s => /order-/.test(s)).map(s => s.split('/').pop()).join(','));
-  ok(/order-extract\.js\?v=2/.test(bundle) && /order-organizer\.js\?v=[3-9]/.test(bundle), '진입: 신번들(extract v=2 · organizer v≥3) 로드', bundle);
+  ok(/order-extract\.js\?v=[3-9]/.test(bundle) && /order-organizer\.js\?v=[4-9]/.test(bundle), '진입: 신번들(extract v≥3 · organizer v≥4) 로드', bundle);
   const rows = () => pg.evaluate(() => window.__ooTest.getRows().map(r => ({ name: r.name, phone: r.phone, addr: r.addr, product: r.product, qty: r.qty, memo: r.memo, sender: r.sender, senderPhone: r.senderPhone, status: r.status })));
   const reset = async () => { await pg.click('#ooBtnReset'); await pg.waitForTimeout(300); await pg.evaluate(() => { document.getElementById('ooOrdererName').value = ''; document.getElementById('ooOrdererPhone').value = ''; }); };
   const upload = async (file) => { await pg.setInputFiles('#ooFileInput', path.join(DL, file)); await pg.waitForTimeout(1500); };
@@ -73,6 +73,14 @@ const EMPTY = { results: { common: { errorCode: '0', errorMessage: '정상', tot
     const r = await rows();
     ok(r.length === 45 && r.every(x => x.name && x.phone && x.addr), '① 추석 발송 리스트: 3시트 45행(무회귀)', r.length + '행');
     ok(/와이에스글로벌/.test(await pg.evaluate(() => document.getElementById('ooOrdererName').value)), '① 추석 발송 리스트: 서문 「보내는사람 : …」 → 보내는이 칸');
+  }
+  if (fs.existsSync(path.join(DL, '주문자 강병철_추석 업선 대상 List.xls'))) {
+    await reset(); await upload('주문자 강병철_추석 업선 대상 List.xls');
+    const r = await rows();
+    ok(r.length === 22 && r.every(x => x.name && x.phone && x.addr), '① #447 업선 List(.xls 2줄 헤더): 22행 이름·전화·주소 채움', r.length + '행 / ' + (r[0] && r[0].addr));
+    ok(/이찬우/.test(r[0].sender) && /김정훈/.test(r[21].sender) && r[0].senderPhone === '010-3321-9827', '① #447 업선: 발송인 이하 동일 구간(이찬우→김정훈)·번호', r[0].sender + ' | ' + r[21].sender);
+    const zh = await pg.evaluate(() => window.__ooTest.getRows().map(r => r.zipHint));
+    ok(zh[0] === '22775' && zh.every(z => /^\d{5}$/.test(z)), '① #447 업선: 우편번호 힌트 22행', zh.slice(0, 3).join(','));
   }
   if (fs.existsSync(path.join(DL, '배송지.xlsx'))) {
     await reset(); await upload('배송지.xlsx');

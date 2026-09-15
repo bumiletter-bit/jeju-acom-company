@@ -114,19 +114,23 @@ const COLMAP = [
   ['company',     /업체명|업체|회사명|회사|상호/],
   ['phone2',      /연락처\s*2|전화\s*2/],
   ['phone',       /수취인연락처|연락처|전화|휴대폰|핸드폰|폰|HP|mobile/i],
-  ['name',        /수취인|받는\s*(사람|분|이)|수령인|성함|이름|고객명|성명/],   // #444: 「받는이」 추가
-  ['addr',        /배송지|주소|배송\s*주소|수령지/],
+  ['name',        /수취인|받는\s*(사람|분|이)|수령인|성함|이름|고객명|성명|대상/],   // #444: 「받는이」 · #447: 「대상」(업선 명단 양식)
+  ['zip',         /우편번호|우편/],                                                  // #447: 우편번호 열(주소 아님 — 검증 때 후보 좁히기 힌트)
+  ['addr2',       /상세주소|^상세$/],                                                // #447: 2줄 헤더의 「상세」 열 → 주소 뒤에 붙임
+  ['addr',        /배송지|주소|배송\s*주소|수령지|도로명/],                          // #447: 「도로명」 추가
   ['memo',        /메세지|메시지|배송\s*메모|요청|비고|메모/],
-  ['product',     /옵션|상품|품목|제품|구성|주문내역|내역/],
+  ['product',     /옵션|상품|품목|제품|물품|구성|주문내역|내역/],                    // #447: 「물품」 추가
   ['qty',         /수량|개수|갯수|박스\s*수/],
 ];
 function mapHeader(cells){
   const map = {};
   const alts = {};   // #444: 같은 필드에 매칭된 열 전부(순서대로) — 첫 열이 통째로 비어 있으면 parseAoa가 데이터 있는 열로 갈아탐
+  const hdr = {};    // #447: 열별 헤더 글자(공백 제거) — 같은 필드 후보 중 더 짧은(정확한) 헤더 우선 판단용
   let hits = 0;
   cells.forEach((c,i)=>{
     const t = String(c||'').replace(/\s+/g,'');   // "주 소" → "주소" (공백 무시)
     if (!t) return;
+    hdr[i] = t;
     for (const [field, re] of COLMAP){
       // #444: 「받는사람 주소」·「받는분연락처」처럼 받는-접두가 붙은 주소/연락처 헤더가 이름 규칙에 삼켜지지 않게 (다음 규칙으로 넘김)
       if (field === 'name' && /주소|배송지|수령지|연락처|전화|번호|휴대폰|핸드폰/.test(t)) continue;
@@ -140,8 +144,17 @@ function mapHeader(cells){
       }
     }
   });
-  return { map, hits, alts };
+  return { map, hits, alts, hdr };
 }
+/* #447: 「2줄 헤더」 판정 — 헤더 바로 아랫줄이 데이터가 아니라 소제목 줄(「우편번호 | 도로명 | 상세」)인가.
+   데이터로 볼 만한 셀(전화·주소 점수·긴 글)이 하나도 없고, 헤더 단어에 걸리는 셀이 2개 이상이면 소제목 줄 */
+function isSubHeaderRow(cells){
+  const vals = cells.map(c=>String(c??'').trim()).filter(Boolean);
+  if (!vals.length) return false;
+  if (vals.some(v => RE_PHONE_ANY.test(v) || glob.akAddressScore(v) >= 4 || v.length > 12)) return false;
+  return mapHeader(cells).hits >= 2;
+}
+const RE_TOTAL_ROW = /^(총\s*액|합\s*계|총\s*합계|소\s*계|계|total|sum)$/i;   // #447: 집계 줄은 주문 아님
 /* #444: 시트 서문·구간 표식 인식 재료 (헤더 밖 행) */
 const RE_MARK_SENDER = /^(보내는\s*(사람|분|이)|발송인|주문자|입금자)$/;                 // 단독 셀 「보내는 사람」 → 아래 행들은 보내는이 정보
 const RE_MARK_RECIP  = /^(받는\s*(사람|분|이)|수취인|수령인|배송지)$/;                      // 단독 셀 「받는 사람」 → 아래 행들은 주문
@@ -204,24 +217,34 @@ function parseAoa(aoa){
   aoa = aoa.map(r=>r.slice(0,60));
   const rowsA = aoa.filter(r=>r.some(c=>String(c).trim()!==''));
   if (!rowsA.length) return [];
-  let hIdx=-1, hMap=null, hAlts=null;
+  let hIdx=-1, hMap=null, hAlts=null, hHdr=null, hRows=1;
   // 헤더 탐색: 종전 앞 5행 → 없으면 #444 6~15행까지 확장(서문이 5행 넘는 양식 — 대량주문양식 실사례. 판정 조건은 종전과 동일)
   for (let i=0;i<Math.min(15,rowsA.length);i++){
-    const {map, hits, alts} = mapHeader(rowsA[i]);
-    if (hits>=2 && (map.addr!==undefined || map.name!==undefined)){ hIdx=i; hMap=map; hAlts=alts; break; }
+    const {map, hits, alts, hdr} = mapHeader(rowsA[i]);
+    if (hits>=2 && (map.addr!==undefined || map.name!==undefined)){ hIdx=i; hMap=map; hAlts=alts; hHdr=hdr; break; }
+  }
+  // #447: 2줄 헤더(윗줄 「주 소」·아랫줄 「우편번호 | 도로명 | 상세」) — 아랫줄이 소제목이면 두 줄을 열별로 합쳐 다시 판단
+  if (hIdx>=0 && hIdx+1 < rowsA.length && isSubHeaderRow(rowsA[hIdx+1])){
+    const top = rowsA[hIdx], sub = rowsA[hIdx+1];
+    const n = Math.max(top.length, sub.length);
+    const merged = Array.from({length:n}, (_,c)=> (String(top[c]??'').trim() + ' ' + String(sub[c]??'').trim()).trim());
+    const {map, hits, alts, hdr} = mapHeader(merged);
+    if (hits>=2 && (map.addr!==undefined || map.name!==undefined)){ hMap=map; hAlts=alts; hHdr=hdr; hRows=2; }
   }
   let dataRows, map;
   const context = { sender:'', senderPhone:'' };   // #444: 서문 「보내는사람 : ○○」·「보내는 사람」 구간 → 보내는이 자동 채움 재료
   const preRows = hIdx>=0 ? rowsA.slice(0, hIdx) : [];
-  if (hIdx>=0){ dataRows = rowsA.slice(hIdx+1); map = hMap; }
+  if (hIdx>=0){ dataRows = rowsA.slice(hIdx+hRows); map = hMap; }
   else { dataRows = rowsA; map = guessColumns(rowsA); }
   if (map.addr===undefined && map.phone===undefined && map.name===undefined) return [];
   // #444: 같은 이름 헤더가 2개(예: 「수량」·「보내는 사람 연락처」)면 첫 열이 통째로 비었을 때만 데이터 있는 다음 열로
+  // #447: 둘 다 데이터가 있으면 헤더 글자가 더 짧은(딱 그 단어인) 열 — 「물품명」 vs 「업선 물품명」
   if (hAlts){
     for (const f of Object.keys(hAlts)){
       if (hAlts[f].length < 2 || map[f] === undefined) continue;
       const hasData = c => dataRows.some(r => String(r[c]??'').trim() !== '');
       if (!hasData(map[f])){ const alt = hAlts[f].find(c => c !== map[f] && hasData(c)); if (alt !== undefined) map[f] = alt; }
+      else if (hHdr){ const withData = hAlts[f].filter(hasData); const best = withData.slice().sort((a,b)=> (hHdr[a]||'').length - (hHdr[b]||'').length || hAlts[f].indexOf(a) - hAlts[f].indexOf(b))[0]; if (best !== undefined && (hHdr[best]||'').length < (hHdr[map[f]]||'').length) map[f] = best; }
     }
   }
   const usedCols = new Set(Object.values(map));
@@ -272,7 +295,9 @@ function parseAoa(aoa){
         }
       } catch(e){ /* 종전 경로로 */ }
     }
-    const get = f => map[f]!==undefined ? String(r[map[f]]??'').trim() : '';
+    // #447: 집계 줄(「총액 | … | 789,800」)은 주문 아님 — 첫 셀이 합계 단어이고 전화 모양 셀이 없을 때만
+    if (RE_TOTAL_ROW.test(nonEmpty[0].replace(/\s+/g,'')) && !nonEmpty.some(v=>RE_PHONE_ANY.test(v))) continue;
+    const get = f => map[f]!==undefined ? String(r[map[f]]??'').replace(/\r?\n/g,' ').trim() : '';   // #447: 셀 안 줄바꿈 → 공백(그 외 글자·띄어쓰기는 손님 원문 그대로)
     // 수취인명에는 수취인(성명)만. 성명이 비어있을 때만 업체명으로 대체
     const nm = get('name') || get('company');
     const rec = {
@@ -280,6 +305,11 @@ function parseAoa(aoa){
       addr: get('addr'), product: get('product'), qty: (get('qty').match(/\d+/)||[''])[0],
       memo: get('memo'), sender: get('sender'), senderPhone: glob.akNormPhone(get('senderPhone')),
     };
+    // #447: 「상세」 열은 같은 행 주소 뒤에 · 우편번호는 힌트로만(주소 글자엔 안 넣음)
+    if (map.addr2 !== undefined && get('addr2')) rec.addr = (rec.addr ? rec.addr + ' ' : '') + get('addr2');
+    { const z = get('zip').replace(/\D/g,''); if (z.length === 5) rec.zip = z; }
+    // #447: 발송인 셀에 「회사 부서 성함 010-…」처럼 번호가 같이 있으면 번호는 보내는이 연락처로
+    if (rec.sender && !rec.senderPhone){ const pm = rec.sender.match(RE_PHONE_ANY); if (pm){ rec.senderPhone = glob.akNormPhone(pm[0]); rec.sender = rec.sender.replace(pm[0],'').replace(/\s{2,}/g,' ').trim(); } }
     // #444: 헤더 없는 표 — 전화가 행마다 다른 열에 있을 때: 같은 행의 전화 모양 셀(주소·이름 열 제외)을 순서대로 연락처1·2로. 상세만 적힌 셀(「301동 503호」)은 같은 행 주소 뒤에 붙임. 헤더 있는 표는 종전 그대로(줄 정합 원칙 — 다른 행은 절대 안 본다)
     if (hIdx < 0){
       const cells = r.map((c,ci)=>({c:String(c??'').trim(),ci})).filter(x=>x.c && x.ci!==map.addr && x.ci!==map.name);
@@ -301,6 +331,14 @@ function parseAoa(aoa){
       if (rec.memo && rec.memo !== prev.memo){ prev.memo = (prev.memo ? prev.memo + ' ' : '') + rec.memo; merged = true; }
       if (rec.product && rec.product !== prev.product && !(prev.product||'').includes(rec.product)){ prev.product = (prev.product ? prev.product + ' ' : '') + rec.product; merged = true; }
       if (merged) continue;
+    }
+    // #447(대표 GO — 발송인·물품명 두 칸에만 한정): 헤더 있는 표에서 그 열이 존재하는데 이 행이 빈칸이면 「이하 동일」로 보고 위 값을 이어받음.
+    //   🔴 받는 분 이름·전화·주소에는 절대 적용하지 않는다(줄 정합 1원칙).
+    if (hIdx >= 0 && prev){
+      for (const f of ['sender','senderPhone','product']){
+        if (map[f] === undefined && !(f === 'senderPhone' && map.sender !== undefined)) continue;
+        if (!rec[f] && prev[f]) rec[f] = prev[f];
+      }
     }
     if (rec.addr || rec.phone || rec.name) orders.push(rec);
   }
