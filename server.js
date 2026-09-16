@@ -5724,6 +5724,31 @@ app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgG
 function guideEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 // 지시 #235: "다른 상품들" 섹션 비노출 (대표 확정 — 옵션 나열이 뒤엉켜 혼동) — 숏클립과 동일한 플래그 OFF 방식(마크업·로직 보존, 정리 후 true로 재활성)
 const GUIDE_SHOW_OTHERS = false;
+// #449(대표 GO 9/16 — 추석 이벤트 1회성): 발송안내 알림톡 [맛있게 드시는 법·보관법] 버튼 페이지(/guide) 상단 이벤트 안내 블록.
+//   설정 = agent_office_config 'guide_event_card' {enabled, title, lines[], btn, url(https만), start, end}(start/end = KST 'YYYY-MM-DD', 포함).
+//   설정이 없거나 꺼졌거나 기간 밖이면 '' → 페이지 출력은 종전과 바이트 동일(스타일도 블록 안에만 둠). 알림톡 템플릿·버튼 URL 무접촉(재심사 없음).
+function guideEventCardHtml(cfg, nowMs) {
+    if (!cfg || typeof cfg !== 'object' || cfg.enabled === false) return '';
+    const url = String(cfg.url || '');
+    if (!/^https:\/\/[A-Za-z0-9.\-]+\.[A-Za-z]{2,}(\/[^\s"'<>]*)?$/.test(url)) return '';
+    const today = new Date((Number(nowMs) || Date.now()) + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    if (cfg.start && today < String(cfg.start)) return '';
+    if (cfg.end && today > String(cfg.end)) return '';
+    const title = guideEsc(cfg.title || '이벤트 안내');
+    const lines = (Array.isArray(cfg.lines) ? cfg.lines : []).map(l => guideEsc(l)).filter(Boolean);
+    const btn = guideEsc(cfg.btn || '자세히 보기');
+    return `<style>
+  .ev { background:var(--yellow-soft); border:1px solid #F3DF8A; border-radius:16px; padding:18px 18px 16px; margin-bottom:14px; }
+  .ev h2 { margin:0 0 8px; font-size:17px; line-height:1.25; letter-spacing:-.02em; color:var(--navy); text-wrap:balance; }
+  .ev p { margin:0 0 6px; font-size:13.5px; line-height:1.6; color:#2B3220; }
+  .ev p:last-of-type { margin-bottom:12px; }
+  .ev a.ev-btn { display:flex; align-items:center; justify-content:center; min-height:46px; padding:0 16px; border-radius:12px; background:var(--navy); color:#FFFDF5; font-weight:700; font-size:15px; text-decoration:none; transition:transform 120ms cubic-bezier(0.23,1,0.32,1), background-color 120ms; }
+  .ev a.ev-btn:hover { background:#2E3B22; } .ev a.ev-btn:active { transform:scale(0.97); }
+  .ev a.ev-btn:focus-visible { outline:3px solid var(--primary-dark); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) { .ev a.ev-btn { transition:none; } }
+</style>
+    <section class="ev" aria-labelledby="ev-title"><h2 id="ev-title">${title}</h2>${lines.map(l => `<p>${l}</p>`).join('')}<a class="ev-btn" href="${guideEsc(url)}" target="_blank" rel="noopener">${btn} ›</a></section>`;
+}
 app.get('/guide', async (req, res) => {
     try {
         const pid = parseInt(req.query.p, 10) || 0;
@@ -5739,6 +5764,7 @@ app.get('/guide', async (req, res) => {
             .replace(/\n/g, '<br>');
         const picked = rows.find(r => r.id === pid) || null;
         const others = rows.filter(r => !picked || r.id !== picked.id);
+        let evCard = ''; try { evCard = guideEventCardHtml(await naverCfgGet('guide_event_card'), Date.now()); } catch (_) { evCard = ''; }   // #449: 이벤트 블록(설정 없으면 '' — 출력 무변경)
         const card = (r, open) => `
             <details class="item"${open ? ' open' : ''}>
                 <summary>${guideEsc(r.name)}</summary>
@@ -5769,7 +5795,7 @@ app.get('/guide', async (req, res) => {
   .buy-slot { margin-top:12px; font-size:12px; color:#9aa0ab; border-top:1px dashed #e4e7ee; padding-top:10px; }
   .ft { text-align:center; font-size:12px; color:#9aa0ab; margin-top:24px; }
 </style></head><body><div class="wrap">
-    <div class="hd"><h1><img class="hd-logo" src="/akkomi.png" alt="아꼼이">제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p><span class="hd-badge">제주에서 우리집까지, 사랑스러운 제주 속으로</span></div>
+    <div class="hd"><h1><img class="hd-logo" src="/akkomi.png" alt="아꼼이">제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p><span class="hd-badge">제주에서 우리집까지, 사랑스러운 제주 속으로</span></div>${evCard}
     ${picked ? `<div class="sec-title">주문하신 상품</div>${card(picked, true)}` : ''}
     ${GUIDE_SHOW_OTHERS && others.length ? `<div class="sec-title">${picked ? '아꼼이네의 다른 상품들도 만나보세요' : '판매 상품 안내'}</div>${others.map(r => card(r, !picked && rows.length === 1)).join('')}` : ''}
     ${!picked ? '<p style="text-align:center; color:#767a83; font-size:14px; line-height:1.7; margin-top:28px;">주문 알림톡의 「맛있게 드시는 법」 버튼으로 접속하시면<br>주문하신 상품의 안내를 보실 수 있습니다 🍊</p>' : ''}
