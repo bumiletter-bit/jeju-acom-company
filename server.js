@@ -7416,7 +7416,8 @@ async function collectKakaoNotify() {
                         ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
                         : '시즌 시작 시 주문 순서대로 발송해 드려요';
                 } else {
-                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
+                    shipLine = memoShipLineSafe(po.shippingMemo, od.paymentDate || od.orderDate || now, hinfo)   // #450: 배송메세지 지정일 우선(없으면 종전)
+                        || shippingSchedule.computeShipping(od.paymentDate || od.orderDate || now, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
                 }
                 const tplDef = kakaoNotify.orderTemplate(isReserve);   // 부재 시 buildMessage가 뼈대 폴백(dry-run 검수에서 노출됨)
                 const message = kakaoNotify.buildMessage({
@@ -9157,13 +9158,18 @@ function holdWindow0809(paidMs, hset) {
     return shippingSchedule.isShipDay(payDayKst, hset);
 }
 // 발송 안내줄 (collectKakaoNotify #144·#182와 동일 — 예약은 품목 발송 시작일, 일반은 computeShipping)
-function buildShipLineFor(isReserve, matched, paidAt, hinfo) {
+function buildShipLineFor(isReserve, matched, paidAt, hinfo, memo) {   // #450: memo(배송메세지) 지정일 반영 — 없으면 종전 계산
     if (isReserve) {
         const rs = matched && matched.reserve_ship_start ? new Date(matched.reserve_ship_start) : null;
         return (rs && !isNaN(rs)) ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
                                   : '시즌 시작 시 주문 순서대로 발송해 드려요';
     }
-    return shippingSchedule.computeShipping(paidAt, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
+    const byMemo = memoShipLineSafe(memo, paidAt, hinfo);
+    return byMemo || shippingSchedule.computeShipping(paidAt, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
+}
+// #450: 배송메세지 해석은 어떤 경우에도 발송을 막지 않는다 — 예외·null이면 '' → 호출부가 종전 계산으로.
+function memoShipLineSafe(memo, paidAt, hinfo) {
+    try { const r = shippingSchedule.memoShipLine(memo, paidAt, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }); return (r && r.text) ? r.text : ''; } catch (_) { return ''; }
 }
 // 카페24 옵션 표기 정제 — option_value가 "상품 선택=1. (제철)…" 형태(dry 실측)라 시스템 접두어를 벗긴다
 function c24OptClean(v) { return String(v || '').replace(/^[^=]{0,20}=\s*/, '').trim(); }
@@ -9453,7 +9459,7 @@ async function collectCoupangNotify() {
                     [orderKey, optText.slice(0, 200), kakaoNotify.maskPhone(coupangRecvTel(s))]).catch(() => {});
                 continue;
             }
-            const shipLine = buildShipLineFor(isReserve, matched, paidAt, hinfo);
+            const shipLine = buildShipLineFor(isReserve, matched, paidAt, hinfo, s.parcelPrintMessage);   // #450: 쿠팡 배송메세지 지정일 반영
             const extra = items.length > 1 ? ` 외 ${items.length - 1}건` : '';
             const tplDef = kakaoNotify.orderTemplate(isReserve);
             const message = kakaoNotify.buildMessage({
@@ -13596,7 +13602,8 @@ setInterval(async () => {
                         ? `${rs.getMonth() + 1}월 ${rs.getDate()}일부터 순차 발송 예정 (주문 순서대로 보내드려요)`
                         : '시즌 시작 시 주문 순서대로 발송해 드려요';
                 } else {
-                    shipLine = shippingSchedule.computeShipping(od.paymentDate || od.orderDate || Date.now(), hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
+                    shipLine = memoShipLineSafe(po.shippingMemo, od.paymentDate || od.orderDate || Date.now(), hinfo)   // #450
+                        || shippingSchedule.computeShipping(od.paymentDate || od.orderDate || Date.now(), hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }).text;
                 }
                 const tplDef = kakaoNotify.orderTemplate(isReserve);
                 const message = kakaoNotify.buildMessage({

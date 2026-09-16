@@ -170,4 +170,102 @@ function renderGuidePlaceholders(text, baseAt, arriveOff) {
         .replace(/\{\{모레요일\}\}/g, DAY_KO[d2.getUTCDay()]);
 }
 
-module.exports = { computeShipping, computeArrival, renderGuidePlaceholders, isShipDay, isDeliveryDay, HOLIDAYS };
+
+// ── #450(대표 GO 9/16 "배송메모에 쓴 날짜를 주문완료 알림톡 발송안내에 반영"): 배송메세지의 발송·도착 요청일 해석
+//   배경: 손님이 메모에 「21일 발송」을 써도 알림톡은 「내일 발송」으로 나가 톡톡으로 재확인이 반복됐다(직원 "AI 카톡은 무시하세요" 3회 — 9/10~16 실기록).
+//   설계(보수적 — 틀린 날짜를 확정 문구로 내보내지 않는다):
+//     · 메모에 날짜(N일·M월 N일·M/N·요일)가 없으면 null → 호출부는 종전 computeShipping 그대로(출력 바이트 동일).
+//     · 발송 키워드(발송·출고·출발·보내·출하)가 붙은 날짜 = 발송일 확정 문구(그 날이 출고 가능일이고 최단 발송일 이후일 때만).
+//     · 도착 키워드(도착·받·수령·까지)가 붙은 날짜 = 그 날 도착에 맞는 최근 출고일로 계산(도착일이 배달 가능일일 때만).
+//     · 「배송」만 있는 경우·키워드 없음·날짜 2개 이상·제외/부정(주말 X·이후·이전…)·계산 불가 = 「요청 확인·담당자 확인 후 발송」 확인형(ack) 문구.
+//     · 요청 발송일이 종전 계산과 같으면 null(종전 문구 그대로).
+//   반환: null | { kind:'ship'|'arrive'|'ack', text, reqDate?:'YYYY-MM-DD' }
+function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
+    const raw = String(memo || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return null;
+    const ms = orderAt ? new Date(orderAt).getTime() : Date.now();
+    if (isNaN(ms)) return null;
+    const orderDay = kstDay(ms);
+    const arriveOff = (opts && opts.arriveOff) || null;
+    const normal = computeShipping(ms, shipOffSet, reasonByDate, { arriveOff });
+    const normalShip = new Date(normal.shipDate + 'T00:00:00Z');
+    const md = d => (d.getUTCMonth() + 1) + '/' + d.getUTCDate();
+    const ack = (label) => ({ kind: 'ack', text: '배송메세지에 남겨주신 요청(' + label + ') 확인했어요. 담당자가 확인 후 요청에 맞춰 발송 예정이며, 발송 후 안내 다시 드릴게요' });
+    const negative = /(안\s*돼|안돼|안되|말아|말고|제외|피해|빼고|빼주|아닌|이외|이후|이전|전에|전까지|불가)/.test(raw);
+    // 날짜 후보: 「M월 N일」·「N일」(범위·기간 표현 제외)·「M/N」
+    const found = [];
+    const reDay = /(?<![\d~\-–.])(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일(?![\d간째분시치씩]|\s*(?:후|뒤|이내|안에|정도|만에|간|째|정도|이상))/g;
+    let m;
+    while ((m = reDay.exec(raw))) {
+        const mo = m[1] ? Number(m[1]) : null, dd = Number(m[2]);
+        if (dd < 1 || dd > 31 || (mo != null && (mo < 1 || mo > 12))) continue;
+        found.push({ mo, dd, idx: m.index, len: m[0].length });
+    }
+    const reSlash = /(?<![\d\-])(\d{1,2})\s*\/\s*(\d{1,2})(?![\d/])/g;
+    while ((m = reSlash.exec(raw))) {
+        const mo = Number(m[1]), dd = Number(m[2]);
+        if (mo < 1 || mo > 12 || dd < 1 || dd > 31) continue;
+        found.push({ mo, dd, idx: m.index, len: m[0].length });
+    }
+    const reDow = /(다음\s*주|담주|이번\s*주)?\s*([월화수목금토일])(?:요일|욜)/g;
+    while ((m = reDow.exec(raw))) found.push({ dow: '일월화수목금토'.indexOf(m[2]), next: /다음|담주/.test(m[1] || ''), idx: m.index, len: m[0].length });
+    const weekendNeg = negative && /(주말|토요일|토욜|일요일)/.test(raw);
+    if (!found.length) return weekendNeg ? ack('주말 제외') : null;
+    if (found.length > 1) return ack('일정 지정');
+    const f = found[0];
+    // 요청일 결정(KST 달력일)
+    let req;
+    if (f.dow != null) {
+        const kstHour = new Date(ms + KST_MS).getUTCHours();
+        let d = orderDay;
+        const todayDow = d.getUTCDay();
+        let diff = (f.dow - todayDow + 7) % 7;
+        if (diff === 0 && kstHour >= 8) diff = 7;
+        if (f.next) {   // 다음 주 = 다음 월요일부터 시작하는 주
+            const toNextMon = ((1 - todayDow + 7) % 7) || 7;
+            diff = toNextMon + ((f.dow - 1 + 7) % 7);
+        }
+        req = addDays(d, diff);
+    } else {
+        const y = orderDay.getUTCFullYear(), curMo = orderDay.getUTCMonth() + 1;
+        let mo = f.mo != null ? f.mo : curMo;
+        let cand = new Date(Date.UTC(y, mo - 1, f.dd));
+        if (cand.getUTCDate() !== f.dd) return ack('일정 지정');   // 존재하지 않는 날짜(9/31 등)
+        if (f.mo == null && cand < addDays(orderDay, -1)) cand = new Date(Date.UTC(y, mo, f.dd));       // 이번 달 지난 날짜 → 다음 달
+        if (f.mo != null && cand < addDays(orderDay, -1)) cand = new Date(Date.UTC(y + 1, mo - 1, f.dd)); // 지난 월 → 내년
+        req = cand;
+    }
+    const span = Math.round((req - orderDay) / 86400000);
+    if (span < 0 || span > 45) return null;   // 과거·45일 초과 = 날짜 요청으로 보지 않음(종전 문구)
+    const label = md(req) + '(' + DAY_KO[req.getUTCDay()] + ')';
+    if (negative) return ack(label + ' 관련');
+    // 키워드 판정(날짜 앞 6자·뒤 10자)
+    const around = raw.slice(Math.max(0, f.idx - 6), f.idx + f.len + 10);
+    const shipKw = /(발송|출고|출발|보내|출하)/.test(around);
+    const arriveKw = /(도착|받|수령|까지|배달)/.test(around);
+    const deliverKw = /배송/.test(around);
+    if (shipKw && arriveKw) return ack(label);
+    if (shipKw) {
+        if (!isShipDay(req, shipOffSet)) return ack(label + ' 발송');           // 토·발송휴무일 요청 = 사람 확인
+        if (req < normalShip) return ack(label + ' 발송');                      // 최단 발송일보다 앞선 요청(오늘 8시 이후 「오늘 발송」 등)
+        if (ymd(req) === normal.shipDate) return null;                           // 종전 계산과 같음 = 종전 문구
+        const a1 = nextMatching(req, d => isDeliveryDay(d, arriveOff)), a2 = nextMatching(a1, d => isDeliveryDay(d, arriveOff));
+        return { kind: 'ship', reqDate: ymd(req), text: '배송메세지에 남겨주신 요청대로 ' + shipPhrase(orderDay, req) + ' 오전 발송, ' + arrivePhrase(req, a1, a2) + '이에요' };
+    }
+    if (arriveKw && !deliverKw) {
+        if (!isDeliveryDay(req, arriveOff)) return ack(label + ' 도착');
+        // 요청 도착일에 맞는 가장 늦은 출고일(최단 발송일 이후)
+        let s = null;
+        for (let d = addDays(req, -1); d >= normalShip; d = addDays(d, -1)) {
+            if (!isShipDay(d, shipOffSet)) continue;
+            const a1 = nextMatching(d, x => isDeliveryDay(x, arriveOff));
+            if (a1 <= req) { s = d; break; }
+        }
+        if (!s) return ack(label + ' 도착');
+        if (ymd(s) === normal.shipDate) return null;
+        return { kind: 'arrive', reqDate: ymd(req), text: shipPhrase(orderDay, s) + ' 오전 발송 예정이에요 (배송메세지에 남겨주신 ' + label + ' 도착 요청 기준 — 택배 사정으로 하루 정도 차이가 날 수 있어요)' };
+    }
+    return ack(label + (deliverKw ? ' 배송' : ''));
+}
+
+module.exports = { computeShipping, computeArrival, renderGuidePlaceholders, isShipDay, isDeliveryDay, HOLIDAYS, memoShipLine };
