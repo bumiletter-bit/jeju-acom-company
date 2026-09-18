@@ -24,6 +24,12 @@
     const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
     const isoOf = (y, m, d) => { const dt = new Date(Date.UTC(y, m - 1, d)); return isNaN(dt) ? null : dt.toISOString().slice(0, 10); };
     const mdLabel = iso => iso ? `${parseInt(iso.slice(5, 7))}/${parseInt(iso.slice(8, 10))}` : '';
+    // embed(iframe) 모드: 내용 높이(달력 팝업 포함)를 바깥 페이지에 알려 iframe이 스크롤 없이 늘어나게 — 렌더·달력 열림/닫힘 때 즉시 + 주기
+    const IS_EMBED = () => document.body.classList.contains('embed') && window.parent !== window;
+    function postHeight() {
+        if (!IS_EMBED()) return;
+        try { const pop = document.querySelector('.akm-cal.ivt-cal'); const popBottom = pop && pop.style.display !== 'none' ? pop.getBoundingClientRect().bottom + window.scrollY + 16 : 0; window.parent.postMessage({ type: 'ivt-height', h: Math.max(document.documentElement.scrollHeight, popBottom) }, location.origin); } catch (_) { }
+    }
 
     let P = null;   // app.js에서 떼어낸 실코드(변환 3종·시트1 내보내기·단가표 로드·중간발주 집계/렌더)
     async function loadProd() {
@@ -151,7 +157,14 @@
             });
             document.addEventListener('mousedown', e => { if (!isOpen()) return; if (pop.contains(e.target) || (cur && e.target === $(cur.ids.ship))) return; close(); });
             document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
-            window.addEventListener('resize', close);
+            // 🔴 resize에 close()하면 안 된다 — embed(iframe) 모드에선 달력이 열려 높이가 늘 때 바깥이 iframe을 키우고 그 순간 resize가 와서 열리자마자 닫혔음(대표 실물 9/18). 위치만 다시 잡는다.
+            window.addEventListener('resize', () => { if (isOpen() && cur) place(); });
+        }
+        function place() {
+            const input = $(cur.ids.ship); const r = input.getBoundingClientRect(); const pw = pop.offsetWidth, ph = pop.offsetHeight; let left = r.left, top = r.bottom + 6;
+            if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);
+            if (top + ph > window.innerHeight - 8 && r.top - ph - 6 > 0 && !document.body.classList.contains('embed')) top = r.top - ph - 6;   // embed에선 아래로 열고 iframe이 늘어남
+            pop.style.left = `${left + window.scrollX}px`; pop.style.top = `${top + window.scrollY}px`;
         }
         function render() {
             const cal = cur.calendar, sel = cur.shipDate, todayIso = cal.realToday;
@@ -172,16 +185,12 @@
         }
         function pick(d) { const ctx = cur; close(); if (!ctx || ctx.shipDate === d) return; ctx.shipDate = d; saveLines(ctx); }
         function isOpen() { return !!pop && pop.style.display !== 'none'; }
-        function close() { if (pop) pop.style.display = 'none'; cur = null; }
+        function close() { if (pop) pop.style.display = 'none'; cur = null; postHeight(); }
         function open(ctx) {
-            ensure(); const input = $(ctx.ids.ship); if (!ctx.calendar) return;
+            ensure(); if (!ctx.calendar) return;
             if (cur === ctx && isOpen()) { close(); return; }
             cur = ctx; const v = ctx.shipDate || ctx.calendar.realToday; viewY = +v.slice(0, 4); viewM = +v.slice(5, 7) - 1; render();
-            pop.style.visibility = 'hidden'; pop.style.display = 'block';
-            const r = input.getBoundingClientRect(); const pw = pop.offsetWidth, ph = pop.offsetHeight; let left = r.left, top = r.bottom + 6;
-            if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);
-            if (top + ph > window.innerHeight - 8 && r.top - ph - 6 > 0) top = r.top - ph - 6;
-            pop.style.left = `${left + window.scrollX}px`; pop.style.top = `${top + window.scrollY}px`; pop.style.visibility = 'visible';
+            pop.style.visibility = 'hidden'; pop.style.display = 'block'; place(); pop.style.visibility = 'visible'; postHeight();
         }
         return { open, close, isOpen };
     })();
@@ -506,10 +515,7 @@
         $('ivt-qty-reset').addEventListener('click', resetQ);
         C.allLines = []; Q.allLines = []; render(C);
         // embed(iframe) 모드: 내용 높이를 바깥 페이지에 알려 iframe이 스크롤 없이 늘어나게
-        if (document.body.classList.contains('embed') && window.parent !== window) {
-            const post = () => { try { window.parent.postMessage({ type: 'ivt-height', h: document.documentElement.scrollHeight }, location.origin); } catch (_) { } };
-            new ResizeObserver(post).observe(document.body); post(); setInterval(post, 1500);
-        }
+        if (IS_EMBED()) { new ResizeObserver(postHeight).observe(document.body); postHeight(); setInterval(postHeight, 1500); }
         if (localStorage.getItem('jwt_token')) { parseMemos(C).then(() => { Q.shipDate = null; return parseMemos(Q); }).catch(() => {}); }   // 기준 발송일 셀렉트 먼저 채움(주문 없이도)
         window.__ivt = { S: C, Q, refreshAll: refreshC, refreshQ, render: () => render(C), download, fmtTel, parseDate, parseLines, switchMode, runQty, qtyTotal: () => P.qtyTotal(), saveLines, ShipCal,
             setNaverApiRows: async rows => { C.naver = { src: 'api', rows }; await refreshC('naver'); },

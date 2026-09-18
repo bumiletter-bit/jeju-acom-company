@@ -56,6 +56,17 @@ const TOKEN = jwt.sign(USER, 'verifytest', { expiresIn: '1h' });
         const q1 = await frame.evaluate(() => __ivt.qtyTotal());
         ok(q0.rows > 0 && q0.filter === 4 && q1 >= q0.total, '② 중간발주 탭(프레임): 집계 렌더·거래처 필터·체크 토글 반영', JSON.stringify({ ...q0, after: q1 }));
         await fr.locator('#ivt-mode-convert').click();
+        // ②-c 프레임 안 달력(대표 실물 9/18 "기준 발송일 누르는데 달력 안 뜸" — resize에 닫히던 결함): 열림 유지 · iframe 높이가 팝업까지 포함 · 날짜 클릭 적용 · 파일 영역 클릭 = 파일 선택창
+        await fr.locator('#ship-date').click(); await pg.waitForTimeout(1200);
+        const cal = await pg.evaluate(() => { const f = document.getElementById('invoice-v2-frame'); const d = f.contentDocument; const p = d.querySelector('.akm-cal.ivt-cal'); if (!p || p.style.display === 'none') return { open: false }; const r = p.getBoundingClientRect(); return { open: f.contentWindow.__ivt.ShipCal.isOpen(), days: p.querySelectorAll('.akm-cal-day').length, bottomIn: (r.bottom + 8) <= (parseInt(f.style.height) || 0), h: parseInt(f.style.height), popBottom: Math.round(r.bottom) }; });
+        ok(cal.open && cal.days === 42 && cal.bottomIn, '②-c 프레임 안 기준 발송일 달력: 1.2초 뒤에도 열림 유지 · iframe 높이가 팝업 아래까지 포함', JSON.stringify(cal));
+        const alt = await frame.evaluate(() => { const s = __ivt.S.calendar.shipDays.find(d => d !== __ivt.S.shipDate && d.slice(0, 7) === __ivt.S.shipDate.slice(0, 7)); return s || null; });
+        if (alt) { await fr.locator(`.ivt-cal .akm-cal-day[data-date="${alt}"]`).click(); await frame.waitForFunction(() => !document.getElementById('save-all').disabled); await pg.waitForTimeout(400); }
+        const picked = await frame.evaluate(() => ({ iso: document.getElementById('ship-date').dataset.iso, open: __ivt.ShipCal.isOpen() }));
+        ok(!alt || (picked.iso === alt && !picked.open), '②-c 달력에서 다른 발송일 클릭 → 적용·닫힘', JSON.stringify(picked));
+        if (alt) { await fr.locator('#ship-date').click(); await pg.waitForTimeout(300); await fr.locator('.ivt-cal [data-next]').click(); await pg.waitForTimeout(500); }
+        const [chooser] = await Promise.all([pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), fr.locator('#area-naver').click()]);
+        ok(!!chooser, '②-c 프레임 안 파일 영역 클릭 → 파일 선택창 열림(드래그 대신 클릭 업로드 경로)');
         // ③ 메뉴 왕복 → 상태 유지 · 높이 · 레거시 해시
         await pg.evaluate(() => switchPage('pricing')); await pg.waitForTimeout(800); await pg.evaluate(() => switchPage('invoice')); await pg.waitForTimeout(800);
         const keep = await pg.evaluate(() => { const f = document.getElementById('invoice-v2-frame'); return { same: /invoice-v2\.html\?embed=1$/.test(f.src), n: f.contentWindow.__ivt ? f.contentWindow.__ivt.S.merged.length : -1, h: parseInt(f.style.height) || 0 }; });
