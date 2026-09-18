@@ -7097,7 +7097,8 @@ app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res
             try { const r = shippingSchedule.memoShipLine(m, at, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }); return r ? { kind: r.kind, reqDate: r.reqDate || null, text: r.text } : null; }
             catch (_) { return null; }
         });
-        res.json({ ok: true, today, realToday, suggested, shipDays, results });
+        const noShip = [...hinfo.set].sort(); const noShipReasons = {}; hinfo.reasons.forEach((v, k) => { if (hinfo.set.has(k)) noShipReasons[k] = v; });   // 달력 표시용(토요일은 클라이언트 규칙)
+        res.json({ ok: true, today, realToday, suggested, shipDays, noShip, noShipReasons, results });
     } catch (err) { res.status(500).json({ ok: false, message: String(err.message || err) }); }
 });
 

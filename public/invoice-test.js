@@ -124,16 +124,66 @@
         const memos = ctx.merged.map(e => String(e.conv['배송메세지'] || ''));
         const r = await api('/api/agent-office/invoice/memo-parse', 'POST', { memos, baseDate: ctx.shipDate || null });
         if (!r.ok) throw new Error(r.message || '메모 해석 실패');
-        ctx.today = r.today; ctx.shipDate = r.today; ctx.calendar = { realToday: r.realToday, suggested: r.suggested, shipDays: r.shipDays || [] }; ctx.fetchedOn = kstToday();
-        fillShipSelect(ctx);
+        ctx.today = r.today; ctx.shipDate = r.today; ctx.calendar = { realToday: r.realToday, suggested: r.suggested, shipDays: r.shipDays || [], noShip: new Set(r.noShip || []), reasons: r.noShipReasons || {} }; ctx.fetchedOn = kstToday();
+        fillShipInput(ctx);
         ctx.merged.forEach((e, k) => { const p = r.results[k] || null; e.parse = p; e.memoFlag = flagOf(p, memos[k], ctx.today); });
     }
-    function fillShipSelect(ctx) {
-        const sel = $(ctx.ids.ship); if (!sel || !ctx.calendar) return;
-        const days = [...new Set([ctx.shipDate].concat(ctx.calendar.shipDays))].sort();
-        sel.innerHTML = days.map(d => `<option value="${d}"${d === ctx.shipDate ? ' selected' : ''}>${dateLabel(d)}${d === ctx.calendar.realToday ? ' · 오늘' : ''}${d === ctx.calendar.suggested ? ' ← 다음 발송일' : ''}</option>`).join('');
-        const note = $(ctx.ids.shipNote); if (note) note.textContent = ctx.shipDate === ctx.calendar.realToday ? '오늘 발송분 기준' : `오늘(${mdLabel(ctx.calendar.realToday)}) 발송은 끝난 것으로 보고 ${mdLabel(ctx.shipDate)} 발송분 기준 — 토요일·발송휴무일은 달력에서 자동 제외`;
+    function fillShipInput(ctx) {
+        const inp = $(ctx.ids.ship); if (!inp || !ctx.calendar) return;
+        const cal = ctx.calendar, d = ctx.shipDate;
+        inp.value = `${dateLabel(d)}${d === cal.realToday ? ' · 오늘' : ''}${d === cal.suggested ? ' · 다음 발송일' : ' · 직접 선택'}`; inp.dataset.iso = d;
+        const note = $(ctx.ids.shipNote); if (note) note.textContent = d === cal.suggested
+            ? (d === cal.realToday ? '오늘 발송분 기준(정오 전) — 달력을 눌러 바꿀 수 있어요' : `오늘(${mdLabel(cal.realToday)}) 발송은 끝난 것으로 보고 ${mdLabel(d)} 발송분 기준 — 토요일·발송휴무일은 달력에서 자동 제외`)
+            : `직접 고른 날짜 기준(달력의 다음 발송일은 ${mdLabel(cal.suggested)})`;
     }
+    // 📅 기준 발송일 달력 — 본 화면 akm-cal 디자인(styles.css 클래스 재사용) + 발송 불가일(토요일·발송휴무일·지난 날) 비활성 + 「다음 발송일」 표시. 날짜를 누르면 그날 기준으로 즉시 재판정.
+    const ShipCal = (() => {
+        let pop = null, cur = null, viewY = 0, viewM = 0;
+        const iso3 = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        function ensure() {
+            if (pop) return;
+            pop = document.createElement('div'); pop.className = 'akm-cal ivt-cal'; pop.style.display = 'none'; document.body.appendChild(pop);
+            pop.addEventListener('click', e => {
+                const nav = e.target.closest('[data-nav]'); if (nav) { viewM += parseInt(nav.dataset.nav, 10); while (viewM < 0) { viewM += 12; viewY--; } while (viewM > 11) { viewM -= 12; viewY++; } render(); return; }
+                if (e.target.closest('[data-next]')) { pick(cur.calendar.suggested); return; }
+                const day = e.target.closest('[data-date]'); if (day && !day.disabled) pick(day.dataset.date);
+            });
+            document.addEventListener('mousedown', e => { if (!isOpen()) return; if (pop.contains(e.target) || (cur && e.target === $(cur.ids.ship))) return; close(); });
+            document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+            window.addEventListener('resize', close);
+        }
+        function render() {
+            const cal = cur.calendar, sel = cur.shipDate, todayIso = cal.realToday;
+            const startDow = new Date(Date.UTC(viewY, viewM, 1)).getUTCDay(); let cells = '';
+            for (let i = 0; i < 42; i++) {
+                const dt = new Date(Date.UTC(viewY, viewM, i - startDow + 1)); const dIso = iso3(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()); const dow = i % 7;
+                const off = dow === 6 || cal.noShip.has(dIso), past = dIso < todayIso;
+                const cls = ['akm-cal-day']; if (dt.getUTCMonth() !== viewM) cls.push('out'); if (dow === 0) cls.push('sun'); else if (dow === 6) cls.push('sat');
+                if (dIso === todayIso) cls.push('today'); if (dIso === sel) cls.push('sel'); if (off) cls.push('off'); if (past && !off) cls.push('past');
+                const tip = off ? (dow === 6 && !cal.noShip.has(dIso) ? '토요일 — 발송 없음' : '발송휴무일' + (cal.reasons[dIso] ? ' · ' + cal.reasons[dIso] : '')) : past ? '지난 날짜' : '';
+                const lab = dIso === cal.suggested ? '<i>다음 발송일</i>' : off ? '<i class="x">휴무</i>' : '';
+                cells += `<button type="button" class="${cls.join(' ')}" data-date="${dIso}" title="${aoEsc(tip)}"${off || past ? ' disabled' : ''}><span>${dt.getUTCDate()}</span>${lab}</button>`;
+            }
+            pop.innerHTML = `<div class="akm-cal-head"><button type="button" class="akm-cal-nav" data-nav="-1" title="이전 달">‹</button><div class="akm-cal-title">${viewY}년 ${viewM + 1}월</div><button type="button" class="akm-cal-nav" data-nav="1" title="다음 달">›</button></div>
+                <div class="akm-cal-week"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+                <div class="akm-cal-grid">${cells}</div>
+                <div class="akm-cal-foot"><span class="ivt-cal-legend"><b class="n">다음 발송일</b> · <s>휴무·토요일</s> = 선택 불가</span><button type="button" class="akm-cal-today-btn" data-next="1">다음 발송일(${mdLabel(cal.suggested)})로</button></div>`;
+        }
+        function pick(d) { const ctx = cur; close(); if (!ctx || ctx.shipDate === d) return; ctx.shipDate = d; saveLines(ctx); }
+        function isOpen() { return !!pop && pop.style.display !== 'none'; }
+        function close() { if (pop) pop.style.display = 'none'; cur = null; }
+        function open(ctx) {
+            ensure(); const input = $(ctx.ids.ship); if (!ctx.calendar) return;
+            if (cur === ctx && isOpen()) { close(); return; }
+            cur = ctx; const v = ctx.shipDate || ctx.calendar.realToday; viewY = +v.slice(0, 4); viewM = +v.slice(5, 7) - 1; render();
+            pop.style.visibility = 'hidden'; pop.style.display = 'block';
+            const r = input.getBoundingClientRect(); const pw = pop.offsetWidth, ph = pop.offsetHeight; let left = r.left, top = r.bottom + 6;
+            if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);
+            if (top + ph > window.innerHeight - 8 && r.top - ph - 6 > 0) top = r.top - ph - 6;
+            pop.style.left = `${left + window.scrollX}px`; pop.style.top = `${top + window.scrollY}px`; pop.style.visibility = 'visible';
+        }
+        return { open, close, isOpen };
+    })();
     // 직원 줄(정리 파일) 읽기 — 칸 1개, 플랫폼 칸으로 채널 구분(없으면 네이버). 같은 주문에 줄이 여럿이면 오늘 > 뒤 날짜(가까운 순) > 지난 날짜(최근 순) > 날짜 없음
     function readLines(ctx) {
         const today = ctx.today || kstToday();
@@ -429,8 +479,8 @@
         $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
         $('save-all').addEventListener('click', () => saveLines(C));
         $('qsave-all').addEventListener('click', () => saveLines(Q));
-        $('ship-date').addEventListener('change', () => { C.shipDate = $('ship-date').value; saveLines(C); });
-        $('qship-date').addEventListener('change', () => { Q.shipDate = $('qship-date').value; saveLines(Q); });
+        $('ship-date').addEventListener('click', () => ShipCal.open(C));
+        $('qship-date').addEventListener('click', () => ShipCal.open(Q));
         for (const ch of CH) {
             const area = $('area-' + ch), input = $('file-' + ch);
             area.addEventListener('click', () => input.click());
@@ -445,7 +495,7 @@
         $('ivt-qty-reset').addEventListener('click', resetQ);
         C.allLines = []; Q.allLines = []; render(C);
         if (localStorage.getItem('jwt_token')) { parseMemos(C).then(() => { Q.shipDate = null; return parseMemos(Q); }).catch(() => {}); }   // 기준 발송일 셀렉트 먼저 채움(주문 없이도)
-        window.__ivt = { S: C, Q, refreshAll: refreshC, refreshQ, render: () => render(C), download, fmtTel, parseDate, parseLines, switchMode, runQty, qtyTotal: () => P.qtyTotal(), saveLines,
+        window.__ivt = { S: C, Q, refreshAll: refreshC, refreshQ, render: () => render(C), download, fmtTel, parseDate, parseLines, switchMode, runQty, qtyTotal: () => P.qtyTotal(), saveLines, ShipCal,
             setNaverApiRows: async rows => { C.naver = { src: 'api', rows }; await refreshC('naver'); },
             setRows: async (ch, rows) => { C[ch] = rows; await refreshC(ch); },
             setQRows: async (nvRows, cfRows, cpRows) => { Q.naver = nvRows ? { src: 'api', rows: nvRows } : null; Q.cafe24 = cfRows || []; Q.coupang = cpRows || []; Q.merged = []; await refreshQ(); } };   // 검증용 훅

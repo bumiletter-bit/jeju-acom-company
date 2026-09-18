@@ -64,7 +64,18 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(true, '① 파일 업로드 → 미리보기 행수 = 원본', N);
         const st1 = await pg.evaluate(() => ({ excl: __ivt.S.merged.filter(e => e.excluded).length, review: __ivt.S.merged.filter(e => e.flag === 'review').length, today: __ivt.S.today }));
         ok(st1.excl === expExcl, '① 자동 체크(기준일 발송 아님) = memo-parse 규칙', `${st1.excl} / 기대 ${expExcl}`);
-        ok((await pg.inputValue('#ship-date')) === mp.today && (await pg.locator('#ship-date option').count()) >= 5 && /다음 발송일/.test(await pg.textContent('#ship-date')), '① 기준 발송일 셀렉트 = suggested · 다음 발송일 후보 표시', await pg.inputValue('#ship-date'));
+        ok((await pg.getAttribute('#ship-date', 'data-iso')) === mp.today && /다음 발송일/.test(await pg.inputValue('#ship-date')), '① 기준 발송일 입력 = suggested · 「다음 발송일」 표기', await pg.inputValue('#ship-date'));
+        // 📅 달력: 열기 → 토요일·휴무일 비활성 · 다음 발송일 라벨 · 다른 발송일 클릭 → 기준일 변경·재판정 → 다음 발송일 버튼으로 복귀
+        await pg.click('#ship-date'); await pg.waitForSelector('.akm-cal.ivt-cal', { state: 'visible' });
+        const calInfo = await pg.evaluate(() => { const days = Array.from(document.querySelectorAll('.ivt-cal .akm-cal-day')); return { n: days.length, satOff: days.filter((b, i) => i % 7 === 6).every(b => b.disabled && b.classList.contains('off')), noShipOff: (window.__ivt.S.calendar.noShip.size ? [...window.__ivt.S.calendar.noShip] : []).every(d => { const b = days.find(x => x.dataset.date === d); return !b || b.disabled; }), nextLab: (days.find(b => b.dataset.date === window.__ivt.S.calendar.suggested) || {}).textContent || '', sel: (days.find(b => b.classList.contains('sel')) || {}).dataset?.date }; });
+        ok(calInfo.n === 42 && calInfo.satOff && calInfo.noShipOff && /다음 발송일/.test(calInfo.nextLab) && calInfo.sel === mp.today, '📅 달력: 42칸 · 토요일·발송휴무일 비활성 · 다음 발송일 라벨 · 선택 = 기준일', JSON.stringify(calInfo));
+        const altDay = mp.shipDays.find(d => d !== mp.today && d.slice(0, 7) === mp.today.slice(0, 7)) || mp.shipDays.find(d => d !== mp.today);
+        if (altDay.slice(0, 7) !== mp.today.slice(0, 7)) { await pg.click('.ivt-cal [data-nav="1"]'); }
+        await pg.click(`.ivt-cal .akm-cal-day[data-date="${altDay}"]`); await pg.waitForFunction(() => !document.getElementById('save-all').disabled); await pg.waitForTimeout(400);
+        const alt = await pg.evaluate(() => ({ iso: document.getElementById('ship-date').dataset.iso, today: __ivt.S.today, txt: document.getElementById('ship-date').value, open: __ivt.ShipCal.isOpen() }));
+        ok(alt.iso === altDay && alt.today === altDay && /직접 선택/.test(alt.txt) && !alt.open, '📅 다른 발송일 클릭 → 기준 발송일 변경·재판정·달력 닫힘', JSON.stringify(alt));
+        await pg.click('#ship-date'); await pg.waitForSelector('.akm-cal.ivt-cal', { state: 'visible' }); await pg.click('.ivt-cal [data-next]'); await pg.waitForFunction(() => !document.getElementById('save-all').disabled); await pg.waitForTimeout(400);
+        ok((await pg.getAttribute('#ship-date', 'data-iso')) === mp.today && (await pg.evaluate(() => __ivt.S.today)) === mp.today, '📅 「다음 발송일로」 버튼 → 추천값 복귀', await pg.inputValue('#ship-date'));
         ok(st1.review >= expAck, '① 확인필요 ≥ 애매(ack) 건수', `${st1.review} / ack ${expAck}`);
         const reviewRows = await pg.locator('#review tbody tr').count();
         ok(reviewRows === (await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && (e.excluded || e.flag)).length)), '① 검토 목록 = 체크됨 + 확인필요', reviewRows);
