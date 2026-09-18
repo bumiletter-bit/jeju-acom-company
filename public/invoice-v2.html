@@ -20,16 +20,18 @@
   .ivt-badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:#FEF3C7; color:#B45309; vertical-align:middle; margin-left:8px; }
   .ivt-note { font-size:12.5px; color:var(--text-mid,#666); line-height:1.6; margin-top:6px; }
   .ivt-stats { display:flex; gap:16px; flex-wrap:wrap; font-size:13px; margin:0 0 12px; color:var(--text-mid,#666); }
-  .ivt-stats b { color: var(--primary); font-size:14px; }
+  .ivt-stats span { display:inline-flex; align-items:baseline; gap:4px; min-width:118px; white-space:nowrap; }   /* 건수 바뀌어도 자리 고정(#452-w) */
+  .ivt-stats b { color: var(--primary); font-size:14px; font-variant-numeric:tabular-nums; min-width:2.2ch; text-align:right; }
   .table-scroll-wrapper.ivt { max-height: 440px; overflow:auto; border:1px solid #ECEDF1; border-radius:12px; }
   .data-table td.memo { white-space:pre-wrap; }
   /* 검토·미리보기 표 열 너비 고정(#452-v) — 필터·체크로 내용이 바뀌어도 칸이 안 틀어지게 */
   #review, #qreview, #preview { table-layout:fixed; width:100%; }
   #review td, #qreview td, #preview td { word-break:break-word; overflow-wrap:anywhere; vertical-align:middle; }
-  #review th:nth-child(1), #qreview th:nth-child(1) { width:46px; } #review th:nth-child(2), #qreview th:nth-child(2) { width:92px; } #review th:nth-child(3), #qreview th:nth-child(3) { width:92px; }
+  #review th, #qreview th, #preview th { white-space:nowrap; }
+  #review th:nth-child(1), #qreview th:nth-child(1) { width:52px; } #review th:nth-child(2), #qreview th:nth-child(2) { width:92px; } #review th:nth-child(3), #qreview th:nth-child(3) { width:92px; }
   #review th:nth-child(4), #qreview th:nth-child(4) { width:25%; } #review th:nth-child(5), #qreview th:nth-child(5) { width:48px; } #review th:nth-child(6), #qreview th:nth-child(6) { width:31%; }
   #review th:nth-child(7), #qreview th:nth-child(7) { width:19%; } #review th:nth-child(8), #qreview th:nth-child(8) { width:128px; }
-  #preview th:nth-child(1) { width:46px; } #preview th:nth-child(2) { width:44px; } #preview th:nth-child(3) { width:92px; } #preview th:nth-child(4) { width:92px; } #preview th:nth-child(5) { width:24%; }
+  #preview th:nth-child(1) { width:52px; } #preview th:nth-child(2) { width:44px; } #preview th:nth-child(3) { width:92px; } #preview th:nth-child(4) { width:92px; } #preview th:nth-child(5) { width:24%; }
   #preview th:nth-child(6) { width:48px; } #preview th:nth-child(7) { width:20%; } #preview th:nth-child(8) { width:26%; } #preview th:nth-child(9) { width:128px; }
   .ivt-reset-btn { background:#DC2626; color:#fff; border:2px solid #B91C1C; border-radius:12px; font-size:16px; font-weight:800; padding:14px 40px; cursor:pointer; box-shadow:0 6px 16px -6px rgba(220,38,38,.6); }
   .ivt-reset-btn:hover { background:#B91C1C; } .ivt-reset-btn:active { transform:scale(.98); }
@@ -67,7 +69,8 @@
   .ivt-rules .tag { flex:0 0 auto; margin-top:2px; min-width:64px; text-align:center; }
   .tag.ok { background:#ECFDF3; color:#067647; } .tag.etc { background:#F2F4F7; color:#475467; }
   .ivt-filter { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
-  .ivt-filter button b { font-weight:800; margin-left:2px; }
+  .ivt-filter button { min-width:118px; display:inline-flex; justify-content:center; align-items:center; gap:6px; }   /* 건수 자릿수가 바뀌어도 폭 고정(#452-w) */
+  .ivt-filter button b { font-weight:800; font-variant-numeric:tabular-nums; min-width:2.2ch; text-align:center; }
   .ivt-filter button.active { background:var(--primary,#4F46E5); color:#fff; border-color:var(--primary,#4F46E5); }
   .data-table td.req .note { display:block; width:fit-content; margin:0 0 3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; white-space:normal; }
   .data-table td.memo .note { display:block; width:fit-content; margin-top:3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; }
@@ -254,6 +257,6 @@
 </div>
 </div>
 <script>if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');</script>
-<script src="/invoice-v2.js?v=18"></script>
+<script src="/invoice-v2.js?v=19"></script>
 </body>
 </html>

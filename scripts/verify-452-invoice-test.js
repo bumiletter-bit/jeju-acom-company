@@ -144,6 +144,14 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         await pg.click('#review-filter button[data-f="all"]'); await pg.waitForTimeout(80);
         const same = [cw1, cw2, cw3].every(w => w.length === cw0.length && w.every((x, i) => Math.abs(x - cw0[i]) <= 1));
         ok(same && cw0.length === 8, '검토 표 열 너비 고정: 필터 전환·체크 토글 후에도 8열 너비 동일', JSON.stringify({ cw0, cw1, cw2, cw3 }));
+        const btnW = async () => pg.evaluate(() => Array.from(document.querySelectorAll('#review-filter button')).map(b => Math.round(b.getBoundingClientRect().width)));
+        const bw0 = await btnW(); await pg.locator('#review tbody tr input[type=checkbox]:not(:checked)').first().click(); await pg.waitForTimeout(120); const bw1 = await btnW();
+        await pg.locator('#review tbody tr input[type=checkbox]:checked').first().click(); await pg.waitForTimeout(120); const bw2 = await btnW();
+        const thWrap = await pg.evaluate(() => { const hs = Array.from(document.querySelectorAll('#review thead th')).map(th => Math.round(th.getBoundingClientRect().height)); return hs.every(x => x === hs[0]); });
+        const stW = async () => pg.evaluate(() => Array.from(document.querySelectorAll('#stats span')).map(s => Math.round(s.getBoundingClientRect().left)));
+        const sw0 = await stW(); await pg.locator('#review tbody tr input[type=checkbox]:not(:checked)').first().click(); await pg.waitForTimeout(120); const sw1 = await stW();
+        await pg.locator('#review tbody tr input[type=checkbox]:checked').first().click(); await pg.waitForTimeout(120); const sw2 = await stW();
+        ok(bw0.length === 3 && bw1.every((x, i) => x === bw0[i]) && bw2.every((x, i) => x === bw0[i]) && thWrap && sw1.every((x, i) => x === sw0[i]) && sw2.every((x, i) => x === sw0[i]), '필터 버튼 폭 고정 · 헤더 높이 균일 · 상단 요약 위치 고정(건수 바뀌어도)', JSON.stringify({ bw0, bw1, bw2, thWrap, sw0, sw1, sw2 }));
         const rb = await pg.evaluate(() => { const b = document.getElementById('btn-reset'); const cs = getComputedStyle(b); const r = b.getBoundingClientRect(); return { bg: cs.backgroundColor, h: Math.round(r.height), w: Math.round(r.width), txt: b.textContent.trim().slice(0, 12) }; });
         pg.once('dialog', d => d.dismiss());
         await pg.click('#btn-reset'); await pg.waitForTimeout(300);
