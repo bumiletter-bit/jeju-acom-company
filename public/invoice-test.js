@@ -184,7 +184,7 @@
             l.hitRows.forEach((e, j) => {
                 const { p, a } = actOf(e, l, ctx); const raw = rawOf(ctx, e) || {};
                 const buyer = e.conv['구매자명'] || raw['구매자명'] || raw['주문자명'] || raw['구매자'] || '—'; const rcv = e.conv['수취인명'] || '';
-                rows.push(`<tr data-k="${k}"><td>${chPill(e.ch)}</td><td>${dateLabel(l.date)}</td><td>${aoEsc(buyer)}${rcv && rcv !== buyer ? `<span class="sub">→ ${aoEsc(rcv)}</span>` : ''}</td><td class="item" title="${aoEsc(e.conv['옵션정보'])}">${aoEsc(e.conv['옵션정보'])}${j === 0 && l.note ? `<span class="sub">📋 ${aoEsc(l.note)}</span>` : ''}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(fmtTel(l.key))}</td><td>${p}${j === 0 ? warn : ''}</td><td>${a}</td></tr>`);
+                rows.push(`<tr data-k="${k}"><td>${chPill(e.ch)}</td><td>${dateLabel(l.date)}</td><td>${aoEsc(buyer)}${rcv && rcv !== buyer ? `<span class="sub">→ ${aoEsc(rcv)}</span>` : ''}</td><td class="item" title="${aoEsc(e.conv['옵션정보'])}">${aoEsc(e.conv['옵션정보'])}${l.note ? `<span class="note">📋 ${aoEsc(l.note)}</span>` : ''}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(fmtTel(l.key))}</td><td>${p}${j === 0 ? warn : ''}</td><td>${a}</td></tr>`);
             });
         });
         const okL = all.filter(l => !l.bad && l.hits && l.hitRows.every(e => e.req !== l || !['past', 'nodate', 'partial'].includes(e.reqKind))).length;
