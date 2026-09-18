@@ -19,7 +19,6 @@
     const BROAD = /다음\s*주|다음\s*날|내일|모레|글피|\d+\s*일|\d+\s*월|\d+\s*\/\s*\d+|\d{1,2}\s*\.\s*\d{1,2}|월요|화요|수요|목요|금요|토요|일요|주말|평일|다다음|이번\s*주|일주일|이후|이전|전에|추석\s*전|명절\s*전|연휴\s*전|까지|늦게|천천히|나중/;
     const CH = ['naver', 'cafe24', 'coupang'];
     const CH_LABEL = { naver: '🛒 네이버', cafe24: '🏠 자사몰', coupang: '🛍️ 쿠팡' };
-    const CH_SHORT = { naver: '네이버', cafe24: '자사몰', coupang: '쿠팡' };
     const PLACEHOLDER = new Set(['01000000000', '0000000000', '00000000000']);   // 네이버 선물하기 등 번호 비공개 주문의 자리표시 번호 — 실데이터에 존재(9/18 1건) → 어떤 칸에 적혀도 매칭 금지
     const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
     const isoOf = (y, m, d) => { const dt = new Date(Date.UTC(y, m - 1, d)); return isNaN(dt) ? null : dt.toISOString().slice(0, 10); };
@@ -38,7 +37,7 @@
     }
 
     // ── 공용 상태/로직(탭마다 ctx 하나) ─────────────────────────────────────────
-    // ids: { ln:{ch:textareaId}, res:{ch:resultId}, review, preview|null, stats, msg } · allowIndiv: 입력삭제 → 개별발송 분류 여부(중간발주는 false = 실물량 포함)
+    // ids: { ln: 붙여넣기 칸 1개, save: 저장 버튼, res: 결과 표, review, preview|null, stats } · allowIndiv: 입력삭제 → 개별발송 분류 여부(중간발주는 false = 실물량 포함)
     const makeCtx = (ids, allowIndiv) => ({ ids, allowIndiv, naver: null, cafe24: [], coupang: [], merged: [], today: null, lines: { naver: [], cafe24: [], coupang: [] } });
     const rawOf = (ctx, e) => e.ch === 'naver' ? ctx.naver.rows[e.i] : ctx[e.ch][e.i];
     const telOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return String(e.conv['구매자연락처'] || raw['구매자연락처'] || raw['주문자 휴대전화'] || raw['구매자전화번호'] || '').replace(/\D/g, ''); };
@@ -97,7 +96,7 @@
             }
             const digits = key.replace(/\D/g, '');
             if (!key || (digits.length < 8 && !/\d{8,}/.test(key))) { out.push({ line, bad: true, boxCh }); continue; }
-            const ch = chOfText(plat) || chOfText(note) || boxCh;
+            const ch = chOfText(plat) || chOfText(note) || (/^\d{8}-\d{7}$/.test(key) ? 'cafe24' : boxCh);   // 자사몰 주문번호(YYYYMMDD-NNNNNNN)는 플랫폼 칸 없어도 자사몰
             const rec = note.match(/수취인\s*[:：]?\s*([가-힣]{2,5})/);
             out.push({ line, date, key, digits, note, plat, ch, boxCh,
                 indiv: /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제/i.test(note),
@@ -128,10 +127,10 @@
         ctx.today = r.today;
         ctx.merged.forEach((e, k) => { const p = r.results[k] || null; e.parse = p; e.memoFlag = flagOf(p, memos[k], ctx.today); });
     }
-    // 직원 줄(정리 파일) 읽기 → 주문에 적용. 같은 주문에 줄이 여럿이면 오늘 > 뒤 날짜(가까운 순) > 지난 날짜(최근 순) > 날짜 없음
+    // 직원 줄(정리 파일) 읽기 — 칸 1개, 플랫폼 칸으로 채널 구분(없으면 네이버). 같은 주문에 줄이 여럿이면 오늘 > 뒤 날짜(가까운 순) > 지난 날짜(최근 순) > 날짜 없음
     function readLines(ctx) {
-        const today = ctx.today || kstToday(); const all = [];
-        CH.forEach(ch => parseLines($(ctx.ids.ln[ch]).value, ch, today).forEach(l => all.push(l)));
+        const today = ctx.today || kstToday();
+        const all = parseLines($(ctx.ids.ln).value, 'naver', today);
         ctx.lines = { naver: [], cafe24: [], coupang: [] }; all.forEach(l => { if (!l.bad) ctx.lines[l.ch].push(l); });
         ctx.allLines = all;
     }
@@ -155,27 +154,44 @@
             e.reqKind = 'today'; e.reqToday = true; e.flag = 'review'; if (!e.userTouched) e.excluded = false; l.applied++;
         });
     }
-    const outcomeOf = (l, ctx) => {
-        const today = ctx.today || kstToday();
-        if (l.bad) return { cls: 'review', t: '형식 오류 — 「요청일자 · 번호 · 비고」 순으로' };
-        if (!l.hits) return { cls: '', t: (l.date && l.date < today) ? '매칭 주문 없음(이미 처리된 듯)' : '매칭 주문 없음' };
-        const n = l.hits + '건' + (l.expect != null && l.expect !== l.hits ? ' ⚠️ 비고 ' + l.expect + '건과 다름 — 확인' : '');
-        if (l.partial) return { cls: 'review', t: `부분 지정 — 수취인 이름이 없어 자동 적용 안 함 · 직접 확인(${n})` };
-        if (!l.date) return { cls: 'review', t: `날짜 없음 → 확인필요(${n})` };
-        if (l.date > today) return { cls: 'excl', t: `${mdLabel(l.date)} 발송 → 오늘 제외(시트1·시트2 모두 빠짐 · ${n})` };
-        if (l.date < today) return { cls: 'review', t: `${mdLabel(l.date)} 지난 날짜인데 아직 배송준비 → 확인필요(${n})` };
-        if (l.indiv && ctx.allowIndiv) return { cls: 'indiv', t: `입력삭제 → 개별발송(시트1 제외·시트2 노란 행 · ${n}${l.recipient ? ' · 수취인 ' + l.recipient : ''})` };
-        if (l.indiv) return { cls: 'indiv', t: `입력삭제(오늘 나가는 실물량 → 집계 포함 · ${n})` };
-        return { cls: 'ok', t: `오늘 발송(손님 메모 무시 · ${n})` };
+    // 저장 결과 표(알림 발송 이력 표와 같은 짜임: 플랫폼 · 요청날짜 · 구매자 · 품목 · 수량 · 수신 · 판정 · 처리) — 주문 1건당 1행, 주문 없는 줄은 1행
+    const chPill = ch => { const m = { cafe24: ['🏠 자사몰', '#EEF2FF', '#4F46E5'], coupang: ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'], naver: ['🛒 네이버', '#E8F8EF', '#1E8E4E'] }[ch] || ['?', '#F2F4F7', '#667085']; return `<span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px; white-space:nowrap;">${m[0]}</span>`; };
+    const WD = ['일', '월', '화', '수', '목', '금', '토'];
+    const dateLabel = iso => iso ? `${mdLabel(iso)} (${WD[new Date(iso + 'T00:00:00Z').getUTCDay()]})` : '—';
+    const pillOk = '<span class="pill pill-ok">✅ 확인완료</span>', pillNone = '<span class="pill pill-off">❌ 주문 없음</span>', pillWarn = '<span class="pill pill-wait">⚠️ 확인필요</span>';
+    // 처리 칸: 그 주문에 실제로 적용된 결과(e.reqKind 기준 — 같은 손님에 줄이 여럿이면 우선 줄이 이김)
+    const actOf = (e, l, ctx) => {
+        const k = e.reqKind, d = e.req && e.req.date;
+        if (e.req !== l) return { p: pillOk, a: `<span class="act warn">다른 줄(${dateLabel(d)}) 우선 적용</span>` };
+        if (k === 'future') return { p: pillOk, a: ctx.allowIndiv ? `<span class="act del">🗑 삭제완료 · ${mdLabel(d)} 발송분</span><span class="sub">시트1·시트2 모두 빠짐</span>` : `<span class="act del">🗑 집계 제외 · ${mdLabel(d)} 발송분</span>` };
+        if (k === 'indiv') return { p: pillOk, a: `<span class="act indiv">✂ 입력삭제 · 시트2 노란 행</span><span class="sub">시트1(택배사)에서만 빠짐</span>` };
+        if (k === 'today') return { p: pillOk, a: ctx.allowIndiv ? `<span class="act ok">🚚 오늘 발송</span>${e.parse ? '<span class="sub">손님 메모보다 우선</span>' : ''}` : `<span class="act ok">📦 집계 포함${l.indiv ? ' · 입력삭제' : ''}</span>` };
+        if (k === 'past') return { p: pillWarn, a: `<span class="act warn">⚠ 지난 날짜 확인</span><span class="sub">아직 배송준비 — 검토 목록에서 결정</span>` };
+        if (k === 'nodate') return { p: pillWarn, a: `<span class="act warn">⚠ 날짜 없음 확인</span>` };
+        if (k === 'partial') return { p: pillWarn, a: `<span class="act warn">⚠ 부분 지정 확인</span><span class="sub">수취인 이름이 없어 자동 적용 안 함</span>` };
+        return { p: pillOk, a: '' };
     };
     function renderResults(ctx) {
-        CH.forEach(ch => {
-            const el = $(ctx.ids.res[ch]); if (!el) return;
-            const mine = ctx.allLines.filter(l => l.boxCh === ch);
-            if (!mine.length) { el.innerHTML = ''; return; }
-            el.innerHTML = mine.map(l => { const o = outcomeOf(l, ctx); const moved = !l.bad && l.ch !== l.boxCh ? ` <span class="tag review">→ ${CH_SHORT[l.ch]} 칸으로 배정</span>` : ''; return `<div class="ln"><span class="src">${aoEsc(l.bad ? l.line : [l.date ? mdLabel(l.date) : (l.line.split(/\t|\s+/)[0] || ''), l.key, l.note].filter(Boolean).join(' · '))}</span><span class="out ${o.cls}">${aoEsc(o.t)}</span>${moved}</div>`; }).join('')
-                + `<div class="sum">저장 ${mine.length}줄 · 적용 ${mine.filter(l => l.applied).length}줄 · 확인필요 ${mine.filter(l => !l.bad && l.hits && !l.applied).length}줄 · 주문 없음 ${mine.filter(l => !l.bad && !l.hits).length}줄${ctx.merged.length ? '' : ' — 주문을 불러오면 적용됩니다'}</div>`;
+        const el = $(ctx.ids.res); if (!el) return;
+        const all = ctx.allLines || []; const today = ctx.today || kstToday();
+        if (!all.length) { el.innerHTML = ''; return; }
+        if (!ctx.merged.length) { el.innerHTML = `<div class="notice">⚠️ 먼저 주문을 불러오세요 — 저장된 ${all.length}줄은 불러오는 순간 자동으로 적용됩니다.</div>`; return; }
+        const rows = [];
+        all.forEach((l, k) => {
+            if (l.bad) { rows.push(`<tr data-k="${k}"><td>${chPill(null)}</td><td>—</td><td colspan="4" style="color:#B45309;">형식 오류: ${aoEsc(l.line)}<span class="sub">요청일자 · 번호 · 비고 · 플랫폼 순으로</span></td><td>${pillWarn}</td><td></td></tr>`); return; }
+            const warn = l.expect != null && l.hits && l.expect !== l.hits ? `<span class="sub" style="color:#B45309;">⚠ 비고 ${l.expect}건과 다름(실제 ${l.hits}건)</span>` : '';
+            if (!l.hits) { rows.push(`<tr data-k="${k}"><td>${chPill(l.ch)}</td><td>${dateLabel(l.date)}</td><td>—</td><td class="item">—${l.note ? `<span class="sub">${aoEsc(l.note)}</span>` : ''}</td><td>—</td><td>${aoEsc(fmtTel(l.key))}</td><td>${pillNone}</td><td><span class="act none">${l.date && l.date < today ? '이미 처리된 듯' : '배송준비에 없음'}</span></td></tr>`); return; }
+            l.hitRows.forEach((e, j) => {
+                const { p, a } = actOf(e, l, ctx); const raw = rawOf(ctx, e) || {};
+                const buyer = e.conv['구매자명'] || raw['구매자명'] || raw['주문자명'] || raw['구매자'] || '—'; const rcv = e.conv['수취인명'] || '';
+                rows.push(`<tr data-k="${k}"><td>${chPill(e.ch)}</td><td>${dateLabel(l.date)}</td><td>${aoEsc(buyer)}${rcv && rcv !== buyer ? `<span class="sub">→ ${aoEsc(rcv)}</span>` : ''}</td><td class="item" title="${aoEsc(e.conv['옵션정보'])}">${aoEsc(e.conv['옵션정보'])}${j === 0 && l.note ? `<span class="sub">📋 ${aoEsc(l.note)}</span>` : ''}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(fmtTel(l.key))}</td><td>${p}${j === 0 ? warn : ''}</td><td>${a}</td></tr>`);
+            });
         });
+        const okL = all.filter(l => !l.bad && l.hits && l.hitRows.every(e => e.req !== l || !['past', 'nodate', 'partial'].includes(e.reqKind))).length;
+        const warnL = all.filter(l => l.bad || (l.hits && l.hitRows.some(e => e.req === l && ['past', 'nodate', 'partial'].includes(e.reqKind)))).length;
+        const noneL = all.filter(l => !l.bad && !l.hits).length;
+        el.innerHTML = `<div class="sum">저장 <b>${all.length}</b>줄 → ✅ 확인완료 <b>${okL}</b>줄(주문 ${all.reduce((s, l) => s + (l.hits || 0), 0)}건) · ⚠️ 확인필요 <b>${warnL}</b>줄 · ❌ 주문 없음 <b>${noneL}</b>줄 · 기준일 ${today}</div>`
+            + `<div class="table-scroll-wrapper ivt"><table class="data-table"><thead><tr><th>플랫폼</th><th>요청날짜</th><th>구매자</th><th>품목</th><th>수량</th><th>수신</th><th>판정</th><th>처리</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
     }
     const statusOf = e => e.individual ? '<span class="tag indiv">개별발송(시트2만)</span>'
         : e.excluded ? (e.req ? `<span class="tag excl">제외(요청 ${mdLabel(e.req.date)})</span>` : '<span class="tag excl">제외(오늘 발송 아님)</span>')
@@ -244,7 +260,7 @@
     }
 
     // ── 송장 변환 탭 ─────────────────────────────────────────────────────────────
-    const C = makeCtx({ ln: { naver: 'ln-naver', cafe24: 'ln-cafe24', coupang: 'ln-coupang' }, res: { naver: 'res-naver', cafe24: 'res-cafe24', coupang: 'res-coupang' }, review: 'review', preview: 'preview', stats: 'stats' }, true);
+    const C = makeCtx({ ln: 'ln-all', save: 'save-all', res: 'res-all', review: 'review', preview: 'preview', stats: 'stats' }, true);
     const days = ch => Math.min(Math.max(parseInt($('days-' + ch).value) || 50, 1), 180);
     const setMsg = (ch, html) => { $('msg-' + ch).innerHTML = html; };
     const markArea = (ch, label) => { $('area-' + ch).classList.add('has-file'); $('fname-' + ch).textContent = label; };
@@ -278,7 +294,8 @@
     }
     function resetC() {
         C.naver = null; C.cafe24 = []; C.coupang = []; C.merged = []; C.today = null; C.allLines = [];
-        CH.forEach(ch => { $('ln-' + ch).value = ''; $('res-' + ch).innerHTML = ''; $('area-' + ch).classList.remove('has-file'); $('fname-' + ch).textContent = ''; setMsg(ch, ''); });
+        $('ln-all').value = ''; $('res-all').innerHTML = '';
+        CH.forEach(ch => { $('area-' + ch).classList.remove('has-file'); $('fname-' + ch).textContent = ''; setMsg(ch, ''); });
         $('msg-dl').textContent = ''; render(C); $('btn-download').disabled = true;
     }
     // 시트2: 네이버 원본 양식
@@ -335,7 +352,7 @@
     }
 
     // ── 중간발주 탭(독립) ─────────────────────────────────────────────────────────
-    const Q = makeCtx({ ln: { naver: 'qln-naver', cafe24: 'qln-cafe24', coupang: 'qln-coupang' }, res: { naver: 'qres-naver', cafe24: 'qres-cafe24', coupang: 'qres-coupang' }, review: 'qreview', preview: null, stats: 'qstats' }, false);
+    const Q = makeCtx({ ln: 'qln-all', save: 'qsave-all', res: 'qres-all', review: 'qreview', preview: null, stats: 'qstats' }, false);
     // 행 → 본 화면 집계 키(옵션정보·수량) 변환은 본 화면 setupQtyStart와 동일. 제외 체크 건만 뺀다(개별발송 개념 없음 = 전부 실물량).
     function qtyRows() {
         const rows = [], skipped = { n: 0, qty: 0 };
@@ -373,20 +390,20 @@
         rebuild(Q); await parseMemos(Q); readLines(Q); applyLines(Q); render(Q, recomputeQ); renderResults(Q); $('qreview-card').style.display = Q.merged.length ? '' : 'none';
         if (Q.merged.length) { if (!dateGuard(Q, 'invoice-qty-msg')) return; recomputeQ(); }
     }
-    function resetQ() { Q.naver = null; Q.cafe24 = []; Q.coupang = []; Q.merged = []; Q.today = null; Q.allLines = []; CH.forEach(ch => { $('qln-' + ch).value = ''; $('qres-' + ch).innerHTML = ''; }); $('qreview-card').style.display = 'none'; $('invoice-qty-msg').textContent = ''; P.resetInvoiceQty(); }
+    function resetQ() { Q.naver = null; Q.cafe24 = []; Q.coupang = []; Q.merged = []; Q.today = null; Q.allLines = []; $('qln-all').value = ''; $('qres-all').innerHTML = ''; $('qreview-card').style.display = 'none'; $('invoice-qty-msg').textContent = ''; P.resetInvoiceQty(); }
     function switchMode(mode) {
         $('invoice-convert-mode').style.display = mode === 'qty' ? 'none' : '';
         $('invoice-qty-mode').style.display = mode === 'qty' ? '' : 'none';
         $('ivt-mode-convert').classList.toggle('active', mode !== 'qty'); $('ivt-mode-qty').classList.toggle('active', mode === 'qty');
     }
-    // [저장하기] = 그 칸의 줄을 읽어 즉시 적용 + 줄별 결과 표시(주문 미로드면 결과만 미리 보여주고, 불러올 때 자동 적용)
-    async function saveLines(ctx, ch) {
-        const btn = $((ctx === C ? 'save-' : 'qsave-') + ch); btn.disabled = true;
+    // [저장하기] = 칸의 줄을 읽어 즉시 적용 + 결과 표(주문 미로드면 안내만, 불러올 때 자동 적용)
+    async function saveLines(ctx) {
+        const btn = $(ctx.ids.save); btn.disabled = true;
         try {
-            formatTextarea($(ctx.ids.ln[ch]));
+            formatTextarea($(ctx.ids.ln));
             if (ctx === C) { await refreshC(); } else { await refreshQ(); }
             if (!ctx.merged.length) { readLines(ctx); applyLines(ctx); renderResults(ctx); }
-        } catch (e) { $(ctx.ids.res[ch]).innerHTML = `<div class="ln"><span class="out review">⚠️ ${aoEsc(e.message)}</span></div>`; }
+        } catch (e) { $(ctx.ids.res).innerHTML = `<div class="notice">⚠️ ${aoEsc(e.message)}</div>`; }
         finally { btn.disabled = false; }
     }
 
@@ -399,9 +416,9 @@
         $('btn-coupang').addEventListener('click', () => loadOther('coupang').catch(e => setMsg('coupang', '⚠️ ' + aoEsc(e.message))));
         $('btn-reset').addEventListener('click', resetC);
         $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
+        $('save-all').addEventListener('click', () => saveLines(C));
+        $('qsave-all').addEventListener('click', () => saveLines(Q));
         for (const ch of CH) {
-            $('save-' + ch).addEventListener('click', () => saveLines(C, ch));
-            $('qsave-' + ch).addEventListener('click', () => saveLines(Q, ch));
             const area = $('area-' + ch), input = $('file-' + ch);
             area.addEventListener('click', () => input.click());
             area.addEventListener('dragover', ev => { ev.preventDefault(); area.classList.add('dragover'); });

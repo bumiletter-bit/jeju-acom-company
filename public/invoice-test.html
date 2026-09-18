@@ -31,14 +31,16 @@
   .ivt-grid3 textarea.form-input { width:100%; }
   #login-gate { background:#FEE2E2; color:#B91C1C; padding:12px 14px; border-radius:10px; font-weight:600; display:none; margin-bottom:16px; }
   .invoice-upload-area.decrypting { opacity:.6; }
-  .ivt-lines textarea.form-input { width:100%; min-height:110px; font-family:inherit; white-space:pre; }
-  .ivt-lines .btn-sm { margin-top:6px; }
-  .ivt-res { font-size:12px; margin-top:8px; line-height:1.5; }
-  .ivt-res .ln { display:flex; flex-wrap:wrap; gap:4px 10px; padding:4px 0; border-top:1px dashed #ECEDF1; }
-  .ivt-res .src { color:#374151; word-break:break-all; }
-  .ivt-res .out { font-weight:700; }
-  .ivt-res .out.excl { color:#B91C1C; } .ivt-res .out.review { color:#B45309; } .ivt-res .out.indiv { color:#374151; } .ivt-res .out.ok { color:#15803D; }
-  .ivt-res .sum { margin-top:6px; color:#6B7280; }
+  .ivt-lines textarea.form-input { width:100%; min-height:120px; font-family:inherit; white-space:pre; }
+  .ivt-lines .ivt-save { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
+  .ivt-res { margin-top:12px; }
+  .ivt-res .sum { font-size:12.5px; color:#374151; margin-bottom:8px; }
+  .ivt-res .notice { background:#FFFAEB; color:#B54708; font-weight:700; font-size:13px; padding:10px 12px; border-radius:10px; }
+  .ivt-res .data-table td { vertical-align:middle; font-size:12.5px; }
+  .ivt-res td.item { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ivt-res .sub { display:block; font-size:11px; color:#6B7280; }
+  .ivt-res .act { font-weight:700; white-space:nowrap; }
+  .ivt-res .act.del { color:#B91C1C; } .ivt-res .act.indiv { color:#374151; } .ivt-res .act.ok { color:#15803D; } .ivt-res .act.warn { color:#B45309; } .ivt-res .act.none { color:#9CA3AF; font-weight:500; }
 </style>
 </head>
 <body>
@@ -55,10 +57,10 @@
   <div id="invoice-qty-mode" style="display:none;">
     <div class="card">
       <p style="font-size:13px;color:var(--text-mid,#667085);margin-bottom:12px;">스마트스토어 + 쿠팡 + 자사몰 <b>3채널 배송준비</b>를 불러와 품목별로 합산합니다. 배송메모·정리 파일 요청일자로 <b>「제외」 체크된 주문은 수량에서 빠지고</b>, 개별발송(입력o·삭제x) 주문은 실제 나가는 물량이라 그대로 포함됩니다.</p>
-      <div class="ivt-grid3 ivt-lines" style="margin-bottom:12px;">
-        <div class="form-group"><label>스마트스토어 — 정리 파일 줄 붙여넣기</label><textarea id="qln-naver" class="form-input" placeholder="9/21/26&#9;010-0000-0000&#9;입력o삭제x 2건&#9;네이버&#10;9/22/26&#9;010-0000-0000&#9;&#9;네이버&#10;(정리 파일 줄을 그대로 복사 — 요청일자 · 연락처/상품주문번호 · 비고 · 플랫폼)"></textarea><button class="btn-primary btn-sm" id="qsave-naver">💾 저장하기</button><div class="ivt-res" id="qres-naver"></div></div>
-        <div class="form-group"><label>자사몰 — 정리 파일 줄 붙여넣기</label><textarea id="qln-cafe24" class="form-input" placeholder="9/21/26&#9;010-0000-0000&#9;자사몰!! 입력o삭제X&#9;자사몰&#10;(연락처 대신 주문번호도 됨)"></textarea><button class="btn-primary btn-sm" id="qsave-cafe24">💾 저장하기</button><div class="ivt-res" id="qres-cafe24"></div></div>
-        <div class="form-group"><label>쿠팡 — 정리 파일 줄 붙여넣기</label><textarea id="qln-coupang" class="form-input" placeholder="9/21/26&#9;0505-0000-0000&#9;&#9;쿠팡&#10;(연락처 대신 주문번호도 됨)"></textarea><button class="btn-primary btn-sm" id="qsave-coupang">💾 저장하기</button><div class="ivt-res" id="qres-coupang"></div></div>
+      <div class="ivt-lines" style="margin-bottom:12px;">
+        <textarea id="qln-all" class="form-input" placeholder="9/20/26&#9;010-0000-0000&#9;입력o삭제x 2건&#9;네이버&#10;9/20/26&#9;010-0000-0000&#9;자사몰!! 입력o삭제X&#9;자사몰&#10;9/21/26&#9;010-0000-0000&#9;&#9;네이버&#10;(정리 파일에서 줄을 그대로 복사 — 요청일자 · 전화번호/상품주문번호 · 비고 · 플랫폼. 플랫폼 칸으로 네이버·자사몰·쿠팡 자동 구분)"></textarea>
+        <div class="ivt-save"><button class="btn-primary" id="qsave-all">💾 저장하기</button><span class="ivt-note" style="margin:0;">집계 전이면 저장만 해 두고 [집계하기] — 집계 뒤에 저장하면 바로 재계산.</span></div>
+        <div class="ivt-res" id="qres-all"></div>
       </div>
       <div class="ivt-note" style="margin:-4px 0 10px;">요청일자가 <b>오늘보다 뒤</b>인 줄만 수량에서 빠집니다(그날 안 나가는 물량). 오늘 줄(입력삭제 포함)은 오늘 나가는 실물량이라 그대로 집계. 집계 전에 붙여넣고 [저장하기] → [집계하기] 순서, 집계 뒤에 붙여넣었으면 [저장하기]만 누르면 바로 재계산.</div>
       <button class="btn-primary" id="ivt-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 집계하기 (3채널)</button>
@@ -168,12 +170,12 @@
 
   <div class="card">
     <h2>개별발송 처리 · 지정 발송일 <span style="font-size:12px; font-weight:500; color:#888;">— 매일 정리하는 파일(요청일자 · 번호 · 비고 · 플랫폼) 줄을 그대로 붙여넣고 [저장하기] · 이번 변환에만 적용</span></h2>
-    <div class="ivt-grid3 ivt-lines">
-      <div class="form-group"><label>스마트스토어</label><textarea id="ln-naver" class="form-input" placeholder="9/21/26&#9;010-0000-0000&#9;입력o삭제x 2건&#9;네이버&#10;9/22/26&#9;010-0000-0000&#9;&#9;네이버&#10;(정리 파일 줄을 그대로 복사 — 요청일자 · 연락처/상품주문번호 · 비고 · 플랫폼)"></textarea><button class="btn-primary btn-sm" id="save-naver">💾 저장하기</button><div class="ivt-res" id="res-naver"></div></div>
-      <div class="form-group"><label>자사몰</label><textarea id="ln-cafe24" class="form-input" placeholder="9/21/26&#9;010-0000-0000&#9;자사몰!! 입력o삭제X&#9;자사몰&#10;(연락처 대신 주문번호도 됨)"></textarea><button class="btn-primary btn-sm" id="save-cafe24">💾 저장하기</button><div class="ivt-res" id="res-cafe24"></div></div>
-      <div class="form-group"><label>쿠팡</label><textarea id="ln-coupang" class="form-input" placeholder="9/21/26&#9;0505-0000-0000&#9;&#9;쿠팡&#10;(연락처 대신 주문번호도 됨)"></textarea><button class="btn-primary btn-sm" id="save-coupang">💾 저장하기</button><div class="ivt-res" id="res-coupang"></div></div>
+    <div class="ivt-lines">
+      <textarea id="ln-all" class="form-input" placeholder="9/20/26&#9;010-0000-0000&#9;입력o삭제x 2건&#9;네이버&#10;9/20/26&#9;010-0000-0000&#9;자사몰!! 입력o삭제X&#9;자사몰&#10;9/21/26&#9;010-0000-0000&#9;&#9;네이버&#10;(정리 파일에서 줄을 그대로 복사 — 요청일자 · 전화번호/상품주문번호 · 비고 · 플랫폼. 플랫폼 칸으로 네이버·자사몰·쿠팡 자동 구분)"></textarea>
+      <div class="ivt-save"><button class="btn-primary" id="save-all">💾 저장하기</button><span class="ivt-note" style="margin:0;">저장하면 아래 표에 줄마다 <b>확인완료 / 주문 없음 / 확인필요</b>와 처리 내용이 뜹니다.</span></div>
+      <div class="ivt-res" id="res-all"></div>
     </div>
-    <div class="ivt-note"><b>저장하기를 누르면 줄마다 판정이 표시됩니다.</b> 요청일자 = <b>오늘</b> + 「입력o삭제x」 → <span class="tag indiv">개별발송</span>(시트1 제외 · 시트2 맨 아래 노란 행) · 오늘 + 비고 없음(메모무시 등) → <b>오늘 발송</b>(손님 배송메모 「22일」 등은 무시) · 요청일자가 <b>오늘보다 뒤</b> → <span class="tag excl">제외</span>(시트1·시트2 모두 빠짐) · 지난 날짜·날짜 없음·「n건 중 1건」(수취인 이름 없으면) → <span class="tag review">확인필요</span>(아래 검토 목록에서 직접 결정). 「7건 중 1건(수취인 홍길동 만)」처럼 수취인 이름이 있으면 그 수취인 건만 적용. 플랫폼 칸에 자사몰·쿠팡이 적혀 있으면 어느 칸에 붙여도 그 채널로 배정. 번호는 자동 하이픈.</div>
+    <div class="ivt-note"><b>저장하기를 누르면 줄마다 판정이 표시됩니다.</b> 요청일자 = <b>오늘</b> + 「입력o삭제x」 → <span class="tag indiv">개별발송</span>(시트1 제외 · 시트2 맨 아래 노란 행) · 오늘 + 비고 없음(메모무시 등) → <b>오늘 발송</b>(손님 배송메모 「22일」 등은 무시) · 요청일자가 <b>오늘보다 뒤</b> → <span class="tag excl">제외</span>(시트1·시트2 모두 빠짐) · 지난 날짜·날짜 없음·「n건 중 1건」(수취인 이름 없으면) → <span class="tag review">확인필요</span>(아래 검토 목록에서 직접 결정). 「7건 중 1건(수취인 홍길동 만)」처럼 수취인 이름이 있으면 그 수취인 건만 적용. 플랫폼 칸(네이버·자사몰·쿠팡)으로 채널을 나누고, 비어 있으면 네이버로 봅니다. 번호는 자동 하이픈.</div>
   </div>
 
   <div class="card">
@@ -196,6 +198,6 @@
   </div><!-- /invoice-convert-mode -->
 </div>
 </div>
-<script src="/invoice-test.js?v=6"></script>
+<script src="/invoice-test.js?v=7"></script>
 </body>
 </html>
