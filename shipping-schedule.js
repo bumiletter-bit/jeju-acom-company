@@ -244,8 +244,11 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         const mo = f.mo != null ? f.mo : curMo;
         let cand = new Date(Date.UTC(y, mo - 1, f.dd));
         if (cand.getUTCDate() !== f.dd) return null;   // 존재하지 않는 날짜(9/31 등)
-        if (f.mo == null && cand < addDays(orderDay, -1)) cand = new Date(Date.UTC(y, mo, f.dd));       // 이번 달 지난 날짜 → 다음 달
-        if (f.mo != null && cand < addDays(orderDay, -1)) cand = new Date(Date.UTC(y + 1, mo - 1, f.dd)); // 지난 월 → 내년
+        // #452-d(대표 9/18 실사고 예방): 「16일 발송」을 18일에 보면 종전엔 10/16로 굴려 확정 문구가 나갔다 → 15일 이내 과거는 「지난 날짜」로 두어 확인형으로.
+        //   월말에 쓴 「1일」(다음 달 1일)처럼 15일 넘게 거슬러 올라가야 할 때만 다음 달로 본다. 월이 명시된 과거는 60일 이내면 지난 날짜, 그 이상이면 내년.
+        const daysBack = Math.round((orderDay - cand) / 86400000);
+        if (f.mo == null && daysBack > 15) cand = new Date(Date.UTC(y, mo, f.dd));
+        if (f.mo != null && daysBack > 60) cand = new Date(Date.UTC(y + 1, mo - 1, f.dd));
         return cand;
     };
     // #452-b: 「21일 월요일 발송」처럼 숫자 날짜와 요일이 같은 날을 가리키면 하나로 본다(종전엔 후보 2개 = 확인형)
@@ -254,8 +257,10 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
     if (uniq.length > 1) return ack('일정 지정');
     const f = uniq[0].f; const req = uniq[0].d;
     const span = Math.round((req - orderDay) / 86400000);
-    if (span < 0 || span > 45) return null;   // 과거·45일 초과 = 날짜 요청으로 보지 않음(종전 문구)
     const label = md(req) + '(' + DAY_KO[req.getUTCDay()] + ')';
+    // #452-d(대표 9/18 "애매한 건 사람이 보게 — 발주는 금액이라 실수 0"): 지난 날짜·45일 넘는 날짜도 조용히 통과시키지 않고 확인형
+    if (span < 0) return ack(label + ' 이미 지난 날짜');
+    if (span > 45) return ack(label + ' 먼 날짜');
     if (negative) return ack(label + ' 관련');
     // 키워드 판정: 날짜 표현 전체 구간(숫자 날짜+요일이 같이 있으면 둘을 합친 범위) 앞 12자·뒤 10자
     //   — #452-b: 「출고해주세요 9월21일」(앞에 멀리) · 「9월 21일 월요일에 배송 출발」(요일 뒤에 키워드)
