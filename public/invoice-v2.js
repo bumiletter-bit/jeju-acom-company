@@ -124,7 +124,11 @@
         entries.forEach(e => { const p = prev.get(e.ch + ':' + e.i); e.excluded = p ? p.excluded : false; e.userTouched = p ? p.userTouched : false; e.parse = p ? p.parse : null; e.flag = p ? p.flag : null; e.memoFlag = p ? p.memoFlag : null; e.individual = false; e.req = null; e.reqKind = null; });
         ctx.merged = entries;
     }
-    const flagOf = (p, memo, today) => (p && (p.kind === 'ship' || p.kind === 'arrive') && p.reqDate && p.reqDate > today) ? 'excl' : (p && p.kind === 'ack') ? 'review' : (!p && BROAD.test(memo)) ? 'review' : null;
+    // 손님 메모 판정: 발송 요청 = 기준일보다 뒤면 제외 · 도착 요청 = 기준일에 보내도 1~2일 배송으로 닿을 수 있으면(ambiguous) 확인필요, 확실히 뒤(가장 늦은 출고일 > 기준일)면 제외 (#452-x 대표 "22일 도착이면 20일 발송도 21~22일 도착") · 애매(ack)·넓은 표현 = 확인필요
+    const flagOf = (p, memo, today) => !p ? (BROAD.test(memo) ? 'review' : null)
+        : p.kind === 'ship' ? (p.reqDate && p.reqDate > today ? 'excl' : null)
+        : p.kind === 'arrive' ? (p.ambiguous ? 'review' : ((p.latestShip || p.reqDate) > today ? 'excl' : null))
+        : 'review';
     // 손님 배송메모 → 서버 해석 → 자동 체크/확인필요(직원 줄이 없는 주문만 최종 반영 — applyLines가 덮어씀)
     // 기준일(ctx.today) = 「기준 발송일」 — 서버가 발송휴무일 달력으로 계산한 다음 발송일(오늘이 발송일이고 정오 전이면 오늘). 직원이 셀렉트로 바꿀 수 있다(ctx.shipDate).
     async function parseMemos(ctx) {
@@ -261,13 +265,18 @@
         el.innerHTML = `<div class="sum">저장 <b>${all.length}</b>줄 → ✅ 확인완료 <b>${okL}</b>줄(주문 ${all.reduce((s, l) => s + (l.hits || 0), 0)}건) · ⚠️ 확인필요 <b>${warnL}</b>줄 · ❌ 주문 없음 <b>${noneL}</b>줄 · 기준일 ${today}</div>`
             + `<div class="table-scroll-wrapper ivt"><table class="data-table"><thead><tr><th>플랫폼</th><th>요청날짜</th><th>구매자</th><th>품목</th><th>수량</th><th>수신</th><th>판정</th><th>처리</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
     }
-    const statusOf = e => e.individual ? '<span class="tag indiv">개별발송(시트2만)</span>'
-        : e.excluded ? (e.req ? `<span class="tag excl">제외(요청 ${mdLabel(e.req.date)})</span>` : '<span class="tag excl">제외(기준일 발송 아님)</span>')
-        : e.reqKind === 'today' ? `<span class="tag review">${mdLabel(e.req.date)} 발송(요청)</span>`
-        : e.reqKind === 'partial' ? '<span class="tag review">부분 지정 확인</span>'
-        : e.reqKind === 'past' ? '<span class="tag review">지난 요청일 확인</span>'
-        : e.reqKind === 'nodate' ? '<span class="tag review">요청일 없음 확인</span>'
-        : e.flag === 'review' ? '<span class="tag review">확인필요</span>' : '';
+    // 상태 칸(#452-y 대표): 1차 = 포함/제외 — 중간발주 「집계 포함」(파랑)·「집계 미포함(이유)」 / 송장변환 「송장 포함」·「송장 제외(이유)」 · 2차 = 확인필요류 보조 표시
+    const statusOf = (e, ctx) => {
+        const inc = ctx && ctx.allowIndiv === false ? ['집계 포함', '집계 미포함'] : ['송장 포함', '송장 제외'];
+        if (e.individual) return '<span class="tag indiv">개별발송(시트2만)</span>';
+        if (e.excluded) { const why = e.req ? `요청 ${mdLabel(e.req.date)}` : e.memoFlag === 'excl' ? '기준일 발송 아님' : '직접 체크'; return `<span class="tag excl">${inc[1]}(${why})</span>`; }
+        const sub = e.reqKind === 'today' ? `<span class="tag review">${mdLabel(e.req.date)} 발송(요청)</span>`
+            : e.reqKind === 'partial' ? '<span class="tag review">부분 지정 확인</span>'
+            : e.reqKind === 'past' ? '<span class="tag review">지난 요청일 확인</span>'
+            : e.reqKind === 'nodate' ? '<span class="tag review">요청일 없음 확인</span>'
+            : e.flag === 'review' ? '<span class="tag review">확인필요</span>' : '';
+        return `<span class="tag inc">${inc[0]}</span>${sub ? ' ' + sub : ''}`;
+    };
     function reqOf(e) {
         if (e.req) {
             const l = e.req;
@@ -280,7 +289,7 @@
         }
         const p = e.parse; if (!p) return '';
         if (p.kind === 'ship') return `${p.reqDate} 발송 요청`;
-        if (p.kind === 'arrive') return `${p.reqDate} 도착 요청`;
+        if (p.kind === 'arrive') return `${p.reqDate} 도착 요청${p.latestShip ? ` · 늦어도 ${mdLabel(p.latestShip)} 발송` : ''}${p.ambiguous ? ' — 기준일 발송으로도 닿을 수 있어 확인' : ''}`;
         return '애매함 — 직원 확인';
     }
     // 배송메모 칸 = 손님 원문만(엑셀에 들어가는 값 그대로). 직원 줄(📋)은 「읽어낸 요청」 칸에 — 대표 지적(9/18): 메모 칸에 겹쳐 보이니 실제 메모로 오해
@@ -300,10 +309,10 @@
         const revRows = f === 'all' ? all : all.filter(({ e }) => ctx.reviewFilterKeys.has(key(e)));
         const cnt = { all: all.length, excl: all.filter(x => x.e.excluded).length, review: all.filter(x => !x.e.excluded && x.e.flag === 'review').length };
         const fl = $(ctx.ids.filter); if (fl) { fl.innerHTML = FILTERS.map(([v, t]) => `<button type="button" class="btn-sm btn-outline${f === v ? ' active' : ''}" data-f="${v}">${t} <b>${cnt[v]}</b></button>`).join(''); fl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { ctx.reviewFilter = b.dataset.f; ctx.reviewFilterKeys = null; render(ctx, onChange); })); }
-        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td class="req">${reqCell(e)}</td><td>${statusOf(e)}</td></tr>`).join('')
+        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td class="req">${reqCell(e)}</td><td>${statusOf(e, ctx)}</td></tr>`).join('')
             : `<tr><td colspan="8" style="color:#6B7280;">${f === 'all' ? '검토할 배송메모가 없습니다.' : '이 조건에 해당하는 건이 없습니다.'}</td></tr>`;
         if (ctx.ids.preview) {
-            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}${e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.note].filter(Boolean).join(' '))}</span>` : ''}</td><td>${statusOf(e)}</td></tr>`).join('');
+            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}${e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.note].filter(Boolean).join(' '))}</span>` : ''}</td><td>${statusOf(e, ctx)}</td></tr>`).join('');
         }
         const n = ctx.merged.length, indiv = ctx.merged.filter(e => e.individual).length, excl = ctx.merged.filter(e => !e.individual && e.excluded).length, review = ctx.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length;
         $(ctx.ids.stats).innerHTML = ctx.ids.preview

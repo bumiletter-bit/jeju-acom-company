@@ -288,7 +288,9 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         }
         if (!s) return ack(label + ' 도착');
         if (ymd(s) === normal.shipDate) return null;
-        return { kind: 'arrive', reqDate: ymd(req), text: shipPhrase(orderDay, s) + ' 오전 발송 예정이에요 (배송메세지에 남겨주신 ' + label + ' 도착 요청 기준 — 택배 사정으로 하루 정도 차이가 날 수 있어요)' };
+        // #452-x(대표 9/18): 정상 발송일에 보내도 1~2일 배송으로 요청 도착일에 닿을 수 있으면(예: 20일 발송 → 21~22일 도착, 요청 22일) 「가장 늦은 출고일」만으로 단정 불가 → ambiguous(송장변환에선 확인필요). 알림톡 문구(text)는 종전 그대로.
+        const n1 = nextMatching(normalShip, x => isDeliveryDay(x, arriveOff)), n2 = nextMatching(n1, x => isDeliveryDay(x, arriveOff));
+        return { kind: 'arrive', reqDate: ymd(req), latestShip: ymd(s), ambiguous: req <= n2, text: shipPhrase(orderDay, s) + ' 오전 발송 예정이에요 (배송메세지에 남겨주신 ' + label + ' 도착 요청 기준 — 택배 사정으로 하루 정도 차이가 날 수 있어요)' };
     }
     return ack(label + (deliverKw ? ' 배송' : ''));
 }

@@ -44,7 +44,10 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(/^\d{4}-\d{2}-\d{2}$/.test(mp.suggested) && Array.isArray(mp.shipDays) && mp.shipDays.length >= 5 && mp.today === mp.suggested && mp.shipDays.every(d => new Date(d + 'T00:00:00Z').getUTCDay() !== 6) && mp.today >= mp.realToday, '기준 발송일 = 달력상 다음 발송일(토요일 0·오늘 이후) · baseDate 없으면 suggested', `today ${mp.today} · real ${mp.realToday} · ${mp.shipDays.join(',')}`);
         const mpB = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['21일 발송'], baseDate: mp.shipDays[mp.shipDays.length - 1] });
         ok(mpB.today === mp.shipDays[mp.shipDays.length - 1] && mpB.suggested === mp.suggested, 'memo-parse baseDate 지정 → 그 날 기준으로 해석(suggested는 불변)', mpB.today);
-        const expExcl = mp.results.filter(p => p && (p.kind === 'ship' || p.kind === 'arrive') && p.reqDate && p.reqDate > mp.today).length;
+        const expExcl = mp.results.filter(p => p && (p.kind === 'ship' ? p.reqDate > mp.today : p.kind === 'arrive' ? (!p.ambiguous && (p.latestShip || p.reqDate) > mp.today) : false)).length;   // #452-x: 도착 요청은 기준일 발송으로 닿을 수 있으면 확인필요
+        const mpA = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['다음주 화요일 22일 도착 희망', '9/29 도착 희망'], baseDate: '2026-09-20' });
+        const [arrA, arrB] = mpA.results;
+        ok(arrA && arrA.kind === 'arrive' && arrA.ambiguous === true && arrA.latestShip === '2026-09-21' && arrB && arrB.kind === 'arrive' && arrB.ambiguous === false && arrB.latestShip === '2026-09-28', '#452-x 도착 요청: 22일 도착(기준 20일) = 20일 발송으로도 닿음 → ambiguous(확인필요) · 29일 도착 = 확실히 뒤 → 제외 후보', JSON.stringify(mpA.results));
         const expAck = mp.results.filter(p => p && p.kind === 'ack').length;
         console.log(`  기대: 자동 체크 ${expExcl}건 · 애매(ack) ${expAck}건 · 기준일 ${mp.today}`);
         // 개별발송 대상: 주문 2건 이상인 구매자 2명
@@ -144,6 +147,8 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         await pg.click('#review-filter button[data-f="all"]'); await pg.waitForTimeout(80);
         const same = [cw1, cw2, cw3].every(w => w.length === cw0.length && w.every((x, i) => Math.abs(x - cw0[i]) <= 1));
         ok(same && cw0.length === 8, '검토 표 열 너비 고정: 필터 전환·체크 토글 후에도 8열 너비 동일', JSON.stringify({ cw0, cw1, cw2, cw3 }));
+        const stTag = await pg.evaluate(() => { const rows = Array.from(document.querySelectorAll('#review tbody tr')); const st = tr => tr.children[7].textContent.trim(); const chk = rows.filter(tr => tr.querySelector('input[type=checkbox]:checked')), un = rows.filter(tr => tr.querySelector('input[type=checkbox]:not(:checked)')); return { chkOk: chk.length > 0 && chk.every(tr => /^송장 제외\((요청 \d+\/\d+|기준일 발송 아님|직접 체크)\)$/.test(st(tr))), unOk: un.length > 0 && un.every(tr => /^송장 포함/.test(st(tr))), unSub: un.filter(tr => /확인필요|확인|발송\(요청\)/.test(st(tr))).length, unN: un.length, sample: [st(chk[0]), st(un[0])] }; });
+        ok(stTag.chkOk && stTag.unOk && stTag.unSub === stTag.unN, '상태 칸(#452-y): 체크 = 「송장 제외(이유)」 · 미체크 = 「송장 포함」 + 확인필요 보조', JSON.stringify(stTag));
         const btnW = async () => pg.evaluate(() => Array.from(document.querySelectorAll('#review-filter button')).map(b => Math.round(b.getBoundingClientRect().width)));
         const bw0 = await btnW(); await pg.locator('#review tbody tr input[type=checkbox]:not(:checked)').first().click(); await pg.waitForTimeout(120); const bw1 = await btnW();
         await pg.locator('#review tbody tr input[type=checkbox]:checked').first().click(); await pg.waitForTimeout(120); const bw2 = await btnW();
@@ -202,6 +207,8 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const qs = await pg.evaluate(() => ({ n: __ivt.Q.merged.length, excl: __ivt.Q.merged.filter(e => e.excluded).length, total: __ivt.qtyTotal(), exp: __ivt.Q.merged.filter(e => !e.excluded).reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0), all: __ivt.Q.merged.reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0), cafeExcl: __ivt.Q.merged.filter(e => e.ch === 'cafe24').every(e => e.excluded) }));
         ok(qs.n === N + 1 && qs.total === qs.exp && qs.total < qs.all, '②-q 집계 = 제외 체크 뺀 수량(독립 상태·3채널)', JSON.stringify(qs));
         ok(qs.cafeExcl, '②-q 자사몰 「21일 발송」 메모 → 자동 제외');
+        const qTag = await pg.evaluate(() => { const rows = Array.from(document.querySelectorAll('#qreview tbody tr')); const st = tr => tr.children[7].textContent.trim(); return { chk: rows.filter(tr => tr.querySelector('input:checked')).every(tr => /^집계 미포함\(/.test(st(tr))), un: rows.filter(tr => tr.querySelector('input:not(:checked)')).every(tr => /^집계 포함/.test(st(tr))), n: rows.length }; });
+        ok(qTag.chk && qTag.un && qTag.n > 0, '②-q 중간발주 상태 칸: 「집계 미포함(이유)」 / 「집계 포함」', JSON.stringify(qTag));
         ok((await pg.locator('#qreview tbody tr').count()) >= qs.excl && (await pg.locator('#qty-partner-filter button').count()) === 4, '②-q 검토 목록·거래처 필터 렌더');
         const firstQ = pg.locator('#qreview input[type=checkbox]:checked').first(); const beforeQ = qs.total;
         await firstQ.click(); await pg.waitForTimeout(200);

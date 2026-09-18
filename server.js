@@ -7094,7 +7094,7 @@ app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res
         const today = baseDate || suggested;
         const at = Date.parse(today + 'T07:00:00+09:00');
         const results = memos.map(m => {
-            try { const r = shippingSchedule.memoShipLine(m, at, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }); return r ? { kind: r.kind, reqDate: r.reqDate || null, text: r.text } : null; }
+            try { const r = shippingSchedule.memoShipLine(m, at, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }); return r ? { kind: r.kind, reqDate: r.reqDate || null, latestShip: r.latestShip || null, ambiguous: !!r.ambiguous, text: r.text } : null; }
             catch (_) { return null; }
         });
         const noShip = [...hinfo.set].sort(); const noShipReasons = {}; hinfo.reasons.forEach((v, k) => { if (hinfo.set.has(k)) noShipReasons[k] = v; });   // 달력 표시용(토요일은 클라이언트 규칙)
