@@ -89,15 +89,15 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         // ☎ 지정 발송일 요청(직원 메모) — 개별발송 칸은 비운 상태에서
         const reqTel = indivTels[1].replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3'), reqN = byTel[indivTels[1]].length;
         const reqState = async () => pg.evaluate(t => { const rows = __ivt.S.merged.filter(e => e.req && e.req.digits === t); return { n: rows.length, excl: rows.filter(e => e.excluded).length, flags: [...new Set(rows.map(e => e.flag))], today: rows.every(e => e.reqToday) }; }, indivTels[1]);
-        await pg.fill('#req-dates', reqTel + ' 21일 발송'); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
+        await pg.fill('#req-naver', reqTel + ' 21일 발송'); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
         const q1 = await reqState(); ok(q1.n === reqN && q1.excl === reqN && q1.flags.join() === 'excl', '☎ 「번호 21일 발송」 → 그 손님 주문 전부 제외 체크(직원 메모 우선)', JSON.stringify(q1));
         ok(new RegExp('매칭 주문 ' + reqN + '건').test(await pg.textContent('#msg-req')), '☎ 매칭 건수 표시', await pg.textContent('#msg-req'));
-        await pg.fill('#req-dates', reqTel + ' 18일'); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
+        await pg.fill('#req-naver', reqTel + ' 18일'); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
         const q2 = await reqState(); ok(q2.n === reqN && q2.excl === 0 && q2.today, '☎ 「번호 18일」(오늘) → 통과·검토 목록에 「오늘 발송」 정보', JSON.stringify(q2));
-        await pg.fill('#req-dates', reqTel + ' 17일 발송\n099-9999-9999 21일'); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
+        await pg.fill('#req-naver', reqTel + ' 17일 발송\n099-9999-9999 21일'); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
         const q3 = await reqState(); ok(q3.n === reqN && q3.excl === 0 && q3.flags.join() === 'review', '☎ 지난 날짜 → 확인필요(체크 없음)', JSON.stringify(q3));
         ok(/주문 없음 1줄/.test(await pg.textContent('#msg-req')), '☎ 매칭 안 되는 번호 → 「주문 없음」 표시', await pg.textContent('#msg-req'));
-        await pg.fill('#req-dates', ''); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
+        await pg.fill('#req-naver', ''); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
         await pg.fill('#ex-naver', indivTels.join('\n')); await pg.dispatchEvent('#ex-naver', 'input');
         await pg.waitForTimeout(300);
         const indivCnt = await pg.evaluate(() => __ivt.S.merged.filter(e => e.individual).length);
@@ -113,14 +113,25 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         let after2 = after1; if (await firstReview.count()) { await firstReview.click(); after2 = await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && e.excluded).length); }
         ok(after2 === after1 + ((await pg.locator('#review input[type=checkbox]').count()) > 0 ? 1 : 0), '② 확인필요 행 체크 → 제외 +1', `${after1} → ${after2}`);
         const exclNow = after2;
-        // ②-q 중간발주(v2): 제외 체크 주문은 집계 제외·개별발송 포함
-        await pg.click('#ivt-mode-qty'); await pg.click('#ivt-qty-start'); await pg.waitForFunction(() => document.querySelectorAll('#invoice-qty-list .qty-row').length > 0);
-        const qExp = await pg.evaluate(() => __ivt.S.merged.filter(e => !(e.excluded && !e.individual)).reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0));
-        const qGot = await pg.evaluate(() => __ivt.qtyTotal());
-        ok(qGot === qExp, '②-q 중간발주 합계 = 제외 체크 뺀 수량(개별발송 포함)', `${qGot} = ${qExp}`);
-        const qAll = await pg.evaluate(() => __ivt.S.merged.reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0));
-        ok(qGot < qAll, '②-q 제외 체크 수량만큼 전체보다 작음', `${qGot} < ${qAll}`);
-        ok(/제외 체크된 지정일 요청/.test(await pg.textContent('#invoice-qty-msg')) && (await pg.locator('#qty-partner-filter button').count()) === 4, '②-q 안내 문구·거래처 필터(본 화면 코드) 렌더');
+        // ②-q 중간발주(v2) — 송장 변환 탭과 독립: 훅으로 3채널 행 주입 → 검토 목록 + 집계 · 체크 토글·☎ 지정일이 수량에 즉시 반영
+        await pg.click('#ivt-mode-qty');
+        const cafeQ = [{ '주문자명': '자사몰손님', '주문상품명(세트상품 포함)': '제주 감귤 · 1. (제철)고당도 하우스감귤 · 하우스감귤 가정용 - 2.5kg(로얄과)', '배송메시지': '21일 발송 부탁드려요', '수령인': '자사몰수취', '주문자 휴대전화': '010-7777-8888', '수량': 3, '수령인 휴대전화': '010-7777-8888', '수령인 주소(전체)': '제주시 자사몰로 1', '주문번호': '20260918-0000077' }];
+        await pg.evaluate(([nv, cf]) => __ivt.setQRows(nv, cf, []), [rows, cafeQ]);
+        await pg.waitForFunction(() => document.querySelectorAll('#invoice-qty-list .qty-row').length > 0);
+        const qs = await pg.evaluate(() => ({ n: __ivt.Q.merged.length, excl: __ivt.Q.merged.filter(e => e.excluded).length, total: __ivt.qtyTotal(), exp: __ivt.Q.merged.filter(e => !e.excluded).reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0), all: __ivt.Q.merged.reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0), cafeExcl: __ivt.Q.merged.filter(e => e.ch === 'cafe24').every(e => e.excluded) }));
+        ok(qs.n === N + 1 && qs.total === qs.exp && qs.total < qs.all, '②-q 집계 = 제외 체크 뺀 수량(독립 상태·3채널)', JSON.stringify(qs));
+        ok(qs.cafeExcl, '②-q 자사몰 「21일 발송」 메모 → 자동 제외');
+        ok((await pg.locator('#qreview tbody tr').count()) >= qs.excl && (await pg.locator('#qty-partner-filter button').count()) === 4, '②-q 검토 목록·거래처 필터 렌더');
+        const firstQ = pg.locator('#qreview input[type=checkbox]:checked').first(); const beforeQ = qs.total;
+        await firstQ.click(); await pg.waitForTimeout(200);
+        const afterQ = await pg.evaluate(() => __ivt.qtyTotal());
+        ok(afterQ > beforeQ, '②-q 검토 목록 체크 해제 → 수량 즉시 증가', `${beforeQ} → ${afterQ}`);
+        const tel2 = indivTels[0].replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3');
+        await pg.fill('#qreq-naver', tel2 + ' 21일 발송'); await pg.dispatchEvent('#qreq-naver', 'input'); await pg.waitForTimeout(1500);
+        const qq2 = await pg.evaluate(t => ({ total: __ivt.qtyTotal(), reqExcl: __ivt.Q.merged.filter(e => e.req && e.excluded).length }), indivTels[0]);
+        ok(qq2.reqExcl === byTel[indivTels[0]].length && qq2.total < afterQ, '②-q ☎ 지정일(네이버 칸) → 그 손님 주문 제외·수량 감소', JSON.stringify(qq2));
+        ok(await pg.evaluate(() => __ivt.S.merged.filter(e => e.req).length === 0), '②-q 중간발주 탭 입력이 송장 변환 탭 상태에 영향 없음(독립)');
+        await pg.fill('#qreq-naver', ''); await pg.dispatchEvent('#qreq-naver', 'input'); await pg.waitForTimeout(800);
         await pg.click('#ivt-mode-convert');
         // ③ 다운로드
         const dl1 = pg.waitForEvent('download'); await pg.click('#btn-download'); const d1 = await dl1;

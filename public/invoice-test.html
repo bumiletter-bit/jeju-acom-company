@@ -43,13 +43,32 @@
   </div>
   <div id="login-gate">회사프로그램 메인 화면에서 먼저 로그인한 뒤 이 페이지를 열어주세요.</div>
 
-  <!-- ===== 중간발주 모드(본 화면 마크업·id 동일 — 집계·렌더·이미지 저장은 app.js 실코드) ===== -->
+  <!-- ===== 중간발주 모드(송장 변환과 독립 — 중간에 거래처에 수량 알려주는 용도) · 결과 카드 마크업·id는 본 화면과 동일(집계·렌더·이미지 저장 = app.js 실코드) ===== -->
   <div id="invoice-qty-mode" style="display:none;">
     <div class="card">
-      <p style="font-size:13px;color:var(--text-mid,#667085);margin-bottom:12px;">송장 변환 탭에서 불러온 <b>3채널 배송준비</b>를 그대로 집계합니다. <b>배송메모·☎ 지정일로 「제외」 체크된 주문은 집계에서 빠지고</b>, 개별발송(입력o·삭제x) 주문은 실제 나가는 물량이라 <b>포함</b>됩니다.</p>
-      <button class="btn-primary" id="ivt-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 집계하기 (송장 변환 탭의 주문 기준)</button>
+      <p style="font-size:13px;color:var(--text-mid,#667085);margin-bottom:12px;">스마트스토어 + 쿠팡 + 자사몰 <b>3채널 배송준비</b>를 불러와 품목별로 합산합니다. 배송메모·☎ 지정일로 <b>「제외」 체크된 주문은 수량에서 빠지고</b>, 개별발송(입력o·삭제x) 주문은 실제 나가는 물량이라 그대로 포함됩니다(여기엔 입력삭제 칸이 없습니다).</p>
+      <div class="ivt-grid3" style="margin-bottom:12px;">
+        <div class="form-group"><label>☎ 스마트스토어 — 구매자 연락처 + 지정 발송일</label><textarea id="qreq-naver" class="form-input" placeholder="010-0000-0000 21일 발송&#10;(전화·톡톡으로 따로 받은 것)"></textarea></div>
+        <div class="form-group"><label>☎ 자사몰 — 구매자 연락처 + 지정 발송일</label><textarea id="qreq-cafe24" class="form-input" placeholder="010-0000-0000 9/22 도착&#10;(주문번호로 적어도 됨)"></textarea></div>
+        <div class="form-group"><label>☎ 쿠팡 — 구매자 연락처 + 지정 발송일</label><textarea id="qreq-coupang" class="form-input" placeholder="0505-0000-0000 월요일&#10;(주문번호로 적어도 됨)"></textarea></div>
+      </div>
+      <div class="ivt-note" id="qmsg-req" style="margin:-4px 0 10px;"></div>
+      <button class="btn-primary" id="ivt-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 집계하기 (3채널)</button>
+      <div style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--text-mid,#667085);">
+        <span>조회 기간</span>
+        <input type="number" id="ivt-qty-days" value="50" min="1" max="180" class="form-input" style="width:64px; padding:5px 6px; text-align:center;">
+        <span>일 (네이버 최대 180 · 쿠팡은 31일·자사몰은 90일까지만 조회)</span>
+      </div>
       <div id="invoice-qty-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:6px; line-height:1.5;"></div>
     </div>
+
+    <div class="card" id="qreview-card" style="display:none;">
+      <h2>배송메모 검토 — 집계에서 뺄 주문</h2>
+      <div class="ivt-note" style="margin:0 0 10px;">지정일이 오늘보다 뒤인 건은 <b>미리 체크</b>(= 수량에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우니 빼야 할 건이면 직접 체크하세요. <b>체크를 바꾸면 아래 수량이 바로 다시 계산됩니다.</b></div>
+      <div class="ivt-stats" id="qstats"></div>
+      <div class="table-scroll-wrapper ivt"><table class="data-table" id="qreview"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
     <div class="card" id="invoice-qty-result" style="display:none;">
       <div class="invoice-qty-toolbar">
         <div class="invoice-qty-summary">선택 <strong id="invoice-qty-sel-count">0</strong>품목 · 합계 <strong id="invoice-qty-sel-total">0</strong></div>
@@ -57,7 +76,7 @@
           <button class="btn-sm btn-outline" onclick="qtySelectAll(true)">전체선택</button>
           <button class="btn-sm btn-outline" onclick="qtySelectAll(false)">전체해제</button>
           <button class="btn-primary btn-sm" onclick="saveQtyImage()">📷 선택분 이미지 저장</button>
-          <button class="btn-reset btn-sm" onclick="resetInvoiceQty()">초기화</button>
+          <button class="btn-reset btn-sm" id="ivt-qty-reset">초기화</button>
         </div>
       </div>
       <div class="invoice-qty-additem">
@@ -148,12 +167,14 @@
     </div>
     <div class="ivt-note">여기 적힌 번호의 주문은 <b>시트1(택배사 양식)에서 빠지고</b>, 네이버 건은 <b>시트2 맨 아래에 노란 배경</b>으로 남습니다(개별 파일로 이미 발송한 건 → 송장만 직접 입력). 채널마다 따로 봅니다 — 같은 손님이 네이버·자사몰에 다 있어도 <b>적은 칸의 채널만</b> 빠집니다.</div>
     <div class="ivt-note" id="msg-ex"></div>
-    <div class="form-group" style="margin-top:18px;">
-      <label>☎ 지정 발송일 요청 — 전화·톡톡으로 따로 받은 것 <span style="font-weight:500; color:#888;">(구매자 연락처 + 날짜, 한 줄에 하나 · 모든 채널 공통)</span></label>
-      <textarea id="req-dates" class="form-input" style="width:100%;" placeholder="010-0000-0000 21일 발송&#10;010-1234-5678 9/22 도착&#10;010-9999-0000 월요일"></textarea>
-      <div class="ivt-note">여기 적힌 손님의 주문은 <b>손님 배송메모보다 이 메모를 우선</b>해 판단합니다 — 지정일이 오늘보다 뒤면 <b>제외 체크</b>(시트1·시트2 모두 제외), 오늘이면 통과, 지난 날짜·애매하면 <span class="tag review">확인필요</span>. 날짜만 적으면 「발송」으로 봅니다.</div>
-      <div class="ivt-note" id="msg-req"></div>
+    <div style="margin-top:18px; font-size:13px; font-weight:700;">☎ 지정 발송일 요청 — 전화·톡톡으로 따로 받은 것 <span style="font-weight:500; color:#888;">(구매자 연락처 + 날짜, 한 줄에 하나)</span></div>
+    <div class="ivt-grid3" style="margin-top:8px;">
+      <div class="form-group"><label>스마트스토어</label><textarea id="req-naver" class="form-input" placeholder="010-0000-0000 21일 발송&#10;010-1234-5678 9/22 도착"></textarea></div>
+      <div class="form-group"><label>자사몰</label><textarea id="req-cafe24" class="form-input" placeholder="010-0000-0000 월요일&#10;(주문번호로 적어도 됨)"></textarea></div>
+      <div class="form-group"><label>쿠팡</label><textarea id="req-coupang" class="form-input" placeholder="0505-0000-0000 21일&#10;(주문번호로 적어도 됨)"></textarea></div>
     </div>
+    <div class="ivt-note">여기 적힌 손님의 주문은 <b>손님 배송메모보다 이 메모를 우선</b>해 판단합니다 — 지정일이 오늘보다 뒤면 <b>제외 체크</b>(시트1·시트2 모두 제외), 오늘이면 통과, 지난 날짜·애매하면 <span class="tag review">확인필요</span>. 날짜만 적으면 「발송」으로 봅니다.</div>
+    <div class="ivt-note" id="msg-req"></div>
   </div>
 
   <div class="card">
@@ -176,6 +197,6 @@
   </div><!-- /invoice-convert-mode -->
 </div>
 </div>
-<script src="/invoice-test.js?v=3"></script>
+<script src="/invoice-test.js?v=4"></script>
 </body>
 </html>
