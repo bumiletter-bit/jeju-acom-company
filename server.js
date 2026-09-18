@@ -6939,7 +6939,8 @@ app.get('/api/agent-office/naver/settlements', authMiddleware, adminOnly, async 
 // 대표 7/25: 네이버는 '현재 배송준비 상태 전체'를 한 번에 주는 API가 없음(상태 목록조회 불가).
 //   결제일(PAYED_DATETIME) 기준으로만 조회 가능 · 1회 최대 24시간 · 최대 180일. → days일을 24h씩 훑어 취합.
 //   중복방지(이미 올림 기록)는 제거 — 중간발주 연동상 매번 '배송준비 전체'를 그대로 넘겨야 함(신규주문은 수기 발주확인).
-async function naverFetchInvoiceOrders(days) {
+async function naverFetchInvoiceOrders(days, opts) {
+    opts = opts || {};   // #452: { extended: true } = 네이버 원본 양식(시트2) 재료 _x 동봉 — 기존 호출(미지정)은 종전 출력과 동일
     const now = Date.now();
     const isoKst = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
     const pick = (o, ...ks) => { for (const k of ks) { if (o && o[k] != null) return o[k]; } return undefined; };
@@ -7017,6 +7018,13 @@ async function naverFetchInvoiceOrders(days) {
             '수취인연락처1': sa.tel1 || '', '수취인연락처2': sa.tel2 || '',
             '통합배송지': addr, '배송메세지': po.shippingMemo || '',
             _pid: pid,
+            ...(opts.extended ? { _x: {   // #452: 「전체주문발주발송관리」 원본 열 재료(있는 것만 — 없으면 빈칸)
+                productOrderId: pid, orderId: String(od.orderId || ''), paymentDate: od.paymentDate || '', orderDate: od.orderDate || '',
+                ordererId: String(od.ordererId || ''), productId: String(po.productId || ''), productName: String(po.productName || ''),
+                expectedSettlementAmount: (po.expectedSettlementAmount != null ? Number(po.expectedSettlementAmount) : null),
+                shippingDueDate: po.shippingDueDate || '', inflowPath: String(po.inflowPath || ''), deliveryMethod: String(po.deliveryMethod || ''),
+                productOrderStatus: String(po.productOrderStatus || ''),
+            } } : {}),
         });
     }
     // 진단용: 첫 응답 항목을 개인정보 가림 처리해 구조만 노출(품목 필드는 보이게 — 미매칭 원인 파악용)
@@ -7055,6 +7063,34 @@ app.get('/api/agent-office/naver/invoice-orders', authMiddleware, async (req, re
     } catch (err) {
         res.json(naverFriendlyError(err));
     }
+});
+
+// #452(대표 GO 9/18 — 송장변환 테스트 버전): v2 = v1과 같은 조회 + 시트2(네이버 원본 양식) 재료 동봉. 기존 /invoice-orders·app.js 무접촉.
+app.get('/api/agent-office/naver/invoice-orders-v2', authMiddleware, async (req, res) => {
+    try {
+        if (!naverRelay.configured()) return res.json({ ok: false, message: '중계서버 환경변수 미설정' });
+        const days = Math.min(Math.max(parseInt(req.query.days) || 50, 1), 180);
+        const r = await naverFetchInvoiceOrders(days, { extended: true });
+        await writeAudit({ action: 'naver_invoice_fetch_v2', targetType: 'naver_order', targetId: null,
+            changes: { after: { days, fetched: r.fetched, count: r.rows.length } }, source: 'naver-api', actor: adminActor(req) });
+        res.json({ ok: true, days, fetched: r.fetched, count: r.rows.length, rows: r.rows, raw_keys: r.rawKeys, page_info: r.pageInfo, partial_adjusted: r.partialAdjusted });
+    } catch (err) { res.json(naverFriendlyError(err)); }
+});
+// #452: 배송메모 해석 — 송장변환에서 「오늘 발송 아님」 후보를 미리 체크하기 위한 재료. 기준일 = 오늘(KST) 07:00 주문으로 계산해
+//   「오늘 발송이 정상」인 메모(오늘 날짜·날짜 없음)는 null, 지정일이 오늘보다 뒤면 ship/arrive+reqDate, 애매하면 ack. 판단은 화면(직원)이 한다.
+app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res) => {
+    try {
+        const memos = Array.isArray(req.body && req.body.memos) ? req.body.memos.slice(0, 3000) : [];
+        const hinfo = await loadShippingHolidayInfo();
+        const kst = new Date(Date.now() + 9 * 3600 * 1000);
+        const today = kst.toISOString().slice(0, 10);
+        const at = Date.parse(today + 'T07:00:00+09:00');
+        const results = memos.map(m => {
+            try { const r = shippingSchedule.memoShipLine(m, at, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }); return r ? { kind: r.kind, reqDate: r.reqDate || null, text: r.text } : null; }
+            catch (_) { return null; }
+        });
+        res.json({ ok: true, today, results });
+    } catch (err) { res.status(500).json({ ok: false, message: String(err.message || err) }); }
 });
 
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===

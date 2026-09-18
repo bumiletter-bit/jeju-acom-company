@@ -207,6 +207,14 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         if (mo < 1 || mo > 12 || dd < 1 || dd > 31) continue;
         found.push({ mo, dd, idx: m.index, len: m[0].length });
     }
+    // #452: 「9.22.」·「9.22 (화)」처럼 점으로 쓴 날짜 — 단위(kg·박스 등)가 뒤에 붙으면 제외(2.5kg 오인 방지)
+    const reDot = /(?<![\d.])(\d{1,2})\s*\.\s*(\d{1,2})\s*\.?(?=\s*[(\s]|\s*(?:도착|발송|출고|배송|까지|출발|보내|받)|$)/g;
+    while ((m = reDot.exec(raw))) {
+        const mo = Number(m[1]), dd = Number(m[2]);
+        if (mo < 1 || mo > 12 || dd < 1 || dd > 31) continue;
+        if (found.some(f => f.idx === m.index)) continue;
+        found.push({ mo, dd, idx: m.index, len: m[0].length });
+    }
     const reDow = /(다음\s*주|담주|이번\s*주)?\s*([월화수목금토일])(?:요일|욜)/g;
     while ((m = reDow.exec(raw))) found.push({ dow: '일월화수목금토'.indexOf(m[2]), next: /다음|담주/.test(m[1] || ''), idx: m.index, len: m[0].length });
     const weekendNeg = negative && /(주말|토요일|토욜|일요일)/.test(raw);
