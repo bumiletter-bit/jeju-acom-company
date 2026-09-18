@@ -66,8 +66,27 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(reviewRows === (await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && (e.excluded || e.flag)).length)), '① 검토 목록 = 체크됨 + 확인필요', reviewRows);
         const ackUnchecked = await pg.evaluate(() => __ivt.S.merged.filter(e => e.flag === 'review').every(e => !e.excluded));
         ok(ackUnchecked, '① 확인필요 건은 체크 안 됨(직원이 결정)');
-        // ② 개별발송 번호
-        await pg.fill('#ex-naver', indivTels.join('\n'));
+        // ② 개별발송 번호 — 자동 하이픈 · 채널 분리
+        await pg.fill('#ex-naver', '01011121111'); await pg.dispatchEvent('#ex-naver', 'input');
+        ok((await pg.inputValue('#ex-naver')) === '010-1112-1111', '② 번호 자동 하이픈: 01011121111 → 010-1112-1111', await pg.inputValue('#ex-naver'));
+        const fm = await pg.evaluate(() => [__ivt.fmtTel('050512345678'), __ivt.fmtTel('0212345678'), __ivt.fmtTel('20260918-0000011'), __ivt.fmtTel('010-1112-1111')]);
+        ok(fm[0] === '0505-1234-5678' && fm[1] === '02-1234-5678' && fm[2] === '20260918-0000011' && fm[3] === '010-1112-1111', '② 하이픈 규칙: 0505 4-4-4 · 02 2-4-4 · 주문번호 무변경 · 이미 하이픈은 유지', fm.join(' | '));
+        // 채널 분리: 네이버 구매자 1명과 같은 번호의 자사몰 주문을 만들어 넣고, 네이버 칸에만 → 자사몰 건은 안 빠짐 / 자사몰 칸에만 → 네이버 안 빠짐
+        const sameTel = indivTels[0].replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3');
+        const cafeRows = [{ '주문자명': '동일손님', '주문상품명(세트상품 포함)': '제주 감귤 · 1. (제철)고당도 하우스감귤 · 하우스감귤 가정용 - 2.5kg(로얄과)', '배송메시지': '', '수령인': '자사몰수취', '주문자 휴대전화': sameTel, '수량': 1, '수령인 휴대전화': '010-0000-0000', '수령인 주소(전체)': '제주시 자사몰로 1', '주문번호': '20260918-0000099' }];
+        await pg.evaluate(rows => __ivt.setRows('cafe24', rows), cafeRows);
+        await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N + 1);
+        const cnt = async () => pg.evaluate(() => ({ nv: __ivt.S.merged.filter(e => e.ch === 'naver' && e.individual).length, cf: __ivt.S.merged.filter(e => e.ch === 'cafe24' && e.individual).length }));
+        await pg.fill('#ex-naver', sameTel); await pg.dispatchEvent('#ex-naver', 'input'); await pg.fill('#ex-cafe24', ''); await pg.dispatchEvent('#ex-cafe24', 'input');
+        const c1 = await cnt(); ok(c1.nv === byTel[indivTels[0]].length && c1.cf === 0, '② 같은 번호 — 네이버 칸에만 → 네이버만 개별발송, 자사몰 건은 시트1 유지', JSON.stringify(c1));
+        await pg.fill('#ex-naver', ''); await pg.dispatchEvent('#ex-naver', 'input'); await pg.fill('#ex-cafe24', sameTel); await pg.dispatchEvent('#ex-cafe24', 'input');
+        const c2 = await cnt(); ok(c2.nv === 0 && c2.cf === 1, '② 같은 번호 — 자사몰 칸에만 → 자사몰만 개별발송, 네이버 건은 유지', JSON.stringify(c2));
+        await pg.fill('#ex-cafe24', '20260918-0000099'); await pg.dispatchEvent('#ex-cafe24', 'input');
+        const c3 = await cnt(); ok(c3.cf === 1, '② 자사몰 주문번호로도 개별발송 지정', JSON.stringify(c3));
+        await pg.fill('#ex-cafe24', ''); await pg.dispatchEvent('#ex-cafe24', 'input');
+        await pg.evaluate(() => __ivt.setRows('cafe24', []));
+        await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N);
+        await pg.fill('#ex-naver', indivTels.join('\n')); await pg.dispatchEvent('#ex-naver', 'input');
         await pg.waitForTimeout(300);
         const indivCnt = await pg.evaluate(() => __ivt.S.merged.filter(e => e.individual).length);
         ok(indivCnt === expIndiv, '② 개별발송 번호 → 회색 분류 건수', `${indivCnt} / 기대 ${expIndiv}`);

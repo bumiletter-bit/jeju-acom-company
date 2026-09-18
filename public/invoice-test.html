@@ -27,7 +27,7 @@
   .tag.review { background:#FEF3C7; color:#B45309; }
   .tag.indiv { background:#E5E7EB; color:#374151; }
   .ivt-grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
-  .ivt-grid3 textarea.form-input { width:100%; min-height:72px; resize:vertical; font-family:inherit; }
+  .ivt-grid3 textarea.form-input { width:100%; }
   #login-gate { background:#FEE2E2; color:#B91C1C; padding:12px 14px; border-radius:10px; font-weight:600; display:none; margin-bottom:16px; }
   .invoice-upload-area.decrypting { opacity:.6; }
 </style>
@@ -108,11 +108,11 @@
   <div class="card">
     <h2>개별발송 처리 번호 (입력o·삭제x) <span style="font-size:12px; font-weight:500; color:#888;">— 이번 변환에만 적용 · 저장되지 않음</span></h2>
     <div class="ivt-grid3">
-      <div class="form-group"><label>스마트스토어 — 구매자 연락처</label><textarea id="ex-naver" class="form-input" placeholder="010-1234-5678&#10;010-9999-0000  (줄바꿈·쉼표 구분)"></textarea></div>
-      <div class="form-group"><label>자사몰 — 주문자 연락처 또는 주문번호</label><textarea id="ex-cafe24" class="form-input" placeholder="010-…  또는 20260918-0000011"></textarea></div>
-      <div class="form-group"><label>쿠팡 — 구매자 연락처 또는 주문번호</label><textarea id="ex-coupang" class="form-input" placeholder="050-…  또는 주문번호"></textarea></div>
+      <div class="form-group"><label>스마트스토어 — 구매자 연락처</label><textarea id="ex-naver" class="form-input" placeholder="01012345678 → 010-1234-5678 자동&#10;여러 명은 줄바꿈·쉼표로"></textarea></div>
+      <div class="form-group"><label>자사몰 — 구매자 연락처</label><textarea id="ex-cafe24" class="form-input" placeholder="01012345678 → 010-1234-5678 자동&#10;(주문번호로 적어도 됨)"></textarea></div>
+      <div class="form-group"><label>쿠팡 — 구매자 연락처</label><textarea id="ex-coupang" class="form-input" placeholder="050512345678 → 0505-1234-5678 자동&#10;(주문번호로 적어도 됨)"></textarea></div>
     </div>
-    <div class="ivt-note">여기 적힌 번호의 주문은 <b>시트1(택배사 양식)에서 빠지고</b>, 네이버 건은 <b>시트2 맨 아래에 노란 배경</b>으로 남습니다(개별 파일로 이미 발송한 건 → 송장만 직접 입력).</div>
+    <div class="ivt-note">여기 적힌 번호의 주문은 <b>시트1(택배사 양식)에서 빠지고</b>, 네이버 건은 <b>시트2 맨 아래에 노란 배경</b>으로 남습니다(개별 파일로 이미 발송한 건 → 송장만 직접 입력). 채널마다 따로 봅니다 — 같은 손님이 네이버·자사몰에 다 있어도 <b>적은 칸의 채널만</b> 빠집니다.</div>
     <div class="ivt-note" id="msg-ex"></div>
   </div>
 

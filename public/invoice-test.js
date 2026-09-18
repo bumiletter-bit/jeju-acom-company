@@ -42,6 +42,21 @@
     }
     const rawOf = e => e.ch === 'naver' ? S.naver.rows[e.i] : e.ch === 'cafe24' ? S.cafe24[e.i] : S.coupang[e.i];
     function parseNums(txt) { return String(txt || '').split(/[\n,;]+/).map(s => s.trim()).filter(Boolean).map(s => ({ raw: s, digits: s.replace(/\D/g, '') })); }
+    // 전화번호 자동 하이픈(01011121111 → 010-1112-1111 · 0505… 12자리 → 4-4-4 · 02 서울 → 2-4-4/2-3-4). 주문번호 등 9~12자리 0으로 시작하지 않는 값은 그대로.
+    function fmtTel(tok) {
+        const d = tok.replace(/\D/g, '');
+        if (!/^0\d{8,11}$/.test(d) || d !== tok.replace(/[\s\-]/g, '')) return tok;   // 숫자·하이픈 외 문자가 섞였으면 손대지 않음
+        if (d.length === 11) return d.replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3');
+        if (d.length === 12) return d.replace(/^(\d{4})(\d{4})(\d{4})$/, '$1-$2-$3');
+        if (d.length === 10) return d.startsWith('02') ? d.replace(/^(02)(\d{4})(\d{4})$/, '$1-$2-$3') : d.replace(/^(\d{3})(\d{3})(\d{4})$/, '$1-$2-$3');
+        if (d.length === 9 && d.startsWith('02')) return d.replace(/^(02)(\d{3})(\d{4})$/, '$1-$2-$3');
+        return tok;
+    }
+    function formatTextarea(el) {
+        const before = el.value; const atEnd = el.selectionStart === before.length;
+        const next = before.split('\n').map(line => line.split(/([,;])/).map(part => (/[,;]/.test(part) ? part : part.replace(/\S+/g, fmtTel))).join('')).join('\n');
+        if (next !== before) { el.value = next; if (atEnd) el.setSelectionRange(next.length, next.length); }
+    }
     function applyIndividual() {
         const ex = { naver: parseNums($('ex-naver').value), cafe24: parseNums($('ex-cafe24').value), coupang: parseNums($('ex-coupang').value) };
         const hit = { naver: 0, cafe24: 0, coupang: 0 };
@@ -223,7 +238,7 @@
         $('btn-coupang').addEventListener('click', () => loadOther('coupang').catch(e => setMsg('coupang', '⚠️ ' + aoEsc(e.message))));
         $('btn-reset').addEventListener('click', reset);
         $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
-        ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).addEventListener('input', () => { applyIndividual(); render(); }));
+        ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).addEventListener('input', () => { formatTextarea($(id)); applyIndividual(); render(); }));
         for (const ch of ['naver', 'cafe24', 'coupang']) {
             const area = $('area-' + ch), input = $('file-' + ch);
             area.addEventListener('click', () => input.click());
@@ -233,6 +248,6 @@
             input.addEventListener('change', () => { const f = input.files[0]; if (f) loadFile(ch, f).catch(e => setMsg(ch, '⚠️ ' + aoEsc(e.message))); input.value = ''; });
         }
         render();
-        window.__ivt = { S, refreshAll, render, download, setNaverApiRows: async rows => { S.naver = { src: 'api', rows }; await refreshAll('naver'); } };   // 검증용 훅
+        window.__ivt = { S, refreshAll, render, download, fmtTel, setNaverApiRows: async rows => { S.naver = { src: 'api', rows }; await refreshAll('naver'); }, setRows: async (ch, rows) => { S[ch] = rows; await refreshAll(ch); } };   // 검증용 훅
     });
 })();
