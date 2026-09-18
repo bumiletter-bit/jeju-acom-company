@@ -6,108 +6,135 @@
 <meta name="robots" content="noindex">
 <title>송장변환 테스트 v2 — 제주아꼼이네</title>
 <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="theme.css?v=12">
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
-  /* #452 테스트 페이지 — 회사프로그램 인디고 테마 토큰(디자인 가이드) */
-  :root { --primary:#4F46E5; --primary-light:#EEF2FF; --ink:#111827; --muted:#6B7280; --line:#E5E7EB; --bg:#F5F6FA; --warn:#B45309; --warn-bg:#FEF3C7; --danger:#B91C1C; --danger-bg:#FEE2E2; --ok:#047857; --ok-bg:#D1FAE5; }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family:'Pretendard',-apple-system,'Malgun Gothic',sans-serif; background:var(--bg); color:var(--ink); font-size:14px; }
-  .wrap { max-width:1280px; margin:0 auto; padding:20px 16px 60px; }
-  h1 { font-size:20px; margin:0 0 4px; letter-spacing:-.02em; }
-  .sub { color:var(--muted); font-size:13px; margin:0 0 16px; }
-  .badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:var(--warn-bg); color:var(--warn); vertical-align:middle; margin-left:6px; }
-  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
-  .card h2 { font-size:15px; margin:0 0 10px; }
-  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-  .btn { border:1px solid var(--line); background:#fff; padding:8px 12px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; color:var(--ink); }
-  .btn:hover { border-color:var(--primary); color:var(--primary); }
-  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
-  .btn.primary:hover { background:#4338CA; }
-  .btn:disabled { opacity:.45; cursor:not-allowed; }
-  .btn:active { transform:scale(.98); }
-  input[type=number], input[type=text] { border:1px solid var(--line); border-radius:8px; padding:7px 10px; font-size:13px; font-family:inherit; }
-  textarea { width:100%; min-height:64px; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px; font-family:inherit; resize:vertical; }
-  .drop { border:2px dashed #C7D2FE; border-radius:10px; padding:16px; text-align:center; color:var(--muted); background:var(--primary-light); cursor:pointer; }
-  .drop.over { border-color:var(--primary); background:#E0E7FF; }
-  .msg { font-size:13px; margin-top:8px; color:var(--muted); min-height:18px; }
-  .grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
-  .grid3 label { display:block; font-size:12px; font-weight:700; margin-bottom:4px; }
-  .hint { font-size:12px; color:var(--muted); margin-top:4px; }
-  table { width:100%; border-collapse:collapse; font-size:12.5px; }
-  th, td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
-  th { background:#F9FAFB; font-weight:700; position:sticky; top:0; }
-  tr.excl td { background:var(--danger-bg); }
-  tr.review td { background:var(--warn-bg); }
-  tr.indiv td { background:#F3F4F6; color:#6B7280; }
-  .tag { display:inline-block; font-size:11px; font-weight:700; padding:1px 6px; border-radius:6px; }
-  .tag.excl { background:var(--danger-bg); color:var(--danger); }
-  .tag.review { background:var(--warn-bg); color:var(--warn); }
+  /* #452 테스트 페이지 — 본 화면(styles.css·theme.css) 그대로 사용. 아래는 이 화면에만 있는 상태 표시 */
+  .main-content.ivt { margin-left: 0; max-width: 1320px; }
+  .ivt-badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:#FEF3C7; color:#B45309; vertical-align:middle; margin-left:8px; }
+  .ivt-note { font-size:12.5px; color:var(--text-mid,#666); line-height:1.6; margin-top:6px; }
+  .ivt-stats { display:flex; gap:16px; flex-wrap:wrap; font-size:13px; margin:0 0 12px; color:var(--text-mid,#666); }
+  .ivt-stats b { color: var(--primary); font-size:14px; }
+  .table-scroll-wrapper.ivt { max-height: 440px; overflow:auto; border:1px solid #ECEDF1; border-radius:12px; }
+  .data-table td.memo { white-space:pre-wrap; max-width:340px; }
+  .data-table td.ch { white-space:nowrap; }
+  .data-table tr.excl td { background:#FEE2E2; }
+  .data-table tr.review td { background:#FEF3C7; }
+  .data-table tr.indiv td { background:#F3F4F6; color:#6B7280; }
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:1px 7px; border-radius:6px; white-space:nowrap; }
+  .tag.excl { background:#FEE2E2; color:#B91C1C; }
+  .tag.review { background:#FEF3C7; color:#B45309; }
   .tag.indiv { background:#E5E7EB; color:#374151; }
-  .tag.ok { background:var(--ok-bg); color:var(--ok); }
-  .tbl-wrap { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
-  .memo { white-space:pre-wrap; max-width:320px; }
-  td.ch { white-space:nowrap; }
-  .stats { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; margin:8px 0; }
-  .stats b { color:var(--primary); }
-  .summary { font-size:13px; color:var(--muted); }
-  #login-gate { background:var(--danger-bg); color:var(--danger); padding:12px 14px; border-radius:10px; font-weight:600; display:none; }
+  .ivt-grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+  .ivt-grid3 textarea.form-input { width:100%; min-height:72px; resize:vertical; font-family:inherit; }
+  #login-gate { background:#FEE2E2; color:#B91C1C; padding:12px 14px; border-radius:10px; font-weight:600; display:none; margin-bottom:16px; }
+  .invoice-upload-area.decrypting { opacity:.6; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>송장변환 테스트 v2 <span class="badge">TEST · 본 화면 무접촉</span></h1>
-  <p class="sub">시트1 = 택배사 양식(현행과 동일) · 시트2 = 네이버 「전체주문발주발송관리」 원본 양식 · 개별발송 번호 제외 · 배송메모 「오늘 발송 아님」 검토</p>
+<div class="main-content ivt">
+<div class="page active" id="page-invoice-test">
+  <h1>송장변환 <span class="ivt-badge">테스트 v2 · 본 화면 무접촉</span></h1>
+  <div class="invoice-mode-toggle">
+    <button class="invoice-mode-btn active" type="button">송장 변환 (v2)</button>
+    <button class="invoice-mode-btn" type="button" onclick="location.href='/'" title="중간발주는 본 화면에서">📊 중간발주</button>
+  </div>
   <div id="login-gate">회사프로그램 메인 화면에서 먼저 로그인한 뒤 이 페이지를 열어주세요.</div>
 
   <div class="card">
-    <h2>1. 주문 불러오기</h2>
-    <div class="row" style="margin-bottom:10px;">
-      <label>조회 기간(일) <input type="number" id="days" value="50" min="1" max="180" style="width:70px;"></label>
-      <button class="btn" id="btn-naver">🛰️ 네이버 배송준비 불러오기 (v2)</button>
-      <button class="btn" id="btn-cafe24">🏠 자사몰 불러오기</button>
-      <button class="btn" id="btn-coupang">🛍️ 쿠팡 불러오기</button>
-      <button class="btn" id="btn-reset">초기화</button>
+    <h2>출고지 정보</h2>
+    <div class="form-group">
+      <label>출고지 주소</label>
+      <input type="text" id="invoice-sender-address" class="form-input" value="제주특별자치도 제주시 연삼로 1066-31, 제주아꼼이네" style="width:100%;">
     </div>
-    <div class="drop" id="drop">📄 네이버 「스마트스토어_전체주문발주발송관리_….xlsx」 파일을 여기에 드래그하거나 클릭해서 선택<br><span style="font-size:12px;">(불러오기 대신 파일로 넣어도 아래 과정은 동일)</span>
-      <input type="file" id="file" accept=".xlsx,.xls" style="display:none;">
+    <p style="font-size:12px; color:#888; margin-top:4px;">* 보내는사람 = 구매자명(제주아꼼이네) / 보내는사람연락처 = 구매자연락처 (자동 변환)</p>
+    <div style="display:none;"><div id="invoice-catalog-list"></div><div id="invoice-success-msg"></div></div>
+  </div>
+
+  <div class="invoice-upload-grid">
+    <div class="card invoice-upload-card">
+      <div class="channel-label channel-smart">스마트스토어</div>
+      <div class="invoice-upload-area" id="area-naver">
+        <div class="upload-icon">📄</div>
+        <p>네이버 「전체주문발주발송관리」 엑셀을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드<br><span style="font-size:11.5px;color:#888;">(비밀번호 걸린 파일도 그대로 — 자동 해제)</span></p>
+        <div class="invoice-file-name" id="fname-naver"></div>
+      </div>
+      <input type="file" id="file-naver" accept=".xlsx,.xls" hidden>
+      <button class="btn-primary" id="btn-naver" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🛰️ 네이버 배송준비 전체 불러오기 (v2)</button>
+      <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
+        <span>조회 기간</span>
+        <input type="number" id="days-naver" value="50" min="1" max="180" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
+        <span>일 (결제일 기준·최대 180)</span>
+      </div>
+      <div id="msg-naver" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
     </div>
-    <div class="msg" id="msg-src"></div>
-    <div style="display:none;">
-      <input type="text" id="invoice-sender-address" value="제주특별자치도 제주시 연삼로 1066-31, 제주아꼼이네">
-      <div id="invoice-catalog-list"></div><div id="invoice-success-msg"></div>
+
+    <div class="card invoice-upload-card">
+      <div class="channel-label channel-jasamol">자사몰</div>
+      <div class="invoice-upload-area" id="area-cafe24">
+        <div class="upload-icon">📄</div>
+        <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
+        <div class="invoice-file-name" id="fname-cafe24"></div>
+      </div>
+      <input type="file" id="file-cafe24" accept=".xlsx,.xls" hidden>
+      <button class="btn-primary" id="btn-cafe24" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🏠 자사몰 자동 불러오기(배송준비중)</button>
+      <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
+        <span>조회 기간</span>
+        <input type="number" id="days-cafe24" value="50" min="1" max="90" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
+        <span>일 (최대 90)</span>
+      </div>
+      <div id="msg-cafe24" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
+    </div>
+
+    <div class="card invoice-upload-card">
+      <div class="channel-label channel-coupang">쿠팡</div>
+      <div class="invoice-upload-area" id="area-coupang">
+        <div class="upload-icon">📄</div>
+        <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
+        <div class="invoice-file-name" id="fname-coupang"></div>
+      </div>
+      <input type="file" id="file-coupang" accept=".xlsx,.xls" hidden>
+      <button class="btn-primary" id="btn-coupang" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🛒 쿠팡 자동 불러오기(상품준비중)</button>
+      <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
+        <span>조회 기간</span>
+        <input type="number" id="days-coupang" value="31" min="1" max="31" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
+        <span>일 (최대 31)</span>
+      </div>
+      <div id="msg-coupang" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>2. 개별발송 처리 번호 (입력o·삭제x) — 이번 변환에만 적용</h2>
-    <div class="grid3">
-      <div><label>🛒 네이버 — 구매자 연락처</label><textarea id="ex-naver" placeholder="010-1234-5678&#10;010-9999-0000 (줄바꿈·쉼표 구분)"></textarea></div>
-      <div><label>🏠 자사몰 — 주문자 연락처 또는 주문번호</label><textarea id="ex-cafe24" placeholder="010-…  또는 20260918-0000011"></textarea></div>
-      <div><label>🛍️ 쿠팡 — 구매자 연락처 또는 주문번호</label><textarea id="ex-coupang" placeholder="050-… 또는 주문번호"></textarea></div>
+    <h2>개별발송 처리 번호 (입력o·삭제x) <span style="font-size:12px; font-weight:500; color:#888;">— 이번 변환에만 적용 · 저장되지 않음</span></h2>
+    <div class="ivt-grid3">
+      <div class="form-group"><label>스마트스토어 — 구매자 연락처</label><textarea id="ex-naver" class="form-input" placeholder="010-1234-5678&#10;010-9999-0000  (줄바꿈·쉼표 구분)"></textarea></div>
+      <div class="form-group"><label>자사몰 — 주문자 연락처 또는 주문번호</label><textarea id="ex-cafe24" class="form-input" placeholder="010-…  또는 20260918-0000011"></textarea></div>
+      <div class="form-group"><label>쿠팡 — 구매자 연락처 또는 주문번호</label><textarea id="ex-coupang" class="form-input" placeholder="050-…  또는 주문번호"></textarea></div>
     </div>
-    <div class="hint">여기 적힌 번호의 주문은 <b>시트1(택배사 양식)에서 빠지고</b>, 네이버 건은 <b>시트2 맨 아래에 노란 배경</b>으로 남습니다(개별 파일로 이미 발송한 건 → 송장만 직접 입력). 저장되지 않으며 초기화 시 비워집니다.</div>
-    <div class="msg" id="msg-ex"></div>
+    <div class="ivt-note">여기 적힌 번호의 주문은 <b>시트1(택배사 양식)에서 빠지고</b>, 네이버 건은 <b>시트2 맨 아래에 노란 배경</b>으로 남습니다(개별 파일로 이미 발송한 건 → 송장만 직접 입력).</div>
+    <div class="ivt-note" id="msg-ex"></div>
   </div>
 
   <div class="card">
-    <h2>3. 배송메모 검토 — 「오늘 발송 아님」 후보</h2>
-    <div class="summary">시스템이 메모를 읽어 지정일이 오늘보다 뒤인 건은 <b>미리 체크</b>해 두었습니다(체크 = 시트1·시트2 모두에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우고 체크하지 않습니다 — 빼야 할 건이면 직접 체크하고, 미리 체크된 건이 아니면 체크를 풀어주세요.</div>
-    <div class="stats" id="stats"></div>
-    <div class="tbl-wrap"><table id="review"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+    <h2>배송메모 검토 — 「오늘 발송 아님」 후보</h2>
+    <div class="ivt-note" style="margin:0 0 10px;">시스템이 메모를 읽어 지정일이 오늘보다 뒤인 건은 <b>미리 체크</b>해 두었습니다(체크 = 시트1·시트2 모두에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우고 체크하지 않습니다 — 빼야 할 건이면 직접 체크하고, 미리 체크된 건이 아니면 체크를 풀어주세요.</div>
+    <div class="ivt-stats" id="stats"></div>
+    <div class="table-scroll-wrapper ivt"><table class="data-table" id="review"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card">
-    <h2>4. 전체 미리보기</h2>
-    <div class="tbl-wrap"><table id="preview"><thead><tr><th>제외</th><th>#</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송지</th><th>배송메모</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+    <h2>전체 미리보기</h2>
+    <div class="table-scroll-wrapper ivt"><table class="data-table" id="preview"><thead><tr><th>제외</th><th>#</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송지</th><th>배송메모</th><th>상태</th></tr></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card">
-    <div class="row">
-      <button class="btn primary" id="btn-download" disabled>⬇️ 통합 변환 및 다운로드 (시트1 택배사 · 시트2 네이버 원본)</button>
-      <span class="summary" id="msg-dl"></span>
-    </div>
+    <button class="btn-primary" id="btn-download" disabled style="width:100%; padding:14px; font-size:15px;">📦 통합 변환 및 다운로드 (시트1 택배사 양식 · 시트2 네이버 원본 양식)</button>
+    <div class="ivt-note" id="msg-dl" style="text-align:center;"></div>
+    <div style="text-align:center; margin-top:10px;"><button class="btn-outline btn-sm" id="btn-reset" type="button">초기화</button></div>
   </div>
 </div>
-<script src="/invoice-test.js?v=1"></script>
+</div>
+<script src="/invoice-test.js?v=2"></script>
 </body>
 </html>

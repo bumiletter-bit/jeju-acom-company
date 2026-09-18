@@ -89,7 +89,7 @@
         rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${aoEsc(e.conv['배송메세지'])}</td><td>${aoEsc(reqOf(e))}</td><td>${statusOf(e)}</td></tr>`).join('')
             : '<tr><td colspan="8" style="color:#6B7280;">검토할 배송메모가 없습니다.</td></tr>';
         const n = S.merged.length, indiv = S.merged.filter(e => e.individual).length, excl = S.merged.filter(e => !e.individual && e.excluded).length, review = S.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length;
-        $('stats').innerHTML = `전체 <b>${n}</b>건 · 시트1(택배사) <b>${n - indiv - excl}</b>건 · 개별발송 <b>${indiv}</b>건 · 제외 체크 <b>${excl}</b>건 · 확인필요 <b>${review}</b>건${S.today ? ` · 기준일 ${S.today}` : ''}`;
+        $('stats').innerHTML = `<span>전체 <b>${n}</b>건</span><span>시트1(택배사) <b>${n - indiv - excl}</b>건</span><span>개별발송 <b>${indiv}</b>건</span><span>제외 체크 <b>${excl}</b>건</span><span>확인필요 <b>${review}</b>건</span>${S.today ? `<span>기준일 ${S.today}</span>` : ''}`;
         $('btn-download').disabled = !n;
         document.querySelectorAll('#preview input[type=checkbox], #review input[type=checkbox]').forEach(el => el.addEventListener('change', () => { const e = S.merged[Number(el.dataset.k)]; e.excluded = el.checked; e.userTouched = true; render(); }));
     }
@@ -152,54 +152,86 @@
     }
 
     // ── 입력원
+    const days = ch => Math.min(Math.max(parseInt($('days-' + ch).value) || 50, 1), 180);
+    const setMsg = (ch, html) => { $('msg-' + ch).innerHTML = html; };
+    const markArea = (ch, label) => { const a = $('area-' + ch); a.classList.add('has-file'); $('fname-' + ch).textContent = label; };
     async function loadNaverApi() {
-        const days = Math.min(Math.max(parseInt($('days').value) || 50, 1), 180);
-        $('msg-src').textContent = `네이버 배송준비 조회 중(최근 ${days}일)…`;
-        const r = await api('/api/agent-office/naver/invoice-orders-v2?days=' + days);
-        if (!r.ok) { $('msg-src').textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
+        setMsg('naver', `네이버 배송준비 조회 중(최근 ${days('naver')}일)…`);
+        const r = await api('/api/agent-office/naver/invoice-orders-v2?days=' + days('naver'));
+        if (!r.ok) { setMsg('naver', '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
         S.naver = { src: 'api', rows: r.rows || [] };
-        $('msg-src').textContent = `✅ 네이버 배송준비 ${r.count}건(API)`;
+        markArea('naver', `🛰️ 네이버 배송준비 ${r.count}건`);
+        setMsg('naver', `✅ 배송준비 <b>${r.count}건</b> 불러왔습니다(API — 비밀번호 없음).`);
         await refreshAll('naver');
     }
     async function loadOther(ch) {
-        const days = Math.min(Math.max(parseInt($('days').value) || 50, 1), 180);
-        const r = await api(`/api/agent-office/${ch}/invoice-orders?days=` + days);
-        if (!r.ok) { $('msg-src').textContent = '⚠️ ' + (r.message || '불러오기 실패'); return; }
+        setMsg(ch, '조회 중…');
+        const r = await api(`/api/agent-office/${ch}/invoice-orders?days=` + days(ch));
+        if (!r.ok) { setMsg(ch, '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
         S[ch] = r.rows || [];
-        $('msg-src').textContent += ` · ${CH_LABEL[ch]} ${r.count}건`;
+        markArea(ch, `${CH_LABEL[ch]} ${r.count}건`);
+        setMsg(ch, `✅ <b>${r.count}건</b> 불러왔습니다.`);
         await refreshAll(ch);
     }
-    async function loadFile(file) {
+    // 네이버 다운로드 파일은 비밀번호(대표: 다운로드 시 입력)로 잠겨 있을 수 있다 — CFB 서명이면 서버(/api/invoice/decrypt)로 자동 해제
+    const isEncrypted = buf => { const b = new Uint8Array(buf.slice(0, 8)); return b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0; };
+    const toB64 = buf => { let bin = ''; const u = new Uint8Array(buf); for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(bin); };
+    async function readWorkbook(file, ch) {
         const buf = await file.arrayBuffer();
-        const wb = XLSX.read(buf, { type: 'array', cellStyles: true });
+        if (isEncrypted(buf)) {
+            $('area-' + ch).classList.add('decrypting'); setMsg(ch, '🔐 비밀번호 파일 — 자동 해제 중…');
+            try {
+                const r = await api('/api/invoice/decrypt', 'POST', { fileBase64: toB64(buf) });
+                if (!r.fileBase64) throw new Error(r.error || '복호화 실패');
+                return { wb: XLSX.read(r.fileBase64, { type: 'base64', cellStyles: true }), decrypted: true };
+            } finally { $('area-' + ch).classList.remove('decrypting'); }
+        }
+        return { wb: XLSX.read(buf, { type: 'array', cellStyles: true }), decrypted: false };
+    }
+    async function loadFile(ch, file) {
+        const { wb, decrypted } = await readWorkbook(file, ch);
         const ws = wb.Sheets[wb.SheetNames[0]];
         const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
-        const hdrIdx = aoa.findIndex(r => Array.isArray(r) && r.includes('상품주문번호'));
-        if (hdrIdx < 0) { $('msg-src').textContent = '⚠️ 네이버 발주발송관리 파일이 아닙니다(상품주문번호 헤더 없음)'; return; }
-        const H = aoa[hdrIdx];
-        const rows = aoa.slice(hdrIdx + 1).filter(r => Array.isArray(r) && r.some(v => v != null && v !== '')).map(r => { const o = {}; H.forEach((h, i) => { o[h] = r[i] == null ? '' : r[i]; }); return o; });
-        S.naver = { src: 'file', rows, ws, hdrIdx, fileName: file.name };
-        $('msg-src').textContent = `✅ 파일 ${file.name} — 주문 ${rows.length}건`;
-        await refreshAll('naver');
+        if (ch === 'naver') {
+            const hdrIdx = aoa.findIndex(r => Array.isArray(r) && r.includes('상품주문번호'));
+            if (hdrIdx < 0) { setMsg('naver', '⚠️ 네이버 발주발송관리 파일이 아닙니다(상품주문번호 헤더 없음)'); return; }
+            const H = aoa[hdrIdx];
+            const rows = aoa.slice(hdrIdx + 1).filter(r => Array.isArray(r) && r.some(v => v != null && v !== '')).map(r => { const o = {}; H.forEach((h, i) => { o[h] = r[i] == null ? '' : r[i]; }); return o; });
+            S.naver = { src: 'file', rows, ws, hdrIdx, fileName: file.name };
+            markArea('naver', file.name);
+            setMsg('naver', `✅ 주문 <b>${rows.length}건</b>${decrypted ? ' · 🔐 비밀번호 자동 해제' : ''}`);
+        } else {
+            const H = aoa[0] || [];
+            const rows = aoa.slice(1).filter(r => Array.isArray(r) && r.some(v => v != null && v !== '')).map(r => { const o = {}; H.forEach((h, i) => { o[h] = r[i] == null ? '' : r[i]; }); return o; });
+            S[ch] = rows; markArea(ch, file.name); setMsg(ch, `✅ <b>${rows.length}건</b>`);
+        }
+        await refreshAll(ch);
     }
-    function reset() { S.naver = null; S.cafe24 = []; S.coupang = []; S.merged = []; S.today = null; ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).value = ''); $('msg-src').textContent = ''; $('msg-ex').textContent = ''; $('msg-dl').textContent = ''; render(); }
+    function reset() {
+        S.naver = null; S.cafe24 = []; S.coupang = []; S.merged = []; S.today = null;
+        ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).value = '');
+        ['naver', 'cafe24', 'coupang'].forEach(ch => { $('area-' + ch).classList.remove('has-file'); $('fname-' + ch).textContent = ''; setMsg(ch, ''); });
+        $('msg-ex').textContent = ''; $('msg-dl').textContent = ''; render();
+    }
 
     // ── 이벤트
     document.addEventListener('DOMContentLoaded', async () => {
         if (!localStorage.getItem('jwt_token')) $('login-gate').style.display = '';
-        try { await loadProd(); } catch (e) { $('msg-src').textContent = '⚠️ ' + e.message; return; }
-        $('btn-naver').addEventListener('click', () => loadNaverApi().catch(e => $('msg-src').textContent = '⚠️ ' + e.message));
-        $('btn-cafe24').addEventListener('click', () => loadOther('cafe24').catch(e => $('msg-src').textContent = '⚠️ ' + e.message));
-        $('btn-coupang').addEventListener('click', () => loadOther('coupang').catch(e => $('msg-src').textContent = '⚠️ ' + e.message));
+        try { await loadProd(); } catch (e) { setMsg('naver', '⚠️ ' + aoEsc(e.message)); return; }
+        $('btn-naver').addEventListener('click', () => loadNaverApi().catch(e => setMsg('naver', '⚠️ ' + aoEsc(e.message))));
+        $('btn-cafe24').addEventListener('click', () => loadOther('cafe24').catch(e => setMsg('cafe24', '⚠️ ' + aoEsc(e.message))));
+        $('btn-coupang').addEventListener('click', () => loadOther('coupang').catch(e => setMsg('coupang', '⚠️ ' + aoEsc(e.message))));
         $('btn-reset').addEventListener('click', reset);
         $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
         ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).addEventListener('input', () => { applyIndividual(); render(); }));
-        const drop = $('drop'), file = $('file');
-        drop.addEventListener('click', () => file.click());
-        drop.addEventListener('dragover', ev => { ev.preventDefault(); drop.classList.add('over'); });
-        drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-        drop.addEventListener('drop', ev => { ev.preventDefault(); drop.classList.remove('over'); const f = ev.dataTransfer.files[0]; if (f) loadFile(f).catch(e => $('msg-src').textContent = '⚠️ ' + e.message); });
-        file.addEventListener('change', () => { const f = file.files[0]; if (f) loadFile(f).catch(e => $('msg-src').textContent = '⚠️ ' + e.message); file.value = ''; });
+        for (const ch of ['naver', 'cafe24', 'coupang']) {
+            const area = $('area-' + ch), input = $('file-' + ch);
+            area.addEventListener('click', () => input.click());
+            area.addEventListener('dragover', ev => { ev.preventDefault(); area.classList.add('dragover'); });
+            area.addEventListener('dragleave', () => area.classList.remove('dragover'));
+            area.addEventListener('drop', ev => { ev.preventDefault(); area.classList.remove('dragover'); const f = ev.dataTransfer.files[0]; if (f) loadFile(ch, f).catch(e => setMsg(ch, '⚠️ ' + aoEsc(e.message))); });
+            input.addEventListener('change', () => { const f = input.files[0]; if (f) loadFile(ch, f).catch(e => setMsg(ch, '⚠️ ' + aoEsc(e.message))); input.value = ''; });
+        }
         render();
         window.__ivt = { S, refreshAll, render, download, setNaverApiRows: async rows => { S.naver = { src: 'api', rows }; await refreshAll('naver'); } };   // 검증용 훅
     });

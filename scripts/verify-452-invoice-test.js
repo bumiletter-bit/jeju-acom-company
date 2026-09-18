@@ -56,7 +56,7 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
         await pg.goto(`${BASE}/invoice-test.html`, { waitUntil: 'load' });
         await pg.waitForFunction(() => window.__ivt, null, { timeout: 20000 });
-        await pg.setInputFiles('#file', XLS);
+        await pg.setInputFiles('#file-naver', XLS);
         await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N, { timeout: 30000 });
         ok(true, '① 파일 업로드 → 미리보기 행수 = 원본', N);
         const st1 = await pg.evaluate(() => ({ excl: __ivt.S.merged.filter(e => e.excluded).length, review: __ivt.S.merged.filter(e => e.flag === 'review').length, today: __ivt.S.today }));
@@ -134,6 +134,15 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const rowA = XLSX.utils.sheet_to_json(q, { header: 1, raw: false }).find(r => r && r[6] === '받는A');
         ok(!!rowA && rowA[0] === '20260918000001' && rowA[2] === '택배,등기,소포' && rowA[3] === 'CJ대한통운' && rowA[16] === '발송대기' && rowA[23] === 'abcd****' && rowA[14] === '2026091800000', '⑤ 시트2(API): 상품주문번호·배송방법·택배사·주문상태·ID 마스킹·주문번호', JSON.stringify(rowA && [rowA[0], rowA[2], rowA[3], rowA[16], rowA[23]]));
         ok(/2026\/09\/18 09:00/.test(String(rowA && rowA[17])) && /₩27,000/.test(String(rowA && rowA[20])) && /2026\/09\/23 23:59/.test(String(rowA && rowA[22])), '⑤ 시트2(API): 결제일·정산예정금액·발송기한 서식', JSON.stringify(rowA && [rowA[17], rowA[20], rowA[22]]));
+        // ⑥ 비밀번호 파일 자동 해제: 오늘 원본을 4031로 암호화해 업로드 → 서버 복호화 → 같은 행수
+        try {
+            const officeCrypto = require('officecrypto-tool');
+            const enc = await officeCrypto.encrypt(fs.readFileSync(XLS), { password: process.env.SMARTSTORE_FILE_PASSWORD || '4031' });
+            const fenc = path.join(os.tmpdir(), 'ivt-enc.xlsx'); fs.writeFileSync(fenc, enc);
+            await pg.setInputFiles('#file-naver', fenc);
+            await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n && /비밀번호 자동 해제/.test(document.getElementById('msg-naver').textContent), N, { timeout: 60000 });
+            ok(true, '⑥ 비밀번호 걸린 파일 업로드 → 자동 해제 → 행수 동일', N);
+        } catch (e) { ok(false, '⑥ 비밀번호 파일 자동 해제', e.message.slice(0, 160)); }
         ok(errs.length === 0, 'pageerror·console error 0', errs.join(' | '));
         await br.close();
     } finally { srv.kill(); }
