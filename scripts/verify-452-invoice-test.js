@@ -275,8 +275,26 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const fr = path.join(os.tmpdir(), 'ivt-ref.xlsx'); XLSX.writeFile(refWb, fr); const wr = XLSX.readFile(fr, { cellStyles: true }); const tr = wr.Sheets.Sheet1;
         const keys = Object.keys(tr).filter(k => /^[A-Z]+\d+$/.test(k));
         const strip = c => c ? JSON.stringify({ v: c.v, t: c.t, s: c.s }) : null;
-        const diffs = keys.filter(k => strip(tr[k]) !== strip(t1[k]));
-        ok(tr['!ref'] === t1['!ref'] && diffs.length === 0, '④ 🔴 무회귀: 제외 0일 때 시트1 = 본 화면 실코드 결과(셀 값·스타일 전부 동일)', `${keys.length}셀 비교 · 차이 ${diffs.length}${diffs.length ? ' 예: ' + diffs.slice(0, 3).join(',') : ''}`);
+        // #453: 보내는이 변경·사이즈 요청 행의 A·B·J만 달라질 수 있다 — 그 밖의 모든 셀은 본 화면 실코드 결과와 동일해야 하고, 배송메세지(J) 값은 전 행 동일(메모 무변경)
+        const { parseSender: ps453 } = require('../public/invoice-sender.js');
+        const allow = new Set(); let snd453 = 0, siz453 = 0; const bad453 = [];
+        conv.forEach((x, i) => {
+            const r = i + 2, c = x.c, buyer = String(c['보내는사람'] || '').replace(/\(제주아꼼이네[^)]*\)\s*$/, '').trim();
+            const p = ps453(c['배송메세지'], buyer), sc = !!(p && !p.ambiguous), sz = /\s(?:2S|S|M)사이즈로!$/.test(String(c['옵션정보'] || ''));
+            const memo = String(c['배송메세지'] || '').trim(), isDate = !!(tr['J' + r] && tr['J' + r].s && tr['J' + r].s.fgColor && tr['J' + r].s.fgColor.rgb === 'FFC7CE');
+            const fill = k => t1[k] && t1[k].s && t1[k].s.fgColor && t1[k].s.fgColor.rgb;
+            if (sc) {
+                snd453++; allow.add('A' + r); if (p.phone) allow.add('B' + r); if (memo) allow.add('J' + r);
+                if (String(t1['A' + r].v) !== p.name + ' 드림' || fill('A' + r) !== 'DDEBF7') bad453.push('A' + r);
+                if (p.phone && (String(t1['B' + r].v) !== p.phone || fill('B' + r) !== 'DDEBF7')) bad453.push('B' + r);
+                if (memo && fill('J' + r) !== 'DDEBF7') bad453.push('J' + r);
+            } else if (sz) { siz453++; if (memo && !isDate) { allow.add('J' + r); if (fill('J' + r) !== 'FCE4D6') bad453.push('J' + r); } }
+        });
+        const diffs = keys.filter(k => !allow.has(k) && strip(tr[k]) !== strip(t1[k]));
+        const memoDiff = keys.filter(k => /^J\d+$/.test(k) && String((tr[k] || {}).v || '') !== String((t1[k] || {}).v || ''));
+        ok(tr['!ref'] === t1['!ref'] && diffs.length === 0, '④ 🔴 무회귀: 제외 0일 때 시트1 = 본 화면 실코드 결과(보내는이·사이즈 표시 칸 외 셀 값·스타일 전부 동일)', `${keys.length}셀 비교 · 허용 ${allow.size}칸 · 차이 ${diffs.length}${diffs.length ? ' 예: ' + diffs.slice(0, 3).join(',') : ''}`);
+        ok(memoDiff.length === 0, '④ #453 배송메세지(J) 값 = 전 행 본 화면 결과와 동일(메모 글자 무변경)', memoDiff.slice(0, 3).join(','));
+        ok(bad453.length === 0, '④ #453 보내는이 변경 행 = 「이름 드림」·번호·연파랑 / 사이즈 요청 행 = 연주황', `보내는이 ${snd453}건 · 사이즈 ${siz453}건${bad453.length ? ' · 불일치 ' + bad453.slice(0, 4).join(',') : ''}`);
         ok(XLSX.utils.sheet_to_json(w2.Sheets['발주발송관리'], { header: 1 }).length - 2 === N, '④ 제외 0일 때 시트2 = 전체 행');
         // ⑤ API 원본 경로(_x) — 가짜 2행
         const fake = [
@@ -293,6 +311,28 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const rowA = XLSX.utils.sheet_to_json(q, { header: 1, raw: false }).find(r => r && r[6] === '받는A');
         ok(!!rowA && rowA[0] === '20260918000001' && rowA[1] === '택배,등기,소포' && rowA[2] === '택배,등기,소포' && !rowA[3] && rowA[16] === '발송대기' && rowA[23] === 'abcd****' && rowA[14] === '2026091800000', '⑤ 시트2(API): 상품주문번호·배송방법(구매자 요청)·배송방법 = 택배,등기,소포 · 택배사 빈칸 · 주문상태·ID 마스킹·주문번호', JSON.stringify(rowA && [rowA[0], rowA[1], rowA[2], rowA[3], rowA[16], rowA[23]]));
         ok(/2026\/09\/18 09:00/.test(String(rowA && rowA[17])) && /₩27,000/.test(String(rowA && rowA[20])) && /2026\/09\/23 23:59/.test(String(rowA && rowA[22])), '⑤ 시트2(API): 결제일·정산예정금액·발송기한 서식', JSON.stringify(rowA && [rowA[17], rowA[20], rowA[22]]));
+        // ⑤-b #453 보내는이 변경·사이즈 요청 표시(가짜 5행 — 개인정보 없음): 보내는사람만 바뀌고 메모는 그대로 · 시트1 색 표시 · 미리보기 배지 · 애매는 무변경
+        const s453mk = (n, memo) => ({ ...fake[0], '구매자명': '구매' + n, '구매자연락처': '010-5555-000' + n, '수취인명': '받는' + n, '수취인연락처1': '010-5555-000' + n, '배송메세지': memo, _pid: '2026091800010' + n, _x: { ...fake[0]._x, productOrderId: '2026091800010' + n } });
+        const s453memos = ['보내는이 홍길동 변경', 's사이즈로 보내주세요', '21일 발송 부탁드려요. 보내는 사람 : 김철수(010-9999-8888)', '보내는이: 홍길동 즐거운 추석 보내세요', '문앞에 놔주세요'];
+        await pg.evaluate(rows => __ivt.setNaverApiRows(rows), s453memos.map((m, i) => s453mk(i + 1, m)));
+        await pg.waitForFunction(() => document.querySelectorAll('#preview tbody tr').length === 5);
+        const s453badge = await pg.evaluate(() => ({ okN: document.querySelectorAll('#preview .note.sender-ok').length, ambN: document.querySelectorAll('#preview .note.sender-amb').length, okTxt: Array.from(document.querySelectorAll('#preview .note.sender-ok')).map(x => x.textContent).join(' | ') }));
+        ok(s453badge.okN === 2 && s453badge.ambN === 1 && /홍길동 드림/.test(s453badge.okTxt) && /김철수 드림 · 010-9999-8888/.test(s453badge.okTxt), '⑤-b #453 미리보기 배지: 자동 변경 2 · 애매 1(자동 변경 안 함)', JSON.stringify(s453badge));
+        await pg.evaluate(() => { __ivt.S.merged.forEach(e => { e.excluded = false; e.userTouched = true; }); __ivt.render(); });
+        const s453dl = pg.waitForEvent('download'); await pg.click('#btn-download'); const s453d = await s453dl;
+        const s453f = path.join(os.tmpdir(), 'ivt453.xlsx'); await s453d.saveAs(s453f); const s453w = XLSX.readFile(s453f, { cellStyles: true }); const s453s = s453w.Sheets.Sheet1;
+        const s453rows = XLSX.utils.sheet_to_json(s453s, { header: 1, defval: '' }).slice(1).map((r, i) => ({ r: i + 2, A: r[0], B: r[1], E: r[4], J: r[9], rcv: r[3] }));
+        const s453fill = k => s453s[k] && s453s[k].s && s453s[k].s.fgColor && s453s[k].s.fgColor.rgb;
+        const s453of = n => s453rows.find(x => x.rcv === '받는' + n);
+        const [q453a, q453b, q453c, q453d, q453e] = [1, 2, 3, 4, 5].map(s453of);
+        ok(q453a.A === '홍길동 드림' && q453a.B === '010-5555-0001' && q453a.J === s453memos[0] && s453fill('A' + q453a.r) === 'DDEBF7' && s453fill('J' + q453a.r) === 'DDEBF7' && s453fill('B' + q453a.r) !== 'DDEBF7', '⑤-b 보내는이 변경: 보내는사람 = 「홍길동 드림」 · 연락처 그대로 · 메모 원문 그대로 · A·J 연파랑', JSON.stringify([q453a.A, q453a.B, q453a.J]));
+        ok(/ S사이즈로!$/.test(q453b.E) && q453b.A === '구매2(제주아꼼이네)' && q453b.J === s453memos[1] && s453fill('J' + q453b.r) === 'FCE4D6' && s453fill('A' + q453b.r) !== 'DDEBF7', '⑤-b 사이즈 요청: 옵션명 「S사이즈로!」(본 화면 실코드) · 메모 그대로 · J 연주황 · 보내는사람 기본값', JSON.stringify([q453b.A, q453b.E.slice(-10), q453b.J]));
+        ok(q453c.A === '김철수 드림' && q453c.B === '010-9999-8888' && q453c.J === s453memos[2] && s453fill('A' + q453c.r) === 'DDEBF7' && s453fill('B' + q453c.r) === 'DDEBF7' && s453fill('J' + q453c.r) === 'DDEBF7', '⑤-b 날짜+보내는이+번호: 보내는사람·연락처 교체 · 메모 그대로 · A·B·J 연파랑', JSON.stringify([q453c.A, q453c.B]));
+        ok(q453d.A === '구매4(제주아꼼이네)' && q453d.J === s453memos[3] && s453fill('A' + q453d.r) !== 'DDEBF7' && s453fill('J' + q453d.r) !== 'DDEBF7', '⑤-b 애매한 메모: 아무것도 안 바꿈(보내는사람 기본값·표시 없음)', q453d.A);
+        ok(q453e.A === '구매5(제주아꼼이네)' && q453e.J === s453memos[4] && !s453fill('J' + q453e.r), '⑤-b 무관한 메모: 기본값 그대로', q453e.A);
+        const s453sheet2 = XLSX.utils.sheet_to_json(s453w.Sheets['발주발송관리'], { header: 1, raw: false }).slice(2);
+        ok(s453sheet2.length === 5 && s453sheet2.every(r => s453memos.includes(r[12]) && /^구매\d$/.test(r[5])), '⑤-b 시트2(네이버 원본) = 구매자명·배송메세지 원본 그대로', JSON.stringify(s453sheet2.map(r => r[5])));
+        ok(/보내는이 변경 2건/.test(await pg.textContent('#msg-dl')) && /사이즈 요청 1건/.test(await pg.textContent('#msg-dl')), '⑤-b 다운로드 안내: 보내는이 변경 2건 · 사이즈 요청 1건', (await pg.textContent('#msg-dl')).slice(0, 160));
         // ⑥ 비밀번호 파일 자동 해제: 오늘 원본을 4031로 암호화해 업로드 → 서버 복호화 → 같은 행수
         try {
             const officeCrypto = require('officecrypto-tool');

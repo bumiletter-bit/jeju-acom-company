@@ -122,8 +122,15 @@
         entries.sort((a, b) => (a.conv['옵션정보'] || '').localeCompare(b.conv['옵션정보'] || '', 'ko'));   // = 본 화면 getMergedConverted 정렬
         const prev = new Map(ctx.merged.map(e => [e.ch + ':' + e.i, e]));
         entries.forEach(e => { const p = prev.get(e.ch + ':' + e.i); e.excluded = p ? p.excluded : false; e.userTouched = p ? p.userTouched : false; e.parse = p ? p.parse : null; e.flag = p ? p.flag : null; e.memoFlag = p ? p.memoFlag : null; e.individual = false; e.req = null; e.reqKind = null; });
+        // #453 보내는이 변경 요청 읽기(확실한 것만 · 애매 = 표시만). 변환 결과(conv)는 건드리지 않고 시트1에 쓸 때만 덮는다(senderOut).
+        entries.forEach(e => { e.sender = window.IvtSender ? window.IvtSender.parseSender(e.conv['배송메세지'], buyerOf(e)) : null; });
         ctx.merged = entries;
     }
+    const buyerOf = e => String(e.conv['보내는사람'] || '').replace(/\(제주아꼼이네[^)]*\)\s*$/, '').trim();
+    const senderChanged = e => !!(e.sender && !e.sender.ambiguous);
+    const sizeChanged = e => /\s(?:2S|S|M)사이즈로!$/.test(String(e.conv['옵션정보'] || ''));   // 본 화면 addSizeSuffix가 붙인 꼬리(메모의 사이즈 요청 → 옵션명)
+    // 시트1에 쓸 행: 보내는사람 = 「이름 드림」, 메모에 보내는이 번호가 있으면 연락처도. 배송메세지는 손대지 않는다(사람이 확인 후 지움 — 대표 9/18).
+    const senderOut = (e, conv) => senderChanged(e) ? { ...conv, '보내는사람': e.sender.name + ' 드림', ...(e.sender.phone ? { '보내는사람연락처': e.sender.phone } : {}) } : conv;
     // 손님 메모 판정: 발송 요청 = 기준일보다 뒤면 제외 · 도착 요청 = 기준일에 보내도 1~2일 배송으로 닿을 수 있으면(ambiguous) 확인필요, 확실히 뒤(가장 늦은 출고일 > 기준일)면 제외 (#452-x 대표 "22일 도착이면 20일 발송도 21~22일 도착") · 애매(ack)·넓은 표현 = 확인필요
     const flagOf = (p, memo, today) => !p ? (BROAD.test(memo) ? 'review' : null)
         : p.kind === 'ship' ? (p.reqDate && p.reqDate > today ? 'excl' : null)
@@ -297,6 +304,9 @@
     const memoCell = e => { const m = String(e.conv['배송메세지'] || '').trim(); return m ? `<div class="memo-box">${aoEsc(m)}</div>` : '<div class="memo-box empty">—</div>'; };
     const reqCell = e => (e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.key, e.req.note].filter(Boolean).join(' '))}</span>` : '') + aoEsc(reqOf(e));
     const cb = (e, k) => e.individual ? '' : `<input type="checkbox" data-k="${k}" ${e.excluded ? 'checked' : ''}>`;
+    // #453 미리보기 메모 칸 아래 표시: 자동 변경 = 「✉ 보내는이 → ○○○ 드림」 · 애매 = 「✉ 보내는이 확인」(아무것도 안 바꿈 — 시트에서 사람이)
+    const senderNote = e => !e.sender ? '' : e.sender.ambiguous ? '<span class="note sender-amb">✉ 보내는이 확인 · 자동 변경 안 함</span>'
+        : `<span class="note sender-ok">✉ 보내는이 → ${aoEsc(e.sender.name)} 드림${e.sender.phone ? ' · ' + aoEsc(e.sender.phone) : ''}</span>`;
     const rowClass = e => e.individual ? 'indiv' : e.excluded ? 'excl' : e.flag === 'review' ? 'review' : '';
     const FILTERS = [['all', '전체'], ['excl', '제외 체크'], ['review', '확인필요']];
     function render(ctx, onChange) {
@@ -312,7 +322,7 @@
         rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td class="req">${reqCell(e)}</td><td>${statusOf(e, ctx)}</td></tr>`).join('')
             : `<tr><td colspan="8" style="color:#6B7280;">${f === 'all' ? '검토할 배송메모가 없습니다.' : '이 조건에 해당하는 건이 없습니다.'}</td></tr>`;
         if (ctx.ids.preview) {
-            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}${e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.note].filter(Boolean).join(' '))}</span>` : ''}</td><td>${statusOf(e, ctx)}</td></tr>`).join('');
+            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}${e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.note].filter(Boolean).join(' '))}</span>` : ''}${senderNote(e)}</td><td>${statusOf(e, ctx)}</td></tr>`).join('');
         }
         const n = ctx.merged.length, indiv = ctx.merged.filter(e => e.individual).length, excl = ctx.merged.filter(e => !e.individual && e.excluded).length, review = ctx.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length;
         $(ctx.ids.stats).innerHTML = ctx.ids.preview
@@ -468,6 +478,23 @@
         ws['!rows'] = [{ hpt: 150 }]; ws['!cols'] = HDR.map(() => ({ wch: 27.7 }));
         return { ws, count: ordered.length, indiv: indiv.length };
     }
+    // #453 시트1 표시(대표 9/18 "변경된 건 티 나게 · 메모는 그대로"): 시트1 행 순서 = list 순서(본 화면 json_to_sheet) → r = i + 2.
+    //  · 보내는이 변경 = 배송메세지(J)·보내는사람(A)(+번호 바꿨으면 B) 연파랑  · 사이즈 요청(옵션명에 「S사이즈로!」) = 배송메세지 연주황
+    //  · 날짜 요청 빨강(본 화면 기존 표시)은 그대로: 보내는이와 겹치면 연파랑 바탕 + 빨간 글자, 사이즈와만 겹치면 기존 빨강 유지(사이즈는 옵션명에 보임)
+    function markSheet1(ws, list) {
+        const border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+        const mk = (fill, color) => ({ border, font: { name: '맑은 고딕', sz: 11, bold: true, color: { rgb: color } }, fill: { fgColor: { rgb: fill } }, alignment: { vertical: 'center' } });
+        const BLUE = 'DDEBF7', NAVY = '1F4E79', ORANGE = 'FCE4D6', DARKRED = 'C00000', RED = 'FF0000';
+        let sender = 0, size = 0;
+        list.forEach((e, i) => {
+            const sc = senderChanged(e), sz = sizeChanged(e); if (!sc && !sz) return;
+            const r = i + 2, J = ws['J' + r], hasMemo = !!(J && String(J.v || '').trim());
+            const isDate = !!(J && J.s && J.s.fill && J.s.fill.fgColor && J.s.fill.fgColor.rgb === 'FFC7CE');
+            if (sc) { sender++; if (ws['A' + r]) ws['A' + r].s = mk(BLUE, NAVY); if (e.sender.phone && ws['B' + r]) ws['B' + r].s = mk(BLUE, NAVY); if (hasMemo) J.s = mk(BLUE, isDate ? RED : sz ? DARKRED : NAVY); }
+            if (sz) { size++; if (!sc && hasMemo && !isDate) J.s = mk(ORANGE, DARKRED); }
+        });
+        return { sender, size };
+    }
     async function download() {
         const cpRemoved = await recheckCoupang();
         readLines(C); applyLines(C, false); renderResults(C);
@@ -478,13 +505,14 @@
         XLSX.writeFile = (wb, name) => { captured = { wb, name }; };
         // 시트1 = 본 화면 실코드 그대로. 단 직원 줄이 「기준일 발송」으로 확정한 주문은 손님 배송메모를 비워 택배사 시트에서 헷갈리지 않게(#452-m 대표). 시트2(네이버 원본)는 그대로.
         const memoCleared = list.filter(e => e.reqKind === 'today').length;
-        try { P.exportInvoiceExcel(list.map(e => e.reqKind === 'today' ? { ...e.conv, '배송메세지': '' } : e.conv)); } finally { XLSX.writeFile = origWrite; }
+        try { P.exportInvoiceExcel(list.map(e => senderOut(e, e.reqKind === 'today' ? { ...e.conv, '배송메세지': '' } : e.conv))); } finally { XLSX.writeFile = origWrite; }
         if (!captured) throw new Error('시트1 생성 실패');
+        const marked = markSheet1(captured.wb.Sheets['Sheet1'], list);
         let s2 = null;
         if (C.naver) { s2 = buildSheet2(list); XLSX.utils.book_append_sheet(captured.wb, s2.ws, '발주발송관리'); }
         const name = captured.name.replace(/\.xlsx$/i, '') + '_v2.xlsx';
         origWrite(captured.wb, name);
-        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
+        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${marked.sender ? ` · ✉ 보내는이 변경 ${marked.sender}건(연파랑 — 메모 확인 후 지우기)` : ''}${marked.size ? ` · 사이즈 요청 ${marked.size}건(연주황)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
         return captured.wb;
     }
 
