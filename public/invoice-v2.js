@@ -344,21 +344,58 @@
     const setMsg = (ch, html) => { $('msg-' + ch).innerHTML = html; };
     const markArea = (ch, label) => { $('area-' + ch).classList.add('has-file'); $('fname-' + ch).textContent = label; };
     async function refreshC(resetCh) { if (resetCh) C.merged = C.merged.filter(e => e.ch !== resetCh); rebuild(C); await parseMemos(C); readLines(C); applyLines(C); C.reviewFilterKeys = null; render(C); renderResults(C); $('btn-download').disabled = !C.merged.length; }
+    // 진행률 표시 — 본 화면 aoProgressBarTicker와 같은 모양(구버전에 있던 것 · #452-s 이식). 네이버 40일 = 40회+ 호출이라 40초 넘게 걸림
+    function progressTicker(el, estSec, label, extraFn) {
+        if (!el) return () => {};
+        const t0 = Date.now();
+        const draw = () => {
+            const s = Math.round((Date.now() - t0) / 1000); const pct = Math.min(95, Math.round((s / Math.max(estSec, 3)) * 100));
+            el.innerHTML = `<div style="font-size:13px;color:#e67700;font-weight:600;">⏳ ${label} <strong>${pct}%</strong> <span style="color:#999;font-weight:400;">(${s}초 경과)</span></div><div style="height:10px;background:#eee;border-radius:6px;overflow:hidden;margin-top:4px;"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#F5C800,#e67700);transition:width .5s ease;"></div></div>`
+                + (extraFn ? `<div style="font-size:12px;color:var(--text-mid,#667085);margin-top:4px;">${extraFn(s)}</div>` : '') + `<div style="font-size:11px;color:#999;margin-top:2px;">잠시만요 — 완료되면 여기 바로 표시됩니다 (나가지 않으셔도 돼요)</div>`;
+        };
+        draw(); const iv = setInterval(draw, 1000); return () => clearInterval(iv);
+    }
     async function loadNaverApi() {
-        setMsg('naver', `네이버 배송준비 조회 중(최근 ${days('naver')}일)…`);
-        await P.aoLoadInvoicePricing();   // #440 동일: 클릭마다 단가표 품목명 새로 읽기(주중 이름 변경·주 바뀜)
-        const r = await fetchChannel('naver', days('naver'));
-        if (!r.ok) { setMsg('naver', '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
-        C.naver = { src: 'api', rows: r.rows || [] }; markArea('naver', `🛰️ 네이버 배송준비 ${r.count}건`); setMsg('naver', `✅ 배송준비 <b>${r.count}건</b> 불러왔습니다(API — 비밀번호 없음).`);
-        await refreshC('naver');
+        const d = days('naver'); const btn = $('btn-naver'); btn.disabled = true;
+        const stop = progressTicker($('msg-naver'), d * 1.3 + 8, `네이버 배송준비 조회 중... (최근 ${d}일)`);
+        try {
+            await P.aoLoadInvoicePricing();   // #440 동일: 클릭마다 단가표 품목명 새로 읽기(주중 이름 변경·주 바뀜)
+            const r = await fetchChannel('naver', d); stop();
+            if (!r.ok) { setMsg('naver', '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
+            C.naver = { src: 'api', rows: r.rows || [] }; markArea('naver', `🛰️ 네이버 배송준비 ${r.count}건`);
+            setMsg('naver', `✅ 배송준비 <b>${r.count}건</b> 불러왔습니다.${r.partial_adjusted ? ` · 부분취소 수량 반영 ${r.partial_adjusted}건` : ''}`);
+            await refreshC('naver');
+        } finally { stop(); btn.disabled = false; }
     }
     async function loadOther(ch) {
-        setMsg(ch, '조회 중…');
-        await P.aoLoadInvoicePricing();
-        const r = await fetchChannel(ch, days(ch));
-        if (!r.ok) { setMsg(ch, '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
-        C[ch] = r.rows || []; markArea(ch, `${CH_LABEL[ch]} ${r.count}건`); setMsg(ch, `✅ <b>${r.count}건</b> 불러왔습니다.`);
-        await refreshC(ch);
+        const btn = $('btn-' + ch); btn.disabled = true;
+        const stop = progressTicker($('msg-' + ch), 12, `${CH_LABEL[ch]} 조회 중... (최근 ${days(ch)}일)`);
+        try {
+            await P.aoLoadInvoicePricing();
+            const r = await fetchChannel(ch, days(ch)); stop();
+            if (!r.ok) { setMsg(ch, '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
+            C[ch] = r.rows || []; markArea(ch, `${CH_LABEL[ch]} ${r.count}건`); setMsg(ch, `✅ <b>${r.count}건</b> 불러왔습니다.${r.partial_adjusted ? ` · 부분취소 수량 반영 ${r.partial_adjusted}건` : ''}`);
+            if (ch === 'coupang') C.coupangLoadedAt = new Date().toISOString();   // 변환 직전 취소 재확인 기준 시각(구버전 Task 4와 동일)
+            await refreshC(ch);
+        } finally { stop(); btn.disabled = false; }
+    }
+    // 구버전 [통합 변환] 클릭 시 하던 쿠팡 취소 재확인(대표 7/26 지시문 §5) 이식 — 쿠팡은 상품준비중에도 취소요청이 생기므로 다운로드 직전 API로 불러온 쿠팡분만 재조회해 자동 제외. 실패해도 변환은 진행+경고.
+    async function recheckCoupang() {
+        if (!C.coupangLoadedAt || !C.coupang.length) return 0;
+        try {
+            const r = await api('/api/agent-office/coupang/canceled-since?since=' + encodeURIComponent(C.coupangLoadedAt));
+            if (!r.ok) throw new Error(r.message || '재확인 실패');
+            const canceled = new Set((r.canceled || []).map(String));
+            C.coupangLoadedAt = new Date().toISOString();
+            if (!canceled.size) return 0;
+            const keep = C.coupang.filter(row => !canceled.has(String(row._orderId || '')));
+            const removed = C.coupang.length - keep.length; if (!removed) return 0;
+            const newIdx = new Map(keep.map((row, i) => [row, i]));   // 남은 쿠팡 행의 검토 결정(체크 등)은 새 위치로 옮겨 보존
+            C.merged = C.merged.filter(e => e.ch !== 'coupang' || newIdx.has(C.coupang[e.i])).map(e => (e.ch === 'coupang' ? Object.assign(e, { i: newIdx.get(C.coupang[e.i]) }) : e));
+            C.coupang = keep; rebuild(C); readLines(C); applyLines(C, false); render(C);
+            setMsg('coupang', `🛡️ 변환 직전 재확인: 쿠팡 취소 요청 <b>${removed}건</b>을 자동 제외했습니다.`);
+            return removed;
+        } catch (e) { setMsg('coupang', `⚠️ 쿠팡 취소 재확인 실패(${aoEsc(String(e.message || e))}) — 변환은 진행합니다. Wing에서 취소 여부를 확인해주세요.`); return 0; }
     }
     async function loadFile(ch, file) {
         $('area-' + ch).classList.add('decrypting');
@@ -415,7 +452,8 @@
         ws['!rows'] = [{ hpt: 150 }]; ws['!cols'] = HDR.map(() => ({ wch: 27.7 }));
         return { ws, count: ordered.length, indiv: indiv.length };
     }
-    function download() {
+    async function download() {
+        const cpRemoved = await recheckCoupang();
         readLines(C); applyLines(C, false); renderResults(C);
         if (!dateGuard(C, 'msg-dl')) return null;
         const list = C.merged.filter(e => !e.individual && !e.excluded);
@@ -430,7 +468,7 @@
         if (C.naver) { s2 = buildSheet2(list); XLSX.utils.book_append_sheet(captured.wb, s2.ws, '발주발송관리'); }
         const name = captured.name.replace(/\.xlsx$/i, '') + '_v2.xlsx';
         origWrite(captured.wb, name);
-        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}`;
+        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
         return captured.wb;
     }
 
@@ -456,10 +494,13 @@
     async function runQty() {
         const btn = $('ivt-qty-start'); btn.disabled = true;
         const d = Math.min(Math.max(parseInt($('ivt-qty-days').value) || 50, 1), 180);
-        $('invoice-qty-msg').textContent = `3채널 배송준비 조회 중… (최근 ${d}일)`;
+        const chState = { nv: '⏳ 조회 중', cp: '⏳ 조회 중', cf: '⏳ 조회 중' };   // 구버전과 같은 채널별 진행 표시
+        const stop = progressTicker($('invoice-qty-msg'), d * 1.3 + 10, `3채널 배송준비 조회 중... (최근 ${d}일)`, () => `🛰️ 네이버: ${chState.nv} · 🛒 쿠팡: ${chState.cp} · 🏠 자사몰: ${chState.cf}`);
+        const track = (p, key) => p.then(v => { chState[key] = (v && v.ok) ? `✅ ${v.count || 0}건` : '⚠️ 실패'; return v; }, e => { chState[key] = '⚠️ 실패'; throw e; });
         try {
             await P.aoLoadInvoicePricing();   // #440 동일
-            const [nv, cp, cf] = await Promise.allSettled([fetchChannel('naver', d), fetchChannel('coupang', d), fetchChannel('cafe24', d)]);
+            const [nv, cp, cf] = await Promise.allSettled([track(fetchChannel('naver', d), 'nv'), track(fetchChannel('coupang', d), 'cp'), track(fetchChannel('cafe24', d), 'cf')]);
+            stop(); $('invoice-qty-msg').innerHTML = '🔄 <b>2/2 변환·합산 중...</b>';
             const val = rv => rv.status === 'fulfilled' && rv.value && rv.value.ok ? rv.value : { ok: false, message: rv.status === 'fulfilled' ? (rv.value && rv.value.message) || '불러오기 실패' : (rv.reason && rv.reason.message) || String(rv.reason) };
             const N = val(nv), P2 = val(cp), F = val(cf);
             if (!N.ok && !P2.ok && !F.ok) { $('invoice-qty-msg').textContent = `⚠️ 3채널 모두 실패 — 네이버: ${N.message} / 쿠팡: ${P2.message} / 자사몰: ${F.message}`; return; }
@@ -468,7 +509,7 @@
             const fail = [!N.ok && `네이버: ${aoEsc(N.message)}`, !P2.ok && `쿠팡: ${aoEsc(P2.message)}`, !F.ok && `자사몰: ${aoEsc(F.message)}`].filter(Boolean).join(' / ');
             if (fail) $('invoice-qty-msg').innerHTML += `<br><span style="color:var(--danger,#F04438);">⚠️ 실패 채널 제외하고 집계됨 — ${fail}</span>`;
         } catch (e) { $('invoice-qty-msg').textContent = '⚠️ ' + e.message; }
-        finally { btn.disabled = false; }
+        finally { stop(); btn.disabled = false; }
     }
     async function refreshQ() {
         rebuild(Q); await parseMemos(Q); readLines(Q); applyLines(Q); Q.reviewFilterKeys = null; render(Q, recomputeQ); renderResults(Q); $('qreview-card').style.display = Q.merged.length ? '' : 'none';
@@ -499,7 +540,7 @@
         $('btn-cafe24').addEventListener('click', () => loadOther('cafe24').catch(e => setMsg('cafe24', '⚠️ ' + aoEsc(e.message))));
         $('btn-coupang').addEventListener('click', () => loadOther('coupang').catch(e => setMsg('coupang', '⚠️ ' + aoEsc(e.message))));
         $('btn-reset').addEventListener('click', resetC);
-        $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
+        $('btn-download').addEventListener('click', async () => { const b = $('btn-download'); b.disabled = true; try { await download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } finally { b.disabled = !C.merged.length; } });
         $('save-all').addEventListener('click', () => saveLines(C));
         $('qsave-all').addEventListener('click', () => saveLines(Q));
         $('ship-date').addEventListener('click', () => ShipCal.open(C));

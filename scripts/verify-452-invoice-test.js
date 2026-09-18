@@ -213,6 +213,17 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const yellowTels = []; for (let k = 0; k < expIndiv3; k++) { const r = a2.length - expIndiv3 + k + 1; yellowTels.push(String((s2['N' + r] || {}).v || '').replace(/\D/g, '')); }
         ok(yellowTels.every(t => indivTelsIn.has(t)), '③ 노란 행의 구매자연락처 = 입력한 개별발송 번호');
         ok((s2.R3 && s2.R3.z === 'yyyy/mm/dd\\ hh:mm') && (s2.U3 && /₩/.test(s2.U3.z || '')), '③ 시트2 날짜·금액 셀 서식 유지(결제일·정산예정금액)', `${s2.R3 && s2.R3.z} / ${s2.U3 && s2.U3.z}`);
+        // ③-c 쿠팡 취소 재확인(구버전 통합 변환의 안전장치 이식 #452-s): API로 불러온 쿠팡 2건 중 1건이 다운로드 전에 취소 → 자동 제외·안내
+        const cpRows = [1, 2].map(n => ({ '구매자': '쿠팡손님' + n, '등록상품명': '제주 황금향', '노출상품명(옵션명)': '황금향 선물용 - 3kg(중대과 7~15과)', '배송메세지': '', '수취인이름': '쿠팡수취' + n, '구매자전화번호': '0505-1111-222' + n, '구매수(수량)': 1, '수취인전화번호': '0505-1111-222' + n, '수취인 주소': '서울시 쿠팡로 ' + n, _orderId: '2710251961537' + n }));
+        await pg.evaluate(rows => __ivt.setRows('coupang', rows), cpRows); await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N + 2);
+        await pg.evaluate(() => { __ivt.S.coupangLoadedAt = new Date(Date.now() - 60000).toISOString(); });
+        await pg.route('**/api/agent-office/coupang/canceled-since*', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, canceled: ['27102519615372'] }) }));
+        const dlC = pg.waitForEvent('download'); await pg.click('#btn-download'); const dC = await dlC; const fC = path.join(os.tmpdir(), 'ivt-cp.xlsx'); await dC.saveAs(fC);
+        const cpState = await pg.evaluate(() => ({ cp: __ivt.S.coupang.length, merged: __ivt.S.merged.filter(e => e.ch === 'coupang').length, msg: document.getElementById('msg-dl').textContent, cmsg: document.getElementById('msg-coupang').textContent }));
+        const s1c = XLSX.utils.sheet_to_json(XLSX.readFile(fC).Sheets.Sheet1).map(r => String(r['수취인명']));
+        ok(cpState.cp === 1 && cpState.merged === 1 && /쿠팡 취소 1건 자동 제외/.test(cpState.msg) && /취소 요청 1건/.test(cpState.cmsg) && s1c.includes('쿠팡수취1') && !s1c.includes('쿠팡수취2'), '③-c 다운로드 직전 쿠팡 취소 재확인 → 취소 건 자동 제외(시트1에 없음)·안내', JSON.stringify(cpState).slice(0, 200));
+        await pg.unroute('**/api/agent-office/coupang/canceled-since*');
+        await pg.evaluate(() => { __ivt.S.coupangLoadedAt = null; return __ivt.setRows('coupang', []); }); await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N);
         // ④ 무회귀: 개별 0·제외 0 → 시트1 = 참조본
         await save('naver', '');
         await pg.evaluate(() => { __ivt.S.merged.forEach(e => { e.excluded = false; e.userTouched = true; }); __ivt.render(); });
