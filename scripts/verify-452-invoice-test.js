@@ -86,6 +86,18 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         await pg.fill('#ex-cafe24', ''); await pg.dispatchEvent('#ex-cafe24', 'input');
         await pg.evaluate(() => __ivt.setRows('cafe24', []));
         await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N);
+        // ☎ 지정 발송일 요청(직원 메모) — 개별발송 칸은 비운 상태에서
+        const reqTel = indivTels[1].replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3'), reqN = byTel[indivTels[1]].length;
+        const reqState = async () => pg.evaluate(t => { const rows = __ivt.S.merged.filter(e => e.req && e.req.digits === t); return { n: rows.length, excl: rows.filter(e => e.excluded).length, flags: [...new Set(rows.map(e => e.flag))], today: rows.every(e => e.reqToday) }; }, indivTels[1]);
+        await pg.fill('#req-dates', reqTel + ' 21일 발송'); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
+        const q1 = await reqState(); ok(q1.n === reqN && q1.excl === reqN && q1.flags.join() === 'excl', '☎ 「번호 21일 발송」 → 그 손님 주문 전부 제외 체크(직원 메모 우선)', JSON.stringify(q1));
+        ok(new RegExp('매칭 주문 ' + reqN + '건').test(await pg.textContent('#msg-req')), '☎ 매칭 건수 표시', await pg.textContent('#msg-req'));
+        await pg.fill('#req-dates', reqTel + ' 18일'); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
+        const q2 = await reqState(); ok(q2.n === reqN && q2.excl === 0 && q2.today, '☎ 「번호 18일」(오늘) → 통과·검토 목록에 「오늘 발송」 정보', JSON.stringify(q2));
+        await pg.fill('#req-dates', reqTel + ' 17일 발송\n099-9999-9999 21일'); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
+        const q3 = await reqState(); ok(q3.n === reqN && q3.excl === 0 && q3.flags.join() === 'review', '☎ 지난 날짜 → 확인필요(체크 없음)', JSON.stringify(q3));
+        ok(/주문 없음 1줄/.test(await pg.textContent('#msg-req')), '☎ 매칭 안 되는 번호 → 「주문 없음」 표시', await pg.textContent('#msg-req'));
+        await pg.fill('#req-dates', ''); await pg.dispatchEvent('#req-dates', 'input'); await pg.waitForTimeout(1200);
         await pg.fill('#ex-naver', indivTels.join('\n')); await pg.dispatchEvent('#ex-naver', 'input');
         await pg.waitForTimeout(300);
         const indivCnt = await pg.evaluate(() => __ivt.S.merged.filter(e => e.individual).length);

@@ -16,6 +16,7 @@
     // 검토 목록용 넓은 날짜 표현(현행 시트1 빨간 표시 규칙 + 점 날짜) — 해석기가 null인데 이 표현이 있으면 「확인필요」
     const BROAD = /다음\s*주|다음\s*날|내일|모레|글피|\d+\s*일|\d+\s*월|\d+\s*\/\s*\d+|\d{1,2}\s*\.\s*\d{1,2}|월요|화요|수요|목요|금요|토요|일요|주말|평일|다다음|이번\s*주|일주일|이후|이전|전에|추석\s*전|명절\s*전|연휴\s*전|까지|늦게|천천히|나중/;   // 「추석·명절·연휴」는 인사말(풍성한 추석 되세요)에 걸려 제외 — 「명절 전에」는 「전에」로 잡힘
     const CH_LABEL = { naver: '🛒 네이버', cafe24: '🏠 자사몰', coupang: '🛍️ 쿠팡' };
+    const PLACEHOLDER = new Set(['01000000000', '0000000000', '00000000000']);   // 네이버 선물하기 등 번호 비공개 주문의 자리표시 번호 — 실데이터에 존재(9/18 1건) → 어떤 칸에 적혀도 매칭 금지
 
     let P = null;   // app.js에서 떼어낸 실코드(변환 3종·시트1 내보내기·단가표 로드)
     async function loadProd() {
@@ -64,44 +65,75 @@
             const raw = rawOf(e) || {};
             const tel = String(e.conv['구매자연락처'] || raw['구매자연락처'] || raw['주문자 휴대전화'] || raw['구매자전화번호'] || '').replace(/\D/g, '');
             const ids = [raw._orderId, raw['주문번호'], raw['상품주문번호'], raw._x && raw._x.orderId].filter(Boolean).map(String);
-            e.individual = ex[e.ch].some(n => (n.digits.length >= 8 && tel && tel === n.digits) || (n.raw && ids.includes(n.raw)));
+            e.individual = ex[e.ch].some(n => (n.digits.length >= 8 && tel && tel === n.digits && !PLACEHOLDER.has(n.digits)) || (n.raw && ids.includes(n.raw)));   // 010-0000-0000(번호 비공개 자리표시)은 매칭 금지
             if (e.individual) hit[e.ch]++;
         });
         const entered = ex.naver.length + ex.cafe24.length + ex.coupang.length;
         $('msg-ex').textContent = entered ? `입력 ${entered}개 → 개별발송으로 분류된 주문: 네이버 ${hit.naver}건 · 자사몰 ${hit.cafe24}건 · 쿠팡 ${hit.coupang}건` : '';
     }
+    // ☎ 지정 발송일 요청(직원 메모): 「010-0000-0000 21일 발송」 — 첫 토큰 = 연락처/주문번호, 나머지 = 날짜 표현(키워드 없으면 「발송」)
+    function parseReqLines() {
+        return String($('req-dates').value || '').split(/\n/).map(s => s.trim()).filter(Boolean).map(line => {
+            const m = line.match(/^(\S+)\s+(.+)$/); if (!m) return { line, bad: true };
+            const key = m[1], digits = key.replace(/\D/g, ''); let text = m[2].trim();
+            if (!/(발송|출고|출발|보내|도착|받|수령|까지|배송)/.test(text)) text += ' 발송';
+            return { line, key, digits, text };
+        });
+    }
+    function reqNoteFor(e) {
+        const raw = rawOf(e) || {};
+        const tel = String(e.conv['구매자연락처'] || raw['구매자연락처'] || raw['주문자 휴대전화'] || raw['구매자전화번호'] || '').replace(/\D/g, '');
+        const ids = [raw._orderId, raw['주문번호'], raw['상품주문번호'], raw._x && raw._x.orderId].filter(Boolean).map(String);
+        return (S.reqs || []).find(q => !q.bad && ((q.digits.length >= 8 && tel && tel === q.digits && !PLACEHOLDER.has(q.digits)) || ids.includes(q.key))) || null;
+    }
     async function parseMemos() {
         if (!S.merged.length) return;
+        S.reqs = parseReqLines();
         const memos = S.merged.map(e => String(e.conv['배송메세지'] || ''));
-        const r = await api('/api/agent-office/invoice/memo-parse', 'POST', { memos });
+        const reqTexts = S.reqs.filter(q => !q.bad).map(q => q.text);
+        const r = await api('/api/agent-office/invoice/memo-parse', 'POST', { memos: memos.concat(reqTexts) });
         if (!r.ok) throw new Error(r.message || '메모 해석 실패');
         S.today = r.today;
+        const reqParse = new Map(); S.reqs.filter(q => !q.bad).forEach((q, i) => reqParse.set(q, r.results[memos.length + i] || null));
+        let hit = 0;
         S.merged.forEach((e, k) => {
-            const p = r.results[k] || null; e.parse = p;
-            e.flag = (p && (p.kind === 'ship' || p.kind === 'arrive') && p.reqDate && p.reqDate > S.today) ? 'excl'
-                : (p && p.kind === 'ack') ? 'review'
-                : (!p && BROAD.test(memos[k])) ? 'review' : null;
+            const q = reqNoteFor(e); e.req = q;
+            if (q) {   // 직원 메모 우선
+                hit++;
+                const p = reqParse.get(q); e.parse = p;
+                e.flag = (p && (p.kind === 'ship' || p.kind === 'arrive') && p.reqDate && p.reqDate > S.today) ? 'excl' : (p && p.kind === 'ack') ? 'review' : 'review';   // null(=오늘) 도 검토 목록에 정보로
+                e.reqToday = !p;
+            } else {
+                const p = r.results[k] || null; e.parse = p; e.reqToday = false;
+                e.flag = (p && (p.kind === 'ship' || p.kind === 'arrive') && p.reqDate && p.reqDate > S.today) ? 'excl'
+                    : (p && p.kind === 'ack') ? 'review'
+                    : (!p && BROAD.test(memos[k])) ? 'review' : null;
+            }
             if (!e.userTouched) e.excluded = (e.flag === 'excl');
         });
+        const bad = S.reqs.filter(q => q.bad).length, unmatched = S.reqs.filter(q => !q.bad && !S.merged.some(e => e.req === q)).length;
+        $('msg-req').textContent = S.reqs.length ? `입력 ${S.reqs.length}줄 → 매칭 주문 ${hit}건${unmatched ? ` · 주문 없음 ${unmatched}줄` : ''}${bad ? ` · 형식 오류 ${bad}줄(연락처 뒤에 날짜를 적어주세요)` : ''}` : '';
     }
     function statusOf(e) {
         if (e.individual) return '<span class="tag indiv">개별발송(시트2만)</span>';
-        if (e.excluded) return '<span class="tag excl">제외(오늘 발송 아님)</span>';
-        if (e.flag === 'review') return '<span class="tag review">확인필요</span>';
+        if (e.excluded) return e.req ? '<span class="tag excl">제외(☎ 지정일)</span>' : '<span class="tag excl">제외(오늘 발송 아님)</span>';
+        if (e.flag === 'review') return e.reqToday ? '<span class="tag review">☎ 오늘 발송</span>' : '<span class="tag review">확인필요</span>';
         return '';
     }
     function reqOf(e) {
-        const p = e.parse; if (!p) return '';
-        if (p.kind === 'ship') return `${p.reqDate} 발송 요청`;
-        if (p.kind === 'arrive') return `${p.reqDate} 도착 요청`;
-        return '애매함 — 직원 확인';
+        const p = e.parse; const pre = e.req ? '☎ ' : '';
+        if (!p) return e.req ? '☎ 지정일 = 오늘 → 오늘 발송' : '';
+        if (p.kind === 'ship') return `${pre}${p.reqDate} 발송 요청`;
+        if (p.kind === 'arrive') return `${pre}${p.reqDate} 도착 요청`;
+        return pre + '애매함 — 직원 확인';
     }
+    const memoCell = e => (e.req ? `<b>☎ ${aoEsc(e.req.line)}</b>${e.conv['배송메세지'] ? '\n' + aoEsc(e.conv['배송메세지']) : ''}` : aoEsc(e.conv['배송메세지']));
     function cb(e, k) { return e.individual ? '' : `<input type="checkbox" data-k="${k}" ${e.excluded ? 'checked' : ''}>`; }
     function render() {
         const pv = $('preview').querySelector('tbody'); const rv = $('review').querySelector('tbody');
-        pv.innerHTML = S.merged.map((e, k) => `<tr class="${e.individual ? 'indiv' : e.excluded ? 'excl' : e.flag === 'review' ? 'review' : ''}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${aoEsc(e.conv['배송메세지'])}</td><td>${statusOf(e)}</td></tr>`).join('');
+        pv.innerHTML = S.merged.map((e, k) => `<tr class="${e.individual ? 'indiv' : e.excluded ? 'excl' : e.flag === 'review' ? 'review' : ''}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}</td><td>${statusOf(e)}</td></tr>`).join('');
         const revRows = S.merged.map((e, k) => ({ e, k })).filter(({ e }) => !e.individual && (e.excluded || e.flag));
-        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${aoEsc(e.conv['배송메세지'])}</td><td>${aoEsc(reqOf(e))}</td><td>${statusOf(e)}</td></tr>`).join('')
+        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td>${aoEsc(reqOf(e))}</td><td>${statusOf(e)}</td></tr>`).join('')
             : '<tr><td colspan="8" style="color:#6B7280;">검토할 배송메모가 없습니다.</td></tr>';
         const n = S.merged.length, indiv = S.merged.filter(e => e.individual).length, excl = S.merged.filter(e => !e.individual && e.excluded).length, review = S.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length;
         $('stats').innerHTML = `<span>전체 <b>${n}</b>건</span><span>시트1(택배사) <b>${n - indiv - excl}</b>건</span><span>개별발송 <b>${indiv}</b>건</span><span>제외 체크 <b>${excl}</b>건</span><span>확인필요 <b>${review}</b>건</span>${S.today ? `<span>기준일 ${S.today}</span>` : ''}`;
@@ -224,7 +256,7 @@
     }
     function reset() {
         S.naver = null; S.cafe24 = []; S.coupang = []; S.merged = []; S.today = null;
-        ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).value = '');
+        ['ex-naver', 'ex-cafe24', 'ex-coupang', 'req-dates'].forEach(id => $(id).value = ''); $('msg-req').textContent = ''; S.reqs = [];
         ['naver', 'cafe24', 'coupang'].forEach(ch => { $('area-' + ch).classList.remove('has-file'); $('fname-' + ch).textContent = ''; setMsg(ch, ''); });
         $('msg-ex').textContent = ''; $('msg-dl').textContent = ''; render();
     }
@@ -239,6 +271,7 @@
         $('btn-reset').addEventListener('click', reset);
         $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
         ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).addEventListener('input', () => { formatTextarea($(id)); applyIndividual(); render(); }));
+        let reqTimer = null; $('req-dates').addEventListener('input', () => { clearTimeout(reqTimer); reqTimer = setTimeout(() => { refreshAll().catch(e => $('msg-req').textContent = '⚠️ ' + e.message); }, 400); });
         for (const ch of ['naver', 'cafe24', 'coupang']) {
             const area = $('area-' + ch), input = $('file-' + ch);
             area.addEventListener('click', () => input.click());
