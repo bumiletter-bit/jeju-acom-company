@@ -215,40 +215,52 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         if (found.some(f => f.idx === m.index)) continue;
         found.push({ mo, dd, idx: m.index, len: m[0].length });
     }
+    // #452-b(3일치 실메모): 「9월21~22일」「21~22일」 범위 = 날짜 2개(확인형) — 종전엔 「21~」 쪽이 lookbehind에 걸려 통째로 미인식
+    const reRange = /(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*[~\-–]\s*(\d{1,2})\s*일(?![\d간째분시치씩]|\s*(?:후|뒤|이내|안에|정도|만에|간|째|이상))/g;
+    while ((m = reRange.exec(raw))) {
+        const d1 = Number(m[2]), d2 = Number(m[3]);
+        if (d1 < 1 || d1 > 31 || d2 < 1 || d2 > 31) continue;
+        if (!found.some(f => f.idx === m.index)) found.push({ mo: m[1] ? Number(m[1]) : null, dd: d1, idx: m.index, len: m[0].length });
+        found.push({ mo: m[1] ? Number(m[1]) : null, dd: d2, idx: m.index + 1, len: m[0].length - 1, rangeEnd: true });
+    }
     const reDow = /(다음\s*주|담주|이번\s*주)?\s*([월화수목금토일])(?:요일|욜)/g;
     while ((m = reDow.exec(raw))) found.push({ dow: '일월화수목금토'.indexOf(m[2]), next: /다음|담주/.test(m[1] || ''), idx: m.index, len: m[0].length });
     const weekendNeg = negative && /(주말|토요일|토욜|일요일)/.test(raw);
     if (!found.length) return weekendNeg ? ack('주말 제외') : null;
-    if (found.length > 1) return ack('일정 지정');
-    const f = found[0];
-    // 요청일 결정(KST 달력일)
-    let req;
-    if (f.dow != null) {
-        const kstHour = new Date(ms + KST_MS).getUTCHours();
-        let d = orderDay;
-        const todayDow = d.getUTCDay();
-        let diff = (f.dow - todayDow + 7) % 7;
-        if (diff === 0 && kstHour >= 8) diff = 7;
-        if (f.next) {   // 다음 주 = 다음 월요일부터 시작하는 주
-            const toNextMon = ((1 - todayDow + 7) % 7) || 7;
-            diff = toNextMon + ((f.dow - 1 + 7) % 7);
+    // 요청일 결정(KST 달력일) — 후보마다 계산
+    const resolve = (f) => {
+        if (f.dow != null) {
+            const kstHour = new Date(ms + KST_MS).getUTCHours();
+            const todayDow = orderDay.getUTCDay();
+            let diff = (f.dow - todayDow + 7) % 7;
+            if (diff === 0 && kstHour >= 8) diff = 7;
+            if (f.next) {   // 다음 주 = 다음 월요일부터 시작하는 주
+                const toNextMon = ((1 - todayDow + 7) % 7) || 7;
+                diff = toNextMon + ((f.dow - 1 + 7) % 7);
+            }
+            return addDays(orderDay, diff);
         }
-        req = addDays(d, diff);
-    } else {
         const y = orderDay.getUTCFullYear(), curMo = orderDay.getUTCMonth() + 1;
-        let mo = f.mo != null ? f.mo : curMo;
+        const mo = f.mo != null ? f.mo : curMo;
         let cand = new Date(Date.UTC(y, mo - 1, f.dd));
-        if (cand.getUTCDate() !== f.dd) return ack('일정 지정');   // 존재하지 않는 날짜(9/31 등)
+        if (cand.getUTCDate() !== f.dd) return null;   // 존재하지 않는 날짜(9/31 등)
         if (f.mo == null && cand < addDays(orderDay, -1)) cand = new Date(Date.UTC(y, mo, f.dd));       // 이번 달 지난 날짜 → 다음 달
         if (f.mo != null && cand < addDays(orderDay, -1)) cand = new Date(Date.UTC(y + 1, mo - 1, f.dd)); // 지난 월 → 내년
-        req = cand;
-    }
+        return cand;
+    };
+    // #452-b: 「21일 월요일 발송」처럼 숫자 날짜와 요일이 같은 날을 가리키면 하나로 본다(종전엔 후보 2개 = 확인형)
+    const resolved = found.map(f => ({ f, d: resolve(f) }));
+    const uniq = []; for (const r of resolved) { if (!r.d) return ack('일정 지정'); if (!uniq.some(u => u.d.getTime() === r.d.getTime())) uniq.push(r); }
+    if (uniq.length > 1) return ack('일정 지정');
+    const f = uniq[0].f; const req = uniq[0].d;
     const span = Math.round((req - orderDay) / 86400000);
     if (span < 0 || span > 45) return null;   // 과거·45일 초과 = 날짜 요청으로 보지 않음(종전 문구)
     const label = md(req) + '(' + DAY_KO[req.getUTCDay()] + ')';
     if (negative) return ack(label + ' 관련');
-    // 키워드 판정(날짜 앞 6자·뒤 10자)
-    const around = raw.slice(Math.max(0, f.idx - 6), f.idx + f.len + 10);
+    // 키워드 판정: 날짜 표현 전체 구간(숫자 날짜+요일이 같이 있으면 둘을 합친 범위) 앞 12자·뒤 10자
+    //   — #452-b: 「출고해주세요 9월21일」(앞에 멀리) · 「9월 21일 월요일에 배송 출발」(요일 뒤에 키워드)
+    const spanS = Math.min(...resolved.map(r => r.f.idx)), spanE = Math.max(...resolved.map(r => r.f.idx + r.f.len));
+    const around = raw.slice(Math.max(0, spanS - 12), spanE + 10);
     const shipKw = /(발송|출고|출발|보내|출하)/.test(around);
     const arriveKw = /(도착|받|수령|까지|배달)/.test(around);
     const deliverKw = /배송/.test(around);
@@ -260,7 +272,7 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         const a1 = nextMatching(req, d => isDeliveryDay(d, arriveOff)), a2 = nextMatching(a1, d => isDeliveryDay(d, arriveOff));
         return { kind: 'ship', reqDate: ymd(req), text: '배송메세지에 남겨주신 요청대로 ' + shipPhrase(orderDay, req) + ' 오전 발송, ' + arrivePhrase(req, a1, a2) + '이에요' };
     }
-    if (arriveKw && !deliverKw) {
+    if (arriveKw) {   // #452-b: 도착 키워드가 있으면 「배송」은 일반어로 무시(「9/21 도착으로 배송해주세요」 = 도착 요청)
         if (!isDeliveryDay(req, arriveOff)) return ack(label + ' 도착');
         // 요청 도착일에 맞는 가장 늦은 출고일(최단 발송일 이후)
         let s = null;
