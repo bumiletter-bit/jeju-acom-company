@@ -66,42 +66,56 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(reviewRows === (await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && (e.excluded || e.flag)).length)), '① 검토 목록 = 체크됨 + 확인필요', reviewRows);
         const ackUnchecked = await pg.evaluate(() => __ivt.S.merged.filter(e => e.flag === 'review').every(e => !e.excluded));
         ok(ackUnchecked, '① 확인필요 건은 체크 안 됨(직원이 결정)');
-        // ② 개별발송 번호 — 자동 하이픈 · 채널 분리
-        await pg.fill('#ex-naver', '01011121111'); await pg.dispatchEvent('#ex-naver', 'input');
-        ok((await pg.inputValue('#ex-naver')) === '010-1112-1111', '② 번호 자동 하이픈: 01011121111 → 010-1112-1111', await pg.inputValue('#ex-naver'));
+        // ② 정리 파일 줄 붙여넣기 → [저장하기] — 하이픈 · 날짜 해석 · 채널 분리 · 판정 6종
+        const todayK = mp.today; const dPlus = (iso, n) => new Date(Date.parse(iso) + n * 86400e3).toISOString().slice(0, 10);
+        const usd = iso => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}/${iso.slice(2, 4)}`;   // 엑셀 복사 형식 9/20/26
+        const TODAY = usd(todayK), FUT = usd(dPlus(todayK, 3)), PAST = usd(dPlus(todayK, -1));
+        const save = async (id, text) => { await pg.fill('#ln-' + id, text); await pg.click('#save-' + id); await pg.waitForTimeout(80); await pg.waitForFunction(i => !document.getElementById('save-' + i).disabled, id); await pg.waitForTimeout(150); };
+        await save('naver', TODAY + '\t01011121111\t입력o삭제x\t네이버');
+        ok((await pg.inputValue('#ln-naver')).includes('010-1112-1111'), '② 저장 시 번호 자동 하이픈: 01011121111 → 010-1112-1111', await pg.inputValue('#ln-naver'));
         const fm = await pg.evaluate(() => [__ivt.fmtTel('050512345678'), __ivt.fmtTel('0212345678'), __ivt.fmtTel('20260918-0000011'), __ivt.fmtTel('010-1112-1111')]);
         ok(fm[0] === '0505-1234-5678' && fm[1] === '02-1234-5678' && fm[2] === '20260918-0000011' && fm[3] === '010-1112-1111', '② 하이픈 규칙: 0505 4-4-4 · 02 2-4-4 · 주문번호 무변경 · 이미 하이픈은 유지', fm.join(' | '));
+        const pd = await pg.evaluate(t => ['9/20/26', '2026-09-20', '9.20', '9월 20일', '20일', '오늘', '내일', '없음'].map(s => __ivt.parseDate(s, t)), todayK);
+        ok(pd[0] === '2026-09-20' && pd[1] === '2026-09-20' && pd[2] === todayK.slice(0, 4) + '-09-20' && pd[3] === pd[2] && pd[4] === todayK.slice(0, 8) + '20' && pd[5] === todayK && pd[6] === dPlus(todayK, 1) && pd[7] === null, '② 요청일자 해석: 9/20/26 · 2026-09-20 · 9.20 · 9월 20일 · 20일 · 오늘 · 내일 · 없음=null', pd.join(' | '));
+        ok(/매칭 주문 없음/.test(await pg.textContent('#res-naver')), '② 없는 번호 → 「매칭 주문 없음」 표시', (await pg.textContent('#res-naver')).slice(0, 80));
         // 채널 분리: 네이버 구매자 1명과 같은 번호의 자사몰 주문을 만들어 넣고, 네이버 칸에만 → 자사몰 건은 안 빠짐 / 자사몰 칸에만 → 네이버 안 빠짐
         const sameTel = indivTels[0].replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3');
         const cafeRows = [{ '주문자명': '동일손님', '주문상품명(세트상품 포함)': '제주 감귤 · 1. (제철)고당도 하우스감귤 · 하우스감귤 가정용 - 2.5kg(로얄과)', '배송메시지': '', '수령인': '자사몰수취', '주문자 휴대전화': sameTel, '수량': 1, '수령인 휴대전화': '010-0000-0000', '수령인 주소(전체)': '제주시 자사몰로 1', '주문번호': '20260918-0000099' }];
         await pg.evaluate(rows => __ivt.setRows('cafe24', rows), cafeRows);
         await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N + 1);
         const cnt = async () => pg.evaluate(() => ({ nv: __ivt.S.merged.filter(e => e.ch === 'naver' && e.individual).length, cf: __ivt.S.merged.filter(e => e.ch === 'cafe24' && e.individual).length }));
-        await pg.fill('#ex-naver', sameTel); await pg.dispatchEvent('#ex-naver', 'input'); await pg.fill('#ex-cafe24', ''); await pg.dispatchEvent('#ex-cafe24', 'input');
+        await save('naver', TODAY + '\t' + sameTel + '\t입력o삭제x 2건\t네이버'); await save('cafe24', '');
         const c1 = await cnt(); ok(c1.nv === byTel[indivTels[0]].length && c1.cf === 0, '② 같은 번호 — 네이버 칸에만 → 네이버만 개별발송, 자사몰 건은 시트1 유지', JSON.stringify(c1));
-        await pg.fill('#ex-naver', ''); await pg.dispatchEvent('#ex-naver', 'input'); await pg.fill('#ex-cafe24', sameTel); await pg.dispatchEvent('#ex-cafe24', 'input');
+        ok(new RegExp('개별발송\\(시트1 제외·시트2 노란 행 · ' + byTel[indivTels[0]].length + '건').test(await pg.textContent('#res-naver')), '② 저장 결과: 「입력삭제 → 개별발송 N건」 표기', (await pg.textContent('#res-naver')).slice(0, 120));
+        await save('naver', ''); await save('cafe24', TODAY + '\t' + sameTel + '\t자사몰!! 입력o삭제X\t자사몰');
         const c2 = await cnt(); ok(c2.nv === 0 && c2.cf === 1, '② 같은 번호 — 자사몰 칸에만 → 자사몰만 개별발송, 네이버 건은 유지', JSON.stringify(c2));
-        await pg.fill('#ex-cafe24', '20260918-0000099'); await pg.dispatchEvent('#ex-cafe24', 'input');
+        await save('cafe24', TODAY + '\t20260918-0000099\t입력o삭제x');
         const c3 = await cnt(); ok(c3.cf === 1, '② 자사몰 주문번호로도 개별발송 지정', JSON.stringify(c3));
-        await pg.fill('#ex-cafe24', ''); await pg.dispatchEvent('#ex-cafe24', 'input');
+        await save('cafe24', ''); await save('naver', TODAY + '\t' + sameTel + '\t자사몰!! 입력o삭제X\t자사몰');
+        const c4 = await cnt(); ok(c4.nv === 0 && c4.cf === 1 && /자사몰 칸으로 배정/.test(await pg.textContent('#res-naver')), '② 플랫폼 칸이 「자사몰」이면 네이버 칸에 붙여도 자사몰로 배정', JSON.stringify(c4));
+        await save('naver', '');
         await pg.evaluate(() => __ivt.setRows('cafe24', []));
         await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N);
-        // ☎ 지정 발송일 요청(직원 메모) — 개별발송 칸은 비운 상태에서
+        // 요청일자 판정 — 뒤 날짜 = 제외 · 오늘(비고 없음) = 오늘 발송 · 지난 날짜 = 확인필요 · 부분 지정(수취인 이름) = 그 수취인만
         const reqTel = indivTels[1].replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3'), reqN = byTel[indivTels[1]].length;
-        const reqState = async () => pg.evaluate(t => { const rows = __ivt.S.merged.filter(e => e.req && e.req.digits === t); return { n: rows.length, excl: rows.filter(e => e.excluded).length, flags: [...new Set(rows.map(e => e.flag))], today: rows.every(e => e.reqToday) }; }, indivTels[1]);
-        await pg.fill('#req-naver', reqTel + ' 21일 발송'); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
-        const q1 = await reqState(); ok(q1.n === reqN && q1.excl === reqN && q1.flags.join() === 'excl', '☎ 「번호 21일 발송」 → 그 손님 주문 전부 제외 체크(직원 메모 우선)', JSON.stringify(q1));
-        ok(new RegExp('매칭 주문 ' + reqN + '건').test(await pg.textContent('#msg-req')), '☎ 매칭 건수 표시', await pg.textContent('#msg-req'));
-        await pg.fill('#req-naver', reqTel + ' 18일'); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
-        const q2 = await reqState(); ok(q2.n === reqN && q2.excl === 0 && q2.today, '☎ 「번호 18일」(오늘) → 통과·검토 목록에 「오늘 발송」 정보', JSON.stringify(q2));
-        await pg.fill('#req-naver', reqTel + ' 17일 발송\n099-9999-9999 21일'); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
-        const q3 = await reqState(); ok(q3.n === reqN && q3.excl === 0 && q3.flags.join() === 'review', '☎ 지난 날짜 → 확인필요(체크 없음)', JSON.stringify(q3));
-        ok(/주문 없음 1줄/.test(await pg.textContent('#msg-req')), '☎ 매칭 안 되는 번호 → 「주문 없음」 표시', await pg.textContent('#msg-req'));
-        await pg.fill('#req-naver', ''); await pg.dispatchEvent('#req-naver', 'input'); await pg.waitForTimeout(1200);
-        await pg.fill('#ex-naver', indivTels.join('\n')); await pg.dispatchEvent('#ex-naver', 'input');
-        await pg.waitForTimeout(300);
+        const reqState = async () => pg.evaluate(t => { const rows = __ivt.S.merged.filter(e => e.req && e.req.digits === t); return { n: rows.length, excl: rows.filter(e => e.excluded).length, kinds: [...new Set(rows.map(e => e.reqKind))], indiv: rows.filter(e => e.individual).length }; }, indivTels[1]);
+        await save('naver', FUT + '\t' + reqTel + '\t2건\t네이버');
+        const q1 = await reqState(); ok(q1.n === reqN && q1.excl === reqN && q1.kinds.join() === 'future', '☎ 요청일자 뒤 날짜 → 그 손님 주문 전부 제외 체크(손님 메모보다 우선)', JSON.stringify(q1));
+        ok(/오늘 제외\(시트1·시트2 모두 빠짐/.test(await pg.textContent('#res-naver')), '☎ 저장 결과: 「M/D 발송 → 오늘 제외」 표기', (await pg.textContent('#res-naver')).slice(0, 120));
+        await save('naver', TODAY + '\t' + reqTel + '\t메모무시\t네이버');
+        const q2 = await reqState(); ok(q2.n === reqN && q2.excl === 0 && q2.kinds.join() === 'today' && q2.indiv === 0, '☎ 요청일자 오늘 + 입력삭제 없음 → 오늘 발송(제외 아님·검토 목록에 정보)', JSON.stringify(q2));
+        await save('naver', PAST + '\t' + reqTel + '\t입력o삭제x\t네이버\n' + TODAY + '\t099-9999-9999\t\t네이버');
+        const q3 = await reqState(); ok(q3.n === reqN && q3.excl === 0 && q3.indiv === 0 && q3.kinds.join() === 'past', '☎ 지난 날짜(입력삭제여도) → 확인필요(자동 적용 안 함)', JSON.stringify(q3));
+        ok(/지난 날짜인데 아직 배송준비/.test(await pg.textContent('#res-naver')) && /매칭 주문 없음/.test(await pg.textContent('#res-naver')), '☎ 저장 결과: 지난 날짜 확인필요 · 없는 번호 주문 없음 표기');
+        const recName = String(byTel[indivTels[1]][0]['수취인명'] || '').trim(); const recN = byTel[indivTels[1]].filter(r => String(r['수취인명'] || '').trim() === recName).length;
+        await save('naver', TODAY + '\t' + reqTel + '\t' + reqN + '건 중 1건(수취인 ' + recName + ' 만)\t네이버');
+        const q4 = await reqState(); const q4o = await pg.evaluate(([t, nm]) => __ivt.S.merged.filter(e => e.ch === 'naver' && (e.conv['구매자연락처'] || '').replace(/\D/g, '') === t && String(e.conv['수취인명'] || '').trim() !== nm).every(e => !e.req), [indivTels[1], recName]);
+        ok(q4.n === recN && q4.kinds.join() === 'today' && q4.indiv === 0 && q4o, '☎ 「n건 중 1건(수취인 ○○ 만)」 → 그 수취인 건만 오늘 발송 적용·나머지 건은 무접촉', JSON.stringify(q4) + ' / 기대 ' + recN);
+        await save('naver', TODAY + '\t' + reqTel + '\t' + reqN + '건 중 1건\t네이버');
+        const q5 = await reqState(); ok(q5.n === reqN && q5.indiv === 0 && q5.excl === 0 && q5.kinds.join() === 'partial', '☎ 「n건 중 1건」 수취인 이름 없음 → 자동 적용 안 함·확인필요', JSON.stringify(q5));
+        await save('naver', indivTels.map(t => TODAY + '\t' + t + '\t입력o삭제x\t네이버').join('\n'));
         const indivCnt = await pg.evaluate(() => __ivt.S.merged.filter(e => e.individual).length);
-        ok(indivCnt === expIndiv, '② 개별발송 번호 → 회색 분류 건수', `${indivCnt} / 기대 ${expIndiv}`);
+        ok(indivCnt === expIndiv, '② 오늘 + 입력삭제 줄 → 개별발송 회색 분류 건수', `${indivCnt} / 기대 ${expIndiv}`);
         ok((await pg.locator('#preview tr.indiv').count()) === expIndiv && (await pg.locator('#preview tr.indiv input[type=checkbox]').count()) === 0, '② 개별발송 행 = 회색·체크박스 없음');
         // ② 체크 토글: 검토 목록 첫 체크된 행 해제 → 체크 수 −1 · 확인필요 행 하나 체크 → +1
         const before = await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && e.excluded).length);
@@ -127,11 +141,14 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const afterQ = await pg.evaluate(() => __ivt.qtyTotal());
         ok(afterQ > beforeQ, '②-q 검토 목록 체크 해제 → 수량 즉시 증가', `${beforeQ} → ${afterQ}`);
         const tel2 = indivTels[0].replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3');
-        await pg.fill('#qreq-naver', tel2 + ' 21일 발송'); await pg.dispatchEvent('#qreq-naver', 'input'); await pg.waitForTimeout(1500);
+        await pg.fill('#qln-naver', FUT + '\t' + tel2 + '\t\t네이버'); await pg.click('#qsave-naver'); await pg.waitForFunction(() => !document.getElementById('qsave-naver').disabled); await pg.waitForTimeout(200);
         const qq2 = await pg.evaluate(t => ({ total: __ivt.qtyTotal(), reqExcl: __ivt.Q.merged.filter(e => e.req && e.excluded).length }), indivTels[0]);
         ok(qq2.reqExcl === byTel[indivTels[0]].length && qq2.total < afterQ, '②-q ☎ 지정일(네이버 칸) → 그 손님 주문 제외·수량 감소', JSON.stringify(qq2));
-        ok(await pg.evaluate(() => __ivt.S.merged.filter(e => e.req).length === 0), '②-q 중간발주 탭 입력이 송장 변환 탭 상태에 영향 없음(독립)');
-        await pg.fill('#qreq-naver', ''); await pg.dispatchEvent('#qreq-naver', 'input'); await pg.waitForTimeout(800);
+        ok(await pg.evaluate(t => __ivt.S.merged.filter(e => e.req && e.req.digits === t && e.excluded).length === 0, indivTels[0]), '②-q 중간발주 탭 입력이 송장 변환 탭 상태에 영향 없음(독립)');
+        await pg.fill('#qln-naver', TODAY + '\t' + tel2 + '\t입력o삭제x\t네이버'); await pg.click('#qsave-naver'); await pg.waitForFunction(() => !document.getElementById('qsave-naver').disabled); await pg.waitForTimeout(200);
+        const qq3 = await pg.evaluate(t => ({ total: __ivt.qtyTotal(), indiv: __ivt.Q.merged.filter(e => e.individual).length, excl: __ivt.Q.merged.filter(e => e.req && e.req.digits === t && e.excluded).length }), indivTels[0]);
+        ok(qq3.indiv === 0 && qq3.excl === 0 && qq3.total === afterQ && /집계 포함/.test(await pg.textContent('#qres-naver')), '②-q 중간발주: 오늘 + 입력삭제 줄 = 실물량이라 집계 포함(제외 0·개별 0)', JSON.stringify(qq3) + ' / ' + afterQ);
+        await pg.fill('#qln-naver', ''); await pg.click('#qsave-naver'); await pg.waitForFunction(() => !document.getElementById('qsave-naver').disabled); await pg.waitForTimeout(200);
         await pg.click('#ivt-mode-convert');
         // ③ 다운로드
         const dl1 = pg.waitForEvent('download'); await pg.click('#btn-download'); const d1 = await dl1;
@@ -158,7 +175,7 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(yellowTels.every(t => indivTelsIn.has(t)), '③ 노란 행의 구매자연락처 = 입력한 개별발송 번호');
         ok((s2.R3 && s2.R3.z === 'yyyy/mm/dd\\ hh:mm') && (s2.U3 && /₩/.test(s2.U3.z || '')), '③ 시트2 날짜·금액 셀 서식 유지(결제일·정산예정금액)', `${s2.R3 && s2.R3.z} / ${s2.U3 && s2.U3.z}`);
         // ④ 무회귀: 개별 0·제외 0 → 시트1 = 참조본
-        await pg.fill('#ex-naver', '');
+        await save('naver', '');
         await pg.evaluate(() => { __ivt.S.merged.forEach(e => { e.excluded = false; e.userTouched = true; }); __ivt.render(); });
         const dl2 = pg.waitForEvent('download'); await pg.click('#btn-download'); const d2 = await dl2;
         const f2 = path.join(os.tmpdir(), 'ivt2.xlsx'); await d2.saveAs(f2);
