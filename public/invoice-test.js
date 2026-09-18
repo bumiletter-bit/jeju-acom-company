@@ -37,7 +37,7 @@
     const makeCtx = (ids) => ({ ids, naver: null, cafe24: [], coupang: [], merged: [], today: null, reqs: { naver: [], cafe24: [], coupang: [] } });
     const rawOf = (ctx, e) => e.ch === 'naver' ? ctx.naver.rows[e.i] : ctx[e.ch][e.i];
     const telOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return String(e.conv['구매자연락처'] || raw['구매자연락처'] || raw['주문자 휴대전화'] || raw['구매자전화번호'] || '').replace(/\D/g, ''); };
-    const idsOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return [raw._orderId, raw['주문번호'], raw['상품주문번호'], raw._x && raw._x.orderId].filter(Boolean).map(String); };
+    const idsOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return [raw._orderId, raw._pid, raw['주문번호'], raw['상품주문번호'], raw._x && raw._x.orderId, raw._x && raw._x.productOrderId].filter(Boolean).map(String); };
     const matchKey = (ctx, e, digits, key) => (digits.length >= 8 && !PLACEHOLDER.has(digits) && telOf(ctx, e) === digits) || (key && idsOf(ctx, e).includes(key));
     function parseNums(txt) { return String(txt || '').split(/[\n,;]+/).map(s => s.trim()).filter(Boolean).map(s => ({ raw: s, digits: s.replace(/\D/g, '') })); }
     // 전화번호 자동 하이픈(01011121111 → 010-1112-1111 · 0505… 12자리 → 4-4-4 · 02 서울 → 2-4-4/2-3-4). 주문번호 등 0으로 시작하지 않는 값·문자 섞인 값은 그대로.

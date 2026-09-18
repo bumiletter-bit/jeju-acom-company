@@ -48,7 +48,7 @@
     <div class="card">
       <p style="font-size:13px;color:var(--text-mid,#667085);margin-bottom:12px;">스마트스토어 + 쿠팡 + 자사몰 <b>3채널 배송준비</b>를 불러와 품목별로 합산합니다. 배송메모·☎ 지정일로 <b>「제외」 체크된 주문은 수량에서 빠지고</b>, 개별발송(입력o·삭제x) 주문은 실제 나가는 물량이라 그대로 포함됩니다(여기엔 입력삭제 칸이 없습니다).</p>
       <div class="ivt-grid3" style="margin-bottom:12px;">
-        <div class="form-group"><label>☎ 스마트스토어 — 구매자 연락처 + 지정 발송일</label><textarea id="qreq-naver" class="form-input" placeholder="010-0000-0000 21일 발송&#10;(전화·톡톡으로 따로 받은 것)"></textarea></div>
+        <div class="form-group"><label>☎ 스마트스토어 — 구매자 연락처 + 지정 발송일</label><textarea id="qreq-naver" class="form-input" placeholder="010-0000-0000 21일 발송&#10;(주문번호·상품주문번호로 적어도 됨)"></textarea></div>
         <div class="form-group"><label>☎ 자사몰 — 구매자 연락처 + 지정 발송일</label><textarea id="qreq-cafe24" class="form-input" placeholder="010-0000-0000 9/22 도착&#10;(주문번호로 적어도 됨)"></textarea></div>
         <div class="form-group"><label>☎ 쿠팡 — 구매자 연락처 + 지정 발송일</label><textarea id="qreq-coupang" class="form-input" placeholder="0505-0000-0000 월요일&#10;(주문번호로 적어도 됨)"></textarea></div>
       </div>
@@ -169,7 +169,7 @@
     <div class="ivt-note" id="msg-ex"></div>
     <div style="margin-top:18px; font-size:13px; font-weight:700;">☎ 지정 발송일 요청 — 전화·톡톡으로 따로 받은 것 <span style="font-weight:500; color:#888;">(구매자 연락처 + 날짜, 한 줄에 하나)</span></div>
     <div class="ivt-grid3" style="margin-top:8px;">
-      <div class="form-group"><label>스마트스토어</label><textarea id="req-naver" class="form-input" placeholder="010-0000-0000 21일 발송&#10;010-1234-5678 9/22 도착"></textarea></div>
+      <div class="form-group"><label>스마트스토어</label><textarea id="req-naver" class="form-input" placeholder="010-0000-0000 21일 발송&#10;(주문번호·상품주문번호로 적어도 됨)"></textarea></div>
       <div class="form-group"><label>자사몰</label><textarea id="req-cafe24" class="form-input" placeholder="010-0000-0000 월요일&#10;(주문번호로 적어도 됨)"></textarea></div>
       <div class="form-group"><label>쿠팡</label><textarea id="req-coupang" class="form-input" placeholder="0505-0000-0000 21일&#10;(주문번호로 적어도 됨)"></textarea></div>
     </div>
@@ -197,6 +197,6 @@
   </div><!-- /invoice-convert-mode -->
 </div>
 </div>
-<script src="/invoice-test.js?v=4"></script>
+<script src="/invoice-test.js?v=5"></script>
 </body>
 </html>
