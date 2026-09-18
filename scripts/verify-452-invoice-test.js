@@ -113,6 +113,15 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         let after2 = after1; if (await firstReview.count()) { await firstReview.click(); after2 = await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && e.excluded).length); }
         ok(after2 === after1 + ((await pg.locator('#review input[type=checkbox]').count()) > 0 ? 1 : 0), '② 확인필요 행 체크 → 제외 +1', `${after1} → ${after2}`);
         const exclNow = after2;
+        // ②-q 중간발주(v2): 제외 체크 주문은 집계 제외·개별발송 포함
+        await pg.click('#ivt-mode-qty'); await pg.click('#ivt-qty-start'); await pg.waitForFunction(() => document.querySelectorAll('#invoice-qty-list .qty-row').length > 0);
+        const qExp = await pg.evaluate(() => __ivt.S.merged.filter(e => !(e.excluded && !e.individual)).reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0));
+        const qGot = await pg.evaluate(() => __ivt.qtyTotal());
+        ok(qGot === qExp, '②-q 중간발주 합계 = 제외 체크 뺀 수량(개별발송 포함)', `${qGot} = ${qExp}`);
+        const qAll = await pg.evaluate(() => __ivt.S.merged.reduce((s, e) => s + (parseInt(e.conv['수량']) || 1), 0));
+        ok(qGot < qAll, '②-q 제외 체크 수량만큼 전체보다 작음', `${qGot} < ${qAll}`);
+        ok(/제외 체크된 지정일 요청/.test(await pg.textContent('#invoice-qty-msg')) && (await pg.locator('#qty-partner-filter button').count()) === 4, '②-q 안내 문구·거래처 필터(본 화면 코드) 렌더');
+        await pg.click('#ivt-mode-convert');
         // ③ 다운로드
         const dl1 = pg.waitForEvent('download'); await pg.click('#btn-download'); const d1 = await dl1;
         const f1 = path.join(os.tmpdir(), 'ivt1.xlsx'); await d1.saveAs(f1);

@@ -22,9 +22,10 @@
     async function loadProd() {
         const txt = await (await fetch('/app.js?ivt=' + Date.now())).text();
         const a = txt.indexOf('function detectSize(msg)'); const b = txt.indexOf('// 채널 초기화');
-        if (a < 0 || b < 0 || b <= a) throw new Error('app.js 변환 코드 위치를 찾지 못했습니다');
-        const code = txt.slice(a, b);
-        P = new Function('api', 'aoEsc', 'XLSX', 'document', code + '\nreturn { convertDataSmart, convertDataJasamol, convertDataCoupang, exportInvoiceExcel, aoLoadInvoicePricing };')(api, aoEsc, XLSX, document);
+        const q0 = txt.indexOf('let qtyAggregated = [];'); const q1 = txt.indexOf('window.resetInvoiceQty = resetInvoiceQty;');
+        if (a < 0 || b < 0 || b <= a || q0 < 0 || q1 < 0) throw new Error('app.js 변환/중간발주 코드 위치를 찾지 못했습니다');
+        const code = txt.slice(a, b) + '\n' + txt.slice(q0, q1 + 'window.resetInvoiceQty = resetInvoiceQty;'.length);
+        P = new Function('api', 'aoEsc', 'XLSX', 'document', 'aoProgressBarTicker', code + '\nreturn { convertDataSmart, convertDataJasamol, convertDataCoupang, exportInvoiceExcel, aoLoadInvoicePricing, setQtyRows: (rows) => { qtyManual = []; qtyRowsMain = rows; recomputeQtyAggregate(); }, qtyTotal: () => qtyAggregated.reduce((s, it) => s + it.qty, 0), resetInvoiceQty };')(api, aoEsc, XLSX, document, () => () => {});
         await P.aoLoadInvoicePricing();
     }
 
@@ -182,8 +183,41 @@
         ws['!rows'] = [{ hpt: 150 }]; ws['!cols'] = HDR.map(() => ({ wch: 27.7 }));
         return { ws, count: ordered.length, indiv: indiv.length };
     }
+    const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    function dateGuard() {   // 페이지를 전날부터 열어 두면 기준일이 어제로 남는다 → 다운로드·집계 전에 막고 다시 불러오게
+        if (S.today && S.today !== kstToday()) { const m = `⚠️ 기준일이 ${S.today} → ${kstToday()}로 바뀌었어요. 새로고침 후 주문을 다시 불러와 검토해주세요.`; $('msg-dl').textContent = m; $('invoice-qty-msg').textContent = m; return false; }
+        return true;
+    }
+    // ── 중간발주: 송장 변환 탭의 주문 중 「제외」 체크(배송메모·☎ 지정일)만 뺀다. 개별발송은 포함(실제 나가는 물량). 행 → 본 화면 집계 키(옵션정보·수량) 변환은 본 화면 setupQtyStart와 동일.
+    function qtyRowsFromMerged() {
+        const rows = [], skipped = { n: 0, qty: 0 };
+        for (const e of S.merged) {
+            const raw = rawOf(e) || {};
+            const row = e.ch === 'naver' ? raw
+                : e.ch === 'coupang' ? { '옵션정보': raw['노출상품명(옵션명)'] || raw['등록상품명'] || '', '수량': raw['구매수(수량)'] }
+                : { '옵션정보': raw['주문상품명(세트상품 포함)'] || '', '수량': raw['수량'] };
+            if (e.excluded && !e.individual) { skipped.n++; skipped.qty += parseInt(row['수량']) || 1; continue; }
+            rows.push(row);
+        }
+        return { rows, skipped };
+    }
+    function runQty() {
+        if (!S.merged.length) { $('invoice-qty-msg').textContent = '⚠️ 먼저 「송장 변환 (v2)」 탭에서 주문을 불러오세요.'; return; }
+        if (!dateGuard()) return;
+        const { rows, skipped } = qtyRowsFromMerged();
+        P.setQtyRows(rows);
+        $('invoice-qty-result').style.display = '';
+        const indiv = S.merged.filter(e => e.individual).length;
+        $('invoice-qty-msg').innerHTML = `✅ 배송준비 <b>${rows.length}건</b> 집계 — 제외 체크된 지정일 요청 <b>${skipped.n}건(수량 ${skipped.qty})</b>은 집계에서 뺐고, 개별발송 ${indiv}건은 포함했습니다. (기준일 ${S.today || kstToday()})`;
+    }
+    function switchMode(mode) {
+        $('invoice-convert-mode').style.display = mode === 'qty' ? 'none' : '';
+        $('invoice-qty-mode').style.display = mode === 'qty' ? '' : 'none';
+        $('ivt-mode-convert').classList.toggle('active', mode !== 'qty'); $('ivt-mode-qty').classList.toggle('active', mode === 'qty');
+    }
     function download() {
         applyIndividual();
+        if (!dateGuard()) return null;
         const list = S.merged.filter(e => !e.individual && !e.excluded);
         if (!list.length) { $('msg-dl').textContent = '내보낼 주문이 없습니다.'; return null; }
         let captured = null; const origWrite = XLSX.writeFile;
@@ -269,6 +303,9 @@
         $('btn-cafe24').addEventListener('click', () => loadOther('cafe24').catch(e => setMsg('cafe24', '⚠️ ' + aoEsc(e.message))));
         $('btn-coupang').addEventListener('click', () => loadOther('coupang').catch(e => setMsg('coupang', '⚠️ ' + aoEsc(e.message))));
         $('btn-reset').addEventListener('click', reset);
+        $('ivt-mode-convert').addEventListener('click', () => switchMode('convert'));
+        $('ivt-mode-qty').addEventListener('click', () => switchMode('qty'));
+        $('ivt-qty-start').addEventListener('click', () => { try { runQty(); } catch (e) { $('invoice-qty-msg').textContent = '⚠️ ' + e.message; } });
         $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
         ['ex-naver', 'ex-cafe24', 'ex-coupang'].forEach(id => $(id).addEventListener('input', () => { formatTextarea($(id)); applyIndividual(); render(); }));
         let reqTimer = null; $('req-dates').addEventListener('input', () => { clearTimeout(reqTimer); reqTimer = setTimeout(() => { refreshAll().catch(e => $('msg-req').textContent = '⚠️ ' + e.message); }, 400); });
@@ -281,6 +318,6 @@
             input.addEventListener('change', () => { const f = input.files[0]; if (f) loadFile(ch, f).catch(e => setMsg(ch, '⚠️ ' + aoEsc(e.message))); input.value = ''; });
         }
         render();
-        window.__ivt = { S, refreshAll, render, download, fmtTel, setNaverApiRows: async rows => { S.naver = { src: 'api', rows }; await refreshAll('naver'); }, setRows: async (ch, rows) => { S[ch] = rows; await refreshAll(ch); } };   // 검증용 훅
+        window.__ivt = { S, refreshAll, render, download, fmtTel, runQty, switchMode, qtyTotal: () => P.qtyTotal(), setNaverApiRows: async rows => { S.naver = { src: 'api', rows }; await refreshAll('naver'); }, setRows: async (ch, rows) => { S[ch] = rows; await refreshAll(ch); } };   // 검증용 훅
     });
 })();

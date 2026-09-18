@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="theme.css?v=12">
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
   /* #452 테스트 페이지 — 본 화면(styles.css·theme.css) 그대로 사용. 아래는 이 화면에만 있는 상태 표시 */
   .main-content.ivt { margin-left: 0; max-width: 1320px; }
@@ -37,10 +38,43 @@
 <div class="page active" id="page-invoice-test">
   <h1>송장변환 <span class="ivt-badge">테스트 v2 · 본 화면 무접촉</span></h1>
   <div class="invoice-mode-toggle">
-    <button class="invoice-mode-btn active" type="button">송장 변환 (v2)</button>
-    <button class="invoice-mode-btn" type="button" onclick="location.href='/'" title="중간발주는 본 화면에서">📊 중간발주</button>
+    <button class="invoice-mode-btn active" type="button" id="ivt-mode-convert">송장 변환 (v2)</button>
+    <button class="invoice-mode-btn" type="button" id="ivt-mode-qty">📊 중간발주 (v2)</button>
   </div>
   <div id="login-gate">회사프로그램 메인 화면에서 먼저 로그인한 뒤 이 페이지를 열어주세요.</div>
+
+  <!-- ===== 중간발주 모드(본 화면 마크업·id 동일 — 집계·렌더·이미지 저장은 app.js 실코드) ===== -->
+  <div id="invoice-qty-mode" style="display:none;">
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-mid,#667085);margin-bottom:12px;">송장 변환 탭에서 불러온 <b>3채널 배송준비</b>를 그대로 집계합니다. <b>배송메모·☎ 지정일로 「제외」 체크된 주문은 집계에서 빠지고</b>, 개별발송(입력o·삭제x) 주문은 실제 나가는 물량이라 <b>포함</b>됩니다.</p>
+      <button class="btn-primary" id="ivt-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 집계하기 (송장 변환 탭의 주문 기준)</button>
+      <div id="invoice-qty-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:6px; line-height:1.5;"></div>
+    </div>
+    <div class="card" id="invoice-qty-result" style="display:none;">
+      <div class="invoice-qty-toolbar">
+        <div class="invoice-qty-summary">선택 <strong id="invoice-qty-sel-count">0</strong>품목 · 합계 <strong id="invoice-qty-sel-total">0</strong></div>
+        <div class="invoice-qty-actions">
+          <button class="btn-sm btn-outline" onclick="qtySelectAll(true)">전체선택</button>
+          <button class="btn-sm btn-outline" onclick="qtySelectAll(false)">전체해제</button>
+          <button class="btn-primary btn-sm" onclick="saveQtyImage()">📷 선택분 이미지 저장</button>
+          <button class="btn-reset btn-sm" onclick="resetInvoiceQty()">초기화</button>
+        </div>
+      </div>
+      <div class="invoice-qty-additem">
+        <button class="btn-sm btn-outline" onclick="toggleAddItemForm()">➕ 품목추가</button>
+        <span id="qty-partner-filter" style="margin-left:8px;"></span>
+        <div id="invoice-qty-addform" style="display:none;">
+          <input type="text" id="qty-add-name" placeholder="품목명 (직접 입력)">
+          <input type="number" id="qty-add-qty" placeholder="수량" min="0">
+          <button class="btn-primary btn-sm" onclick="confirmAddItem()">추가</button>
+          <button class="btn-sm btn-outline" onclick="toggleAddItemForm()">취소</button>
+        </div>
+      </div>
+      <div id="invoice-qty-list"></div>
+    </div>
+  </div>
+
+  <div id="invoice-convert-mode">
 
   <div class="card">
     <h2>출고지 정보</h2>
@@ -139,8 +173,9 @@
     <div class="ivt-note" id="msg-dl" style="text-align:center;"></div>
     <div style="text-align:center; margin-top:10px;"><button class="btn-outline btn-sm" id="btn-reset" type="button">초기화</button></div>
   </div>
+  </div><!-- /invoice-convert-mode -->
 </div>
 </div>
-<script src="/invoice-test.js?v=2"></script>
+<script src="/invoice-test.js?v=3"></script>
 </body>
 </html>
