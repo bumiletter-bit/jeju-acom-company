@@ -7083,13 +7083,21 @@ app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res
         const memos = Array.isArray(req.body && req.body.memos) ? req.body.memos.slice(0, 3000) : [];
         const hinfo = await loadShippingHolidayInfo();
         const kst = new Date(Date.now() + 9 * 3600 * 1000);
-        const today = kst.toISOString().slice(0, 10);
+        const realToday = kst.toISOString().slice(0, 10);
+        // #452-m(대표 9/18): 기준 = 「달력상 다음 발송일」(토요일·발송휴무일 제외 — 문의관리 발송휴무일 연동). 오늘이 발송일이고 정오 전이면 오늘, 아니면 다음 발송일.
+        //   요청으로 baseDate(YYYY-MM-DD)를 주면 그 날을 기준으로(화면에서 직원이 고른 기준 발송일).
+        const isShip = iso => shippingSchedule.isShipDay(new Date(iso + 'T00:00:00Z'), hinfo.set);
+        const addD = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+        const shipDays = []; for (let i = 0, d = realToday; i < 21 && shipDays.length < 7; i++, d = addD(d, 1)) if (isShip(d)) shipDays.push(d);
+        const suggested = (isShip(realToday) && kst.getUTCHours() < 12) ? realToday : (shipDays.find(x => x > realToday) || realToday);
+        const baseDate = (req.body && /^\d{4}-\d{2}-\d{2}$/.test(String(req.body.baseDate || ''))) ? String(req.body.baseDate) : null;
+        const today = baseDate || suggested;
         const at = Date.parse(today + 'T07:00:00+09:00');
         const results = memos.map(m => {
             try { const r = shippingSchedule.memoShipLine(m, at, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }); return r ? { kind: r.kind, reqDate: r.reqDate || null, text: r.text } : null; }
             catch (_) { return null; }
         });
-        res.json({ ok: true, today, results });
+        res.json({ ok: true, today, realToday, suggested, shipDays, results });
     } catch (err) { res.status(500).json({ ok: false, message: String(err.message || err) }); }
 });
 

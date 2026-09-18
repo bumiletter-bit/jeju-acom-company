@@ -38,7 +38,7 @@
 
     // ── 공용 상태/로직(탭마다 ctx 하나) ─────────────────────────────────────────
     // ids: { ln: 붙여넣기 칸 1개, save: 저장 버튼, res: 결과 표, review, preview|null, stats } · allowIndiv: 입력삭제 → 개별발송 분류 여부(중간발주는 false = 실물량 포함)
-    const makeCtx = (ids, allowIndiv) => ({ ids, allowIndiv, naver: null, cafe24: [], coupang: [], merged: [], today: null, lines: { naver: [], cafe24: [], coupang: [] } });
+    const makeCtx = (ids, allowIndiv) => ({ ids, allowIndiv, naver: null, cafe24: [], coupang: [], merged: [], today: null, shipDate: null, calendar: null, fetchedOn: null, lines: { naver: [], cafe24: [], coupang: [] } });
     const rawOf = (ctx, e) => e.ch === 'naver' ? ctx.naver.rows[e.i] : ctx[e.ch][e.i];
     const telOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return String(e.conv['구매자연락처'] || raw['구매자연락처'] || raw['주문자 휴대전화'] || raw['구매자전화번호'] || '').replace(/\D/g, ''); };
     const idsOf = (ctx, e) => { const raw = rawOf(ctx, e) || {}; return [raw._orderId, raw._pid, raw['주문번호'], raw['상품주문번호'], raw._x && raw._x.orderId, raw._x && raw._x.productOrderId].filter(Boolean).map(String); };
@@ -119,13 +119,20 @@
     }
     const flagOf = (p, memo, today) => (p && (p.kind === 'ship' || p.kind === 'arrive') && p.reqDate && p.reqDate > today) ? 'excl' : (p && p.kind === 'ack') ? 'review' : (!p && BROAD.test(memo)) ? 'review' : null;
     // 손님 배송메모 → 서버 해석 → 자동 체크/확인필요(직원 줄이 없는 주문만 최종 반영 — applyLines가 덮어씀)
+    // 기준일(ctx.today) = 「기준 발송일」 — 서버가 발송휴무일 달력으로 계산한 다음 발송일(오늘이 발송일이고 정오 전이면 오늘). 직원이 셀렉트로 바꿀 수 있다(ctx.shipDate).
     async function parseMemos(ctx) {
-        if (!ctx.merged.length) { ctx.today = ctx.today || kstToday(); return; }
         const memos = ctx.merged.map(e => String(e.conv['배송메세지'] || ''));
-        const r = await api('/api/agent-office/invoice/memo-parse', 'POST', { memos });
+        const r = await api('/api/agent-office/invoice/memo-parse', 'POST', { memos, baseDate: ctx.shipDate || null });
         if (!r.ok) throw new Error(r.message || '메모 해석 실패');
-        ctx.today = r.today;
+        ctx.today = r.today; ctx.shipDate = r.today; ctx.calendar = { realToday: r.realToday, suggested: r.suggested, shipDays: r.shipDays || [] }; ctx.fetchedOn = kstToday();
+        fillShipSelect(ctx);
         ctx.merged.forEach((e, k) => { const p = r.results[k] || null; e.parse = p; e.memoFlag = flagOf(p, memos[k], ctx.today); });
+    }
+    function fillShipSelect(ctx) {
+        const sel = $(ctx.ids.ship); if (!sel || !ctx.calendar) return;
+        const days = [...new Set([ctx.shipDate].concat(ctx.calendar.shipDays))].sort();
+        sel.innerHTML = days.map(d => `<option value="${d}"${d === ctx.shipDate ? ' selected' : ''}>${dateLabel(d)}${d === ctx.calendar.realToday ? ' · 오늘' : ''}${d === ctx.calendar.suggested ? ' ← 다음 발송일' : ''}</option>`).join('');
+        const note = $(ctx.ids.shipNote); if (note) note.textContent = ctx.shipDate === ctx.calendar.realToday ? '오늘 발송분 기준' : `오늘(${mdLabel(ctx.calendar.realToday)}) 발송은 끝난 것으로 보고 ${mdLabel(ctx.shipDate)} 발송분 기준 — 토요일·발송휴무일은 달력에서 자동 제외`;
     }
     // 직원 줄(정리 파일) 읽기 — 칸 1개, 플랫폼 칸으로 채널 구분(없으면 네이버). 같은 주문에 줄이 여럿이면 오늘 > 뒤 날짜(가까운 순) > 지난 날짜(최근 순) > 날짜 없음
     function readLines(ctx) {
@@ -134,7 +141,8 @@
         ctx.lines = { naver: [], cafe24: [], coupang: [] }; all.forEach(l => { if (!l.bad) ctx.lines[l.ch].push(l); });
         ctx.allLines = all;
     }
-    function applyLines(ctx) {
+    // force = 저장하기/불러오기 시점: 직원 줄이 잡은 주문은 이전 수동 체크를 덮는다(줄이 더 새 정보). 다운로드 시점(force=false)엔 그 뒤 직원이 만진 체크를 존중.
+    function applyLines(ctx, force = true) {
         const today = ctx.today || kstToday();
         const rank = l => !l.date ? 3e15 : l.date === today ? 0 : l.date > today ? 1e15 + Date.parse(l.date) : 2e15 - Date.parse(l.date);
         ctx.allLines.forEach(l => { l.hits = 0; l.applied = 0; l.hitRows = []; });
@@ -144,7 +152,7 @@
             cands.forEach(l => { l.hits++; l.hitRows.push(e); });
             // 직원 줄 없음 → 손님 메모 판정 그대로
             if (!cands.length) { e.flag = e.memoFlag; if (!e.userTouched) e.excluded = (e.memoFlag === 'excl'); return; }
-            const l = cands.sort((a, b) => rank(a) - rank(b))[0]; e.req = l;
+            const l = cands.sort((a, b) => rank(a) - rank(b))[0]; e.req = l; if (force) e.userTouched = false;
             if (l.partial) { e.reqKind = 'partial'; e.flag = 'review'; if (!e.userTouched) e.excluded = false; return; }
             if (!l.date) { e.reqKind = 'nodate'; e.flag = 'review'; if (!e.userTouched) e.excluded = false; return; }
             if (l.date > today) { e.reqKind = 'future'; e.flag = 'excl'; if (!e.userTouched) e.excluded = true; l.applied++; return; }
@@ -165,7 +173,7 @@
         if (e.req !== l) return { p: pillOk, a: `<span class="act warn">다른 줄(${dateLabel(d)}) 우선 적용</span>` };
         if (k === 'future') return { p: pillOk, a: ctx.allowIndiv ? `<span class="act del">🗑 삭제완료 · ${mdLabel(d)} 발송분</span><span class="sub">시트1·시트2 모두 빠짐</span>` : `<span class="act del">🗑 집계 제외 · ${mdLabel(d)} 발송분</span>` };
         if (k === 'indiv') return { p: pillOk, a: `<span class="act indiv">✂ 입력삭제 · 시트2 노란 행</span><span class="sub">시트1(택배사)에서만 빠짐</span>` };
-        if (k === 'today') return { p: pillOk, a: ctx.allowIndiv ? `<span class="act ok">🚚 오늘 발송</span>${e.parse ? '<span class="sub">손님 메모보다 우선</span>' : ''}` : `<span class="act ok">📦 집계 포함${l.indiv ? ' · 입력삭제' : ''}</span>` };
+        if (k === 'today') return { p: pillOk, a: ctx.allowIndiv ? `<span class="act ok">🚚 ${mdLabel(d)} 발송</span>${e.parse ? '<span class="sub">손님 메모보다 우선 · 시트1 배송메모 비움</span>' : ''}` : `<span class="act ok">📦 집계 포함${l.indiv ? ' · 입력삭제' : ''}</span>` };
         if (k === 'past') return { p: pillWarn, a: `<span class="act warn">⚠ 지난 날짜 확인</span><span class="sub">아직 배송준비 — 검토 목록에서 결정</span>` };
         if (k === 'nodate') return { p: pillWarn, a: `<span class="act warn">⚠ 날짜 없음 확인</span>` };
         if (k === 'partial') return { p: pillWarn, a: `<span class="act warn">⚠ 부분 지정 확인</span><span class="sub">수취인 이름이 없어 자동 적용 안 함</span>` };
@@ -194,8 +202,8 @@
             + `<div class="table-scroll-wrapper ivt"><table class="data-table"><thead><tr><th>플랫폼</th><th>요청날짜</th><th>구매자</th><th>품목</th><th>수량</th><th>수신</th><th>판정</th><th>처리</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
     }
     const statusOf = e => e.individual ? '<span class="tag indiv">개별발송(시트2만)</span>'
-        : e.excluded ? (e.req ? `<span class="tag excl">제외(요청 ${mdLabel(e.req.date)})</span>` : '<span class="tag excl">제외(오늘 발송 아님)</span>')
-        : e.reqKind === 'today' ? '<span class="tag review">오늘 발송(요청)</span>'
+        : e.excluded ? (e.req ? `<span class="tag excl">제외(요청 ${mdLabel(e.req.date)})</span>` : '<span class="tag excl">제외(기준일 발송 아님)</span>')
+        : e.reqKind === 'today' ? `<span class="tag review">${mdLabel(e.req.date)} 발송(요청)</span>`
         : e.reqKind === 'partial' ? '<span class="tag review">부분 지정 확인</span>'
         : e.reqKind === 'past' ? '<span class="tag review">지난 요청일 확인</span>'
         : e.reqKind === 'nodate' ? '<span class="tag review">요청일 없음 확인</span>'
@@ -203,8 +211,8 @@
     function reqOf(e) {
         if (e.req) {
             const l = e.req;
-            if (e.reqKind === 'today') return '요청 오늘 → 오늘 발송(메모 무시)';
-            if (e.reqKind === 'indiv') return '오늘 개별발송(입력o·삭제x)';
+            if (e.reqKind === 'today') return `요청 ${mdLabel(l.date)} = 기준 발송일 → 발송(메모 무시)`;
+            if (e.reqKind === 'indiv') return `${mdLabel(l.date)} 개별발송(입력o·삭제x)`;
             if (e.reqKind === 'future') return `요청 ${mdLabel(l.date)} 발송`;
             if (e.reqKind === 'past') return `요청 ${mdLabel(l.date)} — 지난 날짜`;
             if (e.reqKind === 'partial') return '「' + l.note + '」 — 직접 확인';
@@ -228,13 +236,14 @@
         }
         const n = ctx.merged.length, indiv = ctx.merged.filter(e => e.individual).length, excl = ctx.merged.filter(e => !e.individual && e.excluded).length, review = ctx.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length;
         $(ctx.ids.stats).innerHTML = ctx.ids.preview
-            ? `<span>전체 <b>${n}</b>건</span><span>시트1(택배사) <b>${n - indiv - excl}</b>건</span><span>개별발송 <b>${indiv}</b>건</span><span>제외 체크 <b>${excl}</b>건</span><span>확인필요 <b>${review}</b>건</span>${ctx.today ? `<span>기준일 ${ctx.today}</span>` : ''}`
-            : `<span>전체 <b>${n}</b>건</span><span>집계 대상 <b>${n - excl}</b>건</span><span>제외 체크 <b>${excl}</b>건</span><span>확인필요 <b>${review}</b>건</span>${ctx.today ? `<span>기준일 ${ctx.today}</span>` : ''}`;
+            ? `<span>전체 <b>${n}</b>건</span><span>시트1(택배사) <b>${n - indiv - excl}</b>건</span><span>개별발송 <b>${indiv}</b>건</span><span>제외 체크 <b>${excl}</b>건</span><span>확인필요 <b>${review}</b>건</span>${ctx.today ? `<span>기준 발송일 <b>${dateLabel(ctx.today)}</b></span>` : ''}`
+            : `<span>전체 <b>${n}</b>건</span><span>집계 대상 <b>${n - excl}</b>건</span><span>제외 체크 <b>${excl}</b>건</span><span>확인필요 <b>${review}</b>건</span>${ctx.today ? `<span>기준 발송일 <b>${dateLabel(ctx.today)}</b></span>` : ''}`;
         const scope = [ctx.ids.review, ctx.ids.preview].filter(Boolean).map(id => '#' + id + ' input[type=checkbox]').join(', ');
         document.querySelectorAll(scope).forEach(el => el.addEventListener('change', () => { const e = ctx.merged[Number(el.dataset.k)]; e.excluded = el.checked; e.userTouched = true; render(ctx, onChange); if (onChange) onChange(); }));
     }
-    function dateGuard(ctx, msgId) {   // 페이지를 전날부터 열어 두면 기준일이 어제로 남는다 → 다운로드·집계 전에 막고 다시 불러오게
-        if (ctx.today && ctx.today !== kstToday()) { $(msgId).textContent = `⚠️ 기준일이 ${ctx.today} → ${kstToday()}로 바뀌었어요. 새로고침 후 주문을 다시 불러와 검토해주세요.`; return false; }
+    function dateGuard(ctx, msgId) {   // 페이지를 전날부터 열어 두면 기준 발송일 계산이 낡는다 → 다운로드·집계 전에 막고 다시 불러오게
+        if (ctx.fetchedOn && ctx.fetchedOn !== kstToday()) { $(msgId).textContent = `⚠️ ${ctx.fetchedOn}에 불러온 화면이에요(기준 발송일 ${ctx.shipDate}). 새로고침 후 주문을 다시 불러와 검토해주세요.`; return false; }
+        if (ctx.shipDate && ctx.shipDate < kstToday()) { $(msgId).textContent = `⚠️ 기준 발송일(${ctx.shipDate})이 이미 지났어요. 기준 발송일을 다시 골라주세요.`; return false; }
         return true;
     }
     // 네이버 다운로드 파일은 비밀번호(대표: 다운로드 시 입력)로 잠겨 있을 수 있다 — CFB 서명이면 서버(/api/invoice/decrypt)로 자동 해제
@@ -260,7 +269,7 @@
     }
 
     // ── 송장 변환 탭 ─────────────────────────────────────────────────────────────
-    const C = makeCtx({ ln: 'ln-all', save: 'save-all', res: 'res-all', review: 'review', preview: 'preview', stats: 'stats' }, true);
+    const C = makeCtx({ ln: 'ln-all', save: 'save-all', res: 'res-all', review: 'review', preview: 'preview', stats: 'stats', ship: 'ship-date', shipNote: 'ship-note' }, true);
     const days = ch => Math.min(Math.max(parseInt($('days-' + ch).value) || 50, 1), 180);
     const setMsg = (ch, html) => { $('msg-' + ch).innerHTML = html; };
     const markArea = (ch, label) => { $('area-' + ch).classList.add('has-file'); $('fname-' + ch).textContent = label; };
@@ -335,24 +344,26 @@
         return { ws, count: ordered.length, indiv: indiv.length };
     }
     function download() {
-        readLines(C); applyLines(C); renderResults(C);
+        readLines(C); applyLines(C, false); renderResults(C);
         if (!dateGuard(C, 'msg-dl')) return null;
         const list = C.merged.filter(e => !e.individual && !e.excluded);
         if (!list.length) { $('msg-dl').textContent = '내보낼 주문이 없습니다.'; return null; }
         let captured = null; const origWrite = XLSX.writeFile;
         XLSX.writeFile = (wb, name) => { captured = { wb, name }; };
-        try { P.exportInvoiceExcel(list.map(e => e.conv)); } finally { XLSX.writeFile = origWrite; }   // 시트1 = 본 화면 실코드 그대로
+        // 시트1 = 본 화면 실코드 그대로. 단 직원 줄이 「기준일 발송」으로 확정한 주문은 손님 배송메모를 비워 택배사 시트에서 헷갈리지 않게(#452-m 대표). 시트2(네이버 원본)는 그대로.
+        const memoCleared = list.filter(e => e.reqKind === 'today').length;
+        try { P.exportInvoiceExcel(list.map(e => e.reqKind === 'today' ? { ...e.conv, '배송메세지': '' } : e.conv)); } finally { XLSX.writeFile = origWrite; }
         if (!captured) throw new Error('시트1 생성 실패');
         let s2 = null;
         if (C.naver) { s2 = buildSheet2(list); XLSX.utils.book_append_sheet(captured.wb, s2.ws, '발주발송관리'); }
         const name = captured.name.replace(/\.xlsx$/i, '') + '_v2.xlsx';
         origWrite(captured.wb, name);
-        $('msg-dl').textContent = `${name} — 시트1 ${list.length}건${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}`;
+        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}`;
         return captured.wb;
     }
 
     // ── 중간발주 탭(독립) ─────────────────────────────────────────────────────────
-    const Q = makeCtx({ ln: 'qln-all', save: 'qsave-all', res: 'qres-all', review: 'qreview', preview: null, stats: 'qstats' }, false);
+    const Q = makeCtx({ ln: 'qln-all', save: 'qsave-all', res: 'qres-all', review: 'qreview', preview: null, stats: 'qstats', ship: 'qship-date', shipNote: 'qship-note' }, false);
     // 행 → 본 화면 집계 키(옵션정보·수량) 변환은 본 화면 setupQtyStart와 동일. 제외 체크 건만 뺀다(개별발송 개념 없음 = 전부 실물량).
     function qtyRows() {
         const rows = [], skipped = { n: 0, qty: 0 };
@@ -418,6 +429,8 @@
         $('btn-download').addEventListener('click', () => { try { download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } });
         $('save-all').addEventListener('click', () => saveLines(C));
         $('qsave-all').addEventListener('click', () => saveLines(Q));
+        $('ship-date').addEventListener('change', () => { C.shipDate = $('ship-date').value; saveLines(C); });
+        $('qship-date').addEventListener('change', () => { Q.shipDate = $('qship-date').value; saveLines(Q); });
         for (const ch of CH) {
             const area = $('area-' + ch), input = $('file-' + ch);
             area.addEventListener('click', () => input.click());
@@ -431,6 +444,7 @@
         $('ivt-qty-start').addEventListener('click', () => runQty());
         $('ivt-qty-reset').addEventListener('click', resetQ);
         C.allLines = []; Q.allLines = []; render(C);
+        if (localStorage.getItem('jwt_token')) { parseMemos(C).then(() => { Q.shipDate = null; return parseMemos(Q); }).catch(() => {}); }   // 기준 발송일 셀렉트 먼저 채움(주문 없이도)
         window.__ivt = { S: C, Q, refreshAll: refreshC, refreshQ, render: () => render(C), download, fmtTel, parseDate, parseLines, switchMode, runQty, qtyTotal: () => P.qtyTotal(), saveLines,
             setNaverApiRows: async rows => { C.naver = { src: 'api', rows }; await refreshC('naver'); },
             setRows: async (ch, rows) => { C[ch] = rows; await refreshC(ch); },

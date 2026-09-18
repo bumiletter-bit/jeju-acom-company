@@ -41,6 +41,9 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const memos = conv.map(x => String(x.c['배송메세지'] || ''));
         const mp = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos });
         ok(mp.ok && Array.isArray(mp.results) && mp.results.length === N, 'memo-parse API 응답', mp.today);
+        ok(/^\d{4}-\d{2}-\d{2}$/.test(mp.suggested) && Array.isArray(mp.shipDays) && mp.shipDays.length >= 5 && mp.today === mp.suggested && mp.shipDays.every(d => new Date(d + 'T00:00:00Z').getUTCDay() !== 6) && mp.today >= mp.realToday, '기준 발송일 = 달력상 다음 발송일(토요일 0·오늘 이후) · baseDate 없으면 suggested', `today ${mp.today} · real ${mp.realToday} · ${mp.shipDays.join(',')}`);
+        const mpB = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['21일 발송'], baseDate: mp.shipDays[mp.shipDays.length - 1] });
+        ok(mpB.today === mp.shipDays[mp.shipDays.length - 1] && mpB.suggested === mp.suggested, 'memo-parse baseDate 지정 → 그 날 기준으로 해석(suggested는 불변)', mpB.today);
         const expExcl = mp.results.filter(p => p && (p.kind === 'ship' || p.kind === 'arrive') && p.reqDate && p.reqDate > mp.today).length;
         const expAck = mp.results.filter(p => p && p.kind === 'ack').length;
         console.log(`  기대: 자동 체크 ${expExcl}건 · 애매(ack) ${expAck}건 · 기준일 ${mp.today}`);
@@ -60,7 +63,8 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N, { timeout: 30000 });
         ok(true, '① 파일 업로드 → 미리보기 행수 = 원본', N);
         const st1 = await pg.evaluate(() => ({ excl: __ivt.S.merged.filter(e => e.excluded).length, review: __ivt.S.merged.filter(e => e.flag === 'review').length, today: __ivt.S.today }));
-        ok(st1.excl === expExcl, '① 자동 체크(오늘 발송 아님) = memo-parse 규칙', `${st1.excl} / 기대 ${expExcl}`);
+        ok(st1.excl === expExcl, '① 자동 체크(기준일 발송 아님) = memo-parse 규칙', `${st1.excl} / 기대 ${expExcl}`);
+        ok((await pg.inputValue('#ship-date')) === mp.today && (await pg.locator('#ship-date option').count()) >= 5 && /다음 발송일/.test(await pg.textContent('#ship-date')), '① 기준 발송일 셀렉트 = suggested · 다음 발송일 후보 표시', await pg.inputValue('#ship-date'));
         ok(st1.review >= expAck, '① 확인필요 ≥ 애매(ack) 건수', `${st1.review} / ack ${expAck}`);
         const reviewRows = await pg.locator('#review tbody tr').count();
         ok(reviewRows === (await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && (e.excluded || e.flag)).length)), '① 검토 목록 = 체크됨 + 확인필요', reviewRows);
@@ -151,28 +155,34 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(qq3.indiv === 0 && qq3.excl === 0 && qq3.total === afterQ && /집계 포함/.test(await pg.textContent('#qres-all')), '②-q 중간발주: 오늘 + 입력삭제 줄 = 실물량이라 집계 포함(제외 0·개별 0)', JSON.stringify(qq3) + ' / ' + afterQ);
         await pg.fill('#qln-all', ''); await pg.click('#qsave-all'); await pg.waitForFunction(() => !document.getElementById('qsave-all').disabled); await pg.waitForTimeout(200);
         await pg.click('#ivt-mode-convert');
-        // ③ 다운로드
+        // ③ 다운로드 (개별발송 2명 + reqTel은 「기준일 발송」 줄 → 시트1에 남되 배송메모 비움)
+        await save('naver', TODAY + '\t' + indivTels[0] + '\t입력o삭제x\t네이버\n' + TODAY + '\t' + reqTel + '\t메모무시\t네이버');
+        const expIndiv3 = byTel[indivTels[0]].length;   // ③부터 개별발송은 첫 번호만(둘째 번호 = 「메모무시」 발송 확정)
         const dl1 = pg.waitForEvent('download'); await pg.click('#btn-download'); const d1 = await dl1;
         const f1 = path.join(os.tmpdir(), 'ivt1.xlsx'); await d1.saveAs(f1);
         const w1 = XLSX.readFile(f1, { cellStyles: true });
         ok(w1.SheetNames.length === 2 && w1.SheetNames[0] === 'Sheet1' && w1.SheetNames[1] === '발주발송관리', '③ 시트 2개(Sheet1·발주발송관리)', w1.SheetNames.join(','));
         const s1 = w1.Sheets.Sheet1, s2 = w1.Sheets['발주발송관리'];
         const s1rows = XLSX.utils.sheet_to_json(s1, { header: 1 }).length - 1;
-        ok(s1rows === N - expIndiv - exclNow, '③ 시트1 행수 = 전체 − 개별 − 제외', `${s1rows} = ${N} − ${expIndiv} − ${exclNow}`);
+        const exclNow2 = await pg.evaluate(() => __ivt.S.merged.filter(e => !e.individual && e.excluded).length);
+        ok(s1rows === N - expIndiv3 - exclNow2, '③ 시트1 행수 = 전체 − 개별 − 제외', `${s1rows} = ${N} − ${expIndiv3} − ${exclNow2}`);
+        const s1j = XLSX.utils.sheet_to_json(s1); const memoRows = s1j.filter(r => String(r['구매자연락처'] || '').replace(/\D/g, '').endsWith(indivTels[1].slice(-8)));
+        if (!memoRows.length) console.log('   시트1 헤더:', Object.keys(s1j[0] || {}).join('|'), '· 예시 연락처:', String((s1j[0] || {})['구매자연락처']));
+        ok(memoRows.length === reqN && memoRows.every(r => !String(r['배송메세지'] || '').trim()) && /배송메모 비움/.test(await pg.textContent('#msg-dl')), '③ 「메모무시」 줄로 발송 확정한 주문 = 시트1에 있고 배송메모 비움(원본 메모 ' + byTel[indivTels[1]].filter(r => String(r['배송메세지'] || '').trim()).length + '건 있었음)', memoRows.length);
         const a2 = XLSX.utils.sheet_to_json(s2, { header: 1, raw: true });
         ok(String(s2.A1 && s2.A1.v) === String(ws0.A1.v) && String(s2.D1 && s2.D1.v) === String(ws0.D1.v), '③ 시트2 1행 안내문 = 원본과 동일');
         ok(JSON.stringify(a2[1]) === JSON.stringify(aoa[hdrIdx]), '③ 시트2 2행 헤더 27열 = 원본과 동일');
-        ok(a2.length - 2 === s1rows + expIndiv, '③ 시트2 행수 = 시트1 + 개별발송', a2.length - 2);
+        ok(a2.length - 2 === s1rows + expIndiv3, '③ 시트2 행수 = 시트1 + 개별발송', a2.length - 2);
         // 순서: 시트1 k행 수취인연락처1(G) == 시트2 k행 수취인연락처1(J)
         let orderOk = true; for (let k = 0; k < s1rows; k++) { const t1 = String((s1['G' + (k + 2)] || {}).v || '').replace(/\D/g, ''); const t2 = String((s2['J' + (k + 3)] || {}).v || '').replace(/\D/g, ''); if (t1 !== t2) { orderOk = false; console.log('   순서 불일치 행', k + 1, t1, t2); break; } }
         ok(orderOk, '③ 시트1·시트2 행 순서 동일(수취인연락처 1:1)');
-        const lastRows = []; for (let k = 0; k < expIndiv; k++) { const r = a2.length - expIndiv + k + 1; lastRows.push(s2['A' + r]); }
+        const lastRows = []; for (let k = 0; k < expIndiv3; k++) { const r = a2.length - expIndiv3 + k + 1; lastRows.push(s2['A' + r]); }
         const fillOf = c => c && c.s && ((c.s.fgColor && c.s.fgColor.rgb) || (c.s.fill && c.s.fill.fgColor && c.s.fill.fgColor.rgb)) || null;   // 읽기 시 patternType/fgColor가 최상위로 온다
         ok(lastRows.every(c => fillOf(c) === 'FFF2CC'), '③ 개별발송 행 = 맨 아래 노란 배경', lastRows.map(fillOf).join(','));
         const firstDataFill = fillOf(s2.A3);
         ok(firstDataFill !== 'FFF2CC', '③ 일반 행은 노란 배경 아님');
-        const indivTelsIn = lastRows.length ? new Set(indivTels) : null;
-        const yellowTels = []; for (let k = 0; k < expIndiv; k++) { const r = a2.length - expIndiv + k + 1; yellowTels.push(String((s2['N' + r] || {}).v || '').replace(/\D/g, '')); }
+        const indivTelsIn = lastRows.length ? new Set([indivTels[0]]) : null;
+        const yellowTels = []; for (let k = 0; k < expIndiv3; k++) { const r = a2.length - expIndiv3 + k + 1; yellowTels.push(String((s2['N' + r] || {}).v || '').replace(/\D/g, '')); }
         ok(yellowTels.every(t => indivTelsIn.has(t)), '③ 노란 행의 구매자연락처 = 입력한 개별발송 번호');
         ok((s2.R3 && s2.R3.z === 'yyyy/mm/dd\\ hh:mm') && (s2.U3 && /₩/.test(s2.U3.z || '')), '③ 시트2 날짜·금액 셀 서식 유지(결제일·정산예정금액)', `${s2.R3 && s2.R3.z} / ${s2.U3 && s2.U3.z}`);
         // ④ 무회귀: 개별 0·제외 0 → 시트1 = 참조본
