@@ -334,6 +334,14 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const s453sheet2 = XLSX.utils.sheet_to_json(s453w.Sheets['발주발송관리'], { header: 1, raw: false }).slice(2);
         ok(s453sheet2.length === 5 && s453sheet2.every(r => s453memos.includes(r[12]) && /^구매\d$/.test(r[5])), '⑤-b 시트2(네이버 원본) = 구매자명·배송메세지 원본 그대로', JSON.stringify(s453sheet2.map(r => r[5])));
         ok(/보내는이 변경 2건/.test(await pg.textContent('#msg-dl')) && /사이즈 요청 1건/.test(await pg.textContent('#msg-dl')) && /보내는이 확인 1건/.test(await pg.textContent('#msg-dl')), '⑤-b 다운로드 안내: 보내는이 변경 2건 · 보내는이 확인 1건 · 사이즈 요청 1건', (await pg.textContent('#msg-dl')).slice(0, 160));
+        // ⑤-c #455: 「그날 발송」 줄로 메모를 비우는 주문이라도 보내는이를 바꿨으면(또는 애매하면) 메모를 남긴다 — 대조 근거 보존. 보내는이 요청이 없는 주문은 종전대로 비움
+        await save('naver', TODAY + '\t010-5555-0001\t메모무시\t네이버\n' + TODAY + '\t010-5555-0004\t메모무시\t네이버\n' + TODAY + '\t010-5555-0005\t메모무시\t네이버');
+        const k455dl = pg.waitForEvent('download'); await pg.click('#btn-download'); const k455d = await k455dl;
+        const k455f = path.join(os.tmpdir(), 'ivt455.xlsx'); await k455d.saveAs(k455f); const k455s = XLSX.readFile(k455f, { cellStyles: true }).Sheets.Sheet1;
+        const k455rows = XLSX.utils.sheet_to_json(k455s, { header: 1, defval: '' }).slice(1).map((r, i) => ({ r: i + 2, A: r[0], J: r[9], rcv: r[3] })); const k455of = n => k455rows.find(x => x.rcv === '받는' + n);
+        const k455fill = k => k455s[k] && k455s[k].s && k455s[k].s.fgColor && k455s[k].s.fgColor.rgb;
+        ok(k455of(1).A === '홍길동 드림' && k455of(1).J === s453memos[0] && k455fill('J' + k455of(1).r) === 'DDEBF7' && k455of(4).J === s453memos[3] && k455fill('J' + k455of(4).r) === 'FFF2CC' && k455of(5).J === '' && k455of(5).A === '구매5(제주아꼼이네)', '⑤-c #455 「그날 발송」 줄: 보내는이 변경·애매 주문은 메모 유지(색 표시) · 그 외 주문은 종전대로 메모 비움', JSON.stringify([k455of(1).J, k455of(4).J, k455of(5).J]));
+        await save('naver', '');
         // ⑥ 비밀번호 파일 자동 해제: 오늘 원본을 4031로 암호화해 업로드 → 서버 복호화 → 같은 행수
         try {
             const officeCrypto = require('officecrypto-tool');

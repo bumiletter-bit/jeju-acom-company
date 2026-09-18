@@ -506,15 +506,17 @@
         let captured = null; const origWrite = XLSX.writeFile;
         XLSX.writeFile = (wb, name) => { captured = { wb, name }; };
         // 시트1 = 본 화면 실코드 그대로. 단 직원 줄이 「기준일 발송」으로 확정한 주문은 손님 배송메모를 비워 택배사 시트에서 헷갈리지 않게(#452-m 대표). 시트2(네이버 원본)는 그대로.
-        const memoCleared = list.filter(e => e.reqKind === 'today').length;
-        try { P.exportInvoiceExcel(list.map(e => senderOut(e, e.reqKind === 'today' ? { ...e.conv, '배송메세지': '' } : e.conv))); } finally { XLSX.writeFile = origWrite; }
+        // #455: 보내는이를 바꿨거나 애매한 주문은 메모를 비우지 않는다 — 비우면 바뀐 이름을 대조할 근거가 시트에서 사라진다(색 표시된 칸을 사람이 확인 후 지움)
+        const clearMemo = e => e.reqKind === 'today' && !e.sender;
+        const memoCleared = list.filter(clearMemo).length;
+        try { P.exportInvoiceExcel(list.map(e => senderOut(e, clearMemo(e) ? { ...e.conv, '배송메세지': '' } : e.conv))); } finally { XLSX.writeFile = origWrite; }
         if (!captured) throw new Error('시트1 생성 실패');
         const marked = markSheet1(captured.wb.Sheets['Sheet1'], list);
         let s2 = null;
         if (C.naver) { s2 = buildSheet2(list); XLSX.utils.book_append_sheet(captured.wb, s2.ws, '발주발송관리'); }
         const name = captured.name.replace(/\.xlsx$/i, '') + '_v2.xlsx';
         origWrite(captured.wb, name);
-        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${marked.sender ? ` · ✉ 보내는이 변경 ${marked.sender}건(연파랑 — 메모 확인 후 지우기)` : ''}${marked.amb ? ` · ✉ 보내는이 확인 ${marked.amb}건(연노랑 — 자동 변경 안 함)` : ''}${marked.size ? ` · 사이즈 요청 ${marked.size}건(연주황)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
+        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${window.IvtSender ? '' : ' · ⚠️ 보내는이 판정기를 불러오지 못해 보내는이 변경 0건 — 새로고침 후 다시 받아 주세요'}${marked.sender ? ` · ✉ 보내는이 변경 ${marked.sender}건(연파랑 — 메모 확인 후 지우기)` : ''}${marked.amb ? ` · ✉ 보내는이 확인 ${marked.amb}건(연노랑 — 자동 변경 안 함)` : ''}${marked.size ? ` · 사이즈 요청 ${marked.size}건(연주황)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
         return captured.wb;
     }
 
