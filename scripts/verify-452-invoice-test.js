@@ -57,7 +57,7 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const br = await chromium.launch(); const ctx = await br.newContext({ acceptDownloads: true });
         await ctx.addInitScript(t => { localStorage.setItem('jwt_token', t); }, TOKEN);
         const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
-        await pg.goto(`${BASE}/invoice-test.html`, { waitUntil: 'load' });
+        await pg.goto(`${BASE}/invoice-v2.html`, { waitUntil: 'load' });
         await pg.waitForFunction(() => window.__ivt, null, { timeout: 20000 });
         await pg.setInputFiles('#file-naver', XLS);
         await pg.waitForFunction(n => document.querySelectorAll('#preview tbody tr').length === n, N, { timeout: 30000 });

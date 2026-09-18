@@ -1634,6 +1634,11 @@
             <!-- 송장변환 페이지 -->
             <div id="page-invoice" class="page">
                 <h1>송장변환</h1>
+                <!-- #452-p(대표 GO 9/18): 송장변환 v2(/invoice-v2.html)를 iframe으로 끼움 — app.js 송장변환 코드 무접촉. 구버전 마크업은 아래 #page-invoice-legacy에 숨김(주소 뒤 #invoice-legacy 로만 노출 · 되돌리기 = 이 블록 제거). -->
+                <div id="invoice-v2-wrap">
+                    <iframe id="invoice-v2-frame" class="invoice-v2-frame" title="송장변환" src="about:blank" loading="eager"></iframe>
+                </div>
+                <div id="page-invoice-legacy" style="display:none;">
 
                 <!-- 모드 토글 -->
                 <div class="invoice-mode-toggle">
@@ -1788,6 +1793,7 @@
                         </div>
                         <div id="invoice-qty-list"></div>
                     </div>
+                </div>
                 </div>
             </div>
 
@@ -2468,6 +2474,21 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="app.js?v=383"></script>
+    <style>.invoice-v2-frame { width:100%; border:0; display:block; min-height:70vh; background:transparent; } #page-invoice-legacy.show { display:block !important; } #invoice-v2-wrap.hide { display:none; }</style>
+    <script>
+    // #452-p 송장변환 v2 끼우기: 메뉴 진입 시 1회 로드(이후 상태 유지 · 단가표는 v2가 클릭마다 재로드) · 내용 높이만큼 iframe 확장 · #invoice-legacy 해시면 구버전 노출
+    (function () {
+        const page = document.getElementById('page-invoice'), frame = document.getElementById('invoice-v2-frame'), legacy = document.getElementById('page-invoice-legacy'), wrap = document.getElementById('invoice-v2-wrap');
+        if (!page || !frame) return;
+        const legacyOn = () => location.hash === '#invoice-legacy';
+        const applyLegacy = () => { legacy.classList.toggle('show', legacyOn()); wrap.classList.toggle('hide', legacyOn()); };
+        const ensure = () => { if (!page.classList.contains('active') || legacyOn()) return; if (frame.dataset.loaded) return; frame.dataset.loaded = '1'; frame.src = '/invoice-v2.html?embed=1'; };
+        new MutationObserver(ensure).observe(page, { attributes: true, attributeFilter: ['class'] });
+        window.addEventListener('hashchange', () => { applyLegacy(); ensure(); });
+        window.addEventListener('message', ev => { if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'ivt-height') return; const h = Math.max(400, Math.ceil(ev.data.h) + 8); frame.style.height = h + 'px'; });
+        applyLegacy(); ensure();
+    })();
+    </script>
     <!-- 지시 #395: 주문 정리기 (파서·추출기 = 원형 이식, organizer = 앱 로직. OCR·pako는 화면에서 lazy-load) -->
     <script src="order-parser.js?v=1"></script>
     <script src="order-extract.js?v=3"></script>

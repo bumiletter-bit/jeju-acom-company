@@ -1,4 +1,5 @@
-// #452(대표 GO 9/18) 송장변환 테스트 v2 — 본 화면(app.js 송장변환·중간발주)은 무접촉. 변환·시트1 스타일·중간발주 집계/렌더는 app.js의 실코드를 그대로 떼어 실행(중복 구현 0).
+// #452(대표 GO 9/18) 송장변환 v2(/invoice-v2.html) — #452-p부터 회사프로그램 「송장변환」 메뉴 안에 iframe(?embed=1)으로 끼워 정식 사용. app.js 송장변환·중간발주 코드는 무접촉(구버전은 index.html에 숨김 — #invoice-legacy).
+//   변환·시트1 스타일·중간발주 집계/렌더는 app.js의 실코드를 그대로 떼어 실행(중복 구현 0).
 //   [송장 변환 탭] ① 개별발송·지정 발송일 = 정리 파일(요청일자·번호·비고·플랫폼) 줄을 채널별 칸 1개에 붙여넣고 [저장하기](#452-j) ② 배송메모 해석(서버 /invoice/memo-parse)으로 「오늘 발송 아님」 후보 미리 체크 + 검토 목록
 //                 ③ 시트2 = 네이버 「전체주문발주발송관리」 원본 양식(안내 1행·27열·시트명 동일·시트1과 행 순서 동일·개별발송 건은 맨 아래 노란 배경)
 //   [중간발주 탭 — 독립] 자체 3채널 불러오기 → 같은 정리 파일 줄(입력삭제 = 그날 나가는 실물량이라 포함) + 배송메모 검토 → 제외 체크 건만 집계에서 뺀 수량(체크 바꾸면 즉시 재집계)
@@ -333,6 +334,7 @@
     async function refreshC(resetCh) { if (resetCh) C.merged = C.merged.filter(e => e.ch !== resetCh); rebuild(C); await parseMemos(C); readLines(C); applyLines(C); render(C); renderResults(C); $('btn-download').disabled = !C.merged.length; }
     async function loadNaverApi() {
         setMsg('naver', `네이버 배송준비 조회 중(최근 ${days('naver')}일)…`);
+        await P.aoLoadInvoicePricing();   // #440 동일: 클릭마다 단가표 품목명 새로 읽기(주중 이름 변경·주 바뀜)
         const r = await fetchChannel('naver', days('naver'));
         if (!r.ok) { setMsg('naver', '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
         C.naver = { src: 'api', rows: r.rows || [] }; markArea('naver', `🛰️ 네이버 배송준비 ${r.count}건`); setMsg('naver', `✅ 배송준비 <b>${r.count}건</b> 불러왔습니다(API — 비밀번호 없음).`);
@@ -340,6 +342,7 @@
     }
     async function loadOther(ch) {
         setMsg(ch, '조회 중…');
+        await P.aoLoadInvoicePricing();
         const r = await fetchChannel(ch, days(ch));
         if (!r.ok) { setMsg(ch, '⚠️ ' + aoEsc(r.message || '불러오기 실패')); return; }
         C[ch] = r.rows || []; markArea(ch, `${CH_LABEL[ch]} ${r.count}건`); setMsg(ch, `✅ <b>${r.count}건</b> 불러왔습니다.`);
@@ -347,7 +350,7 @@
     }
     async function loadFile(ch, file) {
         $('area-' + ch).classList.add('decrypting');
-        let wbInfo; try { wbInfo = await readWorkbook(file); } finally { $('area-' + ch).classList.remove('decrypting'); }
+        let wbInfo; try { await P.aoLoadInvoicePricing(); wbInfo = await readWorkbook(file); } finally { $('area-' + ch).classList.remove('decrypting'); }
         const { wb, decrypted } = wbInfo; const ws = wb.Sheets[wb.SheetNames[0]];
         if (ch === 'naver') {
             const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
@@ -443,6 +446,7 @@
         const d = Math.min(Math.max(parseInt($('ivt-qty-days').value) || 50, 1), 180);
         $('invoice-qty-msg').textContent = `3채널 배송준비 조회 중… (최근 ${d}일)`;
         try {
+            await P.aoLoadInvoicePricing();   // #440 동일
             const [nv, cp, cf] = await Promise.allSettled([fetchChannel('naver', d), fetchChannel('coupang', d), fetchChannel('cafe24', d)]);
             const val = rv => rv.status === 'fulfilled' && rv.value && rv.value.ok ? rv.value : { ok: false, message: rv.status === 'fulfilled' ? (rv.value && rv.value.message) || '불러오기 실패' : (rv.reason && rv.reason.message) || String(rv.reason) };
             const N = val(nv), P2 = val(cp), F = val(cf);
@@ -501,6 +505,11 @@
         $('ivt-qty-start').addEventListener('click', () => runQty());
         $('ivt-qty-reset').addEventListener('click', resetQ);
         C.allLines = []; Q.allLines = []; render(C);
+        // embed(iframe) 모드: 내용 높이를 바깥 페이지에 알려 iframe이 스크롤 없이 늘어나게
+        if (document.body.classList.contains('embed') && window.parent !== window) {
+            const post = () => { try { window.parent.postMessage({ type: 'ivt-height', h: document.documentElement.scrollHeight }, location.origin); } catch (_) { } };
+            new ResizeObserver(post).observe(document.body); post(); setInterval(post, 1500);
+        }
         if (localStorage.getItem('jwt_token')) { parseMemos(C).then(() => { Q.shipDate = null; return parseMemos(Q); }).catch(() => {}); }   // 기준 발송일 셀렉트 먼저 채움(주문 없이도)
         window.__ivt = { S: C, Q, refreshAll: refreshC, refreshQ, render: () => render(C), download, fmtTel, parseDate, parseLines, switchMode, runQty, qtyTotal: () => P.qtyTotal(), saveLines, ShipCal,
             setNaverApiRows: async rows => { C.naver = { src: 'api', rows }; await refreshC('naver'); },

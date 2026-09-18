@@ -56,14 +56,14 @@ const ok = (name, c, note) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' :
         const catText = await pg.evaluate(() => (document.getElementById('invoice-catalog-list') || {}).innerText || '');
         ok('③ 카탈로그 표시 무회귀(오늘 품목 N개)', /총\s*\d+\s*개 품목/.test(catText), catText.slice(0, 40).replace(/\n/g, ' '));
         // 중간발주 탭의 시작 버튼 — 클릭 시 catalog 재요청 (채널 조회는 로컬에서 실패해도 무방)
-        await pg.evaluate(() => { switchInvoiceMode('qty'); const b = document.getElementById('invoice-qty-start'); if (b) { b.scrollIntoView(); b.disabled = false; } });
-        await pg.waitForTimeout(500);
-        await pg.click('#invoice-qty-start', { force: true }); await pg.waitForTimeout(4000);
+        // #452-p: 송장변환 = iframe(v2) — 버튼은 프레임 안에서(구버전은 #page-invoice-legacy에 숨김)
+        const fr = pg.frameLocator('#invoice-v2-frame'); await pg.waitForFunction(() => { const f = document.getElementById('invoice-v2-frame'); return f && f.contentWindow && f.contentWindow.__ivt; }, null, { timeout: 20000 });
+        await fr.locator('#ivt-mode-qty').click(); await pg.waitForTimeout(300);
+        await fr.locator('#ivt-qty-start').click({ force: true }); await pg.waitForTimeout(4000);
         const c1 = catalogReq;
         ok('② [중간발주 시작하기] 클릭 → 카탈로그 재요청', c1 > c0, `${c0}→${c1}`);
-        await pg.evaluate(() => { switchInvoiceMode('convert'); const b = document.getElementById('invoice-auto-smart'); if (b) { b.scrollIntoView(); b.disabled = false; } });
-        await pg.waitForTimeout(500);
-        await pg.click('#invoice-auto-smart', { force: true }); await pg.waitForTimeout(4000);
+        await fr.locator('#ivt-mode-convert').click(); await pg.waitForTimeout(300);
+        await fr.locator('#btn-naver').click({ force: true }); await pg.waitForTimeout(4000);
         const c2 = catalogReq;
         ok('② [네이버 배송준비 불러오기] 클릭 → 카탈로그 재요청', c2 > c1, `${c1}→${c2}`);
         // ── ④ #441 로그아웃 즉시 재로드 — 앱 상태 마커 심고 로그아웃 → navigation + 로그인 화면 + 마커 소멸
