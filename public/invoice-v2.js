@@ -293,9 +293,12 @@
         const rv = $(ctx.ids.review).querySelector('tbody');
         const all = ctx.merged.map((e, k) => ({ e, k })).filter(({ e }) => !e.individual && (e.excluded || e.flag));
         const f = ctx.reviewFilter || 'all';
-        const revRows = all.filter(({ e }) => f === 'all' || (f === 'excl' ? e.excluded : (!e.excluded && e.flag === 'review')));
+        // 필터 목록은 버튼을 누른 시점에 고정(키 스냅샷) — 체크를 바꿔도 행이 사라지지 않아 실수로 눌러도 바로 되돌릴 수 있다(대표 실물 9/18). 저장/불러오기(refresh)·필터 변경 때 다시 계산.
+        const key = e => e.ch + ':' + e.i;
+        if (f !== 'all' && !ctx.reviewFilterKeys) ctx.reviewFilterKeys = new Set(all.filter(({ e }) => f === 'excl' ? e.excluded : (!e.excluded && e.flag === 'review')).map(({ e }) => key(e)));
+        const revRows = f === 'all' ? all : all.filter(({ e }) => ctx.reviewFilterKeys.has(key(e)));
         const cnt = { all: all.length, excl: all.filter(x => x.e.excluded).length, review: all.filter(x => !x.e.excluded && x.e.flag === 'review').length };
-        const fl = $(ctx.ids.filter); if (fl) { fl.innerHTML = FILTERS.map(([v, t]) => `<button type="button" class="btn-sm btn-outline${f === v ? ' active' : ''}" data-f="${v}">${t} <b>${cnt[v]}</b></button>`).join(''); fl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { ctx.reviewFilter = b.dataset.f; render(ctx, onChange); })); }
+        const fl = $(ctx.ids.filter); if (fl) { fl.innerHTML = FILTERS.map(([v, t]) => `<button type="button" class="btn-sm btn-outline${f === v ? ' active' : ''}" data-f="${v}">${t} <b>${cnt[v]}</b></button>`).join(''); fl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { ctx.reviewFilter = b.dataset.f; ctx.reviewFilterKeys = null; render(ctx, onChange); })); }
         rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td class="req">${reqCell(e)}</td><td>${statusOf(e)}</td></tr>`).join('')
             : `<tr><td colspan="8" style="color:#6B7280;">${f === 'all' ? '검토할 배송메모가 없습니다.' : '이 조건에 해당하는 건이 없습니다.'}</td></tr>`;
         if (ctx.ids.preview) {
@@ -340,7 +343,7 @@
     const days = ch => Math.min(Math.max(parseInt($('days-' + ch).value) || 50, 1), 180);
     const setMsg = (ch, html) => { $('msg-' + ch).innerHTML = html; };
     const markArea = (ch, label) => { $('area-' + ch).classList.add('has-file'); $('fname-' + ch).textContent = label; };
-    async function refreshC(resetCh) { if (resetCh) C.merged = C.merged.filter(e => e.ch !== resetCh); rebuild(C); await parseMemos(C); readLines(C); applyLines(C); render(C); renderResults(C); $('btn-download').disabled = !C.merged.length; }
+    async function refreshC(resetCh) { if (resetCh) C.merged = C.merged.filter(e => e.ch !== resetCh); rebuild(C); await parseMemos(C); readLines(C); applyLines(C); C.reviewFilterKeys = null; render(C); renderResults(C); $('btn-download').disabled = !C.merged.length; }
     async function loadNaverApi() {
         setMsg('naver', `네이버 배송준비 조회 중(최근 ${days('naver')}일)…`);
         await P.aoLoadInvoicePricing();   // #440 동일: 클릭마다 단가표 품목명 새로 읽기(주중 이름 변경·주 바뀜)
@@ -468,7 +471,7 @@
         finally { btn.disabled = false; }
     }
     async function refreshQ() {
-        rebuild(Q); await parseMemos(Q); readLines(Q); applyLines(Q); render(Q, recomputeQ); renderResults(Q); $('qreview-card').style.display = Q.merged.length ? '' : 'none';
+        rebuild(Q); await parseMemos(Q); readLines(Q); applyLines(Q); Q.reviewFilterKeys = null; render(Q, recomputeQ); renderResults(Q); $('qreview-card').style.display = Q.merged.length ? '' : 'none';
         if (Q.merged.length) { if (!dateGuard(Q, 'invoice-qty-msg')) return; recomputeQ(); }
     }
     function resetQ() { Q.naver = null; Q.cafe24 = []; Q.coupang = []; Q.merged = []; Q.today = null; Q.allLines = []; $('qln-all').value = ''; $('qres-all').innerHTML = ''; $('qreview-card').style.display = 'none'; $('invoice-qty-msg').textContent = ''; P.resetInvoiceQty(); }

@@ -123,6 +123,16 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const fBtn = async f => { await pg.click(`#review-filter button[data-f="${f}"]`); await pg.waitForTimeout(100); return pg.evaluate(() => ({ rows: Array.from(document.querySelectorAll('#review tbody tr')).filter(r => r.querySelector('input[type=checkbox]')), active: document.querySelector('#review-filter button.active').dataset.f })); };
         const fR = await fBtn('review'); const fE = await fBtn('excl'); const fA = await fBtn('all');
         const fchk = await pg.evaluate(() => ({ review: Array.from(document.querySelectorAll('#review tbody tr')).length }));
+        // 필터 목록 고정(대표 실물 9/18): 확인필요 보기에서 체크해도 행이 사라지지 않고 남아 다시 풀 수 있다
+        await pg.click('#review-filter button[data-f="review"]'); await pg.waitForTimeout(100);
+        const stick0 = await pg.evaluate(() => document.querySelectorAll('#review tbody tr input[type=checkbox]').length);
+        const firstUn = pg.locator('#review tbody tr input[type=checkbox]:not(:checked)').first();
+        await firstUn.click(); await pg.waitForTimeout(150);
+        const stick1 = await pg.evaluate(() => ({ rows: document.querySelectorAll('#review tbody tr input[type=checkbox]').length, checked: document.querySelectorAll('#review tbody tr input[type=checkbox]:checked').length, active: document.querySelector('#review-filter button.active').dataset.f }));
+        await pg.locator('#review tbody tr input[type=checkbox]:checked').first().click(); await pg.waitForTimeout(150);
+        const stick2 = await pg.evaluate(() => ({ rows: document.querySelectorAll('#review tbody tr input[type=checkbox]').length, checked: document.querySelectorAll('#review tbody tr input[type=checkbox]:checked').length }));
+        ok(stick0 > 0 && stick1.rows === stick0 && stick1.checked === 1 && stick1.active === 'review' && stick2.rows === stick0 && stick2.checked === 0, '검토 목록 필터 고정: 확인필요 보기에서 체크해도 행 유지 → 다시 풀기 가능', JSON.stringify({ stick0, stick1, stick2 }));
+        await pg.click('#review-filter button[data-f="all"]'); await pg.waitForTimeout(100);
         ok(fR.active === 'review' && fE.active === 'excl' && fA.active === 'all' && (await pg.evaluate(() => { const rows = () => Array.from(document.querySelectorAll('#review tbody tr input[type=checkbox]')); document.querySelector('#review-filter button[data-f="review"]').click(); const r1 = rows().every(c => !c.checked) && rows().length === __ivt.S.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length; document.querySelector('#review-filter button[data-f="excl"]').click(); const r2 = rows().every(c => c.checked) && rows().length === __ivt.S.merged.filter(e => !e.individual && e.excluded).length; document.querySelector('#review-filter button[data-f="all"]').click(); return r1 && r2; })), '검토 목록 필터: 확인필요 = 체크 안 된 행만 · 제외 체크 = 체크된 행만 · 전체 복귀', JSON.stringify({ fR: fR.rows.length, fE: fE.rows.length, fA: fA.rows.length }));
         ok(/삭제완료 · \d+\/\d+ 발송분/.test(await resTxt()) && /확인완료/.test(await resTxt()), '☎ 저장 표: 「🗑 삭제완료 · M/D 발송분」 + 확인완료', (await resTxt()).slice(0, 160));
         await save('naver', TODAY + '\t' + reqTel + '\t메모무시\t네이버');
