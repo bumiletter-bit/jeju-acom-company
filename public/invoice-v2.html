@@ -50,8 +50,9 @@
   .tag.inc { background:var(--primary-light,#EEF2FF); color:var(--primary,#4F46E5); }
   .tag.sender { background:#DDEBF7; color:#1F4E79; }   /* #453 = 시트1 보내는이 변경 표시색(연파랑)과 동일 */
   .tag.size { background:#FCE4D6; color:#C00000; }     /* #453 = 시트1 사이즈 요청 표시색(연주황)과 동일 */
+  .tag.sender-amb { background:#FFF2CC; color:#7F6000; }   /* #454 = 시트1 애매한 보내는이 요청 표시색(연노랑)과 동일 */
   .data-table td.memo .note.sender-ok { background:#DDEBF7; color:#1F4E79; }
-  .data-table td.memo .note.sender-amb { background:#FEF3C7; color:#B45309; }
+  .data-table td.memo .note.sender-amb { background:#FFF2CC; color:#7F6000; }
   .ivt-grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
   .ivt-grid3 textarea.form-input { width:100%; }
   #login-gate { background:#FEE2E2; color:#B91C1C; padding:12px 14px; border-radius:10px; font-weight:600; display:none; margin-bottom:16px; }
@@ -257,7 +258,8 @@
     <button class="btn-primary" id="btn-download" disabled style="width:100%; padding:14px; font-size:15px;">📦 통합 변환 및 다운로드 (시트1 택배사 양식 · 시트2 네이버 원본 양식)</button>
     <div class="ivt-note" id="msg-dl" style="text-align:center;"></div>
     <div class="ivt-rules" id="sender-rules">
-      <div class="rule"><span class="tag sender">✉ 보내는이</span><div>배송메모에 「보내는이 ○○○ 변경」·「○○○ 드림」처럼 <b>확실한 요청</b>만 시트1 보내는사람을 <b>「○○○ 드림」</b>으로 바꿉니다(번호가 같이 있으면 연락처도). <b>배송메모는 그대로</b> 두고 그 칸을 <b>연파랑</b>으로 표시 — 확인 후 앞부분만 지우세요. 애매한 메모는 아무것도 안 바꿉니다.</div></div>
+      <div class="rule"><span class="tag sender">✉ 보내는이</span><div>배송메모에 「보내는이 ○○○ 변경」·「○○○ 드림」처럼 <b>확실한 요청</b>만 시트1 보내는사람을 <b>「○○○ 드림」</b>으로 바꿉니다(번호가 같이 있으면 연락처도). <b>배송메모는 그대로</b> 두고 그 칸을 <b>연파랑</b>으로 표시 — 확인 후 앞부분만 지우세요.</div></div>
+      <div class="rule"><span class="tag sender-amb">✉ 확인</span><div>보내는이 요청 같지만 <b>애매한 메모</b>는 아무것도 안 바꾸고 배송메모 칸만 <b>연노랑</b>으로 표시 — 직접 보고 필요한 건만 수기로 바꾸세요.</div></div>
       <div class="rule"><span class="tag size">사이즈</span><div>메모의 사이즈 요청으로 옵션명에 「S사이즈로!」가 붙은 주문은 배송메모 칸을 <b>연주황</b>으로 표시합니다. 날짜 요청 <b>빨강</b> 표시는 그대로입니다.</div></div>
     </div>
     <div style="text-align:center; margin-top:14px;"><button class="ivt-reset-btn" id="btn-reset" type="button">⚠️ 초기화 — 불러온 주문·저장한 줄 전부 지움</button></div>
@@ -267,6 +269,6 @@
 </div>
 <script>if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');</script>
 <script src="/invoice-sender.js?v=1"></script>
-<script src="/invoice-v2.js?v=22"></script>
+<script src="/invoice-v2.js?v=23"></script>
 </body>
 </html>

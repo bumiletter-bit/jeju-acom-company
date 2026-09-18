@@ -484,16 +484,18 @@
     function markSheet1(ws, list) {
         const border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
         const mk = (fill, color) => ({ border, font: { name: '맑은 고딕', sz: 11, bold: true, color: { rgb: color } }, fill: { fgColor: { rgb: fill } }, alignment: { vertical: 'center' } });
-        const BLUE = 'DDEBF7', NAVY = '1F4E79', ORANGE = 'FCE4D6', DARKRED = 'C00000', RED = 'FF0000';
-        let sender = 0, size = 0;
+        const BLUE = 'DDEBF7', NAVY = '1F4E79', ORANGE = 'FCE4D6', DARKRED = 'C00000', RED = 'FF0000', YELLOW = 'FFF2CC', AMBER = '7F6000';
+        let sender = 0, size = 0, amb = 0;
         list.forEach((e, i) => {
-            const sc = senderChanged(e), sz = sizeChanged(e); if (!sc && !sz) return;
+            const sc = senderChanged(e), sz = sizeChanged(e), am = !!(e.sender && e.sender.ambiguous); if (!sc && !sz && !am) return;
             const r = i + 2, J = ws['J' + r], hasMemo = !!(J && String(J.v || '').trim());
             const isDate = !!(J && J.s && J.s.fill && J.s.fill.fgColor && J.s.fill.fgColor.rgb === 'FFC7CE');
             if (sc) { sender++; if (ws['A' + r]) ws['A' + r].s = mk(BLUE, NAVY); if (e.sender.phone && ws['B' + r]) ws['B' + r].s = mk(BLUE, NAVY); if (hasMemo) J.s = mk(BLUE, isDate ? RED : sz ? DARKRED : NAVY); }
-            if (sz) { size++; if (!sc && hasMemo && !isDate) J.s = mk(ORANGE, DARKRED); }
+            if (sz) { size++; if (!sc && !am && hasMemo && !isDate) J.s = mk(ORANGE, DARKRED); }
+            // #454 애매한 보내는이 요청(자동 변경 안 함) = 배송메세지만 연노랑 — 사람이 수기로 바꿀 대상을 시트에서 바로 찾게(보내는사람 칸은 무변경·무색). 날짜·사이즈와 겹치면 연노랑 바탕 + 빨간 글자
+            if (am) { amb++; if (hasMemo) J.s = mk(YELLOW, isDate ? RED : sz ? DARKRED : AMBER); }
         });
-        return { sender, size };
+        return { sender, size, amb };
     }
     async function download() {
         const cpRemoved = await recheckCoupang();
@@ -512,7 +514,7 @@
         if (C.naver) { s2 = buildSheet2(list); XLSX.utils.book_append_sheet(captured.wb, s2.ws, '발주발송관리'); }
         const name = captured.name.replace(/\.xlsx$/i, '') + '_v2.xlsx';
         origWrite(captured.wb, name);
-        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${marked.sender ? ` · ✉ 보내는이 변경 ${marked.sender}건(연파랑 — 메모 확인 후 지우기)` : ''}${marked.size ? ` · 사이즈 요청 ${marked.size}건(연주황)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
+        $('msg-dl').textContent = `${name} — 기준 발송일 ${mdLabel(C.shipDate)} · 시트1 ${list.length}건${memoCleared ? `(요청 줄로 발송 확정한 ${memoCleared}건은 배송메모 비움)` : ''}${marked.sender ? ` · ✉ 보내는이 변경 ${marked.sender}건(연파랑 — 메모 확인 후 지우기)` : ''}${marked.amb ? ` · ✉ 보내는이 확인 ${marked.amb}건(연노랑 — 자동 변경 안 함)` : ''}${marked.size ? ` · 사이즈 요청 ${marked.size}건(연주황)` : ''}${s2 ? ` · 시트2 ${s2.count + s2.indiv}건(개별발송 ${s2.indiv}건 노란 표시)` : ''}${cpRemoved ? ` · 🛡️ 쿠팡 취소 ${cpRemoved}건 자동 제외` : ''}`;
         return captured.wb;
     }
 

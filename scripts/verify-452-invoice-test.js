@@ -277,10 +277,10 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const strip = c => c ? JSON.stringify({ v: c.v, t: c.t, s: c.s }) : null;
         // #453: 보내는이 변경·사이즈 요청 행의 A·B·J만 달라질 수 있다 — 그 밖의 모든 셀은 본 화면 실코드 결과와 동일해야 하고, 배송메세지(J) 값은 전 행 동일(메모 무변경)
         const { parseSender: ps453 } = require('../public/invoice-sender.js');
-        const allow = new Set(); let snd453 = 0, siz453 = 0; const bad453 = [];
+        const allow = new Set(); let snd453 = 0, siz453 = 0, amb454 = 0; const bad453 = [];
         conv.forEach((x, i) => {
             const r = i + 2, c = x.c, buyer = String(c['보내는사람'] || '').replace(/\(제주아꼼이네[^)]*\)\s*$/, '').trim();
-            const p = ps453(c['배송메세지'], buyer), sc = !!(p && !p.ambiguous), sz = /\s(?:2S|S|M)사이즈로!$/.test(String(c['옵션정보'] || ''));
+            const p = ps453(c['배송메세지'], buyer), sc = !!(p && !p.ambiguous), am = !!(p && p.ambiguous), sz = /\s(?:2S|S|M)사이즈로!$/.test(String(c['옵션정보'] || ''));
             const memo = String(c['배송메세지'] || '').trim(), isDate = !!(tr['J' + r] && tr['J' + r].s && tr['J' + r].s.fgColor && tr['J' + r].s.fgColor.rgb === 'FFC7CE');
             const fill = k => t1[k] && t1[k].s && t1[k].s.fgColor && t1[k].s.fgColor.rgb;
             if (sc) {
@@ -288,13 +288,14 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
                 if (String(t1['A' + r].v) !== p.name + ' 드림' || fill('A' + r) !== 'DDEBF7') bad453.push('A' + r);
                 if (p.phone && (String(t1['B' + r].v) !== p.phone || fill('B' + r) !== 'DDEBF7')) bad453.push('B' + r);
                 if (memo && fill('J' + r) !== 'DDEBF7') bad453.push('J' + r);
-            } else if (sz) { siz453++; if (memo && !isDate) { allow.add('J' + r); if (fill('J' + r) !== 'FCE4D6') bad453.push('J' + r); } }
+            } else if (am) { amb454++; if (memo) { allow.add('J' + r); if (fill('J' + r) !== 'FFF2CC') bad453.push('J' + r); } if (String(t1['A' + r].v) !== String(tr['A' + r].v)) bad453.push('A' + r); }
+            else if (sz) { siz453++; if (memo && !isDate) { allow.add('J' + r); if (fill('J' + r) !== 'FCE4D6') bad453.push('J' + r); } }
         });
         const diffs = keys.filter(k => !allow.has(k) && strip(tr[k]) !== strip(t1[k]));
         const memoDiff = keys.filter(k => /^J\d+$/.test(k) && String((tr[k] || {}).v || '') !== String((t1[k] || {}).v || ''));
         ok(tr['!ref'] === t1['!ref'] && diffs.length === 0, '④ 🔴 무회귀: 제외 0일 때 시트1 = 본 화면 실코드 결과(보내는이·사이즈 표시 칸 외 셀 값·스타일 전부 동일)', `${keys.length}셀 비교 · 허용 ${allow.size}칸 · 차이 ${diffs.length}${diffs.length ? ' 예: ' + diffs.slice(0, 3).join(',') : ''}`);
         ok(memoDiff.length === 0, '④ #453 배송메세지(J) 값 = 전 행 본 화면 결과와 동일(메모 글자 무변경)', memoDiff.slice(0, 3).join(','));
-        ok(bad453.length === 0, '④ #453 보내는이 변경 행 = 「이름 드림」·번호·연파랑 / 사이즈 요청 행 = 연주황', `보내는이 ${snd453}건 · 사이즈 ${siz453}건${bad453.length ? ' · 불일치 ' + bad453.slice(0, 4).join(',') : ''}`);
+        ok(bad453.length === 0, '④ #453 보내는이 변경 행 = 「이름 드림」·번호·연파랑 / 사이즈 요청 행 = 연주황', `보내는이 ${snd453}건 · 사이즈 ${siz453}건 · 애매(연노랑·무변경) ${amb454}건${bad453.length ? ' · 불일치 ' + bad453.slice(0, 4).join(',') : ''}`);
         ok(XLSX.utils.sheet_to_json(w2.Sheets['발주발송관리'], { header: 1 }).length - 2 === N, '④ 제외 0일 때 시트2 = 전체 행');
         // ⑤ API 원본 경로(_x) — 가짜 2행
         const fake = [
@@ -328,11 +329,11 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(q453a.A === '홍길동 드림' && q453a.B === '010-5555-0001' && q453a.J === s453memos[0] && s453fill('A' + q453a.r) === 'DDEBF7' && s453fill('J' + q453a.r) === 'DDEBF7' && s453fill('B' + q453a.r) !== 'DDEBF7', '⑤-b 보내는이 변경: 보내는사람 = 「홍길동 드림」 · 연락처 그대로 · 메모 원문 그대로 · A·J 연파랑', JSON.stringify([q453a.A, q453a.B, q453a.J]));
         ok(/ S사이즈로!$/.test(q453b.E) && q453b.A === '구매2(제주아꼼이네)' && q453b.J === s453memos[1] && s453fill('J' + q453b.r) === 'FCE4D6' && s453fill('A' + q453b.r) !== 'DDEBF7', '⑤-b 사이즈 요청: 옵션명 「S사이즈로!」(본 화면 실코드) · 메모 그대로 · J 연주황 · 보내는사람 기본값', JSON.stringify([q453b.A, q453b.E.slice(-10), q453b.J]));
         ok(q453c.A === '김철수 드림' && q453c.B === '010-9999-8888' && q453c.J === s453memos[2] && s453fill('A' + q453c.r) === 'DDEBF7' && s453fill('B' + q453c.r) === 'DDEBF7' && s453fill('J' + q453c.r) === 'DDEBF7', '⑤-b 날짜+보내는이+번호: 보내는사람·연락처 교체 · 메모 그대로 · A·B·J 연파랑', JSON.stringify([q453c.A, q453c.B]));
-        ok(q453d.A === '구매4(제주아꼼이네)' && q453d.J === s453memos[3] && s453fill('A' + q453d.r) !== 'DDEBF7' && s453fill('J' + q453d.r) !== 'DDEBF7', '⑤-b 애매한 메모: 아무것도 안 바꿈(보내는사람 기본값·표시 없음)', q453d.A);
+        ok(q453d.A === '구매4(제주아꼼이네)' && q453d.J === s453memos[3] && !s453fill('A' + q453d.r) && s453fill('J' + q453d.r) === 'FFF2CC', '⑤-b #454 애매한 메모: 보내는사람 기본값·무색 · 메모 그대로 · J만 연노랑', q453d.A);
         ok(q453e.A === '구매5(제주아꼼이네)' && q453e.J === s453memos[4] && !s453fill('J' + q453e.r), '⑤-b 무관한 메모: 기본값 그대로', q453e.A);
         const s453sheet2 = XLSX.utils.sheet_to_json(s453w.Sheets['발주발송관리'], { header: 1, raw: false }).slice(2);
         ok(s453sheet2.length === 5 && s453sheet2.every(r => s453memos.includes(r[12]) && /^구매\d$/.test(r[5])), '⑤-b 시트2(네이버 원본) = 구매자명·배송메세지 원본 그대로', JSON.stringify(s453sheet2.map(r => r[5])));
-        ok(/보내는이 변경 2건/.test(await pg.textContent('#msg-dl')) && /사이즈 요청 1건/.test(await pg.textContent('#msg-dl')), '⑤-b 다운로드 안내: 보내는이 변경 2건 · 사이즈 요청 1건', (await pg.textContent('#msg-dl')).slice(0, 160));
+        ok(/보내는이 변경 2건/.test(await pg.textContent('#msg-dl')) && /사이즈 요청 1건/.test(await pg.textContent('#msg-dl')) && /보내는이 확인 1건/.test(await pg.textContent('#msg-dl')), '⑤-b 다운로드 안내: 보내는이 변경 2건 · 보내는이 확인 1건 · 사이즈 요청 1건', (await pg.textContent('#msg-dl')).slice(0, 160));
         // ⑥ 비밀번호 파일 자동 해제: 오늘 원본을 4031로 암호화해 업로드 → 서버 복호화 → 같은 행수
         try {
             const officeCrypto = require('officecrypto-tool');
