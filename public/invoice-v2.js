@@ -546,7 +546,7 @@
         $('btn-naver').addEventListener('click', () => loadNaverApi().catch(e => setMsg('naver', '⚠️ ' + aoEsc(e.message))));
         $('btn-cafe24').addEventListener('click', () => loadOther('cafe24').catch(e => setMsg('cafe24', '⚠️ ' + aoEsc(e.message))));
         $('btn-coupang').addEventListener('click', () => loadOther('coupang').catch(e => setMsg('coupang', '⚠️ ' + aoEsc(e.message))));
-        $('btn-reset').addEventListener('click', resetC);
+        $('btn-reset').addEventListener('click', () => { if (!C.merged.length && !$('ln-all').value.trim()) return resetC(); if (confirm('불러온 주문과 저장한 줄을 전부 지웁니다. 초기화할까요?')) resetC(); });   // 실수 방지 확인창(#452-v)
         $('btn-download').addEventListener('click', async () => { const b = $('btn-download'); b.disabled = true; try { await download(); } catch (e) { $('msg-dl').textContent = '⚠️ ' + e.message; } finally { b.disabled = !C.merged.length; } });
         $('save-all').addEventListener('click', () => saveLines(C));
         $('qsave-all').addEventListener('click', () => saveLines(Q));

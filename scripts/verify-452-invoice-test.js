@@ -134,6 +134,21 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         await pvRow.locator('td').nth(3).click(); await pg.waitForTimeout(120);
         const memoBox = await pg.evaluate(() => ({ boxes: document.querySelectorAll('#review td.memo .memo-box').length, rows: document.querySelectorAll('#review tbody tr').length, th: !!document.querySelector('#review th.memo-h') }));
         ok(rc1 === !rc0 && rc2 === rc0 && rp1 === !rp0 && memoBox.boxes === memoBox.rows && memoBox.th, '행 클릭 토글(검토·미리보기) · 체크박스 직접 클릭 정상 · 배송메모 강조 상자', JSON.stringify({ rc0, rc1, rc2, rp0, rp1, memoBox }));
+        // 열 너비 고정(#452-v): 전체 → 제외 체크 → 확인필요 → 체크 토글 후에도 검토 표 각 열 너비 동일 · 초기화 버튼 = 빨간 큰 버튼 + 확인창
+        const colW = async () => pg.evaluate(() => Array.from(document.querySelectorAll('#review thead th')).map(th => Math.round(th.getBoundingClientRect().width)));
+        await pg.click('#review-filter button[data-f="all"]'); await pg.waitForTimeout(80); const cw0 = await colW();
+        await pg.click('#review-filter button[data-f="excl"]'); await pg.waitForTimeout(80); const cw1 = await colW();
+        await pg.click('#review-filter button[data-f="review"]'); await pg.waitForTimeout(80); const cw2 = await colW();
+        await pg.locator('#review tbody tr input[type=checkbox]:not(:checked)').first().click(); await pg.waitForTimeout(120); const cw3 = await colW();
+        await pg.locator('#review tbody tr input[type=checkbox]:checked').first().click(); await pg.waitForTimeout(120);
+        await pg.click('#review-filter button[data-f="all"]'); await pg.waitForTimeout(80);
+        const same = [cw1, cw2, cw3].every(w => w.length === cw0.length && w.every((x, i) => Math.abs(x - cw0[i]) <= 1));
+        ok(same && cw0.length === 8, '검토 표 열 너비 고정: 필터 전환·체크 토글 후에도 8열 너비 동일', JSON.stringify({ cw0, cw1, cw2, cw3 }));
+        const rb = await pg.evaluate(() => { const b = document.getElementById('btn-reset'); const cs = getComputedStyle(b); const r = b.getBoundingClientRect(); return { bg: cs.backgroundColor, h: Math.round(r.height), w: Math.round(r.width), txt: b.textContent.trim().slice(0, 12) }; });
+        pg.once('dialog', d => d.dismiss());
+        await pg.click('#btn-reset'); await pg.waitForTimeout(300);
+        const stillLoaded = await pg.evaluate(() => __ivt.S.merged.length);
+        ok(rb.bg === 'rgb(220, 38, 38)' && rb.h >= 44 && rb.w >= 300 && /초기화/.test(rb.txt) && stillLoaded === N, '초기화 버튼: 빨간 큰 버튼(높이·폭) · 확인창에서 취소하면 유지', JSON.stringify({ ...rb, stillLoaded }));
         // 필터 목록 고정(대표 실물 9/18): 확인필요 보기에서 체크해도 행이 사라지지 않고 남아 다시 풀 수 있다
         await pg.click('#review-filter button[data-f="review"]'); await pg.waitForTimeout(100);
         const stick0 = await pg.evaluate(() => document.querySelectorAll('#review tbody tr input[type=checkbox]').length);

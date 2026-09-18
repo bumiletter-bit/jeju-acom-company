@@ -22,7 +22,17 @@
   .ivt-stats { display:flex; gap:16px; flex-wrap:wrap; font-size:13px; margin:0 0 12px; color:var(--text-mid,#666); }
   .ivt-stats b { color: var(--primary); font-size:14px; }
   .table-scroll-wrapper.ivt { max-height: 440px; overflow:auto; border:1px solid #ECEDF1; border-radius:12px; }
-  .data-table td.memo { white-space:pre-wrap; max-width:360px; min-width:220px; }
+  .data-table td.memo { white-space:pre-wrap; }
+  /* 검토·미리보기 표 열 너비 고정(#452-v) — 필터·체크로 내용이 바뀌어도 칸이 안 틀어지게 */
+  #review, #qreview, #preview { table-layout:fixed; width:100%; }
+  #review td, #qreview td, #preview td { word-break:break-word; overflow-wrap:anywhere; vertical-align:middle; }
+  #review th:nth-child(1), #qreview th:nth-child(1) { width:46px; } #review th:nth-child(2), #qreview th:nth-child(2) { width:92px; } #review th:nth-child(3), #qreview th:nth-child(3) { width:92px; }
+  #review th:nth-child(4), #qreview th:nth-child(4) { width:25%; } #review th:nth-child(5), #qreview th:nth-child(5) { width:48px; } #review th:nth-child(6), #qreview th:nth-child(6) { width:31%; }
+  #review th:nth-child(7), #qreview th:nth-child(7) { width:19%; } #review th:nth-child(8), #qreview th:nth-child(8) { width:128px; }
+  #preview th:nth-child(1) { width:46px; } #preview th:nth-child(2) { width:44px; } #preview th:nth-child(3) { width:92px; } #preview th:nth-child(4) { width:92px; } #preview th:nth-child(5) { width:24%; }
+  #preview th:nth-child(6) { width:48px; } #preview th:nth-child(7) { width:20%; } #preview th:nth-child(8) { width:26%; } #preview th:nth-child(9) { width:128px; }
+  .ivt-reset-btn { background:#DC2626; color:#fff; border:2px solid #B91C1C; border-radius:12px; font-size:16px; font-weight:800; padding:14px 40px; cursor:pointer; box-shadow:0 6px 16px -6px rgba(220,38,38,.6); }
+  .ivt-reset-btn:hover { background:#B91C1C; } .ivt-reset-btn:active { transform:scale(.98); }
   .data-table th.memo-h { background:var(--primary-light,#EEF2FF); color:var(--primary,#4F46E5); }
   .data-table td.memo .memo-box { background:#fff; border:1.5px solid #D0D5DD; border-left:5px solid var(--primary,#4F46E5); border-radius:8px; padding:7px 11px; font-size:13.5px; font-weight:600; color:#101828; line-height:1.5; box-shadow:0 1px 2px rgba(16,24,40,.06); }
   .data-table td.memo .memo-box.empty { color:#98A0AE; font-weight:400; border-left-color:#D0D5DD; }
@@ -59,7 +69,7 @@
   .ivt-filter { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
   .ivt-filter button b { font-weight:800; margin-left:2px; }
   .ivt-filter button.active { background:var(--primary,#4F46E5); color:#fff; border-color:var(--primary,#4F46E5); }
-  .data-table td.req { min-width:170px; } .data-table td.req .note { display:block; width:fit-content; margin:0 0 3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; white-space:normal; }
+  .data-table td.req .note { display:block; width:fit-content; margin:0 0 3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; white-space:normal; }
   .data-table td.memo .note { display:block; width:fit-content; margin-top:3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; }
   .ivt-lines textarea.form-input { width:100%; min-height:120px; font-family:inherit; white-space:pre; }
   .ivt-lines .ivt-save { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
@@ -238,12 +248,12 @@
   <div class="card">
     <button class="btn-primary" id="btn-download" disabled style="width:100%; padding:14px; font-size:15px;">📦 통합 변환 및 다운로드 (시트1 택배사 양식 · 시트2 네이버 원본 양식)</button>
     <div class="ivt-note" id="msg-dl" style="text-align:center;"></div>
-    <div style="text-align:center; margin-top:10px;"><button class="btn-outline btn-sm" id="btn-reset" type="button">초기화</button></div>
+    <div style="text-align:center; margin-top:14px;"><button class="ivt-reset-btn" id="btn-reset" type="button">⚠️ 초기화 — 불러온 주문·저장한 줄 전부 지움</button></div>
   </div>
   </div><!-- /invoice-convert-mode -->
 </div>
 </div>
 <script>if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');</script>
-<script src="/invoice-v2.js?v=17"></script>
+<script src="/invoice-v2.js?v=18"></script>
 </body>
 </html>
