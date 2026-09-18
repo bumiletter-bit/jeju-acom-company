@@ -284,7 +284,8 @@
         return '애매함 — 직원 확인';
     }
     // 배송메모 칸 = 손님 원문만(엑셀에 들어가는 값 그대로). 직원 줄(📋)은 「읽어낸 요청」 칸에 — 대표 지적(9/18): 메모 칸에 겹쳐 보이니 실제 메모로 오해
-    const memoCell = e => aoEsc(e.conv['배송메세지']);
+    // 배송메모는 검토의 핵심이라 흰 상자 + 왼쪽 인디고 선으로 강조(#452-u 대표). 빈 메모는 옅게 「—」
+    const memoCell = e => { const m = String(e.conv['배송메세지'] || '').trim(); return m ? `<div class="memo-box">${aoEsc(m)}</div>` : '<div class="memo-box empty">—</div>'; };
     const reqCell = e => (e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.key, e.req.note].filter(Boolean).join(' '))}</span>` : '') + aoEsc(reqOf(e));
     const cb = (e, k) => e.individual ? '' : `<input type="checkbox" data-k="${k}" ${e.excluded ? 'checked' : ''}>`;
     const rowClass = e => e.individual ? 'indiv' : e.excluded ? 'excl' : e.flag === 'review' ? 'review' : '';
@@ -310,6 +311,11 @@
             : `<span>전체 <b>${n}</b>건</span><span>집계 대상 <b>${n - excl}</b>건</span><span>제외 체크 <b>${excl}</b>건</span><span>확인필요 <b>${review}</b>건</span>${ctx.today ? `<span>기준 발송일 <b>${dateLabel(ctx.today)}</b></span>` : ''}`;
         const scope = [ctx.ids.review, ctx.ids.preview].filter(Boolean).map(id => '#' + id + ' input[type=checkbox]').join(', ');
         document.querySelectorAll(scope).forEach(el => el.addEventListener('change', () => { const e = ctx.merged[Number(el.dataset.k)]; e.excluded = el.checked; e.userTouched = true; render(ctx, onChange); if (onChange) onChange(); }));
+        // 행 어디를 눌러도 체크 토글(#452-u 대표): 체크박스·글자 드래그 선택 중이면 제외. 개별발송 행(체크박스 없음)은 무반응
+        [ctx.ids.review, ctx.ids.preview].filter(Boolean).forEach(id => document.querySelectorAll('#' + id + ' tbody tr').forEach(tr => {
+            const cbEl = tr.querySelector('input[type=checkbox]'); if (!cbEl) return; tr.classList.add('clickable');
+            tr.addEventListener('click', ev => { if (ev.target.closest('input, a, button, label')) return; const sel = window.getSelection && window.getSelection(); if (sel && String(sel).trim()) return; cbEl.checked = !cbEl.checked; cbEl.dispatchEvent(new Event('change', { bubbles: true })); });
+        }));
     }
     function dateGuard(ctx, msgId) {   // 페이지를 전날부터 열어 두면 기준 발송일 계산이 낡는다 → 다운로드·집계 전에 막고 다시 불러오게
         if (ctx.fetchedOn && ctx.fetchedOn !== kstToday()) { $(msgId).textContent = `⚠️ ${ctx.fetchedOn}에 불러온 화면이에요(기준 발송일 ${ctx.shipDate}). 새로고침 후 주문을 다시 불러와 검토해주세요.`; return false; }

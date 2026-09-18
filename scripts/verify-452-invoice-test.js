@@ -123,6 +123,17 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const fBtn = async f => { await pg.click(`#review-filter button[data-f="${f}"]`); await pg.waitForTimeout(100); return pg.evaluate(() => ({ rows: Array.from(document.querySelectorAll('#review tbody tr')).filter(r => r.querySelector('input[type=checkbox]')), active: document.querySelector('#review-filter button.active').dataset.f })); };
         const fR = await fBtn('review'); const fE = await fBtn('excl'); const fA = await fBtn('all');
         const fchk = await pg.evaluate(() => ({ review: Array.from(document.querySelectorAll('#review tbody tr')).length }));
+        // 행 클릭 토글 + 배송메모 강조 상자(#452-u): 수취인 칸 클릭 → 체크 토글 · 미리보기 표도 동일 · 체크박스 직접 클릭은 이중 토글 없음 · 메모 상자 렌더
+        const rowT = pg.locator('#review tbody tr.clickable').first(); const k0 = await rowT.locator('input[type=checkbox]').getAttribute('data-k'); const rc0 = await rowT.locator('input[type=checkbox]').isChecked();
+        await rowT.locator('td').nth(2).click(); await pg.waitForTimeout(120);
+        const rc1 = await pg.evaluate(k => __ivt.S.merged[+k].excluded, k0);
+        await pg.locator(`#review input[type=checkbox][data-k="${k0}"]`).click(); await pg.waitForTimeout(120);
+        const rc2 = await pg.evaluate(k => __ivt.S.merged[+k].excluded, k0);
+        const pvRow = pg.locator('#preview tbody tr.clickable').first(); const kp = await pvRow.locator('input[type=checkbox]').getAttribute('data-k'); const rp0 = await pg.evaluate(k => __ivt.S.merged[+k].excluded, kp);
+        await pvRow.locator('td').nth(3).click(); await pg.waitForTimeout(120); const rp1 = await pg.evaluate(k => __ivt.S.merged[+k].excluded, kp);
+        await pvRow.locator('td').nth(3).click(); await pg.waitForTimeout(120);
+        const memoBox = await pg.evaluate(() => ({ boxes: document.querySelectorAll('#review td.memo .memo-box').length, rows: document.querySelectorAll('#review tbody tr').length, th: !!document.querySelector('#review th.memo-h') }));
+        ok(rc1 === !rc0 && rc2 === rc0 && rp1 === !rp0 && memoBox.boxes === memoBox.rows && memoBox.th, '행 클릭 토글(검토·미리보기) · 체크박스 직접 클릭 정상 · 배송메모 강조 상자', JSON.stringify({ rc0, rc1, rc2, rp0, rp1, memoBox }));
         // 필터 목록 고정(대표 실물 9/18): 확인필요 보기에서 체크해도 행이 사라지지 않고 남아 다시 풀 수 있다
         await pg.click('#review-filter button[data-f="review"]'); await pg.waitForTimeout(100);
         const stick0 = await pg.evaluate(() => document.querySelectorAll('#review tbody tr input[type=checkbox]').length);

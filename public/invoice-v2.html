@@ -22,7 +22,11 @@
   .ivt-stats { display:flex; gap:16px; flex-wrap:wrap; font-size:13px; margin:0 0 12px; color:var(--text-mid,#666); }
   .ivt-stats b { color: var(--primary); font-size:14px; }
   .table-scroll-wrapper.ivt { max-height: 440px; overflow:auto; border:1px solid #ECEDF1; border-radius:12px; }
-  .data-table td.memo { white-space:pre-wrap; max-width:340px; }
+  .data-table td.memo { white-space:pre-wrap; max-width:360px; min-width:220px; }
+  .data-table th.memo-h { background:var(--primary-light,#EEF2FF); color:var(--primary,#4F46E5); }
+  .data-table td.memo .memo-box { background:#fff; border:1.5px solid #D0D5DD; border-left:5px solid var(--primary,#4F46E5); border-radius:8px; padding:7px 11px; font-size:13.5px; font-weight:600; color:#101828; line-height:1.5; box-shadow:0 1px 2px rgba(16,24,40,.06); }
+  .data-table td.memo .memo-box.empty { color:#98A0AE; font-weight:400; border-left-color:#D0D5DD; }
+  .data-table tr.clickable { cursor:pointer; } .data-table tr.clickable:hover td { filter:brightness(.97); }
   .data-table td.ch { white-space:nowrap; }
   .data-table tr.excl td { background:#FEE2E2; }
   .data-table tr.review td { background:#FEF3C7; }
@@ -109,7 +113,7 @@
       <div class="ivt-note" style="margin:0 0 10px;">지정일이 오늘보다 뒤인 건은 <b>미리 체크</b>(= 수량에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우니 빼야 할 건이면 직접 체크하세요. <b>체크를 바꾸면 아래 수량이 바로 다시 계산됩니다.</b></div>
       <div class="ivt-stats" id="qstats"></div>
       <div class="ivt-filter" id="qreview-filter"></div>
-      <div class="table-scroll-wrapper ivt"><table class="data-table" id="qreview"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+      <div class="table-scroll-wrapper ivt"><table class="data-table" id="qreview"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th class="memo-h">📝 배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
     </div>
 
     <div class="card" id="invoice-qty-result" style="display:none;">
@@ -223,12 +227,12 @@
     <div class="ivt-note" style="margin:0 0 10px;">시스템이 메모를 읽어 지정일이 기준 발송일보다 뒤인 건은 <b>미리 체크</b>해 두었습니다(체크 = 시트1·시트2 모두에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우고 체크하지 않습니다 — 빼야 할 건이면 직접 체크하고, 미리 체크된 건이 아니면 체크를 풀어주세요.</div>
     <div class="ivt-stats" id="stats"></div>
     <div class="ivt-filter" id="review-filter"></div>
-    <div class="table-scroll-wrapper ivt"><table class="data-table" id="review"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+    <div class="table-scroll-wrapper ivt"><table class="data-table" id="review"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th class="memo-h">📝 배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card">
     <h2>전체 미리보기</h2>
-    <div class="table-scroll-wrapper ivt"><table class="data-table" id="preview"><thead><tr><th>제외</th><th>#</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송지</th><th>배송메모</th><th>상태</th></tr></thead><tbody></tbody></table></div>
+    <div class="table-scroll-wrapper ivt"><table class="data-table" id="preview"><thead><tr><th>제외</th><th>#</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송지</th><th class="memo-h">📝 배송메모</th><th>상태</th></tr></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card">
@@ -240,6 +244,6 @@
 </div>
 </div>
 <script>if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');</script>
-<script src="/invoice-v2.js?v=16"></script>
+<script src="/invoice-v2.js?v=17"></script>
 </body>
 </html>
