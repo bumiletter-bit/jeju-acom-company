@@ -48,6 +48,11 @@
   .ivt-rules .rule { display:flex; gap:8px; align-items:flex-start; }
   .ivt-rules .tag { flex:0 0 auto; margin-top:2px; min-width:64px; text-align:center; }
   .tag.ok { background:#ECFDF3; color:#067647; } .tag.etc { background:#F2F4F7; color:#475467; }
+  .ivt-filter { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
+  .ivt-filter button b { font-weight:800; margin-left:2px; }
+  .ivt-filter button.active { background:var(--primary,#4F46E5); color:#fff; border-color:var(--primary,#4F46E5); }
+  .data-table td.req { min-width:170px; } .data-table td.req .note { display:block; width:fit-content; margin:0 0 3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; white-space:normal; }
+  .data-table td.memo .note { display:block; width:fit-content; margin-top:3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; }
   .ivt-lines textarea.form-input { width:100%; min-height:120px; font-family:inherit; white-space:pre; }
   .ivt-lines .ivt-save { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
   .ivt-res { margin-top:12px; }
@@ -99,6 +104,7 @@
       <h2>배송메모 검토 — 집계에서 뺄 주문</h2>
       <div class="ivt-note" style="margin:0 0 10px;">지정일이 오늘보다 뒤인 건은 <b>미리 체크</b>(= 수량에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우니 빼야 할 건이면 직접 체크하세요. <b>체크를 바꾸면 아래 수량이 바로 다시 계산됩니다.</b></div>
       <div class="ivt-stats" id="qstats"></div>
+      <div class="ivt-filter" id="qreview-filter"></div>
       <div class="table-scroll-wrapper ivt"><table class="data-table" id="qreview"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
     </div>
 
@@ -212,6 +218,7 @@
     <h2>배송메모 검토 — 「기준 발송일에 안 나감」 후보</h2>
     <div class="ivt-note" style="margin:0 0 10px;">시스템이 메모를 읽어 지정일이 기준 발송일보다 뒤인 건은 <b>미리 체크</b>해 두었습니다(체크 = 시트1·시트2 모두에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우고 체크하지 않습니다 — 빼야 할 건이면 직접 체크하고, 미리 체크된 건이 아니면 체크를 풀어주세요.</div>
     <div class="ivt-stats" id="stats"></div>
+    <div class="ivt-filter" id="review-filter"></div>
     <div class="table-scroll-wrapper ivt"><table class="data-table" id="review"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
   </div>
 
@@ -228,6 +235,6 @@
   </div><!-- /invoice-convert-mode -->
 </div>
 </div>
-<script src="/invoice-test.js?v=10"></script>
+<script src="/invoice-test.js?v=11"></script>
 </body>
 </html>

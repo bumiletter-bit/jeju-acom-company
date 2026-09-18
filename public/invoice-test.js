@@ -273,16 +273,23 @@
         if (p.kind === 'arrive') return `${p.reqDate} 도착 요청`;
         return '애매함 — 직원 확인';
     }
-    const memoCell = e => (e.req ? `<b>📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.key, e.req.note].filter(Boolean).join(' '))}</b>${e.conv['배송메세지'] ? '\n' + aoEsc(e.conv['배송메세지']) : ''}` : aoEsc(e.conv['배송메세지']));
+    // 배송메모 칸 = 손님 원문만(엑셀에 들어가는 값 그대로). 직원 줄(📋)은 「읽어낸 요청」 칸에 — 대표 지적(9/18): 메모 칸에 겹쳐 보이니 실제 메모로 오해
+    const memoCell = e => aoEsc(e.conv['배송메세지']);
+    const reqCell = e => (e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.key, e.req.note].filter(Boolean).join(' '))}</span>` : '') + aoEsc(reqOf(e));
     const cb = (e, k) => e.individual ? '' : `<input type="checkbox" data-k="${k}" ${e.excluded ? 'checked' : ''}>`;
     const rowClass = e => e.individual ? 'indiv' : e.excluded ? 'excl' : e.flag === 'review' ? 'review' : '';
+    const FILTERS = [['all', '전체'], ['excl', '제외 체크'], ['review', '확인필요']];
     function render(ctx, onChange) {
         const rv = $(ctx.ids.review).querySelector('tbody');
-        const revRows = ctx.merged.map((e, k) => ({ e, k })).filter(({ e }) => !e.individual && (e.excluded || e.flag));
-        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td>${aoEsc(reqOf(e))}</td><td>${statusOf(e)}</td></tr>`).join('')
-            : '<tr><td colspan="8" style="color:#6B7280;">검토할 배송메모가 없습니다.</td></tr>';
+        const all = ctx.merged.map((e, k) => ({ e, k })).filter(({ e }) => !e.individual && (e.excluded || e.flag));
+        const f = ctx.reviewFilter || 'all';
+        const revRows = all.filter(({ e }) => f === 'all' || (f === 'excl' ? e.excluded : (!e.excluded && e.flag === 'review')));
+        const cnt = { all: all.length, excl: all.filter(x => x.e.excluded).length, review: all.filter(x => !x.e.excluded && x.e.flag === 'review').length };
+        const fl = $(ctx.ids.filter); if (fl) { fl.innerHTML = FILTERS.map(([v, t]) => `<button type="button" class="btn-sm btn-outline${f === v ? ' active' : ''}" data-f="${v}">${t} <b>${cnt[v]}</b></button>`).join(''); fl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { ctx.reviewFilter = b.dataset.f; render(ctx, onChange); })); }
+        rv.innerHTML = revRows.length ? revRows.map(({ e, k }) => `<tr class="${e.excluded ? 'excl' : 'review'}"><td>${cb(e, k)}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td class="memo">${memoCell(e)}</td><td class="req">${reqCell(e)}</td><td>${statusOf(e)}</td></tr>`).join('')
+            : `<tr><td colspan="8" style="color:#6B7280;">${f === 'all' ? '검토할 배송메모가 없습니다.' : '이 조건에 해당하는 건이 없습니다.'}</td></tr>`;
         if (ctx.ids.preview) {
-            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}</td><td>${statusOf(e)}</td></tr>`).join('');
+            $(ctx.ids.preview).querySelector('tbody').innerHTML = ctx.merged.map((e, k) => `<tr class="${rowClass(e)}"><td>${cb(e, k)}</td><td>${k + 1}</td><td class="ch">${CH_LABEL[e.ch]}</td><td>${aoEsc(e.conv['수취인명'])}</td><td>${aoEsc(e.conv['옵션정보'])}</td><td>${aoEsc(e.conv['수량'])}</td><td>${aoEsc(String(e.conv['배송지'] || '').slice(0, 40))}</td><td class="memo">${memoCell(e)}${e.req ? `<span class="note">📋 ${aoEsc([e.req.date ? mdLabel(e.req.date) : '', e.req.note].filter(Boolean).join(' '))}</span>` : ''}</td><td>${statusOf(e)}</td></tr>`).join('');
         }
         const n = ctx.merged.length, indiv = ctx.merged.filter(e => e.individual).length, excl = ctx.merged.filter(e => !e.individual && e.excluded).length, review = ctx.merged.filter(e => !e.individual && !e.excluded && e.flag === 'review').length;
         $(ctx.ids.stats).innerHTML = ctx.ids.preview
@@ -319,7 +326,7 @@
     }
 
     // ── 송장 변환 탭 ─────────────────────────────────────────────────────────────
-    const C = makeCtx({ ln: 'ln-all', save: 'save-all', res: 'res-all', review: 'review', preview: 'preview', stats: 'stats', ship: 'ship-date', shipNote: 'ship-note' }, true);
+    const C = makeCtx({ ln: 'ln-all', save: 'save-all', res: 'res-all', review: 'review', preview: 'preview', stats: 'stats', ship: 'ship-date', shipNote: 'ship-note', filter: 'review-filter' }, true);
     const days = ch => Math.min(Math.max(parseInt($('days-' + ch).value) || 50, 1), 180);
     const setMsg = (ch, html) => { $('msg-' + ch).innerHTML = html; };
     const markArea = (ch, label) => { $('area-' + ch).classList.add('has-file'); $('fname-' + ch).textContent = label; };
@@ -413,7 +420,7 @@
     }
 
     // ── 중간발주 탭(독립) ─────────────────────────────────────────────────────────
-    const Q = makeCtx({ ln: 'qln-all', save: 'qsave-all', res: 'qres-all', review: 'qreview', preview: null, stats: 'qstats', ship: 'qship-date', shipNote: 'qship-note' }, false);
+    const Q = makeCtx({ ln: 'qln-all', save: 'qsave-all', res: 'qres-all', review: 'qreview', preview: null, stats: 'qstats', ship: 'qship-date', shipNote: 'qship-note', filter: 'qreview-filter' }, false);
     // 행 → 본 화면 집계 키(옵션정보·수량) 변환은 본 화면 setupQtyStart와 동일. 제외 체크 건만 뺀다(개별발송 개념 없음 = 전부 실물량).
     function qtyRows() {
         const rows = [], skipped = { n: 0, qty: 0 };
