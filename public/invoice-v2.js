@@ -432,7 +432,8 @@
             return out;
         }
         const row = nv.rows[i], x = row._x || {};
-        return [sCell(x.productOrderId || row._pid), sCell(dmLabel(x.deliveryMethod)), sCell('택배,등기,소포'), sCell('CJ대한통운'), sCell(''),
+        // #452-t(대표 9/18 실물): 원본 파일과 동일하게 — 배송방법(구매자 요청)·배송방법 = 「택배,등기,소포」(네이버 API가 deliveryMethod를 비워 보내 빈칸이었음), 택배사 = 빈칸(택배사가 바뀔 수 있어 미리 안 넣음)
+        return [sCell(x.productOrderId || row._pid), sCell(dmLabel(x.deliveryMethod) || '택배,등기,소포'), sCell('택배,등기,소포'), sCell(''), sCell(''),
             sCell(row['구매자명']), sCell(row['수취인명']), sCell(row['옵션정보']), nCell(row['수량'], null), sCell(row['수취인연락처1']), sCell(row['수취인연락처2']),
             sCell(row['통합배송지']), sCell(row['배송메세지']), sCell(row['구매자연락처']), sCell(x.orderId), sCell(''), sCell(x.productOrderStatus === 'PAYED' ? '발송대기' : (x.productOrderStatus || '')),
             dCell(x.paymentDate), sCell(x.productId), sCell(x.productName), nCell(x.expectedSettlementAmount, WON_Z), dCell(x.orderDate), dCell(x.shippingDueDate),

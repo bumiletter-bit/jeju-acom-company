@@ -250,7 +250,7 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const dl3 = pg.waitForEvent('download'); await pg.click('#btn-download'); const d3 = await dl3;
         const f3 = path.join(os.tmpdir(), 'ivt3.xlsx'); await d3.saveAs(f3); const w3 = XLSX.readFile(f3, { cellStyles: true }); const q = w3.Sheets['발주발송관리'];
         const rowA = XLSX.utils.sheet_to_json(q, { header: 1, raw: false }).find(r => r && r[6] === '받는A');
-        ok(!!rowA && rowA[0] === '20260918000001' && rowA[2] === '택배,등기,소포' && rowA[3] === 'CJ대한통운' && rowA[16] === '발송대기' && rowA[23] === 'abcd****' && rowA[14] === '2026091800000', '⑤ 시트2(API): 상품주문번호·배송방법·택배사·주문상태·ID 마스킹·주문번호', JSON.stringify(rowA && [rowA[0], rowA[2], rowA[3], rowA[16], rowA[23]]));
+        ok(!!rowA && rowA[0] === '20260918000001' && rowA[1] === '택배,등기,소포' && rowA[2] === '택배,등기,소포' && !rowA[3] && rowA[16] === '발송대기' && rowA[23] === 'abcd****' && rowA[14] === '2026091800000', '⑤ 시트2(API): 상품주문번호·배송방법(구매자 요청)·배송방법 = 택배,등기,소포 · 택배사 빈칸 · 주문상태·ID 마스킹·주문번호', JSON.stringify(rowA && [rowA[0], rowA[1], rowA[2], rowA[3], rowA[16], rowA[23]]));
         ok(/2026\/09\/18 09:00/.test(String(rowA && rowA[17])) && /₩27,000/.test(String(rowA && rowA[20])) && /2026\/09\/23 23:59/.test(String(rowA && rowA[22])), '⑤ 시트2(API): 결제일·정산예정금액·발송기한 서식', JSON.stringify(rowA && [rowA[17], rowA[20], rowA[22]]));
         // ⑥ 비밀번호 파일 자동 해제: 오늘 원본을 4031로 암호화해 업로드 → 서버 복호화 → 같은 행수
         try {
