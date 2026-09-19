@@ -6637,7 +6637,7 @@ app.get('/api/scenarios', async (req, res) => {
         const cfg = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inquiry_auto_reply'`);
         const autoReply = cfg.rows.length ? cfg.rows[0].value : 'on';
         const season = await seasonScenariosToday();   // 지시 #108: 톡톡봇에도 오늘 시기 지식 주입 (가상 시나리오 — 봇 무수정, updated_at은 당일 00시 고정)
-        const ship = [...(await shippingScenarioToday()), ...(await citrusNamingToday())];    // #379 발송 일정표 + #380 감귤 이름 규칙
+        const ship = [...(await shippingScenarioToday()), ...(await citrusNamingToday()), ...paymentWordingRule()];    // #379 발송 일정표 + #380 감귤 이름 규칙
         const all = [...r.rows, ...season, ...ship];
         res.json({
             ok: true, auto_reply: autoReply, count: all.length, scenarios: all,
@@ -8030,6 +8030,23 @@ async function citrusNamingToday() {
     } catch (e) { console.error('[품목표기] 계산 실패(주입 생략):', e.message); return []; }
 }
 
+// ── #460(대표 9/20): 결제 표현 규칙 — 4채널 공용 상시 주입(키워드 없는 가상 시나리오 · 봇 무수정)
+//   🔴 실사고(9/19 22:44 톡톡): 손님이 "계좌번호 남겨주시면 입금하겠다"고 하자 봇이 「계좌이체는 어려운 점 양해」라고 **거절**했는데도
+//      네이버가 판매자 메시지의 단어를 자동 감지해 「현금 결제, 계좌 입금을 유도하는 메시지를 보내셨나요?」 경고를 붙였다(반복 시 계정 제재 안내).
+//      시나리오 #21 본문은 처음부터 그 단어 없이 쓰여 있었는데, AI가 거절 문장을 새로 쓰면서 단어를 넣었다 → 거절할 때도 그 단어를 쓰지 않게 한다.
+//   「현금영수증·세금계산서」는 정상 용어라 금지하지 않는다. 단체 현금 거래는 전화 상담에서만(네이버 채널에 글로 남기지 않음).
+function paymentWordingRule() {
+    const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const text = `(네이버 채널 운영 규칙 — 모든 답변에 항상 적용)
+
+⚠️ 답변에 **「계좌」「계좌번호」「계좌이체」「입금」「이체」「무통장」「송금」「현금으로」** 라는 단어를 **쓰지 마세요. 거절하는 문장에서도 쓰지 마세요.**
+   (네이버가 판매자 메시지의 이 단어들을 자동 감지해 "현금 결제·계좌 입금 유도" 경고를 붙입니다 — "계좌이체는 어렵습니다"처럼 거절해도 경고가 뜹니다.)
+⚠️ 손님이 계좌·입금·현금 결제·추가금 입금을 물으면 그 단어를 되받지 말고 이렇게만 안내하세요:
+   "저희는 네이버 스마트스토어를 통해서만 안전하게 주문·결제를 도와드리고 있어요 😊" + 필요하면 고객센터 📞 010-6687-4031 안내.
+⚠️ 스토어 밖 결제(직접 결제·다른 방법 결제)가 가능하다고 말하거나 제안하지 마세요. 결제 방법을 묻는 단체·기업 문의도 "상담하면서 안내드린다"까지만.
+- 「현금영수증」「세금계산서」는 정상 용어라 써도 됩니다.`;
+    return [{ scenario_no: 892, name: '[운영 규칙] 결제 표현 — 쓰면 안 되는 단어', keywords: [], response: text, action: null, channel: '공통', updated_at: new Date(today) }];
+}
 // 톡톡봇의 "(예시)" 줄 치환용 — "지금" 주문 기준 한 문장 (봇 자체 계산기는 휴무일을 모른다 → 이 값으로 대체)
 async function shippingNowPhrase() {
     try {
@@ -8103,7 +8120,7 @@ async function qnaGenerate(question, productName, simDate) {   // simDate = 지�
     if (!process.env.ANTHROPIC_API_KEY) return null;             // 키 없으면 전부 SKIP (침묵)
     const baseScenarios = await qnaScenarios();
     if (!baseScenarios.length) return null;
-    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday())];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
@@ -8313,7 +8330,7 @@ async function inquiryGenerate(item) {
     if (!process.env.ANTHROPIC_API_KEY) return null;
     const baseScenarios = await qnaScenarios();                   // 재료 공용: 채널 상품문의·공통
     if (!baseScenarios.length) return null;
-    const scenarios = [...baseScenarios, ...(await seasonScenariosToday()), ...(await shippingScenarioToday()), ...(await citrusNamingToday())];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙
+    const scenarios = [...baseScenarios, ...(await seasonScenariosToday()), ...(await shippingScenarioToday()), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
