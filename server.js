@@ -7348,6 +7348,9 @@ async function collectClaim() {
 //    body {productOrderIds:[]} 1회 최대 30개, 응답 data.successProductOrderInfos/failProductOrderInfos(code·message)).
 //    🔴 릴레이 ALLOW에 이 POST가 열려 있어야 실호출 가능 — 현재 차단(403) 상태. 릴레이 갱신은 대표 확인 후 별도.
 //    오류 코드 105306 = "변경을 요청한 상태가 기존과 동일"(이미 발주확인됨) → 'already'로 무해 처리.
+//    #459(대표 9/19): 코드 104443 「이미 발주확인 된 주문입니다」도 같은 뜻 — 대표·직원이 먼저 발주확인을 누른 주문. 30일간 발주확인 실패 9건이 전부 이 코드였고 실제 조치 0건(「알림톡 발송 실패 — 수기 발주확인 필요」 오경보의 원인).
+//    문구가 「이미 발주확인」인 응답도 같은 취급(코드가 또 달라져도 오경보가 안 나게). 그 밖의 실패는 종전대로 failed + 텔레그램.
+const naverConfirmIsAlready = f => !!f && (f.code === '105306' || f.code === '104443' || /이미\s*발주\s*확인/.test(String(f.message || '')));
 async function naverConfirmOrders(ids) {
     const success = [], fail = [];
     for (let i = 0; i < ids.length; i += 30) {
@@ -7539,8 +7542,8 @@ async function collectKakaoNotify() {
     if (sentReal.length) {
         if (kakaoNotify.switchOn()) {
             const cr = await naverConfirmOrders(sentReal);
-            const already = cr.fail.filter(f => f.code === '105306');           // 이미 발주확인된 주문 — 무해
-            const realFail = cr.fail.filter(f => f.code !== '105306');
+            const already = cr.fail.filter(naverConfirmIsAlready);           // 이미 발주확인된 주문 — 무해
+            const realFail = cr.fail.filter(f => !naverConfirmIsAlready(f));
             confirmed = cr.success.length; confirmFailed = realFail.length;
             if (cr.success.length) {
                 await pool.query(`UPDATE kakao_notify_log SET confirm_status='confirmed', confirmed_at=NOW() WHERE order_key = ANY($1)`, [cr.success]).catch(() => {});
@@ -13677,8 +13680,8 @@ setInterval(async () => {
         let confirmedN = 0, confirmFailedN = 0;
         if (toConfirm.length && kakaoNotify.switchOn()) {   // #92 철칙: 발송 성공 건만 발주확인
             const cr = await naverConfirmOrders(toConfirm);
-            const already = cr.fail.filter(f => f.code === '105306');
-            const realFail = cr.fail.filter(f => f.code !== '105306');
+            const already = cr.fail.filter(naverConfirmIsAlready);
+            const realFail = cr.fail.filter(f => !naverConfirmIsAlready(f));
             confirmedN = cr.success.length; confirmFailedN = realFail.length;
             if (cr.success.length) await pool.query(`UPDATE kakao_notify_log SET confirm_status='confirmed', confirmed_at=NOW() WHERE order_key = ANY($1)`, [cr.success]).catch(() => {});
             for (const f of already) await pool.query(`UPDATE kakao_notify_log SET confirm_status='already', confirm_error=$2 WHERE order_key=$1`, [f.id, `${f.code} ${f.message}`.slice(0, 250)]).catch(() => {});
