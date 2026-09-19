@@ -14,7 +14,9 @@
   /* #452 테스트 페이지 — 본 화면(styles.css·theme.css) 그대로 사용. 아래는 이 화면에만 있는 상태 표시 */
   .main-content.ivt { margin-left: 0; max-width: 1320px; }
   /* #452-p embed 모드(회사프로그램 송장변환 메뉴 안 iframe) — 바깥 페이지가 제목·여백을 가지므로 안쪽은 내용만 */
-  body.embed { background: transparent; }
+  body.embed { background: transparent; min-height: 0 !important; }
+  html.embed-root, body.embed .main-content.ivt { min-height: 0 !important; height: auto !important; }   /* #457: 100vh = iframe 높이 → 높이 동기화와 되먹임(빈 화면이 4천px 넘게 자람) */
+  body.no-orders #review-card, body.no-orders #preview-card { display: none; }   /* #457: 주문을 불러오기 전엔 빈 검토·미리보기 카드를 숨겨 화면을 짧게 */
   body.embed .main-content.ivt { padding: 0 2px 8px; max-width: none; }
   body.embed #page-invoice-test > h1 { display: none; }
   .ivt-badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:#FEF3C7; color:#B45309; vertical-align:middle; margin-left:8px; }
@@ -81,6 +83,29 @@
   .data-table td.req .note { display:block; width:fit-content; margin:0 0 3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; white-space:normal; }
   .data-table td.memo .note { display:block; width:fit-content; margin-top:3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; }
   .ivt-lines textarea.form-input { width:100%; min-height:120px; font-family:inherit; white-space:pre; }
+  /* #457 줄별 판정: 붙여넣기 칸 왼쪽에 줄마다 확인완료/확인필요/주문 없음 — 줄 높이(24px)를 칸과 똑같이 맞춰 같은 줄에 나란히 보이게 */
+  .ivt-ed { display:flex; align-items:stretch; border:1px solid var(--border,#D0D5DD); border-radius:12px; background:#fff; overflow:hidden; }
+  .ivt-ed:focus-within { border-color:var(--primary,#4F46E5); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
+  .ivt-ed .ivt-gut { flex:0 0 140px; background:#F9FAFB; border-right:1px solid #ECEDF1; overflow:hidden; padding:10px 0; user-select:none; }
+  .ivt-ed .ivt-gut .m { height:24px; line-height:24px; padding:0 8px; font-size:11.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; cursor:default; }
+  .ivt-ed .ivt-gut .m span { display:inline-block; line-height:18px; padding:0 7px; border-radius:6px; vertical-align:middle; }
+  .ivt-ed .ivt-gut .m.ok span { background:#ECFDF3; color:#067647; } .ivt-ed .ivt-gut .m.warn span { background:#FEF3C7; color:#B45309; }
+  .ivt-ed .ivt-gut .m.none span { background:#FEE2E2; color:#B91C1C; } .ivt-ed .ivt-gut .m.wait span { background:#F2F4F7; color:#667085; font-weight:600; }
+  .ivt-ed .ivt-gut .m.cur { background:var(--primary-light,#EEF2FF); }
+  .ivt-ed.stale .ivt-gut .m span { opacity:.35; }
+  .ivt-ed textarea.form-input { flex:1 1 auto; min-width:0; min-height:0; border:0 !important; border-radius:0; box-shadow:none !important; outline:0; resize:none; margin:0; padding:10px 12px; font-size:13.5px; line-height:24px; white-space:pre; overflow:auto; }
+  .ivt-linebar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .ivt-linebar button { display:inline-flex; align-items:center; gap:5px; border:1px solid transparent; border-radius:999px; padding:4px 11px; font-size:12.5px; font-weight:700; cursor:pointer; background:#F2F4F7; color:#475467; transition:transform .12s cubic-bezier(.23,1,.32,1); }
+  .ivt-linebar button b { font-variant-numeric:tabular-nums; }
+  .ivt-linebar button.ok { background:#ECFDF3; color:#067647; } .ivt-linebar button.warn { background:#FEF3C7; color:#B45309; } .ivt-linebar button.none { background:#FEE2E2; color:#B91C1C; }
+  .ivt-linebar button.zero { background:#F2F4F7; color:#98A2B3; cursor:default; }
+  .ivt-linebar button:not(.zero):hover { border-color:currentColor; } .ivt-linebar button:not(.zero):active { transform:scale(.97); }
+  .ivt-linebar button:focus-visible { outline:2px solid var(--primary,#4F46E5); outline-offset:2px; }
+  .ivt-linebar .meta { font-size:12px; color:#667085; margin-left:4px; }
+  .ivt-linebar .stale-note { font-size:12px; font-weight:700; color:#B45309; }
+  .ivt-res .sum { display:none; }   /* 요약은 위 칩 줄(ivt-linebar)로 이동 — 문구는 그대로 DOM에 둔다 */
+  @media (prefers-reduced-motion: reduce) { .ivt-linebar button { transition:none; } }
+  @media (max-width: 640px) { .ivt-ed .ivt-gut { flex-basis:104px; } .ivt-ed .ivt-gut .m { font-size:10.5px; padding:0 5px; } .ivt-ed .ivt-gut .m span { padding:0 5px; } }   /* 폰: 표시 칸을 좁혀 입력 칸을 넓게 */
   .ivt-lines .ivt-save { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
   .ivt-res { margin-top:12px; }
   .ivt-res .sum { font-size:12.5px; color:#374151; margin-bottom:8px; }
@@ -241,7 +266,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="review-card">
     <h2>배송메모 검토 — 「기준 발송일에 안 나감」 후보</h2>
     <div class="ivt-note" style="margin:0 0 10px;">시스템이 메모를 읽어 지정일이 기준 발송일보다 뒤인 건은 <b>미리 체크</b>해 두었습니다(체크 = 시트1·시트2 모두에서 제외). 애매한 메모는 <span class="tag review">확인필요</span>로만 띄우고 체크하지 않습니다 — 빼야 할 건이면 직접 체크하고, 미리 체크된 건이 아니면 체크를 풀어주세요.</div>
     <div class="ivt-stats" id="stats"></div>
@@ -249,7 +274,7 @@
     <div class="table-scroll-wrapper ivt"><table class="data-table" id="review"><thead><tr><th>제외</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th class="memo-h">📝 배송메모</th><th>읽어낸 요청</th><th>상태</th></tr></thead><tbody></tbody></table></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="preview-card">
     <h2>전체 미리보기</h2>
     <div class="table-scroll-wrapper ivt"><table class="data-table" id="preview"><thead><tr><th>제외</th><th>#</th><th>채널</th><th>수취인</th><th>옵션</th><th>수량</th><th>배송지</th><th class="memo-h">📝 배송메모</th><th>상태</th></tr></thead><tbody></tbody></table></div>
   </div>
@@ -267,8 +292,8 @@
   </div><!-- /invoice-convert-mode -->
 </div>
 </div>
-<script>if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');</script>
+<script>if (/[?&]embed=1/.test(location.search)) { document.body.classList.add('embed'); document.documentElement.classList.add('embed-root'); }</script>
 <script src="/invoice-sender.js?v=2"></script>
-<script src="/invoice-v2.js?v=24"></script>
+<script src="/invoice-v2.js?v=25"></script>
 </body>
 </html>

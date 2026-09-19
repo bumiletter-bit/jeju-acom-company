@@ -55,7 +55,13 @@
 
 ## ★★★★ 8/23~24 세션 마감 인수인계 (#396~#404 종결 — 새 세션은 여기부터) ← 최신
 
-**현행 버전: 회사 v5.9.349 / app.js v=383(무변경) · invoice-v2.js v=24 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/18 밤 배포). ⚠️ **다음 지시 번호 = #456부터** (#405~#455 = 8/24~9/18 세션).
+**현행 버전: 회사 v5.9.350 / app.js v=383(무변경) · invoice-v2.js v=25 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/19 아침 배포). ⚠️ **다음 지시 번호 = #458부터** (#405~#457 = 8/24~9/19 세션).
+
+- 👀📏 **#457(대표 9/19): 송장변환 v2 — 붙여넣기 칸 줄별 판정 표시 + 화면 높이 되먹임 교정** — v5.9.350(`invoice-v2.js/.html`만).
+  - **줄별 판정**: `parseLines`가 줄마다 `srcLine`(칸의 몇 번째 줄)을 기억 → `mountEditor(ctx)`가 textarea를 `.ivt-ed`(왼쪽 `.ivt-gut` 표시 칸 + 입력 칸)로 감싸고 `renderGutter(ctx)`(= `renderResults` 첫 줄에서 호출)가 줄마다 `lineStatus` 표시. 분류: ok 확인완료 n건 / warn 확인필요 w/n건(past·nodate·partial)·건수 다름(비고 n건 ≠ 실제)·형식 확인 / none 주문 없음 / wait 불러오기 전. **줄 높이 24px·padding 10px를 입력 칸과 동일하게**(정렬의 전부) + scroll 동기 + 칸 높이 = 줄 수(5~14줄). 요약 칩 = [저장하기] 옆 `.ivt-linebar`(문제가 앞) — 클릭 = `jumpLine`(그 상태의 다음 줄을 칸에서 선택·가운데 스크롤·표시 칸 강조). 입력이 바뀌면 `.stale`(흐림+다시 저장 안내). 종전 `.sum` 문구는 `display:none`으로 DOM 유지(verify-452가 textContent로 읽음 — 지우지 말 것). ⚠️ 칩 집계는 「건수 다름」을 확인필요로 세므로 숨긴 `.sum`과 숫자가 다를 수 있다(의도 — 문제 찾기 우선).
+  - 🔴 **높이 되먹임(재발 방지)**: iframe 안에서 `100vh` = iframe 높이. 안쪽에 `min-height:100vh`가 있으면 바깥 높이 동기화(+8px)와 맞물려 **끝없이 자란다**(빈 화면 4,145 → 5,553px 실측) + `documentElement.scrollHeight`는 창 높이 밑으로 안 내려가 줄어들 줄 모름. 교정 = `html.embed-root`·`body.embed`·`.main-content.ivt` min-height 0 + `postHeight` = **`.main-content` 아래 끝** 기준. 빈 화면 1,498px(송장)·631px(중간발주). 주문 전엔 `body.no-orders`로 검토·미리보기 카드 숨김(`#review-card`·`#preview-card`). 🔵 교훈: **끼워 넣는 화면은 vh 단위 금지·높이는 내용 기준으로**(#452-q 「resize에 닫기 금지」와 같은 계열 — 바깥 동기화가 안쪽 값을 바꾼다).
+  - ✅ `node scripts/verify-457-linegutter.js [원본.xlsx] [스크린샷 폴더]` **17/17** · v2 80/80 · embed 16/16 · sender 107/107.
+- 🎁 **#456(대표 9/19)**: 룰렛 「업그레이드 이용권」 첫 당첨(reward_grants id 5) 지급완료 — 카페24에 발급할 것이 없는 경품이라 **대표가 손님에게 개별 연락**(클코는 주문자 성함·번호를 raw 러너로 조회해 화면으로만 전달 — 개인정보 리포·메모리 미기록) → "연락했어" 후 `scripts/apply-456-upgrade-grant.js`(화면 버튼과 같은 UPDATE + audit). 미지급 0. 다음 주문 자동 알림은 대표 거절(재제안 금지).
 
 - 🛡️🔴 **#455(대표 GO 9/18 "애매한 건 변경 안 되게")**: 보내는이 판정기 강화 — v5.9.349(`invoice-sender.js`·`invoice-v2.js` 1곳). 아래 「제3자 검수」 허점 5종 + 홀드아웃에서 추가로 드러난 부류를 **「이름처럼 생긴 것만 통과」** 구조로 교정.
   - **통과 조건(정본)**: ①구매자 본인 이름 ②성씨(SURNAMES·두 글자 성) + 성 뒤 1~2글자가 이름 글자(GIVEN) 또는 순우리말 이름(PURE) — 직함 허용 · **두 글자 이름은 구매자 이름의 일부일 때만** ③법인 표식((주)·㈜·주식회사…) ④회사·단체 표식(ORG) **앞에 고유 이름 2글자 이상**(「병원」「카페 사장」 ✕) + 부서(○○부/팀/과…)·임직원·일동 ⑤가족 호칭(FAMILY — 앞에 짧은 단어 허용 「민서 엄마」) ⑥영문 3글자 이상. 표식 없으면 **모든 단어**가 이름 모양. 그 위에 금지어(BAD·NOTNAME_SUB·NOTNAME_TOKEN)·조사/어미 끝 단어 차단.

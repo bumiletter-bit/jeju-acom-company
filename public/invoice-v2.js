@@ -28,7 +28,7 @@
     const IS_EMBED = () => document.body.classList.contains('embed') && window.parent !== window;
     function postHeight() {
         if (!IS_EMBED()) return;
-        try { const pop = document.querySelector('.akm-cal.ivt-cal'); const popBottom = pop && pop.style.display !== 'none' ? pop.getBoundingClientRect().bottom + window.scrollY + 16 : 0; window.parent.postMessage({ type: 'ivt-height', h: Math.max(document.documentElement.scrollHeight, popBottom) }, location.origin); } catch (_) { }
+        try { const pop = document.querySelector('.akm-cal.ivt-cal'); const popBottom = pop && pop.style.display !== 'none' ? pop.getBoundingClientRect().bottom + window.scrollY + 16 : 0; const main = document.querySelector('.main-content'); const contentBottom = main ? Math.ceil(main.getBoundingClientRect().bottom + window.scrollY) : document.documentElement.scrollHeight; window.parent.postMessage({ type: 'ivt-height', h: Math.max(contentBottom, popBottom) }, location.origin); } catch (_) { }
     }
 
     let P = null;   // app.js에서 떼어낸 실코드(변환 3종·시트1 내보내기·단가표 로드·중간발주 집계/렌더)
@@ -87,8 +87,9 @@
     const chOfText = t => /자사몰|카페|cafe/i.test(t) ? 'cafe24' : /쿠팡|coupang/i.test(t) ? 'coupang' : /네이버|스토어|스마트|naver/i.test(t) ? 'naver' : null;
     // 정리 파일 한 줄 → { date, key, digits, note, indiv, recipient, partial, ch } · 탭(엑셀 복사) 또는 공백 구분 · 첫 칸이 날짜가 아니면 「번호 (날짜 표현)」 옛 형식으로 읽음
     function parseLines(txt, boxCh, today) {
-        const out = [];
+        const out = []; let srcLine = -1;
         for (const raw of String(txt || '').split(/\n/)) {
+            srcLine++;
             const line = raw.replace(/\r/g, '').trim(); if (!line) continue;
             if (/^요청일자|전화번호 또는 상품주문번호|^플[렛랫]폼/.test(line)) continue;   // 헤더 줄(예시 번호가 섞여 있어도 건너뜀)
             let date = null, key = '', note = '', plat = '';
@@ -102,10 +103,10 @@
                 else { key = t[0]; note = t.slice(1).join(' '); if (!date) { const dm = note.match(/\d{1,2}\s*[\/.월]\s*\d{1,2}\s*일?|\d{1,2}\s*일|오늘|내일/); if (dm) date = parseDate(dm[0], today); } }
             }
             const digits = key.replace(/\D/g, '');
-            if (!key || (digits.length < 8 && !/\d{8,}/.test(key))) { out.push({ line, bad: true, boxCh }); continue; }
+            if (!key || (digits.length < 8 && !/\d{8,}/.test(key))) { out.push({ line, bad: true, boxCh, srcLine }); continue; }
             const ch = chOfText(plat) || chOfText(note) || (/^\d{8}-\d{7}$/.test(key) ? 'cafe24' : boxCh);   // 자사몰 주문번호(YYYYMMDD-NNNNNNN)는 플랫폼 칸 없어도 자사몰
             const rec = note.match(/수취인\s*[:：]?\s*([가-힣]{2,5})/);
-            out.push({ line, date, key, digits, note, plat, ch, boxCh,
+            out.push({ line, srcLine, date, key, digits, note, plat, ch, boxCh,
                 indiv: /입력\s*[oO○0]\s*[·,]?\s*삭제\s*[xX×]|입력\s*삭제/i.test(note),
                 recipient: rec ? rec[1] : null,
                 partial: !rec && /\d+\s*건\s*중|만\s*\)|만$/.test(note),
@@ -250,7 +251,61 @@
         if (k === 'partial') return { p: pillWarn, a: `<span class="act warn">⚠ 부분 지정 확인</span><span class="sub">수취인 이름이 없어 자동 적용 안 함</span>` };
         return { p: pillOk, a: '' };
     };
+    // ── #457 줄별 판정(대표 9/19 "메모칸에서 한눈에 — 2건인데 1건은 확인필요, 주문 없음") ─────────────────────────
+    // 붙여넣기 칸 왼쪽에 줄마다 표시를 단다(줄 높이 24px를 칸과 똑같이 · 스크롤 동기). 칸 높이는 줄 수에 맞춤(5~14줄). 저장 뒤 내용을 고치면 표시를 흐리게 해 「다시 저장」을 알린다.
+    const LINE_H = 24, ROWS_MIN = 5, ROWS_MAX = 14;
+    function lineStatus(l, ctx) {
+        if (l.bad) return { k: 'warn', t: '형식 확인', tip: '요청일자 · 번호 · 비고 · 플랫폼 순으로 적어 주세요' };
+        if (!ctx.merged.length) return { k: 'wait', t: '불러오기 전', tip: '주문을 불러오면 자동으로 적용됩니다' };
+        if (!l.hits) return { k: 'none', t: '주문 없음', tip: l.date && l.date < (ctx.today || kstToday()) ? '지난 날짜 — 이미 처리된 듯' : '배송준비에 이 번호의 주문이 없습니다' };
+        const rows = l.hitRows || [], warn = rows.filter(e => e.req === l && ['past', 'nodate', 'partial'].includes(e.reqKind));
+        const kindTxt = { past: '지난 날짜', nodate: '날짜 없음', partial: '부분 지정(수취인 이름 없음)' };
+        if (warn.length) return { k: 'warn', t: `확인필요 ${warn.length}/${l.hits}건`, tip: `${l.hits}건 중 ${warn.length}건 확인필요 — ${[...new Set(warn.map(e => kindTxt[e.reqKind]))].join(' · ')}` };
+        if (l.expect != null && l.expect !== l.hits) return { k: 'warn', t: `건수 다름 ${l.hits}건`, tip: `비고는 ${l.expect}건인데 실제 ${l.hits}건` };
+        return { k: 'ok', t: `확인완료 ${l.hits}건`, tip: rows.some(e => e.req !== l) ? '일부 주문은 다른 줄(날짜)이 우선 적용됨' : '' };
+    }
+    function mountEditor(ctx) {
+        const ta = $(ctx.ids.ln); if (!ta || ta.parentNode.classList.contains('ivt-ed')) return;
+        const ed = document.createElement('div'); ed.className = 'ivt-ed'; const gut = document.createElement('div'); gut.className = 'ivt-gut'; gut.setAttribute('aria-hidden', 'true');
+        ta.parentNode.insertBefore(ed, ta); ed.appendChild(gut); ed.appendChild(ta);
+        const bar = document.createElement('div'); bar.className = 'ivt-linebar'; bar.setAttribute('role', 'status');
+        const saveRow = $(ctx.ids.save).parentNode; ctx.savedNote = saveRow.querySelector('.ivt-note'); saveRow.appendChild(bar);
+        ctx.ed = { ed, gut, bar, ta };
+        ta.addEventListener('scroll', () => { gut.scrollTop = ta.scrollTop; });
+        ta.addEventListener('input', () => { fitEditor(ctx); if (ctx.allLines && ctx.allLines.length) { ed.classList.add('stale'); const n = bar.querySelector('.stale-note'); if (n) n.style.display = ''; } });
+        fitEditor(ctx);
+    }
+    function fitEditor(ctx) {
+        const { ta, gut } = ctx.ed || {}; if (!ta) return;
+        const n = ta.value ? ta.value.split('\n').length : 0, rows = Math.max(ROWS_MIN, Math.min(ROWS_MAX, n));
+        ta.style.height = (rows * LINE_H + 20) + 'px'; gut.style.height = ta.style.height; gut.scrollTop = ta.scrollTop;
+    }
+    function renderGutter(ctx) {
+        if (!ctx.ed) return; const { ed, gut, bar, ta } = ctx.ed; const all = ctx.allLines || [];
+        ed.classList.remove('stale'); fitEditor(ctx);
+        const n = ta.value ? ta.value.split('\n').length : 0, marks = new Array(n).fill(null); const cnt = { ok: 0, warn: 0, none: 0, wait: 0 };
+        all.forEach(l => { const st = lineStatus(l, ctx); cnt[st.k]++; l._st = st; if (l.srcLine != null && l.srcLine < n) marks[l.srcLine] = st; });
+        gut.innerHTML = marks.map((st, i) => st ? `<div class="m ${st.k}" data-i="${i}" title="${aoEsc(st.tip || '')}"><span>${st.k === 'ok' ? '✅' : st.k === 'warn' ? '⚠️' : st.k === 'none' ? '❌' : '·'} ${aoEsc(st.t)}</span></div>` : '<div class="m"></div>').join('');
+        gut.scrollTop = ta.scrollTop;
+        if (ctx.savedNote) ctx.savedNote.style.display = all.length ? 'none' : '';
+        if (!all.length) { bar.innerHTML = ''; return; }
+        const orders = all.reduce((s2, l) => s2 + (l.hits || 0), 0);
+        const chip = (k, label) => `<button type="button" class="${k}${cnt[k] ? '' : ' zero'}" data-k="${k}" ${cnt[k] ? '' : 'disabled'} title="${cnt[k] ? '누르면 해당 줄로 이동' : ''}">${label} <b>${cnt[k]}</b>줄</button>`;
+        bar.innerHTML = (cnt.wait ? `<button type="button" class="zero" disabled>· 불러오기 전 <b>${cnt.wait}</b>줄</button>` : chip('warn', '⚠️ 확인필요') + chip('none', '❌ 주문 없음') + chip('ok', '✅ 확인완료'))
+            + `<span class="meta">${cnt.wait ? '주문을 불러오면 자동 적용' : `주문 ${orders}건 · 기준일 ${mdLabel(ctx.today || kstToday())}`}</span><span class="stale-note" style="display:none;">내용이 바뀌었어요 — [저장하기]를 다시 눌러 주세요</span>`;
+        bar.querySelectorAll('button[data-k]').forEach(b => b.addEventListener('click', () => jumpLine(ctx, b.dataset.k)));
+    }
+    // 칩을 누를 때마다 그 상태의 다음 줄로 — 칸 안에서 그 줄을 선택하고 가운데로 스크롤
+    function jumpLine(ctx, k) {
+        const { ta, gut } = ctx.ed; const idx = (ctx.allLines || []).filter(l => l._st && l._st.k === k).map(l => l.srcLine).sort((a, b) => a - b); if (!idx.length) return;
+        ctx.jump = ctx.jump || {}; const last = ctx.jump[k]; const next = idx.find(i => last == null || i > last); const i = next == null ? idx[0] : next; ctx.jump[k] = i;
+        const lines = ta.value.split('\n'); let start = 0; for (let j = 0; j < i; j++) start += lines[j].length + 1;
+        ta.focus({ preventScroll: true }); ta.setSelectionRange(start, start + lines[i].length);
+        ta.scrollTop = Math.max(0, i * LINE_H - (ta.clientHeight - LINE_H) / 2); gut.scrollTop = ta.scrollTop;
+        gut.querySelectorAll('.m.cur').forEach(m => m.classList.remove('cur')); const m = gut.querySelector(`.m[data-i="${i}"]`); if (m) m.classList.add('cur');
+    }
     function renderResults(ctx) {
+        renderGutter(ctx);
         const el = $(ctx.ids.res); if (!el) return;
         const all = ctx.allLines || []; const today = ctx.today || kstToday();
         if (!all.length) { el.innerHTML = ''; return; }
@@ -310,6 +365,7 @@
     const rowClass = e => e.individual ? 'indiv' : e.excluded ? 'excl' : e.flag === 'review' ? 'review' : '';
     const FILTERS = [['all', '전체'], ['excl', '제외 체크'], ['review', '확인필요']];
     function render(ctx, onChange) {
+        if (ctx.ids.preview) document.body.classList.toggle('no-orders', !ctx.merged.length);   // #457: 빈 검토·미리보기 카드는 숨겨 화면을 짧게
         const rv = $(ctx.ids.review).querySelector('tbody');
         const all = ctx.merged.map((e, k) => ({ e, k })).filter(({ e }) => !e.individual && (e.excluded || e.flag));
         const f = ctx.reviewFilter || 'all';
@@ -437,7 +493,7 @@
     }
     function resetC() {
         C.naver = null; C.cafe24 = []; C.coupang = []; C.merged = []; C.today = null; C.allLines = [];
-        $('ln-all').value = ''; $('res-all').innerHTML = '';
+        $('ln-all').value = ''; $('res-all').innerHTML = ''; renderGutter(C);
         CH.forEach(ch => { $('area-' + ch).classList.remove('has-file'); $('fname-' + ch).textContent = ''; setMsg(ch, ''); });
         $('msg-dl').textContent = ''; render(C); $('btn-download').disabled = true;
     }
@@ -605,7 +661,7 @@
         $('ivt-mode-qty').addEventListener('click', () => switchMode('qty'));
         $('ivt-qty-start').addEventListener('click', () => runQty());
         $('ivt-qty-reset').addEventListener('click', resetQ);
-        C.allLines = []; Q.allLines = []; render(C);
+        C.allLines = []; Q.allLines = []; mountEditor(C); mountEditor(Q); render(C);
         // embed(iframe) 모드: 내용 높이를 바깥 페이지에 알려 iframe이 스크롤 없이 늘어나게
         if (IS_EMBED()) { new ResizeObserver(postHeight).observe(document.body); postHeight(); setInterval(postHeight, 1500); }
         if (localStorage.getItem('jwt_token')) { parseMemos(C).then(() => { Q.shipDate = null; return parseMemos(Q); }).catch(() => {}); }   // 기준 발송일 셀렉트 먼저 채움(주문 없이도)
