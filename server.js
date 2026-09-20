@@ -13743,6 +13743,37 @@ setInterval(async () => {
     }
 }, 60000);
 
+// #461(대표 9/20 "로그인 없이 니가 직접 들어가서 발주 수량 보고"): 발주 수량 러너 — DB 플래그(invoice_qty_request {days?, indiv_tels?:[숫자만]}) 감지 시
+//   3채널 배송준비 주문을 **읽기만** 해서 (채널·옵션 원문·개별발송 여부)별 수량 합계를 invoice_qty_result에 기록한다.
+//   🔴 개인정보 미반환: 이름·주소·전화는 결과에 넣지 않는다(개별발송 구매자 대조용으로 전화 **끝 4자리**만). 상태 변경·발송·저장 0. 조회는 화면의 [불러오기]와 같은 함수(취소·부분취소 반영 동일).
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('invoice_qty_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'invoice_qty_request'`);   // 선제거 — 반복 실행 방지
+        const days = Math.min(Math.max(parseInt(req.days) || 50, 1), 180);
+        const indiv = new Set((Array.isArray(req.indiv_tels) ? req.indiv_tels : []).map(t => String(t).replace(/\D/g, '')).filter(t => t.length >= 8));
+        const dg = v => String(v || '').replace(/\D/g, '');
+        const out = { at: new Date().toISOString(), days, counts: {}, errors: {}, groups: [], indiv_buyers: [] };
+        const agg = new Map(), byBuyer = new Map();
+        const add = (ch, opt, qty, tel) => {
+            const isIndiv = indiv.has(dg(tel)); const k = ch + '\u0001' + opt + '\u0001' + (isIndiv ? 1 : 0);
+            const a = agg.get(k) || { ch, opt, indiv: isIndiv, qty: 0, orders: 0 }; a.qty += qty; a.orders++; agg.set(k, a);
+            if (isIndiv) { const bk = ch + '\u0001' + dg(tel).slice(-4) + '\u0001' + opt; const b = byBuyer.get(bk) || { ch, tel4: dg(tel).slice(-4), opt, qty: 0, orders: 0 }; b.qty += qty; b.orders++; byBuyer.set(bk, b); }
+        };
+        try { const r = await naverFetchInvoiceOrders(days); out.counts.naver = r.rows.length; out.partial_adjusted = r.partialAdjusted || 0;
+            for (const row of r.rows) add('naver', String(row['옵션정보'] || ''), parseInt(row['수량']) || 1, row['구매자연락처']); } catch (e) { out.errors.naver = String(e.message || e).slice(0, 200); }
+        try { const r = await cafe24.fetchInvoiceOrders(Math.min(days, 90)); out.counts.cafe24 = r.rows.length;
+            for (const row of r.rows) add('cafe24', String(row['주문상품명(세트상품 포함)'] || ''), parseInt(row['수량']) || 1, row['주문자 휴대전화']); } catch (e) { out.errors.cafe24 = String((e && (e.reason || e.message)) || e).slice(0, 200); }
+        try { const r = await coupangFetchInvoiceOrders(Math.min(days, 31)); out.counts.coupang = r.rows.length;
+            for (const row of r.rows) add('coupang', String(row['노출상품명(옵션명)'] || row['등록상품명'] || ''), parseInt(row['구매수(수량)']) || 1, row['구매자전화번호']); } catch (e) { out.errors.coupang = String(e.message || e).slice(0, 200); }
+        out.groups = [...agg.values()]; out.indiv_buyers = [...byBuyer.values()];
+        await writeAudit({ action: 'invoice_qty_runner', targetType: 'naver_order', targetId: null, changes: { after: { days, counts: out.counts, indiv_tels: indiv.size, errors: out.errors } }, source: 'claude-code', actor: { id: null, name: '클코(발주 수량 러너 #461)' } }).catch(() => {});
+        await naverCfgSet('invoice_qty_result', out);
+    } catch (e) {
+        try { await naverCfgSet('invoice_qty_result', { error: String(e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 60000);
 // 지시 #108: 답변 생성 재현 테스트 — DB 플래그(qna_sim_request {cases:[{q,product,date}]}) 감지 시 qnaGenerate만 호출
 // (생성만 — 게시·발송·기록 없음. 시기 지식 STEP4 검증용. 결과 = qna_sim_result)
 setInterval(async () => {
