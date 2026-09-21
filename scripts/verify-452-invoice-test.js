@@ -15,7 +15,12 @@ async function waitUp() { for (let i = 0; i < 60; i++) { try { const r = await f
 const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN }, body: body ? JSON.stringify(body) : undefined })).json();
 (async () => {
     if (!fs.existsSync(XLS)) { console.log('원본 파일 없음 — 중단'); process.exit(1); }
-    const srv = spawn(process.execPath, ['-e', `global.setInterval=()=>({unref(){},ref(){}}); require('./server.js');`],
+    // #463(9/21): 날짜 고정 — 원본 파일의 메모(「21일 발송」 등)는 날짜가 지나면 전부 「지난 날짜」가 돼 자동 제외 0건 → 검증이 날짜에 따라 썩는다.
+    //   기본 원본(9/18 파일)은 9/18 09:30(KST)로 고정해 돌린다(로컬 검증 서버·브라우저 시계만 — 실서버·실코드 무관). 다른 날짜 = env VERIFY_FAKE_NOW(ISO), 끄기 = VERIFY_FAKE_NOW=off
+    const FAKE_NOW = process.env.VERIFY_FAKE_NOW === 'off' ? '' : (process.env.VERIFY_FAKE_NOW || (process.argv[2] ? '' : '2026-09-18T09:30:00+09:00'));
+    const fakePre = FAKE_NOW ? `(()=>{const RD=Date,off=RD.parse(${JSON.stringify(FAKE_NOW)})-RD.now();global.Date=class extends RD{constructor(...a){if(a.length===0)super(RD.now()+off);else super(...a);}static now(){return RD.now()+off;}};})();` : '';
+    if (FAKE_NOW) console.log('  ⏱ 검증 시계 고정: ' + FAKE_NOW);
+    const srv = spawn(process.execPath, ['-e', `${fakePre}global.setInterval=()=>({unref(){},ref(){}}); require('./server.js');`],
         { cwd: path.join(__dirname, '..'), env: { ...process.env, JWT_SECRET: 'verifytest', PORT: String(PORT) }, stdio: ['ignore', 'pipe', 'pipe'] });
     try {
         await waitUp();
@@ -59,7 +64,7 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         const { chromium } = require('playwright');
         const br = await chromium.launch(); const ctx = await br.newContext({ acceptDownloads: true });
         await ctx.addInitScript(t => { localStorage.setItem('jwt_token', t); }, TOKEN);
-        const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+        const pg = await ctx.newPage(); if (FAKE_NOW) await pg.clock.setFixedTime(new Date(FAKE_NOW)); const errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
         await pg.goto(`${BASE}/invoice-v2.html`, { waitUntil: 'load' });
         await pg.waitForFunction(() => window.__ivt, null, { timeout: 20000 });
         await pg.setInputFiles('#file-naver', XLS);

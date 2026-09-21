@@ -29,8 +29,9 @@ const TOKEN = jwt.sign(USER, 'verifytest', { expiresIn: '1h' });
         await pg.waitForFunction(() => { const f = document.getElementById('invoice-v2-frame'); return f && /invoice-v2\.html\?embed=1/.test(f.src) && f.contentWindow && f.contentWindow.__ivt; }, null, { timeout: 30000 });
         const fr = pg.frameLocator('#invoice-v2-frame'); const frame = pg.frames().find(f => /invoice-v2\.html/.test(f.url()));
         ok(!!frame, '① 송장변환 메뉴 진입 → v2 iframe 로드(?embed=1)', frame && frame.url());
-        const vis = await pg.evaluate(() => ({ legacy: getComputedStyle(document.getElementById('page-invoice-legacy')).display, wrap: getComputedStyle(document.getElementById('invoice-v2-wrap')).display, mergeBtn: !!document.getElementById('invoice-merge-btn'), qtyStart: !!document.getElementById('invoice-qty-start') }));
-        ok(vis.legacy === 'none' && vis.wrap !== 'none' && vis.mergeBtn && vis.qtyStart, '① 구버전 숨김 · 구버전 요소는 DOM에 남아 app.js 초기화 무사', JSON.stringify(vis));
+        // #463(9/21): 구버전 마크업·app.js 구버전 화면 코드 제거 — 바깥 문서에 구버전 요소 0 · app.js는 끝까지 실행(switchPage·init 존재)
+        const vis = await pg.evaluate(() => ({ legacy: !!document.getElementById('page-invoice-legacy'), wrap: getComputedStyle(document.getElementById('invoice-v2-wrap')).display, mergeBtn: !!document.getElementById('invoice-merge-btn'), qtyStart: !!document.getElementById('invoice-qty-start'), oldFn: typeof window.resetInvoice + '/' + typeof window.switchInvoiceMode, appAlive: typeof window.switchPage === 'function' && typeof window.resetInvoiceQty === 'function' }));
+        ok(!vis.legacy && vis.wrap !== 'none' && !vis.mergeBtn && !vis.qtyStart && vis.oldFn === 'undefined/undefined' && vis.appAlive, '① #463 구버전 요소·함수 0 · app.js 끝까지 실행(뒤쪽 전역 살아 있음)', JSON.stringify(vis));
         const emb = await frame.evaluate(() => ({ embed: document.body.classList.contains('embed'), h1: getComputedStyle(document.querySelector('#page-invoice-test > h1')).display }));
         ok(emb.embed && emb.h1 === 'none', '① embed 모드: 안쪽 제목 숨김(바깥 「송장변환」 제목만)', JSON.stringify(emb));
         // ② 프레임 안 실사용
@@ -71,11 +72,11 @@ const TOKEN = jwt.sign(USER, 'verifytest', { expiresIn: '1h' });
         await pg.evaluate(() => switchPage('pricing')); await pg.waitForTimeout(800); await pg.evaluate(() => switchPage('invoice')); await pg.waitForTimeout(800);
         const keep = await pg.evaluate(() => { const f = document.getElementById('invoice-v2-frame'); return { same: /invoice-v2\.html\?embed=1$/.test(f.src), n: f.contentWindow.__ivt ? f.contentWindow.__ivt.S.merged.length : -1, h: parseInt(f.style.height) || 0 }; });
         ok(keep.same && keep.n === N && keep.h > 600, '③ 다른 메뉴 다녀와도 프레임 재로드 없이 상태 유지 · iframe 높이 자동 확장', JSON.stringify(keep));
+        // #463: 옛 비상 주소(#invoice-legacy)로 들어와도 v2가 그대로 보인다(구버전 없음 · 즐겨찾기 해 둔 경우 대비)
         await pg.evaluate(() => { location.hash = '#invoice-legacy'; }); await pg.waitForTimeout(300);
-        const leg = await pg.evaluate(() => ({ legacy: getComputedStyle(document.getElementById('page-invoice-legacy')).display, wrap: getComputedStyle(document.getElementById('invoice-v2-wrap')).display, btn: !!document.querySelector('#page-invoice-legacy #invoice-merge-btn') }));
+        const leg = await pg.evaluate(() => { const f = document.getElementById('invoice-v2-frame'); return { wrap: getComputedStyle(document.getElementById('invoice-v2-wrap')).display, n: f.contentWindow.__ivt ? f.contentWindow.__ivt.S.merged.length : -1 }; });
         await pg.evaluate(() => { location.hash = ''; }); await pg.waitForTimeout(300);
-        const leg2 = await pg.evaluate(() => ({ legacy: getComputedStyle(document.getElementById('page-invoice-legacy')).display, wrap: getComputedStyle(document.getElementById('invoice-v2-wrap')).display }));
-        ok(leg.legacy === 'block' && leg.wrap === 'none' && leg.btn && leg2.legacy === 'none' && leg2.wrap !== 'none', '③ #invoice-legacy 해시 → 구버전 노출(비상용) · 해시 제거 → v2 복귀', JSON.stringify({ leg, leg2 }));
+        ok(leg.wrap !== 'none' && leg.n === N, '③ #463 옛 비상 주소(#invoice-legacy)에도 v2 그대로 · 상태 유지', JSON.stringify(leg));
         // ④ 무회귀 스모크
         for (const p of ['schedule', 'pricing', 'inquiry', 'inventory', 'settlement', 'organizer', 'invoice']) { await pg.evaluate(n => switchPage(n), p); await pg.waitForTimeout(600); }
         const active = await pg.evaluate(() => (document.querySelector('.page.active') || {}).id);

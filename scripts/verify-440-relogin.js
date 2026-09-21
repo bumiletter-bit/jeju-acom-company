@@ -50,11 +50,13 @@ const ok = (name, c, note) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' :
         ok('① 이전 세션 메모리 초기화(심어둔 마커 소멸)', marker === null, String(marker));
         ok('① 재로드 후 자동 로그인으로 앱 화면 표시', appShown);
         // ── ② 송장변환 진입 → 카탈로그 1회, 이후 버튼 클릭마다 재요청
-        await pg.evaluate(() => switchPage('invoice')); await pg.waitForTimeout(2500);
+        await pg.evaluate(() => switchPage('invoice')); await pg.waitForTimeout(500);
+        // #463: 구버전 「현재 판매 품목」 카드 제거 — 진입 시 단가표는 v2(iframe)가 초기화하면서 1회 읽는다
+        await pg.waitForFunction(() => { const f = document.getElementById('invoice-v2-frame'); return f && f.contentWindow && f.contentWindow.__ivt; }, null, { timeout: 20000 }); await pg.waitForTimeout(1500);
         const c0 = catalogReq;
-        ok('② 송장변환 진입 시 카탈로그 로드', c0 >= 1, `요청 ${c0}회`);
-        const catText = await pg.evaluate(() => (document.getElementById('invoice-catalog-list') || {}).innerText || '');
-        ok('③ 카탈로그 표시 무회귀(오늘 품목 N개)', /총\s*\d+\s*개 품목/.test(catText), catText.slice(0, 40).replace(/\n/g, ' '));
+        ok('② 송장변환 진입 시 카탈로그 로드(v2 초기화)', c0 >= 1, `요청 ${c0}회`);
+        const outerCard = await pg.evaluate(() => !!document.getElementById('invoice-catalog-list'));
+        ok('③ #463 바깥 문서에 구버전 품목 카드 없음', !outerCard);
         // 중간발주 탭의 시작 버튼 — 클릭 시 catalog 재요청 (채널 조회는 로컬에서 실패해도 무방)
         // #452-p: 송장변환 = iframe(v2) — 버튼은 프레임 안에서(구버전은 #page-invoice-legacy에 숨김)
         const fr = pg.frameLocator('#invoice-v2-frame'); await pg.waitForFunction(() => { const f = document.getElementById('invoice-v2-frame'); return f && f.contentWindow && f.contentWindow.__ivt; }, null, { timeout: 20000 });

@@ -1634,166 +1634,9 @@
             <!-- 송장변환 페이지 -->
             <div id="page-invoice" class="page">
                 <h1>송장변환</h1>
-                <!-- #452-p(대표 GO 9/18): 송장변환 v2(/invoice-v2.html)를 iframe으로 끼움 — app.js 송장변환 코드 무접촉. 구버전 마크업은 아래 #page-invoice-legacy에 숨김(주소 뒤 #invoice-legacy 로만 노출 · 되돌리기 = 이 블록 제거). -->
+                <!-- #452-p(대표 GO 9/18): 송장변환 v2(/invoice-v2.html)를 iframe으로 끼움. #463(9/21): 구버전 마크업·app.js 구버전 화면 코드 제거(변환·집계 함수는 app.js에 그대로 — v2가 잘라 실행). -->
                 <div id="invoice-v2-wrap">
                     <iframe id="invoice-v2-frame" class="invoice-v2-frame" title="송장변환" src="about:blank" loading="eager"></iframe>
-                </div>
-                <div id="page-invoice-legacy" style="display:none;">
-
-                <!-- 모드 토글 -->
-                <div class="invoice-mode-toggle">
-                    <button class="invoice-mode-btn active" id="invoice-mode-convert-btn" onclick="switchInvoiceMode('convert')">송장 변환</button>
-                    <button class="invoice-mode-btn" id="invoice-mode-qty-btn" onclick="switchInvoiceMode('qty')">📊 중간발주</button>
-                </div>
-
-                <!-- ===== 송장 변환 모드 ===== -->
-                <div id="invoice-convert-mode">
-
-                <!-- 출고지 정보 -->
-                <div class="card">
-                    <h2>출고지 정보</h2>
-                    <div class="form-group">
-                        <label>출고지 주소</label>
-                        <input type="text" id="invoice-sender-address" class="form-input" value="제주특별자치도 제주시 연삼로 1066-31, 제주아꼼이네" style="width:100%;">
-                    </div>
-                    <p style="font-size:12px; color:#888; margin-top:4px;">* 보내는사람 = 구매자명(제주아꼼이네) / 보내는사람연락처 = 구매자연락처 (자동 변환)</p>
-                </div>
-
-                <!-- 채널별 업로드 -->
-                <div class="invoice-upload-grid">
-                    <div class="card invoice-upload-card">
-                        <div class="channel-label channel-smart">스마트스토어</div>
-                        <div class="invoice-upload-area" id="invoice-upload-smart">
-                            <div class="upload-icon">📄</div>
-                            <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
-                            <div class="invoice-file-name" id="invoice-filename-smart"></div>
-                        </div>
-                        <input type="file" id="invoice-file-smart" accept=".xlsx,.xls" hidden>
-                        <!-- 대표 7/24: 네이버 API 자동 업로드 (배송준비 주문) — 수동 업로드와 병행 -->
-                        <button class="btn-primary" id="invoice-auto-smart" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🛰️ 네이버 배송준비 전체 불러오기</button>
-                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
-                            <span>조회 기간</span>
-                            <input type="number" id="invoice-auto-smart-days" value="50" min="1" max="180" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
-                            <span>일 (결제일 기준·최대 180)</span>
-                        </div>
-                        <div id="invoice-auto-smart-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
-                    </div>
-
-                    <div class="card invoice-upload-card">
-                        <div class="channel-label channel-jasamol">자사몰</div>
-                        <div class="invoice-upload-area" id="invoice-upload-jasamol">
-                            <div class="upload-icon">📄</div>
-                            <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
-                            <div class="invoice-file-name" id="invoice-filename-jasamol"></div>
-                        </div>
-                        <input type="file" id="invoice-file-jasamol" accept=".xlsx,.xls" hidden>
-                        <!-- 대표 7/26: 카페24(자사몰) API 자동 불러오기 (배송준비중 주문) — 수동 업로드와 병행 -->
-                        <button class="btn-primary" id="invoice-auto-jasamol" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🏠 자사몰 자동 불러오기(배송준비중)</button>
-                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
-                            <span>조회 기간</span>
-                            <input type="number" id="invoice-auto-jasamol-days" value="50" min="1" max="90" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
-                            <span>일 (최대 90)</span>
-                        </div>
-                        <div id="invoice-auto-jasamol-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
-                    </div>
-
-                    <div class="card invoice-upload-card">
-                        <div class="channel-label channel-coupang">쿠팡</div>
-                        <div class="invoice-upload-area" id="invoice-upload-coupang">
-                            <div class="upload-icon">📄</div>
-                            <p>엑셀 파일을 <strong>드래그</strong>하거나 <strong>클릭</strong>하여 업로드</p>
-                            <div class="invoice-file-name" id="invoice-filename-coupang"></div>
-                        </div>
-                        <input type="file" id="invoice-file-coupang" accept=".xlsx,.xls" hidden>
-                        <!-- 대표 7/26: 쿠팡 API 자동 불러오기 (상품준비중 주문) — 수동 업로드와 병행 -->
-                        <button class="btn-primary" id="invoice-auto-coupang" style="width:100%; margin-top:8px; font-size:13px; padding:8px;">🛒 쿠팡 자동 불러오기(상품준비중)</button>
-                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--text-mid,#666);">
-                            <span>조회 기간</span>
-                            <input type="number" id="invoice-auto-coupang-days" value="31" min="1" max="31" style="width:56px; padding:4px 6px; text-align:center; border:1px solid var(--line,#ddd); border-radius:6px;">
-                            <span>일 (발주일 기준·최대 31)</span>
-                        </div>
-                        <div id="invoice-auto-coupang-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:5px; line-height:1.5;"></div>
-                    </div>
-                </div>
-
-                <!-- 통합 변환 / 초기화 버튼 -->
-                <div class="invoice-btn-row">
-                    <button class="btn-primary invoice-merge-btn" id="invoice-merge-btn" disabled>통합 변환 및 다운로드</button>
-                    <button class="btn-reset invoice-reset-btn" id="invoice-reset-btn" onclick="resetInvoice()">초기화</button>
-                </div>
-
-                <!-- 성공 메시지 -->
-                <div class="invoice-success-msg" id="invoice-success-msg" style="display:none;">
-                    송장 엑셀 파일이 성공적으로 다운로드되었습니다!
-                </div>
-
-                <!-- 현재 판매 품목 (품목별 금액 기준, 읽기 전용) — 대표 7/20 -->
-                <div class="card" id="invoice-catalog-section" style="margin-top:16px;">
-                    <h2 style="font-size:16px;">📋 현재 판매 품목 <small style="color:#888;font-weight:400;">(오늘 기준 품목별 금액과 동일 — 여기 있는 품목만 매칭됩니다)</small></h2>
-                    <div id="invoice-catalog-list" style="margin-top:10px;"></div>
-                </div>
-
-                <!-- 미리보기 -->
-                <div class="card" id="invoice-preview-section" style="display:none;">
-                    <h2>미리보기</h2>
-                    <div class="invoice-stats">
-                        <div class="invoice-stat-card">
-                            <div class="number" id="invoice-total-orders">0</div>
-                            <div class="label">총 주문 건수</div>
-                        </div>
-                        <div class="invoice-stat-card">
-                            <div class="number" id="invoice-total-qty">0</div>
-                            <div class="label">총 수량</div>
-                        </div>
-                        <div class="invoice-stat-card">
-                            <div class="number" id="invoice-unique-recipients">0</div>
-                            <div class="label">수취인 수</div>
-                        </div>
-                    </div>
-                    <div class="invoice-table-wrapper" id="invoice-table-wrapper"></div>
-                </div>
-
-                </div><!-- /invoice-convert-mode -->
-
-                <!-- ===== 현재까지 수량 모드 ===== -->
-                <div id="invoice-qty-mode" style="display:none;">
-                    <div class="card">
-                        <p style="font-size:13px;color:var(--text-mid,#667085);margin-bottom:12px;">스마트스토어 + 쿠팡 + 자사몰 <b>3채널 배송준비</b>로 중간발주를 진행합니다. 거래처별로 품목을 골라 이미지로 저장하세요.</p>
-                        <button class="btn-primary" id="invoice-qty-start" style="width:100%; font-size:14px; padding:10px;">📦 중간발주 시작하기 (3채널)</button>
-                        <div style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--text-mid,#667085);">
-                            <span>조회 기간</span>
-                            <input type="number" id="invoice-qty-days" value="50" min="1" max="180" class="form-input" style="width:64px; padding:5px 6px; text-align:center; font-size:13px;">
-                            <span>일 (네이버 최대 180 · 쿠팡은 31일·자사몰은 90일까지만 조회)</span>
-                        </div>
-                        <div id="invoice-qty-msg" style="font-size:12px; color:var(--text-mid,#666); margin-top:6px; line-height:1.5;"></div>
-                    </div>
-
-                    <!-- 결과 -->
-                    <div class="card" id="invoice-qty-result" style="display:none;">
-                        <div class="invoice-qty-toolbar">
-                            <div class="invoice-qty-summary">
-                                선택 <strong id="invoice-qty-sel-count">0</strong>품목 · 합계 <strong id="invoice-qty-sel-total">0</strong>
-                            </div>
-                            <div class="invoice-qty-actions">
-                                <button class="btn-sm btn-outline" onclick="qtySelectAll(true)">전체선택</button>
-                                <button class="btn-sm btn-outline" onclick="qtySelectAll(false)">전체해제</button>
-                                <button class="btn-primary btn-sm" onclick="saveQtyImage()">📷 선택분 이미지 저장</button>
-                                <button class="btn-reset btn-sm" onclick="resetInvoiceQty()">초기화</button>
-                            </div>
-                        </div>
-                        <div class="invoice-qty-additem">
-                            <button class="btn-sm btn-outline" onclick="toggleAddItemForm()">➕ 품목추가</button>
-                            <span id="qty-partner-filter" style="margin-left:8px;"></span>
-                            <div id="invoice-qty-addform" style="display:none;">
-                                <input type="text" id="qty-add-name" placeholder="품목명 (직접 입력)">
-                                <input type="number" id="qty-add-qty" placeholder="수량" min="0">
-                                <button class="btn-primary btn-sm" onclick="confirmAddItem()">추가</button>
-                                <button class="btn-sm btn-outline" onclick="toggleAddItemForm()">취소</button>
-                            </div>
-                        </div>
-                        <div id="invoice-qty-list"></div>
-                    </div>
-                </div>
                 </div>
             </div>
 
@@ -2473,20 +2316,17 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=383"></script>
-    <style>.invoice-v2-frame { width:100%; border:0; display:block; min-height:70vh; background:transparent; } #page-invoice-legacy.show { display:block !important; } #invoice-v2-wrap.hide { display:none; }</style>
+    <script src="app.js?v=384"></script>
+    <style>.invoice-v2-frame { width:100%; border:0; display:block; min-height:70vh; background:transparent; }</style>
     <script>
-    // #452-p 송장변환 v2 끼우기: 메뉴 진입 시 1회 로드(이후 상태 유지 · 단가표는 v2가 클릭마다 재로드) · 내용 높이만큼 iframe 확장 · #invoice-legacy 해시면 구버전 노출
+    // #452-p 송장변환 v2 끼우기: 메뉴 진입 시 1회 로드(이후 상태 유지 · 단가표는 v2가 클릭마다 재로드) · 내용 높이만큼 iframe 확장 (#463: 구버전 마크업·#invoice-legacy 해시 제거)
     (function () {
-        const page = document.getElementById('page-invoice'), frame = document.getElementById('invoice-v2-frame'), legacy = document.getElementById('page-invoice-legacy'), wrap = document.getElementById('invoice-v2-wrap');
+        const page = document.getElementById('page-invoice'), frame = document.getElementById('invoice-v2-frame');
         if (!page || !frame) return;
-        const legacyOn = () => location.hash === '#invoice-legacy';
-        const applyLegacy = () => { legacy.classList.toggle('show', legacyOn()); wrap.classList.toggle('hide', legacyOn()); };
-        const ensure = () => { if (!page.classList.contains('active') || legacyOn()) return; if (frame.dataset.loaded) return; frame.dataset.loaded = '1'; frame.src = '/invoice-v2.html?embed=1'; };
+        const ensure = () => { if (!page.classList.contains('active')) return; if (frame.dataset.loaded) return; frame.dataset.loaded = '1'; frame.src = '/invoice-v2.html?embed=1'; };
         new MutationObserver(ensure).observe(page, { attributes: true, attributeFilter: ['class'] });
-        window.addEventListener('hashchange', () => { applyLegacy(); ensure(); });
         window.addEventListener('message', ev => { if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'ivt-height') return; const h = Math.max(400, Math.ceil(ev.data.h) + 8); frame.style.height = h + 'px'; });
-        applyLegacy(); ensure();
+        ensure();
     })();
     </script>
     <!-- 지시 #395: 주문 정리기 (파서·추출기 = 원형 이식, organizer = 앱 로직. OCR·pako는 화면에서 lazy-load) -->
