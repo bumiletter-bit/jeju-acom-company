@@ -182,7 +182,7 @@ function isUniqueViolation(err, constraintIncludes) {
 }
 
 // ============================================================================
-function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, notify }) {
+function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, notify, onRewardGrant }) {   /* #467: onRewardGrant = 실물 당첨 후처리(쿠폰 자동 발급·안내) — 미주입이면 종전 텔레그램 안내 */
     if (!pool || !express || typeof cfgGet !== 'function' || typeof writeAudit !== 'function') {
         throw new Error('createMallRouter: pool/express/cfgGet/writeAudit 주입 필수');
     }
@@ -564,16 +564,22 @@ function createMallRouter({ pool, express, cfgGet, cfgSet, writeAudit, cafe24, n
                     memberId: member.id, delta: prize.points,
                     reason: `룰렛 당첨(${prize.label})`, refType: 'roulette', refId: String(spinId), idemKey: 'spin:' + spinId });
             }
+            let grantId = null;
             if (/^coupon/.test(prize.key) || prize.key === 'box' || prize.key === 'upgrade') {
-                await client.query(
+                const gr = await client.query(
                     `INSERT INTO reward_grants (member_id, kind, amount, status, month_key, idem_key)
-                     VALUES ($1,$4,1,'pending',$2,$3) ON CONFLICT (idem_key) DO NOTHING`,
+                     VALUES ($1,$4,1,'pending',$2,$3) ON CONFLICT (idem_key) DO NOTHING RETURNING id`,
                     [member.id, kstMonthKey(), 'spin-' + prize.key + ':' + spinId, prize.key]);
+                grantId = gr.rows[0] ? gr.rows[0].id : null;   /* #467: 후처리(자동 발급·안내)용 — 충돌(중복)이면 null */
             }
-            return { spinId, prize, ledger };
+            return { spinId, prize, ledger, grantId };
         });
         if (/^coupon/.test(out.prize.key) || out.prize.key === 'box' || out.prize.key === 'upgrade') {
-            if (typeof notify === 'function') {
+            if (typeof onRewardGrant === 'function') {
+                // #467(대표 GO 9/23): 쿠폰 = 당첨 즉시 자동 발급 + 발급 안내 알림톡 — 응답을 막지 않도록 비동기. 텔레그램 안내도 후처리가 담당(성공/실패 문구 분기).
+                const payload = { grantId: out.grantId, member: { id: member.id, member_key: member.member_key, nickname: member.nickname }, prize: { key: out.prize.key, label: out.prize.label } };
+                setImmediate(() => { Promise.resolve().then(() => onRewardGrant(payload)).catch(e => console.error('[룰렛 후처리 #467]', String(e && e.message || e).slice(0, 200))); });
+            } else if (typeof notify === 'function') {
                 // #340: 대표가 이 메시지만 보고 바로 지급할 수 있어야 한다 — 회원ID·이름·미지급 누계·처리 위치.
                 let pend = '';
                 try {

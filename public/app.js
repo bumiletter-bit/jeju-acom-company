@@ -12146,7 +12146,7 @@ async function renderRewardTab() {
         box.innerHTML = `
         <div class="card">
             <div class="card-header-row">
-                <h2>🎁 룰렛 실물 당첨 지급 <span class="text-muted" style="font-size:13px; font-weight:400;">쿠폰·귤박스·업그레이드권은 자동 발급이 안 돼 직접 드려야 합니다 — 카페24 관리자에서 회원ID로 찾아 발급하세요</span></h2>
+                <h2>🎁 룰렛 실물 당첨 지급 <span class="text-muted" style="font-size:13px; font-weight:400;">쿠폰(5%·10%)은 당첨 즉시 자동 발급·발급 안내 알림톡, 만료 7일 전 안내(#467). 귤박스·업그레이드권은 직접 드린 뒤 [지급완료]</span></h2>
                 <div class="row" style="gap:6px;">
                     <button class="btn-sm btn-outline" id="btn-reward-refresh">🔄 새로고침</button>
                 </div>
@@ -12219,22 +12219,43 @@ async function loadRewardList() {
     if (stats) stats.innerHTML = `<span class="pill ${d.pending ? 'pill-wait' : 'pill-ok'}">⏳ 미지급 ${d.pending}건</span>
         <span class="pill" style="margin-left:6px">📋 조회 ${rows.length}건</span>`;
 
+    // #467: 쿠폰 칸 — 발급 안내·만료·사용 여부를 건별로(발송 원장은 [알림 발송 이력] 채널 「룰렛」)
+    const mmdd = (t) => { const s = aoKstDate(t); return s ? s.slice(5).replace('-', '/') : ''; };
+    const nst = (s) => s === 'sent' ? '✅' : s === 'dry-run' ? '🧪 검수중' : s === 'no-tel' || s === 'bad-tel' ? '📵 번호 없음' : s ? '❌ ' + aoEsc(s) : '—';
+    const couponCell = (g) => {
+        if (!/^coupon/.test(g.kind || '')) return '<span class="text-muted">—</span>';
+        const p = [];
+        if (g.status !== 'granted') { if (g.grant_error) p.push(`<span style="color:#C0392B" title="${aoEsc(g.grant_error)}">⚠️ 자동 발급 실패 — ${aoEsc(String(g.grant_error).slice(0, 48))}</span>`); else p.push('<span class="text-muted">자동 발급 대기</span>'); return p.join(''); }
+        if (g.expires_at) p.push(`만료 ${mmdd(g.expires_at)}`);
+        p.push(`발급안내 ${nst(g.notify_issue_status)}`);
+        if (g.used_at) p.push(`<b style="color:#1E8E4E">사용됨 ${mmdd(g.used_at)}</b>`);
+        else if (g.expires_at && new Date(g.expires_at).getTime() < Date.now()) p.push('<span class="text-muted">만료·미사용</span>');
+        else if (g.notify_expire_status) p.push(`만료안내 ${nst(g.notify_expire_status)}`);
+        else if (!g.issue_no) p.push('<span class="text-muted">쿠폰번호 없음(수동 발급분)</span>');
+        return `<span style="font-size:12px">${p.join(' · ')}</span>`;
+    };
     const body = rows.length ? rows.map(g => {
         const done = g.status === 'granted';
+        const isCoupon = /^coupon/.test(g.kind || '');
+        const btns = done
+            ? `<button class="btn-sm btn-outline" onclick="aoRewardMark(${g.id}, 'pending')">되돌리기</button>`
+            : (isCoupon ? `<button class="btn-sm btn-primary" onclick="aoRewardGrant(${g.id})">🎫 발급+안내</button> <button class="btn-sm btn-outline" onclick="aoRewardMark(${g.id}, 'granted')" title="카페24에서 직접 발급한 경우만">수동 지급완료</button>`
+                        : `<button class="btn-sm btn-primary" onclick="aoRewardMark(${g.id}, 'granted')">지급완료</button>`);
         return `<tr>
             <td class="cell-dt">${aoEsc(aoFmtDtShort(g.created_at))}</td>
             <td><span class="pill ${done ? 'pill-ok' : 'pill-wait'}">${done ? '지급완료' : '미지급'}</span></td>
             <td><b>${aoEsc(REWARD_LABEL[g.kind] || g.kind)}</b></td>
             <td style="font-variant-numeric:tabular-nums"><b>${aoEsc(g.member_key)}</b>${g.nickname ? ' <span class="text-muted">(' + aoEsc(g.nickname) + ')</span>' : ''}</td>
             <td class="text-muted">${done ? aoEsc(aoFmtDtShort(g.granted_at)) + (g.granted_by ? ' · ' + aoEsc(g.granted_by) : '') : '-'}</td>
-            <td><button class="btn-sm ${done ? 'btn-outline' : 'btn-primary'}" onclick="aoRewardMark(${g.id}, '${done ? 'pending' : 'granted'}')">${done ? '되돌리기' : '지급완료'}</button></td>
+            <td class="reward-coupon-cell">${couponCell(g)}</td>
+            <td style="white-space:nowrap">${btns}</td>
         </tr>`;
-    }).join('') : `<tr><td colspan="6" class="text-muted" style="text-align:center;padding:18px">${rewardFilter.status === 'pending' ? '미지급 당첨이 없습니다 🎉' : '조회된 당첨 기록이 없습니다'}</td></tr>`;
+    }).join('') : `<tr><td colspan="7" class="text-muted" style="text-align:center;padding:18px">${rewardFilter.status === 'pending' ? '미지급 당첨이 없습니다 🎉' : '조회된 당첨 기록이 없습니다'}</td></tr>`;
 
-    list.innerHTML = `<table class="data-table" style="min-width:860px">
+    list.innerHTML = `<table class="data-table" style="min-width:1060px">
         <thead><tr>
-            <th style="width:100px">당첨 일시</th><th style="width:84px">상태</th><th style="width:150px">경품</th>
-            <th>회원ID</th><th style="width:150px">지급 처리</th><th style="width:96px"></th>
+            <th style="width:100px">당첨 일시</th><th style="width:84px">상태</th><th style="width:130px">경품</th>
+            <th>회원ID</th><th style="width:170px">지급 처리</th><th style="width:250px">쿠폰·알림</th><th style="width:190px"></th>
         </tr></thead>
         <tbody>${body}</tbody></table>`;
 }
@@ -12247,6 +12268,15 @@ function aoRewardBadge(n) {
     if (!b) return;
     if (n > 0) { b.textContent = n; b.style.display = ''; } else { b.style.display = 'none'; }
 }
+// #467: 쿠폰 발급+안내(자동 실패 시 재시도) — 서버는 즉시 응답, 발급·검산은 뒤에서(최대 3~4분) → 잠시 뒤 목록 재조회
+window.aoRewardGrant = async function (id) {
+    if (!confirm('카페24에 쿠폰을 발급하고 발급 안내 알림톡을 보냅니다. 진행할까요?')) return;
+    try {
+        const r = await api('/api/agent-office/reward-grants/' + id + '/grant', 'POST', {});
+        showToast(r.message || '발급을 시작했습니다', 'lime');
+        setTimeout(loadRewardList, 12000);
+    } catch (e) { showToast('실패 — ' + e.message); }
+};
 window.aoRewardMark = async function (id, status) {
     try {
         // ⚠️ api(url, method, body) — 위치 인자다. 옵션 객체로 넘기면 method가 객체가 되어 실패한다(#342 오류 원인)
@@ -12643,20 +12673,23 @@ async function renderNotifyLogs(opts) {
         if (st === 'canceled-excluded') return badge('#F1F2F5', '#767A83', '🚫 취소·클레임 제외');
         if (st === 'skip-no-guide') return badge('#F1F2F5', '#767A83', '건너뜀 (구버전 기록)');
         if (st === 'sent') return badge('#E8F8EF', '#1E8E4E', mode === 'sms' ? '🔁 문자(LMS) 대체' : (String(row.order_key || '').startsWith('cp:') ? '✅ 문자(LMS)' : '✅ 알림톡'));   /* #401: 쿠팡=안심번호라 LMS 직행 — 알림톡 오표기 방지 */
-        if (DRY[st]) return badge('#EEF1F6', '#5A616B', /^(c24|cp|join):/.test(String(row.order_key || '')) ? '🧪 검수중 (미발송 — 문면만 기록)' : DRY[st]);
+        if (DRY[st]) return badge('#EEF1F6', '#5A616B', /^(c24|cp|join|coupon|coupon-exp):/.test(String(row.order_key || '')) ? '🧪 검수중 (미발송 — 문면만 기록)' : DRY[st]);   /* #467 룰렛 */
         // 실패류 — 발송안내는 수동 재발송 제공(주문안내 재발송은 보류 버튼 경로로만)
         return badge('#FDECEA', '#C0392B', '❌ 실패',
             kind === 'ship' && row.order_key ? ` <button class="btn-sm btn-outline" onclick="sendLmsGuide('${escapeHtml(row.order_key)}')">수동 재발송</button>` : '');
     };
     const kindLabel = (row) => {
         if (String(row.order_key || '').startsWith('join:')) return row.k_id ? ['가입 환영', 'UK_5877'] : ['—', ''];   // #401 → #417 가입환영2 투입
+        if (String(row.order_key || '').startsWith('coupon-exp:')) return row.k_id ? ['룰렛 쿠폰 만료 안내', ''] : ['—', ''];   // #467
+        if (String(row.order_key || '').startsWith('coupon:')) return row.k_id ? ['룰렛 당첨 쿠폰 발급 안내', ''] : ['—', ''];   // #467
         const reserve = /순차 발송|시즌 시작/.test(row.k_message || '');
         return row.k_id ? (reserve ? ['주문완료·예약', 'UK_5755'] : ['주문완료·일반', 'UK_5754']) : ['—', ''];   /* #414: MD([문의하기]) 버튼판 투입 — 현행 설정 기준 표기 */
     };
     // #401→#405: 채널 표기 — 별도 [플랫폼] 컬럼으로 승격(네이버 포함 전 행 표기·#404 타이머 라벨과 동일 채널 아이콘)
     const chCell = (row) => {
         const k = String(row.order_key || '');
-        const m = k.startsWith('c24:') ? ['🏠 자사몰', '#EEF2FF', '#4F46E5'] : k.startsWith('cp:') ? ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'] : k.startsWith('join:') ? ['👋 가입', '#FDF2F8', '#BE185D'] : ['🛒 네이버', '#E8F8EF', '#1E8E4E'];
+        const m = k.startsWith('c24:') ? ['🏠 자사몰', '#EEF2FF', '#4F46E5'] : k.startsWith('cp:') ? ['🛍️ 쿠팡', '#FDF3E2', '#B26A00'] : k.startsWith('join:') ? ['👋 가입', '#FDF2F8', '#BE185D']
+            : /^coupon(-exp)?:/.test(k) ? ['🎡 룰렛', '#FFF7E6', '#B45309'] : ['🛒 네이버', '#E8F8EF', '#1E8E4E'];   /* #467 */
         return `<span class="pill" style="background:${m[1]}; color:${m[2]}; font-size:11px; white-space:nowrap;">${m[0]}</span>`;
     };
     /* 지시 #405(대표): [발주확인] 컬럼 폐지 — 주문안내 발송 성공 = 발주확인 완료가 원칙이라 정상 건 표기는 불요.
@@ -13753,6 +13786,7 @@ const NAVER_TIMER_LABELS_UI = {
     cafe24_sync:      { o: 12, t: '🏠 자사몰 · 가격·품절 동기화 (05:10 · 네이버 기준)' },
     coupang_notify:   { o: 20, t: '🛍️ 쿠팡 · 주문 안내 문자(LMS)', ch: 'cp' },
     coupang_guide:    { o: 21, t: '🛍️ 쿠팡 · 발송 안내 문자(LMS)', ch: 'cp' },
+    coupon_expire_notify: { o: 30, t: '🎡 룰렛 · 쿠폰 만료 7일 전 안내 (하루 1회 10:00 · 사용 여부 갱신)', ch: 'coupon' },   // #467
     welcome_notify:   { o: 90, t: '👋 가입 환영 (은퇴)', hide: true },   // #401-d 이벤트형 전환 — 가입완료 페이지가 자동 처리
 };
 async function renderNaverTimers() {

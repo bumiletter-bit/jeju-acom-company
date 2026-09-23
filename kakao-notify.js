@@ -20,7 +20,8 @@ function templateByKey(key) {
     if (!TEMPLATES_JSON) return null;
     const pools = [].concat(Array.isArray(TEMPLATES_JSON.templates) ? TEMPLATES_JSON.templates : [],
                             Array.isArray(TEMPLATES_JSON.templates_md) ? TEMPLATES_JSON.templates_md : [],
-                            Array.isArray(TEMPLATES_JSON.templates_welcome2) ? TEMPLATES_JSON.templates_welcome2 : []);   /* #414 MD판 · #417 가입환영2도 조회 대상 */
+                            Array.isArray(TEMPLATES_JSON.templates_welcome2) ? TEMPLATES_JSON.templates_welcome2 : [],
+                            Array.isArray(TEMPLATES_JSON.templates_roulette) ? TEMPLATES_JSON.templates_roulette : []);   /* #414 MD판 · #417 가입환영2 · #467 룰렛 쿠폰 2장도 조회 대상 */
     return pools.find(t => t.key === key) || null;
 }
 
@@ -30,7 +31,11 @@ function templateByKey(key) {
 //   손님이 [문의하기]를 누르면 알림톡 원문이 채널 상담 채팅에 첨부 = 카카오 문의 고객 즉시 특정(#398).
 //   롤백 = env(또는 이 표)를 구코드(order UJ_9084 · order_reserve UJ_9085 · guide UJ_9087)로 — 아래 MD_TPL_KEY 자동 일치로 버튼까지 함께 복귀.
 // #417(대표 GO 8/28): 가입환영2(UK_5877 — 혜택 3종 문구+[문의하기]) 검수 승인 실측 → 기본 투입. 롤백 = welcome을 UJ_9086으로.
-const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UK_5877', guide: 'UK_5756' };
+const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UK_5877', guide: 'UK_5756',
+    coupon_issue: '', coupon_expire: '' };   /* #467: 룰렛 쿠폰 발급/만료 안내 — 검수 승인 전(빈값) = 발송 코드 없음 → 문면만 기록(dry). 승인 시 코드 기입 또는 env */
+// #467: 룰렛 쿠폰 안내 — 코드↔문안·버튼 세트(빈 코드 = 미승인 → 호출 측이 dry 처리)
+function couponTplCode(kind) { return kind === 'expire' ? (process.env.ALIGO_TPL_CODE_COUPON_EXPIRE || APPROVED_TPL.coupon_expire || '') : (process.env.ALIGO_TPL_CODE_COUPON_ISSUE || APPROVED_TPL.coupon_issue || ''); }
+function couponTemplate(kind) { return templateByKey(kind === 'expire' ? 'coupon_expire' : 'coupon_issue'); }
 // #414 🔴 문면·버튼·코드는 세트(불일치 = 알리고 발송 거부): 최종 결정된 tpl_code가 MD판이면 문안·버튼도 templates_md에서 취한다.
 //   env가 구코드(UJ)를 가리키면 자동으로 구버튼 세트 사용 — 어떤 env 상태에서도 코드↔버튼 불일치가 생기지 않는다.
 const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md', 'UK_5877': 'welcome2' };   /* #417 */
@@ -333,6 +338,7 @@ async function registerTemplates({ audit, set } = {}) {
     const list = set === 'image' ? (TEMPLATES_JSON.templates_image || [])
         : set === 'md' ? (TEMPLATES_JSON.templates_md || [])
         : set === 'welcome2' ? (TEMPLATES_JSON.templates_welcome2 || [])
+        : set === 'roulette' ? (TEMPLATES_JSON.templates_roulette || [])   /* #467: 룰렛 쿠폰 발급/만료 안내 2장 */
         : TEMPLATES_JSON.templates;
     if (!list.length) return { ...out, error: `템플릿 세트 비어있음 (set=${set || 'text'})` };
     const auth = { apikey: process.env.ALIGO_API_KEY, userid: process.env.ALIGO_USER_ID };
@@ -414,4 +420,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate };   /* #417 */
+module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */

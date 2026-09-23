@@ -1020,6 +1020,12 @@ async function initDB() {
     // #340: 지급 처리 이력 컬럼(누가·언제 줬는지)
     await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS granted_by TEXT`);
+    // #467(대표 GO 9/23): 룰렛 쿠폰 자동 발급 + 발급/만료 안내 — 쿠폰 메타·알림 상태·사용 여부(전부 additive · 기존 행 NULL)
+    for (const c of ['coupon_no TEXT', 'issue_no TEXT', 'issued_at TIMESTAMPTZ', 'expires_at TIMESTAMPTZ', 'used_at TIMESTAMPTZ', 'used_order_id TEXT',
+        'notify_issue_status VARCHAR(20)', 'notify_issue_at TIMESTAMPTZ', 'notify_expire_status VARCHAR(20)', 'notify_expire_at TIMESTAMPTZ', 'grant_error TEXT']) {
+        await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS ${c}`);
+    }
+    await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min, run_at_time) VALUES ('coupon_expire_notify', true, 1440, '10:00') ON CONFLICT (key) DO NOTHING`);
     // ── 지시 #68 C5: 시즌 오픈 대기 신청 (연락처는 발송 목적상 원문 저장 — 화면 표시는 마스킹, soft-delete)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS season_waitlist (
@@ -5716,7 +5722,8 @@ app.put('/api/agent-office/mall-game-config', authMiddleware, adminOnly, async (
 // ── 지시 #85 STEP2: 자사몰 게임 API 결선 — 게이트(MALL_API=on + MALL_API_TOKEN)는 모듈 내부, 기본 전면 503
 app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgGet, cfgSet: naverCfgSet, writeAudit,
     cafe24: { apiGet: (...a) => require('./cafe24.js').apiGet(...a) },   /* #256: 지연 참조 — const cafe24(8350행)가 이 마운트보다 뒤라 직접 참조 시 TDZ 기동 실패(v5.9.220 배포 실패 원인) */
-    notify: (...a) => notifyTelegram(...a) }));
+    notify: (...a) => notifyTelegram(...a),
+    onRewardGrant: (p) => rouletteOnRewardGrant(p) }));   /* #467: 쿠폰 당첨 = 즉시 자동 발급 + 발급 안내(함수 선언은 아래 — 호이스팅·호출은 기동 뒤) */
 
 // ── 지시 #94: 공개 안내 페이지 /guide — 알림톡 E 버튼 착지 (인증 불필요·PII 0·모바일 퍼스트)
 //    콘텐츠 = bot_products.shipping_guide (판매현황 탭에서 수정하면 즉시 반영). ?p=상품id 이면 그 상품이 최상단.
@@ -5923,8 +5930,9 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         }
         // 지시 #405: 채널(플랫폼) 필터 — order_key 프리픽스로 판별(네이버 = 프리픽스 없음). 상태 필터와 AND 결합.
         const ch = String(req.query.ch || 'all');
-        if (ch === 'naver') conds.push(`COALESCE(k.order_key, l.order_key) !~ '^(c24|cp|join):'`);
+        if (ch === 'naver') conds.push(`COALESCE(k.order_key, l.order_key) !~ '^(c24|cp|join|coupon|coupon-exp):'`);
         else if (ch === 'c24' || ch === 'cp' || ch === 'join') { params.push(ch + ':%'); conds.push(`COALESCE(k.order_key, l.order_key) LIKE $${params.length}`); }
+        else if (ch === 'coupon') conds.push(`COALESCE(k.order_key, l.order_key) ~ '^(coupon|coupon-exp):'`);   /* #467: 룰렛 쿠폰 발급·만료 안내 */
         // 지시 #180-A1: 필터(미도래·실패/보류)를 페이지 내 후처리 → SQL 조건으로 승격.
         //   후처리로 두면 "100건 뽑아서 거른 뒤 남은 것"이 페이지마다 달라져 페이징·총건수가 어긋난다.
         if (filter === 'issue') {
@@ -7105,7 +7113,8 @@ app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res
 // === 네이버 자동수집 타이머 (설계 2026-07-25) — 전부 읽기 전용 · 설정/상태는 naver_auto_collect(DB)만 ===
 //   원칙: 전부 기본 OFF · 주기/시각 하드코딩 금지 · 한 틱에 수집기 1개만(몰림 방지) · 실패 텔레그램(상태 전환 시 1회)
 const NAVER_TIMER_LABELS = { settlement: '정산', order: '주문', claim: '반품·교환', inquiry: '문의', qna: '상품문의', kakao_notify: '알림톡(주문 안내)', lms_guide: '문자(발송 안내)', product_snapshot: '상품 스냅샷(자사몰)', cafe24_sync: '카페24 동기화(신규 세트)',
-    cafe24_notify: '자사몰 주문안내(#401)', cafe24_guide: '자사몰 발송안내(#401)', coupang_notify: '쿠팡 주문안내(#401·LMS)', coupang_guide: '쿠팡 발송안내(#401·LMS)', welcome_notify: '자사몰 가입환영(#401)' };
+    cafe24_notify: '자사몰 주문안내(#401)', cafe24_guide: '자사몰 발송안내(#401)', coupang_notify: '쿠팡 주문안내(#401·LMS)', coupang_guide: '쿠팡 발송안내(#401·LMS)', welcome_notify: '자사몰 가입환영(#401)',
+    coupon_expire_notify: '룰렛 쿠폰 만료 7일 전 안내(#467)' };
 const naverKstIso = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
 
 // 429 백오프 재시도 — naverFetchInvoiceOrders 내부 패턴과 동일 로직(수집기 공용, 기존 함수는 무수정)
@@ -8994,6 +9003,177 @@ app.get('/api/public/shipping-eta', async (req, res) => {
 //   쿠폰·귤박스·업그레이드권은 자동 발급 수단이 없어(쿠폰 API 스코프 미보유) 사람이 직접 준다.
 //   종전엔 목록 화면이 없어 텔레그램 알림에만 의존했고, 그 알림의 회원ID가 금액 마스킹에 걸려
 //   **누구인지 확인 자체가 불가능**했다(대표 실사고). → 조회·지급완료 처리 화면을 만든다.
+// ══════════ #467(대표 GO 9/23): 룰렛 당첨 쿠폰 — 당첨 즉시 자동 발급 + 발급 안내 알림톡 + 만료 7일 전 안내 ══════════
+//   설계: docs/superpowers/specs/2026-09-23-roulette-coupon-notify-design.md
+//   원칙: 정의 번호 고정(중복 생성 0) · 회원 1명(M) 발급 · 보유 n→n+1 검산 전엔 지급완료 표시 안 함 · 실패 = pending 유지 + 텔레그램(종전 수동 문구).
+//   알림 = 새 order_key 프리픽스(coupon:/coupon-exp:) — 기존 4채널 코드 무접촉 · 채널 게이트 notify_channel_mode.coupon(없음 = dry).
+const ROULETTE_COUPON = {
+    coupon5:  { no: process.env.ROULETTE_COUPON5_NO  || '6086230051600000967', pct: 5,  label: '5% 할인 쿠폰',  benefit: '자사몰 주문 금액 5% 할인' },   /* #433 생성 · 발급일부터 30일 */
+    coupon10: { no: process.env.ROULETTE_COUPON10_NO || '6086272594000000984', pct: 10, label: '10% 할인 쿠폰', benefit: '자사몰 주문 금액 10% 할인' }, /* #451 생성 · 발급일부터 30일 */
+};
+const _rSleep = (ms) => new Promise(r => setTimeout(r, ms));
+function rouletteKstDate(d) { const t = d ? new Date(d).getTime() : NaN; return isFinite(t) ? new Date(t + 9 * 3600 * 1000).toISOString().slice(0, 10) : ''; }
+async function rouletteHeld(memberKey, couponNo) {
+    const r = await cafe24.apiGet(`/api/v2/admin/customers/${encodeURIComponent(memberKey)}/coupons`, { limit: 100 });
+    return ((r && r.coupons) || []).filter(c => String(c.coupon_no) === String(couponNo));
+}
+// 쿠폰별 발급 이력(사용 여부·만료일 포함) — offset 순회
+async function rouletteIssues(couponNo) {
+    let all = [];
+    for (let off = 0; off < 2000; off += 100) {
+        const r = await cafe24.apiGet(`/api/v2/admin/coupons/${couponNo}/issues`, { limit: 100, offset: off });
+        const l = (r && r.issues) || [];
+        all = all.concat(l);
+        if (l.length < 100) break;
+    }
+    return all;
+}
+// 카페24 발급 — 성공 시 reward_grants granted + 쿠폰 메타 기록. 예외 = 발급 안 됨(또는 검산 실패)·표시 없음.
+async function rouletteCouponIssue(grantId, actor) {
+    const g = (await pool.query(`SELECT g.*, m.member_key, m.nickname FROM reward_grants g JOIN mall_members m ON m.id=g.member_id WHERE g.id=$1`, [grantId])).rows[0];
+    if (!g) throw new Error('당첨 행 없음(id ' + grantId + ')');
+    const def = ROULETTE_COUPON[g.kind];
+    if (!def) throw new Error('쿠폰 경품이 아님(' + g.kind + ') — 수동 처리');
+    if (g.status !== 'pending') return { ok: true, already: true, grant: g };
+    const member = g.member_key;
+    const d = ((((await cafe24.apiGet('/api/v2/admin/coupons', { coupon_no: def.no })) || {}).coupons) || [])[0];
+    if (!d || d.deleted === 'T' || d.available_period_type !== 'R' || Number(d.benefit_percentage) !== def.pct) throw new Error('쿠폰 정의 이상 — 발급 중단: ' + JSON.stringify(d || null).slice(0, 160));
+    const before = await rouletteHeld(member, def.no);
+    const iss = await cafe24.apiReq('POST', `/api/v2/admin/coupons/${def.no}/issues`,
+        { shop_no: 1, request: { issued_member_scope: 'M', member_id: member, send_sms_for_issue: 'F', allow_duplication: before.length ? 'T' : 'F', single_issue_per_once: 'T' } });
+    const cnt = iss && iss.issues && iss.issues.count && Number(iss.issues.count[def.no]);
+    if (!(cnt >= 1)) throw new Error('발급 응답 이상: ' + JSON.stringify(iss || null).slice(0, 160));
+    let after = [];
+    for (const w of [6000, 30000, 60000, 120000]) { await _rSleep(w); after = await rouletteHeld(member, def.no); if (after.length >= before.length + 1) break; }   // 카페24 조회 지연(9/12·9/21·9/22 실측) 대비
+    if (after.length !== before.length + 1) throw new Error(`발급 후 보유 ${after.length}장(기대 ${before.length + 1}) — 지급완료 표시 안 함(관리자 발급 이력 확인)`);
+    const got = after.find(c => !before.some(x => String(x.issue_no) === String(c.issue_no))) || after[0];
+    let exp = null, issuedAt = got.issued_date || null;
+    try { const row = (await rouletteIssues(def.no)).find(i => String(i.issue_no) === String(got.issue_no)); if (row) { exp = row.expiration_date || null; issuedAt = row.issued_date || issuedAt; } } catch (_) { /* 만료일은 아래 계산 폴백 */ }
+    if (!exp && issuedAt) exp = new Date(new Date(issuedAt).getTime() + (Number(d.available_day_from_issued) || 30) * 86400000).toISOString();
+    await pool.query(`UPDATE reward_grants SET status='granted', granted_at=NOW(), granted_by=$2, coupon_no=$3, issue_no=$4, issued_at=$5, expires_at=$6, grant_error=NULL WHERE id=$1 AND status='pending'`,
+        [grantId, actor, def.no, String(got.issue_no), issuedAt, exp]);
+    await writeAudit({ action: 'update', targetType: 'reward_grant', targetId: grantId,
+        changes: { before: { status: 'pending' }, after: { status: 'granted', member_key: member, kind: g.kind, coupon_no: def.no, issue_no: String(got.issue_no), expires_at: exp }, note: `#467 API 자동 발급(보유 ${before.length}→${after.length}장)` },
+        source: 'reward-grant', actor: { id: null, name: actor } });
+    return { ok: true, grant: { ...g, status: 'granted', coupon_no: def.no, issue_no: String(got.issue_no), issued_at: issuedAt, expires_at: exp }, before: before.length, after: after.length };
+}
+// 회원 연락처 = 카페24 최근 주문 구매자(룰렛 이용권 = 배송완료 주문 기준이라 반드시 있음) — DB 저장은 마스킹만(표시 시점 재조회 원칙 #405)
+async function rouletteMemberTel(memberKey) {
+    const now = new Date(Date.now() + 9 * 3600 * 1000);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    for (let seg = 0; seg < 2; seg++) {
+        const end = new Date(now.getTime() - seg * 90 * 86400000), start = new Date(end.getTime() - 89 * 86400000);
+        const r = await cafe24.apiGet('/api/v2/admin/orders', { member_id: memberKey, start_date: fmt(start), end_date: fmt(end), embed: 'buyer', fields: 'order_id,order_date,buyer', limit: 100 });
+        const os = ((r && r.orders) || []).filter(o => o.buyer && (o.buyer.cellphone || o.buyer.phone))
+            .sort((a, b) => String(b.order_date || '').localeCompare(String(a.order_date || '')));
+        if (os.length) { const o = os[0]; return { tel: String(o.buyer.cellphone || o.buyer.phone).replace(/[^0-9]/g, ''), name: String(o.buyer.name || '').trim().slice(0, 30), orderId: o.order_id }; }
+    }
+    return null;
+}
+// 발급/만료 안내 알림톡 — 이력 order_key coupon:{id} / coupon-exp:{id}(UNIQUE = 중복 발송 차단). dry(검수중) 기록은 live 전환 후 실발송으로 승격 가능.
+async function rouletteCouponNotify(g, kind) {
+    const def = ROULETTE_COUPON[g.kind];
+    if (!def) return { status: 'skip-kind' };
+    const isExp = kind === 'expire';
+    const orderKey = (isExp ? 'coupon-exp:' : 'coupon:') + g.id;
+    const col = isExp ? 'notify_expire' : 'notify_issue';
+    const live = await notifyChannelLive('coupon');
+    const tplCode = kakaoNotify.couponTplCode(kind);
+    const seen = (await pool.query(`SELECT id, status FROM kakao_notify_log WHERE order_key=$1`, [orderKey])).rows[0];
+    if (seen && !(seen.status === 'dry-run' && live && tplCode)) return { status: seen.status, dup: true };
+    const who = await rouletteMemberTel(g.member_key);
+    if (!who || !who.tel || isBadTel(who.tel) || !/^01/.test(who.tel)) {
+        const st = who && who.tel ? 'bad-tel' : 'no-tel';
+        await pool.query(`UPDATE reward_grants SET ${col}_status=$2, ${col}_at=NOW() WHERE id=$1`, [g.id, st]);
+        return { status: st };
+    }
+    const tpl = kakaoNotify.couponTemplate(kind);
+    const expKst = rouletteKstDate(g.expires_at);
+    const days = g.expires_at ? Math.max(1, Math.ceil((new Date(g.expires_at).getTime() - Date.now()) / 86400000)) : 0;
+    const vars = { '고객명': /[*<>{}$]/.test(who.name) ? '고객' : (who.name || '고객'), '쿠폰명': def.label, '혜택내용': def.benefit, '만료일': expKst.replace(/-/g, '.'), '남은일수': String(days) };
+    const message = kakaoNotify.buildMessage(vars, tpl && tpl.content);
+    const label = isExp ? '룰렛 쿠폰 만료 안내' : '룰렛 당첨 쿠폰 발급 안내';
+    let out;
+    if (!live || !tplCode) out = { mode: 'dry-run', status: 'dry-run' };
+    else out = await kakaoNotify.sendAlimtalk({ receiver: who.tel, subject: label, message, failoverMessage: message, tplCode, buttons: (tpl && tpl.button) || undefined });
+    const orderAt = g.created_at ? new Date(g.created_at) : new Date();
+    if (seen) await pool.query(`UPDATE kakao_notify_log SET message=$2, mode=$3, status=$4, error=$5, receiver_masked=$6 WHERE order_key=$1`, [orderKey, message, out.mode, out.status, out.error || null, kakaoNotify.maskPhone(who.tel)]);
+    else await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, message, mode, status, error, confirm_status, order_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,'none',$8) ON CONFLICT (order_key) DO NOTHING`, [orderKey, label, kakaoNotify.maskPhone(who.tel), message, out.mode, out.status, out.error || null, orderAt]);
+    try { _telCache.set(orderKey, { tel: who.tel, name: who.name || '', at: Date.now() }); } catch (_) { /* 표시 보조 */ }
+    await pool.query(`UPDATE reward_grants SET ${col}_status=$2, ${col}_at=NOW() WHERE id=$1`, [g.id, out.status]);
+    return out;
+}
+// 발급 → 안내 한 묶음(자동·버튼 공용). 발급 실패 = grant_error 기록·pending 유지.
+async function rouletteAutoGrant(grantId, opts = {}) {
+    const actor = opts.actor || '자동(룰렛 당첨 즉시 발급 #467)';
+    let r;
+    try { r = await rouletteCouponIssue(grantId, actor); }
+    catch (e) {
+        const msg = String(e && e.message || e).slice(0, 200);
+        await pool.query(`UPDATE reward_grants SET grant_error=$2 WHERE id=$1 AND status='pending'`, [grantId, msg]).catch(() => { });
+        return { ok: false, error: msg };
+    }
+    if (r.already) return { ok: true, already: true, grant: r.grant };
+    let n = { status: 'skip' };
+    try { n = await rouletteCouponNotify(r.grant, 'issue'); }
+    catch (e) { n = { status: 'failed', error: String(e && e.message || e).slice(0, 160) }; await pool.query(`UPDATE reward_grants SET notify_issue_status='failed', notify_issue_at=NOW() WHERE id=$1`, [grantId]).catch(() => { }); }
+    return { ok: true, grant: r.grant, notify: n };
+}
+// spin 후처리(mall-api 주입) — 쿠폰은 자동 발급·안내, 그 외(귤박스·업그레이드)와 실패 건은 종전 텔레그램 수동 안내 문구 그대로.
+async function rouletteOnRewardGrant({ grantId, member, prize, actor }) {
+    const pendTxt = async () => { try { const q = await pool.query("SELECT COUNT(*)::int AS n FROM reward_grants WHERE status='pending'"); return ' · 미지급 누적 ' + q.rows[0].n + '건'; } catch (_) { return ''; } };
+    const who = `회원ID ${member.member_key}${member.nickname ? ' (' + member.nickname + ')' : ''}`;
+    const manual = async (reason) => notifyTelegram(`🎡 [룰렛 실물 당첨] ${prize.label}\n${who}${await pendTxt()}\n→ 카페24 관리자에서 회원ID로 찾아 발급 후, 문의 관리 > 🎁 당첨 지급에서 [지급완료]${reason ? '\n⚠️ 자동 발급 실패: ' + reason : ''}`);
+    if (!grantId || !ROULETTE_COUPON[prize.key]) return manual('');
+    const r = await rouletteAutoGrant(grantId, actor ? { actor } : {});
+    if (!r.ok) return manual(r.error);
+    if (r.already) return;
+    const ns = (r.notify && r.notify.status) || '-';
+    const nTxt = ns === 'sent' ? '발급안내 알림톡 발송 완료' : ns === 'dry-run' ? '발급안내 = 🧪 검수중(문면만 기록)' : '발급안내 ' + ns;
+    return notifyTelegram(`🎡 [룰렛 당첨 · 쿠폰 자동 발급 완료] ${prize.label}\n${who}\n카페24 발급 완료 · 만료 ${rouletteKstDate(r.grant.expires_at)} · ${nTxt}${await pendTxt()}`);
+}
+// 타이머 coupon_expire_notify(하루 1회 10:00): 사용 여부 갱신 + 만료 7일 전 미사용 1회 안내 + 검수중에 dry로 남은 발급안내의 live 승격
+async function collectCouponExpireNotify() {
+    const rows = (await pool.query(`SELECT g.*, m.member_key FROM reward_grants g JOIN mall_members m ON m.id=g.member_id
+        WHERE g.status='granted' AND g.kind IN ('coupon5','coupon10') AND g.issue_no IS NOT NULL ORDER BY g.id`)).rows;
+    if (!rows.length) return '대상 0건';
+    const issuesByNo = {};
+    for (const k of Object.keys(ROULETTE_COUPON)) { const no = ROULETTE_COUPON[k].no; if (!issuesByNo[no]) issuesByNo[no] = await rouletteIssues(no); }
+    const live = await notifyChannelLive('coupon');
+    let used = 0, sent = 0, wait = 0, promoted = 0;
+    const now = Date.now();
+    for (const g of rows) {
+        const iss = (issuesByNo[g.coupon_no] || []).find(i => String(i.issue_no) === String(g.issue_no));
+        if (iss && iss.expiration_date && !g.expires_at) { await pool.query(`UPDATE reward_grants SET expires_at=$2 WHERE id=$1`, [g.id, iss.expiration_date]); g.expires_at = iss.expiration_date; }
+        if (iss && iss.used_coupon === 'T' && !g.used_at) { await pool.query(`UPDATE reward_grants SET used_at=$2, used_order_id=$3 WHERE id=$1`, [g.id, iss.used_date || new Date(), iss.related_order_id || null]); g.used_at = iss.used_date || new Date(); used++; }
+        if (g.used_at) continue;
+        if (!g.expires_at) continue;
+        const left = new Date(g.expires_at).getTime() - now;
+        if (left <= 0) continue;
+        // 검수 기간에 dry로 기록된 발급안내 → live·코드 투입 후 1회 실발송(발급 30일 이내·미사용만)
+        if (live && kakaoNotify.couponTplCode('issue') && g.notify_issue_status === 'dry-run') { try { const o = await rouletteCouponNotify(g, 'issue'); if (o.status === 'sent') promoted++; } catch (_) { /* 다음 회차 */ } }
+        if (left > 7 * 86400000) { wait++; continue; }
+        if (g.notify_expire_status && g.notify_expire_status !== 'dry-run') continue;
+        if (g.notify_expire_status === 'dry-run' && !(live && kakaoNotify.couponTplCode('expire'))) continue;
+        try { const o = await rouletteCouponNotify(g, 'expire'); if (o.status === 'sent' || o.status === 'dry-run') sent++; } catch (e) { await pool.query(`UPDATE reward_grants SET notify_expire_status='failed', notify_expire_at=NOW() WHERE id=$1`, [g.id]).catch(() => { }); }
+    }
+    return `사용 갱신 ${used} · 만료안내 ${sent}(${live ? 'live' : 'dry'}) · 발급안내 승격 ${promoted} · 7일 전 대기 ${wait}`;
+}
+// 버튼(자동 실패 시 재시도) — 응답은 즉시, 발급·검산(최대 ~3.5분)은 뒤에서. 결과는 목록 새로고침·텔레그램.
+app.post('/api/agent-office/reward-grants/:id/grant', authMiddleware, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const cur = (await pool.query(`SELECT g.*, m.member_key, m.nickname FROM reward_grants g JOIN mall_members m ON m.id=g.member_id WHERE g.id=$1`, [id])).rows[0];
+        if (!cur) throw { status: 404, message: '해당 당첨 건을 찾을 수 없습니다' };
+        if (!ROULETTE_COUPON[cur.kind]) throw { status: 400, message: '쿠폰 경품만 자동 발급됩니다(귤박스·업그레이드권은 수동)' };
+        if (cur.status !== 'pending') throw { status: 409, message: '이미 처리된 당첨 건입니다' };
+        const actor = `${(adminActor(req) || {}).name || '직원'}(버튼 발급 #467)`;
+        setImmediate(() => rouletteOnRewardGrant({ grantId: id, member: { id: cur.member_id, member_key: cur.member_key, nickname: cur.nickname }, prize: { key: cur.kind, label: ROULETTE_COUPON[cur.kind].label }, actor })
+            .catch(e => console.error('[룰렛 버튼 발급 #467]', String(e && e.message || e).slice(0, 200))));
+        res.json({ message: '발급을 시작했습니다 — 카페24 검산까지 최대 3~4분, 완료되면 목록에 반영됩니다(텔레그램으로도 알림)' });
+    } catch (err) { handleAdminErr(res, err); }
+});
 app.get('/api/agent-office/reward-grants', authMiddleware, async (req, res) => {
     try {
         const status = String(req.query.status || 'pending');
@@ -9001,6 +9181,8 @@ app.get('/api/agent-office/reward-grants', authMiddleware, async (req, res) => {
         const params = status === 'all' ? [] : [status];
         const r = await pool.query(`
             SELECT g.id, g.kind, g.amount, g.status, g.created_at, g.granted_at, g.granted_by,
+                   g.coupon_no, g.issue_no, g.issued_at, g.expires_at, g.used_at, g.used_order_id,
+                   g.notify_issue_status, g.notify_issue_at, g.notify_expire_status, g.notify_expire_at, g.grant_error,   /* #467 */
                    m.member_key, m.nickname, m.id AS member_id
             FROM reward_grants g JOIN mall_members m ON m.id = g.member_id
             ${cond}
@@ -9092,9 +9274,9 @@ async function naverAutoCollectTick() {
         const due = [];
         for (const r of rows) {
             const last = r.last_run_at ? new Date(r.last_run_at).getTime() : 0;
-            if (r.key === 'settlement' || r.key === 'product_snapshot' || r.key === 'cafe24_sync') {
+            if (r.key === 'settlement' || r.key === 'product_snapshot' || r.key === 'cafe24_sync' || r.key === 'coupon_expire_notify') {   /* #467: 쿠폰 만료 안내 = 하루 1회 10:00 */
                 // 하루 1회 — 실행 시각(KST) 앵커: 오늘 앵커 시각이 지났고, 마지막 실행이 앵커 이전이면 due (product_snapshot 기본 04:30 · cafe24_sync 05:10)
-                const [hh, mm] = String(r.run_at_time || ({ product_snapshot: '04:30', cafe24_sync: '05:10' }[r.key] || '09:30')).split(':').map(Number);
+                const [hh, mm] = String(r.run_at_time || ({ product_snapshot: '04:30', cafe24_sync: '05:10', coupon_expire_notify: '10:00' }[r.key] || '09:30')).split(':').map(Number);
                 const anchor = Date.UTC(kstNow.getUTCFullYear(), kstNow.getUTCMonth(), kstNow.getUTCDate(), hh, mm) - 9 * 3600 * 1000;
                 if (now >= anchor && last < anchor) due.push({ r, waited: now - anchor });
             } else {
@@ -9106,7 +9288,8 @@ async function naverAutoCollectTick() {
         due.sort((a, b) => b.waited - a.waited);
         const { r } = due[0];              // 한 틱에 1개만 — 실행 시각 자연 분산(rate limit 몰림 방지)
         const fn = { settlement: collectSettlement, order: collectOrderNew, claim: collectClaim, inquiry: collectInquiry, qna: collectQna, kakao_notify: collectKakaoNotify, lms_guide: collectLmsGuide, product_snapshot: collectProductSnapshot, cafe24_sync: collectCafe24Sync,
-            cafe24_notify: collectCafe24Notify, cafe24_guide: collectCafe24Guide, coupang_notify: collectCoupangNotify, coupang_guide: collectCoupangGuide, welcome_notify: collectWelcomeNotify }[r.key];   // #401 다채널
+            cafe24_notify: collectCafe24Notify, cafe24_guide: collectCafe24Guide, coupang_notify: collectCoupangNotify, coupang_guide: collectCoupangGuide, welcome_notify: collectWelcomeNotify,
+            coupon_expire_notify: collectCouponExpireNotify }[r.key];   // #401 다채널 · #467 룰렛 쿠폰 만료 안내
         let status = 'ok', errMsg = null, summary = '';
         try { summary = await fn(); }
         catch (e) { status = 'fail'; errMsg = String(e && e.message || e).slice(0, 300); }
