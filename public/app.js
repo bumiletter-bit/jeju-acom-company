@@ -8540,45 +8540,74 @@ async function ssRefreshRecon() {
 }
 const ssReconIcon = (st) => st === 'ok' ? '✅' : (st === 'warn' || st === 'unpaid') ? '⚠️' : st === 'no-input' ? '📝' : '';
 function ssReconCardHtml(dateStr) {
+    // #468-c(대표 9/24 "결과값을 제일 잘 보이게, 세부는 밑으로 · 다른 사람이 봐도 실제와의 차이인 걸 알게"):
+    //   구조 = ① 「실제와의 차이」 큰 숫자 타일(총 합계 타일과 같은 인디고 타일) → ② 그 차이를 채우는 항목표(결과값 크게·세부는 작은 줄) → ③ 검산 합계.
     const r = ssRecon.byDate[dateStr];
     const f = (n) => { const v = Math.round(Number(n) || 0); return (v < 0 ? '−' : '') + Math.abs(v).toLocaleString(); };
+    const fs = (n) => { const v = Math.round(Number(n) || 0); return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toLocaleString(); };   // 부호 항상 표시
     const md = (s) => s ? `${Number(String(s).slice(5, 7))}/${Number(String(s).slice(8, 10))}` : '';
     const dow = (s) => s ? ['일', '월', '화', '수', '목', '금', '토'][new Date(s + 'T00:00:00').getDay()] : '';
     const entry = ssAll.find(e => e.date === dateStr);
     const inputHere = entry ? (Number(entry.record.settlement_scheduled) || 0) + (Number(entry.record.unsettled) || 0) : 0;
-    let inner;
+    const head = (right) => `<div class="ss-ch ss-recon-ch"><span class="ss-recon-ch-t">🛰️ 네이버 정산 대조</span>${right ? `<span class="ss-recon-head-r">${right}</span>` : ''}</div>`;
     if (!r) {
-        if (inputHere > 0) inner = `<div class="ss-recon-note">⏳ ${md(dateStr)} 발송분 — 다음 영업일 네이버 정산이 잡히면(매일 09:30) 여기서 대조됩니다.</div>`;
-        else inner = `<div class="ss-recon-note text-muted">이 날짜에 넣은 정산예정이 없습니다(발주 없는 날). 대조할 회차가 없습니다.</div>`;
-        return `<div class="ss-card" id="ss-recon-card"><div class="ss-ch">🛰️ 네이버 정산 대조</div>${inner}</div>`;
+        const note = inputHere > 0
+            ? `⏳ ${md(dateStr)}(${dow(dateStr)}) 발송분은 다음 영업일에 네이버 정산이 잡히면(매일 09:30) 여기서 실입금과 비교됩니다.`
+            : `이 날짜에 넣은 정산예정이 없어 비교할 네이버 정산이 없습니다(발주 없는 날).`;
+        return `<div class="ss-card" id="ss-recon-card">${head(inputHere > 0 ? '<span class="ss-badge ss-recon-badge wait">⏳ 입금 전</span>' : '')}<div class="ss-recon-note${inputHere > 0 ? '' : ' text-muted'}">${note}</div></div>`;
     }
+    const input = r.input_sum == null ? null : Number(r.input_sum);
+    const settle = Number(r.settle_amount) || 0;
+    const adj = Number(r.benefit) + Number(r.return_care) + Number(r.deduction);
     const period = r.basis_start === r.basis_end ? `${md(r.basis_start)}(${dow(r.basis_start)}) 발송분` : `${md(r.basis_start)}~${md(r.basis_end)} 발송분 묶음`;
-    const paid = r.complete_date ? `${md(r.complete_date)}(${dow(r.complete_date)}) 입금 완료` : (r.expect_date < ssRecon.today ? '⚠️ 예정일 지남 · 완료 기록 없음' : `${md(r.expect_date)}(${dow(r.expect_date)}) 입금 예정`);
-    const icon = ssReconIcon(r.status);
-    const pct = r.input_sum ? (100 * Number(r.diff1) / Number(r.input_sum)).toFixed(1) + '%' : '';
-    const adjTotal = Number(r.benefit) + Number(r.return_care) + Number(r.deduction);
-    const carry = [];
-    if (Number(r.carried_in_count) > 0) carry.push(`전날 집화 지연분이 이번 회차에 들어옴 <b>+${f(r.carried_in)}</b>(${r.carried_in_count}건)`);
-    if (Number(r.pending_out_count) > 0) carry.push(`이 기간 발송인데 집화 미처리로 <b>다음 정산</b>에 넘어간 주문 <b>${r.pending_out_count}건</b>`);
-    if (Number(r.reversal_count) > 0) carry.push(`앞서 정산된 주문의 취소·회수 <b>${f(r.reversal)}</b>(${r.reversal_count}건)`);
-    if (Number(r.unknown_count) > 0) carry.push(`발송일 확인 안 되는 건 ${r.unknown_count}건(${f(r.unknown_amount)})`);
+    const paid = r.complete_date ? `${md(r.complete_date)}(${dow(r.complete_date)}) 입금` : (r.expect_date < ssRecon.today ? '입금 확인 안 됨' : `${md(r.expect_date)}(${dow(r.expect_date)}) 입금 예정`);
+    const badge = r.status === 'ok' ? '<span class="ss-badge ss-recon-badge ok">✅ 일치</span>'
+        : r.status === 'warn' ? '<span class="ss-badge ss-recon-badge warn">⚠️ 차이 큼</span>'
+        : r.status === 'unpaid' ? '<span class="ss-badge ss-recon-badge warn">⚠️ 미입금</span>'
+        : '<span class="ss-badge ss-recon-badge wait">📝 미입력</span>';
     const usedInp = (r.input_dates || []).find(x => x.used) || (r.input_dates || [])[(r.input_dates || []).length - 1];
-    const inputLine = r.status === 'no-input'
-        ? `<tr><th>넣은 값(정산예정+미정산)</th><td class="ss-recon-neg">📝 정산현황 미입력 — 입력·저장하면 자동 대조</td></tr>`
-        : `<tr><th>넣은 값(정산예정+미정산)</th><td>${f(r.input_sum)}${usedInp && (r.input_dates || []).length > 1 ? ` <span class="text-muted">(묶음 — ${md(usedInp.date)} 기록 기준: 정산예정 ${f(usedInp.scheduled)} + 미정산 ${f(usedInp.unsettled)})</span>` : ''}</td></tr>`;
-    inner = `
-      <table class="ss-tbl ss-recon-tbl">
-        ${inputLine}
-        <tr><th>네이버 정산 기준 · 이 기간 발송 주문(결제−수수료)</th><td>${f(r.in_period)} <span class="text-muted">(${r.in_period_count}건)</span></td></tr>
-        ${r.status !== 'no-input' ? `<tr class="ss-hl"><th>① 넣은 값과의 차이 (발주 후 취소·집화 이월)</th><td class="${r.status === 'warn' ? 'ss-recon-neg' : ''}">${f(r.diff1)} ${pct ? '<span class="text-muted">(' + pct + ')</span>' : ''} ${r.status === 'warn' ? '⚠️' : '✅'}</td></tr>` : ''}
-        <tr><th>② 네이버 조정 (정산예정에 없는 사후 차감)</th><td>${f(adjTotal)} <span class="text-muted">리뷰적립 ${f(r.benefit)} · 반품케어 ${f(r.return_care)} · 공제 ${f(r.deduction)}</span></td></tr>
-        ${carry.length ? `<tr><th>집화 이월·취소 회수</th><td>${carry.join('<br>')}</td></tr>` : ''}
-        <tr class="ss-tr"><th>실입금</th><td>${f(r.settle_amount)} <span class="text-muted">· 결제 ${f(r.pay_amount)} · 수수료 ${f(r.commission)}</span></td></tr>
-        ${r.status !== 'no-input' ? `<tr><th>넣은 값 대비 실입금</th><td>${f(Number(r.settle_amount) - Number(r.input_sum))}</td></tr>` : ''}
-      </table>
-      ${r.status === 'warn' ? '<div class="ss-recon-note ss-recon-neg">⚠️ 취소·이월 차이가 0.5%를 넘습니다. 발주 시트에 취소 주문이 섞였거나 집화가 다음날로 넘어갔는지 확인하세요.</div>' : ''}
-      ${r.status === 'unpaid' ? '<div class="ss-recon-note ss-recon-neg">⚠️ 정산 예정일이 지났는데 완료 기록이 없습니다. 스마트스토어 정산 관리에서 확인하세요.</div>' : ''}`;
-    return `<div class="ss-card" id="ss-recon-card"><div class="ss-ch">🛰️ 네이버 정산 대조 <span class="text-muted" style="font-weight:400;font-size:12px;margin-left:6px;">${period} → ${paid} ${icon}</span></div>${inner}</div>`;
+    const inputNote = usedInp && (r.input_dates || []).length > 1 ? `<br>넣은 값 = ${md(usedInp.date)} 기록(정산예정 ${f(usedInp.scheduled)} + 미정산 ${f(usedInp.unsettled)})` : '';
+
+    // ① 큰 숫자 타일 — 실제와의 차이(실입금 − 넣은 값). 미입력이면 실입금만.
+    let hero;
+    if (input == null) {
+        hero = `<div class="ss-sc total ss-recon-hero"><div class="ss-total-left"><div class="ss-sc-lbl">네이버 실입금</div><div class="ss-sc-sub">${period} → ${paid} · 정산현황이 비어 있어 차이를 계산하지 못했습니다</div></div>
+            <div class="ss-total-right"><div class="ss-sc-val-total">${f(settle)}</div><div class="ss-sc-sub">입력·저장하면 자동으로 비교됩니다</div></div></div>`;
+    } else {
+        const diff = settle - input;
+        const pct = input ? (100 * diff / input).toFixed(1) : '0.0';
+        hero = `<div class="ss-sc total ss-recon-hero"><div class="ss-total-left"><div class="ss-sc-lbl">실제와의 차이</div><div class="ss-sc-sub">넣은 값 ${f(input)} → 실입금 ${f(settle)}</div></div>
+            <div class="ss-total-right"><div class="ss-sc-val-total ${diff < 0 ? 'r' : ''}">${fs(diff)}</div><div class="ss-sc-sub">${diff === 0 ? '넣은 값 그대로 들어왔습니다' : diff < 0 ? `넣은 값보다 ${f(Math.abs(diff))}원 적게 들어옴 (${pct}%)` : `넣은 값보다 ${f(diff)}원 더 들어옴 (+${pct}%)`}</div></div></div>`;
+    }
+
+    // ② 차이를 채우는 항목표 — 결과값(오른쪽 큰 숫자) + 세부(아래 작은 줄)
+    const row = (label, val, sub, opt = {}) => `<tr${opt.cls ? ` class="${opt.cls}"` : ''}><th>${label}</th><td><div class="ss-recon-val ${Number(val) < 0 ? 'ss-neg' : Number(val) > 0 ? 'ss-pos' : ''}">${opt.raw != null ? opt.raw : fs(val)}${opt.flag ? ' ' + opt.flag : ''}</div>${sub ? `<div class="ss-recon-sub">${sub}</div>` : ''}</td></tr>`;
+    const rows = [];
+    if (input != null) {
+        const d1 = -Number(r.diff1 || 0);   // 실입금 관점 부호(넣은 값보다 적게 정산되면 마이너스)
+        rows.push(row('발주 후 취소·집화 이월', d1, `넣은 값 ${f(input)} − 실제 정산 ${f(r.in_period)}(${r.in_period_count}건)${inputNote}`, { flag: r.status === 'warn' ? '⚠️' : '' }));
+    }
+    rows.push(row('네이버 조정 (정산예정에 없는 사후 차감)', adj, `리뷰 적립·등급 쿠폰 등 혜택 ${f(r.benefit)} · 반품안심케어 ${f(r.return_care)} · 공제 환급 ${f(r.deduction)}`));
+    if (Number(r.reversal_count) > 0) rows.push(row('앞서 정산된 주문의 취소·회수', r.reversal, `${r.reversal_count}건 · 이미 들어온 돈을 이번 회차에서 되가져감`));
+    if (Number(r.carried_in_count) > 0) rows.push(row('전날 집화 지연분 유입', r.carried_in, `${r.carried_in_count}건 · 전날 발송인데 집화가 늦어 이번 회차에 들어옴`));
+    if (Number(r.unknown_count) > 0) rows.push(row('발송일 확인 안 되는 주문', r.unknown_amount, `${r.unknown_count}건`));
+    if (Number(r.pending_out_count) > 0) rows.push(row('집화 대기 (다음 정산으로 넘어감)', 0, `이 기간 발송인데 집화 미처리 · 금액은 다음 회차에서 「유입」으로 표시`, { raw: `${r.pending_out_count}건` }));
+    let sumRow = '';
+    if (input != null) {
+        const explained = -Number(r.diff1 || 0) + Number(r.carried_in || 0) + Number(r.reversal || 0) + Number(r.unknown_amount || 0) + adj;
+        const residual = Math.round((settle - input) - explained);
+        if (residual !== 0) rows.push(row('기타 (분류 안 됨)', residual, '네이버 회차 총액과 건별 합의 차이'));
+        sumRow = row('합계 = 실제와의 차이', settle - input, '위 항목을 모두 더한 값 · 큰 숫자와 같습니다', { cls: 'ss-tr' });
+    }
+    const warnNote = r.status === 'warn' ? `<div class="ss-recon-note ss-recon-neg">⚠️ 취소·이월 차이가 큽니다(허용 0.5%·10만원 초과). 발주 시트에 취소 주문이 섞였거나 집화가 다음날로 넘어갔는지 확인하세요.</div>`
+        : r.status === 'unpaid' ? `<div class="ss-recon-note ss-recon-neg">⚠️ 정산 예정일이 지났는데 완료 기록이 없습니다. 스마트스토어 정산 관리에서 확인하세요.</div>` : '';
+    const foot = `${warnNote}<div class="ss-recon-foot">결제 ${f(r.pay_amount)} · 수수료 ${f(r.commission)} · 실입금 = 결제 − 수수료 − 네이버 조정</div>`;
+    return `<div class="ss-card" id="ss-recon-card">${head(`${period} → ${paid} ${badge}`)}
+      <div class="ss-recon-body">${hero}
+        <div class="ss-recon-sub-title">차이 내역</div>
+        <table class="ss-tbl ss-recon-tbl">${rows.join('')}${sumRow}</table>
+        ${foot}
+      </div></div>`;
 }
 
 async function ssInit() {

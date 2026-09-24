@@ -60,7 +60,11 @@ const ok = (name, pass, note) => { results.push({ name, pass }); console.log((pa
         await pg.evaluate(() => ssSelectDate('2026-09-17'));
         await pg.waitForFunction(() => !!document.getElementById('ss-recon-card'), null, { timeout: 8000 });
         const c17 = await pg.evaluate(() => document.getElementById('ss-recon-card').innerText.replace(/\s+/g, ' '));
-        ok('9/17 카드 = warn · 넣은 값 34,810,387 · 기간 내 31,988,293 · ① 2,822,094 ⚠️ · 조정 −97,700 · 집화 대기 3건 · 실입금 31,890,593 · 0.5% 안내', /9\/17\(목\) 발송분/.test(c17) && /34,810,387/.test(c17) && /31,988,293/.test(c17) && /2,822,094/.test(c17) && /−97,700/.test(c17) && /다음 정산에 넘어간 주문 3건/.test(c17) && /31,890,593/.test(c17) && /0\.5%를 넘습니다/.test(c17), c17.slice(0, 160));
+        ok('9/17 카드 = ⚠️ 차이 큼 배지 · 「실제와의 차이」 −2,919,794 큰 숫자 · 취소·이월 −2,822,094 ⚠️(세부: 넣은 값 34,810,387 − 정산 31,988,293) · 네이버 조정 −97,700(세부 아래 줄) · 취소·회수 −66,414 · 집화 대기 3건 · 합계 = 실제와의 차이 · 실입금 31,890,593',
+            /9\/17\(목\) 발송분/.test(c17) && /⚠️ 차이 큼/.test(c17) && /실제와의 차이 넣은 값 34,810,387 → 실입금 31,890,593 −2,919,794/.test(c17) && /적게 들어옴/.test(c17)
+            && /발주 후 취소·집화 이월 −2,822,094 ⚠️ 넣은 값 34,810,387 − 실제 정산 31,988,293\(640건\)/.test(c17) && /취소·이월 차이가 큽니다/.test(c17)
+            && /네이버 조정 \(정산예정에 없는 사후 차감\) −97,700 리뷰 적립·등급 쿠폰 등 혜택 −77,700 · 반품안심케어 −20,000 · 공제 환급 0/.test(c17)
+            && /집화 대기 \(다음 정산으로 넘어감\) 3건/.test(c17) && /합계 = 실제와의 차이 −2,919,794/.test(c17), c17.slice(0, 220));
         const tblRows = await pg.evaluate(() => document.querySelectorAll('#ss-wrap .ss-tbl:not(.ss-recon-tbl) tr').length);
         const inputVal = await pg.evaluate(() => document.querySelector('#ss-wrap input[oninput*="settlement_scheduled"]').value);
         ok('기존 정산 내역 표·입력값 무회귀(정산예정 34,810,387 그대로)', inputVal === '34,810,387' && tblRows >= 15, `rows ${tblRows}`);
@@ -77,15 +81,15 @@ const ok = (name, pass, note) => { results.push({ name, pass }); console.log((pa
         await pg.evaluate(() => ssSelectDate('2026-09-20'));
         await pg.waitForTimeout(400);
         const c20 = await pg.evaluate(() => document.getElementById('ss-recon-card').innerText.replace(/\s+/g, ' '));
-        ok('9/20 카드 = 묶음(9/18~9/20) ✅ · 넣은 값 63,914,574(9/20 기록 기준: 정산예정 + 미정산) · 유입 +120,000(3건) · 취소·회수 −66,414(2건) · 실입금 63,242,933', /9\/18~9\/20 발송분 묶음/.test(c20) && /63,914,574/.test(c20) && /9\/20 기록 기준: 정산예정 23,317,068 \+ 미정산 40,597,506/.test(c20) && /\+120,000/.test(c20) && /취소·회수 −66,414\(2건\)/.test(c20) && /63,242,933/.test(c20) && /✅/.test(c20), c20.slice(0, 140));
+        ok('9/20 카드 = 묶음(9/18~9/20) ✅ · 넣은 값 63,914,574(9/20 기록 기준: 정산예정 + 미정산) · 유입 +120,000(3건) · 취소·회수 −66,414(2건) · 실입금 63,242,933', /9\/18~9\/20 발송분 묶음/.test(c20) && /63,914,574/.test(c20) && /넣은 값 = 9\/20 기록\(정산예정 23,317,068 \+ 미정산 40,597,506\)/.test(c20) && /전날 집화 지연분 유입 \+120,000 3건/.test(c20) && /앞서 정산된 주문의 취소·회수 −66,414 2건/.test(c20) && /63,242,933/.test(c20) && /✅ 일치/.test(c20) && /합계 = 실제와의 차이 −671,641/.test(c20), c20.slice(0, 200));
         await pg.evaluate(() => ssSelectDate('2026-09-21'));
         await pg.waitForTimeout(400);
         const c21 = await pg.evaluate(() => document.getElementById('ss-recon-card').innerText.replace(/\s+/g, ' '));
-        ok('9/21 카드 = 미입력 안내(📝) · 실입금 23,933,714', /정산현황 미입력/.test(c21) && /23,933,714/.test(c21) && /📝/.test(c21));
+        ok('9/21 카드 = 📝 미입력 배지 · 실입금 23,933,714 큰 숫자 · 「정산현황이 비어 있어」 안내 · 차이 내역엔 취소·이월 줄 없음', /📝 미입력/.test(c21) && /네이버 실입금/.test(c21) && /23,933,714/.test(c21) && /비어 있어/.test(c21) && !/발주 후 취소·집화 이월/.test(c21), c21.slice(0, 160));
         await pg.evaluate(() => ssSelectDate('2026-09-23'));
         await pg.waitForTimeout(400);
         const c23 = await pg.evaluate(() => document.getElementById('ss-recon-card').innerText.replace(/\s+/g, ' '));
-        ok('9/23 카드 = 회차 없음 안내(발주 없는 날)', /대조할 회차가 없습니다|다음 영업일 네이버 정산이 잡히면/.test(c23), c23.slice(0, 100));
+        ok('9/23 카드 = 회차 없음 안내(발주 없는 날)', /비교할 네이버 정산이 없습니다|네이버 정산이 잡히면/.test(c23), c23.slice(0, 100));
         // 저장 버튼 → POST 가로채기 → 대조 재조회 1회 이상
         await pg.evaluate(() => ssSelectDate('2026-09-17'));
         await pg.waitForTimeout(300);
