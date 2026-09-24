@@ -8560,17 +8560,19 @@ function ssReconCardHtml(dateStr) {
     const carry = [];
     if (Number(r.carried_in_count) > 0) carry.push(`전날 집화 지연분이 이번 회차에 들어옴 <b>+${f(r.carried_in)}</b>(${r.carried_in_count}건)`);
     if (Number(r.pending_out_count) > 0) carry.push(`이 기간 발송인데 집화 미처리로 <b>다음 정산</b>에 넘어간 주문 <b>${r.pending_out_count}건</b>`);
+    if (Number(r.reversal_count) > 0) carry.push(`앞서 정산된 주문의 취소·회수 <b>${f(r.reversal)}</b>(${r.reversal_count}건)`);
     if (Number(r.unknown_count) > 0) carry.push(`발송일 확인 안 되는 건 ${r.unknown_count}건(${f(r.unknown_amount)})`);
+    const usedInp = (r.input_dates || []).find(x => x.used) || (r.input_dates || [])[(r.input_dates || []).length - 1];
     const inputLine = r.status === 'no-input'
         ? `<tr><th>넣은 값(정산예정+미정산)</th><td class="ss-recon-neg">📝 정산현황 미입력 — 입력·저장하면 자동 대조</td></tr>`
-        : `<tr><th>넣은 값(정산예정+미정산)</th><td>${f(r.input_sum)}${(r.input_dates || []).length > 1 ? ` <span class="text-muted">(${(r.input_dates || []).map(x => md(x.date)).join('+')})</span>` : ''}</td></tr>`;
+        : `<tr><th>넣은 값(정산예정+미정산)</th><td>${f(r.input_sum)}${usedInp && (r.input_dates || []).length > 1 ? ` <span class="text-muted">(묶음 — ${md(usedInp.date)} 기록 기준: 정산예정 ${f(usedInp.scheduled)} + 미정산 ${f(usedInp.unsettled)})</span>` : ''}</td></tr>`;
     inner = `
       <table class="ss-tbl ss-recon-tbl">
         ${inputLine}
         <tr><th>네이버 정산 기준 · 이 기간 발송 주문(결제−수수료)</th><td>${f(r.in_period)} <span class="text-muted">(${r.in_period_count}건)</span></td></tr>
         ${r.status !== 'no-input' ? `<tr class="ss-hl"><th>① 넣은 값과의 차이 (발주 후 취소·집화 이월)</th><td class="${r.status === 'warn' ? 'ss-recon-neg' : ''}">${f(r.diff1)} ${pct ? '<span class="text-muted">(' + pct + ')</span>' : ''} ${r.status === 'warn' ? '⚠️' : '✅'}</td></tr>` : ''}
         <tr><th>② 네이버 조정 (정산예정에 없는 사후 차감)</th><td>${f(adjTotal)} <span class="text-muted">리뷰적립 ${f(r.benefit)} · 반품케어 ${f(r.return_care)} · 공제 ${f(r.deduction)}</span></td></tr>
-        ${carry.length ? `<tr><th>집화 이월</th><td>${carry.join('<br>')}</td></tr>` : ''}
+        ${carry.length ? `<tr><th>집화 이월·취소 회수</th><td>${carry.join('<br>')}</td></tr>` : ''}
         <tr class="ss-tr"><th>실입금</th><td>${f(r.settle_amount)} <span class="text-muted">· 결제 ${f(r.pay_amount)} · 수수료 ${f(r.commission)}</span></td></tr>
         ${r.status !== 'no-input' ? `<tr><th>넣은 값 대비 실입금</th><td>${f(Number(r.settle_amount) - Number(r.input_sum))}</td></tr>` : ''}
       </table>

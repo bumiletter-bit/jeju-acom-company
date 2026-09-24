@@ -23,7 +23,7 @@ const ok = (name, pass, note) => { results.push({ name, pass }); console.log((pa
         const tbl = (await db.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_name='naver_settle_recon'`)).rows[0].n;
         const admins = (await db.query(`SELECT id, name FROM users WHERE role='admin' AND deleted_at IS NULL ORDER BY id`)).rows;
         await db.end();
-        ok('DB 테이블 naver_settle_recon 생성(컬럼 27) · 활성 관리자 = 대표·조가영 2명', tbl === 27 && admins.length === 2, admins.map(a => a.name).join('·'));
+        ok('DB 테이블 naver_settle_recon 생성(컬럼 29) · 활성 관리자 = 대표·조가영 2명', tbl === 29 && admins.length === 2, admins.map(a => a.name).join('·') + ` · cols ${tbl}`);
         const token = jwt.sign({ id: ceo.id, name: ceo.name, position: '대표', role: 'admin' }, 'verifytest', { expiresIn: '15m' });
         const H = { Authorization: 'Bearer ' + token };
         const api1 = await (await fetch(`http://localhost:${PORT}/api/agent-office/settle-recon`, { headers: H })).json();
@@ -39,7 +39,7 @@ const ok = (name, pass, note) => { results.push({ name, pass }); console.log((pa
         pg.on('dialog', d => d.accept());
         const fake = { today: '2026-09-24', rows: [
             { expect_date: '2026-09-18', basis_start: '2026-09-17', basis_end: '2026-09-17', complete_date: '2026-09-18', pay_amount: 34286100, commission: -2297807, benefit: -77700, return_care: -20000, deduction: 0, settle_amount: 31890593, case_total: 31890593, in_period: 31988293, in_period_count: 640, carried_in: 0, carried_in_count: 0, unknown_amount: 0, unknown_count: 0, pending_out_count: 3, input_sum: 34810387, input_dates: [{ date: '2026-09-17' }], diff1: 2822094, status: 'warn', detail: {} },
-            { expect_date: '2026-09-21', basis_start: '2026-09-18', basis_end: '2026-09-20', complete_date: '2026-09-21', pay_amount: 68035900, commission: -4494017, benefit: -230900, return_care: -61350, deduction: -6700, settle_amount: 63242933, case_total: 63242933, in_period: 63541883, in_period_count: 1190, carried_in: 120000, carried_in_count: 3, unknown_amount: 0, unknown_count: 0, pending_out_count: 0, input_sum: 63914574, input_dates: [{ date: '2026-09-18' }, { date: '2026-09-20' }], diff1: 372691, status: 'ok', detail: {} },
+            { expect_date: '2026-09-21', basis_start: '2026-09-18', basis_end: '2026-09-20', complete_date: '2026-09-21', pay_amount: 68035900, commission: -4494017, benefit: -230900, return_care: -61350, deduction: -6700, settle_amount: 63242933, case_total: 63242933, in_period: 63541883, in_period_count: 1190, carried_in: 120000, carried_in_count: 3, unknown_amount: 0, unknown_count: 0, pending_out_count: 0, reversal: -66414, reversal_count: 2, input_sum: 63914574, input_dates: [{ date: '2026-09-18', scheduled: 23327884, unsettled: 292915 }, { date: '2026-09-20', scheduled: 23317068, unsettled: 40597506, used: true }], diff1: 372691, status: 'ok', detail: {} },
             { expect_date: '2026-09-22', basis_start: '2026-09-21', basis_end: '2026-09-21', complete_date: '2026-09-22', pay_amount: 25786800, commission: -1718277, benefit: -119009, return_care: -15800, deduction: 0, settle_amount: 23933714, case_total: 23933714, in_period: 24068523, in_period_count: 500, carried_in: 0, carried_in_count: 0, unknown_amount: 0, unknown_count: 0, pending_out_count: 0, input_sum: null, input_dates: [], diff1: null, status: 'no-input', detail: {} },
         ] };
         await pg.route('**/api/agent-office/settle-recon*', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fake) }));
@@ -77,7 +77,7 @@ const ok = (name, pass, note) => { results.push({ name, pass }); console.log((pa
         await pg.evaluate(() => ssSelectDate('2026-09-20'));
         await pg.waitForTimeout(400);
         const c20 = await pg.evaluate(() => document.getElementById('ss-recon-card').innerText.replace(/\s+/g, ' '));
-        ok('9/20 카드 = 묶음(9/18~9/20) ✅ · 넣은 값 63,914,574(9/18+9/20) · 유입 +120,000(3건) · 실입금 63,242,933', /9\/18~9\/20 발송분 묶음/.test(c20) && /63,914,574/.test(c20) && /9\/18\+9\/20/.test(c20) && /\+120,000/.test(c20) && /63,242,933/.test(c20) && /✅/.test(c20), c20.slice(0, 140));
+        ok('9/20 카드 = 묶음(9/18~9/20) ✅ · 넣은 값 63,914,574(9/20 기록 기준: 정산예정 + 미정산) · 유입 +120,000(3건) · 취소·회수 −66,414(2건) · 실입금 63,242,933', /9\/18~9\/20 발송분 묶음/.test(c20) && /63,914,574/.test(c20) && /9\/20 기록 기준: 정산예정 23,317,068 \+ 미정산 40,597,506/.test(c20) && /\+120,000/.test(c20) && /취소·회수 −66,414\(2건\)/.test(c20) && /63,242,933/.test(c20) && /✅/.test(c20), c20.slice(0, 140));
         await pg.evaluate(() => ssSelectDate('2026-09-21'));
         await pg.waitForTimeout(400);
         const c21 = await pg.evaluate(() => document.getElementById('ss-recon-card').innerText.replace(/\s+/g, ' '));
