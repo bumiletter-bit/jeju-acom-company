@@ -1026,6 +1026,18 @@ async function initDB() {
         await pool.query(`ALTER TABLE reward_grants ADD COLUMN IF NOT EXISTS ${c}`);
     }
     await pool.query(`INSERT INTO naver_auto_collect (key, enabled, interval_min, run_at_time) VALUES ('coupon_expire_notify', true, 1440, '10:00') ON CONFLICT (key) DO NOTHING`);
+    // #468(대표 GO 9/24): 네이버 정산 대조 — 회차(정산 예정일)별 「정산현황 넣은 값 ↔ 실입금」 분해 결과. settlement_status는 무접촉(읽기만).
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS naver_settle_recon (
+            expect_date DATE PRIMARY KEY,
+            basis_start DATE, basis_end DATE, complete_date DATE,
+            pay_amount NUMERIC, commission NUMERIC, benefit NUMERIC, return_care NUMERIC, deduction NUMERIC, settle_amount NUMERIC,
+            case_total NUMERIC, in_period NUMERIC, in_period_count INTEGER, carried_in NUMERIC, carried_in_count INTEGER,
+            unknown_amount NUMERIC, unknown_count INTEGER, pending_out_count INTEGER, pending_out_ids JSONB,
+            input_sum NUMERIC, input_dates JSONB, diff1 NUMERIC, status VARCHAR(20), detail JSONB,
+            computed_at TIMESTAMPTZ, notified_at TIMESTAMPTZ, notified_status VARCHAR(20)
+        )
+    `);
     // ── 지시 #68 C5: 시즌 오픈 대기 신청 (연락처는 발송 목적상 원문 저장 — 화면 표시는 마스킹, soft-delete)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS season_waitlist (
@@ -4902,6 +4914,8 @@ app.post('/api/settlement-status', authMiddleware, adminOnly, async (req, res) =
         `, [date, current_cash||0, settlement_scheduled||0, unsettled||0, coupang_unpaid||0, selfmall_unpaid||0,
             ad_naver||0, ad_gfa||0, card_fee||0, corp_card||0, hyodong||0, daesong||0, aewol||0, delivery||0, memo||'', req.user.id]);
 
+        // #468: 저장 뒤 그 날짜가 속한 네이버 정산 회차의 대조만 재계산(DB만·수 ms) — 실패해도 저장 결과 무영향
+        try { await settleReconRecomputeInputs(String(date).slice(0, 10)); } catch (e) { console.error('[settle-recon #468 save-hook]', String(e && e.message || e).slice(0, 160)); }
         res.json(result.rows[0]);
     } catch (err) {
         console.error('POST /api/settlement-status error:', err);
@@ -7243,13 +7257,204 @@ async function collectSettlement() {
     await pool.query(`INSERT INTO naver_settle_snapshot (from_date, to_date, count, elements) VALUES ($1,$2,$3,$4)`,
         [from, to, elements.length, JSON.stringify(elements)]);
     await pool.query(`DELETE FROM naver_settle_snapshot WHERE id NOT IN (SELECT id FROM naver_settle_snapshot ORDER BY id DESC LIMIT 30)`);
+    // #468: 회차별 정산 대조(건별 정산 조회 → 발송일 분류 → 정산현황 넣은 값과 대조 → 회사 알림). 실패해도 수집·스냅샷·텔레그램 무영향.
+    let reconNote = '';
+    for (const e of elements) {
+        if (!e || !e.settleExpectDate) continue;
+        try { const r = await settleReconRun(e); reconNote += ` · 대조 ${e.settleExpectDate} ${r.status}`; }
+        catch (err) { reconNote += ` · 대조 ${e.settleExpectDate} 실패(${String(err && err.message || err).slice(0, 60)})`; console.error('[settle-recon #468]', e.settleExpectDate, String(err && err.message || err).slice(0, 200)); }
+    }
     // 대표 7/27 야간 확장: 야간엔 발송 대신 브리핑 누적 (수집·기록은 평소대로)
     if (await alertEnabled('settlement')) {
         if (await alertQuietNow()) await alertNightAcc('settlement', elements.length || 1);
         else notifyTelegram(await alertText('settlement', { '건수': elements.length, '시작일': from, '종료일': to }));
     }
-    return `정산 ${from}~${to} ${elements.length}건`;
+    return `정산 ${from}~${to} ${elements.length}건${reconNote}`;
 }
+
+// ══════════ #468(대표 GO 9/24): 네이버 정산 대조 — 「정산현황에 넣은 정산예정금액 ↔ 네이버 실입금」 회차별 분해 ══════════
+//   대표 이해(검증됨 · 9/24 23회 항등식): 실입금 = (결제 − 수수료) − 혜택(리뷰 적립 등) − 반품안심케어 − 공제환급.
+//   ① 넣은 값과 「그 발송일 주문의 정산액」 차이 = 발주 후 취소·집화 지연 이월 ② 네이버 조정 = 정산예정금액에 원래 없는 사후 차감(정상).
+//   집화 지연(대표 9/24 "택배사가 집화를 안 누르면 다음날로 넘어간다"): 회차의 건별 정산 내역(pay-settle/settle/case)을 받아
+//   우리 발송 감지일(lms_guide_log)로 나눈다 — 기준 기간 안 발송 = in_period · 기준 시작 전 발송 = 이월 유입(carried_in) ·
+//   기준 기간 안 발송인데 이번 회차에 없음 = 집화 대기(pending_out · 다음 회차에 유입으로 잡힘). settlement_status·기존 수집 무접촉.
+const SETTLE_RECON_ORDER_TYPES = new Set(['PROD_ORDER', 'DELIVERY', 'EXTRAFEE']);
+const settleReconKst = (d) => { const t = d ? new Date(d).getTime() : NaN; return isFinite(t) ? new Date(t + 9 * 3600 * 1000).toISOString().slice(0, 10) : null; };
+async function settleReconFetchCase(expectDate) {
+    let pageNumber = 1, totalPages = 1, rows = [];
+    do {
+        if (pageNumber > 1) await new Promise(r => setTimeout(r, 350));
+        const r = await naverCallWithRetry({ method: 'GET', path: '/external/v1/pay-settle/settle/case',
+            query: { searchDate: expectDate, periodType: 'SETTLE_CASEBYCASE_SETTLE_SCHEDULE_DATE', pageNumber, pageSize: 1000 } });
+        const body = (r && r.data) ? r.data : r;
+        const els = body?.elements || [];
+        rows = rows.concat(Array.isArray(els) ? els : []);
+        totalPages = Number(body?.pagination?.totalPages ?? body?.totalPages) || 1;
+        pageNumber++;
+    } while (pageNumber <= totalPages && pageNumber <= 20);
+    return rows;
+}
+// 건별 정산 행 + 우리 발송일 → 분류(순수 계산). shipMap = { productOrderId: 'YYYY-MM-DD' }
+function settleReconClassify(caseRows, basisStart, basisEnd, shipMap) {
+    const out = { case_total: 0, in_period: 0, in_period_count: 0, carried_in: 0, carried_in_count: 0, unknown_amount: 0, unknown_count: 0, adjust: {}, ids: [], carried_in_dates: {} };
+    for (const c of caseRows || []) {
+        const amt = Number(c.settleExpectAmount) || 0;
+        out.case_total += amt;
+        const t = String(c.productOrderType || '');
+        if (!SETTLE_RECON_ORDER_TYPES.has(t)) { out.adjust[t] = (out.adjust[t] || 0) + amt; continue; }
+        const pid = String(c.productOrderId || '');
+        if (pid) out.ids.push(pid);
+        const ship = pid ? shipMap[pid] : null;
+        if (!ship) { out.unknown_amount += amt; out.unknown_count++; }
+        else if (ship >= basisStart && ship <= basisEnd) { out.in_period += amt; out.in_period_count++; }
+        else if (ship < basisStart) { out.carried_in += amt; out.carried_in_count++; out.carried_in_dates[ship] = (out.carried_in_dates[ship] || 0) + amt; }
+        else { out.in_period += amt; out.in_period_count++; }   // 기준 종료일 뒤 발송으로 감지된 건(감지 지연) = 이번 회차 분으로 본다
+    }
+    return out;
+}
+// 판정: 넣은 값 없음 → no-input · 예정일 지났는데 완료일 없음 → unpaid · |①| ≤ 0.5% → ok · 그 외 warn
+function settleReconStatus({ input_sum, in_period, complete_date, expect_date, todayKst }) {
+    if (input_sum == null) return { status: 'no-input', diff1: null };
+    const diff1 = Number(input_sum) - Number(in_period || 0);
+    if (!complete_date && expect_date < todayKst) return { status: 'unpaid', diff1 };
+    const tol = Math.max(1, Math.abs(Number(input_sum)) * 0.005);
+    return { status: Math.abs(diff1) <= tol ? 'ok' : 'warn', diff1 };
+}
+async function settleReconInputs(basisStart, basisEnd) {
+    const q = await pool.query(`SELECT to_char(date,'YYYY-MM-DD') AS d, COALESCE(settlement_scheduled,0)::numeric AS s, COALESCE(unsettled,0)::numeric AS u
+        FROM settlement_status WHERE date >= $1::date AND date <= $2::date ORDER BY date`, [basisStart, basisEnd]);
+    if (!q.rows.length) return { input_sum: null, input_dates: [] };
+    let sum = 0; const dates = [];
+    for (const r of q.rows) { sum += Number(r.s) + Number(r.u); dates.push({ date: r.d, scheduled: Number(r.s), unsettled: Number(r.u) }); }
+    return { input_sum: sum, input_dates: dates };
+}
+async function settleReconRun(daily) {
+    const expect = String(daily.settleExpectDate).slice(0, 10);
+    const basisStart = String(daily.settleBasisStartDate || expect).slice(0, 10), basisEnd = String(daily.settleBasisEndDate || expect).slice(0, 10);
+    const caseRows = await settleReconFetchCase(expect);
+    const ids = [...new Set(caseRows.filter(c => SETTLE_RECON_ORDER_TYPES.has(String(c.productOrderType || ''))).map(c => String(c.productOrderId || '')).filter(Boolean))];
+    const shipMap = {};
+    if (ids.length) {
+        const s = await pool.query(`SELECT order_key, to_char(created_at + interval '9 hours','YYYY-MM-DD') AS d FROM lms_guide_log WHERE order_key = ANY($1::text[])`, [ids]);
+        for (const r of s.rows) shipMap[r.order_key] = r.d;
+    }
+    const cls = settleReconClassify(caseRows, basisStart, basisEnd, shipMap);
+    // 집화 대기 = 기준 기간에 우리가 발송 감지했는데 이번 회차 건별에 없는 주문(취소 제외 상태만)
+    const po = await pool.query(`SELECT order_key FROM lms_guide_log WHERE order_key !~ '^(c24|cp|join):' AND status <> 'canceled-excluded'
+        AND (created_at + interval '9 hours')::date >= $1::date AND (created_at + interval '9 hours')::date <= $2::date AND NOT (order_key = ANY($3::text[]))`, [basisStart, basisEnd, cls.ids.length ? cls.ids : ['-']]);
+    const pendingIds = po.rows.map(r => r.order_key);
+    const inp = await settleReconInputs(basisStart, basisEnd);
+    const st = settleReconStatus({ input_sum: inp.input_sum, in_period: cls.in_period, complete_date: daily.settleCompleteDate || null, expect_date: expect, todayKst: kstTodayStr() });
+    const row = {
+        expect_date: expect, basis_start: basisStart, basis_end: basisEnd, complete_date: daily.settleCompleteDate || null,
+        pay_amount: Number(daily.paySettleAmount) || 0, commission: Number(daily.commissionSettleAmount) || 0, benefit: Number(daily.benefitSettleAmount) || 0,
+        return_care: Number(daily.returnCareSettleAmount) || 0, deduction: Number(daily.deductionRestoreSettleAmount) || 0, settle_amount: Number(daily.settleAmount) || 0,
+        case_total: cls.case_total, in_period: cls.in_period, in_period_count: cls.in_period_count, carried_in: cls.carried_in, carried_in_count: cls.carried_in_count,
+        unknown_amount: cls.unknown_amount, unknown_count: cls.unknown_count, pending_out_count: pendingIds.length, pending_out_ids: pendingIds.slice(0, 500),
+        input_sum: inp.input_sum, input_dates: inp.input_dates, diff1: st.diff1, status: st.status,
+        detail: { adjust: cls.adjust, carried_in_dates: cls.carried_in_dates, case_rows: caseRows.length, quick: Number(daily.quickSettleAmount) || 0, normal: Number(daily.normalSettleAmount) || 0 },
+    };
+    await settleReconUpsert(row);
+    await settleReconNotify(row);
+    return row;
+}
+async function settleReconUpsert(r) {
+    await pool.query(`INSERT INTO naver_settle_recon (expect_date, basis_start, basis_end, complete_date, pay_amount, commission, benefit, return_care, deduction, settle_amount,
+            case_total, in_period, in_period_count, carried_in, carried_in_count, unknown_amount, unknown_count, pending_out_count, pending_out_ids, input_sum, input_dates, diff1, status, detail, computed_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21::jsonb,$22,$23,$24::jsonb,NOW())
+        ON CONFLICT (expect_date) DO UPDATE SET basis_start=EXCLUDED.basis_start, basis_end=EXCLUDED.basis_end, complete_date=EXCLUDED.complete_date,
+            pay_amount=EXCLUDED.pay_amount, commission=EXCLUDED.commission, benefit=EXCLUDED.benefit, return_care=EXCLUDED.return_care, deduction=EXCLUDED.deduction, settle_amount=EXCLUDED.settle_amount,
+            case_total=EXCLUDED.case_total, in_period=EXCLUDED.in_period, in_period_count=EXCLUDED.in_period_count, carried_in=EXCLUDED.carried_in, carried_in_count=EXCLUDED.carried_in_count,
+            unknown_amount=EXCLUDED.unknown_amount, unknown_count=EXCLUDED.unknown_count, pending_out_count=EXCLUDED.pending_out_count, pending_out_ids=EXCLUDED.pending_out_ids,
+            input_sum=EXCLUDED.input_sum, input_dates=EXCLUDED.input_dates, diff1=EXCLUDED.diff1, status=EXCLUDED.status, detail=EXCLUDED.detail, computed_at=NOW()`,
+        [r.expect_date, r.basis_start, r.basis_end, r.complete_date, r.pay_amount, r.commission, r.benefit, r.return_care, r.deduction, r.settle_amount,
+         r.case_total, r.in_period, r.in_period_count, r.carried_in, r.carried_in_count, r.unknown_amount, r.unknown_count, r.pending_out_count, JSON.stringify(r.pending_out_ids || []),
+         r.input_sum, JSON.stringify(r.input_dates || []), r.diff1, r.status, JSON.stringify(r.detail || {})]);
+}
+// 정산현황 저장 직후: 그 날짜가 속한 회차의 넣은 값·판정만 재계산(네이버 호출 0) — no-input → ok/warn 전환 시 알림 1회
+async function settleReconRecomputeInputs(dateStr) {
+    const q = await pool.query(`SELECT * FROM naver_settle_recon WHERE basis_start <= $1::date AND basis_end >= $1::date`, [dateStr]);
+    const out = [];
+    for (const r of q.rows) {
+        const bs = settleReconKst(r.basis_start), be = settleReconKst(r.basis_end), ex = settleReconKst(r.expect_date);
+        const inp = await settleReconInputs(bs, be);
+        const st = settleReconStatus({ input_sum: inp.input_sum, in_period: r.in_period, complete_date: r.complete_date, expect_date: ex, todayKst: kstTodayStr() });
+        await pool.query(`UPDATE naver_settle_recon SET input_sum=$2, input_dates=$3::jsonb, diff1=$4, status=$5, computed_at=NOW() WHERE expect_date=$1`, [ex, inp.input_sum, JSON.stringify(inp.input_dates), st.diff1, st.status]);
+        const row = { ...r, expect_date: ex, basis_start: bs, basis_end: be, complete_date: settleReconKst(r.complete_date), input_sum: inp.input_sum, input_dates: inp.input_dates, diff1: st.diff1, status: st.status };
+        await settleReconNotify(row);
+        out.push(row);
+    }
+    return out;
+}
+function settleReconFmt(n) { const v = Math.round(Number(n) || 0); return (v < 0 ? '−' : '') + Math.abs(v).toLocaleString('ko-KR'); }
+function settleReconMd(d) { const s = String(d || '').slice(0, 10); return s ? `${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}` : ''; }
+function settleReconMessage(r) {
+    const icon = r.status === 'ok' ? '✅' : r.status === 'warn' ? '⚠️' : r.status === 'unpaid' ? '⚠️' : '📝';
+    const period = r.basis_start === r.basis_end ? `${settleReconMd(r.basis_start)} 발송분` : `${settleReconMd(r.basis_start)}~${settleReconMd(r.basis_end)} 발송분`;
+    const title = r.status === 'unpaid'
+        ? `⚠️ ${settleReconMd(r.expect_date)} 네이버 정산 미입금 — ${period} ${settleReconFmt(r.settle_amount)}원`
+        : `🛰️ ${settleReconMd(r.expect_date)} 네이버 입금 ${settleReconFmt(r.settle_amount)}원 ${icon}`;
+    const adj = `리뷰적립 ${settleReconFmt(r.benefit)} · 반품케어 ${settleReconFmt(r.return_care)} · 공제 ${settleReconFmt(r.deduction)}`;
+    const carry = [];
+    if (Number(r.carried_in_count) > 0) carry.push(`전날 집화 지연분 유입 +${settleReconFmt(r.carried_in)}(${r.carried_in_count}건)`);
+    if (Number(r.pending_out_count) > 0) carry.push(`집화 대기 ${r.pending_out_count}건(다음 정산)`);
+    let body;
+    if (r.status === 'no-input') body = `${period} — 정산현황에 정산예정이 아직 없습니다. 입력·저장하면 자동으로 대조됩니다. ${adj}${carry.length ? ' · ' + carry.join(' · ') : ''}`;
+    else body = `${period} 넣은 값 ${settleReconFmt(r.input_sum)} 대비 실입금 ${settleReconFmt(Number(r.settle_amount) - Number(r.input_sum))} · 취소·이월 차이 ${settleReconFmt(r.diff1)} · ${adj}${carry.length ? ' · ' + carry.join(' · ') : ''}`
+        + (r.status === 'warn' ? ' · ⚠️ 취소·이월 차이가 0.5%를 넘습니다(발주 시트의 취소 주문·집화 여부 확인)' : '');
+    return { title: title.slice(0, 200), body };
+}
+// 회사 알림(종) — 활성 관리자(role admin · 미퇴사)만. 텔레그램 0. 회차당 1회 + no-input→대조 전환 시 1회.
+async function settleReconNotify(r) {
+    const cur = (await pool.query(`SELECT notified_at, notified_status FROM naver_settle_recon WHERE expect_date=$1`, [r.expect_date])).rows[0] || {};
+    const first = !cur.notified_at;
+    const promoted = cur.notified_status === 'no-input' && r.status !== 'no-input';
+    if (!first && !promoted) return false;
+    const { title, body } = settleReconMessage(r);
+    const admins = (await pool.query(`SELECT id FROM users WHERE role='admin' AND deleted_at IS NULL ORDER BY id`)).rows;
+    for (const a of admins) await createNotification(a.id, 'settle_recon', title, body, 'settlement:settlement-status');
+    await pool.query(`UPDATE naver_settle_recon SET notified_at=NOW(), notified_status=$2 WHERE expect_date=$1`, [r.expect_date, r.status]);
+    return true;
+}
+app.get('/api/agent-office/settle-recon', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const from = String(req.query.from || '').slice(0, 10) || new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+        const to = String(req.query.to || '').slice(0, 10) || kstTodayStr();
+        const q = await pool.query(`SELECT to_char(expect_date,'YYYY-MM-DD') AS expect_date, to_char(basis_start,'YYYY-MM-DD') AS basis_start, to_char(basis_end,'YYYY-MM-DD') AS basis_end,
+                to_char(complete_date,'YYYY-MM-DD') AS complete_date, pay_amount, commission, benefit, return_care, deduction, settle_amount, case_total, in_period, in_period_count,
+                carried_in, carried_in_count, unknown_amount, unknown_count, pending_out_count, input_sum, input_dates, diff1, status, detail, computed_at
+            FROM naver_settle_recon WHERE expect_date >= $1::date AND expect_date <= $2::date ORDER BY expect_date`, [from, to]);
+        res.json({ rows: q.rows, today: kstTodayStr() });
+    } catch (err) { handleAdminErr(res, err); }
+});
+// 백필·재계산 러너(실서버 전용 — 릴레이 필요): settle_recon_request {from,to} → 일별 정산 조회 후 회차마다 대조 → settle_recon_result. 🔴 배포 10분 뒤 실행(#398 롤링).
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('settle_recon_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'settle_recon_request'`);
+        const from = String(req.from || '').slice(0, 10), to = String(req.to || kstTodayStr()).slice(0, 10);
+        const out = { at: new Date().toISOString(), from, to, rows: [] };
+        try {
+            let pageNumber = 1, totalPages = 1, elements = [];
+            do {
+                if (pageNumber > 1) await new Promise(r => setTimeout(r, 350));
+                const r = await naverCallWithRetry({ method: 'GET', path: '/external/v1/pay-settle/settle/daily', query: { startDate: from, endDate: to, pageNumber, pageSize: 1000 } });
+                const body = (r && r.data) ? r.data : r;
+                const els = body?.elements || [];
+                elements = elements.concat(Array.isArray(els) ? els : []);
+                totalPages = Number(body?.pagination?.totalPages ?? body?.totalPages) || 1;
+                pageNumber++;
+            } while (pageNumber <= totalPages && pageNumber <= 10);
+            for (const e of elements) {
+                if (!e || !e.settleExpectDate) continue;
+                try { await new Promise(r => setTimeout(r, 350)); const row = await settleReconRun(e); out.rows.push({ expect: row.expect_date, status: row.status, input: row.input_sum, in_period: row.in_period, diff1: row.diff1, carried_in: row.carried_in, pending_out: row.pending_out_count, unknown: row.unknown_count, cases: row.detail.case_rows }); }
+                catch (err) { out.rows.push({ expect: e.settleExpectDate, error: String(err && err.message || err).slice(0, 160) }); }
+            }
+        } catch (e) { out.error = String(e && e.message || e).slice(0, 200); }
+        await naverCfgSet('settle_recon_result', out);
+    } catch (e) { try { await naverCfgSet('settle_recon_result', { error: String(e && e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ } }
+}, 10000);
 
 async function collectOrderNew() {
     const now = Date.now();

@@ -1062,9 +1062,11 @@ window.clickNotification = async function(id, link) {
     } catch (err) { /* ignore */ }
     document.getElementById('notification-dropdown').style.display = 'none';
     // 해당 페이지로 이동 (documents → document 보정)
-    const page = link === 'documents' ? 'document' : link;
+    const [pageRaw, tabKey] = String(link || '').split(':');   /* #468: 'settlement:settlement-status' = 페이지 + 하위 탭 */
+    const page = pageRaw === 'documents' ? 'document' : pageRaw;
     const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
     if (navItem) navItem.click();
+    if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
 };
 
 window.showAnnouncementDetail = async function(id) {
@@ -8516,8 +8518,70 @@ let ssCur = null;
 let ssCalYear = new Date().getFullYear();
 let ssCalMonth = new Date().getMonth(); // 0-based
 
+// ── #468: 네이버 정산 대조(회차별 넣은 값 ↔ 실입금) — 정산현황 값은 무접촉·표시만
+let ssRecon = { rows: [], byDate: {}, today: '' };
+async function ssLoadRecon() {
+    try {
+        const d = await api('/api/agent-office/settle-recon');
+        const byDate = {};
+        for (const r of (d.rows || [])) {
+            // 기준 기간(발송일 범위)의 모든 날짜에 회차를 매핑 — 금·토·일 묶음 정산은 여러 날짜가 같은 회차
+            let t = new Date(r.basis_start + 'T00:00:00Z').getTime(); const end = new Date(r.basis_end + 'T00:00:00Z').getTime();
+            for (; t <= end; t += 86400000) byDate[new Date(t).toISOString().slice(0, 10)] = r;
+        }
+        ssRecon = { rows: d.rows || [], byDate, today: d.today || '' };
+    } catch (_) { ssRecon = { rows: [], byDate: {}, today: '' }; }
+}
+async function ssRefreshRecon() {
+    await ssLoadRecon();
+    const card = document.getElementById('ss-recon-card');
+    if (card && ssCur) card.outerHTML = ssReconCardHtml(ssCur);
+    ssRenderCalendar();
+}
+const ssReconIcon = (st) => st === 'ok' ? '✅' : (st === 'warn' || st === 'unpaid') ? '⚠️' : st === 'no-input' ? '📝' : '';
+function ssReconCardHtml(dateStr) {
+    const r = ssRecon.byDate[dateStr];
+    const f = (n) => { const v = Math.round(Number(n) || 0); return (v < 0 ? '−' : '') + Math.abs(v).toLocaleString(); };
+    const md = (s) => s ? `${Number(String(s).slice(5, 7))}/${Number(String(s).slice(8, 10))}` : '';
+    const dow = (s) => s ? ['일', '월', '화', '수', '목', '금', '토'][new Date(s + 'T00:00:00').getDay()] : '';
+    const entry = ssAll.find(e => e.date === dateStr);
+    const inputHere = entry ? (Number(entry.record.settlement_scheduled) || 0) + (Number(entry.record.unsettled) || 0) : 0;
+    let inner;
+    if (!r) {
+        if (inputHere > 0) inner = `<div class="ss-recon-note">⏳ ${md(dateStr)} 발송분 — 다음 영업일 네이버 정산이 잡히면(매일 09:30) 여기서 대조됩니다.</div>`;
+        else inner = `<div class="ss-recon-note text-muted">이 날짜에 넣은 정산예정이 없습니다(발주 없는 날). 대조할 회차가 없습니다.</div>`;
+        return `<div class="ss-card" id="ss-recon-card"><div class="ss-ch">🛰️ 네이버 정산 대조</div>${inner}</div>`;
+    }
+    const period = r.basis_start === r.basis_end ? `${md(r.basis_start)}(${dow(r.basis_start)}) 발송분` : `${md(r.basis_start)}~${md(r.basis_end)} 발송분 묶음`;
+    const paid = r.complete_date ? `${md(r.complete_date)}(${dow(r.complete_date)}) 입금 완료` : (r.expect_date < ssRecon.today ? '⚠️ 예정일 지남 · 완료 기록 없음' : `${md(r.expect_date)}(${dow(r.expect_date)}) 입금 예정`);
+    const icon = ssReconIcon(r.status);
+    const pct = r.input_sum ? (100 * Number(r.diff1) / Number(r.input_sum)).toFixed(1) + '%' : '';
+    const adjTotal = Number(r.benefit) + Number(r.return_care) + Number(r.deduction);
+    const carry = [];
+    if (Number(r.carried_in_count) > 0) carry.push(`전날 집화 지연분이 이번 회차에 들어옴 <b>+${f(r.carried_in)}</b>(${r.carried_in_count}건)`);
+    if (Number(r.pending_out_count) > 0) carry.push(`이 기간 발송인데 집화 미처리로 <b>다음 정산</b>에 넘어간 주문 <b>${r.pending_out_count}건</b>`);
+    if (Number(r.unknown_count) > 0) carry.push(`발송일 확인 안 되는 건 ${r.unknown_count}건(${f(r.unknown_amount)})`);
+    const inputLine = r.status === 'no-input'
+        ? `<tr><th>넣은 값(정산예정+미정산)</th><td class="ss-recon-neg">📝 정산현황 미입력 — 입력·저장하면 자동 대조</td></tr>`
+        : `<tr><th>넣은 값(정산예정+미정산)</th><td>${f(r.input_sum)}${(r.input_dates || []).length > 1 ? ` <span class="text-muted">(${(r.input_dates || []).map(x => md(x.date)).join('+')})</span>` : ''}</td></tr>`;
+    inner = `
+      <table class="ss-tbl ss-recon-tbl">
+        ${inputLine}
+        <tr><th>네이버 정산 기준 · 이 기간 발송 주문(결제−수수료)</th><td>${f(r.in_period)} <span class="text-muted">(${r.in_period_count}건)</span></td></tr>
+        ${r.status !== 'no-input' ? `<tr class="ss-hl"><th>① 넣은 값과의 차이 (발주 후 취소·집화 이월)</th><td class="${r.status === 'warn' ? 'ss-recon-neg' : ''}">${f(r.diff1)} ${pct ? '<span class="text-muted">(' + pct + ')</span>' : ''} ${r.status === 'warn' ? '⚠️' : '✅'}</td></tr>` : ''}
+        <tr><th>② 네이버 조정 (정산예정에 없는 사후 차감)</th><td>${f(adjTotal)} <span class="text-muted">리뷰적립 ${f(r.benefit)} · 반품케어 ${f(r.return_care)} · 공제 ${f(r.deduction)}</span></td></tr>
+        ${carry.length ? `<tr><th>집화 이월</th><td>${carry.join('<br>')}</td></tr>` : ''}
+        <tr class="ss-tr"><th>실입금</th><td>${f(r.settle_amount)} <span class="text-muted">· 결제 ${f(r.pay_amount)} · 수수료 ${f(r.commission)}</span></td></tr>
+        ${r.status !== 'no-input' ? `<tr><th>넣은 값 대비 실입금</th><td>${f(Number(r.settle_amount) - Number(r.input_sum))}</td></tr>` : ''}
+      </table>
+      ${r.status === 'warn' ? '<div class="ss-recon-note ss-recon-neg">⚠️ 취소·이월 차이가 0.5%를 넘습니다. 발주 시트에 취소 주문이 섞였거나 집화가 다음날로 넘어갔는지 확인하세요.</div>' : ''}
+      ${r.status === 'unpaid' ? '<div class="ss-recon-note ss-recon-neg">⚠️ 정산 예정일이 지났는데 완료 기록이 없습니다. 스마트스토어 정산 관리에서 확인하세요.</div>' : ''}`;
+    return `<div class="ss-card" id="ss-recon-card"><div class="ss-ch">🛰️ 네이버 정산 대조 <span class="text-muted" style="font-weight:400;font-size:12px;margin-left:6px;">${period} → ${paid} ${icon}</span></div>${inner}</div>`;
+}
+
 async function ssInit() {
     try {
+        await ssLoadRecon();   /* #468 */
         const data = await api('/api/settlement-status');
         ssAll = data.map(row => ({
             date: row.date.split('T')[0],
@@ -8661,6 +8725,14 @@ function ssRenderCalendar() {
             }
         }
 
+        // #468: 네이버 정산 대조 표시(✅ 일치 · ⚠️ 차이/미입금 · 📝 미입력) — 넣은 정산예정이 있는데 회차가 아직 없으면 ⏳
+        const rr = ssRecon.byDate[dateStr];
+        const entryR = hasData ? ssAll.find(e => e.date === dateStr) : null;
+        const inpR = entryR ? (Number(entryR.record.settlement_scheduled) || 0) + (Number(entryR.record.unsettled) || 0) : 0;
+        // 정산현황 행이 있는 날(또는 미입력 회차)만 표시 — 묶음 기간의 토요일처럼 행 없는 날엔 표시 안 함
+        const reconIc = rr ? ((hasData || rr.status === 'no-input') ? ssReconIcon(rr.status) : '') : (inpR > 0 && dateStr >= (ssRecon.today ? new Date(new Date(ssRecon.today).getTime() - 7 * 86400000).toISOString().slice(0, 10) : '9999') ? '⏳' : '');
+        if (reconIc) amtHtml += `<div class="ss-cal-recon" title="네이버 정산 대조">${reconIc}</div>`;
+
         html += `<div class="${cls}" onclick="ssCalClick('${dateStr}', ${hasData})">
           <div class="ss-cal-num">${d}</div>
           ${amtHtml}
@@ -8784,6 +8856,7 @@ async function ssRenderMain() {
           <td><div class="ss-cmp ss-pos" id="ss_f_settle_tot">${ssFmt(n('current_cash') + n('settlement_scheduled') + n('unsettled') + n('coupang_unpaid') + n('selfmall_unpaid'))}</div></td></tr>
       </table>
     </div>
+    ${ssReconCardHtml(ssCur)}
 
     <div class="ss-slbl" id="ss-sec-ad">📢 광고비 <span class="ss-badge ss-badge-plus">+ 자산</span></div>
     <div class="ss-card">
@@ -8936,6 +9009,7 @@ async function ssPersist() {
             date: entry.date,
             ...entry.record
         });
+        ssRefreshRecon().catch(() => {});   /* #468 */
     } catch (err) {
         console.error('ssPersist error:', err);
     }
@@ -8952,6 +9026,7 @@ async function ssSaveNow() {
         });
         if (entry._temp) delete entry._temp;
         ssShowToast('✅ 저장 완료');
+        ssRefreshRecon().catch(() => {});   /* #468: 저장 뒤 서버가 회차 대조를 재계산 → 카드·달력 표시 갱신 */
     } catch (err) {
         ssShowToast('저장 실패: ' + err.message);
     }

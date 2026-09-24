@@ -3559,6 +3559,11 @@ textarea.form-input {
 .ss-cal-diff-up { color: #D32F2F; }     /* 상승: 진한 빨강 (가독성 향상) */
 .ss-cal-diff-down { color: #1565C0; }    /* 하락: 파랑 */
 .ss-cal-diff-zero { color: #888; }
+/* #468: 네이버 정산 대조 표시(달력 셀·상세 카드) */
+.ss-cal-recon { font-size: 11px; line-height: 1; margin-top: 2px; }
+.ss-recon-tbl th { font-weight: 500; }
+.ss-recon-note { font-size: 12.5px; padding: 8px 10px; color: var(--text-mid, #555); }
+.ss-recon-neg { color: #C0392B; }
 /* 선택된 셀(남색 배경)에서는 diff가 묻히지 않도록 밝은 색으로 강제 + 굵게 */
 .ss-cal-cell.ss-cal-sel .ss-cal-diff { opacity: 1; font-weight: 900; }
 .ss-cal-cell.ss-cal-sel .ss-cal-diff-up   { color: #FFB4B4 !important; text-shadow: 0 0 6px rgba(255,180,180,0.3); }
