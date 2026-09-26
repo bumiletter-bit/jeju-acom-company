@@ -152,7 +152,7 @@ function grant(id, memberId, kind, extra) { const x = { id, member_id: memberId,
     // ⑨ 템플릿 정의 2장(JSON) — 버튼 규격·변수·AD형
     const ti = kakaoNotify.couponTemplate('issue'), te = kakaoNotify.couponTemplate('expire');
     ok('⑨ 템플릿 2장 = AD형·버튼 3개(AC 최상단·WL 쿠폰함·MD)·이름 14자 이내', [ti, te].every(t => t && t.tpl_type === 'AD' && t.button.button.length === 3 && t.button.button[0].linkType === 'AC' && t.button.button[1].linkType === 'WL' && /coupon\.html$/.test(t.button.button[1].linkMo) && t.button.button[2].linkType === 'MD' && t.button.button.every(b => b.name.length <= 14)));
-    ok('⑨ 승인 전 코드 = 빈값(dry) · env로 교체 가능', kakaoNotify.couponTplCode('issue') === '' && kakaoNotify.couponTplCode('expire') === '');
+    ok('⑨ 코드 = 발급 안내 UL_7570(승인 투입 9/27) · 만료 안내 빈값(반려 → dry) · env로 교체 가능', kakaoNotify.couponTplCode('issue') === 'UL_7570' && kakaoNotify.couponTplCode('expire') === '');
 
     const fail = results.filter(r => !r.pass).length;
     console.log(`\n결과: ${results.length - fail}/${results.length}${fail ? ' — 실패 ' + fail : ''}`);

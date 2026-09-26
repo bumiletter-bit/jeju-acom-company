@@ -32,13 +32,13 @@ function templateByKey(key) {
 //   롤백 = env(또는 이 표)를 구코드(order UJ_9084 · order_reserve UJ_9085 · guide UJ_9087)로 — 아래 MD_TPL_KEY 자동 일치로 버튼까지 함께 복귀.
 // #417(대표 GO 8/28): 가입환영2(UK_5877 — 혜택 3종 문구+[문의하기]) 검수 승인 실측 → 기본 투입. 롤백 = welcome을 UJ_9086으로.
 const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UK_5877', guide: 'UK_5756',
-    coupon_issue: '', coupon_expire: '' };   /* #467: 룰렛 쿠폰 발급/만료 안내 — 검수 승인 전(빈값) = 발송 코드 없음 → 문면만 기록(dry). 승인 시 코드 기입 또는 env */
+    coupon_issue: 'UL_7570', coupon_expire: '' };   /* #467: 룰렛 쿠폰 안내 — 발급 안내 UL_7570 승인(9/27 실측 APR · 대표 GO 투입) · 만료 안내 UL_7571 반려(REJ · 빈값 = 문면만 기록 · 사유 확인 후 재신청) */
 // #467: 룰렛 쿠폰 안내 — 코드↔문안·버튼 세트(빈 코드 = 미승인 → 호출 측이 dry 처리)
 function couponTplCode(kind) { return kind === 'expire' ? (process.env.ALIGO_TPL_CODE_COUPON_EXPIRE || APPROVED_TPL.coupon_expire || '') : (process.env.ALIGO_TPL_CODE_COUPON_ISSUE || APPROVED_TPL.coupon_issue || ''); }
 function couponTemplate(kind) { return templateByKey(kind === 'expire' ? 'coupon_expire' : 'coupon_issue'); }
 // #414 🔴 문면·버튼·코드는 세트(불일치 = 알리고 발송 거부): 최종 결정된 tpl_code가 MD판이면 문안·버튼도 templates_md에서 취한다.
 //   env가 구코드(UJ)를 가리키면 자동으로 구버튼 세트 사용 — 어떤 env 상태에서도 코드↔버튼 불일치가 생기지 않는다.
-const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md', 'UK_5877': 'welcome2' };   /* #417 */
+const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md', 'UK_5877': 'welcome2', 'UL_7570': 'coupon_issue', 'UL_7571': 'coupon_expire' };   /* #417 · #467 룰렛 쿠폰(테스트 발송 sendTestOne도 이 표로 문안·버튼 일치) */
 // #417: 가입 환영 — 코드↔문안·버튼 자동 일치 (welcome-signup·테스트 발송 공용)
 function welcomeTplCode() { return process.env.ALIGO_TPL_CODE_WELCOME || APPROVED_TPL.welcome; }
 function welcomeTemplate() { const code = welcomeTplCode(); return templateByKey(MD_TPL_KEY[code] || 'welcome'); }
