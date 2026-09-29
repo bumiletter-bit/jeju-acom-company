@@ -7436,6 +7436,30 @@ app.get('/api/agent-office/settle-recon', authMiddleware, adminOnly, async (req,
         res.json({ rows: q.rows, today: kstTodayStr() });
     } catch (err) { handleAdminErr(res, err); }
 });
+// #468-d(대표 9/29 "네이버 연결된 API로 정산 확인해야 해"): 정산 API 읽기 러너 — settle_probe_request {calls:[{path:'/external/v1/pay-settle/...', query:{}}]} → settle_probe_result
+//   GET pay-settle 경로만(릴레이 허용 범위) · 건별 응답의 구매자명(purchaserName)은 제거 · 1회 최대 10콜 · 결과 캡 900k. 쓰기·저장·알림 0.
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet('settle_probe_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'settle_probe_request'`);
+        const calls = Array.isArray(req.calls) ? req.calls.slice(0, 10) : [];
+        const results = [];
+        for (const c of calls) {
+            const p = String(c && c.path || '');
+            if (!p.startsWith('/external/v1/pay-settle/')) { results.push({ path: p, error: 'not-allowed(pay-settle GET만)' }); continue; }
+            try {
+                const data = await naverCallWithRetry({ method: 'GET', path: p, query: c.query || null });
+                const body = (data && data.data) ? data.data : data;
+                if (body && Array.isArray(body.elements)) for (const e of body.elements) { if (e && typeof e === 'object') delete e.purchaserName; }
+                let s = JSON.stringify(body); if (s.length > 900000) s = s.slice(0, 900000);
+                results.push({ path: p, query: c.query || null, ok: true, size: s.length, data_str: s });
+            } catch (e) { results.push({ path: p, query: c.query || null, error: String(e && e.message || e).slice(0, 300) }); }
+            await new Promise(r => setTimeout(r, 400));
+        }
+        await naverCfgSet('settle_probe_result', { at: new Date().toISOString(), count: results.length, results });
+    } catch (e) { try { await naverCfgSet('settle_probe_result', { error: String(e && e.message || e).slice(0, 300) }); } catch (_) { /* 다음 주기 */ } }
+}, 10000);
 // 백필·재계산 러너(실서버 전용 — 릴레이 필요): settle_recon_request {from,to} → 일별 정산 조회 후 회차마다 대조 → settle_recon_result. 🔴 배포 10분 뒤 실행(#398 롤링).
 setInterval(async () => {
     try {

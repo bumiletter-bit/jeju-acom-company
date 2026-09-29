@@ -1,3 +1,6 @@
+## v5.9.361 (2026-09-29) — 서버만(러너 1종 추가)
+- 🔎 **#468-d(대표 9/29 "네이버 연결된 API로 정산 확인해야 해"): 정산 API 읽기 러너 `settle_probe_request {calls:[{path,query}]}`** — GET `/external/v1/pay-settle/*`만 · 건별 응답 구매자명 제거 · 최대 10콜 · 결과 `settle_probe_result`. 배경 = 9/29 정산현황 미정산 16,323,154 = 판매자센터 9/30 정산 예정(일별 API: 빠른정산 0 · **일반정산 16,316,534** · 건별 SCHEDULE_DATE 조회는 2행 670,138뿐)의 정체 확인용 — 결제일 UNSETTLED·기준일 조회로 어떤 주문(청귤 사전예약 등 빠른정산 제외분?)인지 확정.
+
 ## v5.9.360 (2026-09-27) — 서버(kakao-notify.js·server.js 러너 1줄)·템플릿 JSON · app.js 무변경
 - 📨 **#467-e(대표 9/27 알리고 반려 사유 캡처 "▶ 기한 안에 이용해 주세요 = 혜택 사용 독려 → 삭제"): 룰렛 쿠폰 만료 안내(UL_7571) 문안 수정·같은 코드 재검수** — `templates_roulette.coupon_expire`에서 「아직 사용하지 않으셨다면 기한 안에 이용해 주세요.」 줄 삭제(사실 통지 + 쿠폰함 위치 + 발송 근거만). `modify_code:'UL_7571'` → `registerTemplates`가 add 대신 **`/akv10/template/modify/`(같은 코드 수정) + 재검수 요청** · `only:['coupon_expire']`로 세트 안 승인본(UL_7570)은 건드리지 않음(중복 등록 방지 — #398 사고 계열). 러너 `aligo_register_request {go:'yes', audit:true, set:'roulette', only:['coupon_expire']}`(🔴 배포 10분 뒤). 반려 상태 템플릿은 코드 빈값이라 만료 안내는 계속 문면만 기록 → 승인 시 `APPROVED_TPL.coupon_expire='UL_7571'` 기입 배포.
 
