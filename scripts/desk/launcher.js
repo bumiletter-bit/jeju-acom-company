@@ -24,7 +24,7 @@ const LOG_DIR = path.join(os.homedir(), '.akkome', 'logs');
 const LOG = path.join(os.homedir(), '.akkome', 'launcher.log');
 const LOCK_PORT = 47469;
 const TICK_MS = 10000;
-const BEAT_MS = 30000;
+const BEAT_MS = parseInt(process.env.DESK_BEAT_MS, 10) || 30000;
 const RUN_TIMEOUT_MS = 25 * 60 * 1000;   // 한 건이 이보다 오래 걸리면 멈춘 것으로 본다
 const MAX_TRY = 3;                       // 같은 지시를 이만큼 실패하면 오류로 돌린다
 const REQ_TTL_MS = 300000;               // 이보다 오래된 화면 버튼 신호는 버린다
@@ -72,7 +72,7 @@ function promptFor(o) {
         + `get.js가 「이미 처리 중」이라고 하면 다른 창이 집어 간 것이니 아무것도 하지 말고 끝내세요.`;
 }
 
-const st = { busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0 };
+const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0 };
 
 function runDesk(order, key) {  // key 가 null 이면 콘솔 키 없이(대표 요금제로) 돈다 — 시험 전용
     return new Promise(resolve => {
@@ -128,12 +128,31 @@ async function nextOrder(onlyId) {
     return r.rows[0] || null;
 }
 
+async function writeState() {
+    await cfgSet('desk_launcher', {
+        at: new Date().toISOString(), host: os.hostname(), on: !!st.active, busy: st.busy, note: st.note,
+        last_done: st.lastDone, handled_req_at: st.handledReqAt, mode: 'headless',
+    });
+}
+
 async function handle(order, key) {
     st.busy = true;
     await heartbeat('busy', order.id);
+    await writeState();
+    // #475 처리하는 동안에도 「살아 있다」는 신호를 계속 보낸다.
+    //   종전엔 시작할 때 한 번만 보내 2분 넘게 걸리는 지시는 화면이 「자리 비움」으로 바뀌었다(PC가 꺼진 것으로 오해).
+    const keep = setInterval(async () => {
+        try {
+            const cur = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [order.id])).rows[0];
+            const open = !cur || ['대기', '처리중', '승인됨'].includes(cur.status);
+            if (open) await heartbeat('busy', order.id); else await heartbeat('idle');
+            await writeState();
+        } catch (e) { log('처리 중 신호 실패(무시): ' + e.message); }
+    }, BEAT_MS);
     log(`#${order.id} 처리 시작 (${order.status} · ${order.created_by || '-'} · ${key ? '콘솔' : '대표 요금제'})`);
     const t0 = Date.now();
-    const r = await runDesk(order, key);
+    let r;
+    try { r = await runDesk(order, key); } finally { clearInterval(keep); }
     const sec = Math.round((Date.now() - t0) / 1000);
     const after = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [order.id])).rows[0];
     const stillOpen = !after || ['대기', '처리중', '승인됨'].includes(after.status);
@@ -159,6 +178,7 @@ async function handle(order, key) {
     st.busy = false;
     await heartbeat('idle');
     st.lastBeat = Date.now();
+    try { await writeState(); } catch (e) { /* 다음 주기에 다시 적는다 */ }
 }
 
 async function tick(mode) {
@@ -186,10 +206,8 @@ async function tick(mode) {
     const active = !!key && !st.paused;
     if (active && !st.busy && Date.now() - st.lastBeat >= BEAT_MS) { await heartbeat('idle'); st.lastBeat = Date.now(); }
 
-    await cfgSet('desk_launcher', {
-        at: new Date().toISOString(), host: os.hostname(), on: active, busy: st.busy, note: st.note,
-        last_done: st.lastDone, handled_req_at: st.handledReqAt, mode: 'headless',
-    });
+    st.active = active;
+    await writeState();
 
     if (st.paused && !st.sub) return false;
     if (st.busy) return false;
