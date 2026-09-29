@@ -353,7 +353,8 @@ function switchPage(pageName) {
         renderMallGameConfig().catch(console.error);   // 지시 #85 STEP3 — 게임 운영 설정
     }
     if (pageName === 'myinfo') renderMyInfoPage();
-    if (pageName === 'agent-office') renderAgentOffice().catch(console.error);
+    // #469: 에이전트 오피스 = 클코 창구 화면(ao-desk.js). 파일이 없으면 종전 화면으로
+    if (pageName === 'agent-office') Promise.resolve(window.aoDeskEnter ? window.aoDeskEnter() : renderAgentOffice()).catch(console.error);
 }
 
 // =============================================
@@ -11458,6 +11459,9 @@ window.aoDiscardLesson = async function(lessonId, agentId) {
 };
 
 // ---- 보고서함 ----
+// #469: 창구(클코)가 처리한 실행은 첫 단계의 행위자가 '클코' — 보고서함 표기용
+function aoRunIsDesk(r) { const s = r && Array.isArray(r.steps) ? r.steps[0] : null; return !!(s && s.actor === '클코'); }
+function aoRunWho(r) { return aoRunIsDesk(r) ? '클코' : (r.agent_name || ''); }
 async function aoLoadReports() {
     const team = document.getElementById('ao-report-team').value;
     const agentId = document.getElementById('ao-report-agent').value;
@@ -11495,8 +11499,8 @@ async function aoLoadReports() {
                 : '<span style="cursor:pointer;" title="클릭하면 전체 질문 표시" data-full="' + aoEsc(q) + '" data-open="0" onclick="aoToggleRunQ(this)">' + aoEsc(q.slice(0, 30)) + '…</span>';
             return '<tr class="' + (archived ? 'ao-run-archived' : '') + '">' +
                 '<td>' + dt + (archived ? ' <span class="ao-arch-badge">확인함' + (r.archived_by ? '·' + aoEsc(r.archived_by) : '') + '</span>' : '') + '</td>' +
-                '<td><span class="ao-ai-badge">🤖AI</span> ' + r.agent_name + '</td>' +
-                '<td>' + r.agent_team + '</td>' +
+                '<td><span class="ao-ai-badge">🤖AI</span> ' + aoEsc(aoRunWho(r)) + '</td>' +
+                '<td>' + (aoRunIsDesk(r) ? '창구' : r.agent_team) + '</td>' +
                 '<td>' + stBadge + '</td>' +
                 '<td style="max-width:220px;white-space:pre-wrap;word-break:break-word;">' + qCell + '</td>' +
                 '<td>' + ((r.result && r.result.summary) || '-') + '</td>' +
@@ -12034,7 +12038,7 @@ window.aoOpenReport = async function(runId) {
     overlay.innerHTML = `
         <div class="modal ao-detail-modal" style="max-width:680px;">
             <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
-            <h3 style="margin:0 0 4px;">📄 ${aoEsc(run.agent_name)} 보고서
+            <h3 style="margin:0 0 4px;">📄 ${aoEsc(aoRunWho(run))} 보고서
                 ${(!run.is_deleted && !run.is_test && run.status === 'done')
                     ? `<button class="ao-fb-btn ao-modal-confirm" onclick="aoArchiveRun(${run.id}); this.closest('.modal-overlay').remove();">✔ 확인</button>` : ''}
                 ${(!run.is_test && run.agent_id)

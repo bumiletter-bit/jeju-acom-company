@@ -801,6 +801,8 @@ async function initDB() {
     // 정산관리 이미지 자동 입력 (대표 7/20 지시): 지시에 첨부된 이미지 (base64 data URL) — 마루 비전 판독용
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_data TEXT`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_mime VARCHAR(40)`);
+    // #469 클코 창구: 요청자 계정(완료 알림 대상) — additive
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by_id INTEGER`);
     // 대표 7/24: 네이버 송장변환 자동업로드 중복방지 — 이미 자동업로드한 상품주문번호 기록
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_invoice_uploaded (
@@ -1220,6 +1222,7 @@ async function initDB() {
     }
     // 서버 재시작으로 '처리중' 상태로 남은 지시 → 대기로 복구 (재처리 가능)
     await pool.query(`UPDATE pending_orders SET status='대기' WHERE status='처리중'`);
+    await pool.query(`UPDATE pending_orders SET status='판독완료' WHERE status='확인표작성'`); // #469
     // 계정별 자동 로그아웃 예외 시간 (대표 7/27 — NULL=전체 설정 따름, 예: 발주컴퓨터 12시간)
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS idle_hours NUMERIC`);
 
@@ -12207,7 +12210,7 @@ async function maruExecuteSettlementSave(pending, currentOrder, actor) {
 
 // 확인 답변("응/등록해/저장해")으로 대기 중인 등록·저장 실행 — AI 호출 없이 정규식 판별 (일정+정산 공용)
 const MARU_YES_RE = /^(응+|어+|네+|넵|예|ㅇㅋ|ok|오케이|yes|등록해줘|등록해|등록|저장해줘|저장해|저장|진행해|진행|해줘|고고|고)[!~.\s]*$/i;
-const MARU_NO_RE = /^(아니요?|아냐|취소|취소해|하지마|노|ㄴㄴ|no)[!~.\s]*$/i;
+const MARU_NO_RE = /^(아니[요오]?|아냐|취소|취소해|하지마|노|ㄴㄴ|no)[!~.\s]*$/i;
 
 async function maruTryScheduleConfirm(order, actor) {
     const content = String(order.content || '').trim();
@@ -12582,7 +12585,7 @@ async function settlementOcrBuildConfirm(order, partnerHint, readItems, runId, s
         summary: `${partner} 정산관리 입력 확인 (${boxTotal}박스)`,
     }, runId);
     if (runId) {
-        await agentRunAppendStep(runId, agentStep('work', '마루', `📋 ${partner}${partnerHint ? '' : ' (품목 자동 인식)'} — ${readItems.length}품목 ${boxTotal}박스, ${sel.total.toLocaleString()}원 (확인 대기)`));
+        await agentRunAppendStep(runId, agentStep('work', aoEngineCache === 'desk' ? '클코' : '마루', `📋 ${partner}${partnerHint ? '' : ' (품목 자동 인식)'} — ${readItems.length}품목 ${boxTotal}박스, ${sel.total.toLocaleString()}원 (확인 대기)`));
         await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW(), result=$2 WHERE id=$1`,
             [runId, JSON.stringify({ summary: `정산관리 판독 — ${partner} ${boxTotal}박스`, report: { type: 'settlement_ocr', partner, rows: sel.rows, total: sel.total, unmatched: sel.unmatched } })]);
     }
@@ -13069,7 +13072,194 @@ async function processOrderWithMaru(order, actor, opts = {}) {
     }
 }
 
-// 지시 접수 (상시 입력바) — 저장 즉시 마루가 비동기 처리
+// ───────── #469 클코 창구 (대표 GO 2026-09-29) ─────────
+// 에이전트 오피스 지시는 서버가 AI를 부르지 않고 '대기'로 쌓는다 → 대표 PC의 창구 터미널(scripts/desk/*)이 집어 처리.
+// 엔진 스위치: agent_office_config 'ao_engine' = 'desk'(기본) | 'api'(되돌리기용 — 기존 마루 경로)
+let aoEngineCache = 'desk', aoEngineAt = 0;
+async function aoEngine() {
+    if (Date.now() - aoEngineAt < 30000) return aoEngineCache;
+    try {
+        const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'ao_engine'`);
+        const v = r.rows[0] ? r.rows[0].value : null;
+        const m = typeof v === 'string' ? v : (v && v.mode);
+        aoEngineCache = m === 'api' ? 'api' : 'desk';
+    } catch (e) { /* 읽기 실패 = 직전 값 유지 */ }
+    aoEngineAt = Date.now();
+    return aoEngineCache;
+}
+function deskOnline(hb, nowMs) {
+    if (!hb || !hb.at) return false;
+    const t = Date.parse(hb.at);
+    return Number.isFinite(t) && (nowMs - t) < 120000; // 2분 무응답 = 오프라인
+}
+// 창구 지시 접수: AI 없는 즉답(정산 확인표 "응/아니오"·거래처 답변)만 서버가 처리하고 나머지는 '대기'로 둔다
+async function deskIntake(order, actor) {
+    try {
+        if (await maruTrySettlementPartnerReply(order, actor)) return;
+        if (await maruTrySettlementOcrConfirm(order, actor)) return;
+        await pool.query(`UPDATE pending_orders SET status='대기' WHERE id=$1 AND status='처리중'`, [order.id]);
+    } catch (err) {
+        console.error('창구 접수 오류:', err.message);
+        await pool.query(`UPDATE pending_orders SET status='오류', result=$2, processed_at=NOW() WHERE id=$1`,
+            [order.id, JSON.stringify({ type: 'error', error: err.message })]).catch(() => {});
+    }
+}
+// 창구가 올린 판독값(품목·수량) → 단가 대조·확인표 생성은 기존 서버 코드 그대로 (금액 계산 무회귀)
+let deskOcrBusy = false;
+async function deskOcrTick() {
+    if (deskOcrBusy) return;
+    deskOcrBusy = true;
+    try {
+        const c = await pool.query(
+            `UPDATE pending_orders SET status='확인표작성'
+             WHERE id = (SELECT id FROM pending_orders WHERE status='판독완료' AND is_deleted=false ORDER BY id ASC LIMIT 1 FOR UPDATE SKIP LOCKED)
+             RETURNING id, content, result, run_id, created_by_id`);
+        const o = c.rows[0];
+        if (!o) return;
+        try {
+            const r = o.result || {};
+            const items = (Array.isArray(r.items) ? r.items : [])
+                .map(x => ({ name: String(x.name || '').trim(), qty: parseInt(x.qty, 10) }))
+                .filter(x => x.name && Number.isFinite(x.qty) && x.qty > 0);
+            if (!items.length) throw new Error('판독된 품목이 없습니다');
+            const partnerHint = normalizePartnerName(o.content) || normalizePartnerName(r.partner);
+            const settleDate = r.date || parseSettlementDate(o.content, kstTodayStr());
+            await settlementOcrBuildConfirm(o, partnerHint, items, o.run_id, settleDate);
+            if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '📋 정산 확인표가 준비됐어요', '에이전트 오피스에서 거래처·금액을 확인하고 저장해 주세요', 'agent-office');
+        } catch (err) {
+            await pool.query(`UPDATE pending_orders SET status='오류', result=$2, processed_at=NOW() WHERE id=$1`,
+                [o.id, JSON.stringify({ type: 'error', error: '확인표 생성 실패: ' + err.message })]);
+            if (o.run_id) await pool.query(`UPDATE agent_runs SET status='error', finished_at=NOW() WHERE id=$1`, [o.run_id]).catch(() => {});
+        }
+    } catch (e) { console.error('deskOcrTick 오류:', e.message); }
+    finally { deskOcrBusy = false; }
+}
+setInterval(deskOcrTick, 5000);
+
+// 창구 상태 (화면 표시용): 온라인 여부·처리 중 지시·대기 건수
+app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
+    try {
+        const [hbq, cq, eng] = await Promise.all([
+            pool.query(`SELECT value FROM agent_office_config WHERE key='desk_heartbeat'`),
+            pool.query(`SELECT status, COUNT(*)::int AS c FROM pending_orders
+                        WHERE is_deleted=false AND status IN ('대기','처리중','판독완료','확인표작성','승인대기','승인됨') GROUP BY status`),
+            aoEngine(),
+        ]);
+        const hb = hbq.rows[0] ? hbq.rows[0].value : null;
+        const cnt = {}; for (const r of cq.rows) cnt[r.status] = r.c;
+        const online = deskOnline(hb, Date.now());
+        res.json({
+            engine: eng, online, state: online ? (hb.state || 'idle') : 'offline', last_seen: hb ? hb.at : null,
+            order_id: online ? (hb.order_id || null) : null,
+            waiting: (cnt['대기'] || 0) + (cnt['승인됨'] || 0),
+            working: (cnt['처리중'] || 0) + (cnt['판독완료'] || 0) + (cnt['확인표작성'] || 0),
+            approval: cnt['승인대기'] || 0,
+        });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 내 지시·전체 지시 목록 (창구 화면 — 이미지 원문 제외)
+app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 40, 200);
+        const mine = req.query.mine === '1';
+        const params = [];
+        let where = `o.is_deleted = false`;
+        if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length}`; }
+        if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
+        const r = await pool.query(
+            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id,
+                    (o.image_data IS NOT NULL) AS has_image,
+                    (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
+             FROM pending_orders o WHERE ${where} ORDER BY o.id DESC LIMIT ${limit}`, params);
+        res.json({ orders: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 대표 확인함: 승인 / 반려 (관리자만)
+app.post('/api/agent-office/orders/:id/approve', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
+        const r = await pool.query(
+            `UPDATE pending_orders
+             SET status='승인됨', result = result || $2::jsonb
+             WHERE id=$1 AND status='승인대기' AND is_deleted=false AND result->>'type'='approval_request'
+             RETURNING id, run_id, created_by_id, result`,
+            [req.params.id, JSON.stringify({ approved_by: who, approved_at: new Date().toISOString() })]);
+        if (!r.rows.length) throw { status: 400, message: '승인 대기 중인 요청이 아닙니다 (이미 처리됐을 수 있습니다)' };
+        const o = r.rows[0];
+        if (o.run_id) await agentRunAppendStep(o.run_id, agentStep('work', who, '✅ 승인 — 창구가 실행합니다'));
+        await writeAudit({ action: 'desk_approve', targetType: 'pending_order', targetId: o.id,
+            changes: { after: { status: '승인됨', action: o.result.action, summary: o.result.summary } }, source: 'agent_office', actor: adminActor(req) });
+        if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '✅ 요청이 승인됐어요', String(o.result.summary || '').slice(0, 120), 'agent-office');
+        res.json({ message: '승인했습니다 — 창구가 실행합니다' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+app.post('/api/agent-office/orders/:id/reject', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
+        const reason = String(req.body?.reason || '').trim().slice(0, 300);
+        const r = await pool.query(
+            `UPDATE pending_orders
+             SET status='반려', processed_at=NOW(), result = result || $2::jsonb
+             WHERE id=$1 AND status='승인대기' AND is_deleted=false AND result->>'type'='approval_request'
+             RETURNING id, run_id, created_by_id, result`,
+            [req.params.id, JSON.stringify({ rejected_by: who, rejected_at: new Date().toISOString(), reject_reason: reason })]);
+        if (!r.rows.length) throw { status: 400, message: '승인 대기 중인 요청이 아닙니다 (이미 처리됐을 수 있습니다)' };
+        const o = r.rows[0];
+        if (o.run_id) {
+            await agentRunAppendStep(o.run_id, agentStep('report', who, '↩️ 반려' + (reason ? ' — ' + reason : '')));
+            await pool.query(`UPDATE agent_runs SET status='done', finished_at=NOW(), result=$2 WHERE id=$1`,
+                [o.run_id, JSON.stringify({ summary: '반려: ' + String(o.result.summary || '').slice(0, 60), lines: [reason || '사유 없음'] })]);
+        }
+        await writeAudit({ action: 'desk_reject', targetType: 'pending_order', targetId: o.id,
+            changes: { after: { status: '반려', reason } }, source: 'agent_office', actor: adminActor(req) });
+        if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '↩️ 요청이 반려됐어요', (reason || String(o.result.summary || '')).slice(0, 120), 'agent-office');
+        res.json({ message: '반려했습니다' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 창구 화면 현황판 — 전부 DB 실값 (외부 API 호출 없음 · 실패한 칸은 null)
+app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
+    const safe = async (fn) => { try { return await fn(); } catch (e) { console.error('desk/board:', e.message); return null; } };
+    try {
+        const isAdmin = req.user.role === 'admin';
+        const [channels, ship, todo, sales] = await Promise.all([
+            // 채널별 주문: 주문안내 이력의 실주문 시각 기준(KST 오늘·어제)
+            safe(async () => (await pool.query(`
+                SELECT CASE WHEN order_key LIKE 'c24:%' THEN 'mall' WHEN order_key LIKE 'cp:%' THEN 'coupang' ELSE 'naver' END AS ch,
+                       COUNT(*) FILTER (WHERE (COALESCE(order_at, created_at) + interval '9 hours')::date = (NOW() + interval '9 hours')::date)::int AS today,
+                       COUNT(*) FILTER (WHERE (COALESCE(order_at, created_at) + interval '9 hours')::date = (NOW() + interval '9 hours')::date - 1)::int AS yesterday
+                FROM kakao_notify_log
+                WHERE order_key NOT LIKE 'join:%' AND order_key NOT LIKE 'coupon%'
+                  AND COALESCE(order_at, created_at) > NOW() - interval '3 days'
+                GROUP BY 1`)).rows),
+            // 최근 7일 발송 박스(정산관리 입력 기준)
+            safe(async () => (await pool.query(`
+                SELECT to_char(s.date, 'YYYY-MM-DD') AS d, s.partner,
+                       COALESCE((SELECT SUM((i->>'qty')::numeric) FROM jsonb_array_elements(s.items) i), 0)::int AS boxes
+                FROM settlements s WHERE s.date >= (NOW() + interval '9 hours')::date - 6 ORDER BY s.date`)).rows),
+            safe(async () => {
+                const q = async (sql) => (await pool.query(sql)).rows[0].c;
+                const out = [];
+                const fail = await q(`SELECT COUNT(*)::int AS c FROM kakao_notify_log WHERE mode='real' AND status <> 'sent' AND created_at > NOW() - interval '2 days'`);
+                if (fail) out.push({ key: 'fail', label: '알림 발송 실패', count: fail, where: '문의 관리 · 알림 발송 이력' });
+                const rw = await q(`SELECT COUNT(*)::int AS c FROM reward_grants WHERE status='pending'`);
+                if (rw) out.push({ key: 'reward', label: '룰렛 당첨 미지급', count: rw, where: '문의 관리 · 당첨 지급' });
+                const pr = await q(`SELECT COUNT(DISTINCT partner)::int AS c FROM pricing WHERE (start_date IS NULL OR start_date <= (NOW() + interval '9 hours')::date) AND (end_date IS NULL OR end_date >= (NOW() + interval '9 hours')::date)`);
+                if (!pr) out.push({ key: 'pricing', label: '이번 주 품목별 금액 미등록', count: 1, where: '품목별 금액' });
+                return out;
+            }),
+            // 매출(네이버 정산 회차 결제금액)은 관리자에게만
+            isAdmin ? safe(async () => (await pool.query(`
+                SELECT to_char(expect_date, 'YYYY-MM-DD') AS d, pay_amount::bigint AS pay, in_period_count AS orders
+                FROM naver_settle_recon ORDER BY expect_date DESC LIMIT 7`)).rows) : Promise.resolve(undefined),
+        ]);
+        res.json({ channels, ship, todo, sales, is_admin: isAdmin, at: new Date().toISOString() });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// 지시 접수 (상시 입력바) — 창구(desk) 엔진: '대기'로 쌓음 / api 엔진: 종전대로 마루가 비동기 처리
 app.post('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/26 A) */ async (req, res) => {
     try {
         const content = String(req.body?.content || '').trim();
@@ -13077,20 +13267,28 @@ app.post('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/
         const imageData = typeof req.body?.image_data === 'string' ? req.body.image_data : '';
         const imageMime = String(req.body?.image_mime || '').slice(0, 40);
         if (!content && !imageData) throw { status: 400, message: '지시 내용을 입력해주세요' };
-        if (content.length > 500) throw { status: 400, message: '지시는 500자 이내로 입력해주세요' };
+        const engine = await aoEngine();
+        const maxLen = engine === 'desk' ? 2000 : 500;
+        if (content.length > maxLen) throw { status: 400, message: `지시는 ${maxLen}자 이내로 입력해주세요` };
         if (imageData && imageData.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
         const effText = content || (imageData ? '[이미지 첨부] 오늘 정산관리에 올려줘' : '');
         const row = (await pool.query(
-            `INSERT INTO pending_orders (content, image_data, image_mime, created_by) VALUES ($1, $2, $3, $4) RETURNING *`,
+            `INSERT INTO pending_orders (content, image_data, image_mime, created_by, created_by_id, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
             [effText, imageData || null, imageData ? imageMime : null,
-             `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`])).rows[0];
+             `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null,
+             engine === 'desk' ? '처리중' : '대기'])).rows[0];
         await writeAudit({
             action: 'create', targetType: 'pending_order', targetId: row.id,
             changes: { after: { content: effText, status: row.status, has_image: !!imageData } }, // 이미지 원문은 audit 미기록 (용량)
             source: 'agent_office', actor: adminActor(req),
         });
+        if (engine === 'desk') {
+            await deskIntake(row, adminActor(req)); // AI 호출 없음 — 즉답 대상이 아니면 '대기'
+            const cur = (await pool.query(`SELECT id, content, status, result, run_id, created_at, processed_at, created_by FROM pending_orders WHERE id=$1`, [row.id])).rows[0];
+            return res.json({ message: '지시가 접수되었습니다 — 클코가 확인합니다', order: cur, engine });
+        }
         processOrderWithMaru(row, adminActor(req)); // 비동기 — 응답은 즉시, 결과는 폴링
-        res.json({ message: '지시가 접수되었습니다 — 마루가 분석 중입니다', order: row });
+        res.json({ message: '지시가 접수되었습니다 — 마루가 분석 중입니다', order: row, engine });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -13119,6 +13317,10 @@ app.post('/api/agent-office/orders/:id/process', authMiddleware, adminOnly, asyn
         const order = r.rows[0];
         if (!['대기', '오류'].includes(order.status)) {
             throw { status: 400, message: `'${order.status}' 상태의 지시는 재처리할 수 없습니다 (대기/오류만 가능)` };
+        }
+        if (await aoEngine() === 'desk') {
+            await pool.query(`UPDATE pending_orders SET status='대기', result=NULL WHERE id=$1`, [order.id]);
+            return res.json({ message: '다시 대기열에 올렸습니다 — 클코가 확인합니다', order: { ...order, status: '대기' } });
         }
         processOrderWithMaru(order, adminActor(req)); // 비동기
         res.json({ message: '마루가 처리를 시작했습니다', order: { ...order, status: '처리중' } });

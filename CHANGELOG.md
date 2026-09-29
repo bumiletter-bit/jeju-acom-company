@@ -1,3 +1,13 @@
+## v5.9.365 (2026-09-29) — 서버 + 프론트(app.js v=391 · ao-desk.js v=1 · ao-desk.css v=1) + scripts/desk + 직원창구/
+- 🧑‍💻 **#469(대표 GO 9/29): 에이전트 오피스 → 클코 창구 전환(1단계 기능 + 2단계 새 화면)** — 에이전트 오피스 지시를 서버가 AI로 처리하지 않고 `대기`로 쌓는다. 대표 PC의 「창구」 터미널(`직원창구/` 폴더에서 연 Claude Code)이 집어 처리하고 결과를 같은 화면에 올린다. 손님 응대(톡톡봇·상품/고객문의 자동답변)는 무접촉.
+  - **서버**: 엔진 스위치 `agent_office_config 'ao_engine'`(기본 desk · `api`면 종전 마루 경로) · 접수 시 AI 없는 즉답(정산 확인표 예/아니오·거래처 답변)만 서버가 처리 · `deskOcrTick`(5초) = 창구가 올린 판독값(품목·수량)을 **기존 `settlementOcrBuildConfirm`** 에 넣어 확인표 생성(단가 대조·금액·저장 경로 무변경) · `GET /desk-status`(2분 무응답 = 자리 비움) · `GET /desk/orders` · `GET /desk/board`(채널별 주문·최근 7일 발송 박스·지금 챙길 일 · 정산 회차 결제금액은 관리자만) · `POST /orders/:id/approve|reject`(관리자만) · `pending_orders.created_by_id`(additive) · 지시 길이 500 → 2000자 · 확인 응답 판정식에 「아니오」 추가(종전엔 빠져 있어 AI로 넘어감).
+  - **창구 스크립트** `scripts/desk/`: watch(10초 감시·30초 heartbeat·AI 사용량 0) · get(집기·첨부 저장·최근 대화) · step(진행 단계) · respond(answer·question·ocr·approval·refuse·error + 종 알림). 규칙 = `직원창구/CLAUDE.md`(바로 / 대표 승인 후 / 금지) · 업무 기준 = `직원창구/업무지식.md`.
+  - **화면**: 에이전트 오피스만 어두운 새 화면(시계·아꼼이 캐릭터 3상태·창구 상태·「클코에게 지시하기」·현황판·내 지시/전체 지시/대표 확인함/보고서함). 조직도·법인/오션라운지 필터·마루 입력바는 숨김(id 보존). 보고서함은 기존 표·과거 기록 그대로, 창구 실행은 「클코 · 창구」로 표기. 정산 확인표는 기존 창 그대로. 날씨 없음.
+  - **캐릭터**: 힉스필드로 기존 아꼼이를 참조해 3장 제작(대기·처리 중·자리 비움) → `public/desk/akkomi-*.webp`(480px · 각 25~29KB).
+  - 🔁 **되돌리기**: `ao_engine`을 `api`로 두면 서버는 종전 마루 경로로 처리(화면은 새 화면 유지). 화면까지 되돌리려면 index.html의 `data-ao-legacy` 5곳과 `ao-desk.js` 스크립트 줄 제거.
+  - ✅ `node scripts/verify-469-desk.js` **47/47**(AI 키 없이 기동해 AI 호출 0 증명 · 스크립트 왕복 · 승인/반려 · 판독값 → 확인표 금액 = 단가 × 수량 직접 계산과 동일 · 확인 전 정산 저장 0 · 실렌더 PC/390px · 다른 메뉴 7곳) · verify-468-ui 15/15 · verify-452-embed 16/16.
+  - ⏭️ 남은 단계: 기존 API 에이전트 코드 삭제(며칠 운용 뒤 별도 배포 · 지도 = `docs/superpowers/specs/2026-09-29-ao-codemap.md`).
+
 ## v5.9.364 (2026-09-29) — 서버(kakao-notify.js)·템플릿 JSON · app.js 무변경
 - 📨 **#467-g(대표 9/29 "템플릿 등록 완료 — 확인하고 진행"): 룰렛 쿠폰 만료 7일 전 안내 알림톡 투입** — selftest(full) 실측: **UL_7571 = 승인(APR)** · 승인 문안·버튼(채널 추가 / 쿠폰함 바로가기 / 문의하기 MD)이 `templates_roulette.coupon_expire`와 **바이트 동일**(발급 안내 UL_7570도 동일 재확인). `APPROVED_TPL.coupon_expire='UL_7571'` 기입 · JSON의 `modify_code` 제거(재신청용 표식 — 더는 불필요). 채널 `notify_channel_mode.coupon`은 9/27부터 live라 배포 즉시 유효 — 타이머 `coupon_expire_notify`(10:00)가 만료 7일 전·미사용 쿠폰에 1회 실발송. 현재 대상: 10/17 만료(안내 10/10) · 10/21(10/14) · 10/22(10/15). 배포 10분 뒤 대표 폰 테스트 발송(key coupon_expire). verify-467-unit 24/24.
 
