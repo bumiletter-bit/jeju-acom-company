@@ -1,4 +1,8 @@
 {
+  "claudeMdExcludes": [
+    "**/*회사프로그램/CLAUDE.md",
+    "**/*회사프로그램/CLAUDE.local.md"
+  ],
   "permissions": {
     "deny": [
       "Bash(git push:*)",
