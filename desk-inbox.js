@@ -154,6 +154,8 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
         try {
             await ensure();
             const token = process.env.SCENARIO_API_TOKEN;
+            // 「보내는 중」에 2분 넘게 멈춘 건은 결과를 모르는 건이다 — 다시 보내지 않고 「확인 필요」로 닫는다(두 번 나가는 것보다 낫다)
+            await pool.query(`UPDATE talk_outbox SET status = 'failed', error = '결과를 확인하지 못했습니다 — 톡톡 화면에서 나갔는지 확인해 주세요' WHERE status = 'sending' AND created_at < NOW() - interval '2 minutes'`);
             const c = await pool.query(
                 `UPDATE talk_outbox SET status = 'sending'
                  WHERE id = (SELECT id FROM talk_outbox WHERE status = 'queued' AND created_at > NOW() - interval '10 minutes' ORDER BY id ASC LIMIT 1 FOR UPDATE SKIP LOCKED)
@@ -172,8 +174,9 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
                 ok = r.ok && j.ok === true;
                 if (!ok) err = j.error || ('응답 ' + r.status);
             } catch (e) { err = e.message; }
-            await pool.query(`UPDATE talk_outbox SET status = $2, error = $3, sent_at = CASE WHEN $2 = 'sent' THEN NOW() ELSE NULL END WHERE id = $1`,
-                [o.id, ok ? 'sent' : 'failed', ok ? null : clip(err, 300)]);
+            // 🔴 같은 자리표시($2)를 값과 비교에 함께 쓰면 PostgreSQL이 형을 못 정해 실패한다(실측 9/30 — 결과가 「보내는 중」에 멈춤) → 경우를 나눠 쓴다
+            if (ok) await pool.query(`UPDATE talk_outbox SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = $1`, [o.id]);
+            else await pool.query(`UPDATE talk_outbox SET status = 'failed', error = $2::text WHERE id = $1`, [o.id, clip(err, 300)]);
             if (ok && o.log_id) await pool.query(`UPDATE message_logs SET reviewed_at = COALESCE(reviewed_at, NOW()), reviewed_by = COALESCE(reviewed_by, $2) WHERE id = $1`, [o.log_id, clip(o.requested_by, 50)]);
         } catch (e) { console.error('[talk_outbox] 배달 실패(다음 주기에 다시):', e.message); }
         finally { sending = false; }
