@@ -19,4 +19,5 @@ $env:ANTHROPIC_API_KEY = $key
 Remove-Variable key
 Set-Location $PSScriptRoot
 Write-Host "콘솔 API 키로 창구를 엽니다. 열리면 '창구 시작'을 입력하세요." -ForegroundColor Green
-claude @args
+# 모델: 콘솔은 모델마다 단가가 다르다 → 창구는 Opus로 고정(대표 9/29). 다른 모델로 열려면 --model 값을 직접 붙인다.
+if ($args -contains "--model") { claude @args } else { claude --model opus @args }
