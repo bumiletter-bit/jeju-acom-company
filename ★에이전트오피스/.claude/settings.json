@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rebase:*)",
+      "Bash(git tag:*)",
+      "Bash(npm run deploy:*)",
+      "Bash(npm publish:*)",
+      "Bash(rm -rf:*)",
+      "Bash(higgsfield auth token:*)",
+      "Edit(../server.js)",
+      "Edit(../version.js)",
+      "Edit(../CHANGELOG.md)",
+      "Edit(../CLAUDE.md)",
+      "Edit(../package.json)",
+      "Edit(../public/**)",
+      "Edit(../relay/**)",
+      "Edit(../agents/**)",
+      "Edit(../scripts/desk/**)",
+      "Edit(../.env)",
+      "Write(../server.js)",
+      "Write(../version.js)",
+      "Write(../CHANGELOG.md)",
+      "Write(../CLAUDE.md)",
+      "Write(../package.json)",
+      "Write(../public/**)",
+      "Write(../relay/**)",
+      "Write(../agents/**)",
+      "Write(../scripts/desk/**)",
+      "Write(../.env)",
+      "Read(../.env)",
+      "Read(~/.akkome/**)"
+    ]
+  }
+}

@@ -33,4 +33,7 @@ Write-Host "콘솔 API 키로 창구를 엽니다. 열리면 '창구 시작'을 
 # 모델: 콘솔은 모델마다 단가가 다르다 → 창구는 Opus로 고정(대표 9/29). 다른 모델로 열려면 --model 값을 직접 붙인다.
 # 작업 범위: 창구는 상위 폴더(회사프로그램)의 스크립트·문서·그림을 읽어야 한다 → 열 때 작업 범위에 넣어 "폴더 밖 읽기" 질문으로 멈추지 않게 한다.
 $repoRoot = Split-Path $PSScriptRoot -Parent
-if ($args -contains "--model") { claude --add-dir $repoRoot @args } else { claude --model opus --add-dir $repoRoot @args }
+# 허용 질문 없이 연다(대표 확정 9/29) — 창구가 질문에 멈추면 직원 지시가 쌓이기 때문이다.
+# 막아야 할 일(배포·커밋·코드 수정·삭제)은 이 폴더의 .claude\settings.json 금지 목록과 CLAUDE.md 0번 규칙이 맡는다.
+$base = @("--dangerously-skip-permissions", "--add-dir", $repoRoot)
+if ($args -contains "--model") { claude @base @args } else { claude --model opus @base @args }
