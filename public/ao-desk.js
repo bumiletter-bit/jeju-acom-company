@@ -15,7 +15,8 @@
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
     };
-    const HINTS = ['오늘 발송 박스 수 알려줘', '이번 주 단가표 등록됐는지 확인해줘', '황금향 선물용 5kg 판매가 알려줘', '연휴 발송 안내 문자 초안 써줘'];
+    // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
+    const HINTS = ['정산관리 오늘 발주수량이야 올려줘', '단골고객에게 문자발송할 예정이야 (쿠폰, 행사내용, 기간 넣어주기)', '지금 네이버 자사몰 쿠팡 가격 맞는지 확인해줘', '신규품목 보고서 작성해줘 (핵심내용 두서없이 쓰기)'];
     const SAY = {
         idle: '무엇을 도와드릴까요? 아래에 적어 주세요.',
         busy: '지금 지시를 처리하고 있어요.',
