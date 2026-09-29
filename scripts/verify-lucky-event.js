@@ -69,7 +69,14 @@ async function main() {
 
   /* ═══ ① 원본과 동일성 ═══ */
   console.log('\n① 원본 lucky.js 와 결과 동일성');
-  if (!ORIG || !fs.existsSync(ORIG)) console.log('  ⏭ 원본 경로 없음 — 건너뜀');
+  if (!ORIG || !fs.existsSync(ORIG)) {
+    console.log('  ⏭ 원본 경로 없음 — 동일성 비교는 건너뛰고 ②~④ 준비 데이터만 만듦');
+    // ②~④는 ①이 만든 상태(주문 + 경품 16개 설정 + 추첨·발표)를 전제로 함 — ①을 건너뛰어도 같은 전제를 만든다
+    const s1 = await N('orders', { orders, label: 'v1.xlsx' });
+    const s2 = await N('event', { event: EVENT, excluded: EXCL });
+    seedRandom(4242); const s3 = await N('draw', {}); const s4 = await N('publish', { published: true });
+    ok(s1.status === 200 && s2.status === 200 && s3.status === 200 && s4.status === 200 && s3.j.db.winners.length === 16, `준비: 주문 ${s1.j && s1.j.added}건 · 경품 16개 · 추첨·발표`);
+  }
   else {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lucky-orig-'));
     process.env.LUCKY_DIR = tmp; process.env.LUCKY_ADMIN = 'vtest-' + crypto.randomBytes(4).toString('hex');
