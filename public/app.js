@@ -1006,6 +1006,7 @@ window.toggleNotificationDropdown = async function(e) {
     const dropdown = document.getElementById('notification-dropdown');
     if (dropdown.style.display === 'none') {
         dropdown.style.display = 'flex';
+        if (typeof akPushRefresh === "function") akPushRefresh();   // #473 폰 알림 상태 갱신
         await renderNotificationList();
     } else {
         dropdown.style.display = 'none';
@@ -14091,3 +14092,72 @@ function setupNaverTimerCard() {
     });
 }
 setupNaverTimerCard();
+
+// ===== #473 폰으로 알림 받기 (웹 푸시) =====
+// 앱을 안 켜도 폰 화면에 알림이 뜬다. 켜기는 사람이 한 번 눌러야 한다(브라우저 규칙).
+// 아이폰은 홈 화면에 추가한 뒤에만 된다(iOS 규칙).
+(function () {
+    let cached = null;
+    const el = id => document.getElementById(id);
+    const b64 = s => { const pad = "=".repeat((4 - s.length % 4) % 4); const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from([...raw].map(c => c.charCodeAt(0))); };
+    const can = () => ("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window);
+
+    function paint(state, note) {
+        const box = el("noti-push"), btn = el("noti-push-btn"), txt = el("noti-push-text"), sub = el("noti-push-sub");
+        if (!box) return;
+        box.style.display = "block";
+        btn.disabled = state === "busy" || state === "no";
+        btn.classList.toggle("off", state === "on");
+        txt.textContent = "폰으로 알림 받기";
+        if (state === "on") { btn.textContent = "끄기"; sub.textContent = note || "이 기기로 알림이 옵니다. 시험해 보려면 끄지 말고 그대로 두세요."; }
+        else if (state === "busy") { btn.textContent = "잠시만"; sub.textContent = note || ""; }
+        else if (state === "no") { btn.textContent = "안 됨"; sub.textContent = note || "이 브라우저에서는 폰 알림을 쓸 수 없어요."; }
+        else { btn.textContent = "켜기"; sub.textContent = note || "켜면 앱을 열지 않아도 폰 화면에 알림이 떠요."; }
+    }
+
+    async function sub() { try { const r = await navigator.serviceWorker.ready; return await r.pushManager.getSubscription(); } catch (e) { return null; } }
+
+    window.akPushRefresh = async function () {
+        if (!el("noti-push")) return;
+        if (!can()) return paint("no", "이 브라우저는 폰 알림을 지원하지 않아요. 아이폰이면 홈 화면에 추가한 뒤 다시 열어 주세요.");
+        if (Notification.permission === "denied") return paint("no", "폰 설정에서 이 사이트의 알림이 막혀 있어요. 브라우저 설정에서 허용으로 바꿔 주세요.");
+        const s = await sub();
+        paint(s ? "on" : "off");
+    };
+
+    async function turnOn() {
+        paint("busy", "켜는 중이에요");
+        try {
+            const perm = await Notification.requestPermission();
+            if (perm !== "granted") return paint("off", "알림을 허용해 주셔야 폰으로 보낼 수 있어요.");
+            const { key } = await api("/api/push/key");
+            if (!key) return paint("off", "알림 열쇠를 받지 못했어요. 잠시 뒤 다시 눌러 주세요.");
+            const reg = await navigator.serviceWorker.ready;
+            let s = await reg.pushManager.getSubscription();
+            if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
+            await api("/api/push/subscribe", "POST", s.toJSON());
+            paint("on", "켰습니다. 시험 알림을 보냅니다.");
+            const t = await api("/api/push/test", "POST", {});
+            paint("on", t.message || "시험 알림을 보냈어요.");
+        } catch (e) {
+            paint("off", "켜지 못했어요: " + ((e && e.message) || "다시 눌러 주세요"));
+        }
+    }
+    async function turnOff() {
+        paint("busy", "끄는 중이에요");
+        try {
+            const s = await sub();
+            if (s) { await api("/api/push/unsubscribe", "POST", { endpoint: s.endpoint }); await s.unsubscribe(); }
+            else await api("/api/push/unsubscribe", "POST", {});
+            paint("off", "이 기기 알림을 껐어요.");
+        } catch (e) { paint("on", "끄지 못했어요. 다시 눌러 주세요."); }
+    }
+
+    document.addEventListener("click", async e => {
+        const btn = e.target.closest("#noti-push-btn");
+        if (!btn || btn.disabled) return;
+        e.stopPropagation();
+        const on = btn.textContent.indexOf("끄기") === 0;
+        if (on) await turnOff(); else await turnOn();
+    });
+})();

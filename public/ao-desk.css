@@ -161,6 +161,9 @@
 .desk-a { margin-top: 8px; background: var(--d-soft); border: 1px solid var(--d-line); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .desk-a.clamp { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .desk-a-title { font-weight: 700; margin-bottom: 5px; }
+.desk-reply { display: flex; gap: 8px; margin-top: 9px; align-items: flex-end; flex-wrap: wrap; }
+.desk-reply-in { flex: 1 1 220px; min-width: 0; min-height: 44px; resize: vertical; border: 1px solid var(--d-line); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 14px; line-height: 1.5; background: #fff; color: var(--d-ink); }
+.desk-reply-in:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }
 .desk-note { margin-top: 7px; color: var(--d-sub); font-size: 12.5px; }
 .desk-working { color: var(--d-accent); font-weight: 600; }
 .desk-acts { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }

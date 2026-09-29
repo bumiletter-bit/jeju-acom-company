@@ -296,8 +296,12 @@
                 <div class="desk-acts"><button type="button" class="desk-btn sm primary" data-act="confirm" data-id="${o.id}">확인표 열기</button></div>`;
         }
         if (st === '질문') {
+            // #473-b 그 자리에서 바로 답한다(대화처럼) — 보내면 이 질문은 닫히고, 창구가 앞 대화를 함께 받아 이어서 처리한다
             return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>
-                <div class="desk-acts"><button type="button" class="desk-btn sm" data-act="reply" data-id="${o.id}">답 적기</button></div>`;
+                <div class="desk-reply">
+                    <textarea class="desk-reply-in" id="reply-${o.id}" rows="2" maxlength="2000" placeholder="여기에 답을 적어 보내면 이어서 처리해요"></textarea>
+                    <button type="button" class="desk-btn sm primary" data-act="sendreply" data-id="${o.id}">답 보내기</button>
+                </div>`;
         }
         if (r.type === 'approval_request') {
             const done = st === '반려' ? `<div class="desk-note">반려: ${esc(r.rejected_by || '')}${r.reject_reason ? ' · ' + esc(r.reject_reason) : ''}</div>`
@@ -406,6 +410,18 @@
                 S.orders = S.orders.filter(x => x.id !== id); S.sig = ''; renderList();
                 showToast('내 지시에서 지웠어요. 전체 지시에서는 계속 볼 수 있어요');
             } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); b.disabled = false; }
+            return;
+        }
+        if (act === 'sendreply') {
+            const ta = document.getElementById('reply-' + id);
+            const text = ta ? ta.value.trim() : '';
+            if (!text) { if (ta) ta.focus(); return; }
+            b.disabled = true; b.textContent = '보내는 중';
+            try {
+                const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', { content: text });
+                showToast(res.message || '답을 보냈어요');
+                S.sig = ''; await loadOrders(true);
+            } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; b.textContent = '답 보내기'; }
             return;
         }
         if (act === 'reply') { const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }

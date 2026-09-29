@@ -805,6 +805,7 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by_id INTEGER`);
     // #469-c: 요청자가 「내 지시」 목록에서 지운 표시(전체 지시·기록은 그대로) — additive
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS mine_hidden BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS reply_to INTEGER`);   // #473-b 되묻기에 이어서 답한 건
     // 대표 7/24: 네이버 송장변환 자동업로드 중복방지 — 이미 자동업로드한 상품주문번호 기록
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_invoice_uploaded (
@@ -1703,12 +1704,17 @@ app.post('/api/users/:id/restore', authMiddleware, adminOnly, async (req, res) =
 
 // === Notifications API ===
 
+// #473 웹 푸시 — 화면 알림을 폰으로도 보낸다(앱을 안 켜도 옴). 실패해도 알림 기록은 그대로 남는다.
+const push = require('./push.js')(app, { pool, authMiddleware });
+
 async function createNotification(userId, type, title, message, link) {
     try {
         await pool.query(
             'INSERT INTO notifications (user_id, type, title, message, link) VALUES ($1, $2, $3, $4, $5)',
             [userId, type, title, message || '', link || 'documents']
         );
+        // 폰으로도 보낸다 — 종류별 켜고 끄기는 push_scope 설정(기본은 꼭 필요한 것만)
+        push.send(userId, { title, message, link: link || 'documents', type }).catch(() => { });
         // 30일 지난 알림 정리
         await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '30 days'");
     } catch (err) { console.error('createNotification error:', err); }
@@ -13164,6 +13170,29 @@ app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
             working: (cnt['처리중'] || 0) + (cnt['판독완료'] || 0) + (cnt['확인표작성'] || 0),
             approval: cnt['승인대기'] || 0,
         });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// #473-b 되묻기에 이어서 답하기 — 질문 카드에서 바로 보낸다.
+//   새 지시를 만들되 원래 질문은 「질문종결」로 닫아 목록이 지저분해지지 않게 한다(창구는 get.js의 recent_talk 로 앞 대화를 함께 받는다).
+app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) => {
+    try {
+        const text = String(req.body?.content || '').trim();
+        if (!text) throw { status: 400, message: '답할 내용을 적어 주세요' };
+        if (text.length > 2000) throw { status: 400, message: '2000자까지 적을 수 있습니다' };
+        const q = (await pool.query(
+            `SELECT id, status, content, created_by_id FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id])).rows[0];
+        if (!q) throw { status: 404, message: '없는 지시입니다' };
+        if (q.status !== '질문') throw { status: 400, message: '지금은 답을 기다리는 상태가 아닙니다' };
+        if (q.created_by_id && q.created_by_id !== req.user.id && req.user.role !== 'admin') throw { status: 403, message: '내가 보낸 지시에만 답할 수 있습니다' };
+        const r = await pool.query(
+            `INSERT INTO pending_orders (content, status, created_by, created_by_id, reply_to) VALUES ($1, '대기', $2, $3, $4) RETURNING id, status`,
+            [text, req.user.name || req.user.username, req.user.id, q.id]);
+        await pool.query(`UPDATE pending_orders SET status = '질문종결', processed_at = NOW() WHERE id = $1 AND status = '질문'`, [q.id]);
+        await writeAudit({ action: 'create', targetType: 'pending_order', targetId: r.rows[0].id,
+            changes: { after: { reply_to: q.id } }, source: 'agent_office', actor: adminActor(req) });
+        if (aoEngineCache !== 'api') await deskIntake({ id: r.rows[0].id, content: text, run_id: null }, req.user.name);
+        res.json({ message: '답을 보냈어요', order: r.rows[0] });
     } catch (err) { handleAdminErr(res, err); }
 });
 

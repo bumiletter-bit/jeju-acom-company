@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
     <link rel="stylesheet" href="styles.css?v=123">
     <link rel="stylesheet" href="theme.css?v=12">
-    <link rel="stylesheet" href="ao-desk.css?v=8">
+    <link rel="stylesheet" href="ao-desk.css?v=9">
     <link rel="stylesheet" href="order-organizer.css?v=2">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -201,6 +201,14 @@
                         <button class="noti-read-all" onclick="markAllNotificationsRead(event)">모두 읽음</button>
                         <button class="noti-close-btn" onclick="document.getElementById('notification-dropdown').style.display='none'">×</button>
                     </div>
+                </div>
+                <!-- #473 웹 푸시: 앱을 안 켜도 폰 화면에 알림이 오게 -->
+                <div class="noti-push" id="noti-push" style="display:none;">
+                    <div class="noti-push-row">
+                        <span id="noti-push-text">폰으로 알림 받기</span>
+                        <button type="button" class="noti-push-btn" id="noti-push-btn">켜기</button>
+                    </div>
+                    <div class="noti-push-sub" id="noti-push-sub"></div>
                 </div>
                 <div class="noti-list" id="noti-list">
                     <div class="noti-empty">알림이 없습니다.</div>
@@ -2325,8 +2333,8 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=392"></script>
-    <script src="ao-desk.js?v=8"></script>
+    <script src="app.js?v=393"></script>
+    <script src="ao-desk.js?v=9"></script>
     <style>.invoice-v2-frame { width:100%; border:0; display:block; min-height:70vh; background:transparent; }</style>
     <script>
     // #452-p 송장변환 v2 끼우기: 메뉴 진입 시 1회 로드(이후 상태 유지 · 단가표는 v2가 클릭마다 재로드) · 내용 높이만큼 iframe 확장 (#463: 구버전 마크업·#invoice-legacy 해시 제거)
