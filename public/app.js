@@ -8585,8 +8585,11 @@ function ssReconCardHtml(dateStr) {
     const rows = [];
     if (input != null) {
         const d1 = -Number(r.diff1 || 0);   // 실입금 관점 부호(넣은 값보다 적게 정산되면 마이너스)
-        const incl = (r.other_detail || {}).input_includes_other && Number(r.other_adj);
-        rows.push(row('발주 후 취소·집화 이월', d1, `넣은 값 ${f(input)}${incl ? ` − 네이버 추가 지급 ${f(r.other_adj)}` : ''} − 실제 정산 ${f(r.in_period)}(${r.in_period_count}건)${inputNote}`, { flag: r.status === 'warn' ? '⚠️' : '' }));
+        // #468-f: 넣은 값 해석 = none(발송분만) / other(+주문 무관 항목) / all(판매자센터 예정액 통째 = 유입·회수·조정·추가 지급 포함)
+        const inc = (r.other_detail || {}).input_includes || ((r.other_detail || {}).input_includes_other ? 'other' : 'none');
+        const allExtra = Number(r.other_adj || 0) + Number(r.carried_in || 0) + Number(r.reversal || 0) + adj;
+        const inclTxt = inc === 'all' ? ` − 판매자센터 예정분 ${f(allExtra)}(미정산 칸에 옮겨 적은 금액)` : inc === 'other' ? ` − 네이버 추가 지급 ${f(r.other_adj)}` : '';
+        rows.push(row('발주 후 취소·집화 이월', d1, `넣은 값 ${f(input)}${inclTxt} − 실제 정산 ${f(r.in_period)}(${r.in_period_count}건)${inputNote}`, { flag: r.status === 'warn' ? '⚠️' : '' }));
     }
     rows.push(row('네이버 조정 (정산예정에 없는 사후 차감)', adj, `리뷰 적립·등급 쿠폰 등 혜택 ${f(r.benefit)} · 반품안심케어 ${f(r.return_care)} · 공제 환급 ${f(r.deduction)}`));
     if (Number(r.reversal_count) > 0) rows.push(row('앞서 정산된 주문의 취소·회수', r.reversal, `${r.reversal_count}건 · 이미 들어온 돈을 이번 회차에서 되가져감`));
@@ -8599,7 +8602,10 @@ function ssReconCardHtml(dateStr) {
     if (Number(r.pending_out_count) > 0) rows.push(row('집화 대기 (다음 정산으로 넘어감)', 0, `이 기간 발송인데 집화 미처리 · 금액은 다음 회차에서 「유입」으로 표시`, { raw: `${r.pending_out_count}건` }));
     let sumRow = '';
     if (input != null) {
-        const explained = -Number(r.diff1 || 0) + Number(r.carried_in || 0) + Number(r.reversal || 0) + Number(r.unknown_amount || 0) + adj + ((r.other_detail || {}).input_includes_other ? 0 : Number(r.other_adj || 0));   /* #468-e */
+        const incK = (r.other_detail || {}).input_includes || ((r.other_detail || {}).input_includes_other ? 'other' : 'none');
+        // 넣은 값에 이미 들어 있는 항목은 합계에서 다시 더하지 않는다(all = 유입·회수·조정·추가 지급 전부 포함 · other = 추가 지급만 포함)
+        const explained = -Number(r.diff1 || 0) + Number(r.unknown_amount || 0)
+            + (incK === 'all' ? 0 : Number(r.carried_in || 0) + Number(r.reversal || 0) + adj + (incK === 'other' ? 0 : Number(r.other_adj || 0)));   /* #468-e·f */
         const residual = Math.round((settle - input) - explained);
         if (residual !== 0) rows.push(row('기타 (분류 안 됨)', residual, '네이버 회차 총액과 건별 합의 차이'));
         sumRow = row('합계 = 실제와의 차이', settle - input, '위 항목을 모두 더한 값 · 큰 숫자와 같습니다', { cls: 'ss-tr' });

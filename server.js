@@ -7320,16 +7320,20 @@ function settleReconClassify(caseRows, basisStart, basisEnd, shipMap) {
 }
 // 판정: 넣은 값 없음 → no-input · 예정일 지났는데 완료일 없음 → unpaid · |①| ≤ 0.5% → ok · 그 외 warn
 // #468-e: other_adj(우대수수료 환급 등 주문과 무관한 회차 항목)가 넣은 값에 포함돼 있으면(판매자센터 예정액을 그대로 옮긴 경우) 그만큼 빼고 판정 — 둘 중 차이가 작은 쪽 채택
-function settleReconStatus({ input_sum, in_period, complete_date, expect_date, todayKst, other_adj }) {
-    if (input_sum == null) return { status: 'no-input', diff1: null, input_includes_other: false };
+//   #468-f(9/29 실측): 직원은 「미정산」 칸에 판매자센터에 이미 떠 있는 다음 회차 예정액(= 유입·회수·조정·추가 지급 전부)을 옮겨 적는다 →
+//   후보 3개 중 차이가 가장 작은 해석을 채택: none(넣은 값 = 발송분만) / other(+주문 무관 항목) / all(+유입·회수·네이버 조정까지 = 판매자센터 예정액 통째)
+function settleReconStatus({ input_sum, in_period, complete_date, expect_date, todayKst, other_adj, extras_all }) {
+    if (input_sum == null) return { status: 'no-input', diff1: null, input_includes_other: false, input_includes: 'none' };
     const d0 = Number(input_sum) - Number(in_period || 0);
-    const oa = Number(other_adj || 0);
-    const d1 = oa ? d0 - oa : d0;
-    const useOther = !!oa && Math.abs(d1) < Math.abs(d0);
-    const diff1 = useOther ? d1 : d0;
-    if (!complete_date && expect_date < todayKst) return { status: 'unpaid', diff1, input_includes_other: useOther };
+    const cands = [{ k: 'none', d: d0 }];
+    if (Number(other_adj || 0)) cands.push({ k: 'other', d: d0 - Number(other_adj) });
+    if (extras_all != null && Number(extras_all)) cands.push({ k: 'all', d: d0 - Number(extras_all) });
+    const best = cands.reduce((a, b) => (Math.abs(b.d) < Math.abs(a.d) ? b : a));
+    const diff1 = best.d;
+    const out = { diff1, input_includes_other: best.k !== 'none', input_includes: best.k };
+    if (!complete_date && expect_date < todayKst) return { status: 'unpaid', ...out };
     const tol = Math.max(100000, Math.abs(Number(input_sum)) * 0.005);   // 0.5% 또는 10만원 중 큰 쪽(소액 차이는 조치 대상 아님)
-    return { status: Math.abs(diff1) <= tol ? 'ok' : 'warn', diff1, input_includes_other: useOther };
+    return { status: Math.abs(diff1) <= tol ? 'ok' : 'warn', ...out };
 }
 // 일별 정산 행에서 주문과 무관한 회차 항목 추출(+ = 추가 지급 · − = 차감)
 function settleReconOther(daily) {
@@ -7365,9 +7369,11 @@ async function settleReconRun(daily) {
     const pendingIds = po.rows.map(r => r.order_key);
     const inp = await settleReconInputs(basisStart, basisEnd);
     const other = settleReconOther(daily);
-    const st = settleReconStatus({ input_sum: inp.input_sum, in_period: cls.in_period, complete_date: daily.settleCompleteDate || null, expect_date: expect, todayKst: kstTodayStr(), other_adj: other.sum });
+    const adjSum = (Number(daily.benefitSettleAmount) || 0) + (Number(daily.returnCareSettleAmount) || 0) + (Number(daily.deductionRestoreSettleAmount) || 0);
+    const extrasAll = other.sum + cls.carried_in + cls.reversal + adjSum;
+    const st = settleReconStatus({ input_sum: inp.input_sum, in_period: cls.in_period, complete_date: daily.settleCompleteDate || null, expect_date: expect, todayKst: kstTodayStr(), other_adj: other.sum, extras_all: extrasAll });
     const row = {
-        other_adj: other.sum, other_detail: { ...other.detail, input_includes_other: st.input_includes_other },
+        other_adj: other.sum, other_detail: { ...other.detail, input_includes_other: st.input_includes_other, input_includes: st.input_includes },
         expect_date: expect, basis_start: basisStart, basis_end: basisEnd, complete_date: daily.settleCompleteDate || null,
         pay_amount: Number(daily.paySettleAmount) || 0, commission: Number(daily.commissionSettleAmount) || 0, benefit: Number(daily.benefitSettleAmount) || 0,
         return_care: Number(daily.returnCareSettleAmount) || 0, deduction: Number(daily.deductionRestoreSettleAmount) || 0, settle_amount: Number(daily.settleAmount) || 0,
@@ -7402,9 +7408,10 @@ async function settleReconRecomputeInputs(dateStr) {
     for (const r of q.rows) {
         const bs = settleReconKst(r.basis_start), be = settleReconKst(r.basis_end), ex = settleReconKst(r.expect_date);
         const inp = await settleReconInputs(bs, be);
-        const st = settleReconStatus({ input_sum: inp.input_sum, in_period: r.in_period, complete_date: r.complete_date, expect_date: ex, todayKst: kstTodayStr(), other_adj: r.other_adj });
+        const extrasAll = Number(r.other_adj || 0) + Number(r.carried_in || 0) + Number(r.reversal || 0) + Number(r.benefit || 0) + Number(r.return_care || 0) + Number(r.deduction || 0);
+        const st = settleReconStatus({ input_sum: inp.input_sum, in_period: r.in_period, complete_date: r.complete_date, expect_date: ex, todayKst: kstTodayStr(), other_adj: r.other_adj, extras_all: extrasAll });
         await pool.query(`UPDATE naver_settle_recon SET input_sum=$2, input_dates=$3::jsonb, diff1=$4, status=$5, other_detail = COALESCE(other_detail,'{}'::jsonb) || $6::jsonb, computed_at=NOW() WHERE expect_date=$1`,
-            [ex, inp.input_sum, JSON.stringify(inp.input_dates), st.diff1, st.status, JSON.stringify({ input_includes_other: st.input_includes_other })]);
+            [ex, inp.input_sum, JSON.stringify(inp.input_dates), st.diff1, st.status, JSON.stringify({ input_includes_other: st.input_includes_other, input_includes: st.input_includes })]);
         const row = { ...r, expect_date: ex, basis_start: bs, basis_end: be, complete_date: settleReconKst(r.complete_date), input_sum: inp.input_sum, input_dates: inp.input_dates, diff1: st.diff1, status: st.status };
         await settleReconNotify(row);
         out.push(row);

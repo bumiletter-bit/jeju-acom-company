@@ -84,6 +84,10 @@ function reset() { Object.assign(S, { ss: [], lms: [], recon: {}, notes: [], cas
     const o1 = R.settleReconStatus({ input_sum: 20218799, in_period: 4497548, complete_date: null, expect_date: '2026-09-30', todayKst: '2026-09-29', other_adj: 15721251 });
     const o2 = R.settleReconStatus({ input_sum: 4497548, in_period: 4497548, complete_date: null, expect_date: '2026-09-30', todayKst: '2026-09-29', other_adj: 15721251 });
     ok('⑥-b 우대수수료 환급 = 넣은 값에 포함 시 빼고 판정 ok(diff 0) · 미포함 시 원래 판정 ok(diff 0)·플래그 false', o1.status === 'ok' && o1.diff1 === 0 && o1.input_includes_other === true && o2.status === 'ok' && o2.diff1 === 0 && o2.input_includes_other === false);
+    // ⑥-c(#468-f 9/30 실측 그대로): 정산예정 4,497,548 + 미정산 16,323,154(판매자센터 예정액 = 환급 15,721,251 + 유입 670,138 − 혜택 68,235 시점) → all 해석 채택·ok
+    const o3 = R.settleReconStatus({ input_sum: 20820702, in_period: 4497548, complete_date: null, expect_date: '2026-09-30', todayKst: '2026-09-29', other_adj: 15721251, extras_all: 15721251 + 670138 - 74855 });
+    const o4 = R.settleReconStatus({ input_sum: 63914574, in_period: 63344158, complete_date: '2026-09-21', expect_date: '2026-09-21', todayKst: '2026-09-24', other_adj: 0, extras_all: 329872 - 132147 - 298950 });
+    ok('⑥-c 판매자센터 예정액 통째 입력 = all 해석·ok(차이 6,620) · 과거 회차(9/21)는 none 해석 유지(570,416 warn 그대로)', o3.status === 'ok' && o3.input_includes === 'all' && o3.diff1 === 6620 && o4.input_includes === 'none' && o4.diff1 === 570416 && o4.status === 'warn', JSON.stringify([o3, o4]));
 
     // ⑦ 건별 조회 페이지 순회(2페이지) · periodType = 정산 예정일
     reset(); S.casePages['2026-09-10'] = [[order('A1', 10)], [order('A2', 20)]];
