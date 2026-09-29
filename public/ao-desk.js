@@ -217,7 +217,9 @@
             const long = text.length > 360 || text.split('\n').length > 6;
             const open = S.open.has(o.id);
             const files = Array.isArray(r.files) && r.files.length
-                ? `<div class="desk-note desk-files">${r.files.map(f => `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join(' · ')}</div>` : '';
+                ? `<div class="desk-acts desk-files">${r.files.map(f => f.file_id
+                    ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
+                    : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
             return `<div class="desk-a ${long && !open ? 'clamp' : ''}">${r.title ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${esc(text)}</div>${files}
                 <div class="desk-acts">${long ? `<button type="button" class="desk-btn sm" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
                 <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button></div>`;
@@ -281,6 +283,12 @@
             return;
         }
         if (act === 'confirm') { openConfirm(o.result); return; }
+        if (act === 'file') {
+            if (typeof aoDownloadFile !== 'function') { showToast('내려받기 기능을 찾지 못했어요. 새로고침 후 다시 눌러 주세요'); return; }
+            b.disabled = true;
+            try { await aoDownloadFile(Number(b.dataset.file)); } finally { b.disabled = false; }
+            return;
+        }
         if (act === 'hide') {
             b.disabled = true;
             try {

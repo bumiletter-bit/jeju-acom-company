@@ -1,6 +1,7 @@
 // #469 결과 올리기 — 사용: node scripts/desk/respond.js <지시 id> <결과.json>
 // 결과.json 형식(하나):
-//   { "kind": "answer",   "answer": "답변 글", "title": "한 줄 제목(선택)", "files": [{"label","url"}](선택) }
+//   { "kind": "answer",   "answer": "답변 글", "title": "한 줄 제목(선택)", "files": [{"label","url"}](선택),
+//                         "attachments": ["만든 파일 경로", ...](선택 — 엑셀·문서·그림을 DB에 올려 화면에서 내려받게 한다 · 파일당 10MB · 5개까지) }
 //   { "kind": "question", "question": "되묻는 말" }
 //   { "kind": "ocr",      "partner": "효돈농협 | 대성(시온) | 기타거래처 | 빈 문자열", "items": [{"name","qty"}], "date": "YYYY-MM-DD(선택)" }
 //        → 서버가 단가표 대조·확인표를 만든다(금액 계산은 서버 몫 — 창구는 품목·수량만 읽는다)
@@ -9,7 +10,25 @@
 //   { "kind": "error",    "error": "사유" }
 const fs = require('fs');
 const { pool, appendStep, heartbeat, audit } = require('./_db');
+const path = require('path');
 const clean = (s, n) => String(s == null ? '' : s).slice(0, n);
+const ATTACH_EXT = ['xlsx', 'csv', 'md', 'txt', 'pdf', 'docx', 'pptx', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4'];
+async function uploadAttachments(list, runId) {
+    const out = [];
+    for (const p of (Array.isArray(list) ? list : []).slice(0, 5)) {
+        const fp = String(p);
+        if (!fs.existsSync(fp)) throw new Error('첨부 파일이 없습니다: ' + fp);
+        const ext = (path.extname(fp).slice(1) || '').toLowerCase();
+        if (!ATTACH_EXT.includes(ext)) throw new Error('올릴 수 없는 형식입니다(.' + ext + '): ' + path.basename(fp));
+        const buf = fs.readFileSync(fp);
+        if (buf.length > 10 * 1024 * 1024) throw new Error('10MB보다 큰 파일은 올릴 수 없습니다: ' + path.basename(fp));
+        if (!buf.length) throw new Error('빈 파일입니다: ' + path.basename(fp));
+        const name = clean(path.basename(fp), 190);
+        const r = await pool.query(`INSERT INTO report_files (filename, run_id, data, size_bytes) VALUES ($1, $2, $3, $4) RETURNING id`, [name, runId || null, buf, buf.length]);
+        out.push({ label: name, file_id: r.rows[0].id, size: buf.length });
+    }
+    return out;
+}
 (async () => {
     const id = parseInt(process.argv[2], 10), file = process.argv[3];
     if (!id || !file) throw new Error('사용: respond.js <지시 id> <결과.json>');
@@ -21,9 +40,10 @@ const clean = (s, n) => String(s == null ? '' : s).slice(0, n);
     if (j.kind === 'answer') {
         if (!j.answer) throw new Error('answer가 비었습니다');
         status = '완료';
+        const uploaded = await uploadAttachments(j.attachments, o.run_id);
         result = {
             type: 'desk_answer', title: clean(j.title || '', 80), answer: clean(j.answer, 20000),
-            files: Array.isArray(j.files) ? j.files.slice(0, 10).map(f => ({ label: clean(f.label, 60), url: clean(f.url, 500) })) : [],
+            files: (Array.isArray(j.files) ? j.files.slice(0, 10).map(f => ({ label: clean(f.label, 60), url: clean(f.url, 500) })) : []).concat(uploaded),
             summary: clean(j.title || j.answer, 80),
         };
         stepText = '✅ 답변 완료';

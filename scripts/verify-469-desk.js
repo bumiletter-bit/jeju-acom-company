@@ -14,7 +14,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
 
 (async () => {
     let srv = null, browser = null, db = null;
-    const made = [];
+    const made = [], madeFiles = [];
     let S_nid0 = null;
     try {
         const env = { ...process.env, JWT_SECRET: 'verifytest', PORT: String(PORT) };
@@ -163,6 +163,27 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const hU = await call(tokS, 'POST', `/api/agent-office/orders/${p3.j.order.id}/hide-mine`, { hide: false });
         ok('되돌리기 = 내 지시에 다시 보임', hU.status === 200 && (await call(tokS, 'GET', '/api/agent-office/desk/orders?mine=1')).j.orders.some(o => o.id === p3.j.order.id));
 
+        // ── 6-c. 파일 첨부(#469-i): 창구가 만든 엑셀 → DB 보관 → 내려받기
+        const ExcelJS = require('exceljs');
+        const xlPath = path.join(os.tmpdir(), '검증469_이익률계산기.xlsx');
+        { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('이익률'); ws.addRow(['품목', '판매가', '결제가', '이익']); ws.addRow(['시험', 62800, 47000, { formula: 'B2-C2' }]); await wb.xlsx.writeFile(xlPath); }
+        const pf = await call(tokS, 'POST', '/api/agent-office/orders', { content: '[검증469] 이익률 계산기 만들어줘' });
+        made.push(pf.j.order.id);
+        desk('get.js', pf.j.order.id);
+        desk('respond.js', pf.j.order.id, tmpJson({ kind: 'answer', title: '이익률 계산기', answer: '[검증469] 시험용 계산기입니다.', attachments: [xlPath] }));
+        const rf = await row(pf.j.order.id);
+        const fileId = ((rf.result.files || []).find(f => f.file_id) || {}).file_id;
+        madeFiles.push(fileId);
+        const frow = fileId ? (await db.query(`SELECT filename, size_bytes FROM report_files WHERE id=$1`, [fileId])).rows[0] : null;
+        ok('첨부 = DB 보관 · 답변에 파일 번호', !!fileId && frow && frow.filename === '검증469_이익률계산기.xlsx' && frow.size_bytes === fs.statSync(xlPath).size);
+        const dl = await fetch(`http://localhost:${PORT}/api/agent-office/files/${fileId}/download?download=1`, { headers: { Authorization: 'Bearer ' + tokS, Connection: 'close' } });
+        const dlBuf = Buffer.from(await dl.arrayBuffer());
+        ok('직원 계정으로 내려받기 200 · 엑셀 형식 · 내용 동일', dl.status === 200 && /spreadsheetml/.test(dl.headers.get('content-type') || '') && dlBuf.equals(fs.readFileSync(xlPath)));
+        let badExt = ''; const pbad = path.join(os.tmpdir(), 'desk469-bad.exe'); fs.writeFileSync(pbad, 'x');
+        const pb = await call(tokS, 'POST', '/api/agent-office/orders', { content: '[검증469] 형식 시험' }); made.push(pb.j.order.id); desk('get.js', pb.j.order.id);
+        try { desk('respond.js', pb.j.order.id, tmpJson({ kind: 'answer', answer: 'x', attachments: [pbad] })); } catch (e) { badExt = String(e.stderr || e.message); }
+        ok('허용하지 않는 형식은 거부 · 지시는 처리중 그대로', /올릴 수 없는 형식/.test(badExt) && (await row(pb.j.order.id)).status === '처리중');
+
         // ── 7. 실렌더
         const { chromium } = require('playwright');
         browser = await chromium.launch();
@@ -213,6 +234,11 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const card = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return { badge: c.querySelector('.desk-badge').textContent, a: c.querySelector('.desk-a').textContent, copy: !!c.querySelector('[data-act="copy"]') }; }, p1.j.order.id);
         ok('답변 카드 = 완료 배지 · 제목·본문 · [답변 복사]', card.badge === '완료' && card.a.includes('오늘 발송 박스') && card.a.includes('검증용 답변입니다.') && card.copy);
         const rejCard = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return c ? c.textContent : ''; }, p3.j.order.id);
+        const dlReq = [];
+        A.pg.on('request', rq => { if (rq.url().includes('/api/agent-office/files/') && rq.url().includes('/download')) dlReq.push(rq.url()); });
+        const fbtn = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); const b = c && c.querySelector('[data-act="file"]'); return b ? { text: b.textContent, h: Math.round(b.getBoundingClientRect().height) } : null; }, pf.j.order.id);
+        if (fbtn) { await A.pg.click(`#desk-list .desk-card[data-oid="${pf.j.order.id}"] [data-act="file"]`); await A.pg.waitForTimeout(1500); }
+        ok('파일 카드 = [내려받기] 버튼 · 실클릭 = 내려받기 요청 1회', !!fbtn && /검증469_이익률계산기.xlsx 내려받기/.test(fbtn.text) && fbtn.h >= 40 && dlReq.length === 1 && dlReq[0].includes('/files/' + fileId + '/'), JSON.stringify(fbtn));
         ok('반려 카드 = 사유 표시 · 승인 버튼 없음', /시험 반려/.test(rejCard) && !/승인하고 실행/.test(rejCard));
         // #469-b: 보고서함 탭 없음 — 탭 = 내 지시·전체 지시(+관리자 대표 확인함)
         const tabs = await A.pg.evaluate(() => {
@@ -277,6 +303,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
                     await db.query(`UPDATE pending_orders SET is_deleted=true WHERE id = ANY($1::int[])`, [made]);
                     await db.query(`UPDATE agent_runs SET is_deleted=true WHERE id IN (SELECT run_id FROM pending_orders WHERE id = ANY($1::int[]) AND run_id IS NOT NULL)`, [made]);
                 }
+                if (madeFiles.filter(Boolean).length) await db.query(`UPDATE report_files SET is_deleted=true WHERE id = ANY($1::int[])`, [madeFiles.filter(Boolean)]);
                 if (S_nid0 != null) await db.query(`DELETE FROM notifications WHERE type='desk' AND id > $1`, [S_nid0]);
                 await db.query(`DELETE FROM agent_office_config WHERE key='desk_heartbeat'`);
                 const left = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE content LIKE '[검증469]%' AND is_deleted=false`)).rows[0].c;
