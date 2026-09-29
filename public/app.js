@@ -270,6 +270,7 @@ const pages = document.querySelectorAll('.page');
 
 navItems.forEach(item => {
     item.addEventListener('click', (e) => {
+        if (!item.dataset.page) return;   // #471 바깥 페이지 링크(이벤트 관리 등)는 브라우저가 그대로 연다
         e.preventDefault();
         const page = item.dataset.page;
         switchPage(page);

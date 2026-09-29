@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>제주아꼼이네 고객 감사 이벤트 — 접수·당첨 확인</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&display=swap">
+<style>
+:root{--primary:#5447f4;--primary-deep:#4e42e7;--yellow:#ffe27a;--bg:#f6f6f9;--card:#fff;--cream:#fdf7ec;--pink:#fdf3f0;--text:#1c1d3a;--mid:#5f627d;--light:#9a9db3;--border:#ebecf3;--orange:#ff7a1a;--num:#fee09a;--numText:#e8500f;--hand:#ff6b2c;
+--shadow:0 2px 10px rgba(28,29,58,.06);--float:0 10px 28px -12px rgba(84,71,244,.35)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:560px;margin:0 auto;padding:10px 10px 40px}
+.hand{font-family:'Nanum Pen Script','Pretendard Variable',cursive;color:var(--hand);font-size:18px;line-height:1.1;white-space:nowrap}
+.card{background:var(--card);border-radius:20px;padding:14px 14px;margin-top:10px;box-shadow:var(--shadow)}
+.card h2{font-size:17px;flex-shrink:0;font-weight:900;display:flex;align-items:center;gap:8px;letter-spacing:-.3px}
+.card .head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:nowrap}
+.card .head .hand{font-size:14.5px;overflow:hidden;text-overflow:ellipsis}
+/* hero */
+.hero{position:relative;border-radius:18px;overflow:hidden;box-shadow:var(--float);background:#5c62f7;line-height:0}
+.hero .banner{display:block;width:100%;height:auto}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* prizes */
+.prize{display:grid;grid-template-columns:40px 1fr 96px;grid-template-areas:"rank info img";align-items:center;gap:8px;background:var(--cream);border-radius:14px;padding:7px 10px;margin-top:7px;position:relative}
+.rank{grid-area:rank;width:40px;height:40px;font-size:12px;border-radius:50%;background:#ffe9b3;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;color:#a04a00;font-size:14px;line-height:1;gap:2px}
+.rank .cr{font-size:13px}
+.info{grid-area:info;min-width:0}
+.info .n{font-size:15px;font-weight:900;letter-spacing:-.3px;word-break:keep-all}
+.info .d{font-size:11.5px;color:var(--mid);margin-top:3px;line-height:1.4;word-break:keep-all}
+.pimg{grid-area:img;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.pimg img{width:96px;height:auto;border-radius:10px;display:block}
+.cnt{display:inline-block;background:var(--num);color:var(--numText);font-weight:900;font-size:13.5px;padding:2px 9px;border-radius:10px;box-shadow:0 2px 6px rgba(255,122,26,.18)}
+.pimg .hand{font-size:13px;text-align:right;line-height:1.05;white-space:nowrap}
+.note{display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;font-size:11.5px;color:var(--mid);word-break:keep-all;line-height:1.5}
+.note .l{flex:1}
+.note .r{display:flex;align-items:center;justify-content:flex-end;gap:4px;flex-shrink:0}
+.note img{width:46px;height:auto}
+/* search */
+.search{display:flex;gap:8px;margin-top:10px}
+.field{flex:1;position:relative;min-width:0}
+.field .ic{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:16px;opacity:.5}
+.field input{width:100%;border:2px solid var(--border);border-radius:12px;padding:11px 36px 11px 38px;font-size:16px;font-family:inherit;outline:none;transition:.15s;background:#fff}
+.field input:focus{border-color:var(--primary);box-shadow:0 0 0 4px rgba(84,71,244,.14)}
+.field .clr{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:24px;height:24px;border-radius:50%;background:#d5d7e2;color:#fff;border:0;font-size:13px;display:none;align-items:center;justify-content:center;cursor:pointer}
+.field.has .clr{display:flex}
+.search button.go{background:var(--primary);color:#fff;border:0;border-radius:12px;padding:0 18px;font-size:15px;font-weight:800;font-family:inherit;cursor:pointer;white-space:nowrap;box-shadow:0 6px 16px -6px rgba(84,71,244,.6)}
+.search button.go:active{background:var(--primary-deep)}
+.hint{font-size:11.5px;color:var(--light);margin-top:8px;line-height:1.5;word-break:keep-all}
+#result{margin-top:14px}
+/* result */
+.res{border-radius:20px;padding:18px 16px;background:var(--pink);position:relative;overflow:hidden;animation:pop .25s ease;display:grid;grid-template-columns:118px 1fr;gap:12px;align-items:center}
+@keyframes pop{from{transform:translateY(6px);opacity:0}to{transform:none;opacity:1}}
+.res .pic{width:118px;height:auto;border-radius:14px;display:block}
+.res .body{min-width:0}
+.res .big{font-size:20px;font-weight:900;line-height:1.3;word-break:keep-all;letter-spacing:-.3px}
+.res ul{margin-top:8px;padding-left:0;list-style:none;font-size:13px;color:var(--mid);line-height:1.55}
+.res ul li{padding-left:12px;position:relative;word-break:keep-all}
+.res ul li::before{content:"";position:absolute;left:0;top:9px;width:5px;height:5px;border-radius:50%;background:var(--primary)}
+.res .sub{font-size:13.5px;color:var(--mid);margin-top:6px;word-break:keep-all}
+.res .rrow{grid-column:1/-1;display:flex;align-items:flex-end;justify-content:flex-end;gap:8px;margin-top:2px}
+.res .deco{width:64px;display:block}
+.res .hand2{font-family:'Nanum Pen Script',cursive;color:var(--hand);font-size:22px;transform:rotate(-6deg);line-height:1;text-align:right}
+.res.ok{background:#eef0ff}
+.res.win{background:linear-gradient(180deg,#fff4d6,#fff9ec)}
+.res.lose{background:var(--pink)}
+.res.none{background:var(--pink)}
+.res.single{grid-template-columns:1fr}
+.ask{margin-top:10px;background:#fff7e6;border:1px solid #fde68a;border-radius:12px;padding:10px 12px;font-size:13px;color:#92400e;font-weight:600;word-break:keep-all}
+.orders{margin-top:12px;display:grid;gap:8px}
+.ord{border:1px solid var(--border);border-radius:14px;padding:11px 13px;font-size:13px;background:#fff}
+.ord .t{font-weight:800;font-size:13.5px;word-break:break-all}
+.ord .m{color:var(--mid);margin-top:4px;display:flex;flex-wrap:wrap;gap:4px 10px}
+.ord .tag{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:2px 6px;background:#eef0ff;color:var(--primary)}
+.prizebox{margin-top:12px;background:#fff;border:2px dashed #f4b63f;border-radius:14px;padding:12px;text-align:center}
+.prizebox .p{font-size:19px;font-weight:900;color:#b45309}
+.prizebox .s{font-size:12.5px;color:var(--mid);margin-top:4px;word-break:keep-all}
+.foot{font-size:11px;color:var(--light);text-align:center;margin-top:16px;line-height:1.7}
+/* winners popup */
+.wbtn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;background:var(--primary);color:#fff;border:0;border-radius:999px;padding:8px 16px;font-size:13.5px;font-weight:800;font-family:inherit;cursor:pointer;box-shadow:0 6px 16px -6px rgba(84,71,244,.6)}
+.wbtn:active{background:var(--primary-deep)}
+.modal{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;padding:14px;background:rgba(28,29,58,.55);backdrop-filter:blur(3px)}
+.modal.on{display:flex}
+.mbox{width:100%;max-width:440px;max-height:calc(100vh - 28px);max-height:calc(100dvh - 28px);background:#fff;border-radius:22px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px -20px rgba(28,29,58,.5);animation:pop .3s ease}
+.mhero{position:relative;background:#5c62f7;line-height:0;flex-shrink:0}
+.mhero img{width:100%;height:auto;display:block}
+.mclose{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:50%;border:0;background:rgba(255,255,255,.9);color:var(--text);font-size:16px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.mtitle{text-align:center;padding:14px 16px 4px;flex-shrink:0}
+.mtitle .t{font-size:21px;font-weight:900;letter-spacing:-.5px;line-height:1.2}
+.mtitle .s{font-size:12.5px;color:var(--mid);margin-top:4px;word-break:keep-all}
+.mtitle .hand{font-size:16px;margin-top:4px;display:block}
+.mbody{overflow-y:auto;padding:6px 14px 14px;-webkit-overflow-scrolling:touch}
+.wg{margin-top:10px}
+.wg .wh{display:flex;align-items:center;gap:8px;background:var(--cream);border-radius:12px;padding:7px 10px}
+.wg .wh .rank{width:34px;height:34px;font-size:12px}
+.wg .wh .rank .cr{font-size:11px}
+.wg .wh .n{font-size:14.5px;font-weight:900;flex:1;min-width:0;word-break:keep-all;letter-spacing:-.3px}
+.wg .wh .cnt{font-size:12.5px;padding:2px 8px}
+.wl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+.wl .w{border:1px solid var(--border);border-radius:10px;padding:7px 8px;font-size:13px;line-height:1.3;background:#fff;display:flex;align-items:center;gap:6px;min-width:0}
+.wl .w .nm{font-weight:800;white-space:nowrap}
+.wl .w .ph{color:var(--mid);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl .w::before{content:"🍊";font-size:12px;flex-shrink:0}
+.mfoot{padding:10px 14px 14px;flex-shrink:0;border-top:1px solid var(--border);background:#fff}
+.mfoot .msg{font-size:12.5px;color:var(--mid);text-align:center;word-break:keep-all;line-height:1.5}
+.mfoot .ok{display:block;width:100%;margin-top:8px;background:var(--primary);color:#fff;border:0;border-radius:12px;padding:12px;font-size:15px;font-weight:800;font-family:inherit;cursor:pointer}
+.mfoot .ok:active{background:var(--primary-deep)}
+@media (max-width:360px){ .wl{grid-template-columns:1fr} }
+@media (max-width:380px){ .pimg img{width:88px} .prize{grid-template-columns:36px 1fr 88px;gap:6px} .rank{width:36px;height:36px;font-size:11px} .info .n{font-size:14px} .res{grid-template-columns:90px 1fr} .res .pic{width:90px} }
+@media (max-width:350px){ .prize{grid-template-columns:44px 1fr auto} .rank{width:40px;height:40px;font-size:12px} .pimg img{width:96px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <img class="banner" src="img/lucky_hero_full.webp" alt="제주아꼼이네 고객 감사 이벤트" width="991" height="289">
+    <div class="sr" id="evTitle">제주아꼼이네 고객 감사 이벤트</div>
+    <div class="sr" id="evPeriod"></div>
+  </div>
+
+  <div class="card">
+    <div class="head"><h2>🎁 경품 안내</h2><span class="hand">제주의 좋은 마음을 선물합니다! ♡</span></div>
+    <div id="prizes"></div>
+    <div class="note">
+      <div class="l" id="evInfo"></div>
+      <div class="r"><span class="hand" style="font-size:14px;line-height:1.1;text-align:right;white-space:normal">늘 함께해 주셔서<br>감사합니다! ♡</span><img src="img/lucky_orange_corner.webp" alt=""></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head"><h2>🔍 접수 · 당첨 확인</h2><span class="hand">성함·번호로 확인해보세요! ♡</span></div>
+    <div class="search">
+      <div class="field" id="field"><span class="ic">👤</span><input id="q" type="text" placeholder="성함 또는 휴대폰 번호" autocomplete="off" enterkeyhint="search"><button class="clr" id="clr" type="button" aria-label="지우기">✕</button></div>
+      <button class="go" id="btn">조회하기</button>
+    </div>
+    <div class="hint">주문하신 분 성함 / 휴대폰 번호로 조회하세요. 선물하기로 주문하신 경우 <b>받는 분 연락처</b>로도 확인됩니다.</div>
+    <div id="result"></div>
+  </div>
+
+  <div class="foot">주문·배송 문의는 구매하신 채널로 남겨주세요 🙏<br>© 제주아꼼이네 농업회사법인</div>
+</div>
+
+<div class="modal" id="wmodal" role="dialog" aria-modal="true" aria-labelledby="wtitle">
+  <div class="mbox">
+    <div class="mhero"><img src="img/lucky_winner_hero.webp" alt="" width="900" height="471"><button class="mclose" id="wclose" type="button" aria-label="닫기">✕</button></div>
+    <div class="mtitle"><div class="t" id="wtitle">🏆 당첨자 발표</div><div class="s" id="wsub"></div><span class="hand">함께해 주신 모든 분께 감사드립니다! ♡</span></div>
+    <div class="mbody" id="wbody"></div>
+    <div class="mfoot"><div class="msg">당첨되신 분께는 <b>순차적으로 연락</b>드리며, 경품은 주문 시 배송지로 보내드립니다 🍊<br>내 당첨 여부는 성함·번호로 조회하세요.</div><button class="ok" id="wok" type="button">확인하고 조회하러 가기</button></div>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let EV=null;
+const fmtDate=d=>{ if(!d) return ''; const [y,m,dd]=d.split('-'); return `${+m}월 ${+dd}일`; };
+const DESC=['제주의 달콤함, 프리미엄 하우스 황금향<br>소중한 분께 전하는 특별한 선물','황금향이 가득한 제주 황금향<br>달콤한 행복을 선물하세요','언제나 맛있는 제주 감귤<br>제주의 따뜻한 마음을 담았습니다'];
+const NOTE=['프리미엄 황금향!','달콤한 선물!','신선한 제주 감귤!'];
+const IMG=['img/lucky_box1.webp','img/lucky_box2.webp','img/lucky_box3.webp'];
+async function loadEvent(){
+  try{ const r=await fetch('/api/lucky/event'); const j=await r.json(); EV=j.event; render(j); }catch(e){ $('#evInfo').textContent='이벤트 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'; }
+}
+function render(j){
+  const e=j.event; const t=e.title.replace(/\s*(고객 감사 이벤트|이벤트)\s*$/,'');
+  $('#evTitle').textContent=e.title;
+  $('#evPeriod').textContent=`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문 고객 대상 · ${fmtDate(e.announce)} 당첨자 발표`;
+  $('#prizes').innerHTML=e.prizes.map((p,i)=>`<div class="prize"><div class="rank"><span class="cr">👑</span>${i+1}등</div><div class="info"><div class="n">${esc(p.name)}</div><div class="d">${DESC[i]||''}</div></div><div class="pimg">${IMG[i]?`<img src="${IMG[i]}" alt="">`:''}<span class="cnt">${p.count}명</span><span class="hand">${NOTE[i]||''}</span></div></div>`).join('');
+  const total=e.prizes.reduce((a,p)=>a+p.count,0);
+  $('#evInfo').innerHTML=e.published?`🎉 <b>당첨자 발표 완료!</b> 아래에서 확인하세요 (총 ${total}분)<br><button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>`:`🎁 총 <b>${total}분</b> 추첨 · 현재 접수 ${j.counts.customers}분 · 기간 내 주문 건은 자동 접수됩니다.<br><span style="color:var(--light)">(송장 등록 후 반영)</span>`;
+  if(e.published) openWinners(false);
+}
+let WIN=null;
+async function openWinners(force){
+  let seen=false; try{ seen=sessionStorage.getItem('lk_winners_seen')==='1'; }catch(_){}
+  if(!force && seen) return;
+  try{
+    if(!WIN){ const r=await fetch('/api/lucky/winners'); WIN=await r.json(); }
+    if(!WIN.published) return;
+    $('#wsub').textContent=`${fmtDate(WIN.announce)} 발표 · 총 ${WIN.total}분`;
+    $('#wbody').innerHTML=WIN.groups.map(g=>`<div class="wg"><div class="wh"><div class="rank"><span class="cr">👑</span>${g.rank}등</div><div class="n">${esc(g.prize)}</div><span class="cnt">${g.winners.length}명</span></div><div class="wl">${g.winners.map(w=>`<div class="w"><span class="nm">${esc(w.name)}</span><span class="ph">${esc(w.phone)}</span></div>`).join('')||'<div class="w" style="grid-column:1/-1;color:var(--light)">당첨자 없음</div>'}</div></div>`).join('');
+    $('#wmodal').classList.add('on'); document.body.style.overflow='hidden';
+    try{ sessionStorage.setItem('lk_winners_seen','1'); }catch(_){}
+  }catch(e){}
+}
+function closeWinners(go){
+  $('#wmodal').classList.remove('on'); document.body.style.overflow='';
+  if(go){ $('#q').scrollIntoView({behavior:'smooth',block:'center'}); setTimeout(()=>$('#q').focus(),400); }
+}
+$('#wclose').onclick=()=>closeWinners(false); $('#wok').onclick=()=>closeWinners(true);
+$('#wmodal').addEventListener('click',e=>{ if(e.target===$('#wmodal')) closeWinners(false); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('#wmodal').classList.contains('on')) closeWinners(false); });
+async function lookup(){
+  const q=$('#q').value.trim(); const box=$('#result');
+  if(!q){ $('#q').focus(); return; }
+  box.innerHTML='<div class="res single"><div class="body"><div class="sub">조회 중...</div></div></div>';
+  try{
+    const r=await fetch('/api/lucky/lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});
+    const j=await r.json();
+    if(!r.ok){ box.innerHTML=`<div class="res none single"><div class="body"><div class="big">${j.error==='SHORT'?'성함은 2글자 이상 입력해주세요':j.error==='RATE'?'잠시 후 다시 시도해주세요':'조회할 수 없어요'}</div></div></div>`; return; }
+    show(j,q);
+  }catch(e){ box.innerHTML='<div class="res none single"><div class="body"><div class="big">연결이 불안정해요</div><div class="sub">잠시 후 다시 시도해주세요.</div></div></div>'; }
+}
+const girl='<img class="pic" src="img/lucky_girl_bottom.webp" alt="">';
+const deco=(t)=>`<div class="rrow"><span class="hand2">${t}</span><img class="deco" src="img/lucky_orange_bl.webp" alt=""></div>`;
+function show(j,q){
+  const box=$('#result'); const e=j.event;
+  if(!j.results.length){
+    box.innerHTML=`<div class="res none">${girl}<div class="body"><div class="big">접수된 주문이 없습니다 😳</div><ul><li>'${esc(q)}'으로 등록된 ${j.mode==='phone'?'연락처가':'성함이'} 없어요.</li><li>주문하신 분 성함이나 휴대폰 번호로 다시 검색해보세요.</li><li>선물하기 주문은 받는 분 연락처로 검색됩니다.</li><li>오늘 주문하셨다면 송장 등록 후(보통 다음날) 반영돼요.</li></ul></div>${deco('다음엔<br>꼭 만나요!')}</div>`; return;
+  }
+  const rec=j.by==='receiver';
+  const first=j.results[0];
+  let head='';
+  if(first.status==='win'){
+    head=`<div class="res win">${girl}<div class="body"><div class="big">🎊 축하합니다! 당첨되셨어요!</div><div class="sub">${esc(first.buyer||first.recv)} 고객님, 제주아꼼이네를 이용해주셔서 감사합니다.</div></div><div class="prizebox" style="grid-column:1/-1;margin-top:0"><div class="p">🍊 ${esc(first.prize)}</div><div class="s">경품은 주문 시 배송지로 보내드립니다. 문의는 구매 채널로 남겨주세요.</div></div></div>`;
+  } else if(first.status==='lose'){
+    head=`<div class="res lose">${girl}<div class="body"><div class="big">아쉽지만 다음 기회에… 🙏</div><div class="sub">이번엔 당첨되지 않으셨어요. 다음 이벤트에서 <b>더 좋은 상품으로 보답</b>드리겠습니다. 이용해주셔서 진심으로 감사합니다!</div></div>${deco('다음엔<br>꼭 만나요!')}</div>`;
+  } else if(first.status==='noitem'){
+    head=`<div class="res none">${girl}<div class="body"><div class="big">이 상품은 이벤트 대상이 아니에요 🙏</div><div class="sub">주문은 확인되지만 <b>${esc((e.excludeProducts||[]).join(', '))}</b> 상품은 이번 이벤트 응모 대상에서 제외돼요. 감귤·황금향 등 다른 상품 주문은 자동 접수됩니다!</div></div></div>`;
+  } else if(first.status==='outside'){
+    head=`<div class="res none">${girl}<div class="body"><div class="big">이벤트 기간 밖 주문이에요 🙏</div><div class="sub">주문은 확인되지만 <b>${fmtDate(e.start)}~${fmtDate(e.end)}</b> 사이 주문만 응모 대상이에요. 기간 내에 주문하시면 자동으로 접수됩니다!</div></div></div>`;
+  } else {
+    head=`<div class="res ok">${girl}<div class="body"><div class="big">✅ 접수되었습니다!</div><div class="sub">${fmtDate(e.announce)} 당첨자 발표 후 이 화면에서 결과를 확인하세요.</div></div>${deco('행운을<br>빌어요!')}</div>`;
+  }
+  const ask=rec?`<div class="ask">📦 받는 분 정보로 찾았어요 — 아래 주문이 맞으신가요? (주문자 연락처가 없는 선물하기 주문은 받는 분 기준으로 접수됩니다)</div>`:'';
+  const list=`<div class="orders">${j.results.map(o=>`<div class="ord" style="${o.inRange?'':'opacity:.6'}"><div class="t">${esc(o.product)} <span class="tag">×${o.qty}</span>${o.inRange?'':' <span class="tag" style="background:#fee4e2;color:#b42318">'+(o.noitem?'대상외':'기간외')+'</span>'}</div><div class="m"><span>📅 ${fmtDate(o.date)} 발송</span>${o.recv?`<span>📦 받는 분 ${esc(o.recv)}${o.recvPhone?' ('+o.recvPhone+')':''}</span>`:''}${o.addr?`<span>📍 ${esc(o.addr)}</span>`:''}</div></div>`).join('')}</div>`;
+  box.innerHTML=head+ask+list;
+}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('#btn').onclick=lookup; $('#q').addEventListener('keydown',e=>{ if(e.key==='Enter') lookup(); });
+$('#q').addEventListener('input',()=>$('#field').classList.toggle('has',!!$('#q').value));
+$('#clr').onclick=()=>{ $('#q').value=''; $('#field').classList.remove('has'); $('#result').innerHTML=''; $('#q').focus(); };
+loadEvent();
+</script>
+</body>
+</html>

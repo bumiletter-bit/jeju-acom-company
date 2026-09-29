@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>이벤트 관리 — 제주아꼼이네</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--primary:#4F46E5;--primary-dark:#4338CA;--primary-light:#EEF0FF;--bg:#F5F6F8;--text:#101828;--mid:#667085;--light:#98A0AE;--border:#ECEDF1;--danger:#F04438;--success:#12B76A;--amber:#F59E0B;--shadow:0 1px 3px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.55}
+.wrap{max-width:900px;margin:0 auto;padding:18px 16px 80px}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+header h1{font-size:19px;font-weight:800;display:flex;align-items:center;gap:9px}
+.logo-dot{width:12px;height:12px;border-radius:4px;background:var(--primary);display:inline-block}
+.card{background:#fff;border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
+.card h2{font-size:14px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;color:var(--text);border-radius:10px;padding:9px 15px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;box-shadow:var(--shadow)}
+.btn:hover{border-color:var(--primary);color:var(--primary)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.primary:hover{background:var(--primary-dark);color:#fff}
+.btn.danger{color:var(--danger);border-color:#FECDD3}
+.btn.sm{padding:6px 10px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+input[type=text],input[type=date],input[type=number],input[type=password]{border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;font-size:14px;font-family:inherit;outline:none;width:100%}
+input:focus{border-color:var(--primary)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.stat{background:var(--primary-light);border-radius:11px;padding:10px 12px}
+.stat .l{font-size:11px;color:var(--mid)}.stat .v{font-size:18px;font-weight:800;color:var(--primary)}
+@media(max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;word-break:break-all}
+th{background:#FAFAFB;font-weight:700;color:var(--mid);font-size:12px;white-space:nowrap}
+.drop{border:2px dashed #C7D2FE;border-radius:14px;padding:22px;text-align:center;color:var(--mid);background:#FAFAFF;cursor:pointer}
+.drop.on{background:var(--primary-light);border-color:var(--primary)}
+.tag{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;background:var(--primary-light);color:var(--primary)}
+.tag.ok{background:#E7F8EF;color:#12B76A}.tag.warn{background:#FFF7E6;color:#B45309}.tag.red{background:#FEE4E2;color:#B42318}
+.hint{font-size:12.5px;color:var(--light);margin-top:6px;line-height:1.5}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#101828;color:#fff;padding:10px 16px;border-radius:12px;font-size:13px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;z-index:99;max-width:90vw}
+.toast.on{opacity:1}
+.prizeRow{display:grid;grid-template-columns:1fr 90px 40px;gap:6px;margin-bottom:6px}
+#loginCard{max-width:420px;margin:60px auto}
+.hidden{display:none!important}
+.scroll{overflow-x:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1><span class="logo-dot"></span>이벤트 관리자 <span style="font-size:12px;font-weight:500;color:var(--mid)">제주아꼼이네 · 접수/추첨</span></h1><div class="row"><a class="btn sm" href="lucky.html" target="_blank">고객 화면 열기 ↗</a><a class="btn sm" href="/" id="btnHome">회사 프로그램으로</a></div></header>
+
+<div class="card" id="loginCard">
+  <h2>🔐 회사 프로그램 로그인이 필요합니다</h2>
+  <div class="hint" id="loginMsg">회사 프로그램에 로그인한 브라우저에서 이 화면을 열어 주세요. 직원 계정으로 사용할 수 있습니다(초기화·복원·새 회차는 관리자만).</div>
+  <div class="row" style="margin-top:10px"><a class="btn primary" href="/">회사 프로그램 로그인하러 가기</a></div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="card">
+    <div class="stats"><div class="stat"><div class="l">응모권(장) = 대상 주문 건수</div><div class="v" id="sOrders">0</div><div class="hint" id="sEx" style="font-size:11px;color:#B42318"></div></div><div class="stat"><div class="l">응모 고객(명)</div><div class="v" id="sCust">0</div></div><div class="stat"><div class="l">당첨자</div><div class="v" id="sWin">0</div></div><div class="stat"><div class="l">발표 상태</div><div class="v" id="sPub" style="font-size:14px">-</div></div></div>
+    <div class="row"><span class="hint" id="sMeta"></span></div>
+  </div>
+
+  <div class="card">
+    <h2>📤 송장 업로드 <span class="hint">매일 거래처(대성·효돈) 송장 엑셀을 넣으면 자동 접수 · 같은 송장은 중복 제외</span></h2>
+    <div class="drop" id="drop">📂 여기에 엑셀 파일을 놓거나 클릭해서 선택 (여러 개 가능)<input type="file" id="file" accept=".xlsx,.xls,.csv" multiple style="display:none"></div>
+    <div id="preview"></div>
+  </div>
+
+  <div class="card">
+    <h2>📚 등록 현황 <span class="hint">날짜·거래처별 건수 · 잘못 올렸으면 삭제 후 다시 업로드</span></h2>
+    <div class="scroll"><table id="tblUploads"><thead><tr><th>발송일</th><th>거래처</th><th>건수</th><th>고객수</th><th></th></tr></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2>⚙️ 이벤트 설정</h2>
+    <div class="row" style="margin-bottom:8px"><input type="text" id="evTitle" placeholder="이벤트 제목" style="flex:1;min-width:200px"></div>
+    <div class="row" style="margin-bottom:8px"><label>주문기간 <input type="date" id="evStart" style="width:150px"></label> ~ <input type="date" id="evEnd" style="width:150px"> <label>발표일 <input type="date" id="evAnn" style="width:150px"></label></div>
+    <div id="prizeList"></div>
+    <div class="row" style="margin-top:6px"><button class="btn sm" id="btnAddPrize">+ 경품 추가</button></div>
+    <div style="margin-top:10px"><input type="text" id="excluded" placeholder="추첨 제외 연락처 (직원·테스트 주문, 쉼표로 구분) 예: 010-1234-5678, 010-0000-0000"></div>
+    <div style="margin-top:8px"><input type="text" id="exProducts" placeholder="응모 제외 품목 키워드 (상품명에 포함되면 제외, 쉼표로 구분) 예: 청귤"></div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="btnSaveEv">설정 저장</button></div>
+  </div>
+
+  <div class="card">
+    <h2>🎲 추첨 &amp; 발표</h2>
+    <div class="hint" style="margin-bottom:10px">응모권 = 기간 내 <b>주문 1건당 1장</b> (11건 주문하면 11장 → 확률↑). 단, 한 사람은 최대 1번만 당첨 (연락처 기준). 추첨 후 <b>발표 시작</b>을 눌러야 고객 화면에 당첨/미당첨이 표시됩니다.</div>
+    <div class="row"><button class="btn primary" id="btnDraw">🎲 추첨하기</button><button class="btn" id="btnPublish">📣 발표 시작</button><button class="btn" id="btnUnpublish">발표 숨기기</button></div>
+    <div class="scroll" style="margin-top:12px"><table id="tblWin"><thead><tr><th>#</th><th>경품</th><th>고객</th><th>연락처</th><th>주문</th><th></th></tr></thead><tbody></tbody></table></div>
+    <div class="row" style="margin-top:10px"><button class="btn sm" id="btnCopyWin">당첨자 목록 복사</button><button class="btn sm" id="btnXlsxWin">당첨자 엑셀</button></div>
+  </div>
+
+  <div class="card">
+    <h2>💾 백업 / 복원 · 회차 <span class="hint">데이터는 회사 DB에 저장돼 배포해도 지워지지 않아요 · 옛 사이트(event.akkome.com) 백업 파일로 옮겨올 수 있어요 · 복원·초기화·새 회차는 관리자만</span></h2>
+    <div class="row"><button class="btn sm" id="btnBackup">백업 파일 다운로드</button><button class="btn sm danger" id="btnNewRound">🆕 새 회차 시작</button><label class="btn sm">백업 파일로 복원<input type="file" id="restoreFile" accept=".json" style="display:none"></label><button class="btn sm danger" id="btnReset">전체 초기화</button></div>
+    <div class="hint" id="backupMeta"></div>
+  </div>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const toast=(m,ms)=>{ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),ms||2600); };
+let DB=null; const TOKEN=()=>localStorage.getItem('jwt_token')||'';
+const digits=s=>String(s||'').replace(/\D/g,'');
+const custKey=o=>digits(o.buyerPhone)||digits(o.recvPhone)||String(o.buyer||'').replace(/\s+/g,'')||String(o.recv||'');
+const inRange=o=>{ const d=String(o.date||'').slice(0,10); return d>=DB.event.start&&d<=DB.event.end; };
+const exProd=o=>(DB.event.excludeProducts||[]).some(k=>k&&String(o.product||'').includes(k));
+const eligible=o=>inRange(o)&&!exProd(o);
+async function api(path,body){ const get=path==='state'; const r=await fetch('/api/agent-office/lucky/'+path,{method:get?'GET':'POST',headers:{'Content-Type':'application/json','X-User-Active':'1',Authorization:'Bearer '+TOKEN()},body:get?undefined:JSON.stringify(body||{})}); const j=await r.json().catch(()=>({})); if(r.status===401){ showLogin(j.error); throw new Error('로그인이 필요해요'); } if(r.status===403) throw new Error('관리자만 할 수 있는 작업이에요'); if(!r.ok) throw new Error(j.error||('오류 '+r.status)); if(j.db){ DB=j.db; render(); } return j; }
+function backupLocal(){ /* 회사 DB 저장으로 대체 — 개인정보를 브라우저에 남기지 않음 */ }
+function showLogin(msg){ $('#app').classList.add('hidden'); $('#loginCard').classList.remove('hidden'); if(msg) $('#loginMsg').textContent=msg+' — 회사 프로그램에서 다시 로그인한 뒤 이 화면을 새로고침해 주세요.'; }
+async function start(){ if(!TOKEN()){ showLogin(); return; } try{ await api('state'); $('#loginCard').classList.add('hidden'); $('#app').classList.remove('hidden'); }catch(e){ toast(e.message,4000); } }
+
+
+start();
+
+/* ---------- 렌더 ---------- */
+const fmt=d=>d?String(d).slice(5).replace('-','/'):'';
+function render(){
+  const list=DB.orders.filter(eligible); const cust=new Set(list.map(custKey)); const exN=DB.orders.filter(o=>inRange(o)&&exProd(o)).length;
+  $('#sOrders').textContent=list.length; $('#sCust').textContent=cust.size; $('#sEx').textContent=exN?`제외 품목(${(DB.event.excludeProducts||[]).join(', ')}) ${exN}건 제외됨`:''; $('#sWin').textContent=DB.winners.length;
+  $('#sPub').textContent=DB.event.published?'📣 발표중':(DB.winners.length?'추첨완료(미발표)':'접수중'); $('#sPub').style.color=DB.event.published?'#12B76A':'';
+  $('#sMeta').textContent='전체 등록 '+DB.orders.length+'건 (기간 외 '+(DB.orders.length-list.length)+'건 제외) · 마지막 저장 '+(DB.updatedAt?new Date(DB.updatedAt).toLocaleString('ko-KR'):'-');
+  // uploads by date/vendor
+  const g={}; DB.orders.forEach(o=>{ const k=o.date+'|'+o.vendor; g[k]=g[k]||{date:o.date,vendor:o.vendor,n:0,c:new Set()}; g[k].n++; g[k].c.add(custKey(o)); });
+  const rows=Object.values(g).sort((a,b)=>b.date.localeCompare(a.date)||a.vendor.localeCompare(b.vendor));
+  $('#tblUploads tbody').innerHTML=rows.map(r=>`<tr><td>${r.date}${(r.date>=DB.event.start&&r.date<=DB.event.end)?'':' <span class="tag warn">기간외</span>'}</td><td>${r.vendor}</td><td>${r.n}</td><td>${r.c.size}</td><td><button class="btn sm danger" data-del="${r.date}|${r.vendor}">삭제</button></td></tr>`).join('')||'<tr><td colspan="5" style="color:var(--light)">아직 등록된 송장이 없어요</td></tr>';
+  $$('#tblUploads [data-del]').forEach(b=>b.onclick=async()=>{ const [date,vendor]=b.dataset.del.split('|'); if(!confirm(date+' '+vendor+' 송장 전체를 삭제할까요?')) return; const j=await api('remove',{vendor,date}); toast(j.removed+'건 삭제'); });
+  // event
+  $('#evTitle').value=DB.event.title; $('#evStart').value=DB.event.start; $('#evEnd').value=DB.event.end; $('#evAnn').value=DB.event.announce||DB.event.end;
+  $('#prizeList').innerHTML=DB.event.prizes.map((p,i)=>`<div class="prizeRow"><input type="text" value="${esc(p.name)}" data-pn="${i}"><input type="number" min="0" value="${p.count}" data-pc="${i}"><button class="btn sm danger" data-pd="${i}">✕</button></div>`).join('');
+  $$('#prizeList [data-pd]').forEach(b=>b.onclick=()=>{ DB.event.prizes.splice(+b.dataset.pd,1); render(); });
+  $('#excluded').value=(DB.excluded||[]).join(', '); $('#exProducts').value=(DB.event.excludeProducts||[]).join(', ');
+  // winners
+  $('#tblWin tbody').innerHTML=DB.winners.map((w,i)=>`<tr><td>${i+1}</td><td><b>${esc(w.prize)}</b></td><td>${esc(w.name)}</td><td>${esc(w.phone)}</td><td>${esc((w.product||'').slice(0,28))} · ${w.orders}건</td><td><button class="btn sm" data-redraw="${w.key}">이 사람만 재추첨</button></td></tr>`).join('')||'<tr><td colspan="6" style="color:var(--light)">아직 추첨 전입니다</td></tr>';
+  $$('#tblWin [data-redraw]').forEach(b=>b.onclick=async()=>{ if(!confirm('이 당첨자를 제외하고 해당 자리만 다시 뽑을까요? (다른 당첨자는 유지)')) return; const keep=DB.winners.filter(w=>w.key!==b.dataset.redraw).map(w=>w.key); DB.excluded=[...new Set([...(DB.excluded||[]),b.dataset.redraw])]; await api('event',{event:{},excluded:DB.excluded}); await api('draw',{keep}); toast('재추첨 완료'); });
+  $('#backupMeta').textContent='회사 DB 저장 · 마지막 저장 '+(DB.updatedAt?new Date(DB.updatedAt).toLocaleString('ko-KR'):'-');
+}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('#btnAddPrize').onclick=()=>{ DB.event.prizes.push({name:'',count:1}); render(); };
+$('#btnSaveEv').onclick=async()=>{ const prizes=$$('#prizeList .prizeRow').map(r=>({name:r.querySelector('[data-pn]').value.trim(),count:+r.querySelector('[data-pc]').value||0})).filter(p=>p.name); const excluded=$('#excluded').value.split(',').map(s=>s.trim()).filter(Boolean); const excludeProducts=$('#exProducts').value.split(',').map(s=>s.trim()).filter(Boolean); await api('event',{event:{title:$('#evTitle').value.trim(),start:$('#evStart').value,end:$('#evEnd').value,announce:$('#evAnn').value,prizes,excludeProducts},excluded}); toast('설정 저장 ✓'); };
+$('#btnDraw').onclick=async()=>{ const list=DB.orders.filter(eligible); if(!list.length){ toast('기간 내 주문이 없어요'); return; } if(DB.winners.length&&!confirm('이미 추첨 결과가 있어요. 전부 다시 뽑을까요?')) return; const j=await api('draw',{}); toast('추첨 완료 — 응모 '+j.pool+'명 (응모권 '+j.tickets+'장) 중 '+DB.winners.length+'명',4000); };
+$('#btnPublish').onclick=async()=>{ if(!DB.winners.length){ toast('먼저 추첨하세요'); return; } if(!confirm('고객 화면에 당첨/미당첨 결과를 공개할까요?')) return; await api('publish',{published:true}); toast('📣 발표 시작!'); };
+$('#btnUnpublish').onclick=async()=>{ await api('publish',{published:false}); toast('발표 숨김'); };
+$('#btnCopyWin').onclick=()=>{ const t=DB.winners.map((w,i)=>`${i+1}. ${w.prize} — ${w.name} ${w.phone}`).join('\n'); navigator.clipboard.writeText(t).then(()=>toast('복사됨')); };
+$('#btnXlsxWin').onclick=()=>{ const ws=XLSX.utils.json_to_sheet(DB.winners.map((w,i)=>({번호:i+1,경품:w.prize,고객:w.name,연락처:w.phone,주문상품:w.product,주문건수:w.orders,발송일:w.date}))); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'당첨자'); XLSX.writeFile(wb,'당첨자_'+DB.event.end+'.xlsx'); };
+$('#btnBackup').onclick=()=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(DB)],{type:'application/json'})); a.download='lucky_backup_'+new Date().toISOString().slice(0,10)+'.json'; a.click(); };
+$('#btnNewRound').onclick=async()=>{ if(prompt('지금 회차를 보관하고 새 회차를 시작하려면 NEW 입력 (지금 데이터는 지워지지 않고 보관돼요)')!=='NEW') return; const title=prompt('새 이벤트 제목',DB.event.title)||DB.event.title; await api('new-round',{confirm:'NEW',title}); toast('새 회차 시작 — 기간·경품을 설정하세요',4000); };
+$('#restoreFile').onchange=async e=>{ const f=e.target.files[0]; if(!f) return; const d=JSON.parse(await f.text()); if(!confirm('백업 파일('+(d.orders||[]).length+'건)으로 서버를 덮어쓸까요?')) return; await api('restore',{db:d}); toast('복원 완료'); e.target.value=''; };
+$('#btnReset').onclick=async()=>{ if(prompt('전체 초기화하려면 RESET 입력')!=='RESET') return; await api('reset',{confirm:'RESET'}); toast('초기화됨'); };
+
+/* ---------- 엑셀 파싱 ---------- */
+const drop=$('#drop'); drop.onclick=()=>$('#file').click();
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.add('on'); }));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.remove('on'); }));
+drop.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files])); $('#file').onchange=e=>{ handleFiles([...e.target.files]); e.target.value=''; };
+let PENDING=[];
+async function handleFiles(files){
+  PENDING=[];
+  for(const f of files){ try{ PENDING.push(await parseFile(f)); }catch(e){ toast(f.name+' 읽기 실패: '+e.message,4000); } }
+  renderPreview();
+}
+const H=(row,names)=>{ for(const n of names){ const k=Object.keys(row).find(k=>k.replace(/\s|_x000D_|\n/g,'')===n.replace(/\s/g,'')); if(k!=null&&row[k]!=null&&String(row[k]).trim()!=='') return String(row[k]).trim(); } return ''; };
+function guessVendor(name){ if(/대성/.test(name)) return '대성'; if(/효돈/.test(name)) return '효돈'; return ''; }
+function guessDate(name){ const m=name.match(/(\d{1,2})[.\-_](\d{1,2})/); if(m){ const y=new Date().getFullYear(); return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`; } return new Date().toISOString().slice(0,10); }
+async function parseFile(f){
+  const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});
+  const sheets=wb.SheetNames.map(n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{defval:''}));
+  // 시트1: 발주 양식 (보내는사람/수취인명/옵션정보/…), 시트2: 택배사 접수 결과 (운송장번호/집화예정일자)
+  // 운송장번호가 줄마다 있는 시트(택배 접수 결과)를 기준으로 읽는다 → 같은 받는분 여러 박스도 각각 1건. 시트1(발주 양식)은 구매자연락처 보강용으로만 사용.
+  const hasKey=(s,re)=>s.length&&Object.keys(s[0]).some(k=>re.test(k));
+  const s2=sheets.find(s=>hasKey(s,/운송장/)&&hasKey(s,/수취인명|받는분/));
+  const s1=sheets.find(s=>s!==s2&&hasKey(s,/수취인명|받는분/));
+  let main=s2||s1||sheets[0];
+  const track={}, buyerMap={}; let dateFromS2='';
+  if(s2){ s2.forEach(r=>{ const rn=H(r,['받는분','수취인명']), rp=digits(H(r,['받는분전화번호','수취인연락처1'])), pd=H(r,['상품명','옵션정보']); const t=H(r,['운송장번호']); const d=H(r,['집화예정일자']); if(d&&!dateFromS2) dateFromS2=normDate(d); if(t) track[rn+'|'+rp+'|'+pd.slice(0,20)]=t; if(t&&!track[rn+'|'+rp]) track[rn+'|'+rp]=t; }); }
+  if(s1&&main===s2){ s1.forEach(r=>{ const rn=H(r,['수취인명','받는분']), rp=digits(H(r,['수취인연락처1','받는분전화번호','수취인연락처'])); const bp=H(r,['구매자연락처','주문자연락처']); const k=rn+'|'+rp; if(bp&&!buyerMap[k]) buyerMap[k]=bp; }); }
+  const vendor=guessVendor(f.name); const date=dateFromS2||guessDate(f.name);
+  const orders=main.map(r=>{
+    const senderRaw=H(r,['보내는사람','보내는분']); const buyer=senderRaw.replace(/\(.*?\)/g,'').trim(); const channel=(senderRaw.match(/\((.*?)\)/)||[])[1]||'';
+    const recv=H(r,['수취인명','받는분']); const recvPhone=H(r,['수취인연락처1','받는분전화번호','수취인연락처']); const recvPhone2=H(r,['수취인연락처2']);
+    const buyerPhone=H(r,['구매자연락처','주문자연락처'])||buyerMap[recv+'|'+digits(recvPhone)]||H(r,['보내는사람연락처','보내는분전화번호']); const buyerPhone2=H(r,['보내는사람연락처','보내는분전화번호']);
+    const product=H(r,['옵션정보','상품명','단품명']); const qty=+H(r,['수량'])||1; const addr=H(r,['배송지','받는분주소']);
+    const tracking=H(r,['운송장번호'])||track[recv+'|'+digits(recvPhone)+'|'+product.slice(0,20)]||track[recv+'|'+digits(recvPhone)]||'';
+    if(!recv&&!buyer) return null;
+    return {vendor,date,buyer,buyerPhone,buyerPhone2,recv,recvPhone,recvPhone2,product,qty,addr,tracking,channel};
+  }).filter(Boolean);
+  return {name:f.name,vendor,date,orders,tracked:orders.filter(o=>o.tracking).length};
+}
+function normDate(v){ if(v instanceof Date) return v.toISOString().slice(0,10); const s=String(v); const m=s.match(/(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/); if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`; return ''; }
+function renderPreview(){
+  if(!PENDING.length){ $('#preview').innerHTML=''; return; }
+  $('#preview').innerHTML=PENDING.map((p,i)=>`<div class="card" style="margin:12px 0 0;background:#FAFAFF"><div class="row" style="justify-content:space-between"><b>📄 ${esc(p.name)}</b><span class="tag ${p.orders.length?'ok':'red'}">${p.orders.length}건 · 송장번호 ${p.tracked}건</span></div>${(p.date>=DB.event.start&&p.date<=DB.event.end)?'':`<div class="hint" style="color:#B42318;font-weight:700;margin-top:6px">⚠️ 발송일 ${p.date}은 이벤트 기간(${DB.event.start}~${DB.event.end}) 밖이라 응모에 포함되지 않아요. 날짜가 맞다면 그대로 등록해도 되고(고객 조회엔 "기간외"로 표시), 테스트용이면 이벤트 설정에서 기간을 바꾸세요.</div>`}
+  <div class="row" style="margin-top:8px"><label>거래처 <select data-v="${i}" style="padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit"><option value="대성" ${p.vendor==='대성'?'selected':''}>대성</option><option value="효돈" ${p.vendor==='효돈'?'selected':''}>효돈</option><option value="기타" ${!p.vendor?'selected':''}>기타</option></select></label><label>발송일 <input type="date" data-d="${i}" value="${p.date}" style="width:150px"></label></div>
+  <div class="scroll" style="margin-top:8px;max-height:220px;overflow:auto"><table><thead><tr><th>주문자</th><th>주문자 연락처</th><th>받는분</th><th>받는분 연락처</th><th>상품</th><th>수량</th></tr></thead><tbody>${p.orders.slice(0,200).map(o=>`<tr><td>${esc(o.buyer)}${o.channel&&!/^제주아꼼이네$/.test(o.channel)?' <span class="tag">'+esc(o.channel)+'</span>':''}</td><td>${esc(o.buyerPhone)}</td><td>${esc(o.recv)}</td><td>${esc(o.recvPhone)}</td><td>${esc(o.product.slice(0,40))}</td><td>${o.qty}</td></tr>`).join('')}</tbody></table></div></div>`).join('')+
+  `<div class="row" style="margin-top:12px"><button class="btn primary" id="btnUpload">📤 서버에 등록 (${PENDING.reduce((a,p)=>a+p.orders.length,0)}건)</button><button class="btn" id="btnCancelUp">취소</button></div>`;
+  $$('#preview [data-v]').forEach(s=>s.onchange=()=>{ PENDING[+s.dataset.v].vendor=s.value; });
+  $$('#preview [data-d]').forEach(s=>s.onchange=()=>{ PENDING[+s.dataset.d].date=s.value; });
+  $('#btnCancelUp').onclick=()=>{ PENDING=[]; renderPreview(); };
+  $('#btnUpload').onclick=async()=>{ $('#btnUpload').disabled=true; let added=0,dup=0; try{ for(const p of PENDING){ const orders=p.orders.map(o=>Object.assign({},o,{vendor:p.vendor||'기타',date:p.date})); const j=await api('orders',{orders,label:p.name}); added+=j.added; dup+=j.dup; } toast(`등록 완료: 신규 ${added}건 · 중복 제외 ${dup}건`,4000); PENDING=[]; renderPreview(); }catch(e){ toast('등록 실패: '+e.message,4000); $('#btnUpload').disabled=false; } };
+}
+</script>
+</body>
+</html>
