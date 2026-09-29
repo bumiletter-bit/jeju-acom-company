@@ -168,15 +168,19 @@
             if (s === 'offline' && d.last_seen) parts.push('마지막 확인 ' + kst(d.last_seen, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
             $('desk-state-sub').textContent = parts.join(' · ');
             $('desk-say').textContent = s === 'busy' && d.order_id ? `${d.order_id}번 지시를 처리하고 있어요.` : SAY[s] || SAY.offline;
-            // #470 창구 켜기·끄기: 대표 PC의 관리 프로그램이 살아 있을 때만 버튼이 뜬다
+            // #470 창구 켜기·끄기 — 버튼은 늘 같은 자리에 둔다(숨기면 어디 있는지 못 찾는다 · 대표 실물 확인 9/29)
             const lc = d.launcher, wrap = $('desk-wake'), wb = $('desk-wake-btn'), sb = $('desk-sleep-btn'), wn = $('desk-wake-note');
-            const canWake = !!d.can_wake;
-            wrap.hidden = !(canWake && (s === 'offline' || isAdmin()));
-            wb.hidden = !(canWake && s === 'offline');
-            sb.hidden = !(canWake && isAdmin() && s !== 'offline');
-            wn.textContent = !canWake && s === 'offline' ? '대표 PC가 꺼져 있어요. 남긴 지시는 켜지면 순서대로 처리됩니다.'
+            const canWake = !!d.can_wake;      // 대표 PC의 관리 프로그램이 살아 있는가
+            const asleep = s === 'offline';
+            wrap.hidden = false;
+            wb.hidden = false;
+            wb.disabled = !canWake || !asleep;
+            wb.textContent = asleep ? '창구 깨우기' : '창구 깨우기 (이미 켜져 있어요)';
+            sb.hidden = !(isAdmin() && !asleep);
+            sb.disabled = !canWake;
+            wn.textContent = !canWake
+                ? '대표 PC의 창구 관리 프로그램이 꺼져 있어요. PC를 켜면 남긴 지시부터 순서대로 처리됩니다.'
                 : (lc && lc.note) ? lc.note : '';
-            if (!canWake && s === 'offline') { wrap.hidden = false; wb.hidden = true; sb.hidden = true; }
             const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
             tabA.hidden = !isAdmin();
             n.hidden = !d.approval; n.textContent = d.approval || 0;
