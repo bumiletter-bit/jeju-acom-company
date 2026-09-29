@@ -148,6 +148,21 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const mine = await call(tokS, 'GET', '/api/agent-office/desk/orders?mine=1');
         ok('내 지시 목록 = 내 것만 · 이미지 원문 미포함', mine.j.orders.length >= 3 && mine.j.orders.every(o => o.created_by_id === staff.id && o.image_data === undefined));
 
+        // ── 6-b. 내 지시에서 지우기(#469-c)
+        const hA = await call(tokA, 'POST', `/api/agent-office/orders/${p1.j.order.id}/hide-mine`, { hide: true });
+        ok('남의 지시는 지울 수 없음(400)', hA.status === 400);
+        const pw = await call(tokS, 'POST', '/api/agent-office/orders', { content: '[검증469] 대기 중 지우기 시도' });
+        made.push(pw.j.order.id);
+        const hW = await call(tokS, 'POST', `/api/agent-office/orders/${pw.j.order.id}/hide-mine`, { hide: true });
+        ok('처리 전(대기) 지시는 지울 수 없음(400)', hW.status === 400);
+        const hS = await call(tokS, 'POST', `/api/agent-office/orders/${p3.j.order.id}/hide-mine`, { hide: true });
+        const mine2 = await call(tokS, 'GET', '/api/agent-office/desk/orders?mine=1');
+        const all2 = await call(tokS, 'GET', '/api/agent-office/desk/orders?limit=100');
+        const rowH = (await db.query(`SELECT is_deleted, mine_hidden, status FROM pending_orders WHERE id=$1`, [p3.j.order.id])).rows[0];
+        ok('끝난 내 지시 지우기 = 내 지시에서 빠짐 · 전체 지시엔 남음 · 삭제 아님 · 상태 무변경', hS.status === 200 && !mine2.j.orders.some(o => o.id === p3.j.order.id) && all2.j.orders.some(o => o.id === p3.j.order.id) && rowH.is_deleted === false && rowH.mine_hidden === true && rowH.status === '반려');
+        const hU = await call(tokS, 'POST', `/api/agent-office/orders/${p3.j.order.id}/hide-mine`, { hide: false });
+        ok('되돌리기 = 내 지시에 다시 보임', hU.status === 200 && (await call(tokS, 'GET', '/api/agent-office/desk/orders?mine=1')).j.orders.some(o => o.id === p3.j.order.id));
+
         // ── 7. 실렌더
         const { chromium } = require('playwright');
         browser = await chromium.launch();
@@ -229,6 +244,19 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const w = await B.pg.evaluate(() => ({ approvalTab: !document.getElementById('desk-tab-approval').hidden, panels: document.querySelectorAll('#desk-board .desk-panel').length, overflow: document.documentElement.scrollWidth > window.innerWidth + 2,
             sendH: document.getElementById('desk-send').getBoundingClientRect().height, mineOnly: Array.from(document.querySelectorAll('#desk-list .desk-card')).length }));
         ok('직원(390px) = 대표 확인함 탭 없음 · 현황판 3칸(정산 회차 없음) · 가로 넘침 없음 · 버튼 44px 이상', !w.approvalTab && w.panels === 3 && !w.overflow && w.sendH >= 44, JSON.stringify(w));
+        // 내 지시 × 실클릭(직원 · 390px)
+        const xInfo = await B.pg.evaluate(ids => { const c = id => document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); const done = c(ids[0]), wait = c(ids[1]); const x = done && done.querySelector('.desk-x'); const r = x ? x.getBoundingClientRect() : null; return { doneX: !!x, size: r ? [Math.round(r.width), Math.round(r.height)] : null, waitX: !!(wait && wait.querySelector('.desk-x')), waitCard: !!wait }; }, [p1.j.order.id, pw.j.order.id]);
+        ok('내 지시 카드: 끝난 지시에 × (44px) · 대기 중 지시엔 × 없음', xInfo.doneX && xInfo.size[0] >= 44 && xInfo.size[1] >= 44 && xInfo.waitCard && !xInfo.waitX, JSON.stringify(xInfo));
+        await B.pg.click(`#desk-list .desk-card[data-oid="${p1.j.order.id}"] .desk-x`);
+        await B.pg.waitForTimeout(900);
+        const goneMine = await B.pg.evaluate(id => !document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`), p1.j.order.id);
+        await B.pg.click('.desk-tab[data-tab="all"]');
+        await B.pg.waitForSelector(`#desk-list .desk-card[data-oid="${p1.j.order.id}"]`, { timeout: 10000 });
+        const inAll = await B.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return { has: !!c, x: !!(c && c.querySelector('.desk-x')) }; }, p1.j.order.id);
+        await B.pg.click('.desk-tab[data-tab="mine"]');
+        await B.pg.waitForTimeout(1200);
+        const stillGone = await B.pg.evaluate(id => !document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`), p1.j.order.id);
+        ok('× 실클릭 = 내 지시에서 사라짐 · 전체 지시엔 그대로(× 없음) · 다시 와도 안 보임', goneMine && inAll.has && !inAll.x && stillGone);
         ok('직원 화면 페이지 오류 0', B.errors.length === 0, B.errors.slice(0, 2).join(' | '));
 
         // 다른 메뉴 무회귀

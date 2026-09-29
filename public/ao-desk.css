@@ -111,6 +111,11 @@
 .desk-list { display: grid; gap: 10px; }
 .desk-card { background: var(--d-surface); border: 1px solid var(--d-line); border-radius: 12px; padding: 14px 16px; }
 .desk-card-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--d-dim); }
+.desk-x { margin-left: auto; width: 44px; height: 44px; margin-top: -10px; margin-bottom: -10px; margin-right: -10px; border: 0; border-radius: 10px; background: transparent; color: var(--d-dim); font-size: 22px; line-height: 1; cursor: pointer; transition: background-color 160ms var(--d-ease), color 160ms var(--d-ease); }
+.desk-x:hover { background: var(--d-raise); color: var(--d-ink); }
+.desk-x:active { transform: scale(0.95); }
+.desk-x:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.desk-x:disabled { opacity: 0.4; cursor: default; }
 .desk-badge { padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--d-raise); color: var(--d-sub); }
 .desk-badge[data-k="wait"] { color: var(--d-sub); }
 .desk-badge[data-k="work"] { color: var(--d-busy); }

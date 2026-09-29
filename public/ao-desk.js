@@ -258,7 +258,8 @@
                 <div class="desk-card-head"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span>
                     <span>${o.id}번</span><span>${esc(o.created_by || '')}</span>
                     <span>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
-                    ${o.has_image ? '<span>이미지 첨부</span>' : ''}</div>
+                    ${o.has_image ? '<span>이미지 첨부</span>' : ''}
+                    ${S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 지시를 내 지시에서 지우기" title="내 지시에서 지우기">×</button>` : ''}</div>
                 <p class="desk-q">${esc(o.content)}</p>
                 ${resultHtml(o)}
                 ${showSteps ? `<ul class="desk-steps">${steps.map(s => `<li>${esc(kst(s.t, { hour: '2-digit', minute: '2-digit' }))} ${esc(s.text)}</li>`).join('')}</ul>` : ''}
@@ -279,6 +280,15 @@
             return;
         }
         if (act === 'confirm') { openConfirm(o.result); return; }
+        if (act === 'hide') {
+            b.disabled = true;
+            try {
+                await api('/api/agent-office/orders/' + id + '/hide-mine', 'POST', { hide: true });
+                S.orders = S.orders.filter(x => x.id !== id); S.sig = ''; renderList();
+                showToast('내 지시에서 지웠어요. 전체 지시에서는 계속 볼 수 있어요');
+            } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); b.disabled = false; }
+            return;
+        }
         if (act === 'reply') { const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }
         if (act === 'approve' || act === 'reject' || act === 'retry') {
             let body;

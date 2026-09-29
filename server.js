@@ -803,6 +803,8 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_mime VARCHAR(40)`);
     // #469 클코 창구: 요청자 계정(완료 알림 대상) — additive
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by_id INTEGER`);
+    // #469-c: 요청자가 「내 지시」 목록에서 지운 표시(전체 지시·기록은 그대로) — additive
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS mine_hidden BOOLEAN DEFAULT false`);
     // 대표 7/24: 네이버 송장변환 자동업로드 중복방지 — 이미 자동업로드한 상품주문번호 기록
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_invoice_uploaded (
@@ -13165,7 +13167,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         const mine = req.query.mine === '1';
         const params = [];
         let where = `o.is_deleted = false`;
-        if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length}`; }
+        if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
         if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
         const r = await pool.query(
             `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id,
@@ -13173,6 +13175,22 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
                     (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
              FROM pending_orders o WHERE ${where} ORDER BY o.id DESC LIMIT ${limit}`, params);
         res.json({ orders: r.rows });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// #469-c: 내 지시에서 지우기 — 본인 지시만 · 처리가 끝난 것만 · 내 목록에서만 숨김(삭제 아님)
+const DESK_ACTIVE_STATUS = ['대기', '처리중', '판독완료', '확인표작성', '승인대기', '승인됨'];
+app.post('/api/agent-office/orders/:id/hide-mine', authMiddleware, async (req, res) => {
+    try {
+        const hide = req.body?.hide !== false; // {hide:false} = 되돌리기
+        const r = await pool.query(
+            `UPDATE pending_orders SET mine_hidden = $3
+             WHERE id = $1 AND created_by_id = $2 AND is_deleted = false AND NOT (status = ANY($4::text[]))
+             RETURNING id`, [req.params.id, req.user.id, hide, DESK_ACTIVE_STATUS]);
+        if (!r.rows.length) throw { status: 400, message: '내가 보낸 지시 중 처리가 끝난 것만 지울 수 있습니다' };
+        await writeAudit({ action: 'update', targetType: 'pending_order', targetId: r.rows[0].id,
+            changes: { after: { mine_hidden: hide } }, source: 'agent_office', actor: adminActor(req) });
+        res.json({ message: hide ? '내 지시에서 지웠습니다 (전체 지시에는 남아 있습니다)' : '내 지시에 다시 올렸습니다' });
     } catch (err) { handleAdminErr(res, err); }
 });
 
