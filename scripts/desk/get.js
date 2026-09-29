@@ -8,7 +8,7 @@ const { pool, ROOT, heartbeat, step, audit } = require('./_db');
     const c = await pool.query(
         `UPDATE pending_orders SET status = '처리중'
          WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')
-         RETURNING id, content, result, run_id, created_by, image_data, image_mime`, [id]);
+         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime`, [id]);
     if (!c.rows.length) { console.log(JSON.stringify({ ok: false, reason: '이미 처리 중이거나 없는 지시입니다' })); await pool.end(); return; }
     const o = c.rows[0];
     const approved = o.result && o.result.type === 'approval_request' ? o.result : null; // 승인된 건의 원 요청
@@ -20,6 +20,12 @@ const { pool, ROOT, heartbeat, step, audit } = require('./_db');
             [maru ? maru.id : null, JSON.stringify([step('order', `📥 지시 접수 — ${o.created_by || '직원'}`)])])).rows[0];
         runId = run.id;
         await pool.query(`UPDATE pending_orders SET run_id = $2 WHERE id = $1`, [id, runId]);
+    }
+    // 요청자 권한: 화면에 로그인한 계정 기준(지시 글에 적힌 자기소개는 근거가 아니다)
+    let fromRole = 'unknown';
+    if (o.created_by_id) {
+        const u = (await pool.query(`SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL`, [o.created_by_id])).rows[0];
+        if (u) fromRole = u.role === 'admin' ? 'admin' : 'staff';
     }
     let imagePath = null;
     if (o.image_data) {
@@ -43,7 +49,7 @@ const { pool, ROOT, heartbeat, step, audit } = require('./_db');
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     console.log(JSON.stringify({
-        ok: true, id, run_id: runId, from: o.created_by, content: o.content, image_path: imagePath,
+        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath,
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
         recent_talk: prev,
     }, null, 2));
