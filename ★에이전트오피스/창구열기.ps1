@@ -31,4 +31,6 @@ Remove-Variable key
 Set-Location $PSScriptRoot
 Write-Host "콘솔 API 키로 창구를 엽니다. 열리면 '창구 시작'을 입력하세요." -ForegroundColor Green
 # 모델: 콘솔은 모델마다 단가가 다르다 → 창구는 Opus로 고정(대표 9/29). 다른 모델로 열려면 --model 값을 직접 붙인다.
-if ($args -contains "--model") { claude @args } else { claude --model opus @args }
+# 작업 범위: 창구는 상위 폴더(회사프로그램)의 스크립트·문서·그림을 읽어야 한다 → 열 때 작업 범위에 넣어 "폴더 밖 읽기" 질문으로 멈추지 않게 한다.
+$repoRoot = Split-Path $PSScriptRoot -Parent
+if ($args -contains "--model") { claude --add-dir $repoRoot @args } else { claude --model opus --add-dir $repoRoot @args }
