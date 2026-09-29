@@ -26,7 +26,9 @@ const { pool, ROOT, heartbeat, step, audit } = require('./_db');
         const m = String(o.image_data).match(/^data:([^;]+);base64,(.+)$/s);
         if (m) {
             const ext = (/(png|jpe?g|webp|gif)/i.exec(o.image_mime || m[1]) || ['', 'png'])[1].replace('jpeg', 'jpg');
-            const dir = path.join(ROOT, '직원창구', '받은파일');
+            // 창구 폴더 이름: ★에이전트오피스(새 이름)가 있으면 그쪽, 없으면 직원창구(옛 이름)
+            const deskDir = fs.existsSync(path.join(ROOT, '★에이전트오피스')) ? '★에이전트오피스' : '직원창구';
+            const dir = path.join(ROOT, deskDir, '받은파일');
             fs.mkdirSync(dir, { recursive: true });
             imagePath = path.join(dir, `${id}.${ext}`);
             fs.writeFileSync(imagePath, Buffer.from(m[2], 'base64'));
