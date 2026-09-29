@@ -66,8 +66,13 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('get.js = 처리중으로 집음 · 실행 기록 생성 · 내용 전달', got.ok && got.content.includes('[검증469]') && !!got.run_id && (await row(p1.j.order.id)).status === '처리중');
         const got2 = JSON.parse(desk('get.js', p1.j.order.id));
         ok('같은 지시 두 번 집기 불가', got2.ok === false);
-        const s1 = await call(tokS, 'GET', '/api/agent-office/desk-status');
-        ok('처리 중 상태 표시(busy · 지시 번호)', s1.j.state === 'busy' && s1.j.order_id === p1.j.order.id);
+        // ⚠️ 대표 PC의 대기 프로그램이 돌고 있으면 30초마다 heartbeat(idle)를 덮어쓴다 → 한 번 더 확인한다(#472)
+        let s1 = await call(tokS, 'GET', '/api/agent-office/desk-status');
+        if (!(s1.j.state === 'busy' && s1.j.order_id === p1.j.order.id)) {
+            desk('step.js', p1.j.order.id, '검증', '중');
+            s1 = await call(tokS, 'GET', '/api/agent-office/desk-status');
+        }
+        ok('처리 중 상태 표시(busy · 지시 번호)', s1.j.state === 'busy' && s1.j.order_id === p1.j.order.id, s1.j.state + ' / ' + s1.j.order_id);
         desk('step.js', p1.j.order.id, '정산관리', '조회', '중');
         desk('respond.js', p1.j.order.id, tmpJson({ kind: 'answer', title: '오늘 발송 박스', answer: '검증용 답변입니다.\n둘째 줄' }));
         const r3 = await row(p1.j.order.id);
@@ -188,7 +193,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const { chromium } = require('playwright');
         browser = await chromium.launch();
         const open = async (tok, user, vw) => {
-            const ctx = await browser.newContext({ viewport: vw || { width: 1440, height: 900 } });
+            const ctx = await browser.newContext({ viewport: vw || { width: 1000, height: 900 } });   // 1024 미만 = 카드 보기(#472)
             const pg = await ctx.newPage();
             const errors = []; pg.on('pageerror', e => errors.push(String(e)));
             pg.on('dialog', d => d.accept());
@@ -197,7 +202,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             await pg.reload({ waitUntil: 'networkidle' });
             await pg.waitForTimeout(2500);
             await pg.evaluate(() => { const n = document.querySelector('.nav-item[data-page="agent-office"]'); if (n) n.click(); else if (typeof switchPage === 'function') switchPage('agent-office'); });
-            await pg.waitForSelector('#desk-list .desk-card, #desk-list .desk-empty', { timeout: 20000 });
+            await pg.waitForSelector('#desk-list .desk-card, #desk-list .desk-table, #desk-list .desk-empty', { timeout: 20000 });
             await pg.waitForTimeout(800);
             return { pg, errors, ctx };
         };
@@ -294,6 +299,41 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         }
         const dark = await A.pg.evaluate(() => { const el = document.getElementById('page-data'); return !!el.querySelector('.desk'); });
         ok('다른 메뉴 7곳 진입 정상 · 어두운 테마가 다른 메뉴에 새지 않음 · 오류 0', bad.length === 0 && !dark && A.errors.length === 0, bad.join(',') || A.errors.slice(0, 2).join(' | '));
+
+        // #472 넓은 화면(PC) = 표 보기 · 오른쪽 칸(LIVE 로그·오늘 일정·업무 현황) · 상태 고르개
+        const W = await open(tokA, { id: ceo.id, name: ceo.name, position: '대표', role: 'admin' }, { width: 1440, height: 950 });
+        await W.pg.waitForSelector('#desk-list .desk-table, #desk-list .desk-empty', { timeout: 20000 });
+        const wide = await W.pg.evaluate(() => {
+            const q = sel => document.querySelector(sel);
+            const th = Array.from(document.querySelectorAll('#desk-list .desk-table th')).map(e => e.textContent.trim());
+            const side = ['desk-live', 'desk-today', 'desk-prog'].map(id => { const e = document.getElementById(id); return e ? e.textContent.trim().length > 0 : false; });
+            return {
+                table: !!q('#desk-list .desk-table'), card: !!q('#desk-list .desk-card'), th,
+                side, quick: document.querySelectorAll('#desk-quick button').length,
+                filter: !!q('#desk-fs'), weather: /날씨|구름|℃/.test(document.getElementById('ao-desk-root').textContent),
+                light: getComputedStyle(q('.desk-panel')).backgroundColor,
+                overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2,
+            };
+        });
+        ok('PC = 표 보기(카드 아님) · 머리글 6칸', wide.table && !wide.card && wide.th.length === 6, wide.th.join(' | '));
+        ok('오른쪽 칸 3개가 내용을 그린다', wide.side.every(Boolean), JSON.stringify(wide.side));
+        ok('빠른 실행 5개 · 상태 고르개 · 날씨 없음', wide.quick === 5 && wide.filter && !wide.weather, '버튼 ' + wide.quick + '개');
+        ok('밝은 화면 · 가로 넘침 없음', /255, 255, 255/.test(wide.light) && !wide.overflow, wide.light);
+        const more = await W.pg.$('#desk-list .desk-more');
+        if (more) {
+            await more.click(); await W.pg.waitForTimeout(600);
+            const opened = await W.pg.evaluate(() => !!document.querySelector('#desk-list .detailrow'));
+            ok('표에서 ⋯ 를 누르면 자세한 내용이 펼쳐진다', opened);
+        } else ok('표에 펼칠 행이 없어 건너뜀', true);
+        await W.pg.selectOption('#desk-fs', 'err');
+        await W.pg.waitForTimeout(600);
+        const filtered = await W.pg.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll('#desk-list .desk-table tr.row'));
+            const bad = rows.filter(r => !/오류|반려/.test(r.querySelector('.desk-badge').textContent)).length;
+            return { rows: rows.length, bad, empty: !!document.querySelector('#desk-list .desk-empty') };
+        });
+        ok('상태 고르개 = 고른 것만 남는다', filtered.bad === 0, JSON.stringify(filtered));
+        ok('넓은 화면 페이지 오류 0', W.errors.length === 0, W.errors.slice(0, 2).join(' | '));
     } catch (e) {
         ok('검증 중 예외 없음', false, e.message);
     } finally {

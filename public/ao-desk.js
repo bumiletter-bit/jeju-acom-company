@@ -14,6 +14,7 @@
     const S = {
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
+        fs: 'all', wide: false, detail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
     const HINTS = ['정산관리 오늘 발주수량이야 올려줘', '단골고객에게 문자발송할 예정이야 (쿠폰, 행사내용, 기간 넣어주기)', '지금 네이버 자사몰 쿠팡 가격 맞는지 확인해줘', '신규품목 보고서 작성해줘 (핵심내용 두서없이 쓰기)'];
@@ -36,44 +37,68 @@
         const root = $('ao-desk-root');
         if (!root) return;
         root.innerHTML = `
-        <section class="desk-top">
-            <div class="desk-hero">
-                <div>
-                    <div class="desk-date" id="desk-date"></div>
-                    <div class="desk-clock" id="desk-clock" aria-live="off"></div>
-                    <span class="desk-state" id="desk-state" data-s="offline"><i></i><span id="desk-state-text">확인 중</span></span>
-                    <span class="desk-state-sub" id="desk-state-sub"></span>
-                    <div class="desk-say" id="desk-say" role="status"></div>
-                    <div class="desk-wake" id="desk-wake" hidden>
+        <div class="desk-main">
+            <section class="desk-top">
+                <div class="desk-hero">
+                    <div>
+                        <div class="desk-date" id="desk-date"></div>
+                        <div class="desk-clock" id="desk-clock" aria-live="off"></div>
+                        <span class="desk-state" id="desk-state" data-s="offline"><i></i><span id="desk-state-text">확인 중</span></span>
+                        <span class="desk-state-sub" id="desk-state-sub"></span>
+                        <div class="desk-say" id="desk-say" role="status"></div>
+                    </div>
+                    <div class="desk-stage" id="desk-stage" data-s="offline"><img id="desk-char" src="/desk/akkomi-off.webp" alt="아꼼이 캐릭터" width="132" height="132"></div>
+                    <div class="desk-wake" id="desk-wake">
                         <button type="button" class="desk-btn primary" id="desk-wake-btn">창구 깨우기</button>
                         <button type="button" class="desk-btn" id="desk-sleep-btn" hidden>쉬게 하기</button>
                         <span class="desk-wake-note" id="desk-wake-note"></span>
                     </div>
                 </div>
-                <div class="desk-stage" id="desk-stage" data-s="offline"><img id="desk-char" src="/desk/akkomi-off.webp" alt="아꼼이 캐릭터" width="150" height="150"></div>
-            </div>
-            <form class="desk-ask" id="desk-ask" autocomplete="off">
-                <h2>클코에게 지시하기</h2>
-                <p>조회, 문구 초안, 정산 이미지 등록을 맡길 수 있어요. 쿠폰, 가격, 발송은 대표 승인 뒤에 실행됩니다.</p>
-                <label for="desk-input">지시 내용</label>
-                <textarea class="desk-input" id="desk-input" maxlength="2000" placeholder="예: 21일 효돈 정산관리에 올려줘 (발송목록 이미지를 함께 붙여 주세요)"></textarea>
-                <div class="desk-thumbs" id="desk-thumbs" hidden></div>
-                <div class="desk-ask-row">
-                    <input type="file" id="desk-file" accept="image/*" multiple hidden>
-                    <button type="button" class="desk-btn" id="desk-attach">이미지 첨부</button>
-                    <button type="submit" class="desk-btn primary" id="desk-send">지시 보내기</button>
-                    <span class="desk-count" id="desk-count">0 / 2000</span>
+                <form class="desk-ask" id="desk-ask" autocomplete="off">
+                    <h2>클코에게 지시하기</h2>
+                    <p>조회, 문구 초안, 정산 이미지 등록을 맡길 수 있어요. 구체적으로 적을수록 정확하게 처리합니다. 쿠폰, 가격, 발송은 대표 승인 뒤에 실행됩니다.</p>
+                    <label for="desk-input">지시 내용</label>
+                    <textarea class="desk-input" id="desk-input" maxlength="2000" placeholder="예: 21일 효돈 정산관리에 올려줘 (발송목록 이미지를 함께 붙여 주세요)"></textarea>
+                    <div class="desk-thumbs" id="desk-thumbs" hidden></div>
+                    <div class="desk-ask-row">
+                        <input type="file" id="desk-file" accept="image/*" multiple hidden>
+                        <button type="button" class="desk-btn" id="desk-attach">이미지 첨부</button>
+                        <button type="submit" class="desk-btn primary" id="desk-send">지시 보내기</button>
+                        <span class="desk-count" id="desk-count">0 / 2000</span>
+                    </div>
+                </form>
+            </section>
+            <section class="desk-quick" id="desk-quick" aria-label="빠른 실행">
+                <b>빠른 실행</b>
+                ${HINTS.map(h => `<button type="button" class="desk-hint" data-fill="${esc(h)}">${esc(h)}</button>`).join('')}
+                <button type="button" data-go="inventory">박스 재고 확인</button>
+            </section>
+            <section class="desk-board" id="desk-board" aria-label="현황판"></section>
+            <section class="desk-listbox">
+                <div class="desk-tabsrow">
+                    <div class="desk-tabs" role="tablist" id="desk-tabs">
+                        <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">내 지시</button>
+                        <button class="desk-tab" role="tab" data-tab="all" aria-selected="false">전체 지시</button>
+                        <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>대표 확인함<span class="n" id="desk-approval-n" hidden>0</span></button>
+                    </div>
+                    <div class="desk-filter">
+                        <select id="desk-fs" aria-label="상태로 걸러 보기">
+                            <option value="all">전체 상태</option>
+                            <option value="work">진행 중</option>
+                            <option value="ask">확인 필요</option>
+                            <option value="done">완료</option>
+                            <option value="err">오류·반려</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="desk-hints" id="desk-hints">${HINTS.map(h => `<button type="button" class="desk-hint">${esc(h)}</button>`).join('')}</div>
-            </form>
-        </section>
-        <section class="desk-board" id="desk-board" aria-label="현황판"></section>
-        <div class="desk-tabs" role="tablist" id="desk-tabs">
-            <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">내 지시</button>
-            <button class="desk-tab" role="tab" data-tab="all" aria-selected="false">전체 지시</button>
-            <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>대표 확인함<span class="n" id="desk-approval-n" hidden>0</span></button>
+                <div class="desk-list" id="desk-list" aria-live="polite"></div>
+            </section>
         </div>
-        <div class="desk-list" id="desk-list" aria-live="polite"></div>`;
+        <aside class="desk-side">
+            <div class="desk-panel"><h3>LIVE 로그 <span>내 지시 처리 현황</span></h3><div id="desk-live"></div></div>
+            <div class="desk-panel"><h3>오늘 일정 <span id="desk-today-n"></span></h3><div id="desk-today"></div></div>
+            <div class="desk-panel"><h3>주요 업무 현황 <span>오늘 기준</span></h3><div id="desk-prog"></div></div>
+        </aside>`;
         bind();
         S.mounted = true;
     }
@@ -95,7 +120,17 @@
         ask.addEventListener('dragover', e => { e.preventDefault(); ask.classList.add('drag'); });
         ask.addEventListener('dragleave', () => ask.classList.remove('drag'));
         ask.addEventListener('drop', e => { e.preventDefault(); ask.classList.remove('drag'); addFiles(Array.from(e.dataTransfer.files || []).filter(f => /^image\//.test(f.type))); });
-        $('desk-hints').addEventListener('click', e => { const b = e.target.closest('.desk-hint'); if (!b) return; input.value = b.textContent; input.dispatchEvent(new Event('input')); input.focus(); });
+        $('desk-quick').addEventListener('click', e => {
+            const b = e.target.closest('button'); if (!b) return;
+            if (b.dataset.go) { if (typeof switchPage === 'function') switchPage(b.dataset.go); return; }
+            if (b.dataset.fill) { input.value = b.dataset.fill; input.dispatchEvent(new Event('input')); input.focus(); input.scrollIntoView({ block: 'center' }); }
+        });
+        $('desk-fs').addEventListener('change', e => { S.fs = e.target.value; S.sig = ''; renderList(); });
+        // 넓은 화면은 표, 좁은 화면은 카드(대표 확정 2026-09-29)
+        const mq = window.matchMedia('(min-width: 1024px)');
+        S.wide = mq.matches;
+        const onMq = () => { if (S.wide === mq.matches) return; S.wide = mq.matches; renderList(); };
+        if (mq.addEventListener) mq.addEventListener('change', onMq); else mq.addListener(onMq);
         $('desk-thumbs').addEventListener('click', e => { const b = e.target.closest('button[data-i]'); if (!b) return; S.images.splice(Number(b.dataset.i), 1); renderThumbs(); });
         $('desk-tabs').addEventListener('click', e => { const t = e.target.closest('.desk-tab'); if (t) setTab(t.dataset.tab); });
         $('desk-list').addEventListener('click', onListClick);
@@ -279,13 +314,36 @@
         return text ? `<div class="desk-a">${esc(text)}</div>` : '';
     }
 
+    // 상태 묶음 — 화면의 「전체 상태」 고르개와 같은 기준
+    const GROUP = {
+        work: ['대기', '처리중', '판독완료', '확인표작성', '승인됨'],
+        ask: ['질문', '승인대기'],
+        done: ['완료', '안내', '응답됨', '질문종결', '취소', '대체됨', '피드백'],
+        err: ['오류', '오류확인', '반려'],
+    };
+    const shown = () => S.fs === 'all' ? S.orders : S.orders.filter(o => (GROUP[S.fs] || []).includes(o.status));
+    // 표 칸에 넣을 한 줄 요약
+    function resultLine(o) {
+        const r = o.result || {}, st = o.status;
+        if (GROUP.work.includes(o.status)) {
+            const steps = Array.isArray(o.steps) ? o.steps : [];
+            const last = steps.length ? steps[steps.length - 1].text : '';
+            return '<span class="desk-working">' + esc(st === '대기' ? '순서를 기다리고 있어요' : st === '승인됨' ? '승인됐어요. 곧 실행합니다' : (last || '처리하고 있어요')) + '</span>';
+        }
+        const t = r.title || r.summary || r.answer || r.question || r.notice || r.error || '';
+        return esc(String(t).replace(/\s+/g, ' ').slice(0, 90));
+    }
+
     function renderList() {
         const box = $('desk-list');
-        if (!S.orders.length) {
-            box.innerHTML = `<div class="desk-empty">${S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : S.tab === 'mine' ? '아직 보낸 지시가 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.' : '지시 기록이 없어요.'}</div>`;
+        const list = shown();
+        box.classList.toggle('desk-cardlist', !S.wide);
+        if (!list.length) {
+            box.innerHTML = `<div class="desk-empty">${S.fs !== 'all' ? '고른 상태에 해당하는 지시가 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : S.tab === 'mine' ? '아직 보낸 지시가 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.' : '지시 기록이 없어요.'}</div>`;
             return;
         }
-        box.innerHTML = S.orders.map(o => {
+        if (S.wide) { renderTable(list); return; }
+        box.innerHTML = list.map(o => {
             const b = BADGE[o.status] || ['wait', o.status];
             const steps = (Array.isArray(o.steps) ? o.steps : []).slice(-4);
             const showSteps = steps.length > 1 && !['완료', '안내', '응답됨'].includes(o.status);
@@ -302,6 +360,25 @@
         }).join('');
     }
 
+    // 넓은 화면 표 보기 — ⋯ 을 누르면 그 아래에 자세한 내용이 펼쳐진다
+    function renderTable(list) {
+        const rows = list.map(o => {
+            const b = BADGE[o.status] || ['wait', o.status];
+            const open = S.detail.has(o.id);
+            const canHide = S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status);
+            return `<tr class="row" data-oid="${o.id}">
+                <td><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></td>
+                <td class="c-id">${o.id}번<br><small>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small></td>
+                <td class="c-q">${esc(String(o.content || '').slice(0, 120))}${o.has_image ? ' <small>(이미지)</small>' : ''}</td>
+                <td class="c-r">${resultLine(o)}</td>
+                <td class="c-by">${esc(o.created_by || '')}</td>
+                <td class="c-x"><button type="button" class="desk-more" data-act="detail" data-id="${o.id}" aria-expanded="${open}" aria-label="${o.id}번 자세히">${open ? '▴' : '⋯'}</button></td>
+            </tr>${open ? `<tr class="detailrow"><td class="detail" colspan="6">${resultHtml(o)}${canHide ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="hide" data-id="${o.id}">내 지시에서 지우기</button></div>` : ''}</td></tr>` : ''}`;
+        }).join('');
+        $('desk-list').innerHTML = `<div class="table-scroll-wrapper"><table class="desk-table"><thead><tr>
+            <th>상태</th><th>번호 · 시각</th><th>지시 내용</th><th>결과</th><th>보낸 사람</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
     async function onListClick(e) {
         const b = e.target.closest('button[data-act]');
         if (!b) return;
@@ -309,6 +386,7 @@
         const o = S.orders.find(x => x.id === id);
         if (!o) return;
         if (act === 'toggle') { if (S.open.has(id)) S.open.delete(id); else S.open.add(id); renderList(); return; }
+        if (act === 'detail') { if (S.detail.has(id)) S.detail.delete(id); else S.detail.add(id); renderList(); return; }
         if (act === 'copy') {
             const text = (o.result && (o.result.answer || o.result.text)) || '';
             try { await navigator.clipboard.writeText(text); showToast('답변을 복사했어요'); } catch (err) { showToast('복사하지 못했어요. 직접 선택해 복사해 주세요'); }
@@ -385,6 +463,35 @@
             <div class="desk-panel"><h3>최근 7일 발송 박스 <span>정산관리 입력 기준</span></h3>${shipHtml}</div>
             <div class="desk-panel"><h3>지금 챙길 일</h3>${todoHtml}</div>
             ${salesHtml}`;
+        renderSide(d);
+    }
+
+    // #472 오른쪽 칸 — LIVE 로그(보는 사람 본인 지시만 · 대표 확정) · 오늘 일정 · 주요 업무 현황
+    function renderSide(d) {
+        const live = $('desk-live'), today = $('desk-today'), prog = $('desk-prog');
+        if (live) {
+            const dot = st => ['오류', '오류확인', '반려'].includes(st) ? 'err' : ['질문', '승인대기'].includes(st) ? 'warn' : 'ok';
+            live.innerHTML = Array.isArray(d.live) && d.live.length
+                ? `<ul class="desk-live">${d.live.map(x => `<li><time>${esc(kst(x.processed_at, { hour: '2-digit', minute: '2-digit' }))}</time><i class="${dot(x.status)}"></i><p>${esc(x.text || '')}</p></li>`).join('')}</ul>`
+                : '<div class="desk-empty">아직 처리된 내 지시가 없어요.</div>';
+        }
+        if (today) {
+            const n = $('desk-today-n');
+            const list = Array.isArray(d.today) ? d.today : [];
+            if (n) n.textContent = list.length ? list.filter(x => x.is_completed).length + ' / ' + list.length + ' 완료' : '';
+            today.innerHTML = list.length
+                ? `<ul class="desk-sch">${list.map(x => `<li class="${x.is_completed ? 'done' : ''}"><span class="mk">✓</span><div>${esc(x.title || '')}<small>${esc([x.start_time ? String(x.start_time).slice(0, 5) : '', x.category || '', x.user_name || ''].filter(Boolean).join(' · '))}</small></div></li>`).join('')}</ul>`
+                : '<div class="desk-empty">오늘 등록된 일정이 없어요.</div>';
+        }
+        if (prog) {
+            const list = Array.isArray(d.progress) ? d.progress : [];
+            prog.innerHTML = list.length
+                ? `<ul class="desk-prog">${list.map(x => {
+                    const pct = x.total ? Math.round(x.done / x.total * 100) : 0;
+                    return `<li data-k="${esc(x.key)}" title="${esc(x.note || '')}"><span>${esc(x.label)}</span><span class="track"><i style="width:${pct}%"></i></span><em>${x.done} / ${x.total}</em></li>`;
+                }).join('')}</ul>`
+                : '<div class="desk-empty">집계를 읽지 못했어요.</div>';
+        }
     }
 
     function clock() {

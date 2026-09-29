@@ -13268,7 +13268,7 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
     const safe = async (fn) => { try { return await fn(); } catch (e) { console.error('desk/board:', e.message); return null; } };
     try {
         const isAdmin = req.user.role === 'admin';
-        const [channels, ship, todo, sales] = await Promise.all([
+        const [channels, ship, todo, sales, live, today, progress] = await Promise.all([
             // 채널별 주문: 주문안내 이력의 실주문 시각 기준(KST 오늘·어제)
             safe(async () => (await pool.query(`
                 SELECT CASE WHEN order_key LIKE 'c24:%' THEN 'mall' WHEN order_key LIKE 'cp:%' THEN 'coupang' ELSE 'naver' END AS ch,
@@ -13314,8 +13314,43 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
             isAdmin ? safe(async () => (await pool.query(`
                 SELECT to_char(expect_date, 'YYYY-MM-DD') AS d, pay_amount::bigint AS pay, in_period_count AS orders
                 FROM naver_settle_recon ORDER BY expect_date DESC LIMIT 7`)).rows) : Promise.resolve(undefined),
+            // #472 LIVE 로그 — 보는 사람 본인이 보낸 지시의 처리 기록만(대표 확정 9/29)
+            safe(async () => (await pool.query(`
+                SELECT id, status, processed_at,
+                       COALESCE(NULLIF(result->>'title',''), NULLIF(result->>'summary',''), NULLIF(result->>'question',''),
+                                NULLIF(result->>'notice',''), NULLIF(result->>'error',''), LEFT(content, 60)) AS text
+                FROM pending_orders
+                WHERE is_deleted = false AND created_by_id = $1 AND processed_at IS NOT NULL
+                  AND processed_at > NOW() - interval '3 days'
+                ORDER BY processed_at DESC LIMIT 8`, [req.user.id])).rows),
+            // #472 오늘 일정 — 회사 일정(완료 표시 포함)
+            safe(async () => (await pool.query(`
+                SELECT s.id, s.title, s.category, s.start_time, s.is_completed, u.name AS user_name
+                FROM schedules s LEFT JOIN users u ON s.user_id = u.id
+                WHERE s.is_deleted = false AND s.date <= $1 AND COALESCE(s.end_date, s.date) >= $1
+                ORDER BY (s.start_time IS NULL), s.start_time, s.id LIMIT 6`, [kstTodayStr()])).rows),
+            // #472 주요 업무 현황 — 오늘 기준(대표 확정 9/29: 총괄 제안 그대로)
+            safe(async () => {
+                const kst = `(NOW() + interval '9 hours')::date`;
+                const one = async (sql) => (await pool.query(sql)).rows[0];
+                const a = await one(`SELECT COUNT(*)::int AS t, COUNT(*) FILTER (WHERE status='sent')::int AS d
+                    FROM kakao_notify_log WHERE deleted_at IS NULL AND (COALESCE(order_at, created_at) + interval '9 hours')::date = ${kst}`);
+                const b = await one(`SELECT COUNT(*)::int AS t, COUNT(*) FILTER (WHERE status='sent')::int AS d
+                    FROM lms_guide_log WHERE (COALESCE(order_at, created_at) + interval '9 hours')::date = ${kst}`);
+                const c = await one(`SELECT COUNT(*)::int AS t, COUNT(*) FILTER (WHERE answered)::int AS d
+                    FROM naver_inquiries WHERE (collected_at + interval '9 hours')::date = ${kst}`);
+                const e = await one(`SELECT (SELECT COUNT(DISTINCT partner)::int FROM pricing
+                        WHERE (start_date IS NULL OR start_date <= ${kst}) AND (end_date IS NULL OR end_date >= ${kst})) AS t,
+                    (SELECT COUNT(DISTINCT partner)::int FROM settlements WHERE date = ${kst}) AS d`);
+                return [
+                    { key: 'order', label: '주문 확인', done: a.d, total: a.t, note: '오늘 주문 중 주문안내가 나간 건' },
+                    { key: 'ship', label: '발송 처리', done: b.d, total: b.t, note: '오늘 발송안내가 나간 건' },
+                    { key: 'qna', label: '고객 문의', done: c.d, total: c.t, note: '답변한 문의 / 들어온 문의' },
+                    { key: 'settle', label: '정산 등록', done: e.d, total: e.t, note: '오늘 정산을 넣은 거래처 / 이번 주 거래처' },
+                ];
+            }),
         ]);
-        res.json({ channels, ship, todo, sales, is_admin: isAdmin, at: new Date().toISOString() });
+        res.json({ channels, ship, todo, sales, live, today, progress, is_admin: isAdmin, me: req.user.name || '', at: new Date().toISOString() });
     } catch (err) { handleAdminErr(res, err); }
 });
 
