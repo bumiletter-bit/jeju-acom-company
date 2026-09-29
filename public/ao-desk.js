@@ -14,7 +14,7 @@
     const S = {
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
-        fs: 'all', wide: false, detail: new Set(),
+        fs: 'all', wide: false, detail: new Set(), closed: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
     const HINTS = ['정산관리 오늘 발주수량이야 올려줘', '단골고객에게 문자발송할 예정이야 (쿠폰, 행사내용, 기간 넣어주기)', '지금 네이버 자사몰 쿠팡 가격 맞는지 확인해줘', '신규품목 보고서 작성해줘 (핵심내용 두서없이 쓰기)'];
@@ -334,6 +334,7 @@
             const last = steps.length ? steps[steps.length - 1].text : '';
             return '<span class="desk-working">' + esc(st === '대기' ? '순서를 기다리고 있어요' : st === '승인됨' ? '승인됐어요. 곧 실행합니다' : (last || '처리하고 있어요')) + '</span>';
         }
+        if (st === '질문') return '<span class="desk-working">답을 기다리고 있어요</span> · ' + esc(String(r.question || '').replace(/\s+/g, ' ').slice(0, 70));
         const t = r.title || r.summary || r.answer || r.question || r.notice || r.error || '';
         return esc(String(t).replace(/\s+/g, ' ').slice(0, 90));
     }
@@ -365,10 +366,12 @@
     }
 
     // 넓은 화면 표 보기 — ⋯ 을 누르면 그 아래에 자세한 내용이 펼쳐진다
+    // 되묻기·승인 대기는 사람이 답해야 하는 행이라 표에서도 저절로 펼쳐 둔다(대표 확인 9/29 — PC에서 답 칸이 안 보이던 것)
+    const NEEDS = ['질문', '승인대기'];
     function renderTable(list) {
         const rows = list.map(o => {
             const b = BADGE[o.status] || ['wait', o.status];
-            const open = S.detail.has(o.id);
+            const open = S.detail.has(o.id) || (NEEDS.includes(o.status) && !S.closed.has(o.id));
             const canHide = S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status);
             return `<tr class="row" data-oid="${o.id}">
                 <td><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></td>
@@ -390,7 +393,13 @@
         const o = S.orders.find(x => x.id === id);
         if (!o) return;
         if (act === 'toggle') { if (S.open.has(id)) S.open.delete(id); else S.open.add(id); renderList(); return; }
-        if (act === 'detail') { if (S.detail.has(id)) S.detail.delete(id); else S.detail.add(id); renderList(); return; }
+        if (act === 'detail') {
+            const auto = ['질문', '승인대기'].includes(o.status);
+            const nowOpen = S.detail.has(id) || (auto && !S.closed.has(id));
+            if (nowOpen) { S.detail.delete(id); if (auto) S.closed.add(id); }
+            else { S.detail.add(id); S.closed.delete(id); }
+            renderList(); return;
+        }
         if (act === 'copy') {
             const text = (o.result && (o.result.answer || o.result.text)) || '';
             try { await navigator.clipboard.writeText(text); showToast('답변을 복사했어요'); } catch (err) { showToast('복사하지 못했어요. 직접 선택해 복사해 주세요'); }
