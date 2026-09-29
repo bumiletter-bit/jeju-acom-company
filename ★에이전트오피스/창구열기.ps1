@@ -13,6 +13,17 @@ if ($here -ne $PSScriptRoot.TrimEnd('\')) {
     exit 1
 }
 
+# 시험 열기(AKKOME_TEST=1): 콘솔 키를 넣지 않는다 = 대표 요금제로 열린다. 창이 열리고 첫 말이 들어가는지만 본다(감시 안 함).
+# 시험은 대표 요금제, 콘솔은 직원이 회사프로그램으로 실제 지시할 때만(대표 확정 2026-09-29).
+if ($env:AKKOME_TEST -eq '1') {
+    Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+    Set-Location $PSScriptRoot
+    $repoRootT = Split-Path $PSScriptRoot -Parent
+    Write-Host "시험 열기 — 대표 요금제로 엽니다(콘솔 요금 없음)." -ForegroundColor Cyan
+    claude "창구 열기 시험입니다. 도구를 쓰지 말고 '시험 확인'이라고만 답하세요." --model opus --dangerously-skip-permissions --add-dir $repoRootT
+    exit 0
+}
+
 $keyFile = Join-Path $env:USERPROFILE ".akkome\desk-api-key.txt"
 if (-not (Test-Path $keyFile)) {
     Write-Host ""
@@ -36,4 +47,8 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 # 허용 질문 없이 연다(대표 확정 9/29) — 창구가 질문에 멈추면 직원 지시가 쌓이기 때문이다.
 # 막아야 할 일(배포·커밋·코드 수정·삭제)은 이 폴더의 .claude\settings.json 금지 목록과 CLAUDE.md 0번 규칙이 맡는다.
 $base = @("--dangerously-skip-permissions", "--add-dir", $repoRoot)
-if ($args -contains "--model") { claude @base @args } else { claude --model opus @base @args }
+# 자동 열기(AKKOME_AUTO=1 · 대기 프로그램이 연 창): 첫 말 "창구 시작"을 넣어 바로 감시를 켠다.
+$first = @()
+if ($env:AKKOME_AUTO -eq '1') { $first = @("창구 시작") }
+# 🔴 첫 문장은 맨 앞에 둔다 — --add-dir 뒤에 두면 폴더 이름으로 먹혀 문장이 사라진다(실측).
+if ($args -contains "--model") { claude @first @base @args } else { claude @first --model opus @base @args }

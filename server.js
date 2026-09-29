@@ -13141,22 +13141,48 @@ setInterval(deskOcrTick, 5000);
 // 창구 상태 (화면 표시용): 온라인 여부·처리 중 지시·대기 건수
 app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
     try {
-        const [hbq, cq, eng] = await Promise.all([
+        const [hbq, cq, eng, lcq] = await Promise.all([
             pool.query(`SELECT value FROM agent_office_config WHERE key='desk_heartbeat'`),
             pool.query(`SELECT status, COUNT(*)::int AS c FROM pending_orders
                         WHERE is_deleted=false AND status IN ('대기','처리중','판독완료','확인표작성','승인대기','승인됨') GROUP BY status`),
             aoEngine(),
+            pool.query(`SELECT value, EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS ago FROM agent_office_config WHERE key='desk_launcher'`),
         ]);
         const hb = hbq.rows[0] ? hbq.rows[0].value : null;
+        // #470 대기 프로그램(대표 PC에서 도는 창구 관리자) — 2분 안에 소식이 있어야 살아 있는 것으로 본다
+        const lcRow = lcq.rows[0] || null;
+        const lc = lcRow ? lcRow.value : null;
+        const lcAlive = !!(lcRow && lcRow.ago !== null && lcRow.ago < 120);
         const cnt = {}; for (const r of cq.rows) cnt[r.status] = r.c;
         const online = deskOnline(hb, Date.now());
         res.json({
             engine: eng, online, state: online ? (hb.state || 'idle') : 'offline', last_seen: hb ? hb.at : null,
             order_id: online ? (hb.order_id || null) : null,
+            launcher: lc ? { alive: lcAlive, on: !!lc.on, busy: !!lc.busy, note: lc.note || '', host: lc.host || '' } : null,
+            can_wake: lcAlive,
             waiting: (cnt['대기'] || 0) + (cnt['승인됨'] || 0),
             working: (cnt['처리중'] || 0) + (cnt['판독완료'] || 0) + (cnt['확인표작성'] || 0),
             approval: cnt['승인대기'] || 0,
         });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// #470 창구 켜기·끄기 — 화면 버튼이 남기는 신호. 대표 PC의 대기 프로그램이 10초 안에 집어 실행한다.
+//    켜기 = 누구나(직원이 지시를 넣었는데 창구가 자고 있을 때) · 끄기 = 관리자만(요금이 나가는 일을 멈추는 것이라)
+app.post('/api/agent-office/desk/wake', authMiddleware, async (req, res) => {
+    try {
+        const sleep = req.body?.action === 'sleep';
+        if (sleep && req.user.role !== 'admin') throw { status: 403, message: '창구를 끄는 것은 관리자만 할 수 있습니다' };
+        const lcq = await pool.query(`SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS ago FROM agent_office_config WHERE key='desk_launcher'`);
+        const alive = !!(lcq.rows[0] && lcq.rows[0].ago !== null && lcq.rows[0].ago < 120);
+        if (!alive) throw { status: 400, message: '대표 PC의 창구 관리 프로그램이 꺼져 있어 신호를 받을 곳이 없습니다. PC를 켜 주세요.' };
+        const v = { at: new Date().toISOString(), action: sleep ? 'sleep' : 'wake', by: req.user.name || req.user.username || null };
+        await pool.query(
+            `INSERT INTO agent_office_config (key, value) VALUES ('desk_wake_request', $1::jsonb)
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(v)]);
+        await writeAudit({ action: 'update', targetType: 'agent_office_config', targetId: null,
+            changes: { after: { desk: sleep ? 'sleep' : 'wake' } }, source: 'agent_office', actor: adminActor(req) });
+        res.json({ message: sleep ? '창구를 끕니다 (처리 중인 지시는 끝내고 멈춥니다)' : '창구를 켭니다 (10초 안에 시작합니다)' });
     } catch (err) { handleAdminErr(res, err); }
 });
 

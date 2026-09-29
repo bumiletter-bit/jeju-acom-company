@@ -41,6 +41,9 @@
 .desk-state[data-s="idle"] i { background: var(--d-ok); }
 .desk-state[data-s="busy"] i { background: var(--d-busy); animation: desk-pulse 1.4s ease-in-out infinite; }
 .desk-state-sub { display: block; margin-top: 8px; color: var(--d-dim); font-size: 12.5px; }
+.desk-wake { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.desk-wake .desk-btn { min-height: 38px; padding: 0 14px; font-size: 13.5px; }
+.desk-wake-note { color: var(--d-dim); font-size: 12.5px; }
 .desk-say { margin-top: 14px; background: var(--d-raise); border-radius: 12px; padding: 10px 14px; font-size: 14px; color: var(--d-ink); max-width: 34ch; }
 .desk-stage { width: 168px; height: 168px; border-radius: 50%; background: #f3f1ea; display: grid; place-items: center; overflow: hidden; }
 .desk-stage img { width: 150px; height: 150px; object-fit: contain; animation: desk-float 4.5s ease-in-out infinite; }

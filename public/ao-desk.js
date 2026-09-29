@@ -44,6 +44,11 @@
                     <span class="desk-state" id="desk-state" data-s="offline"><i></i><span id="desk-state-text">확인 중</span></span>
                     <span class="desk-state-sub" id="desk-state-sub"></span>
                     <div class="desk-say" id="desk-say" role="status"></div>
+                    <div class="desk-wake" id="desk-wake" hidden>
+                        <button type="button" class="desk-btn primary" id="desk-wake-btn">창구 깨우기</button>
+                        <button type="button" class="desk-btn" id="desk-sleep-btn" hidden>쉬게 하기</button>
+                        <span class="desk-wake-note" id="desk-wake-note"></span>
+                    </div>
                 </div>
                 <div class="desk-stage" id="desk-stage" data-s="offline"><img id="desk-char" src="/desk/akkomi-off.webp" alt="아꼼이 캐릭터" width="150" height="150"></div>
             </div>
@@ -83,6 +88,8 @@
         });
         $('desk-ask').addEventListener('submit', e => { e.preventDefault(); send(); });
         $('desk-attach').addEventListener('click', () => $('desk-file').click());
+        $('desk-wake-btn').addEventListener('click', () => wake(false));
+        $('desk-sleep-btn').addEventListener('click', () => wake(true));
         $('desk-file').addEventListener('change', e => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; });
         const ask = $('desk-ask');
         ask.addEventListener('dragover', e => { e.preventDefault(); ask.classList.add('drag'); });
@@ -161,10 +168,31 @@
             if (s === 'offline' && d.last_seen) parts.push('마지막 확인 ' + kst(d.last_seen, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
             $('desk-state-sub').textContent = parts.join(' · ');
             $('desk-say').textContent = s === 'busy' && d.order_id ? `${d.order_id}번 지시를 처리하고 있어요.` : SAY[s] || SAY.offline;
+            // #470 창구 켜기·끄기: 대표 PC의 관리 프로그램이 살아 있을 때만 버튼이 뜬다
+            const lc = d.launcher, wrap = $('desk-wake'), wb = $('desk-wake-btn'), sb = $('desk-sleep-btn'), wn = $('desk-wake-note');
+            const canWake = !!d.can_wake;
+            wrap.hidden = !(canWake && (s === 'offline' || isAdmin()));
+            wb.hidden = !(canWake && s === 'offline');
+            sb.hidden = !(canWake && isAdmin() && s !== 'offline');
+            wn.textContent = !canWake && s === 'offline' ? '대표 PC가 꺼져 있어요. 남긴 지시는 켜지면 순서대로 처리됩니다.'
+                : (lc && lc.note) ? lc.note : '';
+            if (!canWake && s === 'offline') { wrap.hidden = false; wb.hidden = true; sb.hidden = true; }
             const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
             tabA.hidden = !isAdmin();
             n.hidden = !d.approval; n.textContent = d.approval || 0;
         } catch (e) { /* 다음 주기에 다시 */ }
+    }
+
+    async function wake(sleep) {
+        const wb = $('desk-wake-btn'), sb = $('desk-sleep-btn');
+        if (sleep && !confirm('창구를 쉬게 할까요? 새 지시는 쌓였다가 다시 켠 뒤에 처리됩니다.')) return;
+        wb.disabled = sb.disabled = true;
+        try {
+            const r = await api('/api/agent-office/desk/wake', 'POST', { action: sleep ? 'sleep' : 'wake' });
+            showToast(r.message || (sleep ? '창구를 껐습니다' : '창구를 켭니다'), 'success');
+            setTimeout(loadStatus, 4000); setTimeout(loadStatus, 12000);
+        } catch (e) { showToast(e.message || '신호를 보내지 못했습니다', 'error'); }
+        wb.disabled = sb.disabled = false;
     }
 
     async function loadOrders(force) {
