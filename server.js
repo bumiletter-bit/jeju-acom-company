@@ -1040,6 +1040,8 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE naver_settle_recon ADD COLUMN IF NOT EXISTS reversal NUMERIC`);          /* #468-b: 정산 후 취소·회수(마이너스 주문 행) 분리 */
     await pool.query(`ALTER TABLE naver_settle_recon ADD COLUMN IF NOT EXISTS reversal_count INTEGER`);
+    await pool.query(`ALTER TABLE naver_settle_recon ADD COLUMN IF NOT EXISTS other_adj NUMERIC`);         /* #468-e: 우대수수료 환급·차액·보류/해제·한도·상계 = 주문과 무관한 회차 항목(9/30 우대수수료 환급 1,572만 실측) */
+    await pool.query(`ALTER TABLE naver_settle_recon ADD COLUMN IF NOT EXISTS other_detail JSONB`);
     // ── 지시 #68 C5: 시즌 오픈 대기 신청 (연락처는 발송 목적상 원문 저장 — 화면 표시는 마스킹, soft-delete)
     await pool.query(`
         CREATE TABLE IF NOT EXISTS season_waitlist (
@@ -7317,12 +7319,24 @@ function settleReconClassify(caseRows, basisStart, basisEnd, shipMap) {
     return out;
 }
 // 판정: 넣은 값 없음 → no-input · 예정일 지났는데 완료일 없음 → unpaid · |①| ≤ 0.5% → ok · 그 외 warn
-function settleReconStatus({ input_sum, in_period, complete_date, expect_date, todayKst }) {
-    if (input_sum == null) return { status: 'no-input', diff1: null };
-    const diff1 = Number(input_sum) - Number(in_period || 0);
-    if (!complete_date && expect_date < todayKst) return { status: 'unpaid', diff1 };
+// #468-e: other_adj(우대수수료 환급 등 주문과 무관한 회차 항목)가 넣은 값에 포함돼 있으면(판매자센터 예정액을 그대로 옮긴 경우) 그만큼 빼고 판정 — 둘 중 차이가 작은 쪽 채택
+function settleReconStatus({ input_sum, in_period, complete_date, expect_date, todayKst, other_adj }) {
+    if (input_sum == null) return { status: 'no-input', diff1: null, input_includes_other: false };
+    const d0 = Number(input_sum) - Number(in_period || 0);
+    const oa = Number(other_adj || 0);
+    const d1 = oa ? d0 - oa : d0;
+    const useOther = !!oa && Math.abs(d1) < Math.abs(d0);
+    const diff1 = useOther ? d1 : d0;
+    if (!complete_date && expect_date < todayKst) return { status: 'unpaid', diff1, input_includes_other: useOther };
     const tol = Math.max(100000, Math.abs(Number(input_sum)) * 0.005);   // 0.5% 또는 10만원 중 큰 쪽(소액 차이는 조치 대상 아님)
-    return { status: Math.abs(diff1) <= tol ? 'ok' : 'warn', diff1 };
+    return { status: Math.abs(diff1) <= tol ? 'ok' : 'warn', diff1, input_includes_other: useOther };
+}
+// 일별 정산 행에서 주문과 무관한 회차 항목 추출(+ = 추가 지급 · − = 차감)
+function settleReconOther(daily) {
+    const o = { preferential_commission: Number(daily.preferentialCommissionAmount) || 0, difference: Number(daily.differenceSettleAmount) || 0,
+        holdback: Number(daily.payHoldbackAmount) || 0, limit: Number(daily.settlementLimitAmount) || 0, minus_charge: Number(daily.minusChargeAmount) || 0 };
+    const sum = Object.values(o).reduce((a, b) => a + b, 0);
+    return { sum, detail: o };
 }
 // 넣은 값 = 기준 기간의 **마지막 기록 한 행**(정산예정+미정산). 대표는 주말에 금요일 정산예정을 이월해 적으므로(9/20 행 = 9/18분 + 9/20분)
 // 기간 안 행을 전부 더하면 이월분이 두 번 잡힌다(9/24 백필 실측 9/21 회차 8,753만 vs 실제 6,391만). 마지막 행이 묶음 전체의 미입금 잔액.
@@ -7350,8 +7364,10 @@ async function settleReconRun(daily) {
         AND (created_at + interval '9 hours')::date >= $1::date AND (created_at + interval '9 hours')::date <= $2::date AND NOT (order_key = ANY($3::text[]))`, [basisStart, basisEnd, cls.ids.length ? cls.ids : ['-']]);
     const pendingIds = po.rows.map(r => r.order_key);
     const inp = await settleReconInputs(basisStart, basisEnd);
-    const st = settleReconStatus({ input_sum: inp.input_sum, in_period: cls.in_period, complete_date: daily.settleCompleteDate || null, expect_date: expect, todayKst: kstTodayStr() });
+    const other = settleReconOther(daily);
+    const st = settleReconStatus({ input_sum: inp.input_sum, in_period: cls.in_period, complete_date: daily.settleCompleteDate || null, expect_date: expect, todayKst: kstTodayStr(), other_adj: other.sum });
     const row = {
+        other_adj: other.sum, other_detail: { ...other.detail, input_includes_other: st.input_includes_other },
         expect_date: expect, basis_start: basisStart, basis_end: basisEnd, complete_date: daily.settleCompleteDate || null,
         pay_amount: Number(daily.paySettleAmount) || 0, commission: Number(daily.commissionSettleAmount) || 0, benefit: Number(daily.benefitSettleAmount) || 0,
         return_care: Number(daily.returnCareSettleAmount) || 0, deduction: Number(daily.deductionRestoreSettleAmount) || 0, settle_amount: Number(daily.settleAmount) || 0,
@@ -7367,17 +7383,17 @@ async function settleReconRun(daily) {
 }
 async function settleReconUpsert(r) {
     await pool.query(`INSERT INTO naver_settle_recon (expect_date, basis_start, basis_end, complete_date, pay_amount, commission, benefit, return_care, deduction, settle_amount,
-            case_total, in_period, in_period_count, carried_in, carried_in_count, unknown_amount, unknown_count, pending_out_count, pending_out_ids, input_sum, input_dates, diff1, status, detail, computed_at, reversal, reversal_count)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21::jsonb,$22,$23,$24::jsonb,NOW(),$25,$26)
+            case_total, in_period, in_period_count, carried_in, carried_in_count, unknown_amount, unknown_count, pending_out_count, pending_out_ids, input_sum, input_dates, diff1, status, detail, computed_at, reversal, reversal_count, other_adj, other_detail)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21::jsonb,$22,$23,$24::jsonb,NOW(),$25,$26,$27,$28::jsonb)
         ON CONFLICT (expect_date) DO UPDATE SET basis_start=EXCLUDED.basis_start, basis_end=EXCLUDED.basis_end, complete_date=EXCLUDED.complete_date,
             pay_amount=EXCLUDED.pay_amount, commission=EXCLUDED.commission, benefit=EXCLUDED.benefit, return_care=EXCLUDED.return_care, deduction=EXCLUDED.deduction, settle_amount=EXCLUDED.settle_amount,
             case_total=EXCLUDED.case_total, in_period=EXCLUDED.in_period, in_period_count=EXCLUDED.in_period_count, carried_in=EXCLUDED.carried_in, carried_in_count=EXCLUDED.carried_in_count,
             unknown_amount=EXCLUDED.unknown_amount, unknown_count=EXCLUDED.unknown_count, pending_out_count=EXCLUDED.pending_out_count, pending_out_ids=EXCLUDED.pending_out_ids,
             input_sum=EXCLUDED.input_sum, input_dates=EXCLUDED.input_dates, diff1=EXCLUDED.diff1, status=EXCLUDED.status, detail=EXCLUDED.detail, computed_at=NOW(),
-            reversal=EXCLUDED.reversal, reversal_count=EXCLUDED.reversal_count`,
+            reversal=EXCLUDED.reversal, reversal_count=EXCLUDED.reversal_count, other_adj=EXCLUDED.other_adj, other_detail=EXCLUDED.other_detail`,
         [r.expect_date, r.basis_start, r.basis_end, r.complete_date, r.pay_amount, r.commission, r.benefit, r.return_care, r.deduction, r.settle_amount,
          r.case_total, r.in_period, r.in_period_count, r.carried_in, r.carried_in_count, r.unknown_amount, r.unknown_count, r.pending_out_count, JSON.stringify(r.pending_out_ids || []),
-         r.input_sum, JSON.stringify(r.input_dates || []), r.diff1, r.status, JSON.stringify(r.detail || {}), r.reversal || 0, r.reversal_count || 0]);
+         r.input_sum, JSON.stringify(r.input_dates || []), r.diff1, r.status, JSON.stringify(r.detail || {}), r.reversal || 0, r.reversal_count || 0, r.other_adj || 0, JSON.stringify(r.other_detail || {})]);
 }
 // 정산현황 저장 직후: 그 날짜가 속한 회차의 넣은 값·판정만 재계산(네이버 호출 0) — no-input → ok/warn 전환 시 알림 1회
 async function settleReconRecomputeInputs(dateStr) {
@@ -7386,8 +7402,9 @@ async function settleReconRecomputeInputs(dateStr) {
     for (const r of q.rows) {
         const bs = settleReconKst(r.basis_start), be = settleReconKst(r.basis_end), ex = settleReconKst(r.expect_date);
         const inp = await settleReconInputs(bs, be);
-        const st = settleReconStatus({ input_sum: inp.input_sum, in_period: r.in_period, complete_date: r.complete_date, expect_date: ex, todayKst: kstTodayStr() });
-        await pool.query(`UPDATE naver_settle_recon SET input_sum=$2, input_dates=$3::jsonb, diff1=$4, status=$5, computed_at=NOW() WHERE expect_date=$1`, [ex, inp.input_sum, JSON.stringify(inp.input_dates), st.diff1, st.status]);
+        const st = settleReconStatus({ input_sum: inp.input_sum, in_period: r.in_period, complete_date: r.complete_date, expect_date: ex, todayKst: kstTodayStr(), other_adj: r.other_adj });
+        await pool.query(`UPDATE naver_settle_recon SET input_sum=$2, input_dates=$3::jsonb, diff1=$4, status=$5, other_detail = COALESCE(other_detail,'{}'::jsonb) || $6::jsonb, computed_at=NOW() WHERE expect_date=$1`,
+            [ex, inp.input_sum, JSON.stringify(inp.input_dates), st.diff1, st.status, JSON.stringify({ input_includes_other: st.input_includes_other })]);
         const row = { ...r, expect_date: ex, basis_start: bs, basis_end: be, complete_date: settleReconKst(r.complete_date), input_sum: inp.input_sum, input_dates: inp.input_dates, diff1: st.diff1, status: st.status };
         await settleReconNotify(row);
         out.push(row);
@@ -7407,6 +7424,7 @@ function settleReconMessage(r) {
     if (Number(r.carried_in_count) > 0) carry.push(`전날 집화 지연분 유입 +${settleReconFmt(r.carried_in)}(${r.carried_in_count}건)`);
     if (Number(r.pending_out_count) > 0) carry.push(`집화 대기 ${r.pending_out_count}건(다음 정산)`);
     if (Number(r.reversal_count) > 0) carry.push(`정산 후 취소·회수 ${settleReconFmt(r.reversal)}(${r.reversal_count}건)`);
+    if (Number(r.other_adj)) carry.push(`네이버 추가 지급·차감(우대수수료 환급 등) ${Number(r.other_adj) > 0 ? '+' : ''}${settleReconFmt(r.other_adj)}${r.other_detail && r.other_detail.input_includes_other ? '(넣은 값에 포함됨)' : ''}`);
     let body;
     if (r.status === 'no-input') body = `${period} — 정산현황에 정산예정이 아직 없습니다. 입력·저장하면 자동으로 대조됩니다. ${adj}${carry.length ? ' · ' + carry.join(' · ') : ''}`;
     else body = `${period} 넣은 값 ${settleReconFmt(r.input_sum)} 대비 실입금 ${settleReconFmt(Number(r.settle_amount) - Number(r.input_sum))} · 취소·이월 차이 ${settleReconFmt(r.diff1)} · ${adj}${carry.length ? ' · ' + carry.join(' · ') : ''}`
@@ -7431,7 +7449,7 @@ app.get('/api/agent-office/settle-recon', authMiddleware, adminOnly, async (req,
         const to = String(req.query.to || '').slice(0, 10) || kstTodayStr();
         const q = await pool.query(`SELECT to_char(expect_date,'YYYY-MM-DD') AS expect_date, to_char(basis_start,'YYYY-MM-DD') AS basis_start, to_char(basis_end,'YYYY-MM-DD') AS basis_end,
                 to_char(complete_date,'YYYY-MM-DD') AS complete_date, pay_amount, commission, benefit, return_care, deduction, settle_amount, case_total, in_period, in_period_count,
-                carried_in, carried_in_count, unknown_amount, unknown_count, pending_out_count, reversal, reversal_count, input_sum, input_dates, diff1, status, detail, computed_at
+                carried_in, carried_in_count, unknown_amount, unknown_count, pending_out_count, reversal, reversal_count, other_adj, other_detail, input_sum, input_dates, diff1, status, detail, computed_at
             FROM naver_settle_recon WHERE expect_date >= $1::date AND expect_date <= $2::date ORDER BY expect_date`, [from, to]);
         res.json({ rows: q.rows, today: kstTodayStr() });
     } catch (err) { handleAdminErr(res, err); }

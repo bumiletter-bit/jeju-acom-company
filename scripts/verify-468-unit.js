@@ -80,6 +80,10 @@ function reset() { Object.assign(S, { ss: [], lms: [], recon: {}, notes: [], cas
     const bnd2 = R.settleReconStatus({ input_sum: 100000000, in_period: 99499999, complete_date: '2026-09-21', expect_date: '2026-09-21', todayKst: '2026-09-24' });
     const bnd3 = R.settleReconStatus({ input_sum: 25053, in_period: 0, complete_date: '2026-09-23', expect_date: '2026-09-23', todayKst: '2026-09-24' });
     ok('⑥ 경계 = 정확히 0.5%(50만/1억)는 ok · 초과 warn · 소액 차이(25,053 ≤ 10만)는 ok', bnd.status === 'ok' && bnd2.status === 'warn' && bnd3.status === 'ok');
+    // ⑥-b(#468-e 9/30 실측): 넣은 값 = 발송분 4,497,548 + 판매자센터 예정액 속 우대수수료 환급 15,721,251 → other_adj를 빼고 판정 = ok · 환급이 넣은 값에 없으면 원래 차이로
+    const o1 = R.settleReconStatus({ input_sum: 20218799, in_period: 4497548, complete_date: null, expect_date: '2026-09-30', todayKst: '2026-09-29', other_adj: 15721251 });
+    const o2 = R.settleReconStatus({ input_sum: 4497548, in_period: 4497548, complete_date: null, expect_date: '2026-09-30', todayKst: '2026-09-29', other_adj: 15721251 });
+    ok('⑥-b 우대수수료 환급 = 넣은 값에 포함 시 빼고 판정 ok(diff 0) · 미포함 시 원래 판정 ok(diff 0)·플래그 false', o1.status === 'ok' && o1.diff1 === 0 && o1.input_includes_other === true && o2.status === 'ok' && o2.diff1 === 0 && o2.input_includes_other === false);
 
     // ⑦ 건별 조회 페이지 순회(2페이지) · periodType = 정산 예정일
     reset(); S.casePages['2026-09-10'] = [[order('A1', 10)], [order('A2', 20)]];

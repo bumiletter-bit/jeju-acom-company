@@ -23,7 +23,7 @@ const ok = (name, pass, note) => { results.push({ name, pass }); console.log((pa
         const tbl = (await db.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_name='naver_settle_recon'`)).rows[0].n;
         const admins = (await db.query(`SELECT id, name FROM users WHERE role='admin' AND deleted_at IS NULL ORDER BY id`)).rows;
         await db.end();
-        ok('DB 테이블 naver_settle_recon 생성(컬럼 29) · 활성 관리자 = 대표·조가영 2명', tbl === 29 && admins.length === 2, admins.map(a => a.name).join('·') + ` · cols ${tbl}`);
+        ok('DB 테이블 naver_settle_recon 생성(컬럼 31 · #468-e other_adj/other_detail 포함) · 활성 관리자 = 대표·조가영 2명', tbl === 31 && admins.length === 2, admins.map(a => a.name).join('·') + ` · cols ${tbl}`);
         const token = jwt.sign({ id: ceo.id, name: ceo.name, position: '대표', role: 'admin' }, 'verifytest', { expiresIn: '15m' });
         const H = { Authorization: 'Bearer ' + token };
         const api1 = await (await fetch(`http://localhost:${PORT}/api/agent-office/settle-recon`, { headers: H })).json();
