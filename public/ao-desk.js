@@ -15,6 +15,7 @@
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), closed: new Set(),
+        inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0,
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
     const HINTS = ['정산관리 오늘 발주수량이야 올려줘', '단골고객에게 문자발송할 예정이야 (쿠폰, 행사내용, 기간 넣어주기)', '지금 네이버 자사몰 쿠팡 가격 맞는지 확인해줘', '신규품목 보고서 작성해줘 (핵심내용 두서없이 쓰기)'];
@@ -68,10 +69,17 @@
                     </div>
                 </form>
             </section>
-            <section class="desk-quick" id="desk-quick" aria-label="빠른 실행">
-                <b>빠른 실행</b>
-                ${HINTS.map(h => `<button type="button" class="desk-hint" data-fill="${esc(h)}">${esc(h)}</button>`).join('')}
-                <button type="button" data-go="inventory">박스 재고 확인</button>
+            <section class="desk-inbox" id="desk-inbox" aria-label="확인 필요 문의">
+                <div class="desk-inbox-head">
+                    <b>확인 필요 문의</b>
+                    <div class="desk-inbox-tabs" id="desk-inbox-tabs" role="tablist">
+                        <button type="button" role="tab" data-k="talk" aria-selected="true">톡톡 <i id="inbox-n-talk">0</i></button>
+                        <button type="button" role="tab" data-k="qna" aria-selected="false">상품 Q&amp;A <i id="inbox-n-qna">0</i></button>
+                        <button type="button" role="tab" data-k="inquiry" aria-selected="false">주문 문의 <i id="inbox-n-inquiry">0</i></button>
+                    </div>
+                    <label class="desk-inbox-seen"><input type="checkbox" id="desk-inbox-seen"> 확인한 건도 보기</label>
+                </div>
+                <div class="desk-inbox-list" id="desk-inbox-list"><div class="desk-empty">불러오는 중</div></div>
             </section>
             <section class="desk-board" id="desk-board" aria-label="현황판"></section>
             <section class="desk-listbox">
@@ -120,10 +128,30 @@
         ask.addEventListener('dragover', e => { e.preventDefault(); ask.classList.add('drag'); });
         ask.addEventListener('dragleave', () => ask.classList.remove('drag'));
         ask.addEventListener('drop', e => { e.preventDefault(); ask.classList.remove('drag'); addFiles(Array.from(e.dataTransfer.files || []).filter(f => /^image\//.test(f.type))); });
-        $('desk-quick').addEventListener('click', e => {
-            const b = e.target.closest('button'); if (!b) return;
-            if (b.dataset.go) { if (typeof switchPage === 'function') switchPage(b.dataset.go); return; }
-            if (b.dataset.fill) { input.value = b.dataset.fill; input.dispatchEvent(new Event('input')); input.focus(); input.scrollIntoView({ block: 'center' }); }
+        // #474 확인 필요 문의 — 채널 고르기 · 확인한 건 보기 · [확인] · [문구 부탁]
+        $('desk-inbox-tabs').addEventListener('click', e => {
+            const b = e.target.closest('button[data-k]'); if (!b) return;
+            S.inboxKind = b.dataset.k;
+            document.querySelectorAll('#desk-inbox-tabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
+            renderInbox();
+        });
+        $('desk-inbox-seen').addEventListener('change', e => { S.inboxSeen = e.target.checked; loadInbox(); });
+        $('desk-inbox-list').addEventListener('click', async e => {
+            const b = e.target.closest('button[data-ib]'); if (!b) return;
+            const act = b.dataset.ib;
+            if (act === 'ask') {
+                input.value = b.dataset.kind === 'talk' ? '지금 처리 안 된 톡톡 건들 답변 예시문구 만들어줘' : '지금 답변 안 된 ' + (b.dataset.kind === 'qna' ? '상품 Q&A' : '주문 문의') + ' 답변 예시문구 만들어줘';
+                input.dispatchEvent(new Event('input')); input.focus(); input.scrollIntoView({ block: 'center' });
+                return;
+            }
+            if (act === 'go') { if (typeof switchPage === 'function') switchPage('inquiry'); return; }
+            if (act === 'more') { const box = b.closest('.desk-ib'); if (box) box.classList.toggle('open'); b.textContent = box && box.classList.contains('open') ? '접기' : '전체 보기'; return; }
+            b.disabled = true;
+            try {
+                const r = await api('/api/agent-office/desk/inbox/review', 'POST', { kind: b.dataset.kind, id: b.dataset.id, undo: act === 'undo' });
+                showToast(r.message || '확인했습니다');
+                await loadInbox();
+            } catch (err) { showToast(err && err.message ? err.message : '처리하지 못했어요'); b.disabled = false; }
         });
         $('desk-fs').addEventListener('change', e => { S.fs = e.target.value; S.sig = ''; renderList(); });
         // 넓은 화면은 표, 좁은 화면은 카드(대표 확정 2026-09-29)
@@ -448,6 +476,51 @@
         }
     }
 
+    // #474 확인 필요 문의 — 톡톡·상품 Q&A·주문 문의 미처리 건(최근 3일). [확인]을 누른 건은 빠진다.
+    async function loadInbox() {
+        try { S.inbox = await api('/api/agent-office/desk/inbox' + (S.inboxSeen ? '?seen=1' : '')); S.inboxAt = Date.now(); renderInbox(); }
+        catch (e) { const box = $('desk-inbox-list'); if (box && !S.inbox) box.innerHTML = '<div class="desk-empty">문의 현황을 읽지 못했어요. 잠시 뒤 다시 열어 주세요.</div>'; }
+    }
+    function renderInbox() {
+        const d = S.inbox, box = $('desk-inbox-list');
+        if (!d || !box) return;
+        for (const k of ['talk', 'qna', 'inquiry']) {
+            const n = $('inbox-n-' + k), c = d.counts && d.counts[k];
+            if (n) { const v = c ? c.open + c.ai : 0; n.textContent = c ? v : '?'; n.className = v ? 'on' : ''; }
+        }
+        const list = d[S.inboxKind];
+        if (!Array.isArray(list)) { box.innerHTML = '<div class="desk-empty">이 채널은 지금 읽지 못했어요.</div>'; return; }
+        if (!list.length) {
+            box.innerHTML = '<div class="desk-empty">' + (S.inboxSeen ? '최근 ' + d.days + '일 기록이 없어요.' : '확인할 문의가 없어요.') + '</div>';
+            return;
+        }
+        const name = { talk: '톡톡', qna: '상품 Q&A', inquiry: '주문 문의' }[S.inboxKind];
+        const hasOpen = list.some(x => x.state === 'open' && !x.seen);
+        box.innerHTML = (hasOpen ? `<div class="desk-ib-top"><button type="button" class="desk-btn sm primary" data-ib="ask" data-kind="${S.inboxKind}">미답변 ${esc(name)} 답변 문구 부탁하기</button><span>입력칸에 지시가 들어갑니다. 보내면 클코가 건별로 문구를 만들어요.</span></div>` : '')
+            + list.map(x => {
+                const long = (x.question || '').length > 140 || (x.answer || '').length > 160;
+                return `<article class="desk-ib ${x.seen ? 'seen' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">
+                    <div class="desk-ib-head">
+                        <span class="desk-badge" data-k="${x.seen ? 'done' : x.state === 'ai' ? 'work' : 'ask'}">${x.seen ? '확인함' : x.state === 'ai' ? '답변완료 · AI 답변 확인 전' : '미답변'}</span>
+                        <span>${esc(kst(x.at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
+                        ${x.item ? `<span>${esc(x.item)}</span>` : ''}
+                        ${x.why ? `<span>${esc(x.why)}</span>` : ''}
+                        ${x.seen && x.seen_by ? `<span>확인: ${esc(x.seen_by)}</span>` : ''}
+                    </div>
+                    <p class="desk-ib-q">${esc(x.question)}</p>
+                    ${x.answer ? `<div class="desk-ib-a"><b>${x.kind === 'talk' ? '봇이 보낸 답' : '자동으로 등록된 답'}</b>${esc(x.answer)}</div>` : ''}
+                    ${x.draft ? `<div class="desk-ib-a draft"><b>AI 초안(아직 등록 안 됨)</b>${esc(x.draft)}</div>` : ''}
+                    <div class="desk-acts">
+                        ${x.seen
+                            ? `<button type="button" class="desk-btn sm" data-ib="undo" data-kind="${x.kind}" data-id="${esc(x.id)}">다시 목록에 올리기</button>`
+                            : `<button type="button" class="desk-btn sm primary" data-ib="ok" data-kind="${x.kind}" data-id="${esc(x.id)}">확인</button>`}
+                        ${x.kind !== 'talk' && x.state === 'open' ? `<button type="button" class="desk-btn sm" data-ib="go">문의 관리에서 답하기</button>` : ''}
+                        ${long ? `<button type="button" class="desk-btn sm" data-ib="more">전체 보기</button>` : ''}
+                    </div>
+                </article>`;
+            }).join('');
+    }
+
     async function loadBoard() {
         try { S.board = await api('/api/agent-office/desk/board'); S.boardAt = Date.now(); renderBoard(); } catch (e) { /* 다음 주기에 다시 */ }
     }
@@ -538,6 +611,7 @@
         if (S.tick % (hasActive ? 4 : 12) === 0) loadOrders(false);
         if (S.tick % 10 === 0) loadStatus();
         if (Date.now() - S.boardAt > 60000) { S.boardAt = Date.now(); loadBoard(); }
+        if (Date.now() - S.inboxAt > 30000) { S.inboxAt = Date.now(); loadInbox(); }
     }
 
     window.aoDeskEnter = async function () {
@@ -545,7 +619,7 @@
         if (!S.mounted) return;
         try { if (typeof aoBindEventsOnce === 'function') aoBindEventsOnce(); } catch (e) { console.error('보고서함 연결 실패:', e); }
         clock();
-        await Promise.all([loadStatus(), loadOrders(true), loadBoard()]);
+        await Promise.all([loadStatus(), loadOrders(true), loadBoard(), loadInbox()]);
         if (!S.timer) S.timer = setInterval(tick, 1000);
     };
     window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab };

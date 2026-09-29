@@ -97,15 +97,30 @@ function runDesk(order, key) {  // key 가 null 이면 콘솔 키 없이(대표 
     });
 }
 
+// #474 요금 나누기(대표 확정 2026-09-30): 대표 본인 계정이 넣은 지시 = 이 PC에 로그인된 대표 요금제(키 없이 실행),
+//   그 밖의 모든 지시(조가영 포함) = 콘솔 API 키. 개인 요금제는 본인 것만 처리해야 하기 때문이다.
+//   누가 대표인지 = agent_office_config 'desk_subscription_users' {ids:[...]} · 없으면 username 'admin' 한 명.
+let subIds = null, subAt = 0;
+async function subscriptionUsers() {
+    if (subIds && Date.now() - subAt < 300000) return subIds;
+    try {
+        const c = await cfgGet('desk_subscription_users');
+        if (c && Array.isArray(c.ids) && c.ids.length) subIds = new Set(c.ids.map(Number));
+        else subIds = new Set((await pool.query(`SELECT id FROM users WHERE username = 'admin' AND deleted_at IS NULL`)).rows.map(r => r.id));
+    } catch (e) { subIds = subIds || new Set(); }
+    subAt = Date.now();
+    return subIds;
+}
+
 async function nextOrder(onlyId) {
     if (onlyId) {
         const one = await pool.query(
-            `SELECT id, status, created_by, (image_data IS NOT NULL) AS has_image
+            `SELECT id, status, created_by, created_by_id, (image_data IS NOT NULL) AS has_image
              FROM pending_orders WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')`, [onlyId]);
         return one.rows[0] || null;
     }
     const r = await pool.query(
-        `SELECT id, status, created_by, (image_data IS NOT NULL) AS has_image
+        `SELECT id, status, created_by, created_by_id, (image_data IS NOT NULL) AS has_image
          FROM pending_orders
          WHERE is_deleted = false AND status IN ('대기', '승인됨')
            AND content NOT LIKE '[검증469]%'
@@ -116,7 +131,7 @@ async function nextOrder(onlyId) {
 async function handle(order, key) {
     st.busy = true;
     await heartbeat('busy', order.id);
-    log(`#${order.id} 처리 시작 (${order.status} · ${order.created_by || '-'})`);
+    log(`#${order.id} 처리 시작 (${order.status} · ${order.created_by || '-'} · ${key ? '콘솔' : '대표 요금제'})`);
     const t0 = Date.now();
     const r = await runDesk(order, key);
     const sec = Math.round((Date.now() - t0) / 1000);
@@ -176,12 +191,15 @@ async function tick(mode) {
         last_done: st.lastDone, handled_req_at: st.handledReqAt, mode: 'headless',
     });
 
-    if ((!active && !st.sub) || st.busy) return false;
+    if (st.paused && !st.sub) return false;
+    if (st.busy) return false;
     const o = await nextOrder(st.onlyId);
     if (!o) return false;
+    const mine = (await subscriptionUsers()).has(Number(o.created_by_id));   // 대표 본인 지시인가
+    if (!mine && !st.sub && !key) { st.note = '콘솔 API 키 파일이 없어 직원 지시를 처리하지 못합니다'; return false; }
     if (mode === 'dry') { log(`(시험) 처리할 지시 #${o.id} ${o.status}`); return true; }
     try { trust.ensure(); } catch (e) { /* 신뢰 등록은 창을 직접 열 때만 필요하다 */ }
-    await handle(o, st.sub ? null : key);
+    await handle(o, (st.sub || mine) ? null : key);
     return true;
 }
 

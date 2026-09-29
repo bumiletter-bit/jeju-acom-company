@@ -2,6 +2,7 @@
 //   로컬 실서버(3457 · 5초 이하 주기만 살리고 나머지 setInterval 무력화) + 실DB. 시험 지시는 끝에 soft-delete, 시험 알림은 삭제.
 //   🔴 ANTHROPIC_API_KEY를 비워 기동 → AI 경로가 불리면 오류가 나므로 "AI 호출 0"이 기계적으로 증명된다.
 require('dotenv').config();
+process.env.DESK_TEST_NOTIFY = '1';   // 시험 지시도 알림 기록은 남기게(폰으로는 안 나감) — respond.js 참고
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs'), os = require('os'), path = require('path');
 const jwt = require('jsonwebtoken');
@@ -309,7 +310,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const side = ['desk-live', 'desk-today', 'desk-prog'].map(id => { const e = document.getElementById(id); return e ? e.textContent.trim().length > 0 : false; });
             return {
                 table: !!q('#desk-list .desk-table'), card: !!q('#desk-list .desk-card'), th,
-                side, quick: document.querySelectorAll('#desk-quick button').length,
+                side, quick: document.querySelectorAll('#desk-inbox-tabs button').length, inboxList: !!document.querySelector('#desk-inbox-list .desk-ib, #desk-inbox-list .desk-empty'), oldQuick: !!document.getElementById('desk-quick'),
                 filter: !!q('#desk-fs'), weather: /날씨|구름|℃/.test(document.getElementById('ao-desk-root').textContent),
                 light: getComputedStyle(q('.desk-panel')).backgroundColor,
                 overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2,
@@ -317,7 +318,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         });
         ok('PC = 표 보기(카드 아님) · 머리글 6칸', wide.table && !wide.card && wide.th.length === 6, wide.th.join(' | '));
         ok('오른쪽 칸 3개가 내용을 그린다', wide.side.every(Boolean), JSON.stringify(wide.side));
-        ok('빠른 실행 5개 · 상태 고르개 · 날씨 없음', wide.quick === 5 && wide.filter && !wide.weather, '버튼 ' + wide.quick + '개');
+        ok('확인 필요 문의 칸(채널 3개 · 목록) · 빠른 실행 없음 · 상태 고르개 · 날씨 없음', wide.quick === 3 && wide.inboxList && !wide.oldQuick && wide.filter && !wide.weather, '채널 ' + wide.quick + '개');
         ok('밝은 화면 · 가로 넘침 없음', /255, 255, 255/.test(wide.light) && !wide.overflow, wide.light);
         const more = await W.pg.$('#desk-list .desk-more');
         if (more) {

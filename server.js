@@ -15200,6 +15200,8 @@ app.delete('/mcp/:secret', (req, res) => {
 // #471 고객 감사 이벤트(접수 확인·추첨·당첨 조회) — 옛 event.akkome.com 이식판. 라우트는 SPA 캐치올보다 반드시 앞.
 //   저장 = lucky_events 테이블(첫 요청 때 생성 · initDB·타이머·설정 행 무접촉) · 공개 3종은 마스킹·레이트리밋 · 관리는 회사 로그인
 require('./lucky-event.js')(app, { pool, authMiddleware, adminOnly, writeAudit });
+// #474 확인 필요 문의(톡톡·상품 Q&A·주문 문의) + 사람이 확인한 톡톡 답변 배달 — 표·칸은 첫 요청 때 생성
+require('./desk-inbox.js')(app, { pool, authMiddleware, writeAudit });
 
 // claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답
 // SPA 캐치올이 200+HTML을 주면 claude.ai 신규 연결 절차가 OAuth 서버로 오인해 등록 실패함 (2026-07-18 진단)

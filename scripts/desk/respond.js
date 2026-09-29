@@ -91,16 +91,19 @@ async function uploadAttachments(list, runId) {
     // 종 알림: 완료·질문·안내·오류 → 요청자 / 승인대기 → 활성 관리자. 텔레그램 0
     // 시험 지시([검증469])는 알림을 만들지 않는다 — 시험 54건이 대표 화면을 뒤덮은 일이 있었다(2026-09-29)
     try {
-        if (String(o.content || '').startsWith('[검증469]')) throw new Error('시험 지시라 알림 생략');
+        const isTest = String(o.content || '').startsWith('[검증469]');
+        if (isTest && process.env.DESK_TEST_NOTIFY !== '1') throw new Error('시험 지시라 알림 생략');
+        // 검증 스크립트가 알림 기록을 확인할 때(DESK_TEST_NOTIFY=1)는 적되, 폰으로는 나가지 않게 「이미 보냄」으로 표시한다
+        const pushed = isTest ? 'NOW()' : 'NULL';
         if (status === '승인대기') {
             const ad = await pool.query(`SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL`);
             for (const u of ad.rows) {
-                await pool.query(`INSERT INTO notifications (user_id, type, title, message, link) VALUES ($1, 'desk', $2, $3, 'agent-office')`,
+                await pool.query(`INSERT INTO notifications (user_id, type, title, message, link, pushed_at) VALUES ($1, 'desk', $2, $3, 'agent-office', ${pushed})`,
                     [u.id, '🔐 클코 창구 — 승인 요청', result.summary]);
             }
         } else if (status !== '판독완료' && o.created_by_id) {
             const title = status === '질문' ? '❓ 클코가 확인을 요청했어요' : status === '오류' ? '⚠️ 클코 창구 — 처리하지 못했어요' : '✅ 클코가 답했어요';
-            await pool.query(`INSERT INTO notifications (user_id, type, title, message, link) VALUES ($1, 'desk', $2, $3, 'agent-office')`,
+            await pool.query(`INSERT INTO notifications (user_id, type, title, message, link, pushed_at) VALUES ($1, 'desk', $2, $3, 'agent-office', ${pushed})`,
                 [o.created_by_id, title, clean(result.summary || result.question || result.notice || result.error || '', 120)]);
         }
     } catch (e) { console.error('알림 기록 실패(무시):', e.message); }
