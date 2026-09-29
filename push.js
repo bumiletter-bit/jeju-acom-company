@@ -128,5 +128,28 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
         res.json(Object.assign({ message: r.sent ? `${r.sent}개 기기로 보냈습니다` : '보낼 기기가 없습니다. 먼저 「알림 받기」를 켜 주세요.' }, r));
     });
 
-    return { send, init };
+    // ── 배달부: 아직 폰으로 안 보낸 알림을 찾아 보낸다 ──
+    //   알림은 서버(createNotification)도 적고 창구(대표 PC의 respond.js)도 직접 적는다 → 표를 보고 보내야 빠짐이 없다.
+    //   🔴 실서버에서만 돈다(RENDER 환경) — 로컬 검증 서버가 같은 DB를 보고 폰으로 쏘면 안 된다.
+    //   시험 지시([검증469]) 결과는 보내지 않는다. 10분 넘은 알림도 보내지 않는다(서버가 쉬다 깨어나 옛 알림을 쏟아내지 않게).
+    let delivering = false;
+    async function deliver() {
+        if (delivering) return;
+        delivering = true;
+        try {
+            await init();
+            if (!deliver.colReady) { await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS pushed_at TIMESTAMP`); deliver.colReady = true; }   // 칸 만들기는 한 번만(매번 하면 표를 잠근다)
+            const r = await pool.query(`UPDATE notifications SET pushed_at = NOW()
+                WHERE id IN (SELECT id FROM notifications WHERE pushed_at IS NULL ORDER BY id ASC LIMIT 20)
+                RETURNING id, user_id, type, title, message, link, (created_at > NOW() - interval '10 minutes') AS fresh`);
+            for (const n of r.rows) {
+                if (!n.fresh) continue;
+                await send(n.user_id, { title: n.title, message: n.message, link: n.link, type: n.type });
+            }
+        } catch (e) { console.error("[push] 배달 실패(다음 주기에 다시):", e.message); }
+        finally { delivering = false; }
+    }
+    if (process.env.RENDER) { const t = setInterval(deliver, 10000); if (t.unref) t.unref(); }
+
+    return { send, init, deliver };
 };

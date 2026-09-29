@@ -1713,8 +1713,7 @@ async function createNotification(userId, type, title, message, link) {
             'INSERT INTO notifications (user_id, type, title, message, link) VALUES ($1, $2, $3, $4, $5)',
             [userId, type, title, message || '', link || 'documents']
         );
-        // 폰으로도 보낸다 — 종류별 켜고 끄기는 push_scope 설정(기본은 꼭 필요한 것만)
-        push.send(userId, { title, message, link: link || 'documents', type }).catch(() => { });
+        // 폰으로 보내기는 push.js 의 배달부가 맡는다(10초마다 「아직 안 보낸 알림」을 찾아 보냄 — 창구가 직접 적은 알림도 똑같이 나간다)
         // 30일 지난 알림 정리
         await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '30 days'");
     } catch (err) { console.error('createNotification error:', err); }

@@ -89,7 +89,9 @@ async function uploadAttachments(list, runId) {
             })]);
     }
     // 종 알림: 완료·질문·안내·오류 → 요청자 / 승인대기 → 활성 관리자. 텔레그램 0
+    // 시험 지시([검증469])는 알림을 만들지 않는다 — 시험 54건이 대표 화면을 뒤덮은 일이 있었다(2026-09-29)
     try {
+        if (String(o.content || '').startsWith('[검증469]')) throw new Error('시험 지시라 알림 생략');
         if (status === '승인대기') {
             const ad = await pool.query(`SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL`);
             for (const u of ad.rows) {
