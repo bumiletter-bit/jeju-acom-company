@@ -13248,6 +13248,22 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                 if (rw) out.push({ key: 'reward', label: '룰렛 당첨 미지급', count: rw, where: '문의 관리 · 당첨 지급' });
                 const pr = await q(`SELECT COUNT(DISTINCT partner)::int AS c FROM pricing WHERE (start_date IS NULL OR start_date <= (NOW() + interval '9 hours')::date) AND (end_date IS NULL OR end_date >= (NOW() + interval '9 hours')::date)`);
                 if (!pr) out.push({ key: 'pricing', label: '이번 주 품목별 금액 미등록', count: 1, where: '품목별 금액' });
+                // #469-b: 오늘 할 일 알림 — 일정표의 발송·이벤트 일정(오늘·내일). /today-reminders와 같은 조건
+                const today = kstTodayStr();
+                const tomorrow = new Date(new Date(today + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
+                const sch = await pool.query(
+                    `SELECT s.date, s.end_date, s.category, s.title, s.start_time, u.name AS user_name
+                     FROM schedules s LEFT JOIN users u ON s.user_id = u.id
+                     WHERE s.is_deleted = false AND s.category IN ('톡톡발송', '문자발송', '할인·이벤트')
+                       AND s.date <= $2 AND COALESCE(s.end_date, s.date) >= $1
+                     ORDER BY s.date, s.id`, [today, tomorrow]);
+                for (const s of sch.rows) {
+                    out.push({
+                        key: 'remind', when: String(s.date).slice(0, 10) <= today ? '오늘' : '내일',
+                        label: fmtScheduleLine(s.date, s.start_time, s.title, s.user_name, s.category, s.end_date),
+                        count: 1, where: '일정 · ' + s.category,
+                    });
+                }
                 return out;
             }),
             // 매출(네이버 정산 회차 결제금액)은 관리자에게만

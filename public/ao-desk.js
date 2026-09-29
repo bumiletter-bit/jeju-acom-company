@@ -1,6 +1,7 @@
 // #469 클코 창구 — 에이전트 오피스 화면 (대표 GO 2026-09-29)
 // 지시는 서버에 '대기'로 쌓이고, 대표 PC의 창구 터미널이 집어 처리한다. 이 파일은 화면만 담당한다.
-// app.js에서 빌려 쓰는 것: api · showToast · currentUser · aoShowSettlementConfirm · aoSettleModalData · aoSettleQueue · aoBindEventsOnce · aoLoadReports
+// app.js에서 빌려 쓰는 것: api · showToast · currentUser · aoShowSettlementConfirm · aoSettleModalData · aoSettleQueue · aoBindEventsOnce
+// #469-b(대표 9/29): 보고서함 탭 없음 — 내 지시·전체 지시(+관리자에게만 대표 확인함)
 (function () {
     'use strict';
     const $ = id => document.getElementById(id);
@@ -65,12 +66,8 @@
             <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">내 지시</button>
             <button class="desk-tab" role="tab" data-tab="all" aria-selected="false">전체 지시</button>
             <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>대표 확인함<span class="n" id="desk-approval-n" hidden>0</span></button>
-            <button class="desk-tab" role="tab" data-tab="reports" aria-selected="false">보고서함</button>
         </div>
         <div class="desk-list" id="desk-list" aria-live="polite"></div>`;
-        // 보고서함(기존 표)을 새 화면 안으로 옮긴다 — 기능·데이터는 그대로
-        const rep = $('ao-reports-view');
-        if (rep) { root.appendChild(rep); rep.style.display = 'none'; }
         bind();
         S.mounted = true;
     }
@@ -141,16 +138,7 @@
     function setTab(tab) {
         S.tab = tab;
         document.querySelectorAll('#desk-tabs .desk-tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
-        const rep = $('ao-reports-view'), list = $('desk-list');
-        if (tab === 'reports') {
-            list.hidden = true;
-            if (rep) rep.style.display = '';
-            try { localStorage.setItem('ao_inbox_seen', String(Date.now())); } catch (e) { /* 저장 불가 환경 */ }
-            if (typeof aoLoadReports === 'function') aoLoadReports();
-            return;
-        }
-        if (rep) rep.style.display = 'none';
-        list.hidden = false;
+        const list = $('desk-list');
         S.sig = '';
         list.innerHTML = '<div class="desk-empty">불러오는 중</div>';
         loadOrders(true);
@@ -179,7 +167,7 @@
     }
 
     async function loadOrders(force) {
-        if (S.tab === 'reports' || S.loading) return;
+        if (S.loading) return;
         S.loading = true;
         try {
             const q = S.tab === 'mine' ? '?mine=1&limit=30' : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?limit=40';
@@ -332,7 +320,7 @@
         let todoHtml = '<div class="desk-empty">할 일 목록을 읽지 못했어요</div>';
         if (Array.isArray(d.todo)) {
             todoHtml = d.todo.length
-                ? `<ul class="desk-todo">${d.todo.map(t => `<li><span>${esc(t.label)}</span><b>${t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
+                ? `<ul class="desk-todo">${d.todo.map(t => `<li><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
                 : '<div class="desk-empty">지금 챙길 일이 없어요.</div>';
         }
         let salesHtml = '';

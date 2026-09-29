@@ -1,8 +1,8 @@
 /* #469 클코 창구 — 에이전트 오피스 전용 화면 (이 화면만 어두운 테마 · 다른 메뉴는 인디고 가이드 유지) */
 #page-agent-office [data-ao-legacy] { display: none !important; }
 #page-agent-office .ao-desk-title { margin: 0 0 14px; }
-#page-agent-office #ao-report-team,
-#page-agent-office #ao-report-agent { display: none; }
+/* #469-b: 보고서함은 화면에서 뺐다(마크업은 id 보존 — app.js 초기화가 찾는다) */
+#page-agent-office #ao-reports-view { display: none !important; }
 
 .desk {
     --d-bg: #10131f;
@@ -132,8 +132,6 @@
 .desk-note { color: var(--d-dim); font-size: 12.5px; margin-top: 8px; }
 .desk-files a { color: var(--d-accent); }
 
-/* 보고서함(기존 표)은 밝은 카드 그대로 — 어두운 바탕 위 여백만 맞춤 */
-.desk #ao-reports-view { margin-top: 4px; }
 
 @media (max-width: 900px) {
     .desk { padding: 14px; border-radius: 12px; }

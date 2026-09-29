@@ -199,21 +199,23 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('답변 카드 = 완료 배지 · 제목·본문 · [답변 복사]', card.badge === '완료' && card.a.includes('오늘 발송 박스') && card.a.includes('검증용 답변입니다.') && card.copy);
         const rejCard = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return c ? c.textContent : ''; }, p3.j.order.id);
         ok('반려 카드 = 사유 표시 · 승인 버튼 없음', /시험 반려/.test(rejCard) && !/승인하고 실행/.test(rejCard));
-        // 보고서함 탭(기존 표)
-        await A.pg.click('.desk-tab[data-tab="reports"]');
-        await A.pg.waitForFunction(() => document.querySelectorAll('#ao-report-tbody tr').length > 1, null, { timeout: 15000 });
-        const rep = await A.pg.evaluate(() => {
+        // #469-b: 보고서함 탭 없음 — 탭 = 내 지시·전체 지시(+관리자 대표 확인함)
+        const tabs = await A.pg.evaluate(() => {
             const vis = el => !!el && getComputedStyle(el).display !== 'none' && el.offsetParent !== null;
-            const rows = Array.from(document.querySelectorAll('#ao-report-tbody tr'));
-            return { rows: rows.length, desk: rows.filter(r => /클코/.test(r.children[1].textContent) && /창구/.test(r.children[2].textContent)).length, old: rows.filter(r => /마루|세미|글샘/.test(r.children[1].textContent)).length,
-                team: vis(document.getElementById('ao-report-team')), agent: vis(document.getElementById('ao-report-agent')), search: vis(document.getElementById('ao-report-search')), list: vis(document.getElementById('desk-list')) };
+            return { names: Array.from(document.querySelectorAll('#desk-tabs .desk-tab')).filter(vis).map(t => t.dataset.tab), rep: vis(document.getElementById('ao-reports-view')), repExists: !!document.getElementById('ao-report-tbody'), text: /보고서함/.test(document.getElementById('ao-desk-root').textContent) };
         });
-        ok('보고서함 = 기존 표 그대로 · 창구 실행은 「클코 · 창구」 · 과거 기록 보존 · 팀/에이전트 필터 숨김', rep.rows > 1 && rep.desk >= 1 && rep.old >= 1 && !rep.team && !rep.agent && rep.search && !rep.list, `${rep.rows}행 · 창구 ${rep.desk} · 과거 ${rep.old} · ${JSON.stringify([rep.team, rep.agent, rep.search, rep.list])}`);
-        await A.pg.evaluate(id => aoOpenReport(id), r3.run_id);
-        await A.pg.waitForSelector('.ao-report-overlay', { timeout: 10000 });
-        const modal = await A.pg.evaluate(() => document.querySelector('.ao-report-overlay').textContent);
-        ok('보고서 창 = 「클코 보고서」 · 답변 줄 표시', /클코 보고서/.test(modal) && /시험 답변|검증용 답변/.test(modal), modal.replace(/s+/g, ' ').slice(0, 120));
-        await A.pg.evaluate(() => document.querySelectorAll('.ao-report-overlay').forEach(e => e.remove()));
+        ok('보고서함 탭·표 없음 · 탭 = 내 지시·전체 지시·대표 확인함(관리자) · 마크업 id는 보존', tabs.names.join(',') === 'mine,all,approval' && !tabs.rep && tabs.repExists && !tabs.text, tabs.names.join(','));
+        // 오늘 할 일 알림 = 「지금 챙길 일」 칸 (일정표와 같은 조건)
+        const rem = await call(tokS, 'GET', '/api/agent-office/today-reminders');
+        const brd = await call(tokS, 'GET', '/api/agent-office/desk/board');
+        const remTodo = (brd.j.todo || []).filter(t => t.key === 'remind');
+        ok('현황판 할 일의 일정 줄 = 기존 오늘 할 일 알림과 같은 건수·같은 문구', remTodo.length === rem.j.reminders.length && remTodo.every((t, i) => t.label === rem.j.reminders[i].line && t.when === rem.j.reminders[i].when), `${remTodo.length}건`);
+        await A.pg.route('**/api/agent-office/desk/board', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channels: [], ship: [], sales: [], is_admin: true, todo: [{ key: 'remind', when: '내일', label: '9/30(수) 14:00 황금향 특가 문자 [문자발송]', count: 1, where: '일정 · 문자발송' }, { key: 'reward', label: '룰렛 당첨 미지급', count: 2, where: '문의 관리 · 당첨 지급' }] }) }));
+        await A.pg.evaluate(() => __aoDesk.loadBoard());
+        await A.pg.waitForTimeout(600);
+        const todoTxt = await A.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-board .desk-todo li')).map(li => li.querySelector('span').textContent + '|' + li.querySelector('b').textContent + '|' + li.querySelector('small').textContent));
+        ok('할 일 칸 표시 = 일정 줄은 「내일」 · 다른 항목은 건수', todoTxt.length === 2 && todoTxt[0] === '9/30(수) 14:00 황금향 특가 문자 [문자발송]|내일|일정 · 문자발송' && /\|2건\|/.test(todoTxt[1]), todoTxt.join(' / '));
+        await A.pg.unroute('**/api/agent-office/desk/board');
         // 확인표 창(기존 모달) 열기 — 가짜 확인표
         await A.pg.click('.desk-tab[data-tab="all"]');
         await A.pg.waitForSelector('#desk-list .desk-card', { timeout: 10000 });
