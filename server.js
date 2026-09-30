@@ -13182,7 +13182,9 @@ app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) 
         const q = (await pool.query(
             `SELECT id, status, content, created_by_id FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id])).rows[0];
         if (!q) throw { status: 404, message: '없는 지시입니다' };
-        if (q.status !== '질문') throw { status: 400, message: '지금은 답을 기다리는 상태가 아닙니다' };
+        // #477: 되묻기(질문)에 답하기 + 끝난 지시에 [이어서 지시](앞 답을 이어받아 고치기·추가 요청) — 끝난 지시는 상태를 그대로 둔다
+        const FOLLOWABLE = ['완료', '안내', '응답됨', '오류', '오류확인', '반려', '질문종결', '피드백'];
+        if (q.status !== '질문' && !FOLLOWABLE.includes(q.status)) throw { status: 400, message: '처리가 끝난 뒤에 이어서 지시할 수 있어요' };
         if (q.created_by_id && q.created_by_id !== req.user.id && req.user.role !== 'admin') throw { status: 403, message: '내가 보낸 지시에만 답할 수 있습니다' };
         const r = await pool.query(
             `INSERT INTO pending_orders (content, status, created_by, created_by_id, reply_to) VALUES ($1, '대기', $2, $3, $4) RETURNING id, status`,
@@ -13191,7 +13193,7 @@ app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) 
         await writeAudit({ action: 'create', targetType: 'pending_order', targetId: r.rows[0].id,
             changes: { after: { reply_to: q.id } }, source: 'agent_office', actor: adminActor(req) });
         if (aoEngineCache !== 'api') await deskIntake({ id: r.rows[0].id, content: text, run_id: null }, req.user.name);
-        res.json({ message: '답을 보냈어요', order: r.rows[0] });
+        res.json({ message: q.status === '질문' ? '답을 보냈어요' : '이어서 지시를 보냈어요', order: r.rows[0] });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -13226,7 +13228,8 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
         const r = await pool.query(
             `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id,
-                    (o.image_data IS NOT NULL) AS has_image,
+                    (o.image_data IS NOT NULL) AS has_image, o.reply_to,
+                    (SELECT MIN(c.id) FROM pending_orders c WHERE c.reply_to = o.id AND c.is_deleted = false) AS followed_by,
                     (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
              FROM pending_orders o WHERE ${where} ORDER BY o.id DESC LIMIT ${limit}`, params);
         res.json({ orders: r.rows });

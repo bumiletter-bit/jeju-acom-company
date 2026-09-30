@@ -273,3 +273,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 /* 첫 화면 미리보기 카드는 답변 3줄까지(크게 보기에서는 종전대로 6줄 · 짧은 답은 전부) */
 .desk-listbox:not(.is-full) .desk-a.pv { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .desk-listbox.is-full .pv-only { display: none; }
+
+/* #477 이어서 지시 · 이어진 지시 표시 */
+.desk-thread { color: var(--d-accent); font-weight: 600; }
+.desk-follow { background: var(--d-accent-soft); border: 1px solid #D8DBFF; border-radius: 10px; padding: 10px; }

@@ -83,6 +83,21 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('요청자 종 알림 기록', !!n1 && /답했어요/.test(n1.title));
         let again = ''; try { desk('respond.js', p1.j.order.id, tmpJson({ kind: 'answer', answer: 'x' })); } catch (e) { again = String(e.stderr || e.message); }
         ok('완료된 지시에 다시 답 올리기 거부', /상태라 결과를 올릴 수 없습니다/.test(again));
+        // #477 끝난 지시에 [이어서 지시] = 새 지시(reply_to) · 원 지시 상태 그대로 · 창구가 앞 답을 follow_of로 받음
+        const fw = await call(tokS, 'POST', `/api/agent-office/orders/${p1.j.order.id}/reply`, { content: '[검증469] 이어서 — 둘째 줄만 고쳐줘' });
+        if (fw.j && fw.j.order) made.push(fw.j.order.id);
+        const fwRow = fw.j && fw.j.order ? (await db.query(`SELECT reply_to, status FROM pending_orders WHERE id=$1`, [fw.j.order.id])).rows[0] : null;
+        const p1After = await row(p1.j.order.id);
+        const fwGot = fw.j && fw.j.order ? JSON.parse(desk('get.js', fw.j.order.id)) : {};
+        ok('#477 끝난 지시에 이어서 지시 = 새 지시(reply_to) · 원 지시는 완료 그대로 · 창구가 앞 지시·답을 follow_of로 받음',
+            fw.status === 200 && fwRow && fwRow.reply_to === p1.j.order.id && p1After.status === '완료' && fwGot.follow_of && fwGot.follow_of.id === p1.j.order.id && /검증용 답변입니다/.test(fwGot.follow_of.answer || '') && /오늘 발송 박스/.test(fwGot.follow_of.content || ''), JSON.stringify({ st: fw.status, fwRow, p1: p1After.status, fo: fwGot.follow_of && fwGot.follow_of.id }));
+        if (fw.j && fw.j.order) desk('respond.js', fw.j.order.id, tmpJson({ kind: 'answer', title: '검증 이어서', answer: '이어서 처리 끝' }));
+        const fwOther = await call(tokA, 'POST', `/api/agent-office/orders/${p1.j.order.id}/reply`, { content: '[검증469] 관리자도 이어서' });
+        if (fwOther.j && fwOther.j.order) { made.push(fwOther.j.order.id); desk('get.js', fwOther.j.order.id); desk('respond.js', fwOther.j.order.id, tmpJson({ kind: 'answer', title: 'x', answer: 'x' })); }
+        const staffB = (await db.query(`SELECT id FROM users WHERE role <> 'admin' AND deleted_at IS NULL AND id <> $1 ORDER BY id LIMIT 1`, [staff.id])).rows[0];
+        let fwDeny = { status: 'skip' };
+        if (staffB) { const tokS2 = jwt.sign({ id: staffB.id, name: 'x', role: 'staff' }, 'verifytest', { expiresIn: '5m' }); fwDeny = await call(tokS2, 'POST', `/api/agent-office/orders/${p1.j.order.id}/reply`, { content: '[검증469] 남의 지시' }); }
+        ok('#477 이어서 지시 권한 = 본인·관리자만(다른 직원 403)', fwOther.status === 200 && (fwDeny.status === 403 || fwDeny.status === 'skip'), String(fwDeny.status));
         const s2 = await call(tokS, 'GET', '/api/agent-office/desk-status');
         ok('답변 뒤 대기 중(idle)', s2.j.state === 'idle');
 
@@ -349,6 +364,33 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             return r;
         });
         ok('#476 목록이 다시 그려져도 답 칸의 글·커서 유지', keep && keep.v === '적던 답' && keep.focus, JSON.stringify(keep));
+        // #477 화면: 끝난 카드 [이어서 지시] → 답 칸 열림 → 취소로 닫힘 · 질문종결 카드 = 물은 것 + 몇 번으로 이어졌는지 · 이어진 지시에 「↳ n번에 이어서」
+        const fwUi = await B.pg.evaluate(async () => {
+            const D = __aoDesk, saved = D.S.orders.slice();
+            const base = { created_by: '시험', created_at: new Date().toISOString(), steps: [] };
+            D.S.orders = [
+                Object.assign({}, base, { id: 99999901, status: '완료', content: '문구 만들어줘', result: { type: 'desk_answer', title: '문구', answer: '1번 문구\n2번 문구' } }),
+                Object.assign({}, base, { id: 99999902, status: '질문종결', content: '쿠폰 보내줘', result: { question: '대상이 몇 명인가요?' }, followed_by: 99999903 }),
+                Object.assign({}, base, { id: 99999903, status: '대기', content: '30명', reply_to: 99999902 }),
+            ];
+            D.S.fs = 'all'; D.renderList();
+            const q = sel => document.querySelector(sel);
+            const btn = q('#desk-list [data-oid="99999901"] [data-act="follow"]');
+            const hadBtn = !!btn && btn.textContent.trim() === '이어서 지시';
+            btn && btn.click();
+            await new Promise(r => setTimeout(r, 50));
+            const ta = q('#reply-99999901'), send = q('#desk-list [data-oid="99999901"] [data-act="sendreply"]');
+            const opened = !!ta && !!send && document.activeElement === ta;
+            const cancel = Array.from(document.querySelectorAll('#desk-list [data-oid="99999901"] [data-act="follow"]')).find(b => b.textContent.trim() === '취소');
+            cancel && cancel.click();
+            await new Promise(r => setTimeout(r, 50));
+            const closed = !q('#reply-99999901');
+            const qc = q('#desk-list [data-oid="99999902"]').textContent;
+            const th = q('#desk-list [data-oid="99999903"]').textContent;
+            D.S.orders = saved; D.renderList();
+            return { hadBtn, opened, closed, asked: /물은 것/.test(qc) && /대상이 몇 명인가요/.test(qc) && /99999903번 지시로 이어서/.test(qc), thread: /↳ 99999902번에 이어서/.test(th), noFollowOnWait: true };
+        });
+        ok('#477 [이어서 지시] 열기·취소 · 질문종결 카드에 물은 것·이어진 번호 · 이어진 지시에 「↳ n번에 이어서」', fwUi.hadBtn && fwUi.opened && fwUi.closed && fwUi.asked && fwUi.thread, JSON.stringify(fwUi));
         ok('직원 화면 페이지 오류 0', B.errors.length === 0, B.errors.slice(0, 2).join(' | '));
 
         // 다른 메뉴 무회귀

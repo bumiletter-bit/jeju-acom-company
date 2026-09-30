@@ -8,7 +8,7 @@ const { pool, ROOT, heartbeat, step, audit } = require('./_db');
     const c = await pool.query(
         `UPDATE pending_orders SET status = '처리중'
          WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')
-         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime`, [id]);
+         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to`, [id]);
     if (!c.rows.length) { console.log(JSON.stringify({ ok: false, reason: '이미 처리 중이거나 없는 지시입니다' })); await pool.end(); return; }
     const o = c.rows[0];
     const approved = o.result && o.result.type === 'approval_request' ? o.result : null; // 승인된 건의 원 요청
@@ -46,12 +46,22 @@ const { pool, ROOT, heartbeat, step, audit } = require('./_db');
          FROM pending_orders
          WHERE is_deleted = false AND id < $1 AND created_by IS NOT DISTINCT FROM $2 AND created_at > NOW() - interval '1 hour'
          ORDER BY id DESC LIMIT 5`, [id, o.created_by])).rows.reverse();
+    // #477 되묻기 답·[이어서 지시]로 들어온 지시 = 앞 지시와 그 답을 통째로 넘긴다(1시간·300자 제한 없이)
+    let followOf = null;
+    if (o.reply_to) {
+        const f = (await pool.query(
+            `SELECT id, content, status, result->>'type' AS type, result->>'question' AS question, result->>'title' AS title,
+                    LEFT(COALESCE(result->>'answer', result->>'text', result->>'notice', result->>'summary', result->>'error', ''), 4000) AS answer
+             FROM pending_orders WHERE id = $1`, [o.reply_to])).rows[0];
+        if (f) followOf = f;
+    }
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     console.log(JSON.stringify({
         ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath,
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
         recent_talk: prev,
+        follow_of: followOf,
     }, null, 2));
     await pool.end();
 })().catch(async e => { console.error('ERR', e.message); try { await pool.end(); } catch (_) { } process.exit(1); });

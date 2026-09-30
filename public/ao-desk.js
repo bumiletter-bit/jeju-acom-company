@@ -14,7 +14,7 @@
     const S = {
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
-        fs: 'all', wide: false, detail: new Set(), closed: new Set(),
+        fs: 'all', wide: false, detail: new Set(), closed: new Set(), follow: new Set(),
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0,
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
@@ -57,7 +57,7 @@
                 </div>
                 <form class="desk-ask" id="desk-ask" autocomplete="off">
                     <h2>클코에게 지시하기</h2>
-                    <p>조회, 문구 초안, 정산 이미지 등록을 맡길 수 있어요. 구체적으로 적을수록 정확하게 처리합니다. 쿠폰, 가격, 발송은 대표 승인 뒤에 실행됩니다.</p>
+                    <p>조회, 문구 초안, 정산 이미지 등록을 맡길 수 있어요. 구체적으로 적을수록 정확하게 처리합니다. 쿠폰, 가격, 발송도 바로 실행하고, 큰 건(50명 넘는 발송·여러 상품 가격 변경)은 실행 전에 한 번 물어봐요.</p>
                     <label for="desk-input">지시 내용</label>
                     <textarea class="desk-input" id="desk-input" maxlength="2000" placeholder="예: 21일 효돈 정산관리에 올려줘 (발송목록 이미지를 함께 붙여 주세요)"></textarea>
                     <div class="desk-thumbs" id="desk-thumbs" hidden></div>
@@ -113,7 +113,7 @@
         </aside>`;
         bind();
         S.mounted = true;
-        if (isAdmin()) { const ph = $('desk-ask').querySelector('p'); if (ph) ph.textContent = '조회, 문구 초안, 정산 이미지 등록을 맡길 수 있어요. 구체적으로 적을수록 정확하게 처리합니다. 관리자 지시는 쿠폰·가격·발송도 바로 실행하고, 큰 건(50명 넘는 발송·일괄 가격 변경)만 한 번 확인합니다.'; }
+        // #477 안내 문구는 관리자·직원 같다(대표 9/30 — 직원도 바로 실행)
     }
 
     function bind() {
@@ -380,7 +380,22 @@
         } catch (e) { console.error('확인표 열기 실패:', e); }
     }
 
-    function resultHtml(o) {
+    // #477 끝난 지시에 [이어서 지시] — 앞 답을 이어받아 고칠 점·추가 요청을 보낸다(서버 reply · 창구는 follow_of로 앞 대화를 받는다)
+    const FOLLOW = ['완료', '안내', '응답됨', '오류', '오류확인', '반려', '질문종결', '피드백'];
+    function followHtml(o) {
+        if (!FOLLOW.includes(o.status)) return '';
+        if (!S.follow.has(o.id)) return isAnswer(o) ? '' : `<div class="desk-acts">${followBtn(o)}</div>`; // 답변 카드는 [답변 복사] 줄에 함께
+
+        return `<div class="desk-reply desk-follow">
+                <textarea class="desk-reply-in" id="reply-${o.id}" rows="3" maxlength="2000" placeholder="고칠 점이나 이어서 할 일을 적어 주세요. 앞 답변을 이어받아 처리해요 (예: 3번 문구만 더 짧게)"></textarea>
+                <button type="button" class="desk-btn sm primary" data-act="sendreply" data-id="${o.id}">이어서 보내기</button>
+                <button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">취소</button>
+            </div>`;
+    }
+    const isAnswer = o => !!o.result && (o.result.type === 'desk_answer' || o.result.type === 'answer');
+    const followBtn = o => FOLLOW.includes(o.status) && !S.follow.has(o.id) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
+    function resultHtml(o) { return resultBody(o) + followHtml(o); }
+    function resultBody(o) {
         const r = o.result || {};
         const st = o.status;
         if (ACTIVE.includes(st) || st === '판독완료' || st === '확인표작성') {
@@ -400,7 +415,7 @@
                     : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
             return `<div class="desk-a ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}">${r.title ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${esc(text)}</div>${files}
                 <div class="desk-acts">${long || mid ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
-                <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button></div>`;
+                <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button>${followBtn(o)}</div>`;
         }
         if (st === '질문' && r.type === 'settlement_ocr_confirm') {
             return `<div class="desk-a">${esc(r.summary || '정산 확인표가 준비됐어요')}</div>
@@ -425,6 +440,11 @@
         }
         if (st === '오류' || st === '오류확인' || r.type === 'error') return `<div class="desk-a">처리하지 못했어요: ${esc(r.error || '사유 기록 없음')}</div>
             ${st === '오류' && isAdmin() ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="retry" data-id="${o.id}">다시 맡기기</button></div>` : ''}`;
+        if (st === '질문종결') {
+            const asked = r.question || r.summary || '';
+            return (asked ? `<div class="desk-a"><div class="desk-a-title">물은 것</div>${esc(asked)}</div>` : '')
+                + (o.followed_by ? `<div class="desk-note">↳ 답은 ${Number(o.followed_by)}번 지시로 이어서 처리했어요</div>` : '');
+        }
         const text = r.notice || r.summary || '';
         return text ? `<div class="desk-a">${esc(text)}</div>` : '';
     }
@@ -480,7 +500,7 @@
             const showSteps = steps.length > 1 && !['완료', '안내', '응답됨'].includes(o.status);
             return `<article class="desk-card${ov[i] ? ' ov' : ''}" data-oid="${o.id}">
                 <div class="desk-card-head"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span>
-                    <span>${o.id}번</span><span>${esc(o.created_by || '')}</span>
+                    <span>${o.id}번</span>${o.reply_to ? `<span class="desk-thread">↳ ${Number(o.reply_to)}번에 이어서</span>` : ''}<span>${esc(o.created_by || '')}</span>
                     <span>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
                     ${o.has_image ? '<span>이미지 첨부</span>' : ''}
                     ${S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 지시를 내 지시에서 지우기" title="내 지시에서 지우기">×</button>` : ''}</div>
@@ -508,12 +528,12 @@
         ov = ov || [];
         const rows = list.map((o, i) => {
             const b = BADGE[o.status] || ['wait', o.status];
-            const open = S.detail.has(o.id) || (NEEDS.includes(o.status) && !S.closed.has(o.id));
+            const open = S.detail.has(o.id) || S.follow.has(o.id) || (NEEDS.includes(o.status) && !S.closed.has(o.id));
             const canHide = S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status);
             const oc = ov[i] ? ' ov' : '';
             return `<tr class="row${oc}" data-oid="${o.id}">
                 <td><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></td>
-                <td class="c-id">${o.id}번<br><small>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small></td>
+                <td class="c-id">${o.id}번${o.reply_to ? `<br><small class="desk-thread">↳ ${Number(o.reply_to)}번에 이어서</small>` : ''}<br><small>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small></td>
                 <td class="c-q">${esc(String(o.content || '').slice(0, 120))}${o.has_image ? ' <small>(이미지)</small>' : ''}</td>
                 <td class="c-r">${resultLine(o)}</td>
                 <td class="c-by">${esc(o.created_by || '')}</td>
@@ -559,6 +579,12 @@
             } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); b.disabled = false; }
             return;
         }
+        if (act === 'follow') {
+            if (S.follow.has(id)) S.follow.delete(id); else S.follow.add(id);
+            renderList();
+            const ta = document.getElementById('reply-' + id); if (ta) ta.focus();
+            return;
+        }
         if (act === 'sendreply') {
             const ta = document.getElementById('reply-' + id);
             const text = ta ? ta.value.trim() : '';
@@ -567,7 +593,9 @@
             try {
                 const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', { content: text });
                 showToast(res.message || '답을 보냈어요');
+                S.follow.delete(id);
                 S.sig = ''; await loadOrders(true);
+                if (res.order && res.order.id) revealOrders([res.order.id]);
             } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; b.textContent = '답 보내기'; }
             return;
         }
