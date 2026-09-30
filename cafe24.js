@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const MALL_ID = 'akkome';
 const CLIENT_ID = 'mMdlm3cHGZwkVaem7wGDIB';                                  // 공개값 (Secret은 env)
 const REDIRECT_URI = 'https://jeju-acom-company.onrender.com/api/cafe24/callback'; // 앱 등록값과 한 글자도 다르면 실패
-const SCOPE = 'mall.read_order,mall.read_product,mall.write_product,mall.read_store,mall.write_store,mall.read_community,mall.write_community,mall.read_category,mall.write_category,mall.read_customer,mall.read_promotion,mall.write_promotion';   // #248-③ 상품+상점+게시판+분류/진열 · #401 read_customer(가입 환영 — 🔴 개발자센터 권한 선택지에 privacy가 없어 customer로 실측 확정 8/24) · #341 promotion 2종(룰렛 쿠폰 자동발급 대비)
+const SCOPE = 'mall.read_order,mall.read_product,mall.write_product,mall.read_store,mall.write_store,mall.read_community,mall.write_community,mall.read_category,mall.write_category,mall.read_customer,mall.read_promotion,mall.write_promotion,mall.read_mileage,mall.write_mileage';   // #479 적립금 2종(9/30 · 개발자센터 「적립금」 권한 + 재동의 필요) · #248-③ 상품+상점+게시판+분류/진열 · #401 read_customer(가입 환영 — 🔴 개발자센터 권한 선택지에 privacy가 없어 customer로 실측 확정 8/24) · #341 promotion 2종(룰렛 쿠폰 자동발급 대비)
 const API_BASE = `https://${MALL_ID}.cafe24api.com`;
 
 let _pool = null;

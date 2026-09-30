@@ -14341,6 +14341,63 @@ setInterval(async () => {
     }
 }, 10000);   // 대표 지시(8/7): 60초→10초 — 러너 응답 대기 단축 (플래그 없으면 SELECT 1회뿐 — 부하 미미)
 
+// #479(대표 GO 9/30): 카페24 적립금 지급 러너 — 창구(scripts/desk/points.js)가 cafe24_points_request에 요청을 남기면 실서버가 실행한다.
+//   카페24 열쇠는 이 서버에만 있다(창구 PC는 직접 못 부름). 가드: 지급(increase)만 · 회원 1명 · 1원~5만원 정수 · 사유 필수 ·
+//   지급 전후 잔액(available_points) 대조 · audit. 차감(decrease)·여러 명·상한 초과는 막는다. 실서버(RENDER)에서만 돈다(로컬 검증 서버가 요청을 먹지 않게).
+const POINTS_MAX = 50000;
+function pointsTelHy(v) {
+    const t = String(v || '').replace(/[^0-9]/g, '');
+    if (!/^01[016789]\d{7,8}$/.test(t)) return null;
+    return t.length === 11 ? `${t.slice(0, 3)}-${t.slice(3, 7)}-${t.slice(7)}` : `${t.slice(0, 3)}-${t.slice(3, 6)}-${t.slice(6)}`;
+}
+async function pointsMembers(q) {
+    const r = await cafe24.apiGet('/api/v2/admin/customers', q);
+    return ((r && r.customers) || []).map(c => ({ member_id: c.member_id, available_points: Number(c.available_points || 0), created_date: c.created_date || null }));
+}
+setInterval(async () => {
+    if (!process.env.RENDER) return;
+    try {
+        const req = await naverCfgGet('cafe24_points_request');
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'cafe24_points_request'`);   // 선제거 — 두 번 지급 방지
+        const out = { rid: req.rid || null, action: req.action, at: new Date().toISOString(), server_version: VERSION };
+        try {
+            if (req.action === 'lookup') {
+                const mid = String(req.member_id || '').trim(), tel = req.cellphone ? pointsTelHy(req.cellphone) : null;
+                if (!mid && !tel) throw new Error('회원 아이디 또는 휴대폰 번호(010으로 시작)가 필요합니다');
+                out.members = await pointsMembers(mid ? { member_id: mid } : { cellphone: tel });
+                out.ok = true;
+            } else if (req.action === 'grant') {
+                const mid = String(req.member_id || '').trim();
+                const amt = Number(req.amount);
+                const reason = String(req.reason || '').trim().slice(0, 200);
+                if (!/^[A-Za-z0-9@._-]{3,60}$/.test(mid)) throw new Error('회원 아이디 형식이 아닙니다');
+                if (!Number.isInteger(amt) || amt < 1 || amt > POINTS_MAX) throw new Error(`금액은 1~${POINTS_MAX.toLocaleString('ko-KR')}원 정수만 됩니다(넘으면 나눠서 지급)`);
+                if (!reason) throw new Error('지급 사유가 필요합니다');
+                const before = await pointsMembers({ member_id: mid });
+                if (before.length !== 1) throw new Error(before.length ? '같은 아이디가 여러 건 조회돼 지급하지 않았습니다' : '카페24에 없는 회원 아이디입니다');
+                const b = before[0].available_points;
+                const res2 = await cafe24.apiReq('POST', '/api/v2/admin/points', { shop_no: 1, request: { member_id: mid, amount: String(amt), type: 'increase', reason } });
+                let a = null;
+                for (let i = 0; i < 6; i++) {   // 카페24 조회 지연 대비(#433ⓑ)
+                    await new Promise(r => setTimeout(r, 2000));
+                    const m = await pointsMembers({ member_id: mid });
+                    a = m.length ? m[0].available_points : null;
+                    if (a != null && a >= b + amt) break;
+                }
+                out.grant = { member_id: mid, amount: amt, reason, before: b, after: a, confirmed: a === b + amt, api: res2 && res2.points ? { amount: res2.points.amount, type: res2.points.type } : null };
+                out.ok = true;
+                await writeAudit({ action: 'create', targetType: 'cafe24_points', targetId: null,
+                    changes: { after: { member_id: mid, amount: amt, reason, before: b, after: a, order_no: req.order_no || null } },
+                    source: 'agent_office', actor: { id: req.requested_by_id || null, name: req.requested_by ? `${req.requested_by}(창구)` : '클코(창구)' } });
+            } else throw new Error('지원하지 않는 action(lookup·grant만)');
+        } catch (e) { out.ok = false; out.status = e.status || null; out.error = String(e.reason || e.message).slice(0, 200); if (e.detail) out.detail = JSON.stringify(e.detail).slice(0, 300); }
+        await naverCfgSet('cafe24_points_result', out);
+    } catch (e) {
+        try { await naverCfgSet('cafe24_points_result', { ok: false, error: String(e.message || e).slice(0, 200) }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 10000);
+
 // 지시 #177: 주문 역조회 진단 러너 — order_probe_request {orderKeys:[...]}. 읽기 전용·PII 미수집(날짜·상태만) — "발송만 감지" 원인 판정용.
 setInterval(async () => {
     try {
