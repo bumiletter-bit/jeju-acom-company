@@ -69,24 +69,12 @@
                     </div>
                 </form>
             </section>
-            <section class="desk-inbox" id="desk-inbox" aria-label="확인 필요 문의">
-                <div class="desk-inbox-head">
-                    <b>확인 필요 문의</b>
-                    <div class="desk-inbox-tabs" id="desk-inbox-tabs" role="tablist">
-                        <button type="button" role="tab" data-k="talk" aria-selected="true">톡톡 <i id="inbox-n-talk">0</i></button>
-                        <button type="button" role="tab" data-k="qna" aria-selected="false">상품 Q&amp;A <i id="inbox-n-qna">0</i></button>
-                        <button type="button" role="tab" data-k="inquiry" aria-selected="false">주문 문의 <i id="inbox-n-inquiry">0</i></button>
-                    </div>
-                    <label class="desk-inbox-seen"><input type="checkbox" id="desk-inbox-seen"> 확인한 건도 보기</label>
-                </div>
-                <div class="desk-inbox-list" id="desk-inbox-list"><div class="desk-empty">불러오는 중</div></div>
-            </section>
-            <section class="desk-board" id="desk-board" aria-label="현황판"></section>
-            <section class="desk-listbox">
+            <section class="desk-listbox" id="desk-listbox" aria-label="지시 목록">
+                <div class="desk-fullbar"><b>지시 목록</b><button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button></div>
                 <div class="desk-tabsrow">
                     <div class="desk-tabs" role="tablist" id="desk-tabs">
                         <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">내 지시</button>
-                        <button class="desk-tab" role="tab" data-tab="all" aria-selected="false">전체 지시</button>
+                        <button class="desk-tab" role="tab" data-tab="all" aria-selected="false" id="desk-tab-all" hidden>전체 지시</button>
                         <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>대표 확인함<span class="n" id="desk-approval-n" hidden>0</span></button>
                     </div>
                     <div class="desk-filter">
@@ -100,7 +88,23 @@
                     </div>
                 </div>
                 <div class="desk-list" id="desk-list" aria-live="polite"></div>
+                <button type="button" class="desk-more-all" id="desk-list-more" data-full-open="desk-listbox">자세히 확인하기<span class="n"></span><span class="chev" aria-hidden="true">›</span></button>
             </section>
+            <section class="desk-inbox" id="desk-inbox" aria-label="확인 필요 문의">
+                <div class="desk-inbox-head">
+                    <b>확인 필요 문의</b>
+                    <div class="desk-inbox-tabs" id="desk-inbox-tabs" role="tablist">
+                        <button type="button" role="tab" data-k="talk" aria-selected="true">톡톡 <i id="inbox-n-talk">0</i></button>
+                        <button type="button" role="tab" data-k="qna" aria-selected="false">상품 Q&amp;A <i id="inbox-n-qna">0</i></button>
+                        <button type="button" role="tab" data-k="inquiry" aria-selected="false">주문 문의 <i id="inbox-n-inquiry">0</i></button>
+                    </div>
+                    <label class="desk-inbox-seen"><input type="checkbox" id="desk-inbox-seen"> 확인한 건도 보기</label>
+                    <button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button>
+                </div>
+                <div class="desk-inbox-list" id="desk-inbox-list"><div class="desk-empty">불러오는 중</div></div>
+                <button type="button" class="desk-more-all" id="desk-inbox-more" data-full-open="desk-inbox">자세히 확인하기<span class="n"></span><span class="chev" aria-hidden="true">›</span></button>
+            </section>
+            <section class="desk-board" id="desk-board" aria-label="현황판"></section>
         </div>
         <aside class="desk-side">
             <div class="desk-panel"><h3>LIVE 로그 <span>내 지시 처리 현황</span></h3><div id="desk-live"></div></div>
@@ -109,6 +113,7 @@
         </aside>`;
         bind();
         S.mounted = true;
+        if (isAdmin()) { const ph = $('desk-ask').querySelector('p'); if (ph) ph.textContent = '조회, 문구 초안, 정산 이미지 등록을 맡길 수 있어요. 구체적으로 적을수록 정확하게 처리합니다. 관리자 지시는 쿠폰·가격·발송도 바로 실행하고, 큰 건(50명 넘는 발송·일괄 가격 변경)만 한 번 확인합니다.'; }
     }
 
     function bind() {
@@ -140,7 +145,10 @@
             const b = e.target.closest('button[data-ib]'); if (!b) return;
             const act = b.dataset.ib;
             if (act === 'ask') {
-                input.value = b.dataset.kind === 'talk' ? '지금 처리 안 된 톡톡 건들 답변 예시문구 만들어줘' : '지금 답변 안 된 ' + (b.dataset.kind === 'qna' ? '상품 Q&A' : '주문 문의') + ' 답변 예시문구 만들어줘';
+                closeFull();
+                const line = b.dataset.kind === 'talk' ? '지금 처리 안 된 톡톡 건들 답변 예시문구 만들어줘' : '지금 답변 안 된 ' + (b.dataset.kind === 'qna' ? '상품 Q&A' : '주문 문의') + ' 답변 예시문구 만들어줘';
+                const cur = input.value.trim();
+                input.value = !cur ? line : cur.includes(line) ? input.value : input.value.replace(/\s+$/, '') + '\n' + line; // #476 적던 지시는 지우지 않는다
                 input.dispatchEvent(new Event('input')); input.focus(); input.scrollIntoView({ block: 'center' });
                 return;
             }
@@ -162,6 +170,47 @@
         $('desk-thumbs').addEventListener('click', e => { const b = e.target.closest('button[data-i]'); if (!b) return; S.images.splice(Number(b.dataset.i), 1); renderThumbs(); });
         $('desk-tabs').addEventListener('click', e => { const t = e.target.closest('.desk-tab'); if (t) setTab(t.dataset.tab); });
         $('desk-list').addEventListener('click', onListClick);
+        // #476 [자세히 확인하기] = 그 칸을 화면 전체로 크게(같은 DOM이라 버튼·답 칸이 그대로 동작) · 닫기/Esc/뒤로가기로 원래 자리
+        $('ao-desk-root').addEventListener('click', e => {
+            const o = e.target.closest('[data-full-open]');
+            if (o) { openFull($(o.dataset.fullOpen)); return; }
+            if (e.target.closest('[data-full-close]')) closeFull();
+        });
+        document.addEventListener('keydown', e => {
+            if (e.key !== 'Escape' || !S.full) return;
+            // 확인표 창 같은 다른 창이 위에 떠 있으면 그 창이 먼저 닫힌다
+            if (Array.from(document.querySelectorAll('.modal-overlay')).some(m => getComputedStyle(m).display !== 'none')) return;
+            closeFull();
+        });
+        window.addEventListener('popstate', () => {
+            if (S.skipPop) { S.skipPop = false; return; }
+            if (S.full) closeFull(true);
+        });
+    }
+
+    const PREVIEW_LIST = 5, PREVIEW_INBOX = 3;
+    function openFull(sec) {
+        if (!sec || S.full === sec) return;
+        if (S.full) closeFull();
+        S.full = sec;
+        sec.classList.add('is-full');
+        document.body.classList.add('desk-full-open');
+        try { history.pushState({ deskFull: sec.id }, ''); } catch (e) { /* 기록 없이도 닫기·Esc로 닫힌다 */ }
+        sec.scrollTop = 0;
+        const c = sec.querySelector('.desk-close'); if (c) c.focus({ preventScroll: true });
+    }
+    function closeFull(fromPop) {
+        const sec = S.full;
+        if (!sec) return;
+        S.full = null;
+        sec.classList.remove('is-full');
+        document.body.classList.remove('desk-full-open');
+        if (!fromPop && history.state && history.state.deskFull) { S.skipPop = true; history.back(); }
+        const m = sec.querySelector('.desk-more-all'); if (m && pageActive()) m.focus({ preventScroll: true });
+    }
+    function setMore(id, hidden) {
+        const n = $(id) && $(id).querySelector('.n');
+        if (n) n.textContent = hidden > 0 ? ` · ${hidden}건 더` : '';
     }
 
     function addFiles(files) {
@@ -187,18 +236,23 @@
         S.sending = true;
         const btn = $('desk-send');
         btn.disabled = true; btn.textContent = '보내는 중';
+        const newIds = [];
+        const idOf = r => r && r.order && r.order.id;
         try {
             if (S.images.length) {
                 const imgs = S.images.slice();
-                for (const im of imgs) await api('/api/agent-office/orders', 'POST', { content: content || '정산관리에 올려줘', image_data: im.data, image_mime: im.mime });
+                for (const im of imgs) newIds.push(idOf(await api('/api/agent-office/orders', 'POST', { content: content || '정산관리에 올려줘', image_data: im.data, image_mime: im.mime })));
                 showToast(`지시 ${imgs.length}건을 보냈어요`);
             } else {
-                await api('/api/agent-office/orders', 'POST', { content });
+                newIds.push(idOf(await api('/api/agent-office/orders', 'POST', { content })));
                 showToast('지시를 보냈어요');
             }
             input.value = ''; $('desk-count').textContent = '0 / 2000';
             S.images = []; renderThumbs();
-            if (S.tab !== 'mine') setTab('mine'); else await loadOrders(true);
+            // #476 보낸 지시가 바로 보이게: 내 지시 · 전체 상태로 돌리고 새 카드로 이동 + 잠깐 강조
+            if (S.fs !== 'all') { S.fs = 'all'; $('desk-fs').value = 'all'; }
+            if (S.tab !== 'mine') await setTab('mine'); else { S.sig = ''; await loadOrders(true); }
+            revealOrders(newIds.filter(Boolean));
         } catch (err) {
             showToast('보내지 못했어요: ' + (err && err.message ? err.message : '다시 시도해 주세요'));
         } finally {
@@ -212,7 +266,23 @@
         const list = $('desk-list');
         S.sig = '';
         list.innerHTML = '<div class="desk-empty">불러오는 중</div>';
-        loadOrders(true);
+        return loadOrders(true);
+    }
+
+    // 방금 보낸 지시 카드(표 줄)를 찾아 화면 가운데로 옮기고 잠깐 강조한다 — 목록이 아직 안 받아졌으면 몇 번 다시 받는다
+    async function revealOrders(ids) {
+        if (!ids.length) return;
+        const find = () => ids.map(id => document.querySelector(`#desk-list [data-oid="${id}"]`)).filter(Boolean);
+        let els = find();
+        for (let i = 0; i < 4 && !els.length; i++) {
+            await new Promise(r => setTimeout(r, 700));
+            S.sig = ''; await loadOrders(true);
+            els = find();
+        }
+        if (!els.length) { $('desk-listbox').scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
+        const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        els[0].scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+        els.forEach(el => { el.classList.remove('desk-flash'); void el.offsetWidth; el.classList.add('desk-flash'); setTimeout(() => el.classList.remove('desk-flash'), 2600); });
     }
 
     async function loadStatus() {
@@ -238,7 +308,7 @@
             wrap.hidden = false;
             wb.hidden = false;
             wb.disabled = !canWake || !asleep;
-            wb.textContent = asleep ? '창구 깨우기' : '창구 깨우기 (이미 켜져 있어요)';
+            wb.textContent = asleep ? '창구 깨우기' : '창구 켜짐';
             sb.hidden = !(isAdmin() && !asleep);
             sb.disabled = !canWake;
             wn.textContent = !canWake
@@ -246,6 +316,8 @@
                 : (lc && lc.note) ? lc.note : '';
             const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
             tabA.hidden = !isAdmin();
+            $('desk-tab-all').hidden = !isAdmin(); // #476 직원은 내 지시만
+            if (!isAdmin() && S.tab !== 'mine') setTab('mine');
             n.hidden = !d.approval; n.textContent = d.approval || 0;
         } catch (e) { /* 다음 주기에 다시 */ }
     }
@@ -262,20 +334,30 @@
         wb.disabled = sb.disabled = false;
     }
 
-    async function loadOrders(force) {
-        if (S.loading) return;
+    // #476 받는 도중 탭이 바뀌면 이전 탭 목록을 새 탭 이름 아래 그리던 경합 교정 — 끝난 뒤 새 탭으로 한 번 더 받는다
+    function loadOrders(force) {
+        if (S.loading) { S.again = true; return S.loadP; }
         S.loading = true;
+        S.loadP = loadOrdersNow(force);
+        return S.loadP;
+    }
+    async function loadOrdersNow(force) {
+        const tab = S.tab;
         try {
             const q = S.tab === 'mine' ? '?mine=1&limit=30' : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?limit=40';
             const d = await api('/api/agent-office/desk/orders' + q);
+            if (tab !== S.tab) { S.again = true; return; }
             const orders = d.orders || [];
             watchConfirms(orders);
             const sig = S.tab + '|' + orders.map(o => o.id + ':' + o.status + ':' + ((o.steps && o.steps.length) || 0) + ':' + (o.processed_at || '')).join(',');
             S.orders = orders;
             if (force || sig !== S.sig) { S.sig = sig; renderList(); }
         } catch (e) {
-            if (force) $('desk-list').innerHTML = `<div class="desk-empty">목록을 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.</div>`;
-        } finally { S.loading = false; }
+            if (force && tab === S.tab) $('desk-list').innerHTML = `<div class="desk-empty">목록을 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.</div>`;
+        } finally {
+            S.loading = false;
+            if (S.again) { S.again = false; S.sig = ''; await loadOrders(true); }
+        }
     }
 
     // 내 정산 확인표가 새로 준비되면 기존 확인표 창을 띄운다(화면에 들어올 때 이미 있던 것은 목록의 버튼으로만)
@@ -310,13 +392,14 @@
         if (r.type === 'desk_answer' || r.type === 'answer') {
             const text = r.answer || r.text || '';
             const long = text.length > 360 || text.split('\n').length > 6;
+            const mid = !long && (text.length > 120 || text.split('\n').length > 3); // #476 첫 화면 미리보기에서만 3줄로 줄인다
             const open = S.open.has(o.id);
             const files = Array.isArray(r.files) && r.files.length
                 ? `<div class="desk-acts desk-files">${r.files.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
                     : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
-            return `<div class="desk-a ${long && !open ? 'clamp' : ''}">${r.title ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${esc(text)}</div>${files}
-                <div class="desk-acts">${long ? `<button type="button" class="desk-btn sm" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
+            return `<div class="desk-a ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}">${r.title ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${esc(text)}</div>${files}
+                <div class="desk-acts">${long || mid ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
                 <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button></div>`;
         }
         if (st === '질문' && r.type === 'settlement_ocr_confirm') {
@@ -367,20 +450,35 @@
         return esc(String(t).replace(/\s+/g, ' ').slice(0, 90));
     }
 
-    function renderList() {
+    // #476 워커 H1: 진행 중 지시가 있으면 4초마다 목록을 다시 그린다 → 답 칸에 적던 글·커서를 보존해 되돌린다
+    function keepReplies(fn) {
+        const saved = {};
+        document.querySelectorAll('#desk-list .desk-reply-in').forEach(t => { if (t.value) saved[t.id] = t.value; });
+        const a = document.activeElement;
+        const focusId = a && a.classList && a.classList.contains('desk-reply-in') ? a.id : null;
+        const sel = focusId ? [a.selectionStart, a.selectionEnd] : null;
+        fn();
+        for (const id in saved) { const t = document.getElementById(id); if (t && !t.value) t.value = saved[id]; }
+        if (focusId) { const t = document.getElementById(focusId); if (t) { t.focus({ preventScroll: true }); try { t.setSelectionRange(sel[0], sel[1]); } catch (e) { } } }
+    }
+    function renderList() { keepReplies(renderListNow); }
+    function renderListNow() {
         const box = $('desk-list');
         const list = shown();
         box.classList.toggle('desk-cardlist', !S.wide);
         if (!list.length) {
+            setMore('desk-list-more', 0);
             box.innerHTML = `<div class="desk-empty">${S.fs !== 'all' ? '고른 상태에 해당하는 지시가 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : S.tab === 'mine' ? '아직 보낸 지시가 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.' : '지시 기록이 없어요.'}</div>`;
             return;
         }
-        if (S.wide) { renderTable(list); return; }
-        box.innerHTML = list.map(o => {
+        const ov = previewMask(list);
+        setMore('desk-list-more', ov.filter(Boolean).length);
+        if (S.wide) { renderTable(list, ov); return; }
+        box.innerHTML = list.map((o, i) => {
             const b = BADGE[o.status] || ['wait', o.status];
             const steps = (Array.isArray(o.steps) ? o.steps : []).slice(-4);
             const showSteps = steps.length > 1 && !['완료', '안내', '응답됨'].includes(o.status);
-            return `<article class="desk-card" data-oid="${o.id}">
+            return `<article class="desk-card${ov[i] ? ' ov' : ''}" data-oid="${o.id}">
                 <div class="desk-card-head"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span>
                     <span>${o.id}번</span><span>${esc(o.created_by || '')}</span>
                     <span>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
@@ -393,22 +491,34 @@
         }).join('');
     }
 
+    // #476 첫 화면에는 몇 건만(칸이 끝없이 길어지지 않게) — 나머지는 [자세히 확인하기]로. 답해야 하는 건은 늘 보인다
+    function previewMask(list) {
+        let shownN = 0;
+        return list.map(o => {
+            if (NEEDS.includes(o.status)) return false;
+            shownN++;
+            return shownN > PREVIEW_LIST;
+        });
+    }
+
     // 넓은 화면 표 보기 — ⋯ 을 누르면 그 아래에 자세한 내용이 펼쳐진다
     // 되묻기·승인 대기는 사람이 답해야 하는 행이라 표에서도 저절로 펼쳐 둔다(대표 확인 9/29 — PC에서 답 칸이 안 보이던 것)
     const NEEDS = ['질문', '승인대기'];
-    function renderTable(list) {
-        const rows = list.map(o => {
+    function renderTable(list, ov) {
+        ov = ov || [];
+        const rows = list.map((o, i) => {
             const b = BADGE[o.status] || ['wait', o.status];
             const open = S.detail.has(o.id) || (NEEDS.includes(o.status) && !S.closed.has(o.id));
             const canHide = S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status);
-            return `<tr class="row" data-oid="${o.id}">
+            const oc = ov[i] ? ' ov' : '';
+            return `<tr class="row${oc}" data-oid="${o.id}">
                 <td><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></td>
                 <td class="c-id">${o.id}번<br><small>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small></td>
                 <td class="c-q">${esc(String(o.content || '').slice(0, 120))}${o.has_image ? ' <small>(이미지)</small>' : ''}</td>
                 <td class="c-r">${resultLine(o)}</td>
                 <td class="c-by">${esc(o.created_by || '')}</td>
                 <td class="c-x"><button type="button" class="desk-more" data-act="detail" data-id="${o.id}" aria-expanded="${open}" aria-label="${o.id}번 자세히">${open ? '▴' : '⋯'}</button></td>
-            </tr>${open ? `<tr class="detailrow"><td class="detail" colspan="6">${resultHtml(o)}${canHide ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="hide" data-id="${o.id}">내 지시에서 지우기</button></div>` : ''}</td></tr>` : ''}`;
+            </tr>${open ? `<tr class="detailrow${oc}"><td class="detail" colspan="6">${resultHtml(o)}${canHide ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="hide" data-id="${o.id}">내 지시에서 지우기</button></div>` : ''}</td></tr>` : ''}`;
         }).join('');
         $('desk-list').innerHTML = `<div class="table-scroll-wrapper"><table class="desk-table"><thead><tr>
             <th>상태</th><th>번호 · 시각</th><th>지시 내용</th><th>결과</th><th>보낸 사람</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -461,7 +571,7 @@
             } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; b.textContent = '답 보내기'; }
             return;
         }
-        if (act === 'reply') { const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }
+        if (act === 'reply') { closeFull(); const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }
         if (act === 'approve' || act === 'reject' || act === 'retry') {
             let body;
             if (act === 'approve' && !confirm('이 요청을 승인할까요?\n\n' + (o.result.summary || '') + '\n\n승인하면 창구가 바로 실행합니다.')) return;
@@ -484,12 +594,18 @@
     function renderInbox() {
         const d = S.inbox, box = $('desk-inbox-list');
         if (!d || !box) return;
+        const opened = new Set(Array.from(box.querySelectorAll('.desk-ib.open')).map(el => el.dataset.kind + ':' + el.dataset.id));
+        renderInboxNow(d, box);
+        if (opened.size) box.querySelectorAll('.desk-ib').forEach(el => { if (opened.has(el.dataset.kind + ':' + el.dataset.id)) { el.classList.add('open'); const b = el.querySelector('[data-ib="more"]'); if (b) b.textContent = '접기'; } });
+    }
+    function renderInboxNow(d, box) {
         for (const k of ['talk', 'qna', 'inquiry']) {
             const n = $('inbox-n-' + k), c = d.counts && d.counts[k];
             if (n) { const v = c ? c.open + c.ai : 0; n.textContent = c ? v : '?'; n.className = v ? 'on' : ''; }
         }
         const list = d[S.inboxKind];
         if (!Array.isArray(list)) { box.innerHTML = '<div class="desk-empty">이 채널은 지금 읽지 못했어요.</div>'; return; }
+        setMore('desk-inbox-more', Array.isArray(list) ? Math.max(0, list.length - PREVIEW_INBOX) : 0);
         if (!list.length) {
             box.innerHTML = '<div class="desk-empty">' + (S.inboxSeen ? '최근 ' + d.days + '일 기록이 없어요.' : '확인할 문의가 없어요.') + '</div>';
             return;
@@ -497,9 +613,9 @@
         const name = { talk: '톡톡', qna: '상품 Q&A', inquiry: '주문 문의' }[S.inboxKind];
         const hasOpen = list.some(x => x.state === 'open' && !x.seen);
         box.innerHTML = (hasOpen ? `<div class="desk-ib-top"><button type="button" class="desk-btn sm primary" data-ib="ask" data-kind="${S.inboxKind}">미답변 ${esc(name)} 답변 문구 부탁하기</button><span>입력칸에 지시가 들어갑니다. 보내면 클코가 건별로 문구를 만들어요.</span></div>` : '')
-            + list.map(x => {
+            + list.map((x, i) => {
                 const long = (x.question || '').length > 140 || (x.answer || '').length > 160;
-                return `<article class="desk-ib ${x.seen ? 'seen' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">
+                return `<article class="desk-ib ${x.seen ? 'seen' : ''}${i >= PREVIEW_INBOX ? ' ov' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">
                     <div class="desk-ib-head">
                         <span class="desk-badge" data-k="${x.seen ? 'done' : x.state === 'ai' ? 'work' : 'ask'}">${x.seen ? '확인함' : x.state === 'ai' ? '답변완료 · AI 답변 확인 전' : '미답변'}</span>
                         <span>${esc(kst(x.at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
@@ -603,6 +719,7 @@
     }
 
     function tick() {
+        if (S.full && !pageActive()) closeFull();
         if (!S.mounted || !pageActive()) return;
         S.tick++;
         clock();
@@ -622,5 +739,5 @@
         await Promise.all([loadStatus(), loadOrders(true), loadBoard(), loadInbox()]);
         if (!S.timer) S.timer = setInterval(tick, 1000);
     };
-    window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab };
+    window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList };
 })();

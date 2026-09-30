@@ -13218,7 +13218,8 @@ app.post('/api/agent-office/desk/wake', authMiddleware, async (req, res) => {
 app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 40, 200);
-        const mine = req.query.mine === '1';
+        // #476(대표 9/30): 전체 지시·대표 확인함은 관리자만 — 직원에게는 늘 본인 지시만 내려준다(화면 탭만 숨기지 않고 서버에서도)
+        const mine = req.query.mine === '1' || req.user.role !== 'admin';
         const params = [];
         let where = `o.is_deleted = false`;
         if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
@@ -13513,16 +13514,19 @@ app.get('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/2
     try {
         const limit = Math.min(parseInt(req.query.limit) || 30, 200);
         const showHidden = req.query.include_hidden === 'true';
+        // #476: 직원은 본인 지시만(종전 화면 경로도 같은 기준)
+        const onlyMine = req.user.role !== 'admin';
         const r = await pool.query(
             `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by,
                     COALESCE(r.is_deleted, false) AS run_archived
              FROM pending_orders o
              LEFT JOIN agent_runs r ON o.run_id = r.id
              WHERE o.is_deleted = false
+               ${onlyMine ? 'AND o.created_by_id = $1' : ''}
                AND (${showHidden ? 'TRUE' : `
                     o.status IN ('대기', '처리중', '오류', '질문')
                     OR (r.id IS NOT NULL AND r.is_deleted = false)`})
-             ORDER BY o.created_at DESC LIMIT ${limit}`);
+             ORDER BY o.created_at DESC LIMIT ${limit}`, onlyMine ? [req.user.id] : []);
         res.json({ orders: r.rows });
     } catch (err) { handleAdminErr(res, err); }
 });

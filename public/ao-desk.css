@@ -171,7 +171,7 @@
 /* 카드 보기(폰) */
 .desk-cardlist .desk-card { border: 1px solid var(--d-line); border-radius: 12px; padding: 13px 14px; background: #fff; }
 .desk-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--d-dim); }
-.desk-badge { border-radius: 999px; padding: 3px 9px; font-size: 11.5px; font-weight: 700; }
+.desk-badge { white-space: nowrap; border-radius: 999px; padding: 3px 9px; font-size: 11.5px; font-weight: 700; }
 .desk-badge[data-k="wait"] { background: #FEF6E7; color: #B54708; }
 .desk-badge[data-k="work"] { background: var(--d-accent-soft); color: var(--d-accent); }
 .desk-badge[data-k="ask"] { background: #FFF4E5; color: #B54708; }
@@ -227,5 +227,49 @@
     .desk-x { width: 44px; height: 44px; }
     .desk-tabsrow { padding: 6px 10px 0; }
     .desk-filter { margin-left: 0; width: 100%; }
-    .desk-filter select { flex: 1; }
+    .desk-filter select { flex: 1; min-height: 44px; }
 }
+
+/* ── #476 목록 두 칸: 몇 건만 미리 보기 + [자세히 확인하기]로 크게 (대표 9/30 — 네이버 판매자센터식) ── */
+.desk-listbox, .desk-inbox { scroll-margin-top: 16px; }
+.desk-listbox:not(.is-full) .ov, .desk-inbox:not(.is-full) .ov { display: none; }
+.desk-more-all { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 48px; margin: 0; border: 0; border-top: 1px solid var(--d-line); background: #fff; color: var(--d-ink); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; border-radius: 0 0 14px 14px; transition: background-color 160ms var(--d-ease); }
+.desk-more-all:hover { background: var(--d-soft); }
+.desk-more-all:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.desk-more-all .n { color: var(--d-accent); font-weight: 600; }
+.desk-more-all .chev { color: var(--d-dim); font-size: 17px; line-height: 1; transition: transform 160ms var(--d-ease); }
+.desk-more-all:hover .chev { transform: translateX(2px); }
+.desk-inbox .desk-more-all { width: calc(100% + 32px); margin: 14px -16px -16px; }
+.desk-fullbar { display: none; }
+.desk-inbox .desk-close { display: none; }
+
+/* 크게 보기: 같은 칸을 화면 위로 띄운다(버튼·답 칸이 그대로 동작) — 확인표 창(1000)보다는 아래 */
+.desk .is-full { position: fixed; inset: 0; z-index: 950; margin: 0; border: 0; border-radius: 0; box-shadow: none; overflow-y: auto; overscroll-behavior: contain; animation: desk-full-in 220ms var(--d-ease); }
+@keyframes desk-full-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (min-width: 900px) {
+    .desk .is-full { inset: 24px max(24px, calc((100vw - 1240px) / 2)); border: 1px solid var(--d-line); border-radius: 16px; box-shadow: 0 0 0 100vmax rgba(16, 24, 40, .45), 0 24px 64px -12px rgba(16, 24, 40, .35); }
+}
+.desk .is-full .desk-more-all { display: none; }
+.desk-listbox.is-full .desk-fullbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; position: sticky; top: 0; z-index: 3; background: #fff; padding: 12px 16px; border-bottom: 1px solid var(--d-line); }
+.desk-listbox.is-full .desk-fullbar b { font-size: 16px; font-weight: 700; }
+.desk-listbox.is-full { padding-top: 0; }
+.desk-inbox.is-full { padding-top: 0; }
+.desk-inbox.is-full .desk-inbox-head { position: sticky; top: 0; z-index: 3; background: #fff; padding: 12px 0; margin: 0 -16px; padding-left: 16px; padding-right: 16px; border-bottom: 1px solid var(--d-line); }
+.desk-inbox.is-full .desk-close { display: inline-flex; align-items: center; }
+.desk-inbox.is-full .desk-inbox-seen { margin-left: auto; }
+.desk-inbox.is-full .desk-inbox-list { max-height: none; overflow: visible; }
+body.desk-full-open { overflow: hidden; }
+body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { visibility: hidden; }
+
+/* 보낸 지시 잠깐 강조 */
+@keyframes desk-flash { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #C7CBFF; } 100% { background-color: #fff; box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
+@keyframes desk-flash-td { 0%, 40% { background-color: var(--d-accent-soft); } 100% { background-color: transparent; } }
+.desk-card.desk-flash { animation: desk-flash 2.4s var(--d-ease); }
+.desk-table tr.desk-flash td { animation: desk-flash-td 2.4s var(--d-ease); }
+@media (prefers-reduced-motion: reduce) {
+    .desk .is-full, .desk-card.desk-flash, .desk-table tr.desk-flash td { animation: none; }
+    .desk-card.desk-flash { background-color: var(--d-accent-soft); }
+}
+/* 첫 화면 미리보기 카드는 답변 3줄까지(크게 보기에서는 종전대로 6줄 · 짧은 답은 전부) */
+.desk-listbox:not(.is-full) .desk-a.pv { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.desk-listbox.is-full .pv-only { display: none; }

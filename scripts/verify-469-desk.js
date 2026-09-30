@@ -163,7 +163,11 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('처리 전(대기) 지시는 지울 수 없음(400)', hW.status === 400);
         const hS = await call(tokS, 'POST', `/api/agent-office/orders/${p3.j.order.id}/hide-mine`, { hide: true });
         const mine2 = await call(tokS, 'GET', '/api/agent-office/desk/orders?mine=1');
-        const all2 = await call(tokS, 'GET', '/api/agent-office/desk/orders?limit=100');
+        const all2 = await call(tokA, 'GET', '/api/agent-office/desk/orders?limit=100');
+        const staffAll = await call(tokS, 'GET', '/api/agent-office/desk/orders?limit=200');
+        const staffLegacy = await call(tokS, 'GET', '/api/agent-office/orders?limit=200&include_hidden=true');
+        const ownIds = new Set((await db.query(`SELECT id FROM pending_orders WHERE created_by_id=$1`, [staff.id])).rows.map(r => r.id));
+        ok('#476 직원은 mine 없이 불러도 본인 지시만(새 화면·종전 경로 둘 다)', staffAll.status === 200 && staffAll.j.orders.length > 0 && staffAll.j.orders.every(o => o.created_by_id === staff.id) && staffLegacy.status === 200 && staffLegacy.j.orders.every(o => ownIds.has(o.id)), staffAll.j.orders.length + '건 / 종전 ' + staffLegacy.j.orders.length + '건');
         const rowH = (await db.query(`SELECT is_deleted, mine_hidden, status FROM pending_orders WHERE id=$1`, [p3.j.order.id])).rows[0];
         ok('끝난 내 지시 지우기 = 내 지시에서 빠짐 · 전체 지시엔 남음 · 삭제 아님 · 상태 무변경', hS.status === 200 && !mine2.j.orders.some(o => o.id === p3.j.order.id) && all2.j.orders.some(o => o.id === p3.j.order.id) && rowH.is_deleted === false && rowH.mine_hidden === true && rowH.status === '반려');
         const hU = await call(tokS, 'POST', `/api/agent-office/orders/${p3.j.order.id}/hide-mine`, { hide: false });
@@ -236,7 +240,21 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         await A.pg.unroute('**/api/agent-office/orders');
         // 전체 지시 탭: 검증 답변 카드
         await A.pg.click('.desk-tab[data-tab="all"]');
-        await A.pg.waitForSelector(`#desk-list .desk-card[data-oid="${p1.j.order.id}"]`, { timeout: 10000 });
+        await A.pg.waitForSelector(`#desk-list .desk-card[data-oid="${p1.j.order.id}"]`, { state: 'attached', timeout: 10000 });
+        // #476 미리보기 = 앞 5건(+답해야 하는 건) · 칸 순서 = 지시하기 → 지시 목록 → 확인 필요 문의 → 현황판
+        const pv = await A.pg.evaluate(() => {
+            const vis = el => el.offsetParent !== null;
+            const cards = Array.from(document.querySelectorAll('#desk-list .desk-card'));
+            const shownPlain = cards.filter(c => vis(c) && !/확인 필요|승인 대기/.test(c.querySelector('.desk-badge').textContent)).length;
+            const order = Array.from(document.querySelectorAll('#ao-desk-root .desk-main > section')).map(x => x.id || x.className.split(' ')[0]);
+            const mb = document.getElementById('desk-list-more').getBoundingClientRect();
+            return { total: cards.length, shownPlain, hidden: cards.filter(c => !vis(c)).length, more: document.getElementById('desk-list-more').textContent, moreH: Math.round(mb.height), order };
+        });
+        ok('#476 지시 목록 미리보기 = 답할 건 외 5건 이하 · 나머지 수 표시 · 칸 순서(지시 목록이 문의 위) · 버튼 44px 이상', pv.shownPlain <= 5 && (pv.hidden === 0 || pv.more.includes(pv.hidden + '건 더')) && pv.order.join(',') === 'desk-top,desk-listbox,desk-inbox,desk-board' && pv.moreH >= 44, JSON.stringify(pv));
+        await A.pg.click('#desk-list-more');
+        await A.pg.waitForTimeout(400);
+        const fv = await A.pg.evaluate(() => { const b = document.getElementById('desk-listbox').getBoundingClientRect(); const cards = Array.from(document.querySelectorAll('#desk-list .desk-card')); return { full: document.getElementById('desk-listbox').classList.contains('is-full'), all: cards.every(c => c.offsetParent !== null), rect: [Math.round(b.top), Math.round(b.left), Math.round(b.width), Math.round(b.height)], vw: innerWidth, vh: innerHeight, lock: getComputedStyle(document.body).overflow, close: !!document.querySelector('#desk-listbox .desk-fullbar .desk-close'), moreHidden: document.getElementById('desk-list-more').offsetParent === null }; });
+        ok('#476 [자세히 확인하기] = 화면 크게(전 건 보임 · 닫기 버튼 · 뒤 화면 스크롤 잠금)', fv.full && fv.all && fv.close && fv.lock === 'hidden' && fv.moreHidden && fv.rect[3] >= fv.vh - 60 && fv.rect[2] >= Math.min(fv.vw - 60, 1200), JSON.stringify(fv));
         const card = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return { badge: c.querySelector('.desk-badge').textContent, a: c.querySelector('.desk-a').textContent, copy: !!c.querySelector('[data-act="copy"]') }; }, p1.j.order.id);
         ok('답변 카드 = 완료 배지 · 제목·본문 · [답변 복사]', card.badge === '완료' && card.a.includes('오늘 발송 박스') && card.a.includes('검증용 답변입니다.') && card.copy);
         const rejCard = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return c ? c.textContent : ''; }, p3.j.order.id);
@@ -246,6 +264,19 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         if (fbtn) { await A.pg.click(`#desk-list .desk-card[data-oid="${pf.j.order.id}"] [data-act="file"]`); await A.pg.waitForTimeout(1500); }
         ok('파일 카드 = [내려받기] 버튼 · 실클릭 = 내려받기 요청 1회', !!fbtn && /검증469_이익률계산기.xlsx 내려받기/.test(fbtn.text) && fbtn.h >= 40 && dlReq.length === 1 && dlReq[0].includes('/files/' + fileId + '/'), JSON.stringify(fbtn));
         ok('반려 카드 = 사유 표시 · 승인 버튼 없음', /시험 반려/.test(rejCard) && !/승인하고 실행/.test(rejCard));
+        await A.pg.keyboard.press('Escape');
+        await A.pg.waitForTimeout(300);
+        const esc1 = await A.pg.evaluate(() => ({ full: document.getElementById('desk-listbox').classList.contains('is-full'), lock: document.body.classList.contains('desk-full-open') }));
+        await A.pg.click('#desk-inbox-more');
+        await A.pg.waitForTimeout(300);
+        const ib1 = await A.pg.evaluate(() => ({ full: document.getElementById('desk-inbox').classList.contains('is-full'), close: document.querySelector('#desk-inbox .desk-close').offsetParent !== null }));
+        await A.pg.goBack();
+        await A.pg.waitForTimeout(500);
+        const ib2 = await A.pg.evaluate(() => ({ full: document.getElementById('desk-inbox').classList.contains('is-full'), page: document.getElementById('page-agent-office').classList.contains('active') }));
+        await A.pg.click('#desk-inbox-more'); await A.pg.waitForTimeout(300);
+        await A.pg.click('#desk-inbox .desk-close'); await A.pg.waitForTimeout(500);
+        const ib3 = await A.pg.evaluate(() => ({ full: document.getElementById('desk-inbox').classList.contains('is-full'), page: document.getElementById('page-agent-office').classList.contains('active'), lock: document.body.classList.contains('desk-full-open') }));
+        ok('#476 크게 보기 닫기 = Esc · 뒤로가기(화면은 그대로) · [닫기] 버튼 — 문의 칸도 같은 방식', !esc1.full && !esc1.lock && ib1.full && ib1.close && !ib2.full && ib2.page && !ib3.full && ib3.page && !ib3.lock, JSON.stringify({ esc1, ib1, ib2, ib3 }));
         // #469-b: 보고서함 탭 없음 — 탭 = 내 지시·전체 지시(+관리자 대표 확인함)
         const tabs = await A.pg.evaluate(() => {
             const vis = el => !!el && getComputedStyle(el).display !== 'none' && el.offsetParent !== null;
@@ -277,18 +308,47 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             sendH: document.getElementById('desk-send').getBoundingClientRect().height, mineOnly: Array.from(document.querySelectorAll('#desk-list .desk-card')).length }));
         ok('직원(390px) = 대표 확인함 탭 없음 · 현황판 3칸(정산 회차 없음) · 가로 넘침 없음 · 버튼 44px 이상', !w.approvalTab && w.panels === 3 && !w.overflow && w.sendH >= 44, JSON.stringify(w));
         // 내 지시 × 실클릭(직원 · 390px)
+        await B.pg.click('#desk-list-more'); await B.pg.waitForTimeout(400); // #476 오래된 카드는 크게 보기에서
         const xInfo = await B.pg.evaluate(ids => { const c = id => document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); const done = c(ids[0]), wait = c(ids[1]); const x = done && done.querySelector('.desk-x'); const r = x ? x.getBoundingClientRect() : null; return { doneX: !!x, size: r ? [Math.round(r.width), Math.round(r.height)] : null, waitX: !!(wait && wait.querySelector('.desk-x')), waitCard: !!wait }; }, [p1.j.order.id, pw.j.order.id]);
         ok('내 지시 카드: 끝난 지시에 × (44px) · 대기 중 지시엔 × 없음', xInfo.doneX && xInfo.size[0] >= 44 && xInfo.size[1] >= 44 && xInfo.waitCard && !xInfo.waitX, JSON.stringify(xInfo));
         await B.pg.click(`#desk-list .desk-card[data-oid="${p1.j.order.id}"] .desk-x`);
         await B.pg.waitForTimeout(900);
         const goneMine = await B.pg.evaluate(id => !document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`), p1.j.order.id);
-        await B.pg.click('.desk-tab[data-tab="all"]');
-        await B.pg.waitForSelector(`#desk-list .desk-card[data-oid="${p1.j.order.id}"]`, { timeout: 10000 });
-        const inAll = await B.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return { has: !!c, x: !!(c && c.querySelector('.desk-x')) }; }, p1.j.order.id);
-        await B.pg.click('.desk-tab[data-tab="mine"]');
+        const staffTabs = await B.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-tabs .desk-tab')).filter(t => t.offsetParent !== null).map(t => t.dataset.tab).join(','));
+        await B.pg.keyboard.press('Escape'); await B.pg.waitForTimeout(300);
+        ok('#476 직원 탭 = 내 지시만(전체 지시·대표 확인함 없음)', staffTabs === 'mine', staffTabs);
+        const allA = await call(tokA, 'GET', '/api/agent-office/desk/orders?limit=100');
+        const inAll = { has: allA.j.orders.some(o => o.id === p1.j.order.id), x: false };
+        await B.pg.evaluate(() => __aoDesk.loadOrders(true));
         await B.pg.waitForTimeout(1200);
         const stillGone = await B.pg.evaluate(id => !document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`), p1.j.order.id);
-        ok('× 실클릭 = 내 지시에서 사라짐 · 전체 지시엔 그대로(× 없음) · 다시 와도 안 보임', goneMine && inAll.has && !inAll.x && stillGone);
+        ok('× 실클릭 = 내 지시에서 사라짐 · 전체 지시(관리자)엔 그대로 · 다시 불러와도 안 보임', goneMine && inAll.has && !inAll.x && stillGone);
+        // #476 보내면: 상태 고르개 = 전체로 · 새 카드로 이동 + 강조(POST는 가로채 기존 대기 지시 번호를 돌려준다)
+        await B.pg.selectOption('#desk-fs', 'done');
+        await B.pg.route('**/api/agent-office/orders', route => route.request().method() === 'POST' ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ message: 'ok', engine: 'desk', order: { id: pw.j.order.id, status: '대기' } }) }) : route.continue());
+        await B.pg.evaluate(() => window.scrollTo(0, 0));
+        await B.pg.fill('#desk-input', '화면 검증 지시(가로챔)');
+        await B.pg.click('#desk-send');
+        let rv = null;
+        for (let i = 0; i < 12 && !(rv && rv.flash); i++) { await B.pg.waitForTimeout(250); rv = await B.pg.evaluate(id => { const c = document.querySelector(`#desk-list [data-oid="${id}"]`); return { fs: document.getElementById('desk-fs').value, flash: !!(c && c.classList.contains('desk-flash')) }; }, pw.j.order.id); }
+        await B.pg.waitForTimeout(1000);
+        const rv2 = await B.pg.evaluate(id => { const c = document.querySelector(`#desk-list [data-oid="${id}"]`); const r = c && c.getBoundingClientRect(); return r ? [Math.round(r.top), Math.round(r.bottom), innerHeight] : null; }, pw.j.order.id);
+        await B.pg.unroute('**/api/agent-office/orders');
+        ok('#476 [지시 보내기] 뒤 = 상태 고르개 전체 · 새 카드 강조 · 화면 안으로 이동(390px)', rv && rv.fs === 'all' && rv.flash && rv2 && rv2[0] >= 0 && rv2[0] < rv2[2], JSON.stringify({ rv, rv2 }));
+        // #476 H1 되묻기 답 칸: 목록이 다시 그려져도 적던 글이 남는다
+        const keep = await B.pg.evaluate(async () => {
+            const o = __aoDesk.S.orders[0]; if (!o) return 'no-order';
+            const saved = __aoDesk.S.orders.slice();
+            __aoDesk.S.orders = [Object.assign({}, o, { id: 99999999, status: '질문', result: { question: '시험 질문' } })].concat(saved);
+            __aoDesk.renderList();
+            const ta = document.getElementById('reply-99999999'); ta.value = '적던 답'; ta.focus();
+            __aoDesk.renderList();
+            const ta2 = document.getElementById('reply-99999999');
+            const r = { v: ta2 && ta2.value, focus: document.activeElement === ta2 };
+            __aoDesk.S.orders = saved; __aoDesk.renderList();
+            return r;
+        });
+        ok('#476 목록이 다시 그려져도 답 칸의 글·커서 유지', keep && keep.v === '적던 답' && keep.focus, JSON.stringify(keep));
         ok('직원 화면 페이지 오류 0', B.errors.length === 0, B.errors.slice(0, 2).join(' | '));
 
         // 다른 메뉴 무회귀
