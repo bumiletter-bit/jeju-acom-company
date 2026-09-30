@@ -20,6 +20,11 @@
 
     --bg: #F5F6F8;
     --bg-soft: #EDEFF3;
+    /* #487(대표 9/30): 화면 뒤 바탕을 한 단계 진하게 → 흰 카드가 떠 보이게. --bg는 카드 안쪽에서도 쓰일 수 있어 그대로 두고 바탕 전용 토큰을 따로 둔다 */
+    --page-bg: #E9EBF0;             /* 흰 카드 대비 1.19:1 (종전 #F5F6F8 = 1.08:1) */
+    --card-border: #DFE2E8;         /* 카드 바깥 테두리 (종전 --border #ECEDF1 — 표·칸 안쪽 선은 --border 그대로) */
+    --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.06), 0 2px 6px -2px rgba(16, 24, 40, 0.10);
+    --text-on-page: #545D70;        /* 바탕 위 보조 글자 — #E9EBF0 위 5.54:1 (--text-mid는 바탕 위 4.18:1이라 AA 미달) */
 
     --sidebar-bg: #FFFFFF;
     --sidebar-text: #667085;
@@ -49,8 +54,8 @@ input, button, textarea, select,
 table, .ao-office, .ao-log-card {
     font-family: var(--font-app);
 }
-body { background: var(--bg); color: var(--text-dark); }
-.main-content { background: var(--bg); }
+body { background: var(--page-bg); color: var(--text-dark); }
+.main-content { background: var(--page-bg); }
 
 /* ================= 사이드바 (화이트 + 브랜드 + SVG 아이콘) ================= */
 .sidebar {
@@ -131,11 +136,15 @@ body { background: var(--bg); color: var(--text-dark); }
 /* ================= 카드 / 버튼 / 입력 ================= */
 .card {
     background: var(--card-bg);
-    border: 1px solid var(--border);
+    border: 1px solid var(--card-border);
     border-radius: var(--radius);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-card);
 }
 .card h2, .card h3, .page > h1, .page-header h1 { color: var(--text-dark); }
+/* #487: 진해진 바탕 위에 바로 놓이는 보조 글자 — 대비 AA 유지(카드 안 글자는 무변경) */
+.page > p.text-muted { color: var(--text-on-page) !important; }
+.settlement-tab-bar:not(.inq-subtab-bar) > .settlement-tab:not(.active):not(:hover) { color: var(--text-on-page); }
+.settlement-tab-bar:not(.inq-subtab-bar) { border-bottom-color: var(--card-border); }
 
 .btn-primary, button.btn-primary, .btn-save, .btn-add, .btn-submit {
     background: var(--primary);

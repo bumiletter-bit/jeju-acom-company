@@ -19,7 +19,8 @@
     --d-warn: #F59E0B;
     --d-err: var(--danger, #F04438);
     --d-ease: cubic-bezier(0.23, 1, 0.32, 1);
-    --d-shadow: 0 1px 3px rgba(16, 24, 40, .06);
+    --d-shadow: var(--shadow-card, 0 1px 3px rgba(16, 24, 40, .06));   /* #487: 진해진 바탕 위에서 카드가 뜨게 — 토큰은 theme.css */
+    --d-card-line: var(--card-border, #ECEDF1);                         /* #487: 카드 바깥 테두리만(안쪽 선은 --d-line 그대로) */
     color: var(--d-ink);
     display: grid;
     grid-template-columns: minmax(0, 1fr) 330px;
@@ -30,14 +31,14 @@
 .desk-main, .desk-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 /* ── 카드 공통 ── */
-.desk-card-box { background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); }
+.desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); }
 .desk-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 12px; font-size: 15px; font-weight: 700; }
 .desk-h span { font-weight: 500; color: var(--d-dim); font-size: 12px; }
 .desk-h a, .desk-h button.link { background: none; border: 0; color: var(--d-accent); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 0; }
 
 /* ── 윗줄: 시계 + 지시하기 ── */
 .desk-top { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 16px; align-items: stretch; }
-.desk-hero { composes: desk-card-box; background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 18px 20px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.desk-hero { composes: desk-card-box; background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 18px 20px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
 .desk-date { color: var(--d-sub); font-size: 13px; }
 .desk-clock { font-size: 40px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .desk-clock small { font-size: 0.42em; font-weight: 600; color: var(--d-dim); margin-left: 6px; letter-spacing: 0; }
@@ -56,7 +57,7 @@
 .desk-wake-note { color: var(--d-dim); font-size: 12px; }
 
 /* ── 지시하기 ── */
-.desk-ask { background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.desk-ask { background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
 .desk-ask h2 { margin: 0; font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .desk-ask p { margin: 0; color: var(--d-sub); font-size: 13px; line-height: 1.5; }
 .desk-input { width: 100%; min-height: 92px; resize: vertical; background: #fff; color: var(--d-ink); border: 1px solid var(--d-line); border-radius: 10px; padding: 11px 13px; font: inherit; font-size: 14.5px; line-height: 1.5; }
@@ -79,7 +80,7 @@
 .desk-thumb button { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: rgba(16, 24, 40, .72); color: #fff; cursor: pointer; font-size: 13px; line-height: 1; }
 
 /* ── 확인 필요 문의 (#474) ── */
-.desk-inbox { background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 14px 16px 16px; }
+.desk-inbox { background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 14px 16px 16px; }
 .desk-inbox-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .desk-inbox-head > b { font-size: 15px; font-weight: 700; white-space: nowrap; }
 .desk-inbox-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -108,7 +109,7 @@
 .desk-a.answer + .desk-a.answer { margin-top: 8px; }
 
 /* ── 빠른 실행 ── */
-.desk-quick { background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 14px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.desk-quick { background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 14px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .desk-quick > b { font-size: 14px; font-weight: 700; margin-right: 4px; white-space: nowrap; }
 .desk-quick button { flex: 0 1 auto; min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--d-line); background: #fff; color: var(--d-ink); font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; }
 .desk-quick button:hover { background: var(--d-accent-soft); border-color: #D8DBFF; color: var(--d-accent); }
@@ -116,7 +117,7 @@
 
 /* ── 현황판 3칸 ── */
 .desk-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
-.desk-panel { background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 16px 18px; min-width: 0; }
+.desk-panel { background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 16px 18px; min-width: 0; }
 .desk-panel h3 { margin: 0 0 12px; font-size: 14px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .desk-panel h3 span { font-weight: 500; color: var(--d-dim); font-size: 11.5px; }
 .desk-ch { display: grid; grid-template-columns: 1fr auto auto; gap: 8px 10px; align-items: center; font-size: 14px; }
@@ -163,7 +164,7 @@
 .desk-prog em { font-style: normal; text-align: right; color: var(--d-sub); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
 /* ── 지시 목록 ── */
-.desk-listbox { background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 6px 0 0; }
+.desk-listbox { background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 6px 0 0; }
 .desk-tabsrow { display: flex; align-items: center; gap: 10px; padding: 8px 16px 0; flex-wrap: wrap; border-bottom: 1px solid var(--d-line); }
 .desk-tabs { display: flex; gap: 4px; }
 .desk-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 9px 12px; font-size: 14px; font-weight: 600; color: var(--d-sub); cursor: pointer; min-height: 42px; }
