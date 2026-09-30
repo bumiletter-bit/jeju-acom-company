@@ -12623,8 +12623,31 @@ async function renderBotProducts() {
     const d = await api('/api/agent-office/bot-products');
     botProducts = d.products || [];
     const isAdmin = currentUser?.role === 'admin';
+    // #483(대표 9/30 「두서없이 나온다 — 품목별로라도 나와야 입력하기 쉽다」): 화면 표시만 품목별로 묶는다(서버 순서·저장·삭제 무변경).
+    //   품목 = 이름의 「 / 」 앞(예: 고당도 하우스감귤 · 과즙팡팡 황금향). 파는 중인 품목 묶음이 위, 품절·시즌종료만 남은 묶음이 아래.
+    //   묶음 안에서는 준비중(가격 입력할 것) → 판매중 → 품절 → 시즌종료, 같은 상태는 이름순.
+    const BP_ST_ORD = { '준비중': 0, '판매중': 1, '품절': 2 };
+    //   「 / 」가 없는 이름(「과수 및 크기: 제주산 레드키위 10kg(로얄과)」·「최상품 청귤(풋귤) 10kg」)은 앞 머리말(「…:」)과 무게 이하를 떼어 묶는다.
+    const bpGroupOf = p => {
+        const nm = String(p.name || '').trim();
+        if (nm.includes(' / ')) return nm.split(' / ')[0].trim();
+        const g = nm.replace(/^[^:]{1,20}:\s*/, '').replace(/\s*\d+(\.\d+)?\s*kg.*$/i, '').trim();
+        return g || nm;
+    };
+    const bpGroups = new Map();
+    for (const p of botProducts) { const g = bpGroupOf(p); if (!bpGroups.has(g)) bpGroups.set(g, []); bpGroups.get(g).push(p); }
+    const bpActive = list => list.some(p => p.status === '준비중' || p.status === '판매중');
+    const bpOrdered = [...bpGroups.entries()]
+        .sort((a, b) => (bpActive(b[1]) - bpActive(a[1])) || a[0].localeCompare(b[0], 'ko'))
+        .map(([g, list]) => [g, list.slice().sort((x, y) => ((BP_ST_ORD[x.status] ?? 3) - (BP_ST_ORD[y.status] ?? 3)) || String(x.name).localeCompare(String(y.name), 'ko'))]);
+    const bpHead = (g, list) => {
+        const cnt = s => list.filter(p => p.status === s).length;
+        const parts = [['준비중', '가격 입력 필요'], ['판매중', '판매중'], ['품절', '품절'], ['시즌종료', '시즌종료']]
+            .filter(([s]) => cnt(s)).map(([s, l]) => `${l} ${cnt(s)}`);
+        return `<tr class="bp-group"><td colspan="7" style="background:var(--bg,#F2F3F5); font-weight:700; padding:10px 12px;">${escapeHtml(g)} <span style="font-weight:500; color:var(--text-mid,#667085); font-size:12px; margin-left:6px;">${list.length}개 · ${parts.join(' · ')}</span></td></tr>`;
+    };
     // 지시 #152: 행 일괄 저장(변경 행만 활성)·예약발송 토글(O일 때만 날짜칸)·안내문 펼치기
-    const rows = botProducts.map(p => `
+    const bpRow = p => `
         <tr id="botprod-row-${p.id}">
             <td>${escapeHtml(p.name)}${p.status === '준비중' ? ' <span class="pill pill-wait" style="font-size:11px;">가격 미세팅 · 봇 미노출</span>' : ''}${p.naver_product_no ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px;">🛰️ 네이버 ${p.naver_product_no}</div>` : ''}</td>
             <td style="white-space:nowrap;">${BOTPROD_STATUSES.map(s =>
@@ -12653,7 +12676,8 @@ async function renderBotProducts() {
                 <button class="btn-sm btn-outline" id="botprod-save-${p.id}" onclick="saveBotProdRow(${p.id})" disabled style="opacity:.45;">저장</button>
                 ${(isAdmin && p.deletable) ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteBotProd(${p.id})">삭제</button>` : ''}
             </td>
-        </tr>`).join('');
+        </tr>`;
+    const rows = bpOrdered.map(([g, list]) => bpHead(g, list) + list.map(bpRow).join('')).join('');
     document.getElementById('botprod-list').innerHTML = `
         <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡</th><th>📦 발송 안내문(LMS)</th><th>📅 예약발송 여부</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table>
