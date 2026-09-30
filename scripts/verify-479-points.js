@@ -80,7 +80,8 @@ function harness({ render = true, members = { mem1: 1000 }, failPost = null, lag
     const rr = await hr.run({ rid: 'r7', action: 'lookup', member_id: 'mem1' });
     ok('실서버(RENDER)가 아니면 요청을 집지 않음(로컬 검증 서버가 먹지 않게)', rr === undefined && hr.cfg.cafe24_points_request && hr.calls.length === 0);
     const scope = fs.readFileSync(path.join(__dirname, '..', 'cafe24.js'), 'utf8');
-    ok('앱 스코프에 적립금 읽기·쓰기 추가', /mall\.read_mileage/.test(scope) && /mall\.write_mileage/.test(scope));
+    // 9/30 실측: 개발자센터 권한 선택지에 적립금이 없어 보류 — 등록 안 된 스코프를 요청하면 재승인이 깨질 수 있어 SCOPE에 넣지 않는다
+    ok('앱 스코프 요청 문자열에 적립금 미포함(권한 열리기 전까지)', !/,mall\.(read|write)_mileage/.test(scope.match(/const SCOPE = '[^']*'/)[0]));
     console.log(`\n결과 ${results.filter(Boolean).length}/${results.length}`);
     process.exit(results.every(Boolean) ? 0 : 1);
 })();
