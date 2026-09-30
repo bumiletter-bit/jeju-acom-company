@@ -12403,16 +12403,19 @@ function matchSettlementItemExact(imgName, priceMap) {
     return null;
 }
 
-// 지정 날짜·거래처의 최신 가격표(pricing)에서 품목→가격 맵 구성 (정산관리 화면과 동일 로직)
+// 지정 날짜·거래처의 가격표(pricing)에서 품목→가격 맵 구성.
+//   #491(대표 실물 10/1): 같은 주에 거래처 단가표가 두 줄(9/27 황금향 6종 #105 + 9/30 새 품목 15종 #107)이면 종전 LIMIT 1은 마지막 한 줄만 봐서
+//   황금향 6종이 「미매칭」이 됐다 → 정산관리 화면(4473행)·박스 매핑(getBoxTypeMapFor)과 같이 **그 날짜에 걸리는 줄을 전부 병합**(id 순 · 같은 이름은 나중 줄이 이김).
 async function buildPriceMapFor(partner, dateStr) {
     const r = await pool.query(
         `SELECT items FROM pricing WHERE partner = $1
            AND (start_date IS NULL OR start_date <= $2)
            AND (end_date IS NULL OR end_date >= $2)
-         ORDER BY start_date DESC NULLS LAST, id DESC LIMIT 1`, [partner, dateStr]);
+         ORDER BY start_date ASC NULLS FIRST, id ASC`, [partner, dateStr]);
     const map = {};
-    if (r.rows[0] && Array.isArray(r.rows[0].items)) {
-        for (const it of r.rows[0].items) if (it && it.name) map[it.name] = Number(it.price) || 0;
+    for (const row of r.rows) {
+        if (!Array.isArray(row.items)) continue;
+        for (const it of row.items) if (it && it.name) map[it.name] = Number(it.price) || 0;
     }
     return map;
 }
