@@ -111,7 +111,11 @@ function buildMessage(vars, template) {
 }
 
 // 품목 판별: 옵션 문자열에 이름이 포함되는 판매현황 품목 중 가장 긴 이름 채택 (부분 문자열 오탐 최소화)
-function matchNotifyProduct(optionText, botProducts) {
+// #482(대표 9/30 — 하우스감귤 발송안내 「안내문 미등록」 230건/3일): 네이버 옵션이 「상품 및 과수: 하우스감귤 가정용 - 2.5kg(로얄과)」·
+//   「(특가)하우스감귤 …」처럼 품목명을 한 번 더 붙이면서 판매현황 이름(「… / 상품 및 과수: 가정용 - 2.5kg(로얄과)」)이 통째 포함되지 않아
+//   9/10 이후 하우스감귤 전 옵션이 미매칭(버튼 = 빈 안내 페이지). → 1차 = 종전 통째 포함(그대로) · 2차 = 품목명 토큰 전부 포함(#401 자사몰·쿠팡과 같은 규칙).
+//   통째 포함으로 이미 잡히던 것은 결과가 절대 바뀌지 않는다(2차는 1차가 못 잡을 때만).
+function matchNotifyProductExact(optionText, botProducts) {
     const opt = String(optionText || '');
     let best = null;
     for (const p of botProducts || []) {
@@ -120,22 +124,35 @@ function matchNotifyProduct(optionText, botProducts) {
     }
     return best;   // { name, notify_message } | null
 }
+function matchNotifyProduct(optionText, botProducts) {
+    return matchNotifyProductExact(optionText, botProducts) || matchNotifyProductTokens(optionText, botProducts, true);
+}
 
 // #401: 새 채널(자사몰·쿠팡)용 보조 매칭 — 옵션 문자열 형식이 네이버와 달라(구분자 「·」 vs 「/ 상품 및 과수:」)
 //   exact includes가 미매칭이던 것. 1차 = 종전 exact → 2차 = 품목명 토큰(2자+·조사어 제외)이 **전부** 포함될 때만 채택
 //   (오매칭>미매칭 원칙 #350 — 일부 일치로 단정 금지). 후보 여러 개면 이름이 긴(구체적인) 쪽.
 //   🔴 네이버 경로는 종전 matchNotifyProduct 그대로 사용 — 이 함수는 새 채널 전용(무회귀).
 function matchNotifyProductLoose(optionText, botProducts) {
-    const exact = matchNotifyProduct(optionText, botProducts);
-    if (exact) return exact;
+    return matchNotifyProductExact(optionText, botProducts) || matchNotifyProductTokens(optionText, botProducts, false);   // 자사몰·쿠팡 = 종전(#401) 그대로
+}
+// strict(네이버 #482) = 괄호째 한 덩어리로 비교 — 「4.5kg(소과)」가 「4.5kg(중소과)」에 걸리지 않게(하우스귤·유라조생 동시 판매 대비 · 대표 9/30)
+function matchNotifyProductTokens(optionText, botProducts, strict) {
     const norm = (s) => String(s || '').normalize('NFC').replace(/\s+/g, '');
     const hay = norm(optionText);
     if (!hay) return null;
     let best = null;
     for (const p of botProducts || []) {
-        const tokens = String(p.name || '').normalize('NFC').split(/[\s/·:()\-]+/)
+        const tokens = String(p.name || '').normalize('NFC').split(strict ? /[\s/·:\-]+/ : /[\s/·:()\-]+/)
             .map(t => t.trim()).filter(t => t.length >= 2 && !/^(상품|및|과수|선택)$/.test(t));
         if (!tokens.length) continue;
+        if (strict) {
+            // 옵션 칸(「상품 및 과수:」 뒤)의 한글 단어가 판매현황 이름에 없으면 다른 품목이다 — 「유라조생 가정용 - 2.5kg(소과)」가
+            //   하우스감귤 품목에 붙지 않게. 「(특가)」 같은 괄호 표식은 떼고 본다(「(특가)하우스감귤」 → 하우스감귤).
+            const optPart = String(optionText || '').split('상품 및 과수:').slice(1).join(' ');
+            const words = optPart.replace(/\([^)]*\)/g, ' ').split(/[\s/·:\-,]+/).map(w => w.trim()).filter(w => /^[가-힣]{2,}$/.test(w));
+            const nameNorm = norm(p.name);
+            if (words.some(w => !nameNorm.includes(w))) continue;
+        }
         if (tokens.every(t => hay.includes(norm(t)))) {
             if (!best || String(p.name).length > String(best.name).length) best = p;
         }
