@@ -51,7 +51,6 @@
                     <div class="desk-stage" id="desk-stage" data-s="offline"><img id="desk-char" src="/desk/akkomi-off.webp" alt="아꼼이 캐릭터" width="132" height="132"></div>
                     <div class="desk-wake" id="desk-wake">
                         <button type="button" class="desk-btn primary" id="desk-wake-btn">창구 깨우기</button>
-                        <button type="button" class="desk-btn" id="desk-sleep-btn" hidden>쉬게 하기</button>
                         <span class="desk-wake-note" id="desk-wake-note"></span>
                     </div>
                 </div>
@@ -126,8 +125,7 @@
         });
         $('desk-ask').addEventListener('submit', e => { e.preventDefault(); send(); });
         $('desk-attach').addEventListener('click', () => $('desk-file').click());
-        $('desk-wake-btn').addEventListener('click', () => wake(false));
-        $('desk-sleep-btn').addEventListener('click', () => wake(true));
+        $('desk-wake-btn').addEventListener('click', () => wake());
         $('desk-file').addEventListener('change', e => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; });
         const ask = $('desk-ask');
         ask.addEventListener('dragover', e => { e.preventDefault(); ask.classList.add('drag'); });
@@ -316,17 +314,17 @@
             $('desk-state-sub').textContent = parts.join(' · ');
             $('desk-say').textContent = s === 'busy' && d.order_id ? `${d.order_id}번 지시를 처리하고 있어요.` : SAY[s] || SAY.offline;
             // #470 창구 켜기·끄기 — 버튼은 늘 같은 자리에 둔다(숨기면 어디 있는지 못 찾는다 · 대표 실물 확인 9/29)
-            const lc = d.launcher, wrap = $('desk-wake'), wb = $('desk-wake-btn'), sb = $('desk-sleep-btn'), wn = $('desk-wake-note');
+            // #490(대표 9/30): [쉬게 하기] 없음 — 껐다 켜면 토큰만 쓴다. 창구는 늘 켜 두고, PC가 꺼졌다 켜졌을 때 [창구 깨우기]만 관리자(대표·조가영)가 누른다.
+            const lc = d.launcher, wrap = $('desk-wake'), wb = $('desk-wake-btn'), wn = $('desk-wake-note');
             const canWake = !!d.can_wake;      // 대표 PC의 관리 프로그램이 살아 있는가
             const asleep = s === 'offline';
             wrap.hidden = false;
-            wb.hidden = false;
+            wb.hidden = !isAdmin();
             wb.disabled = !canWake || !asleep;
             wb.textContent = asleep ? '창구 깨우기' : '창구 켜짐';
-            sb.hidden = !(isAdmin() && !asleep);
-            sb.disabled = !canWake;
             wn.textContent = !canWake
                 ? '대표 PC의 창구 관리 프로그램이 꺼져 있어요. PC를 켜면 남긴 지시부터 순서대로 처리됩니다.'
+                : asleep && !isAdmin() ? '창구가 자리 비움이에요. 관리자가 깨우면 남긴 지시부터 처리됩니다.'
                 : (lc && lc.note) ? lc.note : '';
             const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
             tabA.hidden = !isAdmin();
@@ -336,16 +334,15 @@
         } catch (e) { /* 다음 주기에 다시 */ }
     }
 
-    async function wake(sleep) {
-        const wb = $('desk-wake-btn'), sb = $('desk-sleep-btn');
-        if (sleep && !confirm('창구를 쉬게 할까요? 새 지시는 쌓였다가 다시 켠 뒤에 처리됩니다.')) return;
-        wb.disabled = sb.disabled = true;
+    async function wake() {
+        const wb = $('desk-wake-btn');
+        wb.disabled = true;
         try {
-            const r = await api('/api/agent-office/desk/wake', 'POST', { action: sleep ? 'sleep' : 'wake' });
-            showToast(r.message || (sleep ? '창구를 껐습니다' : '창구를 켭니다'), 'success');
+            const r = await api('/api/agent-office/desk/wake', 'POST', { action: 'wake' });
+            showToast(r.message || '창구를 켭니다', 'success');
             setTimeout(loadStatus, 4000); setTimeout(loadStatus, 12000);
         } catch (e) { showToast(e.message || '신호를 보내지 못했습니다', 'error'); }
-        wb.disabled = sb.disabled = false;
+        wb.disabled = false;
     }
 
     // #476 받는 도중 탭이 바뀌면 이전 탭 목록을 새 탭 이름 아래 그리던 경합 교정 — 끝난 뒤 새 탭으로 한 번 더 받는다

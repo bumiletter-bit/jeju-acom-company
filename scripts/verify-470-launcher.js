@@ -58,10 +58,10 @@ async function post(url, token, body) {
             st.body.can_wake ? '' : '대기 프로그램이 꺼져 있으면 이 항목은 ❌가 정상');
 
         if (staff) {
-            const r = await post('/api/agent-office/desk/wake', tok(staff), { action: 'sleep' });
-            ok('직원은 창구를 끌 수 없다(403)', r.status === 403, String(r.status));
             const w = await post('/api/agent-office/desk/wake', tok(staff), { action: 'wake' });
-            ok('직원도 창구를 깨울 수는 있다', w.status === 200, w.body.message || String(w.status));
+            ok('#490 직원은 창구를 깨울 수 없다(403 · 관리자만)', w.status === 403, w.body.message || String(w.status));
+            const r = await post('/api/agent-office/desk/wake', tok(admin), { action: 'sleep' });
+            ok('#490 「쉬게 하기」 없음(관리자여도 400)', r.status === 400, String(r.status));
         } else ok('직원 계정 없음 — 권한 검사 건너뜀', true);
 
         const a = await post('/api/agent-office/desk/wake', tok(admin), { action: 'wake' });

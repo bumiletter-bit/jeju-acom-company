@@ -13201,8 +13201,10 @@ app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) 
 //    켜기 = 누구나(직원이 지시를 넣었는데 창구가 자고 있을 때) · 끄기 = 관리자만(요금이 나가는 일을 멈추는 것이라)
 app.post('/api/agent-office/desk/wake', authMiddleware, async (req, res) => {
     try {
+        // #490(대표 9/30): 「쉬게 하기」 폐지(껐다 켜면 토큰만 씀 · 창구는 늘 켜 둔다) · 깨우기는 관리자(대표·조가영)만
         const sleep = req.body?.action === 'sleep';
-        if (sleep && req.user.role !== 'admin') throw { status: 403, message: '창구를 끄는 것은 관리자만 할 수 있습니다' };
+        if (sleep) throw { status: 400, message: '창구를 쉬게 하는 기능은 없어졌습니다 — 창구는 늘 켜 둡니다' };
+        if (req.user.role !== 'admin') throw { status: 403, message: '창구 깨우기는 관리자(대표·조가영)만 할 수 있습니다' };
         const lcq = await pool.query(`SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS ago FROM agent_office_config WHERE key='desk_launcher'`);
         const alive = !!(lcq.rows[0] && lcq.rows[0].ago !== null && lcq.rows[0].ago < 120);
         if (!alive) throw { status: 400, message: '대표 PC의 창구 관리 프로그램이 꺼져 있어 신호를 받을 곳이 없습니다. PC를 켜 주세요.' };
