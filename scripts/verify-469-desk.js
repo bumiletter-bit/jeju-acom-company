@@ -421,8 +421,8 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('PC = 표 보기(카드 아님) · 머리글 6칸', wide.table && !wide.card && wide.th.length === 6, wide.th.join(' | '));
         ok('오른쪽 칸 3개가 내용을 그린다', wide.side.every(Boolean), JSON.stringify(wide.side));
         ok('확인 필요 문의 칸(채널 3개 · 목록) · 빠른 실행 없음 · 상태 고르개 · 날씨 없음', wide.quick === 3 && wide.inboxList && !wide.oldQuick && wide.filter && !wide.weather, '채널 ' + wide.quick + '개');
-        await W.pg.route('**/api/agent-office/desk/inbox*', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ days: 3, counts: { talk: { open: 2, ai: 1 }, qna: { open: 0, ai: 0 }, inquiry: { open: 0, ai: 0 } },
-            talk: [{ kind: 'talk', id: 'v1', state: 'open', at: new Date().toISOString(), question: '유라조생 언제부터 받을 수 있나요? 선물로 보내려고요' }, { kind: 'talk', id: 'v2', state: 'ai', at: new Date().toISOString(), question: '그린레몬 2kg도 있나요?', answer: '안녕하세요 제주아꼼이네입니다 😊 그린레몬은 3kg·5kg로 준비돼 있어요' }, { kind: 'talk', id: 'v3', state: 'open', at: new Date().toISOString(), question: '세 번째' }, { kind: 'talk', id: 'v4', state: 'open', at: new Date().toISOString(), question: '네 번째(미리보기 밖)' }], qna: [], inquiry: [] }) }));
+        await W.pg.route('**/api/agent-office/desk/inbox*', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ days: 3, counts: { talk: { open: 2, ai: 1, staff: 1 }, qna: { open: 0, ai: 0 }, inquiry: { open: 0, ai: 0 } },
+            talk: [{ kind: 'talk', id: 'v1', state: 'open', at: new Date().toISOString(), question: '유라조생 언제부터 받을 수 있나요? 선물로 보내려고요' }, { kind: 'talk', id: 'v2', state: 'ai', at: new Date().toISOString(), question: '그린레몬 2kg도 있나요?', answer: '안녕하세요 제주아꼼이네입니다 😊 그린레몬은 3kg·5kg로 준비돼 있어요' }, { kind: 'talk', id: 'v3', state: 'open', at: new Date().toISOString(), question: '세 번째' }, { kind: 'talk', id: 'v4', state: 'staff', at: new Date().toISOString(), question: '네 번째(직원 답변)', answer: '봇 답', staff: '직원이 답한 글' }], qna: [], inquiry: [] }) }));
         await W.pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await W.pg.waitForTimeout(600);
         await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v2"] .c-q'); await W.pg.waitForTimeout(400);
         const ibt = await W.pg.evaluate(() => {
@@ -433,6 +433,12 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('#485 확인 필요 문의 = PC 표 · 3건 미리보기(4건 중) · 줄 클릭 = 손님 문의 전문 + 「봇이 보낸 답」 띠 + [확인] 띠', ibt.table && ibt.rows === 4 && ibt.visible === 3 && ibt.opened && ibt.q && ibt.label === '봇이 보낸 답' && ibt.band === '4px' && ibt.acts && /1건 더/.test(ibt.more), JSON.stringify(ibt));
         await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v2"] .c-q'); await W.pg.waitForTimeout(300);
         ok('#485 다시 누르면 접힘', await W.pg.evaluate(() => !document.querySelector('#desk-inbox-list .detailrow')));
+        // #486: 직원 답변 건도 [확인] 전까지 보임 — 배지 「직원 답변함 · 확인 전」 + 봇 답·직원 답 띠 둘 다 + 채널 숫자에 포함
+        await W.pg.click('#desk-inbox-more'); await W.pg.waitForTimeout(300);
+        await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v4"] .c-q'); await W.pg.waitForTimeout(400);
+        const st = await W.pg.evaluate(() => { const tr = document.querySelector('#desk-inbox-list tr.desk-ib-row[data-id="v4"]'); const d = document.querySelector('#desk-inbox-list .detailrow td.detail'); return { badge: tr && tr.querySelector('.desk-badge').textContent, labels: d ? Array.from(d.querySelectorAll('.desk-a-label')).map(e => e.textContent) : [], n: document.getElementById('inbox-n-talk').textContent }; });
+        ok('#486 직원 답변 건 = 「직원 답변함 · 확인 전」 · 봇 답+직원 답 띠 · 톡톡 숫자에 포함', st.badge === '직원 답변함 · 확인 전' && st.labels.join(',') === '손님 문의,봇이 보낸 답,직원이 보낸 답' && st.n === '4', JSON.stringify(st));
+        await W.pg.keyboard.press('Escape'); await W.pg.waitForTimeout(300);
         await W.pg.unroute('**/api/agent-office/desk/inbox*');
         ok('밝은 화면 · 가로 넘침 없음', /255, 255, 255/.test(wide.light) && !wide.overflow, wide.light);
         const more = await W.pg.$('#desk-list .desk-more');

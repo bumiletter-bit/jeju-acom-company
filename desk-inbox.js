@@ -41,7 +41,10 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
         return ready;
     }
 
-    // 톡톡: 손님마다 마지막 줄을 본다. 직원이 답했으면 끝난 건, 봇이 답했으면 「AI 답변 확인」, 아무도 안 했으면 「미답변」
+    // 톡톡: 손님마다 마지막 줄을 본다(최근 3일). #486(대표 확정 9/30 「제일 심플하게 — 핸드오버 없이」):
+    //   봇·직원이 답했든 안 했든 **[확인]을 누르기 전까지** 남는다(네이버 파트너센터 「확인 필요한 문의」 + [답변완료]와 같은 방식).
+    //   직원이 톡톡에서 답해도 자동으로 빠지지 않는다(종전엔 빠졌음). 손님이 새 글을 보내면 새 마지막 줄이라 다시 올라온다.
+    //   상태 = open(미답변) · ai(봇 답변) · staff(직원 답변 — 봇 답이 먼저 있었으면 둘 다 보여 준다)
     async function talkItems(includeSeen) {
         const r = await pool.query(`
             WITH last AS (
@@ -50,19 +53,20 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
                 FROM message_logs
                 WHERE received_at > NOW() - ($1 || ' days')::interval AND user_id NOT LIKE 'kakao:%'
                 ORDER BY user_id, received_at DESC, id DESC)
-            SELECT * FROM last WHERE COALESCE(staff_response, '') = '' ORDER BY received_at DESC LIMIT 60`, [String(DAYS)]);
+            SELECT * FROM last ORDER BY received_at DESC LIMIT 60`, [String(DAYS)]);
         const out = [];
         for (const x of r.rows) {
             const msg = String(x.message || '');
+            const staff = String(x.staff_response || '').trim();
             if (!msg.trim() || NOT_TEXT.includes(msg.trim())) continue;
-            if (!x.answered && AD_RE.test(msg)) continue;
+            if (!x.answered && !staff && AD_RE.test(msg)) continue;
             if (x.reviewed_at && !includeSeen) continue;
             const bot = x.answered ? String(x.bot_response || '') : '';
             out.push({
                 kind: 'talk', id: x.id, at: x.received_at, item: x.item && x.item !== '기타' ? x.item : '',
-                state: x.answered ? 'ai' : 'open',
-                why: x.answered ? '' : /^\[쿨다운/.test(String(x.bot_response || '')) ? '봇이 답한 뒤 30분 안에 다시 온 글' : /^\[AI에러/.test(String(x.bot_response || '')) ? '봇이 답을 만들지 못함' : '봇이 넘긴 글',
-                question: clip(msg, 600), answer: clip(bot, 1200), scenario: x.scenario_name || '',
+                state: staff ? 'staff' : x.answered ? 'ai' : 'open',
+                why: (x.answered || staff) ? '' : /^\[쿨다운/.test(String(x.bot_response || '')) ? '봇이 답한 뒤 30분 안에 다시 온 글' : /^\[AI에러/.test(String(x.bot_response || '')) ? '봇이 답을 만들지 못함' : '봇이 넘긴 글',
+                question: clip(msg, 600), answer: clip(bot, 1200), staff: clip(staff, 1200), scenario: x.scenario_name || '',
                 seen: !!x.reviewed_at, seen_by: x.reviewed_by || '',
             });
         }
@@ -121,7 +125,7 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
             const seen = req.query.seen === '1';
             const safe = async fn => { try { return await fn(seen); } catch (e) { console.error('[inbox]', e.message); return null; } };
             const [talk, qna, inquiry] = await Promise.all([safe(talkItems), safe(qnaItems), safe(inquiryItems)]);
-            const count = list => Array.isArray(list) ? { open: list.filter(x => x.state === 'open' && !x.seen).length, ai: list.filter(x => x.state === 'ai' && !x.seen).length } : null;
+            const count = list => Array.isArray(list) ? { open: list.filter(x => x.state === 'open' && !x.seen).length, ai: list.filter(x => x.state === 'ai' && !x.seen).length, staff: list.filter(x => x.state === 'staff' && !x.seen).length } : null;
             res.json({ days: DAYS, talk, qna, inquiry, counts: { talk: count(talk), qna: count(qna), inquiry: count(inquiry) }, at: new Date().toISOString() });
         } catch (e) { console.error('[inbox]', e.message); res.status(500).json({ error: '문의 현황을 읽지 못했습니다' }); }
     });
