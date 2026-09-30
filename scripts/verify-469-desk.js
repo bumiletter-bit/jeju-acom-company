@@ -427,6 +427,21 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             await more.click(); await W.pg.waitForTimeout(600);
             const opened = await W.pg.evaluate(() => !!document.querySelector('#desk-list .detailrow'));
             ok('표에서 ⋯ 를 누르면 자세한 내용이 펼쳐진다', opened);
+            // #484: 줄(지시 내용 칸)을 눌러도 열리고 · 펼친 칸 = 지시 내용 전문 + 「클코 답변」 표식 + 답변 줄이지 않음(전체 보기 버튼 없음)
+            await W.pg.click('#desk-list .desk-more'); await W.pg.waitForTimeout(400);   // 일단 접고(재렌더 뒤라 selector 재질의)
+            // 답변(완료)이 있는 줄을 골라 누른다 — 진행 중·되묻기 줄은 답변 칸이 없다
+            const ansRow = await W.pg.evaluate(() => { const r = Array.from(document.querySelectorAll('#desk-list tr.row')).find(t => /^완료|답변함$/.test(t.querySelector('.desk-badge').textContent.trim())); return r ? r.dataset.oid : null; });
+            await W.pg.click(ansRow ? '#desk-list tr.row[data-oid="' + ansRow + '"] .c-q' : '#desk-list tr.row .c-q'); await W.pg.waitForTimeout(600);
+            const rc = await W.pg.evaluate(() => {
+                const d = document.querySelector('#desk-list .detailrow td.detail'); if (!d) return null;
+                const a = d.querySelector('.desk-a.answer');
+                return { opened: true, qFull: !!d.querySelector('.desk-q-full'), label: a ? a.querySelector('.desk-a-label').textContent : null,
+                    clamped: !!(a && (a.classList.contains('clamp') || a.classList.contains('pv'))), toggle: !!d.querySelector('[data-act="toggle"]'),
+                    accent: a ? getComputedStyle(a).borderLeftWidth : null, rowMarked: !!document.querySelector('#desk-list tr.row.opened') };
+            });
+            ok('#484 줄을 누르면 열림 · 지시 내용 전문 · 「클코 답변」 표식 · 줄임 없음 · 전체 보기 버튼 없음 · 왼쪽 띠', !!rc && rc.qFull && rc.label === '클코 답변' && !rc.clamped && !rc.toggle && rc.accent === '4px' && rc.rowMarked, JSON.stringify(rc));
+            await W.pg.click(ansRow ? '#desk-list tr.row[data-oid="' + ansRow + '"] .c-q' : '#desk-list tr.row .c-q'); await W.pg.waitForTimeout(400);
+            ok('#484 다시 누르면 접힘', await W.pg.evaluate(() => !document.querySelector('#desk-list .detailrow')));
         } else ok('표에 펼칠 행이 없어 건너뜀', true);
         await W.pg.selectOption('#desk-fs', 'err');
         await W.pg.waitForTimeout(600);

@@ -183,6 +183,16 @@
 .desk-a { margin-top: 8px; background: var(--d-soft); border: 1px solid var(--d-line); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .desk-a.clamp { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .desk-a-title { font-weight: 700; margin-bottom: 5px; }
+/* #484 답변 칸 강조 — 흰 바탕 · 왼쪽 인디고 띠 · 「클코 답변」 표식(지시 내용 칸과 한눈에 구분) */
+.desk-a.answer { background: #fff; border: 1px solid #D8DBFF; border-left: 4px solid var(--d-accent); box-shadow: 0 1px 2px rgba(79, 70, 229, .08); padding: 10px 14px 12px; font-size: 14px; }
+.desk-a-label { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--d-accent); background: var(--d-accent-soft); border-radius: 999px; padding: 1px 8px; margin-bottom: 6px; white-space: normal; }
+.desk-q-full { margin: 2px 0 10px; font-size: 14px; font-weight: 600; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.desk-q-full .desk-a-label { display: block; width: max-content; background: #EEF0F4; color: var(--d-sub); }
+.desk-q-full small { color: var(--d-dim); font-weight: 500; }
+.desk-table tr.row.clickable { cursor: pointer; }
+.desk-table tr.row.clickable:hover td { background: var(--d-accent-soft); }
+.desk-table tr.row.opened td { background: var(--d-accent-soft); }
+.desk-table td.detail { padding: 14px 16px 16px; }
 .desk-reply { display: flex; gap: 8px; margin-top: 9px; align-items: flex-end; flex-wrap: wrap; }
 .desk-reply-in { flex: 1 1 220px; min-width: 0; min-height: 44px; resize: vertical; border: 1px solid var(--d-line); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 14px; line-height: 1.5; background: #fff; color: var(--d-ink); }
 .desk-reply-in:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }

@@ -394,8 +394,9 @@
     }
     const isAnswer = o => !!o.result && (o.result.type === 'desk_answer' || o.result.type === 'answer');
     const followBtn = o => FOLLOW.includes(o.status) && !S.follow.has(o.id) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
-    function resultHtml(o) { return resultBody(o) + followHtml(o); }
-    function resultBody(o) {
+    // #484(대표 9/30): full = 표에서 줄을 눌러 펼친 자세히 칸 — 답변을 줄이지 않고 전부 보여 준다(전체 보기 버튼 없음)
+    function resultHtml(o, full) { return resultBody(o, full) + followHtml(o); }
+    function resultBody(o, full) {
         const r = o.result || {};
         const st = o.status;
         if (ACTIVE.includes(st) || st === '판독완료' || st === '확인표작성') {
@@ -408,13 +409,13 @@
             const text = r.answer || r.text || '';
             const long = text.length > 360 || text.split('\n').length > 6;
             const mid = !long && (text.length > 120 || text.split('\n').length > 3); // #476 첫 화면 미리보기에서만 3줄로 줄인다
-            const open = S.open.has(o.id);
+            const open = full || S.open.has(o.id);
             const files = Array.isArray(r.files) && r.files.length
                 ? `<div class="desk-acts desk-files">${r.files.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
                     : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
-            return `<div class="desk-a ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}">${r.title ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${esc(text)}</div>${files}
-                <div class="desk-acts">${long || mid ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
+            return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><div class="desk-a-label">클코 답변</div>${r.title ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${esc(text)}</div>${files}
+                <div class="desk-acts">${(long || mid) && !full ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
                 <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button>${followBtn(o)}</div>`;
         }
         if (st === '질문' && r.type === 'settlement_ocr_confirm') {
@@ -531,22 +532,30 @@
             const open = S.detail.has(o.id) || S.follow.has(o.id) || (NEEDS.includes(o.status) && !S.closed.has(o.id));
             const canHide = S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status);
             const oc = ov[i] ? ' ov' : '';
-            return `<tr class="row${oc}" data-oid="${o.id}">
+            return `<tr class="row clickable${oc}${open ? ' opened' : ''}" data-oid="${o.id}" title="${open ? '접기' : '눌러서 답변 보기'}">
                 <td><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></td>
                 <td class="c-id">${o.id}번${o.reply_to ? `<br><small class="desk-thread">↳ ${Number(o.reply_to)}번에 이어서</small>` : ''}<br><small>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small></td>
                 <td class="c-q">${esc(String(o.content || '').slice(0, 120))}${o.has_image ? ' <small>(이미지)</small>' : ''}</td>
                 <td class="c-r">${resultLine(o)}</td>
                 <td class="c-by">${esc(o.created_by || '')}</td>
                 <td class="c-x"><button type="button" class="desk-more" data-act="detail" data-id="${o.id}" aria-expanded="${open}" aria-label="${o.id}번 자세히">${open ? '▴' : '⋯'}</button></td>
-            </tr>${open ? `<tr class="detailrow${oc}"><td class="detail" colspan="6">${resultHtml(o)}${canHide ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="hide" data-id="${o.id}">내 지시에서 지우기</button></div>` : ''}</td></tr>` : ''}`;
+            </tr>${open ? `<tr class="detailrow${oc}"><td class="detail" colspan="6"><div class="desk-q-full"><div class="desk-a-label">지시 내용</div>${esc(o.content || '')}${o.has_image ? ' <small>(이미지 첨부)</small>' : ''}</div>${resultHtml(o, true)}${canHide ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="hide" data-id="${o.id}">내 지시에서 지우기</button></div>` : ''}</td></tr>` : ''}`;
         }).join('');
         $('desk-list').innerHTML = `<div class="table-scroll-wrapper"><table class="desk-table"><thead><tr>
             <th>상태</th><th>번호 · 시각</th><th>지시 내용</th><th>결과</th><th>보낸 사람</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
     async function onListClick(e) {
-        const b = e.target.closest('button[data-act]');
-        if (!b) return;
+        let b = e.target.closest('button[data-act]');
+        if (!b) {
+            // #484: 표의 줄(번호·지시 내용·결과 …)을 눌러도 자세히가 열린다 — 버튼·입력칸·링크·글자 드래그는 제외
+            const tr = e.target.closest('tr.row');
+            if (!tr || e.target.closest('button, input, textarea, select, a')) return;
+            const sel = window.getSelection && window.getSelection();
+            if (sel && String(sel).length) return;
+            b = tr.querySelector('.desk-more[data-act="detail"]');
+            if (!b) return;
+        }
         const id = Number(b.dataset.id), act = b.dataset.act;
         const o = S.orders.find(x => x.id === id);
         if (!o) return;
