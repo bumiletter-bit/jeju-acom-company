@@ -437,9 +437,9 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
                 const a = d.querySelector('.desk-a.answer');
                 return { opened: true, qFull: !!d.querySelector('.desk-q-full'), label: a ? a.querySelector('.desk-a-label').textContent : null,
                     clamped: !!(a && (a.classList.contains('clamp') || a.classList.contains('pv'))), toggle: !!d.querySelector('[data-act="toggle"]'),
-                    accent: a ? getComputedStyle(a).borderLeftWidth : null, rowMarked: !!document.querySelector('#desk-list tr.row.opened') };
+                    accent: a ? getComputedStyle(a).borderLeftWidth : null, acts: (() => { const x = d.querySelector('.desk-a-acts'); return x ? getComputedStyle(x).borderLeftWidth + '/' + !!x.querySelector('[data-act="copy"]') + '/' + !!x.querySelector('[data-act="follow"]') : null; })(), rowMarked: !!document.querySelector('#desk-list tr.row.opened') };
             });
-            ok('#484 줄을 누르면 열림 · 지시 내용 전문 · 「클코 답변」 표식 · 줄임 없음 · 전체 보기 버튼 없음 · 왼쪽 띠', !!rc && rc.qFull && rc.label === '클코 답변' && !rc.clamped && !rc.toggle && rc.accent === '4px' && rc.rowMarked, JSON.stringify(rc));
+            ok('#484 줄을 누르면 열림 · 지시 내용 전문 · 「클코 답변」 표식 · 줄임 없음 · 전체 보기 버튼 없음 · 왼쪽 띠', !!rc && rc.qFull && rc.label === '클코 답변' && !rc.clamped && !rc.toggle && rc.accent === '4px' && rc.acts === '4px/true/true' && rc.rowMarked, JSON.stringify(rc));
             await W.pg.click(ansRow ? '#desk-list tr.row[data-oid="' + ansRow + '"] .c-q' : '#desk-list tr.row .c-q'); await W.pg.waitForTimeout(400);
             ok('#484 다시 누르면 접힘', await W.pg.evaluate(() => !document.querySelector('#desk-list .detailrow')));
         } else ok('표에 펼칠 행이 없어 건너뜀', true);

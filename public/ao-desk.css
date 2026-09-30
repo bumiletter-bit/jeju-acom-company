@@ -186,6 +186,14 @@
 /* #484 답변 칸 강조 — 흰 바탕 · 왼쪽 인디고 띠 · 「클코 답변」 표식(지시 내용 칸과 한눈에 구분) */
 .desk-a.answer { background: #fff; border: 1px solid #D8DBFF; border-left: 4px solid var(--d-accent); box-shadow: 0 1px 2px rgba(79, 70, 229, .08); padding: 10px 14px 12px; font-size: 14px; }
 .desk-a-label { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--d-accent); background: var(--d-accent-soft); border-radius: 999px; padding: 1px 8px; margin-bottom: 6px; white-space: normal; }
+/* #484-b(대표 9/30) 답변 아래 버튼 줄(답변 복사·이어서 지시)도 같은 인디고 띠 — 답변 칸에 붙은 한 덩어리로 보이게 */
+.desk-a-acts { margin-top: 0; padding: 8px 12px 9px; border-left: 4px solid var(--d-accent); border-right: 1px solid #D8DBFF; border-bottom: 1px solid #D8DBFF; border-radius: 0 0 10px 10px; background: var(--d-accent-soft); }
+.desk-a.answer:has(+ .desk-a-acts), .desk-a.answer:has(+ .desk-files) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; }
+.desk-a.answer + .desk-files { margin-top: 0; padding: 8px 12px 0; border-left: 4px solid var(--d-accent); border-right: 1px solid #D8DBFF; background: var(--d-accent-soft); }
+.desk-files + .desk-a-acts { margin-top: 0; }
+.desk-a-acts .desk-btn { background: #fff; border-color: #C7CBFF; color: var(--d-accent); font-weight: 700; }
+.desk-a-acts .desk-btn:hover { background: var(--d-accent); border-color: var(--d-accent); color: #fff; }
+.desk-a-acts .desk-btn.pv-only { color: var(--d-sub); border-color: var(--d-line); font-weight: 600; }
 .desk-q-full { margin: 2px 0 10px; font-size: 14px; font-weight: 600; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .desk-q-full .desk-a-label { display: block; width: max-content; background: #EEF0F4; color: var(--d-sub); }
 .desk-q-full small { color: var(--d-dim); font-weight: 500; }
