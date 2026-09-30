@@ -99,6 +99,13 @@
 .desk-ib-a b { display: block; font-size: 12px; color: var(--d-sub); margin-bottom: 3px; }
 .desk-ib-a.draft { border-style: dashed; }
 .desk-ib.open .desk-ib-q, .desk-ib.open .desk-ib-a { display: block; overflow: visible; }
+/* #485 확인 필요 문의 — PC는 지시 목록과 같은 표(줄 클릭 = 펼침 · 답변 띠 · 버튼 띠) · 폰 카드의 답변 칸도 같은 띠 */
+.desk-inbox-list .table-scroll-wrapper { width: 100%; }
+.desk-inbox-list .desk-table tr.desk-ib-row.seen td { color: var(--d-dim); }
+.desk-inbox-list .desk-ib-a.desk-a.answer { margin-top: 8px; -webkit-line-clamp: 4; }
+.desk-inbox-list .desk-ib-a.desk-a.answer.draft { border-style: dashed; border-left-style: solid; }
+.desk-a.answer.draft { border-color: #C7CBFF; border-style: dashed; border-left-style: solid; background: #FBFBFF; }
+.desk-a.answer + .desk-a.answer { margin-top: 8px; }
 
 /* ── 빠른 실행 ── */
 .desk-quick { background: var(--d-card); border: 1px solid var(--d-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 14px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -185,7 +192,7 @@
 .desk-a-title { font-weight: 700; margin-bottom: 5px; }
 /* #484 답변 칸 강조 — 흰 바탕 · 왼쪽 인디고 띠 · 「클코 답변」 표식(지시 내용 칸과 한눈에 구분) */
 .desk-a.answer { background: #fff; border: 1px solid #D8DBFF; border-left: 4px solid var(--d-accent); box-shadow: 0 1px 2px rgba(79, 70, 229, .08); padding: 10px 14px 12px; font-size: 14px; }
-.desk-a-label { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--d-accent); background: var(--d-accent-soft); border-radius: 999px; padding: 1px 8px; margin-bottom: 6px; white-space: normal; }
+.desk-a-label { display: block; width: max-content; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--d-accent); background: var(--d-accent-soft); border-radius: 999px; padding: 1px 8px; margin-bottom: 6px; white-space: normal; }
 /* #484-b(대표 9/30) 답변 아래 버튼 줄(답변 복사·이어서 지시)도 같은 인디고 띠 — 답변 칸에 붙은 한 덩어리로 보이게 */
 .desk-a-acts { margin-top: 0; padding: 8px 12px 9px; border-left: 4px solid var(--d-accent); border-right: 1px solid #D8DBFF; border-bottom: 1px solid #D8DBFF; border-radius: 0 0 10px 10px; background: var(--d-accent-soft); }
 .desk-a.answer:has(+ .desk-a-acts), .desk-a.answer:has(+ .desk-files) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; }

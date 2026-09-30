@@ -15,7 +15,7 @@
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), closed: new Set(), follow: new Set(),
-        inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0,
+        inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
     const HINTS = ['정산관리 오늘 발주수량이야 올려줘', '단골고객에게 문자발송할 예정이야 (쿠폰, 행사내용, 기간 넣어주기)', '지금 네이버 자사몰 쿠팡 가격 맞는지 확인해줘', '신규품목 보고서 작성해줘 (핵심내용 두서없이 쓰기)'];
@@ -142,8 +142,22 @@
         });
         $('desk-inbox-seen').addEventListener('change', e => { S.inboxSeen = e.target.checked; loadInbox(); });
         $('desk-inbox-list').addEventListener('click', async e => {
-            const b = e.target.closest('button[data-ib]'); if (!b) return;
+            let b = e.target.closest('button[data-ib]');
+            if (!b) {
+                // #485: 표의 줄을 눌러도 펼친다(버튼·링크·글자 드래그 제외)
+                const tr = e.target.closest('tr.desk-ib-row');
+                if (!tr || e.target.closest('button, input, textarea, select, a')) return;
+                const sel = window.getSelection && window.getSelection();
+                if (sel && String(sel).length) return;
+                b = tr.querySelector('[data-ib="detail"]');
+                if (!b) return;
+            }
             const act = b.dataset.ib;
+            if (act === 'detail') {
+                const key = b.dataset.kind + ':' + b.dataset.id;
+                if (S.ibDetail.has(key)) S.ibDetail.delete(key); else S.ibDetail.add(key);
+                renderInbox(); return;
+            }
             if (act === 'ask') {
                 closeFull();
                 const line = b.dataset.kind === 'talk' ? '지금 처리 안 된 톡톡 건들 답변 예시문구 만들어줘' : '지금 답변 안 된 ' + (b.dataset.kind === 'qna' ? '상품 Q&A' : '주문 문의') + ' 답변 예시문구 만들어줘';
@@ -165,7 +179,7 @@
         // 넓은 화면은 표, 좁은 화면은 카드(대표 확정 2026-09-29)
         const mq = window.matchMedia('(min-width: 1024px)');
         S.wide = mq.matches;
-        const onMq = () => { if (S.wide === mq.matches) return; S.wide = mq.matches; renderList(); };
+        const onMq = () => { if (S.wide === mq.matches) return; S.wide = mq.matches; renderList(); renderInbox(); };
         if (mq.addEventListener) mq.addEventListener('change', onMq); else mq.addListener(onMq);
         $('desk-thumbs').addEventListener('click', e => { const b = e.target.closest('button[data-i]'); if (!b) return; S.images.splice(Number(b.dataset.i), 1); renderThumbs(); });
         $('desk-tabs').addEventListener('click', e => { const t = e.target.closest('.desk-tab'); if (t) setTab(t.dataset.tab); });
@@ -649,7 +663,33 @@
         }
         const name = { talk: '톡톡', qna: '상품 Q&A', inquiry: '주문 문의' }[S.inboxKind];
         const hasOpen = list.some(x => x.state === 'open' && !x.seen);
-        box.innerHTML = (hasOpen ? `<div class="desk-ib-top"><button type="button" class="desk-btn sm primary" data-ib="ask" data-kind="${S.inboxKind}">미답변 ${esc(name)} 답변 문구 부탁하기</button><span>입력칸에 지시가 들어갑니다. 보내면 클코가 건별로 문구를 만들어요.</span></div>` : '')
+        const top = (hasOpen ? `<div class="desk-ib-top"><button type="button" class="desk-btn sm primary" data-ib="ask" data-kind="${S.inboxKind}">미답변 ${esc(name)} 답변 문구 부탁하기</button><span>입력칸에 지시가 들어갑니다. 보내면 클코가 건별로 문구를 만들어요.</span></div>` : '');
+        const badge = x => `<span class="desk-badge" data-k="${x.seen ? 'done' : x.state === 'ai' ? 'work' : 'ask'}">${x.seen ? '확인함' : x.state === 'ai' ? '답변완료 · AI 답변 확인 전' : '미답변'}</span>`;
+        const acts = x => `${x.seen
+            ? `<button type="button" class="desk-btn sm" data-ib="undo" data-kind="${x.kind}" data-id="${esc(x.id)}">다시 목록에 올리기</button>`
+            : `<button type="button" class="desk-btn sm primary" data-ib="ok" data-kind="${x.kind}" data-id="${esc(x.id)}">확인</button>`}
+            ${x.kind !== 'talk' && x.state === 'open' ? `<button type="button" class="desk-btn sm" data-ib="go">문의 관리에서 답하기</button>` : ''}`;
+        // #485(대표 9/30): PC = 지시 목록과 같은 표 — 줄을 누르면 손님 문의 전문 + 답변 띠 + 확인 버튼이 펼쳐진다 · 폰 = 카드(종전)
+        if (S.wide) {
+            const rows = list.map((x, i) => {
+                const key = x.kind + ':' + x.id, open = S.ibDetail.has(key), oc = i >= PREVIEW_INBOX ? ' ov' : '';
+                const ansLbl = x.kind === 'talk' ? '봇이 보낸 답' : '자동으로 등록된 답';
+                return `<tr class="row clickable desk-ib-row${oc}${open ? ' opened' : ''}${x.seen ? ' seen' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}" title="${open ? '접기' : '눌러서 문의·답변 보기'}">
+                    <td>${badge(x)}</td>
+                    <td class="c-id">${esc(kst(x.at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}${x.item ? `<br><small>${esc(x.item)}</small>` : ''}${x.seen && x.seen_by ? `<br><small>확인: ${esc(x.seen_by)}</small>` : ''}</td>
+                    <td class="c-q">${esc(String(x.question || '').replace(/\s+/g, ' ').slice(0, 120))}</td>
+                    <td class="c-r">${esc(String(x.draft ? '(초안) ' + x.draft : x.answer || x.why || '').replace(/\s+/g, ' ').slice(0, 90))}</td>
+                    <td class="c-x"><button type="button" class="desk-more" data-ib="detail" data-kind="${x.kind}" data-id="${esc(x.id)}" aria-expanded="${open}" aria-label="자세히">${open ? '▴' : '⋯'}</button></td>
+                </tr>${open ? `<tr class="detailrow${oc}"><td class="detail" colspan="5">
+                    <div class="desk-q-full"><div class="desk-a-label">손님 문의</div>${esc(x.question || '')}${x.why ? ` <small>· ${esc(x.why)}</small>` : ''}</div>
+                    ${x.answer ? `<div class="desk-a answer"><div class="desk-a-label">${ansLbl}</div>${esc(x.answer)}</div>` : ''}
+                    ${x.draft ? `<div class="desk-a answer draft"><div class="desk-a-label">AI 초안 · 아직 등록 안 됨</div>${esc(x.draft)}</div>` : ''}
+                    <div class="desk-acts desk-a-acts">${acts(x)}</div></td></tr>` : ''}`;
+            }).join('');
+            box.innerHTML = top + `<div class="table-scroll-wrapper"><table class="desk-table"><thead><tr><th>상태</th><th>시각 · 품목</th><th>손님 문의</th><th>답변</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+            return;
+        }
+        box.innerHTML = top
             + list.map((x, i) => {
                 const long = (x.question || '').length > 140 || (x.answer || '').length > 160;
                 return `<article class="desk-ib ${x.seen ? 'seen' : ''}${i >= PREVIEW_INBOX ? ' ov' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">
@@ -661,14 +701,11 @@
                         ${x.seen && x.seen_by ? `<span>확인: ${esc(x.seen_by)}</span>` : ''}
                     </div>
                     <p class="desk-ib-q">${esc(x.question)}</p>
-                    ${x.answer ? `<div class="desk-ib-a"><b>${x.kind === 'talk' ? '봇이 보낸 답' : '자동으로 등록된 답'}</b>${esc(x.answer)}</div>` : ''}
-                    ${x.draft ? `<div class="desk-ib-a draft"><b>AI 초안(아직 등록 안 됨)</b>${esc(x.draft)}</div>` : ''}
-                    <div class="desk-acts">
-                        ${x.seen
-                            ? `<button type="button" class="desk-btn sm" data-ib="undo" data-kind="${x.kind}" data-id="${esc(x.id)}">다시 목록에 올리기</button>`
-                            : `<button type="button" class="desk-btn sm primary" data-ib="ok" data-kind="${x.kind}" data-id="${esc(x.id)}">확인</button>`}
-                        ${x.kind !== 'talk' && x.state === 'open' ? `<button type="button" class="desk-btn sm" data-ib="go">문의 관리에서 답하기</button>` : ''}
-                        ${long ? `<button type="button" class="desk-btn sm" data-ib="more">전체 보기</button>` : ''}
+                    ${x.answer ? `<div class="desk-ib-a desk-a answer"><div class="desk-a-label">${x.kind === 'talk' ? '봇이 보낸 답' : '자동으로 등록된 답'}</div>${esc(x.answer)}</div>` : ''}
+                    ${x.draft ? `<div class="desk-ib-a desk-a answer draft"><div class="desk-a-label">AI 초안 · 아직 등록 안 됨</div>${esc(x.draft)}</div>` : ''}
+                    <div class="desk-acts desk-a-acts">
+                        ${acts(x)}
+                        ${long ? `<button type="button" class="desk-btn sm pv-only" data-ib="more">전체 보기</button>` : ''}
                     </div>
                 </article>`;
             }).join('');
@@ -776,5 +813,5 @@
         await Promise.all([loadStatus(), loadOrders(true), loadBoard(), loadInbox()]);
         if (!S.timer) S.timer = setInterval(tick, 1000);
     };
-    window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList };
+    window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList, loadInbox, renderInbox };
 })();

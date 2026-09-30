@@ -412,7 +412,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const side = ['desk-live', 'desk-today', 'desk-prog'].map(id => { const e = document.getElementById(id); return e ? e.textContent.trim().length > 0 : false; });
             return {
                 table: !!q('#desk-list .desk-table'), card: !!q('#desk-list .desk-card'), th,
-                side, quick: document.querySelectorAll('#desk-inbox-tabs button').length, inboxList: !!document.querySelector('#desk-inbox-list .desk-ib, #desk-inbox-list .desk-empty'), oldQuick: !!document.getElementById('desk-quick'),
+                side, quick: document.querySelectorAll('#desk-inbox-tabs button').length, inboxList: !!document.querySelector('#desk-inbox-list .desk-ib, #desk-inbox-list .desk-ib-row, #desk-inbox-list .desk-empty'), oldQuick: !!document.getElementById('desk-quick'),
                 filter: !!q('#desk-fs'), weather: /날씨|구름|℃/.test(document.getElementById('ao-desk-root').textContent),
                 light: getComputedStyle(q('.desk-panel')).backgroundColor,
                 overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2,
@@ -421,6 +421,19 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('PC = 표 보기(카드 아님) · 머리글 6칸', wide.table && !wide.card && wide.th.length === 6, wide.th.join(' | '));
         ok('오른쪽 칸 3개가 내용을 그린다', wide.side.every(Boolean), JSON.stringify(wide.side));
         ok('확인 필요 문의 칸(채널 3개 · 목록) · 빠른 실행 없음 · 상태 고르개 · 날씨 없음', wide.quick === 3 && wide.inboxList && !wide.oldQuick && wide.filter && !wide.weather, '채널 ' + wide.quick + '개');
+        await W.pg.route('**/api/agent-office/desk/inbox*', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ days: 3, counts: { talk: { open: 2, ai: 1 }, qna: { open: 0, ai: 0 }, inquiry: { open: 0, ai: 0 } },
+            talk: [{ kind: 'talk', id: 'v1', state: 'open', at: new Date().toISOString(), question: '유라조생 언제부터 받을 수 있나요? 선물로 보내려고요' }, { kind: 'talk', id: 'v2', state: 'ai', at: new Date().toISOString(), question: '그린레몬 2kg도 있나요?', answer: '안녕하세요 제주아꼼이네입니다 😊 그린레몬은 3kg·5kg로 준비돼 있어요' }, { kind: 'talk', id: 'v3', state: 'open', at: new Date().toISOString(), question: '세 번째' }, { kind: 'talk', id: 'v4', state: 'open', at: new Date().toISOString(), question: '네 번째(미리보기 밖)' }], qna: [], inquiry: [] }) }));
+        await W.pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await W.pg.waitForTimeout(600);
+        await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v2"] .c-q'); await W.pg.waitForTimeout(400);
+        const ibt = await W.pg.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll('#desk-inbox-list tr.desk-ib-row'));
+            const d = document.querySelector('#desk-inbox-list .detailrow td.detail'); const a = d && d.querySelector('.desk-a.answer');
+            return { table: !!document.querySelector('#desk-inbox-list .desk-table'), rows: rows.length, visible: rows.filter(r => r.offsetParent !== null).length, opened: !!d, q: !!(d && d.querySelector('.desk-q-full')), label: a && a.querySelector('.desk-a-label').textContent, band: a && getComputedStyle(a).borderLeftWidth, acts: !!(d && d.querySelector('.desk-a-acts [data-ib="ok"]')), more: document.getElementById('desk-inbox-more').textContent };
+        });
+        ok('#485 확인 필요 문의 = PC 표 · 3건 미리보기(4건 중) · 줄 클릭 = 손님 문의 전문 + 「봇이 보낸 답」 띠 + [확인] 띠', ibt.table && ibt.rows === 4 && ibt.visible === 3 && ibt.opened && ibt.q && ibt.label === '봇이 보낸 답' && ibt.band === '4px' && ibt.acts && /1건 더/.test(ibt.more), JSON.stringify(ibt));
+        await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v2"] .c-q'); await W.pg.waitForTimeout(300);
+        ok('#485 다시 누르면 접힘', await W.pg.evaluate(() => !document.querySelector('#desk-inbox-list .detailrow')));
+        await W.pg.unroute('**/api/agent-office/desk/inbox*');
         ok('밝은 화면 · 가로 넘침 없음', /255, 255, 255/.test(wide.light) && !wide.overflow, wide.light);
         const more = await W.pg.$('#desk-list .desk-more');
         if (more) {
