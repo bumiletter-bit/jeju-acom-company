@@ -2910,14 +2910,17 @@ app.put('/api/expense-reports/:id/resubmit', authMiddleware, async (req, res) =>
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 삭제 (대표만 가능)
+// 삭제 — #493-b(대표 10/1 「승인 전까지는 수정·삭제 되도록, 승인 후에는 삭제 안 되도록」): 승인된 건은 누구도(대표 포함) 삭제 불가 · 승인 전 건은 신청자 본인 또는 대표
 app.delete('/api/expense-reports/:id', authMiddleware, async (req, res) => {
     try {
-        if (req.user.position !== '대표') {
-            return res.status(403).json({ error: '지출결의서 삭제는 대표만 가능합니다' });
+        const cur = await pool.query('SELECT id, applicant_id, status FROM expense_reports WHERE id = $1', [req.params.id]);
+        if (cur.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        const er = cur.rows[0];
+        if (er.status === 'approved') return res.status(400).json({ error: '승인 완료된 결의서는 삭제할 수 없습니다' });
+        if (er.applicant_id !== req.user.id && req.user.position !== '대표') {
+            return res.status(403).json({ error: '본인이 신청한 결의서만 삭제할 수 있습니다' });
         }
-        const result = await pool.query('DELETE FROM expense_reports WHERE id = $1 RETURNING id', [req.params.id]);
-        if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        await pool.query('DELETE FROM expense_reports WHERE id = $1', [er.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -7650,7 +7650,7 @@ async function renderExpenseMyList() {
             <td>${Number(d.total_amount).toLocaleString()} 원</td>
             <td>${new Date(d.created_at).toLocaleDateString()}</td>
             <td>${getExpenseStatusBadge(d.status)}</td>
-            <td><button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button>${d.status === 'pending' ? ` <button class="btn-outline expense-edit-btn" onclick="editExpense(${d.id})" style="margin-left:4px;padding:4px 10px;font-size:12px;">✏️ 수정</button>` : ''}</td>
+            <td><button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button>${d.status === 'pending' ? ` <button class="btn-outline expense-edit-btn" onclick="editExpense(${d.id})" style="margin-left:4px;padding:4px 10px;font-size:12px;">✏️ 수정</button>` : ''}${d.status !== 'approved' ? ` <button class="btn-danger expense-del-btn" onclick="deleteExpense(${d.id})" style="margin-left:4px;padding:4px 10px;font-size:12px;">삭제</button>` : ''}</td>
         </tr>`).join('');
     } catch (err) { console.error('내 신청 목록 로드 오류:', err); }
 }
@@ -7782,10 +7782,11 @@ async function renderExpenseHistoryList() {
             if (delBtnH) delBtnH.style.display = 'none';
             return;
         }
-        if (delBtnH) delBtnH.style.display = isCeo ? '' : 'none';
+        // (#493-b) 선택 삭제 버튼 표시는 아래 hasDeletable에서 결정
         const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         tbody.innerHTML = data.map(d => {
-            const deleteBtn = currentUser.position === '대표' ? `<button class="btn-danger" onclick="deleteExpense(${d.id})" style="margin-left:4px;">삭제</button>` : '';
+            // #493-b: 승인된 건은 삭제 불가(대표 포함) — 승인 전 건만 삭제 버튼
+            const deleteBtn = (currentUser.position === '대표' && d.status !== 'approved') ? `<button class="btn-danger" onclick="deleteExpense(${d.id})" style="margin-left:4px;">삭제</button>` : '';
             const pdfBtn = d.status === 'approved' ? `<button class="btn-view" onclick="downloadExpensePDF(${d.id})" style="margin-left:4px;color:#7c3aed;border-color:#7c3aed;">PDF</button>` : '';
             // 비고: items의 note들을 합쳐서 표시 (어디에 쓰였는지 식별용)
             let noteText = '';
@@ -7800,7 +7801,7 @@ async function renderExpenseHistoryList() {
                 : `<span style="color:#9ca3af;">${new Date(d.created_at).toLocaleDateString()}</span>`;
             // 승인 전(결재대기) 상태만 체크박스 표시 (admin만) — #493: 대표는 전 행(선택 삭제용). 승인 핸들러는 승인 가능 건만 골라 보낸다
             const approvable = d.status === 'pending' || d.status === 'manager_approved';
-            const checkCell = ((isAdmin && approvable) || isCeo)
+            const checkCell = ((isAdmin && approvable) || (isCeo && d.status !== 'approved'))   // #493-b: 승인된 건은 삭제 불가 → 체크박스 없음
                 ? `<td style="text-align:center;"><input type="checkbox" class="expense-history-check" value="${d.id}" data-approvable="${approvable ? 1 : 0}"></td>`
                 : '<td></td>';
             return `<tr>
@@ -7819,13 +7820,15 @@ async function renderExpenseHistoryList() {
             </tr>`;
         }).join('');
 
-        // 일괄 승인 UI: 결재대기 항목이 있고 admin일 때만 노출 (#493: 전체선택 체크박스는 대표면 항상 — 선택 삭제용)
+        // 일괄 승인 UI: 결재대기 항목이 있고 admin일 때만 노출 (#493-b: 전체선택·선택 삭제는 대표 + 승인 전 행이 있을 때 — 선택 삭제용)
         const hasApprovable = isAdmin && data.some(d => d.status === 'pending' || d.status === 'manager_approved');
+        const hasDeletable = isCeo && data.some(d => d.status !== 'approved');
         const batchBtn = document.getElementById('expense-history-batch-approve');
         const checkAll = document.getElementById('expense-history-check-all');
         if (batchBtn) batchBtn.style.display = hasApprovable ? '' : 'none';
+        if (delBtnH) delBtnH.style.display = hasDeletable ? '' : 'none';
         if (checkAll) {
-            checkAll.style.display = (hasApprovable || isCeo) ? '' : 'none';
+            checkAll.style.display = (hasApprovable || hasDeletable) ? '' : 'none';
             checkAll.checked = false;
             checkAll.onchange = () => {
                 tbody.querySelectorAll('.expense-history-check').forEach(cb => { cb.checked = checkAll.checked; });
@@ -8005,9 +8008,13 @@ window.viewExpenseDetail = async function(id) {
         const resubmitBtn = d.status === 'rejected' && d.applicant_id === currentUser.id
             ? `<button class="btn-primary" onclick="resubmitExpense(${d.id})" style="margin-right:8px;background:#0066CC;border-color:#0066CC;">🔄 재요청</button>`
             : '';
-        // #493: 승인 전(결재 대기) + 신청자 본인 또는 대표 → 수정
-        const editBtn = d.status === 'pending' && (d.applicant_id === currentUser.id || currentUser.position === '대표')
+        // #493: 승인 전(결재 대기) + 신청자 본인 또는 대표 → 수정 · #493-b: 승인 전이면 삭제도(승인된 건은 누구도 삭제 불가)
+        const mine = d.applicant_id === currentUser.id || currentUser.position === '대표';
+        const editBtn = d.status === 'pending' && mine
             ? `<button class="btn-outline expense-edit-btn" onclick="editExpense(${d.id})" style="margin-right:8px;">✏️ 수정</button>`
+            : '';
+        const delBtn = d.status !== 'approved' && mine
+            ? `<button class="btn-danger expense-del-btn" onclick="deleteExpense(${d.id})" style="margin-right:8px;">삭제</button>`
             : '';
 
         const overlay = document.createElement('div');
@@ -8031,6 +8038,7 @@ window.viewExpenseDetail = async function(id) {
                     ${pdfBtn}
                     ${resubmitBtn}
                     ${editBtn}
+                    ${delBtn}
                     <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
                 </div>
             </div>
@@ -8081,7 +8089,10 @@ window.deleteExpense = async function(id) {
     try {
         await api(`/api/expense-reports/${id}`, 'DELETE');
         alert('삭제 완료');
+        document.querySelector('.modal-overlay')?.remove();
         renderExpenseHistoryList().catch(console.error);
+        renderExpenseMyList().catch(console.error);
+        renderExpensePendingList().catch(console.error);
     } catch (err) { alert('삭제 실패: ' + err.message); }
 };
 
