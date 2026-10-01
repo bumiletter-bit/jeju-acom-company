@@ -5593,6 +5593,22 @@ const PRODUCT_CATALOG = new Set([
     '초당옥수수 / 중품 20+2개입',
     '최상품 청귤(풋귤) 5kg',
     '최상품 청귤(풋귤) 10kg',
+    /* #497(10/1 오픈): 그린레몬·레드키위·유라조생 표준명(규칙 파서 결과 검증용 — pricing 이름과 글자 동일) */
+    '과수 및 크기: 제주 그린레몬3kg(중소과)',
+    '과수 및 크기: 제주 그린레몬5kg(중소과)',
+    '과수 및 크기: 제주 그린레몬10kg(중소과)',
+    '과수 및 크기: 제주산 레드키위 3kg(로얄과)',
+    '과수 및 크기: 제주산 레드키위 5kg(로얄과)',
+    '과수 및 크기: 제주산 레드키위 10kg(로얄과)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 3kg(로얄과 2S~M)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 3kg(소과 2S미만)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 3kg(중대과 L이상)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 5kg(로얄과 2S~M)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 5kg(소과 2S미만)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 5kg(중대과 L이상)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 10kg(로얄과 2S~M)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 10kg(소과 2S미만)',
+    '유라품종 노지감귤 / 상품 및 과수: 가정용 - 10kg(중대과 L이상)',
 ]);
 
 // 송장변환 품목 매칭 = 오늘 품목별 금액(pricing) 기반 (대표 7/20)
@@ -5624,7 +5640,7 @@ function aoItemPartner(name) {
 // 품목명 → 특징(과일·용도·중량·등급) 추출 (정산 matchItemToPricing과 같은 개념, 송장변환용 프론트 판)
 function aoInvoiceFeat(name) {
     const t = String(name || '').replace(/\s/g, '');
-    const fruit = (t.match(/하우스감귤|미니밤호박|한입밤호박|황금향|한라봉|천혜향|새콤달콤카라향|카라향|레드향|세미놀귤|자몽|레몬|블러드오렌지|수라향|하귤|청귤|풋귤|초당옥수수|취나물/) || [])[0] || '';
+    const fruit = (t.match(/하우스감귤|미니밤호박|한입밤호박|황금향|한라봉|천혜향|새콤달콤카라향|카라향|레드향|세미놀귤|자몽|그린레몬|레드키위|유라품종|레몬|블러드오렌지|수라향|하귤|청귤|풋귤|초당옥수수|취나물/) || [])[0] || '';   /* #497: 그린레몬·레드키위·유라품종 추가 — 그린레몬은 레몬보다 앞(옛 「레몬」 이름과 구분) */
     const use = (t.match(/특품|못난이|한입|가정용|선물용|프리미엄/) || [])[0] || '';
     const weight = ((t.match(/(\d+(?:\.\d+)?)kg/) || [])[1]) || '';
     const grade = (t.match(/로얄과|중대과|소과|랜덤과|중소과|대과/) || [])[0] || '';
@@ -5655,6 +5671,12 @@ async function aoRenderInvoiceCatalog() {
         + aoInvoicePricingNames.map(n => `<div style="padding:6px 10px;background:#f7f9fc;border-radius:6px;font-size:13px;">${aoEsc(n)}</div>`).join('')
         + '</div>';
 }
+// #497: 옵션 문자열 ↔ pricing 품목명 「통째 포함」 대조용 정규화 키 — 공백·구분 기호·칸 이름만 제거(글자 자체는 안 바꿈)
+function aoMatchKey(s) {
+    return String(s || '')
+        .replace(/(?:아꼼이네\s*)?상품\s*선택\s*[:=]|상품\s*및\s*과수\s*:|과수\s*및\s*크기\s*:/g, '')
+        .replace(/[\s\/·]/g, '');
+}
 function matchProduct(rawText) {
     /* 지시 #406(대표 8/24): pricing(품목별 금액) 정식 품목명이 옵션 문자열에 「통째로」 들어 있으면 최우선 채택.
        — 대표 운용 모델 그대로: 신규 네이버 옵션은 품목별 금액에 등록만 하면 송장변환·중간발주 매칭이 자동 연동(규칙 파서 수정 불요).
@@ -5665,6 +5687,13 @@ function matchProduct(rawText) {
     if (aoInvoicePricingNames.length && !/중량\s*(?:up|업)/i.test(raw)) {
         let hit = null;
         for (const nm of aoInvoicePricingNames) { if (nm && raw.includes(nm) && (!hit || nm.length > hit.length)) hit = nm; }
+        if (hit) return hit;
+        /* 지시 #497(대표 실물 10/1): 자사몰(카페24) 주문은 같은 옵션을 「제주 감귤 상품 선택=2. (제철)유라품종 노지감귤 · 가정용 - 3kg(로얄과 2S~M)」처럼
+           「 / 상품 및 과수: 」 대신 「 · 」로 잇고, 레몬·키위는 「상품 선택=」 뒤에 옵션만 와서 pricing 이름이 통째로 안 들어 있어 [미매칭]이 됐다.
+           → 띄어쓰기·구분 기호(/ ·)·칸 이름(「상품 및 과수:」「과수 및 크기:」「상품선택:」「상품 선택=」)만 벗긴 뒤 다시 「통째 포함」 대조.
+           여전히 전체 이름(품목·용도·중량·등급 전부) 일치만 인정 — 토큰·부분 매칭 아님(오매칭>미매칭 원칙 그대로). */
+        const rawKey = aoMatchKey(raw);
+        for (const nm of aoInvoicePricingNames) { const k = aoMatchKey(nm); if (k && rawKey.includes(k) && (!hit || nm.length > hit.length)) hit = nm; }
         if (hit) return hit;
     }
     const std = matchProductRaw(rawText);
@@ -5722,6 +5751,16 @@ function matchProductRaw(rawText) {
         } else {
             result = '살살녹는 수라향 / 상품 및 과수: 수라향 가정용 - ' + wStr + '(랜덤과)';
         }
+    /* 지시 #497(10/1 오픈 3품목): 쿠팡 옵션(「제주아꼼이네 제철 제주레몬 출하, 1박스, 그린레몬 중소과 10kg」)처럼 단어 순서가 다른 문자열은
+       통째 포함 대조로 못 잡으므로 표준명 규칙 분기를 둔다(#406 못난이·#428 중대과와 같은 계열). 그린레몬·레드키위는 「레몬」·「감귤」보다 먼저 본다.
+       🔴 「레몬」만 있고 「그린」이 없는 옵션(옛 이름 「제주 레몬3kg(중소과)」)은 종전대로 혼합과 표준명 → 등급 불일치 → [미매칭](대표 확인 10/1 "수기로"). */
+    } else if (/그린\s*레몬/.test(t)) {
+        result = '과수 및 크기: 제주 그린레몬' + wStr + '(중소과)';
+    } else if (/레드\s*키위|키위/.test(t)) {
+        result = '과수 및 크기: 제주산 레드키위 ' + wStr + '(로얄과)';
+    } else if (/유라/.test(t)) {
+        const grade = /소과|2S\s*미만/.test(t) ? '소과 2S미만' : /중대과|L\s*이상/.test(t) ? '중대과 L이상' : '로얄과 2S~M';
+        result = '유라품종 노지감귤 / 상품 및 과수: 가정용 - ' + wStr + '(' + grade + ')';
     } else if (/레몬/.test(t)) {
         if (/못난이/.test(t)) result = '과수 및 크기: 제주 못난이 레몬' + wStr + '(랜덤과)';
         else result = '과수 및 크기: 제주 레몬' + wStr + '(혼합과)';
