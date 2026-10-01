@@ -8172,8 +8172,23 @@ function qnaFilterStoreLines(text, message) {
        용량(「5kg」)은 「4.5kg」의 일부로 잡히지 않게 앞 글자가 숫자·점이 아닐 때만 인정. */
     let narrowed = matched;
     // 좁히기 단어 = 토큰(「3kg에」처럼 조사가 붙은 용량은 용량만) + 용도 단어(선물용·가정용·못난이 — 넓히기엔 위험해 스톱워드지만 좁히기엔 안전)
-    const narrowToks = tokens.map(t => { const m = t.match(/(\d+(?:\.\d+)?)kg/i); return m ? m[1].toLowerCase() + 'kg' : t.toLowerCase(); });
+    //   품목 단어는 조사가 붙은 토큰(「유라조생이」「노지귤이랑」)에서도 뽑아 쓴다(#495-c · 「유라조생이 뭐예요」에 하우스 줄까지 15줄 붙던 것) — 줄에 그대로 있는 글자(「유라」「노지」「하우스감귤」…)로 바꿔 좁힘
+    //   품목 단어가 둘 이상이면(「황금향이랑 하우스감귤 같이」) 그 품목들 줄을 **모두** 남긴다(합집합) — 먼저 말한 품목만 남기면 비교 질문에서 한쪽이 사라진다.
+    const PRODUCT_WORDS = [['하우스귤', '하우스감귤'], ['하우스감귤', '하우스감귤'], ['유라', '유라'], ['노지', '노지'], ['타이벡', '타이벡'], ['황금향', '황금향'], ['그린레몬', '그린레몬'], ['레몬', '레몬'], ['레드키위', '레드키위'], ['키위', '키위'], ['청귤', '청귤']];
+    const productToks = [], narrowToks = [];
+    const gyulInjected = msgNorm.replace(/청귤|풋귤|귤즙|금귤/g, '').includes('귤');   // 위에서 「귤」 때문에 '감귤' 토큰을 맨 뒤에 넣은 조건과 동일
+    for (const t of (gyulInjected ? tokens.slice(0, -1) : tokens)) {
+        const m = t.match(/(\d+(?:\.\d+)?)kg/i);
+        if (m) { narrowToks.push(m[1].toLowerCase() + 'kg'); continue; }
+        const hit = PRODUCT_WORDS.find(([w]) => t.includes(w));
+        if (hit) productToks.push(hit[1]); else if (t.includes('감귤')) productToks.push('감귤'); else narrowToks.push(t.toLowerCase());
+    }
+    if (!productToks.length && gyulInjected) productToks.push('감귤');   // 「귤」만 말했으면 감귤 줄로(종전과 같은 범위)
     for (const w of ['선물용', '가정용', '못난이']) if (msgNorm.includes(w)) narrowToks.push(w);
+    if (productToks.length) {
+        const sub = narrowed.filter(line => { const ln = line.toLowerCase().replace(/\s/g, ''); return productToks.some(pw => ln.includes(pw)); });
+        if (sub.length > 0 && sub.length < narrowed.length) narrowed = sub;
+    }
     const sizeTok = t => /^\d+(?:\.\d+)?kg$/i.test(t);
     for (const tl of narrowToks) {
         const sub = narrowed.filter(line => {

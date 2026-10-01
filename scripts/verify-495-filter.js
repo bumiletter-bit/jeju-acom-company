@@ -8,7 +8,8 @@ const ROOT = path.join(__dirname, '..');
 const cut = (src, from, to) => { const a = src.indexOf(from); const b = src.indexOf(to, a); if (a < 0 || b < 0) throw new Error('구간 없음 ' + from); return src.slice(a, b); };
 const build = (src) => new Function(cut(src, 'const QNA_FILTER_STOPWORDS', 'function qnaFilterStoreLines') + cut(src, 'function qnaFilterStoreLines', '// {{가격표}}/{{판매현황}} 치환') + '\nreturn qnaFilterStoreLines;')();
 const NEW = build(fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8'));
-const OLD = build(execSync('git show HEAD:server.js', { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+// 구 = 좁히기 이전 원본(v5.9.394 태그 · 넓은 매칭만) — 신 ⊆ 구 = 「넓어지는 경우 0」 무회귀 기준
+const OLD = build(execSync('git show v5.9.394:server.js', { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
 let pass = 0, fail = 0; const ok = (t, c, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + t + (d != null ? ' — ' + d : '')); };
 (async () => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -27,6 +28,10 @@ let pass = 0, fail = 0; const ok = (t, c, d) => { c ? pass++ : fail++; console.l
         ['귤 가격 알려주세요', l => l.length >= 6 && l.every(x => /감귤/.test(x))],   // 「귤」 → 감귤 줄 전체(종전 동일)
         ['황금향 가격이요', l => l.length >= 5 && l.every(x => /황금향/.test(x))],   // 품목만 = 그 품목 전부(종전 동일)
         ['지금 뭐 팔아요?', l => l.length === N(priceText).length],                  // 품목 단어 없음 = 전체(종전 동일)
+        ['유라조생이 뭐예요? 그냥 노지귤이랑 뭐가 달라요?', l => l.length === 9 && l.every(x => /유라품종/.test(x))],   // #495-c 조사 붙은 품목 단어 → 유라 9줄만(하우스 0)
+        ['하우스귤이랑 유라조생 반반 돼요?', l => l.length === 15 && l.every(x => /감귤/.test(x))],                // 두 품목 다 말함 → 하우스 6 + 유라 9 합집합
+        ['황금향이랑 하우스감귤 같이 선물세트로 있어요?', l => l.length === 12 && l.some(x => /황금향/.test(x)) && l.some(x => /하우스감귤/.test(x))],   // 비교·동시 질문 = 두 품목 모두(종전엔 조사 때문에 황금향이 빠짐)
+        ['노지귤이랑 하우스귤 뭐가 더 달아요?', l => l.length === 15 && l.every(x => /감귤/.test(x))],
     ];
     for (const [q, chk] of CASES) {
         const o = N(OLD(priceText, q)), n = N(NEW(priceText, q));
