@@ -88,7 +88,8 @@ const by = Object.fromEntries(SHEETS.map(s => [s.name, []]));
 const unknown = [];
 for (const d of data) {
   const sh = sheetOf(d.product);
-  const row = { no: d.no, q: d.q, answer: cleanAnswer(d.answer), verdict: normVerdict(d.verdict), reason: d.reason || '', product: d.product };
+  const changedKeys = Object.keys(d).filter(k => /^(before_|prev_verdict|rerun_at)/.test(k));   // 재실행 흔적 — 🟩 변경 표시용
+  const row = { no: d.no, q: d.q, answer: cleanAnswer(d.answer), verdict: normVerdict(d.verdict), reason: d.reason || '', product: d.product, changed: changedKeys.length > 0, changedByStaff: changedKeys.some(k => /496/.test(k)) };
   if (sh) by[sh].push(row); else unknown.push(row);
 }
 const numOf = (n) => { const m = String(n == null ? '' : n).match(/\d+/); return m ? +m[0] : 1e9; };
@@ -124,7 +125,12 @@ if (unknown.length) {
   const ur = rr + 3 + Math.max(issues.length, 1);
   put(ur, 0, `품목 미분류 ${unknown.length}건: ` + [...new Set(unknown.map(u => u.product))].join(', '), { font: { ...FONT, color: { rgb: 'B42318' } } });
 }
-const lastR = rr + 4 + Math.max(issues.length, 1);
+// 🟩 변경 표시 범례(대표 10/1 「변경된 거 색칠해서 표시」): 재실행 흔적(before_*/prev_verdict*/rerun_at)이 있는 행 = 오늘 수정·재실행된 문항
+const CHANGED = r => !!r.changed;
+const changedCount = SHEETS.reduce((n, s) => n + by[s.name].filter(CHANGED).length, 0);
+const legendR = rr + 3 + Math.max(issues.length, 1) + (unknown.length ? 2 : 0);
+put(legendR, 0, `🟩 연초록 행 = 10/1 수정·재실행된 문항(${changedCount}건) — 교정·사실 보강·직원 검토 반영 뒤 봇에 다시 물어 확인한 답변. 비고 앞 🔄 표시.`, { font: { ...FONT, bold: true }, fill: { patternType: 'solid', fgColor: { rgb: 'E2F0D9' } } });
+const lastR = legendR + 1;
 wsSum['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastR, c: 6 } });
 wsSum['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 46 }, { wch: 60 }, { wch: 10 }, { wch: 10 }];
 delete wsSum['!autofilter'];
@@ -132,7 +138,11 @@ XLSX.utils.book_append_sheet(wb, wsSum, '요약');
 
 // ── 품목별 시트
 for (const s of SHEETS) {
-  const rows = by[s.name].map(r => ({ cells: [String(r.no ?? ''), String(r.q || ''), r.answer, r.verdict, String(r.reason || '')], fill: FILL[r.verdict] }));
+  const rows = by[s.name].map(r => {
+    const ch = CHANGED(r);
+    const tag = ch ? (r.changedByStaff ? '🔄 오늘 수정됨(직원 검토 반영) · ' : '🔄 오늘 수정됨(교정·보강 반영) · ') : '';
+    return { cells: [String(r.no ?? ''), String(r.q || ''), r.answer, r.verdict, tag + String(r.reason || '')], fill: FILL[r.verdict] || (ch ? 'E2F0D9' : undefined) };
+  });
   const ws = sheetFromRows(['번호', '손님 질문', '봇 답변', '판정', '비고(근거/고칠 점)'], rows, [7, 38, 90, 8, 40], { center: [0, 3] });
   XLSX.utils.book_append_sheet(wb, ws, s.name);
 }
