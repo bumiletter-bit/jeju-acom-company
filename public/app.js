@@ -7232,6 +7232,7 @@ const EXPENSE_CATEGORIES = [
     { name: '수선유지비', detail: '사무실 수리, 장비 수리, 시설 보수' },
     { name: '차량유지비', detail: '사무차량 유류비, 차량 수리, 보험료' },
     { name: '교육훈련비', detail: '직원 교육, 세미나, 자격증, 도서 구입' },
+    { name: '급여', detail: '직원 급여, 상여, 수당, 퇴직금' },   // #493(대표 10/1): 제목 항목란에 급여 추가
     { name: '기타', detail: '' }
 ];
 
@@ -7305,19 +7306,87 @@ document.getElementById('expense-submit').addEventListener('click', async () => 
     // 제목은 첫 번째 항목 카테고리로 자동 생성
     const title = items.map(i => i.category).join(', ');
 
-    if (!confirm(`지출결의서를 제출하시겠습니까?\n사용날짜: ${useDate}\n합계: ${items.reduce((s, i) => s + i.amount, 0).toLocaleString()} 원`)) return;
+    // #493: 수정 모드(승인 전 결의서를 작성 탭에 불러온 상태)면 PUT으로 덮어쓴다
+    const editId = window._expenseEditId || null;
+    const total = items.reduce((s, i) => s + i.amount, 0).toLocaleString();
+    if (!confirm(editId ? `지출결의서 #${editId}를 수정 저장하시겠습니까?\n사용날짜: ${useDate}\n합계: ${total} 원`
+                        : `지출결의서를 제출하시겠습니까?\n사용날짜: ${useDate}\n합계: ${total} 원`)) return;
 
     try {
-        await api('/api/expense-reports', 'POST', { title, purpose, items, useDate });
-        alert('지출결의서가 제출되었습니다.');
-        document.getElementById('expense-purpose').value = '';
-        document.getElementById('expense-use-date').value = '';
-        document.getElementById('expense-items').innerHTML = '';
-        addExpenseItem();
-        updateExpenseTotal();
+        if (editId) await api(`/api/expense-reports/${editId}`, 'PUT', { title, purpose, items, useDate });
+        else await api('/api/expense-reports', 'POST', { title, purpose, items, useDate });
+        alert(editId ? '지출결의서가 수정되었습니다.' : '지출결의서가 제출되었습니다.');
+        resetExpenseForm();
         switchExpenseTab('my');
-    } catch (err) { alert('제출 실패: ' + err.message); }
+    } catch (err) { alert((editId ? '수정' : '제출') + ' 실패: ' + err.message); }
 });
+
+// #493: 작성 폼 초기화(수정 모드 해제 포함)
+function resetExpenseForm() {
+    window._expenseEditId = null;
+    document.getElementById('expense-purpose').value = '';
+    document.getElementById('expense-use-date').value = '';
+    document.getElementById('expense-items').innerHTML = '';
+    addExpenseItem();
+    updateExpenseTotal();
+    const bar = document.getElementById('expense-edit-bar'); if (bar) bar.style.display = 'none';
+    const btn = document.getElementById('expense-submit'); if (btn) btn.textContent = '제출';
+}
+window.cancelExpenseEdit = function() { resetExpenseForm(); switchExpenseTab('my'); };
+
+// #493(대표 10/1 "승인 전 수정할 수 있도록"): 결재 대기 결의서를 작성 탭에 불러와 고친 뒤 [수정 저장]
+window.editExpense = async function(id) {
+    try {
+        const d = await api(`/api/expense-reports/${id}`);
+        if (d.status !== 'pending') { alert('승인 전(결재 대기) 결의서만 수정할 수 있습니다.'); return; }
+        const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
+        document.querySelector('.modal-overlay')?.remove();
+        switchExpenseTab('write');
+        window._expenseEditId = id;
+        document.getElementById('expense-purpose').value = d.purpose || '';
+        document.getElementById('expense-use-date').value = d.use_date ? String(d.use_date).slice(0, 10) : '';
+        const container = document.getElementById('expense-items');
+        container.innerHTML = '';
+        (items.length ? items : [{}]).forEach(it => {
+            addExpenseItem();
+            const row = container.lastElementChild;
+            const sel = row.querySelector('.expense-item-category');
+            const name = it.category || it.item || '';
+            if (name && !EXPENSE_CATEGORIES.some(c => c.name === name)) sel.insertAdjacentHTML('beforeend', `<option value="${name}">${name}</option>`);
+            sel.value = name;
+            sel.dispatchEvent(new Event('change'));
+            if (name === '기타' && it.detail) row.querySelector('.expense-item-detail').textContent = it.detail;
+            row.querySelector('.expense-item-amount').value = it.amount || '';
+            row.querySelector('.expense-item-note').value = it.note || '';
+        });
+        updateExpenseTotal();
+        const bar = document.getElementById('expense-edit-bar');
+        if (bar) { bar.style.display = ''; bar.querySelector('b').textContent = `#${id} 수정 중`; }
+        const btn = document.getElementById('expense-submit'); if (btn) btn.textContent = '수정 저장';
+        document.getElementById('expense-section-write')?.scrollIntoView({ block: 'start' });
+    } catch (err) { alert('불러오기 실패: ' + err.message); }
+};
+
+// #493(대표 10/1 "잘못된 건 한번에 체크 삭제"): 결재 대기·이력 탭 선택 일괄 삭제(대표만 — 서버 DELETE가 재검증)
+async function batchDeleteExpenses(listSelector, checkClass) {
+    const checked = Array.from(document.querySelectorAll(`${listSelector} .${checkClass}:checked`)).map(cb => Number(cb.value));
+    if (checked.length === 0) { alert('삭제할 항목을 선택해주세요.'); return; }
+    if (!confirm(`선택한 ${checked.length}건을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+    let ok = 0, fail = 0;
+    const errs = [];
+    for (const id of checked) {
+        try { await api(`/api/expense-reports/${id}`, 'DELETE'); ok++; }
+        catch (err) { fail++; errs.push(`#${id}: ${err.message}`); }
+    }
+    let msg = `삭제 완료: ${ok}건`;
+    if (fail > 0) msg += `\n실패: ${fail}건\n${errs.slice(0, 5).join('\n')}`;
+    alert(msg);
+    renderExpensePendingList().catch(console.error);
+    renderExpenseHistoryList().catch(console.error);
+    renderExpenseMyList().catch(console.error);
+}
+document.getElementById('expense-pending-batch-delete')?.addEventListener('click', () => batchDeleteExpenses('#expense-pending-list', 'expense-pending-check'));
+document.getElementById('expense-history-batch-delete')?.addEventListener('click', () => batchDeleteExpenses('#expense-history-list', 'expense-history-check'));
 
 // ============================================================
 //  지출결의서 엑셀 일괄 업로드 (제주은행 통장 거래내역)
@@ -7581,7 +7650,7 @@ async function renderExpenseMyList() {
             <td>${Number(d.total_amount).toLocaleString()} 원</td>
             <td>${new Date(d.created_at).toLocaleDateString()}</td>
             <td>${getExpenseStatusBadge(d.status)}</td>
-            <td><button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button></td>
+            <td><button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button>${d.status === 'pending' ? ` <button class="btn-outline expense-edit-btn" onclick="editExpense(${d.id})" style="margin-left:4px;padding:4px 10px;font-size:12px;">✏️ 수정</button>` : ''}</td>
         </tr>`).join('');
     } catch (err) { console.error('내 신청 목록 로드 오류:', err); }
 }
@@ -7595,12 +7664,15 @@ async function renderExpensePendingList() {
         //   /pending은 서버가 "지금 이 사용자가 결재할 차례인 건"만 주므로 전 행 체크 가능(권한은 승인 API가 재검증).
         const batchBtn = document.getElementById('expense-pending-batch-approve');
         const checkAll = document.getElementById('expense-pending-check-all');
+        const delBtn = document.getElementById('expense-pending-batch-delete');   // #493 선택 삭제(대표만)
         if (data.length === 0) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="7">결재 대기 건이 없습니다.</td></tr>';
             if (batchBtn) batchBtn.style.display = 'none';
             if (checkAll) checkAll.style.display = 'none';
+            if (delBtn) delBtn.style.display = 'none';
             return;
         }
+        if (delBtn) delBtn.style.display = currentUser.position === '대표' ? '' : 'none';
         tbody.innerHTML = data.map(d => `<tr>
             <td style="text-align:center;"><input type="checkbox" class="expense-pending-check" value="${d.id}"></td>
             <td>${d.title}</td>
@@ -7699,14 +7771,18 @@ async function renderExpenseHistoryList() {
         }
 
         const isAdmin = currentUser.role === 'admin';
+        const isCeo = currentUser.position === '대표';   // #493: 선택 삭제는 대표만(모든 행 체크 가능)
+        const delBtnH = document.getElementById('expense-history-batch-delete');
         if (data.length === 0) {
             tbody.innerHTML = '<tr class="empty-row"><td colspan="8">지출결의서가 없습니다.</td></tr>';
             const batchBtn0 = document.getElementById('expense-history-batch-approve');
             if (batchBtn0) batchBtn0.style.display = 'none';
             const checkAll0 = document.getElementById('expense-history-check-all');
             if (checkAll0) checkAll0.style.display = 'none';
+            if (delBtnH) delBtnH.style.display = 'none';
             return;
         }
+        if (delBtnH) delBtnH.style.display = isCeo ? '' : 'none';
         const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         tbody.innerHTML = data.map(d => {
             const deleteBtn = currentUser.position === '대표' ? `<button class="btn-danger" onclick="deleteExpense(${d.id})" style="margin-left:4px;">삭제</button>` : '';
@@ -7722,10 +7798,10 @@ async function renderExpenseHistoryList() {
             const useDateStr = d.use_date
                 ? new Date(d.use_date).toLocaleDateString()
                 : `<span style="color:#9ca3af;">${new Date(d.created_at).toLocaleDateString()}</span>`;
-            // 승인 전(결재대기) 상태만 체크박스 표시 (admin만)
+            // 승인 전(결재대기) 상태만 체크박스 표시 (admin만) — #493: 대표는 전 행(선택 삭제용). 승인 핸들러는 승인 가능 건만 골라 보낸다
             const approvable = d.status === 'pending' || d.status === 'manager_approved';
-            const checkCell = (isAdmin && approvable)
-                ? `<td style="text-align:center;"><input type="checkbox" class="expense-history-check" value="${d.id}"></td>`
+            const checkCell = ((isAdmin && approvable) || isCeo)
+                ? `<td style="text-align:center;"><input type="checkbox" class="expense-history-check" value="${d.id}" data-approvable="${approvable ? 1 : 0}"></td>`
                 : '<td></td>';
             return `<tr>
                 ${checkCell}
@@ -7743,13 +7819,13 @@ async function renderExpenseHistoryList() {
             </tr>`;
         }).join('');
 
-        // 일괄 승인 UI: 결재대기 항목이 있고 admin일 때만 노출
+        // 일괄 승인 UI: 결재대기 항목이 있고 admin일 때만 노출 (#493: 전체선택 체크박스는 대표면 항상 — 선택 삭제용)
         const hasApprovable = isAdmin && data.some(d => d.status === 'pending' || d.status === 'manager_approved');
         const batchBtn = document.getElementById('expense-history-batch-approve');
         const checkAll = document.getElementById('expense-history-check-all');
         if (batchBtn) batchBtn.style.display = hasApprovable ? '' : 'none';
         if (checkAll) {
-            checkAll.style.display = hasApprovable ? '' : 'none';
+            checkAll.style.display = (hasApprovable || isCeo) ? '' : 'none';
             checkAll.checked = false;
             checkAll.onchange = () => {
                 tbody.querySelectorAll('.expense-history-check').forEach(cb => { cb.checked = checkAll.checked; });
@@ -7760,7 +7836,8 @@ async function renderExpenseHistoryList() {
 
 // 선택 일괄 승인
 document.getElementById('expense-history-batch-approve')?.addEventListener('click', async () => {
-    const checked = Array.from(document.querySelectorAll('#expense-history-list .expense-history-check:checked')).map(cb => Number(cb.value));
+    // #493: 대표는 승인된 행도 체크할 수 있으므로(선택 삭제) 승인 대상은 결재 대기 행만
+    const checked = Array.from(document.querySelectorAll('#expense-history-list .expense-history-check:checked')).filter(cb => cb.dataset.approvable !== '0').map(cb => Number(cb.value));
     if (checked.length === 0) { alert('승인할 항목을 선택해주세요.'); return; }
     if (!confirm(`선택한 ${checked.length}건을 승인하시겠습니까?`)) return;
     let ok = 0, fail = 0;
@@ -7928,6 +8005,10 @@ window.viewExpenseDetail = async function(id) {
         const resubmitBtn = d.status === 'rejected' && d.applicant_id === currentUser.id
             ? `<button class="btn-primary" onclick="resubmitExpense(${d.id})" style="margin-right:8px;background:#0066CC;border-color:#0066CC;">🔄 재요청</button>`
             : '';
+        // #493: 승인 전(결재 대기) + 신청자 본인 또는 대표 → 수정
+        const editBtn = d.status === 'pending' && (d.applicant_id === currentUser.id || currentUser.position === '대표')
+            ? `<button class="btn-outline expense-edit-btn" onclick="editExpense(${d.id})" style="margin-right:8px;">✏️ 수정</button>`
+            : '';
 
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
@@ -7949,6 +8030,7 @@ window.viewExpenseDetail = async function(id) {
                 <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
                     ${pdfBtn}
                     ${resubmitBtn}
+                    ${editBtn}
                     <button class="btn-outline" onclick="this.closest('.modal-overlay').remove()">닫기</button>
                 </div>
             </div>

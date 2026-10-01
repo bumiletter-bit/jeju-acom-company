@@ -2848,6 +2848,30 @@ app.put('/api/expense-reports/:id/reject', authMiddleware, async (req, res) => {
 });
 
 // 재요청 (반려된 결의서를 다시 결재대기 상태로 되돌림 — 신청자 본인만)
+// #493(대표 10/1): 승인 전 수정 — 신청자 본인(또는 대표)이 아직 아무 결재도 안 난 건(status pending)만 제목·목적·항목·사용날짜를 고친다
+app.put('/api/expense-reports/:id', authMiddleware, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM expense_reports WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: '지출결의서를 찾을 수 없습니다' });
+        const er = result.rows[0];
+        if (er.applicant_id !== req.user.id && req.user.position !== '대표') {
+            return res.status(403).json({ error: '본인이 신청한 결의서만 수정할 수 있습니다' });
+        }
+        if (er.status !== 'pending' || er.ceo_status === 'approved' || er.manager_status === 'approved') {
+            return res.status(400).json({ error: '승인 전(결재 대기) 결의서만 수정할 수 있습니다' });
+        }
+        const { title, purpose, items, useDate } = req.body;
+        if (!title) return res.status(400).json({ error: '제목을 입력해주세요' });
+        if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: '지출 항목을 추가해주세요' });
+        const totalAmount = items.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+        await pool.query(
+            `UPDATE expense_reports SET title = $2, purpose = $3, items = $4, total_amount = $5, use_date = $6 WHERE id = $1`,
+            [er.id, title, purpose || '', JSON.stringify(items), totalAmount, useDate || null]
+        );
+        res.json({ success: true, id: er.id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put('/api/expense-reports/:id/resubmit', authMiddleware, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM expense_reports WHERE id = $1', [req.params.id]);
