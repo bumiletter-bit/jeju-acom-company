@@ -8165,7 +8165,26 @@ function qnaFilterStoreLines(text, message) {
         return chunks.some(c => msgNorm.includes(c.toLowerCase())) ||
                tokens.some(t => lineNorm.includes(t.toLowerCase()));
     });
-    return matched.length > 0 ? matched.join('\n') : text;
+    if (matched.length === 0) return text;
+    /* #495(10/1 실측 「황금향 못난이 5kg 얼마예요?」): 「5kg」 토큰이 4.5kg·유라 5kg·레몬 5kg 줄까지 끌어와 16줄이 되자
+       AI가 「황금향 못난이 5kg는 준비돼 있지 않다」고 틀리게 안내(목록 안에는 37,800원 줄이 있었음).
+       교정 = 질문 단어 순서대로 **좁혀 간다**(품목 단어 → 세부 단어 → 용량). 단어가 어느 줄에도 없으면 그 단계는 건너뛰어 종전 결과 유지(무회귀).
+       용량(「5kg」)은 「4.5kg」의 일부로 잡히지 않게 앞 글자가 숫자·점이 아닐 때만 인정. */
+    let narrowed = matched;
+    // 좁히기 단어 = 토큰(「3kg에」처럼 조사가 붙은 용량은 용량만) + 용도 단어(선물용·가정용·못난이 — 넓히기엔 위험해 스톱워드지만 좁히기엔 안전)
+    const narrowToks = tokens.map(t => { const m = t.match(/(\d+(?:\.\d+)?)kg/i); return m ? m[1].toLowerCase() + 'kg' : t.toLowerCase(); });
+    for (const w of ['선물용', '가정용', '못난이']) if (msgNorm.includes(w)) narrowToks.push(w);
+    const sizeTok = t => /^\d+(?:\.\d+)?kg$/i.test(t);
+    for (const tl of narrowToks) {
+        const sub = narrowed.filter(line => {
+            const ln = line.toLowerCase().replace(/\s/g, '');
+            if (!sizeTok(tl)) return ln.includes(tl);
+            const i = ln.indexOf(tl);
+            return i >= 0 && !(i > 0 && /[\d.]/.test(ln[i - 1]));
+        });
+        if (sub.length > 0 && sub.length < narrowed.length) narrowed = sub;
+    }
+    return narrowed.join('\n');
 }
 // {{가격표}}/{{판매현황}} 치환 — 공개 게시판은 글이 계속 남으므로 "N/N 기준" 날짜를 붙여 시점을 명시
 //   filterText(질문+상품명)가 있으면 문의한 품목 라인만 골라 표시 (봇과 동일 규칙)
