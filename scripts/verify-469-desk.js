@@ -218,7 +218,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const errors = []; pg.on('pageerror', e => errors.push(String(e)));
             pg.on('dialog', d => d.accept());
             await pg.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
-            await pg.evaluate(([t, u]) => { localStorage.setItem('jwt_token', t); localStorage.setItem('jwt_user', JSON.stringify(u)); localStorage.setItem('akm_last_page', 'agent-office'); }, [tok, user]);
+            await pg.evaluate(([t, u]) => { localStorage.setItem('jwt_token', t); localStorage.setItem('jwt_user', JSON.stringify(u)); localStorage.setItem('akm_last_page', 'agent-office'); localStorage.setItem('akm_desk_view', 'table'); }, [tok, user]);
             await pg.reload({ waitUntil: 'networkidle' });
             await pg.waitForTimeout(2500);
             await pg.evaluate(() => { const n = document.querySelector('.nav-item[data-page="agent-office"]'); if (n) n.click(); else if (typeof switchPage === 'function') switchPage('agent-office'); });

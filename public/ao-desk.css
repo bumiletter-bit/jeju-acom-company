@@ -348,3 +348,36 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-md-t .ctr { text-align: center; }
 .desk-quick2-label { flex-basis: 100%; }
 .desk-md-t td, .desk-md-t th { min-width: 4.5em; }
+/* #499 내 지시 대화 보기 — 내 글 오른쪽 · 클코 답 왼쪽 · 대화마다 구분선 */
+.desk-viewbtn { min-height: 36px; margin-right: 8px; }
+.desk-chat { display: block; }
+.desk-thread-box { padding: 14px 4px 18px; border-top: 1px solid var(--d-line); }
+.desk-thread-box:first-child { border-top: 0; padding-top: 4px; }
+.desk-th-head { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--d-sub); margin-bottom: 8px; }
+.desk-th-head .desk-x { margin-left: auto; }
+.desk-turn { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.desk-th-head + .desk-turn { margin-top: 0; }
+.desk-bub.me { align-self: flex-end; max-width: min(78%, 640px); background: var(--d-accent-soft); color: var(--d-ink); border-radius: 14px 14px 4px 14px; padding: 9px 13px 8px; }
+.desk-bub.me .desk-q { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.55; font-weight: 500; }
+.desk-bub-meta { margin-top: 3px; font-size: 11px; color: var(--d-sub); text-align: right; font-variant-numeric: tabular-nums; }
+.desk-bub.ai { align-self: stretch; max-width: min(100%, 860px); }
+.desk-bub-who { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.desk-bub.ai > .desk-a:first-of-type, .desk-bub.ai > .desk-note:first-of-type { margin-top: 6px; }
+.desk-turn:not(.last) [data-act="follow"] { display: none; }
+.desk-turn.desk-flash .desk-bub.me { box-shadow: 0 0 0 2px var(--d-accent); }
+.desk-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.desk-confirm-q { flex-basis: 100%; margin: 0; font-size: 13px; font-weight: 600; color: var(--d-ink); }
+.desk-confirm .desk-reply-in { flex-basis: 100%; }
+/* 폰: 현황판은 접어 두고 버튼으로 연다(넓은 화면에서는 늘 보임) */
+.desk-foldbtn { display: none; }
+@media (max-width: 640px) {
+    .desk-foldbtn { display: block; width: 100%; min-height: 44px; border: 1px solid var(--d-line); border-radius: 12px; background: var(--d-card); color: var(--d-ink); font-size: 14px; font-weight: 600; cursor: pointer; }
+    .desk-board.folded { display: none; }
+    .desk-bub.me { max-width: 88%; }
+    .desk-viewbtn { min-height: 44px; }
+}
+/* #499 다듬기: 대화에서는 답변 아래 띠를 얇게 · 쓰는 중인 글과 머리말 사이 경계 */
+.desk-chat .desk-a-acts { padding: 5px 10px 6px; }
+.desk-chat .desk-a-acts .desk-btn { min-height: 32px; padding: 0 10px; font-size: 12.5px; }
+.desk-live-scroll { padding-top: 6px; border-top: 1px solid var(--d-line); }
+@media (max-width: 720px) { .desk-chat .desk-a-acts .desk-btn { min-height: 44px; } }

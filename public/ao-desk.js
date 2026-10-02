@@ -69,7 +69,8 @@
     const S = {
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
-        fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), closed: new Set(), follow: new Set(),
+        fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(),
+        view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
@@ -138,6 +139,7 @@
                         <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>대표 확인함<span class="n" id="desk-approval-n" hidden>0</span></button>
                     </div>
                     <div class="desk-filter">
+                        <button type="button" class="desk-btn sm desk-viewbtn" id="desk-view" hidden>표로 보기</button>
                         <select id="desk-fs" aria-label="상태로 걸러 보기">
                             <option value="all">전체 상태</option>
                             <option value="work">진행 중</option>
@@ -164,7 +166,8 @@
                 <div class="desk-inbox-list" id="desk-inbox-list"><div class="desk-empty">불러오는 중</div></div>
                 <button type="button" class="desk-more-all" id="desk-inbox-more" data-full-open="desk-inbox">자세히 확인하기<span class="n"></span><span class="chev" aria-hidden="true">›</span></button>
             </section>
-            <section class="desk-board" id="desk-board" aria-label="현황판"></section>
+            <button type="button" class="desk-foldbtn" id="desk-board-fold" aria-expanded="false" aria-controls="desk-board">현황판 보기</button>
+            <section class="desk-board folded" id="desk-board" aria-label="현황판"></section>
         </div>
         <aside class="desk-side">
             <div class="desk-panel"><h3>LIVE 로그 <span>내 지시 처리 현황</span></h3><div id="desk-live"></div></div>
@@ -238,6 +241,17 @@
             } catch (err) { showToast(err && err.message ? err.message : '처리하지 못했어요'); b.disabled = false; }
         });
         $('desk-fs').addEventListener('change', e => { S.fs = e.target.value; S.sig = ''; renderList(); });
+        $('desk-view').addEventListener('click', () => {
+            S.view = S.view === 'chat' ? 'table' : 'chat';
+            try { localStorage.setItem('akm_desk_view', S.view); } catch (e) { }
+            S.sig = ''; renderList();
+        });
+        const fold = $('desk-board-fold');
+        if (fold) fold.addEventListener('click', () => {
+            const open = $('desk-board').classList.toggle('folded') === false;
+            fold.setAttribute('aria-expanded', String(open));
+            fold.textContent = open ? '현황판 접기' : '현황판 보기';
+        });
         // 넓은 화면은 표, 좁은 화면은 카드(대표 확정 2026-09-29)
         const mq = window.matchMedia('(min-width: 1024px)');
         S.wide = mq.matches;
@@ -436,7 +450,7 @@
     async function loadOrdersNow(force) {
         const tab = S.tab;
         try {
-            const q = S.tab === 'mine' ? '?mine=1&limit=30' : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?limit=40';
+            const q = S.tab === 'mine' ? '?mine=1&limit=60' : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?limit=40';
             const d = await api('/api/agent-office/desk/orders' + q);
             if (tab !== S.tab) { S.again = true; return; }
             const orders = d.orders || [];
@@ -534,7 +548,17 @@
         if (r.type === 'approval_request') {
             const done = st === '반려' ? `<div class="desk-note">반려: ${esc(r.rejected_by || '')}${r.reject_reason ? ' · ' + esc(r.reject_reason) : ''}</div>`
                 : r.approved_by ? `<div class="desk-note">승인: ${esc(r.approved_by)}</div>` : '';
-            const acts = st === '승인대기' && isAdmin()
+            const pend = S.pend.get(o.id);
+            const acts = st === '승인대기' && isAdmin() && pend === 'approve'
+                ? `<div class="desk-reply desk-confirm"><p class="desk-confirm-q">이 요청을 승인할까요? 승인하면 창구가 바로 실행합니다.</p>
+                   <button type="button" class="desk-btn sm primary" data-act="approve2" data-id="${o.id}">승인하고 실행</button>
+                   <button type="button" class="desk-btn sm" data-act="pendcancel" data-id="${o.id}">취소</button></div>`
+                : st === '승인대기' && isAdmin() && pend === 'reject'
+                ? `<div class="desk-reply desk-confirm"><label class="desk-confirm-q" for="reject-${o.id}">반려 사유 (비워도 됩니다)</label>
+                   <textarea class="desk-reply-in" id="reject-${o.id}" rows="2" maxlength="500" placeholder="예: 대상을 다시 확인해 주세요"></textarea>
+                   <button type="button" class="desk-btn sm danger" data-act="reject2" data-id="${o.id}">반려하기</button>
+                   <button type="button" class="desk-btn sm" data-act="pendcancel" data-id="${o.id}">취소</button></div>`
+                : st === '승인대기' && isAdmin()
                 ? `<div class="desk-acts"><button type="button" class="desk-btn sm primary" data-act="approve" data-id="${o.id}">승인하고 실행</button>
                    <button type="button" class="desk-btn sm danger" data-act="reject" data-id="${o.id}">반려</button></div>`
                 : st === '승인대기' ? '<div class="desk-note">대표 승인을 기다리고 있어요</div>' : '';
@@ -598,12 +622,17 @@
     function renderListNow() {
         const box = $('desk-list');
         const list = shown();
-        box.classList.toggle('desk-cardlist', !S.wide);
+        const chat = S.tab === 'mine' && S.view === 'chat';
+        const vb = $('desk-view');
+        if (vb) { vb.hidden = S.tab !== 'mine'; vb.textContent = S.view === 'chat' ? '표로 보기' : '대화로 보기'; }
+        box.classList.toggle('desk-cardlist', !S.wide && !chat);
+        box.classList.toggle('desk-chat', chat);
         if (!list.length) {
             setMore('desk-list-more', 0);
             box.innerHTML = `<div class="desk-empty">${S.fs !== 'all' ? '고른 상태에 해당하는 지시가 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : S.tab === 'mine' ? '아직 보낸 지시가 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.' : '지시 기록이 없어요.'}</div>`;
             return;
         }
+        if (chat) { renderChat(list); return; }
         const ov = previewMask(list);
         setMore('desk-list-more', ov.filter(Boolean).length);
         if (S.wide) { renderTable(list, ov); return; }
@@ -622,6 +651,44 @@
                 ${showSteps ? `<ul class="desk-steps">${steps.map(s => `<li>${esc(kst(s.t, { hour: '2-digit', minute: '2-digit' }))} ${esc(s.text)}</li>`).join('')}</ul>` : ''}
             </article>`;
         }).join('');
+    }
+
+    // #499(대표 GO 10/2) 내 지시 = 대화 보기. 이어서 지시·되묻기 답(reply_to)을 한 대화로 묶어, 내 글은 오른쪽·클코 답은 왼쪽에 시간순으로 쌓는다.
+    //   새 대화가 맨 위(입력칸 바로 아래). 답 내용은 표·카드와 같은 resultBody 를 그대로 쓴다(버튼·답 칸·쓰는 중인 답변 동작 동일).
+    const CLOSED_FOR_HIDE = o => !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기', '질문'].includes(o.status);
+    function threadsOf(all) {
+        const byId = new Map(all.map(o => [o.id, o]));
+        const rootOf = o => { let c = o, n = 0; while (c.reply_to && byId.has(c.reply_to) && n++ < 60) c = byId.get(c.reply_to); return c.id; };
+        const m = new Map();
+        for (const o of all) { const r = rootOf(o); if (!m.has(r)) m.set(r, []); m.get(r).push(o); }
+        const out = [...m.entries()].map(([id, items]) => { items.sort((a, b) => a.id - b.id); return { id, items, last: items[items.length - 1].id }; });
+        out.sort((a, b) => b.last - a.last);
+        return out;
+    }
+    function renderChat(list) {
+        const keep = new Set(list.map(o => o.id));
+        const ths = threadsOf(S.orders).filter(t => t.items.some(o => keep.has(o.id)));   // 상태로 거를 때: 대화 안 한 건이라도 맞으면 대화 통째로
+        let shownN = 0, hidden = 0;
+        const hm = { hour: '2-digit', minute: '2-digit' };
+        const html = ths.map(t => {
+            const needs = t.items.some(o => NEEDS.includes(o.status));
+            const ov = !needs && ++shownN > PREVIEW_LIST;
+            if (ov) hidden++;
+            const first = t.items[0];
+            const canHide = t.items.every(CLOSED_FOR_HIDE);
+            const head = `<div class="desk-th-head"><span>${esc(kst(t.items[t.items.length - 1].created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>${first.reply_to ? `<span class="desk-thread">↳ ${Number(first.reply_to)}번에 이어서</span>` : ''}${t.items.length > 1 ? `<span>${t.items.length}번 주고받음</span>` : ''}${canHide ? `<button type="button" class="desk-x" data-act="hidethread" data-id="${t.id}" aria-label="이 대화를 내 지시에서 지우기" title="이 대화를 내 지시에서 지우기">×</button>` : ''}</div>`;
+            const turns = t.items.map(o => {
+                const b = BADGE[o.status] || ['wait', o.status];
+                const last = o.id === t.last;
+                return `<div class="desk-turn${last ? ' last' : ''}" data-oid="${o.id}">
+                    <div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, hm))}${o.has_image ? ' · 이미지 첨부' : ''}</div></div>
+                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultHtml(o, true) : resultBody(o, true)}</div>
+                </div>`;
+            }).join('');
+            return `<article class="desk-thread-box${ov ? ' ov' : ''}" data-th="${t.id}">${head}${turns}</article>`;
+        }).join('');
+        setMore('desk-list-more', hidden);
+        $('desk-list').innerHTML = html;
     }
 
     // #476 첫 화면에는 몇 건만(칸이 끝없이 길어지지 않게) — 나머지는 [자세히 확인하기]로. 답해야 하는 건은 늘 보인다
@@ -691,6 +758,18 @@
             try { await aoDownloadFile(Number(b.dataset.file)); } finally { b.disabled = false; }
             return;
         }
+        if (act === 'hidethread') {
+            const t = threadsOf(S.orders).find(x => x.id === id);
+            if (!t) return;
+            b.disabled = true;
+            try {
+                for (const it of t.items) await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: true });
+                const gone = new Set(t.items.map(x => x.id));
+                S.orders = S.orders.filter(x => !gone.has(x.id)); S.sig = ''; renderList();
+                showToast('이 대화를 내 지시에서 지웠어요. 전체 지시에서는 계속 볼 수 있어요');
+            } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); S.sig = ''; loadOrders(true); }
+            return;
+        }
         if (act === 'hide') {
             b.disabled = true;
             try {
@@ -721,13 +800,19 @@
             return;
         }
         if (act === 'reply') { closeFull(); const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }
-        if (act === 'approve' || act === 'reject' || act === 'retry') {
+        if (act === 'approve' || act === 'reject') {   // #499 한 번 더 확인은 카드 안에서(브라우저 기본 창 대신)
+            S.pend.set(id, act); renderList();
+            if (act === 'reject') { const ta = document.getElementById('reject-' + id); if (ta) ta.focus(); }
+            return;
+        }
+        if (act === 'pendcancel') { S.pend.delete(id); renderList(); return; }
+        if (act === 'approve2' || act === 'reject2' || act === 'retry') {
             let body;
-            if (act === 'approve' && !confirm('이 요청을 승인할까요?\n\n' + (o.result.summary || '') + '\n\n승인하면 창구가 바로 실행합니다.')) return;
-            if (act === 'reject') { const reason = prompt('반려 사유를 적어 주세요 (비워도 됩니다)', ''); if (reason === null) return; body = { reason }; }
+            if (act === 'reject2') { const ta = document.getElementById('reject-' + id); body = { reason: ta ? ta.value.trim() : '' }; }
             b.disabled = true;
             try {
-                const path = act === 'retry' ? 'process' : act;
+                const path = act === 'retry' ? 'process' : act === 'approve2' ? 'approve' : 'reject';
+                S.pend.delete(id);
                 const res = await api('/api/agent-office/orders/' + id + '/' + path, 'POST', body);
                 showToast(res.message || '처리했어요');
                 await Promise.all([loadOrders(true), loadStatus()]);
