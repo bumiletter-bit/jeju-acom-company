@@ -76,7 +76,7 @@
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
     const HINTS = ['정산관리 오늘 발주수량이야 올려줘', '단골고객에게 문자발송할 예정이야 (쿠폰, 행사내용, 기간 넣어주기)', '지금 네이버 자사몰 쿠팡 가격 맞는지 확인해줘', '신규품목 보고서 작성해줘 (핵심내용 두서없이 쓰기)'];
     const SAY = {
-        idle: '무엇을 도와드릴까요? 아래에 적어 주세요.',
+        idle: '무엇을 도와드릴까요?',
         busy: '지금 지시를 처리하고 있어요.',
         offline: '지금은 자리에 없어요. 남겨 두시면 돌아와서 순서대로 처리할게요.',
     };
@@ -95,38 +95,40 @@
         if (!root) return;
         root.innerHTML = `
         <div class="desk-main">
-            <section class="desk-top">
+            <section class="desk-top desk-top1">
                 <div class="desk-hero">
-                    <div>
+                    <div class="desk-hero-info">
                         <div class="desk-date" id="desk-date"></div>
                         <div class="desk-clock" id="desk-clock" aria-live="off"></div>
-                        <span class="desk-state" id="desk-state" data-s="offline"><i></i><span id="desk-state-text">확인 중</span></span>
+                        <div class="desk-hero-line">
+                            <span class="desk-state" id="desk-state" data-s="offline"><i></i><span id="desk-state-text">확인 중</span></span>
+                            <span class="desk-say" id="desk-say" role="status"></span>
+                        </div>
                         <span class="desk-state-sub" id="desk-state-sub"></span>
-                        <div class="desk-say" id="desk-say" role="status"></div>
+                        <div class="desk-wake" id="desk-wake">
+                            <button type="button" class="desk-btn primary" id="desk-wake-btn">창구 깨우기</button>
+                            <span class="desk-wake-note" id="desk-wake-note"></span>
+                        </div>
                     </div>
                     <div class="desk-stage" id="desk-stage" data-s="offline"><img id="desk-char" src="/desk/akkomi-off.webp" alt="아꼼이 캐릭터" width="132" height="132"></div>
-                    <div class="desk-wake" id="desk-wake">
-                        <button type="button" class="desk-btn primary" id="desk-wake-btn">창구 깨우기</button>
-                        <span class="desk-wake-note" id="desk-wake-note"></span>
-                    </div>
                 </div>
                 <form class="desk-ask" id="desk-ask" autocomplete="off">
-                    <h2>클코에게 지시하기</h2>
-                    <p>조회, 문구 초안, 정산 이미지 등록을 맡길 수 있어요. 구체적으로 적을수록 정확하게 처리합니다. 쿠폰, 가격, 발송도 바로 실행하고, 큰 건(50명 넘는 발송·여러 상품 가격 변경)은 실행 전에 한 번 물어봐요.</p>
-                    <label for="desk-input">지시 내용</label>
-                    <textarea class="desk-input" id="desk-input" maxlength="2000" placeholder="예: 21일 효돈 정산관리에 올려줘 (발송목록 이미지를 함께 붙여 주세요)"></textarea>
-                    <div class="desk-thumbs" id="desk-thumbs" hidden></div>
-                    <div class="desk-ask-row">
-                        <input type="file" id="desk-file" accept="image/*" multiple hidden>
-                        <input type="file" id="desk-reply-file" accept="image/*" hidden>
-                        <button type="button" class="desk-btn" id="desk-attach">이미지 첨부</button>
-                        <button type="submit" class="desk-btn primary" id="desk-send">지시 보내기</button>
-                        <span class="desk-ask-meta"><span class="desk-keyhint">Enter 보내기 · Shift+Enter 줄바꿈</span><span class="desk-count" id="desk-count">0 / 2000</span></span>
+                    <label class="desk-sr" for="desk-input">지시 내용</label>
+                    <div class="desk-compose">
+                        <span class="desk-spark" aria-hidden="true">✦</span>
+                        <textarea class="desk-input" id="desk-input" rows="2" maxlength="2000" placeholder="원하시는 작업을 입력해 주세요"></textarea>
+                        <div class="desk-thumbs" id="desk-thumbs" hidden></div>
+                        <div class="desk-compose-row">
+                            <input type="file" id="desk-file" accept="image/*" multiple hidden>
+                            <input type="file" id="desk-reply-file" accept="image/*" hidden>
+                            <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
+                            <button type="button" class="desk-icon" id="desk-attach" aria-label="이미지 첨부" title="이미지 첨부 (붙여넣기·끌어 놓기도 돼요)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button>
+                            <button type="submit" class="desk-icon primary" id="desk-send" aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg></button>
+                        </div>
                     </div>
                     <div class="desk-quick2" role="group" aria-label="자주 쓰는 일">
-                        <span class="desk-quick2-label">자주 쓰는 일</span>
-                        <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주 바로 받기</button>
-                        <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지 올리기</button>
+                        <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주</button>
+                        <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
                         <button type="button" class="desk-chip" id="desk-talk-now" title="입력칸에 지시를 채워 드려요. 고쳐서 보내도 돼요">톡톡 답변 추천</button>
                     </div>
                 </form>
@@ -182,7 +184,7 @@
 
     function bind() {
         const input = $('desk-input');
-        input.addEventListener('input', () => { $('desk-count').textContent = input.value.length + ' / 2000'; });
+        input.addEventListener('input', () => { syncInput(); });
         input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); send(); } });
         input.addEventListener('paste', e => {
             const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter(f => /^image\//.test(f.type));
@@ -207,8 +209,8 @@
             if (btn) btn.click();
         });
         $('desk-qty-now').addEventListener('click', () => sendQtyNow());
-        $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; $('desk-count').textContent = input.value.length + ' / 2000'; } $('desk-file').click(); });
-        $('desk-talk-now').addEventListener('click', () => { input.value = '처리 안 된 톡톡 건 답변 예시문구 만들어줘'; $('desk-count').textContent = input.value.length + ' / 2000'; input.focus(); });
+        $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } $('desk-file').click(); });
+        $('desk-talk-now').addEventListener('click', () => { input.value = '처리 안 된 톡톡 건 답변 예시문구 만들어줘'; syncInput(); input.focus(); });
         $('desk-wake-btn').addEventListener('click', () => wake());
         $('desk-file').addEventListener('change', e => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; });
         const ask = $('desk-ask');
@@ -320,6 +322,15 @@
         if (n) n.textContent = hidden > 0 ? ` · ${hidden}건 더` : '';
     }
 
+    // #501 입력칸: 적는 만큼 늘어나고(최대 240px), 글자 수는 1,500자를 넘을 때만 보인다
+    function syncInput() {
+        const t = $('desk-input'), c = $('desk-count');
+        if (!t || !c) return;
+        const n = t.value.length;
+        c.textContent = n + ' / 2000'; c.hidden = n < 1500;
+        t.style.height = 'auto';
+        if (t.value) t.style.height = Math.min(t.scrollHeight + 2, 240) + 'px'; else t.style.height = '';
+    }
     function addFiles(files) {
         for (const f of files) {
             if (S.images.length >= 6) { showToast('이미지는 한 번에 6장까지 보낼 수 있어요'); break; }
@@ -342,7 +353,7 @@
         if (!content && !S.images.length) { input.focus(); return; }
         S.sending = true;
         const btn = $('desk-send');
-        btn.disabled = true; btn.textContent = '보내는 중';
+        btn.disabled = true; btn.setAttribute('aria-busy', 'true');
         const newIds = [];
         const idOf = r => r && r.order && r.order.id;
         try {
@@ -354,7 +365,7 @@
                 newIds.push(idOf(await api('/api/agent-office/orders', 'POST', { content })));
                 showToast('지시를 보냈어요');
             }
-            input.value = ''; $('desk-count').textContent = '0 / 2000';
+            input.value = ''; syncInput();
             S.images = []; renderThumbs();
             // #476 보낸 지시가 바로 보이게: 내 지시 · 전체 상태로 돌리고 새 카드로 이동 + 잠깐 강조
             if (S.fs !== 'all') { S.fs = 'all'; $('desk-fs').value = 'all'; }
@@ -363,7 +374,7 @@
         } catch (err) {
             showToast('보내지 못했어요: ' + (err && err.message ? err.message : '다시 시도해 주세요'));
         } finally {
-            S.sending = false; btn.disabled = false; btn.textContent = '지시 보내기';
+            S.sending = false; btn.disabled = false; btn.removeAttribute('aria-busy');
         }
     }
 
@@ -431,7 +442,7 @@
             const canWake = !!d.can_wake;      // 대표 PC의 관리 프로그램이 살아 있는가
             const asleep = s === 'offline';
             wrap.hidden = false;
-            wb.hidden = !isAdmin();
+            wb.hidden = !isAdmin() || !asleep;   // #501(대표 GO 10/2): 켜져 있을 땐 버튼을 숨긴다 — 자리 비움일 때만 상태 옆에 보인다
             wb.disabled = !canWake || !asleep;
             wb.textContent = asleep ? '창구 깨우기' : '창구 켜짐';
             wn.textContent = !canWake

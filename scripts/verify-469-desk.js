@@ -231,7 +231,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const vis = el => !!el && getComputedStyle(el).display !== 'none' && el.offsetParent !== null;
             return {
                 root: vis(document.getElementById('ao-desk-root')), legacyOffice: vis(document.getElementById('ao-office')), legacyBar: vis(document.getElementById('ao-order-bar')),
-                biz: vis(document.getElementById('ao-biz-filter')), title: document.querySelector('#desk-ask h2').textContent,
+                biz: vis(document.getElementById('ao-biz-filter')), title: (document.querySelector('#desk-ask label[for="desk-input"]') || {}).textContent, sendLabel: document.getElementById('desk-send').getAttribute('aria-label'), oneCard: !!document.querySelector('.desk-top1 #desk-clock') && !!document.querySelector('.desk-top1 #desk-input'),
                 clock: document.getElementById('desk-clock').textContent, state: document.getElementById('desk-state-text').textContent,
                 img: document.getElementById('desk-char').naturalWidth, panels: document.querySelectorAll('#desk-board .desk-panel').length,
                 weather: /날씨/.test(document.getElementById('ao-desk-root').textContent), maru: /마루/.test(document.getElementById('ao-desk-root').textContent),
@@ -239,7 +239,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             };
         });
         ok('새 화면 표시 · 종전 조직도·입력바·법인/오션라운지 필터 숨김', v.root && !v.legacyOffice && !v.legacyBar && !v.biz);
-        ok('「클코에게 지시하기」 · 시계 · 창구 상태 · 캐릭터 그림 로드', v.title === '클코에게 지시하기' && /\d\d:\d\d/.test(v.clock) && !!v.state && v.img > 0, `${v.clock} / ${v.state}`);
+        ok('#501 첫 칸 = 한 카드(시계 + 지시 입력칸 「지시 내용」 · [지시 보내기]) · 창구 상태 · 캐릭터 그림 로드', v.title === '지시 내용' && v.sendLabel === '지시 보내기' && v.oneCard && /\d\d:\d\d/.test(v.clock) && !!v.state && v.img > 0, `${v.clock} / ${v.state}`);
         ok('현황판 4칸(대표: 채널·발송·할 일·정산 회차) · 날씨 없음 · 「마루」 글자 없음', v.panels === 4 && !v.weather && !v.maru);
         ok('대표 = 대표 확인함 탭 보임 · 가로 넘침 없음', v.approvalTab && !v.overflow);
         // 지시 보내기(실클릭) — POST는 가로채 실DB 무변경

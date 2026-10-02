@@ -383,3 +383,43 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 @media (max-width: 720px) { .desk-chat .desk-a-acts .desk-btn { min-height: 44px; } }
 /* #500 답 칸에 붙인 이미지 */
 .desk-reply-thumbs { flex-basis: 100%; }
+/* #501 첫 칸 — 시계·상태·아꼼이 + 지시 입력을 한 카드로 */
+.desk-top.desk-top1 { display: block; background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: var(--d-shadow); padding: 18px 20px 16px; }
+.desk-top1 .desk-hero { background: none; border: 0; box-shadow: none; padding: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
+.desk-top1 .desk-ask { background: none; border: 0; box-shadow: none; padding: 0; margin-top: 12px; gap: 10px; }
+.desk-top1 .desk-wake { margin-top: 10px; }
+.desk-hero-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.desk-top1 .desk-state { margin-top: 0; }
+.desk-top1 .desk-say { margin: 0; background: none; border: 0; border-radius: 0; padding: 0; font-size: 13.5px; color: var(--d-sub); }
+.desk-top1 .desk-stage img { width: 124px; height: 124px; display: block; }
+.desk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.desk-compose { position: relative; background: #fff; border: 2px solid #A5ACFF; border-radius: 16px; padding: 13px 12px 10px 44px; box-shadow: 0 1px 2px rgba(79, 70, 229, .08); transition: border-color 160ms var(--d-ease), box-shadow 160ms var(--d-ease); }
+.desk-compose:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .14); }
+.desk-ask.drag .desk-compose { border-style: dashed; border-color: var(--d-accent); }
+.desk-spark { position: absolute; left: 15px; top: 13px; font-size: 18px; line-height: 1.4; color: #8F96FF; }
+.desk-top1 .desk-input { display: block; width: 100%; min-height: 50px; border: 0; border-radius: 0; padding: 0; resize: none; background: transparent; font-size: 15px; line-height: 1.55; }
+.desk-top1 .desk-input:focus-visible, .desk-ask.drag .desk-top1 .desk-input, .desk-top1 .desk-ask.drag .desk-input { outline: none; }
+.desk-top1 .desk-input::placeholder { color: var(--d-sub); }
+.desk-top1 .desk-thumbs { margin-top: 8px; }
+.desk-compose-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.desk-compose-row .desk-count { margin-left: 0; margin-right: 4px; }
+.desk-icon { width: 44px; height: 44px; flex: none; border-radius: 50%; border: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-sub); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 160ms var(--d-ease), background-color 160ms var(--d-ease), border-color 160ms var(--d-ease), color 160ms var(--d-ease); }
+.desk-icon:hover { background: var(--d-accent-soft); border-color: #C7CBFF; color: var(--d-accent); }
+.desk-icon:active { transform: scale(.97); }
+.desk-icon:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.desk-icon.primary { background: var(--d-accent); border-color: var(--d-accent); color: #fff; box-shadow: 0 6px 16px -8px rgba(79, 70, 229, .55); }
+.desk-icon.primary:hover { background: var(--primary-dark, #4338CA); border-color: var(--primary-dark, #4338CA); color: #fff; }
+.desk-icon[disabled] { opacity: .55; cursor: default; }
+.desk-top1 .desk-quick2 { border-top: 0; padding-top: 0; margin-top: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.desk-top1 .desk-quick2::-webkit-scrollbar { display: none; }
+.desk-top1 .desk-chip { flex: none; white-space: nowrap; background: #fff; }
+@media (max-width: 640px) {
+    .desk-top.desk-top1 { padding: 16px 14px 14px; }
+    .desk-top1 .desk-stage img { width: 96px; height: 96px; }
+    .desk-top1 .desk-clock { font-size: 34px; }
+    .desk-compose { padding-left: 40px; }
+}
+@media (prefers-reduced-motion: reduce) { .desk-compose, .desk-icon { transition: none; } }
+/* 입력칸을 누를 때 테마의 기본 포커스 테두리가 안쪽에 겹치지 않게 — 포커스 표시는 바깥 상자(.desk-compose)가 한다 */
+.desk-top1 textarea#desk-input, .desk-top1 textarea#desk-input:focus, .desk-top1 textarea#desk-input:focus-visible { border: 0; outline: none; box-shadow: none; background: transparent; }
+.desk-top1 textarea#desk-input:focus { box-shadow: none !important; border-color: transparent !important; }
