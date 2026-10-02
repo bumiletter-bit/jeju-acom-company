@@ -6,6 +6,61 @@
     'use strict';
     const $ = id => document.getElementById(id);
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    // #498 답변 글을 표·굵은 글씨·목록으로 그린다. 글자는 먼저 전부 esc 한 뒤 꾸미므로 답변에 든 태그는 글자로만 보인다.
+    const mdInline = s => esc(s).replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`\n]+?)`/g, '<code>$1</code>');
+    const mdCells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+    function md(text) {
+        const lines = String(text == null ? '' : text).replace(/\r/g, '').split('\n');
+        const out = [];
+        let para = [], list = null;
+        const flushP = () => { if (para.length) { out.push('<div class="desk-md-p">' + para.map(mdInline).join('\n') + '</div>'); para = []; } };
+        const flushL = () => { if (list) { out.push('<' + list.tag + ' class="desk-md-l">' + list.items.map(x => '<li>' + mdInline(x) + '</li>').join('') + '</' + list.tag + '>'); list = null; } };
+        for (let i = 0; i < lines.length; i++) {
+            const ln = lines[i], t = ln.trim();
+            const isRow = t.startsWith('|') && t.indexOf('|', 1) > 0;
+            if (isRow && i + 1 < lines.length && /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(lines[i + 1].trim())) {
+                flushP(); flushL();
+                const head = mdCells(t);
+                const align = mdCells(lines[i + 1]).map(c => /^:?-+:$/.test(c) ? (c[0] === ':' ? 'c' : 'r') : '');
+                const numCls = (c, k) => { const a = align[k] || (/^[\d,.\-+%₩\s]*\d[\d,.\-+%₩\s]*(원|박스|건|개|kg|과|명|장|초|분)?$/.test(c) ? 'r' : ''); return a ? ' class="' + (a === 'r' ? 'num' : 'ctr') + '"' : ''; };
+                i += 2;
+                const rows = [];
+                while (i < lines.length && lines[i].trim().startsWith('|')) { rows.push(mdCells(lines[i])); i++; }
+                i--;
+                out.push('<div class="desk-md-tw"><table class="desk-md-t"><thead><tr>' + head.map((c, k) => '<th' + (align[k] ? ' class="' + (align[k] === 'r' ? 'num' : 'ctr') + '"' : '') + '>' + mdInline(c) + '</th>').join('') + '</tr></thead><tbody>'
+                    + rows.map(r => '<tr>' + head.map((_, k) => '<td' + numCls(r[k] == null ? '' : r[k], k) + '>' + mdInline(r[k] == null ? '' : r[k]) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>');
+                continue;
+            }
+            if (!t) { flushP(); flushL(); continue; }
+            if (/^(-{3,}|━{3,}|═{3,}|─{3,})$/.test(t)) { flushP(); flushL(); out.push('<hr class="desk-md-hr">'); continue; }
+            const h = /^#{1,4}\s+(.+)$/.exec(t);
+            if (h) { flushP(); flushL(); out.push('<div class="desk-md-h">' + mdInline(h[1]) + '</div>'); continue; }
+            const ul = /^[-*•]\s+(.+)$/.exec(t), ol = /^(\d{1,2})[.)]\s+(.+)$/.exec(t);
+            if (ul || ol) {
+                flushP();
+                const tag = ul ? 'ul' : 'ol';
+                if (!list || list.tag !== tag) { flushL(); list = { tag, items: [] }; }
+                list.items.push(ul ? ul[1] : ol[2]);
+                continue;
+            }
+            flushL(); para.push(ln);
+        }
+        flushP(); flushL();
+        return '<div class="desk-md">' + out.join('') + '</div>';
+    }
+    const plainHead = t => String(t || '').replace(/^[#\s*]+/, '').replace(/[*\s]+$/, '').replace(/\s+/g, ' ').trim();
+    const sameHead = (title, text) => plainHead(title) === plainHead(String(text || '').split('\n').find(l => l.trim()) || '');
+    // 화면에 보일 진행 단계(처리 길 표시는 답변 옆 작은 표시로만 쓴다)
+    const visSteps = o => (Array.isArray(o.steps) ? o.steps : []).filter(x => x && x.kind !== 'lane');
+    // 어느 길로 처리했는지(대기 프로그램이 단계에 남긴다) + 걸린 시간
+    function laneChip(o) {
+        const st = (Array.isArray(o.steps) ? o.steps : []).find(s => s && s.kind === 'lane');
+        if (!st) return '';
+        let sec = '';
+        if (o.processed_at && st.t) { const d = Math.round((new Date(o.processed_at) - new Date(st.t)) / 1000); if (d > 0 && d < 7200) sec = d < 90 ? d + '초' : Math.round(d / 60) + '분'; }
+        const done = !ACTIVE.includes(o.status) && o.status !== '판독완료' && o.status !== '확인표작성';
+        return `<span class="desk-lane" data-lane="${esc(st.lane || '')}">${esc(st.text)}${done && sec ? ' · ' + sec : ''}</span>`;
+    }
     const isAdmin = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin');
     const pageActive = () => { const p = $('page-agent-office'); return !!(p && p.classList.contains('active')); };
     const kst = (t, opt) => { try { return new Date(/Z|[+-]\d\d:?\d\d$/.test(String(t)) ? t : String(t).replace(' ', 'T') + 'Z').toLocaleString('ko-KR', Object.assign({ timeZone: 'Asia/Seoul' }, opt)); } catch (e) { return ''; } };
@@ -14,7 +69,7 @@
     const S = {
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
-        fs: 'all', wide: false, detail: new Set(), closed: new Set(), follow: new Set(),
+        fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), closed: new Set(), follow: new Set(),
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
@@ -64,7 +119,13 @@
                         <input type="file" id="desk-file" accept="image/*" multiple hidden>
                         <button type="button" class="desk-btn" id="desk-attach">이미지 첨부</button>
                         <button type="submit" class="desk-btn primary" id="desk-send">지시 보내기</button>
-                        <span class="desk-count" id="desk-count">0 / 2000</span>
+                        <span class="desk-ask-meta"><span class="desk-keyhint">Enter 보내기 · Shift+Enter 줄바꿈</span><span class="desk-count" id="desk-count">0 / 2000</span></span>
+                    </div>
+                    <div class="desk-quick2" role="group" aria-label="자주 쓰는 일">
+                        <span class="desk-quick2-label">자주 쓰는 일</span>
+                        <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주 바로 받기</button>
+                        <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지 올리기</button>
+                        <button type="button" class="desk-chip" id="desk-talk-now" title="입력칸에 지시를 채워 드려요. 고쳐서 보내도 돼요">톡톡 답변 추천</button>
                     </div>
                 </form>
             </section>
@@ -118,13 +179,16 @@
     function bind() {
         const input = $('desk-input');
         input.addEventListener('input', () => { $('desk-count').textContent = input.value.length + ' / 2000'; });
-        input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); send(); } });
+        input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); send(); } });
         input.addEventListener('paste', e => {
             const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter(f => /^image\//.test(f.type));
             if (files.length) { e.preventDefault(); addFiles(files); }
         });
         $('desk-ask').addEventListener('submit', e => { e.preventDefault(); send(); });
         $('desk-attach').addEventListener('click', () => $('desk-file').click());
+        $('desk-qty-now').addEventListener('click', () => sendQtyNow());
+        $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; $('desk-count').textContent = input.value.length + ' / 2000'; } $('desk-file').click(); });
+        $('desk-talk-now').addEventListener('click', () => { input.value = '처리 안 된 톡톡 건 답변 예시문구 만들어줘'; $('desk-count').textContent = input.value.length + ' / 2000'; input.focus(); });
         $('desk-wake-btn').addEventListener('click', () => wake());
         $('desk-file').addEventListener('change', e => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; });
         const ask = $('desk-ask');
@@ -272,6 +336,23 @@
         }
     }
 
+    // #498 중간발주 — 정해진 일이라 AI를 거치지 않고 대기 프로그램이 바로 집계한다(지시 목록에 결과가 올라온다)
+    async function sendQtyNow() {
+        if (S.sending) return;
+        S.sending = true;
+        const btn = $('desk-qty-now');
+        btn.disabled = true;
+        try {
+            const r = await api('/api/agent-office/orders', 'POST', { content: '중간발주 뽑아줘' });
+            showToast('중간발주를 집계하고 있어요 (1~2분)');
+            if (S.fs !== 'all') { S.fs = 'all'; $('desk-fs').value = 'all'; }
+            if (S.tab !== 'mine') await setTab('mine'); else { S.sig = ''; await loadOrders(true); }
+            revealOrders([r && r.order && r.order.id].filter(Boolean));
+        } catch (err) {
+            showToast('보내지 못했어요: ' + (err && err.message ? err.message : '다시 시도해 주세요'));
+        } finally { S.sending = false; btn.disabled = false; }
+    }
+
     function setTab(tab) {
         S.tab = tab;
         document.querySelectorAll('#desk-tabs .desk-tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
@@ -360,7 +441,9 @@
             if (tab !== S.tab) { S.again = true; return; }
             const orders = d.orders || [];
             watchConfirms(orders);
-            const sig = S.tab + '|' + orders.map(o => o.id + ':' + o.status + ':' + ((o.steps && o.steps.length) || 0) + ':' + (o.processed_at || '')).join(',');
+            const sig = S.tab + '|' + orders.map(o => o.id + ':' + o.status + ':' + ((o.steps && o.steps.length) || 0) + ':' + (o.processed_at || '') + ':' + liveLen(o)).join(',');
+            // #498 내 지시가 처리되기 시작하면 그 줄을 한 번 펼쳐 진행 상황과 쓰는 중인 답변이 바로 보이게 한다(닫으면 다시 열지 않는다)
+            if (tab === 'mine') for (const o of orders) if (o.status === '처리중' && !S.autoOpened.has(o.id)) { S.autoOpened.add(o.id); S.detail.add(o.id); }
             S.orders = orders;
             if (force || sig !== S.sig) { S.sig = sig; renderList(); }
         } catch (e) {
@@ -406,15 +489,22 @@
     const isAnswer = o => !!o.result && (o.result.type === 'desk_answer' || o.result.type === 'answer');
     const followBtn = o => FOLLOW.includes(o.status) && !S.follow.has(o.id) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
     // #484(대표 9/30): full = 표에서 줄을 눌러 펼친 자세히 칸 — 답변을 줄이지 않고 전부 보여 준다(전체 보기 버튼 없음)
+    // #498 처리 중에 대기 프로그램이 적어 주는 「쓰는 중인 답변」(result.type = live)
+    function liveText(o) { const r = o.result || {}; return o.status === '처리중' && r.type === 'live' && r.text ? String(r.text) : ''; }
+    function liveLen(o) { return liveText(o).length; }
     function resultHtml(o, full) { return resultBody(o, full) + followHtml(o); }
     function resultBody(o, full) {
         const r = o.result || {};
         const st = o.status;
         if (ACTIVE.includes(st) || st === '판독완료' || st === '확인표작성') {
-            const steps = Array.isArray(o.steps) ? o.steps : [];
+            const steps = visSteps(o);
             const last = steps.length ? steps[steps.length - 1].text : '';
             const msg = st === '대기' ? '순서를 기다리고 있어요' : st === '승인됨' ? '승인됐어요. 곧 실행합니다' : (last || '처리하고 있어요');
-            return `<div class="desk-note"><span class="desk-working">${esc(msg)}</span></div>`;
+            const live = liveText(o);
+            const trail = steps.slice(-4).filter(s => s && s.text);
+            return `<div class="desk-note"><span class="desk-working">${esc(live ? '답변을 쓰고 있어요' : msg)}</span></div>`
+                + (full && trail.length > 1 ? `<ul class="desk-steps">${trail.map(s => `<li>${esc(kst(s.t, { hour: '2-digit', minute: '2-digit' }))} ${esc(s.text)}</li>`).join('')}</ul>` : '')
+                + (live ? `<div class="desk-a answer draft live"><div class="desk-a-label">클코 답변 · 쓰는 중</div><div class="desk-live-scroll" data-live="${o.id}">${md(live)}<span class="desk-caret" aria-hidden="true"></span></div></div>` : '');
         }
         if (r.type === 'desk_answer' || r.type === 'answer') {
             const text = r.answer || r.text || '';
@@ -425,7 +515,7 @@
                 ? `<div class="desk-acts desk-files">${r.files.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
                     : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
-            return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><div class="desk-a-label">클코 답변</div>${r.title ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${esc(text)}</div>${files}
+            return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><div class="desk-a-label">클코 답변</div>${laneChip(o)}${r.title && !sameHead(r.title, text) ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${md(text)}</div>${files}
                 <div class="desk-acts desk-a-acts">${(long || mid) && !full ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
                 <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button>${followBtn(o)}</div>`;
         }
@@ -473,7 +563,7 @@
     function resultLine(o) {
         const r = o.result || {}, st = o.status;
         if (GROUP.work.includes(o.status)) {
-            const steps = Array.isArray(o.steps) ? o.steps : [];
+            const steps = visSteps(o);
             const last = steps.length ? steps[steps.length - 1].text : '';
             return '<span class="desk-working">' + esc(st === '대기' ? '순서를 기다리고 있어요' : st === '승인됨' ? '승인됐어요. 곧 실행합니다' : (last || '처리하고 있어요')) + '</span>';
         }
@@ -489,11 +579,22 @@
         const a = document.activeElement;
         const focusId = a && a.classList && a.classList.contains('desk-reply-in') ? a.id : null;
         const sel = focusId ? [a.selectionStart, a.selectionEnd] : null;
+        // #498 쓰는 중인 답변 칸: 맨 아래를 보고 있었으면(또는 처음 그리면) 계속 맨 아래를 따라가고, 위로 올려 읽고 있었으면 그 자리를 지킨다
+        const liveAt = {};
+        document.querySelectorAll('#desk-list [data-live]').forEach(el => { liveAt[el.dataset.live] = { top: el.scrollTop, bottom: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }; });
         fn();
+        document.querySelectorAll('#desk-list [data-live]').forEach(el => { const p = liveAt[el.dataset.live]; el.scrollTop = !p || p.bottom ? el.scrollHeight : p.top; });
         for (const id in saved) { const t = document.getElementById(id); if (t && !t.value) t.value = saved[id]; }
         if (focusId) { const t = document.getElementById(focusId); if (t) { t.focus({ preventScroll: true }); try { t.setSelectionRange(sel[0], sel[1]); } catch (e) { } } }
     }
-    function renderList() { keepReplies(renderListNow); }
+    // #498 목록 안의 글자를 끌어 고르는 중이면 다시 그리지 않는다(고른 것이 풀리지 않게) — 고르기를 끝내면 다음 새로고침에 그린다
+    function selectingInList() {
+        const g = window.getSelection && window.getSelection();
+        if (!g || g.isCollapsed || !g.anchorNode) return false;
+        const box = $('desk-list');
+        return !!(box && box.contains(g.anchorNode));
+    }
+    function renderList() { if (selectingInList()) { S.sig = ''; return; } keepReplies(renderListNow); }
     function renderListNow() {
         const box = $('desk-list');
         const list = shown();
@@ -508,7 +609,7 @@
         if (S.wide) { renderTable(list, ov); return; }
         box.innerHTML = list.map((o, i) => {
             const b = BADGE[o.status] || ['wait', o.status];
-            const steps = (Array.isArray(o.steps) ? o.steps : []).slice(-4);
+            const steps = visSteps(o).slice(-4);
             const showSteps = steps.length > 1 && !['완료', '안내', '응답됨'].includes(o.status);
             return `<article class="desk-card${ov[i] ? ' ov' : ''}" data-oid="${o.id}">
                 <div class="desk-card-head"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span>
@@ -797,7 +898,7 @@
         clock();
         if (document.hidden) return;
         const hasActive = S.orders.some(o => ACTIVE.includes(o.status) || o.status === '판독완료' || o.status === '확인표작성');
-        if (S.tick % (hasActive ? 4 : 12) === 0) loadOrders(false);
+        if (S.tick % (hasActive ? 2 : 12) === 0) loadOrders(false);   // #498 진행 중이면 2초마다(종전 4초)
         if (S.tick % 10 === 0) loadStatus();
         if (Date.now() - S.boardAt > 60000) { S.boardAt = Date.now(); loadBoard(); }
         if (Date.now() - S.inboxAt > 30000) { S.inboxAt = Date.now(); loadInbox(); }

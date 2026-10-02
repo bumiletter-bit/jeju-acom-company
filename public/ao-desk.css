@@ -303,3 +303,48 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 /* #477 이어서 지시 · 이어진 지시 표시 */
 .desk-thread { color: var(--d-accent); font-weight: 600; }
 .desk-follow { background: var(--d-accent-soft); border: 1px solid #D8DBFF; border-radius: 10px; padding: 10px; }
+
+/* #498 쓰는 중인 답변 — 끝에 깜빡이는 커서(움직임 줄이기 설정이면 멈춤) */
+.desk-live-scroll { max-height: 300px; overflow-y: auto; }
+.desk-caret { display: inline-block; width: 7px; height: 1.05em; margin-left: 2px; vertical-align: text-bottom; background: var(--d-accent); border-radius: 1px; animation: desk-caret 1s steps(2, start) infinite; }
+@keyframes desk-caret { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .desk-caret { animation: none; } }
+.detail .desk-steps { margin: 6px 0 0; }
+/* #498-b 답변 글(표·굵게·목록) · 자주 쓰는 일 · 처리 길 표시 */
+.desk-md { white-space: normal; }
+.desk-md-p { white-space: pre-wrap; margin: 0 0 8px; }
+.desk-md > :last-child { margin-bottom: 0; }
+.desk-md-h { font-weight: 700; font-size: 14.5px; margin: 10px 0 6px; color: var(--d-ink); }
+.desk-md > .desk-md-h:first-child { margin-top: 0; }
+.desk-md-l { margin: 0 0 8px; padding-left: 20px; }
+.desk-md-l li { margin: 2px 0; }
+.desk-md-hr { border: 0; border-top: 1px solid var(--d-line); margin: 10px 0; }
+.desk-md strong { font-weight: 700; color: var(--d-ink); }
+.desk-md code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; background: var(--d-soft); border: 1px solid var(--d-line); border-radius: 4px; padding: 0 4px; }
+.desk-md-tw { overflow-x: auto; margin: 0 0 8px; border: 1px solid var(--d-line); border-radius: 8px; }
+.desk-md-t { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+.desk-md-t th { text-align: left; font-weight: 700; background: var(--d-soft); color: var(--d-ink); padding: 7px 10px; border-bottom: 1px solid var(--d-line); white-space: nowrap; }
+.desk-md-t td { padding: 7px 10px; border-bottom: 1px solid var(--d-line); vertical-align: top; }
+.desk-md-t tr:last-child td { border-bottom: 0; }
+/* 접어 보기: 표·목록이 든 글은 줄 수 대신 높이로 자른다 */
+.desk-a.clamp:has(.desk-md) { display: block; max-height: 11.5em; overflow: hidden; }
+.desk-listbox:not(.is-full) .desk-a.pv:has(.desk-md) { display: block; max-height: 7em; overflow: hidden; }
+.desk-lane { float: right; font-size: 11px; font-weight: 600; color: var(--d-sub); background: var(--d-soft); border: 1px solid var(--d-line); border-radius: 999px; padding: 1px 8px; margin-left: 8px; }
+.desk-ask-meta { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
+.desk-ask-meta .desk-count { margin-left: 0; }
+.desk-keyhint { font-size: 12px; color: var(--d-sub); }
+.desk-quick2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--d-line); }
+.desk-quick2-label { font-size: 12px; font-weight: 600; color: var(--d-sub); }
+.desk-chip { min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-ink); font-size: 13px; font-weight: 600; cursor: pointer; transition: transform 160ms var(--d-ease, ease-out), background-color 160ms var(--d-ease, ease-out), border-color 160ms var(--d-ease, ease-out); }
+.desk-chip:hover { background: var(--d-accent-soft); border-color: #C7CBFF; color: var(--d-accent); }
+.desk-chip:active { transform: scale(0.97); }
+.desk-chip:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.desk-chip:disabled { opacity: .5; cursor: default; }
+@media (max-width: 720px) { .desk-chip { min-height: 44px; } .desk-keyhint { display: none; } }
+@media (prefers-reduced-motion: reduce) { .desk-chip { transition: none; } }
+/* 표 칸: 숫자가 글자 단위로 쪼개지지 않게 · 숫자 칸은 오른쪽 정렬 */
+.desk-md-t th, .desk-md-t td { overflow-wrap: normal; word-break: keep-all; }
+.desk-md-t .num { text-align: right; white-space: nowrap; }
+.desk-md-t .ctr { text-align: center; }
+.desk-quick2-label { flex-basis: 100%; }
+.desk-md-t td, .desk-md-t th { min-width: 4.5em; }

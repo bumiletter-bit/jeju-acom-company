@@ -6,6 +6,10 @@
 //   ⓒ `claude -p`(창 없이 한 건 처리)는 준 API 키를 그대로 쓴다 → 이 방식으로 지시 1건마다 창구를 부른다.
 //   ⓓ 창 안에서 돌던 감시(watch.js)는 PC 메모리가 모자라면 강제로 꺼진다(9/29 실사고) — 이 프로그램은 창 밖에서 돌아 그 영향을 안 받는다.
 //
+//   #498(대표 GO 2026-10-02) 빠르게: ①새 지시 확인 10초 → 2초 ②진행 상황·답변을 쓰는 대로 화면에 ③지시를 미리 받아 창구에 건넴
+//   ④단순한 일은 빠른 모델(Sonnet)·판단과 창작은 Opus ⑤중간발주는 AI 없이 바로. 규칙 = scripts/desk/fast.js
+//   되돌리기 = agent_office_config 'desk_fast' 를 {"off":true} 로(대기 프로그램을 다시 띄울 필요 없음 · 10초 안에 반영)
+//
 // 사용: node scripts/desk/launcher.js              (상주 — 설치는 install-launcher.js)
 //       node scripts/desk/launcher.js --once       (지금 대기 중인 1건만 처리하고 끝 · 시험용)
 //       node scripts/desk/launcher.js --dry        (실행하지 않고 무엇을 할지만 보기)
@@ -15,7 +19,9 @@ const fs = require('fs');
 const os = require('os');
 const net = require('net');
 const { spawn } = require('child_process');
-const { pool, ROOT, heartbeat } = require('./_db');
+const { pool, ROOT, heartbeat, appendStep } = require('./_db');
+const { claim } = require('./get');
+const fast = require('./fast');
 const trust = require('./trust-desk');
 
 const DESK_DIR = path.join(ROOT, '★에이전트오피스');
@@ -23,12 +29,17 @@ const KEY_FILE = path.join(os.homedir(), '.akkome', 'desk-api-key.txt');
 const LOG_DIR = path.join(os.homedir(), '.akkome', 'logs');
 const LOG = path.join(os.homedir(), '.akkome', 'launcher.log');
 const LOCK_PORT = 47469;
-const TICK_MS = 10000;
+const TICK_MS = 10000;                   // 상태 기록·화면 신호 확인 주기(종전 그대로)
+const POLL_MS = 2000;                    // #498 새 지시 확인 주기
 const BEAT_MS = parseInt(process.env.DESK_BEAT_MS, 10) || 30000;
 const RUN_TIMEOUT_MS = 25 * 60 * 1000;   // 한 건이 이보다 오래 걸리면 멈춘 것으로 본다
+const DIRECT_TIMEOUT_MS = 9 * 60 * 1000; // AI 없이 바로 처리하는 일의 한도
 const MAX_TRY = 3;                       // 같은 지시를 이만큼 실패하면 오류로 돌린다
 const REQ_TTL_MS = 300000;               // 이보다 오래된 화면 버튼 신호는 버린다
-const MODEL = process.env.AKKOME_MODEL || 'opus';
+// 시험용: DESK_FAST='{"lean":false}' 처럼 주면 DB 설정 대신 이 값을 쓴다
+let ENV_FAST = null; try { ENV_FAST = process.env.DESK_FAST ? JSON.parse(process.env.DESK_FAST) : null; } catch (e) { ENV_FAST = null; }
+const FORCED_MODEL = process.env.AKKOME_MODEL || '';   // 주면 모델 나누기를 하지 않고 그 모델로만 돈다(시험용)
+const MODEL = FORCED_MODEL || 'opus';
 // 🔴 윈도에서 'claude' 는 PowerShell 껍데기라 그대로는 못 띄운다 → 진짜 실행 파일(claude.exe)을 찾아 쓴다.
 function findClaude() {
     const c = [
@@ -48,6 +59,14 @@ function log(msg) {
 }
 function trimLog() {
     try { const s = fs.statSync(LOG); if (s.size > 512 * 1024) fs.writeFileSync(LOG, fs.readFileSync(LOG, 'utf8').split('\n').slice(-400).join('\n')); } catch (e) { /* 없음 */ }
+    // #498 지시별 기록이 진행 상황까지 담아 커졌다 → 14일 지난 것은 지운다
+    try {
+        for (const f of fs.readdirSync(LOG_DIR)) {
+            if (!/^order-\d+\.log$/.test(f)) continue;
+            const p = path.join(LOG_DIR, f);
+            if (Date.now() - fs.statSync(p).mtimeMs > 14 * 86400e3) fs.unlinkSync(p);
+        }
+    } catch (e) { /* 폴더 없음 */ }
 }
 async function cfgGet(key) {
     const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [key]);
@@ -71,10 +90,32 @@ function promptFor(o) {
         + `이 실행은 지시 한 건만 처리하고 끝납니다 — 감시(watch.js)는 돌리지 마세요. 결과를 올린 뒤 한 줄로 끝내면 됩니다.\n`
         + `get.js가 「이미 처리 중」이라고 하면 다른 창이 집어 간 것이니 아무것도 하지 말고 끝내세요.`;
 }
+// #498 미리 받아 둔 지시를 문장에 넣어 준다 — 창구가 get.js를 부르는 한 차례를 줄인다(내용은 get.js가 내주는 것과 같다)
+function promptPrefetched(o, got) {
+    return `새 지시 #${o.id} 를 대기 프로그램이 이미 받아 두었습니다(상태는 이미 '처리중'). 아래가 get.js가 내주는 내용 그대로입니다 — get.js를 다시 부르지 마세요.\n`
+        + '<지시>\n' + JSON.stringify(got, null, 2) + '\n</지시>\n'
+        + `CLAUDE.md의 「일하는 순서」에서 받기 다음 단계부터 평소와 똑같이 처리하고, node scripts/desk/respond.js ${o.id} <결과.json> 으로 결과를 올립니다.\n`
+        + `이 실행은 지시 한 건만 처리하고 끝납니다 — 감시(watch.js)는 돌리지 마세요. 결과를 올린 뒤 한 줄로 끝내면 됩니다.\n`
+        + HINTS(o.id);
+}
+// 창구가 매번 헤매던 두 가지(결과 형식·조회 방법)를 미리 알려 준다 — 규칙은 그대로, 길만 짧게(워커 실측: 형식을 몰라 4차례·12초를 썼다)
+function HINTS(id) {
+    return `\n[빠르게 일하는 법]\n`
+        + `· 결과 파일은 Write 도구로 ${path.join(ROOT, '.scratch' + id, 'result.json')} 에 씁니다(직원 화면에 쓰는 대로 보입니다). 맨 위 열쇠는 "kind" 입니다 — 답: {"kind":"answer","title":"한 줄 제목","answer":"답변 글","attachments":["파일 경로"]} · 되묻기: {"kind":"question","question":"…"} · 정산 이미지: {"kind":"ocr","partner":"거래처","items":[{"name":"품목","qty":수량}],"date":"YYYY-MM-DD"} · 그 밖(approval·refuse·error)은 respond.js 머리말 그대로.\n`
+        + `· 회사프로그램 자료 조회는 node scripts/desk/q.js "SELECT …" 한 번이면 됩니다(읽기 전용 · 컬럼은 node scripts/desk/q.js --cols 테이블). 값을 바꾸는 일은 종전 도구·방법 그대로입니다.\n`
+        + `· 짧아진 것은 길뿐입니다 — 확인·계산·대조는 종전과 똑같이 합니다(예: 박스재고는 업무지식의 계산 그대로, 저장된 값만 읽고 끝내지 않기). 날짜·시각은 SQL에서 한국 시각으로 바꿔 읽습니다.
+`
+        + `· 손님에게 나갈 문구에 발송일(「당일 발송」 등)을 적을 때는 발송휴무 달력을 먼저 확인하고, 업무지식에 확정된 사실(반품·보관·후숙 등)은 빠뜨리지 않습니다.
+`
+        + `· 누구·무엇·언제가 빠져 짐작해야 하는 지시는 answer로 닫지 말고 question(되묻기)으로 올립니다 — 직원 화면에 답 칸이 열립니다.
+`
+        + `· 답변은 한국어로, 평소 기준(업무지식.md) 그대로 씁니다.`;
+}
 
-const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0 };
+const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0, forceWarm: false, lastSlow: 0, fast: fast.settings(null), key: null };
 
-function runDesk(order, key) {  // key 가 null 이면 콘솔 키 없이(대표 요금제로) 돈다 — 시험 전용
+function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(대표 요금제로) 돈다 · opt = { model, prompt, stream, runId, live }
+    opt = opt || {};
     return new Promise(resolve => {
         fs.mkdirSync(LOG_DIR, { recursive: true });
         const outPath = path.join(LOG_DIR, `order-${order.id}.log`);
@@ -82,19 +123,168 @@ function runDesk(order, key) {  // key 가 null 이면 콘솔 키 없이(대표 
         const env = Object.assign({}, process.env);
         if (key) env.ANTHROPIC_API_KEY = key; else delete env.ANTHROPIC_API_KEY;
         // 🔴 문장은 반드시 맨 앞 — --add-dir 는 폴더를 여러 개 받는 옵션이라 뒤에 둔 문장을 폴더로 삼킨다(실측).
-        const args = [promptFor(order), '--model', MODEL, '--dangerously-skip-permissions', '--add-dir', ROOT];
+        const args = [opt.prompt || promptFor(order), '--model', opt.model || MODEL, '--dangerously-skip-permissions', '--add-dir', ROOT];
+        if (opt.stream) args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages');
+        // 가볍게: 대표 개인 설정(도구를 쓸 때마다 울리는 알림 훅·플러그인)과 외부 연결(MCP)을 창구 실행에서 뺀다.
+        //   창구 규칙(★에이전트오피스의 CLAUDE.md·settings.json)은 그대로 읽는다 · 생각 깊이는 종전 값(high)을 그대로 준다.
+        if (opt.lean) args.push('--setting-sources', 'project,local', '--strict-mcp-config');
+        if (opt.effort) args.push('--effort', opt.effort);
         const exe = findClaude();
-        if (!exe) { try { fs.closeSync(out); } catch (_) { } return resolve({ code: -1, err: 'claude 실행 파일을 찾지 못했습니다', outPath }); }
-        const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['ignore', out, out], windowsHide: true });
+        if (!exe) { try { fs.closeSync(out); } catch (_) { } return resolve({ code: -1, err: 'claude 실행 파일을 찾지 못했습니다', outPath, info: {} });
+        }
+        const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['ignore', opt.stream ? 'pipe' : out, out], windowsHide: true });
         let done = false;
+        const info = {};
+        if (opt.stream) {
+            // #498 도구 호출은 「지금 하는 일」 한 줄로, 답변 글은 적는 대로 미리 보여 준다(기록 실패는 처리에 영향 없음)
+            const watcher = fast.streamWatcher({
+                onStep: text => {
+                    if (!opt.runId) return;
+                    appendStep(opt.runId, 'work', text).then(() => heartbeat('busy', order.id)).catch(e => log('단계 기록 실패(무시): ' + e.message));
+                },
+                onLive: text => {
+                    if (!opt.live) return;
+                    pool.query(`UPDATE pending_orders SET result = $2 WHERE id = $1 AND status = '처리중'`,
+                        [order.id, JSON.stringify({ type: 'live', text: String(text).slice(0, 20000) })]).catch(e => log('미리 보기 기록 실패(무시): ' + e.message));
+                },
+                onResult: r => { Object.assign(info, r); },
+            });
+            let buf = '';
+            child.stdout.setEncoding('utf8');   // 한글이 조각 경계에서 깨지지 않게
+            child.stdout.on('data', d => {
+                try { fs.writeSync(out, d); } catch (_) { /* 기록 실패는 무시 */ }
+                buf += d;
+                let i;
+                while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); try { watcher.line(line); } catch (e) { /* 한 줄 해석 실패는 무시 */ } }
+            });
+        }
         const finish = r => { if (done) return; done = true; clearTimeout(timer); try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ } resolve(r); };
         const timer = setTimeout(() => {
             log(`#${order.id} 25분을 넘겨 중단`);
             try { child.kill(); } catch (e) { /* 이미 끝남 */ }
         }, RUN_TIMEOUT_MS);
-        child.on('error', e => finish({ code: -1, err: e.message, outPath }));
-        child.on('exit', code => finish({ code, outPath }));
+        child.on('error', e => finish({ code: -1, err: e.message, outPath, info }));
+        child.on('exit', code => finish({ code, outPath, info }));
     });
+}
+
+// ── #498 ③ 켜 둔 창구 — 지시마다 새로 켜지 않고, 한 번 켠 창구를 잠깐 살려 두었다가 다음 지시에 다시 쓴다
+//   워커 실측(10/2): 살려 둔 프로세스도 준 키를 그대로 따르고(요금 분리 유지), 「/clear」를 넣으면 앞 대화를 잊는다(지시끼리 섞이지 않음).
+//   요금·모델은 프로세스마다 정해지므로 (요금 종류 × 모델)별로 하나씩 둔다. 20분 동안 일이 없으면 끈다(메모리 약 230MB씩).
+//   끄는 법: agent_office_config 'desk_fast' 에 {"warm":false}. 살려 둔 창구가 죽었거나 바쁘면 종전처럼 새로 켠다.
+const warm = new Map();
+const WARM_IDLE_MS = 20 * 60 * 1000;
+const WARM_MAX = 2;
+const warmKey = (key, model, effort) => (key ? 'key' : 'sub') + ':' + model + (effort ? ':' + effort : '');
+function warmSpawn(key, model, lean, effort) {
+    const exe = findClaude();
+    if (!exe) return null;
+    const env = Object.assign({}, process.env);
+    if (key) env.ANTHROPIC_API_KEY = key; else delete env.ANTHROPIC_API_KEY;
+    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+        '--model', model, '--dangerously-skip-permissions', '--add-dir', ROOT];
+    if (lean) args.push('--setting-sources', 'project,local', '--strict-mcp-config');
+    if (effort) args.push('--effort', effort);
+    const child = spawn(exe, args, { cwd: DESK_DIR, env, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    const w = { k: warmKey(key, model, effort), child, busy: false, dead: false, last: Date.now(), onLine: null, onExit: null, used: 0 };
+    let buf = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', d => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (w.onLine) { try { w.onLine(line); } catch (e) { /* 무시 */ } } }
+    });
+    const gone = () => { if (w.dead) return; w.dead = true; if (warm.get(w.k) === w) warm.delete(w.k); if (w.onExit) { try { w.onExit(); } catch (e) { /* 무시 */ } } };
+    child.on('exit', gone);
+    child.on('error', gone);
+    child.stdin.on('error', () => { /* 이미 닫힌 창구에 쓰려 한 경우 — exit 가 처리한다 */ });
+    warm.set(w.k, w);
+    return w;
+}
+function warmSend(w, text) {
+    w.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n');
+}
+function warmEnd(w) { try { w.child.stdin.end(); } catch (e) { /* 무시 */ } setTimeout(() => { if (!w.dead) { try { w.child.kill(); } catch (e) { /* 무시 */ } } }, 5000).unref(); }
+function warmReap(all) {
+    for (const w of warm.values()) if (!w.busy && (all || Date.now() - w.last > WARM_IDLE_MS)) { warm.delete(w.k); warmEnd(w); }
+}
+function runWarm(order, key, opt) {
+    const model = opt.model || MODEL;
+    let w = warm.get(warmKey(key, model, opt.effort));
+    const reused = !!(w && !w.dead && !w.busy);
+    if (!reused && !(w && w.busy)) {
+        // 살려 두는 창구는 2개까지 — 넘으면 가장 오래 쉰 것을 끈다(메모리 아끼기)
+        const idle = [...warm.values()].filter(x => !x.busy).sort((a, b) => a.last - b.last);
+        while (warm.size >= WARM_MAX && idle.length) { const x = idle.shift(); warm.delete(x.k); warmEnd(x); }
+    }
+    if (!reused) w = (w && w.busy) ? null : warmSpawn(key, model, opt.lean, opt.effort);
+    if (!w) return runDesk(order, key, opt);   // 살려 둔 창구가 바쁘거나 못 켰으면 종전 방식
+    return new Promise(resolve => {
+        fs.mkdirSync(LOG_DIR, { recursive: true });
+        const outPath = path.join(LOG_DIR, `order-${order.id}.log`);
+        const out = fs.openSync(outPath, 'a');
+        const info = { warm: reused ? 'reused' : 'new' };
+        let done = false;
+        const finish = code => {
+            if (done) return; done = true; clearTimeout(timer);
+            try { fs.closeSync(out); } catch (_) { /* 이미 닫힘 */ }
+            w.onExit = null;
+            if (w.dead) { w.onLine = null; return resolve({ code, outPath, info }); }
+            // 다음 지시와 섞이지 않게 앞 대화를 비운다 — 비우기가 끝나야 다시 쓸 수 있다(15초 안에 안 끝나면 끈다)
+            const guard = setTimeout(() => { if (warm.get(w.k) === w) warm.delete(w.k); warmEnd(w); }, 15000);
+            w.onLine = line => { if (line.includes('"type":"result"')) { clearTimeout(guard); w.onLine = null; w.busy = false; w.last = Date.now(); w.used++; } };
+            try { warmSend(w, '/clear'); } catch (e) { clearTimeout(guard); if (warm.get(w.k) === w) warm.delete(w.k); warmEnd(w); }
+            resolve({ code, outPath, info });
+        };
+        const watcher = fast.streamWatcher({
+            onStep: text => { if (opt.runId) appendStep(opt.runId, 'work', text).then(() => heartbeat('busy', order.id)).catch(e => log('단계 기록 실패(무시): ' + e.message)); },
+            onLive: text => {
+                if (!opt.live) return;
+                pool.query(`UPDATE pending_orders SET result = $2 WHERE id = $1 AND status = '처리중'`,
+                    [order.id, JSON.stringify({ type: 'live', text: String(text).slice(0, 20000) })]).catch(e => log('미리 보기 기록 실패(무시): ' + e.message));
+            },
+            onResult: r => { Object.assign(info, r); finish(r.is_error ? 1 : 0); },
+        });
+        const timer = setTimeout(() => { log(`#${order.id} 25분을 넘겨 중단`); try { w.child.kill(); } catch (e) { /* 이미 끝남 */ } }, RUN_TIMEOUT_MS);
+        w.busy = true;
+        w.onLine = line => { try { fs.writeSync(out, line + '\n'); } catch (_) { /* 무시 */ } watcher.line(line); };
+        w.onExit = () => finish(-1);
+        try { warmSend(w, opt.prompt); } catch (e) { finish(-1); }
+    });
+}
+
+// node 스크립트 한 개를 돌려 출력을 받는다(AI 없음)
+function runNode(script, args, timeoutMs) {
+    return new Promise(resolve => {
+        const child = spawn(process.execPath, [path.join(__dirname, script)].concat(args || []), { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        let out = '', err = '', done = false;
+        const finish = code => { if (done) return; done = true; clearTimeout(timer); resolve({ code, out, err }); };
+        const timer = setTimeout(() => { try { child.kill(); } catch (e) { /* 이미 끝남 */ } finish(-2); }, timeoutMs || 120000);
+        child.stdout.on('data', d => { out += d.toString('utf8'); });
+        child.stderr.on('data', d => { err += d.toString('utf8'); });
+        child.on('error', e => { err += e.message; finish(-1); });
+        child.on('exit', finish);
+    });
+}
+// #498 ⑤ 중간발주 — AI 없이 바로: 회사프로그램과 같은 집계·그림(qty-image.js)을 돌려 결과만 올린다(콘솔 요금 0)
+async function runDirectQty(order, got) {
+    const say = t => got.run_id ? appendStep(got.run_id, 'work', t).catch(() => { }) : null;
+    await say('📦 중간발주 집계 중 — 3채널 주문을 불러와요 (AI 없이 바로 · 1~2분)');
+    const r = await runNode('qty-image.js', [], DIRECT_TIMEOUT_MS);
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const resFile = path.join(LOG_DIR, `direct-${order.id}.json`);
+    let payload;
+    if (r.code === 0) {
+        try { const a = fast.qtyAnswer(r.out); payload = { kind: 'answer', title: a.title, answer: a.answer, attachments: a.attachments }; }
+        catch (e) { payload = { kind: 'error', error: '중간발주 집계 결과를 정리하지 못했어요: ' + e.message }; }
+    } else {
+        const why = (r.err || r.out || '').split(/\r?\n/).filter(Boolean).slice(-1)[0] || (r.code === -2 ? '시간이 너무 오래 걸렸어요' : '알 수 없는 오류');
+        payload = { kind: 'error', error: '중간발주를 집계하지 못했어요 — ' + String(why).replace(/^ERR\s*/, '').slice(0, 300) + ' (잠시 뒤 다시 눌러 주세요. 송장변환 > 중간발주에서도 바로 볼 수 있어요)' };
+    }
+    fs.writeFileSync(resFile, JSON.stringify(payload));
+    const up = await runNode('respond.js', [String(order.id), resFile], 120000);
+    if (up.code !== 0) log(`#${order.id} 바로 처리 결과 올리기 실패: ${(up.err || up.out).slice(0, 200)}`);
+    return { code: up.code === 0 ? 0 : 1, outPath: resFile, info: { direct: true } };
 }
 
 // #474 요금 나누기(대표 확정 2026-09-30): 대표 본인 계정이 넣은 지시 = 이 PC에 로그인된 대표 요금제(키 없이 실행),
@@ -112,26 +302,26 @@ async function subscriptionUsers() {
     return subIds;
 }
 
+const ORDER_COLS = `o.id, o.status, o.created_by, o.created_by_id, (o.image_data IS NOT NULL) AS has_image, o.content, o.reply_to,
+                    (SELECT p.content FROM pending_orders p WHERE p.id = o.reply_to) AS parent_content`;
 async function nextOrder(onlyId) {
     if (onlyId) {
         const one = await pool.query(
-            `SELECT id, status, created_by, created_by_id, (image_data IS NOT NULL) AS has_image
-             FROM pending_orders WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')`, [onlyId]);
+            `SELECT ${ORDER_COLS} FROM pending_orders o WHERE o.id = $1 AND o.is_deleted = false AND o.status IN ('대기', '승인됨')`, [onlyId]);
         return one.rows[0] || null;
     }
     const r = await pool.query(
-        `SELECT id, status, created_by, created_by_id, (image_data IS NOT NULL) AS has_image
-         FROM pending_orders
-         WHERE is_deleted = false AND status IN ('대기', '승인됨')
-           AND content NOT LIKE '[검증469]%'
-         ORDER BY (status = '승인됨') DESC, id ASC LIMIT 1`);
+        `SELECT ${ORDER_COLS} FROM pending_orders o
+         WHERE o.is_deleted = false AND o.status IN ('대기', '승인됨')
+           AND o.content NOT LIKE '[검증469]%'
+         ORDER BY (o.status = '승인됨') DESC, o.id ASC LIMIT 1`);
     return r.rows[0] || null;
 }
 
 async function writeState() {
     await cfgSet('desk_launcher', {
         at: new Date().toISOString(), host: os.hostname(), on: !!st.active, busy: st.busy, note: st.note,
-        last_done: st.lastDone, handled_req_at: st.handledReqAt, mode: 'headless',
+        last_done: st.lastDone, handled_req_at: st.handledReqAt, mode: 'headless', fast: st.fast.off ? 'off' : 'on',
     });
 }
 
@@ -149,17 +339,44 @@ async function handle(order, key) {
             await writeState();
         } catch (e) { log('처리 중 신호 실패(무시): ' + e.message); }
     }, BEAT_MS);
-    log(`#${order.id} 처리 시작 (${order.status} · ${order.created_by || '-'} · ${key ? '콘솔' : '대표 요금제'})`);
+    const f = st.fast;
+    const rt = f.off ? { lane: 'ai', model: MODEL, why: '종전 방식' }
+        : fast.route(order, f.route ? FORCED_MODEL : (FORCED_MODEL || 'opus'));
+    if (rt.lane === 'direct_qty' && !f.direct) { rt.lane = 'ai'; rt.model = MODEL; rt.why = '바로 처리 꺼짐'; }
+    log(`#${order.id} 처리 시작 (${order.status} · ${order.created_by || '-'} · ${rt.lane === 'ai' ? (key ? '콘솔' : '대표 요금제') + ' · ' + rt.model : 'AI 없음'} · ${rt.why})`);
     const t0 = Date.now();
-    let r;
-    try { r = await runDesk(order, key); } finally { clearInterval(keep); }
+    let r = { code: -1, outPath: '', info: {} };
+    try {
+        // 미리 받기: 대기 프로그램이 지시를 집어(처리중) 내용을 문장에 넣어 준다. 끄면 종전처럼 창구가 get.js로 받는다.
+        let got = null;
+        if (rt.lane === 'direct_qty' || f.prefetch) {
+            got = await claim(order.id);
+            if (!got.ok) { log(`#${order.id} 다른 곳에서 이미 집어 감 — 건너뜀`); got = null; r = { code: 0, outPath: '', info: { skipped: true } }; }
+        }
+        // 어느 길로 처리하는지 화면에 한 줄(답변 옆 작은 표시로도 쓰인다)
+        if (got && got.run_id) await appendStep(got.run_id, 'lane', rt.lane === 'direct_qty' ? '📦 바로 처리' : rt.model === 'sonnet' ? '⚡ 빠른 답' : '🧠 깊은 답').catch(() => { });
+        if (rt.lane === 'direct_qty') { if (got) r = await runDirectQty(order, got); }
+        else if (f.prefetch) {
+            const run = (f.warm || st.forceWarm) && f.stream ? runWarm : runDesk;
+            if (got) r = await run(order, key, { model: rt.model, prompt: promptPrefetched(order, got), stream: f.stream, lean: f.lean, effort: f.effort, runId: got.run_id, live: f.stream && order.status !== '승인됨' });
+        } else {
+            let runId = null;
+            if (f.stream) {   // 미리 받기를 껐을 때: 단계 기록에 쓸 실행 번호는 창구가 받은 뒤에야 생긴다 → 잠깐 기다렸다 찾는다
+                setTimeout(async () => { try { runId = (await pool.query(`SELECT run_id FROM pending_orders WHERE id = $1`, [order.id])).rows[0].run_id; } catch (e) { /* 무시 */ } }, 20000).unref();
+            }
+            r = await runDesk(order, key, { model: rt.model, stream: f.stream, lean: f.lean, effort: f.effort, get runId() { return runId; }, live: f.stream && order.status !== '승인됨' });
+        }
+    } catch (e) { log(`#${order.id} 처리 중 오류: ${e.message}`); }
+    finally { clearInterval(keep); }
     const sec = Math.round((Date.now() - t0) / 1000);
     const after = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [order.id])).rows[0];
     const stillOpen = !after || ['대기', '처리중', '승인됨'].includes(after.status);
+    const info = r.info || {};
+    const costNote = (info.cost_usd != null ? ` · $${Number(info.cost_usd).toFixed(3)} · ${info.turns || '?'}턴` : '') + (info.warm ? ` · 켜 둔 창구(${info.warm === 'reused' ? '다시 씀' : '새로 켬'})` : '');
     if (!stillOpen) {
         st.tries.delete(order.id);
-        st.lastDone = { id: order.id, at: new Date().toISOString(), sec, status: after.status };
-        log(`#${order.id} 끝 — ${after.status} (${sec}초)`);
+        st.lastDone = { id: order.id, at: new Date().toISOString(), sec, status: after.status, model: rt.lane === 'ai' ? rt.model : 'none' };
+        log(`#${order.id} 끝 — ${after.status} (${sec}초${costNote})`);
     } else {
         const n = (st.tries.get(order.id) || 0) + 1;
         st.tries.set(order.id, n);
@@ -171,8 +388,8 @@ async function handle(order, key) {
             st.tries.delete(order.id);
             log(`#${order.id} 오류로 돌림`);
         } else {
-            // '처리중'으로 잡혀 있으면 되돌려 다음 차례에 다시 집게 한다
-            await pool.query(`UPDATE pending_orders SET status = '대기' WHERE id = $1 AND status = '처리중'`, [order.id]);
+            // '처리중'으로 잡혀 있으면 되돌려 다음 차례에 다시 집게 한다(쓰다 만 미리 보기는 지운다)
+            await pool.query(`UPDATE pending_orders SET status = '대기', result = CASE WHEN result->>'type' = 'live' THEN NULL ELSE result END WHERE id = $1 AND status = '처리중'`, [order.id]);
         }
     }
     st.busy = false;
@@ -181,9 +398,12 @@ async function handle(order, key) {
     try { await writeState(); } catch (e) { /* 다음 주기에 다시 적는다 */ }
 }
 
-async function tick(mode) {
-    const [req, autoCfg] = await Promise.all([cfgGet('desk_wake_request'), cfgGet('desk_auto')]);
+// 10초마다: 화면 버튼 신호·설정·상태 기록(종전 tick의 앞부분 그대로)
+async function slowTick() {
+    const [req, autoCfg, fastCfg] = await Promise.all([cfgGet('desk_wake_request'), cfgGet('desk_auto'), cfgGet('desk_fast')]);
     st.paused = !!(autoCfg && autoCfg.on === false);
+    st.fast = fast.settings(ENV_FAST || fastCfg);
+    warmReap(!st.fast.warm && !st.forceWarm);   // 오래 쉰 창구는 끈다(켜 둔 창구를 안 쓰는 설정이면 전부)
 
     // 화면 버튼 신호(켜기/끄기)
     const reqAt = req && req.at ? Date.parse(req.at) : NaN;
@@ -199,6 +419,7 @@ async function tick(mode) {
     }
 
     const key = readKey();
+    st.key = key;
     if (!key) st.note = '콘솔 API 키 파일이 없습니다 (' + KEY_FILE + ')';
     else if (st.paused) st.note = '꺼 둔 상태입니다 — 화면에서 [창구 켜기]를 누르면 다시 받습니다';
     else st.note = '';
@@ -208,14 +429,19 @@ async function tick(mode) {
 
     st.active = active;
     await writeState();
+}
 
+async function tick(mode) {
+    if (mode || Date.now() - st.lastSlow >= TICK_MS) { await slowTick(); st.lastSlow = Date.now(); }
+    const key = st.key;
     if (st.paused && !st.sub) return false;
     if (st.busy) return false;
     const o = await nextOrder(st.onlyId);
     if (!o) return false;
     const mine = (await subscriptionUsers()).has(Number(o.created_by_id));   // 대표 본인 지시인가
-    if (!mine && !st.sub && !key) { st.note = '콘솔 API 키 파일이 없어 직원 지시를 처리하지 못합니다'; return false; }
-    if (mode === 'dry') { log(`(시험) 처리할 지시 #${o.id} ${o.status}`); return true; }
+    const direct = !st.fast.off && st.fast.direct && fast.route(o, null).lane === 'direct_qty';   // AI를 안 쓰는 일은 키가 없어도 된다
+    if (!mine && !st.sub && !key && !direct) { st.note = '콘솔 API 키 파일이 없어 직원 지시를 처리하지 못합니다'; return false; }
+    if (mode === 'dry') { const rt = st.fast.off ? { lane: 'ai', model: MODEL, why: '종전 방식' } : fast.route(o, FORCED_MODEL); log(`(시험) 처리할 지시 #${o.id} ${o.status} → ${rt.lane} ${rt.model || ''} (${rt.why})`); return true; }
     try { trust.ensure(); } catch (e) { /* 신뢰 등록은 창을 직접 열 때만 필요하다 */ }
     await handle(o, (st.sub || mine) ? null : key);
     return true;
@@ -227,8 +453,15 @@ async function main() {
     const idx = process.argv.indexOf('--id');
     st.onlyId = idx > 0 ? parseInt(process.argv[idx + 1], 10) || 0 : 0;
     if (mode) {
-        const did = await tick(mode);
-        console.log(JSON.stringify({ ok: true, did, note: st.note }));
+        // 시험: --ids 1,2,3 = 그 지시들을 한 프로세스에서 차례로 · --warm = 켜 둔 창구 방식으로(설정과 무관하게)
+        st.forceWarm = process.argv.includes('--warm');
+        const li = process.argv.indexOf('--ids');
+        const ids = li > 0 ? String(process.argv[li + 1] || '').split(',').map(x => parseInt(x, 10)).filter(Boolean) : [st.onlyId];
+        const runs = [];
+        for (const id of ids) { st.onlyId = id; const did = await tick(mode); runs.push({ id, did, last: st.lastDone }); }
+        for (let i = 0; i < 20 && [...warm.values()].some(w => w.busy); i++) await new Promise(r => setTimeout(r, 500));
+        warmReap(true);
+        console.log(JSON.stringify({ ok: true, did: runs.some(x => x.did), note: st.note, last: st.lastDone, runs }));
         await pool.end();
         return;
     }
@@ -238,10 +471,10 @@ async function main() {
         srv.listen(LOCK_PORT, '127.0.0.1', () => resolve(srv));
     });
     trimLog();
-    log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + MODEL);
+    log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + (FORCED_MODEL || '자동(sonnet/opus)') + ' #498');
     for (;;) {
         try { await tick(null); } catch (e) { log('주기 오류(재시도): ' + e.message); }
-        await new Promise(r => setTimeout(r, TICK_MS));
+        await new Promise(r => setTimeout(r, st.fast.poll ? POLL_MS : TICK_MS));
     }
 }
 main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });

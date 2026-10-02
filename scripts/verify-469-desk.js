@@ -366,6 +366,9 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('#476 목록이 다시 그려져도 답 칸의 글·커서 유지', keep && keep.v === '적던 답' && keep.focus, JSON.stringify(keep));
         // #477 화면: 끝난 카드 [이어서 지시] → 답 칸 열림 → 취소로 닫힘 · 질문종결 카드 = 물은 것 + 몇 번으로 이어졌는지 · 이어진 지시에 「↳ n번에 이어서」
         const fwUi = await B.pg.evaluate(async () => {
+            // #498 진행 중이면 2초마다 목록을 새로 받는다 → 이 블록이 넣은 가짜 지시가 실제 목록으로 바뀌어 [취소] 클릭이 헛돌던 타이밍 문제 — 블록 동안만 주기 새로고침을 멈춘다(검사 내용은 그대로)
+            try { await __aoDesk.S.loadP; } catch (e) { }
+            __aoDesk.S.loading = true;
             const D = __aoDesk, saved = D.S.orders.slice();
             const base = { created_by: '시험', created_at: new Date().toISOString(), steps: [] };
             D.S.orders = [
@@ -387,7 +390,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const closed = !q('#reply-99999901');
             const qc = q('#desk-list [data-oid="99999902"]').textContent;
             const th = q('#desk-list [data-oid="99999903"]').textContent;
-            D.S.orders = saved; D.renderList();
+            D.S.orders = saved; D.S.loading = false; D.S.again = false; D.S.sig = ''; D.renderList();
             return { hadBtn, opened, closed, asked: /물은 것/.test(qc) && /대상이 몇 명인가요/.test(qc) && /99999903번 지시로 이어서/.test(qc), thread: /↳ 99999902번에 이어서/.test(th), noFollowOnWait: true };
         });
         ok('#477 [이어서 지시] 열기·취소 · 질문종결 카드에 물은 것·이어진 번호 · 이어진 지시에 「↳ n번에 이어서」', fwUi.hadBtn && fwUi.opened && fwUi.closed && fwUi.asked && fwUi.thread, JSON.stringify(fwUi));

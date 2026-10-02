@@ -2,14 +2,14 @@
 // 사용: node scripts/desk/get.js <지시 id>
 const fs = require('fs'), path = require('path');
 const { pool, ROOT, heartbeat, step, audit } = require('./_db');
-(async () => {
-    const id = parseInt(process.argv[2], 10);
+// #498: 대기 프로그램(launcher.js)이 창구를 부르기 전에 미리 받아 둘 수 있게 함수로도 내준다(CLI 동작은 종전과 같다)
+async function claim(id) {
     if (!id) throw new Error('지시 id가 필요합니다');
     const c = await pool.query(
         `UPDATE pending_orders SET status = '처리중'
          WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')
          RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to`, [id]);
-    if (!c.rows.length) { console.log(JSON.stringify({ ok: false, reason: '이미 처리 중이거나 없는 지시입니다' })); await pool.end(); return; }
+    if (!c.rows.length) return { ok: false, reason: '이미 처리 중이거나 없는 지시입니다' };
     const o = c.rows[0];
     const approved = o.result && o.result.type === 'approval_request' ? o.result : null; // 승인된 건의 원 요청
     let runId = o.run_id;
@@ -57,11 +57,18 @@ const { pool, ROOT, heartbeat, step, audit } = require('./_db');
     }
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
-    console.log(JSON.stringify({
+    return {
         ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath,
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
         recent_talk: prev,
         follow_of: followOf,
-    }, null, 2));
-    await pool.end();
-})().catch(async e => { console.error('ERR', e.message); try { await pool.end(); } catch (_) { } process.exit(1); });
+    };
+}
+module.exports = { claim };
+if (require.main === module) {
+    (async () => {
+        const out = await claim(parseInt(process.argv[2], 10));
+        console.log(JSON.stringify(out, null, 2));
+        await pool.end();
+    })().catch(async e => { console.error('ERR', e.message); try { await pool.end(); } catch (_) { } process.exit(1); });
+}
