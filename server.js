@@ -13240,7 +13240,11 @@ app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
 //   새 지시를 만들되 원래 질문은 「질문종결」로 닫아 목록이 지저분해지지 않게 한다(창구는 get.js의 recent_talk 로 앞 대화를 함께 받는다).
 app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) => {
     try {
-        const text = String(req.body?.content || '').trim();
+        // #500(대표 10/2): 이어서 지시·되묻기 답에도 이미지 1장을 붙일 수 있다(지시 접수와 같은 한도)
+        const imageData = typeof req.body?.image_data === 'string' && /^data:image\//.test(req.body.image_data) ? req.body.image_data : '';
+        const imageMime = String(req.body?.image_mime || '').slice(0, 40);
+        if (imageData.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
+        const text = String(req.body?.content || '').trim() || (imageData ? '[이미지 첨부] 이어서 확인해줘' : '');
         if (!text) throw { status: 400, message: '답할 내용을 적어 주세요' };
         if (text.length > 2000) throw { status: 400, message: '2000자까지 적을 수 있습니다' };
         const q = (await pool.query(
@@ -13251,11 +13255,11 @@ app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) 
         if (q.status !== '질문' && !FOLLOWABLE.includes(q.status)) throw { status: 400, message: '처리가 끝난 뒤에 이어서 지시할 수 있어요' };
         if (q.created_by_id && q.created_by_id !== req.user.id && req.user.role !== 'admin') throw { status: 403, message: '내가 보낸 지시에만 답할 수 있습니다' };
         const r = await pool.query(
-            `INSERT INTO pending_orders (content, status, created_by, created_by_id, reply_to) VALUES ($1, '대기', $2, $3, $4) RETURNING id, status`,
-            [text, req.user.name || req.user.username, req.user.id, q.id]);
+            `INSERT INTO pending_orders (content, status, created_by, created_by_id, reply_to, image_data, image_mime) VALUES ($1, '대기', $2, $3, $4, $5, $6) RETURNING id, status`,
+            [text, req.user.name || req.user.username, req.user.id, q.id, imageData || null, imageData ? imageMime : null]);
         await pool.query(`UPDATE pending_orders SET status = '질문종결', processed_at = NOW() WHERE id = $1 AND status = '질문'`, [q.id]);
         await writeAudit({ action: 'create', targetType: 'pending_order', targetId: r.rows[0].id,
-            changes: { after: { reply_to: q.id } }, source: 'agent_office', actor: adminActor(req) });
+            changes: { after: { reply_to: q.id, has_image: !!imageData } }, source: 'agent_office', actor: adminActor(req) });
         if (aoEngineCache !== 'api') await deskIntake({ id: r.rows[0].id, content: text, run_id: null }, req.user.name);
         res.json({ message: q.status === '질문' ? '답을 보냈어요' : '이어서 지시를 보냈어요', order: r.rows[0] });
     } catch (err) { handleAdminErr(res, err); }

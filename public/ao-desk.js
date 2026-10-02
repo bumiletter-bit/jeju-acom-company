@@ -69,7 +69,7 @@
     const S = {
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
-        fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(),
+        fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), replyImg: new Map(), replyTarget: 0,
         view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
@@ -118,6 +118,7 @@
                     <div class="desk-thumbs" id="desk-thumbs" hidden></div>
                     <div class="desk-ask-row">
                         <input type="file" id="desk-file" accept="image/*" multiple hidden>
+                        <input type="file" id="desk-reply-file" accept="image/*" hidden>
                         <button type="button" class="desk-btn" id="desk-attach">이미지 첨부</button>
                         <button type="submit" class="desk-btn primary" id="desk-send">지시 보내기</button>
                         <span class="desk-ask-meta"><span class="desk-keyhint">Enter 보내기 · Shift+Enter 줄바꿈</span><span class="desk-count" id="desk-count">0 / 2000</span></span>
@@ -189,6 +190,22 @@
         });
         $('desk-ask').addEventListener('submit', e => { e.preventDefault(); send(); });
         $('desk-attach').addEventListener('click', () => $('desk-file').click());
+        $('desk-reply-file').addEventListener('change', e => { const f = (e.target.files || [])[0]; e.target.value = ''; if (f && S.replyTarget) setReplyImg(S.replyTarget, f); });
+        const replyId = el => el && el.classList && el.classList.contains('desk-reply-in') && /^reply-\d+$/.test(el.id) ? Number(el.id.slice(6)) : 0;
+        $('desk-list').addEventListener('paste', e => {
+            const id = replyId(e.target);
+            if (!id) return;
+            const f = Array.from((e.clipboardData && e.clipboardData.files) || []).find(x => /^image\//.test(x.type));
+            if (f) { e.preventDefault(); setReplyImg(id, f); }
+        });
+        $('desk-list').addEventListener('input', e => { if (e.target && e.target.classList && e.target.classList.contains('desk-reply-in')) fitReply(e.target); });
+        $('desk-list').addEventListener('keydown', e => {   // 답 칸도 Enter = 보내기(PC) · Shift+Enter = 줄바꿈
+            const id = replyId(e.target);
+            if (!id || e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229 || !window.matchMedia('(pointer: fine)').matches) return;
+            e.preventDefault();
+            const btn = e.target.parentElement && e.target.parentElement.querySelector('[data-act="sendreply"]');
+            if (btn) btn.click();
+        });
         $('desk-qty-now').addEventListener('click', () => sendQtyNow());
         $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; $('desk-count').textContent = input.value.length + ' / 2000'; } $('desk-file').click(); });
         $('desk-talk-now').addEventListener('click', () => { input.value = '처리 안 된 톡톡 건 답변 예시문구 만들어줘'; $('desk-count').textContent = input.value.length + ' / 2000'; input.focus(); });
@@ -492,16 +509,29 @@
     const FOLLOW = ['완료', '안내', '응답됨', '오류', '오류확인', '반려', '질문종결', '피드백'];
     function followHtml(o) {
         if (!FOLLOW.includes(o.status)) return '';
-        if (!S.follow.has(o.id)) return isAnswer(o) ? '' : `<div class="desk-acts">${followBtn(o)}</div>`; // 답변 카드는 [답변 복사] 줄에 함께
+        if (!followOpen(o)) return isAnswer(o) ? '' : `<div class="desk-acts">${followBtn(o)}</div>`; // 답변 카드는 [답변 복사] 줄에 함께
+        const always = chatMine();   // #500 대화 보기에서는 누르지 않아도 늘 열려 있다
 
         return `<div class="desk-reply desk-follow">
-                <textarea class="desk-reply-in" id="reply-${o.id}" rows="3" maxlength="2000" placeholder="고칠 점이나 이어서 할 일을 적어 주세요. 앞 답변을 이어받아 처리해요 (예: 3번 문구만 더 짧게)"></textarea>
+                ${replyImgHtml(o.id)}<textarea class="desk-reply-in" id="reply-${o.id}" rows="${always ? 1 : 3}" maxlength="2000" placeholder="${always ? '이어서 지시하기 (이미지는 붙여넣기도 돼요)' : '고칠 점이나 이어서 할 일을 적어 주세요. 앞 답변을 이어받아 처리해요 (예: 3번 문구만 더 짧게)'}"></textarea>
                 <button type="button" class="desk-btn sm primary" data-act="sendreply" data-id="${o.id}">이어서 보내기</button>
-                <button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">취소</button>
+                <button type="button" class="desk-btn sm" data-act="replyimg" data-id="${o.id}">이미지 첨부</button>
+                ${always ? '' : `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">취소</button>`}
             </div>`;
     }
     const isAnswer = o => !!o.result && (o.result.type === 'desk_answer' || o.result.type === 'answer');
-    const followBtn = o => FOLLOW.includes(o.status) && !S.follow.has(o.id) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
+    const chatMine = () => S.tab === 'mine' && S.view === 'chat';
+    const followOpen = o => S.follow.has(o.id) || chatMine();
+    // 이어서 지시·되묻기 답에 붙인 이미지(지시 1건에 1장) — 다시 그려도 남도록 S.replyImg 에 둔다
+    const replyImgHtml = id => { const im = S.replyImg.get(id); return im ? `<div class="desk-thumbs desk-reply-thumbs"><div class="desk-thumb"><img src="${im.data}" alt="붙인 이미지"><button type="button" data-act="replyimgx" data-id="${id}" aria-label="붙인 이미지 빼기">×</button></div></div>` : ''; };
+    function setReplyImg(id, file) {
+        if (!file || !/^image\//.test(file.type)) return;
+        if (file.size > 9 * 1024 * 1024) { showToast('10MB보다 큰 이미지는 보낼 수 없어요'); return; }
+        const rd = new FileReader();
+        rd.onload = () => { S.replyImg.set(id, { data: String(rd.result), mime: file.type || 'image/png' }); S.sig = ''; renderList(); const ta = document.getElementById('reply-' + id); if (ta) ta.focus(); };
+        rd.readAsDataURL(file);
+    }
+    const followBtn = o => FOLLOW.includes(o.status) && !followOpen(o) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
     // #484(대표 9/30): full = 표에서 줄을 눌러 펼친 자세히 칸 — 답변을 줄이지 않고 전부 보여 준다(전체 보기 버튼 없음)
     // #498 처리 중에 대기 프로그램이 적어 주는 「쓰는 중인 답변」(result.type = live)
     function liveText(o) { const r = o.result || {}; return o.status === '처리중' && r.type === 'live' && r.text ? String(r.text) : ''; }
@@ -541,8 +571,9 @@
             // #473-b 그 자리에서 바로 답한다(대화처럼) — 보내면 이 질문은 닫히고, 창구가 앞 대화를 함께 받아 이어서 처리한다
             return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>
                 <div class="desk-reply">
-                    <textarea class="desk-reply-in" id="reply-${o.id}" rows="2" maxlength="2000" placeholder="여기에 답을 적어 보내면 이어서 처리해요"></textarea>
+                    ${replyImgHtml(o.id)}<textarea class="desk-reply-in" id="reply-${o.id}" rows="2" maxlength="2000" placeholder="여기에 답을 적어 보내면 이어서 처리해요"></textarea>
                     <button type="button" class="desk-btn sm primary" data-act="sendreply" data-id="${o.id}">답 보내기</button>
+                    <button type="button" class="desk-btn sm" data-act="replyimg" data-id="${o.id}">이미지 첨부</button>
                 </div>`;
         }
         if (r.type === 'approval_request') {
@@ -608,7 +639,7 @@
         document.querySelectorAll('#desk-list [data-live]').forEach(el => { liveAt[el.dataset.live] = { top: el.scrollTop, bottom: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }; });
         fn();
         document.querySelectorAll('#desk-list [data-live]').forEach(el => { const p = liveAt[el.dataset.live]; el.scrollTop = !p || p.bottom ? el.scrollHeight : p.top; });
-        for (const id in saved) { const t = document.getElementById(id); if (t && !t.value) t.value = saved[id]; }
+        for (const id in saved) { const t = document.getElementById(id); if (t && !t.value) t.value = saved[id]; if (t) fitReply(t); }
         if (focusId) { const t = document.getElementById(focusId); if (t) { t.focus({ preventScroll: true }); try { t.setSelectionRange(sel[0], sel[1]); } catch (e) { } } }
     }
     // #498 목록 안의 글자를 끌어 고르는 중이면 다시 그리지 않는다(고른 것이 풀리지 않게) — 고르기를 끝내면 다음 새로고침에 그린다
@@ -618,6 +649,8 @@
         const box = $('desk-list');
         return !!(box && box.contains(g.anchorNode));
     }
+    // 답 칸은 한 줄로 시작해 적는 만큼 늘어난다(최대 220px)
+    function fitReply(t) { if (!t.value) { t.style.height = ''; return; } t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 220) + 'px'; }
     function renderList() { if (selectingInList()) { S.sig = ''; return; } keepReplies(renderListNow); }
     function renderListNow() {
         const box = $('desk-list');
@@ -779,6 +812,8 @@
             } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); b.disabled = false; }
             return;
         }
+        if (act === 'replyimg') { S.replyTarget = id; $('desk-reply-file').click(); return; }
+        if (act === 'replyimgx') { S.replyImg.delete(id); S.sig = ''; renderList(); return; }
         if (act === 'follow') {
             if (S.follow.has(id)) S.follow.delete(id); else S.follow.add(id);
             renderList();
@@ -788,15 +823,17 @@
         if (act === 'sendreply') {
             const ta = document.getElementById('reply-' + id);
             const text = ta ? ta.value.trim() : '';
-            if (!text) { if (ta) ta.focus(); return; }
-            b.disabled = true; b.textContent = '보내는 중';
+            const im = S.replyImg.get(id);
+            if (!text && !im) { if (ta) ta.focus(); return; }
+            const label0 = b.textContent; b.disabled = true; b.textContent = '보내는 중';
             try {
-                const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', { content: text });
+                const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', im ? { content: text, image_data: im.data, image_mime: im.mime } : { content: text });
+                S.replyImg.delete(id);
                 showToast(res.message || '답을 보냈어요');
                 S.follow.delete(id);
                 S.sig = ''; await loadOrders(true);
                 if (res.order && res.order.id) revealOrders([res.order.id]);
-            } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; b.textContent = '답 보내기'; }
+            } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; b.textContent = label0; }
             return;
         }
         if (act === 'reply') { closeFull(); const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }

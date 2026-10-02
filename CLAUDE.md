@@ -111,7 +111,7 @@
   - 분석 요령(재사용): 발주 파일 「송장번호」↔ 택배사 Sheet2 「운송장번호」로 연결 · 박스 출처는 Sheet2 「보내는분」 꼴(`!` = 현금 · 「자사몰)」·「쿠팡)」) · 구매자 대조는 입력삭제 건이 보내는분 전화를 바꾸므로 **총량 등식**으로 볼 것. 분석용 PII 임시 파일은 사용 후 삭제.
 - 🛒 **#459(대표 9/19): 「알림톡 발송 실패 — 수기 발주확인 필요」 오경보 교정** — v5.9.351(서버만). 알림톡은 정상 발송됐는데 자동 발주확인에 네이버가 **104443 「이미 발주확인 된 주문입니다」**(대표·직원이 먼저 누른 주문)로 답한 것을 실패로 세던 것 — 종전엔 105306만 already 처리. 공용 판정 `naverConfirmIsAlready`(105306·104443·문구 「이미 발주확인」)로 2곳(본선·소급/수동) 교체 · 기존 10행 already 정리(`apply-459-already-backfill.js`·audit) · `verify-459-confirm-already.js` 12/12. **대표 확인: 전에도 발주확인을 직접 누른 것이 맞음 — 이상 없음.** 🔵 이 텔레그램 문구(`confirmneed`)는 「발송 실패 + 발주확인 실패」 합산이라 문구만으론 어느 쪽인지 모른다 → 원인은 `kakao_notify_log`의 status(발송)와 confirm_status/confirm_error(발주확인)를 나눠 볼 것. 🔴 **시각 오보고 재범(9/19)**: 이 조사에서 naive UTC 컬럼을 JS에서 +9h 해 17:55 주문을 「08:55」로 보고하고 없는 「아침 발주 시간대」 설명까지 붙임 → 대표 지적으로 정정. KST는 SQL에서 `col + interval '9 hours'`로만(메모리 jeju-db-time-calc 갱신).
 
-**현행 버전: 회사 v5.9.399 / app.js v=397 · ao-desk.js v=20 · ao-desk.css v=18 · theme.css v=13 · styles.css v=123(#469 에이전트 오피스 → 클코 창구) · invoice-v2.js v=25 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/23 배포). ⚠️ **다음 지시 번호 = #500부터** (#405~#469 = 8/24~9/29 세션 · #491~#497 = 10/1).
+**현행 버전: 회사 v5.9.400 / app.js v=397 · ao-desk.js v=21 · ao-desk.css v=19 · theme.css v=13 · styles.css v=123(#469 에이전트 오피스 → 클코 창구) · invoice-v2.js v=25 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/23 배포). ⚠️ **다음 지시 번호 = #501부터** (#405~#469 = 8/24~9/29 세션 · #491~#497 = 10/1).
 
 - 👀📏 **#457(대표 9/19): 송장변환 v2 — 붙여넣기 칸 줄별 판정 표시 + 화면 높이 되먹임 교정** — v5.9.350(`invoice-v2.js/.html`만).
   - **줄별 판정**: `parseLines`가 줄마다 `srcLine`(칸의 몇 번째 줄)을 기억 → `mountEditor(ctx)`가 textarea를 `.ivt-ed`(왼쪽 `.ivt-gut` 표시 칸 + 입력 칸)로 감싸고 `renderGutter(ctx)`(= `renderResults` 첫 줄에서 호출)가 줄마다 `lineStatus` 표시. 분류: ok 확인완료 n건 / warn 확인필요 w/n건(past·nodate·partial)·건수 다름(비고 n건 ≠ 실제)·형식 확인 / none 주문 없음 / wait 불러오기 전. **줄 높이 24px·padding 10px를 입력 칸과 동일하게**(정렬의 전부) + scroll 동기 + 칸 높이 = 줄 수(5~14줄). 요약 칩 = [저장하기] 옆 `.ivt-linebar`(문제가 앞) — 클릭 = `jumpLine`(그 상태의 다음 줄을 칸에서 선택·가운데 스크롤·표시 칸 강조). 입력이 바뀌면 `.stale`(흐림+다시 저장 안내). 종전 `.sum` 문구는 `display:none`으로 DOM 유지(verify-452가 textContent로 읽음 — 지우지 말 것). ⚠️ 칩 집계는 「건수 다름」을 확인필요로 세므로 숨긴 `.sum`과 숫자가 다를 수 있다(의도 — 문제 찾기 우선).
@@ -175,6 +175,13 @@
 - 토큰 = theme.css :root --page-bg·--card-border·--shadow-card·--text-on-page(디자인_가이드 표에 추가). 🔵 --bg(#F5F6F8)는 카드 안쪽 옅은 칸에서도 쓰여 바꾸지 않고 바탕 전용 토큰을 따로 뒀다 — 앞으로 바탕색은 --page-bg만.
 - 🔴 --text-mid(#667085)는 새 바탕 위 4.18:1(AA 미달) → 바탕에 바로 놓이는 글자는 --text-on-page. 카드 안 글자는 그대로.
 - 390px 가로 넘침(정산관리 637 · 품목별 금액 446 · 문의 관리 473)은 시공 전과 동일한 기존 문제(별도 지시 대상).
+
+### 🖼️ #500 대화 보기: 이어서 지시 칸 늘 열림 · 답 칸에 이미지 (대표 폰 실물 10/2 · v5.9.400 / ao-desk.js v=21 · css v=19 · server.js reply 라우트)
+
+- 대화 보기에서는 끝난 대화의 마지막 차례 아래 답 칸이 늘 열려 있다(followOpen = S.follow 또는 chatMine · 한 줄로 시작 → fitReply 로 늘어남). 표·카드 보기는 종전 버튼 흐름 그대로.
+- 답 칸 이미지 1장: #desk-list 에 위임한 paste + [이미지 첨부](data-act replyimg → 숨은 #desk-reply-file) → S.replyImg(id) → 썸네일(replyimgx 로 빼기) → sendreply 본문에 image_data·image_mime. 되묻기 답 칸도 같다. 답 칸 Enter = 보내기(pointer:fine 만).
+- 서버: POST /api/agent-office/orders/:id/reply 가 image_data(data:image/ 로 시작 · 14MB 이하)·image_mime 저장 · 글이 없고 이미지만 오면 「[이미지 첨부] 이어서 확인해줘」로 채움. 이미지 든 이어서 지시는 reply_to 규칙으로 Opus 로 간다.
+- ✅ verify-499-chat.js 86/86(서버 라우트 실검증 포함 — 실DB에 [검증469] 시험 지시 2건을 만들고 숨긴다) · 469 80/80 · 498 100/100 · 470 9/9 · 463 7/7 · 407 16/16.
 
 ### 💬 #499 에이전트 오피스 「내 지시」 대화 보기 · 승인/반려 카드 안 입력 · 폰 현황판 접기 (대표 GO 10/2 · v5.9.399 / ao-desk.js v=20 · css v=18 · 화면만)
 

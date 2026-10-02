@@ -381,3 +381,5 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-chat .desk-a-acts .desk-btn { min-height: 32px; padding: 0 10px; font-size: 12.5px; }
 .desk-live-scroll { padding-top: 6px; border-top: 1px solid var(--d-line); }
 @media (max-width: 720px) { .desk-chat .desk-a-acts .desk-btn { min-height: 44px; } }
+/* #500 답 칸에 붙인 이미지 */
+.desk-reply-thumbs { flex-basis: 100%; }
