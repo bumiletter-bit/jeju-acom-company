@@ -274,7 +274,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('답변 카드 = 완료 배지 · 제목·본문 · [답변 복사]', card.badge === '완료' && card.a.includes('오늘 발송 박스') && card.a.includes('검증용 답변입니다.') && card.copy);
         const rejCard = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return c ? c.textContent : ''; }, p3.j.order.id);
         const dlReq = [];
-        A.pg.on('request', rq => { if (rq.url().includes('/api/agent-office/files/') && rq.url().includes('/download')) dlReq.push(rq.url()); });
+        A.pg.on('request', rq => { if (rq.url().includes('/api/agent-office/files/' + fileId + '/download')) dlReq.push(rq.url()); });   // #504 첨부 사진은 화면이 알아서 받으므로(다른 파일 번호) 이 파일만 센다
         const fbtn = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); const b = c && c.querySelector('[data-act="file"]'); return b ? { text: b.textContent, h: Math.round(b.getBoundingClientRect().height) } : null; }, pf.j.order.id);
         if (fbtn) { await A.pg.click(`#desk-list .desk-card[data-oid="${pf.j.order.id}"] [data-act="file"]`); await A.pg.waitForTimeout(1500); }
         ok('파일 카드 = [내려받기] 버튼 · 실클릭 = 내려받기 요청 1회', !!fbtn && /검증469_이익률계산기.xlsx 내려받기/.test(fbtn.text) && fbtn.h >= 40 && dlReq.length === 1 && dlReq[0].includes('/files/' + fileId + '/'), JSON.stringify(fbtn));

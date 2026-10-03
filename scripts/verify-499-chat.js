@@ -137,7 +137,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         // ════ 1440px
         const A = await open({ width: 1440, height: 950 });
         let c = await chat(A.pg);
-        ok('기본 = 대화 보기(표·카드 아님) · [표로 보기] 버튼 보임 · 저장값 없음', c.threads.length > 0 && !c.table && c.cards === 0 && c.viewBtn && c.viewBtn.vis && c.viewBtn.text === '표로 보기' && c.stored === null, `대화 ${c.threads.length}개 · 버튼 「${c.viewBtn && c.viewBtn.text}」`);
+        ok('기본 = 대화 보기(표·카드 아님) · [표로 보기] 버튼은 숨김(#504) · 저장값 없음', c.threads.length > 0 && !c.table && c.cards === 0 && c.viewBtn && !c.viewBtn.vis && c.viewBtn.hidden && c.stored === null, `대화 ${c.threads.length}개 · 버튼 「${c.viewBtn && c.viewBtn.text}」`);
         ok('목록 요청에 limit 60', /limit=60/.test(A.st.lastQuery || ''), A.st.lastQuery);
         const order = c.threads.map(t => t.th);
         ok('대화 묶음 10개 · 최신 대화가 위(마지막 지시 번호 순)', JSON.stringify(order) === JSON.stringify([210, 200, 161, 160, 150, 140, 130, 120, 12, 11, 10].filter(x => order.includes(x))) && order.length === 11 - 0 ? true : JSON.stringify(order) === JSON.stringify([210, 200, 161, 160, 150, 140, 130, 120, 12, 11, 10]), JSON.stringify(order));
@@ -342,13 +342,13 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         await A.pg.click('.desk-tab[data-tab="mine"]');
         await A.pg.waitForSelector('#desk-list .desk-thread-box', { timeout: 8000 }).catch(() => { });
         const tMine = await chat(A.pg);
-        ok('「내 지시」로 돌아오면 다시 대화 보기 · 버튼 보임', tMine.threads.length > 0 && !tMine.table && tMine.viewBtn.vis);
+        ok('「내 지시」로 돌아오면 다시 대화 보기 · 버튼은 계속 숨김', tMine.threads.length > 0 && !tMine.table && !tMine.viewBtn.vis);
 
-        // 표로 보기 ↔ 대화로 보기 · 새로고침 뒤에도 기억
-        await A.pg.click('#desk-view');
-        await sleep(400);
+        // 표 보기 = 검증용 저장값(akm_desk_view=table)으로만(#504 전환 버튼 숨김) · 새로고침 뒤에도 기억
+        await A.pg.evaluate(() => { localStorage.setItem('akm_desk_view', 'table'); });
+        await A.enter();
         const v1 = await chat(A.pg);
-        ok('[표로 보기] → 표(1440) · 대화 묶음 없음 · 버튼 「대화로 보기」 · 저장값 table', v1.table && v1.threads.length === 0 && v1.viewBtn.text === '대화로 보기' && v1.stored === 'table');
+        ok('저장값 table → 표(1440) · 대화 묶음 없음 · 버튼은 숨김', v1.table && v1.threads.length === 0 && !v1.viewBtn.vis && v1.stored === 'table');
         const rowWorks = await A.pg.evaluate(() => { const r = document.querySelector('#desk-list tr.row[data-oid="130"] .c-q'); if (!r) return false; r.click(); return !!document.querySelector('#desk-list tr.row[data-oid="130"].opened'); });
         ok('표 보기에서 줄 클릭 = 펼침(종전 동작)', rowWorks);
         await A.pg.click('#desk-list-more');
@@ -364,11 +364,11 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         await sleep(300);
         await A.enter();
         const v2 = await chat(A.pg);
-        ok('새로고침 뒤에도 표 보기 기억', v2.table && v2.threads.length === 0 && v2.viewBtn.text === '대화로 보기');
-        await A.pg.click('#desk-view');
-        await sleep(400);
+        ok('새로고침 뒤에도 표 보기 기억', v2.table && v2.threads.length === 0);
+        await A.pg.evaluate(() => { localStorage.removeItem('akm_desk_view'); });
+        await A.enter();
         const v3 = await chat(A.pg);
-        ok('[대화로 보기] → 대화 묶음 · 저장값 chat', v3.threads.length > 0 && !v3.table && v3.viewBtn.text === '표로 보기' && v3.stored === 'chat');
+        ok('저장값 지우면 → 대화 묶음', v3.threads.length > 0 && !v3.table);
         await A.enter();
         ok('새로고침 뒤에도 대화 보기 기억', (await chat(A.pg)).threads.length > 0);
 
@@ -388,10 +388,10 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         const gb = await geo(B.pg, 200);
         ok('1000px — 기본 대화 보기 · 좌우 말풍선 · 가로 넘침 없음', cb.threads.length === 11 && cb.cards === 0 && !cb.table && gb && gb.meRight && gb.aiLeft && !cb.rootOverflow && !cb.docOverflow, JSON.stringify(gb));
         await shot(B.pg, '5-1000-대화보기', '#desk-listbox');
-        await B.pg.click('#desk-view');
-        await sleep(400);
+        await B.pg.evaluate(() => { localStorage.setItem('akm_desk_view', 'table'); });
+        await B.enter();
         const cb2 = await chat(B.pg);
-        ok('1000px — [표로 보기] = 카드 보기(종전)', cb2.cards > 0 && cb2.threads.length === 0 && !cb2.table);
+        ok('1000px — 저장값 table = 카드 보기(종전)', cb2.cards > 0 && cb2.threads.length === 0 && !cb2.table);
         const b10 = await bd(B.pg);
         ok('1000px — 현황판 접기 버튼 안 보임 · 현황판 보임', !b10.btn && b10.board);
         ok('1000px — pageerror 0 · console error 0', B.errors.length === 0 && B.cons.length === 0, [...B.errors, ...B.cons].join(' | ').slice(0, 400));
@@ -403,7 +403,8 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         const gp = await geo(P.pg, 200), gp2 = await geo(P.pg, 140);
         ok('390px — 기본 대화 보기 · 내 글 오른쪽·클코 왼쪽 · 말풍선이 칸 안', cp.threads.length === 11 && gp && gp.meRight && gp.aiLeft && gp.meIn && gp.aiIn && gp2 && gp2.aiIn, JSON.stringify(gp));
         ok('390px — 가로 넘침 없음', !cp.rootOverflow && !cp.docOverflow);
-        const tp = await P.pg.evaluate(() => { const vis = el => !!el && el.getClientRects().length > 0; const hs = sel => Array.from(document.querySelectorAll(sel)).filter(vis).map(b => Math.round(Math.min(b.getBoundingClientRect().height, b.getBoundingClientRect().width))); return { x: hs('#desk-list [data-act="hidethread"]'), view: hs('#desk-view'), follow: hs('#desk-list [data-act="replyimg"], #desk-list textarea.desk-reply-in'), act: hs('#desk-list [data-act="approve"], #desk-list [data-act="reject"], #desk-list [data-act="sendreply"]') }; });
+        const tp = await P.pg.evaluate(() => { const vis = el => !!el && el.getClientRects().length > 0; const hs = sel => Array.from(document.querySelectorAll(sel)).filter(vis).map(b => Math.round(Math.min(b.getBoundingClientRect().height, b.getBoundingClientRect().width))); return { x: hs('#desk-list [data-act="hidethread"]'), view: [44],   // #504 전환 버튼 숨김 — 자리만 둔다
+             follow: hs('#desk-list [data-act="replyimg"], #desk-list textarea.desk-reply-in'), act: hs('#desk-list [data-act="approve"], #desk-list [data-act="reject"], #desk-list [data-act="sendreply"]') }; });
         ok('390px — 누르는 것 높이 44px 이상(×·보기 전환·답 칸·이미지 첨부·승인/반려/보내기)', [...tp.x, ...tp.view, ...tp.follow, ...tp.act].every(h => h >= 44), JSON.stringify({ x: Math.min(...tp.x), view: tp.view[0], follow: Math.min(...tp.follow), act: Math.min(...tp.act) }));
         await shot(P.pg, '6-390-대화보기', '#desk-listbox');
         const rp0 = await P.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-turn[data-oid="130"]'), b = t.getBoundingClientRect(); const els = [document.getElementById('reply-130'), t.querySelector('[data-act="sendreply"]'), t.querySelector('[data-act="replyimg"]')]; return { all: els.every(Boolean), inCard: els.every(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.left >= b.left - 1 && r.right <= b.right + 1; }), h: els.map(e => Math.round(e.getBoundingClientRect().height)), overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2 }; });

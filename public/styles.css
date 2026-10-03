@@ -2610,6 +2610,7 @@ textarea.form-input {
 .qty-cat-orange { background: #F4B183; }
 .qty-cat-blue   { background: #BDD7EE; }
 .qty-cat-green  { background: #C6E0B4; }
+.qty-cat-pink   { background: #F4CCCC; }   /* #502 황금향 선물용 */
 .qty-cat-none   { background: #fff; }
 
 /* 이미지 캡처용 표 (화면 밖 렌더) */

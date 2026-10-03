@@ -422,6 +422,7 @@ input:focus, textarea:focus, select:focus {
 .qty-cat-orange { background: #FFE3CC; }
 .qty-cat-blue   { background: #DBEAFE; }
 .qty-cat-green  { background: #DCF2D9; }
+.qty-cat-pink   { background: #FCE4EC; }   /* #502 황금향 선물용 */
 
 /* 화면 목록 행 */
 .qty-row {
@@ -435,6 +436,7 @@ input:focus, textarea:focus, select:focus {
 .qty-row.qty-cat-orange { border-left-color: #F97316; }
 .qty-row.qty-cat-blue   { border-left-color: #3B82F6; }
 .qty-row.qty-cat-green  { border-left-color: #12B76A; }
+.qty-row.qty-cat-pink   { border-left-color: #EC4899; }
 .qty-row input[type="checkbox"] { accent-color: var(--primary); }
 .qty-row .qty-name { font-weight: 600; color: var(--text-dark); }
 /* 수량 입력칸 — 1,000개 이상(4자리+스피너)도 안 잘리게 폭 확대 */
@@ -468,6 +470,7 @@ input:focus, textarea:focus, select:focus {
 #invoice-qty-capture td.cap-name.qty-cat-orange { border-left-color: #F97316; }
 #invoice-qty-capture td.cap-name.qty-cat-blue   { border-left-color: #3B82F6; }
 #invoice-qty-capture td.cap-name.qty-cat-green  { border-left-color: #12B76A; }
+#invoice-qty-capture td.cap-name.qty-cat-pink   { border-left-color: #EC4899; }
 #invoice-qty-capture td.cap-num {
     background: #fff;
     min-width: 72px;

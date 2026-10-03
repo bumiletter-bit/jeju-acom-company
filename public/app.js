@@ -6044,10 +6044,18 @@ let qtyImageCounter = 1;
 
 // 과일별 색상 분류 (사진 기준)
 function qtyCategory(name) {
+    /* #502(대표 확정 10/3 — 거래처에 보내던 색 그대로 · 색만 바뀌고 수량·매칭은 무접촉):
+       주황 = 사이즈 지정 요청 행(S·M·2S사이즈로!) · 분홍 = 황금향 선물용 · 파랑 = 중대과·못난이 10kg · 초록 = 소과·못난이 5kg · 노랑 = 로얄과·가정용(중소과) 등 나머지.
+       종전 품목(밤호박 주황·블러드오렌지 파랑·자몽 초록)은 그대로 둔다. */
     if (name.startsWith('[미매칭]')) return 'none';
+    if (/사이즈로!/.test(name)) return 'orange';
     if (/미니밤호박|밤호박|호박/.test(name)) return 'orange';
     if (/블러드오렌지/.test(name)) return 'blue';
     if (/자몽/.test(name)) return 'green';
+    if (/황금향/.test(name) && /선물용/.test(name)) return 'pink';
+    if (/중대과/.test(name) || (/못난이/.test(name) && /10\s*kg/i.test(name))) return 'blue';
+    if (/소과/.test(name) && !/중소과/.test(name)) return 'green';
+    if (/못난이/.test(name)) return 'green';
     return 'yellow';
 }
 

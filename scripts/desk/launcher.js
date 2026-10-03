@@ -112,7 +112,7 @@ function HINTS(id) {
         + `· 답변은 한국어로, 평소 기준(업무지식.md) 그대로 씁니다.`;
 }
 
-const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0, forceWarm: false, lastSlow: 0, fast: fast.settings(null), key: null };
+const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0, forceWarm: false, lastSlow: 0, running: new Map(), directBusy: false, fast: fast.settings(null), key: null };
 
 function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(대표 요금제로) 돈다 · opt = { model, prompt, stream, runId, live }
     opt = opt || {};
@@ -174,7 +174,8 @@ function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(�
 //   끄는 법: agent_office_config 'desk_fast' 에 {"warm":false}. 살려 둔 창구가 죽었거나 바쁘면 종전처럼 새로 켠다.
 const warm = new Map();
 const WARM_IDLE_MS = 20 * 60 * 1000;
-const WARM_MAX = 2;
+const PARALLEL = Math.max(1, Math.min(8, parseInt(process.env.DESK_PARALLEL, 10) || 4));   // #503(대표 10/3 「창구 4개」): 동시에 돌리는 창구 수
+const WARM_MAX = PARALLEL;
 const warmKey = (key, model, effort) => (key ? 'key' : 'sub') + ':' + model + (effort ? ':' + effort : '');
 function warmSpawn(key, model, lean, effort) {
     const exe = findClaude();
@@ -305,29 +306,36 @@ async function subscriptionUsers() {
 const ORDER_COLS = `o.id, o.status, o.created_by, o.created_by_id, (o.image_data IS NOT NULL) AS has_image, o.content, o.reply_to,
                     (SELECT p.content FROM pending_orders p WHERE p.id = o.reply_to) AS parent_content`;
 async function nextOrder(onlyId) {
+    const busyUsers = new Set([...st.running.values()].map(x => Number(x.by)));
+    const blocked = o => st.running.has(o.id) || (o.created_by_id != null && busyUsers.has(Number(o.created_by_id)))
+        || (st.directBusy && !st.fast.off && st.fast.direct && fast.route(o, null).lane === 'direct_qty');
     if (onlyId) {
         const one = await pool.query(
             `SELECT ${ORDER_COLS} FROM pending_orders o WHERE o.id = $1 AND o.is_deleted = false AND o.status IN ('대기', '승인됨')`, [onlyId]);
-        return one.rows[0] || null;
+        const o = one.rows[0] || null;
+        return o && !blocked(o) ? o : null;
     }
     const r = await pool.query(
         `SELECT ${ORDER_COLS} FROM pending_orders o
          WHERE o.is_deleted = false AND o.status IN ('대기', '승인됨')
            AND o.content NOT LIKE '[검증469]%'
-         ORDER BY (o.status = '승인됨') DESC, o.id ASC LIMIT 1`);
-    return r.rows[0] || null;
+         ORDER BY (o.status = '승인됨') DESC, o.id ASC LIMIT 20`);
+    // #503 같은 사람의 지시는 한 번에 하나(이어서 지시가 앞 답을 받아야 하므로 차례를 지킨다) · 돌고 있는 건 제외 · 중간발주(바로 처리)는 조회 통로가 하나라 한 번에 하나
+    for (const o of r.rows) if (!blocked(o)) return o;
+    return null;
 }
 
 async function writeState() {
     await cfgSet('desk_launcher', {
-        at: new Date().toISOString(), host: os.hostname(), on: !!st.active, busy: st.busy, note: st.note,
+        at: new Date().toISOString(), host: os.hostname(), on: !!st.active, busy: st.running.size > 0, running: [...st.running.keys()], parallel: PARALLEL, note: st.note,
         last_done: st.lastDone, handled_req_at: st.handledReqAt, mode: 'headless', fast: st.fast.off ? 'off' : 'on',
     });
 }
 
+const firstRunning = () => { const it = st.running.keys().next(); return it.done ? null : it.value; };
 async function handle(order, key) {
-    st.busy = true;
-    await heartbeat('busy', order.id);
+    st.running.set(order.id, { by: order.created_by_id, at: Date.now() });
+    await heartbeat('busy', firstRunning() || order.id);
     await writeState();
     // #475 처리하는 동안에도 「살아 있다」는 신호를 계속 보낸다.
     //   종전엔 시작할 때 한 번만 보내 2분 넘게 걸리는 지시는 화면이 「자리 비움」으로 바뀌었다(PC가 꺼진 것으로 오해).
@@ -335,7 +343,7 @@ async function handle(order, key) {
         try {
             const cur = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [order.id])).rows[0];
             const open = !cur || ['대기', '처리중', '승인됨'].includes(cur.status);
-            if (open) await heartbeat('busy', order.id); else await heartbeat('idle');
+            if (open) await heartbeat('busy', firstRunning() || order.id); else if (!st.running.size) await heartbeat('idle');
             await writeState();
         } catch (e) { log('처리 중 신호 실패(무시): ' + e.message); }
     }, BEAT_MS);
@@ -392,8 +400,8 @@ async function handle(order, key) {
             await pool.query(`UPDATE pending_orders SET status = '대기', result = CASE WHEN result->>'type' = 'live' THEN NULL ELSE result END WHERE id = $1 AND status = '처리중'`, [order.id]);
         }
     }
-    st.busy = false;
-    await heartbeat('idle');
+    st.running.delete(order.id);
+    if (st.running.size) await heartbeat('busy', firstRunning()); else await heartbeat('idle');
     st.lastBeat = Date.now();
     try { await writeState(); } catch (e) { /* 다음 주기에 다시 적는다 */ }
 }
@@ -425,7 +433,7 @@ async function slowTick() {
     else st.note = '';
 
     const active = !!key && !st.paused;
-    if (active && !st.busy && Date.now() - st.lastBeat >= BEAT_MS) { await heartbeat('idle'); st.lastBeat = Date.now(); }
+    if (active && !st.running.size && Date.now() - st.lastBeat >= BEAT_MS) { await heartbeat('idle'); st.lastBeat = Date.now(); }
 
     st.active = active;
     await writeState();
@@ -435,7 +443,7 @@ async function tick(mode) {
     if (mode || Date.now() - st.lastSlow >= TICK_MS) { await slowTick(); st.lastSlow = Date.now(); }
     const key = st.key;
     if (st.paused && !st.sub) return false;
-    if (st.busy) return false;
+    if (st.running.size >= PARALLEL) return false;
     const o = await nextOrder(st.onlyId);
     if (!o) return false;
     const mine = (await subscriptionUsers()).has(Number(o.created_by_id));   // 대표 본인 지시인가
@@ -443,7 +451,9 @@ async function tick(mode) {
     if (!mine && !st.sub && !key && !direct) { st.note = '콘솔 API 키 파일이 없어 직원 지시를 처리하지 못합니다'; return false; }
     if (mode === 'dry') { const rt = st.fast.off ? { lane: 'ai', model: MODEL, why: '종전 방식' } : fast.route(o, FORCED_MODEL); log(`(시험) 처리할 지시 #${o.id} ${o.status} → ${rt.lane} ${rt.model || ''} (${rt.why})`); return true; }
     try { trust.ensure(); } catch (e) { /* 신뢰 등록은 창을 직접 열 때만 필요하다 */ }
-    await handle(o, (st.sub || mine) ? null : key);
+    if (direct) st.directBusy = true;
+    const p = handle(o, (st.sub || mine) ? null : key).catch(e => log(`#${o.id} 처리 실패: ${e.message}`)).finally(() => { if (direct) st.directBusy = false; });
+    if (mode && !st.multi) await p;   // 시험(--once 1건)은 끝까지 기다린다 · --ids 여러 건과 상주 모드는 바로 다음 자리를 본다
     return true;
 }
 
@@ -458,7 +468,20 @@ async function main() {
         const li = process.argv.indexOf('--ids');
         const ids = li > 0 ? String(process.argv[li + 1] || '').split(',').map(x => parseInt(x, 10)).filter(Boolean) : [st.onlyId];
         const runs = [];
-        for (const id of ids) { st.onlyId = id; const did = await tick(mode); runs.push({ id, did, last: st.lastDone }); }
+        st.multi = ids.length > 1;
+        // 지정한 지시들도 상주 모드와 같은 규칙(같은 사람은 차례로 · 중간발주는 한 번에 하나)으로 자리가 날 때 띄운다
+        const left = [...ids]; const t0 = Date.now();
+        while (left.length && Date.now() - t0 < RUN_TIMEOUT_MS) {
+            for (const id of [...left]) {
+                st.onlyId = id;
+                const did = await tick(mode);
+                if (did) { runs.push({ id, did }); left.splice(left.indexOf(id), 1); continue; }
+                const cur = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [id])).rows[0];
+                if (!cur || !['대기', '승인됨'].includes(cur.status)) { runs.push({ id, did: false, status: cur ? cur.status : '없음' }); left.splice(left.indexOf(id), 1); }
+            }
+            if (left.length) await new Promise(r => setTimeout(r, 1000));
+        }
+        while (st.running.size) await new Promise(r => setTimeout(r, 500));
         for (let i = 0; i < 20 && [...warm.values()].some(w => w.busy); i++) await new Promise(r => setTimeout(r, 500));
         warmReap(true);
         console.log(JSON.stringify({ ok: true, did: runs.some(x => x.did), note: st.note, last: st.lastDone, runs }));
@@ -471,7 +494,7 @@ async function main() {
         srv.listen(LOCK_PORT, '127.0.0.1', () => resolve(srv));
     });
     trimLog();
-    log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + (FORCED_MODEL || '자동(sonnet/opus)') + ' #498');
+    log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + (FORCED_MODEL || '자동(sonnet/opus)') + ' #498 · 동시 ' + PARALLEL + '개 #503');
     for (;;) {
         try { await tick(null); } catch (e) { log('주기 오류(재시도): ' + e.message); }
         await new Promise(r => setTimeout(r, st.fast.poll ? POLL_MS : TICK_MS));

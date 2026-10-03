@@ -423,3 +423,29 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 /* 입력칸을 누를 때 테마의 기본 포커스 테두리가 안쪽에 겹치지 않게 — 포커스 표시는 바깥 상자(.desk-compose)가 한다 */
 .desk-top1 textarea#desk-input, .desk-top1 textarea#desk-input:focus, .desk-top1 textarea#desk-input:focus-visible { border: 0; outline: none; box-shadow: none; background: transparent; }
 .desk-top1 textarea#desk-input:focus { box-shadow: none !important; border-color: transparent !important; }
+/* #504 대화 틀 = 입력칸과 같은 인디고 테두리(이 틀 안에서 이어받아 진행된다는 표시) · 첨부 사진·영상 바로 보기 */
+.desk-thread-box { border: 2px solid #A5ACFF; border-radius: 16px; padding: 12px 14px 14px; margin-top: 12px; background: #fff; }
+.desk-thread-box:first-child { border-top: 2px solid #A5ACFF; padding-top: 12px; margin-top: 0; }
+.desk-thread-box:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .12); }
+.desk-th-head { margin-bottom: 6px; }
+.desk-media { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; padding: 10px 12px 2px; border-left: 4px solid var(--d-accent); border-right: 1px solid #D8DBFF; background: var(--d-accent-soft); }
+.desk-a.answer:has(+ .desk-media) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; }
+.desk-media + .desk-files { margin-top: 0; padding: 8px 12px 0; border-left: 4px solid var(--d-accent); border-right: 1px solid #D8DBFF; background: var(--d-accent-soft); }
+.desk-media-item { margin: 0; max-width: 100%; }
+.desk-media-item img { display: block; max-width: min(100%, 420px); max-height: 300px; border-radius: 10px; border: 1px solid var(--d-line); background: #fff; cursor: zoom-in; }
+.desk-media-item video { display: block; width: min(100%, 560px); max-height: 360px; border-radius: 10px; background: #000; }
+.desk-media-item figcaption { font-size: 12px; color: var(--d-sub); margin-top: 4px; }
+.desk-media-item.fail figcaption::after { content: " · 미리 보기를 못 불러왔어요(내려받기는 됩니다)"; color: var(--d-err); }
+.desk-media-item img:not([src]), .desk-media-item video:not([src]) { width: 160px; height: 110px; background: var(--d-soft); }
+.desk-zoom { position: fixed; inset: 0; z-index: 980; background: rgba(16, 24, 40, .82); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; cursor: zoom-out; }
+.desk-zoom img { max-width: 100%; max-height: calc(100vh - 80px); border-radius: 10px; background: #fff; }
+.desk-zoom-cap { color: #fff; font-size: 13px; }
+@media (max-width: 640px) { .desk-thread-box { padding: 10px 10px 12px; } .desk-media-item img { max-width: 100%; } }
+/* #504 대화 닫기(×)를 또렷하게 — 둥근 테두리 버튼 */
+.desk-th-head .desk-x { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #C7CBFF; background: #fff; color: var(--d-accent); font-size: 18px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.desk-th-head .desk-x:hover { background: var(--d-accent); border-color: var(--d-accent); color: #fff; }
+.desk-th-head .desk-x:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+@media (max-width: 640px) { .desk-th-head .desk-x { width: 44px; height: 44px; } }
+/* #504 다듬기: 크게 보기는 .desk 밖(body)에 붙으므로 hidden 을 따로 적용 · 대화에서 클코 답·이어서 지시 칸은 내 말풍선 오른쪽 끝까지(전체 너비) */
+.desk-zoom[hidden] { display: none !important; }
+.desk-chat .desk-bub.ai { max-width: 100%; }

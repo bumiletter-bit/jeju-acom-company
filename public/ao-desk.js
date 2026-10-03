@@ -69,7 +69,7 @@
     const S = {
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
-        fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), replyImg: new Map(), replyTarget: 0,
+        fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
         view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
@@ -286,6 +286,7 @@
             if (e.target.closest('[data-full-close]')) closeFull();
         });
         document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { const z = $('desk-zoom'); if (z && !z.hidden) { z.hidden = true; return; } }
             if (e.key !== 'Escape' || !S.full) return;
             // 확인표 창 같은 다른 창이 위에 떠 있으면 그 창이 먼저 닫힌다
             if (Array.from(document.querySelectorAll('.modal-overlay')).some(m => getComputedStyle(m).display !== 'none')) return;
@@ -435,7 +436,7 @@
             if (d.working) parts.push(`처리 중 ${d.working}건`);
             if (s === 'offline' && d.last_seen) parts.push('마지막 확인 ' + kst(d.last_seen, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
             $('desk-state-sub').textContent = parts.join(' · ');
-            $('desk-say').textContent = s === 'busy' && d.order_id ? `${d.order_id}번 지시를 처리하고 있어요.` : SAY[s] || SAY.offline;
+            $('desk-say').textContent = s === 'busy' && d.working > 1 ? `지시 ${d.working}건을 동시에 처리하고 있어요.` : s === 'busy' && d.order_id ? `${d.order_id}번 지시를 처리하고 있어요.` : SAY[s] || SAY.offline;
             // #470 창구 켜기·끄기 — 버튼은 늘 같은 자리에 둔다(숨기면 어디 있는지 못 찾는다 · 대표 실물 확인 9/29)
             // #490(대표 9/30): [쉬게 하기] 없음 — 껐다 켜면 토큰만 쓴다. 창구는 늘 켜 두고, PC가 꺼졌다 켜졌을 때 [창구 깨우기]만 관리자(대표·조가영)가 누른다.
             const lc = d.launcher, wrap = $('desk-wake'), wb = $('desk-wake-btn'), wn = $('desk-wake-note');
@@ -566,8 +567,14 @@
             const long = text.length > 360 || text.split('\n').length > 6;
             const mid = !long && (text.length > 120 || text.split('\n').length > 3); // #476 첫 화면 미리보기에서만 3줄로 줄인다
             const open = full || S.open.has(o.id);
-            const files = Array.isArray(r.files) && r.files.length
-                ? `<div class="desk-acts desk-files">${r.files.map(f => f.file_id
+            const fl = Array.isArray(r.files) ? r.files : [];
+            const mediaOf = f => { const ext = String(f.label || '').split('.').pop().toLowerCase(); return /^(png|jpe?g|gif|webp)$/.test(ext) ? 'img' : ext === 'mp4' ? 'video' : ''; };
+            const media = fl.filter(f => f.file_id && mediaOf(f));
+            const mediaHtml = media.length ? `<div class="desk-media">${media.map(f => mediaOf(f) === 'img'
+                ? `<figure class="desk-media-item"><img data-file="${Number(f.file_id)}" alt="${esc(f.label || '첨부 사진')}" data-act="zoom" data-id="${o.id}" title="누르면 크게 보여요"><figcaption>${esc(f.label || '')}</figcaption></figure>`
+                : `<figure class="desk-media-item video"><video data-file="${Number(f.file_id)}" controls playsinline preload="metadata"></video><figcaption>${esc(f.label || '')}</figcaption></figure>`).join('')}</div>` : '';
+            const files = fl.length
+                ? mediaHtml + `<div class="desk-acts desk-files">${fl.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
                     : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
             return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><div class="desk-a-label">클코 답변</div>${laneChip(o)}${r.title && !sameHead(r.title, text) ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${md(text)}</div>${files}
@@ -662,13 +669,38 @@
     }
     // 답 칸은 한 줄로 시작해 적는 만큼 늘어난다(최대 220px)
     function fitReply(t) { if (!t.value) { t.style.height = ''; return; } t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 220) + 'px'; }
-    function renderList() { if (selectingInList()) { S.sig = ''; return; } keepReplies(renderListNow); }
+    function renderList() { if (selectingInList()) { S.sig = ''; return; } keepReplies(renderListNow); fillMedia(); }
+    // #504 첨부 사진·영상 채우기 — 받은 파일은 S.media(file_id → object URL)에 두어 2초 새로고침에 다시 받지 않는다
+    async function fillMedia() {
+        const els = document.querySelectorAll('#desk-list [data-file]:not([src])');
+        for (const el of els) {
+            if (!(el instanceof HTMLImageElement) && !(el instanceof HTMLVideoElement)) continue;
+            const id = Number(el.dataset.file);
+            if (!id) continue;
+            if (S.media.has(id)) { const u = S.media.get(id); if (u === 'fail') { const fig = el.closest('.desk-media-item'); if (fig) fig.classList.add('fail'); } else if (u) el.src = u; continue; }
+            S.media.set(id, '');   // 받는 중
+            try {
+                const res = await fetch('/api/agent-office/files/' + id + '/download', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } });
+                if (!res.ok) throw new Error(String(res.status));
+                const u = URL.createObjectURL(await res.blob());
+                S.media.set(id, u);
+                document.querySelectorAll('#desk-list [data-file="' + id + '"]:not([src])').forEach(x => { x.src = u; });
+            } catch (e) { S.media.set(id, 'fail'); const fig = el.closest('.desk-media-item'); if (fig) fig.classList.add('fail'); }   // 실패도 기억해 2초마다 다시 받지 않는다
+        }
+    }
+    // 사진 크게 보기(누르면 열리고, 다시 누르거나 Esc 로 닫힘)
+    function zoomMedia(src, label) {
+        let z = $('desk-zoom');
+        if (!z) { z = document.createElement('div'); z.id = 'desk-zoom'; z.className = 'desk-zoom'; z.setAttribute('role', 'dialog'); z.setAttribute('aria-label', '사진 크게 보기'); z.addEventListener('click', () => { z.hidden = true; }); document.body.appendChild(z); }
+        z.innerHTML = `<img src="${src}" alt="${esc(label || '')}"><div class="desk-zoom-cap">${esc(label || '')} · 누르면 닫혀요</div>`;
+        z.hidden = false;
+    }
     function renderListNow() {
         const box = $('desk-list');
         const list = shown();
         const chat = S.tab === 'mine' && S.view === 'chat';
         const vb = $('desk-view');
-        if (vb) { vb.hidden = S.tab !== 'mine'; vb.textContent = S.view === 'chat' ? '표로 보기' : '대화로 보기'; }
+        if (vb) { vb.hidden = true; vb.textContent = S.view === 'chat' ? '표로 보기' : '대화로 보기'; }   // #504 전환 버튼 없음
         box.classList.toggle('desk-cardlist', !S.wide && !chat);
         box.classList.toggle('desk-chat', chat);
         if (!list.length) {
@@ -769,7 +801,7 @@
     }
 
     async function onListClick(e) {
-        let b = e.target.closest('button[data-act]');
+        let b = e.target.closest('button[data-act], img[data-act="zoom"]');
         if (!b) {
             // #484: 표의 줄(번호·지시 내용·결과 …)을 눌러도 자세히가 열린다 — 버튼·입력칸·링크·글자 드래그는 제외
             const tr = e.target.closest('tr.row');
@@ -780,6 +812,7 @@
             if (!b) return;
         }
         const id = Number(b.dataset.id), act = b.dataset.act;
+        if (act === 'zoom') { if (b.src) zoomMedia(b.src, b.alt); return; }
         const o = S.orders.find(x => x.id === id);
         if (!o) return;
         if (act === 'toggle') { if (S.open.has(id)) S.open.delete(id); else S.open.add(id); renderList(); return; }

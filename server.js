@@ -14657,9 +14657,23 @@ setInterval(async () => {
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'invoice_qty_request'`);   // 선제거 — 반복 실행 방지
         const days = Math.min(Math.max(parseInt(req.days) || 50, 1), 180);
+        // #502(대표 10/3): size_rows=true 면 손님 배송메모의 사이즈 요청을 프로그램 송장변환과 같은 판정(app.js detectSize·addSizeSuffix 를 실행 시점에 떼어 씀)으로
+        //   옵션 끝에 「S사이즈로!」 꼬리를 붙여 따로 묶는다(메모 글 자체는 결과에 넣지 않는다). 종전 호출(size_rows 없음)은 그대로.
+        let sizeFn = null, out_err;
+        if (req.size_rows === true) {
+            try {
+                const src = require('fs').readFileSync(path.join(__dirname, 'public', 'app.js'), 'utf8');
+                const a = src.indexOf('function detectSize(msg)'), b = src.indexOf('// 품목명 카탈로그', a);
+                const c = src.indexOf('function addSizeSuffix(optionInfo, msg)'), d = src.indexOf('}', src.indexOf('return optionInfo;', c));   // app.js 는 CRLF 라 줄바꿈으로 끝을 찾지 않는다
+                if (a < 0 || b <= a || c < 0 || d <= c) throw new Error('app.js 사이즈 판정 구간을 못 찾음');
+                sizeFn = new Function(src.slice(a, b) + '\n' + src.slice(c, d + 1) + '\nreturn addSizeSuffix;')();
+            } catch (e) { out_err = String(e.message || e); sizeFn = null; }
+        }
+        const withSize = (opt, memo) => { try { return sizeFn ? sizeFn(String(opt || ''), String(memo || '').trim()) : opt; } catch (e) { return opt; } };
         const indiv = new Set((Array.isArray(req.indiv_tels) ? req.indiv_tels : []).map(t => String(t).replace(/\D/g, '')).filter(t => t.length >= 8));
         const dg = v => String(v || '').replace(/\D/g, '');
-        const out = { at: new Date().toISOString(), days, counts: {}, errors: {}, groups: [], indiv_buyers: [] };
+        const out = { at: new Date().toISOString(), days, counts: {}, errors: {}, groups: [], indiv_buyers: [], size_rows: !!sizeFn };
+        if (typeof out_err === 'string') out.errors.size_rows = out_err;
         const agg = new Map(), byBuyer = new Map();
         const add = (ch, opt, qty, tel) => {
             const isIndiv = indiv.has(dg(tel)); const k = ch + '\u0001' + opt + '\u0001' + (isIndiv ? 1 : 0);
@@ -14667,11 +14681,11 @@ setInterval(async () => {
             if (isIndiv) { const bk = ch + '\u0001' + dg(tel).slice(-4) + '\u0001' + opt; const b = byBuyer.get(bk) || { ch, tel4: dg(tel).slice(-4), opt, qty: 0, orders: 0 }; b.qty += qty; b.orders++; byBuyer.set(bk, b); }
         };
         try { const r = await naverFetchInvoiceOrders(days); out.counts.naver = r.rows.length; out.partial_adjusted = r.partialAdjusted || 0;
-            for (const row of r.rows) add('naver', String(row['옵션정보'] || ''), parseInt(row['수량']) || 1, row['구매자연락처']); } catch (e) { out.errors.naver = String(e.message || e).slice(0, 200); }
+            for (const row of r.rows) add('naver', withSize(String(row['옵션정보'] || ''), row['배송메세지']), parseInt(row['수량']) || 1, row['구매자연락처']); } catch (e) { out.errors.naver = String(e.message || e).slice(0, 200); }
         try { const r = await cafe24.fetchInvoiceOrders(Math.min(days, 90)); out.counts.cafe24 = r.rows.length;
-            for (const row of r.rows) add('cafe24', String(row['주문상품명(세트상품 포함)'] || ''), parseInt(row['수량']) || 1, row['주문자 휴대전화']); } catch (e) { out.errors.cafe24 = String((e && (e.reason || e.message)) || e).slice(0, 200); }
+            for (const row of r.rows) add('cafe24', withSize(String(row['주문상품명(세트상품 포함)'] || ''), row['배송메시지']), parseInt(row['수량']) || 1, row['주문자 휴대전화']); } catch (e) { out.errors.cafe24 = String((e && (e.reason || e.message)) || e).slice(0, 200); }
         try { const r = await coupangFetchInvoiceOrders(Math.min(days, 31)); out.counts.coupang = r.rows.length;
-            for (const row of r.rows) add('coupang', String(row['노출상품명(옵션명)'] || row['등록상품명'] || ''), parseInt(row['구매수(수량)']) || 1, row['구매자전화번호']); } catch (e) { out.errors.coupang = String(e.message || e).slice(0, 200); }
+            for (const row of r.rows) add('coupang', withSize(String(row['노출상품명(옵션명)'] || row['등록상품명'] || ''), row['배송메세지']), parseInt(row['구매수(수량)']) || 1, row['구매자전화번호']); } catch (e) { out.errors.coupang = String(e.message || e).slice(0, 200); }
         out.groups = [...agg.values()]; out.indiv_buyers = [...byBuyer.values()];
         await writeAudit({ action: 'invoice_qty_runner', targetType: 'naver_order', targetId: null, changes: { after: { days, counts: out.counts, indiv_tels: indiv.size, errors: out.errors } }, source: 'claude-code', actor: { id: null, name: '클코(발주 수량 러너 #461)' } }).catch(() => {});
         await naverCfgSet('invoice_qty_result', out);

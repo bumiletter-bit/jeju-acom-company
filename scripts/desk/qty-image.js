@@ -19,7 +19,7 @@ const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] 
 const DAYS = Math.max(1, Math.min(180, parseInt(arg('--days', '50'), 10) || 50));
 const OUT = path.resolve(arg('--out', path.join(ROOT, '★에이전트오피스', '받은파일')));
 const NO_RUN = arg('--no-run', null);
-const CAT_BG = { yellow: '#FFFF00', orange: '#F4B183', blue: '#BDD7EE', green: '#C6E0B4', none: '#fff' };   // styles.css .qty-cat-* 그대로
+const CAT_BG = { yellow: '#FFFF00', orange: '#F4B183', blue: '#BDD7EE', green: '#C6E0B4', pink: '#F4CCCC', none: '#fff' };   // styles.css .qty-cat-* 그대로(#502 pink 추가)
 
 // ── 회사프로그램 실코드 추출(verify-406-match.js buildMatcher와 같은 방식)
 function buildMatcher() {
@@ -38,7 +38,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&
 async function runRunner(pool) {
     await pool.query(`DELETE FROM agent_office_config WHERE key='invoice_qty_result'`);
     await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('invoice_qty_request', $1::jsonb)
-                      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`, [JSON.stringify({ days: DAYS })]);
+                      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`, [JSON.stringify({ days: DAYS, size_rows: true })]);   // #502 사이즈 요청 행 분리
     const t0 = Date.now();
     while (Date.now() - t0 < 420000) {
         await new Promise(r => setTimeout(r, 6000));
@@ -73,7 +73,7 @@ function tableHtml(rows, total, opt) {
         WHERE p.start_date <= (now() AT TIME ZONE 'Asia/Seoul')::date AND p.end_date >= (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY p.partner, nm`)).rows;
     const names = [...new Set(pr.map(r => r.nm).filter(Boolean))];
     const byPartner = {}; pr.forEach(r => { if (!r.nm) return; (byPartner[r.partner] = byPartner[r.partner] || new Set()).add(r.nm); });
-    const partnerOf = nm => Object.keys(byPartner).find(p => byPartner[p].has(nm)) || null;
+    const partnerOf = nm => { const base = String(nm).replace(/\s+(2S|S|M)사이즈로!$/, ''); return Object.keys(byPartner).find(p => byPartner[p].has(base)) || null; };
     // ② 러너
     let res;
     if (NO_RUN) res = JSON.parse(fs.readFileSync(NO_RUN, 'utf8'));
@@ -86,7 +86,10 @@ function tableHtml(rows, total, opt) {
     const map = new Map(), unmatched = [];
     for (const g of groups) {
         const qty = parseInt(g.qty, 10) || 1;
-        const name = M.matchProduct(g.opt || '');
+        // #502 손님 메모의 사이즈 요청(「S사이즈로!」 꼬리 — 러너가 프로그램과 같은 판정으로 붙여 줌)은 기본 품목에 맞춘 뒤 꼬리를 다시 붙여 따로 줄로(주황)
+        const sm = /^(.*?)\s+(2S|S|M)사이즈로!$/.exec(String(g.opt || ''));
+        let name = M.matchProduct(sm ? sm[1] : (g.opt || ''));
+        if (sm && typeof name === 'string' && !name.startsWith('[미매칭]')) name = name + ' ' + sm[2] + '사이즈로!';
         if (typeof name !== 'string' || name.startsWith('[미매칭]')) { unmatched.push({ ch: g.ch, opt: String(g.opt || ''), qty }); continue; }
         map.set(name, (map.get(name) || 0) + qty);
     }
