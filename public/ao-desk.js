@@ -81,6 +81,20 @@
         offline: '지금은 자리에 없어요. 남겨 두시면 돌아와서 순서대로 처리할게요.',
     };
     const STATE_LABEL = { idle: '대기 중', busy: '처리 중', offline: '자리 비움' };
+    // #506(대표 10/3): 처리 중 문구는 번호 대신 「누구의 "요청"」 — 길면 앞부분만, 이어서 보낸 글은 괄호로, 여러 건이면 나란히
+    const cutText = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+    const whoOf = w => { const by = String(w.created_by || '').trim(); return by ? by + '님' : '직원'; };
+    function sayWorking(d) {
+        const list = Array.isArray(d.working_list) ? d.working_list : [];
+        if (!list.length) return d.working > 1 ? `지시 ${d.working}건을 동시에 처리하고 있어요.` : SAY.busy;
+        if (list.length === 1) {
+            const w = list[0];
+            const base = w.reply_to && w.parent_content ? w.parent_content : w.content;
+            const follow = w.reply_to && w.parent_content ? ` (이어서: "${cutText(w.content, 16)}")` : '';
+            return `${whoOf(w)}의 "${cutText(base, 24)}"${follow} 처리 중이에요`;
+        }
+        return `${list.length}건 처리 중 — ` + list.map(w => `${whoOf(w)} "${cutText(w.reply_to && w.parent_content ? w.parent_content : w.content, 14)}"`).join(' · ');
+    }
     const BADGE = {
         '대기': ['wait', '순서 대기'], '처리중': ['work', '처리 중'], '판독완료': ['work', '확인표 작성 중'], '확인표작성': ['work', '확인표 작성 중'],
         '질문': ['ask', '확인 필요'], '승인대기': ['ask', '승인 대기'], '승인됨': ['work', '승인됨 · 실행 대기'], '반려': ['err', '반려'],
@@ -110,7 +124,7 @@
                             <span class="desk-wake-note" id="desk-wake-note"></span>
                         </div>
                     </div>
-                    <div class="desk-stage" id="desk-stage" data-s="offline"><img id="desk-char" src="/desk/akkomi-off.webp" alt="아꼼이 캐릭터" width="132" height="132"></div>
+                    <div class="desk-stage" id="desk-stage" data-s="offline"><img id="desk-char" src="/desk/akkomi-off.webp?v=2" alt="아꼼이 캐릭터" width="132" height="132"></div>
                 </div>
                 <form class="desk-ask" id="desk-ask" autocomplete="off">
                     <label class="desk-sr" for="desk-input">지시 내용</label>
@@ -429,14 +443,14 @@
             $('desk-stage').dataset.s = s;
             $('desk-state-text').textContent = STATE_LABEL[s] || s;
             const img = $('desk-char');
-            const src = '/desk/akkomi-' + (s === 'busy' ? 'busy' : s === 'idle' ? 'idle' : 'off') + '.webp';
+            const src = '/desk/akkomi-' + (s === 'busy' ? 'busy' : s === 'idle' ? 'idle' : 'off') + '.webp?v=2';   // #507 3D 아꼼이(10/3)
             if (img.getAttribute('src') !== src) img.setAttribute('src', src);
             const parts = [];
             if (d.waiting) parts.push(`대기 ${d.waiting}건`);
             if (d.working) parts.push(`처리 중 ${d.working}건`);
             if (s === 'offline' && d.last_seen) parts.push('마지막 확인 ' + kst(d.last_seen, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
             $('desk-state-sub').textContent = parts.join(' · ');
-            $('desk-say').textContent = s === 'busy' && d.working > 1 ? `지시 ${d.working}건을 동시에 처리하고 있어요.` : s === 'busy' && d.order_id ? `${d.order_id}번 지시를 처리하고 있어요.` : SAY[s] || SAY.offline;
+            $('desk-say').textContent = s === 'busy' ? sayWorking(d) : SAY[s] || SAY.offline;
             // #470 창구 켜기·끄기 — 버튼은 늘 같은 자리에 둔다(숨기면 어디 있는지 못 찾는다 · 대표 실물 확인 9/29)
             // #490(대표 9/30): [쉬게 하기] 없음 — 껐다 켜면 토큰만 쓴다. 창구는 늘 켜 두고, PC가 꺼졌다 켜졌을 때 [창구 깨우기]만 관리자(대표·조가영)가 누른다.
             const lc = d.launcher, wrap = $('desk-wake'), wb = $('desk-wake-btn'), wn = $('desk-wake-note');

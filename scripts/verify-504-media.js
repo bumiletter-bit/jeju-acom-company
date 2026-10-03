@@ -165,12 +165,23 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
         // ④ 전환 버튼
         ok('④ [표로 보기] 버튼 숨김(hidden)', !!m2.viewBtn && m2.viewBtn.hidden && !m2.viewBtn.vis);
         // ⑤ 동시 처리 문구
-        await A.setStatus({ state: 'busy', working: 3, order_id: 77 });
-        const s3 = (await media(A.pg)).say;
-        await A.setStatus({ state: 'busy', working: 1, order_id: 77 });
+        const cut = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+        const LONG = '판매현황에서 지금 판매중인 품목이 몇 개인지 알려줘 — 보고만, 아무것도 바꾸지 말 것';
+        await A.setStatus({ state: 'busy', working: 1, order_id: 77, working_list: [{ id: 77, created_by: '조가영 과장', content: LONG, reply_to: null, parent_content: null }] });
         const s1 = (await media(A.pg)).say;
-        await A.setStatus({ state: 'idle', working: 0, order_id: null });
-        ok('⑤ working 3 → 「지시 3건을 동시에 처리하고 있어요.」 · working 1 → 「77번 지시를 처리하고 있어요.」', s3 === '지시 3건을 동시에 처리하고 있어요.' && s1 === '77번 지시를 처리하고 있어요.', `${s3} / ${s1}`);
+        ok('⑤ #506 1건(긴 요청) → 「조가영 과장님의 "요청 24자…" 처리 중이에요」', s1 === `조가영 과장님의 "${cut(LONG, 24)}" 처리 중이에요` && /…" 처리 중이에요$/.test(s1), s1);
+        await A.setStatus({ state: 'busy', working: 1, order_id: 78, working_list: [{ id: 78, created_by: '전승범 대표', content: '고 진행해 — 효돈 것만 다시 뽑아서 올려줘', reply_to: 70, parent_content: '중간발주 뽑아줘' }] });
+        const s2 = (await media(A.pg)).say;
+        ok('⑤ #506 이어서 지시 → 원래 요청 + (이어서: "16자…")', s2 === `전승범 대표님의 "중간발주 뽑아줘" (이어서: "${cut('고 진행해 — 효돈 것만 다시 뽑아서 올려줘', 16)}") 처리 중이에요`, s2);
+        await A.setStatus({ state: 'busy', working: 3, order_id: 77, working_list: [{ id: 77, created_by: '전승범 대표', content: '중간발주 뽑아줘', reply_to: null, parent_content: null }, { id: 79, created_by: '조가영 과장', content: '정산 이미지 올려줘 — 효돈 10/3', reply_to: null, parent_content: null }, { id: 80, created_by: '', content: '톡톡 답변 추천', reply_to: null, parent_content: null }] });
+        const s3 = (await media(A.pg)).say;
+        ok('⑤ #506 3건 → 「3건 처리 중 — 전승범 대표님 "…" · 조가영 과장님 "…14자…" · 직원 "…"」(이름 없으면 「직원」)', s3 === `3건 처리 중 — 전승범 대표님 "중간발주 뽑아줘" · 조가영 과장님 "${cut('정산 이미지 올려줘 — 효돈 10/3', 14)}" · 직원 "톡톡 답변 추천"`, s3);
+        await A.setStatus({ state: 'busy', working: 3, order_id: 77, working_list: undefined });
+        const s3f = (await media(A.pg)).say;
+        await A.setStatus({ state: 'busy', working: 1, order_id: 77, working_list: [] });
+        const s1f = (await media(A.pg)).say;
+        await A.setStatus({ state: 'idle', working: 0, order_id: null, working_list: [] });
+        ok('⑤ working_list 없음·빈 배열(옛 서버·폴백) → 「지시 3건을 동시에 처리하고 있어요.」 / 「지금 지시를 처리하고 있어요.」', s3f === '지시 3건을 동시에 처리하고 있어요.' && s1f === '지금 지시를 처리하고 있어요.', `${s3f} / ${s1f}`);
         ok('1440 — 가로 넘침 0 · pageerror 0 · console error 0 · 쓰기 요청 0', !m2.docOverflow && A.errors.length === 0 && A.cons.length === 0 && A.st.writes.length === 0, [...A.errors, ...A.cons, ...A.st.writes].join(' | ').slice(0, 300));
         await A.ctx.close();
 

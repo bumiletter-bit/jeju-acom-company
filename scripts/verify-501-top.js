@@ -228,9 +228,13 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         ok("「중간발주」 = POST 1회 content '중간발주 뽑아줘'", !!pq && pq[pq.length - 1].body.content === '중간발주 뽑아줘');
 
         // 창구 상태별
-        await A.setStatus({ state: 'busy', order_id: 77, working: 1 });
+        const cut = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+        await A.setStatus({ state: 'busy', order_id: 77, working: 1, working_list: [{ id: 77, created_by: '전승범 대표', content: '중간발주 뽑아줘', reply_to: null, parent_content: null }] });
         const b1 = await top(A.pg);
-        ok('처리 중 = 「처리 중」 · 「77번 지시를 처리하고 있어요.」 · 깨우기 버튼 숨김 · 아꼼이 일하는 그림', b1.state.text === '처리 중' && b1.say.text === '77번 지시를 처리하고 있어요.' && !b1.wake.vis && /akkomi-busy/.test(b1.img.src), b1.say.text);
+        ok('#506 처리 중 1건 = 「처리 중」 · 「전승범 대표님의 "중간발주 뽑아줘" 처리 중이에요」 · 깨우기 버튼 숨김 · 아꼼이 일하는 그림', b1.state.text === '처리 중' && b1.say.text === '전승범 대표님의 "중간발주 뽑아줘" 처리 중이에요' && !b1.wake.vis && /akkomi-busy/.test(b1.img.src), b1.say.text);
+        await A.setStatus({ state: 'busy', order_id: 77, working: 1, working_list: undefined });
+        const b1f = await top(A.pg);
+        ok('#506 working_list 없는 옛 서버 응답 → 폴백 「지금 지시를 처리하고 있어요.」', b1f.say.text === '지금 지시를 처리하고 있어요.', b1f.say.text);
         await A.setStatus({ state: 'offline', online: false, can_wake: true, waiting: 2, last_seen: new Date(Date.now() - 600000).toISOString() });
         const o1 = await top(A.pg);
         ok('자리 비움 + 관리자 = [창구 깨우기] 버튼 보임·누를 수 있음(44px 이상) · 카드 안 · 「자리 비움」', o1.state.text === '자리 비움' && o1.wake.vis && !o1.wake.disabled && o1.wake.text === '창구 깨우기' && o1.wake.box.h >= 36 && inside(o1.wake.box, o1.card) && /자리에 없어요/.test(o1.say.text), JSON.stringify(o1.wake));

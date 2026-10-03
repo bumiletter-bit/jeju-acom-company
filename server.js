@@ -13210,12 +13210,16 @@ setInterval(deskOcrTick, 5000);
 // 창구 상태 (화면 표시용): 온라인 여부·처리 중 지시·대기 건수
 app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
     try {
-        const [hbq, cq, eng, lcq] = await Promise.all([
+        const [hbq, cq, eng, lcq, wq] = await Promise.all([
             pool.query(`SELECT value FROM agent_office_config WHERE key='desk_heartbeat'`),
             pool.query(`SELECT status, COUNT(*)::int AS c FROM pending_orders
                         WHERE is_deleted=false AND status IN ('대기','처리중','판독완료','확인표작성','승인대기','승인됨') GROUP BY status`),
             aoEngine(),
             pool.query(`SELECT value, EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS ago FROM agent_office_config WHERE key='desk_launcher'`),
+            // #506(대표 10/3): 처리 중인 지시의 「누가 · 무슨 요청 · 이어서 보낸 글」 — 화면 문구용(이미지·결과는 안 내림 · 요청 글은 80자까지)
+            pool.query(`SELECT o.id, o.created_by, LEFT(o.content, 80) AS content, o.reply_to,
+                               (SELECT LEFT(p.content, 80) FROM pending_orders p WHERE p.id = o.reply_to) AS parent_content
+                        FROM pending_orders o WHERE o.is_deleted=false AND o.status IN ('처리중','판독완료','확인표작성') ORDER BY o.id ASC LIMIT 8`),
         ]);
         const hb = hbq.rows[0] ? hbq.rows[0].value : null;
         // #470 대기 프로그램(대표 PC에서 도는 창구 관리자) — 2분 안에 소식이 있어야 살아 있는 것으로 본다
@@ -13232,6 +13236,7 @@ app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
             waiting: (cnt['대기'] || 0) + (cnt['승인됨'] || 0),
             working: (cnt['처리중'] || 0) + (cnt['판독완료'] || 0) + (cnt['확인표작성'] || 0),
             approval: cnt['승인대기'] || 0,
+            working_list: online ? wq.rows : [],
         });
     } catch (err) { handleAdminErr(res, err); }
 });

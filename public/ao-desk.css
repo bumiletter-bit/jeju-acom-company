@@ -391,7 +391,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-hero-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .desk-top1 .desk-state { margin-top: 0; }
 .desk-top1 .desk-say { margin: 0; background: none; border: 0; border-radius: 0; padding: 0; font-size: 13.5px; color: var(--d-sub); }
-.desk-top1 .desk-stage img { width: 124px; height: 124px; display: block; }
+.desk-top1 .desk-stage img { width: 156px; height: 156px; display: block; }   /* #507 3D 아꼼이 — 정사각 틀이라 조금 크게 */
 .desk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .desk-compose { position: relative; background: #fff; border: 2px solid #A5ACFF; border-radius: 16px; padding: 13px 12px 10px 44px; box-shadow: 0 1px 2px rgba(79, 70, 229, .08); transition: border-color 160ms var(--d-ease), box-shadow 160ms var(--d-ease); }
 .desk-compose:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .14); }
@@ -415,7 +415,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-top1 .desk-chip { flex: none; white-space: nowrap; background: #fff; }
 @media (max-width: 640px) {
     .desk-top.desk-top1 { padding: 16px 14px 14px; }
-    .desk-top1 .desk-stage img { width: 96px; height: 96px; }
+    .desk-top1 .desk-stage img { width: 116px; height: 116px; }
     .desk-top1 .desk-clock { font-size: 34px; }
     .desk-compose { padding-left: 40px; }
 }
