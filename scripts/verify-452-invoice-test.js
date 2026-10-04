@@ -53,13 +53,13 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         // #515(대표 정답 10/4): 도착 요청 = 도착 희망일 이틀 전 발송(그날이 발송 없는 날이거나 지났으면 하루 전). 「애매(ambiguous)」는 이제 나오지 않는다 —
         //   발송일이 기준일과 같으면 onTime(그날 발송 · 표시 없음), 기준일보다 뒤면 자동 제외. 그래서 9/18 원본(97건 · 시계 9/18 고정)의 「기대: 자동 체크」가 21 → 28건으로 늘었다
         //   (종전 「기준일에 보내도 닿을 수 있음 = 애매 → 확인필요」 8건 가운데 7건이 「이틀 전 발송」으로 확정돼 9/18 기준에선 제외 쪽으로, 1건(「21일~22일 도착」 범위 — #515-A)은 확인형으로 갔다. 그 밖의 89건은 판정 그대로).
-        const mpA = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['다음주 화요일 22일 도착 희망', '9/29 도착 희망', '21일 도착 희망', '9월 21일~22일 도착 희망'], baseDate: '2026-09-20' });
-        const [arrA, arrB, arrC, arrD] = mpA.results;
+        const mpA = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['다음주 화요일 22일 도착 희망', '9/29 도착 희망', '21일 도착 희망', '9월 21일~22일 도착 희망', '9월 28일~29일 도착 희망', '21일~22일 발송'], baseDate: '2026-09-20' });
+        const [arrA, arrB, arrC, arrD, arrE, arrF] = mpA.results;
         ok(arrA && arrA.kind === 'arrive' && arrA.onTime === true && arrA.ambiguous === false && arrA.latestShip === '2026-09-20'
             && arrB && arrB.kind === 'arrive' && arrB.onTime === false && arrB.ambiguous === false && arrB.latestShip === '2026-09-27'
             && arrC && arrC.kind === 'arrive' && arrC.onTime === true && arrC.latestShip === '2026-09-20'
-            && arrD && arrD.kind === 'ack',
-            '#515 도착 요청(기준 20일): 22일 도착 = 이틀 전 20일 발송 → 그날 발송(onTime) · 29일 도착 = 27일 발송 → 제외 후보 · 21일 도착 = 이틀 전(19일)이 지나 하루 전 20일 → 그날 발송 · 「21일~22일」 범위 = 확인형', JSON.stringify(mpA.results.map(r => r && { k: r.kind, s: r.latestShip, t: r.onTime })));
+            && arrD && arrD.kind === 'arrive' && arrD.onTime === true && arrD.latestShip === '2026-09-20' && arrE && arrE.kind === 'arrive' && arrE.onTime === false && arrE.latestShip === '2026-09-27' && arrF && arrF.kind === 'ack',
+            '#515 도착 요청(기준 20일): 22일 도착 = 이틀 전 20일 발송 → 그날 발송(onTime) · 29일 도착 = 27일 발송 → 제외 후보 · 21일 도착 = 이틀 전(19일)이 지나 하루 전 20일 → 그날 발송 · #519 「21일~22일 도착」 범위 = 첫 날짜 하루 전 20일 → 그날 발송 · 「28일~29일 도착」 = 27일 발송 → 제외 후보 · 「21일~22일 발송」 = 확인형', JSON.stringify(mpA.results.map(r => r && { k: r.kind, s: r.latestShip, t: r.onTime })));
         const expAck = mp.results.filter(p => p && p.kind === 'ack').length;
         console.log(`  기대: 자동 체크 ${expExcl}건 · 애매(ack) ${expAck}건 · 기준일 ${mp.today}`);
         // 개별발송 대상: 주문 2건 이상인 구매자 2명
@@ -321,12 +321,12 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         // ⑤-x #515: 도착 요청이 v2 화면에서 어떻게 표시되는가 — 기준 발송일 9/20(일) · 가짜 4행(개인정보 없음). 끝나면 기준일·행을 되돌린다.
         const x515prev = await pg.evaluate(() => __ivt.S.shipDate);
         const x515mk = (n, memo) => ({ ...fake[1], '수취인명': '도착' + n, '배송메세지': memo, _pid: '2026091800020' + n, _x: { ...fake[1]._x, productOrderId: '2026091800020' + n } });
-        await pg.evaluate(rows => { __ivt.S.shipDate = '2026-09-20'; return __ivt.setNaverApiRows(rows); }, ['9월 22일 도착 희망', '9월 21일 도착 희망', '9월 29일 도착 희망', '9월 21일~22일 도착 희망'].map((m, i) => x515mk(i + 1, m)));
-        await pg.waitForFunction(() => document.querySelectorAll('#preview tbody tr').length === 4);
+        await pg.evaluate(rows => { __ivt.S.shipDate = '2026-09-20'; return __ivt.setNaverApiRows(rows); }, ['9월 22일 도착 희망', '9월 21일 도착 희망', '9월 29일 도착 희망', '9월 21일~22일 도착 희망', '9월 28일~29일 도착 희망', '21일~22일 발송'].map((m, i) => x515mk(i + 1, m)));
+        await pg.waitForFunction(() => document.querySelectorAll('#preview tbody tr').length === 6);
         const x515 = await pg.evaluate(() => ({ today: __ivt.S.today, rows: __ivt.S.merged.map(e => ({ n: e.conv['수취인명'], flag: e.flag || null, x: !!e.excluded })) }));
         const x515of = n => x515.rows.find(e => e.n === '도착' + n) || {};
-        ok(x515.today === '2026-09-20' && x515of(1).flag === null && x515of(1).x === false && x515of(2).flag === null && x515of(2).x === false && x515of(3).x === true && x515of(4).flag === 'review' && x515of(4).x === false,
-            '⑤-x #515 화면 표시(기준 20일): 이틀 전이 기준일(22일 도착)·하루 전이 기준일(21일 도착) = 표시 없음(그날 발송) · 이틀 전이 뒤 날짜(29일 도착) = 자동 제외 · 범위 = 확인필요(체크 안 함)', JSON.stringify(x515));
+        ok(x515.today === '2026-09-20' && x515of(1).flag === null && x515of(1).x === false && x515of(2).flag === null && x515of(2).x === false && x515of(3).x === true && x515of(4).flag === null && x515of(4).x === false && x515of(5).flag === 'excl' && x515of(5).x === true && x515of(6).flag === 'review' && x515of(6).x === false,
+            '⑤-x #515 화면 표시(기준 20일): 이틀 전이 기준일(22일 도착)·하루 전이 기준일(21일 도착) = 표시 없음(그날 발송) · 이틀 전이 뒤 날짜(29일 도착) = 자동 제외 · #519 범위 도착(21~22일) = 표시 없음(그날 발송) · 범위 도착(28~29일) = 자동 제외 · 범위 발송 = 확인필요(체크 안 함)', JSON.stringify(x515));
         await pg.evaluate(([d, rows]) => { __ivt.S.shipDate = d; return __ivt.setNaverApiRows(rows); }, [x515prev, fake]);
         await pg.waitForFunction(() => document.querySelectorAll('#preview tbody tr').length === 2 && __ivt.S.merged.some(e => e.conv['수취인명'] === '받는A'));
         await pg.evaluate(() => { __ivt.S.merged.forEach(e => { e.excluded = false; e.userTouched = true; }); __ivt.render(); });
