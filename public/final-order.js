@@ -488,7 +488,7 @@
         } else {
             acts = cd.choices.map(([val, lab, pri]) => `<button type="button" class="fo-btn sm${pri ? ' primary' : ''}" data-choice="${esc(val)}" data-fo-act="${esc(val)}" data-id="${esc(cd.id)}">${esc(lab)}</button>`).join('') || '<span class="fo-wait">고친 뒤 [다시 판정]을 눌러야 넘어가요</span>';
         }
-        return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''} data-type="${cd.type}" data-state="${done ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span><b>${esc(cd.title)}</b></div>${done && cd.type !== 'pick' && cd.type !== 'sender-edit' && cd.type !== 'sender-order' ? '' : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div></article>`;
+        return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''} data-type="${cd.type}" data-state="${done ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span>${done && st.ai.tag.has(cd.id) ? '<span class="fo-aibadge" data-ai-badge>AI가 처리</span>' : ''}<b>${esc(cd.title)}</b></div>${done && cd.type !== 'pick' && cd.type !== 'sender-edit' && cd.type !== 'sender-order' ? '' : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div></article>`;
     }
     // 다시 그리기 전에, 아직 확정하지 않은 카드의 입력칸 글을 떠 둔다(워커1 관찰: 다른 카드를 누르면 적다 만 글이 사라졌다)
     function saveDrafts() {
@@ -709,7 +709,7 @@
         bar.hidden = !(st.phase === 'review' || st.phase === 'result');
         const btn = $('fo-ai-read'); btn.disabled = A.running || st.busy || !st.judged || !!st.stale; btn.textContent = A.done ? 'AI에게 다시 읽히기' : 'AI에게 메모 읽히기';
         $('fo-ai-stop').hidden = !A.running;
-        if (!A.running && A.done && !msg.classList.contains('err')) msg.textContent = `AI가 메모 ${A.count}건을 읽었어요. 확실한 것은 처리했고(카드에 「AI」 표시 · [바꾸기]로 고칠 수 있어요), 애매한 것은 입력칸에 채워 두었으니 남은 카드만 확인해 주세요.`;
+        if (!A.running && A.done && !msg.classList.contains('err')) msg.textContent = `AI가 메모 ${A.count}건을 읽었어요. 확실한 것은 처리했고(보라색 「AI가 처리」 표시가 붙은 카드 · [바꾸기]로 고칠 수 있어요), 애매한 것은 입력칸에 채워 두었으니 남은 카드만 확인해 주세요.`;
         if (!A.running && !A.done && !msg.classList.contains('err')) msg.textContent = A.note || '판정이 끝나면 애매한 메모를 AI가 한 번 더 읽어 카드에 채워 줘요(대표 PC의 창구가 켜져 있어야 해요).';
     }
     // auto = 판정 직후 자동 시작(#520). 읽을 메모가 앞서 읽은 것과 같으면 다시 읽지 않는다(판정을 다시 해도 앞선 결과를 그대로 쓴다).
