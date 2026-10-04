@@ -245,7 +245,7 @@
     }
     async function loadChannels(list) { for (const ch of list) await clickLoad(ch); }   // 하나씩(동시에 누르면 v2 재판정이 겹친다)
     async function start() {
-        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb):/.test(id))); st.draft = new Map(); st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
+        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb|memo):/.test(id))); st.draft = new Map(); st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
         await ensureFrame();
         st.chState = {}; drawProgress();
         await loadChannels(CH);
@@ -347,6 +347,8 @@
         //   v2가 스스로 뺀 주문(오늘 안 나감)은 대상 아님 · 같은 구매자·같은 메모는 한 장으로 묶음(#512)
         //   대상 = ⓐv2가 애매로 잡은 주문 ⓑv2가 보내는이 판정을 안 했는데 메모가 이름 한 덩어리뿐인 주문(#512 — 사람은 보내는이로 처리했다)
         const hintOf = e => (typeof c.senderHint === 'function' ? c.senderHint(memoOf(e), buyerName(e)) : null) || {};
+        // 요청 글(보내는이 부탁 · 당일 발송 부탁)을 뺀 나머지 — core.memoRest 가 없으면 원문 그대로(아무것도 안 바꿈)
+        const restOf = (e, sender, day) => (typeof c.memoRest === 'function' ? c.memoRest(memoOf(e), { sender: !!sender, sameDay: !!day, buyerName: buyerName(e) }) : null) || { rest: memoOf(e), removed: '', sure: false };
         const nameOnly = e => !e.sender && !!memoOf(e) && !!hintOf(e).nameOnly;
         groupBy(s.merged.filter(e => !(e.individual || sm.line.has(keyOf(e)) || (e.excluded && !e.userTouched)) && ((e.sender && e.sender.ambiguous) || nameOnly(e))), sameBuyerMemo).forEach(es => {
             const e = es[0], id = 'samb:' + keyOf(e); es.forEach(x => st.sambCard.set(keyOf(x), id));
@@ -356,7 +358,23 @@
             // 번호 칸: 메모에 전화번호가 하나만 있고 구매자·수취인 번호가 아니면 미리 채움(같은 번호면 바꿀 것이 없어 빈칸)
             const known = [buyerTel(e), digitsOf(e.conv['수취인연락처1']), digitsOf(e.conv['수취인연락처2'])].filter(Boolean);
             const phone = (e.sender && e.sender.phone) || (hint.phone && !known.includes(digitsOf(hint.phone)) ? hint.phone : '');
-            cards.push({ id, keys: es.map(keyOf), type: 'sender-order', tag: '보내는이', title: groupTitle(es), lines: [['손님 메모', memo], ['처리', only ? '손님 메모가 이름뿐이에요. 보내는 분으로 넣으려면 확인하고 [이대로 넣기]를 눌러 주세요.' : '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.'], ...groupLines(es)], sender: { name: guess, phone, addr: '', memo } });
+            cards.push({ id, keys: es.map(keyOf), type: 'sender-order', tag: '보내는이', title: groupTitle(es), lines: [['손님 메모', memo], ['처리', only ? '손님 메모가 이름뿐이에요. 보내는 분으로 넣으려면 확인하고 [이대로 넣기]를 눌러 주세요.' : '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.'], ...groupLines(es)], sender: { name: guess, phone, addr: '', memo: only ? '' : restOf(e, true, false).rest, orig: memo } });   // 배송메세지 칸 = 보내는이 부탁 글을 뺀 나머지(#516 · 사람이 확인)
+        });
+        // ③-b 배송메세지 정리(#516 대표 10/4 「보내는이가 확인되면 기본 문구로 · 인사말 같은 글은 남겼다 · 당일 발송 요청도 정답은 기본 문구」)
+        //   대상 = 보내는이를 바꾸는 주문(v2 자동 · 메모 줄 지정)과 당일 발송 요청 메모. 요청 글뿐이라고 확실할 때만(sure && rest==='') 자동으로 기본 문구,
+        //   글이 남거나 확실하지 않으면 카드로(남길 글을 미리 채워 사람이 확인). 실자료 117건에서 「자동으로 비웠는데 수기본엔 글이 남은」 경우 0건.
+        st.memoAuto = new Map(); st.memoCard = new Map();
+        const memoTargets = s.merged.filter(e => {
+            if (e.individual || (e.excluded && !e.userTouched) || !memoOf(e) || st.sambCard.has(keyOf(e))) return false;
+            if (e.reqKind === 'today' && !e.sender) return false;                       // v2가 이미 메모를 비우는 주문(직원 줄로 그날 발송 확정)
+            return (e.sender && !e.sender.ambiguous) || sm.line.has(keyOf(e)) || sameDay(e);
+        });
+        groupBy(memoTargets, sameBuyerMemo).forEach(es => {
+            const e = es[0], r = restOf(e, (e.sender && !e.sender.ambiguous) || sm.line.has(keyOf(e)), sameDay(e));
+            if (r.rest === memoOf(e)) return;                                            // 뺄 것이 없음 → 원문 그대로(종전과 같음)
+            if (r.sure && r.rest === '') { es.forEach(x => st.memoAuto.set(keyOf(x), true)); info.push(`배송메세지를 기본 문구로: ${groupTitle(es)} — 손님 메모 「${memoOf(e)}」`); return; }
+            const id = 'memo:' + keyOf(e); es.forEach(x => st.memoCard.set(keyOf(x), id));
+            cards.push({ id, keys: es.map(keyOf), type: 'memo-edit', tag: '배송메세지', title: groupTitle(es), lines: [['손님 메모', memoOf(e)], ['처리', '보내는이·발송일 부탁 글을 빼고 택배사 양식에 남길 글을 확인해 주세요. 비우면 기본 문구가 들어가요.'], ...groupLines(es)], memo: { rest: r.rest, orig: memoOf(e) } });
         });
         // ④ 메모 줄
         (s.allLines || []).forEach(l => {
@@ -396,7 +414,7 @@
         st.cards = cards; st.info = info;
         // 사라진 주문 카드의 옛 결정은 지운다(같은 카드가 나중에 다시 뜨면 새로 묻는다)
         const live = new Set(cards.map(cd => cd.id));
-        [...st.dec.keys()].forEach(id => { if (/^(ord|split|samb):/.test(id) && !live.has(id)) st.dec.delete(id); });
+        [...st.dec.keys()].forEach(id => { if (/^(ord|split|samb|memo):/.test(id) && !live.has(id)) st.dec.delete(id); });
     }
     // 지금 떠 있는 카드의 결정만 인정한다(사라진 카드의 옛 결정이 주문을 빼지 않게 — 워커2 재현 C)
     const liveDec = id => (st.cards.some(cd => cd.id === id) ? st.dec.get(id) : undefined);
@@ -417,7 +435,7 @@
     const otherDec = (cd, k) => { const id = cd.type === 'order' ? 'split:' + k : st.ordCard && st.ordCard.get(k); return id ? liveDec(id) : undefined; };
     const pending = () => st.cards.filter(cd => !st.dec.has(cd.id));
     // 검증·스타일용 카드 종류(data-fo-card) — 카드 id 머리말로 정한다
-    const KIND = { ord: 'order', split: 'split', samb: 'sender-memo', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
+    const KIND = { ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
     const kindOf = cd => KIND[cd.id.split(':')[0]] || cd.type;
     function cardHtml(cd) {
         const v = st.dec.get(cd.id), done = v !== undefined;
@@ -425,12 +443,17 @@
         let acts = '';
         if (cd.type === 'pick') {
             acts = `<label class="fo-pick">거래처 <select data-pick="${esc(cd.id)}"><option value="">고르기</option>${cd.picks.map(p => `<option value="${esc(p)}"${v === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>`;
+        } else if (cd.type === 'memo-edit') {
+            const d = v || st.draft.get(cd.id) || { memo: cd.memo.rest };
+            acts = done ? `<span class="fo-done">${v.use ? `배송메세지 「${esc(v.memo || '기본 문구')}」` : '원문 그대로'}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
+                : `<div class="fo-edit"><label class="wide">택배사 양식에 들어갈 배송메세지(비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.memo.rest : d.memo)}</textarea></label></div>
+                   <button type="button" class="fo-btn sm primary" data-memo="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-memo="keep" data-fo-act="keep" data-id="${esc(cd.id)}">원문 그대로</button>`;
         } else if (cd.type === 'sender-edit' || cd.type === 'sender-order') {
             const ord = cd.type === 'sender-order';   // 주문 카드(손님 메모 애매) = [안 바꿈] · 메모 줄 카드 = [넣지 않음]
             const d = v || st.draft.get(cd.id) || { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '', memo: cd.sender.memo || '' };   // draft = 아직 안 누른 카드에 적어 둔 글(다른 카드를 눌러 다시 그려도 유지)
             // #511(대표 10/4 「정답은 동호수만 남기고 김현정 드림」): 주문 카드에서는 택배사 양식에 들어갈 배송메세지도 사람이 고쳐 넣을 수 있다(프로그램이 지우지 않는다 · 비우면 기본 문구)
             const memoBox = ord ? `<label class="wide">택배사 양식에 들어갈 배송메세지(보내는이 부탁 글은 지우고 남길 것만 · 비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.sender.memo || '' : d.memo)}</textarea></label>` : '';
-            const memoDone = ord && v && v.use && typeof v.memo === 'string' && v.memo !== (cd.sender.memo || '') ? ` · 배송메세지 「${esc(v.memo || '기본 문구')}」` : '';
+            const memoDone = ord && v && v.use && typeof v.memo === 'string' && v.memo !== (cd.sender.orig || '') ? ` · 배송메세지 「${esc(v.memo || '기본 문구')}」` : '';
             acts = done ? `<span class="fo-done">${v.use ? `보내는이 ${esc(/드림$/.test(v.name) ? v.name : v.name + ' 드림')}${v.phone ? ' · ' + esc(v.phone) : ''}${v.addr ? ' · 주소 ' + esc(v.addr) : ''}${memoDone}` : ord ? '안 바꿈' : '이 줄은 넣지 않음'}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
                 : `<div class="fo-edit"><label>보내는 분 이름(「드림」은 자동으로 붙어요)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label>${memoBox}</div>
                    <button type="button" class="fo-btn sm primary" data-sender="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-sender="skip" data-fo-act="${ord ? 'keep' : 'skip'}" data-id="${esc(cd.id)}">${ord ? '안 바꿈' : '넣지 않음'}</button>`;
@@ -488,6 +511,11 @@
         if (b.dataset.choice) return decide(b.dataset.id, b.dataset.choice);
         if (b.dataset.undo) return decide(b.dataset.undo, undefined);
         if (b.dataset.bulk === 'send') { pending().filter(cd => cd.type === 'order').forEach(cd => st.dec.set(cd.id, 'send')); st.out = null; $('fo-result').hidden = true; return renderSummaryOnly(); }
+        if (b.dataset.memo) {
+            if (b.dataset.memo === 'keep') return decide(b.dataset.id, { use: false });
+            const el = b.closest('.fo-card').querySelector('[data-f="memo"]');
+            return decide(b.dataset.id, { use: true, memo: String((el && el.value) || '').replace(/\r/g, '').trim() });
+        }
         if (b.dataset.sender) {
             const card = b.closest('.fo-card'), get = f => (card.querySelector(`[data-f="${f}"]`).value || '').trim();
             if (b.dataset.sender === 'skip') return decide(b.dataset.id, { use: false });
@@ -515,10 +543,15 @@
         if (rows1 !== list.length) throw new Error(`택배사 양식 행 수가 맞지 않아요(시트 ${rows1}행 / 주문 ${list.length}건). 다시 판정해 주세요.`);
         const program = list.map((e, i) => ({ key: keyOf(e), cells: 'ABCDEFGHIJK'.split('').map(col => { const x = ws1[col + (i + 2)]; return x ? { v: x.v == null ? '' : x.v, s: x.s, t: x.t } : { v: '' }; }) }));
         // #511: 보내는이 카드에서 사람이 고쳐 넣은 배송메세지(원문과 다를 때만) — 색 표시는 보통 칸 서식으로(사람이 처리한 칸). 비웠으면 core 가 기본 문구를 넣는다.
+        //   #516: 배송메세지 카드에서 정한 글 · 요청 글뿐이라 자동으로 기본 문구가 되는 주문(st.memoAuto)도 여기서 덮는다.
         list.forEach((e, i) => {
-            const d = sambDec(e); if (!d || !d.use || typeof d.memo !== 'string') return;
-            if (d.memo === String(e.conv['배송메세지'] || '').replace(/\r/g, '').trim()) return;
-            program[i].cells[9] = { v: d.memo, t: 's', s: program[i].cells[3].s };
+            const k = keyOf(e), orig = String(e.conv['배송메세지'] || '').replace(/\r/g, '').trim();
+            const put = text => { if (text !== orig) program[i].cells[9] = { v: text, t: 's', s: program[i].cells[3].s }; };
+            const d = sambDec(e);
+            if (d) { if (d.use && typeof d.memo === 'string') put(d.memo); return; }   // 보내는이 카드가 있는 주문은 그 카드의 결정만 따른다([안 바꿈]이면 원문 그대로)
+            const md2 = st.memoCard && st.memoCard.get(k) ? st.dec.get(st.memoCard.get(k)) : undefined;
+            if (md2) { if (md2.use && typeof md2.memo === 'string') put(md2.memo); return; }
+            if (st.memoAuto && st.memoAuto.get(k)) put('');
         });
         const picks = {}; st.cards.forEach(cd => { if (cd.type === 'pick' && st.dec.get(cd.id)) picks[cd.id.slice(5)] = st.dec.get(cd.id); });
         const out = core().buildRows({ program, cash: st.cash && st.cash.ok ? st.cash.rows : [], byPartner: st.byPartner, picks, senderByKey: senderMap().byKey, defaultMemo: DEFAULT_MEMO });

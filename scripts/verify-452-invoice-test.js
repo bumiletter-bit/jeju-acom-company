@@ -49,10 +49,17 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         ok(/^\d{4}-\d{2}-\d{2}$/.test(mp.suggested) && Array.isArray(mp.shipDays) && mp.shipDays.length >= 5 && mp.today === mp.suggested && mp.shipDays.every(d => new Date(d + 'T00:00:00Z').getUTCDay() !== 6) && mp.today >= mp.realToday, '기준 발송일 = 달력상 다음 발송일(토요일 0·오늘 이후) · baseDate 없으면 suggested', `today ${mp.today} · real ${mp.realToday} · ${mp.shipDays.join(',')}`);
         const mpB = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['21일 발송'], baseDate: mp.shipDays[mp.shipDays.length - 1] });
         ok(mpB.today === mp.shipDays[mp.shipDays.length - 1] && mpB.suggested === mp.suggested, 'memo-parse baseDate 지정 → 그 날 기준으로 해석(suggested는 불변)', mpB.today);
-        const expExcl = mp.results.filter(p => p && (p.kind === 'ship' ? p.reqDate > mp.today : p.kind === 'arrive' ? (!p.ambiguous && (p.latestShip || p.reqDate) > mp.today) : false)).length;   // #452-x: 도착 요청은 기준일 발송으로 닿을 수 있으면 확인필요
-        const mpA = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['다음주 화요일 22일 도착 희망', '9/29 도착 희망'], baseDate: '2026-09-20' });
-        const [arrA, arrB] = mpA.results;
-        ok(arrA && arrA.kind === 'arrive' && arrA.ambiguous === true && arrA.latestShip === '2026-09-21' && arrB && arrB.kind === 'arrive' && arrB.ambiguous === false && arrB.latestShip === '2026-09-28', '#452-x 도착 요청: 22일 도착(기준 20일) = 20일 발송으로도 닿음 → ambiguous(확인필요) · 29일 도착 = 확실히 뒤 → 제외 후보', JSON.stringify(mpA.results));
+        const expExcl = mp.results.filter(p => p && (p.kind === 'ship' ? p.reqDate > mp.today : p.kind === 'arrive' ? (!p.ambiguous && (p.latestShip || p.reqDate) > mp.today) : false)).length;
+        // #515(대표 정답 10/4): 도착 요청 = 도착 희망일 이틀 전 발송(그날이 발송 없는 날이거나 지났으면 하루 전). 「애매(ambiguous)」는 이제 나오지 않는다 —
+        //   발송일이 기준일과 같으면 onTime(그날 발송 · 표시 없음), 기준일보다 뒤면 자동 제외. 그래서 9/18 원본(97건 · 시계 9/18 고정)의 「기대: 자동 체크」가 21 → 28건으로 늘었다
+        //   (종전 「기준일에 보내도 닿을 수 있음 = 애매 → 확인필요」 8건 가운데 7건이 「이틀 전 발송」으로 확정돼 9/18 기준에선 제외 쪽으로, 1건(「21일~22일 도착」 범위 — #515-A)은 확인형으로 갔다. 그 밖의 89건은 판정 그대로).
+        const mpA = await apiJ('/api/agent-office/invoice/memo-parse', 'POST', { memos: ['다음주 화요일 22일 도착 희망', '9/29 도착 희망', '21일 도착 희망', '9월 21일~22일 도착 희망'], baseDate: '2026-09-20' });
+        const [arrA, arrB, arrC, arrD] = mpA.results;
+        ok(arrA && arrA.kind === 'arrive' && arrA.onTime === true && arrA.ambiguous === false && arrA.latestShip === '2026-09-20'
+            && arrB && arrB.kind === 'arrive' && arrB.onTime === false && arrB.ambiguous === false && arrB.latestShip === '2026-09-27'
+            && arrC && arrC.kind === 'arrive' && arrC.onTime === true && arrC.latestShip === '2026-09-20'
+            && arrD && arrD.kind === 'ack',
+            '#515 도착 요청(기준 20일): 22일 도착 = 이틀 전 20일 발송 → 그날 발송(onTime) · 29일 도착 = 27일 발송 → 제외 후보 · 21일 도착 = 이틀 전(19일)이 지나 하루 전 20일 → 그날 발송 · 「21일~22일」 범위 = 확인형', JSON.stringify(mpA.results.map(r => r && { k: r.kind, s: r.latestShip, t: r.onTime })));
         const expAck = mp.results.filter(p => p && p.kind === 'ack').length;
         console.log(`  기대: 자동 체크 ${expExcl}건 · 애매(ack) ${expAck}건 · 기준일 ${mp.today}`);
         // 개별발송 대상: 주문 2건 이상인 구매자 2명
@@ -311,6 +318,17 @@ const apiJ = async (url, method = 'GET', body) => (await fetch(BASE + url, { met
         await pg.waitForFunction(() => document.querySelectorAll('#preview tbody tr').length === 2);
         const exclFake = await pg.evaluate(() => __ivt.S.merged.map(e => ({ n: e.conv['수취인명'], x: e.excluded })));
         ok(exclFake.find(e => e.n === '받는A').x === true && exclFake.find(e => e.n === '받는B').x === false, '⑤ API 경로: 「21일 발송」 자동 체크 · 「문앞」 미체크', JSON.stringify(exclFake));
+        // ⑤-x #515: 도착 요청이 v2 화면에서 어떻게 표시되는가 — 기준 발송일 9/20(일) · 가짜 4행(개인정보 없음). 끝나면 기준일·행을 되돌린다.
+        const x515prev = await pg.evaluate(() => __ivt.S.shipDate);
+        const x515mk = (n, memo) => ({ ...fake[1], '수취인명': '도착' + n, '배송메세지': memo, _pid: '2026091800020' + n, _x: { ...fake[1]._x, productOrderId: '2026091800020' + n } });
+        await pg.evaluate(rows => { __ivt.S.shipDate = '2026-09-20'; return __ivt.setNaverApiRows(rows); }, ['9월 22일 도착 희망', '9월 21일 도착 희망', '9월 29일 도착 희망', '9월 21일~22일 도착 희망'].map((m, i) => x515mk(i + 1, m)));
+        await pg.waitForFunction(() => document.querySelectorAll('#preview tbody tr').length === 4);
+        const x515 = await pg.evaluate(() => ({ today: __ivt.S.today, rows: __ivt.S.merged.map(e => ({ n: e.conv['수취인명'], flag: e.flag || null, x: !!e.excluded })) }));
+        const x515of = n => x515.rows.find(e => e.n === '도착' + n) || {};
+        ok(x515.today === '2026-09-20' && x515of(1).flag === null && x515of(1).x === false && x515of(2).flag === null && x515of(2).x === false && x515of(3).x === true && x515of(4).flag === 'review' && x515of(4).x === false,
+            '⑤-x #515 화면 표시(기준 20일): 이틀 전이 기준일(22일 도착)·하루 전이 기준일(21일 도착) = 표시 없음(그날 발송) · 이틀 전이 뒤 날짜(29일 도착) = 자동 제외 · 범위 = 확인필요(체크 안 함)', JSON.stringify(x515));
+        await pg.evaluate(([d, rows]) => { __ivt.S.shipDate = d; return __ivt.setNaverApiRows(rows); }, [x515prev, fake]);
+        await pg.waitForFunction(() => document.querySelectorAll('#preview tbody tr').length === 2 && __ivt.S.merged.some(e => e.conv['수취인명'] === '받는A'));
         await pg.evaluate(() => { __ivt.S.merged.forEach(e => { e.excluded = false; e.userTouched = true; }); __ivt.render(); });
         const dl3 = pg.waitForEvent('download'); await pg.click('#btn-download'); const d3 = await dl3;
         const f3 = path.join(os.tmpdir(), 'ivt3.xlsx'); await d3.saveAs(f3); const w3 = XLSX.readFile(f3, { cellStyles: true }); const q = w3.Sheets['발주발송관리'];

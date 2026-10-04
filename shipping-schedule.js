@@ -176,7 +176,7 @@ function renderGuidePlaceholders(text, baseAt, arriveOff) {
 //   설계(보수적 — 틀린 날짜를 확정 문구로 내보내지 않는다):
 //     · 메모에 날짜(N일·M월 N일·M/N·요일)가 없으면 null → 호출부는 종전 computeShipping 그대로(출력 바이트 동일).
 //     · 발송 키워드(발송·출고·출발·보내·출하)가 붙은 날짜 = 발송일 확정 문구(그 날이 출고 가능일이고 최단 발송일 이후일 때만).
-//     · 도착 키워드(도착·받·수령·까지)가 붙은 날짜 = 그 날 도착에 맞는 최근 출고일로 계산(도착일이 배달 가능일일 때만).
+//     · 도착 키워드(도착·받·수령·까지)가 붙은 날짜 = 도착 희망일 이틀 전 발송, 그날이 발송 없는 날이거나 지났으면 하루 전(#515 대표 정답 — 도착일이 배달 가능일일 때만).
 //     · 「배송」만 있는 경우·키워드 없음·날짜 2개 이상·제외/부정(주말 X·이후·이전…)·계산 불가 = 「요청 확인·담당자 확인 후 발송」 확인형(ack) 문구.
 //     · 요청 발송일이 종전 계산과 같으면 null(종전 문구 그대로).
 //   반환: null | { kind:'ship'|'arrive'|'ack', text, reqDate?:'YYYY-MM-DD' }
@@ -223,6 +223,16 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         if (!found.some(f => f.idx === m.index)) found.push({ mo: m[1] ? Number(m[1]) : null, dd: d1, idx: m.index, len: m[0].length });
         found.push({ mo: m[1] ? Number(m[1]) : null, dd: d2, idx: m.index + 1, len: m[0].length - 1, rangeEnd: true });
     }
+    // #515-A(대표 10/4): 「9월 21일~22일」「9월18일~21일」처럼 「일」을 두 번 쓴 범위 — 물결·대시 바로 뒤 날짜가 reDay 의 lookbehind 에 걸려 앞 날짜 하나로만 읽히던 것 → 뒤 날짜도 후보에 넣어 날짜 2개(확인형).
+    //   띄어 쓴 꼴(「21일 ~ 22일」)·「에서」「부터」로 이은 꼴은 reDay 가 이미 둘 다 잡는다(같은 자리 후보는 다시 넣지 않음).
+    const reRange2 = /\d{1,2}\s*일\s*(?:[~\-–]|에서|부터)\s*((?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일(?![\d간째분시치씩]|\s*(?:후|뒤|이내|안에|정도|만에|간|째|이상)))/g;
+    while ((m = reRange2.exec(raw))) {
+        const mo = m[2] ? Number(m[2]) : null, dd = Number(m[3]);
+        if (dd < 1 || dd > 31 || (mo != null && (mo < 1 || mo > 12))) continue;
+        const at2 = m.index + m[0].length - m[1].length, end2 = m.index + m[0].length;
+        if (!found.some(f => f.idx >= at2 && f.idx < end2)) found.push({ mo: mo != null ? mo : null, dd, idx: at2, len: m[1].length, rangeEnd: true });
+        reRange2.lastIndex = at2;   // 「20일~21일~22일」처럼 이어 쓴 경우 뒤 날짜에서 다시 시작
+    }
     const reDow = /(다음\s*주|담주|이번\s*주)?\s*([월화수목금토일])(?:요일|욜)/g;
     while ((m = reDow.exec(raw))) found.push({ dow: '일월화수목금토'.indexOf(m[2]), next: /다음|담주/.test(m[1] || ''), idx: m.index, len: m[0].length });
     const weekendNeg = negative && /(주말|토요일|토욜|일요일)/.test(raw);
@@ -266,7 +276,11 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
     //   — #452-b: 「출고해주세요 9월21일」(앞에 멀리) · 「9월 21일 월요일에 배송 출발」(요일 뒤에 키워드)
     const spanS = Math.min(...resolved.map(r => r.f.idx)), spanE = Math.max(...resolved.map(r => r.f.idx + r.f.len));
     const around = raw.slice(Math.max(0, spanS - 12), spanE + 10);
-    const shipKw = /(발송|출고|출발|보내|출하)/.test(around);
+    // #514(대표 GO 10/4): 「보내는분·보내는 사람·보내는이·보낸이·발신자」는 보내는 사람을 가리키는 말이지 발송 요청이 아니다 → 그 낱말을 가린 글로 발송 키워드를 찾는다.
+    //   실사고(9/16): 「○월○일 배송희망 보내는분 ○○ …」의 「보내」 때문에 발송 요청으로 읽혀 하루 늦게 잡혔다. 「보내주세요·보내 달라」 같은 진짜 발송 요청은 그대로.
+    //   「보내는 이번 주」처럼 뒤에 글자가 이어지는 「이」는 가리지 않는다. 글자 수를 그대로 두어(같은 길이의 □) 창의 위치는 변하지 않는다.
+    const aroundShip = raw.replace(/보내시?는\s*(?:분|사람)|보내시?는\s*이(?![가-힣])|보내시?는\s*이(?=[는가를의도]\s)|보낸\s*(?:분|사람)|보낸\s*이(?![가-힣])|발신(?:자|인)/g, m => '□'.repeat(m.length)).slice(Math.max(0, spanS - 12), spanE + 10);
+    const shipKw = /(발송|출고|출발|보내|출하)/.test(aroundShip);
     const arriveKw = /(도착|받|수령|까지|배달)/.test(around);
     const deliverKw = /배송/.test(around);
     if (shipKw && arriveKw) return ack(label);
@@ -278,19 +292,16 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         return { kind: 'ship', reqDate: ymd(req), text: '배송메세지에 남겨주신 요청대로 ' + shipPhrase(orderDay, req) + ' 오전 발송, ' + arrivePhrase(req, a1, a2) + '이에요' };
     }
     if (arriveKw) {   // #452-b: 도착 키워드가 있으면 「배송」은 일반어로 무시(「9/21 도착으로 배송해주세요」 = 도착 요청)
-        if (!isDeliveryDay(req, arriveOff)) return ack(label + ' 도착');
-        // 요청 도착일에 맞는 가장 늦은 출고일(최단 발송일 이후)
+        if (!isDeliveryDay(req, arriveOff)) return ack(label + ' 도착');           // 일요일·도착불가일 도착 요청 = 손님이 날을 잘못 본 것 → 사람 확인
+        // #515(대표 정답 10/4): 배송이 1~2일 걸리므로 **도착 희망일 이틀 전에 발송**한다. 이틀 전이 발송 없는 날(토요일·발송휴무일)이거나 이미 지났으면(주문이 늦음) 하루 전.
+        //   월요일 도착 = 이틀 전 토요일은 발송이 없으니 일요일 발송 · 화요일 도착 = 일요일 발송 · 수 = 월 · 목 = 화 · 금 = 수 · 토 = 목.
+        //   둘 다 안 되면(둘 다 발송 없는 날 · 둘 다 가장 빠른 발송일보다 앞) 확인형. 종전(#450·#452-x)은 「가장 늦은 출고일(하루 전)」 + 「기준일에 보내도 닿으면 애매」였다.
         let s = null;
-        for (let d = addDays(req, -1); d >= normalShip; d = addDays(d, -1)) {
-            if (!isShipDay(d, shipOffSet)) continue;
-            const a1 = nextMatching(d, x => isDeliveryDay(x, arriveOff));
-            if (a1 <= req) { s = d; break; }
-        }
+        for (const back of [2, 1]) { const d = addDays(req, -back); if (d >= normalShip && isShipDay(d, shipOffSet)) { s = d; break; } }
         if (!s) return ack(label + ' 도착');
-        if (ymd(s) === normal.shipDate) return null;
-        // #452-x(대표 9/18): 정상 발송일에 보내도 1~2일 배송으로 요청 도착일에 닿을 수 있으면(예: 20일 발송 → 21~22일 도착, 요청 22일) 「가장 늦은 출고일」만으로 단정 불가 → ambiguous(송장변환에선 확인필요). 알림톡 문구(text)는 종전 그대로.
-        const n1 = nextMatching(normalShip, x => isDeliveryDay(x, arriveOff)), n2 = nextMatching(n1, x => isDeliveryDay(x, arriveOff));
-        return { kind: 'arrive', reqDate: ymd(req), latestShip: ymd(s), ambiguous: req <= n2, text: shipPhrase(orderDay, s) + ' 오전 발송 예정이에요 (배송메세지에 남겨주신 ' + label + ' 도착 요청 기준 — 택배 사정으로 하루 정도 차이가 날 수 있어요)' };
+        // 고른 발송일 = 평소 발송일이면 종전 문구 그대로(null — #450 원칙). opts.detail(송장변환·최종발주의 메모 판정용)일 때만 「그날 발송이 요청대로」임을 알려 준다(text 없음 = 알림톡 문구에는 쓰이지 않는다)
+        if (ymd(s) === normal.shipDate) return (opts && opts.detail) ? { kind: 'arrive', reqDate: ymd(req), latestShip: ymd(s), ambiguous: false, onTime: true, text: '' } : null;
+        return { kind: 'arrive', reqDate: ymd(req), latestShip: ymd(s), ambiguous: false, text: shipPhrase(orderDay, s) + ' 오전 발송 예정이에요 (배송메세지에 남겨주신 ' + label + ' 도착 요청 기준 — 택배 사정으로 하루 정도 차이가 날 수 있어요)' };
     }
     return ack(label + (deliverKw ? ' 배송' : ''));
 }

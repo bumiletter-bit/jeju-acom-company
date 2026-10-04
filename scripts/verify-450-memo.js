@@ -23,7 +23,7 @@ let pass = 0, fail = 0; const ok = (c, t, d) => { c ? pass++ : fail++; console.l
         ['17일배송으로부탁드려요', 'ack', '9/17'],
         ['20일 발송희망', 'ship', '9/20'],
         ['9월21일날 도착희망합니다', 'arrive', '9/21'],
-        ['22일까지 꼭 배송부탁드릴게요', 'arrive', '9/22'],       // #452-b: 「까지」 = 도착 기한 → 도착 요청(「배송」은 일반어) → 9/21 발송
+        ['22일까지 꼭 배송부탁드릴게요', 'arrive', '9/22'],       // #452-b: 「까지」 = 도착 기한 → 도착 요청(「배송」은 일반어) → #515부터 이틀 전 9/20(일) 발송(종전 9/21)
         ['9월 24일 도착 희망', 'ack', '9/24'],          // 연휴(도착불가) → 확인형
         ['9/22 도착 희망', 'arrive', '9/22'],
         ['월요일 발송 부탁드려요', 'ship', '9/21'],
@@ -69,6 +69,56 @@ let pass = 0, fail = 0; const ok = (c, t, d) => { c ? pass++ : fail++; console.l
         if (memo === '다음주 화요일 도착 희망') good = res && (res.kind === 'arrive' || res.kind === 'ack') && res.text.includes('9/22');
         ok(good, `「${memo || '(빈 메모)'}」 → ${got}`, res ? res.text : '(종전 문구)');
     }
+    // #514(대표 GO 10/4): 「보내는분·보내는 사람·보내는이·보낸이·발신자」의 「보내」는 발송 낱말이 아니다 — 그 낱말이 붙어도 붙지 않았을 때와 같은 결과
+    const same = (a, b) => JSON.stringify(run(a)) === JSON.stringify(run(b));
+    const base18 = run('9월18일 배송희망');
+    ok(base18 && base18.kind === 'ack' && same('9월18일 배송희망 보내는분 가짜상회 서울 가짜구 가짜로 12 010 1111 2222', '9월18일 배송희망'), '#514 「9월18일 배송희망 보내는분 …」 = 「9월18일 배송희망」과 같은 확인형(종전엔 발송 요청으로 읽힘)', JSON.stringify(run('9월18일 배송희망 보내는분 가짜상회 서울 가짜구 가짜로 12 010 1111 2222')).slice(0, 90));
+    const senderOnly = ['18일 보내는이 홍길동', '보내시는분 홍길동 9/18', '보내는 사람: 홍길동 18일', '보낸이 홍길동 18일', '18일 보내는 분 홍길동', '18일 보내는이는 홍길동', '9월18일 배송희망 보내는 이 "홍길동 드림"'];
+    const stillShip = senderOnly.filter(m => { const r = run(m); return !r || r.kind !== 'ack'; });
+    ok(stillShip.length === 0, `#514 보내는이 낱말만 있고 발송 낱말이 없는 ${senderOnly.length}꼴 → 확인형(ack)`, stillShip.join(' | '));
+    const realShip = [['21일 발송 부탁드립니다 보내는분 홍길동', '9/21'], ['보내는 이 "홍길동 드림"으로 부탁드리고 출고날짜 9/21', '9/21'], ['21일에 보내주세요', '9/21'], ['21일 보내 주세요', '9/21'], ['9/21 보내줘요', '9/21'], ['21일에 보내 달라고 했어요', '9/21'], ['21일 보내는 이번 주문 꼭 부탁해요', '9/21'], ['보내는분 홍길동 21일 출발', '9/21']];
+    const lostShip = realShip.filter(([m, inc]) => { const r = run(m); return !(r && r.kind === 'ship' && r.text.includes(inc)); });
+    ok(lostShip.length === 0, `#514 진짜 발송 요청 ${realShip.length}꼴(발송·출고·출발·보내주세요·보내 달라 …)은 그대로 발송 요청`, lostShip.map(x => x[0]).join(' | '));
+    ok(same('9월21일 도착희망 보내는분 홍길동', '9월21일 도착희망') && run('9월21일 도착희망 보내는분 홍길동').kind === 'arrive', '#514 「도착희망 + 보내는분」 = 「도착희망」과 같은 도착 요청(종전엔 발송·도착 낱말이 겹쳐 확인형)', JSON.stringify(run('9월21일 도착희망 보내는분 홍길동')).slice(0, 80));
+    ok(same('보내는분 홍길동', '홍길동') && run('보내는분 홍길동 드림') === null && run('보내는 사람 홍길동 010-1111-2222') === null, '#514 날짜가 없는 보내는이 메모 = null(종전 문구 그대로)');
+    // #515(대표 정답 10/4): 도착 희망일 → 발송일 = 이틀 전, 그날이 발송 없는 날(토요일·발송휴무일)이거나 이미 지났으면 하루 전. 둘 다 안 되면 확인형.
+    //   휴무 없는 주로 확인: 10/12(월) 15시 주문 → 가장 빠른 발송일 10/13(화)
+    const AT2 = Date.parse('2026-10-12T15:00:00+09:00');
+    ok(ss.computeShipping(AT2, set, reasons, { arriveOff }).shipDate === '2026-10-13', '#515 기준: 10/12(월) 15시 주문의 평소 발송일 = 10/13(화)');
+    const arr = (memo, at = AT2, opt) => ss.memoShipLine(memo, at, set, reasons, Object.assign({ arriveOff }, opt || {}));
+    const WEEK = [['10월 19일 도착 희망', '2026-10-18', '월 → 일'], ['10월 20일 도착 희망', '2026-10-18', '화 → 일'], ['10월 21일 도착 희망', '2026-10-19', '수 → 월'], ['10월 22일 도착 희망', '2026-10-20', '목 → 화'], ['10월 23일 도착 희망', '2026-10-21', '금 → 수'], ['10월 24일 도착 희망', '2026-10-22', '토 → 목'],
+        ['월요일에 받고 싶어요', '2026-10-18', '「월요일 받고 싶어요」 → 일'], ['다음주 화요일 도착희망', '2026-10-18', '「화요일 도착희망」 → 일'], ['10/23 까지 받게 해주세요', '2026-10-21', '「까지」 = 도착 기한']];
+    const badW = WEEK.filter(([m, ship]) => { const x = arr(m); return !(x && x.kind === 'arrive' && x.latestShip === ship && x.ambiguous === false); });
+    ok(badW.length === 0, `#515 도착 요일별 발송일 ${WEEK.length}꼴(월→일 · 화→일 · 수→월 · 목→화 · 금→수 · 토→목 · 애매 표시 없음)`, badW.map(([m, ship, t]) => t + ': ' + JSON.stringify(arr(m) && { k: arr(m).kind, s: arr(m).latestShip })).join(' | '));
+    const w1 = arr('10월 21일 도착 희망');
+    ok(w1 && w1.text === '월요일(10/19) 오전 발송 예정이에요 (배송메세지에 남겨주신 10/21(수) 도착 요청 기준 — 택배 사정으로 하루 정도 차이가 날 수 있어요)', '#515 알림톡 문구 꼴은 종전 그대로(발송일만 이틀 전으로)', w1 && w1.text);
+    ok(arr('10월 25일 도착 희망').kind === 'ack' && /10\/25\(일\) 도착/.test(arr('10월 25일 도착 희망').text), '#515 일요일 도착 = 확인형(일요일은 배달 없음 — 손님이 날을 잘못 봄)', arr('10월 25일 도착 희망').text.slice(0, 40));
+    ok(arr('10월 21일 화요일 도착').kind === 'ack' && arr('10월 5일 도착 희망').kind === 'ack' && /지난 날짜/.test(arr('10월 5일 도착 희망').text), '#515 날짜와 요일이 안 맞음 · 지난 날짜 = 확인형');
+    ok(arr('10월 15일 도착 희망') === null && arr('10월 14일 도착 희망') === null, '#515 이틀 전(또는 늦은 주문의 하루 전)이 평소 발송일과 같으면 null(평소 문구 그대로)');
+    const d15 = arr('10월 15일 도착 희망', AT2, { detail: true }), d14 = arr('10월 14일 도착 희망', AT2, { detail: true });
+    ok(d15 && d15.kind === 'arrive' && d15.onTime === true && d15.latestShip === '2026-10-13' && d15.text === '' && d14 && d14.latestShip === '2026-10-13' && d14.onTime === true, '#515 opts.detail(메모 판정용)일 때만 「그날 발송이 요청대로」를 알려 줌 · 알림톡 문구는 없음(text 빈칸)', JSON.stringify(d15));
+    ok(JSON.stringify(arr('10월 21일 도착 희망', AT2, { detail: true })) === JSON.stringify(w1) && arr('10월 25일 도착 희망', AT2, { detail: true }).kind === 'ack' && arr('문 앞에 놔주세요', AT2, { detail: true }) === null && arr('10월 19일 발송', AT2, { detail: true }).kind === 'ship', '#515 detail 은 그 한 경우 말고는 결과를 바꾸지 않음');
+    ok(arr('10월 13일 도착 희망').kind === 'ack', '#515 이틀 전·하루 전이 둘 다 가장 빠른 발송일보다 앞(내일 도착) = 확인형', arr('10월 13일 도착 희망').text.slice(0, 40));
+    // 대표 예시: 「21일(월) 도착인데 19일에 들어온 주문 = 20일(일) 발송」
+    const late = Date.parse('2026-09-19T10:00:00+09:00');
+    ok(ss.computeShipping(late, set, reasons, { arriveOff }).shipDate === '2026-09-20' && arr('21일 도착 부탁드립니다', late) === null && arr('21일 도착 부탁드립니다', late, { detail: true }).latestShip === '2026-09-20', '#515 늦은 주문: 9/19(토) 주문 + 21일(월) 도착 = 하루 전 9/20(일) 발송(= 평소 발송일 → 평소 문구)');
+    // 발송휴무일(실제 달력: 10/8 목 발송휴무 · 10/9 금 한글날 발송휴무·도착불가)
+    const hol = Date.parse('2026-10-05T15:00:00+09:00');   // 평소 발송일 10/6(화)
+    ok(set.has('2026-10-08') && set.has('2026-10-09') && arr('10월 10일 도착 희망', hol).kind === 'ack', '#515 이틀 전(10/8)·하루 전(10/9)이 둘 다 발송휴무 = 확인형(실제 달력 한글날)', arr('10월 10일 도착 희망', hol).text.slice(0, 50));
+    ok(arr('10월 9일 도착 희망', hol).kind === 'ack', '#515 도착불가일(10/9 한글날) 도착 요청 = 확인형');
+    { const s2 = new Set([...set, '2026-10-14']); const x = ss.memoShipLine('10월 16일 도착 희망', AT2, s2, reasons, { arriveOff }); ok(x && x.kind === 'arrive' && x.latestShip === '2026-10-15', '#515 이틀 전(10/14)이 발송휴무일이면 하루 전(10/15) 발송', x && x.latestShip); }
+    { const s2 = new Set([...set, '2026-10-14', '2026-10-15']); ok(ss.memoShipLine('10월 16일 도착 희망', AT2, s2, reasons, { arriveOff }).kind === 'ack', '#515 이틀 전·하루 전이 둘 다 발송휴무 = 확인형'); }
+    ok(run('22일까지 꼭 배송부탁드릴게요').latestShip === '2026-09-20' && run('9월21일날 도착희망합니다').latestShip === '2026-09-20', '#515 9/16 주문: 22일(화) 도착 = 9/20(일) 발송(종전 9/21) · 21일(월) 도착 = 9/20(일)');
+    const others = ['21일 발송 꼭 부탁드릴게요~', '18일로 지정일배송요청합니다', '9월21~22일 도착희망합니다!', '21일 22일 도착', '주말 도착 안돼요', '부재시 문앞에 놓아주세요', '15일 발송 부탁드려요'];
+    ok(others.every(m => { const a = run(m), b = ss.memoShipLine(m, AT, set, reasons, { arriveOff, detail: true }); return JSON.stringify(a) === JSON.stringify(b); }), '#515 발송 요청·범위·확인형·날짜 없는 메모는 detail 을 줘도 같은 결과');
+    // #515-A(대표 10/4): 「일」을 두 번 쓴 범위(물결·대시 바로 뒤 날짜) = 날짜 2개 → 확인형. 종전엔 앞 날짜 하나로만 읽혀 도착 요청으로 확정됐다.
+    const RANGES = ['9월 21일~22일 도착 희망합니다', '9월18일~21일 도착', '21일-22일 도착 부탁드려요', '21일–22일 사이 도착', '9월 21일~9월 22일 도착', '21일 ~ 22일 도착', '21일에서 22일 사이 도착', '21일에서22일 도착', '21일부터22일 사이에 받고 싶어요', '21일~22일 발송'];
+    const badR = RANGES.filter(m => { const a = run(m); return !(a && a.kind === 'ack' && /일정 지정/.test(a.text)); });
+    ok(badR.length === 0, `#515-A 「일」 두 번 쓴 범위 ${RANGES.length}꼴(물결·대시·에서·부터 · 띄어쓰기 유무) = 확인형(일정 지정)`, badR.join(' / '));
+    const ORS = ['21일 또는 22일 도착', '21일이나 22일 도착 부탁드립니다', '21일이나22일 도착', '21일 혹은 22일에 받고 싶어요', '21일, 22일 중 도착'];
+    const badO = ORS.filter(m => { const a = run(m); return !(a && a.kind === 'ack'); });
+    ok(badO.length === 0, `#515-A 「D일 또는 D일」「D일이나 D일」 ${ORS.length}꼴 = 종전대로 확인형`, badO.join(' / '));
+    ok(run('9월 21일 도착 희망합니다').kind === 'arrive' && run('21일~ 도착 부탁').kind === 'arrive' && run('1~2일 정도 걸려도 괜찮아요') === null && run('010-1234-5678 21일 도착').kind === 'arrive', '#515-A 무회귀: 날짜 하나·「21일~」(뒤 날짜 없음)·기간 표현(「1~2일 정도」)·전화번호 대시는 범위로 보지 않음');
     // 예약 상품·자사몰 경로는 memo 미전달 → buildShipLineFor(…, undefined) = 종전과 동일해야 함
     ok(run(undefined) === null && run(null) === null, 'memo 미전달(undefined/null) → null(종전 문구)');
     // 08시 이전 주문: 종전 = 오늘 발송. 메모 「오늘 발송」은 날짜 없음 → null. 「17일 발송」 = 내일 → ship

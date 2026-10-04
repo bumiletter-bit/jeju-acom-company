@@ -262,6 +262,106 @@
         return true;
     }
 
+    // ── 택배사 양식 배송메세지에서 「요청 글」 떼어 내기(#516) ─────────────────────────────────────────
+    //   사람이 하던 방식: 보내는이를 바꿨거나 당일 발송 요청이면 그 요청 글은 지우고 기본 문구로 — 단 받는 분·기사에게 전하는 글(인사말·「문 앞」·동호수)은 남긴다.
+    //   memoRest(memo, { sender, sameDay, buyerName }) → { rest, removed, sure }
+    //     sender  = 이 주문은 보내는이를 바꾼다 → 보내는이 요청 부분을 뺀다        sameDay = 메모의 날짜가 전부 기준 발송일 → 당일 발송 요청 부분을 뺀다
+    //     rest    = 요청 부분을 뺀 나머지 글('' = 남는 글 없음)                   removed = 뺀 글(카드에 보여 줄 용도)
+    //     sure    = 뺀 부분이 「요청 글뿐인 문장(줄)」이라고 자신할 때만 true. 한 문장 안에 요청과 다른 글이 섞였거나, 뺄 부분을 못 찾았으면 false(화면은 카드로 보낸다).
+    //   문장(줄) 단위로만 뺀다 — 문장 중간을 잘라 내는 일은 sure=false 일 때의 「미리 채움」뿐이다. 인사말을 요청 꼬리로 같이 지우지 않는다.
+    const MR_KEY = /보내는\s*(?:이|사람|분)|보낸\s*(?:이|사람|분)|발신(?:자|인)?|발송(?:인|자)/;
+    const MR_QUOTE = /[<>〈〉《》「」『』'"‘’“”`\[\]]/g;
+    const MR_PHONE_LABEL = /(?:연락처|전화번호|전화|번호|핸드폰|휴대폰|HP|H\.P|TEL|tel)\s*(?:는|은)?\s*[:：]?/g;
+    const MR_PUNCT_ONLY = /^[\s.,!?~^♡♥()\-ㅡ:：/|·ㆍ*]*$/;
+    const MR_REQ_WORDS = /으로|이라고|라고|변경|표기|기재|기입|수정|부탁|드립니다|드려요|드릴게요|합니다|해\s*주세요|주세요|바랍니다|요청|꼭|로(?=\s|$)/g;   // 요청 꼬리에만 쓰이는 낱말(이 낱말들만 남은 줄 = 요청 꼬리)
+    // 이름(상호) 낱말: 한글·영문·법인 표식만. 인사말·문장 꼴·주소·지시 낱말이면 이름이 아니다
+    const mrNameWord = w => /^[가-힣A-Za-z㈜()&.]{1,14}$/.test(w) && !HINT_GREET.test(w) && !HINT_ENDING.test(w) && !HINT_NOTNAME.test(w) && !/받는|주소|배송|발송|도착|출고|택배|선물|맛있|예쁜|좋은|것으로|부탁|주세요|감사|입니다|합니다/.test(w);
+    //   낱말이 둘 이상인데 주소가 시작되는 낱말(「서울시」「충남」)이 끼어 있으면 이름이 아니다(「보내는 사람은 서울시 ○○구 ○○○ 으로 표기」)
+    const mrNameOk = s => { const w = String(s || '').replace(/[()]/g, ' ').split(/\s+/).filter(Boolean); return w.length >= 1 && w.length <= 3 && w.join('').length >= 2 && w.join('').length <= 20 && w.every(mrNameWord) && !(w.length > 1 && w.some(x => HINT_REGION.test(x) && !HINT_CORP.test(x))); };
+    // 한 문장이 「보내는이 요청뿐」인가 → { strict, rest }  (strict=false 면 rest = 이름 뒤에 남는 글 추정)
+    function mrSenderSeg(seg, buyer) {
+        const s = String(seg || '').trim(), km = s.match(MR_KEY); if (!km) return null;
+        const before = s.slice(0, km.index), after = s.slice(km.index + km[0].length);
+        // 「보내는 번호 000 로 변경」
+        const bn = after.match(/^\s*(?:번호|연락처|전화번호)\s*(?:는|은)?\s*[:：]?\s*/);
+        if (bn && MR_PUNCT_ONLY.test(before)) { const ph = findPhones(after)[0]; if (ph) { const tail = after.slice(ph.index + ph.text.length); return { strict: !tail.trim() || TAIL_ONLY.test(tail.trim()) || MR_PUNCT_ONLY.test(tail), rest: '' }; } }
+        // 이름이 앞에 오는 꼴: 「○○○(으)로 보내는사람 적어주세요」
+        if (!MR_PUNCT_ONLY.test(before)) {
+            const cut = before.replace(/\s*(?:이름|성함)?\s*(?:으로|이라고|라고|로)\s*$/, ''); const nm = hintTidy(cut.replace(MR_QUOTE, ' '));
+            const reqAfter = !after.trim() || TAIL_ONLY.test(after.trim()) || (HINT_REQ.test(after.trim()) && TAIL_ONLY.test(after.trim().replace(/^(?:으로|로)\s*/, '')));
+            if (cut !== before && reqAfter && nm.split(' ').length === 1 && (personWord(nm, buyer) || HINT_CORP.test(nm))) return { strict: true, rest: '' };
+            return { strict: false, rest: s };   // 낱말 앞에 다른 글이 있다 — 어디까지가 요청인지 모른다(그대로 사람에게)
+        }
+        // 「보내는이 ○○○ [번호] [으로 변경 부탁]」
+        let r = after.replace(/^(?:은|는|을|를)(?=[\s:：=])/, '').replace(/^\s*(?:이름|성함|명|변경\s*요청|변경요청)(?:은|는|을|를)?(?=[\s:：=(]|$)/, '').replace(/^[\s:：=\-ㅡ—>→,.]+/, '');
+        const phones = findPhones(r); if (phones.length > 1) return { strict: false, rest: '' };
+        if (phones.length) r = r.slice(0, phones[0].index) + ' ' + r.slice(phones[0].index + phones[0].text.length);
+        r = r.replace(MR_PHONE_LABEL, ' ').replace(MR_QUOTE, ' ').replace(/\s+/g, ' ').trim();
+        let name = r, tail = '';
+        for (let i = 1; i <= r.length; i++) {
+            const m = r.slice(i).match(TAIL); if (!m) continue;
+            const head = r.slice(0, i); if (head.trim().length < 2) continue;
+            if (!m[1] && !m[2] && !/\s$/.test(head) && !/^(?:변경|표기|기재)/.test(m[3])) continue;
+            name = head; tail = r.slice(i); break;
+        }
+        name = name.replace(/\s*(?:드림|올림)\s*$/, '').replace(/[\s.,!~^\-ㅡ:：/|·ㆍ]+$/, '').replace(/^[\s.,:：\-ㅡ/|·ㆍ]+/, '').trim();
+        const tailOk = !tail.trim() || TAIL_ONLY.test(tail.trim()) || MR_PUNCT_ONLY.test(tail.replace(MR_REQ_WORDS, ' '));   // 「로 변경 부탁 드립니다^^」처럼 띄어 쓴 요청 꼬리도
+        if (tailOk && mrNameOk(name) && !/[,/]/.test(name)) return { strict: true, rest: '' };
+        // 애매: 이름 뒤에 남는 글을 추정해 돌려준다(카드 미리 채움용). 이름 = 구매자 이름 또는 첫 낱말
+        const words = r.split(' ').filter(Boolean); let k = 0;
+        const clean = w => w.replace(/[,()]/g, ''); const bi = buyer ? words.findIndex(w => clean(w) === buyer) : -1;
+        if (bi >= 0) k = bi + 1;                                                                     // 구매자 이름이 있으면 그 낱말까지가 이름 쪽(앞의 주소·상호 포함)
+        else if (words.length && HINT_REGION.test(words[0])) k = 0;                                   // 주소로 시작 — 어디까지인지 모른다(남는 글 추정 안 함)
+        else if (words.length && personWord(clean(words[0]), buyer)) k = 1;
+        else if (words.length > 1 && mrNameWord(words[0]) && personWord(clean(words[1]), buyer)) k = 2;
+        let left = k ? words.slice(k).join(' ') : ''; left = left.replace(/^[\s,.)]+/, '');
+        if (TAIL_ONLY.test(left) || MR_PUNCT_ONLY.test(left.replace(MR_REQ_WORDS, ' '))) left = '';
+        return { strict: false, rest: left };
+    }
+    // 한 문장이 「당일 발송 요청뿐」인가(날짜가 기준일인지는 부르는 쪽이 sameDayOnly 로 이미 확인했다)
+    const MR_DAY_WORDS = /(?:추석|명절|한가위|연휴)\s*전(?:에)?|마지막|발송|날짜인|날짜는|날짜|일자|출고|출발|배송|택배|보내|전부|모두|모든|꼭|반드시|경에|경|쯤에|쯤|해\s*주세요|해\s*주시면|주세요|부탁\s*드려요|부탁\s*드립니다|부탁\s*드릴게요|부탁합니다|부탁해요|부탁|바랍니다|바래요|요청\s*드립니다|요청\s*드려요|요청합니다|요청|드립니다|드려요|감사하겠습니다|감사합니다|희망합니다|희망해요|희망|원합니다|원해요|입니다|합니다|으로|에는|에|로|은|는|이|가|을|를|날|요/g;
+    function mrDaySeg(seg) {
+        let s = String(seg || ''); const had = /\d{1,2}\s*월\s*\d{1,2}\s*일?|\d{1,2}\s*[\/.]\s*\d{1,2}|\d{1,2}\s*일/.test(s); if (!had) return null;
+        s = s.replace(/\d{1,2}\s*월\s*\d{1,2}\s*일?/g, ' ').replace(/\d{1,2}\s*[\/.]\s*\d{1,2}(?!\d)/g, ' ').replace(/\d{1,2}\s*일/g, ' ')
+            .replace(/[월화수목금토일]\s*요일|\(\s*[월화수목금토일]\s*\)|[월화수목금토일]욜/g, ' ').replace(MR_QUOTE, ' ').replace(MR_DAY_WORDS, ' ');
+        return { strict: !/[가-힣A-Za-z0-9]/.test(s) };
+    }
+    function memoRest(memoRaw, opt) {
+        const memo = String(memoRaw == null ? '' : memoRaw).replace(/\r/g, ''); const o = opt || {}; const buyer = String(o.buyerName || '').replace(/\s/g, '');
+        if (!memo.trim() || (!o.sender && !o.sameDay)) return { rest: memo.trim(), removed: '', sure: true };
+        // 줄 → 문장(마침표·느낌표·물음표 뒤에 빈칸이나 줄 끝이 올 때만 끊는다 — 「010.1234.5678」「9.19일」은 끊지 않는다)
+        const lines = memo.split('\n').map(line => line.replace(/([.!?]+[~^]*)(\s+|$)/g, '$1\u0001').split('\u0001').map(x => x.trim()).filter(Boolean));
+        let sure = true, hitSender = false, hitKey = false, hitClose = false, hitDay = false; const removed = [];
+        const out = lines.map(segs => {
+            const keep = [];
+            segs.forEach(seg => {
+                if (o.sender) {
+                    const r = mrSenderSeg(seg, buyer);
+                    if (r) { hitSender = true; hitKey = true; removed.push(seg); if (!r.strict) { sure = false; if (r.rest) keep.push(r.rest); } return; }
+                    // 「연락처: 000」뿐인 줄 · 「○○○ 드림」뿐인 줄(맺음) — 보내는이 요청의 일부
+                    const ph = findPhones(seg);
+                    if (ph.length === 1 && MR_PUNCT_ONLY.test(seg.replace(ph[0].text, ' ').replace(/보내는\s*(?:이|사람|분)?/g, ' ').replace(MR_PHONE_LABEL, ' ').replace(MR_REQ_WORDS, ' '))) { removed.push(seg); hitSender = true; return; }
+                    // 앞 줄의 보내는이 요청에서 줄이 바뀌어 넘어온 꼬리(「으로 변경 부탁 드립니다.」)
+                    if (hitKey && MR_PUNCT_ONLY.test(seg.replace(MR_REQ_WORDS, ' '))) { removed.push(seg); return; }   // 「으로 변경 부탁 드립니다.」「기입해주세요.」
+                    // 「○○○ 드림」뿐인 줄(맺음 · 번호가 괄호로 붙어도) — 다른 글(인사말)과 함께 있으면 사람은 맺음까지 그대로 남긴다 → 아래에서 되돌린다
+                    const cs = ph.length === 1 ? seg.replace(ph[0].text, ' ').replace(/\(\s*\)/g, ' ').trim() : seg;
+                    if (/(?:드림|올림)[\s.!~^♡♥\-]*$/.test(cs)) {
+                        const nm = cs.replace(/[\s.!~^♡♥\-]+$/, '').replace(/\s*(?:드림|올림)$/, '').replace(MR_QUOTE, ' ').replace(/^[\s\-ㅡ]+/, '').trim();
+                        if (mrNameOk(nm)) { removed.push(seg); hitSender = true; hitClose = true; return; }
+                    }
+                }
+                if (o.sameDay) { const d = mrDaySeg(seg); if (d) { hitDay = true; removed.push(seg); if (!d.strict) { sure = false; keep.push(seg); } return; } }
+                keep.push(seg);
+            });
+            return keep.join(' ');
+        }).filter(Boolean);
+        if ((o.sender && !hitSender) || (o.sameDay && !hitDay && !o.sender)) sure = false;   // 뺄 부분을 못 찾았다 → 사람에게
+        const rest = out.join('\n').replace(/^[\s,\-ㅡ/|·ㆍ]+/, '').replace(/[\s,\-ㅡ/|·ㆍ]+$/, '').trim();
+        // 인사말 + 「○○○ 드림」 맺음: 완성본은 맺음까지 그대로 둔다(9/17·9/18 실물) → 아무것도 빼지 않고 사람에게
+        if (hitClose && !hitKey && !hitDay && rest) return { rest: memo.trim(), removed: '', sure: false };
+        return { rest, removed: removed.join(' / '), sure };
+    }
+
     // ── §5 메모 줄 다듬기 ────────────────────────────────────────────────────────────────────────────
     // 줄 수·줄 번호는 그대로(뺄 줄은 빈 줄). v2 가 이미 읽는 보통 줄은 한 글자도 바꾸지 않는다.
     function prepLines(text, opt) {
@@ -482,7 +582,7 @@
         return ws;
     }
 
-    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, sameDayOnly,
+    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, sameDayOnly, memoRest,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

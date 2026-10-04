@@ -7157,7 +7157,8 @@ app.post('/api/agent-office/invoice/memo-parse', authMiddleware, async (req, res
         const today = baseDate || suggested;
         const at = Date.parse(today + 'T07:00:00+09:00');
         const results = memos.map(m => {
-            try { const r = shippingSchedule.memoShipLine(m, at, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff }); return r ? { kind: r.kind, reqDate: r.reqDate || null, latestShip: r.latestShip || null, ambiguous: !!r.ambiguous, text: r.text } : null; }
+            // #515: detail = 도착 요청의 발송일이 기준 발송일과 같을 때도 { kind:'arrive', latestShip, onTime } 을 돌려준다 → 화면(v2·최종발주)이 「날짜 글자가 있으니 확인필요」로 헛표시하지 않고 그날 발송으로 본다. 알림톡 쪽(memoShipLineSafe)은 detail 을 주지 않아 종전처럼 null = 평소 문구.
+            try { const r = shippingSchedule.memoShipLine(m, at, hinfo.set, hinfo.reasons, { arriveOff: hinfo.arriveOff, detail: true }); return r ? { kind: r.kind, reqDate: r.reqDate || null, latestShip: r.latestShip || null, ambiguous: !!r.ambiguous, onTime: !!r.onTime, text: r.text } : null; }
             catch (_) { return null; }
         });
         const noShip = [...hinfo.set].sort(); const noShipReasons = {}; hinfo.reasons.forEach((v, k) => { if (hinfo.set.has(k)) noShipReasons[k] = v; });   // 달력 표시용(토요일은 클라이언트 규칙)

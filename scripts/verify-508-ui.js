@@ -489,7 +489,7 @@ async function resolveCards(pg, type) {
             // #511 배송메세지 고쳐 넣기: 97 = 동호수만 남김 · 98 = 비움(기본 문구) · 91 = 안 건드림 · 92 = (나중에) 안 바꿈
             const c97 = () => cardOf(a.pg, CARD.senderMemo, '받는97'), c98 = () => cardOf(a.pg, CARD.senderMemo, '받는98');
             const m97 = (await c97().locator('[data-f="memo"]').inputValue()).replace(/\r/g, ''), n97 = await c97().locator('[data-f="name"]').inputValue(), lineMemo = await a.pg.locator(`${SEL.card}[data-fo-card="${CARD.senderLine}"] [data-f="memo"]`).count();
-            ok(m97 === M97 && n97 === '박구매' && lineMemo === 0, '⑪ #511 카드의 배송메세지 칸 = 손님 메모 원문(줄바꿈 포함)으로 미리 채움 · 이름 칸 = 구매자 이름', JSON.stringify([m97, n97]));
+            ok(m97 === '115동 1202호' && n97 === '박구매' && lineMemo === 0, '⑪ #516 카드의 배송메세지 칸 = 보내는이 부탁 글을 뺀 나머지(「115동 1202호」)로 미리 채움 · 이름 칸 = 구매자 이름', JSON.stringify([m97, n97]));
             await c97().locator('[data-f="memo"]').fill('115동 1202호'); await c97().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
             await c98().locator('[data-f="memo"]').fill(''); await c98().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
             // #512 뒤: 이름 칸 = 「보내는이」 낱말 뒤 글자(core.senderHint) → 사람이 다듬는다. 여기서는 그 글자에 이름이 들어 있는지만 본다(정확한 값은 ⑫에서)
@@ -506,7 +506,8 @@ async function resolveCards(pg, type) {
             let at = await grab9(); const r91 = at('받는91'), r92 = at('받는92'), r93 = at('받는93');
             ok(!!r91 && r91.r[0] === '홍길동 드림' && String(r91.r[1]) === '010-5555-0091' && r91.r[12] === '서울 가짜구 보내는로 91' && r91.f('A') === 'DDEBF7' && r91.f('B') === 'DDEBF7' && r91.f('M') === 'DDEBF7', '⑨ 이름·번호·주소를 적은 주문: A 「이름 드림」 · B 번호 · M 주소 + 세 칸 연파랑', r91 && JSON.stringify([r91.r[0], r91.r[1], r91.r[12], r91.f('A'), r91.f('B'), r91.f('M')]));
             ok(!!r92 && r92.r[0] === '김구매 드림' && r92.f('A') === 'DDEBF7' && String(r92.r[1]) === '010-7000-1992' && r92.f('B') !== 'DDEBF7' && String(r92.r[12]) === '', '⑨ 이름만 넣은 주문: A만 바뀜 · B(구매자 번호)·M 그대로', r92 && JSON.stringify([r92.r[0], r92.r[1], r92.r[12], r92.f('B')]));
-            ok(!!r91 && r91.r[9] === M91 && r91.f('J') === 'FFF2CC' && !!r92 && r92.r[9] === M92, '⑨ 배송메세지(J)는 손님 원문 그대로 · v2 연노랑 표시 유지', r91 && `${r91.f('J')} · ${String(r91.r[9]).slice(0, 14)}`);
+            // #516: 카드의 배송메세지 칸은 「보내는이 부탁 글을 뺀 나머지」로 미리 채워진다 → 안 건드리고 넣으면 그 글(없으면 기본 문구) · 보통 칸 서식
+            ok(!!r91 && r91.r[9] === '즐거운 명절 보내세요' && !r91.f('J') && !!r92 && r92.r[9] === FX.DEFAULT_MEMO && !r92.f('J'), '⑨ 배송메세지 칸을 안 건드리고 넣기 → J = 부탁 글을 뺀 나머지(「즐거운 명절 보내세요」) · 남는 글이 없으면 기본 문구 · 채움색 없음', r91 && r92 && JSON.stringify([r91.r[9], r91.f('J'), r92.r[9]]));
             ok(!!r93 && /\(제주아꼼이네\)$/.test(r93.r[0]) && r93.f('A') !== 'DDEBF7', '⑨ 다른 주문은 보내는사람 무변경');
             const r97 = at('받는97'), r98 = at('받는98');
             ok(!!r97 && r97.r[9] === '115동 1202호' && !r97.f('J') && r97.r[0] === '박구매 드림' && r97.f('A') === 'DDEBF7', '⑪ #511 배송메세지를 고쳐 넣은 주문: J = 고친 글 · J 채움색 없음 · A 「이름 드림」+연파랑', r97 && JSON.stringify([r97.r[9], r97.f('J'), r97.r[0], r97.f('A')]));
@@ -608,6 +609,48 @@ async function resolveCards(pg, type) {
             const names12 = r12.slice(1).map(r => r[3]);
             ok(['묶음A1', '묶음A2', '묶음A3', '당일I', '문앞F', '경비G'].every(n => names12.includes(n)) && ['묶음B1', '묶음B2', '묶음B3', '제외K'].every(n => !names12.includes(n)), '⑫ 파일: 발송으로 정한 묶음 3건·당일 메모 주문 있음 / 제외 묶음 3건·자동 제외 주문 없음', `${names12.length}행`);
             ok(a.errs.length === 0, '⑫ 오류 0', a.errs.join(' | ')); await a.ctx.close();
+        }
+        // ⑬ #516 택배사 양식 배송메세지 = 요청 글은 지우고 기본 문구로(확실할 때만) · 글이 남으면 배송메세지 카드 ─────────
+        console.log('\n⑬ #516 배송메세지: 자동 기본 문구 · 배송메세지 카드(memo-edit)');
+        {
+            const MEMO_EDIT = 'memo-edit'; const base = fx.naver.find(r => r['수취인명'] === '받는21'); const WD = ['일', '월', '화', '수', '목', '금', '토'];
+            const dOf = iso => `${+iso.slice(8, 10)}일(${WD[new Date(iso + 'T00:00:00Z').getUTCDay()]})`;
+            let seq = 0; const mk = (nm, buyer, memo) => { seq++; return { ...base, '구매자명': buyer, '구매자연락처': '010-7000-4' + String(100 + seq), '수취인명': nm, '수취인연락처1': '010-7100-4' + String(100 + seq), '통합배송지': '서울특별시 가짜구 메모로 ' + seq, '배송메세지': memo, '수량': 1, _pid: '2099010300' + String(100 + seq), _x: { ...base._x, productOrderId: '2099010300' + String(100 + seq), orderId: '2099010300' + String(100 + seq) } }; };
+            const MA = '보내는이 홍길동으로 변경 부탁드립니다', MB = '보내는이 홍길동 변경\n즐거운 추석 보내세요~!', MC2 = `전부 ${dOf(ship)}에 출고 부탁드려요!!`, MD = `${dOf(ship)}에 출고 부탁드려요. 문 앞에 놔주세요`, ME = '보내는 사람: 시험구매E', MF = '문앞에 놔주세요';
+            const fx13 = { ...fx, cafe24: [], coupang: [], canceledCoupang: [], naver: [mk('자동A', '시험구매A', MA), mk('인사B1', '시험구매B1', MB), mk('인사B2', '시험구매B2', MB), mk('당일C', '시험구매C', MC2), mk('당일D', '시험구매D', MD), mk('줄E', '시험구매E', ME), mk('보통F', '시험구매F', MF), mk('빈G', '시험구매G', '')] };
+            const telE = fx13.naver[5]['구매자연락처'];
+            const a = await openFO(br, fx13, {});
+            await a.pg.fill(SEL.memo, `${telE} 보내는이 박직원`); await setCash(a.pg, null); await a.pg.click(SEL.start); await idle(a.pg); await a.pg.waitForFunction(() => window.AkmFinalOrder.state.phase === 'review', null, { timeout: 15000 });
+            const J13 = (await readJudge(a.pg)).judge; const mc = t => cardOf(a.pg, MEMO_EDIT, t); const anyCard = t => a.pg.locator(SEL.card, { hasText: t }).count();
+            ok(J13['자동A'].sender === '홍길동' && J13['인사B1'].sender === '홍길동' && J13['줄E'].sender === '시험구매E', '⑬ 재료: v2 가 보내는이를 자동으로 바꾼 주문(자동A · 인사B · 줄E)', JSON.stringify([J13['자동A'].sender, J13['인사B1'].sender, J13['줄E'].sender]));
+            const c13 = await cardCount(a.pg);
+            ok(((c13[MEMO_EDIT] || {}).pending || 0) === 3 && (await mc('인사B1').count()) === 1 && (await mc('인사B2').count()) === 1 && (await mc('당일D').count()) === 1, '⑬ 배송메세지 카드 3장: 인사말이 남는 2건(구매자가 달라 따로) · 당일 요청 + 「문 앞」 1건', JSON.stringify(c13));
+            ok((await anyCard('자동A')) === 0 && (await anyCard('당일C')) === 0 && (await anyCard('줄E')) === 0 && (await anyCard('보통F')) === 0 && (await anyCard('빈G')) === 0, '⑬ⓐⓒⓔⓕ 요청 글뿐인 메모 · 보통 메모 · 빈 메모 = 카드 없음');
+            ok(await a.pg.isDisabled(SEL.make), '⑬ⓖ 배송메세지 카드가 남으면 [파일 만들기] 꺼짐');
+            const vB = (await mc('인사B1').locator('[data-f="memo"]').inputValue()).replace(/\r/g, ''), vD = (await mc('당일D').locator('[data-f="memo"]').inputValue()).replace(/\r/g, '');
+            ok(vB === '즐거운 추석 보내세요~!' && vD === '문 앞에 놔주세요', '⑬ⓑⓓ 카드의 칸 = 요청 글을 뺀 나머지로 미리 채움', JSON.stringify([vB, vD]));
+            const info13 = await a.pg.evaluate(() => [...document.querySelectorAll('#fo-info li')].map(li => li.textContent).filter(t => /기본 문구로/.test(t)).length);
+            ok(info13 === 3, '⑬ 참고 목록에 「배송메세지를 기본 문구로」 3줄(자동A · 당일C · 줄E)', info13);
+            await mc('인사B1').locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            await mc('인사B2').locator('[data-fo-act="keep"]').click(); await a.pg.waitForTimeout(150);
+            await mc('당일D').locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            await a.pg.fill(SEL.memo, `${telE} 보내는이 박직원\n${FX.usd(ship)}\t010-7999-0000\t\t네이버`); await a.pg.click(SEL.rejudge); await idle(a.pg);
+            ok((await pendingN(a.pg)) === 0 && !(await a.pg.isDisabled(SEL.make)) && a.hits.naver === 1, '⑬ⓖ [다시 판정] 뒤 배송메세지 카드 결정 유지 → [파일 만들기] 켜짐', JSON.stringify(await cardCount(a.pg)));
+            await a.pg.click(SEL.make); await idle(a.pg); await a.pg.waitForSelector(SEL.save, { timeout: 15000 });
+            const saves13 = await a.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save);
+            const grab13 = async part => { const nm = saves13.find(x => x.includes(part)); const [d] = await Promise.all([a.pg.waitForEvent('download', { timeout: 20000 }), a.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's13-' + Date.now() + '.xlsx'); await d.saveAs(f); return XLSX.readFile(f, { cellStyles: true }); };
+            const s13 = (await grab13('(효돈)')).Sheets.Sheet1; const r13 = XLSX.utils.sheet_to_json(s13, { header: 1, defval: '' }); const at = nm => { const i = r13.findIndex(r => r[3] === nm); return i < 0 ? null : { r: r13[i], f: c => fillOf(s13[c + (i + 1)]) }; };
+            const A = at('자동A'), B1 = at('인사B1'), B2 = at('인사B2'), Cc = at('당일C'), Dd = at('당일D'), E = at('줄E'), F = at('보통F'), G = at('빈G'); const DEF = FX.DEFAULT_MEMO;
+            ok(!!A && A.r[9] === DEF && !A.f('J') && A.r[0] === '홍길동 드림' && A.f('A') === 'DDEBF7', '⑬ⓐ 보내는이 요청뿐(v2 자동 변경) → J 기본 문구 · J 채움색 없음 · A 「홍길동 드림」 연파랑', A && JSON.stringify([A.r[9].slice(0, 8), A.f('J'), A.r[0], A.f('A')]));
+            ok(!!B1 && B1.r[9] === '즐거운 추석 보내세요~!' && !B1.f('J') && B1.r[0] === '홍길동 드림', '⑬ⓑ 배송메세지 카드 [이대로 넣기] → J = 칸의 글(인사말만) · 보통 칸', B1 && JSON.stringify([B1.r[9], B1.f('J')]));
+            ok(!!B2 && String(B2.r[9]).replace(/\r/g, '') === MB && B2.f('J') === 'DDEBF7' && B2.r[0] === '홍길동 드림', '⑬ⓑ 배송메세지 카드 [원문 그대로] → J 원문 + v2 연파랑 표시 그대로', B2 && JSON.stringify([B2.r[9], B2.f('J')]));
+            ok(!!Cc && Cc.r[9] === DEF && !Cc.f('J') && /\(제주아꼼이네\)$/.test(Cc.r[0]), '⑬ⓒ 당일 발송 요청뿐 → J 기본 문구 · 날짜 빨강 표시 없음 · 보내는사람 그대로', Cc && JSON.stringify([Cc.r[9].slice(0, 8), Cc.f('J')]));
+            ok(!!Dd && Dd.r[9] === '문 앞에 놔주세요' && !Dd.f('J'), '⑬ⓓ 당일 요청 + 「문 앞에 놔주세요」 → 카드에서 넣은 글', Dd && JSON.stringify([Dd.r[9], Dd.f('J')]));
+            ok(!!E && E.r[0] === '박직원 드림' && E.f('A') === 'DDEBF7' && E.r[9] === DEF && !E.f('J'), '⑬ⓔ 메모 줄로 보내는이를 지정한 주문 + 손님 메모가 보내는이 요청뿐 → A 「박직원 드림」 · J 기본 문구', E && JSON.stringify([E.r[0], E.r[9].slice(0, 8), E.f('J')]));
+            ok(!!F && F.r[9] === MF && !!G && G.r[9] === DEF, '⑬ⓕ 보통 메모는 원문 그대로 · 빈 메모는 기본 문구(종전과 같음)');
+            const st13 = XLSX.utils.sheet_to_json((await grab13('스마트스토어')).Sheets['발주발송관리'], { header: 1, defval: '' }); const sm13 = nm => { const r = st13.find(x => x[6] === nm); return r ? String(r[12]).replace(/\r/g, '') : null; };
+            ok(sm13('자동A') === MA && sm13('당일C') === MC2 && sm13('인사B1') === MB && sm13('당일D') === MD && sm13('줄E') === ME, '⑬ 스토어 파일(발주발송관리)의 배송메세지는 전부 손님 원문');
+            ok(a.errs.length === 0, '⑬ 오류 0', a.errs.join(' | ')); await a.ctx.close();
         }
         code = fail ? 1 : 0;
     } catch (e) { if (e.message !== 'STOP') { console.error('ERR', e.stack || e.message); code = 1; } }
