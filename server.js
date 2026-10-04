@@ -6298,7 +6298,7 @@ const TELEGRAM_ALERT_DEFAULT_OFF = ['office', 'kakaosend', 'ccbox'];   // kakaos
 // 알림 문구 템플릿 (대표 7/26): DB(agent_office_config 'telegram_alert_templates')에 저장, 화면에서 편집.
 //   기본값 = 기존 문구 그대로. {{변수}}는 발송 시 치환 — 모르는 변수는 원문 유지(치환 실패로 알림이 안 나가는 일 없음).
 const TELEGRAM_ALERT_DEFAULTS = {
-    order: '🛰️ 신규 주문 {{건수}}건 (자동수집 — 발주확인은 수기)',
+    order: '🛒 신규 주문 {{건수}}건',   // #522: 뒤에 「 · 알림톡 M건 발송」이 코드에서 붙는다(문제가 있을 때만 둘째 줄)
     claim: '⚠️ 반품·교환 {{건수}}건 — 판매자센터에서 확인해주세요 (알림만, 자동처리 없음 · 취소는 알림 제외)',
     settlement: '🛰️ 정산 자동수집 완료 — {{시작일}}~{{종료일}} {{건수}}건. 데이터관리 > 정산 조회에서 확인하세요',
     autodone: '📮 {{채널}} 답변완료 {{건수}}건 — 확인바람 ([문의 관리]에서 답변 내용 확인)',
@@ -6415,18 +6415,22 @@ setInterval(async () => {
         for (const h of hits) {
             const 미답 = String(h.bot_response || '') === '[SKIP-무응답]';
             // #435(대표 9/13): 요청형(봇은 답했지만 변경·취소 등 실제 처리 필요)과 봇 미답변을 라벨로 구분 — 대표가 "봇이 답했는데 왜 미답변?"으로 혼동(실물 9/13 주소 변경 건)
-            queue.push(`[${chLabel(h.user_id)}${미답 ? '·봇 미답변' : '·요청형(봇 답변함)'}] ` + String(h.message || '').replace(/\s+/g, ' ').slice(0, 60));
+            // #522(대표 10/5 「톡톡은 내용이 얼추 나오게 · 봇 답변도 보이게 · 편하게」): 라벨 한 줄 + 손님 글 150자 + 봇이 답한 건은 봇 답변 첫머리 80자. 매번 붙던 설명 4줄은 뺐다.
+            const cut = (s, n) => { const x = String(s || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x; };
+            const chName = { '톡톡': '네이버톡톡' }[chLabel(h.user_id)] || chLabel(h.user_id);
+            queue.push(`${chName} · ${미답 ? '봇이 답 못함' : '봇이 답함(처리 필요)'}\n${cut(h.message, 150)}` + (미답 ? '' : `\n↳ 봇: ${cut(h.bot_response, 80)}`));
         }
         const lastId = r.rows.length ? r.rows[r.rows.length - 1].id : st.last_id;
         const quiet = await alertQuietNow();
         let lastAlert = st.last_alert || null;
         if (!quiet && queue.length) {
-            const lines = queue.slice(0, 8).map(m => `· "${m}"`).join('\n');
+            const NUM = '①②③④⑤⑥⑦⑧';
+            const lines = queue.slice(0, 8).map((m, n) => `${NUM[n]} ${m}`).join('\n\n') + (queue.length > 8 ? `\n\n… 그 밖에 ${queue.length - 8}건` : '');
             // 지시 #113: 발송 결과를 상태에 기록 — 'sent'일 때만 비움(실패 시 큐 유지·다음 틱 재시도). 실물 수신 확인은 대표 몫.
             /* 🔴 #371(대표 실물): 안내 문구가 낡아 있었다 — #301에서 카카오 챗봇을 끄고 상담 채팅으로 돌린 뒤에도
                "카카오는 챗봇 대화라 알림이 오지 않습니다"가 그대로 나갔다(대표가 받은 건 네이버톡톡 건인데도 그 문장이 붙었다).
                지금은 채널마다 답변 창구가 있으므로 그대로 안내한다. */
-            const result = await notifyTelegram(`📮 직원 확인 필요 문의 ${queue.length}건\n${lines}\n(‘요청형(봇 답변함)’ = 봇은 답했지만 주소·옵션 변경·취소 등 실제 처리가 필요한 건 / ‘봇 미답변’ = AI가 답하지 못한 건. [문의 관리] > 💬 톡톡 문의에서 3채널을 함께 볼 수 있고, 답변은 네이버톡톡은 판매자센터·카카오는 채널 [내 채팅]에서 해주세요)`);
+            const result = await notifyTelegram(`📮 톡톡 확인 ${queue.length}건\n\n${lines}`);
             lastAlert = { at: new Date().toISOString(), count: queue.length, result };
             if (result === 'sent') queue = [];
         }
@@ -6457,17 +6461,18 @@ async function inquiryAlertTick() {
                 const w = new Date(startUtc);
                 const acc = (await naverCfgGet('alert_night_acc')) || {};   // 야간 억제분 (주문·취소반품·정산)
                 const lines = [];
-                if (await alertEnabled('order') && Number(acc.order) > 0) lines.push(`🚚 신규 주문 ${acc.order}건 (발주확인은 수기)`);
+                // #522(대표 10/5): 주문과 알림톡을 한 줄로 · 「발주확인은 수기」는 지금 사실과 달라 뺌(알림톡이 나가면 발주확인도 자동)
+                const ordOn = await alertEnabled('order') && Number(acc.order) > 0, ksOn = await alertEnabled('kakaosend') && Number(acc.kakaosend) > 0;
+                if (ordOn || ksOn) lines.push('🛒 ' + [ordOn ? `주문 ${acc.order}건` : '', ksOn ? `알림톡 ${acc.kakaosend}건 발송` : ''].filter(Boolean).join(' · '));
                 if (await alertEnabled('claim') && Number(acc.claim) > 0) lines.push(`⚠️ 반품·교환 ${acc.claim}건`);
                 if (await alertEnabled('kakaosend')) {   // 지시 #68 C6 → #334: 실패·보류·차단도 함께 (종전엔 성공 건수만 떠서 밤사이 실패를 놓쳤음)
-                    if (Number(acc.kakaosend) > 0) lines.push(`📨 주문 안내 알림톡 ${acc.kakaosend}건 발송`);
                     const kf = Number(acc.kakaosend_fail) || 0, kh = Number(acc.kakaosend_hold) || 0, kb = Number(acc.kakaosend_block) || 0;
                     if (kf + kh + kb > 0) {
                         const sub = [];
                         if (kf > 0) sub.push(`❌ 실패 ${kf}건`);
                         if (kh > 0) sub.push(`⏸ 보류 ${kh}건`);
                         if (kb > 0) sub.push(`🚫 번호없음 ${kb}건`);
-                        lines.push(`📨 알림톡 ${sub.join(' · ')} — [알림 발송 이력]에서 확인·재발송`);
+                        lines.push(`⚠️ 알림톡 ${sub.join(' · ')} — [알림 발송 이력]에서 확인`);
                         const fails = (await naverCfgGet('alert_night_kakao_fail')) || [];
                         for (const f of fails) lines.push(`   ❌ ${f}`);
                     }
@@ -6477,11 +6482,11 @@ async function inquiryAlertTick() {
                 if (await alertEnabled('autodone')) {
                     const aq = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_qnas WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
                     const ai = (await pool.query(`SELECT COUNT(*)::int AS n FROM naver_inquiries WHERE posted_by='auto' AND posted_at >= $1`, [w])).rows[0].n;
-                    if (aq + ai > 0) lines.push(`📮 자동 답변완료 ${aq + ai}건 (상품문의 ${aq}·고객문의 ${ai}) — 확인바람`);
+                    if (aq + ai > 0) lines.push(`📮 자동 답변 ${aq + ai}건 (${[aq > 0 ? `상품문의 ${aq}` : '', ai > 0 ? `고객문의 ${ai}` : ''].filter(Boolean).join(' · ')})`);
                 }
                 if (await alertEnabled('staffneed')) {
                     const p = await inquiryStaffPending();
-                    if (p.n > 0) lines.push(`✍️ 직접 처리 필요 ${p.n}건 (가장 오래된 건 ${p.hours}시간 경과)`);
+                    if (p.n > 0) lines.push(`✍️ 답 안 한 문의 ${p.n}건 (가장 오래된 것 ${p.hours}시간째)`);
                 }
                 if (!lines.length) lines.push('밤사이 특이사항 없음');
                 notifyTelegram(await alertText('briefing', { '시작': cfg.night_start, '종료': cfg.briefing_time, '내용': lines.join('\n') }));
@@ -7566,7 +7571,7 @@ async function collectOrderNew() {
     //   (틱은 60초 단위라 실제 간격이 주기보다 최대 1분 길다 — 고정 창이면 그만큼 매번 새어나감)
     // #334(대표 8/10): 야간 실패·보류·차단도 아침 브리핑에 실으려면 이 값들이 함수 스코프에 있어야 한다
     //   (종전엔 try 블록 지역변수라 야간엔 sent 건수만 누적 → 밤사이 실패가 아침에 안 보였음)
-    let kakaoLines = [], kakaoSentN = 0, kakaoWinLabel = '';
+    let kakaoLines = [], kakaoSentN = 0, kakaoWinLabel = '', kakaoAny = false;
     let kakaoFailN = 0, kakaoHoldN = 0, kakaoBlockN = 0, kakaoFailRows = [];
     if (await alertEnabled('kakaosend')) {
         try {
@@ -7590,7 +7595,10 @@ async function collectOrderNew() {
             const blockN = (g['no-tel'] || 0) + (g['gift-masked'] || 0);
             kakaoFailN = failedN; kakaoHoldN = holdN; kakaoBlockN = blockN;
             if (kakaoSentN + failedN + holdN + blockN > 0) {   // 0건 구간은 알림톡 줄 생략 (#215)
-                kakaoLines.push(`📨 알림톡(${winLabel}): 성공 ${kakaoSentN} · 실패 ${failedN} · 보류 ${holdN} · 차단 ${blockN}`);
+                // #522(대표 10/5 「편하게·깔끔하게」): 문제가 없으면 한 줄(「신규 주문 N건 · 알림톡 M건 발송」), 실패·보류·번호없음이 있을 때만 둘째 줄. 0이 줄줄이 나오던 「성공·실패·보류·차단」 줄과 「(5.1시간)」 표기를 없앴다.
+                kakaoAny = true;
+                const prob = [failedN > 0 ? `실패 ${failedN}` : '', holdN > 0 ? `보류 ${holdN}` : '', blockN > 0 ? `번호없음 ${blockN}` : ''].filter(Boolean);
+                if (prob.length) kakaoLines.push(`⚠️ 알림톡 ${prob.join(' · ')} — [알림 발송 이력]에서 확인`);
                 if (failedN > 0) {
                     const fr = (await pool.query(`SELECT receiver_masked, error FROM kakao_notify_log
                         WHERE created_at >= NOW() - make_interval(mins => $1) AND mode='real' AND status IN ('failed','token-failed')
@@ -7616,11 +7624,12 @@ async function collectOrderNew() {
             } catch (_) { /* 상세 보관 실패해도 건수는 남는다 */ }
         }
     } else if (paid.length > 0 && await alertEnabled('order')) {
-        const base = await alertText('order', { '건수': paid.length });
+        const base = (await alertText('order', { '건수': paid.length })) + (kakaoSentN > 0 ? ` · 알림톡 ${kakaoSentN}건 발송` : '');
         notifyTelegram(kakaoLines.length ? `${base}\n${kakaoLines.join('\n')}` : base);
-    } else if (kakaoLines.length > 0) {
+    } else if (kakaoAny) {
         // 신규 결제 0건이어도 알림톡 결과가 있으면(소급 발송 시간대 등) 요약만 발송 — 1회 1통 원칙 유지
-        notifyTelegram(`📨 알림톡 결과 (직전 ${kakaoWinLabel || '1시간'})\n${kakaoLines.join('\n')}`);
+        const head = `📨 알림톡 ${kakaoSentN}건 발송`;
+        notifyTelegram(kakaoLines.length ? `${head}\n${kakaoLines.join('\n')}` : head);
     }
     return `신규 결제 ${paid.length}건 (변경 ${list.length}건 검사)`;
 }
