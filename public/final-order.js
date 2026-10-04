@@ -339,7 +339,7 @@
             // #509(대표 10/4 실물): 손님 메모는 우리가 못 고친다 → 이 카드에서 보내는 분을 바로 적어 넣는다. 이름 칸은 메모에 구매자 이름이 있으면 그 이름으로 미리 채움(사람이 확인·수정)
             const buyer = buyerName(e), memo = memoOf(e);
             const guess = (e.sender.name && String(e.sender.name).trim()) || (buyer && memo.replace(/\s/g, '').includes(buyer.replace(/\s/g, '')) ? buyer : '');
-            cards.push({ id: 'samb:' + keyOf(e), type: 'sender-order', tag: '보내는이', title: orderLine(e), lines: [['손님 메모', memo], ['처리', '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.']], sender: { name: guess, phone: e.sender.phone || '', addr: '' } });
+            cards.push({ id: 'samb:' + keyOf(e), type: 'sender-order', tag: '보내는이', title: orderLine(e), lines: [['손님 메모', memo], ['처리', '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.']], sender: { name: guess, phone: e.sender.phone || '', addr: '', memo } });
         });
         // ④ 메모 줄
         (s.allLines || []).forEach(l => {
@@ -405,9 +405,12 @@
             acts = `<label class="fo-pick">거래처 <select data-pick="${esc(cd.id)}"><option value="">고르기</option>${cd.picks.map(p => `<option value="${esc(p)}"${v === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>`;
         } else if (cd.type === 'sender-edit' || cd.type === 'sender-order') {
             const ord = cd.type === 'sender-order';   // 주문 카드(손님 메모 애매) = [안 바꿈] · 메모 줄 카드 = [넣지 않음]
-            const d = v || { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '' };
-            acts = done ? `<span class="fo-done">${v.use ? `보내는이 ${esc(/드림$/.test(v.name) ? v.name : v.name + ' 드림')}${v.phone ? ' · ' + esc(v.phone) : ''}${v.addr ? ' · 주소 ' + esc(v.addr) : ''}` : ord ? '안 바꿈' : '이 줄은 넣지 않음'}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
-                : `<div class="fo-edit"><label>보내는 분 이름(「드림」은 자동으로 붙어요)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label></div>
+            const d = v || { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '', memo: cd.sender.memo || '' };
+            // #511(대표 10/4 「정답은 동호수만 남기고 김현정 드림」): 주문 카드에서는 택배사 양식에 들어갈 배송메세지도 사람이 고쳐 넣을 수 있다(프로그램이 지우지 않는다 · 비우면 기본 문구)
+            const memoBox = ord ? `<label class="wide">택배사 양식에 들어갈 배송메세지(보내는이 부탁 글은 지우고 남길 것만 · 비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.sender.memo || '' : d.memo)}</textarea></label>` : '';
+            const memoDone = ord && v && v.use && typeof v.memo === 'string' && v.memo !== (cd.sender.memo || '') ? ` · 배송메세지 「${esc(v.memo || '기본 문구')}」` : '';
+            acts = done ? `<span class="fo-done">${v.use ? `보내는이 ${esc(/드림$/.test(v.name) ? v.name : v.name + ' 드림')}${v.phone ? ' · ' + esc(v.phone) : ''}${v.addr ? ' · 주소 ' + esc(v.addr) : ''}${memoDone}` : ord ? '안 바꿈' : '이 줄은 넣지 않음'}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
+                : `<div class="fo-edit"><label>보내는 분 이름(「드림」은 자동으로 붙어요)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label>${memoBox}</div>
                    <button type="button" class="fo-btn sm primary" data-sender="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-sender="skip" data-fo-act="${ord ? 'keep' : 'skip'}" data-id="${esc(cd.id)}">${ord ? '안 바꿈' : '넣지 않음'}</button>`;
         } else if (done) {
             const lab = (cd.choices.find(c => c[0] === v) || [])[1] || '확인함';
@@ -454,7 +457,8 @@
             const card = b.closest('.fo-card'), get = f => (card.querySelector(`[data-f="${f}"]`).value || '').trim();
             if (b.dataset.sender === 'skip') return decide(b.dataset.id, { use: false });
             const name = get('name'); if (!name) { card.querySelector('[data-f="name"]').focus(); return; }
-            return decide(b.dataset.id, { use: true, name, phone: get('phone'), addr: get('addr') });
+            const memoEl = card.querySelector('[data-f="memo"]');
+            return decide(b.dataset.id, { use: true, name, phone: get('phone'), addr: get('addr'), ...(memoEl ? { memo: String(memoEl.value || '').replace(/\r/g, '').trim() } : {}) });
         }
     }
     function onCardChange(e) { const sel = e.target.closest('select[data-pick]'); if (sel && !st.busy && st.judged) decide(sel.dataset.pick, sel.value || undefined); }
@@ -475,6 +479,12 @@
         const rows1 = ws1 && ws1['!ref'] ? w.XLSX.utils.decode_range(ws1['!ref']).e.r : 0;
         if (rows1 !== list.length) throw new Error(`택배사 양식 행 수가 맞지 않아요(시트 ${rows1}행 / 주문 ${list.length}건). 다시 판정해 주세요.`);
         const program = list.map((e, i) => ({ key: keyOf(e), cells: 'ABCDEFGHIJK'.split('').map(col => { const x = ws1[col + (i + 2)]; return x ? { v: x.v == null ? '' : x.v, s: x.s, t: x.t } : { v: '' }; }) }));
+        // #511: 보내는이 카드에서 사람이 고쳐 넣은 배송메세지(원문과 다를 때만) — 색 표시는 보통 칸 서식으로(사람이 처리한 칸). 비웠으면 core 가 기본 문구를 넣는다.
+        list.forEach((e, i) => {
+            const d = st.dec.get('samb:' + keyOf(e)); if (!d || !d.use || typeof d.memo !== 'string') return;
+            if (d.memo === String(e.conv['배송메세지'] || '').replace(/\r/g, '').trim()) return;
+            program[i].cells[9] = { v: d.memo, t: 's', s: program[i].cells[3].s };
+        });
         const picks = {}; st.cards.forEach(cd => { if (cd.type === 'pick' && st.dec.get(cd.id)) picks[cd.id.slice(5)] = st.dec.get(cd.id); });
         const out = core().buildRows({ program, cash: st.cash && st.cash.ok ? st.cash.rows : [], byPartner: st.byPartner, picks, senderByKey: senderMap().byKey, defaultMemo: DEFAULT_MEMO });
         if (out.unknown && out.unknown.length) { buildCards(); applyOrderDecisions(); renderReview(); throw new Error('거래처를 못 정한 품목이 새로 생겼어요. 위에서 골라 주세요.'); }
