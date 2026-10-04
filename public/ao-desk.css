@@ -418,6 +418,9 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
     .desk-top1 .desk-stage img { width: 116px; height: 116px; }
     .desk-top1 .desk-clock { font-size: 34px; }
     .desk-compose { padding-left: 40px; }
+    /* #513(대표 10/4): 자주 쓰는 일 버튼이 4개가 되어 폰에서 넷째가 잘렸다 → 폰에서만 글씨·여백을 줄여 한 줄에 다 보이게(PC는 그대로) */
+    .desk-top1 .desk-quick2 { gap: 5px; }
+    .desk-top1 .desk-chip { font-size: clamp(11px, 3.3vw, 13px); padding: 0 clamp(5px, 2vw, 9px); letter-spacing: -0.02em; }
 }
 @media (prefers-reduced-motion: reduce) { .desk-compose, .desk-icon { transition: none; } }
 /* 입력칸을 누를 때 테마의 기본 포커스 테두리가 안쪽에 겹치지 않게 — 포커스 표시는 바깥 상자(.desk-compose)가 한다 */
