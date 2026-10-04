@@ -618,7 +618,15 @@
     function partnerOf(opt, byPartner) {
         const name = String(opt == null ? '' : opt).trim(); if (!name || name.startsWith('[미매칭]')) return null;
         const find = n => { for (const [p, arr] of Object.entries(byPartner || {})) { if ((arr instanceof Set ? arr.has(n) : (arr || []).includes(n))) return p; } return null; };
-        return find(name) || (SIZE_TAIL.test(name) ? find(name.replace(SIZE_TAIL, '').trim()) : null);
+        return find(name) || (SIZE_TAIL.test(name) ? find(name.replace(SIZE_TAIL, '').trim()) : null) || find(stripTail(name, find));
+    }
+    // #525: 품목 뒤 「요청 꼬리」(빈칸 + 글 + ! — 「 17과로!」 「 S사이즈로!」)를 뗀 품목 이름. 단가표에 그대로 있는 이름이면 손대지 않고,
+    //   「!」로 끝날 때만 오른쪽 빈칸부터 차례로 잘라 단가표에 있는 이름이 나오는 곳에서 멈춘다(꼬리 안에 빈칸이 있어도 된다). 못 찾으면 원래 글자 그대로.
+    //   has = 이름 → 단가표에 있으면 참(값)
+    function stripTail(name, has) {
+        const n = String(name == null ? '' : name).trim(); if (!n.endsWith('!') || has(n)) return n;
+        for (let i = n.lastIndexOf(' '); i > 0; i = n.lastIndexOf(' ', i - 1)) { const head = n.slice(0, i).trim(); if (has(head)) return head; }
+        return SIZE_TAIL.test(n) ? n.replace(SIZE_TAIL, '').trim() : n;
     }
     const shortPartner = name => { const s = String(name == null ? '' : name).replace(/\([^)]*\)/g, '').replace(/농협/g, '').trim(); return s || String(name || '').trim(); };
     const isJeju = addr => String(addr == null ? '' : addr).trim().startsWith('제주');
@@ -693,7 +701,7 @@
         return ws;
     }
 
-    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
+    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

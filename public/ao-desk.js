@@ -535,8 +535,10 @@
 
     // #477 끝난 지시에 [이어서 지시] — 앞 답을 이어받아 고칠 점·추가 요청을 보낸다(서버 reply · 창구는 follow_of로 앞 대화를 받는다)
     const FOLLOW = ['완료', '안내', '응답됨', '오류', '오류확인', '반려', '질문종결', '피드백'];
+    // #525: 최종발주 정리 기록(내용이 「[최종발주] 」로 시작)에는 이어서 지시·답 칸을 띄우지 않는다 — 수정은 최종발주 화면의 대화 칸에서 한다
+    const isFinalLog = o => /^\[최종발주\] /.test(String((o && o.content) || ''));
     function followHtml(o) {
-        if (!FOLLOW.includes(o.status)) return '';
+        if (!FOLLOW.includes(o.status) || isFinalLog(o)) return '';
         if (!followOpen(o)) return isAnswer(o) ? '' : `<div class="desk-acts">${followBtn(o)}</div>`; // 답변 카드는 [답변 복사] 줄에 함께
         const always = chatMine();   // #500 대화 보기에서는 누르지 않아도 늘 열려 있다
 
@@ -559,7 +561,7 @@
         rd.onload = () => { S.replyImg.set(id, { data: String(rd.result), mime: file.type || 'image/png' }); S.sig = ''; renderList(); const ta = document.getElementById('reply-' + id); if (ta) ta.focus(); };
         rd.readAsDataURL(file);
     }
-    const followBtn = o => FOLLOW.includes(o.status) && !followOpen(o) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
+    const followBtn = o => FOLLOW.includes(o.status) && !isFinalLog(o) && !followOpen(o) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
     // #484(대표 9/30): full = 표에서 줄을 눌러 펼친 자세히 칸 — 답변을 줄이지 않고 전부 보여 준다(전체 보기 버튼 없음)
     // #498 처리 중에 대기 프로그램이 적어 주는 「쓰는 중인 답변」(result.type = live)
     function liveText(o) { const r = o.result || {}; return o.status === '처리중' && r.type === 'live' && r.text ? String(r.text) : ''; }

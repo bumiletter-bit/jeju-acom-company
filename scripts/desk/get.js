@@ -65,6 +65,15 @@ async function claim(id) {
         foMemo = { payload_path: p2, count: (o.payload.items || []).length, rules: path.join(ROOT, deskDir2, '최종발주_메모읽기.md'),
             how: '이 지시는 최종발주 화면이 보낸 「손님 메모 읽기」입니다. rules 문서를 먼저 읽고, payload_path 의 메모를 한 건도 빠짐없이 판정해 결과를 {"kind":"answer","title":"메모 N건 읽음","answer":"한 줄 요약","data":{"items":[…]}} 꼴로 올립니다. 다른 일(조회·수정·발송)은 하지 않습니다. 끝나면 payload_path 파일을 지웁니다.' };
     }
+    // #525 최종발주 대화: 직원이 최종발주 화면의 대화 칸에 말로 한 지시(주소·품목 이름·수량 바꾸기 · 제주 건 질문 등). 규칙 = ★에이전트오피스/최종발주_대화.md
+    if (o.payload && o.payload.type === 'fo_chat') {
+        const deskDir3 = fs.existsSync(path.join(ROOT, '★에이전트오피스')) ? '★에이전트오피스' : '직원창구';
+        const dir3 = path.join(ROOT, deskDir3, '받은파일'); fs.mkdirSync(dir3, { recursive: true });
+        const p3 = path.join(dir3, `${id}_chat.json`);
+        fs.writeFileSync(p3, JSON.stringify(o.payload, null, 1));
+        foMemo = { payload_path: p3, count: (o.payload.orders || []).length, rules: path.join(ROOT, deskDir3, '최종발주_대화.md'),
+            how: '이 지시는 최종발주 화면의 대화 칸에서 직원이 말로 한 요청입니다. rules 문서를 먼저 읽고, payload_path 의 ask(요청 글)·orders(후보 주문)·catalog(품목 이름)·summary(화면이 센 사실)만 보고 결과를 {"kind":"answer","title":"최종발주 대화","answer":"한 줄","data":{"reply":"직원에게 할 말","actions":[…]}} 꼴로 올립니다. DB 조회·수정·발송은 하지 않습니다(화면이 적용합니다). 끝나면 payload_path 파일을 지웁니다.' };
+    }
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     return {

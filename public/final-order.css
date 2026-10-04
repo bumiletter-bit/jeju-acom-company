@@ -149,3 +149,24 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 
 /* #524: AI가 닫은 카드 표시 — 카드 머리에 보라 배지(사람이 한눈에 「이건 AI가 정한 것」을 알고 [바꾸기]로 고칠 수 있게) */
 .fo-aibadge { flex: none; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: #EEF0FF; color: #4F46E5; border: 1px solid #C7CBFF; }
+
+/* #525: 클코와 대화하는 칸 — 말풍선 · 바뀔 내용 미리 보기 · 말로 바꾼 것 목록 · 제주도 배송 */
+.fo-chat { display: grid; gap: 10px; }
+.fo-chat-log { display: grid; gap: 8px; max-height: 360px; overflow-y: auto; }
+.fo-chat-log:empty { display: none; }
+.fo-bub { max-width: min(560px, 92%); padding: 9px 12px; border-radius: 12px; font-size: 13.5px; line-height: 1.55; border: 1px solid var(--f-line); background: #fff; }
+.fo-bub p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fo-bub.me { justify-self: end; background: var(--f-accent-soft); border-color: #C7CBFF; }
+.fo-bub.ai { justify-self: start; }
+.fo-bub ul, .fo-patches ul, .fo-patched ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.fo-bub li, .fo-patches li, .fo-patched li { overflow-wrap: anywhere; }
+.fo-bub li.bad { color: #B42318; }
+.fo-bub .fo-acts { margin-top: 8px; }
+.fo-chat-in { display: flex; gap: 8px; align-items: flex-end; }
+.fo-chat-in textarea { flex: 1 1 auto; min-height: 44px; }
+.fo-patches:empty { display: none; }
+.fo-patches, .fo-patched { padding: 10px 12px; border-radius: 12px; border: 1px solid #D9CCE8; background: #F6F1FA; font-size: 13px; }
+.fo-patches li .fo-btn { margin-left: 6px; }
+.fo-jeju { margin: 0; font-size: 13.5px; }
+.fo-jeju b { font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .fo-chat-in { flex-wrap: wrap; } .fo-chat-in textarea { flex-basis: 100%; } }

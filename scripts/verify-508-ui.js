@@ -42,6 +42,8 @@ async function fakeApis(ctx, fx, hits, mode = {}) {
     await ctx.route('**/api/agent-office/coupang/invoice-orders*', reply('coupang', { ok: true, count: fx.coupang.length, rows: fx.coupang }));
     // #520: 판정이 끝나면 AI 읽기가 자동으로 시작된다 → 기본은 「못 올림」으로 막는다(실DB에 요청이 생기거나 실제 창구가 도는 일이 없게). ⑮ 에서만 따로 가짜 창구를 붙인다.
     await ctx.route('**/api/agent-office/final-order/memo-read**', r => { hits.ai = (hits.ai || 0) + 1; r.fulfill({ json: { ok: false, message: '시험에서는 AI를 부르지 않아요' } }); });
+    // #525: 정리 기록 라우트는 실DB에 줄을 만든다 → 늘 가로챈다(보낸 내용은 hits.logs 에)
+    await ctx.route('**/api/agent-office/final-order/log', r => { (hits.logs = hits.logs || []).push(r.request().postDataJSON()); r.fulfill({ json: { ok: true, id: 7001 } }); });
     await ctx.route('**/api/agent-office/coupang/canceled-since*', r => { hits.cancel++; r.fulfill({ json: { ok: true, canceled: fx.canceledCoupang } }); });
 }
 async function newCtx(br, fx, hits, viewport, mobile, mode) {
@@ -353,7 +355,7 @@ async function resolveCards(pg, type) {
         // ⑦-4·5·9·6 거래처 고르기 · 모두 오늘 발송 · 기준일 바꾸기 · 전부 저장
         console.log('\n⑦-4·5·9·6 거래처 고르기 · 모두 오늘 발송 · 기준일 바꾸기 · 전부 저장');
         {
-            const oddOpt = fx.H[0] + ' 15과로!';   // 단가표에 없는 이름(표준 이름 + 손글씨 꼬리)
+            const oddOpt = '세상에 없는 과일 5kg';   // 단가표에 없는 이름(#525 부터 「표준 이름 + 손글씨 꼬리!」는 꼬리를 떼고 거래처를 찾으므로 아예 없는 이름으로)
             const odd = writeXlsx(path.join(TMP, '가짜_거래처없음.xlsx'), [...fx.cashAoa, ['현금손님 드림!', '010-7300-0000', fx.cashAoa[1][2], '현금받는P', oddOpt, 2, '010-7400-9999', '', '인천광역시 가짜구 현금로 99', '', '', '', '']]);
             const past = new Date(Date.parse(mp.realToday + 'T00:00:00Z') - 86400e3).toISOString().slice(0, 10);
             const memo = [`${FX.usd(past)}\t${FX.tel(9)}\t\t네이버`, `${FX.usd(past)}\t${FX.tel(10)}\t\t네이버`].join('\n');   // 지난 날짜 줄 2개 → 주문 확인 카드 2장 이상
@@ -875,6 +877,178 @@ async function resolveCards(pg, type) {
                 ok(/아직 집지 않았어요/.test(waitMsg), '⑮7 40초 넘게 창구가 집지 않으면 안내(대표 PC가 꺼져 있으면 쓸 수 없음 · 그만두고 카드로)', waitMsg.slice(0, 60));
                 await c.pg.click('#fo-ai-stop'); await c.ctx.clock.fastForward(4000); await c.pg.waitForTimeout(400); await c.ctx.close();
             } else note('⑮7 40초 안내 — 브라우저 시계 조작 불가로 미검증');
+        }
+        // ⑯ #525 클코와 대화하는 칸 — 말로 고치기 · 제주 건 · 정리 기록(가짜 창구 응답 · 실제 AI·DB 쓰기 0) ─────────────────
+        console.log('\n⑯ #525 대화 칸(가짜 창구 응답)');
+        {
+            const base = fx.naver.find(r => r['수취인명'] === '받는21');
+            const target = (cat.byPartner[FX.P_DAESUNG] || [])[0];   // 품목 이름을 바꿀 때 쓸 단가표 이름(대성)
+            let seq = 0; const MT = '13과로 부탁드려요 문 앞에 놔주세요';   // 손님 메모의 과수 요청 → AI가 tail 로 돌려줌(자동으로 붙이지 않고 카드로)
+            const mk = (nm, o) => {
+                seq++; const pid = '2099010600' + String(100 + seq), x = o || {};
+                return { ...base, '구매자명': x.buyer || nm, '구매자연락처': x.tel || '010-7300-0' + String(100 + seq), '수취인명': x.recv || nm, '수취인연락처1': '010-7400-0' + String(100 + seq),
+                    '통합배송지': x.addr || `서울특별시 가짜구 대화로 ${seq}, 101동 ${200 + seq}호`, '배송메세지': x.memo || '', '수량': x.qty || 1, ...(x.opt ? { '옵션정보': x.opt } : {}), _pid: pid, _x: { ...base._x, productOrderId: pid, orderId: pid } };
+            };
+            const rows16 = [mk('대화가'), mk('대화나'), mk('대화다'), mk('대화라'), mk('대화마', { opt: '세상에 없는 과일 9kg' }), mk('대화바', { addr: '제주특별자치도 제주시 가짜로 7' }),
+                mk('같은이', { recv: '같은받는일', tel: '010-7300-0555' }), mk('같은이', { recv: '같은받는이', tel: '010-7300-0555' }), mk('대화사'), mk('대화아'), mk('대화자', { tel: '010-7300-0777' }), mk('대화차'), mk('대화타', { memo: MT })];
+            const fx16 = { ...fx, cafe24: [], coupang: [], canceledCoupang: [], naver: rows16 };
+            const mkChat = async withClock => {
+                const hitsC = { naver: 0, cafe24: 0, coupang: 0, cancel: 0, ai: 0 }; const ctxC = await newCtx(br, fx16, hitsC, { width: 1400, height: 900 }, false, {});
+                if (withClock) await ctxC.clock.install();
+                const chat = { posts: [], memoPosts: [], dels: 0, mode: 'done', status: '처리중', answer: () => ({ reply: '', actions: [] }) };
+                await ctxC.route('**/api/agent-office/final-order/memo-read', r => { if (r.request().method() !== 'POST') return r.continue(); const b = r.request().postDataJSON(); if (b.kind !== 'chat') { chat.memoPosts.push(b); return r.fulfill({ json: { ok: true, id: 9200 } }); } chat.posts.push(b); r.fulfill({ json: { ok: true, id: 9100 } }); });
+                await ctxC.route('**/api/agent-office/final-order/memo-read/9200', r => { if (r.request().method() === 'DELETE') return r.fulfill({ json: { ok: true } }); const b = chat.memoPosts[chat.memoPosts.length - 1];
+                    r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: b.items.map(it => (it.memo === MT ? { i: it.i, ship: 'go', sender: null, memo: '문 앞에 놔주세요', tail: '13과로!', split: false, sure: false, why: '과수 지정' } : { i: it.i, ship: 'go', sender: null, memo: '그대로', split: false, sure: true, why: '' })) }, message: '' } }); });
+                await ctxC.route('**/api/agent-office/final-order/memo-read/9100', r => {
+                    if (r.request().method() === 'DELETE') { chat.dels++; return r.fulfill({ json: { ok: true } }); }
+                    if (chat.mode === 'wait') return r.fulfill({ json: { ok: true, state: 'wait', status: chat.status, data: null, message: '' } });
+                    r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: chat.answer(chat.posts[chat.posts.length - 1]), message: '' } });
+                });
+                const pgC = await ctxC.newPage(); const errsC = []; pgC.on('pageerror', e => errsC.push(e.message)); pgC.on('dialog', d => d.accept());
+                await pgC.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pgC.waitForTimeout(2500); await pgC.evaluate(() => switchPage('agent-office')); await pgC.waitForTimeout(1000);
+                await pgC.click(SEL.btn); await pgC.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
+                await pgC.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await idle(pgC);
+                return { ctx: ctxC, pg: pgC, errs: errsC, chat, hits: hitsC };
+            };
+            const chatIdle = async pg2 => { await pg2.waitForTimeout(150); await pg2.waitForFunction(() => { const s = window.AkmFinalOrder.state; return !s.chat.running && !s.busy; }, null, { timeout: 60000 }); await pg2.waitForTimeout(150); };
+            const say = async (pg2, text) => { await pg2.fill('#fo-chat-input', text); await pg2.click('#fo-chat-send'); await chatIdle(pg2); };
+            const lastBub = pg2 => pg2.evaluate(() => { const b = [...document.querySelectorAll('#fo-chat-log .fo-bub')].pop(); return b ? { cls: b.className, text: b.innerText.replace(/\s+/g, ' '), preview: b.getAttribute('data-chat-preview'), bad: b.querySelectorAll('li.bad').length, li: b.querySelectorAll('li').length } : null; });
+            const patchN = pg2 => pg2.evaluate(() => window.AkmFinalOrder.state.patch.size);
+            const nOf = (b, who) => (b.orders.find(o => o.buyer === who || o.recv === who) || {}).n;
+            const apply = async pg2 => { await pg2.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(pg2); await idle(pg2); };
+
+            const d = await mkChat();
+            ok(await d.pg.evaluate(() => document.getElementById('fo-chat').hidden), '⑯1 주문을 불러오기 전에는 대화 칸이 안 보임');
+            await setCash(d.pg, null); await d.pg.click(SEL.start); await idle(d.pg); await d.pg.waitForTimeout(300);
+            const jeju0 = await d.pg.evaluate(() => (document.getElementById('fo-jeju') || {}).textContent || '');
+            ok((await d.pg.isVisible('#fo-chat')) && /제주도 배송/.test(jeju0) && /1건/.test(jeju0) && /없음/.test(jeju0), '⑯1 판정 뒤 대화 칸이 보이고 요약에 「제주도 배송: 거래처 N건 · 없음」', jeju0);
+            ok(d.chat.posts.length === 0 && d.chat.memoPosts.length === 1 && d.chat.memoPosts[0].items.length === 1 && d.chat.memoPosts[0].items[0].memo === MT, '⑯1 말을 걸기 전에는 대화를 올리지 않음 · 과수 요청 메모는 AI 메모 읽기로 보냄', `대화 ${d.chat.posts.length} · 메모 읽기 ${d.chat.memoPosts.length}`);
+            const J16a = (await readJudge(d.pg)).judge;
+            // 손님 메모의 「품목 뒤에 붙일 말」 — 자동으로 붙이지 않고 카드로
+            const tcard = d.pg.locator(`${SEL.pending}[data-fo-card="memo-edit"]`, { hasText: '대화타' }).first();
+            const tHas = await tcard.count(), tTail = tHas ? await tcard.locator('[data-f="tail"]').inputValue() : null, tMemo = tHas ? await tcard.locator('[data-f="memo"]').inputValue() : null;
+            ok(tHas === 1 && tTail === '13과로!' && tMemo === '문 앞에 놔주세요' && !/13과로!/.test(J16a['대화타'].opt), '⑯14 손님 메모의 과수 요청: AI가 준 「품목 뒤에 붙일 말」은 자동으로 붙지 않고 배송메세지 카드에 입력칸으로(13과로! · 남길 글 함께)', JSON.stringify({ tHas, tTail, tMemo }));
+            await tcard.locator('[data-fo-act="use"]').click(); await d.pg.waitForTimeout(250);
+
+            // 주소 변경 — 지시 글에 있는 글자만
+            d.chat.answer = b => ({ reply: '주소를 바꿀게요.', actions: [{ op: 'addr', n: nOf(b, '대화가'), text: '서울 가짜구 새주소로 12, 301호' }] });
+            await say(d.pg, '대화가 건 주소 서울 가짜구 새주소로 12, 301호로 바꿔줘');
+            const b1 = d.chat.posts[0], raw1 = JSON.stringify({ o: b1.orders, c: b1.catalog, s: b1.summary });
+            ok(b1.kind === 'chat' && b1.orders.length === 1 && b1.orders[0].buyer === '대화가' && Object.keys(b1.orders[0]).sort().join(',') === 'buyer,memo,n,opt,partner,qty,recv,state,unit' && b1.orders[0].unit === '101동201호' && !/대화로|서울특별시|010-7[34]00/.test(raw1), '⑯2 보낸 것: 지시 글 + 후보 주문 1건(이름·옵션·수량·메모·동호수·거래처·상태) — 주소 글·전화 없음', Object.keys(b1.orders[0]).join(','));
+            ok(/제주도 배송/.test(b1.summary) && Object.keys(b1.catalog).length >= 2 && b1.shipDate === ship, '⑯2 요약(건수·제주 건)과 단가표 이름 목록을 함께 보냄', b1.summary.split('\n')[3]);
+            let lb = await lastBub(d.pg);
+            ok(lb.preview === 'open' && /새주소로 12, 301호/.test(lb.text) && /대화로 1/.test(lb.text) && (await patchN(d.pg)) === 0 && (await d.pg.isDisabled('#fo-chat-send')), '⑯3 바뀔 내용 미리 보기(전 → 후) — [적용]을 누르기 전에는 안 바뀜', lb.text.slice(0, 120));
+            await apply(d.pg);
+            ok((await patchN(d.pg)) === 1 && /주소 변경/.test(await d.pg.evaluate(() => document.getElementById('fo-patches').textContent)) && d.chat.dels === 1, '⑯3 [적용] → 「말로 바꾼 것」 목록에 주소 변경 1건 · 대화 묶음 DELETE');
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'addr', n: nOf(b, '대화나'), text: '서울 지어낸구 없는로 9' }] });
+            await say(d.pg, '대화나 건 주소 좀 바꿔줘'); lb = await lastBub(d.pg);
+            ok(lb.bad === 1 && lb.preview !== 'open' && /다시 적어/.test(lb.text) && (await patchN(d.pg)) === 1, '⑯3 🔴 지시 글에 없는 주소 글자를 돌려주면 거부(적용 버튼 없음 · 「주소 글자를 다시 적어 주세요」)', lb.text.slice(0, 110));
+
+            // 품목 이름 — 단가표 이름만
+            const pick0 = await d.pg.locator(`${SEL.pending}[data-fo-card="${CARD.partner}"]`).count();
+            d.chat.answer = b => ({ reply: '미매칭 1건을 바꿀게요.', actions: [{ op: 'opt', n: b.orders[0].n, name: '세상에없는품목' }, { op: 'opt', n: b.orders[0].n, name: target }] });
+            await say(d.pg, '미매칭 없는 과일, 대성 것으로 바꿔줘'); lb = await lastBub(d.pg);
+            const b3 = d.chat.posts[d.chat.posts.length - 1];
+            ok(b3.orders.length === 1 && b3.orders[0].buyer === '대화마' && b3.orders[0].partner === '미정' && lb.bad === 1 && lb.li === 2 && lb.preview === 'open', '⑯4 「미매칭」이라고 하면 거래처를 못 정한 주문만 후보로 · 단가표에 없는 이름은 거부, 있는 이름만 통과', lb.text.slice(0, 120));
+            await apply(d.pg);
+            ok(pick0 === 1 && (await d.pg.locator(`${SEL.pending}[data-fo-card="${CARD.partner}"]`).count()) === 0, '⑯4 품목 이름을 바꾸면 「거래처 고르기」 카드가 사라짐', `${pick0} → 0`);
+
+            // 수량 · 받는 분 · 제외 · 취소
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'qty', n: nOf(b, '대화다'), qty: 3 }, { op: 'recv', n: nOf(b, '대화라'), name: '새받는이' }, { op: 'qty', n: nOf(b, '대화다'), qty: 0 }, { op: 'recv', n: nOf(b, '대화라'), name: '지어낸이름' }] });
+            await say(d.pg, '대화다 건 3박스로 하고 대화라 건 받는 분 새받는이로 바꿔줘'); lb = await lastBub(d.pg);
+            ok(lb.li === 4 && lb.bad === 2, '⑯5 수량(1~999)·받는 분(지시 글에 있는 이름)만 통과 — 0박스 · 지어낸 이름은 거부', lb.text.slice(0, 100)); await apply(d.pg);
+            const ex0 = (await readJudge(d.pg)).judge;
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'exclude', n: nOf(b, '대화사') }] });
+            await say(d.pg, '대화사 건 빼줘'); await apply(d.pg);
+            const ex1 = (await readJudge(d.pg)).judge;
+            ok(!ex0['대화사'].excluded && ex1['대화사'].excluded, '⑯5 「○○ 건 빼줘」 → 적용 뒤 오늘 안 나감');
+            const pn0 = await patchN(d.pg);
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'qty', n: nOf(b, '대화아'), qty: 5 }] });
+            await say(d.pg, '대화아 건 5박스로'); await d.pg.click('#fo-chat-log [data-chat="cancel"]'); await d.pg.waitForTimeout(200); lb = await lastBub(d.pg);
+            ok((await patchN(d.pg)) === pn0 && /취소함/.test(lb.text) && !(await d.pg.isDisabled('#fo-chat-send')), '⑯5 미리 보기에서 [취소] → 아무것도 안 바뀜');
+
+            // 품목 뒤 요청 꼬리(대화로) — 품목을 가리지 않고 시킨 대로
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'tail', n: nOf(b, '대화나'), text: '17과로!' }] });
+            await say(d.pg, '대화나 건 17과로 해줘'); lb = await lastBub(d.pg);
+            ok(lb.preview === 'open' && /17과로!/.test(lb.text), '⑯15 「○○ 건 17과로」 → 품목 뒤에 붙일 말 미리 보기(전 → 후)', lb.text.slice(0, 110)); await apply(d.pg);
+            const pnT = await patchN(d.pg);
+
+            // 되묻기 — 같은 이름이 여럿이면 번호로
+            d.chat.answer = () => ({ reply: '같은이 님 주문이 2건이에요 — 1번 / 2번 중 어느 건인가요?', actions: [] });
+            await say(d.pg, '같은이 건 빼줘'); lb = await lastBub(d.pg); const bq = d.chat.posts[d.chat.posts.length - 1];
+            ok(bq.orders.length === 2 && /어느 건/.test(lb.text) && lb.preview == null && (await patchN(d.pg)) === pnT,'⑯6 같은 이름 주문이 2건 → 후보 2건을 보내고, 되묻는 답을 그대로 보여 줌(바뀌는 것 없음)');
+            d.chat.answer = b => ({ reply: '2번을 뺄게요.', actions: [{ op: 'exclude', n: 2 }] });
+            await say(d.pg, '2번'); const bq2 = d.chat.posts[d.chat.posts.length - 1]; await apply(d.pg);
+            const ex2 = (await readJudge(d.pg)).judge;
+            ok(bq2.orders.length === 2 && bq2.orders.map(o => o.n).join() === '1,2' && bq2.history.some(h => h.who === 'ai' && /어느 건/.test(h.text)) && ex2['같은받는이'].excluded && !ex2['같은받는일'].excluded, '⑯6 「2번」이라고 이어 답하면 앞의 후보 번호·대화를 그대로 보내고 그 주문만 제외');
+
+            // 정리 줄을 대화 칸에 붙이면 규칙이 처리
+            const postsBefore = d.chat.posts.length;
+            await say(d.pg, `${FX.usd(later)}\t010-7300-0777\t\t네이버`); await idle(d.pg);
+            const ex3 = (await readJudge(d.pg)), memoVal = await d.pg.inputValue(SEL.memo);
+            ok(d.chat.posts.length === postsBefore && /010-7300-0777/.test(memoVal) && ex3.judge['대화자'].excluded, '⑯7 대화 칸에 정리 파일 줄을 붙이면 AI에게 안 보내고 메모 칸에 넣어 다시 판정(뒤 날짜 → 제외)');
+            ok(ex3.judge['대화사'].excluded && ex3.judge['같은받는이'].excluded && (await patchN(d.pg)) === pnT + 1, '⑯7 다시 판정해도 말로 바꾼 것(제외 포함)은 유지');
+
+            // 파일
+            ok((await pendingN(d.pg)) === 0 && !(await d.pg.isDisabled(SEL.make)), '⑯8 남은 카드 0 → [파일 만들기] 켜짐');
+            await d.pg.click(SEL.make); await idle(d.pg); await d.pg.waitForSelector(SEL.save, { timeout: 15000 }); await d.pg.waitForTimeout(400);
+            const grab = async () => { const names = await d.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const out = {};
+                for (const nm of names) { const [dl] = await Promise.all([d.pg.waitForEvent('download', { timeout: 20000 }), d.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's16-' + Date.now() + '.xlsx'); await dl.saveAs(f); out[nm.includes('(대성)') ? '대성' : nm.includes('(효돈)') ? '효돈' : '스토어'] = XLSX.readFile(f, { cellStyles: true }); }
+                return out; };
+            const find = (wbs, nm) => { for (const k of ['대성', '효돈']) { const ws = wbs[k] && wbs[k].Sheets.Sheet1; if (!ws) continue; const a = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }); const i = a.findIndex(r => r[3] === nm); if (i >= 0) return { who: k, r: a[i], f: c => fillOf(ws[c + (i + 1)]) }; } return null; };
+            const W1 = await grab(); const ga = find(W1, '대화가'), gm = find(W1, '대화마'), gd = find(W1, '대화다'), gr = find(W1, '새받는이'), gj = find(W1, '대화바');
+            ok(!!ga && ga.r[8] === '서울 가짜구 새주소로 12, 301호' && ga.f('I') === 'E4DFEC' && !!gd && Number(gd.r[5]) === 3 && gd.f('F') === 'E4DFEC' && !!gr && gr.f('D') === 'E4DFEC' && !find(W1, '대화라'), '⑯8 파일: 주소·수량·받는 분이 말한 대로 바뀌고 그 칸은 연보라', ga && JSON.stringify([ga.r[8], gd && gd.r[5], gr && gr.r[3]]));
+            const qtyD = XLSX.utils.sheet_to_json(W1['대성'].Sheets['수량'], { header: 1, defval: '' });
+            ok(!!gm && gm.who === '대성' && gm.r[4] === target && gm.f('E') === 'E4DFEC' && qtyD.some(r => r[0] === target), '⑯8 파일: 품목 이름을 바꾼 주문은 새 이름의 거래처(대성) 파일과 수량 표로', gm && gm.who + ' · ' + gm.r[4]);
+            ok(!find(W1, '대화사') && !find(W1, '같은받는이') && !find(W1, '대화자') && !!find(W1, '같은받는일'), '⑯8 파일: 말로 뺀 주문·정리 줄로 뺀 주문은 없음 · 같은 이름의 다른 주문은 그대로');
+            const gn = find(W1, '대화나'), gt = find(W1, '대화타'), tailName = J16a['대화나'].opt + ' 17과로!';
+            const qtyAll = ['대성', '효돈'].flatMap(k => (W1[k] ? XLSX.utils.sheet_to_json(W1[k].Sheets['수량'], { header: 1, defval: '' }).map((r, i) => ({ k, name: r[0], qty: r[1], fill: fillOf(W1[k].Sheets['수량']['A' + (i + 1)]) })) : []));
+            const qn = qtyAll.find(q => q.name === tailName), gb = find(W1, '같은받는일');
+            ok(!!gn && gn.r[4] === tailName && gn.f('E') === 'E4DFEC' && !!gb && gn.who === gb.who && !!qn && Number(qn.qty) === 1 && qn.fill === 'F4B183', '⑯15 파일: 옵션 칸 끝에 「 17과로!」 · 거래처 분류는 그대로 · 수량 표에 따로 한 줄(주황)', gn && gn.r[4].slice(-22) + ' · ' + JSON.stringify(qn));
+            ok(!!gt && gt.r[4] === J16a['대화타'].opt + ' 13과로!' && gt.r[9] === '문 앞에 놔주세요', '⑯14 파일: 카드에서 [이대로 넣기]를 누른 과수 요청은 옵션 칸 끝에 붙고 배송메세지는 남길 글만', gt && gt.r[4].slice(-14) + ' / ' + gt.r[9]);
+            // 🔴 무회귀: 말로 바꾼 주문 말고는 수취인·옵션·수량·연락처·주소가 원본 그대로 · 색도 없음
+            const d8 = v => String(v).replace(/\D/g, '').slice(-8); const untouched = ['대화아', '대화차', '같은받는일', '대화바'];
+            const badU = untouched.filter(nm => { const g = find(W1, nm), o = rows16.find(r => r['수취인명'] === nm); return !g || g.r[4] !== J16a[nm].opt || Number(g.r[5]) !== 1 || d8(g.r[6]) !== d8(o['수취인연락처1']) || g.r[8] !== o['통합배송지'] || ['D', 'E', 'F'].some(c => g.f(c) === 'E4DFEC'); });
+            const gaOther = !!ga && ga.r[3] === '대화가' && ga.r[4] === J16a['대화가'].opt && Number(ga.r[5]) === 1 && ga.f('D') !== 'E4DFEC';
+            ok(badU.length === 0 && gaOther, '⑯8 🔴 무회귀: 말로 바꾸지 않은 주문은 수취인·옵션·수량·연락처·주소가 원본 그대로(연보라 없음) · 바꾼 주문도 말한 칸만 바뀜', `다른 행 ${badU.join(',') || '0'}`);
+            const res1 = await d.pg.evaluate(() => ({ jeju: (document.getElementById('fo-jeju-result') || {}).textContent || '', patched: (document.getElementById('fo-patched') || {}).textContent || '' }));
+            ok(/제주도 배송/.test(res1.jeju) && /1건/.test(res1.jeju) && !!gj && /말로 바꾼 것 7건/.test(res1.patched), '⑯9 결과에 「제주도 배송: …」와 「말로 바꾼 것 N건」 목록', res1.jeju + ' / ' + res1.patched.slice(0, 20));
+            const lg = d.hits.logs || [];
+            ok(lg.length === 1 && lg[0].id == null && lg[0].shipDate === ship && Array.isArray(lg[0].lines) && lg[0].lines.some(t => /제주도 배송/.test(t)) && lg[0].lines.some(t => /주소 변경 1건/.test(t)) && lg[0].lines.some(t => /품목 이름 변경 1건/.test(t)) && lg[0].lines.some(t => /오늘 제외/.test(t)), '⑯10 [파일 만들기]가 끝나면 정리 기록 1건을 올림(거래처별 건수 · 제주 · 특이사항)', lg[0] && lg[0].lines.slice(0, 3).join(' | '));
+            ok(lg[0] && !lg[0].lines.some(t => /01\d[-.\s]?\d{3,4}[-.\s]?\d{4}|새주소로|대화로/.test(t)) && lg[0].lines.every(t => t.length <= 200) && lg[0].lines.length <= 40, '⑯10 정리 기록에 전화·주소 글자 없음 · 줄 길이·줄 수 한도 안');
+
+            // 파일이 나온 뒤 이어서 고치기 → 자동으로 다시 만들기 · 같은 기록 고쳐 씀
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'qty', n: nOf(b, '대화차'), qty: 2 }] });
+            await say(d.pg, '대화차 건 2박스로'); await apply(d.pg); await d.pg.waitForSelector(SEL.save, { timeout: 20000 }); await d.pg.waitForTimeout(500);
+            const W2 = await grab(); const gc = find(W2, '대화차'); const lg2 = d.hits.logs || [];
+            ok(!!gc && Number(gc.r[5]) === 2 && lg2.length === 2 && lg2[1].id === 7001, '⑯11 파일이 나온 뒤 말로 고치면 자동으로 다시 만들고, 정리 기록은 같은 id 로 고쳐 씀', `기록 ${lg2.length}회 · id ${lg2[1] && lg2[1].id}`);
+            await d.pg.locator('#fo-patches [data-unpatch]').last().click(); await d.pg.waitForTimeout(300); await idle(d.pg); await chatIdle(d.pg); await d.pg.waitForSelector(SEL.save, { timeout: 20000 }); await d.pg.waitForTimeout(500);
+            const W3 = await grab(); const gc3 = find(W3, '대화차');
+            ok(!!gc3 && Number(gc3.r[5]) === 1 && gc3.f('F') !== 'E4DFEC' && (d.hits.logs || []).length === 3, '⑯11 [되돌리기] → 원래 값으로 다시 만듦', gc3 && gc3.r[5]);
+            // 꼬리 떼기
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'tail', n: nOf(b, '대화나'), text: '' }] });
+            await say(d.pg, '대화나 건 17과로 붙인 것 떼줘'); await apply(d.pg); await d.pg.waitForSelector(SEL.save, { timeout: 20000 }); await d.pg.waitForTimeout(500);
+            const W4 = await grab(); const gn4 = find(W4, '대화나');
+            ok(!!gn4 && gn4.r[4] === J16a['대화나'].opt, '⑯15 꼬리 떼기 → 옵션 칸이 품목 이름만으로', gn4 && gn4.r[4].slice(-16));
+            // 입력삭제로
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'indiv', n: nOf(b, '대화아') }] });
+            await say(d.pg, '대화아 건 입력삭제로'); await apply(d.pg);
+            const memo2 = await d.pg.inputValue(SEL.memo), ji = (await readJudge(d.pg)).judge;
+            ok(/입력o삭제x/.test(memo2) && ji['대화아'].individual && (await d.pg.locator(`${SEL.pending}[data-fo-card="${CARD.cashMissing}"]`).count()) === 1, '⑯12 「입력삭제로」 → 메모 칸에 입력삭제 줄을 넣고 다시 판정(현금파일에 주소 줄이 없다는 카드가 뜸)');
+            ok(d.errs.length === 0, '⑯ 오류 0', d.errs.join(' | ')); await d.ctx.close();
+
+            // 창구가 안 집음(40초)
+            let e2; try { e2 = await mkChat(true); } catch (_) { e2 = null; }
+            if (e2) {
+                await setCash(e2.pg, null); await e2.pg.click(SEL.start); await idle(e2.pg); await e2.pg.waitForTimeout(300);
+                e2.chat.mode = 'wait'; e2.chat.status = '대기';
+                await e2.pg.fill('#fo-chat-input', '제주 건 있어?'); await e2.pg.click('#fo-chat-send');
+                await e2.pg.waitForFunction(() => window.AkmFinalOrder.state.chat.id, null, { timeout: 15000 });
+                await e2.ctx.clock.fastForward(46000); await e2.pg.waitForTimeout(800);
+                const lbw = await lastBub(e2.pg), be = e2.chat.posts[0];
+                ok(/말로 고치기를 쓸 수 없어요/.test(lbw.text) && e2.chat.dels === 1 && be.orders.length === 0 && /제주도 배송/.test(be.summary), '⑯13 40초 안에 창구가 안 집으면 「지금은 말로 고치기를 쓸 수 없어요 — 정리 줄과 카드로 진행하세요」 · 질문만이면 후보 없이 요약만 보냄', lbw.text.slice(0, 70));
+                await e2.ctx.close();
+            } else note('⑯13 40초 안내 — 브라우저 시계 조작 불가로 미검증');
         }
         code = fail ? 1 : 0;
     } catch (e) { if (e.message !== 'STOP') { console.error('ERR', e.stack || e.message); code = 1; } }

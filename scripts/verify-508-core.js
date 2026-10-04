@@ -364,7 +364,11 @@ const BY = { '효돈농협': [O_H1, O_H2, '고당도 하우스감귤 / 상품 �
 {
     ok(core.partnerOf(O_H1, BY) === '효돈농협' && core.partnerOf(O_G1, BY) === '대성(시온)', '옵션정보가 그 거래처 목록에 정확히 있으면 그 거래처');
     ok(core.partnerOf(O_H1 + ' S사이즈로!', BY) === '효돈농협' && core.partnerOf(O_H1 + ' 2S사이즈로!', BY) === '효돈농협' && core.partnerOf(' ' + O_H1 + ' M사이즈로! ', BY) === '효돈농협', '사이즈 꼬리(2S·S·M)는 떼고 다시 찾음');
-    ok(core.partnerOf(O_G1 + ' 15과로!', BY) === null && core.partnerOf('[미매칭] 가짜 5kg', BY) === null && core.partnerOf('', BY) === null && core.partnerOf(O_H1, {}) === null, '수기 꼬리 · [미매칭] · 빈 값 · 단가표 없음 = 못 정함(null)');
+    ok(core.partnerOf('[미매칭] 가짜 5kg', BY) === null && core.partnerOf('', BY) === null && core.partnerOf(O_H1, {}) === null, '[미매칭] · 빈 값 · 단가표 없음 = 못 정함(null)');
+    // #525(대표 10/5): 품목 뒤 「요청 꼬리」(빈칸 + 글 + !)는 떼고 거래처를 찾는다 — 종전엔 사이즈 꼬리만 뗐고 손글씨 꼬리는 거래처 고르기 카드였다
+    ok(core.partnerOf(O_G1 + ' 15과로!', BY) === core.partnerOf(O_G1, BY) && core.partnerOf(O_G1 + ' 17과 전후로 부탁!', BY) === core.partnerOf(O_G1, BY) && core.partnerOf(O_H1 + ' 13과로!', BY) === core.partnerOf(O_H1, BY), '#525 요청 꼬리(「 15과로!」 · 꼬리 안에 빈칸이 있어도)는 떼고 거래처를 찾음');
+    ok(core.partnerOf(O_G1 + ' 15과로', BY) === null && core.partnerOf('없는품목 15과로!', BY) === null && core.partnerOf(O_G1 + '15과로!', BY) === null, '#525 「!」로 안 끝나는 꼬리 · 단가표에 없는 품목 + 꼬리 · 빈칸 없이 붙은 글 = 못 정함(넓히지 않음)');
+    { const has = n => !!core.partnerOf(n, BY) && Object.values(BY).some(a => a.includes(n)); ok(core.stripTail(O_G1 + ' 15과로!', has) === O_G1 && core.stripTail(O_G1, has) === O_G1 && core.stripTail('없는품목 15과로!', has) === '없는품목 15과로!' && core.stripTail(O_G1 + ' S사이즈로!', has) === O_G1, '#525 stripTail: 단가표 이름이 나오는 곳까지만 뗌 · 못 찾으면 원래 글자'); }
     ok(core.partnerOf(O_H1, { '효돈농협': new Set([O_H1]) }) === '효돈농협', '목록이 Set 이어도 됨');
     ok(core.shortPartner('대성(시온)') === '대성' && core.shortPartner('효돈농협') === '효돈' && core.shortPartner('기타거래처') === '기타거래처', '파일 이름용 짧은 이름', [core.shortPartner('대성(시온)'), core.shortPartner('효돈농협'), core.shortPartner('기타거래처')]);
     ok(core.isJeju('제주특별자치도 제주시 가짜로 1') && core.isJeju('  제주도 서귀포시 가짜로') && core.isJeju('제주시 가짜동') && !core.isJeju('경기도 가짜시 제주로 12') && !core.isJeju('') && !core.isJeju(null), '제주 = 앞뒤 공백을 뗀 뒤 「제주」로 시작(주소 중간의 「제주」는 아님)');
@@ -401,7 +405,7 @@ let built;
     ]).rows;
     const senderByKey = new Map([['naver:3', { name: '홍길동', phone: '010-3333-4444', addr: '서울시 보내는구 보내는로 9' }], ['naver:5', { name: '김철수 드림', phone: null, addr: null }]]);
     const out0 = core.buildRows({ program, cash, byPartner: BY, picks: {}, senderByKey, defaultMemo: core.DEFAULT_MEMO });
-    ok(eq(out0.unknown.slice().sort(), [O_G1 + ' 15과로!', '[미매칭] 가짜과일 5kg'].sort()), '단가표에 없는 옵션(수기 꼬리 · [미매칭]) → unknown(중복 없이)', JSON.stringify(out0.unknown));
+    ok(eq(out0.unknown.slice().sort(), ['[미매칭] 가짜과일 5kg'].sort()), '단가표에 없는 옵션([미매칭]) → unknown(중복 없이) · #525 요청 꼬리가 붙은 행은 꼬리를 떼고 거래처를 찾음', JSON.stringify(out0.unknown));
     const out = built = core.buildRows({ program, cash, byPartner: BY, picks: { '[미매칭] 가짜과일 5kg': '효돈농협', [O_G1 + ' 15과로!']: '대성(시온)' }, senderByKey, defaultMemo: core.DEFAULT_MEMO });
     ok(out.unknown.length === 0 && eq(out.partners.map(p => p.name), ['대성(시온)', '효돈농협']) && eq(out.partners.map(p => p.short), ['대성', '효돈']), '고른 거래처(picks) 반영 · 거래처 이름순 · 짧은 이름', JSON.stringify(out.partners.map(p => p.name)));
     const dae = out.partners[0], hyo = out.partners[1];

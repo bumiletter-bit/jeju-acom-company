@@ -13309,7 +13309,8 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         // #476(대표 9/30): 전체 지시·대표 확인함은 관리자만 — 직원에게는 늘 본인 지시만 내려준다(화면 탭만 숨기지 않고 서버에서도)
         const mine = req.query.mine === '1' || req.user.role !== 'admin';
         const params = [];
-        let where = `o.is_deleted = false`;
+        // #525: 최종발주 화면이 창구에 보낸 중간 요청(메모 읽기·대화 한마디)은 목록에 안 보인다 — 정리 기록(「[최종발주] …」) 1건만 보인다
+        let where = `o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'`;
         if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
         if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
         const r = await pool.query(
@@ -13511,8 +13512,25 @@ app.post('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/
 //   메모 글에는 손님이 적은 이름·번호가 들어 있으므로: 내 지시 목록에 안 보이게(mine_hidden) · 결과를 받아 가면 묶음과 결과를 지운다 · audit 에는 건수만.
 app.post('/api/agent-office/final-order/memo-read', authMiddleware, async (req, res) => {
     try {
-        const src = Array.isArray(req.body?.items) ? req.body.items : [];
         const s = (v, n) => String(v == null ? '' : v).slice(0, n);
+        // #525 kind:'chat' = 최종발주 화면의 대화 칸에서 직원이 말로 한 지시(「○○ 건 주소 …로 바꿔줘」 「제주 건 있어?」). 화면이 고른 후보 주문(이름·옵션·수량·메모 — 주소·전화 없음)과 품목 이름 목록을 같이 넘긴다.
+        //   결과(result.data = { reply, actions })는 화면이 검사하고 사람이 [적용]을 눌러야 반영된다. 받아 가면 지운다(메모 읽기와 같은 길).
+        if (req.body?.kind === 'chat') {
+            const ask = s(req.body.ask, 1500).trim();
+            if (!ask) throw { status: 400, message: '지시 글이 없습니다' };
+            const iso0 = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '');
+            const orders = (Array.isArray(req.body.orders) ? req.body.orders : []).slice(0, 80).map(o => ({ n: Number(o && o.n), buyer: s(o && o.buyer, 30), recv: s(o && o.recv, 30), opt: s(o && o.opt, 160), qty: Math.max(1, parseInt(o && o.qty, 10) || 1), memo: s(o && o.memo, 400), unit: s(o && o.unit, 40), partner: s(o && o.partner, 30), state: s(o && o.state, 40) })).filter(o => Number.isInteger(o.n) && o.n >= 0);
+            const catalog = {}; let left = 200;
+            for (const [k, v] of Object.entries((req.body.catalog && typeof req.body.catalog === 'object') ? req.body.catalog : {}).slice(0, 8)) { if (!Array.isArray(v) || left <= 0) continue; catalog[s(k, 30)] = v.slice(0, left).map(x => s(x, 120)); left -= catalog[s(k, 30)].length; }
+            const history = (Array.isArray(req.body.history) ? req.body.history : []).slice(-6).map(h => ({ who: h && h.who === 'ai' ? 'ai' : 'me', text: s(h && h.text, 300) }));
+            const payloadC = { type: 'fo_chat', shipDate: iso0(req.body.shipDate), realToday: iso0(req.body.realToday) || kstTodayStr(), shipDays: (Array.isArray(req.body.shipDays) ? req.body.shipDays : []).map(iso0).filter(Boolean).slice(0, 14), ask, orders, catalog, summary: s(req.body.summary, 800), history };
+            const rowC = (await pool.query(
+                `INSERT INTO pending_orders (content, payload, created_by, created_by_id, status, mine_hidden) VALUES ($1, $2, $3, $4, '대기', true) RETURNING id`,
+                [`[최종발주 대화] 후보 주문 ${orders.length}건 · 기준 발송일 ${payloadC.shipDate || '-'}`, JSON.stringify(payloadC), `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null])).rows[0];
+            await writeAudit({ action: 'create', targetType: 'pending_order', targetId: rowC.id, changes: { after: { kind: 'fo_chat', orders: orders.length, shipDate: payloadC.shipDate } }, source: 'agent_office', actor: adminActor(req) });
+            return res.json({ ok: true, id: rowC.id });
+        }
+        const src = Array.isArray(req.body?.items) ? req.body.items : [];
         const items = src.slice(0, 800).map(it => ({ i: Number(it && it.i), memo: s(it && it.memo, 600), buyer: s(it && it.buyer, 30), recv: s(it && it.recv, 30), qty: Math.max(1, parseInt(it && it.qty, 10) || 1), cards: Array.isArray(it && it.cards) ? it.cards.slice(0, 6).map(c => s(c, 20)) : [], hint: s(it && it.hint, 160), unit: s(it && it.unit, 40) }))   // #520 unit = 배송지의 동·호수 조각만(메모의 동호수와 다른지 AI가 볼 수 있게 — 주소 전체는 받지 않는다)
             .filter(it => Number.isInteger(it.i) && it.i >= 0 && it.memo.trim());
         if (!items.length) throw { status: 400, message: '읽을 메모가 없습니다' };
@@ -13529,7 +13547,7 @@ app.post('/api/agent-office/final-order/memo-read', authMiddleware, async (req, 
 });
 const foMemoRow = async (req) => {
     const r = (await pool.query(`SELECT id, status, result, created_by_id, (payload->>'type') AS ptype, content FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id])).rows[0];
-    if (!r || !/^\[최종발주 메모 읽기\]/.test(r.content || '')) throw { status: 404, message: '없는 요청입니다' };
+    if (!r || !/^\[최종발주 (?:메모 읽기|대화)\]/.test(r.content || '')) throw { status: 404, message: '없는 요청입니다' };
     if (req.user.role !== 'admin' && Number(r.created_by_id) !== Number(req.user.id)) throw { status: 403, message: '내가 올린 요청만 볼 수 있습니다' };
     return r;
 };
@@ -13546,6 +13564,33 @@ app.delete('/api/agent-office/final-order/memo-read/:id', authMiddleware, async 
         const r = await foMemoRow(req);
         await pool.query(`UPDATE pending_orders SET payload = NULL, result = CASE WHEN result IS NULL THEN NULL ELSE result - 'data' END, status = CASE WHEN status = '대기' THEN '취소' ELSE status END, processed_at = COALESCE(processed_at, NOW()) WHERE id = $1`, [r.id]);
         res.json({ ok: true });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// #525 최종발주 정리 기록 — [파일 만들기] 때 화면이 한 번 올린다(다시 만들면 같은 id 를 고쳐 씀). 전체 지시에 「[최종발주] 10/5(월) 발송분」 1건으로 보인다.
+//   주소·전화 글자는 받지 않는다(화면이 안 넣고, 서버도 전화 꼴은 지운다). AI를 부르지 않는다(상태 = 완료로 바로).
+app.post('/api/agent-office/final-order/log', authMiddleware, async (req, res) => {
+    try {
+        const shipDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.shipDate || '')) ? String(req.body.shipDate) : '';
+        if (!shipDate) throw { status: 400, message: '기준 발송일이 없습니다' };
+        const lines = (Array.isArray(req.body?.lines) ? req.body.lines : []).slice(0, 40)
+            .map(x => String(x == null ? '' : x).slice(0, 200).replace(/0\d{1,3}[-\s.]?\d{3,4}[-\s.]?\d{4}/g, '(번호)')).filter(x => x.trim());
+        if (!lines.length) throw { status: 400, message: '정리할 내용이 없습니다' };
+        const d = new Date(shipDate + 'T00:00:00Z');
+        const content = `[최종발주] ${d.getUTCMonth() + 1}/${d.getUTCDate()}(${'일월화수목금토'[d.getUTCDay()]}) 발송분`;
+        const result = JSON.stringify({ type: 'answer', title: '최종발주 정리', answer: lines.join('\n') });
+        const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
+        const id0 = parseInt(req.body?.id, 10) || 0;
+        let id = 0;
+        if (id0) {
+            const u = await pool.query(`UPDATE pending_orders SET content = $2, result = $3::jsonb, processed_at = NOW()
+                WHERE id = $1 AND is_deleted = false AND created_by_id = $4 AND content LIKE '[최종발주] %' RETURNING id`, [id0, content, result, req.user.id || null]);
+            if (u.rows.length) id = u.rows[0].id;
+        }
+        if (!id) id = (await pool.query(`INSERT INTO pending_orders (content, result, created_by, created_by_id, status, processed_at) VALUES ($1, $2::jsonb, $3, $4, '완료', NOW()) RETURNING id`,
+            [content, result, who, req.user.id || null])).rows[0].id;
+        await writeAudit({ action: id0 && id === id0 ? 'update' : 'create', targetType: 'pending_order', targetId: id, changes: { after: { kind: 'fo_log', shipDate, lines: lines.length } }, source: 'agent_office', actor: adminActor(req) });
+        res.json({ ok: true, id });
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -13654,7 +13699,7 @@ app.get('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/2
                     COALESCE(r.is_deleted, false) AS run_archived
              FROM pending_orders o
              LEFT JOIN agent_runs r ON o.run_id = r.id
-             WHERE o.is_deleted = false
+             WHERE o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'
                ${onlyMine ? 'AND o.created_by_id = $1' : ''}
                AND (${showHidden ? 'TRUE' : `
                     o.status IN ('대기', '처리중', '오류', '질문')

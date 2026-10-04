@@ -101,7 +101,7 @@
                         </div>
                     </div>
                     <div class="fo-field">
-                        <label for="fo-memo">메모 (정리 파일 줄을 그대로 붙여 넣어요)</label>
+                        <label for="fo-memo">클코와 대화하는 칸 — 정리 파일 줄 (그대로 붙여 넣어요 · 말로 고칠 것은 주문을 불러온 뒤 맨 아래 대화 칸에)</label>
                         <textarea id="fo-memo" rows="6" spellcheck="false" placeholder="10/5&#9;010-0000-0000&#9;입력o삭제x&#9;네이버&#10;010-0000-0000 금요일 발송&#10;10/5&#9;010-0000-0000&#9;보내는이 홍길동"></textarea>
                         <p class="fo-hint">요청일자, 번호, 비고, 플랫폼 순서예요. 「개별발송처리」는 입력삭제와 같아요. 보내는이는 「보내는이 이름 (번호) (주소 …)」로 적어요.</p>
                     </div>
@@ -124,6 +124,14 @@
                     </div>
                 </section>
                 <section class="fo-sec" id="fo-result" hidden aria-label="결과"></section>
+                <section class="fo-sec fo-chat" id="fo-chat" hidden aria-label="클코와 대화">
+                    <div class="fo-cards-head"><h3>클코와 대화하는 칸</h3></div>
+                    <p class="fo-hint">말로 고칠 것을 적어요. 예: 「김○○ 건 2박스로」 「김○○ 건 주소 ○○로 12, 301호로 바꿔줘」 「미매칭 레몬 3kg, 그린레몬 3kg로 바꿔줘」 「김○○ 건 빼줘」 「제주 건 있어?」 · 정리 파일 줄을 붙여도 돼요. 바뀔 내용을 먼저 보여 주고 [적용]을 눌러야 바뀌어요.</p>
+                    <div class="fo-patches" id="fo-patches"></div>
+                    <div class="fo-chat-log" id="fo-chat-log" aria-live="polite"></div>
+                    <div class="fo-chat-in"><textarea id="fo-chat-input" rows="2" maxlength="1500" placeholder="여기에 적고 [보내기]"></textarea><button type="button" class="fo-btn primary" id="fo-chat-send">보내기</button><button type="button" class="fo-btn sm" id="fo-chat-stop" hidden>그만두기</button></div>
+                    <span class="fo-msg" id="fo-chat-msg" role="status"></span>
+                </section>
             </div>
         </div>`;
         document.body.appendChild(el);
@@ -143,13 +151,15 @@
         $('fo-cards').addEventListener('click', onCardClick);
         $('fo-cards').addEventListener('change', onCardChange);
         $('fo-result').addEventListener('click', onResultClick);
+        $('fo-chat').addEventListener('click', onChatClick);
+        $('fo-chat-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); chatSend(); } });
         $('fo-progress').addEventListener('click', e => { const b = e.target.closest('button[data-fo-load]'); if (b) run(() => b.dataset.foLoad === 'retry' ? loadChannels(CH.filter(c => st.chState[c] && st.chState[c].fail)).then(afterLoad) : skipFailed()); });
     }
     const LOCKS = ['fo-memo', 'fo-ship', 'fo-cash-pick', 'fo-cash-none'];
     async function run(fn) {
         if (st.busy || (st.ai && st.ai.running)) return; st.busy = true; $('fo-panel').classList.add('busy');
         LOCKS.forEach(id => { $(id).disabled = true; });   // 실행 중에는 입력을 잠근다 — 판정이 도는 사이 메모를 고치면 낡은 판정으로 파일이 만들어진다(워커2 재현 E)
-        try { await fn(); } catch (err) { showError(err); } finally { st.busy = false; $('fo-panel').classList.remove('busy'); LOCKS.forEach(id => { $(id).disabled = id === 'fo-ship' && !st.cal; }); syncInput(); syncMake(); syncAi(); }
+        try { await fn(); } catch (err) { showError(err); } finally { st.busy = false; $('fo-panel').classList.remove('busy'); LOCKS.forEach(id => { $(id).disabled = id === 'fo-ship' && !st.cal; }); syncInput(); syncMake(); syncAi(); syncChat(); }
         if (st.autoAi) { st.autoAi = false; if (st.judged && !st.stale) aiRead(true); }   // #520
     }
     // 실패한 채널 없이 계속: 주문은 받았는데 그 뒤 판정에서 실패한 채널이면 받은 주문도 비운다(안내 글 「결과 파일에 들어가지 않아요」와 맞게)
@@ -247,7 +257,7 @@
     }
     async function loadChannels(list) { for (const ch of list) await clickLoad(ch); }   // 하나씩(동시에 누르면 v2 재판정이 겹친다)
     async function start() {
-        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb|memo):/.test(id))); st.draft = new Map(); st.ai = newAi(); st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
+        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb|memo):/.test(id))); st.draft = new Map(); st.ai = newAi(); st.patch = new Map(); st.chat.cand = []; st.chat.pending = null; st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
         await ensureFrame();
         st.chState = {}; drawProgress();
         await loadChannels(CH);
@@ -378,7 +388,7 @@
             // 번호 칸: 메모에 전화번호가 하나만 있고 구매자·수취인 번호가 아니면 미리 채움(같은 번호면 바꿀 것이 없어 빈칸)
             const known = [buyerTel(e), digitsOf(e.conv['수취인연락처1']), digitsOf(e.conv['수취인연락처2'])].filter(Boolean);
             const phone = (e.sender && e.sender.phone) || (hint.phone && !known.includes(digitsOf(hint.phone)) ? hint.phone : '');
-            cards.push({ id, keys: es.map(keyOf), type: 'sender-order', tag: '보내는이', title: groupTitle(es), lines: [['손님 메모', memo], ['처리', only ? '손님 메모가 이름뿐이에요. 보내는 분으로 넣으려면 확인하고 [이대로 넣기]를 눌러 주세요.' : '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.'], ...groupLines(es)], sender: { name: guess, phone, addr: '', memo: only ? '' : restOf(e, true, false).rest, orig: memo } });   // 배송메세지 칸 = 보내는이 부탁 글을 뺀 나머지(#516 · 사람이 확인)
+            cards.push({ id, keys: es.map(keyOf), type: 'sender-order', tag: '보내는이', title: groupTitle(es), lines: [['손님 메모', memo], ['처리', only ? '손님 메모가 이름뿐이에요. 보내는 분으로 넣으려면 확인하고 [이대로 넣기]를 눌러 주세요.' : '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.'], ...groupLines(es)], sender: { name: guess, phone, addr: '', memo: only ? '' : restOf(e, true, false).rest, orig: memo }, ...(st.ai.tailAsk.get(keyOf(e)) ? { tail: st.ai.tailAsk.get(keyOf(e)) } : {}) });   // 배송메세지 칸 = 보내는이 부탁 글을 뺀 나머지(#516 · 사람이 확인)
         });
         // ③-b 배송메세지 정리(#516 대표 10/4 「보내는이가 확인되면 기본 문구로 · 인사말 같은 글은 남겼다 · 당일 발송 요청도 정답은 기본 문구」)
         //   대상 = 보내는이를 바꾸는 주문(v2 자동 · 메모 줄 지정)과 당일 발송 요청 메모. 요청 글뿐이라고 확실할 때만(sure && rest==='') 자동으로 기본 문구,
@@ -387,16 +397,18 @@
         const memoTargets = s.merged.filter(e => {
             if (e.individual || (e.excluded && !e.userTouched) || !memoOf(e) || st.sambCard.has(keyOf(e))) return false;
             if (e.reqKind === 'today' && !e.sender) return false;                       // v2가 이미 메모를 비우는 주문(직원 줄로 그날 발송 확정)
-            return (e.sender && !e.sender.ambiguous) || sm.line.has(keyOf(e)) || sameDay(e) || st.ai.memoAsk.has(keyOf(e));
+            return (e.sender && !e.sender.ambiguous) || sm.line.has(keyOf(e)) || sameDay(e) || st.ai.memoAsk.has(keyOf(e)) || st.ai.tailAsk.has(keyOf(e));
         });
+        const tailAskOf = es => { for (const x of es) { const t = st.ai.tailAsk.get(keyOf(x)); if (t) return t; } return null; };   // #525: AI가 손님 메모에서 읽은 「품목 뒤에 붙일 말」(자동으로 붙이지 않는다 — 카드에서 확인)
         groupBy(memoTargets, sameBuyerMemo).forEach(es => {
             const e = es[0];
             // #518: AI가 「남길 글」을 제안했지만 확신이 없다고 한 메모는 그 글을 미리 채워 카드로
             const r = st.ai.memoAsk.has(keyOf(e)) ? { rest: st.ai.memoAsk.get(keyOf(e)), removed: '', sure: false } : restOf(e, (e.sender && !e.sender.ambiguous) || sm.line.has(keyOf(e)), sameDay(e));
-            if (r.rest === memoOf(e)) return;                                            // 뺄 것이 없음 → 원문 그대로(종전과 같음)
-            if (r.sure && r.rest === '') { es.forEach(x => st.memoAuto.set(keyOf(x), true)); info.push(`배송메세지를 기본 문구로: ${groupTitle(es)} — 손님 메모 「${memoOf(e)}」`); return; }
+            const tail = tailAskOf(es);
+            if (r.rest === memoOf(e) && !tail) return;                                   // 뺄 것이 없음 → 원문 그대로(종전과 같음)
+            if (r.sure && r.rest === '' && !tail) { es.forEach(x => st.memoAuto.set(keyOf(x), true)); info.push(`배송메세지를 기본 문구로: ${groupTitle(es)} — 손님 메모 「${memoOf(e)}」`); return; }
             const id = 'memo:' + keyOf(e); es.forEach(x => st.memoCard.set(keyOf(x), id));
-            cards.push({ id, keys: es.map(keyOf), type: 'memo-edit', tag: '배송메세지', title: groupTitle(es), lines: [['손님 메모', memoOf(e)], ['처리', '보내는이·발송일 부탁 글을 빼고 택배사 양식에 남길 글을 확인해 주세요. 비우면 기본 문구가 들어가요.'], ...groupLines(es)], memo: { rest: r.rest, orig: memoOf(e) } });
+            cards.push({ id, keys: es.map(keyOf), type: 'memo-edit', tag: '배송메세지', title: groupTitle(es), lines: [['손님 메모', memoOf(e)], ['처리', '보내는이·발송일 부탁 글을 빼고 택배사 양식에 남길 글을 확인해 주세요. 비우면 기본 문구가 들어가요.'], ...groupLines(es)], memo: { rest: r.rest, orig: memoOf(e) }, ...(tail ? { tail } : {}) });
         });
         // ④ 메모 줄
         (s.allLines || []).forEach(l => {
@@ -428,7 +440,7 @@
         (chk.unchecked || []).forEach(x => info.push(`번호가 가려진 입력삭제 주문(선물하기 등)은 현금파일과 대조하지 못했어요: ${x.buyer || ''} ${x.qty || ''}박스`));
         // ⑥ 거래처를 못 정한 품목
         const opts = new Set();
-        s.merged.forEach(e => { if (goingOut(e) || st.dec.has('ord:' + keyOf(e))) opts.add(String(e.conv['옵션정보'] || '')); });
+        s.merged.forEach(e => { if (goingOut(e) || st.dec.has('ord:' + keyOf(e))) opts.add(optOf(e)); });   // #525: 대화 칸에서 품목 이름을 바꾼 주문은 새 이름으로
         (st.cash && st.cash.ok ? st.cash.rows : []).forEach(r => opts.add(r.opt));
         [...opts].filter(o => !c.partnerOf(o, st.byPartner)).sort().forEach(o => cards.push({ id: 'pick:' + o, type: 'pick', tag: '거래처', title: o || '(옵션정보 빈칸)', lines: [['이유', '품목별 금액에 없는 이름이라 어느 거래처 파일에 넣을지 몰라요.']], picks: Object.keys(st.byPartner) }));
         // 오늘 안 나가는 주문(v2가 손님 메모·직원 줄의 뒤 날짜로 스스로 뺀 것) — 어느 주문인지 볼 수 있게 참고 목록에
@@ -452,6 +464,8 @@
                 e.excluded = v === 'excl' || otherDec(cd, k) === 'excl'; e.userTouched = true;
             });
         });
+        // #525: 대화 칸에서 사람이 말로 시킨 제외·다시 넣기(카드 결정보다 뒤에 건다 — 가장 나중에 한 말)
+        if (st.patch && st.patch.size) byKey.forEach((e, k) => { const p = st.patch.get(k); if (p && typeof p.excl === 'boolean' && !e.individual) { e.excluded = p.excl; e.userTouched = true; } });
     }
     // 카드가 맡은 주문 키들(주문 확인 카드는 같은 구매자·같은 메모 묶음일 수 있다) · 같은 주문의 다른 종류 카드 결정
     const keysOf = cd => cd.keys || [cd.id.slice(cd.id.indexOf(':') + 1)];
@@ -460,6 +474,8 @@
     // 검증·스타일용 카드 종류(data-fo-card) — 카드 id 머리말로 정한다
     const KIND = { ord: 'order', split: 'split', samb: 'sender-memo', memo: 'memo-edit', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
     const kindOf = cd => KIND[cd.id.split(':')[0]] || cd.type;
+    // #525: AI가 손님 메모에서 읽은 「품목 뒤에 붙일 말」 입력칸 — 사람이 [이대로 넣기]를 눌러야 옵션 칸 끝에 붙는다(비우면 안 붙임)
+    const tailBoxHtml = (cd, d) => (cd.tail ? `<label class="wide">품목 뒤에 붙일 말(옵션 칸 끝에 붙어요 · 비우면 안 붙임)<input type="text" data-f="tail" value="${esc(d && d.tail != null ? d.tail : cd.tail)}" maxlength="80"></label>` : '');
     function cardHtml(cd) {
         const v = st.dec.get(cd.id), done = v !== undefined;
         // #520: AI가 입력칸을 채워 둔 열린 카드에는 그 사실과 이유를 한 줄로(사람이 눌러야 끝난다)
@@ -470,17 +486,18 @@
             acts = `<label class="fo-pick">거래처 <select data-pick="${esc(cd.id)}"><option value="">고르기</option>${cd.picks.map(p => `<option value="${esc(p)}"${v === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>`;
         } else if (cd.type === 'memo-edit') {
             const d = v || st.draft.get(cd.id) || { memo: cd.memo.rest };
-            acts = done ? `<span class="fo-done">${v.use ? `배송메세지 「${esc(v.memo || '기본 문구')}」` : '원문 그대로'}${st.ai.tag.has(cd.id) ? ' · AI: ' + esc(st.ai.tag.get(cd.id)) : ''}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
-                : `<div class="fo-edit"><label class="wide">택배사 양식에 들어갈 배송메세지(비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.memo.rest : d.memo)}</textarea></label></div>
-                   <button type="button" class="fo-btn sm primary" data-memo="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-memo="keep" data-fo-act="keep" data-id="${esc(cd.id)}">원문 그대로</button>`;
+            const tailBox = tailBoxHtml(cd, d);
+            acts = done ? `<span class="fo-done">${v.use ? `배송메세지 「${esc(v.memo || '기본 문구')}」${v.tail ? ` · 품목 뒤 「${esc(normTail(v.tail))}」` : ''}` : cd.tail ? '안 바꿈' : '원문 그대로'}${st.ai.tag.has(cd.id) ? ' · AI: ' + esc(st.ai.tag.get(cd.id)) : ''}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
+                : `<div class="fo-edit"><label class="wide">택배사 양식에 들어갈 배송메세지(비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.memo.rest : d.memo)}</textarea></label>${tailBox}</div>
+                   <button type="button" class="fo-btn sm primary" data-memo="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-memo="keep" data-fo-act="keep" data-id="${esc(cd.id)}">${cd.tail ? '안 바꿈' : '원문 그대로'}</button>`;
         } else if (cd.type === 'sender-edit' || cd.type === 'sender-order') {
             const ord = cd.type === 'sender-order';   // 주문 카드(손님 메모 애매) = [안 바꿈] · 메모 줄 카드 = [넣지 않음]
             const d = v || st.draft.get(cd.id) || { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '', memo: cd.sender.memo || '' };   // draft = 아직 안 누른 카드에 적어 둔 글(다른 카드를 눌러 다시 그려도 유지)
             // #511(대표 10/4 「정답은 동호수만 남기고 김현정 드림」): 주문 카드에서는 택배사 양식에 들어갈 배송메세지도 사람이 고쳐 넣을 수 있다(프로그램이 지우지 않는다 · 비우면 기본 문구)
             const memoBox = ord ? `<label class="wide">택배사 양식에 들어갈 배송메세지(보내는이 부탁 글은 지우고 남길 것만 · 비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.sender.memo || '' : d.memo)}</textarea></label>` : '';
-            const memoDone = ord && v && v.use && typeof v.memo === 'string' && v.memo !== (cd.sender.orig || '') ? ` · 배송메세지 「${esc(v.memo || '기본 문구')}」` : '';
+            const memoDone = (ord && v && v.use && typeof v.memo === 'string' && v.memo !== (cd.sender.orig || '') ? ` · 배송메세지 「${esc(v.memo || '기본 문구')}」` : '') + (v && v.use && v.tail ? ` · 품목 뒤 「${esc(normTail(v.tail))}」` : '');
             acts = done ? `<span class="fo-done">${v.use ? `보내는이 ${esc(/드림$/.test(v.name) ? v.name : v.name + ' 드림')}${v.phone ? ' · ' + esc(v.phone) : ''}${v.addr ? ' · 주소 ' + esc(v.addr) : ''}${memoDone}` : ord ? '안 바꿈' : '이 줄은 넣지 않음'}${st.ai.tag.has(cd.id) ? ' · AI: ' + esc(st.ai.tag.get(cd.id)) : ''}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
-                : `<div class="fo-edit"><label>보내는 분 이름(「드림」 자동)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label>${memoBox}</div>
+                : `<div class="fo-edit"><label>보내는 분 이름(「드림」 자동)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label>${memoBox}${ord ? tailBoxHtml(cd, d) : ''}</div>
                    <button type="button" class="fo-btn sm primary" data-sender="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-sender="skip" data-fo-act="${ord ? 'keep' : 'skip'}" data-id="${esc(cd.id)}">${ord ? '안 바꿈' : '넣지 않음'}</button>`;
         } else if (done) {
             const lab = ((cd.choices.find(c => c[0] === v) || [])[1] || '확인함') + (st.ai.tag.has(cd.id) ? ' · AI: ' + st.ai.tag.get(cd.id) : '');
@@ -503,8 +520,8 @@
         const s = S(), m = s.merged;
         const n = m.length, indiv = m.filter(e => e.individual).length, excl = m.filter(e => !e.individual && e.excluded).length;
         const cashRows = st.cash && st.cash.ok ? st.cash.rows.length : 0;
-        $('fo-review').hidden = false; syncAi();
-        $('fo-sum').innerHTML = `<span>기준 발송일 <b>${esc(dateLabel(s.shipDate))}</b></span><span>주문 <b>${n}</b>건</span><span>택배사 양식 <b>${n - indiv - excl}</b>건</span><span>입력삭제 <b>${indiv}</b>건</span><span>오늘 안 나감 <b>${excl}</b>건</span><span>현금파일 <b>${cashRows}</b>행</span>${st.loadedAt ? `<span>주문 불러온 시각 <b>${hm(st.loadedAt)}</b></span>` : ''}`;
+        $('fo-review').hidden = false; syncAi(); syncChat();
+        $('fo-sum').innerHTML = `<span>기준 발송일 <b>${esc(dateLabel(s.shipDate))}</b></span><span>주문 <b>${n}</b>건</span><span>택배사 양식 <b>${n - indiv - excl}</b>건</span><span>입력삭제 <b>${indiv}</b>건</span><span>오늘 안 나감 <b>${excl}</b>건</span><span>현금파일 <b>${cashRows}</b>행</span><span id="fo-jeju">제주도 배송 <b>${esc(jejuText())}</b></span>${st.loadedAt ? `<span>주문 불러온 시각 <b>${hm(st.loadedAt)}</b></span>` : ''}`;
         $('fo-info').innerHTML = st.info.length ? `<details><summary>참고 ${st.info.length}건 (확인만 하면 돼요)</summary><ul>${st.info.map(t => `<li>${esc(t)}</li>`).join('')}</ul></details>` : '';
         const open = pending(), ordOpen = open.filter(cd => cd.type === 'order').length;
         const head = st.cards.length ? `<div class="fo-cards-head"><h3>확인할 것 <b>${open.length}</b>건 <small>/ 전체 ${st.cards.length}건</small></h3>${ordOpen > 1 ? `<button type="button" class="fo-btn sm" data-bulk="send">남은 주문 확인 ${ordOpen}건 모두 오늘 발송</button>` : ''}</div>` : '<p class="fo-empty">확인할 것이 없어요. 바로 파일을 만들 수 있어요.</p>';
@@ -546,14 +563,15 @@
         if (b.dataset.memo) {
             if (b.dataset.memo === 'keep') return decide(b.dataset.id, { use: false });
             const el = b.closest('.fo-card').querySelector('[data-f="memo"]');
-            return decide(b.dataset.id, { use: true, memo: String((el && el.value) || '').replace(/\r/g, '').trim() });
+            const tl = b.closest('.fo-card').querySelector('[data-f="tail"]');
+            return decide(b.dataset.id, { use: true, memo: String((el && el.value) || '').replace(/\r/g, '').trim(), ...(tl && tl.value.trim() ? { tail: tl.value.trim() } : {}) });
         }
         if (b.dataset.sender) {
             const card = b.closest('.fo-card'), get = f => (card.querySelector(`[data-f="${f}"]`).value || '').trim();
             if (b.dataset.sender === 'skip') return decide(b.dataset.id, { use: false });
             const name = get('name'); if (!name) { card.querySelector('[data-f="name"]').focus(); return; }
-            const memoEl = card.querySelector('[data-f="memo"]');
-            return decide(b.dataset.id, { use: true, name, phone: get('phone'), addr: get('addr'), ...(memoEl ? { memo: String(memoEl.value || '').replace(/\r/g, '').trim() } : {}) });
+            const memoEl = card.querySelector('[data-f="memo"]'), tailEl = card.querySelector('[data-f="tail"]');
+            return decide(b.dataset.id, { use: true, name, phone: get('phone'), addr: get('addr'), ...(memoEl ? { memo: String(memoEl.value || '').replace(/\r/g, '').trim() } : {}), ...(tailEl && tailEl.value.trim() ? { tail: tailEl.value.trim() } : {}) });
         }
     }
     function onCardChange(e) { const sel = e.target.closest('select[data-pick]'); if (sel && !st.busy && st.judged) decide(sel.dataset.pick, sel.value || undefined); }
@@ -586,11 +604,24 @@
             if (st.ai.memo.has(k)) { put(st.ai.memo.get(k)); return; }                // #518: AI가 정리한 배송메세지(확실하다고 한 것만 · 카드 없는 주문)
             if (st.memoAuto && st.memoAuto.get(k)) put('');
         });
+        // #525: 대화 칸에서 사람이 말로 시킨 주문만 덮는다(받는 분·옵션·수량·주소·배송메세지 · 연보라 칸). 다른 행은 엔진 결과 그대로.
+        const sby = senderMap().byKey;
+        list.forEach((e, i) => {
+            const p = st.patch.get(keyOf(e)), tl = tailOf(e), c = program[i].cells, base = c[3].s, lilac = v => ({ v, t: typeof v === 'number' ? 'n' : 's', s: patchStyle(base) });
+            if (tl !== undefined) c[4] = lilac(withTail(String(p && p.opt != null ? p.opt : c[4].v), tl));   // 품목 뒤 요청 꼬리(대화 또는 카드에서 사람이 확인)
+            if (!p) return;
+            if (p.opt != null && tl === undefined) c[4] = lilac(p.opt);
+            if (p.recv != null) c[3] = lilac(p.recv);
+            if (p.qty != null) c[5] = lilac(p.qty);
+            if (p.addr != null) c[8] = lilac(p.addr);
+            if (p.memo != null) c[9] = lilac(p.memo);
+            if (p.sender && p.sender.name) sby.set(keyOf(e), { name: p.sender.name, phone: p.sender.phone || null, addr: p.sender.addr || null });
+        });
         const picks = {}; st.cards.forEach(cd => { if (cd.type === 'pick' && st.dec.get(cd.id)) picks[cd.id.slice(5)] = st.dec.get(cd.id); });
-        const out = core().buildRows({ program, cash: st.cash && st.cash.ok ? st.cash.rows : [], byPartner: st.byPartner, picks, senderByKey: senderMap().byKey, defaultMemo: DEFAULT_MEMO });
+        const out = core().buildRows({ program, cash: st.cash && st.cash.ok ? st.cash.rows : [], byPartner: st.byPartner, picks, senderByKey: sby, defaultMemo: DEFAULT_MEMO });
         if (out.unknown && out.unknown.length) { buildCards(); applyOrderDecisions(); renderReview(); throw new Error('거래처를 못 정한 품목이 새로 생겼어요. 위에서 골라 주세요.'); }
         const dot = mdDot(s.shipDate), files = [];
-        const colorOf = name => CAT_RGB[typeof window.qtyCategory === 'function' ? window.qtyCategory(name) : ''] || null;
+        const colorOf = name => (/!$/.test(name) && !inCatalog(name) && core().stripTail(name, inCatalog) !== name ? CAT_RGB.orange : CAT_RGB[typeof window.qtyCategory === 'function' ? window.qtyCategory(name) : '']) || null;   // #525: 요청 꼬리가 붙은 줄 = 사이즈 꼬리 줄과 같은 주황
         const shorts = out.partners.map(p => p.short);
         out.partners.forEach(p => {
             if (!p.rows.length) return;
@@ -604,6 +635,7 @@
         if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length }); }
         st.out = out; st.files = files; st.colorOf = colorOf; st.phase = 'result';
         renderResult(D().getElementById('msg-coupang').textContent || '');
+        sendLog();   // #525: 전체 지시에 남길 정리 기록 1건(다시 만들면 같은 기록을 고쳐 씀) — 실패해도 파일 만들기는 성공
     }
     function renderResult(cpMsg) {
         const el = $('fo-result'); el.hidden = false;
@@ -611,7 +643,10 @@
         const partner = f => { const p = f.partner, cash = p.rows.filter(r => r.src === 'cash').length, jeju = p.rows.filter(r => r.jeju).length; return `<article class="fo-file" data-short="${esc(f.short)}"><header><h4>${esc(f.short)}</h4><p>${p.rows.length}행 · ${p.total}박스${cash ? ` · 현금파일 ${cash}행 포함` : ''}${jeju ? ` · 제주 ${jeju}행(맨 아래)` : ''}</p></header>${qtyTable(p)}<div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">택배사 양식 저장</button><button type="button" class="fo-btn" data-fo-png="${esc(f.short)}">수량 이미지 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`; };
         const store = f => `<article class="fo-file store"><header><h4>스마트스토어</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">스토어 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
         const ps = st.files.filter(f => f.kind === 'partner'), ss = st.files.filter(f => f.kind === 'store');
+        const pl = patchLines();
         el.innerHTML = `<div class="fo-cards-head"><h3>결과 파일</h3><button type="button" class="fo-btn" id="fo-save-all">전부 저장</button></div>
+            <p class="fo-jeju" id="fo-jeju-result">제주도 배송: <b>${esc(jejuText())}</b></p>
+            ${pl.length ? `<div class="fo-patched" id="fo-patched"><b>말로 바꾼 것 ${pl.length}건</b> (바뀐 칸은 연보라색)<ul>${pl.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}
             ${/재확인 실패/.test(cpMsg) ? `<p class="fo-hint err">${esc(cpMsg.replace(/^⚠️?\s*/, ''))}</p>` : /취소/.test(cpMsg) && /자동 제외/.test(cpMsg) ? `<p class="fo-hint">${esc(cpMsg.replace(/^🛡️\s*/, ''))}</p>` : ''}
             <div class="fo-files">${ps.map(partner).join('')}${ss.map(store).join('')}</div>
             <p class="fo-hint">색이 칠해진 배송메세지 칸(보내는이·사이즈·날짜 요청)은 송장변환과 같아요. 확인하고 지워 주세요. 메모나 현금파일을 고치면 [다시 판정] 후 다시 만들어요.</p>`;
@@ -641,13 +676,13 @@
     // ── #518(대표 10/4 「AI가 배송메세지를 읽고 사람처럼 처리」) AI(창구)가 손님 메모를 읽는다 ─────────────────────────
     //   규칙이 확실히 처리한 것은 그대로 두고, 카드가 뜬 주문과 「기사에게 전하는 말만은 아닌」 메모를 창구에 보낸다(직원 = 콘솔 · 대표 = 대표 요금제 — 창구 대기 프로그램이 가른다).
     //   AI는 받는 분·주소·옵션·수량을 못 건드린다(메모 글과 구매자·수취인 이름·수량만 받는다). 돌아온 판정은 확실하다고 한 것만 카드 결정으로 넣고, 나머지는 입력칸에 미리 채워 사람이 확인한다.
-    function newAi() { return { id: 0, running: false, gen: 0, t0: 0, items: [], byKey: new Map(), memo: new Map(), memoAsk: new Map(), tag: new Map(), hint: new Map(), seen: new Set(), done: false, count: 0, sig: '' }; }
+    function newAi() { return { id: 0, running: false, gen: 0, t0: 0, items: [], byKey: new Map(), memo: new Map(), memoAsk: new Map(), tag: new Map(), hint: new Map(), tailAsk: new Map(), seen: new Set(), done: false, count: 0, sig: '' }; }
     st.ai = newAi();
     function aiOf(e) { return st.ai.byKey.get(keyOf(e)) || null; }
     function aiHold(e) { const r = aiOf(e); return !!r && r.ship !== 'go' && !e.individual && e.reqKind !== 'today' && !(e.excluded && !e.userTouched); }
     function aiSender(e) { const r = aiOf(e); return !e.sender && !!(r && r.sender && r.sender.name) && !!String(e.conv['배송메세지'] || '').trim(); }
     const AI_COURIER = /문\s*앞|현관|경비|비밀\s*번호|비번|부재|연락|전화|문자|택배함|보관|\d+\s*층|\d+\s*동|\d+\s*호|공동|초인종|벨|\d+\s*과/g;
-    const AI_PLAIN_SKIP = /선물|좋은|예쁜|맛있|신선|꼼꼼|포장|빠른|빨리|사이즈|size|감사|수고|안녕|하자|상태|크기|보내는|보낸|드림|올림|주문자|발신|from|\d+\s*일|요일|도착|발송|출고|주소|리스트|명단|메일|톡톡/i;
+    const AI_PLAIN_SKIP = /\d+\s*과|과수|선물|좋은|예쁜|맛있|신선|꼼꼼|포장|빠른|빨리|사이즈|size|감사|수고|안녕|하자|상태|크기|보내는|보낸|드림|올림|주문자|발신|from|\d+\s*일|요일|도착|발송|출고|주소|리스트|명단|메일|톡톡/i;
     const aiSquash = s => String(s || '').replace(/\s+/g, '');
     // AI가 돌려준 「남길 글」 검사 — 원문에 있는 글자만으로 이루어졌는지 · 기사에게 전하는 낱말을 빠뜨리지 않았는지. 어긋나면 확실하지 않은 것으로 본다(사람이 카드로 확인)
     function aiMemoText(r, orig) {
@@ -720,7 +755,7 @@
         msg.classList.remove('err');
         if (!groups.length) { msg.textContent = 'AI가 읽을 메모가 없어요.'; return; }
         // 앞서 읽은 결과는 새 결과가 올 때까지 그대로 둔다(AI 때문에 뜬 카드와 그 카드의 사람 결정이 읽는 동안 사라지지 않게)
-        st.ai = Object.assign(newAi(), { running: true, gen: (prev.gen || 0) + 1, items: groups, t0: Date.now(), sig, byKey: prev.byKey, memo: prev.memo, memoAsk: prev.memoAsk, tag: prev.tag, hint: prev.hint, seen: auto ? prev.seen : new Set(), done: prev.done, count: prev.count });   // 버튼으로 다시 읽히면 아직 안 정한 카드는 새 결과로 다시 채운다
+        st.ai = Object.assign(newAi(), { running: true, gen: (prev.gen || 0) + 1, items: groups, t0: Date.now(), sig, byKey: prev.byKey, memo: prev.memo, memoAsk: prev.memoAsk, tag: prev.tag, hint: prev.hint, tailAsk: prev.tailAsk, seen: auto ? prev.seen : new Set(), done: prev.done, count: prev.count });   // 버튼으로 다시 읽히면 아직 안 정한 카드는 새 결과로 다시 채운다
         const A = st.ai; syncAi(); syncMake(); syncInput(); msg.textContent = `메모 ${groups.length}건을 창구에 올리는 중이에요`;
         try {
             const s = S();
@@ -752,7 +787,8 @@
             const mt = aiMemoText(r0, g.memo), sd = r0.sender && String(r0.sender.name || '').trim() ? r0.sender : null;
             const r = { ship: ['go', 'hold', 'ask'].includes(r0.ship) ? r0.ship : 'ask', ship_date: /^\d{4}-\d{2}-\d{2}$/.test(String(r0.ship_date || '')) ? r0.ship_date : null,
                 sender: sd ? { name: String(sd.name).trim().replace(/\s*(드림|올림)$/, '').slice(0, 20), phone: String(sd.phone || '').trim().slice(0, 14), addr: String(sd.addr || '').trim().slice(0, 120) } : null,
-                split: !!r0.split, sure: r0.sure === true && mt.safe, why: String(r0.why || '').slice(0, 60), memoText: mt.text };
+                split: !!r0.split, sure: r0.sure === true && mt.safe, why: String(r0.why || '').slice(0, 60), memoText: mt.text,
+                tail: typeof r0.tail === 'string' && !/[\r\n]/.test(r0.tail) ? normTail(r0.tail) : '' };   // #525: 품목 뒤에 붙일 말(「17과로!」) — 자동으로 붙이지 않고 카드에서 사람이 확인
             if (r.split && r.ship === 'go') r.ship = 'ask';
             g.keys.forEach(k => A.byKey.set(k, r));
         });
@@ -767,6 +803,7 @@
         const act = document.activeElement, actCard = act && act.closest ? act.closest('#fo-cards .fo-card') : null;
         const focus = actCard && act.dataset && act.dataset.f ? { id: actCard.dataset.id, f: act.dataset.f, a: act.selectionStart, b: act.selectionEnd } : null;
         A.memo = new Map(); A.memoAsk = new Map();
+        A.tailAsk = new Map(); A.byKey.forEach((r, k) => { if (r.tail && r.ship === 'go') A.tailAsk.set(k, r.tail); });
         buildCards();
         const carded = new Set(); st.cards.forEach(cd => { if (AI_KIND[cd.type]) keysOf(cd).forEach(k => carded.add(k)); });
         const byKeyE = new Map(S().merged.map(e => [keyOf(e), e]));
@@ -774,8 +811,8 @@
         const unitFine = k => { const e = byKeyE.get(k); return !e || unitOk(memoRaw(e), unitOf(e)); };
         S().merged.forEach(e => {   // 카드가 없는 주문의 배송메세지: 확실하면 바로(동·호수가 배송지와 다르면 확실로 보지 않는다), 아니면 「남길 글」을 채운 카드로
             const k = keyOf(e), r = A.byKey.get(k); if (!r || carded.has(k) || r.ship !== 'go' || r.sender) return;
-            const orig = memoRaw(e); if (r.memoText === orig) return;
-            if (r.sure && unitFine(k)) A.memo.set(k, r.memoText); else A.memoAsk.set(k, r.memoText);
+            const orig = memoRaw(e); if (r.memoText === orig && !r.tail) return;
+            if (r.sure && unitFine(k) && !r.tail) A.memo.set(k, r.memoText); else A.memoAsk.set(k, r.memoText);   // 품목 뒤에 붙일 말이 있으면 늘 카드로(사람 확인)
         });
         buildCards(); applyOrderDecisions();
         const same = (a, b) => ['name', 'phone', 'addr', 'memo'].every(f => String((a && a[f]) || '') === String((b && b[f]) || ''));
@@ -785,7 +822,7 @@
             const tag = v => { st.dec.set(cd.id, v); A.tag.set(cd.id, r.why || 'AI 판단'); };
             // #520 절충(대표 10/4 밤 「AI가 확실한 건 알아서 처리 · 애매한 문구만 사람에게」): 보내는이·배송메세지 카드는 ①AI가 확실 ②안전장치 통과(r.sure 에 들어 있음) ③메모의 동·호수 = 배송지 일 때만 닫는다.
             //   그 밖에는 입력칸만 채우고 이유를 적어 사람이 누르게 한다. 사람이 이미 고쳐 적은 칸은 닫지도 덮지도 않는다.
-            const unitBad = !keysOf(cd).every(unitFine), closable = r.sure && !unitBad;
+            const unitBad = !keysOf(cd).every(unitFine), closable = r.sure && !unitBad && !r.tail && !cd.tail && !keysOf(cd).some(k => A.tailAsk.has(k));   // 품목 뒤에 붙일 말이 걸린 카드는 닫지 않는다(한 카드에 묶인 주문 중 하나라도)
             const note = t => A.hint.set(cd.id, t + (r.why ? ' · ' + r.why : '') + (unitBad ? ` · 메모의 동·호수가 배송지(${unitOf(byKeyE.get(keysOf(cd)[0]))})와 달라요 — 확인해 주세요` : r.sure ? '' : ' · AI도 확실하지 않대요'));
             if (cd.type === 'order') { if (r.sure && r.ship === 'go') tag('send'); else if (r.sure && r.ship === 'hold') { tag('excl'); if (r.ship_date) A.tag.set(cd.id, (r.why || 'AI 판단') + ' · ' + md(r.ship_date) + ' 발송'); } }
             else if (cd.type === 'split') { if (r.sure && !r.split && r.ship === 'go') tag('all'); }
@@ -793,13 +830,13 @@
                 const base = { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '', memo: cd.sender.memo || '' }, cur = st.draft.get(cd.id);
                 if (cur && !same(cur, base)) { note('AI가 읽은 값은 넣지 않았어요(직접 고쳐 적은 글이 있어요)'); return; }
                 if (closable) { st.draft.delete(cd.id); tag(r.sender ? { use: true, name: r.sender.name, phone: r.sender.phone, addr: r.sender.addr, memo: r.memoText } : { use: false }); }
-                else if (r.sender) { st.draft.set(cd.id, { name: r.sender.name, phone: r.sender.phone, addr: r.sender.addr, memo: r.memoText }); note('AI가 읽은 값이에요'); }
+                else if (r.sender) { st.draft.set(cd.id, { name: r.sender.name, phone: r.sender.phone, addr: r.sender.addr, memo: r.memoText, ...(r.tail ? { tail: r.tail } : {}) }); note(r.tail ? 'AI가 읽은 값이에요(품목 뒤에 붙일 말 포함 — 확인해 주세요)' : 'AI가 읽은 값이에요'); }
                 else note('AI는 보내는이를 바꿔 달라는 글이 아니라고 봤어요');
             } else if (cd.type === 'memo-edit') {
                 const cur = st.draft.get(cd.id);
                 if (cur && String(cur.memo || '') !== String(cd.memo.rest || '') && String(cur.memo || '') !== r.memoText) { note('AI가 읽은 값은 넣지 않았어요(직접 고쳐 적은 글이 있어요)'); return; }
                 if (closable) { st.draft.delete(cd.id); tag({ use: true, memo: r.memoText }); }
-                else { st.draft.set(cd.id, { memo: r.memoText }); note('AI가 읽은 값이에요'); }
+                else { st.draft.set(cd.id, { memo: r.memoText, ...(r.tail ? { tail: r.tail } : {}) }); note(r.tail ? 'AI가 읽은 값이에요(품목 뒤에 붙일 말 포함 — 확인해 주세요)' : 'AI가 읽은 값이에요'); }
             }
         });
         st.out = null; $('fo-result').hidden = true; st.skipDraftSave = true; renderSummaryOnly();
@@ -809,6 +846,255 @@
         const b = e.target.closest && e.target.closest('#fo-ai-read, #fo-ai-stop'); if (!b) return;
         if (b.id === 'fo-ai-read') aiRead(false); else { st.ai.running = false; st.ai.failed = true; st.ai.note ='AI 읽기를 그만뒀어요. 카드로 직접 확인해 주세요.'; syncAi(); syncMake(); syncInput(); }
     });
+
+    // ── #525(대표 GO 10/5) 클코와 대화하는 칸 — 말로 고치기 · 제주 건 · 정리 기록 ─────────────────────────
+    //   직원이 대화 칸에 직접 적은 말만 주문을 바꾼다(받는 분·주소·수량·품목 이름 포함). AI가 손님 메모만 보고 스스로 그 칸들을 바꾸는 일은 없다.
+    //   AI에게는 지시 글과 「후보 주문」의 이름·옵션·수량·메모·동호수·거래처·상태만 보낸다(주소 전체·전화는 보내지 않는다).
+    //   돌아온 actions 는 화면이 검사한다(주소·받는 분 글자는 사람이 적은 글 안에 있어야 함 · 품목 이름은 단가표에 있는 이름만) → 「바뀔 내용」을 보여 주고 [적용]을 눌러야 바뀐다.
+    st.patch = new Map(); st.chat = { log: [], cand: [], pending: null, running: false, id: 0, t0: 0 }; st.logId = 0;
+    const LILAC = 'E4DFEC';   // 말로 바꾼 칸(연보라) — 연파랑(보내는이)·연노랑(확인)·연주황(사이즈)·노랑(제주)과 겹치지 않게
+    function patchStyle(base) { return Object.assign({}, base || {}, { fill: { patternType: 'solid', fgColor: { rgb: LILAC } } }); }
+    // 품목 뒤 「요청 꼬리」(「 17과로!」 — v2 의 「 S사이즈로!」와 같은 꼴). 품목 이름은 그대로 두고 옵션 칸 끝에만 붙인다 → 거래처 찾기는 꼬리를 떼고, 수량 표에는 따로 한 줄(주황).
+    //   tailOf: 대화로 시킨 것(st.patch.tail — '' = 꼬리 떼기)이 먼저, 없으면 카드에서 사람이 [이대로 넣기]로 확인한 것. undefined = 손대지 않음.
+    const inCatalog = n => Object.values(st.byPartner || {}).some(a => (a || []).includes(n));
+    const normTail = t => { const x = String(t == null ? '' : t).replace(/\s+/g, ' ').trim().slice(0, 80); return x && !x.endsWith('!') ? x + '!' : x; };
+    const withTail = (name, t) => core().stripTail(name, inCatalog) + (t ? ' ' + t : '');
+    function tailOf(e) {
+        const k = keyOf(e), p = st.patch.get(k); if (p && p.tail != null) return p.tail;
+        for (const id of [st.memoCard && st.memoCard.get(k), st.sambCard && st.sambCard.get(k)]) { const d = id ? liveDec(id) : null; if (d && d.use && d.tail) return normTail(d.tail); }
+        return undefined;
+    }
+    function optOf(e) { const p = st.patch.get(keyOf(e)), base = String((p && p.opt != null ? p.opt : e.conv['옵션정보']) || ''), t = tailOf(e); return t === undefined ? base : withTail(base, t); }
+    const addrOf = e => { const p = st.patch.get(keyOf(e)); return String((p && p.addr != null ? p.addr : (e.conv['배송지'] || rawOf(e)['통합배송지'])) || ''); };
+    const qtyNow = e => { const p = st.patch.get(keyOf(e)); return p && p.qty != null ? p.qty : qtyOf(e); };
+    const whoOf = e => { const b = buyerName(e), r = String(e.conv['수취인명'] || ''); return b + (r && r !== b ? ' → ' + r : ''); };
+    const partnerShort = opt => { const c = core(), p = c.partnerOf(opt, st.byPartner || {}) || st.dec.get('pick:' + opt) || null; return p ? c.shortPartner(p) : ''; };
+    // 제주도 배송(주소가 「제주」로 시작 — 택배사 양식에서 맨 아래 노란 줄과 같은 기준) 거래처별 건수
+    function jejuCount() {
+        const c = core(), m = new Map(); if (!c || !st.byPartner) return m;
+        Object.keys(st.byPartner).forEach(p => m.set(c.shortPartner(p), 0));
+        const add = (opt, addr) => { if (!c.isJeju(addr)) return; const k = partnerShort(opt) || '거래처 미정'; m.set(k, (m.get(k) || 0) + 1); };
+        S().merged.forEach(e => { if (goingOut(e)) add(optOf(e), addrOf(e)); });
+        (st.cash && st.cash.ok ? st.cash.rows : []).forEach(r => add(String(r.opt || ''), String((r.cells || [])[8] || '')));
+        return m;
+    }
+    function jejuText() { const m = jejuCount(); return m.size ? [...m].map(([k, n]) => `${k} ${n ? n + '건' : '없음'}`).join(' · ') : '없음'; }
+    // 말로 바꾼 것 목록 — screen = 화면용(값 포함) · log = 정리 기록용(주소 글자는 넣지 않는다)
+    function patchItems() {
+        const byKey = new Map(S().merged.map(e => [keyOf(e), e])), out = [];
+        st.patch.forEach((p, k) => {
+            const e = byKey.get(k); if (!e) return; const who = whoOf(e), b = buyerName(e);
+            const add = (kind, screen, log) => out.push({ key: k, kind, screen: `${kind}: ${screen}`, log });
+            if (p.addr != null) add('주소 변경', `${who} — 「${p.addr}」`, b);
+            if (p.recv != null) add('받는 분 변경', `${who} → ${p.recv}`, `${b}: ${e.conv['수취인명'] || ''} → ${p.recv}`);
+            if (p.qty != null) add('수량 변경', `${who} — ${qtyOf(e)} → ${p.qty}박스`, `${b}: ${qtyOf(e)} → ${p.qty}박스`);
+            if (p.opt != null) add('품목 이름 변경', `${who} — ${e.conv['옵션정보']} → ${p.opt}`, `${e.conv['옵션정보']} → ${p.opt}`);
+            if (p.tail != null) add('품목 뒤 요청', `${who} — ${p.tail ? '「' + p.tail + '」' : '꼬리 뗌'}`, `${b}: ${p.tail || '꼬리 뗌'}`);
+            if (p.sender && p.sender.name) add('보내는이 변경', `${who} — ${p.sender.name} 드림`, `${b}: ${p.sender.name} 드림`);
+            if (p.memo != null) add('배송메세지 변경', `${who} — 「${p.memo || '기본 문구'}」`, b);
+            if (p.excl === true) add('오늘 제외', who, b);
+            if (p.excl === false) add('오늘 발송으로', who, b);
+        });
+        return out;
+    }
+    const patchLines = () => patchItems().map(x => x.screen);
+    function renderPatches() {
+        const el = $('fo-patches'); if (!el) return; const items = patchItems();
+        const keys = [...new Set(items.map(x => x.key))];
+        el.innerHTML = items.length ? `<b>말로 바꾼 것 ${items.length}건</b><ul>${keys.map(k => `<li>${items.filter(x => x.key === k).map(x => esc(x.screen)).join(' · ')} <button type="button" class="fo-btn sm" data-unpatch="${esc(k)}">되돌리기</button></li>`).join('')}</ul>` : '';
+    }
+    function renderChat() {
+        const el = $('fo-chat-log'); if (!el) return; const C = st.chat;
+        el.innerHTML = C.log.map((m, i) => {
+            if (m.preview) {
+                const live = C.pending && C.pending.at === i;
+                return `<div class="fo-bub ai" data-chat-preview="${live ? 'open' : 'closed'}"><p>${esc(m.text)}</p><ul>${m.preview.map(x => `<li class="${x.ok ? '' : 'bad'}">${esc(x.line)}${x.ok ? '' : ' — ' + esc(x.why)}</li>`).join('')}</ul>${live ? `<div class="fo-acts"><button type="button" class="fo-btn sm primary" data-chat="apply">적용</button><button type="button" class="fo-btn sm" data-chat="cancel">취소</button></div>` : `<span class="fo-done">${esc(m.state || '')}</span>`}</div>`;
+            }
+            return `<div class="fo-bub ${m.who === 'me' ? 'me' : 'ai'}"><p>${esc(m.text)}</p></div>`;
+        }).join('');
+        el.scrollTop = el.scrollHeight;
+    }
+    function syncChat() {
+        const sec = $('fo-chat'); if (!sec) return; const C = st.chat;
+        sec.hidden = !(st.loaded && (st.phase === 'review' || st.phase === 'result'));
+        $('fo-chat-send').disabled = C.running || st.busy || !st.judged || !!C.pending;
+        $('fo-chat-input').disabled = C.running;
+        $('fo-chat-stop').hidden = !C.running;
+        renderPatches();
+    }
+    const chatSay = (who, text, extra) => { st.chat.log.push(Object.assign({ who, text: String(text || '') }, extra || {})); if (st.chat.log.length > 60) st.chat.log.splice(0, st.chat.log.length - 60); renderChat(); return st.chat.log.length - 1; };
+    const sq = s => String(s == null ? '' : s).replace(/\s+/g, '');
+    const meText = () => sq(st.chat.log.filter(m => m.who === 'me').map(m => m.text).join('\n'));
+    // 정리 파일 줄로 읽히는 줄(휴대폰 번호 · 상품주문번호 · 자사몰 주문번호가 든 줄)은 규칙이 처리한다 — 메모 칸에 쌓고 다시 판정
+    const LINEISH = /01\d[-.\s]?\d{3,4}[-.\s]?\d{4}|\d{16,}|\d{8}-\d{7}/;
+    const CHAT_STOP = /^(건|주소|박스|수량|품목|이름|오늘|발송|제외|제주|바꿔줘|바꿔|변경|빼줘|있어|있나요|없어|으로|해줘|주문|고객|보내는이|받는|사람|배송|메세지|미매칭)$/;
+    // 지시 글에서 후보 주문을 뽑는다: 구매자·수취인 이름 · 전화 끝 4자리 · 「미매칭」 · 품목 낱말
+    function chatCandidates(text) {
+        const s = S(), t = sq(text), out = [], seen = new Set();
+        const push = e => { const k = keyOf(e); if (!seen.has(k)) { seen.add(k); out.push(e); } };
+        const four = (String(text).match(/(?<!\d)\d{4}(?!\d)/g) || []);
+        s.merged.forEach(e => {
+            const b = sq(buyerName(e)), r = sq(e.conv['수취인명']);
+            if ((b.length >= 2 && t.includes(b)) || (r.length >= 2 && t.includes(r))) return push(e);
+            const tails = [buyerTel(e), digitsOf(e.conv['수취인연락처1'])].filter(x => x.length >= 8).map(x => x.slice(-4));
+            if (four.some(f => tails.includes(f))) push(e);
+        });
+        if (!out.length && /미매칭/.test(text)) s.merged.forEach(e => { const o = optOf(e); if (/^\[미매칭\]/.test(o) || !partnerShort(o)) push(e); });
+        if (!out.length) {
+            const words = String(text).split(/[\s,.:;!?「」"'()~]+/).map(w => w.replace(/(으로|로|을|를|이|가|은|는|에|도|만)$/, '')).filter(w => /^[가-힣A-Za-z0-9]{2,}$/.test(w) && /[가-힣]/.test(w) && !CHAT_STOP.test(w));
+            const hit = s.merged.filter(e => words.some(w => optOf(e).includes(w)));
+            if (hit.length && hit.length <= 80) hit.forEach(push);
+        }
+        return out.slice(0, 80).map((e, i) => ({ n: i + 1, key: keyOf(e) }));
+    }
+    function chatSummary() {
+        const s = S(), m = s.merged, going = m.filter(goingOut), c = core();
+        const by = new Map(); going.forEach(e => { const k = partnerShort(optOf(e)) || '거래처 미정'; const x = by.get(k) || { n: 0, q: 0 }; x.n++; x.q += qtyNow(e); by.set(k, x); });
+        (st.cash && st.cash.ok ? st.cash.rows : []).forEach(r => { const k = partnerShort(String(r.opt || '')) || '거래처 미정'; const x = by.get(k) || { n: 0, q: 0 }; x.n++; x.q += Number(r.qty) || 0; by.set(k, x); });
+        const un = going.filter(e => !partnerShort(optOf(e))).length;
+        return [`기준 발송일 ${s.shipDate}`, `주문 ${m.length}건 · 택배사 양식 ${going.length}건 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건 · 현금파일 ${st.cash && st.cash.ok ? st.cash.rows.length : 0}행`,
+            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, `거래처를 못 정한 주문(미매칭) ${un}건`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, c ? '' : ''].filter(Boolean).join('\n').slice(0, 800);
+    }
+    async function chatSend() {
+        const el = $('fo-chat-input'), msg = $('fo-chat-msg'), C = st.chat; const text = String(el.value || '').replace(/\r/g, '').trim();
+        if (!text || C.running || st.busy || C.pending) return;
+        if (!st.judged || st.stale) { msg.textContent = '위의 [다시 판정]을 먼저 눌러 주세요.'; return; }
+        msg.textContent = ''; el.value = '';
+        const lines = text.split('\n'), rule = lines.filter(l => LINEISH.test(l)), talk = lines.filter(l => !LINEISH.test(l)).join('\n').trim();
+        chatSay('me', text);
+        if (rule.length) {
+            if (st.ai.running) { chatSay('ai', 'AI가 메모를 읽는 중이라 정리 줄을 아직 못 넣었어요. 읽기가 끝난 뒤 다시 보내 주세요.'); return; }
+            const had = st.phase === 'result' && st.files.length > 0, memo = $('fo-memo');
+            memo.value = (memo.value.trim() ? memo.value.replace(/\s+$/, '') + '\n' : '') + rule.join('\n');
+            await run(judge);
+            chatSay('ai', `정리 줄 ${rule.length}줄을 메모 칸에 넣고 다시 판정했어요.${pending().length ? ` 확인할 카드가 ${pending().length}건 있어요.` : ''}`);
+            if (had) await remake();
+        }
+        if (talk) await chatAsk(talk);
+    }
+    async function remake() {   // 파일이 이미 만들어져 있었으면 고친 내용으로 다시 만든다(남은 카드가 있거나 AI가 읽는 중이면 안내만)
+        for (let i = 0; i < 1200 && st.ai.running; i++) await sleep(500);
+        if (pending().length) { $('fo-chat-msg').textContent = '확인할 카드가 남아 있어요. 처리한 뒤 [파일 만들기]를 눌러 주세요.'; return; }
+        await run(make);
+        if (st.phase === 'result' && st.out) chatSay('ai', '고친 내용으로 파일을 다시 만들었어요.');
+    }
+    async function chatAsk(text) {
+        const C = st.chat, msg = $('fo-chat-msg'), s = S();
+        for (let i = 0; i < 1800 && st.ai.running; i++) { msg.textContent = 'AI가 손님 메모를 읽는 중이에요. 끝나면 이어서 물어볼게요.'; await sleep(500); }
+        const cand = chatCandidates(text); if (cand.length) C.cand = cand;   // 후보를 못 찾으면 앞서 보여 준 번호를 그대로 쓴다(「2번으로」처럼 이어서 답할 때)
+        const byKey = new Map(s.merged.map(e => [keyOf(e), e]));
+        const orders = C.cand.map(c => { const e = byKey.get(c.key); return e ? { n: c.n, buyer: buyerName(e), recv: String(e.conv['수취인명'] || ''), opt: optOf(e), qty: qtyNow(e), memo: String(e.conv['배송메세지'] || '').trim().slice(0, 300), unit: unitOf(e), partner: partnerShort(optOf(e)) || '미정', state: e.individual ? '입력삭제' : e.excluded ? '오늘 안 나감' : '오늘 발송' } : null; }).filter(Boolean);
+        const catalog = {}; let left = 200; Object.entries(st.byPartner || {}).forEach(([p, names]) => { const take = (names || []).slice(0, Math.max(left, 0)); left -= take.length; catalog[p] = take; });
+        const history = C.log.slice(0, -1).filter(m => !m.preview).slice(-6).map(m => ({ who: m.who === 'me' ? 'me' : 'ai', text: m.text.slice(0, 300) }));
+        C.running = true; C.t0 = Date.now(); C.id = 0; syncChat(); msg.textContent = '클코에게 물어보는 중이에요';
+        try {
+            const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', { kind: 'chat', shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, ask: text.slice(0, 1500), orders, catalog, summary: chatSummary(), history });
+            if (!r || !r.ok || !r.id) throw new Error((r && (r.message || r.error)) || '요청을 올리지 못했어요');
+            C.id = r.id;
+            for (;;) {
+                await sleep(2000);
+                if (!C.running) return;
+                const q = await window.api('/api/agent-office/final-order/memo-read/' + C.id), sec = Math.round((Date.now() - C.t0) / 1000);
+                if (q && q.state === 'done') { chatResult(q.data || {}); break; }
+                if (q && q.state === 'fail') throw new Error(q.message || '클코가 처리하지 못했어요');
+                if (q && q.status === '대기' && sec > 40) throw new Error('지금은 말로 고치기를 쓸 수 없어요(대표 PC의 창구가 꺼져 있어요) — 정리 줄과 카드로 진행하세요');
+                if (sec > 600) throw new Error('10분이 지나도 답이 없어요');
+                msg.textContent = `클코가 읽고 있어요 · ${sec}초`;
+            }
+            msg.textContent = '';
+        } catch (err) { msg.textContent = ''; chatSay('ai', '⚠️ ' + (err && err.message ? err.message : err)); }
+        finally {
+            const id = C.id; C.running = false; C.id = 0;
+            if (id) { try { await window.api('/api/agent-office/final-order/memo-read/' + id, 'DELETE'); } catch (_) { } }   // 대화 글을 서버에 남기지 않는다
+            syncChat();
+        }
+    }
+    // 돌아온 actions 검사 → 「바뀔 내용」 미리 보기(적용은 사람이 눌러야)
+    function chatResult(data) {
+        const C = st.chat, s = S(), byKey = new Map(s.merged.map(e => [keyOf(e), e])), mine = meText();
+        const names = new Set(); Object.values(st.byPartner || {}).forEach(a => (a || []).forEach(n => names.add(n)));
+        const inMine = v => { const x = sq(v); return x.length >= 1 && mine.includes(x); };
+        const items = (Array.isArray(data.actions) ? data.actions : []).slice(0, 80).map(a => {
+            const c = C.cand.find(x => x.n === Number(a && a.n)), e = c ? byKey.get(c.key) : null;
+            if (!a || !e) return { ok: false, line: `${a && a.n != null ? a.n + '번' : '주문'}`, why: '어느 주문인지 찾지 못했어요' };
+            const who = `${c.n}. ${whoOf(e)}`, bad = (line, why) => ({ ok: false, line: `${who} — ${line}`, why }), good = (line, set) => ({ ok: true, key: c.key, line: `${who} — ${line}`, set });
+            const p = st.patch.get(c.key) || {};
+            switch (a.op) {
+                case 'exclude': return e.individual ? bad('오늘 제외', '입력삭제 주문이에요') : good('오늘 제외(택배사·스토어 파일에서 빠져요)', { excl: true });
+                case 'include': return e.individual ? bad('오늘 발송으로', '입력삭제 주문이에요') : good('오늘 발송으로', { excl: false });
+                case 'indiv': return buyerTel(e) ? good('입력삭제로(이 구매자의 주문이 택배사 양식에서 빠져요 · 현금파일에 주소 줄이 있어야 해요)', { indiv: true }) : bad('입력삭제로', '구매자 번호가 없어 정리 줄을 만들 수 없어요');
+                case 'addr': { const t = String(a.text || '').trim(); return sq(t).length >= 5 && inMine(t) ? good(`주소: 「${addrOf(e)}」 → 「${t}」`, { addr: t }) : bad(`주소 → 「${t}」`, '주소 글자를 다시 적어 주세요(적어 주신 글에 그대로 있는 주소만 넣어요)'); }
+                case 'recv': { const t = String(a.name || '').trim(); return t && inMine(t) ? good(`받는 분: ${e.conv['수취인명'] || ''} → ${t}`, { recv: t }) : bad(`받는 분 → ${t}`, '받는 분 이름을 다시 적어 주세요'); }
+                case 'qty': { const q = Number(a.qty); return Number.isInteger(q) && q >= 1 && q <= 999 ? good(`수량: ${qtyNow(e)} → ${q}박스`, { qty: q }) : bad(`수량 → ${a.qty}`, '수량은 1~999 사이 숫자여야 해요'); }
+                case 'opt': { const t = String(a.name || '').trim(); return names.has(t) ? good(`품목 이름: ${optOf(e)} → ${t}`, { opt: t }) : bad(`품목 이름 → ${t}`, '품목별 금액(단가표)에 없는 이름이에요'); }
+                case 'sender': { const t = String(a.name || '').trim().replace(/\s*(드림|올림)$/, ''), ph = String(a.phone || '').trim(), ad = String(a.addr || '').trim();
+                    if (!t || !inMine(t)) return bad(`보내는이 → ${t}`, '보내는 분 이름을 다시 적어 주세요');
+                    if ((ph && !sq(st.chat.log.filter(m => m.who === 'me').map(m => m.text).join(' ')).replace(/\D/g, '').includes(digitsOf(ph))) || (ad && !inMine(ad))) return bad(`보내는이 → ${t}`, '보내는 분 번호·주소를 다시 적어 주세요');
+                    return good(`보내는이: ${t} 드림${ph ? ' · ' + ph : ''}${ad ? ' · 주소 ' + ad : ''}`, { sender: { name: t, phone: ph, addr: ad } }); }
+                case 'memo': { const t = String(a.text == null ? '' : a.text).replace(/\r/g, '').trim(), orig = sq(e.conv['배송메세지']); return t === '' || inMine(t) || orig.includes(sq(t)) ? good(`배송메세지: 「${p.memo != null ? p.memo : String(e.conv['배송메세지'] || '').trim() || '(없음)'}」 → 「${t || '기본 문구'}」`, { memo: t }) : bad(`배송메세지 → 「${t}」`, '배송메세지 글을 다시 적어 주세요'); }
+                case 'tail': { const raw = String(a.text == null ? '' : a.text); if (/[\r\n]/.test(raw) || raw.trim().length > 80) return bad('품목 뒤에 붙일 말', '한 줄 80자까지만 붙일 수 있어요');
+                    const t = normTail(raw), cur = optOf(e); return t ? good(`품목 뒤에 붙일 말: ${cur} → ${withTail(cur, t)}`, { tail: t }) : good(`품목 뒤 꼬리 떼기: ${cur} → ${withTail(cur, '')}`, { tail: '' }); }
+                default: return bad(String(a.op || ''), '모르는 지시예요');
+            }
+        });
+        const reply = String(data.reply || '').trim();
+        if (!items.length) { chatSay('ai', reply || '바꿀 것이 없어요.'); return; }
+        const okN = items.filter(x => x.ok).length;
+        const at = chatSay('ai', (reply ? reply + '\n' : '') + (okN ? `바뀔 내용 ${okN}건이에요. 맞으면 [적용]을 눌러 주세요.` : '바꿀 수 있는 것이 없어요.'), { preview: items, state: okN ? '' : '적용할 것 없음' });
+        if (okN) { C.pending = { at, items }; renderChat(); }
+    }
+    async function chatApply() {
+        const C = st.chat, P = C.pending; if (!P || st.busy) return;
+        const had = st.phase === 'result' && st.files.length > 0, s = S(), byKey = new Map(s.merged.map(e => [keyOf(e), e])), indiv = [];
+        P.items.filter(x => x.ok).forEach(x => {
+            if (x.set.indiv) { const e = byKey.get(x.key); if (e) indiv.push(`${md(s.shipDate)}\t${buyerTel(e)}\t입력o삭제x\t${CH_LABEL[e.ch] || '네이버'}`); return; }
+            st.patch.set(x.key, Object.assign({}, st.patch.get(x.key) || {}, x.set));
+        });
+        C.log[P.at].state = '적용함'; C.pending = null;
+        st.out = null; st.files = []; $('fo-result').hidden = true; clearMsg();
+        if (indiv.length) { const memo = $('fo-memo'); memo.value = (memo.value.trim() ? memo.value.replace(/\s+$/, '') + '\n' : '') + [...new Set(indiv)].join('\n'); for (let i = 0; i < 1200 && st.ai.running; i++) await sleep(500); await run(judge); }
+        else renderSummaryOnly();
+        renderChat(); syncChat();
+        if (had) await remake(); else $('fo-chat-msg').textContent = pending().length ? '적용했어요. 남은 카드를 처리하고 [파일 만들기]를 눌러 주세요.' : '적용했어요. [파일 만들기]를 눌러 주세요.';
+    }
+    async function onChatClick(e) {
+        const b = e.target.closest('button'); if (!b) return; const C = st.chat;
+        if (b.id === 'fo-chat-send') return chatSend();
+        if (b.id === 'fo-chat-stop') { C.running = false; $('fo-chat-msg').textContent = '그만뒀어요.'; syncChat(); return; }
+        if (b.dataset.chat === 'apply') return chatApply();
+        if (b.dataset.chat === 'cancel' && C.pending) { C.log[C.pending.at].state = '취소함'; C.pending = null; renderChat(); syncChat(); return; }
+        if (b.dataset.unpatch && !st.busy) {
+            const had = st.phase === 'result' && st.files.length > 0; st.patch.delete(b.dataset.unpatch);
+            st.out = null; st.files = []; $('fo-result').hidden = true;
+            for (let i = 0; i < 1200 && st.ai.running; i++) await sleep(500);
+            await run(judge);   // 제외를 되돌리면 엔진 판정값으로 돌아가야 하므로 판정을 다시 한다
+            if (had) await remake();
+        }
+    }
+    // 전체 지시에 남길 정리 기록 1건 — [파일 만들기]가 끝날 때(다시 만들면 같은 기록을 고쳐 씀). 주소·전화 글자는 넣지 않는다.
+    function logLines() {
+        const s = S(), m = s.merged, out = st.out, L = [];
+        L.push(out.partners.map(p => `${p.short} ${p.rows.length}건(${p.total}박스)`).join(' · ') || '택배사 양식 0건');
+        L.push(`제주도 배송: ${jejuText()}`);
+        L.push(`현금파일 ${st.cash && st.cash.ok ? st.cash.rows.length : 0}행 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건`);
+        const sp = [], items = patchItems(), kinds = ['주소 변경', '받는 분 변경', '수량 변경', '품목 이름 변경', '품목 뒤 요청', '배송메세지 변경'];
+        kinds.forEach(k => { const xs = items.filter(x => x.kind === k); if (xs.length) sp.push(`· ${k} ${xs.length}건: ${[...new Set(xs.map(x => x.log))].slice(0, 6).join(', ')}${xs.length > 6 ? ' 외' : ''}`); });
+        const cardTail = m.filter(e => goingOut(e) && !(st.patch.get(keyOf(e)) || {}).tail && tailOf(e)); if (cardTail.length) sp.push(`· 품목 뒤 요청(손님 메모 · 카드에서 확인) ${cardTail.length}건: ${cardTail.slice(0, 6).map(e => `${buyerName(e)} ${tailOf(e)}`).join(', ')}`);
+        const sm = senderMap().byKey; let rule = 0, ai = 0, hand = 0;
+        m.filter(goingOut).forEach(e => { const k = keyOf(e), p = st.patch.get(k); if (p && p.sender && p.sender.name) hand++; else if (sm.has(k)) { const id = st.sambCard && st.sambCard.get(k); if (id && st.ai.tag.has(id)) ai++; else hand++; } else if (e.sender && !e.sender.ambiguous) rule++; });
+        if (rule + ai + hand) sp.push(`· 보내는이 변경 ${rule + ai + hand}건 (규칙 ${rule} · AI가 처리 ${ai} · 직접 ${hand})`);
+        const ex = m.filter(e => !e.individual && e.excluded);
+        const why = e => { const p = st.patch.get(keyOf(e)); if (p && p.excl === true) return '말로 제외'; const id = st.ordCard && st.ordCard.get(keyOf(e)); if (id && st.dec.get(id) === 'excl') return st.ai.tag.has(id) ? 'AI: ' + st.ai.tag.get(id) : '카드에서 제외'; if (e.req) return `메모 줄 ${md(e.req.date)}`; if (e.parse && e.parse.reqDate) return `${e.parse.reqDate} ${e.parse.kind === 'arrive' ? '도착' : '발송'} 요청`; return '손님 메모'; };
+        if (ex.length) { sp.push(`· 오늘 제외 ${ex.length}건${ex.length > 12 ? ' (앞 12건만 적음)' : ''}`); ex.slice(0, 12).forEach(e => sp.push(`   - ${buyerName(e)} (${why(e)})`)); }
+        if (sp.length) L.push('특이사항', ...sp);
+        return L.map(t => String(t).replace(/0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}/g, '(번호)').slice(0, 200)).slice(0, 40);
+    }
+    async function sendLog() {
+        try {
+            const r = await window.api('/api/agent-office/final-order/log', 'POST', Object.assign({ shipDate: S().shipDate, lines: logLines() }, st.logId ? { id: st.logId } : {}));
+            if (r && r.ok && r.id) st.logId = r.id;
+        } catch (_) { /* 기록을 못 남겨도 파일은 만들어졌다 */ }
+    }
 
     window.AkmFinalOrder = { open, close, state: st };
 })();
