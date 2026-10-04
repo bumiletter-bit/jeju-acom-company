@@ -150,23 +150,56 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 /* #524: AI가 닫은 카드 표시 — 카드 머리에 보라 배지(사람이 한눈에 「이건 AI가 정한 것」을 알고 [바꾸기]로 고칠 수 있게) */
 .fo-aibadge { flex: none; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: #EEF0FF; color: #4F46E5; border: 1px solid #C7CBFF; }
 
-/* #525: 클코와 대화하는 칸 — 말풍선 · 바뀔 내용 미리 보기 · 말로 바꾼 것 목록 · 제주도 배송 */
+/* #525·#526: 클코와 대화하는 칸 — 에이전트 오피스 「내 지시」 대화 보기와 같은 모양(시간 표시 없음) · 말로 바꾼 것 목록 · 제주도 배송 */
 .fo-chat { display: grid; gap: 10px; }
-.fo-chat-log { display: grid; gap: 8px; max-height: 360px; overflow-y: auto; }
-.fo-chat-log:empty { display: none; }
-.fo-bub { max-width: min(560px, 92%); padding: 9px 12px; border-radius: 12px; font-size: 13.5px; line-height: 1.55; border: 1px solid var(--f-line); background: #fff; }
-.fo-bub p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.fo-bub.me { justify-self: end; background: var(--f-accent-soft); border-color: #C7CBFF; }
-.fo-bub.ai { justify-self: start; }
-.fo-bub ul, .fo-patches ul, .fo-patched ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
-.fo-bub li, .fo-patches li, .fo-patched li { overflow-wrap: anywhere; }
-.fo-bub li.bad { color: #B42318; }
-.fo-bub .fo-acts { margin-top: 8px; }
-.fo-chat-in { display: flex; gap: 8px; align-items: flex-end; }
-.fo-chat-in textarea { flex: 1 1 auto; min-height: 44px; }
+/* 대화 틀: 인디고 2px 테두리 카드 */
+.fo-thread { display: flex; flex-direction: column; gap: 10px; border: 2px solid #A5ACFF; border-radius: 16px; padding: 12px 14px 14px; background: #fff; max-height: 460px; overflow-y: auto; }
+.fo-thread[hidden] { display: none !important; }
+.fo-bub p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.55; }
+.fo-bub.me { align-self: flex-end; max-width: min(78%, 640px); background: var(--f-accent-soft); color: var(--f-ink); border-radius: 14px 14px 4px 14px; padding: 9px 13px 8px; }
+.fo-bub.me p { font-weight: 500; }
+.fo-bub.ai { align-self: stretch; max-width: min(100%, 860px); }
+/* 클코 답 카드: 왼쪽 인디고 띠 + 「클코 답변」 배지 · 아래 버튼 띠 */
+.fo-a { background: #fff; border: 1px solid #D8DBFF; border-left: 4px solid var(--f-accent); border-radius: 10px; box-shadow: 0 1px 2px rgba(79, 70, 229, .08); padding: 10px 14px 12px; }
+.fo-a.has-acts { border-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.fo-a-label { display: block; width: max-content; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--f-accent); background: var(--f-accent-soft); border-radius: 999px; padding: 1px 8px; margin-bottom: 6px; }
+.fo-a-list { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; }
+.fo-a-list li { overflow-wrap: anywhere; }
+.fo-a-list li.bad { color: #B42318; }
+.fo-a-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px 9px; border-left: 4px solid var(--f-accent); border-right: 1px solid #D8DBFF; border-bottom: 1px solid #D8DBFF; border-radius: 0 0 10px 10px; background: var(--f-accent-soft); }
+.fo-a-acts .fo-btn { background: #fff; border-color: #C7CBFF; color: var(--f-accent); font-weight: 700; }
+.fo-a-acts .fo-btn.primary { background: var(--f-accent); border-color: var(--f-accent); color: #fff; }
+.fo-a-acts .fo-done { font-size: 12.5px; color: var(--f-sub); }
+.fo-bub.ai.live .fo-a { border-style: dashed; border-left-style: solid; background: #FBFBFF; }
+.fo-bub.ai.live p { color: var(--f-sub); font-variant-numeric: tabular-nums; }
+/* 입력 상자: 인디고 2px 테두리 · 왼쪽 ✦ · 오른쪽 아래 둥근 보내기 버튼 */
+.fo-compose { position: relative; background: #fff; border: 2px solid #A5ACFF; border-radius: 16px; padding: 13px 12px 10px 44px; box-shadow: 0 1px 2px rgba(79, 70, 229, .08); transition: border-color 160ms cubic-bezier(.2, .8, .2, 1), box-shadow 160ms cubic-bezier(.2, .8, .2, 1); }
+.fo-compose:focus-within { border-color: var(--f-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .14); }
+.fo-spark { position: absolute; left: 15px; top: 13px; font-size: 18px; line-height: 1.4; color: #8F96FF; }
+/* 테마의 input/textarea :focus 규칙이 !important 로 테두리·그림자를 준다(#501) → 안쪽 입력칸은 !important 로 지우고 포커스 표시는 바깥 상자가 한다 */
+.fo .fo-compose textarea, .fo .fo-compose textarea:focus, .fo .fo-compose textarea:focus-visible { width: 100%; min-height: 48px; max-height: 240px; padding: 0 !important; border: 0 !important; border-radius: 0; outline: 0 !important; box-shadow: none !important; background: transparent; resize: none; font-size: 15px; line-height: 1.55; }
+.fo-compose-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.fo-icon { width: 44px; height: 44px; flex: none; border-radius: 50%; border: 1px solid var(--f-line); background: var(--f-soft); color: var(--f-sub); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 160ms cubic-bezier(.2, .8, .2, 1), background-color 160ms cubic-bezier(.2, .8, .2, 1); }
+.fo-icon:active { transform: scale(.97); }
+.fo-icon:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; }
+.fo-icon.primary { background: var(--f-accent); border-color: var(--f-accent); color: #fff; box-shadow: 0 6px 16px -8px rgba(79, 70, 229, .55); }
+.fo-icon.primary:hover { background: var(--f-accent-dark); border-color: var(--f-accent-dark); }
+.fo-icon[disabled] { opacity: .55; cursor: default; }
+/* 말로 바꾼 것 목록: 글은 왼쪽 · [되돌리기]는 오른쪽 끝(줄이 길어도 버튼이 아래로 떨어지지 않게) */
 .fo-patches:empty { display: none; }
-.fo-patches, .fo-patched { padding: 10px 12px; border-radius: 12px; border: 1px solid #D9CCE8; background: #F6F1FA; font-size: 13px; }
-.fo-patches li .fo-btn { margin-left: 6px; }
+.fo-patches, .fo-patched { padding: 10px 14px; border-radius: 12px; border: 1px solid #D8DBFF; background: var(--f-accent-soft); font-size: 13px; line-height: 1.6; }
+.fo-patches ul, .fo-patched ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.fo-patched li { overflow-wrap: anywhere; }
+.fo-patches li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 10px; background: #fff; border: 1px solid #E3E5FF; }
+.fo-patches li span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.fo-patches li .fo-btn { flex: none; }
+.fo-chatbadge { background: #EEF0FF; color: #4F46E5; border: 1px solid #C7CBFF; }
 .fo-jeju { margin: 0; font-size: 13.5px; }
 .fo-jeju b { font-variant-numeric: tabular-nums; }
-@media (max-width: 640px) { .fo-chat-in { flex-wrap: wrap; } .fo-chat-in textarea { flex-basis: 100%; } }
+@media (max-width: 640px) {
+    .fo-thread { padding: 10px 10px 12px; }
+    .fo-bub.me { max-width: 88%; }
+    .fo-compose { padding-left: 40px; }
+    .fo-a-acts .fo-btn { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .fo-compose, .fo-icon { transition: none; } .fo-icon:active { transform: none; } }

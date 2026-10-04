@@ -882,6 +882,7 @@ async function resolveCards(pg, type) {
         console.log('\n⑯ #525 대화 칸(가짜 창구 응답)');
         {
             const base = fx.naver.find(r => r['수취인명'] === '받는21');
+            const SHOT = process.env.SHOT_DIR || TMP; require('fs').mkdirSync(SHOT, { recursive: true });
             const target = (cat.byPartner[FX.P_DAESUNG] || [])[0];   // 품목 이름을 바꿀 때 쓸 단가표 이름(대성)
             let seq = 0; const MT = '13과로 부탁드려요 문 앞에 놔주세요';   // 손님 메모의 과수 요청 → AI가 tail 로 돌려줌(자동으로 붙이지 않고 카드로)
             const mk = (nm, o) => {
@@ -892,13 +893,13 @@ async function resolveCards(pg, type) {
             const rows16 = [mk('대화가'), mk('대화나'), mk('대화다'), mk('대화라'), mk('대화마', { opt: '세상에 없는 과일 9kg' }), mk('대화바', { addr: '제주특별자치도 제주시 가짜로 7' }),
                 mk('같은이', { recv: '같은받는일', tel: '010-7300-0555' }), mk('같은이', { recv: '같은받는이', tel: '010-7300-0555' }), mk('대화사'), mk('대화아'), mk('대화자', { tel: '010-7300-0777' }), mk('대화차'), mk('대화타', { memo: MT })];
             const fx16 = { ...fx, cafe24: [], coupang: [], canceledCoupang: [], naver: rows16 };
-            const mkChat = async withClock => {
-                const hitsC = { naver: 0, cafe24: 0, coupang: 0, cancel: 0, ai: 0 }; const ctxC = await newCtx(br, fx16, hitsC, { width: 1400, height: 900 }, false, {});
+            const mkChat = async (withClock, rowsX, vp, mobile) => {
+                const hitsC = { naver: 0, cafe24: 0, coupang: 0, cancel: 0, ai: 0 }; const ctxC = await newCtx(br, rowsX ? { ...fx16, naver: rowsX } : fx16, hitsC, vp || { width: 1400, height: 900 }, !!mobile, {});
                 if (withClock) await ctxC.clock.install();
                 const chat = { posts: [], memoPosts: [], dels: 0, mode: 'done', status: '처리중', answer: () => ({ reply: '', actions: [] }) };
                 await ctxC.route('**/api/agent-office/final-order/memo-read', r => { if (r.request().method() !== 'POST') return r.continue(); const b = r.request().postDataJSON(); if (b.kind !== 'chat') { chat.memoPosts.push(b); return r.fulfill({ json: { ok: true, id: 9200 } }); } chat.posts.push(b); r.fulfill({ json: { ok: true, id: 9100 } }); });
                 await ctxC.route('**/api/agent-office/final-order/memo-read/9200', r => { if (r.request().method() === 'DELETE') return r.fulfill({ json: { ok: true } }); const b = chat.memoPosts[chat.memoPosts.length - 1];
-                    r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: b.items.map(it => (it.memo === MT ? { i: it.i, ship: 'go', sender: null, memo: '문 앞에 놔주세요', tail: '13과로!', split: false, sure: false, why: '과수 지정' } : { i: it.i, ship: 'go', sender: null, memo: '그대로', split: false, sure: true, why: '' })) }, message: '' } }); });
+                    r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: b.items.map(it => (it.memo === MT ? { i: it.i, ship: 'go', sender: null, memo: '문 앞에 놔주세요', tail: '13과로!', split: false, sure: false, why: '과수 지정' } : { i: it.i, ship: rowsX ? 'ask' : 'go', sender: null, memo: '그대로', split: false, sure: !rowsX, why: '' })) }, message: '' } }); });
                 await ctxC.route('**/api/agent-office/final-order/memo-read/9100', r => {
                     if (r.request().method() === 'DELETE') { chat.dels++; return r.fulfill({ json: { ok: true } }); }
                     if (chat.mode === 'wait') return r.fulfill({ json: { ok: true, state: 'wait', status: chat.status, data: null, message: '' } });
@@ -1036,6 +1037,95 @@ async function resolveCards(pg, type) {
             const memo2 = await d.pg.inputValue(SEL.memo), ji = (await readJudge(d.pg)).judge;
             ok(/입력o삭제x/.test(memo2) && ji['대화아'].individual && (await d.pg.locator(`${SEL.pending}[data-fo-card="${CARD.cashMissing}"]`).count()) === 1, '⑯12 「입력삭제로」 → 메모 칸에 입력삭제 줄을 넣고 다시 판정(현금파일에 주소 줄이 없다는 카드가 뜸)');
             ok(d.errs.length === 0, '⑯ 오류 0', d.errs.join(' | ')); await d.ctx.close();
+
+            // ── ⑰ #526 실사용 반영: 라벨 · 대화 칸 모양 · 말로 정한 주문의 카드 닫기 · 거래처를 고른 미매칭도 후보로 ─────────────
+            console.log('\n⑰ #526 대화 칸 모양 · 말로 정한 카드 닫기 · 미매칭 후보');
+            {
+                const M7 = { ME: '보내는이 홍길동 변경\n즐거운 추석 보내세요~!', OR: '다음주에 보내주세요', SD: '보내는이: 홍길동 즐거운 명절 보내세요', GR: '나중에 보내주셔도 됩니다' };
+                const rows17 = [mk('일칠가', { memo: M7.ME }), mk('일칠나', { memo: M7.OR }), mk('일칠다', { memo: M7.SD }), mk('묶음이', { recv: '묶음받는일', tel: '010-7300-0666', memo: M7.GR }), mk('묶음이', { recv: '묶음받는이', tel: '010-7300-0666', memo: M7.GR }),
+                    mk('일칠마', { opt: '세상에 없는 과일 9kg' }), mk('일칠바')];
+                const g = await mkChat(false, rows17);
+                const lab = await g.pg.evaluate(() => ({ label: document.querySelector('label[for="fo-memo"]').textContent.trim(), ph: document.getElementById('fo-memo').placeholder.split('\n').length }));
+                ok(lab.label === '개별발송 처리 · 지정 발송일' && lab.ph === 3, '⑰1 메모 칸 라벨 = 「개별발송 처리 · 지정 발송일」 · 예시 3줄 그대로', JSON.stringify(lab));
+                await setCash(g.pg, null); await g.pg.click(SEL.start); await idle(g.pg); await g.pg.waitForTimeout(400);
+                const cOpen = (type, t) => g.pg.locator(`${SEL.pending}[data-fo-card="${type}"]`, { hasText: t }).first();
+                const cChat = async (type, t) => { const c = g.pg.locator(`${SEL.card}[data-fo-card="${type}"][data-by-chat]`, { hasText: t }).first(); return (await c.count()) ? (await c.innerText()).replace(/\s+/g, ' ') : null; };
+                const p0 = await pendingN(g.pg), c0 = await cardCount(g.pg);
+                ok((await cOpen('memo-edit', '일칠가').count()) === 1 && (await cOpen(CARD.order, '일칠나').count()) === 1 && (await cOpen(CARD.senderMemo, '일칠다').count()) === 1 && (await cOpen(CARD.order, '묶음이').count()) === 1 && (await cOpen(CARD.partner, '세상에 없는').count()) === 1, '⑰ 준비: 배송메세지 · 주문 확인 · 보내는이 · 묶음 주문 확인 · 거래처 카드가 열려 있음', JSON.stringify(c0));
+                // 새 마크업
+                const mkp = await g.pg.evaluate(() => { const c = document.querySelector('#fo-chat .fo-compose'), s = document.getElementById('fo-chat-send'), ta = document.getElementById('fo-chat-input'); const cs = getComputedStyle(c), ts = getComputedStyle(ta); return { compose: !!c, border: cs.borderTopWidth + ' ' + cs.borderTopStyle, radius: cs.borderTopLeftRadius, spark: !!c.querySelector('.fo-spark'), icon: s.classList.contains('fo-icon') && !!s.querySelector('svg'), sendW: Math.round(s.getBoundingClientRect().width), taBorder: ts.borderTopWidth, threadHidden: document.getElementById('fo-chat-log').hidden, attach: !!document.querySelector('#fo-chat [id*="attach"]') }; });
+                ok(mkp.compose && mkp.border === '2px solid' && mkp.spark && mkp.icon && mkp.sendW === 44 && mkp.taBorder === '0px' && mkp.threadHidden && !mkp.attach, '⑰2 입력 상자 = 인디고 2px 테두리 상자 · ✦ · 둥근 보내기 버튼(44px) · 안쪽 입력칸 테두리 없음 · 첨부 버튼 없음 · 대화가 없으면 대화 틀 숨김', JSON.stringify(mkp));
+                await g.pg.focus('#fo-chat-input'); await g.pg.waitForTimeout(350); const foc = await g.pg.evaluate(() => { const ta = document.getElementById('fo-chat-input'), c = document.querySelector('#fo-chat .fo-compose'); return { ta: getComputedStyle(ta).boxShadow, taB: getComputedStyle(ta).borderTopWidth, ring: getComputedStyle(c).boxShadow }; });
+                ok(foc.ta === 'none' && foc.taB === '0px' && /3px/.test(foc.ring), '⑰2 입력칸을 눌러도 안쪽에 테마 포커스 테두리가 안 생기고 바깥 상자에 링', JSON.stringify(foc).slice(0, 120));
+                // 쓰는 중 · 그만두기
+                g.chat.mode = 'wait'; await g.pg.fill('#fo-chat-input', '제주 건 있어?'); await g.pg.click('#fo-chat-send');
+                await g.pg.waitForFunction(() => window.AkmFinalOrder.state.chat.id, null, { timeout: 15000 }); await g.pg.waitForTimeout(2600);
+                const liv = await g.pg.evaluate(() => { const b = document.querySelector('#fo-chat-log [data-chat-live]'); return { live: b ? b.innerText.replace(/\s+/g, ' ') : null, stop: !document.getElementById('fo-chat-stop').hidden, me: !!document.querySelector('#fo-chat-log .fo-bub.me'), sendOff: document.getElementById('fo-chat-send').disabled }; });
+                ok(/쓰는 중/.test(String(liv.live)) && /읽고 있어요|물어보는 중/.test(String(liv.live)) && liv.stop && liv.me && liv.sendOff, '⑰2 보내면 내 말풍선(오른쪽) + 클코 답 자리에 「쓰는 중」 · [그만두기]는 읽는 중에만 보임', liv.live);
+                await g.pg.click('#fo-chat-stop'); await chatIdle(g.pg); for (let q = 0; q < 20 && g.chat.dels < 1; q++) await g.pg.waitForTimeout(250);
+                ok(!(await g.pg.locator('#fo-chat-log [data-chat-live]').count()) && (await g.pg.evaluate(() => document.getElementById('fo-chat-stop').hidden)) && g.chat.dels === 1, '⑰2 [그만두기] → 「쓰는 중」이 사라지고 대화 묶음 DELETE');
+                g.chat.mode = 'done';
+                // ③ 말로 정하면 그 주문의 카드가 닫힌다
+                g.chat.answer = b => ({ reply: '배송메세지를 기본 문구로 할게요.', actions: [{ op: 'memo', n: nOf(b, '일칠가'), text: '' }] });
+                await say(g.pg, '일칠가 건 배송메세지는 기본 문구만'); const bubA = await g.pg.evaluate(() => { const b = [...document.querySelectorAll('#fo-chat-log .fo-bub.ai')].pop(); return { label: (b.querySelector('.fo-a-label') || {}).textContent, acts: !!b.querySelector('.fo-a-acts [data-chat="apply"]'), time: /\d{1,2}:\d{2}/.test(document.getElementById('fo-chat-log').innerText) }; });
+                ok(bubA.label === '클코 답변' && bubA.acts && !bubA.time, '⑰2 클코 답 = 「클코 답변」 배지 카드 + 아래 버튼 띠([적용]/[취소]) · 시간 표시 없음', JSON.stringify(bubA));
+                await apply(g.pg);
+                const dA = await cChat('memo-edit', '일칠가');
+                ok(!!dA && /말로 정함/.test(dA) && /기본 문구/.test(dA) && (await pendingN(g.pg)) === p0 - 1 && (await cOpen('memo-edit', '일칠가').count()) === 0, '⑰3 🔴 실사용 결함: 말로 배송메세지를 정하면 그 주문의 배송메세지 카드가 닫힘(「말로 정함」 · 확인할 것 −1)', `${p0} → ${await pendingN(g.pg)} · ${String(dA).slice(-60)}`);
+                // 반대 순서: 카드를 먼저 누르고 나중에 말로 고침 → 말이 이김
+                await cOpen(CARD.order, '일칠나').locator('[data-fo-act="send"]').click(); await g.pg.waitForTimeout(200);
+                g.chat.answer = b => ({ reply: '', actions: [{ op: 'exclude', n: nOf(b, '일칠나') }] });
+                await say(g.pg, '일칠나 건 빼줘'); await apply(g.pg);
+                const dB = await cChat(CARD.order, '일칠나'), jB = (await readJudge(g.pg)).judge;
+                ok(!!dB && /제외/.test(dB) && /말로 정함/.test(dB) && jB['일칠나'].excluded, '⑰3 카드에서 [오늘 발송]을 먼저 눌렀어도 나중에 말로 「빼줘」 하면 말이 이기고 카드 표시도 「제외 · 말로 정함」', String(dB).slice(-50));
+                // 보내는이 + 배송메세지
+                g.chat.answer = b => ({ reply: '', actions: [{ op: 'sender', n: nOf(b, '일칠다'), name: '새보낸이', phone: '', addr: '' }, { op: 'memo', n: nOf(b, '일칠다'), text: '' }] });
+                await say(g.pg, '일칠다 건 보내는이 새보낸이로 하고 배송메세지는 지워줘'); await apply(g.pg);
+                const dC = await cChat(CARD.senderMemo, '일칠다');
+                ok(!!dC && /새보낸이 드림/.test(dC) && /기본 문구/.test(dC) && (await cOpen(CARD.senderMemo, '일칠다').count()) === 0, '⑰3 말로 보내는이·배송메세지를 정하면 보내는이 카드가 닫힘', String(dC).slice(-70));
+                // 묶음 카드: 묶인 주문 전부가 정해졌을 때만
+                g.chat.answer = b => ({ reply: '', actions: [{ op: 'exclude', n: nOf(b, '묶음받는일') }] });
+                await say(g.pg, '묶음받는일 건 빼줘'); await apply(g.pg);
+                const grpOpen1 = await cOpen(CARD.order, '묶음이').count();
+                g.chat.answer = b => ({ reply: '', actions: [{ op: 'exclude', n: nOf(b, '묶음받는이') }] });
+                await say(g.pg, '묶음받는이 건도 빼줘'); await apply(g.pg);
+                ok(grpOpen1 === 1 && (await cOpen(CARD.order, '묶음이').count()) === 0 && !!(await cChat(CARD.order, '묶음이')), '⑰3 묶음 카드(같은 구매자 2건): 한 건만 말로 정하면 열린 채 · 둘 다 정해지면 닫힘', `한 건 뒤 열림 ${grpOpen1}`);
+                // 되돌리기 두 길
+                const pMid = await pendingN(g.pg);
+                await g.pg.locator(`${SEL.card}[data-fo-card="memo-edit"][data-by-chat]`, { hasText: '일칠가' }).first().locator('[data-unpatch-card]').click(); await g.pg.waitForTimeout(300); await idle(g.pg);
+                ok((await cOpen('memo-edit', '일칠가').count()) === 1 && (await pendingN(g.pg)) === pMid + 1, '⑰3 닫힌 카드의 [바꾸기] → 그 말을 되돌리고 카드가 다시 열림');
+                const li = g.pg.locator('#fo-patches li', { hasText: '일칠다' }).first(); const liBox = await li.evaluate(el => { const b = el.querySelector('button').getBoundingClientRect(), r = el.getBoundingClientRect(); return { sameRow: b.top >= r.top - 1 && b.bottom <= r.bottom + 1, right: Math.round(r.right - b.right) }; });
+                await li.locator('[data-unpatch]').click(); await g.pg.waitForTimeout(300); await idle(g.pg); await chatIdle(g.pg);
+                ok((await cOpen(CARD.senderMemo, '일칠다').count()) === 1 && liBox.sameRow && liBox.right <= 14, '⑰3 「말로 바꾼 것」 목록의 [되돌리기] → 보내는이 카드가 다시 열림 · 버튼은 줄 오른쪽 끝(아래로 안 떨어짐)', JSON.stringify(liBox));
+                // ④ 거래처를 골라 둔 미매칭도 후보
+                await cOpen(CARD.partner, '세상에 없는').locator('select[data-pick]').selectOption(FX.P_DAESUNG); await g.pg.waitForTimeout(300);
+                g.chat.answer = b => ({ reply: '', actions: [{ op: 'opt', n: b.orders[0].n, name: target }] });
+                await say(g.pg, '없는 과일 미매칭 대성 것으로 변경해줘'); const b4 = g.chat.posts[g.chat.posts.length - 1];
+                ok(b4.orders.length === 1 && b4.orders[0].buyer === '일칠마' && /^\[미매칭\]/.test(b4.orders[0].opt) && b4.orders[0].partner === '대성' && /미매칭\) 1건/.test(b4.summary) && /거래처만 골라/.test(b4.summary), '⑰4 🔴 실사용: 거래처 카드에서 거래처를 고른 뒤에도 「미매칭」이라고 하면 그 주문을 후보로 보내고 요약에도 1건으로', b4.summary.split('\n').find(t => /미매칭/.test(t)));
+                await apply(g.pg);
+                ok((await g.pg.locator(`${SEL.card}[data-fo-card="${CARD.partner}"]`).count()) === 0, '⑰4 품목 이름을 바꾸면 거래처 카드가 사라짐(골라 둔 것 포함)');
+                // 파일까지
+                for (const t of [...Object.keys(ACT), 'memo-edit']) { for (let q = 0; q < 40; q++) { const c = g.pg.locator(`${SEL.pending}[data-fo-card="${t}"]`).first(); if (!(await c.count())) break; await c.locator(`[data-fo-act="${t === 'memo-edit' ? 'keep' : ACT[t]}"]`).first().click(); await g.pg.waitForTimeout(120); } }
+                ok((await pendingN(g.pg)) === 0 && !(await g.pg.isDisabled(SEL.make)), '⑰5 남은 카드 처리 → [파일 만들기] 켜짐');
+                await g.pg.click(SEL.make); await idle(g.pg); await g.pg.waitForSelector(SEL.save, { timeout: 15000 }); await g.pg.waitForTimeout(400);
+                const names7 = await g.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const W7 = {};
+                for (const nm of names7) { const [dl] = await Promise.all([g.pg.waitForEvent('download', { timeout: 20000 }), g.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's17-' + Date.now() + '.xlsx'); await dl.saveAs(f); W7[nm.includes('(대성)') ? '대성' : nm.includes('(효돈)') ? '효돈' : '스토어'] = XLSX.readFile(f, { cellStyles: true }); }
+                const all7 = ['대성', '효돈'].flatMap(k => (W7[k] ? XLSX.utils.sheet_to_json(W7[k].Sheets.Sheet1, { header: 1, defval: '' }).slice(1).map(r => ({ k, r })) : [])); const row7 = nm => all7.find(x => x.r[3] === nm);
+                ok(!row7('일칠나') && !row7('묶음받는일') && !row7('묶음받는이') && !!row7('일칠마') && row7('일칠마').k === '대성' && row7('일칠마').r[4] === target && !!row7('일칠바') && row7('일칠바').r[8] === rows17[6]['통합배송지'], '⑰5 파일: 말로 뺀 주문 없음 · 이름을 바꾼 주문은 대성 파일 · 손대지 않은 주문은 그대로');
+                await g.pg.evaluate(() => document.getElementById('fo-chat').scrollIntoView({ block: 'start' })); await g.pg.waitForTimeout(400);
+                await g.pg.screenshot({ path: path.join(SHOT, 'fo-chat-pc.png') });
+                ok(g.errs.length === 0, '⑰ 오류 0', g.errs.join(' | ')); await g.ctx.close();
+                // 폰 390px
+                const h = await mkChat(false, rows17, { width: 390, height: 844 }, true);
+                await setCash(h.pg, null); await h.pg.click(SEL.start); await idle(h.pg); await h.pg.waitForTimeout(400);
+                h.chat.answer = b => ({ reply: '주소를 바꿀게요.', actions: [{ op: 'addr', n: nOf(b, '일칠바'), text: '서울 가짜구 아주긴주소시험로 123번길 45, 가나다라마바사아파트 101동 1201호' }] });
+                await say(h.pg, '일칠바 건 주소 서울 가짜구 아주긴주소시험로 123번길 45, 가나다라마바사아파트 101동 1201호로 바꿔줘'); await apply(h.pg);
+                h.chat.answer = b => ({ reply: '', actions: [{ op: 'qty', n: nOf(b, '일칠바'), qty: 2 }] }); await say(h.pg, '일칠바 건 2박스로');
+                const ov = await h.pg.evaluate(() => { const W = window.innerWidth, bad = []; document.querySelectorAll('#fo-chat, #fo-chat *').forEach(el => { const r = el.getBoundingClientRect(); if (r.width && (r.right > W + 1 || r.left < -1)) bad.push(el.className || el.tagName); }); const body = document.querySelector('#fo-panel .fo-body') || document.getElementById('fo-panel'); return { W, bad: bad.slice(0, 5), sw: body.scrollWidth, cw: body.clientWidth, send: Math.round(document.getElementById('fo-chat-send').getBoundingClientRect().width), applyH: Math.round(document.querySelector('#fo-chat-log [data-chat="apply"]').getBoundingClientRect().height) }; });
+                ok(ov.bad.length === 0 && ov.sw <= ov.cw + 1 && ov.send === 44 && ov.applyH >= 44, '⑰6 폰(390px): 대화 칸 가로 넘침 0 · 보내기 44px · [적용] 터치 44px 이상', JSON.stringify(ov));
+                await h.pg.evaluate(() => document.getElementById('fo-chat').scrollIntoView({ block: 'start' })); await h.pg.waitForTimeout(400);
+                await h.pg.screenshot({ path: path.join(SHOT, 'fo-chat-phone.png') }); await h.ctx.close();
+            }
 
             // 창구가 안 집음(40초)
             let e2; try { e2 = await mkChat(true); } catch (_) { e2 = null; }
