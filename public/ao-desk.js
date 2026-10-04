@@ -142,6 +142,7 @@
                     </div>
                     <div class="desk-quick2" role="group" aria-label="자주 쓰는 일">
                         <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주</button>
+                        <button type="button" class="desk-chip" id="desk-final-now" title="현금파일과 메모를 넣으면 거래처별 택배사 양식, 수량 표, 스토어 양식을 만들어요">최종발주</button>
                         <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
                         <button type="button" class="desk-chip" id="desk-talk-now" title="입력칸에 지시를 채워 드려요. 고쳐서 보내도 돼요">톡톡 답변 추천</button>
                     </div>
@@ -223,6 +224,7 @@
             if (btn) btn.click();
         });
         $('desk-qty-now').addEventListener('click', () => sendQtyNow());
+        $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) window.AkmFinalOrder.open(); else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
         $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } $('desk-file').click(); });
         $('desk-talk-now').addEventListener('click', () => { input.value = '처리 안 된 톡톡 건 답변 예시문구 만들어줘'; syncInput(); input.focus(); });
         $('desk-wake-btn').addEventListener('click', () => wake());
