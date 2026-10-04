@@ -107,6 +107,9 @@
             const phoneOk = !!pm && (/^[\s(\[:：\-.,/·]*(?:(?:연락처|전화번호|전화|번호|핸드폰|휴대폰|폰|HP|H\.P|TEL|tel|T)[\s:：.]*)?$/.test(gap) || /보내는\s*(?:이|사람|분)?\s*(?:번호|연락처|전화)|발신\s*번호/.test(gap));
             if (validName(nm, buyerName) && !trailing && !bareRo && tokN <= 3 && !(generic && (tokN > 1 || !PARTICLE.test(head.slice(cut))))) return { rule: 'A', name: nm, phone: phoneOk ? pm[1] + '-' + pm[2] + '-' + pm[3] : null };
             const first = stripQ(rest).split(/[\s.,:(]/)[0];
+            // #517(설날 실자료): 구매자 이름 바로 뒤에 「,다른이름」 「&다른이름」 「(상호)」가 이어지면 보내는이가 구매자 한 사람이 아니다(사람은 둘 다 적었다) → 애매(카드로). 「(010-…)」처럼 괄호 안이 번호면 종전 그대로
+            const afterFirst = stripQ(rest).slice(first.length);
+            if (buyerName && first === buyerName && /^\s*(?:[,/&+·]\s*[가-힣(㈜]|[(（]\s*[^\d\s)）])/.test(afterFirst)) return { rule: 'A?', ambiguous: true };
             if (buyerName && first === buyerName) return { rule: 'A2', name: buyerName, phone: null };   // 뒤에 다른 말이 이어져도 첫 단어가 구매자 본인 이름이면 확실
             return { rule: 'A?', ambiguous: true };
         }

@@ -111,7 +111,7 @@
   - 분석 요령(재사용): 발주 파일 「송장번호」↔ 택배사 Sheet2 「운송장번호」로 연결 · 박스 출처는 Sheet2 「보내는분」 꼴(`!` = 현금 · 「자사몰)」·「쿠팡)」) · 구매자 대조는 입력삭제 건이 보내는분 전화를 바꾸므로 **총량 등식**으로 볼 것. 분석용 PII 임시 파일은 사용 후 삭제.
 - 🛒 **#459(대표 9/19): 「알림톡 발송 실패 — 수기 발주확인 필요」 오경보 교정** — v5.9.351(서버만). 알림톡은 정상 발송됐는데 자동 발주확인에 네이버가 **104443 「이미 발주확인 된 주문입니다」**(대표·직원이 먼저 누른 주문)로 답한 것을 실패로 세던 것 — 종전엔 105306만 already 처리. 공용 판정 `naverConfirmIsAlready`(105306·104443·문구 「이미 발주확인」)로 2곳(본선·소급/수동) 교체 · 기존 10행 already 정리(`apply-459-already-backfill.js`·audit) · `verify-459-confirm-already.js` 12/12. **대표 확인: 전에도 발주확인을 직접 누른 것이 맞음 — 이상 없음.** 🔵 이 텔레그램 문구(`confirmneed`)는 「발송 실패 + 발주확인 실패」 합산이라 문구만으론 어느 쪽인지 모른다 → 원인은 `kakao_notify_log`의 status(발송)와 confirm_status/confirm_error(발주확인)를 나눠 볼 것. 🔴 **시각 오보고 재범(9/19)**: 이 조사에서 naive UTC 컬럼을 JS에서 +9h 해 17:55 주문을 「08:55」로 보고하고 없는 「아침 발주 시간대」 설명까지 붙임 → 대표 지적으로 정정. KST는 SQL에서 `col + interval '9 hours'`로만(메모리 jeju-db-time-calc 갱신).
 
-**현행 버전: 회사 v5.9.409 / app.js v=398 · ao-desk.js v=26 · final-order.js v=5 · final-order-core.js v=3 · ao-desk.css v=22 · theme.css v=14 · styles.css v=124 · theme.css v=13 · styles.css v=123(#469 에이전트 오피스 → 클코 창구) · invoice-v2.js v=25 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/23 배포). ⚠️ **다음 지시 번호 = #517부터** (#405~#469 = 8/24~9/29 세션 · #491~#497 = 10/1).
+**현행 버전: 회사 v5.9.410 / app.js v=398 · ao-desk.js v=26 · final-order.js v=6 · final-order-core.js v=4 · invoice-sender.js v=3 · ao-desk.css v=22 · theme.css v=14 · styles.css v=124 · theme.css v=13 · styles.css v=123(#469 에이전트 오피스 → 클코 창구) · invoice-v2.js v=25 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/23 배포). ⚠️ **다음 지시 번호 = #519부터** (#405~#469 = 8/24~9/29 세션 · #491~#497 = 10/1).
 
 - 👀📏 **#457(대표 9/19): 송장변환 v2 — 붙여넣기 칸 줄별 판정 표시 + 화면 높이 되먹임 교정** — v5.9.350(`invoice-v2.js/.html`만).
   - **줄별 판정**: `parseLines`가 줄마다 `srcLine`(칸의 몇 번째 줄)을 기억 → `mountEditor(ctx)`가 textarea를 `.ivt-ed`(왼쪽 `.ivt-gut` 표시 칸 + 입력 칸)로 감싸고 `renderGutter(ctx)`(= `renderResults` 첫 줄에서 호출)가 줄마다 `lineStatus` 표시. 분류: ok 확인완료 n건 / warn 확인필요 w/n건(past·nodate·partial)·건수 다름(비고 n건 ≠ 실제)·형식 확인 / none 주문 없음 / wait 불러오기 전. **줄 높이 24px·padding 10px를 입력 칸과 동일하게**(정렬의 전부) + scroll 동기 + 칸 높이 = 줄 수(5~14줄). 요약 칩 = [저장하기] 옆 `.ivt-linebar`(문제가 앞) — 클릭 = `jumpLine`(그 상태의 다음 줄을 칸에서 선택·가운데 스크롤·표시 칸 강조). 입력이 바뀌면 `.stale`(흐림+다시 저장 안내). 종전 `.sum` 문구는 `display:none`으로 DOM 유지(verify-452가 textContent로 읽음 — 지우지 말 것). ⚠️ 칩 집계는 「건수 다름」을 확인필요로 세므로 숨긴 `.sum`과 숫자가 다를 수 있다(의도 — 문제 찾기 우선).
@@ -175,6 +175,19 @@
 - 토큰 = theme.css :root --page-bg·--card-border·--shadow-card·--text-on-page(디자인_가이드 표에 추가). 🔵 --bg(#F5F6F8)는 카드 안쪽 옅은 칸에서도 쓰여 바꾸지 않고 바탕 전용 토큰을 따로 뒀다 — 앞으로 바탕색은 --page-bg만.
 - 🔴 --text-mid(#667085)는 새 바탕 위 4.18:1(AA 미달) → 바탕에 바로 놓이는 글자는 --text-on-page. 카드 안 글자는 그대로.
 - 390px 가로 넘침(정산관리 637 · 품목별 금액 446 · 문의 관리 473)은 시공 전과 동일한 기존 문제(별도 지시 대상).
+
+### 🤖 #518 최종발주 — AI(창구)가 손님 메모를 읽는다 · #517 설날 실파일 시험 (대표 10/4 저녁 · v5.9.410)
+
+- **대표 뜻(원문 요지)**: 「규칙으로는 얼추 되고 확인은 수기 — 그건 한계가 있어서 AI가 읽고 사람처럼 처리하게 하려던 것 · 직원은 콘솔, 내가 하면 내 요금제(기존도 그랬다)」. 🔴 #508 설계 때 총괄이 「AI 없이 규칙 + 카드」를 권해 그대로 만들었는데, 그것이 대표가 뜻한 흐름이 아니었다 — **대표 구상과 다른 구조를 권할 때는 「무엇이 달라지는지」를 맨 앞에 한 줄로 못 박을 것.**
+- **구조**: 규칙(v2 + core)이 확실한 것을 먼저 처리 → [AI에게 메모 읽히기](`#fo-ai-read`)가 카드 뜬 주문 + 「기사에게 전하는 말뿐이 아닌」 메모 묶음을 올림(메모·구매자/수취인 이름·수량·카드 종류·힌트만) → `POST/GET/DELETE /api/agent-office/final-order/memo-read` → `pending_orders`(내용 「[최종발주 메모 읽기] …」 · `payload` JSONB · mine_hidden) → 대표 PC 대기 프로그램(get.js 가 묶음을 `받은파일/{id}_memo.json` 으로 내주고 `final_order_memo` 안내) → 창구가 `★에이전트오피스/최종발주_메모읽기.md` 기준으로 읽어 respond.js `data.items` → 화면 `aiApply`·`aiToCards`. 서버는 AI를 부르지 않는다(요금 = 누른 계정 기준 · 종전 창구와 같은 길). 결과를 받으면 묶음·결과 삭제.
+- **반영 규칙**: sure = 카드 결정(`st.ai.tag` → 끝난 카드에 「· AI: 이유」) · sure 아님 = `st.draft` 로 입력칸만 · 규칙이 그냥 보내려던 주문에서 AI가 hold/ask/보내는이를 찾으면 새 카드(`aiHold`·`aiSender`) · 카드 없는 주문의 배송메세지 = sure 면 `st.ai.memo`(make 에서 덮음 · 참고 목록에 원문 → 새 글), 아니면 `st.ai.memoAsk` → memo-edit 카드. 사람이 정했거나 [바꾸기]한 카드는 다시 안 덮는다(`st.ai.seen`).
+- **안전장치(`aiMemoText`)**: AI의 「남길 글」 조각이 원문에 없으면 원문 유지·sure 취소 · 원문의 기사용 낱말(문 앞·비번·부재·연락·동/호/층·N과 — 「주문자」 속 「문자」는 제외)을 AI가 빼면 sure 취소. 받는 분·주소·옵션·수량은 AI에게 보내지도 않는다.
+- **실측(설 2/11 · 195건 · 대표 요금제 opus)**: 115~145초 · 0.78~0.89달러 · 형식 오류 0 · 확실 84% · 사람이 누를 카드 99 → 47 · 완성본 일치 A 96.8 → 98.2% · J 91.2 → 96.0% · 확실인데 틀린 보내는이 0 · 발송 1(손님이 적은 발송일을 사람이 당겨 보냄).
+- **창구 규칙 문서를 고칠 때**: 근거는 완성본 대조. 지금 기준 = 서명(○○○ 드림/올림)은 보내는이로 뽑고 J에서 뗌 · 「-조카가」 같은 관계 말은 인사말과 남김 · 「파손주의/살살」뿐 = 기본 문구 · 과수 글은 남기고 sure false(사람이 옵션에 옮김) · 「○○○ 올림」뿐 = sure false · 범위 도착(「12~13일」)·「○일 배송」(다른 날) = ask(대표 미확정 — 풀면 주문 확인 카드가 더 준다).
+- 🔴 **창구 스크립트(scripts/desk/get.js·respond.js·launcher.js·fast.js)를 고치면 대기 프로그램을 다시 띄운다**(47469 포트 node 종료 → `node scripts/desk/install-launcher.js` · 처리 중인 지시가 없는지 ~/.akkome/launcher.log 로 먼저 확인).
+- **#517 설날 시험 요약**: 5개 파일(6,434건) 전부 끝까지 · 자동 보내는이 틀림 0/238 · 자동 기본 문구 잘못 지움 0/226 · 실물 되살리기 뒤 일치율 96~98%(설 품목 [미매칭] 이름 포함 99.8~100%). 보강 = 한 글자 요일 카드 · 전화번호 헛카드 제거 · senderCue · sameDayOnly/senderHint/splitSignal/memoRest 보강 · invoice-sender A2 좁힘 · shipping-schedule 「도착하게 … 발송 부탁」 = 도착 요청 · 쉼표 날짜 = 확인형. 설 최종파일에는 「!」가 없다(「!」는 알림톡 이후 표기) → 실물 되살리기는 구매자연락처 K칸으로.
+- 🔵 대표 판단 대기: ①명절 직전 도착 요청을 사람은 이틀 전보다 일찍 보낸 사례(2/9에 2/12·13 도착분 4건) ②범위 도착 요청을 기준일 발송으로 닿으면 그날 보낼지. 🔵 다음 설 전: PRODUCT_CATALOG 에 설 품목(레드향·천혜향·3종세트·비가림귤) · 발송휴무 달력에 연휴 앞뒤 발송 없는 날(2026 설은 2/13·2/15도 발송 없음).
+- ✅ verify-508-core 170 · verify-508-ui 206 · 453 111 · 450 73 · 452-invoice-test 81 · 452-embed 16 · 457 17 · 501 57.
 
 ### 📅✉ #514~#516 손님 메모 판정 3종 (대표 GO 10/4 · v5.9.409 · shipping-schedule.js + server.js 1줄 + final-order.js v=5 · core v=3)
 

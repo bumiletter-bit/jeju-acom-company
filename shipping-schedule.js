@@ -233,6 +233,14 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
         if (!found.some(f => f.idx >= at2 && f.idx < end2)) found.push({ mo: mo != null ? mo : null, dd, idx: at2, len: m[1].length, rangeEnd: true });
         reRange2.lastIndex = at2;   // 「20일~21일~22일」처럼 이어 쓴 경우 뒤 날짜에서 다시 시작
     }
+    // #517(설날 실자료): 「13,14일」 「13, 14일」처럼 쉼표로 이은 날짜 — 뒤 날짜(14일)만 읽혀 날짜 하나로 확정되던 것 → 앞 숫자도 후보에 넣어 날짜 2개(확인형).
+    //   기간 표현(「3,4일 정도」)은 reDay 와 같은 조건으로 제외. 전화번호·주소 숫자 뒤(「…5678, 14일」)는 앞 글자가 숫자라 걸리지 않는다.
+    const reList = /(?<![\d~\-–.\/])(\d{1,2})\s*,\s*\d{1,2}\s*일(?![\d간째분시치씩]|\s*(?:후|뒤|이내|안에|정도|만에|간|째|이상))/g;
+    while ((m = reList.exec(raw))) {
+        const dd = Number(m[1]); if (dd < 1 || dd > 31) continue;
+        const mm = raw.slice(0, m.index).match(/(\d{1,2})\s*월\s*$/); const mo = mm && Number(mm[1]) >= 1 && Number(mm[1]) <= 12 ? Number(mm[1]) : null;
+        if (!found.some(f => f.idx === m.index)) found.push({ mo, dd, idx: m.index, len: m[1].length, listHead: true });
+    }
     const reDow = /(다음\s*주|담주|이번\s*주)?\s*([월화수목금토일])(?:요일|욜)/g;
     while ((m = reDow.exec(raw))) found.push({ dow: '일월화수목금토'.indexOf(m[2]), next: /다음|담주/.test(m[1] || ''), idx: m.index, len: m[0].length });
     const weekendNeg = negative && /(주말|토요일|토욜|일요일)/.test(raw);
@@ -280,8 +288,13 @@ function memoShipLine(memo, orderAt, shipOffSet, reasonByDate, opts) {
     //   실사고(9/16): 「○월○일 배송희망 보내는분 ○○ …」의 「보내」 때문에 발송 요청으로 읽혀 하루 늦게 잡혔다. 「보내주세요·보내 달라」 같은 진짜 발송 요청은 그대로.
     //   「보내는 이번 주」처럼 뒤에 글자가 이어지는 「이」는 가리지 않는다. 글자 수를 그대로 두어(같은 길이의 □) 창의 위치는 변하지 않는다.
     const aroundShip = raw.replace(/보내시?는\s*(?:분|사람)|보내시?는\s*이(?![가-힣])|보내시?는\s*이(?=[는가를의도]\s)|보낸\s*(?:분|사람)|보낸\s*이(?![가-힣])|발신(?:자|인)/g, m => '□'.repeat(m.length)).slice(Math.max(0, spanS - 12), spanE + 10);
-    const shipKw = /(발송|출고|출발|보내|출하)/.test(aroundShip);
+    let shipKw = /(발송|출고|출발|보내|출하)/.test(aroundShip);
     const arriveKw = /(도착|받|수령|까지|배달)/.test(around);
+    // #517(설날 실자료 · 대표 GO 10/4): 「13일에 도착하게끔 출고 부탁」 「11일 도착할 수 있게 발송 부탁」 「14일 받을 수 있게 보내 주세요」 —
+    //   날짜 바로 뒤가 「도착·받·수령 … 게/게끔/도록」이고 그 뒤에 발송 낱말이 오면, 발송 낱말은 「그렇게 되도록 보내 달라」는 말이지 발송일 지정이 아니다 → 도착 요청으로 읽는다(도착 낱말 우선).
+    //   종전엔 두 낱말이 다 있다고 확인형이 됐다(사람은 이런 메모를 도착일 이틀 전에 보냈다). 날짜가 둘 이상이면 위에서 이미 확인형이라 여기 오지 않는다.
+    if (shipKw && arriveKw && /^\s*(?:일|날|에는|에|쯤|경)?\s*(?:\([월화수목금토일]\)|[월화수목금토일]요일)?\s*(?:에는|에|날|쯤|경|까지는|까지)?\s*(?:꼭\s*)?(?:도착|받|수령)[가-힣\s]{0,9}?(?:게끔|도록|게)\s*(?:꼭\s*)?[가-힣\s]{0,5}?(?:발송|출고|출발|보내|출하|배송)/.test(raw.slice(spanE))
+        && !/(발송|출고|출발|보내|출하)/.test(raw.replace(/보내시?는\s*(?:분|사람|이)|보낸\s*(?:분|사람|이)|발신(?:자|인)/g, m => '□'.repeat(m.length)).slice(Math.max(0, spanS - 12), spanS))) shipKw = false;
     const deliverKw = /배송/.test(around);
     if (shipKw && arriveKw) return ack(label);
     if (shipKw) {

@@ -805,6 +805,7 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by_id INTEGER`);
     // #469-c: 요청자가 「내 지시」 목록에서 지운 표시(전체 지시·기록은 그대로) — additive
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS mine_hidden BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS payload JSONB`);   // #518 최종발주 메모 읽기 — 창구에 넘길 메모 묶음(결과를 받아 가면 비운다)
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS reply_to INTEGER`);   // #473-b 되묻기에 이어서 답한 건
     // 대표 7/24: 네이버 송장변환 자동업로드 중복방지 — 이미 자동업로드한 상품주문번호 기록
     await pool.query(`
@@ -13492,6 +13493,50 @@ app.post('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/
         }
         processOrderWithMaru(row, adminActor(req)); // 비동기 — 응답은 즉시, 결과는 폴링
         res.json({ message: '지시가 접수되었습니다 — 마루가 분석 중입니다', order: row, engine });
+    } catch (err) { handleAdminErr(res, err); }
+});
+
+// ── #518(대표 10/4 「AI가 배송메세지를 읽고 사람처럼 처리 · 직원 = 콘솔 · 내가 하면 내 요금제」) 최종발주 메모 읽기 ──
+//   브라우저(최종발주 패널)가 규칙으로 못 가른 손님 메모 묶음을 올린다 → 창구 대기열(pending_orders · 서버는 AI를 부르지 않는다) →
+//   대표 PC의 대기 프로그램이 누가 눌렀는지 보고 요금을 가른다(대표 계정 = 대표 요금제 · 그 밖 = 콘솔 — 종전 창구와 같은 길) → 결과(result.data)를 브라우저가 받아 간다.
+//   메모 글에는 손님이 적은 이름·번호가 들어 있으므로: 내 지시 목록에 안 보이게(mine_hidden) · 결과를 받아 가면 묶음과 결과를 지운다 · audit 에는 건수만.
+app.post('/api/agent-office/final-order/memo-read', authMiddleware, async (req, res) => {
+    try {
+        const src = Array.isArray(req.body?.items) ? req.body.items : [];
+        const s = (v, n) => String(v == null ? '' : v).slice(0, n);
+        const items = src.slice(0, 800).map(it => ({ i: Number(it && it.i), memo: s(it && it.memo, 600), buyer: s(it && it.buyer, 30), recv: s(it && it.recv, 30), qty: Math.max(1, parseInt(it && it.qty, 10) || 1), cards: Array.isArray(it && it.cards) ? it.cards.slice(0, 6).map(c => s(c, 20)) : [], hint: s(it && it.hint, 160) }))
+            .filter(it => Number.isInteger(it.i) && it.i >= 0 && it.memo.trim());
+        if (!items.length) throw { status: 400, message: '읽을 메모가 없습니다' };
+        const iso = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '');
+        const shipDate = iso(req.body?.shipDate);
+        if (!shipDate) throw { status: 400, message: '기준 발송일이 없습니다' };
+        const payload = { type: 'fo_memo', shipDate, realToday: iso(req.body?.realToday) || kstTodayStr(), shipDays: (Array.isArray(req.body?.shipDays) ? req.body.shipDays : []).map(iso).filter(Boolean).slice(0, 14), items };
+        const row = (await pool.query(
+            `INSERT INTO pending_orders (content, payload, created_by, created_by_id, status, mine_hidden) VALUES ($1, $2, $3, $4, '대기', true) RETURNING id`,
+            [`[최종발주 메모 읽기] 손님 메모 ${items.length}건 · 기준 발송일 ${shipDate}`, JSON.stringify(payload), `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null])).rows[0];
+        await writeAudit({ action: 'create', targetType: 'pending_order', targetId: row.id, changes: { after: { kind: 'fo_memo', count: items.length, shipDate } }, source: 'agent_office', actor: adminActor(req) });
+        res.json({ ok: true, id: row.id, count: items.length });
+    } catch (err) { handleAdminErr(res, err); }
+});
+const foMemoRow = async (req) => {
+    const r = (await pool.query(`SELECT id, status, result, created_by_id, (payload->>'type') AS ptype, content FROM pending_orders WHERE id = $1 AND is_deleted = false`, [req.params.id])).rows[0];
+    if (!r || !/^\[최종발주 메모 읽기\]/.test(r.content || '')) throw { status: 404, message: '없는 요청입니다' };
+    if (req.user.role !== 'admin' && Number(r.created_by_id) !== Number(req.user.id)) throw { status: 403, message: '내가 올린 요청만 볼 수 있습니다' };
+    return r;
+};
+app.get('/api/agent-office/final-order/memo-read/:id', authMiddleware, async (req, res) => {
+    try {
+        const r = await foMemoRow(req), rs = r.result || {};
+        const state = r.status === '완료' ? 'done' : ['대기', '처리중', '승인됨'].includes(r.status) ? 'wait' : 'fail';
+        res.json({ ok: true, state, status: r.status, data: state === 'done' ? (rs.data || null) : null, message: state === 'fail' ? String(rs.error || rs.question || rs.notice || rs.answer || '창구가 처리하지 못했어요').slice(0, 300) : '' });
+    } catch (err) { handleAdminErr(res, err); }
+});
+// 결과를 받아 갔거나 그만둘 때: 메모 묶음과 결과를 지우고(손님 글 보관 안 함), 아직 안 집힌 요청이면 취소한다
+app.delete('/api/agent-office/final-order/memo-read/:id', authMiddleware, async (req, res) => {
+    try {
+        const r = await foMemoRow(req);
+        await pool.query(`UPDATE pending_orders SET payload = NULL, result = CASE WHEN result IS NULL THEN NULL ELSE result - 'data' END, status = CASE WHEN status = '대기' THEN '취소' ELSE status END, processed_at = COALESCE(processed_at, NOW()) WHERE id = $1`, [r.id]);
+        res.json({ ok: true });
     } catch (err) { handleAdminErr(res, err); }
 });
 

@@ -119,6 +119,15 @@ let pass = 0, fail = 0; const ok = (c, t, d) => { c ? pass++ : fail++; console.l
     const badO = ORS.filter(m => { const a = run(m); return !(a && a.kind === 'ack'); });
     ok(badO.length === 0, `#515-A 「D일 또는 D일」「D일이나 D일」 ${ORS.length}꼴 = 종전대로 확인형`, badO.join(' / '));
     ok(run('9월 21일 도착 희망합니다').kind === 'arrive' && run('21일~ 도착 부탁').kind === 'arrive' && run('1~2일 정도 걸려도 괜찮아요') === null && run('010-1234-5678 21일 도착').kind === 'arrive', '#515-A 무회귀: 날짜 하나·「21일~」(뒤 날짜 없음)·기간 표현(「1~2일 정도」)·전화번호 대시는 범위로 보지 않음');
+    // #517(설날 실자료 · 대표 GO 10/4): ⓐ「D일 도착하게(끔)/받을 수 있게 … 발송·출고 부탁」 = 도착 요청(종전 확인형) ⓑ「D,D일」 쉼표로 이은 날짜 = 날짜 2개(확인형 — 종전엔 뒤 날짜 하나로 확정)
+    const CLAUSE = ['22일에 도착하게끔 출고 부탁드립니다^^', '22일도착할수있게 발송부탁드립니다', '9월 22일 받을 수 있게 보내주세요', '22일(화)에 받아볼 수 있도록 발송 부탁드려요', '9/22 화요일 도착하도록 출고해주세요'];
+    const badC = CLAUSE.filter(m => { const a = run(m); return !(a && a.kind === 'arrive' && a.reqDate === '2026-09-22' && a.latestShip === '2026-09-20'); });
+    ok(badC.length === 0, `#517 「D일 도착하게/받을 수 있게 … 발송·출고 부탁」 ${CLAUSE.length}꼴 = 도착 요청(22일 화요일 도착 → 이틀 전 9/20 발송)`, badC.join(' / '));
+    ok(run('22일 발송해서 24일 도착하게 해주세요').kind === 'ack' && run('출고는 22일에 도착하게끔 부탁드립니다').kind === 'ack' && run('21일 발송 부탁드립니다').kind === 'ship' && run('21일 발송 부탁드려요 받는 분 부재 시 문 앞').kind === 'ship', '#517 무회귀: 날짜 둘 = 확인형 · 날짜 앞에 발송 낱말 = 확인형 · 발송 요청(뒤에 다른 글이 이어져도) = 발송 요청 그대로');
+    const LISTS = ['21,22일 중에 도착 가능한 날로 해주세요', '9월 21, 22일 도착 부탁드립니다', '다음주 월, 화( 21,22일)중에 도착가능한 날로'];
+    const badL = LISTS.filter(m => { const a = run(m); return !(a && a.kind === 'ack' && /일정 지정/.test(a.text)); });
+    ok(badL.length === 0, `#517 쉼표로 이은 날짜 ${LISTS.length}꼴 = 확인형(일정 지정)`, badL.join(' / '));
+    ok(run('3,4일 정도 걸려도 괜찮아요') === null && run('010-1234-5678, 21일 도착').kind === 'arrive' && run('2박스, 21일 도착 부탁').kind === 'arrive' && run('101동 1203호, 21일 도착').kind === 'arrive', '#517 무회귀: 기간(「3,4일 정도」) · 전화번호·박스·동호수 뒤 쉼표는 날짜 목록이 아님');
     // 예약 상품·자사몰 경로는 memo 미전달 → buildShipLineFor(…, undefined) = 종전과 동일해야 함
     ok(run(undefined) === null && run(null) === null, 'memo 미전달(undefined/null) → null(종전 문구)');
     // 08시 이전 주문: 종전 = 오늘 발송. 메모 「오늘 발송」은 날짜 없음 → null. 「17일 발송」 = 내일 → ship

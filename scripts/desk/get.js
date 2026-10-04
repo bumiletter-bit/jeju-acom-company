@@ -8,7 +8,7 @@ async function claim(id) {
     const c = await pool.query(
         `UPDATE pending_orders SET status = '처리중'
          WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')
-         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to`, [id]);
+         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to, to_jsonb(pending_orders)->'payload' AS payload`, [id]);   // payload = #518(칸이 아직 없는 DB에서도 죽지 않게 to_jsonb 로 읽는다)
     if (!c.rows.length) return { ok: false, reason: '이미 처리 중이거나 없는 지시입니다' };
     const o = c.rows[0];
     const approved = o.result && o.result.type === 'approval_request' ? o.result : null; // 승인된 건의 원 요청
@@ -55,10 +55,20 @@ async function claim(id) {
              FROM pending_orders WHERE id = $1`, [o.reply_to])).rows[0];
         if (f) followOf = f;
     }
+    // #518 최종발주 메모 읽기: 메모 묶음을 파일로 내준다(글이 길어 지시문에 싣지 않는다). 규칙 = ★에이전트오피스/최종발주_메모읽기.md
+    let foMemo = null;
+    if (o.payload && o.payload.type === 'fo_memo') {
+        const deskDir2 = fs.existsSync(path.join(ROOT, '★에이전트오피스')) ? '★에이전트오피스' : '직원창구';
+        const dir2 = path.join(ROOT, deskDir2, '받은파일'); fs.mkdirSync(dir2, { recursive: true });
+        const p2 = path.join(dir2, `${id}_memo.json`);
+        fs.writeFileSync(p2, JSON.stringify(o.payload, null, 1));
+        foMemo = { payload_path: p2, count: (o.payload.items || []).length, rules: path.join(ROOT, deskDir2, '최종발주_메모읽기.md'),
+            how: '이 지시는 최종발주 화면이 보낸 「손님 메모 읽기」입니다. rules 문서를 먼저 읽고, payload_path 의 메모를 한 건도 빠짐없이 판정해 결과를 {"kind":"answer","title":"메모 N건 읽음","answer":"한 줄 요약","data":{"items":[…]}} 꼴로 올립니다. 다른 일(조회·수정·발송)은 하지 않습니다. 끝나면 payload_path 파일을 지웁니다.' };
+    }
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     return {
-        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath,
+        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(foMemo ? { final_order_memo: foMemo } : {}),
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
         recent_talk: prev,
         follow_of: followOf,

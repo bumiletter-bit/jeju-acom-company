@@ -91,6 +91,15 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 /* 확인 카드 */
 .fo-cards { display: flex; flex-direction: column; gap: 10px; }
 .fo-cards-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.fo-ai { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid #C7CBFF; border-radius: 12px; background: var(--f-accent-soft); }
+.fo-ai .fo-btn { background: #fff; border-color: #C7CBFF; color: var(--f-accent); }
+.fo-ai .fo-msg { flex: 1 1 220px; color: var(--f-ink); }
+.fo-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.fo-kind { min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--f-card-line); background: #fff; color: var(--f-sub); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fo-kind:hover { background: var(--f-soft); }
+.fo-kind.on { background: var(--f-accent-soft); border-color: #C7CBFF; color: var(--f-accent); }
+.fo-kind:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; }
+@media (max-width: 640px) { .fo-kind { min-height: 44px; } }
 .fo-card { border: 1px solid var(--f-card-line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; background: #fff; }
 .fo-card[data-state="open"] { border-color: #FEC84B; background: #FFFCF5; }
 .fo-card[data-state="done"] { background: var(--f-soft); }

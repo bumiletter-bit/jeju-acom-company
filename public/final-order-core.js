@@ -187,10 +187,12 @@
         if (!flat) return { name: '', phone: '', nameOnly: false };
         const km = memo.match(SENDER_KEY);
         if (km) {
-            let r = memo.slice(km.index + km[0].length).replace(/^(?:은|는|을|를)(?=[\s:：=])/, '').replace(/^\s*(?:이름|성함|명)(?:은|는|을|를)?(?=[\s:：=]|$)/, '').replace(/^[ \t:：=\-ㅡ—>→,.]+/, '');
+            // #517(설날 실자료): 낱말 뒤의 「 은 」(띄어 쓴 조사) · 「;」 「_」 · 「변경-」 「변경:」 라벨도 뗀다(「보낸사람 ; ○○○」 「(보내는이_○○ ○○○팀장)」 「보내는사람 은 ○○」 「발송인 변경-○○○」)
+            let r = memo.slice(km.index + km[0].length).replace(/^(?:은|는|을|를)(?=[\s:：=])/, '').replace(/^[ \t]+(?:은|는|을|를)(?=[ \t])/, '').replace(/^\s*(?:이름|성함|명)(?:은|는|을|를)?(?=[\s:：=]|$)/, '').replace(/^[ \t:：;_=\-ㅡ—>→,.]+/, '').replace(/^(?:변경|표기|수정)\s*(?:요청|부탁)?\s*[:：\-ㅡ→>]\s*(?=[가-힣(㈜])/, '');
             r = r.split('\n')[0];                                    // 줄바꿈 앞까지
             const pm = findPhones(r)[0]; if (pm) r = r.slice(0, pm.index);   // 번호 앞까지
             r = r.split(/[.!?]/)[0];                                 // 마침표(인사말) 앞까지
+            const reqOnly = !r.trim() || TAIL_ONLY.test(r) || HINT_REQ.test(r.trim());   // 낱말 뒤(그 줄)에 이름이 없다
             if (TAIL_ONLY.test(r) || HINT_REQ.test(r.trim())) r = '';   // 낱말 뒤가 요청 말뿐(「보내는사람 적어주세요」) = 이름이 아니다 → 낱말 앞쪽을 본다
             for (let i = 1; i <= r.length; i++) {                    // 「으로 변경 부탁」 꼬리 — readSender 와 같은 기준(앞부분이 두 글자 이상 · 붙은 꼬리는 변경·표기·기재만)
                 const m = r.slice(i).match(TAIL); if (!m) continue;
@@ -218,13 +220,31 @@
                 const before = memo.slice(0, km.index).split('\n').pop(); const cut = before.replace(/\s*(?:이름|성함)?\s*(?:으로|이라고|라고|로)\s*$/, '');
                 if (cut !== before) { const tok = hintTidy(cut).split(' ').pop() || ''; if (personWord(tok, buyer) || HINT_CORP.test(tok)) name = tok; }
             }
+            // #517: 이름이 다음 줄에 오는 꼴(「보내는사람 변경부탁드립니다. ⏎ ⏎ ○○○ ⏎ 010-…」) — 낱말 줄에 이름이 없을 때만, 바로 다음 글 줄이 이름(사람 이름 · 법인 표식)일 때만
+            if (!name && reqOnly) {
+                const next = memo.slice(km.index).split('\n').slice(1).map(x => x.trim()).filter(Boolean)[0] || ''; const np = findPhones(next)[0];
+                const cand = hintTidy(np ? next.slice(0, np.index) : next), cw = cand.split(' ').filter(Boolean);
+                if (cand && cw.length <= 3 && cand.length <= 20 && !/\d/.test(cand) && !HINT_REQ.test(cand) && !HINT_REQ_END.test(cand) && (personWord(cw[cw.length - 1], buyer) || HINT_CORP.test(cand))) name = cand;
+            }
+            // #517: 「○○○님 으로 부탁」 — 사람 이름 뒤의 「님」은 뗀다(「대표님」 같은 직함은 그대로)
+            if (/님$/.test(name)) { const base = name.slice(0, -1).trim(); if (personWord(base.split(' ').pop(), buyer)) name = base; }
             return { name: name || buyerIn, phone, nameOnly: false };
         }
         // 보내는이 낱말은 없지만 줄(문장) 끝이 「○○○ 드림/올림」인 메모(인사말 + 맺음) — 그 맺음 앞 글을 이름 후보로
-        const seg = memo.split(/\n|[.!?]+/).map(x => x.trim()).filter(Boolean).find(x => /(?:드림|올림)\s*[~^♡♥\-]*$/.test(x));
-        if (seg && (/\n/.test(memo) || /[.!?]/.test(flat.replace(/[.!?~^\s]+$/, '')))) {
-            const nm = hintTidy(seg.replace(/[~^♡♥\-\s]+$/, ''));
-            if (nm.length >= 2 && nm.length <= 20 && !/\d/.test(nm)) return { name: nm, phone, nameOnly: false };
+        //   #517(설날 실자료): 맺음 뒤에 닫는 기호(「)」 「>」 「_」)나 요청 꼬리(「드림 으로 보내주세요」)가 붙은 꼴 · 맺음 앞이 여는 기호(「(」 「<」 「-」)로 끊긴 꼴도 읽는다
+        //   — 「감사합니다(○○드림)」 「<○○○ 드림> 으로 보내주세요」 「…받으세요-○○드림」 「(○○○,○○○ 올림)」. 두 이름(「A&B」 「A,B」)은 그대로 둔다.
+        {
+            const CLOSE_AFTER = /^[\s)>〉」』'"’”_\/~^♡♥\-.!]*(?:(?:으로|로|이라고|라고)\s*(?:꼭\s*)?(?:보내|변경|표기|기재|작성|적어|써|해\s*주|부탁)[가-힣\s.!~^]*)?$/;
+            const multi = /\n/.test(memo) || /[.!?]/.test(flat.replace(/[.!?~^\s]+$/, ''));
+            for (const line of memo.split('\n')) {
+                const k = Math.max(line.lastIndexOf('드림'), line.lastIndexOf('올림')); if (k < 0) continue;
+                const after = line.slice(k + 2); if (!CLOSE_AFTER.test(after)) continue;
+                let before = line.slice(0, k); const sb = before.search(/[.!?][^.!?]*$/); if (sb >= 0 && before.slice(sb + 1).trim()) before = before.slice(sb + 1);
+                const om = before.match(/[(<〈「『'"‘“\-–—_:：][^(<〈「『'"‘“\-–—_:：]*$/); const opened = !!(om && om[0].slice(1).trim());
+                if (!(multi || opened || after.trim())) continue;   // 한 줄에 「○○○ 드림」뿐 = 아래 「이름뿐」 판정이 본다
+                const nm = hintTidy(opened ? om[0].slice(1) : before);
+                if (nm.length >= 2 && nm.length <= 20 && !/\d/.test(nm) && !nm.split(' ').some(w => HINT_NOTNAME.test(w))) return { name: nm, phone, nameOnly: false };
+            }
         }
         // 보내는이 낱말이 없는 메모: 이름·상호 한 덩어리뿐인가
         if (!/\n/.test(memo) && flat.length <= 24 && !/\d/.test(flat) && !/[.!?]/.test(flat.replace(/[.!?~^\s]+$/, ''))) {
@@ -235,19 +255,59 @@
             const core2 = words.filter(w => !HINT_TITLE.test(w)); const lastW = core2[core2.length - 1] || '';
             const closed = closing && chunk.length >= 2 && chunk.length <= 16 && words.length <= 3 && !words.some(w => HINT_NOTNAME.test(w)) && personWord(lastW, buyer);
             const corpOne = HINT_CORP.test(chunk) && words.length <= 3 && chunk.replace(HINT_CORP, '').trim().length >= 2;
-            if (person || closed || corpOne) return { name: chunk, phone, nameOnly: true };
+            if (person || closed || corpOne) return { name: chunk.replace(/^(?:주문자명?|구매자명?)\s*[:：]\s*/, ''), phone, nameOnly: true };   // #517: 「주문자: (주)○○ ○○○」의 라벨은 이름 칸에 넣지 않는다(판정은 종전 그대로 — 라벨을 떼고 다시 판정하지 않는다)
+        }
+        // #517: 보내는이 단서 낱말(senderCue) 뒤·앞의 이름 — 「보내시는 분 : ○○○」 「FROM: ○○○」 「보내는 곳 : ○○」 「○○○님이 보내셨습니다」
+        {
+            const cm = memo.match(CUE_KEY_AFTER);
+            if (cm) { const sub = senderHint('보내는이' + memo.slice(cm.index + cm[0].length), buyerName); if (sub && sub.name) return { name: sub.name, phone, nameOnly: false }; }
+            const bm = memo.match(/([가-힣A-Za-z()㈜]{2,12})\s*님이\s*보내/);
+            if (bm) { const nm = hintTidy(bm[1]); if (personWord(nm, buyer) || HINT_CORP.test(nm)) return { name: nm, phone, nameOnly: false }; }
+            // 서명 줄이 「상호·부서 + 구매자 이름」뿐이면 그 글 그대로(대표 9/18: 회사명·직함은 손님 원문 + 드림 · 9월 실자료 6건 모두 사람이 그대로 적음). 인사말에 붙은 이름은 이름만.
+            if (buyerIn) for (const line of memo.split('\n')) {
+                const t = line.trim().replace(/[\s\-_~^)\]>.!♡♥*/]+$/, ''); if (!t.endsWith(buyer)) continue;
+                const chunk = t.split(/[\[(<\-_~:：.!?^♡♥*/]/).pop().trim(), words = chunk.split(/\s+/);
+                if (words.length >= 2 && words.length <= 3 && chunk.length <= 16 && words[words.length - 1] === buyer && words.every(w => /^[가-힣A-Za-z0-9㈜&]{1,12}$/.test(w) && !HINT_GREET.test(w) && !HINT_ENDING.test(w) && !HINT_NOTNAME.test(w))) return { name: chunk, phone, nameOnly: false };
+            }
         }
         return { name: buyerIn, phone, nameOnly: false };
     }
 
+    // ── 보내는이 단서(#517) — v2 가 보내는이 판정을 하지 않은 메모 가운데 사람이 보내는이로 처리한 꼴. 자동 적용이 아니라 「보내는이 카드를 띄울지」의 신호다 ──
+    //   senderCue(memo, buyerName) → null | { why }
+    //   ⓐ보내는이 낱말의 다른 꼴: 「보내시는 분」 「보내는 곳」 「보낸는이·보내는 시람」(오타) 「FROM:」 「○○○님이 보내셨습니다/보냅니다」
+    //   ⓑ구매자 본인 이름이 서명처럼 적힌 꼴: 줄(메모) 끝의 이름(「새해 복 많이 받으세요 _○○○」 「-상호 ○○○-」 「(○○○)」) · 이름만 있는 줄
+    //   넣지 않는 것: 「주문자 ○○로 변경」 「주문자명 ○○ 표기」(9/18 대표 확정) · 보내는이 낱말·「드림/올림」이 있는 메모(v2 가 판정) · 받는 분 이야기가 있는 줄
+    const CUE_KEY_AFTER = /보내시는\s*분|보내는\s*곳|보낸는\s*(?:이|사람|분)|보내는\s*시람|보네는\s*(?:이|사람|분)|(?:FROM|From|from)(?=\s*[:：.]|\s+[가-힣(㈜])/;
+    const CUE_SENT_BY = /[가-힣A-Za-z)]\s*님이\s*보내(?:셨|십|시는|는|드리는)|[가-힣A-Za-z)]\s*님이\s*보냅니다/;
+    function senderCue(memoRaw, buyerName) {
+        const memo = String(memoRaw == null ? '' : memoRaw).replace(/\r/g, '').trim(); const buyer = String(buyerName || '').replace(/\s/g, '');
+        if (!memo || /주문자/.test(memo) || SENDER_KEY.test(memo) || /드림|올림/.test(memo)) return null;
+        if (CUE_KEY_AFTER.test(memo)) return { why: '보내는 분을 적은 것으로 보이는 낱말(「보내시는 분」 「보내는 곳」 「FROM」 · 오타)' };
+        if (CUE_SENT_BY.test(memo)) return { why: '「○○님이 보냅니다」 꼴' };
+        if (buyer.length >= 2) {
+            const esc = buyer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const sign = new RegExp('(?:^|[\\s\\-_~(\\[<:：.,!^♡♥*/])' + esc + '[\\s\\-_~^)\\]>.!♡♥*/]*$');
+            for (const line of memo.split('\n')) {
+                const t = line.trim(); if (!t || /받는|수취인|수령인|고객|성함|이름|님께|에게|한테/.test(t)) continue;
+                if (sign.test(t) && !(memo.replace(/\s/g, '') === buyer)) return { why: '메모에 구매자 이름이 서명처럼 적혀 있어요' };   // 메모 전체가 이름뿐인 것은 「이름뿐」 판정이 본다
+            }
+        }
+        return null;
+    }
+
     // 손님 메모의 날짜가 전부 기준 발송일인가(#512) — true 면 「그날 발송」이 곧 요청대로라 주문 확인 카드가 필요 없다. 조금이라도 다르면 false(카드 유지).
     //   조건: 날짜가 하나 이상 · 전부 기준일 · 요일이 적혀 있으면 기준일의 요일 · 도착·범위 말(도착·받·수령·까지·사이·~ …)과 다른 날짜 표현(늦게·다음주·주말 …)이 없음.
-    const SD_BLOCK = /도착|받|수령|까지|전후|사이|이후|이전|전에|부터|안에|내로|이내|[~∼〜]|다음\s*주|다다음|다음\s*날|내일|모레|글피|주말|평일|늦게|천천히|나중|이번\s*주|일주일|연휴|추석|명절|한가위|오늘/;
+    //   #517(설날 실자료): ⓐ요일만 적은 요청(「수요일 발송 부탁」)도 그 요일이 기준일의 요일이고 발송·출고·배송 낱말이 있으면 참 ⓑ물결은 날짜·숫자 뒤에 올 때만 범위(「11일~」 「2/9~11」) — 문장 끝 「부탁드립니다~!」는 범위가 아니다
+    //   ⓒ「배송」 낱말로 적은 요청(「2월 11일 배송 요청」)도 날짜가 기준일이면 참(도착·받·수령·까지 … 가 있으면 거짓) — 화면이 서버 확인형일 때도 이 함수를 부른다.
+    const SD_BLOCK = /도착|받|수령|까지|전후|사이|이후|이전|전에|부터|안에|내로|이내|다음\s*주|다다음|다음\s*날|내일|모레|글피|주말|평일|늦게|천천히|나중|이번\s*주|일주일|연휴|추석|명절|한가위|오늘/;
+    const SD_RANGE = /(?:\d|일|월|요일|욜|\))\s*[~∼〜]/;
     function sameDayOnly(memoRaw, shipDate) {
         const memo = String(memoRaw == null ? '' : memoRaw).replace(/\s+/g, ' ').trim();
         if (!memo || !/^\d{4}-\d{2}-\d{2}$/.test(String(shipDate || ''))) return false;
         // 「추석전 16일 경에 발송」처럼 날짜를 꾸미는 「추석 전·명절 전」은 그 날짜와 어긋나지 않는다(실물 9/15). 그 밖의 추석·명절·연휴 말은 다른 날짜 표현으로 본다
-        if (SD_BLOCK.test(memo.replace(/(?:추석|명절|한가위|연휴)\s*전(?:에)?(?!후)/g, ' '))) return false;
+        //   인사말 「복 많이 받으세요」의 「받」은 도착 요청이 아니다(#517)
+        if (SD_BLOCK.test(memo.replace(/(?:추석|명절|한가위|연휴)\s*전(?:에)?(?!후)/g, ' ').replace(/복\s*(?:많이|마니)?\s*받(?:으세요|으시|으십시|으셔)/g, ' ')) || SD_RANGE.test(memo)) return false;
         const sm = +shipDate.slice(5, 7), sd = +shipDate.slice(8, 10), wd = '일월화수목금토'[new Date(shipDate + 'T00:00:00Z').getUTCDay()];
         let rest = memo, found = 0, bad = false;
         const take = (re, fn) => { rest = rest.replace(re, (...m) => { found++; if (!fn(m)) bad = true; return ' '; }); };
@@ -255,10 +315,11 @@
         take(/(\d{1,2})\s*[\/.]\s*(\d{1,2})(?!\d|[.\/]\d)/g, m => +m[1] === sm && +m[2] === sd);
         if (/\d+\s*일\s*(?:후|뒤|간|동안|정도|만에|내)/.test(rest)) return false;   // 기간(「3일 후」)은 날짜가 아니다
         take(/(\d{1,2})\s*일/g, m => +m[1] === sd);
-        if (bad || !found) return false;
+        if (bad) return false;
         if (/\d/.test(rest.replace(/\d+\s*(?:박스|상자|개|kg|과|호|동|층|번|시|분)/gi, ' '))) return false;   // 날짜로 못 읽은 숫자가 남으면 판단하지 않는다
-        let m; const W = /([월화수목금토일])\s*요일|\(\s*([월화수목금토일])\s*\)|([월화수목금토일])욜/g;
-        while ((m = W.exec(memo))) { if ((m[1] || m[2] || m[3]) !== wd) return false; }
+        let m, days = 0; const W = /([월화수목금토일])\s*요일|\(\s*([월화수목금토일])\s*\)|([월화수목금토일])욜/g;
+        while ((m = W.exec(memo))) { days++; if ((m[1] || m[2] || m[3]) !== wd) return false; }
+        if (!found) return days > 0 && /발송|출고|출발|보내|배송/.test(memo);   // 날짜 없이 요일만(「수요일 발송 부탁」) — 그 요일이 기준일이고 발송 낱말이 있을 때만
         return true;
     }
 
@@ -273,7 +334,13 @@
     const MR_QUOTE = /[<>〈〉《》「」『』'"‘’“”`\[\]]/g;
     const MR_PHONE_LABEL = /(?:연락처|전화번호|전화|번호|핸드폰|휴대폰|HP|H\.P|TEL|tel)\s*(?:는|은)?\s*[:：]?/g;
     const MR_PUNCT_ONLY = /^[\s.,!?~^♡♥()\-ㅡ:：/|·ㆍ*]*$/;
-    const MR_REQ_WORDS = /으로|이라고|라고|변경|표기|기재|기입|수정|부탁|드립니다|드려요|드릴게요|합니다|해\s*주세요|주세요|바랍니다|요청|꼭|로(?=\s|$)/g;   // 요청 꼬리에만 쓰이는 낱말(이 낱말들만 남은 줄 = 요청 꼬리)
+    const MR_REQ_WORDS = /으로|이라고|라고|변경|표기|기재|기입|수정|바꿔|부탁|드리겠습니다|드립니다|드려요|드릴게요|드리고|합니다|해\s*주시면|해\s*주시고|해\s*주세요|해서|보내\s*주세요|주세요|바랍니다|감사하겠습니다|요청|요망|꼭|로(?=\s|$)/g;   // 요청 꼬리에만 쓰이는 낱말(이 낱말들만 남은 줄 = 요청 꼬리)
+    // 우리(판매자)에게 한 내용 없는 인사 — 이것만 남으면 남는 글로 치지 않는다. 받는 분에게 전하는 덕담(「즐거운 명절 보내세요」「건강하세요」)은 여기에 넣지 않는다
+    const MR_COURTESY = /안녕하세요|안녕하십니까|감사합니다|감사드립니다|감사해요|고맙습니다|수고하세요|수고하십시오|수고\s*많으십니다|잘\s*부탁\s*드립니다|잘\s*부탁\s*드려요|잘\s*부탁\s*드릴게요|잘\s*부탁합니다|좋은\s*하루\s*(?:되세요|보내세요)|번창하세요/g;
+    // 미리 채움에 남길 글(#517 완성본 기준): 기사에게 전하는 글 · 받는 분에게 전하는 인사 · 과수 지정(v2 가 옵션명으로 옮기지 않아 지우면 정보가 사라진다)
+    const MR_DELIV = /문\s*앞|현관|경비|공동|비번|비밀번호|출입|[#*]\s*\d|\d\s*[#*]|부재|연락|문자|전화|통화|택배함|보관|맡겨|맡기|계단|엘리베이터|\d+\s*층|\d+\s*호|\d+\s*동|놓아|놔\s*주|두고|올려|벨|초인종|파손|조심|던지/;
+    const MR_TO_RECV = /보내세요|보내시|되세요|되셔요|되시길|되십시오|받으세요|받으십시오|건강하|행복하|축하|사랑|쾌유|응원|힘내|즐거운|풍성한|새해|명절|한가위|추석|설날|생신|생일|드림|올림|[가-힣]{1,4}(?:이가|가)[\s!.~^]*$/;
+    const mrKeepForCourier = seg => MR_DELIV.test(seg) || MR_TO_RECV.test(seg) || /\d+\s*(?:~|-|,)?\s*\d*\s*과(?![가-힣])|\d+\s*과로/.test(seg);
     // 이름(상호) 낱말: 한글·영문·법인 표식만. 인사말·문장 꼴·주소·지시 낱말이면 이름이 아니다
     const mrNameWord = w => /^[가-힣A-Za-z㈜()&.]{1,14}$/.test(w) && !HINT_GREET.test(w) && !HINT_ENDING.test(w) && !HINT_NOTNAME.test(w) && !/받는|주소|배송|발송|도착|출고|택배|선물|맛있|예쁜|좋은|것으로|부탁|주세요|감사|입니다|합니다/.test(w);
     //   낱말이 둘 이상인데 주소가 시작되는 낱말(「서울시」「충남」)이 끼어 있으면 이름이 아니다(「보내는 사람은 서울시 ○○구 ○○○ 으로 표기」)
@@ -297,6 +364,8 @@
         const phones = findPhones(r); if (phones.length > 1) return { strict: false, rest: '' };
         if (phones.length) r = r.slice(0, phones[0].index) + ' ' + r.slice(phones[0].index + phones[0].text.length);
         r = r.replace(MR_PHONE_LABEL, ' ').replace(MR_QUOTE, ' ').replace(/\s+/g, ' ').trim();
+        // 낱말 뒤가 비었거나 요청 말뿐(「보내는이」「보내는사람 변경부탁드립니다.」) — 이름이 다음 줄에 온다(부르는 쪽이 다음 줄을 본다). 번호만 적힌 경우는 이름을 더 찾지 않는다
+        if (MR_PUNCT_ONLY.test(r.replace(MR_REQ_WORDS, ' '))) return { strict: true, rest: '', needName: !phones.length };
         let name = r, tail = '';
         for (let i = 1; i <= r.length; i++) {
             const m = r.slice(i).match(TAIL); if (!m) continue;
@@ -315,14 +384,19 @@
         else if (words.length && personWord(clean(words[0]), buyer)) k = 1;
         else if (words.length > 1 && mrNameWord(words[0]) && personWord(clean(words[1]), buyer)) k = 2;
         let left = k ? words.slice(k).join(' ') : ''; left = left.replace(/^[\s,.)]+/, '');
+        left = left.replace(/^(?:드림|올림)\s*\)?[\s,.]*/, '').replace(/[\s*★※]+$/, '');   // 「(보내는 이:○○○ 드림) 즐거운 명절…**」의 맺음·꾸밈 기호
+        // 이름 바로 뒤의 요청 마디(「로 변경해 주세요 」「로 변경 부탁드리고 」)는 보내는이 부분이다 — 요청 낱말뿐인 마디가 끝나는 곳까지 뗀다
+        { const m = left.match(/^(.*?(?:부탁\s*드리고|해\s*주시고|하시고|해\s*주세요|해주세요|보내\s*주세요|바랍니다|부탁\s*드립니다|부탁\s*드려요|부탁\s*드릴게요|부탁\s*드리겠습니다|부탁합니다|요청\s*드립니다|요청합니다))[\s,.!~^]*/); if (m && MR_PUNCT_ONLY.test(m[1].replace(MR_REQ_WORDS, ' '))) left = left.slice(m[0].length); }
         if (TAIL_ONLY.test(left) || MR_PUNCT_ONLY.test(left.replace(MR_REQ_WORDS, ' '))) left = '';
         return { strict: false, rest: left };
     }
     // 한 문장이 「당일 발송 요청뿐」인가(날짜가 기준일인지는 부르는 쪽이 sameDayOnly 로 이미 확인했다)
-    const MR_DAY_WORDS = /(?:추석|명절|한가위|연휴)\s*전(?:에)?|마지막|발송|날짜인|날짜는|날짜|일자|출고|출발|배송|택배|보내|전부|모두|모든|꼭|반드시|경에|경|쯤에|쯤|해\s*주세요|해\s*주시면|주세요|부탁\s*드려요|부탁\s*드립니다|부탁\s*드릴게요|부탁합니다|부탁해요|부탁|바랍니다|바래요|요청\s*드립니다|요청\s*드려요|요청합니다|요청|드립니다|드려요|감사하겠습니다|감사합니다|희망합니다|희망해요|희망|원합니다|원해요|입니다|합니다|으로|에는|에|로|은|는|이|가|을|를|날|요/g;
+    //   #517: 「발송지정」「발송일:」「배송일 지정」「예약발송」「발송 희망일」「발송 요망」「배송되었으면 합니다」 · 「배송메모:」 머리 · 요일만 적은 꼴(「수요일 발송요청」)도
+    const MR_DAY_WORDS = /(?:추석|명절|한가위|연휴|설)\s*전(?:에)?|배송\s*메모|메모|마지막|발송일|배송일|출고일|희망일|발송|날짜인|날짜는|날짜|일자|출고|출구|출발|배송|택배|보내|전부|모두|모든|꼭|반드시|가능하시면|가능하면|경에|경|쯤에|쯤|지정|예약|요망|되었으면|됐으면|되도록|하는\s*걸로|걸로|해\s*주세요|해\s*주시면|주세요|부탁\s*드려요|부탁\s*드립니다|부탁\s*드릴게요|부탁\s*드리겠습니다|부탁합니다|부탁해요|부탁|바랍니다|바래요|요청\s*드립니다|요청\s*드려요|요청합니다|요청|드리겠습니다|드립니다|드려요|감사하겠습니다|감사합니다|희망합니다|희망해요|희망|원합니다|원해요|입니다|합니다|으로|에는|에|로|은|는|이|가|을|를|날|요/g;
+    const MR_WEEKDAY = /[월화수목금토일]\s*요일|\(\s*[월화수목금토일]\s*\)|[월화수목금토일]욜/g;
     function mrDaySeg(seg) {
-        let s = String(seg || ''); const had = /\d{1,2}\s*월\s*\d{1,2}\s*일?|\d{1,2}\s*[\/.]\s*\d{1,2}|\d{1,2}\s*일/.test(s); if (!had) return null;
-        s = s.replace(/\d{1,2}\s*월\s*\d{1,2}\s*일?/g, ' ').replace(/\d{1,2}\s*[\/.]\s*\d{1,2}(?!\d)/g, ' ').replace(/\d{1,2}\s*일/g, ' ')
+        let s = String(seg || ''); const had = /\d{1,2}\s*월\s*\d{1,2}\s*일?|\d{1,2}\s*[\/.]\s*\d{1,2}|\d{1,2}\s*일/.test(s) || (/[월화수목금토일]\s*요일|[월화수목금토일]욜/.test(s) && /발송|출고|배송|보내/.test(s)); if (!had) return null;
+        s = s.replace(/\d{1,2}\s*월\s*\d{1,2}\s*일?/g, ' ').replace(/\d{1,2}\s*[\/.]\s*\d{1,2}(?!\d)\s*일?/g, ' ').replace(/\d{1,2}\s*일/g, ' ')
             .replace(/[월화수목금토일]\s*요일|\(\s*[월화수목금토일]\s*\)|[월화수목금토일]욜/g, ' ').replace(MR_QUOTE, ' ').replace(MR_DAY_WORDS, ' ');
         return { strict: !/[가-힣A-Za-z0-9]/.test(s) };
     }
@@ -331,13 +405,22 @@
         if (!memo.trim() || (!o.sender && !o.sameDay)) return { rest: memo.trim(), removed: '', sure: true };
         // 줄 → 문장(마침표·느낌표·물음표 뒤에 빈칸이나 줄 끝이 올 때만 끊는다 — 「010.1234.5678」「9.19일」은 끊지 않는다)
         const lines = memo.split('\n').map(line => line.replace(/([.!?]+[~^]*)(\s+|$)/g, '$1\u0001').split('\u0001').map(x => x.trim()).filter(Boolean));
-        let sure = true, hitSender = false, hitKey = false, hitClose = false, hitDay = false; const removed = [];
+        let sure = true, hitSender = false, hitKey = false, hitClose = false, hitDay = false, pend = false, closeUp = false; const removed = [];
         const out = lines.map(segs => {
             const keep = [];
             segs.forEach(seg => {
                 if (o.sender) {
+                    // 앞 줄이 「보내는이」 낱말뿐이었다 → 이 줄이 이름(상호)이면 보내는이 부분(「보내는사람 변경부탁드립니다. ⏎ □□□ ⏎ 000 ⏎ 으로 바꿔주세요」)
+                    if (pend && !MR_KEY.test(seg) && !findPhones(seg).length) {
+                        const nm = seg.replace(MR_QUOTE, ' ').replace(/[\s.,!~^\-ㅡ:：/|·ㆍ]+$/, '').replace(/\s*(?:드림|올림)$/, '').replace(/^[\s\-ㅡ:：]+/, '').trim();
+                        if (mrNameOk(nm)) { pend = false; removed.push(seg); return; }
+                        if (!MR_PUNCT_ONLY.test(seg.replace(MR_REQ_WORDS, ' '))) { pend = false; sure = false; }   // 이름이 아닌 글이 왔다 — 이름을 못 찾음
+                    }
                     const r = mrSenderSeg(seg, buyer);
-                    if (r) { hitSender = true; hitKey = true; removed.push(seg); if (!r.strict) { sure = false; if (r.rest) keep.push(r.rest); } return; }
+                    if (r) { hitSender = true; hitKey = true; removed.push(seg); if (r.needName) pend = true; if (!r.strict) { sure = false; if (r.rest) keep.push(r.rest); } return; }
+                    // 「○○○ 드림(으)로 변경 부탁드립니다」「<○○○ 드림> 으로 보내주세요」 — 낱말 없이 맺음 꼴로 적은 보내는이 요청
+                    { const q = seg.replace(MR_QUOTE, ' ').replace(/\s+/g, ' ').trim(), cm = q.match(/^(.*?)\s*(?:드림|올림)\s*(?:으로|이라고|라고|로)\s*(.*)$/);
+                      if (cm && mrNameOk(cm[1].replace(/^[\s\-ㅡ(]+/, '').trim()) && MR_PUNCT_ONLY.test(cm[2].replace(MR_REQ_WORDS, ' '))) { hitSender = true; hitKey = true; removed.push(seg); return; } }
                     // 「연락처: 000」뿐인 줄 · 「○○○ 드림」뿐인 줄(맺음) — 보내는이 요청의 일부
                     const ph = findPhones(seg);
                     if (ph.length === 1 && MR_PUNCT_ONLY.test(seg.replace(ph[0].text, ' ').replace(/보내는\s*(?:이|사람|분)?/g, ' ').replace(MR_PHONE_LABEL, ' ').replace(MR_REQ_WORDS, ' '))) { removed.push(seg); hitSender = true; return; }
@@ -347,19 +430,32 @@
                     const cs = ph.length === 1 ? seg.replace(ph[0].text, ' ').replace(/\(\s*\)/g, ' ').trim() : seg;
                     if (/(?:드림|올림)[\s.!~^♡♥\-]*$/.test(cs)) {
                         const nm = cs.replace(/[\s.!~^♡♥\-]+$/, '').replace(/\s*(?:드림|올림)$/, '').replace(MR_QUOTE, ' ').replace(/^[\s\-ㅡ]+/, '').trim();
-                        if (mrNameOk(nm)) { removed.push(seg); hitSender = true; hitClose = true; return; }
+                        if (mrNameOk(nm)) { removed.push(seg); hitSender = true; hitClose = true; if (/올림[\s.!~^♡♥\-]*$/.test(cs)) closeUp = true; return; }
                     }
                 }
                 if (o.sameDay) { const d = mrDaySeg(seg); if (d) { hitDay = true; removed.push(seg); if (!d.strict) { sure = false; keep.push(seg); } return; } }
                 keep.push(seg);
             });
-            return keep.join(' ');
-        }).filter(Boolean);
+            return keep;
+        });
+        if (pend) sure = false;                                                               // 「보내는이」 낱말만 있고 이름 줄을 못 찾았다
         if ((o.sender && !hitSender) || (o.sameDay && !hitDay && !o.sender)) sure = false;   // 뺄 부분을 못 찾았다 → 사람에게
-        const rest = out.join('\n').replace(/^[\s,\-ㅡ/|·ㆍ]+/, '').replace(/[\s,\-ㅡ/|·ㆍ]+$/, '').trim();
+        const join = ls => ls.map(k => k.join(' ')).filter(Boolean).join('\n').replace(/^[\s,\-ㅡ/|·ㆍ]+/, '').replace(/[\s,\-ㅡ/|·ㆍ]+$/, '').trim();
         // 인사말 + 「○○○ 드림」 맺음: 완성본은 맺음까지 그대로 둔다(9/17·9/18 실물) → 아무것도 빼지 않고 사람에게
-        if (hitClose && !hitKey && !hitDay && rest) return { rest: memo.trim(), removed: '', sure: false };
-        return { rest, removed: removed.join(' / '), sure };
+        if (hitClose && !hitKey && !hitDay && join(out)) return { rest: memo.trim(), removed: '', sure: false };
+        // 메모 전체가 「○○○ 올림」: 완성본이 그대로 둔 실물이 있다(설 2/11) → 지우지 않고 사람에게(「○○○ 드림」은 기본 문구가 맞았다)
+        if (closeUp && !hitKey && !hitDay) return { rest: memo.trim(), removed: '', sure: false };
+        if (!removed.length) return { rest: join(out), removed: '', sure };
+        // 메모에 「받는이 ㅡ 주소 · 이름 · 번호」를 따로 적은 꼴(받는 곳이 주문과 다르다는 뜻 — 사람이 처리) → 주소 조각을 미리 채우지 않는다
+        if (/받는\s*(?:이|분|사람)/.test(memo)) return { rest: '', removed: removed.join(' / '), sure: false };
+        // 남는 글 고르기(미리 채움): ①우리에게 한 내용 없는 인사(감사합니다·안녕하세요)는 남는 글이 아니다 ②기사·받는 분에게 전하는 글과 과수 지정만 남긴다 —
+        //   판매자에게 한 부탁(「선물용입니다」「좋은 걸로」)을 뺐으면 사람이 확인해야 하므로 sure=false(자동 비움 조건은 넓히지 않는다)
+        const picked = out.map(k => k.filter(seg => {
+            if (MR_PUNCT_ONLY.test(seg.replace(MR_COURTESY, ' '))) return false;
+            if (mrKeepForCourier(seg)) return true;
+            sure = false; return false;
+        }));
+        return { rest: join(picked), removed: removed.join(' / '), sure };
     }
 
     // ── §5 메모 줄 다듬기 ────────────────────────────────────────────────────────────────────────────
@@ -488,11 +584,26 @@
     const SP_SENDER = /보내는|보낸|발신|드림|올림/;
     const SP_BOX = /(?:\d+|한|두|세|네|하나|둘)\s*(?:박스|상자|개)\s*(?:는|은|씩|만)/;
     const SP_WORD = /따로|각각|나머지|나눠|나누어|다른\s*(?:주소|곳|배송지)/;
+    // #517(설날 실자료 38건): 「주소」 낱말만으로는 신호가 아니다 — 주소를 따로 보낸다·여러 곳이다·이 주소가 아니다 라는 말이 함께 있을 때만(「회사주소인데 13일 도착」 「상세배송지_○○」는 헛카드였다).
+    //   명단·리스트·주소록·엑셀·파일 · 메일·톡톡·문자·카톡으로 「보냈다/보내겠다/전달한다」(손님이 한 일 — 기사에게 「문자 보내 주세요」라고 부탁하는 말은 아님)도 신호.
+    //   수량 1 이라도 「주소는 따로 보냄 / 이 주소 말고 / 배송지 별도 전달」 꼴이면 신호(한 박스씩 여러 건 주문하고 주소를 따로 보내는 손님 — 실자료 6건 중 4건이 다른 곳으로 나갔다).
+    const SP_ADDR = /주소|배송지|배송처|도착지/;
+    const SP_LIST = /리스트|명단|주소록|엑셀|파일/;
+    const SP_SENT_SRC = '보내\\s*드리|보내\\s*드렸|보내\\s*드린|보낸\\s*(?:주소|배송지|명단|리스트|파일|메일)|메일\\s*보낸|전달\\s*드린|알려\\s*드린|보낼게|보낼께|보냈|보내겠|보내려|전달\\s*드리|전달\\s*하겠|전달\\s*했|전달\\s*예정|전달\\s*할|드렸|드리겠|드릴게|드릴께|남기겠|남길게|남길께|남겼|남겨\\s*놓|남겨\\s*드|남깁니다|납깁니다|(?:^|[^배발])송부|발송\\s*했|발송\\s*하겠|발송\\s*드리|공유|알려\\s*드';
+    const SP_SENT = new RegExp(SP_SENT_SRC);
+    const SP_VIA = new RegExp('(?:이메일|메일|톡톡|문자|카톡|카카오톡|카카오|메시지|메세지)(?:으로|로|에|를|을)?[가-힣\\s]{0,8}?(?:' + SP_SENT_SRC + ')');
+    const SP_ELSE = /별도|따로|각각|개별|다른|다르|말고|무시|아니|아닌|여러|다수|\d+\s*(?:곳|군데|개소|건|명|개)/;
+    const SP_NOTHERE = /(?:이|위|해당)\s*주소\s*(?:는|가|로)?\s*(?:말고|무시|아니|아닌)/;
     function splitSignal(arg) {
         const a = arg || {}; const memo = String(a.memo == null ? '' : a.memo).replace(/\s+/g, ' ').trim();
-        if (!memo || !(Number(a.qty) >= 2)) return null;
+        const qty = Number(a.qty);
+        if (!memo || !(qty >= 1)) return null;
+        const addrWord = SP_ADDR.test(memo), listWord = SP_LIST.test(memo);
+        if (qty < 2) return ((addrWord || listWord) && (SP_SENT.test(memo) || /별도|따로/.test(memo))) || SP_NOTHERE.test(memo) ? { why: '주소를 따로 보낸다는 말' } : null;
         const why = [];
-        if (/주소|배송지/.test(memo)) why.push('「주소」 낱말');
+        if (addrWord && (SP_SENT.test(memo) || SP_ELSE.test(memo))) why.push('「주소」 낱말');
+        if (listWord) why.push('명단·리스트·파일 낱말');
+        if (SP_VIA.test(memo)) why.push('따로 보냈다는 말');
         if (/개별\s*(?:발송|배송)/.test(memo)) why.push('「개별발송」');
         if (SP_ROAD.test(memo) || (SP_DONGHO.test(memo) && !SP_DOOR.test(memo))) why.push('주소로 보이는 글');
         const known = [].concat(a.buyerDigits == null ? [] : a.buyerDigits, a.recvDigits == null ? [] : a.recvDigits).map(dg).filter(Boolean);   // recvDigits = 글자 또는 배열(수취인연락처1·2)
@@ -582,7 +693,7 @@
         return ws;
     }
 
-    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, sameDayOnly, memoRest,
+    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

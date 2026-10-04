@@ -46,6 +46,8 @@ async function uploadAttachments(list, runId) {
             files: (Array.isArray(j.files) ? j.files.slice(0, 10).map(f => ({ label: clean(f.label, 60), url: clean(f.url, 500) })) : []).concat(uploaded),
             summary: clean(j.title || j.answer, 80),
         };
+        // #518 최종발주 메모 읽기의 판정 결과(화면이 받아 가면 서버가 지운다) — 최종발주 요청에만, 400KB 이하
+        if (j.data && typeof j.data === 'object' && /^\[최종발주 메모 읽기\]/.test(o.content || '') && JSON.stringify(j.data).length <= 400000) result.data = j.data;
         stepText = '✅ 답변 완료';
     } else if (j.kind === 'question') {
         if (!j.question) throw new Error('question이 비었습니다');
