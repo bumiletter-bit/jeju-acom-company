@@ -13504,7 +13504,7 @@ app.post('/api/agent-office/final-order/memo-read', authMiddleware, async (req, 
     try {
         const src = Array.isArray(req.body?.items) ? req.body.items : [];
         const s = (v, n) => String(v == null ? '' : v).slice(0, n);
-        const items = src.slice(0, 800).map(it => ({ i: Number(it && it.i), memo: s(it && it.memo, 600), buyer: s(it && it.buyer, 30), recv: s(it && it.recv, 30), qty: Math.max(1, parseInt(it && it.qty, 10) || 1), cards: Array.isArray(it && it.cards) ? it.cards.slice(0, 6).map(c => s(c, 20)) : [], hint: s(it && it.hint, 160) }))
+        const items = src.slice(0, 800).map(it => ({ i: Number(it && it.i), memo: s(it && it.memo, 600), buyer: s(it && it.buyer, 30), recv: s(it && it.recv, 30), qty: Math.max(1, parseInt(it && it.qty, 10) || 1), cards: Array.isArray(it && it.cards) ? it.cards.slice(0, 6).map(c => s(c, 20)) : [], hint: s(it && it.hint, 160), unit: s(it && it.unit, 40) }))   // #520 unit = 배송지의 동·호수 조각만(메모의 동호수와 다른지 AI가 볼 수 있게 — 주소 전체는 받지 않는다)
             .filter(it => Number.isInteger(it.i) && it.i >= 0 && it.memo.trim());
         if (!items.length) throw { status: 400, message: '읽을 메모가 없습니다' };
         const iso = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '');

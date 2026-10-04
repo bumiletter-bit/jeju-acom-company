@@ -40,6 +40,8 @@ async function fakeApis(ctx, fx, hits, mode = {}) {
     await ctx.route('**/api/agent-office/naver/invoice-orders-v2*', reply('naver', { ok: true, count: fx.naver.length, rows: fx.naver, partial_adjusted: 0 }));
     await ctx.route('**/api/agent-office/cafe24/invoice-orders*', reply('cafe24', { ok: true, count: fx.cafe24.length, rows: fx.cafe24 }));
     await ctx.route('**/api/agent-office/coupang/invoice-orders*', reply('coupang', { ok: true, count: fx.coupang.length, rows: fx.coupang }));
+    // #520: 판정이 끝나면 AI 읽기가 자동으로 시작된다 → 기본은 「못 올림」으로 막는다(실DB에 요청이 생기거나 실제 창구가 도는 일이 없게). ⑮ 에서만 따로 가짜 창구를 붙인다.
+    await ctx.route('**/api/agent-office/final-order/memo-read**', r => { hits.ai = (hits.ai || 0) + 1; r.fulfill({ json: { ok: false, message: '시험에서는 AI를 부르지 않아요' } }); });
     await ctx.route('**/api/agent-office/coupang/canceled-since*', r => { hits.cancel++; r.fulfill({ json: { ok: true, canceled: fx.canceledCoupang } }); });
 }
 async function newCtx(br, fx, hits, viewport, mobile, mode) {
@@ -81,10 +83,10 @@ async function v2Judge(ctx, v2Text, shipDate) {
     }, [v2Text || '', shipDate || null]);
     await pg.close(); out.errs = errs; return out;
 }
-const readJudge = pg => pg.evaluate(sel => { const f = document.querySelector(sel); const i = f && f.contentWindow && f.contentWindow.__ivt; if (!i) return null; return { ship: i.S.shipDate, v2Text: f.contentDocument.getElementById('ln-all').value, judge: Object.fromEntries(i.S.merged.map(e => [e.conv['수취인명'], { ch: e.ch, excluded: !!e.excluded, individual: !!e.individual, flag: e.flag || null, kind: e.reqKind || null, sender: e.sender ? (e.sender.ambiguous ? 'amb' : e.sender.name) : null }])) }; }, SEL.hidden);
+const readJudge = pg => pg.evaluate(sel => { const f = document.querySelector(sel); const i = f && f.contentWindow && f.contentWindow.__ivt; if (!i) return null; return { ship: i.S.shipDate, v2Text: f.contentDocument.getElementById('ln-all').value, judge: Object.fromEntries(i.S.merged.map(e => [e.conv['수취인명'], { ch: e.ch, excluded: !!e.excluded, individual: !!e.individual, flag: e.flag || null, kind: e.reqKind || null, sender: e.sender ? (e.sender.ambiguous ? 'amb' : e.sender.name) : null, opt: e.conv['옵션정보'] }])) }; }, SEL.hidden);
 const cardCount = pg => pg.evaluate(sel => { const o = {}; document.querySelectorAll(sel.card).forEach(c => { const k = c.getAttribute('data-fo-card'); o[k] = o[k] || { all: 0, pending: 0 }; o[k].all++; if (!c.hasAttribute('data-fo-done')) o[k].pending++; }); return o; }, SEL);
 // 불러오기·판정·파일 만들기 중엔 #fo-panel 에 busy 클래스가 붙는다 — 사라질 때까지 기다린다
-const idle = async pg => { await pg.waitForTimeout(200); await pg.waitForFunction(sel => { const p = document.querySelector(sel); return p && !p.classList.contains('busy'); }, SEL.panel, { timeout: 120000 }); };
+const idle = async pg => { await pg.waitForTimeout(200); await pg.waitForFunction(sel => { const p = document.querySelector(sel); return p && !p.classList.contains('busy') && !(window.AkmFinalOrder && window.AkmFinalOrder.state.ai && window.AkmFinalOrder.state.ai.running); }, SEL.panel, { timeout: 120000 }); };
 const pendingN = pg => pg.evaluate(sel => document.querySelectorAll(sel).length, SEL.pending);
 // 남은 카드 중 한 종류를 전부 누른다(재렌더 대비 — 매번 다시 찾는다)
 async function resolveCards(pg, type) {
@@ -715,109 +717,159 @@ async function resolveCards(pg, type) {
             ok(km.n >= 4 && km.right <= km.inner + 1 && km.sw <= km.cw + 1 && km.doc <= km.inner + 1 && km.minH >= 44 && em2.length === 0, '⑭ⓘ 390px: 칩 줄이 가로로 안 넘침(줄바꿈) · 칩 높이 44px 이상 · 오류 0', JSON.stringify(km));
             await cm.close();
         }
-        // ⑮ #518 AI(창구)가 손님 메모를 읽는다 — memo-read 3개 라우트는 가짜 응답(실제 창구·AI 호출 0) ─────────────────
-        console.log('\n⑮ #518 AI에게 메모 읽히기(가짜 창구 응답)');
+        // ⑮ #518·#520 AI(창구)가 손님 메모를 읽는다 — memo-read 3개 라우트는 가짜 응답(실제 창구·AI 호출 0 · DB 쓰기 0) ─────────
+        //   #520: 판정이 끝나면 자동으로 1회 시작 · 보내는이·배송메세지 카드는 AI가 닫지 않고 입력칸만 채움 · 읽는 동안에도 카드를 누를 수 있음 · 배송지 동·호수(unit) 전달
+        console.log('\n⑮ #518·#520 AI 메모 읽기(가짜 창구 응답)');
         {
             const base = fx.naver.find(r => r['수취인명'] === '받는21');
-            let seq = 0; const mk = (nm, memo, qty, buyer) => { seq++; return { ...base, '구매자명': buyer || ('시험구매' + nm), '구매자연락처': buyer ? '010-7000-6999' : '010-7000-6' + String(100 + seq), '수취인명': nm, '수취인연락처1': '010-7100-6' + String(100 + seq), '통합배송지': '서울특별시 가짜구 에이아이로 ' + seq, '배송메세지': memo, '수량': qty || 1, _pid: '2099010500' + String(100 + seq), _x: { ...base._x, productOrderId: '2099010500' + String(100 + seq), orderId: '2099010500' + String(100 + seq) } }; };
-            const M = { O1: '다음주에 보내주세요', O2: '천천히 보내주세요', O3: '나중에 보내주셔도 됩니다', SP: '주소 따로 안 보냅니다 3박스 다 이 주소로 보내주세요', SD: '보내는이: 홍길동 즐거운 명절 보내세요', SD2: '보내는 사람은 서울시 가짜구 김구매 으로 표기', ME: '보내는이 홍길동 변경\n즐거운 추석 보내세요~!',
-                P1: '선물용입니다. 좋은 상품으로 부탁드려요', P2: '선물용입니다. 좋은 상품으로 부탁드려요. 문 앞에 놔주세요', P3: '문 앞에 놔주세요', P4: '보내는이 홍길동으로 변경 부탁드립니다', P5: '좋은 걸로 부탁드려요 감사합니다', S1: '예쁜 걸로 보내주세요', S2: '선물용이에요 문 앞에 두세요', N1: '주문자명 박가짜 이라고 포장지에 표기 부탁드립니다', N2: '명절 지나고 받고 싶어요 선물이에요' };
-            const fx15 = { ...fx, cafe24: [], coupang: [], canceledCoupang: [], naver: [mk('에이O1', M.O1), mk('에이O2', M.O2), mk('에이O3', M.O3), mk('에이SP', M.SP, 3), mk('에이SD', M.SD), mk('에이SD2', M.SD2, 1, '김구매'), mk('에이ME', M.ME), mk('에이P1', M.P1), mk('에이P2', M.P2), mk('에이P3', M.P3), mk('에이P4', M.P4), mk('에이P5a', M.P5, 1, '같은구매'), mk('에이P5b', M.P5, 1, '같은구매'), mk('에이S1', M.S1), mk('에이S2', M.S2), mk('에이N1', M.N1), mk('에이N2', M.N2)] };
+            let seq = 0;
+            const mk = (nm, memo, qty, buyer, unitTxt) => {
+                seq++; const pid = '2099010500' + String(100 + seq);
+                return { ...base, '구매자명': buyer || ('시험구매' + nm), '구매자연락처': buyer ? '010-7000-6999' : '010-7000-6' + String(100 + seq), '수취인명': nm, '수취인연락처1': '010-7100-6' + String(100 + seq),
+                    '통합배송지': `서울특별시 가짜구 에이아이로 ${seq}, ${unitTxt || `101동 ${200 + seq}호`}`, '배송메세지': memo, '수량': qty || 1, _pid: pid, _x: { ...base._x, productOrderId: pid, orderId: pid } };
+            };
+            const M = { O1: '다음주에 보내주세요', O2: '천천히 보내주세요', O3: '나중에 보내주셔도 됩니다', O4: '늦게 보내주셔도 괜찮아요', SP: '주소 따로 안 보냅니다 3박스 다 이 주소로 보내주세요',
+                SD: '보내는이: 홍길동 즐거운 명절 보내세요', SD2: '보내는 사람은 서울시 가짜구 김구매 으로 표기', ME: '보내는이 홍길동 변경\n즐거운 추석 보내세요~!',
+                P1: '선물용입니다. 좋은 상품으로 부탁드려요', P2: '선물용입니다. 좋은 상품으로 부탁드려요. 문 앞에 놔주세요', P3: '문 앞에 놔주세요', P4: '보내는이 홍길동으로 변경 부탁드립니다', P5: '좋은 걸로 부탁드려요 감사합니다',
+                S1: '예쁜 걸로 보내주세요', S2: '선물용이에요 문 앞에 두세요', N1: '주문자명 박가짜 이라고 포장지에 표기 부탁드립니다', N2: '명절 지나고 받고 싶어요 선물이에요',
+                KH: '115동1202호 김가짜으로 보내는사람 적어주세요', KS: '115동402호 박동일으로 보내는사람 적어주세요' };
+            const rows15 = [mk('에이O1', M.O1), mk('에이O2', M.O2), mk('에이O3', M.O3), mk('에이O4', M.O4), mk('에이SP', M.SP, 3), mk('에이SD', M.SD), mk('에이SD2', M.SD2, 1, '김구매'), mk('에이ME', M.ME), mk('에이P1', M.P1), mk('에이P2', M.P2), mk('에이P3', M.P3),
+                mk('에이P4', M.P4), mk('에이P5a', M.P5, 1, '같은구매'), mk('에이P5b', M.P5, 1, '같은구매'), mk('에이S1', M.S1), mk('에이S2', M.S2), mk('에이N1', M.N1), mk('에이N2', M.N2), mk('에이KH', M.KH, 1, null, '115동 402호'), mk('에이KS', M.KS, 1, null, '115동 402호')];
+            const fx15 = { ...fx, cafe24: [], coupang: [], canceledCoupang: [], naver: rows15 };
             // 가짜 창구: 메모 글로 판정을 골라 돌려준다
-            const ANS = { [M.O1]: { ship: 'go', memo: '기본', sure: true, why: '다음 주 = 기준일' }, [M.O2]: { ship: 'hold', ship_date: later, memo: '기본', sure: true, why: '천천히 요청' }, [M.O3]: { ship: 'ask', memo: '그대로', sure: false, why: '날짜 없음' }, [M.SP]: { ship: 'go', split: false, memo: '그대로', sure: true, why: '받는 곳 설명' },
-                [M.SD]: { ship: 'go', sender: { name: '홍길동', phone: '', addr: '' }, memo: '즐거운 명절 보내세요', sure: true, why: '보내는이 요청' }, [M.SD2]: { ship: 'go', sender: { name: '김구매', phone: '', addr: '' }, memo: '기본', sure: false, why: '주소가 섞임' }, [M.ME]: { ship: 'go', memo: '즐거운 추석 보내세요~!', sure: true, why: '인사말만' },
+            const ANS = {
+                [M.O1]: { ship: 'go', memo: '기본', sure: true, why: '다음 주 = 기준일' }, [M.O2]: { ship: 'hold', ship_date: later, memo: '기본', sure: true, why: '천천히 요청' },
+                [M.O3]: { ship: 'ask', memo: '그대로', sure: false, why: '날짜 없음' }, [M.O4]: { ship: 'go', memo: '기본', sure: true, why: '오늘 보내도 됨' },
+                [M.SP]: { ship: 'go', split: false, memo: '그대로', sure: true, why: '받는 곳 설명' },
+                [M.SD]: { ship: 'go', sender: { name: '홍길동', phone: '', addr: '' }, memo: '즐거운 명절 보내세요', sure: true, why: '보내는이 요청' },
+                [M.SD2]: { ship: 'go', sender: { name: '김구매', phone: '', addr: '' }, memo: '기본', sure: true, why: '구매자 이름' },
+                [M.ME]: { ship: 'go', memo: '즐거운 추석 보내세요~!', sure: true, why: '인사말만' },
                 [M.P1]: { ship: 'go', memo: '기본', sure: true, why: '판매자에게 한 말' }, [M.P2]: { ship: 'go', memo: '문 앞에 놔주세요', sure: true, why: '기사용만 남김' }, [M.P5]: { ship: 'go', memo: '기본', sure: true, why: '판매자에게 한 말' },
-                [M.S1]: { ship: 'go', memo: '맛있게 드세요', sure: true, why: '지어낸 글' }, [M.S2]: { ship: 'go', memo: '기본', sure: true, why: '기사용 낱말 빠짐' }, [M.N1]: { ship: 'go', sender: { name: '박가짜', phone: '', addr: '' }, memo: '기본', sure: false, why: '주문자명 표기' }, [M.N2]: { ship: 'hold', ship_date: later, memo: '기본', sure: true, why: '명절 뒤 수령' } };
-            const mkAi = async (viewport, withClock) => {
-                const hitsA = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }; const ctxA = await newCtx(br, fx15, hitsA, viewport || { width: 1400, height: 900 }, false, {});
+                [M.S1]: { ship: 'go', memo: '맛있게 드세요', sure: true, why: '지어낸 글' }, [M.S2]: { ship: 'go', memo: '기본', sure: true, why: '기사용 낱말 빠짐' },
+                [M.KH]: { ship: 'go', sender: { name: '김가짜', phone: '', addr: '' }, memo: '115동1202호', sure: true, why: '보내는이 요청' }, [M.KS]: { ship: 'go', sender: { name: '박동일', phone: '', addr: '' }, memo: '115동402호', sure: true, why: '보내는이 요청' },
+                [M.N1]: { ship: 'go', sender: { name: '박가짜', phone: '', addr: '' }, memo: '기본', sure: true, why: '주문자명 표기' }, [M.N2]: { ship: 'hold', ship_date: later, memo: '기본', sure: true, why: '명절 뒤 수령' } };
+            const aiState = pg2 => pg2.evaluate(() => { const a = window.AkmFinalOrder.state.ai; return { running: !!a.running, id: a.id, done: !!a.done }; });
+            const busyIdle = async pg2 => { await pg2.waitForTimeout(200); await pg2.waitForFunction(sel => { const p = document.querySelector(sel); return p && !p.classList.contains('busy'); }, SEL.panel, { timeout: 120000 }); };
+            const aiRunning = pg2 => pg2.waitForFunction(() => { const a = window.AkmFinalOrder.state.ai; return a.running && a.id; }, null, { timeout: 15000 });
+            const aiIdle = pg2 => pg2.waitForFunction(() => !window.AkmFinalOrder.state.ai.running, null, { timeout: 60000 });
+            const mkAi = async (mode0, withClock) => {
+                const hitsA = { naver: 0, cafe24: 0, coupang: 0, cancel: 0, ai: 0 }; const ctxA = await newCtx(br, fx15, hitsA, { width: 1400, height: 900 }, false, {});
                 if (withClock) await ctxA.clock.install();
-                const ai = { mode: 'done', post: [], gets: 0, dels: 0, status: '처리중' };
+                const ai = { mode: mode0, post: [], gets: 0, dels: 0, status: '처리중' };
                 await ctxA.route('**/api/agent-office/final-order/memo-read', r => { if (r.request().method() !== 'POST') return r.continue(); ai.post.push(r.request().postDataJSON()); r.fulfill({ json: { ok: true, id: 9001, count: ai.post[ai.post.length - 1].items.length } }); });
-                await ctxA.route('**/api/agent-office/final-order/memo-read/9001', r => { const mth = r.request().method(); if (mth === 'DELETE') { ai.dels++; return r.fulfill({ json: { ok: true } }); }
-                    ai.gets++; if (ai.mode === 'wait') return r.fulfill({ json: { ok: true, state: 'wait', status: ai.status, data: null, message: '' } }); if (ai.mode === 'fail') return r.fulfill({ json: { ok: true, state: 'fail', status: '오류', data: null, message: '가짜 창구 오류(시험)' } });
-                    const body = ai.post[ai.post.length - 1]; r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: body.items.map(it => ({ i: it.i, ship: 'go', ship_date: null, sender: null, memo: '그대로', split: false, sure: true, why: '', ...(ANS[it.memo] || {}) })) }, message: '' } }); });
+                await ctxA.route('**/api/agent-office/final-order/memo-read/9001', r => {
+                    const mth = r.request().method(); if (mth === 'DELETE') { ai.dels++; return r.fulfill({ json: { ok: true } }); }
+                    ai.gets++;
+                    if (ai.mode === 'wait') return r.fulfill({ json: { ok: true, state: 'wait', status: ai.status, data: null, message: '' } });
+                    if (ai.mode === 'fail') return r.fulfill({ json: { ok: true, state: 'fail', status: '오류', data: null, message: '가짜 창구 오류(시험)' } });
+                    const body = ai.post[ai.post.length - 1];
+                    r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: body.items.map(it => ({ i: it.i, ship: 'go', ship_date: null, sender: null, memo: '그대로', split: false, sure: true, why: '', ...(ANS[it.memo] || {}) })) }, message: '' } });
+                });
                 const pgA = await ctxA.newPage(); const errsA = []; pgA.on('pageerror', e => errsA.push(e.message)); pgA.on('dialog', d => d.accept());
                 await pgA.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pgA.waitForTimeout(2500); await pgA.evaluate(() => switchPage('agent-office')); await pgA.waitForTimeout(1000);
                 await pgA.click(SEL.btn); await pgA.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
-                await pgA.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await idle(pgA);
+                await pgA.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await busyIdle(pgA);
                 return { ctx: ctxA, pg: pgA, errs: errsA, ai, hits: hitsA };
             };
-            const aiIdle = pg2 => pg2.waitForFunction(() => !window.AkmFinalOrder.state.ai.running, null, { timeout: 60000 });
-            const a = await mkAi();
+            const openCard = (pg2, type, t) => pg2.locator(`${SEL.pending}[data-fo-card="${type}"]`, { hasText: t }).first();
+            const doneTxt = async (pg2, type, t) => { const c = pg2.locator(`${SEL.card}[data-fo-card="${type}"][data-fo-done]`, { hasText: t }).first(); return (await c.count()) ? (await c.innerText()).replace(/\s+/g, ' ') : null; };
+            const fieldOf = async (pg2, type, t, f) => { const c = openCard(pg2, type, t); return (await c.count()) ? c.locator(`[data-f="${f}"]`).inputValue() : null; };
+            const noteOf = async (pg2, type, t) => { const c = openCard(pg2, type, t).locator('[data-ai-note]'); return (await c.count()) ? (await c.innerText()).replace(/\s+/g, ' ') : null; };
+
+            // ── a. 자동 시작 → 읽는 동안 사람이 카드를 고침 → 결과 반영 ─────────────────
+            const a = await mkAi('wait');
             const vis0 = await a.pg.evaluate(() => { const b = document.getElementById('fo-ai'); return { has: !!b, hidden: !b || b.hidden || getComputedStyle(b).display === 'none' }; });
-            ok(vis0.has && vis0.hidden, '⑮1 판정 전에는 AI 띠(#fo-ai)가 안 보임', JSON.stringify(vis0));
-            await setCash(a.pg, null); await a.pg.click(SEL.start); await idle(a.pg); await a.pg.waitForSelector(SEL.card, { timeout: 15000 });
-            const en0 = !(await a.pg.isDisabled('#fo-ai-read'));
-            ok((await a.pg.isVisible('#fo-ai')) && en0, '⑮1 판정 직후 AI 띠가 보이고 [AI에게 메모 읽히기]가 바로 켜짐', en0);
-            await a.pg.fill(SEL.memo, ' '); await a.pg.waitForTimeout(200);
-            ok(await a.pg.isDisabled('#fo-ai-read'), '⑮1 메모를 바꿔 낡은 상태(다시 판정 전)면 버튼 꺼짐');
-            await a.pg.fill(SEL.memo, ''); await a.pg.click(SEL.rejudge); await idle(a.pg);
-            const cBefore = await cardCount(a.pg); const pBefore = await pendingN(a.pg);
-            // 실행 중 잠금 → 완료
-            a.ai.mode = 'wait'; await a.pg.click('#fo-ai-read'); await a.pg.waitForFunction(() => window.AkmFinalOrder.state.ai.running && window.AkmFinalOrder.state.ai.id, null, { timeout: 10000 });
-            const lock = { make: await a.pg.isDisabled(SEL.make), rejLooksOff: await a.pg.isDisabled(SEL.rejudge), stop: await a.pg.isVisible('#fo-ai-stop'), read: await a.pg.isDisabled('#fo-ai-read') };
-            await cardOf(a.pg, CARD.order, '에이O3').locator('[data-fo-act="send"]').click({ timeout: 3000 }).catch(() => { }); await a.pg.click(SEL.rejudge, { timeout: 3000 }).catch(() => { }); await a.pg.waitForTimeout(300);
-            lock.rejNoop = await a.pg.evaluate(() => { const t = window.AkmFinalOrder.state; return t.judged && !t.busy && t.ai.running; });
-            ok(lock.make && lock.rejNoop && lock.stop && lock.read && (await pendingN(a.pg)) === pBefore, '⑮7 AI가 읽는 동안: [파일 만들기]·읽기 버튼 꺼짐 · [그만두기] 보임 · 카드·[다시 판정]을 눌러도 처리 안 됨', JSON.stringify({ ...lock, pending: await pendingN(a.pg), before: pBefore }));
+            ok(vis0.has && vis0.hidden && a.ai.post.length === 0, '⑮1 판정 전에는 AI 띠가 안 보이고 올린 것도 없음', JSON.stringify(vis0));
+            await setCash(a.pg, null); await a.pg.click(SEL.start); await busyIdle(a.pg); await a.pg.waitForSelector(SEL.card, { timeout: 15000 });
+            await aiRunning(a.pg);
+            ok(a.ai.post.length === 1 && (await a.pg.isVisible('#fo-ai')), '⑮1 #520 판정이 끝나면 버튼을 누르지 않아도 AI 읽기가 1회 시작됨', `POST ${a.ai.post.length}회`);
+            const pBefore = await pendingN(a.pg); const cBefore = await cardCount(a.pg);
+            const lock = { make: await a.pg.isDisabled(SEL.make), rej: await a.pg.isDisabled(SEL.rejudge), stop: await a.pg.isVisible('#fo-ai-stop'), read: await a.pg.isDisabled('#fo-ai-read') };
+            ok(lock.make && lock.rej && lock.stop && lock.read, '⑮7 AI가 읽는 동안: [파일 만들기]·[다시 판정]·읽기 버튼 꺼짐 · [그만두기] 보임', JSON.stringify(lock));
+            // 읽는 동안 사람이 먼저 정함: 주문 확인 1장을 제외로 · 보내는이 카드에 이름을 직접 적음
+            await openCard(a.pg, CARD.order, '에이O1').locator('[data-fo-act="excl"]').click(); await a.pg.waitForTimeout(200);
+            await openCard(a.pg, CARD.senderMemo, '에이SD2').locator('[data-f="name"]').fill('직접적음'); await a.pg.waitForTimeout(100);
+            ok((await pendingN(a.pg)) === pBefore - 1 && (await aiState(a.pg)).running, '⑮7 #520 AI가 읽는 동안에도 카드를 누르고 입력할 수 있음', `${pBefore} → ${await pendingN(a.pg)}`);
             a.ai.mode = 'done'; await aiIdle(a.pg); await a.pg.waitForTimeout(400);
+
             // 2. 보낸 묶음
             const body = a.ai.post[0], memos = body.items.map(it => it.memo), keys = [...new Set(body.items.flatMap(it => Object.keys(it)))].sort(), raw = JSON.stringify(body);
-            ok(keys.every(k => ['i', 'memo', 'buyer', 'recv', 'qty', 'cards', 'hint'].includes(k)) && !/에이아이로|010-7[01]00-6/.test(raw) && !/통합배송지|수취인연락처|구매자연락처|옵션정보/.test(raw), '⑮2 보낸 묶음에 주소·전화번호·옵션 칸 없음(메모 · 구매자·수취인 이름 · 수량 · 카드 종류 · 힌트만)', keys.join(','));
-            ok(!memos.includes(M.P3) && !memos.includes(M.P4) && memos.filter(m => m === M.P5).length === 1 && memos.includes(M.P1) && memos.includes(M.O1) && body.shipDate === ship, '⑮2 「문 앞에 놔주세요」뿐인 메모 · 규칙이 기본 문구로 정한 메모는 안 보냄 · 같은 구매자·같은 메모는 1건', `${body.items.length}건`);
+            ok(keys.every(k => ['i', 'memo', 'buyer', 'recv', 'qty', 'cards', 'hint', 'unit'].includes(k)) && !/에이아이로|서울특별시|010-7[01]00-6/.test(raw) && !/통합배송지|수취인연락처|구매자연락처|옵션정보/.test(raw), '⑮2 보낸 묶음에 주소 글·전화번호·옵션 칸 없음(메모 · 이름 · 수량 · 카드 종류 · 힌트 · 동호수만)', keys.join(','));
+            const uSD = (body.items.find(it => it.memo === M.SD) || {}).unit;
+            ok(body.items.every(it => typeof it.unit === 'string' && /^(\d+동\d+호|)$/.test(it.unit)) && uSD === '101동206호', '⑮2 #520 배송지의 동·호수 조각(unit)만 함께 보냄', uSD);
+            ok(!memos.includes(M.P3) && !memos.includes(M.P4) && memos.filter(m => m === M.P5).length === 1 && memos.includes(M.P1) && memos.includes(M.O1) && body.shipDate === ship, '⑮2 기사용 말뿐인 메모 · 규칙이 기본 문구로 정한 메모는 안 보냄 · 같은 구매자·같은 메모는 1건', `${body.items.length}건`);
             ok(a.ai.dels === 1, '⑮8 결과를 받은 뒤 DELETE 1회(묶음·결과 지움)', a.ai.dels);
+
             // 3. 카드 반영
-            const doneTxt = async (type, t) => { const c = a.pg.locator(`${SEL.card}[data-fo-card="${type}"][data-fo-done]`, { hasText: t }).first(); return (await c.count()) ? (await c.innerText()).replace(/\s+/g, ' ') : null; };
-            const J15 = (await readJudge(a.pg)).judge; const dO1 = await doneTxt(CARD.order, '에이O1'), dO2 = await doneTxt(CARD.order, '에이O2'), dSP = await doneTxt(CARD.split, '에이SP'), dSD = await doneTxt(CARD.senderMemo, '에이SD'), dME = await doneTxt('memo-edit', '에이ME');
-            ok(!!dO1 && /AI/.test(dO1) && !J15['에이O1'].excluded && !!dO2 && /AI/.test(dO2) && J15['에이O2'].excluded, '⑮3 AI가 확실하다고 한 주문 확인 카드: 오늘 발송 / 제외로 끝난 상태 + 「AI」 표시', String(dO2).slice(-60));
-            ok(!!dSP && /AI/.test(dSP) && !!dSD && /홍길동 드림/.test(dSD) && /AI/.test(dSD) && !!dME && /AI/.test(dME), '⑮3 나눠 보내기(전부 발송) · 보내는이(홍길동 드림) · 배송메세지 카드도 AI가 끝냄', String(dSD).slice(-70));
-            const o3 = await cardOf(a.pg, CARD.order, '에이O3').count(), sd2 = cardOf(a.pg, CARD.senderMemo, '에이SD2'); const sd2Name = (await sd2.count()) ? await sd2.locator('[data-f="name"]').inputValue() : null;
-            ok(o3 === 1 && sd2Name === '김구매', '⑮3 AI가 확실하지 않다고 한 카드는 열린 채 · 입력칸에 AI 값이 채워짐', JSON.stringify({ o3, sd2Name }));
+            const J15 = (await readJudge(a.pg)).judge;
+            const dO1 = await doneTxt(a.pg, CARD.order, '에이O1'), dO2 = await doneTxt(a.pg, CARD.order, '에이O2'), dO4 = await doneTxt(a.pg, CARD.order, '에이O4'), dSP = await doneTxt(a.pg, CARD.split, '에이SP');
+            ok(!!dO4 && /AI/.test(dO4) && !J15['에이O4'].excluded && !!dO2 && /AI/.test(dO2) && J15['에이O2'].excluded && !!dSP && /AI/.test(dSP), '⑮3 주문 확인·나눠 보내기 카드: AI가 확실하다고 한 것은 미리 눌러 둠(오늘 발송 / 제외 / 전부 발송) + 「AI」 표시', String(dO2).slice(-50));
+            ok(!!dO1 && !/AI/.test(dO1) && J15['에이O1'].excluded, '⑮3 #520 사람이 먼저 정한 카드는 AI 결과가 덮지 않음(AI는 오늘 발송 · 사람은 제외 → 제외 유지)', String(dO1).slice(-40));
+            const dSD = await doneTxt(a.pg, CARD.senderMemo, '에이SD'), dME = await doneTxt(a.pg, 'memo-edit', '에이ME'), dKS = await doneTxt(a.pg, CARD.senderMemo, '에이KS');
+            ok(!!dSD && /홍길동 드림/.test(dSD) && /AI/.test(dSD) && !!dME && /AI/.test(dME) && !!dKS && /박동일 드림/.test(dKS), '⑮3 보내는이·배송메세지 카드: AI가 확실하고 메모의 동·호수가 배송지와 같으면(또는 메모에 동·호수가 없으면) AI가 끝냄 + 「AI」 표시', String(dSD).slice(-70));
+            const khOpen = await openCard(a.pg, CARD.senderMemo, '에이KH').count(), khName = await fieldOf(a.pg, CARD.senderMemo, '에이KH', 'name'), khMemo = await fieldOf(a.pg, CARD.senderMemo, '에이KH', 'memo'), khNote = await noteOf(a.pg, CARD.senderMemo, '에이KH');
+            ok(khOpen === 1 && khName === '김가짜' && khMemo === '115동1202호' && /달라요/.test(String(khNote)) && /115동402호/.test(String(khNote)), '⑮3 #520 실사고 재현: 메모 「115동1202호 ○○○으로 보내는사람…」 · 배송지 115동402호 → AI가 확실하다고 해도 닫지 않고 입력칸만 채움 + 「동·호수가 달라요」', JSON.stringify({ khOpen, khName, khMemo, khNote }));
+            const sd2Name = await fieldOf(a.pg, CARD.senderMemo, '에이SD2', 'name'), sd2Note = await noteOf(a.pg, CARD.senderMemo, '에이SD2');
+            ok(sd2Name === '직접적음' && /넣지 않았어요/.test(String(sd2Note)), '⑮3 #520 사람이 적다 만 글은 AI 값으로 덮지 않음', JSON.stringify({ sd2Name, sd2Note }));
+            ok((await openCard(a.pg, CARD.order, '에이O3').count()) === 1, '⑮3 AI가 확실하지 않다고 한 주문 확인 카드는 열린 채');
+            // 4. 카드 없는 주문
+            const info15 = await a.pg.evaluate(() => [...document.querySelectorAll('#fo-info li')].map(li => li.textContent).filter(t => /AI가 배송메세지/.test(t)));
+            ok(info15.length === 4 && (await a.pg.locator(SEL.card, { hasText: '에이P2' }).count()) === 0, '⑮4 카드 없는 주문: AI가 확실하다고 한 배송메세지는 바로 정리(참고 목록 4줄 · 카드 없음)', info15.length);
             // 5. 안전장치 · 6. 새 카드
-            const s2 = cardOf(a.pg, 'memo-edit', '에이S2'); const s2Has = await s2.count(); const anyS1 = await a.pg.locator(SEL.card, { hasText: '에이S1' }).count();
-            ok(anyS1 === 0 && s2Has === 1, '⑮5 안전장치: 원문에 없는 글을 돌려주면 자동 적용 안 됨(원문 유지) · 「문 앞」 메모를 「기본」으로 돌려주면 카드로', JSON.stringify({ S1카드: anyS1, S2카드: s2Has }));
-            const n1 = cardOf(a.pg, CARD.senderMemo, '에이N1'); const n1Name = (await n1.count()) ? await n1.locator('[data-f="name"]').inputValue() : null; const dN2 = await doneTxt(CARD.order, '에이N2');
-            ok(n1Name === '박가짜' && !!dN2 && /AI/.test(dN2) && J15['에이N2'].excluded, '⑮6 규칙이 못 본 주문: AI가 보내는이를 찾으면 보내는이 카드가 새로 뜸 · 「오늘 안 나감」(확실)이면 주문 확인 카드가 제외로 끝남', JSON.stringify({ n1Name, N2: J15['에이N2'].excluded }));
-            const info15 = await a.pg.evaluate(() => [...document.querySelectorAll('#fo-info li')].map(li => li.textContent).filter(t => /AI가 배송메세지/.test(t)).length);
-            ok(info15 >= 3, '⑮4 카드 없는 주문의 배송메세지를 AI가 정리 → 참고 목록에 줄', info15);
-            const cAfter = await cardCount(a.pg); ok(lock.rejLooksOff, '⑮7 AI가 읽는 동안 [다시 판정] 버튼이 꺼진 모양(눌러도 동작은 안 함)', lock.rejLooksOff);
-            note('⑮ 사람이 눌러야 하는 카드: AI 전 → 후', `${pBefore} → ${await pendingN(a.pg)} · ${JSON.stringify(cBefore)} → ${JSON.stringify(cAfter)}`);
-            // [바꾸기]로 고친 카드는 다시 판정 뒤에도 AI가 덮지 않음
-            await a.pg.locator(`${SEL.card}[data-fo-card="${CARD.order}"][data-fo-done]`, { hasText: '에이O1' }).first().locator('[data-undo]').click(); await a.pg.waitForTimeout(200);
-            await cardOf(a.pg, CARD.order, '에이O1').locator('[data-fo-act="excl"]').click(); await a.pg.waitForTimeout(200);
-            await a.pg.fill(SEL.memo, `${FX.usd(ship)}\t010-7999-0000\t\t네이버`); await a.pg.click(SEL.rejudge); await idle(a.pg);
+            const anyS1 = await a.pg.locator(SEL.card, { hasText: '에이S1' }).count(), s2Has = await openCard(a.pg, 'memo-edit', '에이S2').count();
+            ok(anyS1 === 0 && s2Has === 1, '⑮5 안전장치: 원문에 없는 글을 돌려주면 반영 안 됨(원문 유지) · 「문 앞」 메모를 「기본」으로 돌려주면 카드로', JSON.stringify({ S1카드: anyS1, S2카드: s2Has }));
+            const dN1 = await doneTxt(a.pg, CARD.senderMemo, '에이N1'), n1Name = dN1 && /박가짜 드림/.test(dN1) && /AI/.test(dN1) ? '박가짜' : null, dN2 = await doneTxt(a.pg, CARD.order, '에이N2');
+            ok(n1Name === '박가짜' && !!dN2 && /AI/.test(dN2) && J15['에이N2'].excluded, '⑮6 규칙이 못 본 주문: AI가 보내는이를 찾으면 보내는이 카드가 새로 뜸(확실하면 AI가 끝냄 · [바꾸기] 가능) · 「오늘 안 나감」(확실)이면 주문 확인 카드가 제외로', JSON.stringify({ n1Name, N2: J15['에이N2'].excluded }));
+            const btnTxt = await a.pg.evaluate(() => document.getElementById('fo-ai-read').textContent);
+            ok(/다시 읽히기/.test(btnTxt) && !(await a.pg.isDisabled('#fo-ai-read')), '⑮1 읽은 뒤 버튼 = 「다시 읽히기」', btnTxt);
+            note('⑮ 사람이 눌러야 하는 카드: AI 전 → 후', `${pBefore} → ${await pendingN(a.pg)} · ${JSON.stringify(cBefore)} → ${JSON.stringify(await cardCount(a.pg))}`);
+            // [다시 판정] — 읽을 메모가 같으면 AI를 다시 부르지 않고 앞선 결과·사람 결정·적어 둔 글을 유지
+            await a.pg.fill(SEL.memo, `${FX.usd(ship)}\t010-7999-0000\t\t네이버`); await a.pg.click(SEL.rejudge); await busyIdle(a.pg); await a.pg.waitForTimeout(600);
             const J15b = (await readJudge(a.pg)).judge;
-            ok(J15b['에이O1'].excluded && J15b['에이O2'].excluded && !J15b['에이SD'].excluded && (await doneTxt(CARD.senderMemo, '에이SD')) !== null && a.ai.post.length === 1, '⑮3 [바꾸기]로 사람이 고친 카드는 [다시 판정] 뒤에도 AI가 다시 덮지 않음 · AI가 끝낸 다른 카드는 유지 · AI를 다시 부르지 않음', JSON.stringify({ O1: J15b['에이O1'].excluded, posts: a.ai.post.length }));
+            ok(a.ai.post.length === 1 && J15b['에이O1'].excluded && J15b['에이O2'].excluded && (await doneTxt(a.pg, CARD.senderMemo, '에이SD')) !== null && (await fieldOf(a.pg, CARD.senderMemo, '에이KH', 'name')) === '김가짜' &&(await fieldOf(a.pg, CARD.senderMemo, '에이SD2', 'name')) === '직접적음',
+                '⑮3 [다시 판정]: 읽을 메모가 같으면 AI를 다시 부르지 않음 · 사람 결정·AI가 채운 값·적어 둔 글 유지', `POST ${a.ai.post.length}회`);
             // 남은 카드 처리 → 파일
-            await cardOf(a.pg, CARD.senderMemo, '에이N1').locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            for (const t of ['에이SD2', '에이KH']) { await openCard(a.pg, CARD.senderMemo, t).locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150); }
             for (const t of [...Object.keys(ACT), 'memo-edit']) { for (let g = 0; g < 40; g++) { const c = a.pg.locator(`${SEL.pending}[data-fo-card="${t}"]`).first(); if (!(await c.count())) break; await c.locator(`[data-fo-act="${t === 'memo-edit' ? 'keep' : ACT[t]}"]`).first().click(); await a.pg.waitForTimeout(120); } }
             ok((await pendingN(a.pg)) === 0 && !(await a.pg.isDisabled(SEL.make)), '⑮ 남은 카드 처리 → [파일 만들기] 켜짐', JSON.stringify(await cardCount(a.pg)));
+            const J15c = (await readJudge(a.pg)).judge;
             await a.pg.click(SEL.make); await idle(a.pg); await a.pg.waitForSelector(SEL.save, { timeout: 15000 });
             const sv15 = await a.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save);
             const gr15 = async part => { const nmx = sv15.find(x => x.includes(part)); const [d] = await Promise.all([a.pg.waitForEvent('download', { timeout: 20000 }), a.pg.locator(`[data-fo-save="${nmx}"]`).click()]); const f = path.join(TMP, 's15-' + Date.now() + '.xlsx'); await d.saveAs(f); return XLSX.readFile(f, { cellStyles: true }); };
-            const w15 = (await gr15('(효돈)')).Sheets.Sheet1; const r15 = XLSX.utils.sheet_to_json(w15, { header: 1, defval: '' }); const at = nm => { const i = r15.findIndex(r => r[3] === nm); return i < 0 ? null : { r: r15[i], f: c => fillOf(w15[c + (i + 1)]) }; };
-            const DEF = FX.DEFAULT_MEMO; const P1 = at('에이P1'), P2 = at('에이P2'), P3 = at('에이P3'), P5a = at('에이P5a'), P5b = at('에이P5b'), S1 = at('에이S1'), S2 = at('에이S2'), SD = at('에이SD'), ME = at('에이ME'), N1 = at('에이N1');
-            ok(!!P1 && P1.r[9] === DEF && !!P2 && P2.r[9] === '문 앞에 놔주세요' && !!P5a && P5a.r[9] === DEF && !!P5b && P5b.r[9] === DEF && !!P3 && P3.r[9] === M.P3, '⑮4 카드 없는 주문: AI 「기본」 → J 기본 문구 · 「남길 글」 → J 그 글 · 같은 구매자 묶음 둘 다 반영 · 안 보낸 메모는 원문', P1 && P2 && JSON.stringify([P1.r[9].slice(0, 8), P2.r[9]]));
-            ok(!!S1 && S1.r[9] === M.S1 && !!S2 && S2.r[9] === M.S2, '⑮5 안전장치에 걸린 두 주문의 J = 원문 그대로(카드에서 [원문 그대로])');
-            ok(!!SD && SD.r[0] === '홍길동 드림' && SD.r[9] === '즐거운 명절 보내세요' && SD.f('A') === 'DDEBF7' && !!ME && ME.r[9] === '즐거운 추석 보내세요~!' && !!N1 && N1.r[0] === '박가짜 드림', '⑮3·6 AI가 끝낸 보내는이·배송메세지 카드 · 새로 뜬 보내는이 카드가 파일에 반영', SD && JSON.stringify([SD.r[0], SD.r[9]]));
+            const w15 = (await gr15('(효돈)')).Sheets.Sheet1; const r15 = XLSX.utils.sheet_to_json(w15, { header: 1, defval: '' });
+            const at = nm => { const i = r15.findIndex(r => r[3] === nm); return i < 0 ? null : { r: r15[i], f: c => fillOf(w15[c + (i + 1)]) }; };
+            const DEF = FX.DEFAULT_MEMO; const P1 = at('에이P1'), P2 = at('에이P2'), P3 = at('에이P3'), P5a = at('에이P5a'), P5b = at('에이P5b'), S1 = at('에이S1'), S2 = at('에이S2'), SD = at('에이SD'), SD2 = at('에이SD2'), ME = at('에이ME'), N1 = at('에이N1'), KH = at('에이KH'), KS = at('에이KS');
+            ok(!!P1 && P1.r[9] === DEF && !!P5a && P5a.r[9] === DEF && !!P5b && P5b.r[9] === DEF && !!P3 && P3.r[9] === M.P3 && !!P2 && P2.r[9] === '문 앞에 놔주세요', '⑮4 파일: AI 「기본」 → J 기본 문구(같은 구매자 묶음 둘 다) · 안 보낸 메모는 원문 · 카드에서 [이대로 넣기]한 글', P1 && P2 && JSON.stringify([P1.r[9].slice(0, 8), P2.r[9]]));
+            ok(!!S1 && S1.r[9] === M.S1 && !!S2 && S2.r[9] === M.S2, '⑮5 파일: 안전장치에 걸린 두 주문의 J = 원문 그대로');
+            ok(!!SD && SD.r[0] === '홍길동 드림' && SD.r[9] === '즐거운 명절 보내세요' && SD.f('A') === 'DDEBF7' && !!SD2 && SD2.r[0] === '직접적음 드림' && !!ME && ME.r[9] === '즐거운 추석 보내세요~!' && !!N1 && N1.r[0] === '박가짜 드림' && !!KH && KH.r[0] === '김가짜 드림' && KH.r[9] === '115동1202호' && !!KS && KS.r[0] === '박동일 드림' && KS.r[9] === '115동402호', '⑮3·6 파일: AI가 끝낸 카드 · 사람이 [이대로 넣기]를 누른 카드(AI 값 · 사람이 적은 값)가 반영', SD && SD2 && JSON.stringify([SD.r[0], SD.r[9], SD2.r[0]]));
             const names15 = r15.slice(1).map(r => r[3]); const st15 = XLSX.utils.sheet_to_json((await gr15('스마트스토어')).Sheets['발주발송관리'], { header: 1, defval: '' }).slice(2).map(r => r[6]);
-            ok(!names15.includes('에이O2') && !names15.includes('에이N2') && !names15.includes('에이O1') && !st15.includes('에이O2') && !st15.includes('에이N2') && st15.includes('에이SD'), '⑮6 AI가 「오늘 안 나감」으로 끝낸 주문 = 택배사·스토어 파일 모두에 없음(사람이 제외로 고친 주문도)', `택배사 ${names15.length}행 · 스토어 ${st15.length}행`);
+            ok(!names15.includes('에이O2') && !names15.includes('에이N2') && !names15.includes('에이O1') && !st15.includes('에이O2') && !st15.includes('에이N2') && st15.includes('에이SD'), '⑮6 파일: 「오늘 안 나감」 주문(AI가 미리 누른 것 · 사람이 제외한 것) = 택배사·스토어 파일 모두에 없음', `택배사 ${names15.length}행 · 스토어 ${st15.length}행`);
+            // #520 무회귀: 결과 파일의 받는 분·옵션·수량·연락처·주소 칸이 원본 주문과 같은가(AI·카드가 건드리는 것은 A·B·J·M뿐)
+            const src15 = new Map(rows15.map(r => [r['수취인명'], r])); const d8 = v => String(v).replace(/\D/g, '').slice(-8);
+            const bad15 = r15.slice(1).filter(r => { const o = src15.get(r[3]); const j = J15c[r[3]]; return !o || !j || r[4] !== j.opt || Number(r[5]) !== Number(o['수량']) || d8(r[6]) !== d8(o['수취인연락처1']) || r[8] !== o['통합배송지']; });
+            ok(r15.length - 1 === rows15.length - 3 && bad15.length === 0, '⑮ #520 무회귀: 택배사 파일 전 행의 수취인·옵션·수량·연락처·주소 = 원본 주문 그대로', `${r15.length - 1}행 · 다른 행 ${bad15.length}${bad15.length ? ' ' + bad15.map(r => r[3]).join(',') : ''}`);
             ok(a.errs.length === 0, '⑮ 오류 0', a.errs.join(' | ')); await a.ctx.close();
-            // 7. 그만두기 · 실패 · 창구가 안 집음
-            const b = await mkAi(); await setCash(b.pg, null); await b.pg.click(SEL.start); await idle(b.pg); await b.pg.waitForSelector(SEL.card, { timeout: 15000 });
-            b.ai.mode = 'wait'; await b.pg.click('#fo-ai-read'); await b.pg.waitForFunction(() => window.AkmFinalOrder.state.ai.running && window.AkmFinalOrder.state.ai.id, null, { timeout: 10000 });
+
+            // ── b. 그만두기 · 실패 · 버튼으로 다시 ─────────────────────────────
+            const b = await mkAi('wait'); await setCash(b.pg, null); await b.pg.click(SEL.start); await busyIdle(b.pg); await b.pg.waitForSelector(SEL.card, { timeout: 15000 }); await aiRunning(b.pg);
             await b.pg.click('#fo-ai-stop'); for (let i = 0; i < 30 && b.ai.dels < 1; i++) await b.pg.waitForTimeout(250);
             const stopMsg = await b.pg.evaluate(() => document.getElementById('fo-ai-msg').textContent);
-            ok(b.ai.dels === 1 && !(await b.pg.isDisabled('#fo-ai-read')), '⑮7 [그만두기] → DELETE 호출 · 다시 누를 수 있음', b.ai.dels);
-            ok(/그만뒀/.test(stopMsg), '⑮7 [그만두기] 뒤 「그만뒀어요」 안내 글이 남음', stopMsg.slice(0, 40));
+            ok(b.ai.dels === 1 && /그만뒀/.test(stopMsg) && !(await b.pg.isDisabled('#fo-ai-read')), '⑮7 [그만두기] → DELETE 호출 · 「그만뒀어요」 안내 · 버튼으로 다시 읽힐 수 있음', stopMsg.slice(0, 40));
+            // 그만둔 뒤 남은 카드를 처리하면 [파일 만들기]가 켜진다(AI 없이도 끝까지 갈 수 있다)
+            await b.pg.click(SEL.rejudge); await busyIdle(b.pg); await b.pg.waitForTimeout(800);
+            ok(b.ai.post.length === 1 && !(await aiState(b.pg)).running, '⑮7 그만둔 뒤 [다시 판정]을 해도 같은 메모면 자동으로 다시 올리지 않음', `POST ${b.ai.post.length}회`);
             b.ai.mode = 'fail'; await b.pg.click('#fo-ai-read'); await aiIdle(b.pg); await b.pg.waitForTimeout(300);
             const failMsg = await b.pg.evaluate(() => document.getElementById('fo-ai-msg').textContent); const pF = await pendingN(b.pg);
-            await cardOf(b.pg, CARD.order, '에이O3').locator('[data-fo-act="send"]').click(); await b.pg.waitForTimeout(200);
-            ok(/못 했어요/.test(failMsg) && /가짜 창구 오류/.test(failMsg) && (await pendingN(b.pg)) === pF - 1 && b.ai.dels === 2, '⑮7 창구가 실패로 답함 → 안내 글 · 카드로 계속 처리 가능 · 묶음 지움', failMsg.slice(0, 60));
+            await openCard(b.pg, CARD.order, '에이O3').locator('[data-fo-act="send"]').click(); await b.pg.waitForTimeout(200);
+            ok(b.ai.post.length === 2 && /못 했어요/.test(failMsg) && /가짜 창구 오류/.test(failMsg) && (await pendingN(b.pg)) === pF - 1 && b.ai.dels === 2, '⑮7 버튼으로 다시 읽힘 → 창구가 실패로 답함 → 안내 글 · 카드로 계속 처리 가능 · 묶음 지움', failMsg.slice(0, 60));
+            for (const t of [...Object.keys(ACT), 'memo-edit']) { for (let g = 0; g < 40; g++) { const c = b.pg.locator(`${SEL.pending}[data-fo-card="${t}"]`).first(); if (!(await c.count())) break; await c.locator(`[data-fo-act="${t === 'memo-edit' ? 'keep' : ACT[t]}"]`).first().click(); await b.pg.waitForTimeout(120); } }
+            ok((await pendingN(b.pg)) === 0 && !(await b.pg.isDisabled(SEL.make)), '⑮7 AI 없이도 카드를 다 처리하면 [파일 만들기] 켜짐');
             await b.ctx.close();
-            let clockOk = true; let c; try { c = await mkAi(null, true); } catch (e) { clockOk = false; }
-            if (clockOk) {
-                await setCash(c.pg, null); await c.pg.click(SEL.start); await idle(c.pg); await c.pg.waitForSelector(SEL.card, { timeout: 15000 });
-                c.ai.mode = 'wait'; c.ai.status = '대기'; await c.pg.click('#fo-ai-read'); await c.pg.waitForFunction(() => window.AkmFinalOrder.state.ai.running && window.AkmFinalOrder.state.ai.id, null, { timeout: 10000 });
+
+            // ── c. 창구가 안 집음(40초) ─────────────────────────────────────
+            let c; try { c = await mkAi('wait', true); } catch (e) { c = null; }
+            if (c) {
+                c.ai.status = '대기'; await setCash(c.pg, null); await c.pg.click(SEL.start); await busyIdle(c.pg); await c.pg.waitForSelector(SEL.card, { timeout: 15000 }); await aiRunning(c.pg);
                 await c.ctx.clock.fastForward(46000); await c.pg.waitForTimeout(600);
                 const waitMsg = await c.pg.evaluate(() => document.getElementById('fo-ai-msg').textContent);
                 ok(/아직 집지 않았어요/.test(waitMsg), '⑮7 40초 넘게 창구가 집지 않으면 안내(대표 PC가 꺼져 있으면 쓸 수 없음 · 그만두고 카드로)', waitMsg.slice(0, 60));

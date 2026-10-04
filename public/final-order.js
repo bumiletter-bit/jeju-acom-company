@@ -150,6 +150,7 @@
         if (st.busy || (st.ai && st.ai.running)) return; st.busy = true; $('fo-panel').classList.add('busy');
         LOCKS.forEach(id => { $(id).disabled = true; });   // 실행 중에는 입력을 잠근다 — 판정이 도는 사이 메모를 고치면 낡은 판정으로 파일이 만들어진다(워커2 재현 E)
         try { await fn(); } catch (err) { showError(err); } finally { st.busy = false; $('fo-panel').classList.remove('busy'); LOCKS.forEach(id => { $(id).disabled = id === 'fo-ship' && !st.cal; }); syncInput(); syncMake(); syncAi(); }
+        if (st.autoAi) { st.autoAi = false; if (st.judged && !st.stale) aiRead(true); }   // #520
     }
     // 실패한 채널 없이 계속: 주문은 받았는데 그 뒤 판정에서 실패한 채널이면 받은 주문도 비운다(안내 글 「결과 파일에 들어가지 않아요」와 맞게)
     async function skipFailed() {
@@ -285,6 +286,7 @@
         if (s.shipDate !== ship) throw new Error(`기준 발송일이 ${s.shipDate}로 잡혔어요. 다시 골라 주세요.`);
         st.cal = s.calendar; st.phase = 'review'; st.stale = false; st.judged = true;
         buildCards(); applyOrderDecisions(); if (st.ai.done) aiToCards(); else renderSummaryOnly();   // 결정을 건 뒤 상태로 카드를 한 번 더 만든다(현금파일 대조 문구가 결정 전 상태로 뜨지 않게)
+        st.autoAi = true;   // #520: 판정이 끝나면 AI 읽기를 버튼 없이 1회 시작한다(run() 이 끝난 뒤 — 읽을 메모가 앞서 읽은 것과 같으면 다시 읽지 않는다)
     }
     // 주문을 불러온 날이 지나면 멈춘다 — v2의 날짜 가드는 [다시 판정] 때마다 기준이 오늘로 다시 적혀, 전날 불러온 주문으로 파일이 만들어질 수 있다(워커2 재현 D)
     function dayGuard() { if (st.loadedOn && st.loadedOn !== kstToday()) throw new Error(`주문을 ${md(st.loadedOn)}에 불러왔어요. [주문 다시 불러오기]를 눌러 오늘 주문으로 다시 해 주세요.`); }
@@ -460,7 +462,9 @@
     const kindOf = cd => KIND[cd.id.split(':')[0]] || cd.type;
     function cardHtml(cd) {
         const v = st.dec.get(cd.id), done = v !== undefined;
-        const lines = cd.lines.map(([k, t]) => `<div class="fo-line"><span>${esc(k)}</span><p>${esc(t)}</p></div>`).join('');
+        // #520: AI가 입력칸을 채워 둔 열린 카드에는 그 사실과 이유를 한 줄로(사람이 눌러야 끝난다)
+        const aiNote = !done && st.ai.hint && st.ai.hint.has(cd.id) ? `<div class="fo-line fo-ai-note" data-ai-note="1"><span>AI</span><p>${esc(st.ai.hint.get(cd.id))}</p></div>` : '';
+        const lines = cd.lines.map(([k, t]) => `<div class="fo-line"><span>${esc(k)}</span><p>${esc(t)}</p></div>`).join('') + aiNote;
         let acts = '';
         if (cd.type === 'pick') {
             acts = `<label class="fo-pick">거래처 <select data-pick="${esc(cd.id)}"><option value="">고르기</option>${cd.picks.map(p => `<option value="${esc(p)}"${v === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>`;
@@ -533,7 +537,7 @@
     }
     function renderSummaryOnly() { buildCards(); applyOrderDecisions(); renderReview(); }
     function onCardClick(e) {
-        if (st.busy || !st.judged || st.ai.running) return;   // 판정이 실패한 뒤 남은 카드는 [다시 판정] 전까지 누를 수 없다
+        if (st.busy || !st.judged) return;   // 판정이 실패한 뒤 남은 카드는 [다시 판정] 전까지 누를 수 없다 · #520: AI가 읽는 동안에도 카드는 누를 수 있다(사람이 정한 카드는 AI가 덮지 않는다)
         const b = e.target.closest('button'); if (!b) return;
         if (b.classList.contains('fo-kind')) { st.kindFilter = b.dataset.kind || ''; return renderReview(); }
         if (b.dataset.choice) return decide(b.dataset.id, b.dataset.choice);
@@ -637,7 +641,7 @@
     // ── #518(대표 10/4 「AI가 배송메세지를 읽고 사람처럼 처리」) AI(창구)가 손님 메모를 읽는다 ─────────────────────────
     //   규칙이 확실히 처리한 것은 그대로 두고, 카드가 뜬 주문과 「기사에게 전하는 말만은 아닌」 메모를 창구에 보낸다(직원 = 콘솔 · 대표 = 대표 요금제 — 창구 대기 프로그램이 가른다).
     //   AI는 받는 분·주소·옵션·수량을 못 건드린다(메모 글과 구매자·수취인 이름·수량만 받는다). 돌아온 판정은 확실하다고 한 것만 카드 결정으로 넣고, 나머지는 입력칸에 미리 채워 사람이 확인한다.
-    function newAi() { return { id: 0, running: false, gen: 0, t0: 0, items: [], byKey: new Map(), memo: new Map(), memoAsk: new Map(), tag: new Map(), seen: new Set(), done: false, count: 0 }; }
+    function newAi() { return { id: 0, running: false, gen: 0, t0: 0, items: [], byKey: new Map(), memo: new Map(), memoAsk: new Map(), tag: new Map(), hint: new Map(), seen: new Set(), done: false, count: 0, sig: '' }; }
     st.ai = newAi();
     function aiOf(e) { return st.ai.byKey.get(keyOf(e)) || null; }
     function aiHold(e) { const r = aiOf(e); return !!r && r.ship !== 'go' && !e.individual && e.reqKind !== 'today' && !(e.excluded && !e.userTouched); }
@@ -657,6 +661,23 @@
         return { text: partsOk ? m : orig, safe: partsOk && !lost };
     }
     const AI_KIND = { order: 'order', split: 'split', 'sender-order': 'sender', 'memo-edit': 'memo' };
+    // #520: 그 주문 배송지의 동·호수 조각만(「115동402호」 「301호」 — 없으면 빈칸). 메모에 적힌 동·호수가 배송지와 다른지 AI가 견주게 한다. 주소 전체·전화는 보내지 않는다.
+    function unitOf(e) {
+        const a = String(e.conv['배송지'] || rawOf(e)['통합배송지'] || '');
+        const m = a.match(/(\d{1,4}|[A-Za-z])\s*동\s*(\d{1,4})\s*호/); if (m) return `${m[1]}동${m[2]}호`;
+        const h = a.match(/(\d{1,4})\s*호(?![가-힣])/); return h ? `${h[1]}호` : '';
+    }
+    // 메모에 동·호 숫자가 적혀 있으면 배송지 동·호수와 같아야 「확실」로 본다(AI가 확실하다고 답해도 화면에서 한 번 더 — 대표 10/4 「115동1202호 … 보내는사람」 · 배송지 115동402호 실사고).
+    //   배송지에서 동·호수를 못 읽었으면(빈칸) 견줄 수 없어 통과.
+    function unitOk(memo, unit) {
+        const m = String(memo || ''); if (!/\d\s*(?:동|호)/.test(m) || !unit) return true;
+        const u = unit.match(/^(?:(\w+)동)?(\d+)호$/); if (!u) return true;
+        const full = [...m.matchAll(/(\d{1,4}|[A-Za-z])\s*동\s*(\d{1,4})\s*호/g)].map(x => [x[1], x[2]]);
+        if (full.length) return full.every(([d, h]) => h === u[2] && (!u[1] || d === u[1]));
+        const hos = [...m.matchAll(/(\d{1,4})\s*호(?![가-힣])/g)].map(x => x[1]), dongs = [...m.matchAll(/(\d{1,4})\s*동(?![가-힣])/g)].map(x => x[1]);
+        return hos.every(h => h === u[2]) && dongs.every(d => !u[1] || d === u[1]);
+    }
+    const aiSig = groups => groups.map(g => [g.buyer, g.memo, g.qty, g.unit, g.keys.length].join('\u0001')).sort().join('\u0002');
     function aiCollect() {
         const s = S(), groups = new Map(), cardOf = new Map();
         st.cards.forEach(cd => { if (AI_KIND[cd.type]) keysOf(cd).forEach(k => { (cardOf.get(k) || cardOf.set(k, []).get(k)).push(cd); }); });
@@ -669,11 +690,13 @@
                 if (st.memoAuto && st.memoAuto.get(k)) return;        // 규칙이 이미 기본 문구로 정함
                 if (!AI_PLAIN_SKIP.test(memo)) return;                // 「문 앞에 놔주세요」처럼 기사에게 전하는 말뿐인 메모는 보내지 않는다(그대로 나감)
             }
-            const gk = buyerName(e) + '|' + (cds.length ? buyerTel(e) : '') + '|' + memo + '|' + (qtyOf(e) >= 2 ? 'm' : 's');
+            const unit = unitOf(e);
+            // 메모에 동·호수가 적혀 있으면 배송지 동·호수가 다른 주문끼리는 묶지 않는다(견줄 값이 다르다)
+            const gk = buyerName(e) + '|' + (cds.length ? buyerTel(e) : '') + '|' + memo + '|' + (qtyOf(e) >= 2 ? 'm' : 's') + (/\d\s*(?:동|호)/.test(memo) ? '|' + unit : '');
             let g = groups.get(gk);
             if (!g) {
                 const hint = [e.sender ? (e.sender.ambiguous ? '보내는이 애매' : '보내는이 자동: ' + e.sender.name) : '', e.flag === 'review' ? '날짜 확인필요' : ''].filter(Boolean).join(' · ');
-                g = { keys: [], memo, buyer: buyerName(e), recv: String(e.conv['수취인명'] || ''), qty: qtyOf(e), cards: [...new Set(cds.map(c => AI_KIND[c.type]))], hint };
+                g = { keys: [], memo, buyer: buyerName(e), recv: String(e.conv['수취인명'] || ''), qty: qtyOf(e), cards: [...new Set(cds.map(c => AI_KIND[c.type]))], hint, unit };
                 groups.set(gk, g);
             }
             g.keys.push(k);
@@ -685,18 +708,22 @@
         bar.hidden = !(st.phase === 'review' || st.phase === 'result');
         const btn = $('fo-ai-read'); btn.disabled = A.running || st.busy || !st.judged || !!st.stale; btn.textContent = A.done ? 'AI에게 다시 읽히기' : 'AI에게 메모 읽히기';
         $('fo-ai-stop').hidden = !A.running;
-        if (!A.running && A.done && !msg.classList.contains('err')) msg.textContent = `AI가 메모 ${A.count}건을 읽었어요. 확실한 것은 처리했고(카드에 「AI」 표시 · [바꾸기]로 고칠 수 있어요), 남은 카드만 확인해 주세요.`;
-        if (!A.running && !A.done && !msg.classList.contains('err')) msg.textContent = A.note || '애매한 메모를 AI가 사람처럼 읽어 카드에 채워 줘요(대표 PC의 창구가 켜져 있어야 해요).';
+        if (!A.running && A.done && !msg.classList.contains('err')) msg.textContent = `AI가 메모 ${A.count}건을 읽었어요. 확실한 것은 처리했고(카드에 「AI」 표시 · [바꾸기]로 고칠 수 있어요), 애매한 것은 입력칸에 채워 두었으니 남은 카드만 확인해 주세요.`;
+        if (!A.running && !A.done && !msg.classList.contains('err')) msg.textContent = A.note || '판정이 끝나면 애매한 메모를 AI가 한 번 더 읽어 카드에 채워 줘요(대표 PC의 창구가 켜져 있어야 해요).';
     }
-    async function aiRead() {
+    // auto = 판정 직후 자동 시작(#520). 읽을 메모가 앞서 읽은 것과 같으면 다시 읽지 않는다(판정을 다시 해도 앞선 결과를 그대로 쓴다).
+    async function aiRead(auto) {
         if (st.ai.running || st.busy || !st.judged || st.stale) return;
-        const groups = aiCollect(), msg = $('fo-ai-msg'); msg.classList.remove('err');
+        const groups = aiCollect(), msg = $('fo-ai-msg'), sig = aiSig(groups), prev = st.ai;
+        if (auto && (!groups.length || (prev.sig === sig && (prev.done || prev.failed)))) return;   // 같은 묶음이 실패했으면 자동으로는 다시 올리지 않는다(버튼으로)
+        msg.classList.remove('err');
         if (!groups.length) { msg.textContent = 'AI가 읽을 메모가 없어요.'; return; }
-        const gen = (st.ai.gen || 0) + 1; st.ai = Object.assign(newAi(), { running: true, gen, items: groups, t0: Date.now() });
+        // 앞서 읽은 결과는 새 결과가 올 때까지 그대로 둔다(AI 때문에 뜬 카드와 그 카드의 사람 결정이 읽는 동안 사라지지 않게)
+        st.ai = Object.assign(newAi(), { running: true, gen: (prev.gen || 0) + 1, items: groups, t0: Date.now(), sig, byKey: prev.byKey, memo: prev.memo, memoAsk: prev.memoAsk, tag: prev.tag, hint: prev.hint, seen: auto ? prev.seen : new Set(), done: prev.done, count: prev.count });   // 버튼으로 다시 읽히면 아직 안 정한 카드는 새 결과로 다시 채운다
         const A = st.ai; syncAi(); syncMake(); syncInput(); msg.textContent = `메모 ${groups.length}건을 창구에 올리는 중이에요`;
         try {
             const s = S();
-            const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', { shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, items: groups.map((g, i) => ({ i, memo: g.memo, buyer: g.buyer, recv: g.recv, qty: g.qty, cards: g.cards, hint: g.hint })) });
+            const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', { shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, items: groups.map((g, i) => ({ i, memo: g.memo, buyer: g.buyer, recv: g.recv, qty: g.qty, cards: g.cards, hint: g.hint, unit: g.unit })) });
             if (!r || !r.ok || !r.id) throw new Error((r && (r.message || r.error)) || '요청을 올리지 못했어요');
             A.id = r.id;
             for (;;) {
@@ -708,7 +735,7 @@
                 msg.textContent = (q && q.status === '대기' ? (sec > 40 ? '창구가 아직 집지 않았어요. 대표 PC가 꺼져 있으면 AI 읽기를 쓸 수 없어요([그만두기]를 누르고 카드로 확인해도 돼요)' : '창구에 올렸어요') : `AI가 메모 ${groups.length}건을 읽고 있어요`) + ` · ${sec}초`;
                 if (sec > 900) throw new Error('15분이 지나도 끝나지 않았어요');
             }
-        } catch (err) { msg.textContent = '⚠️ AI 읽기를 못 했어요: ' + (err && err.message ? err.message : err) + ' — 카드로 직접 확인해 주세요.'; msg.classList.add('err'); }
+        } catch (err) { A.failed = true; msg.textContent = '⚠️ AI 읽기를 못 했어요: ' + (err && err.message ? err.message : err) + ' — 카드로 직접 확인해 주세요.'; msg.classList.add('err'); }
         finally {
             const id = A.id; A.running = false; A.id = 0;
             if (id) { try { await window.api('/api/agent-office/final-order/memo-read/' + id, 'DELETE'); } catch (_) { } }   // 손님 글을 서버에 남기지 않는다
@@ -718,6 +745,7 @@
     function aiApply(data) {
         const A = st.ai, byI = new Map(((data && Array.isArray(data.items)) ? data.items : []).map(r => [Number(r && r.i), r]));
         let n = 0;
+        A.byKey = new Map();
         A.items.forEach((g, i) => {
             const r0 = byI.get(i); if (!r0) return; n++;
             const mt = aiMemoText(r0, g.memo), sd = r0.sender && String(r0.sender.name || '').trim() ? r0.sender : null;
@@ -733,31 +761,52 @@
     // AI 판정을 카드에 반영한다(판정을 다시 해 카드가 새로 생겨도 부른다). 사람이 이미 정했거나 [바꾸기]로 되돌린 카드는 건드리지 않는다.
     function aiToCards() {
         const A = st.ai; if (!A.done) return;
+        // 사람이 적다 만 글을 먼저 떠 둔다(AI가 읽는 동안에도 카드를 고칠 수 있다) · 입력 중이던 칸은 다시 그린 뒤 되찾는다
+        st.skipDraftSave = false; saveDrafts();
+        const act = document.activeElement, actCard = act && act.closest ? act.closest('#fo-cards .fo-card') : null;
+        const focus = actCard && act.dataset && act.dataset.f ? { id: actCard.dataset.id, f: act.dataset.f, a: act.selectionStart, b: act.selectionEnd } : null;
         A.memo = new Map(); A.memoAsk = new Map();
         buildCards();
         const carded = new Set(); st.cards.forEach(cd => { if (AI_KIND[cd.type]) keysOf(cd).forEach(k => carded.add(k)); });
-        S().merged.forEach(e => {   // 카드가 없는 주문의 배송메세지: 확실하면 바로, 아니면 「남길 글」을 채운 카드로
+        const byKeyE = new Map(S().merged.map(e => [keyOf(e), e]));
+        const memoRaw = e => String(e.conv['배송메세지'] || '').replace(/\r/g, '').trim();
+        const unitFine = k => { const e = byKeyE.get(k); return !e || unitOk(memoRaw(e), unitOf(e)); };
+        S().merged.forEach(e => {   // 카드가 없는 주문의 배송메세지: 확실하면 바로(동·호수가 배송지와 다르면 확실로 보지 않는다), 아니면 「남길 글」을 채운 카드로
             const k = keyOf(e), r = A.byKey.get(k); if (!r || carded.has(k) || r.ship !== 'go' || r.sender) return;
-            const orig = String(e.conv['배송메세지'] || '').replace(/\r/g, '').trim(); if (r.memoText === orig) return;
-            if (r.sure) A.memo.set(k, r.memoText); else A.memoAsk.set(k, r.memoText);
+            const orig = memoRaw(e); if (r.memoText === orig) return;
+            if (r.sure && unitFine(k)) A.memo.set(k, r.memoText); else A.memoAsk.set(k, r.memoText);
         });
         buildCards(); applyOrderDecisions();
+        const same = (a, b) => ['name', 'phone', 'addr', 'memo'].every(f => String((a && a[f]) || '') === String((b && b[f]) || ''));
         st.cards.forEach(cd => {
             if (!AI_KIND[cd.type] || st.dec.has(cd.id) || A.seen.has(cd.id)) return;
             const r = A.byKey.get(keysOf(cd)[0]); if (!r) return; A.seen.add(cd.id);
             const tag = v => { st.dec.set(cd.id, v); A.tag.set(cd.id, r.why || 'AI 판단'); };
+            // #520 절충(대표 10/4 밤 「AI가 확실한 건 알아서 처리 · 애매한 문구만 사람에게」): 보내는이·배송메세지 카드는 ①AI가 확실 ②안전장치 통과(r.sure 에 들어 있음) ③메모의 동·호수 = 배송지 일 때만 닫는다.
+            //   그 밖에는 입력칸만 채우고 이유를 적어 사람이 누르게 한다. 사람이 이미 고쳐 적은 칸은 닫지도 덮지도 않는다.
+            const unitBad = !keysOf(cd).every(unitFine), closable = r.sure && !unitBad;
+            const note = t => A.hint.set(cd.id, t + (r.why ? ' · ' + r.why : '') + (unitBad ? ` · 메모의 동·호수가 배송지(${unitOf(byKeyE.get(keysOf(cd)[0]))})와 달라요 — 확인해 주세요` : r.sure ? '' : ' · AI도 확실하지 않대요'));
             if (cd.type === 'order') { if (r.sure && r.ship === 'go') tag('send'); else if (r.sure && r.ship === 'hold') { tag('excl'); if (r.ship_date) A.tag.set(cd.id, (r.why || 'AI 판단') + ' · ' + md(r.ship_date) + ' 발송'); } }
             else if (cd.type === 'split') { if (r.sure && !r.split && r.ship === 'go') tag('all'); }
             else if (cd.type === 'sender-order') {
-                if (r.sure) tag(r.sender ? { use: true, name: r.sender.name, phone: r.sender.phone, addr: r.sender.addr, memo: r.memoText } : { use: false });
-                else if (r.sender) st.draft.set(cd.id, { name: r.sender.name, phone: r.sender.phone, addr: r.sender.addr, memo: r.memoText });
-            } else if (cd.type === 'memo-edit') { if (r.sure) tag({ use: true, memo: r.memoText }); else st.draft.set(cd.id, { memo: r.memoText }); }
+                const base = { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '', memo: cd.sender.memo || '' }, cur = st.draft.get(cd.id);
+                if (cur && !same(cur, base)) { note('AI가 읽은 값은 넣지 않았어요(직접 고쳐 적은 글이 있어요)'); return; }
+                if (closable) { st.draft.delete(cd.id); tag(r.sender ? { use: true, name: r.sender.name, phone: r.sender.phone, addr: r.sender.addr, memo: r.memoText } : { use: false }); }
+                else if (r.sender) { st.draft.set(cd.id, { name: r.sender.name, phone: r.sender.phone, addr: r.sender.addr, memo: r.memoText }); note('AI가 읽은 값이에요'); }
+                else note('AI는 보내는이를 바꿔 달라는 글이 아니라고 봤어요');
+            } else if (cd.type === 'memo-edit') {
+                const cur = st.draft.get(cd.id);
+                if (cur && String(cur.memo || '') !== String(cd.memo.rest || '') && String(cur.memo || '') !== r.memoText) { note('AI가 읽은 값은 넣지 않았어요(직접 고쳐 적은 글이 있어요)'); return; }
+                if (closable) { st.draft.delete(cd.id); tag({ use: true, memo: r.memoText }); }
+                else { st.draft.set(cd.id, { memo: r.memoText }); note('AI가 읽은 값이에요'); }
+            }
         });
         st.out = null; $('fo-result').hidden = true; st.skipDraftSave = true; renderSummaryOnly();
+        if (focus) { const el = [...document.querySelectorAll('#fo-cards .fo-card')].find(c => c.dataset.id === focus.id); const f = el && el.querySelector(`[data-f="${focus.f}"]`); if (f) { f.focus({ preventScroll: true }); try { f.setSelectionRange(focus.a, focus.b); } catch (_) { } } }
     }
     document.addEventListener('click', e => {
         const b = e.target.closest && e.target.closest('#fo-ai-read, #fo-ai-stop'); if (!b) return;
-        if (b.id === 'fo-ai-read') aiRead(); else { st.ai.running = false; st.ai.note = 'AI 읽기를 그만뒀어요. 카드로 직접 확인해 주세요.'; syncAi(); syncMake(); syncInput(); }
+        if (b.id === 'fo-ai-read') aiRead(false); else { st.ai.running = false; st.ai.failed = true; st.ai.note ='AI 읽기를 그만뒀어요. 카드로 직접 확인해 주세요.'; syncAi(); syncMake(); syncInput(); }
     });
 
     window.AkmFinalOrder = { open, close, state: st };

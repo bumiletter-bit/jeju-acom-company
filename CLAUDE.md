@@ -111,7 +111,7 @@
   - 분석 요령(재사용): 발주 파일 「송장번호」↔ 택배사 Sheet2 「운송장번호」로 연결 · 박스 출처는 Sheet2 「보내는분」 꼴(`!` = 현금 · 「자사몰)」·「쿠팡)」) · 구매자 대조는 입력삭제 건이 보내는분 전화를 바꾸므로 **총량 등식**으로 볼 것. 분석용 PII 임시 파일은 사용 후 삭제.
 - 🛒 **#459(대표 9/19): 「알림톡 발송 실패 — 수기 발주확인 필요」 오경보 교정** — v5.9.351(서버만). 알림톡은 정상 발송됐는데 자동 발주확인에 네이버가 **104443 「이미 발주확인 된 주문입니다」**(대표·직원이 먼저 누른 주문)로 답한 것을 실패로 세던 것 — 종전엔 105306만 already 처리. 공용 판정 `naverConfirmIsAlready`(105306·104443·문구 「이미 발주확인」)로 2곳(본선·소급/수동) 교체 · 기존 10행 already 정리(`apply-459-already-backfill.js`·audit) · `verify-459-confirm-already.js` 12/12. **대표 확인: 전에도 발주확인을 직접 누른 것이 맞음 — 이상 없음.** 🔵 이 텔레그램 문구(`confirmneed`)는 「발송 실패 + 발주확인 실패」 합산이라 문구만으론 어느 쪽인지 모른다 → 원인은 `kakao_notify_log`의 status(발송)와 confirm_status/confirm_error(발주확인)를 나눠 볼 것. 🔴 **시각 오보고 재범(9/19)**: 이 조사에서 naive UTC 컬럼을 JS에서 +9h 해 17:55 주문을 「08:55」로 보고하고 없는 「아침 발주 시간대」 설명까지 붙임 → 대표 지적으로 정정. KST는 SQL에서 `col + interval '9 hours'`로만(메모리 jeju-db-time-calc 갱신).
 
-**현행 버전: 회사 v5.9.411 / app.js v=398 · ao-desk.js v=26 · final-order.js v=6 · final-order-core.js v=4 · invoice-sender.js v=3 · ao-desk.css v=22 · theme.css v=14 · styles.css v=124 · theme.css v=13 · styles.css v=123(#469 에이전트 오피스 → 클코 창구) · invoice-v2.js v=25 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/23 배포). ⚠️ **다음 지시 번호 = #520부터** (#405~#469 = 8/24~9/29 세션 · #491~#497 = 10/1).
+**현행 버전: 회사 v5.9.412 / app.js v=398 · ao-desk.js v=26 · final-order.js v=7 · final-order-core.js v=4 · invoice-sender.js v=3 · ao-desk.css v=22 · theme.css v=14 · styles.css v=124 · theme.css v=13 · styles.css v=123(#469 에이전트 오피스 → 클코 창구) · invoice-v2.js v=25 · invoice-sender.js v=2 · 주문정리기 번들 extract v=3 · organizer v=4** (9/23 배포). ⚠️ **다음 지시 번호 = #521부터** (#405~#469 = 8/24~9/29 세션 · #491~#497 = 10/1).
 
 - 👀📏 **#457(대표 9/19): 송장변환 v2 — 붙여넣기 칸 줄별 판정 표시 + 화면 높이 되먹임 교정** — v5.9.350(`invoice-v2.js/.html`만).
   - **줄별 판정**: `parseLines`가 줄마다 `srcLine`(칸의 몇 번째 줄)을 기억 → `mountEditor(ctx)`가 textarea를 `.ivt-ed`(왼쪽 `.ivt-gut` 표시 칸 + 입력 칸)로 감싸고 `renderGutter(ctx)`(= `renderResults` 첫 줄에서 호출)가 줄마다 `lineStatus` 표시. 분류: ok 확인완료 n건 / warn 확인필요 w/n건(past·nodate·partial)·건수 다름(비고 n건 ≠ 실제)·형식 확인 / none 주문 없음 / wait 불러오기 전. **줄 높이 24px·padding 10px를 입력 칸과 동일하게**(정렬의 전부) + scroll 동기 + 칸 높이 = 줄 수(5~14줄). 요약 칩 = [저장하기] 옆 `.ivt-linebar`(문제가 앞) — 클릭 = `jumpLine`(그 상태의 다음 줄을 칸에서 선택·가운데 스크롤·표시 칸 강조). 입력이 바뀌면 `.stale`(흐림+다시 저장 안내). 종전 `.sum` 문구는 `display:none`으로 DOM 유지(verify-452가 textContent로 읽음 — 지우지 말 것). ⚠️ 칩 집계는 「건수 다름」을 확인필요로 세므로 숨긴 `.sum`과 숫자가 다를 수 있다(의도 — 문제 찾기 우선).
@@ -175,6 +175,16 @@
 - 토큰 = theme.css :root --page-bg·--card-border·--shadow-card·--text-on-page(디자인_가이드 표에 추가). 🔵 --bg(#F5F6F8)는 카드 안쪽 옅은 칸에서도 쓰여 바꾸지 않고 바탕 전용 토큰을 따로 뒀다 — 앞으로 바탕색은 --page-bg만.
 - 🔴 --text-mid(#667085)는 새 바탕 위 4.18:1(AA 미달) → 바탕에 바로 놓이는 글자는 --text-on-page. 카드 안 글자는 그대로.
 - 390px 가로 넘침(정산관리 637 · 품목별 금액 446 · 문의 관리 473)은 시공 전과 동일한 기존 문제(별도 지시 대상).
+
+### 🧭 #520 최종발주의 구조 = 규칙은 확실한 것만 → AI가 읽고 확실한 건 처리 → 애매한 것만 사람이 고치는 칸 (대표 확정 10/4 밤 · v5.9.412 · 워커1 시공)
+
+- **대표 원문 요지**: 「1차로 확실한 것 아니면 안 잡혀야 한다 · 애써 잡으려던 규칙은 검토해 뺀다 · AI가 한 번 더 읽고 확실히 처리할 건 처리, 애매한 문구만 남긴다 · 마무리 책임은 사람 · 확인이 너무 많아지면 의미가 없다 · 수정은 최종발주 화면에서 바로 하고 파일 만들기 · 거래처별 파일·스토어 양식·뒤 날짜 요청 건 빠지는 것은 지금과 같게 · 주소·수량·이름 칸 무회귀」.
+- 🔴 총괄 오판 1회: 김현정 건 하나를 보고 「보내는이·배송메세지는 AI가 절대 안 닫음」으로 잡았다가 대표가 「확인이 너무 많아진다」고 바로잡음(그 안이면 카드 99 → 약 95). **한 건의 사고로 전체를 사람 확인으로 돌리지 말 것 — 그 건이 왜 「확실」로 읽혔는지(이번엔 AI가 배송지 동호수를 못 봄)를 막는다.**
+- **지금 동작**: 판정 끝 → AI 자동 읽기 1회(`st.autoAi` → `aiRead(true)`) → order/split = sure 면 미리 누름 · sender-order/memo-edit = sure + `aiMemoText` 통과 + `unitOk(memo, unit)` 일 때만 닫음, 아니면 입력칸 미리 채움 + `[data-ai-note]` 줄 · 카드 없는 주문의 배송메세지 = 같은 조건이면 바로 적용(A.memo), 아니면 memo-edit 카드. 사람이 정한 카드(`st.dec`)·고쳐 적은 칸(draft)은 안 덮는다. `unitOf(e)` = 배송지의 「N동N호」/「N호」만.
+- **규칙 감사 결과(뺀 것 없음)**: 사람 확인 없이 값을 정하는 규칙 = v2 자동 제외 · v2 자동 보내는이 · #516 자동 기본 문구 · sameDayOnly · #510 카드 생략 · prepLines · (AI 닫기). 실측상 뺄 만큼 틀리는 것이 없다. 카드만 띄우는 것(DAYCHAR·splitSignal·nameOnly·senderCue·오타)과 입력칸만 채우는 것(senderHint·memoRest 남길 글)은 사람이 보므로 그대로. 손댈 여지 = 명절 마지막 발송일의 뒤 날짜 자동 제외(달력 건) · 2/12 자동 기본 문구 2건.
+- 🔴 **자동 시작 함정**: 최종발주를 로컬 서버로 돌리는 스크립트는 `**/final-order/memo-read**` 를 가로챌 것(verify-508-ui 는 fakeApis 에 기본 차단). 안 막으면 실DB에 요청 행이 생기고 대표 PC 대기 프로그램이 실제 AI를 돌린다.
+- 워커 구분(10/4): 두 워커 창 이름이 둘 다 claude-94 — 워커1(Opus) = 파이프 주소 cc-msg-3032… · 워커2(Fable) = cc-msg-4bb8…. 대표 지시 = Fable 워커에게는 맡기지 않는다.
+- ✅ verify-508-ui 212 · 508-core 170 · 453 111 · 450 78 · 452-invoice-test 81 · 설·추석 재현 전과 같음.
 
 ### 📅 #519 범위로 적은 도착 요청 = 첫 날짜 하루 전 발송 (대표 정답 10/4 밤 · v5.9.411 · shipping-schedule.js만)
 
