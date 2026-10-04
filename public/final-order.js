@@ -480,7 +480,7 @@
             const memoBox = ord ? `<label class="wide">택배사 양식에 들어갈 배송메세지(보내는이 부탁 글은 지우고 남길 것만 · 비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.sender.memo || '' : d.memo)}</textarea></label>` : '';
             const memoDone = ord && v && v.use && typeof v.memo === 'string' && v.memo !== (cd.sender.orig || '') ? ` · 배송메세지 「${esc(v.memo || '기본 문구')}」` : '';
             acts = done ? `<span class="fo-done">${v.use ? `보내는이 ${esc(/드림$/.test(v.name) ? v.name : v.name + ' 드림')}${v.phone ? ' · ' + esc(v.phone) : ''}${v.addr ? ' · 주소 ' + esc(v.addr) : ''}${memoDone}` : ord ? '안 바꿈' : '이 줄은 넣지 않음'}${st.ai.tag.has(cd.id) ? ' · AI: ' + esc(st.ai.tag.get(cd.id)) : ''}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
-                : `<div class="fo-edit"><label>보내는 분 이름(「드림」은 자동으로 붙어요)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label>${memoBox}</div>
+                : `<div class="fo-edit"><label>보내는 분 이름(「드림」 자동)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label>${memoBox}</div>
                    <button type="button" class="fo-btn sm primary" data-sender="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-sender="skip" data-fo-act="${ord ? 'keep' : 'skip'}" data-id="${esc(cd.id)}">${ord ? '안 바꿈' : '넣지 않음'}</button>`;
         } else if (done) {
             const lab = ((cd.choices.find(c => c[0] === v) || [])[1] || '확인함') + (st.ai.tag.has(cd.id) ? ' · AI: ' + st.ai.tag.get(cd.id) : '');
@@ -686,16 +686,17 @@
             if (e.excluded && !e.userTouched) return;                 // v2가 스스로 뺀 주문(날짜가 분명)
             if (e.reqKind === 'today' && !e.sender) return;           // 직원 줄로 그날 발송 확정(메모는 이미 비움)
             const k = keyOf(e), cds = cardOf.get(k) || [];
+            const sized = /사이즈로!\s*$/.test(String(e.conv['옵션정보'] || ''));   // #523: v2가 메모의 사이즈 요청을 옵션에 붙인 주문(「…2S사이즈로!」) — 메모에 남은 사이즈 글을 AI가 정리하게 보낸다
             if (!cds.length) {
                 if (st.memoAuto && st.memoAuto.get(k)) return;        // 규칙이 이미 기본 문구로 정함
-                if (!AI_PLAIN_SKIP.test(memo)) return;                // 「문 앞에 놔주세요」처럼 기사에게 전하는 말뿐인 메모는 보내지 않는다(그대로 나감)
+                if (!AI_PLAIN_SKIP.test(memo) && !sized) return;                // 「문 앞에 놔주세요」처럼 기사에게 전하는 말뿐인 메모는 보내지 않는다(그대로 나감)
             }
             const unit = unitOf(e);
             // 메모에 동·호수가 적혀 있으면 배송지 동·호수가 다른 주문끼리는 묶지 않는다(견줄 값이 다르다)
             const gk = buyerName(e) + '|' + (cds.length ? buyerTel(e) : '') + '|' + memo + '|' + (qtyOf(e) >= 2 ? 'm' : 's') + (/\d\s*(?:동|호)/.test(memo) ? '|' + unit : '');
             let g = groups.get(gk);
             if (!g) {
-                const hint = [e.sender ? (e.sender.ambiguous ? '보내는이 애매' : '보내는이 자동: ' + e.sender.name) : '', e.flag === 'review' ? '날짜 확인필요' : ''].filter(Boolean).join(' · ');
+                const hint = [e.sender ? (e.sender.ambiguous ? '보내는이 애매' : '보내는이 자동: ' + e.sender.name) : '', e.flag === 'review' ? '날짜 확인필요' : '', sized ? '사이즈 요청은 옵션에 반영됨' : ''].filter(Boolean).join(' · ');
                 g = { keys: [], memo, buyer: buyerName(e), recv: String(e.conv['수취인명'] || ''), qty: qtyOf(e), cards: [...new Set(cds.map(c => AI_KIND[c.type]))], hint, unit };
                 groups.set(gk, g);
             }
