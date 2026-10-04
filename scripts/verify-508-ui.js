@@ -394,6 +394,7 @@ async function resolveCards(pg, type) {
 
         // ⑧ 결함 검토 뒤 보탠 흐름 ───────────────────────────────────────────────
         const fState = (pg2, nm) => pg2.evaluate(([sel, nm]) => { const i = document.querySelector(sel).contentWindow.__ivt; const e = i.S.merged.find(x => x.conv['수취인명'] === nm); return e ? { excluded: !!e.excluded, kind: e.reqKind || null, individual: !!e.individual } : null; }, [SEL.hidden, nm]);
+        const cardOf2 = (pg2, text) => pg2.locator(`${SEL.card}[data-fo-card="${CARD.senderMemo}"][data-fo-done]`, { hasText: text }).first();   // 처리 끝난 손님 보내는이 카드
         const cardOf = (pg2, type, text) => pg2.locator(`${SEL.pending}[data-fo-card="${type}"]`, { hasText: text }).first();
         const saveFile = async (pg2, part) => { const nm = (await pg2.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save)).find(x => x.includes(part)); const [d] = await Promise.all([pg2.waitForEvent('download', { timeout: 20000 }), pg2.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 'x-' + Date.now() + '.xlsx'); await d.saveAs(f); return XLSX.utils.sheet_to_json(XLSX.readFile(f).Sheets.Sheet1, { header: 1, defval: '' }).slice(1).map(r => r[3]); };
         // ⑧-e·a·c 실행 중 입력 잠금 · 판정 실패와 복구 · 「제외」로 정한 주문을 메모무시 줄로 되살리기
@@ -462,6 +463,50 @@ async function resolveCards(pg, type) {
                 ok(hasReload && hitsB.naver === naverBefore + 1 && (await phaseOf(pb)) === 'review' && !/불러왔어요/.test(mr), '⑧-d [주문 다시 불러오기](#fo-reload) → 3채널 재조회 뒤 판정 단계로 진행', `네이버 호출 ${naverBefore} → ${hitsB.naver} · ${await phaseOf(pb)} · ${mr.trim().slice(0, 60)}`);
             } else note('⑧-d 브라우저 시계 바꾸기 불가(이 Playwright 판에 clock 없음) — 미검증');
             ok(errB.length === 0, '⑧-b·d 오류 0', errB.join(' | ')); await ctxB.close();
+        }
+
+        // ⑨ #509 손님 메모가 애매한 보내는이 카드에서 바로 적어 넣기 ─────────────────────
+        console.log('\n⑨ #509 보내는이 카드(손님 메모 애매)에서 바로 적기');
+        {
+            const base = fx.naver.find(r => r['수취인명'] === '받는21');
+            const mk9 = (n, buyer, memo) => ({ ...base, '구매자명': buyer, '구매자연락처': '010-7000-19' + n, '수취인명': '받는' + n, '수취인연락처1': '010-7100-19' + n, '통합배송지': '서울특별시 가짜구 시험로 ' + n, '배송메세지': memo, _pid: '20990101009' + n, _x: { ...base._x, productOrderId: '20990101009' + n, orderId: '209901019' + n } });
+            const M91 = '보내는이: 홍길동 즐거운 명절 보내세요', M92 = '보내는 사람은 서울시 가짜구 김구매 으로 표기', M94 = '배송 전에 미리 연락주세요', M96 = '퇴근 이후 배송 부탁드립니다';
+            const fx9 = { ...fx, naver: [mk9(91, '시험구매91', M91), mk9(92, '김구매', M92), mk9(93, '시험구매93', ''),
+                mk9(94, '시험구매94', M94), mk9(95, '시험구매95', '10일까지 보내주세요'), mk9(96, '시험구매96', M96)], cafe24: [], coupang: [], canceledCoupang: [] };
+            const a = await openFO(br, fx9, {});
+            await setCash(a.pg, null); await a.pg.click(SEL.start); await idle(a.pg); await a.pg.waitForSelector(SEL.card, { timeout: 15000 });
+            // #510 「전에·이전·이후·까지」만 걸린 흔한 손님 메모는 주문 확인 카드가 아니다(v2 판정은 그대로)
+            const f10 = await a.pg.evaluate(sel => { const i = document.querySelector(sel).contentWindow.__ivt; const g = nm => { const e = i.S.merged.find(x => x.conv['수취인명'] === nm); return { flag: e.flag || null, excl: !!e.excluded, parse: !!e.parse }; }; return { 94: g('받는94'), 95: g('받는95'), 96: g('받는96') }; }, SEL.hidden);
+            const o10 = { 94: await cardOf(a.pg, CARD.order, '받는94').count(), 95: await cardOf(a.pg, CARD.order, '받는95').count(), 96: await cardOf(a.pg, CARD.order, '받는96').count(), all: await pend(a.pg, CARD.order) };
+            ok(o10[94] === 0 && o10[96] === 0 && !f10[94].excl && !f10[96].excl, '⑩ #510 「배송 전에 미리 연락주세요」·「퇴근 이후 배송 부탁」 = 주문 확인 카드 없음 · 제외도 아님', JSON.stringify({ 카드: o10, v2: f10 }));
+            ok(o10[95] === 1 && o10.all === 1, '⑩ #510 「10일까지 보내주세요」(날짜 표현) = 주문 확인 카드 뜸 · 주문 카드는 이 1장뿐', JSON.stringify(o10));
+            note('⑩ 참고: 같은 주문의 v2 판정(flag)', JSON.stringify(f10));
+            const c91 = () => cardOf(a.pg, CARD.senderMemo, '받는91'), c92 = () => cardOf(a.pg, CARD.senderMemo, '받는92');
+            const pre = { n: await pend(a.pg, CARD.senderMemo), v91: await c91().locator('[data-f="name"]').inputValue(), v92: await c92().locator('[data-f="name"]').inputValue(), use: await c91().locator('[data-fo-act="use"]').count(), keep: await c91().locator('[data-fo-act="keep"]').count() };
+            ok(pre.n === 2 && pre.use === 1 && pre.keep === 1, '⑨ 손님 보내는이 애매 카드 2장 · 입력칸 + [이대로 넣기]·[안 바꿈]', JSON.stringify(pre));
+            ok(pre.v92 === '김구매' && pre.v91 === '', '⑨ 이름 칸 미리 채움: 메모에 구매자 이름이 있으면 그 이름 · 없으면 빈칸', `받는92 「${pre.v92}」 · 받는91 「${pre.v91}」`);
+            await c91().locator('[data-f="name"]').fill('홍길동'); await c91().locator('[data-f="phone"]').fill('010-5555-0091'); await c91().locator('[data-f="addr"]').fill('서울 가짜구 보내는로 91');
+            await c91().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            await c92().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            ok((await pend(a.pg, CARD.senderMemo)) === 0, '⑨ [이대로 넣기] 2건 → 카드 처리');
+            await a.pg.fill(SEL.memo, `${FX.usd(ship)}\t010-7999-0000\t\t네이버`); await a.pg.click(SEL.rejudge); await idle(a.pg);
+            ok((await pend(a.pg, CARD.senderMemo)) === 0 && a.hits.naver === 1, '⑨ [다시 판정] 뒤에도 적어 넣은 결정 유지(카드 다시 안 뜸 · 주문 재조회 없음)', JSON.stringify(await cardCount(a.pg)));
+            await resolveAll(a.pg);
+            const grab9 = async () => { await a.pg.click(SEL.make); await idle(a.pg); await a.pg.waitForSelector(SEL.save, { timeout: 15000 }); const nm = (await a.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save)).find(x => x.includes('(효돈)')); const [d] = await Promise.all([a.pg.waitForEvent('download', { timeout: 20000 }), a.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's9-' + Date.now() + '.xlsx'); await d.saveAs(f); const s1 = XLSX.readFile(f, { cellStyles: true }).Sheets.Sheet1; const rows = XLSX.utils.sheet_to_json(s1, { header: 1, defval: '' }); const at = nm2 => { const i = rows.findIndex(r => r[3] === nm2); return i < 0 ? null : { r: rows[i], f: c => fillOf(s1[c + (i + 1)]) }; }; return at; };
+            let at = await grab9(); const r91 = at('받는91'), r92 = at('받는92'), r93 = at('받는93');
+            ok(!!r91 && r91.r[0] === '홍길동 드림' && String(r91.r[1]) === '010-5555-0091' && r91.r[12] === '서울 가짜구 보내는로 91' && r91.f('A') === 'DDEBF7' && r91.f('B') === 'DDEBF7' && r91.f('M') === 'DDEBF7', '⑨ 이름·번호·주소를 적은 주문: A 「이름 드림」 · B 번호 · M 주소 + 세 칸 연파랑', r91 && JSON.stringify([r91.r[0], r91.r[1], r91.r[12], r91.f('A'), r91.f('B'), r91.f('M')]));
+            ok(!!r92 && r92.r[0] === '김구매 드림' && r92.f('A') === 'DDEBF7' && String(r92.r[1]) === '010-7000-1992' && r92.f('B') !== 'DDEBF7' && String(r92.r[12]) === '', '⑨ 이름만 넣은 주문: A만 바뀜 · B(구매자 번호)·M 그대로', r92 && JSON.stringify([r92.r[0], r92.r[1], r92.r[12], r92.f('B')]));
+            ok(!!r91 && r91.r[9] === M91 && r91.f('J') === 'FFF2CC' && !!r92 && r92.r[9] === M92, '⑨ 배송메세지(J)는 손님 원문 그대로 · v2 연노랑 표시 유지', r91 && `${r91.f('J')} · ${String(r91.r[9]).slice(0, 14)}`);
+            ok(!!r93 && /\(제주아꼼이네\)$/.test(r93.r[0]) && r93.f('A') !== 'DDEBF7', '⑨ 다른 주문은 보내는사람 무변경');
+            const r94 = at('받는94'), r96 = at('받는96');
+            ok(!!r94 && r94.r[9] === M94 && !!r96 && r96.r[9] === M96, '⑩ #510 카드 없이 넘어간 두 주문이 택배사 파일에 있음 · 배송메세지 원문 그대로', r94 && r96 && `${r94.r[9]} | ${r96.r[9]}`);
+            // 되돌려 [안 바꿈]
+            await cardOf2(a.pg, '받는92').locator('[data-undo]').click(); await a.pg.waitForTimeout(200);
+            ok((await pend(a.pg, CARD.senderMemo)) === 1, '⑨ [바꾸기] → 카드가 다시 열림', JSON.stringify((await cardCount(a.pg))[CARD.senderMemo]));
+            await c92().locator('[data-fo-act="keep"]').click(); await a.pg.waitForTimeout(150);
+            at = await grab9(); const k92 = at('받는92'), k91 = at('받는91');
+            ok(!!k92 && k92.r[0] === '김구매(제주아꼼이네)' && k92.f('A') !== 'DDEBF7' && !!k91 && k91.r[0] === '홍길동 드림', '⑨ [안 바꿈]으로 되돌린 주문 = 보내는사람 원래 값 · 다른 주문의 결정은 그대로', k92 && k92.r[0]);
+            ok(a.errs.length === 0, '⑨ 오류 0', a.errs.join(' | ')); await a.ctx.close();
         }
         code = fail ? 1 : 0;
     } catch (e) { if (e.message !== 'STOP') { console.error('ERR', e.stack || e.message); code = 1; } }

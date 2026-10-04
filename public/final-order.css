@@ -98,7 +98,7 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 .fo-card-top b { font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; min-width: 0; }
 .fo-tag { flex: none; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: #FEF6E7; color: #B54708; }
 .fo-tag[data-k="cash"], .fo-tag[data-k="block"] { background: #FEECEB; color: var(--f-err); }
-.fo-tag[data-k="pick"], .fo-tag[data-k="sender"], .fo-tag[data-k="sender-edit"] { background: var(--f-accent-soft); color: var(--f-accent); }
+.fo-tag[data-k="pick"], .fo-tag[data-k="sender"], .fo-tag[data-k="sender-edit"], .fo-tag[data-k="sender-order"] { background: var(--f-accent-soft); color: var(--f-accent); }
 .fo-card[data-state="done"] .fo-tag { background: #E7F8EF; color: #067647; }
 .fo-card-body { display: flex; flex-direction: column; gap: 6px; }
 .fo-line { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; font-size: 13px; line-height: 1.55; }

@@ -294,7 +294,11 @@
             if (d && d.use && d.name) list.push({ ...sd, name: d.name, phone: d.phone || '', addr: d.addr || '', ambiguous: false });
         });
         const orders = S().merged.map(e => ({ key: keyOf(e), digits: buyerTel(e), ids: idsOf(e), recipient: String(e.conv['수취인명'] || '').trim() }));
-        return core().applySenders(list, orders);
+        const res = core().applySenders(list, orders);
+        res.line = new Set(res.byKey.keys());   // 메모 줄로 지정한 주문(이 주문은 보내는이 카드를 띄우지 않는다)
+        // #509: 손님 메모가 애매해 v2가 안 바꾼 주문 — 카드에서 사람이 직접 적어 넣은 보내는이(메모 줄 지정이 있으면 그쪽이 우선)
+        S().merged.forEach(e => { const k = keyOf(e), d = st.dec.get('samb:' + k); if (d && d.use && d.name && !res.byKey.has(k)) res.byKey.set(k, { name: d.name, phone: d.phone || null, addr: d.addr || null }); });
+        return res;
     }
     function reasonOf(e) {
         if (e.req) {
@@ -314,8 +318,12 @@
         const memoOf = e => String(e.conv['배송메세지'] || '').trim();
         const sm = senderMap();
         // ① 주문 확인(v2 확인필요)
+        // #510(대표 10/4 실물): 「배송 전에 미리 연락주세요」처럼 날짜가 없는 흔한 메모는 카드로 띄우지 않는다(그대로 발송 · 메모 글자 그대로).
+        //   v2는 「전에·이전·이후·까지」만 있어도 확인필요로 표시한다(송장변환 화면은 그대로) — 여기서는 서버가 날짜를 못 읽었고(parse 없음) 날짜·요일·미루기 표현도 없으면 카드에서 뺀다.
+        const DATEISH = /다음\s*주|다음\s*날|내일|모레|글피|\d+\s*일|\d+\s*월|\d+\s*\/\s*\d+|\d{1,2}\s*\.\s*\d{1,2}|월요|화요|수요|목요|금요|토요|일요|주말|평일|다다음|이번\s*주|일주일|추석\s*전|명절\s*전|연휴\s*전|늦게|천천히|나중/;
         s.merged.forEach(e => {
             if (e.individual || e.flag !== 'review' || e.reqKind === 'today') return;
+            if (!e.req && !e.parse && !DATEISH.test(memoOf(e))) return;
             cards.push({ id: 'ord:' + keyOf(e), type: 'order', tag: '주문 확인', title: orderLine(e), lines: [['손님 메모', memoOf(e) || '(없음)'], ['이유', reasonOf(e)]], choices: [['send', '오늘 발송', 1], ['excl', '제외']] });
         });
         // ② 나눠 보내기 신호(손님 메모)
@@ -327,8 +335,11 @@
         });
         // ③ 손님 메모의 보내는이 — 애매해서 v2가 안 바꾼 건(직원 줄로 지정한 주문은 제외)
         s.merged.forEach(e => {
-            if (e.individual || !(e.sender && e.sender.ambiguous) || sm.byKey.has(keyOf(e))) return;
-            cards.push({ id: 'samb:' + keyOf(e), type: 'sender', tag: '보내는이', title: orderLine(e), lines: [['손님 메모', memoOf(e)], ['처리', '보내는이를 바꾸려면 메모에 「번호 보내는이 이름」 줄을 넣고 [다시 판정]을 눌러 주세요.']], choices: [['keep', '안 바꿈', 1]] });
+            if (e.individual || !(e.sender && e.sender.ambiguous) || sm.line.has(keyOf(e))) return;
+            // #509(대표 10/4 실물): 손님 메모는 우리가 못 고친다 → 이 카드에서 보내는 분을 바로 적어 넣는다. 이름 칸은 메모에 구매자 이름이 있으면 그 이름으로 미리 채움(사람이 확인·수정)
+            const buyer = buyerName(e), memo = memoOf(e);
+            const guess = (e.sender.name && String(e.sender.name).trim()) || (buyer && memo.replace(/\s/g, '').includes(buyer.replace(/\s/g, '')) ? buyer : '');
+            cards.push({ id: 'samb:' + keyOf(e), type: 'sender-order', tag: '보내는이', title: orderLine(e), lines: [['손님 메모', memo], ['처리', '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.']], sender: { name: guess, phone: e.sender.phone || '', addr: '' } });
         });
         // ④ 메모 줄
         (s.allLines || []).forEach(l => {
@@ -392,18 +403,19 @@
         let acts = '';
         if (cd.type === 'pick') {
             acts = `<label class="fo-pick">거래처 <select data-pick="${esc(cd.id)}"><option value="">고르기</option>${cd.picks.map(p => `<option value="${esc(p)}"${v === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>`;
-        } else if (cd.type === 'sender-edit') {
+        } else if (cd.type === 'sender-edit' || cd.type === 'sender-order') {
+            const ord = cd.type === 'sender-order';   // 주문 카드(손님 메모 애매) = [안 바꿈] · 메모 줄 카드 = [넣지 않음]
             const d = v || { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '' };
-            acts = done ? `<span class="fo-done">${v.use ? `보내는이 ${esc(v.name)} 드림${v.phone ? ' · ' + esc(v.phone) : ''}${v.addr ? ' · 주소 ' + esc(v.addr) : ''}` : '이 줄은 넣지 않음'}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
-                : `<div class="fo-edit"><label>이름<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label></div>
-                   <button type="button" class="fo-btn sm primary" data-sender="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-sender="skip" data-fo-act="skip" data-id="${esc(cd.id)}">넣지 않음</button>`;
+            acts = done ? `<span class="fo-done">${v.use ? `보내는이 ${esc(/드림$/.test(v.name) ? v.name : v.name + ' 드림')}${v.phone ? ' · ' + esc(v.phone) : ''}${v.addr ? ' · 주소 ' + esc(v.addr) : ''}` : ord ? '안 바꿈' : '이 줄은 넣지 않음'}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
+                : `<div class="fo-edit"><label>보내는 분 이름(「드림」은 자동으로 붙어요)<input type="text" data-f="name" value="${esc(d.name)}" maxlength="20"></label><label>번호(바꿀 때만)<input type="text" data-f="phone" value="${esc(d.phone)}" inputmode="tel" maxlength="14"></label><label class="wide">보내는이 주소(바꿀 때만 · M칸에 그대로)<input type="text" data-f="addr" value="${esc(d.addr)}" maxlength="120"></label></div>
+                   <button type="button" class="fo-btn sm primary" data-sender="use" data-fo-act="use" data-id="${esc(cd.id)}">이대로 넣기</button><button type="button" class="fo-btn sm" data-sender="skip" data-fo-act="${ord ? 'keep' : 'skip'}" data-id="${esc(cd.id)}">${ord ? '안 바꿈' : '넣지 않음'}</button>`;
         } else if (done) {
             const lab = (cd.choices.find(c => c[0] === v) || [])[1] || '확인함';
             acts = `<span class="fo-done">${esc(lab)}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`;
         } else {
             acts = cd.choices.map(([val, lab, pri]) => `<button type="button" class="fo-btn sm${pri ? ' primary' : ''}" data-choice="${esc(val)}" data-fo-act="${esc(val)}" data-id="${esc(cd.id)}">${esc(lab)}</button>`).join('') || '<span class="fo-wait">고친 뒤 [다시 판정]을 눌러야 넘어가요</span>';
         }
-        return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''} data-type="${cd.type}" data-state="${done ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span><b>${esc(cd.title)}</b></div>${done && cd.type !== 'pick' && cd.type !== 'sender-edit' ? '' : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div></article>`;
+        return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''} data-type="${cd.type}" data-state="${done ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span><b>${esc(cd.title)}</b></div>${done && cd.type !== 'pick' && cd.type !== 'sender-edit' && cd.type !== 'sender-order' ? '' : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div></article>`;
     }
     function renderReview() {
         const s = S(), m = s.merged;
