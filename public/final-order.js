@@ -975,14 +975,19 @@
     const meText = () => sq(st.chat.log.filter(m => m.who === 'me').map(m => m.text).join('\n'));
     // 정리 파일 줄로 읽히는 줄(휴대폰 번호 · 상품주문번호 · 자사몰 주문번호가 든 줄)은 규칙이 처리한다 — 메모 칸에 쌓고 다시 판정
     const LINEISH = /01\d[-.\s]?\d{3,4}[-.\s]?\d{4}|\d{16,}|\d{8}-\d{7}/;
+    const CHAT_TALK = /해\s*줘|해\s*주세요|해\s*줄래|바꿔|변경해|수정|확인|표시|맞는지|맞아|됐어|되었|있어\s*\??|인지|빼\s*줘|넣어\s*줘|붙여|떼\s*줘|지워|알려|\d+\s*과\s*로|사이즈로|\?/;
+    const CHAT_PHONE = /01\d[-.\s]?\d{3,4}[-.\s]?\d{4}/g;
+    const chatMask = s => String(s || '').replace(CHAT_PHONE, m => '(전화 끝 ' + m.replace(/\D/g, '').slice(-4) + ')');   // 클코에게 보내는 글에는 전화번호를 끝 4자리만 남긴다(주문은 화면이 찾는다)
     const CHAT_STOP = /^(건|주소|박스|수량|품목|이름|오늘|발송|제외|제주|바꿔줘|바꿔|변경|빼줘|있어|있나요|없어|으로|해줘|주문|고객|보내는이|받는|사람|배송|메세지|미매칭)$/;
     // 지시 글에서 후보 주문을 뽑는다: 구매자·수취인 이름 · 전화 끝 4자리 · 「미매칭」 · 품목 낱말
     function chatCandidates(text) {
         const s = S(), t = sq(text), out = [], seen = new Set();
         const push = e => { const k = keyOf(e); if (!seen.has(k)) { seen.add(k); out.push(e); } };
         const four = (String(text).match(/(?<!\d)\d{4}(?!\d)/g) || []);
+        const fullTels = (String(text).match(CHAT_PHONE) || []).map(x => x.replace(/\D/g, ''));
         s.merged.forEach(e => {
             const b = sq(buyerName(e)), r = sq(e.conv['수취인명']);
+            if (fullTels.length && [buyerTel(e), digitsOf(e.conv['수취인연락처1']), digitsOf(e.conv['수취인연락처2'])].some(x => x && fullTels.includes(x))) return push(e);   // #527 번호를 통째로 적은 경우(하이픈 없이 붙여 적어도)
             if ((b.length >= 2 && t.includes(b)) || (r.length >= 2 && t.includes(r))) return push(e);
             const tails = [buyerTel(e), digitsOf(e.conv['수취인연락처1'])].filter(x => x.length >= 8).map(x => x.slice(-4));
             if (four.some(f => tails.includes(f))) push(e);
@@ -1009,13 +1014,17 @@
         if (!text || C.running || st.busy || C.pending) return;
         if (!st.judged || st.stale) { msg.textContent = '위의 [다시 판정]을 먼저 눌러 주세요.'; return; }
         msg.textContent = ''; el.value = '';
-        const lines = text.split('\n'), rule = lines.filter(l => LINEISH.test(l)), talk = lines.filter(l => !LINEISH.test(l)).join('\n').trim();
+        // #527(대표 실물 10/5 「010-… 주문건 황금향 3키로 선물용 맞는지 확인하고 10과로! 로 표시해줘」가 정리 줄로 읽혀 클코에게 안 갔다):
+        //   번호가 든 줄이라도 「해줘·바꿔·수정·확인·표시·맞는지·○과로」 같은 시키는 말이 있으면 정리 줄이 아니라 말이다(번호는 그 주문을 찾는 데 쓴다).
+        const isRule = l => LINEISH.test(l) && !CHAT_TALK.test(l);
+        const lines = text.split('\n'), rule = lines.filter(isRule), talk = lines.filter(l => !isRule(l)).join('\n').trim();
         chatSay('me', text);
         if (rule.length) {
             if (st.ai.running) { chatSay('ai', 'AI가 메모를 읽는 중이라 정리 줄을 아직 못 넣었어요. 읽기가 끝난 뒤 다시 보내 주세요.'); return; }
             const had = st.phase === 'result' && st.files.length > 0, memo = $('fo-memo');
             memo.value = (memo.value.trim() ? memo.value.replace(/\s+$/, '') + '\n' : '') + rule.join('\n');
             await run(judge);
+            { const rc = chatCandidates(rule.join('\n')); if (rc.length) st.chat.cand = rc; }   // #527 바로 뒤에 「이건 …」이라고 하면 방금 정리 줄의 주문을 가리킨다
             chatSay('ai', `정리 줄 ${rule.length}줄을 메모 칸에 넣고 다시 판정했어요.${pending().length ? ` 확인할 카드가 ${pending().length}건 있어요.` : ''}`);
             if (had) await remake();
         }
@@ -1034,10 +1043,10 @@
         const byKey = new Map(s.merged.map(e => [keyOf(e), e]));
         const orders = C.cand.map(c => { const e = byKey.get(c.key); return e ? { n: c.n, buyer: buyerName(e), recv: String(e.conv['수취인명'] || ''), opt: optOf(e), qty: qtyNow(e), memo: String(e.conv['배송메세지'] || '').trim().slice(0, 300), unit: unitOf(e), partner: partnerShort(optOf(e)) || '미정', state: e.individual ? '입력삭제' : e.excluded ? '오늘 안 나감' : '오늘 발송' } : null; }).filter(Boolean);
         const catalog = {}; let left = 200; Object.entries(st.byPartner || {}).forEach(([p, names]) => { const take = (names || []).slice(0, Math.max(left, 0)); left -= take.length; catalog[p] = take; });
-        const history = C.log.slice(0, -1).filter(m => !m.preview).slice(-6).map(m => ({ who: m.who === 'me' ? 'me' : 'ai', text: m.text.slice(0, 300) }));
+        const history = C.log.slice(0, -1).filter(m => !m.preview).slice(-6).map(m => ({ who: m.who === 'me' ? 'me' : 'ai', text: chatMask(m.text).slice(0, 300) }));
         C.running = true; C.t0 = Date.now(); C.id = 0; C.live = '클코에게 물어보는 중이에요'; msg.textContent = ''; syncChat(); renderChat();
         try {
-            const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', { kind: 'chat', shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, ask: text.slice(0, 1500), orders, catalog, summary: chatSummary(), history });
+            const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', { kind: 'chat', shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, ask: chatMask(text).slice(0, 1500), orders, catalog, summary: chatSummary(), history });
             if (!r || !r.ok || !r.id) throw new Error((r && (r.message || r.error)) || '요청을 올리지 못했어요');
             C.id = r.id;
             for (;;) {
