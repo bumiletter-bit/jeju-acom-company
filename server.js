@@ -13913,59 +13913,8 @@ app.post('/api/agent-office/telegram-test', authMiddleware, adminOnly, async (re
     } catch (err) { handleAdminErr(res, err); }
 });
 
-// ===== 지시 #54-2: 한수 자동 훅 (0원 코드) — 주간 재무 브리핑(월) + 단가 변경 감지 =====
-setInterval(async () => {
-    try {
-        // ① 주간 재무 브리핑 — 월요일, 주 1회 (기준: agent_office_config.hansu_brief_last)
-        const now = new Date(Date.now() + 9 * 3600 * 1000);
-        const todayK = now.toISOString().slice(0, 10);
-        if (now.getUTCDay() === 1) { // KST 기준 월요일
-            const last = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'hansu_brief_last'`);
-            const lastDate = last.rows.length ? last.rows[0].value.date : null;
-            if (lastDate !== todayK) {
-                await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('hansu_brief_last', $1::jsonb)
-                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify({ date: todayK })]);
-                const hansuAgent = (await pool.query(`SELECT * FROM agents WHERE code = 'hansu' LIMIT 1`)).rows[0];
-                const semiRunner = loadAgentRunner('세미');
-                // 지난주(월~일)·전주 — 세미 집계 재사용 (0원)
-                const t0 = new Date(todayK + 'T00:00:00Z');
-                const mkD = off => { const d = new Date(t0); d.setUTCDate(t0.getUTCDate() + off); return d.toISOString().slice(0, 10); };
-                const lw = { from: mkD(-7), to: mkD(-1) };
-                // 간이 브리핑: 거래처 3사 지난주 합계 (semi partner_week 재사용 — 효돈·대성·기타)
-                const parts = [];
-                for (const p of ['대성(시온)', '효돈농협', '기타거래처']) {
-                    try {
-                        const r = await semiRunner.result({ agent: hansuAgent, pool, params: { partner_week: { partner: p, from: lw.from, to: lw.to, label: '지난주' } }, helpers: { matchItemToPricing, normDateSafe } });
-                        parts.push({ partner: p, total: r.report.total || 0 });
-                    } catch (e) { parts.push({ partner: p, total: null }); }
-                }
-                const tot = parts.reduce((s, x) => s + (x.total || 0), 0);
-                const firstStep = agentStep('order', '한수', `🧮 주간 재무 브리핑 (${lw.from}~${lw.to}) — 자동 (지시 #54)`);
-                const bRun = (await pool.query(`INSERT INTO agent_runs (agent_id, steps) VALUES ($1, $2) RETURNING *`,
-                    [hansuAgent.id, JSON.stringify([firstStep])])).rows[0];
-                await pool.query(`UPDATE agent_runs SET status='done', result=$2, finished_at=NOW() WHERE id=$1`, [bRun.id, JSON.stringify({
-                    summary: `주간 브리핑: 지난주(${lw.from}~${lw.to}) 상품 ${Math.round(tot).toLocaleString('ko-KR')}원`,
-                    lines: parts.map(x => `${x.partner}: ${x.total === null ? '집계 실패' : Math.round(x.total).toLocaleString('ko-KR') + '원'}`),
-                    report: { type: 'hansu_briefing', week: lw, partners: parts, total: tot, note: '매주 월요일 자동 브리핑 (0원 코드 — 세미 집계 재사용, 지시 #54)' },
-                })]);
-                notifyTelegram('🧮 한수 주간 재무 브리핑 도착 — 보고서함에서 확인');
-            }
-        }
-        // ② 단가표 변경 감지 (10분 주기와 무관하게 이 인터벌에서 함께 — pricing max id 비교)
-        const pm = await pool.query(`SELECT COALESCE(MAX(id), 0) AS m FROM pricing`);
-        const prevRow = await pool.query(`SELECT value FROM agent_office_config WHERE key = 'hansu_price_maxid'`);
-        const prev = prevRow.rows.length ? Number(prevRow.rows[0].value.max) : null;
-        if (prev === null) {
-            await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('hansu_price_maxid', $1::jsonb)
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify({ max: pm.rows[0].m })]);
-        } else if (Number(pm.rows[0].m) > prev) {
-            const rows = await pool.query(`SELECT partner, start_date, end_date FROM pricing WHERE id > $1 ORDER BY id`, [prev]);
-            await pool.query(`UPDATE agent_office_config SET value = $1::jsonb, updated_at = NOW() WHERE key = 'hansu_price_maxid'`, [JSON.stringify({ max: pm.rows[0].m })]);
-            const desc = rows.rows.map(r => `${r.partner} ${String(r.start_date).slice(0, 10)}~${String(r.end_date).slice(0, 10)}`).join(' / ');
-            notifyTelegram(`🧮 한수: 주차 세팅 단가표 변경 감지 — ${desc.slice(0, 150)}`);
-        }
-    } catch (e) { console.error('한수 자동 훅 오류:', e.message); }
-}, 10 * 60 * 1000);
+// ===== #521(대표 10/5 「둘 다 꺼」): 한수 자동 훅 제거 — 월요일 주간 재무 브리핑(보고서함은 9/29 화면에서 없앰)과 단가표 변경 감지 텔레그램.
+//   옛 에이전트 오피스(#54-2) 때 등록한 자동 기능. 되살리려면 git 에서 이 자리의 setInterval 블록(v5.9.412 이전)을 가져올 것.
 
 // 지시함 상태 변화 감시 → 알림 (서버가 24시간 발송 주체 — 기록 주체와 무관하게 동작)
 let _tgInboxInit = false;
