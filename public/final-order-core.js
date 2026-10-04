@@ -156,6 +156,112 @@
         return { name, phone: phone || null, addr: addr || null, ambiguous: !!why, why };
     }
 
+    // ── 손님 메모의 보내는이 — 카드 입력칸 미리 채움(#512) ────────────────────────────────────────────
+    //   자동 적용이 아니라 사람이 확인하는 값이다(v2가 애매하다고 안 바꾼 주문 · 이름만 적힌 메모). 9/15 실파일 애매 12건을 완성본 A칸과 대조해 정했다.
+    //   name: 보내는이 낱말 바로 뒤 글자를 번호·닫는 괄호·줄바꿈·마침표 앞까지. 「A/B」「A,B」 두 이름·상호+이름은 그대로. 「상호 ( 이름 번호 )」처럼 괄호 안에 사람 이름이 있으면 그 이름.
+    //         못 찾으면 메모에 구매자 이름이 있을 때 구매자 이름. phone: 메모에 전화번호가 정확히 하나일 때만.
+    //   nameOnly: 보내는이 낱말 없이 메모가 이름·상호 한 덩어리뿐일 때(사람은 이것을 보내는이로 처리한다) — 아주 좁게: 성씨+이름 글자 3~4자(두 글자는 구매자 이름일 때만) · 「○○○ 드림/올림」 · 법인 표식+이름.
+    const HINT_SURNAMES = '김이박최정강조윤장임한오서신권황안송류유전홍고문양손배백허남심노하곽성차주우구민진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육맹제모탁국어은편용';   // = invoice-sender.js SURNAMES
+    const HINT_GIVEN = '가강건경고관광구국권규균근금기길나남녀노다단달담대덕도돈동두라락란람래량려련렬령례로록룡류률리린림마만명모목무문미민박배백범병보복봉부비빈사산삼상서석선설섭성세소솔송수숙순슬승시식신실심아안애양언엄여연열염엽영예오옥온완왕용우욱운웅원월위유윤율은을음의이익인일임자잔장재전정제조종주준중지진찬창채천철초춘충치태택평표필하학한해향헌혁현형혜호홍화환황회효후훈휘희흥겸결곤교군랑루얀요울탁흠협';   // = invoice-sender.js GIVEN
+    const HINT_NOTNAME = /^(?:문앞|문앞에|조심|조심히|안전|안전히|배송|배송전|선물|선물용|현관|현관앞|주의|전화|연락|문자|정문|후문|경비실|부재시|부재|감사|감사합니다|이상무|고객|성함|주문|주소|직접|수령|전달|보관|상온|냉장|신선|제주|서울|하우스|황금향|한라봉|천혜향|유의|유선|소중|정성|정성껏|신속|이유식|차례상|한가위|명절|추석)$/;
+    const HINT_CORP = /\(주\)|㈜|\(유\)|\(사\)|\(재\)|주식회사|유한회사/;
+    const personWord = (w, buyer) => {
+        const t = String(w || ''); if (!/^[가-힣]{2,4}$/.test(t) || HINT_NOTNAME.test(t)) return false;
+        if (buyer && t === buyer) return true;
+        if (t.length === 2) return false;   // 두 글자는 「이유」「정말」 같은 낱말과 구별할 수 없다 — 구매자 이름일 때만
+        const given = /^(?:남궁|황보|제갈|선우|독고|사공|서문)/.test(t) ? t.slice(2) : HINT_SURNAMES.includes(t[0]) ? t.slice(1) : null;
+        return !!given && given.length >= 1 && given.split('').every(ch => HINT_GIVEN.includes(ch));
+    };
+    const HINT_REQ = /^(?:꼭\s*)?(?:적어|써|해\s*주|해주|넣어|표기|기재|기입|변경|수정|바꿔|부탁|바랍|바래|주세요|요청)/;   // 요청 말로 시작
+    const HINT_REQ_END = /(?:주세요|부탁|부탁드립니다|부탁드려요|바랍니다|바래요|변경|해주|해 주)\s*$/;                       // 요청 말로 끝남
+    const HINT_GREET = /^(?:즐거운|즐겁|행복|건강|감사|고맙|추석|명절|한가위|새해|풍성|풍요|넉넉|좋은|따뜻|늘|항상|올해|메리|해피|잘|맛있게|맛있는)/;   // 인사말·덕담이 시작되는 낱말
+    const HINT_ENDING = /(?:세요|니다|해요|에요|어요|아요|네요|구요|고요)[.!~^]*$/;                                                      // 문장으로 끝나는 낱말(「보내세요」「되세요」「드립니다」)
+    const HINT_REGION = /(?:특별시|광역시|특별자치시|특별자치도|시|도)$|^(?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)$/;   // 주소가 시작되는 낱말
+    const HINT_TITLE = /^(?:대표이사|대표님|대표|이사장|이사|사장님|사장|회장님|회장|원장님|원장|본부장|팀장|과장|부장|차장|실장|소장|교수님|교수|목사님|목사)$/;
+    const hintTidy = s => String(s || '').replace(/[<>〈〉《》「」『』'"‘’“”`\[\]]/g, ' ').replace(/\s*(?:드림|올림)\s*$/, '').replace(/^[\s.,:：\-ㅡ=>→/|·ㆍ]+/, '').replace(/^\((?![주유사재]\))\s*/, '').replace(/[\s.,!~^♡♥\-ㅡ:：/|·ㆍ(]+$/, '').replace(/\s+/g, ' ').trim();
+    function senderHint(memoRaw, buyerName) {
+        const raw = String(memoRaw == null ? '' : memoRaw), buyer = String(buyerName || '').replace(/\s/g, '');
+        const memo = raw.replace(/\r/g, '').trim(); const flat = memo.replace(/\s+/g, ' ').trim();
+        const phones = findPhones(flat); const phone = phones.length === 1 ? fmtPhone(phones[0].text) : '';
+        const buyerIn = buyer && flat.replace(/\s/g, '').includes(buyer) ? buyer : '';
+        if (!flat) return { name: '', phone: '', nameOnly: false };
+        const km = memo.match(SENDER_KEY);
+        if (km) {
+            let r = memo.slice(km.index + km[0].length).replace(/^(?:은|는|을|를)(?=[\s:：=])/, '').replace(/^\s*(?:이름|성함|명)(?:은|는|을|를)?(?=[\s:：=]|$)/, '').replace(/^[ \t:：=\-ㅡ—>→,.]+/, '');
+            r = r.split('\n')[0];                                    // 줄바꿈 앞까지
+            const pm = findPhones(r)[0]; if (pm) r = r.slice(0, pm.index);   // 번호 앞까지
+            r = r.split(/[.!?]/)[0];                                 // 마침표(인사말) 앞까지
+            if (TAIL_ONLY.test(r) || HINT_REQ.test(r.trim())) r = '';   // 낱말 뒤가 요청 말뿐(「보내는사람 적어주세요」) = 이름이 아니다 → 낱말 앞쪽을 본다
+            for (let i = 1; i <= r.length; i++) {                    // 「으로 변경 부탁」 꼬리 — readSender 와 같은 기준(앞부분이 두 글자 이상 · 붙은 꼬리는 변경·표기·기재만)
+                const m = r.slice(i).match(TAIL); if (!m) continue;
+                const head = r.slice(0, i); if (head.trim().length < 2) continue;
+                if (!m[1] && !m[2] && !/\s$/.test(head) && !/^(?:변경|표기|기재)/.test(m[3])) continue;
+                r = head; break;
+            }
+            let name = '';
+            const corp = HINT_CORP.test(r); const po = corp ? -1 : r.indexOf('(');
+            if (po >= 0) {                                          // 「상호 ( 이름 」·「(이름, 」 — 괄호 안이 사람 이름이면 그 이름, 아니면 괄호 앞 글
+                const inner = hintTidy(r.slice(po + 1).split(')')[0]), outer = hintTidy(r.slice(0, po));
+                name = (!outer || personWord(inner.replace(/\s/g, ''), buyer)) ? inner : outer;
+            } else name = corp ? hintTidy(r) : hintTidy(r.split(')')[0]);
+            const tk = name.split(' '); if (tk.length > 1 && tk.every(x => /^[가-힣]$/.test(x))) name = tk.join('');   // 「류 현」 → 「류현」(완성본도 붙여 적는다 · v2 와 같음)
+            // 사람이 그대로 [이대로 넣기]를 누르면 A칸에 들어가므로 짧게 맞춘다: ①이름 뒤 인사말·덕담은 뗀다 ②이름 앞 주소 낱말(○○시 ○○구 …)은 뗀다
+            { let w = name.split(' ').filter(Boolean);
+              if (w.slice(1).some(t => HINT_GREET.test(t) || HINT_ENDING.test(t))) { const cut = w.findIndex((t, i) => i >= 1 && (HINT_GREET.test(t) || HINT_ENDING.test(t) || (/[운한은는을를의]$/.test(t) && !personWord(t, buyer)))); if (cut >= 1) w = w.slice(0, cut); }
+              if (w.length > 1 && HINT_REGION.test(w[0]) && !HINT_CORP.test(w[0])) { while (w.length && w[0] !== buyer && !HINT_CORP.test(w[0]) && (HINT_REGION.test(w[0]) || /\d/.test(w[0]) || (/(?:구|군|읍|면|동|리|로|길)$/.test(w[0]) && !personWord(w[0], buyer)))) w.shift(); }   // 「서울시」는 이름 글자 꼴이어도 주소 · 「홍길동」처럼 사람 이름이면 「동」으로 끝나도 남긴다
+              name = w.join(' '); }
+            if (/받는|주소|카톡|톡톡|메일|문자|연락|배송|발송/.test(name)) name = '';                // 「보내는분·받는분 주소는 카톡으로」 같은 글은 이름이 아니다
+            else if (/\d/.test(name) || name.length > 20) { const first = name.split(' ')[0]; name = /^[가-힣()㈜]{2,12}$/.test(first) ? first : ''; }   // 이름 뒤에 주소·숫자가 이어진 꼴 = 첫 덩어리만
+            if (HINT_REQ.test(name) || HINT_REQ_END.test(name)) name = '';                            // 요청 말로 시작하거나 끝나는 글은 이름이 아니다
+            // 이름이 낱말 앞에 온 꼴: 「○○○(으)로 보내는사람 적어주세요」 「○○○ 이름으로 보내는 사람 …」 — 조사 바로 앞 낱말이 사람 이름(또는 구매자 이름·법인 표식)일 때만
+            if (!name) {
+                const before = memo.slice(0, km.index).split('\n').pop(); const cut = before.replace(/\s*(?:이름|성함)?\s*(?:으로|이라고|라고|로)\s*$/, '');
+                if (cut !== before) { const tok = hintTidy(cut).split(' ').pop() || ''; if (personWord(tok, buyer) || HINT_CORP.test(tok)) name = tok; }
+            }
+            return { name: name || buyerIn, phone, nameOnly: false };
+        }
+        // 보내는이 낱말은 없지만 줄(문장) 끝이 「○○○ 드림/올림」인 메모(인사말 + 맺음) — 그 맺음 앞 글을 이름 후보로
+        const seg = memo.split(/\n|[.!?]+/).map(x => x.trim()).filter(Boolean).find(x => /(?:드림|올림)\s*[~^♡♥\-]*$/.test(x));
+        if (seg && (/\n/.test(memo) || /[.!?]/.test(flat.replace(/[.!?~^\s]+$/, '')))) {
+            const nm = hintTidy(seg.replace(/[~^♡♥\-\s]+$/, ''));
+            if (nm.length >= 2 && nm.length <= 20 && !/\d/.test(nm)) return { name: nm, phone, nameOnly: false };
+        }
+        // 보내는이 낱말이 없는 메모: 이름·상호 한 덩어리뿐인가
+        if (!/\n/.test(memo) && flat.length <= 24 && !/\d/.test(flat) && !/[.!?]/.test(flat.replace(/[.!?~^\s]+$/, ''))) {
+            const body = flat.replace(/[.!?~^\s]+$/, ''); const closing = /\s*(드림|올림)$/.test(body); const chunk = hintTidy(body);
+            const words = chunk.split(' ');
+            const person = words.length === 1 && personWord(chunk, buyer);
+            // 「○○○ 드림」: 맺음 바로 앞 낱말(직함은 건너뜀)이 사람 이름일 때만 — 「경비실에 맡겨 드림」 같은 문장을 이름으로 읽지 않게
+            const core2 = words.filter(w => !HINT_TITLE.test(w)); const lastW = core2[core2.length - 1] || '';
+            const closed = closing && chunk.length >= 2 && chunk.length <= 16 && words.length <= 3 && !words.some(w => HINT_NOTNAME.test(w)) && personWord(lastW, buyer);
+            const corpOne = HINT_CORP.test(chunk) && words.length <= 3 && chunk.replace(HINT_CORP, '').trim().length >= 2;
+            if (person || closed || corpOne) return { name: chunk, phone, nameOnly: true };
+        }
+        return { name: buyerIn, phone, nameOnly: false };
+    }
+
+    // 손님 메모의 날짜가 전부 기준 발송일인가(#512) — true 면 「그날 발송」이 곧 요청대로라 주문 확인 카드가 필요 없다. 조금이라도 다르면 false(카드 유지).
+    //   조건: 날짜가 하나 이상 · 전부 기준일 · 요일이 적혀 있으면 기준일의 요일 · 도착·범위 말(도착·받·수령·까지·사이·~ …)과 다른 날짜 표현(늦게·다음주·주말 …)이 없음.
+    const SD_BLOCK = /도착|받|수령|까지|전후|사이|이후|이전|전에|부터|안에|내로|이내|[~∼〜]|다음\s*주|다다음|다음\s*날|내일|모레|글피|주말|평일|늦게|천천히|나중|이번\s*주|일주일|연휴|추석|명절|한가위|오늘/;
+    function sameDayOnly(memoRaw, shipDate) {
+        const memo = String(memoRaw == null ? '' : memoRaw).replace(/\s+/g, ' ').trim();
+        if (!memo || !/^\d{4}-\d{2}-\d{2}$/.test(String(shipDate || ''))) return false;
+        // 「추석전 16일 경에 발송」처럼 날짜를 꾸미는 「추석 전·명절 전」은 그 날짜와 어긋나지 않는다(실물 9/15). 그 밖의 추석·명절·연휴 말은 다른 날짜 표현으로 본다
+        if (SD_BLOCK.test(memo.replace(/(?:추석|명절|한가위|연휴)\s*전(?:에)?(?!후)/g, ' '))) return false;
+        const sm = +shipDate.slice(5, 7), sd = +shipDate.slice(8, 10), wd = '일월화수목금토'[new Date(shipDate + 'T00:00:00Z').getUTCDay()];
+        let rest = memo, found = 0, bad = false;
+        const take = (re, fn) => { rest = rest.replace(re, (...m) => { found++; if (!fn(m)) bad = true; return ' '; }); };
+        take(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/g, m => +m[1] === sm && +m[2] === sd);
+        take(/(\d{1,2})\s*[\/.]\s*(\d{1,2})(?!\d|[.\/]\d)/g, m => +m[1] === sm && +m[2] === sd);
+        if (/\d+\s*일\s*(?:후|뒤|간|동안|정도|만에|내)/.test(rest)) return false;   // 기간(「3일 후」)은 날짜가 아니다
+        take(/(\d{1,2})\s*일/g, m => +m[1] === sd);
+        if (bad || !found) return false;
+        if (/\d/.test(rest.replace(/\d+\s*(?:박스|상자|개|kg|과|호|동|층|번|시|분)/gi, ' '))) return false;   // 날짜로 못 읽은 숫자가 남으면 판단하지 않는다
+        let m; const W = /([월화수목금토일])\s*요일|\(\s*([월화수목금토일])\s*\)|([월화수목금토일])욜/g;
+        while ((m = W.exec(memo))) { if ((m[1] || m[2] || m[3]) !== wd) return false; }
+        return true;
+    }
+
     // ── §5 메모 줄 다듬기 ────────────────────────────────────────────────────────────────────────────
     // 줄 수·줄 번호는 그대로(뺄 줄은 빈 줄). v2 가 이미 읽는 보통 줄은 한 글자도 바꾸지 않는다.
     function prepLines(text, opt) {
@@ -376,7 +482,7 @@
         return ws;
     }
 
-    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf,
+    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, sameDayOnly,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

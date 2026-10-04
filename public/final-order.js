@@ -25,6 +25,7 @@
         cash: null, cashName: '', cashNone: false,                  // cash = core.parseCash 결과
         prep: null, loaded: false, chState: {}, cards: [], info: [],
         dec: new Map(),                                              // 카드 id → 결정값(다시 판정해도 유지)
+        draft: new Map(),                                            // 카드 id → 아직 확정 안 한 입력칸 글
         out: null, files: [], fetchCount: 0,
     };
 
@@ -244,7 +245,7 @@
     }
     async function loadChannels(list) { for (const ch of list) await clickLoad(ch); }   // 하나씩(동시에 누르면 v2 재판정이 겹친다)
     async function start() {
-        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb):/.test(id))); st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
+        clearMsg(); st.phase = 'loading'; st.loaded = false; st.judged = false; st.dec = new Map([...st.dec].filter(([id]) => !/^(ord|split|samb):/.test(id))); st.draft = new Map(); st.out = null;   /* 주문에 묶인 결정만 지운다(메모 줄·현금파일·거래처 결정은 내용 기준이라 유지) */ st.files = []; $('fo-review').hidden = true; $('fo-result').hidden = true;
         await ensureFrame();
         st.chState = {}; drawProgress();
         await loadChannels(CH);
@@ -286,6 +287,8 @@
     }
     // 주문을 불러온 날이 지나면 멈춘다 — v2의 날짜 가드는 [다시 판정] 때마다 기준이 오늘로 다시 적혀, 전날 불러온 주문으로 파일이 만들어질 수 있다(워커2 재현 D)
     function dayGuard() { if (st.loadedOn && st.loadedOn !== kstToday()) throw new Error(`주문을 ${md(st.loadedOn)}에 불러왔어요. [주문 다시 불러오기]를 눌러 오늘 주문으로 다시 해 주세요.`); }
+    // 그 주문이 속한 보내는이 카드(묶음 카드일 수 있다)의 결정
+    const sambDec = e => { const id = st.sambCard && st.sambCard.get(keyOf(e)); return id ? st.dec.get(id) : undefined; };
     function senderMap() {   // 직원 메모의 보내는이 지정(확실한 것 + 카드에서 사람이 확정한 것) → 주문 키별
         const list = [];
         (st.prep.senders || []).forEach(sd => {
@@ -297,7 +300,7 @@
         const res = core().applySenders(list, orders);
         res.line = new Set(res.byKey.keys());   // 메모 줄로 지정한 주문(이 주문은 보내는이 카드를 띄우지 않는다)
         // #509: 손님 메모가 애매해 v2가 안 바꾼 주문 — 카드에서 사람이 직접 적어 넣은 보내는이(메모 줄 지정이 있으면 그쪽이 우선)
-        S().merged.forEach(e => { const k = keyOf(e), d = st.dec.get('samb:' + k); if (d && d.use && d.name && !res.byKey.has(k)) res.byKey.set(k, { name: d.name, phone: d.phone || null, addr: d.addr || null }); });
+        S().merged.forEach(e => { const k = keyOf(e), d = sambDec(e); if (d && d.use && d.name && !res.byKey.has(k)) res.byKey.set(k, { name: d.name, phone: d.phone || null, addr: d.addr || null }); });
         return res;
     }
     function reasonOf(e) {
@@ -321,25 +324,39 @@
         // #510(대표 10/4 실물): 「배송 전에 미리 연락주세요」처럼 날짜가 없는 흔한 메모는 카드로 띄우지 않는다(그대로 발송 · 메모 글자 그대로).
         //   v2는 「전에·이전·이후·까지」만 있어도 확인필요로 표시한다(송장변환 화면은 그대로) — 여기서는 서버가 날짜를 못 읽었고(parse 없음) 날짜·요일·미루기 표현도 없으면 카드에서 뺀다.
         const DATEISH = /다음\s*주|다음\s*날|내일|모레|글피|\d+\s*일|\d+\s*월|\d+\s*\/\s*\d+|\d{1,2}\s*\.\s*\d{1,2}|월요|화요|수요|목요|금요|토요|일요|주말|평일|다다음|이번\s*주|일주일|추석\s*전|명절\s*전|연휴\s*전|늦게|천천히|나중/;
-        s.merged.forEach(e => {
-            if (e.individual || e.flag !== 'review' || e.reqKind === 'today') return;
-            if (!e.req && !e.parse && !DATEISH.test(memoOf(e))) return;
-            cards.push({ id: 'ord:' + keyOf(e), type: 'order', tag: '주문 확인', title: orderLine(e), lines: [['손님 메모', memoOf(e) || '(없음)'], ['이유', reasonOf(e)]], choices: [['send', '오늘 발송', 1], ['excl', '제외']] });
+        // #512(실파일 시험): 같은 구매자가 같은 메모로 여러 건 주문하면 카드가 건수만큼 떴다 → 한 장으로 묶어 한 번에 정한다(구매자 번호 + 메모 + 이유가 같을 때만)
+        const groupBy = (list, keyFn) => { const g = new Map(); list.forEach(e => { const k = keyFn(e) || 'solo|' + keyOf(e); (g.get(k) || g.set(k, []).get(k)).push(e); }); return [...g.values()]; };
+        const sameBuyerMemo = e => { const t = buyerTel(e), m = memoOf(e); return t && m ? e.ch + '|' + t + '|' + m : null; };
+        const groupLines = es => (es.length > 1 ? [['묶음', `같은 구매자 · 같은 메모 주문 ${es.length}건에 함께 적용돼요 — ${es.map(e => `${e.conv['수취인명'] || ''} ${e.conv['수량']}박스`).join(' · ')}`]] : []);
+        const groupTitle = es => orderLine(es[0]) + (es.length > 1 ? ` 외 ${es.length - 1}건` : '');
+        st.ordCard = new Map(); st.sambCard = new Map();
+        // #512: 메모의 날짜가 전부 기준 발송일이면(「15일(화)에 출고 부탁」) 그대로 보내면 되는 건이라 카드에서 뺀다 — 서버가 날짜를 못 읽은 주문에만 적용(실자료 8건 모두 그날 나감)
+        const sameDay = e => !e.req && !e.parse && typeof c.sameDayOnly === 'function' && c.sameDayOnly(memoOf(e), s.shipDate);
+        groupBy(s.merged.filter(e => !(e.individual || e.flag !== 'review' || e.reqKind === 'today') && (e.req || e.parse || DATEISH.test(memoOf(e))) && !sameDay(e)), e => { const k = sameBuyerMemo(e); return k ? k + '|' + reasonOf(e) : null; }).forEach(es => {
+            const id = 'ord:' + keyOf(es[0]); es.forEach(e => st.ordCard.set(keyOf(e), id));
+            cards.push({ id, keys: es.map(keyOf), type: 'order', tag: '주문 확인', title: groupTitle(es), lines: [['손님 메모', memoOf(es[0]) || '(없음)'], ['이유', reasonOf(es[0])], ...groupLines(es)], choices: [['send', '오늘 발송', 1], ['excl', '제외']] });
         });
         // ② 나눠 보내기 신호(손님 메모)
         s.merged.forEach(e => {
             if (e.individual || (e.excluded && !e.userTouched)) return;   // v2가 스스로 뺀 주문(뒤 날짜)은 오늘 안 나가므로 대상 아님
             const sig = c.splitSignal({ memo: memoOf(e), qty: qtyOf(e), buyerDigits: buyerTel(e), recvDigits: [digitsOf(e.conv['수취인연락처1']), digitsOf(e.conv['수취인연락처2'])].filter(Boolean) });
             if (!sig) return;
-            cards.push({ id: 'split:' + keyOf(e), type: 'split', tag: '나눠 보내기', title: orderLine(e), lines: [['손님 메모', memoOf(e)], ['이유', sig.why], ['처리', '따로 보낼 박스가 있으면 메모에 입력삭제 줄을 넣고 현금파일에 주소 줄을 적은 뒤 [다시 판정]을 눌러 주세요.']], choices: [['all', '주문 주소로 전부 발송', 1], ['excl', '오늘은 제외']] });
+            cards.push({ id: 'split:' + keyOf(e), type: 'split', tag: '나눠 보내기', title: orderLine(e), lines: [['손님 메모', memoOf(e)], ['이유', sig.why], ['처리', '따로 보낼 박스가 있으면 메모에 입력삭제 줄을 넣고 현금파일에 주소 줄을 적은 뒤 [다시 판정]을 눌러 주세요.']], choices: [['excl', '오늘은 제외(주소 받은 뒤 처리)', 1], ['all', '주문 주소로 전부 발송']] });   // #512 실자료: 이런 메모 10건 중 주문 주소로 그대로 다 나간 것은 0건 → 「제외」를 앞에
         });
         // ③ 손님 메모의 보내는이 — 애매해서 v2가 안 바꾼 건(직원 줄로 지정한 주문은 제외)
-        s.merged.forEach(e => {
-            if (e.individual || !(e.sender && e.sender.ambiguous) || sm.line.has(keyOf(e))) return;
-            // #509(대표 10/4 실물): 손님 메모는 우리가 못 고친다 → 이 카드에서 보내는 분을 바로 적어 넣는다. 이름 칸은 메모에 구매자 이름이 있으면 그 이름으로 미리 채움(사람이 확인·수정)
-            const buyer = buyerName(e), memo = memoOf(e);
-            const guess = (e.sender.name && String(e.sender.name).trim()) || (buyer && memo.replace(/\s/g, '').includes(buyer.replace(/\s/g, '')) ? buyer : '');
-            cards.push({ id: 'samb:' + keyOf(e), type: 'sender-order', tag: '보내는이', title: orderLine(e), lines: [['손님 메모', memo], ['처리', '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.']], sender: { name: guess, phone: e.sender.phone || '', addr: '', memo } });
+        //   v2가 스스로 뺀 주문(오늘 안 나감)은 대상 아님 · 같은 구매자·같은 메모는 한 장으로 묶음(#512)
+        //   대상 = ⓐv2가 애매로 잡은 주문 ⓑv2가 보내는이 판정을 안 했는데 메모가 이름 한 덩어리뿐인 주문(#512 — 사람은 보내는이로 처리했다)
+        const hintOf = e => (typeof c.senderHint === 'function' ? c.senderHint(memoOf(e), buyerName(e)) : null) || {};
+        const nameOnly = e => !e.sender && !!memoOf(e) && !!hintOf(e).nameOnly;
+        groupBy(s.merged.filter(e => !(e.individual || sm.line.has(keyOf(e)) || (e.excluded && !e.userTouched)) && ((e.sender && e.sender.ambiguous) || nameOnly(e))), sameBuyerMemo).forEach(es => {
+            const e = es[0], id = 'samb:' + keyOf(e); es.forEach(x => st.sambCard.set(keyOf(x), id));
+            // #509(대표 10/4 실물): 손님 메모는 우리가 못 고친다 → 이 카드에서 보내는 분을 바로 적어 넣는다. 입력칸은 메모에서 읽어낸 값으로 미리 채움(사람이 확인·수정 — 자동 적용 아님)
+            const buyer = buyerName(e), memo = memoOf(e), hint = hintOf(e), only = nameOnly(e);
+            const guess = (hint.name && String(hint.name).trim()) || (e.sender && e.sender.name && String(e.sender.name).trim()) || (buyer && memo.replace(/\s/g, '').includes(buyer.replace(/\s/g, '')) ? buyer : '');
+            // 번호 칸: 메모에 전화번호가 하나만 있고 구매자·수취인 번호가 아니면 미리 채움(같은 번호면 바꿀 것이 없어 빈칸)
+            const known = [buyerTel(e), digitsOf(e.conv['수취인연락처1']), digitsOf(e.conv['수취인연락처2'])].filter(Boolean);
+            const phone = (e.sender && e.sender.phone) || (hint.phone && !known.includes(digitsOf(hint.phone)) ? hint.phone : '');
+            cards.push({ id, keys: es.map(keyOf), type: 'sender-order', tag: '보내는이', title: groupTitle(es), lines: [['손님 메모', memo], ['처리', only ? '손님 메모가 이름뿐이에요. 보내는 분으로 넣으려면 확인하고 [이대로 넣기]를 눌러 주세요.' : '손님 메모가 분명하지 않아 자동으로 바꾸지 않았어요. 보내는 분을 여기에 적어 넣거나 그대로 둘 수 있어요.'], ...groupLines(es)], sender: { name: guess, phone, addr: '', memo } });
         });
         // ④ 메모 줄
         (s.allLines || []).forEach(l => {
@@ -387,12 +404,17 @@
         const byKey = new Map(S().merged.map(e => [keyOf(e), e]));
         st.cards.forEach(cd => {
             if (cd.type !== 'order' && cd.type !== 'split') return;
-            const v = st.dec.get(cd.id), e = byKey.get(cd.id.slice(cd.id.indexOf(':') + 1)); if (!v || !e) return;
-            // 같은 주문에 「주문 확인」과 「나눠 보내기」 카드가 둘 다 있으면 하나라도 제외면 제외
-            const other = liveDec((cd.type === 'order' ? 'split:' : 'ord:') + keyOf(e));
-            e.excluded = v === 'excl' || other === 'excl'; e.userTouched = true;
+            const v = st.dec.get(cd.id); if (!v) return;
+            keysOf(cd).forEach(k => {
+                const e = byKey.get(k); if (!e) return;
+                // 같은 주문에 「주문 확인」과 「나눠 보내기」 카드가 둘 다 있으면 하나라도 제외면 제외
+                e.excluded = v === 'excl' || otherDec(cd, k) === 'excl'; e.userTouched = true;
+            });
         });
     }
+    // 카드가 맡은 주문 키들(주문 확인 카드는 같은 구매자·같은 메모 묶음일 수 있다) · 같은 주문의 다른 종류 카드 결정
+    const keysOf = cd => cd.keys || [cd.id.slice(cd.id.indexOf(':') + 1)];
+    const otherDec = (cd, k) => { const id = cd.type === 'order' ? 'split:' + k : st.ordCard && st.ordCard.get(k); return id ? liveDec(id) : undefined; };
     const pending = () => st.cards.filter(cd => !st.dec.has(cd.id));
     // 검증·스타일용 카드 종류(data-fo-card) — 카드 id 머리말로 정한다
     const KIND = { ord: 'order', split: 'split', samb: 'sender-memo', 'samb-line': 'sender-line', lbad: 'line', lcnt: 'line', lsplit: 'line', lnoship: 'line', lnodate: 'line', snohit: 'line', cashfmt: 'cash-format', cmiss: 'cash-missing', cnot: 'cash-notindiv', cbox: 'cash-boxdiff', pick: 'partner' };
@@ -405,7 +427,7 @@
             acts = `<label class="fo-pick">거래처 <select data-pick="${esc(cd.id)}"><option value="">고르기</option>${cd.picks.map(p => `<option value="${esc(p)}"${v === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>`;
         } else if (cd.type === 'sender-edit' || cd.type === 'sender-order') {
             const ord = cd.type === 'sender-order';   // 주문 카드(손님 메모 애매) = [안 바꿈] · 메모 줄 카드 = [넣지 않음]
-            const d = v || { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '', memo: cd.sender.memo || '' };
+            const d = v || st.draft.get(cd.id) || { name: cd.sender.name || '', phone: cd.sender.phone || '', addr: cd.sender.addr || '', memo: cd.sender.memo || '' };   // draft = 아직 안 누른 카드에 적어 둔 글(다른 카드를 눌러 다시 그려도 유지)
             // #511(대표 10/4 「정답은 동호수만 남기고 김현정 드림」): 주문 카드에서는 택배사 양식에 들어갈 배송메세지도 사람이 고쳐 넣을 수 있다(프로그램이 지우지 않는다 · 비우면 기본 문구)
             const memoBox = ord ? `<label class="wide">택배사 양식에 들어갈 배송메세지(보내는이 부탁 글은 지우고 남길 것만 · 비우면 기본 문구)<textarea data-f="memo" rows="2" maxlength="300">${esc(d.memo == null ? cd.sender.memo || '' : d.memo)}</textarea></label>` : '';
             const memoDone = ord && v && v.use && typeof v.memo === 'string' && v.memo !== (cd.sender.memo || '') ? ` · 배송메세지 「${esc(v.memo || '기본 문구')}」` : '';
@@ -420,7 +442,15 @@
         }
         return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}"${done ? ' data-fo-done="1"' : ''} data-type="${cd.type}" data-state="${done ? 'done' : 'open'}"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span><b>${esc(cd.title)}</b></div>${done && cd.type !== 'pick' && cd.type !== 'sender-edit' && cd.type !== 'sender-order' ? '' : `<div class="fo-card-body">${lines}</div>`}<div class="fo-card-acts">${acts}</div></article>`;
     }
+    // 다시 그리기 전에, 아직 확정하지 않은 카드의 입력칸 글을 떠 둔다(워커1 관찰: 다른 카드를 누르면 적다 만 글이 사라졌다)
+    function saveDrafts() {
+        document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').forEach(card => {
+            const fs = card.querySelectorAll('[data-f]'); if (!fs.length) return;
+            const d = {}; fs.forEach(el => { d[el.dataset.f] = el.value; }); st.draft.set(card.dataset.id, d);
+        });
+    }
     function renderReview() {
+        saveDrafts();
         const s = S(), m = s.merged;
         const n = m.length, indiv = m.filter(e => e.individual).length, excl = m.filter(e => !e.individual && e.excluded).length;
         const cashRows = st.cash && st.cash.ok ? st.cash.rows.length : 0;
@@ -439,12 +469,17 @@
         btn.disabled = st.busy || left > 0 || !!st.stale || !st.judged;
         if (!$('fo-make-msg').classList.contains('err')) $('fo-make-msg').textContent = st.stale || !st.judged ? '위의 [다시 판정]을 먼저 눌러 주세요.' : left ? `확인할 것이 ${left}건 남았어요.` : '';
     }
-    function decide(id, v) { if (v === undefined) st.dec.delete(id); else st.dec.set(id, v); st.out = null; $('fo-result').hidden = true; clearMsg(); applyOrderDecisions(); if (v === undefined) resetOrder(id); renderSummaryOnly(); }
+    function decide(id, v) {
+        saveDrafts(); const prev = st.dec.get(id); st.draft.delete(id);
+        if (v === undefined) { st.dec.delete(id); if (prev && typeof prev === 'object' && prev.use) st.draft.set(id, prev); }   // [바꾸기] = 앞서 넣은 값에서 이어 고친다
+        else st.dec.set(id, v);
+        st.out = null; $('fo-result').hidden = true; clearMsg(); applyOrderDecisions(); if (v === undefined) resetOrder(id); renderSummaryOnly();
+    }
     function resetOrder(id) {   // 결정을 되돌리면 v2 판정값으로
         if (!/^(ord|split):/.test(id)) return;
-        const e = S().merged.find(x => keyOf(x) === id.slice(id.indexOf(':') + 1)); if (!e) return;
-        const other = liveDec((id.startsWith('ord:') ? 'split:' : 'ord:') + keyOf(e));
-        e.excluded = other === 'excl'; e.userTouched = !!other;
+        const cd = st.cards.find(c => c.id === id); if (!cd) return;
+        const byKey = new Map(S().merged.map(x => [keyOf(x), x]));
+        keysOf(cd).forEach(k => { const e = byKey.get(k); if (!e) return; const other = otherDec(cd, k); e.excluded = other === 'excl'; e.userTouched = !!other; });
     }
     function renderSummaryOnly() { buildCards(); applyOrderDecisions(); renderReview(); }
     function onCardClick(e) {
@@ -481,7 +516,7 @@
         const program = list.map((e, i) => ({ key: keyOf(e), cells: 'ABCDEFGHIJK'.split('').map(col => { const x = ws1[col + (i + 2)]; return x ? { v: x.v == null ? '' : x.v, s: x.s, t: x.t } : { v: '' }; }) }));
         // #511: 보내는이 카드에서 사람이 고쳐 넣은 배송메세지(원문과 다를 때만) — 색 표시는 보통 칸 서식으로(사람이 처리한 칸). 비웠으면 core 가 기본 문구를 넣는다.
         list.forEach((e, i) => {
-            const d = st.dec.get('samb:' + keyOf(e)); if (!d || !d.use || typeof d.memo !== 'string') return;
+            const d = sambDec(e); if (!d || !d.use || typeof d.memo !== 'string') return;
             if (d.memo === String(e.conv['배송메세지'] || '').replace(/\r/g, '').trim()) return;
             program[i].cells[9] = { v: d.memo, t: 's', s: program[i].cells[3].s };
         });

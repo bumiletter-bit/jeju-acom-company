@@ -492,9 +492,11 @@ async function resolveCards(pg, type) {
             ok(m97 === M97 && n97 === '박구매' && lineMemo === 0, '⑪ #511 카드의 배송메세지 칸 = 손님 메모 원문(줄바꿈 포함)으로 미리 채움 · 이름 칸 = 구매자 이름', JSON.stringify([m97, n97]));
             await c97().locator('[data-f="memo"]').fill('115동 1202호'); await c97().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
             await c98().locator('[data-f="memo"]').fill(''); await c98().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
-            ok(pre.v92 === '김구매' && pre.v91 === '', '⑨ 이름 칸 미리 채움: 메모에 구매자 이름이 있으면 그 이름 · 없으면 빈칸', `받는92 「${pre.v92}」 · 받는91 「${pre.v91}」`);
+            // #512 뒤: 이름 칸 = 「보내는이」 낱말 뒤 글자(core.senderHint) → 사람이 다듬는다. 여기서는 그 글자에 이름이 들어 있는지만 본다(정확한 값은 ⑫에서)
+            ok(pre.v92 === '김구매' && pre.v91 === '홍길동', '⑨ 이름 칸 미리 채움: 메모에서 이름만(뒤 인사말·앞 주소 글 뺌)', `받는92 「${pre.v92}」 · 받는91 「${pre.v91}」`);
             await c91().locator('[data-f="name"]').fill('홍길동'); await c91().locator('[data-f="phone"]').fill('010-5555-0091'); await c91().locator('[data-f="addr"]').fill('서울 가짜구 보내는로 91');
             await c91().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            await c92().locator('[data-f="name"]').fill('김구매');   // 미리 채운 글(「서울시 가짜구 김구매」)을 사람이 다듬는 경우 — 누르기 직전에 적는다(다른 카드를 누르면 카드 목록이 다시 그려진다)
             await c92().locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
             ok((await pend(a.pg, CARD.senderMemo)) === 0, '⑨ [이대로 넣기] 2건 → 카드 처리');
             await a.pg.fill(SEL.memo, `${FX.usd(ship)}\t010-7999-0000\t\t네이버`); await a.pg.click(SEL.rejudge); await idle(a.pg);
@@ -526,6 +528,86 @@ async function resolveCards(pg, type) {
             const k97 = at('받는97');
             ok(!!k92 && k92.r[9] === M92 && k92.f('J') === 'FFF2CC' && !!k97 && k97.r[9] === '115동 1202호', '⑪ #511 [안 바꿈] 주문의 J = 원문 + 연노랑 · 고쳐 넣은 다른 주문은 다시 만들어도 고친 글', k92 && JSON.stringify([k92.r[9], k92.f('J')]));
             ok(a.errs.length === 0, '⑨ 오류 0', a.errs.join(' | ')); await a.ctx.close();
+        }
+        // ⑫ #512 실파일 시험 뒤 보탠 규칙: 묶음 카드 · 미리 채움 · 이름뿐인 메모 · 기준일 당일 날짜 · 자동 제외 주문 ─────────
+        console.log('\n⑫ #512 묶음 카드 · 미리 채움 · 이름뿐인 메모 · 기준일 당일 날짜');
+        {
+            const base = fx.naver.find(r => r['수취인명'] === '받는21'); const WD = ['일', '월', '화', '수', '목', '금', '토'];
+            const dOf = iso => `${+iso.slice(8, 10)}일(${WD[new Date(iso + 'T00:00:00Z').getUTCDay()]})`;
+            let seq = 0; const mk = (nm, buyer, tel, memo, qty) => { seq++; return { ...base, '구매자명': buyer, '구매자연락처': tel, '수취인명': nm, '수취인연락처1': '010-7100-3' + String(100 + seq), '통합배송지': '서울특별시 가짜구 묶음로 ' + seq, '배송메세지': memo, '수량': qty || 1, _pid: '2099010200' + String(100 + seq), _x: { ...base._x, productOrderId: '2099010200' + String(100 + seq), orderId: '2099010200' + String(100 + seq) } }; };
+            const MC = '보내는사람 변경요청 ( 박묶음 010-5555-0777 )';
+            const fx12 = { ...fx, cafe24: [], coupang: [], canceledCoupang: [], naver: [
+                mk('묶음A1', '가묶음', '010-7000-3001', '다음주에 보내주세요'), mk('묶음A2', '가묶음', '010-7000-3001', '다음주에 보내주세요'), mk('묶음A3', '가묶음', '010-7000-3001', '다음주에 보내주세요'),   // ⓐ send
+                mk('묶음B1', '나묶음', '010-7000-3002', '다음주에 보내주세요'), mk('묶음B2', '나묶음', '010-7000-3002', '다음주에 보내주세요'), mk('묶음B3', '나묶음', '010-7000-3002', '다음주에 보내주세요'),   // ⓐ excl → 되돌리기
+                mk('묶음C1', '박묶음', '010-7000-3003', MC), mk('묶음C2', '박묶음', '010-7000-3003', MC),                                                   // ⓑ·ⓔ 제3의 번호
+                mk('본인D', '최본인', '010-7000-2004', '보내는사람 변경요청 ( 최본인 010-7000-2004 )'),                                                    // ⓔ 구매자 번호와 같음
+                mk('이름E', '시험구매E', '010-7000-3005', '김민수'), mk('문앞F', '시험구매F', '010-7000-3006', '문앞'), mk('경비G', '시험구매G', '010-7000-3007', '경비실'),   // ⓒ
+                mk('앞이름H', '시험구매H', '010-7000-3008', '이순신으로 보내는사람 적어주세요'),                                                         // ⓓ
+                mk('당일I', '시험구매I', '010-7000-3009', `전부 ${dOf(ship)}에 출고 부탁드려요!!`), mk('다른날J', '시험구매J', '010-7000-3010', `전부 ${dOf(later)}에 출고 부탁드려요!!`),   // ⓕ
+                mk('제외K', '시험구매K', '010-7000-3011', `${+later.slice(5, 7)}월 ${+later.slice(8, 10)}일 발송 부탁드려요 보내는분 가나다 서울 가짜구 가짜로 1 010-5555-0888`),   // ⓖ
+            ] };
+            const a = await openFO(br, fx12, {});
+            await setCash(a.pg, null); await a.pg.click(SEL.start); await idle(a.pg); await a.pg.waitForSelector(SEL.card, { timeout: 15000 });
+            const J12 = (await readJudge(a.pg)).judge; const cc = await cardCount(a.pg);
+            const oc = t => cardOf(a.pg, CARD.order, t), sc = t => cardOf(a.pg, CARD.senderMemo, t), doneCard = (type, t) => a.pg.locator(`${SEL.card}[data-fo-card="${type}"][data-fo-done]`, { hasText: t }).first();
+            const exOf = async nms => (await Promise.all(nms.map(nm => fState(a.pg, nm)))).map(s => s && s.excluded);
+            // ⓐ 묶음 주문 확인 카드
+            const tA = (await oc('묶음A1').count()) ? await oc('묶음A1').innerText() : '';
+            const nCards = (type, t) => a.pg.locator(`${SEL.pending}[data-fo-card="${type}"]`, { hasText: t }).count();   // 그 글이 든 남은 카드 장수(묶음 카드는 본문에 묶인 주문이 다 적힌다)
+            ok((await nCards(CARD.order, '가묶음')) === 1 && /외\s*2건/.test(tA) && /묶음A2/.test(tA) && /묶음A3/.test(tA) && (await nCards(CARD.order, '나묶음')) === 1, '⑫ⓐ 같은 구매자·같은 메모 3건 → 주문 확인 카드 1장(「외 2건」) · 다른 구매자는 따로', tA.replace(/\s+/g, ' ').slice(0, 90));
+            await oc('묶음A1').locator('[data-fo-act="send"]').click(); await a.pg.waitForTimeout(200);
+            ok((await exOf(['묶음A1', '묶음A2', '묶음A3'])).every(x => x === false) && (await oc('묶음A1').count()) === 0, '⑫ⓐ [오늘 발송] 한 번 → 묶음 3건 모두 발송 · 카드 처리');
+            await oc('묶음B1').locator('[data-fo-act="excl"]').click(); await a.pg.waitForTimeout(200);
+            ok((await exOf(['묶음B1', '묶음B2', '묶음B3'])).every(x => x === true), '⑫ⓐ [제외] 한 번 → 묶음 3건 모두 빠짐', JSON.stringify(await exOf(['묶음B1', '묶음B2', '묶음B3'])));
+            await doneCard(CARD.order, '묶음B1').locator('[data-undo]').click(); await a.pg.waitForTimeout(200);
+            ok((await oc('묶음B1').count()) === 1 && (await exOf(['묶음B1', '묶음B2', '묶음B3'])).every(x => x === false), '⑫ⓐ [바꾸기]로 되돌리면 카드가 다시 열리고 3건 모두 제외 풀림', JSON.stringify(await exOf(['묶음B1', '묶음B2', '묶음B3'])));
+            await oc('묶음B1').locator('[data-fo-act="excl"]').click(); await a.pg.waitForTimeout(200);
+            // ⓑ·ⓔ 묶음 보내는이 카드 + 번호 미리 채움
+            const vC = { n: await nCards(CARD.senderMemo, '박묶음'), n2: 0, name: await sc('묶음C1').locator('[data-f="name"]').inputValue(), phone: await sc('묶음C1').locator('[data-f="phone"]').inputValue() };
+            ok(vC.n === 1 && vC.n2 === 0 && vC.name === '박묶음' && vC.phone.replace(/\D/g, '') === '01055550777', '⑫ⓑⓔ 같은 구매자·같은 보내는이 메모 2건 → 카드 1장 · 이름 칸 = 메모의 이름 · 번호 칸 = 메모의 제3의 번호', JSON.stringify(vC));
+            const vD = { name: await sc('본인D').locator('[data-f="name"]').inputValue(), phone: await sc('본인D').locator('[data-f="phone"]').inputValue() };
+            ok(vD.name === '최본인' && vD.phone === '', '⑫ⓔ 메모의 번호가 구매자 번호와 같으면 번호 칸 빈칸', JSON.stringify(vD));
+            // ⓒ 이름뿐인 메모
+            const vE = { v2: J12['이름E'].sender, n: await sc('이름E').count(), name: (await sc('이름E').count()) ? await sc('이름E').locator('[data-f="name"]').inputValue() : null, f: await a.pg.locator(`${SEL.card}`, { hasText: '문앞F' }).count(), g: await a.pg.locator(`${SEL.card}`, { hasText: '경비G' }).count() };
+            ok(vE.v2 === null && vE.n === 1 && vE.name === '김민수' && vE.f === 0 && vE.g === 0, '⑫ⓒ 이름뿐인 메모(v2는 판정 안 함) → 보내는이 카드 · 이름 칸 = 그 이름 / 「문앞」「경비실」은 카드 없음', JSON.stringify(vE));
+            // ⓓ 앞에 오는 이름
+            const vH = await sc('앞이름H').locator('[data-f="name"]').inputValue();
+            ok(vH === '이순신', '⑫ⓓ 「○○○으로 보내는사람 적어주세요」 → 이름 칸 = ○○○(구매자 이름이 아니어도)', vH);
+            // ⓕ 기준일 당일 날짜 메모
+            const vI = { card: await a.pg.locator(SEL.card, { hasText: '당일I' }).count(), st: J12['당일I'], jCard: await oc('다른날J').count(), jSt: J12['다른날J'] };
+            ok(vI.card === 0 && !vI.st.excluded, '⑫ⓕ 기준일 당일을 집은 날짜 메모 → 카드 없음 · 그대로 발송', JSON.stringify({ 카드: vI.card, v2: vI.st.flag }));
+            ok(vI.jCard === 1 || vI.jSt.excluded, '⑫ⓕ 다른 날짜를 집은 메모 → 그냥 나가지 않음(주문 확인 카드 또는 자동 제외)', JSON.stringify({ 카드: vI.jCard, 제외: vI.jSt.excluded, flag: vI.jSt.flag }));
+            // ⓖ 자동 제외 주문
+            const vK = { st: J12['제외K'], card: await a.pg.locator(SEL.card, { hasText: '제외K' }).count() };
+            ok(vK.st.excluded && vK.st.sender === 'amb' && vK.card === 0, '⑫ⓖ 자동 제외(오늘 안 나감) 주문의 보내는이 애매 메모 → 카드 없음', JSON.stringify(vK));
+            ok(((cc[CARD.order] || {}).pending || 0) === 2 + vI.jCard && ((cc[CARD.senderMemo] || {}).pending || 0) === 4, '⑫ 카드 수: 주문 확인 = 묶음 2(+다른 날짜 카드) · 보내는이 = 4(묶음 C · 본인 D · 이름뿐 E · 앞이름 H)', JSON.stringify(cc));
+            // 파일까지
+            // 적다 만 글 유지: 카드 H에 주소·배송메세지를 적어 두고 다른 카드 C를 먼저 누른다
+            await sc('앞이름H').locator('[data-f="addr"]').fill('적다 만 주소'); await sc('앞이름H').locator('[data-f="memo"]').fill('적다 만 메모');
+            await sc('묶음C1').locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            const keepH = { addr: await sc('앞이름H').locator('[data-f="addr"]').inputValue(), memo: await sc('앞이름H').locator('[data-f="memo"]').inputValue(), name: await sc('앞이름H').locator('[data-f="name"]').inputValue() };
+            ok(keepH.addr === '적다 만 주소' && keepH.memo === '적다 만 메모' && keepH.name === '이순신', '⑫ 다른 카드를 처리해도, 아직 안 누른 카드에 적어 둔 글이 그대로', JSON.stringify(keepH));
+            await sc('앞이름H').locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            // [바꾸기] → 앞서 넣은 값에서 이어 고침
+            await doneCard(CARD.senderMemo, '박묶음').locator('[data-undo]').click(); await a.pg.waitForTimeout(200);
+            const reC = { n: await nCards(CARD.senderMemo, '박묶음'), name: await sc('묶음C1').locator('[data-f="name"]').inputValue(), phone: (await sc('묶음C1').locator('[data-f="phone"]').inputValue()).replace(/\D/g, '') };
+            ok(reC.n === 1 && reC.name === '박묶음' && reC.phone === '01055550777', '⑫ [바꾸기]로 다시 연 카드 = 앞서 넣은 이름·번호가 입력칸에 그대로', JSON.stringify(reC));
+            await sc('묶음C1').locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            await sc('이름E').locator('[data-fo-act="use"]').click(); await a.pg.waitForTimeout(150);
+            await resolveAll(a.pg);
+            ok((await pendingN(a.pg)) === 0 && !(await a.pg.isDisabled(SEL.make)), '⑫ 카드 전부 처리 → [파일 만들기] 켜짐', JSON.stringify(await cardCount(a.pg)));
+            await a.pg.click(SEL.make); await idle(a.pg); await a.pg.waitForSelector(SEL.save, { timeout: 15000 });
+            const nmH = (await a.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save)).find(x => x.includes('(효돈)'));
+            const [dH] = await Promise.all([a.pg.waitForEvent('download', { timeout: 20000 }), a.pg.locator(`[data-fo-save="${nmH}"]`).click()]); const fH12 = path.join(TMP, 's12.xlsx'); await dH.saveAs(fH12);
+            const s12 = XLSX.readFile(fH12, { cellStyles: true }).Sheets.Sheet1; const r12 = XLSX.utils.sheet_to_json(s12, { header: 1, defval: '' }); const at12 = nm => { const i = r12.findIndex(r => r[3] === nm); return i < 0 ? null : { r: r12[i], f: c => fillOf(s12[c + (i + 1)]) }; };
+            const c1 = at12('묶음C1'), c2 = at12('묶음C2'), e1 = at12('이름E');
+            ok(!!c1 && !!c2 && [c1, c2].every(x => x.r[0] === '박묶음 드림' && String(x.r[1]).replace(/\D/g, '') === '01055550777' && x.f('A') === 'DDEBF7' && x.f('B') === 'DDEBF7'), '⑫ⓑ [이대로 넣기] 한 번 → 묶음 두 행 모두 A 「이름 드림」 · B 번호 + 연파랑', c1 && c2 && JSON.stringify([c1.r[0], c2.r[0], c2.r[1]]));
+            ok(!!e1 && e1.r[0] === '김민수 드림' && e1.f('A') === 'DDEBF7', '⑫ⓒ 이름뿐인 메모 카드에서 넣기 → A 「김민수 드림」', e1 && e1.r[0]);
+            const h1 = at12('앞이름H');
+            ok(!!h1 && h1.r[0] === '이순신 드림' && h1.r[12] === '적다 만 주소' && h1.r[9] === '적다 만 메모', '⑫ 적어 두었던 글로 넣은 카드 → A 「이순신 드림」 · M 주소 · J 고친 배송메세지', h1 && JSON.stringify([h1.r[0], h1.r[12], h1.r[9]]));
+            const names12 = r12.slice(1).map(r => r[3]);
+            ok(['묶음A1', '묶음A2', '묶음A3', '당일I', '문앞F', '경비G'].every(n => names12.includes(n)) && ['묶음B1', '묶음B2', '묶음B3', '제외K'].every(n => !names12.includes(n)), '⑫ 파일: 발송으로 정한 묶음 3건·당일 메모 주문 있음 / 제외 묶음 3건·자동 제외 주문 없음', `${names12.length}행`);
+            ok(a.errs.length === 0, '⑫ 오류 0', a.errs.join(' | ')); await a.ctx.close();
         }
         code = fail ? 1 : 0;
     } catch (e) { if (e.message !== 'STOP') { console.error('ERR', e.stack || e.message); code = 1; } }
