@@ -586,11 +586,15 @@
             const mid = !long && (text.length > 120 || text.split('\n').length > 3); // #476 첫 화면 미리보기에서만 3줄로 줄인다
             const open = full || S.open.has(o.id);
             const fl = Array.isArray(r.files) ? r.files : [];
-            const mediaOf = f => { const ext = String(f.label || '').split('.').pop().toLowerCase(); return /^(png|jpe?g|gif|webp)$/.test(ext) ? 'img' : ext === 'mp4' ? 'video' : ''; };
-            const media = fl.filter(f => f.file_id && mediaOf(f));
+            // #536 주소로 온 그림(힉스필드 결과 등 · file_id 없음)도 바로 보인다 — 이름표가 아니라 주소 끝의 확장자로 가린다(https 만)
+            const extOf = s => { const m = String(s || '').split(/[?#]/)[0].match(/\.([a-z0-9]{2,5})$/i); return m ? m[1].toLowerCase() : ''; };
+            const urlOk = f => !f.file_id && /^https:\/\//i.test(String(f.url || ''));
+            const mediaOf = f => { const ext = f.file_id ? extOf(f.label) : urlOk(f) ? extOf(f.url) : ''; return /^(png|jpe?g|gif|webp)$/.test(ext) ? 'img' : ext === 'mp4' ? 'video' : ''; };
+            const srcOf = f => f.file_id ? `data-file="${Number(f.file_id)}"` : `src="${esc(f.url)}" referrerpolicy="no-referrer" loading="lazy"`;
+            const media = fl.filter(f => (f.file_id || urlOk(f)) && mediaOf(f));
             const mediaHtml = media.length ? `<div class="desk-media">${media.map(f => mediaOf(f) === 'img'
-                ? `<figure class="desk-media-item"><img data-file="${Number(f.file_id)}" alt="${esc(f.label || '첨부 사진')}" data-act="zoom" data-id="${o.id}" title="누르면 크게 보여요"><figcaption>${esc(f.label || '')}</figcaption></figure>`
-                : `<figure class="desk-media-item video"><video data-file="${Number(f.file_id)}" controls playsinline preload="metadata"></video><figcaption>${esc(f.label || '')}</figcaption></figure>`).join('')}</div>` : '';
+                ? `<figure class="desk-media-item"><img ${srcOf(f)} alt="${esc(f.label || '첨부 사진')}" data-act="zoom" data-id="${o.id}" title="누르면 크게 보여요"><figcaption>${esc(f.label || '')}</figcaption></figure>`
+                : `<figure class="desk-media-item video"><video ${srcOf(f)} controls playsinline preload="metadata"></video><figcaption>${esc(f.label || '')}</figcaption></figure>`).join('')}</div>` : '';
             const files = fl.length
                 ? mediaHtml + `<div class="desk-acts desk-files">${fl.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`

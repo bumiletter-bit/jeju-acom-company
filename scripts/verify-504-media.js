@@ -45,13 +45,14 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
             O(300, '중간발주 뽑아줘', { result: { type: 'desk_answer', title: '중간발주 집계 (10-03 09:12)', answer: '거래처별 수량 표입니다.', files: [{ file_id: 901, label: '중간발주_대성(시온)_1003.png' }, { file_id: 902, label: '중간발주_효돈농협_1003.jpg' }, { file_id: 903, label: '릴스_초안.mp4' }, { file_id: 904, label: '수량표.xlsx' }] } }),
             O(301, '사진 못 받는 경우', { result: { type: 'desk_answer', answer: '사진이 하나 있어요.', files: [{ file_id: 905, label: '없는사진.png' }] } }),
             O(302, '그냥 글 답', {}),
+            O(304, '행사 그림 만들어줘', { result: { type: 'desk_answer', answer: '그림 2장입니다.', files: [{ url: 'https://img.test/a/hf_1.png', label: '이미지 1 — 글자 있는 것' }, { url: 'https://img.test/a/hf_2.webp?x=1', label: '이미지 2' }, { url: 'https://img.test/a/clip.mp4', label: '영상' }, { url: 'https://img.test/a/page', label: '결과 페이지' }, { url: 'javascript:alert(1)//x.png', label: '나쁜 주소' }] } }),
             O(303, '처리 중 건', { status: '처리중', processed_at: null, result: { type: 'live', text: '쓰는 중…' } }),
         ];
         const { chromium } = require('playwright');
         browser = await chromium.launch();
         const open = async (vw, extra) => {
             const st = { orders: seed(), files: {}, status: { state: 'idle', online: true, waiting: 0, working: 0, order_id: null, can_wake: true, launcher: { on: true }, approval: 0 }, writes: [], gets: 0 };
-            const ctx = await browser.newContext(Object.assign({ viewport: vw }, extra || {}));
+            const ctx = await browser.newContext(Object.assign({ viewport: vw, serviceWorkers: "block" }, extra || {}));   // 서비스 워커는 가짜 그림 주소(img.test)를 못 받는다
             const pg = await ctx.newPage();
             const errors = [], cons = [];
             pg.on('pageerror', e => errors.push(String(e)));
@@ -69,6 +70,7 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
                 if (id === 904) return route.fulfill({ status: 200, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', body: Buffer.from('PK') });
                 return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"없는 파일"}' });
             });
+            await pg.route('https://img.test/**', route => /.mp4/.test(route.request().url()) ? route.fulfill({ status: 200, contentType: 'video/mp4', body: MP4 }) : route.fulfill({ status: 200, contentType: 'image/png', body: PNG_BIG }));
             await pg.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
             await pg.evaluate(([t, u]) => { localStorage.setItem('jwt_token', t); localStorage.setItem('jwt_user', JSON.stringify(u)); localStorage.setItem('akm_last_page', 'agent-office'); localStorage.removeItem('akm_desk_view'); }, [tok, user]);
             await pg.reload({ waitUntil: 'networkidle' });
@@ -149,7 +151,7 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
         await sleep(200);
         ok('① 다시 열고 아무 데나 누르면 닫힘 · 크게 보기 열어도 파일 재요청 0', !!z3b.zoom && !z3b.zoom.vis && !z3b.zoom.covers && A.st.files[902] === 1, JSON.stringify(z3b.zoom));
         // 대화 틀
-        ok('② 대화 틀 .desk-thread-box = 인디고 테두리 2px #A5ACFF · 둥근 모서리 · 대화마다(4개)', m2.box && m2.box.border === 'rgb(165, 172, 255)' && parseFloat(m2.box.w) >= 2 && parseFloat(m2.box.radius) >= 12 && m2.boxes === 4, JSON.stringify(m2.box));
+        ok('② 대화 틀 .desk-thread-box = 인디고 테두리 2px #A5ACFF · 둥근 모서리 · 대화마다(5개)', m2.box && m2.box.border === 'rgb(165, 172, 255)' && parseFloat(m2.box.w) >= 2 && parseFloat(m2.box.radius) >= 12 && m2.boxes === 5, JSON.stringify(m2.box));
         const comp = await A.pg.evaluate(() => { const c = getComputedStyle(document.querySelector('.desk-compose')); return { border: c.borderTopColor, w: c.borderTopWidth }; });
         ok('② 입력 상자와 같은 테두리 색·두께', comp.border === m2.box.border && comp.w === m2.box.w, JSON.stringify(comp));
         await A.pg.focus('#reply-302');
@@ -207,6 +209,30 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
         const zpc = await media(P.pg);
         ok('390 — 탭으로 닫힘 · pageerror 0 · console error 0', !zpc.zoom.vis && !zpc.zoom.covers && P.errors.length === 0 && P.cons.length === 0, [...P.errors, ...P.cons].join(' | ').slice(0, 300));
         await P.ctx.close();
+
+        // ════ #536 주소로 온 그림(file_id 없음)도 바로 보인다
+        const U = await open({ width: 1440, height: 950 });
+        const um = () => U.pg.evaluate(() => {
+            const turn = document.querySelector('#desk-list .desk-turn[data-oid="304"]'); if (!turn) return null;
+            const m = turn.querySelector('.desk-media');
+            const imgs = m ? Array.from(m.querySelectorAll('img')) : [], vids = m ? Array.from(m.querySelectorAll('video')) : [];
+            const z = document.getElementById('desk-zoom');
+            return { imgs: imgs.map(i => ({ src: i.getAttribute('src'), w: i.naturalWidth, ref: i.getAttribute('referrerpolicy'), file: i.dataset.file || '' })), vids: vids.map(v => v.getAttribute('src')),
+                links: Array.from(turn.querySelectorAll('.desk-files a.desk-link')).map(a => a.getAttribute('href')), zoom: z && !z.hidden ? (z.querySelector('img') || {}).src : null };
+        });
+        const u1 = await waitFor(async () => { const x = await um(); return x && x.imgs.length === 2 && x.imgs.every(i => i.w > 0) ? x : null; }, 10000) || await um();
+        ok('#536 주소 그림 2장 바로 보임(png · webp?질의)', !!u1 && u1.imgs.length === 2 && u1.imgs.every(i => i.w > 0 && String(i.src).startsWith('https://img.test/') && i.ref === 'no-referrer' && !i.file), JSON.stringify(u1 && u1.imgs));
+        ok('#536 주소 영상 1개 · 확장자 없는 주소·https 아닌 주소는 미리 보기 없음', !!u1 && u1.vids.length === 1 && /clip.mp4$/.test(u1.vids[0]), JSON.stringify(u1 && u1.vids));
+        ok('#536 열기 링크는 종전대로 5개 그대로', !!u1 && u1.links.length === 5, JSON.stringify(u1 && u1.links.length));
+        await sleep(2500);
+        const u2 = await um();
+        ok('#536 2초 새로고침 뒤에도 그대로 보임', !!u2 && u2.imgs.length === 2 && u2.imgs.every(i => i.w > 0));
+        await U.pg.click('#desk-list .desk-turn[data-oid="304"] .desk-media img');
+        await sleep(250);
+        const u3 = await um();
+        ok('#536 누르면 크게 보기', !!u3 && /hf_1.png$/.test(u3.zoom || ''), String(u3 && u3.zoom));
+        ok('#536 pageerror 0 · 쓰기 0', U.errors.length === 0 && U.st.writes.length === 0, U.errors.join(' | ').slice(0, 200));
+        await U.ctx.close();
     } catch (e) {
         ok('검증 실행', false, e.message);
     } finally {
