@@ -7765,6 +7765,17 @@ async function collectKakaoNotify() {
                          (예: 8/13 08:05 주문 → 8/13~16 발송휴무 → **8/17 발송**, 8/12 오후 주문과 같은 안내). */
                     const payDayKst = new Date(Date.UTC(_kst.getUTCFullYear(), _kst.getUTCMonth(), _kst.getUTCDate()));
                     if (payHourKst === 8 && shippingSchedule.isShipDay(payDayKst, hinfo.set)) {
+                        /* #529(대표 10/5 「선물하기는 8~9시 건도 다른 시간 건과 동일하게 — 연락을 드릴 수 없다」):
+                           번호가 가려진 선물하기 주문은 보류로 잡아도 [오늘/내일 발송으로 안내]를 보낼 번호가 없다. 보류보다 선물하기 판정을 먼저 해
+                           다른 시간대 선물하기와 같은 기록(gift-masked · 발주확인 none)으로 남긴다. 번호가 있는 8시대 주문은 종전 그대로 보류. */
+                        const rawTel0 = od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '';
+                        let rt0 = ''; try { rt0 = await resolveReceiver(rawTel0, orderKey); } catch (_) { rt0 = ''; }   // 다른 시간대와 같은 판정 함수(정상 번호면 추가 호출 없음 · 실패하면 종전대로 보류)
+                        if (isMaskedTel(rt0)) {
+                            await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
+                                VALUES ($1,$2,'gift-masked','skip','gift-masked','none') ON CONFLICT (order_key) DO NOTHING`,
+                                [orderKey, (po.productName || '').slice(0, 200)]).catch(() => {});
+                            continue;
+                        }
                         await pool.query(`INSERT INTO kakao_notify_log (order_key, product_name, receiver_masked, mode, status, confirm_status)
                             VALUES ($1,$2,$3,'hold','hold-0809','manual-needed') ON CONFLICT (order_key) DO NOTHING`,
                             [orderKey, (po.productName || '').slice(0, 200), kakaoNotify.maskPhone(od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || '')]).catch(() => {});
