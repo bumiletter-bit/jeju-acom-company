@@ -998,7 +998,8 @@
     function chatCandidates(text) {
         const s = S(), t = sq(text), out = [], seen = new Set();
         const push = e => { const k = keyOf(e); if (!seen.has(k)) { seen.add(k); out.push(e); } };
-        const four = (String(text).match(/(?<!\d)\d{4}(?!\d)/g) || []);
+        // #533: 「끝 4자리」 대조는 전화번호를 통째로 적은 부분을 지운 글에서만 — 「010-2222-3333」의 가운데 2222 가 끝 번호 2222 인 다른 주문을 끌어오던 것
+        const four = (String(text).replace(CHAT_PHONE, ' ').match(/(?<!\d)\d{4}(?!\d)/g) || []);
         const fullTels = (String(text).match(CHAT_PHONE) || []).map(x => x.replace(/\D/g, ''));
         s.merged.forEach(e => {
             const b = sq(buyerName(e)), r = sq(e.conv['수취인명']);

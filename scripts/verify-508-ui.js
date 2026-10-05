@@ -1256,7 +1256,7 @@ async function resolveCards(pg, type) {
             console.log('\n⑳ #527 번호가 든 말과 정리 줄 가르기');
             {
                 const PID16 = '2026100512345678';
-                const rows20 = [mk('이공가', { tel: '010-1111-2222' }), mk('이공나', { tel: '010-3333-4444' }), mk('이공다', { tel: '010-5555-6666' }), mk('이공라', { tel: '010-7777-8888' }), mk('이공마', { tel: '010-9999-0000' }), mk('이공바', { pid: PID16 }), mk('이공사', { tel: '010-2424-3535' }), mk('이공아')];
+                const rows20 = [mk('이공가', { tel: '010-1111-2222' }), mk('이공나', { tel: '010-3333-4444' }), mk('이공다', { tel: '010-5555-6666' }), mk('이공라', { tel: '010-7777-8888' }), mk('이공마', { tel: '010-9999-0000' }), mk('이공바', { pid: PID16 }), mk('이공사', { tel: '010-2222-3333' }), mk('이공아')];
                 const t = await mkChat(false, rows20);
                 await setCash(t.pg, null); await t.pg.click(SEL.start); await idle(t.pg); await t.pg.waitForTimeout(400);
                 const memoV = () => t.pg.inputValue(SEL.memo); const lastPost = () => t.chat.posts[t.chat.posts.length - 1];
@@ -1288,7 +1288,7 @@ async function resolveCards(pg, type) {
                 const J20b = (await readJudge(t.pg)).judge;
                 ok(J20b['이공나'].individual && J20b['이공마'].individual && J20b['이공바'].kind === 'today', '⑳3 넣은 줄이 그대로 판정에 반영(입력삭제 2건 · 메모무시 = 그날 발송)', JSON.stringify({ 나: J20b['이공나'].individual, 마: J20b['이공마'].individual, 바: J20b['이공바'].kind }));
                 // 정리 줄 직후 「이건 빼줘」
-                await say(t.pg, `${FX.usd(later)}\t010-2424-3535\t\t네이버`); await idle(t.pg);
+                await say(t.pg, `${FX.usd(later)}\t010-2222-3333\t\t네이버`); await idle(t.pg);
                 t.chat.answer = b => ({ reply: '', actions: (b.orders || []).map(o => ({ op: 'include', n: o.n })) });
                 const before6 = t.chat.posts.length; await say(t.pg, '이건 다시 넣어줘'); const p6 = lastPost();
                 ok(t.chat.posts.length === before6 + 1 && p6.orders.length === 1 && p6.orders[0].buyer === '이공사' && p6.orders[0].state === '오늘 안 나감', '⑳4 정리 줄을 넣은 직후 「이건 …」 → 후보 = 방금 그 줄의 주문(상태 = 오늘 안 나감)', JSON.stringify(p6.orders.map(o => [o.buyer, o.state])));
