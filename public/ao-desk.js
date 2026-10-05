@@ -961,8 +961,27 @@
         if (!box) return;
         const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         const ta = box.querySelector('.desk-turn.last .desk-reply-in');
-        (ta ? (ta.closest('.desk-cbox') || ta) : box).scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+        const target = ta ? (ta.closest('.desk-cbox') || ta) : box;
+        // #545(대표 폰 실물 「잘 안 맞아」): 폰에서는 ①자판이 올라오며 보이는 화면이 줄고 ②위쪽 대화의 그림이 늦게 떠 자리가 밀리고 ③부드러운 스크롤이 2초 새로고침에 끊긴다
+        //   → 「보이는 화면(visualViewport)」 기준으로 답 상자가 위에서 1/3 쯤에 오게 직접 맞추고, 자리가 잡힐 때까지 몇 번 다시 맞춘다(손을 대면 그만둔다)
+        const align = () => {
+            if (!target.isConnected) return;
+            const vv = window.visualViewport, vh = vv ? vv.height : window.innerHeight, vtop = vv ? vv.offsetTop : 0;
+            const sc = target.closest('.is-full') || document.scrollingElement || document.documentElement;
+            const bar = sc.querySelector ? sc.querySelector('.desk-fullbar') : null;
+            const head = bar && sc.classList && sc.classList.contains('is-full') ? bar.getBoundingClientRect().height : 0;
+            const r = target.getBoundingClientRect();
+            const want = vtop + Math.max(head + 12, Math.min(vh * 0.32, vh - r.height - 16));
+            const d = r.top - want;
+            if (Math.abs(d) > 4) { if (sc === document.scrollingElement || sc === document.documentElement) window.scrollBy(0, d); else sc.scrollTop += d; }
+        };
+        align();
         if (ta) ta.focus({ preventScroll: true });
+        let stop = false; const cancel = () => { stop = true; };
+        ['touchstart', 'wheel', 'keydown'].forEach(ev => window.addEventListener(ev, cancel, { once: true, passive: true, capture: true }));
+        [250, 600, 1100, 1800].forEach(ms => setTimeout(() => { if (!stop) align(); }, ms));
+        if (window.visualViewport) { const vv = window.visualViewport, on = () => { if (!stop) align(); }; vv.addEventListener('resize', on); setTimeout(() => vv.removeEventListener('resize', on), 2600); }   // 자판이 올라와 화면이 줄면 한 번 더
+        void calm;
         box.classList.remove('desk-flash'); void box.offsetWidth; box.classList.add('desk-flash'); setTimeout(() => box.classList.remove('desk-flash'), 1600);
     }
     // 이력의 내 대화를 채팅 탭으로 다시 꺼낸다(숨겨 둔 차례만 되살림) → 그 대화로 옮겨 답 칸에 커서
