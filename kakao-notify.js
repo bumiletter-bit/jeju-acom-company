@@ -186,6 +186,17 @@ async function aligoPost(reqPath, form, host, extra) {
 
 // 실발송 경로 (조사1 스펙: 토큰 발급 → alimtalk/send, failover=Y 시 fsubject/fmessage 필수)
 // ⚠️ 호출돼도 switchOn()·configured() 둘 다 통과해야만 실제 API에 닿음.
+// #549(대표 실물 10/6 「대체 문자에 물음표가 들어간다」): 문자(LMS)는 이모지를 못 싣는다 → 「?」로 찍힌다.
+//   알림톡 본문은 그대로 두고(승인 문안), 문자로 나가는 글(대체 문자 · 쿠팡 등 문자 직행)에서만 이모지를 뺀다. 전화기 그림은 ☎ 로, 문자에 실리는 기호(★ ☆ → ▶ ※ ♥ 등)는 그대로.
+const SMS_KEEP = new Set(['☎', '★', '☆', '♥', '♡', '♠', '♣', '♤', '♧', '☜', '☞', '♨', '♪', '♬', '▶', '◀', '※', '↔', '↕', '™', '©', '®']);
+function smsSafe(s) {
+    return String(s == null ? '' : s)
+        .replace(/📞/gu, '☎')
+        .replace(/\p{Extended_Pictographic}/gu, m => SMS_KEEP.has(m) ? m : '')
+        .replace(/[️‍⃣]/g, '')
+        .replace(/[\u{1F3FB}-\u{1F3FF}\u{1F1E6}-\u{1F1FF}]/gu, '')
+        .split('\n').map(l => l.replace(/[ \t]{2,}/g, ' ').replace(/^[ \t]+|[ \t]+$/g, '')).join('\n');
+}
 async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessage, buttons }) {
     if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', message };
     if (!configured()) return { mode: 'dry-run', status: 'keys-missing', message };
@@ -202,7 +213,7 @@ async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessa
         subject_1: subject || '주문 안내',
         message_1: message,
     };
-    if (failoverMessage) { form.failover = 'Y'; form.fsubject_1 = subject || '주문 안내'; form.fmessage_1 = failoverMessage; }
+    if (failoverMessage) { form.failover = 'Y'; form.fsubject_1 = subject || '주문 안내'; form.fmessage_1 = smsSafe(failoverMessage); }   // #549
     if (buttons) form.button_1 = JSON.stringify(buttons);                                     // 승인 템플릿과 동일 구성이어야 함 (공식 button_1 JSON)
     if (String(process.env.ALIGO_TEST || '').toUpperCase() === 'Y') form.testMode = 'Y';      // 알림톡 API 공식 testMode — 과금·실발송 없는 연동 테스트
     const r = await aligoPost('/akv10/alimtalk/send/', form);
@@ -249,7 +260,7 @@ async function sendLms({ receiver, subject, message }) {
         user_id: process.env.ALIGO_USER_ID,     // 공식 표기 user_id (언더스코어 — 알림톡의 userid와 다름)
         sender: process.env.ALIGO_SENDER,
         receiver: String(receiver || '').replace(/[^0-9]/g, ''),
-        msg: message,
+        msg: smsSafe(message),   // #549
         msg_type: 'LMS',
         title: (subject || '제주아꼼이네 배송 안내').slice(0, 20),   // 제목 1~44byte 제한 — 한글 20자 상한으로 방어
     };
@@ -442,4 +453,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */
+module.exports = { smsSafe, switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */
