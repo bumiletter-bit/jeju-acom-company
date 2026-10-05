@@ -452,3 +452,81 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 /* #504 다듬기: 크게 보기는 .desk 밖(body)에 붙으므로 hidden 을 따로 적용 · 대화에서 클코 답·이어서 지시 칸은 내 말풍선 오른쪽 끝까지(전체 너비) */
 .desk-zoom[hidden] { display: none !important; }
 .desk-chat .desk-bub.ai { max-width: 100%; }
+
+/* ── #538(대표 10/5) 채팅 / 이전 채팅 이력 / 승인 결재함 ─────────────────────────────────────────── */
+/* 답 칸 = 둥근 상자 하나: 글 칸(위) + 아래 줄 왼쪽 「+」(이미지 첨부) · 오른쪽 화살표(보내기) */
+.desk-chatbar { display: flex; align-items: flex-end; gap: 10px; margin-top: 10px; }
+.desk-chatbar:empty { display: none; }
+.desk-chatbar .desk-cbox { margin-top: 0; }
+.desk-cbox { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; margin-top: 10px; padding: 4px 10px 8px 14px; background: #fff; border: 1.5px solid #C7CBFF; border-radius: 22px; transition: border-color .16s var(--d-ease), box-shadow .16s var(--d-ease); }
+.desk-cbox:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .12); }
+.desk-cbox .desk-reply-in { flex: none; width: 100%; min-height: 44px; max-height: 220px; resize: none; border: 0 !important; border-radius: 0; padding: 10px 2px; background: transparent; box-shadow: none !important; outline: none !important; font-size: 15px; line-height: 1.5; color: var(--d-ink); }
+.desk-cbox .desk-reply-in::placeholder { color: var(--d-sub); }
+.desk-cbox .desk-reply-thumbs { flex-basis: auto; margin: 0 0 6px; }
+.desk-cbox-row { display: flex; align-items: center; justify-content: space-between; margin-top: 0; }
+.desk-cbtn { width: 44px; height: 44px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid var(--d-line); background: #fff; color: var(--d-ink); cursor: pointer; transition: background-color .16s var(--d-ease), border-color .16s var(--d-ease), transform .12s var(--d-ease), opacity .16s var(--d-ease); }
+.desk-cbtn:hover { background: var(--d-soft); border-color: #DEE0E7; }
+.desk-cbtn:active { transform: scale(.97); }
+.desk-cbtn:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.desk-cbtn.primary { background: var(--d-accent); border-color: var(--d-accent); color: #fff; }
+.desk-cbtn.primary:hover { background: var(--primary-dark, #4338CA); border-color: var(--primary-dark, #4338CA); }
+.desk-cbtn.primary[disabled] { background: #E4E6EE; border-color: #E4E6EE; color: #fff; cursor: default; transform: none; }
+.desk-cbtn[aria-busy="true"] { opacity: .6; }
+/* [채팅 종료] — 조용한 버튼(상자 밖 오른쪽 · 폰에선 아래 줄) */
+.desk-endbtn { flex: none; min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: none; color: var(--d-sub); font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color .16s var(--d-ease), color .16s var(--d-ease); }
+.desk-endbtn:hover { background: var(--d-soft); color: var(--d-ink); }
+.desk-endbtn:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.desk-chatbar.asking { flex-wrap: wrap; }
+.desk-end-ask { flex: 1 1 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--d-soft); border: 1px solid var(--d-line); font-size: 13.5px; color: var(--d-ink); }
+.desk-end-ask span { flex: 1 1 220px; min-width: 0; }
+/* 이전 채팅 이력 */
+.desk-histbar { display: flex; align-items: center; gap: 12px; margin: 12px 16px 0; }
+.desk-hist-search { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid var(--d-line); border-radius: 12px; background: #fff; color: var(--d-sub); transition: border-color .16s var(--d-ease), box-shadow .16s var(--d-ease); }
+.desk-hist-search:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .12); }
+.desk-hist-search input { flex: 1 1 auto; min-width: 0; height: 42px; border: 0 !important; background: transparent; box-shadow: none !important; outline: none !important; font: inherit; font-size: 14px; color: var(--d-ink); padding: 0; }
+.desk-hist-mine { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; font-weight: 600; color: var(--d-ink); cursor: pointer; white-space: nowrap; }
+.desk-hist-mine input { width: 18px; height: 18px; accent-color: var(--d-accent); }
+.desk-h-day { margin: 16px 2px 4px; font-size: 12px; font-weight: 700; color: var(--d-sub); letter-spacing: .01em; }
+.desk-h-day:first-child { margin-top: 6px; }
+.desk-h-item { border-bottom: 1px solid var(--d-line); }
+.desk-h-item.open { border: 1px solid #C7CBFF; border-radius: 14px; margin: 6px 0; background: #fff; }
+.desk-h-row { width: 100%; min-height: 48px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 8px 8px; border: 0; border-radius: 10px; background: none; color: var(--d-ink); font: inherit; text-align: left; cursor: pointer; transition: background-color .16s var(--d-ease); }
+.desk-h-row:has(.desk-h-who) { grid-template-columns: auto auto minmax(0, 1fr) auto; }
+.desk-h-row:hover { background: var(--d-soft); }
+.desk-h-row:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.desk-h-when { font-size: 12.5px; color: var(--d-sub); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 64px; }
+.desk-h-who { font-size: 12.5px; font-weight: 600; color: var(--d-ink); white-space: nowrap; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.desk-h-text { min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-h-meta { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--d-sub); white-space: nowrap; }
+.desk-h-clip { display: inline-flex; color: var(--d-sub); }
+.desk-h-chev { width: 16px; text-align: center; color: var(--d-dim); }
+.desk-h-body { padding: 4px 14px 14px; }
+.desk-h-body .desk-turn:first-child { margin-top: 4px; }
+.desk-h-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--d-line); }
+.desk-h-note { font-size: 12.5px; color: var(--d-sub); }
+.desk-h-more { display: block; margin: 14px auto 4px; }
+.desk-h-more[aria-busy="true"] { opacity: .6; }
+@media (max-width: 640px) {
+    .desk-chatbar { flex-wrap: wrap; justify-content: flex-end; }
+    .desk-chatbar .desk-cbox { flex: 1 1 100%; }
+    .desk-histbar { flex-wrap: wrap; }
+    .desk-h-row, .desk-h-row:has(.desk-h-who) { grid-template-columns: auto minmax(0, 1fr); row-gap: 2px; padding: 8px 4px; }
+    .desk-h-row:has(.desk-h-who) { grid-template-columns: auto auto minmax(0, 1fr); }
+    .desk-h-text { grid-column: 1 / -1; grid-row: 2; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .desk-h-meta { justify-self: end; }
+    .desk-h-body { padding: 4px 10px 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .desk-cbox, .desk-cbtn, .desk-endbtn, .desk-hist-search, .desk-h-row { transition: none; } }
+/* #538 보충: 대화와 대화의 경계가 한눈에 — 틀 사이 간격 넉넉히 · 머리 줄에 시작 시각과 첫 글 */
+.desk-chat .desk-thread-box { margin-top: 22px; }
+.desk-chat .desk-thread-box:first-child { margin-top: 0; }
+.desk-th-head { flex-wrap: nowrap; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px solid var(--d-line); }
+.desk-th-when { flex: none; font-weight: 700; color: var(--d-accent); font-variant-numeric: tabular-nums; }
+.desk-th-sum { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 600; color: var(--d-ink); }
+.desk-th-head > span:not(.desk-th-sum) { flex: none; white-space: nowrap; }
+.desk-h-item { border: 1px solid var(--d-card-line); border-radius: 12px; margin: 8px 0; background: #fff; }
+.desk-h-item.open { border: 2px solid #A5ACFF; border-radius: 16px; margin: 18px 0; }
+.desk-h-item.open > .desk-h-row { border-radius: 14px 14px 0 0; background: var(--d-accent-soft); }
+.desk-h-head { padding: 10px 0 8px; margin-bottom: 4px; border-bottom: 1px solid var(--d-line); font-size: 12.5px; font-weight: 700; color: var(--d-accent); font-variant-numeric: tabular-nums; }
+.desk-h-row { padding: 8px 12px; }
+@media (max-width: 640px) { .desk-h-row, .desk-h-row:has(.desk-h-who) { padding: 8px 10px; } .desk-th-head { flex-wrap: wrap; } .desk-th-sum { flex-basis: 100%; order: 5; } }

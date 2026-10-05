@@ -114,10 +114,10 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
                 viewBtn: vb ? { vis: vis(vb), text: vb.textContent.trim(), hidden: vb.hidden } : null, stored: localStorage.getItem('akm_desk_view'),
                 threads: boxes.map(b => ({
                     th: Number(b.dataset.th), vis: vis(b), ov: b.classList.contains('ov'), head: (b.querySelector('.desk-th-head') || {}).textContent.replace(/\s+/g, ' ').trim(),
-                    x: !!b.querySelector('.desk-th-head [data-act="hidethread"]'),
+                    x: !!b.querySelector('[data-act="endchat"]'),   // #538 × 대신 [채팅 종료]
                     turns: Array.from(b.querySelectorAll('.desk-turn')).map(t => ({ id: Number(t.dataset.oid), last: t.classList.contains('last'), me: (t.querySelector('.desk-bub.me .desk-q') || {}).textContent, meta: (t.querySelector('.desk-bub-meta') || {}).textContent,
                         badge: (t.querySelector('.desk-bub.ai .desk-badge') || {}).textContent, ai: (t.querySelector('.desk-bub.ai') || {}).textContent.replace(/\s+/g, ' ').trim().slice(0, 160),
-                        reply: Array.from(t.querySelectorAll('textarea.desk-reply-in[id^="reply-"]')).filter(vis).length, send: Array.from(t.querySelectorAll('[data-act="sendreply"]')).filter(vis).map(b => b.textContent.trim()), imgBtn: Array.from(t.querySelectorAll('[data-act="replyimg"]')).filter(vis).length,
+                        reply: Array.from(t.querySelectorAll('textarea.desk-reply-in[id^="reply-"]')).filter(vis).length, send: Array.from(t.querySelectorAll('[data-act="sendreply"]')).filter(vis).map(b => b.getAttribute('aria-label') || b.textContent.trim()), imgBtn: Array.from(t.querySelectorAll('[data-act="replyimg"]')).filter(vis).length,
                         followVis: Array.from(t.querySelectorAll('[data-act="follow"]')).filter(vis).length, followDom: t.querySelectorAll('[data-act="follow"]').length })),
                 })),
                 more: (document.getElementById('desk-list-more') || {}).textContent.replace(/\s+/g, ' ').trim(), full: document.getElementById('desk-listbox').classList.contains('is-full'),
@@ -246,9 +246,9 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         await sleep(300);
         const inFull = await A.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="120"]'); if (t) t.scrollIntoView({ block: 'center' }); const ta = document.getElementById('reply-120'); return !!ta && ta.getClientRects().length > 0; });
         ok('#500 [자세히 확인하기] 크게 보기 안의 대화에도 답 칸이 열려 있음', inFull);
-        await A.pg.click('#desk-list .desk-turn[data-oid="120"] [data-act="sendreply"]');
-        await sleep(500);
-        ok('#500 글·이미지 둘 다 없으면 보내지 않음', posts(A, /\/orders\/120\/reply$/).length === 0);
+        // #538: 비어 있으면 보내기 버튼이 꺼져 있다(누를 수 없음)
+        const dis120 = await A.pg.evaluate(() => document.querySelector('#desk-list .desk-turn[data-oid="120"] [data-act="sendreply"]').disabled);
+        ok('#500 글·이미지 둘 다 없으면 보내지 않음(#538 보내기 버튼이 꺼져 있음)', dis120 === true && posts(A, /\/orders\/120\/reply$/).length === 0);
         await pasteImg(A.pg, '#reply-120');
         await waitFor(async () => { const x = await rst(A.pg, 120); return x && x.thumb ? x : null; }, 4000);
         await A.pg.click('#desk-list .desk-turn[data-oid="120"] [data-act="sendreply"]');
@@ -304,7 +304,8 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
 
         // × = 대화 통째 지우기
         const h0 = posts(A, /hide-mine$/).length;
-        await A.pg.click('#desk-list .desk-thread-box[data-th="210"] [data-act="hidethread"]');
+        await A.pg.click('#desk-list .desk-thread-box[data-th="210"] [data-act="endchat"]');   // #538 [채팅 종료] → 카드 안 확인 → [종료]
+        await A.pg.click('#desk-list .desk-thread-box[data-th="210"] .desk-end-ask [data-act="hidethread"]');
         const ph = await waitFor(async () => posts(A, /hide-mine$/).length - h0 >= 3 ? posts(A, /hide-mine$/).slice(h0) : null, 6000);
         await sleep(500);
         const ch = await chat(A.pg);
@@ -332,9 +333,10 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
 
         // 전체 지시 탭 = 표 그대로 · 버튼 숨김
         await A.pg.click('.desk-tab[data-tab="all"]');
-        await A.pg.waitForSelector('#desk-list .desk-table', { timeout: 8000 }).catch(() => { });
+        await A.pg.waitForSelector('#desk-list .desk-h-item', { timeout: 8000 }).catch(() => { });
         const tAll = await chat(A.pg);
-        ok('「전체 지시」 탭 = 표 그대로 · 대화 묶음 없음 · [표로 보기] 버튼 숨김', tAll.table && tAll.threads.length === 0 && tAll.viewBtn && !tAll.viewBtn.vis);
+        const hAll = await A.pg.evaluate(() => document.querySelectorAll('#desk-list .desk-h-item').length);
+        ok('「이전 채팅 이력」 탭(#538) = 대화 한 줄씩(표 아님) · 채팅 틀 없음 · [표로 보기] 버튼 숨김', !tAll.table && hAll > 0 && tAll.threads.length === 0 && tAll.viewBtn && !tAll.viewBtn.vis);
         await A.pg.click('.desk-tab[data-tab="approval"]');
         await sleep(900);
         const tAp = await chat(A.pg);
@@ -403,7 +405,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         const gp = await geo(P.pg, 200), gp2 = await geo(P.pg, 140);
         ok('390px — 기본 대화 보기 · 내 글 오른쪽·클코 왼쪽 · 말풍선이 칸 안', cp.threads.length === 11 && gp && gp.meRight && gp.aiLeft && gp.meIn && gp.aiIn && gp2 && gp2.aiIn, JSON.stringify(gp));
         ok('390px — 가로 넘침 없음', !cp.rootOverflow && !cp.docOverflow);
-        const tp = await P.pg.evaluate(() => { const vis = el => !!el && el.getClientRects().length > 0; const hs = sel => Array.from(document.querySelectorAll(sel)).filter(vis).map(b => Math.round(Math.min(b.getBoundingClientRect().height, b.getBoundingClientRect().width))); return { x: hs('#desk-list [data-act="hidethread"]'), view: [44],   // #504 전환 버튼 숨김 — 자리만 둔다
+        const tp = await P.pg.evaluate(() => { const vis = el => !!el && el.getClientRects().length > 0; const hs = sel => Array.from(document.querySelectorAll(sel)).filter(vis).map(b => Math.round(Math.min(b.getBoundingClientRect().height, b.getBoundingClientRect().width))); return { x: hs('#desk-list [data-act="endchat"]'), view: [44],   // #504 전환 버튼 숨김 — 자리만 둔다
              follow: hs('#desk-list [data-act="replyimg"], #desk-list textarea.desk-reply-in'), act: hs('#desk-list [data-act="approve"], #desk-list [data-act="reject"], #desk-list [data-act="sendreply"]') }; });
         ok('390px — 누르는 것 높이 44px 이상(×·보기 전환·답 칸·이미지 첨부·승인/반려/보내기)', [...tp.x, ...tp.view, ...tp.follow, ...tp.act].every(h => h >= 44), JSON.stringify({ x: Math.min(...tp.x), view: tp.view[0], follow: Math.min(...tp.follow), act: Math.min(...tp.act) }));
         await shot(P.pg, '6-390-대화보기', '#desk-listbox');

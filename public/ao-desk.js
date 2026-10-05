@@ -71,6 +71,7 @@
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
         view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
+        hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false }, endAsk: 0, pin: new Set(),
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
@@ -148,13 +149,13 @@
                     </div>
                 </form>
             </section>
-            <section class="desk-listbox" id="desk-listbox" aria-label="지시 목록">
-                <div class="desk-fullbar"><b>지시 목록</b><button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button></div>
+            <section class="desk-listbox" id="desk-listbox" aria-label="채팅 목록">
+                <div class="desk-fullbar"><b>채팅</b><button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button></div>
                 <div class="desk-tabsrow">
                     <div class="desk-tabs" role="tablist" id="desk-tabs">
-                        <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">내 지시</button>
-                        <button class="desk-tab" role="tab" data-tab="all" aria-selected="false" id="desk-tab-all" hidden>전체 지시</button>
-                        <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>대표 확인함<span class="n" id="desk-approval-n" hidden>0</span></button>
+                        <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">채팅</button>
+                        <button class="desk-tab" role="tab" data-tab="all" aria-selected="false" id="desk-tab-all">이전 채팅 이력</button>
+                        <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>승인 결재함<span class="n" id="desk-approval-n" hidden>0</span></button>
                     </div>
                     <div class="desk-filter">
                         <button type="button" class="desk-btn sm desk-viewbtn" id="desk-view" hidden>표로 보기</button>
@@ -166,6 +167,11 @@
                             <option value="err">오류·반려</option>
                         </select>
                     </div>
+                </div>
+                <div class="desk-histbar" id="desk-histbar" hidden>
+                    <label class="desk-sr" for="desk-hist-q">이전 채팅 검색</label>
+                    <div class="desk-hist-search"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="desk-hist-q" maxlength="60" placeholder="보낸 글이나 답변에서 찾기" autocomplete="off"></div>
+                    <label class="desk-hist-mine" id="desk-hist-mine-wrap" hidden><input type="checkbox" id="desk-hist-mine"> 내 것만</label>
                 </div>
                 <div class="desk-list" id="desk-list" aria-live="polite"></div>
                 <button type="button" class="desk-more-all" id="desk-list-more" data-full-open="desk-listbox">자세히 확인하기<span class="n"></span><span class="chev" aria-hidden="true">›</span></button>
@@ -188,7 +194,7 @@
             <section class="desk-board folded" id="desk-board" aria-label="현황판"></section>
         </div>
         <aside class="desk-side">
-            <div class="desk-panel"><h3>LIVE 로그 <span>내 지시 처리 현황</span></h3><div id="desk-live"></div></div>
+            <div class="desk-panel"><h3>LIVE 로그 <span>내 채팅 처리 현황</span></h3><div id="desk-live"></div></div>
             <div class="desk-panel"><h3>오늘 일정 <span id="desk-today-n"></span></h3><div id="desk-today"></div></div>
             <div class="desk-panel"><h3>주요 업무 현황 <span>오늘 기준</span></h3><div id="desk-prog"></div></div>
         </aside>`;
@@ -215,12 +221,15 @@
             const f = Array.from((e.clipboardData && e.clipboardData.files) || []).find(x => /^image\//.test(x.type));
             if (f) { e.preventDefault(); setReplyImg(id, f); }
         });
-        $('desk-list').addEventListener('input', e => { if (e.target && e.target.classList && e.target.classList.contains('desk-reply-in')) fitReply(e.target); });
+        $('desk-list').addEventListener('input', e => { if (e.target && e.target.classList && e.target.classList.contains('desk-reply-in')) { fitReply(e.target); syncSendBtns(); } });
+        let histT = 0;   // #538 이력 검색 — 입력을 멈추고 350ms 뒤에 찾는다
+        $('desk-hist-q').addEventListener('input', e => { clearTimeout(histT); const v = e.target.value.trim(); histT = setTimeout(() => { if (v === S.hist.q) return; S.hist.q = v; S.hist.older = []; S.hist.open.clear(); S.sig = ''; loadOrders(true); }, 350); });
+        $('desk-hist-mine').addEventListener('change', e => { S.hist.mineOnly = e.target.checked; S.sig = ''; renderList(); });
         $('desk-list').addEventListener('keydown', e => {   // 답 칸도 Enter = 보내기(PC) · Shift+Enter = 줄바꿈
             const id = replyId(e.target);
             if (!id || e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229 || !window.matchMedia('(pointer: fine)').matches) return;
             e.preventDefault();
-            const btn = e.target.parentElement && e.target.parentElement.querySelector('[data-act="sendreply"]');
+            const box = e.target.closest('.desk-reply'), btn = box && box.querySelector('[data-act="sendreply"]');
             if (btn) btn.click();
         });
         $('desk-qty-now').addEventListener('click', () => sendQtyNow());
@@ -416,7 +425,9 @@
         S.tab = tab;
         document.querySelectorAll('#desk-tabs .desk-tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
         const list = $('desk-list');
-        S.sig = '';
+        S.sig = ''; S.endAsk = 0;
+        $('desk-histbar').hidden = tab !== 'all'; $('desk-fs').hidden = tab === 'all';
+        $('desk-hist-mine-wrap').hidden = !isAdmin();
         list.innerHTML = '<div class="desk-empty">불러오는 중</div>';
         return loadOrders(true);
     }
@@ -468,8 +479,9 @@
                 : (lc && lc.note) ? lc.note : '';
             const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
             tabA.hidden = !isAdmin();
-            $('desk-tab-all').hidden = !isAdmin(); // #476 직원은 내 지시만
-            if (!isAdmin() && S.tab !== 'mine') setTab('mine');
+            $('desk-tab-all').hidden = false;   // #538 이전 채팅 이력은 직원에게도 보인다(서버가 본인 것만 내려준다)
+            $('desk-hist-mine-wrap').hidden = !isAdmin();
+            if (!isAdmin() && S.tab === 'approval') setTab('mine');
             n.hidden = !d.approval; n.textContent = d.approval || 0;
         } catch (e) { /* 다음 주기에 다시 */ }
     }
@@ -486,6 +498,7 @@
     }
 
     // #476 받는 도중 탭이 바뀌면 이전 탭 목록을 새 탭 이름 아래 그리던 경합 교정 — 끝난 뒤 새 탭으로 한 번 더 받는다
+    const HIST_PAGE = 60;
     function loadOrders(force) {
         if (S.loading) { S.again = true; return S.loadP; }
         S.loading = true;
@@ -495,10 +508,17 @@
     async function loadOrdersNow(force) {
         const tab = S.tab;
         try {
-            const q = S.tab === 'mine' ? '?mine=1&limit=60' : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?limit=40';
+            const hq = S.hist.q;
+            const q = S.tab === 'mine' ? '?mine=1&limit=60' : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?history=1&limit=' + HIST_PAGE + (hq ? '&q=' + encodeURIComponent(hq) : '');
             const d = await api('/api/agent-office/desk/orders' + q);
-            if (tab !== S.tab) { S.again = true; return; }
-            const orders = d.orders || [];
+            if (tab !== S.tab || (tab === 'all' && hq !== S.hist.q)) { S.again = true; return; }
+            let orders = d.orders || [];
+            if (tab === 'all') {   // #538 [더 보기]로 받아 둔 옛 줄은 새로고침해도 남긴다
+                const min = orders.length ? Math.min(...orders.map(o => o.id)) : Infinity;
+                S.hist.older = S.hist.older.filter(o => o.id < min);
+                if (!S.hist.older.length) S.hist.more = orders.length >= HIST_PAGE;
+                orders = orders.concat(S.hist.older);
+            }
             watchConfirms(orders);
             const sig = S.tab + '|' + orders.map(o => o.id + ':' + o.status + ':' + ((o.steps && o.steps.length) || 0) + ':' + (o.processed_at || '') + ':' + liveLen(o)).join(',');
             // #498 내 지시가 처리되기 시작하면 그 줄을 한 번 펼쳐 진행 상황과 쓰는 중인 답변이 바로 보이게 한다(닫으면 다시 열지 않는다)
@@ -541,6 +561,7 @@
         if (!FOLLOW.includes(o.status) || isFinalLog(o)) return '';
         if (!followOpen(o)) return isAnswer(o) ? '' : `<div class="desk-acts">${followBtn(o)}</div>`; // 답변 카드는 [답변 복사] 줄에 함께
         const always = chatMine();   // #500 대화 보기에서는 누르지 않아도 늘 열려 있다
+        if (always) return composeBox(o, '이어서 보내기', '이어서 적어 주세요');
 
         return `<div class="desk-reply desk-follow">
                 ${replyImgHtml(o.id)}<textarea class="desk-reply-in" id="reply-${o.id}" rows="${always ? 1 : 3}" maxlength="2000" placeholder="${always ? '이어서 지시하기 (이미지는 붙여넣기도 돼요)' : '고칠 점이나 이어서 할 일을 적어 주세요. 앞 답변을 이어받아 처리해요 (예: 3번 문구만 더 짧게)'}"></textarea>
@@ -548,6 +569,23 @@
                 <button type="button" class="desk-btn sm" data-act="replyimg" data-id="${o.id}">이미지 첨부</button>
                 ${always ? '' : `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">취소</button>`}
             </div>`;
+    }
+    // #538(대표 10/5 캡처): 채팅 탭의 답 칸 = 둥근 상자 하나 — 글 칸(위) + 아래 줄 왼쪽 「+」(이미지 첨부) · 오른쪽 화살표(보내기). 글자 버튼 없음(이름은 aria-label)
+    const ICON_PLUS = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+    const ICON_UP = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+    function composeBox(o, sendLabel, hint) {
+        return `<div class="desk-reply desk-cbox" data-cbox="${o.id}">
+                ${replyImgHtml(o.id)}<label class="desk-sr" for="reply-${o.id}">${esc(sendLabel === '답 보내기' ? '답 적기' : '이어서 보낼 글')}</label>
+                <textarea class="desk-reply-in" id="reply-${o.id}" rows="1" maxlength="2000" placeholder="${esc(hint)}"></textarea>
+                <div class="desk-cbox-row">
+                    <button type="button" class="desk-cbtn" data-act="replyimg" data-id="${o.id}" aria-label="이미지 첨부" title="이미지 첨부 (붙여넣기도 돼요)">${ICON_PLUS}</button>
+                    <button type="button" class="desk-cbtn primary" data-act="sendreply" data-id="${o.id}" aria-label="${esc(sendLabel)}" title="${esc(sendLabel)} (Enter)" disabled>${ICON_UP}</button>
+                </div>
+            </div>`;
+    }
+    // 글이나 붙인 이미지가 있어야 보내기가 켜진다
+    function syncSendBtns() {
+        document.querySelectorAll('#desk-list .desk-cbox').forEach(box => { const t = box.querySelector('.desk-reply-in'), b = box.querySelector('[data-act="sendreply"]'); if (t && b && b.getAttribute('aria-busy') !== 'true') b.disabled = !t.value.trim() && !S.replyImg.has(Number(box.dataset.cbox)); });
     }
     const isAnswer = o => !!o.result && (o.result.type === 'desk_answer' || o.result.type === 'answer');
     const chatMine = () => S.tab === 'mine' && S.view === 'chat';
@@ -561,7 +599,7 @@
         rd.onload = () => { S.replyImg.set(id, { data: String(rd.result), mime: file.type || 'image/png' }); S.sig = ''; renderList(); const ta = document.getElementById('reply-' + id); if (ta) ta.focus(); };
         rd.readAsDataURL(file);
     }
-    const followBtn = o => FOLLOW.includes(o.status) && !isFinalLog(o) && !followOpen(o) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
+    const followBtn = o => S.tab !== 'all' && FOLLOW.includes(o.status) && !isFinalLog(o) && !followOpen(o) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
     // #484(대표 9/30): full = 표에서 줄을 눌러 펼친 자세히 칸 — 답변을 줄이지 않고 전부 보여 준다(전체 보기 버튼 없음)
     // #498 처리 중에 대기 프로그램이 적어 주는 「쓰는 중인 답변」(result.type = live)
     function liveText(o) { const r = o.result || {}; return o.status === '처리중' && r.type === 'live' && r.text ? String(r.text) : ''; }
@@ -609,6 +647,8 @@
         }
         if (st === '질문') {
             // #473-b 그 자리에서 바로 답한다(대화처럼) — 보내면 이 질문은 닫히고, 창구가 앞 대화를 함께 받아 이어서 처리한다
+            if (S.tab === 'all') return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div><div class="desk-note">답을 기다리고 있어요. 답은 채팅 탭에서 보낼 수 있어요.</div>`;
+            if (chatMine()) return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>` + composeBox(o, '답 보내기', '여기에 답을 적어 주세요');
             return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>
                 <div class="desk-reply">
                     ${replyImgHtml(o.id)}<textarea class="desk-reply-in" id="reply-${o.id}" rows="2" maxlength="2000" placeholder="여기에 답을 적어 보내면 이어서 처리해요"></textarea>
@@ -681,6 +721,7 @@
         document.querySelectorAll('#desk-list [data-live]').forEach(el => { const p = liveAt[el.dataset.live]; el.scrollTop = !p || p.bottom ? el.scrollHeight : p.top; });
         for (const id in saved) { const t = document.getElementById(id); if (t && !t.value) t.value = saved[id]; if (t) fitReply(t); }
         if (focusId) { const t = document.getElementById(focusId); if (t) { t.focus({ preventScroll: true }); try { t.setSelectionRange(sel[0], sel[1]); } catch (e) { } } }
+        syncSendBtns();
     }
     // #498 목록 안의 글자를 끌어 고르는 중이면 다시 그리지 않는다(고른 것이 풀리지 않게) — 고르기를 끝내면 다음 새로고침에 그린다
     function selectingInList() {
@@ -719,17 +760,19 @@
     }
     function renderListNow() {
         const box = $('desk-list');
-        const list = shown();
+        const list = S.tab === 'all' ? (S.hist.mineOnly ? S.orders.filter(o => o.created_by_id === myId()) : S.orders) : shown();
         const chat = S.tab === 'mine' && S.view === 'chat';
         const vb = $('desk-view');
         if (vb) { vb.hidden = true; vb.textContent = S.view === 'chat' ? '표로 보기' : '대화로 보기'; }   // #504 전환 버튼 없음
         box.classList.toggle('desk-cardlist', !S.wide && !chat);
-        box.classList.toggle('desk-chat', chat);
+        box.classList.toggle('desk-chat', chat || S.tab === 'all');
+        box.classList.toggle('desk-hist', S.tab === 'all');
         if (!list.length) {
             setMore('desk-list-more', 0);
-            box.innerHTML = `<div class="desk-empty">${S.fs !== 'all' ? '고른 상태에 해당하는 지시가 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : S.tab === 'mine' ? '아직 보낸 지시가 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.' : '지시 기록이 없어요.'}</div>`;
+            box.innerHTML = `<div class="desk-empty">${S.tab === 'all' ? (S.hist.q ? '찾는 글이 든 채팅이 없어요. 다른 낱말로 찾아 보세요.' : '이전 채팅이 아직 없어요.') : S.fs !== 'all' ? '고른 상태에 해당하는 채팅이 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : '열려 있는 채팅이 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.'}</div>`;
             return;
         }
+        if (S.tab === 'all') { renderHistory(list); return; }
         if (chat) { renderChat(list); return; }
         const ov = previewMask(list);
         setMore('desk-list-more', ov.filter(Boolean).length);
@@ -743,7 +786,7 @@
                     <span>${o.id}번</span>${o.reply_to ? `<span class="desk-thread">↳ ${Number(o.reply_to)}번에 이어서</span>` : ''}<span>${esc(o.created_by || '')}</span>
                     <span>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
                     ${o.has_image ? '<span>이미지 첨부</span>' : ''}
-                    ${S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 지시를 내 지시에서 지우기" title="내 지시에서 지우기">×</button>` : ''}</div>
+                    ${S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 채팅 종료" title="채팅 종료">×</button>` : ''}</div>
                 <p class="desk-q">${esc(o.content)}</p>
                 ${resultHtml(o)}
                 ${showSteps ? `<ul class="desk-steps">${steps.map(s => `<li>${esc(kst(s.t, { hour: '2-digit', minute: '2-digit' }))} ${esc(s.text)}</li>`).join('')}</ul>` : ''}
@@ -770,23 +813,106 @@
         const hm = { hour: '2-digit', minute: '2-digit' };
         const html = ths.map(t => {
             const needs = t.items.some(o => NEEDS.includes(o.status));
-            const ov = !needs && ++shownN > PREVIEW_LIST;
+            const ov = !needs && !t.items.some(o => S.pin.has(o.id)) && ++shownN > PREVIEW_LIST;
             if (ov) hidden++;
             const first = t.items[0];
             const canHide = t.items.every(CLOSED_FOR_HIDE);
-            const head = `<div class="desk-th-head"><span>${esc(kst(t.items[t.items.length - 1].created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>${first.reply_to ? `<span class="desk-thread">↳ ${Number(first.reply_to)}번에 이어서</span>` : ''}${t.items.length > 1 ? `<span>${t.items.length}번 주고받음</span>` : ''}${canHide ? `<button type="button" class="desk-x" data-act="hidethread" data-id="${t.id}" aria-label="이 대화를 내 지시에서 지우기" title="이 대화를 내 지시에서 지우기">×</button>` : ''}</div>`;
+            // #538: 대화 머리 = 시작 시각 + 첫 글 한 줄 → 어디서부터 다른 대화인지 바로 보인다
+            const head = `<div class="desk-th-head"><span class="desk-th-when">${esc(kst(first.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))} 시작</span><span class="desk-th-sum">${esc(cutText(first.content, 60))}</span>${first.reply_to ? `<span class="desk-thread">↳ ${Number(first.reply_to)}번에 이어서</span>` : ''}${t.items.length > 1 ? `<span>${t.items.length}번 주고받음</span>` : ''}</div>`;
+            // #538 [채팅 종료] — 끝난 대화에만 · 카드 안에서 한 번 확인 · 이전 채팅 이력에서 다시 볼 수 있다
+            const endHtml = !canHide ? '' : S.endAsk === t.id
+                ? `<div class="desk-end-ask" role="group" aria-label="채팅 종료 확인"><span>이 채팅을 종료할까요? 이전 채팅 이력에서 다시 볼 수 있어요.</span><button type="button" class="desk-btn sm primary" data-act="hidethread" data-id="${t.id}">종료</button><button type="button" class="desk-btn sm" data-act="endno" data-id="${t.id}">취소</button></div>`
+                : `<button type="button" class="desk-endbtn" data-act="endchat" data-id="${t.id}">채팅 종료</button>`;
             const turns = t.items.map(o => {
                 const b = BADGE[o.status] || ['wait', o.status];
                 const last = o.id === t.last;
                 return `<div class="desk-turn${last ? ' last' : ''}" data-oid="${o.id}">
                     <div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, hm))}${o.has_image ? ' · 이미지 첨부' : ''}</div></div>
-                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultHtml(o, true) : resultBody(o, true)}</div>
+                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultBody(o, true) + `<div class="desk-chatbar${endHtml && S.endAsk === t.id ? ' asking' : ''}">${followHtml(o)}${endHtml}</div>` : resultBody(o, true)}</div>
                 </div>`;
             }).join('');
             return `<article class="desk-thread-box${ov ? ' ov' : ''}" data-th="${t.id}">${head}${turns}</article>`;
         }).join('');
         setMore('desk-list-more', hidden);
         $('desk-list').innerHTML = html;
+    }
+
+    // #538(대표 10/5) 이전 채팅 이력 — 대화(스레드) 한 줄씩 · 날짜 묶음 · 누르면 그 자리에서 말풍선으로 펼침(읽기 전용) · 본인 대화는 [이 채팅 다시 이어가기]
+    const myId = () => (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null;
+    const PREVIEW_HIST = 8;
+    function dayGroup(t) {
+        const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(String(t)) ? t : String(t).replace(' ', 'T') + 'Z'), now = new Date();
+        const key = x => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(x);
+        const dk = key(d), nk = key(now), diff = Math.round((Date.parse(nk + 'T00:00:00Z') - Date.parse(dk + 'T00:00:00Z')) / 86400000);
+        if (diff <= 0) return '오늘';
+        if (diff === 1) return '어제';
+        const dow = (new Date(nk + 'T00:00:00Z').getUTCDay() + 6) % 7;   // 월요일 = 0
+        if (diff <= dow) return '이번 주';
+        const y = Number(dk.slice(0, 4)), m = Number(dk.slice(5, 7));
+        return (y !== Number(nk.slice(0, 4)) ? y + '년 ' : '') + m + '월';
+    }
+    const histFlag = t => t.items.some(o => ['질문', '승인대기'].includes(o.status)) ? ['ask', '확인 필요'] : t.items.some(o => GROUP.err.includes(o.status)) ? ['err', '오류'] : t.items.some(o => GROUP.work.includes(o.status)) ? ['work', '진행 중'] : null;
+    const hasAttach = o => !!o.has_image || !!(o.result && Array.isArray(o.result.files) && o.result.files.length);
+    const ICON_CLIP = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>';
+    function renderHistory(list) {
+        const ths = threadsOf(list), admin = isAdmin(), me = myId(), hm = { hour: '2-digit', minute: '2-digit' }, mdhm = { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        let lastG = '', n = 0, hidden = 0;
+        const html = ths.map(t => {
+            const first = t.items[0], lastO = t.items[t.items.length - 1], g = dayGroup(lastO.created_at), open = S.hist.open.has(t.id);
+            const ov = ++n > PREVIEW_HIST && !open; if (ov) hidden++;
+            const flag = histFlag(t), fin = isFinalLog(first);
+            const head = g !== lastG ? `<h4 class="desk-h-day${ov ? ' ov' : ''}">${esc(g)}</h4>` : ''; lastG = g;
+            const when = (g === '오늘' || g === '어제' ? '' : kst(lastO.created_at, { month: 'numeric', day: 'numeric' }) + ' ') + kst(lastO.created_at, hm);
+            const row = `<button type="button" class="desk-h-row" data-act="histopen" data-id="${t.id}" aria-expanded="${open}">
+                    <span class="desk-h-when">${esc(when)}</span>${admin ? `<span class="desk-h-who">${esc(first.created_by || '')}</span>` : ''}
+                    <span class="desk-h-text">${esc(cutText(first.content, 120))}</span>
+                    <span class="desk-h-meta">${flag ? `<span class="desk-badge" data-k="${flag[0]}">${flag[1]}</span>` : ''}${t.items.some(hasAttach) ? `<span class="desk-h-clip" title="첨부 있음" aria-label="첨부 있음">${ICON_CLIP}</span>` : ''}${t.items.length > 1 ? `<span class="desk-h-n">${t.items.length}번 주고받음</span>` : ''}<span class="desk-h-chev" aria-hidden="true">${open ? '▴' : '▾'}</span></span>
+                </button>`;
+            let body = '';
+            if (open) {
+                const turns = t.items.map(o => { const b = BADGE[o.status] || ['wait', o.status];
+                    return `<div class="desk-turn" data-oid="${o.id}"><div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, mdhm))}${o.has_image ? ' · 이미지 첨부' : ''}</div></div>
+                        <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${resultBody(o, true)}</div></div>`; }).join('');
+                const mine = me != null && t.items.every(o => o.created_by_id === me);
+                const live = t.items.some(o => !o.mine_hidden);
+                const foot = mine && !fin ? `<div class="desk-h-foot"><button type="button" class="desk-btn sm primary" data-act="resume" data-id="${t.id}">${live ? '채팅 탭에서 이어가기' : '이 채팅 다시 이어가기'}</button><span class="desk-h-note">${live ? '지금 채팅 탭에 열려 있는 대화예요.' : '채팅 탭으로 다시 꺼내 이어서 보낼 수 있어요.'}</span></div>` : '';
+                body = `<div class="desk-h-body"><div class="desk-h-head">${esc(kst(first.created_at, mdhm))} 시작 · ${t.items.length}번 주고받음</div>${turns}${foot}</div>`;
+            }
+            return head + `<article class="desk-h-item${ov ? ' ov' : ''}${open ? ' open' : ''}" data-th="${t.id}">${row}${body}</article>`;
+        }).join('');
+        const more = S.hist.more ? `<button type="button" class="desk-btn desk-h-more${hidden ? ' ov' : ''}" data-act="histmore" data-id="${list.length ? list[list.length - 1].id : 0}">더 보기</button>` : '';
+        setMore('desk-list-more', hidden);
+        $('desk-list').innerHTML = html + more;
+    }
+    async function histMore(b) {
+        if (S.hist.busy || !S.orders.length) return;
+        S.hist.busy = true; b.disabled = true; b.setAttribute('aria-busy', 'true');
+        try {
+            const last = Math.min(...S.orders.map(o => o.id)), q0 = S.hist.q;
+            const d = await api('/api/agent-office/desk/orders?history=1&limit=' + HIST_PAGE + '&before=' + last + (q0 ? '&q=' + encodeURIComponent(q0) : ''));
+            if (S.tab !== 'all' || q0 !== S.hist.q) return;
+            const got = d.orders || [];
+            S.hist.older = S.hist.older.concat(got); S.hist.more = got.length >= HIST_PAGE;
+            S.orders = S.orders.concat(got); S.sig = ''; renderList();
+        } catch (err) { showToast(err && err.message ? err.message : '더 불러오지 못했어요'); b.disabled = false; b.removeAttribute('aria-busy'); }
+        finally { S.hist.busy = false; }
+    }
+    // 이력의 내 대화를 채팅 탭으로 다시 꺼낸다(숨겨 둔 차례만 되살림) → 그 대화로 옮겨 답 칸에 커서
+    async function resumeChat(rootId, b) {
+        const t = threadsOf(S.orders).find(x => x.id === rootId), me = myId();
+        if (!t || me == null || !t.items.every(o => o.created_by_id === me)) return;
+        b.disabled = true;
+        try {
+            for (const it of t.items) if (it.mine_hidden) await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: false });
+            t.items.forEach(o => S.pin.add(o.id));
+            closeFull();
+            await setTab('mine');
+            const el = document.querySelector('#desk-list [data-oid="' + t.last + '"]');
+            if (!el) { showToast('채팅 탭으로 옮겼어요'); return; }
+            const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            (el.closest('.desk-thread-box') || el).scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+            const ta = document.getElementById('reply-' + t.last); if (ta) ta.focus({ preventScroll: true });
+        } catch (err) { showToast(err && err.message ? err.message : '다시 꺼내지 못했어요'); b.disabled = false; }
     }
 
     // #476 첫 화면에는 몇 건만(칸이 끝없이 길어지지 않게) — 나머지는 [자세히 확인하기]로. 답해야 하는 건은 늘 보인다
@@ -816,7 +942,7 @@
                 <td class="c-r">${resultLine(o)}</td>
                 <td class="c-by">${esc(o.created_by || '')}</td>
                 <td class="c-x"><button type="button" class="desk-more" data-act="detail" data-id="${o.id}" aria-expanded="${open}" aria-label="${o.id}번 자세히">${open ? '▴' : '⋯'}</button></td>
-            </tr>${open ? `<tr class="detailrow${oc}"><td class="detail" colspan="6"><div class="desk-q-full"><div class="desk-a-label">지시 내용</div>${esc(o.content || '')}${o.has_image ? ' <small>(이미지 첨부)</small>' : ''}</div>${resultHtml(o, true)}${canHide ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="hide" data-id="${o.id}">내 지시에서 지우기</button></div>` : ''}</td></tr>` : ''}`;
+            </tr>${open ? `<tr class="detailrow${oc}"><td class="detail" colspan="6"><div class="desk-q-full"><div class="desk-a-label">지시 내용</div>${esc(o.content || '')}${o.has_image ? ' <small>(이미지 첨부)</small>' : ''}</div>${resultHtml(o, true)}${canHide ? `<div class="desk-acts"><button type="button" class="desk-btn sm" data-act="hide" data-id="${o.id}">채팅 종료</button></div>` : ''}</td></tr>` : ''}`;
         }).join('');
         $('desk-list').innerHTML = `<div class="table-scroll-wrapper"><table class="desk-table"><thead><tr>
             <th>상태</th><th>번호 · 시각</th><th>지시 내용</th><th>결과</th><th>보낸 사람</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -857,6 +983,11 @@
             try { await aoDownloadFile(Number(b.dataset.file)); } finally { b.disabled = false; }
             return;
         }
+        if (act === 'endchat') { S.endAsk = id; renderList(); const y = document.querySelector('#desk-list .desk-end-ask [data-act="hidethread"]'); if (y) y.focus(); return; }
+        if (act === 'endno') { S.endAsk = 0; renderList(); return; }
+        if (act === 'histopen') { if (S.hist.open.has(id)) S.hist.open.delete(id); else S.hist.open.add(id); renderList(); return; }
+        if (act === 'histmore') { return histMore(b); }
+        if (act === 'resume') { return resumeChat(id, b); }
         if (act === 'hidethread') {
             const t = threadsOf(S.orders).find(x => x.id === id);
             if (!t) return;
@@ -864,9 +995,9 @@
             try {
                 for (const it of t.items) await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: true });
                 const gone = new Set(t.items.map(x => x.id));
-                S.orders = S.orders.filter(x => !gone.has(x.id)); S.sig = ''; renderList();
-                showToast('이 대화를 내 지시에서 지웠어요. 전체 지시에서는 계속 볼 수 있어요');
-            } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); S.sig = ''; loadOrders(true); }
+                S.orders = S.orders.filter(x => !gone.has(x.id)); S.sig = ''; S.endAsk = 0; renderList();
+                showToast('채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');
+            } catch (err) { showToast(err && err.message ? err.message : '종료하지 못했어요'); S.sig = ''; S.endAsk = 0; loadOrders(true); }
             return;
         }
         if (act === 'hide') {
@@ -874,8 +1005,8 @@
             try {
                 await api('/api/agent-office/orders/' + id + '/hide-mine', 'POST', { hide: true });
                 S.orders = S.orders.filter(x => x.id !== id); S.sig = ''; renderList();
-                showToast('내 지시에서 지웠어요. 전체 지시에서는 계속 볼 수 있어요');
-            } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); b.disabled = false; }
+                showToast('채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');
+            } catch (err) { showToast(err && err.message ? err.message : '종료하지 못했어요'); b.disabled = false; }
             return;
         }
         if (act === 'replyimg') { S.replyTarget = id; $('desk-reply-file').click(); return; }
@@ -891,7 +1022,7 @@
             const text = ta ? ta.value.trim() : '';
             const im = S.replyImg.get(id);
             if (!text && !im) { if (ta) ta.focus(); return; }
-            const label0 = b.textContent; b.disabled = true; b.textContent = '보내는 중';
+            const icon = b.classList.contains('desk-cbtn'), label0 = b.textContent; b.disabled = true; if (icon) b.setAttribute('aria-busy', 'true'); else b.textContent = '보내는 중';
             try {
                 const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', im ? { content: text, image_data: im.data, image_mime: im.mime } : { content: text });
                 S.replyImg.delete(id);
@@ -899,7 +1030,7 @@
                 S.follow.delete(id);
                 S.sig = ''; await loadOrders(true);
                 if (res.order && res.order.id) revealOrders([res.order.id]);
-            } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; b.textContent = label0; }
+            } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; if (icon) b.removeAttribute('aria-busy'); else b.textContent = label0; }
             return;
         }
         if (act === 'reply') { closeFull(); const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }
@@ -1048,7 +1179,7 @@
             const dot = st => ['오류', '오류확인', '반려'].includes(st) ? 'err' : ['질문', '승인대기'].includes(st) ? 'warn' : 'ok';
             live.innerHTML = Array.isArray(d.live) && d.live.length
                 ? `<ul class="desk-live">${d.live.map(x => `<li><time>${esc(kst(x.processed_at, { hour: '2-digit', minute: '2-digit' }))}</time><i class="${dot(x.status)}"></i><p>${esc(x.text || '')}</p></li>`).join('')}</ul>`
-                : '<div class="desk-empty">아직 처리된 내 지시가 없어요.</div>';
+                : '<div class="desk-empty">아직 처리된 내 채팅이 없어요.</div>';
         }
         if (today) {
             const n = $('desk-today-n');

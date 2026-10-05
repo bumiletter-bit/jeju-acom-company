@@ -253,11 +253,15 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         await A.pg.waitForTimeout(300);
         ok('빈 입력은 보내지 않음', posts.length === 1);
         await A.pg.unroute('**/api/agent-office/orders');
-        // 전체 지시 탭: 검증 답변 카드
-        await A.pg.click('.desk-tab[data-tab="all"]');
-        await A.pg.waitForSelector(`#desk-list .desk-card[data-oid="${p1.j.order.id}"]`, { state: 'attached', timeout: 10000 });
+        // #538: 「전체 지시」 탭은 「이전 채팅 이력」(대화 한 줄씩)이 됐다 → 카드 보기 검사는 직원 본인 화면(채팅 탭 · 1000px 카드)에서 한다
+        await A.pg.click('.desk-tab[data-tab="all"]'); await A.pg.waitForTimeout(1200);
+        const histA = await A.pg.evaluate(() => ({ bar: document.getElementById('desk-histbar').offsetParent !== null, table: !!document.querySelector('#desk-list table'), cards: document.querySelectorAll('#desk-list .desk-card').length }));
+        ok('#538 관리자 「이전 채팅 이력」 탭 = 검색칸 보임 · 표·카드 아님', histA.bar && !histA.table && histA.cards === 0, JSON.stringify(histA));
+        await A.pg.click('.desk-tab[data-tab="mine"]'); await A.pg.waitForTimeout(800);
+        const S2 = await open(tokS, { id: staff.id, name: staff.name, position: staff.position || '', role: 'staff' }, { width: 1000, height: 900 });
+        await S2.pg.waitForSelector(`#desk-list .desk-card[data-oid="${p1.j.order.id}"]`, { state: 'attached', timeout: 10000 });
         // #476 미리보기 = 앞 5건(+답해야 하는 건) · 칸 순서 = 지시하기 → 지시 목록 → 확인 필요 문의 → 현황판
-        const pv = await A.pg.evaluate(() => {
+        const pv = await S2.pg.evaluate(() => {
             const vis = el => el.offsetParent !== null;
             const cards = Array.from(document.querySelectorAll('#desk-list .desk-card'));
             const shownPlain = cards.filter(c => vis(c) && !/확인 필요|승인 대기/.test(c.querySelector('.desk-badge').textContent)).length;
@@ -266,22 +270,23 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             return { total: cards.length, shownPlain, hidden: cards.filter(c => !vis(c)).length, more: document.getElementById('desk-list-more').textContent, moreH: Math.round(mb.height), order };
         });
         ok('#476 지시 목록 미리보기 = 답할 건 외 5건 이하 · 나머지 수 표시 · 칸 순서(지시 목록이 문의 위) · 버튼 44px 이상', pv.shownPlain <= 5 && (pv.hidden === 0 || pv.more.includes(pv.hidden + '건 더')) && pv.order.join(',') === 'desk-top,desk-listbox,desk-inbox,desk-board' && pv.moreH >= 44, JSON.stringify(pv));
-        await A.pg.click('#desk-list-more');
-        await A.pg.waitForTimeout(400);
-        const fv = await A.pg.evaluate(() => { const b = document.getElementById('desk-listbox').getBoundingClientRect(); const cards = Array.from(document.querySelectorAll('#desk-list .desk-card')); return { full: document.getElementById('desk-listbox').classList.contains('is-full'), all: cards.every(c => c.offsetParent !== null), rect: [Math.round(b.top), Math.round(b.left), Math.round(b.width), Math.round(b.height)], vw: innerWidth, vh: innerHeight, lock: getComputedStyle(document.body).overflow, close: !!document.querySelector('#desk-listbox .desk-fullbar .desk-close'), moreHidden: document.getElementById('desk-list-more').offsetParent === null }; });
+        await S2.pg.click('#desk-list-more');
+        await S2.pg.waitForTimeout(400);
+        const fv = await S2.pg.evaluate(() => { const b = document.getElementById('desk-listbox').getBoundingClientRect(); const cards = Array.from(document.querySelectorAll('#desk-list .desk-card')); return { full: document.getElementById('desk-listbox').classList.contains('is-full'), all: cards.every(c => c.offsetParent !== null), rect: [Math.round(b.top), Math.round(b.left), Math.round(b.width), Math.round(b.height)], vw: innerWidth, vh: innerHeight, lock: getComputedStyle(document.body).overflow, close: !!document.querySelector('#desk-listbox .desk-fullbar .desk-close'), moreHidden: document.getElementById('desk-list-more').offsetParent === null }; });
         ok('#476 [자세히 확인하기] = 화면 크게(전 건 보임 · 닫기 버튼 · 뒤 화면 스크롤 잠금)', fv.full && fv.all && fv.close && fv.lock === 'hidden' && fv.moreHidden && fv.rect[3] >= fv.vh - 60 && fv.rect[2] >= Math.min(fv.vw - 60, 1200), JSON.stringify(fv));
-        const card = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return { badge: c.querySelector('.desk-badge').textContent, a: c.querySelector('.desk-a').textContent, copy: !!c.querySelector('[data-act="copy"]') }; }, p1.j.order.id);
+        const card = await S2.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return { badge: c.querySelector('.desk-badge').textContent, a: c.querySelector('.desk-a').textContent, copy: !!c.querySelector('[data-act="copy"]') }; }, p1.j.order.id);
         ok('답변 카드 = 완료 배지 · 제목·본문 · [답변 복사]', card.badge === '완료' && card.a.includes('오늘 발송 박스') && card.a.includes('검증용 답변입니다.') && card.copy);
-        const rejCard = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return c ? c.textContent : ''; }, p3.j.order.id);
+        const rejCard = await S2.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); return c ? c.textContent : ''; }, p3.j.order.id);
         const dlReq = [];
-        A.pg.on('request', rq => { if (rq.url().includes('/api/agent-office/files/' + fileId + '/download')) dlReq.push(rq.url()); });   // #504 첨부 사진은 화면이 알아서 받으므로(다른 파일 번호) 이 파일만 센다
-        const fbtn = await A.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); const b = c && c.querySelector('[data-act="file"]'); return b ? { text: b.textContent, h: Math.round(b.getBoundingClientRect().height) } : null; }, pf.j.order.id);
-        if (fbtn) { await A.pg.click(`#desk-list .desk-card[data-oid="${pf.j.order.id}"] [data-act="file"]`); await A.pg.waitForTimeout(1500); }
+        S2.pg.on('request', rq => { if (rq.url().includes('/api/agent-office/files/' + fileId + '/download')) dlReq.push(rq.url()); });   // #504 첨부 사진은 화면이 알아서 받으므로(다른 파일 번호) 이 파일만 센다
+        const fbtn = await S2.pg.evaluate(id => { const c = document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); const b = c && c.querySelector('[data-act="file"]'); return b ? { text: b.textContent, h: Math.round(b.getBoundingClientRect().height) } : null; }, pf.j.order.id);
+        if (fbtn) { await S2.pg.click(`#desk-list .desk-card[data-oid="${pf.j.order.id}"] [data-act="file"]`); await S2.pg.waitForTimeout(1500); }
         ok('파일 카드 = [내려받기] 버튼 · 실클릭 = 내려받기 요청 1회', !!fbtn && /검증469_이익률계산기.xlsx 내려받기/.test(fbtn.text) && fbtn.h >= 40 && dlReq.length === 1 && dlReq[0].includes('/files/' + fileId + '/'), JSON.stringify(fbtn));
         ok('반려 카드 = 사유 표시 · 승인 버튼 없음', /시험 반려/.test(rejCard) && !/승인하고 실행/.test(rejCard));
-        await A.pg.keyboard.press('Escape');
-        await A.pg.waitForTimeout(300);
-        const esc1 = await A.pg.evaluate(() => ({ full: document.getElementById('desk-listbox').classList.contains('is-full'), lock: document.body.classList.contains('desk-full-open') }));
+        await S2.pg.keyboard.press('Escape');
+        await S2.pg.waitForTimeout(300);
+        const esc1 = await S2.pg.evaluate(() => ({ full: document.getElementById('desk-listbox').classList.contains('is-full'), lock: document.body.classList.contains('desk-full-open') }));
+        await S2.ctx.close().catch(() => { });
         await A.pg.click('#desk-inbox-more');
         await A.pg.waitForTimeout(300);
         const ib1 = await A.pg.evaluate(() => ({ full: document.getElementById('desk-inbox').classList.contains('is-full'), close: document.querySelector('#desk-inbox .desk-close').offsetParent !== null }));
@@ -311,7 +316,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         await A.pg.unroute('**/api/agent-office/desk/board');
         // 확인표 창(기존 모달) 열기 — 가짜 확인표
         await A.pg.click('.desk-tab[data-tab="all"]');
-        await A.pg.waitForSelector('#desk-list .desk-card', { timeout: 10000 });
+        await A.pg.waitForSelector('#desk-list .desk-h-item, #desk-list .desk-empty', { timeout: 10000 });   // #538 이 탭은 이제 이전 채팅 이력
         const modalOk = await A.pg.evaluate(() => { try { aoShowSettlementConfirm({ type: 'settlement_ocr_confirm', order_id: 0, partner: '효돈농협', date: '2031-01-06', box_total: 1, rows: [{ name: 'x', matched: 'x', qty: 1, price: 1000, subtotal: 1000 }], total: 1000, unmatched: [], candidates: { '효돈농협': { rows: [{ name: 'x', matched: 'x', qty: 1, price: 1000, subtotal: 1000 }], total: 1000, unmatched: [], box_total: 1, catalog: [] } } }); return !!document.querySelector('.ao-settle-overlay'); } catch (e) { return String(e); } });
         ok('정산 확인표 창(기존)이 새 화면에서 열림', modalOk === true, String(modalOk));
         await A.pg.evaluate(() => { document.querySelectorAll('.ao-settle-overlay').forEach(e => e.remove()); aoSettleModalData = null; });
@@ -331,7 +336,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const goneMine = await B.pg.evaluate(id => !document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`), p1.j.order.id);
         const staffTabs = await B.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-tabs .desk-tab')).filter(t => t.offsetParent !== null).map(t => t.dataset.tab).join(','));
         await B.pg.keyboard.press('Escape'); await B.pg.waitForTimeout(300);
-        ok('#476 직원 탭 = 내 지시만(전체 지시·대표 확인함 없음)', staffTabs === 'mine', staffTabs);
+        ok('#538 직원 탭 = 채팅 · 이전 채팅 이력(승인 결재함 없음)', staffTabs === 'mine,all', staffTabs);
         const allA = await call(tokA, 'GET', '/api/agent-office/desk/orders?limit=100');
         const inAll = { has: allA.j.orders.some(o => o.id === p1.j.order.id), x: false };
         await B.pg.evaluate(() => __aoDesk.loadOrders(true));

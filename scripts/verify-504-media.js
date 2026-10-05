@@ -92,7 +92,7 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
             const fail = document.querySelector('#desk-list .desk-turn[data-oid="301"] .desk-media-item');
             const failBtn = document.querySelector('#desk-list .desk-turn[data-oid="301"] [data-act="file"]');
             const bs = box ? getComputedStyle(box) : null;
-            const xs = Array.from(document.querySelectorAll('#desk-list .desk-th-head .desk-x')).filter(vis);
+            const xs = Array.from(document.querySelectorAll('#desk-list .desk-thread-box [data-act="endchat"]')).filter(vis);   // #538 × 대신 [채팅 종료]
             const xcs = xs[0] ? getComputedStyle(xs[0]) : null;
             const z = document.getElementById('desk-zoom');
             const vb = document.getElementById('desk-view');
@@ -159,11 +159,11 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
         const fw = await A.pg.evaluate(() => { const b = document.querySelector('#desk-list .desk-turn[data-oid="302"]').closest('.desk-thread-box'); const c = getComputedStyle(b); return { border: c.borderTopColor, shadow: c.boxShadow }; });
         ok('② 답 칸에 포커스 → 그 대화 틀 테두리 진해짐(+링)', fw.border === 'rgb(79, 70, 229)' && /rgba\(79, 70, 229/.test(fw.shadow), JSON.stringify(fw));
         // × 버튼
-        ok('③ × = 32px 둥근(반지름 50%) 테두리 버튼', !!m2.x && m2.x.w === 32 && m2.x.h === 32 && m2.x.radius === '50%' && m2.x.border !== 'rgba(0, 0, 0, 0)', JSON.stringify(m2.x));
-        await A.pg.hover('#desk-list .desk-th-head .desk-x');
+        ok('③ #538 [채팅 종료] = 조용한 글자 버튼(높이 44px · 대화 머리의 × 는 없음)', !!m2.x && m2.x.h >= 44 && await A.pg.evaluate(() => document.querySelectorAll('#desk-list .desk-th-head .desk-x').length === 0), JSON.stringify(m2.x));
+        await A.pg.hover('#desk-list .desk-thread-box [data-act="endchat"]');
         await sleep(250);
-        const xh = await A.pg.evaluate(() => { const x = document.querySelector('#desk-list .desk-th-head .desk-x'); const c = getComputedStyle(x); return { bg: c.backgroundColor, color: c.color }; });
-        ok('③ × hover = 인디고 채움 + 흰 글자', xh.bg === 'rgb(79, 70, 229)' && xh.color === 'rgb(255, 255, 255)', JSON.stringify(xh));
+        const xh = await A.pg.evaluate(() => { const x = document.querySelector('#desk-list .desk-thread-box [data-act="endchat"]'); const c = getComputedStyle(x); return { bg: c.backgroundColor, color: c.color }; });
+        ok('③ [채팅 종료] hover = 옅은 바탕 + 진한 글자', xh.bg !== 'rgba(0, 0, 0, 0)' && xh.color !== 'rgb(255, 255, 255)', JSON.stringify(xh));
         // ④ 전환 버튼
         ok('④ [표로 보기] 버튼 숨김(hidden)', !!m2.viewBtn && m2.viewBtn.hidden && !m2.viewBtn.vis);
         // ⑤ 동시 처리 문구
@@ -197,7 +197,7 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
         const P = await open({ width: 390, height: 800 }, { hasTouch: true, isMobile: true });
         const mp = await waitFor(async () => { const x = await media(P.pg); return x.imgs.length === 2 && x.imgs.every(i => i.src === 'blob:') ? x : null; }, 10000) || await media(P.pg);
         ok('390 — 사진·영상 보임 · 틀 안 · 가로 넘침 0', mp.imgs.length === 2 && mp.imgs.every(i => i.src === 'blob:' && i.w > 0) && mp.vids.length === 1 && mp.mediaIn === true && !mp.docOverflow && !mp.rootOverflow, JSON.stringify(mp.imgs.map(i => [i.w, i.h])));
-        ok('390 — × 44px', !!mp.x && mp.x.w === 44 && mp.x.h === 44, JSON.stringify(mp.x && { w: mp.x.w, h: mp.x.h }));
+        ok('390 — [채팅 종료] 44px', !!mp.x && mp.x.w >= 44 && mp.x.h >= 44, JSON.stringify(mp.x && { w: mp.x.w, h: mp.x.h }));
         await shot(P.pg, '3-390-대화-사진첨부', '#desk-list .desk-thread-box[data-th="300"]');
         await P.pg.tap('#desk-list .desk-turn[data-oid="300"] .desk-media img[data-file="901"]');
         await sleep(300);
