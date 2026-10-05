@@ -896,9 +896,9 @@ async function resolveCards(pg, type) {
             const target = (cat.byPartner[FX.P_DAESUNG] || [])[0];   // 품목 이름을 바꿀 때 쓸 단가표 이름(대성)
             let seq = 0; const MT = '13과로 부탁드려요 문 앞에 놔주세요';   // 손님 메모의 과수 요청 → AI가 tail 로 돌려줌(자동으로 붙이지 않고 카드로)
             const mk = (nm, o) => {
-                seq++; const pid = '2099010600' + String(100 + seq), x = o || {};
-                return { ...base, '구매자명': x.buyer || nm, '구매자연락처': x.tel || '010-7300-0' + String(100 + seq), '수취인명': x.recv || nm, '수취인연락처1': '010-7400-0' + String(100 + seq),
-                    '통합배송지': x.addr || `서울특별시 가짜구 대화로 ${seq}, 101동 ${200 + seq}호`, '배송메세지': x.memo || '', '수량': x.qty || 1, ...(x.opt ? { '옵션정보': x.opt } : {}), _pid: pid, _x: { ...base._x, productOrderId: pid, orderId: pid } };
+                seq++; const x = o || {}, pid = x.pid || ('2099010600' + String(100 + seq)), bs = x.base || base;
+                return { ...bs, '구매자명': x.buyer || nm, '구매자연락처': x.tel || '010-7300-0' + String(100 + seq), '수취인명': x.recv || nm, '수취인연락처1': '010-7400-0' + String(100 + seq),
+                    '통합배송지': x.addr || `서울특별시 가짜구 대화로 ${seq}, 101동 ${200 + seq}호`, '배송메세지': x.memo || '', '수량': x.qty || 1, ...(x.opt ? { '옵션정보': x.opt } : {}), _pid: pid, _x: { ...bs._x, productOrderId: pid, orderId: pid } };
             };
             const rows16 = [mk('대화가'), mk('대화나'), mk('대화다'), mk('대화라'), mk('대화마', { opt: '세상에 없는 과일 9kg' }), mk('대화바', { addr: '제주특별자치도 제주시 가짜로 7' }),
                 mk('같은이', { recv: '같은받는일', tel: '010-7300-0555' }), mk('같은이', { recv: '같은받는이', tel: '010-7300-0555' }), mk('대화사'), mk('대화아'), mk('대화자', { tel: '010-7300-0777' }), mk('대화차'), mk('대화타', { memo: MT })];
@@ -912,7 +912,7 @@ async function resolveCards(pg, type) {
                 await ctxC.route('**/api/agent-office/juso*', r => { const kw = new URL(r.request().url()).searchParams.get('keyword'); chat.jusoQ.push(kw); r.fulfill({ json: chat.juso(kw) }); });
                 await ctxC.route('**/api/agent-office/final-order/memo-read', r => { if (r.request().method() !== 'POST') return r.continue(); const b = r.request().postDataJSON(); if (b.kind !== 'chat') { chat.memoPosts.push(b); return r.fulfill({ json: { ok: true, id: 9200 } }); } chat.posts.push(b); r.fulfill({ json: { ok: true, id: 9100 } }); });
                 await ctxC.route('**/api/agent-office/final-order/memo-read/9200', r => { if (r.request().method() === 'DELETE') return r.fulfill({ json: { ok: true } }); const b = chat.memoPosts[chat.memoPosts.length - 1];
-                    r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: b.items.map(it => (it.memo === MT ? { i: it.i, ship: 'go', sender: null, memo: '문 앞에 놔주세요', tail: '13과로!', split: false, sure: false, why: '과수 지정' } : { i: it.i, ship: rowsX ? 'ask' : 'go', sender: null, memo: '그대로', split: false, sure: !rowsX, why: '' })) }, message: '' } }); });
+                    r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: b.items.map(it => (chat.memoAns ? { i: it.i, ship: 'go', sender: null, memo: '그대로', split: false, sure: true, why: '', ...chat.memoAns(it) } : it.memo === MT ? { i: it.i, ship: 'go', sender: null, memo: '문 앞에 놔주세요', tail: '13과로!', split: false, sure: false, why: '과수 지정' } : { i: it.i, ship: rowsX ? 'ask' : 'go', sender: null, memo: '그대로', split: false, sure: !rowsX, why: '' })) }, message: '' } }); });
                 await ctxC.route('**/api/agent-office/final-order/memo-read/9100', r => {
                     if (r.request().method() === 'DELETE') { chat.dels++; return r.fulfill({ json: { ok: true } }); }
                     if (chat.mode === 'wait') return r.fulfill({ json: { ok: true, state: 'wait', status: chat.status, data: null, message: '' } });
@@ -1250,6 +1250,74 @@ async function resolveCards(pg, type) {
                 await m9.pg.click('#fo-reset'); await m9.pg.waitForTimeout(200);
                 const ov9 = await m9.pg.evaluate(() => { const W = window.innerWidth, c = document.getElementById('fo-reset-confirm'), bad = [...c.querySelectorAll('*'), c, document.getElementById('fo-reset')].filter(el => { const b = el.getBoundingClientRect(); return b.width && (b.right > W + 1 || b.left < -1); }).length; return { bad, h: [...c.querySelectorAll('button')].map(b => Math.round(b.getBoundingClientRect().height)), reset: Math.round(document.getElementById('fo-reset').getBoundingClientRect().height) }; });
                 ok(ov9.bad === 0 && ov9.h.every(h => h >= 44) && ov9.reset >= 44, '⑲6 폰(390px): 초기화 버튼·확인 상자 가로 넘침 0 · 터치 44px 이상', JSON.stringify(ov9)); await m9.ctx.close();
+            }
+
+            // ── ⑳ #527 전화번호가 든 말 = 클코에게 · 진짜 정리 줄 = 메모 칸 · 「이건」 = 방금 그 줄의 주문 ─────────────────
+            console.log('\n⑳ #527 번호가 든 말과 정리 줄 가르기');
+            {
+                const PID16 = '2026100512345678';
+                const rows20 = [mk('이공가', { tel: '010-1111-2222' }), mk('이공나', { tel: '010-3333-4444' }), mk('이공다', { tel: '010-5555-6666' }), mk('이공라', { tel: '010-7777-8888' }), mk('이공마', { tel: '010-9999-0000' }), mk('이공바', { pid: PID16 }), mk('이공사', { tel: '010-2424-3535' }), mk('이공아')];
+                const t = await mkChat(false, rows20);
+                await setCash(t.pg, null); await t.pg.click(SEL.start); await idle(t.pg); await t.pg.waitForTimeout(400);
+                const memoV = () => t.pg.inputValue(SEL.memo); const lastPost = () => t.chat.posts[t.chat.posts.length - 1];
+                // 오늘 아침 실물 문장
+                t.chat.answer = b => ({ reply: '맞아요. 품목 뒤에 10과로! 를 붙일게요.', actions: [{ op: 'tail', n: b.orders[0].n, text: '10과로!' }] });
+                await say(t.pg, '010-1111-2222 주문건 황금향 3키로 선물용 맞는지 확인하고 10과로! 로 표시해줘!');
+                const p1 = lastPost(), raw1 = JSON.stringify(p1);
+                ok(t.chat.posts.length === 1 && (await memoV()) === '' && p1.kind === 'chat' && p1.orders.length === 1 && p1.orders[0].buyer === '이공가', '⑳1 실물 문장(번호 + 「확인하고 … 표시해줘」): 메모 칸에 안 들어가고 클코에게 감 · 후보 = 그 번호의 주문 1건', `대화 ${t.chat.posts.length} · 메모 칸 「${await memoV()}」 · 후보 ${p1.orders.map(o => o.buyer)}`);
+                ok(!/010-?1111-?2222|01011112222/.test(raw1) && /\(전화 끝 2222\)/.test(p1.ask) && /10과로!/.test(p1.ask), '⑳1 클코에게 보낸 글에는 전화번호 전체가 없고 「(전화 끝 2222)」만', p1.ask.slice(0, 60));
+                let lb20 = await lastBub(t.pg); ok(lb20.preview === 'open' && /10과로!/.test(lb20.text), '⑳1 응답 tail 「10과로!」 → 미리 보기', lb20.text.slice(0, 90)); await apply(t.pg);
+                // 하이픈 없이
+                t.chat.answer = b => ({ reply: '', actions: [{ op: 'exclude', n: b.orders[0].n }] });
+                await say(t.pg, '01011112222 건 빼줘'); const p2 = lastPost();
+                ok(t.chat.posts.length === 2 && (await memoV()) === '' && p2.orders.length === 1 && p2.orders[0].buyer === '이공가' && !/01011112222|010-1111-2222/.test(JSON.stringify(p2)) && p2.history.some(h => h.who === 'me' && /\(전화 끝 2222\)/.test(h.text)), '⑳2 하이픈 없이 붙여 쓴 번호 + 「빼줘」도 그 주문이 후보 · 앞 대화(history)에도 번호 전체 없음', p2.ask);
+                await t.pg.click('#fo-chat-log [data-chat="cancel"]'); await t.pg.waitForTimeout(200);
+                // 옵션 끝에 붙었는지(파일)
+                ok((await pendingN(t.pg)) === 0, '⑳ 준비: 남은 카드 0', JSON.stringify(await cardCount(t.pg)));
+                const J20 = (await readJudge(t.pg)).judge;
+                await t.pg.click(SEL.make); await idle(t.pg); await t.pg.waitForSelector(SEL.save, { timeout: 15000 }); await t.pg.waitForTimeout(300);
+                const n20 = await t.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a20 = [];
+                for (const nm of n20.filter(x => !x.includes('스마트스토어'))) { const [dl] = await Promise.all([t.pg.waitForEvent('download', { timeout: 20000 }), t.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's20-' + Date.now() + '.xlsx'); await dl.saveAs(f); XLSX.utils.sheet_to_json(XLSX.readFile(f).Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => a20.push(r)); }
+                const r20 = a20.find(r => r[3] === '이공가');
+                ok(!!r20 && r20[4] === J20['이공가'].opt + ' 10과로!', '⑳1 [적용] → 그 주문 옵션 끝에 「 10과로!」', r20 && r20[4].slice(-24));
+                // 진짜 정리 줄 5꼴 → 메모 칸 · 대화 호출 0
+                const lines5 = [`${FX.usd(ship)}\t010-3333-4444\t입력o삭제x\t네이버`, '010-5555-6666 금요일 발송', `${FX.usd(ship)}\t010-7777-8888\t보내는이 홍길동`, '010-9999-0000 개별발송처리', `${FX.usd(ship)}\t${PID16}\t메모무시\t네이버`];
+                const before5 = t.chat.posts.length; const got5 = [];
+                for (const ln of lines5) { await say(t.pg, ln); await idle(t.pg); got5.push((await memoV()).split('\n').includes(ln)); }
+                ok(t.chat.posts.length === before5 && got5.every(Boolean) && (await memoV()).split('\n').filter(Boolean).length === 5, '⑳3 진짜 정리 줄 5꼴(입력삭제 · 요일 발송 · 보내는이 · 개별발송처리 · 상품주문번호 메모무시)은 메모 칸으로 가고 클코 호출 0', JSON.stringify(got5));
+                const J20b = (await readJudge(t.pg)).judge;
+                ok(J20b['이공나'].individual && J20b['이공마'].individual && J20b['이공바'].kind === 'today', '⑳3 넣은 줄이 그대로 판정에 반영(입력삭제 2건 · 메모무시 = 그날 발송)', JSON.stringify({ 나: J20b['이공나'].individual, 마: J20b['이공마'].individual, 바: J20b['이공바'].kind }));
+                // 정리 줄 직후 「이건 빼줘」
+                await say(t.pg, `${FX.usd(later)}\t010-2424-3535\t\t네이버`); await idle(t.pg);
+                t.chat.answer = b => ({ reply: '', actions: (b.orders || []).map(o => ({ op: 'include', n: o.n })) });
+                const before6 = t.chat.posts.length; await say(t.pg, '이건 다시 넣어줘'); const p6 = lastPost();
+                ok(t.chat.posts.length === before6 + 1 && p6.orders.length === 1 && p6.orders[0].buyer === '이공사' && p6.orders[0].state === '오늘 안 나감', '⑳4 정리 줄을 넣은 직후 「이건 …」 → 후보 = 방금 그 줄의 주문(상태 = 오늘 안 나감)', JSON.stringify(p6.orders.map(o => [o.buyer, o.state])));
+                ok(t.errs.length === 0, '⑳ 오류 0', t.errs.join(' | ')); await t.ctx.close();
+            }
+
+            // ── ㉑ #523 옵션에 사이즈 꼬리가 붙은 주문의 메모 — AI가 사이즈 글을 정리 ─────────────────────────
+            console.log('\n㉑ #523 사이즈 요청 메모');
+            {
+                const sizeBase = fx.naver.find(r => /사이즈/.test(String(r['배송메세지'] || '')));   // 가짜 재료의 「s사이즈로 보내주세요」 주문(옵션에 사이즈 꼬리가 붙는 품목)
+                const S1 = '꼭 2S로 보내주세요', S2 = '2S로 주세요 문 앞에 놔주세요', S3 = '문 앞에 놔주세요';
+                const rows21 = [mk('이일가', { base: sizeBase, memo: S1 }), mk('이일나', { base: sizeBase, memo: S2 }), mk('이일다', { base: sizeBase, memo: S3 }), mk('이일라', { base: sizeBase })];
+                const u = await mkChat(false, rows21);
+                u.chat.memoAns = it => (it.memo === S1 ? { memo: '기본', sure: true, why: '사이즈는 옵션에 반영됨' } : it.memo === S2 ? { memo: '문 앞에 놔주세요', sure: true, why: '사이즈 글만 뗌' } : {});
+                await setCash(u.pg, null); await u.pg.click(SEL.start); await idle(u.pg); await u.pg.waitForTimeout(500);
+                const J21 = (await readJudge(u.pg)).judge, mp21 = u.chat.memoPosts[0] || { items: [] };
+                ok(/2S사이즈로!$/.test(J21['이일가'].opt) && /2S사이즈로!$/.test(J21['이일나'].opt) && !/사이즈로!$/.test(J21['이일다'].opt), '㉑ 준비: 「2S로」 메모 주문은 옵션에 「2S사이즈로!」 꼬리 · 사이즈 말이 없는 주문은 꼬리 없음', J21['이일가'].opt.slice(-20));
+                const sent21 = mp21.items.map(it => it.memo);
+                ok(sent21.includes(S1) && sent21.includes(S2) && !sent21.includes(S3) && mp21.items.filter(it => /사이즈/.test(it.memo) || it.memo === S1 || it.memo === S2).every(it => /사이즈 요청은 옵션에 반영됨/.test(it.hint)), '㉑1 사이즈 꼬리가 붙은 주문의 메모는 AI 묶음에 들어가고 hint 「사이즈 요청은 옵션에 반영됨」 · 꼬리 없는 주문의 「문 앞에 놔주세요」는 안 보냄', JSON.stringify(mp21.items.map(it => [it.memo.slice(0, 12), it.hint])));
+                ok((await pendingN(u.pg)) === 0 && (await u.pg.evaluate(() => [...document.querySelectorAll('#fo-info li')].filter(li => /AI가 배송메세지 정리/.test(li.textContent)).length)) === 2, '㉑2 응답 「기본」·「남길 글」(확실) → 카드 없이 정리(참고 목록 2줄)', JSON.stringify(await cardCount(u.pg)));
+                await u.pg.click(SEL.make); await idle(u.pg); await u.pg.waitForSelector(SEL.save, { timeout: 15000 }); await u.pg.waitForTimeout(300);
+                const n21 = await u.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a21 = []; let st21 = null;
+                for (const nm of n21) { const [dl] = await Promise.all([u.pg.waitForEvent('download', { timeout: 20000 }), u.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's21-' + Date.now() + '.xlsx'); await dl.saveAs(f); const wb = XLSX.readFile(f);
+                    if (nm.includes('스마트스토어')) st21 = XLSX.utils.sheet_to_json(wb.Sheets['발주발송관리'], { header: 1, defval: '' }); else XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => a21.push(r)); }
+                const j21 = nm => (a21.find(r => r[3] === nm) || [])[9];
+                ok(j21('이일가') === FX.DEFAULT_MEMO && j21('이일나') === '문 앞에 놔주세요' && j21('이일다') === S3 && j21('이일라') === FX.DEFAULT_MEMO, '㉑2 택배사 파일 J: 「꼭 2S로…」 → 기본 문구 · 「2S로 주세요 문 앞에…」 → 「문 앞에 놔주세요」 · 사이즈 말 없는 메모는 그대로', JSON.stringify([j21('이일가').slice(0, 6), j21('이일나')]));
+                const hdr21 = st21 ? st21[1] : [], cM = hdr21.indexOf('배송메세지'), cR = hdr21.indexOf('수취인명'); const stMemo = nm => { const r = (st21 || []).find(x => x[cR] === nm); return r ? r[cM] : null; };
+                ok(cM >= 0 && stMemo('이일가') === S1 && stMemo('이일나') === S2, '㉑2 스토어 양식의 배송메세지는 손님 원문 그대로', JSON.stringify([stMemo('이일가'), stMemo('이일나')]));
+                ok(u.errs.length === 0, '㉑ 오류 0', u.errs.join(' | ')); await u.ctx.close();
             }
 
             // 창구가 안 집음(40초)
