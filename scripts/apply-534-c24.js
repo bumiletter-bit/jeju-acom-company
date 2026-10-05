@@ -21,6 +21,8 @@ async function flag(c, req, ms = 150000) {
     while (Date.now() - t0 < ms) { await new Promise(r => setTimeout(r, 4000)); const q = await c.query(`SELECT value FROM agent_office_config WHERE key='cafe24_product_result'`); if (q.rows.length) { await c.query(`DELETE FROM agent_office_config WHERE key='cafe24_product_result'`); return q.rows[0].value; } }
     throw new Error('러너 응답 없음(타임아웃)');
 }
+// 러너 응답: { ok, raw: { ok, status, data } } — 판에 따라 status 가 없을 수 있어 ok·status·오류 본문을 함께 본다
+const putOk = r => !!r && r.ok !== false && !!r.raw && r.raw.ok !== false && !(Number(r.raw.status) >= 400) && !(r.raw.data && r.raw.data.error);
 const nameOf = v => (v.options || []).map(o => o.value).join(' / ');
 async function load(c) {
     const pr = await flag(c, { action: 'raw', method: 'GET', path: `/api/v2/admin/products/${CNO}`, query: { fields: 'product_no,price,selling,display' } });
@@ -35,7 +37,7 @@ async function load(c) {
         const cur = await load(c);
         console.log(`카페24 c${CNO} 기본가 ${cur.base} · 판매 ${cur.selling} · variants ${cur.vars.length}종`);
         cur.vars.forEach(v => console.log(`  ${v.code} | ${v.selling}/${v.display} | +${v.add} = ${cur.base + v.add} | ${v.name}`));
-        const snap = await c.query("SELECT id, to_char(created_at + interval '9 hours','MM-DD HH24:MI') at, items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1").catch(e => { console.log('스냅샷 조회 실패:', e.message); return null; });
+        const snap = await c.query("SELECT id, to_char(run_at AT TIME ZONE 'Asia/Seoul','MM-DD HH24:MI') at, items FROM naver_product_snapshot ORDER BY id DESC LIMIT 1").catch(e => { console.log('스냅샷 조회 실패:', e.message); return null; });
         if (snap && snap.rows.length) { const items = Array.isArray(snap.rows[0].items) ? snap.rows[0].items : JSON.parse(snap.rows[0].items); const p = items.find(x => String(x.no) === NAVER); console.log('최신 스냅샷 #' + snap.rows[0].id + '(' + snap.rows[0].at + ' KST) 감귤 페이지 옵션:'); ((p && p.opts) || []).forEach(o => console.log('  ', JSON.stringify(o).slice(0, 220))); }
         const by = n => cur.vars.find(v => v.name === n);
         console.log('\n계획 대조:'); PLAN.forEach(p => { const n = by(p.neo), o = by(p.old); console.log(`  새 「${p.neo}」 ${n ? `있음(${n.code} · ${n.selling}/${n.display} · 결제가 ${cur.base + n.add})` : '없음 ← 관리자 화면에서 추가 필요'} | 옛 ${o ? `${o.code} ${o.selling}/${o.display} 결제가 ${cur.base + o.add}` : '없음'} | 목표 ${p.pay}`); });
@@ -50,8 +52,8 @@ async function load(c) {
             if (n && (n.selling !== 'F' || n.display !== 'F')) todo.push({ code: n.code, name: n.name, body: { selling: 'F', display: 'F' } });
         }
         if (!todo.length) { console.log('\n바꿀 것 없음(이미 반영).'); return; }
-        for (const t of todo) { const r = await flag(c, { action: 'raw', method: 'PUT', path: `/api/v2/admin/products/${CNO}/variants/${t.code}`, body: { shop_no: 1, request: t.body } }); console.log(`  PUT ${t.code} ${JSON.stringify(t.body)} → ${!(r.raw && r.raw.status < 300) ? '실패 ' + JSON.stringify(r).slice(0, 200) : 'ok'} | ${t.name}`); }
-        await c.query(`INSERT INTO audit_logs(action, target_type, target_id, changes, source, actor) VALUES($1,$2,$3,$4::jsonb,$5,$6)`, ['cafe24_variant_update', 'cafe24_product', String(CNO), JSON.stringify({ mode, before: cur.vars.filter(v => todo.some(t => t.code === v.code)), after: todo }), 'script', '클코(대표 GO #534 하우스감귤 4kg 행사)']).catch(e => console.log('audit 기록 실패:', e.message));
+        for (const t of todo) { const r = await flag(c, { action: 'raw', method: 'PUT', path: `/api/v2/admin/products/${CNO}/variants/${t.code}`, body: { shop_no: 1, request: t.body } }); console.log(`  PUT ${t.code} ${JSON.stringify(t.body)} → ${!putOk(r) ? '실패 ' + JSON.stringify(r).slice(0, 200) : 'ok'} | ${t.name}`); }
+        await c.query(`INSERT INTO audit_logs(action, target_type, target_id, changes, source, actor_name) VALUES($1,$2,$3,$4::jsonb,$5,$6)`, ['cafe24_variant_update', 'cafe24_product', String(CNO), JSON.stringify({ mode, before: cur.vars.filter(v => todo.some(t => t.code === v.code)), after: todo }), 'script', '클코(대표 GO #534 하우스감귤 4kg 행사)']).catch(e => console.log('audit 기록 실패:', e.message));
         console.log('\n카페24 조회는 약 1분 늦게 바뀝니다 — 75초 뒤 재조회…'); await new Promise(r => setTimeout(r, 75000));
         const aft = await load(c); const b2 = n => aft.vars.find(v => v.name === n);
         PLAN.forEach(p => { const n = b2(p.neo), o = b2(p.old); console.log(`  새 ${n ? `${n.selling}/${n.display} 결제가 ${aft.base + n.add}` : '없음'} · 옛 ${o ? `${o.selling}/${o.display}` : '없음'} | ${p.neo}`); });
