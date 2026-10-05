@@ -4,7 +4,7 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const LABEL = '로얄과 중량UP 행사 2026-10';
-const KEYS = ['하우스감귤', '하우스귤', '중량'];
+const KEYS = ['하우스감귤', '하우스귤', '중량'];   // 본문·마감일은 apply-534b-knowledge.js 가 최신(10-11 · 쿠팡·업그레이드 키 추가) — off 는 label 로 전부 끈다
 const TEXT = [
     '지금 「하우스감귤 로얄과 2.5kg → 4kg 중량UP 행사」 중이에요.',
     '· 옵션 「행사★하우스귤 2.5kg로얄과→중량up 4kg」(29,000원)을 주문하시면 2.5kg 값으로 로얄과 4kg을 보내드려요. 판매현황의 「가정용 - 4kg(로얄과) 29,000원」이 바로 이 행사 옵션이에요.',
