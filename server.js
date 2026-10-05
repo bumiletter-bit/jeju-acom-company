@@ -5825,7 +5825,15 @@ app.get('/guide', async (req, res) => {
         const renderGuide = (g) => guideEsc(shippingSchedule.renderGuidePlaceholders(g, now, hinfo.arriveOff))   /* #336: 요일 치환은 도착불가 기준 */
             .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--primary); word-break:break-all;">$1</a>')   // #164: 안내문 내 URL 클릭 가능 링크
             .replace(/\n/g, '<br>');
-        const picked = rows.find(r => r.id === pid) || null;
+        let picked = rows.find(r => r.id === pid) || null;
+        // #540(10/5): 알림톡 링크로 지정된 품목은 판매 상태와 무관하게 안내문을 보여 준다 — 「준비중·시즌종료」로 돌린 품목의 이미 나간 링크가 빈 페이지가 되던 것(행사로 2.5kg 로얄과를 준비중으로 돌린 실사고). 목록(others)은 종전대로 판매중만.
+        if (!picked && pid) {
+            try {
+                picked = (await pool.query(
+                    `SELECT id, name, shipping_guide FROM bot_products
+                     WHERE id = $1 AND deleted_at IS NULL AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> ''`, [pid])).rows[0] || null;
+            } catch (_) { picked = null; }
+        }
         const others = rows.filter(r => !picked || r.id !== picked.id);
         let evCard = ''; try { evCard = guideEventCardHtml(await naverCfgGet('guide_event_card'), Date.now()); } catch (_) { evCard = ''; }   // #449: 이벤트 블록(설정 없으면 '' — 출력 무변경)
         const card = (r, open) => `
@@ -13318,14 +13326,24 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 40, 200);
         // #476(대표 9/30): 전체 지시·대표 확인함은 관리자만 — 직원에게는 늘 본인 지시만 내려준다(화면 탭만 숨기지 않고 서버에서도)
-        const mine = req.query.mine === '1' || req.user.role !== 'admin';
+        // #538(대표 10/5): 이전 채팅 이력(history=1) — 직원 = 본인 것 전부(채팅 종료로 내린 것 포함) · 관리자 = 모두. 검색어 q = 지시 글·답 글
+        const history = req.query.history === '1';
+        const mine = !history && (req.query.mine === '1' || req.user.role !== 'admin');
         const params = [];
         // #525: 최종발주 화면이 창구에 보낸 중간 요청(메모 읽기·대화 한마디)은 목록에 안 보인다 — 정리 기록(「[최종발주] …」) 1건만 보인다
         let where = `o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'`;
         if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
+        if (history) {
+            where += ` AND o.content NOT LIKE '[검증%'`;
+            if (req.user.role !== 'admin') { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length}`; }
+            const q = String(req.query.q || '').trim().slice(0, 60);
+            if (q) { params.push('%' + q.split('%').join('').split('_').join(' ') + '%'); where += ` AND (o.content ILIKE $${params.length} OR COALESCE(o.result->>'answer','') ILIKE $${params.length} OR COALESCE(o.result->>'title','') ILIKE $${params.length} OR COALESCE(o.created_by,'') ILIKE $${params.length})`; }
+            const before = parseInt(req.query.before, 10);
+            if (Number.isFinite(before) && before > 0) { params.push(before); where += ` AND o.id < $${params.length}`; }
+        }
         if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
         const r = await pool.query(
-            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id,
+            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id, COALESCE(o.mine_hidden, false) AS mine_hidden,
                     (o.image_data IS NOT NULL) AS has_image, o.reply_to,
                     (SELECT MIN(c.id) FROM pending_orders c WHERE c.reply_to = o.id AND c.is_deleted = false) AS followed_by,
                     (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
