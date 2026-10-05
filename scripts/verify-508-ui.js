@@ -10,6 +10,8 @@ const FX = require('./fixtures-508.js');
 let pass = 0, fail = 0; const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + t + (d != null ? ' — ' + String(d).slice(0, 300) : '')); return !!c; };
 const note = (t, d) => console.log('  ℹ️ ' + t + (d != null ? ' — ' + String(d).slice(0, 400) : ''));
 const PORT = 3458, BASE = `http://localhost:${PORT}`;
+// 검사가 길어져(10분 넘음) 둘로 나눠 돌릴 수 있게: node scripts/verify-508-ui.js A = ⓪~⑭ · B = ⓪ + ⑮~ · 인자 없으면 전부
+const PART = (process.argv[2] || '').toUpperCase();
 const USER = { id: 1, username: 'ceo', role: 'admin', name: '전승범', position: '대표' };
 const TOKEN = jwt.sign(USER, 'verifytest', { expiresIn: '1h' });
 const TMP = path.join(os.tmpdir(), 'verify508ui'); fs.mkdirSync(TMP, { recursive: true });
@@ -44,6 +46,8 @@ async function fakeApis(ctx, fx, hits, mode = {}) {
     await ctx.route('**/api/agent-office/final-order/memo-read**', r => { hits.ai = (hits.ai || 0) + 1; r.fulfill({ json: { ok: false, message: '시험에서는 AI를 부르지 않아요' } }); });
     // #525: 정리 기록 라우트는 실DB에 줄을 만든다 → 늘 가로챈다(보낸 내용은 hits.logs 에)
     await ctx.route('**/api/agent-office/final-order/log', r => { (hits.logs = hits.logs || []).push(r.request().postDataJSON()); r.fulfill({ json: { ok: true, id: 7001 } }); });
+    // #528: 주소 검색 프록시도 늘 가짜 응답(기본 0건) — 실제 도로명주소 검색을 부르지 않는다
+    await ctx.route('**/api/agent-office/juso*', r => r.fulfill({ json: { results: { common: { errorCode: '0', errorMessage: '정상', totalCount: '0' }, juso: [] } } }));
     await ctx.route('**/api/agent-office/coupang/canceled-since*', r => { hits.cancel++; r.fulfill({ json: { ok: true, canceled: fx.canceledCoupang } }); });
 }
 async function newCtx(br, fx, hits, viewport, mobile, mode) {
@@ -103,6 +107,9 @@ async function resolveCards(pg, type) {
 
 (async () => {
     const srv = spawn(process.execPath, ['-e', `global.setInterval=()=>({unref(){},ref(){}}); require('./server.js');`], { cwd: path.join(__dirname, '..'), env: { ...process.env, JWT_SECRET: 'verifytest', PORT: String(PORT) }, stdio: ['ignore', 'pipe', 'pipe'] });
+    // 🔴 서버의 출력(stdout·stderr)을 읽어 내지 않으면 파이프가 차서 서버가 console 출력에서 멈춘다(모든 응답이 끊김 — 10/5 실측: 검사가 길어지며 ⑧-b 에서 화면 열기가 멈춤). 읽어서 버리고 끝부분만 남긴다.
+    const srvLog = { out: 0, err: 0, tail: '' };
+    srv.stdout.on('data', d => { srvLog.out += d.length; }); srv.stderr.on('data', d => { srvLog.err += d.length; srvLog.tail = (srvLog.tail + d).slice(-600); });
     let br, code = 1;
     try {
         await waitUp();
@@ -127,6 +134,7 @@ async function resolveCards(pg, type) {
             '⓪ 손님 메모 판정 재료: 사이즈 꼬리 · 뒤 날짜 자동 제외 · 날짜 애매 = 확인필요 · 보내는이 확실/애매', JSON.stringify({ 17: J0['받는17'].opt.slice(-8), 18: J0['받는18'].excluded, 19: J0['받는19'].flag, 20: J0['받는20'].sender, 21: J0['받는21'].sender }));
         ok(base0.errs.length === 0, '⓪ 송장변환 v2 단독 오류 0', base0.errs.join(' | '));
 
+        if (PART !== 'B') {   // 앞부분(①~⑭)
         // ① 버튼 → 패널 → 시작 조건
         console.log('\n① 버튼 · 패널 · 시작 조건');
         const hits = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }; const ctx = await newCtx(br, fx, hits, { width: 1400, height: 900 });
@@ -719,6 +727,8 @@ async function resolveCards(pg, type) {
             ok(km.n >= 4 && km.right <= km.inner + 1 && km.sw <= km.cw + 1 && km.doc <= km.inner + 1 && km.minH >= 44 && em2.length === 0, '⑭ⓘ 390px: 칩 줄이 가로로 안 넘침(줄바꿈) · 칩 높이 44px 이상 · 오류 0', JSON.stringify(km));
             await cm.close();
         }
+        }
+        if (PART !== 'A') {   // 뒷부분(⑮~): AI 메모 읽기 · 대화 칸 · 주소 검색 · 초기화
         // ⑮ #518·#520 AI(창구)가 손님 메모를 읽는다 — memo-read 3개 라우트는 가짜 응답(실제 창구·AI 호출 0 · DB 쓰기 0) ─────────
         //   #520: 판정이 끝나면 자동으로 1회 시작 · 보내는이·배송메세지 카드는 AI가 닫지 않고 입력칸만 채움 · 읽는 동안에도 카드를 누를 수 있음 · 배송지 동·호수(unit) 전달
         console.log('\n⑮ #518·#520 AI 메모 읽기(가짜 창구 응답)');
@@ -896,7 +906,10 @@ async function resolveCards(pg, type) {
             const mkChat = async (withClock, rowsX, vp, mobile) => {
                 const hitsC = { naver: 0, cafe24: 0, coupang: 0, cancel: 0, ai: 0 }; const ctxC = await newCtx(br, rowsX ? { ...fx16, naver: rowsX } : fx16, hitsC, vp || { width: 1400, height: 900 }, !!mobile, {});
                 if (withClock) await ctxC.clock.install();
-                const chat = { posts: [], memoPosts: [], dels: 0, mode: 'done', status: '처리중', answer: () => ({ reply: '', actions: [] }) };
+                const NOJUSO = { results: { common: { errorCode: '0', errorMessage: '정상', totalCount: '0' }, juso: [] } };
+                const chat = { posts: [], memoPosts: [], dels: 0, mode: 'done', status: '처리중', answer: () => ({ reply: '', actions: [] }), jusoQ: [], juso: () => NOJUSO };
+                // #528: 주소 검색(도로명주소 프록시)은 늘 가짜 응답 — 기본은 「0건」
+                await ctxC.route('**/api/agent-office/juso*', r => { const kw = new URL(r.request().url()).searchParams.get('keyword'); chat.jusoQ.push(kw); r.fulfill({ json: chat.juso(kw) }); });
                 await ctxC.route('**/api/agent-office/final-order/memo-read', r => { if (r.request().method() !== 'POST') return r.continue(); const b = r.request().postDataJSON(); if (b.kind !== 'chat') { chat.memoPosts.push(b); return r.fulfill({ json: { ok: true, id: 9200 } }); } chat.posts.push(b); r.fulfill({ json: { ok: true, id: 9100 } }); });
                 await ctxC.route('**/api/agent-office/final-order/memo-read/9200', r => { if (r.request().method() === 'DELETE') return r.fulfill({ json: { ok: true } }); const b = chat.memoPosts[chat.memoPosts.length - 1];
                     r.fulfill({ json: { ok: true, state: 'done', status: '완료', data: { items: b.items.map(it => (it.memo === MT ? { i: it.i, ship: 'go', sender: null, memo: '문 앞에 놔주세요', tail: '13과로!', split: false, sure: false, why: '과수 지정' } : { i: it.i, ship: rowsX ? 'ask' : 'go', sender: null, memo: '그대로', split: false, sure: !rowsX, why: '' })) }, message: '' } }); });
@@ -916,7 +929,8 @@ async function resolveCards(pg, type) {
             const lastBub = pg2 => pg2.evaluate(() => { const b = [...document.querySelectorAll('#fo-chat-log .fo-bub')].pop(); return b ? { cls: b.className, text: b.innerText.replace(/\s+/g, ' '), preview: b.getAttribute('data-chat-preview'), bad: b.querySelectorAll('li.bad').length, li: b.querySelectorAll('li').length } : null; });
             const patchN = pg2 => pg2.evaluate(() => window.AkmFinalOrder.state.patch.size);
             const nOf = (b, who) => (b.orders.find(o => o.buyer === who || o.recv === who) || {}).n;
-            const apply = async pg2 => { await pg2.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(pg2); await idle(pg2); };
+            // 주소 검색이 0건(기본 가짜 응답)이면 「그대로 넣기」를 먼저 눌러야 [적용]이 켜진다(#528)
+            const apply = async pg2 => { for (let q = 0; q < 10; q++) { const b = pg2.locator('#fo-chat-log [data-chat-preview="open"] [data-addr-pick$=":raw"]:not(.on)').first(); if (!(await b.count()) || !(await pg2.isDisabled('#fo-chat-log [data-chat="apply"]'))) break; await b.click(); await pg2.waitForTimeout(120); } await pg2.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(pg2); await idle(pg2); };
 
             const d = await mkChat();
             ok(await d.pg.evaluate(() => document.getElementById('fo-chat').hidden), '⑯1 주문을 불러오기 전에는 대화 칸이 안 보임');
@@ -1127,6 +1141,117 @@ async function resolveCards(pg, type) {
                 await h.pg.screenshot({ path: path.join(SHOT, 'fo-chat-phone.png') }); await h.ctx.close();
             }
 
+            // ── ⑱ #528 말로 주소를 바꿀 때 도로명 주소 검색으로 확인(주소·검색 응답은 전부 가짜) ─────────────────
+            console.log('\n⑱ #528 주소 변경 = 도로명 주소 검색으로 확인');
+            {
+                const MEMO_ADDR = '주소가 바뀌었어요 경기 가짜시 메모로 77, 202호 로 보내주세요';
+                const rows18 = [mk('주팔가'), mk('주팔나'), mk('주팔다'), mk('주팔라'), mk('주팔마'), mk('주팔바', { memo: MEMO_ADDR }), mk('주팔사')];
+                const J = (part, bd, zip, jibun) => ({ roadAddrPart1: part, roadAddr: part + (bd ? ` (${bd})` : ''), bdNm: bd || '', zipNo: zip || '00000', jibunAddr: jibun || '', detBdNmList: '' });
+                const R = list => ({ results: { common: { errorCode: '0', errorMessage: '정상', totalCount: String(list.length) }, juso: list } }); const NOJUSO = R([]);
+                const k = await mkChat(false, rows18);
+                k.chat.juso = kw => /시험로 12/.test(kw) ? R([J('충청남도 가짜시 시험로 12', '가짜아파트', '31000', '충청남도 가짜시 가짜동 100')])
+                    : /여러로 1/.test(kw) ? R([J('서울특별시 가짜구 여러로 1', '가짜빌딩', '06000'), J('서울특별시 다른구 여러로 1', '다른빌딩', '07000')])
+                    : /실패로/.test(kw) ? { error: 'NOKEY' }
+                    : /메모로 77/.test(kw) ? R([J('경기도 가짜시 메모로 77', '', '10000')]) : NOJUSO;
+                await setCash(k.pg, null); await k.pg.click(SEL.start); await idle(k.pg); await k.pg.waitForTimeout(400);
+                const lastPrev = () => k.pg.evaluate(() => { const b = [...document.querySelectorAll('#fo-chat-log .fo-bub.ai')].pop(); const a = b.querySelector('.fo-addr'); const ap = b.querySelector('[data-chat="apply"]'); return { text: b.innerText.replace(/\s+/g, ' '), state: a ? a.getAttribute('data-addr-state') : null, applyOff: ap ? ap.disabled : null, opts: [...b.querySelectorAll('[data-addr-pick]')].map(x => x.textContent.trim()), open: b.getAttribute('data-chat-preview') }; });
+                // 1건 확정: 줄임말 → 전체 이름 · 상세는 적은 그대로
+                k.chat.answer = b => ({ reply: '주소를 바꿀게요.', actions: [{ op: 'addr', n: nOf(b, '주팔가'), text: '충남 가짜시 시험로 12, 가짜아파트 101동 1201호' }] });
+                await say(k.pg, '주팔가 건 주소 충남 가짜시 시험로 12, 가짜아파트 101동 1201호로 바꿔줘'); let pv = await lastPrev();
+                ok(pv.state === 'one' && /도로명 주소 확인됨/.test(pv.text) && /→ 「충청남도 가짜시 시험로 12 가짜아파트 101동 1201호」/.test(pv.text) && pv.applyOff === false && k.chat.jusoQ[0] === '충남 가짜시 시험로 12', '⑱1 검색 1건: 「후」가 도로명 주소(충남 → 충청남도) + 상세(적은 그대로) · 「도로명 주소 확인됨」 · 검색어는 상세를 뗀 앞부분', pv.text.slice(-90) + ' / ' + k.chat.jusoQ[0]);
+                await k.pg.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(k.pg); await idle(k.pg);
+                // 여러 건: 골라야 [적용]
+                k.chat.answer = b => ({ reply: '', actions: [{ op: 'addr', n: nOf(b, '주팔나'), text: '서울 가짜구 여러로 1, 3층' }] });
+                await say(k.pg, '주팔나 건 주소 서울 가짜구 여러로 1, 3층으로 바꿔줘'); pv = await lastPrev();
+                ok(pv.state === 'multi' && pv.applyOff === true && pv.opts.length === 3 && /적은 그대로 넣기/.test(pv.opts[2]) && /다른구/.test(pv.opts[1]), '⑱2 검색 여러 건: 후보 목록 + 「적은 그대로 넣기」 · 고르기 전에는 [적용] 꺼짐', JSON.stringify(pv.opts));
+                await k.pg.click('#fo-chat-log [data-addr-pick="0:1"]'); await k.pg.waitForTimeout(150); pv = await lastPrev();
+                ok(pv.applyOff === false && /→ 「서울특별시 다른구 여러로 1 3층」/.test(pv.text), '⑱2 후보를 고르면 「후」가 그 주소 + 상세로 바뀌고 [적용] 켜짐', pv.text.slice(0, 110));
+                await k.pg.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(k.pg); await idle(k.pg);
+                // 0건: 묻고 → 그대로 넣기 / 취소
+                k.chat.answer = b => ({ reply: '', actions: [{ op: 'addr', n: nOf(b, '주팔다'), text: '부산 가짜구 없는길 9, 101호' }] });
+                await say(k.pg, '주팔다 건 주소 부산 가짜구 없는길 9, 101호로 바꿔줘'); pv = await lastPrev();
+                ok(pv.state === 'none' && /주소를 찾지 못했어요/.test(pv.text) && /그대로 넣을까요/.test(pv.text) && pv.applyOff === true && pv.opts.join() === '그대로 넣기,취소', '⑱3 검색 0건: 「주소를 찾지 못했어요 — 적은 글자 그대로 넣을까요?」 [그대로 넣기]/[취소] · 조용히 넣지 않음([적용] 꺼짐)', pv.text.slice(-70));
+                await k.pg.click('#fo-chat-log [data-addr-pick="0:raw"]'); await k.pg.waitForTimeout(150); await k.pg.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(k.pg); await idle(k.pg);
+                const pn3 = await patchN(k.pg);
+                k.chat.answer = b => ({ reply: '', actions: [{ op: 'addr', n: nOf(b, '주팔라'), text: '대구 가짜구 없는길 5, 202호' }] });
+                await say(k.pg, '주팔라 건 주소 대구 가짜구 없는길 5, 202호로 바꿔줘'); await k.pg.click('#fo-chat-log [data-addr-pick="0:skip"]'); await k.pg.waitForTimeout(200); pv = await lastPrev();
+                ok((await patchN(k.pg)) === pn3 && pv.open === 'closed' && /취소함/.test(pv.text) && !(await k.pg.isDisabled('#fo-chat-send')), '⑱3 0건에서 [취소] → 그 주소는 안 넣고 미리 보기가 닫힘(바뀌는 것 없음)');
+                // 검색 실패
+                k.chat.answer = b => ({ reply: '', actions: [{ op: 'addr', n: nOf(b, '주팔마'), text: '인천 가짜구 실패로 3, 1층' }] });
+                await say(k.pg, '주팔마 건 주소 인천 가짜구 실패로 3, 1층으로 바꿔줘'); pv = await lastPrev();
+                ok(pv.state === 'fail' && /주소 검색을 하지 못했어요/.test(pv.text) && pv.applyOff === true, '⑱4 검색 실패(승인키 없음 등): 이유와 함께 묻고 [적용] 꺼짐', pv.text.slice(-80));
+                await k.pg.click('#fo-chat-log [data-addr-pick="0:raw"]'); await k.pg.waitForTimeout(150); await k.pg.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(k.pg); await idle(k.pg);
+                // 손님 메모에 적힌 주소(직원이 「메모 주소로」라고 시킴)
+                k.chat.answer = b => ({ reply: '메모에 적힌 주소로 바꿀게요.', actions: [{ op: 'addr', n: nOf(b, '주팔바'), text: '경기 가짜시 메모로 77, 202호' }] });
+                await say(k.pg, '주팔바 건 메모에 적힌 주소로 바꿔줘'); pv = await lastPrev();
+                ok(pv.state === 'one' && /→ 「경기도 가짜시 메모로 77 202호」/.test(pv.text), '⑱5 지시 글에는 없지만 그 주문의 손님 메모에 그대로 있는 주소 글자는 통과 → 도로명 주소로', pv.text.slice(-60));
+                await k.pg.click('#fo-chat-log [data-chat="apply"]'); await chatIdle(k.pg); await idle(k.pg);
+                k.chat.answer = b => ({ reply: '', actions: [{ op: 'addr', n: nOf(b, '주팔사'), text: '경기 가짜시 메모로 77, 202호' }] });
+                await say(k.pg, '주팔사 건 주소 바꿔줘'); pv = await lastPrev();
+                ok(pv.open !== 'open' && /다시 적어/.test(pv.text), '⑱5 다른 주문의 메모에 있는 주소(이 주문 메모·지시 글에 없음)는 거부', pv.text.slice(-70));
+                // 목록·기록에는 이름만 · 파일
+                const ptxt = await k.pg.evaluate(() => document.getElementById('fo-patches').textContent);
+                ok(/주소 변경: 주팔가/.test(ptxt) && !/시험로|여러로|없는길|실패로|메모로/.test(ptxt), '⑱6 「말로 바꾼 것」 목록에는 「주소 변경: 이름」만(주소 글자 없음)', ptxt.slice(0, 80));
+                for (const t of [...Object.keys(ACT), 'memo-edit']) { for (let q = 0; q < 40; q++) { const c = k.pg.locator(`${SEL.pending}[data-fo-card="${t}"]`).first(); if (!(await c.count())) break; await c.locator(`[data-fo-act="${t === 'memo-edit' ? 'keep' : ACT[t]}"]`).first().click(); await k.pg.waitForTimeout(120); } }
+                await k.pg.click(SEL.make); await idle(k.pg); await k.pg.waitForSelector(SEL.save, { timeout: 15000 }); await k.pg.waitForTimeout(400);
+                const names8 = await k.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const all8 = [];
+                for (const nm of names8.filter(x => !x.includes('스마트스토어'))) { const [dl] = await Promise.all([k.pg.waitForEvent('download', { timeout: 20000 }), k.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's18-' + Date.now() + '.xlsx'); await dl.saveAs(f); const ws = XLSX.readFile(f, { cellStyles: true }).Sheets.Sheet1; XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).forEach((r, i) => { if (i) all8.push({ r, fill: fillOf(ws['I' + (i + 1)]) }); }); }
+                const I = nm => { const x = all8.find(y => y.r[3] === nm); return x ? { v: x.r[8], fill: x.fill, qty: Number(x.r[5]), opt: x.r[4] } : null; }; const src = nm => rows18.find(r => r['수취인명'] === nm);
+                ok(I('주팔가').v === '충청남도 가짜시 시험로 12 가짜아파트 101동 1201호' && I('주팔가').fill === 'E4DFEC' && I('주팔나').v === '서울특별시 다른구 여러로 1 3층' && I('주팔다').v === '부산 가짜구 없는길 9, 101호' && I('주팔마').v === '인천 가짜구 실패로 3, 1층' && I('주팔바').v === '경기도 가짜시 메모로 77 202호', '⑱7 파일 I칸: 확정·고른 주소 = 도로명 주소 + 상세 · 못 찾아 「그대로 넣기」한 것은 적은 글자 그대로 · 연보라', JSON.stringify([I('주팔가').v, I('주팔다').v]));
+                ok(I('주팔라').v === src('주팔라')['통합배송지'] && I('주팔라').fill !== 'E4DFEC' && I('주팔사').v === src('주팔사')['통합배송지'] && all8.every(x => Number(x.r[5]) === 1) && !all8.some(x => /\d{5}/.test(String(x.r[8]).replace(/\d+동|\d+호/g, '')) && /31000|06000|10000/.test(x.r[8])), '⑱7 🔴 취소한 주문·손대지 않은 주문의 주소는 원본 그대로 · 수량 무변경 · 우편번호는 안 들어감');
+                const lg8 = (k.hits.logs || [])[0];
+                ok(!!lg8 && lg8.lines.some(t => /주소 변경 5건/.test(t)) && !lg8.lines.some(t => /시험로|여러로|없는길|실패로|메모로/.test(t)), '⑱6 정리 기록에는 「주소 변경 N건: 이름」만(주소 글자 없음)', lg8 && lg8.lines.find(t => /주소 변경/.test(t)));
+                ok(k.errs.length === 0, '⑱ 오류 0', k.errs.join(' | ')); await k.ctx.close();
+            }
+
+            // ── ⑲ #530 [초기화] — 최종발주를 방금 연 상태로 ─────────────────────────────────────
+            console.log('\n⑲ #530 초기화');
+            {
+                const rows19 = [mk('일구가', { memo: '다음주에 보내주세요' }), mk('일구나'), mk('일구다', { opt: '세상에 없는 과일 9kg' })];
+                const r = await mkChat(false, rows19);
+                const snap = () => r.pg.evaluate(() => { const t = window.AkmFinalOrder.state, f = document.getElementById('fo-frame'), i = f && f.contentWindow && f.contentWindow.__ivt; const vis = id => { const el = document.getElementById(id); return !!el && !el.hidden; };
+                    return { phase: t.phase, loaded: t.loaded, judged: t.judged, dec: t.dec.size, draft: t.draft.size, patch: t.patch.size, chat: t.chat.log.length, logId: t.logId, files: t.files.length, cards: t.cards.length, aiDone: t.ai.done, cash: !!t.cash, cashNone: t.cashNone, noneChecked: document.getElementById('fo-cash-none').checked, memo: document.getElementById('fo-memo').value, ship: document.getElementById('fo-ship').value,
+                        review: vis('fo-review'), result: vis('fo-result'), chatSec: vis('fo-chat'), progress: vis('fo-progress'), start: vis('fo-start'), rejudge: vis('fo-rejudge'), confirm: vis('fo-reset-confirm'), bubbles: document.querySelectorAll('#fo-chat-log .fo-bub').length, merged: i && i.S && i.S.merged ? i.S.merged.length : -1, lines: f && f.contentDocument && f.contentDocument.getElementById('ln-all') ? f.contentDocument.getElementById('ln-all').value : null }; });
+                const first = await snap();
+                const rb = await r.pg.evaluate(() => { const b = document.getElementById('fo-reset'), cs = getComputedStyle(b), row = b.parentElement.getBoundingClientRect(), bb = b.getBoundingClientRect(); return { color: cs.color, border: cs.borderTopColor, h: Math.round(bb.height), rightGap: Math.round(row.right - bb.right) }; });
+                ok(rb.color === 'rgb(180, 35, 24)' && rb.h >= 44 && rb.rightGap <= 2 && !first.confirm, '⑲1 [초기화] 버튼: 빨간 글씨 · 줄 오른쪽 끝 · 44px 이상 · 확인 상자는 숨김', JSON.stringify(rb));
+                await r.pg.fill(SEL.memo, `${FX.usd(later)}\t010-7999-0000\t\t네이버`); await setCash(r.pg, null); await r.pg.click(SEL.start); await idle(r.pg); await r.pg.waitForTimeout(400);
+                const c0 = await cardCount(r.pg), n0 = r.hits.naver;
+                await r.pg.locator(`${SEL.pending}[data-fo-card="${CARD.order}"]`).first().locator('[data-fo-act="send"]').click(); await r.pg.waitForTimeout(150);
+                r.chat.answer = b => ({ reply: '', actions: [{ op: 'qty', n: nOf(b, '일구나'), qty: 2 }] }); await say(r.pg, '일구나 건 2박스로'); await apply(r.pg);
+                await r.pg.locator(`${SEL.pending}[data-fo-card="${CARD.partner}"] select[data-pick]`).first().selectOption(FX.P_HYODON); await r.pg.waitForTimeout(200);
+                for (const t of [...Object.keys(ACT), 'memo-edit']) { for (let q = 0; q < 20; q++) { const c = r.pg.locator(`${SEL.pending}[data-fo-card="${t}"]`).first(); if (!(await c.count())) break; await c.locator(`[data-fo-act="${t === 'memo-edit' ? 'keep' : ACT[t]}"]`).first().click(); await r.pg.waitForTimeout(120); } }
+                await r.pg.click(SEL.make); await idle(r.pg); await r.pg.waitForSelector(SEL.save, { timeout: 15000 }); await r.pg.waitForTimeout(400);
+                const full = await snap();
+                ok(full.phase === 'result' && full.dec >= 2 && full.patch === 1 && full.chat >= 2 && full.files >= 2 && full.logId === 7001 && full.result && full.chatSec && /7999/.test(full.memo) && full.noneChecked, '⑲ 준비: 메모 · 「오늘은 없음」 · 카드 결정 · 말로 바꾼 것 · 대화 · 결과 파일 · 정리 기록이 있는 상태', JSON.stringify({ dec: full.dec, patch: full.patch, chat: full.chat, files: full.files }));
+                // 취소
+                let dlg = 0; r.pg.on('dialog', () => { dlg++; });
+                await r.pg.click('#fo-reset'); await r.pg.waitForTimeout(150); const cf = await r.pg.evaluate(() => { const c = document.getElementById('fo-reset-confirm'); return { shown: !c.hidden, text: c.innerText.replace(/\s+/g, ' ') }; });
+                ok(cf.shown && /전부 지우고 처음부터/.test(cf.text) && /메모/.test(cf.text) && /말로 바꾼 것/.test(cf.text) && dlg === 0, '⑲2 누르면 브라우저 창이 아니라 패널 안 확인 상자([초기화]/[취소])', cf.text.slice(0, 80));
+                await r.pg.click('#fo-reset-no'); await r.pg.waitForTimeout(150); const kept = await snap();
+                ok(!kept.confirm && JSON.stringify({ ...kept, confirm: 0 }) === JSON.stringify({ ...full, confirm: 0 }), '⑲2 [취소] → 아무것도 안 바뀜');
+                // 초기화
+                await r.pg.click('#fo-reset'); await r.pg.click('#fo-reset-yes'); await r.pg.waitForTimeout(300); await idle(r.pg);
+                await r.pg.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await r.pg.waitForTimeout(300);
+                const z = await snap();
+                ok(z.phase === 'input' && !z.loaded && !z.judged && z.dec === 0 && z.draft === 0 && z.patch === 0 && z.chat === 0 && z.logId === 0 && z.files === 0 && z.cards === 0 && !z.aiDone, '⑲3 초기화: 카드 결정 · 적다 만 글 · AI 결과 · 말로 바꾼 것 · 대화 · 결과 파일 · 정리 기록 번호가 전부 비워짐', JSON.stringify({ dec: z.dec, patch: z.patch, chat: z.chat, files: z.files, logId: z.logId }));
+                ok(z.memo === '' && !z.cash && !z.cashNone && !z.noneChecked && z.ship === first.ship, '⑲3 메모 빈칸 · 현금파일 해제(「오늘은 없음」도 처음 값) · 기준 발송일 = 추천값', JSON.stringify({ memo: z.memo, none: z.noneChecked, ship: z.ship }));
+                ok(!z.review && !z.result && !z.chatSec && !z.progress && z.start && !z.rejudge && z.bubbles === 0 && z.merged === 0 && z.lines === '', '⑲3 화면이 처음 모양(확인·결과·대화 숨김 · [주문 불러와 시작하기] 보임) · 숨은 계산 화면도 새로(주문 0 · 줄 빈칸)', JSON.stringify({ merged: z.merged, lines: z.lines, start: z.start }));
+                await setCash(r.pg, null); await r.pg.click(SEL.start); await idle(r.pg); await r.pg.waitForTimeout(400);
+                const c1 = await cardCount(r.pg), z2 = await snap();
+                ok(r.hits.naver === n0 + 1 && JSON.stringify(c1) !== JSON.stringify({}) && (c1[CARD.order] || {}).pending === (c0[CARD.order] || {}).pending && (c1[CARD.partner] || {}).pending === 1 && z2.patch === 0 && z2.memo === '', '⑲4 초기화 뒤 다시 시작 → 주문을 새로 불러오고 카드가 처음처럼 전부 열림(앞서 고른 것 없음)', JSON.stringify(c1));
+                // 대화가 도는 중에 초기화 → 그 요청도 정리
+                r.chat.mode = 'wait'; const d0 = r.chat.dels; await r.pg.fill('#fo-chat-input', '제주 건 있어?'); await r.pg.click('#fo-chat-send'); await r.pg.waitForFunction(() => window.AkmFinalOrder.state.chat.id, null, { timeout: 15000 });
+                await r.pg.click('#fo-reset'); await r.pg.click('#fo-reset-yes'); await r.pg.waitForTimeout(300); await idle(r.pg); for (let q = 0; q < 24 && r.chat.dels <= d0; q++) await r.pg.waitForTimeout(250);
+                const z3 = await snap();
+                ok(r.chat.dels === d0 + 1 && z3.phase === 'input' && z3.chat === 0 && z3.bubbles === 0, '⑲5 대화 요청이 도는 중에 초기화해도 그 요청을 정리(DELETE)하고 처음 상태로', `DELETE ${r.chat.dels - d0}`);
+                ok(r.errs.length === 0, '⑲ 오류 0', r.errs.join(' | ')); await r.ctx.close();
+                const m9 = await mkChat(false, rows19, { width: 390, height: 844 }, true);
+                await m9.pg.click('#fo-reset'); await m9.pg.waitForTimeout(200);
+                const ov9 = await m9.pg.evaluate(() => { const W = window.innerWidth, c = document.getElementById('fo-reset-confirm'), bad = [...c.querySelectorAll('*'), c, document.getElementById('fo-reset')].filter(el => { const b = el.getBoundingClientRect(); return b.width && (b.right > W + 1 || b.left < -1); }).length; return { bad, h: [...c.querySelectorAll('button')].map(b => Math.round(b.getBoundingClientRect().height)), reset: Math.round(document.getElementById('fo-reset').getBoundingClientRect().height) }; });
+                ok(ov9.bad === 0 && ov9.h.every(h => h >= 44) && ov9.reset >= 44, '⑲6 폰(390px): 초기화 버튼·확인 상자 가로 넘침 0 · 터치 44px 이상', JSON.stringify(ov9)); await m9.ctx.close();
+            }
+
             // 창구가 안 집음(40초)
             let e2; try { e2 = await mkChat(true); } catch (_) { e2 = null; }
             if (e2) {
@@ -1139,6 +1264,7 @@ async function resolveCards(pg, type) {
                 ok(/말로 고치기를 쓸 수 없어요/.test(lbw.text) && e2.chat.dels === 1 && be.orders.length === 0 && /제주도 배송/.test(be.summary), '⑯13 40초 안에 창구가 안 집으면 「지금은 말로 고치기를 쓸 수 없어요 — 정리 줄과 카드로 진행하세요」 · 질문만이면 후보 없이 요약만 보냄', lbw.text.slice(0, 70));
                 await e2.ctx.close();
             } else note('⑯13 40초 안내 — 브라우저 시계 조작 불가로 미검증');
+        }
         }
         code = fail ? 1 : 0;
     } catch (e) { if (e.message !== 'STOP') { console.error('ERR', e.stack || e.message); code = 1; } }

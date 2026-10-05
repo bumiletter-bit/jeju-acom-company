@@ -110,6 +110,11 @@
                         <button type="button" class="fo-btn" id="fo-rejudge" hidden>다시 판정</button>
                         <button type="button" class="fo-btn" id="fo-reload" hidden>주문 다시 불러오기</button>
                         <span class="fo-msg" id="fo-in-msg" role="status"></span>
+                        <button type="button" class="fo-btn fo-reset" id="fo-reset">초기화</button>
+                    </div>
+                    <div class="fo-reset-confirm" id="fo-reset-confirm" hidden role="alertdialog" aria-labelledby="fo-reset-q">
+                        <p id="fo-reset-q"><b>전부 지우고 처음부터 할까요?</b> 메모 · 현금파일 · 확인 카드에서 고른 것 · 말로 바꾼 것 · 대화 · 만든 파일이 지워져요.</p>
+                        <div class="fo-acts"><button type="button" class="fo-btn fo-reset solid" id="fo-reset-yes">초기화</button><button type="button" class="fo-btn" id="fo-reset-no">취소</button></div>
                     </div>
                 </section>
                 <section class="fo-sec" id="fo-progress" hidden aria-label="주문 불러오기" aria-live="polite"></section>
@@ -159,6 +164,9 @@
         $('fo-cards').addEventListener('change', onCardChange);
         $('fo-result').addEventListener('click', onResultClick);
         $('fo-chat').addEventListener('click', onChatClick);
+        $('fo-reset').addEventListener('click', () => { if (st.busy) return; $('fo-reset-confirm').hidden = false; $('fo-reset-yes').focus({ preventScroll: true }); });
+        $('fo-reset-no').addEventListener('click', () => { $('fo-reset-confirm').hidden = true; $('fo-reset').focus({ preventScroll: true }); });
+        $('fo-reset-yes').addEventListener('click', resetAll);
         $('fo-chat-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); chatSend(); } });
         $('fo-progress').addEventListener('click', e => { const b = e.target.closest('button[data-fo-load]'); if (b) run(() => b.dataset.foLoad === 'retry' ? loadChannels(CH.filter(c => st.chState[c] && st.chState[c].fail)).then(afterLoad) : skipFailed()); });
     }
@@ -926,7 +934,7 @@
         st.patch.forEach((p, k) => {
             const e = byKey.get(k); if (!e) return; const who = whoOf(e), b = buyerName(e);
             const add = (kind, screen, log) => out.push({ key: k, kind, screen: `${kind}: ${screen}`, log });
-            if (p.addr != null) add('주소 변경', `${who} — 「${p.addr}」`, b);
+            if (p.addr != null) add('주소 변경', who, b);   // 목록·정리 기록에는 이름만(주소 글자는 넣지 않는다 — 바뀐 주소는 결과 파일의 연보라 칸에서 본다)
             if (p.recv != null) add('받는 분 변경', `${who} → ${p.recv}`, `${b}: ${e.conv['수취인명'] || ''} → ${p.recv}`);
             if (p.qty != null) add('수량 변경', `${who} — ${qtyOf(e)} → ${p.qty}박스`, `${b}: ${qtyOf(e)} → ${p.qty}박스`);
             if (p.opt != null) add('품목 이름 변경', `${who} — ${e.conv['옵션정보']} → ${p.opt}`, `${e.conv['옵션정보']} → ${p.opt}`);
@@ -951,8 +959,15 @@
         el.innerHTML = C.log.map((m, i) => {
             if (m.preview) {
                 const live = C.pending && C.pending.at === i;
-                const list = `<ul class="fo-a-list">${m.preview.map(x => `<li class="${x.ok ? '' : 'bad'}">${esc(x.line)}${x.ok ? '' : ' — ' + esc(x.why)}</li>`).join('')}</ul>`;
-                const acts = `<div class="fo-a-acts">${live ? `<button type="button" class="fo-btn sm primary" data-chat="apply">적용</button><button type="button" class="fo-btn sm" data-chat="cancel">취소</button>` : `<span class="fo-done">${esc(m.state || '')}</span>`}</div>`;
+                // #528 주소 줄: 도로명 주소 검색 결과(확인됨 / 후보 고르기 / 못 찾음 → 그대로 넣을지 묻기)
+                const addrHtml = (x, idx) => { const Q = x.addrQ; if (!Q) return ''; const on = v => (String(Q.sel) === String(v) ? ' on' : ''), btn = (v, t) => (live ? `<button type="button" class="fo-btn sm fo-addr-opt${on(v)}" data-addr-pick="${idx}:${v}" aria-pressed="${String(Q.sel) === String(v)}">${esc(t)}</button>` : '');
+                    if (Q.sel === 'skip') return `<div class="fo-addr" data-addr-state="skip"><span class="fo-addr-note">이 주소는 넣지 않아요.</span></div>`;
+                    if (Q.state === 'one') return `<div class="fo-addr" data-addr-state="one"><span class="fo-addr-ok">도로명 주소 확인됨</span></div>`;
+                    if (Q.state === 'multi') return `<div class="fo-addr" data-addr-state="multi"><span class="fo-addr-note">비슷한 주소가 여러 개예요. 맞는 것을 골라 주세요.</span><div class="fo-addr-opts">${Q.cands.map((c, k) => btn(k, c.part + (c.bd ? ` (${c.bd})` : ''))).join('')}${btn('raw', '적은 그대로 넣기')}</div></div>`;
+                    return `<div class="fo-addr" data-addr-state="${Q.state}"><span class="fo-addr-note">${Q.state === 'fail' ? `주소 검색을 하지 못했어요${Q.err ? `(${esc(Q.err)})` : ''}` : '주소를 찾지 못했어요'} — 적은 글자 그대로 넣을까요?</span><div class="fo-addr-opts">${btn('raw', '그대로 넣기')}${btn('skip', '취소')}</div></div>`; };
+                const list = `<ul class="fo-a-list">${m.preview.map((x, idx) => `<li class="${x.ok ? '' : 'bad'}">${esc(x.line)}${x.ok || (x.addrQ && x.addrQ.sel === 'skip') ? '' : ' — ' + esc(x.why)}${addrHtml(x, idx)}</li>`).join('')}</ul>`;
+                const need = live && m.preview.some(addrNeedsPick);
+                const acts = `<div class="fo-a-acts">${live ? `<button type="button" class="fo-btn sm primary" data-chat="apply"${need ? ' disabled' : ''}>적용</button><button type="button" class="fo-btn sm" data-chat="cancel">취소</button>${need ? '<span class="fo-done">주소를 먼저 골라 주세요</span>' : ''}` : `<span class="fo-done">${esc(m.state || '')}</span>`}</div>`;
                 return ai(`<p>${esc(m.text)}</p>${list}`, acts, ` data-chat-preview="${live ? 'open' : 'closed'}"`);
             }
             return m.who === 'me' ? `<div class="fo-bub me"><p>${esc(m.text)}</p></div>` : ai(`<p>${esc(m.text)}</p>`);
@@ -1053,7 +1068,7 @@
                 await sleep(2000);
                 if (!C.running) return;
                 const q = await window.api('/api/agent-office/final-order/memo-read/' + C.id), sec = Math.round((Date.now() - C.t0) / 1000);
-                if (q && q.state === 'done') { chatResult(q.data || {}); break; }
+                if (q && q.state === 'done') { await chatResult(q.data || {}); break; }
                 if (q && q.state === 'fail') throw new Error(q.message || '클코가 처리하지 못했어요');
                 if (q && q.status === '대기' && sec > 40) throw new Error('지금은 말로 고치기를 쓸 수 없어요(대표 PC의 창구가 꺼져 있어요) — 정리 줄과 카드로 진행하세요');
                 if (sec > 600) throw new Error('10분이 지나도 답이 없어요');
@@ -1068,7 +1083,7 @@
         }
     }
     // 돌아온 actions 검사 → 「바뀔 내용」 미리 보기(적용은 사람이 눌러야)
-    function chatResult(data) {
+    async function chatResult(data) {
         const C = st.chat, s = S(), byKey = new Map(s.merged.map(e => [keyOf(e), e])), mine = meText();
         const names = new Set(); Object.values(st.byPartner || {}).forEach(a => (a || []).forEach(n => names.add(n)));
         const inMine = v => { const x = sq(v); return x.length >= 1 && mine.includes(x); };
@@ -1081,7 +1096,10 @@
                 case 'exclude': return e.individual ? bad('오늘 제외', '입력삭제 주문이에요') : good('오늘 제외(택배사·스토어 파일에서 빠져요)', { excl: true });
                 case 'include': return e.individual ? bad('오늘 발송으로', '입력삭제 주문이에요') : good('오늘 발송으로', { excl: false });
                 case 'indiv': return buyerTel(e) ? good('입력삭제로(이 구매자의 주문이 택배사 양식에서 빠져요 · 현금파일에 주소 줄이 있어야 해요)', { indiv: true }) : bad('입력삭제로', '구매자 번호가 없어 정리 줄을 만들 수 없어요');
-                case 'addr': { const t = String(a.text || '').trim(); return sq(t).length >= 5 && inMine(t) ? good(`주소: 「${addrOf(e)}」 → 「${t}」`, { addr: t }) : bad(`주소 → 「${t}」`, '주소 글자를 다시 적어 주세요(적어 주신 글에 그대로 있는 주소만 넣어요)'); }
+                // #528: 주소 글자는 이 대화에서 사람이 적은 글, 또는 그 주문의 손님 배송메세지 안에 그대로 있어야 한다(「메모에 적힌 주소로 바꿔줘」). 통과하면 도로명 주소 검색으로 확인한다(아래 addrLookup).
+                case 'addr': { const t = String(a.text || '').trim(), inMemo = sq(t).length >= 5 && sq(e.conv['배송메세지']).includes(sq(t));
+                    if (!(sq(t).length >= 5 && (inMine(t) || inMemo))) return bad(`주소 → 「${t}」`, '주소 글자를 다시 적어 주세요(적어 주신 글이나 손님 메모에 그대로 있는 주소만 넣어요)');
+                    return Object.assign(good(`주소: 「${addrOf(e)}」 → 「${t}」`, { addr: t }), { addrQ: { raw: t, head: `${who} — 주소: 「${addrOf(e)}」 → `, state: 'wait', cands: [], sel: null } }); }
                 case 'recv': { const t = String(a.name || '').trim(); return t && inMine(t) ? good(`받는 분: ${e.conv['수취인명'] || ''} → ${t}`, { recv: t }) : bad(`받는 분 → ${t}`, '받는 분 이름을 다시 적어 주세요'); }
                 case 'qty': { const q = Number(a.qty); return Number.isInteger(q) && q >= 1 && q <= 999 ? good(`수량: ${qtyNow(e)} → ${q}박스`, { qty: q }) : bad(`수량 → ${a.qty}`, '수량은 1~999 사이 숫자여야 해요'); }
                 case 'opt': { const t = String(a.name || '').trim(); return names.has(t) ? good(`품목 이름: ${optOf(e)} → ${t}`, { opt: t }) : bad(`품목 이름 → ${t}`, '품목별 금액(단가표)에 없는 이름이에요'); }
@@ -1097,10 +1115,49 @@
         });
         const reply = String(data.reply || '').trim();
         if (!items.length) { chatSay('ai', reply || '바꿀 것이 없어요.'); return; }
+        // #528: 주소는 도로명 주소 검색으로 확인한 뒤에 미리 보기를 띄운다(1건 = 그 주소로 · 여러 건 = 고르기 · 못 찾음 = 물어봄 — 조용히 그대로 넣지 않는다)
+        const qs = items.filter(x => x.ok && x.addrQ);
+        if (qs.length) { chatLive('주소를 도로명 주소로 찾는 중이에요'); for (const x of qs) { await addrLookup(x); if (!C.running) return; } }
         const okN = items.filter(x => x.ok).length;
         const at = chatSay('ai', (reply ? reply + '\n' : '') + (okN ? `바뀔 내용 ${okN}건이에요. 맞으면 [적용]을 눌러 주세요.` : '바꿀 수 있는 것이 없어요.'), { preview: items, state: okN ? '' : '적용할 것 없음' });
         if (okN) { C.pending = { at, items }; renderChat(); }
     }
+    // 도로명 주소 검색(주문 정리기 #395·#444 와 같은 통로·같은 규칙): 검색어/상세 나누기 → 원문 그대로 검색 → 정확히 1건(또는 검색한 도로명+번호와 정확히 같은 후보가 1건)일 때만 확정.
+    //   넣는 글자 = 검색 결과의 도로명 주소(시·도 전체 이름) + 빈칸 + 상세(적은 그대로 — 정리·축약 없음). 우편번호는 넣지 않는다.
+    const addrText = (j, detail) => String(j.roadAddrPart1 || '').trim() + (detail ? ' ' + detail : '');
+    async function addrLookup(x) {
+        const Q = x.addrQ, oo = window.__ooTest;
+        const setOne = j => { Q.state = 'one'; Q.sel = 'one'; Q.road = addrText(j, Q.detail); x.set.addr = Q.road; x.line = Q.head + `「${Q.road}」`; };
+        try {
+            if (!oo || typeof oo.splitAddr !== 'function') throw new Error('주소 검색 도구를 불러오지 못했어요');
+            const [body, detail] = oo.splitAddr(Q.raw); Q.detail = detail || '';
+            const tries = [body]; const sb = oo.searchBody(body); if (sb && sb !== body) tries.push(sb);
+            let list = null, fallback = false, err = '';
+            for (let t = 0; t < tries.length && !list; t++) {
+                const d = await window.api('/api/agent-office/juso?keyword=' + encodeURIComponent(tries[t]));
+                if (d && d.error) { err = d.error === 'NOKEY' ? '주소 검색 승인키가 서버에 없어요' : String(d.error); continue; }
+                const c = d && d.results && d.results.common; if (!c) continue;
+                if (c.errorCode !== '0') { err = c.errorMessage || c.errorCode; continue; }
+                const ls = d.results.juso || []; if (ls.length) { list = ls; fallback = t > 0; }
+            }
+            if (!list) { Q.state = err ? 'fail' : 'none'; Q.err = err; return; }
+            const uniq = [...new Set(list.map(j => j.roadAddrPart1 + '|' + j.zipNo))];
+            const ex = !fallback && uniq.length > 1 ? oo.exactMatches(tries[0], list, Q.detail) : [];
+            if (!fallback && (list.length === 1 || uniq.length === 1)) setOne(list[0]);
+            else if (ex.length === 1) setOne(ex[0]);
+            else { Q.state = 'multi'; Q.cands = list.slice(0, 7).map(j => ({ road: addrText(j, Q.detail), part: String(j.roadAddrPart1 || ''), bd: String(j.bdNm || ''), jibun: String(j.jibunAddr || '') })); }
+        } catch (e) { Q.state = 'fail'; Q.err = (e && e.message) || String(e); }
+    }
+    // 미리 보기에서 주소 고르기: 'raw' = 적은 그대로 · 'skip' = 이 주소는 넣지 않음 · 숫자 = 후보 번호
+    function addrPick(i, v) {
+        const P = st.chat.pending; if (!P) return; const x = P.items[i]; if (!x || !x.addrQ) return; const Q = x.addrQ;
+        Q.sel = v; x.ok = v !== 'skip';
+        const text = v === 'raw' ? Q.raw : v === 'skip' ? null : (Q.cands[Number(v)] || {}).road;
+        if (text) { x.set.addr = text; x.line = Q.head + `「${text}」`; }
+        if (!P.items.some(y => y.ok)) { st.chat.log[P.at].state = '취소함'; st.chat.pending = null; syncChat(); }
+        renderChat();
+    }
+    const addrNeedsPick = x => !!(x.addrQ && x.ok && !x.addrQ.sel);
     async function chatApply() {
         const C = st.chat, P = C.pending; if (!P || st.busy) return;
         const had = st.phase === 'result' && st.files.length > 0, s = S(), byKey = new Map(s.merged.map(e => [keyOf(e), e])), indiv = [];
@@ -1119,7 +1176,8 @@
         const b = e.target.closest('button'); if (!b) return; const C = st.chat;
         if (b.id === 'fo-chat-send') return chatSend();
         if (b.id === 'fo-chat-stop') { C.running = false; $('fo-chat-msg').textContent = '그만뒀어요.'; syncChat(); renderChat(); return; }
-        if (b.dataset.chat === 'apply') return chatApply();
+        if (b.dataset.addrPick) { const [i, v] = b.dataset.addrPick.split(':'); return addrPick(Number(i), v); }
+        if (b.dataset.chat === 'apply') { if (C.pending && C.pending.items.some(addrNeedsPick)) return; return chatApply(); }
         if (b.dataset.chat === 'cancel' && C.pending) { C.log[C.pending.at].state = '취소함'; C.pending = null; renderChat(); syncChat(); return; }
         if (b.dataset.unpatch && !st.busy) {
             const had = st.phase === 'result' && st.files.length > 0; st.patch.delete(b.dataset.unpatch);
@@ -1152,6 +1210,33 @@
             const r = await window.api('/api/agent-office/final-order/log', 'POST', Object.assign({ shipDate: S().shipDate, lines: logLines() }, st.logId ? { id: st.logId } : {}));
             if (r && r.ok && r.id) st.logId = r.id;
         } catch (_) { /* 기록을 못 남겨도 파일은 만들어졌다 */ }
+    }
+
+    // ── #530(대표 10/5) [초기화] — 최종발주를 방금 연 상태로 ─────────────────────────────────────
+    //   메모·현금파일·기준 발송일·카드 결정·적다 만 글·AI 결과·말로 바꾼 것·대화·결과 파일·정리 기록 번호를 비우고, 숨은 계산 화면(v2)도 새로 연다.
+    //   돌고 있는 AI 읽기·대화 요청은 [그만두기]와 같게 정리한다(각 요청의 finally 가 서버 묶음을 DELETE).
+    async function resetAll() {
+        if (st.busy) return;
+        $('fo-reset-confirm').hidden = true;
+        st.ai.running = false; st.chat.running = false; st.autoAi = false;
+        st.busy = true; $('fo-panel').classList.add('busy'); $('fo-reset').disabled = true;
+        try {
+            $('fo-memo').value = ''; $('fo-chat-input').value = '';
+            st.cash = null; st.cashName = ''; st.cashNone = false; $('fo-cash').value = '';
+            st.prep = null; st.loaded = false; st.judged = false; st.stale = false; st.loadedOn = null; st.loadedAt = 0; st.chState = {}; st.cards = []; st.info = []; st.kindFilter = '';
+            st.dec = new Map(); st.draft = new Map(); st.ai = newAi(); st.patch = new Map();
+            st.chat = { log: [], cand: [], pending: null, running: false, id: 0, t0: 0 }; st.logId = 0;
+            st.out = null; st.files = []; st.phase = 'input';
+            ['fo-review', 'fo-result', 'fo-progress', 'fo-chat'].forEach(id => { $(id).hidden = true; });
+            $('fo-progress').innerHTML = ''; $('fo-cards').innerHTML = ''; $('fo-info').innerHTML = ''; $('fo-sum').innerHTML = ''; $('fo-result').innerHTML = '';
+            clearMsg(); $('fo-chat-msg').textContent = ''; $('fo-ai-msg').textContent = ''; $('fo-ai-msg').classList.remove('err'); renderChat(); renderPatches();
+            // 숨은 계산 화면도 새로(불러온 주문·줄·체크가 남지 않게) → 달력을 다시 받아 기준 발송일을 추천값으로
+            if (st.frame) { st.frame.remove(); st.frame = null; } st.ready = null; st.cal = null;
+            const sel = $('fo-ship'); sel.dataset.filled = ''; sel.innerHTML = '<option value="">달력을 불러오는 중</option>'; sel.disabled = true;
+            await ensureFrame(); fillShip();
+        } catch (err) { showError(err); }
+        finally { st.busy = false; $('fo-panel').classList.remove('busy'); $('fo-reset').disabled = false; LOCKS.forEach(id => { $(id).disabled = id === 'fo-ship' && !st.cal; }); syncInput(); syncAi(); syncChat(); }
+        toast('처음 상태로 돌렸어요');
     }
 
     window.AkmFinalOrder = { open, close, state: st };

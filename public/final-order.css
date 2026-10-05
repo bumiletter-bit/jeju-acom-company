@@ -203,3 +203,21 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
     .fo-a-acts .fo-btn { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { .fo-compose, .fo-icon { transition: none; } .fo-icon:active { transform: none; } }
+
+/* #528: 말로 바꾼 주소의 도로명 주소 확인 — 확인됨 표시 · 후보 고르기 · 못 찾았을 때 묻기 */
+.fo-addr { display: grid; gap: 6px; margin: 4px 0 6px; }
+.fo-addr-ok { width: max-content; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; color: #067647; background: #ECFDF3; border: 1px solid #ABEFC6; }
+.fo-addr-note { font-size: 12.5px; color: #B54708; }
+.fo-addr-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.fo-addr-opt { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.fo-addr-opt.on { background: var(--f-accent); border-color: var(--f-accent); color: #fff; }
+@media (max-width: 640px) { .fo-addr-opt { min-height: 44px; } }
+
+/* #530: [초기화] — 빨간 글씨 · 옅은 빨강 테두리(줄 오른쪽 끝) · 패널 안 확인 상자 */
+.fo-btn.fo-reset { margin-left: auto; background: #fff; color: #B42318; border-color: #FDA29B; font-weight: 700; }
+.fo-btn.fo-reset:hover { background: #FEF3F2; }
+.fo-btn.fo-reset.solid { margin-left: 0; background: #D92D20; border-color: #D92D20; color: #fff; }
+.fo-btn.fo-reset.solid:hover { background: #B42318; border-color: #B42318; }
+.fo-reset-confirm { margin-top: 10px; padding: 12px 14px; border: 1px solid #FDA29B; border-radius: 12px; background: #FEF3F2; display: grid; gap: 10px; }
+.fo-reset-confirm[hidden] { display: none !important; }
+.fo-reset-confirm p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--f-ink); }
