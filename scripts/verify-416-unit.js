@@ -35,7 +35,8 @@ ok(K.cleanProductName('') === '', '③ 빈 입력 안전');
 ok(K.cleanProductName('최상품 청귤(풋귤) 5kg') === '최상품 청귤(풋귤) 5kg', '③ 이미 깨끗한 이름 = 무변형', '');
 // ④ 실삽입 확인(grep — #178 교훈) — 발송안내 2곳에 cleanProductName 적용·주문안내/쿠팡 경로 무접촉
 const src = fs.readFileSync(PROJ + '\\server.js', 'utf8');
-const eN = /'상품명': kakaoNotify\.cleanProductName\(po\.productOption \|\| po\.productName \|\| '주문 상품'\)\.slice\(0, 80\),\s+\/\* #416/.test(src);
+// #542: 네이버 발송안내 상품명은 정제기 결과에 꼬리 도우미를 한 번 감싼다(설정 없으면 정제기 결과 그대로)
+const eN = /'상품명': notifyNameWithTail\(po\.productOption \|\| po\.productName \|\| '', kakaoNotify\.cleanProductName\(po\.productOption \|\| po\.productName \|\| '주문 상품'\), 80\),/.test(src);
 const eC = /'상품명': kakaoNotify\.cleanProductName\(c24OptClean\(it0\.option_value\) \|\| it0\.product_name \|\| '주문 상품'\)\.slice\(0, 80\),\s+\/\* #416/.test(src);
 ok(eN, '④ 네이버 E 조립부 실삽입');
 ok(eC, '④ 자사몰 E 조립부 실삽입');

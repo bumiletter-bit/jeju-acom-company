@@ -7252,6 +7252,29 @@ function isMaskedTel(v) { return v === '__MASKED__'; }
 //   발송 시도 없이 'bad-tel'로 기록하고 재안내하지 않는다(화면 「번호 오류」 — 조치 불요·중립 표기).
 function isBadTel(v) { const d = String(v || '').replace(/[^0-9]/g, ''); return d.length >= 8 && !/^01/.test(d); }
 
+// #542(대표 GO 10/5 「꼬리 붙여 — 그 건만」): 발송안내 상품명 꼬리 — 행사로 주문 옵션과 다른 것을 보낼 때(변경 전 「2.5kg(로얄과)」 주문 → 4kg 발송)
+//   설정 agent_office_config 'notify_name_tail' = { until:'YYYY-MM-DD'(KST·포함), has:[전부 들어 있어야], not:[하나라도 있으면 제외], tail:' (…)', note:'쿠팡 문자 맨 위 한 줄' }
+//   설정이 없거나 날짜가 지나면 '' → 출력 바이트 동일(무회귀). 발송안내에만 쓴다(주문안내·수동 주문안내 무접촉). 알림톡 변수 값이라 재심사 없음(#450 과 같은 근거).
+const _nameTail = { at: 0, v: null };
+async function notifyNameTailLoad() {
+    if (Date.now() - _nameTail.at < 60000) return;
+    try { _nameTail.v = await naverCfgGet('notify_name_tail'); } catch (_) { _nameTail.v = null; }
+    _nameTail.at = Date.now();
+}
+function notifyNameTailCfg(optText, nowMs) {
+    const c = _nameTail.v;
+    if (!c || typeof c !== 'object' || !Array.isArray(c.has) || !c.has.length) return null;
+    const today = new Date((nowMs || Date.now()) + 9 * 3600000).toISOString().slice(0, 10);
+    if (!c.until || today > String(c.until)) return null;
+    const s = String(optText || '');
+    if (!c.has.every(w => w && s.includes(String(w)))) return null;
+    if (Array.isArray(c.not) && c.not.some(w => w && s.includes(String(w)))) return null;
+    return c;
+}
+function notifyNameWithTail(optText, cleaned, max, nowMs) {
+    const c = notifyNameTailCfg(optText, nowMs); const tail = c && c.tail ? String(c.tail).slice(0, 30) : '';
+    return tail ? String(cleaned).slice(0, max - tail.length) + tail : String(cleaned).slice(0, max);
+}
 async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
     return r.rows.length ? r.rows[0].value : null;
@@ -7938,11 +7961,12 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
         return { skip: false, matched, noGuide: !hasGuide, message: null, badTel: true,
                  res: { mode: 'skip', status: 'bad-tel', error: null }, recvTel: '' };
     }
+    await notifyNameTailLoad();   // #542
     const res = await kakaoNotify.sendShippingGuideAlimtalk({
         receiver: guideRecvTel,   // #177: 주문자 미제공 시 수취인 폴백 → #193: 그래도 비면 재조회로 구제
         vars: {
             '고객명': od.ordererName || '고객',
-            '상품명': kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품').slice(0, 80),   /* #416(대표 8/26): 발송안내도 주문안내(#146)와 동일 정제 — 「아꼼이네 상품선택: 1. …」 원문 통째 노출 교정 */
+            '상품명': notifyNameWithTail(po.productOption || po.productName || '', kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품'), 80),   /* #542 꼬리(설정 없으면 종전과 같음) · #416(대표 8/26): 발송안내도 주문안내(#146)와 동일 정제 — 「아꼼이네 상품선택: 1. …」 원문 통째 노출 교정 */
             '도착안내': 도착안내,
             '상품코드': String((matched && matched.id) || ''),   // 버튼 링크 /guide?p=상품코드 (지시 #94 — 미매칭이면 빈값=가이드 홈)
             '송장번호': String(trackingNumber || '').replace(/[^0-9]/g, ''),   // 버튼 링크 /track?n=송장번호 (지시 #99 — 없으면 빈값=조회 홈)
@@ -10176,6 +10200,7 @@ async function collectCoupangGuide() {
             const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
             const tracking = String(first.invoiceNumber || s.invoiceNumber || '').replace(/[^0-9]/g, '');
             let message;
+            await notifyNameTailLoad();   // #542
             if (hasGuide) message = shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), hinfo.arriveOff);
             else {
                 // 안내문 미등록 폴백 = E 문면 기반(버튼 없는 LMS라 링크를 본문 텍스트로)
@@ -10183,6 +10208,7 @@ async function collectCoupangGuide() {
                 const nm = (s.orderer && s.orderer.name) || '고객';
                 message = `제주아꼼이네입니다~! 🍊\n${nm}님이 주문하신 [${kakaoNotify.cleanProductName(optText || '주문 상품').slice(0, 60)}]이 오늘 출발했습니다!\n▶ 도착 예정: ${도착안내}\n\n맛있게 드시는 법·보관법: https://jeju-acom-company.onrender.com/guide${matched ? '?p=' + matched.id : ''}\n${tracking ? '택배 배송조회: https://jeju-acom-company.onrender.com/track?n=' + tracking + '\n' : ''}\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031`;
             }
+            { const tc = notifyNameTailCfg(optText); if (tc && tc.note && message) message = String(tc.note).slice(0, 120) + '\n\n' + message; }   // #542: 쿠팡 문자는 상품명이 없는 안내문이라 맨 위 한 줄로
             const recvTel = coupangRecvTel(s);
             if (!recvTel || coupangBadTel(recvTel)) {
                 await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
