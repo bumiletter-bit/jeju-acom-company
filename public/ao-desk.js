@@ -956,6 +956,15 @@
         } catch (err) { showToast(err && err.message ? err.message : '더 불러오지 못했어요'); b.disabled = false; b.removeAttribute('aria-busy'); }
         finally { S.hist.busy = false; }
     }
+    // #547(대표 10/5): 이력에서 펼친 대화를 접으면 화면이 접힌 자리(아래쪽 다른 대화)에 남던 것 → 그 대화의 한 줄이 위에서 1/4 쯤에 보이게 맞춘다
+    function alignRow(row) {
+        const go = () => { if (!row.isConnected) return; const vv = window.visualViewport, vh = vv ? vv.height : window.innerHeight, vtop = vv ? vv.offsetTop : 0;
+            const sc = row.closest('.is-full') || document.scrollingElement || document.documentElement;
+            const bar = sc.querySelector ? sc.querySelector('.desk-fullbar') : null; const head = bar && sc.classList && sc.classList.contains('is-full') ? bar.getBoundingClientRect().height : 0;
+            const d = row.getBoundingClientRect().top - (vtop + Math.max(head + 12, vh * 0.25));
+            if (Math.abs(d) > 4) { if (sc === document.scrollingElement || sc === document.documentElement) window.scrollBy(0, d); else sc.scrollTop += d; } };
+        go(); setTimeout(go, 120);
+    }
     // 그 대화의 답 칸으로 옮겨 커서를 둔다(답 칸이 없는 대화면 대화 틀로만 옮긴다)
     function focusThread(box) {
         if (!box) return;
@@ -1054,7 +1063,7 @@
             if (sel && String(sel).length) return;
             // #543: 채팅 탭 — 대화 머리 줄이나 빈 곳을 누르면 그 대화의 답 칸으로 / 이력 탭 — 펼친 대화의 본문을 누르면 접힌다
             const hb = e.target.closest('.desk-h-body');
-            if (hb) { const it = hb.closest('.desk-h-item'); if (it) { S.hist.open.delete(Number(it.dataset.th)); renderList(); const row = document.querySelector('#desk-list .desk-h-item[data-th="' + it.dataset.th + '"] .desk-h-row'); if (row) row.focus({ preventScroll: true }); } return; }
+            if (hb) { const it = hb.closest('.desk-h-item'); if (it) { S.hist.open.delete(Number(it.dataset.th)); renderList(); const row = document.querySelector('#desk-list .desk-h-item[data-th="' + it.dataset.th + '"] .desk-h-row'); if (row) { row.focus({ preventScroll: true }); alignRow(row); } } return; }   // #547: 접은 뒤에는 그 줄(처음 눌렀던 자리)이 보이게
             const tb = chatMine() ? e.target.closest('.desk-thread-box') : null;
             if (tb && !e.target.closest('.desk-cbox, .desk-end-ask, .desk-media')) { focusThread(tb); return; }   // #546(대표 10/5): 대화 어디를 눌러도(답변 글 포함) 맨 아래 답 칸으로 — 버튼·링크·그림·글자 고르는 중·답 상자 안은 제외
             if (!tr) return;
