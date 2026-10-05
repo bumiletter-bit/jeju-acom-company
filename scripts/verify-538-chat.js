@@ -73,7 +73,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 const p = new URL(rq.url()).pathname; let body = null; try { body = JSON.parse(rq.postData() || 'null'); } catch (_) { }
                 st.writes.push({ m: rq.method(), p, body });
                 let m;
-                if ((m = /\/orders\/(\d+)\/reply$/.exec(p))) { const o = { id: st.nextId++, content: body && body.content, status: '대기', created_at: new Date().toISOString(), processed_at: null, created_by: '검증538', created_by_id: user.id, mine_hidden: false, has_image: !!(body && body.image_data), reply_to: Number(m[1]), followed_by: null, steps: [], result: null }; st.orders.push(o); return json(route, { ok: true, message: '보냈어요', order: { id: o.id } }); }
+                if (p === '/api/agent-office/orders') { const isF = !!(body && body.file_name); const o = { id: st.nextId++, content: body && body.content, status: '대기', created_at: new Date().toISOString(), processed_at: null, created_by: '검증538', created_by_id: user.id, mine_hidden: false, has_image: !!(body && body.image_data) && !isF, file_name: isF ? body.file_name : null, reply_to: null, followed_by: null, steps: [], result: null }; st.orders.push(o); return json(route, { ok: true, message: '보냈어요', order: { id: o.id } }); }
+                if ((m = /\/orders\/(\d+)\/reply$/.exec(p))) { const o = { id: st.nextId++, content: body && body.content, status: '대기', created_at: new Date().toISOString(), processed_at: null, created_by: '검증538', created_by_id: user.id, mine_hidden: false, has_image: !!(body && body.image_data) && !(body && body.file_name), file_name: (body && body.file_name) || null, reply_to: Number(m[1]), followed_by: null, steps: [], result: null }; st.orders.push(o); return json(route, { ok: true, message: '보냈어요', order: { id: o.id } }); }
                 if ((m = /\/orders\/(\d+)\/hide-mine$/.exec(p))) { const o = st.orders.find(x => x.id === Number(m[1])); if (o) o.mine_hidden = !(body && body.hide === false); return json(route, { ok: true }); }
                 return json(route, { ok: true });
             });
@@ -86,7 +87,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                     const q = sp.get('q'); if (q) rows = rows.filter(o => String(o.content).includes(q) || String((o.result && o.result.answer) || '').includes(q));
                     const before = Number(sp.get('before')); if (before) rows = rows.filter(o => o.id < before);
                 } else if (sp.get('status')) rows = rows.filter(o => o.status === sp.get('status'));
-                else rows = rows.filter(o => o.created_by_id === user.id && !o.mine_hidden);
+                else { (st.mq = st.mq || []).push(u.search); rows = rows.filter(o => o.created_by_id === user.id && !o.mine_hidden); }
                 return json(route, { orders: rows.slice(0, Number(sp.get('limit')) || 40) });
             });
             await pg.route('**/api/agent-office/files/*/download', route => route.fulfill({ status: 200, contentType: 'image/png', body: PNG }));
@@ -122,7 +123,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         });
         let bx = await box(A.pg);
         ok('② 이어서 보내는 칸 = 둥근 상자 하나 안에 글 칸(위) + 아래 줄 왼쪽 「+」 · 오른쪽 화살표', !!bx && bx.radius >= 16 && bx.taAbove && bx.plusLeft && bx.sameRow && bx.plusIn && bx.sendIn, JSON.stringify(bx));
-        ok('② 두 버튼은 둥근 아이콘(44px 이상 · 글자 없음 · aria-label 「이미지 첨부」「이어서 보내기」) · 비었으면 보내기 꺼짐', !!bx && bx.size.every(n => n >= 44) && bx.round.every(v => v === '50%') && bx.text === '' && bx.wordBtns.filter(w => w !== '채팅 종료').length === 0 && bx.labels.join() === '이미지 첨부,이어서 보내기' && bx.disabled === true, JSON.stringify(bx && [bx.size, bx.labels, bx.disabled]));
+        ok('② 두 버튼은 둥근 아이콘(44px 이상 · 글자 없음 · aria-label 「이미지 첨부」「이어서 보내기」) · 비었으면 보내기 꺼짐', !!bx && bx.size.every(n => n >= 44) && bx.round.every(v => v === '50%') && bx.text === '' && bx.wordBtns.filter(w => w !== '채팅 종료').length === 0 && bx.labels.join() === '이미지·파일 첨부,이어서 보내기' && bx.disabled === true, JSON.stringify(bx && [bx.size, bx.labels, bx.disabled]));
         await A.pg.fill('#reply-902', '더 짧게'); bx = await box(A.pg);
         ok('② 글을 적으면 보내기 켜짐', bx.disabled === false);
         await A.pg.fill('#reply-902', ''); bx = await box(A.pg);
@@ -137,7 +138,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         await A.pg.waitForTimeout(1200);
         // 되묻기 답 칸도 같은 모양
         const qb = await A.pg.evaluate(() => { const b = document.querySelector('#desk-list [data-oid="880"] .desk-cbox'); return b ? { labels: Array.from(b.querySelectorAll('button')).map(x => x.getAttribute('aria-label')), dis: b.querySelector('[data-act="sendreply"]').disabled } : null; });
-        ok('② 되묻기 답 칸도 같은 상자(「이미지 첨부」「답 보내기」 · 비었으면 꺼짐)', !!qb && qb.labels.join() === '이미지 첨부,답 보내기' && qb.dis === true, JSON.stringify(qb));
+        ok('② 되묻기 답 칸도 같은 상자(「이미지 첨부」「답 보내기」 · 비었으면 꺼짐)', !!qb && qb.labels.join() === '이미지·파일 첨부,답 보내기' && qb.dis === true, JSON.stringify(qb));
         ok('② 맨 위 새 지시 입력칸은 그대로(#desk-input · #desk-attach · #desk-send)', await A.pg.evaluate(() => !!document.querySelector('#desk-ask #desk-input') && !!document.getElementById('desk-attach') && !!document.getElementById('desk-send') && !document.querySelector('#desk-ask .desk-cbox')));
         await shot(A.pg, '538-1-chat-1440');
 
@@ -227,7 +228,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         ok('④ 이미 채팅 탭에 떠 있는 대화 = 버튼 「채팅 탭에서 이어가기」 · 되살리기 요청 없이 이동만', lbl === '채팅 탭에서 이어가기' && B.st.writes.slice(w1).filter(w => /hide-mine/.test(w.p)).length === 0);
         // ⑤ 승인 결재함
         await B.pg.click('#desk-tabs .desk-tab[data-tab="approval"]'); await B.pg.waitForTimeout(1200);
-        ok('⑤ 승인 결재함 = 종전 동작(승인 대기만 조회 · 없으면 안내 글) · 이력 검색칸 숨김', /승인을 기다리는 요청이 없어요/.test(await B.pg.evaluate(() => document.getElementById('desk-list').innerText)) && !(await B.pg.isVisible('#desk-histbar')));
+        ok('⑤ 승인 결재함 = 종전 동작(승인 대기만 조회 · 없으면 안내 글) · 이력 검색칸 숨김', /승인을 기다리는 요청이 없어요/.test(await B.pg.evaluate(() => document.getElementById('desk-list').innerText)) && (await B.pg.isVisible('#desk-histbar')) && !(await B.pg.isVisible('#desk-hist-mine-wrap')));   // #543 검색칸은 세 탭 모두
         ok('가로 넘침 없음(1440px) · 화면 오류 0 · 브라우저 확인창 0', !(await overflow(B.pg)) && A.errors.length === 0 && B.errors.length === 0 && B.st.dialogs === 0, [...A.errors, ...B.errors].join(' | '));
         await A.ctx.close(); await B.ctx.close();
 
@@ -252,6 +253,144 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         ok('⑥ 390px: 펼쳐도 가로 넘침 0 · 직원도 [이 채팅 다시 이어가기] 됨(hide:false 2회 → 채팅 탭)', !pOver && P.st.writes.slice(pw0).filter(w => /hide-mine/.test(w.p) && w.body.hide === false).length === 2 && (await tabs(P.pg)).find(t => t.sel === 'true').tab === 'mine');
         ok('⑥ 화면 오류 0 · 브라우저 확인창 0(폰)', P.errors.length === 0 && P.st.dialogs === 0, P.errors.join(' | '));
         await P.ctx.close();
+
+        // ══ ⑦ #543 검색칸(세 탭) · 강조 · 누르면 답 칸으로 · 본문 눌러 접기 ══════════════════════════
+        const C = await open(admin, { width: 1440, height: 1000 });
+        const vis538 = pg => pg.evaluate(() => ({ bar: document.getElementById('desk-histbar').getClientRects().length > 0, ph: document.getElementById('desk-hist-q').placeholder, val: document.getElementById('desk-hist-q').value, x: document.getElementById('desk-hist-x').getClientRects().length > 0, ths: Array.from(document.querySelectorAll('#desk-list .desk-thread-box')).filter(b => b.getClientRects().length).map(b => b.dataset.th), hl: Array.from(document.querySelectorAll('#desk-list mark.desk-hl')).map(m => m.textContent), empty: (document.querySelector('#desk-list .desk-empty') || {}).textContent || '' }));
+        let sv = await vis538(C.pg);
+        ok('⑦ 채팅 탭에도 검색칸(자리표시 글 「보낸 글이나 답변에서 찾기」)', sv.bar && sv.ph === '보낸 글이나 답변에서 찾기' && sv.ths.length >= 4, JSON.stringify(sv.ths));
+        const g0 = C.st.hq.length + 0; const gets0 = C.st.gets || 0;
+        await C.pg.type('#desk-hist-q', '황금'); await C.pg.waitForTimeout(120); sv = await vis538(C.pg);
+        ok('⑦ 채팅 탭: 치는 즉시 걸러짐(「황금」 → 그 글이 든 대화 900 만 · 한 차례라도 맞으면 대화 통째) · 서버 조회 없이', sv.ths.join() === '900' && C.st.hq.length === g0, JSON.stringify(sv.ths));
+        ok('⑦ 맞는 낱말에 형광 표시(mark) · × 보임', sv.hl.length >= 1 && sv.hl.every(t => t === '황금') && sv.x, JSON.stringify(sv.hl));
+        const turns7 = await C.pg.evaluate(() => document.querySelectorAll('#desk-list .desk-thread-box[data-th="900"] .desk-turn').length);
+        ok('⑦ 걸러도 그 대화의 차례는 전부 보임(3차례)', turns7 === 3, String(turns7));
+        await C.pg.fill('#desk-hist-q', '세상에없는말'); await C.pg.waitForTimeout(150); sv = await vis538(C.pg);
+        ok('⑦ 맞는 것이 없으면 안내 글', sv.ths.length === 0 && /찾는 글이 든 채팅이 없어요/.test(sv.empty));
+        await C.pg.click('#desk-hist-x'); await C.pg.waitForTimeout(150); sv = await vis538(C.pg);
+        ok('⑦ × → 검색어 지워지고 전부 다시 보임', sv.val === '' && !sv.x && sv.ths.length >= 4);
+        // 탭마다 값이 따로
+        await C.pg.fill('#desk-hist-q', '쿠폰'); await C.pg.waitForTimeout(120);
+        await goTab(C.pg, 'all', '#desk-list .desk-h-item'); const vAll0 = await C.pg.inputValue('#desk-hist-q');
+        const hqA = C.st.hq.length; await C.pg.type('#desk-hist-q', '보고'); await C.pg.waitForTimeout(110);
+        const inst = await C.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-list .desk-h-item')).filter(i => i.getClientRects().length).map(i => i.dataset.th));
+        const serverYet = C.st.hq.slice(hqA).some(q => /q=/.test(q));
+        ok('⑦ 이력 탭: 검색어는 탭마다 따로(채팅 탭의 「쿠폰」이 안 넘어옴) · 치는 즉시 받아 둔 줄에서 걸러짐(서버 답 전)', vAll0 === '' && inst.join() === '700' && !serverYet, JSON.stringify({ vAll0, inst, serverYet }));
+        await waitFor(async () => C.st.hq.slice(hqA).some(q => /q=/.test(q)), 3000); await C.pg.waitForTimeout(400);
+        const sq7 = C.st.hq.slice(hqA).filter(q => /q=/.test(q)).pop() || '';
+        const hlA = await C.pg.evaluate(() => ({ n: document.querySelectorAll('#desk-list .desk-h-item').length, hl: Array.from(document.querySelectorAll('#desk-list .desk-h-text mark.desk-hl')).map(m => m.textContent) }));
+        ok('⑦ 이력 탭: 250ms 쯤 뒤 서버 ?history=1&q= 결과로 바꿔 끼움 · 한 줄 글에 형광', decodeURIComponent(sq7).includes('q=보고') && hlA.n === 1 && hlA.hl.join() === '보고', sq7);
+        await C.pg.click('#desk-hist-x'); await C.pg.waitForTimeout(900);
+        await C.pg.click('#desk-tabs .desk-tab[data-tab="approval"]'); await C.pg.waitForTimeout(900);
+        ok('⑦ 승인 결재함에도 검색칸 · 「내 것만」은 이력 탭에만', await C.pg.isVisible('#desk-hist-q') && !(await C.pg.isVisible('#desk-hist-mine-wrap')));
+        await goTab(C.pg, 'mine', '#desk-list .desk-thread-box, #desk-list .desk-empty');
+        ok('⑦ 채팅 탭으로 돌아오면 그 탭의 검색어(「쿠폰」)가 그대로', (await C.pg.inputValue('#desk-hist-q')) === '쿠폰' && (await vis538(C.pg)).ths.join() === '880');
+        await C.pg.click('#desk-hist-x'); await C.pg.waitForTimeout(200);
+        // 대화 머리 줄 = 답 칸으로
+        await C.pg.evaluate(() => { document.activeElement && document.activeElement.blur(); window.scrollTo(0, 0); });
+        await C.pg.click('#desk-list .desk-thread-box[data-th="900"] .desk-th-head .desk-th-sum'); await C.pg.waitForTimeout(700);
+        const f7 = await C.pg.evaluate(() => { const a = document.activeElement, r = a.getBoundingClientRect(); return { id: a.id, inView: r.top >= 0 && r.bottom <= window.innerHeight }; });
+        ok('⑦ 채팅 탭: 대화 머리 줄을 누르면 그 대화의 답 칸으로 옮겨 커서', f7.id === 'reply-902' && f7.inView, JSON.stringify(f7));
+        await C.pg.evaluate(() => document.activeElement.blur());
+        await C.pg.click('#desk-list .desk-thread-box[data-th="900"] [data-act="copy"]'); await C.pg.waitForTimeout(300);
+        ok('⑦ 버튼(답변 복사)을 누를 땐 답 칸으로 옮기지 않음', await C.pg.evaluate(() => document.activeElement.id !== 'reply-902'));
+        // 이력: 본문 눌러 접기
+        await goTab(C.pg, 'all', '#desk-list .desk-h-item');
+        await C.pg.click('#desk-list .desk-h-item[data-th="800"] .desk-h-row'); await C.pg.waitForTimeout(300);
+        await C.pg.click('#desk-list .desk-h-item[data-th="800"] .desk-h-body [data-act="copy"]'); await C.pg.waitForTimeout(250);
+        const stay = await C.pg.evaluate(() => document.querySelector('#desk-list .desk-h-item[data-th="800"]').classList.contains('open'));
+        await C.pg.click('#desk-list .desk-h-item[data-th="800"] .desk-h-head'); await C.pg.waitForTimeout(300);
+        const shut1 = await C.pg.evaluate(() => !document.querySelector('#desk-list .desk-h-item[data-th="800"]').classList.contains('open'));
+        await C.pg.click('#desk-list .desk-h-item[data-th="800"] .desk-h-row'); await C.pg.waitForTimeout(300);
+        await C.pg.click('#desk-list .desk-h-item[data-th="800"] .desk-h-body .desk-turn', { position: { x: 12, y: 6 } }); await C.pg.waitForTimeout(300);
+        const shut2 = await C.pg.evaluate(() => !document.querySelector('#desk-list .desk-h-item[data-th="800"]').classList.contains('open'));
+        ok('⑦ 이력: 펼친 대화의 머리 줄·말풍선 빈 곳을 누르면 접힘 · 안의 버튼을 누를 땐 그대로', stay && shut1 && shut2, JSON.stringify({ stay, shut1, shut2 }));
+        // 음영
+        const tone = await C.pg.evaluate(() => { const it = Array.from(document.querySelectorAll('#desk-list .desk-h-item:not(.open)')).find(i => i.getClientRects().length), cs = getComputedStyle(it), day = getComputedStyle(document.querySelector('#desk-list .desk-h-day')); const whoM = document.querySelector('#desk-list .desk-h-who.mine'), whoO = document.querySelector('#desk-list .desk-h-who:not(.mine)');
+            return { bg: cs.backgroundColor, bl: cs.borderLeftWidth, bt: cs.borderTopWidth, bc: cs.borderTopColor, dayBg: day.backgroundColor, dayR: parseFloat(day.borderTopLeftRadius), mine: whoM ? getComputedStyle(whoM).color : '', other: whoO ? getComputedStyle(whoO).color : '' }; });
+        ok('⑦ 이력 한 줄 = 옅은 인디고 바탕 + 옅은 인디고 테두리(왼쪽 띠 없음) · 날짜는 알약 · 내 것/남의 것은 이름 색으로', tone.bg === 'rgb(247, 247, 255)' && tone.bl === tone.bt && tone.bc === 'rgb(224, 226, 255)' && tone.dayBg === 'rgb(238, 240, 244)' && tone.dayR >= 12 && tone.mine && tone.other && tone.mine !== tone.other, JSON.stringify(tone));
+        await shot(C.pg, '543-1-history-tone-1440');
+        // 크게 보기에서 다시 이어가기
+        await C.pg.click('#desk-list-more'); await C.pg.waitForTimeout(400);
+        const ft = await C.pg.evaluate(() => ({ full: document.getElementById('desk-listbox').classList.contains('is-full'), title: document.getElementById('desk-full-title').textContent }));
+        ok('⑦ 크게 보기 제목 = 탭 이름(이전 채팅 이력)', ft.full && ft.title === '이전 채팅 이력', JSON.stringify(ft));
+        await C.pg.click('#desk-list .desk-h-item[data-th="700"] .desk-h-row'); await C.pg.waitForTimeout(300);
+        const w7 = C.st.writes.length; await C.pg.click('#desk-list .desk-h-item[data-th="700"] [data-act="resume"]');
+        await C.pg.waitForSelector('#desk-list .desk-thread-box[data-th="700"]', { timeout: 15000 }); await C.pg.waitForTimeout(900);
+        const r7 = await C.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="700"]'), r = t.getBoundingClientRect(), a = document.activeElement, ar = a.getBoundingClientRect(); return { tab: document.querySelector('#desk-tabs .desk-tab[aria-selected="true"]').dataset.tab, vis: t.getClientRects().length > 0, focus: a.id, focusIn: ar.top >= 0 && ar.bottom <= window.innerHeight, title: document.getElementById('desk-full-title').textContent, full: document.getElementById('desk-listbox').classList.contains('is-full') }; });
+        ok('⑦ 크게 보기(is-full)에서 [이 채팅 다시 이어가기] → hide:false → 채팅 탭으로 넘어가 그 대화가 보이고 답 칸에 커서(화면 안)', C.st.writes.slice(w7).filter(w => /hide-mine/.test(w.p) && w.body.hide === false).length === 1 && r7.tab === 'mine' && r7.vis && r7.focus === 'reply-700' && r7.focusIn && r7.title === '채팅', JSON.stringify(r7));
+        if (r7.full) { await C.pg.keyboard.press('Escape'); await C.pg.waitForTimeout(300); }
+        // 60건 밖
+        const D0 = await open(admin, { width: 1440, height: 1000 });
+        for (let i = 0; i < 64; i++) D0.st.orders.push({ id: 2000 + i, content: '채팅 탭을 채우는 글 ' + i, status: '완료', created_at: new Date().toISOString(), processed_at: new Date().toISOString(), created_by: '검증538', created_by_id: admin.id, mine_hidden: false, has_image: false, reply_to: null, followed_by: null, steps: [], result: { type: 'desk_answer', answer: 'ok' } });
+        await goTab(D0.pg, 'all', '#desk-list .desk-h-item'); await D0.pg.fill('#desk-hist-q', '어제 정산'); await D0.pg.waitForTimeout(900);
+        await D0.pg.click('#desk-list .desk-h-item[data-th="800"] .desk-h-row'); await D0.pg.waitForTimeout(300);
+        await D0.pg.click('#desk-list .desk-h-item[data-th="800"] [data-act="resume"]');
+        const far = await waitFor(async () => D0.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="800"]'); return t && t.getClientRects().length > 0 && document.activeElement.id === 'reply-801'; }), 15000);
+        if (!far) console.log('  dbg far', JSON.stringify(await D0.pg.evaluate(() => { const e = document.querySelector('#desk-list [data-oid="801"]'); return { tab: document.querySelector('#desk-tabs .desk-tab[aria-selected="true"]').dataset.tab, has801: !!e, th: e && e.closest('.desk-thread-box') ? e.closest('.desk-thread-box').dataset.th : null, act: document.activeElement.id || document.activeElement.tagName, n: document.querySelectorAll('#desk-list .desk-thread-box').length }; })));
+        ok('⑦ 다시 이어간 대화가 채팅 탭 60건 밖이어도 한 번 더 넉넉히 받아(?mine=1&limit=200) 찾아 감', !!far && (D0.st.mq || []).some(q => /limit=200/.test(q)), JSON.stringify((D0.st.mq || []).slice(-2)));
+        await D0.ctx.close();
+
+        // ══ ⑧ #544 파일 첨부 ══════════════════════════════════════════════════════════════
+        const mkFile = (name, type, size) => ({ name, mimeType: type, buffer: Buffer.alloc(size || 2048, 0x41) });
+        const topInfo = pg => pg.evaluate(() => ({ accept: document.getElementById('desk-file').accept, label: document.getElementById('desk-attach').getAttribute('aria-label'), chips: Array.from(document.querySelectorAll('#desk-thumbs .desk-filechip')).map(c => [c.querySelector('.desk-filechip-name').textContent, c.querySelector('.desk-filechip-size').textContent, !!c.querySelector('button')]), thumbs: document.querySelectorAll('#desk-thumbs .desk-thumb').length }));
+        const pick = async (pg, sel, files) => { const [fc] = await Promise.all([pg.waitForEvent('filechooser', { timeout: 5000 }), pg.click(sel)]); await fc.setFiles(files); await pg.waitForTimeout(500); };
+        await goTab(C.pg, 'mine', '#desk-list .desk-thread-box');
+        await pick(C.pg, '#desk-attach', [mkFile('발주명단.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 3000)]);
+        let ti = await topInfo(C.pg);
+        ok('⑧ 맨 위 클립: 이미지 + xlsx·xls·csv·pdf·txt 를 고를 수 있음 · aria-label 「이미지·파일 첨부」', /image\/\*/.test(ti.accept) && ['.xlsx', '.xls', '.csv', '.pdf', '.txt'].every(x => ti.accept.includes(x)) && ti.label === '이미지·파일 첨부', ti.accept);
+        ok('⑧ 파일을 고르면 썸네일 자리에 칩(이름 + 크기 + ×)', ti.chips.length === 1 && ti.chips[0][0] === '발주명단.xlsx' && /KB$/.test(ti.chips[0][1]) && ti.chips[0][2] && ti.thumbs === 0, JSON.stringify(ti.chips));
+        await C.pg.fill('#desk-input', '이 명단으로 정리해줘'); const w8 = C.st.writes.length; await C.pg.click('#desk-send');
+        const p8 = await waitFor(async () => C.st.writes.slice(w8).find(w => w.p === '/api/agent-office/orders'), 5000); await C.pg.waitForTimeout(900);
+        ok('⑧ 보내기 → POST /orders 본문에 content · file_name · image_data(data URL) · image_mime', !!p8 && p8.body.content === '이 명단으로 정리해줘' && p8.body.file_name === '발주명단.xlsx' && /^data:[^;,]*;base64,/.test(p8.body.image_data || '') && !!p8.body.image_mime, p8 && JSON.stringify({ f: p8.body.file_name, m: p8.body.image_mime, d: String(p8.body.image_data).slice(0, 30) }));
+        const meta8 = await C.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-list .desk-bub-meta')).map(m => m.textContent).find(t => /발주명단/.test(t)) || '');
+        ok('⑧ 보낸 뒤 내 말풍선 아래 「📎 파일이름」 · 칩은 사라짐', /📎 발주명단\.xlsx/.test(meta8) && (await topInfo(C.pg)).chips.length === 0, meta8);
+        await pick(C.pg, '#desk-attach', [mkFile('a.csv', 'text/csv'), mkFile('b.pdf', 'application/pdf')]); ti = await topInfo(C.pg); let tz8 = await toast(C.pg);
+        ok('⑧ 파일을 여러 개 고르면 첫 것만 + 안내', ti.chips.length === 1 && ti.chips[0][0] === 'a.csv' && /파일은 한 번에 1개만/.test(tz8), JSON.stringify(ti.chips));
+        await C.pg.click('#desk-thumbs .desk-filechip button'); await C.pg.waitForTimeout(200);
+        ok('⑧ 칩의 × → 첨부 빠짐', (await topInfo(C.pg)).chips.length === 0);
+        await pick(C.pg, '#desk-attach', [mkFile('위험.exe', 'application/octet-stream')]); ti = await topInfo(C.pg); tz8 = await toast(C.pg);
+        ok('⑧ 허용 밖 확장자(exe)는 붙지 않고 안내', ti.chips.length === 0 && ti.thumbs === 0 && /첨부할 수 있는 파일은 이미지 · 엑셀/.test(tz8), tz8.slice(-70));
+        await pick(C.pg, '#desk-attach', [mkFile('큰파일.pdf', 'application/pdf', 10 * 1024 * 1024 + 10)]); ti = await topInfo(C.pg); tz8 = await toast(C.pg);
+        ok('⑧ 10MB 초과는 붙지 않고 안내', ti.chips.length === 0 && /10MB보다 큰 파일/.test(tz8), tz8.slice(-50));
+        await pick(C.pg, '#desk-attach', [{ name: 'p.png', mimeType: 'image/png', buffer: PNG }]); ti = await topInfo(C.pg);
+        const w8b = C.st.writes.length; await C.pg.fill('#desk-input', '그림 봐줘'); await C.pg.click('#desk-send');
+        const p8b = await waitFor(async () => C.st.writes.slice(w8b).find(w => w.p === '/api/agent-office/orders'), 5000); await C.pg.waitForTimeout(700);
+        ok('⑧ 이미지는 종전대로(썸네일 · 요청 본문에 file_name 없음)', ti.thumbs === 1 && ti.chips.length === 0 && !!p8b && /^data:image\/png;base64,/.test(p8b.body.image_data) && p8b.body.file_name === undefined, p8b && JSON.stringify(Object.keys(p8b.body)));
+        const [fcS] = await Promise.all([C.pg.waitForEvent('filechooser', { timeout: 5000 }), C.pg.click('#desk-settle-now')]); const accS = await C.pg.evaluate(() => document.getElementById('desk-file').accept); await fcS.setFiles([]);
+        ok('⑧ 「정산 이미지」 버튼은 이미지 전용 그대로(accept = image/*)', accS === 'image/*', accS); await C.pg.fill('#desk-input', '');
+        // 답 상자
+        await pick(C.pg, '#desk-list .desk-thread-box[data-th="870"] ~ .desk-thread-box [data-act="replyimg"], #desk-list .desk-turn[data-oid="700"] [data-act="replyimg"]', [mkFile('수정본.pdf', 'application/pdf', 5000)]);
+        const rc = await C.pg.evaluate(() => { const b = document.querySelector('#desk-list .desk-cbox .desk-filechip'); if (!b) return null; const box = b.closest('.desk-cbox'); return { id: box.dataset.cbox, name: b.querySelector('.desk-filechip-name').textContent, label: box.querySelector('[data-act="replyimg"]').getAttribute('aria-label'), sendOn: !box.querySelector('[data-act="sendreply"]').disabled, above: b.getBoundingClientRect().bottom <= box.querySelector('textarea').getBoundingClientRect().top + 1 }; });
+        ok('⑧ 답 상자의 「+」도 파일을 받음: 글 칸 위에 칩 · 글 없이도 보내기 켜짐 · aria-label 「이미지·파일 첨부」', !!rc && rc.name === '수정본.pdf' && rc.label === '이미지·파일 첨부' && rc.sendOn && rc.above, JSON.stringify(rc));
+        const w8c = C.st.writes.length; await C.pg.fill('#reply-' + rc.id, '이걸로 다시'); await C.pg.click('#desk-list .desk-cbox[data-cbox="' + rc.id + '"] [data-act="sendreply"]');
+        const p8c = await waitFor(async () => C.st.writes.slice(w8c).find(w => /\/reply$/.test(w.p)), 5000); await C.pg.waitForTimeout(600);
+        ok('⑧ 답 보내기 → POST /orders/:id/reply 본문에 file_name · data URL', !!p8c && p8c.body.file_name === '수정본.pdf' && p8c.body.content === '이걸로 다시' && /^data:application\/pdf;base64,/.test(p8c.body.image_data), p8c && p8c.p);
+        await goTab(C.pg, 'all', '#desk-list .desk-h-item');
+        const clip8 = await C.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-list .desk-h-item')).filter(i => /이 명단으로 정리해줘/.test(i.textContent)).map(i => !!i.querySelector('.desk-h-clip')));
+        ok('⑧ 이력 탭의 첨부 클립 표시가 파일(file_name)도 봄', clip8.length === 1 && clip8[0] === true, JSON.stringify(clip8));
+        ok('⑦⑧ 가로 넘침 0 · 화면 오류 0 · 브라우저 확인창 0(1440px)', !(await overflow(C.pg)) && C.errors.length === 0 && C.st.dialogs === 0, C.errors.join(' | '));
+        await C.ctx.close();
+
+        // ══ ⑨ 폰 390px ═══════════════════════════════════════════════════════════════════
+        const Q = await open(staff, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
+        await Q.pg.fill('#desk-hist-q', '황금'); await Q.pg.waitForTimeout(150);
+        const q9 = await Q.pg.evaluate(() => ({ ths: Array.from(document.querySelectorAll('#desk-list .desk-thread-box')).filter(b => b.getClientRects().length).map(b => b.dataset.th), xh: Math.round(document.getElementById('desk-hist-x').getBoundingClientRect().height), over: document.documentElement.scrollWidth > window.innerWidth + 1 }));
+        ok('⑨ 390px: 검색 즉시 걸러짐 · × 44px · 가로 넘침 0', q9.ths.join() === '900' && q9.xh >= 44 && !q9.over, JSON.stringify(q9));
+        await Q.pg.tap('#desk-hist-x'); await Q.pg.waitForTimeout(200);
+        await Q.pg.tap('#desk-tabs .desk-tab[data-tab="all"]'); await Q.pg.waitForSelector('#desk-list .desk-h-item', { timeout: 15000 }); await Q.pg.waitForTimeout(400);
+        await Q.pg.tap('#desk-list-more'); await Q.pg.waitForTimeout(400);
+        await Q.pg.tap('#desk-list .desk-h-item[data-th="800"] .desk-h-row'); await Q.pg.waitForTimeout(300);
+        await shot(Q.pg, '543-2-history-full-390');
+        await Q.pg.tap('#desk-list .desk-h-item[data-th="800"] [data-act="resume"]');
+        const r9 = await waitFor(async () => Q.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="800"]'); const a = document.activeElement, ar = a.getBoundingClientRect(); return t && t.getClientRects().length > 0 && a.id === 'reply-801' && ar.top >= 0 && ar.bottom <= window.innerHeight ? { tab: document.querySelector('#desk-tabs .desk-tab[aria-selected="true"]').dataset.tab } : null; }), 15000);
+        ok('⑨ 390px 크게 보기에서 [이 채팅 다시 이어가기] → 채팅 탭 · 그 대화 · 답 칸 커서가 화면 안', !!r9 && r9.tab === 'mine', JSON.stringify(r9));
+        await pick(Q.pg, '#desk-list .desk-cbox[data-cbox="801"] [data-act="replyimg"]', [mkFile('아주아주아주아주아주아주아주아주아주아주아주아주아주아주 긴 이름의 파일.xlsx', 'application/octet-stream', 4000)]);
+        const c9 = await Q.pg.evaluate(() => { const c = document.querySelector('#desk-list .desk-cbox[data-cbox="801"] .desk-filechip'); if (!c) return null; const r = c.getBoundingClientRect(), b = c.closest('.desk-cbox').getBoundingClientRect(); return { inBox: r.right <= b.right + 1, xh: Math.round(c.querySelector('button').getBoundingClientRect().height), over: document.documentElement.scrollWidth > window.innerWidth + 1 }; });
+        ok('⑨ 390px: 긴 파일 이름 칩이 상자 안에서 말줄임 · × 44px · 가로 넘침 0', !!c9 && c9.inBox && c9.xh >= 44 && !c9.over, JSON.stringify(c9));
+        await shot(Q.pg, '543-3-chat-filechip-390');
+        ok('⑨ 화면 오류 0 · 브라우저 확인창 0(폰)', Q.errors.length === 0 && Q.st.dialogs === 0, Q.errors.join(' | '));
+        await Q.ctx.close();
     } catch (e) { ok('실행 오류 없음', false, e && e.stack ? e.stack.split('\n').slice(0, 3).join(' / ') : String(e)); }
     finally {
         if (browser) await browser.close().catch(() => { });

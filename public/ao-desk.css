@@ -534,3 +534,33 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-h-head { padding: 10px 0 8px; margin-bottom: 4px; border-bottom: 1px solid var(--d-line); font-size: 12.5px; font-weight: 700; color: var(--d-accent); font-variant-numeric: tabular-nums; }
 .desk-h-row { padding: 8px 12px; }
 @media (max-width: 640px) { .desk-h-row, .desk-h-row:has(.desk-h-who) { padding: 8px 10px; } .desk-th-head { flex-wrap: wrap; } .desk-th-sum { flex-basis: 100%; order: 5; } }
+
+/* ── #543·#544(대표 10/5 폰 실물) 검색칸(세 탭) · 강조 · 이력 음영 · 파일 칩 ───────────────────────── */
+.desk-hist-search input::-webkit-search-cancel-button { display: none; }
+.desk-hist-x { flex: none; width: 32px; height: 32px; margin-right: -6px; border: 0; border-radius: 50%; background: none; color: var(--d-sub); font-size: 18px; line-height: 1; cursor: pointer; }
+.desk-hist-x:hover { background: var(--d-soft); color: var(--d-ink); }
+.desk-hist-x:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.desk-hl { background: #FFF3B0; color: inherit; border-radius: 3px; padding: 0 1px; }
+/* 이력 한 줄: 구도는 그대로 · 아주 옅은 인디고 바탕 + 옅은 인디고 테두리(띠 없음) · hover/누름 때 한 단계 진하게 */
+.desk-h-item { background: #F7F7FF; border-color: #E0E2FF; transition: background-color .16s var(--d-ease), border-color .16s var(--d-ease); }
+.desk-h-item:not(.open):hover { background: #F0F1FF; border-color: #C7CBFF; }
+.desk-h-item:not(.open):active { background: #E9EBFF; border-color: #A5ACFF; }
+.desk-h-item.open { background: #fff; }
+.desk-h-row:hover { background: transparent; }
+.desk-h-when, .desk-h-meta { color: #5A6478; }
+.desk-h-who.mine { color: #4338CA; }
+.desk-h-day { display: inline-flex; align-self: flex-start; align-items: center; min-height: 24px; padding: 0 10px; margin: 14px 0 2px; border-radius: 999px; background: #EEF0F4; color: #475467; font-size: 12px; font-weight: 700; }
+.desk-h-day:first-child { margin-top: 2px; }
+.desk-h-body { cursor: default; }
+.desk-thread-box.desk-flash { box-shadow: 0 0 0 3px rgba(79, 70, 229, .22); }
+.desk-chat .desk-th-head { cursor: pointer; }
+/* 파일 칩(썸네일 자리) */
+.desk-filechip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 44px; padding: 4px 4px 4px 12px; border: 1px solid #D8DBFF; border-radius: 12px; background: var(--d-accent-soft); color: var(--d-ink); font-size: 13px; }
+.desk-filechip-ic { flex: none; display: inline-flex; color: var(--d-accent); }
+.desk-filechip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.desk-filechip-size { flex: none; color: #5A6478; font-variant-numeric: tabular-nums; }
+.desk-filechip button { flex: none; width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: var(--d-sub); font-size: 17px; line-height: 1; cursor: pointer; }
+.desk-filechip button:hover { background: #fff; color: var(--d-ink); }
+.desk-filechip button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+@media (max-width: 640px) { .desk-filechip button, .desk-hist-x { width: 44px; height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .desk-h-item { transition: none; } }

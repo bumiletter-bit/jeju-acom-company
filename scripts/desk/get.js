@@ -8,7 +8,7 @@ async function claim(id) {
     const c = await pool.query(
         `UPDATE pending_orders SET status = '처리중'
          WHERE id = $1 AND is_deleted = false AND status IN ('대기', '승인됨')
-         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to, to_jsonb(pending_orders)->'payload' AS payload`, [id]);   // payload = #518(칸이 아직 없는 DB에서도 죽지 않게 to_jsonb 로 읽는다)
+         RETURNING id, content, result, run_id, created_by, created_by_id, image_data, image_mime, reply_to, to_jsonb(pending_orders)->'payload' AS payload, to_jsonb(pending_orders)->>'file_name' AS file_name`, [id]);   // payload = #518(칸이 아직 없는 DB에서도 죽지 않게 to_jsonb 로 읽는다)
     if (!c.rows.length) return { ok: false, reason: '이미 처리 중이거나 없는 지시입니다' };
     const o = c.rows[0];
     const approved = o.result && o.result.type === 'approval_request' ? o.result : null; // 승인된 건의 원 요청
@@ -27,7 +27,7 @@ async function claim(id) {
         const u = (await pool.query(`SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL`, [o.created_by_id])).rows[0];
         if (u) fromRole = u.role === 'admin' ? 'admin' : 'staff';
     }
-    let imagePath = null;
+    let imagePath = null, filePath = null;
     if (o.image_data) {
         const m = String(o.image_data).match(/^data:([^;]+);base64,(.+)$/s);
         if (m) {
@@ -36,8 +36,15 @@ async function claim(id) {
             const deskDir = fs.existsSync(path.join(ROOT, '★에이전트오피스')) ? '★에이전트오피스' : '직원창구';
             const dir = path.join(ROOT, deskDir, '받은파일');
             fs.mkdirSync(dir, { recursive: true });
-            imagePath = path.join(dir, `${id}.${ext}`);
-            fs.writeFileSync(imagePath, Buffer.from(m[2], 'base64'));
+            // #543: 파일 첨부(엑셀·CSV·PDF·텍스트)는 원래 이름·확장자 그대로 「번호_이름」으로 — 이미지는 종전대로 「번호.확장자」
+            if (o.file_name) {
+                const safe = String(o.file_name).replace(/[\\/:*?"<>|]/g, '_').slice(-120);
+                filePath = path.join(dir, id + '_' + safe);
+                fs.writeFileSync(filePath, Buffer.from(m[2], 'base64'));
+            } else {
+                imagePath = path.join(dir, `${id}.${ext}`);
+                fs.writeFileSync(imagePath, Buffer.from(m[2], 'base64'));
+            }
         }
     }
     const prev = (await pool.query(
@@ -77,7 +84,7 @@ async function claim(id) {
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     return {
-        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(foMemo ? { final_order_memo: foMemo } : {}),
+        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(filePath ? { file_path: filePath, file_name: o.file_name, file_hint: '첨부 파일입니다. 종류에 맞게 읽으세요 — xlsx·xls: node -e 로 xlsx 모듈(require("xlsx"))로 시트를 읽기 · csv·txt: Read · pdf: Read(쪽 지정). 손님 이름·번호가 들어 있을 수 있으니 답변에는 필요한 만큼만 쓰고, 처리 뒤 이 파일은 지웁니다.' } : {}), ...(foMemo ? { final_order_memo: foMemo } : {}),
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
         recent_talk: prev,
         follow_of: followOf,

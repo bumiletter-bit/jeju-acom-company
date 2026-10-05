@@ -71,7 +71,7 @@
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
         view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
-        hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false }, endAsk: 0, pin: new Set(),
+        hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false }, endAsk: 0, pin: new Set(), q: { mine: '', all: '', approval: '' }, mineLimit: 60, pickImg: false,
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
@@ -134,10 +134,10 @@
                         <textarea class="desk-input" id="desk-input" rows="2" maxlength="2000" placeholder="원하시는 작업을 입력해 주세요"></textarea>
                         <div class="desk-thumbs" id="desk-thumbs" hidden></div>
                         <div class="desk-compose-row">
-                            <input type="file" id="desk-file" accept="image/*" multiple hidden>
-                            <input type="file" id="desk-reply-file" accept="image/*" hidden>
+                            <input type="file" id="desk-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" multiple hidden>
+                            <input type="file" id="desk-reply-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" hidden>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
-                            <button type="button" class="desk-icon" id="desk-attach" aria-label="이미지 첨부" title="이미지 첨부 (붙여넣기·끌어 놓기도 돼요)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button>
+                            <button type="button" class="desk-icon" id="desk-attach" aria-label="이미지·파일 첨부" title="이미지·파일 첨부 (붙여넣기·끌어 놓기도 돼요 · 파일은 엑셀·CSV·PDF·텍스트 1개)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button>
                             <button type="submit" class="desk-icon primary" id="desk-send" aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg></button>
                         </div>
                     </div>
@@ -150,7 +150,7 @@
                 </form>
             </section>
             <section class="desk-listbox" id="desk-listbox" aria-label="채팅 목록">
-                <div class="desk-fullbar"><b>채팅</b><button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button></div>
+                <div class="desk-fullbar"><b id="desk-full-title">채팅</b><button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button></div>
                 <div class="desk-tabsrow">
                     <div class="desk-tabs" role="tablist" id="desk-tabs">
                         <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">채팅</button>
@@ -168,9 +168,9 @@
                         </select>
                     </div>
                 </div>
-                <div class="desk-histbar" id="desk-histbar" hidden>
-                    <label class="desk-sr" for="desk-hist-q">이전 채팅 검색</label>
-                    <div class="desk-hist-search"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="desk-hist-q" maxlength="60" placeholder="보낸 글이나 답변에서 찾기" autocomplete="off"></div>
+                <div class="desk-histbar" id="desk-histbar">
+                    <label class="desk-sr" for="desk-hist-q">채팅 검색</label>
+                    <div class="desk-hist-search"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="desk-hist-q" maxlength="60" placeholder="보낸 글이나 답변에서 찾기" autocomplete="off"><button type="button" class="desk-hist-x" id="desk-hist-x" aria-label="검색어 지우기" hidden>×</button></div>
                     <label class="desk-hist-mine" id="desk-hist-mine-wrap" hidden><input type="checkbox" id="desk-hist-mine"> 내 것만</label>
                 </div>
                 <div class="desk-list" id="desk-list" aria-live="polite"></div>
@@ -208,22 +208,30 @@
         input.addEventListener('input', () => { syncInput(); });
         input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); send(); } });
         input.addEventListener('paste', e => {
-            const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter(f => /^image\//.test(f.type));
+            const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
             if (files.length) { e.preventDefault(); addFiles(files); }
         });
         $('desk-ask').addEventListener('submit', e => { e.preventDefault(); send(); });
-        $('desk-attach').addEventListener('click', () => $('desk-file').click());
+        $('desk-attach').addEventListener('click', () => { S.pickImg = false; $('desk-file').accept = ACCEPT_ALL; $('desk-file').click(); });
         $('desk-reply-file').addEventListener('change', e => { const f = (e.target.files || [])[0]; e.target.value = ''; if (f && S.replyTarget) setReplyImg(S.replyTarget, f); });
         const replyId = el => el && el.classList && el.classList.contains('desk-reply-in') && /^reply-\d+$/.test(el.id) ? Number(el.id.slice(6)) : 0;
         $('desk-list').addEventListener('paste', e => {
             const id = replyId(e.target);
             if (!id) return;
-            const f = Array.from((e.clipboardData && e.clipboardData.files) || []).find(x => /^image\//.test(x.type));
+            const f = Array.from((e.clipboardData && e.clipboardData.files) || [])[0];
             if (f) { e.preventDefault(); setReplyImg(id, f); }
         });
         $('desk-list').addEventListener('input', e => { if (e.target && e.target.classList && e.target.classList.contains('desk-reply-in')) { fitReply(e.target); syncSendBtns(); } });
-        let histT = 0;   // #538 이력 검색 — 입력을 멈추고 350ms 뒤에 찾는다
-        $('desk-hist-q').addEventListener('input', e => { clearTimeout(histT); const v = e.target.value.trim(); histT = setTimeout(() => { if (v === S.hist.q) return; S.hist.q = v; S.hist.older = []; S.hist.open.clear(); S.sig = ''; loadOrders(true); }, 350); });
+        let histT = 0;   // #543 검색 — 치는 즉시(한글 조합 중에도) 받은 목록을 화면에서 거른다. 이력 탭은 250ms 뒤 서버에서 찾아 바꿔 끼운다
+        const onSearch = () => {
+            const v = $('desk-hist-q').value; S.q[S.tab] = v; $('desk-hist-x').hidden = !v;
+            S.sig = ''; renderList();
+            if (S.tab !== 'all') return;
+            clearTimeout(histT); const t = v.trim();
+            histT = setTimeout(() => { if (t === S.hist.q) return; S.hist.q = t; S.hist.older = []; S.sig = ''; loadOrders(true); }, 250);
+        };
+        $('desk-hist-q').addEventListener('input', onSearch);
+        $('desk-hist-x').addEventListener('click', () => { const i = $('desk-hist-q'); i.value = ''; onSearch(); i.focus(); });
         $('desk-hist-mine').addEventListener('change', e => { S.hist.mineOnly = e.target.checked; S.sig = ''; renderList(); });
         $('desk-list').addEventListener('keydown', e => {   // 답 칸도 Enter = 보내기(PC) · Shift+Enter = 줄바꿈
             const id = replyId(e.target);
@@ -234,14 +242,14 @@
         });
         $('desk-qty-now').addEventListener('click', () => sendQtyNow());
         $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) window.AkmFinalOrder.open(); else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
-        $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } $('desk-file').click(); });
+        $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } S.pickImg = true; $('desk-file').accept = 'image/*'; $('desk-file').click(); });   // 정산 이미지는 이미지 전용 그대로
         $('desk-talk-now').addEventListener('click', () => { input.value = '처리 안 된 톡톡 건 답변 예시문구 만들어줘'; syncInput(); input.focus(); });
         $('desk-wake-btn').addEventListener('click', () => wake());
-        $('desk-file').addEventListener('change', e => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; });
+        $('desk-file').addEventListener('change', e => { const fl = Array.from(e.target.files || []); addFiles(S.pickImg ? fl.filter(isImg) : fl); e.target.value = ''; });
         const ask = $('desk-ask');
         ask.addEventListener('dragover', e => { e.preventDefault(); ask.classList.add('drag'); });
         ask.addEventListener('dragleave', () => ask.classList.remove('drag'));
-        ask.addEventListener('drop', e => { e.preventDefault(); ask.classList.remove('drag'); addFiles(Array.from(e.dataTransfer.files || []).filter(f => /^image\//.test(f.type))); });
+        ask.addEventListener('drop', e => { e.preventDefault(); ask.classList.remove('drag'); addFiles(Array.from(e.dataTransfer.files || [])); });
         // #474 확인 필요 문의 — 채널 고르기 · 확인한 건 보기 · [확인] · [문구 부탁]
         $('desk-inbox-tabs').addEventListener('click', e => {
             const b = e.target.closest('button[data-k]'); if (!b) return;
@@ -357,10 +365,32 @@
         t.style.height = 'auto';
         if (t.value) t.style.height = Math.min(t.scrollHeight + 2, 240) + 'px'; else t.style.height = '';
     }
+    // #544(대표 GO 10/5) 첨부 = 이미지 또는 파일 1개(엑셀·CSV·PDF·텍스트 · 10MB 이내). 서버 약속: image_data(data URL) + image_mime + 파일이면 file_name
+    const FILE_EXT = ['xlsx', 'xls', 'csv', 'pdf', 'txt'], ACCEPT_ALL = 'image/*,.xlsx,.xls,.csv,.pdf,.txt', MAX_FILE = 10 * 1024 * 1024, MAX_IMG = 9 * 1024 * 1024;
+    const extOfName = n => { const m = String(n || '').match(/\.([A-Za-z0-9]{2,5})$/); return m ? m[1].toLowerCase() : ''; };
+    const isImg = f => /^image\//.test(f.type || '');
+    const isDoc = f => !isImg(f) && FILE_EXT.includes(extOfName(f.name));
+    const sizeText = n => n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round((Number(n) || 0) / 1024)) + 'KB';
+    function attachOk(f) {
+        if (!isImg(f) && !isDoc(f)) { showToast('첨부할 수 있는 파일은 이미지 · 엑셀(xlsx·xls) · CSV · PDF · 텍스트(txt)예요: ' + f.name); return false; }
+        if (f.size > (isImg(f) ? MAX_IMG : MAX_FILE)) { showToast('10MB보다 큰 ' + (isImg(f) ? '이미지' : '파일') + '는 보낼 수 없어요: ' + f.name); return false; }
+        return true;
+    }
+    const ICON_FILE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+    const fileChip = (name, size, xAttr) => `<div class="desk-filechip"><span class="desk-filechip-ic">${ICON_FILE}</span><span class="desk-filechip-name">${esc(name)}</span><span class="desk-filechip-size">${esc(sizeText(size))}</span><button type="button" ${xAttr} aria-label="첨부 파일 빼기">×</button></div>`;
+    const attMeta = o => o.file_name ? ' · 📎 ' + esc(o.file_name) : o.has_image ? ' · 이미지 첨부' : '';
     function addFiles(files) {
-        for (const f of files) {
+        const good = files.filter(attachOk), doc = good.find(isDoc);
+        if (doc) {   // 파일은 1개만 — 여러 개를 골랐거나 이미지가 붙어 있었으면 첫 파일만 남긴다
+            if (good.length > 1 || S.images.length) showToast('파일은 한 번에 1개만 보낼 수 있어요. 첫 파일만 붙였어요');
+            const rd = new FileReader();
+            rd.onload = () => { S.images = [{ data: String(rd.result), mime: doc.type || 'application/octet-stream', name: doc.name, size: doc.size, file: true }]; renderThumbs(); };
+            rd.readAsDataURL(doc);
+            return;
+        }
+        if (good.length && S.images.some(x => x.file)) S.images = [];   // 파일 대신 이미지로 바꿔 붙인다
+        for (const f of good) {
             if (S.images.length >= 6) { showToast('이미지는 한 번에 6장까지 보낼 수 있어요'); break; }
-            if (f.size > 9 * 1024 * 1024) { showToast('10MB보다 큰 이미지는 보낼 수 없어요: ' + f.name); continue; }
             const rd = new FileReader();
             rd.onload = () => { S.images.push({ data: String(rd.result), mime: f.type || 'image/png', name: f.name }); renderThumbs(); };
             rd.readAsDataURL(f);
@@ -369,7 +399,7 @@
     function renderThumbs() {
         const box = $('desk-thumbs');
         box.hidden = !S.images.length;
-        box.innerHTML = S.images.map((im, i) => `<div class="desk-thumb"><img src="${im.data}" alt="첨부 ${i + 1}"><button type="button" data-i="${i}" aria-label="첨부 ${i + 1} 빼기">×</button></div>`).join('');
+        box.innerHTML = S.images.map((im, i) => im.file ? fileChip(im.name, im.size, `data-i="${i}"`) : `<div class="desk-thumb"><img src="${im.data}" alt="첨부 ${i + 1}"><button type="button" data-i="${i}" aria-label="첨부 ${i + 1} 빼기">×</button></div>`).join('');
     }
 
     async function send() {
@@ -385,8 +415,10 @@
         try {
             if (S.images.length) {
                 const imgs = S.images.slice();
-                for (const im of imgs) newIds.push(idOf(await api('/api/agent-office/orders', 'POST', { content: content || '정산관리에 올려줘', image_data: im.data, image_mime: im.mime })));
-                showToast(`지시 ${imgs.length}건을 보냈어요`);
+                for (const im of imgs) newIds.push(idOf(await api('/api/agent-office/orders', 'POST', im.file
+                    ? { content: content || '첨부한 파일을 확인해줘', image_data: im.data, image_mime: im.mime, file_name: im.name }
+                    : { content: content || '정산관리에 올려줘', image_data: im.data, image_mime: im.mime })));
+                showToast(imgs[0].file ? '파일과 함께 지시를 보냈어요' : `지시 ${imgs.length}건을 보냈어요`);
             } else {
                 newIds.push(idOf(await api('/api/agent-office/orders', 'POST', { content })));
                 showToast('지시를 보냈어요');
@@ -421,13 +453,16 @@
         } finally { S.sending = false; btn.disabled = false; }
     }
 
+    const TAB_NAME = { mine: '채팅', all: '이전 채팅 이력', approval: '승인 결재함' };
     function setTab(tab) {
         S.tab = tab;
         document.querySelectorAll('#desk-tabs .desk-tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
         const list = $('desk-list');
         S.sig = ''; S.endAsk = 0;
-        $('desk-histbar').hidden = tab !== 'all'; $('desk-fs').hidden = tab === 'all';
-        $('desk-hist-mine-wrap').hidden = !isAdmin();
+        $('desk-fs').hidden = tab === 'all';
+        $('desk-hist-mine-wrap').hidden = !isAdmin() || tab !== 'all';
+        $('desk-hist-q').value = S.q[tab] || ''; $('desk-hist-x').hidden = !S.q[tab];
+        $('desk-full-title').textContent = TAB_NAME[tab] || '채팅';
         list.innerHTML = '<div class="desk-empty">불러오는 중</div>';
         return loadOrders(true);
     }
@@ -480,7 +515,7 @@
             const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
             tabA.hidden = !isAdmin();
             $('desk-tab-all').hidden = false;   // #538 이전 채팅 이력은 직원에게도 보인다(서버가 본인 것만 내려준다)
-            $('desk-hist-mine-wrap').hidden = !isAdmin();
+            $('desk-hist-mine-wrap').hidden = !isAdmin() || S.tab !== 'all';
             if (!isAdmin() && S.tab === 'approval') setTab('mine');
             n.hidden = !d.approval; n.textContent = d.approval || 0;
         } catch (e) { /* 다음 주기에 다시 */ }
@@ -509,7 +544,7 @@
         const tab = S.tab;
         try {
             const hq = S.hist.q;
-            const q = S.tab === 'mine' ? '?mine=1&limit=60' : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?history=1&limit=' + HIST_PAGE + (hq ? '&q=' + encodeURIComponent(hq) : '');
+            const q = S.tab === 'mine' ? '?mine=1&limit=' + S.mineLimit : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?history=1&limit=' + HIST_PAGE + (hq ? '&q=' + encodeURIComponent(hq) : '');
             const d = await api('/api/agent-office/desk/orders' + q);
             if (tab !== S.tab || (tab === 'all' && hq !== S.hist.q)) { S.again = true; return; }
             let orders = d.orders || [];
@@ -578,7 +613,7 @@
                 ${replyImgHtml(o.id)}<label class="desk-sr" for="reply-${o.id}">${esc(sendLabel === '답 보내기' ? '답 적기' : '이어서 보낼 글')}</label>
                 <textarea class="desk-reply-in" id="reply-${o.id}" rows="1" maxlength="2000" placeholder="${esc(hint)}"></textarea>
                 <div class="desk-cbox-row">
-                    <button type="button" class="desk-cbtn" data-act="replyimg" data-id="${o.id}" aria-label="이미지 첨부" title="이미지 첨부 (붙여넣기도 돼요)">${ICON_PLUS}</button><!--endslot-->
+                    <button type="button" class="desk-cbtn" data-act="replyimg" data-id="${o.id}" aria-label="이미지·파일 첨부" title="이미지·파일 첨부 (붙여넣기도 돼요)">${ICON_PLUS}</button><!--endslot-->
                     <button type="button" class="desk-cbtn primary" data-act="sendreply" data-id="${o.id}" aria-label="${esc(sendLabel)}" title="${esc(sendLabel)} (Enter)" disabled>${ICON_UP}</button>
                 </div>
             </div>`;
@@ -591,12 +626,12 @@
     const chatMine = () => S.tab === 'mine' && S.view === 'chat';
     const followOpen = o => S.follow.has(o.id) || chatMine();
     // 이어서 지시·되묻기 답에 붙인 이미지(지시 1건에 1장) — 다시 그려도 남도록 S.replyImg 에 둔다
-    const replyImgHtml = id => { const im = S.replyImg.get(id); return im ? `<div class="desk-thumbs desk-reply-thumbs"><div class="desk-thumb"><img src="${im.data}" alt="붙인 이미지"><button type="button" data-act="replyimgx" data-id="${id}" aria-label="붙인 이미지 빼기">×</button></div></div>` : ''; };
+    const replyImgHtml = id => { const im = S.replyImg.get(id); if (im && im.file) return `<div class="desk-thumbs desk-reply-thumbs">${fileChip(im.name, im.size, `data-act="replyimgx" data-id="${id}"`)}</div>`; return im ? `<div class="desk-thumbs desk-reply-thumbs"><div class="desk-thumb"><img src="${im.data}" alt="붙인 이미지"><button type="button" data-act="replyimgx" data-id="${id}" aria-label="붙인 이미지 빼기">×</button></div></div>` : ''; };
     function setReplyImg(id, file) {
-        if (!file || !/^image\//.test(file.type)) return;
-        if (file.size > 9 * 1024 * 1024) { showToast('10MB보다 큰 이미지는 보낼 수 없어요'); return; }
+        if (!file || !attachOk(file)) return;
+        const doc = isDoc(file);
         const rd = new FileReader();
-        rd.onload = () => { S.replyImg.set(id, { data: String(rd.result), mime: file.type || 'image/png' }); S.sig = ''; renderList(); const ta = document.getElementById('reply-' + id); if (ta) ta.focus(); };
+        rd.onload = () => { S.replyImg.set(id, doc ? { data: String(rd.result), mime: file.type || 'application/octet-stream', name: file.name, size: file.size, file: true } : { data: String(rd.result), mime: file.type || 'image/png' }); S.sig = ''; renderList(); const ta = document.getElementById('reply-' + id); if (ta) ta.focus(); };
         rd.readAsDataURL(file);
     }
     const followBtn = o => S.tab !== 'all' && FOLLOW.includes(o.status) && !isFinalLog(o) && !followOpen(o) ? `<button type="button" class="desk-btn sm" data-act="follow" data-id="${o.id}">이어서 지시</button>` : '';
@@ -732,7 +767,24 @@
     }
     // 답 칸은 한 줄로 시작해 적는 만큼 늘어난다(최대 220px)
     function fitReply(t) { if (!t.value) { t.style.height = ''; return; } t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 220) + 'px'; }
-    function renderList() { if (selectingInList()) { S.sig = ''; return; } keepReplies(renderListNow); fillMedia(); }
+    function renderList() { if (selectingInList()) { S.sig = ''; return; } keepReplies(renderListNow); highlight(); fillMedia(); }
+    // #543 검색 — 지시 글·답 글·보낸 사람에서 찾는다(대화는 한 차례라도 맞으면 통째로)
+    const qNow = () => String(S.q[S.tab] || '').trim().toLowerCase();
+    const hayOf = o => { const r = o.result || {}; return [o.content, o.created_by, o.file_name, r.answer, r.text, r.title, r.question, r.summary, r.notice].filter(Boolean).join('\n').toLowerCase(); };
+    const matchQ = (o, q) => !q || hayOf(o).includes(q);
+    // 맞는 낱말에 옅은 형광 — 다 그린 뒤 글자 노드만 감싼다(HTML 을 문자열로 끼우지 않는다)
+    function highlight() {
+        const q = qNow(); if (!q) return;
+        const root = $('desk-list');
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => { const p = n.parentElement; return p && !p.closest('textarea, script, style, mark, .desk-badge, .desk-empty, .desk-cbox, .desk-end-ask, .desk-h-foot, .desk-a-acts, .desk-acts') && n.nodeValue.toLowerCase().includes(q) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; } });
+        const nodes = []; while (w.nextNode() && nodes.length < 600) nodes.push(w.currentNode);
+        for (const n of nodes) {
+            const txt = n.nodeValue, low = txt.toLowerCase(), frag = document.createDocumentFragment(); let i = 0, j;
+            while ((j = low.indexOf(q, i)) >= 0) { if (j > i) frag.appendChild(document.createTextNode(txt.slice(i, j))); const m = document.createElement('mark'); m.className = 'desk-hl'; m.textContent = txt.slice(j, j + q.length); frag.appendChild(m); i = j + q.length; }
+            if (i < txt.length) frag.appendChild(document.createTextNode(txt.slice(i)));
+            n.parentNode.replaceChild(frag, n);
+        }
+    }
     // #504 첨부 사진·영상 채우기 — 받은 파일은 S.media(file_id → object URL)에 두어 2초 새로고침에 다시 받지 않는다
     async function fillMedia() {
         const els = document.querySelectorAll('#desk-list [data-file]:not([src])');
@@ -760,8 +812,13 @@
     }
     function renderListNow() {
         const box = $('desk-list');
-        const list = S.tab === 'all' ? (S.hist.mineOnly ? S.orders.filter(o => o.created_by_id === myId()) : S.orders) : shown();
+        let list = S.tab === 'all' ? (S.hist.mineOnly ? S.orders.filter(o => o.created_by_id === myId()) : S.orders) : shown();
         const chat = S.tab === 'mine' && S.view === 'chat';
+        const q = qNow(); S.qOn = !!q;
+        if (q) {
+            if (S.tab === 'all' || chat) { const okIds = new Set(); threadsOf(S.tab === 'all' ? list : S.orders).forEach(t => { if (t.items.some(o => matchQ(o, q))) t.items.forEach(o => okIds.add(o.id)); }); list = list.filter(o => okIds.has(o.id)); }
+            else list = list.filter(o => matchQ(o, q));
+        }
         const vb = $('desk-view');
         if (vb) { vb.hidden = true; vb.textContent = S.view === 'chat' ? '표로 보기' : '대화로 보기'; }   // #504 전환 버튼 없음
         box.classList.toggle('desk-cardlist', !S.wide && !chat);
@@ -769,7 +826,7 @@
         box.classList.toggle('desk-hist', S.tab === 'all');
         if (!list.length) {
             setMore('desk-list-more', 0);
-            box.innerHTML = `<div class="desk-empty">${S.tab === 'all' ? (S.hist.q ? '찾는 글이 든 채팅이 없어요. 다른 낱말로 찾아 보세요.' : '이전 채팅이 아직 없어요.') : S.fs !== 'all' ? '고른 상태에 해당하는 채팅이 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : '열려 있는 채팅이 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.'}</div>`;
+            box.innerHTML = `<div class="desk-empty">${q ? '찾는 글이 든 채팅이 없어요. 다른 낱말로 찾아 보세요.' : S.tab === 'all' ? '이전 채팅이 아직 없어요.' : S.fs !== 'all' ? '고른 상태에 해당하는 채팅이 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : '열려 있는 채팅이 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.'}</div>`;
             return;
         }
         if (S.tab === 'all') { renderHistory(list); return; }
@@ -785,7 +842,7 @@
                 <div class="desk-card-head"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span>
                     <span>${o.id}번</span>${o.reply_to ? `<span class="desk-thread">↳ ${Number(o.reply_to)}번에 이어서</span>` : ''}<span>${esc(o.created_by || '')}</span>
                     <span>${esc(kst(o.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
-                    ${o.has_image ? '<span>이미지 첨부</span>' : ''}
+                    ${o.file_name ? `<span>📎 ${esc(o.file_name)}</span>` : o.has_image ? '<span>이미지 첨부</span>' : ''}
                     ${S.tab === 'mine' && !ACTIVE.includes(o.status) && !['판독완료', '확인표작성', '승인대기'].includes(o.status) ? `<button type="button" class="desk-x" data-act="hide" data-id="${o.id}" aria-label="${o.id}번 채팅 종료" title="채팅 종료">×</button>` : ''}</div>
                 <p class="desk-q">${esc(o.content)}</p>
                 ${resultHtml(o)}
@@ -813,7 +870,7 @@
         const hm = { hour: '2-digit', minute: '2-digit' };
         const html = ths.map(t => {
             const needs = t.items.some(o => NEEDS.includes(o.status));
-            const ov = !needs && !t.items.some(o => S.pin.has(o.id)) && ++shownN > PREVIEW_LIST;
+            const ov = !S.qOn && !needs && !t.items.some(o => S.pin.has(o.id)) && ++shownN > PREVIEW_LIST;
             if (ov) hidden++;
             const first = t.items[0];
             const canHide = t.items.every(CLOSED_FOR_HIDE);
@@ -829,7 +886,7 @@
                 const b = BADGE[o.status] || ['wait', o.status];
                 const last = o.id === t.last;
                 return `<div class="desk-turn${last ? ' last' : ''}" data-oid="${o.id}">
-                    <div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, hm))}${o.has_image ? ' · 이미지 첨부' : ''}</div></div>
+                    <div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, hm))}${attMeta(o)}</div></div>
                     <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultBody(o, true) + `<div class="desk-chatbar${endHtml && S.endAsk === t.id ? ' asking' : ''}">${barHtml(o)}</div>` : resultBody(o, true)}</div>
                 </div>`;
             }).join('');
@@ -854,26 +911,26 @@
         return (y !== Number(nk.slice(0, 4)) ? y + '년 ' : '') + m + '월';
     }
     const histFlag = t => t.items.some(o => ['질문', '승인대기'].includes(o.status)) ? ['ask', '확인 필요'] : t.items.some(o => GROUP.err.includes(o.status)) ? ['err', '오류'] : t.items.some(o => GROUP.work.includes(o.status)) ? ['work', '진행 중'] : null;
-    const hasAttach = o => !!o.has_image || !!(o.result && Array.isArray(o.result.files) && o.result.files.length);
+    const hasAttach = o => !!o.has_image || !!o.file_name || !!(o.result && Array.isArray(o.result.files) && o.result.files.length);
     const ICON_CLIP = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>';
     function renderHistory(list) {
         const ths = threadsOf(list), admin = isAdmin(), me = myId(), hm = { hour: '2-digit', minute: '2-digit' }, mdhm = { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
         let lastG = '', n = 0, hidden = 0;
         const html = ths.map(t => {
             const first = t.items[0], lastO = t.items[t.items.length - 1], g = dayGroup(lastO.created_at), open = S.hist.open.has(t.id);
-            const ov = ++n > PREVIEW_HIST && !open; if (ov) hidden++;
+            const ov = !S.qOn && ++n > PREVIEW_HIST && !open; if (ov) hidden++;
             const flag = histFlag(t), fin = isFinalLog(first);
             const head = g !== lastG ? `<h4 class="desk-h-day${ov ? ' ov' : ''}">${esc(g)}</h4>` : ''; lastG = g;
             const when = (g === '오늘' || g === '어제' ? '' : kst(lastO.created_at, { month: 'numeric', day: 'numeric' }) + ' ') + kst(lastO.created_at, hm);
             const row = `<button type="button" class="desk-h-row" data-act="histopen" data-id="${t.id}" aria-expanded="${open}">
-                    <span class="desk-h-when">${esc(when)}</span>${admin ? `<span class="desk-h-who">${esc(first.created_by || '')}</span>` : ''}
+                    <span class="desk-h-when">${esc(when)}</span>${admin ? `<span class="desk-h-who${first.created_by_id === me ? ' mine' : ''}">${esc(first.created_by || '')}</span>` : ''}
                     <span class="desk-h-text">${esc(cutText(first.content, 120))}</span>
                     <span class="desk-h-meta">${flag ? `<span class="desk-badge" data-k="${flag[0]}">${flag[1]}</span>` : ''}${t.items.some(hasAttach) ? `<span class="desk-h-clip" title="첨부 있음" aria-label="첨부 있음">${ICON_CLIP}</span>` : ''}${t.items.length > 1 ? `<span class="desk-h-n">${t.items.length}번 주고받음</span>` : ''}<span class="desk-h-chev" aria-hidden="true">${open ? '▴' : '▾'}</span></span>
                 </button>`;
             let body = '';
             if (open) {
                 const turns = t.items.map(o => { const b = BADGE[o.status] || ['wait', o.status];
-                    return `<div class="desk-turn" data-oid="${o.id}"><div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, mdhm))}${o.has_image ? ' · 이미지 첨부' : ''}</div></div>
+                    return `<div class="desk-turn" data-oid="${o.id}"><div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, mdhm))}${attMeta(o)}</div></div>
                         <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${resultBody(o, true)}</div></div>`; }).join('');
                 const mine = me != null && t.items.every(o => o.created_by_id === me);
                 const live = t.items.some(o => !o.mine_hidden);
@@ -899,21 +956,39 @@
         } catch (err) { showToast(err && err.message ? err.message : '더 불러오지 못했어요'); b.disabled = false; b.removeAttribute('aria-busy'); }
         finally { S.hist.busy = false; }
     }
+    // 그 대화의 답 칸으로 옮겨 커서를 둔다(답 칸이 없는 대화면 대화 틀로만 옮긴다)
+    function focusThread(box) {
+        if (!box) return;
+        const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const ta = box.querySelector('.desk-turn.last .desk-reply-in');
+        (ta ? (ta.closest('.desk-cbox') || ta) : box).scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+        if (ta) ta.focus({ preventScroll: true });
+        box.classList.remove('desk-flash'); void box.offsetWidth; box.classList.add('desk-flash'); setTimeout(() => box.classList.remove('desk-flash'), 1600);
+    }
     // 이력의 내 대화를 채팅 탭으로 다시 꺼낸다(숨겨 둔 차례만 되살림) → 그 대화로 옮겨 답 칸에 커서
     async function resumeChat(rootId, b) {
-        const t = threadsOf(S.orders).find(x => x.id === rootId), me = myId();
+        let t = threadsOf(S.orders).find(x => x.id === rootId); const me = myId();
         if (!t || me == null || !t.items.every(o => o.created_by_id === me)) return;
         b.disabled = true;
         try {
+            // #543: 검색 결과에서 누르면 맞은 차례만 받아져 있다 → 검색 없이 한 번 받아 그 대화의 차례를 전부 찾는다(일부만 되살리지 않게)
+            if (S.hist.q) {
+                const d = await api('/api/agent-office/desk/orders?history=1&limit=200');
+                const known = new Set(S.orders.map(o => o.id));
+                const all = S.orders.concat((d.orders || []).filter(o => !known.has(o.id)));
+                const full = threadsOf(all).find(x => x.items.some(o => o.id === rootId));
+                if (full && full.items.every(o => o.created_by_id === me)) t = full;
+            }
             for (const it of t.items) if (it.mine_hidden) await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: false });
             t.items.forEach(o => S.pin.add(o.id));
-            closeFull();
+            // #543(대표 폰 실물): 크게 보기(is-full)에서 눌러도 반드시 넘어가야 한다 → 크게 보기를 닫지 않고(뒤로 가기를 건드리지 않는다) 그 자리에서 탭만 바꾼다
+            S.q.mine = ''; if (S.fs !== 'all') { S.fs = 'all'; $('desk-fs').value = 'all'; }
             await setTab('mine');
-            const el = document.querySelector('#desk-list [data-oid="' + t.last + '"]');
+            const find = () => document.querySelector('#desk-list [data-oid="' + t.last + '"]');
+            let el = find();
+            if (!el) { S.mineLimit = 200; S.sig = ''; await loadOrders(true); el = find(); }   // 채팅 탭 60건 밖이면 한 번 더 넉넉히 받는다
             if (!el) { showToast('채팅 탭으로 옮겼어요'); return; }
-            const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            (el.closest('.desk-thread-box') || el).scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
-            const ta = document.getElementById('reply-' + t.last); if (ta) ta.focus({ preventScroll: true });
+            focusThread(el.closest('.desk-thread-box') || el);
         } catch (err) { showToast(err && err.message ? err.message : '다시 꺼내지 못했어요'); b.disabled = false; }
     }
 
@@ -921,7 +996,7 @@
     function previewMask(list) {
         let shownN = 0;
         return list.map(o => {
-            if (NEEDS.includes(o.status)) return false;
+            if (S.qOn || NEEDS.includes(o.status)) return false;
             shownN++;
             return shownN > PREVIEW_LIST;
         });
@@ -955,9 +1030,15 @@
         if (!b) {
             // #484: 표의 줄(번호·지시 내용·결과 …)을 눌러도 자세히가 열린다 — 버튼·입력칸·링크·글자 드래그는 제외
             const tr = e.target.closest('tr.row');
-            if (!tr || e.target.closest('button, input, textarea, select, a')) return;
+            if (e.target.closest('button, input, textarea, select, a, img, video, summary, label')) return;
             const sel = window.getSelection && window.getSelection();
             if (sel && String(sel).length) return;
+            // #543: 채팅 탭 — 대화 머리 줄이나 빈 곳을 누르면 그 대화의 답 칸으로 / 이력 탭 — 펼친 대화의 본문을 누르면 접힌다
+            const hb = e.target.closest('.desk-h-body');
+            if (hb) { const it = hb.closest('.desk-h-item'); if (it) { S.hist.open.delete(Number(it.dataset.th)); renderList(); const row = document.querySelector('#desk-list .desk-h-item[data-th="' + it.dataset.th + '"] .desk-h-row'); if (row) row.focus({ preventScroll: true }); } return; }
+            const tb = chatMine() ? e.target.closest('.desk-thread-box') : null;
+            if (tb && (e.target.closest('.desk-th-head') || !e.target.closest('.desk-a, .desk-q, .desk-media, .desk-cbox, .desk-end-ask, .desk-note, .desk-kv, .desk-steps'))) { focusThread(tb); return; }
+            if (!tr) return;
             b = tr.querySelector('.desk-more[data-act="detail"]');
             if (!b) return;
         }
@@ -1026,7 +1107,7 @@
             if (!text && !im) { if (ta) ta.focus(); return; }
             const icon = b.classList.contains('desk-cbtn'), label0 = b.textContent; b.disabled = true; if (icon) b.setAttribute('aria-busy', 'true'); else b.textContent = '보내는 중';
             try {
-                const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', im ? { content: text, image_data: im.data, image_mime: im.mime } : { content: text });
+                const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', im ? (im.file ? { content: text, image_data: im.data, image_mime: im.mime, file_name: im.name } : { content: text, image_data: im.data, image_mime: im.mime }) : { content: text });
                 S.replyImg.delete(id);
                 showToast(res.message || '답을 보냈어요');
                 S.follow.delete(id);

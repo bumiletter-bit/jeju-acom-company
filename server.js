@@ -800,6 +800,7 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by TEXT`);
     // 정산관리 이미지 자동 입력 (대표 7/20 지시): 지시에 첨부된 이미지 (base64 data URL) — 마루 비전 판독용
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_data TEXT`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS file_name TEXT`);   // #543 파일 첨부 이름(이미지면 NULL)
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS image_mime VARCHAR(40)`);
     // #469 클코 창구: 요청자 계정(완료 알림 대상) — additive
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by_id INTEGER`);
@@ -13297,15 +13298,31 @@ app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
     } catch (err) { handleAdminErr(res, err); }
 });
 
+// #543(대표 GO 10/5): 지시 첨부 = 이미지 또는 파일 1개(엑셀·CSV·PDF·텍스트). 같은 칸(image_data = data URL)에 담고, 파일이면 file_name 에 이름을 적는다.
+//   허용 밖 종류는 400. 이미지는 종전과 같다(file_name 없음 → 종전 판독·미리 보기 경로 무변경).
+const DESK_FILE_EXT = ['xlsx', 'xls', 'csv', 'pdf', 'txt'];
+function deskAttachOf(body) {
+    const data = typeof body?.image_data === 'string' ? body.image_data : '';
+    if (!data) return { data: '', mime: '', fileName: '' };
+    const mime = String(body?.image_mime || '').slice(0, 100);
+    if (/^data:image\//.test(data) && !body?.file_name) return { data, mime: mime.slice(0, 40), fileName: '' };
+    const name = String(body?.file_name || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim().slice(-120);
+    const ext = (name.match(/\.([A-Za-z0-9]{2,5})$/) || [])[1];
+    if (/^data:image\//.test(data)) return { data, mime: mime.slice(0, 40), fileName: '' };   // 이미지에 이름이 붙어 와도 이미지로
+    if (!/^data:[^;,]*;base64,/.test(data) || !ext || !DESK_FILE_EXT.includes(ext.toLowerCase())) throw { status: 400, message: '첨부할 수 있는 파일은 이미지 · 엑셀(xlsx·xls) · CSV · PDF · 텍스트(txt)입니다' };
+    return { data, mime, fileName: name };
+}
 // #473-b 되묻기에 이어서 답하기 — 질문 카드에서 바로 보낸다.
 //   새 지시를 만들되 원래 질문은 「질문종결」로 닫아 목록이 지저분해지지 않게 한다(창구는 get.js의 recent_talk 로 앞 대화를 함께 받는다).
 app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) => {
     try {
         // #500(대표 10/2): 이어서 지시·되묻기 답에도 이미지 1장을 붙일 수 있다(지시 접수와 같은 한도)
-        const imageData = typeof req.body?.image_data === 'string' && /^data:image\//.test(req.body.image_data) ? req.body.image_data : '';
-        const imageMime = String(req.body?.image_mime || '').slice(0, 40);
-        if (imageData.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
-        const text = String(req.body?.content || '').trim() || (imageData ? '[이미지 첨부] 이어서 확인해줘' : '');
+        // #543(대표 GO 10/5): 이미지 말고 파일(엑셀·CSV·PDF·텍스트)도 1개 — 같은 칸(image_data)에 담고 파일 이름을 file_name 에 적는다
+        const att = deskAttachOf(req.body);
+        const imageData = att.data;
+        const imageMime = att.mime;
+        if (imageData.length > 14_000_000) throw { status: 400, message: '첨부가 너무 큽니다 (10MB 이내로 올려주세요)' };
+        const text = String(req.body?.content || '').trim() || (imageData ? (att.fileName ? '[파일 첨부] 이어서 확인해줘' : '[이미지 첨부] 이어서 확인해줘') : '');
         if (!text) throw { status: 400, message: '답할 내용을 적어 주세요' };
         if (text.length > 2000) throw { status: 400, message: '2000자까지 적을 수 있습니다' };
         const q = (await pool.query(
@@ -13316,8 +13333,8 @@ app.post('/api/agent-office/orders/:id/reply', authMiddleware, async (req, res) 
         if (q.status !== '질문' && !FOLLOWABLE.includes(q.status)) throw { status: 400, message: '처리가 끝난 뒤에 이어서 지시할 수 있어요' };
         if (q.created_by_id && q.created_by_id !== req.user.id && req.user.role !== 'admin') throw { status: 403, message: '내가 보낸 지시에만 답할 수 있습니다' };
         const r = await pool.query(
-            `INSERT INTO pending_orders (content, status, created_by, created_by_id, reply_to, image_data, image_mime) VALUES ($1, '대기', $2, $3, $4, $5, $6) RETURNING id, status`,
-            [text, req.user.name || req.user.username, req.user.id, q.id, imageData || null, imageData ? imageMime : null]);
+            `INSERT INTO pending_orders (content, status, created_by, created_by_id, reply_to, image_data, image_mime, file_name) VALUES ($1, '대기', $2, $3, $4, $5, $6, $7) RETURNING id, status`,
+            [text, req.user.name || req.user.username, req.user.id, q.id, imageData || null, imageData ? imageMime : null, att.fileName || null]);
         await pool.query(`UPDATE pending_orders SET status = '질문종결', processed_at = NOW() WHERE id = $1 AND status = '질문'`, [q.id]);
         await writeAudit({ action: 'create', targetType: 'pending_order', targetId: r.rows[0].id,
             changes: { after: { reply_to: q.id, has_image: !!imageData } }, source: 'agent_office', actor: adminActor(req) });
@@ -13370,7 +13387,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
         const r = await pool.query(
             `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id, COALESCE(o.mine_hidden, false) AS mine_hidden,
-                    (o.image_data IS NOT NULL) AS has_image, o.reply_to,
+                    (o.image_data IS NOT NULL AND o.file_name IS NULL) AS has_image, o.file_name, o.reply_to,
                     (SELECT MIN(c.id) FROM pending_orders c WHERE c.reply_to = o.id AND c.is_deleted = false) AS followed_by,
                     (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
              FROM pending_orders o WHERE ${where} ORDER BY o.id DESC LIMIT ${limit}`, params);
@@ -13533,19 +13550,20 @@ app.post('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/
     try {
         const content = String(req.body?.content || '').trim();
         // 정산관리 이미지 첨부 (대표 7/20): 이미지가 있으면 content는 비어도 허용 (기본 지시문 대체)
-        const imageData = typeof req.body?.image_data === 'string' ? req.body.image_data : '';
-        const imageMime = String(req.body?.image_mime || '').slice(0, 40);
+        const att = req.body?.file_name ? deskAttachOf(req.body) : null;   // #543: 파일 이름이 오면 파일 첨부(허용 종류만) · 없으면 종전 이미지 경로 그대로
+        const imageData = att ? att.data : (typeof req.body?.image_data === 'string' ? req.body.image_data : '');
+        const imageMime = att ? att.mime : String(req.body?.image_mime || '').slice(0, 40);
         if (!content && !imageData) throw { status: 400, message: '지시 내용을 입력해주세요' };
         const engine = await aoEngine();
         const maxLen = engine === 'desk' ? 2000 : 500;
         if (content.length > maxLen) throw { status: 400, message: `지시는 ${maxLen}자 이내로 입력해주세요` };
         if (imageData && imageData.length > 14_000_000) throw { status: 400, message: '이미지가 너무 큽니다 (10MB 이내로 올려주세요)' };
-        const effText = content || (imageData ? '[이미지 첨부] 오늘 정산관리에 올려줘' : '');
+        const effText = content || (imageData ? (att && att.fileName ? '[파일 첨부] 확인해줘' : '[이미지 첨부] 오늘 정산관리에 올려줘') : '');
         const row = (await pool.query(
-            `INSERT INTO pending_orders (content, image_data, image_mime, created_by, created_by_id, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            `INSERT INTO pending_orders (content, image_data, image_mime, file_name, created_by, created_by_id, status) VALUES ($1, $2, $3, $7, $4, $5, $6) RETURNING *`,
             [effText, imageData || null, imageData ? imageMime : null,
              `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null,
-             engine === 'desk' ? '처리중' : '대기'])).rows[0];
+             engine === 'desk' ? '처리중' : '대기', (att && att.fileName) || null])).rows[0];
         await writeAudit({
             action: 'create', targetType: 'pending_order', targetId: row.id,
             changes: { after: { content: effText, status: row.status, has_image: !!imageData } }, // 이미지 원문은 audit 미기록 (용량)
