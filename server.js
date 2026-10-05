@@ -13534,7 +13534,7 @@ app.post('/api/agent-office/final-order/memo-read', authMiddleware, async (req, 
             const catalog = {}; let left = 200;
             for (const [k, v] of Object.entries((req.body.catalog && typeof req.body.catalog === 'object') ? req.body.catalog : {}).slice(0, 8)) { if (!Array.isArray(v) || left <= 0) continue; catalog[s(k, 30)] = v.slice(0, left).map(x => s(x, 120)); left -= catalog[s(k, 30)].length; }
             const history = (Array.isArray(req.body.history) ? req.body.history : []).slice(-6).map(h => ({ who: h && h.who === 'ai' ? 'ai' : 'me', text: s(h && h.text, 300) }));
-            const payloadC = { type: 'fo_chat', shipDate: iso0(req.body.shipDate), realToday: iso0(req.body.realToday) || kstTodayStr(), shipDays: (Array.isArray(req.body.shipDays) ? req.body.shipDays : []).map(iso0).filter(Boolean).slice(0, 14), ask, orders, catalog, summary: s(req.body.summary, 800), history };
+            const payloadC = { type: 'fo_chat', shipDate: iso0(req.body.shipDate), realToday: iso0(req.body.realToday) || kstTodayStr(), shipDays: (Array.isArray(req.body.shipDays) ? req.body.shipDays : []).map(iso0).filter(Boolean).slice(0, 14), ask, orders, catalog, summary: s(req.body.summary, 4000), history };   // #535: 요약 끝에 품목별 건수 목록이 붙는다(800자에서는 잘림)
             const rowC = (await pool.query(
                 `INSERT INTO pending_orders (content, payload, created_by, created_by_id, status, mine_hidden) VALUES ($1, $2, $3, $4, '대기', true) RETURNING id`,
                 [`[최종발주 대화] 후보 주문 ${orders.length}건 · 기준 발송일 ${payloadC.shipDate || '-'}`, JSON.stringify(payloadC), `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null])).rows[0];

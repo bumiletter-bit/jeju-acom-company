@@ -1320,6 +1320,59 @@ async function resolveCards(pg, type) {
                 ok(u.errs.length === 0, '㉑ 오류 0', u.errs.join(' | ')); await u.ctx.close();
             }
 
+            // ── ㉒ #535 품목 통째로 바꾸기(optall) — 「○○ 전부 △△로」 ──────────────────────────────────────
+            console.log('\n㉒ #535 품목 통째로 바꾸기');
+            {
+                const sizeBase22 = fx.naver.find(r => /사이즈/.test(String(r['배송메세지'] || '')));
+                const D22 = cat.byPartner[FX.P_DAESUNG] || [];
+                const rows22 = [mk('이이가'), mk('이이나', { base: sizeBase22, memo: '꼭 2S로 보내주세요' }), mk('이이다', { qty: 3 }), mk('이이라', { opt: D22[1] }), mk('이이마')];
+                const v = await mkChat(false, rows22);
+                v.chat.memoAns = () => ({ memo: '기본', sure: true });
+                // 현금파일: 같은 품목(바꾸기 전 이름) 1행 — 이 행은 손대지 않는다
+                const J0 = (await (async () => { await setCash(v.pg, null); await v.pg.click(SEL.start); await idle(v.pg); await v.pg.waitForTimeout(400); return readJudge(v.pg); })()).judge;
+                const FROM = J0['이이가'].opt, TO = D22[0], used = new Set(Object.values(J0).map(x => x.opt.replace(/ \S+!$/, ''))), NONE = [].concat(...Object.values(cat.byPartner)).find(n => !used.has(n) && n !== TO);
+                const cashRow = fx.cashAoa.find(r => r[3] === '현금받는1').slice(); cashRow[3] = '현금이이'; cashRow[4] = FROM;
+                const cash22 = path.join(TMP, '가짜_현금파일_22.xlsx'); { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([fx.cashAoa[0], cashRow]), 'Sheet1'); XLSX.writeFile(wb, cash22); }
+                await setCash(v.pg, cash22); await v.pg.click(SEL.rejudge).catch(() => { }); await idle(v.pg); await v.pg.waitForTimeout(400);
+                const J22 = (await readJudge(v.pg)).judge;
+                ok(FROM && TO && FROM !== TO && J22['이이나'].opt === FROM + ' 2S사이즈로!' && J22['이이라'].opt === D22[1] && (await pendingN(v.pg)) === 0, '㉒ 준비: 같은 품목 4건(그중 1건은 「2S사이즈로!」 꼬리 · 1건은 3박스) + 다른 품목 1건 + 현금파일 같은 품목 1행 · 남은 카드 0', JSON.stringify({ from: FROM.slice(-18), to: TO.slice(-18), cards: await cardCount(v.pg) }));
+                const lastP = () => v.chat.posts[v.chat.posts.length - 1];
+                // 단가표에 없는 이름 · 해당 주문 0건 → 거부
+                v.chat.answer = () => ({ reply: '', actions: [{ op: 'optall', from: FROM, to: '세상에 없는 과일 9kg' }] });
+                await say(v.pg, '2.5kg 로얄과 전부 없는과일로 바꿔줘'); let b22 = await lastBub(v.pg);
+                ok(b22.bad === 1 && /단가표\)에 없는 이름/.test(b22.text) && b22.preview !== 'open' && (await patchN(v.pg)) === 0, '㉒1 단가표에 없는 이름으로는 못 바꿈(빨간 글 · [적용] 없음)', b22.text.slice(0, 110));
+                const sum22 = lastP().summary;
+                ok(/품목별\(택배사 양식으로 나가는 주문/.test(sum22) && sum22.includes(`「${FROM}」 4건(6박스)`) && sum22.includes(`「${D22[1]}」 1건(1박스)`), '㉒2 클코에게 보내는 요약에 품목별 건수(꼬리 뗀 이름 · 현금파일 행 제외)', sum22.split('\n').pop().slice(0, 140));
+                if (NONE) { v.chat.answer = () => ({ reply: '', actions: [{ op: 'optall', from: NONE, to: TO }] }); await say(v.pg, '없는 품목 전부 바꿔줘'); b22 = await lastBub(v.pg);
+                    ok(b22.bad === 1 && /그 품목이 없어요/.test(b22.text) && b22.preview !== 'open', '㉒3 그 품목으로 나가는 주문이 0건이면 거부', b22.text.slice(0, 110)); } else note('㉒3 주문 없는 단가표 품목을 못 찾아 건너뜀');
+                // 미리 보기 → 적용
+                v.chat.answer = () => ({ reply: '2.5kg 로얄과 주문을 전부 바꿀게요.', actions: [{ op: 'optall', from: FROM, to: TO }] });
+                await say(v.pg, '2.5kg 로얄과 전부 다른 품목으로 바꿔줘'); b22 = await lastBub(v.pg);
+                ok(b22.preview === 'open' && b22.li === 1 && b22.text.includes(`품목 통째로 바꾸기: ${FROM} 4건(6박스) → ${TO}`) && /거래처 효돈 → 대성/.test(b22.text) && /현금파일에 같은 품목 1행은 그대로예요/.test(b22.text), '㉒4 미리 보기 한 줄: 「품목 통째로 바꾸기: A 4건(6박스) → B」 + 거래처 바뀜 + 현금파일 행 안내', b22.text.slice(0, 260));
+                await apply(v.pg);
+                const pl22 = await v.pg.evaluate(() => ({ n: window.AkmFinalOrder.state.patch.size, txt: document.getElementById('fo-patches').innerText.replace(/\s+/g, ' '), btn: document.querySelectorAll('#fo-patches [data-unpatch]').length }));
+                ok(pl22.n === 4 && pl22.btn === 1 && pl22.txt.includes(`품목 통째로 변경 4건: ${FROM} → ${TO}`), '㉒5 [적용] → 4건에 걸리고 「말로 바꾼 것」에는 한 줄([되돌리기] 1개)', pl22.txt.slice(0, 160));
+                const grab = async tag => { await v.pg.waitForSelector(SEL.save, { timeout: 20000 }); await v.pg.waitForTimeout(400); const names = await v.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const rows = []; let store = null, qty = null;
+                    for (const nm of names) { const [dl] = await Promise.all([v.pg.waitForEvent('download', { timeout: 20000 }), v.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, tag + '-' + Date.now() + '.xlsx'); await dl.saveAs(f); if (!/\.xlsx$/i.test(nm)) continue; const wb = XLSX.readFile(f);
+                        if (nm.includes('스마트스토어')) store = XLSX.utils.sheet_to_json(wb.Sheets['발주발송관리'], { header: 1, defval: '' }); else if (wb.Sheets.Sheet1) { XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => rows.push({ file: nm, r })); const s2 = wb.SheetNames.find(n => n !== 'Sheet1'); if (s2 && nm.includes('대성')) qty = XLSX.utils.sheet_to_json(wb.Sheets[s2], { header: 1, defval: '' }); } }
+                    return { rows, store, qty, names }; };
+                await v.pg.click(SEL.make); await idle(v.pg); const g1 = await grab('s22a');
+                const R = (g, nm) => g.rows.find(x => x.r[3] === nm) || { file: '', r: [] };
+                ok(R(g1, '이이가').r[4] === TO && R(g1, '이이마').r[4] === TO && R(g1, '이이다').r[4] === TO && R(g1, '이이다').r[5] === 3 && R(g1, '이이나').r[4] === TO + ' 2S사이즈로!', '㉒6 택배사 파일: 그 품목 4건 전부 새 이름 · 꼬리 「2S사이즈로!」 유지 · 수량 그대로', JSON.stringify([String(R(g1, '이이가').r[4]).slice(-16), String(R(g1, '이이나').r[4]).slice(-22), R(g1, '이이다').r[5]]));
+                ok(['이이가', '이이나', '이이다', '이이마'].every(n => R(g1, n).file.includes('대성')) && R(g1, '이이라').r[4] === D22[1] && R(g1, '현금이이').r[4] === FROM && R(g1, '현금이이').file.includes('효돈'), '㉒6 바뀐 4건은 대성 파일로 옮겨 감 · 다른 품목 주문 무변경 · 현금파일 행은 옛 이름으로 효돈 파일에 그대로', JSON.stringify({ 가: R(g1, '이이가').file.slice(0, 22), 현금: R(g1, '현금이이').file.slice(0, 22) }));
+                const qtxt = JSON.stringify(g1.qty || []);
+                ok(g1.qty && qtxt.includes(TO) && !qtxt.includes(FROM), '㉒6 대성 수량 표에 새 품목 줄이 생김(옛 이름 줄 없음)', qtxt.slice(0, 160));
+                const h22 = g1.store ? g1.store[1] : [], cO = h22.indexOf('옵션정보'), cN = h22.indexOf('수취인명'); const sRow = (g1.store || []).find(x => x[cN] === '이이가');
+                ok(cO >= 0 && sRow && sRow[cO] === rows22[0]['옵션정보'], '㉒6 스토어 양식의 옵션정보는 주문 원문 그대로', sRow && String(sRow[cO]).slice(-30));
+                const logs22 = (v.hits.logs || []).slice(-1)[0];
+                ok(logs22 && logs22.lines.some(l => /품목 통째로 변경 1건: /.test(l) && l.includes('(4건)')), '㉒7 정리 기록에 한 줄(「품목 통째로 변경 … (4건)」)', logs22 && logs22.lines.filter(l => /통째/.test(l)).join(' | ').slice(0, 160));
+                // 되돌리기 = 묶음 전부
+                await v.pg.click('#fo-patches [data-unpatch^="all:"]'); await idle(v.pg); await chatIdle(v.pg); await idle(v.pg);
+                const g2 = await grab('s22b');
+                ok((await patchN(v.pg)) === 0 && R(g2, '이이가').r[4] === FROM && R(g2, '이이다').r[4] === FROM && R(g2, '이이나').r[4] === FROM + ' 2S사이즈로!' && R(g2, '이이가').file.includes('효돈'), '㉒8 [되돌리기] 한 번 → 4건 전부 옛 이름·옛 거래처로(파일 다시 만듦)', JSON.stringify([await patchN(v.pg), String(R(g2, '이이가').r[4]).slice(-16), R(g2, '이이가').file.slice(0, 20)]));
+                ok(v.errs.length === 0, '㉒ 오류 0', v.errs.join(' | ')); await v.ctx.close();
+            }
+
             // 창구가 안 집음(40초)
             let e2; try { e2 = await mkChat(true); } catch (_) { e2 = null; }
             if (e2) {

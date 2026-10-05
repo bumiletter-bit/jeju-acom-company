@@ -930,20 +930,23 @@
     function jejuText() { const m = jejuCount(); return m.size ? [...m].map(([k, n]) => `${k} ${n ? n + '건' : '없음'}`).join(' · ') : '없음'; }
     // 말로 바꾼 것 목록 — screen = 화면용(값 포함) · log = 정리 기록용(주소 글자는 넣지 않는다)
     function patchItems() {
-        const byKey = new Map(S().merged.map(e => [keyOf(e), e])), out = [];
+        const byKey = new Map(S().merged.map(e => [keyOf(e), e])), out = [], groups = new Map();
         st.patch.forEach((p, k) => {
             const e = byKey.get(k); if (!e) return; const who = whoOf(e), b = buyerName(e);
             const add = (kind, screen, log) => out.push({ key: k, kind, screen: `${kind}: ${screen}`, log });
             if (p.addr != null) add('주소 변경', who, b);   // 목록·정리 기록에는 이름만(주소 글자는 넣지 않는다 — 바뀐 주소는 결과 파일의 연보라 칸에서 본다)
             if (p.recv != null) add('받는 분 변경', `${who} → ${p.recv}`, `${b}: ${e.conv['수취인명'] || ''} → ${p.recv}`);
             if (p.qty != null) add('수량 변경', `${who} — ${qtyOf(e)} → ${p.qty}박스`, `${b}: ${qtyOf(e)} → ${p.qty}박스`);
-            if (p.opt != null) add('품목 이름 변경', `${who} — ${e.conv['옵션정보']} → ${p.opt}`, `${e.conv['옵션정보']} → ${p.opt}`);
+            if (p.optAll) { const g = groups.get(p.optAll) || []; g.push(k); groups.set(p.optAll, g); }
+            else if (p.opt != null) add('품목 이름 변경', `${who} — ${e.conv['옵션정보']} → ${p.opt}`, `${e.conv['옵션정보']} → ${p.opt}`);
             if (p.tail != null) add('품목 뒤 요청', `${who} — ${p.tail ? '「' + p.tail + '」' : '꼬리 뗌'}`, `${b}: ${p.tail || '꼬리 뗌'}`);
             if (p.sender && p.sender.name) add('보내는이 변경', `${who} — ${p.sender.name} 드림`, `${b}: ${p.sender.name} 드림`);
             if (p.memo != null) add('배송메세지 변경', `${who} — 「${p.memo || '기본 문구'}」`, b);
             if (p.excl === true) add('오늘 제외', who, b);
             if (p.excl === false) add('오늘 발송으로', who, b);
         });
+        // #535: 품목 통째로 바꾼 묶음은 한 줄로(되돌리기 = 그 묶음 전부)
+        groups.forEach((ks, gid) => { const g = (st.optAll && st.optAll.get(gid)) || { from: '', to: '' }; out.push({ key: 'all:' + gid, kind: '품목 통째로 변경', screen: `품목 통째로 변경 ${ks.length}건: ${g.from} → ${g.to}`, log: `${g.from} → ${g.to} (${ks.length}건)` }); });
         return out;
     }
     const patchLines = () => patchItems().map(x => x.screen);
@@ -1016,6 +1019,25 @@
         }
         return out.slice(0, 80).map((e, i) => ({ n: i + 1, key: keyOf(e) }));
     }
+    // #535: 품목(꼬리 뗀 이름)별 건수 — 「○○ 전부 △△로」(optall)에서 클코가 from 을 고를 때 본다. 택배사 양식으로 나가는 주문만(현금파일 행은 빼고).
+    const baseName = e => core().stripTail(optOf(e), inCatalog);
+    function itemCounts() {
+        const m = new Map(); S().merged.filter(goingOut).forEach(e => { const k = baseName(e), x = m.get(k) || { name: k, n: 0, q: 0 }; x.n++; x.q += qtyNow(e); m.set(k, x); });
+        return [...m.values()].sort((a, b) => b.n - a.n);
+    }
+    // #535 「품목 통째로 바꾸기」: from 품목으로 나가는 주문 전부를 to 로(꼬리는 그대로). 주문을 클코에게 다 보내지 않고 화면이 직접 찾는다. 현금파일 행은 손대지 않는다.
+    function optAllItem(a, names) {
+        const c = core(), from = String((a && a.from) || '').trim(), to = String((a && a.to) || '').trim(), head = '품목 통째로 바꾸기';
+        const bad = why => ({ ok: false, line: `${head}: ${from || '(이름 없음)'} → ${to || '(이름 없음)'}`, why });
+        if (!names.has(from) || !names.has(to)) return bad('품목별 금액(단가표)에 없는 이름이에요');
+        if (from === to) return bad('같은 품목이에요');
+        const hit = S().merged.filter(e => goingOut(e) && baseName(e) === from);
+        if (!hit.length) return bad('오늘 택배사 양식으로 나가는 주문 중에 그 품목이 없어요');
+        const boxes = hit.reduce((t, e) => t + qtyNow(e), 0), pf = partnerShort(from), pt = partnerShort(to);
+        const cashN = (st.cash && st.cash.ok ? st.cash.rows : []).filter(r => c.stripTail(String(r.opt || ''), inCatalog) === from).length;
+        const sets = hit.map(e => { const cur = optOf(e); return { key: keyOf(e), opt: to + cur.slice(baseName(e).length) }; });   // 꼬리(「 S사이즈로!」 등)는 그대로 붙여 둔다
+        return { ok: true, all: true, from, to, sets, line: `${head}: ${from} ${hit.length}건(${boxes}박스) → ${to}${pf !== pt ? ` · 거래처 ${pf || '미정'} → ${pt || '미정'}` : ''}${cashN ? ` · 현금파일에 같은 품목 ${cashN}행은 그대로예요` : ''}` };
+    }
     function chatSummary() {
         const s = S(), m = s.merged, going = m.filter(goingOut), c = core();
         const by = new Map(); going.forEach(e => { const k = partnerShort(optOf(e)) || '거래처 미정'; const x = by.get(k) || { n: 0, q: 0 }; x.n++; x.q += qtyNow(e); by.set(k, x); });
@@ -1023,7 +1045,7 @@
         // #526: 「미매칭」 = 옵션 글자가 「[미매칭]」으로 시작(단가표에 없는 이름) 또는 거래처 미정. 카드에서 거래처를 골랐어도 이름은 여전히 미매칭이다(실사용에서 0건으로 세어 AI가 못 찾았다고 답함)
         const unAll = going.filter(e => /^\[미매칭\]/.test(optOf(e)) || !partnerShort(optOf(e))), un = unAll.length, unPicked = unAll.filter(e => !!partnerShort(optOf(e))).length;
         return [`기준 발송일 ${s.shipDate}`, `주문 ${m.length}건 · 택배사 양식 ${going.length}건 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건 · 현금파일 ${st.cash && st.cash.ok ? st.cash.rows.length : 0}행`,
-            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, c ? '' : ''].filter(Boolean).join('\n').slice(0, 800);
+            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`].filter(Boolean).join('\n').slice(0, 4000);
     }
     async function chatSend() {
         const el = $('fo-chat-input'), msg = $('fo-chat-msg'), C = st.chat; const text = String(el.value || '').replace(/\r/g, '').trim();
@@ -1089,6 +1111,7 @@
         const names = new Set(); Object.values(st.byPartner || {}).forEach(a => (a || []).forEach(n => names.add(n)));
         const inMine = v => { const x = sq(v); return x.length >= 1 && mine.includes(x); };
         const items = (Array.isArray(data.actions) ? data.actions : []).slice(0, 80).map(a => {
+            if (a && a.op === 'optall') return optAllItem(a, names);
             const c = C.cand.find(x => x.n === Number(a && a.n)), e = c ? byKey.get(c.key) : null;
             if (!a || !e) return { ok: false, line: `${a && a.n != null ? a.n + '번' : '주문'}`, why: '어느 주문인지 찾지 못했어요' };
             const who = `${c.n}. ${whoOf(e)}`, bad = (line, why) => ({ ok: false, line: `${who} — ${line}`, why }), good = (line, set) => ({ ok: true, key: c.key, line: `${who} — ${line}`, set });
@@ -1163,8 +1186,10 @@
         const C = st.chat, P = C.pending; if (!P || st.busy) return;
         const had = st.phase === 'result' && st.files.length > 0, s = S(), byKey = new Map(s.merged.map(e => [keyOf(e), e])), indiv = [];
         P.items.filter(x => x.ok).forEach(x => {
+            if (x.all) { const gid = 'g' + Date.now() + Math.random().toString(36).slice(2, 6); st.optAll = st.optAll || new Map(); st.optAll.set(gid, { from: x.from, to: x.to }); x.sets.forEach(z => st.patch.set(z.key, Object.assign({}, st.patch.get(z.key) || {}, { opt: z.opt, optAll: gid }))); return; }
             if (x.set.indiv) { const e = byKey.get(x.key); if (e) indiv.push(`${md(s.shipDate)}\t${buyerTel(e)}\t입력o삭제x\t${CH_LABEL[e.ch] || '네이버'}`); return; }
-            st.patch.set(x.key, Object.assign({}, st.patch.get(x.key) || {}, x.set));
+            const np = Object.assign({}, st.patch.get(x.key) || {}, x.set); if (x.set.opt != null) delete np.optAll;   // 한 건만 따로 바꾸면 묶음에서 빠진다
+            st.patch.set(x.key, np);
         });
         C.log[P.at].state = '적용함'; C.pending = null;
         st.out = null; st.files = []; $('fo-result').hidden = true; clearMsg();
@@ -1181,7 +1206,9 @@
         if (b.dataset.chat === 'apply') { if (C.pending && C.pending.items.some(addrNeedsPick)) return; return chatApply(); }
         if (b.dataset.chat === 'cancel' && C.pending) { C.log[C.pending.at].state = '취소함'; C.pending = null; renderChat(); syncChat(); return; }
         if (b.dataset.unpatch && !st.busy) {
-            const had = st.phase === 'result' && st.files.length > 0; st.patch.delete(b.dataset.unpatch);
+            const had = st.phase === 'result' && st.files.length > 0, uk = b.dataset.unpatch;
+            if (uk.startsWith('all:')) { const gid = uk.slice(4); [...st.patch].forEach(([k, p]) => { if (p.optAll !== gid) return; const np = Object.assign({}, p); delete np.opt; delete np.optAll; if (Object.keys(np).length) st.patch.set(k, np); else st.patch.delete(k); }); if (st.optAll) st.optAll.delete(gid); }
+            else st.patch.delete(uk);
             st.out = null; st.files = []; $('fo-result').hidden = true;
             for (let i = 0; i < 1200 && st.ai.running; i++) await sleep(500);
             await run(judge);   // 제외를 되돌리면 엔진 판정값으로 돌아가야 하므로 판정을 다시 한다
@@ -1194,7 +1221,7 @@
         L.push(out.partners.map(p => `${p.short} ${p.rows.length}건(${p.total}박스)`).join(' · ') || '택배사 양식 0건');
         L.push(`제주도 배송: ${jejuText()}`);
         L.push(`현금파일 ${st.cash && st.cash.ok ? st.cash.rows.length : 0}행 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건`);
-        const sp = [], items = patchItems(), kinds = ['주소 변경', '받는 분 변경', '수량 변경', '품목 이름 변경', '품목 뒤 요청', '배송메세지 변경'];
+        const sp = [], items = patchItems(), kinds = ['주소 변경', '받는 분 변경', '수량 변경', '품목 통째로 변경', '품목 이름 변경', '품목 뒤 요청', '배송메세지 변경'];
         kinds.forEach(k => { const xs = items.filter(x => x.kind === k); if (xs.length) sp.push(`· ${k} ${xs.length}건: ${[...new Set(xs.map(x => x.log))].slice(0, 6).join(', ')}${xs.length > 6 ? ' 외' : ''}`); });
         const cardTail = m.filter(e => goingOut(e) && !(st.patch.get(keyOf(e)) || {}).tail && tailOf(e)); if (cardTail.length) sp.push(`· 품목 뒤 요청(손님 메모 · 카드에서 확인) ${cardTail.length}건: ${cardTail.slice(0, 6).map(e => `${buyerName(e)} ${tailOf(e)}`).join(', ')}`);
         const sm = senderMap().byKey; let rule = 0, ai = 0, hand = 0;
