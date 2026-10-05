@@ -578,7 +578,7 @@
                 ${replyImgHtml(o.id)}<label class="desk-sr" for="reply-${o.id}">${esc(sendLabel === '답 보내기' ? '답 적기' : '이어서 보낼 글')}</label>
                 <textarea class="desk-reply-in" id="reply-${o.id}" rows="1" maxlength="2000" placeholder="${esc(hint)}"></textarea>
                 <div class="desk-cbox-row">
-                    <button type="button" class="desk-cbtn" data-act="replyimg" data-id="${o.id}" aria-label="이미지 첨부" title="이미지 첨부 (붙여넣기도 돼요)">${ICON_PLUS}</button>
+                    <button type="button" class="desk-cbtn" data-act="replyimg" data-id="${o.id}" aria-label="이미지 첨부" title="이미지 첨부 (붙여넣기도 돼요)">${ICON_PLUS}</button><!--endslot-->
                     <button type="button" class="desk-cbtn primary" data-act="sendreply" data-id="${o.id}" aria-label="${esc(sendLabel)}" title="${esc(sendLabel)} (Enter)" disabled>${ICON_UP}</button>
                 </div>
             </div>`;
@@ -823,12 +823,14 @@
             const endHtml = !canHide ? '' : S.endAsk === t.id
                 ? `<div class="desk-end-ask" role="group" aria-label="채팅 종료 확인"><span>이 채팅을 종료할까요? 이전 채팅 이력에서 다시 볼 수 있어요.</span><button type="button" class="desk-btn sm primary" data-act="hidethread" data-id="${t.id}">종료</button><button type="button" class="desk-btn sm" data-act="endno" data-id="${t.id}">취소</button></div>`
                 : `<button type="button" class="desk-endbtn" data-act="endchat" data-id="${t.id}">채팅 종료</button>`;
+            // #541(대표 10/5): [채팅 종료]는 답 상자 안 「+」 옆에 담는다(상자가 틀 너비를 다 쓴다). 답 상자가 없는 대화(최종발주 기록 등)와 확인 중일 때만 상자 밖
+            const barHtml = o => { const f = followHtml(o); const asking = S.endAsk === t.id; if (!endHtml || asking || f.indexOf('<!--endslot-->') < 0) return f + endHtml; return f.replace('<!--endslot-->', endHtml); };
             const turns = t.items.map(o => {
                 const b = BADGE[o.status] || ['wait', o.status];
                 const last = o.id === t.last;
                 return `<div class="desk-turn${last ? ' last' : ''}" data-oid="${o.id}">
                     <div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, hm))}${o.has_image ? ' · 이미지 첨부' : ''}</div></div>
-                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultBody(o, true) + `<div class="desk-chatbar${endHtml && S.endAsk === t.id ? ' asking' : ''}">${followHtml(o)}${endHtml}</div>` : resultBody(o, true)}</div>
+                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultBody(o, true) + `<div class="desk-chatbar${endHtml && S.endAsk === t.id ? ' asking' : ''}">${barHtml(o)}</div>` : resultBody(o, true)}</div>
                 </div>`;
             }).join('');
             return `<article class="desk-thread-box${ov ? ' ov' : ''}" data-th="${t.id}">${head}${turns}</article>`;

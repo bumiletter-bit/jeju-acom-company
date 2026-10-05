@@ -122,7 +122,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         });
         let bx = await box(A.pg);
         ok('② 이어서 보내는 칸 = 둥근 상자 하나 안에 글 칸(위) + 아래 줄 왼쪽 「+」 · 오른쪽 화살표', !!bx && bx.radius >= 16 && bx.taAbove && bx.plusLeft && bx.sameRow && bx.plusIn && bx.sendIn, JSON.stringify(bx));
-        ok('② 두 버튼은 둥근 아이콘(44px 이상 · 글자 없음 · aria-label 「이미지 첨부」「이어서 보내기」) · 비었으면 보내기 꺼짐', !!bx && bx.size.every(n => n >= 44) && bx.round.every(v => v === '50%') && bx.text === '' && bx.wordBtns.length === 0 && bx.labels.join() === '이미지 첨부,이어서 보내기' && bx.disabled === true, JSON.stringify(bx && [bx.size, bx.labels, bx.disabled]));
+        ok('② 두 버튼은 둥근 아이콘(44px 이상 · 글자 없음 · aria-label 「이미지 첨부」「이어서 보내기」) · 비었으면 보내기 꺼짐', !!bx && bx.size.every(n => n >= 44) && bx.round.every(v => v === '50%') && bx.text === '' && bx.wordBtns.filter(w => w !== '채팅 종료').length === 0 && bx.labels.join() === '이미지 첨부,이어서 보내기' && bx.disabled === true, JSON.stringify(bx && [bx.size, bx.labels, bx.disabled]));
         await A.pg.fill('#reply-902', '더 짧게'); bx = await box(A.pg);
         ok('② 글을 적으면 보내기 켜짐', bx.disabled === false);
         await A.pg.fill('#reply-902', ''); bx = await box(A.pg);
@@ -148,8 +148,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 end: Object.fromEntries(bs.map(b => [b.dataset.th, b.querySelectorAll('[data-act="endchat"]').length])) }; });
         ok('③ 인접한 두 대화 틀 사이 간격 16px 이상 · 틀마다 머리 줄(시작 시각 + 첫 글 한 줄)', th.n >= 4 && th.gaps.every(g => g >= 16) && th.heads.every(h => h && /시작$/.test(h[0]) && h[1].length > 0), JSON.stringify({ gaps: th.gaps, head: th.heads[0] }));
         ok('③ 대화 오른쪽 위 × 없음 · [채팅 종료]는 끝난 대화에만(진행 중 890 · 되묻기 880 에는 없음 · 최종발주 기록 870 에는 있음)', th.x === 0 && th.end['900'] === 1 && th.end['890'] === 0 && th.end['880'] === 0 && th.end['870'] === 1, JSON.stringify(th.end));
-        const endPos = await B.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="900"]'), c = t.querySelector('.desk-cbox').getBoundingClientRect(), e = t.querySelector('[data-act="endchat"]').getBoundingClientRect(); return { right: e.left >= c.right - 1, h: Math.round(e.height), text: t.querySelector('[data-act="endchat"]').textContent.trim() }; });
-        ok('③ [채팅 종료] = 상자 밖 오른쪽 · 44px', endPos.right && endPos.h >= 44 && endPos.text === '채팅 종료', JSON.stringify(endPos));
+        const endPos = await B.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="900"]'), c = t.querySelector('.desk-cbox').getBoundingClientRect(), e = t.querySelector('[data-act="endchat"]').getBoundingClientRect(); const p = t.querySelector('.desk-cbox [data-act="replyimg"]').getBoundingClientRect(), s = t.querySelector('.desk-cbox [data-act="sendreply"]').getBoundingClientRect(), tb = t.getBoundingClientRect(), ecs = getComputedStyle(t.querySelector('[data-act="endchat"]')); return { right: !!t.querySelector('.desk-cbox [data-act="endchat"]') && e.left >= p.right && e.right <= s.left && Math.abs(e.top - p.top) < 3, full: c.width >= tb.width - 80, red: ecs.color + ' / ' + ecs.backgroundColor, h: Math.round(e.height), text: t.querySelector('[data-act="endchat"]').textContent.trim() }; });
+        ok('③ [채팅 종료] = 답 상자 안 「+」 바로 옆(#541) · 44px · 붉은 음영 · 상자가 틀 너비를 다 씀', endPos.right && endPos.full && endPos.h >= 44 && endPos.text === '채팅 종료' && endPos.red === 'rgb(180, 35, 24) / rgb(254, 228, 226)', JSON.stringify(endPos));
         await B.pg.click('#desk-list .desk-thread-box[data-th="900"] [data-act="endchat"]'); await B.pg.waitForTimeout(300);
         const ask = await B.pg.evaluate(() => { const a = document.querySelector('#desk-list .desk-thread-box[data-th="900"] .desk-end-ask'); return a ? a.innerText.replace(/\s+/g, ' ') : ''; });
         ok('③ 누르면 카드 안에서 한 번 확인(브라우저 확인창 0) · 아직 요청 안 나감', /이 채팅을 종료할까요/.test(ask) && B.st.dialogs === 0 && !B.st.writes.some(w => /hide-mine/.test(w.p)), ask);
@@ -237,8 +237,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         ok('⑥ 직원 = 채팅 · 이전 채팅 이력 보임 · 승인 결재함은 안 보임', tb.find(t => t.tab === 'mine').vis && tb.find(t => t.tab === 'all').vis && !tb.find(t => t.tab === 'approval').vis, JSON.stringify(tb.map(t => [t.text, t.vis])));
         const pm = await P.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="900"]'); const c = t.querySelector('.desk-cbox').getBoundingClientRect(), e = t.querySelector('[data-act="endchat"]').getBoundingClientRect(), hs = Array.from(t.querySelectorAll('.desk-cbtn, [data-act="endchat"]')).map(b => Math.round(b.getBoundingClientRect().height));
             const bs = Array.from(document.querySelectorAll('#desk-list .desk-thread-box')).filter(b => b.getClientRects().length); const gaps = []; for (let i = 1; i < bs.length; i++) gaps.push(Math.round(bs[i].getBoundingClientRect().top - bs[i - 1].getBoundingClientRect().bottom));
-            return { below: e.top >= c.bottom - 1, hs, gaps, over: document.documentElement.scrollWidth > window.innerWidth + 1, boxW: Math.round(c.width), inW: c.right <= window.innerWidth }; });
-        ok('⑥ 390px 채팅 탭: 답 상자가 화면 안 · [채팅 종료]는 아래 줄 · 누르는 것 44px 이상 · 대화 틀 간격 16px 이상 · 가로 넘침 0', pm.below && pm.hs.every(h => h >= 44) && pm.gaps.every(g => g >= 16) && !pm.over && pm.inW, JSON.stringify(pm));
+            return { below: e.top >= c.top && e.bottom <= c.bottom + 1 && e.right <= c.right, hs, gaps, over: document.documentElement.scrollWidth > window.innerWidth + 1, boxW: Math.round(c.width), inW: c.right <= window.innerWidth }; });
+        ok('⑥ 390px 채팅 탭: 답 상자가 화면 안 · [채팅 종료]는 상자 안 · 누르는 것 44px 이상 · 대화 틀 간격 16px 이상 · 가로 넘침 0', pm.below && pm.hs.every(h => h >= 44) && pm.gaps.every(g => g >= 16) && !pm.over && pm.inW, JSON.stringify(pm));
         await shot(P.pg, '538-3-chat-390');
         await P.pg.tap('#desk-tabs .desk-tab[data-tab="all"]'); await P.pg.waitForSelector('#desk-list .desk-h-item', { timeout: 15000 }); await P.pg.waitForTimeout(500);
         H = await hist(P.pg);
