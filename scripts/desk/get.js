@@ -84,7 +84,7 @@ async function claim(id) {
     await heartbeat('busy', id);
     await audit('desk_claim', id, { status: '처리중' });
     return {
-        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(filePath ? { file_path: filePath, file_name: o.file_name, file_hint: '첨부 파일입니다. 종류에 맞게 읽으세요 — xlsx·xls: node -e 로 xlsx 모듈(require("xlsx"))로 시트를 읽기 · csv·txt: Read · pdf: Read(쪽 지정). 손님 이름·번호가 들어 있을 수 있으니 답변에는 필요한 만큼만 쓰고, 처리 뒤 이 파일은 지웁니다.' } : {}), ...(foMemo ? { final_order_memo: foMemo } : {}),
+        ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(filePath ? { file_path: filePath, file_name: o.file_name, file_hint: '첨부 파일입니다. 종류에 맞게 읽으세요 — xlsx·xls: 저장소 루트에서 node -e 로 require("exceljs")(xlsx) 또는 require("xlsx-js-style")(xls 포함 · 없을 수 있음)로 시트를 읽기 · csv·txt: Read · pdf: Read(쪽 지정). 손님 이름·번호가 들어 있을 수 있으니 답변에는 필요한 만큼만 쓰고, 처리 뒤 이 파일은 지웁니다.' } : {}), ...(foMemo ? { final_order_memo: foMemo } : {}),
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
         recent_talk: prev,
         follow_of: followOf,

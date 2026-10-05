@@ -13310,7 +13310,7 @@ function deskAttachOf(body) {
     const ext = (name.match(/\.([A-Za-z0-9]{2,5})$/) || [])[1];
     if (/^data:image\//.test(data)) return { data, mime: mime.slice(0, 40), fileName: '' };   // 이미지에 이름이 붙어 와도 이미지로
     if (!/^data:[^;,]*;base64,/.test(data) || !ext || !DESK_FILE_EXT.includes(ext.toLowerCase())) throw { status: 400, message: '첨부할 수 있는 파일은 이미지 · 엑셀(xlsx·xls) · CSV · PDF · 텍스트(txt)입니다' };
-    return { data, mime, fileName: name };
+    return { data, mime: mime.slice(0, 40), fileName: name };   // image_mime 칸이 40자 — 엑셀 종류 이름(65자)을 그대로 넣으면 저장이 실패한다(실제 시험에서 발견)
 }
 // #473-b 되묻기에 이어서 답하기 — 질문 카드에서 바로 보낸다.
 //   새 지시를 만들되 원래 질문은 「질문종결」로 닫아 목록이 지저분해지지 않게 한다(창구는 get.js의 recent_talk 로 앞 대화를 함께 받는다).
