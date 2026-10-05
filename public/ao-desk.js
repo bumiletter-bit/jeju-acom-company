@@ -1056,7 +1056,7 @@
             const hb = e.target.closest('.desk-h-body');
             if (hb) { const it = hb.closest('.desk-h-item'); if (it) { S.hist.open.delete(Number(it.dataset.th)); renderList(); const row = document.querySelector('#desk-list .desk-h-item[data-th="' + it.dataset.th + '"] .desk-h-row'); if (row) row.focus({ preventScroll: true }); } return; }
             const tb = chatMine() ? e.target.closest('.desk-thread-box') : null;
-            if (tb && (e.target.closest('.desk-th-head') || !e.target.closest('.desk-a, .desk-q, .desk-media, .desk-cbox, .desk-end-ask, .desk-note, .desk-kv, .desk-steps'))) { focusThread(tb); return; }
+            if (tb && !e.target.closest('.desk-cbox, .desk-end-ask, .desk-media')) { focusThread(tb); return; }   // #546(대표 10/5): 대화 어디를 눌러도(답변 글 포함) 맨 아래 답 칸으로 — 버튼·링크·그림·글자 고르는 중·답 상자 안은 제외
             if (!tr) return;
             b = tr.querySelector('.desk-more[data-act="detail"]');
             if (!b) return;
