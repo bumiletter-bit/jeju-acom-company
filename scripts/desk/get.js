@@ -26,8 +26,9 @@ async function claim(id) {
     // 요청자 권한: 화면에 로그인한 계정 기준(지시 글에 적힌 자기소개는 근거가 아니다)
     let fromRole = 'unknown';
     if (o.created_by_id) {
-        const u = (await pool.query(`SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL`, [o.created_by_id])).rows[0];
-        if (u) fromRole = u.role === 'admin' ? 'admin' : 'staff';
+        const u = (await pool.query(`SELECT role, position FROM users WHERE id = $1 AND deleted_at IS NULL`, [o.created_by_id])).rows[0];
+        // #561-b(대표 10/6 「승인 거치게 하도록」): 승인 없이 바로 실행하는 것은 대표 계정뿐 — 관리자 계정이라도 대표가 아니면(조가영 과장) 직원과 같이 승인 대기
+        if (u) fromRole = (u.role === 'admin' && u.position === '대표') ? 'admin' : 'staff';
     }
     let imagePath = null, filePath = null;
     if (o.image_data) {

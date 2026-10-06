@@ -100,7 +100,15 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/6 오후): 회사 v5.9.446 / app.js v=401 · ao-desk.js v=42 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #562부터(#560 자사몰 지식 · #561 조가영 권한 예약).** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/6 저녁): 회사 v5.9.447 / app.js v=402 · ao-desk.js v=43 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #566부터(#565 = 자사몰 채팅 봇 · 진행 중).** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 🧹 #563 메뉴 스크롤 막대·CS처리방 제거·업그레이드 표 제거 · 조회 기간 20일 · #564 대표 할 일 표시 (대표 10/6 저녁 · v5.9.447 / app.js v=402 · ao-desk.js v=43 · theme.css v=15 · invoice-v2.js v=26 · 워커1 화면 + 총괄)
+
+- **#563(워커1)**: ①왼쪽 메뉴(.sidebar-nav) 스크롤 막대 = 인디고(thumb --primary · track --primary-light · 굵기 9px 그대로 · 메뉴만). 🔵 아이폰 사파리는 막대 색이 안 바뀐다(시스템 막대) ②「CS처리방」 메뉴 제거 — #page-cs-room 은 data-legacy="563" hidden 으로 남김 · switchPage('cs-room') → 일정표 · 서버 /api/cs-templates·cs-categories 와 자료는 그대로 ③자사몰 게임 설정의 「업그레이드 이용권 — 주문 중량 → 상향 발송 중량」 표 제거(upgrade_map 은 어디에도 안 쓰이던 값 — 저장할 때 받은 값 그대로 다시 보냄 · 룰렛 경품 「업그레이드 이용권」 3.5% 는 그대로). ✅ verify-563-nav 61 · verify-563-game 17.
+- **조회 기간 기본 20일**(대표 「15일이면 충분」 → 총괄 권고 20일로 확정): invoice-v2.html 4칸(네이버·자사몰 50 → 20 · 쿠팡 31 → 20 · 중간발주 50 → 20) · invoice-v2.js 폴백 · scripts/desk/qty-image.js · run-461-invoice-qty.js · server.js 발주 수량 러너 기본값. 최종발주는 송장변환 화면을 끼워 쓰므로 같이 바뀜. 실측(10/6 · 3채널): 15일 13~15초 · 50일 30초 · 건수 같음(네이버 1,196). 근거 = 최근 21일 네이버 발송 4,328건 중 주문 후 최장 12.9일. 🔴 **사전예약 상품을 열거나 긴 연휴 전후에는 화면에서 숫자를 올릴 것 — 기간 밖 주문은 경고 없이 빠진다.**
+- **#564 대표 할 일**: 에이전트 오피스 「지금 챙길 일」 칸(서버 GET /desk/board 의 todo = 알림 실패·룰렛 미지급·단가표 미등록·오늘·내일 발송/이벤트 일정)에 대표 계정에게만 대표 확인·결정 건을 덧붙인다(key 'owner'). 정본 = DB agent_office_config `owner_todo` · 도구 `node scripts/owner-todo.js list | add "글" --when .. --where .. | done <번호> | edit <번호>`. 🔴 **대표는 화면에서 내리지 않는다 — 대표가 답하거나 총괄이 처리하면 바로 done, 대표 답이 필요한 일이 생기면 바로 add**(메모리 jeju-owner-todo). ✅ verify-564-todo 10/10.
+- **#561-b(대표 10/6)**: scripts/desk/get.js from_role = 대표 계정만 admin(조가영 과장 = staff · 대기 프로그램 재시작함). 🔴 총괄 오보고 정정 필요: 창구의 쿠폰·가격·발송·외부 설정은 **9/30 「직원이 모두 할 수 있도록」 뒤로 전 직원이 승인 없이 바로 실행**(★에이전트오피스/CLAUDE.md 1절) — 총괄이 「관리자만 바로 실행」이라고 잘못 보고했고 대표가 「승인 거치게」라고 답함 → 규칙은 안 바꾸고 대표에게 다시 여쭘(owner_todo 에 올림: 조가영만 / 전 직원 / 그대로).
+- **#565(진행 중 · 워커2 · server.js)**: 자사몰 채팅창 봇을 자사몰 안내로(대표 GO).
 
 ### 🎁 #562 선물용 가격 인하(네이버 → 자사몰·봇 문구) (대표 10/6 「선물페이지 가격으로 모두 맞췄어 — 자사몰 가격 변경 · 봇 문구도」 · 배포 0 · 워커2 조사·시공 + 총괄 문구)
 
