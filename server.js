@@ -13506,6 +13506,16 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                         count: 1, where: '일정 · ' + s.category,
                     });
                 }
+                // #564(대표 GO 10/6): 대표가 챙길 일 — 대표 계정에게만(총괄이 scripts/owner-todo.js 로 올리고 내린다 · 화면에서 내리는 버튼 없음)
+                if (isOwnerUser(req.user)) {
+                    try {
+                        const ot = await naverCfgGet('owner_todo');
+                        for (const it of ((ot && Array.isArray(ot.items)) ? ot.items : [])) {
+                            if (!it || it.done || !String(it.text || '').trim()) continue;
+                            out.push({ key: 'owner', label: String(it.text).slice(0, 140), when: String(it.when || '').slice(0, 12), count: 1, where: String(it.where || '대표 확인').slice(0, 70) });
+                        }
+                    } catch (e) { console.error('desk/board owner_todo:', e.message); }
+                }
                 return out;
             }),
             // 매출(네이버 정산 회차 결제금액)은 관리자에게만
@@ -14790,7 +14800,7 @@ setInterval(async () => {
         const req = await naverCfgGet('invoice_qty_request');
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = 'invoice_qty_request'`);   // 선제거 — 반복 실행 방지
-        const days = Math.min(Math.max(parseInt(req.days) || 50, 1), 180);
+        const days = Math.min(Math.max(parseInt(req.days) || 20, 1), 180);
         // #502(대표 10/3): size_rows=true 면 손님 배송메모의 사이즈 요청을 프로그램 송장변환과 같은 판정(app.js detectSize·addSizeSuffix 를 실행 시점에 떼어 씀)으로
         //   옵션 끝에 「S사이즈로!」 꼬리를 붙여 따로 묶는다(메모 글 자체는 결과에 넣지 않는다). 종전 호출(size_rows 없음)은 그대로.
         let sizeFn = null, out_err;

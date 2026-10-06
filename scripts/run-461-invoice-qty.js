@@ -17,7 +17,7 @@ const partner = fam => fam === '황금향' || fam === '청귤' ? '대성(시온)
     const indivLines = lines.filter(l => l.d === base && /입력\s*o\s*삭제\s*x/i.test(l.note)); const later = lines.filter(l => l.d !== base);
     console.log(`기준 발송일 ${base} · 정리 줄 ${lines.length}줄 · 개별발송(입력삭제) ${indivLines.length}줄` + (later.length ? ` · ⚠️ 기준일이 아닌 줄 ${later.length}줄(${[...new Set(later.map(l => l.d))].join(',')}) — 이 집계에서는 제외하지 않음` : ''));
     await pool.query(`DELETE FROM agent_office_config WHERE key='invoice_qty_result'`);
-    await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('invoice_qty_request', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`, [JSON.stringify({ days: 50, indiv_tels: indivLines.map(l => l.tel) })]);
+    await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('invoice_qty_request', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`, [JSON.stringify({ days: 20, indiv_tels: indivLines.map(l => l.tel) })]);
     let res = null; const t0 = Date.now(); while (Date.now() - t0 < 420000) { await new Promise(r => setTimeout(r, 6000)); const q = await pool.query(`SELECT value FROM agent_office_config WHERE key='invoice_qty_result'`); if (q.rows.length) { res = q.rows[0].value; await pool.query(`DELETE FROM agent_office_config WHERE key='invoice_qty_result'`); break; } }
     await pool.end(); if (!res) throw new Error('러너 타임아웃 — 배포 직후면 몇 분 뒤 다시');
     if (res.error) throw new Error('러너 오류: ' + res.error);

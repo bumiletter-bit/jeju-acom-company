@@ -298,6 +298,7 @@ function switchPage(pageName) {
         pageName = 'schedule';
     }
     if (pageName === 'data' && currentUser?.position !== '대표') pageName = 'schedule';   // #561: 데이터관리는 대표만
+    if (pageName === 'cs-room') pageName = 'schedule';   // #563(대표 10/6): CS처리방 메뉴 제거 — 저장된 마지막 화면 등으로 들어와도 일정표로(서버 라우트·자료·숨긴 마크업은 그대로)
     // 세무사: 지출결의서 외엔 모두 expense로
     if (currentUser?.role === 'accountant' && pageName !== 'expense') {
         pageName = 'expense';
@@ -347,7 +348,6 @@ function switchPage(pageName) {
     if (pageName === 'organizer') window.ooInitOrganizer?.();   // 지시 #395: 주문 정리기 — 첫 진입 시 공용 설정 로드
     if (pageName === 'planner') renderPlannerPage().catch(console.error);
     if (pageName === 'inventory') renderBoxInventory().catch(console.error);
-    if (pageName === 'cs-room') renderCsTemplates().catch(console.error);
     if (pageName === 'inquiry') {
         renderInquiryPage().catch(console.error);
         if (inquiryActiveTab === 'products') renderBotProducts().catch(console.error);
@@ -13971,12 +13971,7 @@ async function renderMallGameConfig() {
             <td><input type="number" id="mg-coupon-${i}" value="${Number(p.coupon_rate) || 0}" min="0" max="100" step="1" style="width:64px; ${inp}"> <span class="text-muted">%</span></td>
             <td class="text-muted" style="font-size:12px;">${escapeHtml(p.key || '')}</td>
         </tr>`).join('');
-    const upRows = (c.upgrade_map || []).map((m, i) => `
-        <tr>
-            <td><input type="text" id="mg-up-from-${i}" value="${escapeHtml(m.from || '')}" style="width:180px; ${inp}"></td>
-            <td style="text-align:center;">→</td>
-            <td><input type="text" id="mg-up-to-${i}" value="${escapeHtml(m.to || '')}" style="width:180px; ${inp}"></td>
-        </tr>`).join('');
+    // #563(대표 10/6): 「업그레이드 이용권 — 주문 중량 → 상향 발송 중량」 표 제거 — 저장만 되고 어디서도 읽지 않던 값. upgrade_map 은 받아 둔 값(_mgConfigBase)을 그대로 다시 보낸다
     el.innerHTML = `
         <p class="text-muted" style="margin:0 0 8px;">자사몰 API 상태: <b>${d.mall_api === 'on' ? '🟢 가동' : '⚪ 준비 중 (MALL_API=off)'}</b> — 꺼져 있는 동안은 설정만 미리 준비됩니다. 아래 값은 <b>전부 화면에서 수정</b>되며 배포가 필요 없습니다.</p>
         <h3 style="font-size:14px; margin:12px 0 6px;">🎰 룰렛 확률 <span class="text-muted" style="font-weight:400; font-size:12px;">— 꽝 없음 · 합계가 100.0%가 아니면 저장되지 않습니다</span></h3>
@@ -13995,10 +13990,8 @@ async function renderMallGameConfig() {
             <label>쿠폰 유효기간 <input type="number" id="mg-coupon-days" value="${Number(c.coupon_valid_days) || 30}" min="1" step="1" style="width:70px; ${inp}"> 일</label>
             <label>실물 보상 월 한도 <input type="number" id="mg-phys-limit" value="${Number(c.physical_monthly_limit) || 30}" min="0" step="1" style="width:70px; ${inp}"></label>
         </div>
-        <h3 style="font-size:14px; margin:14px 0 6px;">🎁 업그레이드 이용권 <span class="text-muted" style="font-weight:400; font-size:12px;">— 주문 중량 → 상향 발송 중량</span></h3>
-        <table class="data-table" style="max-width:520px;"><tbody>${upRows}</tbody></table>
         <div style="display:flex; gap:10px; margin-top:14px; align-items:center;">
-            <button class="btn-primary btn-sm" onclick="saveMallGameConfig(${(c.probabilities || []).length}, ${(c.upgrade_map || []).length})">저장</button>
+            <button class="btn-primary btn-sm" onclick="saveMallGameConfig(${(c.probabilities || []).length})">저장</button>
             <button class="btn-sm btn-outline" onclick="resetMallGameConfig()">대표 확정값으로 복원</button>
         </div>
         <p class="text-muted" style="font-size:12px; margin-top:6px;">저장은 수정 이력(audit)에 남습니다 — 누가·언제·무엇을 바꿨는지 기록됩니다.</p>`;
@@ -14020,7 +14013,7 @@ window.mgSumPercent = function(n) {
         : `<span style="color:var(--danger,#F04438);">합계 ${(sum10 / 10).toFixed(1)}% — 100.0%가 되어야 저장됩니다 (${sum10 > 1000 ? '초과' : '미달'} ${Math.abs(sum10 - 1000) / 10}%)</span>`;
     return sum10;
 };
-window.saveMallGameConfig = async function(n, upN) {
+window.saveMallGameConfig = async function(n) {
     try {
         const base = window._mgConfigBase || {};
         if (window.mgSumPercent(n) !== 1000) { alert('확률 합계가 100.0%가 아닙니다 — 값을 조정한 뒤 저장해주세요.'); return; }
@@ -14033,13 +14026,8 @@ window.saveMallGameConfig = async function(n, upN) {
                 points: num('mg-points-' + i, 0), percent: num('mg-percent-' + i, 0),
                 ...(cr > 0 ? { coupon_rate: cr } : {}) });
         }
-        const upgrade_map = [];
-        for (let i = 0; i < (upN || 0); i++) {
-            const f = (document.getElementById('mg-up-from-' + i) || {}).value || '';
-            const t = (document.getElementById('mg-up-to-' + i) || {}).value || '';
-            if (f.trim() && t.trim()) upgrade_map.push({ from: f.trim(), to: t.trim() });
-        }
-        const config = { ...base, probabilities, upgrade_map,
+        // #563: upgrade_map 은 화면에서 읽지 않는다 — base(받아 둔 설정)에 든 값이 ...base 로 그대로 다시 나간다(안 보내면 서버가 기본값으로 되돌린다)
+        const config = { ...base, probabilities,
             tree_goal_water: num('mg-tree-goal', 100),
             water_per_krw: num('mg-water-krw', 10000),
             water_per_unit: num('mg-water-unit', 1),

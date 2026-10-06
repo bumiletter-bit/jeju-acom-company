@@ -166,6 +166,11 @@ input:focus, textarea:focus, select:focus {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 9px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-light); }
 ::-webkit-scrollbar-track { background: transparent; }
+/* #563(대표 10/6): 왼쪽 메뉴의 스크롤 막대만 인디고 — 바탕과 같은 회색이라 안 보였다. 굵기(9px)는 그대로라 메뉴 글자가 밀리지 않는다 */
+.sidebar-nav::-webkit-scrollbar-thumb { background: var(--primary); }
+.sidebar-nav::-webkit-scrollbar-thumb:hover { background: var(--primary-dark); }
+.sidebar-nav::-webkit-scrollbar-track { background: var(--primary-light); border-radius: 9px; }
+@supports not selector(::-webkit-scrollbar) { .sidebar-nav { scrollbar-color: var(--primary) var(--primary-light); } }
 
 /* ================= 조직도(AGENT OFFICE) 새 톤 — 픽셀 게임 캐릭터는 유지 ================= */
 .ao-office {

@@ -1,6 +1,6 @@
 // #497(대표 10/1 「에이전트오피스도 중간발주 이 라임으로 나오도록 이미지 해줘」) — 창구용 중간발주 PNG
 //   회사프로그램 [중간발주 → 선택분 이미지 저장]과 같은 모양의 표를 거래처별 PNG로 만든다.
-//   사용: node scripts/desk/qty-image.js [--days 50] [--out <폴더>] [--no-run <결과json>]
+//   사용: node scripts/desk/qty-image.js [--days 20] [--out <폴더>] [--no-run <결과json>]
 //     · 러너 invoice_qty_request(#461 · 읽기 전용 · 실서버가 60초 주기로 집음 · 최대 420초 대기) → 결과 groups 집계
 //     · --no-run <json> = 저장된 러너 결과로 렌더만(검증용 · DB 쓰기 0)
 //   매칭·색 = 회사프로그램 실코드 그대로: public/app.js 「품목명 카탈로그 ~ addSizeSuffix」·「qtyCategory」 구간을 실행 시점에 떼어 실행(복사 금지)
@@ -16,7 +16,7 @@ const { chromium } = require(path.join(ROOT, 'node_modules', 'playwright'));
 
 const argv = process.argv.slice(2);
 const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] != null ? argv[i + 1] : d; };
-const DAYS = Math.max(1, Math.min(180, parseInt(arg('--days', '50'), 10) || 50));
+const DAYS = Math.max(1, Math.min(180, parseInt(arg('--days', '20'), 10) || 20));
 const OUT = path.resolve(arg('--out', path.join(ROOT, '★에이전트오피스', '받은파일')));
 const NO_RUN = arg('--no-run', null);
 const CAT_BG = { yellow: '#FFFF00', orange: '#F4B183', blue: '#BDD7EE', green: '#C6E0B4', pink: '#F4CCCC', none: '#fff' };   // styles.css .qty-cat-* 그대로(#502 pink 추가)

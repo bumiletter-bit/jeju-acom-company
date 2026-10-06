@@ -421,7 +421,7 @@
 
     // ── 송장 변환 탭 ─────────────────────────────────────────────────────────────
     const C = makeCtx({ ln: 'ln-all', save: 'save-all', res: 'res-all', review: 'review', preview: 'preview', stats: 'stats', ship: 'ship-date', shipNote: 'ship-note', filter: 'review-filter' }, true);
-    const days = ch => Math.min(Math.max(parseInt($('days-' + ch).value) || 50, 1), 180);
+    const days = ch => Math.min(Math.max(parseInt($('days-' + ch).value) || 20, 1), 180);
     const setMsg = (ch, html) => { $('msg-' + ch).innerHTML = html; };
     const markArea = (ch, label) => { $('area-' + ch).classList.add('has-file'); $('fname-' + ch).textContent = label; };
     async function refreshC(resetCh) { if (resetCh) C.merged = C.merged.filter(e => e.ch !== resetCh); rebuild(C); await parseMemos(C); readLines(C); applyLines(C); C.reviewFilterKeys = null; render(C); renderResults(C); $('btn-download').disabled = !C.merged.length; }
@@ -597,7 +597,7 @@
     }
     async function runQty() {
         const btn = $('ivt-qty-start'); btn.disabled = true;
-        const d = Math.min(Math.max(parseInt($('ivt-qty-days').value) || 50, 1), 180);
+        const d = Math.min(Math.max(parseInt($('ivt-qty-days').value) || 20, 1), 180);
         const chState = { nv: '⏳ 조회 중', cp: '⏳ 조회 중', cf: '⏳ 조회 중' };   // 구버전과 같은 채널별 진행 표시
         const stop = progressTicker($('invoice-qty-msg'), d * 1.3 + 10, `3채널 배송준비 조회 중... (최근 ${d}일)`, () => `🛰️ 네이버: ${chState.nv} · 🛒 쿠팡: ${chState.cp} · 🏠 자사몰: ${chState.cf}`);
         const track = (p, key) => p.then(v => { chState[key] = (v && v.ok) ? `✅ ${v.count || 0}건` : '⚠️ 실패'; return v; }, e => { chState[key] = '⚠️ 실패'; throw e; });
