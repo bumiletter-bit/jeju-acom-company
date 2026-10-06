@@ -139,7 +139,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         // 되묻기 답 칸도 같은 모양
         const qb = await A.pg.evaluate(() => { const b = document.querySelector('#desk-list [data-oid="880"] .desk-cbox'); return b ? { labels: Array.from(b.querySelectorAll('button')).map(x => x.getAttribute('aria-label')), dis: b.querySelector('[data-act="sendreply"]').disabled } : null; });
         ok('② 되묻기 답 칸도 같은 상자(「이미지 첨부」「답 보내기」 · 비었으면 꺼짐)', !!qb && qb.labels.join() === '이미지·파일 첨부,답 보내기' && qb.dis === true, JSON.stringify(qb));
-        ok('② 맨 위 새 지시 입력칸은 그대로(#desk-input · #desk-attach · #desk-send)', await A.pg.evaluate(() => !!document.querySelector('#desk-ask #desk-input') && !!document.getElementById('desk-attach') && !!document.getElementById('desk-send') && !document.querySelector('#desk-ask .desk-cbox')));
+        ok('② #550 맨 위 입력칸도 답 상자와 같은 모양(.desk-cbox) · id 그대로(#desk-input · #desk-attach · #desk-send)', await A.pg.evaluate(() => !!document.querySelector('#desk-ask .desk-cbox #desk-input') && !!document.getElementById('desk-attach') && !!document.getElementById('desk-send')));
         await shot(A.pg, '538-1-chat-1440');
 
         // ══ ③ 대화 경계 · 채팅 종료 ══════════════════════════════════════════════════════

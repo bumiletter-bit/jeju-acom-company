@@ -515,20 +515,23 @@ async function ui() {
         ok('(enter) 빈 입력칸에서 Enter = 보내지 않음', M.st.posts.length === 1 && (await M.pg.inputValue('#desk-input')) === '');
 
         // 자주 쓰는 일 3종
-        const q = await M.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'); const ids = ['desk-qty-now', 'desk-settle-now', 'desk-talk-now']; const inp = document.getElementById('desk-input').getBoundingClientRect(); return { group: !!g, inGroup: ids.map(i => !!(g && g.querySelector('#' + i))), vis: ids.map(i => { const b = document.getElementById(i); return !!b && b.getClientRects().length > 0; }), text: ids.map(i => (document.getElementById(i) || {}).textContent), h: ids.map(i => Math.round(document.getElementById(i).getBoundingClientRect().height)), below: g ? g.getBoundingClientRect().top >= inp.bottom - 1 : false, oneRow: new Set(ids.map(i => Math.round(document.getElementById(i).getBoundingClientRect().top))).size === 1, label: g ? g.getAttribute('aria-label') : '' }; });
+        const q = await M.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'); const ids = ['desk-qty-now', 'desk-final-now', 'desk-settle-now']; const inp = document.getElementById('desk-input').getBoundingClientRect();   /* #550 자주 쓰는 일 = 중간발주·최종발주·정산 이미지(입력 상자 안 아래 줄) */ return { group: !!g, inGroup: ids.map(i => !!(g && g.querySelector('#' + i))), vis: ids.map(i => { const b = document.getElementById(i); return !!b && b.getClientRects().length > 0; }), text: ids.map(i => (document.getElementById(i) || {}).textContent), h: ids.map(i => Math.round(document.getElementById(i).getBoundingClientRect().height)), below: g ? g.getBoundingClientRect().top >= inp.bottom - 1 : false, oneRow: new Set(ids.map(i => Math.round(document.getElementById(i).getBoundingClientRect().top))).size === 1, label: g ? g.getAttribute('aria-label') : '' }; });
         ok('(quick) 입력칸 아래 「자주 쓰는 일」 묶음(aria-label)에 버튼 3종', q.group && q.below && q.inGroup.every(Boolean) && q.vis.every(Boolean) && q.label === '자주 쓰는 일', q.text.join(' / ') + ' · 높이 ' + q.h.join('/'));
-        ok('(quick) 세 번째 버튼 이름 = 「톡톡 답변 추천」', q.text[2] === '톡톡 답변 추천', q.text.join(' / '));
+        ok('(quick) #550 버튼 = 「중간발주」「최종발주」「정산 이미지」 · 「톡톡 답변 추천」은 없음', q.text.join('|') === '중간발주|최종발주|정산 이미지' && await M.pg.evaluate(() => !document.getElementById('desk-talk-now')), q.text.join(' / '));
         ok('(quick) #501 버튼 3개가 한 줄', q.oneRow);
         const meta = await M.pg.evaluate(() => { const b = document.getElementById('desk-send'), c = document.getElementById('desk-count'); return { title: b.getAttribute('title') || '', label: b.getAttribute('aria-label'), hint: document.querySelectorAll('.desk-keyhint, .desk-ask-meta').length, cntHidden: c.hidden, cnt: c.textContent }; });
         ok('(enter) #501 입력 안내 글은 없애고 보내기 버튼 설명(title)에 「Enter · Shift+Enter」 · 글자 수는 평소 숨김', /Enter/.test(meta.title) && /Shift\+Enter/.test(meta.title) && meta.label === '지시 보내기' && meta.hint === 0 && meta.cntHidden === true, JSON.stringify(meta));
         const p0 = M.st.posts.length;
-        await M.pg.click('#desk-talk-now');
+        await M.pg.evaluate(() => { window.__foOpen = 0; window.AkmFinalOrder = { open() { window.__foOpen++; } }; });   // #550 톡톡 답변 추천 대신 최종발주 버튼(화면은 열지 않고 불렸는지만)
+        await M.pg.click('#desk-final-now');
         const tk = await M.pg.evaluate(() => ({ v: document.getElementById('desk-input').value, focus: document.activeElement === document.getElementById('desk-input'), count: document.getElementById('desk-count').textContent }));
         await sleep(400);
-        ok('(quick) 「톡톡 답변 추천」 = 입력칸에 글 채우고 포커스 · 보내지 않음 · 글자 수 갱신', tk.v === '처리 안 된 톡톡 건 답변 예시문구 만들어줘' && tk.focus && M.st.posts.length === p0 && tk.count.replace(/\s/g, '') === tk.v.length + '/2000', JSON.stringify(tk));
+        ok('(quick) #550 「최종발주」 = 최종발주 화면 열기 · 지시는 보내지 않음 · 입력칸 그대로(빈칸)', (await M.pg.evaluate(() => window.__foOpen)) === 1 && tk.v === '' && M.st.posts.length === p0, JSON.stringify(tk));
+        const KEEP = '어제 발송분 정산 올려줘';   // #550: 예전엔 「톡톡 답변 추천」이 채운 글로 봤다 → 직접 적은 글로
+        await M.pg.fill('#desk-input', KEEP);
         const [fc1] = await Promise.all([M.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), M.pg.click('#desk-settle-now')]);
         const sv1 = await M.pg.inputValue('#desk-input');
-        ok('(quick) 「정산 이미지 올리기」 — 입력칸에 글이 있으면 그대로 두고 파일 고르기 열림', !!fc1 && sv1 === tk.v, '입력칸 ' + JSON.stringify(sv1));
+        ok('(quick) 「정산 이미지 올리기」 — 입력칸에 글이 있으면 그대로 두고 파일 고르기 열림', !!fc1 && sv1 === KEEP, '입력칸 ' + JSON.stringify(sv1));
         await M.pg.fill('#desk-input', '');
         const [fc2] = await Promise.all([M.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), M.pg.click('#desk-settle-now')]);
         const sv2 = await M.pg.evaluate(() => ({ v: document.getElementById('desk-input').value, count: document.getElementById('desk-count').textContent }));

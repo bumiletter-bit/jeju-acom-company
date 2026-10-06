@@ -83,7 +83,7 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
             const R = el => { const r = el.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) }; };
             const card = document.querySelector('.desk-top.desk-top1'), comp = document.querySelector('.desk-compose'), inp = $('desk-input'), form = $('desk-ask');
             const cs = getComputedStyle(comp), ccs = getComputedStyle(card), ics = getComputedStyle(inp);
-            const chips = ['desk-qty-now', 'desk-settle-now', 'desk-talk-now'].map(i => $(i));
+            const chips = ['desk-qty-now', 'desk-final-now', 'desk-settle-now'].map(i => $(i));   // #550 자주 쓰는 일 = 3개(톡톡 답변 추천은 뺌)
             const quick = document.querySelector('.desk-quick2'), hero = document.querySelector('.desk-top1 .desk-hero');
             const lab = form.querySelector('label[for="desk-input"]');
             const spark = document.querySelector('.desk-spark');
@@ -102,10 +102,11 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
                 state: { text: $('desk-state-text').textContent, s: $('desk-state').dataset.s, box: R($('desk-state')) }, say: { text: $('desk-say').textContent, box: R($('desk-say')), color: getComputedStyle($('desk-say')).color, vis: vis($('desk-say')) },
                 wake: { vis: vis($('desk-wake-btn')), hidden: $('desk-wake-btn').hidden, disabled: $('desk-wake-btn').disabled, text: $('desk-wake-btn').textContent.trim(), note: $('desk-wake-note').textContent, box: vis($('desk-wake-btn')) ? R($('desk-wake-btn')) : null },
                 onText: /창구 켜짐/.test(card.innerText), img: Object.assign(R($('desk-char')), { src: $('desk-char').getAttribute('src'), nat: $('desk-char').naturalWidth }), hero: R(hero), clock: R($('desk-clock')),
+                talkGone: !$('desk-talk-now'), sameAsReply: comp.classList.contains('desk-cbox'), btnCls: [$('desk-attach').className, $('desk-send').className], btnRound: [getComputedStyle($('desk-attach')).borderTopLeftRadius, getComputedStyle($('desk-send')).borderTopLeftRadius], svgs: [$('desk-attach').querySelectorAll('svg').length, $('desk-send').querySelectorAll('svg').length],
                 spark: spark ? Object.assign(R(spark), { hidden: spark.getAttribute('aria-hidden'), color: getComputedStyle(spark).color }) : null,
                 thumbs: Array.from(document.querySelectorAll('#desk-thumbs .desk-thumb')).map(R), thumbsHidden: $('desk-thumbs').hidden, drag: form.classList.contains('drag'),
                 order: Array.from(document.querySelectorAll('#ao-desk-root .desk-main > section')).map(x => x.id || x.className.split(' ')[0]),
-                ids: ['desk-input', 'desk-send', 'desk-attach', 'desk-file', 'desk-thumbs', 'desk-count', 'desk-qty-now', 'desk-settle-now', 'desk-talk-now', 'desk-wake', 'desk-wake-btn', 'desk-state', 'desk-say', 'desk-date', 'desk-clock', 'desk-char', 'desk-reply-file'].filter(i => !$(i)),
+                ids: ['desk-input', 'desk-send', 'desk-attach', 'desk-file', 'desk-thumbs', 'desk-count', 'desk-qty-now', 'desk-final-now', 'desk-settle-now', 'desk-wake', 'desk-wake-btn', 'desk-state', 'desk-say', 'desk-date', 'desk-clock', 'desk-char', 'desk-reply-file'].filter(i => !$(i)),
                 rootOverflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2, docOverflow: document.documentElement.scrollWidth > window.innerWidth + 2, focusInInput: document.activeElement === inp,
             };
         });
@@ -123,17 +124,17 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         ok('칸 순서 그대로(desk-top → desk-listbox → desk-inbox → desk-board)', JSON.stringify(t.order) === '["desk-top","desk-listbox","desk-inbox","desk-board"]', JSON.stringify(t.order));
         const innerW = t.card.w - t.cardPadL - t.cardPadR;
         ok('입력 상자가 카드 너비를 거의 다 씀(안쪽 너비의 98% 이상)', t.comp.w >= innerW * 0.98 && inside(t.comp, t.card), `상자 ${t.comp.w}px / 카드 안쪽 ${Math.round(innerW)}px`);
-        ok('입력 상자 테두리 = 인디고 옅은 색(#A5ACFF · 2px) · 둥근 모서리 · 흰 바탕', t.compBorder === 'rgb(165, 172, 255)' && parseFloat(t.compBorderW) === 2 && parseFloat(t.compRadius) >= 12 && t.compBg === 'rgb(255, 255, 255)', `${t.compBorder} ${t.compBorderW} r=${t.compRadius}`);
-        ok('입력칸 rows 2 · 안내 글 「원하시는 작업을 입력해 주세요」 · 글자 15px 이상 · maxlength 2000', t.rows === 2 && t.ph === '원하시는 작업을 입력해 주세요' && parseFloat(t.inpFont) >= 15 && t.maxlength === 2000);
-        ok('아이콘 버튼 2개 = 44×44 · 입력 상자 안 오른쪽 아래 · 첨부가 왼쪽·보내기가 오른쪽', t.attach.w === 44 && t.attach.h === 44 && t.send.w === 44 && t.send.h === 44 && inside(t.attach, t.comp) && inside(t.send, t.comp) && t.comp.r - t.send.r <= 16 && t.comp.b - t.send.b <= 16 && t.attach.r <= t.send.l && Math.abs(t.attach.t - t.send.t) <= 1 && t.send.t >= t.inp.b - 2, JSON.stringify({ attach: t.attach, send: t.send, comp: t.comp }));
+        ok('#550 입력 상자 = 채팅 탭 답 상자와 같은 모양(.desk-cbox · 옅은 인디고 테두리 #C7CBFF · 둥글기 22px · 흰 바탕)', t.sameAsReply && t.compBorder === 'rgb(199, 203, 255)' && parseFloat(t.compBorderW) >= 1 && parseFloat(t.compBorderW) <= 2 && parseFloat(t.compRadius) === 22 && t.compBg === 'rgb(255, 255, 255)', `${t.compBorder} ${t.compBorderW} r=${t.compRadius}`);
+        ok('입력칸 rows 1(답 상자와 같음 · 적는 만큼 늘어남) · 안내 글 「원하시는 작업을 입력해 주세요」 · 글자 15px 이상 · maxlength 2000', t.rows === 1 && t.inp.h >= 44 && t.ph === '원하시는 작업을 입력해 주세요' && parseFloat(t.inpFont) >= 15 && t.maxlength === 2000);
+        ok('#550 둥근 버튼 2개 = 44×44 · 「+」(첨부)는 아래 줄 왼쪽 끝 · ↑(보내기)는 오른쪽 끝 · 답 상자와 같은 버튼(.desk-cbtn · 원)', t.attach.l - t.comp.l <= 20 && /desk-cbtn/.test(t.btnCls[0]) && /desk-cbtn primary/.test(t.btnCls[1]) && t.btnRound.every(v => v === '50%') && t.svgs.join() === '1,1' && t.attach.w === 44 && t.attach.h === 44 && t.send.w === 44 && t.send.h === 44 && inside(t.attach, t.comp) && inside(t.send, t.comp) && t.comp.r - t.send.r <= 16 && t.comp.b - t.send.b <= 16 && t.attach.r <= t.send.l && Math.abs(t.attach.t - t.send.t) <= 1 && t.send.t >= t.inp.b - 2, JSON.stringify({ attach: t.attach, send: t.send, comp: t.comp }));
         ok('aria-label = 「이미지 첨부」·「지시 보내기」 · 보내기는 submit · 버튼 안에 글자 없음(아이콘)', t.attachLabel === '이미지·파일 첨부' &&   /* #544 파일도 첨부 */ t.sendLabel === '지시 보내기' && t.sendType === 'submit' && t.sendText === '');
         ok('「Enter 보내기…」 안내 글 없음 · 보내기 버튼 설명(title)에 Enter·Shift+Enter', t.hint === 0 && /Enter/.test(t.sendTitle) && /Shift\+Enter/.test(t.sendTitle), t.sendTitle);
-        ok('자주 쓰는 일 = 머리글 없이 3개(「중간발주」「정산 이미지」「톡톡 답변 추천」) · 한 줄(같은 높이) · 입력 상자 아래 · 묶음 이름(aria-label)', t.chips.map(c => c.text).join('|') === '중간발주|정산 이미지|톡톡 답변 추천' && new Set(t.chips.map(c => c.t)).size === 1 && t.chips.every(c => c.vis && c.t >= t.comp.b) && t.quick.head === 0 && t.quick.label === '자주 쓰는 일', JSON.stringify(t.chips.map(c => [c.text, c.t])));
+        ok('#550 자주 쓰는 일 = 3개(「중간발주」「최종발주」「정산 이미지」 · 톡톡 답변 추천 없음) · 입력 상자 안 아래 줄의 「+」와 ↑ 사이 · 한 줄 · 묶음 이름(aria-label)', t.talkGone && t.chips.map(c => c.text).join('|') === '중간발주|최종발주|정산 이미지' && new Set(t.chips.map(c => c.t)).size === 1 && t.chips.every(c => c.vis && inside(c, t.comp) && c.l >= t.attach.r && c.r <= t.send.l && Math.abs((c.t + c.b) / 2 - (t.attach.t + t.attach.b) / 2) <= 2) && t.quick.head === 0 && t.quick.label === '자주 쓰는 일', JSON.stringify(t.chips.map(c => [c.text, c.t])));
         ok('상태 한 줄: 상태 알약 + 인사 글이 같은 줄 · idle 인사 = 「무엇을 도와드릴까요?」 · 「대기 중」', t.state.text === '대기 중' && t.say.text === '무엇을 도와드릴까요?' && t.say.vis && Math.abs((t.state.box.t + t.state.box.b) / 2 - (t.say.box.t + t.say.box.b) / 2) <= 6 && t.say.box.l >= t.state.box.r, JSON.stringify({ state: t.state.box, say: t.say.box }));
         ok('창구가 켜져 있으면(idle) 깨우기 버튼 숨김 · 「창구 켜짐」 글자 없음', !t.wake.vis && !t.onText);
         ok('아꼼이 그림 로드 · 카드 안 오른쪽 · 입력 상자 위', t.img.nat > 0 && inside(t.img, t.card) && t.img.r >= t.card.r - 40 && t.img.b <= t.comp.t + 2 && /akkomi-idle/.test(t.img.src), JSON.stringify(t.img));
         info(`배치(1440): 카드 ${t.card.w}×${t.card.h} · 아꼼이 아래 ↔ 입력 상자 위 ${t.comp.t - t.img.b}px · 상태 줄 아래 ↔ 입력 상자 위 ${t.comp.t - t.state.box.b}px · 입력 상자 아래 ↔ 버튼 줄 ${t.chips[0].t - t.comp.b}px · ✦ 위치 x=${t.spark && t.spark.l - t.comp.l}px y=${t.spark && t.spark.t - t.comp.t}px(상자 기준) · 글 시작 x=${t.inp.l - t.comp.l}px`);
-        ok('✦ 는 장식(aria-hidden) · 입력 상자 안 왼쪽 위 · 글과 안 겹침', !!t.spark && t.spark.hidden === 'true' && inside(t.spark, t.comp) && t.spark.r <= t.inp.l + 1, JSON.stringify(t.spark));
+        ok('#550 ✦ 장식 없음(답 상자와 같게)', !t.spark);
         // 대비
         const cPh = ratio(t.phColor, 'rgb(255,255,255)'), cSay = ratio(t.say.color, t.cardBg), cChip = Math.min(...t.chips.map(c => ratio(c.color, c.bg))), cSend = ratio(t.sendColors[1], t.sendColors[0]), cAtt = ratio(t.attachColors[1], t.attachColors[0]), cBorder = ratio(t.compBorder, t.cardBg);
         ok('대비 — 자리표시 글(placeholder) 4.5:1 이상', cPh >= 4.5, `${t.phColor} on 흰색 = ${cPh.toFixed(2)}:1`);
@@ -155,7 +156,7 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         const c1 = await top(A.pg);
         await A.pg.fill('#desk-input', '가'.repeat(1500));
         const c2 = await top(A.pg);
-        ok('글자 수 = 1,499자까지 숨김(값은 갱신됨) · 1,500자부터 보임 · 입력 상자 안 버튼 줄 왼쪽', !c1.count.vis && c1.count.text.replace(/\s/g, '') === '1499/2000' && c2.count.vis && c2.count.text.replace(/\s/g, '') === '1500/2000' && inside(c2.count.box, c2.comp) && c2.count.box.r <= c2.attach.l, JSON.stringify({ c1: c1.count.text, c2: c2.count }));
+        ok('글자 수 = 1,499자까지 숨김(값은 갱신됨) · 1,500자부터 보임 · 입력 상자 안 버튼 줄 왼쪽', !c1.count.vis && c1.count.text.replace(/\s/g, '') === '1499/2000' && c2.count.vis && c2.count.text.replace(/\s/g, '') === '1500/2000' && inside(c2.count.box, c2.comp) && c2.count.box.r <= c2.send.l, JSON.stringify({ c1: c1.count.text, c2: c2.count }));
         await A.pg.fill('#desk-input', '');
         const c3 = await top(A.pg);
         ok('지우면 글자 수 다시 숨김', !c3.count.vis);
@@ -167,12 +168,12 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         await A.pg.fill('#desk-input', Array.from({ length: 40 }, (_, i) => `${i + 1}번째 줄 — 길게 적는 지시`).join('\n'));
         const g2 = await top(A.pg);
         ok('긴 글 → 입력칸 높이가 늘어남(6줄) · 더 길면 240px에서 멈추고 안쪽 스크롤', g1.inp.h > h0 + 40 && g1.inpScroll <= 2 && g2.inp.h <= 242 && g2.inp.h >= 200 && g2.inpScroll > 0 && inside(g2.send, g2.comp), `빈칸 ${h0}px → 6줄 ${g1.inp.h}px → 40줄 ${g2.inp.h}px`);
-        ok('긴 글에서도 버튼은 상자 안 오른쪽 아래 · 자주 쓰는 일 줄은 상자 아래 · 넘침 없음', g2.send.t >= g2.inp.b - 2 && g2.chips[0].t >= g2.comp.b && !g2.rootOverflow);
+        ok('긴 글에서도 버튼·자주 쓰는 일은 상자 안 아래 줄 · 넘침 없음', g2.send.t >= g2.inp.b - 2 && inside(g2.chips[0], g2.comp) && g2.chips[0].t >= g2.inp.b - 2 && !g2.rootOverflow);
 
         // 이미지: 붙여넣기 · 첨부 · 끌어 놓기
         const pv = await pasteImg(A.pg, '#desk-input');
         const i1 = await waitFor(async () => { const x = await top(A.pg); return x.thumbs.length === 1 ? x : null; }, 4000);
-        ok('이미지 붙여넣기 → 썸네일 1장 · 입력 상자 안(글 아래·버튼 위)', pv && !!i1 && inside(i1.thumbs[0], i1.comp) && i1.thumbs[0].t >= i1.inp.b - 2 && i1.thumbs[0].b <= i1.send.t + 2, i1 ? JSON.stringify(i1.thumbs[0]) : '썸네일 없음');
+        ok('이미지 붙여넣기 → 썸네일 1장 · 입력 상자 안 글 칸 위(답 상자와 같은 자리)', pv && !!i1 && inside(i1.thumbs[0], i1.comp) && i1.thumbs[0].b <= i1.inp.t + 2, i1 ? JSON.stringify(i1.thumbs[0]) : '썸네일 없음');
         const [fc] = await Promise.all([A.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), A.pg.click('#desk-attach')]);
         if (fc) await fc.setFiles({ name: '목록.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(PNG, 'base64') });
         const i2 = await waitFor(async () => { const x = await top(A.pg); return x.thumbs.length === 2 ? x : null; }, 4000);
@@ -216,9 +217,9 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
 
         // 자주 쓰는 일 동작
         const w0 = posts(A, /\/orders$/).length;
-        await A.pg.click('#desk-talk-now');
-        const tk = await top(A.pg);
-        ok('「톡톡 답변 추천」 = 입력칸에 글 채움·포커스 · 보내지 않음 · 칸 높이가 글에 맞춰짐', tk.value === '처리 안 된 톡톡 건 답변 예시문구 만들어줘' && tk.focusInInput && posts(A, /\/orders$/).length === w0 && tk.inpScroll <= 2);
+        await A.pg.evaluate(() => { window.__foOpen = 0; window.AkmFinalOrder = { open() { window.__foOpen++; } }; });   // #550 최종발주 화면은 열지 않고 불렸는지만 본다
+        await A.pg.click('#desk-final-now');
+        ok('「최종발주」 = 최종발주 화면 열기(지시를 보내지 않음)', (await A.pg.evaluate(() => window.__foOpen)) === 1 && posts(A, /\/orders$/).length === w0);
         await A.pg.fill('#desk-input', '');
         const [fc2] = await Promise.all([A.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), A.pg.click('#desk-settle-now')]);
         ok('「정산 이미지」 = 빈칸이면 「정산관리에 올려줘」 채우고 파일 고르기', !!fc2 && (await A.pg.inputValue('#desk-input')) === '정산관리에 올려줘');
@@ -275,8 +276,8 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         // ════ 390px(터치)
         const P = await open({ width: 390, height: 800 }, admin, { hasTouch: true, isMobile: true });
         const tp = await top(P.pg);
-        ok('390px — 한 카드 · 입력 상자 카드 안 가득 · 아이콘 2개 44px·상자 안 오른쪽 아래', tp.oneCard && inside(tp.comp, tp.card) && tp.comp.w >= (tp.card.w - tp.cardPadL - tp.cardPadR) * 0.98 && tp.send.w === 44 && tp.send.h === 44 && tp.attach.h === 44 && inside(tp.send, tp.comp) && inside(tp.attach, tp.comp), `카드 ${tp.card.w} · 상자 ${tp.comp.w}`);
-        ok('390px — 자주 쓰는 일 3개 한 줄(같은 높이) · 높이 44px 이상 · 줄이 넘치면 그 줄만 옆으로 밀림 · 페이지 가로 넘침 0', new Set(tp.chips.map(c => c.t)).size === 1 && tp.chips.every(c => c.h >= 44) && (tp.quick.sw <= tp.quick.cw + 1 || /auto|scroll/.test(tp.quick.ox)) && !tp.rootOverflow && !tp.docOverflow, `줄 너비 ${tp.quick.cw} · 내용 ${tp.quick.sw} · overflow-x ${tp.quick.ox}`);
+        ok('390px — 한 카드 · 입력 상자 카드 안 가득 · 둥근 버튼 2개 44px · ↑ 는 오른쪽 끝', tp.comp.r - tp.send.r <= 16 && tp.oneCard && inside(tp.comp, tp.card) && tp.comp.w >= (tp.card.w - tp.cardPadL - tp.cardPadR) * 0.98 && tp.send.w === 44 && tp.send.h === 44 && tp.attach.h === 44 && inside(tp.send, tp.comp) && inside(tp.attach, tp.comp), `카드 ${tp.card.w} · 상자 ${tp.comp.w}`);
+        ok('390px — 「+」·자주 쓰는 일 3개·↑ 가 한 줄 · 알약 높이 44px 이상 · 알약 3개가 안 잘리고 다 보임 · 페이지 가로 넘침 0', tp.quick.sw <= tp.quick.cw + 1 && tp.chips.every(c => c.l >= tp.attach.r && c.r <= tp.send.l) && new Set(tp.chips.map(c => c.t)).size === 1 && tp.chips.every(c => c.h >= 44) && (tp.quick.sw <= tp.quick.cw + 1 || /auto|scroll/.test(tp.quick.ox)) && !tp.rootOverflow && !tp.docOverflow, `줄 너비 ${tp.quick.cw} · 내용 ${tp.quick.sw} · overflow-x ${tp.quick.ox}`);
         ok('390px — 상태 알약·인사 글·아꼼이가 카드 안 · 아꼼이가 글을 가리지 않음', inside(tp.state.box, tp.card) && inside(tp.say.box, tp.card) && inside(tp.img, tp.card) && (tp.say.box.r <= tp.img.l + 1 || tp.say.box.t >= tp.img.b - 1 || tp.say.box.b <= tp.img.t + 1), JSON.stringify({ say: tp.say.box, img: tp.img }));
         await P.pg.evaluate(() => window.scrollTo(0, 0));
         await shot(P.pg, '6-390-첫화면');
@@ -300,6 +301,15 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         await shot(P.pg, '6-390-자리비움');
         ok('390px — pageerror 0 · console error 0', P.errors.length === 0 && P.cons.length === 0, [...P.errors, ...P.cons].join(' | ').slice(0, 400));
         await P.ctx.close();
+
+        // ════ 320px(터치) — #550: 가장 좁은 폰에서도 넘침 0 · ↑ 는 늘 오른쪽 끝(알약 줄이 좁으면 그 줄만 옆으로 밀림)
+        const N = await open({ width: 320, height: 700 }, admin, { hasTouch: true, isMobile: true });
+        const tn = await top(N.pg);
+        ok('320px — 가로 넘침 0 · 「+」 왼쪽 끝 · ↑ 오른쪽 끝(상자 안) · 알약 높이 44px 이상 · 알약 줄은 넘치면 그 줄만 옆으로 밀림', !tn.rootOverflow && !tn.docOverflow && inside(tn.send, tn.comp) && tn.comp.r - tn.send.r <= 16 && inside(tn.attach, tn.comp) && tn.send.w === 44 && tn.chips.every(c => c.h >= 44) && (tn.quick.sw <= tn.quick.cw + 1 || /auto|scroll/.test(tn.quick.ox)) && tn.quick.r <= tn.send.l, `알약 줄 너비 ${tn.quick.cw} · 내용 ${tn.quick.sw} · ${tn.chips.map(c => c.w).join('/')}`);
+        await N.pg.evaluate(() => window.scrollTo(0, 0));
+        await shot(N.pg, '7-320-첫화면');
+        ok('320px — pageerror 0', N.errors.length === 0, N.errors.join(' | ').slice(0, 300));
+        await N.ctx.close();
     } catch (e) {
         ok('검증 실행', false, e.message);
     } finally {

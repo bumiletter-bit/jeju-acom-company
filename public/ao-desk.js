@@ -129,23 +129,21 @@
                 </div>
                 <form class="desk-ask" id="desk-ask" autocomplete="off">
                     <label class="desk-sr" for="desk-input">지시 내용</label>
-                    <div class="desk-compose">
-                        <span class="desk-spark" aria-hidden="true">✦</span>
-                        <textarea class="desk-input" id="desk-input" rows="2" maxlength="2000" placeholder="원하시는 작업을 입력해 주세요"></textarea>
+                    <div class="desk-compose desk-cbox desk-topbox">
                         <div class="desk-thumbs" id="desk-thumbs" hidden></div>
-                        <div class="desk-compose-row">
+                        <textarea class="desk-input" id="desk-input" rows="1" maxlength="2000" placeholder="원하시는 작업을 입력해 주세요"></textarea>
+                        <div class="desk-cbox-row">
                             <input type="file" id="desk-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" multiple hidden>
                             <input type="file" id="desk-reply-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" hidden>
+                            <button type="button" class="desk-cbtn" id="desk-attach" aria-label="이미지·파일 첨부" title="이미지·파일 첨부 (붙여넣기·끌어 놓기도 돼요 · 파일은 엑셀·CSV·PDF·텍스트 1개)">${ICON_PLUS}</button>
+                            <div class="desk-quick2" role="group" aria-label="자주 쓰는 일">
+                                <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주</button>
+                                <button type="button" class="desk-chip" id="desk-final-now" title="현금파일과 메모를 넣으면 거래처별 택배사 양식, 수량 표, 스토어 양식을 만들어요">최종발주</button>
+                                <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
+                            </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
-                            <button type="button" class="desk-icon" id="desk-attach" aria-label="이미지·파일 첨부" title="이미지·파일 첨부 (붙여넣기·끌어 놓기도 돼요 · 파일은 엑셀·CSV·PDF·텍스트 1개)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button>
-                            <button type="submit" class="desk-icon primary" id="desk-send" aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg></button>
+                            <button type="submit" class="desk-cbtn primary" id="desk-send" aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter">${ICON_UP}</button>
                         </div>
-                    </div>
-                    <div class="desk-quick2" role="group" aria-label="자주 쓰는 일">
-                        <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주</button>
-                        <button type="button" class="desk-chip" id="desk-final-now" title="현금파일과 메모를 넣으면 거래처별 택배사 양식, 수량 표, 스토어 양식을 만들어요">최종발주</button>
-                        <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
-                        <button type="button" class="desk-chip" id="desk-talk-now" title="입력칸에 지시를 채워 드려요. 고쳐서 보내도 돼요">톡톡 답변 추천</button>
                     </div>
                 </form>
             </section>
@@ -243,7 +241,6 @@
         $('desk-qty-now').addEventListener('click', () => sendQtyNow());
         $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) window.AkmFinalOrder.open(); else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
         $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } S.pickImg = true; $('desk-file').accept = 'image/*'; $('desk-file').click(); });   // 정산 이미지는 이미지 전용 그대로
-        $('desk-talk-now').addEventListener('click', () => { input.value = '처리 안 된 톡톡 건 답변 예시문구 만들어줘'; syncInput(); input.focus(); });
         $('desk-wake-btn').addEventListener('click', () => wake());
         $('desk-file').addEventListener('change', e => { const fl = Array.from(e.target.files || []); addFiles(S.pickImg ? fl.filter(isImg) : fl); e.target.value = ''; });
         const ask = $('desk-ask');

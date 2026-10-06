@@ -153,7 +153,7 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
         // 대화 틀
         ok('② 대화 틀 .desk-thread-box = 인디고 테두리 2px #A5ACFF · 둥근 모서리 · 대화마다(5개)', m2.box && m2.box.border === 'rgb(165, 172, 255)' && parseFloat(m2.box.w) >= 2 && parseFloat(m2.box.radius) >= 12 && m2.boxes === 5, JSON.stringify(m2.box));
         const comp = await A.pg.evaluate(() => { const c = getComputedStyle(document.querySelector('.desk-compose')); return { border: c.borderTopColor, w: c.borderTopWidth }; });
-        ok('② 입력 상자와 같은 테두리 색·두께', comp.border === m2.box.border && comp.w === m2.box.w, JSON.stringify(comp));
+        ok('② #550 맨 위 입력 상자는 답 상자와 같은 옅은 인디고 테두리(#C7CBFF) — 대화 틀(#A5ACFF 2px)보다 가늘다', comp.border === 'rgb(199, 203, 255)' && parseFloat(comp.w) <= parseFloat(m2.box.w), JSON.stringify(comp));
         await A.pg.focus('#reply-302');
         await sleep(200);
         const fw = await A.pg.evaluate(() => { const b = document.querySelector('#desk-list .desk-turn[data-oid="302"]').closest('.desk-thread-box'); const c = getComputedStyle(b); return { border: c.borderTopColor, shadow: c.boxShadow }; });

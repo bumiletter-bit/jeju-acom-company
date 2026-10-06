@@ -564,3 +564,23 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-filechip button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
 @media (max-width: 640px) { .desk-filechip button, .desk-hist-x { width: 44px; height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .desk-h-item { transition: none; } }
+
+/* ── #550(대표 10/6) 맨 위 입력칸 = 채팅 탭 답 상자와 같은 모양: 둥근 상자 · 글 칸(위) · 아래 줄 「+」 + 자주 쓰는 일 3개 + 화살표 ── */
+.desk-top1 .desk-topbox { position: static; margin-top: 0; padding: 4px 10px 8px 14px; border: 1.5px solid #C7CBFF; border-radius: 22px; box-shadow: none; }
+.desk-top1 .desk-topbox:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .12); }
+.desk-top1 .desk-ask.drag .desk-topbox { border-style: dashed; border-color: var(--d-accent); }
+.desk-top1 .desk-topbox .desk-input { flex: none; width: 100%; min-height: 44px; max-height: 240px; padding: 10px 2px; font-size: 15px; line-height: 1.5; }
+.desk-top1 .desk-topbox .desk-thumbs { margin: 8px 0 0; }
+.desk-topbox .desk-cbox-row { gap: 8px; }
+.desk-top1 .desk-topbox .desk-quick2 { flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; border: 0; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.desk-top1 .desk-topbox .desk-quick2::-webkit-scrollbar { display: none; }
+.desk-top1 .desk-topbox .desk-chip { flex: none; min-height: 44px; padding: 0 14px; white-space: nowrap; border: 1px solid #D8DBFF; background: var(--d-accent-soft); color: #4338CA; font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; }
+.desk-top1 .desk-topbox .desk-chip:hover { background: #E3E6FF; border-color: #C7CBFF; color: #3730A3; }
+.desk-topbox .desk-count { flex: none; margin: 0; }
+.desk-topbox .desk-cbtn.primary { margin-left: 0; }
+@media (max-width: 640px) {
+    .desk-top1 .desk-topbox { padding: 4px 8px 8px 12px; }
+    .desk-topbox .desk-cbox-row { gap: 5px; }
+    .desk-top1 .desk-topbox .desk-quick2 { gap: 4px; }
+    .desk-top1 .desk-topbox .desk-chip { font-size: clamp(11px, 3.2vw, 13px); padding: 0 clamp(6px, 2.2vw, 11px); letter-spacing: -.03em; }
+}
