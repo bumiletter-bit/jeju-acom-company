@@ -45,7 +45,36 @@ th{background:#FAFAFB;font-weight:700;color:var(--mid);font-size:12px;white-spac
 #loginCard{max-width:420px;margin:60px auto}
 .hidden{display:none!important}
 .scroll{overflow-x:auto}
+
+/* ══ #569(대표 10/6) 야간 화면 — 이벤트 관리(따로 열리는 직원용 화면) ══
+ * 전부 html[data-ao-theme="dark"] 아래에만(위의 밝은 화면 규칙 무수정). 회사 프로그램에서 야간 화면을 켜 둔 기기에서만 켜진다(아래 스크립트 — 같은 기억 값).
+ * 색 = 회사 프로그램 야간 화면과 같은 값. 저장되는 엑셀은 화면 색과 무관하다. */
+html[data-ao-theme="dark"]{--primary:#8C94FF;--primary-dark:#4B4BD6;--primary-light:#232A52;--bg:#0E1122;--text:#E9EBF5;--mid:#AEB4CB;--light:#9299B4;--border:#2A3052;--danger:#FF7A6E;--success:#3DD68C;--amber:#FBBF4A;--shadow:none;color-scheme:dark}
+html[data-ao-theme="dark"] .card{background:#161A2E}
+html[data-ao-theme="dark"] .logo-dot{background:#5B5BEA}
+html[data-ao-theme="dark"] .btn{background:#1B2038;color:var(--text)}
+html[data-ao-theme="dark"] .btn:hover{background:#232A52;color:var(--text);border-color:var(--primary)}
+html[data-ao-theme="dark"] .btn.primary{background:#5B5BEA;border-color:#5B5BEA;color:#fff}
+html[data-ao-theme="dark"] .btn.primary:hover{background:#4B4BD6;border-color:#4B4BD6;color:#fff}
+html[data-ao-theme="dark"] .btn.danger{color:var(--danger);border-color:#7A3436}
+html[data-ao-theme="dark"] .btn.danger:hover{background:#3A1B1D;color:var(--danger);border-color:#7A3436}
+html[data-ao-theme="dark"] input[type=text],html[data-ao-theme="dark"] input[type=date],html[data-ao-theme="dark"] input[type=number],html[data-ao-theme="dark"] input[type=password],html[data-ao-theme="dark"] select,html[data-ao-theme="dark"] textarea{background:#0E1122;color:var(--text)}
+html[data-ao-theme="dark"] input::placeholder,html[data-ao-theme="dark"] textarea::placeholder{color:var(--light);opacity:1}
+html[data-ao-theme="dark"] .stat .v{color:#C5EE4F}
+html[data-ao-theme="dark"] th{background:#1B2038}
+html[data-ao-theme="dark"] .drop{border-color:#3B4380;background:#0E1122}
+html[data-ao-theme="dark"] .drop.on{background:var(--primary-light);border-color:var(--primary)}
+html[data-ao-theme="dark"] .tag.ok{background:#12352A;color:var(--success)}
+html[data-ao-theme="dark"] .tag.warn{background:#3A2E12;color:var(--amber)}
+html[data-ao-theme="dark"] .tag.red{background:#3A1B1D;color:var(--danger)}
+html[data-ao-theme="dark"] .toast{background:#E9EBF5;color:#101828}
+html[data-ao-theme="dark"] [style*="background:#FAFAFF"]{background:#0E1122 !important}
+html[data-ao-theme="dark"] [style*="color:#B42318"]{color:var(--danger) !important}
 </style>
+<script>
+/* #569 야간 화면: 회사 프로그램에서 켜 둔 기기면 이 화면도 어둡게(같은 기억 값 akm_ao_theme). 다른 창에서 바꾸면 따라간다. */
+(function(){ var sync=function(){ try{ if(localStorage.getItem('akm_ao_theme')==='dark') document.documentElement.setAttribute('data-ao-theme','dark'); else document.documentElement.removeAttribute('data-ao-theme'); }catch(e){} }; sync(); window.addEventListener('storage',function(e){ if(!e.key||e.key==='akm_ao_theme') sync(); }); })();
+</script>
 </head>
 <body>
 <div class="wrap">

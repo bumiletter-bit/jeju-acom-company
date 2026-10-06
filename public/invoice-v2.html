@@ -116,7 +116,139 @@
   .ivt-res .note { display:block; width:fit-content; margin-top:3px; font-size:11px; font-weight:700; color:var(--primary,#4F46E5); background:var(--primary-light,#EEF2FF); padding:1px 8px; border-radius:6px; white-space:normal; }   /* block이어야 품목 칸(nowrap·overflow hidden) 안에서 둘째 줄로 내려와 보인다 — inline-block이면 긴 옵션명 뒤에서 잘림 */
   .ivt-res .act { font-weight:700; white-space:nowrap; }
   .ivt-res .act.del { color:#B91C1C; } .ivt-res .act.indiv { color:#374151; } .ivt-res .act.ok { color:#15803D; } .ivt-res .act.warn { color:#B45309; } .ivt-res .act.none { color:#9CA3AF; font-weight:500; }
+
+  /* ══ #569(대표 10/6) 야간 화면 — 송장변환(메뉴 안 iframe) ══════════════════════════════════════
+   * 🔴 아래는 전부 html[data-ao-theme="dark"] 안에서만 먹는다. 위의 밝은 화면 규칙은 한 글자도 안 고쳤다(추가만).
+   * 켜짐 표시는 바깥(회사프로그램) html 의 속성을 따라 붙는다(아래 스크립트) — 메뉴 안(?embed=1)일 때만. 따로 연 화면과 최종발주의 숨은 계산용(?fo=1)은 늘 밝다.
+   * 색 = 에이전트 오피스 야간 화면(#568)과 같은 토큰 한 벌. theme.css 의 색 변수를 어두운 값으로 다시 잡아 공용 모양(카드·버튼·표·입력칸)이 따라오게 하고, 값이 박힌 곳만 따로 덮는다.
+   * 뜻이 있는 색은 그대로: 줄별 표시(초록·노랑·빨강) · 제외/확인필요 줄 · 보내는이(연파랑)·사이즈(연주황)·애매(연노랑) 표시는 엑셀 시트1 의 칸 색과 같은 색이라 바꾸지 않는다.
+   * 중간발주 수량 줄(품목 색 = 거래처에 보내는 수량 이미지와 같은 색)은 「종이」처럼 밝은 색 + 검은 글자 그대로.
+   * 저장되는 엑셀·수량 이미지는 화면 색과 무관하다(엑셀은 코드가 직접 칠하고, 이미지는 찍는 순간 복제 문서에서 켜짐 표시를 뗀다 — 아래 스크립트). */
+  html[data-ao-theme="dark"] {
+    --d-bg:#0E1122; --d-card:#161A2E; --d-soft:#1B2038; --d-line:#2A3052; --d-card-line:#2A3052;
+    --d-ink:#E9EBF5; --d-sub:#AEB4CB; --d-dim:#9299B4;
+    --d-accent:#8C94FF; --d-accent-fill:#5B5BEA; --d-accent-soft:#232A52;
+    --d-ok:#3DD68C; --d-warn:#FBBF4A; --d-err:#FF7A6E; --d-lime:#C5EE4F;
+    --page-bg:var(--d-bg); --bg:var(--d-soft); --bg-soft:var(--d-soft); --card-bg:var(--d-card); --card-border:var(--d-card-line); --border:var(--d-line); --border-soft:#232948; --line:var(--d-line);
+    --text-dark:var(--d-ink); --text-mid:var(--d-sub); --text-light:var(--d-dim); --text-on-page:var(--d-sub);
+    --primary:var(--d-accent); --primary-dark:#4B4BD6; --primary-light:var(--d-accent-soft); --primary-ring:rgba(140,148,255,.24); --accent-blue:var(--d-accent); --accent-blue-light:var(--d-accent-soft);
+    --danger:var(--d-err); --success:var(--d-ok); --shadow-card:none; --shadow-sm:none;
+    color-scheme:dark;
+  }
+  /* 공용 모양(styles.css·theme.css)에서 값이 박힌 곳 — 이 문서 안에서만 덮는다 */
+  html[data-ao-theme="dark"] body { color:var(--d-ink); }
+  html[data-ao-theme="dark"] .card { background:var(--d-card); border-color:var(--d-card-line); box-shadow:none; color:var(--d-ink); }
+  html[data-ao-theme="dark"] .form-group label { color:var(--d-ink); }
+  html[data-ao-theme="dark"] .form-input, html[data-ao-theme="dark"] select, html[data-ao-theme="dark"] input[type="number"], html[data-ao-theme="dark"] input[type="text"] { background:var(--d-bg); color:var(--d-ink); border-color:var(--d-line); }
+  html[data-ao-theme="dark"] .form-input::placeholder, html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textarea::placeholder { color:var(--d-dim); opacity:1; }
+  html[data-ao-theme="dark"] .invoice-mode-btn { background:var(--d-soft); color:var(--d-sub); border-color:var(--d-line); }
+  html[data-ao-theme="dark"] .invoice-mode-btn.active { background:var(--d-accent-fill); color:#fff; border-color:var(--d-accent-fill); }
+  html[data-ao-theme="dark"] .btn-primary { background:var(--d-accent-fill); border-color:var(--d-accent-fill); color:#fff; box-shadow:none; }
+  html[data-ao-theme="dark"] .btn-primary:hover { background:#4B4BD6; border-color:#4B4BD6; }
+  html[data-ao-theme="dark"] .btn-primary:disabled { background:#1A1F36; border-color:var(--d-line); color:var(--d-dim); }
+  html[data-ao-theme="dark"] .btn-outline { background:transparent; color:var(--d-ink); border-color:#3A4168; }
+  html[data-ao-theme="dark"] .btn-outline:hover { background:var(--d-soft); color:var(--d-ink); }
+  html[data-ao-theme="dark"] .ivt-filter button.active, html[data-ao-theme="dark"] .btn-outline.active { background:var(--d-accent-fill); color:#fff; border-color:var(--d-accent-fill); }
+  /* 채널 이름표 = 채널 고유 색(초록·파랑·빨강) 그대로, 흰 글자가 읽히게 조금 눌렀다 */
+  html[data-ao-theme="dark"] .channel-smart { background:#0A7F3E; } html[data-ao-theme="dark"] .channel-jasamol { background:#3F5FE0; } html[data-ao-theme="dark"] .channel-coupang { background:#C81E22; }
+  html[data-ao-theme="dark"] .invoice-upload-area { background:var(--d-bg); border-color:#3B4380; color:var(--d-sub); }
+  html[data-ao-theme="dark"] .invoice-upload-area:hover, html[data-ao-theme="dark"] .invoice-upload-area.dragover { background:#141833; border-color:var(--d-accent); }
+  html[data-ao-theme="dark"] .invoice-upload-area.has-file { background:#10281F; border-color:#1F5C44; }
+  html[data-ao-theme="dark"] .invoice-upload-area p { color:var(--d-sub); }
+  html[data-ao-theme="dark"] .invoice-upload-area strong { color:var(--d-accent); }
+  html[data-ao-theme="dark"] .upload-icon { color:var(--d-dim); }
+  html[data-ao-theme="dark"] .invoice-file-name { color:var(--d-ok); }
+  html[data-ao-theme="dark"] .invoice-qty-summary { color:var(--d-sub); }
+  html[data-ao-theme="dark"] .invoice-qty-summary strong { color:var(--d-lime); }
+  html[data-ao-theme="dark"] #invoice-qty-addform input[type="text"], html[data-ao-theme="dark"] #invoice-qty-addform input[type="number"] { background:var(--d-bg); color:var(--d-ink); border-color:var(--d-line); }
+  /* 표 */
+  html[data-ao-theme="dark"] .table-scroll-wrapper, html[data-ao-theme="dark"] .table-scroll-wrapper.ivt { border-color:var(--d-line); background:var(--d-card); }
+  html[data-ao-theme="dark"] .data-table { background:var(--d-card); color:var(--d-ink); border-color:var(--d-line); }
+  html[data-ao-theme="dark"] .data-table th { background:var(--d-soft); color:var(--d-sub); border-color:var(--d-line); }
+  html[data-ao-theme="dark"] .data-table td { background:var(--d-card); color:var(--d-ink); border-color:var(--d-line); }
+  html[data-ao-theme="dark"] .data-table tbody tr:hover td { background:#1A1F38; }
+  html[data-ao-theme="dark"] .data-table th.memo-h { background:var(--d-accent-soft); color:var(--d-accent); }
+  /* 제외(빨강)·확인필요(노랑)·개별발송(회색) 줄 — 뜻 그대로, 어두운 바탕용 */
+  html[data-ao-theme="dark"] .data-table tr.excl td, html[data-ao-theme="dark"] .data-table tbody tr.excl:hover td { background:#34191C; }
+  html[data-ao-theme="dark"] .data-table tr.review td, html[data-ao-theme="dark"] .data-table tbody tr.review:hover td { background:#2E2610; }
+  html[data-ao-theme="dark"] .data-table tr.indiv td, html[data-ao-theme="dark"] .data-table tbody tr.indiv:hover td { background:#1D2138; color:var(--d-dim); }
+  html[data-ao-theme="dark"] .data-table tr.clickable:hover td { filter:brightness(1.12); }
+  html[data-ao-theme="dark"] .data-table td.memo .memo-box { background:var(--d-bg); border-color:#3B4380; border-left-color:var(--d-accent); color:var(--d-ink); box-shadow:none; }
+  html[data-ao-theme="dark"] .data-table td.memo .memo-box.empty { color:var(--d-dim); border-left-color:#3B4380; }
+  html[data-ao-theme="dark"] .tag.excl { background:#3A1B1D; color:var(--d-err); }
+  html[data-ao-theme="dark"] .tag.review, html[data-ao-theme="dark"] .ivt-badge { background:#3A2E12; color:var(--d-warn); }
+  html[data-ao-theme="dark"] .tag.indiv { background:#2A3052; color:var(--d-sub); }
+  html[data-ao-theme="dark"] .tag.ok { background:#12352A; color:var(--d-ok); }
+  html[data-ao-theme="dark"] .tag.etc { background:#232948; color:var(--d-sub); }
+  html[data-ao-theme="dark"] #login-gate { background:#3A1B1D; color:var(--d-err); }
+  /* 줄별 표시 — ✓ 초록 · ⚠ 노랑 · ✕ 빨강 */
+  html[data-ao-theme="dark"] .ivt-ed { background:var(--d-bg); border-color:var(--d-line); }
+  html[data-ao-theme="dark"] .ivt-ed:focus-within { box-shadow:0 0 0 3px rgba(140,148,255,.24); }
+  html[data-ao-theme="dark"] .ivt-ed .ivt-gut { background:var(--d-soft); border-right-color:var(--d-line); }
+  html[data-ao-theme="dark"] .ivt-ed textarea.form-input { background:transparent; }
+  html[data-ao-theme="dark"] .ivt-ed .ivt-gut .m.ok span, html[data-ao-theme="dark"] .ivt-linebar button.ok { background:#12352A; color:var(--d-ok); }
+  html[data-ao-theme="dark"] .ivt-ed .ivt-gut .m.warn span, html[data-ao-theme="dark"] .ivt-linebar button.warn { background:#3A2E12; color:var(--d-warn); }
+  html[data-ao-theme="dark"] .ivt-ed .ivt-gut .m.none span, html[data-ao-theme="dark"] .ivt-linebar button.none { background:#3A1B1D; color:var(--d-err); }
+  html[data-ao-theme="dark"] .ivt-ed .ivt-gut .m.wait span, html[data-ao-theme="dark"] .ivt-linebar button { background:#232948; color:var(--d-sub); }
+  html[data-ao-theme="dark"] .ivt-linebar button.zero { background:#1A1F36; color:var(--d-dim); }
+  html[data-ao-theme="dark"] .ivt-ed.stale .ivt-gut .m span { opacity:.5; }
+  html[data-ao-theme="dark"] .ivt-linebar .meta { color:var(--d-sub); }
+  html[data-ao-theme="dark"] .ivt-linebar .stale-note { color:var(--d-warn); }
+  html[data-ao-theme="dark"] .ivt-res .sum { color:var(--d-sub); }
+  html[data-ao-theme="dark"] .ivt-res .notice { background:#3A2E12; color:var(--d-warn); }
+  html[data-ao-theme="dark"] .ivt-res .sub { color:var(--d-dim); }
+  html[data-ao-theme="dark"] .ivt-res .act.del { color:var(--d-err); } html[data-ao-theme="dark"] .ivt-res .act.indiv { color:var(--d-sub); } html[data-ao-theme="dark"] .ivt-res .act.ok { color:var(--d-ok); } html[data-ao-theme="dark"] .ivt-res .act.warn { color:var(--d-warn); } html[data-ao-theme="dark"] .ivt-res .act.none { color:var(--d-dim); }
+  html[data-ao-theme="dark"] .ivt-stats b { color:var(--d-lime); }
+  /* 달력(기준 발송일) */
+  html[data-ao-theme="dark"] .akm-cal { background:var(--d-card); border-color:var(--d-line); color:var(--d-ink); box-shadow:0 16px 40px -12px rgba(0,0,0,.6); }
+  html[data-ao-theme="dark"] .akm-cal-title { color:var(--d-ink); }
+  html[data-ao-theme="dark"] .akm-cal-nav { color:var(--d-sub); background:transparent; }
+  html[data-ao-theme="dark"] .akm-cal-nav:hover, html[data-ao-theme="dark"] .akm-cal-day:hover { background:var(--d-accent-soft); color:var(--d-ink); }
+  html[data-ao-theme="dark"] .akm-cal-week span { color:var(--d-dim); }
+  html[data-ao-theme="dark"] .akm-cal-week span:first-child, html[data-ao-theme="dark"] .akm-cal-day.sun { color:var(--d-err); }
+  html[data-ao-theme="dark"] .akm-cal-week span:last-child, html[data-ao-theme="dark"] .akm-cal-day.sat { color:#7FB0FF; }
+  html[data-ao-theme="dark"] .akm-cal-day { color:var(--d-ink); }
+  html[data-ao-theme="dark"] .akm-cal-day.today { box-shadow:inset 0 0 0 1.5px var(--d-accent); }
+  html[data-ao-theme="dark"] .akm-cal-day.sel, html[data-ao-theme="dark"] .akm-cal-day.sel:hover { background:var(--d-accent-fill); color:#fff; }
+  html[data-ao-theme="dark"] .akm-cal-foot { border-top-color:var(--d-line); }
+  html[data-ao-theme="dark"] .akm-cal-today-btn { background:transparent; color:var(--d-accent); border-color:#3B4380; }
+  html[data-ao-theme="dark"] .akm-cal-today-btn:hover { background:var(--d-accent-fill); color:#fff; }
+  html[data-ao-theme="dark"] .ivt-cal .akm-cal-day.off, html[data-ao-theme="dark"] .ivt-cal .akm-cal-day.past, html[data-ao-theme="dark"] .ivt-cal .akm-cal-day i.x { color:#5C6388; }
+  html[data-ao-theme="dark"] .ivt-cal .akm-cal-day.off:hover, html[data-ao-theme="dark"] .ivt-cal .akm-cal-day.past:hover { background:transparent; color:#5C6388; }
+  html[data-ao-theme="dark"] .ivt-cal-legend { color:var(--d-sub); }
+  /* 중간발주 수량 줄 = 종이처럼(품목 색 + 검은 글자 · 보내는 이미지와 같은 색). 색 없는 줄만 살짝 누른다 */
+  /* 알약(상태·채널) — 채널 색은 그대로(네이버 초록 · 쿠팡 주황 · 자사몰 인디고), 어두운 바탕용 */
+  html[data-ao-theme="dark"] .pill-ok { background:#12352A; color:var(--d-ok); }
+  html[data-ao-theme="dark"] .pill-wait { background:#3A2E12; color:var(--d-warn); }
+  html[data-ao-theme="dark"] .pill-off { background:#232948; color:var(--d-sub); }
+  html[data-ao-theme="dark"] .pill[style*="#E8F8EF"] { background:#12352A !important; color:#5FE0A0 !important; }
+  html[data-ao-theme="dark"] .pill[style*="#FDF3E2"] { background:#3A2E12 !important; color:#F2B65C !important; }
+  html[data-ao-theme="dark"] .pill[style*="#EEF2FF"] { background:var(--d-accent-soft) !important; color:var(--d-accent) !important; }
+  html[data-ao-theme="dark"] .pill[style*="#F2F4F7"] { background:#232948 !important; color:var(--d-sub) !important; }
+  html[data-ao-theme="dark"] .btn-reset { background:transparent; color:var(--d-err); border-color:#7A3436; }
+  html[data-ao-theme="dark"] .btn-reset:hover { background:#3A1B1D; color:var(--d-err); }
+  html[data-ao-theme="dark"] .ivt-cal-legend s { color:var(--d-dim); }
+  html[data-ao-theme="dark"] .qty-row, html[data-ao-theme="dark"] .qty-row .qty-name, html[data-ao-theme="dark"] .qty-row .qty-num { color:#101828; }
+  html[data-ao-theme="dark"] .qty-row.qty-cat-none, html[data-ao-theme="dark"] .qty-row:not([class*="qty-cat-"]) { background:#ECEEF4; }
+  html[data-ao-theme="dark"] .qty-row .qty-num-input { background:#fff; color:#101828; }
+  html[data-ao-theme="dark"] .qty-row.unmatched { color:#B42318; }
+  /* 화면 코드가 style 속성으로 넣는 글자색(회색·주황) — 어두운 바탕에서 읽히게 */
+  html[data-ao-theme="dark"] [style*="color:#888"], html[data-ao-theme="dark"] [style*="color: #888"], html[data-ao-theme="dark"] [style*="color:#999"], html[data-ao-theme="dark"] [style*="color:#6B7280"], html[data-ao-theme="dark"] [style*="color:#666"], html[data-ao-theme="dark"] [style*="color: #666"] { color:var(--d-sub) !important; }
+  html[data-ao-theme="dark"] [style*="color:#B45309"], html[data-ao-theme="dark"] [style*="color:#e67700"] { color:var(--d-warn) !important; }
 </style>
+<script>
+/* #569 야간 화면 — 바깥(회사프로그램) html 의 data-ao-theme 를 그대로 따라간다. 메뉴 안(?embed=1)일 때만: 따로 연 화면·최종발주의 숨은 계산용(?fo=1)은 건드리지 않는다.
+   수량 이미지(html2canvas)는 찍히는 복제 문서에서 켜짐 표시를 떼어, 야간으로 저장해도 종전과 같은 그림이 나오게 한다(보이는 화면은 그대로). */
+(function () {
+    try {
+        if (window.html2canvas) { var h2c = window.html2canvas; window.html2canvas = function (el, opt) { opt = Object.assign({}, opt); var oc = opt.onclone; opt.onclone = function (doc, node) { try { doc.documentElement.removeAttribute('data-ao-theme'); } catch (e) { /* 그대로 찍음 */ } return typeof oc === 'function' ? oc(doc, node) : undefined; }; return h2c(el, opt); }; }
+        if (!/[?&]embed=1(?:&|$)/.test(location.search) || window.parent === window) return;
+        var pr = window.parent.document.documentElement, me = document.documentElement;
+        var sync = function () { if (pr.getAttribute('data-ao-theme') === 'dark') me.setAttribute('data-ao-theme', 'dark'); else me.removeAttribute('data-ao-theme'); };
+        sync(); new MutationObserver(sync).observe(pr, { attributes: true, attributeFilter: ['data-ao-theme'] });
+    } catch (e) { /* 바깥을 못 읽으면 밝은 화면 그대로 */ }
+})();
+</script>
 </head>
 <body>
 <div class="main-content ivt">

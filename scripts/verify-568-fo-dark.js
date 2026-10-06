@@ -17,8 +17,9 @@ const TOKEN = jwt.sign(USER, 'verifytest', { expiresIn: '1h' });
 const SHOT = process.env.SHOT_DIR || path.join(os.tmpdir(), 'verify568'); fs.mkdirSync(SHOT, { recursive: true });
 const SEL = { btn: '#desk-final-now', panel: '#fo-panel', ship: '#fo-ship', cash: '#fo-cash', memo: '#fo-memo', start: '#fo-start', card: '#fo-cards [data-fo-card]', pending: '#fo-cards [data-fo-card]:not([data-fo-done])', make: '#fo-make', save: '[data-fo-save]', png: '[data-fo-png]' };
 const ACT = { order: 'send', split: 'all', 'sender-memo': 'keep', line: 'ok', 'cash-boxdiff': 'ok', 'cash-notindiv': 'extra', 'cash-missing': 'skip', 'sender-line': 'skip' };
-const HEAD_CSS = execFileSync('git', ['show', 'HEAD:public/final-order.css'], { cwd: ROOT, maxBuffer: 1 << 24 });
-const HEAD_JS = execFileSync('git', ['show', 'HEAD:public/final-order.js'], { cwd: ROOT, maxBuffer: 1 << 24 });
+const BASE_REF = process.env.BASE_REF || '8d8d42a';   // 고치기 전 기준 = #568 직전 커밋(커밋된 뒤에도 같은 비교가 되게 고정)
+const HEAD_CSS = execFileSync('git', ['show', BASE_REF + ':public/final-order.css'], { cwd: ROOT, maxBuffer: 1 << 24 });
+const HEAD_JS = execFileSync('git', ['show', BASE_REF + ':public/final-order.js'], { cwd: ROOT, maxBuffer: 1 << 24 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // 두 스크린샷을 픽셀로 비교 — mask(전환 버튼 자리) 밖에서 다른 픽셀 수와 그 범위
 async function pxDiff(br, a, b, mask) {
@@ -162,9 +163,9 @@ const sheetDump = f => { const wb = XLSX.readFile(f, { cellStyles: true }); retu
         const loose = rules.filter(sel => !sel.split(',').every(p => p.trim().startsWith('html[data-ao-theme="dark"] ') || /^\.fo-theme\b/.test(p.trim())));
         const btnRules = rules.filter(sel => /^\.fo-theme\b/.test(sel));
         ok(rules.length > 30 && loose.length === 0, `⓪ 덧붙인 규칙 ${rules.length}개 = html[data-ao-theme="dark"] 아래 ${rules.length - btnRules.length}개 + 새 버튼(.fo-theme) ${btnRules.length}개`, loose.slice(0, 3).join(' | ') || '그 밖 규칙 없음');
-        let jsSame = true; try { execFileSync('git', ['diff', '--quiet', 'HEAD', '--', 'public/final-order-core.js', 'public/invoice-v2.html', 'public/invoice-v2.js'], { cwd: ROOT }); } catch (_) { jsSame = false; }
-        ok(jsSame, '⓪ final-order-core.js · invoice-v2.html/js 는 HEAD 와 같음(무수정)');
-        const jd = execFileSync('git', ['diff', '-U0', 'HEAD', '--', 'public/final-order.js'], { cwd: ROOT, maxBuffer: 1 << 24 }).toString('utf8').split('\n').filter(l => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
+        let jsSame = true; try { execFileSync('git', ['diff', '--quiet', BASE_REF, '--', 'public/final-order-core.js', 'public/invoice-v2.js'], { cwd: ROOT }); } catch (_) { jsSame = false; }
+        ok(jsSame, '⓪ final-order-core.js · invoice-v2.js 는 HEAD 와 같음(무수정)');   // invoice-v2.html 은 #569 에서 야간 규칙이 덧붙는다(숨은 계산용 ?fo=1 은 무영향 — verify-569-invoice-dark ④)
+        const jd = execFileSync('git', ['diff', '-U0', BASE_REF, '--', 'public/final-order.js'], { cwd: ROOT, maxBuffer: 1 << 24 }).toString('utf8').split('\n').filter(l => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
         ok(jd.length === 2 && jd.every(l => l[0] === '+' && l.includes('fo-theme')), '⓪ final-order.js 변경 = 추가 2줄뿐(전환 버튼 마크업 1 · 클릭 연결 1) · 지운 줄 0', jd.map(l => l.slice(0, 70)).join(' ‖ '));
 
         // ① 밝은 화면 무회귀 — HEAD css vs 지금 css (전환 끔)

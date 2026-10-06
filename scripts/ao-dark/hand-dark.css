@@ -1,0 +1,56 @@
+/* ⓪ 색 토큰(--d-*) — ao-desk.css #568 블록과 같은 값. 이 파일만 불러도 되게 한 벌 더 둔다(값을 바꿀 때는 scripts/ao-dark/hand568.css 와 같이) */
+html[data-ao-theme="dark"] {
+    --d-bg: #0E1122; --d-card: #161A2E; --d-soft: #1B2038; --d-line: #2A3052; --d-card-line: #2A3052;
+    --d-ink: #E9EBF5; --d-sub: #AEB4CB; --d-dim: #9299B4;
+    --d-accent: #8C94FF; --d-accent-fill: #5B5BEA; --d-accent-hover: #6464EE; --d-accent-soft: #232A52;
+    --d-ok: #3DD68C; --d-warn: #FBBF4A; --d-err: #FF7A6E; --d-lime: #C5EE4F;
+    --d-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px -2px rgba(0, 0, 0, .45);
+}
+/* ① 테마 토큰(theme.css :root)을 어두운 값으로 — var() 로 쓴 곳은 이것만으로 따라온다 */
+html[data-ao-theme="dark"] {
+    --primary: #8C94FF;                 /* 글자·테두리용 인디고(채운 바탕은 ② 에서 --d-accent-fill 로 돌린다) */
+    --primary-dark: #B4BAFF;
+    --primary-light: #232A52;
+    --primary-ring: rgba(140, 148, 255, 0.28);
+    --accent-blue: #8C94FF;
+    --accent-blue-light: #232A52;
+    --bg: #1B2038;
+    --bg-soft: #1B2038;
+    --page-bg: #0E1122;
+    --card-border: #2A3052;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 8px -2px rgba(0, 0, 0, 0.45);
+    --text-on-page: #AEB4CB;
+    --sidebar-bg: #121629;
+    --sidebar-text: #AEB4CB;
+    --sidebar-hover: #1B2038;
+    --sidebar-active-bg: #232A52;
+    --text-dark: #E9EBF5;
+    --text-mid: #AEB4CB;
+    --text-light: #9299B4;
+    --border: #2A3052;
+    --border-soft: #232845;
+    --card-bg: #161A2E;
+    --danger: #FF7A6E;
+    --success: #3DD68C;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 16px -6px rgba(0, 0, 0, 0.55);
+    --shadow-primary: 0 6px 16px -6px rgba(0, 0, 0, 0.6);
+    --k-danger-fill: #C8281C;           /* 빨강 바탕 + 흰 글자 5.6:1 */
+    --k-success-fill: #14804D;          /* 초록 바탕 + 흰 글자 5:1 */
+}
+/* 화면 틀 — body 글자색은 건드리지 않는다(찍기용 임시 칸 보호). 글자색은 틀 안쪽에서 준다 */
+html[data-ao-theme="dark"] body { background: var(--d-bg); }
+html[data-ao-theme="dark"] .sidebar, html[data-ao-theme="dark"] .main-content { color: var(--d-ink); color-scheme: dark; }
+
+/* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
+html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textarea::placeholder { color: #A6ADC6; }
+
+/*@@GEN@@*/
+
+/* ③ 계산식으로 안 맞아 손으로 맞춘 곳(② 뒤) */
+/* 정산현황 달력의 고른 날 — 밝은 인디고 위에서는 증감 글자(분홍·하늘)가 안 읽혀 한 단계 진한 인디고로 */
+html[data-ao-theme="dark"] .ss-cal-cell.ss-cal-sel { background: #4338CA !important; border-color: #4338CA !important; }
+/* 발송 휴무일 달력: 붉은 기운 칸 위의 붉은 알약 — 기운이 두 겹이라 글자를 한 단계 밝게 */
+html[data-ao-theme="dark"] .shcal-cell .tg .t-off { color: #FFB4AC; }
+/* 알림 종 목록: 안 읽은 줄(노란 기운) 위의 시각 글자 */
+html[data-ao-theme="dark"] .noti-item .noti-time { color: var(--d-sub); }

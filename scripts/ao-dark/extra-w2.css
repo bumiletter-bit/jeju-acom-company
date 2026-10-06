@@ -1,0 +1,32 @@
+/* ══ #569 야간 화면 — 워커2 조각(gen-dark.js 가 ao-dark.css 맨 끝에 그대로 붙인다) ══════════════════════════
+ * 전부 html[data-ao-theme="dark"] 아래 · 색은 --d-* 토큰. 밝은 화면 규칙은 건드리지 않는다.
+ * ① (비움) ② 화면 코드가 값을 계산해 style 속성에 넣는 색(app.js 의 style 글자에는 색이 안 보이는 것)
+ * ③ 순위 차트(canvas — CSS 로 못 바꾸므로 흰 종이 카드로 둔다)
+ * 뜻이 있는 색은 색상(초록·주황·보라·빨강·파랑)을 그대로 두고 어두운 바탕용 밝기로만 옮겼다. 속성 선택자는 대소문자 무시(i). */
+
+/* ① 주문 정리기 — 워커1 생성기가 order-organizer.css 를 통째로 옮기므로 여기서는 뺐다(어색한 곳이 생기면 그 줄만 여기에 남긴다) */
+
+/* ② 값이 계산돼 style 속성에 들어가는 색 */
+/* 품목별 금액 — 박스 배지: 귤박스 주황 · 만감박스 초록 · 선물용 보라 */
+html[data-ao-theme="dark"] [style*="background:#FFF3E0" i] { background: #3A2A12 !important; color: #FFB066 !important; }
+html[data-ao-theme="dark"] [style*="background:#E8F5E9" i] { background: #12352A !important; color: #6FDC9A !important; }
+html[data-ao-theme="dark"] [style*="background:#EDE7F6" i] { background: #2A2350 !important; color: #BFA8FF !important; }
+/* 알림 발송 이력 — 상태 알약(회색 = 조치 불요 · 주황 = 보류 · 초록 = 발송 · 청회색 = 검수중 · 빨강 = 실패) */
+html[data-ao-theme="dark"] .pill[style*="#F1F2F5" i], html[data-ao-theme="dark"] .pill[style*="#EEF1F6" i] { background: #232948 !important; color: var(--d-sub) !important; }
+html[data-ao-theme="dark"] .pill[style*="#FDF3E2" i] { background: #3A2E12 !important; color: #F2B65C !important; }
+html[data-ao-theme="dark"] .pill[style*="#E8F8EF" i] { background: #12352A !important; color: #5FE0A0 !important; }
+html[data-ao-theme="dark"] .pill[style*="#FDECEA" i] { background: #3A1B1D !important; color: var(--d-err) !important; }
+/* 같은 표의 채널 알약 — 자사몰 인디고 · 룰렛 주황 · 가입 분홍(네이버 초록·쿠팡 주황은 위 규칙과 같은 색) */
+html[data-ao-theme="dark"] .pill[style*="#EEF2FF" i] { background: var(--d-accent-soft) !important; color: var(--d-accent) !important; }
+html[data-ao-theme="dark"] .pill[style*="#FFF7E6" i] { background: #3A2E12 !important; color: #F2B65C !important; }
+html[data-ao-theme="dark"] .pill[style*="#FDF2F8" i] { background: #3A1B30 !important; color: #F28BC0 !important; }
+/* 박스재고 이력 — 종류·수량 글자색(입고 초록 · 시온 이동 파랑 · 효돈 이동 주황 · 차감 빨강 · 그 밖 회색) */
+html[data-ao-theme="dark"] td[style*="color:#16a34a" i] { color: var(--d-ok) !important; }
+html[data-ao-theme="dark"] td[style*="color:#0066CC" i] { color: #7FB0FF !important; }
+html[data-ao-theme="dark"] td[style*="color:#F5A623" i] { color: var(--d-warn) !important; }
+html[data-ao-theme="dark"] td[style*="color:#dc2626" i] { color: var(--d-err) !important; }
+html[data-ao-theme="dark"] td[style*="color:#6b7280" i] { color: var(--d-sub) !important; }
+html[data-ao-theme="dark"] td[style*="color:#2563eb" i] { color: #7FB0FF !important; }
+
+/* ③ 순위관리 차트(canvas) — 축 글자·눈금이 흰 바탕 기준이라 흰 종이 카드로 둔다 */
+html[data-ao-theme="dark"] canvas#rank-chart { background: #F4F5FA; border-radius: 12px; }

@@ -1370,20 +1370,29 @@
         if (Date.now() - S.inboxAt > 30000) { S.inboxAt = Date.now(); loadInbox(); }
     }
 
-    // #568(대표 10/6) 야간 화면 — 에이전트 오피스에 들어와 있을 때만 · 사람(기기)마다 기억 · 기기 다크모드 설정은 따르지 않는다
+    // #568(대표 10/6) 야간 화면 — 사람(기기)마다 기억 · 기기 다크모드 설정은 따르지 않는다 (범위는 아래 #569 DARK_PAGES)
     //   켜짐 표시 = <html data-ao-theme="dark">(색은 전부 ao-desk.css 의 그 속성 아래) · 다른 메뉴로 가면 뗀다(page active 클래스 관찰 — app.js 무접촉)
     const THEME_KEY = 'akm_ao_theme';
     const ICON_MOON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
     const ICON_SUN = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     let themeOn = (() => { try { return localStorage.getItem(THEME_KEY) === 'dark'; } catch (e) { return false; } })();
+    // #569(대표 10/6 밤) 야간 화면을 모든 메뉴로 — 「끝난 메뉴 목록」에 든 메뉴를 보고 있을 때만 속성이 붙는다(목록 밖 메뉴는 켠 사람에게도 종전 밝은 화면)
+    //   색은 ao-dark.css(생성물 · scripts/ao-dark) · 에이전트 오피스는 ao-desk.css #568 블록. 묶음이 검증을 통과할 때마다 여기에 이름만 넣는다.
+    const DARK_PAGES = ['agent-office', 'schedule', 'worklog', 'planner', 'rankings', 'myinfo', 'inquiry', 'settlement', 'pricing', 'inventory', 'document', 'expense', 'data', 'organizer', 'invoice'];
+    const curPage = () => { const p = document.querySelector('.main-content > .page.active, .page.active'); return p ? p.id.replace(/^page-/, '') : ''; };
+    const loginShown = () => { const l = $('login-page'); return !!l && l.style.display !== 'none'; };
+    const inScope = () => DARK_PAGES.includes(curPage());
     function applyTheme() {
         const root = document.documentElement;
-        if (themeOn && pageActive()) root.setAttribute('data-ao-theme', 'dark'); else root.removeAttribute('data-ao-theme');
-        const b = $('desk-theme');
-        if (!b) return;
+        if (themeOn && inScope() && !loginShown()) root.setAttribute('data-ao-theme', 'dark'); else root.removeAttribute('data-ao-theme');
         const label = themeOn ? '밝은 화면으로 바꾸기' : '야간 화면으로 바꾸기';
-        b.setAttribute('aria-pressed', String(themeOn)); b.setAttribute('aria-label', label); b.title = label;
-        if (b.dataset.on !== String(themeOn)) { b.dataset.on = String(themeOn); b.innerHTML = themeOn ? ICON_SUN : ICON_MOON; }
+        for (const b of [$('desk-theme'), $('side-theme')]) {
+            if (!b) continue;
+            b.setAttribute('aria-pressed', String(themeOn)); b.setAttribute('aria-label', label); b.title = label;
+            if (b.dataset.on !== String(themeOn)) { b.dataset.on = String(themeOn); b.innerHTML = themeOn ? ICON_SUN : ICON_MOON; }
+        }
+        const sb = $('side-theme');
+        if (sb) { const off = !inScope(); sb.classList.toggle('off-scope', off); if (off) sb.title = label + ' (이 화면은 아직 밝은 화면만 돼요)'; }
     }
     function setTheme(on) {
         themeOn = !!on;
@@ -1391,8 +1400,43 @@
         applyTheme();
         try { document.dispatchEvent(new CustomEvent('akm-ao-theme', { detail: { dark: themeOn } })); } catch (e) { /* 알림 없이도 속성으로 동작 */ }
     }
-    window.AkmAoTheme = { isDark: () => themeOn, set: setTheme, toggle: () => setTheme(!themeOn) };
-    (() => { const p = $('page-agent-office'); if (p && window.MutationObserver) new MutationObserver(applyTheme).observe(p, { attributes: true, attributeFilter: ['class'] }); applyTheme(); })();
+    window.AkmAoTheme = { isDark: () => themeOn, set: setTheme, toggle: () => setTheme(!themeOn), pages: () => DARK_PAGES.slice() };
+    // 왼쪽 메뉴 아래(사용자 이름 줄 오른쪽 끝)의 전환 버튼 — 모든 메뉴·폰 메뉴에서 닿는다. index.html 무수정(여기서 만들어 붙인다)
+    function mountSideTheme() {
+        const row = document.querySelector('.sidebar-footer .user-info');
+        if (!row || $('side-theme')) return;
+        const b = document.createElement('button');
+        b.type = 'button'; b.id = 'side-theme'; b.className = 'side-theme';
+        b.addEventListener('click', () => {
+            setTheme(!themeOn);
+            if (themeOn && !inScope()) { try { if (typeof showToast === 'function') showToast('야간 화면을 켰어요. 이 화면은 아직 밝은 화면만 돼요.'); } catch (e) { /* 안내 없이도 동작 */ } }
+        });
+        row.appendChild(b);
+    }
+    // 화면을 찍어 만드는 결과물(PDF · 이미지 저장)은 야간이어도 종전과 같아야 한다 → html2canvas 가 찍는 복제 문서에서만 속성을 뗀다(보이는 화면은 그대로)
+    function guardCapture() {
+        const orig = window.html2canvas;
+        if (typeof orig !== 'function' || orig.__akmGuard) return;
+        const wrapped = function (el, opt) {
+            let o = opt;
+            try {
+                const prev = opt && opt.onclone;
+                o = Object.assign({}, opt || {}, { onclone: function (doc) { try { doc.documentElement.removeAttribute('data-ao-theme'); } catch (e) { /* 그대로 찍는다 */ } return typeof prev === 'function' ? prev.apply(this, arguments) : undefined; } });
+            } catch (e) { o = opt; }
+            return orig.call(this, el, o);
+        };
+        wrapped.__akmGuard = true;
+        try { window.html2canvas = wrapped; } catch (e) { /* 못 감싸면 원래 것 그대로 */ }
+    }
+    (() => {
+        guardCapture(); mountSideTheme();
+        if (window.MutationObserver) {
+            const mo = new MutationObserver(applyTheme);
+            document.querySelectorAll('.page').forEach(p => mo.observe(p, { attributes: true, attributeFilter: ['class'] }));
+            const l = $('login-page'); if (l) mo.observe(l, { attributes: true, attributeFilter: ['style'] });
+        }
+        applyTheme();
+    })();
 
     window.aoDeskEnter = async function () {
         mount();

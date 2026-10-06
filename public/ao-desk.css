@@ -676,7 +676,7 @@ html[data-ao-theme="dark"], html[data-ao-theme="dark"] .desk {
     --d-dim: #9299B4;
     --d-accent: #8C94FF;            /* 글자·테두리용 인디고 */
     --d-accent-fill: #5B5BEA;       /* 채운 버튼 바탕 — 흰 글자 5:1 */
-    --d-accent-hover: #6E6EF5;
+    --d-accent-hover: #6464EE;
     --d-accent-soft: #232A52;
     --d-ok: #3DD68C;
     --d-warn: #FBBF4A;
@@ -1014,3 +1014,14 @@ html[data-ao-theme="dark"] .desk-inbox-tabs i.on, html[data-ao-theme="dark"] .de
 html[data-ao-theme="dark"] .desk .table-scroll-wrapper { background: var(--d-card); border-color: var(--d-line); box-shadow: none; }
 html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb { background: #3A4168; }
 html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb:hover { background: #4A54A6; }
+
+/* #569 왼쪽 메뉴 아래(사용자 이름 줄 오른쪽 끝)의 전환 버튼 — 모든 메뉴에서 닿는다. 음수 여백이라 줄 높이는 그대로(밝은 화면에서 달라지는 곳은 이 버튼 자리뿐) */
+.side-theme { flex: none; margin: -8px -6px -8px auto; width: 34px; height: 34px; padding: 0; border-radius: 50%; border: 1px solid var(--border, #ECEDF1); background: var(--card-bg, #fff); color: var(--text-mid, #667085); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1), background-color 160ms cubic-bezier(0.23, 1, 0.32, 1), color 160ms cubic-bezier(0.23, 1, 0.32, 1), opacity 160ms cubic-bezier(0.23, 1, 0.32, 1); }
+.side-theme:hover { background: var(--sidebar-hover, #F4F5F8); color: var(--text-dark, #101828); }
+.side-theme:active { transform: scale(.97); }
+.side-theme:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
+.side-theme svg { display: block; }
+.side-theme.off-scope { opacity: .5; }   /* 지금 보는 메뉴는 아직 밝은 화면만 되는 곳 */
+@media (max-width: 768px) { .side-theme { width: 44px; height: 44px; margin: -13px -8px -13px auto; } }
+@media (prefers-reduced-motion: reduce) { .side-theme { transition: none; } }
+html[data-ao-theme="dark"] .side-theme { color: var(--d-warn); }

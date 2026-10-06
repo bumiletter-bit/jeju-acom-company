@@ -100,7 +100,18 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/6 밤): 회사 v5.9.449 / app.js v=402 · ao-desk.js v=45 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #569부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/7 새벽): 회사 v5.9.450 / app.js v=402 · ao-desk.js v=46 · ao-dark.css v=1 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #570부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 🌌 #569 야간 화면을 모든 메뉴로 (대표 10/6 밤 「야간모드 너무 만족해!!! 다른 것도 다 진행해줘」 · v5.9.450 / ao-dark.css v=1 · ao-desk.css v=34 · ao-desk.js v=46 · 워커1 기반·공용 CSS + 워커2 송장변환·이벤트 관리·검증)
+
+- **범위**: 15개 메뉴 전부(ao-desk.js `DARK_PAGES`) + 송장변환 iframe 안(invoice-v2.html 이 바깥 html 속성을 따라 붙임 — `?embed=1` 일 때만 · 따로 연 화면과 최종발주의 숨은 계산용 `?fo=1` 은 늘 밝음) + 이벤트 관리(lucky-admin.html — 새 창 · 기억 값 akm_ao_theme 를 직접 읽음). 로그인 화면·손님용 페이지는 대상 아님.
+- **켜고 끄기**: 왼쪽 메뉴 아래 이름 옆 #side-theme(ao-desk.js 가 만들어 붙임) + 에이전트 오피스 #desk-theme + 최종발주 창 #fo-theme. index.html head 끝 한 줄 스크립트가 새로고침 깜빡임을 줄임(기억이 dark 이고 로그인 토큰이 있으면 속성을 먼저 붙임).
+- 🔴 **구조 — 기존 파일 무수정**: styles.css·theme.css·order-organizer.css·app.js 는 한 글자도 안 고침. 야간 색은 **생성물 public/ao-dark.css**(약 196KB · 규칙 1,027 + style 속성 덮기 122종 + 워커2 조각 extra-w2.css) — `node scripts/ao-dark/gen-dark.js` 가 위 CSS 들과 index.html·app.js 의 style 속성을 읽어 「색감은 그대로 · 밝기만 뒤집는 계산식 + 예외표(overrides.js) + 손 규칙(hand-dark.css)」으로 만든다. 🔴 **styles.css·theme.css·app.js·index.html 의 색을 고치면 생성기를 다시 돌려 ao-dark.css 를 같이 커밋**(verify-569-dark 0번 항목이 어긋남을 잡는다). ao-dark.css 를 손으로 고치지 말 것. 에이전트 오피스 블록(#568)은 종전대로 gen568.js + hand568.css.
+- **결과물 보호**: 화면을 찍어 만드는 것(html2canvas — 기안서류·문서·지출결의 PDF · 중간발주 선택분 이미지)은 ao-desk.js 가 window.html2canvas 를 감싸 **찍히는 복제 문서에서만 야간 속성을 뗀다**(화면은 안 깜빡임 · 실패하면 원래 것 그대로). 정산현황 캡처(ssCaptureScreen)는 부르는 버튼이 없는 안 쓰이는 코드. 엑셀·canvas 로 그리는 것은 화면 색과 무관.
+- **야간에도 밝게 두는 칸(「흰 종이」)**: 최종발주 수량 표(.fo-qty) · 송장변환 중간발주 수량 줄·시트 칸 색 칩 · 순위 차트 카드. 🔴 이런 칸이 새로 생기면 gen-dark.js 의 PAPER 에 class 추가 + 그 화면 검증에 항목으로.
+- ✅ 총괄 최종 검증: verify-569-dark 71(밝은 화면 PNG 동일 = 대표 PC 14·폰 14·직원 PC 11메뉴 · 야간 대비 미달 0·흰 칸 0 · 모달 19개 · 생성기 재실행 = 바이트 동일) · 569-open --group=all 45(14메뉴의 탭·창·펼침·빈 상태를 눌러 열어 측정 · 약 11분) · 569-invoice-dark 27(엑셀·선택분 이미지 바이트 동일) · 569-lucky-dark 15 · 569-capture 10(PDF 4종 그림 동일) · 568-dark 200 · 568-fo-dark 36 · 566 50 · 561-app 37 · 563-nav 61 · 564 10.
+- 🔵 함정(이번에 잡음): style 속성 덮기 `[style*="background:#fff" i]` 가 「글자 포함」 찾기라 #FFFFFF·#FFF2CC 같은 더 긴 색에도 걸려 **최종발주 수량 표 바탕만 어두워지고 검은 글자가 남음**(568-fo-dark 32/36 — 총괄 재검증에서 발견) → 색 뒤가 「끝·세미콜론·빈칸」일 때만 맞게 + 흰 종이 칸은 덮기에서 제외. 교훈: 전역 덮기를 넣으면 「일부러 밝게 둔 칸」 검증이 꼭 있어야 한다.
+- 약점: 실기기(아이폰·안드로이드) 미확인 · 대비 측정은 글자만(아이콘·그래프는 눈으로) · 같은 종류 창은 하나씩만 열어 봄 · 저장·삭제·승인 뒤의 확인창은 못 봄 · verify-563-game 은 「HEAD = 고치기 전」 전제가 깨져 배포 뒤로는 못 쓰는 검증.
 
 ### 🌙 #568 에이전트 오피스 야간 화면 (대표 GO 10/6 밤 「에이전트 오피스만 — 이게 사용 많이 하니까」 · v5.9.449 / ao-desk.css v=33 · ao-desk.js v=45 · final-order.css v=13 · final-order.js v=19 · 워커1 본체 + 워커2 최종발주)
 

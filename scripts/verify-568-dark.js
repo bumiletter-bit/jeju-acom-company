@@ -36,10 +36,10 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         const OLD = { css: execFileSync('git', ['show', 'HEAD:public/ao-desk.css'], { cwd: ROOT }).toString('utf8'), js: execFileSync('git', ['show', 'HEAD:public/ao-desk.js'], { cwd: ROOT, maxBuffer: 32 * 1024 * 1024 }).toString('utf8') };
         const CUR = fs.readFileSync(path.join(ROOT, 'public/ao-desk.css'), 'utf8');
         const cut = CUR.indexOf('/* ═══ #568 야간 화면');
-        ok('ao-desk.css: 종전 내용은 한 글자도 안 바뀜(#568 블록은 끝에 덧붙이기만)', cut > 0 && CUR.slice(0, cut).replace(/\s+$/, '') === OLD.css.replace(/\r\n/g, '\n').replace(/\s+$/, '').split('\n').join(CUR.includes('\r\n') ? '\r\n' : '\n'), 'cut ' + cut);
+        ok('ao-desk.css: 종전 내용은 한 글자도 안 바뀜(#568 블록은 끝에 덧붙이기만)', cut > 0 && CUR.slice(0, cut).replace(/\s+$/, '') === (OLD.css.indexOf('/* ═══ #568 야간 화면') > 0 ? OLD.css.slice(0, OLD.css.indexOf('/* ═══ #568 야간 화면')) : OLD.css).replace(/\r\n/g, '\n').replace(/\s+$/, '').split('\n').join(CUR.includes('\r\n') ? '\r\n' : '\n'), 'cut ' + cut);
         const blk = CUR.slice(cut).replace(/\/\*[\s\S]*?\*\//g, '');
-        const loose = []; { const re = /(^|})\s*([^{}@]+)\{/g; let m; while ((m = re.exec(blk))) { const sel = m[2].trim(); if (/^(\d+%|from|to)(\s*,\s*(\d+%|from|to))*$/.test(sel)) continue; for (const part of sel.split(',')) { const p = part.trim(); if (!/data-ao-theme="dark"/.test(p) && !/^\.desk-theme\b/.test(p) && !/^\.desk-theme-slot\b/.test(p)) loose.push(p); } } }
-        ok('#568 블록의 규칙은 전부 html[data-ao-theme="dark"] 아래(예외 = 전환 버튼 .desk-theme 과 그 자리 칸)', loose.length === 0, loose.slice(0, 8).join(' | '));
+        const loose = []; { const re = /(^|})\s*([^{}@]+)\{/g; let m; while ((m = re.exec(blk))) { const sel = m[2].trim(); if (/^(\d+%|from|to)(\s*,\s*(\d+%|from|to))*$/.test(sel)) continue; for (const part of sel.split(',')) { const p = part.trim(); if (!/data-ao-theme="dark"/.test(p) && !/^\.desk-theme\b/.test(p) && !/^\.desk-theme-slot\b/.test(p) && !/^\.side-theme\b/.test(p)) loose.push(p); } } }
+        ok('#568 블록의 규칙은 전부 html[data-ao-theme="dark"] 아래(예외 = 전환 버튼 .desk-theme 과 그 자리 칸 · #569 왼쪽 메뉴 전환 버튼 .side-theme)', loose.length === 0, loose.slice(0, 8).join(' | '));
 
         // ── 가짜 채팅 목록
         const DAY = 86400e3, now = Date.now();
@@ -79,6 +79,9 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
             live: [{ processed_at: new Date(now - 600e3).toISOString(), status: '완료', text: '중간발주 집계' }, { processed_at: new Date(now - 1200e3).toISOString(), status: '질문', text: '쿠폰 문자 대상 확인' }, { processed_at: new Date(now - 1800e3).toISOString(), status: '오류', text: '시간 초과로 멈춘 일' }],
             today: [{ title: '가영 당직', is_completed: true, category: '일반', user_name: '조가영' }, { title: '하우스귤 문자 톡톡', is_completed: false, start_time: '10:00:00', category: '톡톡발송', user_name: '전승범' }],
             progress: [{ key: 'order', label: '주문 확인', done: 1359, total: 1372 }, { key: 'ship', label: '발송 처리', done: 39, total: 39 }, { key: 'qna', label: '고객 문의', done: 1, total: 4 }, { key: 'settle', label: '정산 등록', done: 2, total: 2 }] });
+        // #569: 야간이 붙는 메뉴 = ao-desk.js 의 DARK_PAGES. 「다른 메뉴는 밝다」 검사는 목록 밖 메뉴로 한다(전 메뉴가 끝나면 그 검사는 「다른 메뉴도 어둡다」로 바뀐다)
+        const DARK_LIST = JSON.parse(((/const DARK_PAGES = (\[[^\]]*\]);/.exec(fs.readFileSync(path.join(ROOT, 'public/ao-desk.js'), 'utf8')) || [])[1] || "['agent-office']").replace(/'/g, '"'));
+        const OUT_PAGES = ['myinfo', 'schedule', 'worklog', 'planner', 'document', 'data'].filter(p => !DARK_LIST.includes(p));
         const { chromium } = require('playwright');
         browser = await chromium.launch();
         const cache = new Map();   // 실서버 GET 응답을 처음 한 번만 받아 모든 화면에 같은 값으로
@@ -109,6 +112,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
             await pg.route('**/api/agent-office/desk/inbox*', route => { if (route.request().method() !== 'GET') return route.fallback(); return json(route, inboxOf(new URL(route.request().url()).searchParams.get('seen') === '1')); });
             await pg.route('**/api/agent-office/desk/board*', route => json(route, boardOf(user)));
             await pg.route('**/api/agent-office/files/*/download', route => route.fulfill({ status: 200, contentType: 'image/png', body: PNG }));
+            if (!opt.old && !/ao-dark\.css/.test(fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8'))) await pg.route(u => u.pathname === '/' || u.pathname === '/index.html', async route => { const r0 = await route.fetch(); const html = (await r0.text()).replace(/(<link rel="stylesheet" href="order-organizer\.css[^>]*>)/, '$1\n    <link rel="stylesheet" href="ao-dark.css?v=0">'); return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }); });
             if (opt.old) {
                 await pg.route('**/ao-desk.css*', route => route.fulfill({ status: 200, contentType: 'text/css; charset=utf-8', body: OLD.css }));
                 await pg.route('**/ao-desk.js*', route => route.fulfill({ status: 200, contentType: 'application/javascript; charset=utf-8', body: OLD.js }));
@@ -118,7 +122,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
             await pg.evaluate(([t, u, th, lp]) => { localStorage.setItem('jwt_token', t); localStorage.setItem('jwt_user', JSON.stringify(u)); localStorage.setItem('akm_last_page', lp); localStorage.removeItem('akm_desk_view'); if (th) localStorage.setItem('akm_ao_theme', th); else localStorage.removeItem('akm_ao_theme'); }, [tok, user, opt.theme || null, opt.page || 'agent-office']);
             await pg.reload({ waitUntil: 'networkidle' }); await pg.waitForTimeout(2500);
             // 움직이는 곳(시계·날짜·커서) 고정 · 실DB 대기 확인표 창 숨김(#548 함정) · 전환 버튼은 비교에서 뺀다(opt.maskBtn)
-            await pg.addStyleTag({ content: '.ao-settle-overlay{display:none!important} #desk-clock,#desk-date,.desk-caret,#desk-char{visibility:hidden!important} *{caret-color:transparent!important}' + (opt.maskBtn ? ' #desk-theme{visibility:hidden!important}' : '') });
+            await pg.addStyleTag({ content: '.ao-settle-overlay{display:none!important} #desk-clock,#desk-date,.desk-caret,#desk-char{visibility:hidden!important} *{caret-color:transparent!important}' + ((opt.maskBtn || opt.old) ? ' #desk-theme,#side-theme{visibility:hidden!important}' : '') });
             if ((opt.page || 'agent-office') === 'agent-office') { await pg.waitForSelector('#desk-list .desk-thread-box, #desk-list .desk-empty', { timeout: 20000 }); await pg.waitForTimeout(1200); }
             return { pg, st, errors, ctx };
         };
@@ -269,9 +273,10 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 await D.pg.addStyleTag({ content: '.ao-settle-overlay{display:none!important}' });
                 const nav = async p => { if (phone && await D.pg.evaluate(() => !document.querySelector('.sidebar').classList.contains('mobile-open'))) { await D.pg.click('.mobile-menu-btn'); await D.pg.waitForTimeout(450); } await D.pg.click(`.sidebar-nav .nav-item[data-page="${p}"]`); await D.pg.waitForTimeout(700); };
                 if (phone) { await D.pg.click('.mobile-menu-btn'); await D.pg.waitForTimeout(450); a = await audit(D.pg); report(tag + ' 메뉴 열림', a); }
-                await nav('myinfo');
+                await nav(OUT_PAGES[0] || 'myinfo');
                 const away = await D.pg.evaluate(() => ({ attr: document.documentElement.getAttribute('data-ao-theme') || '', body: getComputedStyle(document.body).backgroundColor, side: getComputedStyle(document.querySelector('.sidebar')).backgroundColor }));
-                ok(`C [${tag}] 다른 메뉴(내 정보)로 가면 밝은 화면(속성 없음 · 바탕·왼쪽 메뉴 밝은 색)`, away.attr === '' && away.side === 'rgb(255, 255, 255)' && away.body !== 'rgb(14, 17, 34)', JSON.stringify(away));
+                if (OUT_PAGES.length) ok(`C [${tag}] 목록 밖 메뉴(${OUT_PAGES[0]})로 가면 밝은 화면(속성 없음 · 바탕·왼쪽 메뉴 밝은 색)`, away.attr === '' && away.side === 'rgb(255, 255, 255)' && away.body !== 'rgb(14, 17, 34)', JSON.stringify(away));
+                else ok(`C [${tag}] 전 메뉴가 야간 대상 — 다른 메뉴(내 정보)로 가도 어두운 화면 유지`, away.attr === 'dark', JSON.stringify(away));
                 await nav('agent-office'); await D.pg.waitForTimeout(600);
                 ok(`C [${tag}] 에이전트 오피스로 돌아오면 다시 어두운 화면`, (await attr(D.pg)) === 'dark');
                 if (phone) await D.pg.tap('#desk-theme'); else await D.pg.click('#desk-theme'); await D.pg.waitForTimeout(300);
@@ -284,14 +289,14 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         // ══ D. 전환을 켠 사람의 다른 메뉴 화면 = 안 켠 사람과 픽셀 동일 ═══════════════════════════════════
         for (const [dev, vw, phone] of [['PC', { width: 1440, height: 1000 }, false], ['폰', { width: 390, height: 844 }, true]]) {
             const bad = [], moving = [];
-            for (const page of ['myinfo', 'schedule', 'worklog', 'planner']) {
+            for (const page of OUT_PAGES.slice(0, 4)) {
                 const L = await open(owner, vw, { phone, page }), K = await open(owner, vw, { phone, page, theme: 'dark' });
                 const a = await shotBuf(L.pg), b = await shotBuf(K.pg);
                 const a2 = a.equals(b) ? a : await shotBuf(L.pg);   // 다르면 밝은 사람 화면을 한 번 더 찍어 본다 — 그것끼리도 다르면 스스로 움직이는 화면(비교 불가)
                 if (!a.equals(b) && !a.equals(a2)) { moving.push(page); } else if (!a.equals(b) || (await attr(K.pg)) !== '') { bad.push(page); save(`568-other-${dev}-${page}-light`, a); save(`568-other-${dev}-${page}-darkuser`, b); }
                 await L.ctx.close(); await K.ctx.close();
             }
-            ok(`D [대표·${dev}] 야간 화면을 켠 사람도 다른 메뉴(내 정보 · 일정 · 업무일지 · 마이 플래너)는 종전과 픽셀 동일 · 속성 없음${moving.length ? ' (스스로 움직여 비교 못 한 화면: ' + moving.join() + ')' : ''}`, bad.length === 0 && moving.length <= 1, bad.join());
+            ok(`D [대표·${dev}] 야간 화면을 켠 사람도 목록 밖 메뉴(${OUT_PAGES.slice(0, 4).join() || '없음 — 전 메뉴 완료'})는 종전과 픽셀 동일 · 속성 없음${moving.length ? ' (스스로 움직여 비교 못 한 화면: ' + moving.join() + ')' : ''}`, bad.length === 0 && moving.length <= 1, bad.join());
         }
         // 저장소가 막힌 브라우저(localStorage 예외)에서도 화면이 뜬다
         {
