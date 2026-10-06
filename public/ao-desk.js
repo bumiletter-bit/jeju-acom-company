@@ -139,6 +139,7 @@
         root.innerHTML = `
         <div class="desk-main">
             <section class="desk-top desk-top1">
+                <div class="desk-theme-slot"><button type="button" class="desk-theme" id="desk-theme" aria-pressed="false" aria-label="야간 화면으로 바꾸기" title="야간 화면으로 바꾸기"></button></div>
                 <div class="desk-hero">
                     <div class="desk-hero-info">
                         <div class="desk-date" id="desk-date"></div>
@@ -266,6 +267,8 @@
             if (btn) btn.click();
         });
         $('desk-qty-now').addEventListener('click', () => sendQtyNow());
+        $('desk-theme').addEventListener('click', () => setTheme(!themeOn));   // #568
+        applyTheme();
         $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) window.AkmFinalOrder.open(); else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
         $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } S.pickImg = true; $('desk-file').accept = 'image/*'; $('desk-file').click(); });   // 정산 이미지는 이미지 전용 그대로
         $('desk-wake-btn').addEventListener('click', () => wake());
@@ -1366,6 +1369,30 @@
         if (Date.now() - S.boardAt > 60000) { S.boardAt = Date.now(); loadBoard(); }
         if (Date.now() - S.inboxAt > 30000) { S.inboxAt = Date.now(); loadInbox(); }
     }
+
+    // #568(대표 10/6) 야간 화면 — 에이전트 오피스에 들어와 있을 때만 · 사람(기기)마다 기억 · 기기 다크모드 설정은 따르지 않는다
+    //   켜짐 표시 = <html data-ao-theme="dark">(색은 전부 ao-desk.css 의 그 속성 아래) · 다른 메뉴로 가면 뗀다(page active 클래스 관찰 — app.js 무접촉)
+    const THEME_KEY = 'akm_ao_theme';
+    const ICON_MOON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+    const ICON_SUN = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+    let themeOn = (() => { try { return localStorage.getItem(THEME_KEY) === 'dark'; } catch (e) { return false; } })();
+    function applyTheme() {
+        const root = document.documentElement;
+        if (themeOn && pageActive()) root.setAttribute('data-ao-theme', 'dark'); else root.removeAttribute('data-ao-theme');
+        const b = $('desk-theme');
+        if (!b) return;
+        const label = themeOn ? '밝은 화면으로 바꾸기' : '야간 화면으로 바꾸기';
+        b.setAttribute('aria-pressed', String(themeOn)); b.setAttribute('aria-label', label); b.title = label;
+        if (b.dataset.on !== String(themeOn)) { b.dataset.on = String(themeOn); b.innerHTML = themeOn ? ICON_SUN : ICON_MOON; }
+    }
+    function setTheme(on) {
+        themeOn = !!on;
+        try { localStorage.setItem(THEME_KEY, themeOn ? 'dark' : 'light'); } catch (e) { /* 기억 못 해도 이번 화면에는 적용 */ }
+        applyTheme();
+        try { document.dispatchEvent(new CustomEvent('akm-ao-theme', { detail: { dark: themeOn } })); } catch (e) { /* 알림 없이도 속성으로 동작 */ }
+    }
+    window.AkmAoTheme = { isDark: () => themeOn, set: setTheme, toggle: () => setTheme(!themeOn) };
+    (() => { const p = $('page-agent-office'); if (p && window.MutationObserver) new MutationObserver(applyTheme).observe(p, { attributes: true, attributeFilter: ['class'] }); applyTheme(); })();
 
     window.aoDeskEnter = async function () {
         mount();

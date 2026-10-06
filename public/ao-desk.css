@@ -650,3 +650,367 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-endbtn.no { background: #fff; border-color: #F3C5C0; color: #B42318; }
 .desk-endbtn.no:hover { background: #FEF3F2; }
 @media (max-width: 380px) { .desk-end-ask.in .desk-endbtn { padding: 0 11px; font-size: 13px; } }
+/* ═══ #568 야간 화면 (대표 10/6) ═══
+ * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
+ * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
+ */
+/* 전환 버튼(해·달) — 맨 위 카드의 오른쪽 위 모서리. 높이 0 칸(.desk-theme-slot) 안의 absolute 라 다른 글자·칸을 밀지 않고, 카드 자체의 속성은 건드리지 않는다(밝은 화면에서 달라지는 곳은 이 버튼 자리뿐) */
+.desk-theme-slot { display: flex; justify-content: flex-end; height: 0; }
+.desk-theme { position: absolute; margin: -8px -10px 0 0; z-index: 2; width: 40px; height: 40px; padding: 0; border-radius: 50%; border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-sub); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 160ms var(--d-ease), background-color 160ms var(--d-ease), color 160ms var(--d-ease), border-color 160ms var(--d-ease); }
+.desk-theme:hover { background: var(--d-soft); color: var(--d-ink); border-color: #DEE0E7; }
+.desk-theme:active { transform: scale(.97); }
+.desk-theme:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.desk-theme svg { display: block; }
+@media (max-width: 640px) { .desk-theme { width: 44px; height: 44px; margin: -9px -10px 0 0; } }
+@media (prefers-reduced-motion: reduce) { .desk-theme { transition: none; } }
+
+/* ① 색 토큰 — 루트에 한 벌(최종발주 .fo 도 같은 이름을 쓴다) · .desk 는 자기 토큰을 다시 정의하므로 같이 덮는다 */
+html[data-ao-theme="dark"], html[data-ao-theme="dark"] .desk {
+    --d-bg: #0E1122;
+    --d-card: #161A2E;
+    --d-soft: #1B2038;
+    --d-line: #2A3052;
+    --d-card-line: #2A3052;
+    --d-ink: #E9EBF5;
+    --d-sub: #AEB4CB;
+    --d-dim: #9299B4;
+    --d-accent: #8C94FF;            /* 글자·테두리용 인디고 */
+    --d-accent-fill: #5B5BEA;       /* 채운 버튼 바탕 — 흰 글자 5:1 */
+    --d-accent-hover: #6E6EF5;
+    --d-accent-soft: #232A52;
+    --d-ok: #3DD68C;
+    --d-warn: #FBBF4A;
+    --d-err: #FF7A6E;
+    --d-lime: #C5EE4F;              /* 답변 강조(대표 「라임」) */
+    --d-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px -2px rgba(0, 0, 0, .45);
+}
+html[data-ao-theme="dark"] .desk { color-scheme: dark; }
+
+/* 화면 틀(에이전트 오피스에 있을 때만) — 바탕 · 제목 · 왼쪽 메뉴 · 폰 위쪽 둥근 버튼 */
+html[data-ao-theme="dark"] body, html[data-ao-theme="dark"] .main-content { background: var(--d-bg); }
+html[data-ao-theme="dark"] #page-agent-office .ao-desk-title { color: var(--d-ink); }
+html[data-ao-theme="dark"] .sidebar {
+    --sidebar-bg: #121629; --sidebar-text: #AEB4CB; --sidebar-hover: #1B2038; --sidebar-active-bg: #232A52;
+    --text-dark: #E9EBF5; --text-mid: #AEB4CB; --text-light: #9299B4;
+    --border: #2A3052; --border-soft: #232845; --card-bg: #161A2E; --bg-soft: #1B2038;
+    --primary: #8C94FF; --primary-light: #1B2038; --danger: #FF7A6E;
+    color-scheme: dark;
+}
+html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
+html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
+
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (278규칙 · :where 라 우선순위는 원래와 같다) */
+@keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
+:where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-h span { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-h a, :where(html[data-ao-theme="dark"]) .desk-h button.link { background: none; border: 0; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-hero { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-date { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-clock small { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-state { background: var(--d-soft); border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-state i { background: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-state[data-s="idle"] i { background: var(--d-ok); }
+:where(html[data-ao-theme="dark"]) .desk-state[data-s="busy"] i { background: var(--d-warn); }
+:where(html[data-ao-theme="dark"]) .desk-state-sub { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-say { background: var(--d-soft); border: 1px solid var(--d-line); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-wake-note { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-ask { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-ask p { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-input { background: var(--d-card); color: var(--d-ink); border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-input::placeholder { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-input:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }
+:where(html[data-ao-theme="dark"]) .desk-ask.drag .desk-input { outline: 2px dashed var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-count { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-btn { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-btn:hover { background: var(--d-soft); border-color: #3A4168; }
+:where(html[data-ao-theme="dark"]) .desk-btn:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-btn.primary { background: var(--d-accent-fill); border-color: var(--d-accent); color: #fff; box-shadow: 0 6px 16px -8px rgba(140, 148, 255, 0.65); }
+:where(html[data-ao-theme="dark"]) .desk-btn.primary:hover { background: var(--d-accent-hover); border-color: var(--d-accent-hover); }
+:where(html[data-ao-theme="dark"]) .desk-btn.danger { color: var(--d-err); }
+:where(html[data-ao-theme="dark"]) .desk-thumb { border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-thumb button { border: 0; background: rgba(16, 24, 40, .72); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-inbox { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-inbox-tabs button { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-inbox-tabs button[aria-selected="true"] { background: var(--d-accent-soft); border-color: #333B73; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-inbox-tabs button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-inbox-tabs i { background: var(--d-line); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-inbox-tabs i.on { background: var(--d-err); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-inbox-seen { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-ib-top { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-ib { border: 1px solid var(--d-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-ib.seen { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-ib-head { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-ib-a { background: var(--d-soft); border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-ib-a b { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-ib-a.draft { border-style: dashed; }
+:where(html[data-ao-theme="dark"]) .desk-inbox-list .desk-table tr.desk-ib-row.seen td { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-inbox-list .desk-ib-a.desk-a.answer.draft { border-style: dashed; border-left-style: solid; }
+:where(html[data-ao-theme="dark"]) .desk-a.answer.draft { border-color: #3D468A; border-style: dashed; border-left-style: solid; background: #1A1F3A; }
+:where(html[data-ao-theme="dark"]) .desk-quick { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-quick button { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-quick button:hover { background: var(--d-accent-soft); border-color: #333B73; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-quick button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-panel { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-panel h3 span { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-ch em { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-ch .sum { border-top: 1px solid var(--d-line); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-bar b { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-bar i { background: #3D468A; }
+:where(html[data-ao-theme="dark"]) .desk-bar.top i { background: var(--d-accent-fill); }
+:where(html[data-ao-theme="dark"]) .desk-bar i.zero { background: var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-bar span { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-sales span:nth-child(3n+2) { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-sales b.minus { color: var(--d-err); }
+:where(html[data-ao-theme="dark"]) .desk-todo b { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-todo small { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-live time { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-live i { background: var(--d-accent-fill); }
+:where(html[data-ao-theme="dark"]) .desk-live i.ok { background: var(--d-ok); }
+:where(html[data-ao-theme="dark"]) .desk-live i.warn { background: var(--d-warn); }
+:where(html[data-ao-theme="dark"]) .desk-live i.err { background: var(--d-err); }
+:where(html[data-ao-theme="dark"]) .desk-sch .mk { border: 1.5px solid var(--d-line); color: transparent; }
+:where(html[data-ao-theme="dark"]) .desk-sch li.done .mk { background: var(--d-accent-fill); border-color: var(--d-accent); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-sch small { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-prog .track { background: var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-prog .track i { background: var(--d-accent-fill); }
+:where(html[data-ao-theme="dark"]) .desk-prog li[data-k="ship"] .track i { background: #7C8BFF; }
+:where(html[data-ao-theme="dark"]) .desk-prog li[data-k="qna"] .track i { background: #38BDF8; }
+:where(html[data-ao-theme="dark"]) .desk-prog li[data-k="settle"] .track i { background: var(--d-ok); }
+:where(html[data-ao-theme="dark"]) .desk-prog em { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-listbox { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-tabsrow { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-tab[aria-selected="true"] { color: var(--d-accent); border-bottom-color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-tab:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .desk-tab .n { background: var(--d-err); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-filter select { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-empty { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-cardlist .desk-card { border: 1px solid var(--d-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-card-head { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-badge[data-k="wait"] { background: rgba(251, 191, 74, .15); color: #FBBF4A; }
+:where(html[data-ao-theme="dark"]) .desk-badge[data-k="work"] { background: var(--d-accent-soft); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-badge[data-k="ask"] { background: rgba(251, 191, 74, .15); color: #FBBF4A; }
+:where(html[data-ao-theme="dark"]) .desk-badge[data-k="done"] { background: rgba(61, 214, 140, .15); color: #7BE3AE; }
+:where(html[data-ao-theme="dark"]) .desk-badge[data-k="err"] { background: rgba(255, 122, 110, .16); color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .desk-x { border: 0; background: none; color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-x:hover { background: var(--d-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-a { background: var(--d-soft); border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-a.answer { background: var(--d-card); border: 1px solid #333B73; border-left: 4px solid var(--d-accent); box-shadow: 0 1px 2px rgba(140, 148, 255, 0.18); }
+:where(html[data-ao-theme="dark"]) .desk-a-label { color: var(--d-accent); background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-a-acts { border-left: 4px solid var(--d-accent); border-right: 1px solid #333B73; border-bottom: 1px solid #333B73; background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-a.answer:has(+ .desk-a-acts), :where(html[data-ao-theme="dark"]) .desk-a.answer:has(+ .desk-files) { border-bottom: 0; }
+:where(html[data-ao-theme="dark"]) .desk-a.answer + .desk-files { border-left: 4px solid var(--d-accent); border-right: 1px solid #333B73; background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-a-acts .desk-btn { background: var(--d-card); border-color: #3D468A; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-a-acts .desk-btn:hover { background: var(--d-accent-fill); border-color: var(--d-accent); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-a-acts .desk-btn.pv-only { color: var(--d-sub); border-color: var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-q-full .desk-a-label { background: #242A47; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-q-full small { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-table tr.row.clickable:hover td { background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-table tr.row.opened td { background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-reply-in { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-reply-in:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }
+:where(html[data-ao-theme="dark"]) .desk-note { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-working { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-link { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-kv dt { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-steps { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-table th { color: var(--d-sub); background: linear-gradient(#1F2440, #1B2038); border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-table td { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-table tr.row:hover td { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-table .c-id { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-table .c-r { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-table .c-by { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-table td.detail { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-more { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-more:hover { background: var(--d-accent-soft); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-more-all { border: 0; border-top: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-more-all:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-more-all:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .desk-more-all .n { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-more-all .chev { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk .is-full { border: 0; box-shadow: none; }
+@media (min-width: 900px) {
+    :where(html[data-ao-theme="dark"]) .desk .is-full { border: 1px solid var(--d-line); box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.7), 0 24px 64px -12px rgba(0, 0, 0, 0.6); }
+}
+:where(html[data-ao-theme="dark"]) .desk-listbox.is-full .desk-fullbar { background: var(--d-card); border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-inbox.is-full .desk-inbox-head { background: var(--d-card); border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-card.desk-flash { animation-name: desk-flash-dk; }
+@media (prefers-reduced-motion: reduce) {
+    :where(html[data-ao-theme="dark"]) .desk-card.desk-flash { background-color: var(--d-accent-soft); }
+}
+:where(html[data-ao-theme="dark"]) .desk-thread { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-follow { background: var(--d-accent-soft); border: 1px solid #333B73; }
+:where(html[data-ao-theme="dark"]) .desk-caret { background: var(--d-accent-fill); }
+:where(html[data-ao-theme="dark"]) .desk-md-h { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-md-hr { border: 0; border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-md strong { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-md code { background: var(--d-soft); border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-md-tw { border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-md-t th { background: var(--d-soft); color: var(--d-ink); border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-md-t td { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-md-t tr:last-child td { border-bottom: 0; }
+:where(html[data-ao-theme="dark"]) .desk-lane { color: var(--d-sub); background: var(--d-soft); border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-keyhint { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-quick2 { border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-quick2-label { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-chip { border: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-chip:hover { background: var(--d-accent-soft); border-color: #3D468A; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-chip:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-thread-box { border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-thread-box:first-child { border-top: 0; }
+:where(html[data-ao-theme="dark"]) .desk-th-head { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-bub.me { background: var(--d-accent-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-bub-meta { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-turn.desk-flash .desk-bub.me { box-shadow: 0 0 0 2px var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-confirm-q { color: var(--d-ink); }
+@media (max-width: 640px) {
+    :where(html[data-ao-theme="dark"]) .desk-foldbtn { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+}
+:where(html[data-ao-theme="dark"]) .desk-live-scroll { border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-top.desk-top1 { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-hero { background: none; border: 0; box-shadow: none; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-ask { background: none; border: 0; box-shadow: none; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-say { background: none; border: 0; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-compose { background: var(--d-card); border: 2px solid #4A54A6; box-shadow: 0 1px 2px rgba(140, 148, 255, 0.18); }
+:where(html[data-ao-theme="dark"]) .desk-compose:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(140, 148, 255, 0.24); }
+:where(html[data-ao-theme="dark"]) .desk-ask.drag .desk-compose { border-style: dashed; border-color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-spark { color: #8F96FF; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-input { border: 0; background: transparent; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-input:focus-visible, :where(html[data-ao-theme="dark"]) .desk-ask.drag .desk-top1 .desk-input, :where(html[data-ao-theme="dark"]) .desk-top1 .desk-ask.drag .desk-input { outline: none; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-input::placeholder { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-icon { border: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-icon:hover { background: var(--d-accent-soft); border-color: #3D468A; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-icon:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-icon.primary { background: var(--d-accent-fill); border-color: var(--d-accent); color: #fff; box-shadow: 0 6px 16px -8px rgba(140, 148, 255, 0.65); }
+:where(html[data-ao-theme="dark"]) .desk-icon.primary:hover { background: var(--d-accent-hover); border-color: var(--d-accent-hover); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-quick2 { border-top: 0; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-chip { background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-top1 textarea#desk-input, :where(html[data-ao-theme="dark"]) .desk-top1 textarea#desk-input:focus, :where(html[data-ao-theme="dark"]) .desk-top1 textarea#desk-input:focus-visible { border: 0; outline: none; box-shadow: none; background: transparent; }
+:where(html[data-ao-theme="dark"]) .desk-top1 textarea#desk-input:focus { box-shadow: none !important; border-color: transparent !important; }
+:where(html[data-ao-theme="dark"]) .desk-thread-box { border: 2px solid #4A54A6; background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-thread-box:first-child { border-top: 2px solid #4A54A6; }
+:where(html[data-ao-theme="dark"]) .desk-thread-box:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(140, 148, 255, 0.22); }
+:where(html[data-ao-theme="dark"]) .desk-media { border-left: 4px solid var(--d-accent); border-right: 1px solid #333B73; background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-a.answer:has(+ .desk-media) { border-bottom: 0; }
+:where(html[data-ao-theme="dark"]) .desk-media + .desk-files { border-left: 4px solid var(--d-accent); border-right: 1px solid #333B73; background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-media-item img { border: 1px solid var(--d-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-media-item video { background: #000; }
+:where(html[data-ao-theme="dark"]) .desk-media-item figcaption { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-media-item.fail figcaption::after { color: var(--d-err); }
+:where(html[data-ao-theme="dark"]) .desk-media-item img:not([src]), :where(html[data-ao-theme="dark"]) .desk-media-item video:not([src]) { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-zoom { background: rgba(16, 24, 40, .82); }
+:where(html[data-ao-theme="dark"]) .desk-zoom img { background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-zoom-cap { color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-th-head .desk-x { border: 1px solid #3D468A; background: var(--d-card); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-th-head .desk-x:hover { background: var(--d-accent-fill); border-color: var(--d-accent); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-th-head .desk-x:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-cbox { background: var(--d-card); border: 1.5px solid #3D468A; }
+:where(html[data-ao-theme="dark"]) .desk-cbox:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(140, 148, 255, 0.22); }
+:where(html[data-ao-theme="dark"]) .desk-cbox .desk-reply-in { border: 0 !important; background: transparent; box-shadow: none !important; outline: none !important; color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-cbox .desk-reply-in::placeholder { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-cbtn { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-cbtn:hover { background: var(--d-soft); border-color: #3A4168; }
+:where(html[data-ao-theme="dark"]) .desk-cbtn:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-cbtn.primary { background: var(--d-accent-fill); border-color: var(--d-accent); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-cbtn.primary:hover { background: var(--d-accent-hover); border-color: var(--d-accent-hover); }
+:where(html[data-ao-theme="dark"]) .desk-cbtn.primary[disabled] { background: #242A47; border-color: var(--d-line); color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-endbtn { border: 1px solid rgba(255, 122, 110, .38); background: rgba(255, 122, 110, .16); color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .desk-endbtn:hover { background: rgba(255, 122, 110, .28); border-color: rgba(255, 122, 110, .65); }
+:where(html[data-ao-theme="dark"]) .desk-endbtn:focus-visible { outline: 2px solid #FF7A6E; outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-end-ask { background: var(--d-soft); border: 1px solid var(--d-line); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-hist-search { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-hist-search:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(140, 148, 255, 0.22); }
+:where(html[data-ao-theme="dark"]) .desk-hist-search input { border: 0 !important; background: transparent; box-shadow: none !important; outline: none !important; color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-hist-mine { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-h-day { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-h-item { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-h-item.open { border: 1px solid #3D468A; background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-h-row { border: 0; background: none; color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-h-row:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-h-row:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .desk-h-when { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-h-who { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-h-meta { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-h-clip { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-h-chev { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-h-foot { border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-h-note { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-th-head { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-th-when { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-th-sum { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-h-item { border: 1px solid var(--d-card-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-h-item.open { border: 2px solid #4A54A6; }
+:where(html[data-ao-theme="dark"]) .desk-h-item.open > .desk-h-row { background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-h-head { border-bottom: 1px solid var(--d-line); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-hist-x { border: 0; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-hist-x:hover { background: var(--d-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-hist-x:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .desk-hl { background: rgba(251, 191, 74, .38); color: inherit; }
+:where(html[data-ao-theme="dark"]) .desk-h-item { background: #1A1F3A; border-color: var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-h-item:not(.open):hover { background: #202647; border-color: #3D468A; }
+:where(html[data-ao-theme="dark"]) .desk-h-item:not(.open):active { background: #2A3160; border-color: #4A54A6; }
+:where(html[data-ao-theme="dark"]) .desk-h-item.open { background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-h-row:hover { background: transparent; }
+:where(html[data-ao-theme="dark"]) .desk-h-when, :where(html[data-ao-theme="dark"]) .desk-h-meta { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-h-who.mine { color: #B4BAFF; }
+:where(html[data-ao-theme="dark"]) .desk-h-day { background: #242A47; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-thread-box.desk-flash { box-shadow: 0 0 0 3px rgba(140, 148, 255, 0.32); }
+:where(html[data-ao-theme="dark"]) .desk-filechip { border: 1px solid #333B73; background: var(--d-accent-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-filechip-ic { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-filechip-size { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-filechip button { border: 0; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-filechip button:hover { background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-filechip button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-topbox { border: 1.5px solid #3D468A; box-shadow: none; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-topbox:focus-within { border-color: var(--d-accent); box-shadow: 0 0 0 3px rgba(140, 148, 255, 0.22); }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-ask.drag .desk-topbox { border-style: dashed; border-color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-topbox .desk-quick2 { border: 0; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-topbox .desk-chip { border: 1px solid #333B73; background: var(--d-accent-soft); color: #B4BAFF; }
+:where(html[data-ao-theme="dark"]) .desk-top1 .desk-topbox .desk-chip:hover { background: #2C3566; border-color: #3D468A; color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .desk-cbtn.primary[disabled] { color: var(--d-dim); }
+:where(html[data-ao-theme="dark"]) .desk-sec { border: 1.5px solid rgba(61, 214, 140, .38); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-sec-head { background: rgba(61, 214, 140, .12); border-bottom: 1.5px solid rgba(61, 214, 140, .38); }
+:where(html[data-ao-theme="dark"]) .desk-sec-head b { color: #7BE3AE; }
+:where(html[data-ao-theme="dark"]) .desk-sec-copy { border: 0; background: none; color: #7BE3AE; }
+:where(html[data-ao-theme="dark"]) .desk-sec-copy::before { background: currentColor; }
+:where(html[data-ao-theme="dark"]) .desk-sec-copy:hover { background: rgba(61, 214, 140, .24); }
+:where(html[data-ao-theme="dark"]) .desk-sec-copy:focus-visible { outline: 2px solid var(--d-ok); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) #desk-list .desk-a-label { color: var(--d-sub); background: none; }
+:where(html[data-ao-theme="dark"]) #desk-list .desk-lane { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) #desk-list .desk-bub-meta { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) #desk-list .desk-a.answer .desk-a-title { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-end-ask.in { border: 0; background: none; }
+:where(html[data-ao-theme="dark"]) .desk-endbtn.yes { background: #C8281C; border-color: #FF7A6E; color: #fff; }
+:where(html[data-ao-theme="dark"]) .desk-endbtn.yes:hover { background: #D92D20; border-color: #D92D20; }
+:where(html[data-ao-theme="dark"]) .desk-endbtn.no { background: var(--d-card); border-color: rgba(255, 122, 110, .42); color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .desk-endbtn.no:hover { background: rgba(255, 122, 110, .10); }
+
+/* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */
+/* 「중간발주·최종발주·정산 이미지」 = 「대기 중」 알약과 같은 꼴(흰 글씨 · 같은 바탕 · 같은 테두리) */
+html[data-ao-theme="dark"] .desk-state,
+html[data-ao-theme="dark"] .desk-chip,
+html[data-ao-theme="dark"] .desk-top1 .desk-topbox .desk-chip { background: var(--d-soft); border-color: var(--d-line); color: #fff; }
+html[data-ao-theme="dark"] .desk-chip:hover,
+html[data-ao-theme="dark"] .desk-top1 .desk-topbox .desk-chip:hover { background: #2C3566; border-color: #3D468A; color: #fff; }
+/* 답변의 강조 = 라임(「클코 답변」 표지 · 답 제목 · 답 상자 왼쪽 선) */
+html[data-ao-theme="dark"] .desk-a.answer,
+html[data-ao-theme="dark"] .desk-a-acts,
+html[data-ao-theme="dark"] .desk-a.answer + .desk-files { border-left-color: var(--d-lime); }
+html[data-ao-theme="dark"] .desk-a.answer .desk-a-label,
+html[data-ao-theme="dark"] #desk-list .desk-a.answer .desk-a-label { color: var(--d-lime); }
+html[data-ao-theme="dark"] .desk-a.answer .desk-a-label { background: rgba(197, 238, 79, .12); }
+html[data-ao-theme="dark"] #desk-list .desk-a.answer .desk-a-label { background: none; }
+html[data-ao-theme="dark"] .desk-a.answer .desk-a-title,
+html[data-ao-theme="dark"] #desk-list .desk-a.answer .desk-a-title { color: var(--d-lime); }
+/* 전환 버튼 — 켜져 있을 때는 해 */
+html[data-ao-theme="dark"] .desk-theme { color: var(--d-warn); }
+html[data-ao-theme="dark"] .desk-theme:hover { color: var(--d-warn); border-color: #3A4168; }
+/* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
+html[data-ao-theme="dark"] .desk input::placeholder, html[data-ao-theme="dark"] .desk textarea::placeholder { color: #9AA1BA; }
+/* 숫자 배지(문의 건수) — 밝은 빨강 위 흰 글자는 2.5:1 이라 바탕을 진한 빨강으로 */
+html[data-ao-theme="dark"] .desk-inbox-tabs i.on, html[data-ao-theme="dark"] .desk-tab .n { background: #C8281C; color: #fff; }
+/* 공용 스타일(styles.css)로 그려지는 것 — 에이전트 오피스 안에서만: 표를 감싼 칸 · 스크롤 막대 */
+html[data-ao-theme="dark"] .desk .table-scroll-wrapper { background: var(--d-card); border-color: var(--d-line); box-shadow: none; }
+html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb { background: #3A4168; }
+html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb:hover { background: #4A54A6; }

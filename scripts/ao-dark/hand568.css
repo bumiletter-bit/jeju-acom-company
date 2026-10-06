@@ -1,0 +1,75 @@
+/* 전환 버튼(해·달) — 맨 위 카드의 오른쪽 위 모서리. 높이 0 칸(.desk-theme-slot) 안의 absolute 라 다른 글자·칸을 밀지 않고, 카드 자체의 속성은 건드리지 않는다(밝은 화면에서 달라지는 곳은 이 버튼 자리뿐) */
+.desk-theme-slot { display: flex; justify-content: flex-end; height: 0; }
+.desk-theme { position: absolute; margin: -8px -10px 0 0; z-index: 2; width: 40px; height: 40px; padding: 0; border-radius: 50%; border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-sub); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 160ms var(--d-ease), background-color 160ms var(--d-ease), color 160ms var(--d-ease), border-color 160ms var(--d-ease); }
+.desk-theme:hover { background: var(--d-soft); color: var(--d-ink); border-color: #DEE0E7; }
+.desk-theme:active { transform: scale(.97); }
+.desk-theme:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.desk-theme svg { display: block; }
+@media (max-width: 640px) { .desk-theme { width: 44px; height: 44px; margin: -9px -10px 0 0; } }
+@media (prefers-reduced-motion: reduce) { .desk-theme { transition: none; } }
+
+/* ① 색 토큰 — 루트에 한 벌(최종발주 .fo 도 같은 이름을 쓴다) · .desk 는 자기 토큰을 다시 정의하므로 같이 덮는다 */
+html[data-ao-theme="dark"], html[data-ao-theme="dark"] .desk {
+    --d-bg: #0E1122;
+    --d-card: #161A2E;
+    --d-soft: #1B2038;
+    --d-line: #2A3052;
+    --d-card-line: #2A3052;
+    --d-ink: #E9EBF5;
+    --d-sub: #AEB4CB;
+    --d-dim: #9299B4;
+    --d-accent: #8C94FF;            /* 글자·테두리용 인디고 */
+    --d-accent-fill: #5B5BEA;       /* 채운 버튼 바탕 — 흰 글자 5:1 */
+    --d-accent-hover: #6E6EF5;
+    --d-accent-soft: #232A52;
+    --d-ok: #3DD68C;
+    --d-warn: #FBBF4A;
+    --d-err: #FF7A6E;
+    --d-lime: #C5EE4F;              /* 답변 강조(대표 「라임」) */
+    --d-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px -2px rgba(0, 0, 0, .45);
+}
+html[data-ao-theme="dark"] .desk { color-scheme: dark; }
+
+/* 화면 틀(에이전트 오피스에 있을 때만) — 바탕 · 제목 · 왼쪽 메뉴 · 폰 위쪽 둥근 버튼 */
+html[data-ao-theme="dark"] body, html[data-ao-theme="dark"] .main-content { background: var(--d-bg); }
+html[data-ao-theme="dark"] #page-agent-office .ao-desk-title { color: var(--d-ink); }
+html[data-ao-theme="dark"] .sidebar {
+    --sidebar-bg: #121629; --sidebar-text: #AEB4CB; --sidebar-hover: #1B2038; --sidebar-active-bg: #232A52;
+    --text-dark: #E9EBF5; --text-mid: #AEB4CB; --text-light: #9299B4;
+    --border: #2A3052; --border-soft: #232845; --card-bg: #161A2E; --bg-soft: #1B2038;
+    --primary: #8C94FF; --primary-light: #1B2038; --danger: #FF7A6E;
+    color-scheme: dark;
+}
+html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
+html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
+
+/*@@GEN@@*/
+
+/* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */
+/* 「중간발주·최종발주·정산 이미지」 = 「대기 중」 알약과 같은 꼴(흰 글씨 · 같은 바탕 · 같은 테두리) */
+html[data-ao-theme="dark"] .desk-state,
+html[data-ao-theme="dark"] .desk-chip,
+html[data-ao-theme="dark"] .desk-top1 .desk-topbox .desk-chip { background: var(--d-soft); border-color: var(--d-line); color: #fff; }
+html[data-ao-theme="dark"] .desk-chip:hover,
+html[data-ao-theme="dark"] .desk-top1 .desk-topbox .desk-chip:hover { background: #2C3566; border-color: #3D468A; color: #fff; }
+/* 답변의 강조 = 라임(「클코 답변」 표지 · 답 제목 · 답 상자 왼쪽 선) */
+html[data-ao-theme="dark"] .desk-a.answer,
+html[data-ao-theme="dark"] .desk-a-acts,
+html[data-ao-theme="dark"] .desk-a.answer + .desk-files { border-left-color: var(--d-lime); }
+html[data-ao-theme="dark"] .desk-a.answer .desk-a-label,
+html[data-ao-theme="dark"] #desk-list .desk-a.answer .desk-a-label { color: var(--d-lime); }
+html[data-ao-theme="dark"] .desk-a.answer .desk-a-label { background: rgba(197, 238, 79, .12); }
+html[data-ao-theme="dark"] #desk-list .desk-a.answer .desk-a-label { background: none; }
+html[data-ao-theme="dark"] .desk-a.answer .desk-a-title,
+html[data-ao-theme="dark"] #desk-list .desk-a.answer .desk-a-title { color: var(--d-lime); }
+/* 전환 버튼 — 켜져 있을 때는 해 */
+html[data-ao-theme="dark"] .desk-theme { color: var(--d-warn); }
+html[data-ao-theme="dark"] .desk-theme:hover { color: var(--d-warn); border-color: #3A4168; }
+/* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
+html[data-ao-theme="dark"] .desk input::placeholder, html[data-ao-theme="dark"] .desk textarea::placeholder { color: #9AA1BA; }
+/* 숫자 배지(문의 건수) — 밝은 빨강 위 흰 글자는 2.5:1 이라 바탕을 진한 빨강으로 */
+html[data-ao-theme="dark"] .desk-inbox-tabs i.on, html[data-ao-theme="dark"] .desk-tab .n { background: #C8281C; color: #fff; }
+/* 공용 스타일(styles.css)로 그려지는 것 — 에이전트 오피스 안에서만: 표를 감싼 칸 · 스크롤 막대 */
+html[data-ao-theme="dark"] .desk .table-scroll-wrapper { background: var(--d-card); border-color: var(--d-line); box-shadow: none; }
+html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb { background: #3A4168; }
+html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb:hover { background: #4A54A6; }

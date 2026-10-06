@@ -80,6 +80,7 @@
         <div class="fo-box">
             <header class="fo-head">
                 <div><h2 id="fo-title">최종발주</h2><p class="fo-sub">거래처별 택배사 양식, 수량 표, 스마트스토어 양식을 한 번에 만들어요. 송장변환 메뉴는 그대로 쓸 수 있어요.</p></div>
+                <button type="button" class="fo-theme" id="fo-theme" aria-label="야간 화면 켜기·끄기" title="야간 화면 켜기·끄기"></button>
                 <button type="button" class="fo-btn" id="fo-close">닫기</button>
             </header>
             <div class="fo-body">
@@ -149,6 +150,7 @@
         </div>`;
         document.body.appendChild(el);
         $('fo-close').addEventListener('click', () => close());
+        $('fo-theme').addEventListener('click', () => { if (window.AkmAoTheme && typeof window.AkmAoTheme.toggle === 'function') window.AkmAoTheme.toggle(); });   // #568: 야간 화면 전환(에이전트 오피스 본체의 버튼과 같은 동작 · 없으면 아무 일도 안 함)
         el.addEventListener('mousedown', e => { if (e.target === el && !st.busy) close(); });
         document.addEventListener('keydown', e => { if (e.key === 'Escape' && st.open && !st.busy) close(); });
         window.addEventListener('popstate', () => { if (st.skipPop) { st.skipPop = false; return; } if (st.open) close(true); });

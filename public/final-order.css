@@ -248,3 +248,135 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 /* #548 보충: 파일을 고른 뒤 「오늘은 없음」은 흐리게(누를 수 없음) */
 .fo .fo-check.off { opacity: .45; cursor: default; }
 .fo .fo-check.off input { cursor: default; }
+
+/* ══ #568(대표 10/6) 에이전트 오피스 야간모드 — 최종발주 패널 ══════════════════════════════════════════
+ * 🔴 여기 아래는 전부 html[data-ao-theme="dark"] 안에서만 먹는다. 위의 밝은 화면 규칙은 한 글자도 안 고쳤다(추가만).
+ * 색 = ao-desk.css 가 html[data-ao-theme="dark"] 에 정의하는 --d-* 토큰(대체값은 그 토큰이 없을 때만 쓰임).
+ * 뜻이 있는 색(✓ 초록 · ⚠ 노랑 · ✕ 빨강 · 카드 종류)은 뜻 그대로, 어두운 바탕에 맞게 밝기만 바꿨다.
+ * 수량 표(.fo-qty)는 일부러 「흰 종이 표」로 둔다 — 품목 칸의 거래처 색(중간발주 색표) + 검은 글자가 거래처에 보내는 이미지와 같아야 해서.
+ * 저장되는 엑셀·수량 이미지의 색은 화면 CSS 와 무관하다(final-order.js 가 직접 칠함) — 야간모드로 뽑아도 결과물은 같다. */
+html[data-ao-theme="dark"] .fo {
+    --f-ink: var(--d-ink, #E9EBF5);
+    --f-sub: var(--d-sub, #AEB4CB);
+    --f-line: var(--d-line, #2A3052);
+    --f-card-line: var(--d-card-line, #2A3052);
+    --f-soft: var(--d-soft, #1B2038);
+    --f-accent: var(--d-accent, #8C94FF);
+    --f-accent-dark: #4B4BD6;                              /* 채운 버튼 hover(흰 글자 6:1) */
+    --f-accent-soft: var(--d-accent-soft, #232A52);
+    --f-err: var(--d-err, #FF7A6E);
+    /* 이 패널에서만 쓰는 어두운 색(토큰 조합) */
+    --fd-bg: var(--d-bg, #0E1122);                         /* 입력칸·대화 틀 = 한 단 들어간 바탕 */
+    --fd-card: var(--d-card, #161A2E);                     /* 패널 바탕 */
+    --fd-dim: var(--d-dim, #8B92AD);
+    --fd-fill: var(--d-accent-fill, #5B5BEA);              /* 채운 버튼(흰 글자) */
+    --fd-ok: var(--d-ok, #3DD68C);
+    --fd-warn: var(--d-warn, #FBBF4A);
+    --fd-lime: var(--d-lime, #C5EE4F);
+    --fd-accent-line: #3B4380;                             /* 인디고 옅은 칸의 테두리 */
+    --fd-ok-bg: #12352A; --fd-ok-line: #1F5C44;
+    --fd-warn-bg: #3A2E12; --fd-warn-line: #6E5416;
+    --fd-err-bg: #3A1B1D; --fd-err-line: #7A3436;
+    background: rgba(4, 6, 16, .62);
+    color-scheme: dark;                                    /* 고르기 상자 목록·스크롤 막대도 어둡게 */
+}
+/* 패널 안 전환 버튼(「닫기」 왼쪽) — 에이전트 오피스 본체의 #desk-theme 와 같은 모양(둥근 40px · 폰 44px · 달/해). 새 요소라 밝은 화면에도 이 버튼만 생긴다 */
+.fo-theme { flex: none; margin: 2px 0 0 auto; width: 40px; height: 40px; padding: 0; border-radius: 50%; border: 1px solid var(--f-line); background: #fff; color: var(--f-sub); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 160ms var(--f-ease), background-color 160ms var(--f-ease), color 160ms var(--f-ease), border-color 160ms var(--f-ease); }
+.fo-theme:hover { background: var(--f-soft); color: var(--f-ink); border-color: #DEE0E7; }
+.fo-theme:active { transform: scale(.97); }
+.fo-theme:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; }
+/* 아이콘(달 · 야간이면 해)은 본체 버튼과 같은 그림을 CSS 로 그린다 — 버튼 안에 svg 를 직접 넣으면 옆 「닫기」 글자의 가장자리 처리가 달라져(실측) 밝은 화면이 픽셀 단위로 바뀐다 */
+.fo-theme::before { content: ''; width: 18px; height: 18px; background: currentColor; -webkit-mask: var(--fo-theme-icon) center / contain no-repeat; mask: var(--fo-theme-icon) center / contain no-repeat; }
+.fo-theme { --fo-theme-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'/%3E%3C/svg%3E"); }
+@media (max-width: 640px) { .fo-theme { width: 44px; height: 44px; margin-top: 0; } }
+/* 좁은 폰: 줄 안에 두면 제목 칸이 좁아져 설명이 한 줄 더 내려간다 → 「닫기」 바로 아래에 띄워 둔다(보이는 크기 32px · 누르는 자리는 44px) */
+@media (max-width: 480px) {
+    .fo-theme { position: absolute; top: 58px; right: 16px; width: 32px; height: 32px; margin: 0; }
+    .fo-theme::after { content: ''; position: absolute; inset: -2px -6px -10px -6px; }
+}
+@media (prefers-reduced-motion: reduce) { .fo-theme { transition: none; } .fo-theme:active { transform: none; } }
+html[data-ao-theme="dark"] .fo-theme { background: var(--fd-card); color: var(--fd-warn); --fo-theme-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='4'/%3E%3Cpath d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/%3E%3C/svg%3E"); }
+html[data-ao-theme="dark"] .fo-theme:hover { background: var(--f-soft); color: var(--fd-warn); border-color: #3A4168; }
+html[data-ao-theme="dark"] .fo-box { background: var(--fd-card); }
+@media (min-width: 900px) { html[data-ao-theme="dark"] .fo-box { box-shadow: 0 24px 64px -12px rgba(0, 0, 0, .6); } }
+html[data-ao-theme="dark"] .fo-sec h3 b { color: var(--fd-lime); }
+
+/* 입력 */
+html[data-ao-theme="dark"] .fo select, html[data-ao-theme="dark"] .fo input[type="text"], html[data-ao-theme="dark"] .fo textarea { background: var(--fd-bg); color: var(--f-ink); border-color: var(--f-card-line); }
+html[data-ao-theme="dark"] .fo textarea::placeholder, html[data-ao-theme="dark"] .fo input::placeholder { color: var(--fd-dim); opacity: 1; }
+html[data-ao-theme="dark"] .fo input[type="file"] { color: var(--f-sub); }
+
+/* 버튼 */
+html[data-ao-theme="dark"] .fo-btn { background: var(--f-soft); color: var(--f-ink); border-color: var(--f-card-line); }
+html[data-ao-theme="dark"] .fo-btn:hover { background: #232948; }
+html[data-ao-theme="dark"] .fo-btn.primary { background: var(--fd-fill); border-color: var(--fd-fill); color: #fff; }
+html[data-ao-theme="dark"] .fo-btn.primary:hover { background: var(--f-accent-dark); border-color: var(--f-accent-dark); }
+html[data-ao-theme="dark"] .fo-btn:disabled, html[data-ao-theme="dark"] .fo-btn.primary:disabled { background: #1A1F36; border-color: var(--f-line); color: var(--fd-dim); }
+html[data-ao-theme="dark"] .fo-acts.sticky { background: var(--fd-card); }
+
+/* 불러오기 */
+html[data-ao-theme="dark"] .fo-ch li[data-k="work"] { border-color: var(--fd-accent-line); }
+html[data-ao-theme="dark"] .fo-ch li[data-k="done"] span { color: var(--fd-ok); }
+html[data-ao-theme="dark"] .fo-ch li[data-k="err"] { border-color: var(--fd-err-line); background: var(--fd-err-bg); }
+
+/* 요약·참고 */
+html[data-ao-theme="dark"] .fo-empty { background: var(--fd-ok-bg); color: var(--fd-ok); }
+
+/* 확인 카드 */
+html[data-ao-theme="dark"] .fo-ai { border-color: var(--fd-accent-line); }
+html[data-ao-theme="dark"] .fo-ai .fo-btn { background: var(--fd-card); border-color: var(--fd-accent-line); color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-kind { background: transparent; }
+html[data-ao-theme="dark"] .fo-kind:hover { background: var(--f-soft); }
+html[data-ao-theme="dark"] .fo-kind.on { background: var(--f-accent-soft); border-color: var(--fd-accent-line); color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-card { background: var(--f-soft); }
+html[data-ao-theme="dark"] .fo-card[data-state="open"] { border-color: var(--fd-warn-line); background: #262313; }   /* 확인이 필요한 카드 = 노랑 기운 */
+html[data-ao-theme="dark"] .fo-card[data-state="done"] { background: transparent; }
+html[data-ao-theme="dark"] .fo-tag { background: var(--fd-warn-bg); color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-tag[data-k="cash"], html[data-ao-theme="dark"] .fo-tag[data-k="block"] { background: var(--fd-err-bg); color: var(--f-err); }
+html[data-ao-theme="dark"] .fo-tag[data-k="pick"], html[data-ao-theme="dark"] .fo-tag[data-k="sender"], html[data-ao-theme="dark"] .fo-tag[data-k="sender-edit"], html[data-ao-theme="dark"] .fo-tag[data-k="sender-order"], html[data-ao-theme="dark"] .fo-tag[data-k="memo-edit"] { background: var(--f-accent-soft); color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-card[data-state="done"] .fo-tag { background: var(--fd-ok-bg); color: var(--fd-ok); }
+html[data-ao-theme="dark"] .fo-done { color: var(--fd-ok); }
+
+/* 결과 — 수량 표는 「흰 종이 표」(품목 칸 거래처 색 + 검은 글자 = 보내는 이미지와 같은 모양). 색 없는 칸만 살짝 눌러 눈부심을 줄인다 */
+html[data-ao-theme="dark"] .fo-qty { background: #ECEEF4; }
+html[data-ao-theme="dark"] .fo-qty tr.tot td { background: #ECEEF4; }
+
+/* AI·대화 배지 */
+html[data-ao-theme="dark"] .fo-aibadge, html[data-ao-theme="dark"] .fo-chatbadge { background: var(--f-accent-soft); color: var(--f-accent); border-color: var(--fd-accent-line); }
+
+/* 대화 칸 */
+html[data-ao-theme="dark"] .fo-thread { background: var(--fd-bg); border-color: #4A53B5; }
+html[data-ao-theme="dark"] .fo-a { background: var(--f-soft); border-color: var(--fd-accent-line); border-left-color: var(--f-accent); box-shadow: none; }
+html[data-ao-theme="dark"] .fo-a-list li.bad { color: var(--f-err); }
+html[data-ao-theme="dark"] .fo-a-acts { border-right-color: var(--fd-accent-line); border-bottom-color: var(--fd-accent-line); }
+html[data-ao-theme="dark"] .fo-a-acts .fo-btn { background: var(--fd-card); border-color: var(--fd-accent-line); color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-a-acts .fo-btn.primary { background: var(--fd-fill); border-color: var(--fd-fill); color: #fff; }
+html[data-ao-theme="dark"] .fo-bub.ai.live .fo-a { background: #181C33; }
+html[data-ao-theme="dark"] .fo-compose { background: var(--fd-bg); border-color: #4A53B5; box-shadow: none; }
+html[data-ao-theme="dark"] .fo-compose:focus-within { border-color: var(--f-accent); box-shadow: 0 0 0 3px rgba(140, 148, 255, .24); }
+html[data-ao-theme="dark"] .fo .fo-compose textarea, html[data-ao-theme="dark"] .fo .fo-compose textarea:focus, html[data-ao-theme="dark"] .fo .fo-compose textarea:focus-visible { background: transparent; }
+html[data-ao-theme="dark"] .fo-spark { color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-icon.primary { background: var(--fd-fill); border-color: var(--fd-fill); color: #fff; box-shadow: none; }
+html[data-ao-theme="dark"] .fo-icon.primary:hover { background: var(--f-accent-dark); border-color: var(--f-accent-dark); }
+html[data-ao-theme="dark"] .fo-patches, html[data-ao-theme="dark"] .fo-patched { border-color: var(--fd-accent-line); }
+html[data-ao-theme="dark"] .fo-patches li { background: var(--fd-card); border-color: var(--fd-accent-line); }
+
+/* 주소 확인 */
+html[data-ao-theme="dark"] .fo-addr-ok { color: var(--fd-ok); background: var(--fd-ok-bg); border-color: var(--fd-ok-line); }
+html[data-ao-theme="dark"] .fo-addr-note { color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-addr-opt.on { background: var(--fd-fill); border-color: var(--fd-fill); color: #fff; }
+
+/* [초기화] */
+html[data-ao-theme="dark"] .fo-btn.fo-reset { background: transparent; color: var(--f-err); border-color: var(--fd-err-line); }
+html[data-ao-theme="dark"] .fo-btn.fo-reset:hover { background: var(--fd-err-bg); }
+html[data-ao-theme="dark"] .fo-btn.fo-reset.solid { background: #D92D20; border-color: #D92D20; color: #fff; }
+html[data-ao-theme="dark"] .fo-btn.fo-reset.solid:hover { background: #B42318; border-color: #B42318; }
+html[data-ao-theme="dark"] .fo-reset-confirm { border-color: var(--fd-err-line); background: var(--fd-err-bg); }
+
+/* 메모 칸 줄별 표시 — ✓ 초록 · ⚠ 노랑 · ✕ 빨강(뜻 그대로) */
+html[data-ao-theme="dark"] .fo .fo-ed { background: var(--fd-bg); }
+html[data-ao-theme="dark"] .fo .fo-ed:focus-within { box-shadow: 0 0 0 3px rgba(140, 148, 255, .24); }
+html[data-ao-theme="dark"] .fo .fo-gut .m.ok span, html[data-ao-theme="dark"] .fo .fo-linebar button.ok { background: var(--fd-ok-bg); color: var(--fd-ok); }
+html[data-ao-theme="dark"] .fo .fo-gut .m.warn span, html[data-ao-theme="dark"] .fo .fo-linebar button.warn { background: var(--fd-warn-bg); color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo .fo-gut .m.none span, html[data-ao-theme="dark"] .fo .fo-linebar button.none { background: var(--fd-err-bg); color: var(--f-err); }
+html[data-ao-theme="dark"] .fo .fo-ed.stale .fo-gut .m span { opacity: .5; }
