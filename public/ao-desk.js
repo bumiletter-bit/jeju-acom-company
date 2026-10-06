@@ -88,6 +88,8 @@
         return `<span class="desk-lane" data-lane="${esc(st.lane || '')}">${esc(st.text)}${done && sec ? ' · ' + sec : ''}</span>`;
     }
     const isAdmin = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin');
+    // #561(대표 10/6 A안): 관리자 중 대표만 — 모두의 이력 보기 · 승인 결재함 · 승인/반려. 창구 깨우기 · [다시 맡기기]는 관리자(isAdmin) 그대로
+    const isOwner = () => isAdmin() && currentUser.position === '대표';
     const pageActive = () => { const p = $('page-agent-office'); return !!(p && p.classList.contains('active')); };
     const kst = (t, opt) => { try { return new Date(/Z|[+-]\d\d:?\d\d$/.test(String(t)) ? t : String(t).replace(' ', 'T') + 'Z').toLocaleString('ko-KR', Object.assign({ timeZone: 'Asia/Seoul' }, opt)); } catch (e) { return ''; } };
     const won = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
@@ -486,7 +488,7 @@
         const list = $('desk-list');
         S.sig = ''; S.endAsk = 0;
         $('desk-fs').hidden = tab === 'all';
-        $('desk-hist-mine-wrap').hidden = !isAdmin() || tab !== 'all';
+        $('desk-hist-mine-wrap').hidden = !isOwner() || tab !== 'all';
         $('desk-hist-q').value = S.q[tab] || ''; $('desk-hist-x').hidden = !S.q[tab];
         $('desk-full-title').textContent = TAB_NAME[tab] || '채팅';
         list.innerHTML = '<div class="desk-empty">불러오는 중</div>';
@@ -539,10 +541,10 @@
                 : asleep && !isAdmin() ? '창구가 자리 비움이에요. 관리자가 깨우면 남긴 지시부터 처리됩니다.'
                 : (lc && lc.note) ? lc.note : '';
             const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
-            tabA.hidden = !isAdmin();
+            tabA.hidden = !isOwner();
             $('desk-tab-all').hidden = false;   // #538 이전 채팅 이력은 직원에게도 보인다(서버가 본인 것만 내려준다)
-            $('desk-hist-mine-wrap').hidden = !isAdmin() || S.tab !== 'all';
-            if (!isAdmin() && S.tab === 'approval') setTab('mine');
+            $('desk-hist-mine-wrap').hidden = !isOwner() || S.tab !== 'all';
+            if (!isOwner() && S.tab === 'approval') setTab('mine');
             n.hidden = !d.approval; n.textContent = d.approval || 0;
         } catch (e) { /* 다음 주기에 다시 */ }
     }
@@ -721,16 +723,16 @@
             const done = st === '반려' ? `<div class="desk-note">반려: ${esc(r.rejected_by || '')}${r.reject_reason ? ' · ' + esc(r.reject_reason) : ''}</div>`
                 : r.approved_by ? `<div class="desk-note">승인: ${esc(r.approved_by)}</div>` : '';
             const pend = S.pend.get(o.id);
-            const acts = st === '승인대기' && isAdmin() && pend === 'approve'
+            const acts = st === '승인대기' && isOwner() && pend === 'approve'
                 ? `<div class="desk-reply desk-confirm"><p class="desk-confirm-q">이 요청을 승인할까요? 승인하면 창구가 바로 실행합니다.</p>
                    <button type="button" class="desk-btn sm primary" data-act="approve2" data-id="${o.id}">승인하고 실행</button>
                    <button type="button" class="desk-btn sm" data-act="pendcancel" data-id="${o.id}">취소</button></div>`
-                : st === '승인대기' && isAdmin() && pend === 'reject'
+                : st === '승인대기' && isOwner() && pend === 'reject'
                 ? `<div class="desk-reply desk-confirm"><label class="desk-confirm-q" for="reject-${o.id}">반려 사유 (비워도 됩니다)</label>
                    <textarea class="desk-reply-in" id="reject-${o.id}" rows="2" maxlength="500" placeholder="예: 대상을 다시 확인해 주세요"></textarea>
                    <button type="button" class="desk-btn sm danger" data-act="reject2" data-id="${o.id}">반려하기</button>
                    <button type="button" class="desk-btn sm" data-act="pendcancel" data-id="${o.id}">취소</button></div>`
-                : st === '승인대기' && isAdmin()
+                : st === '승인대기' && isOwner()
                 ? `<div class="desk-acts"><button type="button" class="desk-btn sm primary" data-act="approve" data-id="${o.id}">승인하고 실행</button>
                    <button type="button" class="desk-btn sm danger" data-act="reject" data-id="${o.id}">반려</button></div>`
                 : st === '승인대기' ? '<div class="desk-note">대표 승인을 기다리고 있어요</div>' : '';
@@ -942,7 +944,7 @@
     const hasAttach = o => !!o.has_image || !!o.file_name || !!(o.result && Array.isArray(o.result.files) && o.result.files.length);
     const ICON_CLIP = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>';
     function renderHistory(list) {
-        const ths = threadsOf(list), admin = isAdmin(), me = myId(), hm = { hour: '2-digit', minute: '2-digit' }, mdhm = { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        const ths = threadsOf(list), admin = isOwner(), me = myId(), hm = { hour: '2-digit', minute: '2-digit' }, mdhm = { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
         let lastG = '', n = 0, hidden = 0;
         const html = ths.map(t => {
             const first = t.items[0], lastO = t.items[t.items.length - 1], g = dayGroup(lastO.created_at), open = S.hist.open.has(t.id);

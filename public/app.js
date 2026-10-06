@@ -191,7 +191,7 @@ function updateUserUI() {
     const cafe24Card = document.getElementById('cafe24-connect-card'); // 대표 7/26: 카페24 연동(관리자만)
     if (cafe24Card) cafe24Card.style.display = currentUser.role === 'admin' ? '' : 'none';
     const inqHistCard = document.getElementById('inquiry-history-card'); // 대표 7/26: 문의 관리 수정 이력(관리자만)
-    if (inqHistCard) inqHistCard.style.display = currentUser.role === 'admin' ? '' : 'none';
+    if (inqHistCard) inqHistCard.style.display = (currentUser?.role === 'admin' && currentUser?.position === '대표') ? '' : 'none';
 
     // 관리자 전용 메뉴 숨김 (정산관리, 품목별 금액, 데이터관리, AGENT OFFICE)
     const adminOnlyPages = ['settlement', 'pricing', 'data']; // 대표 7/26 A: agent-office 직원 개방 (관리 기능은 화면 안에서 대표 전용)
@@ -199,6 +199,9 @@ function updateUserUI() {
         const navEl = document.querySelector(`.nav-item[data-page="${page}"]`);
         if (navEl) navEl.style.display = currentUser.role === 'admin' ? '' : 'none';
     });
+    // #561(대표 10/6): 데이터관리는 대표만(관리자 계정이라도 대표가 아니면 메뉴를 숨긴다)
+    const dataNavEl = document.querySelector('.nav-item[data-page="data"]');
+    if (dataNavEl && currentUser.position !== '대표') dataNavEl.style.display = 'none';
 
     // 세무사(accountant): 지출결의서만 노출, 나머지 메뉴 모두 숨김
     if (currentUser.role === 'accountant') {
@@ -294,6 +297,7 @@ function switchPage(pageName) {
     if (adminOnlyPages.includes(pageName) && currentUser?.role !== 'admin') {
         pageName = 'schedule';
     }
+    if (pageName === 'data' && currentUser?.position !== '대표') pageName = 'schedule';   // #561: 데이터관리는 대표만
     // 세무사: 지출결의서 외엔 모두 expense로
     if (currentUser?.role === 'accountant' && pageName !== 'expense') {
         pageName = 'expense';
@@ -12251,7 +12255,7 @@ async function renderInquiryPage() {
     const d = await api('/api/agent-office/scenarios');
     inquiryScenarios = d.scenarios || [];
     _scenNoMap = null;   // 이름→번호 캐시 무효화 (저장·삭제 후 최신 반영)
-    const isAdmin = currentUser?.role === 'admin';
+    const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
     document.getElementById('inquiry-count').textContent = `(${inquiryScenarios.length}건)`;
     const wrap = document.getElementById('inquiry-auto-reply-wrap');
     wrap.style.display = isAdmin ? 'inline-flex' : 'none';
@@ -12291,7 +12295,7 @@ window.openScenarioEdit = function(id) {
     document.getElementById('inquiry-edit-action').value = s.action;
     document.getElementById('inquiry-edit-channel').value = s.channel;
     document.getElementById('inquiry-edit-enabled').checked = !!s.enabled;
-    document.getElementById('btn-inquiry-delete').style.display = currentUser?.role === 'admin' ? '' : 'none';
+    document.getElementById('btn-inquiry-delete').style.display = (currentUser?.role === 'admin' && currentUser?.position === '대표') ? '' : 'none';
     updateInquiryPreview();
     document.getElementById('inquiry-edit-card').scrollIntoView({ behavior: 'smooth' });
 };
@@ -12350,7 +12354,7 @@ function setupInquiryPage() {
     });
 }
 async function renderInquiryLogs(range) {
-    if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
+    if (!(currentUser?.role === 'admin' && currentUser?.position === '대표')) return; // 수정 이력은 관리자만 (대표 7/26)
     if (!range) return showInqLogPrompt();   // #178-2: 기본 비표시 — 기간 선택 후 [조회]
     const seq = inqLogBegin(range);
     const d = await api('/api/agent-office/scenario-logs?from=' + range.from + '&to=' + range.to);
@@ -12565,7 +12569,7 @@ async function renderUserInqTab() {
     if (inquiryActiveTab !== 'userinq') return;
     const scenMap = await scenNoMap();   // 작업B: 재료 시나리오 번호 링크용
     const rows = d.rows || [];
-    const isAdmin = currentUser?.role === 'admin';
+    const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
     const pending = rows.filter(r => !r.posted_at && !r.answered);
     const done = rows.filter(r => r.posted_at || r.answered);
     const fmtDt = aoFmtDtShort;   /* #283: "08-08 13:23" 짧은 표기 — 좁은 열에서 분이 잘리지 않게 */
@@ -12662,7 +12666,7 @@ async function renderQnaTab() {
     if (inquiryActiveTab !== 'qna') return; // 늦게 온 응답이 다른 탭을 덮어쓰는 경합 방지
     const scenMap = await scenNoMap();   // 작업B: 재료 시나리오 번호 링크용
     const rows = d.rows || [];
-    const isAdmin = currentUser?.role === 'admin';
+    const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
     const pending = rows.filter(r => !r.posted_at && !r.answered);          // 직원 답변 필요 (SKIP·초안 대기·실패)
     const done = rows.filter(r => r.posted_at || r.answered);
     const fmtDt = aoFmtDtShort;   /* #283: "08-08 13:23" 짧은 표기 — 좁은 열에서 분이 잘리지 않게 */
@@ -12765,7 +12769,7 @@ const BOTPROD_STATUSES = ['준비중', '판매중', '품절', '시즌종료'];
 async function renderBotProducts() {
     const d = await api('/api/agent-office/bot-products');
     botProducts = d.products || [];
-    const isAdmin = currentUser?.role === 'admin';
+    const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
     // #483(대표 9/30 「두서없이 나온다 — 품목별로라도 나와야 입력하기 쉽다」): 화면 표시만 품목별로 묶는다(서버 순서·저장·삭제 무변경).
     //   품목 = 이름의 「 / 」 앞(예: 고당도 하우스감귤 · 과즙팡팡 황금향). 파는 중인 품목 묶음이 위, 품절·시즌종료만 남은 묶음이 아래.
     //   묶음 안에서는 준비중(가격 입력할 것) → 판매중 → 품절 → 시즌종료, 같은 상태는 이름순.
@@ -13204,7 +13208,7 @@ async function renderSeasonWaitlist() {
     const el = document.getElementById('season-wait-list');
     if (!el) return;
     const d = await api('/api/agent-office/season-waitlist');
-    const isAdmin = currentUser?.role === 'admin';
+    const isAdmin = (currentUser?.role === 'admin' && currentUser?.position === '대표');
     /* #356(대표): 전화번호는 하이픈을 넣어 읽기 쉽게 — 보고 바로 걸거나 옮겨 적는 용도라 한 줄로 붙여 보이면 실수가 난다.
        숫자 폭이 들쭉날쭉하지 않게 tabular-nums로 표시(표에서 자릿수가 흔들리지 않는다). */
     const fmtWaitTel = (t) => {
@@ -13646,7 +13650,7 @@ window.deleteBotProd = async function(id) {
     renderBotProducts().catch(console.error);
 };
 async function renderBotProductLogs(range) {
-    if (currentUser?.role !== 'admin') return; // 수정 이력은 관리자만 (대표 7/26)
+    if (!(currentUser?.role === 'admin' && currentUser?.position === '대표')) return; // 수정 이력은 관리자만 (대표 7/26)
     if (!range) return showInqLogPrompt();   // #178-2: 기본 비표시
     const seq = inqLogBegin(range);
     const d = await api('/api/agent-office/bot-product-logs?from=' + range.from + '&to=' + range.to);
@@ -13681,7 +13685,7 @@ function inqLogEmptyHtml(range) {
 }
 // 지시 #181-1: 시기별 상품 지식 수정 이력 — 전용 라우트로 조회(이 탭에서 시나리오 이력이 나오던 혼입 교정)
 async function renderSeasonKnowledgeLogs(range) {
-    if (currentUser?.role !== 'admin') return;
+    if (!(currentUser?.role === 'admin' && currentUser?.position === '대표')) return;
     if (!range) return showInqLogPrompt();
     const seq = inqLogBegin(range);
     const d = await api('/api/agent-office/season-knowledge-logs?from=' + range.from + '&to=' + range.to);
@@ -13717,7 +13721,7 @@ function syncInqLogCard() {
     const card = document.getElementById('inquiry-history-card');
     const t = INQ_LOG_TARGETS[inquiryActiveTab];
     if (!card) return;
-    const canShow = !!t && currentUser?.role === 'admin';
+    const canShow = !!t && (currentUser?.role === 'admin' && currentUser?.position === '대표');
     card.style.display = canShow ? '' : 'none';   // 이력 대상이 없는 탭(톡톡/상품문의/고객문의)에서는 카드 자체를 숨김
     const h = card.querySelector('h2');
     if (h && t) h.innerHTML = `🕓 ${escapeHtml(t.label)} 수정 이력 <span class="text-muted" style="font-size:13px; font-weight:400;">기간을 선택해 조회하세요</span>`;

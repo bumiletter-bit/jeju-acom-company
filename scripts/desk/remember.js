@@ -10,9 +10,9 @@ const load = async () => { const r = await pool.query(`SELECT value FROM agent_o
 const save = v => pool.query(`INSERT INTO agent_office_config(key, value) VALUES($1, $2::jsonb) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [KEY, JSON.stringify(v)]);
 const kst = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 async function adminOf(orderId) {
-    const o = (await pool.query(`SELECT o.id, o.created_by, u.role FROM pending_orders o LEFT JOIN users u ON u.id = o.created_by_id AND u.deleted_at IS NULL WHERE o.id = $1`, [orderId])).rows[0];
+    const o = (await pool.query(`SELECT o.id, o.created_by, u.role, u.position FROM pending_orders o LEFT JOIN users u ON u.id = o.created_by_id AND u.deleted_at IS NULL WHERE o.id = $1`, [orderId])).rows[0];
     if (!o) throw new Error('없는 지시입니다');
-    if (o.role !== 'admin') throw new Error('기억해 두는 것은 관리자(대표·조가영) 지시일 때만 됩니다 — 이 지시는 관리자 계정이 보낸 것이 아닙니다');
+    if (o.role !== 'admin' || o.position !== '대표') throw new Error('기억해 두는 것은 대표 지시일 때만 됩니다(#561) — 이 지시는 대표 계정이 보낸 것이 아닙니다');
     return o;
 }
 // 지시마다 내줄 목록(켜져 있는 것만 · 최근 것이 뒤) — get.js 가 쓴다

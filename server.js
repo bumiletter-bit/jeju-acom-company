@@ -96,6 +96,12 @@ function adminOnly(req, res, next) {
     if (req.user.role !== 'admin') return res.status(403).json({ error: '관리자 권한이 필요합니다' });
     next();
 }
+// #561(대표 10/6): 관리자 계정 가운데 「대표만」 — 조가영 과장(관리자·경리)은 정산·지출결의는 그대로 쓰되 남의 채팅 이력·승인 결재함·데이터관리는 막는다
+const isOwnerUser = u => !!u && u.role === 'admin' && u.position === '대표';
+function ownerOnly(req, res, next) {
+    if (!isOwnerUser(req.user)) return res.status(403).json({ error: '대표만 할 수 있습니다' });
+    next();
+}
 
 // 카드내역 조회 권한: admin + accountant
 function adminOrAccountant(req, res, next) {
@@ -5369,12 +5375,12 @@ app.put('/api/agent-office/scenarios/:id', authMiddleware, async (req, res) => {
     try { res.json({ message: '시나리오가 수정되었습니다', scenario: await svcUpdateScenario(req.params.id, req.body || {}, adminActor(req)) }); }
     catch (err) { handleAdminErr(res, err); }
 });
-app.delete('/api/agent-office/scenarios/:id', authMiddleware, adminOnly, async (req, res) => {
+app.delete('/api/agent-office/scenarios/:id', authMiddleware, ownerOnly, async (req, res) => {
     if (!requireConfirm(req, res)) return;
     try { res.json({ message: '시나리오가 삭제되었습니다(복구 가능)', scenario: await svcSoftDeleteScenario(req.params.id, adminActor(req)) }); }
     catch (err) { handleAdminErr(res, err); }
 });
-app.put('/api/agent-office/scenarios-auto-reply', authMiddleware, adminOnly, async (req, res) => {
+app.put('/api/agent-office/scenarios-auto-reply', authMiddleware, ownerOnly, async (req, res) => {
     try {
         const value = req.body?.value === 'off' ? 'off' : 'on';
         await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ('inquiry_auto_reply', $1::jsonb)
@@ -5384,7 +5390,7 @@ app.put('/api/agent-office/scenarios-auto-reply', authMiddleware, adminOnly, asy
         res.json({ message: `전체 자동응답을 ${value === 'on' ? '켰습니다' : '껐습니다'}`, auto_reply: value });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.get('/api/agent-office/scenario-logs', authMiddleware, adminOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
+app.get('/api/agent-office/scenario-logs', authMiddleware, ownerOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
     try {
         // 지시 #178-2: 조회식 전환 — 날짜 구간(KST) 파라미터
         const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
@@ -5452,7 +5458,7 @@ app.put('/api/agent-office/bot-products/:id', authMiddleware, async (req, res) =
 });
 // 대표 7/25(2차): 품목별 금액과 매칭되는 연동 품목은 삭제 불가(상태로만 관리).
 //   예외 품목(사전예약특가 등 단가표에 없는 것)·수동 추가 품목만 대표가 삭제 가능.
-app.delete('/api/agent-office/bot-products/:id', authMiddleware, adminOnly, async (req, res) => {
+app.delete('/api/agent-office/bot-products/:id', authMiddleware, ownerOnly, async (req, res) => {
     if (!requireConfirm(req, res)) return;
     try {
         const cur = await pool.query('SELECT name FROM bot_products WHERE id=$1 AND deleted_at IS NULL', [req.params.id]);
@@ -5464,7 +5470,7 @@ app.delete('/api/agent-office/bot-products/:id', authMiddleware, adminOnly, asyn
         res.json({ message: '품목이 삭제되었습니다(복구 가능)', product: await svcSoftDeleteBotProduct(req.params.id, adminActor(req)) });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
+app.get('/api/agent-office/bot-product-logs', authMiddleware, ownerOnly, async (req, res) => { // 수정 이력은 관리자만 (대표 7/26)
     try {
         // 지시 #178-2: 조회식 전환 — 날짜 구간(KST) 파라미터. 미지정 시 기존 동작(최근 100).
         const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
@@ -5480,7 +5486,7 @@ app.get('/api/agent-office/bot-product-logs', authMiddleware, adminOnly, async (
 });
 // 지시 #181-1: 시기별 상품 지식 수정 이력 — 전용 라우트가 없어 이 탭에서 [조회]를 누르면 시나리오 이력이 나오던 문제 교정.
 //   서버는 원래도 target_type으로 분리 저장 중이었음(혼입은 프론트 매핑·초기화 누락 탓).
-app.get('/api/agent-office/season-knowledge-logs', authMiddleware, adminOnly, async (req, res) => {
+app.get('/api/agent-office/season-knowledge-logs', authMiddleware, ownerOnly, async (req, res) => {
     try {
         const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
         const useRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);
@@ -5582,7 +5588,7 @@ app.post('/api/agent-office/season-waitlist', authMiddleware, async (req, res) =
         res.json({ ok: true, row: r.rows[0] });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, adminOnly, async (req, res) => {
+app.delete('/api/agent-office/season-waitlist/:id', authMiddleware, ownerOnly, async (req, res) => {
     try {
         const cur = await pool.query(`SELECT * FROM season_waitlist WHERE id=$1 AND deleted_at IS NULL`, [req.params.id]);
         if (!cur.rows.length) throw { status: 404, message: '신청 건을 찾을 수 없습니다' };
@@ -6645,7 +6651,7 @@ app.get('/api/agent-office/naver/qnas', authMiddleware, async (req, res) => {
                 ? x.ai_scenarios.join(' + ') : (names[x.ai_scenario_id] || null) })) });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.put('/api/agent-office/naver/qna-auto-post', authMiddleware, adminOnly, async (req, res) => {
+app.put('/api/agent-office/naver/qna-auto-post', authMiddleware, ownerOnly, async (req, res) => {
     try {
         const value = (req.body && req.body.enabled === false) ? 'off' : 'on';
         await naverCfgSet('qna_auto_post', value);
@@ -6675,7 +6681,7 @@ app.get('/api/agent-office/naver/inquiries', authMiddleware, async (req, res) =>
             scenario_name: (Array.isArray(x.ai_scenarios) && x.ai_scenarios.length) ? x.ai_scenarios.join(' + ') : null })) });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.put('/api/agent-office/naver/inquiry-auto-post', authMiddleware, adminOnly, async (req, res) => {
+app.put('/api/agent-office/naver/inquiry-auto-post', authMiddleware, ownerOnly, async (req, res) => {
     try {
         const value = (req.body && req.body.enabled === true) ? 'on' : 'off';
         await naverCfgSet('inquiry_auto_post', value);
@@ -13371,14 +13377,15 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         // #476(대표 9/30): 전체 지시·대표 확인함은 관리자만 — 직원에게는 늘 본인 지시만 내려준다(화면 탭만 숨기지 않고 서버에서도)
         // #538(대표 10/5): 이전 채팅 이력(history=1) — 직원 = 본인 것 전부(채팅 종료로 내린 것 포함) · 관리자 = 모두. 검색어 q = 지시 글·답 글
         const history = req.query.history === '1';
-        const mine = !history && (req.query.mine === '1' || req.user.role !== 'admin');
+        const seeAll = isOwnerUser(req.user);   // #561: 모두의 지시를 보는 것은 대표만(관리자라도 대표가 아니면 본인 것만)
+        const mine = !history && (req.query.mine === '1' || !seeAll);
         const params = [];
         // #525: 최종발주 화면이 창구에 보낸 중간 요청(메모 읽기·대화 한마디)은 목록에 안 보인다 — 정리 기록(「[최종발주] …」) 1건만 보인다
         let where = `o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'`;
         if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
         if (history) {
             where += ` AND o.content NOT LIKE '[검증%'`;
-            if (req.user.role !== 'admin') { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length}`; }
+            if (!seeAll) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length}`; }
             const q = String(req.query.q || '').trim().slice(0, 60);
             if (q) { params.push('%' + q.split('%').join('').split('_').join(' ') + '%'); where += ` AND (o.content ILIKE $${params.length} OR COALESCE(o.result->>'answer','') ILIKE $${params.length} OR COALESCE(o.result->>'title','') ILIKE $${params.length} OR COALESCE(o.created_by,'') ILIKE $${params.length})`; }
             const before = parseInt(req.query.before, 10);
@@ -13412,7 +13419,7 @@ app.post('/api/agent-office/orders/:id/hide-mine', authMiddleware, async (req, r
 });
 
 // 대표 확인함: 승인 / 반려 (관리자만)
-app.post('/api/agent-office/orders/:id/approve', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/orders/:id/approve', authMiddleware, ownerOnly, async (req, res) => {
     try {
         const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
         const r = await pool.query(
@@ -13430,7 +13437,7 @@ app.post('/api/agent-office/orders/:id/approve', authMiddleware, adminOnly, asyn
         res.json({ message: '승인했습니다 — 창구가 실행합니다' });
     } catch (err) { handleAdminErr(res, err); }
 });
-app.post('/api/agent-office/orders/:id/reject', authMiddleware, adminOnly, async (req, res) => {
+app.post('/api/agent-office/orders/:id/reject', authMiddleware, ownerOnly, async (req, res) => {
     try {
         const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
         const reason = String(req.body?.reason || '').trim().slice(0, 300);

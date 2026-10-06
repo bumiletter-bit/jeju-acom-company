@@ -100,7 +100,17 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/6 마감): 회사 v5.9.445 / app.js v=400 · ao-desk.js v=41 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #562부터(#560 자사몰 지식 · #561 조가영 권한 예약).** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/6 오후): 회사 v5.9.446 / app.js v=401 · ao-desk.js v=42 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #562부터(#560 자사몰 지식 · #561 조가영 권한 예약).** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 🔐 #561 관리자 계정 가운데 「대표만」 범위 넓힘 — 조가영 과장 권한 (대표 「A안으로 가자」 10/6 · v5.9.446 / app.js v=401 · ao-desk.js v=42 · 워커1 화면 + 총괄 서버)
+
+- **대표 확정(10/6)**: 막음 = 남의 채팅 이력 · 승인 결재함 · 창구 「기억해」 · 데이터관리 · 문의 관리의 삭제·전체 스위치 / 그대로 = 정산관리 · 정산현황 · 품목별 금액 · 박스재고 · 지출결의(다른 직원 것 보기 포함). 송장변환·최종발주는 원래 전 직원 공용(바꿀 것 없음).
+- **판정** = role admin + position '대표'. server.js `isOwnerUser(u)` · `ownerOnly` 미들웨어(adminOnly 바로 아래) / app.js 는 그 자리에서 직접 판정 / ao-desk.js `isOwner()`.
+- **대표만이 된 곳**: ①GET /desk/orders 의 history·전체 목록(대표가 아니면 본인 것만) ②orders/:id/approve·reject ③scripts/desk/remember.js add·off(★에이전트오피스/CLAUDE.md 2-1절 반영) ④데이터관리 메뉴·switchPage('data')(화면만 — 그 화면이 쓰는 서버 라우트는 adminOnly 그대로) ⑤문의 관리 9개 라우트: scenarios DELETE · scenarios-auto-reply · scenario-logs · bot-products DELETE · bot-product-logs · season-knowledge-logs · season-waitlist DELETE · naver/qna-auto-post · naver/inquiry-auto-post + 화면의 스위치·삭제 버튼·수정 이력 카드.
+- **관리자 그대로**: 창구 깨우기 · 오류 건 [다시 맡기기] · 창구가 관리자 지시를 승인 없이 바로 실행하는 것(#469-h — get.js from_role 무변경 · 대기 프로그램 재시작 불요).
+- ✅ verify-561-server 34/34(세 계정 · 과장이 계속 쓰는 정산·품목별 금액·지출결의·박스재고 200) · verify-561-app 37/37(실렌더 · 쓰기 0) · verify-561-owner 38/38(워커1) · 538 102 · 469 81 · 498 101 · 499 86 · 501 59 · 504 33.
+- 🔴 함정(이번에 밟음): ⓐJS `String.replace(a, b)` 의 b 안 `$$` 는 `$` 하나로 줄어든다 → SQL placeholder(`$${n}`)가 든 줄을 스크립트로 치환하면 깨진다(과장·직원 이력 500 — 로컬 검증에서 잡음). 치환 값은 함수(`() => b`)로 넘기거나 Edit 도구로. ⓑ워커가 같은 작업 트리에서 편집 중일 때 `git stash` 금지(워커 파일이 잠깐 되돌아간다). ⓒ검증 파일 이름은 배정 때 정해 줄 것(verify-561-owner.js 를 총괄·워커1이 동시에 만듦).
+- 🔵 조가영이 열어 둔 창은 새로고침해야 화면에 적용(서버 판정은 즉시). 실계정 실물 확인 = 대표·조가영.
 
 ### 🏪 #560 봇 「자사몰」 안내 = 네이버 채널에서는 먼저 꺼내지 않는다 (대표 확정 10/6 오후 · DB 지식만 · 배포 0 · 워커2 조사 + 총괄 적용)
 
