@@ -590,11 +590,16 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 
 /* ── #552(대표 10/6 폰 실물) 글 쓰는 칸 글씨 17px(상자를 키운 만큼) · 답변 묶음별 [복사] ── */
 .desk-cbox .desk-reply-in, .desk-top1 .desk-topbox .desk-input { font-size: 17px; line-height: 1.45; padding: 16px 2px 15px; min-height: 56px; }
-.desk-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 6px; padding-bottom: 2px; border-bottom: 1px solid var(--d-line); }
-.desk-a > .desk-sec-head:first-child, .desk-a-label + .desk-sec-head { margin-top: 6px; }
-.desk-sec-head b { min-width: 0; font-size: 14px; font-weight: 700; color: var(--d-ink); overflow-wrap: anywhere; }
-.desk-sec-copy { flex: none; min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: none; color: var(--d-accent); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: background-color .16s var(--d-ease); }
-.desk-sec-copy:hover { background: var(--d-accent-soft); }
+/* #556(대표 폰 실물 10/6): 묶음마다 틀 — 머리 띠(이름 + [복사])와 본문을 한 상자로 묶어 「이 [복사]가 어디까지인지」 보이게. 전체 [답변 복사](인디고)와 헷갈리지 않게 묶음은 초록 계열 */
+.desk-sec { margin: 14px 0 0; border: 1.5px solid #A6E9C4; border-radius: 14px; background: #fff; overflow: hidden; }
+.desk-sec + .desk-sec { margin-top: 12px; }
+.desk-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; padding: 4px 6px 4px 14px; background: #ECFDF3; border-bottom: 1.5px solid #A6E9C4; }
+.desk-sec-head b { min-width: 0; font-size: 14.5px; font-weight: 800; color: #05603A; overflow-wrap: anywhere; }
+.desk-sec-body { padding: 10px 14px 12px; }
+.desk-sec-body > :first-child { margin-top: 0; } .desk-sec-body > :last-child { margin-bottom: 0; }
+.desk-sec-copy { flex: none; min-height: 44px; padding: 0 14px; border: 0; border-radius: 999px; background: none; color: #05603A; font: inherit; font-size: 13.5px; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background-color .16s var(--d-ease), transform .12s var(--d-ease); }
+.desk-sec-copy::before { content: ""; width: 15px; height: 15px; flex: none; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='9' width='11' height='11' rx='2'/%3E%3Cpath d='M5 15V6a2 2 0 0 1 2-2h9'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='9' width='11' height='11' rx='2'/%3E%3Cpath d='M5 15V6a2 2 0 0 1 2-2h9'/%3E%3C/svg%3E") center / contain no-repeat; }
+.desk-sec-copy:hover { background: #D1FADF; }
 .desk-sec-copy:active { transform: scale(.97); }
-.desk-sec-copy:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.desk-sec-copy:focus-visible { outline: 2px solid #039855; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .desk-sec-copy { transition: none; } }

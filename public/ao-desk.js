@@ -59,7 +59,7 @@
     }
     function mdAnswer(text, o) {
         const a = o ? answerSecs(text) : null; if (!a) return md(text);
-        return (a.pre.trim() ? md(a.pre) : '') + a.secs.map((s, i) => `<div class="desk-sec-head"><b>${esc(s.title)}</b><button type="button" class="desk-sec-copy" data-act="copysec" data-id="${o.id}" data-sec="${i}" aria-label="${esc(s.title)} 복사">복사</button></div>` + md(s.body)).join('');
+        return (a.pre.trim() ? md(a.pre) : '') + a.secs.map((s, i) => `<section class="desk-sec" aria-label="${esc(s.title)}"><div class="desk-sec-head"><b>${esc(s.title)}</b><button type="button" class="desk-sec-copy" data-act="copysec" data-id="${o.id}" data-sec="${i}" aria-label="${esc(s.title)} 복사">복사</button></div><div class="desk-sec-body">${md(s.body)}</div></section>`).join('');   // #556: 묶음마다 틀(머리 띠 + 본문) — 어느 [복사]가 어디까지인지 보이게
     }
     // 복사: 브라우저가 클립보드 쓰기를 막으면(권한·보안 연결 아님) 숨은 입력칸으로 한 번 더 해 본다
     async function copyText(text, okMsg) {
