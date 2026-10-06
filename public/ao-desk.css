@@ -603,3 +603,41 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-sec-copy:active { transform: scale(.97); }
 .desk-sec-copy:focus-visible { outline: 2px solid #039855; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .desk-sec-copy { transition: none; } }
+
+/* ── #557(대표 10/6) 채팅 글을 폰에서 더 편하게 — 글씨 3단계(제목 18 · 본문 16 · 부가 정보 12)와 강약만. 구조는 그대로 ── */
+/* 1) 클코 답 본문 크게 · 부가 정보(번호·시각 · 처리 길 · 「클코 답변」 표지)는 작고 옅게(대비 4.5:1 이상) */
+#desk-list .desk-a.answer { font-size: 16px; line-height: 1.6; }
+#desk-list .desk-a.answer .desk-md-h { font-size: 16px; }
+#desk-list .desk-a.answer .desk-md-t { font-size: 16px; }
+#desk-list .desk-a.answer .desk-md-l li { margin: 3px 0; }
+#desk-list .desk-a-label { font-size: 12px; font-weight: 600; letter-spacing: 0; color: #5A6478; background: none; padding: 0; margin-bottom: 4px; }
+#desk-list .desk-lane { font-size: 12px; color: #5A6478; }
+#desk-list .desk-bub-meta { font-size: 12px; color: #5A6478; }
+/* 2) 결론 한 줄(답 제목) 강조 */
+#desk-list .desk-a.answer .desk-a-title { font-size: 18px; font-weight: 800; line-height: 1.35; letter-spacing: -.01em; margin-bottom: 8px; color: var(--d-ink); text-wrap: balance; }
+/* 3) 내 글은 작게(15px · 폭 85% 까지) — 클코 답은 대화 틀 폭을 다 쓴다(#505 그대로) */
+#desk-list .desk-bub.me { max-width: min(85%, 640px); }
+#desk-list .desk-bub.me .desk-q { font-size: 15px; line-height: 1.5; }
+/* 4) 기호 줄: 앞 글과 살짝 띄우고 같은 기호끼리는 붙인다 */
+.desk-md-sym { white-space: normal; }
+.desk-md-sym .desk-md-ln { white-space: pre-wrap; }
+.desk-md-sym .desk-md-ln.sym { margin-top: 7px; }
+.desk-md-sym .desk-md-ln:first-child, .desk-md-ln.s1 + .desk-md-ln.s1, .desk-md-ln.s2 + .desk-md-ln.s2, .desk-md-ln.s3 + .desk-md-ln.s3, .desk-md-ln.s4 + .desk-md-ln.s4, .desk-md-ln.s5 + .desk-md-ln.s5 { margin-top: 0; }
+.desk-md-sym .desk-md-ln.sym + .desk-md-ln:not(.sym) { margin-top: 7px; }
+#desk-list .desk-a.answer .desk-md-l { margin-top: 7px; }
+#desk-list .desk-a.answer .desk-md > .desk-md-l:first-child { margin-top: 0; }
+/* PC(넓은 화면)는 본문을 반 단계 작게 — 지나치게 커 보이지 않게 */
+@media (min-width: 1024px) {
+    #desk-list .desk-a.answer, #desk-list .desk-a.answer .desk-md-h, #desk-list .desk-a.answer .desk-md-t { font-size: 15.5px; }
+}
+/* 5) 폰: 대화 틀·답 칸·묶음 틀 안쪽 좌우 여백을 줄여 한 줄에 2~3자 더 */
+@media (max-width: 640px) {
+    #desk-list .desk-thread-box { padding-left: 8px; padding-right: 8px; }
+    #desk-list .desk-a.answer { padding-left: 10px; padding-right: 10px; }
+    #desk-list .desk-sec-body { padding-left: 10px; padding-right: 10px; }
+    #desk-list .desk-sec-head { padding-left: 10px; }
+    #desk-list .desk-h-body { padding-left: 8px; padding-right: 8px; }
+    #desk-list .desk-bub.me { max-width: 85%; }
+}
+/* 답 제목은 처리 길 칩 아래 줄부터 폭을 다 쓴다(폰에서 칩에 밀려 낱말 가운데서 끊기던 것) · 낱말 단위로 줄바꿈 */
+#desk-list .desk-a.answer .desk-a-title { clear: right; word-break: keep-all; overflow-wrap: anywhere; }

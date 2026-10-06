@@ -13,7 +13,14 @@
         const lines = String(text == null ? '' : text).replace(/\r/g, '').split('\n');
         const out = [];
         let para = [], list = null;
-        const flushP = () => { if (para.length) { out.push('<div class="desk-md-p">' + para.map(mdInline).join('\n') + '</div>'); para = []; } };
+        // #557(대표 10/6): 「★ ▶ ■ · ※」로 시작하는 줄은 앞 글과 살짝 띄우고 같은 기호끼리는 붙인다 — 줄마다 틀만 씌운다(글자는 그대로 · 복사 결과 불변). 기호 줄이 없는 문단은 종전 그대로.
+        const symOf = l => { const m = /^\s*([★▶■·※])/.exec(l); return m ? '★▶■·※'.indexOf(m[1]) + 1 : 0; };
+        const flushP = () => {
+            if (!para.length) return;
+            if (para.some(symOf)) out.push('<div class="desk-md-p desk-md-sym">' + para.map(l => { const k = symOf(l); return '<div class="desk-md-ln' + (k ? ' sym s' + k : '') + '">' + mdInline(l) + '</div>'; }).join('') + '</div>');
+            else out.push('<div class="desk-md-p">' + para.map(mdInline).join('\n') + '</div>');
+            para = [];
+        };
         const flushL = () => { if (list) { out.push('<' + list.tag + ' class="desk-md-l">' + list.items.map(x => '<li>' + mdInline(x) + '</li>').join('') + '</' + list.tag + '>'); list = null; } };
         for (let i = 0; i < lines.length; i++) {
             const ln = lines[i], t = ln.trim();

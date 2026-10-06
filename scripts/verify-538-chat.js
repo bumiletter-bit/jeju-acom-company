@@ -429,6 +429,69 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         await shot(F.pg, '552-1-sections-390');
         ok('⑩ⓔ 390px: 묶음 [복사] 누르는 높이 44px 이상 · 글 칸 글씨 17px · 가로 넘침 0 · 오류 0', !!sF && sF.btns.length === 4 && sF.btns.every(b => b.h >= 44) && fF.fs === '17px' && !fF.over && F.errors.length === 0, JSON.stringify({ h: sF && sF.btns.map(b => b.h), fF }));
         await F.ctx.close();
+
+        // ───────── ⑪ #557 채팅 글 크기·강약(대표 10/6 — 구조는 그대로 · 본문 16 / 제목 18 / 부가 정보 12) ─────────
+        const ANS557 = ['문구를 만들었어요. 아래 2가지입니다.', '', '━━━ ① 문자(LMS) ━━━', '[제주아꼼이네] 황금향이 가장 맛있는 때예요', '', '안녕하세요, 제주아꼼이네입니다.', '지난번 보내 드린 황금향은 맛있게 드셨나요?', '★ 이번 주 수확분은 과즙이 가득해요', '★ 선물용 3kg · 5kg 모두 준비했어요', '▶ 주문: 스마트스토어에서 검색', '▶ 문의: 010-0000-0000', '※ 오전 8시 이전 주문은 당일 발송해요', '', '━━━ ② 확인한 것 ━━━', '확인한 항목이에요.', '1. 가격은 판매현황과 대조했어요', '2. 수신 거부 고객은 뺐어요', '', '| 항목 | 값 |', '|---|---|', '| 대상 | 412명 |'].join('\n');
+        const mk557 = uid => [
+            { id: 3101, content: '추석 뒤에 황금향 재구매 안내 문자랑 톡톡 문구 만들어줘. 대상은 최근 두 달 구매 고객이고 톤은 부드럽게 해줘. 길게 적어도 괜찮아.', status: '완료', created_at: new Date().toISOString(), processed_at: new Date().toISOString(), created_by: '검증538', created_by_id: uid, mine_hidden: false, has_image: false, reply_to: null, followed_by: null, steps: [{ t: new Date().toISOString(), kind: 'lane', lane: 'opus', actor: '클코', text: '🧠 꼼꼼한 답' }], result: { type: 'desk_answer', title: '재구매 안내 문구 2종을 만들었어요 — 발송 전 대상 수만 확인해 주세요', answer: ANS557 } },
+            { id: 3102, content: '오늘 발송 몇 건이야?', status: '완료', created_at: new Date(Date.now() - 60e3).toISOString(), processed_at: new Date().toISOString(), created_by: '검증538', created_by_id: uid, mine_hidden: false, has_image: false, reply_to: null, followed_by: null, steps: [], result: { type: 'desk_answer', answer: '오늘 발송은 43건이에요.\n택배 접수는 오후 3시까지예요.' } }];
+        const m557 = pg => pg.evaluate(() => {
+            const lum = c => { const m = c.match(/[\d.]+/g).map(Number); const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(m[0]) + 0.7152 * f(m[1]) + 0.0722 * f(m[2]); };
+            const bgOf = el => { for (let e = el; e; e = e.parentElement) { const b = getComputedStyle(e).backgroundColor, m = b.match(/[\d.]+/g); if (m && (m.length < 4 || Number(m[3]) >= 0.99)) return b; } return 'rgb(255,255,255)'; };
+            const cr = el => { const a = lum(getComputedStyle(el).color), b = lum(bgOf(el)); return Math.round((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) * 100) / 100; };
+            const fs = el => el ? getComputedStyle(el).fontSize : '', T = document.querySelector('#desk-list [data-oid="3101"]'), U = document.querySelector('#desk-list [data-oid="3102"]'); if (!T) return null;
+            const A = T.querySelector('.desk-a.answer'), me = T.querySelector('.desk-bub.me'), box = T.closest('.desk-thread-box, .desk-h-body') || T.parentElement;
+            const title = A.querySelector('.desk-a-title'), lab = A.querySelector('.desk-a-label'), lane = A.querySelector('.desk-lane'), meta = me.querySelector('.desk-bub-meta');
+            const lns = Array.from(A.querySelectorAll('.desk-md-ln')).map(l => ({ t: l.textContent.trim().slice(0, 1), sym: l.classList.contains('sym'), mt: parseFloat(getComputedStyle(l).marginTop) }));
+            const cs = getComputedStyle(box), inner = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), tr = title.getBoundingClientRect(), ar = A.getBoundingClientRect(), lr = lane ? lane.getBoundingClientRect() : null;
+            return { body: fs(A), p: fs(A.querySelector('.desk-md-p')), li: fs(A.querySelector('.desk-md-l li')), td: fs(A.querySelector('.desk-md-t td')), lh: Math.round(parseFloat(getComputedStyle(A).lineHeight) / parseFloat(fs(A)) * 100) / 100,
+                title: fs(title), titleW: getComputedStyle(title).fontWeight, titleLh: Math.round(parseFloat(getComputedStyle(title).lineHeight) / parseFloat(fs(title)) * 100) / 100, pW: getComputedStyle(A.querySelector('.desk-md-p')).fontWeight, titleFull: tr.width >= (ar.width - 40), titleBelowLane: !lr || tr.top >= lr.bottom - 1,
+                noTitle: !!U && !U.querySelector('.desk-a-title'), body2: U ? fs(U.querySelector('.desk-a.answer')) : '',
+                meQ: fs(me.querySelector('.desk-q')), meRatio: Math.round(me.getBoundingClientRect().width / inner * 1000) / 1000, ansRatio: Math.round(ar.width / inner * 1000) / 1000,
+                lab: fs(lab), lane: fs(lane), meta: fs(meta), cLab: cr(lab), cLane: lane ? cr(lane) : 99, cMeta: cr(meta), lns,
+                olMt: parseFloat(getComputedStyle(A.querySelector('.desk-md-l')).marginTop), text: A.querySelector('.desk-sec-body').textContent,
+                padBox: parseFloat(cs.paddingLeft), padAns: parseFloat(getComputedStyle(A).paddingLeft), padSec: parseFloat(getComputedStyle(A.querySelector('.desk-sec-body')).paddingLeft),
+                over: document.documentElement.scrollWidth > window.innerWidth + 1, sizes: Array.from(new Set([fs(A), fs(title), fs(lab), fs(lane), fs(meta)])).length,
+                small: Array.from(T.querySelectorAll('button')).filter(b => b.offsetParent && b.getBoundingClientRect().height < 43.5).map(b => (b.textContent || b.getAttribute('aria-label') || '').trim().slice(0, 12)) };
+        });
+        const gap557 = m => { const L = m.lns, i = k => L.findIndex(l => l.t === k); const s1 = i('★'), a1 = i('▶'), n1 = i('※'); return { firstStar: L[s1].mt, secondStar: L[s1 + 1].mt, firstArrow: L[a1].mt, secondArrow: L[a1 + 1].mt, note: L[n1].mt, plain: L.filter(l => !l.sym).map(l => l.mt) }; };
+        const G7 = await open(staff, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
+        mk557(staff.id).forEach(o => G7.st.orders.push(o));
+        await G7.pg.tap('#desk-tabs .desk-tab[data-tab="all"]'); await G7.pg.waitForSelector('#desk-list .desk-h-item', { timeout: 15000 }); await G7.pg.tap('#desk-tabs .desk-tab[data-tab="mine"]'); await G7.pg.waitForSelector('#desk-list [data-oid="3101"] .desk-a.answer', { timeout: 15000 }); await G7.pg.waitForTimeout(400);
+        await stubClip(G7.pg);
+        const g = await m557(G7.pg), gg = gap557(g); await shot(G7.pg, '557-1-type-390');
+        ok('⑪ⓐ 390px: 클코 답 본문 16px(문단·목록·표 같은 크기) · 줄 높이 1.6 안팎', g.body === '16px' && g.p === '16px' && g.li === '16px' && g.td === '16px' && g.lh >= 1.55 && g.lh <= 1.65, JSON.stringify({ body: g.body, p: g.p, li: g.li, td: g.td, lh: g.lh }));
+        ok('⑪ⓐ 부가 정보(번호·시각 · 처리 길 칩 · 「클코 답변」 표지) 12px · 대비 4.5:1 이상', g.meta === '12px' && g.lane === '12px' && g.lab === '12px' && g.cMeta >= 4.5 && g.cLane >= 4.5 && g.cLab >= 4.5, JSON.stringify({ meta: g.cMeta, lane: g.cLane, lab: g.cLab }));
+        ok('⑪ⓑ 답 제목 18px 굵게(줄 높이 1.35 안팎) · 본문은 보통 굵기 · 제목은 처리 길 칩 아래 줄에서 폭을 다 씀', g.title === '18px' && Number(g.titleW) >= 700 && g.titleLh >= 1.3 && g.titleLh <= 1.4 && Number(g.pW) <= 500 && g.titleFull && g.titleBelowLane, JSON.stringify({ t: g.title, w: g.titleW, lh: g.titleLh, pW: g.pW, full: g.titleFull, below: g.titleBelowLane }));
+        ok('⑪ⓑ 제목 없는 답은 그대로(제목 칸 없음 · 본문 16px)', g.noTitle && g.body2 === '16px');
+        ok('⑪ⓒ 내 말풍선 글 15px · 폭은 대화 틀 안 폭의 85% 이하 · 클코 답은 폭을 다 씀', g.meQ === '15px' && g.meRatio <= 0.851 && g.meRatio >= 0.7 && g.ansRatio >= 0.99, JSON.stringify({ me: g.meRatio, ans: g.ansRatio }));
+        ok('⑪ⓓ 기호 줄: 앞 글과 6~8px 띄움 · 같은 기호끼리는 붙임(★★ · ▶▶) · 다른 기호로 바뀌면 다시 띄움 · 보통 줄은 0', gg.firstStar >= 6 && gg.firstStar <= 8 && gg.secondStar === 0 && gg.firstArrow >= 6 && gg.firstArrow <= 8 && gg.secondArrow === 0 && gg.note >= 6 && gg.note <= 8 && gg.plain.every(v => v === 0), JSON.stringify(gg));
+        ok('⑪ⓓ 번호 목록도 앞 글과 6~8px', g.olMt >= 6 && g.olMt <= 8, String(g.olMt));
+        await G7.pg.tap('#desk-list [data-oid="3101"] [data-act="copysec"][data-sec="0"]'); await G7.pg.waitForTimeout(300);
+        const c557 = await G7.pg.evaluate(() => window.__clip[0]);
+        ok('⑪ⓓ 글자는 한 자도 안 바뀜 — 묶음 [복사] 결과 = 원문 그대로(줄바꿈·기호·빈 줄 포함)', c557 === ANS557.split('\n').slice(3, 12).join('\n'), JSON.stringify(c557).slice(0, 120));
+        ok('⑪ⓔ 390px: 안쪽 좌우 여백 줄임(대화 틀 8 · 답 칸 10 · 묶음 틀 10) · 누르는 것 44px 이상 · 가로 넘침 0 · 오류 0', g.padBox === 8 && g.padAns === 10 && g.padSec === 10 && g.small.length === 0 && !g.over && G7.errors.length === 0, JSON.stringify({ box: g.padBox, ans: g.padAns, sec: g.padSec, small: g.small, err: G7.errors }));
+        ok('⑪ 글씨 크기 3단계 이내(18 / 16 / 12)', g.sizes <= 3, String(g.sizes));
+        // 이전 채팅 이력의 펼친 대화에도 같은 글 크기
+        await G7.pg.evaluate(() => window.scrollTo(0, 0)); await G7.pg.tap('#desk-tabs .desk-tab[data-tab="all"]'); await G7.pg.waitForSelector('#desk-list .desk-h-item[data-th="3101"]', { timeout: 15000 }); await G7.pg.tap('#desk-list .desk-h-item[data-th="3101"] .desk-h-row'); await G7.pg.waitForTimeout(400);
+        const gh = await m557(G7.pg);
+        ok('⑪ 이전 채팅 이력의 펼친 대화에도 같은 글 크기(본문 16 · 제목 18 · 내 글 15 · 부가 12) · 가로 넘침 0', !!gh && gh.body === '16px' && gh.title === '18px' && gh.meQ === '15px' && gh.meta === '12px' && !gh.over, gh ? JSON.stringify({ b: gh.body, t: gh.title, me: gh.meQ, meta: gh.meta, meR: gh.meRatio }) : 'null');
+        await G7.ctx.close();
+        const H7 = await open(ceo, { width: 1440, height: 900 });
+        mk557(ceo.id).forEach(o => H7.st.orders.push(o));
+        await goTab(H7.pg, 'all', '#desk-list .desk-h-item'); await goTab(H7.pg, 'mine', '#desk-list [data-oid="3101"] .desk-a.answer'); await H7.pg.waitForTimeout(400);
+        const h = await m557(H7.pg), hh = gap557(h); await shot(H7.pg, '557-2-type-1440');
+        ok('⑪ⓕ 1440px: 본문 15.5px · 제목 18px · 내 글 15px · 부가 12px(대비 4.5 이상) · 기호 줄 간격 같음 · 내 말풍선 85% 이하 · 가로 넘침 0 · 오류 0', h.body === '15.5px' && h.td === '15.5px' && h.title === '18px' && h.meQ === '15px' && h.meta === '12px' && h.cMeta >= 4.5 && h.cLane >= 4.5 && h.cLab >= 4.5 && hh.firstStar >= 6 && hh.secondStar === 0 && h.meRatio <= 0.851 && !h.over && H7.errors.length === 0, JSON.stringify({ b: h.body, td: h.td, me: h.meRatio, c: [h.cMeta, h.cLane, h.cLab], err: H7.errors }));
+        // 표 보기 자세히 칸에도 같은 글 크기
+        await H7.pg.evaluate(() => { localStorage.setItem('akm_desk_view', 'table'); }); await H7.pg.reload({ waitUntil: 'networkidle' }); await H7.pg.waitForTimeout(2500);
+        await H7.pg.evaluate(() => { const n = document.querySelector('.nav-item[data-page="agent-office"]'); if (n) n.click(); document.querySelectorAll('.ao-settle-overlay').forEach(e => e.remove()); });
+        const tb7 = await H7.pg.waitForSelector('#desk-list tr.row', { timeout: 15000 }).then(() => true).catch(() => false);
+        if (tb7) {
+            await H7.pg.evaluate(() => { const r = Array.from(document.querySelectorAll('#desk-list tr.row')).find(x => /재구매 안내/.test(x.textContent)); if (r) r.click(); }); await H7.pg.waitForTimeout(500);
+            const tv7 = await H7.pg.evaluate(() => { const a = Array.from(document.querySelectorAll('#desk-list .desk-a.answer')).find(x => x.querySelector('.desk-a-title')); return a ? { b: getComputedStyle(a).fontSize, t: getComputedStyle(a.querySelector('.desk-a-title')).fontSize } : null; });
+            ok('⑪ 표 보기 자세히 칸에도 같은 글 크기(본문 15.5 · 제목 18)', !!tv7 && tv7.b === '15.5px' && tv7.t === '18px', JSON.stringify(tv7));
+        } else ok('⑪ 표 보기 자세히 칸에도 같은 글 크기(본문 15.5 · 제목 18)', false, '표 보기를 열지 못함');
+        await H7.ctx.close();
     } catch (e) { ok('실행 오류 없음', false, e && e.stack ? e.stack.split('\n').slice(0, 3).join(' / ') : String(e)); }
     finally {
         if (browser) await browser.close().catch(() => { });
