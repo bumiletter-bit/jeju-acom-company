@@ -907,13 +907,15 @@
                 ? `<div class="desk-end-ask" role="group" aria-label="채팅 종료 확인"><span>이 채팅을 종료할까요? 이전 채팅 이력에서 다시 볼 수 있어요.</span><button type="button" class="desk-btn sm primary" data-act="hidethread" data-id="${t.id}">종료</button><button type="button" class="desk-btn sm" data-act="endno" data-id="${t.id}">취소</button></div>`
                 : `<button type="button" class="desk-endbtn" data-act="endchat" data-id="${t.id}">채팅 종료</button>`;
             // #541(대표 10/5): [채팅 종료]는 답 상자 안 「+」 옆에 담는다(상자가 틀 너비를 다 쓴다). 답 상자가 없는 대화(최종발주 기록 등)와 확인 중일 때만 상자 밖
-            const barHtml = o => { const f = followHtml(o); const asking = S.endAsk === t.id; if (!endHtml || asking || f.indexOf('<!--endslot-->') < 0) return f + endHtml; return f.replace('<!--endslot-->', endHtml); };
+            // #559(대표 폰 실물 10/6): 종료 확인도 답 상자 안 같은 자리에서 — [채팅 종료]를 누른 그 자리에 [종료하기]가 나와 손이 안 움직인다(답 상자가 없는 대화만 종전처럼 아래 칸)
+            const endIn = `<span class="desk-end-ask in" role="group" aria-label="채팅 종료 확인 — 이전 채팅 이력에서 다시 볼 수 있어요"><button type="button" class="desk-endbtn yes" data-act="hidethread" data-id="${t.id}">종료하기</button><button type="button" class="desk-endbtn no" data-act="endno" data-id="${t.id}">취소</button></span>`;
+            const barHtml = o => { const f = followHtml(o); const asking = S.endAsk === t.id; if (!endHtml || f.indexOf('<!--endslot-->') < 0) return f + endHtml; return f.replace('<!--endslot-->', asking ? endIn : endHtml); };
             const turns = t.items.map(o => {
                 const b = BADGE[o.status] || ['wait', o.status];
                 const last = o.id === t.last;
                 return `<div class="desk-turn${last ? ' last' : ''}" data-oid="${o.id}">
                     <div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, hm))}${attMeta(o)}</div></div>
-                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultBody(o, true) + `<div class="desk-chatbar${endHtml && S.endAsk === t.id ? ' asking' : ''}">${barHtml(o)}</div>` : resultBody(o, true)}</div>
+                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultBody(o, true) + `<div class="desk-chatbar${endHtml && S.endAsk === t.id && followHtml(o).indexOf('<!--endslot-->') < 0 ? ' asking' : ''}">${barHtml(o)}</div>` : resultBody(o, true)}</div>
                 </div>`;
             }).join('');
             return `<article class="desk-thread-box${ov ? ' ov' : ''}" data-th="${t.id}">${head}${turns}</article>`;

@@ -641,3 +641,12 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 }
 /* 답 제목은 처리 길 칩 아래 줄부터 폭을 다 쓴다(폰에서 칩에 밀려 낱말 가운데서 끊기던 것) · 낱말 단위로 줄바꿈 */
 #desk-list .desk-a.answer .desk-a-title { clear: right; word-break: keep-all; overflow-wrap: anywhere; }
+
+/* #559(대표 10/6): 채팅 종료 확인 = 답 상자 안 같은 자리 — [종료하기](붉은 채움) · [취소] */
+.desk-end-ask.in { flex: 0 1 auto; display: inline-flex; align-items: center; flex-wrap: nowrap; gap: 6px; margin-left: 8px; padding: 0; border: 0; border-radius: 0; background: none; }
+.desk-end-ask.in .desk-endbtn { margin-left: 0; }
+.desk-endbtn.yes { background: #D92D20; border-color: #D92D20; color: #fff; }
+.desk-endbtn.yes:hover { background: #B42318; border-color: #B42318; }
+.desk-endbtn.no { background: #fff; border-color: #F3C5C0; color: #B42318; }
+.desk-endbtn.no:hover { background: #FEF3F2; }
+@media (max-width: 380px) { .desk-end-ask.in .desk-endbtn { padding: 0 11px; font-size: 13px; } }
