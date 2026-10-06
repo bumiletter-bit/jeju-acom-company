@@ -2,6 +2,8 @@
 // 사용: node scripts/desk/get.js <지시 id>
 const fs = require('fs'), path = require('path');
 const { pool, ROOT, heartbeat, step, audit } = require('./_db');
+// #551: 기억해 둔 업무 기준(없거나 읽기 실패면 빈 목록 — 지시 받기는 막지 않는다). 최종발주 메모 읽기·대화처럼 규칙 문서가 따로 있는 일에도 함께 가지만 그 일의 규칙이 우선이다.
+async function rememberList() { try { return await require('./remember').activeList(); } catch (_) { return []; } }
 // #498: 대기 프로그램(launcher.js)이 창구를 부르기 전에 미리 받아 둘 수 있게 함수로도 내준다(CLI 동작은 종전과 같다)
 async function claim(id) {
     if (!id) throw new Error('지시 id가 필요합니다');
@@ -86,6 +88,7 @@ async function claim(id) {
     return {
         ok: true, id, run_id: runId, from: o.created_by, from_role: fromRole, content: o.content, image_path: imagePath, ...(filePath ? { file_path: filePath, file_name: o.file_name, file_hint: '첨부 파일입니다. 종류에 맞게 읽으세요 — xlsx·xls: 저장소 루트에서 node -e 로 require("exceljs")(xlsx) 또는 require("xlsx-js-style")(xls 포함 · 없을 수 있음)로 시트를 읽기 · csv·txt: Read · pdf: Read(쪽 지정). 손님 이름·번호가 들어 있을 수 있으니 답변에는 필요한 만큼만 쓰고, 처리 뒤 이 파일은 지웁니다.' } : {}), ...(foMemo ? { final_order_memo: foMemo } : {}),
         approved_request: approved ? { action: approved.action, summary: approved.summary, plan: approved.plan, approved_by: approved.approved_by } : null,
+        remember: await rememberList(),   // #551: 관리자가 「기억해」라고 한 업무 기준 — 문서보다 최근 결정이므로 문서와 다르면 이쪽을 따른다
         recent_talk: prev,
         follow_of: followOf,
     };
