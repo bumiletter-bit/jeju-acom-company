@@ -54,6 +54,8 @@ async function newCtx(br, fx, hits, viewport, mobile, mode) {
     const ctx = await br.newContext({ acceptDownloads: true, viewport, ...(mobile ? { isMobile: true, hasTouch: true } : {}) });
     await ctx.addInitScript(([t, u]) => { localStorage.setItem('jwt_token', t); localStorage.setItem('jwt_user', JSON.stringify(u)); }, [TOKEN, USER]);
     await fakeApis(ctx, fx, hits, mode);
+    // 실DB에 대기 중인 정산 확인표가 있으면 그 창(.ao-settle-overlay)이 떠서 시험 클릭을 가린다(10/6 실사고) → 시험에서만 숨긴다
+    await ctx.addInitScript(() => { const add = () => { const s = document.createElement('style'); s.textContent = '.ao-settle-overlay{display:none!important}'; (document.head || document.documentElement).appendChild(s); }; if (document.head) add(); else document.addEventListener('DOMContentLoaded', add); });
     return ctx;
 }
 // ⑦ 묶음용: 새 창에서 패널을 열고(달력 준비까지) 돌려준다
@@ -68,7 +70,8 @@ async function openFO(br, fx, mode) {
 // 현금파일(경로) 또는 「없음」(null)을 고른다 — 이미 고른 상태에서 바꿀 때도 쓴다
 async function setCash(pg, file) {
     if (file) { if (await pg.isChecked(SEL.cashNone)) await pg.uncheck(SEL.cashNone); await pg.setInputFiles(SEL.cash, file); }
-    else if (!(await pg.isChecked(SEL.cashNone))) await pg.check(SEL.cashNone);
+    else { if (await pg.isVisible('#fo-cash-clear')) { await pg.click('#fo-cash-clear'); await pg.waitForTimeout(150); }   // #548: 파일을 고른 뒤에는 「오늘은 없음」이 잠긴다 → 먼저 [파일 빼기]
+        if (!(await pg.isChecked(SEL.cashNone))) await pg.check(SEL.cashNone); }
     await pg.waitForTimeout(300);
 }
 const phaseOf = pg => pg.evaluate(() => window.AkmFinalOrder.state.phase);
@@ -393,8 +396,10 @@ async function resolveCards(pg, type) {
             ok(btnNames.length === 3 && btnNames.every(nm => nm.includes(' ' + md2 + '.')), '⑦-9 파일 이름 MM.DD = 바꾼 기준 발송일', btnNames.join(' | '));
             // ⑦-6 전부 저장
             const got = []; const onDl = d => got.push(d.suggestedFilename()); a.pg.on('download', onDl);
-            await a.pg.click(SEL.saveAll); for (let i = 0; i < 40 && got.length < 5; i++) await a.pg.waitForTimeout(250); await a.pg.waitForTimeout(600); a.pg.off('download', onDl);
-            ok(got.length === 5 && got.filter(x => /\.xlsx$/.test(x)).length === 3 && got.filter(x => /\.png$/.test(x)).length === 2, '⑦-6 [전부 저장] → 파일 3개 + 수량 이미지 2개', got.join(' | '));
+            const allTxt = (await a.pg.textContent(SEL.saveAll)).trim();
+            await a.pg.click(SEL.saveAll); for (let i = 0; i < 40 && got.length < 3; i++) await a.pg.waitForTimeout(250); await a.pg.waitForTimeout(1500); const nAll = got.slice();
+            await a.pg.locator(SEL.png).first().click(); for (let i = 0; i < 20 && got.length < nAll.length + 1; i++) await a.pg.waitForTimeout(250); await a.pg.waitForTimeout(300); a.pg.off('download', onDl);
+            ok(nAll.length === 3 && nAll.every(x => /\.xlsx$/.test(x)) && /파일 3개 전부 저장/.test(allTxt) && got.length === 4 && /\.png$/.test(got[3]), '⑦-6 #548 [파일 3개 전부 저장] → 엑셀 3개만(수량 이미지 0) · 수량 이미지는 낱개 버튼으로 받아짐', allTxt + ' → ' + got.join(' | '));
             // ⑦-4 고른 거래처 파일에 그 행이 들어갔는가
             const hName = btnNames.find(nm => nm.includes('(효돈)'));
             const [d] = await Promise.all([a.pg.waitForEvent('download', { timeout: 20000 }), a.pg.locator(`[data-fo-save="${hName}"]`).click()]); const fo = path.join(TMP, 'partner.xlsx'); await d.saveAs(fo);
@@ -897,7 +902,7 @@ async function resolveCards(pg, type) {
             let seq = 0; const MT = '13과로 부탁드려요 문 앞에 놔주세요';   // 손님 메모의 과수 요청 → AI가 tail 로 돌려줌(자동으로 붙이지 않고 카드로)
             const mk = (nm, o) => {
                 seq++; const x = o || {}, pid = x.pid || ('2099010600' + String(100 + seq)), bs = x.base || base;
-                return { ...bs, '구매자명': x.buyer || nm, '구매자연락처': x.tel || '010-7300-0' + String(100 + seq), '수취인명': x.recv || nm, '수취인연락처1': '010-7400-0' + String(100 + seq),
+                return { ...bs, '구매자명': x.buyer || nm, '구매자연락처': x.tel || '010-7300-0' + String(100 + seq), '수취인명': x.recv || nm, '수취인연락처1': x.rtel || '010-7400-0' + String(100 + seq),
                     '통합배송지': x.addr || `서울특별시 가짜구 대화로 ${seq}, 101동 ${200 + seq}호`, '배송메세지': x.memo || '', '수량': x.qty || 1, ...(x.opt ? { '옵션정보': x.opt } : {}), _pid: pid, _x: { ...bs._x, productOrderId: pid, orderId: pid } };
             };
             const rows16 = [mk('대화가'), mk('대화나'), mk('대화다'), mk('대화라'), mk('대화마', { opt: '세상에 없는 과일 9kg' }), mk('대화바', { addr: '제주특별자치도 제주시 가짜로 7' }),
@@ -1371,6 +1376,131 @@ async function resolveCards(pg, type) {
                 const g2 = await grab('s22b');
                 ok((await patchN(v.pg)) === 0 && R(g2, '이이가').r[4] === FROM && R(g2, '이이다').r[4] === FROM && R(g2, '이이나').r[4] === FROM + ' 2S사이즈로!' && R(g2, '이이가').file.includes('효돈'), '㉒8 [되돌리기] 한 번 → 4건 전부 옛 이름·옛 거래처로(파일 다시 만듦)', JSON.stringify([await patchN(v.pg), String(R(g2, '이이가').r[4]).slice(-16), R(g2, '이이가').file.slice(0, 20)]));
                 ok(v.errs.length === 0, '㉒ 오류 0', v.errs.join(' | ')); await v.ctx.close();
+            }
+
+            // ── ㉓ #548 받는 분 번호로 적힌 메모 줄 → 카드 · 메모 칸 줄별 확인 표시 ───────────────────────────
+            console.log('\n㉓ #548 받는 분 번호 메모 줄 · 줄별 표시');
+            {
+                const rows23 = [mk('이삼가', { rtel: '010-8100-1111' }), mk('이삼나', { rtel: '010-8100-2222' }), mk('이삼다', { rtel: '010-8100-2222' }), mk('이삼라', { tel: '010-8200-3333' }), mk('이삼마', { rtel: '010-8300-9999' }), mk('이삼바', { rtel: '010-8400-5555' }), mk('이삼사')];
+                const pidOf = nm => rows23.find(r => r['수취인명'] === nm)._pid;
+                const laterTxt = `${+later.slice(5, 7)}월 ${+later.slice(8)}일 발송`;
+                const memo23 = [`010-8100-1111 ${laterTxt}`, `${FX.usd(ship)}\t010-8100-2222\t입력o삭제x\t네이버`, `010-8200-3333 ${laterTxt}`, `${FX.usd(later)}\t010-1234-9999\t\t네이버`, `010-8400-5555 ${laterTxt}`, 'ㅁㄴㅇㄹ 확인'];
+                const w = await mkChat(false, rows23);
+                const gut = pg => pg.evaluate(() => { const ta = document.getElementById('fo-memo'), g = document.getElementById('fo-memo-gut'), ms = g ? Array.from(g.querySelectorAll('.m')) : []; const cs = getComputedStyle(ta);
+                    return { has: !!g, n: ms.length, lines: ta.value ? ta.value.split('\n').length : 0, t: ms.map(m => (m.textContent || '').trim()), k: ms.map(m => m.className.replace(/^m ?/, '').replace(' cur', '')), h: [...new Set(ms.map(m => Math.round(m.getBoundingClientRect().height)))], lh: cs.lineHeight, ws: cs.whiteSpace, padTop: [cs.paddingTop, getComputedStyle(g).paddingTop],
+                        firstTop: ms[0] ? Math.round(ms[0].getBoundingClientRect().top - g.getBoundingClientRect().top) : null, stale: document.querySelector('.fo-ed').classList.contains('stale'), bar: (document.getElementById('fo-memo-bar') || {}).innerText || '', val: ta.value, sel: [ta.selectionStart, ta.selectionEnd], sameH: Math.abs(g.getBoundingClientRect().height - ta.getBoundingClientRect().height) < 2 }; });
+                const recvCards = pg => pg.evaluate(sel => Array.from(document.querySelectorAll(sel + '[data-fo-card="line-recv"]')).map(c => ({ title: c.querySelector('b').textContent, text: c.innerText.replace(/\s+/g, ' '), btns: Array.from(c.querySelectorAll('[data-fo-act]')).map(b => b.textContent.trim()) })), SEL.pending);
+                const info23 = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-info li')).map(li => li.textContent));
+                let g0 = await gut(w.pg);
+                ok(g0.has && g0.t.every(x => !x) && g0.bar === '', '㉓1 판정 전에는 표시 칸이 비어 있음(표시 칸은 처음부터 있음)', JSON.stringify(g0.t));
+                await w.pg.fill(SEL.memo, memo23.join('\n')); await setCash(w.pg, null); await w.pg.click(SEL.start); await idle(w.pg); await w.pg.waitForTimeout(500);
+                g0 = await gut(w.pg); let rc23 = await recvCards(w.pg); let J23 = (await readJudge(w.pg)).judge;
+                ok(g0.n === 6 && g0.lines === 6 && g0.k.join() === 'warn,warn,ok,none,warn,warn' && /받는 분 번호/.test(g0.t[0]) && /받는 분 번호/.test(g0.t[1]) && /확인완료 1건/.test(g0.t[2]) && /주문 없음/.test(g0.t[3]) && /받는 분 번호/.test(g0.t[4]) && /형식 확인/.test(g0.t[5]), '㉓2 판정 뒤 줄마다 표시: 받는 분 번호(⚠) ×3 · 확인완료 1건(✓) · 주문 없음(✕) · 형식 확인(⚠)', JSON.stringify(g0.t));
+                ok(g0.h.join() === '24' && g0.lh === '24px' && g0.ws === 'pre' && g0.padTop[0] === g0.padTop[1] && g0.firstTop === parseInt(g0.padTop[0]) && g0.sameH && !g0.stale, '㉓2 줄 높이 맞춤: 표시 한 칸 24px = 입력 칸 줄 높이 24px · 위 여백 같음 · 줄바꿈 없음(pre) · 두 칸 높이 같음', JSON.stringify({ h: g0.h, lh: g0.lh, ws: g0.ws, pad: g0.padTop, sameH: g0.sameH }));
+                ok(/확인 필요 4줄/.test(g0.bar.replace(/\s+/g, ' ')) && /주문 없음 1줄/.test(g0.bar.replace(/\s+/g, ' ')) && /확인완료 1줄/.test(g0.bar.replace(/\s+/g, ' ')), '㉓2 아래 요약 칩(확인 필요 4 · 주문 없음 1 · 확인완료 1)', g0.bar.replace(/\s+/g, ' ').slice(0, 80));
+                const c0 = rc23.find(c => c.title.startsWith('010-8100-1111')), c1 = rc23.find(c => /010-8100-2222/.test(c.title)), c4 = rc23.find(c => c.title.startsWith('010-8400-5555'));
+                ok(rc23.length === 3 && c0 && /구매자가 아니라 받는 분 번호/.test(c0.text) && /이삼가/.test(c0.text) && c0.btns.join() === '이 주문에 적용,넘어감' && c1 && /이삼나/.test(c1.text) && /이삼다/.test(c1.text) && c1.btns[0] === '2건 모두 적용' && c4, '㉓3 받는 분 번호 줄 = 카드(그 번호의 주문 목록 · [이 주문에 적용] / [2건 모두 적용] · [넘어감])', JSON.stringify(rc23.map(c => c.btns)));
+                ok(!rc23.some(c => /010-8200-3333|010-1234-9999/.test(c.title)) && J23['이삼라'].excluded && !J23['이삼마'].excluded && (await info23(w.pg)).some(t => /^주문 없음: .*010-1234-9999/.test(t)), '㉓3 구매자 번호 줄은 카드 없이 그대로 적용 · 끝 4자리만 같은 번호(…9999)는 후보로 안 띄우고 참고 목록 「주문 없음」', JSON.stringify({ 라: J23['이삼라'].excluded, 마: J23['이삼마'].excluded }));
+                ok(!J23['이삼가'].excluded && !J23['이삼나'].individual, '㉓3 적용 전에는 그 주문에 아무것도 안 걸림(오늘 발송 그대로)');
+                // [이 주문에 적용] → 뒤 날짜 = 제외
+                await w.pg.locator(`${SEL.pending}[data-fo-card="line-recv"]`, { hasText: '010-8100-1111' }).locator('[data-fo-act="apply"]').click(); await idle(w.pg); await w.pg.waitForTimeout(500);
+                g0 = await gut(w.pg); J23 = (await readJudge(w.pg)).judge; rc23 = await recvCards(w.pg);
+                ok(g0.val.split('\n')[0] === `${pidOf('이삼가')} ${laterTxt}` && !/010-8100-1111/.test(g0.val) && J23['이삼가'].excluded && J23['이삼가'].kind === 'future' && /확인완료 1건/.test(g0.t[0]) && rc23.length === 2, '㉓4 [이 주문에 적용] → 메모 칸의 그 줄 번호가 주문번호로 바뀌고 다시 판정 → 뒤 날짜라 오늘 제외 · 표시 = 확인완료 1건 · 카드 사라짐', JSON.stringify({ line0: g0.val.split('\n')[0].slice(0, 30), ex: J23['이삼가'].excluded, kind: J23['이삼가'].kind }));
+                ok((await info23(w.pg)).some(t => /받는 분 번호로 적은 줄을 주문번호로 바꿈: 010-8100-1111 .* → 1건/.test(t)), '㉓4 참고 목록에 「받는 분 번호로 적은 줄을 주문번호로 바꿈」(원래 적은 줄)', (await info23(w.pg)).find(t => /바꿈/.test(t)));
+                // [2건 모두 적용] → 입력삭제 2건
+                await w.pg.locator(`${SEL.pending}[data-fo-card="line-recv"]`, { hasText: '010-8100-2222' }).locator('[data-fo-act="apply"]').click(); await idle(w.pg); await w.pg.waitForTimeout(500);
+                g0 = await gut(w.pg); J23 = (await readJudge(w.pg)).judge; const ls23 = g0.val.split('\n');
+                ok(ls23.length === 7 && ls23[1] === `${FX.usd(ship)}\t${pidOf('이삼나')}\t입력o삭제x\t네이버` && ls23[2] === `${FX.usd(ship)}\t${pidOf('이삼다')}\t입력o삭제x\t네이버` && J23['이삼나'].individual && J23['이삼다'].individual && g0.n === 7 && /확인완료 1건/.test(g0.t[1]) && /확인완료 1건/.test(g0.t[2]), '㉓5 [2건 모두 적용] → 같은 날짜·비고로 줄이 2줄이 되고 두 주문 다 입력삭제(개별발송) · 표시 칸도 7줄로', JSON.stringify({ n: ls23.length, 나: J23['이삼나'].individual, 다: J23['이삼다'].individual }));
+                // [넘어감]
+                await w.pg.locator(`${SEL.pending}[data-fo-card="line-recv"]`, { hasText: '010-8400-5555' }).locator('[data-fo-act="ok"]').click(); await w.pg.waitForTimeout(400);
+                g0 = await gut(w.pg); J23 = (await readJudge(w.pg)).judge;
+                ok((await recvCards(w.pg)).length === 0 && !J23['이삼바'].excluded && (await info23(w.pg)).some(t => /^주문 없음: 010-8400-5555.*받는 분 번호 — 넘어감/.test(t)) && /주문 없음/.test(g0.t[5]) && /010-8400-5555/.test(g0.val), '㉓6 [넘어감] → 그 주문은 그대로 오늘 발송 · 참고 목록 「주문 없음 … (받는 분 번호 — 넘어감)」 · 메모 줄은 안 바뀜 · 표시 = 주문 없음', JSON.stringify(g0.t));
+                // 남은 카드(형식 확인 줄 · 입력삭제 현금 줄 없음 등) 처리 → 파일
+                for (let q = 0; q < 12 && (await pendingN(w.pg)) > 0; q++) { const b = w.pg.locator(SEL.pending + ' [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
+                ok((await pendingN(w.pg)) === 0, '㉓ 준비: 남은 카드 0', JSON.stringify(await cardCount(w.pg)));
+                await w.pg.click(SEL.make); await idle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 15000 }); await w.pg.waitForTimeout(300);
+                const n23 = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a23 = [];
+                for (const nm of n23.filter(x => !x.includes('스마트스토어') && /xlsx$/i.test(x))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's23-' + Date.now() + '.xlsx'); await dl.saveAs(f); XLSX.utils.sheet_to_json(XLSX.readFile(f).Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => a23.push(r[3])); }
+                ok(!a23.includes('이삼가') && !a23.includes('이삼나') && !a23.includes('이삼다') && !a23.includes('이삼라') && a23.includes('이삼마') && a23.includes('이삼바') && a23.includes('이삼사'), '㉓7 택배사 파일: 적용한 뒤 날짜 주문·입력삭제 2건·구매자 번호 뒤 날짜 주문은 빠지고, 넘어간 주문·끝자리만 같은 주문은 그대로 나감', JSON.stringify(a23));
+                const lg23 = (w.hits.logs || []).slice(-1)[0];
+                ok(lg23 && lg23.lines.some(l => /받는 분 번호로 적은 메모 줄을 주문번호로 바꿈 3건/.test(l)) && !lg23.lines.some(l => /8100-1111|8100-2222/.test(l)), '㉓7 정리 기록에는 건수만(번호 없음)', lg23 && lg23.lines.filter(l => /받는 분/.test(l)).join());
+                // 표시 칸 누르기 · 입력이 바뀌면 흐리게
+                await w.pg.click('#fo-memo-gut .m[data-i="3"]'); g0 = await gut(w.pg); const ls = g0.val.split('\n'), st3 = ls.slice(0, 3).reduce((a, x) => a + x.length + 1, 0);
+                ok(g0.sel[0] === st3 && g0.sel[1] === st3 + ls[3].length, '㉓8 표시 칸을 누르면 그 줄이 선택됨', JSON.stringify(g0.sel));
+                await w.pg.focus(SEL.memo); await w.pg.keyboard.press('End'); await w.pg.keyboard.type(' '); g0 = await gut(w.pg);
+                ok(g0.stale && (await w.pg.evaluate(() => getComputedStyle(document.querySelector('#fo-memo-gut .m span')).opacity)) === '0.35', '㉓8 입력이 바뀌면 표시가 흐려짐(다시 판정 필요)');
+                ok(w.errs.length === 0, '㉓ 오류 0', w.errs.join(' | ')); await w.ctx.close();
+                // 폰 390px
+                const wm = await mkChat(false, rows23, { width: 390, height: 844 }, true);
+                await wm.pg.fill(SEL.memo, memo23.join('\n')); await setCash(wm.pg, null); await wm.pg.click(SEL.start); await idle(wm.pg); await wm.pg.waitForTimeout(500);
+                const gm = await gut(wm.pg); const mm = await wm.pg.evaluate(() => { const ed = document.querySelector('.fo-ed').getBoundingClientRect(), ta = document.getElementById('fo-memo'); return { over: document.documentElement.scrollWidth > window.innerWidth + 1, edIn: ed.right <= window.innerWidth + 1, taW: Math.round(ta.getBoundingClientRect().width), scrollX: ta.scrollWidth > ta.clientWidth }; });
+                ok(!mm.over && mm.edIn && mm.taW >= 150 && gm.h.join() === '24' && gm.n === 6 && gm.k.join() === 'warn,warn,ok,none,warn,warn', '㉓9 390px: 가로 넘침 0 · 긴 줄은 입력 칸 안에서 가로로 밀림(줄바꿈 없음) · 표시 6칸이 줄과 1:1', JSON.stringify(mm));
+                ok(wm.errs.length === 0, '㉓9 오류 0(폰)', wm.errs.join(' | ')); await wm.ctx.close();
+            }
+
+            // ── ㉔ #548 보충: 현금파일 「오늘은 없음」 잠금 · 메모 줄 「번호 + 사이즈」 · 주문 확인 카드의 배송메세지 칸 ─────────
+            console.log('\n㉔ #548 보충(현금파일 잠금 · 번호+사이즈 · 주문 확인 카드 배송메세지)');
+            {
+                const sizeBase24 = fx.naver.find(r => /사이즈/.test(String(r['배송메세지'] || '')));
+                const D24 = cat.byPartner[FX.P_DAESUNG] || [], gold = D24.find(n => /황금향/.test(n)) || D24[0];
+                const OM = '다음주쯤 보내주세요 경비실에 맡겨주세요';
+                const rows24 = [mk('이사가', { buyer: '사이즈손님', tel: '010-8500-1111' }), mk('이사나', { buyer: '사이즈손님', tel: '010-8500-1111', opt: gold }), mk('이사다', { tel: '010-8500-2222' }), mk('이사라', { tel: '010-8500-3333', opt: gold }),
+                    mk('이사마', { base: sizeBase24, memo: 's사이즈로 보내주세요', tel: '010-8500-4444' }), mk('이사바', { rtel: '010-8500-9999' }), mk('이사사'),
+                    mk('오가', { memo: OM }), mk('오나', { memo: OM }), mk('오다', { memo: OM })];
+                const memo24 = ['010-8500-1111 2s', `${FX.usd(ship)}\t010-8500-2222\t메모무시 M\t네이버`, '010-8500-3333 s', '010-8500-4444 2S 사이즈', '010-8500-9999 2s로'];
+                const x = await mkChat(false, rows24);
+                x.chat.memoAns = it => (it.memo === OM ? { ship: 'ask', memo: '그대로', sure: false, why: '언제인지 분명하지 않음' } : { memo: '기본', sure: true });
+                // ③ 현금파일 ↔ 「오늘은 없음」
+                const cs = pg => pg.evaluate(() => { const n = document.getElementById('fo-cash-none'), c = document.getElementById('fo-cash-clear'); return { dis: n.disabled, chk: n.checked, off: n.closest('.fo-check').classList.contains('off'), op: getComputedStyle(n.closest('.fo-check')).opacity, clear: c.getClientRects().length > 0, note: document.getElementById('fo-cash-note').textContent }; });
+                let c0 = await cs(x.pg);
+                ok(!c0.dis && !c0.clear, '㉔③ 처음에는 「오늘은 없음」을 누를 수 있음 · [파일 빼기] 없음');
+                await x.pg.setInputFiles(SEL.cash, cashFile); await x.pg.waitForTimeout(400); c0 = await cs(x.pg);
+                ok(c0.dis && c0.off && Number(c0.op) < 0.6 && !c0.chk && c0.clear, '㉔③ 파일을 고르면 「오늘은 없음」이 꺼지고(disabled · 흐림) [파일 빼기]가 보임', JSON.stringify(c0));
+                await x.pg.click('#fo-cash-clear'); await x.pg.waitForTimeout(300); c0 = await cs(x.pg);
+                ok(!c0.dis && !c0.off && !c0.clear && /없으면 「오늘은 없음」/.test(c0.note), '㉔③ [파일 빼기] → 다시 누를 수 있음', c0.note.slice(0, 40));
+                await x.pg.check(SEL.cashNone); await x.pg.waitForTimeout(200); await x.pg.setInputFiles(SEL.cash, cashFile); await x.pg.waitForTimeout(400); c0 = await cs(x.pg);
+                ok(!c0.chk && c0.dis && /가짜_현금파일/.test(c0.note), '㉔③ 「없음」을 누른 상태에서 파일을 고르면 「없음」이 풀리고 파일이 우선', JSON.stringify({ chk: c0.chk, dis: c0.dis }));
+                await x.pg.click('#fo-cash-clear'); await x.pg.waitForTimeout(200);
+                // ④ 번호 + 사이즈
+                await x.pg.fill(SEL.memo, memo24.join('\n')); await setCash(x.pg, null); await x.pg.click(SEL.start); await idle(x.pg); await x.pg.waitForTimeout(600);
+                const gt = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-memo-gut .m')).map(m => (m.textContent || '').trim()));
+                const inf = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-info li')).map(li => li.textContent));
+                let g24 = await gt(x.pg), rj = await readJudge(x.pg), i24 = await inf(x.pg);
+                ok(rj.v2Text.split('\n').length === 5 && rj.v2Text.split('\n')[0] === '' && /메모무시/.test(rj.v2Text.split('\n')[1]) && !/ M(\t|$)/.test(rj.v2Text.split('\n')[1]) && rj.v2Text.split('\n').slice(2).every(l => l === ''), '㉔④ 숨은 계산 화면에는 사이즈 낱말을 빼고 넘김(사이즈뿐인 줄 = 빈 줄 · 줄 수 그대로)', JSON.stringify(rj.v2Text.split('\n')));
+                ok(/사이즈 지정 1건/.test(g24[0]) && /확인완료 1건 · 사이즈/.test(g24[1]) && /귤 주문 없음/.test(g24[2]) && /사이즈 지정 1건/.test(g24[3]) && /받는 분 번호/.test(g24[4]), '㉔④ 줄별 표시: 사이즈 지정 n건 · (날짜도 적은 줄) 확인완료 · 사이즈 · 귤 주문 없음 · 받는 분 번호', JSON.stringify(g24));
+                ok(i24.some(t => /사이즈 지정 대상 아님: .*황금향.* 1건/.test(t)) && i24.some(t => /사이즈를 붙일 귤 주문이 없어요: 010-8500-3333/.test(t)), '㉔④ 참고 목록: 「사이즈 지정 대상 아님: 황금향 … 1건」 · 「사이즈를 붙일 귤 주문이 없어요」', i24.filter(t => /사이즈/.test(t)).join(' | ').slice(0, 200));
+                const rcv = x.pg.locator(`${SEL.pending}[data-fo-card="line-recv"]`, { hasText: '010-8500-9999' });
+                ok((await rcv.count()) === 1 && rj.judge['이사다'].kind === 'today', '㉔④ 번호가 받는 분 번호인 사이즈 줄 = 확인 카드 · 날짜도 적은 줄의 나머지(메모무시)는 종전 규칙대로', String(rj.judge['이사다'].kind));
+                await rcv.locator('[data-fo-act="apply"]').click(); await idle(x.pg); await x.pg.waitForTimeout(500); g24 = await gt(x.pg);
+                ok(/사이즈 지정 1건/.test(g24[4]), '㉔④ 카드에서 [이 주문에 적용] → 그 줄도 「사이즈 지정 1건」', g24[4]);
+                // ⑤ 주문 확인 카드의 배송메세지 칸
+                const oc = nm => x.pg.locator(`#fo-cards [data-fo-card="order"]`, { hasText: nm }).first();
+                const pre5 = await oc('오가').locator('[data-f="memo"]').inputValue().catch(() => null);
+                ok((await x.pg.locator(`${SEL.pending}[data-fo-card="order"]`).count()) === 3 && pre5 === OM, '㉔⑤ 주문 확인 카드에 「택배사 양식에 들어갈 배송메세지」 칸(손님 메모로 미리 채움)', String(pre5));
+                await oc('오가').locator('[data-f="memo"]').fill('경비실에 맡겨주세요'); await oc('오가').locator('[data-fo-act="send"]').click(); await x.pg.waitForTimeout(300);
+                const done5 = await oc('오가').innerText();
+                ok(/오늘 발송/.test(done5) && /배송메세지 「경비실에 맡겨주세요」/.test(done5), '㉔⑤ 글을 고치고 [오늘 발송] → 끝난 카드에 고친 배송메세지가 보임', done5.replace(/\s+/g, ' ').slice(-70));
+                await oc('오가').locator('[data-undo]').click(); await x.pg.waitForTimeout(300);
+                const re5 = await oc('오가').locator('[data-f="memo"]').inputValue();
+                ok(re5 === '경비실에 맡겨주세요', '㉔⑤ [바꾸기]로 다시 열면 앞서 적은 글에서 이어 고침', re5);
+                await oc('오가').locator('[data-fo-act="send"]').click(); await x.pg.waitForTimeout(250);
+                await oc('오나').locator('[data-fo-act="send"]').click(); await x.pg.waitForTimeout(250);
+                await oc('오다').locator('[data-f="memo"]').fill('이건 무시될 글'); await oc('오다').locator('[data-fo-act="excl"]').click(); await x.pg.waitForTimeout(300);
+                for (let q = 0; q < 12 && (await pendingN(x.pg)) > 0; q++) { const b = x.pg.locator(SEL.pending + ' [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await x.pg.waitForTimeout(200); }
+                ok((await pendingN(x.pg)) === 0, '㉔ 준비: 남은 카드 0', JSON.stringify(await cardCount(x.pg)));
+                await x.pg.click(SEL.make); await idle(x.pg); await x.pg.waitForSelector(SEL.save, { timeout: 15000 }); await x.pg.waitForTimeout(300);
+                const n24 = await x.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a24 = []; let st24 = null;
+                for (const nm of n24.filter(v => /xlsx$/i.test(v))) { const [dl] = await Promise.all([x.pg.waitForEvent('download', { timeout: 20000 }), x.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's24-' + Date.now() + '.xlsx'); await dl.saveAs(f); const wb = XLSX.readFile(f);
+                    if (nm.includes('스마트스토어')) st24 = XLSX.utils.sheet_to_json(wb.Sheets['발주발송관리'], { header: 1, defval: '' }); else if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => a24.push(r)); }
+                const R24 = nm => a24.find(r => r[3] === nm) || [];
+                ok(/ 2S사이즈로!$/.test(R24('이사가')[4]) && R24('이사나')[4] === gold && / M사이즈로!$/.test(R24('이사다')[4]) && R24('이사라')[4] === gold && / 2S사이즈로!$/.test(R24('이사바')[4]) && !/사이즈로!$/.test(R24('이사사')[4]), '㉔④ 택배사 파일: 그 구매자의 귤 주문에만 「2S사이즈로!」 · 같은 구매자의 황금향은 그대로 · 날짜+사이즈 줄 = 「M사이즈로!」 · 받는 분 번호 줄도 적용 뒤 붙음 · 다른 주문 무변경', JSON.stringify(['이사가', '이사나', '이사다', '이사바'].map(n => String(R24(n)[4]).slice(-14))));
+                ok(/ 2S사이즈로!$/.test(R24('이사마')[4]) && !/ S사이즈로!/.test(R24('이사마')[4]), '㉔④ 손님 메모로 「S사이즈로!」가 붙어 있던 주문 = 직원 줄(2S)이 이김', String(R24('이사마')[4]).slice(-16));
+                ok(R24('오가')[9] === '경비실에 맡겨주세요' && R24('오나')[9] === OM && !a24.some(r => r[3] === '오다'), '㉔⑤ 택배사 파일 J: 고친 주문 = 고친 글 · 안 고친 주문 = 종전대로(손님 메모) · [제외]한 주문은 빠짐(적은 글 무시)', JSON.stringify([R24('오가')[9], R24('오나')[9]]));
+                const h24 = st24 ? st24[1] : [], cM24 = h24.indexOf('배송메세지'), cR24 = h24.indexOf('수취인명'), sr24 = (st24 || []).find(r => r[cR24] === '오가');
+                ok(cM24 >= 0 && sr24 && sr24[cM24] === OM, '㉔⑤ 스토어 양식의 배송메세지는 손님 원문 그대로', sr24 && sr24[cM24]);
+                const lg24 = (x.hits.logs || []).slice(-1)[0];
+                ok(lg24 && lg24.lines.some(l => /메모 줄로 사이즈 지정 4건/.test(l)), '㉔④ 정리 기록에 「메모 줄로 사이즈 지정 N건」', lg24 && lg24.lines.filter(l => /사이즈/.test(l)).join());
+                ok(x.errs.length === 0, '㉔ 오류 0', x.errs.join(' | ')); await x.ctx.close();
             }
 
             // 창구가 안 집음(40초)

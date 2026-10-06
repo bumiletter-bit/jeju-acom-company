@@ -460,6 +460,22 @@
 
     // ── §5 메모 줄 다듬기 ────────────────────────────────────────────────────────────────────────────
     // 줄 수·줄 번호는 그대로(뺄 줄은 빈 줄). v2 가 이미 읽는 보통 줄은 한 글자도 바꾸지 않는다.
+    // #548(대표 10/6 「010-…-… 2s」): 메모 줄의 「번호 + 사이즈」 — 사이즈 낱말(2S·S·M·L·2L · 「2s로」「2S 사이즈」「s사이즈로」)만 떼어 따로 돌려주고, 나머지 글은 종전 규칙으로 읽게 남긴다.
+    //   줄 수는 그대로(사이즈뿐인 줄 = 빈 줄로). 번호가 없는 줄은 손대지 않는다. 어느 주문에 붙일지는 화면이 정한다(귤 품목만).
+    const SIZE_TOK = /(^|[ \t])(2s|2l|s|m|l)[ ]*(?:사이즈|size)?[ ]*(?:으로|로)?!?(?=$|[ \t])/i;
+    function sizeLines(text) {
+        const lines = String(text == null ? '' : text).split('\n'), sizes = [];
+        const out = lines.map((raw, srcLine) => {
+            const line = raw.replace(/\r/g, ''); const m = line.match(SIZE_TOK); if (!m) return raw;
+            const rest = line.slice(0, m.index) + (m[1] || '') + line.slice(m.index + m[0].length);
+            const toks = rest.split(/[ \t]+/).filter(Boolean);
+            const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
+            if (!key) return raw;
+            sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: m[2].toUpperCase() });
+            return toks.length === 1 ? '' : rest.replace(/[ ]{2,}/g, ' ').replace(/[ ]+$/, '');
+        });
+        return { text: out.join('\n'), sizes };
+    }
     function prepLines(text, opt) {
         const o = opt || {}; const today = o.realToday || new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10); const shipDays = Array.isArray(o.shipDays) ? o.shipDays : [];
         const noShip = o.noShip instanceof Set ? o.noShip : new Set(o.noShip || []);
@@ -701,7 +717,7 @@
         return ws;
     }
 
-    const api = { prepLines, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
+    const api = { prepLines, sizeLines, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

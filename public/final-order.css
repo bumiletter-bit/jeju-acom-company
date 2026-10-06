@@ -221,3 +221,30 @@ body.fo-open .mobile-menu-btn, body.fo-open .mobile-noti-btn { visibility: hidde
 .fo-reset-confirm { margin-top: 10px; padding: 12px 14px; border: 1px solid #FDA29B; border-radius: 12px; background: #FEF3F2; display: grid; gap: 10px; }
 .fo-reset-confirm[hidden] { display: none !important; }
 .fo-reset-confirm p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--f-ink); }
+
+/* ── #548(대표 10/6) 메모 칸 줄별 확인 표시 — 송장변환 v2(#457)와 같은 뜻: 왼쪽 표시 칸 · 줄 높이 24px 맞춤 · 입력이 바뀌면 흐리게 ── */
+.fo .fo-ed { display: flex; align-items: stretch; border: 1px solid var(--f-card-line); border-radius: 10px; background: #fff; overflow: hidden; }
+.fo .fo-ed:focus-within { border-color: var(--f-accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, .12); }
+.fo .fo-gut { flex: 0 0 132px; background: var(--f-soft); border-right: 1px solid var(--f-line); overflow: hidden; padding: 10px 0; user-select: none; }
+.fo .fo-gut .m { height: 24px; line-height: 24px; padding: 0 8px; font-size: 11.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.fo .fo-gut .m[data-i] { cursor: pointer; }
+.fo .fo-gut .m span { display: inline-block; line-height: 18px; padding: 0 7px; border-radius: 6px; vertical-align: middle; }
+.fo .fo-gut .m.ok span { background: #ECFDF3; color: #067647; }
+.fo .fo-gut .m.warn span { background: #FEF3C7; color: #92400E; }
+.fo .fo-gut .m.none span { background: #FEE2E2; color: #B42318; }
+.fo .fo-gut .m.cur { background: var(--f-accent-soft); }
+.fo .fo-ed.stale .fo-gut .m span { opacity: .35; }
+.fo .fo-ed textarea, .fo .fo-ed textarea:focus, .fo .fo-ed textarea:focus-visible { flex: 1 1 auto; width: auto; min-width: 0; min-height: 0; margin: 0; padding: 10px 12px; border: 0 !important; border-radius: 0; outline: 0 !important; box-shadow: none !important; resize: none; font-size: 13.5px; line-height: 24px; white-space: pre; overflow: auto; }
+.fo .fo-linebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+.fo .fo-linebar:empty { display: none; }
+.fo .fo-linebar button { min-height: 32px; padding: 0 10px; border-radius: 999px; border: 1px solid transparent; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.fo .fo-linebar button.ok { background: #ECFDF3; color: #067647; }
+.fo .fo-linebar button.warn { background: #FEF3C7; color: #92400E; }
+.fo .fo-linebar button.none { background: #FEE2E2; color: #B42318; }
+.fo .fo-linebar button:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; }
+.fo .fo-linebar .stale-note { display: none; font-size: 12.5px; color: var(--f-sub); }
+.fo .fo-ed.stale + .fo-linebar .stale-note { display: inline; }
+@media (max-width: 640px) { .fo .fo-gut { flex-basis: 100px; } .fo .fo-gut .m { font-size: 10.5px; padding: 0 5px; } .fo .fo-gut .m span { padding: 0 5px; } .fo .fo-linebar button { min-height: 44px; } }
+/* #548 보충: 파일을 고른 뒤 「오늘은 없음」은 흐리게(누를 수 없음) */
+.fo .fo-check.off { opacity: .45; cursor: default; }
+.fo .fo-check.off input { cursor: default; }
