@@ -1478,8 +1478,8 @@ async function resolveCards(pg, type) {
                 const inf = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-info li')).map(li => li.textContent));
                 let g24 = await gt(x.pg), rj = await readJudge(x.pg), i24 = await inf(x.pg);
                 ok(rj.v2Text.split('\n').length === 5 && rj.v2Text.split('\n')[0] === '' && /메모무시/.test(rj.v2Text.split('\n')[1]) && !/ M(\t|$)/.test(rj.v2Text.split('\n')[1]) && rj.v2Text.split('\n').slice(2).every(l => l === ''), '㉔④ 숨은 계산 화면에는 사이즈 낱말을 빼고 넘김(사이즈뿐인 줄 = 빈 줄 · 줄 수 그대로)', JSON.stringify(rj.v2Text.split('\n')));
-                ok(/사이즈 지정 1건/.test(g24[0]) && /확인완료 1건 · 사이즈/.test(g24[1]) && /귤 주문 없음/.test(g24[2]) && /사이즈 지정 1건/.test(g24[3]) && /받는 분 번호/.test(g24[4]), '㉔④ 줄별 표시: 사이즈 지정 n건 · (날짜도 적은 줄) 확인완료 · 사이즈 · 귤 주문 없음 · 받는 분 번호', JSON.stringify(g24));
-                ok(i24.some(t => /사이즈 지정 대상 아님: .*황금향.* 1건/.test(t)) && i24.some(t => /사이즈를 붙일 귤 주문이 없어요: 010-8500-3333/.test(t)), '㉔④ 참고 목록: 「사이즈 지정 대상 아님: 황금향 … 1건」 · 「사이즈를 붙일 귤 주문이 없어요」', i24.filter(t => /사이즈/.test(t)).join(' | ').slice(0, 200));
+                ok(/사이즈 지정 1건/.test(g24[0]) && /확인완료 1건 · 사이즈/.test(g24[1]) && /귤 로얄과 주문 없음/.test(g24[2]) && /사이즈 지정 1건/.test(g24[3]) && /받는 분 번호/.test(g24[4]), '㉔④ 줄별 표시: 사이즈 지정 n건 · (날짜도 적은 줄) 확인완료 · 사이즈 · 귤 로얄과 주문 없음 · 받는 분 번호', JSON.stringify(g24));
+                ok(i24.some(t => /사이즈 지정 대상 아님: .*황금향.* 1건/.test(t)) && i24.some(t => /사이즈를 붙일 귤 로얄과 주문이 없어요: 010-8500-3333/.test(t)), '㉔④ 참고 목록: 「사이즈 지정 대상 아님: 황금향 … 1건」 · 「사이즈를 붙일 귤 로얄과 주문이 없어요」', i24.filter(t => /사이즈/.test(t)).join(' | ').slice(0, 200));
                 const rcv = x.pg.locator(`${SEL.pending}[data-fo-card="line-recv"]`, { hasText: '010-8500-9999' });
                 ok((await rcv.count()) === 1 && rj.judge['이사다'].kind === 'today', '㉔④ 번호가 받는 분 번호인 사이즈 줄 = 확인 카드 · 날짜도 적은 줄의 나머지(메모무시)는 종전 규칙대로', String(rj.judge['이사다'].kind));
                 await rcv.locator('[data-fo-act="apply"]').click(); await idle(x.pg); await x.pg.waitForTimeout(500); g24 = await gt(x.pg);

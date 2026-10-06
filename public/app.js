@@ -5883,8 +5883,10 @@ function matchProductRaw(rawText) {
 }
 
 function addSizeSuffix(optionInfo, msg) {
-    let detectedSize = detectSize(msg);
-    if (!detectedSize && /귤/.test(optionInfo) && /작은|작게|작다|작아|소과/.test(msg)) detectedSize = 'S';
+    // #554(대표 확정 10/6): 사이즈(2S·S·M) 지정은 「귤 로얄과」만 — 선물용 제외 · 소과·중대과·황금향·레몬·키위는 손님 메모에 사이즈 말이 있어도 꼬리를 붙이지 않는다(그대로 나감)
+    const sizeOk = /귤/.test(optionInfo) && /로얄과/.test(optionInfo) && !/선물용/.test(optionInfo);
+    let detectedSize = sizeOk ? detectSize(msg) : null;
+    if (sizeOk && !detectedSize && /작은|작게|작다|작아|소과/.test(msg)) detectedSize = 'S';
     if (detectedSize) optionInfo = optionInfo.trim() + ' ' + detectedSize + '사이즈로!';
     return optionInfo;
 }

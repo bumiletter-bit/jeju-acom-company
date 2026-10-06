@@ -365,12 +365,12 @@
         (st.sizeLines || []).forEach(z => {
             const hit = s.merged.filter(e => (z.digits.length >= 8 && !NO_TEL.has(z.digits) && buyerTel(e) === z.digits) || idsOf(e).includes(z.key));
             if (!hit.length) { const rv = recvMatches(z); res.set(z.srcLine, rv.length ? { k: 'warn', t: '받는 분 번호', rv } : { k: 'none', t: '주문 없음' }); return; }
-            const okE = hit.filter(e => /귤/.test(String(e.conv['옵션정보'] || ''))), tail = z.size + '사이즈로!';
+            const okE = hit.filter(e => sizeItem(e.conv['옵션정보'])), tail = z.size + '사이즈로!';
             okE.forEach(e => tails.set(keyOf(e), tail));
             const no = new Map(); hit.filter(e => !okE.includes(e)).forEach(e => { const o = core().stripTail(String(e.conv['옵션정보'] || ''), inCatalog); no.set(o, (no.get(o) || 0) + 1); });
-            no.forEach((n, o) => info.push(`사이즈 지정 대상 아님: ${o} ${n}건 (메모 줄 「${z.raw}」 — 귤 주문에만 붙여요)`));
+            no.forEach((n, o) => info.push(`사이즈 지정 대상 아님: ${o} ${n}건 (메모 줄 「${z.raw}」 — 귤 로얄과 주문에만 붙여요 · 선물용 제외)`));
             if (okE.length) info.push(`메모 줄로 사이즈 지정: ${z.raw} → 귤 주문 ${okE.length}건에 「${tail}」`);
-            res.set(z.srcLine, okE.length ? { k: 'ok', t: `사이즈 지정 ${okE.length}건`, n: okE.length } : { k: 'warn', t: '귤 주문 없음', tip: '사이즈를 붙일 귤 주문이 없어요' });
+            res.set(z.srcLine, okE.length ? { k: 'ok', t: `사이즈 지정 ${okE.length}건`, n: okE.length } : { k: 'warn', t: '귤 로얄과 주문 없음', tip: '사이즈를 붙일 귤 로얄과 주문이 없어요' });
         });
         st.sizeTail = tails; st.sizeRes = res; return info;
     }
@@ -557,7 +557,7 @@
                     choices: [['apply', r.rv.length > 1 ? `${r.rv.length}건 모두 적용` : '이 주문에 적용', 1], ['ok', '넘어감']] });
                 else { cards.push({ id: rid, type: 'line', tag: '메모 줄', title: z.raw, lines: [['이유', '받는 분 번호로 적힌 줄이에요.']], choices: [['apply', '적용', 1], ['ok', '넘어감']] }); info.push(`주문 없음: ${z.raw} (받는 분 번호 — 넘어감)`); }
             } else if (r.k === 'none') info.push(`주문 없음: ${z.raw}`);
-            else if (r.k === 'warn') info.push(`사이즈를 붙일 귤 주문이 없어요: ${z.raw}`);
+            else if (r.k === 'warn') info.push(`사이즈를 붙일 귤 로얄과 주문이 없어요: ${z.raw}`);
         });
         // ④ 메모 줄
         (s.allLines || []).forEach(l => {
@@ -1061,6 +1061,8 @@
     // 품목 뒤 「요청 꼬리」(「 17과로!」 — v2 의 「 S사이즈로!」와 같은 꼴). 품목 이름은 그대로 두고 옵션 칸 끝에만 붙인다 → 거래처 찾기는 꼬리를 떼고, 수량 표에는 따로 한 줄(주황).
     //   tailOf: 대화로 시킨 것(st.patch.tail — '' = 꼬리 떼기)이 먼저, 없으면 카드에서 사람이 [이대로 넣기]로 확인한 것. undefined = 손대지 않음.
     const inCatalog = n => Object.values(st.byPartner || {}).some(a => (a || []).includes(n));
+    // #554(대표 확정 10/6): 사이즈(2S·S·M) 지정 품목 = 귤 로얄과(선물용 제외) — app.js addSizeSuffix 와 같은 기준
+    const sizeItem = s => { s = String(s || ''); return /귤/.test(s) && /로얄과/.test(s) && !/선물용/.test(s); };
     const normTail = t => { const x = String(t == null ? '' : t).replace(/\s+/g, ' ').trim().slice(0, 80); return x && !x.endsWith('!') ? x + '!' : x; };
     const withTail = (name, t) => core().stripTail(name, inCatalog) + (t ? ' ' + t : '');
     function tailOf(e) {
@@ -1291,7 +1293,7 @@
                 case 'tail': { const raw = String(a.text == null ? '' : a.text); if (/[\r\n]/.test(raw) || raw.trim().length > 80) return bad('품목 뒤에 붙일 말', '한 줄 80자까지만 붙일 수 있어요');
                     const t = normTail(raw), cur = optOf(e);
                     // #553(대표 10/6 실사고): 사이즈(2S·S·M·L) 꼬리는 귤 품목에만 — 황금향·레몬·키위는 사이즈로 지정하지 않는다(황금향은 과수 지정). 같은 손님의 귤 + 황금향 두 주문에 한꺼번에 붙던 것을 화면에서 막는다
-                    if (t && /^(?:[2-4]?[SML]|2?XL)\s*(?:사이즈)?(?:로)?!?$/i.test(t.replace(/\s/g, '')) && !/귤/.test(String(e.conv['옵션정보'] || ''))) return bad(`사이즈 지정: ${cur}`, '이 품목은 사이즈(2S·S·M)로 지정하지 않아요 — 귤만 사이즈 지정이에요(황금향은 과수로)');
+                    if (t && /^(?:[2-4]?[SML]|2?XL)\s*(?:사이즈)?(?:로)?!?$/i.test(t.replace(/\s/g, '')) && !sizeItem(e.conv['옵션정보'])) return bad(`사이즈 지정: ${cur}`, '이 품목은 사이즈(2S·S·M)로 지정하지 않아요 — 귤만 사이즈 지정이에요(로얄과만 · 선물용·소과·중대과 제외 · 황금향은 과수로)');
                     return t ? good(`품목 뒤에 붙일 말: ${cur} → ${withTail(cur, t)}`, { tail: t }) : good(`품목 뒤 꼬리 떼기: ${cur} → ${withTail(cur, '')}`, { tail: '' }); }
                 default: return bad(String(a.op || ''), '모르는 지시예요');
             }

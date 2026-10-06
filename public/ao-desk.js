@@ -999,7 +999,8 @@
             const bar = sc.querySelector ? sc.querySelector('.desk-fullbar') : null;
             const head = bar && sc.classList && sc.classList.contains('is-full') ? bar.getBoundingClientRect().height : 0;
             const r = target.getBoundingClientRect();
-            const want = vtop + Math.max(head + 12, Math.min(vh * 0.32, vh - r.height - 16));
+            // #555(대표 폰 실물 10/6 「너무 위에 있다 — 키보드 바로 위로」): 답 상자를 보이는 화면의 맨 아래(자판 바로 위 · 12px 띄움)에 붙인다 → 위쪽에 앞 답이 더 많이 보인다. 상자가 화면보다 크면 머리 아래에 맞춘다
+            const want = vtop + Math.max(head + 12, vh - r.height - 12);
             const d = r.top - want;
             if (Math.abs(d) > 4) { if (sc === document.scrollingElement || sc === document.documentElement) window.scrollBy(0, d); else sc.scrollTop += d; }
         };
