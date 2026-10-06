@@ -337,10 +337,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         const tAll = await chat(A.pg);
         const hAll = await A.pg.evaluate(() => document.querySelectorAll('#desk-list .desk-h-item').length);
         ok('「이전 채팅 이력」 탭(#538) = 대화 한 줄씩(표 아님) · 채팅 틀 없음 · [표로 보기] 버튼 숨김', !tAll.table && hAll > 0 && tAll.threads.length === 0 && tAll.viewBtn && !tAll.viewBtn.vis);
-        await A.pg.click('.desk-tab[data-tab="approval"]');
-        await sleep(900);
-        const tAp = await chat(A.pg);
-        ok('「대표 확인함」 탭 = 대화 보기 아님 · 버튼 숨김', tAp.threads.length === 0 && tAp.viewBtn && !tAp.viewBtn.vis);
+        ok('#566 승인 결재함 탭 없음', (await A.pg.evaluate(() => document.querySelectorAll('.desk-tab[data-tab="approval"]').length)) === 0);
         await A.pg.click('.desk-tab[data-tab="mine"]');
         await A.pg.waitForSelector('#desk-list .desk-thread-box', { timeout: 8000 }).catch(() => { });
         const tMine = await chat(A.pg);

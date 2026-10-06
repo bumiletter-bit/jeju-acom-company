@@ -19,8 +19,8 @@ const U = { 대표: { id: 1, username: 'o', name: '전승범', position: '대표
             await pg.evaluate(() => switchPage('agent-office')); await sleep(4500);
             const d = await pg.evaluate(() => { const ul = document.querySelector('.desk-todo'); const panel = [...document.querySelectorAll('.desk-panel')].find(p => /지금 챙길 일/.test(p.textContent)); const lis = ul ? [...ul.querySelectorAll('li')] : []; return { panel: !!panel, empty: panel ? !!panel.querySelector('.desk-empty') : null, n: lis.length, rows: lis.map(li => ({ b: li.querySelector('b').textContent, t: li.querySelector('span').textContent.slice(0, 26), over: li.scrollWidth > li.clientWidth + 1 })), pOver: panel ? panel.scrollWidth > panel.clientWidth + 1 : null, docOver: document.documentElement.scrollWidth > innerWidth + 1 }; });
             console.log('—', who, vw, JSON.stringify(d.rows.map(r => r.b + ':' + r.t)));
-            if (who === '대표') { ok(d.n >= 4 && d.rows.some(r => /쿠팡 선물용/.test(r.t)) && d.rows.some(r => r.b === '10/11'), `대표 ${vw}px = 할 일 ${d.n}줄 · 「10/11」 표시 있음`); ok(!d.rows.some(r => r.over) && !d.pOver && !d.docOver, `대표 ${vw}px = 줄·칸·화면 가로 넘침 없음`); }
-            else ok(d.panel && !d.rows.some(r => /쿠팡 선물용|행사 종료|자사몰 채팅/.test(r.t)), `${who} = 대표 할 일 안 보임(${d.n}줄${d.empty ? ' · 「챙길 일이 없어요」' : ''})`);
+            if (who === '대표') { ok(d.n >= 1 && d.rows.every(r => r.b && r.t), `대표 ${vw}px = 할 일 ${d.n}줄(실DB 열린 항목 — 줄 수는 그때그때 다름)`); ok(!d.rows.some(r => r.over) && !d.pOver && !d.docOver, `대표 ${vw}px = 줄·칸·화면 가로 넘침 없음`); }
+            else ok(d.panel && !d.rows.some(r => /행사 종료|자사몰 채팅|총괄에게/.test(r.t)), `${who} = 대표 할 일 안 보임(${d.n}줄${d.empty ? ' · 「챙길 일이 없어요」' : ''})`);
             ok(errs.length === 0, `${who} ${vw}px 화면 오류 ${errs.length}${errs[0] ? ' — ' + errs[0].slice(0, 100) : ''}`);
             await ctx.close();
         }

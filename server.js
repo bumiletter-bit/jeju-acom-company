@@ -8285,8 +8285,14 @@ async function qnaScenarios() {
 
 // ── 지시 #108: 시기별 상품 지식 → 오늘 날짜 구간을 "가상 시나리오 재료"로 변환 (3채널 공용 주입)
 //    시기 지식 없는 품목·실패 시 = 빈 배열 → 기존과 완전 동일(변화 0). 경계 3일 전이면 전환기 뉘앙스 자동 부가.
-async function seasonScenariosToday(dateOverride) {
+// #565(대표 10/6 「자사몰 채팅창 봇은 자사몰로 안내해야」): channel 'mall'(자사몰 챗)일 때만 label 머리말로 행을 거른다.
+//    「[자사몰챗] …」 = 자사몰 챗에만 · 「[네이버] …」 = 자사몰 챗에서 뺌 · 머리말 없는 행 = 종전대로 전 채널. 머리말은 재료 이름에 싣지 않는다
+//    (네이버 채널 프롬프트 글자 불변). channel 을 안 넘기는 호출(톡톡·상품문의·고객문의)은 「[자사몰챗]」 행만 빠지고 나머지는 종전과 같다.
+const SEASON_LABEL_TAG_RE = /^\[(자사몰챗|네이버)\]\s*/;
+async function seasonScenariosToday(dateOverride, channel) {
     try {
+        const isMall = channel === 'mall';
+        const bareLabel = x => String(x.label || '').replace(SEASON_LABEL_TAG_RE, '');
         const now = dateOverride ? new Date(dateOverride + 'T12:00:00+09:00') : new Date(Date.now() + 9 * 3600 * 1000);
         const md = String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
         const inRange = (m, s, e) => (s <= e) ? (m >= s && m <= e) : (m >= s || m <= e);
@@ -8298,14 +8304,18 @@ async function seasonScenariosToday(dateOverride) {
         const out = [];
         for (const row of r.rows) {
             if (!inRange(md, row.start_md, row.end_md)) continue;
+            const tag = (String(row.label || '').match(SEASON_LABEL_TAG_RE) || [])[1] || '';
+            if (tag === '자사몰챗' && !isMall) continue;
+            if (tag === '네이버' && isMall) continue;
+            const visible = x => { const t = (String(x.label || '').match(SEASON_LABEL_TAG_RE) || [])[1] || ''; return !(t === '자사몰챗' && !isMall) && !(t === '네이버' && isMall); };
             let text = `(오늘 ${md.replace('-', '/')} 기준 — 이 상품 문의에는 이 '오늘 상태'를 다른 재료보다 우선 반영하세요)\n${row.knowledge}`;
             const gap = mdDiff(md, row.end_md);
-            if (gap >= 0 && gap <= 3 && row.label !== '공통') {
-                const next = r.rows.find(x => x.item_key === row.item_key && x.id !== row.id && x.label !== '공통'
+            if (gap >= 0 && gap <= 3 && bareLabel(row) !== '공통') {
+                const next = r.rows.find(x => x.item_key === row.item_key && x.id !== row.id && bareLabel(x) !== '공통' && visible(x)
                     && mdDiff(row.end_md, x.start_md) >= 0 && mdDiff(row.end_md, x.start_md) <= 3);
-                if (next) text += `\n(참고: 지금은 '${next.label}' 시기로 넘어가는 전환기예요 — "~로 넘어가는 시기"처럼 부드럽게 안내해주세요)`;
+                if (next) text += `\n(참고: 지금은 '${bareLabel(next)}' 시기로 넘어가는 전환기예요 — "~로 넘어가는 시기"처럼 부드럽게 안내해주세요)`;
             }
-            out.push({ scenario_no: 900 + row.id, name: `[오늘 시기] ${row.item_key} — ${row.label}`, keywords: [row.item_key], response: text, action: null, channel: '공통', updated_at: new Date(now.toISOString().slice(0, 10)) });
+            out.push({ scenario_no: 900 + row.id, name: `[오늘 시기] ${row.item_key} — ${bareLabel(row)}`, keywords: [row.item_key], response: text, action: null, channel: '공통', updated_at: new Date(now.toISOString().slice(0, 10)) });
         }
         return out;
     } catch (e) { console.error('[시기지식] 조회 실패(주입 생략):', e.message); return []; }
@@ -8451,6 +8461,60 @@ function paymentWordingRule() {
 - 「현금영수증」「세금계산서」는 정상 용어라 써도 됩니다.`;
     return [{ scenario_no: 892, name: '[운영 규칙] 결제 표현 — 쓰면 안 되는 단어', keywords: [], response: text, action: null, channel: '공통', updated_at: new Date(today) }];
 }
+// ── #565(대표 10/6 「자사몰 채팅창 봇은 자사몰로 안내해야」): 자사몰 챗(POST /api/public/shop-chat) 전용 재료·규칙
+//   종전: 자사몰 챗이 상품문의와 같은 재료·같은 프롬프트(「네이버 스마트스토어 상품문의」)로 답해, 자사몰 안에 있는 손님을 스마트스토어 주소로 보냈다
+//        (message_logs 3882·3884 — 9/30). #892 결제 표현 규칙(「스마트스토어를 통해서만」)도 자사몰에서는 틀린 말.
+//   방식: 네이버 3채널(톡톡·상품문의·고객문의)의 재료·프롬프트는 한 글자도 안 바꾸고, 자사몰 챗일 때만
+//        ①재료에서 네이버 스토어 주소·네이버 전용 결제 줄을 걸러 내고 ②#892 대신 아래 규칙(893)을 싣고 ③채널 안내 블록을 덧붙인다.
+const MALL_NAVER_STORE_URL_RE = /\s*(?:▶|→)?\s*https?:\/\/(?:[a-z0-9-]+\.)*(?:smartstore|brand|shopping|m\.shopping)\.naver\.com[^\s)」』"']*|\s*(?:▶|→)?\s*https?:\/\/naver\.me\/[^\s)」』"']*/gi;
+function mallStripNaver(text) {
+    // 네이버 스토어 주소를 지운다. 주소만 있던 줄·「…페이지:」처럼 주소를 가리키던 줄은 통째로 뺀다. 블로그(조리법 글) 주소·이메일은 그대로.
+    return String(text || '').split('\n').map(line => {
+        if (!/naver\.(?:com|me)/i.test(line) || !line.match(MALL_NAVER_STORE_URL_RE)) return line;
+        const rest = line.replace(MALL_NAVER_STORE_URL_RE, '').replace(/\s*\(\s*\)/g, '').replace(/\s+$/, '');   // 주소만 들어 있던 괄호 「( )」도 같이 지움
+        if (!rest.replace(/[\s▶→:：\-·*]/g, '') || /[:：]\s*$/.test(rest)) return null;
+        return rest;
+    }).filter(l => l !== null).join('\n');
+}
+function mallMaterial(scenarios) {
+    // 자사몰 챗 재료 = 같은 시나리오에서 ①네이버 스토어 주소 제거 ②「네이버페이」 줄·「네이버 스마트스토어 주문은 …」 줄 제거(네이버 주문·결제 전용 안내 — 자사몰에서도 같은지 확인 안 된 내용)
+    //   ③「네이버 스마트스토어」 → 「이 자사몰」(「통해서만」은 「주문서를 통해」 — 자사몰만 판다는 뜻이 되지 않게)
+    return scenarios.map(s => {
+        const response = mallStripNaver(s.response).split('\n').filter(l => !/네이버\s*페이|N\s*페이|네이버 스마트스토어 주문은/.test(l)).join('\n')
+            .replace(/네이버 스마트스토어를 통해서만/g, '이 자사몰 주문서를 통해').replace(/저희 네이버 스마트스토어/g, '저희 자사몰')
+            .replace(/네이버 스마트스토어를/g, '이 자사몰을').replace(/네이버 스마트스토어/g, '이 자사몰').replace(/스마트스토어/g, '자사몰');
+        return response === s.response ? s : { ...s, response };
+    });
+}
+function mallChannelRule() {
+    const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const text = `(자사몰 채팅 운영 규칙 — 이 채팅의 모든 답변에 항상 적용 · 다른 재료와 다르면 이 규칙이 우선)
+
+⚠️ 지금 손님은 제주아꼼이네 **자사몰(akkome.com) 채팅창**에서 문의하고 계세요.
+- 주문·결제는 **지금 보고 계신 이 자사몰에서** 바로 하실 수 있어요 — 원하시는 상품을 고르고 옵션을 선택한 뒤 [구매하기]로 주문하시면 됩니다(비회원 주문도 가능해요).
+- 재료에 「스토어」「상품페이지」「상세페이지」라고 적힌 곳은 이 채팅에서는 「이 자사몰」의 상품 화면을 뜻해요. 그렇게 바꿔서 안내하세요.
+- 네이버 스마트스토어·브랜드스토어 주소(naver.com)를 적거나, 네이버에서 주문하라고 권하지 마세요.
+- 손님이 먼저 "네이버(스마트스토어)·쿠팡에서도 파느냐"고 물으면 「네, 네이버 스마트스토어·쿠팡에서도 함께 판매하고 있어요」까지만 답하고 주소는 적지 마세요.
+- 재료에 나오는 「VIP 선물용 페이지」「선물용 페이지」는 이 자사몰의 선물세트(VIP 선물용) 상품이에요 ▶ https://akkome.com/#p/10801253976
+- 재료의 「알림받기」는 네이버 기능이에요. 이 자사몰에서는 상품 화면의 「🔔 시즌 오픈 알림(시즌 대기 신청)」으로 안내하세요.
+- 재료의 「톡톡」은 네이버 채팅이에요. 이 채팅에서는 「카카오톡 채널 제주아꼼이네 또는 📞 010-6687-4031 고객센터」로 안내하세요.
+- 네이버 전용 기능(네이버 선물하기·네이버 마이페이지·네이버 송장 표시·네이버 포인트 등)을 이 자사몰의 기능처럼 말하지 마세요. 주문 후 배송 확인은 「이 자사몰의 주문내역」으로 안내하세요.
+- 가격은 판매현황에 적힌 값 그대로예요.
+- 자사몰 회원 혜택·쿠폰·적립금·등급, 결제수단의 종류, 현금영수증·세금계산서 발급 방법, 부분환불 방식처럼 **재료에 자사몰 기준으로 적혀 있지 않은 내용은 지어내지 마세요.** "그 부분은 고객센터(📞 010-6687-4031)에서 바로 확인해드릴게요"로 안내하세요. 네이버 전용 쿠폰(알림받기 쿠폰·스토어 등급 쿠폰 등)은 이 자사몰에 해당하지 않으니 안내하지 마세요.
+- 손님이 계좌·입금·현금 결제를 물으면 계좌번호를 안내하거나 주문서 밖 개별 결제를 제안하지 말고, 「결제는 이 자사몰 주문서에서 하실 수 있어요」 + 필요하면 고객센터 안내까지만. 단체·기업 문의도 "상담하면서 안내드린다"까지만.`;
+    return [{ scenario_no: 893, name: '[운영 규칙] 자사몰 채팅 — 주문·안내 기준', keywords: [], response: text, action: null, channel: '공통', updated_at: new Date(today) }];
+}
+// 자사몰 챗 system 덧붙임 블록(캐시 블록 뒤 · 상품문의 프롬프트의 「네이버 상품문의 공개 게시판」 전제를 이 채팅에 맞게 바로잡음)
+const MALL_SYSTEM_NOTE = `## 지금 채널 — 자사몰(akkome.com) 채팅 (위 안내보다 우선)
+- 이 대화는 네이버 스마트스토어 상품문의 게시판이 아니라, 제주아꼼이네 **자사몰(akkome.com)의 1:1 채팅창**입니다. 답변은 문의한 손님에게만 바로 보입니다.
+- 재료의 「[운영 규칙] 자사몰 채팅 — 주문·안내 기준」을 모든 답변에 적용하세요: 주문은 이 자사몰에서 · 네이버 스토어 주소·네이버 주문 권유 금지 · 자료에 없는 자사몰 회원·쿠폰·적립·결제수단은 지어내지 말고 고객센터 안내.
+- 개인정보를 채팅에 남기게 하지 않는 원칙, 개별 주문 조회가 안 되는 점은 그대로입니다 — 개별 확인이 필요한 문의는 「카카오톡 채널 제주아꼼이네 또는 📞 010-6687-4031 고객센터」로 안내하세요.
+- 그 운영 규칙도 재료입니다. 규칙에 답이 적혀 있는 문의(어디서·어떻게 주문하는지 · 네이버·쿠팡에서도 파는지 · 쿠폰·회원 혜택·적립이 있는지 · 결제 방법 · 품절 상품 알림)는 SKIP 하지 말고 규칙에 적힌 대로 답하세요. 이때 첫 줄 "사용시나리오:" 에는 「[운영 규칙] 자사몰 채팅 — 주문·안내 기준」을 적으면 됩니다.
+- 판매현황에 있는 상품의 가격·구성 문의는 네이버 상품문의와 똑같이 재료와 판매현황으로 답하세요(채널이 자사몰이라는 이유로 SKIP 하지 마세요).`;
+function mallPostAnswer(answer) {
+    // 답 후처리(안전망): 재료를 걸렀어도 답에 네이버 스토어 주소가 남으면 지우고, 「톡톡」은 자사몰 손님이 쓸 수 있는 「카카오톡 채널」로 바꾼다
+    return mallStripNaver(answer).replace(/(?:네이버\s*|스토어\s*)?톡톡으로/g, '카카오톡 채널로').replace(/(?:네이버\s*|스토어\s*)?톡톡/g, '카카오톡 채널').replace(/\n{3,}/g, '\n\n').trim();   // 「톡톡으로」는 조사까지(채널으로 ✕ → 채널로)
+}
 // 톡톡봇의 "(예시)" 줄 치환용 — "지금" 주문 기준 한 문장 (봇 자체 계산기는 휴무일을 모른다 → 이 값으로 대체)
 async function shippingNowPhrase() {
     try {
@@ -8520,11 +8584,14 @@ function qnaBuildSystem(scenarios) {
 ## 회사 확정 답변자료 (시나리오)
 ${scenarios.map(s => `### ${s.name}\n${s.response}`).join('\n\n')}`;
 }
-async function qnaGenerate(question, productName, simDate) {   // simDate = 지시 #108 재현 테스트 전용(날짜 시뮬레이션 — 실운영 호출은 2인자)
+async function qnaGenerate(question, productName, simDate, channel) {   // simDate = 지시 #108 재현 테스트 전용(날짜 시뮬레이션 — 실운영 호출은 2인자) · channel = #565 'mall'(자사몰 챗)일 때만 넘김 — 안 넘기면 종전과 같다
     if (!process.env.ANTHROPIC_API_KEY) return null;             // 키 없으면 전부 SKIP (침묵)
     const baseScenarios = await qnaScenarios();
     if (!baseScenarios.length) return null;
-    const scenarios = [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
+    const isMall = channel === 'mall';
+    const scenarios = isMall
+        ? [...mallMaterial([...baseScenarios, ...(await seasonScenariosToday(simDate, 'mall')), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday())]), ...mallChannelRule()]   // #565 자사몰 챗: 네이버 주소·결제 줄을 거른 재료 + #892 대신 자사몰 규칙(893)
+        : [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
     let storeBlock = '## 판매현황 정보 없음\n- 판매 여부가 관건인 문의는 확신이 없으면 SKIP 하세요.';
     try {
         const { statusText } = await qnaStoreData();
@@ -8540,6 +8607,7 @@ async function qnaGenerate(question, productName, simDate) {   // simDate = 지�
         model: QNA_MODEL, max_tokens: 4000,
         system: [
             { type: 'text', text: qnaBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
+            ...(isMall ? [{ type: 'text', text: MALL_SYSTEM_NOTE }] : []),   // #565: 자사몰 챗일 때만 채널 안내 블록(네이버 쪽은 블록 2개 그대로)
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
@@ -8565,6 +8633,7 @@ async function qnaGenerate(question, productName, simDate) {   // simDate = 지�
     if (/SKIP/.test(answer)) { console.error('[문의생성] 본문에 SKIP 판정 혼입 → 답변 보류'); return null; }
     used = used.filter(n => scenarios.some(s => s.name === n));   // 재료 목록에 있는 이름만 기록
     if (!answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;   // 고객센터 안내 항상 유지 (안전망)
+    if (isMall) answer = mallPostAnswer(answer);   // #565: 자사몰 챗 — 네이버 스토어 주소 제거·「톡톡」 → 「카카오톡 채널」
     // 품목 필터용 텍스트: 질문 + 상품명(용량 숫자는 다른 품목까지 매칭시키므로 제거 — 봇과 동일)
     const filterText = (String(question || '') + ' ' + String(productName || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
     answer = await qnaRenderPlaceholders(answer, filterText);
@@ -9281,7 +9350,7 @@ app.post('/api/public/shop-chat', async (req, res) => {
             }
         }
 
-        const out = await qnaGenerate(question, productName || null);
+        const out = await qnaGenerate(question, productName || null, undefined, 'mall');   // #565: 자사몰 챗 전용 재료·규칙
         if (!out || !out.answer) {
             // 재료 부족·SKIP — 가짜 답변 금지(#189 원칙). 사람 연결 안내로 넘긴다.
             // 진단용 사유 구분(고객 문구는 동일 — 운영자가 원인을 알 수 있게 reason만 세분화)

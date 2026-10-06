@@ -235,13 +235,13 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
                 clock: document.getElementById('desk-clock').textContent, state: document.getElementById('desk-state-text').textContent,
                 img: document.getElementById('desk-char').naturalWidth, panels: document.querySelectorAll('#desk-board .desk-panel').length,
                 weather: /날씨/.test(document.getElementById('ao-desk-root').textContent), maru: /마루/.test(document.getElementById('ao-desk-root').textContent),
-                approvalTab: !document.getElementById('desk-tab-approval').hidden, overflow: document.documentElement.scrollWidth > window.innerWidth + 2,
+                approvalTab: !!document.getElementById('desk-tab-approval'), overflow: document.documentElement.scrollWidth > window.innerWidth + 2,
             };
         });
         ok('새 화면 표시 · 종전 조직도·입력바·법인/오션라운지 필터 숨김', v.root && !v.legacyOffice && !v.legacyBar && !v.biz);
         ok('#501 첫 칸 = 한 카드(시계 + 지시 입력칸 「지시 내용」 · [지시 보내기]) · 창구 상태 · 캐릭터 그림 로드', v.title === '지시 내용' && v.sendLabel === '지시 보내기' && v.oneCard && /\d\d:\d\d/.test(v.clock) && !!v.state && v.img > 0, `${v.clock} / ${v.state}`);
         ok('현황판 4칸(대표: 채널·발송·할 일·정산 회차) · 날씨 없음 · 「마루」 글자 없음', v.panels === 4 && !v.weather && !v.maru);
-        ok('대표 = 대표 확인함 탭 보임 · 가로 넘침 없음', v.approvalTab && !v.overflow);
+        ok('#566 대표 = 승인 결재함 탭 없음 · 가로 넘침 없음', !v.approvalTab && !v.overflow);
         // 지시 보내기(실클릭) — POST는 가로채 실DB 무변경
         const posts = [];
         await A.pg.route('**/api/agent-office/orders', route => { if (route.request().method() === 'POST') { posts.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ message: 'ok', engine: 'desk', order: { id: 0, status: '대기' } }) }); } return route.continue(); });
@@ -303,7 +303,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const vis = el => !!el && getComputedStyle(el).display !== 'none' && el.offsetParent !== null;
             return { names: Array.from(document.querySelectorAll('#desk-tabs .desk-tab')).filter(vis).map(t => t.dataset.tab), rep: vis(document.getElementById('ao-reports-view')), repExists: !!document.getElementById('ao-report-tbody'), text: /보고서함/.test(document.getElementById('ao-desk-root').textContent) };
         });
-        ok('보고서함 탭·표 없음 · 탭 = 내 지시·전체 지시·대표 확인함(관리자) · 마크업 id는 보존', tabs.names.join(',') === 'mine,all,approval' && !tabs.rep && tabs.repExists && !tabs.text, tabs.names.join(','));
+        ok('보고서함 탭·표 없음 · 탭 = 채팅·이전 채팅 이력(#566 승인 결재함 없음) · 마크업 id는 보존', tabs.names.join(',') === 'mine,all' && !tabs.rep && tabs.repExists && !tabs.text, tabs.names.join(','));
         // 오늘 할 일 알림 = 「지금 챙길 일」 칸 (일정표와 같은 조건)
         const rem = await call(tokS, 'GET', '/api/agent-office/today-reminders');
         const brd = await call(tokS, 'GET', '/api/agent-office/desk/board');
@@ -325,7 +325,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
 
         // 직원 화면 + 폰 폭
         const B = await open(tokS, { id: staff.id, name: staff.name, position: staff.position || '', role: 'staff' }, { width: 390, height: 844 });
-        const w = await B.pg.evaluate(() => ({ approvalTab: !document.getElementById('desk-tab-approval').hidden, panels: document.querySelectorAll('#desk-board .desk-panel').length, overflow: document.documentElement.scrollWidth > window.innerWidth + 2,
+        const w = await B.pg.evaluate(() => ({ approvalTab: !!document.getElementById('desk-tab-approval'), panels: document.querySelectorAll('#desk-board .desk-panel').length, overflow: document.documentElement.scrollWidth > window.innerWidth + 2,
             sendH: document.getElementById('desk-send').getBoundingClientRect().height, mineOnly: Array.from(document.querySelectorAll('#desk-list .desk-card')).length }));
         ok('직원(390px) = 대표 확인함 탭 없음 · 현황판 3칸(정산 회차 없음) · 가로 넘침 없음 · 버튼 44px 이상', !w.approvalTab && w.panels === 3 && !w.overflow && w.sendH >= 44, JSON.stringify(w));
         // 내 지시 × 실클릭(직원 · 390px)

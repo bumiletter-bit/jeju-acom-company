@@ -108,8 +108,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         // ══ ① 탭 이름·권한 ════════════════════════════════════════════════════════════════
         const A = await open(admin, { width: 1440, height: 1000 });
         let tb = await tabs(A.pg);
-        ok('① 탭 이름 = 채팅 · 이전 채팅 이력 · 승인 결재함(data-tab 은 mine/all/approval 그대로)', tb.map(t => t.tab + ':' + t.text).join() === 'mine:채팅,all:이전 채팅 이력,approval:승인 결재함', JSON.stringify(tb.map(t => t.text)));
-        ok('① 관리자 = 세 탭 모두 보임 · 처음 고른 탭 = 채팅', tb.every(t => t.vis) && tb[0].sel === 'true');
+        ok('① 탭 이름 = 채팅 · 이전 채팅 이력(#566 승인 결재함 탭 없음 · data-tab 은 mine/all 그대로)', tb.map(t => t.tab + ':' + t.text).join() === 'mine:채팅,all:이전 채팅 이력', JSON.stringify(tb.map(t => t.text)));
+        ok('① 관리자 = 두 탭 모두 보임 · 처음 고른 탭 = 채팅', tb.every(t => t.vis) && tb[0].sel === 'true');
         const txt0 = await A.pg.evaluate(() => document.getElementById('ao-desk-root').innerText);
         ok('① 화면에 옛 이름(내 지시 · 전체 지시 · 대표 확인함)이 남아 있지 않음', !/내 지시|전체 지시|대표 확인함/.test(txt0), (txt0.match(/내 지시|전체 지시|대표 확인함/g) || []).join());
 
@@ -228,15 +228,14 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         const w1 = B.st.writes.length; await B.pg.click('#desk-list .desk-h-item[data-th="800"] [data-act="resume"]'); await B.pg.waitForSelector('#desk-list .desk-thread-box[data-th="800"]', { timeout: 15000 }); await B.pg.waitForTimeout(500);
         ok('④ 이미 채팅 탭에 떠 있는 대화 = 버튼 「채팅 탭에서 이어가기」 · 되살리기 요청 없이 이동만', lbl === '채팅 탭에서 이어가기' && B.st.writes.slice(w1).filter(w => /hide-mine/.test(w.p)).length === 0);
         // ⑤ 승인 결재함
-        await B.pg.click('#desk-tabs .desk-tab[data-tab="approval"]'); await B.pg.waitForTimeout(1200);
-        ok('⑤ 승인 결재함 = 종전 동작(승인 대기만 조회 · 없으면 안내 글) · 이력 검색칸 숨김', /승인을 기다리는 요청이 없어요/.test(await B.pg.evaluate(() => document.getElementById('desk-list').innerText)) && (await B.pg.isVisible('#desk-histbar')) && !(await B.pg.isVisible('#desk-hist-mine-wrap')));   // #543 검색칸은 세 탭 모두
+        ok('⑤ #566 승인 결재함 탭 없음(대표 화면에도) · 화면에 그 이름 0', (await B.pg.evaluate(() => document.querySelectorAll('[data-tab="approval"], #desk-tab-approval').length + (/승인 결재함/.test(document.getElementById('ao-desk-root').innerText) ? 1 : 0))) === 0);   // #543 검색칸은 세 탭 모두
         ok('가로 넘침 없음(1440px) · 화면 오류 0 · 브라우저 확인창 0', !(await overflow(B.pg)) && A.errors.length === 0 && B.errors.length === 0 && B.st.dialogs === 0, [...A.errors, ...B.errors].join(' | '));
         await A.ctx.close(); await B.ctx.close();
 
         // ══ ⑥ 직원 · 폰 390px ════════════════════════════════════════════════════════════
         const P = await open(staff, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
         tb = await tabs(P.pg);
-        ok('⑥ 직원 = 채팅 · 이전 채팅 이력 보임 · 승인 결재함은 안 보임', tb.find(t => t.tab === 'mine').vis && tb.find(t => t.tab === 'all').vis && !tb.find(t => t.tab === 'approval').vis, JSON.stringify(tb.map(t => [t.text, t.vis])));
+        ok('⑥ 직원 = 채팅 · 이전 채팅 이력 보임 · 승인 결재함은 안 보임', tb.find(t => t.tab === 'mine').vis && tb.find(t => t.tab === 'all').vis && !tb.find(t => t.tab === 'approval'), JSON.stringify(tb.map(t => [t.text, t.vis])));
         const pm = await P.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="900"]'); const c = t.querySelector('.desk-cbox').getBoundingClientRect(), e = t.querySelector('[data-act="endchat"]').getBoundingClientRect(), hs = Array.from(t.querySelectorAll('.desk-cbtn, [data-act="endchat"]')).map(b => Math.round(b.getBoundingClientRect().height));
             const bs = Array.from(document.querySelectorAll('#desk-list .desk-thread-box')).filter(b => b.getClientRects().length); const gaps = []; for (let i = 1; i < bs.length; i++) gaps.push(Math.round(bs[i].getBoundingClientRect().top - bs[i - 1].getBoundingClientRect().bottom));
             return { below: e.top >= c.top && e.bottom <= c.bottom + 1 && e.right <= c.right, hs, gaps, over: document.documentElement.scrollWidth > window.innerWidth + 1, boxW: Math.round(c.width), inW: c.right <= window.innerWidth }; });
@@ -282,8 +281,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         const hlA = await C.pg.evaluate(() => ({ n: document.querySelectorAll('#desk-list .desk-h-item').length, hl: Array.from(document.querySelectorAll('#desk-list .desk-h-text mark.desk-hl')).map(m => m.textContent) }));
         ok('⑦ 이력 탭: 250ms 쯤 뒤 서버 ?history=1&q= 결과로 바꿔 끼움 · 한 줄 글에 형광', decodeURIComponent(sq7).includes('q=보고') && hlA.n === 1 && hlA.hl.join() === '보고', sq7);
         await C.pg.click('#desk-hist-x'); await C.pg.waitForTimeout(900);
-        await C.pg.click('#desk-tabs .desk-tab[data-tab="approval"]'); await C.pg.waitForTimeout(900);
-        ok('⑦ 승인 결재함에도 검색칸 · 「내 것만」은 이력 탭에만', await C.pg.isVisible('#desk-hist-q') && !(await C.pg.isVisible('#desk-hist-mine-wrap')));
+        await C.pg.click('#desk-tabs .desk-tab[data-tab="mine"]'); await C.pg.waitForTimeout(900);
+        ok('⑦ 채팅 탭에도 검색칸 · 「내 것만」은 이력 탭에만', await C.pg.isVisible('#desk-hist-q') && !(await C.pg.isVisible('#desk-hist-mine-wrap')));
         await goTab(C.pg, 'mine', '#desk-list .desk-thread-box, #desk-list .desk-empty');
         ok('⑦ 채팅 탭으로 돌아오면 그 탭의 검색어(「쿠폰」)가 그대로', (await C.pg.inputValue('#desk-hist-q')) === '쿠폰' && (await vis538(C.pg)).ths.join() === '880');
         await C.pg.click('#desk-hist-x'); await C.pg.waitForTimeout(200);

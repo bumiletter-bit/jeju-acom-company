@@ -1,7 +1,7 @@
 // #469 클코 창구 — 에이전트 오피스 화면 (대표 GO 2026-09-29)
 // 지시는 서버에 '대기'로 쌓이고, 대표 PC의 창구 터미널이 집어 처리한다. 이 파일은 화면만 담당한다.
 // app.js에서 빌려 쓰는 것: api · showToast · currentUser · aoShowSettlementConfirm · aoSettleModalData · aoSettleQueue · aoBindEventsOnce
-// #469-b(대표 9/29): 보고서함 탭 없음 — 내 지시·전체 지시(+관리자에게만 대표 확인함)
+// #469-b(대표 9/29): 보고서함 탭 없음 — 내 지시·전체 지시(+관리자에게만 대표 확인함) → #538 채팅·이전 채팅 이력·승인 결재함 → #566 채팅·이전 채팅 이력 2개
 (function () {
     'use strict';
     const $ = id => document.getElementById(id);
@@ -88,7 +88,7 @@
         return `<span class="desk-lane" data-lane="${esc(st.lane || '')}">${esc(st.text)}${done && sec ? ' · ' + sec : ''}</span>`;
     }
     const isAdmin = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin');
-    // #561(대표 10/6 A안): 관리자 중 대표만 — 모두의 이력 보기 · 승인 결재함 · 승인/반려. 창구 깨우기 · [다시 맡기기]는 관리자(isAdmin) 그대로
+    // #561(대표 10/6 A안): 관리자 중 대표만 — 모두의 이력 보기 · 승인/반려(#566 에서 승인 결재함 탭은 없앰). 창구 깨우기 · [다시 맡기기]는 관리자(isAdmin) 그대로
     const isOwner = () => isAdmin() && currentUser.position === '대표';
     const pageActive = () => { const p = $('page-agent-office'); return !!(p && p.classList.contains('active')); };
     const kst = (t, opt) => { try { return new Date(/Z|[+-]\d\d:?\d\d$/.test(String(t)) ? t : String(t).replace(' ', 'T') + 'Z').toLocaleString('ko-KR', Object.assign({ timeZone: 'Asia/Seoul' }, opt)); } catch (e) { return ''; } };
@@ -99,7 +99,7 @@
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
         view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
-        hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false }, endAsk: 0, pin: new Set(), q: { mine: '', all: '', approval: '' }, mineLimit: 60, pickImg: false,
+        hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false }, endAsk: 0, pin: new Set(), q: { mine: '', all: '' }, mineLimit: 60, pickImg: false,
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
@@ -181,7 +181,6 @@
                     <div class="desk-tabs" role="tablist" id="desk-tabs">
                         <button class="desk-tab" role="tab" data-tab="mine" aria-selected="true">채팅</button>
                         <button class="desk-tab" role="tab" data-tab="all" aria-selected="false" id="desk-tab-all">이전 채팅 이력</button>
-                        <button class="desk-tab" role="tab" data-tab="approval" aria-selected="false" id="desk-tab-approval" hidden>승인 결재함<span class="n" id="desk-approval-n" hidden>0</span></button>
                     </div>
                     <div class="desk-filter">
                         <button type="button" class="desk-btn sm desk-viewbtn" id="desk-view" hidden>표로 보기</button>
@@ -481,8 +480,10 @@
         } finally { S.sending = false; btn.disabled = false; }
     }
 
-    const TAB_NAME = { mine: '채팅', all: '이전 채팅 이력', approval: '승인 결재함' };
+    // #566(대표 10/6): 승인 결재함 탭 없음(모든 계정) — 9/30 뒤로 승인을 거치는 일이 없다. 혹시 승인 대기 건이 생기면 대표는 채팅 탭(본인 것)·이전 채팅 이력(모두)의 그 카드에서 승인/반려한다
+    const TAB_NAME = { mine: '채팅', all: '이전 채팅 이력' };
     function setTab(tab) {
+        if (!TAB_NAME[tab]) tab = 'mine';
         S.tab = tab;
         document.querySelectorAll('#desk-tabs .desk-tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
         const list = $('desk-list');
@@ -540,12 +541,8 @@
                 ? '대표 PC의 창구 관리 프로그램이 꺼져 있어요. PC를 켜면 남긴 지시부터 순서대로 처리됩니다.'
                 : asleep && !isAdmin() ? '창구가 자리 비움이에요. 관리자가 깨우면 남긴 지시부터 처리됩니다.'
                 : (lc && lc.note) ? lc.note : '';
-            const tabA = $('desk-tab-approval'), n = $('desk-approval-n');
-            tabA.hidden = !isOwner();
             $('desk-tab-all').hidden = false;   // #538 이전 채팅 이력은 직원에게도 보인다(서버가 본인 것만 내려준다)
             $('desk-hist-mine-wrap').hidden = !isOwner() || S.tab !== 'all';
-            if (!isOwner() && S.tab === 'approval') setTab('mine');
-            n.hidden = !d.approval; n.textContent = d.approval || 0;
         } catch (e) { /* 다음 주기에 다시 */ }
     }
 
@@ -572,7 +569,7 @@
         const tab = S.tab;
         try {
             const hq = S.hist.q;
-            const q = S.tab === 'mine' ? '?mine=1&limit=' + S.mineLimit : S.tab === 'approval' ? '?status=' + encodeURIComponent('승인대기') + '&limit=50' : '?history=1&limit=' + HIST_PAGE + (hq ? '&q=' + encodeURIComponent(hq) : '');
+            const q = S.tab === 'mine' ? '?mine=1&limit=' + S.mineLimit : '?history=1&limit=' + HIST_PAGE + (hq ? '&q=' + encodeURIComponent(hq) : '');
             const d = await api('/api/agent-office/desk/orders' + q);
             if (tab !== S.tab || (tab === 'all' && hq !== S.hist.q)) { S.again = true; return; }
             let orders = d.orders || [];
@@ -854,7 +851,7 @@
         box.classList.toggle('desk-hist', S.tab === 'all');
         if (!list.length) {
             setMore('desk-list-more', 0);
-            box.innerHTML = `<div class="desk-empty">${q ? '찾는 글이 든 채팅이 없어요. 다른 낱말로 찾아 보세요.' : S.tab === 'all' ? '이전 채팅이 아직 없어요.' : S.fs !== 'all' ? '고른 상태에 해당하는 채팅이 없어요.' : S.tab === 'approval' ? '승인을 기다리는 요청이 없어요.' : '열려 있는 채팅이 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.'}</div>`;
+            box.innerHTML = `<div class="desk-empty">${q ? '찾는 글이 든 채팅이 없어요. 다른 낱말로 찾아 보세요.' : S.tab === 'all' ? '이전 채팅이 아직 없어요.' : S.fs !== 'all' ? '고른 상태에 해당하는 채팅이 없어요.' : '열려 있는 채팅이 없어요. 위 입력칸에 적어 보내면 여기에 쌓여요.'}</div>`;
             return;
         }
         if (S.tab === 'all') { renderHistory(list); return; }
