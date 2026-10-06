@@ -48,6 +48,25 @@
         flushP(); flushL();
         return '<div class="desk-md">' + out.join('') + '</div>';
     }
+    // #552(대표 10/6): 창구가 여러 결과물을 한 답에 낼 때 「━━━ ① 문자(LMS) ━━━」 꼴 줄로 묶음을 나눈다 → 묶음이 2개 이상이면 묶음마다 [복사]
+    //   묶음 머리 = 「━ 두 개 이상 + 글자 + ━ 두 개 이상」으로만 된 줄(글자 없는 「━━━━」 구분 줄은 아님). 머리 앞의 글은 묶음이 아니다. 복사하는 글 = 원문 그대로(머리 줄 빼고 · 앞뒤 빈 줄 정리).
+    const SEC_HEAD = /^\s*━{2,}\s*([^━\s][^━]*?)\s*━{2,}\s*$/;
+    function answerSecs(text) {
+        const pre = [], secs = []; let cur = null;
+        String(text == null ? '' : text).replace(/\r/g, '').split('\n').forEach(ln => { const m = SEC_HEAD.exec(ln); if (m) { cur = { title: m[1].trim(), lines: [] }; secs.push(cur); } else (cur ? cur.lines : pre).push(ln); });
+        if (secs.length < 2) return null;
+        return { pre: pre.join('\n'), secs: secs.map(s => ({ title: s.title, body: s.lines.join('\n').replace(/^(?:[ \t]*\n)+/, '').replace(/\s+$/, '') })) };
+    }
+    function mdAnswer(text, o) {
+        const a = o ? answerSecs(text) : null; if (!a) return md(text);
+        return (a.pre.trim() ? md(a.pre) : '') + a.secs.map((s, i) => `<div class="desk-sec-head"><b>${esc(s.title)}</b><button type="button" class="desk-sec-copy" data-act="copysec" data-id="${o.id}" data-sec="${i}" aria-label="${esc(s.title)} 복사">복사</button></div>` + md(s.body)).join('');
+    }
+    // 복사: 브라우저가 클립보드 쓰기를 막으면(권한·보안 연결 아님) 숨은 입력칸으로 한 번 더 해 본다
+    async function copyText(text, okMsg) {
+        try { await navigator.clipboard.writeText(text); showToast(okMsg); return; } catch (e) { /* 아래 대체 방법 */ }
+        try { const ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0'; document.body.appendChild(ta); ta.select(); const done = document.execCommand('copy'); ta.remove(); if (done) { showToast(okMsg); return; } } catch (e) { /* 아래 안내 */ }
+        showToast('복사하지 못했어요. 직접 선택해 복사해 주세요');
+    }
     const plainHead = t => String(t || '').replace(/^[#\s*]+/, '').replace(/[*\s]+$/, '').replace(/\s+/g, ' ').trim();
     const sameHead = (title, text) => plainHead(title) === plainHead(String(text || '').split('\n').find(l => l.trim()) || '');
     // 화면에 보일 진행 단계(처리 길 표시는 답변 옆 작은 표시로만 쓴다)
@@ -672,7 +691,7 @@
                 ? mediaHtml + `<div class="desk-acts desk-files">${fl.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
                     : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
-            return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><div class="desk-a-label">클코 답변</div>${laneChip(o)}${r.title && !sameHead(r.title, text) ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${md(text)}</div>${files}
+            return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><div class="desk-a-label">클코 답변</div>${laneChip(o)}${r.title && !sameHead(r.title, text) ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${mdAnswer(text, o)}</div>${files}
                 <div class="desk-acts desk-a-acts">${(long || mid) && !full ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
                 <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button>${followBtn(o)}</div>`;
         }
@@ -1084,7 +1103,12 @@
         }
         if (act === 'copy') {
             const text = (o.result && (o.result.answer || o.result.text)) || '';
-            try { await navigator.clipboard.writeText(text); showToast('답변을 복사했어요'); } catch (err) { showToast('복사하지 못했어요. 직접 선택해 복사해 주세요'); }
+            await copyText(text, '답변을 복사했어요');
+            return;
+        }
+        if (act === 'copysec') {   // #552 그 묶음의 본문만
+            const a = answerSecs((o.result && (o.result.answer || o.result.text)) || ''), sec = a && a.secs[Number(b.dataset.sec)];
+            if (sec) await copyText(sec.body, `${sec.title}를 복사했어요`.replace(/([가-힣])를 복사/, (m, c) => ((c.charCodeAt(0) - 0xAC00) % 28 ? c + '을 복사' : c + '를 복사')));
             return;
         }
         if (act === 'confirm') { openConfirm(o.result); return; }

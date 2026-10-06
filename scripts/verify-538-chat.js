@@ -391,6 +391,44 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         await shot(Q.pg, '543-3-chat-filechip-390');
         ok('⑨ 화면 오류 0 · 브라우저 확인창 0(폰)', Q.errors.length === 0 && Q.st.dialogs === 0, Q.errors.join(' | '));
         await Q.ctx.close();
+
+        // ══ ⑩ #552 글 칸 글씨 17px · 답변 묶음별 [복사] ══════════════════════════════════════════
+        const SEC_ANS = ['요청하신 3가지를 만들었어요.', '━━━━━━━━━━', '━━━ ① 문자(LMS) ━━━', '', '[제주아꼼이네] 문자 첫 줄', '━━━━━━━━', '문자 둘째 줄', '', '━━━ ② 톡톡(이미지형 카드) ━━━', '톡톡 **굵은** 글', '', '━━━ ③ 톡톡 이미지 ━━━', '이미지 설명 글', '━━━ 확인한 것 · 발송 전 볼 곳 ━━━', '- 대상 50명'].join('\n');
+        const addSec = st => { const mk2 = (id, content, answer) => ({ id, content, status: '완료', created_at: new Date().toISOString(), processed_at: new Date().toISOString(), created_by: '검증538', created_by_id: admin.id, mine_hidden: false, has_image: false, reply_to: null, followed_by: null, steps: [], result: { type: 'desk_answer', answer } }); st.orders.push(mk2(3001, '문자 톡톡 이미지 만들어줘', SEC_ANS), mk2(3002, '묶음 없는 답', '그냥 한 덩어리 답입니다.\n━━━━━━━━\n구분 줄 아래 글')); };
+        const stubClip = pg => pg.evaluate(() => { window.__clip = []; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: t => { window.__clip.push(t); return Promise.resolve(); } } }); });
+        const secInfo = (pg, oid) => pg.evaluate(oid => { const t = document.querySelector(`#desk-list [data-oid="${oid}"]`); if (!t) return null; const hs = Array.from(t.querySelectorAll('.desk-sec-head'));
+            return { heads: hs.map(h => h.querySelector('b').textContent), btns: hs.map(h => { const b = h.querySelector('[data-act="copysec"]'), r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), h: Math.round(r.height), right: r.left > h.querySelector('b').getBoundingClientRect().left }; }), md: t.querySelectorAll('.desk-a.answer .desk-md').length, hr: t.querySelectorAll('.desk-a.answer hr').length, all: t.querySelectorAll('[data-act="copy"]').length, strong: t.querySelectorAll('.desk-a.answer strong').length, text: (t.querySelector('.desk-a.answer') || {}).innerText || '' }; }, oid);
+        const E = await open(admin, { width: 1440, height: 1000 });
+        addSec(E.st); await goTab(E.pg, 'all', '#desk-list .desk-h-item'); await goTab(E.pg, 'mine', '#desk-list .desk-thread-box[data-th="3001"]'); await stubClip(E.pg);
+        const fs17 = await E.pg.evaluate(() => { const a = getComputedStyle(document.getElementById('desk-input')), r = document.querySelector('#desk-list .desk-cbox .desk-reply-in'), b = getComputedStyle(r); return { top: a.fontSize, reply: b.fontSize, topH: Math.round(document.getElementById('desk-input').getBoundingClientRect().height), replyH: Math.round(r.getBoundingClientRect().height), ph: getComputedStyle(r, '::placeholder').fontSize, btn: Math.round(document.querySelector('#desk-list .desk-cbox .desk-cbtn').getBoundingClientRect().height) }; });
+        ok('⑩ⓐ 글 쓰는 칸 글씨 17px(맨 위 입력칸 · 답 상자 · 자리표시 글도) · 칸 최소 56px · 버튼 44px 그대로', fs17.top === '17px' && fs17.reply === '17px' && fs17.ph === '17px' && fs17.topH >= 56 && fs17.replyH >= 56 && fs17.replyH <= 60 && fs17.btn === 44, JSON.stringify(fs17));
+        let s1 = await secInfo(E.pg, 3001);
+        ok('⑩ⓑ 묶음 머리(「━━━ 글 ━━━」)가 있는 답 = 묶음 4개마다 머리 오른쪽에 [복사](aria-label 「… 복사」) · 맨 아래 [답변 복사]는 그대로', !!s1 && s1.heads.join('|') === '① 문자(LMS)|② 톡톡(이미지형 카드)|③ 톡톡 이미지|확인한 것 · 발송 전 볼 곳' && s1.btns.length === 4 && s1.btns[0].label === '① 문자(LMS) 복사' && s1.btns.every(b => b.right) && s1.all === 1 && s1.strong === 1, JSON.stringify(s1 && { heads: s1.heads, btns: s1.btns.map(b => b.label) }));
+        ok('⑩ⓓ 본문 안의 글자 없는 「━━━━」 줄은 묶음 머리로 안 봄(구분선 2개로 그려짐 · 묶음 수 그대로)', !!s1 && s1.hr === 2 && s1.heads.length === 4 && /요청하신 3가지를 만들었어요/.test(s1.text), String(s1 && s1.hr));
+        await E.pg.click('#desk-list [data-oid="3001"] [data-act="copysec"][data-sec="0"]'); await E.pg.waitForTimeout(300);
+        await E.pg.click('#desk-list [data-oid="3001"] [data-act="copysec"][data-sec="1"]'); await E.pg.waitForTimeout(300);
+        await E.pg.click('#desk-list [data-oid="3001"] [data-act="copysec"][data-sec="3"]'); await E.pg.waitForTimeout(300);
+        const clip = await E.pg.evaluate(() => window.__clip), tz10 = await toast(E.pg);
+        ok('⑩ⓑ [복사] → 그 묶음의 본문만(머리 줄 없음 · 다른 묶음 글 없음 · 원문 글자 그대로 — 굵게 표시 기호·안쪽 구분 줄 포함 · 앞뒤 빈 줄 정리)', clip.length === 3 && clip[0] === '[제주아꼼이네] 문자 첫 줄\n━━━━━━━━\n문자 둘째 줄' && clip[1] === '톡톡 **굵은** 글' && clip[2] === '- 대상 50명', JSON.stringify(clip));
+        ok('⑩ⓑ 토스트 「① 문자(LMS)를 복사했어요」', /① 문자\(LMS\)를 복사했어요/.test(tz10) && /발송 전 볼 곳을 복사했어요/.test(tz10), tz10.slice(-90));
+        await E.pg.click('#desk-list [data-oid="3001"] [data-act="copy"]'); await E.pg.waitForTimeout(300);
+        ok('⑩ⓑ 맨 아래 [답변 복사] = 답 전체(종전과 같음)', (await E.pg.evaluate(() => window.__clip[3])) === SEC_ANS);
+        const s2 = await secInfo(E.pg, 3002);
+        ok('⑩ⓒ 묶음 머리가 없는 답 = 묶음 [복사] 0 · 종전과 같은 그리기(한 덩어리 · 구분선 1개 · [답변 복사] 1개)', !!s2 && s2.heads.length === 0 && s2.md === 1 && s2.hr === 1 && s2.all === 1 && /그냥 한 덩어리 답입니다/.test(s2.text), JSON.stringify(s2 && { md: s2.md, hr: s2.hr }));
+        // 이력 탭 펼친 대화에도
+        await E.pg.evaluate(() => window.scrollTo(0, 0)); await goTab(E.pg, 'all', '#desk-list .desk-h-item'); await E.pg.click('#desk-list .desk-h-item[data-th="3001"] .desk-h-row'); await E.pg.waitForTimeout(300); await stubClip(E.pg);
+        const sH = await secInfo(E.pg, 3001);
+        await E.pg.click('#desk-list .desk-h-item[data-th="3001"] [data-act="copysec"][data-sec="2"]'); await E.pg.waitForTimeout(300);
+        const stillOpen = await E.pg.evaluate(() => document.querySelector('#desk-list .desk-h-item[data-th="3001"]').classList.contains('open'));
+        ok('⑩ 이전 채팅 이력의 펼친 대화에도 같은 묶음 [복사] · 눌러도 대화가 접히지 않음', !!sH && sH.btns.length === 4 && (await E.pg.evaluate(() => window.__clip[0])) === '이미지 설명 글' && stillOpen, JSON.stringify(sH && sH.heads));
+        ok('⑩ 화면 오류 0(1440px)', E.errors.length === 0, E.errors.join(' | ')); await E.ctx.close();
+        const F = await open(staff, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
+        F.st.orders.push({ id: 3001, content: '문자 톡톡 이미지 만들어줘', status: '완료', created_at: new Date().toISOString(), processed_at: new Date().toISOString(), created_by: '검증538', created_by_id: staff.id, mine_hidden: false, has_image: false, reply_to: null, followed_by: null, steps: [], result: { type: 'desk_answer', answer: SEC_ANS } });
+        await F.pg.tap('#desk-tabs .desk-tab[data-tab="all"]'); await F.pg.waitForSelector('#desk-list .desk-h-item', { timeout: 15000 }); await F.pg.tap('#desk-tabs .desk-tab[data-tab="mine"]'); await F.pg.waitForSelector('#desk-list .desk-thread-box[data-th="3001"]', { timeout: 15000 }); await F.pg.waitForTimeout(400);
+        const sF = await secInfo(F.pg, 3001), fF = await F.pg.evaluate(() => ({ fs: getComputedStyle(document.getElementById('desk-input')).fontSize, over: document.documentElement.scrollWidth > window.innerWidth + 1 }));
+        await shot(F.pg, '552-1-sections-390');
+        ok('⑩ⓔ 390px: 묶음 [복사] 누르는 높이 44px 이상 · 글 칸 글씨 17px · 가로 넘침 0 · 오류 0', !!sF && sF.btns.length === 4 && sF.btns.every(b => b.h >= 44) && fF.fs === '17px' && !fF.over && F.errors.length === 0, JSON.stringify({ h: sF && sF.btns.map(b => b.h), fF }));
+        await F.ctx.close();
     } catch (e) { ok('실행 오류 없음', false, e && e.stack ? e.stack.split('\n').slice(0, 3).join(' / ') : String(e)); }
     finally {
         if (browser) await browser.close().catch(() => { });
