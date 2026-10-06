@@ -207,7 +207,7 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         A.st.delay = 0;
         const s2 = await top(A.pg);
         ok('이미지 2장 + 글 → POST 2회(장마다 1건 · 같은 글 · image_data) · 보내는 중 Enter 재입력은 무시', !!ps && posts(A, /\/orders$/).length === 2 && ps.every(x => x.body.content === '첫 줄\n둘째 줄' && /^data:image\//.test(x.body.image_data || '')), ps ? JSON.stringify(ps.map(x => [x.body.content, String(x.body.image_data).slice(0, 16), x.body.image_mime])) : 'POST 부족');
-        ok('보낸 뒤 = 입력칸 비워짐 · 원래 높이로 · 썸네일 사라짐 · 버튼 다시 켜짐(aria-busy 없음)', s2.value === '' && Math.abs(s2.inp.h - h0) <= 1 && s2.thumbs.length === 0 && s2.thumbsHidden && !s2.sendDisabled && s2.sendBusy !== 'true', JSON.stringify({ h: s2.inp.h, h0, busy: s2.sendBusy }));
+        ok('보낸 뒤 = 입력칸 비워짐 · 원래 높이로 · 썸네일 사라짐 · 버튼 다시 켜짐(aria-busy 없음)', s2.value === '' && Math.abs(s2.inp.h - h0) <= 1 && s2.thumbs.length === 0 && s2.thumbsHidden && s2.sendDisabled && s2.sendBusy !== 'true',   /* #550-b 비면 꺼짐 */ JSON.stringify({ h: s2.inp.h, h0, busy: s2.sendBusy }));
         await A.pg.focus('#desk-input'); await A.pg.keyboard.press('Enter'); await sleep(400);
         ok('빈 입력칸 Enter = 보내지 않음', posts(A, /\/orders$/).length === 2);
         await A.pg.fill('#desk-input', '클릭으로 보내기');

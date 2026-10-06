@@ -584,3 +584,6 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
     .desk-top1 .desk-topbox .desk-quick2 { gap: 4px; }
     .desk-top1 .desk-topbox .desk-chip { font-size: clamp(11px, 3.2vw, 13px); padding: 0 clamp(6px, 2.2vw, 11px); letter-spacing: -.03em; }
 }
+/* #550-b(대표 10/6): 글 쓰는 칸 : 아래 버튼 줄(「+」·알약·↑ 44px) = 100 : 80 — 답 상자와 맨 위 상자 같은 비율(글 칸 최소 56px) */
+.desk-cbox .desk-reply-in, .desk-top1 .desk-topbox .desk-input { min-height: 56px; }
+.desk-cbtn.primary[disabled] { color: #667085; }   /* 꺼진 보내기: 옅은 회색 바탕에 흰 화살표는 안 보여 화살표를 회색으로(3:1 이상) */

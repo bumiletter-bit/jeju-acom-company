@@ -142,7 +142,7 @@
                                 <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
                             </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
-                            <button type="submit" class="desk-cbtn primary" id="desk-send" aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter">${ICON_UP}</button>
+                            <button type="submit" class="desk-cbtn primary" id="desk-send" disabled aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter">${ICON_UP}</button>
                         </div>
                     </div>
                 </form>
@@ -361,6 +361,8 @@
         c.textContent = n + ' / 2000'; c.hidden = n < 1500;
         t.style.height = 'auto';
         if (t.value) t.style.height = Math.min(t.scrollHeight + 2, 240) + 'px'; else t.style.height = '';
+        // #550-b: 답 상자처럼 — 글도 첨부도 없으면 보내기가 꺼져 있다(보내는 중에는 건드리지 않는다)
+        const sb = $('desk-send'); if (sb && sb.getAttribute('aria-busy') !== 'true') sb.disabled = !t.value.trim() && !S.images.length;
     }
     // #544(대표 GO 10/5) 첨부 = 이미지 또는 파일 1개(엑셀·CSV·PDF·텍스트 · 10MB 이내). 서버 약속: image_data(data URL) + image_mime + 파일이면 file_name
     const FILE_EXT = ['xlsx', 'xls', 'csv', 'pdf', 'txt'], ACCEPT_ALL = 'image/*,.xlsx,.xls,.csv,.pdf,.txt', MAX_FILE = 10 * 1024 * 1024, MAX_IMG = 9 * 1024 * 1024;
@@ -396,6 +398,7 @@
     function renderThumbs() {
         const box = $('desk-thumbs');
         box.hidden = !S.images.length;
+        syncInput();
         box.innerHTML = S.images.map((im, i) => im.file ? fileChip(im.name, im.size, `data-i="${i}"`) : `<div class="desk-thumb"><img src="${im.data}" alt="첨부 ${i + 1}"><button type="button" data-i="${i}" aria-label="첨부 ${i + 1} 빼기">×</button></div>`).join('');
     }
 
@@ -429,7 +432,7 @@
         } catch (err) {
             showToast('보내지 못했어요: ' + (err && err.message ? err.message : '다시 시도해 주세요'));
         } finally {
-            S.sending = false; btn.disabled = false; btn.removeAttribute('aria-busy');
+            S.sending = false; btn.disabled = false; btn.removeAttribute('aria-busy'); syncInput();
         }
     }
 

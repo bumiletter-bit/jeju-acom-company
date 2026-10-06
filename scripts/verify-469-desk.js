@@ -249,9 +249,10 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         await A.pg.click('#desk-send');
         await A.pg.waitForTimeout(800);
         ok('입력 → [지시 보내기] 실클릭 = POST 1회 · 입력칸 비워짐', posts.length === 1 && posts[0].content === '화면 검증 지시' && (await A.pg.inputValue('#desk-input')) === '');
-        await A.pg.click('#desk-send');
+        const sendOff = await A.pg.evaluate(() => document.getElementById('desk-send').disabled);   // #550-b: 비어 있으면 보내기가 꺼져 있다(답 상자와 같게)
+        await A.pg.focus('#desk-input'); await A.pg.keyboard.press('Enter');
         await A.pg.waitForTimeout(300);
-        ok('빈 입력은 보내지 않음', posts.length === 1);
+        ok('빈 입력은 보내지 않음(보내기 버튼 꺼짐 · Enter 도 무시)', sendOff === true && posts.length === 1);
         await A.pg.unroute('**/api/agent-office/orders');
         // #538: 「전체 지시」 탭은 「이전 채팅 이력」(대화 한 줄씩)이 됐다 → 카드 보기 검사는 직원 본인 화면(채팅 탭 · 1000px 카드)에서 한다
         await A.pg.click('.desk-tab[data-tab="all"]'); await A.pg.waitForTimeout(1200);
