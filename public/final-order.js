@@ -1289,7 +1289,10 @@
                     return good(`보내는이: ${t} 드림${ph ? ' · ' + ph : ''}${ad ? ' · 주소 ' + ad : ''}`, { sender: { name: t, phone: ph, addr: ad } }); }
                 case 'memo': { const t = String(a.text == null ? '' : a.text).replace(/\r/g, '').trim(), orig = sq(e.conv['배송메세지']); return t === '' || inMine(t) || orig.includes(sq(t)) ? good(`배송메세지: 「${p.memo != null ? p.memo : String(e.conv['배송메세지'] || '').trim() || '(없음)'}」 → 「${t || '기본 문구'}」`, { memo: t }) : bad(`배송메세지 → 「${t}」`, '배송메세지 글을 다시 적어 주세요'); }
                 case 'tail': { const raw = String(a.text == null ? '' : a.text); if (/[\r\n]/.test(raw) || raw.trim().length > 80) return bad('품목 뒤에 붙일 말', '한 줄 80자까지만 붙일 수 있어요');
-                    const t = normTail(raw), cur = optOf(e); return t ? good(`품목 뒤에 붙일 말: ${cur} → ${withTail(cur, t)}`, { tail: t }) : good(`품목 뒤 꼬리 떼기: ${cur} → ${withTail(cur, '')}`, { tail: '' }); }
+                    const t = normTail(raw), cur = optOf(e);
+                    // #553(대표 10/6 실사고): 사이즈(2S·S·M·L) 꼬리는 귤 품목에만 — 황금향·레몬·키위는 사이즈로 지정하지 않는다(황금향은 과수 지정). 같은 손님의 귤 + 황금향 두 주문에 한꺼번에 붙던 것을 화면에서 막는다
+                    if (t && /^(?:[2-4]?[SML]|2?XL)\s*(?:사이즈)?(?:로)?!?$/i.test(t.replace(/\s/g, '')) && !/귤/.test(String(e.conv['옵션정보'] || ''))) return bad(`사이즈 지정: ${cur}`, '이 품목은 사이즈(2S·S·M)로 지정하지 않아요 — 귤만 사이즈 지정이에요(황금향은 과수로)');
+                    return t ? good(`품목 뒤에 붙일 말: ${cur} → ${withTail(cur, t)}`, { tail: t }) : good(`품목 뒤 꼬리 떼기: ${cur} → ${withTail(cur, '')}`, { tail: '' }); }
                 default: return bad(String(a.op || ''), '모르는 지시예요');
             }
         });

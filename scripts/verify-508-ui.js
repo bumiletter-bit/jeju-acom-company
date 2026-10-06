@@ -991,6 +991,17 @@ async function resolveCards(pg, type) {
             d.chat.answer = b => ({ reply: '', actions: [{ op: 'tail', n: nOf(b, '대화나'), text: '17과로!' }] });
             await say(d.pg, '대화나 건 17과로 해줘'); lb = await lastBub(d.pg);
             ok(lb.preview === 'open' && /17과로!/.test(lb.text), '⑯15 「○○ 건 17과로」 → 품목 뒤에 붙일 말 미리 보기(전 → 후)', lb.text.slice(0, 110)); await apply(d.pg);
+            // #553: 사이즈(2S·S·M) 꼬리는 귤 품목에만 — 귤이 아닌 품목에 오면 화면이 막는다(과수 꼬리는 위 ⑯15 처럼 품목을 안 가림)
+            const pnS = await patchN(d.pg);
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'tail', n: nOf(b, '대화마'), text: '2S사이즈로!' }] });
+            await say(d.pg, '대화마 건 2s 사이즈로 해줘'); lb = await lastBub(d.pg);
+            ok(lb.bad === 1 && /귤만 사이즈 지정/.test(lb.text) && (await patchN(d.pg)) === pnS, '⑯15-b #553 귤이 아닌 품목에 사이즈 꼬리 → 막고 이유를 보여 줌(바뀌는 것 없음)', lb.text.slice(0, 120));
+            { const c = await d.pg.$('#fo-chat-log [data-chat="cancel"]'); if (c) { await c.click(); await d.pg.waitForTimeout(150); } }
+            d.chat.answer = b => ({ reply: '', actions: [{ op: 'tail', n: nOf(b, '대화사'), text: '2S사이즈로!' }] });
+            await say(d.pg, '대화사 건 2s 사이즈로 해줘'); lb = await lastBub(d.pg);
+            const optSa = await d.pg.evaluate(() => { const s = window.__fo && window.__fo.S ? window.__fo.S() : null; return ''; });
+            ok(lb.bad === 0 && lb.preview === 'open' && /2S사이즈로!/.test(lb.text), '⑯15-c #553 귤 품목이면 사이즈 꼬리 그대로 미리 보기', lb.text.slice(0, 120) + optSa);
+            await d.pg.click('#fo-chat-log [data-chat="cancel"]'); await d.pg.waitForTimeout(200);
             const pnT = await patchN(d.pg);
 
             // 되묻기 — 같은 이름이 여럿이면 번호로
