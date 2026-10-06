@@ -460,11 +460,11 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         await G7.pg.tap('#desk-tabs .desk-tab[data-tab="all"]'); await G7.pg.waitForSelector('#desk-list .desk-h-item', { timeout: 15000 }); await G7.pg.tap('#desk-tabs .desk-tab[data-tab="mine"]'); await G7.pg.waitForSelector('#desk-list [data-oid="3101"] .desk-a.answer', { timeout: 15000 }); await G7.pg.waitForTimeout(400);
         await stubClip(G7.pg);
         const g = await m557(G7.pg), gg = gap557(g); await shot(G7.pg, '557-1-type-390');
-        ok('⑪ⓐ 390px: 클코 답 본문 16px(문단·목록·표 같은 크기) · 줄 높이 1.6 안팎', g.body === '16px' && g.p === '16px' && g.li === '16px' && g.td === '16px' && g.lh >= 1.55 && g.lh <= 1.65, JSON.stringify({ body: g.body, p: g.p, li: g.li, td: g.td, lh: g.lh }));
-        ok('⑪ⓐ 부가 정보(번호·시각 · 처리 길 칩 · 「클코 답변」 표지) 12px · 대비 4.5:1 이상', g.meta === '12px' && g.lane === '12px' && g.lab === '12px' && g.cMeta >= 4.5 && g.cLane >= 4.5 && g.cLab >= 4.5, JSON.stringify({ meta: g.cMeta, lane: g.cLane, lab: g.cLab }));
-        ok('⑪ⓑ 답 제목 18px 굵게(줄 높이 1.35 안팎) · 본문은 보통 굵기 · 제목은 처리 길 칩 아래 줄에서 폭을 다 씀', g.title === '18px' && Number(g.titleW) >= 700 && g.titleLh >= 1.3 && g.titleLh <= 1.4 && Number(g.pW) <= 500 && g.titleFull && g.titleBelowLane, JSON.stringify({ t: g.title, w: g.titleW, lh: g.titleLh, pW: g.pW, full: g.titleFull, below: g.titleBelowLane }));
-        ok('⑪ⓑ 제목 없는 답은 그대로(제목 칸 없음 · 본문 16px)', g.noTitle && g.body2 === '16px');
-        ok('⑪ⓒ 내 말풍선 글 15px · 폭은 대화 틀 안 폭의 85% 이하 · 클코 답은 폭을 다 씀', g.meQ === '15px' && g.meRatio <= 0.851 && g.meRatio >= 0.7 && g.ansRatio >= 0.99, JSON.stringify({ me: g.meRatio, ans: g.ansRatio }));
+        ok('⑪ⓐ 390px: 클코 답 본문 12.3px(문단·목록·표 같은 크기) · 줄 높이 1.6 안팎', g.body === '12.3px' && g.p === '12.3px' && g.li === '12.3px' && g.td === '12.3px' && g.lh >= 1.55 && g.lh <= 1.65, JSON.stringify({ body: g.body, p: g.p, li: g.li, td: g.td, lh: g.lh }));
+        ok('⑪ⓐ 부가 정보(번호·시각 · 처리 길 칩 · 「클코 답변」 표지) 11px · 대비 4.5:1 이상', g.meta === '11px' && g.lane === '11px' && g.lab === '11px' && g.cMeta >= 4.5 && g.cLane >= 4.5 && g.cLab >= 4.5, JSON.stringify({ meta: g.cMeta, lane: g.cLane, lab: g.cLab }));
+        ok('⑪ⓑ 답 제목 14px 굵게(줄 높이 1.35 안팎) · 본문은 보통 굵기 · 제목은 처리 길 칩 아래 줄에서 폭을 다 씀', g.title === '14px' && Number(g.titleW) >= 700 && g.titleLh >= 1.3 && g.titleLh <= 1.4 && Number(g.pW) <= 500 && g.titleFull && g.titleBelowLane, JSON.stringify({ t: g.title, w: g.titleW, lh: g.titleLh, pW: g.pW, full: g.titleFull, below: g.titleBelowLane }));
+        ok('⑪ⓑ 제목 없는 답은 그대로(제목 칸 없음 · 본문 12.3px)', g.noTitle && g.body2 === '12.3px');
+        ok('⑪ⓒ 내 말풍선 글 12.3px · 폭은 대화 틀 안 폭의 85% 이하 · 클코 답은 폭을 다 씀', g.meQ === '12.3px' && g.meRatio <= 0.851 && g.meRatio >= 0.7 && g.ansRatio >= 0.99, JSON.stringify({ me: g.meRatio, ans: g.ansRatio }));
         ok('⑪ⓓ 기호 줄: 앞 글과 6~8px 띄움 · 같은 기호끼리는 붙임(★★ · ▶▶) · 다른 기호로 바뀌면 다시 띄움 · 보통 줄은 0', gg.firstStar >= 6 && gg.firstStar <= 8 && gg.secondStar === 0 && gg.firstArrow >= 6 && gg.firstArrow <= 8 && gg.secondArrow === 0 && gg.note >= 6 && gg.note <= 8 && gg.plain.every(v => v === 0), JSON.stringify(gg));
         ok('⑪ⓓ 번호 목록도 앞 글과 6~8px', g.olMt >= 6 && g.olMt <= 8, String(g.olMt));
         await G7.pg.tap('#desk-list [data-oid="3101"] [data-act="copysec"][data-sec="0"]'); await G7.pg.waitForTimeout(300);
@@ -475,13 +475,13 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         // 이전 채팅 이력의 펼친 대화에도 같은 글 크기
         await G7.pg.evaluate(() => window.scrollTo(0, 0)); await G7.pg.tap('#desk-tabs .desk-tab[data-tab="all"]'); await G7.pg.waitForSelector('#desk-list .desk-h-item[data-th="3101"]', { timeout: 15000 }); await G7.pg.tap('#desk-list .desk-h-item[data-th="3101"] .desk-h-row'); await G7.pg.waitForTimeout(400);
         const gh = await m557(G7.pg);
-        ok('⑪ 이전 채팅 이력의 펼친 대화에도 같은 글 크기(본문 16 · 제목 18 · 내 글 15 · 부가 12) · 가로 넘침 0', !!gh && gh.body === '16px' && gh.title === '18px' && gh.meQ === '15px' && gh.meta === '12px' && !gh.over, gh ? JSON.stringify({ b: gh.body, t: gh.title, me: gh.meQ, meta: gh.meta, meR: gh.meRatio }) : 'null');
+        ok('⑪ 이전 채팅 이력의 펼친 대화에도 같은 글 크기(본문 12.3 · 제목 14 · 내 글 12.3 · 부가 11) · 가로 넘침 0', !!gh && gh.body === '12.3px' && gh.title === '14px' && gh.meQ === '12.3px' && gh.meta === '11px' && !gh.over, gh ? JSON.stringify({ b: gh.body, t: gh.title, me: gh.meQ, meta: gh.meta, meR: gh.meRatio }) : 'null');
         await G7.ctx.close();
         const H7 = await open(ceo, { width: 1440, height: 900 });
         mk557(ceo.id).forEach(o => H7.st.orders.push(o));
         await goTab(H7.pg, 'all', '#desk-list .desk-h-item'); await goTab(H7.pg, 'mine', '#desk-list [data-oid="3101"] .desk-a.answer'); await H7.pg.waitForTimeout(400);
         const h = await m557(H7.pg), hh = gap557(h); await shot(H7.pg, '557-2-type-1440');
-        ok('⑪ⓕ 1440px: 본문 15.5px · 제목 18px · 내 글 15px · 부가 12px(대비 4.5 이상) · 기호 줄 간격 같음 · 내 말풍선 85% 이하 · 가로 넘침 0 · 오류 0', h.body === '15.5px' && h.td === '15.5px' && h.title === '18px' && h.meQ === '15px' && h.meta === '12px' && h.cMeta >= 4.5 && h.cLane >= 4.5 && h.cLab >= 4.5 && hh.firstStar >= 6 && hh.secondStar === 0 && h.meRatio <= 0.851 && !h.over && H7.errors.length === 0, JSON.stringify({ b: h.body, td: h.td, me: h.meRatio, c: [h.cMeta, h.cLane, h.cLab], err: H7.errors }));
+        ok('⑪ⓕ 1440px: 본문 12.3px · 제목 14px · 내 글 12.3px · 부가 11px(대비 4.5 이상) · 기호 줄 간격 같음 · 내 말풍선 85% 이하 · 가로 넘침 0 · 오류 0', h.body === '12.3px' && h.td === '12.3px' && h.title === '14px' && h.meQ === '12.3px' && h.meta === '11px' && h.cMeta >= 4.5 && h.cLane >= 4.5 && h.cLab >= 4.5 && hh.firstStar >= 6 && hh.secondStar === 0 && h.meRatio <= 0.851 && !h.over && H7.errors.length === 0, JSON.stringify({ b: h.body, td: h.td, me: h.meRatio, c: [h.cMeta, h.cLane, h.cLab], err: H7.errors }));
         // 표 보기 자세히 칸에도 같은 글 크기
         await H7.pg.evaluate(() => { localStorage.setItem('akm_desk_view', 'table'); }); await H7.pg.reload({ waitUntil: 'networkidle' }); await H7.pg.waitForTimeout(2500);
         await H7.pg.evaluate(() => { const n = document.querySelector('.nav-item[data-page="agent-office"]'); if (n) n.click(); document.querySelectorAll('.ao-settle-overlay').forEach(e => e.remove()); });
@@ -489,8 +489,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         if (tb7) {
             await H7.pg.evaluate(() => { const r = Array.from(document.querySelectorAll('#desk-list tr.row')).find(x => /재구매 안내/.test(x.textContent)); if (r) r.click(); }); await H7.pg.waitForTimeout(500);
             const tv7 = await H7.pg.evaluate(() => { const a = Array.from(document.querySelectorAll('#desk-list .desk-a.answer')).find(x => x.querySelector('.desk-a-title')); return a ? { b: getComputedStyle(a).fontSize, t: getComputedStyle(a.querySelector('.desk-a-title')).fontSize } : null; });
-            ok('⑪ 표 보기 자세히 칸에도 같은 글 크기(본문 15.5 · 제목 18)', !!tv7 && tv7.b === '15.5px' && tv7.t === '18px', JSON.stringify(tv7));
-        } else ok('⑪ 표 보기 자세히 칸에도 같은 글 크기(본문 15.5 · 제목 18)', false, '표 보기를 열지 못함');
+            ok('⑪ 표 보기 자세히 칸에도 같은 글 크기(본문 12.3 · 제목 14)', !!tv7 && tv7.b === '12.3px' && tv7.t === '14px', JSON.stringify(tv7));
+        } else ok('⑪ 표 보기 자세히 칸에도 같은 글 크기(본문 12.3 · 제목 14)', false, '표 보기를 열지 못함');
         await H7.ctx.close();
     } catch (e) { ok('실행 오류 없음', false, e && e.stack ? e.stack.split('\n').slice(0, 3).join(' / ') : String(e)); }
     finally {
