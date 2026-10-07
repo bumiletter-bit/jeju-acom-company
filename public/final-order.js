@@ -102,14 +102,8 @@
                             <p class="fo-hint" id="fo-cash-note">현금, 입력삭제 건의 주소 줄이 적힌 엑셀(13칸 양식)</p>
                         </div>
                     </div>
-                    <div class="fo-field">
-                        <label for="fo-memo">개별발송 처리 · 지정 발송일</label>
-                        <textarea id="fo-memo" rows="6" spellcheck="false" placeholder="10/5&#9;010-0000-0000&#9;입력o삭제x&#9;네이버&#10;010-0000-0000 금요일 발송&#10;10/5&#9;010-0000-0000&#9;보내는이 홍길동"></textarea>
-                        <p class="fo-hint">정리 파일 줄을 그대로 붙여 넣어요(요청일자, 번호, 비고, 플랫폼 순서).</p>
-                    </div>
                     <div class="fo-acts">
                         <button type="button" class="fo-btn primary" id="fo-start" disabled>주문 불러와 시작하기</button>
-                        <button type="button" class="fo-btn" id="fo-rejudge" hidden>다시 판정</button>
                         <button type="button" class="fo-btn" id="fo-reload" hidden>주문 다시 불러오기</button>
                         <span class="fo-msg" id="fo-in-msg" role="status"></span>
                         <button type="button" class="fo-btn fo-reset" id="fo-reset">초기화</button>
@@ -120,6 +114,20 @@
                     </div>
                 </section>
                 <section class="fo-sec" id="fo-progress" hidden aria-label="주문 불러오기" aria-live="polite"></section>
+                <!-- #572(대표 10/7 「틀 순서를 불러오기 밑으로 · AI 가 인식 · 이미지도」): 메모 칸은 주문을 불러온 뒤에 — 규칙이 먼저 읽고, 못 읽은 줄만 클코가 틀로 고쳐 쓰고, 사진(폰 메모 캡처)은 클코가 틀 줄로 읽는다 -->
+                <section class="fo-sec" id="fo-memo-sec" hidden aria-label="개별발송 처리 · 지정 발송일">
+                    <div class="fo-field">
+                        <label for="fo-memo">개별발송 처리 · 지정 발송일</label>
+                        <textarea id="fo-memo" rows="6" spellcheck="false" placeholder="10/5&#9;010-0000-0000&#9;입력o삭제x&#9;네이버&#10;010-0000-0000 금요일 발송&#10;010-0000-0000 2S사이즈&#10;10/5&#9;010-0000-0000&#9;보내는이 홍길동"></textarea>
+                        <p class="fo-hint">정리 파일 줄을 그대로 붙여 넣어요(요청일자, 번호, 비고, 플랫폼 순서). 틀에 안 맞는 줄은 클코가 틀로 고쳐 쓰고, 폰 메모 캡처는 [사진으로 넣기]로 읽혀요.</p>
+                    </div>
+                    <div class="fo-acts">
+                        <button type="button" class="fo-btn" id="fo-rejudge">다시 판정</button>
+                        <input type="file" id="fo-memo-file" accept="image/*" hidden>
+                        <button type="button" class="fo-btn" id="fo-memo-photo" title="폰 메모 캡처·사진을 클코가 읽어 정리 줄로 넣어요">사진으로 넣기</button>
+                        <span class="fo-msg" id="fo-memo-msg" role="status"></span>
+                    </div>
+                </section>
                 <section class="fo-sec" id="fo-review" hidden aria-label="확인">
                     <div class="fo-sum" id="fo-sum"></div>
                     <div class="fo-ai" id="fo-ai" hidden><button type="button" class="fo-btn" id="fo-ai-read">AI에게 메모 읽히기</button><button type="button" class="fo-btn sm" id="fo-ai-stop" hidden>그만두기</button><span class="fo-msg" id="fo-ai-msg" role="status"></span></div>
@@ -178,6 +186,8 @@
         $('fo-reset-yes').addEventListener('click', resetAll);
         $('fo-chat-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); chatSend(); } });
         // #570-b(대표 10/7 「사이즈 요청 이미지로 찍어서 보내도 되게」): 대화 칸에 사진 1장 — 클코가 읽어 「번호 사이즈」 정리 줄로 돌려주면 화면이 메모 칸에 넣는다
+        $('fo-memo-photo').addEventListener('click', () => { if (!st.busy && !st.memoAsk) $('fo-memo-file').click(); });   // #572
+        $('fo-memo-file').addEventListener('change', async e => { const f = (e.target.files || [])[0]; e.target.value = ''; if (f) await memoPhoto(f); });
         $('fo-chat-attach').addEventListener('click', () => { if (!st.chat.running) $('fo-chat-file').click(); });
         $('fo-chat-file').addEventListener('change', async e => { const f = (e.target.files || [])[0]; e.target.value = ''; if (f) await setChatImg(f); });
         $('fo-chat-chip').addEventListener('click', e => { if (e.target.closest('[data-chat="unimg"]')) { st.chat.img = null; renderChatChip(); } });
@@ -190,6 +200,7 @@
         LOCKS.forEach(id => { $(id).disabled = true; });   // 실행 중에는 입력을 잠근다 — 판정이 도는 사이 메모를 고치면 낡은 판정으로 파일이 만들어진다(워커2 재현 E)
         try { await fn(); } catch (err) { showError(err); } finally { st.busy = false; $('fo-panel').classList.remove('busy'); LOCKS.forEach(id => { $(id).disabled = id === 'fo-ship' && !st.cal; }); syncInput(); syncMake(); syncAi(); syncChat(); }
         if (st.autoAi) { st.autoAi = false; if (st.judged && !st.stale) aiRead(true); }   // #520
+        if (fn === judge && st.judged && !st.stale) lineFixAuto();   // #572 규칙이 못 읽은 메모 줄만 클코가 틀로 고쳐 쓰게(기다리지 않음)
     }
     // 실패한 채널 없이 계속: 주문은 받았는데 그 뒤 판정에서 실패한 채널이면 받은 주문도 비운다(안내 글 「결과 파일에 들어가지 않아요」와 맞게)
     async function skipFailed() {
@@ -246,7 +257,9 @@
         const haveCash = !!st.cash || st.cashNone;
         const ready = !!st.cal && !!st.byPartner && haveCash && !st.busy;
         $('fo-start').disabled = !ready; $('fo-start').hidden = st.loaded;
+        $('fo-memo-sec').hidden = !st.loaded;   // #572 메모 칸은 주문을 불러온 뒤에
         $('fo-rejudge').hidden = !st.loaded; $('fo-rejudge').disabled = !haveCash || st.busy || st.ai.running;
+        $('fo-memo-photo').disabled = !st.loaded || st.busy || !!st.memoAsk;
         $('fo-reload').hidden = !st.loaded; $('fo-reload').disabled = !ready || st.ai.running;
         $('fo-cash-none').checked = st.cashNone;
         // #548: 파일을 고른 뒤에는 「오늘은 없음」을 누를 수 없다(파일을 빼거나 초기화하면 다시 눌림) — 「없음」 상태에서 파일을 고르면 파일이 우선
@@ -842,7 +855,7 @@
             if (p.sender && p.sender.name) sby.set(keyOf(e), { name: p.sender.name, phone: p.sender.phone || null, addr: p.sender.addr || null });
         });
         const picks = {}; st.cards.forEach(cd => { if (cd.type === 'pick' && st.dec.get(cd.id)) picks[cd.id.slice(5)] = st.dec.get(cd.id); });
-        const out = core().buildRows({ program, cash: st.cash && st.cash.ok ? st.cash.rows : [], byPartner: st.byPartner, picks, senderByKey: sby, defaultMemo: DEFAULT_MEMO });
+        const out = core().buildRows({ program, cash: cashRowsWithSize(st.cash && st.cash.ok ? st.cash.rows : []), byPartner: st.byPartner, picks, senderByKey: sby, defaultMemo: DEFAULT_MEMO });
         if (out.unknown && out.unknown.length) { buildCards(); applyOrderDecisions(); renderReview(); throw new Error('거래처를 못 정한 품목이 새로 생겼어요. 위에서 골라 주세요.'); }
         const dot = mdDot(s.shipDate), files = [];
         const colorOf = name => (/!$/.test(name) && !inCatalog(name) && core().stripTail(name, inCatalog) !== name ? CAT_RGB.orange : CAT_RGB[typeof window.qtyCategory === 'function' ? window.qtyCategory(name) : '']) || null;   // #525: 요청 꼬리가 붙은 줄 = 사이즈 꼬리 줄과 같은 주황
@@ -1170,6 +1183,101 @@
         $('fo-chat-log').hidden = !C.log.length && !C.running;   // 대화가 없으면 빈 대화 틀을 보이지 않는다
         renderPatches();
     }
+    // ── #572(대표 10/7) 메모 칸 = 규칙이 먼저, 틀 밖은 클코가 ───────────────────────────────────────────
+    // 입력삭제 손님의 사이즈 지정(「번호 입력o삭제x 2S사이즈」): 입력삭제 주문은 택배사 양식에서 빠지고 현금파일 주소 줄이 나가므로 그 줄의 옵션에 꼬리를 붙인다(귤 로얄과만 · 이미 꼬리가 있으면 그대로)
+    function cashRowsWithSize(rows) {
+        const by = new Map(); (st.sizeLines || []).forEach(z => { if (z.digits && z.digits.length >= 8) by.set(z.digits, z.size + '사이즈로!'); });
+        if (!by.size) return rows;
+        return rows.map(r => { const tail = by.get(String(r.digits || '')); const opt = String(r.opt || ''); if (!tail || !sizeItem(opt) || /사이즈로!$/.test(opt)) return r;
+            const opt2 = withTail(opt, tail), cells = r.cells.slice(); cells[4] = opt2; return Object.assign({}, r, { opt: opt2, cells }); });
+    }
+    // 사진 1장을 긴 변 1600px JPEG data URL 로
+    async function imgToDataUrl(file) {
+        if (!/^image\//.test(file.type)) throw new Error('사진 파일만 붙일 수 있어요.');
+        const url = URL.createObjectURL(file); const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('사진을 읽지 못했어요')); i.src = url; });
+        const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(im.naturalWidth * k)); cv.height = Math.max(1, Math.round(im.naturalHeight * k));
+        cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+        return { name: String(file.name || '사진.jpg').slice(0, 60), data: cv.toDataURL('image/jpeg', 0.85), mime: 'image/jpeg' };
+    }
+    // 클코(창구)에게 묻고 결과 data({ reply, actions })를 받는다 — 대화 칸(chatAsk)과 같은 길 · 받은 뒤 서버 묶음은 지운다
+    async function askDesk(ask, img, onTick) {
+        const s = S();
+        const body = Object.assign({ kind: 'chat', shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, ask: String(ask).slice(0, 1500), orders: [], catalog: {}, summary: chatSummary(), history: [] }, img ? { image_data: img.data, image_mime: img.mime } : {});
+        const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', body);
+        if (!r || !r.ok || !r.id) throw new Error((r && (r.message || r.error)) || '요청을 올리지 못했어요');
+        const id = r.id, t0 = Date.now();
+        try {
+            for (;;) {
+                await sleep(2000);
+                const q = await window.api('/api/agent-office/final-order/memo-read/' + id), sec = Math.round((Date.now() - t0) / 1000);
+                if (q && q.state === 'done') return q.data || {};
+                if (q && q.state === 'fail') throw new Error(q.message || '클코가 처리하지 못했어요');
+                if (q && q.status === '대기' && sec > 40) throw new Error('지금은 클코를 쓸 수 없어요(대표 PC의 창구가 꺼져 있어요) — 줄을 직접 틀에 맞춰 적어 주세요');
+                if (sec > 600) throw new Error('10분이 지나도 답이 없어요');
+                if (onTick) onTick(sec);
+            }
+        } finally { try { await window.api('/api/agent-office/final-order/memo-read/' + id, 'DELETE'); } catch (_) { } }
+    }
+    const linesOf = data => [...new Set((Array.isArray(data && data.actions) ? data.actions : []).filter(a => a && a.op === 'lines').flatMap(a => String(a.text == null ? '' : a.text).replace(/\r/g, '').split('\n')).map(l => l.replace(/[ ]+$/, '')).filter(l => l.trim()))].slice(0, 80);
+    const memoNote = (text, err) => { const m = $('fo-memo-msg'); if (!m) return; m.textContent = text || ''; m.classList.toggle('err', !!err); };
+    // 폰 메모 캡처를 클코가 읽어 틀 줄로 → 메모 칸 끝에 넣고 다시 판정
+    async function memoPhoto(file) {
+        if (!st.loaded || st.busy || st.memoAsk) return;
+        st.memoAsk = true; syncInput();
+        try {
+            memoNote('사진을 줄이는 중…');
+            const img = await imgToDataUrl(file);
+            memoNote('클코가 사진을 읽는 중이에요…');
+            const data = await askDesk('[사진 첨부] 폰 메모·목록 사진이에요. 한 줄에 하나씩 정리 줄 틀(요청일자<TAB>번호<TAB>비고<TAB>플랫폼 또는 「번호 요청말」)로 읽어 주세요.', img, sec => memoNote(`클코가 사진을 읽는 중이에요 · ${sec}초`));
+            const lines = linesOf(data).filter(l => LINEISH.test(l));
+            const reply = String(data.reply || '').trim();
+            if (!lines.length) { memoNote(reply || '사진에서 번호가 든 줄을 읽지 못했어요 — 글로 적어 주세요.', true); chatSay('ai', reply || '사진에서 번호가 든 줄을 읽지 못했어요.'); return; }
+            chatSay('me', `📷 ${img.name} (메모 칸에 사진으로 넣기)`);
+            if (reply) chatSay('ai', reply);
+            st.memoAsk = false; syncInput();
+            await addRuleLines(lines, `사진에서 읽은 ${lines.length}줄을 메모 칸에 넣고`);
+            memoNote(`사진에서 ${lines.length}줄을 넣었어요 — 왼쪽 줄별 표시와 아래 대화 답을 확인해 주세요.`);
+        } catch (err) { memoNote('⚠️ ' + (err && err.message ? err.message : err), true); }
+        finally { st.memoAsk = false; syncInput(); }
+    }
+    // 규칙이 못 읽은 줄(형식 확인 · 사이즈 못 읽음)만 클코에게 보내 틀로 고쳐 받는다. 번호는 《번호n》 자리표로 바꿔 보내 숫자를 못 바꾸게 하고, 돌아온 줄의 자리표·숫자를 되맞춰 검사한 뒤 바꿔 넣는다.
+    const FIX_RE = /^(?:⚠ )?(?:형식 확인|사이즈 못 읽음)/;
+    const NUM_RE = /01\d[-.\s]?\d{3,4}[-.\s]?\d{4}|\d{8}-\d{7}|\d{10,}/g;
+    async function lineFixAuto() {
+        const E = st.memoEd; if (!E || !st.loaded || !st.judged || st.stale || st.memoAsk || st.busy) return;
+        const lines = String(E.ta.value || '').split('\n'), tried = st.lineFixTried || (st.lineFixTried = new Set());
+        const targets = lines.map((raw, i) => ({ i, raw: raw.replace(/\r/g, '') })).filter(x => x.raw.trim() && E.marks[x.i] && FIX_RE.test(E.marks[x.i].t || '') && !tried.has(x.raw.trim()));
+        if (!targets.length) return;
+        targets.forEach(x => tried.add(x.raw.trim()));
+        const toks = new Map(); let k = 0;
+        const masked = targets.map(x => x.raw.replace(NUM_RE, m => { k++; toks.set(`《번호${k}》`, m); return `《번호${k}》`; }));
+        st.memoAsk = true; syncInput();
+        try {
+            memoNote(`틀에 안 맞는 줄 ${targets.length}줄을 클코가 틀로 고쳐 쓰는 중이에요…`);
+            const data = await askDesk('[정리 줄 고쳐 쓰기]\n' + masked.join('\n'), null, sec => memoNote(`틀에 안 맞는 줄 ${targets.length}줄을 클코가 고쳐 쓰는 중 · ${sec}초`));
+            const got = linesOf(data);
+            const digitsOfLine = s => (String(s).match(NUM_RE) || []).map(v => v.replace(/\D/g, '')).join('|');
+            const out = [], changed = [];
+            targets.forEach((x, j) => {
+                const myToks = [...toks.keys()].filter(t => masked[j].includes(t));
+                const cand = got[j] && myToks.every(t => got[j].includes(t)) && myToks.length ? got[j] : got.find(l => myToks.length && myToks.every(t => l.includes(t)));
+                if (!cand) return;
+                let fixed = cand; toks.forEach((num, t) => { fixed = fixed.split(t).join(num); });
+                if (/《번호\d+》/.test(fixed) || digitsOfLine(fixed) !== digitsOfLine(x.raw)) return;   // 자리표가 남거나 숫자가 달라지면 안 넣는다
+                if (fixed.trim() === x.raw.trim()) return;   // 클코가 뜻을 몰라 원문 그대로 돌려준 줄
+                out.push({ i: x.i, fixed }); changed.push(`· 「${x.raw.trim()}」 → 「${fixed.trim()}」`);
+            });
+            const reply = String(data.reply || '').trim();
+            if (!out.length) { memoNote(reply || '클코도 그 줄들을 틀로 바꾸지 못했어요 — 직접 틀에 맞춰 적어 주세요.', true); return; }
+            out.forEach(o => { lines[o.i] = o.fixed; });
+            st.memoAsk = false; syncInput();
+            E.ta.value = lines.join('\n');
+            chatSay('ai', `틀에 안 맞던 줄 ${out.length}줄을 클코가 틀로 고쳐 썼어요(번호는 그대로):\n${changed.join('\n')}${targets.length > out.length ? `\n그대로 둔 줄 ${targets.length - out.length}줄은 직접 틀에 맞춰 적어 주세요.` : ''}`);
+            memoNote(`클코가 ${out.length}줄을 틀로 고쳐 썼어요 — 다시 판정했어요.`);
+            await run(judge);
+        } catch (err) { memoNote('⚠️ ' + (err && err.message ? err.message : err), true); }
+        finally { st.memoAsk = false; syncInput(); }
+    }
     // #570-b 사진 첨부: 긴 변 1600px 로 줄여 JPEG 로(서버 한도 10MB · 창구가 읽기엔 충분) · 칩에 이름 표시
     async function setChatImg(file) {
         if (!/^image\//.test(file.type)) { $('fo-chat-msg').textContent = '사진 파일만 붙일 수 있어요.'; return; }
@@ -1486,7 +1594,7 @@
         st.ai.running = false; st.chat.running = false; st.autoAi = false;
         st.busy = true; $('fo-panel').classList.add('busy'); $('fo-reset').disabled = true;
         try {
-            $('fo-memo').value = ''; $('fo-chat-input').value = '';
+            $('fo-memo').value = ''; $('fo-chat-input').value = ''; st.lineFixTried = null; st.memoAsk = false; memoNote('');   // #572
             st.cash = null; st.cashName = ''; st.cashNone = false; $('fo-cash').value = '';
             st.prep = null; st.loaded = false; st.judged = false; st.stale = false; st.loadedOn = null; st.loadedAt = 0; st.chState = {}; st.cards = []; st.info = []; st.kindFilter = '';
             st.dec = new Map(); st.draft = new Map(); st.ai = newAi(); st.patch = new Map(); st.recvFix = []; st.ordMemo = new Map();

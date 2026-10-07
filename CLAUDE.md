@@ -100,7 +100,17 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/7 아침): 회사 v5.9.451 / app.js v=402 · ao-desk.js v=47 · ao-dark.css v=1 · final-order.js v=20 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #572부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/7 아침): 회사 v5.9.452 / app.js v=402 · ao-desk.js v=47 · ao-dark.css v=1 · final-order.js v=21 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #573부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 📝 #572 최종발주 메모 칸 = 불러오기 아래 · 틀 밖 줄은 클코가 틀로 · 사진으로 넣기 · 입력삭제 사이즈 (대표 10/7 「틀 순서를 불러오기 밑으로 · AI 가 인식 · 이미지도 · 고」 · v5.9.452 / final-order.js v=21 · core v=8 · 총괄 시공 + 워커2 창구 규칙·AI 시험 + 워커1 화면 검증)
+
+- **대표 뜻**: 흐름 = 주문 불러오기 → 메모 칸(정리 줄 틀) → 확인 카드 → 추가 수정만 대화 칸(사진 포함). 메모 칸은 **규칙이 먼저** 읽고(종전 v2 규칙 · sizeLines), **틀에 안 맞는 줄만** 클코가 틀로 고쳐 쓴다. 폰 메모 캡처는 클코가 읽어 틀 줄로.
+- **화면(final-order.js)**: ①#fo-memo(줄별 표시 포함)를 #fo-in 에서 새 구획 `#fo-memo-sec`(#fo-progress 뒤)로 — `syncInput` 에서 hidden = !st.loaded · [다시 판정](#fo-rejudge)도 그 구획 ②[사진으로 넣기](#fo-memo-photo · #fo-memo-file) → `memoPhoto()` → `askDesk()`(memo-read kind chat · orders [] · image) → `linesOf()`(op lines · 번호 든 줄만) → `addRuleLines()` ③`lineFixAuto()` — `run(judge)` 가 끝날 때 줄별 표시가 「형식 확인」「사이즈 못 읽음」인 줄만 모아 ask 「[정리 줄 고쳐 쓰기]
+…」(전화·주문번호는 《번호n》 자리표로 · 같은 줄은 한 번만 st.lineFixTried) → 돌아온 줄의 자리표를 되돌려 **자리표가 남거나 숫자가 달라지면 안 넣음** · 원문 그대로면 건너뜀 → 바꿔 넣고 다시 판정 · 대화 칸에 「원문 → 고친 줄」 ④`cashRowsWithSize()` — buildRows 에 주는 현금파일 행의 옵션(cells[4]·opt)에 st.sizeLines 의 번호와 같은 구매자면 사이즈 꼬리(귤 로얄과만 · 이미 꼬리 있으면 그대로) ⑤#fo-memo-msg 안내 칸 · resetAll 이 lineFixTried·memoAsk 비움.
+- **창구 규칙(★에이전트오피스/최종발주_대화.md · 워커2)**: 「사진이 폰 메모 캡처일 때」(한 줄 → 틀 한 줄 · 날짜 줄은 탭 3개 · 번호는 사진 숫자 그대로 · 흐리면 빼고 몇째 줄인지 · 이름만 있으면 orders 와 하나로 맞을 때만 tail) · 「[정리 줄 고쳐 쓰기]」(《번호n》 글자 그대로 · 줄 수·순서 그대로 · 낱말 안 지어냄 · 뜻 모르면 원문 그대로 · 적는 꼴 표). 실제 AI 시험 6회 37줄 중 36줄 글자 동일(1줄 = 시험 사진이 잘린 탓 · AI 가 「잘렸다」고 알림).
+- 🔵 core.sizeLines 가 탭 줄의 비고 칸 사이즈(「10/9⇥번호⇥2S사이즈⇥네이버」)를 떼면서 **탭 칸을 보존**하도록 고침(v5.9.451 에 포함 — 처음 #570 수정은 toks.join(' ') 으로 탭을 잃었음 · 워커2 지적으로 발견).
+- 🔵 core.sizeLines 에 군더더기 낱말 제거(SIZE_FILLER: 사이즈·요청·부탁·해줘·로) — 「번호 사이즈 S 로 부탁」이 종전엔 「사이즈 부탁」이 남아 「확인 필요(날짜 없음)」 줄로 읽혔다(워커1 발견). ✅ 508-ui A 183 · B 244(㉘ 사진 9 · ㉙ 자동 고쳐 쓰기 12 · ㉚ 입력삭제 사이즈 8) · 508-core 173 · 452 81·16 · 570-size-lines 16.
+- 🔴 함정: 메모 칸이 불러오기 뒤에만 보이므로 **검증 하네스는 「불러오기 → 메모 → 다시 판정」 순서**(종전 「메모 → 불러오기」는 숨은 요소 채우기로 실패). lineFixAuto 는 판정 때마다 스스로 요청을 보내므로 시험 자료에 「형식 확인」 줄이 있으면 요청 횟수가 1 늘어난다(가로채서 빈 답).
 
 ### 🛑 #571 [채팅 종료] — 최종발주 기록(답 상자 없는 대화)도 PC 에서 누른 자리에서 (대표 10/7 · v5.9.451 / ao-desk.js v=47 · css v=35 · 워커2)
 

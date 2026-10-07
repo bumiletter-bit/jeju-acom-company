@@ -466,6 +466,7 @@
     //   따로 떼어(expect) 메모 줄에 남기지 않는다 — 남기면 「번호 2건」이 「오늘 발송·손님 메모 무시」 줄로 읽혀 손님 메모가 조용히 무시되고 건수 카드가 떴다.
     const SIZE_TOK = /(^|[ \t])[.,·/:;\-]*(2s|2l|s|m|l)[ ]*(?:사이즈|싸이즈|size)?[ ]*(?:으로|로)?!?[.,]?(?=$|[ \t])/i;
     const SIZE_CNT = /^(\d{1,2})건$/;
+    const SIZE_FILLER = /^(?:사이즈|싸이즈|size|요청|부탁|부탁해요?|부탁드려요?|부탁드립니다|해\s*줘요?|해주세요|로|으로|요)[!.]*$/i;
     function sizeLines(text) {
         const lines = String(text == null ? '' : text).split('\n'), sizes = [];
         const out = lines.map((raw, srcLine) => {
@@ -475,8 +476,11 @@
             const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
             if (!key) return raw;
             let expect = null, kept = rest;
+            const drop = tok => { toks = toks.filter(t => t !== tok); kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); };
             const cnt = toks.find(t => t !== key && SIZE_CNT.test(t));
-            if (cnt) { expect = parseInt(cnt.match(SIZE_CNT)[1], 10); toks = toks.filter(t => t !== cnt); kept = kept.replace(new RegExp('(^|[ \\t])' + cnt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); }
+            if (cnt) { expect = parseInt(cnt.match(SIZE_CNT)[1], 10); drop(cnt); }
+            // #572: 「번호 사이즈 S 로 부탁」처럼 사이즈 낱말과 글자가 떨어져 있거나 「요청」「부탁」이 붙은 꼴 — 남는 군더더기 낱말은 메모 줄에 두지 않는다(남으면 「오늘 발송·메모 무시」 줄로 읽힌다)
+            toks.filter(t => t !== key && SIZE_FILLER.test(t)).forEach(drop);
             sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: m[2].toUpperCase(), expect });
             if (toks.length === 1) return '';
             return kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');   // 탭 줄은 탭 칸을 그대로(비고 칸만 비워짐) · 빈칸 줄은 빈칸 하나로

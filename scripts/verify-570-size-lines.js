@@ -22,4 +22,8 @@ ok(core.sizeLines('010-1234-5678 2S싸이즈').sizes[0] && core.sizeLines('010-1
 { const t = core.sizeLines('10/9\t010-1234-5678\t2S사이즈\t네이버\n10/9\t010-2222-3333\t입력o삭제x S사이즈 2건\t쿠팡'); const L = t.text.split('\n');
   ok(t.sizes.length === 2 && t.sizes[0].size === '2S' && L[0] === '10/9\t010-1234-5678\t\t네이버', '탭 줄: 비고 칸의 사이즈를 떼고 탭 칸은 그대로(비고만 빔)', JSON.stringify(L[0]));
   ok(t.sizes[1].size === 'S' && t.sizes[1].expect === 2 && L[1] === '10/9\t010-2222-3333\t입력o삭제x\t쿠팡', '탭 줄: 「입력o삭제x S사이즈 2건」 → 입력o삭제x 만 남고 건수는 expect', JSON.stringify(L[1])); }
+// #572 사이즈 낱말과 글자가 떨어진 꼴·군더더기(요청·부탁) — 사이즈를 읽고 줄은 비운다(워커1 발견: 종전엔 「사이즈 부탁」이 남아 「확인 필요」 줄로)
+{ const t = core.sizeLines('010-1234-5678 사이즈 S 로 부탁\n010-2222-3333 사이즈 2S 요청\n010-3333-4444 사이즈 S 7일발송'); const L = t.text.split('\n');
+  ok(t.sizes.length === 3 && t.sizes[0].size === 'S' && L[0] === '' && t.sizes[1].size === '2S' && L[1] === '', '「사이즈 S 로 부탁」「사이즈 2S 요청」 = 사이즈 읽고 줄 비움', JSON.stringify(L.slice(0, 2)));
+  ok(t.sizes[2].size === 'S' && L[2] === '010-3333-4444 7일발송', '「사이즈 S 7일발송」 = 사이즈 떼고 날짜 요청은 남김', JSON.stringify(L[2])); }
 console.log(`\n#570 sizeLines: ${pass} 통과 / ${fail} 실패`); process.exit(fail ? 1 : 0);
