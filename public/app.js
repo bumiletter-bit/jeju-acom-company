@@ -3978,11 +3978,18 @@ window.deleteDocHistory = async function(id) {
     }
 };
 
+// #577: 서류 한 건 찾기 — 관리자는 이력(history · adminOnly) · 직원은 본인 서류(mine)에서(승인·반려된 것만)
+async function docFindOne(id) {
+    const docs = (currentUser && currentUser.role === 'admin')
+        ? await api('/api/documents/history?')
+        : (await api('/api/documents?mine=true')).filter(x => x.status === 'approved' || x.status === 'rejected');
+    return docs.find(doc => doc.id === id);
+}
+
 // 기안서류 개별 상세 모달
 window.viewDocDetail = async function(id) {
     try {
-        const docs = await api('/api/documents/history?');
-        const d = docs.find(doc => doc.id === id);
+        const d = await docFindOne(id);
         if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
 
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
@@ -4129,8 +4136,7 @@ async function renderEmploymentCertPDF(d) {
 // 기안서류 개별 PDF 다운로드
 window.downloadDocPDF = async function(id) {
     try {
-        const docs = await api('/api/documents/history?');
-        const d = docs.find(doc => doc.id === id);
+        const d = await docFindOne(id);
         if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
 
         // 재직증명서: 표준 양식으로 별도 처리
