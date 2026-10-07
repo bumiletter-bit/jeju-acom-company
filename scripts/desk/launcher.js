@@ -91,9 +91,11 @@ function promptFor(o) {
         + `get.js가 「이미 처리 중」이라고 하면 다른 창이 집어 간 것이니 아무것도 하지 말고 끝내세요.`;
 }
 // #498 미리 받아 둔 지시를 문장에 넣어 준다 — 창구가 get.js를 부르는 한 차례를 줄인다(내용은 get.js가 내주는 것과 같다)
-function promptPrefetched(o, got) {
+//   #580 B: inl = fast.inlineFinalOrder() 결과(최종발주 규칙 문서·자료를 미리 읽은 것) — 있으면 그 글을 지시 바로 뒤에 싣는다(읽는 호출 1~2번이 준다)
+function promptPrefetched(o, got, inl) {
     return `새 지시 #${o.id} 를 대기 프로그램이 이미 받아 두었습니다(상태는 이미 '처리중'). 아래가 get.js가 내주는 내용 그대로입니다 — get.js를 다시 부르지 마세요.\n`
-        + '<지시>\n' + JSON.stringify(got, null, 2) + '\n</지시>\n'
+        + '<지시>\n' + JSON.stringify(inl ? inl.got : got, null, 2) + '\n</지시>\n'
+        + (inl ? inl.text : '')
         + `CLAUDE.md의 「일하는 순서」에서 받기 다음 단계부터 평소와 똑같이 처리하고, node scripts/desk/respond.js ${o.id} <결과.json> 으로 결과를 올립니다.\n`
         + `이 실행은 지시 한 건만 처리하고 끝납니다 — 감시(watch.js)는 돌리지 마세요. 결과를 올린 뒤 한 줄로 끝내면 됩니다.\n`
         + HINTS(o.id);
@@ -303,11 +305,15 @@ async function subscriptionUsers() {
     return subIds;
 }
 
-const ORDER_COLS = `o.id, o.status, o.created_by, o.created_by_id, (o.image_data IS NOT NULL) AS has_image, o.content, o.reply_to,
+const ORDER_COLS = `o.id, o.status, o.created_by, o.created_by_id, (o.image_data IS NOT NULL) AS has_image, o.content, o.reply_to, o.file_name,
                     (SELECT p.content FROM pending_orders p WHERE p.id = o.reply_to) AS parent_content`;
 async function nextOrder(onlyId) {
     const busyUsers = new Set([...st.running.values()].map(x => Number(x.by)));
-    const blocked = o => st.running.has(o.id) || (o.created_by_id != null && busyUsers.has(Number(o.created_by_id)))
+    // #580 C: 그 사람의 돌고 있는 일이 전부 「정산 이미지 판독」이고 새 지시도 정산 이미지면 같이 돌린다(끄기 = desk_fast {"settlepar":false})
+    const mixedUsers = new Set([...st.running.values()].filter(x => !x.settle).map(x => Number(x.by)));
+    const sameUserBusy = o => o.created_by_id != null && busyUsers.has(Number(o.created_by_id))
+        && !(!st.fast.off && st.fast.settlepar && fast.settleImage(o) && !mixedUsers.has(Number(o.created_by_id)));
+    const blocked = o => st.running.has(o.id) || sameUserBusy(o)
         || (st.directBusy && !st.fast.off && st.fast.direct && fast.route(o, null).lane === 'direct_qty');
     if (onlyId) {
         const one = await pool.query(
@@ -334,7 +340,7 @@ async function writeState() {
 
 const firstRunning = () => { const it = st.running.keys().next(); return it.done ? null : it.value; };
 async function handle(order, key) {
-    st.running.set(order.id, { by: order.created_by_id, at: Date.now() });
+    st.running.set(order.id, { by: order.created_by_id, at: Date.now(), settle: fast.settleImage(order) });   // settle = 정산 이미지 판독(#580 C)
     await heartbeat('busy', firstRunning() || order.id);
     await writeState();
     // #475 처리하는 동안에도 「살아 있다」는 신호를 계속 보낸다.
@@ -366,7 +372,13 @@ async function handle(order, key) {
         if (rt.lane === 'direct_qty') { if (got) r = await runDirectQty(order, got); }
         else if (f.prefetch) {
             const run = (f.warm || st.forceWarm) && f.stream ? runWarm : runDesk;
-            if (got) r = await run(order, key, { model: rt.model, prompt: promptPrefetched(order, got), stream: f.stream, lean: f.lean, effort: f.effort, runId: got.run_id, live: f.stream && order.status !== '승인됨' });
+            // #580 B: 최종발주 메모 읽기·대화는 규칙 문서와 자료를 미리 읽어 지시문에 넣는다(끄기 = desk_fast {"inline":false} · 못 읽으면 종전대로 창구가 읽는다)
+            let inl = null;
+            if (got && f.inline) { try { inl = fast.inlineFinalOrder(got, p => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { return null; } }); } catch (e) { inl = null; log(`#${order.id} 규칙 미리 넣기 실패(종전 방식으로): ${e.message}`); } }
+            if (inl) log(`#${order.id} 규칙 문서 미리 넣음 (${inl.name}${inl.withData ? ' + 자료' : ''} · ${inl.text.length}자)`);
+            if (got) r = await run(order, key, { model: rt.model, prompt: promptPrefetched(order, got, inl), stream: f.stream, lean: f.lean, effort: f.effort, runId: got.run_id, live: f.stream && order.status !== '승인됨' });
+            // 미리 넣은 경우 자료 파일은 여기서 지운다(창구에게 「지우지 말라」고 했으므로) — 다시 시도하게 되면 받기(claim)가 파일을 새로 쓴다
+            if (inl && inl.cleanup) { try { fs.unlinkSync(inl.cleanup); } catch (e) { /* 이미 없음 */ } }
         } else {
             let runId = null;
             if (f.stream) {   // 미리 받기를 껐을 때: 단계 기록에 쓸 실행 번호는 창구가 받은 뒤에야 생긴다 → 잠깐 기다렸다 찾는다

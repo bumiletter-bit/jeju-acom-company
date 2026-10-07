@@ -3,11 +3,12 @@
 //   ② streamWatcher() claude -p --output-format stream-json 의 줄을 읽어 「지금 하는 일」·답변 미리 보기를 뽑는다
 //   되돌리기: agent_office_config 'desk_fast' = {"off":true} → 전부 종전 방식(10초 확인·Opus·끝나야 보임)
 //   낱개로 끄기: {"route":false} 처럼 항목만 false (poll·stream·prefetch·route·direct·lean·warm)
-const DEFAULTS = { off: false, poll: true, stream: true, prefetch: true, route: true, direct: true, lean: true, warm: true };
-const KEYS = ['poll', 'stream', 'prefetch', 'route', 'direct', 'lean', 'warm'];
+//   #580(대표 10/8): inline = 최종발주 규칙 문서·자료를 지시문에 미리 넣기 · settlepar = 같은 사람의 정산 이미지 여러 장을 동시에
+const DEFAULTS = { off: false, poll: true, stream: true, prefetch: true, route: true, direct: true, lean: true, warm: true, inline: true, settlepar: true };
+const KEYS = ['poll', 'stream', 'prefetch', 'route', 'direct', 'lean', 'warm', 'inline', 'settlepar'];
 function settings(cfg) {
     const c = cfg && typeof cfg === 'object' ? cfg : {};
-    if (c.off === true) return { off: true, poll: false, stream: false, prefetch: false, route: false, direct: false, lean: false, warm: false };
+    if (c.off === true) return { off: true, poll: false, stream: false, prefetch: false, route: false, direct: false, lean: false, warm: false, inline: false, settlepar: false };
     const o = Object.assign({}, DEFAULTS);
     for (const k of KEYS) if (c[k] === false) o[k] = false;
     if (['low', 'medium', 'high', 'xhigh'].includes(c.effort)) o.effort = c.effort;   // 생각 깊이를 따로 줄 때만(없으면 창구 기본값)
@@ -36,6 +37,39 @@ function route(o, forcedModel) {
     if (o.has_image) return { lane: 'ai', model: 'opus', why: '이미지 + 정산 외 지시' };
     if (text.length <= 160 && LOOKUP_WORDS.test(text) && !OPUS_WORDS.test(text)) return { lane: 'ai', model: 'sonnet', why: '조회' };
     return { lane: 'ai', model: 'opus', why: parent ? '이어서' : '판단·창작·변경' };
+}
+
+// #580 C: 같은 사람의 지시는 한 번에 하나가 원칙(이어서 지시가 앞 답을 받아야 하므로)이지만,
+//   「정산 이미지 판독」은 장마다 따로 끝나는 일(품목·수량만 읽어 올림 · 앞 답을 안 봄)이라 여러 장이 연달아 오면 같이 돌려도 된다.
+//   조건 = route() 가 정산 이미지 판독으로 고른 새 지시(대기 · 이어서 아님) + 그림(엑셀 같은 파일 첨부 제외)
+function settleImage(o) {
+    if (!o || !o.has_image || o.file_name || o.reply_to || o.status !== '대기') return false;
+    return route(o, null).why === '정산 이미지 판독';
+}
+
+// #580 B: 최종발주 화면이 보낸 일(메모 읽기·대화)은 규칙 문서와 자료 파일을 읽는 데 호출 1~2번을 쓴다 → 대기 프로그램이 미리 읽어 지시문에 넣는다.
+//   read(path) = 파일 글(없으면 null) — 순수 함수로 두려고 읽는 길을 받아 쓴다. 돌려주는 값이 null 이면 종전 방식(창구가 직접 읽음).
+const INLINE_RULES_MAX = 60000, INLINE_DATA_MAX = 200000;
+function inlineFinalOrder(got, read) {
+    const fm = got && got.final_order_memo;
+    if (!fm || !fm.rules || !fm.how) return null;
+    const rules = read(fm.rules);
+    if (!rules || !String(rules).trim() || rules.length > INLINE_RULES_MAX) return null;
+    // 「규칙 문서를 먼저 읽고」「끝나면 파일을 지웁니다」 두 마디를 떼어 낸다 — 둘 다 못 떼면(문구가 바뀌었으면) 말이 엇갈리므로 미리 넣지 않는다
+    const A = 'rules 문서를 먼저 읽고, ', B = ' 끝나면 payload_path 파일을 지웁니다.';
+    if (fm.how.split(A).length !== 2 || fm.how.split(B).length !== 2) return null;
+    const data = fm.payload_path ? read(fm.payload_path) : null;
+    const withData = !!data && data.length <= INLINE_DATA_MAX;
+    const name = String(fm.rules).split(/[\\/]/).pop();
+    const fm2 = Object.assign({}, fm, { how: fm.how.split(A).join('아래 <규칙 문서> 대로, ').split(B).join('') });
+    delete fm2.rules;
+    if (withData) { fm2.how = fm2.how.split('payload_path 의 ').join('아래 <자료> 의 '); delete fm2.payload_path; }
+    const text = `<규칙 문서 ${name}>\n${rules}\n</규칙 문서>\n`
+        + (withData ? `<자료>\n${data}\n</자료>\n` : '')
+        + `위 규칙 문서${withData ? '와 자료' : ''}는 대기 프로그램이 파일을 미리 읽어 그대로 넣은 것입니다 — 그 파일을 다시 읽지 말고 바로 판정하세요.`
+        + (withData ? '' : ' 자료는 payload_path 파일에 있습니다(이것만 읽습니다).')
+        + ' 받은 자료 파일은 대기 프로그램이 지우므로 지우는 명령은 하지 않습니다.\n';
+    return { got: Object.assign({}, got, { final_order_memo: fm2 }), text, name, withData, cleanup: fm.payload_path || null };
 }
 
 // ── ② 진행 상황 읽기 ─────────────────────────────────────────────────────────
@@ -156,4 +190,4 @@ function qtyAnswer(stdout) {
     return { title: '중간발주 집계 (' + String(meta.at || '').slice(5) + ')', answer: body + tail, attachments: files };
 }
 
-module.exports = { DEFAULTS, settings, route, streamWatcher, livePreview, lenientString, stepText, qtyAnswer };
+module.exports = { DEFAULTS, settings, route, settleImage, inlineFinalOrder, streamWatcher, livePreview, lenientString, stepText, qtyAnswer };

@@ -304,7 +304,7 @@ async function ui() {
         ok('(b) 답 안의 꺾쇠 글자는 태그가 아니라 글자로 보임', !!b && !b.liveHtmlHasTag && b.liveText.includes('<b>굵게</b>'));
         await sleep(6200);
         const perSec = (A.st.gets - g0) / ((Date.now() - tB) / 1000);
-        ok('(b) 진행 중에는 약 2초마다 목록 새로고침', perSec > 0.33 && perSec < 0.8, `${A.st.gets - g0}회 / ${((Date.now() - tB) / 1000).toFixed(1)}초`);
+        ok('(b) 진행 중에는 약 1초마다 목록 새로고침(#580: 2초 → 1초)', perSec > 0.7 && perSec < 1.3, `${A.st.gets - g0}회 / ${((Date.now() - tB) / 1000).toFixed(1)}초`);
         // 긴 글: 칸 높이 제한·스크롤 위치(관찰)
         A.st.orders = [Object.assign(base(990001, A.st.orders[0].content), { result: { type: 'live', text: LIVE_LONG } }), old];
         const bl = await waitFor(async () => { const s = await rowState(A.pg, 990001); return s.liveText.includes('60번째 줄') ? s : null; }, 8000);
