@@ -100,13 +100,13 @@ async function uploadAttachments(list, runId) {
         if (status === '승인대기') {
             const ad = await pool.query(`SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL`);
             for (const u of ad.rows) {
-                await pool.query(`INSERT INTO notifications (user_id, type, title, message, link, pushed_at) VALUES ($1, 'desk', $2, $3, 'agent-office', ${pushed})`,
-                    [u.id, '🔐 클코 창구 — 승인 요청', result.summary]);
+                await pool.query(`INSERT INTO notifications (user_id, type, title, message, link, pushed_at) VALUES ($1, 'desk', $2, $3, $4, ${pushed})`,
+                    [u.id, '🔐 클코 창구 — 승인 요청', result.summary, 'agent-office?o=' + id]);   // #576: 알림을 누르면 그 채팅으로
             }
         } else if (status !== '판독완료' && o.created_by_id) {
             const title = status === '질문' ? '❓ 클코가 확인을 요청했어요' : status === '오류' ? '⚠️ 클코 창구 — 처리하지 못했어요' : '✅ 클코가 답했어요';
-            await pool.query(`INSERT INTO notifications (user_id, type, title, message, link, pushed_at) VALUES ($1, 'desk', $2, $3, 'agent-office', ${pushed})`,
-                [o.created_by_id, title, clean(result.summary || result.question || result.notice || result.error || '', 120)]);
+            await pool.query(`INSERT INTO notifications (user_id, type, title, message, link, pushed_at) VALUES ($1, 'desk', $2, $3, $4, ${pushed})`,
+                [o.created_by_id, title, clean(result.summary || result.question || result.notice || result.error || '', 120), 'agent-office?o=' + id]);
         }
     } catch (e) { console.error('알림 기록 실패(무시):', e.message); }
     await audit('desk_respond', id, { status, type: result.type });

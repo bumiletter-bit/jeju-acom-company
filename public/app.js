@@ -170,6 +170,7 @@ function onLoginSuccess() {
     updateUserUI();
     init();
     startNotiPolling();
+    notiApplyHash();   // #576 푸시 알림으로 열린 경우 그 알림의 창으로
 }
 
 function updateUserUI() {
@@ -1062,22 +1063,53 @@ async function renderNotificationList() {
     }
 }
 
+// #576 알림 링크 = page[:tab][?k=v] — 메뉴로 간 뒤 그 창까지: agent-office?o=지시번호 → 그 채팅(ao-desk.js AkmAoDesk.open) · expense?id= → 그 결의서 · documents?id= → 그 서류 · settlement:settlement-status → 그 탭(#468)
+function notiGo(link) {
+    const raw = String(link || '');
+    const [pathPart, qs] = raw.split('?');
+    const [pageRaw, tabKey] = String(pathPart || '').split(':');
+    const page = (pageRaw === 'documents' || !pageRaw) ? 'document' : pageRaw;
+    const prm = new URLSearchParams(qs || '');
+    const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
+    if (navItem) navItem.click();
+    if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
+    const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10);
+    if (!(oid > 0) && !(rid > 0)) return;
+    setTimeout(() => {
+        try {
+            if (page === 'agent-office' && oid > 0 && window.AkmAoDesk && typeof window.AkmAoDesk.open === 'function') window.AkmAoDesk.open(oid);
+            else if (page === 'expense' && rid > 0 && typeof window.viewExpenseDetail === 'function') window.viewExpenseDetail(rid);
+            else if (page === 'document' && rid > 0 && typeof window.viewDocDetail === 'function') window.viewDocDetail(rid);
+        } catch (_) { /* 그 창을 못 열어도 메뉴까지는 간다 */ }
+    }, 300);
+}
+window.notiGo = notiGo;
+
+// #576 폰 푸시 알림(sw.js)이 '/#<link>' 로 열면 로그인 뒤 그 알림의 창으로(해시는 바로 지운다 — 새로고침 때 또 가지 않게)
+function notiApplyHash() {
+    let h = location.hash ? location.hash.slice(1) : '';
+    if (!h) return;
+    try { h = decodeURIComponent(h); } catch (_) { /* 그대로 */ }
+    if (!/^[a-z][a-z-]*(?::[a-z-]+)?(?:\?[\w=&%-]*)?$/.test(h)) return;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (_) { /* 무시 */ }
+    const page = h.split('?')[0].split(':')[0];
+    if (!document.getElementById('page-' + (page === 'documents' ? 'document' : page))) return;
+    setTimeout(() => notiGo(h), 400);   // 자동 로그인의 「보던 메뉴 복원」(#407) 뒤에
+}
+// 앱이 이미 열려 있을 때 푸시를 누르면 sw.js 가 해시만 바꾼다(새로고침 없음) → 그때도 같은 길로
+window.addEventListener('hashchange', () => { if (currentUser) notiApplyHash(); });
+
 window.clickNotification = async function(id, link) {
     try {
         await api(`/api/notifications/${id}/read`, 'PUT');
         fetchUnreadCount();
     } catch (err) { /* ignore */ }
     document.getElementById('notification-dropdown').style.display = 'none';
-    // 해당 페이지로 이동 (documents → document 보정)
-    const [pageRaw, tabKey] = String(link || '').split(':');   /* #468: 'settlement:settlement-status' = 페이지 + 하위 탭 */
-    const page = pageRaw === 'documents' ? 'document' : pageRaw;
-    const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
-    if (navItem) navItem.click();
-    if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
+    notiGo(link);
 };
 
 window.showAnnouncementDetail = async function(id) {
-    const noti = (window._notiCache || []).find(n => n.id === id);
+    const noti = (window._notiCache || []).find(n => n.id === id) || (window._notiHistCache || []).find(n => n.id === id);
     const message = noti ? noti.message : '';
 
     try {
@@ -1125,6 +1157,144 @@ window.deleteNotification = async function(e, id) {
         await renderNotificationList();
     } catch (err) { alert('삭제 실패: ' + err.message); }
 };
+
+// =============================================
+// #576 이전 알림 보기 — 읽은 것까지 90일 · 검색 · 더 보기 · 누르면 그 창으로 (대표 10/7)
+//   서버 GET /api/notifications/history?q&before&limit · 모양은 noti-history.css(야간 규칙 포함)
+// =============================================
+const NH = { q: '', items: [], hasMore: false, busy: false, timer: null, seq: 0 };
+const nhEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const NH_ICON = { announcement: '📢', desk: '🤖', expense: '🧾', settle_recon: '📊' };
+function nhIcon(t) { return NH_ICON[t] || (/^(document_|modification_)/.test(String(t)) ? '📄' : '🔔'); }
+function nhDayKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function nhDayLabel(d) {
+    const now = new Date(), today = nhDayKey(now), y = new Date(now); y.setDate(y.getDate() - 1);
+    const k = nhDayKey(d);
+    const base = `${d.getMonth() + 1}월 ${d.getDate()}일 (${'일월화수목금토'[d.getDay()]})`;
+    if (k === today) return '오늘 · ' + base;
+    if (k === nhDayKey(y)) return '어제 · ' + base;
+    return (d.getFullYear() !== now.getFullYear() ? d.getFullYear() + '년 ' : '') + base;
+}
+function nhBuild() {
+    if (document.getElementById('noti-hist')) return;
+    const ov = document.createElement('div');
+    ov.className = 'noti-hist-overlay'; ov.id = 'noti-hist'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-label', '이전 알림'); ov.hidden = true;
+    ov.innerHTML = `<div class="noti-hist">
+        <div class="nh-head"><span class="nh-head-title">이전 알림</span>
+            <button type="button" class="nh-link" id="noti-hist-readall">모두 읽음</button>
+            <button type="button" class="nh-close" id="noti-hist-close" aria-label="닫기">×</button></div>
+        <div class="nh-search"><input id="noti-hist-q" type="search" placeholder="알림 내용으로 찾기" autocomplete="off" aria-label="알림 내용으로 찾기">
+            <button type="button" class="nh-x" id="noti-hist-x" aria-label="검색어 지우기" hidden>×</button></div>
+        <div class="nh-list" id="noti-hist-list"><div class="noti-hist-empty">불러오는 중</div></div>
+        <div class="nh-foot"><button type="button" class="nh-more" id="noti-hist-more" hidden>더 보기</button></div>
+    </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e => { if (e.target === ov) closeNotiHistory(); });
+    ov.querySelector('#noti-hist-close').addEventListener('click', closeNotiHistory);
+    ov.querySelector('#noti-hist-more').addEventListener('click', () => nhLoad(true));
+    ov.querySelector('#noti-hist-readall').addEventListener('click', async () => {
+        try { await api('/api/notifications/read-all', 'PUT'); NH.items.forEach(n => { n.isRead = true; }); nhRender(); fetchUnreadCount(); } catch (err) { alert('실패: ' + err.message); }
+    });
+    const q = ov.querySelector('#noti-hist-q');
+    q.addEventListener('input', () => { clearTimeout(NH.timer); NH.timer = setTimeout(() => { NH.q = q.value.trim(); ov.querySelector('#noti-hist-x').hidden = !q.value; nhLoad(false); }, 250); });
+    q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(NH.timer); NH.q = q.value.trim(); nhLoad(false); } });
+    ov.querySelector('#noti-hist-x').addEventListener('click', () => { q.value = ''; NH.q = ''; ov.querySelector('#noti-hist-x').hidden = true; nhLoad(false); q.focus(); });
+    ov.querySelector('#noti-hist-list').addEventListener('click', e => {
+        const del = e.target.closest('.nh-del');
+        const item = e.target.closest('.noti-hist-item');
+        if (!item) return;
+        const id = Number(item.dataset.id);
+        if (del) { e.stopPropagation(); nhDelete(id); return; }
+        nhOpen(id);
+    });
+    ov.querySelector('#noti-hist-list').addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const item = e.target.closest('.noti-hist-item'); if (!item || e.target.closest('.nh-del')) return;
+        e.preventDefault(); nhOpen(Number(item.dataset.id));
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !ov.hidden) closeNotiHistory(); });
+}
+window.openNotiHistory = function(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    const dd = document.getElementById('notification-dropdown'); if (dd) dd.style.display = 'none';
+    nhBuild();
+    const ov = document.getElementById('noti-hist');
+    ov.hidden = false;
+    document.body.classList.add('noti-hist-open');
+    const q = ov.querySelector('#noti-hist-q');
+    if (window.innerWidth > 640) q.focus();   // 폰은 자판이 올라오지 않게
+    nhLoad(false);
+};
+window.closeNotiHistory = function() {
+    const ov = document.getElementById('noti-hist'); if (!ov) return;
+    ov.hidden = true;
+    document.body.classList.remove('noti-hist-open');
+};
+async function nhLoad(more) {
+    const ov = document.getElementById('noti-hist'); if (!ov) return;
+    const list = ov.querySelector('#noti-hist-list'), moreBtn = ov.querySelector('#noti-hist-more');
+    const seq = ++NH.seq;
+    if (!more) { NH.items = []; NH.hasMore = false; list.innerHTML = '<div class="noti-hist-empty">불러오는 중</div>'; }
+    moreBtn.disabled = true;
+    try {
+        const prm = new URLSearchParams();
+        if (NH.q) prm.set('q', NH.q);
+        if (more && NH.items.length) prm.set('before', String(NH.items[NH.items.length - 1].id));
+        prm.set('limit', '50');
+        const d = await api('/api/notifications/history?' + prm.toString());
+        if (seq !== NH.seq) return;   // 그 사이 다른 검색이 시작됨
+        const items = Array.isArray(d.items) ? d.items : [];
+        NH.items = more ? NH.items.concat(items) : items;
+        NH.hasMore = !!d.has_more;
+        window._notiHistCache = NH.items;
+        nhRender();
+    } catch (err) {
+        if (seq !== NH.seq) return;
+        list.innerHTML = '<div class="noti-hist-empty">알림을 불러올 수 없어요. 잠시 뒤 다시 열어 주세요.</div>';
+        moreBtn.hidden = true;
+    } finally { moreBtn.disabled = false; }
+}
+function nhRender() {
+    const ov = document.getElementById('noti-hist'); if (!ov) return;
+    const list = ov.querySelector('#noti-hist-list'), moreBtn = ov.querySelector('#noti-hist-more');
+    if (!NH.items.length) {
+        list.innerHTML = `<div class="noti-hist-empty">${NH.q ? '「' + nhEsc(NH.q) + '」이 든 알림이 없어요.' : '지난 알림이 없어요. 알림은 90일 동안 남아요.'}</div>`;
+        moreBtn.hidden = true; return;
+    }
+    let lastDay = '', html = '';
+    for (const n of NH.items) {
+        const d = new Date(n.createdAt);
+        const key = isNaN(d) ? '' : nhDayKey(d);
+        if (key !== lastDay) { lastDay = key; html += `<div class="noti-hist-day">${isNaN(d) ? '날짜 없음' : nhDayLabel(d)}</div>`; }
+        const title = String(n.title || '').trim(), msg = String(n.message || '').trim();
+        const showMsg = msg && msg !== title && !(n.type === 'announcement' && title.indexOf(msg.slice(0, 30)) >= 0 && msg.length <= 30);
+        const time = isNaN(d) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        html += `<div class="noti-hist-item${n.isRead ? '' : ' unread'}" data-id="${n.id}" role="button" tabindex="0" aria-label="${nhEsc(title || msg)}">
+            <span class="nh-ic" aria-hidden="true">${nhIcon(n.type)}</span>
+            <div class="nh-body">
+                <div class="nh-title">${nhEsc(title || msg)}</div>
+                ${showMsg ? `<div class="nh-msg">${nhEsc(msg)}</div>` : ''}
+                <div class="nh-time">${time}${n.isRead ? '' : ' · 안 읽음'}</div>
+            </div>
+            <button type="button" class="nh-del" aria-label="이 알림 삭제" title="삭제">×</button>
+        </div>`;
+    }
+    list.innerHTML = html;
+    moreBtn.hidden = !NH.hasMore;
+}
+async function nhOpen(id) {
+    const n = NH.items.find(x => x.id === id); if (!n) return;
+    closeNotiHistory();
+    if (n.type === 'announcement') { n.isRead = true; return showAnnouncementDetail(id); }
+    n.isRead = true;
+    return clickNotification(id, n.link || 'documents');
+}
+async function nhDelete(id) {
+    try {
+        await api(`/api/notifications/${id}`, 'DELETE');
+        NH.items = NH.items.filter(x => x.id !== id); window._notiHistCache = NH.items; nhRender(); fetchUnreadCount();
+    } catch (err) { alert('삭제 실패: ' + err.message); }
+}
 
 // =============================================
 // 📢 지시사항 전달 (관리자 전용)

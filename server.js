@@ -1722,8 +1722,8 @@ async function createNotification(userId, type, title, message, link) {
             [userId, type, title, message || '', link || 'documents']
         );
         // 폰으로 보내기는 push.js 의 배달부가 맡는다(10초마다 「아직 안 보낸 알림」을 찾아 보냄 — 창구가 직접 적은 알림도 똑같이 나간다)
-        // 30일 지난 알림 정리
-        await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '30 days'");
+        // 90일 지난 알림 정리(#576: 「이전 알림 보기」가 생겨 30일 → 90일)
+        await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '90 days'");
     } catch (err) { console.error('createNotification error:', err); }
 }
 
@@ -1737,6 +1737,22 @@ app.get('/api/notifications', authMiddleware, async (req, res) => {
             id: r.id, type: r.type, title: r.title, message: r.message,
             link: r.link, isRead: r.is_read, createdAt: r.created_at
         })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// #576 이전 알림 보기 — 읽은 것 포함 · 본인 것만 · q = 제목·내용 검색 · before = 그 번호보다 앞(더 보기) · 최대 100건
+app.get('/api/notifications/history', authMiddleware, async (req, res) => {
+    try {
+        const q = String(req.query.q || '').trim().slice(0, 80);
+        const before = parseInt(req.query.before, 10);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+        const where = ['user_id = $1'], params = [req.user.id];
+        if (before > 0) { params.push(before); where.push('id < $' + params.length); }
+        if (q) { params.push('%' + q.replace(/[%_\\]/g, m => '\\' + m) + '%'); where.push('(title ILIKE $' + params.length + " ESCAPE '\\' OR message ILIKE $" + params.length + " ESCAPE '\\')"); }
+        params.push(limit + 1);
+        const r = await pool.query('SELECT id, type, title, message, link, is_read, created_at FROM notifications WHERE ' + where.join(' AND ') + ' ORDER BY id DESC LIMIT $' + params.length, params);
+        const rows = r.rows.slice(0, limit);
+        res.json({ items: rows.map(x => ({ id: x.id, type: x.type, title: x.title, message: x.message, link: x.link, isRead: x.is_read, createdAt: x.created_at })), has_more: r.rows.length > limit });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2175,7 +2191,7 @@ app.post('/api/documents', authMiddleware, async (req, res) => {
             approverId, 'document_submitted',
             '새 서류 신청',
             `${req.user.name}님이 ${typeLabels[type] || type}(${subType})을 신청했습니다.`,
-            'documents'
+            'documents?id=' + docId
         );
 
         res.json({ id: docId, success: true });
@@ -2205,7 +2221,7 @@ app.put('/api/documents/:id/approve', authMiddleware, async (req, res) => {
             d.applicant_id, 'document_approved',
             '서류 승인',
             `${tl[d.type] || d.type}(${d.sub_type}) 신청이 승인되었습니다.`,
-            'documents'
+            'documents?id=' + d.id
         );
 
         res.json({ success: true });
@@ -2242,7 +2258,7 @@ app.put('/api/documents/:id/reject', authMiddleware, async (req, res) => {
             d.applicant_id, 'document_rejected',
             '서류 반려',
             `${tl2[d.type] || d.type}(${d.sub_type}) 신청이 반려되었습니다.`,
-            'documents'
+            'documents?id=' + d.id
         );
 
         res.json({ success: true });
@@ -2278,7 +2294,7 @@ app.put('/api/documents/:id/request-modification', authMiddleware, async (req, r
             d.approver_id, 'modification_requested',
             '서류 수정 요청',
             `${req.user.name}님이 ${tl3[d.type] || d.type}(${d.sub_type}) ${modLabel}을 요청했습니다.`,
-            'documents'
+            'documents?id=' + d.id
         );
 
         res.json({ success: true });
@@ -2373,7 +2389,7 @@ app.put('/api/documents/:id/approve-modification', authMiddleware, async (req, r
             d.applicant_id, 'modification_approved',
             '수정 요청 승인',
             `${tl4[d.type] || d.type}(${d.sub_type}) ${modLabel2} 요청이 승인되었습니다.`,
-            'documents'
+            'documents?id=' + d.id
         );
 
         res.json({ success: true });
@@ -2403,7 +2419,7 @@ app.put('/api/documents/:id/reject-modification', authMiddleware, async (req, re
             d.applicant_id, 'modification_rejected',
             '수정 요청 반려',
             `${tl5[d.type] || d.type}(${d.sub_type}) ${modLabel3} 요청이 반려되었습니다.`,
-            'documents'
+            'documents?id=' + d.id
         );
 
         res.json({ success: true });
@@ -2573,7 +2589,7 @@ app.post('/api/expense-reports', authMiddleware, async (req, res) => {
         const notifyTo = managerId || ceoId;
         const applicantInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [req.user.id]);
         const applicantName = applicantInfo.rows[0] ? `${applicantInfo.rows[0].position} ${applicantInfo.rows[0].name}` : '';
-        await createNotification(notifyTo, 'expense', '지출결의서 결재 요청', `${applicantName}님이 "${title}" 지출결의서를 제출했습니다.`, 'expense');
+        await createNotification(notifyTo, 'expense', '지출결의서 결재 요청', `${applicantName}님이 "${title}" 지출결의서를 제출했습니다.`, 'expense?id=' + result.rows[0].id);
 
         res.json({ id: result.rows[0].id, success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2803,8 +2819,8 @@ app.put('/api/expense-reports/:id/approve', authMiddleware, async (req, res) => 
             // 알림: 대표에게 + 신청자에게
             const applicantInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [er.applicant_id]);
             const aName = applicantInfo.rows[0] ? `${applicantInfo.rows[0].position} ${applicantInfo.rows[0].name}` : '';
-            await createNotification(er.ceo_id, 'expense', '지출결의서 2차 결재 요청', `${aName}님의 "${er.title}" 지출결의서가 1차 승인되었습니다.`, 'expense');
-            await createNotification(er.applicant_id, 'expense', '지출결의서 1차 승인', `"${er.title}" 지출결의서가 1차 승인되었습니다.`, 'expense');
+            await createNotification(er.ceo_id, 'expense', '지출결의서 2차 결재 요청', `${aName}님의 "${er.title}" 지출결의서가 1차 승인되었습니다.`, 'expense?id=' + er.id);
+            await createNotification(er.applicant_id, 'expense', '지출결의서 1차 승인', `"${er.title}" 지출결의서가 1차 승인되었습니다.`, 'expense?id=' + er.id);
             return res.json({ success: true, status: 'manager_approved' });
         }
 
@@ -2820,7 +2836,7 @@ app.put('/api/expense-reports/:id/approve', authMiddleware, async (req, res) => 
             );
             // 알림: 신청자에게 (본인이 아닌 경우)
             if (er.applicant_id !== req.user.id) {
-                await createNotification(er.applicant_id, 'expense', '지출결의서 최종 승인', `"${er.title}" 지출결의서가 최종 승인되었습니다.`, 'expense');
+                await createNotification(er.applicant_id, 'expense', '지출결의서 최종 승인', `"${er.title}" 지출결의서가 최종 승인되었습니다.`, 'expense?id=' + er.id);
             }
             return res.json({ success: true, status: 'approved' });
         }
@@ -2849,7 +2865,7 @@ app.put('/api/expense-reports/:id/reject', authMiddleware, async (req, res) => {
         // 알림: 신청자에게
         const rejectorInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [req.user.id]);
         const rName = rejectorInfo.rows[0] ? `${rejectorInfo.rows[0].position} ${rejectorInfo.rows[0].name}` : '';
-        await createNotification(er.applicant_id, 'expense', '지출결의서 반려', `"${er.title}" 지출결의서가 ${rName}님에 의해 반려되었습니다.${reason ? ' 사유: ' + reason : ''}`, 'expense');
+        await createNotification(er.applicant_id, 'expense', '지출결의서 반려', `"${er.title}" 지출결의서가 ${rName}님에 의해 반려되었습니다.${reason ? ' 사유: ' + reason : ''}`, 'expense?id=' + er.id);
 
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2911,7 +2927,7 @@ app.put('/api/expense-reports/:id/resubmit', authMiddleware, async (req, res) =>
         if (notifyTo) {
             const applicantInfo = await pool.query('SELECT name, position FROM users WHERE id = $1', [req.user.id]);
             const applicantName = applicantInfo.rows[0] ? `${applicantInfo.rows[0].position} ${applicantInfo.rows[0].name}` : '';
-            await createNotification(notifyTo, 'expense', '지출결의서 재요청', `${applicantName}님이 "${er.title}" 지출결의서를 재요청했습니다.`, 'expense');
+            await createNotification(notifyTo, 'expense', '지출결의서 재요청', `${applicantName}님이 "${er.title}" 지출결의서를 재요청했습니다.`, 'expense?id=' + er.id);
         }
 
         res.json({ success: true });
@@ -13328,7 +13344,7 @@ async function deskOcrTick() {
             const partnerHint = normalizePartnerName(o.content) || normalizePartnerName(r.partner);
             const settleDate = r.date || parseSettlementDate(o.content, kstTodayStr());
             await settlementOcrBuildConfirm(o, partnerHint, items, o.run_id, settleDate);
-            if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '📋 정산 확인표가 준비됐어요', '에이전트 오피스에서 거래처·금액을 확인하고 저장해 주세요', 'agent-office');
+            if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '📋 정산 확인표가 준비됐어요', '에이전트 오피스에서 거래처·금액을 확인하고 저장해 주세요', 'agent-office?o=' + o.id);
         } catch (err) {
             await pool.query(`UPDATE pending_orders SET status='오류', result=$2, processed_at=NOW() WHERE id=$1`,
                 [o.id, JSON.stringify({ type: 'error', error: '확인표 생성 실패: ' + err.message })]);
@@ -13502,7 +13518,7 @@ app.post('/api/agent-office/orders/:id/approve', authMiddleware, ownerOnly, asyn
         if (o.run_id) await agentRunAppendStep(o.run_id, agentStep('work', who, '✅ 승인 — 창구가 실행합니다'));
         await writeAudit({ action: 'desk_approve', targetType: 'pending_order', targetId: o.id,
             changes: { after: { status: '승인됨', action: o.result.action, summary: o.result.summary } }, source: 'agent_office', actor: adminActor(req) });
-        if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '✅ 요청이 승인됐어요', String(o.result.summary || '').slice(0, 120), 'agent-office');
+        if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '✅ 요청이 승인됐어요', String(o.result.summary || '').slice(0, 120), 'agent-office?o=' + o.id);
         res.json({ message: '승인했습니다 — 창구가 실행합니다' });
     } catch (err) { handleAdminErr(res, err); }
 });
@@ -13525,7 +13541,7 @@ app.post('/api/agent-office/orders/:id/reject', authMiddleware, ownerOnly, async
         }
         await writeAudit({ action: 'desk_reject', targetType: 'pending_order', targetId: o.id,
             changes: { after: { status: '반려', reason } }, source: 'agent_office', actor: adminActor(req) });
-        if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '↩️ 요청이 반려됐어요', (reason || String(o.result.summary || '')).slice(0, 120), 'agent-office');
+        if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '↩️ 요청이 반려됐어요', (reason || String(o.result.summary || '')).slice(0, 120), 'agent-office?o=' + o.id);
         res.json({ message: '반려했습니다' });
     } catch (err) { handleAdminErr(res, err); }
 });

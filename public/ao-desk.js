@@ -998,7 +998,7 @@
         go(); setTimeout(go, 120);
     }
     // 그 대화의 답 칸으로 옮겨 커서를 둔다(답 칸이 없는 대화면 대화 틀로만 옮긴다)
-    function focusThread(box) {
+    function focusThread(box, noFocus) {
         if (!box) return;
         const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         const ta = box.querySelector('.desk-turn.last .desk-reply-in');
@@ -1018,7 +1018,7 @@
             if (Math.abs(d) > 4) { if (sc === document.scrollingElement || sc === document.documentElement) window.scrollBy(0, d); else sc.scrollTop += d; }
         };
         align();
-        if (ta) ta.focus({ preventScroll: true });
+        if (ta && !noFocus) ta.focus({ preventScroll: true });
         let stop = false; const cancel = () => { stop = true; };
         ['touchstart', 'wheel', 'keydown'].forEach(ev => window.addEventListener(ev, cancel, { once: true, passive: true, capture: true }));
         [250, 600, 1100, 1800].forEach(ms => setTimeout(() => { if (!stop) align(); }, ms));
@@ -1057,7 +1057,7 @@
     function previewMask(list) {
         let shownN = 0;
         return list.map(o => {
-            if (S.qOn || NEEDS.includes(o.status)) return false;
+            if (S.qOn || NEEDS.includes(o.status) || S.pin.has(o.id)) return false;   // #576 알림에서 찾아온 줄(pin)은 접지 않는다
             shownN++;
             return shownN > PREVIEW_LIST;
         });
@@ -1439,6 +1439,70 @@
         }
         applyTheme();
     })();
+
+    // #576(대표 10/7 「알림을 누르면 해당 창·페이지로」): 알림에서 그 채팅으로 — app.js 가 메뉴를 바꾼 뒤 window.AkmAoDesk.open(지시 id) 를 부른다
+    //   ①채팅 탭에 있으면 그 대화 틀로(답 칸은 자판 바로 위 자리 · 자판은 띄우지 않는다) ②없으면(종료한 대화 · 남의 것) 이전 채팅 이력에서 펼쳐 보여 준다 ③어디에도 없으면 아무것도 바꾸지 않는다
+    //   탭을 바꾸기 전에 먼저 받아서 확인한다 → 없는 번호로는 탭·검색이 그대로다. 답·되묻기 차례 id 여도 그 차례가 속한 대화를 찾는다(threadsOf)
+    let openSeq = 0;
+    const flashEl = (el, ms) => { if (!el) return; el.classList.remove('desk-flash'); void el.offsetWidth; el.classList.add('desk-flash'); setTimeout(() => el.classList.remove('desk-flash'), ms || 2600); };
+    async function openOrder(orderId) {
+        const id = Number(orderId);
+        if (!Number.isInteger(id) || id <= 0) return false;
+        const seq = ++openSeq, stale = () => seq !== openSeq || !S.mounted || !pageActive();
+        try {
+            for (let i = 0; i < 50 && !(S.mounted && pageActive()); i++) await new Promise(r => setTimeout(r, 100));   // 메뉴 전환·첫 그리기를 기다린다(최대 5초)
+            if (stale()) return false;
+            const has = list => list.some(o => o.id === id);
+            const turnEl = () => document.querySelector('#desk-list .desk-turn[data-oid="' + id + '"], #desk-list [data-oid="' + id + '"]');
+            const showList = () => { const lb = $('desk-listbox'); if (S.full && lb && !S.full.contains(lb) && S.full !== lb) closeFull(); };
+            // ① 채팅 탭(내 것 · 열려 있는 대화)
+            let mine = S.tab === 'mine' && has(S.orders) ? S.orders : null;
+            if (!mine) { const d = await api('/api/agent-office/desk/orders?mine=1&limit=200'); if (stale()) return false; if (has(d.orders || [])) mine = d.orders; }
+            if (mine) {
+                const t = threadsOf(mine).find(x => x.items.some(o => o.id === id));
+                t.items.forEach(o => S.pin.add(o.id));   // 첫 화면 몇 건 밖이어도 접히지 않게
+                if (mine.findIndex(o => o.id === id) >= S.mineLimit) S.mineLimit = 200;   // 채팅 탭 60건 밖이면 넉넉히 받는다
+                S.q.mine = ''; if (S.fs !== 'all') { S.fs = 'all'; $('desk-fs').value = 'all'; }
+                showList();
+                if (S.tab !== 'mine') await setTab('mine'); else { $('desk-hist-q').value = ''; $('desk-hist-x').hidden = true; S.sig = ''; await loadOrders(true); }
+                if (stale()) return false;
+                let el = turnEl();
+                for (let i = 0; i < 3 && !el; i++) { await new Promise(r => setTimeout(r, 500)); if (stale()) return false; S.sig = ''; await loadOrders(true); el = turnEl(); }
+                if (!el) return false;
+                const box = el.closest('.desk-thread-box');
+                if (!box) { el.scrollIntoView({ block: 'center' }); flashEl(el); return 'mine'; }   // 표·카드 보기
+                if (el.classList.contains('last')) focusThread(box, true); else { alignRow(el); flashEl(box, 1600); }
+                flashEl(el);
+                return 'mine';
+            }
+            // ② 이전 채팅 이력(종료한 대화 · 대표는 남의 것도) — 몇 쪽까지 받아 본다
+            let got = [], more = true, before = 0;
+            for (let p = 0; p < 5 && more && !has(got); p++) {
+                const d = await api('/api/agent-office/desk/orders?history=1&limit=' + HIST_PAGE + (before ? '&before=' + before : ''));
+                if (stale()) return false;
+                const rows = d.orders || []; got = got.concat(rows); more = rows.length >= HIST_PAGE;
+                if (rows.length) before = Math.min(...rows.map(o => o.id));
+                if (before && before <= id) break;   // 그 번호보다 옛 줄까지 받았는데 없으면 더 볼 것 없다
+            }
+            if (!has(got)) return false;
+            S.hist.q = ''; S.q.all = ''; S.hist.older = got.slice(HIST_PAGE); S.hist.more = more;
+            if (S.hist.mineOnly) { S.hist.mineOnly = false; $('desk-hist-mine').checked = false; }
+            S.hist.open.add(threadsOf(got).find(x => x.items.some(o => o.id === id)).id);
+            showList();
+            await setTab('all');
+            if (stale()) return false;
+            const t2 = threadsOf(S.orders).find(x => x.items.some(o => o.id === id));
+            if (!t2) return false;
+            if (!S.hist.open.has(t2.id) || !turnEl()) { S.hist.open.add(t2.id); renderList(); }
+            const el = turnEl();
+            if (!el) return false;
+            const item = el.closest('.desk-h-item');
+            alignRow((item && item.querySelector('.desk-h-row')) || el);
+            flashEl(el);
+            return 'all';
+        } catch (e) { return false; }
+    }
+    window.AkmAoDesk = { open: openOrder };
 
     window.aoDeskEnter = async function () {
         mount();

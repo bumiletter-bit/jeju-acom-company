@@ -100,7 +100,18 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/7 아침): 회사 v5.9.454 / app.js v=402 · ao-desk.js v=47 · ao-dark.css v=1 · final-order.js v=22 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #576부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/7 아침): 회사 v5.9.455 / app.js v=403 · ao-desk.js v=48 · ao-dark.css v=1 · final-order.js v=22 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #577부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 🔔 #576 이전 알림 보기 · 검색 · 알림을 누르면 그 창으로 (대표 10/7 · v5.9.455 / app.js v=403 · ao-desk.js v=48 · 총괄 서버·app.js·CSS + 워커1 ao-desk.js + 워커2 검증)
+
+- **대표 질문 「에이전트 오피스 알림은 왜 채팅으로 연결 안 돼?」**: 알림의 link 칸이 메뉴 이름(「agent-office」)뿐이라 몇 번 채팅인지 몰랐다. 지출결의·서류도 같았다(메뉴까지만).
+- **링크 꼴(이제)** = `page[:tab][?k=v]` — `agent-office?o=<지시 id>`(server.js 3곳 + scripts/desk/respond.js 2곳) · `expense?id=<결의서 id>`(6곳) · `documents?id=<서류 id>`(6곳) · `settlement:settlement-status`(종전 #468). app.js `notiGo(link)`: 메뉴 전환 → 탭 → 300ms 뒤 `window.AkmAoDesk.open(o)` / `viewExpenseDetail(id)` / `viewDocDetail(id)`. 옛 알림(링크에 번호 없음)은 종전대로 메뉴까지.
+- **ao-desk.js `window.AkmAoDesk.open(id)`(워커1)**: 채팅 탭에서 그 차례가 속한 대화를 찾아 보이는 화면에 맞추고 강조 → 없으면 이전 채팅 이력 탭에서 펼침 → 그래도 없으면 조용히 끝.
+- **푸시(sw.js `/#<link>`)**: `notiApplyHash()` — onLoginSuccess 뒤 400ms(자동 로그인의 보던 메뉴 복원 #407 뒤) + `hashchange`(앱이 이미 열려 있으면 sw 가 해시만 바꿈 · 새로고침 없음). 해시는 바로 지움. 정규식 밖 해시는 무시.
+- **이전 알림 창**: 종 창 머리 [이전 알림](#noti-hist-open) → `#noti-hist`(.noti-hist-overlay · role dialog) = 검색칸(치는 즉시 250ms · 서버 q) · 날짜 머리(오늘 · 어제 · M월 D일) · 항목(제목·내용·시각 · 안 읽음 = 왼쪽 선) · 삭제 × · [더 보기](before=마지막 id · 50건씩) · 모두 읽음 · Esc·바깥 누름 닫기. 서버 `GET /api/notifications/history?q&before&limit`(본인 것만 · ILIKE · %_ 는 글자 그대로 · 최대 100). **보관 30일 → 90일**(createNotification 의 정리 줄).
+- **모양 = public/noti-history.css(신규 · 밝은 + 야간 규칙 함께)** — ao-dark.css 생성기는 이 파일을 읽지 않는다(gen-dark 재실행 = 바이트 동일 확인). 🔴 새 화면에 style 속성을 쓰면 생성기 출력이 바뀌므로 class 로만.
+- ✅ 총괄 스모크 18 · verify-468-ui 15 · verify-576-noti-history(워커2) · ao-desk 쪽(워커1): 538·571·499·501 + 576-desk-open.
+- 🔵 함정: Playwright `goto('/#…')` 는 같은 주소면 해시 이동만(새로고침 없음) — 실기기 sw 의 `client.navigate` 도 같아서 hashchange 처리가 꼭 필요했다. respond.js 는 별도 프로세스로 돌아 대기 프로그램 재시작 불요.
 
 ### 📅 #574 창구 발송휴무일 등록 · #575 최종발주 [확인]/[다시 판정] (대표 10/7 「만들어」 · v5.9.454 / final-order.js v=22 · css v=15)
 
