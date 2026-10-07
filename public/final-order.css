@@ -393,3 +393,7 @@ html[data-ao-theme="dark"] .fo .fo-ed.stale .fo-gut .m span { opacity: .5; }
 .fo-x:hover { background: rgba(0, 0, 0, .08); }
 html[data-ao-theme="dark"] #fo-chat-chip { background: var(--d-accent-soft, #232A52); color: var(--d-accent, #8C94FF); }
 html[data-ao-theme="dark"] .fo-x:hover { background: rgba(255, 255, 255, .12); }
+
+/* #575 [확인] 버튼 — 판정이 낡으면 [다시 판정](주황 테두리)으로 눈에 띄게 */
+#fo-rejudge.stale { background: #FFF7E6; color: #B54708; border-color: #F59E0B; }
+html[data-ao-theme="dark"] #fo-rejudge.stale { background: #3A2E12; color: #FBBF4A; border-color: #6E5416; }

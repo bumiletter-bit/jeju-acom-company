@@ -18,4 +18,10 @@ r = ss.computeShipping(at('2026-10-16T14:00:00'), new Set(), new Map(), { arrive
 ok(r.shipDate === '2026-10-18' && !/\(/.test(r.text), '토요일만으로 밀린 것(일요일 발송)은 종전대로 괄호 없음', r.text);
 r = ss.computeShipping(at('2026-10-13T14:00:00'), new Set(), new Map(), { arriveOff: new Set() });
 ok(r.text === '내일 수요일 오전 발송, 내일 목요일 도착 예정' || /^내일 수요일 오전 발송/.test(r.text), '평일 보통 주문은 종전 문장 그대로', r.text);
+// #574 창구가 등록한 사유 꼴(「시험 휴무」「추석 연휴」) — 뒤의 휴무·연휴 낱말을 떼고 붙인다
+const two = new Set(['2026-10-15', '2026-10-16']);
+r = ss.computeShipping(at('2026-10-14T14:00:00'), two, new Map([['2026-10-15', '시험 휴무'], ['2026-10-16', '시험 휴무']]), { arriveOff: new Set() });
+ok(/\(시험 연휴 휴무로 일요일 발송이에요\)$/.test(r.text), '「시험 휴무」 두 날 → 「시험 연휴 휴무로 일요일 발송이에요」(휴무 휴무 중복 없음)', r.text);
+r = ss.computeShipping(at('2026-10-14T14:00:00'), one, new Map([['2026-10-15', '추석 연휴']]), { arriveOff: new Set() });
+ok(/\(추석 휴무로 금요일 발송이에요\)$/.test(r.text), '「추석 연휴」 하루 → 「추석 휴무로 금요일 발송이에요」', r.text);
 console.log(`\n#573: ${pass} 통과 / ${fail} 실패`); process.exit(fail ? 1 : 0);

@@ -122,7 +122,7 @@
                         <p class="fo-hint">정리 파일 줄을 그대로 붙여 넣어요(요청일자, 번호, 비고, 플랫폼 순서). 틀에 안 맞는 줄은 클코가 틀로 고쳐 쓰고, 폰 메모 캡처는 [사진으로 넣기]로 읽혀요.</p>
                     </div>
                     <div class="fo-acts">
-                        <button type="button" class="fo-btn" id="fo-rejudge">다시 판정</button>
+                        <button type="button" class="fo-btn primary" id="fo-rejudge">확인</button>
                         <input type="file" id="fo-memo-file" accept="image/*" hidden>
                         <button type="button" class="fo-btn" id="fo-memo-photo" title="폰 메모 캡처·사진을 클코가 읽어 정리 줄로 넣어요">사진으로 넣기</button>
                         <span class="fo-msg" id="fo-memo-msg" role="status"></span>
@@ -217,7 +217,9 @@
     }
     const clearMsg = () => ['fo-in-msg', 'fo-make-msg'].forEach(id => { $(id).textContent = ''; $(id).classList.remove('err'); });
     // 주문을 불러온 뒤 메모·현금파일·기준 발송일을 바꾸면 판정이 낡는다 → [다시 판정] 전에는 파일을 못 만든다
-    function markStale() { if (!st.loaded || st.phase === 'loading') return; st.stale = true; st.out = null; $('fo-result').hidden = true; $('fo-in-msg').classList.remove('err'); $('fo-in-msg').textContent = '내용이 바뀌었어요. [다시 판정]을 눌러 주세요.'; syncMake(); syncAi(); }
+    function markStale() { if (!st.loaded || st.phase === 'loading') return; st.stale = true; st.out = null; $('fo-result').hidden = true; $('fo-in-msg').classList.remove('err'); $('fo-in-msg').textContent = '내용이 바뀌었어요. [다시 판정]을 눌러 주세요.'; syncMake(); syncAi(); syncRejudgeLabel(); }
+    // #575: 버튼 글은 낡음(stale) 상태와 늘 같이 간다 — markStale 에서도, syncInput 에서도 이 한 곳을 부른다(워커1 발견: 메모 입력·기준일 변경 때 글이 안 바뀜)
+    function syncRejudgeLabel() { const b = $('fo-rejudge'); if (!b) return; const stale = !!(st.stale || !st.judged); b.textContent = stale ? '다시 판정' : '확인'; b.classList.toggle('stale', stale); }
 
     // ── 열기·닫기 ────────────────────────────────────────────────────────────
     async function open() {
@@ -259,6 +261,8 @@
         $('fo-start').disabled = !ready; $('fo-start').hidden = st.loaded;
         $('fo-memo-sec').hidden = !st.loaded;   // #572 메모 칸은 주문을 불러온 뒤에
         $('fo-rejudge').hidden = !st.loaded; $('fo-rejudge').disabled = !haveCash || st.busy || st.ai.running;
+        // #575(대표 10/7): 버튼 이름 = 평소 [확인] · 메모·현금파일·기준일이 바뀌어 판정이 낡으면 [다시 판정] — 판정하면 다시 [확인]
+        syncRejudgeLabel();
         $('fo-memo-photo').disabled = !st.loaded || st.busy || !!st.memoAsk;
         $('fo-reload').hidden = !st.loaded; $('fo-reload').disabled = !ready || st.ai.running;
         $('fo-cash-none').checked = st.cashNone;

@@ -1762,6 +1762,63 @@ async function resolveCards(pg, type) {
                 ok(t30.errs.length === 0, '㉚ 오류 0', t30.errs.join(' | ')); await t30.ctx.close();
             }
 
+            // ── ㉛ #575 메모 구획 버튼 = 평소 「확인」 · 판정이 낡으면 「다시 판정」(주황) ─────────────────────────────────────────
+            console.log('\n㉛ #575 [확인] ↔ [다시 판정]');
+            {
+                const PNG31 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFklEQVR42mP8z8Dwn4EIwDiqkL4KAZKnCAHsjSN4AAAAAElFTkSuQmCC', 'base64');
+                const rows31 = [mk('일가', { tel: '010-9200-1111' }), mk('일나', { tel: '010-9200-2222' }), mk('일다')];
+                const w31 = await mkChat(false, rows31);
+                w31.chat.memoAns = () => ({ memo: '기본', sure: true });
+                const btn = pg => pg.evaluate(() => { const b = document.getElementById('fo-rejudge'), cs = getComputedStyle(b); return { t: b.textContent.trim(), stale: b.classList.contains('stale'), primary: b.classList.contains('primary'), dis: b.disabled, vis: b.getClientRects().length > 0, bg: cs.backgroundColor, fg: cs.color }; });
+                const settle = async pg => { await idle(pg); await pg.waitForTimeout(800); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(250); };
+                await setCash(w31.pg, null); await w31.pg.click(SEL.start); await settle(w31.pg);
+                let b = await btn(w31.pg); const bg0 = b.bg;
+                ok(b.vis && b.t === '확인' && !b.stale && b.primary && !b.dis, '㉛ 불러온 직후(판정 끝) 버튼 글 = 「확인」 · 주황 표시 없음', JSON.stringify(b));
+                await w31.pg.focus(SEL.memo); await w31.pg.keyboard.type('0'); await w31.pg.waitForTimeout(250); b = await btn(w31.pg);
+                ok(b.t === '다시 판정' && b.stale && !b.dis && b.bg !== bg0 && b.bg === 'rgb(255, 247, 230)' && b.fg === 'rgb(181, 71, 8)', '㉛ 메모 칸에 한 글자 입력 → 「다시 판정」 · 주황 바탕(#FFF7E6) · 갈색 글자', JSON.stringify(b));
+                ok(await w31.pg.isDisabled(SEL.make), '㉛ 판정이 낡은 동안 [파일 만들기] 꺼짐(종전 그대로)');
+                await w31.pg.fill(SEL.memo, ''); await w31.pg.click(SEL.rejudge); await settle(w31.pg); b = await btn(w31.pg);
+                ok(b.t === '확인' && !b.stale && b.bg !== 'rgb(255, 247, 230)', '㉛ 누르면 판정 뒤 다시 「확인」(주황 표시 사라짐)', JSON.stringify(b));
+                // 현금파일 「오늘은 없음」 토글
+                await w31.pg.uncheck(SEL.cashNone); await w31.pg.waitForTimeout(250); const bOff = await btn(w31.pg);
+                await w31.pg.check(SEL.cashNone); await w31.pg.waitForTimeout(250); b = await btn(w31.pg);
+                ok(bOff.t === '다시 판정' && bOff.stale && bOff.dis && b.t === '다시 판정' && b.stale && !b.dis, '㉛ 「오늘은 없음」을 풀면 「다시 판정」(현금 정보가 없어 꺼짐) → 다시 체크해도 「다시 판정」(켜짐)', JSON.stringify([bOff, b]));
+                await w31.pg.click(SEL.rejudge); await settle(w31.pg); b = await btn(w31.pg);
+                ok(b.t === '확인' && !b.stale, '㉛ 누르면 「확인」', b.t);
+                // 기준 발송일 바꿈
+                const other = await w31.pg.evaluate(sel => { const e = document.querySelector(sel); return [...e.options].map(o => o.value).find(v => v !== e.value) || ''; }, SEL.ship);
+                await w31.pg.selectOption(SEL.ship, other); await w31.pg.waitForTimeout(400); b = await btn(w31.pg);
+                ok(!!other && b.t === '다시 판정' && b.stale, '㉛ 기준 발송일을 바꾸면 「다시 판정」', other + ' ' + JSON.stringify(b));
+                await w31.pg.selectOption(SEL.ship, ship); await w31.pg.waitForTimeout(300); await w31.pg.click(SEL.rejudge); await settle(w31.pg); b = await btn(w31.pg);
+                ok(b.t === '확인' && !b.stale, '㉛ 기준일을 되돌리고 누르면 「확인」', b.t);
+                // 사진으로 넣기 뒤 = 판정이 끝나 있으므로 「확인」
+                w31.chat.answer = () => ({ reply: '사진에서 1줄을 읽었어요', actions: [{ op: 'lines', text: '010-9200-1111 2S사이즈' }] });
+                await w31.pg.setInputFiles('#fo-memo-file', { name: '메모.png', mimeType: 'image/png', buffer: PNG31 });
+                await w31.pg.waitForFunction(() => document.getElementById('fo-memo').value.includes('010-9200-1111'), null, { timeout: 30000 }).catch(() => { });
+                await settle(w31.pg); b = await btn(w31.pg);
+                ok(b.t === '확인' && !b.stale && (await w31.pg.inputValue(SEL.memo)).includes('010-9200-1111 2S사이즈'), '㉛ [사진으로 넣기] 뒤 = 「확인」(줄이 들어가며 판정까지 끝남)', JSON.stringify(b));
+                // 자동 고쳐 쓰기 뒤 = 「확인」
+                w31.chat.fixAnswer = bb => { const t = (String(bb.ask || '').match(/《번호\d+》/) || [])[0]; return { reply: '', actions: [{ op: 'lines', text: (t || '') + ' S사이즈' }] }; };
+                await w31.pg.fill(SEL.memo, '010-9200-1111 2S사이즈\n010-9200-2222 사이즈S'); await w31.pg.waitForTimeout(200); const bMid = await btn(w31.pg);
+                await w31.pg.click(SEL.rejudge);
+                await w31.pg.waitForFunction(() => /고쳐 썼어요/.test(document.getElementById('fo-memo-msg').textContent), null, { timeout: 60000 }).catch(() => { });
+                await settle(w31.pg); b = await btn(w31.pg);
+                ok(bMid.t === '다시 판정' && b.t === '확인' && !b.stale && w31.chat.fixPosts.length === 1 && (await w31.pg.inputValue(SEL.memo)).split('\n')[1] === '010-9200-2222 S사이즈', '㉛ 못 읽는 줄을 적고 누름 → 클코가 고쳐 쓰고 다시 판정까지 끝나면 「확인」', JSON.stringify({ mid: bMid.t, end: b.t, fix: w31.chat.fixPosts.length }));
+                ok(w31.errs.length === 0, '㉛ 오류 0', w31.errs.join(' | ')); await w31.ctx.close();
+                // 폰 390
+                const m31 = await mkChat(false, rows31, { width: 390, height: 844 }, true);
+                m31.chat.memoAns = () => ({ memo: '기본', sure: true });
+                await setCash(m31.pg, null); await m31.pg.click(SEL.start); await settle(m31.pg);
+                const lay = pg => pg.evaluate(() => { const r = id => { const e = document.getElementById(id), q = e.getBoundingClientRect(); return [Math.round(q.left), Math.round(q.right), Math.round(q.height)]; }; const sec = document.getElementById('fo-memo-sec'); return { vw: window.innerWidth, rej: r('fo-rejudge'), photo: r('fo-memo-photo'), msg: r('fo-memo-msg'), over: document.documentElement.scrollWidth > window.innerWidth + 1, secOver: sec.scrollWidth > sec.clientWidth + 1, t: document.getElementById('fo-rejudge').textContent.trim() }; });
+                const l0 = await lay(m31.pg);
+                await m31.pg.focus(SEL.memo); await m31.pg.keyboard.type('010-9200-1111 사이즈가 뭔지 모르겠는 아주 긴 줄을 적어 본다'); await m31.pg.waitForTimeout(250);
+                await m31.pg.evaluate(() => { const m = document.getElementById('fo-memo-msg'); m.textContent = '틀에 안 맞는 줄 3줄을 클코가 고쳐 쓰는 중 · 12초 — 안내 글이 길어질 때도 버튼이 밀리지 않는지'; });
+                const l1 = await lay(m31.pg);
+                const inV = l => l.rej[0] >= 0 && l.rej[1] <= l.vw + 1 && l.photo[0] >= 0 && l.photo[1] <= l.vw + 1 && l.msg[1] <= l.vw + 1 && !l.over && !l.secOver && l.rej[2] >= 40 && l.photo[2] >= 40;
+                ok(l0.t === '확인' && inV(l0) && l1.t === '다시 판정' && inV(l1), '㉛ 폰 390px: 버튼 줄(확인/다시 판정 · 사진으로 넣기 · 안내 칸)이 화면 밖으로 안 넘침 — 안내 글이 길 때도 · 버튼 높이 40px 이상', JSON.stringify([l0, l1]));
+                ok(m31.errs.length === 0, '㉛ 폰 오류 0', m31.errs.join(' | ')); await m31.ctx.close();
+            }
+
             // 창구가 안 집음(40초)
             let e2; try { e2 = await mkChat(true); } catch (_) { e2 = null; }
             if (e2) {

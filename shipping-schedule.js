@@ -122,7 +122,7 @@ function delayPhrase(reason, cand, shipDay) {
     const r = String(reason || '').trim();
     if (!r) return '';
     if (/휴무|쉬|발송|배송|택배/.test(r) && r.length > 8) return r;                  // 이미 설명 문장으로 등록한 사유는 그대로
-    const name = r.replace(/^(?:공휴일|휴일|연휴)\s*\(\s*(.+?)\s*\)$/, '$1').replace(/\s*(?:공휴일|휴일)$/, '').trim() || r;
+    const name = r.replace(/^(?:공휴일|휴일|연휴)\s*\(\s*(.+?)\s*\)$/, '$1').replace(/\s*(?:공휴일|휴일|휴무|연휴|쉬는\s*날)+\s*$/, '').trim() || r;   // 「시험 휴무」「추석 연휴」 → 「시험」「추석」(뒤에 「연휴 휴무로」를 붙이므로)
     const days = Math.round((shipDay - cand) / 86400000);
     const dow = DAY_KO[shipDay.getUTCDay()];
     return `${name} ${days >= 2 ? '연휴 ' : ''}휴무로 ${dow}요일 발송이에요`;

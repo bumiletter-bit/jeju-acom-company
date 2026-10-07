@@ -100,7 +100,13 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/7 아침): 회사 v5.9.453 / app.js v=402 · ao-desk.js v=47 · ao-dark.css v=1 · final-order.js v=21 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #574부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/7 아침): 회사 v5.9.454 / app.js v=402 · ao-desk.js v=47 · ao-dark.css v=1 · final-order.js v=22 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #576부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 📅 #574 창구 발송휴무일 등록 · #575 최종발주 [확인]/[다시 판정] (대표 10/7 「만들어」 · v5.9.454 / final-order.js v=22 · css v=15)
+
+- **#574**: `scripts/desk/holiday.js`(list · preview · add · off) — 화면과 같은 표(shipping_holidays) 같은 upsert · audit(source desk · actor 「클코(창구) · 요청자」) · 지난 날짜·90일 밖·14일 초과·사유 2~40자 밖은 거절 · off 는 deleted_at(되돌릴 수 있음) · add/preview 가 그 앞뒤 주문의 안내 문장을 같이 보여 줌(computeShipping). 규칙 = ★에이전트오피스/CLAUDE.md 2-2절: **되묻기 1회 뒤 등록** · 도착 쉼은 「도착·택배·배달」 말이 있을 때만 · 전 직원 가능(대표 확정 10/7). 등록 즉시 알림톡·봇·자사몰 안내가 바뀐다(캐시 없음). get.js 무수정 → 대기 프로그램 재시작 불요.
+- **#575**: #fo-rejudge 글 = st.stale || !st.judged ? 「다시 판정」(class stale · 주황) : 「확인」(primary). 메모 input·현금파일·기준일 변경(markStale) → 「다시 판정」, 판정 끝 → 「확인」.
+- delayPhrase 보강: 사유 끝의 「휴무·휴일·연휴·쉬는 날」을 떼고 붙임(「시험 휴무」 → 「시험 연휴 휴무로」 — 창구 도구 시험에서 「시험 휴무 연휴 휴무로」가 나와 고침).
 
 ### 🗓️ #573 발송이 밀린 이유를 문장으로 (대표 10/7 「알림톡에 한글날 휴무로 일요일 발송된다는 이유가 안 들어가?」 → 「2로 해줘」 · v5.9.453 · shipping-schedule.js)
 
