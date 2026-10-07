@@ -87,19 +87,40 @@ async function api(url, method = 'GET', body = null) {
         options.headers['Content-Type'] = 'application/json';
         options.body = JSON.stringify(body);
     }
-    const res = await fetch(url, options);
+    let res;
+    try { res = await fetch(url, options); }
+    catch (_) { throw new Error(AKM_NET_ERR); }   // #578 브라우저의 영어 오류 글(Failed to fetch) 대신
     if (res.status === 401) {
-        localStorage.removeItem('jwt_token');
-        localStorage.removeItem('jwt_user');
-        showLoginPage();
-        throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
+        akmSessionExpired();
+        throw new Error('로그인이 만료됐어요. 다시 로그인해 주세요.');
     }
     if (!res.ok) {
         const err = await res.json().catch(() => ({ error: '서버 오류' }));
-        throw new Error(err.error || '서버 오류');
+        throw new Error(akmErrText(err.error, res.status));
     }
     return res.json();
 }
+
+// #578 오류 글을 사람 말로 — 통신 끊김 · 서버가 영어로만 준 5xx
+const AKM_NET_ERR = '통신이 끊겼습니다. 인터넷 연결을 확인한 뒤 다시 해 주세요.';
+function akmErrText(msg, status) {
+    msg = msg == null ? '' : String(msg);
+    if (/Failed to fetch|NetworkError|Load failed|network error/i.test(msg)) return AKM_NET_ERR;
+    if (status >= 500 && !/[가-힣]/.test(msg)) return '서버에 잠시 문제가 생겼습니다. 잠시 뒤 다시 해 주세요.';
+    return msg || '서버 오류';
+}
+// #578 로그인 만료 — 떠 있던 창을 걷고 로그인 화면에 이유를 적는다(송장변환 iframe 도 이 함수를 부른다)
+function akmSessionExpired() {
+    const had = !!localStorage.getItem('jwt_token') || !!currentUser;
+    localStorage.removeItem('jwt_token');
+    localStorage.removeItem('jwt_user');
+    document.querySelectorAll('.modal-overlay').forEach(ov => { if (ov.hasAttribute('data-akm-static')) ov.style.display = 'none'; else ov.remove(); });
+    document.body.classList.remove('fo-open', 'desk-full-open');
+    document.body.classList.add('akm-expired');
+    showLoginPage();
+    if (had) { const el = document.getElementById('login-error'); if (el) { el.textContent = '로그인이 만료됐어요 · 다시 로그인해 주세요'; el.style.display = 'block'; } }
+}
+window.akmSessionExpired = akmSessionExpired;
 
 // 캐시
 let settlementsCache = [];
@@ -115,6 +136,8 @@ function showLoginPage() {
     document.querySelector('.app').style.display = 'none';
     currentUser = null;
     stopNotiPolling();
+    // #578 PC 에서는 아이디 칸에 커서(폰은 자판이 화면을 가리므로 그대로)
+    try { if (window.matchMedia('(pointer: fine)').matches) { const u = document.getElementById('login-username'); if (u && !u.value) u.focus(); } } catch (_) { }
 }
 
 function showAppPage() {
@@ -140,10 +163,10 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password })
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
 
         if (!res.ok) {
-            errorEl.textContent = data.error || '로그인 실패';
+            errorEl.textContent = akmErrText(data.error, res.status) || '로그인 실패';
             errorEl.style.display = 'block';
             return;
         }
@@ -160,7 +183,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         location.reload();
         return;
     } catch (err) {
-        errorEl.textContent = '서버 연결에 실패했습니다.';
+        errorEl.textContent = AKM_NET_ERR;
         errorEl.style.display = 'block';
     }
 });
@@ -845,18 +868,18 @@ window.openScheduleModal = function(dateStr) {
 
     overlay.querySelector('#modal-schedule-save').addEventListener('click', async () => {
         const title = overlay.querySelector('#modal-schedule-title').value.trim();
-        if (!title) return alert('일정 내용을 입력해주세요.');
+        if (!title) return akmAlert('일정 내용을 입력해주세요.');
         const startDate = overlay.querySelector('#modal-schedule-start').value;
         const endDate = overlay.querySelector('#modal-schedule-end').value;
-        if (!startDate || !endDate) return alert('시작일과 종료일을 입력해주세요.');
-        if (endDate < startDate) return alert('종료일은 시작일 이후여야 합니다.');
+        if (!startDate || !endDate) return akmAlert('시작일과 종료일을 입력해주세요.');
+        if (endDate < startDate) return akmAlert('종료일은 시작일 이후여야 합니다.');
 
         try {
             await api('/api/schedules', 'POST', { startDate, endDate, title, type: selectedType });
             overlay.remove();
             await renderScheduleCalendar();
         } catch (err) {
-            alert('저장 실패: ' + err.message);
+            akmAlert('저장 실패: ' + err.message);
         }
     });
 };
@@ -904,7 +927,7 @@ window.deleteSchedule = async function(id, btn) {
         localStorage.setItem('jwt_user', JSON.stringify(me));
         document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
     } catch (err) {
-        alert('삭제 실패: ' + err.message);
+        akmAlert('삭제 실패: ' + err.message);
     }
 };
 
@@ -925,15 +948,90 @@ window.toggleScheduleComplete = async function(id, checkbox) {
     }
 };
 
-function showToast(msg, type) {
+function showToast(msg, type, ms) {
     // type 'lime' = 저장·완료 성공 표기 (대표 7/27 — 문의 관리·판매현황 등 변경 성공 시 라임 토스트)
     const toast = document.createElement('div');
     toast.className = 'toast-message' + (type ? ' toast-' + type : '');
     toast.textContent = msg;
     document.body.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('show'));
-    setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000);
+    setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, ms || 2000);
 }
+
+// #578 안내 방식 통일 — 브라우저 기본 alert/prompt 대신 화면 안에서
+//  · akmAlert(글): 한 줄(60자 이하)이면 토스트, 길거나 여러 줄이면 [확인] 안내 창
+//  · akmPrompt(글, 기본값): 입력 창 — 값(문자열) 또는 취소 시 null 을 돌려주는 Promise
+function akmAlert(msg) {
+    msg = msg == null ? '' : String(msg).replace(/Failed to fetch|Load failed|NetworkError when attempting to fetch resource.?/g, AKM_NET_ERR);
+    if (!msg.trim()) return;
+    if (msg.length <= 60 && !/[\r\n]/.test(msg)) { showToast(msg, undefined, Math.min(4200, 2200 + msg.length * 45)); return; }
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay akm-notice';
+    ov.innerHTML = '<div class="modal" role="alertdialog" aria-modal="true"><p class="akm-notice-msg"></p><div class="akm-notice-foot"><button type="button" class="btn-primary akm-notice-ok">확인</button></div></div>';
+    ov.querySelector('.akm-notice-msg').textContent = msg;
+    ov.querySelector('.akm-notice-ok').onclick = () => ov.remove();
+    document.body.appendChild(ov);
+    ov.querySelector('.akm-notice-ok').focus();
+}
+function akmPrompt(msg, def) {
+    return new Promise(resolve => {
+        const ov = document.createElement('div');
+        ov.className = 'modal-overlay akm-notice akm-ask';
+        ov.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><p class="akm-notice-msg"></p><input type="text" class="form-input akm-ask-input" autocomplete="off"><div class="akm-notice-foot"><button type="button" class="btn-outline akm-ask-cancel">취소</button><button type="button" class="btn-primary akm-notice-ok">확인</button></div></div>';
+        ov.querySelector('.akm-notice-msg').textContent = String(msg || '');
+        const inp = ov.querySelector('.akm-ask-input'); inp.value = def == null ? '' : String(def);
+        let done = false; const end = v => { if (done) return; done = true; mo.disconnect(); ov.remove(); resolve(v); };
+        const mo = new MutationObserver(() => { if (!ov.isConnected) end(null); });   // Esc·바깥 누름으로 닫혀도 취소로 끝난다
+        ov.querySelector('.akm-ask-cancel').onclick = () => end(null);
+        ov.querySelector('.akm-notice-ok').onclick = () => end(inp.value);
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); end(inp.value); } });
+        document.body.appendChild(ov); mo.observe(document.body, { childList: true });
+        inp.focus(); inp.select();
+    });
+}
+
+// =============================================
+// #578 떠 있는 창(.modal-overlay) 공용 닫기 — Esc · 어두운 바탕 누름
+//  · 창마다 가진 닫기 길(× · 자기 바깥 누름 처리 · [취소]/[닫기])을 그대로 눌러 정리 로직을 보존한다
+//  · 바깥 누름은 그 창에 글을 쓰던 중이면 닫지 않는다(잘못 눌러 쓴 글이 날아가지 않게) — Esc 는 닫는다
+// =============================================
+(function () {
+    const shown = ov => ov && ov.isConnected && getComputedStyle(ov).display !== 'none';
+    let busy = false, downOn = null;
+    function closeOverlay(ov) {
+        if (!shown(ov) || busy) return;
+        busy = true;
+        try {
+            const x = ov.querySelector('.modal-close');
+            if (x) x.click();
+            if (shown(ov)) ov.click();   // 창이 가진 바깥 누름 처리(업무일지 · 정산 입력 창)
+            if (shown(ov)) { const b = [...ov.querySelectorAll('button')].find(e => /^(닫기|취소)$/.test(e.textContent.trim())); if (b) b.click(); }
+            if (shown(ov)) { if (ov.hasAttribute('data-akm-static')) ov.style.display = 'none'; else ov.remove(); }
+        } finally { busy = false; }
+        ov.removeAttribute('data-akm-dirty');
+    }
+    const topOverlay = () => [...document.querySelectorAll('.modal-overlay')].filter(shown).pop();
+    document.addEventListener('DOMContentLoaded', () => document.querySelectorAll('.modal-overlay').forEach(ov => ov.setAttribute('data-akm-static', '1')));
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape' || e.isComposing) return;
+        if ([...document.querySelectorAll('.akm-cal')].some(c => c.getClientRects().length)) return;   // 달력이 떠 있으면 달력만 닫힌다
+        const ov = topOverlay(); if (!ov) return;
+        e.stopImmediatePropagation();   // 창 아래의 다른 화면(최종발주 창 등)까지 같이 닫히지 않게
+        closeOverlay(ov);
+    }, true);
+    document.addEventListener('input', e => { const ov = e.target.closest && e.target.closest('.modal-overlay'); if (ov) ov.setAttribute('data-akm-dirty', '1'); }, true);
+    document.addEventListener('mousedown', e => { downOn = e.target; }, true);
+    // 글을 쓰던 창은 바깥을 눌러도 그대로(창이 따로 가진 바깥 누름 처리도 여기서 막는다)
+    document.addEventListener('click', e => { const ov = e.target; if (!busy && ov.classList && ov.classList.contains('modal-overlay') && ov.hasAttribute('data-akm-dirty')) e.stopImmediatePropagation(); }, true);
+    document.addEventListener('click', e => {
+        const ov = e.target;
+        document.querySelectorAll('.modal-overlay[data-akm-dirty]').forEach(o => { if (!shown(o)) o.removeAttribute('data-akm-dirty'); });
+        if (busy || !ov.classList || !ov.classList.contains('modal-overlay') || downOn !== ov) return;   // 창 안에서 끌다가 바깥에서 뗀 것은 누름이 아니다
+        if (ov.hasAttribute('data-akm-dirty')) return;
+        closeOverlay(ov);
+    });
+    window.akmCloseOverlay = closeOverlay;
+})();
 
 // =============================================
 // 알림 시스템
@@ -950,7 +1048,7 @@ function timeAgo(dateStr) {
     if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
     if (diff < 172800) return '어제';
     if (diff < 2592000) return `${Math.floor(diff / 86400)}일 전`;
-    return d.toLocaleDateString('ko-KR');
+    return akmDate(d);
 }
 
 async function fetchUnreadCount() {
@@ -1146,7 +1244,7 @@ window.markAllNotificationsRead = async function(e) {
         await api('/api/notifications/read-all', 'PUT');
         fetchUnreadCount();
         await renderNotificationList();
-    } catch (err) { alert('실패: ' + err.message); }
+    } catch (err) { akmAlert('실패: ' + err.message); }
 };
 
 window.deleteNotification = async function(e, id) {
@@ -1155,7 +1253,7 @@ window.deleteNotification = async function(e, id) {
         await api(`/api/notifications/${id}`, 'DELETE');
         fetchUnreadCount();
         await renderNotificationList();
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 // =============================================
@@ -1193,7 +1291,7 @@ function nhBuild() {
     ov.querySelector('#noti-hist-close').addEventListener('click', closeNotiHistory);
     ov.querySelector('#noti-hist-more').addEventListener('click', () => nhLoad(true));
     ov.querySelector('#noti-hist-readall').addEventListener('click', async () => {
-        try { await api('/api/notifications/read-all', 'PUT'); NH.items.forEach(n => { n.isRead = true; }); nhRender(); fetchUnreadCount(); } catch (err) { alert('실패: ' + err.message); }
+        try { await api('/api/notifications/read-all', 'PUT'); NH.items.forEach(n => { n.isRead = true; }); nhRender(); fetchUnreadCount(); } catch (err) { akmAlert('실패: ' + err.message); }
     });
     const q = ov.querySelector('#noti-hist-q');
     q.addEventListener('input', () => { clearTimeout(NH.timer); NH.timer = setTimeout(() => { NH.q = q.value.trim(); ov.querySelector('#noti-hist-x').hidden = !q.value; nhLoad(false); }, 250); });
@@ -1293,7 +1391,7 @@ async function nhDelete(id) {
     try {
         await api(`/api/notifications/${id}`, 'DELETE');
         NH.items = NH.items.filter(x => x.id !== id); window._notiHistCache = NH.items; nhRender(); fetchUnreadCount();
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 }
 
 // =============================================
@@ -1352,7 +1450,7 @@ window.closeAnnouncementModal = function() {
 
 window.submitAnnouncement = async function() {
     const message = document.getElementById('announcement-message').value.trim();
-    if (!message) return alert('전달 내용을 입력해주세요.');
+    if (!message) return akmAlert('전달 내용을 입력해주세요.');
 
     const targetBtn = document.querySelector('#announcement-target-group .btn-toggle.active');
     const target = targetBtn ? targetBtn.dataset.value : 'all';
@@ -1363,7 +1461,7 @@ window.submitAnnouncement = async function() {
     } else {
         const checked = document.querySelectorAll('#announcement-user-list input[type="checkbox"]:checked');
         const ids = Array.from(checked).map(c => Number(c.value));
-        if (ids.length === 0) return alert('최소 한 명의 직원을 선택해주세요.');
+        if (ids.length === 0) return akmAlert('최소 한 명의 직원을 선택해주세요.');
         body.user_ids = ids;
     }
 
@@ -1373,7 +1471,7 @@ window.submitAnnouncement = async function() {
         const result = await api('/api/notifications/announcement', 'POST', body);
         closeAnnouncementModal();
         showAnnouncementToast(`전달 완료! (${result.count}명)`);
-    } catch (err) { alert('전달 실패: ' + err.message); }
+    } catch (err) { akmAlert('전달 실패: ' + err.message); }
 };
 
 function showAnnouncementToast(msg) {
@@ -1719,7 +1817,7 @@ window.toggleSettlementPaid = async function(id) {
         // 창 유지(대표 지시): 갱신된 데이터로 같은 날짜 모달을 다시 그림 — 여러 건 연속 체크 후 닫기 가능
         if (modal) { modal.remove(); if (dateStr) showSettlementDayModal(dateStr); }
     } catch (err) {
-        alert('결제완료 처리 실패: ' + err.message);
+        akmAlert('결제완료 처리 실패: ' + err.message);
     }
 };
 
@@ -1732,7 +1830,7 @@ window.toggleCjDailyPaid = async function(date, amount) {
         // 창 유지(대표 지시): 갱신된 데이터로 같은 날짜 모달을 다시 그림
         if (modal) { modal.remove(); showSettlementDayModal(date); }
     } catch (err) {
-        alert('CJ 결제완료 처리 실패: ' + err.message);
+        akmAlert('CJ 결제완료 처리 실패: ' + err.message);
     }
 };
 
@@ -1743,14 +1841,14 @@ window.showSettlementItemsModal = function(settlementId) {
         const found = (dp.entries || []).find(e => e.id === settlementId);
         if (found) entry = found;
     });
-    if (!entry) { alert('정산 데이터를 찾을 수 없습니다'); return; }
+    if (!entry) { akmAlert('정산 데이터를 찾을 수 없습니다'); return; }
 
     const items = (entry.items || []).map(it => ({
         name: it.name || '',
         qty: Number(it.qty) || 0,
         price: Number(it.price) || 0
     }));
-    if (items.length === 0) { alert('등록된 품목이 없습니다'); return; }
+    if (items.length === 0) { akmAlert('등록된 품목이 없습니다'); return; }
 
     const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -1838,7 +1936,7 @@ window.showSettlementItemsModal = function(settlementId) {
             await renderSettlementList();
             await renderWeeklySettlement();
         } catch (err) {
-            alert('저장 실패: ' + err.message);
+            akmAlert('저장 실패: ' + err.message);
             btn.disabled = false;
             btn.textContent = '💾 저장';
         }
@@ -1891,7 +1989,7 @@ document.getElementById('cj-parcel-qty').addEventListener('input', () => {
 // CJ 자동 계산 버튼
 document.getElementById('cj-auto-calc-btn').addEventListener('click', async () => {
     const date = document.getElementById('settlement-date').value;
-    if (!date) return alert('먼저 날짜를 선택해주세요.');
+    if (!date) return akmAlert('먼저 날짜를 선택해주세요.');
 
     try {
         const data = await api(`/api/settlements/box-count?date=${date}`);
@@ -1912,7 +2010,7 @@ document.getElementById('cj-auto-calc-btn').addEventListener('click', async () =
         document.getElementById('cj-calc-amount').textContent = amount.toLocaleString() + ' 원';
         document.getElementById('settlement-amount').value = amount;
     } catch (err) {
-        alert('자동 계산 실패: ' + err.message);
+        akmAlert('자동 계산 실패: ' + err.message);
     }
 });
 
@@ -1948,9 +2046,9 @@ salesUploadArea.addEventListener('drop', (e) => {
 });
 
 function handleSalesExcel(file) {
-    if (!selectedSettlementPartner) { alert('먼저 거래처를 선택해주세요.'); return; }
+    if (!selectedSettlementPartner) { akmAlert('먼저 거래처를 선택해주세요.'); return; }
     const settlementDate = document.getElementById('settlement-date').value;
-    if (!settlementDate) { alert('먼저 날짜를 선택해주세요.'); return; }
+    if (!settlementDate) { akmAlert('먼저 날짜를 선택해주세요.'); return; }
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -1961,7 +2059,7 @@ function handleSalesExcel(file) {
             const sheet = workbook.Sheets[sheetName];
             const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-            if (jsonData.length === 0) return alert('엑셀에 데이터가 없습니다.');
+            if (jsonData.length === 0) return akmAlert('엑셀에 데이터가 없습니다.');
 
             // 헤더 행 탐색: 첫 번째 행부터 검사하여 품목명+수량 헤더가 있는 행을 찾음
             let headerRowIdx = 0;
@@ -2002,12 +2100,12 @@ function handleSalesExcel(file) {
                 if (name && qty > 0) { salesItems.push({ name, qty }); console.log(`[정산 엑셀] 행${i}: "${name}" → ${qty}개`); }
             }
 
-            if (salesItems.length === 0) { alert('엑셀에서 품목/수량 데이터를 찾을 수 없습니다.'); return; }
+            if (salesItems.length === 0) { akmAlert('엑셀에서 품목/수량 데이터를 찾을 수 없습니다.'); return; }
             console.log('[정산 엑셀] 파싱된 품목 수:', salesItems.length, '총 수량:', salesItems.reduce((s, i) => s + i.qty, 0));
 
             const pricingItems = await getPricingForDate(selectedSettlementPartner, settlementDate);
             if (pricingItems.length === 0) {
-                alert('해당 날짜(' + settlementDate + ') / 거래처(' + selectedSettlementPartner + ')의 품목별 금액이 등록되지 않았습니다.\n먼저 품목별 금액에서 단가를 등록해주세요.');
+                akmAlert('해당 날짜(' + settlementDate + ') / 거래처(' + selectedSettlementPartner + ')의 품목별 금액이 등록되지 않았습니다.\n먼저 품목별 금액에서 단가를 등록해주세요.');
                 return;
             }
 
@@ -2068,9 +2166,9 @@ function handleSalesExcel(file) {
             let msg = '=== 매칭 결과 ===\n매칭 성공: ' + matched.length + '개 품목 / 실패: ' + unmatched.length + '개\n';
             if (groupedList.length > 0) { msg += '\n[매칭 성공 (그룹핑)]\n'; groupedList.forEach(g => { msg += '  ' + g.name + ' (' + g.price.toLocaleString() + '원 x ' + g.qty + ')\n'; }); }
             if (unmatched.length > 0) { msg += '\n[매칭 실패 - 드롭다운에서 수동 선택 가능]\n'; unmatched.forEach(u => { msg += '  ' + u.name + '\n'; }); }
-            alert(msg);
+            akmAlert(msg);
         } catch (err) {
-            alert('엑셀 파일을 읽는데 실패했습니다: ' + err.message);
+            akmAlert('엑셀 파일을 읽는데 실패했습니다: ' + err.message);
             console.error('Sales Excel Error:', err);
         }
     };
@@ -2239,9 +2337,9 @@ document.getElementById('save-mappings-btn').addEventListener('click', async () 
     if (savedCount > 0) {
         updateSettlementTotal();
         document.getElementById('sales-unmatched-container').style.display = 'none';
-        alert(savedCount + '개 매칭이 저장되었습니다. 다음부터 자동 매칭됩니다.');
+        akmAlert(savedCount + '개 매칭이 저장되었습니다. 다음부터 자동 매칭됩니다.');
     } else {
-        alert('매칭할 품목을 드롭다운에서 선택해주세요.');
+        akmAlert('매칭할 품목을 드롭다운에서 선택해주세요.');
     }
 });
 
@@ -2287,13 +2385,13 @@ document.getElementById('settlement-month-filter').addEventListener('change', ()
 document.getElementById('settlement-save').addEventListener('click', async () => {
     try {
         const date = document.getElementById('settlement-date').value;
-        if (!date) return alert('날짜를 선택해주세요.');
-        if (!selectedSettlementPartner) return alert('거래처를 선택해주세요.');
+        if (!date) return akmAlert('날짜를 선택해주세요.');
+        if (!selectedSettlementPartner) return akmAlert('거래처를 선택해주세요.');
 
         let items = [], amount = 0;
         if (selectedSettlementPartner === 'CJ대한통운') {
             const parcelQty = Number(document.getElementById('cj-parcel-qty').value) || 0;
-            if (parcelQty <= 0) return alert('택배수량을 입력해주세요.');
+            if (parcelQty <= 0) return akmAlert('택배수량을 입력해주세요.');
             amount = parcelQty * 3100;
             items = [{ name: 'CJ택배', price: 3100, qty: parcelQty, subtotal: amount }];
         } else {
@@ -2325,8 +2423,8 @@ document.getElementById('settlement-save').addEventListener('click', async () =>
         toggleCjMode(false);
         await renderSettlementList();
         await renderSettlementCalendar();
-        alert('저장되었습니다.');
-    } catch (err) { alert('저장 실패: ' + err.message); }
+        akmAlert('저장되었습니다.');
+    } catch (err) { akmAlert('저장 실패: ' + err.message); }
 });
 
 async function renderSettlementList() {
@@ -2361,7 +2459,7 @@ async function renderSettlementList() {
 
 window.deleteSettlement = async function(id) {
     if (!confirm('삭제하시겠습니까?')) return;
-    try { await api(`/api/settlements/${id}`, 'DELETE'); await renderSettlementList(); await renderSettlementCalendar(); } catch (err) { alert('삭제 실패: ' + err.message); }
+    try { await api(`/api/settlements/${id}`, 'DELETE'); await renderSettlementList(); await renderSettlementCalendar(); } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 window.viewSettlementItems = function(id) {
@@ -2449,7 +2547,7 @@ window.viewSettlementItems = function(id) {
                     await renderSettlementList();
                     await renderSettlementCalendar();
                 } catch (err) {
-                    alert('수정 실패: ' + (err.message || err));
+                    akmAlert('수정 실패: ' + (err.message || err));
                 }
             });
         }
@@ -2534,7 +2632,7 @@ function parsePricingExcel(file) {
             const workbook = XLSX.read(data, { type: 'array' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-            if (jsonData.length === 0) return alert('엑셀에 데이터가 없습니다.');
+            if (jsonData.length === 0) return akmAlert('엑셀에 데이터가 없습니다.');
 
             const header = jsonData[0].map(h => String(h || '').trim());
             let nameCol = -1, priceCol = -1;
@@ -2556,7 +2654,7 @@ function parsePricingExcel(file) {
                 if (name) addPricingRow(name, price, inheritMap[name]);
             }
             showPricingRows();
-        } catch (err) { alert('엑셀 파일을 읽는데 실패했습니다: ' + err.message); }
+        } catch (err) { akmAlert('엑셀 파일을 읽는데 실패했습니다: ' + err.message); }
     };
     reader.readAsArrayBuffer(file);
 }
@@ -2663,8 +2761,8 @@ document.getElementById('pricing-save').addEventListener('click', async () => {
     try {
         const startDate = document.getElementById('pricing-start-date').value;
         const endDate = document.getElementById('pricing-end-date').value;
-        if (!startDate || !endDate) return alert('기간을 선택해주세요.');
-        if (!selectedPricingPartner) return alert('거래처를 선택해주세요.');
+        if (!startDate || !endDate) return akmAlert('기간을 선택해주세요.');
+        if (!selectedPricingPartner) return akmAlert('거래처를 선택해주세요.');
 
         const rows = [];
         document.querySelectorAll('#pricing-rows .pricing-row').forEach(row => {
@@ -2674,7 +2772,7 @@ document.getElementById('pricing-save').addEventListener('click', async () => {
             const boxType = boxChecked ? boxChecked.value : '해당없음';
             if (name) rows.push({ name, price: Number(price) || 0, boxType });
         });
-        if (rows.length === 0) return alert('품목을 입력해주세요.');
+        if (rows.length === 0) return akmAlert('품목을 입력해주세요.');
 
         await api('/api/pricing', 'POST', { startDate, endDate, partner: selectedPricingPartner, items: rows });
 
@@ -2683,8 +2781,8 @@ document.getElementById('pricing-save').addEventListener('click', async () => {
         document.getElementById('pricing-rows').innerHTML = '';
         resetPricingPaste();
         await renderPricingList();
-        alert('저장되었습니다.');
-    } catch (err) { alert('저장 실패: ' + err.message); }
+        akmAlert('저장되었습니다.');
+    } catch (err) { akmAlert('저장 실패: ' + err.message); }
 });
 
 // 박스 표시용 짧은 라벨 + 색상
@@ -2732,13 +2830,13 @@ async function renderPricingList() {
 
 window.deletePricing = async function(id) {
     if (!confirm('삭제하시겠습니까?')) return;
-    try { await api(`/api/pricing/${id}`, 'DELETE'); await renderPricingList(); } catch (err) { alert('삭제 실패: ' + err.message); }
+    try { await api(`/api/pricing/${id}`, 'DELETE'); await renderPricingList(); } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 // 품목별 금액 수정 (대표 7/20): 품목명·단가·박스 편집 모달
 window.editPricing = function(id) {
     const entry = (pricingCache || []).find(p => p.id === id);
-    if (!entry) return alert('항목을 찾을 수 없습니다');
+    if (!entry) return akmAlert('항목을 찾을 수 없습니다');
     document.querySelectorAll('.ao-pricing-edit-overlay').forEach(e => e.remove());
     const boxOpts = (cur) => BOX_OPTIONS.map(o => `<option value="${aoEsc(o.value)}"${o.value === (cur || '해당없음') ? ' selected' : ''}>${aoEsc(o.label)}</option>`).join('');
     const rowHtml = (it, i) => `<tr data-prow="${i}">
@@ -2789,13 +2887,13 @@ window.aoPricingSaveEdit = async function(id) {
         const boxType = tr.querySelector('.pe-box').value;
         if (name) items.push({ name, price, boxType });
     });
-    if (!items.length) return alert('품목이 하나 이상 필요합니다');
+    if (!items.length) return akmAlert('품목이 하나 이상 필요합니다');
     try {
         await api(`/api/pricing/${id}`, 'PUT', { startDate: entry.startDate, endDate: entry.endDate, partner: entry.partner, items });
         document.querySelectorAll('.ao-pricing-edit-overlay').forEach(e => e.remove());
         await renderPricingList();
         showToast('✅ 품목별 금액이 수정되었습니다');
-    } catch (err) { alert('저장 실패: ' + err.message); }
+    } catch (err) { akmAlert('저장 실패: ' + err.message); }
 };
 
 // =============================================
@@ -2829,8 +2927,8 @@ async function renderUserList() {
 }
 window.restoreUser = async function(id) {
     if (!confirm('이 계정을 재입사 처리할까요? (다시 로그인 가능해집니다)')) return;
-    try { const r = await api(`/api/users/${id}/restore`, 'POST'); alert(r.message || '복구 완료'); await renderUserList(); }
-    catch (err) { alert('복구 실패: ' + err.message); }
+    try { const r = await api(`/api/users/${id}/restore`, 'POST'); akmAlert(r.message || '복구 완료'); await renderUserList(); }
+    catch (err) { akmAlert('복구 실패: ' + err.message); }
 };
 
 document.getElementById('btn-add-user').addEventListener('click', () => openUserModal());
@@ -2903,7 +3001,7 @@ document.getElementById('btn-add-user').addEventListener('click', () => openUser
             const line = (ok, label, extra) => `<div>${ok ? '🟢' : '🔴'} ${label}${extra ? ' — ' + aoEsc(String(extra)) : ''}</div>`;
             const stateKo = { ok: '정상', expiring: '만료 임박(재승인 권장)', reauth_required: '재승인 필요 — [연동 승인] 클릭', none: '미연동 — [연동 승인] 클릭' }[r.token_state] || r.token_state;
             let html = line(r.secret_set, 'Secret 설정(Render)', r.secret_set ? '' : 'CAFE24_CLIENT_SECRET 입력 필요');
-            html += line(r.token_state === 'ok', '토큰 상태', stateKo + (r.expires_at ? ` (access 만료 ${new Date(r.expires_at).toLocaleString('ko-KR')})` : ''));
+            html += line(r.token_state === 'ok', '토큰 상태', stateKo + (r.expires_at ? ` (access 만료 ${akmDateTime(r.expires_at)})` : ''));
             html += line(r.chain && r.chain.ok, '주문 API 왕복', r.chain ? (r.chain.note || r.chain.reason || '') : '');
             if (box) box.innerHTML = html;
         } catch (e) { if (box) box.innerHTML = '❌ ' + aoEsc(e.message || String(e)); }
@@ -3094,21 +3192,21 @@ window.openUserModal = async function(userId) {
             } else {
                 data.username = overlay.querySelector('#modal-user-username').value.trim();
                 data.password = pw;
-                if (!data.username || !data.password || !data.name) return alert('아이디, 비밀번호, 이름은 필수입니다.');
+                if (!data.username || !data.password || !data.name) return akmAlert('아이디, 비밀번호, 이름은 필수입니다.');
                 await api('/api/users', 'POST', data);
             }
 
             overlay.remove();
             await renderUserList();
-            alert('저장되었습니다.');
-        } catch (err) { alert('저장 실패: ' + err.message); }
+            akmAlert('저장되었습니다.');
+        } catch (err) { akmAlert('저장 실패: ' + err.message); }
     });
 };
 
 window.deleteUser = async function(id) {
     if (!confirm('이 직원을 퇴사 처리할까요?\n· 로그인 불가 + 목록·조직도에서 숨김\n· 과거 기안서류·기록의 이름은 그대로 보존\n· [재입사]로 복구 가능')) return;
-    try { const r = await api(`/api/users/${id}`, 'DELETE'); alert(r.message || '퇴사 처리 완료'); await renderUserList(); }
-    catch (err) { alert('퇴사 처리 실패: ' + err.message); }
+    try { const r = await api(`/api/users/${id}`, 'DELETE'); akmAlert(r.message || '퇴사 처리 완료'); await renderUserList(); }
+    catch (err) { akmAlert('퇴사 처리 실패: ' + err.message); }
 };
 
 // =============================================
@@ -3348,8 +3446,8 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
     const endDate = document.getElementById('doc-end-date').value;
     let reason = document.getElementById('doc-reason').value.trim();
 
-    if (!startDate) return alert('날짜를 선택해주세요.');
-    if (!approverId) return alert('결재자 정보를 불러올 수 없습니다. 페이지를 새로고침해주세요.');
+    if (!startDate) return akmAlert('날짜를 선택해주세요.');
+    if (!approverId) return akmAlert('결재자 정보를 불러올 수 없습니다. 페이지를 새로고침해주세요.');
 
     const isTime = (currentDocType === 'vacation' && selectedDocSubType === '시간차') ||
                    (currentDocType === 'attendance' && selectedDocSubType === '기타');
@@ -3358,7 +3456,7 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
     if (isTime) {
         const st = document.getElementById('doc-start-time').value;
         const et = document.getElementById('doc-end-time').value;
-        if (!st || !et) return alert('시작시간과 종료시간을 선택해주세요.');
+        if (!st || !et) return akmAlert('시작시간과 종료시간을 선택해주세요.');
     }
 
     // 재직증명서: 매수를 reason에 자동 기록
@@ -3382,7 +3480,7 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
 
     try {
         await api('/api/documents', 'POST', body);
-        alert('서류가 제출되었습니다.');
+        akmAlert('서류가 제출되었습니다.');
 
         document.getElementById('doc-start-date').value = '';
         document.getElementById('doc-end-date').value = '';
@@ -3401,7 +3499,7 @@ document.getElementById('doc-submit').addEventListener('click', async () => {
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
     } catch (err) {
-        alert('제출 실패: ' + err.message);
+        akmAlert('제출 실패: ' + err.message);
     }
 });
 
@@ -3528,7 +3626,7 @@ async function renderMyApprovedList() {
             if (d.subType === '시간차' && d.startTime && d.endTime) {
                 dateStr += ` (${d.startTime}~${d.endTime})`;
             }
-            const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+            const processedDate = d.processedAt ? akmDate(d.processedAt) : '-';
 
             let statusHtml = '<span class="status-badge status-approved">승인</span>';
             let actionHtml = `<button class="btn-mod-request" onclick="openModRequestModal(${d.id})">수정요청</button>`;
@@ -3565,7 +3663,7 @@ window.deleteDocument = async function(id) {
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
     } catch (err) {
-        alert('삭제 실패: ' + err.message);
+        akmAlert('삭제 실패: ' + err.message);
     }
 };
 
@@ -3578,13 +3676,13 @@ window.openEditDocument = async function(id) {
             // 관리자가 다른 사람 서류 수정 시
             const allDocs = await api('/api/documents');
             const found = allDocs.find(d => d.id === id);
-            if (!found) return alert('서류를 찾을 수 없습니다.');
+            if (!found) return akmAlert('서류를 찾을 수 없습니다.');
             showEditDocModal(found);
         } else {
             showEditDocModal(doc);
         }
     } catch (err) {
-        alert('서류 정보 로드 실패: ' + err.message);
+        akmAlert('서류 정보 로드 실패: ' + err.message);
     }
 };
 
@@ -3684,8 +3782,8 @@ window.submitEditDocument = async function(id, type) {
     const editApprovers = await api('/api/users/approvers');
     const approverId = editApprovers.length > 0 ? editApprovers[0].id : null;
 
-    if (!startDate) return alert('시작일을 입력하세요.');
-    if (!approverId) return alert('결재자 정보를 불러올 수 없습니다.');
+    if (!startDate) return akmAlert('시작일을 입력하세요.');
+    if (!approverId) return akmAlert('결재자 정보를 불러올 수 없습니다.');
 
     try {
         await api(`/api/documents/${id}`, 'PUT', { subType, startDate, endDate, reason, approverId: Number(approverId) });
@@ -3696,9 +3794,9 @@ window.submitEditDocument = async function(id, type) {
         document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
         await renderDocList();
         if (currentUser.role === 'admin') await renderApprovalList();
-        alert(type === 'rejected' ? '재제출되었습니다.' : '수정되었습니다.');
+        akmAlert(type === 'rejected' ? '재제출되었습니다.' : '수정되었습니다.');
     } catch (err) {
-        alert('수정 실패: ' + err.message);
+        akmAlert('수정 실패: ' + err.message);
     }
 };
 
@@ -3710,7 +3808,7 @@ window.openModRequestModal = function(id) {
     // API에서 다시 가져옴
     api('/api/documents?mine=true').then(allDocs => {
         const doc = allDocs.find(d => d.id === id);
-        if (!doc) return alert('서류를 찾을 수 없습니다.');
+        if (!doc) return akmAlert('서류를 찾을 수 없습니다.');
 
         document.getElementById('mod-doc-id').value = id;
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
@@ -3744,7 +3842,7 @@ window.submitModRequest = async function() {
     const id = document.getElementById('mod-doc-id').value;
     const modificationType = document.querySelector('input[name="mod-type"]:checked').value;
     const modificationReason = document.getElementById('mod-reason').value.trim();
-    if (!modificationReason) { alert('사유를 입력해주세요.'); return; }
+    if (!modificationReason) { akmAlert('사유를 입력해주세요.'); return; }
 
     const body = { modification_type: modificationType, modification_reason: modificationReason };
     if (modificationType === 'modify') {
@@ -3759,8 +3857,8 @@ window.submitModRequest = async function() {
         document.getElementById('mod-request-modal').style.display = 'none';
         await renderMyApprovedList();
         if (currentUser.role === 'admin') await renderApprovalList();
-        alert('수정 요청이 제출되었습니다.');
-    } catch (err) { alert('요청 실패: ' + err.message); }
+        akmAlert('수정 요청이 제출되었습니다.');
+    } catch (err) { akmAlert('요청 실패: ' + err.message); }
 };
 
 // 수정 요청 승인/반려
@@ -3775,8 +3873,8 @@ window.approveModification = async function(id) {
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
         document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
-        alert('수정 요청이 승인되었습니다.');
-    } catch (err) { alert('승인 실패: ' + err.message); }
+        akmAlert('수정 요청이 승인되었습니다.');
+    } catch (err) { akmAlert('승인 실패: ' + err.message); }
 };
 
 window.rejectModification = async function(id) {
@@ -3785,8 +3883,8 @@ window.rejectModification = async function(id) {
         await api(`/api/documents/${id}/reject-modification`, 'PUT');
         await renderApprovalList();
         await renderMyApprovedList();
-        alert('수정 요청이 반려되었습니다. 기존 승인 내용이 유지됩니다.');
-    } catch (err) { alert('반려 실패: ' + err.message); }
+        akmAlert('수정 요청이 반려되었습니다. 기존 승인 내용이 유지됩니다.');
+    } catch (err) { akmAlert('반려 실패: ' + err.message); }
 };
 
 // 결재 승인
@@ -3796,9 +3894,9 @@ window.approveDocument = async function(id) {
         await api(`/api/documents/${id}/approve`, 'PUT');
         await renderApprovalList();
         await renderDocList();
-        alert('승인되었습니다.');
+        akmAlert('승인되었습니다.');
     } catch (err) {
-        alert('승인 실패: ' + err.message);
+        akmAlert('승인 실패: ' + err.message);
     }
 };
 
@@ -3813,9 +3911,9 @@ window.rejectDocument = async function(id) {
         currentUser = me;
         localStorage.setItem('jwt_user', JSON.stringify(me));
         document.getElementById('annual-leave-count').textContent = formatLeave(me.annualLeave);
-        alert('반려되었습니다.');
+        akmAlert('반려되었습니다.');
     } catch (err) {
-        alert('반려 실패: ' + err.message);
+        akmAlert('반려 실패: ' + err.message);
     }
 };
 
@@ -3923,7 +4021,7 @@ function renderDocHistory(docs) {
         if (d.isLeaveAdjustment || d.type === 'leave_adjustment') {
             const adj = d.deductedLeave;
             const adjSign = adj > 0 ? '+' : '';
-            const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+            const processedDate = d.processedAt ? akmDate(d.processedAt) : '-';
             return `<tr>
                 <td>연차 조정 ${adjSign}${adj}일</td>
                 <td>${d.applicantPosition ? d.applicantPosition + ' ' : ''}${d.applicantName}</td>
@@ -3939,13 +4037,13 @@ function renderDocHistory(docs) {
 
         const statusClass = d.status === 'approved' ? 'status-approved' : 'status-rejected';
         const statusLabel = d.status === 'approved' ? '승인' : '반려';
-        const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
-        const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
+        const sd = d.startDate ? akmDate(d.startDate) : '';
+        const ed = d.endDate ? akmDate(d.endDate) : '';
         let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
         if (d.subType === '시간차' && d.startTime && d.endTime) {
             dateStr += ` (${d.startTime}~${d.endTime})`;
         }
-        const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+        const processedDate = d.processedAt ? akmDate(d.processedAt) : '-';
         const deducted = formatDeductedLeave(d);
 
         return `<tr>
@@ -3974,7 +4072,7 @@ window.deleteDocHistory = async function(id) {
         searchDocHistory();
         renderLeaveSummary();
     } catch (err) {
-        alert('삭제 실패: ' + err.message);
+        akmAlert('삭제 실패: ' + err.message);
     }
 };
 
@@ -3990,14 +4088,14 @@ async function docFindOne(id) {
 window.viewDocDetail = async function(id) {
     try {
         const d = await docFindOne(id);
-        if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
+        if (!d) { akmAlert('문서를 찾을 수 없습니다.'); return; }
 
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
         const typeLabel = `${typeLabels[d.type] || d.type} - ${d.subType}`;
 
         // 날짜 포맷
-        const sd = d.startDate ? new Date(d.startDate).toLocaleDateString('ko-KR') : '';
-        const ed = d.endDate ? new Date(d.endDate).toLocaleDateString('ko-KR') : '';
+        const sd = d.startDate ? akmDate(d.startDate) : '';
+        const ed = d.endDate ? akmDate(d.endDate) : '';
         let dateStr = sd === ed || !ed ? sd : `${sd} ~ ${ed}`;
         if (d.subType === '시간차' && d.startTime && d.endTime) dateStr += ` (${d.startTime}~${d.endTime})`;
 
@@ -4005,7 +4103,7 @@ window.viewDocDetail = async function(id) {
 
         const statusClass = d.status === 'approved' ? 'status-approved' : 'status-rejected';
         const statusLabel = d.status === 'approved' ? '승인' : '반려';
-        const processedDate = d.processedAt ? new Date(d.processedAt).toLocaleDateString('ko-KR') : '-';
+        const processedDate = d.processedAt ? akmDate(d.processedAt) : '-';
 
         // 결재란 도장 이미지 조회
         const sigIds = [d.applicantId];
@@ -4058,7 +4156,7 @@ window.viewDocDetail = async function(id) {
         `;
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
         document.body.appendChild(overlay);
-    } catch (err) { alert('상세 조회 실패: ' + err.message); }
+    } catch (err) { akmAlert('상세 조회 실패: ' + err.message); }
 };
 
 // 재직증명서 전용 PDF 양식 (표준 양식)
@@ -4137,7 +4235,7 @@ async function renderEmploymentCertPDF(d) {
 window.downloadDocPDF = async function(id) {
     try {
         const d = await docFindOne(id);
-        if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
+        if (!d) { akmAlert('문서를 찾을 수 없습니다.'); return; }
 
         // 재직증명서: 표준 양식으로 별도 처리
         if (d.type === 'employment') {
@@ -4224,7 +4322,7 @@ window.downloadDocPDF = async function(id) {
 
         const dateForFile = d.startDate ? d.startDate.replace(/-/g, '').slice(0, 8) : '';
         pdf.save(`${docTitle}_${d.applicantName}_${d.subType}_${dateForFile}.pdf`);
-    } catch (err) { alert('PDF 다운로드 실패: ' + err.message); }
+    } catch (err) { akmAlert('PDF 다운로드 실패: ' + err.message); }
 };
 
 // 기안서류 개별 엑셀 다운로드
@@ -4232,7 +4330,7 @@ window.downloadDocExcel = function(id) {
     try {
         const docs = window._lastDocHistory || [];
         const d = docs.find(doc => doc.id === id);
-        if (!d) { alert('문서를 찾을 수 없습니다.'); return; }
+        if (!d) { akmAlert('문서를 찾을 수 없습니다.'); return; }
 
         const typeLabels = { vacation: '휴가', attendance: '근태', reason: '시말서', employment: '재직증명서' };
         const typeLabel = `${typeLabels[d.type] || d.type} - ${d.subType}`;
@@ -4270,13 +4368,13 @@ window.downloadDocExcel = function(id) {
 
         const dateForFile = d.startDate ? d.startDate.replace(/-/g, '').slice(0, 8) : '';
         XLSX.writeFile(wb, `기안서류_${d.applicantName}_${d.subType}_${dateForFile}.xlsx`);
-    } catch (err) { alert('엑셀 다운로드 실패: ' + err.message); }
+    } catch (err) { akmAlert('엑셀 다운로드 실패: ' + err.message); }
 };
 
 // 기안서류 승인이력 엑셀 다운로드
 // 직원별 연차 현황 다운로드
 window.downloadLeaveSummary = async function() {
-    if (currentUser?.role !== 'admin') { alert('관리자만 다운로드할 수 있습니다.'); return; }
+    if (currentUser?.role !== 'admin') { akmAlert('관리자만 다운로드할 수 있습니다.'); return; }
     try {
         const leaveData = await api('/api/users/leave-summary');
         const now = new Date();
@@ -4300,12 +4398,12 @@ window.downloadLeaveSummary = async function() {
         });
         XLSX.utils.book_append_sheet(wb, ws, '직원별 연차 현황');
         XLSX.writeFile(wb, `직원별_연차현황_${now.getFullYear()}년${now.getMonth() + 1}월.xlsx`);
-    } catch (err) { alert('다운로드 실패: ' + err.message); }
+    } catch (err) { akmAlert('다운로드 실패: ' + err.message); }
 };
 
 // 승인/반려 이력 다운로드
 window.downloadDocHistory = async function() {
-    if (currentUser?.role !== 'admin') { alert('관리자만 다운로드할 수 있습니다.'); return; }
+    if (currentUser?.role !== 'admin') { akmAlert('관리자만 다운로드할 수 있습니다.'); return; }
     try {
         const employeeId = document.getElementById('history-employee').value;
         const startDate = document.getElementById('history-start-date').value;
@@ -4360,7 +4458,7 @@ window.downloadDocHistory = async function() {
         });
         XLSX.utils.book_append_sheet(wb, ws, '승인반려 이력');
         XLSX.writeFile(wb, `승인반려_이력_${now.getFullYear()}년${now.getMonth() + 1}월.xlsx`);
-    } catch (err) { alert('다운로드 실패: ' + err.message); }
+    } catch (err) { akmAlert('다운로드 실패: ' + err.message); }
 };
 
 // =============================================
@@ -4391,7 +4489,7 @@ async function loadLeaveAdjustments() {
         }
         const canAdjust = currentUser.role === 'admin';
         tbody.innerHTML = data.map(d => {
-            const date = new Date(d.createdAt).toLocaleDateString('ko-KR');
+            const date = akmDate(d.createdAt);
             const adjSign = d.adjustment > 0 ? '+' : '';
             const isDoc = d.source === 'document';   // 수기 이력에서 넘어온 추가일수
             const actionCell = isDoc
@@ -4439,9 +4537,9 @@ window.saveLeaveAdj = async function() {
     const reason = document.getElementById('adj-reason').value.trim();
     const isAdd = document.querySelector('input[name="adj-type"]:checked').value === 'add';
 
-    if (!userId) { alert('대상 직원을 선택해주세요.'); return; }
-    if (!days || days <= 0) { alert('일수를 입력해주세요.'); return; }
-    if (!reason) { alert('사유를 입력해주세요.'); return; }
+    if (!userId) { akmAlert('대상 직원을 선택해주세요.'); return; }
+    if (!days || days <= 0) { akmAlert('일수를 입력해주세요.'); return; }
+    if (!reason) { akmAlert('사유를 입력해주세요.'); return; }
 
     const adjustment = isAdd ? days : -days;
 
@@ -4452,7 +4550,7 @@ window.saveLeaveAdj = async function() {
         loadLeaveAdjustments();
         renderLeaveSummary();
     } catch (err) {
-        alert('연차 조정 실패: ' + err.message);
+        akmAlert('연차 조정 실패: ' + err.message);
     }
 };
 
@@ -4464,7 +4562,7 @@ window.deleteLeaveAdj = async function(id) {
         loadLeaveAdjustments();
         renderLeaveSummary();
     } catch (err) {
-        alert('취소 실패: ' + err.message);
+        akmAlert('취소 실패: ' + err.message);
     }
 };
 
@@ -4579,12 +4677,12 @@ window.saveManualDoc = async function() {
     const addDays = parseFloat(document.getElementById('manual-added').value) || 0;
 
     if (deductDays > 0 && addDays > 0) {
-        alert('차감일수와 추가일수는 동시에 입력할 수 없습니다.');
+        akmAlert('차감일수와 추가일수는 동시에 입력할 수 없습니다.');
         return;
     }
 
     if (!employeeId || !startDate) {
-        alert('직원과 시작일을 선택해주세요.');
+        akmAlert('직원과 시작일을 선택해주세요.');
         return;
     }
 
@@ -4602,11 +4700,11 @@ window.saveManualDoc = async function() {
     try {
         await api('/api/documents/manual', 'POST', body);
         closeManualDocModal();
-        alert('추가 완료되었습니다.');
+        akmAlert('추가 완료되었습니다.');
         renderLeaveSummary();
         searchDocHistory();
     } catch (err) {
-        alert('저장 실패: ' + err.message);
+        akmAlert('저장 실패: ' + err.message);
     }
 };
 
@@ -4775,7 +4873,7 @@ window.saveCsTemplate = async function() {
     const category = document.getElementById('cs-template-category').value;
     const title = document.getElementById('cs-template-title-input').value.trim();
     const content = document.getElementById('cs-template-content').value.trim();
-    if (!title || !content) { alert('제목과 내용을 입력해주세요.'); return; }
+    if (!title || !content) { akmAlert('제목과 내용을 입력해주세요.'); return; }
     try {
         if (id) {
             await api(`/api/cs-templates/${id}`, 'PUT', { category, title, content });
@@ -4784,7 +4882,7 @@ window.saveCsTemplate = async function() {
         }
         document.getElementById('cs-template-modal').style.display = 'none';
         await renderCsTemplates();
-    } catch (err) { alert('저장 실패: ' + err.message); }
+    } catch (err) { akmAlert('저장 실패: ' + err.message); }
 };
 
 window.deleteCsTemplate = async function(id) {
@@ -4792,7 +4890,7 @@ window.deleteCsTemplate = async function(id) {
     try {
         await api(`/api/cs-templates/${id}`, 'DELETE');
         await renderCsTemplates();
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 // --- CS 카테고리 관리 ---
@@ -4826,7 +4924,7 @@ function renderCsCategoryList() {
 window.addCsCategory = async function() {
     const name = document.getElementById('cs-new-cat-name').value.trim();
     const color = document.getElementById('cs-new-cat-color').value;
-    if (!name) { alert('카테고리 이름을 입력해주세요.'); return; }
+    if (!name) { akmAlert('카테고리 이름을 입력해주세요.'); return; }
     try {
         await api('/api/cs-categories', 'POST', { name, color });
         document.getElementById('cs-new-cat-name').value = '';
@@ -4835,7 +4933,7 @@ window.addCsCategory = async function() {
         renderCsCategoryList();
         renderCsTabs();
         renderCsCategoryDropdown();
-    } catch (err) { alert('추가 실패: ' + err.message); }
+    } catch (err) { akmAlert('추가 실패: ' + err.message); }
 };
 
 window.editCsCategory = function(id) {
@@ -4856,14 +4954,14 @@ window.editCsCategory = function(id) {
 window.saveCsCategory = async function(id) {
     const name = document.getElementById(`cs-edit-cat-name-${id}`).value.trim();
     const color = document.getElementById(`cs-edit-cat-color-${id}`).value;
-    if (!name) { alert('카테고리 이름을 입력해주세요.'); return; }
+    if (!name) { akmAlert('카테고리 이름을 입력해주세요.'); return; }
     try {
         await api(`/api/cs-categories/${id}`, 'PUT', { name, color });
         await loadCsCategories();
         renderCsCategoryList();
         renderCsTabs();
         renderCsCategoryDropdown();
-    } catch (err) { alert('수정 실패: ' + err.message); }
+    } catch (err) { akmAlert('수정 실패: ' + err.message); }
 };
 
 window.deleteCsCategory = async function(id) {
@@ -4881,7 +4979,7 @@ window.deleteCsCategory = async function(id) {
             csCurrentCategory = '전체';
         }
         await renderCsTemplates();
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 // =============================================
@@ -5043,7 +5141,7 @@ window.addPlannerTodo = async function() {
         input.value = '';
         await renderPlannerTodos();
         await renderPlannerCalendar();
-    } catch (err) { alert('추가 실패: ' + err.message); }
+    } catch (err) { akmAlert('추가 실패: ' + err.message); }
 };
 
 window.togglePlannerTodo = async function(id, checked) {
@@ -5130,13 +5228,13 @@ window.openDdayModal = function() {
 window.saveDday = async function() {
     const title = document.getElementById('dday-title').value.trim();
     const targetDate = document.getElementById('dday-date').value;
-    if (!title || !targetDate) { alert('제목과 날짜를 입력해주세요.'); return; }
+    if (!title || !targetDate) { akmAlert('제목과 날짜를 입력해주세요.'); return; }
     try {
         await api('/api/planner/ddays', 'POST', { title, targetDate });
         document.getElementById('dday-modal').style.display = 'none';
         await renderPlannerDdays();
         await renderPlannerCalendar();
-    } catch (err) { alert('저장 실패: ' + err.message); }
+    } catch (err) { akmAlert('저장 실패: ' + err.message); }
 };
 
 window.deletePlannerDday = async function(id) {
@@ -5199,12 +5297,12 @@ async function renderPlannerHabits() {
 }
 
 window.addPlannerHabit = async function() {
-    const title = prompt('습관명을 입력하세요:');
+    const title = await akmPrompt('습관명을 입력하세요');
     if (!title || !title.trim()) return;
     try {
         await api('/api/planner/habits', 'POST', { title: title.trim() });
         await renderPlannerHabits();
-    } catch (err) { alert('추가 실패: ' + err.message); }
+    } catch (err) { akmAlert('추가 실패: ' + err.message); }
 };
 
 window.toggleHabitLog = async function(habitId, date, isDone) {
@@ -5356,7 +5454,7 @@ async function loadBoxHistoryAll() {
 
 // 전체 입출고 현황 엑셀 다운로드
 function downloadBoxHistoryAllExcel() {
-    if (!_boxHistAllCache || !_boxHistAllCache.events.length) { alert('다운로드할 데이터가 없습니다. 먼저 조회해주세요.'); return; }
+    if (!_boxHistAllCache || !_boxHistAllCache.events.length) { akmAlert('다운로드할 데이터가 없습니다. 먼저 조회해주세요.'); return; }
     const { events, startDate, endDate } = _boxHistAllCache;
     const typeLabel = { order: '업체 입고', transfer: '시온 이동', consume: '정산 차감' };
 
@@ -5415,15 +5513,15 @@ document.getElementById('box-hist-type')?.addEventListener('change', loadBoxHist
 document.getElementById('box-hist-product')?.addEventListener('change', loadBoxHistoryAll);
 document.getElementById('box-hist-excel-btn')?.addEventListener('click', downloadBoxHistoryAllExcel);
 
-window.editBoxStock = function(id, field) {
+window.editBoxStock = async function(id, field) {
     const item = boxInventoryData.find(i => i.id === id);
     if (!item) return;
     const label = field === 'company' ? '업체재고' : field === 'daesong' ? '대성(시온)재고' : '효돈재고';
     const current = field === 'company' ? item.companyStock : field === 'daesong' ? item.daesongStock : (item.hyodonStock || 0);
-    const val = prompt(`${item.productName} - ${label} 실재고 입력\n(오늘 기준 실제 재고 수량 → 내일부터 입출고 자동 반영):`, current);
+    const val = await akmPrompt(`${item.productName} - ${label} 실재고 입력\n(오늘 기준 실제 재고 수량 → 내일부터 입출고 자동 반영)`, current);
     if (val === null) return;
     const num = parseInt(val);
-    if (isNaN(num) || num < 0) { alert('올바른 숫자를 입력해주세요.'); return; }
+    if (isNaN(num) || num < 0) { akmAlert('올바른 숫자를 입력해주세요.'); return; }
 
     if (field === 'company') item.companyStock = num;
     else if (field === 'daesong') item.daesongStock = num;
@@ -5450,10 +5548,10 @@ window.saveBoxInventory = async function() {
                 hyodonStock: item.hyodonStock || 0
             });
         }
-        alert('저장되었습니다.');
+        akmAlert('저장되었습니다.');
         document.getElementById('box-inventory-save-row').style.display = 'none';
     } catch (err) {
-        alert('저장 실패: ' + err.message);
+        akmAlert('저장 실패: ' + err.message);
     }
 };
 
@@ -5534,7 +5632,7 @@ window.showBoxHistoryModal = async function(productName) {
         // 다운로드용 캐시
         window._lastBoxHistory = { productName, events, summary: s };
     } catch (err) {
-        alert('이력 조회 실패: ' + err.message);
+        akmAlert('이력 조회 실패: ' + err.message);
     }
 };
 
@@ -5546,13 +5644,13 @@ window.deleteBoxMovement = async function(id, productName) {
         document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
         await renderBoxInventory();
         showBoxHistoryModal(productName);
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 // 박스 이력 엑셀 다운로드 (거래처 제출용)
 window.downloadBoxHistoryExcel = function(productName) {
     const cache = window._lastBoxHistory;
-    if (!cache || cache.productName !== productName) { alert('이력을 다시 조회해주세요.'); return; }
+    if (!cache || cache.productName !== productName) { akmAlert('이력을 다시 조회해주세요.'); return; }
     const { events, summary } = cache;
     const typeLabel = { order: '업체 입고', transfer: '시온 이동', consume: '정산 차감' };
 
@@ -5663,17 +5761,17 @@ document.getElementById('box-movement-btn')?.addEventListener('click', () => {
         const qty = Number(overlay.querySelector('#mov-qty').value) || 0;
         const date = overlay.querySelector('#mov-date').value;
         const note = overlay.querySelector('#mov-note').value.trim();
-        if (qty <= 0) { alert('수량을 입력해주세요.'); return; }
-        if (!date) { alert('날짜를 선택해주세요.'); return; }
+        if (qty <= 0) { akmAlert('수량을 입력해주세요.'); return; }
+        if (!date) { akmAlert('날짜를 선택해주세요.'); return; }
         const btn = overlay.querySelector('#mov-save');
         btn.disabled = true; btn.textContent = '저장 중...';
         try {
             await api('/api/box-movements', 'POST', { productName, movementType, qty, date, note });
             overlay.remove();
             await renderBoxInventory();
-            alert('등록 완료');
+            akmAlert('등록 완료');
         } catch (err) {
-            alert('등록 실패: ' + err.message);
+            akmAlert('등록 실패: ' + err.message);
             btn.disabled = false; btn.textContent = '💾 저장';
         }
     });
@@ -6368,8 +6466,8 @@ window.toggleAddItemForm = toggleAddItemForm;
 function confirmAddItem() {
     const name = document.getElementById('qty-add-name').value.trim();
     const qty = parseInt(document.getElementById('qty-add-qty').value);
-    if (!name) { alert('품목명을 입력해주세요.'); return; }
-    if (isNaN(qty) || qty <= 0) { alert('수량을 1 이상 입력해주세요.'); return; }
+    if (!name) { akmAlert('품목명을 입력해주세요.'); return; }
+    if (isNaN(qty) || qty <= 0) { akmAlert('수량을 1 이상 입력해주세요.'); return; }
     qtyManual.push({ name, qty });
     recomputeQtyAggregate();
     document.getElementById('invoice-qty-result').style.display = '';
@@ -6434,7 +6532,7 @@ function updateQtySummary() {
 async function saveQtyImage() {
     // 거래처 필터 적용 (대표 7/21): 화면에 보이는 것만 저장 — 거래처 선택 시 미매칭·타 거래처 제외
     const sel = qtyAggregated.filter(it => it.checked && (aoQtyPartnerFilter === '전체' || aoItemPartner(it.name) === aoQtyPartnerFilter));
-    if (sel.length === 0) { alert('선택된 품목이 없습니다.'); return; }
+    if (sel.length === 0) { akmAlert('선택된 품목이 없습니다.'); return; }
     const total = sel.reduce((s, it) => s + it.qty, 0);
 
     const cap = document.createElement('div');
@@ -6463,7 +6561,7 @@ async function saveQtyImage() {
         });
         qtyImageCounter++;
     } catch (err) {
-        alert('이미지 생성 오류: ' + err.message);
+        akmAlert('이미지 생성 오류: ' + err.message);
     } finally {
         document.body.removeChild(cap);
     }
@@ -6484,6 +6582,17 @@ window.resetInvoiceQty = resetInvoiceQty;
 // =============================================
 // Utility
 // =============================================
+// #578 화면에 보이는 날짜 표기 한 가지 — 날짜 = 2026-10-08 · 날짜+시각 = 2026-10-08 14:05 (내려받는 파일·PDF 는 종전 표기 그대로)
+function akmDate(v) {
+    const d = v instanceof Date ? v : new Date(v);
+    if (!v || isNaN(d)) return '-';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function akmDateTime(v) {
+    const d = v instanceof Date ? v : new Date(v);
+    if (!v || isNaN(d)) return '-';
+    return akmDate(d) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
 function formatDate(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -6560,9 +6669,9 @@ document.getElementById('prepay-save').addEventListener('click', async () => {
     const date = document.getElementById('prepay-date').value;
     const note = document.getElementById('prepay-note').value.trim();
 
-    if (!partner) return alert('거래처를 선택해주세요.');
-    if (!amount) return alert('금액을 입력해주세요.');
-    if (!date) return alert('날짜를 선택해주세요.');
+    if (!partner) return akmAlert('거래처를 선택해주세요.');
+    if (!amount) return akmAlert('금액을 입력해주세요.');
+    if (!date) return akmAlert('날짜를 선택해주세요.');
 
     try {
         await api('/api/prepayments', 'POST', { partner, amount, date, note });
@@ -6572,9 +6681,9 @@ document.getElementById('prepay-save').addEventListener('click', async () => {
         document.getElementById('prepay-note').value = '';
         await renderPrepaymentList();
         await renderSettlementCalendar();
-        alert('지급결제가 추가되었습니다.');
+        akmAlert('지급결제가 추가되었습니다.');
     } catch (err) {
-        alert('추가 실패: ' + err.message);
+        akmAlert('추가 실패: ' + err.message);
     }
 });
 
@@ -6585,7 +6694,7 @@ window.deletePrepayment = async function(id) {
         await renderPrepaymentList();
         await renderSettlementCalendar();
     } catch (err) {
-        alert('삭제 실패: ' + err.message);
+        akmAlert('삭제 실패: ' + err.message);
     }
 };
 
@@ -6623,7 +6732,7 @@ window.updateCjCarryoverMonth = function() {
 window.saveCjCarryover = async function() {
     const startDate = document.getElementById('cj-carryover-start').value;
     const endDate = document.getElementById('cj-carryover-end').value;
-    if (!startDate || !endDate) { alert('시작일과 종료일을 입력해주세요.'); return; }
+    if (!startDate || !endDate) { akmAlert('시작일과 종료일을 입력해주세요.'); return; }
     const month = endDate.substring(0, 7);
     const amount = Number(document.getElementById('cj-carryover-amount').value) || 0;
     const note = document.getElementById('cj-carryover-note').value.trim();
@@ -6631,7 +6740,7 @@ window.saveCjCarryover = async function() {
         await api('/api/cj-carryover', 'POST', { month, amount, note, startDate, endDate });
         document.getElementById('cj-carryover-modal').style.display = 'none';
         await renderSettlementCalendar();
-    } catch (err) { alert('저장 실패: ' + err.message); }
+    } catch (err) { akmAlert('저장 실패: ' + err.message); }
 };
 
 async function renderWeeklySettlement() {
@@ -6762,7 +6871,7 @@ window.downloadPartnerWeeklySettlement = async function(partner, weekStart, week
         const all = settsByMonth.flat();
         const target = all.filter(s => s.partner === partner && s.date >= weekStart && s.date <= weekEnd);
 
-        if (target.length === 0) { alert('해당 주차에 정산 데이터가 없습니다.'); return; }
+        if (target.length === 0) { akmAlert('해당 주차에 정산 데이터가 없습니다.'); return; }
 
         // 주차의 7일 날짜 배열 (월~일)
         const days = [];
@@ -6895,7 +7004,7 @@ window.downloadPartnerWeeklySettlement = async function(partner, weekStart, week
         const fname = `${partner}_결제금액_${weekStart}~${weekEnd}.xlsx`;
         XLSX.writeFile(wb, fname);
     } catch (err) {
-        alert('엑셀 다운로드 실패: ' + err.message);
+        akmAlert('엑셀 다운로드 실패: ' + err.message);
         console.error(err);
     }
 };
@@ -7002,7 +7111,7 @@ window.completeWeekSettlement = async function(weekStart, weekEnd, partner, amou
         await renderWeeklySettlement();
         await renderSettlementCalendar();
     } catch (err) {
-        alert('정산 완료 처리 실패: ' + err.message);
+        akmAlert('정산 완료 처리 실패: ' + err.message);
     }
 };
 
@@ -7013,7 +7122,7 @@ window.cancelWeekSettlement = async function(id) {
         await renderWeeklySettlement();
         await renderSettlementCalendar();
     } catch (err) {
-        alert('취소 실패: ' + err.message);
+        akmAlert('취소 실패: ' + err.message);
     }
 };
 
@@ -7245,7 +7354,7 @@ async function saveWorkLog() {
     const afternoon = document.getElementById('worklog-afternoon').value.trim();
     const meeting = document.getElementById('worklog-meeting').value.trim();
     if (!morning && !afternoon) {
-        alert('오전 또는 오후 업무 내용을 입력해주세요.');
+        akmAlert('오전 또는 오후 업무 내용을 입력해주세요.');
         return;
     }
     const content = JSON.stringify({ morning, afternoon, meeting });
@@ -7265,7 +7374,7 @@ async function saveWorkLog() {
         toast.style.display = 'block';
         setTimeout(() => { toast.style.display = 'none'; }, 3000);
     } catch (err) {
-        alert('저장 실패: ' + (err.message || '오류'));
+        akmAlert('저장 실패: ' + (err.message || '오류'));
     }
 }
 window.saveWorkLog = saveWorkLog;
@@ -7279,7 +7388,7 @@ async function deleteWorkLog() {
         closeWorklogModal();
         await loadWorkLogs();
     } catch (err) {
-        alert('삭제 실패: ' + (err.message || '오류'));
+        akmAlert('삭제 실패: ' + (err.message || '오류'));
     }
 }
 window.deleteWorkLog = deleteWorkLog;
@@ -7320,16 +7429,16 @@ function updateSignaturePreview(imgData) {
 document.getElementById('signature-file-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { alert('파일 크기가 2MB를 초과합니다.'); e.target.value = ''; return; }
-    if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) { alert('PNG 또는 JPG 파일만 업로드 가능합니다.'); e.target.value = ''; return; }
+    if (file.size > 2 * 1024 * 1024) { akmAlert('파일 크기가 2MB를 초과합니다.'); e.target.value = ''; return; }
+    if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) { akmAlert('PNG 또는 JPG 파일만 업로드 가능합니다.'); e.target.value = ''; return; }
     const reader = new FileReader();
     reader.onload = async (ev) => {
         const base64 = ev.target.result;
         try {
             await api('/api/users/signature', 'PUT', { signatureImage: base64 });
             updateSignaturePreview(base64);
-            alert('도장 이미지가 등록되었습니다.');
-        } catch (err) { alert('업로드 실패: ' + err.message); }
+            akmAlert('도장 이미지가 등록되었습니다.');
+        } catch (err) { akmAlert('업로드 실패: ' + err.message); }
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -7340,8 +7449,8 @@ document.getElementById('signature-delete-btn').addEventListener('click', async 
     try {
         await api('/api/users/signature', 'DELETE');
         updateSignaturePreview(null);
-        alert('도장 이미지가 삭제되었습니다.');
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+        akmAlert('도장 이미지가 삭제되었습니다.');
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 });
 
 document.getElementById('form-change-password').addEventListener('submit', async (e) => {
@@ -7351,17 +7460,17 @@ document.getElementById('form-change-password').addEventListener('submit', async
     const confirmPw = document.getElementById('pw-confirm').value;
 
     if (newPw !== confirmPw) {
-        alert('새 비밀번호가 일치하지 않습니다.');
+        akmAlert('새 비밀번호가 일치하지 않습니다.');
         return;
     }
     if (newPw.length < 4) {
-        alert('새 비밀번호는 4자 이상이어야 합니다.');
+        akmAlert('새 비밀번호는 4자 이상이어야 합니다.');
         return;
     }
 
     try {
         await api('/api/auth/change-password', 'PUT', { currentPassword: currentPw, newPassword: newPw });
-        alert('비밀번호가 변경되었습니다. 다시 로그인해주세요.');
+        akmAlert('비밀번호가 변경되었습니다. 다시 로그인해주세요.');
         document.getElementById('form-change-password').reset();
         // 로그아웃 처리
         localStorage.removeItem('jwt_token');
@@ -7369,7 +7478,7 @@ document.getElementById('form-change-password').addEventListener('submit', async
         currentUser = null;
         showLoginPage();
     } catch (err) {
-        alert(err.message || '비밀번호 변경에 실패했습니다.');
+        akmAlert(err.message || '비밀번호 변경에 실패했습니다.');
     }
 });
 
@@ -7531,7 +7640,7 @@ document.getElementById('expense-submit').addEventListener('click', async () => 
         const note = row.querySelector('.expense-item-note').value.trim();
         if (category && amount > 0) items.push({ category, detail, amount, note });
     });
-    if (items.length === 0) { alert('지출 항목을 하나 이상 추가해주세요.'); return; }
+    if (items.length === 0) { akmAlert('지출 항목을 하나 이상 추가해주세요.'); return; }
 
     // 제목은 첫 번째 항목 카테고리로 자동 생성
     const title = items.map(i => i.category).join(', ');
@@ -7545,10 +7654,10 @@ document.getElementById('expense-submit').addEventListener('click', async () => 
     try {
         if (editId) await api(`/api/expense-reports/${editId}`, 'PUT', { title, purpose, items, useDate });
         else await api('/api/expense-reports', 'POST', { title, purpose, items, useDate });
-        alert(editId ? '지출결의서가 수정되었습니다.' : '지출결의서가 제출되었습니다.');
+        akmAlert(editId ? '지출결의서가 수정되었습니다.' : '지출결의서가 제출되었습니다.');
         resetExpenseForm();
         switchExpenseTab('my');
-    } catch (err) { alert((editId ? '수정' : '제출') + ' 실패: ' + err.message); }
+    } catch (err) { akmAlert((editId ? '수정' : '제출') + ' 실패: ' + err.message); }
 });
 
 // #493: 작성 폼 초기화(수정 모드 해제 포함)
@@ -7568,7 +7677,7 @@ window.cancelExpenseEdit = function() { resetExpenseForm(); switchExpenseTab('my
 window.editExpense = async function(id) {
     try {
         const d = await api(`/api/expense-reports/${id}`);
-        if (d.status !== 'pending') { alert('승인 전(결재 대기) 결의서만 수정할 수 있습니다.'); return; }
+        if (d.status !== 'pending') { akmAlert('승인 전(결재 대기) 결의서만 수정할 수 있습니다.'); return; }
         const items = typeof d.items === 'string' ? JSON.parse(d.items) : (d.items || []);
         document.querySelector('.modal-overlay')?.remove();
         switchExpenseTab('write');
@@ -7594,13 +7703,13 @@ window.editExpense = async function(id) {
         if (bar) { bar.style.display = ''; bar.querySelector('b').textContent = `#${id} 수정 중`; }
         const btn = document.getElementById('expense-submit'); if (btn) btn.textContent = '수정 저장';
         document.getElementById('expense-section-write')?.scrollIntoView({ block: 'start' });
-    } catch (err) { alert('불러오기 실패: ' + err.message); }
+    } catch (err) { akmAlert('불러오기 실패: ' + err.message); }
 };
 
 // #493(대표 10/1 "잘못된 건 한번에 체크 삭제"): 결재 대기·이력 탭 선택 일괄 삭제(대표만 — 서버 DELETE가 재검증)
 async function batchDeleteExpenses(listSelector, checkClass) {
     const checked = Array.from(document.querySelectorAll(`${listSelector} .${checkClass}:checked`)).map(cb => Number(cb.value));
-    if (checked.length === 0) { alert('삭제할 항목을 선택해주세요.'); return; }
+    if (checked.length === 0) { akmAlert('삭제할 항목을 선택해주세요.'); return; }
     if (!confirm(`선택한 ${checked.length}건을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
     let ok = 0, fail = 0;
     const errs = [];
@@ -7610,7 +7719,7 @@ async function batchDeleteExpenses(listSelector, checkClass) {
     }
     let msg = `삭제 완료: ${ok}건`;
     if (fail > 0) msg += `\n실패: ${fail}건\n${errs.slice(0, 5).join('\n')}`;
-    alert(msg);
+    akmAlert(msg);
     renderExpensePendingList().catch(console.error);
     renderExpenseHistoryList().catch(console.error);
     renderExpenseMyList().catch(console.error);
@@ -7625,7 +7734,7 @@ document.getElementById('expense-history-batch-delete')?.addEventListener('click
 // 일괄 업로드 공통 처리: 파일 → 파싱 → 사전 중복 체크 → 미리보기
 async function handleExpenseBulkUpload(file) {
     const txs = await parseBankExcelFile(file);
-    if (txs.length === 0) { alert('유효한 거래를 찾을 수 없습니다. 엑셀 양식을 확인해주세요.'); return; }
+    if (txs.length === 0) { akmAlert('유효한 거래를 찾을 수 없습니다. 엑셀 양식을 확인해주세요.'); return; }
 
     // 사전 중복 체크: 이미 등록된 거래는 미리보기에서 즉시 제외
     let skippedDup = 0;
@@ -7644,7 +7753,7 @@ async function handleExpenseBulkUpload(file) {
     newTxs._skippedDuplicate = skippedDup;
 
     if (newTxs.length === 0) {
-        alert(`업로드할 신규 거래가 없습니다.\n중복: ${skippedDup}건`);
+        akmAlert(`업로드할 신규 거래가 없습니다.\n중복: ${skippedDup}건`);
         return;
     }
     showBulkExpensePreview(newTxs);
@@ -7657,7 +7766,7 @@ document.getElementById('expense-bulk-file')?.addEventListener('change', async (
     const file = e.target.files[0];
     if (!file) return;
     try { await handleExpenseBulkUpload(file); }
-    catch (err) { alert('파일 읽기 실패: ' + err.message); }
+    catch (err) { akmAlert('파일 읽기 실패: ' + err.message); }
     finally { e.target.value = ''; }
 });
 
@@ -7669,7 +7778,7 @@ document.getElementById('expense-history-bulk-file')?.addEventListener('change',
     const file = e.target.files[0];
     if (!file) return;
     try { await handleExpenseBulkUpload(file); }
-    catch (err) { alert('파일 읽기 실패: ' + err.message); }
+    catch (err) { akmAlert('파일 읽기 실패: ' + err.message); }
     finally { e.target.value = ''; }
 });
 
@@ -7845,7 +7954,7 @@ function showBulkExpensePreview(txs) {
         try {
             const result = await api('/api/expense-reports/bulk', 'POST', { transactions: txs });
             const skippedTxt = (result.skipped > 0) ? `\n중복 스킵: ${result.skipped}건` : '';
-            alert(`등록 완료\n성공: ${result.inserted}건${skippedTxt}\n실패: ${result.failed}건`);
+            akmAlert(`등록 완료\n성공: ${result.inserted}건${skippedTxt}\n실패: ${result.failed}건`);
             overlay.remove();
             // 현재 활성 탭에 맞춰 새로고침. 조회/이력 탭에서 호출한 경우 history 갱신.
             const activeTab = document.querySelector('[data-expense-tab].active')?.dataset.expenseTab;
@@ -7856,7 +7965,7 @@ function showBulkExpensePreview(txs) {
                 switchExpenseTab('my');
             }
         } catch (err) {
-            alert('등록 실패: ' + err.message);
+            akmAlert('등록 실패: ' + err.message);
             btn.disabled = false;
             btn.textContent = `${txs.length}건 등록`;
         }
@@ -7878,7 +7987,7 @@ async function renderExpenseMyList() {
         tbody.innerHTML = data.map(d => `<tr>
             <td>${d.title}</td>
             <td>${Number(d.total_amount).toLocaleString()} 원</td>
-            <td>${new Date(d.created_at).toLocaleDateString()}</td>
+            <td>${akmDate(d.created_at)}</td>
             <td>${getExpenseStatusBadge(d.status)}</td>
             <td><button class="btn-view" onclick="viewExpenseDetail(${d.id})">상세</button>${d.status === 'pending' ? ` <button class="btn-outline expense-edit-btn" onclick="editExpense(${d.id})" style="margin-left:4px;padding:4px 10px;font-size:12px;">✏️ 수정</button>` : ''}${d.status !== 'approved' ? ` <button class="btn-danger expense-del-btn" onclick="deleteExpense(${d.id})" style="margin-left:4px;padding:4px 10px;font-size:12px;">삭제</button>` : ''}</td>
         </tr>`).join('');
@@ -7908,7 +8017,7 @@ async function renderExpensePendingList() {
             <td>${d.title}</td>
             <td>${d.applicant_position} ${d.applicant_name}</td>
             <td>${Number(d.total_amount).toLocaleString()} 원</td>
-            <td>${new Date(d.created_at).toLocaleDateString()}</td>
+            <td>${akmDate(d.created_at)}</td>
             <td>${getExpenseStatusBadge(d.status)}</td>
             <td>
                 <button class="btn-view" onclick="viewExpenseDetail(${d.id})" style="margin-right:4px;">상세</button>
@@ -7930,7 +8039,7 @@ async function renderExpensePendingList() {
 // #423: 결재 대기 탭 선택 일괄 승인 — 이력 탭 핸들러와 동일 방식(건별 순차 승인·실패 건 개별 보고)
 document.getElementById('expense-pending-batch-approve')?.addEventListener('click', async () => {
     const checked = Array.from(document.querySelectorAll('#expense-pending-list .expense-pending-check:checked')).map(cb => Number(cb.value));
-    if (checked.length === 0) { alert('승인할 항목을 선택해주세요.'); return; }
+    if (checked.length === 0) { akmAlert('승인할 항목을 선택해주세요.'); return; }
     if (!confirm(`선택한 ${checked.length}건을 승인하시겠습니까?`)) return;
     let ok = 0, fail = 0;
     const errs = [];
@@ -7940,7 +8049,7 @@ document.getElementById('expense-pending-batch-approve')?.addEventListener('clic
     }
     let msg = `승인 완료: ${ok}건`;
     if (fail > 0) msg += `\n실패: ${fail}건\n${errs.slice(0, 5).join('\n')}`;
-    alert(msg);
+    akmAlert(msg);
     renderExpensePendingList().catch(console.error);
     renderExpenseHistoryList().catch(console.error);
 });
@@ -8027,8 +8136,8 @@ async function renderExpenseHistoryList() {
             const noteCell = noteText ? escapeHtml(noteText) : '<span style="color:#9ca3af;">-</span>';
             // 사용날짜 우선 (없으면 작성일 fallback)
             const useDateStr = d.use_date
-                ? new Date(d.use_date).toLocaleDateString()
-                : `<span style="color:#9ca3af;">${new Date(d.created_at).toLocaleDateString()}</span>`;
+                ? akmDate(d.use_date)
+                : `<span style="color:#9ca3af;">${akmDate(d.created_at)}</span>`;
             // 승인 전(결재대기) 상태만 체크박스 표시 (admin만) — #493: 대표는 전 행(선택 삭제용). 승인 핸들러는 승인 가능 건만 골라 보낸다
             const approvable = d.status === 'pending' || d.status === 'manager_approved';
             const checkCell = ((isAdmin && approvable) || (isCeo && d.status !== 'approved'))   // #493-b: 승인된 건은 삭제 불가 → 체크박스 없음
@@ -8071,7 +8180,7 @@ async function renderExpenseHistoryList() {
 document.getElementById('expense-history-batch-approve')?.addEventListener('click', async () => {
     // #493: 대표는 승인된 행도 체크할 수 있으므로(선택 삭제) 승인 대상은 결재 대기 행만
     const checked = Array.from(document.querySelectorAll('#expense-history-list .expense-history-check:checked')).filter(cb => cb.dataset.approvable !== '0').map(cb => Number(cb.value));
-    if (checked.length === 0) { alert('승인할 항목을 선택해주세요.'); return; }
+    if (checked.length === 0) { akmAlert('승인할 항목을 선택해주세요.'); return; }
     if (!confirm(`선택한 ${checked.length}건을 승인하시겠습니까?`)) return;
     let ok = 0, fail = 0;
     const errs = [];
@@ -8081,7 +8190,7 @@ document.getElementById('expense-history-batch-approve')?.addEventListener('clic
     }
     let msg = `승인 완료: ${ok}건`;
     if (fail > 0) msg += `\n실패: ${fail}건\n${errs.slice(0, 5).join('\n')}`;
-    alert(msg);
+    akmAlert(msg);
     renderExpenseHistoryList().catch(console.error);
     renderExpensePendingList().catch(console.error);
 });
@@ -8105,7 +8214,7 @@ document.getElementById('expense-history-search')?.addEventListener('click', () 
 // 지출결의서 조회 결과 엑셀 일괄 다운로드 (세무사 검토용)
 document.getElementById('expense-history-download')?.addEventListener('click', () => {
     const data = window._lastExpenseHistory || [];
-    if (data.length === 0) { alert('다운로드할 데이터가 없습니다. 먼저 검색을 실행해주세요.'); return; }
+    if (data.length === 0) { akmAlert('다운로드할 데이터가 없습니다. 먼저 검색을 실행해주세요.'); return; }
 
     const fmt = v => v ? new Date(v).toISOString().slice(0, 10) : '';
     const statusLabel = s => ({pending:'대기중', manager_approved:'1차 승인', approved:'최종 승인', rejected:'반려'}[s] || s);
@@ -8255,8 +8364,8 @@ window.viewExpenseDetail = async function(id) {
                 <h3 style="text-align:center;margin-bottom:8px;">지출결의서</h3>
                 ${stampHtml}
                 <div style="margin-bottom:8px;"><strong>제목:</strong> ${d.title}</div>
-                <div style="margin-bottom:8px;"><strong>작성일:</strong> ${new Date(d.created_at).toLocaleDateString()}</div>
-                <div style="margin-bottom:8px;"><strong>사용날짜:</strong> ${d.use_date ? new Date(d.use_date).toLocaleDateString() : '-'}</div>
+                <div style="margin-bottom:8px;"><strong>작성일:</strong> ${akmDate(d.created_at)}</div>
+                <div style="margin-bottom:8px;"><strong>사용날짜:</strong> ${d.use_date ? akmDate(d.use_date) : '-'}</div>
                 <div style="margin-bottom:12px;"><strong>지출목적:</strong> ${d.purpose || '-'}</div>
                 <table class="data-table">
                     <thead><tr><th>항목</th><th style="text-align:right">금액(원)</th><th>비고</th></tr></thead>
@@ -8275,7 +8384,7 @@ window.viewExpenseDetail = async function(id) {
         `;
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
         document.body.appendChild(overlay);
-    } catch (err) { alert('상세 조회 실패: ' + err.message); }
+    } catch (err) { akmAlert('상세 조회 실패: ' + err.message); }
 };
 
 // 재요청 (반려된 결의서를 다시 결재대기로 — 신청자 본인만)
@@ -8283,11 +8392,11 @@ window.resubmitExpense = async function(id) {
     if (!confirm('이 지출결의서를 다시 결재 요청하시겠습니까?\n반려 사유는 초기화되며 결재라인이 처음부터 다시 진행됩니다.')) return;
     try {
         await api(`/api/expense-reports/${id}/resubmit`, 'PUT');
-        alert('재요청 완료');
+        akmAlert('재요청 완료');
         document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
         renderExpenseMyList().catch(console.error);
         renderExpenseHistoryList().catch(console.error);
-    } catch (err) { alert('재요청 실패: ' + err.message); }
+    } catch (err) { akmAlert('재요청 실패: ' + err.message); }
 };
 
 // 승인
@@ -8295,22 +8404,22 @@ window.approveExpense = async function(id) {
     if (!confirm('이 지출결의서를 승인하시겠습니까?')) return;
     try {
         await api(`/api/expense-reports/${id}/approve`, 'PUT');
-        alert('승인 완료');
+        akmAlert('승인 완료');
         renderExpensePendingList().catch(console.error);
         renderExpenseHistoryList().catch(console.error);
-    } catch (err) { alert('승인 실패: ' + err.message); }
+    } catch (err) { akmAlert('승인 실패: ' + err.message); }
 };
 
 // 반려
 window.rejectExpense = async function(id) {
-    const reason = prompt('반려 사유를 입력해주세요:');
+    const reason = await akmPrompt('반려 사유를 입력해주세요');
     if (reason === null) return;
     try {
         await api(`/api/expense-reports/${id}/reject`, 'PUT', { reason });
-        alert('반려 완료');
+        akmAlert('반려 완료');
         renderExpensePendingList().catch(console.error);
         renderExpenseHistoryList().catch(console.error);
-    } catch (err) { alert('반려 실패: ' + err.message); }
+    } catch (err) { akmAlert('반려 실패: ' + err.message); }
 };
 
 // 삭제 (대표만)
@@ -8318,12 +8427,12 @@ window.deleteExpense = async function(id) {
     if (!confirm('이 지출결의서를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
     try {
         await api(`/api/expense-reports/${id}`, 'DELETE');
-        alert('삭제 완료');
+        akmAlert('삭제 완료');
         document.querySelector('.modal-overlay')?.remove();
         renderExpenseHistoryList().catch(console.error);
         renderExpenseMyList().catch(console.error);
         renderExpensePendingList().catch(console.error);
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 // PDF 다운로드
@@ -8424,7 +8533,7 @@ window.downloadExpensePDF = async function(id) {
         const pdfH = (canvas.height * pdfW) / canvas.width;
         pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
         pdf.save(`지출결의서_${d.title}.pdf`);
-    } catch (err) { alert('PDF 다운로드 실패: ' + err.message); }
+    } catch (err) { akmAlert('PDF 다운로드 실패: ' + err.message); }
 };
 
 // ============================================================
@@ -8623,7 +8732,7 @@ function renderCardTransactions() {
                     const tx = cardTxAll.find(t => t.id === Number(sel.dataset.id));
                     if (tx) tx.category = newCat;
                     renderCardTransactions(); // 소계 갱신용 전체 재렌더
-                } catch (err) { alert('수정 실패: ' + err.message); }
+                } catch (err) { akmAlert('수정 실패: ' + err.message); }
             });
         });
         tbody.querySelectorAll('.card-tx-memo').forEach(input => {
@@ -8632,7 +8741,7 @@ function renderCardTransactions() {
                     await api(`/api/card-transactions/${input.dataset.id}`, 'PUT', { memo: input.value });
                     const tx = cardTxAll.find(t => t.id === Number(input.dataset.id));
                     if (tx) tx.memo = input.value;
-                } catch (err) { alert('메모 저장 실패: ' + err.message); }
+                } catch (err) { akmAlert('메모 저장 실패: ' + err.message); }
             });
         });
     }
@@ -8659,13 +8768,13 @@ document.getElementById('card-upload-file')?.addEventListener('change', async (e
     if (!file) return;
     try {
         const transactions = await parseCardFile(file);
-        if (transactions.length === 0) { alert('파일에서 유효한 카드내역을 찾을 수 없습니다.'); return; }
+        if (transactions.length === 0) { akmAlert('파일에서 유효한 카드내역을 찾을 수 없습니다.'); return; }
         if (!confirm(`${transactions.length}건을 업로드하시겠습니까?\n(같은 날짜+가맹점+금액은 자동 스킵)`)) return;
         const result = await api('/api/card-transactions/bulk', 'POST', { transactions });
-        alert(`업로드 완료\n신규: ${result.inserted}건 / 중복 스킵: ${result.skipped}건`);
+        akmAlert(`업로드 완료\n신규: ${result.inserted}건 / 중복 스킵: ${result.skipped}건`);
         loadCardTransactions();
     } catch (err) {
-        alert('업로드 실패: ' + err.message);
+        akmAlert('업로드 실패: ' + err.message);
     } finally {
         e.target.value = '';
     }
@@ -8731,7 +8840,7 @@ async function parseCardFile(file) {
 
 // 엑셀 다운로드
 document.getElementById('card-download-btn')?.addEventListener('click', () => {
-    if (cardTxAll.length === 0) { alert('다운로드할 데이터가 없습니다.'); return; }
+    if (cardTxAll.length === 0) { akmAlert('다운로드할 데이터가 없습니다.'); return; }
     const rows = [['날짜', '가맹점명', '금액', '카테고리', '세부내용', '메모', '처리상태']];
     let cardTotal = 0;
     cardTxAll.forEach(tx => {
@@ -8770,7 +8879,7 @@ window.deleteCardTransaction = async function(id) {
     try {
         await api(`/api/card-transactions/${id}`, 'DELETE');
         loadCardTransactions();
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 // 처리상태 토글 (미입력 ↔ 입력) - 같은 행의 메모도 함께 저장
@@ -8787,7 +8896,7 @@ window.toggleCardProcessed = async function(id, nextValue) {
             if (memoInput) tx.memo = memoInput.value;
         }
         renderCardTransactions();
-    } catch (err) { alert('상태 변경 실패: ' + err.message); }
+    } catch (err) { akmAlert('상태 변경 실패: ' + err.message); }
 };
 
 // ============================================================
@@ -9622,7 +9731,7 @@ document.getElementById('rank-parse-btn')?.addEventListener('click', () => {
     const text = document.getElementById('rank-input-text').value;
     const parsed = _parseRankText(text);
     if (parsed.rows.length === 0) {
-        alert('파싱 가능한 키워드 행을 찾지 못했어요.\n예: 귤(16위) 광고2위 파워링크1위');
+        akmAlert('파싱 가능한 키워드 행을 찾지 못했어요.\n예: 귤(16위) 광고2위 파워링크1위');
         return;
     }
     if (parsed.date) document.getElementById('rank-input-date').value = parsed.date;
@@ -9651,20 +9760,20 @@ document.getElementById('rank-clear-btn')?.addEventListener('click', () => {
 });
 
 document.getElementById('rank-save-btn')?.addEventListener('click', async () => {
-    if (!_rankParsed || _rankParsed.rows.length === 0) { alert('먼저 정리 버튼을 눌러주세요.'); return; }
+    if (!_rankParsed || _rankParsed.rows.length === 0) { akmAlert('먼저 정리 버튼을 눌러주세요.'); return; }
     const date = document.getElementById('rank-input-date').value;
-    if (!date) { alert('날짜를 입력해주세요.'); return; }
+    if (!date) { akmAlert('날짜를 입력해주세요.'); return; }
     const btn = document.getElementById('rank-save-btn');
     btn.disabled = true; btn.textContent = '저장 중...';
     try {
         const r = await api('/api/rankings/bulk', 'POST', { date, rows: _rankParsed.rows });
-        alert(`저장 완료\n신규: ${r.inserted}건 / 덮어쓰기: ${r.updated}건`);
+        akmAlert(`저장 완료\n신규: ${r.inserted}건 / 덮어쓰기: ${r.updated}건`);
         document.getElementById('rank-input-text').value = '';
         document.getElementById('rank-preview-wrap').style.display = 'none';
         _rankParsed = null;
         await loadRankings();
     } catch (err) {
-        alert('저장 실패: ' + err.message);
+        akmAlert('저장 실패: ' + err.message);
     } finally {
         btn.disabled = false; btn.textContent = '💾 저장';
     }
@@ -9761,7 +9870,7 @@ window.deleteRanking = async function(id) {
     try {
         await api(`/api/rankings/${id}`, 'DELETE');
         await loadRankings();
-    } catch (err) { alert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
 };
 
 function drawRankChart() {
@@ -10186,7 +10295,7 @@ window.aoSettlePickItem = function(rowIdx) {
     const c = (r.candidates && r.candidates[partner]) ? r.candidates[partner] : r;
     const catalog = c.catalog || [];
     const row = c.rows[rowIdx];
-    if (!catalog.length) return alert('이 거래처의 품목별 금액이 없습니다 — 품목별 금액을 먼저 등록하세요.');
+    if (!catalog.length) return akmAlert('이 거래처의 품목별 금액이 없습니다 — 품목별 금액을 먼저 등록하세요.');
     document.querySelectorAll('.ao-pick-overlay').forEach(e => e.remove());
     const opts = catalog.map(p => `<button class="ao-manage-item" onclick="aoSettleApplyPick(${rowIdx}, ${JSON.stringify(p.name).replace(/"/g,'&quot;')}, ${p.price})">${aoEsc(p.name)} <small>(${p.price.toLocaleString()}원)</small></button>`).join('');
     const overlay = document.createElement('div');
@@ -10250,7 +10359,7 @@ window.aoSettleSaveOcr = async function() {
         }
         aoRefreshLog();
         aoSettleCloseModal();
-    } catch (err) { alert(err.message); if (btn) btn.disabled = false; }
+    } catch (err) { akmAlert(err.message); if (btn) btn.disabled = false; }
 };
 function aoSettleShowNextInQueue() {
     if (aoSettleQueue.length) { const next = aoSettleQueue.shift(); setTimeout(() => aoShowSettlementConfirm(next), 300); }
@@ -10286,7 +10395,7 @@ function aoAddImageFiles(files) {
     let pending = files.length;
     if (!pending) return;
     files.forEach((f, i) => {
-        if (f.size > 10 * 1024 * 1024) { alert(`이미지가 너무 큽니다 (10MB 이내)`); if (--pending <= 0) aoRenderImagePreview(); return; }
+        if (f.size > 10 * 1024 * 1024) { akmAlert(`이미지가 너무 큽니다 (10MB 이내)`); if (--pending <= 0) aoRenderImagePreview(); return; }
         const reader = new FileReader();
         reader.onload = () => { aoOrderImages.push({ data: reader.result, mime: f.type || 'image/png', name: f.name || `붙여넣기_${Date.now()}_${i}.png` }); if (--pending <= 0) aoRenderImagePreview(); };
         reader.readAsDataURL(f);
@@ -10334,7 +10443,7 @@ async function aoSendOrder() {
             aoPollOrder(res.order.id);
         }
     } catch (err) {
-        alert(err.message);
+        akmAlert(err.message);
     } finally {
         btn.disabled = false;
         input.focus();
@@ -10382,7 +10491,7 @@ window.aoQuickAnswer = async function(yes) {
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
         aoSayThinking('마루', '💭', '처리 중');
         aoPollOrder(res.order.id);
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 
 // 대표 7/22: 선택지 버튼 답변 — 고른 선택지 텍스트를 그대로 답으로 전송 (자유 입력과 동일 경로)
@@ -10399,7 +10508,7 @@ window.aoAnswerChoice = async function(text) {
         aoAppendLiveLogHtml(aoOrderLogLine(res.order));
         aoSayThinking('마루', '💭', '처리 중');
         aoPollOrder(res.order.id);
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 
 // 마루 처리 결과 폴링 (질문/완료/안내/오류가 될 때까지)
@@ -10506,7 +10615,7 @@ window.aoProcessOrder = async function(orderId) {
         if (overlay) overlay.remove();
         aoSayThinking('마루', '💭', '생각 중');
         aoPollOrder(orderId);
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 
 // 마루 패널: 처리 대기/오류 지시 목록
@@ -10600,7 +10709,7 @@ function aoKst(ts, opts) {
 window.aoOpenArchiveModal = async function() {
     let data;
     try { data = await api('/api/agent-office/archive'); }
-    catch (e) { return alert(e.message); }
+    catch (e) { return akmAlert(e.message); }
     const files = data.files || [];
     const body = files.length
         ? '<div class="ao-run-history">' + files.map(f => {
@@ -10636,7 +10745,7 @@ window.aoDownloadArchive = async function(encName) {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 4000);
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // 지시 #33: 이미지 미리보기 — 인증 fetch → blob URL (캐시), 썸네일 로드 + 탭하면 크게 보기
@@ -10670,7 +10779,7 @@ window.aoPreviewImage = async function(fileId) {
         }
         document.getElementById('ao-media-overlay-img').src = url;
         ov.style.display = 'flex';
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // 지시 #26·#27: 미소 생성 승인 — 건별 비용 확인 후 서버 호출 (승인 없이 생성 불가)
@@ -10680,7 +10789,7 @@ window.aoGenerateMedia = async function(runId, outputIndex, grade, media, costLa
         const r = await api(`/api/agent-office/runs/${runId}/generate`, 'POST', { output_index: outputIndex, grade });
         showToast('✅ ' + r.message);
         aoOpenReport(runId); // 생성 중 상태 + 진행바로 즉시 재렌더 (모달이 자동으로 폴링 시작 → 완료 시 이미지 자동 표시)
-    } catch (e) { alert('생성 요청 실패: ' + e.message); }
+    } catch (e) { akmAlert('생성 요청 실패: ' + e.message); }
 };
 
 // 대표 7/21: 미소 생성 진행률 + 완료 자동 표시 — 생성 중이면 진행바를 0→85% 크리핑,
@@ -10730,9 +10839,9 @@ window.aoTelegramTest = async function() {
         const res = await api('/api/agent-office/telegram-test', 'POST');
         const d = res.diag || {};
         showToast('🔔 ' + res.message);
-        if (!d.token_set) alert('⚠️ TELEGRAM_BOT_TOKEN이 서버에 설정되어 있지 않습니다 (Render 환경변수 확인)');
-        else if (!d.chat_resolved) alert('⚠️ 수신처(chat_id)를 아직 확보하지 못했습니다 — 봇에게 아무 메시지나 1개 보낸 뒤 다시 눌러주세요' + (d.getupdates && d.getupdates.error ? '\n(오류: ' + d.getupdates.error + ')' : ''));
-    } catch (e) { alert(e.message); }
+        if (!d.token_set) akmAlert('⚠️ TELEGRAM_BOT_TOKEN이 서버에 설정되어 있지 않습니다 (Render 환경변수 확인)');
+        else if (!d.chat_resolved) akmAlert('⚠️ 수신처(chat_id)를 아직 확보하지 못했습니다 — 봇에게 아무 메시지나 1개 보낸 뒤 다시 눌러주세요' + (d.getupdates && d.getupdates.error ? '\n(오류: ' + d.getupdates.error + ')' : ''));
+    } catch (e) { akmAlert(e.message); }
 };
 
 // 4단계: 보고서 파일 다운로드 — 인증 토큰 포함 fetch → blob 저장 (adminOnly API)
@@ -10760,7 +10869,7 @@ window.aoDownloadFile = async function(fileId) {
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
         showToast('📎 ' + filename + ' 다운로드');
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // 오류 지시 확인 종결 (대표 실사용 지적 — LIVE 오류 잔존 정리, soft-close)
@@ -10769,7 +10878,7 @@ window.aoAckOrderError = async function(orderId) {
         const res = await api('/api/agent-office/orders/' + orderId + '/ack-error', 'POST');
         showToast('✔ ' + res.message);
         aoRefreshLog();
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // 지시 #4-1: 미응답 질문 수동 종결 (soft-close — 전체 보기에서 계속 조회 가능)
@@ -10778,14 +10887,14 @@ window.aoCloseQuestion = async function(orderId) {
         const res = await api('/api/agent-office/orders/' + orderId + '/close', 'POST');
         showToast('✔ ' + res.message);
         aoRefreshLog();
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // ---- v5.0 1단계: 오배정 카운트 모달 (감이 아닌 숫자로) ----
 window.aoOpenMisrouteModal = async function() {
     let m;
     try { m = await api('/api/agent-office/misroute-stats?days=7'); }
-    catch (e) { return alert(e.message); }
+    catch (e) { return akmAlert(e.message); }
     const row = (label, val, desc) =>
         `<div class="ao-lesson-row"><strong>${label}: ${val}건</strong><span class="ao-lesson-meta">${desc}</span></div>`;
     const overlay = document.createElement('div');
@@ -10806,7 +10915,7 @@ window.aoOpenMisrouteModal = async function() {
 window.aoOpenTestResultsModal = async function() {
     let data;
     try { data = await api('/api/agent-office/runs?only_test=true&limit=20'); }
-    catch (e) { return alert(e.message); }
+    catch (e) { return akmAlert(e.message); }
     const runs = data.runs || [];
     const body = runs.length
         ? '<div class="ao-run-history">' + runs.map(r => {
@@ -11058,7 +11167,7 @@ window.aoRunAgent = async function(agentId) {
         const runBtn = document.getElementById('ao-detail-run-btn');
         if (runBtn) { runBtn.disabled = true; runBtn.textContent = '⏳ 실행 중...'; }
     } catch (err) {
-        alert(err.message);
+        akmAlert(err.message);
     }
 };
 
@@ -11394,7 +11503,7 @@ window.openAoDetail = async function(agentId) {
     let data;
     try {
         data = await api('/api/agent-office/agents/' + agentId);
-    } catch (err) { return alert(err.message); }
+    } catch (err) { return akmAlert(err.message); }
     const agent = data.agent, tools = data.tools, lessons = data.lessons, runs = data.runs;
     const feedbackList = data.feedback || [];
     const lessonProposals = lessons.filter(l => l.status === '제안');
@@ -11509,7 +11618,7 @@ function aoFbLine(f, withAgent) {
 window.aoOpenLessonsModal = async function(weekOnly) {
     let data;
     try { data = await api('/api/agent-office/lessons' + (weekOnly ? '?week=1' : '')); }
-    catch (e) { return alert(e.message); }
+    catch (e) { return akmAlert(e.message); }
     const lessons = data.lessons || [];
     const groups = {};
     lessons.forEach(l => { (groups[l.agent_name] = groups[l.agent_name] || []).push(l); });
@@ -11556,7 +11665,7 @@ window.aoModalLessonAct = async function(id, act, weekOnly) {
         if (ov) ov.remove();
         aoOpenLessonsModal(weekOnly);
         aoRefreshGrowth();
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // 실패 수집함 모달 (대표 7/21 전면 개편): 실패(fail)만 표시 — 내 질문 + 마루/요원 답변, 길면 …+클릭 전체보기, 항목별 삭제.
@@ -11574,7 +11683,7 @@ window.aoExtractAnswer = function(orig) {
 window.aoOpenFeedbackModal = async function() {
     let data;
     try { data = await api('/api/agent-office/feedback'); }
-    catch (e) { return alert(e.message); }
+    catch (e) { return akmAlert(e.message); }
     const fails = (data.feedback || []).filter(f => f.feedback_type === 'fail');
     aoFailData = {};
     const itemHtml = f => {
@@ -11627,7 +11736,7 @@ window.aoDeleteFail = async function(id) {
         showToast('🗑 삭제했습니다');
         aoOpenFeedbackModal();
         aoRefreshGrowth();
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // ---- 9차: 보고서 보관/복원 (soft-delete — 피드백·학습 노트 무영향) ----
@@ -11637,7 +11746,7 @@ window.aoArchiveRun = async function(runId) {
         showToast('✔ ' + res.message);
         aoLoadReports();
         aoRefreshLog();
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 // 대표 7/22: LIVE 로그 일괄 정리 — 현재 로그의 완료·오류 실행을 모두 확인 처리(숨김, 삭제 아님)
 window.aoClearLog = async function() {
@@ -11654,7 +11763,7 @@ window.aoClearLog = async function() {
         showToast(`🧹 ${ok}건 정리 완료`);
         aoLoadReports();
         aoRefreshLog();
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 window.aoRestoreRun = async function(runId) {
     try {
@@ -11662,7 +11771,7 @@ window.aoRestoreRun = async function(runId) {
         showToast('↩️ ' + res.message);
         aoLoadReports();
         aoRefreshLog();
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // 10차: 역량 점검 실행 (자동 수정 없음 — 보고서만 등록)
@@ -11680,7 +11789,7 @@ window.aoRunCapabilityTest = async function() {
             aoSayThinking(maru.name, '📝', '시험 중'); // 점검 완료까지 상시 표시
             aoStartRunPolling();
         }
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 
 // 보고함 클릭 → 보고서함 탭으로 이동
@@ -11736,7 +11845,7 @@ window.aoSendFeedback = async function(agentId, runId, type) {
         }
         showToast(type === 'good' ? '피드백이 기록되었습니다 👍' : '피드백 기록 — 교훈 후보 정리 중 📚 (마루 패널에서 승인)');
         aoRefreshGrowth();
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 
 // [❌ 실패 표시] 원탭 — 실패 수집함 적재 (대표 7/21: 사유 프롬프트 제거, 질문+답변 자동 캡처. 나중에 함께 정리·학습)
@@ -11748,7 +11857,7 @@ window.aoMarkFail = async function(agentId, runId, btnEl) {
         showToast('🧰 ' + res.message);
         if (btnEl) { btnEl.disabled = true; btnEl.textContent = '❌ 수집됨'; }
         aoRefreshGrowth();
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 // [❌ 실패] 라이브 로그용 — 마루/요원 답변(오더)을 질문+답변째 실패 수집함에 담기 (대표 7/21)
 window.aoMarkOrderFail = async function(orderId, btnEl) {
@@ -11757,7 +11866,7 @@ window.aoMarkOrderFail = async function(orderId, btnEl) {
         showToast('🧰 ' + res.message);
         if (btnEl) { btnEl.disabled = true; btnEl.textContent = '❌ 담김'; }
         aoRefreshGrowth();
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 
 // 교훈 승인/폐기 (성장시스템 3절 — 대표 승인 시에만 활성)
@@ -11769,7 +11878,7 @@ window.aoApproveLesson = async function(lessonId, agentId) {
         if (overlay) overlay.remove();
         openAoDetail(agentId);
         aoRefreshGrowth();
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 window.aoDiscardLesson = async function(lessonId, agentId) {
     if (!confirm('이 교훈 제안을 폐기할까요?')) return;
@@ -11780,7 +11889,7 @@ window.aoDiscardLesson = async function(lessonId, agentId) {
         if (overlay) overlay.remove();
         openAoDetail(agentId);
         aoRefreshGrowth();
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 };
 
 // ---- 보고서함 ----
@@ -11836,7 +11945,7 @@ async function aoLoadReports() {
                 '<td>' + archBtn + '</td>' +
                 '</tr>';
         }).join('');
-    } catch (err) { alert(err.message); }
+    } catch (err) { akmAlert(err.message); }
 }
 
 // ---- 상세 보고서 모달 (2차: 세미 정산 보고서 — 표 형태) ----
@@ -11844,9 +11953,9 @@ window.aoOpenReport = async function(runId) {
     let run;
     try {
         run = (await api('/api/agent-office/runs/' + runId)).run;
-    } catch (err) { return alert(err.message); }
+    } catch (err) { return akmAlert(err.message); }
     const rep = (run.result && run.result.report) || null;
-    if (!run.result) return alert('아직 결과가 없는 실행입니다 (진행 중이거나 기록 없음)');
+    if (!run.result) return akmAlert('아직 결과가 없는 실행입니다 (진행 중이거나 기록 없음)');
 
     const dt = aoKst(run.started_at, { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
     // v5.2 (지시 #38) + 지시 #44: 팀장 검수 블록 (검수 4문) — ⚠️보완이어도 숨기지 않고 표시 (최종 판단은 대표)
@@ -12451,12 +12560,12 @@ async function renderInquiryPage() {
         </tr>`).join('');
     document.getElementById('inquiry-list').innerHTML = `
         <table class="data-table"><thead><tr><th>번호</th><th>시나리오명</th><th>채널</th><th>동작</th><th>사용</th><th></th></tr></thead>
-        <tbody>${rows}</tbody></table>`;
+        <tbody>${rows || '<tr class="empty-row"><td colspan="6">등록된 시나리오가 없습니다.</td></tr>'}</tbody></table>`;
     renderInquiryLogs().catch(console.error);
 }
 window.toggleScenario = async function(id, enabled) {
     try { await api(`/api/agent-office/scenarios/${id}`, 'PUT', { enabled }); showToast(enabled ? '✅ 사용 켬 완료' : '⏸ 사용 끔 완료', 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderInquiryPage().catch(console.error);
 };
 window.openScenarioEdit = function(id) {
@@ -12510,7 +12619,7 @@ function setupInquiryPage() {
             document.getElementById('inquiry-edit-card').style.display = 'none';
             showToast(id ? '✅ 수정 완료 — 톡톡봇에 5분 내 반영됩니다' : '✅ 시나리오 등록 완료', 'lime');
             renderInquiryPage().catch(console.error);
-        } catch (e) { alert(e.message); }
+        } catch (e) { akmAlert(e.message); }
     });
     document.getElementById('btn-inquiry-delete').addEventListener('click', async () => {
         const id = document.getElementById('inquiry-edit-id').value;
@@ -12520,13 +12629,13 @@ function setupInquiryPage() {
             document.getElementById('inquiry-edit-card').style.display = 'none';
             showToast('🗑 삭제 완료 (복구는 대표에게)', 'lime');
             renderInquiryPage().catch(console.error);
-        } catch (e) { alert(e.message); }
+        } catch (e) { akmAlert(e.message); }
     });
     document.getElementById('inquiry-auto-reply-toggle').addEventListener('change', async (e) => {
         try {
             await api('/api/agent-office/scenarios-auto-reply', 'PUT', { value: e.target.checked ? 'on' : 'off' });
             showToast(e.target.checked ? '✅ 전체 자동응답 켬 완료' : '⏸ 전체 자동응답 끔 완료', 'lime');
-        } catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
+        } catch (err) { akmAlert(err.message); e.target.checked = !e.target.checked; }
     });
 }
 async function renderInquiryLogs(range) {
@@ -12539,7 +12648,7 @@ async function renderInquiryLogs(range) {
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || (l.action.startsWith('auto_reply') ? '전체 자동응답' : '');
         const act = { create: '추가', update: '수정', delete: '삭제', auto_reply_on: '전체 ON', auto_reply_off: '전체 OFF' }[l.action] || l.action;
-        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(name)}</td></tr>`;
+        return `<tr><td>${akmDateTime(l.created_at)}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(name)}</td></tr>`;
     }).join('');
     document.getElementById('inquiry-logs').innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -12826,7 +12935,7 @@ window.toggleInquiryAutoPost = async function(enabled) {
     try {
         await api('/api/agent-office/naver/inquiry-auto-post', 'PUT', { enabled });
         showToast(enabled ? '🤖 고객문의 자동 답변 켬 완료' : '⏸ 자동 답변 끔 완료 — 승인 모드', 'lime');
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
     renderUserInqTab().catch(console.error);
 };
 // --- 상품문의(Q&A) 탭 (STEP E v2 — 자동 게시·직원 폴백. 게시된 답변 수정은 판매자센터에서) ---
@@ -12937,7 +13046,7 @@ window.toggleQnaAutoPost = async function(enabled) {
     try {
         await api('/api/agent-office/naver/qna-auto-post', 'PUT', { enabled });
         showToast(enabled ? '🤖 자동 게시 켬 완료' : '⏸ 자동 게시 끔 완료 — 승인 모드 (초안이 대기 목록에 쌓입니다)', 'lime');
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
     renderQnaTab().catch(console.error);
 };
 // '준비중' = 봇 미노출 (판매가 세팅 전 상태 — 품목별 금액 연동으로 자동 등록된 신규 품목)
@@ -13003,8 +13112,8 @@ async function renderBotProducts() {
     const rows = bpOrdered.map(([g, list]) => bpHead(g, list) + list.map(bpRow).join('')).join('');
     document.getElementById('botprod-list').innerHTML = `
         <table class="data-table"><thead><tr><th>품목명</th><th>상태</th><th>가격</th><th>📨 알림톡</th><th>📦 발송 안내문(LMS)</th><th>📅 예약발송 여부</th><th></th></tr></thead>
-        <tbody>${rows}</tbody></table>
-        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡(#156): 카카오 승인 템플릿(알리고)으로만 발송되므로 품목별 문구 입력이 아니라 준비 상태 뱃지로 표시 — ⚠️ 미설정에 마우스를 올리면 미비 항목이 보입니다. · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). · 📅 예약발송(#152): 체크하면 날짜칸이 열리고, 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다. 체크 해제 = 일반 자동 발송일 계산으로 복귀. · 변경한 행만 [저장] 버튼이 켜지며, 행의 상태·가격·안내문·예약발송이 한 번에 저장됩니다.</p>`;
+        <tbody>${rows || '<tr class="empty-row"><td colspan="7">등록된 품목이 없습니다.</td></tr>'}</tbody></table>
+        <p class="text-muted" style="font-size:12px; margin-top:6px;">📨 알림톡: 카카오 승인 템플릿(알리고)으로만 발송되므로 품목별 문구 입력이 아니라 준비 상태 뱃지로 표시 — ⚠️ 미설정에 마우스를 올리면 미비 항목이 보입니다. · 📦 발송 안내문: 발송 시점에 문자(LMS)로 나갈 장문 안내(먹는법·보관법 — {{내일요일}}·{{모레요일}}은 발송 시 요일로 자동 치환). · 📅 예약발송(#152): 체크하면 날짜칸이 열리고, 주문 알림톡에 "N월 N일부터 순차 발송 예정"으로 들어갑니다. 체크 해제 = 일반 자동 발송일 계산으로 복귀. · 변경한 행만 [저장] 버튼이 켜지며, 행의 상태·가격·안내문·예약발송이 한 번에 저장됩니다.</p>`;
     renderBotProductLogs().catch(console.error);
     // (지시 #112) 시즌 대기·시기 지식은 독립 탭('season')으로 이동 — 여기서 렌더하지 않음
     // (지시 #407) 발송 휴무일·알림 발송 이력도 독립 탭으로 분리 — 각 탭 진입 시 switchInquiryTab이 렌더
@@ -13101,6 +13210,7 @@ async function renderNotifyLogs(opts) {
     const d = await api('/api/agent-office/notify-logs?' + qs.join('&'));
     if (mySeq !== notifyLogSeq) return;   // 그 사이 새 조회가 시작됨 → 이 응답은 버린다(화면·카운터 오염 방지)
     notifyLogTotal = Number(d.total || 0);
+    { const note = document.getElementById('notify-log-range-note'); if (note) { const days = Number(d.default_days) || 0; note.hidden = !(days > 0) || !!(from && to); if (days > 0) note.textContent = '최근 ' + days + '일 기록이에요 · 더 오래된 것은 날짜를 고르세요'; } }   // #578
     const s = d.summary || {};
     // #412: 요약 줄 재료를 보관하고 함수로 렌더 — 후채움(summary_fix)이 오면 같은 형식으로 다시 그린다(#180-A1 형식 유지)
     _nlogSumCtx = { s, cond: (from && to) ? `${from} ~ ${to}` : '오늘', searched: q ? ` · 검색 "${q}"` : '', ranged: !!((from && to) || q) };
@@ -13290,7 +13400,7 @@ window.sendLmsGuide = async function(orderKey) {
     try {
         const r = await api('/api/agent-office/lms-guide/' + encodeURIComponent(orderKey) + '/send', 'POST', {});
         showToast(r.mode === 'real' && r.status === 'sent' ? '✅ 발송 완료' : 'ℹ️ dry-run 기록 완료 (발송 기능 OFF)', 'lime');
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
     renderNotifyLogs().catch(console.error);
 };
 // --- 시즌 오픈 대기 신청 (지시 #68 C5) — 연락처는 서버가 마스킹해서 내려줌 ---
@@ -13399,7 +13509,7 @@ async function renderSeasonWaitlist() {
             <td style="white-space:nowrap; font-variant-numeric:tabular-nums; padding-left:12px; padding-right:12px;">${escapeHtml(fmtWaitTel(r.contact))}</td>
             <td style="white-space:nowrap; padding-left:10px; padding-right:10px;">${escapeHtml(r.memo || '')}</td>
             <td>${r.notified ? '✅ 발송됨' : '대기'}</td>
-            <td style="white-space:nowrap;">${new Date(r.created_at).toLocaleDateString('ko-KR')}</td>
+            <td style="white-space:nowrap;">${akmDate(r.created_at)}</td>
             <td>${isAdmin ? `<button class="btn-sm btn-outline" style="color:#c0392b;" onclick="deleteSeasonWait(${r.id})">삭제</button>` : ''}</td>
         </tr>`).join('');
     el.innerHTML = rows
@@ -13409,7 +13519,7 @@ async function renderSeasonWaitlist() {
 window.deleteSeasonWait = async function(id) {
     if (!confirm('이 대기 신청을 삭제할까요?')) return;
     try { await api('/api/agent-office/season-waitlist/' + id, 'DELETE', { confirm: true }); showToast('🗑 삭제 완료', 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderSeasonWaitlist().catch(console.error);
 };
 // --- 발송 휴무일 관리 (지시 #69·#73) — 발송 불가일 + 명절 마감 기간·안내 문구 (직원 추가/삭제) ---
@@ -13742,12 +13852,12 @@ window.deleteShipHolidayGroup = async function(idsCsv) {
     try {
         for (const id of ids) await api('/api/agent-office/shipping-holidays/' + id, 'DELETE', { confirm: true });
         showToast('🗑 휴무일 삭제 완료', 'lime');
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
     renderShippingHolidays().catch(console.error);
 };
 window.setBotProdStatus = async function(id, status) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { status }); showToast(`✅ '${status}' 변경 완료 — 봇 답변에 1분 내 반영`, 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderBotProducts().catch(console.error);
 };
 // ── 지시 #152: 행 일괄 저장 체계 ──
@@ -13796,25 +13906,25 @@ window.saveBotProdRow = async function(id) {
 };
 window.saveBotProdPrice = async function(id) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { price: document.getElementById('botprod-price-' + id).value }); showToast('✅ 가격 저장 완료 — 봇 답변에 1분 내 반영', 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderBotProducts().catch(console.error);
 };
 // 알림톡 품목별 안내문 저장 (지시 #68 C2) — 발송 기능 OFF 상태에서도 문구는 미리 관리
 window.saveBotProdNotify = async function(id) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { notify_message: document.getElementById('botprod-notify-' + id).value }); showToast('✅ 알림톡 안내문 저장 완료', 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderBotProducts().catch(console.error);
 };
 // 예약 발송 시작일 저장 (지시 #144)
 window.saveBotProdReserveStart = async function(id) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { reserve_ship_start: document.getElementById('botprod-rss-' + id).value }); showToast('✅ 예약 발송 시작일 저장 완료', 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderBotProducts().catch(console.error);
 };
 // 발송 안내문(LMS 장문) 저장 (지시 #74)
 window.saveBotProdGuide = async function(id) {
     try { await api('/api/agent-office/bot-products/' + id, 'PUT', { shipping_guide: document.getElementById('botprod-guide-' + id).value }); showToast('✅ 발송 안내문 저장 완료', 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderBotProducts().catch(console.error);
 };
 // 대표 7/25(2차): 삭제는 '예외·수동 추가 품목'만(대표 전용) — 품목별 금액 매칭(연동) 품목은 삭제 버튼 자체가 없음(상태로만 관리)
@@ -13822,7 +13932,7 @@ window.deleteBotProd = async function(id) {
     const p = botProducts.find(x => x.id === id);
     if (!p || !confirm(`"${p.name}" 품목을 삭제할까요? (예외 품목 — 복구 가능)`)) return;
     try { await api('/api/agent-office/bot-products/' + id, 'DELETE', { confirm: true }); showToast('🗑 품목 삭제 완료 (복구 가능)', 'lime'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderBotProducts().catch(console.error);
 };
 async function renderBotProductLogs(range) {
@@ -13835,7 +13945,7 @@ async function renderBotProductLogs(range) {
     const rows = (d.logs || []).map(l => {
         const name = l.changes?.after?.name || l.changes?.before?.name || '';
         const act = { create: '추가', restore: '복구', update: '수정', delete: '삭제' }[l.action] || l.action;
-        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(name)}</td></tr>`;
+        return `<tr><td>${akmDateTime(l.created_at)}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(name)}</td></tr>`;
     }).join('');
     document.getElementById('inquiry-logs').innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -13871,7 +13981,7 @@ async function renderSeasonKnowledgeLogs(range) {
         const a = l.changes?.after || {}, b = l.changes?.before || {};
         const name = a.item_key || b.item_key || a.fix || a.migration || Object.values(a)[0] || '-';
         const act = { create: '추가', restore: '복구', update: '수정', delete: '삭제' }[l.action] || l.action;
-        return `<tr><td>${new Date(l.created_at).toLocaleString('ko-KR')}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(String(name).slice(0, 60))}</td></tr>`;
+        return `<tr><td>${akmDateTime(l.created_at)}</td><td>${escapeHtml(l.actor_name || '-')}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(String(name).slice(0, 60))}</td></tr>`;
     }).join('');
     document.getElementById('inquiry-logs').innerHTML = rows
         ? `<table class="data-table"><thead><tr><th>일시</th><th>수정자</th><th>작업</th><th>대상</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -13920,14 +14030,14 @@ function setupBotProductsTab() {
     });
     document.getElementById('btn-botprod-add').addEventListener('click', async () => {
         const name = document.getElementById('botprod-add-name').value.trim();
-        if (!name) return alert('품목명을 입력하세요');
+        if (!name) return akmAlert('품목명을 입력하세요');
         try {
             await api('/api/agent-office/bot-products', 'POST', { name, price: document.getElementById('botprod-add-price').value });
             document.getElementById('botprod-add-name').value = '';
             document.getElementById('botprod-add-price').value = '';
             showToast('✅ 품목 추가 완료', 'lime');
             renderBotProducts().catch(console.error);
-        } catch (e) { alert(e.message); }
+        } catch (e) { akmAlert(e.message); }
     });
     // 지시 #76: LMS 이력 새로고침
     document.getElementById('btn-notify-log-refresh')?.addEventListener('click', () => renderNotifyLogs().catch(console.error));   // 지시 #176 통합 이력
@@ -13970,7 +14080,7 @@ function setupBotProductsTab() {
     document.getElementById('btn-season-wait-add')?.addEventListener('click', async () => {
         const item = document.getElementById('season-wait-item').value.trim();
         const contact = document.getElementById('season-wait-contact').value.trim();
-        if (!item || !contact) return alert('품목과 연락처를 입력하세요');
+        if (!item || !contact) return akmAlert('품목과 연락처를 입력하세요');
         try {
             await api('/api/agent-office/season-waitlist', 'POST', { item, contact, memo: document.getElementById('season-wait-memo').value });
             document.getElementById('season-wait-item').value = '';
@@ -13978,7 +14088,7 @@ function setupBotProductsTab() {
             document.getElementById('season-wait-memo').value = '';
             showToast('✅ 대기 신청 등록 완료', 'lime');
             renderSeasonWaitlist().catch(console.error);
-        } catch (e) { alert(e.message); }
+        } catch (e) { akmAlert(e.message); }
     });
     // 지시 #108·#114: 시기별 상품 지식 구간 추가 (선택형 구간 + 월/일 픽커)
     document.getElementById('btn-sk-add')?.addEventListener('click', async () => {
@@ -13987,14 +14097,14 @@ function setupBotProductsTab() {
         const start_md = skMdSave(document.getElementById('sk-start').value);
         const end_md = skMdSave(document.getElementById('sk-end').value);
         const knowledge = document.getElementById('sk-knowledge').value.trim();
-        if (!item_key || !start_md || !end_md || !knowledge) return alert('품목·기간(월/일)·내용을 모두 입력하세요');
-        if (!/^\d{2}-\d{2}$/.test(start_md) || !/^\d{2}-\d{2}$/.test(end_md)) return alert('기간은 달력에서 선택하거나 05/01 형식으로 입력하세요');
+        if (!item_key || !start_md || !end_md || !knowledge) return akmAlert('품목·기간(월/일)·내용을 모두 입력하세요');
+        if (!/^\d{2}-\d{2}$/.test(start_md) || !/^\d{2}-\d{2}$/.test(end_md)) return akmAlert('기간은 달력에서 선택하거나 05/01 형식으로 입력하세요');
         try {
             await api('/api/agent-office/season-knowledge', 'POST', { item_key, label: phase, start_md, end_md, knowledge });
             ['sk-item', 'sk-start', 'sk-end', 'sk-knowledge'].forEach(id => document.getElementById(id).value = '');
             showToast('✅ 시기 지식 등록 완료 — AI 답변에 반영됩니다', 'lime');
             renderSeasonKnowledge().catch(console.error);
-        } catch (e) { alert(e.message); }
+        } catch (e) { akmAlert(e.message); }
     });
 }
 // --- 무응답 현황 탭 (톡톡봇 /unmatched 이관 2026-07-26, 조회 전용) ---
@@ -14107,7 +14217,7 @@ function setupUnansweredTab() {
     });
     document.getElementById('btn-unans-excel').addEventListener('click', () => {
         // 대표 7/27 2차: 엑셀 = 미매칭·무응답 목록 다운로드 (미매칭 서브탭 전용 버튼)
-        if (!unansPendRows.length) return alert('내보낼 미매칭·무응답 데이터가 없습니다');
+        if (!unansPendRows.length) return akmAlert('내보낼 미매칭·무응답 데이터가 없습니다');
         const data = unansPendRows.map(r => ({
             '시각': new Date(r.received_at).toLocaleString('ko-KR'),
             '답변여부': r.answered ? '봇 답변' : '무응답',
@@ -14192,7 +14302,7 @@ window.mgSumPercent = function(n) {
 window.saveMallGameConfig = async function(n) {
     try {
         const base = window._mgConfigBase || {};
-        if (window.mgSumPercent(n) !== 1000) { alert('확률 합계가 100.0%가 아닙니다 — 값을 조정한 뒤 저장해주세요.'); return; }
+        if (window.mgSumPercent(n) !== 1000) { akmAlert('확률 합계가 100.0%가 아닙니다 — 값을 조정한 뒤 저장해주세요.'); return; }
         const num = (id, def) => { const el = document.getElementById(id); const v = Number(el && el.value); return Number.isFinite(v) ? v : def; };
         const probabilities = [];
         for (let i = 0; i < n; i++) {
@@ -14216,7 +14326,7 @@ window.saveMallGameConfig = async function(n) {
         await api('/api/agent-office/mall-game-config', 'PUT', { config });
         showToast('✅ 게임 설정 저장 완료', 'lime');
         renderMallGameConfig().catch(console.error);   // QA D5: 성공 시에만 재렌더 — 실패 시 입력값 보존
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 window.resetMallGameConfig = async function() {
     if (!confirm('게임 설정을 대표 확정값(지시 #184)으로 복원할까요?')) return;
@@ -14224,7 +14334,7 @@ window.resetMallGameConfig = async function() {
         await api('/api/agent-office/mall-game-config', 'PUT', { reset: true });
         showToast('✅ 기본값 복원 완료', 'lime');
         renderMallGameConfig().catch(console.error);
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
 };
 
 // === 자동수집 타이머 (데이터관리) — 설정은 전부 DB, 기본 OFF ===
@@ -14261,7 +14371,7 @@ async function renderNaverTimers() {
         const cycle = t.key === 'settlement'
             ? `실행시각 <input type="text" id="naver-timer-time-${t.key}" value="${escapeHtml(t.run_at_time || '09:30')}" style="width:64px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`
             : `주기(분) <input type="number" min="3" max="1440" id="naver-timer-min-${t.key}" value="${Number(t.interval_min) || 60}" style="width:70px; padding:5px; border:1px solid var(--border,#ccc); border-radius:8px;">`;
-        const last = t.last_run_at ? new Date(t.last_run_at).toLocaleString('ko-KR') : '-';
+        const last = t.last_run_at ? akmDateTime(t.last_run_at) : '-';
         const st = !t.last_status ? '-' : (t.last_status === 'ok' ? '✅ 성공' : `❌ 실패`);
         const err = (t.last_status === 'fail' && t.last_error) ? `<div class="text-muted" style="font-size:11px; max-width:260px;">${escapeHtml(String(t.last_error).slice(0, 120))}</div>` : '';
         return `<tr>
@@ -14283,7 +14393,7 @@ async function renderNaverTimers() {
     // 대표 7/27 알림 개선: 문의 알림을 상황별 4종으로 재편 (답변완료 확인 / 직접 처리 필요 / 미처리 리마인더 / 아침 브리핑)
     const ALERT_LABELS = [['order', '신규주문'], ['claim', '반품·교환'], ['settlement', '정산'],
         ['autodone', '문의 답변완료(확인)'], ['staffneed', '직접 처리 필요'], ['reminder', '미처리 리마인더'], ['briefing', '아침 브리핑'],
-        ['office', 'AGENT OFFICE 완료·질문'], // 대표 7/27: 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성) — 기본 OFF, 문구 편집 없음
+        ['office', '에이전트 오피스 완료·질문'], // 대표 7/27: 지시 처리 알림(요원·마루 완료, 되묻기, 미소 생성) — 기본 OFF, 문구 편집 없음
         ['kakaosend', '알림톡 발송 결과'], // 지시 #68 C6: 기본 OFF — 발송 기능 가동 전까지 알림 없음
         ['ccbox', '지시함 알림']]; // 지시 #84: 기본 OFF — CS폰 공유 소음 방지 (긴급 🚨 똑똑확인요청은 이 스위치와 무관하게 발송), 문구 편집 없음
     const tplEditors = alerts ? ALERT_LABELS.filter(([k]) => k !== 'office' && k !== 'ccbox').map(([k, label]) => {   // ccbox도 문구 편집 없음 (지시 #84 — 폴러가 자체 문구 생성)
@@ -14364,9 +14474,9 @@ window.refreshProductDetails = async function() {
 window.saveSessionIdle = async function() {
     const el = document.getElementById('session-idle-hours');
     const hours = parseFloat(el && el.value);
-    if (!Number.isFinite(hours) || hours < 0.5 || hours > 24) { alert('0.5~24시간 사이로 입력해주세요'); return; }
-    try { await api('/api/agent-office/session-idle', 'PUT', { hours }); alert(`자동 로그아웃을 ${hours}시간으로 저장했습니다`); }
-    catch (e) { alert(e.message); }
+    if (!Number.isFinite(hours) || hours < 0.5 || hours > 24) { akmAlert('0.5~24시간 사이로 입력해주세요'); return; }
+    try { await api('/api/agent-office/session-idle', 'PUT', { hours }); akmAlert(`자동 로그아웃을 ${hours}시간으로 저장했습니다`); }
+    catch (e) { akmAlert(e.message); }
 };
 window.saveAlertQuiet = async function() {
     const v = (id) => (document.getElementById(id) || {}).value || '';
@@ -14380,27 +14490,27 @@ window.saveAlertQuiet = async function() {
             briefing_time: v('alert-q-brief'), reminder_min: parseInt(v('alert-q-remind')) || 120,
         } });
         showToast('✅ 야간·브리핑·리마인더 설정 저장 완료', 'lime');
-    } catch (e) { alert(e.message); }
+    } catch (e) { akmAlert(e.message); }
     renderNaverTimers().catch(console.error);
 };
 window.saveAlertSetting = async function(key, enabled) {
     try { await api('/api/agent-office/naver/alert-settings', 'PUT', { [key]: enabled }); showToast('✅ 알림 설정이 저장되었습니다'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderNaverTimers().catch(console.error);
 };
 window.saveAlertTemplate = async function(key, reset) {
     const el = document.getElementById('alert-tpl-' + key);
     const value = reset ? '' : (el ? el.value.trim() : '');
-    if (!reset && !value) { alert('문구가 비어 있습니다. 기본 문구로 되돌리려면 [기본 문구로 복원]을 눌러주세요.'); return; }
+    if (!reset && !value) { akmAlert('문구가 비어 있습니다. 기본 문구로 되돌리려면 [기본 문구로 복원]을 눌러주세요.'); return; }
     try {
         await api('/api/agent-office/naver/alert-settings', 'PUT', { templates: { [key]: value } });
-        alert(reset ? '기본 문구로 복원했습니다' : '알림 문구를 저장했습니다');
-    } catch (e) { alert(e.message); }
+        akmAlert(reset ? '기본 문구로 복원했습니다' : '알림 문구를 저장했습니다');
+    } catch (e) { akmAlert(e.message); }
     renderNaverTimers().catch(console.error);
 };
 window.toggleNaverTimer = async function(key, enabled) {
     try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', { enabled }); showToast(enabled ? '✅ 켰습니다 — 자동 수집 시작' : '⏸ 껐습니다'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderNaverTimers().catch(console.error);
 };
 window.saveNaverTimer = async function(key) {
@@ -14410,7 +14520,7 @@ window.saveNaverTimer = async function(key) {
     if (timeEl) body.run_at_time = timeEl.value.trim();
     if (minEl) body.interval_min = parseInt(minEl.value);
     try { await api('/api/agent-office/naver/auto-collect/' + key, 'PUT', body); showToast('✅ 저장되었습니다'); }
-    catch (e) { alert(e.message); }
+    catch (e) { akmAlert(e.message); }
     renderNaverTimers().catch(console.error);
 };
 function setupNaverTimerCard() {
@@ -14418,11 +14528,11 @@ function setupNaverTimerCard() {
     if (!on || !off) return;
     on.addEventListener('click', async () => {
         if (!confirm('타이머 4종을 전부 켤까요?')) return;
-        try { await api('/api/agent-office/naver/auto-collect-all', 'PUT', { enabled: true }); } catch (e) { alert(e.message); }
+        try { await api('/api/agent-office/naver/auto-collect-all', 'PUT', { enabled: true }); } catch (e) { akmAlert(e.message); }
         renderNaverTimers().catch(console.error);
     });
     off.addEventListener('click', async () => {
-        try { await api('/api/agent-office/naver/auto-collect-all', 'PUT', { enabled: false }); } catch (e) { alert(e.message); }
+        try { await api('/api/agent-office/naver/auto-collect-all', 'PUT', { enabled: false }); } catch (e) { akmAlert(e.message); }
         renderNaverTimers().catch(console.error);
     });
 }

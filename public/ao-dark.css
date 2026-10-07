@@ -49,7 +49,7 @@ html[data-ao-theme="dark"] .sidebar, html[data-ao-theme="dark"] .main-content { 
 /* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
 html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textarea::placeholder { color: #A6ADC6; }
 
-/* ── styles.css 에서 옮긴 것 (783규칙) ── */
+/* ── styles.css 에서 옮긴 것 (786규칙) ── */
 :where(html[data-ao-theme="dark"]) .btn-login { background: var(--d-accent-fill); color: #FFFFFF; border: none; }
 :where(html[data-ao-theme="dark"]) .btn-login:hover { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .sidebar { background: var(--sidebar-bg); }
@@ -839,6 +839,9 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .inq-subtab-bar .settlement-tab { border: 1.5px solid var(--d-line); background: var(--d-card); color: var(--d-sub); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.31); }
 :where(html[data-ao-theme="dark"]) .inq-subtab-bar .settlement-tab:hover { color: var(--primary); border-color: var(--primary); background: var(--d-card); }
 :where(html[data-ao-theme="dark"]) .inq-subtab-bar .settlement-tab.active { background: var(--primary-light, #EEF0FF); color: var(--primary); border: 1.5px solid var(--primary); box-shadow: 0 1px 3px rgba(85, 76, 230, 0.26); }
+:where(html[data-ao-theme="dark"]) .btn-mod-request { color: #F09B7F; border-color: #F0A44C; }
+:where(html[data-ao-theme="dark"]) .btn-mod-request:hover { background: #9A3412; border-color: #EB7851; color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .data-table > tbody:empty::after { color: var(--text-mid); }
 
 /* ── theme.css 에서 옮긴 것 (160규칙) ── */
 :where(html[data-ao-theme="dark"]) .main-content { background: var(--page-bg); }

@@ -83,10 +83,18 @@
         const st = (Array.isArray(o.steps) ? o.steps : []).find(s => s && s.kind === 'lane');
         if (!st) return '';
         let sec = '';
-        if (o.processed_at && st.t) { const d = Math.round((new Date(o.processed_at) - new Date(st.t)) / 1000); if (d > 0 && d < 7200) sec = d < 90 ? d + '초' : Math.round(d / 60) + '분'; }
+        // #580: 걸린 시간은 「보낸 때」부터 잰다 — 종전엔 창구가 집은 뒤(길 표시)부터 재서, 기다린 시간이 빠져 실제보다 짧게 나왔다
+        const t0 = o.created_at || st.t;
+        if (o.processed_at && t0) { const d = Math.round((tms(o.processed_at) - tms(t0)) / 1000); if (d > 0 && d < 7200) sec = d < 90 ? d + '초' : Math.round(d / 60) + '분'; }
         const done = !ACTIVE.includes(o.status) && o.status !== '판독완료' && o.status !== '확인표작성';
         return `<span class="desk-lane" data-lane="${esc(st.lane || '')}">${esc(st.text)}${done && sec ? ' · ' + sec : ''}</span>`;
     }
+    // #580: 서버 시각(시간대 표시 없는 UTC 글자)을 밀리초로 · 지난 시간을 「N초」「M분 S초」로
+    const tms = t => { const v = new Date(/Z|[+-]\d\d:?\d\d$/.test(String(t)) ? t : String(t).replace(' ', 'T') + 'Z').getTime(); return Number.isFinite(v) ? v : NaN; };
+    const agoText = since => { const d = Math.floor((Date.now() - tms(since)) / 1000); if (!Number.isFinite(d) || d < 1) return ''; return d < 90 ? d + '초' : Math.floor(d / 60) + '분 ' + (d % 60) + '초'; };
+    const elapsedHtml = o => o.created_at ? `<span class="desk-elapsed" data-since="${esc(o.created_at)}">${agoText(o.created_at) ? ' · ' + agoText(o.created_at) : ''}</span>` : '';
+    // 1초마다 숫자만 바꾼다(목록을 다시 그리지 않는다)
+    function tickElapsed() { const list = $('desk-list'); if (!list) return; list.querySelectorAll('.desk-elapsed[data-since]').forEach(el => { const t = agoText(el.getAttribute('data-since')); const v = t ? ' · ' + t : ''; if (el.textContent !== v) el.textContent = v; }); }
     const isAdmin = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin');
     // #561(대표 10/6 A안): 관리자 중 대표만 — 모두의 이력 보기 · 승인/반려(#566 에서 승인 결재함 탭은 없앰). 창구 깨우기 · [다시 맡기기]는 관리자(isAdmin) 그대로
     const isOwner = () => isAdmin() && currentUser.position === '대표';
@@ -674,10 +682,10 @@
         if (ACTIVE.includes(st) || st === '판독완료' || st === '확인표작성') {
             const steps = visSteps(o);
             const last = steps.length ? steps[steps.length - 1].text : '';
-            const msg = st === '대기' ? '순서를 기다리고 있어요' : st === '승인됨' ? '승인됐어요. 곧 실행합니다' : (last || '처리하고 있어요');
+            const msg = st === '대기' ? '순서를 기다리고 있어요' : st === '승인됨' ? '승인됐어요. 곧 실행합니다' : (last || '생각하고 있어요');   // #580: 아직 한 일이 없으면 「생각 중」
             const live = liveText(o);
             const trail = steps.slice(-4).filter(s => s && s.text);
-            return `<div class="desk-note"><span class="desk-working">${esc(live ? '답변을 쓰고 있어요' : msg)}</span></div>`
+            return `<div class="desk-note"><span class="desk-working">${esc(live ? '답변을 쓰고 있어요' : msg)}</span>${elapsedHtml(o)}</div>`
                 + (full && trail.length > 1 ? `<ul class="desk-steps">${trail.map(s => `<li>${esc(kst(s.t, { hour: '2-digit', minute: '2-digit' }))} ${esc(s.text)}</li>`).join('')}</ul>` : '')
                 + (live ? `<div class="desk-a answer draft live"><div class="desk-a-label">클코 답변 · 쓰는 중</div><div class="desk-live-scroll" data-live="${o.id}">${md(live)}<span class="desk-caret" aria-hidden="true"></span></div></div>` : '');
         }
@@ -1366,7 +1374,9 @@
         clock();
         if (document.hidden) return;
         const hasActive = S.orders.some(o => ACTIVE.includes(o.status) || o.status === '판독완료' || o.status === '확인표작성');
-        if (S.tick % (hasActive ? 2 : 12) === 0) loadOrders(false);   // #498 진행 중이면 2초마다(종전 4초)
+        tickElapsed();
+        // #580: 진행 중이면 1초마다(종전 2초) — 앞 요청이 아직 안 끝났으면 건너뛴다(겹쳐 쌓이지 않게) · 없으면 12초 그대로
+        if (hasActive ? !S.loading : S.tick % 12 === 0) loadOrders(false);
         if (S.tick % 10 === 0) loadStatus();
         if (Date.now() - S.boardAt > 60000) { S.boardAt = Date.now(); loadBoard(); }
         if (Date.now() - S.inboxAt > 30000) { S.inboxAt = Date.now(); loadInbox(); }
@@ -1511,6 +1521,8 @@
         clock();
         await Promise.all([loadStatus(), loadOrders(true), loadBoard(), loadInbox()]);
         if (!S.timer) S.timer = setInterval(tick, 1000);
+        // #580: 다른 탭·앱에 갔다 돌아오면 다음 차례를 기다리지 않고 바로 다시 받는다(가려진 동안은 안 받으므로 돌아온 순간이 가장 낡아 있다)
+        if (!S.visBound) { S.visBound = true; document.addEventListener('visibilitychange', () => { if (document.hidden || !S.mounted || !pageActive()) return; tickElapsed(); if (!S.loading) loadOrders(false); loadStatus(); }); }
     };
     window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList, loadInbox, renderInbox };
 })();

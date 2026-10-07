@@ -9,8 +9,15 @@
     const aoEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     async function api(url, method = 'GET', body = null) {
         const token = localStorage.getItem('jwt_token');
-        const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: body ? JSON.stringify(body) : undefined });
-        if (r.status === 401) { $('login-gate').style.display = ''; throw new Error('로그인 필요'); }
+        let r;
+        try { r = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: body ? JSON.stringify(body) : undefined }); }
+        catch (_) { throw new Error('통신이 끊겼습니다. 인터넷 연결을 확인한 뒤 다시 해 주세요.'); }   // #578 영어 오류 글 대신
+        if (r.status === 401) {
+            $('login-gate').style.display = '';
+            // #578 메뉴 안에 끼워진 화면이면 바깥(회사프로그램)을 로그인 화면으로 보낸다
+            try { if (window.parent !== window && typeof window.parent.akmSessionExpired === 'function') window.parent.akmSessionExpired(); } catch (_) { }
+            throw new Error('로그인이 만료됐어요. 다시 로그인해 주세요.');
+        }
         return r.json();
     }
     const HDR = ['상품주문번호', '배송방법(구매자 요청)', '배송방법', '택배사', '송장번호', '구매자명', '수취인명', '옵션정보', '수량', '수취인연락처1', '수취인연락처2', '통합배송지', '배송메세지', '구매자연락처', '주문번호', '발송일', '주문상태', '결제일', '상품번호', '상품명', '정산예정금액', '주문일시', '발송기한', '구매자ID', '고객 등급', '1년 주문건수', '주문 유입경로'];
