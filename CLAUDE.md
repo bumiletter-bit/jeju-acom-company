@@ -100,7 +100,14 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/7 아침): 회사 v5.9.452 / app.js v=402 · ao-desk.js v=47 · ao-dark.css v=1 · final-order.js v=21 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #573부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/7 아침): 회사 v5.9.453 / app.js v=402 · ao-desk.js v=47 · ao-dark.css v=1 · final-order.js v=21 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #574부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 🗓️ #573 발송이 밀린 이유를 문장으로 (대표 10/7 「알림톡에 한글날 휴무로 일요일 발송된다는 이유가 안 들어가?」 → 「2로 해줘」 · v5.9.453 · shipping-schedule.js)
+
+- 종전: computeShipping 의 text 끝에 **달력에 등록한 사유 글자 그대로** 「(공휴일(한글날))」 — 광복절 때 길게 나온 것은 직원이 달력에 「택배사 택배 없는날 및 공휴일(광복절) 휴무」로 적었기 때문(프로그램 차이 아님). 10월 달력 = 10/8(목) 「공휴일(한글날)」 발송 쉼 · 10/9 「한글날」 발송·도착 쉼 · 10/10 토.
+- 지금: `delayPhrase(reason, cand, shipDay)` — 「공휴일(한글날)」 → 「한글날 연휴 휴무로 일요일 발송이에요」(밀린 날이 2일 이상이면 「연휴」) · 사유가 이미 문장(휴무·쉬·발송·배송·택배 낱말 + 8자 초과)이면 그대로 · 토요일만이면 종전대로 괄호 없음. 봇(톡톡·상품문의·자사몰)·자사몰 안내도 같은 계산기라 같은 문장.
+- ✅ verify-573-delay-phrase 6 · 450-memo 78 · 529 21 · 401-unit 19/20(⑤ 「notifyChannelLive( 7곳」 기대가 HEAD 에서도 9곳 — #401 뒤 2곳이 늘어 검증 기대가 낡은 것 · 이번과 무관).
+- 🔵 대표 질문 「이건 에이전트 오피스 AI 도 나중에 수정 가능?」: 문장 틀은 코드라 총괄만 · 달력의 사유 글자는 DB(shipping_holidays.reason)라 직원은 화면에서, 창구는 도구가 없어 지금은 못 바꿈(필요하면 remember.js 같은 작은 도구로 열 수 있음 — 대표 지시 때).
 
 ### 📝 #572 최종발주 메모 칸 = 불러오기 아래 · 틀 밖 줄은 클코가 틀로 · 사진으로 넣기 · 입력삭제 사이즈 (대표 10/7 「틀 순서를 불러오기 밑으로 · AI 가 인식 · 이미지도 · 고」 · v5.9.452 / final-order.js v=21 · core v=8 · 총괄 시공 + 워커2 창구 규칙·AI 시험 + 워커1 화면 검증)
 

@@ -112,8 +112,20 @@ function computeShipping(orderAt, shipOffSet, reasonByDate, opts) {
     const arrive2 = nextMatching(arrive1, d => isDeliveryDay(d, arriveOff));       //        ~ 둘째 배달 가능일
     const reason = shipDelayReason(cand, shipDay, reasonByDate);
     const text = `${shipPhrase(orderDay, shipDay)} 오전 발송, ${arrivePhrase(shipDay, arrive1, arrive2)}`
-        + (reason ? ` (${reason})` : '');
+        + (reason ? ` (${delayPhrase(reason, cand, shipDay)})` : '');
     return { shipDate: ymd(shipDay), arriveStart: ymd(arrive1), arriveEnd: ymd(arrive2), text, reason, override: false };
+}
+// #573(대표 10/7 「알림톡에 한글날 휴무로 일요일 발송된다는 이유가 안 들어간다」): 등록된 사유 글자만 괄호에 붙이던 것(「(공휴일(한글날))」)을
+//   「한글날 연휴 휴무로 일요일 발송이에요」 꼴 문장으로. 사유가 이미 문장이면(「휴무」「쉬」「발송」이 든 긴 글) 등록한 그대로 둔다.
+//   알림톡 변수 값이라 템플릿 재심사 없음. 봇(톡톡·상품문의)도 같은 계산기를 쓰므로 같은 문장이 나간다.
+function delayPhrase(reason, cand, shipDay) {
+    const r = String(reason || '').trim();
+    if (!r) return '';
+    if (/휴무|쉬|발송|배송|택배/.test(r) && r.length > 8) return r;                  // 이미 설명 문장으로 등록한 사유는 그대로
+    const name = r.replace(/^(?:공휴일|휴일|연휴)\s*\(\s*(.+?)\s*\)$/, '$1').replace(/\s*(?:공휴일|휴일)$/, '').trim() || r;
+    const days = Math.round((shipDay - cand) / 86400000);
+    const dow = DAY_KO[shipDay.getUTCDay()];
+    return `${name} ${days >= 2 ? '연휴 ' : ''}휴무로 ${dow}요일 발송이에요`;
 }
 
 // ── #336: 발송 안내(E·LMS)용 도착 표기 — 발송 당일 기준 "내일/모레"
