@@ -13682,11 +13682,15 @@ app.post('/api/agent-office/final-order/memo-read', authMiddleware, async (req, 
             const catalog = {}; let left = 200;
             for (const [k, v] of Object.entries((req.body.catalog && typeof req.body.catalog === 'object') ? req.body.catalog : {}).slice(0, 8)) { if (!Array.isArray(v) || left <= 0) continue; catalog[s(k, 30)] = v.slice(0, left).map(x => s(x, 120)); left -= catalog[s(k, 30)].length; }
             const history = (Array.isArray(req.body.history) ? req.body.history : []).slice(-6).map(h => ({ who: h && h.who === 'ai' ? 'ai' : 'me', text: s(h && h.text, 300) }));
+            // #570-b(대표 10/7): 사진 1장(번호·사이즈 요청 목록을 찍은 것) — 지시 접수와 같은 칸(image_data)에 담아 창구가 Read 로 본다. 파일(엑셀 등)은 이 길에서 안 받는다
+            const attC = deskAttachOf(req.body);
+            if (attC.fileName) throw { status: 400, message: '최종발주 대화에는 사진만 붙일 수 있어요' };
+            if (attC.data.length > 14_000_000) throw { status: 400, message: '사진이 너무 큽니다 (10MB 이내)' };
             const payloadC = { type: 'fo_chat', shipDate: iso0(req.body.shipDate), realToday: iso0(req.body.realToday) || kstTodayStr(), shipDays: (Array.isArray(req.body.shipDays) ? req.body.shipDays : []).map(iso0).filter(Boolean).slice(0, 14), ask, orders, catalog, summary: s(req.body.summary, 4000), history };   // #535: 요약 끝에 품목별 건수 목록이 붙는다(800자에서는 잘림)
             const rowC = (await pool.query(
-                `INSERT INTO pending_orders (content, payload, created_by, created_by_id, status, mine_hidden) VALUES ($1, $2, $3, $4, '대기', true) RETURNING id`,
-                [`[최종발주 대화] 후보 주문 ${orders.length}건 · 기준 발송일 ${payloadC.shipDate || '-'}`, JSON.stringify(payloadC), `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null])).rows[0];
-            await writeAudit({ action: 'create', targetType: 'pending_order', targetId: rowC.id, changes: { after: { kind: 'fo_chat', orders: orders.length, shipDate: payloadC.shipDate } }, source: 'agent_office', actor: adminActor(req) });
+                `INSERT INTO pending_orders (content, payload, created_by, created_by_id, status, mine_hidden, image_data, image_mime) VALUES ($1, $2, $3, $4, '대기', true, $5, $6) RETURNING id`,
+                [`[최종발주 대화] 후보 주문 ${orders.length}건 · 기준 발송일 ${payloadC.shipDate || '-'}${attC.data ? ' · 사진 1장' : ''}`, JSON.stringify(payloadC), `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`, req.user.id || null, attC.data || null, attC.data ? (attC.mime || null) : null])).rows[0];
+            await writeAudit({ action: 'create', targetType: 'pending_order', targetId: rowC.id, changes: { after: { kind: 'fo_chat', orders: orders.length, shipDate: payloadC.shipDate, image: !!attC.data } }, source: 'agent_office', actor: adminActor(req) });
             return res.json({ ok: true, id: rowC.id });
         }
         const src = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -13737,19 +13741,35 @@ app.post('/api/agent-office/final-order/log', authMiddleware, async (req, res) =
         if (!lines.length) throw { status: 400, message: '정리할 내용이 없습니다' };
         const d = new Date(shipDate + 'T00:00:00Z');
         const content = `[최종발주] ${d.getUTCMonth() + 1}/${d.getUTCDate()}(${'일월화수목금토'[d.getUTCDay()]}) 발송분`;
-        const result = JSON.stringify({ type: 'answer', title: '최종발주 정리', answer: lines.join('\n') });
         const who = `${req.user.name}${req.user.position ? ' ' + req.user.position : ''}`;
         const id0 = parseInt(req.body?.id, 10) || 0;
+        // #570(대표 10/7): 거래처별 수량 표 그림(PNG data URL · 5장 · 장당 2MB)을 report_files 에 저장해 기록의 files 로 — 에이전트 오피스에서 중간발주처럼 바로 보인다.
+        //   다시 만들어 같은 기록을 고쳐 쓸 때는 앞서 붙인 그림을 지운다(soft-delete)
+        const files = [];
+        for (const im of (Array.isArray(req.body?.images) ? req.body.images : []).slice(0, 5)) {
+            const m = String(im && im.data || '').match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/); if (!m) continue;
+            const buf = Buffer.from(m[1], 'base64'); if (!buf.length || buf.length > 2 * 1024 * 1024) continue;
+            const name = String(im.name || '').replace(/[\\/:*?"<>|\r\n]/g, '').trim().slice(0, 120).replace(/\.png$/i, '') + '.png';
+            if (name === '.png') continue;
+            const fid = await saveReportFile(name, buf, null, adminActor(req));
+            files.push({ label: name, file_id: fid, size: buf.length });
+        }
+        const result = JSON.stringify({ type: 'answer', title: '최종발주 정리', answer: lines.join('\n'), files });
         let id = 0;
         if (id0) {
+            const prev = await pool.query(`SELECT result FROM pending_orders WHERE id = $1 AND is_deleted = false AND created_by_id = $2 AND content LIKE '[최종발주] %'`, [id0, req.user.id || null]);
             const u = await pool.query(`UPDATE pending_orders SET content = $2, result = $3::jsonb, processed_at = NOW()
                 WHERE id = $1 AND is_deleted = false AND created_by_id = $4 AND content LIKE '[최종발주] %' RETURNING id`, [id0, content, result, req.user.id || null]);
-            if (u.rows.length) id = u.rows[0].id;
+            if (u.rows.length) {
+                id = u.rows[0].id;
+                const old = ((prev.rows[0] && prev.rows[0].result && prev.rows[0].result.files) || []).map(f => Number(f && f.file_id)).filter(n => Number.isInteger(n) && n > 0);
+                if (old.length) await pool.query(`UPDATE report_files SET is_deleted = true WHERE id = ANY($1::int[])`, [old]).catch(e => console.error('fo_log old files:', e.message));
+            }
         }
         if (!id) id = (await pool.query(`INSERT INTO pending_orders (content, result, created_by, created_by_id, status, processed_at) VALUES ($1, $2::jsonb, $3, $4, '완료', NOW()) RETURNING id`,
             [content, result, who, req.user.id || null])).rows[0].id;
-        await writeAudit({ action: id0 && id === id0 ? 'update' : 'create', targetType: 'pending_order', targetId: id, changes: { after: { kind: 'fo_log', shipDate, lines: lines.length } }, source: 'agent_office', actor: adminActor(req) });
-        res.json({ ok: true, id });
+        await writeAudit({ action: id0 && id === id0 ? 'update' : 'create', targetType: 'pending_order', targetId: id, changes: { after: { kind: 'fo_log', shipDate, lines: lines.length, images: files.length } }, source: 'agent_office', actor: adminActor(req) });
+        res.json({ ok: true, id, files: files.length });
     } catch (err) { handleAdminErr(res, err); }
 });
 

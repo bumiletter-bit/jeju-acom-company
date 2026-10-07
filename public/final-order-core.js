@@ -462,17 +462,24 @@
     // 줄 수·줄 번호는 그대로(뺄 줄은 빈 줄). v2 가 이미 읽는 보통 줄은 한 글자도 바꾸지 않는다.
     // #548(대표 10/6 「010-…-… 2s」): 메모 줄의 「번호 + 사이즈」 — 사이즈 낱말(2S·S·M·L·2L · 「2s로」「2S 사이즈」「s사이즈로」)만 떼어 따로 돌려주고, 나머지 글은 종전 규칙으로 읽게 남긴다.
     //   줄 수는 그대로(사이즈뿐인 줄 = 빈 줄로). 번호가 없는 줄은 손대지 않는다. 어느 주문에 붙일지는 화면이 정한다(귤 품목만).
-    const SIZE_TOK = /(^|[ \t])(2s|2l|s|m|l)[ ]*(?:사이즈|size)?[ ]*(?:으로|로)?!?(?=$|[ \t])/i;
+    // #570(대표 10/7 실사고): 「.2S사이즈」처럼 앞에 기호가 붙은 것도 읽고(「·」「,」「.」「/」), 「s사이즈 2건」의 「N건」은 그 손님 주문 건수를 적은 것이라
+    //   따로 떼어(expect) 메모 줄에 남기지 않는다 — 남기면 「번호 2건」이 「오늘 발송·손님 메모 무시」 줄로 읽혀 손님 메모가 조용히 무시되고 건수 카드가 떴다.
+    const SIZE_TOK = /(^|[ \t])[.,·/:;\-]*(2s|2l|s|m|l)[ ]*(?:사이즈|싸이즈|size)?[ ]*(?:으로|로)?!?[.,]?(?=$|[ \t])/i;
+    const SIZE_CNT = /^(\d{1,2})건$/;
     function sizeLines(text) {
         const lines = String(text == null ? '' : text).split('\n'), sizes = [];
         const out = lines.map((raw, srcLine) => {
             const line = raw.replace(/\r/g, ''); const m = line.match(SIZE_TOK); if (!m) return raw;
             const rest = line.slice(0, m.index) + (m[1] || '') + line.slice(m.index + m[0].length);
-            const toks = rest.split(/[ \t]+/).filter(Boolean);
+            let toks = rest.split(/[ \t]+/).filter(Boolean);
             const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
             if (!key) return raw;
-            sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: m[2].toUpperCase() });
-            return toks.length === 1 ? '' : rest.replace(/[ ]{2,}/g, ' ').replace(/[ ]+$/, '');
+            let expect = null, kept = rest;
+            const cnt = toks.find(t => t !== key && SIZE_CNT.test(t));
+            if (cnt) { expect = parseInt(cnt.match(SIZE_CNT)[1], 10); toks = toks.filter(t => t !== cnt); kept = kept.replace(new RegExp('(^|[ \\t])' + cnt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); }
+            sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: m[2].toUpperCase(), expect });
+            if (toks.length === 1) return '';
+            return kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');   // 탭 줄은 탭 칸을 그대로(비고 칸만 비워짐) · 빈칸 줄은 빈칸 하나로
         });
         return { text: out.join('\n'), sizes };
     }

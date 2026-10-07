@@ -650,6 +650,9 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-endbtn.no { background: #fff; border-color: #F3C5C0; color: #B42318; }
 .desk-endbtn.no:hover { background: #FEF3F2; }
 @media (max-width: 380px) { .desk-end-ask.in .desk-endbtn { padding: 0 11px; font-size: 13px; } }
+/* #571(대표 10/7): 답 상자가 없는 대화(최종발주 기록)의 종료 확인도 같은 자리 — [채팅 종료]가 있던 곳에 [종료하기]·[취소]. 폰은 그 줄이 오른쪽 정렬이라 [취소]를 앞에 놓아 [종료하기]가 누른 자리에 온다 */
+.desk-chatbar > .desk-end-ask.in.solo { margin-left: 0; }
+@media (max-width: 640px) { .desk-chatbar > .desk-end-ask.in.solo .desk-endbtn.no { order: -1; } }
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).

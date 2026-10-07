@@ -380,3 +380,16 @@ html[data-ao-theme="dark"] .fo .fo-gut .m.ok span, html[data-ao-theme="dark"] .f
 html[data-ao-theme="dark"] .fo .fo-gut .m.warn span, html[data-ao-theme="dark"] .fo .fo-linebar button.warn { background: var(--fd-warn-bg); color: var(--fd-warn); }
 html[data-ao-theme="dark"] .fo .fo-gut .m.none span, html[data-ao-theme="dark"] .fo .fo-linebar button.none { background: var(--fd-err-bg); color: var(--f-err); }
 html[data-ao-theme="dark"] .fo .fo-ed.stale .fo-gut .m span { opacity: .5; }
+
+/* #570-b 대화 칸 사진 첨부 — 칩(이름 + 빼기)과 빈 자리 채우기 */
+.fo-compose-row .fo-grow { flex: 1 1 auto; }
+#fo-chat-chip { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: min(55%, 320px); white-space: nowrap; overflow: hidden; background: var(--f-accent-soft); color: var(--f-accent); }
+#fo-chat-chip .fo-chip-name { flex: 0 1 auto; min-width: 0; max-width: min(40vw, 240px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 긴 파일 이름이 입력 상자의 최소 폭을 밀어 올리지 않게(워커1 실측: 폰에서 상자 358 → 485) */
+.fo-chat, .fo-compose, .fo-compose-row { min-width: 0; }
+#fo-chat-chip .fo-x { flex: none; }
+#fo-chat-chip[hidden] { display: none; }
+.fo-x { border: 0; background: transparent; color: inherit; font-size: 15px; line-height: 1; padding: 0 2px; cursor: pointer; border-radius: 50%; min-width: 22px; min-height: 22px; }
+.fo-x:hover { background: rgba(0, 0, 0, .08); }
+html[data-ao-theme="dark"] #fo-chat-chip { background: var(--d-accent-soft, #232A52); color: var(--d-accent, #8C94FF); }
+html[data-ao-theme="dark"] .fo-x:hover { background: rgba(255, 255, 255, .12); }

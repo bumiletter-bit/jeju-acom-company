@@ -1084,7 +1084,7 @@ async function resolveCards(pg, type) {
                 ok((await cOpen('memo-edit', '일칠가').count()) === 1 && (await cOpen(CARD.order, '일칠나').count()) === 1 && (await cOpen(CARD.senderMemo, '일칠다').count()) === 1 && (await cOpen(CARD.order, '묶음이').count()) === 1 && (await cOpen(CARD.partner, '세상에 없는').count()) === 1, '⑰ 준비: 배송메세지 · 주문 확인 · 보내는이 · 묶음 주문 확인 · 거래처 카드가 열려 있음', JSON.stringify(c0));
                 // 새 마크업
                 const mkp = await g.pg.evaluate(() => { const c = document.querySelector('#fo-chat .fo-compose'), s = document.getElementById('fo-chat-send'), ta = document.getElementById('fo-chat-input'); const cs = getComputedStyle(c), ts = getComputedStyle(ta); return { compose: !!c, border: cs.borderTopWidth + ' ' + cs.borderTopStyle, radius: cs.borderTopLeftRadius, spark: !!c.querySelector('.fo-spark'), icon: s.classList.contains('fo-icon') && !!s.querySelector('svg'), sendW: Math.round(s.getBoundingClientRect().width), taBorder: ts.borderTopWidth, threadHidden: document.getElementById('fo-chat-log').hidden, attach: !!document.querySelector('#fo-chat [id*="attach"]') }; });
-                ok(mkp.compose && mkp.border === '2px solid' && mkp.spark && mkp.icon && mkp.sendW === 44 && mkp.taBorder === '0px' && mkp.threadHidden && !mkp.attach, '⑰2 입력 상자 = 인디고 2px 테두리 상자 · ✦ · 둥근 보내기 버튼(44px) · 안쪽 입력칸 테두리 없음 · 첨부 버튼 없음 · 대화가 없으면 대화 틀 숨김', JSON.stringify(mkp));
+                ok(mkp.compose && mkp.border === '2px solid' && mkp.spark && mkp.icon && mkp.sendW === 44 && mkp.taBorder === '0px' && mkp.threadHidden && mkp.attach, '⑰2 입력 상자 = 인디고 2px 테두리 상자 · ✦ · 둥근 보내기 버튼(44px) · 안쪽 입력칸 테두리 없음 · 사진 첨부 버튼 있음(#570-b — 종전 기대 「첨부 버튼 없음」을 바꿈) · 대화가 없으면 대화 틀 숨김', JSON.stringify(mkp));
                 await g.pg.focus('#fo-chat-input'); await g.pg.waitForTimeout(350); const foc = await g.pg.evaluate(() => { const ta = document.getElementById('fo-chat-input'), c = document.querySelector('#fo-chat .fo-compose'); return { ta: getComputedStyle(ta).boxShadow, taB: getComputedStyle(ta).borderTopWidth, ring: getComputedStyle(c).boxShadow }; });
                 ok(foc.ta === 'none' && foc.taB === '0px' && /3px/.test(foc.ring), '⑰2 입력칸을 눌러도 안쪽에 테마 포커스 테두리가 안 생기고 바깥 상자에 링', JSON.stringify(foc).slice(0, 120));
                 // 쓰는 중 · 그만두기
@@ -1512,6 +1512,133 @@ async function resolveCards(pg, type) {
                 const lg24 = (x.hits.logs || []).slice(-1)[0];
                 ok(lg24 && lg24.lines.some(l => /메모 줄로 사이즈 지정 4건/.test(l)), '㉔④ 정리 기록에 「메모 줄로 사이즈 지정 N건」', lg24 && lg24.lines.filter(l => /사이즈/.test(l)).join());
                 ok(x.errs.length === 0, '㉔ 오류 0', x.errs.join(' | ')); await x.ctx.close();
+            }
+
+            // ── ㉕ #570(대표 10/7 실사고 「연락처 옆에 요청 사이즈야 다 해줘」) 대화 칸에 「번호 + 사이즈」 줄을 그대로 보냄 ─────────────
+            console.log('\n㉕ #570 대화 칸의 번호+사이즈 줄(실사고 재현)');
+            {
+                const rows25 = [mk('칠가', { tel: '010-8600-1111' }), mk('칠나', { buyer: '두건손님', tel: '010-8600-2222' }), mk('칠다', { buyer: '두건손님', tel: '010-8600-2222' }), mk('칠라', { tel: '010-8600-3333' }),
+                    mk('칠마', { tel: '010-8600-4444' }), mk('칠바', { tel: '010-8600-5555' }), mk('칠사', { tel: '010-8600-6666' }), mk('칠아')];
+                const y = await mkChat(false, rows25);
+                y.chat.memoAns = () => ({ memo: '기본', sure: true });
+                await setCash(y.pg, null); await y.pg.click(SEL.start); await idle(y.pg); await y.pg.waitForTimeout(500);
+                const gt = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-memo-gut .m')).map(m => (m.textContent || '').trim()));
+                const memoOf = pg => pg.evaluate(() => document.getElementById('fo-memo').value);
+                // ①~④ 세 줄을 한 번에 — 시키는 말이 없으니 정리 줄로 메모 칸에 들어간다(AI 에게 안 보냄)
+                const p0 = y.chat.posts.length, L3 = ['010-8600-1111 2s사이즈', '010-8600-2222 s사이즈 2건', '010-8600-3333 .2S사이즈'];
+                await say(y.pg, L3.join('\n')); await idle(y.pg); await y.pg.waitForTimeout(500);
+                let lb = await lastBub(y.pg), g = await gt(y.pg), mv = await memoOf(y.pg), rj = await readJudge(y.pg);
+                ok(y.chat.posts.length === p0 && mv.split('\n').length === 3 && mv === L3.join('\n'), '㉕① 세 줄 모두 정리 줄로 메모 칸에 들어감(AI 에게 안 보냄 · 적은 글 그대로)', JSON.stringify(mv.split('\n')));
+                ok(/정리 줄 3줄을 메모 칸에 넣고/.test(lb.text) && /사이즈 지정 3줄 → 귤 로얄과 주문 4건에 사이즈 꼬리/.test(lb.text), '㉕① 화면 답: 「정리 줄 3줄을 메모 칸에 넣고 …」 + 「사이즈 지정 3줄 → 귤 로얄과 주문 4건에 사이즈 꼬리 …」', lb.text.slice(0, 150));
+                ok(/사이즈 지정 1건/.test(g[0]) && /사이즈 지정 2건/.test(g[1]) && !/건수 다름/.test(g[1]) && /사이즈 지정 1건/.test(g[2]), '㉕② 줄별 표시: 사이즈 지정 1건 · 2건(「2건」이라 적었고 실제 2건 → 건수 다름 아님) · 1건(「.2S사이즈」)', JSON.stringify(g));
+                ok(rj.v2Text.split('\n').length === 3 && rj.v2Text.split('\n').every(l => l === ''), '㉕② 숨은 계산 화면에는 사이즈 말과 「2건」을 빼고 넘김(세 줄 다 빈 줄 · 줄 수 그대로)', JSON.stringify(rj.v2Text.split('\n')));
+                // 건수가 다른 줄
+                await say(y.pg, '010-8600-4444 s사이즈 2건'); await idle(y.pg); await y.pg.waitForTimeout(400); lb = await lastBub(y.pg); g = await gt(y.pg);
+                ok(/건수 다름 1건 · 사이즈 1건/.test(g[3]) && /건수 다름/.test(lb.text) && /정리 줄 1줄/.test(lb.text), '㉕② 「s사이즈 2건」인데 실제 1건 → 줄별 표시 「건수 다름 1건 · 사이즈 1건」 · 화면 답에도 그 줄', g[3] + ' / ' + lb.text.slice(0, 140));
+                // ⑤ 이어서 시키는 말 — 클코에게 가는 요약 끝에 사이즈 줄 처리 결과가 들어 있다
+                const p1 = y.chat.posts.length; y.chat.answer = () => ({ reply: '이미 메모 칸 줄로 처리돼 있어요.', actions: [] });
+                await say(y.pg, '지금 보낸 연락처 옆 사이즈 다 해줘'); lb = await lastBub(y.pg);
+                const b5 = y.chat.posts[y.chat.posts.length - 1] || {}, tailLines = String(b5.summary || '').split('\n').filter(l => /메모 칸 사이즈 지정 줄/.test(l));
+                ok(y.chat.posts.length === p1 + 1 && b5.kind === 'chat' && tailLines.length === 1 && /메모 칸 사이즈 지정 줄 4줄\(화면이 이미 처리/.test(tailLines[0]) && /붙임 4줄\(귤 로얄과 주문 5건/.test(tailLines[0]), '㉕⑤ 시키는 말은 클코에게 가고, 요약에 「메모 칸 사이즈 지정 줄 4줄(화면이 이미 처리 …): 붙임 4줄(귤 로얄과 주문 5건 …)」', (tailLines[0] || String(b5.summary || '').slice(-160)).slice(0, 200));
+                ok(/이미 메모 칸 줄로 처리/.test(lb.text) && (await memoOf(y.pg)).split('\n').length === 4, '㉕⑤ 답을 그대로 보여 주고 메모 칸은 그대로(4줄)', lb.text.slice(0, 60));
+                // ⑥ 정말 못 읽는 꼴 · 읽히는 다른 꼴
+                const p2 = y.chat.posts.length;
+                await say(y.pg, '010-8600-5555 사이즈2S'); await idle(y.pg); await y.pg.waitForTimeout(400); lb = await lastBub(y.pg); g = await gt(y.pg);
+                ok(y.chat.posts.length === p2 && /^(⚠\s*)?사이즈 못 읽음/.test(g[4]) && /사이즈를 못 읽었어요/.test(lb.text), '㉕⑥ 「번호 사이즈2S」 = 줄별 표시가 「사이즈 못 읽음」으로 시작(뒤에 종전 표시가 이어짐) · 화면 답에 다시 적는 법', g[4] + ' / ' + lb.text.slice(0, 120));
+                await say(y.pg, '010-8600-6666 2S싸이즈'); await idle(y.pg); await y.pg.waitForTimeout(400); g = await gt(y.pg);
+                ok(/사이즈 지정 1건/.test(g[5]), '㉕⑥ 「번호 2S싸이즈」는 읽힘(사이즈 지정 1건)', g[5]);
+                // ③④ 파일로 확인 — 옵션 끝의 꼬리
+                for (let q = 0; q < 12 && (await pendingN(y.pg)) > 0; q++) { const b = y.pg.locator(SEL.pending + ' [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await y.pg.waitForTimeout(200); }
+                ok((await pendingN(y.pg)) === 0, '㉕ 준비: 남은 카드 0', JSON.stringify(await cardCount(y.pg)));
+                await y.pg.click(SEL.make); await idle(y.pg); await y.pg.waitForSelector(SEL.save, { timeout: 15000 }); await y.pg.waitForTimeout(300);
+                const n25 = await y.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a25 = [];
+                for (const nm of n25.filter(v => /xlsx$/i.test(v) && !v.includes('스마트스토어'))) { const [dl] = await Promise.all([y.pg.waitForEvent('download', { timeout: 20000 }), y.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's25-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff); if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => a25.push(r)); }
+                const O25 = nm => String((a25.find(r => r[3] === nm) || [])[4] || '');
+                ok(/ 2S사이즈로!$/.test(O25('칠가')) && / S사이즈로!$/.test(O25('칠나')) && !/2S사이즈로!/.test(O25('칠나')) && / S사이즈로!$/.test(O25('칠다')) && !/2S사이즈로!/.test(O25('칠다')), '㉕③ 택배사 파일 옵션 끝: 「2s사이즈」 = 2S사이즈로! · 「s사이즈 2건」의 두 주문 = S사이즈로!', [O25('칠가'), O25('칠나'), O25('칠다')].map(v => v.slice(-9)).join(' | '));
+                ok(/ 2S사이즈로!$/.test(O25('칠라')), '㉕④ 「.2S사이즈」(앞에 점) 줄도 2S사이즈로! 로 붙음', O25('칠라').slice(-10));
+                ok(/ S사이즈로!$/.test(O25('칠마')) && !/2S/.test(O25('칠마')) && !/사이즈로!/.test(O25('칠바')) && / 2S사이즈로!$/.test(O25('칠사')) && !!O25('칠아') && !/사이즈로!/.test(O25('칠아')), '㉕③ 건수 다름 줄도 붙음(S) · 못 읽은 줄의 주문은 꼬리 없음 · 「2S싸이즈」 = 2S · 안 적은 주문은 그대로', [O25('칠마'), O25('칠바'), O25('칠사'), O25('칠아')].map(v => v.slice(-9)).join(' | '));
+                const lg25 = (y.hits.logs || []).slice(-1)[0];
+                ok(!!lg25 && lg25.lines.some(l => /메모 줄로 사이즈 지정 6건/.test(l)), '㉕ 정리 기록에 「메모 줄로 사이즈 지정 6건」', lg25 ? lg25.lines.filter(l => /사이즈/.test(l)).join(' | ').slice(0, 120) : '기록 없음');
+                ok(y.errs.length === 0, '㉕ 오류 0', y.errs.join(' | ')); await y.ctx.close();
+            }
+
+            // ── ㉖ #570 시키는 말 처리 — 번호 줄 끝·맨 아래의 「변경해줘」 같은 말은 그 줄들을 하라는 뜻(클코에게 안 보냄) ─────────────
+            console.log('\n㉖ #570 시키는 말 처리');
+            {
+                const rows26 = [mk('육가', { tel: '010-8700-1111' }), mk('육나', { buyer: '육두건', tel: '010-8700-2222' }), mk('육다', { buyer: '육두건', tel: '010-8700-2222' }), mk('육라', { tel: '010-8700-3333' }),
+                    mk('육마', { tel: '010-8700-4444' }), mk('육바', { tel: '010-8700-5555' }), mk('육사')];
+                const z = await mkChat(false, rows26);
+                z.chat.memoAns = () => ({ memo: '기본', sure: true });
+                await setCash(z.pg, null); await z.pg.click(SEL.start); await idle(z.pg); await z.pg.waitForTimeout(500);
+                const gt = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-memo-gut .m')).map(m => (m.textContent || '').trim()));
+                const memoL = async pg => (await pg.evaluate(() => document.getElementById('fo-memo').value)).split('\n').filter(l => l.trim());
+                const sayJ = async t => { await say(z.pg, t); await idle(z.pg); await z.pg.waitForTimeout(400); };
+                let p = z.chat.posts.length;
+                await sayJ(['010-8700-1111 2s사이즈', '010-8700-2222 s사이즈 2건', '010-8700-3333 .2S사이즈', '변경해줘'].join('\n'));
+                let ml = await memoL(z.pg), lb = await lastBub(z.pg), g = await gt(z.pg);
+                ok(z.chat.posts.length === p && ml.length === 3 && ml.join('|') === '010-8700-1111 2s사이즈|010-8700-2222 s사이즈 2건|010-8700-3333 .2S사이즈' && /정리 줄 3줄을 메모 칸에 넣고/.test(lb.text) && g.slice(0, 3).every(t => /사이즈 지정/.test(t)), '㉖① 번호 줄 3개 + 맨 아래 「변경해줘」 → 클코 요청 0회 · 3줄 전부 정리 줄(「변경해줘」는 메모 칸에 안 들어감)', JSON.stringify(ml) + ' 요청 ' + (z.chat.posts.length - p));
+                p = z.chat.posts.length;
+                await sayJ('010-8700-4444 s사이즈 2건 변경해줘'); ml = await memoL(z.pg); g = await gt(z.pg);
+                ok(z.chat.posts.length === p && ml.length === 4 && ml[3] === '010-8700-4444 s사이즈 2건' && /건수 다름 1건 · 사이즈 1건/.test(g[3]), '㉖② 「번호 s사이즈 2건 변경해줘」 한 줄 → 요청 0회 · 꼬리(변경해줘)를 떼고 「번호 s사이즈 2건」으로 정리 줄', ml[3] + ' / ' + g[3]);
+                p = z.chat.posts.length;
+                await sayJ('010-8700-5555 s사이즈로'); ml = await memoL(z.pg); g = await gt(z.pg);
+                ok(z.chat.posts.length === p && ml.length === 5 && /^010-8700-5555 s사이즈/.test(ml[4]) && /사이즈 지정 1건/.test(g[4]), '㉖③ 「번호 s사이즈로」 → 정리 줄(종전엔 「사이즈로」 때문에 클코에게 갔음) · 사이즈 지정 1건', ml[4] + ' / ' + g[4]);
+                p = z.chat.posts.length; z.chat.answer = () => ({ reply: '확인해 볼게요.', actions: [] });
+                await sayJ('010-8700-1111 황금향 3키로 선물용 맞는지 확인하고 10과로! 로 표시해줘'); ml = await memoL(z.pg);
+                ok(z.chat.posts.length === p + 1 && ml.length === 5 && z.chat.posts[z.chat.posts.length - 1].kind === 'chat', '㉖④ 종전 유지: 「번호 … 맞는지 확인하고 10과로! 로 표시해줘」 → 클코에게 1회(메모 칸 그대로)', '요청 ' + (z.chat.posts.length - p) + ' · 메모 ' + ml.length + '줄');
+                p = z.chat.posts.length;
+                await sayJ('육사 건 2박스로'); ml = await memoL(z.pg);
+                ok(z.chat.posts.length === p + 1 && ml.length === 5, '㉖⑤ 종전 유지: 「육사 건 2박스로」(번호 없음) → 클코에게 1회', '요청 ' + (z.chat.posts.length - p));
+                ok(z.errs.length === 0, '㉖ 오류 0', z.errs.join(' | ')); await z.ctx.close();
+            }
+
+            // ── ㉗ #570-b 대화 칸 사진 첨부 — 클코가 사진에서 읽은 줄(op lines)을 정리 줄로 메모 칸에 넣는다 ───────────────────────
+            console.log('\n㉗ #570-b 대화 칸 사진 첨부');
+            {
+                const PNG27 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFklEQVR42mP8z8Dwn4EIwDiqkL4KAZKnCAHsjSN4AAAAAElFTkSuQmCC', 'base64');
+                const rows27 = [mk('팔가', { tel: '010-8800-1111' }), mk('팔나', { buyer: '팔두건', tel: '010-8800-2222' }), mk('팔다', { buyer: '팔두건', tel: '010-8800-2222' }), mk('팔라', { tel: '010-8800-3333' }), mk('팔마')];
+                const v = await mkChat(false, rows27);
+                v.chat.memoAns = () => ({ memo: '기본', sure: true });
+                await setCash(v.pg, null); await v.pg.click(SEL.start); await idle(v.pg); await v.pg.waitForTimeout(500);
+                const gt = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-memo-gut .m')).map(m => (m.textContent || '').trim()));
+                const memoL = async pg => (await pg.evaluate(() => document.getElementById('fo-memo').value)).split('\n').filter(l => l.trim());
+                const chip = pg => pg.evaluate(() => { const c = document.getElementById('fo-chat-chip'); return { vis: !c.hidden && c.getClientRects().length > 0, text: c.textContent.trim(), x: !!c.querySelector('[data-chat="unimg"]') }; });
+                const attach = async pg => { await pg.setInputFiles('#fo-chat-file', { name: '요청목록.png', mimeType: 'image/png', buffer: PNG27 }); await pg.waitForFunction(() => !document.getElementById('fo-chat-chip').hidden, null, { timeout: 8000 }).catch(() => { }); await pg.waitForTimeout(200); };
+                const b0 = await v.pg.evaluate(() => { const b = document.getElementById('fo-chat-attach'), f = document.getElementById('fo-chat-file'), r = b.getBoundingClientRect(); return { vis: r.width > 0, label: b.getAttribute('aria-label'), accept: f.accept, w: Math.round(r.width), h: Math.round(r.height) }; });
+                ok(b0.vis && b0.label === '사진 첨부' && b0.accept === 'image/*', '㉗ 대화 칸에 [사진 첨부] 버튼(#fo-chat-attach · 고르는 창은 이미지만)', JSON.stringify(b0));
+                await attach(v.pg); let c = await chip(v.pg);
+                ok(c.vis && /요청목록/.test(c.text) && c.x, '㉗ 사진을 고르면 칩에 이름 표시 + ×', c.text);
+                await v.pg.click('#fo-chat-chip [data-chat="unimg"]'); await v.pg.waitForTimeout(200); c = await chip(v.pg);
+                ok(!c.vis && await v.pg.evaluate(() => !window.AkmFinalOrder.state.chat.img), '㉗ × → 칩 사라짐 · 붙인 사진 없음');
+                // 글 없이 사진만 보내기
+                await attach(v.pg);
+                const A = '010-8800-1111', B = '010-8800-2222', C3 = '010-8800-3333';
+                v.chat.answer = () => ({ reply: '사진에서 3줄을 읽었어요', actions: [{ op: 'lines', text: A + ' 2S사이즈\n' + B + ' s사이즈 2건\n' + C3 + ' .2S사이즈\n이름만 적은 줄' }] });
+                const p0 = v.chat.posts.length;
+                await v.pg.fill('#fo-chat-input', ''); await v.pg.click('#fo-chat-send'); await chatIdle(v.pg); await idle(v.pg); await v.pg.waitForTimeout(600);
+                const b1 = v.chat.posts[v.chat.posts.length - 1] || {}, logTxt = await v.pg.evaluate(() => document.getElementById('fo-chat-log').innerText.replace(/\s+/g, ' '));
+                ok(v.chat.posts.length === p0 + 1 && b1.kind === 'chat' && /^data:image\/jpeg;base64,/.test(String(b1.image_data || '')) && b1.image_mime === 'image/jpeg' && /^\[사진 첨부\]/.test(String(b1.ask || '')), '㉗ 글 없이 보내기 → 요청에 image_data(data:image/jpeg;base64,…) · image_mime · ask 「[사진 첨부] …」', JSON.stringify({ n: v.chat.posts.length - p0, mime: b1.image_mime, head: String(b1.image_data || '').slice(0, 24), ask: String(b1.ask || '').slice(0, 30) }));
+                let ml = await memoL(v.pg), g = await gt(v.pg); c = await chip(v.pg);
+                ok(ml.length === 3 && ml.join('|') === [A + ' 2S사이즈', B + ' s사이즈 2건', C3 + ' .2S사이즈'].join('|') && !ml.some(l => /이름만 적은 줄/.test(l)), '㉗ 번호가 든 3줄만 메모 칸에 들어감(「이름만 적은 줄」은 안 들어감)', JSON.stringify(ml));
+                ok(/사진에서 읽은 3줄을 메모 칸에 넣고 다시 판정했어요/.test(logTxt) && /사이즈 지정 3줄 → 귤 로얄과 주문 4건에 사이즈 꼬리/.test(logTxt), '㉗ 화면 답: 「사진에서 읽은 3줄을 메모 칸에 넣고 다시 판정했어요. 사이즈 지정 3줄 → 귤 로얄과 주문 4건 …」', logTxt.slice(-200));
+                const tails = await v.pg.evaluate(() => { const st = window.AkmFinalOrder.state; return st.sizeTail ? [...st.sizeTail.values()].map(String).sort().join() : ''; });
+                ok(/사이즈 지정 1건/.test(g[0]) && /사이즈 지정 2건/.test(g[1]) && /사이즈 지정 1건/.test(g[2]) && (tails.match(/2S/g) || []).length === 2 && tails.split(',').length === 4, '㉗ 줄별 표시 「사이즈 지정 1 · 2 · 1건」 · 꼬리 4건(2S 2 · S 2)', JSON.stringify(g) + ' ' + tails);
+                ok(!c.vis && await v.pg.evaluate(() => !window.AkmFinalOrder.state.chat.img), '㉗ 보낸 뒤 칩 사라짐');
+                // 글과 같이 보내기
+                await attach(v.pg); v.chat.answer = () => ({ reply: '사진에는 새로 넣을 줄이 없어요.', actions: [] });
+                await say(v.pg, '이 사진대로 해줘');
+                const b2 = v.chat.posts[v.chat.posts.length - 1] || {};
+                ok(/이 사진대로 해줘/.test(String(b2.ask || '')) && !/^\[사진 첨부\]/.test(String(b2.ask || '')) && /^data:image\/jpeg;base64,/.test(String(b2.image_data || '')) && (await memoL(v.pg)).length === 3, '㉗ 글과 같이 보내면 ask 는 그 글 · 사진도 같이 감 · 메모 칸 그대로', String(b2.ask || '').slice(0, 40));
+                ok(v.errs.length === 0, '㉗ 오류 0', v.errs.join(' | ')); await v.ctx.close();
+                // 폰 390
+                const m = await mkChat(false, rows27, { width: 390, height: 844 }, true);
+                m.chat.memoAns = () => ({ memo: '기본', sure: true });
+                await setCash(m.pg, null); await m.pg.click(SEL.start); await idle(m.pg); await m.pg.waitForTimeout(500);
+                const ph0 = await m.pg.evaluate(() => { const r = q => document.querySelector(q).getBoundingClientRect(); return { send: Math.round(r('#fo-chat-send').right), compose: Math.round(r('#fo-chat .fo-compose').width), row: Math.round(r('#fo-chat .fo-compose-row').width) }; });
+                await m.pg.setInputFiles('#fo-chat-file', { name: '아주_긴_이름의_요청목록_사진_파일_20261007.png', mimeType: 'image/png', buffer: PNG27 }); await m.pg.waitForTimeout(600);
+                const ph = await m.pg.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(), a = r('fo-chat-attach'), sd = r('fo-chat-send'), cp = r('fo-chat-chip'), pn = document.querySelector('.fo'); return { vw: window.innerWidth, attach: [Math.round(a.left), Math.round(a.right), Math.round(a.height)], send: [Math.round(sd.left), Math.round(sd.right)], chip: [Math.round(cp.left), Math.round(cp.right)], compose: Math.round(document.querySelector('#fo-chat .fo-compose').getBoundingClientRect().width), row: Math.round(document.querySelector('#fo-chat .fo-compose-row').getBoundingClientRect().width), over: document.documentElement.scrollWidth > window.innerWidth + 1, panelOver: pn ? pn.scrollWidth > pn.clientWidth + 1 : false }; });
+                ok(!ph.over && !ph.panelOver && ph.attach[0] >= 0 && ph.send[1] <= ph.vw + 1 && ph.chip[1] <= ph.vw + 1 && ph.attach[2] >= 40, '㉗ 폰 390px: 사진 첨부·보내기 버튼과 긴 이름 칩이 화면 밖으로 안 넘침', JSON.stringify(ph) + ' · 붙이기 전 ' + JSON.stringify(ph0));
+                ok(m.errs.length === 0, '㉗ 폰 오류 0', m.errs.join(' | ')); await m.ctx.close();
             }
 
             // 창구가 안 집음(40초)

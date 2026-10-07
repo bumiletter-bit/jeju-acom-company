@@ -139,6 +139,10 @@
                         <span class="fo-spark" aria-hidden="true">✦</span>
                         <textarea id="fo-chat-input" rows="2" maxlength="1500" aria-label="클코에게 말로 고칠 것 적기" placeholder="말로 고칠 것을 적어요 — 예: 김○○ 건 2박스로 · 김○○ 건 주소 ○○로 12, 301호로 바꿔줘 · 제주 건 있어?"></textarea>
                         <div class="fo-compose-row">
+                            <input type="file" id="fo-chat-file" accept="image/*" hidden>
+                            <button type="button" class="fo-icon" id="fo-chat-attach" aria-label="사진 첨부" title="사진 첨부 — 번호·사이즈 요청 목록을 찍어 보내면 클코가 읽어 정리 줄로 넣어요"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/><path d="M8 5l1.2-2h5.6L16 5"/></svg></button>
+                            <span class="fo-tag" id="fo-chat-chip" hidden></span>
+                            <span class="fo-grow" aria-hidden="true"></span>
                             <button type="button" class="fo-btn sm" id="fo-chat-stop" hidden>그만두기</button>
                             <button type="button" class="fo-icon primary" id="fo-chat-send" aria-label="보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg></button>
                         </div>
@@ -173,6 +177,11 @@
         $('fo-reset-no').addEventListener('click', () => { $('fo-reset-confirm').hidden = true; $('fo-reset').focus({ preventScroll: true }); });
         $('fo-reset-yes').addEventListener('click', resetAll);
         $('fo-chat-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); chatSend(); } });
+        // #570-b(대표 10/7 「사이즈 요청 이미지로 찍어서 보내도 되게」): 대화 칸에 사진 1장 — 클코가 읽어 「번호 사이즈」 정리 줄로 돌려주면 화면이 메모 칸에 넣는다
+        $('fo-chat-attach').addEventListener('click', () => { if (!st.chat.running) $('fo-chat-file').click(); });
+        $('fo-chat-file').addEventListener('change', async e => { const f = (e.target.files || [])[0]; e.target.value = ''; if (f) await setChatImg(f); });
+        $('fo-chat-chip').addEventListener('click', e => { if (e.target.closest('[data-chat="unimg"]')) { st.chat.img = null; renderChatChip(); } });
+        $('fo-chat-input').addEventListener('paste', async e => { const f = Array.from((e.clipboardData && e.clipboardData.files) || []).find(x => /^image\//.test(x.type)); if (f) { e.preventDefault(); await setChatImg(f); } });
         $('fo-progress').addEventListener('click', e => { const b = e.target.closest('button[data-fo-load]'); if (b) run(() => b.dataset.foLoad === 'retry' ? loadChannels(CH.filter(c => st.chState[c] && st.chState[c].fail)).then(afterLoad) : skipFailed()); });
     }
     const LOCKS = ['fo-memo', 'fo-ship', 'fo-cash-pick', 'fo-cash-none'];
@@ -307,6 +316,10 @@
         const cal = st.cal, ship = $('fo-ship').value;
         if (!cal.shipDays.includes(ship)) throw new Error('기준 발송일을 다시 골라 주세요(토요일·발송휴무일은 안 돼요).');
         const sz = core().sizeLines($('fo-memo').value); st.sizeLines = sz.sizes;   // #548 「번호 + 사이즈」 줄 — 사이즈 낱말은 떼고 나머지만 종전 규칙으로
+        // #570: 사이즈 말이 있는데 못 읽은 줄(「2S싸이즈」 「S size로」 같은 꼴) — 조용히 「오늘 발송」 줄로 읽히지 않게 줄별 표시와 대화 답에서 알린다
+        { const got = new Set(sz.sizes.map(z => z.srcLine));
+          st.sizeMiss = String($('fo-memo').value || '').split('\n').map((raw, i) => ({ srcLine: i, raw: raw.replace(/\r/g, '').trim() }))
+              .filter(x => !got.has(x.srcLine) && LINEISH.test(x.raw) && SIZE_HINT.test(x.raw.replace(LINEISH, ' '))); }
         st.prep = core().prepLines(sz.text, { realToday: cal.realToday, shipDays: cal.shipDays, noShip: [...cal.noShip], shipDate: ship });
         dayGuard();
         st.judged = false; st.out = null; st.files = []; $('fo-result').hidden = true;
@@ -372,7 +385,10 @@
             const no = new Map(); hit.filter(e => !okE.includes(e)).forEach(e => { const o = core().stripTail(String(e.conv['옵션정보'] || ''), inCatalog); no.set(o, (no.get(o) || 0) + 1); });
             no.forEach((n, o) => info.push(`사이즈 지정 대상 아님: ${o} ${n}건 (메모 줄 「${z.raw}」 — 귤 로얄과 주문에만 붙여요 · 선물용 제외)`));
             if (okE.length) info.push(`메모 줄로 사이즈 지정: ${z.raw} → 귤 주문 ${okE.length}건에 「${tail}」`);
-            res.set(z.srcLine, okE.length ? { k: 'ok', t: `사이즈 지정 ${okE.length}건`, n: okE.length } : { k: 'warn', t: '귤 로얄과 주문 없음', tip: '사이즈를 붙일 귤 로얄과 주문이 없어요' });
+            // #570: 「s사이즈 2건」처럼 건수를 적었는데 실제 주문 수와 다르면 붙이되 표시로 알린다(v2 의 「건수 다름」과 같은 뜻)
+            const cntOff = z.expect != null && z.expect !== hit.length;
+            if (cntOff) info.push(`건수 다름: ${z.raw} — 적은 건수 ${z.expect}건 · 실제 주문 ${hit.length}건(귤 로얄과 ${okE.length}건에 붙임)`);
+            res.set(z.srcLine, okE.length ? (cntOff ? { k: 'warn', t: `건수 다름 ${hit.length}건 · 사이즈 ${okE.length}건`, n: okE.length, tip: `적은 건수 ${z.expect}건인데 실제 주문 ${hit.length}건 — 귤 로얄과 ${okE.length}건에 붙였어요` } : { k: 'ok', t: `사이즈 지정 ${okE.length}건`, n: okE.length }) : { k: 'warn', t: '귤 로얄과 주문 없음', tip: '사이즈를 붙일 귤 로얄과 주문이 없어요' });
         });
         st.sizeTail = tails; st.sizeRes = res; return info;
     }
@@ -448,6 +464,8 @@
             if (r.rv && z && st.dec.get('lrecv:' + i + ':' + z.raw) === 'ok') return put(i, { k: 'none', t: '주문 없음', tip: '받는 분 번호 — 넘어감' });
             put(i, { k: r.k, t: r.t, tip: r.tip || (r.rv ? '구매자가 아니라 받는 분 번호예요 — 아래 카드에서 적용하거나 넘어가요' : '') });
         });
+        // #570 사이즈 말이 있는데 못 읽은 줄 — 보통 줄로 먼저 「확인 필요」(같은 warn 등급)가 붙어 put() 으로는 못 덮으므로 직접 덮고 종전 표시는 뒤에 이어 적는다
+        (st.sizeMiss || []).forEach(x => { if (x.srcLine < 0 || x.srcLine >= n) return; const prev = marks[x.srcLine]; marks[x.srcLine] = { k: 'warn', t: '사이즈 못 읽음' + (prev && prev.t ? ' · ' + prev.t : ''), tip: '사이즈 말이 있는데 읽지 못했어요 — 「번호 2S사이즈」처럼 다시 적어 주세요(지금은 사이즈 없이 보통 줄로 읽혔어요)' + (prev && prev.tip ? ' · ' + prev.tip : '') }; });
         const sm = senderMap(), nohit = new Set((sm.nohit || []).map(x => x.srcLine + ':' + x.raw));
         (st.prep.senders || []).forEach(sd => {
             if (nohit.has(sd.srcLine + ':' + sd.raw)) return put(sd.srcLine, { k: 'none', t: '주문 없음', tip: '보내는이를 넣을 주문이 배송준비에 없어요' });
@@ -861,6 +879,10 @@
     function saveFile(name) { const f = st.files.find(x => x.name === name); if (!f) return; XLSX.writeFile(f.wb, f.name); }
     function savePng(short) {
         const f = st.files.find(x => x.short === short); if (!f) return;
+        qtyCanvas(f).toBlob(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = f.png; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
+    }
+    // 수량 표 그림(거래처별) — [수량 이미지 저장] 과 정리 기록 첨부(#570)가 같은 그림을 쓴다. 화면 색과 무관하게 흰 바탕·검은 글자·품목 색을 직접 그린다
+    function qtyCanvas(f) {
         const p = f.partner, dpr = 2, rowH = 34, padX = 12, font = '600 15px Pretendard, "Malgun Gothic", sans-serif';
         const cv = document.createElement('canvas'), g = cv.getContext('2d'); g.font = font;
         const nameW = Math.ceil(Math.max(260, ...p.qty.map(q => g.measureText(q.name).width)) + padX * 2), qtyW = 96, Wd = nameW + qtyW, H = rowH * (p.qty.length + 1);
@@ -870,7 +892,7 @@
         // 대표가 보내던 표와 같은 모양: 품목 칸만 색 · 수량 칸과 합계 줄은 흰색
         p.qty.forEach((q, i) => { cell(0, i * rowH, nameW, '#' + (st.colorOf(q.name) || 'FFFFFF'), q.name); cell(nameW, i * rowH, qtyW, null, q.qty, true); });
         cell(0, p.qty.length * rowH, nameW, null, ''); cell(nameW, p.qty.length * rowH, qtyW, null, p.total, true);
-        cv.toBlob(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = f.png; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
+        return cv;
     }
     async function onResultClick(e) {
         const b = e.target.closest('button'); if (!b) return;
@@ -1148,6 +1170,18 @@
         $('fo-chat-log').hidden = !C.log.length && !C.running;   // 대화가 없으면 빈 대화 틀을 보이지 않는다
         renderPatches();
     }
+    // #570-b 사진 첨부: 긴 변 1600px 로 줄여 JPEG 로(서버 한도 10MB · 창구가 읽기엔 충분) · 칩에 이름 표시
+    async function setChatImg(file) {
+        if (!/^image\//.test(file.type)) { $('fo-chat-msg').textContent = '사진 파일만 붙일 수 있어요.'; return; }
+        try {
+            const url = URL.createObjectURL(file); const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('사진을 읽지 못했어요')); i.src = url; });
+            const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(im.naturalWidth * k)); cv.height = Math.max(1, Math.round(im.naturalHeight * k));
+            cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+            const data = cv.toDataURL('image/jpeg', 0.85);
+            st.chat.img = { name: String(file.name || '사진.jpg').slice(0, 60), data, mime: 'image/jpeg' }; renderChatChip(); $('fo-chat-msg').textContent = '';
+        } catch (err) { $('fo-chat-msg').textContent = '⚠️ ' + (err && err.message ? err.message : err); }
+    }
+    function renderChatChip() { const c = $('fo-chat-chip'), im = st.chat.img; if (!c) return; c.hidden = !im; c.innerHTML = im ? `📷 <span class="fo-chip-name" title="${esc(im.name)}">${esc(im.name)}</span> <button type="button" class="fo-x" data-chat="unimg" aria-label="사진 빼기" title="사진 빼기">×</button>` : ''; }
     const chatSay = (who, text, extra) => { st.chat.log.push(Object.assign({ who, text: String(text || '') }, extra || {})); if (st.chat.log.length > 60) st.chat.log.splice(0, st.chat.log.length - 60); renderChat(); return st.chat.log.length - 1; };
     const sq = s => String(s == null ? '' : s).replace(/\s+/g, '');
     const meText = () => sq(st.chat.log.filter(m => m.who === 'me').map(m => m.text).join('\n'));
@@ -1155,6 +1189,7 @@
     const LINEISH = /01\d[-.\s]?\d{3,4}[-.\s]?\d{4}|\d{16,}|\d{8}-\d{7}/;
     const CHAT_TALK = /해\s*줘|해\s*주세요|해\s*줄래|바꿔|변경해|수정|확인|표시|맞는지|맞아|됐어|되었|있어\s*\??|인지|빼\s*줘|넣어\s*줘|붙여|떼\s*줘|지워|알려|\d+\s*과\s*로|사이즈로|\?/;
     const CHAT_PHONE = /01\d[-.\s]?\d{3,4}[-.\s]?\d{4}/g;
+    const SIZE_HINT = /사이즈|싸이즈|size|(?:^|[^a-z0-9가-힣])2?[sml](?:[^a-z0-9가-힣]|$)/i;   // #570 사이즈 말처럼 보이는 것(못 읽은 줄 알림용)
     const chatMask = s => String(s || '').replace(CHAT_PHONE, m => '(전화 끝 ' + m.replace(/\D/g, '').slice(-4) + ')');   // 클코에게 보내는 글에는 전화번호를 끝 4자리만 남긴다(주문은 화면이 찾는다)
     const CHAT_STOP = /^(건|주소|박스|수량|품목|이름|오늘|발송|제외|제주|바꿔줘|바꿔|변경|빼줘|있어|있나요|없어|으로|해줘|주문|고객|보내는이|받는|사람|배송|메세지|미매칭)$/;
     // 지시 글에서 후보 주문을 뽑는다: 구매자·수취인 이름 · 전화 끝 4자리 · 「미매칭」 · 품목 낱말
@@ -1198,35 +1233,63 @@
         const sets = hit.map(e => { const cur = optOf(e); return { key: keyOf(e), opt: to + cur.slice(baseName(e).length) }; });   // 꼬리(「 S사이즈로!」 등)는 그대로 붙여 둔다
         return { ok: true, all: true, from, to, sets, line: `${head}: ${from} ${hit.length}건(${boxes}박스) → ${to}${pf !== pt ? ` · 거래처 ${pf || '미정'} → ${pt || '미정'}` : ''}${cashN ? ` · 현금파일에 같은 품목 ${cashN}행은 그대로예요` : ''}` };
     }
+    // #570 메모 칸 「번호 + 사이즈」 줄의 결과를 글로(대화 답 · 클코에게 주는 요약 공용). from = 이 줄 번호부터만(없으면 전부).
+    function sizeReport(from) {
+        const res = st.sizeRes || new Map(), zs = (st.sizeLines || []).filter(z => from == null || z.srcLine >= from), miss = (st.sizeMiss || []).filter(x => from == null || x.srcLine >= from);
+        if (!zs.length && !miss.length) return '';
+        const okZ = zs.filter(z => { const r = res.get(z.srcLine); return r && r.n; }), okN = okZ.reduce((a, z) => a + (res.get(z.srcLine).n || 0), 0);
+        const L = [];
+        if (okZ.length) L.push(`사이즈 지정 ${okZ.length}줄 → 귤 로얄과 주문 ${okN}건에 사이즈 꼬리를 붙였어요(옵션 끝 「S사이즈로!」 — 파일에 그대로 나가요).`);
+        zs.forEach(z => { const r = res.get(z.srcLine); if (!r || (r.k === 'ok')) return; L.push(`· 「${z.raw}」 — ${r.t}${r.tip ? ' · ' + r.tip : r.rv ? ' · 받는 분 번호 — 아래 카드에서 적용하거나 넘어가요' : ''}`); });
+        miss.forEach(x => L.push(`· 「${x.raw}」 — 사이즈를 못 읽었어요 → 「번호 2S사이즈」처럼 다시 적어 주세요(지금은 사이즈 없이 보통 줄로 읽혔어요)`));
+        return L.join('\n');
+    }
     function chatSummary() {
         const s = S(), m = s.merged, going = m.filter(goingOut), c = core();
+        const sizeSum = (() => { const zs = st.sizeLines || [], miss = st.sizeMiss || []; if (!zs.length && !miss.length) return '메모 칸 사이즈 지정 줄: 없음';
+            const res = st.sizeRes || new Map(); let okL = 0, okN = 0, none = 0, warn = 0; zs.forEach(z => { const r = res.get(z.srcLine); if (!r) return; if (r.n) { okL++; okN += r.n; } else if (r.k === 'none') none++; else warn++; });
+            return `메모 칸 사이즈 지정 줄 ${zs.length + miss.length}줄(화면이 이미 처리 — 다시 시킬 필요 없음): 붙임 ${okL}줄(귤 로얄과 주문 ${okN}건에 꼬리) · 귤 로얄과 주문 없음 등 확인 ${warn}줄 · 주문 없음 ${none}줄 · 사이즈 못 읽음 ${miss.length}줄(직원이 「번호 2S사이즈」 꼴로 다시 적어야 함)`; })();
         const by = new Map(); going.forEach(e => { const k = partnerShort(optOf(e)) || '거래처 미정'; const x = by.get(k) || { n: 0, q: 0 }; x.n++; x.q += qtyNow(e); by.set(k, x); });
         (st.cash && st.cash.ok ? st.cash.rows : []).forEach(r => { const k = partnerShort(String(r.opt || '')) || '거래처 미정'; const x = by.get(k) || { n: 0, q: 0 }; x.n++; x.q += Number(r.qty) || 0; by.set(k, x); });
         // #526: 「미매칭」 = 옵션 글자가 「[미매칭]」으로 시작(단가표에 없는 이름) 또는 거래처 미정. 카드에서 거래처를 골랐어도 이름은 여전히 미매칭이다(실사용에서 0건으로 세어 AI가 못 찾았다고 답함)
         const unAll = going.filter(e => /^\[미매칭\]/.test(optOf(e)) || !partnerShort(optOf(e))), un = unAll.length, unPicked = unAll.filter(e => !!partnerShort(optOf(e))).length;
         return [`기준 발송일 ${s.shipDate}`, `주문 ${m.length}건 · 택배사 양식 ${going.length}건 · 입력삭제 ${m.filter(e => e.individual).length}건 · 오늘 안 나감 ${m.filter(e => !e.individual && e.excluded).length}건 · 현금파일 ${st.cash && st.cash.ok ? st.cash.rows.length : 0}행`,
-            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`].filter(Boolean).join('\n').slice(0, 4000);
+            `거래처별: ${[...by].map(([k, x]) => `${k} ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, `제주도 배송: ${jejuText()}`, `단가표에 없는 품목 이름(미매칭) ${un}건${unPicked ? `(그중 ${unPicked}건은 거래처만 골라 둠 · 이름은 그대로 미매칭)` : ''}`, `남은 확인 카드 ${pending().length}건 · 말로 바꾼 것 ${patchItems().length}건`, `품목별(택배사 양식으로 나가는 주문 · 꼬리 뗀 이름): ${itemCounts().map(x => `「${x.name}」 ${x.n}건(${x.q}박스)`).join(' · ') || '없음'}`, sizeSum].filter(Boolean).join('\n').slice(0, 4000);
+    }
+    // #570(대표 10/7): 줄 끝·맨 아래의 「변경해줘」「다 해줘」 같은 시키는 말만 있는 것은 위 정리 줄들을 가리키는 말 — 그 줄들은 화면이 처리하므로 클코에게 보내지 않는다
+    const CMD_TAIL = /\s+(?:다\s*|전부\s*|모두\s*|싹\s*)?(?:변경|수정|적용|반영|표시|처리)?\s*(?:해\s*줘요?|해\s*주세요|해\s*줄래|해\s*주라|부탁해요?|부탁드려요?|부탁)\s*[!.~]*$/;
+    const CMD_ONLY = /^\s*(?:다|전부|모두|싹|이거|이것|위에?|위\s*줄들?|전체|전부\s*다|이대로)?\s*(?:변경|수정|적용|반영|표시|처리)?\s*(?:해\s*줘요?|해\s*주세요|해\s*줄래|해\s*주라|부탁해요?|부탁드려요?|부탁|해)\s*[!.~]*$/;
+    // 정리 줄이면 그 글(시키는 말 꼬리를 뗀 것)을, 아니면 null. 번호가 든 줄의 「s사이즈로」는 시키는 말이 아니라 사이즈 지정(#548 sizeLines 가 읽는다)
+    const ruleOf = l => { const l2 = l.replace(CMD_TAIL, '').trim(); return LINEISH.test(l) && !CHAT_TALK.test(l2.replace(/사이즈\s*로/g, '사이즈')) ? l2 : null; };
+    // 정리 줄을 메모 칸에 넣고 다시 판정한 뒤 줄별 결과를 답한다(직원이 적은 줄 · 클코가 사진에서 읽은 줄 공용)
+    async function addRuleLines(rule, head) {
+        if (st.ai.running) { chatSay('ai', 'AI가 메모를 읽는 중이라 정리 줄을 아직 못 넣었어요. 읽기가 끝난 뒤 다시 보내 주세요.'); return; }
+        const had = st.phase === 'result' && st.files.length > 0, memo = $('fo-memo');
+        const base = memo.value.trim() ? memo.value.replace(/\s+$/, '').split('\n').length : 0;   // #570 방금 넣은 줄의 시작 번호(줄별 결과를 이 줄들만 보여 준다)
+        memo.value = (memo.value.trim() ? memo.value.replace(/\s+$/, '') + '\n' : '') + rule.join('\n');
+        await run(judge);
+        { const rc = chatCandidates(rule.join('\n')); if (rc.length) st.chat.cand = rc; }   // #527 바로 뒤에 「이건 …」이라고 하면 방금 정리 줄의 주문을 가리킨다
+        // #570(대표 10/7 실사고 「연락처 옆에 요청 사이즈야 다 해줘」): 어느 줄이 붙었고 어느 줄을 못 읽었는지 바로 보여 준다(종전엔 「정리 줄 N줄을 넣었어요」뿐)
+        const rep = sizeReport(base);
+        chatSay('ai', `${head || `정리 줄 ${rule.length}줄을 메모 칸에 넣고`} 다시 판정했어요.${rep ? '\n' + rep : ''}${pending().length ? `\n확인할 카드가 ${pending().length}건 있어요.` : ''}`);
+        if (had) await remake();
     }
     async function chatSend() {
-        const el = $('fo-chat-input'), msg = $('fo-chat-msg'), C = st.chat; const text = String(el.value || '').replace(/\r/g, '').trim();
-        if (!text || C.running || st.busy || C.pending) return;
+        const el = $('fo-chat-input'), msg = $('fo-chat-msg'), C = st.chat; let text = String(el.value || '').replace(/\r/g, '').trim();
+        const img = C.img || null;
+        if ((!text && !img) || C.running || st.busy || C.pending) return;
         if (!st.judged || st.stale) { msg.textContent = '위의 [다시 판정]을 먼저 눌러 주세요.'; return; }
         msg.textContent = ''; el.value = '';
         // #527(대표 실물 10/5 「010-… 주문건 황금향 3키로 선물용 맞는지 확인하고 10과로! 로 표시해줘」가 정리 줄로 읽혀 클코에게 안 갔다):
         //   번호가 든 줄이라도 「해줘·바꿔·수정·확인·표시·맞는지·○과로」 같은 시키는 말이 있으면 정리 줄이 아니라 말이다(번호는 그 주문을 찾는 데 쓴다).
-        const isRule = l => LINEISH.test(l) && !CHAT_TALK.test(l);
-        const lines = text.split('\n'), rule = lines.filter(isRule), talk = lines.filter(l => !isRule(l)).join('\n').trim();
-        chatSay('me', text);
-        if (rule.length) {
-            if (st.ai.running) { chatSay('ai', 'AI가 메모를 읽는 중이라 정리 줄을 아직 못 넣었어요. 읽기가 끝난 뒤 다시 보내 주세요.'); return; }
-            const had = st.phase === 'result' && st.files.length > 0, memo = $('fo-memo');
-            memo.value = (memo.value.trim() ? memo.value.replace(/\s+$/, '') + '\n' : '') + rule.join('\n');
-            await run(judge);
-            { const rc = chatCandidates(rule.join('\n')); if (rc.length) st.chat.cand = rc; }   // #527 바로 뒤에 「이건 …」이라고 하면 방금 정리 줄의 주문을 가리킨다
-            chatSay('ai', `정리 줄 ${rule.length}줄을 메모 칸에 넣고 다시 판정했어요.${pending().length ? ` 확인할 카드가 ${pending().length}건 있어요.` : ''}`);
-            if (had) await remake();
-        }
-        if (talk) await chatAsk(talk);
+        const lines = text.split('\n').filter(l => l.trim()), rule = lines.map(ruleOf).filter(Boolean);
+        let talk = lines.filter(l => ruleOf(l) == null).join('\n').trim();
+        if (rule.length && talk && CMD_ONLY.test(talk)) talk = '';   // #570 「…(번호 줄들)… 변경해줘」 = 위 줄들을 하라는 말 — 화면이 처리했으니 클코에게 묻지 않는다
+        if (img && !talk) talk = '[사진 첨부] 사진에 적힌 번호와 요청(사이즈 등)을 정리 줄로 읽어 주세요.';
+        chatSay('me', (text || '') + (img ? `${text ? '\n' : ''}📷 ${img.name}` : ''));
+        C.img = null; renderChatChip();
+        if (rule.length) await addRuleLines(rule);
+        if (talk) await chatAsk(talk, img);
     }
     async function remake() {   // 파일이 이미 만들어져 있었으면 고친 내용으로 다시 만든다(남은 카드가 있거나 AI가 읽는 중이면 안내만)
         for (let i = 0; i < 1200 && st.ai.running; i++) await sleep(500);
@@ -1234,7 +1297,7 @@
         await run(make);
         if (st.phase === 'result' && st.out) chatSay('ai', '고친 내용으로 파일을 다시 만들었어요.');
     }
-    async function chatAsk(text) {
+    async function chatAsk(text, img) {
         const C = st.chat, msg = $('fo-chat-msg'), s = S();
         for (let i = 0; i < 1800 && st.ai.running; i++) { msg.textContent = 'AI가 손님 메모를 읽는 중이에요. 끝나면 이어서 물어볼게요.'; await sleep(500); }
         const cand = chatCandidates(text); if (cand.length) C.cand = cand;   // 후보를 못 찾으면 앞서 보여 준 번호를 그대로 쓴다(「2번으로」처럼 이어서 답할 때)
@@ -1244,7 +1307,7 @@
         const history = C.log.slice(0, -1).filter(m => !m.preview).slice(-6).map(m => ({ who: m.who === 'me' ? 'me' : 'ai', text: chatMask(m.text).slice(0, 300) }));
         C.running = true; C.t0 = Date.now(); C.id = 0; C.live = '클코에게 물어보는 중이에요'; msg.textContent = ''; syncChat(); renderChat();
         try {
-            const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', { kind: 'chat', shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, ask: chatMask(text).slice(0, 1500), orders, catalog, summary: chatSummary(), history });
+            const r = await window.api('/api/agent-office/final-order/memo-read', 'POST', Object.assign({ kind: 'chat', shipDate: s.shipDate, realToday: st.cal.realToday, shipDays: st.cal.shipDays, ask: chatMask(text).slice(0, 1500), orders, catalog, summary: chatSummary(), history }, img ? { image_data: img.data, image_mime: img.mime } : {}));
             if (!r || !r.ok || !r.id) throw new Error((r && (r.message || r.error)) || '요청을 올리지 못했어요');
             C.id = r.id;
             for (;;) {
@@ -1264,13 +1327,19 @@
             if (id) { try { await window.api('/api/agent-office/final-order/memo-read/' + id, 'DELETE'); } catch (_) { } }   // 대화 글을 서버에 남기지 않는다
             syncChat();
         }
+        // #570-b 클코가 사진에서 읽은 「번호 + 요청」 줄(op lines) — 직원이 직접 적은 정리 줄과 같은 길로 메모 칸에 넣는다(적용 버튼 없이 · 결과는 줄별 표시와 답으로)
+        if (C.linesToAdd && C.linesToAdd.length) { const L = C.linesToAdd; C.linesToAdd = null; await addRuleLines(L, `사진에서 읽은 ${L.length}줄을 메모 칸에 넣고`); }
     }
     // 돌아온 actions 검사 → 「바뀔 내용」 미리 보기(적용은 사람이 눌러야)
     async function chatResult(data) {
         const C = st.chat, s = S(), byKey = new Map(s.merged.map(e => [keyOf(e), e])), mine = meText();
         const names = new Set(); Object.values(st.byPartner || {}).forEach(a => (a || []).forEach(n => names.add(n)));
         const inMine = v => { const x = sq(v); return x.length >= 1 && mine.includes(x); };
-        const items = (Array.isArray(data.actions) ? data.actions : []).slice(0, 80).map(a => {
+        const rawActs = Array.isArray(data.actions) ? data.actions : [];
+        // #570-b op lines = 사진에서 읽은 정리 줄 — 번호가 든 줄만 · 80줄까지 · 적용 미리 보기가 아니라 바로 메모 칸으로(chatAsk 끝에서)
+        const readLines = [...new Set(rawActs.filter(a => a && a.op === 'lines').flatMap(a => String(a.text == null ? '' : a.text).replace(/\r/g, '').split('\n')).map(l => l.trim()).filter(l => l && l.length <= 200 && LINEISH.test(l)))].slice(0, 80);
+        if (readLines.length) C.linesToAdd = readLines;
+        const items = rawActs.filter(a => !(a && a.op === 'lines')).slice(0, 80).map(a => {
             if (a && a.op === 'optall') return optAllItem(a, names);
             const c = C.cand.find(x => x.n === Number(a && a.n)), e = c ? byKey.get(c.key) : null;
             if (!a || !e) return { ok: false, line: `${a && a.n != null ? a.n + '번' : '주문'}`, why: '어느 주문인지 찾지 못했어요' };
@@ -1301,7 +1370,7 @@
             }
         });
         const reply = String(data.reply || '').trim();
-        if (!items.length) { chatSay('ai', reply || '바꿀 것이 없어요.'); return; }
+        if (!items.length) { if (reply || !readLines.length) chatSay('ai', reply || '바꿀 것이 없어요.'); return; }
         // #528: 주소는 도로명 주소 검색으로 확인한 뒤에 미리 보기를 띄운다(1건 = 그 주소로 · 여러 건 = 고르기 · 못 찾음 = 물어봄 — 조용히 그대로 넣지 않는다)
         const qs = items.filter(x => x.ok && x.addrQ);
         if (qs.length) { chatLive('주소를 도로명 주소로 찾는 중이에요'); for (const x of qs) { await addrLookup(x); if (!C.running) return; } }
@@ -1400,7 +1469,10 @@
     }
     async function sendLog() {
         try {
-            const r = await window.api('/api/agent-office/final-order/log', 'POST', Object.assign({ shipDate: S().shipDate, lines: logLines() }, st.logId ? { id: st.logId } : {}));
+            // #570(대표 10/7 「최종발주 이미지 안 들어가는 거 들어가게」): 거래처별 수량 표 그림을 정리 기록에 첨부 — 에이전트 오피스 기록에서 중간발주처럼 바로 보인다
+            let images = [];
+            try { images = st.files.filter(f => f.kind === 'partner' && f.partner && f.partner.qty && f.partner.qty.length).slice(0, 5).map(f => ({ name: f.png, data: qtyCanvas(f).toDataURL('image/png') })).filter(x => x.data.length < 2.5e6); } catch (_) { images = []; }
+            const r = await window.api('/api/agent-office/final-order/log', 'POST', Object.assign({ shipDate: S().shipDate, lines: logLines(), images }, st.logId ? { id: st.logId } : {}));
             if (r && r.ok && r.id) st.logId = r.id;
         } catch (_) { /* 기록을 못 남겨도 파일은 만들어졌다 */ }
     }
