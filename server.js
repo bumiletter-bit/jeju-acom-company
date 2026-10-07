@@ -814,6 +814,9 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS mine_hidden BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS payload JSONB`);   // #518 최종발주 메모 읽기 — 창구에 넘길 메모 묶음(결과를 받아 가면 비운다)
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS reply_to INTEGER`);   // #473-b 되묻기에 이어서 답한 건
+    // #579: 지시가 쌓여도 목록이 느려지지 않게 — 내 지시 목록(created_by_id · id 역순)과 「이어서 보낸 글」 찾기(reply_to)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_orders_by ON pending_orders (created_by_id, id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pending_orders_reply ON pending_orders (reply_to) WHERE reply_to IS NOT NULL`);
     // 대표 7/24: 네이버 송장변환 자동업로드 중복방지 — 이미 자동업로드한 상품주문번호 기록
     await pool.query(`
         CREATE TABLE IF NOT EXISTS naver_invoice_uploaded (
@@ -3125,15 +3128,15 @@ async function computeBoxStocks() {
         { partner: '대성(시온)', field: 'daesong' },
         { partner: '효돈농협', field: 'hyodon' },
     ];
+    // #579: 정산 날짜마다 단가표를 따로 조회하던 것(거래처 2곳 × 정산 날짜 수 = 수백 번 왕복)을 거래처당 한 번으로 — 결과 값은 종전과 같다
     for (const { partner, field } of DEDUCT_PARTNERS) {
         const setts = await pool.query('SELECT date, items FROM settlements WHERE partner = $1 ORDER BY date', [partner]);
-        const mapCache = {};
+        const mapCache = await getBoxTypeMapsForDates(partner, setts.rows.map(s => normDateSafe(s.date)));
         for (const s of setts.rows) {
             const d = normDateSafe(s.date);
             const items = (typeof s.items === 'string' ? JSON.parse(s.items) : s.items) || [];
             if (items.length === 0) continue;
-            if (!(d in mapCache)) mapCache[d] = (await getBoxTypeMapFor(partner, d)).boxTypeMap;
-            const btMap = mapCache[d];
+            const btMap = mapCache[d] || {};
             for (const it of items) {
                 const bt = btMap[it.name];
                 if (!bt) continue;
@@ -3856,6 +3859,24 @@ async function getBoxTypeMapFor(partner, dateStr) {
     return { boxTypeMap, count: pr.rows.length };
 }
 async function getDaesongBoxTypeMap(dateStr) { return getBoxTypeMapFor('대성(시온)', dateStr); } // 하위호환
+// #579: 날짜 여러 개를 한 번의 조회로 — { 'YYYY-MM-DD': 박스타입 맵 }. 판정은 getBoxTypeMapFor 와 같다(그 날짜에 걸리는 단가표 전부 · id 순 · 같은 이름은 나중 줄이 이김)
+async function getBoxTypeMapsForDates(partner, dateStrs) {
+    const out = {};
+    const dates = [...new Set((dateStrs || []).filter(Boolean))];
+    if (!dates.length) return out;
+    const pr = await pool.query(
+        `SELECT items, to_char(start_date, 'YYYY-MM-DD') AS sd, to_char(end_date, 'YYYY-MM-DD') AS ed
+         FROM pricing WHERE partner = $1 ORDER BY id ASC`, [partner]);
+    for (const d of dates) {
+        const m = {};
+        for (const r of pr.rows) {
+            if (!(r.sd <= d && r.ed >= d)) continue;
+            (r.items || []).forEach(p => { if (p.boxType && p.boxType !== '해당없음') m[p.name] = p.boxType; });
+        }
+        out[d] = m;
+    }
+    return out;
+}
 
 // [A안 폐기] 박스재고 자동 차감/복구 헬퍼 — 더 이상 호출되지 않음 (표시 시점 재계산으로 대체).
 // settlement: { id, date, partner, items, box_adjusted_at? }, delta: +1 = 차감, -1 = 복구
@@ -5977,18 +5998,26 @@ async function nlogFetchTels(orderKeys) {
     try {
         const cpNeed = orderKeys.filter(k => /^cp:/.test(String(k)) && !(_telCache.has(k) && _telCache.get(k).tel));
         if (cpNeed.length) {
+            // #579: 두 표를 통째로 맞붙이던 조회(표 전체 훑기)를 주문번호 인덱스 조회 2번으로 — 값은 종전과 같다(주문안내 쪽 값 우선 · 없으면 발송안내 쪽)
             const r4 = await pool.query(
-                `SELECT COALESCE(k.order_key, l.order_key) AS order_key,
-                        COALESCE(k.cp_name, l.cp_name) AS cp_name,
-                        COALESCE(k.cp_tel,  l.cp_tel)  AS cp_tel
-                   FROM kakao_notify_log k FULL OUTER JOIN lms_guide_log l ON k.order_key = l.order_key
-                  WHERE COALESCE(k.order_key, l.order_key) = ANY($1)`, [cpNeed.slice(0, 200)]);
-            for (const row of r4.rows) if (row.cp_tel || row.cp_name)
+                `SELECT order_key, 0 AS src, cp_name, cp_tel FROM kakao_notify_log WHERE order_key = ANY($1)
+                 UNION ALL
+                 SELECT order_key, 1 AS src, cp_name, cp_tel FROM lms_guide_log WHERE order_key = ANY($1)
+                 ORDER BY src`, [cpNeed.slice(0, 200)]);
+            const cpMerged = new Map();
+            for (const row of r4.rows) {
+                const cur = cpMerged.get(row.order_key) || { order_key: row.order_key, cp_name: null, cp_tel: null };
+                if (cur.cp_name == null) cur.cp_name = row.cp_name;
+                if (cur.cp_tel == null) cur.cp_tel = row.cp_tel;
+                cpMerged.set(row.order_key, cur);
+            }
+            for (const row of cpMerged.values()) if (row.cp_tel || row.cp_name)
                 _telCache.set(row.order_key, { tel: String(row.cp_tel || ''), name: String(row.cp_name || ''), at: Date.now() });
         }
     } catch (_) { /* 쿠팡 DB 시딩 실패 = 종전(캐시 없으면 마스킹 표시) 유지 */ }
 }
 /* #419: 12자리(0505-xxxx-xxxx 안심번호) 포맷 추가 — 10·11자리 기존 동작 무변경 */
+const NLOG_DEFAULT_DAYS = 90;   // #579: 알림 발송 이력 — 날짜를 안 고르면 보는 기간
 const nlogFmtTel = (t) => { const d2 = String(t).replace(/[^0-9]/g, ''); return d2.length === 11 ? `${d2.slice(0,3)}-${d2.slice(3,7)}-${d2.slice(7)}` : (d2.length === 10 ? `${d2.slice(0,3)}-${d2.slice(3,6)}-${d2.slice(6)}` : (d2.length === 12 ? `${d2.slice(0,4)}-${d2.slice(4,8)}-${d2.slice(8)}` : String(t))); };
 // ── 지시 #176: [알림 발송 이력] 통합 조회 — 주문 단위 한 줄(주문안내·발송안내 두 칸).
 //    원본 테이블은 그대로 두고 조회 계층에서 order_key FULL OUTER JOIN (한쪽만 있는 건도 단독 행으로 표시).
@@ -6004,6 +6033,9 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
         conds.push(`(k.id IS NULL OR k.deleted_at IS NULL)`);   // 지시 #245: 수기 삭제 건 비표시(soft-delete — 발송안내만 있는 행은 k.id IS NULL이라 통과)
         // #179-2: 아래 3줄은 SQL 파라미터 참조($1·$2…)의 '$'가 소실돼 정수 리터럴로 박혔었음(1::date → 캐스팅 오류 500) — 교정
         if (useRange) { params.push(from, to); conds.push(`(COALESCE(k.created_at, l.created_at) + interval '9 hours')::date BETWEEN $${params.length - 1}::date AND $${params.length}::date`); }
+        // #579: 날짜를 안 고르면 최근 90일만(이력이 해마다 쌓여도 첫 화면이 느려지지 않게). 더 옛것은 날짜를 골라서 본다 · all=1 이면 전체(점검용)
+        const defaultDays = (!useRange && String(req.query.all || '') !== '1') ? NLOG_DEFAULT_DAYS : 0;
+        if (defaultDays) conds.push(`COALESCE(k.created_at, l.created_at) > NOW() - interval '${defaultDays} days'`);
         if (qRaw) {
             // #179-4: 연락처 검색 — 풀번호(하이픈 유무 무관)·뒷자리 부분검색 모두 수용. DB는 마스킹(010****4031)만 보관하므로
             //   앞 3자리 + 뒷 4자리로 대조(풀번호 입력 시 오탐 축소), 4자리만 넣으면 뒷자리 대조. 숫자가 아니면 품목명 검색(기존 기능 유지).
@@ -6119,7 +6151,7 @@ app.get('/api/agent-office/notify-logs', authMiddleware, async (req, res) => {
             }
         }
         sum.gift = giftCnt; sum.no_tel = Math.max(noTelCnt, 0); sum.bad_tel = badTelCnt;
-        res.json({ rows, summary: sum, total, offset, limit });   // #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
+        res.json({ rows, summary: sum, total, offset, limit, default_days: defaultDays });   // #579: default_days = 날짜를 안 골라 최근 N일만 본 경우(0 = 기간 제한 없음) · #180-A1: total = 조회 조건 전체 건수(표시분과 분리 — 요약 줄은 항상 이 값 기준)
     } catch (err) { handleAdminErr(res, err); }
 });
 
@@ -6520,6 +6552,8 @@ async function inquiryAlertTick() {
                     if (p.n > 0) lines.push(`✍️ 답 안 한 문의 ${p.n}건 (가장 오래된 것 ${p.hours}시간째)`);
                 }
                 if (!lines.length) lines.push('밤사이 특이사항 없음');
+                // #579: 월요일 브리핑 끝에 DB 크기 한 줄(주간 보고가 따로 없어 여기에) — 실패해도 브리핑은 그대로 나간다
+                if (new Date(Date.now() + 9 * 3600 * 1000).getUTCDay() === 1) { try { lines.push(await dbSizeWeeklyLine(todayKst)); } catch (_) { /* 크기 줄만 생략 */ } }
                 notifyTelegram(await alertText('briefing', { '시작': cfg.night_start, '종료': cfg.briefing_time, '내용': lines.join('\n') }));
                 await naverCfgSet('alert_night_acc', {});   // 브리핑 발송 = 야간 누적 리셋
                 await naverCfgSet('alert_night_kakao_fail', []);   // #334: 실패 상세도 함께 리셋(무한 누적 방지)
@@ -9785,6 +9819,139 @@ async function naverAutoCollectTick() {
     } finally { _naverTickBusy = false; }
 }
 setInterval(naverAutoCollectTick, 60 * 1000);
+
+// ===== #579 DB 보관 정리 — 시작 (verify-579-db.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) =====
+// 대표 10/8: DB 가 해마다 쌓여도 느려지지 않게. 설정 = agent_office_config 'db_retention' { enabled, report_days, image_days, log_days, image_statuses }.
+//   🔴 enabled 가 true 가 아니면(설정 행이 없을 때 포함) 아무것도 지우지 않는다 — 하루 한 번 「지울 대상 건수·용량」만 'db_retention_last' 에 적는다(텔레그램 없음).
+//   켜면 한 틱(1분)에 한 가지만: ⓐ report_files 본문 비우기(행·이름·크기는 남김 · purged_at) ⓑ 끝난 지시의 첨부 그림 비우기 ⓒ 알림 이력 2종을 보관표(_archive)로 옮김(지우는 게 아니라 이사).
+//   DB 크기는 켜짐·꺼짐과 무관하게 매일 'db_size_log' 에 한 줄(월요일 아침 브리핑의 「DB ○MB · 이번 주 +○MB」 재료).
+const DB_RET_DEFAULT = { enabled: false, report_days: 90, image_days: 30, log_days: 365, image_statuses: ['완료', '취소', '질문종결', '응답됨', '대체됨', '반려'] };   // 끝난 상태 전부(총괄 10/8) — 「승인됨」(실행 전)·「오류확인」([다시 맡기기]에 그림이 필요)은 넣지 않는다
+const DB_RET_LOG_TABLES = ['kakao_notify_log', 'lms_guide_log'];
+const DB_RET_BATCH = { report: 50, image: 200, log: 5000 };   // 한 번에 손대는 행 수(오래 잠그지 않게) — 남으면 같은 날 다음 틱에 이어서(하루 최대 DB_RET_ROUNDS 번)
+const DB_RET_ROUNDS = 20;
+const DB_RET_AT = '03:40';   // KST · 상품 스냅샷(04:30)·자사몰 점검(05:10) 앞
+function dbRetentionCfg(raw) {
+    const v = (raw && typeof raw === 'object') ? raw : {};
+    const num = (x, d, min) => { const n = Math.floor(Number(x)); return Number.isFinite(n) && n >= min ? n : d; };   // 하한보다 작으면 기본값(실수로 「1일」을 넣어도 안 지워지게)
+    const st = Array.isArray(v.image_statuses) ? v.image_statuses.map(s => String(s).slice(0, 20)).filter(Boolean).slice(0, 12) : [];
+    return { enabled: v.enabled === true, report_days: num(v.report_days, DB_RET_DEFAULT.report_days, 30), image_days: num(v.image_days, DB_RET_DEFAULT.image_days, 7),
+        log_days: num(v.log_days, DB_RET_DEFAULT.log_days, 180), image_statuses: st.length ? st : DB_RET_DEFAULT.image_statuses.slice() };
+}
+// 지울 대상 세기 — 읽기만
+async function dbRetentionCount(cfg) {
+    const one = async (sql, p) => (await pool.query(sql, p)).rows[0];
+    const rf = await one(`SELECT count(*)::int AS n, COALESCE(sum(COALESCE(size_bytes, octet_length(data))), 0)::bigint AS bytes
+                            FROM report_files WHERE purged_at IS NULL AND created_at < NOW() - make_interval(days => $1::int)`, [cfg.report_days]);
+    const im = await one(`SELECT count(*)::int AS n, COALESCE(sum(octet_length(image_data)), 0)::bigint AS bytes
+                            FROM pending_orders WHERE image_data IS NOT NULL AND status = ANY($2::text[])
+                             AND COALESCE(processed_at, created_at) < NOW() - make_interval(days => $1::int)`, [cfg.image_days, cfg.image_statuses]);
+    const logs = {};
+    for (const t of DB_RET_LOG_TABLES) logs[t] = (await one(`SELECT count(*)::int AS n FROM ${t} WHERE created_at < NOW() - make_interval(days => $1::int)`, [cfg.log_days])).n;
+    const db = await one(`SELECT pg_database_size(current_database())::bigint AS b`);
+    return { report: { n: rf.n, bytes: Number(rf.bytes) }, image: { n: im.n, bytes: Number(im.bytes) }, logs, db_bytes: Number(db.b) };
+}
+// 알림 이력 → 보관표로 이사(한 문장 = 옮긴 만큼만 원표에서 빠진다). 보관표는 처음 쓸 때 만들고, 원표에 칸이 늘었으면 보관표에도 같은 칸을 더한다
+async function dbRetentionArchive(t, days) {
+    if (!DB_RET_LOG_TABLES.includes(t)) return 0;
+    const a = t + '_archive';
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${a} (LIKE ${t})`);
+    await pool.query(`ALTER TABLE ${a} ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP DEFAULT NOW()`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${a}_key ON ${a} (order_key)`);
+    const colsOf = async (name) => (await pool.query(
+        `SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type
+           FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relname = $1 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum`, [name])).rows;
+    const src = await colsOf(t), have = new Set((await colsOf(a)).map(c => c.name));
+    for (const c of src) if (!have.has(c.name)) await pool.query(`ALTER TABLE ${a} ADD COLUMN IF NOT EXISTS "${c.name}" ${c.type}`);
+    const list = src.map(c => `"${c.name}"`).join(', ');
+    const r = await pool.query(
+        `WITH moved AS (
+            DELETE FROM ${t} WHERE id IN (SELECT id FROM ${t} WHERE created_at < NOW() - make_interval(days => $1::int) ORDER BY id LIMIT ${DB_RET_BATCH.log})
+            RETURNING ${list})
+         INSERT INTO ${a} (${list}) SELECT ${list} FROM moved`, [days]);
+    return r.rowCount || 0;
+}
+// 한 가지 정리 실행 — 손댄 행 수를 돌려준다. 🔴 cfg.enabled 가 아니면 0(틱 쪽 잠금과 겹으로)
+async function dbRetentionRunJob(job, cfg) {
+    if (!cfg || cfg.enabled !== true) return 0;
+    if (job === 'report') {
+        // data 칸은 NOT NULL 이라 빈 값으로 — 내려받기 길(report_files … purged_at IS NULL)은 이미 purged_at 을 보고 「없음」으로 답한다
+        const r = await pool.query(
+            `UPDATE report_files SET data = ''::bytea, purged_at = NOW()
+              WHERE id IN (SELECT id FROM report_files WHERE purged_at IS NULL AND created_at < NOW() - make_interval(days => $1::int) ORDER BY id LIMIT ${DB_RET_BATCH.report})`, [cfg.report_days]);
+        return r.rowCount || 0;
+    }
+    if (job === 'image') {
+        const r = await pool.query(
+            `UPDATE pending_orders SET image_data = NULL
+              WHERE id IN (SELECT id FROM pending_orders WHERE image_data IS NOT NULL AND status = ANY($2::text[])
+                             AND COALESCE(processed_at, created_at) < NOW() - make_interval(days => $1::int) ORDER BY id LIMIT ${DB_RET_BATCH.image})`, [cfg.image_days, cfg.image_statuses]);
+        return r.rowCount || 0;
+    }
+    if (job.indexOf('log:') === 0) return dbRetentionArchive(job.slice(4), cfg.log_days);
+    return 0;
+}
+const DB_RET_LIMIT_OF = job => job === 'report' ? DB_RET_BATCH.report : job === 'image' ? DB_RET_BATCH.image : DB_RET_BATCH.log;
+let _dbRetBusy = false, _dbRetDoneDay = '', _dbRetQueue = [];
+async function dbRetentionTick(nowMs) {
+    if (_dbRetBusy) return null;
+    _dbRetBusy = true;
+    try {
+        // ① 오늘 할 일이 남아 있으면 그중 하나만
+        if (_dbRetQueue.length) {
+            const item = _dbRetQueue.shift();
+            const cfg = dbRetentionCfg(await naverCfgGet('db_retention'));   // 그 사이 꺼졌으면 여기서 멈춘다
+            if (!cfg.enabled) { _dbRetQueue = []; return { job: item.job, n: 0, stopped: true }; }
+            const n = await dbRetentionRunJob(item.job, cfg);
+            if (n > 0) {
+                const last = (await naverCfgGet('db_retention_last')) || {};
+                const done = Object.assign({}, last.done); done[item.job] = (Number(done[item.job]) || 0) + n;
+                await naverCfgSet('db_retention_last', Object.assign({}, last, { done }));
+                await writeAudit({ action: 'purge', targetType: 'db_retention', changes: { after: { job: item.job, rows: n, days: item.job === 'report' ? cfg.report_days : item.job === 'image' ? cfg.image_days : cfg.log_days } }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } });
+                console.log(`[보관 정리] ${item.job}: ${n}행`);
+            }
+            if (n >= DB_RET_LIMIT_OF(item.job) && item.round + 1 < DB_RET_ROUNDS) _dbRetQueue.push({ job: item.job, round: item.round + 1 });
+            return { job: item.job, n };
+        }
+        // ② 하루 한 번(KST 03:40 뒤 첫 틱) — 대상 세기 + DB 크기 기록
+        const k = new Date((nowMs || Date.now()) + 9 * 3600 * 1000);
+        const today = k.toISOString().slice(0, 10);
+        const hhmm = String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0');
+        if (hhmm < DB_RET_AT || _dbRetDoneDay === today) return null;
+        const prev = await naverCfgGet('db_retention_last');
+        if (prev && prev.date === today) { _dbRetDoneDay = today; return null; }   // 재시작 뒤 같은 날 두 번 세지 않는다
+        const cfg = dbRetentionCfg(await naverCfgGet('db_retention'));
+        const targets = await dbRetentionCount(cfg);
+        await naverCfgSet('db_retention_last', { date: today, at: new Date(nowMs || Date.now()).toISOString(), enabled: cfg.enabled,
+            days: { report: cfg.report_days, image: cfg.image_days, log: cfg.log_days }, image_statuses: cfg.image_statuses, targets, done: {} });
+        const sizeLog = ((await naverCfgGet('db_size_log')) || []).filter(x => x && x.d && x.d !== today).slice(-119);
+        sizeLog.push({ d: today, b: targets.db_bytes });
+        await naverCfgSet('db_size_log', sizeLog);
+        _dbRetDoneDay = today;
+        if (cfg.enabled) {
+            if (targets.report.n > 0) _dbRetQueue.push({ job: 'report', round: 0 });
+            if (targets.image.n > 0) _dbRetQueue.push({ job: 'image', round: 0 });
+            for (const t of DB_RET_LOG_TABLES) if (targets.logs[t] > 0) _dbRetQueue.push({ job: 'log:' + t, round: 0 });
+        }
+        console.log(`[보관 정리] 대상 — 보고서 파일 ${targets.report.n}건 · 지시 첨부 ${targets.image.n}건 · 알림 이력 ${DB_RET_LOG_TABLES.map(t => targets.logs[t]).join('+')}행 · DB ${Math.round(targets.db_bytes / 1048576)}MB · ${cfg.enabled ? '정리 켜짐' : '세기만(꺼짐)'}`);
+        return { counted: true, enabled: cfg.enabled, targets, queued: _dbRetQueue.map(q => q.job) };
+    } catch (e) { console.error('[보관 정리] 틱 오류:', e.message); return { error: e.message }; }
+    finally { _dbRetBusy = false; }
+}
+// 월요일 아침 브리핑에 붙는 한 줄 — 「💾 DB 145MB · 이번 주 +20MB」(7일 전 기록이 없으면 크기만)
+async function dbSizeWeeklyLine(todayKst) {
+    const cur = Number((await pool.query(`SELECT pg_database_size(current_database())::bigint AS b`)).rows[0].b);
+    const mb = b => Math.round(Number(b) / 1048576);
+    const t = new Date(todayKst + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() - 7);
+    const weekAgo = t.toISOString().slice(0, 10);
+    const log = (await naverCfgGet('db_size_log')) || [];
+    const prev = [...log].reverse().find(x => x && x.d && x.d <= weekAgo && Number(x.b) > 0);
+    if (!prev) return `💾 DB ${mb(cur)}MB`;
+    const diff = mb(cur) - mb(prev.b);
+    return `💾 DB ${mb(cur)}MB · 이번 주 ${diff >= 0 ? '+' : '−'}${Math.abs(diff)}MB`;
+}
+setInterval(() => { dbRetentionTick(); }, 60 * 1000);
+// ===== #579 DB 보관 정리 — 끝 =====
 
 // 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).
 //   안전장치 = [자동 불러오기]가 항상 실행 시점 신규 조회. 타이머 수집분은 현황·통계용(변환 재사용 안 함).

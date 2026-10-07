@@ -100,7 +100,15 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/7 아침): 회사 v5.9.455 / app.js v=403 · ao-desk.js v=48 · ao-dark.css v=1 · final-order.js v=22 · ao-desk.css v=32 · final-order.js v=18 · final-order-core.js v=6 · final-order.css v=12 · invoice-v2.js v=25 · styles.css v=124 · theme.css v=14.** ⚠️ **다음 지시 번호 = #577부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/8): 회사 v5.9.456 / app.js v=404 · ao-desk.js v=48 · ao-dark.css v=1 · final-order.js v=22 · ao-desk.css v=32 · final-order-core.js v=8 · final-order.css v=15 · invoice-v2.js v=26 · styles.css v=124 · theme.css v=15.** ⚠️ **다음 지시 번호 = #581부터(#578~#580 은 10/8 진행 중 · 아래 절).** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 🩹 #577 직원이 서류 알림·[상세]·PDF 를 눌러도 열리게 (대표 「전체 고」 10/8 · v5.9.456 / app.js v=404 · 총괄) + #578~#580 배정(진행 중)
+
+- **#576 회귀(워커1 제3자 점검이 발견)**: 직원이 서류 알림을 누르면 「상세 조회 실패: 관리자 권한이 필요합니다」. viewDocDetail·downloadDocPDF 가 관리자 전용 `/api/documents/history`(adminOnly)를 읽었다 → 공용 `docFindOne(id)` = 관리자는 history · 직원은 `/api/documents?mine=true`(본인 것 · 응답 모양 동일)에서 approved/rejected 만. 기안서류 목록 [상세]도 같은 함수. ✅ verify-577-doc-detail 10/10(대표·직원 실렌더 · 403 0 · alert 0 · PDF 파일 생성 · 쓰기 0).
+- 🔴 교훈(메모리 jeju-third-party-audit-lessons · 재발 방지 점검표): 새 연결은 **직원 계정으로도 눌러 본다** · 화면이 부르는 라우트가 adminOnly 인지 server.js 에서 확인 · 폰 390 scrollWidth · Esc·× 44px · showToast 통일 · 빈 상태 글 · DB 에 이미지를 넣으면 삭제 작업 같이. 끝나면 이 절에 점검표를 옮겨 적는다.
+- **배정(10/8 · 대표 「나머지 불편이랑 다 고쳐」)**: **#578 화면 다듬기 묶음 = 워커1(claude-b3 · 3461 · app.js·index.html·CSS 편집권 넘김)** — 폰 390 가로 넘침 9메뉴 + PC 판매현황 탭 · Esc 11종 · × 44px · 자주 쓰는 터치 44px · 로그인 만료 안내(+송장변환) · 영어 오류 글 · 로그인 칸 · alert → showToast · 날짜 통일 · 빈 상태 6곳 · 메뉴 이름=제목 · 내부 표기 · .qna-clip · [수정요청] 대비. 검증 verify-578-polish + 569-dark·569-open·563·561·468·508·538·499. **#579 DB·서버 = 워커2(claude-97 · 3462 · server.js 편집권)** — computeBoxStocks N+1 일괄 · pending_orders 인덱스 · 보관 정리 작업 3종(report_files 90일 bytea NULL · pending_orders.image_data 완료 30일 NULL · 알림 로그 1년 보관표) = 설정 `db_retention` enabled 가 아니면 **건수만 기록(삭제 0)** · DB 크기 주간 보고 한 줄 · 알림 발송 이력 기본 90일. **#580 창구 속도 = 워커2 이어서** — B 최종발주 규칙 prefetch · C 같은 사람 정산 이미지 동시 · E ao-desk tick 1초 + visibilitychange · F 「생각 중」 + 시간 표시 created_at 기준. launcher/fast 를 고치면 대기 프로그램 재시작(총괄).
+- DB 현황(10/8 보고): 145MB · 월 +85MB(report_files 59MB +50/월 · pending_orders.image_data 16MB · kakao_notify_log·lms_guide_log 각 19MB +9/월). Render DB 저장 한도·자동 백업은 대표 확인 대기. 실제 삭제는 대표가 건수 보고를 보고 따로 「고」.
+- owner_todo: 11·12 done · **13 = 「믿고 맡기기」 3가지 중 켤 것(대표 답 대기)**.
 
 ### 🔔 #576 이전 알림 보기 · 검색 · 알림을 누르면 그 창으로 (대표 10/7 · v5.9.455 / app.js v=403 · ao-desk.js v=48 · 총괄 서버·app.js·CSS + 워커1 ao-desk.js + 워커2 검증)
 
