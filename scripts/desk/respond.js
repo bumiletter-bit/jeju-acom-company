@@ -12,7 +12,7 @@ const fs = require('fs');
 const { pool, appendStep, heartbeat, audit } = require('./_db');
 const path = require('path');
 const clean = (s, n) => String(s == null ? '' : s).slice(0, n);
-const ATTACH_EXT = ['xlsx', 'csv', 'md', 'txt', 'pdf', 'docx', 'pptx', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4'];
+const ATTACH_EXT = ['xlsx', 'xls', 'csv', 'md', 'txt', 'pdf', 'docx', 'doc', 'pptx', 'hwp', 'hwpx', 'zip', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4'];   // #582: 공유폴더 서류(hwp·xls·doc·zip)도 전달
 async function uploadAttachments(list, runId) {
     const out = [];
     for (const p of (Array.isArray(list) ? list : []).slice(0, 5)) {
