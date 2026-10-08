@@ -470,3 +470,23 @@ html[data-ao-theme="dark"] .fo-ibadge[data-k="warn"] { background: var(--fd-warn
 html[data-ao-theme="dark"] .fo-ibadge[data-k="indiv"] { background: var(--fd-err-bg); color: var(--f-err); }
 html[data-ao-theme="dark"] .fo-em { color: var(--fd-lime); }
 html[data-ao-theme="dark"] .fo-btn.sm.fo-igo { color: var(--f-accent); border-color: var(--fd-accent-line); }
+
+/* #583-b 옵션명 = 단가표 이름 고르는 목록 · #583-c 발송일 판정 뒤집기([오늘 발송으로]/[오늘 안 나감으로]) */
+.fo-optpick { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fo-optpick > label { font-size: 12.5px; font-weight: 600; color: var(--f-sub); }
+.fo-optpick select { width: 100%; min-width: 0; min-height: 40px; text-overflow: ellipsis; }
+.fo-optq { display: flex; align-items: center; gap: 8px; }
+.fo .fo-optq input { flex: 1 1 auto; min-width: 0; min-height: 36px; }
+.fo-optq [data-optn] { flex: none; font-size: 12px; color: var(--f-sub); font-variant-numeric: tabular-nums; }
+.fo-flip { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 10px; border-radius: 10px; background: var(--f-soft); }
+.fo-flip-now { padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.fo-flip-now[data-k="excl"] { background: #FEF0C7; color: #93370D; }
+.fo-flip-now[data-k="send"] { background: #E7F8EF; color: #067647; }
+.fo-flip-note { flex: 1 1 100%; margin: 0; font-size: 12px; line-height: 1.5; color: var(--f-sub); }
+.fo-ibadge[data-k="hand"] { background: #E7F8EF; color: #067647; }
+.fo-btn.sm.fo-iflip { color: #fff; background: var(--f-accent); border-color: var(--f-accent); }
+@media (max-width: 640px) { .fo-optpick select, .fo .fo-optq input, .fo-flip .fo-btn { min-height: 44px; } }
+html[data-ao-theme="dark"] .fo-flip-now[data-k="excl"] { background: var(--fd-warn-bg); color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-flip-now[data-k="send"], html[data-ao-theme="dark"] .fo-ibadge[data-k="hand"] { background: var(--fd-ok-bg); color: var(--fd-ok); }
+html[data-ao-theme="dark"] .fo-btn.sm.fo-iflip { color: #fff; background: #5B5BEA; border-color: #5B5BEA; }
+html[data-ao-theme="dark"] .fo-optpick select optgroup, html[data-ao-theme="dark"] .fo-optpick select option { background: var(--fd-bg); color: var(--f-ink); }
