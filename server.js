@@ -7336,6 +7336,11 @@ async function naverCfgGet(key) {
     const r = await pool.query('SELECT value FROM agent_office_config WHERE key=$1', [key]);
     return r.rows.length ? r.rows[0].value : null;
 }
+// #587: 알림톡 발송안내4 「#{발송일} 출발했습니다!」 변수 — KST 「10/6(화)」 꼴(발송안내는 발송처리 당일 나가므로 = 오늘)
+function kstMdDow(ms) {
+    const k = new Date((ms || Date.now()) + 9 * 3600 * 1000);
+    return `${k.getUTCMonth() + 1}/${k.getUTCDate()}(${'일월화수목금토'[k.getUTCDay()]})`;
+}
 // #434(대표 실물 9/13 "상품 스냅샷 자동수집 실패 — invalid input syntax for type json"): jsonb는 「짝 잃은 서로게이트」(이모지 반쪽)를 거부한다
 //   (실DB 재현: '\ud83c' 단독 → 같은 메시지 + detail "Unicode low surrogate must follow a high surrogate"). 원인 = 리뷰 본문 slice(0,300)·옵션 slice(0,120)이
 //   이모지(UTF-16 2단위)를 반으로 자름 → 그 회차 스냅샷 전체 INSERT 실패(자사몰 화면은 전날분 유지). 문자열 값의 짝 잃은 반쪽만 제거하고 나머지는 그대로.
@@ -8025,6 +8030,7 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
             '고객명': od.ordererName || '고객',
             '상품명': notifyNameWithTail(po.productOption || po.productName || '', kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품'), 80),   /* #542 꼬리(설정 없으면 종전과 같음) · #416(대표 8/26): 발송안내도 주문안내(#146)와 동일 정제 — 「아꼼이네 상품선택: 1. …」 원문 통째 노출 교정 */
             '도착안내': 도착안내,
+            '발송일': kstMdDow(Date.now()),   // #587: 발송안내4(「#{발송일} 출발했습니다!」)용 — 옛 템플릿(UK_5756)은 이 변수를 안 써 무해
             '상품코드': String((matched && matched.id) || ''),   // 버튼 링크 /guide?p=상품코드 (지시 #94 — 미매칭이면 빈값=가이드 홈)
             '송장번호': String(trackingNumber || '').replace(/[^0-9]/g, ''),   // 버튼 링크 /track?n=송장번호 (지시 #99 — 없으면 빈값=조회 홈)
         },
@@ -10266,6 +10272,7 @@ async function collectCafe24Guide() {
                 '고객명': (o.buyer && o.buyer.name) || '고객',
                 '상품명': kakaoNotify.cleanProductName(c24OptClean(it0.option_value) || it0.product_name || '주문 상품').slice(0, 80),   /* #416: 「1. 」 번호 접두 제거 — 자사몰 주문안내(#401-278)와 동일 정제 */
                 '도착안내': 도착안내,
+                '발송일': kstMdDow(Date.now()),   // #587
                 '상품코드': String((matched && matched.id) || ''),
                 '송장번호': String(it0.tracking_no || '').replace(/[^0-9]/g, ''),
             };

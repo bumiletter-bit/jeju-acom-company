@@ -21,7 +21,8 @@ function templateByKey(key) {
     const pools = [].concat(Array.isArray(TEMPLATES_JSON.templates) ? TEMPLATES_JSON.templates : [],
                             Array.isArray(TEMPLATES_JSON.templates_md) ? TEMPLATES_JSON.templates_md : [],
                             Array.isArray(TEMPLATES_JSON.templates_welcome2) ? TEMPLATES_JSON.templates_welcome2 : [],
-                            Array.isArray(TEMPLATES_JSON.templates_roulette) ? TEMPLATES_JSON.templates_roulette : []);   /* #414 MD판 · #417 가입환영2 · #467 룰렛 쿠폰 2장도 조회 대상 */
+                            Array.isArray(TEMPLATES_JSON.templates_roulette) ? TEMPLATES_JSON.templates_roulette : [],
+                            Array.isArray(TEMPLATES_JSON.templates_guide4) ? TEMPLATES_JSON.templates_guide4 : []);   /* #414 MD판 · #417 가입환영2 · #467 룰렛 쿠폰 2장 · #587 발송안내4(발송일 변수)도 조회 대상 */
     return pools.find(t => t.key === key) || null;
 }
 
@@ -367,6 +368,7 @@ async function registerTemplates({ audit, set, only } = {}) {
         : set === 'md' ? (TEMPLATES_JSON.templates_md || [])
         : set === 'welcome2' ? (TEMPLATES_JSON.templates_welcome2 || [])
         : set === 'roulette' ? (TEMPLATES_JSON.templates_roulette || [])   /* #467: 룰렛 쿠폰 발급/만료 안내 2장 */
+        : set === 'guide4' ? (TEMPLATES_JSON.templates_guide4 || [])   /* #587: 발송안내4 — 「#{발송일} 출발했습니다!」 1장 */
         : TEMPLATES_JSON.templates;
     // #467-e: only=['coupon_expire'] → 세트 안 일부만(반려 1장 재신청 때 승인된 다른 장이 중복 등록되지 않게)
     const list = Array.isArray(only) && only.length ? list0.filter(t => only.includes(t.key)) : list0;

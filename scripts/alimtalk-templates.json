@@ -434,6 +434,52 @@
       "image_file": "assets/alimtalk_image.jpg"
     }
   ],
+  "templates_guide4": [
+    {
+      "key": "ship_guide4",
+      "name": "제주아꼼이네_발송안내4",
+      "env_key": "ALIGO_TPL_CODE_GUIDE",
+      "content": "제주아꼼이네입니다~! 🍊\n#{고객명}님이 주문하신 [#{상품명}]이 #{발송일} 출발했습니다!\n▶ 도착 예정: #{도착안내}\n\n상품별 맛있게 드시는 법과 보관·후숙 방법은 아래 버튼에서 확인하실 수 있어요!\n\n꼼꼼히 포장하여 보내드렸지만, 받아보신 상품에 문제가 있거나 궁금하신 점이 있으시면 언제든 연락주세요!\n\n제주의 달콤한 마음이 닿길 바랍니다. 오늘도 좋은 하루 보내세요!\n📞 010-6687-4031",
+      "button": {
+        "button": [
+          {
+            "name": "채널 추가",
+            "linkType": "AC",
+            "linkTypeName": "채널 추가"
+          },
+          {
+            "name": "택배 배송조회",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://jeju-acom-company.onrender.com/track?n=#{송장번호}",
+            "linkPc": "https://jeju-acom-company.onrender.com/track?n=#{송장번호}"
+          },
+          {
+            "name": "맛있게 드시는 법·보관법",
+            "linkType": "WL",
+            "linkTypeName": "웹링크",
+            "linkMo": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}",
+            "linkPc": "https://jeju-acom-company.onrender.com/guide?p=#{상품코드}"
+          },
+          {
+            "name": "문의하기",
+            "linkType": "MD",
+            "linkTypeName": "메시지전달"
+          }
+        ]
+      },
+      "변수예시": {
+        "고객명": "김제주",
+        "상품명": "제주 하우스감귤 3kg",
+        "발송일": "10/6(화)",
+        "도착안내": "내일 수요일(10/7)~모레 목요일(10/8) 사이 도착 예정",
+        "상품코드": "12",
+        "송장번호": "123456789012"
+      },
+      "tpl_type": "AD",
+      "_주의": "#587(대표 10/8) 발송안내3(UK_5756)과 글자 하나 차이 — 「오늘 출발했습니다!」 → 「#{발송일} 출발했습니다!」. 손님이 며칠 뒤 [문의하기]로 인용해도 날짜가 보이게. 버튼 4개 동일. 승인되면 MD_TPL_KEY 에 새 코드 → 'ship_guide4' 추가 + APPROVED_TPL.guide 교체(또는 env ALIGO_TPL_CODE_GUIDE). 발송일 변수는 서버가 늘 채운다(옛 템플릿은 그 변수를 안 써 무해)."
+    }
+  ],
   "templates_roulette": [
     {
       "key": "coupon_issue",
