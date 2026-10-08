@@ -25,9 +25,10 @@ function collect() {
     idx.rows.forEach((r, i) => {
         if (r.d !== opt.date) return;
         if (opt.partner && !String(r.pt || '').includes(opt.partner)) return;
-        const tr = String(r.tr || '').replace(/\D/g, '');
-        if (!/^\d{10}(\d{2})?$/.test(tr)) { noTr++; return; }
-        rows.push({ tr, nm: r.nm || '', t1: r.t1 || '', pt: r.pt || '', op: r.op || '', q: r.q, ad: addr ? (addr[i] || '') : '' });
+        // 한 분께 상자가 여럿이면 운송장도 여럿(trs · #582-b) — 운송장마다 한 줄로 센다
+        const trList = (r.trs && r.trs.length ? r.trs : [r.tr]).map(x => String(x || '').replace(/\D/g, '')).filter(x => /^\d{10}(\d{2})?$/.test(x));
+        if (!trList.length) { noTr++; return; }
+        for (const tr of trList) rows.push({ tr, nm: r.nm || '', t1: r.t1 || '', pt: r.pt || '', op: r.op || '', q: r.q, ad: addr ? (addr[i] || '') : '' });
     });
     // 같은 운송장이 여러 줄(한 상자에 주문 줄 여럿)이면 한 번만 조회 · 같은 받는 분에게 송장이 여럿이면 「중복」으로 센다
     const byTr = new Map(); rows.forEach(r => { if (!byTr.has(r.tr)) byTr.set(r.tr, r); });

@@ -1,6 +1,7 @@
 // #582 송장 주문 이력 찾기 — 사용: node scripts/desk/invoice-find.js "<전화번호 | 이름>" [--year 2025] [--addr] [--limit 40]
 //   ★송장 엑셀 색인(share-index.js · 비공개 폴더)에서 찾는다. 번호는 숫자만 비교(「010-1234-5678」·「01012345678」·끝 4자리만 「5678」도 됨 — 끝자리만이면 여러 손님이 걸릴 수 있다).
 //   이름은 수취인명 그대로(부분 일치). 결과 = 날짜 최근 순 · 날짜·거래처·수취인·옵션·수량·송장번호·파일. 주소는 --addr 를 붙였을 때만 나온다(직원이 꼭 필요할 때만).
+//   한 분께 상자가 둘 이상 갔으면 송장번호가 「a, b」로 여럿 나온다(#582-b).
 //   색인이 60분 넘게 오래됐으면 share-index.js 를 먼저 돌린다(바뀐 엑셀만 다시 읽어 몇 초).
 const fs = require('fs'), path = require('path'); const { execFileSync, spawn } = require('child_process');
 const ROOT = path.join(__dirname, '..', '..');
@@ -36,6 +37,6 @@ for (const r of idx.rows) {
 hits.sort((a, b) => String(b.d || '').localeCompare(String(a.d || '')) || b.f.localeCompare(a.f));
 const limit = opt.limit || 40;
 const mask = t => t ? t.replace(/^(\d{3})(\d+)(\d{4})$/, '$1-****-$3') : '';
-const items = hits.slice(0, limit).map(r => Object.assign({ date: r.d, partner: r.pt, name: r.nm, option: r.op, qty: r.q, matched: r.how, phone_hint: mask(r.how === '구매자' ? r.tb : r.t1), tracking: r.tr || '', memo: r.ms, file: path.join('★송장', r.f.replace(/^★송장\\/, '')) }, opt.addr ? { address: r.ad } : {}));
+const items = hits.slice(0, limit).map(r => Object.assign({ date: r.d, partner: r.pt, name: r.nm, option: r.op, qty: r.q, matched: r.how, phone_hint: mask(r.how === '구매자' ? r.tb : r.t1), tracking: (r.trs && r.trs.length ? r.trs.join(', ') : r.tr) || '', memo: r.ms, file: path.join('★송장', r.f.replace(/^★송장\\/, '')) }, opt.addr ? { address: r.ad } : {}));
 const people = new Set(hits.map(r => r.nm + '|' + (r.t1 || r.tb)));
 console.log(JSON.stringify({ ok: true, query: term, by: byPhone ? '전화번호' : '이름', total: hits.length, shown: items.length, distinct_people: people.size, indexed_at: idx.at, note: byPhone && dg.length < 9 ? '끝자리만으로 찾아 여러 손님이 섞일 수 있어요 — 전체 번호로 다시 찾는 것이 정확합니다' : undefined, items }, null, 1));

@@ -37,6 +37,7 @@ function metaOf(rel) {
     if (/효돈/.test(all)) partner = '효돈농협'; else if (/대성/.test(all)) partner = '대성(시온)'; else if (/길영/.test(all)) partner = '길영'; else if (/옥수수|초당/.test(all)) partner = '초당옥수수'; else if (/취나물/.test(all)) partner = '취나물'; else if (/산하홍/.test(all)) partner = '산하홍'; else if (/단체/.test(all)) partner = '단체'; else if (/쿠팡/.test(all)) partner = '쿠팡리뷰건';
     return { year, date, partner };
 }
+const FMT = 2;   // 색인 줄 형식 — 올리면 옛 형식 파일을 다시 읽는다
 async function readInvoice(absPath, rel) {
     const ExcelJS = require(path.join(ROOT, 'node_modules', 'exceljs'));
     const wb = new ExcelJS.Workbook();
@@ -52,8 +53,9 @@ async function readInvoice(absPath, rel) {
     }
     if (!headRow) return rows;
     const pick = (row, keys) => { for (const k of keys) if (col[k]) return cellStr(row.getCell(col[k]).value); return ''; };
-    // 2번째 시트에 운송장번호가 있으면 받는분 전화로 맞춘다
-    const tracking = {};
+    // 2번째 시트(택배사 접수 목록 · 운송장 한 줄 = 상자 하나)의 운송장번호를 받는분 전화+이름으로 모은다.
+    //   #582-b: 한 분께 상자가 둘 이상 가면 운송장도 여럿이다 — 종전에는 첫 운송장만 남겨 나머지가 빠졌다(10/07 실측 75건). 이제 전부 모아 주문 줄에 나눠 붙인다.
+    const tracking = {};   // 키 → [{ no, pn(상품명), used }]
     const ws2 = wb.worksheets[1];
     if (ws2) {
         let h2 = 0, c2 = {};
@@ -63,7 +65,8 @@ async function readInvoice(absPath, rel) {
             for (let r = h2 + 1; r <= ws2.rowCount; r++) {
                 const row = ws2.getRow(r); const no = cellStr(row.getCell(c2['운송장번호']).value); if (!no) continue;
                 const key = digits(telCol ? row.getCell(telCol).value : '') + '|' + (nameCol ? cellStr(row.getCell(nameCol).value) : '');
-                if (!tracking[key]) tracking[key] = no;
+                const pnCol = c2['상품명'] || c2['단품명']; const pn = pnCol ? cellStr(row.getCell(pnCol).value).replace(/\s+/g, '') : '';
+                (tracking[key] = tracking[key] || []).push({ no, pn, used: false });
             }
         }
     }
@@ -72,8 +75,24 @@ async function readInvoice(absPath, rel) {
         const name = pick(row, ['수취인명', '고객명/수신인', '받는분']); const opt = pick(row, ['옵션정보', '상품명', '품목']);
         if (!name && !opt) continue;
         const t1 = digits(pick(row, ['수취인연락처1', '연락처', '받는분전화번호'])), t2 = digits(pick(row, ['수취인연락처2'])), tb = digits(pick(row, ['구매자연락처']));
-        rows.push({ f: rel, d: meta.date, y: meta.year, pt: meta.partner, nm: name, t1, t2, tb, op: opt, q: pick(row, ['수량']), ad: pick(row, ['배송지', '주소']), ms: pick(row, ['배송메세지', '배송메시지']).slice(0, 80), sn: pick(row, ['보내는사람', '보내는사람/발송인']), tr: tracking[t1 + '|' + name] || '' });
+        rows.push({ f: rel, d: meta.date, y: meta.year, pt: meta.partner, nm: name, t1, t2, tb, op: opt, q: pick(row, ['수량']), ad: pick(row, ['배송지', '주소']), ms: pick(row, ['배송메세지', '배송메시지']).slice(0, 80), sn: pick(row, ['보내는사람', '보내는사람/발송인']), tr: '', _k: t1 + '|' + name });
     }
+    // 주문 줄에 운송장 나눠 붙이기: ①상품명이 그 줄의 옵션과 같은 운송장을 수량만큼 ②그렇게 못 붙인 줄은 그 받는 분의 남은 운송장 전부(남은 것이 없으면 = 한 상자에 여러 줄 → 그 받는 분 운송장 전부)
+    //   tr = 첫 운송장(종전 칸 · 다른 도구 호환) · trs = 둘 이상일 때만 전체 목록
+    const put = (r, list) => { const nos = [...new Set(list.map(t => t.no))]; r.tr = nos[0] || ''; if (nos.length > 1) r.trs = nos; };
+    const later = [];
+    for (const r of rows) {
+        const T = tracking[r._k]; if (!T) continue;
+        const want = Math.max(1, parseInt(r.q, 10) || 1); const o = String(r.op || '').replace(/\s+/g, ''); const got = [];
+        for (const t of T) { if (got.length >= want) break; if (!t.used && t.pn && t.pn === o) { t.used = true; got.push(t); } }
+        if (got.length) put(r, got); else later.push(r);
+    }
+    for (const r of later) { const T = tracking[r._k]; const rest = T.filter(t => !t.used); put(r, rest.length ? rest : T); }
+    for (const r of later) for (const t of tracking[r._k]) t.used = true;
+    // 어느 줄에도 못 붙은 운송장(상품명이 달라 남은 것)은 그 받는 분의 첫 줄에 보탠다 — 색인에서 운송장이 빠지지 않게
+    const firstOf = {}; for (const r of rows) if (!(r._k in firstOf)) firstOf[r._k] = r;
+    for (const k of Object.keys(tracking)) { const left = tracking[k].filter(t => !t.used); const r = firstOf[k]; if (left.length && r) put(r, [...(r.trs || (r.tr ? [r.tr] : [])).map(no => ({ no })), ...left]); }
+    for (const r of rows) delete r._k;
     return rows;
 }
 async function main() {
@@ -100,9 +119,11 @@ async function main() {
         let read = 0, failed = 0, newRows = [];
         for (const f of xl) {
             const old = prev.files[f.p];
-            if (old && old.m === f.m && old.s === f.s) { keep[f.p] = old; newRows.push(...(rowsByFile[f.p] || [])); continue; }
-            try { const rows = await readInvoice(path.join(SHARE, f.p), f.p); keep[f.p] = { m: f.m, s: f.s, n: rows.length }; newRows.push(...rows); read++; }
-            catch (e) { keep[f.p] = { m: f.m, s: f.s, n: 0, err: String(e.message).slice(0, 80) }; failed++; }
+            // 형식 v2(#582-b 운송장 전부): 옛 형식으로 읽어 둔 파일 중 운송장이 붙어 있던 파일만 한 번 다시 읽는다(운송장 없는 파일은 달라질 것이 없어 그대로)
+            const same = old && old.m === f.m && old.s === f.s;
+            if (same && (old.v === FMT || !(rowsByFile[f.p] || []).some(r => r.tr))) { keep[f.p] = Object.assign({}, old, { v: FMT }); newRows.push(...(rowsByFile[f.p] || [])); continue; }
+            try { const rows = await readInvoice(path.join(SHARE, f.p), f.p); keep[f.p] = { m: f.m, s: f.s, n: rows.length, v: FMT }; newRows.push(...rows); read++; }
+            catch (e) { if (same) { keep[f.p] = old; newRows.push(...(rowsByFile[f.p] || [])); } else keep[f.p] = { m: f.m, s: f.s, n: 0, err: String(e.message).slice(0, 80) }; failed++; }
             if (read && read % 200 === 0) process.stderr.write(`  …송장 ${read}개 읽음\n`);
         }
         const addr = newRows.map(r => r.ad || ''); const slim = newRows.map(r => { const { ad, ...rest } = r; return rest; });

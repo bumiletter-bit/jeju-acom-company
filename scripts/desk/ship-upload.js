@@ -122,11 +122,14 @@ if (require.main === module) (async () => {
         if (!set.has(r.d)) return;
         rows++; const pd = perDate[r.d] = perDate[r.d] || { rows: 0, tracking: 0, no_tracking: 0 }; pd.rows++;
         if (r.f && !files.has(r.f)) files.set(r.f, { d: r.d, pt: r.pt || null });
-        const tr = String(r.tr || '').replace(/\D/g, '');
-        if (!/^\d{10}(\d{2})?$/.test(tr)) { noTr++; pd.no_tracking++; return; }
-        const q = parseInt(r.q, 10) || 0; const cur = byTr.get(tr);
-        if (cur) { if (r.op && !cur.opts.includes(r.op)) cur.opts.push(r.op); cur.qty += q; }
-        else { pd.tracking++; byTr.set(tr, { tr, f: r.f, d: r.d, pt: r.pt || null, nm: r.nm || null, ph: String(r.t1 || r.tb || '').replace(/\D/g, '') || null, opts: r.op ? [r.op] : [], qty: q, ms: r.ms || null, i }); }
+        // 색인 줄의 운송장: trs(한 분께 상자 여럿 · #582-b) 가 있으면 전부, 없으면 tr 하나. 여럿이면 수량은 상자마다 1로 본다
+        const trList = (r.trs && r.trs.length ? r.trs : [r.tr]).map(x => String(x || '').replace(/\D/g, '')).filter(x => /^\d{10}(\d{2})?$/.test(x));
+        if (!trList.length) { noTr++; pd.no_tracking++; return; }
+        for (const tr of trList) {
+            const q = trList.length > 1 ? 1 : (parseInt(r.q, 10) || 0); const cur = byTr.get(tr);
+            if (cur) { if (r.op && !cur.opts.includes(r.op)) cur.opts.push(r.op); cur.qty += q; }
+            else { pd.tracking++; byTr.set(tr, { tr, f: r.f, d: r.d, pt: r.pt || null, nm: r.nm || null, ph: String(r.t1 || r.tb || '').replace(/\D/g, '') || null, opts: r.op ? [r.op] : [], qty: q, ms: r.ms || null, i }); }
+        }
     });
     // 파일마다 둘째 시트를 직접 읽어 그 파일의 운송장을 통째로 바꿔 넣는다(읽히면 색인 줄은 버림 · 안 읽히면 색인 줄 그대로)
     const fileInfo = [];
