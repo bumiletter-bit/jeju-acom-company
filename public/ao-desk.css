@@ -535,6 +535,11 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-h-head { padding: 10px 0 8px; margin-bottom: 4px; border-bottom: 1px solid var(--d-line); font-size: 12.5px; font-weight: 700; color: var(--d-accent); font-variant-numeric: tabular-nums; }
 .desk-h-row { padding: 8px 12px; }
 @media (max-width: 640px) { .desk-h-row, .desk-h-row:has(.desk-h-who) { padding: 8px 10px; } .desk-th-head { flex-wrap: wrap; } .desk-th-sum { flex-basis: 100%; order: 5; } }
+/* #584 접힌 이력 줄의 [복사] — 줄(button) 안에 button 을 못 넣어 형제로 두고 오른쪽 끝에 겹친다 · 44px 터치 */
+.desk-h-item { position: relative; }
+.desk-h-item > .desk-h-copy { position: absolute; right: 36px; top: 50%; transform: translateY(-50%); min-height: 32px; padding: 0 10px; }
+.desk-h-item:has(> .desk-h-copy) > .desk-h-row { padding-right: 96px; }
+@media (max-width: 640px) { .desk-h-item > .desk-h-copy { right: 30px; min-height: 44px; min-width: 44px; } .desk-h-item:has(> .desk-h-copy) > .desk-h-row { padding-right: 92px; } }
 
 /* ── #543·#544(대표 10/5 폰 실물) 검색칸(세 탭) · 강조 · 이력 음영 · 파일 칩 ───────────────────────── */
 .desk-hist-search input::-webkit-search-cancel-button { display: none; }

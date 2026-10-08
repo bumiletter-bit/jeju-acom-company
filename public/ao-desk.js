@@ -69,9 +69,13 @@
         return (a.pre.trim() ? md(a.pre) : '') + a.secs.map((s, i) => `<section class="desk-sec" aria-label="${esc(s.title)}"><div class="desk-sec-head"><b>${esc(s.title)}</b><button type="button" class="desk-sec-copy" data-act="copysec" data-id="${o.id}" data-sec="${i}" aria-label="${esc(s.title)} 복사">복사</button></div><div class="desk-sec-body">${md(s.body)}</div></section>`).join('');   // #556: 묶음마다 틀(머리 띠 + 본문) — 어느 [복사]가 어디까지인지 보이게
     }
     // 복사: 브라우저가 클립보드 쓰기를 막으면(권한·보안 연결 아님) 숨은 입력칸으로 한 번 더 해 본다
-    async function copyText(text, okMsg) {
+    // #584: 그래도 막히면(회사 PC 보안 프로그램·브라우저 정책) 화면의 그 글을 골라 둬서 Ctrl+C(폰은 길게 눌러 복사)만 누르면 되게 한다
+    async function copyText(text, okMsg, el) {
         try { await navigator.clipboard.writeText(text); showToast(okMsg); return; } catch (e) { /* 아래 대체 방법 */ }
         try { const ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0'; document.body.appendChild(ta); ta.select(); const done = document.execCommand('copy'); ta.remove(); if (done) { showToast(okMsg); return; } } catch (e) { /* 아래 안내 */ }
+        if (el && el.isConnected) {
+            try { const sel = window.getSelection(); sel.removeAllRanges(); const r = document.createRange(); r.selectNodeContents(el); sel.addRange(r); el.scrollIntoView({ block: 'nearest' }); showToast('이 브라우저는 복사를 막고 있어 글을 골라 두었어요. Ctrl+C(폰은 길게 눌러 복사)로 복사해 주세요', '', 5000); return; } catch (e) { /* 아래 안내 */ }
+        }
         showToast('복사하지 못했어요. 직접 선택해 복사해 주세요');
     }
     const plainHead = t => String(t || '').replace(/^[#\s*]+/, '').replace(/[*\s]+$/, '').replace(/\s+/g, ' ').trim();
@@ -966,7 +970,7 @@
                     <span class="desk-h-when">${esc(when)}</span>${admin ? `<span class="desk-h-who${first.created_by_id === me ? ' mine' : ''}">${esc(first.created_by || '')}</span>` : ''}
                     <span class="desk-h-text">${esc(cutText(first.content, 120))}</span>
                     <span class="desk-h-meta">${flag ? `<span class="desk-badge" data-k="${flag[0]}">${flag[1]}</span>` : ''}${t.items.some(hasAttach) ? `<span class="desk-h-clip" title="첨부 있음" aria-label="첨부 있음">${ICON_CLIP}</span>` : ''}${t.items.length > 1 ? `<span class="desk-h-n">${t.items.length}번 주고받음</span>` : ''}<span class="desk-h-chev" aria-hidden="true">${open ? '▴' : '▾'}</span></span>
-                </button>`;
+                </button>${(() => { const la = [...t.items].reverse().find(o => o.result && (o.result.answer || o.result.text)); return !open && la ? `<button type="button" class="desk-btn sm desk-h-copy" data-act="copy" data-id="${la.id}" aria-label="마지막 답변 복사">복사</button>` : ''; })()}`;   // #584(대표 10/8): 접힌 검색 결과에서도 펼치지 않고 마지막 답변을 바로 복사
             let body = '';
             if (open) {
                 const turns = t.items.map(o => { const b = BADGE[o.status] || ['wait', o.status];
@@ -1125,12 +1129,14 @@
         }
         if (act === 'copy') {
             const text = (o.result && (o.result.answer || o.result.text)) || '';
-            await copyText(text, '답변을 복사했어요');
+            const acts = b.closest('.desk-a-acts'), shown = acts ? acts.parentElement.querySelector('.desk-a') : null;   // #584: 막히면 골라 둘 글(접힌 이력 줄의 [복사]는 화면에 글이 없어 안내만)
+            await copyText(text, '답변을 복사했어요', shown);
             return;
         }
         if (act === 'copysec') {   // #552 그 묶음의 본문만
             const a = answerSecs((o.result && (o.result.answer || o.result.text)) || ''), sec = a && a.secs[Number(b.dataset.sec)];
-            if (sec) await copyText(sec.body, `${sec.title}를 복사했어요`.replace(/([가-힣])를 복사/, (m, c) => ((c.charCodeAt(0) - 0xAC00) % 28 ? c + '을 복사' : c + '를 복사')));
+            const secEl = b.closest('.desk-sec'), shown = secEl ? secEl.querySelector('.desk-sec-body') : null;
+            if (sec) await copyText(sec.body, `${sec.title}를 복사했어요`.replace(/([가-힣])를 복사/, (m, c) => ((c.charCodeAt(0) - 0xAC00) % 28 ? c + '을 복사' : c + '를 복사')), shown);
             return;
         }
         if (act === 'confirm') { openConfirm(o.result); return; }
