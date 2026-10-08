@@ -1,7 +1,7 @@
 # 제주아꼼이네 회사프로그램 — 네이버 커머스API 연동 인수인계
 
 > **이 문서 목적**: 새 세션(새 터미널)에서 이것만 봐도 네이버 API 연동 작업을 그대로 이어가기 위한 상세 기록.
-> **최종 갱신**: 2026-10-08 (v5.9.467 — 지시 #590-b까지 · 다음 번호 #591 · #590 은 후보로 예약). 새 세션은 아래 「★★★★★ 10/8 세션 마감 인수인계」부터. 과거 세션 상세 = 같은 폴더 `CLAUDE_ARCHIVE.md`(8월~10/7 기록 원문).
+> **최종 갱신**: 2026-10-08 밤 (v5.9.467 — 지시 #591까지 · 다음 번호 #594 · #590 후보 · #592 리뷰 API 조사 · #593 배송 확인 도구 = 다음 세션 착수 예약). 새 세션은 아래 「★★★★★ 10/8 세션 마감 인수인계」부터. 과거 세션 상세 = 같은 폴더 `CLAUDE_ARCHIVE.md`(8월~10/7 기록 원문).
 > 요약본 아님. 구체적으로 적음. 관련 상세는 리포 `NCP인증키/네이버커머스API_연동_인수인계서.md`(최초 설계)와 자동메모리 `jeju-naver-commerce-api.md`도 참조.
 
 ## 🔀 병행 세션 규칙 (대표가 터미널 2개를 동시에 씁니다 — 2026-08-12 확립)
@@ -67,7 +67,9 @@
 > 대표가 재부팅 뒤 총괄·워커1·워커2 창을 새로 띄운다(10/8 저녁). 대표가 「할 일 뭐야?」라고 물으면 **아래 ①~③을 그대로 보고**한다. 10/6 인수인계와 #536~#576 상세는 `CLAUDE_ARCHIVE.md`(10/8 저녁에 원문 그대로 옮김 · CLAUDE.md 가 110k자에 가까워져). 오늘(10/8) 지시 #577~#590 상세는 아래 각 절에 그대로 있다.
 
 ### ① 대표 답을 기다리는 것
-- **없음.** owner_todo 는 16(발송안내4 심사 확인 — 총괄이 챙김)만 열려 있음. 후보(대표가 「고」 하면 착수 · 재제안은 하지 않는다 · 물으면 이 목록으로 답): **#590** = 새 품목 자사몰 스킨 3파일(STORE_DATA 항목·AKM_C24MAP·AKM_C24TONV ×2)을 한 명령으로(apply-489-skin.js 번호 인자화) → 그러면 새 품목은 카페24 등록만 사람이 / **#591 후보** = 카페24·네이버 러너 요청·결과 키에 표식(server.js — 창구 자사몰 지시 2건이 겹치면 535초까지 늘고 스냅샷으로 물러나는 실측) / 카페24 상품 단위 진열·판매 켜기 도구(지금은 옵션 단위 hide/show 만) / 자사몰 안내 탭을 레몬·키위·VIP 로 넓히기(스킨 guideFor 3키).
+- **답 대기 없음.** owner_todo 는 16(발송안내4 심사 확인 — 총괄이 챙김)만 열려 있음.
+- 🔴 **다음 세션에 바로 착수할 것(대표 10/8 밤 「다음 터미널에서 할게」 — 「고」 없이 조사부터 시작 · 상세 = 아래 「#592·#593」 절)**: **#592 네이버 리뷰 API 조사·연결**(창구에서 「최근 리뷰 요약해줘 · 불만 골라줘 · 답글 써줘」) · **#593 배송 확인 도구**(창구에서 「○○ 손님 배송 완료됐어? · 송장 알려줘」 → 네이버·쿠팡·자사몰 주문 상태·택배사·송장).
+- 후보(대표가 「고」 하면 착수 · 재제안은 하지 않는다 · 물으면 이 목록으로 답): **#590** = 새 품목 자사몰 스킨 3파일(STORE_DATA 항목·AKM_C24MAP·AKM_C24TONV ×2)을 한 명령으로(apply-489-skin.js 번호 인자화) → 그러면 새 품목은 카페24 등록만 사람이 / 카페24·네이버 러너 요청·결과 키에 표식(server.js — 창구 자사몰 지시 2건이 겹치면 535초까지 늘고 스냅샷으로 물러나는 실측) / 카페24 상품 단위 진열·판매 켜기 도구(지금은 옵션 단위 hide/show 만) / 자사몰 안내 탭을 레몬·키위·VIP 로 넓히기(스킨 guideFor 3키) / 에이전트 오피스 카드에서 PDF 미리 보기(지금은 PNG 만 그림으로 · PDF 는 내려받기).
 
 ### ② 날짜가 정해진 일(총괄이 먼저 챙긴다)
 - **10/9(목) 아침 보고 3가지**: ⓐ DB 보관 정리 첫 실행(03:40 · 대상 = 끝난 지시 첨부 그림 115건 4.9MB · `agent_office_config.db_retention_last.done` + audit source db_retention 으로 건수 확인) ⓑ 아침 정리 첫 실행(07:40 · `desk_morning_last` 에 지시 id · 그 지시의 창구 답과 대표 폰 알림 도착 · 톡톡·상품문의·고객문의 건수) ⓒ 발송안내4(UM_2824) 심사 상태(`aligo_selftest_request` {"full":true} → `aligo_selftest_result` templates 에서 UM_2824 status A/R) — 승인(A)이면 kakao-notify.js `MD_TPL_KEY` 에 `'UM_2824': 'ship_guide4'` + `APPROVED_TPL.guide` = 'UM_2824' → verify-414 ①·416 기대 갱신 → 배포 → 대표 번호(01065594031) 시험 1건(sendTestOne key 'guide' · vars 에 발송일 「10/9(목)」 꼴) → owner_todo 16 done. 반려(R)면 사유 보고.
@@ -95,6 +97,7 @@
 | #588 c~g | 자사몰 창구 도구(안내문 · 가격 · 상세·스킨 · 미노출/노출 · 페이지 추천) + 안내문 교체 첫 실행 | 배포 0 |
 | #589 | 새 품목 「자사몰 연결」 도구(mall-link) | 배포 0 |
 | #590-b | 레드키위 상세 매핑·장바구니/주문내역 연결표 보완(실제 반영) | 배포 0 |
+| #591 | 창구 엑셀 서류 → 그림(PNG)·PDF 첨부 도구(xlsx-image.js) + 「양식은 필요한 값을 먼저 묻기」 규칙(대표 10/8 밤) | 배포 0 |
 | 운용 | DB 보관 정리 켬(대표 「고」) · 렌더 DB 저장 자동 확장 켬(대표 지시) · 렌더 실측(Hobby · DB 6달러 1GB 24% · 웹 7달러) | — |
 
 ### 지금 켜져 있는 규칙·도구(새 세션이 꼭 알 것)
@@ -108,12 +111,28 @@
 - **최종발주 지금 동작(v5.9.467)**: 카드 없는 손님 메모도 기본 문구·기사님 말 빼고 전부 AI 로(aiDriverOnly) → AI 요청 26 → 60~70건 · AI 실패·꺼짐이면 「메모 확인」 카드 · 「오늘 안 나감」 → [오늘 발송으로] · 직접 고치기(옵션명 목록 창 · 꼬리 칩) · 주문 찾아 고치기 · 자리 유지·떠 있는 버튼. 우회 길: 「번호 메모무시」(오늘 발송) · 「번호 2s」(사이즈).
 - **알림톡**: 발송안내 도착안내 변수에 날짜 늘 붙음(#585) · 서버가 `발송일` 변수(「10/8(목)」)를 늘 채움(#587 · 지금 템플릿은 안 씀) · 새 템플릿 UM_2824 심사 중 · 템플릿 코드 표 = kakao-notify.js APPROVED_TPL·MD_TPL_KEY.
 - **검증 함정 모음(오늘)**: verify-508-ui 는 PORT508 환경값(없으면 3458) · A 183 + B 429 합계 약 40분(AI 폴링) · 기본 AI 라우트 = 「빈 답으로 성공」(실패 라우트는 ㊳ 만) · 워커1 PC 는 B 도중 메모리 부족 강제 종료 이력 → 브라우저 검증은 총괄이 돌림 · 568-fo-dark 는 #572 뒤 낡아 못 돌림 · verify-401-unit ⑤는 낡은 기대(19/20 정상) · verify-578 90일 항목은 waitForFunction · 느린 조회가 끼는 화면 검증은 「상태가 바뀔 때까지」 기다리기.
-- **메모리 새로 적은 것**: jeju-render-plan · jeju-share-folder · jeju-mall-only-options. owner_todo 는 DB `scripts/owner-todo.js` 가 정본(13·14·15 done · 16 열림).
+- **창구 서류 규칙(#591 · 대표 확정 10/8 밤)**: 양식·서류 채우기 지시는 빠진 값(날짜·받는 분·품목·수량·단가·사유)을 **만들기 전에 question 한 번으로 묶어 묻는다**(기본값 제안 · 짐작으로 안 채움 — 사고서류 「오늘로 했다」 왕복이 발단) · 엑셀 서류는 `node scripts/desk/xlsx-image.js "<xlsx>"` 로 PNG·PDF 를 만들어 xlsx·png·pdf 셋을 attachments 에(카드에 그림 미리 보기). 규칙 = 업무지식 6-2절 + 창구 CLAUDE.md 4-1 표(재시작 불요). 메모리 feedback-form-required-fields.
+- **메모리 새로 적은 것**: jeju-render-plan · jeju-share-folder · jeju-mall-only-options · feedback-form-required-fields. owner_todo 는 DB `scripts/owner-todo.js` 가 정본(13·14·15 done · 16 열림).
 
 ### 워커 구성(재부팅 뒤 대표가 다시 지정)
 - 총괄 = 리모트 컨트롤 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고 · **브라우저 검증 실행**) · 워커1 = 화면 시공(final-order.js·css·core · ao-desk · verify-508-ui 기대값) · 워커2 = 조사·창구 도구·규칙·실제 AI 시험(대표 요금제). 둘 다 Opus 5.5(대표 재확인 10/8 「Fable 워커 불필요」). 포트 총괄 3457(검증 3458·3463) · 워커1 3461 · 워커2 3462. 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인. 워커 편집 중 `git stash` 금지 · 배포는 `git add <명시 경로>` → commit → `npm run backup` → tag → push main → push tag(워커 dirty 트리로 `npm run deploy` 거부). 작업 트리의 untracked(chuseok-script*.md · qnasim-*.md · scripts/coupon_*.png · scripts/봇_답변_예시_품목별(10-01).xlsx)는 무관 · 그대로.
 
-**현행 버전(10/8 저녁): 회사 v5.9.467 / app.js v=405 · ao-desk.js v=51 · ao-dark.css v=2 · final-order.js v=26 · ao-desk.css v=38 · final-order-core.js v=10 · final-order.css v=19 · invoice-v2.js v=27 · styles.css v=125 · theme.css v=15 · noti-history.css v=1.** ⚠️ **다음 지시 번호 = #591부터(#590 = 새 품목 스킨 3파일 자동화 후보로 예약 · #590-b 는 레드키위 보완으로 씀).** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인 · 알림톡 템플릿 코드 = kakao-notify.js APPROVED_TPL)
+**현행 버전(10/8 저녁): 회사 v5.9.467 / app.js v=405 · ao-desk.js v=51 · ao-dark.css v=2 · final-order.js v=26 · ao-desk.css v=38 · final-order-core.js v=10 · final-order.css v=19 · invoice-v2.js v=27 · styles.css v=125 · theme.css v=15 · noti-history.css v=1.** ⚠️ **다음 지시 번호 = #594부터(#590 = 새 품목 스킨 3파일 자동화 후보 · #591 = xlsx-image 완료 · #592 = 네이버 리뷰 API 조사 · #593 = 배송 확인 도구 — 둘 다 다음 세션 착수 예약 · ① 참조).** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인 · 알림톡 템플릿 코드 = kakao-notify.js APPROVED_TPL)
+
+### 🖼️ #591 창구 엑셀 서류 → 그림·PDF 첨부 + 「양식은 필요한 값 먼저 묻기」 (대표 10/8 밤 「조금만 더 하자」 · ✅ 도구·규칙 완료 · 배포 0)
+
+- **발단**: 창구가 만든 사고서류 엑셀(지시 #1628 · report_files 248)이 에이전트 오피스 카드에 [내려받기]만 뜨고 그림이 안 보임(#504 미리 보기는 png·jpg 만). 대표 「PDF 로도 · 바로 이미지만 다운해서 보낼 수 있도록」. 같은 건에서 창구가 날짜를 안 받고 「오늘로 했다」고 만들어 대표가 다시 지시 → 「필요한 값을 먼저 알려 주는 걸로 · 메모도 추가」.
+- **도구 `scripts/desk/xlsx-image.js <xlsx> [--out 폴더] [--sheet 이름|번호] [--no-pdf]`**: 이 PC 엑셀(Excel COM · Office 16)로 읽기 전용으로 열어 ①메모리에서 셀 메모 삭제 + 인쇄 영역 밖 행·열 숨김 ②통합문서를 HTML 로 저장(SaveAs 44) → Playwright(Chromium · **JS 끔** — 시트 HTML 의 스크립트가 프레임 밖에서 열리면 다른 페이지로 넘김) 로 첫 표를 2배율 PNG ③시트마다 PDF(ExportAsFixedFormat). 6초 · 시험 파일(사고서류 = 거래명세표 2벌 · 도장 그림) PNG 160KB · PDF 69KB · 메모 「[1]」 링크 0 · 보조 노란 칸 0. 원본 xlsx 무변경 · 엑셀 창 안 띄움 · 우리가 띄운 EXCEL.EXE 만 끝에 닫음(대표가 열어 둔 엑셀은 PID 로 구분) · 90초 넘으면 실패.
+- 🔴 **쓰지 말 것(10/8 실측)**: `CopyPicture → ChartObjects.Add → Chart.Paste → Export` 는 Visible false 면 233바이트 빈 PNG · Visible true 면 멈춤(90초 타임아웃) · `Worksheet.Copy()`(새 통합문서)도 멈춤. 통째 SaveAs(html) 만 3초에 끝남. PowerShell 스크립트 파일은 **UTF-8 BOM 필수**(없으면 한글 경로가 ANSI 로 깨짐) · `[Console]::OutputEncoding = UTF8` 로 stdout 한글 보존.
+- **창구 규칙**: 업무지식 6-2절 ①양식 지시는 채울 칸 목록을 뽑아 **빠진 값을 question 한 번으로 묶어 묻기**(기본값 제안 · 「오늘·요청자·단가표」로 말없이 안 채움 · 지시에 전부 있으면 바로) ②엑셀 서류는 xlsx-image 로 **xlsx·png·pdf 셋을 attachments 에** · 창구 CLAUDE.md 4-1 표에 한 줄. get.js 무수정 → 대기 프로그램 재시작 불요. 메모리 feedback-form-required-fields.
+- 🔵 남긴 것: #1628 건은 다시 첨부하지 않음(직원이 요청하면 창구가 「사고서류 그림으로 다시 줘」 한 번에 가능) · 카드 PDF 미리 보기(ao-desk.js) 는 후보 · 시트가 아주 넓으면(1100px 초과) 표가 그대로 넓게 찍힘(글자는 안 잘림) · 실제 창구 지시로 한 번 돌려 보는 것은 다음 세션 첫 서류 지시 때.
+
+### 🔎 #592 네이버 리뷰 API 조사·연결 · #593 배송 확인 도구 — 다음 세션 착수 예약 (대표 10/8 밤 「할일로 작성 · 다음 터미널에서」 · 미착수)
+
+- **대표가 원하는 것(원문 뜻 그대로)**: ⓐ 「너 네이버 리뷰 읽을 수 있어? api로」 → 창구(에이전트 오피스)에서 직원이 **「최근 리뷰 요약해줘」「별점 낮은 리뷰·불만 골라줘」「이 리뷰 답글 써줘」** 라고 하면 네이버 스마트스토어 리뷰를 읽어 답하게. ⓑ 「배송중 확인도 할 수 있어?」 → **「○○ 손님 배송 완료됐어?」「송장 번호 알려줘」「아직 안 받았대」** 에 네이버(+쿠팡·자사몰) 주문의 배송 상태·택배사·송장번호를 창구가 바로 답하게. 둘 다 **읽기(조회)가 목적** · 리뷰 답글 등록은 쓰기라 대표 확정 뒤.
+- **#592 순서**: ①공식 문서에서 리뷰 조회 엔드포인트·파라미터 확인(apicenter.commerce.naver.com 은 직접 fetch 차단 → `https://r.jina.ai/https://apicenter.commerce.naver.com/docs/...` · SPA 라 본문이 안 나오면 개발자 포럼 github.com/commerce-api-naver/commerce-api/discussions — 🔴 **추측·probe 금지**(작업 규칙 5절)) ②중계서버 `relay/server.js` ALLOW(82행 ~)에 리뷰 경로가 **없음**(pay-settle · pay-order/seller · pay-user · seller · contents/qnas · products 만) → 리뷰 경로(contents/reviews 류로 보이나 문서로 확정) GET 을 ALLOW 에 추가 + `RELAY_VERSION` 올림 → **install.sh 재실행 = 대표 SSH**(NCP 101.79.16.213 · 2-2절 · ACG 22 는 대표 회선 IP) ③회사프로그램: 러너 꼴(`naver_query_request` 15103행 — 창구 → DB 플래그 → 서버가 중계 호출 → 결과 키) 또는 adminOnly 라우트 + 창구 도구 `scripts/desk/review.js list|summary|draft`(기간·별점·상품 · 350ms 간격·429 재시도 = 3-3절 ④ 패턴) ④창구 규칙(업무지식 4절) — 요약·골라내기·답글 초안까지 · 손님 이름은 가리기 ⑤답글 등록(쓰기)은 대표 「고」 뒤 별도(ALLOW 에 PUT/POST 추가 · 승인 흐름). 🔵 러너 요청·결과 키 표식 문제(① 후보 · 지시 2건 겹침)가 여기서도 생기므로 러너를 쓰면 표식부터.
+- **#593 순서**: ①네이버 = 이미 ALLOW 열린 `pay-order/seller/product-orders`(조건형 · 결제일 24시간 단위 · 최대 180일) + `product-orders/query`(상세 POST)로 **이름·연락처 → 최근 30~60일 주문 → productOrderStatus(DELIVERING·DELIVERED 등)·배송사·송장번호·발송일** · 중계서버 추가 불요 ②쿠팡 = 발주서 조회 2종(COUPANG_ALLOW · 4-2절) · 자사몰 = 카페24 주문 조회(mall.read_order · cafe24.js) ③창구 도구 `scripts/desk/ship-status.js "<이름|번호 끝 4자리>" [--days 30]` → 채널별 표(주문일 · 품목 · 상태 · 택배사 · 송장 · 발송일) · 동명이인이면 번호로 좁히기 · **답에 손님 전체 번호·주소는 안 적음**(끝 4자리만) ④러너(`naver_query_request` 꼴)로 서버가 호출하거나 창구 PC 에서 직접 중계 호출(토큰은 Render env 뿐 → 러너 길이 정본) ⑤송장 색인(invoice-find · 공유폴더 송장 엑셀)과 합치면 「언제 뭐 시켰고 지금 어디」까지 한 답. 읽기만 · 쓰기 0.
+- 두 건 모두 **워커2(조사·문서 확인·도구 초안) + 총괄(server.js·중계·배포·대표 SSH 명령 작성)** 으로 나누기. 완료 기준 = 실제 창구 지시 1건씩(대표 요금제 시험 · 쓰기 0) + 손님 정보 가림 확인.
 
 ### 🔗 #589 새 품목 「자사몰 연결해줘」 창구 도구 (대표 「고」 10/8 · ✅ 도구·규칙 완료 · 첫 실행(link·--then)은 총괄이 보며) · #583-h~j 최종발주 「주문 찾아 고치기」·꼬리 적용·스크롤·버튼 (대표 「고」 10/8 · ✅ v5.9.467 배포) · #590-b 레드키위 보완 (✅ 반영)
 
