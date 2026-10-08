@@ -46,6 +46,26 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
             ok(P.errors.length === 0 && P.writes.length === 0, `[${label}] 화면 오류 ${P.errors.length} · 쓰기 ${P.writes.length}`);
             await P.ctx.close();
         }
+        for (const [label, vw, phone, theme] of [['PC', PC, false, null], ['폰', PH, true, null], ['PC 야간', PC, false, 'dark']]) {   // #586 답 맨 위 [복사]
+            const P = await h.open(SH, vw, { phone, page: 'agent-office', theme });
+            await P.ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:3463' });
+            const toasts = await prep(P, false); const pg = P.pg;
+            await pg.locator('#desk-list .desk-h-item .desk-h-row').first().click({ timeout: 3000 }); await pg.waitForTimeout(600);
+            const top = pg.locator('#desk-list .desk-h-item.open .desk-a > .desk-a-copy').first();
+            ok(await top.count() > 0, `[${label}·위 복사] 펼친 답 맨 위 오른쪽에 [복사]`);
+            const g = await pg.evaluate(() => { const a = document.querySelector('#desk-list .desk-h-item.open .desk-a'); const b = a.querySelector(':scope > .desk-a-copy'), l = a.querySelector('.desk-a-label'), c = a.querySelector('.desk-lane'); const br = b.getBoundingClientRect(), ar = a.getBoundingClientRect(), lr = l.getBoundingClientRect(); return { w: Math.round(br.width), h: Math.round(br.height), right: Math.round(ar.right - br.right), top: Math.round(br.top - ar.top), labelClear: lr.right <= br.left, laneClear: !c || c.getBoundingClientRect().right <= br.left + 1 || c.getBoundingClientRect().top >= br.bottom - 1, lane: c ? [Math.round(c.getBoundingClientRect().left), Math.round(c.getBoundingClientRect().right), Math.round(c.getBoundingClientRect().top)] : null, btn: [Math.round(br.left), Math.round(br.right), Math.round(br.top)] }; });
+            ok(g.h >= (phone ? 44 : 32) && g.w >= (phone ? 44 : 40) && g.right >= 0 && g.right <= 16 && g.top <= 12 && g.labelClear && g.laneClear, `[${label}·위 복사] 크기 ${g.w}x${g.h} · 오른쪽 여백 ${g.right} · 위 ${g.top} · 「클코 답변」·칩과 안 겹침(${g.labelClear}/${g.laneClear} · 칩 ${JSON.stringify(g.lane)} · 버튼 ${JSON.stringify(g.btn)})`);
+            await top.click({ timeout: 3000 }); await pg.waitForTimeout(600);
+            const clip = await pg.evaluate(() => navigator.clipboard.readText()).catch(() => '');
+            ok(toasts.some(t => /복사했어요/.test(t)) && clip.length > 10, `[${label}·위 복사] 누르면 복사(토스트 「${toasts[toasts.length - 1] || ''}」 · ${clip.length}자)`);
+            const bottom = await pg.locator('#desk-list .desk-h-item.open [data-act="copy"]').count();
+            ok(bottom >= 1, `[${label}·위 복사] 맨 아래 [답변 복사]도 그대로(${bottom}개)`);
+            const sw = await pg.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth));
+            ok(sw <= vw.width, `[${label}·위 복사] 가로 넘침 없음(${sw})`);
+            if (theme) { const a = await H.audit(pg, '#desk-list .desk-h-item.open'); ok(a.fails.length === 0, `[${label}·위 복사] 야간 대비 미달 0(글자 ${a.texts}개)`); }
+            ok(P.errors.length === 0 && P.writes.length === 0, `[${label}·위 복사] 화면 오류 ${P.errors.length} · 쓰기 ${P.writes.length}`);
+            await P.ctx.close();
+        }
         {   // 막힌 브라우저 — 펼친 카드의 [답변 복사] → 글 골라 두기
             const P = await h.open(SH, PC, { page: 'agent-office' }); const toasts = await prep(P, true); const pg = P.pg;
             await pg.locator('#desk-list .desk-h-item .desk-h-row').first().click({ timeout: 3000 }); await pg.waitForTimeout(600);

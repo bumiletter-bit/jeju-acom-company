@@ -712,7 +712,7 @@
                 ? mediaHtml + `<div class="desk-acts desk-files">${fl.map(f => f.file_id
                     ? `<button type="button" class="desk-btn sm" data-act="file" data-id="${o.id}" data-file="${Number(f.file_id)}">${esc(f.label || '파일')} 내려받기</button>`
                     : `<a class="desk-link" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.label || '첨부 열기')}</a>`).join('')}</div>` : '';
-            return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><div class="desk-a-label">클코 답변</div>${laneChip(o)}${r.title && !sameHead(r.title, text) ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${mdAnswer(text, o)}</div>${files}
+            return `<div class="desk-a answer ${long && !open ? 'clamp' : ''}${(long || mid) && !open ? ' pv' : ''}"><button type="button" class="desk-sec-copy desk-a-copy" data-act="copytop" data-id="${o.id}" aria-label="답변 복사">복사</button><div class="desk-a-label">클코 답변</div>${laneChip(o)}${r.title && !sameHead(r.title, text) ? `<div class="desk-a-title">${esc(r.title)}</div>` : ''}${mdAnswer(text, o)}</div>${files}
                 <div class="desk-acts desk-a-acts">${(long || mid) && !full ? `<button type="button" class="desk-btn sm${long ? '' : ' pv-only'}" data-act="toggle" data-id="${o.id}">${open ? '접기' : '전체 보기'}</button>` : ''}
                 <button type="button" class="desk-btn sm" data-act="copy" data-id="${o.id}">답변 복사</button>${followBtn(o)}</div>`;
         }
@@ -1127,9 +1127,9 @@
             else { S.detail.add(id); S.closed.delete(id); }
             renderList(); return;
         }
-        if (act === 'copy') {
+        if (act === 'copy' || act === 'copytop') {   // #586(대표 10/8 「위에가 좋은데」): 답 맨 위 오른쪽 [복사]도 같은 동작(맨 아래 [답변 복사]는 그대로)
             const text = (o.result && (o.result.answer || o.result.text)) || '';
-            const acts = b.closest('.desk-a-acts'), shown = acts ? acts.parentElement.querySelector('.desk-a') : null;   // #584: 막히면 골라 둘 글(접힌 이력 줄의 [복사]는 화면에 글이 없어 안내만)
+            const acts = b.closest('.desk-a-acts'), shown = act === 'copytop' ? b.closest('.desk-a') : (acts ? acts.parentElement.querySelector('.desk-a') : null);   // #584: 막히면 골라 둘 글(접힌 이력 줄의 [복사]는 화면에 글이 없어 안내만)
             await copyText(text, '답변을 복사했어요', shown);
             return;
         }

@@ -100,7 +100,13 @@
 - 총괄 = 리모트 컨트롤이 걸린 창(지시 번호 · 배포 · server.js/app.js/index.html · 문서 · 대표 보고). 워커1 = 화면 시공·검증(ao-desk · final-order) · 워커2 = 조사·점검·판정 로직. 둘 다 Opus 5.5(대표 지시: Fable 워커에게는 맡기지 않는다). 새 창은 이름·주소가 바뀌므로 `ListAgents` 로 다시 확인.
 
 
-**현행 버전(10/8): 회사 v5.9.462 / app.js v=405 · ao-desk.js v=50 · ao-dark.css v=2 · final-order.js v=23 · ao-desk.css v=37 · final-order-core.js v=9 · final-order.css v=16 · invoice-v2.js v=27 · styles.css v=125 · theme.css v=15.** ⚠️ **다음 지시 번호 = #586부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+**현행 버전(10/8): 회사 v5.9.463 / app.js v=405 · ao-desk.js v=51 · ao-dark.css v=2 · final-order.js v=23 · ao-desk.css v=38 · final-order-core.js v=9 · final-order.css v=16 · invoice-v2.js v=27 · styles.css v=125 · theme.css v=15.** ⚠️ **다음 지시 번호 = #587부터.** (배포 전에는 `version.js`·`index.html` 실값을 다시 확인)
+
+### 📋 #586 답변 맨 위에도 [복사] (대표 폰 실물 10/8 「답변 복사는 위에가 좋은데 1번처럼」 · v5.9.463 / ao-desk.js v=51 · css v=38 · 총괄)
+
+- 대표가 비교한 두 답: ①묶음 머리(━━━)가 있는 답 = 묶음마다 머리 오른쪽 [복사](#552·#556) ②묶음 머리가 없는 답(사업자등록증 첨부) = 맨 아래 [답변 복사]뿐 → 「위에가 좋다」.
+- 고친 것: 답 카드 맨 위 「클코 답변」 줄 오른쪽에 `.desk-a-copy`(묶음 [복사]와 같은 `.desk-sec-copy` 모양 · 「빠른 답 · N초」 칩 왼쪽 · float right · PC 32 · 폰 44) · `data-act="copytop"`(기존 `copy` 와 같은 처리 · 막히면 그 답 글을 골라 둠 #584). **맨 아래 [답변 복사]는 그대로**(verify-469·498·538 이 그 버튼을 세므로 act 이름을 따로 둬 기대값 무변경). 색은 기존 class 라 gen568 바이트 동일.
+- ✅ verify-584-copy(위 복사 항목 추가) · 538-chat.
 
 ### 📨 #585 발송안내 「오늘 출발·내일 도착」이 며칠 뒤 다시 보일 때 (대표 10/8 · v5.9.461 · shipping-schedule.js 만 · 총괄)
 

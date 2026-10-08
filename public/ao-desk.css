@@ -609,6 +609,9 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .desk-sec-copy:active { transform: scale(.97); }
 .desk-sec-copy:focus-visible { outline: 2px solid #039855; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .desk-sec-copy { transition: none; } }
+/* #586(대표 10/8 「답변 복사는 위에가 좋은데」) 답 맨 위 오른쪽 [복사] — 묶음 머리 [복사]와 같은 모양 · 「빠른 답」 칩 옆 · 맨 아래 [답변 복사]는 그대로 */
+.desk-a-copy { float: right; min-height: 32px; margin: -6px -8px 0 8px; padding: 0 10px; font-size: 13px; }   /* 「클코 답변」 줄보다 앞에 두어 첫 줄 오른쪽 끝 · 「빠른 답」 칩은 그 왼쪽에 붙는다 */
+@media (max-width: 640px) { .desk-a-copy { min-height: 44px; min-width: 44px; margin-top: -12px; } }
 
 /* ── #557(대표 10/6) 채팅 글을 폰에서 더 편하게 — 글씨 3단계(제목 18 · 본문 16 · 부가 정보 12)와 강약만. 구조는 그대로 ── */
 /* 1) 클코 답 본문 크게 · 부가 정보(번호·시각 · 처리 길 · 「클코 답변」 표지)는 작고 옅게(대비 4.5:1 이상) */
