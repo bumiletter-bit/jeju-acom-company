@@ -737,7 +737,7 @@
     //   주문 조회·옵션 매칭·사이즈 꼬리·색·거래처 판정은 app.js 의 송장변환 함수를 그대로 부른다(addSizeSuffix · matchProduct · qtyCategory · aoItemPartner · aoLoadInvoicePricing — 복사하지 않는다).
     //   표 모양·묶는 법은 종전 그림(scripts/desk/qty-image.js)과 같다: 거래처별 한 장 · 이름 가나다순 · 사이즈 요청은 따로 줄 · 미매칭은 따로 한 장 · 최근 20일.
     //   「효돈 것만」「지난주 것」처럼 조건이 붙은 말은 종전대로 채팅(창구)으로 보낸다.
-    const QTY = { busy: false, urls: [], blobs: new Map() };
+    const QTY = { busy: false, urls: [], blobs: new Map(), base: null, extra: [], draft: null, xday: '', xopen: false };
     const QTY_DAYS = 20;
     const QTY_BG = { yellow: '#FFFF00', orange: '#F4B183', blue: '#BDD7EE', green: '#C6E0B4', pink: '#F4CCCC', none: '#FFFFFF' };   // 거래처에 보내는 그림 색(styles.css .qty-cat-* 와 같은 값 · 야간에도 그대로)
     const QTY_SIZE = /^(.*?)\s+(2S|S|M)사이즈로!$/;
@@ -809,27 +809,98 @@
                 if (typeof name !== 'string' || name.startsWith('[미매칭]')) { const k = `[${g.ch}] ${g.opt}`; umap.set(k, (umap.get(k) || 0) + g.qty); continue; }
                 map.set(name, (map.get(name) || 0) + g.qty);
             }
-            const partners = new Map();
-            [...map.entries()].map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), partner: aoItemPartner(name.replace(/\s+(2S|S|M)사이즈로!$/, '')) || '기타' }))
-                .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
-                .forEach(it => { const p = partners.get(it.partner) || { total: 0, rows: [] }; p.rows.push(it); p.total += it.qty; partners.set(it.partner, p); });
+            const items = [...map.entries()].map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), partner: aoItemPartner(name.replace(/\s+(2S|S|M)사이즈로!$/, '')) || '기타' }));
             const urows = [...umap.entries()].map(([name, qty]) => ({ name, qty, cat: 'none' })).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-            const tag = kstDay(0).slice(5, 7) + kstDay(0).slice(8, 10);
-            const figs = [];
-            for (const [p, v] of partners) figs.push({ title: p, total: v.total, kinds: v.rows.length, file: `중간발주_${p}_${tag}.png`, blob: await qtyPng(v.rows, v.total, false) });
-            if (urows.length) { const t = urows.reduce((s, r) => s + r.qty, 0); figs.push({ title: '미매칭', total: t, kinds: urows.length, file: `중간발주_미매칭_${tag}.png`, blob: await qtyPng(urows, t, true), unmatched: true }); }
+            QTY.base = { items, urows };   // #598: 직접 추가 행을 넣어 그림만 다시 만들 때 쓴다(주문은 다시 묻지 않는다)
             const fails = [!nv.ok && '네이버: ' + nv.message, !cp.ok && '쿠팡: ' + cp.message, !cf.ok && '자사몰: ' + cf.message].filter(Boolean);
             const partial = (nv.ok ? nv.partial_adjusted || 0 : 0) + (cp.ok ? cp.partial_adjusted || 0 : 0) + (cf.ok ? cf.partial_adjusted || 0 : 0);
             const cnt = x => x.ok ? nfmt(x.count != null ? x.count : (x.rows || []).length) : '실패';
             $('qty-sub').textContent = `${kst(new Date().toISOString(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 조회 · 최근 ${QTY_DAYS}일`;
-            const canCopy = !!(navigator.clipboard && window.ClipboardItem);
-            out.innerHTML = `<div class="ship-meta"><span>주문 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)}${partial ? ' · 부분취소 반영 ' + nfmt(partial) + '건' : ''}</span><button type="button" class="desk-btn sm" id="qty-again">다시 집계</button></div>`
-                + figs.map((f, i) => { const u = URL.createObjectURL(f.blob); QTY.urls.push(u); QTY.blobs.set(String(i), f.blob);
-                    return `<figure class="qty-fig${f.unmatched ? ' unmatched' : ''}"><figcaption><b>${esc(f.title)}</b><span>${nfmt(f.kinds)}종 · 합계 ${nfmt(f.total)}박스${f.unmatched ? ' · 품목별 금액에 없는 옵션' : ''}</span><span class="qty-acts">${canCopy ? `<button type="button" class="desk-btn sm" data-qty-copy="${i}">그림 복사</button>` : ''}<a class="desk-btn sm" href="${u}" download="${esc(f.file)}">내려받기</a></span></figcaption><div class="qty-img"><img src="${u}" width="${f.blob.cssW}" height="${f.blob.cssH}" alt="${esc(f.title)} 중간발주 표"></div></figure>`; }).join('');
+            qtyExtraLoad();
+            out.innerHTML = `<div class="ship-meta"><span>주문 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)}${partial ? ' · 부분취소 반영 ' + nfmt(partial) + '건' : ''}</span><button type="button" class="desk-btn sm" id="qty-again">다시 집계</button></div><div id="qty-figs"></div>`
+                + `<details class="qty-extra" id="qty-extra"${QTY.draft.length || QTY.xopen ? ' open' : ''}><summary>직접 추가 <span class="desk-note" id="qty-extra-n"></span></summary>
+                    <p class="desk-note">전화·현금으로 받은 물량을 행으로 넣고 [그림 다시 만들기]를 누르면 그 거래처 그림에 「(추가)」 줄로 들어가요. 오늘 하루 동안 기억해요.</p>
+                    <div id="qty-extra-rows"></div>
+                    <div class="qty-extra-acts"><button type="button" class="desk-btn sm" id="qty-extra-add">+ 행</button><button type="button" class="desk-btn sm primary" id="qty-extra-go">그림 다시 만들기</button></div>
+                    <p class="desk-note" id="qty-extra-dirty" role="status" hidden>바꾼 내용은 [그림 다시 만들기]를 눌러야 그림에 들어가요.</p>
+                </details>`;
+            qtyExtraPaint(); qtyExtraDirty(false);
+            await qtyDraw();
             if (fails.length) qtyNote('불러오지 못한 채널은 빼고 집계했어요 · ' + fails.join(' / '), 'err');
         } catch (e) {
             qtyNote('집계하지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요'), 'err');
         } finally { prog.hidden = true; QTY.busy = false; $('desk-qty-now').disabled = false; }
+    }
+    // 거래처별 그림을 (다시) 그린다 — 집계(QTY.base) + 직접 추가(QTY.extra). 추가 행이 없으면 종전과 같은 표·같은 순서
+    async function qtyDraw() {
+        const box = document.getElementById('qty-figs'), base = QTY.base;
+        if (!box || !base) return;
+        QTY.urls.forEach(u => URL.revokeObjectURL(u)); QTY.urls = []; QTY.blobs.clear();
+        const ex = new Map();   // 같은 거래처·같은 품목을 두 번 넣었으면 한 줄로
+        QTY.extra.forEach(x => { const k = x.partner + '\n' + x.name; ex.set(k, (ex.get(k) || 0) + x.qty); });
+        const exItems = [...ex.entries()].map(([k, qty]) => { const i = k.indexOf('\n'), name = k.slice(i + 1); let cat = 'none'; try { cat = qtyCategory(name); } catch (e) { /* 색 없이 */ } return { name: name + ' (추가)', qty, cat, partner: k.slice(0, i), extra: true }; });
+        const partners = new Map();
+        base.items.concat(exItems).sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+            .forEach(it => { const p = partners.get(it.partner) || { total: 0, added: 0, rows: [] }; p.rows.push(it); p.total += it.qty; if (it.extra) p.added += it.qty; partners.set(it.partner, p); });
+        const tag = kstDay(0).slice(5, 7) + kstDay(0).slice(8, 10);
+        const figs = [];
+        for (const [p, v] of partners) figs.push({ title: p, total: v.total, added: v.added, kinds: new Set(v.rows.map(r => r.extra ? r.name.slice(0, -5) : r.name)).size, file: `중간발주_${p}_${tag}.png`, blob: await qtyPng(v.rows, v.total, false) });
+        if (base.urows.length) { const t = base.urows.reduce((s, r) => s + r.qty, 0); figs.push({ title: '미매칭', total: t, kinds: base.urows.length, file: `중간발주_미매칭_${tag}.png`, blob: await qtyPng(base.urows, t, true), unmatched: true }); }
+        const canCopy = !!(navigator.clipboard && window.ClipboardItem);
+        box.innerHTML = figs.map((f, i) => { const u = URL.createObjectURL(f.blob); QTY.urls.push(u); QTY.blobs.set(String(i), f.blob);
+            return `<figure class="qty-fig${f.unmatched ? ' unmatched' : ''}"><figcaption><b>${esc(f.title)}</b><span>${nfmt(f.kinds)}종 · 합계 ${nfmt(f.total)}박스${f.added ? ' · 직접 추가 ' + nfmt(f.added) + '박스 포함' : ''}${f.unmatched ? ' · 품목별 금액에 없는 옵션' : ''}</span><span class="qty-acts">${canCopy ? `<button type="button" class="desk-btn sm" data-qty-copy="${i}">그림 복사</button>` : ''}<a class="desk-btn sm" href="${u}" download="${esc(f.file)}">내려받기</a></span></figcaption><div class="qty-img"><img src="${u}" width="${f.blob.cssW}" height="${f.blob.cssH}" alt="${esc(f.title)} 중간발주 표"></div></figure>`; }).join('');
+        const n = document.getElementById('qty-extra-n'); if (n) n.textContent = QTY.extra.length ? `${QTY.extra.length}행 · ${nfmt(QTY.extra.reduce((s, x) => s + x.qty, 0))}박스 들어가 있어요` : '';
+    }
+    // ── #598(대표 10/9) 중간발주 「직접 추가」 — 「현금건 4kg 로얄 18건 추가해 줘」를 창구(AI)에 보내지 않고 사람이 행으로 넣는다
+    //   QTY.draft = 적는 중인 행(화면) · QTY.extra = 그림에 들어간 행([그림 다시 만들기]를 누른 것) · 같은 날(KST)에만 sessionStorage 에 둔다
+    const QTY_XKEY = 'akm_qty_extra';
+    function qtyExtraLoad() {
+        const day = kstDay(0);
+        if (QTY.xday === day && QTY.draft) return;   // 이 화면에서 적던 것은 [다시 집계]를 눌러도 그대로
+        QTY.xday = day; QTY.extra = [];
+        try {
+            const j = JSON.parse(sessionStorage.getItem(QTY_XKEY) || 'null');
+            if (j && j.day === day && Array.isArray(j.rows)) QTY.extra = j.rows.filter(x => x && x.partner && x.name && parseInt(x.qty) > 0).map(x => ({ partner: String(x.partner), name: String(x.name), qty: parseInt(x.qty) }));
+            else sessionStorage.removeItem(QTY_XKEY);   // 날짜가 바뀌면 비운다
+        } catch (e) { /* 저장소를 못 쓰는 브라우저 — 이 화면 동안만 */ }
+        QTY.draft = QTY.extra.map(x => ({ partner: x.partner, name: x.name, qty: String(x.qty) }));
+    }
+    function qtyExtraSave() { try { if (QTY.extra.length) sessionStorage.setItem(QTY_XKEY, JSON.stringify({ day: kstDay(0), rows: QTY.extra })); else sessionStorage.removeItem(QTY_XKEY); } catch (e) { /* 무시 */ } }
+    function qtyExtraDirty(on) { const n = document.getElementById('qty-extra-dirty'); if (n) n.hidden = !on; }
+    const qtyPartners = () => { const by = typeof aoInvoicePricingByPartner === 'object' && aoInvoicePricingByPartner ? aoInvoicePricingByPartner : {}; const ps = Object.keys(by).sort((a, b) => a.localeCompare(b, 'ko')); return { by, ps: ps.length ? ps : ['기타'] }; };
+    function qtyExtraPaint() {
+        const box = document.getElementById('qty-extra-rows'); if (!box) return;
+        const { by, ps } = qtyPartners();
+        box.innerHTML = QTY.draft.map((d, i) => {
+            if (!d.partner) d.partner = ps[0];
+            const plist = ps.includes(d.partner) ? ps : ps.concat(d.partner);
+            const names = [...(by[d.partner] || [])].sort((a, b) => a.localeCompare(b, 'ko'));
+            if (d.free === undefined) d.free = !names.length || (!!d.name && !names.includes(d.name));
+            if (!names.length) d.free = true;
+            if (!d.free && !d.name) d.name = names[0];
+            return `<div class="qty-xrow" data-i="${i}">
+                <select class="ship-q qty-xp" aria-label="거래처">${plist.map(p => `<option value="${esc(p)}"${p === d.partner ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>
+                ${names.length ? `<select class="ship-q qty-xn" aria-label="품목">${names.map(n => `<option value="${esc(n)}"${!d.free && n === d.name ? ' selected' : ''}>${esc(n)}</option>`).join('')}<option value=""${d.free ? ' selected' : ''}>단가표에 없는 품목 (직접 적기)</option></select>` : ''}
+                ${d.free ? `<input type="text" class="ship-q qty-xf" maxlength="60" placeholder="품목 이름" aria-label="품목 이름" value="${esc(d.name || '')}">` : ''}
+                <input type="text" inputmode="numeric" class="ship-q qty-xq" maxlength="4" placeholder="수량" aria-label="수량(박스)" value="${esc(d.qty || '')}">
+                <button type="button" class="desk-btn sm qty-xx" aria-label="이 행 빼기" title="이 행 빼기">×</button>
+            </div>`;
+        }).join('');
+    }
+    async function qtyExtraGo(btn) {
+        const rows = [], warn = (i, sel, msg) => { if (typeof akmAlert === 'function') akmAlert(msg); else showToast(msg); const el = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] ${sel}`); if (el) el.focus(); };
+        for (let i = 0; i < QTY.draft.length; i++) {
+            const d = QTY.draft[i], name = String(d.name || '').replace(/\s+/g, ' ').trim(), q = String(d.qty || '').trim();
+            if (!name) return warn(i, '.qty-xf, .qty-xn', '품목 이름을 적어 주세요');
+            if (!/^\d{1,4}$/.test(q) || parseInt(q) < 1) return warn(i, '.qty-xq', '수량은 1 이상 숫자로 적어 주세요');
+            rows.push({ partner: d.partner, name, qty: parseInt(q) });
+        }
+        btn.disabled = true;
+        try {
+            QTY.extra = rows; qtyExtraSave(); await qtyDraw(); qtyExtraDirty(false);
+            showToast(rows.length ? `직접 추가 ${rows.length}행을 넣어 그림을 다시 만들었어요` : '직접 추가 없이 그림을 다시 만들었어요');
+        } catch (e) { showToast('그림을 만들지 못했어요. 다시 눌러 주세요'); }
+        finally { btn.disabled = false; }
     }
     function bindTools() {
         $('desk-ship-now').addEventListener('click', () => shipOpen());
@@ -862,10 +933,33 @@
         drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); shipUpload((e.dataTransfer.files || [])[0]); });
         $('qty-out').addEventListener('click', async e => {
             if (e.target.closest('#qty-again')) { qtyRun(); return; }
+            if (e.target.closest('#qty-extra-add')) {
+                QTY.draft.push({ partner: QTY.draft.length ? QTY.draft[QTY.draft.length - 1].partner : '', name: '', qty: '' }); qtyExtraPaint(); qtyExtraDirty(true);
+                const f = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${QTY.draft.length - 1}"] .qty-xp`); if (f) f.focus();
+                return;
+            }
+            if (e.target.closest('#qty-extra-go')) { qtyExtraGo(e.target.closest('#qty-extra-go')); return; }
+            const xx = e.target.closest('.qty-xx');
+            if (xx) { QTY.draft.splice(Number(xx.closest('.qty-xrow').dataset.i), 1); qtyExtraPaint(); qtyExtraDirty(true); $('qty-extra-add').focus(); return; }
             const b = e.target.closest('[data-qty-copy]'); if (!b) return;
             try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': QTY.blobs.get(b.dataset.qtyCopy) })]); showToast('그림을 복사했어요. 카톡에 붙여 넣으세요'); }
             catch (err) { showToast('이 브라우저는 그림 복사를 막고 있어요. [내려받기]를 눌러 주세요'); }
         });
+        // #598 직접 추가 행 — 적는 대로 QTY.draft 에(거래처·품목 고르기를 바꾸면 그 행을 다시 그린다)
+        const xEdit = e => {
+            const row = e.target.closest && e.target.closest('.qty-xrow'); if (!row) return;
+            const i = Number(row.dataset.i), d = QTY.draft[i], t = e.target; if (!d) return;
+            if (t.classList.contains('qty-xq')) d.qty = t.value;
+            else if (t.classList.contains('qty-xf')) d.name = t.value;
+            else if (e.type !== 'change') return;
+            else if (t.classList.contains('qty-xp')) { d.partner = t.value; d.name = ''; d.free = undefined; qtyExtraPaint(); const f = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] .qty-xp`); if (f) f.focus(); }
+            else if (t.classList.contains('qty-xn')) { d.free = !t.value; d.name = t.value; qtyExtraPaint(); const f = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] ${d.free ? '.qty-xf' : '.qty-xn'}`); if (f) f.focus(); }
+            qtyExtraDirty(true);
+        };
+        $('qty-out').addEventListener('input', xEdit);
+        $('qty-out').addEventListener('change', xEdit);
+        $('qty-out').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest && e.target.closest('.qty-xrow input')) { e.preventDefault(); qtyExtraGo($('qty-extra-go')); } });
+        $('qty-out').addEventListener('toggle', e => { if (e.target.id === 'qty-extra') QTY.xopen = e.target.open; }, true);
     }
 
     // #566(대표 10/6): 승인 결재함 탭 없음(모든 계정) — 9/30 뒤로 승인을 거치는 일이 없다. 혹시 승인 대기 건이 생기면 대표는 채팅 탭(본인 것)·이전 채팅 이력(모두)의 그 카드에서 승인/반려한다
@@ -1003,6 +1097,7 @@
 
     // #477 끝난 지시에 [이어서 지시] — 앞 답을 이어받아 고칠 점·추가 요청을 보낸다(서버 reply · 창구는 follow_of로 앞 대화를 받는다)
     const FOLLOW = ['완료', '안내', '응답됨', '오류', '오류확인', '반려', '질문종결', '피드백'];
+    const PLAN_GO = '[이대로 진행]';   // #598: 대기 프로그램이 이 글자 그대로를 알아본다 — 바꾸면 scripts/desk 쪽도 같이
     // #525: 최종발주 정리 기록(내용이 「[최종발주] 」로 시작)에는 이어서 지시·답 칸을 띄우지 않는다 — 수정은 최종발주 화면의 대화 칸에서 한다
     const isFinalLog = o => /^\[최종발주\] /.test(String((o && o.content) || ''));
     function followHtml(o) {
@@ -1096,8 +1191,10 @@
         if (st === '질문') {
             // #473-b 그 자리에서 바로 답한다(대화처럼) — 보내면 이 질문은 닫히고, 창구가 앞 대화를 함께 받아 이어서 처리한다
             if (S.tab === 'all') return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div><div class="desk-note">답을 기다리고 있어요. 답은 채팅 탭에서 보낼 수 있어요.</div>`;
-            if (chatMine()) return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>` + composeBox(o, '답 보내기', '여기에 답을 적어 주세요');
-            return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>
+            // #598(대표 10/9): 창구가 되물으며 할 일(result.plan = { label, cmds })을 함께 실어 보냈으면 [이대로 진행] 버튼 — 누르면 고정 글 「[이대로 진행]」이 이어서 지시 길로 간다(대기 프로그램이 AI 없이 cmds 를 실행). cmds 는 화면에 그리지 않는다
+            const plan = r.type === 'clarify' && r.plan && typeof r.plan === 'object' && String(r.plan.label || '').trim() ? `<div class="desk-acts desk-plan"><button type="button" class="desk-btn sm primary" data-act="plango" data-id="${o.id}">이대로 진행 · ${esc(cutText(String(r.plan.label).replace(/\s+/g, ' ').trim(), 60))}</button></div>` : '';
+            if (chatMine()) return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>` + plan + composeBox(o, '답 보내기', '여기에 답을 적어 주세요');
+            return `<div class="desk-a">${esc(r.question || '확인이 필요해요')}</div>${plan}
                 <div class="desk-reply">
                     ${replyImgHtml(o.id)}<textarea class="desk-reply-in" id="reply-${o.id}" rows="2" maxlength="2000" placeholder="여기에 답을 적어 보내면 이어서 처리해요"></textarea>
                     <button type="button" class="desk-btn sm primary" data-act="sendreply" data-id="${o.id}">답 보내기</button>
@@ -1567,6 +1664,17 @@
                 S.sig = ''; await loadOrders(true);
                 if (res.order && res.order.id) revealOrders([res.order.id]);
             } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; if (icon) b.removeAttribute('aria-busy'); else b.textContent = label0; }
+            return;
+        }
+        if (act === 'plango') {   // #598: 글 칸·붙인 이미지와 무관하게 고정 글만 보낸다
+            const label0 = b.textContent; b.disabled = true; b.textContent = '보내는 중';
+            try {
+                const res = await api('/api/agent-office/orders/' + id + '/reply', 'POST', { content: PLAN_GO });
+                showToast(res.message || '이대로 진행할게요');
+                S.follow.delete(id);
+                S.sig = ''; await loadOrders(true);
+                if (res.order && res.order.id) revealOrders([res.order.id]);
+            } catch (err) { showToast(err && err.message ? err.message : '보내지 못했어요'); b.disabled = false; b.textContent = label0; }
             return;
         }
         if (act === 'reply') { closeFull(); const i = $('desk-input'); i.focus(); i.scrollIntoView({ block: 'center' }); return; }

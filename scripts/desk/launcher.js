@@ -67,6 +67,9 @@ function trimLog() {
             if (Date.now() - fs.statSync(p).mtimeMs > 14 * 86400e3) fs.unlinkSync(p);
         }
     } catch (e) { /* 폴더 없음 */ }
+    // #598 A: 앞 판정 보관함에서 7일 지난 것을 덜어 낸다(시작할 때 + 하루 한 번) · 주인 없는 쪽지(하루 넘은 것)도 치운다
+    try { const c = JSON.parse(fs.readFileSync(MEMO_CACHE, 'utf8')); const p = fast.memoCachePut(c, {}, []); if (Object.keys(p.items).length !== Object.keys(c.items || {}).length) fs.writeFileSync(MEMO_CACHE, JSON.stringify(p)); } catch (e) { /* 보관함 없음·깨짐 — 대조 때 없는 것으로 본다 */ }
+    try { for (const f of fs.readdirSync(LOG_DIR)) { if (!/^memo-reuse-\d+\.json$/.test(f)) continue; const p = path.join(LOG_DIR, f); if (Date.now() - fs.statSync(p).mtimeMs > 86400e3) fs.unlinkSync(p); } } catch (e) { /* 폴더 없음 */ }
 }
 async function cfgGet(key) {
     const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [key]);
@@ -114,7 +117,7 @@ function HINTS(id) {
         + `· 답변은 한국어로, 평소 기준(업무지식.md) 그대로 씁니다.`;
 }
 
-const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0, forceWarm: false, lastSlow: 0, running: new Map(), directBusy: false, fast: fast.settings(null), key: null };
+const st = { active: false, busy: false, lastBeat: 0, tries: new Map(), handledReqAt: null, note: '', paused: false, lastDone: null, sub: false, onlyId: 0, forceWarm: false, lastSlow: 0, running: new Map(), directBusy: false, fast: fast.settings(null), key: null, planTried: new Set(), lastTrim: Date.now() };
 
 function runDesk(order, key, opt) {  // key 가 null 이면 콘솔 키 없이(대표 요금제로) 돈다 · opt = { model, prompt, stream, runId, live }
     opt = opt || {};
@@ -290,6 +293,99 @@ async function runDirectQty(order, got) {
     return { code: up.code === 0 ? 0 : 1, outPath: resFile, info: { direct: true } };
 }
 
+// ── #598 A: 최종발주 메모 읽기 — 앞서 판정한 같은 메모는 다시 묻지 않는다(규칙·열쇠 = fast.memoPlan · 끄기 = desk_fast {"memo_reuse":false})
+//   앞 판정 보관함 = ~/.akkome/memo-reuse.json(7일 · 열쇠는 해시). 서버는 결과를 화면이 받아 가면 지우므로(손님 글 보관 안 함) DB 에는 앞 판정이 없다.
+//   돌려주는 값: null(재사용 안 함 · 종전대로) / { all:true, payload }(새 메모 0건 → AI 없이 바로) / { part:true }(새 메모만 자료 파일에 남김 · 합치기는 respond.js)
+const MEMO_CACHE = path.join(os.homedir(), '.akkome', 'memo-reuse.json');
+const memoSide = id => path.join(LOG_DIR, 'memo-reuse-' + id + '.json');
+function memoPrepare(order, got) {
+    const fm = got.final_order_memo;
+    try { fs.unlinkSync(memoSide(order.id)); } catch (e) { /* 앞 시도의 쪽지 없음 */ }
+    const payload = JSON.parse(fs.readFileSync(fm.payload_path, 'utf8'));
+    if (payload.type !== 'fo_memo' || !Array.isArray(payload.items) || !payload.items.length) return null;
+    const rules = fs.readFileSync(fm.rules, 'utf8');
+    let cache = null; try { if (fs.existsSync(MEMO_CACHE)) cache = JSON.parse(fs.readFileSync(MEMO_CACHE, 'utf8')); } catch (e) { cache = null; log(`#${order.id} 앞 판정 보관함을 읽지 못함 — 전부 새로 읽음: ${e.message}`); }
+    const plan = fast.memoPlan(payload, cache, rules, Date.now());
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    if (!plan.fresh.length) {
+        const items = plan.reused;
+        return { all: true, n: items.length, payload: { kind: 'answer', title: `메모 ${items.length}건 읽음`, answer: `${fast.memoSummary(items)} (앞 판정 재사용 ${items.length}건)`, data: { items } } };
+    }
+    // 쪽지: 이번에 읽은 판정을 보관함에 넣을 열쇠 + 합칠 앞 판정(없으면 빈 목록 — 보관만 한다)
+    fs.writeFileSync(memoSide(order.id), JSON.stringify({ keys: plan.keys, reused: plan.reused, order: plan.order, total: plan.total }));
+    if (!plan.reused.length) return { part: true, reused: 0, fresh: plan.fresh.length };
+    fs.writeFileSync(fm.payload_path, JSON.stringify(Object.assign({}, payload, { items: plan.fresh }), null, 1));   // 새 메모만(원래 i 그대로)
+    fm.count = plan.fresh.length;
+    return { part: true, reused: plan.reused.length, fresh: plan.fresh.length };
+}
+async function runMemoReuse(order, got, m) {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const resFile = path.join(LOG_DIR, `direct-${order.id}.json`);
+    fs.writeFileSync(resFile, JSON.stringify(m.payload));
+    const up = await runNode('respond.js', [String(order.id), resFile], 120000);
+    try { fs.unlinkSync(resFile); } catch (e) { /* 무시 */ }   // 판정 글이 들어 있어 남기지 않는다
+    try { fs.unlinkSync(got.final_order_memo.payload_path); } catch (e) { /* 이미 없음 */ }
+    if (up.code !== 0) log(`#${order.id} 앞 판정 재사용 결과 올리기 실패: ${(up.err || up.out).slice(0, 200)}`);
+    return { code: up.code === 0 ? 0 : 1, outPath: '', info: { direct: true } };
+}
+
+// ── #598 B: 되묻기에 실어 둔 명령(result.plan) — 답이 화면 버튼 글 「[이대로 진행]」이면 AI 없이 그 명령만 실행(끄기 = desk_fast {"plan":false})
+//   조건(하나라도 아니면 null → 종전 AI 길): 원 지시가 창구의 되묻기(clarify) · plan 이 허용 목록 통과 · 원 지시와 답 모두 대표 계정(승인 없이 바로 실행하는 계정 — get.js from_role admin 과 같은 기준)
+//   · 그 되묻기에 「[이대로 진행]」을 실행한 적이 없음(두 번 보내는 일 방지). 직원 지시는 종전대로 AI → 승인 흐름.
+async function planLookup(order) {
+    if (!order.reply_to || order.has_image || order.status !== '대기' || !fast.planGo(order.content)) return null;
+    const p = (await pool.query(`SELECT id, status, result, created_by_id FROM pending_orders WHERE id = $1 AND is_deleted = false`, [order.reply_to])).rows[0];
+    if (!p || !p.result || p.result.type !== 'clarify' || !['질문', '질문종결'].includes(p.status)) return null;
+    const chk = fast.planCheck(p.result.plan);
+    if (!chk.ok) { if (p.result.plan) log(`#${order.id} 정해 둔 명령을 쓰지 않음 — ${chk.why} (종전 AI 길)`); return null; }
+    if (!order.created_by_id || !p.created_by_id) return null;
+    const us = (await pool.query(`SELECT id FROM users WHERE id = ANY($1::int[]) AND deleted_at IS NULL AND role = 'admin' AND position = '대표'`, [[order.created_by_id, p.created_by_id]])).rows.map(r => Number(r.id));
+    if (!us.includes(Number(order.created_by_id)) || !us.includes(Number(p.created_by_id))) return null;
+    // 두 번 실행 방지: 같은 되묻기에 이미 실행한 답이 있거나(버튼 두 번), 이 지시가 실행 도중 끊긴 적이 있으면 다시 돌리지 않고 알린다
+    const dup = (await pool.query(`SELECT id FROM pending_orders WHERE (reply_to = $1 OR id = $2) AND is_deleted = false AND result->>'plan_run' = 'yes' ORDER BY id LIMIT 1`, [p.id, order.id])).rows[0];
+    if (dup || st.planTried.has(order.id)) return Object.assign(chk, { stop: dup && Number(dup.id) !== Number(order.id) ? `이 확인의 명령(${chk.label})은 앞에서 이미 실행했어요. 다시 실행하지 않았어요 — 더 필요한 것이 있으면 글로 지시해 주세요.` : `「${chk.label}」 실행이 도중에 끊겼어요. 어디까지 됐는지 모르므로 다시 실행하지 않았어요 — 상태를 확인해 달라고 글로 지시해 주세요.` });
+    return chk;
+}
+function runScript(script, args, timeoutMs) {
+    return new Promise(resolve => {
+        const child = spawn(process.execPath, [path.join(__dirname, script)].concat(args), { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });   // 셸을 거치지 않는다(인자 배열 그대로)
+        let out = '', err = '', done = false;
+        const finish = code => { if (done) return; done = true; clearTimeout(timer); resolve({ code, out, err }); };
+        const timer = setTimeout(() => { try { child.kill(); } catch (e) { /* 이미 끝남 */ } finish(-2); }, timeoutMs);
+        child.stdout.on('data', d => { out += d.toString('utf8'); if (out.length > 400000) out = out.slice(-200000); });
+        child.stderr.on('data', d => { err += d.toString('utf8'); if (err.length > 400000) err = err.slice(-200000); });
+        child.on('error', e => { err += e.message; finish(-1); });
+        child.on('exit', finish);
+    });
+}
+async function runPlan(order, got, plan) {
+    if (plan.stop) {
+        const rf = path.join(LOG_DIR, `direct-${order.id}.json`); fs.mkdirSync(LOG_DIR, { recursive: true }); fs.writeFileSync(rf, JSON.stringify({ kind: 'error', error: plan.stop }));
+        const u = await runNode('respond.js', [String(order.id), rf], 120000);
+        return { code: u.code === 0 ? 0 : 1, outPath: rf, info: { direct: true } };
+    }
+    st.planTried.add(order.id);
+    const say = t => got.run_id ? appendStep(got.run_id, 'work', t).catch(() => { }) : null;
+    // 실행을 시작했다는 표시를 먼저 남긴다 — 도중에 꺼져도 같은 명령을 두 번 돌리지 않게(다시 시도는 AI 길로 간다)
+    await pool.query(`UPDATE pending_orders SET result = $2 WHERE id = $1 AND status = '처리중'`, [order.id, JSON.stringify({ type: 'live', text: `실행 중: ${plan.label}`, plan_run: 'yes' })]);
+    const runs = [];
+    for (const [i, c] of plan.cmds.entries()) {
+        await say(`▶ ${plan.label} (${i + 1}/${plan.cmds.length}) — AI 없이 정해 둔 명령 그대로`);
+        const args = c.args.map(a => a === '{id}' ? String(order.id) : a);
+        const r = await runScript(c.script, args, RUN_TIMEOUT_MS - 60000);
+        runs.push({ script: c.script, args, code: r.code, out: r.out, err: r.err });
+        log(`#${order.id} 정해 둔 명령 ${i + 1}/${plan.cmds.length} ${c.script} ${args[0] || ''} → exit ${r.code}`);
+        if (r.code !== 0) break;
+    }
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const resFile = path.join(LOG_DIR, `direct-${order.id}.json`);
+    fs.writeFileSync(resFile, JSON.stringify(fast.planAnswer(plan.label, runs, plan.cmds.length)));
+    const up = await runNode('respond.js', [String(order.id), resFile], 120000);
+    if (up.code !== 0) log(`#${order.id} 정해 둔 명령 결과 올리기 실패: ${(up.err || up.out).slice(0, 200)}`);
+    else await pool.query(`UPDATE pending_orders SET result = result || '{"plan_run":"yes"}'::jsonb WHERE id = $1`, [order.id]).catch(() => { });
+    return { code: up.code === 0 ? 0 : 1, outPath: resFile, info: { direct: true } };
+}
+
 // #474 요금 나누기(대표 확정 2026-09-30): 대표 본인 계정이 넣은 지시 = 이 PC에 로그인된 대표 요금제(키 없이 실행),
 //   그 밖의 모든 지시(조가영 포함) = 콘솔 API 키. 개인 요금제는 본인 것만 처리해야 하기 때문이다.
 //   누가 대표인지 = agent_office_config 'desk_subscription_users' {ids:[...]} · 없으면 username 'admin' 한 명.
@@ -357,19 +453,32 @@ async function handle(order, key) {
     const rt = f.off ? { lane: 'ai', model: MODEL, why: '종전 방식' }
         : fast.route(order, f.route ? FORCED_MODEL : (FORCED_MODEL || 'opus'));
     if (rt.lane === 'direct_qty' && !f.direct) { rt.lane = 'ai'; rt.model = MODEL; rt.why = '바로 처리 꺼짐'; }
+    // #598 B: 되묻기에 실어 둔 명령 + 화면 버튼 답 「[이대로 진행]」 → AI 없이 그 명령만(미리 받기가 켜져 있을 때)
+    let plan = null;
+    if (rt.lane === 'ai' && !f.off && f.plan && f.prefetch) { try { plan = await planLookup(order); } catch (e) { plan = null; log(`#${order.id} 정해 둔 명령 확인 실패(종전 AI 길): ${e.message}`); } }
+    if (plan) { rt.lane = 'plan'; rt.model = null; rt.why = '정해 둔 명령 — AI 없이'; }
     log(`#${order.id} 처리 시작 (${order.status} · ${order.created_by || '-'} · ${rt.lane === 'ai' ? (key ? '콘솔' : '대표 요금제') + ' · ' + rt.model : 'AI 없음'} · ${rt.why})`);
     const t0 = Date.now();
     let r = { code: -1, outPath: '', info: {} };
     try {
         // 미리 받기: 대기 프로그램이 지시를 집어(처리중) 내용을 문장에 넣어 준다. 끄면 종전처럼 창구가 get.js로 받는다.
         let got = null;
-        if (rt.lane === 'direct_qty' || f.prefetch) {
+        if (rt.lane !== 'ai' || f.prefetch) {
             got = await claim(order.id);
             if (!got.ok) { log(`#${order.id} 다른 곳에서 이미 집어 감 — 건너뜀`); got = null; r = { code: 0, outPath: '', info: { skipped: true } }; }
         }
         // 어느 길로 처리하는지 화면에 한 줄(답변 옆 작은 표시로도 쓰인다)
-        if (got && got.run_id) await appendStep(got.run_id, 'lane', rt.lane === 'direct_qty' ? '📦 바로 처리' : rt.model === 'sonnet' ? '⚡ 빠른 답' : '🧠 깊은 답').catch(() => { });
+        // #598 A: 최종발주 메모 읽기 — 앞 판정 재사용(전부 같으면 AI 없이 · 일부면 새 메모만 자료 파일에 남긴다)
+        let memo = null;
+        if (got && rt.lane === 'ai' && !f.off && f.memo_reuse && f.prefetch && got.final_order_memo && /^(\[검증469\]\s*)?\[최종발주 메모 읽기\]/.test(order.content || '')) {
+            try { memo = memoPrepare(order, got); } catch (e) { memo = null; try { fs.unlinkSync(memoSide(order.id)); } catch (_) { /* 없음 */ } log(`#${order.id} 앞 판정 재사용 준비 실패(전부 새로 읽음): ${e.message}`); }
+            if (memo && memo.all) { rt.lane = 'memo_reuse'; rt.model = null; }
+            if (memo) log(`#${order.id} 메모 재사용 ${memo.all ? memo.n + '건 전부 — AI 없이' : memo.reused + '건 · 새로 읽기 ' + memo.fresh + '건'}`);
+        }
+        if (got && got.run_id) await appendStep(got.run_id, 'lane', rt.lane === 'direct_qty' ? '📦 바로 처리' : rt.lane === 'memo_reuse' ? '♻ 앞 판정 재사용' : rt.lane === 'plan' ? '▶ 정해 둔 명령 실행' : rt.model === 'sonnet' ? '⚡ 빠른 답' : '🧠 깊은 답').catch(() => { });
         if (rt.lane === 'direct_qty') { if (got) r = await runDirectQty(order, got); }
+        else if (rt.lane === 'memo_reuse') r = await runMemoReuse(order, got, memo);
+        else if (rt.lane === 'plan') { if (got) r = await runPlan(order, got, plan); }
         else if (f.prefetch) {
             const run = (f.warm || st.forceWarm) && f.stream ? runWarm : runDesk;
             // #580 B: 최종발주 메모 읽기·대화는 규칙 문서와 자료를 미리 읽어 지시문에 넣는다(끄기 = desk_fast {"inline":false} · 못 읽으면 종전대로 창구가 읽는다)
@@ -387,7 +496,7 @@ async function handle(order, key) {
             r = await runDesk(order, key, { model: rt.model, stream: f.stream, lean: f.lean, effort: f.effort, get runId() { return runId; }, live: f.stream && order.status !== '승인됨' });
         }
     } catch (e) { log(`#${order.id} 처리 중 오류: ${e.message}`); }
-    finally { clearInterval(keep); }
+    finally { clearInterval(keep); try { fs.unlinkSync(memoSide(order.id)); } catch (_) { /* respond.js 가 이미 치웠거나 없음(#598 A) */ } }
     const sec = Math.round((Date.now() - t0) / 1000);
     const after = (await pool.query(`SELECT status FROM pending_orders WHERE id = $1`, [order.id])).rows[0];
     const stillOpen = !after || ['대기', '처리중', '승인됨'].includes(after.status);
@@ -423,6 +532,7 @@ async function slowTick() {
     const [req, autoCfg, fastCfg] = await Promise.all([cfgGet('desk_wake_request'), cfgGet('desk_auto'), cfgGet('desk_fast')]);
     st.paused = !!(autoCfg && autoCfg.on === false);
     st.fast = fast.settings(ENV_FAST || fastCfg);
+    if (Date.now() - st.lastTrim > 86400e3) { st.lastTrim = Date.now(); trimLog(); }   // 하루 한 번(상주 시작 때는 main 이 이미 돌렸다)
     warmReap(!st.fast.warm && !st.forceWarm);   // 오래 쉰 창구는 끈다(켜 둔 창구를 안 쓰는 설정이면 전부)
 
     // 화면 버튼 신호(켜기/끄기)

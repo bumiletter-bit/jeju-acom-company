@@ -2,7 +2,8 @@
 // 결과.json 형식(하나):
 //   { "kind": "answer",   "answer": "답변 글", "title": "한 줄 제목(선택)", "files": [{"label","url"}](선택),
 //                         "attachments": ["만든 파일 경로", ...](선택 — 엑셀·문서·그림을 DB에 올려 화면에서 내려받게 한다 · 파일당 10MB · 5개까지) }
-//   { "kind": "question", "question": "되묻는 말" }
+//   { "kind": "question", "question": "되묻는 말", "plan": { "label": "톡톡 3건 보내기", "cmds": [["node","scripts/desk/talk-send.js","{id}","보낼글.json"]] }(선택 · #598) }
+//        → plan = 「응」이면 그대로 실행할 명령이 정해져 있을 때만. 화면의 [이대로 진행] 답이 오면 대기 프로그램이 AI 없이 그 명령만 실행한다(허용 목록·검사는 fast.planCheck)
 //   { "kind": "ocr",      "partner": "효돈농협 | 대성(시온) | 기타거래처 | 빈 문자열", "items": [{"name","qty"}], "date": "YYYY-MM-DD(선택)" }
 //        → 서버가 단가표 대조·확인표를 만든다(금액 계산은 서버 몫 — 창구는 품목·수량만 읽는다)
 //   { "kind": "approval", "action": "coupon|price|send|external", "summary": "무엇을", "impact": "영향·금액·대상", "plan": "승인되면 할 일" }
@@ -12,6 +13,21 @@ const fs = require('fs');
 const { pool, appendStep, heartbeat, audit } = require('./_db');
 const path = require('path');
 const clean = (s, n) => String(s == null ? '' : s).slice(0, n);
+const fast = require('./fast');
+// #598 A: 최종발주 메모 읽기 — 대기 프로그램이 남긴 쪽지(앞 판정 재사용분·열쇠)가 있으면 합쳐서 올리고, 이번에 읽은 판정은 보관함(7일)에 넣는다. 실패해도 올리기는 막지 않는다.
+const MEMO_DIR = path.join(require('os').homedir(), '.akkome');
+function memoReuse(id, j) {
+    const sideFile = path.join(MEMO_DIR, 'logs', 'memo-reuse-' + id + '.json'), cacheFile = path.join(MEMO_DIR, 'memo-reuse.json');
+    let side; try { side = JSON.parse(fs.readFileSync(sideFile, 'utf8')); } catch (e) { return j; }
+    try { fs.unlinkSync(sideFile); } catch (e) { /* 이미 없음 */ }
+    if (!j.data || !Array.isArray(j.data.items)) return j;
+    try {
+        let cache = null; try { cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch (e) { cache = null; }
+        const tmp = cacheFile + '.' + process.pid + '.tmp';
+        fs.writeFileSync(tmp, JSON.stringify(fast.memoCachePut(cache, side.keys, j.data.items))); fs.renameSync(tmp, cacheFile);
+    } catch (e) { console.error('메모 판정 보관 실패(무시):', e.message); }
+    return fast.memoMerge(j, side);
+}
 const ATTACH_EXT = ['xlsx', 'xls', 'csv', 'md', 'txt', 'pdf', 'docx', 'doc', 'pptx', 'hwp', 'hwpx', 'zip', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4'];   // #582: 공유폴더 서류(hwp·xls·doc·zip)도 전달
 async function uploadAttachments(list, runId) {
     const out = [];
@@ -32,7 +48,7 @@ async function uploadAttachments(list, runId) {
 (async () => {
     const id = parseInt(process.argv[2], 10), file = process.argv[3];
     if (!id || !file) throw new Error('사용: respond.js <지시 id> <결과.json>');
-    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    let j = JSON.parse(fs.readFileSync(file, 'utf8'));
     const o = (await pool.query(`SELECT id, status, run_id, created_by_id, content FROM pending_orders WHERE id = $1 AND is_deleted = false`, [id])).rows[0];
     if (!o) throw new Error('없는 지시');
     if (!['처리중', '대기'].includes(o.status)) throw new Error(`'${o.status}' 상태라 결과를 올릴 수 없습니다(처리중만 가능)`); // '대기' = 처리 도중 서버 재시작으로 되돌려진 건
@@ -40,6 +56,7 @@ async function uploadAttachments(list, runId) {
     if (j.kind === 'answer') {
         if (!j.answer) throw new Error('answer가 비었습니다');
         status = '완료';
+        if (/^(\[검증469\]\s*)?\[최종발주 메모 읽기\]/.test(o.content || '')) j = memoReuse(id, j);
         const uploaded = await uploadAttachments(j.attachments, o.run_id);
         result = {
             type: 'desk_answer', title: clean(j.title || '', 80), answer: clean(j.answer, 20000),
@@ -47,12 +64,14 @@ async function uploadAttachments(list, runId) {
             summary: clean(j.title || j.answer, 80),
         };
         // #518 최종발주 메모 읽기의 판정 결과(화면이 받아 가면 서버가 지운다) — 최종발주 요청에만, 400KB 이하
-        if (j.data && typeof j.data === 'object' && /^\[최종발주 (?:메모 읽기|대화)\]/.test(o.content || '') && JSON.stringify(j.data).length <= 400000) result.data = j.data;
+        if (j.data && typeof j.data === 'object' && /^(\[검증469\]\s*)?\[최종발주 (?:메모 읽기|대화)\]/.test(o.content || '') && JSON.stringify(j.data).length <= 400000) result.data = j.data;
         stepText = '✅ 답변 완료';
     } else if (j.kind === 'question') {
         if (!j.question) throw new Error('question이 비었습니다');
         status = '질문';
         result = { type: 'clarify', question: clean(j.question, 1000), summary: '확인 필요', by: 'desk' };
+        const plan = fast.planClean(j.plan);   // #598 B
+        if (plan) result.plan = plan;
         stepText = '❓ 확인 질문';
     } else if (j.kind === 'ocr') {
         const items = (Array.isArray(j.items) ? j.items : [])

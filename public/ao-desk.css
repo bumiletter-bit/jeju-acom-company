@@ -786,6 +786,25 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
     .qty-acts .desk-btn { flex: 1 1 0; justify-content: center; }
 }
 @media (prefers-reduced-motion: reduce) { .ship-track i, .ship-drop { transition: none; } .ship-track.busy i { animation: none; transform: none; width: 100%; opacity: .5; } }
+/* #598(대표 10/9): 되묻기 카드 [이대로 진행] · 중간발주 「직접 추가」 — 자리·크기만(색은 기존 .desk-btn · .ship-q · .desk-note 그대로) */
+.desk-plan .desk-btn { min-height: 44px; height: auto; max-width: 100%; padding-top: 6px; padding-bottom: 6px; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.qty-extra { margin-top: 14px; }
+.qty-extra > summary { padding: 12px 0; cursor: pointer; font-size: 14px; font-weight: 700; }
+.qty-extra > summary .desk-note { margin: 0 0 0 6px; font-weight: 500; }
+.qty-extra > .desk-note { margin-top: 0; }
+.qty-xrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.qty-xrow .qty-xp { flex: 0 1 130px; }
+.qty-xrow .qty-xn, .qty-xrow .qty-xf { flex: 3 1 220px; }
+.qty-xrow .qty-xq { flex: 0 0 84px; text-align: right; }
+.qty-xrow .qty-xx { flex: 0 0 44px; min-height: 44px; padding: 0; justify-content: center; }
+.qty-extra-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.qty-extra-acts .desk-btn { min-height: 44px; }
+@media (max-width: 720px) {
+    .qty-xrow { margin-top: 14px; }
+    .qty-xrow .qty-xp, .qty-xrow .qty-xn, .qty-xrow .qty-xf { flex: 1 1 100%; }
+    .qty-xrow .qty-xq { flex: 1 1 0; }
+    .qty-extra-acts .desk-btn { flex: 1 1 0; justify-content: center; }
+}
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).

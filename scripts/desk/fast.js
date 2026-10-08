@@ -3,12 +3,13 @@
 //   ② streamWatcher() claude -p --output-format stream-json 의 줄을 읽어 「지금 하는 일」·답변 미리 보기를 뽑는다
 //   되돌리기: agent_office_config 'desk_fast' = {"off":true} → 전부 종전 방식(10초 확인·Opus·끝나야 보임)
 //   낱개로 끄기: {"route":false} 처럼 항목만 false (poll·stream·prefetch·route·direct·lean·warm)
+//   #598(대표 10/9): memo_reuse = 최종발주 메모 읽기에서 앞서 판정한 같은 메모는 다시 묻지 않기 · plan = 되묻기에 실어 둔 명령을 「[이대로 진행]」 답에 AI 없이 실행
 //   #580(대표 10/8): inline = 최종발주 규칙 문서·자료를 지시문에 미리 넣기 · settlepar = 같은 사람의 정산 이미지 여러 장을 동시에
-const DEFAULTS = { off: false, poll: true, stream: true, prefetch: true, route: true, direct: true, lean: true, warm: true, inline: true, settlepar: true };
-const KEYS = ['poll', 'stream', 'prefetch', 'route', 'direct', 'lean', 'warm', 'inline', 'settlepar'];
+const DEFAULTS = { off: false, poll: true, stream: true, prefetch: true, route: true, direct: true, lean: true, warm: true, inline: true, settlepar: true, memo_reuse: true, plan: true };
+const KEYS = ['poll', 'stream', 'prefetch', 'route', 'direct', 'lean', 'warm', 'inline', 'settlepar', 'memo_reuse', 'plan'];
 function settings(cfg) {
     const c = cfg && typeof cfg === 'object' ? cfg : {};
-    if (c.off === true) return { off: true, poll: false, stream: false, prefetch: false, route: false, direct: false, lean: false, warm: false, inline: false, settlepar: false };
+    if (c.off === true) return { off: true, poll: false, stream: false, prefetch: false, route: false, direct: false, lean: false, warm: false, inline: false, settlepar: false, memo_reuse: false, plan: false };
     const o = Object.assign({}, DEFAULTS);
     for (const k of KEYS) if (c[k] === false) o[k] = false;
     if (['low', 'medium', 'high', 'xhigh'].includes(c.effort)) o.effort = c.effort;   // 생각 깊이를 따로 줄 때만(없으면 창구 기본값)
@@ -70,6 +71,113 @@ function inlineFinalOrder(got, read) {
         + (withData ? '' : ' 자료는 payload_path 파일에 있습니다(이것만 읽습니다).')
         + ' 받은 자료 파일은 대기 프로그램이 지우므로 지우는 명령은 하지 않습니다.\n';
     return { got: Object.assign({}, got, { final_order_memo: fm2 }), text, name, withData, cleanup: fm.payload_path || null };
+}
+
+// ── #598 A: 최종발주 메모 읽기 — 앞서 판정한 같은 메모는 다시 묻지 않는다 ─────────────────
+//   10/8 실측: 12회 550건 중 486건(88%)이 앞 회차와 손님·받는 분·메모 글이 같았다([다시 판정]을 누를 때마다 전부 다시 읽음).
+//   「같은 메모」 = 판정에 들어가는 값이 전부 같은 것: 구매자·받는 분·메모 원문·동호수·프로그램 힌트·수량·카드 종류 + 기준 발송일·오늘·발송 가능일 + 규칙 문서.
+//   하나라도 다르면 새 메모다(애매하면 다시 읽는다). 앞 판정은 대표 PC 의 ~/.akkome/memo-reuse.json 에 7일(열쇠는 해시 — 메모 원문은 안 남긴다).
+const crypto = require('crypto');
+const MEMO_REUSE_DAYS = 7;
+const sha = t => crypto.createHash('sha256').update(String(t), 'utf8').digest('hex');
+const SHIP_OK = ['go', 'hold', 'ask'];
+// ctx = { shipDate, realToday, shipDays, rules(규칙 문서 글) }
+function memoKey(it, ctx) {
+    const c = ctx || {}, x = it || {};
+    return sha(JSON.stringify([String(x.buyer || ''), String(x.recv || ''), String(x.memo || ''), String(x.unit || ''), String(x.hint || ''), Number(x.qty) || 0,
+        Array.isArray(x.cards) ? x.cards.map(String) : [], String(c.shipDate || ''), String(c.realToday || ''), Array.isArray(c.shipDays) ? c.shipDays.map(String) : [], sha(c.rules || '')]));
+}
+// 받은 묶음을 「앞 판정을 다시 쓸 것 / 새로 읽을 것」으로 가른다. cache = { items: { 열쇠: { at, r } } }
+function memoPlan(payload, cache, rules, now) {
+    const p = payload || {}, items = Array.isArray(p.items) ? p.items : [], store = (cache && cache.items) || {};
+    const t = now || Date.now(), ctx = { shipDate: p.shipDate, realToday: p.realToday, shipDays: p.shipDays, rules };
+    const keys = {}, reused = [], fresh = [], seen = new Set();
+    for (const it of items) {
+        const i = Number(it && it.i);
+        // 번호가 이상하거나 겹치면 건드리지 않고 그대로 AI 에게(판정을 엉뚱한 주문에 붙이지 않게)
+        if (!Number.isInteger(i) || i < 0 || seen.has(i)) { fresh.push(it); continue; }
+        seen.add(i);
+        const k = memoKey(it, ctx); keys[i] = k;
+        const c = store[k];
+        if (c && c.r && SHIP_OK.includes(c.r.ship) && t - Number(c.at) >= 0 && t - Number(c.at) < MEMO_REUSE_DAYS * 86400e3) reused.push(Object.assign({ i }, c.r));
+        else fresh.push(it);
+    }
+    return { keys, reused, fresh, total: items.length, order: items.map(it => Number(it && it.i)) };
+}
+function memoSummary(items) {
+    const n = v => items.filter(x => x && x.ship === v).length;
+    return `오늘 발송 ${n('go')} · 오늘 안 나감 ${n('hold')} · 사람 확인 ${n('ask')}`;
+}
+// AI 가 새 메모만 판정해 올린 결과(j)에 앞 판정(side.reused)을 합친다 — 받은 순서(side.order)대로 · 모양은 종전과 같다
+function memoMerge(j, side) {
+    const ai = (j && j.data && Array.isArray(j.data.items)) ? j.data.items : [];
+    const re = (side && Array.isArray(side.reused)) ? side.reused : [];
+    const total = Number(side && side.total) || 0;
+    // 받은 메모 수와 판정 수가 다르면 요약 글에 적는다(규칙 5 「한 건도 빠뜨리지 않는다」 — 빠진 건은 화면에서 사람이 확인)
+    const miss = n => (total && n < total) ? ` · ⚠️ 메모 ${total}건 중 ${total - n}건 판정 못 받음` : '';
+    if (!re.length) return miss(ai.length) ? Object.assign({}, j, { answer: String(j.answer || '') + miss(ai.length) }) : j;
+    const by = new Map();
+    for (const x of re) by.set(Number(x.i), x);
+    for (const x of ai) if (x && Number.isInteger(Number(x.i))) by.set(Number(x.i), x);   // 같은 번호가 둘 다 있으면 이번에 읽은 것
+    const order = (side.order || []).filter(i => by.has(i)), rest = [...by.keys()].filter(i => !order.includes(i));
+    const items = order.concat(rest).map(i => by.get(i));
+    return Object.assign({}, j, { title: `메모 ${items.length}건 읽음`, answer: `${memoSummary(items)} (앞 판정 재사용 ${re.length}건)${miss(items.length)}`, data: Object.assign({}, j.data, { items }) });
+}
+// 이번에 AI 가 읽은 판정을 보관함에 넣는다(7일 지난 것은 덜어 낸다). items = AI 가 올린 것만 · keys = { i: 열쇠 }
+function memoCachePut(cache, keys, items, now) {
+    const t = now || Date.now(), out = { v: 1, items: {} };
+    for (const [k, v] of Object.entries((cache && cache.items) || {})) if (v && t - Number(v.at) < MEMO_REUSE_DAYS * 86400e3) out.items[k] = v;
+    for (const x of (Array.isArray(items) ? items : [])) {
+        const k = x && keys && keys[Number(x.i)];
+        if (!k || !SHIP_OK.includes(x.ship)) continue;
+        const r = Object.assign({}, x); delete r.i;
+        out.items[k] = { at: t, r };
+    }
+    return out;
+}
+
+// ── #598 B: 되묻기에 실어 둔 「정해 둔 명령」 — 화면 버튼 답 「[이대로 진행]」이면 AI 없이 그 명령만 실행 ───────────
+//   되묻기 결과에 plan = { label, cmds: [['node', 'scripts/desk/talk-send.js', '{id}', '보낼글.json'], …] } 을 실어 둔다(배열 인자 · 셸 문자열 아님).
+//   '{id}' 는 실행하는 지시(「[이대로 진행]」)의 번호로 바뀐다. 허용 목록 밖이거나 모양이 이상하면 실행하지 않는다(종전 AI 길).
+const PLAN_GO = /^(\[검증469\]\s*)?\[이대로 진행\]$/;
+const planGo = text => PLAN_GO.test(String(text || '').trim());
+const PLAN_ALLOW = { 'talk-send.js': null, 'mall-guide.js': ['set'], 'mall-price.js': ['apply', 'hide', 'show'], 'mall-sync.js': ['run'], 'mall-link.js': ['link'] };
+const PLAN_BAD_CHAR = /[;&|<>`$"\r\n\0]/;
+function planCheck(plan) {
+    const bad = why => ({ ok: false, why });
+    if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return bad('plan 없음');
+    if (!Array.isArray(plan.cmds) || !plan.cmds.length) return bad('명령이 없음');
+    if (plan.cmds.length > 5) return bad('명령이 5개를 넘음');
+    const cmds = [];
+    for (const c of plan.cmds) {
+        if (!Array.isArray(c) || c.length < 2 || c.length > 22) return bad('명령 모양이 배열이 아님');
+        if (!c.every(a => typeof a === 'string' && a.length <= 2000)) return bad('인자가 글자가 아님');
+        if (c[0] !== 'node') return bad('node 명령만 됨');
+        const m = /^scripts[\\/]desk[\\/]([a-z0-9-]+\.js)$/.exec(c[1]);
+        if (!m) return bad('scripts/desk/ 안의 도구가 아님: ' + c[1].slice(0, 60));
+        if (!Object.prototype.hasOwnProperty.call(PLAN_ALLOW, m[1])) return bad('허용 목록에 없는 도구: ' + m[1]);
+        const subs = PLAN_ALLOW[m[1]], args = c.slice(2);
+        if (subs && !subs.includes(args[0])) return bad(`${m[1]} 는 ${subs.join('·')} 만 됨`);
+        if (!subs && !args.length) return bad('인자가 없음');
+        const x = args.find(a => PLAN_BAD_CHAR.test(a));
+        if (x != null) return bad('인자에 쓸 수 없는 문자가 있음');
+        cmds.push({ script: m[1], args });
+    }
+    return { ok: true, label: String(plan.label || '').slice(0, 80) || cmds.map(c => c.script).join(' → '), cmds };
+}
+// respond.js 가 결과에 실을 때 모양만 다듬는다(허용 검사는 실행하는 쪽이 한다)
+function planClean(plan) {
+    if (!plan || typeof plan !== 'object' || !Array.isArray(plan.cmds)) return null;
+    const cmds = plan.cmds.slice(0, 5).filter(Array.isArray).map(c => c.slice(0, 22).map(a => String(a).slice(0, 2000)));
+    return cmds.length ? { label: String(plan.label || '').slice(0, 80), cmds } : null;
+}
+// 실행 기록 → 답변 글. runs = [{ script, args, code, out, err }] (실패하면 그 자리에서 멈춘 것)
+function planAnswer(label, runs, total) {
+    const failed = runs.find(r => r.code !== 0);
+    const show = t => { const s = String(t || '').trim(); return s.length > 1800 ? '…' + s.slice(-1800) : s; };
+    const body = runs.map((r, i) => `${'①②③④⑤'[i] || (i + 1)} ${r.script.replace(/\.js$/, '')} ${r.args.join(' ')}\n${r.code === 0 ? '→ 끝' : '→ 실패' + (r.code === -2 ? '(시간 초과)' : '')}\n${show(r.code === 0 ? r.out : (r.err || r.out))}`).join('\n\n');
+    if (failed) return { kind: 'error', error: (`「${label}」 실행 중 ${runs.length}번째 명령에서 멈췄어요` + (runs.length < total ? `(남은 ${total - runs.length}개는 실행하지 않았어요)` : '') + ' — ' + show(failed.err || failed.out).split(/\r?\n/).filter(Boolean).slice(-1)[0]).slice(0, 900) };
+    return { kind: 'answer', title: ('실행: ' + label).slice(0, 80), answer: `실행: ${label} (AI 없이 정해 둔 명령 그대로)\n\n${body}` };
 }
 
 // ── ② 진행 상황 읽기 ─────────────────────────────────────────────────────────
@@ -190,4 +298,4 @@ function qtyAnswer(stdout) {
     return { title: '중간발주 집계 (' + String(meta.at || '').slice(5) + ')', answer: body + tail, attachments: files };
 }
 
-module.exports = { DEFAULTS, settings, route, settleImage, inlineFinalOrder, streamWatcher, livePreview, lenientString, stepText, qtyAnswer };
+module.exports = { DEFAULTS, settings, route, settleImage, inlineFinalOrder, memoKey, memoPlan, memoSummary, memoMerge, memoCachePut, MEMO_REUSE_DAYS, PLAN_GO, planGo, planCheck, planClean, planAnswer, streamWatcher, livePreview, lenientString, stepText, qtyAnswer };
