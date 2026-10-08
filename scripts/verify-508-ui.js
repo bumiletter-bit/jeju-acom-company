@@ -9,7 +9,7 @@ const jwt = require('jsonwebtoken'); const XLSX = require('xlsx-js-style');
 const FX = require('./fixtures-508.js');
 let pass = 0, fail = 0; const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + t + (d != null ? ' — ' + String(d).slice(0, 300) : '')); return !!c; };
 const note = (t, d) => console.log('  ℹ️ ' + t + (d != null ? ' — ' + String(d).slice(0, 400) : ''));
-const PORT = 3458, BASE = `http://localhost:${PORT}`;
+const PORT = Number(process.env.PORT508) || 3458, BASE = `http://localhost:${PORT}`;
 // 검사가 길어져(10분 넘음) 둘로 나눠 돌릴 수 있게: node scripts/verify-508-ui.js A = ⓪~⑭ · B = ⓪ + ⑮~ · 인자 없으면 전부
 const PART = (process.argv[2] || '').toUpperCase();
 const USER = { id: 1, username: 'ceo', role: 'admin', name: '전승범', position: '대표' };
@@ -835,8 +835,9 @@ async function resolveCards(pg, type) {
             ok(sd2Name === '직접적음' && /넣지 않았어요/.test(String(sd2Note)), '⑮3 #520 사람이 적다 만 글은 AI 값으로 덮지 않음', JSON.stringify({ sd2Name, sd2Note }));
             ok((await openCard(a.pg, CARD.order, '에이O3').count()) === 1, '⑮3 AI가 확실하지 않다고 한 주문 확인 카드는 열린 채');
             // 4. 카드 없는 주문
-            const info15 = await a.pg.evaluate(() => [...document.querySelectorAll('#fo-info li')].map(li => li.textContent).filter(t => /AI가 배송메세지/.test(t)));
-            ok(info15.length === 4 && (await a.pg.locator(SEL.card, { hasText: '에이P2' }).count()) === 0, '⑮4 카드 없는 주문: AI가 확실하다고 한 배송메세지는 바로 정리(참고 목록 4줄 · 카드 없음)', info15.length);
+            // #583 ①(대표 10/8 「AI 수정 건은 다 볼 수 있게」): 종전 = 카드 없이 참고 목록에만 → 이제 「AI가 처리」 카드로 보인다(확인할 것에는 안 셈 · 결과 파일 값은 같음)
+            const info15 = await a.pg.evaluate(() => [...document.querySelectorAll('#fo-cards .fo-card[data-fo-card="memo-edit"][data-ai-done]')].map(c => ({ did: (c.querySelector('[data-ai-did] p') || {}).textContent || '', hl: !!c.querySelector('mark.fo-hl'), undo: !!c.querySelector('[data-undo]') })));
+            ok(info15.length >= 3 && info15.every(x => /배송메세지 「[\s\S]*」 → 「/.test(x.did) && x.hl && x.undo) && (await a.pg.locator(SEL.card + '[data-ai-done]', { hasText: '에이P2' }).count()) === 1, '⑮4 카드 없는 주문: AI가 확실하다고 한 배송메세지 = 「AI가 처리」 카드(무엇 → 무엇 한 줄 · 손님 메모 형광 · [바꾸기]) — 종전엔 카드 없이 참고 목록에만', JSON.stringify(info15).slice(0, 300));
             // 5. 안전장치 · 6. 새 카드
             const anyS1 = await a.pg.locator(SEL.card, { hasText: '에이S1' }).count(), s2Has = await openCard(a.pg, 'memo-edit', '에이S2').count();
             ok(anyS1 === 0 && s2Has === 1, '⑮5 안전장치: 원문에 없는 글을 돌려주면 반영 안 됨(원문 유지) · 「문 앞」 메모를 「기본」으로 돌려주면 카드로', JSON.stringify({ S1카드: anyS1, S2카드: s2Has }));
@@ -1330,7 +1331,7 @@ async function resolveCards(pg, type) {
                 ok(/2S사이즈로!$/.test(J21['이일가'].opt) && /2S사이즈로!$/.test(J21['이일나'].opt) && !/사이즈로!$/.test(J21['이일다'].opt), '㉑ 준비: 「2S로」 메모 주문은 옵션에 「2S사이즈로!」 꼬리 · 사이즈 말이 없는 주문은 꼬리 없음', J21['이일가'].opt.slice(-20));
                 const sent21 = mp21.items.map(it => it.memo);
                 ok(sent21.includes(S1) && sent21.includes(S2) && !sent21.includes(S3) && mp21.items.filter(it => /사이즈/.test(it.memo) || it.memo === S1 || it.memo === S2).every(it => /사이즈 요청은 옵션에 반영됨/.test(it.hint)), '㉑1 사이즈 꼬리가 붙은 주문의 메모는 AI 묶음에 들어가고 hint 「사이즈 요청은 옵션에 반영됨」 · 꼬리 없는 주문의 「문 앞에 놔주세요」는 안 보냄', JSON.stringify(mp21.items.map(it => [it.memo.slice(0, 12), it.hint])));
-                ok((await pendingN(u.pg)) === 0 && (await u.pg.evaluate(() => [...document.querySelectorAll('#fo-info li')].filter(li => /AI가 배송메세지 정리/.test(li.textContent)).length)) === 2, '㉑2 응답 「기본」·「남길 글」(확실) → 카드 없이 정리(참고 목록 2줄)', JSON.stringify(await cardCount(u.pg)));
+                ok((await pendingN(u.pg)) === 0 && (await u.pg.evaluate(() => document.querySelectorAll('#fo-cards .fo-card[data-fo-card="memo-edit"][data-ai-done]').length)) === 2, '㉑2 응답 「기본」·「남길 글」(확실) → 「AI가 처리」 카드 2장(#583 · 확인할 것 0)', JSON.stringify(await cardCount(u.pg)));
                 await u.pg.click(SEL.make); await idle(u.pg); await u.pg.waitForSelector(SEL.save, { timeout: 15000 }); await u.pg.waitForTimeout(300);
                 const n21 = await u.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a21 = []; let st21 = null;
                 for (const nm of n21) { const [dl] = await Promise.all([u.pg.waitForEvent('download', { timeout: 20000 }), u.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's21-' + Date.now() + '.xlsx'); await dl.saveAs(f); const wb = XLSX.readFile(f);
@@ -1407,7 +1408,7 @@ async function resolveCards(pg, type) {
                     return { has: !!g, n: ms.length, lines: ta.value ? ta.value.split('\n').length : 0, t: ms.map(m => (m.textContent || '').trim()), k: ms.map(m => m.className.replace(/^m ?/, '').replace(' cur', '')), h: [...new Set(ms.map(m => Math.round(m.getBoundingClientRect().height)))], lh: cs.lineHeight, ws: cs.whiteSpace, padTop: [cs.paddingTop, getComputedStyle(g).paddingTop],
                         firstTop: ms[0] ? Math.round(ms[0].getBoundingClientRect().top - g.getBoundingClientRect().top) : null, stale: document.querySelector('.fo-ed').classList.contains('stale'), bar: (document.getElementById('fo-memo-bar') || {}).innerText || '', val: ta.value, sel: [ta.selectionStart, ta.selectionEnd], sameH: Math.abs(g.getBoundingClientRect().height - ta.getBoundingClientRect().height) < 2 }; });
                 const recvCards = pg => pg.evaluate(sel => Array.from(document.querySelectorAll(sel + '[data-fo-card="line-recv"]')).map(c => ({ title: c.querySelector('b').textContent, text: c.innerText.replace(/\s+/g, ' '), btns: Array.from(c.querySelectorAll('[data-fo-act]')).map(b => b.textContent.trim()) })), SEL.pending);
-                const info23 = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-info li')).map(li => li.textContent));
+                const info23 = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-info li')).map(li => (li.querySelector('.fo-itext') || li).textContent));   // #583 ⑨: 줄 앞 배지·뒤 [고치기] 버튼 글자는 빼고 본문만
                 let g0 = await gut(w.pg);
                 ok(g0.has && g0.t.every(x => !x) && g0.bar === '', '㉓1 판정 전에는 표시 칸이 비어 있음(표시 칸은 처음부터 있음)', JSON.stringify(g0.t));
                 await setCash(w.pg, null); await startWithMemo(w.pg, memo23.join('\n')); await w.pg.waitForTimeout(500);
@@ -1817,6 +1818,150 @@ async function resolveCards(pg, type) {
                 const inV = l => l.rej[0] >= 0 && l.rej[1] <= l.vw + 1 && l.photo[0] >= 0 && l.photo[1] <= l.vw + 1 && l.msg[1] <= l.vw + 1 && !l.over && !l.secOver && l.rej[2] >= 40 && l.photo[2] >= 40;
                 ok(l0.t === '확인' && inV(l0) && l1.t === '다시 판정' && inV(l1), '㉛ 폰 390px: 버튼 줄(확인/다시 판정 · 사진으로 넣기 · 안내 칸)이 화면 밖으로 안 넘침 — 안내 글이 길 때도 · 버튼 높이 40px 이상', JSON.stringify([l0, l1]));
                 ok(m31.errs.length === 0, '㉛ 폰 오류 0', m31.errs.join(' | ')); await m31.ctx.close();
+            }
+
+            // ── ㉜ #583(대표 10/8 실사용) — AI 처리 카드 · 읽는 중 띠 · 빨강 안내 · 메모 재확인 · 업그레이드 사이즈 버튼 · 직접 고치기 · 참고 줄 · 사진 붙여넣기 ──
+            console.log('\n㉜ #583 AI 처리 카드 · 메모 재확인 · 사이즈 버튼 · 직접 고치기 · 참고 줄');
+            {
+                const PNG32 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFklEQVR42mP8z8Dwn4EIwDiqkL4KAZKnCAHsjSN4AAAAAElFTkSuQmCC', 'base64');
+                const royal = String(base['옵션정보'] || ''), D32 = cat.byPartner[FX.P_DAESUNG] || [], gold32 = D32.find(n => /황금향/.test(n)) || D32[0];
+                const royalName = (cat.byPartner[FX.P_HYODON] || []).find(n => royal.includes(n)) || (cat.byPartner[FX.P_HYODON] || [])[0];
+                const other32 = (cat.byPartner[FX.P_HYODON] || []).find(n => n !== royalName) || gold32;
+                const AIM = '선물이라 예쁜 걸로 부탁드려요';
+                const rows32 = [mk('이가', { tel: '010-9300-1111' }), mk('이나', { tel: '010-9300-2222', opt: gold32 }), mk('이다', { tel: '010-9300-3333' }), mk('이라', { tel: '010-9300-4444', memo: AIM }), mk('이마', { tel: '010-9300-5555' }), mk('이바', { tel: '010-9300-6666' })];
+                const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
+                const gt = pg => pg.evaluate(() => Array.from(document.querySelectorAll('#fo-memo-gut .m')).map(m => (m.textContent || '').trim()));
+                const cardBy = (pg, sel, txt) => pg.locator(`#fo-cards .fo-card${sel}`).filter({ hasText: txt });
+                const run32 = async (vp, mobile, tag) => {
+                    const w = await mkChat(false, rows32, vp, mobile);
+                    w.chat.memoAns = it => (it.memo === AIM ? { memo: '기본', sure: true, why: '판매자에게 한 부탁' } : { memo: '그대로', sure: true });
+                    await setCash(w.pg, null); await w.pg.click(SEL.start); await settle(w.pg);
+                    // ① AI가 닫은 건이 카드로 보임
+                    const ai1 = await w.pg.evaluate(M => { const c = [...document.querySelectorAll('#fo-cards .fo-card[data-ai-done]')].find(x => x.textContent.includes('이라')); if (!c) return null; const hl = c.querySelector('mark.fo-hl'), did = c.querySelector('[data-ai-did] p'), cs = hl ? getComputedStyle(hl) : null;
+                        return { hl: hl ? hl.textContent : '', hlBg: cs ? cs.backgroundColor : '', hlW: cs ? cs.fontWeight : '', did: did ? did.textContent : '', badge: !!c.querySelector('[data-ai-badge]'), undo: !!c.querySelector('[data-undo]'), head: document.querySelector('#fo-cards .fo-cards-head h3').textContent, chip: (document.querySelector('.fo-kind.ai') || {}).textContent || '', pend: document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length }; }, AIM);
+                    ok(!!ai1 && ai1.hl === AIM && ai1.badge && ai1.undo && /배송메세지 「선물이라 예쁜 걸로 부탁드려요」 → 「기본 문구」/.test(ai1.did) && /판매자에게 한 부탁/.test(ai1.did), `㉜① ${tag} AI가 확실하다고 정리한 주문(종전엔 참고 목록에만)이 「AI가 처리」 카드로 — 손님 메모 원문 + 「배송메세지 「원문」 → 「기본 문구」 — 이유」 한 줄 + [바꾸기]`, JSON.stringify(ai1));
+                    ok(!!ai1 && ai1.hlBg === 'rgb(255, 243, 163)' && Number(ai1.hlW) >= 700 && /AI 처리 1건/.test(ai1.head) && /AI 처리 1/.test(ai1.chip) && ai1.pend === 0, `㉜① ${tag} 손님 메모 = 형광 바탕·굵게 · 머리 「AI 처리 1건」 · 칩 「AI 처리 1」 · 확인할 것 0건(AI가 닫음)`, JSON.stringify(ai1));
+                    await w.pg.click('.fo-kind.ai'); await w.pg.waitForTimeout(200);
+                    ok((await w.pg.locator('#fo-cards .fo-card').count()) === 1 && (await w.pg.locator('#fo-cards .fo-card[data-ai-done]').count()) === 1, `㉜① ${tag} 칩 「AI 처리」를 누르면 AI가 닫은 카드만 보임`);
+                    await w.pg.click('.fo-kind[data-kind=""]'); await w.pg.waitForTimeout(150);
+                    // ④ 빨강 안내 자리
+                    await w.pg.focus(SEL.memo); await w.pg.keyboard.type('0'); await w.pg.waitForTimeout(250);
+                    const s4 = await w.pg.evaluate(() => { const e = document.getElementById('fo-stale-msg'), cs = getComputedStyle(e), r = e.getBoundingClientRect(), p = document.getElementById('fo-memo-photo').getBoundingClientRect(), sec = document.getElementById('fo-memo-sec'); return { vis: !e.hidden && r.width > 0, t: e.textContent, bg: cs.backgroundColor, fg: cs.color, inSec: sec.contains(e), sameRow: e.parentElement === document.getElementById('fo-memo-photo').parentElement, after: r.top > p.top - 60, inMsg: document.getElementById('fo-in-msg').textContent }; });
+                    ok(s4.vis && /내용이 바뀌었어요/.test(s4.t) && s4.bg === 'rgb(254, 228, 226)' && s4.fg === 'rgb(180, 35, 24)' && s4.inSec && s4.sameRow && !/내용이 바뀌었어요/.test(s4.inMsg), `㉜④ ${tag} 메모를 고치면 「내용이 바뀌었어요」 = 빨강(#FEE4E2 · #B42318) · [확인]·[사진으로 넣기] 줄 안 · 「주문 불러오기」 옆에는 없음`, JSON.stringify(s4));
+                    // ⑤⑥ 업그레이드 + 날짜 없는 직원 줄
+                    await w.pg.fill(SEL.memo, ['010-9300-1111 업그레이드', '010-9300-2222 업그레이드', '010-9300-3333 4kg로 업그레이드', FX.usd(ship) + '\t010-9300-6666\t업그레이드\t네이버'].join('\n')); await w.pg.click(SEL.rejudge); await settle(w.pg);
+                    ok(await w.pg.evaluate(() => document.getElementById('fo-stale-msg').hidden), `㉜④ ${tag} 판정하면 빨강 안내 사라짐`);
+                    const g = await gt(w.pg), kinds = await w.pg.evaluate(() => [...document.querySelectorAll('#fo-cards .fo-kind')].map(b => b.textContent.trim()));
+                    const up1 = cardBy(w.pg, '[data-fo-card="size-up"]', '010-9300-1111'), up2 = cardBy(w.pg, '[data-fo-card="size-up"]', '010-9300-2222'), up6 = cardBy(w.pg, '[data-fo-card="size-up"]', '010-9300-6666');
+                    ok(/사이즈 고르기/.test(g[0]) && /귤 로얄과 주문 없음/.test(g[1]) && /사이즈 고르기/.test(g[3]) && (await up1.count()) === 1 && (await up2.count()) === 1 && (await up6.count()) === 1 && w.chat.fixPosts.length === 0, `㉜⑥ ${tag} 「번호 업그레이드」 줄(빈칸 꼴 · 탭 줄의 비고 칸) → 줄 표시 「사이즈 고르기」 + 사이즈 카드 · 클코 요청 0회`, JSON.stringify(g));
+                    ok(!/사이즈 고르기/.test(g[2]) && (await cardBy(w.pg, '[data-fo-card="size-up"]', '010-9300-3333').count()) === 0, `㉜⑥ ${tag} 「4kg로 업그레이드」(무게 말)는 사이즈 카드가 안 뜸 — 종전 규칙이 읽음`, g[2]);
+                    const rc3 = cardBy(w.pg, '[data-recheck][data-fo-card="order"]', '이다');
+                    const look = await w.pg.evaluate(() => { const c = document.querySelector('#fo-cards .fo-card[data-recheck][data-state="open"]'), cs = getComputedStyle(c), t = c.querySelector('.fo-tag'), ts = getComputedStyle(t); return { bc: cs.borderTopColor, bw: cs.borderTopWidth, tag: t.textContent, tbg: ts.backgroundColor, tfg: ts.color }; });
+                    ok((await rc3.count()) === 1 && /직원 메모 줄/.test(await rc3.innerText()) && /010-9300-3333 4kg로 업그레이드/.test(await rc3.innerText()) && /구매자 010-9300-3333/.test(await rc3.innerText()), `㉜⑤⑦ ${tag} 직원 메모 줄 때문에 뜬 카드 = 「메모 재확인」(주문 확인 아님) · 그 줄 원문 + 손님 번호 표시`, (await rc3.count()) ? (await rc3.innerText()).replace(/\s+/g, ' ').slice(0, 160) : '카드 없음');
+                    ok(look.tag === '메모 재확인' && look.bc === 'rgb(240, 68, 56)' && look.bw === '2px' && look.tbg === 'rgb(254, 228, 226)' && look.tfg === 'rgb(180, 35, 24)' && kinds.some(k => /^메모 재확인 \d/.test(k)), `㉜⑤ ${tag} 메모 재확인 카드 = 빨강 테두리 2px · 빨강 배지 · 칩 「메모 재확인 N」`, JSON.stringify({ look, kinds }));
+                    ok((await up2.locator('[data-size]').count()) === 0 && /귤 로얄과 주문에만/.test(await up2.innerText()), `㉜⑥ ${tag} 황금향 손님 = 사이즈 버튼 없음 + 안 되는 이유`, (await up2.innerText()).replace(/\s+/g, ' ').slice(0, 140));
+                    const szBox = await up1.locator('[data-size]').evaluateAll(bs => bs.map(b => { const r = b.getBoundingClientRect(); return [b.textContent, Math.round(r.width), Math.round(r.height)]; }));
+                    ok(szBox.map(x => x[0]).join(',') === '2S,S,M,L' && szBox.every(x => x[1] >= 44 && x[2] >= 44), `㉜⑥ ${tag} 사이즈 버튼 2S·S·M·L · 44px 이상`, JSON.stringify(szBox));
+                    await up1.locator('[data-size="M"]').click(); await w.pg.waitForTimeout(250);
+                    const opt1 = await w.pg.evaluate(sel => { const i = document.querySelector(sel).contentWindow.__ivt; const st = window.AkmFinalOrder.state; const e = i.S.merged.find(x => x.conv['수취인명'] === '이가'); return { tails: [...st.sizeTail.values()], gut: (document.querySelector('#fo-memo-gut .m') || {}).textContent, done: [...document.querySelectorAll('#fo-cards .fo-card[data-fo-card="size-up"][data-fo-done]')].map(c => c.querySelector('.fo-done').textContent) }; }, SEL.hidden);
+                    ok(opt1.tails.includes('M사이즈로!') && /사이즈 지정 1건/.test(opt1.gut) && opt1.done.some(t => /M사이즈로! · 귤 로얄과 1건/.test(t)), `㉜⑥ ${tag} [M]을 누르면 그 손님 귤 로얄과 주문에 「M사이즈로!」 · 줄 표시 「사이즈 지정 1건」 · 카드 닫힘`, JSON.stringify(opt1));
+                    // ⑦ 직접 고치기(메모 재확인 카드에서 옵션명·보내는 분)
+                    const fx3 = rc3.locator('details.fo-fix');
+                    await fx3.locator('summary').click(); await w.pg.waitForTimeout(150);
+                    const sumH = await fx3.locator('summary').evaluate(e => Math.round(e.getBoundingClientRect().height));
+                    await fx3.locator('[data-x="opt"]').fill('세상에 없는 이름'); await fx3.locator('[data-fix-apply]').click(); await w.pg.waitForTimeout(200);
+                    const bad7 = await cardBy(w.pg, '[data-recheck][data-fo-card="order"]', '이다').locator('[data-fix-msg]').innerText();
+                    ok(sumH >= 44 && /단가표\)에 없는 이름/.test(bad7) && (await w.pg.evaluate(() => window.AkmFinalOrder.state.patch.size)) === 0, `㉜⑦ ${tag} 단가표에 없는 옵션명은 안 받음(안내 · 바뀐 것 0) · 접이식 머리 44px`, bad7);
+                    const fx3b = cardBy(w.pg, '[data-recheck][data-fo-card="order"]', '이다').locator('details.fo-fix');
+                    await fx3b.locator('[data-x="opt"]').fill(other32); await fx3b.locator('[data-x="name"]').fill('홍길동'); await fx3b.locator('[data-x="phone"]').fill('010-1111-2222'); await fx3b.locator('[data-fix-apply]').click(); await w.pg.waitForTimeout(300);
+                    const p7 = await w.pg.evaluate(() => { const st = window.AkmFinalOrder.state, p = [...st.patch.values()][0] || {}; return { n: st.patch.size, opt: p.opt, name: p.sender && p.sender.name, by: p.by, list: document.getElementById('fo-patches').innerText.replace(/\s+/g, ' '), undo: document.querySelectorAll('#fo-cards [data-fix-undo]').length }; });
+                    ok(p7.n === 1 && p7.opt === other32 && p7.name === '홍길동' && p7.by === 'card' && /품목 이름 변경/.test(p7.list) && /보내는이 변경/.test(p7.list) && /되돌리기/.test(p7.list) && p7.undo === 1, `㉜⑦ ${tag} [적용] → 옵션명·보내는 분이 바뀌고 「말로 바꾼 것」 목록에 기록 + 카드에 [되돌리기]`, JSON.stringify(p7).slice(0, 260));
+                    return { w, rc3: () => cardBy(w.pg, '[data-recheck][data-fo-card="order"]', '이다'), up2, up6 };
+                };
+                const A32 = await run32({ width: 1400, height: 900 }, false, 'PC');
+                { const w = A32.w;
+                    // 파일까지: 사이즈 꼬리 · 옵션명 · 보내는 분이 결과에 들어가는지
+                    await A32.up6.locator('[data-size="2S"]').click(); await w.pg.waitForTimeout(150); await A32.up2.locator('[data-choice="skip"]').click(); await w.pg.waitForTimeout(150);
+                    await A32.rc3().locator('[data-choice="send"]').click(); await w.pg.waitForTimeout(200);
+                    for (let k = 0; k < 10 && (await pendingN(w.pg)) > 0; k++) { const b = w.pg.locator(SEL.pending + ' [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
+                    ok((await pendingN(w.pg)) === 0, '㉜ 준비: 남은 카드 0', JSON.stringify(await cardCount(w.pg)));
+                    await w.pg.click(SEL.make); await idle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 15000 }); await w.pg.waitForTimeout(300);
+                    const n32 = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a32 = [];
+                    for (const nm of n32.filter(v => /xlsx$/i.test(v) && !v.includes('스마트스토어'))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's32-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff, { cellStyles: true }); if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => a32.push(r)); }
+                    const R = nm => a32.find(r => r[3] === nm) || [];
+                    ok(String(R('이가')[4]) === royalName + ' M사이즈로!' && String(R('이바')[4]) === royalName + ' 2S사이즈로!' && String(R('이나')[4]) === gold32, '㉜⑥ 결과 파일: 고른 사이즈가 옵션 끝에(「M사이즈로!」「2S사이즈로!」) · 황금향은 그대로', JSON.stringify([R('이가')[4], R('이바')[4], R('이나')[4]]));
+                    ok(String(R('이다')[4]) === other32 && /^홍길동/.test(String(R('이다')[0])) && String(R('이라')[9]) === '고객님의 소중한 물건으로 파손주의 부탁드리겠습니다.!', '㉜①⑦ 결과 파일: 직접 고친 옵션명·보내는 분 반영 · AI가 정리한 배송메세지 = 기본 문구(종전 값과 같음)', JSON.stringify([R('이다')[4], R('이다')[0], R('이라')[9]]));
+                    // 되돌리기
+                    await A32.rc3().locator('[data-undo]').click().catch(() => { }); await w.pg.waitForTimeout(200);
+                    const ub = w.pg.locator('#fo-cards [data-fix-undo]').first(); if (await ub.count()) { await ub.click(); await settle(w.pg); }
+                    ok((await w.pg.evaluate(() => window.AkmFinalOrder.state.patch.size)) === 0 && !/품목 이름 변경/.test(await w.pg.evaluate(() => document.getElementById('fo-patches').innerText)), '㉜⑦ 카드의 [되돌리기] → 고친 것이 없어지고 목록에서도 빠짐');
+                    // ⑨ 참고 줄
+                    const info = await w.pg.evaluate(() => { const d = document.querySelector('#fo-info details'); if (d) d.open = true; return [...document.querySelectorAll('#fo-info li')].map(li => ({ t: li.innerText.replace(/\s+/g, ' '), kind: li.getAttribute('data-info-kind'), badge: (li.querySelector('.fo-ibadge') || {}).textContent || '', em: [...li.querySelectorAll('.fo-em')].map(e => e.textContent), emC: li.querySelector('.fo-em') ? getComputedStyle(li.querySelector('.fo-em')).color : '', go: (li.querySelector('[data-info-go]') || {}).textContent || '' })); });
+                    const iSize = info.find(x => /업그레이드\)로 사이즈 지정/.test(x.t) && /1111/.test(x.t));
+                    ok(!!iSize && iSize.badge === '사이즈' && iSize.em.includes('M사이즈로!') && iSize.emC === 'rgb(67, 56, 202)' && iSize.go === '고치기', '㉜⑨ 참고 줄: 종류 배지(사이즈) · 바뀐 결과 「M사이즈로!」 굵은 인디고 · [고치기]', JSON.stringify(iSize || info.slice(0, 3)));
+                    await w.pg.locator('#fo-info li', { hasText: '1111' }).filter({ hasText: '사이즈 지정' }).first().locator('[data-info-go]').click(); await w.pg.waitForTimeout(500);
+                    const go9 = await w.pg.evaluate(() => { const c = document.querySelector('#fo-cards .fo-card.fo-flash'); if (!c) return null; const d = c.querySelector('details.fo-fix'), r = c.getBoundingClientRect(); return { id: c.dataset.id, kind: c.getAttribute('data-fo-card'), open: !!(d && d.open), inView: r.top < innerHeight && r.bottom > 0, focus: !!(document.activeElement && document.activeElement.closest('.fo-fix')) }; });
+                    ok(!!go9 && go9.open && go9.inView && go9.focus, '㉜⑨ [고치기]를 누르면 그 주문 카드로 가서 「직접 고치기」가 펼쳐지고 강조 · 입력칸에 커서', JSON.stringify(go9));
+                    ok((await pendingN(w.pg)) <= 1, '㉜⑨ 참고 줄로 연 카드는 「확인할 것」에 세지 않음', String(await pendingN(w.pg)));
+                    // 사진: 붙여넣기 · 못 여는 그림
+                    w.chat.answer = () => ({ reply: '사진에서 1줄을 읽었어요', actions: [{ op: 'lines', text: '010-9300-5555 S사이즈' }] });
+                    const before = w.chat.posts.length;
+                    await w.pg.evaluate(b64 => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); const dt = new DataTransfer(); dt.items.add(new File([u], '캡처.png', { type: 'image/png' })); const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); document.getElementById('fo-memo').dispatchEvent(ev); }, PNG32.toString('base64'));
+                    await w.pg.waitForFunction(() => document.getElementById('fo-memo').value.includes('010-9300-5555'), null, { timeout: 30000 }).catch(() => { }); await settle(w.pg);
+                    ok(w.chat.posts.length === before + 1 && !!w.chat.posts[before].image_data && (await w.pg.inputValue(SEL.memo)).includes('010-9300-5555 S사이즈'), '㉜A 🔴 메모 칸에 캡처를 붙여넣기(Ctrl+V) → 창구 요청 1회(사진 포함) → 읽은 줄이 메모 칸에(종전 = 아무 일도 없음)', String(w.chat.posts.length - before));
+                    await w.pg.setInputFiles('#fo-memo-file', { name: '깨진그림.png', mimeType: 'image/png', buffer: Buffer.from('이건 그림이 아님') }); await w.pg.waitForTimeout(700);
+                    const bad = await w.pg.evaluate(() => ({ m: document.getElementById('fo-memo-msg').textContent, log: document.getElementById('fo-chat-log').innerText.slice(-120) }));
+                    ok(/이 사진 형식은 열 수 없어요/.test(bad.m) && /사진으로 넣기를 못 했어요/.test(bad.log) && w.chat.posts.length === before + 1, '㉜A 못 여는 그림 = 「이 사진 형식은 열 수 없어요 — 캡처(PNG·JPG)로 다시」 안내 칸 + 대화 칸에도 한 줄 · 요청 0회', bad.m);
+                    ok(w.errs.length === 0, '㉜ PC 오류 0', w.errs.join(' | ')); await w.ctx.close();
+                }
+                // ③ 읽는 중 띠 + ⑤ 클코가 고쳐 쓴 줄 카드(원문대로)
+                {
+                    const w = await mkChat(false, rows32); let hold = true;
+                    w.chat.memoAns = () => ({ memo: '그대로', sure: true });
+                    await w.ctx.route('**/api/agent-office/final-order/memo-read/9200', r => { if (r.request().method() === 'DELETE' || !hold) return r.fallback(); r.fulfill({ json: { ok: true, state: 'wait', status: '처리중', data: null, message: '' } }); });
+                    await setCash(w.pg, null); await w.pg.click(SEL.start);
+                    await w.pg.waitForFunction(() => { const b = document.getElementById('fo-ai-band'); return b && !b.hidden; }, null, { timeout: 60000 }).catch(() => { });
+                    await w.pg.waitForTimeout(2300);
+                    const b3 = await w.pg.evaluate(() => { const b = document.getElementById('fo-ai-band'), s = b.querySelector('b'), cs = s ? getComputedStyle(s) : null, bs = getComputedStyle(b); return { vis: !b.hidden && b.getBoundingClientRect().height > 0, t: b.innerText.replace(/\s+/g, ' '), fs: cs ? parseFloat(cs.fontSize) : 0, fw: cs ? cs.fontWeight : '', bw: bs.borderTopWidth, role: b.getAttribute('role') }; });
+                    ok(b3.vis && /AI가 손님 메모 1건을 읽고 있어요/.test(b3.t) && /작업 중입니다 · 기다려 주세요 · \d+초/.test(b3.t) && b3.fs >= 15 && Number(b3.fw) >= 700 && b3.bw === '2px' && b3.role === 'status', '㉜③ AI가 읽는 동안 큰 띠 — 「AI가 손님 메모 N건을 읽고 있어요 · 작업 중입니다 · 기다려 주세요 · N초」(15px 굵게 · 인디고 2px 테두리)', JSON.stringify(b3));
+                    const t1 = b3.t; await w.pg.waitForTimeout(1500); const t2 = await w.pg.evaluate(() => document.getElementById('fo-ai-band').innerText.replace(/\s+/g, ' '));
+                    hold = false; await settle(w.pg);
+                    ok(t1 !== t2 && (await w.pg.evaluate(() => document.getElementById('fo-ai-band').hidden)), '㉜③ 초가 흐르고(1초마다) · 읽기가 끝나면 띠가 사라짐', t1.slice(-8) + ' → ' + t2.slice(-8));
+                    w.chat.fixAnswer = bb => { const t = (String(bb.ask || '').match(/《번호\d+》/) || [])[0]; return { reply: '', actions: [{ op: 'lines', text: (t || '') + ' S사이즈' }] }; };
+                    await w.pg.fill(SEL.memo, '010-9300-1111 사이즈S'); await w.pg.click(SEL.rejudge);
+                    await w.pg.waitForFunction(() => /고쳐 썼어요/.test(document.getElementById('fo-memo-msg').textContent), null, { timeout: 60000 }).catch(() => { }); await settle(w.pg);
+                    const lf = cardBy(w.pg, '[data-fo-card="line-fix"]', '010-9300-1111');
+                    const lft = (await lf.count()) ? (await lf.innerText()).replace(/\s+/g, ' ') : '';
+                    ok(/메모 재확인/.test(lft) && /원래 적은 줄 010-9300-1111 사이즈S/.test(lft) && /클코가 고친 줄 010-9300-1111 S사이즈/.test(lft) && /이대로/.test(lft) && /원문대로/.test(lft) && /제외/.test(lft) && (await lf.getAttribute('data-recheck')) === '1', '㉜⑤ 클코가 고쳐 쓴 직원 줄 → 「메모 재확인」 카드(원래 적은 줄 / 클코가 고친 줄 · [이대로]/[원문대로]/[제외])', lft.slice(0, 200));
+                    await lf.locator('[data-choice="orig"]').click(); await settle(w.pg);
+                    const g5 = await gt(w.pg);
+                    ok((await w.pg.inputValue(SEL.memo)) === '010-9300-1111 사이즈S' && /사이즈 못 읽음/.test(g5[0]) && w.chat.fixPosts.length === 1 && (await cardBy(w.pg, '[data-fo-card="line-fix"]', '010-9300-1111').count()) === 0, '㉜⑤ [원문대로] → 메모 칸이 적은 그대로 돌아가고 규칙 판정(「사이즈 못 읽음」 그대로 남음) · 클코에게 다시 묻지 않음', JSON.stringify(g5));
+                    ok(w.errs.length === 0, '㉜③⑤ 오류 0', w.errs.join(' | ')); await w.ctx.close();
+                }
+                // 폰 390 + 야간 대비
+                const M32 = await run32({ width: 390, height: 844 }, true, '폰390');
+                { const w = M32.w;
+                    await w.pg.focus(SEL.memo); await w.pg.keyboard.type(' '); await w.pg.waitForTimeout(200);
+                    await w.pg.evaluate(() => { const d = document.querySelector('#fo-info details'); if (d) d.open = true; document.querySelectorAll('#fo-cards details.fo-fix').forEach(x => { x.open = true; }); const b = document.getElementById('fo-ai-band'); b.hidden = false; b.innerHTML = '<span class="fo-aiband-dot"></span><b>AI가 손님 메모 12건을 읽고 있어요</b><span class="fo-aiband-sub">작업 중입니다 · 기다려 주세요 · <span class="fo-aiband-sec">1분 12초</span></span>'; });
+                    const m = await w.pg.evaluate(() => { const small = []; document.querySelectorAll('#fo-cards [data-size], #fo-cards .fo-fix > summary, #fo-cards [data-fix-apply], #fo-cards [data-fix-undo], #fo-info [data-info-go], #fo-cards .fo-kind, #fo-cards .fo-fix input, #fo-cards .fo-fix textarea').forEach(e => { const r = e.getBoundingClientRect(); if (r.width && r.height < 43.5) small.push(e.className + ':' + Math.round(r.height)); });
+                        const over = []; document.querySelectorAll('#fo-panel .fo-aiband, #fo-panel .fo-stale, #fo-panel .fo-card, #fo-panel .fo-fix, #fo-info li, #fo-panel .fo-sizes').forEach(e => { const r = e.getBoundingClientRect(); if (r.width && r.right > innerWidth + 1) over.push(e.className + ':' + Math.round(r.right)); });
+                        return { sw: document.documentElement.scrollWidth, body: document.querySelector('.fo-body').scrollWidth, bodyC: document.querySelector('.fo-body').clientWidth, small, over }; });
+                    ok(m.sw <= 390 && m.body <= m.bodyC + 1 && !m.over.length, '㉜ 폰 390: 새 띠·빨강 안내·메모 재확인 카드·사이즈 버튼·직접 고치기·참고 줄이 가로로 안 넘침(scrollWidth ≤ 390)', JSON.stringify(m));
+                    ok(!m.small.length, '㉜ 폰 390: 새 누르는 요소(사이즈 버튼 · 직접 고치기 머리·입력칸·[적용]·[되돌리기] · 참고 [고치기] · 칩) 44px 이상', JSON.stringify(m.small.slice(0, 8)));
+                    // 야간 대비
+                    await w.pg.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark'); }); await w.pg.waitForTimeout(300);
+                    const low = await w.pg.evaluate(() => {
+                        const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; };
+                        const rgb = s => { const m = String(s).match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(',').map(x => parseFloat(x)); return { c: p.slice(0, 3), a: p[3] == null ? 1 : p[3] }; };
+                        const bgOf = el => { let out = [14, 17, 34]; const chain = []; for (let e = el; e; e = e.parentElement) chain.unshift(e); chain.forEach(e => { const b = rgb(getComputedStyle(e).backgroundColor); if (b && b.a > 0) out = out.map((v, i) => v * (1 - b.a) + b.c[i] * b.a); }); return out; };
+                        const bad = []; let n = 0;
+                        document.querySelectorAll('#fo-ai-band b, #fo-ai-band .fo-aiband-sub, #fo-stale-msg, #fo-cards .fo-card[data-recheck] .fo-tag, #fo-cards .fo-card[data-recheck] .fo-line p, #fo-cards .fo-card[data-recheck] .fo-line span, #fo-cards mark.fo-hl, #fo-cards [data-ai-did] p, #fo-cards [data-ai-did] span, #fo-cards [data-size], #fo-cards .fo-fix > summary, #fo-cards .fo-fix > summary small, #fo-cards .fo-fix label, #fo-cards .fo-kind, #fo-info .fo-ibadge, #fo-info .fo-itext, #fo-info .fo-em, #fo-info [data-info-go]').forEach(el => { const r = el.getBoundingClientRect(); if (!r.width || !(el.textContent || '').trim()) return; n++; const f = rgb(getComputedStyle(el).color), b = bgOf(el); const L1 = lum(f.c), L2 = lum(b), cr = (Math.max(L1, L2) + .05) / (Math.min(L1, L2) + .05); if (cr < 4.5) bad.push((el.className || el.tagName) + ' ' + cr.toFixed(2)); });
+                        const white = [...document.querySelectorAll('#fo-panel .fo-aiband, #fo-panel .fo-stale, #fo-panel .fo-card, #fo-info li, #fo-panel .fo-fix input, #fo-panel .fo-btn.fo-size')].filter(e => { const b = rgb(getComputedStyle(e).backgroundColor); return e.getBoundingClientRect().width && b && b.a > .5 && lum(b.c) > .7; }).length;
+                        return { n, bad, white }; });
+                    await w.pg.evaluate(() => { document.documentElement.removeAttribute('data-ao-theme'); });
+                    ok(low.n >= 20 && !low.bad.length && low.white === 0, '㉜ 야간: 새 요소 글자 대비 4.5 미만 0 · 흰 칸 0', JSON.stringify(low).slice(0, 400));
+                    ok(w.errs.length === 0, '㉜ 폰 오류 0', w.errs.join(' | ')); await w.ctx.close();
+                }
             }
 
             // 창구가 안 집음(40초)

@@ -466,11 +466,30 @@
     //   따로 떼어(expect) 메모 줄에 남기지 않는다 — 남기면 「번호 2건」이 「오늘 발송·손님 메모 무시」 줄로 읽혀 손님 메모가 조용히 무시되고 건수 카드가 떴다.
     const SIZE_TOK = /(^|[ \t])[.,·/:;\-]*(2s|2l|s|m|l)[ ]*(?:사이즈|싸이즈|size)?[ ]*(?:으로|로)?!?[.,]?(?=$|[ \t])/i;
     const SIZE_CNT = /^(\d{1,2})건$/;
-    const SIZE_FILLER = /^(?:사이즈|싸이즈|size|요청|부탁|부탁해요?|부탁드려요?|부탁드립니다|해\s*줘요?|해주세요|로|으로|요)[!.]*$/i;
+    const SIZE_FILLER = /^(?:사이즈|싸이즈|size|업그레이드|업글|요청|부탁|부탁해요?|부탁드려요?|부탁드립니다|해\s*줘요?|해주세요|로|으로|요)[!.]*$/i;
+    // #583(대표 10/8 「번호 업그레이드」): 사이즈 글자 없이 「업그레이드」만 적은 줄 — 어느 사이즈인지는 화면 카드에서 사람이 고른다(ups).
+    //   줄에 번호·날짜·플랫폼·건수 말고 다른 낱말이 있으면(「4kg 업그레이드」) 손대지 않는다 — 종전 규칙이 읽는다.
+    const UP_TOK = /^(?:사이즈)?(?:업그레이드|업글|upgrade)(?:로|요)?[!.]*$/i;
+    const UP_OK = /^(?:\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2}|네이버|자사몰|쿠팡|카페24|스마트스토어)$/;
+    function upLine(line, srcLine) {
+        const toks = line.split(/[ \t]+/).filter(Boolean); if (!toks.some(t => UP_TOK.test(t))) return null;
+        const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
+        if (!key) return null;
+        let expect = null; const keep = [];
+        for (const t of toks) {
+            if (t === key || UP_OK.test(t)) { keep.push(t); continue; }
+            if (UP_TOK.test(t) || SIZE_FILLER.test(t)) continue;
+            if (SIZE_CNT.test(t)) { expect = parseInt(t.match(SIZE_CNT)[1], 10); continue; }
+            return null;
+        }
+        let kept = line; toks.filter(t => !keep.includes(t)).forEach(tok => { kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); });
+        return { up: { srcLine, raw: line.trim(), key, digits: dg(key), expect }, text: keep.length === 1 ? '' : kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '') };
+    }
     function sizeLines(text) {
-        const lines = String(text == null ? '' : text).split('\n'), sizes = [];
+        const lines = String(text == null ? '' : text).split('\n'), sizes = [], ups = [];
         const out = lines.map((raw, srcLine) => {
-            const line = raw.replace(/\r/g, ''); const m = line.match(SIZE_TOK); if (!m) return raw;
+            const line = raw.replace(/\r/g, ''); const m = line.match(SIZE_TOK);
+            if (!m) { const u = upLine(line, srcLine); if (!u) return raw; ups.push(u.up); return u.text; }
             const rest = line.slice(0, m.index) + (m[1] || '') + line.slice(m.index + m[0].length);
             let toks = rest.split(/[ \t]+/).filter(Boolean);
             const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
@@ -485,7 +504,7 @@
             if (toks.length === 1) return '';
             return kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');   // 탭 줄은 탭 칸을 그대로(비고 칸만 비워짐) · 빈칸 줄은 빈칸 하나로
         });
-        return { text: out.join('\n'), sizes };
+        return { text: out.join('\n'), sizes, ups };
     }
     function prepLines(text, opt) {
         const o = opt || {}; const today = o.realToday || new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10); const shipDays = Array.isArray(o.shipDays) ? o.shipDays : [];

@@ -397,3 +397,76 @@ html[data-ao-theme="dark"] .fo-x:hover { background: rgba(255, 255, 255, .12); }
 /* #575 [확인] 버튼 — 판정이 낡으면 [다시 판정](주황 테두리)으로 눈에 띄게 */
 #fo-rejudge.stale { background: #FFF7E6; color: #B54708; border-color: #F59E0B; }
 html[data-ao-theme="dark"] #fo-rejudge.stale { background: #3A2E12; color: #FBBF4A; border-color: #6E5416; }
+
+/* ══ #583(대표 10/8 실사용) — AI 읽는 중 띠 · 빨강 안내 · 메모 재확인 카드 · 사이즈 버튼 · 직접 고치기 · 참고 줄 강조 ══ */
+/* ③ 읽는 중 띠: 인디고 테두리 + 굵은 글 · 왼쪽 점이 깜박(투명도만) */
+.fo-aiband { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 12px 14px; border: 2px solid var(--f-accent); border-radius: 12px; background: var(--f-accent-soft); color: var(--f-accent-dark); }
+.fo-aiband[hidden] { display: none !important; }
+.fo-aiband b { font-size: 15px; font-weight: 800; line-height: 1.4; }
+.fo-aiband-sub { font-size: 13px; font-weight: 700; color: #B54708; font-variant-numeric: tabular-nums; }
+.fo-aiband-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--f-accent); animation: fo-pulse 1.1s ease-in-out infinite; }
+@keyframes fo-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .fo-aiband-dot { animation: none; } }
+/* ④ 「내용이 바뀌었어요」 = 빨강 알약([확인]·[사진으로 넣기] 옆) */
+.fo-stale { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 12px; border-radius: 999px; border: 1px solid #FDA29B; background: #FEE4E2; color: #B42318; font-size: 13px; font-weight: 800; line-height: 1.4; }
+.fo-stale[hidden] { display: none !important; }
+#fo-memo-sec.fo-drop { outline: 2px dashed var(--f-accent); outline-offset: 4px; border-radius: 12px; }
+/* ① 손님 메모 형광 · AI 처리 줄 · AI 칩 */
+.fo-hl { background: #FFF3A3; color: #101828; font-weight: 700; padding: 1px 4px; border-radius: 4px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.fo-line.fo-ai-did span { color: #4F46E5; font-weight: 700; }
+.fo-line.fo-ai-did p { color: #3730A3; font-weight: 700; }
+.fo-card[data-ai-done] { border-color: #C7CBFF; background: #FAFAFF; }
+.fo-kind.ai { border-color: #C7CBFF; color: #4F46E5; }
+/* ⑤ 메모 재확인 = 빨강 */
+.fo-card[data-recheck][data-state="open"] { border: 2px solid #F04438; background: #FFF5F4; }
+.fo-tag[data-k="recheck"] { background: #FEE4E2; color: #B42318; }
+.fo-kind.recheck { border-color: #FDA29B; color: #B42318; }
+.fo-kind.recheck.on { background: #FEE4E2; border-color: #F04438; color: #B42318; }
+/* ⑥ 사이즈 버튼 */
+.fo-sizes { display: flex; flex-wrap: wrap; gap: 8px; }
+.fo-btn.fo-size { min-width: 56px; font-size: 15px; font-weight: 800; border-color: #C7CBFF; color: var(--f-accent); }
+.fo-btn.fo-size:hover { background: var(--f-accent-soft); }
+/* ⑦ 직접 고치기 */
+.fo-fix { border-top: 1px dashed var(--f-card-line); padding-top: 8px; }
+.fo-fix > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 44px; cursor: pointer; font-size: 13px; font-weight: 700; color: var(--f-accent); }
+.fo-fix > summary small { font-size: 12px; font-weight: 500; color: var(--f-sub); }
+.fo-fix > summary:focus-visible { outline: 2px solid var(--f-accent); outline-offset: 2px; border-radius: 6px; }
+.fo-fix[open] { display: flex; flex-direction: column; gap: 10px; }
+.fo-card.fo-flash { box-shadow: 0 0 0 3px rgba(79, 70, 229, .45); transition: box-shadow 200ms var(--f-ease); }
+/* ⑨ 참고 줄: 배지 · 강조 · [고치기] */
+.fo-info ul { padding-left: 0; list-style: none; gap: 6px; }
+.fo-info li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 10px; border: 1px solid var(--f-line); border-radius: 10px; background: #fff; color: var(--f-ink); line-height: 1.55; }
+.fo-info li:has(.fo-igo) { cursor: pointer; }
+.fo-info li:has(.fo-igo):hover { background: var(--f-soft); }
+.fo-itext { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.fo-ibadge { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: #F2F4F7; color: #475467; }
+.fo-ibadge[data-k="memo"] { background: #EEF0FF; color: #4F46E5; }
+.fo-ibadge[data-k="size"] { background: #E7F8EF; color: #067647; }
+.fo-ibadge[data-k="warn"] { background: #FEF0C7; color: #93370D; }
+.fo-ibadge[data-k="indiv"] { background: #FEE4E2; color: #B42318; }
+.fo-em { color: #4338CA; font-weight: 800; }
+.fo-btn.sm.fo-igo { min-height: 32px; padding: 0 10px; font-size: 12.5px; color: var(--f-accent); border-color: #C7CBFF; }
+@media (max-width: 640px) { .fo-btn.sm.fo-igo { min-height: 44px; } .fo-btn.fo-size { min-width: 60px; } .fo-stale { min-height: 36px; } }
+/* 야간 */
+html[data-ao-theme="dark"] .fo-aiband { background: var(--f-accent-soft); border-color: var(--f-accent); color: var(--f-ink); }
+html[data-ao-theme="dark"] .fo-aiband-sub { color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-stale { background: var(--fd-err-bg); border-color: var(--fd-err-line); color: var(--f-err); }
+html[data-ao-theme="dark"] .fo-hl { background: #5C4A0E; color: #FFE58A; }
+html[data-ao-theme="dark"] .fo-line.fo-ai-did span, html[data-ao-theme="dark"] .fo-line.fo-ai-did p { color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-card[data-ai-done] { border-color: var(--fd-accent-line); background: #1A1E3A; }
+html[data-ao-theme="dark"] .fo-kind.ai { border-color: var(--fd-accent-line); color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-card[data-recheck][data-state="open"] { border-color: #B8423F; background: #2E1A1C; }
+html[data-ao-theme="dark"] .fo-tag[data-k="recheck"] { background: var(--fd-err-bg); color: var(--f-err); }
+html[data-ao-theme="dark"] .fo-kind.recheck { border-color: var(--fd-err-line); color: var(--f-err); }
+html[data-ao-theme="dark"] .fo-kind.recheck.on { background: var(--fd-err-bg); border-color: #B8423F; color: var(--f-err); }
+html[data-ao-theme="dark"] .fo-btn.fo-size { border-color: var(--fd-accent-line); color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-btn.fo-size:hover { background: var(--f-accent-soft); }
+html[data-ao-theme="dark"] .fo-info li { background: var(--f-soft); }
+html[data-ao-theme="dark"] .fo-info li:has(.fo-igo):hover { background: #232948; }
+html[data-ao-theme="dark"] .fo-ibadge { background: #262C48; color: var(--f-sub); }
+html[data-ao-theme="dark"] .fo-ibadge[data-k="memo"] { background: var(--f-accent-soft); color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-ibadge[data-k="size"] { background: var(--fd-ok-bg); color: var(--fd-ok); }
+html[data-ao-theme="dark"] .fo-ibadge[data-k="warn"] { background: var(--fd-warn-bg); color: var(--fd-warn); }
+html[data-ao-theme="dark"] .fo-ibadge[data-k="indiv"] { background: var(--fd-err-bg); color: var(--f-err); }
+html[data-ao-theme="dark"] .fo-em { color: var(--fd-lime); }
+html[data-ao-theme="dark"] .fo-btn.sm.fo-igo { color: var(--f-accent); border-color: var(--fd-accent-line); }
