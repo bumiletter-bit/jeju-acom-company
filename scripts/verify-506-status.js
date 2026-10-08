@@ -31,7 +31,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const tokA = jwt.sign({ id: ceo.id, name: ceo.name, position: '대표', role: 'admin' }, 'verifytest', { expiresIn: '20m' });
         const tokS = jwt.sign({ id: staff.id, name: staff.name, position: staff.position || '', role: 'staff' }, 'verifytest', { expiresIn: '20m' });
         const get = async tok => { const r = await fetch(`http://localhost:${PORT}/api/agent-office/desk-status`, { headers: { Authorization: 'Bearer ' + tok, Connection: 'close' } }); return { status: r.status, j: await r.json() }; };
-        const busyNow = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE is_deleted=false AND status IN ('처리중','판독완료','확인표작성')`)).rows[0].c;
+        // #596(대표 10/8): 상태 카드는 본인 지시만 — 건수·목록·state 가 로그인 계정 기준이고 이름(created_by)은 안 내려온다
+        const busyOf = async id => (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE is_deleted=false AND created_by_id = $1 AND status IN ('처리중','판독완료','확인표작성')`, [id])).rows[0].c;
+        const busyNow = await busyOf(ceo.id), staffBusy = await busyOf(staff.id);
         const s0 = await get(tokA);
         ok('desk-status 200 · working_list 는 배열', s0.status === 200 && Array.isArray(s0.j.working_list), `online=${s0.j.online} state=${s0.j.state} working=${s0.j.working} list=${s0.j.working_list && s0.j.working_list.length} · 지금 실제 처리중 ${busyNow}건`);
         if (!s0.j.online) info('⚠️ 창구가 자리 비움(offline) 상태라 서버가 working_list를 [] 로 내린다 — 아래 내용 검사는 online일 때만 의미 있음');
@@ -47,17 +49,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const s1 = await get(tokA);
         const w = (s1.j.working_list || []).find(x => x.id === child);
         if (s1.j.online) {
-            ok('처리중으로 만든 시험 지시가 working_list에 옴 · 항목 = {id, created_by, content, reply_to, parent_content}', !!w && w.created_by === '시험506 대표' && w.reply_to === parent && typeof w.content === 'string' && typeof w.parent_content === 'string' && Object.keys(w).sort().join() === 'content,created_by,id,parent_content,reply_to', w ? Object.keys(w).sort().join() : `목록 ${JSON.stringify((s1.j.working_list || []).map(x => x.id))}`);
+            ok('(본인) 처리중으로 만든 시험 지시가 working_list에 옴 · 항목 = {id, content, reply_to, parent_content} — #596 이름(created_by) 칸 없음', !!w && !('created_by' in w) && w.reply_to === parent && typeof w.content === 'string' && typeof w.parent_content === 'string' && Object.keys(w).sort().join() === 'content,id,parent_content,reply_to', w ? Object.keys(w).sort().join() : `목록 ${JSON.stringify((s1.j.working_list || []).map(x => x.id))}`);
+            ok('(본인) #596 state = busy · working = 본인 처리 중 건수 · 응답 어디에도 이름 글자 없음', s1.j.state === 'busy' && s1.j.working === busyNow + 1 && !/시험506|created_by/.test(JSON.stringify(s1.j)) && typeof s1.j.others_busy === 'boolean', `state=${s1.j.state} working=${s1.j.working} others_busy=${s1.j.others_busy}`);
             ok('content·parent_content 는 80자까지만 · image_data·result·image_mime 은 안 옴', !!w && w.content.length === 80 && w.parent_content.length === 80 && !('image_data' in w) && !('result' in w) && !('image_mime' in w), w ? `content ${w.content.length}자 · parent ${w.parent_content.length}자` : '');
             ok('working 수에 시험 지시 포함 · 부모(완료)는 목록에 없음', s1.j.working >= 1 && !(s1.j.working_list || []).some(x => x.id === parent), `working=${s1.j.working}`);
             const s2 = await get(tokS);
-            ok('직원 계정도 같은 working_list(화면 문구용 · 성함·요청만)', s2.status === 200 && Array.isArray(s2.j.working_list) && s2.j.working_list.some(x => x.id === child), `list=${s2.j.working_list && s2.j.working_list.length}`);
+            const raw2 = JSON.stringify(s2.j);
+            ok('#596 다른 계정(직원) 응답에 남의 지시 없음 — 목록에 시험 지시 없음 · 그 글·이름 글자 0 · 건수는 본인 것만', s2.status === 200 && Array.isArray(s2.j.working_list) && !s2.j.working_list.some(x => x.id === child || x.id === parent) && !/검증469|시험506|created_by|나나나|가가가/.test(raw2) && s2.j.working === staffBusy && s2.j.working_list.length === Math.min(staffBusy, 8), `working=${s2.j.working}(본인 처리 중 ${staffBusy}) · list=${s2.j.working_list.length}`);
+            ok('#596 다른 계정 state = 본인 지시가 없으면 idle(남의 것이 돌아도) · order_id 없음 · others_busy = true(참/거짓만)', s2.j.state === (staffBusy > 0 ? 'busy' : 'idle') && (staffBusy > 0 || s2.j.order_id == null) && s2.j.others_busy === true, `state=${s2.j.state} order_id=${s2.j.order_id} others_busy=${s2.j.others_busy}`);
         } else {
             ok('(offline) working_list 는 빈 배열 · working 수에는 시험 지시 포함', Array.isArray(s1.j.working_list) && s1.j.working_list.length === 0 && s1.j.working >= 1, `working=${s1.j.working}`);
             info('온라인 때의 항목 내용 검사는 창구가 켜진 뒤 다시 돌려야 함');
         }
         const S = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-        ok('server.js: 목록 SQL = 처리중·판독완료·확인표작성 · LEFT(…, 80) · LIMIT 8 · online 일 때만 · 읽기만(UPDATE/INSERT 없음)', /LEFT\(o\.content, 80\) AS content/.test(S) && /LEFT\(p\.content, 80\)/.test(S) && /status IN \('처리중','판독완료','확인표작성'\) ORDER BY o\.id ASC LIMIT 8/.test(S) && /working_list: online \? wq\.rows : \[\]/.test(S));
+        ok('server.js: 목록 SQL = 처리중·판독완료·확인표작성 · LEFT(…, 80) · LIMIT 8 · online 일 때만 · 읽기만(UPDATE/INSERT 없음)', /LEFT\(o\.content, 80\) AS content/.test(S) && /LEFT\(p\.content, 80\)/.test(S) && /o\.created_by_id = \$1 AND o\.status IN \('처리중','판독완료','확인표작성'\) ORDER BY o\.id ASC LIMIT 8/.test(S) && /working_list: online \? wq\.rows : \[\]/.test(S) && !/SELECT o\.id, o\.created_by, LEFT\(o\.content, 80\)/.test(S));
     } catch (e) {
         ok('검증 실행', false, e.message);
     } finally {

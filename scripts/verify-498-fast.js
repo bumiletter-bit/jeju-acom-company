@@ -385,11 +385,11 @@ async function ui() {
         const btn = await A.pg.evaluate(() => { const b = document.getElementById('desk-qty-now'); return b ? { vis: b.getClientRects().length > 0, text: b.textContent.trim(), h: Math.round(b.getBoundingClientRect().height) } : null; });
         ok('(f) #desk-qty-now 버튼이 보임', !!btn && btn.vis, btn ? `「${btn.text}」 높이 ${btn.h}px` : '없음');
         await A.pg.click('#desk-qty-now');
-        const f = await waitFor(async () => A.st.posts.length ? A.st.posts : null, 5000);
-        ok("(f) 클릭 → POST /api/agent-office/orders 본문 content = '중간발주 뽑아줘' · 1회만", !!f && f.length === 1 && f[0] && f[0].content === '중간발주 뽑아줘' && Object.keys(f[0]).join() === 'content', JSON.stringify(f));
-        const f2 = await waitFor(async () => { const s = await rowState(A.pg, 990101); return s.found ? s : null; }, 6000);
-        ok('(f) 보낸 지시가 목록 맨 위에 「대기」로 보임', !!f2 && /대기|기다리/.test((f2.badge || '') + (f2.line || '')), f2 ? `${f2.badge} · ${(f2.line || '').trim()}` : '');
-        ok('(f) 보낸 지시와 fast.route() 판정이 맞물림(direct_qty)', F.route({ content: f && f[0] && f[0].content, status: '대기' }).lane === 'direct_qty');
+        await sleep(1500);
+        ok('(f) #595 클릭 → 창구 지시를 보내지 않음(POST 0) · 중간발주 카드가 열림(브라우저가 바로 집계)', A.st.posts.length === 0 && await A.pg.evaluate(() => !document.getElementById('desk-qty').hidden), 'POST ' + A.st.posts.length);
+        await A.pg.waitForFunction(() => !document.getElementById('desk-qty-now').disabled, null, { timeout: 60000 }).catch(() => { });
+        await A.pg.click('#qty-close');
+        ok('(f) 글로 친 「중간발주 뽑아줘」는 종전대로 대기 프로그램 직행 길(direct_qty)', F.route({ content: '중간발주 뽑아줘', status: '대기' }).lane === 'direct_qty');
         ok('(g) 1440px — pageerror 0 · console error 0', A.errors.length === 0 && A.cons.length === 0, [...A.errors, ...A.cons].join(' | ').slice(0, 400));
         info('가로챈 쓰기 요청(실서버 미도달): ' + (A.st.writes.length ? A.st.writes.join(', ') : '없음') + ` · POST orders ${A.st.posts.length}회`);
         await A.ctx.close();
@@ -538,8 +538,10 @@ async function ui() {
         ok('(quick) 「정산 이미지 올리기」 — 입력칸이 비었으면 「정산관리에 올려줘」 채우고 파일 고르기 열림 · 보내지 않음', !!fc2 && sv2.v === '정산관리에 올려줘' && M.st.posts.length === p0, JSON.stringify(sv2));
         await M.pg.fill('#desk-input', '');
         await M.pg.click('#desk-qty-now');
-        const pq = await waitFor(async () => M.st.posts.length > p0 ? M.st.posts : null, 5000);
-        ok("(quick) 「중간발주 바로 받기」(자리 옮긴 뒤에도) POST 1회 · content = '중간발주 뽑아줘'", !!pq && pq.length === p0 + 1 && pq[pq.length - 1].content === '중간발주 뽑아줘');
+        await sleep(1500);
+        ok('(quick) #595 「중간발주」 = POST 0 · 중간발주 카드가 열림', M.st.posts.length === p0 && await M.pg.evaluate(() => !document.getElementById('desk-qty').hidden));
+        await M.pg.waitForFunction(() => !document.getElementById('desk-qty-now').disabled, null, { timeout: 60000 }).catch(() => { });
+        await M.pg.click('#qty-close');
         await M.pg.evaluate(() => { window.scrollTo(0, 0); const m = document.querySelector('.main-content'); if (m) m.scrollTop = 0; });
         await sleep(300);
         await shot(M.pg, '3-1440-입력칸-자주쓰는일');
@@ -568,7 +570,7 @@ async function ui() {
         const pFine = await P.pg.evaluate(() => window.matchMedia('(pointer: fine)').matches);
         await P.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'); if (g) g.scrollIntoView({ block: 'end' }); });
         const pq2 = await P.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'), r = g.getBoundingClientRect(); const bs = Array.from(g.querySelectorAll('button')).map(b => b.getBoundingClientRect()); return { inView: r.left >= 0 && r.right <= window.innerWidth + 1, btnIn: bs.every(b => b.left >= r.left - 1 && b.right <= r.right + 1), minH: Math.min(...bs.map(b => Math.round(b.height))), rows: new Set(bs.map(b => Math.round(b.top))).size, overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2 }; });
-        ok('(quick) 390 폰 — 「자주 쓰는 일」 버튼이 화면 안(줄바꿈됨) · 가로 넘침 없음 · 누를 높이 44px 이상', pq2.inView && pq2.btnIn && !pq2.overflow && pq2.minH >= 44, JSON.stringify(pq2));
+        ok('(quick) 390 폰 — 「자주 쓰는 일」 버튼 4개가 전부 화면 안(#594 두 줄로 접힘) · 가로 넘침 없음 · 누를 높이 44px 이상', pq2.inView && pq2.btnIn && pq2.rows <= 2 && !pq2.overflow && pq2.minH >= 44, JSON.stringify(pq2));
         await shot(P.pg, '5-390-입력칸');
         await P.pg.tap('#desk-input');
         await P.pg.keyboard.type('폰 첫 줄');

@@ -13739,18 +13739,23 @@ async function deskOcrTick() {
 setInterval(deskOcrTick, 5000);
 
 // 창구 상태 (화면 표시용): 온라인 여부·처리 중 지시·대기 건수
+// #596(대표 10/8): 위쪽 상태 카드는 **본인 지시만** — 건수·처리 중 목록·state·order_id 전부 로그인 계정(created_by_id) 기준.
+//   남의 지시는 이름·글·건수 어느 것도 응답에 싣지 않는다(화면에서 가리는 것만으로는 안 됨). 대표·관리자도 예외 없음.
+//   남의 것 때문에 내 지시가 기다리는지는 `others_busy`(참/거짓만 · 건수 없음)로 — 화면이 「순서 대기」만 적게.
 app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
     try {
-        const [hbq, cq, eng, lcq, wq] = await Promise.all([
+        const me = req.user.id;
+        const [hbq, cq, eng, lcq, wq, oq] = await Promise.all([
             pool.query(`SELECT value FROM agent_office_config WHERE key='desk_heartbeat'`),
             pool.query(`SELECT status, COUNT(*)::int AS c FROM pending_orders
-                        WHERE is_deleted=false AND status IN ('대기','처리중','판독완료','확인표작성','승인대기','승인됨') GROUP BY status`),
+                        WHERE is_deleted=false AND created_by_id = $1 AND status IN ('대기','처리중','판독완료','확인표작성','승인대기','승인됨') GROUP BY status`, [me]),
             aoEngine(),
             pool.query(`SELECT value, EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS ago FROM agent_office_config WHERE key='desk_launcher'`),
-            // #506(대표 10/3): 처리 중인 지시의 「누가 · 무슨 요청 · 이어서 보낸 글」 — 화면 문구용(이미지·결과는 안 내림 · 요청 글은 80자까지)
-            pool.query(`SELECT o.id, o.created_by, LEFT(o.content, 80) AS content, o.reply_to,
+            // #506(대표 10/3): 처리 중인 지시의 「무슨 요청 · 이어서 보낸 글」 — 화면 문구용(이미지·결과는 안 내림 · 요청 글은 80자까지) · #596 본인 것만 · 이름 없음
+            pool.query(`SELECT o.id, LEFT(o.content, 80) AS content, o.reply_to,
                                (SELECT LEFT(p.content, 80) FROM pending_orders p WHERE p.id = o.reply_to) AS parent_content
-                        FROM pending_orders o WHERE o.is_deleted=false AND o.status IN ('처리중','판독완료','확인표작성') ORDER BY o.id ASC LIMIT 8`),
+                        FROM pending_orders o WHERE o.is_deleted=false AND o.created_by_id = $1 AND o.status IN ('처리중','판독완료','확인표작성') ORDER BY o.id ASC LIMIT 8`, [me]),
+            pool.query(`SELECT EXISTS(SELECT 1 FROM pending_orders WHERE is_deleted=false AND created_by_id IS DISTINCT FROM $1 AND status IN ('처리중','판독완료','확인표작성')) AS b`, [me]),
         ]);
         const hb = hbq.rows[0] ? hbq.rows[0].value : null;
         // #470 대기 프로그램(대표 PC에서 도는 창구 관리자) — 2분 안에 소식이 있어야 살아 있는 것으로 본다
@@ -13759,15 +13764,18 @@ app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
         const lcAlive = !!(lcRow && lcRow.ago !== null && lcRow.ago < 120);
         const cnt = {}; for (const r of cq.rows) cnt[r.status] = r.c;
         const online = deskOnline(hb, Date.now());
+        const working = (cnt['처리중'] || 0) + (cnt['판독완료'] || 0) + (cnt['확인표작성'] || 0);
+        const myIds = new Set(wq.rows.map(r => r.id));
         res.json({
-            engine: eng, online, state: online ? (hb.state || 'idle') : 'offline', last_seen: hb ? hb.at : null,
-            order_id: online ? (hb.order_id || null) : null,
+            engine: eng, online, state: online ? (working > 0 ? 'busy' : 'idle') : 'offline', last_seen: hb ? hb.at : null,
+            order_id: online && hb && hb.order_id && myIds.has(hb.order_id) ? hb.order_id : null,
             launcher: lc ? { alive: lcAlive, on: !!lc.on, busy: !!lc.busy, note: lc.note || '', host: lc.host || '' } : null,
             can_wake: lcAlive,
             waiting: (cnt['대기'] || 0) + (cnt['승인됨'] || 0),
-            working: (cnt['처리중'] || 0) + (cnt['판독완료'] || 0) + (cnt['확인표작성'] || 0),
+            working,
             approval: cnt['승인대기'] || 0,
             working_list: online ? wq.rows : [],
+            others_busy: online && !!(oq.rows[0] && oq.rows[0].b),
         });
     } catch (err) { handleAdminErr(res, err); }
 });

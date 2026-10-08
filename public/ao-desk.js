@@ -120,11 +120,12 @@
         idle: '무엇을 도와드릴까요?',
         busy: '지금 지시를 처리하고 있어요.',
         offline: '지금은 자리에 없어요. 남겨 두시면 돌아와서 순서대로 처리할게요.',
+        queued: '순서 대기 중이에요.',   // #596: 내 지시가 기다리는데 다른 일을 처리 중일 때(누구 것·몇 건인지는 적지 않는다)
     };
     const STATE_LABEL = { idle: '대기 중', busy: '처리 중', offline: '자리 비움' };
-    // #506(대표 10/3): 처리 중 문구는 번호 대신 「누구의 "요청"」 — 길면 앞부분만, 이어서 보낸 글은 괄호로, 여러 건이면 나란히
+    // #506(대표 10/3): 처리 중 문구는 번호 대신 「"요청"」 — 길면 앞부분만, 이어서 보낸 글은 괄호로, 여러 건이면 나란히
+    // #596(대표 10/8): 이 카드는 **본인 지시만** — 서버(desk-status)가 건수·목록·state 를 로그인 계정 것만 내려준다(이름 없음). 남의 지시는 건수도 글도 여기 안 나온다(대표·관리자도 같다)
     const cutText = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
-    const whoOf = w => { const by = String(w.created_by || '').trim(); return by ? by + '님' : '직원'; };
     function sayWorking(d) {
         const list = Array.isArray(d.working_list) ? d.working_list : [];
         if (!list.length) return d.working > 1 ? `지시 ${d.working}건을 동시에 처리하고 있어요.` : SAY.busy;
@@ -132,9 +133,9 @@
             const w = list[0];
             const base = w.reply_to && w.parent_content ? w.parent_content : w.content;
             const follow = w.reply_to && w.parent_content ? ` (이어서: "${cutText(w.content, 16)}")` : '';
-            return `${whoOf(w)}의 "${cutText(base, 24)}"${follow} 처리 중이에요`;
+            return `"${cutText(base, 24)}"${follow} 처리 중이에요`;
         }
-        return `${list.length}건 처리 중 — ` + list.map(w => `${whoOf(w)} "${cutText(w.reply_to && w.parent_content ? w.parent_content : w.content, 14)}"`).join(' · ');
+        return `${list.length}건 처리 중 — ` + list.map(w => `"${cutText(w.reply_to && w.parent_content ? w.parent_content : w.content, 14)}"`).join(' · ');
     }
     const BADGE = {
         '대기': ['wait', '순서 대기'], '처리중': ['work', '처리 중'], '판독완료': ['work', '확인표 작성 중'], '확인표작성': ['work', '확인표 작성 중'],
@@ -181,12 +182,38 @@
                                 <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주</button>
                                 <button type="button" class="desk-chip" id="desk-final-now" title="현금파일과 메모를 넣으면 거래처별 택배사 양식, 수량 표, 스토어 양식을 만들어요">최종발주</button>
                                 <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
+                                <button type="button" class="desk-chip" id="desk-ship-now" title="발송한 택배가 어디까지 갔는지 CJ대한통운에 바로 물어봐요">배송조회 확인하기</button>
                             </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
                             <button type="submit" class="desk-cbtn primary" id="desk-send" disabled aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter">${ICON_UP}</button>
                         </div>
                     </div>
                 </form>
+            </section>
+            <section class="desk-tool" id="desk-ship" aria-label="배송조회" hidden>
+                <div class="desk-tool-head"><b>배송조회</b><span>CJ대한통운 · 발송일 기준</span><button type="button" class="desk-btn sm desk-tool-x" id="ship-close">닫기</button></div>
+                <form class="ship-form" id="ship-form" autocomplete="off">
+                    <label class="ship-f" for="ship-from">발송일</label>
+                    <input type="text" class="akm-date ship-date" id="ship-from" readonly autocomplete="off" placeholder="날짜 선택" aria-label="발송일 시작">
+                    <span class="ship-tilde" aria-hidden="true">~</span>
+                    <input type="text" class="akm-date ship-date" id="ship-to" readonly autocomplete="off" placeholder="날짜 선택" aria-label="발송일 끝">
+                    <button type="submit" class="desk-btn primary" id="ship-go">조회</button>
+                </form>
+                <div class="ship-prog" id="ship-prog" role="status" hidden><div class="ship-prog-line"><span id="ship-prog-text">조회 중</span><b id="ship-prog-n"></b></div><div class="ship-track"><i id="ship-prog-bar"></i></div></div>
+                <div class="ship-note" id="ship-note" role="status" hidden></div>
+                <div class="ship-out" id="ship-out"></div>
+                <div class="ship-drop" id="ship-drop">
+                    <input type="file" id="ship-file" accept=".xlsx" hidden>
+                    <span class="ship-drop-txt"><b>송장 엑셀 올리기</b> 송장이 아직 안 올라온 날은 택배사 엑셀을 여기에 끌어다 놓으세요</span>
+                    <button type="button" class="desk-btn sm" id="ship-pick">파일 고르기</button>
+                    <span class="ship-up-msg" id="ship-up-msg" role="status"></span>
+                </div>
+            </section>
+            <section class="desk-tool" id="desk-qty" aria-label="중간발주" hidden>
+                <div class="desk-tool-head"><b>중간발주</b><span id="qty-sub">3채널 배송준비 · 지금 기준</span><button type="button" class="desk-btn sm desk-tool-x" id="qty-close">닫기</button></div>
+                <div class="ship-prog" id="qty-prog" role="status" hidden><div class="ship-prog-line"><span id="qty-prog-text">주문을 불러오는 중</span></div><div class="ship-track busy"><i></i></div></div>
+                <div class="ship-note" id="qty-note" role="status" hidden></div>
+                <div class="qty-out" id="qty-out"></div>
             </section>
             <section class="desk-listbox" id="desk-listbox" aria-label="채팅 목록">
                 <div class="desk-fullbar"><b id="desk-full-title">채팅</b><button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button></div>
@@ -278,7 +305,8 @@
             const box = e.target.closest('.desk-reply'), btn = box && box.querySelector('[data-act="sendreply"]');
             if (btn) btn.click();
         });
-        $('desk-qty-now').addEventListener('click', () => sendQtyNow());
+        $('desk-qty-now').addEventListener('click', () => qtyOpen());   // #595: 브라우저가 바로 집계·그림(대기 프로그램을 거치지 않는다)
+        bindTools();   // #594 배송조회 · #595 중간발주
         $('desk-theme').addEventListener('click', () => setTheme(!themeOn));   // #568
         applyTheme();
         $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) window.AkmFinalOrder.open(); else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
@@ -478,21 +506,264 @@
         }
     }
 
-    // #498 중간발주 — 정해진 일이라 AI를 거치지 않고 대기 프로그램이 바로 집계한다(지시 목록에 결과가 올라온다)
-    async function sendQtyNow() {
-        if (S.sending) return;
-        S.sending = true;
-        const btn = $('desk-qty-now');
-        btn.disabled = true;
+    // ── #594 배송조회(대표 10/8) — 알약 [배송조회 확인하기] → 서버가 CJ대한통운에 직접 물어본 결과를 이 카드에 그린다(창구·AI를 거치지 않는다)
+    //   서버: POST /api/delivery/track · GET /api/delivery/track/status · GET /api/delivery/summary · POST /api/delivery/shipments/upload
+    const SHIP = { timer: 0, data: null, busy: false, seq: 0 };
+    const kstDay = off => new Date(Date.now() + 9 * 3600e3 + (off || 0) * 86400e3).toISOString().slice(0, 10);
+    const nfmt = n => (Number(n) || 0).toLocaleString('ko-KR');
+    const mdOf = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '/' + m[3] : String(d || ''); };
+    const SHIP_KEYS = ['배송완료', '배송출발', '간선상하차', '집화', '미배송', '사고', '기타', '조회실패', '미조회'];
+    const SHIP_BADGE = { '사고': 'err', '미배송': 'ask', '집화': 'wait', '집화 정체': 'wait', '기타': 'mute', '조회실패': 'mute', '미조회': 'mute' };
+    const SHIP_EMPTY = '그 기간 송장이 아직 안 올라왔어요. 아래에 택배사 엑셀을 끌어다 놓거나, 대표 PC에서 송장이 올라오기를 기다려 주세요.';
+    function toolShow(id) {   // 도구 카드는 한 번에 하나만
+        ['desk-ship', 'desk-qty'].forEach(k => { const el = $(k); if (el) el.hidden = k !== id; });
+        if (id !== 'desk-ship') clearTimeout(SHIP.timer);
+        const el = id && $(id); if (el) el.scrollIntoView({ block: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+    function shipNote(text, kind) { const n = $('ship-note'); n.hidden = !text; n.textContent = text || ''; n.dataset.k = kind || ''; }
+    function shipProg(st) {
+        const box = $('ship-prog'); box.hidden = !st;
+        $('ship-go').disabled = !!st; const f = document.getElementById('ship-force'); if (f) f.disabled = !!st;
+        if (!st) return;
+        const total = Number(st.total) || 0, done = Math.min(Number(st.done) || 0, total || Infinity);
+        $('ship-prog-text').textContent = total ? '조회 중' : '송장을 모으는 중';
+        $('ship-prog-n').textContent = total ? nfmt(done) + ' / ' + nfmt(total) : '';
+        $('ship-prog-bar').style.transform = 'scaleX(' + (total ? Math.max(0.02, done / total) : 0.02) + ')';
+    }
+    function shipRange() {
+        let from = $('ship-from').value.trim(), to = $('ship-to').value.trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) from = kstDay(-1);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(to)) to = from;
+        if (from > to) { const t = from; from = to; to = t; }
+        $('ship-from').value = from; $('ship-to').value = to;
+        return { from, to };
+    }
+    function shipOpen() {
+        toolShow('desk-ship');
+        if (!$('ship-from').value) { $('ship-from').value = kstDay(-1); $('ship-to').value = kstDay(-1); }   // 기본 = 어제 발송분
+        shipCheck(true);
+    }
+    // 열 때·[조회] 뒤: 서버에 도는 조회가 있으면 진행 줄, 없으면 마지막 결과를 그린다
+    async function shipCheck(first) {
+        clearTimeout(SHIP.timer);
+        if ($('desk-ship').hidden) return;
+        const seq = ++SHIP.seq;
+        let st;
+        try { st = await api('/api/delivery/track/status'); } catch (e) { shipProg(null); shipNote('조회 상태를 불러오지 못했어요: ' + (e && e.message ? e.message : '다시 시도해 주세요'), 'err'); return; }
+        if (seq !== SHIP.seq || $('desk-ship').hidden) return;
+        if (st && st.state === 'running') {
+            if (first && st.from) { $('ship-from').value = st.from; $('ship-to').value = st.to || st.from; }
+            shipProg(st); shipNote('');
+            SHIP.timer = setTimeout(() => shipCheck(false), 2000);
+            return;
+        }
+        shipProg(null);
+        if (st && st.state === 'error' && !first) shipNote('조회하다 멈췄어요: ' + (st.error || '다시 눌러 주세요'), 'err');
+        await shipLoad();
+    }
+    async function shipLoad() {
+        const r = shipRange(), out = $('ship-out');
+        let d;
+        try { d = await api('/api/delivery/summary?from=' + r.from + '&to=' + r.to); }
+        catch (e) { out.innerHTML = ''; shipNote((e && e.message) || '불러오지 못했어요', 'err'); return; }
+        if (r.from !== $('ship-from').value || r.to !== $('ship-to').value) return;   // 그 사이 날짜를 바꿨다
+        SHIP.data = d;
+        if (!d || d.ok === false || !(Number(d.shipments) > 0)) { out.innerHTML = `<div class="desk-empty ship-empty">${esc((d && d.error) || SHIP_EMPTY)}</div>`; $('ship-drop').classList.add('want'); return; }
+        $('ship-drop').classList.remove('want');
+        if (!(Number(d.checked) > 0)) { out.innerHTML = `<div class="desk-empty ship-empty">송장 ${nfmt(d.shipments)}건이 올라와 있고 아직 조회하지 않았어요. [조회]를 누르면 CJ대한통운에 물어봐요.</div>`; return; }
+        out.innerHTML = shipHtml(d);
+    }
+    function shipHtml(d) {
+        const c = d.counts || {}, tr = Array.isArray(d.trouble) ? d.trouble : [], bd = Array.isArray(d.by_date) ? d.by_date : [];
+        const keys = SHIP_KEYS.filter(k => k in c || ['배송완료', '배송출발', '간선상하차', '미배송', '사고'].includes(k));
+        const stat = keys.map(k => `<li data-k="${SHIP_BADGE[k] && Number(c[k]) > 0 ? SHIP_BADGE[k] : ''}"><span>${esc(k)}</span><b>${nfmt(c[k])}</b></li>`).join('');
+        const when = d.checked_at ? kst(d.checked_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+        const byCols = SHIP_KEYS.filter(k => bd.some(x => x.counts && Number(x.counts[k]) > 0) || ['배송완료', '배송출발', '간선상하차'].includes(k));
+        const byTable = bd.length ? `<h4 class="ship-h">발송일·거래처별</h4><div class="desk-md-tw ship-tw"><table class="desk-md-t ship-by"><thead><tr><th>발송일</th><th>거래처</th><th class="num">송장</th>${byCols.map(k => `<th class="num">${esc(k)}</th>`).join('')}</tr></thead><tbody>`
+            + bd.map(x => `<tr><td>${esc(mdOf(x.date))}</td><td>${esc(x.partner || '')}</td><td class="num">${nfmt(x.n)}</td>${byCols.map(k => { const v = Number(x.counts && x.counts[k]) || 0; return `<td class="num${v && (k === '미배송' || k === '사고') ? ' warn' : ''}">${v ? nfmt(v) : '<i>0</i>'}</td>`; }).join('')}</tr>`).join('') + '</tbody></table></div>' : '';
+        const tel = p => { const g = String(p || '').replace(/[^\d+]/g, ''); return g ? `<a class="ship-tel" href="tel:${esc(g)}">${esc(p)}</a>` : ''; };
+        const trTable = tr.length ? `<div class="desk-md-tw ship-tw"><table class="desk-md-t ship-tr"><thead><tr><th>상태</th><th>받는 분</th><th>품목</th><th>상태 내용</th><th class="num">며칠째</th><th>담당기사</th><th>운송장</th></tr></thead><tbody>`
+            + tr.map(x => {
+                const dr = x.driver || {}, days = Number(x.days);
+                const what = [x.label, x.msg && x.msg !== x.label ? x.msg : ''].filter(Boolean).map(esc).join('<br>');
+                const where = [x.event_time ? kst(x.event_time, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '', x.branch].filter(Boolean).map(esc).join(' · ');
+                return `<tr><td><span class="desk-badge" data-k="${SHIP_BADGE[x.bucket] || 'mute'}">${esc(x.bucket || '확인')}</span></td>`
+                    + `<td class="ship-who">${esc(x.recipient || '')}${x.phone_tail ? `<small>끝 ${esc(x.phone_tail)}</small>` : ''}${x.region ? `<small>${esc(x.region)}</small>` : ''}</td>`
+                    + `<td class="ship-opt">${esc(x.option || '')}${Number(x.qty) > 1 ? ` <b>× ${nfmt(x.qty)}</b>` : ''}</td>`
+                    + `<td class="ship-what">${what || '<i>내용 없음</i>'}${where ? `<small>${where}</small>` : ''}${x.memo ? `<small class="memo" title="${esc(x.memo)}">손님 메모 · ${esc(x.memo)}</small>` : ''}</td>`
+                    + `<td class="num">${Number.isFinite(days) && days > 0 ? days + '일째' : ''}</td>`
+                    + `<td class="ship-drv">${esc(dr.name || '')}${tel(dr.phone)}</td>`
+                    + `<td class="ship-no">${esc(x.tracking || '')}<small>${esc([mdOf(x.ship_date) + ' 발송', x.partner].filter(Boolean).join(' · '))}</small></td></tr>`;
+            }).join('') + '</tbody></table></div>' : '<div class="desk-empty ship-empty">확인할 건이 없어요. 미배송·사고 0건입니다.</div>';
+        return `<section class="desk-sec ship-sum" aria-label="카톡에 올릴 요약"><div class="desk-sec-head"><b>카톡에 올릴 요약</b><button type="button" class="desk-sec-copy" id="ship-copy" aria-label="요약 복사">복사</button></div><div class="desk-sec-body"><div class="ship-sum-text" id="ship-sum-text">${esc(d.summary_text || '')}</div></div></section>`
+            + `<ul class="ship-stat" aria-label="상태별 건수">${stat}</ul>`
+            + `<div class="ship-meta"><span>송장 ${nfmt(d.shipments)}건 중 ${nfmt(d.checked)}건 조회${Number(d.shipments) > Number(d.checked) ? ' (아직 ' + nfmt(d.shipments - d.checked) + '건은 [조회]를 눌러야 해요)' : ''}${d.dup && Number(d.dup.person) > 0 ? ' · 같은 분 여러 상자 ' + nfmt(d.dup.person) + '건' : ''}${when ? ' · ' + esc(when) + ' 기준' : ''}</span><button type="button" class="desk-btn sm" id="ship-force" title="배송완료로 확인된 건까지 전부 다시 물어봐요">전부 다시 조회</button></div>`
+            + byTable
+            + `<h4 class="ship-h">확인할 건 <b>${nfmt(tr.length)}</b></h4>` + trTable;
+    }
+    async function shipGo(force) {
+        if (SHIP.busy) return;
+        const r = shipRange();
+        SHIP.busy = true; shipNote(''); shipProg({ total: 0, done: 0 });
         try {
-            const r = await api('/api/agent-office/orders', 'POST', { content: '중간발주 뽑아줘' });
-            showToast('중간발주를 집계하고 있어요 (1~2분)');
-            if (S.fs !== 'all') { S.fs = 'all'; $('desk-fs').value = 'all'; }
-            if (S.tab !== 'mine') await setTab('mine'); else { S.sig = ''; await loadOrders(true); }
-            revealOrders([r && r.order && r.order.id].filter(Boolean));
-        } catch (err) {
-            showToast('보내지 못했어요: ' + (err && err.message ? err.message : '다시 시도해 주세요'));
-        } finally { S.sending = false; btn.disabled = false; }
+            const res = await api('/api/delivery/track', 'POST', force ? { from: r.from, to: r.to, force: true } : { from: r.from, to: r.to });
+            if (!res || res.ok === false) {
+                shipProg(null);
+                if (res && res.need_upload) { $('ship-out').innerHTML = `<div class="desk-empty ship-empty">${esc(res.error || SHIP_EMPTY)}</div>`; $('ship-drop').classList.add('want'); }
+                else shipNote((res && res.error) || '조회를 시작하지 못했어요', 'err');
+                return;
+            }
+            if (res.job && res.job.state === 'running') shipProg(res.job);
+            SHIP.timer = setTimeout(() => shipCheck(false), res.job && res.job.state === 'running' ? 2000 : 0);
+        } catch (e) {
+            shipProg(null);
+            const m = (e && e.message) || '다시 시도해 주세요';
+            if (/송장/.test(m)) { $('ship-out').innerHTML = `<div class="desk-empty ship-empty">${esc(m)}</div>`; $('ship-drop').classList.add('want'); }
+            else shipNote('조회를 시작하지 못했어요: ' + m, 'err');
+        } finally { SHIP.busy = false; }
+    }
+    // 송장 엑셀 올리기 — 서버가 받는 꼴 = JSON { name, data(base64), date? } · 발송일은 파일 이름의 「10.07」에서 읽고, 이름에 날짜가 없으면 지금 고른 발송일로 한 번 더 보낸다
+    const fileB64 = file => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result || '')); fr.onerror = () => rej(new Error('파일을 읽지 못했어요')); fr.readAsDataURL(file); });
+    async function shipUpload(file) {
+        const msg = $('ship-up-msg');
+        if (!file) return;
+        if (!/\.xlsx$/i.test(file.name || '')) { msg.dataset.k = 'err'; msg.textContent = '엑셀 파일(xlsx)만 올릴 수 있어요'; return; }
+        if (file.size > 12 * 1024 * 1024) { msg.dataset.k = 'err'; msg.textContent = '파일이 너무 커요(12MB까지)'; return; }
+        msg.dataset.k = ''; msg.textContent = '올리는 중';
+        $('ship-pick').disabled = true;
+        try {
+            const data = await fileB64(file);
+            let d, byPick = false;
+            try { d = await api('/api/delivery/shipments/upload', 'POST', { name: file.name, data }); }
+            catch (e) { if (!/발송일을 알 수 없/.test((e && e.message) || '')) throw e; byPick = true; d = await api('/api/delivery/shipments/upload', 'POST', { name: file.name, data, date: shipRange().from }); }
+            if (!d || d.ok === false) throw new Error((d && d.error) || '올리지 못했어요');
+            msg.dataset.k = 'ok'; msg.textContent = `${d.date ? mdOf(d.date) + ' ' : ''}송장 ${nfmt(d.rows)}건을 올렸어요${byPick ? ' (파일 이름에 날짜가 없어 고른 발송일로 넣었어요)' : ''}`;
+            if (d.date && /^\d{4}-\d{2}-\d{2}/.test(d.date)) { $('ship-from').value = String(d.date).slice(0, 10); $('ship-to').value = String(d.date).slice(0, 10); }
+            shipNote(''); await shipLoad();
+        } catch (e) { msg.dataset.k = 'err'; msg.textContent = (e && e.message) || '올리지 못했어요'; }
+        finally { $('ship-pick').disabled = false; }
+    }
+
+    // ── #595 중간발주(대표 10/8) — 대기 프로그램(대표 PC)이 그리던 거래처별 그림을 브라우저가 바로 그린다
+    //   주문 조회·옵션 매칭·사이즈 꼬리·색·거래처 판정은 app.js 의 송장변환 함수를 그대로 부른다(addSizeSuffix · matchProduct · qtyCategory · aoItemPartner · aoLoadInvoicePricing — 복사하지 않는다).
+    //   표 모양·묶는 법은 종전 그림(scripts/desk/qty-image.js)과 같다: 거래처별 한 장 · 이름 가나다순 · 사이즈 요청은 따로 줄 · 미매칭은 따로 한 장 · 최근 20일.
+    //   「효돈 것만」「지난주 것」처럼 조건이 붙은 말은 종전대로 채팅(창구)으로 보낸다.
+    const QTY = { busy: false, urls: [], blobs: new Map() };
+    const QTY_DAYS = 20;
+    const QTY_BG = { yellow: '#FFFF00', orange: '#F4B183', blue: '#BDD7EE', green: '#C6E0B4', pink: '#F4CCCC', none: '#FFFFFF' };   // 거래처에 보내는 그림 색(styles.css .qty-cat-* 와 같은 값 · 야간에도 그대로)
+    const QTY_SIZE = /^(.*?)\s+(2S|S|M)사이즈로!$/;
+    function qtyNote(text, kind) { const n = $('qty-note'); n.hidden = !text; n.textContent = text || ''; n.dataset.k = kind || ''; }
+    // 표 그림 — 화면을 찍지 않고 캔버스에 바로 그린다(쪽 전체를 복사해 찍는 html2canvas 는 이 화면에서 한 장에 몇 초씩 걸리고 야간 색이 섞일 수 있다).
+    //   모양은 종전 그림과 같다: 15px 맑은 고딕 · 칸 안쪽 6px 10px · 1px 검은 줄 · 수량 굵게 오른쪽 · 맨 아래 합계 줄 노랑 · 2배율.
+    function qtyPng(rows, total, unmatched) {
+        const FONT = '15px "Malgun Gothic", "맑은 고딕", sans-serif', BOLD = '800 ' + FONT;
+        const probe = document.createElement('span');
+        probe.style.cssText = 'position:absolute;left:-9999px;top:0;white-space:nowrap;line-height:normal;letter-spacing:normal;font:' + FONT;
+        probe.textContent = '가Ag'; document.body.appendChild(probe);
+        const lh = Math.max(18, Math.round(probe.getBoundingClientRect().height)); probe.remove();
+        const c = document.createElement('canvas'), g = c.getContext('2d');
+        g.font = FONT; const wName = Math.ceil(Math.max(0, ...rows.map(r => g.measureText(r.name).width))) + 20;
+        g.font = BOLD; const wNum = Math.max(50, Math.ceil(Math.max(g.measureText(String(total)).width, ...rows.map(r => g.measureText(String(r.qty)).width)))) + 20;
+        const rh = lh + 12, W = 1 + wName + 1 + wNum + 1, H = 1 + (rows.length + 1) * (rh + 1);
+        c.width = W * 2; c.height = H * 2; g.scale(2, 2);
+        g.fillStyle = '#000000'; g.fillRect(0, 0, W, H);   // 줄 색을 먼저 깔고 칸을 덮는다
+        g.textBaseline = 'middle';
+        const line = (i, name, qty, bgName, bgNum, color) => {
+            const y = 1 + i * (rh + 1);
+            g.fillStyle = bgName; g.fillRect(1, y, wName, rh);
+            g.fillStyle = bgNum; g.fillRect(1 + wName + 1, y, wNum, rh);
+            g.font = FONT; g.textAlign = 'left'; g.fillStyle = color; if (name) g.fillText(name, 11, y + rh / 2 + 1);
+            g.font = BOLD; g.textAlign = 'right'; g.fillStyle = '#000000'; g.fillText(String(qty), W - 11, y + rh / 2 + 1);
+        };
+        rows.forEach((r, i) => line(i, r.name, r.qty, QTY_BG[r.cat] || QTY_BG.none, '#FFFFFF', unmatched ? '#C0392B' : '#000000'));
+        line(rows.length, '', total, QTY_BG.yellow, QTY_BG.yellow, '#000000');
+        return new Promise((res, rej) => c.toBlob(b => { if (!b) return rej(new Error('그림을 만들지 못했어요')); b.cssW = W; b.cssH = H; res(b); }, 'image/png'));
+    }
+    function qtyOpen() {
+        toolShow('desk-qty');
+        if (!QTY.busy) qtyRun();
+    }
+    async function qtyRun() {
+        if (QTY.busy) return;
+        if (typeof matchProduct !== 'function' || typeof addSizeSuffix !== 'function' || typeof qtyCategory !== 'function' || typeof aoItemPartner !== 'function') { qtyNote('중간발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요', 'err'); return; }
+        QTY.busy = true; $('desk-qty-now').disabled = true;
+        const out = $('qty-out'), prog = $('qty-prog'), ptxt = $('qty-prog-text');
+        QTY.urls.forEach(u => URL.revokeObjectURL(u)); QTY.urls = []; QTY.blobs.clear();
+        out.innerHTML = ''; qtyNote(''); prog.hidden = false;
+        const chState = { naver: '조회 중', coupang: '조회 중', cafe24: '조회 중' };
+        const paint = () => { ptxt.textContent = `주문을 불러오는 중 · 네이버 ${chState.naver} · 쿠팡 ${chState.coupang} · 자사몰 ${chState.cafe24}`; };
+        paint();
+        const track = (p, key) => p.then(v => { chState[key] = v && v.ok ? nfmt(v.count != null ? v.count : (v.rows || []).length) + '건' : '실패'; paint(); return v; }, e => { chState[key] = '실패'; paint(); throw e; });
+        try {
+            await aoLoadInvoicePricing();   // 매번 오늘 단가표 품목명으로(#440)
+            const rv = await Promise.allSettled([
+                track(api('/api/agent-office/naver/invoice-orders?days=' + QTY_DAYS), 'naver'),
+                track(api('/api/agent-office/coupang/invoice-orders?days=' + QTY_DAYS), 'coupang'),
+                track(api('/api/agent-office/cafe24/invoice-orders?days=' + QTY_DAYS), 'cafe24'),
+            ]);
+            const chan = x => x.status === 'fulfilled' && x.value && x.value.ok ? x.value : { ok: false, message: x.status === 'fulfilled' ? (x.value && x.value.message) || '불러오기 실패' : (x.reason && x.reason.message) || String(x.reason) };
+            const nv = chan(rv[0]), cp = chan(rv[1]), cf = chan(rv[2]);
+            if (!nv.ok && !cp.ok && !cf.ok) { qtyNote(`3채널 모두 불러오지 못했어요 · 네이버: ${nv.message} / 쿠팡: ${cp.message} / 자사몰: ${cf.message}`, 'err'); return; }
+            ptxt.textContent = '거래처별로 묶어 그림을 만드는 중';
+            // 채널별 (옵션 원문 + 손님 메모의 사이즈 요청 꼬리) → 수량
+            const lines = [];
+            const add = (ch, opt, memo, qty) => { let o = String(opt || ''); try { o = addSizeSuffix(o, String(memo || '').trim()); } catch (e) { /* 꼬리 없이 */ } lines.push({ ch, opt: o, qty: parseInt(qty) || 1 }); };
+            if (nv.ok) (nv.rows || []).forEach(r => add('naver', r['옵션정보'], r['배송메세지'], r['수량']));
+            if (cf.ok) (cf.rows || []).forEach(r => add('cafe24', r['주문상품명(세트상품 포함)'], r['배송메시지'], r['수량']));
+            if (cp.ok) (cp.rows || []).forEach(r => add('coupang', r['노출상품명(옵션명)'] || r['등록상품명'], r['배송메세지'], r['구매수(수량)']));
+            if (!lines.length) { qtyNote('3채널 모두 배송준비 주문이 없어요.', ''); return; }
+            const map = new Map(), umap = new Map();
+            for (const g of lines) {
+                const sm = QTY_SIZE.exec(g.opt);
+                let name = matchProduct(sm ? sm[1] : g.opt);
+                if (sm && typeof name === 'string' && !name.startsWith('[미매칭]')) name = name + ' ' + sm[2] + '사이즈로!';
+                if (typeof name !== 'string' || name.startsWith('[미매칭]')) { const k = `[${g.ch}] ${g.opt}`; umap.set(k, (umap.get(k) || 0) + g.qty); continue; }
+                map.set(name, (map.get(name) || 0) + g.qty);
+            }
+            const partners = new Map();
+            [...map.entries()].map(([name, qty]) => ({ name, qty, cat: qtyCategory(name), partner: aoItemPartner(name.replace(/\s+(2S|S|M)사이즈로!$/, '')) || '기타' }))
+                .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+                .forEach(it => { const p = partners.get(it.partner) || { total: 0, rows: [] }; p.rows.push(it); p.total += it.qty; partners.set(it.partner, p); });
+            const urows = [...umap.entries()].map(([name, qty]) => ({ name, qty, cat: 'none' })).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+            const tag = kstDay(0).slice(5, 7) + kstDay(0).slice(8, 10);
+            const figs = [];
+            for (const [p, v] of partners) figs.push({ title: p, total: v.total, kinds: v.rows.length, file: `중간발주_${p}_${tag}.png`, blob: await qtyPng(v.rows, v.total, false) });
+            if (urows.length) { const t = urows.reduce((s, r) => s + r.qty, 0); figs.push({ title: '미매칭', total: t, kinds: urows.length, file: `중간발주_미매칭_${tag}.png`, blob: await qtyPng(urows, t, true), unmatched: true }); }
+            const fails = [!nv.ok && '네이버: ' + nv.message, !cp.ok && '쿠팡: ' + cp.message, !cf.ok && '자사몰: ' + cf.message].filter(Boolean);
+            const partial = (nv.ok ? nv.partial_adjusted || 0 : 0) + (cp.ok ? cp.partial_adjusted || 0 : 0) + (cf.ok ? cf.partial_adjusted || 0 : 0);
+            const cnt = x => x.ok ? nfmt(x.count != null ? x.count : (x.rows || []).length) : '실패';
+            $('qty-sub').textContent = `${kst(new Date().toISOString(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 조회 · 최근 ${QTY_DAYS}일`;
+            const canCopy = !!(navigator.clipboard && window.ClipboardItem);
+            out.innerHTML = `<div class="ship-meta"><span>주문 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)}${partial ? ' · 부분취소 반영 ' + nfmt(partial) + '건' : ''}</span><button type="button" class="desk-btn sm" id="qty-again">다시 집계</button></div>`
+                + figs.map((f, i) => { const u = URL.createObjectURL(f.blob); QTY.urls.push(u); QTY.blobs.set(String(i), f.blob);
+                    return `<figure class="qty-fig${f.unmatched ? ' unmatched' : ''}"><figcaption><b>${esc(f.title)}</b><span>${nfmt(f.kinds)}종 · 합계 ${nfmt(f.total)}박스${f.unmatched ? ' · 품목별 금액에 없는 옵션' : ''}</span><span class="qty-acts">${canCopy ? `<button type="button" class="desk-btn sm" data-qty-copy="${i}">그림 복사</button>` : ''}<a class="desk-btn sm" href="${u}" download="${esc(f.file)}">내려받기</a></span></figcaption><div class="qty-img"><img src="${u}" width="${f.blob.cssW}" height="${f.blob.cssH}" alt="${esc(f.title)} 중간발주 표"></div></figure>`; }).join('');
+            if (fails.length) qtyNote('불러오지 못한 채널은 빼고 집계했어요 · ' + fails.join(' / '), 'err');
+        } catch (e) {
+            qtyNote('집계하지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요'), 'err');
+        } finally { prog.hidden = true; QTY.busy = false; $('desk-qty-now').disabled = false; }
+    }
+    function bindTools() {
+        $('desk-ship-now').addEventListener('click', () => shipOpen());
+        $('ship-close').addEventListener('click', () => { toolShow(null); $('desk-ship-now').focus(); });
+        $('qty-close').addEventListener('click', () => { toolShow(null); $('desk-qty-now').focus(); });
+        $('ship-form').addEventListener('submit', e => { e.preventDefault(); shipGo(false); });
+        ['ship-from', 'ship-to'].forEach(id => $(id).addEventListener('change', () => { shipRange(); shipNote(''); shipLoad(); }));
+        $('ship-out').addEventListener('click', e => {
+            if (e.target.closest('#ship-copy')) { const d = SHIP.data; if (d && d.summary_text) copyText(d.summary_text, '요약을 복사했어요', document.getElementById('ship-sum-text')); }
+            else if (e.target.closest('#ship-force')) shipGo(true);
+        });
+        $('ship-pick').addEventListener('click', () => $('ship-file').click());
+        $('ship-file').addEventListener('change', e => { const f = (e.target.files || [])[0]; e.target.value = ''; shipUpload(f); });
+        const drop = $('ship-drop');
+        drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+        drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+        drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); shipUpload((e.dataTransfer.files || [])[0]); });
+        $('qty-out').addEventListener('click', async e => {
+            if (e.target.closest('#qty-again')) { qtyRun(); return; }
+            const b = e.target.closest('[data-qty-copy]'); if (!b) return;
+            try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': QTY.blobs.get(b.dataset.qtyCopy) })]); showToast('그림을 복사했어요. 카톡에 붙여 넣으세요'); }
+            catch (err) { showToast('이 브라우저는 그림 복사를 막고 있어요. [내려받기]를 눌러 주세요'); }
+        });
     }
 
     // #566(대표 10/6): 승인 결재함 탭 없음(모든 계정) — 9/30 뒤로 승인을 거치는 일이 없다. 혹시 승인 대기 건이 생기면 대표는 채팅 탭(본인 것)·이전 채팅 이력(모두)의 그 카드에서 승인/반려한다
@@ -542,7 +813,7 @@
             if (d.working) parts.push(`처리 중 ${d.working}건`);
             if (s === 'offline' && d.last_seen) parts.push('마지막 확인 ' + kst(d.last_seen, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
             $('desk-state-sub').textContent = parts.join(' · ');
-            $('desk-say').textContent = s === 'busy' ? sayWorking(d) : SAY[s] || SAY.offline;
+            $('desk-say').textContent = s === 'busy' ? sayWorking(d) : s === 'idle' && Number(d.waiting) > 0 && d.others_busy ? SAY.queued : SAY[s] || SAY.offline;
             // #470 창구 켜기·끄기 — 버튼은 늘 같은 자리에 둔다(숨기면 어디 있는지 못 찾는다 · 대표 실물 확인 9/29)
             // #490(대표 9/30): [쉬게 하기] 없음 — 껐다 켜면 토큰만 쓴다. 창구는 늘 켜 두고, PC가 꺼졌다 켜졌을 때 [창구 깨우기]만 관리자(대표·조가영)가 누른다.
             const lc = d.launcher, wrap = $('desk-wake'), wb = $('desk-wake-btn'), wn = $('desk-wake-note');

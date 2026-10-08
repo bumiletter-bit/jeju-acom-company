@@ -169,15 +169,15 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')
         // ⑤ 동시 처리 문구
         const cut = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
         const LONG = '판매현황에서 지금 판매중인 품목이 몇 개인지 알려줘 — 보고만, 아무것도 바꾸지 말 것';
-        await A.setStatus({ state: 'busy', working: 1, order_id: 77, working_list: [{ id: 77, created_by: '조가영 과장', content: LONG, reply_to: null, parent_content: null }] });
+        await A.setStatus({ state: 'busy', working: 1, order_id: 77, working_list: [{ id: 77, content: LONG, reply_to: null, parent_content: null }] });   // #596: 서버가 본인 것만 · 이름 칸 없이 내려준다
         const s1 = (await media(A.pg)).say;
-        ok('⑤ #506 1건(긴 요청) → 「조가영 과장님의 "요청 24자…" 처리 중이에요」', s1 === `조가영 과장님의 "${cut(LONG, 24)}" 처리 중이에요` && /…" 처리 중이에요$/.test(s1), s1);
-        await A.setStatus({ state: 'busy', working: 1, order_id: 78, working_list: [{ id: 78, created_by: '전승범 대표', content: '고 진행해 — 효돈 것만 다시 뽑아서 올려줘', reply_to: 70, parent_content: '중간발주 뽑아줘' }] });
+        ok('⑤ #506·#596 1건(긴 요청) → 이름 없이 「"요청 24자…" 처리 중이에요」', s1 === `"${cut(LONG, 24)}" 처리 중이에요` && /…" 처리 중이에요$/.test(s1) && !/님/.test(s1), s1);
+        await A.setStatus({ state: 'busy', working: 1, order_id: 78, working_list: [{ id: 78, content: '고 진행해 — 효돈 것만 다시 뽑아서 올려줘', reply_to: 70, parent_content: '중간발주 뽑아줘' }] });
         const s2 = (await media(A.pg)).say;
-        ok('⑤ #506 이어서 지시 → 원래 요청 + (이어서: "16자…")', s2 === `전승범 대표님의 "중간발주 뽑아줘" (이어서: "${cut('고 진행해 — 효돈 것만 다시 뽑아서 올려줘', 16)}") 처리 중이에요`, s2);
-        await A.setStatus({ state: 'busy', working: 3, order_id: 77, working_list: [{ id: 77, created_by: '전승범 대표', content: '중간발주 뽑아줘', reply_to: null, parent_content: null }, { id: 79, created_by: '조가영 과장', content: '정산 이미지 올려줘 — 효돈 10/3', reply_to: null, parent_content: null }, { id: 80, created_by: '', content: '톡톡 답변 추천', reply_to: null, parent_content: null }] });
+        ok('⑤ #506 이어서 지시 → 원래 요청 + (이어서: "16자…")', s2 === `"중간발주 뽑아줘" (이어서: "${cut('고 진행해 — 효돈 것만 다시 뽑아서 올려줘', 16)}") 처리 중이에요`, s2);
+        await A.setStatus({ state: 'busy', working: 3, order_id: 77, working_list: [{ id: 77, content: '중간발주 뽑아줘', reply_to: null, parent_content: null }, { id: 79, content: '정산 이미지 올려줘 — 효돈 10/3', reply_to: null, parent_content: null }, { id: 80, created_by: '옛 서버가 내려준 이름', content: '톡톡 답변 추천', reply_to: null, parent_content: null }] });
         const s3 = (await media(A.pg)).say;
-        ok('⑤ #506 3건 → 「3건 처리 중 — 전승범 대표님 "…" · 조가영 과장님 "…14자…" · 직원 "…"」(이름 없으면 「직원」)', s3 === `3건 처리 중 — 전승범 대표님 "중간발주 뽑아줘" · 조가영 과장님 "${cut('정산 이미지 올려줘 — 효돈 10/3', 14)}" · 직원 "톡톡 답변 추천"`, s3);
+        ok('⑤ #506·#596 3건 → 이름 없이 「3건 처리 중 — "…" · "…14자…" · "…"」(응답에 이름이 섞여 와도 화면에 안 씀)', s3 === `3건 처리 중 — "중간발주 뽑아줘" · "${cut('정산 이미지 올려줘 — 효돈 10/3', 14)}" · "톡톡 답변 추천"`, s3);
         await A.setStatus({ state: 'busy', working: 3, order_id: 77, working_list: undefined });
         const s3f = (await media(A.pg)).say;
         await A.setStatus({ state: 'busy', working: 1, order_id: 77, working_list: [] });
