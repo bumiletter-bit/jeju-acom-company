@@ -9,7 +9,7 @@ const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  �
 (async () => {
   // ① 기본 코드 = MD판
   ok(K.orderTplCode(false) === 'UK_5754' && K.orderTplCode(true) === 'UK_5755', '① 주문 코드 기본값 = UK_5754/UK_5755', K.orderTplCode(false) + '/' + K.orderTplCode(true));
-  ok(K.APPROVED_TPL.guide === 'UK_5756' && K.APPROVED_TPL.welcome === 'UJ_9086', '① 발송안내 UK_5756 · 가입환영 UJ_9086 유지', '');
+  ok(K.APPROVED_TPL.guide === 'UK_5756' && K.APPROVED_TPL.welcome === 'UK_5877', '① 발송안내 UK_5756 · 가입환영 UK_5877(가입환영2) 유지', K.APPROVED_TPL.welcome);   // #585: 가입환영은 UK_5877 로 바뀐 지 오래(기대값만 갱신)
 
   // ② 코드↔문안·버튼 자동 일치 — 주문 템플릿이 MD판 엔트리를 집는다
   const tN = K.orderTemplate(false), tR = K.orderTemplate(true);
