@@ -62,7 +62,39 @@
 - **2026-10-06 2차 정리**: 다시 223k자까지 불어 뒷부분(프로젝트 개요·배포 방법·작업 규칙)이 잘려 읽히던 것을 51k자로 줄임 — #468~#532 와 9월 기록을 `CLAUDE_ARCHIVE.md` 끝에 원문 그대로 옮김. 🔴 이 파일이 **120k자를 넘으면** 세션 마감 때 오래된 절을 같은 방식으로 옮길 것(`node -e` 로 글자 수 확인).
 - 과거 결정·함정·검증 이력이 필요하면 **CLAUDE_ARCHIVE.md를 Read로 열어 검색할 것**(자동 로드 아님 — 컨텍스트 절약). 이 파일에는 현행 규칙·최신 세션·상시 참조만 유지한다.
 
-## ★★★★★ 10/8 세션 마감 인수인계 — 새 세션(총괄)은 여기부터 ← 최신
+## ★★★★★ 10/8 밤 2차 세션 인수인계(#592~#596 · v5.9.469) — 새 세션(총괄)은 여기부터 ← 최신
+
+> 대표가 「할 일 뭐야?」라고 물으면 아래 ①~③ + 바로 아래 10/8 저녁 인수인계의 ②(날짜 일)를 합쳐 보고. **다음 지시 번호 = #597부터**(#594·#595·#596 완료 · #597 = 리뷰 최신순 증분 수집 후보 — 대표 「나중에」 보류 · 재제안 금지).
+
+### ① 대표 답 대기 · 보류
+- 답 대기 없음. **보류(대표 10/8 밤 「나중에 하자」 · 재제안 금지 · 물으면 설계만 답)**: 리뷰를 최신순·전건·누적 표로(중계서버 `/naver-public` reviews 에 정렬·쪽 인자 — 실브라우저에서 「최신순」 눌러 값 관찰 · 증분 수집 · `naver_reviews` 표 · review.js 전환 · 센터 리뷰 엑셀 보조 입력 · 약 1.5일 · 비공식 호출 위험) / 주소 정리 도로명 API(행안부 juso — **이미 회사프로그램 주문 정리기(#395)에 연결돼 있음** · 창구는 네이버 검색 방식 유지 = 대표 「네이버가 좋아 지금대로」).
+- 메모 줄에 **수취인 번호**로 사이즈를 적으면 확인 카드(#548 · 번호 전체 일치만)로 — 대표가 「확인 없이 바로」를 원하면 그때 바꾼다(10/8 밤 보고만).
+
+### ② 오늘(10/8 밤) 한 일
+| 지시 | 내용 | 버전 |
+|---|---|---|
+| #592 | 네이버 커머스 API 에 **리뷰 조회·답글 API 없음**(포럼 공식 답변 5건 · 2024~2026) → 중계서버 변경 불요 · 창구 도구 `scripts/desk/review.js list\|summary`(새벽 스냅샷 상품당 20건 랭킹순 · 401건 · 3점 이하 42) + 업무지식 4절 「리뷰」 · 답글 등록은 센터에서 | 배포 0 |
+| #594 | **CJ 택배조회** — `cj-track.js`(CJ 누리집 조회 · 키 없음 · 동시 5 · 렌더에서 0.26초/건) · `delivery_shipments`/`delivery_status` 표 · 라우트 `/api/delivery/track·status·summary·shipments/upload·test` + 시험 러너 `delivery_test_request` · 대표 PC 작업 스케줄러 「아꼼이-송장-올리기」(매일 14:30 + 로그온 · `scripts/desk/ship-upload.js --days 3` · 엑셀 둘째 시트 직접) · 에이전트 오피스 알약 [배송조회 확인하기] 카드(기간 · 요약 [복사] · 이상 건 표 · 엑셀 끌어다 놓기) · 매일 루틴 없음(대표 확정 — 버튼으로) | 468·469 |
+| #593 | 창구 「○○ 손님 배송?」 = `ship-status.js` · 「6~7일 중 안 된 거?」 = 서버 표 q.js · 업무지식 「배송조회」 절 · 창구 CLAUDE.md 4-1 | 배포 0 |
+| #595 | 에이전트 오피스 「중간발주」 알약 = 브라우저가 3채널 조회 + app.js 매칭 함수로 캔버스 PNG(창구·대표 PC 불요) · 조건 붙은 말은 종전 창구 | 469 |
+| #596 | 위쪽 상태 카드 **본인 지시만**(desk-status created_by_id 기준 · 이름 제거 · `others_busy` · 「순서 대기 중이에요.」) | 469 |
+| #582-b | 송장 색인 운송장 누락 보완(한 분 상자 2개면 1개만 남던 것 → `trs` 배열 · 고유 운송장 594,594 → 643,754 · invoice-find 「a, b」) | 배포 0 |
+| 운용 | 창구 「기억」 번호 없앰(글로만 · 잊기 = 글 조각) · 터미널 상태줄 진행 목록(`~/.akkome/progress.json` · 메모리 jeju-terminal-progress-statusline) | 배포 0 |
+
+### ③ 대표가 실물로 볼 것(답 오면 조정)
+- 폰·PC 에이전트 오피스: [배송조회 확인하기] → 어제 → [조회](렌더 1,684건 약 3분 · 두 번째부터 미완료만) → 요약 [복사] → 「확인할 건」 표(미배송 = 섬지역 「익일」 · 집화 정체 · 담당기사 tel:) · 폰 알약 4개 두 줄 · [중간발주] 그림 3장(종전 PNG 와 같은 모양인지) · 다른 직원 계정 화면에 남의 지시 안 보이는지.
+- 사고·파손·반송 문구는 **아직 실측 0건** — 며칠 돌리면 「기타」에 원문이 모임 → 그때 cj-track.js TROUBLE 낱말표 보강(총괄).
+- **10/9 14:30** 스케줄러 첫 자동 실행 → `%USERPROFILE%\.akkome\ship-upload.log` 끝 · `in_db` 에 10/08·10/09 건수. 안 돌았으면 `node scripts/desk/install-ship-upload.js --status`.
+- 검증 함정: verify-568-dark 「밝은 화면 픽셀 동일」 4항목은 문의 탭 찍는 시점으로 흔들림(색·대비는 통과 · 196/200) · verify-469-desk 는 실DB 시험 지시를 만듦(총괄만) · 로컬 검증 서버는 `JWT_SECRET=local594` + setInterval 차단 + 포트 3464(워커1 이 3461·3463 씀) · 검증 PC 토큰 = jwt.sign({id,username,name,role}) · `/api/delivery/test` 는 adminOnly · 러너 `delivery_test_request` {tr} → `delivery_test_result`.
+- 송장 색인 백업 `%LOCALAPPDATA%\akkome\공유폴더_색인\invoices.pre582b.json`·`invoices-addr.pre582b.json`(396MB) — 10/11 뒤 문제없으면 총괄이 삭제.
+- 리뷰 도구는 스냅샷 기준이라 「어제 리뷰 전부」는 못 봄(① 보류 건) · 답글 여부 없음.
+
+### 워커 구성(10/8 밤)
+총괄 claude-9e(이 창) · 워커1 claude-67(화면 · ao-desk·app.js 편집권 → 미션 끝나 반납) · 워커2 claude-e8(조사·창구 도구). 새 창이면 ListAgents 로 재확인. 포트 총괄 3457(검증 3464) · 워커1 3461·3463 · 워커2 3462.
+
+**현행 버전(10/8 밤): 회사 v5.9.469 / app.js v=405 · ao-desk.js v=52 · ao-desk.css v=39 · ao-dark.css v=2 · final-order.js v=26 · final-order.css v=19 · final-order-core.js v=10 · invoice-v2.js v=27 · styles.css v=125 · theme.css v=15.** 다음 지시 번호 = **#597**.
+
+## ★★★★ 10/8 저녁 세션 마감 인수인계(#577~#591 · v5.9.467) — ②날짜 일은 여전히 유효
 
 > 대표가 재부팅 뒤 총괄·워커1·워커2 창을 새로 띄운다(10/8 저녁). 대표가 「할 일 뭐야?」라고 물으면 **아래 ①~③을 그대로 보고**한다. 10/6 인수인계와 #536~#576 상세는 `CLAUDE_ARCHIVE.md`(10/8 저녁에 원문 그대로 옮김 · CLAUDE.md 가 110k자에 가까워져). 오늘(10/8) 지시 #577~#590 상세는 아래 각 절에 그대로 있다.
 
@@ -353,7 +385,7 @@ npm run deploy
 - 동작: DB 백업 → git tag → git push (main). push되면 Render가 자동 재배포(~2분).
 - ⚠️ **DB 백업이 오래 걸림(3분+ 가능)** → Bash 타임아웃 **9분(540000ms)** 이상으로 실행할 것.
 - 배포 전 반드시: `node --check server.js`, `node --check public/app.js`, `version.js`의 VERSION 상향, `public/index.html`의 `app.js?v=NNN` 캐시버전 상향, `CHANGELOG.md` 갱신.
-- **현재 버전: v5.9.306 / app.js 캐시 v=381** (2026-09-07 배포·Render 반영 실측). ⚠️ 배포 전 `version.js`·`index.html` **실값 재확인** — 병행 세션이 올렸을 수 있음(8/4 v5.9.183 선점 사례).
+- **현재 버전: 파일 실값으로 확인**(version.js · index.html — 이 줄의 숫자는 낡는다). ⚠️ 배포 전 `version.js`·`index.html` **실값 재확인** — 병행 세션이 올렸을 수 있음(8/4 v5.9.183 선점 사례).
 - ⚠️ **병행 세션 주의**: 같은 작업폴더에서 세션 2개가 동시에 커밋하면 배포 준비 `git add`에 상대 세션의 미커밋 변경이 쓸려 들어감(2026-07-26 실사례 — 무해 확인 후 병합 배포). **핵심 로직 작업 2개가 겹칠 땐 반드시 따로 배포**(대표 확정 원칙). 배포 직전 `git log`·`git status`로 상대 세션 커밋 확인.
 - git commit 메시지 끝에 Co-Authored-By / Claude-Session 푸터 붙이기(기존 커밋 참고).
 
@@ -480,7 +512,7 @@ NAVER_RELAY_CA    = (중계서버 자체서명 cert.pem 내용 — 인증서 고
 ### 3-4-b. 중간발주 API 직결 (v5.9.53) — 완료·테스트 대기
 - 송장변환 > **중간발주 탭**: 비번(4031) 엑셀 업로드 **제거** → **[📦 중간발주 시작하기]** 버튼이 같은 API(`/api/agent-office/naver/invoice-orders?days=N`)로 배송준비 전체를 불러와 `qtyRowsMain`에 주입 → 기존 `recomputeQtyAggregate()`(matchProduct로 옵션정보 파싱)·거래처 필터·품목추가·이미지 저장 **무수정** 동작. 조회 기간 입력 `#invoice-qty-days`(기본40·최대180). 문구 "현재 스마트스토어 배송준비로 중간발주를 진행합니다".
 - app.js: `handleQtyUpload`/`setupQtyArea` 삭제, `setupQtyStart()`(~5765행) 추가, `resetInvoiceQty` 정리. `parseInvoiceRows` 등 헬퍼는 미사용 정의로 존치. 서버 `/api/invoice/decrypt` 존치.
-- ⚠️ 불러오기 API는 **관리자 전용**(기존 정책) — 직원 계정은 중간발주 시작하기 사용 불가(필요 시 직원 허용 여부 대표에게 문의).
+- ✅ 불러오기 API 3종(네이버·쿠팡·자사몰)은 **직원도 가능**(authMiddleware — 대표 7/26 결정 · 10/8 실코드 확인 · 「관리자 전용」은 낡은 기록).
 
 ### 3-5. 정산 조회 (3단계) — 완료
 - `GET /api/agent-office/naver/settlements?from&to` (adminOnly). 일별정산 `GET /external/v1/pay-settle/settle/daily` (필수: startDate·endDate·pageNumber·pageSize). 데이터관리 화면에서 조회. **대표 확인: 정산내역 정상.**
