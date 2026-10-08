@@ -106,7 +106,7 @@
 
 - **왜**: #585 로 도착안내 변수에 날짜를 붙였지만 고정 문안 「오늘 출발했습니다!」는 그대로 → 대표가 고정 문안까지 바꾸기로. 새 템플릿 = 발송안내3(UK_5756)과 글자 하나 차이(「오늘」 → 「#{발송일}」) · 버튼 4개 동일(채널 추가 · 택배 배송조회 · 맛있게 드시는 법·보관법 · 문의하기) · tpl_type AD.
 - **준비(이 배포)**: `scripts/alimtalk-templates.json` `templates_guide4`(key ship_guide4 · name 제주아꼼이네_발송안내4) · kakao-notify.js templateByKey 조회 대상 + registerTemplates set 'guide4' · server.js 발송안내 vars 에 `'발송일': kstMdDow(Date.now())`(네이버 8027 · 자사몰 10270 — 쿠팡은 템플릿 아닌 문자라 무관) — **지금 템플릿(UK_5756)은 발송일 변수를 안 쓰므로 문면 변화 0**.
-- **등록·심사 신청(배포 뒤 총괄 1회)**: agent_office_config `aligo_register_request` = {"go":"yes","audit":true,"set":"guide4"} → 실서버 폴러(server.js 15250)가 알리고 template/add + template/request → `aligo_register_result` 에 새 tpl_code(UM_… 꼴). 결과 코드는 아래 줄에 적는다.
+- **등록·심사 신청(배포 뒤 총괄 1회)**: agent_office_config `aligo_register_request` = {"go":"yes","audit":true,"set":"guide4"} → 실서버 폴러(server.js 15250)가 알리고 template/add + template/request → `aligo_register_result` 에 새 tpl_code. ✅ **10/8 12:50 실행 = 등록 성공 「정상적으로 템플릿을 생성하였습니다」 · 검수요청 성공 · 새 코드 `UM_2824`(제주아꼼이네_발송안내4 · 심사 중).**
 - **승인 뒤 할 일(owner_todo 16 · 1~3 영업일 · `aligo_selftest_request` {"full":true} 로 상태(A/R) 확인)**: kakao-notify.js `MD_TPL_KEY` 에 `'<새코드>': 'ship_guide4'` + `APPROVED_TPL.guide` 를 새 코드로(또는 Render env ALIGO_TPL_CODE_GUIDE) → verify-414-unit ①·416 기대값 갱신 → 배포 → 대표 번호로 시험 1건(sendTestOne key 'guide' · vars 발송일) → 실발송 확인. 반려(R)면 사유 보고 뒤 문안 수정·modify 재신청(#467-e 길 · modify_code).
 - 🔴 롤백 = APPROVED_TPL.guide 를 UK_5756 으로(MD_TPL_KEY 자동 일치 · 버튼 세트 함께). 옛 템플릿은 지우지 않는다.
 
