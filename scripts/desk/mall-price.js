@@ -4,6 +4,8 @@
 //   node scripts/desk/mall-price.js apply <상품> <지시 id>         계획대로 카페24 추가금(필요하면 기본가)을 바꿈 → 90초 뒤 다시 읽어 확인
 //   node scripts/desk/mall-price.js restore <상품> <지시 id>       이 도구로 바꾸기 직전 값으로 되돌림
 //   node scripts/desk/mall-price.js checkout <상품> [옵션 글자]     실제 결제창(비회원 · 주문은 안 함)의 최종 금액 = 네이버 결제가인지
+//   node scripts/desk/mall-price.js hide <상품> "<옵션 글자>"… [지시 id]   네이버에서 내린 옵션을 카페24에서도 미노출(판매 F · 진열 F)로 — 지시 id 를 빼면 계획만(쓰기 0)
+//   node scripts/desk/mall-price.js show <상품> "<옵션 글자>"… [지시 id]   미노출 옵션을 다시 노출(되돌리기용)
 //   <상품> = 네이버 상품번호 · c92 같은 카페24 번호 · 상품/옵션 이름의 낱말 하나(하나로 좁혀질 때만)
 //   규칙: 카페24 결제가 = 기본가 + 옵션 추가금. 기본가 = 네이버 결제가 + 가장 싼 옵션 증감(새벽 자동 동기화와 같은 식 — 다르면 다음 날 되돌아감).
 //         옵션은 이름이 글자까지 같은 것끼리만 맞춘다(앞 번호 「1. 」만 무시). 이름이 다르면 바꾸지 않고 멈춘다 — 카페24 옵션 추가·이름 변경은 관리자 화면에서 사람만 할 수 있다.
@@ -46,7 +48,8 @@ async function plan(arg, useSnap) {
     if (!usable.length) { P.stops.push('네이버에 판매 중인 옵션이 없어요'); return { P, c, nv }; }
     const liveMin = Math.min(...usable.map(o => o.price)), targetBase = nv.discPrice + liveMin;
     P.target_base = targetBase; P.target_minAdd = liveMin;
-    const live = c.vars.filter(v => v.selling === 'T' && v.display === 'T'), hidden = c.vars.filter(v => !(v.selling === 'T' && v.display === 'T'));
+    P.extra_live = [];   // 네이버에 없는데 카페24에서 팔리는 옵션 = 미노출(hide) 후보(구성 차이로 일부러 둔 것일 수 있다 — 사람이 정함)
+    const live = c.vars.filter(v => v.selling === 'T' && v.display === 'T'), hidden =c.vars.filter(v => !(v.selling === 'T' && v.display === 'T'));
     const used = new Set();
     const find = (o) => { const t = nrm(nText(o)); let h = c.vars.filter(v => nrm(v.name) === t); if (!h.length) h = c.vars.filter(v => noNum(v.name) === noNum(t)); return h; };
     for (const o of usable) {
@@ -71,7 +74,8 @@ async function plan(arg, useSnap) {
         if (used.has(v.code)) continue; const cur = c.base + v.add, add = cur - targetBase;
         const nvOff = nv.opts.find(o => !o.usable && noNum(nText(o)) === noNum(v.name));
         P.rows.push({ opt: v.name, code: v.code, naver: null, c24: cur, add_now: v.add, add_new: add, state: nvOff ? '네이버는 판매 안 함 · 카페24는 판매 중(그대로 둠)' : '카페24에만 있음(결제가 그대로 둠)' });
-        if (add < 0) P.stops.push(`「${v.name}」는 새 기본가보다 싸서 추가금이 음수가 돼요 — 총괄 확인이 필요해요`);
+        P.extra_live.push({ code: v.code, opt: v.name, pay: cur, add: v.add, naver: nvOff ? '네이버 판매 안 함(목록에는 있음)' : '네이버에 없음' });
+        if (add < 0) P.stops.push(`「${v.name}」는 새 기본가보다 싸서 추가금이 음수가 돼요 — 네이버에서 내린 옵션이면 먼저 미노출(hide)로 바꾼 뒤 다시 맞추세요. 계속 팔 옵션이면 총괄 확인이 필요해요`);
         else if (add !== v.add) P.puts.push({ code: v.code, name: v.name, body: { additional_amount: String(add) }, before: v.add, pay_before: cur, pay_after: cur });
     }
     if (hidden.length) P.notes.push(`미노출 옵션 ${hidden.length}개는 건드리지 않아요`);
@@ -173,6 +177,46 @@ async function checkout(nno, cases) {
         if (!rows.length) throw new Error('확인할 옵션이 없어요');
         const picked = rows.slice(0, 6); const res = await checkout(P.nno, picked.map(r => ({ opt: r.opt, pay: r.naver })));
         console.log(JSON.stringify({ nno: P.nno, source: P.source, checked: res.length, skipped: rows.length - picked.length, all_ok: res.every(r => r.ok), results: res, note: '결제창(비회원 주문서)의 최종 결제 금액을 읽었어요 — 주문은 하지 않았고 장바구니는 비웠어요' + (rows.length > picked.length ? ' · 한 번에 6개까지라 나머지는 옵션 글자를 붙여 다시 실행' : '') }, null, 1));
-    } else throw new Error('사용: mall-price.js preview [상품] [--snapshot] | apply <상품> <지시 id> | restore <상품> <지시 id> | checkout <상품> [옵션 글자]');
+    } else if (cmd === 'hide' || cmd === 'show') {
+        // #588-f(대표 GO 10/8): 네이버에서 내린 옵션을 카페24에서도 미노출(selling F · display F)로 — show 는 그 반대(되돌리기). 지시 id 를 빼면 계획만 보여 준다(쓰기 0).
+        const dry = !/^\d{1,9}$/.test(String(args[args.length - 1] || '')), orderId = dry ? null : parseInt(args[args.length - 1], 10), frags = (dry ? args.slice(1) : args.slice(1, -1)).map(nrm).filter(Boolean);
+        if (!args[0] || !frags.length) throw new Error(`사용: mall-price.js ${cmd} <상품> "<옵션 글자>"… [지시 id]  (지시 id 를 빼면 계획만)`);
+        const actor = dry ? null : await M.who(orderId);
+        const { P, c, nv } = await plan(args[0], useSnap); const stops = [], picks = [];
+        const naverHas = v => nv.opts.some(o => o.usable && noNum(nText(o)) === noNum(v.name));
+        for (const f of frags) {
+            const h = c.vars.filter(v => nrm(v.name).includes(f));
+            if (!h.length) { stops.push(`카페24에 「${f}」가 든 옵션이 없어요`); continue; }
+            if (h.length > 1) { stops.push(`「${f}」가 든 카페24 옵션이 ${h.length}개예요 — 더 길게 적어 하나로 좁혀 주세요: ` + h.map(v => `「${v.name}」`).join(' · ')); continue; }
+            const v = h[0], on = v.selling === 'T' && v.display === 'T';
+            if (picks.some(p => p.code === v.code)) continue;
+            if (cmd === 'hide') {
+                if (naverHas(v)) { stops.push(`「${v.name}」는 네이버에서 아직 파는 옵션이에요 — 네이버에서 먼저 내린 뒤 다시 말씀해 주세요`); continue; }
+                if (v.selling === 'F' && v.display === 'F') { stops.push(`「${v.name}」는 이미 미노출이에요`); continue; }
+            } else if (on) { stops.push(`「${v.name}」는 이미 판매 중이에요`); continue; }
+            picks.push(v);
+        }
+        const liveNow = c.vars.filter(v => v.selling === 'T' && v.display === 'T');
+        if (cmd === 'hide' && picks.length && liveNow.filter(v => !picks.some(p => p.code === v.code)).length < 1) stops.push('그 상품의 마지막 판매 옵션이라 미노출로 바꾸지 않아요 — 상품 자체를 내리는 것은 총괄 창에서');
+        // 가격 쪽에 미치는 것: 기본가·minAdd 는 「네이버 판매 옵션」으로만 정해지므로 네이버에 없는 옵션을 내려도 달라지지 않는다. 다만 네이버가 가장 싼 옵션을 내려 기본가가 올라야 하는 상태면 hide 뒤 apply 가 이어져야 한다.
+        const after = cmd === 'hide' ? { stops: P.stops.filter(s => !picks.some(p => s.includes(`「${p.name}」`))), base_change: P.base_change || null, minAdd_change: P.minAdd_change || null, price_changes: P.puts.filter(t => !picks.some(p => p.code === t.code)).length } : null;
+        const priceNext = !!after && (!!after.base_change || !!after.minAdd_change || after.price_changes > 0);
+        const notes = [];
+        if (cmd === 'hide') { notes.push('미노출로 바꾸면 그 옵션을 장바구니에 담아 둔 손님도 살 수 없어요'); if (priceNext) notes.push(`이 옵션을 내린 뒤 가격 맞추기(apply)가 이어져야 해요${after.base_change ? ` — 기본가 ${won(after.base_change.from)} → ${won(after.base_change.to)}원` : ''}${after.minAdd_change ? ` · 동기화 기준값 ${after.minAdd_change.from} → ${after.minAdd_change.to}` : ''}${after.price_changes ? ` · 옵션 ${after.price_changes}개 추가금` : ''}(안 하면 다음 새벽 자동 동기화 때 결제가가 어긋날 수 있어요)`); else notes.push('기본가·동기화 기준값은 네이버 판매 옵션으로 정해지므로 이 옵션을 내려도 그대로예요'); if (after.stops.length) notes.push('가격 맞추기 쪽에 따로 멈춤 사유가 있어요: ' + after.stops.join(' / ')); }
+        else notes.push(...picks.filter(v => !naverHas(v)).map(v => `「${v.name}」는 네이버에 없는 옵션이에요 — 다시 노출하면 자사몰 결제창에서만 살 수 있는 옵션이 됩니다(화면에는 안 보일 수 있어요)`), '다시 노출한 뒤 preview 로 결제가가 맞는지 확인하세요(내려가 있던 동안 추가금은 안 바뀌었어요)');
+        const planOut = { nno: P.nno, cno: P.cno, source: P.source, action: cmd === 'hide' ? '미노출로(판매 F · 진열 F)' : '다시 노출(판매 T · 진열 T)', targets: picks.map(v => ({ code: v.code, opt: v.name, pay: c.base + v.add, now: `${v.selling}/${v.display}` })), live_before: liveNow.length, live_after: cmd === 'hide' ? liveNow.length - picks.filter(p => p.selling === 'T' && p.display === 'T').length : liveNow.length + picks.length, stops, notes, price_follow_up: priceNext ? `node scripts/desk/mall-price.js apply ${P.nno} <지시 id>` : undefined };
+        if (stops.length || !picks.length) { console.log(JSON.stringify({ ok: false, stopped: true, ...planOut, note: '멈췄어요 — 바꾼 것 없음' }, null, 1)); await M.pool.end(); return; }
+        if (dry) { console.log(JSON.stringify({ ...planOut, note: '계획만 — 아직 아무것도 바꾸지 않았어요(실행하려면 끝에 지시 id)' }, null, 1)); await M.pool.end(); return; }
+        // 내리는 실행은 네이버 실시간 값으로 판단했을 때만 — 스냅샷(새벽 값)으로 물러난 상태면 낮에 네이버에 새로 올린 옵션을 「네이버에 없음」으로 잘못 볼 수 있다(총괄 판단 10/8)
+        if (cmd === 'hide' && P.source !== '네이버 실시간') { console.log(JSON.stringify({ ok: false, stopped: true, ...planOut, stops: ['네이버 실시간 조회가 안 돼 지금은 내리지 않아요 — 잠시 뒤 다시 말씀해 주세요'], note: '멈췄어요 — 바꾼 것 없음' }, null, 1)); await M.pool.end(); return; }
+        const prev = (await M.cfgGet('mall_price_prev')) || {}, hk = 'hide:' + P.nno, list = Array.isArray(prev[hk]) ? prev[hk] : [];
+        const before = { at: new Date().toISOString(), order_id: orderId, by: actor, mode: cmd, cno: P.cno, vars: picks.map(v => ({ code: v.code, name: v.name, add: v.add, selling: v.selling, display: v.display })) };
+        list.push(before); prev[hk] = list.slice(-5); await M.cfgSet('mall_price_prev', prev);
+        const want = cmd === 'hide' ? 'F' : 'T', res = await putAll(P.cno, null, picks.map(v => ({ code: v.code, name: v.name, body: { selling: want, display: want } })), orderId);
+        await M.audit('cafe24_variant_update', 'cafe24_product', orderId, { tool: 'mall-price', mode: cmd, order_id: orderId, naver_no: P.nno, cno: P.cno, before, want, results: res }, actor);
+        await M.stepLog(orderId, '자사몰 옵션 노출: 카페24가 새 값을 보여 줄 때까지 90초 대기'); await M.sleep(90000);
+        const aft = await M.c24Product(P.cno), bad = picks.filter(p => { const v = aft.vars.find(x => x.code === p.code); return !v || v.selling !== want || v.display !== want; }).map(p => p.name);
+        console.log(JSON.stringify({ ok: !bad.length && res.every(r => r.ok), changed: true, ...planOut, put_fail: res.filter(r => !r.ok), recheck_bad: bad, undo: `node scripts/desk/mall-price.js ${cmd === 'hide' ? 'show' : 'hide'} ${P.nno} ${picks.map(v => JSON.stringify(v.name)).join(' ')} <지시 id>`, note: bad.length ? '다시 읽은 값이 아직 달라요 — 카페24 조회는 몇 분 늦을 수 있어요. 3분 뒤 preview 로 확인하고 그래도 다르면 총괄에게' : (cmd === 'hide' ? '미노출로 바꿨어요' : '다시 노출했어요') + (priceNext ? ' — 이어서 가격 맞추기(apply)를 하세요' : '') }, null, 1));
+    } else throw new Error('사용: mall-price.js preview [상품] [--snapshot] | apply <상품> <지시 id> | restore <상품> <지시 id> | checkout <상품> [옵션 글자] | hide <상품> "<옵션 글자>"… [지시 id] | show <상품> "<옵션 글자>"… [지시 id]');
     await M.pool.end();
 })().catch(async e => { console.log(JSON.stringify({ ok: false, error: e.message })); try { await M.pool.end(); } catch (_) { } process.exit(1); });
