@@ -9818,6 +9818,10 @@ async function naverAutoCollectTick() {
         if (status === 'fail' && r.last_status !== 'fail') {
             // 연속 실패 스팸 방지 — 정상→실패 전환 시에만 1회 알림
             notifyTelegram(`🛰️ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 실패 — ${errMsg}`);
+        } else if (status === 'ok' && r.last_status === 'fail') {
+            // #599(대표 10/9 텔레그램 「쿠팡 자동수집 실패 coupang_relay_error_500」): 실패 알림만 오고 저절로 복구돼도 알 길이 없었다 → 실패→정상 전환 때 1회 복구 알림
+            //   (실패분은 다음 회차가 같은 기간을 다시 읽어 따라잡는다 — 주문안내 2일 · 발송안내 7일 · 처리 이력(order_key)으로 중복 없음)
+            notifyTelegram(`✅ [${NAVER_TIMER_LABELS[r.key] || r.key}] 자동수집 복구 — 다시 정상${summary ? ' (' + String(summary).slice(0, 80) + ')' : ''}`);
         }
         console.log(`[자동수집] ${r.key}: ${status}${summary ? ' — ' + summary : ''}${errMsg ? ' — ' + errMsg : ''}`);
     } catch (e) {
