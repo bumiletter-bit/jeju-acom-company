@@ -10030,6 +10030,8 @@ async function deliveryInitDB() {
         tracking text PRIMARY KEY, bucket text, code text, label text, msg text, event_time text, branch text,
         driver_name text, driver_phone text, events jsonb, delivered boolean DEFAULT false,
         checked_at timestamptz DEFAULT now(), first_trouble_at timestamptz)`);
+    // #597 처리함 — 직원이 이상 건을 봤다고 표시(누가 · 언제) · 상태가 새로 조회돼도 유지
+    await pool.query(`ALTER TABLE delivery_status ADD COLUMN IF NOT EXISTS handled_at timestamptz, ADD COLUMN IF NOT EXISTS handled_by text`);
 }
 const kstDateStr = ms => new Date((ms || Date.now()) + 9 * 3600e3).toISOString().slice(0, 10);
 const isYmd = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
@@ -10103,26 +10105,71 @@ app.get('/api/delivery/summary', authMiddleware, async (req, res) => {
     const from = req.query.from, to = req.query.to || from;
     if (!isYmd(from) || !isYmd(to) || from > to) return res.status(400).json({ ok: false, error: '기간을 YYYY-MM-DD 로 주세요' });
     const r = await pool.query(`SELECT s.tracking, s.ship_date::text AS ship_date, s.partner, s.recipient, s.phone, s.addr, s.option_text, s.qty, s.memo,
-            t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at
+            t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at, t.handled_at, t.handled_by
         FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE s.ship_date BETWEEN $1 AND $2 ORDER BY s.ship_date, s.partner, s.tracking`, [from, to]);
-    const today = kstDateStr(); const counts = {}, byKey = {}; let checked = 0, checkedAt = null; const trouble = []; const persons = {};
-    const tail4 = t => { const d = String(t || '').replace(/\D/g, ''); return d ? d.slice(-4) : ''; };
-    const region = ad => String(ad || '').trim().split(/\s+/).slice(0, 2).join(' ');
-    const dayDiff = d => Math.round((new Date(today) - new Date(d)) / 86400e3);
+    const today = kstDateStr(); const counts = {}, byKey = {}; let checked = 0, checkedAt = null; const trouble = []; const persons = {}; const undelivered = {};
     for (const x of r.rows) {
         const pk = (x.recipient || '') + '|' + String(x.phone || '').replace(/\D/g, ''); persons[pk] = (persons[pk] || 0) + 1;
         const b = x.bucket || '미조회'; counts[b] = (counts[b] || 0) + 1; if (x.bucket) { checked++; if (!checkedAt || x.checked_at > checkedAt) checkedAt = x.checked_at; }
         const k = x.ship_date + '|' + (x.partner || ''); (byKey[k] = byKey[k] || { date: x.ship_date, partner: x.partner || '', n: 0, counts: {} }).n++; byKey[k].counts[b] = (byKey[k].counts[b] || 0) + 1;
-        const stuck = b === '집화' && dayDiff(x.ship_date) >= 1;
-        if (TROUBLE_SET.has(b) || stuck) trouble.push({ tracking: cjTrack.fmtTracking(x.tracking), ship_date: x.ship_date, partner: x.partner || '', recipient: x.recipient || '', phone_tail: tail4(x.phone), region: region(x.addr),
-            option: x.option_text || '', qty: x.qty, bucket: stuck ? '집화 정체' : b, label: x.label || '', msg: x.msg || '', event_time: x.event_time || '', branch: x.branch || '',
-            driver: x.driver_name ? { name: x.driver_name, phone: x.driver_phone || '' } : null, days: dayDiff(x.ship_date), since_trouble: x.first_trouble_at, memo: x.memo || '' });
+        const row = deliveryRow(x, today);
+        if (TROUBLE_SET.has(b) || row.bucket === '집화 정체') trouble.push(row);
+        if (b === '미배송') { const key = row.region || '지역 모름'; undelivered[key] = (undelivered[key] || 0) + 1; }
     }
     const dupExtra = Object.values(persons).reduce((a, n) => a + (n > 1 ? n - 1 : 0), 0);
     const label = from === to ? from.slice(5).replace('-', '/') : from.slice(5).replace('-', '/') + '~' + to.slice(5).replace('-', '/');
-    const summary_text = cjTrack.summaryText({ label, total: r.rows.length, dupExtra, counts });
+    let summary_text = cjTrack.summaryText({ label, total: r.rows.length, dupExtra, counts });
+    // #597 직원 양식의 「👉미배송건 섬지역」 줄 — 미배송 건의 시군구별 건수 + 상태 문구에 도서·익일이 있으면 「섬지역 익일」
+    if (counts['미배송'] > 0) {
+        const island = trouble.some(t => t.bucket === '미배송' && /도서|섬|익일/.test(t.msg || ''));
+        summary_text += `\n👉 미배송 ${counts['미배송']}건: ` + Object.entries(undelivered).map(([k, n]) => k + ' ' + n).join(' · ') + (island ? '(섬지역 익일)' : '');
+    }
     res.json({ ok: true, from, to, shipments: r.rows.length, checked, unchecked: r.rows.length - checked, counts, dup: { person: dupExtra }, summary_text,
         by_date: Object.values(byKey), trouble, checked_at: checkedAt, job: deliveryJob && deliveryJob.state === 'running' ? deliveryJob : null });
+});
+// 한 줄 꼴(summary.trouble 과 list.rows 공용) — 손님 번호 끝 4자리 · 시군구만 · 기사 번호는 직원용이라 그대로
+function deliveryRow(x, today) {
+    const tail4 = t => { const d = String(t || '').replace(/\D/g, ''); return d ? d.slice(-4) : ''; };
+    const region = ad => String(ad || '').trim().split(/\s+/).slice(0, 2).join(' ');
+    const days = Math.round((new Date(today || kstDateStr()) - new Date(x.ship_date)) / 86400e3);
+    const b = x.bucket || '미조회';
+    return { tracking: cjTrack.fmtTracking(x.tracking), ship_date: x.ship_date, partner: x.partner || '', recipient: x.recipient || '', phone_tail: tail4(x.phone), region: region(x.addr),
+        option: x.option_text || '', qty: x.qty, bucket: b === '집화' && days >= 1 ? '집화 정체' : b, label: x.label || '', msg: x.msg || '', event_time: x.event_time || '', branch: x.branch || '',
+        driver: x.driver_name ? { name: x.driver_name, phone: x.driver_phone || '' } : null, days, since_trouble: x.first_trouble_at, memo: x.memo || '',
+        handled_at: x.handled_at || null, handled_by: x.handled_by || '' };
+}
+// #597 상태별 목록 — 숫자 칸·발송일 표 숫자를 눌렀을 때(bucket · partner · q = 이름|끝 4자리|운송장 · 미처리 먼저)
+app.get('/api/delivery/list', authMiddleware, async (req, res) => {
+    const from = req.query.from, to = req.query.to || from;
+    if (!isYmd(from) || !isYmd(to) || from > to) return res.status(400).json({ ok: false, error: '기간을 YYYY-MM-DD 로 주세요' });
+    const bucket = String(req.query.bucket || '').trim(), partner = String(req.query.partner || '').trim(), q = String(req.query.q || '').trim().slice(0, 40);
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 300));
+    const where = ['s.ship_date BETWEEN $1 AND $2'], args = [from, to];
+    if (bucket) { if (bucket === '미조회') where.push('t.bucket IS NULL'); else { args.push(bucket === '집화 정체' ? '집화' : bucket); where.push(`t.bucket = $${args.length}`); } }
+    if (partner) { args.push(partner); where.push(`COALESCE(s.partner, '') = $${args.length}`); }
+    if (q) {
+        const digits = q.replace(/\D/g, '');
+        if (digits.length >= 4 && digits.length === q.length) { args.push(digits); where.push(`(regexp_replace(COALESCE(s.phone, ''), '\\D', '', 'g') LIKE '%' || $${args.length} OR s.tracking LIKE '%' || $${args.length} || '%')`); }
+        else { args.push('%' + q + '%'); where.push(`s.recipient ILIKE $${args.length}`); }
+    }
+    const sql = `FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE ${where.join(' AND ')}`;
+    const cnt = await pool.query(`SELECT count(*)::int AS n ${sql}`, args);
+    const r = await pool.query(`SELECT s.tracking, s.ship_date::text AS ship_date, s.partner, s.recipient, s.phone, s.addr, s.option_text, s.qty, s.memo,
+            t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at, t.handled_at, t.handled_by
+        ${sql} ORDER BY (t.handled_at IS NOT NULL), s.ship_date, s.partner, s.tracking LIMIT ${limit}`, args);
+    const today = kstDateStr();
+    res.json({ ok: true, from, to, bucket, partner, q, total: cnt.rows[0].n, limit, rows: r.rows.map(x => deliveryRow(x, today)) });
+});
+// #597 처리함 표시 — 직원 누구나 · 상태 행이 아직 없으면(미조회) 행을 만들어 표시만
+app.post('/api/delivery/handled', authMiddleware, async (req, res) => {
+    const tr = cjTrack.normTracking(req.body && req.body.tracking);
+    if (!tr || tr.length < 10) return res.status(400).json({ ok: false, error: '운송장번호가 없어요' });
+    const on = !(req.body && (req.body.on === false || req.body.on === 'false' || req.body.on === 0));
+    const who = String((req.user && req.user.name) || '').slice(0, 40);
+    const r = await pool.query(`INSERT INTO delivery_status (tracking, handled_at, handled_by) VALUES ($1, CASE WHEN $2 THEN now() END, CASE WHEN $2 THEN $3 END)
+        ON CONFLICT (tracking) DO UPDATE SET handled_at = CASE WHEN $2 THEN now() END, handled_by = CASE WHEN $2 THEN $3 END
+        RETURNING tracking, handled_at, handled_by`, [tr, on, who]);
+    res.json({ ok: true, tracking: cjTrack.fmtTracking(r.rows[0].tracking), handled_at: r.rows[0].handled_at, handled_by: r.rows[0].handled_by || '' });
 });
 // 보조 입력 — LOIS 엑셀(Sheet2 운송장) base64 · body { name, data, date? } → delivery_shipments upsert
 app.post('/api/delivery/shipments/upload', authMiddleware, async (req, res) => {

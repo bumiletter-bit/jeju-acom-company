@@ -508,7 +508,7 @@
 
     // ── #594 배송조회(대표 10/8) — 알약 [배송조회 확인하기] → 서버가 CJ대한통운에 직접 물어본 결과를 이 카드에 그린다(창구·AI를 거치지 않는다)
     //   서버: POST /api/delivery/track · GET /api/delivery/track/status · GET /api/delivery/summary · POST /api/delivery/shipments/upload
-    const SHIP = { timer: 0, data: null, busy: false, seq: 0 };
+    const SHIP = { timer: 0, data: null, busy: false, seq: 0, pick: null, q: '', list: null, lseq: 0, qt: 0, rkey: '' };
     const kstDay = off => new Date(Date.now() + 9 * 3600e3 + (off || 0) * 86400e3).toISOString().slice(0, 10);
     const nfmt = n => (Number(n) || 0).toLocaleString('ko-KR');
     const mdOf = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '/' + m[3] : String(d || ''); };
@@ -568,38 +568,127 @@
         catch (e) { out.innerHTML = ''; shipNote((e && e.message) || '불러오지 못했어요', 'err'); return; }
         if (r.from !== $('ship-from').value || r.to !== $('ship-to').value) return;   // 그 사이 날짜를 바꿨다
         SHIP.data = d;
+        const rkey = r.from + '|' + r.to;   // #597: 다시 받아도 고른 칸·검색어는 그대로 — 날짜가 바뀌었을 때만 「확인할 건」으로
+        if (SHIP.rkey !== rkey) { SHIP.rkey = rkey; SHIP.pick = null; SHIP.q = ''; SHIP.list = null; SHIP.lseq++; }
         if (!d || d.ok === false || !(Number(d.shipments) > 0)) { out.innerHTML = `<div class="desk-empty ship-empty">${esc((d && d.error) || SHIP_EMPTY)}</div>`; $('ship-drop').classList.add('want'); return; }
         $('ship-drop').classList.remove('want');
         if (!(Number(d.checked) > 0)) { out.innerHTML = `<div class="desk-empty ship-empty">송장 ${nfmt(d.shipments)}건이 올라와 있고 아직 조회하지 않았어요. [조회]를 누르면 CJ대한통운에 물어봐요.</div>`; return; }
         out.innerHTML = shipHtml(d);
+        shipDetail();
+        if (SHIP.pick) shipList();
     }
     function shipHtml(d) {
         const c = d.counts || {}, tr = Array.isArray(d.trouble) ? d.trouble : [], bd = Array.isArray(d.by_date) ? d.by_date : [];
         const keys = SHIP_KEYS.filter(k => k in c || ['배송완료', '배송출발', '간선상하차', '미배송', '사고'].includes(k));
-        const stat = keys.map(k => `<li data-k="${SHIP_BADGE[k] && Number(c[k]) > 0 ? SHIP_BADGE[k] : ''}"><span>${esc(k)}</span><b>${nfmt(c[k])}</b></li>`).join('');
+        // #597: 건수가 있는 칸은 누르면 그 상태만 아래 표에(0건 칸은 안 눌림)
+        const stat = keys.map(k => `<li data-k="${SHIP_BADGE[k] && Number(c[k]) > 0 ? SHIP_BADGE[k] : ''}"${Number(c[k]) > 0 ? ` data-b="${esc(k)}" role="button" tabindex="0" aria-pressed="false"` : ''}><span>${esc(k)}</span><b>${nfmt(c[k])}</b></li>`).join('');
+        const cell = (x, k, v) => `<button type="button" class="ship-cell" data-b="${esc(k)}" data-d="${esc(String(x.date || '').slice(0, 10))}" data-p="${esc(x.partner || '')}" aria-pressed="false">${nfmt(v)}</button>`;
         const when = d.checked_at ? kst(d.checked_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
         const byCols = SHIP_KEYS.filter(k => bd.some(x => x.counts && Number(x.counts[k]) > 0) || ['배송완료', '배송출발', '간선상하차'].includes(k));
         const byTable = bd.length ? `<h4 class="ship-h">발송일·거래처별</h4><div class="desk-md-tw ship-tw"><table class="desk-md-t ship-by"><thead><tr><th>발송일</th><th>거래처</th><th class="num">송장</th>${byCols.map(k => `<th class="num">${esc(k)}</th>`).join('')}</tr></thead><tbody>`
-            + bd.map(x => `<tr><td>${esc(mdOf(x.date))}</td><td>${esc(x.partner || '')}</td><td class="num">${nfmt(x.n)}</td>${byCols.map(k => { const v = Number(x.counts && x.counts[k]) || 0; return `<td class="num${v && (k === '미배송' || k === '사고') ? ' warn' : ''}">${v ? nfmt(v) : '<i>0</i>'}</td>`; }).join('')}</tr>`).join('') + '</tbody></table></div>' : '';
-        const tel = p => { const g = String(p || '').replace(/[^\d+]/g, ''); return g ? `<a class="ship-tel" href="tel:${esc(g)}">${esc(p)}</a>` : ''; };
-        const trTable = tr.length ? `<div class="desk-md-tw ship-tw"><table class="desk-md-t ship-tr"><thead><tr><th>상태</th><th>받는 분</th><th>품목</th><th>상태 내용</th><th class="num">며칠째</th><th>담당기사</th><th>운송장</th></tr></thead><tbody>`
-            + tr.map(x => {
-                const dr = x.driver || {}, days = Number(x.days);
-                const what = [x.label, x.msg && x.msg !== x.label ? x.msg : ''].filter(Boolean).map(esc).join('<br>');
-                const where = [x.event_time ? kst(x.event_time, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '', x.branch].filter(Boolean).map(esc).join(' · ');
-                return `<tr><td><span class="desk-badge" data-k="${SHIP_BADGE[x.bucket] || 'mute'}">${esc(x.bucket || '확인')}</span></td>`
-                    + `<td class="ship-who">${esc(x.recipient || '')}${x.phone_tail ? `<small>끝 ${esc(x.phone_tail)}</small>` : ''}${x.region ? `<small>${esc(x.region)}</small>` : ''}</td>`
-                    + `<td class="ship-opt">${esc(x.option || '')}${Number(x.qty) > 1 ? ` <b>× ${nfmt(x.qty)}</b>` : ''}</td>`
-                    + `<td class="ship-what">${what || '<i>내용 없음</i>'}${where ? `<small>${where}</small>` : ''}${x.memo ? `<small class="memo" title="${esc(x.memo)}">손님 메모 · ${esc(x.memo)}</small>` : ''}</td>`
-                    + `<td class="num">${Number.isFinite(days) && days > 0 ? days + '일째' : ''}</td>`
-                    + `<td class="ship-drv">${esc(dr.name || '')}${tel(dr.phone)}</td>`
-                    + `<td class="ship-no">${esc(x.tracking || '')}<small>${esc([mdOf(x.ship_date) + ' 발송', x.partner].filter(Boolean).join(' · '))}</small></td></tr>`;
-            }).join('') + '</tbody></table></div>' : '<div class="desk-empty ship-empty">확인할 건이 없어요. 미배송·사고 0건입니다.</div>';
+            + bd.map(x => `<tr><td>${esc(mdOf(x.date))}</td><td>${esc(x.partner || '')}</td><td class="num">${Number(x.n) > 0 ? cell(x, '', x.n) : nfmt(x.n)}</td>${byCols.map(k => { const v = Number(x.counts && x.counts[k]) || 0; return `<td class="num${v && (k === '미배송' || k === '사고') ? ' warn' : ''}">${v ? cell(x, k, v) : '<i>0</i>'}</td>`; }).join('')}</tr>`).join('') + '</tbody></table></div>' : '';
         return `<section class="desk-sec ship-sum" aria-label="카톡에 올릴 요약"><div class="desk-sec-head"><b>카톡에 올릴 요약</b><button type="button" class="desk-sec-copy" id="ship-copy" aria-label="요약 복사">복사</button></div><div class="desk-sec-body"><div class="ship-sum-text" id="ship-sum-text">${esc(d.summary_text || '')}</div></div></section>`
             + `<ul class="ship-stat" aria-label="상태별 건수">${stat}</ul>`
             + `<div class="ship-meta"><span>송장 ${nfmt(d.shipments)}건 중 ${nfmt(d.checked)}건 조회${Number(d.shipments) > Number(d.checked) ? ' (아직 ' + nfmt(d.shipments - d.checked) + '건은 [조회]를 눌러야 해요)' : ''}${d.dup && Number(d.dup.person) > 0 ? ' · 같은 분 여러 상자 ' + nfmt(d.dup.person) + '건' : ''}${when ? ' · ' + esc(when) + ' 기준' : ''}</span><button type="button" class="desk-btn sm" id="ship-force" title="배송완료로 확인된 건까지 전부 다시 물어봐요">전부 다시 조회</button></div>`
             + byTable
-            + `<h4 class="ship-h">확인할 건 <b>${nfmt(tr.length)}</b></h4>` + trTable;
+            + '<div class="ship-detail" id="ship-detail"></div>';
+    }
+    // ── #597(대표 10/8 밤): 아래 표 = 평소엔 「확인할 건」(summary.trouble) · 숫자 칸을 누르면 그 상태만(GET /api/delivery/list) · 같은 분 여러 상자는 한 줄 · 줄마다 [처리함]
+    const shipKey = p => p ? [p.bucket || '', p.from || '', p.partner || ''].join('|') : '';
+    const shipHm = at => { const t = new Date(new Date(at).getTime() + 9 * 3600e3); return isNaN(t) ? '' : `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`; };
+    // 같은 분(이름·끝 4자리·지역)이고 상태도 같을 때만 한 줄로 — 한 상자만 미배송이면 따로 둔다. 처리한 줄은 아래로
+    function shipGroup(rows) {
+        const out = [], at = new Map();
+        rows.forEach(x => {
+            const k = x.recipient ? [x.recipient, x.phone_tail || '', x.region || '', x.bucket || ''].join('\u0001') : '';
+            const g = k && at.get(k);
+            if (g) g.items.push(x); else { const n = { items: [x] }; out.push(n); if (k) at.set(k, n); }
+        });
+        out.forEach(g => { g.done = g.items.every(x => x.handled_at); });
+        return out.filter(g => !g.done).concat(out.filter(g => g.done));
+    }
+    function shipTable(rows) {
+        const tel = p => { const g = String(p || '').replace(/[^\d+]/g, ''); return g ? `<a class="ship-tel" href="tel:${esc(g)}">${esc(p)}</a>` : ''; };
+        const uniq = a => a.filter((v, i) => v && a.indexOf(v) === i);
+        return `<div class="desk-md-tw ship-tw"><table class="desk-md-t ship-tr"><thead><tr><th>상태</th><th>받는 분</th><th>품목</th><th>상태 내용</th><th class="num">며칠째</th><th>담당기사</th><th>운송장</th><th>처리</th></tr></thead><tbody>`
+            + shipGroup(rows).map(g => {
+                const x = g.items[0], n = g.items.length;
+                const dr = g.items.map(i => i.driver).find(v => v && (v.name || v.phone)) || {}, days = Math.max(...g.items.map(i => Number(i.days) || 0));
+                const what = [x.label, x.msg && x.msg !== x.label ? x.msg : ''].filter(Boolean).map(esc).join('<br>');
+                const where = [x.event_time ? kst(x.event_time, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '', x.branch].filter(Boolean).map(esc).join(' · ');
+                const opts = uniq(g.items.map(i => esc(i.option || '') + (Number(i.qty) > 1 ? ` <b>× ${nfmt(i.qty)}</b>` : ''))).join('<br>');
+                const trs = g.items.map(i => String(i.tracking || '')).filter(Boolean), last = g.items.filter(i => i.handled_at).pop();
+                const act = g.done
+                    ? `<small class="ship-hby">처리 ${esc([last.handled_by, shipHm(last.handled_at)].filter(Boolean).join(' · '))}</small><button type="button" class="desk-btn sm ship-undo" data-tr="${esc(trs.join(','))}">되돌리기</button>`
+                    : `<button type="button" class="desk-btn sm ship-done" data-tr="${esc(trs.join(','))}">처리함</button>`;
+                return `<tr${g.done ? ' class="done"' : ''}><td><span class="desk-badge" data-k="${SHIP_BADGE[x.bucket] || 'mute'}">${esc(x.bucket || '확인')}</span></td>`
+                    + `<td class="ship-who">${esc(x.recipient || '')}${n > 1 ? ` <em class="ship-box">× ${n}상자</em>` : ''}${x.phone_tail ? `<small>끝 ${esc(x.phone_tail)}</small>` : ''}${x.region ? `<small>${esc(x.region)}</small>` : ''}</td>`
+                    + `<td class="ship-opt">${opts}</td>`
+                    + `<td class="ship-what">${what || '<i>내용 없음</i>'}${where ? `<small>${where}</small>` : ''}${x.memo ? `<small class="memo" title="${esc(x.memo)}">손님 메모 · ${esc(x.memo)}</small>` : ''}</td>`
+                    + `<td class="num${days >= 3 ? ' warn' : ''}">${days > 0 ? days + '일째' : ''}</td>`
+                    + `<td class="ship-drv">${esc(dr.name || '')}${tel(dr.phone)}</td>`
+                    + `<td class="ship-no">${trs.map(t => `<span class="ship-trk">${esc(t)}</span>`).join('')}<small>${esc(uniq(g.items.map(i => [mdOf(i.ship_date) + ' 발송', i.partner].filter(Boolean).join(' · '))).join(' / '))}</small></td>`
+                    + `<td class="ship-act">${act}</td></tr>`;
+            }).join('') + '</tbody></table></div>';
+    }
+    function shipDetail() {
+        const box = document.getElementById('ship-detail'); if (!box) return;
+        const p = SHIP.pick, d = SHIP.data || {}, key = shipKey(p), mode = p ? 'L' + key : 'T';
+        $('ship-out').querySelectorAll('[aria-pressed]').forEach(el => el.setAttribute('aria-pressed', String(!!p && [el.dataset.b || '', el.dataset.d || '', el.dataset.p || ''].join('|') === key)));
+        if (box.dataset.mode !== mode) {   // 머리(검색 칸)는 칸을 바꿀 때만 새로 그린다 — 검색어를 적는 동안 초점이 날아가지 않게
+            box.dataset.mode = mode;
+            box.innerHTML = `<div class="ship-dhead"><h4 class="ship-h" id="ship-dh"></h4>${p ? `<button type="button" class="desk-btn sm" id="ship-all" title="확인할 건으로 돌아가요">전체</button><input type="search" class="ship-q" id="ship-q" autocomplete="off" placeholder="이름 · 끝 4자리 · 운송장" aria-label="이 목록에서 찾기" value="${esc(SHIP.q || '')}">` : ''}</div><div class="ship-dnote" id="ship-dnote" role="status" hidden></div><div id="ship-dbody"></div>`;
+        }
+        const L = p ? SHIP.list : null, rows = p ? (L ? L.rows : []) : (Array.isArray(d.trouble) ? d.trouble : []);
+        const doneN = rows.filter(x => x.handled_at).length, doneT = doneN ? ` <small>(처리 ${nfmt(doneN)})</small>` : '';
+        const label = p ? (p.from ? `${mdOf(p.from)} ${p.partner} · ${p.bucket || '전체'}` : p.bucket) : '확인할 건';
+        $('ship-dh').innerHTML = `${esc(label)} <b>${p && !L ? '…' : nfmt(p ? L.total : rows.length)}</b>${doneT}`;
+        const note = $('ship-dnote'), body = $('ship-dbody');
+        const more = L && !L.error && L.total > rows.length;
+        note.hidden = !more; note.textContent = more ? `${nfmt(rows.length)}건까지 보여요. 이름·끝 4자리·운송장으로 찾아보세요.` : '';
+        if (p && !L) { body.setAttribute('aria-busy', 'true'); if (!body.firstChild) body.innerHTML = '<div class="desk-empty ship-empty">불러오는 중</div>'; return; }
+        body.removeAttribute('aria-busy');
+        if (L && L.error) body.innerHTML = `<div class="desk-empty ship-empty">${esc(L.error)}</div>`;
+        else if (!rows.length) body.innerHTML = `<div class="desk-empty ship-empty">${p ? (SHIP.q ? `「${esc(SHIP.q)}」로 찾은 건이 없어요.` : '해당하는 건이 없어요.') : '확인할 건이 없어요. 미배송·사고 0건입니다.'}</div>`;
+        else body.innerHTML = shipTable(rows);
+    }
+    function shipPick(el) {
+        let p = el ? { bucket: el.dataset.b || '', from: el.dataset.d || '', partner: el.dataset.p || '' } : null;
+        if (p && shipKey(p) === shipKey(SHIP.pick)) p = null;   // 같은 칸을 다시 누르면 확인할 건으로
+        clearTimeout(SHIP.qt); SHIP.pick = p; SHIP.q = ''; SHIP.list = null; SHIP.lseq++;
+        shipDetail();
+        if (p) shipList();
+    }
+    async function shipList() {
+        const p = SHIP.pick; if (!p) return;
+        const r = shipRange(), seq = ++SHIP.lseq;
+        const qs = new URLSearchParams({ from: p.from || r.from, to: p.from || r.to });
+        if (p.bucket) qs.set('bucket', p.bucket);
+        if (p.partner) qs.set('partner', p.partner);
+        if (SHIP.q) qs.set('q', SHIP.q);
+        qs.set('limit', '300');
+        let d, err = '';
+        try { d = await api('/api/delivery/list?' + qs.toString()); } catch (e) { err = (e && e.message) || '불러오지 못했어요'; }
+        if (seq !== SHIP.lseq || SHIP.pick !== p) return;
+        if (!err && (!d || d.ok === false)) err = (d && d.error) || '불러오지 못했어요';
+        const rows = !err && Array.isArray(d.rows) ? d.rows : [];
+        SHIP.list = { rows, total: err ? 0 : Math.max(Number(d.total) || 0, rows.length), error: err };
+        shipDetail();
+    }
+    async function shipHandled(btn) {
+        const key = btn.dataset.tr || '', trs = key.split(',').filter(Boolean), on = btn.classList.contains('ship-done');
+        btn.disabled = true;
+        try {
+            for (const t of trs) {
+                const res = await api('/api/delivery/handled', 'POST', { tracking: t, on });
+                if (res && res.ok === false) throw new Error(res.error || '다시 시도해 주세요');
+                const at = on ? (res && res.handled_at) || new Date().toISOString() : null, by = on ? (res && res.handled_by) || '' : '';
+                [SHIP.data && SHIP.data.trouble, SHIP.list && SHIP.list.rows].forEach(a => (a || []).forEach(x => { if (String(x.tracking) === t) { x.handled_at = at; x.handled_by = by; } }));
+            }
+        } catch (e) { showToast('처리 표시를 저장하지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요')); }
+        shipDetail();
+        const again = Array.from(document.querySelectorAll('#ship-dbody [data-tr]')).find(b => b.dataset.tr === key);
+        if (again) again.focus({ preventScroll: true });
     }
     async function shipGo(force) {
         if (SHIP.busy) return;
@@ -751,6 +840,19 @@
         $('ship-out').addEventListener('click', e => {
             if (e.target.closest('#ship-copy')) { const d = SHIP.data; if (d && d.summary_text) copyText(d.summary_text, '요약을 복사했어요', document.getElementById('ship-sum-text')); }
             else if (e.target.closest('#ship-force')) shipGo(true);
+            else if (e.target.closest('#ship-all')) shipPick(null);
+            else if (e.target.closest('.ship-done, .ship-undo')) shipHandled(e.target.closest('.ship-done, .ship-undo'));
+            else { const c = e.target.closest('.ship-stat li[role="button"], .ship-cell'); if (c) shipPick(c); }
+        });
+        $('ship-out').addEventListener('keydown', e => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const li = e.target.closest && e.target.closest('.ship-stat li[role="button"]');
+            if (li && e.target === li) { e.preventDefault(); shipPick(li); }
+        });
+        $('ship-out').addEventListener('input', e => {
+            if (e.target.id !== 'ship-q') return;
+            clearTimeout(SHIP.qt);
+            SHIP.qt = setTimeout(() => { const v = e.target.value.trim(); if (v === SHIP.q) return; SHIP.q = v; shipList(); }, 300);
         });
         $('ship-pick').addEventListener('click', () => $('ship-file').click());
         $('ship-file').addEventListener('change', e => { const f = (e.target.files || [])[0]; e.target.value = ''; shipUpload(f); });
