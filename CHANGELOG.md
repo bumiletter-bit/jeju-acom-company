@@ -1,3 +1,8 @@
+## v5.9.468 (2026-10-08) — #594 택배 배송조회 서버 1단계(표·CJ 조회 모듈·라우트·엑셀 올리기 · 화면은 다음 배포) + #592 리뷰 창구 도구
+
+- **#594**: `cj-track.js`(CJ 누리집 배송조회 · 키 없음 · 동시 5 · 간격 350ms · 연속 3건 실패면 멈춤 · 상태 분류 = 배송완료/배송출발/간선상하차/집화/미배송(도서지역 문구)/사고/기타) · 표 `delivery_shipments`(송장 · 대표 PC 색인 올리기 ship-upload.js 또는 엑셀 끌어다 놓기) · `delivery_status`(운송장별 마지막 상태 · 배송완료 확정 건은 force 아니면 다시 안 묻음) · 라우트 `POST /api/delivery/track`(기간 · 직원 가능 · 뒤에서 조회) · `GET /api/delivery/track/status` · `GET /api/delivery/summary`(직원 카톡 양식 한 줄 + 날짜·거래처별 + 이상 건 표 — 끝 4자리·시군구만) · `POST /api/delivery/shipments/upload`(LOIS 엑셀 base64 · 운송장번호 머리글 시트) · `GET /api/delivery/test`(관리자) + 러너 `delivery_test_request`(렌더에서 CJ 닿는지 시험용). 로컬 실DB 검증: 10/07 1,620건 조회 2분 48초 · 실패 0 · 배송완료 1339/출발 193/간선 77/집화 10/미배송 2(옹진군 도서지역). 매일 루틴 없음(대표 확정 — 버튼으로).
+- **#592**: 네이버 커머스 API 에 리뷰 조회·답글 API 없음(포럼 공식 답변 5건) → 중계서버 변경 불요 · 창구 도구 `scripts/desk/review.js list|summary`(새벽 스냅샷 상품당 20건 기준 · 읽기 전용) + 업무지식 4절 「리뷰」. 답글 등록은 스마트스토어센터에서.
+
 ## (배포 없음 · 2026-10-08 밤) — #591 창구 엑셀 서류 → 그림(PNG)·PDF 첨부 도구 + 「양식은 필요한 값 먼저 묻기」 규칙
 
 - `scripts/desk/xlsx-image.js <xlsx>`: 이 PC 엑셀(COM)로 읽기 전용 열기 → 셀 메모 삭제·인쇄 영역 밖 숨김(메모리에서만) → HTML 저장 → Playwright(JS 끔) 로 시트 표 PNG(2배율) + 시트별 PDF. 6초 · 원본 무변경 · 엑셀 창 없음 · 우리가 띄운 EXCEL.EXE 만 닫음. 차트 Export 길(빈 PNG·멈춤)·Worksheet.Copy(멈춤)는 쓰지 않음.

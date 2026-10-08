@@ -10016,6 +10016,158 @@ async function deskMorningTick(nowMs) {
 setInterval(() => { deskMorningTick(); }, 60 * 1000);
 // ===== #581 아침 정리 — 끝 =====
 
+// ===== #594 택배 배송조회 — 시작 (대표 「고」 10/8 · 에이전트 오피스 [배송조회 확인하기] 버튼 → 서버가 CJ 누리집에 직접 조회 · 창구·AI 0) =====
+//   입력 = delivery_shipments(어제 효돈·대성 송장 — 대표 PC 색인 올리기 scripts/desk/ship-upload.js 또는 카드에 LOIS 엑셀 끌어다 놓기)
+//   결과 = delivery_status(운송장별 마지막 상태 · 배송완료 확정 건은 force 아니면 다시 안 묻는다) · 조회 모듈 cj-track.js(동시 5 · 간격 350ms · 연속 3건 실패면 멈춤)
+//   매일 루틴 없음(대표 확정 — 버튼으로 그때마다) · 셈 기준 = 운송장 단위 전건 · 「중복」= 같은 받는 분(이름+번호) 초과 건수 표시만
+const cjTrack = require('./cj-track.js');
+async function deliveryInitDB() {
+    await pool.query(`CREATE TABLE IF NOT EXISTS delivery_shipments (
+        tracking text PRIMARY KEY, ship_date date NOT NULL, partner text, recipient text, phone text, addr text,
+        option_text text, qty integer, memo text, source text DEFAULT 'index', uploaded_at timestamptz DEFAULT now())`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_delivery_shipments_date ON delivery_shipments(ship_date)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS delivery_status (
+        tracking text PRIMARY KEY, bucket text, code text, label text, msg text, event_time text, branch text,
+        driver_name text, driver_phone text, events jsonb, delivered boolean DEFAULT false,
+        checked_at timestamptz DEFAULT now(), first_trouble_at timestamptz)`);
+}
+const kstDateStr = ms => new Date((ms || Date.now()) + 9 * 3600e3).toISOString().slice(0, 10);
+const isYmd = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+const TROUBLE_SET = new Set(cjTrack.TROUBLE_BUCKETS);
+async function deliveryUpsertStatus(k) {
+    const trouble = TROUBLE_SET.has(k.bucket);
+    await pool.query(`INSERT INTO delivery_status (tracking, bucket, code, label, msg, event_time, branch, driver_name, driver_phone, events, delivered, checked_at, first_trouble_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11, now(), CASE WHEN $12 THEN now() ELSE NULL END)
+        ON CONFLICT (tracking) DO UPDATE SET bucket = EXCLUDED.bucket, code = EXCLUDED.code, label = EXCLUDED.label, msg = EXCLUDED.msg, event_time = EXCLUDED.event_time,
+            branch = EXCLUDED.branch, driver_name = EXCLUDED.driver_name, driver_phone = EXCLUDED.driver_phone, events = EXCLUDED.events, delivered = EXCLUDED.delivered, checked_at = now(),
+            first_trouble_at = CASE WHEN $12 THEN COALESCE(delivery_status.first_trouble_at, now()) ELSE NULL END`,
+        [k.tracking, k.bucket, k.code || '', k.label || '', k.msg || '', k.time || '', k.branch || '', k.driver ? k.driver.name : null, k.driver ? k.driver.phone : null,
+            JSON.stringify(k.events || []), !!k.delivered, trouble]);
+}
+// 조회 작업(한 번에 하나 · 메모리 + 설정 delivery_track_last)
+let deliveryJob = null;
+async function deliveryRunJob(job) {
+    try {
+        const r = await pool.query(`SELECT s.tracking FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking
+            WHERE s.ship_date BETWEEN $1 AND $2 AND ($3 OR t.tracking IS NULL OR t.delivered IS NOT TRUE) ORDER BY s.ship_date, s.tracking`, [job.from, job.to, !!job.force]);
+        job.total = r.rows.length; job.done = 0;
+        if (!job.total) { job.state = 'done'; job.done_at = new Date().toISOString(); return; }
+        const out = await cjTrack.trackMany(r.rows.map(x => x.tracking), { conc: 5, gap: 350, onEach: async (k) => { job.done++; await deliveryUpsertStatus(k); } });
+        job.stopped = out.stopped || null; job.state = out.stopped ? 'error' : 'done'; if (out.stopped) job.error = '연속 조회 실패로 멈춤(' + out.stopped.asked + '/' + out.stopped.of + ' · ' + out.stopped.why + ')';
+    } catch (e) { job.state = 'error'; job.error = String(e.message).slice(0, 200); }
+    finally { job.done_at = new Date().toISOString(); try { await naverCfgSet('delivery_track_last', job); } catch (e) { /* 기록 실패는 무시 */ } }
+}
+// 연결 시험 러너(로그인 없이 — 총괄이 DB 플래그로) : agent_office_config 'delivery_test_request' {tr} → 'delivery_test_result'
+let _deliveryTestBusy = false;
+async function deliveryTestTick() {
+    if (_deliveryTestBusy) return; _deliveryTestBusy = true;
+    try {
+        const req = await naverCfgGet('delivery_test_request'); if (!req || !req.tr) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'delivery_test_request'`);   // 선제거 — 반복 실행 방지
+        const t0 = Date.now(); let out;
+        try { const k = await cjTrack.trackOne(req.tr); out = { ok: k.bucket !== '조회실패', ms: Date.now() - t0, bucket: k.bucket, code: k.code, label: k.label, time: k.time, branch: k.branch, has_driver: !!k.driver, events: (k.events || []).length }; }
+        catch (e) { out = { ok: false, ms: Date.now() - t0, error: String(e.message).slice(0, 200) }; }
+        await naverCfgSet('delivery_test_result', Object.assign({ at: new Date().toISOString(), where: process.env.RENDER ? 'render' : 'local' }, out));
+    } catch (e) { console.error('[배송조회] 시험 러너 오류:', e.message); }
+    finally { _deliveryTestBusy = false; }
+}
+setInterval(deliveryTestTick, 60 * 1000);
+// 연결 시험(관리자) — 렌더에서 CJ 누리집이 닿는지 운송장 1건으로
+app.get('/api/delivery/test', authMiddleware, adminOnly, async (req, res) => {
+    const t0 = Date.now(); const tr = cjTrack.normTracking(req.query.tr || '');
+    if (tr.length < 10) return res.json({ ok: false, error: '운송장번호를 ?tr= 로 주세요' });
+    try { const k = await cjTrack.trackOne(tr); res.json({ ok: k.bucket !== '조회실패', ms: Date.now() - t0, result: Object.assign({}, k, { driver: k.driver ? { name: k.driver.name, phone: '***' } : null }) }); }
+    catch (e) { res.json({ ok: false, ms: Date.now() - t0, error: e.message }); }
+});
+// 조회 시작 — body { from, to, force } (직원 가능)
+app.post('/api/delivery/track', authMiddleware, async (req, res) => {
+    const from = req.body?.from, to = req.body?.to || req.body?.from, force = !!req.body?.force;
+    if (!isYmd(from) || !isYmd(to) || from > to) return res.status(400).json({ ok: false, error: '기간을 YYYY-MM-DD 로 주세요(시작 ≤ 끝)' });
+    if ((new Date(to) - new Date(from)) / 86400e3 > 31) return res.status(400).json({ ok: false, error: '기간은 31일 안으로 해 주세요' });
+    if (deliveryJob && deliveryJob.state === 'running') return res.json({ ok: true, already: true, job: deliveryJob });
+    const n = await pool.query(`SELECT count(*)::int AS n FROM delivery_shipments WHERE ship_date BETWEEN $1 AND $2`, [from, to]);
+    if (!n.rows[0].n) return res.json({ ok: false, need_upload: true, error: '그 기간 송장이 아직 안 올라왔어요 — 엑셀을 끌어다 놓거나 대표 PC 색인 올리기를 기다려 주세요' });
+    deliveryJob = { id: Date.now(), from, to, force, state: 'running', total: 0, done: 0, started_at: new Date().toISOString(), by: req.user?.name || req.user?.username || '' };
+    try { await pool.query(`INSERT INTO audit_logs (action, target_type, target_id, changes, source, actor_id, actor_name) VALUES ('delivery_track','delivery',$1,$2,'delivery',$3,$4)`,
+        [null, JSON.stringify({ from, to, force, shipments: n.rows[0].n }), req.user?.id || null, deliveryJob.by]); } catch (e) { /* audit 실패는 무시 */ }
+    deliveryRunJob(deliveryJob);
+    res.json({ ok: true, job: deliveryJob });
+});
+app.get('/api/delivery/track/status', authMiddleware, async (req, res) => {
+    if (deliveryJob) return res.json(Object.assign({ ok: true }, deliveryJob));
+    const last = await naverCfgGet('delivery_track_last').catch(() => null);
+    res.json(Object.assign({ ok: true, state: 'idle' }, last ? { last } : {}));
+});
+// 집계 — 직원 양식 한 줄 + 날짜·거래처별 + 이상 건 표(끝 4자리 · 시군구만 · 기사 번호는 직원용이라 그대로)
+app.get('/api/delivery/summary', authMiddleware, async (req, res) => {
+    const from = req.query.from, to = req.query.to || from;
+    if (!isYmd(from) || !isYmd(to) || from > to) return res.status(400).json({ ok: false, error: '기간을 YYYY-MM-DD 로 주세요' });
+    const r = await pool.query(`SELECT s.tracking, s.ship_date::text AS ship_date, s.partner, s.recipient, s.phone, s.addr, s.option_text, s.qty, s.memo,
+            t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at
+        FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE s.ship_date BETWEEN $1 AND $2 ORDER BY s.ship_date, s.partner, s.tracking`, [from, to]);
+    const today = kstDateStr(); const counts = {}, byKey = {}; let checked = 0, checkedAt = null; const trouble = []; const persons = {};
+    const tail4 = t => { const d = String(t || '').replace(/\D/g, ''); return d ? d.slice(-4) : ''; };
+    const region = ad => String(ad || '').trim().split(/\s+/).slice(0, 2).join(' ');
+    const dayDiff = d => Math.round((new Date(today) - new Date(d)) / 86400e3);
+    for (const x of r.rows) {
+        const pk = (x.recipient || '') + '|' + String(x.phone || '').replace(/\D/g, ''); persons[pk] = (persons[pk] || 0) + 1;
+        const b = x.bucket || '미조회'; counts[b] = (counts[b] || 0) + 1; if (x.bucket) { checked++; if (!checkedAt || x.checked_at > checkedAt) checkedAt = x.checked_at; }
+        const k = x.ship_date + '|' + (x.partner || ''); (byKey[k] = byKey[k] || { date: x.ship_date, partner: x.partner || '', n: 0, counts: {} }).n++; byKey[k].counts[b] = (byKey[k].counts[b] || 0) + 1;
+        const stuck = b === '집화' && dayDiff(x.ship_date) >= 1;
+        if (TROUBLE_SET.has(b) || stuck) trouble.push({ tracking: cjTrack.fmtTracking(x.tracking), ship_date: x.ship_date, partner: x.partner || '', recipient: x.recipient || '', phone_tail: tail4(x.phone), region: region(x.addr),
+            option: x.option_text || '', qty: x.qty, bucket: stuck ? '집화 정체' : b, label: x.label || '', msg: x.msg || '', event_time: x.event_time || '', branch: x.branch || '',
+            driver: x.driver_name ? { name: x.driver_name, phone: x.driver_phone || '' } : null, days: dayDiff(x.ship_date), since_trouble: x.first_trouble_at, memo: x.memo || '' });
+    }
+    const dupExtra = Object.values(persons).reduce((a, n) => a + (n > 1 ? n - 1 : 0), 0);
+    const label = from === to ? from.slice(5).replace('-', '/') : from.slice(5).replace('-', '/') + '~' + to.slice(5).replace('-', '/');
+    const summary_text = cjTrack.summaryText({ label, total: r.rows.length, dupExtra, counts });
+    res.json({ ok: true, from, to, shipments: r.rows.length, checked, unchecked: r.rows.length - checked, counts, dup: { person: dupExtra }, summary_text,
+        by_date: Object.values(byKey), trouble, checked_at: checkedAt, job: deliveryJob && deliveryJob.state === 'running' ? deliveryJob : null });
+});
+// 보조 입력 — LOIS 엑셀(Sheet2 운송장) base64 · body { name, data, date? } → delivery_shipments upsert
+app.post('/api/delivery/shipments/upload', authMiddleware, async (req, res) => {
+    try {
+        const name = String(req.body?.name || ''); const b64 = String(req.body?.data || '').replace(/^data:[^,]*,/, '');
+        if (!b64) return res.status(400).json({ ok: false, error: '파일이 없습니다' });
+        const buf = Buffer.from(b64, 'base64'); if (buf.length > 12 * 1024 * 1024) return res.status(400).json({ ok: false, error: '파일이 너무 큽니다(12MB)' });
+        const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
+        const cellStr = v => v == null ? '' : typeof v === 'object' ? (v.richText ? v.richText.map(t => t.text).join('') : v.text != null ? String(v.text) : v.result != null ? String(v.result) : String(v)) : String(v);
+        // 날짜 = body.date > 파일 이름 「MM.DD」 + 올해 · 거래처 = 파일 이름의 (효돈) 꼴
+        let date = isYmd(req.body?.date) ? req.body.date : null;
+        if (!date) { const m = name.match(/(\d{1,2})\.(\d{1,2})/); if (m) date = kstDateStr().slice(0, 4) + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0'); }
+        if (!date) return res.status(400).json({ ok: false, error: '발송일을 알 수 없어요 — 파일 이름에 「10.07」 꼴이 없으면 날짜를 골라 주세요' });
+        const pm = name.match(/\(([^)]+)\)/); const partner = pm ? pm[1] : (name.replace(/\.xlsx?$/i, '').split(/[_\s]/)[0] || '');
+        // 운송장 시트 = 머리글에 「운송장번호」가 있는 시트(보통 Sheet2) · 받는 분·전화·주소·메시지·품목·수량은 머리글 이름으로
+        let rows = [];
+        wb.eachSheet(ws => {
+            if (rows.length) return; let h = 0, map = {};
+            for (let r = 1; r <= Math.min(8, ws.rowCount) && !h; r++) { const mm = {}; ws.getRow(r).eachCell((c, i) => { const s = cellStr(c.value).replace(/\s/g, ''); if (s) mm[s] = i; }); if (mm['운송장번호']) { h = r; map = mm; } }
+            if (!h) return;
+            const find = (...keys) => { for (const k of keys) { const hit = Object.keys(map).find(x => x.includes(k)); if (hit) return map[hit]; } return 0; };
+            const cTr = map['운송장번호'], cNm = find('받는분', '수취인명', '수취인', '받는사람', '고객명'), cTel = find('받는분전화', '수취인전화', '전화', '연락처', '휴대폰'), cAd = find('받는분주소', '수취인주소', '주소'),
+                cMs = find('배송메세지', '배송메시지', '메세지', '메시지'), cOp = find('품목', '상품명', '옵션', '내용물', '품명'), cQ = find('수량', '박스수');
+            for (let r = h + 1; r <= ws.rowCount; r++) {
+                const row = ws.getRow(r); const tr = cjTrack.normTracking(cellStr(row.getCell(cTr).value)); if (tr.length < 10) continue;
+                const g = c => c ? cellStr(row.getCell(c).value).trim() : '';
+                rows.push({ tr, nm: g(cNm), tel: g(cTel), ad: g(cAd), ms: g(cMs), op: g(cOp), q: parseInt(g(cQ), 10) || null });
+            }
+        });
+        if (!rows.length) return res.json({ ok: false, error: '운송장번호 머리글이 있는 시트를 못 찾았어요(LOIS 엑셀 Sheet2 인지 확인)' });
+        const merged = {}; for (const x of rows) { const m = merged[x.tr]; if (!m) merged[x.tr] = Object.assign({}, x); else { if (x.op && !m.op.includes(x.op)) m.op = m.op ? m.op + ' / ' + x.op : x.op; m.q = (m.q || 0) + (x.q || 0) || m.q; } }
+        let n = 0;
+        for (const x of Object.values(merged)) {
+            await pool.query(`INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, addr, option_text, qty, memo, source, uploaded_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upload',now()) ON CONFLICT (tracking) DO UPDATE SET ship_date = EXCLUDED.ship_date, partner = COALESCE(NULLIF(delivery_shipments.partner,''), EXCLUDED.partner),
+                recipient = COALESCE(NULLIF(EXCLUDED.recipient,''), delivery_shipments.recipient), phone = COALESCE(NULLIF(EXCLUDED.phone,''), delivery_shipments.phone),
+                addr = COALESCE(NULLIF(EXCLUDED.addr,''), delivery_shipments.addr), option_text = COALESCE(NULLIF(EXCLUDED.option_text,''), delivery_shipments.option_text),
+                qty = COALESCE(EXCLUDED.qty, delivery_shipments.qty), memo = COALESCE(NULLIF(EXCLUDED.memo,''), delivery_shipments.memo), source = 'upload', uploaded_at = now()`,
+                [x.tr, date, partner, x.nm, x.tel, x.ad, x.op, x.q, x.ms]); n++;
+        }
+        res.json({ ok: true, date, partner, rows: rows.length, upserted: n });
+    } catch (e) { res.status(500).json({ ok: false, error: '엑셀을 읽지 못했어요: ' + String(e.message).slice(0, 120) }); }
+});
+// ===== #594 택배 배송조회 — 끝 =====
+
 // 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).
 //   안전장치 = [자동 불러오기]가 항상 실행 시점 신규 조회. 타이머 수집분은 현황·통계용(변환 재사용 안 함).
 
@@ -15841,7 +15993,7 @@ app.get('*', (req, res) => {
 });
 
 // 서버 시작
-initDB().then(() => {
+initDB().then(() => deliveryInitDB().catch(e => console.error('[배송조회] 표 생성 실패:', e.message))).then(() => {
     app.listen(PORT, () => {
         console.log(`서버 실행 중: http://localhost:${PORT}`);
         // 6차: 기존 피드백 교훈 소급 추출 (미처리분만 — 멱등)
