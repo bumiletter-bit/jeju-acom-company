@@ -9953,6 +9953,63 @@ async function dbSizeWeeklyLine(todayKst) {
 setInterval(() => { dbRetentionTick(); }, 60 * 1000);
 // ===== #579 DB 보관 정리 — 끝 =====
 
+// ===== #581 아침 정리 — 시작 (verify-581-morning.js 가 이 구간을 떼어 실행한다 · 이 줄과 「끝」 줄의 글자를 바꾸지 말 것) =====
+// 대표 10/8 「2번 진행」: 매일 KST 07:40 에 대표 이름으로 에이전트 오피스 지시 1건을 자동 등록 → 창구가 미처리 톡톡·상품문의·고객문의와 예상 답변을 정리(★에이전트오피스/업무지식.md 4절 「아침 정리」)
+//   → respond.js 가 대표에게 알림(agent-office?o=id · 푸시) → 대표가 그 채팅에서 「보내줘」 하면 기존 2단계(talk-send.js)로 발송. 정산은 대상 아님(대표가 직접) · 3번(톡톡 바로 발송)은 보류.
+//   설정 = agent_office_config 'desk_morning' { enabled(기본 true), time '07:40', user_id(없으면 role admin + position 대표 첫 계정) } · 하루 1건('desk_morning_last' {date,id}) · 엔진 desk 일 때만.
+//   창구(대기 프로그램)가 꺼져 있으면 '대기'로 남아 켜지면 처리된다. 첫 가동 날(기록 없음)은 넣지 않고 기준일만 적는다 — 배포 직후 낮에 「아침 정리」가 뜨지 않게.
+const DESK_MORNING_DEFAULT = { enabled: true, time: '07:40' };
+const DESK_MORNING_TEXT = '[아침 정리] 미처리 톡톡·상품문의·고객문의 — 손님 글과 예상 답변을 정리해 주세요. 보내기는 「보내줘」 답을 받은 뒤에만.';
+function deskMorningCfg(raw) {
+    const v = (raw && typeof raw === 'object') ? raw : {};
+    const time = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v.time || '')) ? String(v.time) : DESK_MORNING_DEFAULT.time;
+    return { enabled: v.enabled !== false, time, user_id: Number.isInteger(v.user_id) && v.user_id > 0 ? v.user_id : null };
+}
+async function deskMorningOwner(cfg) {
+    const r = cfg.user_id
+        ? await pool.query(`SELECT id, name, position FROM users WHERE id = $1 AND deleted_at IS NULL`, [cfg.user_id])
+        : await pool.query(`SELECT id, name, position FROM users WHERE role = 'admin' AND position = '대표' AND deleted_at IS NULL ORDER BY id LIMIT 1`);
+    return r.rows[0] || null;
+}
+// 지시 1건 넣기. test 면 머리말 [검증469](대기 프로그램·respond 알림이 건너뜀) + mine_hidden — 실DB 검증용
+async function deskMorningCreate(opts = {}) {
+    const cfg = deskMorningCfg(await naverCfgGet('desk_morning'));
+    const owner = await deskMorningOwner(cfg);
+    if (!owner) return { ok: false, why: 'owner_missing' };
+    if ((await aoEngine()) !== 'desk') return { ok: false, why: 'engine_api' };
+    const text = (opts.test ? '[검증469] ' : '') + DESK_MORNING_TEXT;
+    const row = (await pool.query(
+        `INSERT INTO pending_orders (content, status, created_by, created_by_id, mine_hidden) VALUES ($1, '대기', $2, $3, $4) RETURNING id`,
+        [text, `${owner.name}${owner.position ? ' ' + owner.position : ''}`, owner.id, !!opts.test])).rows[0];
+    await writeAudit({ action: 'create', targetType: 'pending_order', targetId: row.id, changes: { after: { kind: 'morning', test: !!opts.test } }, source: 'desk_morning', actor: { id: owner.id, name: '아침 정리(자동)' } });
+    return { ok: true, id: row.id, owner_id: owner.id };
+}
+let _deskMorningBusy = false, _deskMorningDay = '';
+async function deskMorningTick(nowMs) {
+    if (_deskMorningBusy) return null;
+    _deskMorningBusy = true;
+    try {
+        const k = new Date((nowMs || Date.now()) + 9 * 3600 * 1000);
+        const today = k.toISOString().slice(0, 10);
+        const hhmm = String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0');
+        if (_deskMorningDay === today) return null;
+        const cfg = deskMorningCfg(await naverCfgGet('desk_morning'));
+        if (hhmm < cfg.time) return null;
+        const last = await naverCfgGet('desk_morning_last');
+        if (last && last.date === today) { _deskMorningDay = today; return null; }   // 재시작 뒤 같은 날 두 번 넣지 않는다
+        _deskMorningDay = today;
+        if (!last) { await naverCfgSet('desk_morning_last', { date: today, skipped: 'first_run' }); return { skipped: 'first_run' }; }
+        if (!cfg.enabled) { await naverCfgSet('desk_morning_last', { date: today, skipped: 'disabled' }); return { skipped: 'disabled' }; }
+        const r = await deskMorningCreate();
+        await naverCfgSet('desk_morning_last', { date: today, at: new Date(nowMs || Date.now()).toISOString(), id: r.id || null, why: r.why || null });
+        console.log(`[아침 정리] ${r.ok ? '지시 #' + r.id + ' 등록' : '건너뜀(' + r.why + ')'}`);
+        return r;
+    } catch (e) { console.error('[아침 정리] 틱 오류:', e.message); return { error: e.message }; }
+    finally { _deskMorningBusy = false; }
+}
+setInterval(() => { deskMorningTick(); }, 60 * 1000);
+// ===== #581 아침 정리 — 끝 =====
+
 // 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).
 //   안전장치 = [자동 불러오기]가 항상 실행 시점 신규 조회. 타이머 수집분은 현황·통계용(변환 재사용 안 함).
 

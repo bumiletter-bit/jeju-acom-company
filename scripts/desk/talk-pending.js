@@ -1,5 +1,6 @@
 // #474 미처리 톡톡 건 뽑기 — 사용: node scripts/desk/talk-pending.js [--seen]
 //   손님마다 마지막 글을 보고, 직원이 아직 답하지 않은 건만 내준다(최근 3일 · 광고/업체 제안 글 제외 · [확인]한 건 제외).
+//   #581: 톡톡만(kakao: 카카오 · mall: 자사몰 채팅은 제외 — 둘 다 톡톡 발송 길로 답을 보낼 수 없다).
 //   state: open = 아무도 답하지 않음 / ai = 봇이 답함(사람 확인 전)
 //   talk_no 는 message_logs 의 번호다 — 보낼 때 talk-send.js 에 이 번호를 준다(손님 식별값은 밖으로 내지 않는다).
 const { pool } = require('./_db');
@@ -11,7 +12,7 @@ const AD_RE = /https?:\/\/|www\.|\.(kr|com|net|co\.kr)\b|순위\s*올리|상위\
             SELECT DISTINCT ON (user_id) id, user_id, item, message, answered, bot_response, staff_response, scenario_name, received_at,
                    (SELECT to_regclass('public.talk_outbox') IS NOT NULL) AS has_outbox
             FROM message_logs
-            WHERE received_at > NOW() - interval '3 days' AND user_id NOT LIKE 'kakao:%'
+            WHERE received_at > NOW() - interval '3 days' AND user_id NOT LIKE 'kakao:%' AND user_id NOT LIKE 'mall:%'
             ORDER BY user_id, received_at DESC, id DESC)
         SELECT l.*, to_char(l.received_at + interval '9 hours', 'MM-DD HH24:MI') AS at_kst,
                (SELECT json_agg(json_build_object('at', to_char(p.received_at + interval '9 hours', 'MM-DD HH24:MI'), 'q', LEFT(p.message, 300),

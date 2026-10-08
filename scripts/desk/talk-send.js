@@ -34,6 +34,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const m = (await pool.query(`SELECT id, user_id, received_at FROM message_logs WHERE id = $1 AND received_at > NOW() - interval '7 days'`, [no])).rows[0];
         if (!m) { res.error = '최근 7일 안의 톡톡 글이 아닙니다'; continue; }
         if (String(m.user_id).startsWith('kakao:')) { res.error = '카카오 손님에게는 보낼 수 없습니다'; continue; }
+        if (String(m.user_id).startsWith('mall:')) { res.error = '자사몰 채팅 손님에게는 이 통로로 보낼 수 없습니다'; continue; }   // #581
         // 그 손님에게 직원이 이미 답했는지(이 글 이후)
         const st = (await pool.query(
             `SELECT 1 FROM message_logs WHERE user_id = $1 AND received_at >= $2 AND COALESCE(staff_response, '') <> '' LIMIT 1`, [m.user_id, m.received_at])).rows[0];
