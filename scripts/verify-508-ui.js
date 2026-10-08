@@ -2192,13 +2192,14 @@ async function resolveCards(pg, type) {
                 const royalName = (cat.byPartner[FX.P_HYODON] || []).find(n => String(base['옵션정보'] || '').includes(n)) || (cat.byPartner[FX.P_HYODON] || [])[0];
                 const gold = Object.values(cat.byPartner).flat().find(n => /황금향/.test(n)) || '';
                 const LM = `${+later.slice(5, 7)}월 ${+later.slice(8)}일에 발송해주세요`;
-                const rows37 = [mk('칠가', { tel: '010-9800-1111', memo: LM }), ...(gold ? [mk('칠나', { tel: '010-9800-2222', memo: LM, opt: gold })] : []), mk('칠다', { tel: '010-9800-3333' })];
+                const sizeBase37 = fx.naver.find(x => /사이즈/.test(String(x['배송메세지'] || ''))); let base37 = '';   // #583-i: 손님 메모로 「S사이즈로!」가 이미 붙는 주문
+                const rows37 = [mk('칠가', { tel: '010-9800-1111', memo: LM }), ...(gold ? [mk('칠나', { tel: '010-9800-2222', memo: LM, opt: gold })] : []), mk('칠다', { tel: '010-9800-3333' }), ...(sizeBase37 ? [mk('칠라', { base: sizeBase37, memo: 's사이즈로 보내주세요', tel: '010-9800-4444' })] : [])];
                 const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
                 const w = await mkChat(false, rows37); w.chat.memoAns = () => ({ memo: '그대로', sure: true });
                 await setCash(w.pg, null); await w.pg.click(SEL.start); await settle(w.pg);
                 const card = nm => w.pg.locator('#fo-cards .fo-card').filter({ hasText: nm }).first();
                 const openFix = async nm => { await w.pg.evaluate(() => { const d = document.querySelector('#fo-info details'); if (d) d.open = true; }); await w.pg.locator('#fo-info li', { hasText: nm }).first().locator('[data-info-go]').click(); await w.pg.waitForTimeout(500); };
-                const tb = nm => card(nm).evaluate(c => { const t = c.querySelector('[data-tailbox]'); if (!t) return null; const i = t.querySelector('[data-x="tail"]'); return { val: i.value, chips: [...t.querySelectorAll('.fo-chip:not(.clear)')].map(b => b.textContent), on: [...t.querySelectorAll('.fo-chip.on')].map(b => b.textContent), warn: !t.querySelector('[data-tailwarn]').hidden, warnT: t.querySelector('[data-tailwarn]').textContent, hint: (t.querySelector('.fo-chiphint') || {}).textContent || '', clear: !!t.querySelector('.fo-chip.clear') }; });
+                const tb = nm => card(nm).evaluate(c => { const t = c.querySelector('[data-tailbox]'); if (!t) return null; const i = t.querySelector('[data-x="tail"]'); return { val: i.value, chips: [...t.querySelectorAll('.fo-chip:not(.clear)')].map(b => b.textContent), on: [...t.querySelectorAll('.fo-chip.on')].map(b => b.textContent), warn: !t.querySelector('[data-tailwarn]').hidden, warnT: t.querySelector('[data-tailwarn]').textContent, hint: (t.querySelector('.fo-chiphint') || {}).textContent || '', clear: !!t.querySelector('.fo-chip.clear:not([hidden])') }; });
                 const patchOf = nm => w.pg.evaluate(a => { const i = document.querySelector(a.sel).contentWindow.__ivt, st = window.AkmFinalOrder.state, e = i.S.merged.find(x => x.conv['수취인명'] === a.nm); const key = [...st.patch.keys()].find(k => { const c = st.cards.find(cd => (cd.fix || []).includes(k)); return c && c.title.includes(a.nm); }); const p = key ? st.patch.get(key) : null; return p ? { tail: p.tail, tailBy: p.tailBy, opt: p.opt } : null; }, { sel: SEL.hidden, nm });
                 await openFix('칠가');
                 const t0 = await tb('칠가');
@@ -2222,6 +2223,21 @@ async function resolveCards(pg, type) {
                     const g3 = await tb('칠나');
                     ok((await patchOf('칠나') || {}).tail === '15과로!' && !!g3 && g3.chips.includes('15과'), '㊲ [적용] 뒤 최근 쓴 과수 칩 「15과」가 생김', JSON.stringify(g3));
                 } else note('㊲ 황금향 품목이 단가표에 없어 만감류 항목 건너뜀');
+                // #583-i(대표 실물 10/8): 이미 「S사이즈로!」가 붙은 주문을 칩 [2S]로 바꿔 바로 [적용](칸을 떠나지 않고)
+                { const pre = sizeBase37 ? await w.pg.evaluate(sel => { const e = document.querySelector(sel).contentWindow.__ivt.S.merged.find(x => x.conv['수취인명'] === '칠라'); return e ? String(e.conv['옵션정보'] || '') : ''; }, SEL.hidden) : '';
+                  if (/ S사이즈로!$/.test(pre)) {
+                    base37 = pre.replace(/ S사이즈로!$/, '');
+                    await w.pg.fill('#fo-find-q', '칠라'); await w.pg.waitForTimeout(200); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(600);
+                    const head = () => card('칠라').locator('.fo-card-top b').innerText();
+                    const s0 = await tb('칠라'), h0 = await head();
+                    ok(!!s0 && s0.val === 'S사이즈로!' && s0.on.join() === 'S' && / S사이즈로!/.test(h0), '㊲i 손님 메모로 「S사이즈로!」가 붙은 주문: 꼬리 칸에 그 꼬리가 미리 들어 있고 칩 [S]가 켜져 있음', JSON.stringify({ s0, h0 }));
+                    await card('칠라').locator('[data-tailset="2S사이즈로!"]').click(); await card('칠라').locator('[data-fix-apply]').click(); await settle(w.pg);
+                    const p2 = await patchOf('칠라'), h2 = await head(), m2 = await card('칠라').locator('[data-fix-msg]').innerText();
+                    ok(!!p2 && p2.tail === '2S사이즈로!' && h2.includes(base37 + ' 2S사이즈로!') && !/바꾼 것이 없어요/.test(m2), '㊲i 🔴 칩 [2S]를 누르고 바로 [적용] → 꼬리가 「2S사이즈로!」로 바뀜 · 카드 머리도 새 꼬리 · 「바꾼 것이 없어요」 안 뜸', JSON.stringify({ p2, h2, m2 }));
+                    await card('칠라').locator('[data-fix-apply]').click(); await w.pg.waitForTimeout(300);
+                    ok(/이미 적용돼 있어요/.test(await card('칠라').locator('[data-fix-msg]').innerText()), '㊲i 같은 값으로 [적용]을 한 번 더 누르면 「바꾼 것이 없어요 — 앞서 고친 내용은 이미 적용돼 있어요」');
+                  } else note('㊲i 가짜 재료에 사이즈 메모 주문(꼬리 자동)이 없어 건너뜀: ' + pre);
+                }
                 // 결과 파일: 옵션 칸 = 옵션명 + 꼬리
                 for (const nm of ['칠가'].concat(gold ? ['칠나'] : [])) { await card(nm).locator('[data-flip="send"]').click(); await settle(w.pg); }
                 for (let k = 0; k < 10; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
@@ -2230,6 +2246,7 @@ async function resolveCards(pg, type) {
                 for (const nm of names.filter(v => /xlsx$/i.test(v) && !v.includes('스마트스토어'))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's37-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff); if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => rows.push(r)); }
                 const E = nm => String((rows.find(r => r[3] === nm) || [])[4]);
                 ok(E('칠가') === royalName + ' 2S사이즈로!' && (!gold || E('칠나') === gold + ' 15과로!') && E('칠다') === royalName, '㊲ 결과 파일(택배사 양식) 옵션 칸 = 「옵션명 + 꼬리」(2S사이즈로! · 15과로!) · 손대지 않은 주문은 그대로', JSON.stringify([E('칠가'), gold ? E('칠나') : '-', E('칠다')]));
+                if (base37) ok(E('칠라') === base37 + ' 2S사이즈로!', '㊲i 결과 파일: 「S사이즈로!」였던 주문이 「2S사이즈로!」로 나감', E('칠라'));
                 await card('칠가').locator('[data-fix-undo]').click(); await settle(w.pg);
                 const pu = await patchOf('칠가');
                 ok(!pu || pu.tail === undefined, '㊲ 카드의 [되돌리기] → 꼬리가 없어짐', JSON.stringify(pu));
@@ -2289,6 +2306,146 @@ async function resolveCards(pg, type) {
                     const white = [...document.querySelectorAll('#fo-ai-miss')].filter(e => { const b = rgb(getComputedStyle(e).backgroundColor); return b && b.a > .5 && lum(b.c) > .7; }).length; document.documentElement.removeAttribute('data-ao-theme'); return { n, bad, white }; });
                 ok(lowM.n >= 3 && !lowM.bad.length && lowM.white === 0, '㊳ 야간: 주황 띠·배지 글자 대비 4.5 미만 0 · 흰 칸 0', JSON.stringify(lowM));
                 ok(w2.errs.length === 0, '㊳ 오류 0(꺼짐)', w2.errs.join(' | ')); await w2.ctx.close();
+            }
+
+            // ── ㊴ #583-h(대표 「고」 10/8) — 「주문 찾아 고치기」: 카드도 참고 줄도 없는 평범한 주문에 직접 고치기 열기 · 입력삭제 주문 꼬리 → 현금파일 줄 ──
+            console.log('\n㊴ #583-h 주문 찾아 고치기');
+            {
+                const H = cat.byPartner[FX.P_HYODON] || [], royalName = H.find(n => String(base['옵션정보'] || '').includes(n)) || H[0], other = H.find(n => n !== royalName) || royalName;
+                const gold = Object.values(cat.byPartner).flat().find(n => /황금향/.test(n)) || '', PID = '2099039999001';
+                const rows39 = [mk('구가', { tel: '010-9111-1234' }), mk('구나', { tel: '010-9222-1234', ...(gold ? { opt: gold } : {}) }), mk('구다', { tel: '010-9333-5678', pid: PID }), mk('구라', { tel: '010-9444-7777' })];
+                const DEP = '제주특별자치도 제주시 연삼로 1066-31, 제주아꼼이네';
+                const cash39 = writeXlsx(path.join(TMP, '가짜_현금_찾기.xlsx'), [FX.CASH_HDR, ['시험구매(제주아꼼이네)', '010-7300-0000', DEP, '현구받는', royalName, 1, '010-7400-3901', '', '서울특별시 가짜구 현금로 39', '', '010-9444-7777', '', '']]);
+                const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
+                const lst = pg => pg.evaluate(() => { const b = document.getElementById('fo-find-list'); return { open: !b.hidden, rows: [...b.querySelectorAll('.fo-find-row')].map(r => ({ t: r.querySelector('.fo-find-t').innerText.replace(/\s+/g, ' '), badge: r.querySelector('.fo-ibadge').textContent, act: r.classList.contains('act'), h: Math.round(r.getBoundingClientRect().height) })), more: (b.querySelector('.fo-find-more') || {}).textContent || '', exp: document.getElementById('fo-find-q').getAttribute('aria-expanded') }; });
+                const find = async (pg, q) => { await pg.fill('#fo-find-q', q); await pg.waitForTimeout(200); return lst(pg); };
+                const w = await mkChat(false, rows39); w.chat.memoAns = () => ({ memo: '그대로', sure: true });
+                await setCash(w.pg, cash39); await startWithMemo(w.pg, '010-9444-7777 입력o삭제x'); await w.pg.waitForTimeout(700); await settle(w.pg);
+                for (let k = 0; k < 10; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
+                const pre = await w.pg.evaluate(() => ({ vis: !!document.getElementById('fo-find-q') && document.getElementById('fo-find-q').getBoundingClientRect().width > 0, cards: [...document.querySelectorAll('#fo-cards .fo-card')].filter(c => /구가|구나|구다/.test(c.innerText)).length, info: [...document.querySelectorAll('#fo-info li')].filter(li => /구가|구나|구다/.test(li.innerText)).length, ph: document.getElementById('fo-find-q').getAttribute('placeholder') }));
+                ok(pre.vis && pre.cards === 0 && pre.info === 0 && /이름/.test(pre.ph) && /번호 끝자리/.test(pre.ph), '㊴ 준비: 평범한 주문 3건은 카드도 참고 줄도 없음 · 「주문 찾아 고치기」 검색칸이 보임', JSON.stringify(pre));
+                const f1 = await find(w.pg, '구가');
+                ok(f1.open && f1.rows.length === 1 && /구가/.test(f1.rows[0].t) && /박스/.test(f1.rows[0].t) && f1.rows[0].badge === '오늘 발송' && f1.rows[0].act && f1.exp === 'true', '㊴ 이름으로 찾기 「구가」 → 1건(채널·옵션·수량 · 상태 「오늘 발송」) · 첫 줄이 고를 줄', JSON.stringify(f1));
+                const f2 = await find(w.pg, '1234');
+                ok(f2.rows.length === 2 && f2.rows.some(r => /구가/.test(r.t)) && f2.rows.some(r => /구나/.test(r.t)) && f2.rows.every(r => /번호 끝 1234/.test(r.t)), '㊴ 번호 끝 4자리 「1234」 → 같은 끝자리 2건을 모두 보여 줌(이름으로 가림)', JSON.stringify(f2.rows.map(r => r.t.slice(0, 40))));
+                if (gold) { const f3 = await find(w.pg, '황금향'); ok(f3.rows.length === 1 && /구나/.test(f3.rows[0].t), '㊴ 옵션 낱말 「황금향」 → 그 품목 주문 1건', JSON.stringify(f3.rows.map(r => r.t.slice(0, 50)))); } else note('㊴ 황금향 품목이 단가표에 없어 옵션 낱말 검색 항목 건너뜀');
+                const f4 = await find(w.pg, PID);
+                ok(f4.rows.length === 1 && /구다/.test(f4.rows[0].t), '㊴ 주문번호로 찾기 → 1건', JSON.stringify(f4.rows.map(r => r.t.slice(0, 40))));
+                const f5 = await find(w.pg, '구라');
+                ok(f5.rows.length === 1 && f5.rows[0].badge === '입력삭제', '㊴ 입력삭제 주문도 찾힘(상태 「입력삭제」)', JSON.stringify(f5.rows));
+                const f0 = await find(w.pg, '세상에없는손님zz');
+                ok(f0.open && f0.rows.length === 0 && /맞는 주문이 없어요/.test(f0.more), '㊴ 0건이면 「맞는 주문이 없어요 …」', f0.more);
+                await w.pg.keyboard.press('Escape'); await w.pg.waitForTimeout(200);
+                ok(!(await lst(w.pg)).open && (await w.pg.isVisible(SEL.panel)), '㊴ Esc = 목록만 닫힘(최종발주 화면은 그대로)');
+                // 카드 없는 주문 → 새 「직접 고치기」 카드 → 옵션·꼬리·보내는 분
+                const pend0 = await w.pg.evaluate(() => document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length);
+                await find(w.pg, '구가'); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(600);
+                const c1 = await w.pg.evaluate(() => { const c = [...document.querySelectorAll('#fo-cards .fo-card[data-fo-card="fix"]')].find(x => x.innerText.includes('구가')); if (!c) return null; const d = c.querySelector('details.fo-fix'), r = c.getBoundingClientRect(); return { open: !!(d && d.open), inView: r.top < innerHeight && r.bottom > 0, fields: [...c.querySelectorAll('[data-x]')].map(e => e.dataset.x).join(','), flip: (c.querySelector('[data-flip]') || {}).textContent || '', close: !!c.querySelector('[data-fix-close]'), q: document.getElementById('fo-find-q').value, list: !document.getElementById('fo-find-list').hidden, pend: document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length }; });
+                ok(!!c1 && c1.open && c1.inView && c1.fields === 'name,phone,addr,memo,opt,tail' && c1.flip === '오늘 안 나감으로' && c1.close && c1.q === '' && !c1.list && c1.pend === pend0, '㊴ Enter 로 고르면 그 주문의 「직접 고치기」 카드가 새로 뜸(보내는 분·주소·배송메세지·옵션명·꼬리 · [오늘 안 나감으로] · [닫기]) · 확인할 것에 안 셈 · 검색칸 비워짐', JSON.stringify(c1));
+                const card = nm => w.pg.locator('#fo-cards .fo-card[data-fo-card="fix"]').filter({ hasText: nm }).first();
+                if (other !== royalName) await pickOpt(w.pg, card('구가'), other);
+                await card('구가').locator('[data-x="tail"]').fill('2s'); await card('구가').locator('[data-x="name"]').fill('홍길동'); await card('구가').locator('[data-fix-apply]').click(); await settle(w.pg);
+                // 입력삭제 주문: 꼬리만 → 현금파일 줄
+                await find(w.pg, '구라'); await w.pg.locator('#fo-find-list .fo-find-row').first().click(); await w.pg.waitForTimeout(600);
+                const c2 = await card('구라').evaluate(c => ({ optDis: c.querySelector('[data-optbtn]').disabled, tailDis: c.querySelector('[data-x="tail"]').disabled, hasName: !!c.querySelector('[data-x="name"]'), flip: !!c.querySelector('[data-flip]'), t: c.innerText.replace(/\s+/g, ' ') }));
+                ok(c2.optDis && !c2.tailDis && !c2.hasName && !c2.flip && /현금파일의 주소 줄로 나가요/.test(c2.t), '㊴ 입력삭제 주문 카드 = 꼬리 칸만 살아 있음(옵션명 잠김 · 보내는 분·발송일 버튼 없음) + 「현금파일의 주소 줄로 나가요」 안내', JSON.stringify(c2).slice(0, 260));
+                await card('구라').locator('[data-x="tail"]').fill('2s'); await card('구라').locator('[data-fix-apply]').click(); await settle(w.pg);
+                for (let k = 0; k < 10; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
+                await w.pg.click(SEL.make); await idle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 15000 }); await w.pg.waitForTimeout(300);
+                const names = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save), rows = [];
+                for (const nm of names.filter(v => /xlsx$/i.test(v) && !v.includes('스마트스토어'))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's39-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff); if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => rows.push(r)); }
+                const row = nm => rows.find(r => r[3] === nm) || [];
+                ok(String(row('구가')[4]) === other + ' 2S사이즈로!' && /^홍길동/.test(String(row('구가')[0])) && String(row('구다')[4]) === royalName, '㊴ 결과 파일: 찾아서 고친 주문 = 옵션명 + 꼬리(「2S사이즈로!」) · 보내는 분 「홍길동 드림」 · 손대지 않은 주문은 그대로', JSON.stringify([row('구가')[0], row('구가')[4], row('구다')[4]]));
+                ok(String(row('현구받는')[4]) === royalName + ' 2S사이즈로!' && !rows.some(r => r[3] === '구라'), '㊴ 🔴 입력삭제 주문에 넣은 꼬리가 현금파일 주소 줄 옵션 끝에 붙음(주문 자체는 택배사 양식에 없음)', JSON.stringify([row('현구받는')[3], row('현구받는')[4]]));
+                await find(w.pg, '구가'); const f6 = await lst(w.pg);
+                ok(f6.rows.length === 1 && /2S사이즈로!/.test(f6.rows[0].t), '㊴ 다시 찾으면 고친 옵션(꼬리 포함)으로 보임', JSON.stringify(f6.rows));
+                await w.pg.keyboard.press('Escape');
+                ok(w.errs.length === 0, '㊴ PC 오류 0', w.errs.join(' | ')); await w.ctx.close();
+                // 폰 390 + 야간
+                const m = await mkChat(false, rows39, { width: 390, height: 844 }, true); m.chat.memoAns = () => ({ memo: '그대로', sure: true });
+                await setCash(m.pg, null); await m.pg.click(SEL.start); await settle(m.pg);
+                await find(m.pg, '1234');
+                const mm = await m.pg.evaluate(() => { const q = document.getElementById('fo-find-q'), b = document.getElementById('fo-find-list'), r = b.getBoundingClientRect(); return { qh: Math.round(q.getBoundingClientRect().height), rows: [...b.querySelectorAll('.fo-find-row')].map(x => Math.round(x.getBoundingClientRect().height)), right: Math.round(r.right), sw: document.documentElement.scrollWidth, body: document.querySelector('.fo-body').scrollWidth, bodyC: document.querySelector('.fo-body').clientWidth }; });
+                ok(mm.qh >= 44 && mm.rows.length === 2 && mm.rows.every(h => h >= 44) && mm.right <= 390 && mm.sw <= 390 && mm.body <= mm.bodyC + 1, '㊴ 폰 390: 검색칸·줄 44px 이상 · 가로 넘침 없음', JSON.stringify(mm));
+                const low = await m.pg.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark');
+                    const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; };
+                    const rgb = s => { const x = String(s).match(/rgba?\(([^)]+)\)/); if (!x) return null; const p = x[1].split(',').map(v => parseFloat(v)); return { c: p.slice(0, 3), a: p[3] == null ? 1 : p[3] }; };
+                    const bgOf = el => { let out = [14, 17, 34]; const chain = []; for (let e = el; e; e = e.parentElement) chain.unshift(e); chain.forEach(e => { const b = rgb(getComputedStyle(e).backgroundColor); if (b && b.a > 0) out = out.map((v, i) => v * (1 - b.a) + b.c[i] * b.a); }); return out; };
+                    const bad = []; let n = 0; document.querySelectorAll('#fo-find .fo-find-lab, #fo-find-q, #fo-find-list .fo-find-t b, #fo-find-list .fo-find-t span, #fo-find-list .fo-ibadge').forEach(e => { if (!e.getBoundingClientRect().width) return; const f = rgb(getComputedStyle(e).color); if (!f) return; n++; const bg = bgOf(e), L1 = lum(f.c), L2 = lum(bg), cr = (Math.max(L1, L2) + .05) / (Math.min(L1, L2) + .05); if (cr < 4.5) bad.push((e.className || e.tagName) + ':' + cr.toFixed(2)); });
+                    const white = [...document.querySelectorAll('#fo-find-q, #fo-find-list, #fo-find-list .fo-find-row')].filter(e => { const b = rgb(getComputedStyle(e).backgroundColor); return e.getBoundingClientRect().width && b && b.a > .5 && lum(b.c) > .7; }).length; document.documentElement.removeAttribute('data-ao-theme'); return { n, bad, white }; });
+                ok(low.n >= 6 && !low.bad.length && low.white === 0, '㊴ 야간: 검색칸·목록 글자 대비 4.5 미만 0 · 흰 칸 0', JSON.stringify(low));
+                ok(m.errs.length === 0, '㊴ 폰 오류 0', m.errs.join(' | ')); await m.ctx.close();
+            }
+
+            // ── ㊵ #583-j(대표 실물 10/8) — 카드 조작 뒤 작업하던 자리 그대로 · 떠 있는 버튼(↑ 맨 위 · 다음 확인 · 방금 보던 곳으로) ──
+            console.log('\n㊵ #583-j 자리 유지 · 맨 위 · 다음 확인');
+            {
+                const N40 = 8, nm = n => '사십' + '일이삼사오육칠팔'[n];
+                const rows40 = Array.from({ length: N40 }, (_, n) => mk(nm(n), { tel: '010-9040-' + String(1001 + n), memo: '선물이라 예쁜 걸로 부탁드려요 ' + (n + 1) }));
+                const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
+                const arm = pg => pg.evaluate(() => { window.__t0 = null; document.addEventListener('click', e => { const c = e.target.closest && e.target.closest('#fo-cards .fo-card'); if (c) { const n = c.nextElementSibling; window.__t0 = { top: c.getBoundingClientRect().top, id: c.dataset.id, next: n && n.dataset ? n.dataset.id || '' : '' }; } }, { capture: true, once: true }); });
+                const got = pg => pg.evaluate(() => { const a = window.__t0; if (!a) return null; const f = id => [...document.querySelectorAll('#fo-cards .fo-card')].find(x => x.dataset.id === id), c = f(a.id), n = a.next ? f(a.next) : null, ae = document.activeElement; return { was: Math.round(a.top), now: c ? Math.round(c.getBoundingClientRect().top) : null, nextNow: n ? Math.round(n.getBoundingClientRect().top) : null, state: c ? c.dataset.state : '', fixOpen: !!(c && c.querySelector('details.fo-fix[open]')), focusIn: !!(c && ae && c.contains(ae)), focusNext: !!(n && ae && n.contains(ae)) }; });
+                const flt = pg => pg.evaluate(() => { const sc = document.querySelector('#fo-panel .fo-body'), v = id => { const e = document.getElementById(id); return e && !e.hidden && e.getBoundingClientRect().width > 0 ? e.textContent : ''; }, r = id => { const e = document.getElementById(id); const b = e.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height), Math.round(b.right), Math.round(b.bottom)]; }; return { top: v('fo-top'), next: v('fo-next'), back: v('fo-back'), y: Math.round(sc.scrollTop), max: sc.scrollHeight - sc.clientHeight, ch: sc.clientHeight, rTop: r('fo-top'), rNext: r('fo-next'), vw: innerWidth, vh: innerHeight, sw: document.documentElement.scrollWidth, flash: (document.querySelector('#fo-cards .fo-card.fo-flash') || { dataset: {} }).dataset.id || '' }; });
+                const cardOf = (pg, n) => pg.locator('#fo-cards .fo-card').filter({ hasText: nm(n) }).first();
+                const run40 = async (vp, mobile, tag) => {
+                    const w = await mkChat(false, rows40, vp, mobile);
+                    await setCash(w.pg, null); await w.pg.click(SEL.start); await settle(w.pg);
+                    const f0 = await flt(w.pg), openN = await w.pg.locator('#fo-cards .fo-card[data-state="open"]').count();
+                    ok(openN === N40 && new RegExp('다음 확인 \\(' + N40 + '\\)').test(f0.next) && !f0.top && f0.y === 0, `㊵ ${tag} 준비: 확인할 카드 ${N40}장 · 떠 있는 「다음 확인 (${N40}) →」 · 맨 위에서는 「↑ 맨 위」 없음`, JSON.stringify({ openN, f0 }));
+                    // 다음 확인: 누를 때마다 다음 카드로
+                    await w.pg.click('#fo-next'); await w.pg.waitForTimeout(900); const n1 = await flt(w.pg);
+                    await w.pg.click('#fo-next'); await w.pg.waitForTimeout(900); const n2 = await flt(w.pg);
+                    ok(!!n1.flash && !!n2.flash && n1.flash !== n2.flash && n2.y > n1.y, `㊵ ${tag} 「다음 확인」을 누를 때마다 다음 안 정한 카드로 이동·강조`, JSON.stringify({ a: n1.flash, b: n2.flash, y: [n1.y, n2.y] }));
+                    // 맨 위 · 방금 보던 곳으로
+                    await w.pg.evaluate(() => { const sc = document.querySelector('#fo-panel .fo-body'); sc.scrollTop = sc.scrollHeight; }); await w.pg.waitForTimeout(400);
+                    const t1 = await flt(w.pg);
+                    ok(t1.y > t1.ch && /맨 위/.test(t1.top) && t1.rTop[1] >= 44 && t1.rNext[1] >= 44 && t1.rTop[2] <= t1.vw && t1.rTop[3] <= t1.vh && t1.sw <= t1.vw, `㊵ ${tag} 한 화면 넘게 내려가면 「↑ 맨 위」가 나타남 · 버튼 44px · 화면 안 · 가로 넘침 없음`, JSON.stringify(t1));
+                    await w.pg.click('#fo-top'); await w.pg.waitForTimeout(1600); const t2 = await flt(w.pg);
+                    ok(t2.y <= 16 &&!t2.top && /방금 보던 곳으로/.test(t2.back), `㊵ ${tag} 「↑ 맨 위」 → 창 맨 위로 · 버튼은 사라지고 「방금 보던 곳으로」가 잠깐 나타남`, JSON.stringify({ y: t2.y, back: t2.back }));
+                    await w.pg.click('#fo-back'); await w.pg.waitForTimeout(1100); const t3 = await flt(w.pg);
+                    ok(Math.abs(t3.y - t1.y) <= 24 && !t3.back, `㊵ ${tag} 「방금 보던 곳으로」 → 보던 자리로 돌아감`, JSON.stringify({ was: t1.y, now: t3.y }));
+                    // 자리 유지: 직접 고치기 [적용]
+                    const c4 = cardOf(w.pg, 4); await c4.scrollIntoViewIfNeeded(); await c4.locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(200);
+                    await w.pg.evaluate(id => { const sc = document.querySelector('#fo-panel .fo-body'), c = [...document.querySelectorAll('#fo-cards .fo-card')].find(x => x.innerText.includes(id)); sc.scrollTop += c.getBoundingClientRect().top - sc.getBoundingClientRect().top - 40; }, nm(4)); await w.pg.waitForTimeout(200);
+                    await c4.locator('[data-x="tail"]').fill('2s'); await arm(w.pg); await c4.locator('[data-tailset="M사이즈로!"]').click(); await w.pg.waitForTimeout(200); const g0 = await got(w.pg);
+                    ok(!!g0 && Math.abs(g0.now - g0.was) <= 8, `㊵ ${tag} 칩을 눌러도 그 카드가 제자리(차이 ≤ 8px)`, JSON.stringify(g0));
+                    await c4.locator('[data-x="name"]').fill('홍길동'); await arm(w.pg); await c4.locator('[data-fix-apply]').click(); await settle(w.pg); const g1 = await got(w.pg);
+                    ok(!!g1 && g1.now != null && Math.abs(g1.now - g1.was) <= 8 && g1.fixOpen && g1.focusIn && g1.state === 'open', `㊵ ${tag} 🔴 직접 고치기 [적용] 뒤에도 그 카드가 같은 자리(차이 ≤ 8px) · 접이식은 펼친 채 · 초점은 그 카드 안`, JSON.stringify(g1));
+                    await arm(w.pg); await cardOf(w.pg, 4).locator('[data-fix-undo]').click(); await settle(w.pg); const g2 = await got(w.pg);
+                    ok(!!g2 && Math.abs(g2.now - g2.was) <= 8 && g2.fixOpen, `㊵ ${tag} [되돌리기] 뒤에도 같은 자리 · 펼친 채`, JSON.stringify(g2));
+                    // 카드가 끝나서 아래로 내려가면 다음 카드가 그 자리에
+                    await arm(w.pg); await cardOf(w.pg, 4).locator('[data-fo-act="send"]').click(); await w.pg.waitForTimeout(500); const g3 = await got(w.pg);
+                    ok(!!g3 && g3.state === 'done' && g3.nextNow != null && Math.abs(g3.nextNow - g3.was) <= 8 && g3.focusNext, `㊵ ${tag} [오늘 발송]으로 카드가 끝나면(아래로 내려감) 바로 다음 카드가 그 자리에 · 초점도 다음 카드`, JSON.stringify(g3));
+                    return w;
+                };
+                const w = await run40({ width: 1400, height: 900 }, false, 'PC');
+                {
+                    // 파일을 만든 뒤 고치면(다시 만들기) 결과 쪽으로 끌려가지 않는다 — 대표가 겪은 길
+                    for (let k = 0; k < 20; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
+                    const fm = await flt(w.pg);
+                    ok(/확인 끝 · 파일 만들기/.test(fm.next), '㊵ 다 정하면 떠 있는 버튼이 「확인 끝 · 파일 만들기」로 바뀜', fm.next);
+                    await w.pg.click('#fo-next'); await w.pg.waitForTimeout(900);
+                    ok(await w.pg.evaluate(() => document.activeElement === document.getElementById('fo-make')), '㊵ 누르면 [파일 만들기] 버튼으로 이동(초점)');
+                    await w.pg.click(SEL.make); await idle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 15000 }); await w.pg.waitForTimeout(600);
+                    await w.pg.fill('#fo-find-q', nm(1)); await w.pg.waitForTimeout(200); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(1200);
+                    const c1 = cardOf(w.pg, 1); await c1.locator('[data-x="name"]').fill('김가짜'); await arm(w.pg); await c1.locator('[data-fix-apply]').click();
+                    await w.pg.waitForFunction(() => /다시 만들었어요/.test(document.getElementById('fo-chat-log').innerText), null, { timeout: 60000 }).catch(() => { }); await settle(w.pg); await w.pg.waitForTimeout(700);
+                    const g4 = await got(w.pg), res = await w.pg.evaluate(() => { const r = document.getElementById('fo-result'), sc = document.querySelector('#fo-panel .fo-body'); return { shown: !r.hidden, top: Math.round(r.getBoundingClientRect().top), scTop: Math.round(sc.getBoundingClientRect().top), remade: /다시 만들었어요/.test(document.getElementById('fo-chat-log').innerText) }; });
+                    ok(!!g4 && g4.now != null && Math.abs(g4.now - g4.was) <= 8 && res.shown && res.remade && res.top > res.scTop + 100, '㊵ 🔴 파일을 만든 뒤 카드에서 고쳐 [적용](파일 다시 만듦) → 화면이 결과 파일 쪽으로 내려가지 않고 그 카드가 같은 자리(차이 ≤ 8px)', JSON.stringify({ g4, res }));
+                    ok(w.errs.length === 0, '㊵ PC 오류 0', w.errs.join(' | ')); await w.ctx.close();
+                }
+                const m = await run40({ width: 390, height: 844 }, true, '폰390');
+                {
+                    await m.pg.evaluate(() => { const sc = document.querySelector('#fo-panel .fo-body'); sc.scrollTop = sc.scrollHeight; }); await m.pg.waitForTimeout(400);
+                    await m.pg.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark'); }); await m.pg.waitForTimeout(500);   // 버튼 색은 160ms 에 걸쳐 바뀐다 — 다 바뀐 뒤에 잰다
+                    const low = await m.pg.evaluate(() => {
+                        const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; };
+                        const rgb = s => { const x = String(s).match(/rgba?\(([^)]+)\)/); if (!x) return null; const p = x[1].split(',').map(v => parseFloat(v)); return { c: p.slice(0, 3), a: p[3] == null ? 1 : p[3] }; };
+                        const out = [...document.querySelectorAll('#fo-float .fo-fbtn')].filter(e => !e.hidden && e.getBoundingClientRect().width).map(e => { const cs = getComputedStyle(e), f = rgb(cs.color), b = rgb(cs.backgroundColor), L1 = lum(f.c), L2 = lum(b.c); return { t: e.textContent, cr: +((Math.max(L1, L2) + .05) / (Math.min(L1, L2) + .05)).toFixed(2), white: lum(b.c) > .7 }; });
+                        document.documentElement.removeAttribute('data-ao-theme'); return out; });
+                    ok(low.length >= 2 && low.every(x => x.cr >= 4.5 && !x.white), '㊵ 야간: 떠 있는 버튼 글자 대비 4.5 이상 · 흰 칸 없음', JSON.stringify(low));
+                    ok(m.errs.length === 0, '㊵ 폰 오류 0', m.errs.join(' | ')); await m.ctx.close();
+                }
             }
 
             // 창구가 안 집음(40초)
