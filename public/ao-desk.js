@@ -778,7 +778,7 @@
         QTY.busy = true; $('desk-qty-now').disabled = true;
         const out = $('qty-out'), prog = $('qty-prog'), ptxt = $('qty-prog-text');
         QTY.urls.forEach(u => URL.revokeObjectURL(u)); QTY.urls = []; QTY.blobs.clear();
-        out.innerHTML = ''; qtyNote(''); prog.hidden = false;
+        pkClose(false); out.innerHTML = ''; qtyNote(''); prog.hidden = false;
         const chState = { naver: '조회 중', coupang: '조회 중', cafe24: '조회 중' };
         const paint = () => { ptxt.textContent = `주문을 불러오는 중 · 네이버 ${chState.naver} · 쿠팡 ${chState.coupang} · 자사몰 ${chState.cafe24}`; };
         paint();
@@ -819,7 +819,7 @@
             qtyExtraLoad();
             out.innerHTML = `<div class="ship-meta"><span>주문 네이버 ${cnt(nv)} · 쿠팡 ${cnt(cp)} · 자사몰 ${cnt(cf)}${partial ? ' · 부분취소 반영 ' + nfmt(partial) + '건' : ''}</span><button type="button" class="desk-btn sm" id="qty-again">다시 집계</button></div><div id="qty-figs"></div>`
                 + `<details class="qty-extra" id="qty-extra"${QTY.draft.length || QTY.xopen ? ' open' : ''}><summary>직접 추가 <span class="desk-note" id="qty-extra-n"></span></summary>
-                    <p class="desk-note">전화·현금으로 받은 물량을 행으로 넣고 [그림 다시 만들기]를 누르면 그 거래처 그림에 「(추가)」 줄로 들어가요. 오늘 하루 동안 기억해요.</p>
+                    <p class="desk-note">전화·현금으로 받은 물량을 행으로 넣고 [그림 다시 만들기]를 누르면 그 거래처 그림의 같은 품목 줄에 더해져요(그림에 없던 품목은 새 줄). 오늘 하루 동안 기억해요.</p>
                     <div id="qty-extra-rows"></div>
                     <div class="qty-extra-acts"><button type="button" class="desk-btn sm" id="qty-extra-add">+ 행</button><button type="button" class="desk-btn sm primary" id="qty-extra-go">그림 다시 만들기</button></div>
                     <p class="desk-note" id="qty-extra-dirty" role="status" hidden>바꾼 내용은 [그림 다시 만들기]를 눌러야 그림에 들어가요.</p>
@@ -836,15 +836,20 @@
         const box = document.getElementById('qty-figs'), base = QTY.base;
         if (!box || !base) return;
         QTY.urls.forEach(u => URL.revokeObjectURL(u)); QTY.urls = []; QTY.blobs.clear();
-        const ex = new Map();   // 같은 거래처·같은 품목을 두 번 넣었으면 한 줄로
-        QTY.extra.forEach(x => { const k = x.partner + '\n' + x.name; ex.set(k, (ex.get(k) || 0) + x.qty); });
-        const exItems = [...ex.entries()].map(([k, qty]) => { const i = k.indexOf('\n'), name = k.slice(i + 1); let cat = 'none'; try { cat = qtyCategory(name); } catch (e) { /* 색 없이 */ } return { name: name + ' (추가)', qty, cat, partner: k.slice(0, i), extra: true }; });
+        // #600(대표 10/9): 직접 추가는 같은 거래처·같은 품목 줄에 더한다(「(추가)」 줄을 따로 두지 않는다) · 집계에 없던 품목은 그 이름 그대로 새 줄
+        const rows = base.items.map(it => ({ name: it.name, qty: it.qty, cat: it.cat, partner: it.partner, added: 0 }));
+        const at = new Map(rows.map(r => [r.partner + '\n' + r.name, r]));
+        QTY.extra.forEach(x => {
+            const k = x.partner + '\n' + x.name; let r = at.get(k);
+            if (!r) { let cat = 'none'; try { cat = qtyCategory(x.name); } catch (e) { /* 색 없이 */ } r = { name: x.name, qty: 0, cat, partner: x.partner, added: 0 }; at.set(k, r); rows.push(r); }
+            r.qty += x.qty; r.added += x.qty;
+        });
         const partners = new Map();
-        base.items.concat(exItems).sort((a, b) => a.name.localeCompare(b.name, 'ko'))
-            .forEach(it => { const p = partners.get(it.partner) || { total: 0, added: 0, rows: [] }; p.rows.push(it); p.total += it.qty; if (it.extra) p.added += it.qty; partners.set(it.partner, p); });
+        rows.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+            .forEach(it => { const p = partners.get(it.partner) || { total: 0, added: 0, rows: [] }; p.rows.push(it); p.total += it.qty; p.added += it.added; partners.set(it.partner, p); });
         const tag = kstDay(0).slice(5, 7) + kstDay(0).slice(8, 10);
         const figs = [];
-        for (const [p, v] of partners) figs.push({ title: p, total: v.total, added: v.added, kinds: new Set(v.rows.map(r => r.extra ? r.name.slice(0, -5) : r.name)).size, file: `중간발주_${p}_${tag}.png`, blob: await qtyPng(v.rows, v.total, false) });
+        for (const [p, v] of partners) figs.push({ title: p, total: v.total, added: v.added, kinds: v.rows.length, file: `중간발주_${p}_${tag}.png`, blob: await qtyPng(v.rows, v.total, false) });
         if (base.urows.length) { const t = base.urows.reduce((s, r) => s + r.qty, 0); figs.push({ title: '미매칭', total: t, kinds: base.urows.length, file: `중간발주_미매칭_${tag}.png`, blob: await qtyPng(base.urows, t, true), unmatched: true }); }
         const canCopy = !!(navigator.clipboard && window.ClipboardItem);
         box.innerHTML = figs.map((f, i) => { const u = URL.createObjectURL(f.blob); QTY.urls.push(u); QTY.blobs.set(String(i), f.blob);
@@ -870,23 +875,114 @@
     const qtyPartners = () => { const by = typeof aoInvoicePricingByPartner === 'object' && aoInvoicePricingByPartner ? aoInvoicePricingByPartner : {}; const ps = Object.keys(by).sort((a, b) => a.localeCompare(b, 'ko')); return { by, ps: ps.length ? ps : ['기타'] }; };
     function qtyExtraPaint() {
         const box = document.getElementById('qty-extra-rows'); if (!box) return;
+        pkClose(false);
         const { by, ps } = qtyPartners();
         box.innerHTML = QTY.draft.map((d, i) => {
             if (!d.partner) d.partner = ps[0];
-            const plist = ps.includes(d.partner) ? ps : ps.concat(d.partner);
             const names = [...(by[d.partner] || [])].sort((a, b) => a.localeCompare(b, 'ko'));
             if (d.free === undefined) d.free = !names.length || (!!d.name && !names.includes(d.name));
             if (!names.length) d.free = true;
             if (!d.free && !d.name) d.name = names[0];
+            const pick = (kind, cls, v, text, lab) => `<button type="button" class="ship-q qty-pick ${cls}" data-pick="${kind}" value="${esc(v)}" aria-haspopup="listbox" aria-expanded="false" aria-label="${lab} 고르기 — 지금: ${esc(text)}"><span class="qty-pick-t">${esc(text)}</span><span class="qty-pick-ar" aria-hidden="true"></span></button>`;
             return `<div class="qty-xrow" data-i="${i}">
-                <select class="ship-q qty-xp" aria-label="거래처">${plist.map(p => `<option value="${esc(p)}"${p === d.partner ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>
-                ${names.length ? `<select class="ship-q qty-xn" aria-label="품목">${names.map(n => `<option value="${esc(n)}"${!d.free && n === d.name ? ' selected' : ''}>${esc(n)}</option>`).join('')}<option value=""${d.free ? ' selected' : ''}>단가표에 없는 품목 (직접 적기)</option></select>` : ''}
+                ${pick('p', 'qty-xp', d.partner, d.partner, '거래처')}
+                ${names.length ? pick('n', 'qty-xn', d.free ? '' : d.name, d.free ? PK_FREE : d.name, '품목') : ''}
                 ${d.free ? `<input type="text" class="ship-q qty-xf" maxlength="60" placeholder="품목 이름" aria-label="품목 이름" value="${esc(d.name || '')}">` : ''}
-                <input type="text" inputmode="numeric" class="ship-q qty-xq" maxlength="4" placeholder="수량" aria-label="수량(박스)" value="${esc(d.qty || '')}">
+                <span class="qty-xstep"><button type="button" class="desk-btn sm qty-xm" aria-label="수량 1 줄이기">−</button><input type="text" inputmode="numeric" class="ship-q qty-xq" maxlength="4" placeholder="수량" aria-label="수량(박스)" value="${esc(d.qty || '')}"><button type="button" class="desk-btn sm qty-xa" aria-label="수량 1 늘리기">+</button></span>
                 <button type="button" class="desk-btn sm qty-xx" aria-label="이 행 빼기" title="이 행 빼기">×</button>
             </div>`;
         }).join('');
     }
+    // #600(대표 10/9 「브라우저 기본 목록 말고 우리 디자인으로」): 거래처·품목 고르기 = 입력칸처럼 생긴 버튼 → 목록 창(최종발주 #583-g 옵션 목록 창과 같은 모양·동작)
+    //   묶음 머리 · 지금 값 체크 · 8개 넘으면 위에 거르기 칸 · ↑↓/Home/End/Enter/Esc/Tab · 바깥 누름 닫기 · 폰(640 이하)은 아래에서 올라오는 시트. 창은 .desk 바로 아래 하나만 둔다.
+    const PK = { open: false, i: -1, kind: '', sel: '', act: -1, n: 0 };
+    const PK_FREE = '단가표에 없는 품목 (직접 적기)';
+    const pkBtn = () => document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${PK.i}"] .qty-pick[data-pick="${PK.kind}"]`);
+    const pkMobile = () => window.matchMedia('(max-width: 640px)').matches;
+    function pkEl() {
+        let p = document.getElementById('qty-pickpanel'); if (p) return p;
+        const host = $('desk-qty').closest('.desk') || document.body, bk = document.createElement('div'); bk.className = 'qty-pickback'; bk.id = 'qty-pickback'; bk.hidden = true; host.appendChild(bk);
+        p = document.createElement('div'); p.className = 'qty-pickpanel'; p.id = 'qty-pickpanel'; p.hidden = true; p.tabIndex = -1; p.setAttribute('role', 'dialog');
+        p.innerHTML = '<div class="qty-pick-head"><b id="qty-pick-title"></b><span class="qty-pick-n" id="qty-pick-n" aria-live="polite"></span><button type="button" class="qty-pick-x" data-pkclose>닫기</button></div>'
+            + '<div class="qty-pick-q" id="qty-pick-qbox"><input type="text" inputmode="search" class="ship-q" id="qty-pickq" placeholder="검색 (예: 2.5 · 로얄과 4kg)" aria-label="목록에서 찾기" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="qty-pickrows"></div>'
+            + '<div class="qty-pickrows" id="qty-pickrows" role="listbox"></div>';
+        host.appendChild(p);
+        p.addEventListener('click', e => { if (e.target.closest('[data-pkclose]')) return pkClose(true); const r = e.target.closest('.qty-pickrow'); if (r) pkPick(r.dataset.v); });
+        p.addEventListener('keydown', e => {
+            const inQ = e.target.id === 'qty-pickq';
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (PK.n) pkAct(PK.act < 0 ? (e.key === 'ArrowDown' ? 0 : PK.n - 1) : Math.max(0, Math.min(PK.n - 1, PK.act + (e.key === 'ArrowDown' ? 1 : -1)))); }
+            else if (e.key === 'Home' && PK.n && !inQ) { e.preventDefault(); pkAct(0); }
+            else if (e.key === 'End' && PK.n && !inQ) { e.preventDefault(); pkAct(PK.n - 1); }
+            else if (e.key === 'Enter' || (e.key === ' ' && !inQ)) { e.preventDefault(); const r = $('qty-pickrows').querySelector('.qty-pickrow.act'); if (r) pkPick(r.dataset.v); }
+            else if (e.key === 'Tab') { e.preventDefault(); pkClose(true); }
+        });
+        $('qty-pickq').addEventListener('input', () => pkDraw());
+        bk.addEventListener('click', () => pkClose(false));
+        return p;
+    }
+    function pkItems() {
+        const d = QTY.draft[PK.i] || {}, { by, ps } = qtyPartners();
+        if (PK.kind === 'p') return { title: '거래처 고르기', grp: '', rows: (ps.includes(d.partner) || !d.partner ? ps : ps.concat(d.partner)).map(v => ({ v, t: v })), tail: [] };
+        return { title: '품목 고르기', grp: d.partner || '', rows: [...(by[d.partner] || [])].sort((a, b) => a.localeCompare(b, 'ko')).map(v => ({ v, t: v })), tail: [{ v: '', t: PK_FREE }] };
+    }
+    function pkDraw() {
+        // 연관검색처럼(최종발주와 같은 규칙): 띄어쓰기·괄호·「kg」 유무 무시 · 띄어 쓴 낱말은 모두 포함 · 맞는 글자 강조 · 「직접 적기」 줄은 늘 맨 아래에 남는다
+        const it = pkItems(), sq = t => String(t || '').toLowerCase().replace(/kg/g, '').replace(/[\s()\[\]{}·:,\/\-_~*]/g, '');
+        const big = it.rows.length > 8, qbox = $('qty-pick-qbox'); qbox.hidden = !big;
+        const raw = big ? String($('qty-pickq').value || '').toLowerCase().split(/\s+/).filter(Boolean) : [], ws = raw.map(sq).filter(Boolean), hit = n => { const x = sq(n); return ws.every(w => x.includes(w)); };
+        const mark = n => {
+            const low = n.toLowerCase(), rg = []; [...new Set(raw.concat(raw.map(w => w.replace(/kg/g, ''))))].filter(Boolean).forEach(w => { for (let k = low.indexOf(w); k >= 0; k = low.indexOf(w, k + w.length)) rg.push([k, k + w.length]); });
+            if (!rg.length) return esc(n); rg.sort((a, b) => a[0] - b[0]); let out = '', at = 0;
+            rg.forEach(([a, b]) => { if (b <= at) return; a = Math.max(a, at); out += esc(n.slice(at, a)) + '<mark class="qty-pickmk">' + esc(n.slice(a, b)) + '</mark>'; at = b; });
+            return out + esc(n.slice(at));
+        };
+        let i = 0; const row = (x, cls) => `<button type="button" role="option" class="qty-pickrow${cls || ''}${x.v === PK.sel ? ' on' : ''}" id="qty-pickrow-${i}" data-i="${i++}" data-v="${esc(x.v)}" aria-selected="${x.v === PK.sel}"><span class="qty-pickrow-t">${cls ? esc(x.t) : mark(x.t)}</span>${x.v === PK.sel ? '<span class="qty-pickck" aria-hidden="true"></span>' : ''}</button>`;
+        const found = it.rows.filter(x => hit(x.t));
+        let h = (it.grp ? `<div class="qty-pickgrp" role="presentation">${esc(it.grp)}</div>` : '') + found.map(x => row(x)).join('');
+        if (!found.length && it.rows.length) h += '<p class="qty-picknone">맞는 이름이 없어요.</p>';
+        h += it.tail.map(x => row(x, ' free')).join('');
+        $('qty-pickrows').innerHTML = h; $('qty-pickrows').setAttribute('aria-label', it.title);
+        $('qty-pick-title').textContent = it.title; $('qty-pickpanel').setAttribute('aria-label', it.title);
+        PK.n = i; $('qty-pick-n').textContent = ws.length ? `${found.length}개` : `전체 ${it.rows.length}개`;
+        const on = $('qty-pickrows').querySelector('.qty-pickrow.on'); pkAct(on ? Number(on.dataset.i) : (ws.length && found.length ? 0 : -1));
+    }
+    function pkAct(i) {
+        PK.act = i; const rows = $('qty-pickrows'); rows.querySelectorAll('.qty-pickrow.act').forEach(r => r.classList.remove('act'));
+        const r = i >= 0 ? rows.querySelector(`.qty-pickrow[data-i="${i}"]`) : null;
+        if (r) { r.classList.add('act'); $('qty-pickq').setAttribute('aria-activedescendant', r.id); if (typeof r.scrollIntoView === 'function') r.scrollIntoView({ block: 'nearest' }); } else $('qty-pickq').removeAttribute('aria-activedescendant');
+    }
+    function pkPlace() {
+        const p = document.getElementById('qty-pickpanel'), b = pkBtn(); if (!p) return; if (!b) return pkClose(false);
+        if (pkMobile()) { ['left', 'top', 'width', 'maxHeight', 'bottom'].forEach(k => { p.style[k] = ''; }); p.dataset.up = ''; return; }   // 폰 = 시트(자리·크기는 CSS)
+        const r = b.getBoundingClientRect(), vh = window.innerHeight, vw = window.innerWidth, w = Math.max(PK.kind === 'p' ? 220 : 320, Math.min(520, r.width)), below = vh - r.bottom - 12, above = r.top - 12, up = below < 280 && above > below;
+        p.style.width = w + 'px'; p.style.left = Math.max(8, Math.min(vw - w - 8, r.left)) + 'px'; p.style.maxHeight = Math.max(200, Math.min(440, up ? above : below)) + 'px';
+        if (up) { p.style.top = ''; p.style.bottom = (vh - r.top + 6) + 'px'; } else { p.style.bottom = ''; p.style.top = (r.bottom + 6) + 'px'; }
+        p.dataset.up = up ? '1' : '';
+    }
+    function pkOpen(btn) {
+        const row = btn.closest('.qty-xrow'); if (!row) return;
+        if (PK.open) pkClose(false);
+        const p = pkEl(); PK.open = true; PK.i = Number(row.dataset.i); PK.kind = btn.dataset.pick; PK.sel = btn.value; $('qty-pickq').value = '';
+        p.hidden = false; $('qty-pickback').hidden = false; btn.setAttribute('aria-expanded', 'true'); pkDraw(); pkPlace();
+        if (pkMobile() || $('qty-pick-qbox').hidden) p.focus({ preventScroll: true }); else $('qty-pickq').focus({ preventScroll: true });   // 폰은 자판이 시트를 가리지 않게 거르기 칸에 바로 커서를 두지 않는다
+    }
+    function pkClose(focusBack) {
+        if (!PK.open) return; PK.open = false; const p = document.getElementById('qty-pickpanel'), bk = document.getElementById('qty-pickback'), b = pkBtn();
+        if (p) p.hidden = true; if (bk) bk.hidden = true;
+        if (b) { b.setAttribute('aria-expanded', 'false'); if (focusBack) b.focus({ preventScroll: true }); }
+    }
+    function pkPick(v) {
+        const i = PK.i, kind = PK.kind, d = QTY.draft[i]; pkClose(false); if (!d) return;
+        let sel = '.qty-xp';
+        if (kind === 'p') { if (v !== d.partner) { d.partner = v; d.name = ''; d.free = undefined; qtyExtraDirty(true); } }
+        else { const free = !v; if (free !== !!d.free || (!free && v !== d.name)) qtyExtraDirty(true); if (free && !d.free) d.name = ''; d.free = free; if (!free) d.name = v; sel = free ? '.qty-xf' : '.qty-xn'; }
+        qtyExtraPaint();
+        const f = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] ${sel}`); if (f) f.focus({ preventScroll: true });
+    }
+    document.addEventListener('pointerdown', e => { if (PK.open && !(e.target.closest && (e.target.closest('#qty-pickpanel') || e.target.closest('.qty-pick')))) pkClose(false); }, true);
+    document.addEventListener('keydown', e => { if (PK.open && e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); pkClose(true); } }, true);   // 목록 창만 닫는다
+    window.addEventListener('resize', () => { if (PK.open) pkPlace(); });
+    window.addEventListener('scroll', e => { if (PK.open && !pkMobile() && !(e.target && e.target.closest && e.target.closest('#qty-pickpanel'))) pkPlace(); }, { passive: true, capture: true });
     async function qtyExtraGo(btn) {
         const rows = [], warn = (i, sel, msg) => { if (typeof akmAlert === 'function') akmAlert(msg); else showToast(msg); const el = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] ${sel}`); if (el) el.focus(); };
         for (let i = 0; i < QTY.draft.length; i++) {
@@ -905,7 +1001,7 @@
     function bindTools() {
         $('desk-ship-now').addEventListener('click', () => shipOpen());
         $('ship-close').addEventListener('click', () => { toolShow(null); $('desk-ship-now').focus(); });
-        $('qty-close').addEventListener('click', () => { toolShow(null); $('desk-qty-now').focus(); });
+        $('qty-close').addEventListener('click', () => { pkClose(false); toolShow(null); $('desk-qty-now').focus(); });
         $('ship-form').addEventListener('submit', e => { e.preventDefault(); shipGo(false); });
         ['ship-from', 'ship-to'].forEach(id => $(id).addEventListener('change', () => { shipRange(); shipNote(''); shipLoad(); }));
         $('ship-out').addEventListener('click', e => {
@@ -939,26 +1035,32 @@
                 return;
             }
             if (e.target.closest('#qty-extra-go')) { qtyExtraGo(e.target.closest('#qty-extra-go')); return; }
+            const pk = e.target.closest('.qty-pick');
+            if (pk) { if (PK.open && pkBtn() === pk) pkClose(true); else pkOpen(pk); return; }
+            const stp = e.target.closest('.qty-xm, .qty-xa');   // #600 수량 − / + (최소 1 · 직접 적어도 됨)
+            if (stp) {
+                const row = stp.closest('.qty-xrow'), d = QTY.draft[Number(row.dataset.i)], inp = row.querySelector('.qty-xq'), cur = parseInt(String(inp.value).trim(), 10);
+                const nv = String(Math.max(1, Math.min(9999, (Number.isFinite(cur) ? cur : 0) + (stp.classList.contains('qty-xa') ? 1 : -1))));
+                inp.value = nv; if (d) d.qty = nv; qtyExtraDirty(true); return;
+            }
             const xx = e.target.closest('.qty-xx');
             if (xx) { QTY.draft.splice(Number(xx.closest('.qty-xrow').dataset.i), 1); qtyExtraPaint(); qtyExtraDirty(true); $('qty-extra-add').focus(); return; }
             const b = e.target.closest('[data-qty-copy]'); if (!b) return;
             try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': QTY.blobs.get(b.dataset.qtyCopy) })]); showToast('그림을 복사했어요. 카톡에 붙여 넣으세요'); }
             catch (err) { showToast('이 브라우저는 그림 복사를 막고 있어요. [내려받기]를 눌러 주세요'); }
         });
-        // #598 직접 추가 행 — 적는 대로 QTY.draft 에(거래처·품목 고르기를 바꾸면 그 행을 다시 그린다)
+        // #598 직접 추가 행 — 적는 대로 QTY.draft 에(거래처·품목은 목록 창 pkPick 이 바꾼다 #600)
         const xEdit = e => {
             const row = e.target.closest && e.target.closest('.qty-xrow'); if (!row) return;
             const i = Number(row.dataset.i), d = QTY.draft[i], t = e.target; if (!d) return;
             if (t.classList.contains('qty-xq')) d.qty = t.value;
             else if (t.classList.contains('qty-xf')) d.name = t.value;
-            else if (e.type !== 'change') return;
-            else if (t.classList.contains('qty-xp')) { d.partner = t.value; d.name = ''; d.free = undefined; qtyExtraPaint(); const f = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] .qty-xp`); if (f) f.focus(); }
-            else if (t.classList.contains('qty-xn')) { d.free = !t.value; d.name = t.value; qtyExtraPaint(); const f = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] ${d.free ? '.qty-xf' : '.qty-xn'}`); if (f) f.focus(); }
+            else return;
             qtyExtraDirty(true);
         };
         $('qty-out').addEventListener('input', xEdit);
         $('qty-out').addEventListener('change', xEdit);
-        $('qty-out').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest && e.target.closest('.qty-xrow input')) { e.preventDefault(); qtyExtraGo($('qty-extra-go')); } });
+        $('qty-out').addEventListener('keydown', e => { if (e.key === 'ArrowDown' && e.target.closest && e.target.closest('.qty-pick') && !PK.open) { e.preventDefault(); pkOpen(e.target.closest('.qty-pick')); return; } if (e.key === 'Enter' && e.target.closest && e.target.closest('.qty-xrow input')) { e.preventDefault(); qtyExtraGo($('qty-extra-go')); } });
         $('qty-out').addEventListener('toggle', e => { if (e.target.id === 'qty-extra') QTY.xopen = e.target.open; }, true);
     }
 

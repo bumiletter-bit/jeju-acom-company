@@ -1,4 +1,4 @@
-// #598 창구 비용 줄이기(화면) 검증 — B 되묻기 카드 [이대로 진행] · C 중간발주 「직접 추가」
+// #598 창구 비용 줄이기(화면) 검증 — B 되묻기 카드 [이대로 진행] · C 중간발주 「직접 추가」(+ #600: 같은 품목 줄에 합치기 · 수량 − / + · 거래처·품목 목록 창)
 //   로컬 서버(포트 PORT598 · 없으면 3463) · 쓰기 전부 가로챔(DB 쓰기 0) · 지시 목록(/api/agent-office/desk/orders)과 3채널 주문은 이 파일의 가짜 응답.
 //   단가표 카탈로그(/api/invoice/catalog)는 실DB 읽기. 「추가 0 = 종전과 동일」은 git HEAD 의 ao-desk.js 로 그린 PNG 와 바이트 비교.
 //   사용: node scripts/verify-598-ui.js
@@ -49,7 +49,7 @@ function routesFor(state, user) {
             return json(route, { message: '답을 보냈어요', order: o });
         });
         const orders = rows => ({ ok: true, count: rows.length, rows, partial_adjusted: 0 });
-        await pg.route('**/api/agent-office/naver/invoice-orders*', route => json(route, orders(NAVER_ROWS)));
+        await pg.route('**/api/agent-office/naver/invoice-orders*', route => json(route, orders(state.naver || NAVER_ROWS)));
         await pg.route('**/api/agent-office/coupang/invoice-orders*', route => json(route, orders(CP_ROWS)));
         await pg.route('**/api/agent-office/cafe24/invoice-orders*', route => json(route, orders(CF_ROWS)));
     };
@@ -76,6 +76,23 @@ async function figs(pg) {
     return raw.map(f => ({ title: f.title, sub: f.sub, nw: f.nw, nh: f.nh, same: f.same, hash: crypto.createHash('sha1').update(Buffer.from(f.b64, 'base64')).digest('hex').slice(0, 12) }));
 }
 const sig = fs => fs.map(f => `${f.title}|${f.sub}|${f.nw}x${f.nh}|${f.hash}`).join('\n');
+// #600 목록 창(거래처·품목 고르기)
+const pkState = pg => pg.evaluate(() => {
+    const p = document.getElementById('qty-pickpanel'); if (!p || p.hidden) return { open: false };
+    const r = p.getBoundingClientRect(), rows = Array.from(p.querySelectorAll('.qty-pickrow')), bk = document.getElementById('qty-pickback'), ae = document.activeElement, mid = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height - 4, 20));
+    const on = p.querySelector('.qty-pickrow.on'), act = p.querySelector('.qty-pickrow.act'), g = p.querySelector('.qty-pickgrp');
+    return { open: true, title: document.getElementById('qty-pick-title').textContent, vals: rows.map(x => x.dataset.v), texts: rows.map(x => x.textContent), on: on ? on.dataset.v : null, ck: !!(on && on.querySelector('.qty-pickck')), act: act ? act.dataset.v : null,
+        grp: Array.from(p.querySelectorAll('.qty-pickgrp')).map(x => x.textContent), grpSticky: g ? getComputedStyle(g).position : '', q: !document.getElementById('qty-pick-qbox').hidden, n: document.getElementById('qty-pick-n').textContent, none: !!p.querySelector('.qty-picknone'), marks: p.querySelectorAll('.qty-pickmk').length,
+        rect: [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)], minH: rows.length ? Math.min(...rows.map(x => Math.round(x.getBoundingClientRect().height))) : 0, xH: Math.round(p.querySelector('.qty-pick-x').getBoundingClientRect().height),
+        focus: ae === p ? 'panel' : (ae && (ae.id || ae.className)) || '', back: !!bk && !bk.hidden && getComputedStyle(bk).display !== 'none', onTop: !!(mid && mid.closest('#qty-pickpanel')), vw: innerWidth, vh: innerHeight, exp: Array.from(document.querySelectorAll('.qty-pick[aria-expanded="true"]')).length };
+});
+async function pkOpen(pg, i, kind) { await pg.click(`.qty-xrow[data-i="${i}"] .qty-x${kind}`); await pg.waitForSelector('#qty-pickpanel:not([hidden])', { timeout: 5000 }).catch(() => { }); await pg.waitForTimeout(260); }
+async function pkPick(pg, i, kind, v) {   // 실제 마크업 클릭: 버튼 → 목록 창의 그 줄
+    await pkOpen(pg, i, kind);
+    const hd = await pg.evaluateHandle(v => Array.from(document.querySelectorAll('#qty-pickpanel .qty-pickrow')).find(x => x.dataset.v === v) || null, v);
+    const el = hd.asElement(); if (!el) throw new Error('목록 창에 없는 값: ' + v);
+    await el.click(); await pg.waitForTimeout(180);
+}
 const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.getItem('akm_qty_extra') || 'null'); } catch (e) { return 'bad'; } });
 
 (async () => {
@@ -156,7 +173,39 @@ const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.
             }, [NAVER_ROWS, CP_ROWS, CF_ROWS]);
             const TP = Object.keys(exp.by).find(p => p !== '기타' && exp.by[p].plain.length);   // 시험할 거래처 = 집계에 줄이 있는 단가표 거래처
             const N1 = TP && exp.by[TP].plain[0];
-            const row0 = await pg.evaluate(() => { const r = document.querySelector('.qty-xrow[data-i="0"]'); if (!r) return null; const hs = Array.from(r.querySelectorAll('select, input, button')).map(x => Math.round(x.getBoundingClientRect().height)); return { ps: Array.from(r.querySelectorAll('.qty-xp option')).map(o => o.value), p: r.querySelector('.qty-xp').value, ns: Array.from(r.querySelectorAll('.qty-xn option')).map(o => o.value), free: !!r.querySelector('.qty-xf'), minH: Math.min(...hs), n: hs.length, labels: Array.from(r.querySelectorAll('select, input, button')).every(x => x.getAttribute('aria-label')), dirty: !document.getElementById('qty-extra-dirty').hidden, focus: document.activeElement.className }; });
+            const row0 = await pg.evaluate(() => { const r = document.querySelector('.qty-xrow[data-i="0"]'); if (!r) return null; const hs = Array.from(r.querySelectorAll('select, input, button')).map(x => Math.round(x.getBoundingClientRect().height)); return { sel: r.querySelectorAll('select').length, p: r.querySelector('.qty-xp').value, free: !!r.querySelector('.qty-xf'), minH: Math.min(...hs), n: hs.length, labels: Array.from(r.querySelectorAll('select, input, button')).every(x => x.getAttribute('aria-label')), dirty: !document.getElementById('qty-extra-dirty').hidden, focus: document.activeElement.className }; });
+            // #600 A-3: 브라우저 기본 고르기(select) 대신 우리 목록 창
+            await pkOpen(pg, 0, 'p'); const pp = await pkState(pg);
+            if (row0) row0.ps = pp.vals || [];
+            ok(row0 && row0.sel === 0 && pp.open && pp.title === '거래처 고르기' && pp.on === row0.p && pp.ck && pp.exp === 1 && pp.onTop && pp.minH >= 44, `#600 거래처 버튼 → 목록 창(브라우저 기본 select ${row0 && row0.sel}개) · 「${pp.title}」 · 지금 값(${pp.on})에 체크 · 줄 ${pp.minH}px · 맨 위에 뜸`);
+            ok(phone ? (pp.back && pp.rect[0] === 0 && pp.rect[2] === pp.vw && pp.rect[3] === pp.vh && pp.xH >= 44 && pp.focus === 'panel') : (!pp.back && pp.rect[0] >= 0 && pp.rect[2] <= pp.vw && pp.rect[1] >= 0 && pp.rect[3] <= pp.vh), phone ? `#600 폰 = 아래에서 올라오는 시트(화면 폭 가득 · 아래 끝 ${pp.rect[3]} = ${pp.vh}) · 어두운 바탕 · [닫기] ${pp.xH}px · 자판 안 띄움(초점 = 창)` : `#600 PC = 버튼 옆에 뜨는 창 — 화면 안(${(pp.rect || []).join(',')})`);
+            await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
+            const esc1 = await pg.evaluate(() => ({ open: !document.getElementById('qty-pickpanel').hidden, tool: !document.getElementById('desk-qty').hidden && document.querySelectorAll('.qty-xrow').length, focus: document.activeElement.className, exp: document.querySelectorAll('.qty-pick[aria-expanded="true"]').length }));
+            ok(!esc1.open && esc1.tool === 1 && /qty-xp/.test(esc1.focus) && esc1.exp === 0, '#600 Esc = 목록 창만 닫힘(중간발주 카드·행 그대로) · 초점은 거래처 버튼으로');
+            await pkOpen(pg, 0, 'n'); const pn = await pkState(pg);
+            if (row0) row0.ns = pn.vals || [];
+            ok(pn.open && pn.title === '품목 고르기' && pn.grp.length === 1 && pn.grp[0] === row0.p && pn.grpSticky === 'sticky' && pn.texts[pn.texts.length - 1] === '단가표에 없는 품목 (직접 적기)' && pn.minH >= 44 && pn.n === '전체 ' + (pn.vals.length - 1) + '개', `#600 품목 버튼 → 「${pn.title}」 · 거래처 묶음 머리 「${pn.grp[0]}」(붙어 있음) · ${pn.n} · 줄 ${pn.minH}px`);
+            if (pn.q) {   // 품목이 8개를 넘으면 거르기 칸
+                ok(phone ? pn.focus === 'panel' : pn.focus === 'qty-pickq', `#600 거르기 칸 있음(품목 ${pn.vals.length - 1}개) · ${phone ? '폰은 자판을 바로 띄우지 않음' : '커서는 거르기 칸'}`);
+                                const nq = t => String(t || '').toLowerCase().replace(/kg/g, '').replace(/[\s()\[\]{}·:,\/\-_~*]/g, '');
+                const names0 = (exp.cat[row0.p] || []).map(nq), word = (() => { for (const n of names0) for (let k = 0; k + 2 <= n.length; k++) { const w = n.slice(k, k + 2), c = names0.filter(x => x.includes(w)).length; if (c >= 1 && c < names0.length) return w; } return names0[0].slice(0, 2); })();   // 일부만 걸리는 두 글자
+                await pg.fill('#qty-pickq', word); await pg.waitForTimeout(120); const f1 = await pkState(pg);
+                ok(f1.vals.length >= 2 && f1.vals.length - 1 === names0.filter(x => x.includes(word)).length && f1.marks >= 1 && f1.vals.slice(0, -1).every(v => nq(v).includes(nq(word))) && f1.vals[f1.vals.length - 1] === '' && f1.n === (f1.vals.length - 1) + '개' && f1.act === f1.vals[0], `#600 「${word}」로 거르기 → ${f1.n}(전부 그 글자 포함) · 「직접 적기」 줄은 남음 · 첫 줄이 고를 줄`);
+                await pg.fill('#qty-pickq', 'ㅋㅋ없는글자'); await pg.waitForTimeout(120); const f2 = await pkState(pg);
+                ok(f2.vals.length === 1 && f2.vals[0] === '' && f2.none && f2.n === '0개', '#600 맞는 것이 없으면 「맞는 이름이 없어요」 + 「직접 적기」 줄만');
+                await pg.fill('#qty-pickq', ''); await pg.waitForTimeout(120);
+            } else ok(true, `#600 품목 ${pn.vals.length - 1}개(8개 이하) — 거르기 칸 없음`);
+            // 키보드: ↓ 두 번 → Enter = 둘째 줄을 고름 · 그 뒤 바깥 누름으로 닫기
+            await pg.evaluate(() => (document.getElementById('qty-pickq').offsetParent ? document.getElementById('qty-pickq') : document.getElementById('qty-pickpanel')).focus());
+            const k0 = (await pkState(pg)).act; await pg.keyboard.press('ArrowDown'); const k1 = (await pkState(pg)).act; await pg.keyboard.press('ArrowDown'); const k2 = (await pkState(pg)).act;
+            await pg.keyboard.press('Enter'); await pg.waitForTimeout(180);
+            const kd = await pg.evaluate(() => ({ open: !document.getElementById('qty-pickpanel').hidden, v: document.querySelector('.qty-xrow[data-i="0"] .qty-xn').value, t: document.querySelector('.qty-xrow[data-i="0"] .qty-xn .qty-pick-t').textContent, focus: document.activeElement.className, dirty: !document.getElementById('qty-extra-dirty').hidden }));
+            ok(k1 !== k0 && k2 !== k1 && !kd.open && kd.v === k2 && kd.t === k2 && /qty-xn/.test(kd.focus) && kd.dirty, `#600 ↓↓ Enter → 「${kd.t}」를 고르고 닫힘 · 초점은 품목 버튼 · 「다시 만들기」 안내`);
+            await pkOpen(pg, 0, 'n');
+            if (phone) await pg.touchscreen.tap(195, 60); else await pg.mouse.click(8, 8);
+            await pg.waitForTimeout(200);
+            ok(!(await pkState(pg)).open && await pg.evaluate(() => document.querySelectorAll('.qty-xrow').length === 1 && !document.getElementById('desk-qty').hidden), `#600 바깥(${phone ? '어두운 바탕' : '빈 곳'}) 누름 → 닫힘 · 행은 그대로`);
+            if (theme) { await pkOpen(pg, 0, 'n'); const a = await H.audit(pg, '#qty-pickpanel'); ok(a.fails.length === 0 && a.texts > 3, `#600 야간: 목록 창 대비 미달 ${a.fails.length}(글자 ${a.texts}개)${a.fails.length ? ' — ' + a.fails.slice(0, 3).join(' / ') : ''}`); await pg.keyboard.press('Escape'); await pg.waitForTimeout(120); }
             ok(row0 && JSON.stringify(row0.ps) === JSON.stringify(exp.partners) && exp.partners.length >= 1, `[+ 행] → 거래처 고르기 = 단가표 거래처 ${row0 && row0.ps.length}곳(${row0 && row0.ps.join(' · ')})`);
             ok(row0 && JSON.stringify(row0.ns.slice(0, -1).sort()) === JSON.stringify((exp.cat[row0.p] || []).slice().sort()) && row0.ns[row0.ns.length - 1] === '' && !row0.free, `품목 고르기 = 「${row0 && row0.p}」 단가표 이름 ${row0 && row0.ns.length - 1}개 + 맨 끝 「단가표에 없는 품목 (직접 적기)」`);
             ok(row0 && row0.minH >= 44 && row0.labels && /qty-xp/.test(row0.focus), `행 안 칸·버튼 ${row0 && row0.n}개 높이 ${row0 && row0.minH}px 이상 · 이름표(aria-label) 있음 · 초점은 새 행 거래처로`);
@@ -167,13 +216,23 @@ const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.
             await pg.fill('.qty-xrow[data-i="0"] .qty-xq', '1.5'); await pg.click('#qty-extra-go'); await pg.waitForTimeout(500);
             const rej = toasts.slice(tN);
             ok(rej.length === 3 && rej.every(t => t === '수량은 1 이상 숫자로 적어 주세요') && sig(await figs(pg)) === sig(f0) && (await stored(pg)) === null && await pg.evaluate(() => document.activeElement.classList.contains('qty-xq')), `수량 빈칸·0·1.5 → 거부 토스트 ${rej.length}번(「${rej[0]}」) · 그림 그대로 · 저장 없음 · 초점은 수량 칸`);
+            // #600 A-2: 수량 [−][칸][+]
+            const qv = () => pg.evaluate(() => document.querySelector('.qty-xrow[data-i="0"] .qty-xq').value);
+            await pg.fill('.qty-xrow[data-i="0"] .qty-xq', ''); await pg.evaluate(() => { document.getElementById('qty-extra-dirty').hidden = true; });
+            await pg.click('.qty-xrow[data-i="0"] .qty-xa'); const q1 = await qv(), dq = await pg.evaluate(() => !document.getElementById('qty-extra-dirty').hidden);
+            await pg.click('.qty-xrow[data-i="0"] .qty-xm'); await pg.click('.qty-xrow[data-i="0"] .qty-xm'); const q2 = await qv();
+            await pg.click('.qty-xrow[data-i="0"] .qty-xa'); await pg.click('.qty-xrow[data-i="0"] .qty-xa'); const q3 = await qv();
+            await pg.fill('.qty-xrow[data-i="0"] .qty-xq', '17'); await pg.click('.qty-xrow[data-i="0"] .qty-xa'); const q4 = await qv();
+            const stp = await pg.evaluate(() => { const r = document.querySelector('.qty-xrow[data-i="0"]'), b = s => r.querySelector(s).getBoundingClientRect(), m = b('.qty-xm'), q = b('.qty-xq'), a = b('.qty-xa'), x = b('.qty-xx'), inp = r.querySelector('.qty-xq'); return { w: [m.width, a.width].map(Math.round), h: [m.height, q.height, a.height].map(Math.round), order: m.right <= q.left + 1 && q.right <= a.left + 1 && a.right <= x.left + 1, line: Math.abs(m.top - a.top) < 2 && Math.abs(m.top - x.top) < 2 && Math.abs(m.top - q.top) < 2, in: m.left >= 0 && x.right <= innerWidth, type: inp.type, spin: getComputedStyle(inp).appearance }; });
+            ok(q1 === '1' && dq && q2 === '1' && q3 === '3' && q4 === '18', `#600 수량 − / + — 빈칸에서 [+] → ${q1} · [−][−] → ${q2}(최소 1) · [+][+] → ${q3} · 17 적고 [+] → ${q4} · 누르면 「다시 만들기」 안내`);
+            ok(stp.order && stp.line && stp.in && Math.min(...stp.w, ...stp.h) >= 44 && stp.type === 'text', `#600 [−][수량][+][×] 한 줄(${phone ? '폰' : 'PC'}) · 버튼 ${stp.w.join('·')}px × ${stp.h.join('·')}px · 화면 안 · 브라우저 기본 스피너 없음(type=${stp.type})`);
             // 1행: 집계에 이미 있는 품목 18 · 2행: 단가표에 없는 품목(글자 입력) 15
-            await pg.selectOption('.qty-xrow[data-i="0"] .qty-xp', TP); await pg.waitForTimeout(150);
-            await pg.selectOption('.qty-xrow[data-i="0"] .qty-xn', N1); await pg.waitForTimeout(150);
-            await pg.fill('.qty-xrow[data-i="0"] .qty-xq', '18');
+            await pkPick(pg, 0, 'p', TP);
+            await pkPick(pg, 0, 'n', N1);
+            await pg.fill('.qty-xrow[data-i="0"] .qty-xq', '17'); await pg.click('.qty-xrow[data-i="0"] .qty-xa');
             await pg.click('#qty-extra-add'); await pg.waitForTimeout(150);
             const inherit = await pg.evaluate(() => document.querySelector('.qty-xrow[data-i="1"] .qty-xp').value);
-            await pg.selectOption('.qty-xrow[data-i="1"] .qty-xn', ''); await pg.waitForTimeout(150);
+            await pkPick(pg, 1, 'n', '');
             const freeFocus = await pg.evaluate(() => document.activeElement.classList.contains('qty-xf'));
             await pg.click('#qty-extra-go'); await pg.waitForTimeout(400);
             ok(inherit === TP && freeFocus && toasts[toasts.length - 1] === '품목 이름을 적어 주세요', `둘째 행은 앞 행 거래처(${inherit})를 이어받음 · 「직접 적기」를 고르면 글자 칸이 뜨고 초점 · 이름 빈칸이면 「${toasts[toasts.length - 1]}」`);
@@ -186,9 +245,9 @@ const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.
             ok(keep.q0 === '18' && keep.n0 === N1, '행을 더 넣어도 앞 행에 적은 값은 그대로');
             ok(o1 && o1.sub === `${B0.names.length + 1}종 · 합계 ${B0.total + 33}박스 · 직접 추가 33박스 포함`, `「${TP}」 그림 글 = 「${o1 && o1.sub}」(집계 ${B0.names.length}종 ${B0.total}박스 + 추가 18·15 · 이미 있는 품목은 종 수에 안 더함)`);
             const rowH = o0 ? (o0.nh / 2 - 1) / (B0.names.length + 1) : 0;
-            ok(o0 && o1 && Number.isInteger(rowH) && o1.nh - o0.nh === 2 * rowH * 2 && o1.nw >= o0.nw && o1.hash !== o0.hash && o1.same, `PNG 에 줄 2개가 더 들어감 — 높이 ${o0 && o0.nh} → ${o1 && o1.nh}px(한 줄 ${rowH * 2}px × 2) · 너비 ${o0 && o0.nw} → ${o1 && o1.nw} · [내려받기] = 새 그림`);
+            ok(o0 && o1 && Number.isInteger(rowH) && o1.nh - o0.nh === 1 * rowH * 2 && o1.nw >= o0.nw && o1.hash !== o0.hash && o1.same, `#600 PNG 에 줄은 1개만 늘어남(이미 있는 품목 18 은 그 줄에 더함 · 없던 품목만 새 줄) — 높이 ${o0 && o0.nh} → ${o1 && o1.nh}px(한 줄 ${rowH * 2}px × 1) · 너비 ${o0 && o0.nw} → ${o1 && o1.nw} · [내려받기] = 새 그림`);
             ok(f1.length === f0.length && f1.filter(f => f.title !== TP).every(f => { const p = f0.find(x => x.title === f.title); return p && p.hash === f.hash && p.sub === f.sub; }), `다른 그림(${f1.filter(f => f.title !== TP).map(f => f.title).join(' · ')})은 바이트 그대로`);
-            // 그림 속 「(추가)」 줄: 같은 줄 집합으로 화면 함수가 직접 그린 PNG 와 바이트 비교는 내부 함수라 못 하므로 — 줄 색(주황·흰색)으로 줄 위치를 읽는다
+            // 그림 속 줄: 같은 줄 집합으로 화면 함수가 직접 그린 PNG 와 바이트 비교는 내부 함수라 못 하므로 — 줄 색(주황·흰색)으로 줄 위치를 읽는다
             const px = await pg.evaluate(async ([title, rowH]) => {
                 const fig = Array.from(document.querySelectorAll('#qty-out .qty-fig')).find(f => f.querySelector('figcaption b').textContent === title), img = fig.querySelector('img');
                 const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; const g = c.getContext('2d'); g.drawImage(img, 0, 0);
@@ -197,7 +256,7 @@ const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.
                 const last = g.getImageData(6, (1 + rows * rowH) * 2 + 6, 1, 1).data;
                 return { rows, ink, lastYellow: last[0] > 240 && last[1] > 240 && last[2] < 40 };
             }, [TP, rowH]);
-            ok(px.rows === B0.names.length + 2 && px.ink.every(n => n > 20) && px.lastYellow, `그림 픽셀 — 품목 줄 ${px.rows}개(집계 ${B0.names.length} + 추가 2) 전부 글자가 찍힘 · 맨 아래 합계 줄 노랑`);
+            ok(px.rows === B0.names.length + 1 && px.ink.every(n => n > 20) && px.lastYellow, `그림 픽셀 — 품목 줄 ${px.rows}개(집계 ${B0.names.length} + 새 품목 1) 전부 글자가 찍힘 · 맨 아래 합계 줄 노랑`);
             const s1 = await stored(pg);
             ok(s1 && s1.day === kstDay(0) && JSON.stringify(s1.rows) === JSON.stringify([{ partner: TP, name: N1, qty: 18 }, { partner: TP, name: '현금건 시험품목 9kg', qty: 15 }]), `sessionStorage = 오늘(${s1 && s1.day}) · ${JSON.stringify(s1 && s1.rows)}`);
             const e1 = await pg.evaluate(() => ({ n: document.getElementById('qty-extra-n').textContent, dirty: !document.getElementById('qty-extra-dirty').hidden, hs: Array.from(document.querySelectorAll('#qty-extra select, #qty-extra input, #qty-extra button, #qty-extra summary')).map(x => Math.round(x.getBoundingClientRect().height)) }));
@@ -232,6 +291,16 @@ const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.
             // 추가 없이 [그림 다시 만들기] = 종전 그림
             await pg.click('#qty-extra > summary'); await pg.click('#qty-extra-go'); await pg.waitForTimeout(700);
             ok(sig(await figs(pg)) === sig(f0) && /직접 추가 없이 그림을 다시 만들었어요/.test(toasts[toasts.length - 1]), `행 0 으로 [그림 다시 만들기] → 종전 그림 그대로(「${toasts[toasts.length - 1]}」)`);
+            if (label === '대표 PC' || label === '직원 폰') {   // #600 A-1: 합친 줄의 수량까지 — 주문 자료에 같은 품목 18박스를 더 넣어 그린 그림과 바이트 비교
+                await pg.click('#qty-extra-add'); await pkPick(pg, 0, 'p', TP); await pkPick(pg, 0, 'n', N1); await pg.fill('.qty-xrow[data-i="0"] .qty-xq', '18');
+                await pg.click('#qty-extra-go'); await pg.waitForFunction(() => /직접 추가 18박스 포함/.test(document.getElementById('qty-figs').textContent), null, { timeout: 10000 }).catch(() => { });
+                const fm = await figs(pg), om = fm.find(f => f.title === TP);
+                const src = await pg.evaluate(([nv, n1]) => { const r = nv.find(r => !String(r['배송메세지'] || '').trim() && matchProduct(String(r['옵션정보'])) === n1); return r ? r['옵션정보'] : null; }, [NAVER_ROWS, N1]);
+                const R = await h.open(user, vw, { phone, page: 'agent-office', theme, routes: routesFor({ orders: [], replies: [], naver: NAVER_ROWS.concat([{ '옵션정보': src, '수량': 18, '배송메세지': '' }]) }, user) });
+                await R.pg.evaluate(() => sessionStorage.removeItem('akm_qty_extra')); await openQty(R.pg); const fr = await figs(R.pg), orf = fr.find(f => f.title === TP); await R.ctx.close();
+                ok(!!src && om && orf && om.hash === orf.hash && om.nw === orf.nw && om.nh === orf.nh && om.nh === o0.nh && om.sub === `${B0.names.length}종 · 합계 ${B0.total + 18}박스 · 직접 추가 18박스 포함` && orf.sub === `${B0.names.length}종 · 합계 ${B0.total + 18}박스`, `#600 같은 품목 직접 추가 18 = 한 줄로 합침 — 「${TP}」 그림이 「주문에 그 품목 18박스가 더 있는」 그림과 PNG 바이트 동일(${om && om.hash} = ${orf && orf.hash}) · 줄 수 그대로 · 글 「${om && om.sub}」`);
+                await pg.evaluate(() => sessionStorage.removeItem('akm_qty_extra'));
+            }
             ok(P.errors.length === 0 && P.writes.length === 0 && st.replies.length === 2, `화면 오류 ${P.errors.length}${P.errors.length ? ' — ' + P.errors[0].slice(0, 140) : ''} · 창구 지시(POST) 0 — 중간발주 내내 서버 쓰기 ${P.writes.length}`);
             await P.ctx.close();
         }
