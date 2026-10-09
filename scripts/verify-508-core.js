@@ -537,5 +537,76 @@ console.log('⑦ 택배사 양식 시트(xlsx 로 써서 다시 읽기)');
     ok(typeof core.memoRest === 'function' && core.senderHint('보내는이: 홍길동 즐거운 명절 보내세요', '김구매').name === '홍길동', 'senderHint 는 인사말을 떼고(이름 뽑기) · memoRest 는 인사말을 남긴다(서로 다른 일)');
 }
 
+console.log('⑫ #601 박스마다 다른 사이즈 — sizeLines parts · boxTails · 같은 key 두 줄');
+{
+    const K = '010-1234-5678', sl = x => core.sizeLines(K + ' ' + x), one = x => sl(x).sizes[0];
+    const P = (...a) => { const o = []; for (let i = 0; i < a.length; i += 2) o.push({ size: a[i], n: a[i + 1] }); return o; };
+    // 허용 꼴: 「사이즈 뒤 건수」 · 「건수 뒤 사이즈」 · 섞임 · 「1건만/1건은」
+    const GOOD = [
+        ['S사이즈 1건 M사이즈 1건', P('S', 1, 'M', 1), 'S', 2],
+        ['1건 S 1건 M', P('S', 1, 'M', 1), 'S', 2],
+        ['S 1건만 1건은 M사이즈', P('S', 1, 'M', 1), 'S', 2],
+        ['2S사이즈로! 2건 L 1건', P('2S', 2, 'L', 1), '2S', 3],
+        ['1건은 s사이즈로 2건은 m사이즈로 부탁', P('S', 1, 'M', 2), 'S', 3],
+        ['S 1건 M 1건 2L 1건', P('S', 1, 'M', 1, '2L', 1), 'S', 3],
+        ['m 1건씩 s 1건씩', P('M', 1, 'S', 1), 'M', 2],
+    ];
+    const badG = GOOD.filter(g => { const r = sl(g[0]), z = r.sizes[0]; return !(r.text === '' && r.sizes.length === 1 && eq(z.parts, g[1]) && z.size === g[2] && z.expect === g[3] && z.key === K && z.digits === '01012345678' && z.srcLine === 0 && z.raw === K + ' ' + g[0] && r.bad.length === 0); });
+    ok(badG.length === 0, `「사이즈 + 건수」 짝 여러 개 ${GOOD.length}꼴 → parts(짝 순서) · size = 첫 짝 · expect = 건수 합 · 줄은 빈 줄`, badG.map(g => g[0]).join(' | '));
+    const same = one('S 1건 S 1건');
+    ok(eq(same.parts, P('S', 2)) && same.expect === 2 && same.size === 'S', '같은 사이즈는 합침(「S 1건 S 1건」 → S n2 · parts 1개)', JSON.stringify(same));
+    const keepO = sl('10/11 네이버 S 1건 M 1건'), tab = core.sizeLines(K + '\t10/11\t네이버\tS 1건 M 1건'), mid = sl('S 1건 문앞 M 1건');
+    ok(keepO.text === K + ' 10/11 네이버' && tab.text === K + '\t10/11\t네이버\t' && eq(tab.sizes[0].parts, P('S', 1, 'M', 1)) && mid.text === K + ' 문앞' && eq(mid.sizes[0].parts, P('S', 1, 'M', 1)), '날짜·플랫폼·다른 낱말은 줄에 남김 · 탭 줄은 탭 칸 그대로(비고 칸만 비움)', JSON.stringify([keepO.text, tab.text, mid.text]));
+    // 짝이 안 맞으면 사이즈를 하나도 붙이지 않는다: sizes 에 없음 · 줄 그대로 · bad[] 로 따로
+    const BAD = [['S M사이즈', '건수 없음'], ['S 1건 M', '건수 없음'], ['S M 1건', '건수 없음'], ['S 1건 M 1건 2건', '건수 짝 안 맞음'], ['S 0건 M 1건', '건수 0']];
+    const badB = BAD.filter(x => { const r = sl(x[0]); return !(r.sizes.length === 0 && r.ups.length === 0 && r.text === K + ' ' + x[0] && eq(r.bad, [{ srcLine: 0, raw: K + ' ' + x[0], key: K, digits: '01012345678', why: x[1] }])); });
+    ok(badB.length === 0, `사이즈 둘 이상인데 짝이 안 맞는 ${BAD.length}꼴 → sizes 에 없음 · 줄 그대로 · bad[{ srcLine, raw, key, digits, why }]`, badB.map(x => x[0] + ' → ' + JSON.stringify(sl(x[0]))).join(' | '));
+    const bm = core.sizeLines([K + ' 2s', '010-9999-8888 S M', '그냥 글'].join('\n'));
+    ok(bm.text === '\n010-9999-8888 S M\n그냥 글' &&bm.sizes.length === 1 && bm.bad.length === 1 && bm.bad[0].srcLine === 1 && Array.isArray(sl('2s').bad) && sl('2s').bad.length === 0 && Array.isArray(core.sizeLines('').bad), 'bad 는 늘 배열(없으면 빈 배열) · 여러 줄에서 줄 번호 그대로', JSON.stringify(bm));
+    // 종전 줄 12개 = 결과 바이트 동일(#601 앞 코드로 뽑아 박은 값)
+    const OLD = [
+        ['2s', '{"text":"","sizes":[{"srcLine":0,"raw":"010-1234-5678 2s","key":"010-1234-5678","digits":"01012345678","size":"2S","expect":null}],"ups":[]}'],
+        ['2S사이즈 2건', '{"text":"","sizes":[{"srcLine":0,"raw":"010-1234-5678 2S사이즈 2건","key":"010-1234-5678","digits":"01012345678","size":"2S","expect":2}],"ups":[]}'],
+        ['.2S사이즈', '{"text":"","sizes":[{"srcLine":0,"raw":"010-1234-5678 .2S사이즈","key":"010-1234-5678","digits":"01012345678","size":"2S","expect":null}],"ups":[]}'],
+        ['s사이즈로!', '{"text":"","sizes":[{"srcLine":0,"raw":"010-1234-5678 s사이즈로!","key":"010-1234-5678","digits":"01012345678","size":"S","expect":null}],"ups":[]}'],
+        ['사이즈 S 로 부탁', '{"text":"","sizes":[{"srcLine":0,"raw":"010-1234-5678 사이즈 S 로 부탁","key":"010-1234-5678","digits":"01012345678","size":"S","expect":null}],"ups":[]}'],
+        ['업그레이드', '{"text":"","sizes":[],"ups":[{"srcLine":0,"raw":"010-1234-5678 업그레이드","key":"010-1234-5678","digits":"01012345678","expect":null}]}'],
+        ['업그레이드 2건', '{"text":"","sizes":[],"ups":[{"srcLine":0,"raw":"010-1234-5678 업그레이드 2건","key":"010-1234-5678","digits":"01012345678","expect":2}]}'],
+        ['4kg 업그레이드', '{"text":"010-1234-5678 4kg 업그레이드","sizes":[],"ups":[]}'],
+        ['10/12 L 사이즈 요청', '{"text":"010-1234-5678 10/12","sizes":[{"srcLine":0,"raw":"010-1234-5678 10/12 L 사이즈 요청","key":"010-1234-5678","digits":"01012345678","size":"L","expect":null}],"ups":[]}'],
+        ['2건', '{"text":"010-1234-5678 2건","sizes":[],"ups":[]}'],
+        ['S사이즈 문 앞', '{"text":"010-1234-5678 문 앞","sizes":[{"srcLine":0,"raw":"010-1234-5678 S사이즈 문 앞","key":"010-1234-5678","digits":"01012345678","size":"S","expect":null}],"ups":[]}'],
+        ['2s 2건 10/13 자사몰', '{"text":"010-1234-5678 10/13 자사몰","sizes":[{"srcLine":0,"raw":"010-1234-5678 2s 2건 10/13 자사몰","key":"010-1234-5678","digits":"01012345678","size":"2S","expect":2}],"ups":[]}'],
+    ];
+    const old3 = r => JSON.stringify({ text: r.text, sizes: r.sizes, ups: r.ups });   // 종전 세 칸(bad 는 #601 새 칸)
+    const badO = OLD.filter(o => old3(sl(o[0])) !== o[1] || sl(o[0]).bad.length);
+    ok(badO.length === 0, `종전 줄 ${OLD.length}개(한 짝·업그레이드·빈칸 줄) 결과 바이트 동일 · parts 칸 없음`, badO.map(o => o[0] + ' → ' + JSON.stringify(sl(o[0]))).join(' | '));
+    const t1 = core.sizeLines(K + '\t\t\tM사이즈 3건'), t2 = core.sizeLines(K + '\t10/11\t네이버\tS'), nk = core.sizeLines('홍길동 S 1건 M 1건');
+    ok(old3(t1) === '{"text":"","sizes":[{"srcLine":0,"raw":"010-1234-5678\\t\\t\\tM사이즈 3건","key":"010-1234-5678","digits":"01012345678","size":"M","expect":3}],"ups":[]}' && t2.text === K + '\t10/11\t네이버\t' && t2.sizes[0].parts === undefined && nk.text === '홍길동 S 1건 M 1건' && nk.sizes.length === 0, '종전 탭 줄 바이트 동일 · 번호 없는 줄은 손대지 않음', JSON.stringify([t1, t2.text, nk]));
+    const w1 = sl('S 2건만'), w2 = sl('업그레이드 1건은');
+    ok(w1.text === '' && w1.sizes[0].expect === 2 && w1.sizes[0].parts === undefined && w2.ups.length === 1 && w2.ups[0].expect === 1 && w2.text === '', '「N건만·N건은」도 건수로 읽음(한 짝 줄 · 업그레이드 줄)', JSON.stringify([w1, w2]));
+    const multi = core.sizeLines([K + ' S 1건 M 1건', '010-9999-8888 2s', '그냥 글', '010-7777-6666 1건 L 2건 2L'].join('\n'));
+    ok(multi.text === '\n\n그냥 글\n' && eq(multi.sizes.map(z => [z.srcLine, z.size, z.expect, z.parts ? z.parts.length : 0]), [[0, 'S', 2, 2], [1, '2S', null, 0], [3, 'L', 3, 2]]), '여러 줄: 줄 수·줄 번호 그대로', JSON.stringify(multi.text));
+
+    // boxTails
+    const parts = P('S', 1, 'M', 1), keepP = JSON.stringify(parts);
+    const e = core.boxTails(parts, 2), lt = core.boxTails(parts, 4), gt = core.boxTails(P('S', 2, 'M', 1), 2);
+    ok(eq(e, { ok: true, boxes: [{ tail: 'S사이즈로!', qty: 1 }, { tail: 'M사이즈로!', qty: 1 }] }), 'boxTails 합 = 박스 수 → 박스별 꼬리(기본 「○사이즈로!」 · note 없음)', JSON.stringify(e));
+    ok(eq(lt, { ok: true, boxes: [{ tail: 'S사이즈로!', qty: 1 }, { tail: 'M사이즈로!', qty: 1 }, { tail: null, qty: 2 }], note: '꼬리 없는 박스 2' }), 'boxTails 합 < 박스 수 → 남는 박스는 tail null(맨 뒤) + note', JSON.stringify(lt));
+    ok(eq(gt, { ok: false, why: '메모 줄은 3건인데 주문은 2박스예요' }), 'boxTails 합 > 박스 수 → ok:false + 이유', JSON.stringify(gt));
+    ok(eq(core.boxTails(undefined, 2), { ok: false, why: '박스별 사이즈 없음' }) && eq(core.boxTails([], 2), { ok: false, why: '박스별 사이즈 없음' }) && core.boxTails(parts, 0).ok === false && core.boxTails(parts, '둘').ok === false, 'boxTails parts 없음 · 박스 수 이상 → ok:false');
+    const mkd = core.boxTails(P('2S', 2, 'L', 1), 3, s => s + ' 사이즈!');
+    ok(eq(mkd.boxes, [{ tail: '2S 사이즈!', qty: 2 }, { tail: 'L 사이즈!', qty: 1 }]) && JSON.stringify(parts) === keepP && eq(core.boxTails(parts, 2), e), 'boxTails mk 바꿈 · 입력 무변경 · 두 번 불러도 같음', JSON.stringify(mkd));
+
+    // buildRows: 화면이 한 주문(2박스)을 같은 key 로 두 줄(수량 1 · 꼬리 다름)로 떼어 넘기는 꼴
+    const bt = core.boxTails(one('S사이즈 1건 M사이즈 1건').parts, 2);
+    const program = bt.boxes.map(b => prog('naver:50', '구매나눔', '받나눔', O_H1 + ' ' + b.tail, b.qty, '서울시 가짜구 가짜로 50', '', 'E8F1FB')).concat([prog('naver:51', '구매다른', '받다른', O_H1, 2, '서울시 가짜구 가짜로 51', '', 'E8F1FB')]);
+    const r = core.buildRows({ program, cash: [], byPartner: BY, picks: {}, senderByKey: new Map([['naver:50', { name: '홍길동', phone: '010-3333-4444', addr: null }]]), defaultMemo: core.DEFAULT_MEMO });
+    const hy = r.partners.find(p => p.short === '효돈'), mine = hy ? hy.rows.filter(x => x.cells[3].v === '받나눔') : [];
+    ok(r.unknown.length === 0 && r.partners.length === 1 && hy.rows.length === 3 && mine.length === 2 && eq(mine.map(x => [x.cells[4].v, x.cells[5].v]), [[O_H1 + ' M사이즈로!', 1], [O_H1 + ' S사이즈로!', 1]]), '같은 key 두 줄 → 택배사 양식 2줄(꼬리별 · 수량 1씩)', JSON.stringify(hy && hy.rows.map(x => [x.cells[3].v, x.cells[4].v, x.cells[5].v])));
+    ok(mine.every(x => x.cells[0].v === '홍길동 드림' && x.cells[1].v === '010-3333-4444' && x.cells[9].v === core.DEFAULT_MEMO) && hy.rows.find(x => x.cells[3].v === '받다른').cells[0].v === '구매다른(제주아꼼이네)', '같은 key 두 줄 모두 보내는이 지정·기본 문구 적용 · 다른 주문 무접촉');
+    ok(eq(hy.qty.map(q => [q.name, q.qty]), [[O_H1, 2], [O_H1 + ' M사이즈로!', 1], [O_H1 + ' S사이즈로!', 1]]) && hy.total === 4, '수량 표가 꼬리별로 갈림 · 합계 = 박스 수 합', JSON.stringify(hy.qty));
+}
+
 console.log(`\n합계: ✅ ${pass} · ❌ ${fail}`);
 process.exit(fail ? 1 : 0);

@@ -469,7 +469,7 @@
     // #570(대표 10/7 실사고): 「.2S사이즈」처럼 앞에 기호가 붙은 것도 읽고(「·」「,」「.」「/」), 「s사이즈 2건」의 「N건」은 그 손님 주문 건수를 적은 것이라
     //   따로 떼어(expect) 메모 줄에 남기지 않는다 — 남기면 「번호 2건」이 「오늘 발송·손님 메모 무시」 줄로 읽혀 손님 메모가 조용히 무시되고 건수 카드가 떴다.
     const SIZE_TOK = /(^|[ \t])[.,·/:;\-]*(2s|2l|s|m|l)[ ]*(?:사이즈|싸이즈|size)?[ ]*(?:으로|로)?!?[.,]?(?=$|[ \t])/i;
-    const SIZE_CNT = /^(\d{1,2})건$/;
+    const SIZE_CNT = /^(\d{1,2})건(?:만|은|씩)?$/;   // #601: 「1건만」「1건은」(직원 실제 글)
     const SIZE_FILLER = /^(?:사이즈|싸이즈|size|업그레이드|업글|요청|부탁|부탁해요?|부탁드려요?|부탁드립니다|해\s*줘요?|해주세요|로|으로|요)[!.]*$/i;
     // #583(대표 10/8 「번호 업그레이드」): 사이즈 글자 없이 「업그레이드」만 적은 줄 — 어느 사이즈인지는 화면 카드에서 사람이 고른다(ups).
     //   줄에 번호·날짜·플랫폼·건수 말고 다른 낱말이 있으면(「4kg 업그레이드」) 손대지 않는다 — 종전 규칙이 읽는다.
@@ -489,8 +489,54 @@
         let kept = line; toks.filter(t => !keep.includes(t)).forEach(tok => { kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); });
         return { up: { srcLine, raw: line.trim(), key, digits: dg(key), expect }, text: keep.length === 1 ? '' : kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '') };
     }
+    // #601(대표 10/9 「1건 S · 1건 M」): 한 줄에 사이즈 낱말이 둘 이상이면 「사이즈 + 건수」 짝으로 읽는다(박스마다 다른 사이즈).
+    //   짝 = 사이즈 바로 뒤 건수 또는 건수 바로 뒤 사이즈(군더더기 낱말은 건너뜀 · 번호·다른 낱말이 끼면 짝이 아니다). 왼쪽부터 차례로 짝짓는다.
+    //   전부 짝이 맞으면 { parts, expect(합), text } · 하나라도 안 맞으면 { bad } — 그 줄은 sizes 에 넣지 않고 줄도 그대로 둔 채 반환의 bad[] 로 따로 알린다(사이즈를 하나도 붙이지 않는다). 사이즈 낱말이 하나뿐이면 null(종전 길 그대로).
+    function sizeParts(line, key) {
+        let s = line; const found = [];
+        for (let g = 0; g < 12; g++) {
+            const m = s.match(SIZE_TOK); if (!m) break;
+            found.push(m[2].toUpperCase());
+            s = s.slice(0, m.index) + (m[1] || '') + '\u0001' + (found.length - 1) + '\u0001' + s.slice(m.index + m[0].length);
+        }
+        if (found.length < 2) return null;
+        const toks = s.split(/[ \t]+/).filter(Boolean), seq = [], gone = []; let keySeen = false;
+        toks.forEach(t => {
+            const z = t.match(/^\u0001(\d+)\u0001$/);
+            if (z) { seq.push({ k: 'S', size: found[+z[1]] }); gone.push(t); return; }
+            if (t === key && !keySeen) { keySeen = true; seq.push({ k: 'X' }); return; }
+            if (SIZE_CNT.test(t)) { seq.push({ k: 'C', n: parseInt(t.match(SIZE_CNT)[1], 10) }); gone.push(t); return; }
+            if (SIZE_FILLER.test(t)) { gone.push(t); return; }
+            seq.push({ k: 'X' });
+        });
+        const pairs = []; let bad = '';
+        for (let i = 0; i < seq.length; i++) {
+            const a = seq[i], b = seq[i + 1]; if (a.k === 'X') continue;
+            if (b && b.k !== 'X' && b.k !== a.k) { const S = a.k === 'S' ? a : b, C = a.k === 'C' ? a : b; if (C.n < 1) bad = bad || '건수 0'; pairs.push({ size: S.size, n: C.n }); i++; continue; }
+            bad = bad || (a.k === 'S' ? '건수 없음' : '건수 짝 안 맞음');
+        }
+        if (bad) return { bad };
+        const parts = []; pairs.forEach(p => { const hit = parts.find(x => x.size === p.size); if (hit) hit.n += p.n; else parts.push({ size: p.size, n: p.n }); });
+        let kept = s; gone.forEach(tok => { kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); });
+        const text = toks.length - gone.length === 1 ? '' : kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');
+        return { parts, first: pairs[0].size, expect: pairs.reduce((n, p) => n + p.n, 0), text };
+    }
+    // #601: 박스별 꼬리 — parts(sizeLines) 를 주문 박스 수(qty)에 맞춰 편다. mk = 사이즈 → 꼬리 글(기본 「○사이즈로!」). 순수 함수 · 입력을 바꾸지 않는다.
+    //   합 = qty → 그대로 · 합 < qty → 남는 박스는 { tail:null }(맨 뒤 · note) · 합 > qty → ok:false(사람이 확인)
+    function boxTails(parts, qty, mk) {
+        const list = Array.isArray(parts) ? parts.filter(p => p && p.size && Number(p.n) > 0) : [];
+        if (!list.length) return { ok: false, why: '박스별 사이즈 없음' };
+        const q = Number(qty); if (!Number.isInteger(q) || q < 1) return { ok: false, why: '주문 박스 수를 알 수 없어요' };
+        const f = typeof mk === 'function' ? mk : (s => s + '사이즈로!');
+        const sum = list.reduce((n, p) => n + Number(p.n), 0);
+        if (sum > q) return { ok: false, why: `메모 줄은 ${sum}건인데 주문은 ${q}박스예요` };
+        const boxes = list.map(p => ({ tail: f(String(p.size)), qty: Number(p.n) }));
+        if (sum === q) return { ok: true, boxes };
+        boxes.push({ tail: null, qty: q - sum });
+        return { ok: true, boxes, note: `꼬리 없는 박스 ${q - sum}` };
+    }
     function sizeLines(text) {
-        const lines = String(text == null ? '' : text).split('\n'), sizes = [], ups = [];
+        const lines = String(text == null ? '' : text).split('\n'), sizes = [], ups = [], bad = [];
         const out = lines.map((raw, srcLine) => {
             const line = raw.replace(/\r/g, ''); const m = line.match(SIZE_TOK);
             if (!m) { const u = upLine(line, srcLine); if (!u) return raw; ups.push(u.up); return u.text; }
@@ -498,6 +544,9 @@
             let toks = rest.split(/[ \t]+/).filter(Boolean);
             const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
             if (!key) return raw;
+            const mp = sizeParts(line, key);   // #601: 사이즈 낱말이 둘 이상일 때만 값이 온다
+            if (mp && mp.parts) { sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: mp.first, expect: mp.expect, parts: mp.parts }); return mp.text; }
+            if (mp && mp.bad) { bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why: mp.bad }); return raw; }   // 짝이 안 맞으면 사이즈를 하나도 붙이지 않고 줄도 그대로(사람이 정한다)
             let expect = null, kept = rest;
             const drop = tok => { toks = toks.filter(t => t !== tok); kept = kept.replace(new RegExp('(^|[ \\t])' + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[ \\t])'), '$1'); };
             const cnt = toks.find(t => t !== key && SIZE_CNT.test(t));
@@ -508,7 +557,7 @@
             if (toks.length === 1) return '';
             return kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');   // 탭 줄은 탭 칸을 그대로(비고 칸만 비워짐) · 빈칸 줄은 빈칸 하나로
         });
-        return { text: out.join('\n'), sizes, ups };
+        return { text: out.join('\n'), sizes, ups, bad };
     }
     function prepLines(text, opt) {
         const o = opt || {}; const today = o.realToday || new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10); const shipDays = Array.isArray(o.shipDays) ? o.shipDays : [];
@@ -751,7 +800,7 @@
         return ws;
     }
 
-    const api = { prepLines, sizeLines, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
+    const api = { prepLines, sizeLines, boxTails, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

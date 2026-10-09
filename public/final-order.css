@@ -534,6 +534,15 @@ html[data-ao-theme="dark"] .fo-optpick select optgroup, html[data-ao-theme="dark
 .fo-chip.on { background: var(--f-accent); border-color: var(--f-accent); color: #fff; }
 .fo-chip.clear { border-color: var(--f-card-line); color: var(--f-sub); font-weight: 600; }
 .fo-chiphint { font-size: 12px; color: var(--f-sub); }
+/* #601 박스별 꼬리(직접 고치기 안): [박스별로 다르게] 토글 + 박스 줄마다 칩 */
+.fo-boxes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; min-width: 0; }
+.fo-boxes > .fo-boxtog { align-self: flex-start; }
+.fo-boxrow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.fo-boxno { flex: 0 0 52px; font-size: 12.5px; font-weight: 700; color: var(--f-sub); font-variant-numeric: tabular-nums; }
+.fo .fo-boxrow .fo-boxin { flex: 1 1 110px; width: auto; min-width: 0; max-width: 180px; min-height: 36px; }
+.fo-tailchips[hidden] { display: none; }
+.fo-boxrow .fo-chip.clear.on { background: var(--f-soft); border-color: var(--f-sub); color: var(--f-ink); font-weight: 700; }
+@media (max-width: 640px) { .fo .fo-boxrow .fo-boxin { min-height: 44px; font-size: 16px; } .fo-boxno { flex-basis: 100%; } }
 .fo-tailwarn { margin: 0; font-size: 12.5px; font-weight: 600; line-height: 1.5; color: var(--f-err); }
 .fo-aimiss { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 12px 14px; border: 2px solid #F79009; border-radius: 12px; background: #FFFAEB; color: #93370D; }
 .fo-aimiss b { font-size: 15px; font-weight: 800; }
@@ -586,9 +595,9 @@ html[data-ao-theme="dark"] .fo-optback { background: rgba(4, 6, 16, .62); }
 html[data-ao-theme="dark"] .fo-find-list { background: var(--fd-card); border-color: #2A3052; box-shadow: 0 16px 40px -8px rgba(0, 0, 0, .6); }
 html[data-ao-theme="dark"] .fo-find-row { color: var(--f-ink); }
 
-/* #583-j 떠 있는 버튼(오른쪽 아래 · [파일 만들기] 줄 위): 「↑ 맨 위」 · 「다음 확인 (N) →」 · 「방금 보던 곳으로」 */
+/* #583-j 떠 있는 버튼(오른쪽 아래 · [파일 만들기] 줄 위): 「↑ 맨 위」 · 「다음 확인 (N) →」 · 「방금 보던 곳으로」 · #600: --fo-float-up = 대화 입력 칸·폰 자판을 피해 올리는 높이(final-order.js floatPlace) */
 .fo-box { position: relative; }
-.fo-float { position: absolute; right: 16px; bottom: 84px; z-index: 3; display: flex; flex-wrap: wrap-reverse; justify-content: flex-end; align-items: center; gap: 8px; max-width: calc(100% - 32px); pointer-events: none; }
+.fo-float { position: absolute; right: 16px; bottom: calc(84px + var(--fo-float-up, 0px)); z-index: 3; display: flex; flex-wrap: wrap-reverse; justify-content: flex-end; align-items: center; gap: 8px; max-width: calc(100% - 32px); pointer-events: none; }
 .fo-fbtn { pointer-events: auto; min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid #C7CBFF; background: #fff; color: var(--f-accent-dark); font: inherit; font-size: 13.5px; font-weight: 700; white-space: nowrap; cursor: pointer; box-shadow: 0 8px 20px -6px rgba(16, 24, 40, .28); font-variant-numeric: tabular-nums; transition: transform 160ms var(--f-ease), background-color 160ms var(--f-ease); }
 .fo-fbtn:hover { background: var(--f-accent-soft); }
 .fo-fbtn:active { transform: scale(.97); }
@@ -596,7 +605,7 @@ html[data-ao-theme="dark"] .fo-find-row { color: var(--f-ink); }
 .fo-fbtn.next { background: var(--f-accent); border-color: var(--f-accent); color: #fff; }
 .fo-fbtn.next:hover { background: var(--f-accent-dark); }
 .fo-fbtn.back { border-color: var(--f-card-line); color: var(--f-sub); font-weight: 600; }
-@media (max-width: 640px) { .fo-float { right: 12px; bottom: 72px; max-width: calc(100% - 24px); } }
+@media (max-width: 640px) { .fo-float { right: 12px; bottom: calc(72px + var(--fo-float-up, 0px)); max-width: calc(100% - 24px); } }
 @media (prefers-reduced-motion: reduce) { .fo-fbtn { transition: none; } .fo-fbtn:active { transform: none; } }
 html[data-ao-theme="dark"] .fo-fbtn { background: var(--fd-card); border-color: var(--fd-accent-line); color: var(--f-accent); box-shadow: 0 8px 20px -6px rgba(0, 0, 0, .6); }
 html[data-ao-theme="dark"] .fo-fbtn:hover { background: #232948; }

@@ -812,6 +812,7 @@ async function initDB() {
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS created_by_id INTEGER`);
     // #469-c: 요청자가 「내 지시」 목록에서 지운 표시(전체 지시·기록은 그대로) — additive
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS mine_hidden BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS hist_hidden BOOLEAN DEFAULT false`);   // #605(대표 10/9): 직원이 「이전 채팅 이력」에서 [지우기]한 것(본인 화면만 · 대표 전체 이력에는 남음)
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS payload JSONB`);   // #518 최종발주 메모 읽기 — 창구에 넘길 메모 묶음(결과를 받아 가면 비운다)
     await pool.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS reply_to INTEGER`);   // #473-b 되묻기에 이어서 답한 건
     // #579: 지시가 쌓여도 목록이 느려지지 않게 — 내 지시 목록(created_by_id · id 역순)과 「이어서 보낸 글」 찾기(reply_to)
@@ -13912,7 +13913,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
         if (history) {
             where += ` AND o.content NOT LIKE '[검증%'`;
-            if (!seeAll) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length}`; }
+            if (!seeAll) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.hist_hidden, false) = false`; }   // #605: 직원이 [지우기]한 줄은 본인 이력에서만 빠진다(대표 전체 이력은 그대로)
             const q = String(req.query.q || '').trim().slice(0, 60);
             if (q) { params.push('%' + q.split('%').join('').split('_').join(' ') + '%'); where += ` AND (o.content ILIKE $${params.length} OR COALESCE(o.result->>'answer','') ILIKE $${params.length} OR COALESCE(o.result->>'title','') ILIKE $${params.length} OR COALESCE(o.created_by,'') ILIKE $${params.length})`; }
             const before = parseInt(req.query.before, 10);
@@ -13920,7 +13921,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         }
         if (req.query.status) { params.push(String(req.query.status)); where += ` AND o.status = $${params.length}`; }
         const r = await pool.query(
-            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id, COALESCE(o.mine_hidden, false) AS mine_hidden,
+            `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id, COALESCE(o.mine_hidden, false) AS mine_hidden, COALESCE(o.hist_hidden, false) AS hist_hidden,
                     (o.image_data IS NOT NULL AND o.file_name IS NULL) AS has_image, o.file_name, o.reply_to,
                     (SELECT MIN(c.id) FROM pending_orders c WHERE c.reply_to = o.id AND c.is_deleted = false) AS followed_by,
                     (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
@@ -13934,13 +13935,14 @@ const DESK_ACTIVE_STATUS = ['대기', '처리중', '판독완료', '확인표작
 app.post('/api/agent-office/orders/:id/hide-mine', authMiddleware, async (req, res) => {
     try {
         const hide = req.body?.hide !== false; // {hide:false} = 되돌리기
+        const hist = req.body?.hist === true;  // #605(대표 10/9): {hist:true} = 「이전 채팅 이력」 [지우기] — 본인 이력에서도 빠짐(hist_hidden · 대표 전체 이력에는 남음). hide:false 면 둘 다 되돌림
         const r = await pool.query(
-            `UPDATE pending_orders SET mine_hidden = $3
+            `UPDATE pending_orders SET mine_hidden = $3, hist_hidden = CASE WHEN $5::boolean THEN $3 WHEN $3 = false THEN false ELSE COALESCE(hist_hidden, false) END
              WHERE id = $1 AND created_by_id = $2 AND is_deleted = false AND NOT (status = ANY($4::text[]))
-             RETURNING id`, [req.params.id, req.user.id, hide, DESK_ACTIVE_STATUS]);
+             RETURNING id`, [req.params.id, req.user.id, hide, DESK_ACTIVE_STATUS, hist]);
         if (!r.rows.length) throw { status: 400, message: '내가 보낸 지시 중 처리가 끝난 것만 지울 수 있습니다' };
         await writeAudit({ action: 'update', targetType: 'pending_order', targetId: r.rows[0].id,
-            changes: { after: { mine_hidden: hide } }, source: 'agent_office', actor: adminActor(req) });
+            changes: { after: { mine_hidden: hide, hist_hidden: hist ? hide : undefined } }, source: 'agent_office', actor: adminActor(req) });
         res.json({ message: hide ? '내 지시에서 지웠습니다 (전체 지시에는 남아 있습니다)' : '내 지시에 다시 올렸습니다' });
     } catch (err) { handleAdminErr(res, err); }
 });

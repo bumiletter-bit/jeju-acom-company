@@ -111,7 +111,7 @@
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
         view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
-        hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false }, endAsk: 0, pin: new Set(), q: { mine: '', all: '' }, mineLimit: 60, pickImg: false,
+        hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false, delAsk: 0 }, endAsk: 0, pin: new Set(), q: { mine: '', all: '' }, mineLimit: 60, pickImg: false,
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
@@ -951,10 +951,13 @@
         const r = i >= 0 ? rows.querySelector(`.qty-pickrow[data-i="${i}"]`) : null;
         if (r) { r.classList.add('act'); $('qty-pickq').setAttribute('aria-activedescendant', r.id); if (typeof r.scrollIntoView === 'function') r.scrollIntoView({ block: 'nearest' }); } else $('qty-pickq').removeAttribute('aria-activedescendant');
     }
-    function pkPlace() {
+    // #602: follow = 화면이 움직일 때 — 연 방향·크기는 그대로 두고 버튼에 붙여 따라간다(버튼이 화면 밖으로 나가면 창도 같이)
+    function pkPlace(follow) {
         const p = document.getElementById('qty-pickpanel'), b = pkBtn(); if (!p) return; if (!b) return pkClose(false);
-        if (pkMobile()) { ['left', 'top', 'width', 'maxHeight', 'bottom'].forEach(k => { p.style[k] = ''; }); p.dataset.up = ''; return; }   // 폰 = 시트(자리·크기는 CSS)
+        if (pkMobile()) { ['left', 'top', 'width', 'maxHeight', 'bottom', 'visibility'].forEach(k => { p.style[k] = ''; }); p.dataset.up = ''; return; }   // 폰 = 시트(자리·크기는 CSS)
         const r = b.getBoundingClientRect(), vh = window.innerHeight, vw = window.innerWidth, w = Math.max(PK.kind === 'p' ? 220 : 320, Math.min(520, r.width)), below = vh - r.bottom - 12, above = r.top - 12, up = below < 280 && above > below;
+        { const full = b.closest('.is-full'), sr = full ? full.getBoundingClientRect() : { top: 0, bottom: vh }; p.style.visibility = r.bottom < Math.max(0, sr.top) || r.top > Math.min(vh, sr.bottom) ? 'hidden' : ''; }   // 버튼이 화면 밖에 있는 동안은 창도 안 보인다(열린 채 · 돌아오면 제자리)
+        if (follow && p.style.width) { if (p.dataset.up === '1') p.style.bottom = (vh - r.top + 6) + 'px'; else p.style.top = (r.bottom + 6) + 'px'; return; }
         p.style.width = w + 'px'; p.style.left = Math.max(8, Math.min(vw - w - 8, r.left)) + 'px'; p.style.maxHeight = Math.max(200, Math.min(440, up ? above : below)) + 'px';
         if (up) { p.style.top = ''; p.style.bottom = (vh - r.top + 6) + 'px'; } else { p.style.bottom = ''; p.style.top = (r.bottom + 6) + 'px'; }
         p.dataset.up = up ? '1' : '';
@@ -982,7 +985,7 @@
     document.addEventListener('pointerdown', e => { if (PK.open && !(e.target.closest && (e.target.closest('#qty-pickpanel') || e.target.closest('.qty-pick')))) pkClose(false); }, true);
     document.addEventListener('keydown', e => { if (PK.open && e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); pkClose(true); } }, true);   // 목록 창만 닫는다
     window.addEventListener('resize', () => { if (PK.open) pkPlace(); });
-    window.addEventListener('scroll', e => { if (PK.open && !pkMobile() && !(e.target && e.target.closest && e.target.closest('#qty-pickpanel'))) pkPlace(); }, { passive: true, capture: true });
+    window.addEventListener('scroll', e => { if (PK.open && !pkMobile() && !(e.target && e.target.closest && e.target.closest('#qty-pickpanel'))) pkPlace(true); }, { passive: true, capture: true });
     async function qtyExtraGo(btn) {
         const rows = [], warn = (i, sel, msg) => { if (typeof akmAlert === 'function') akmAlert(msg); else showToast(msg); const el = document.querySelector(`#qty-extra-rows .qty-xrow[data-i="${i}"] ${sel}`); if (el) el.focus(); };
         for (let i = 0; i < QTY.draft.length; i++) {
@@ -1485,7 +1488,8 @@
             const ov = !S.qOn && !needs && !t.items.some(o => S.pin.has(o.id)) && ++shownN > PREVIEW_LIST;
             if (ov) hidden++;
             const first = t.items[0];
-            const canHide = t.items.every(CLOSED_FOR_HIDE);
+            const canHide = t.items.every(o => CLOSED_FOR_HIDE(o) || o.status === '질문');   // #605(대표 10/9): 되묻기에 답하지 않고도 끝낼 수 있게 — 종료 때 「질문」은 먼저 닫는다(질문종결)
+            const busyEnd = !canHide && t.items.some(o => ['판독완료', '확인표작성', '승인대기'].includes(o.status));
             // #538: 대화 머리 = 시작 시각 + 첫 글 한 줄 → 어디서부터 다른 대화인지 바로 보인다
             const head = `<div class="desk-th-head"><span class="desk-th-when">${esc(kst(first.created_at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))} 시작</span><span class="desk-th-sum">${esc(cutText(first.content, 60))}</span>${first.reply_to ? `<span class="desk-thread">↳ ${Number(first.reply_to)}번에 이어서</span>` : ''}${t.items.length > 1 ? `<span>${t.items.length}번 주고받음</span>` : ''}</div>`;
             // #538 [채팅 종료] — 끝난 대화에만 · 카드 안에서 한 번 확인 · 이전 채팅 이력에서 다시 볼 수 있다
@@ -1494,13 +1498,17 @@
             const endIn = `<span class="desk-end-ask in" role="group" aria-label="채팅 종료 확인 — 이전 채팅 이력에서 다시 볼 수 있어요"><button type="button" class="desk-endbtn yes" data-act="hidethread" data-id="${t.id}">종료하기</button><button type="button" class="desk-endbtn no" data-act="endno" data-id="${t.id}">취소</button></span>`;
             // #571(대표 10/7 「PC 에서도 모바일처럼」): 답 상자가 없는 대화(최종발주 기록)도 같은 자리에서 — 종전 넓은 확인 칸은 PC 에서 [종료]가 오른쪽 끝(600px 넘게)으로 떨어졌다. 이제 [채팅 종료]가 있던 그 자리에 [종료하기]·[취소](.solo)
             const endBtn = canHide ? `<button type="button" class="desk-endbtn" data-act="endchat" data-id="${t.id}">채팅 종료</button>` : '';
-            const barHtml = o => { const f = followHtml(o); const asking = S.endAsk === t.id; if (!endBtn) return f; if (f.indexOf('<!--endslot-->') < 0) return f + (asking ? endIn.replace('class="desk-end-ask in"', 'class="desk-end-ask in solo"') : endBtn); return f.replace('<!--endslot-->', asking ? endIn : endBtn); };
+            const lastHtml = o => { const rb = resultBody(o, true), f = followHtml(o), asking = S.endAsk === t.id; const wrap = (a, b) => a + `<div class="desk-chatbar">${b}</div>`;
+                if (!endBtn) return wrap(rb, f + (busyEnd ? '<span class="desk-h-note">처리 중이라 끝난 뒤 종료할 수 있어요.</span>' : ''));
+                if (f.indexOf('<!--endslot-->') >= 0) return wrap(rb, f.replace('<!--endslot-->', asking ? endIn : endBtn));
+                if (rb.indexOf('<!--endslot-->') >= 0) return wrap(rb.replace('<!--endslot-->', asking ? endIn : endBtn), f);   // #605 되묻기 답 상자 안 「+」 옆
+                return wrap(rb, f + (asking ? endIn.replace('class="desk-end-ask in"', 'class="desk-end-ask in solo"') : endBtn)); };
             const turns = t.items.map(o => {
                 const b = BADGE[o.status] || ['wait', o.status];
                 const last = o.id === t.last;
                 return `<div class="desk-turn${last ? ' last' : ''}" data-oid="${o.id}">
                     <div class="desk-bub me"><p class="desk-q">${esc(o.content)}</p><div class="desk-bub-meta">${o.id}번 · ${esc(kst(o.created_at, hm))}${attMeta(o)}</div></div>
-                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? resultBody(o, true) + `<div class="desk-chatbar">${barHtml(o)}</div>` : resultBody(o, true)}</div>
+                    <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${last ? lastHtml(o) : resultBody(o, true)}</div>
                 </div>`;
             }).join('');
             return `<article class="desk-thread-box${ov ? ' ov' : ''}" data-th="${t.id}">${head}${turns}</article>`;
@@ -1529,6 +1537,27 @@
     const histFlag = t => t.items.some(o => ['질문', '승인대기'].includes(o.status)) ? ['ask', '확인 필요'] : t.items.some(o => GROUP.err.includes(o.status)) ? ['err', '오류'] : t.items.some(o => GROUP.work.includes(o.status)) ? ['work', '진행 중'] : null;
     const hasAttach = o => !!o.has_image || !!o.file_name || !!(o.result && Array.isArray(o.result.files) && o.result.files.length);
     const ICON_CLIP = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>';
+    // #605(대표 10/9): 이전 채팅 이력 줄 [지우기] — 본인 대화 · 끝난 것만 · 내 이력에서만 사라진다(대표의 전체 이력에는 그대로). hide-mine {hist:true} → 서버가 hist_hidden 으로 직원 이력에서 거른다
+    const histCanDel = t => { const me = myId(); return !isOwner() && me != null && t.items.every(o => o.created_by_id === me && CLOSED_FOR_HIDE(o)); };
+    const histDelBtn = (t, cls) => S.hist.delAsk === t.id ? `<button type="button" class="desk-btn sm primary${cls}" data-act="histdel" data-id="${t.id}" aria-label="지우기 확인 — 한 번 더 누르면 내 이력에서 지워요" title="한 번 더 누르면 내 이력에서 지워요">확인</button>` : `<button type="button" class="desk-btn sm${cls}" data-act="histdel" data-id="${t.id}" aria-label="이 채팅을 내 이력에서 지우기">지우기</button>`;
+    async function histDelete(rootId, b) {
+        let t = threadsOf(S.orders).find(x => x.id === rootId); const me = myId();
+        if (!t || !histCanDel(t)) return;
+        if (S.hist.delAsk !== rootId) { S.hist.delAsk = rootId; renderList(); const y = document.querySelector('#desk-list [data-act="histdel"][data-id="' + rootId + '"]'); if (y) y.focus({ preventScroll: true }); showToast('한 번 더 누르면 내 이력에서 지워요'); return; }
+        b.disabled = true;
+        try {
+            if (S.hist.q) {   // 검색 결과에는 맞은 차례만 있다 → 그 대화의 차례를 전부 찾아 함께 지운다
+                const d = await api('/api/agent-office/desk/orders?history=1&limit=200');
+                const known = new Set(S.orders.map(o => o.id));
+                const full = threadsOf(S.orders.concat((d.orders || []).filter(o => !known.has(o.id)))).find(x => x.items.some(o => o.id === rootId));
+                if (full && full.items.every(o => o.created_by_id === me && CLOSED_FOR_HIDE(o))) t = full;
+            }
+            for (const it of t.items) await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: true, hist: true });
+            const gone = new Set(t.items.map(x => x.id));
+            S.orders = S.orders.filter(x => !gone.has(x.id)); S.hist.older = S.hist.older.filter(x => !gone.has(x.id)); S.hist.open.delete(rootId); S.hist.delAsk = 0; S.sig = ''; renderList();
+            showToast('내 이력에서 지웠어요');
+        } catch (err) { showToast(err && err.message ? err.message : '지우지 못했어요'); S.hist.delAsk = 0; S.sig = ''; loadOrders(true); }
+    }
     function renderHistory(list) {
         const ths = threadsOf(list), admin = isOwner(), me = myId(), hm = { hour: '2-digit', minute: '2-digit' }, mdhm = { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
         let lastG = '', n = 0, hidden = 0;
@@ -1542,7 +1571,7 @@
                     <span class="desk-h-when">${esc(when)}</span>${admin ? `<span class="desk-h-who${first.created_by_id === me ? ' mine' : ''}">${esc(first.created_by || '')}</span>` : ''}
                     <span class="desk-h-text">${esc(cutText(first.content, 120))}</span>
                     <span class="desk-h-meta">${flag ? `<span class="desk-badge" data-k="${flag[0]}">${flag[1]}</span>` : ''}${t.items.some(hasAttach) ? `<span class="desk-h-clip" title="첨부 있음" aria-label="첨부 있음">${ICON_CLIP}</span>` : ''}${t.items.length > 1 ? `<span class="desk-h-n">${t.items.length}번 주고받음</span>` : ''}<span class="desk-h-chev" aria-hidden="true">${open ? '▴' : '▾'}</span></span>
-                </button>${(() => { const la = [...t.items].reverse().find(o => o.result && (o.result.answer || o.result.text)); return !open && la ? `<button type="button" class="desk-btn sm desk-h-copy" data-act="copy" data-id="${la.id}" aria-label="마지막 답변 복사">복사</button>` : ''; })()}`;   // #584(대표 10/8): 접힌 검색 결과에서도 펼치지 않고 마지막 답변을 바로 복사
+                </button>${(() => { const la = [...t.items].reverse().find(o => o.result && (o.result.answer || o.result.text)); return !open && la ? `<button type="button" class="desk-btn sm desk-h-copy" data-act="copy" data-id="${la.id}" aria-label="마지막 답변 복사">복사</button>` : ''; })()}${!open && histCanDel(t) ? histDelBtn(t, ' desk-h-del') : ''}`;   // #584(대표 10/8): 접힌 검색 결과에서도 펼치지 않고 마지막 답변을 바로 복사
             let body = '';
             if (open) {
                 const turns = t.items.map(o => { const b = BADGE[o.status] || ['wait', o.status];
@@ -1550,7 +1579,7 @@
                         <div class="desk-bub ai">${['완료', '안내', '응답됨'].includes(o.status) ? '' : `<div class="desk-bub-who"><span class="desk-badge" data-k="${b[0]}">${esc(b[1])}</span></div>`}${resultBody(o, true)}</div></div>`; }).join('');
                 const mine = me != null && t.items.every(o => o.created_by_id === me);
                 const live = t.items.some(o => !o.mine_hidden);
-                const foot = mine && !fin ? `<div class="desk-h-foot"><button type="button" class="desk-btn sm primary" data-act="resume" data-id="${t.id}">${live ? '채팅 탭에서 이어가기' : '이 채팅 다시 이어가기'}</button><span class="desk-h-note">${live ? '지금 채팅 탭에 열려 있는 대화예요.' : '채팅 탭으로 다시 꺼내 이어서 보낼 수 있어요.'}</span></div>` : '';
+                const foot = mine && !fin ? `<div class="desk-h-foot"><button type="button" class="desk-btn sm primary" data-act="resume" data-id="${t.id}">${live ? '채팅 탭에서 이어가기' : '이 채팅 다시 이어가기'}</button><span class="desk-h-note">${live ? '지금 채팅 탭에 열려 있는 대화예요.' : '채팅 탭으로 다시 꺼내 이어서 보낼 수 있어요.'}</span>${histCanDel(t) ? histDelBtn(t, '') : ''}</div>` : '';
                 body = `<div class="desk-h-body"><div class="desk-h-head">${esc(kst(first.created_at, mdhm))} 시작 · ${t.items.length}번 주고받음</div>${turns}${foot}</div>`;
             }
             return head + `<article class="desk-h-item${ov ? ' ov' : ''}${open ? ' open' : ''}" data-th="${t.id}">${row}${body}</article>`;
@@ -1720,7 +1749,8 @@
         }
         if (act === 'endchat') { S.endAsk = id; renderList(); const y = document.querySelector('#desk-list .desk-end-ask [data-act="hidethread"]'); if (y) y.focus(); return; }
         if (act === 'endno') { S.endAsk = 0; renderList(); return; }
-        if (act === 'histopen') { if (S.hist.open.has(id)) S.hist.open.delete(id); else S.hist.open.add(id); renderList(); return; }
+        if (act === 'histopen') { S.hist.delAsk = 0; if (S.hist.open.has(id)) S.hist.open.delete(id); else S.hist.open.add(id); renderList(); return; }
+        if (act === 'histdel') { return histDelete(id, b); }
         if (act === 'histmore') { return histMore(b); }
         if (act === 'resume') { return resumeChat(id, b); }
         if (act === 'hidethread') {
@@ -1728,16 +1758,18 @@
             if (!t) return;
             b.disabled = true;
             try {
-                for (const it of t.items) await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: true });
+                let asked = 0;
+                for (const it of t.items) { if (it.status === '질문') { await api('/api/agent-office/orders/' + it.id + '/close', 'POST'); it.status = '질문종결'; asked++; } await api('/api/agent-office/orders/' + it.id + '/hide-mine', 'POST', { hide: true }); }
                 const gone = new Set(t.items.map(x => x.id));
                 S.orders = S.orders.filter(x => !gone.has(x.id)); S.sig = ''; S.endAsk = 0; renderList();
-                showToast('채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');
+                showToast(asked ? '채팅을 종료했어요(전체 지시에는 남아 있어요)' : '채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');
             } catch (err) { showToast(err && err.message ? err.message : '종료하지 못했어요'); S.sig = ''; S.endAsk = 0; loadOrders(true); }
             return;
         }
         if (act === 'hide') {
             b.disabled = true;
             try {
+                if (o.status === '질문') { await api('/api/agent-office/orders/' + id + '/close', 'POST'); o.status = '질문종결'; }   // #605
                 await api('/api/agent-office/orders/' + id + '/hide-mine', 'POST', { hide: true });
                 S.orders = S.orders.filter(x => x.id !== id); S.sig = ''; renderList();
                 showToast('채팅을 종료했어요 · 이전 채팅 이력에서 다시 볼 수 있어요');

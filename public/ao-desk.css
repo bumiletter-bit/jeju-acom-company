@@ -1308,3 +1308,16 @@ html[data-ao-theme="dark"] .desk ::-webkit-scrollbar-thumb:hover { background: #
 @media (max-width: 768px) { .side-theme { width: 44px; height: 44px; margin: -13px -8px -13px auto; } }
 @media (prefers-reduced-motion: reduce) { .side-theme { transition: none; } }
 html[data-ao-theme="dark"] .side-theme { color: var(--d-warn); }
+/* #605(대표 10/9) 이전 채팅 이력 줄 [지우기] — 자리·크기만(색은 .desk-btn 그대로 · 야간 규칙 없음) */
+.desk-h-item > .desk-h-del { position: absolute; right: 36px; top: 50%; transform: translateY(-50%); min-height: 32px; min-width: 56px; padding: 0 10px; }
+.desk-h-item:has(> .desk-h-del) > .desk-h-copy { right: 98px; }
+.desk-h-item:has(> .desk-h-del) > .desk-h-row { padding-right: 100px; }
+.desk-h-item:has(> .desk-h-del):has(> .desk-h-copy) > .desk-h-row { padding-right: 158px; }
+.desk-h-foot .desk-btn[data-act="histdel"] { margin-left: auto; }
+@media (max-width: 640px) {
+    .desk-h-item > .desk-h-del { right: 30px; min-height: 44px; }
+    .desk-h-item:has(> .desk-h-del) > .desk-h-copy { right: 92px; }
+    .desk-h-item:has(> .desk-h-del) > .desk-h-row { padding-right: 94px; }
+    .desk-h-item:has(> .desk-h-del):has(> .desk-h-copy) > .desk-h-row { padding-right: 152px; }
+    .desk-h-foot .desk-btn[data-act="histdel"], .desk-chatbar > .desk-h-note { min-height: 44px; }
+}

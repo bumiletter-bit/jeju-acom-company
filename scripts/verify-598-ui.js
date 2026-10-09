@@ -7,6 +7,7 @@ const ROOT = path.join(__dirname, '..');
 const H = require(path.join(ROOT, 'scripts/ao-dark/harness.js'));
 const PORT = parseInt(process.env.PORT598, 10) || 3463;
 const PC = { width: 1440, height: 900 }, PH = { width: 390, height: 844 };
+const note = m => console.log('  ·  ' + m);
 let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + m); };
 const kstDay = off => new Date(Date.now() + 9 * 3600e3 + off * 86400e3).toISOString().slice(0, 10);
 const GO = '[이대로 진행]';
@@ -179,6 +180,18 @@ const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.
             if (row0) row0.ps = pp.vals || [];
             ok(row0 && row0.sel === 0 && pp.open && pp.title === '거래처 고르기' && pp.on === row0.p && pp.ck && pp.exp === 1 && pp.onTop && pp.minH >= 44, `#600 거래처 버튼 → 목록 창(브라우저 기본 select ${row0 && row0.sel}개) · 「${pp.title}」 · 지금 값(${pp.on})에 체크 · 줄 ${pp.minH}px · 맨 위에 뜸`);
             ok(phone ? (pp.back && pp.rect[0] === 0 && pp.rect[2] === pp.vw && pp.rect[3] === pp.vh && pp.xH >= 44 && pp.focus === 'panel') : (!pp.back && pp.rect[0] >= 0 && pp.rect[2] <= pp.vw && pp.rect[1] >= 0 && pp.rect[3] <= pp.vh), phone ? `#600 폰 = 아래에서 올라오는 시트(화면 폭 가득 · 아래 끝 ${pp.rect[3]} = ${pp.vh}) · 어두운 바탕 · [닫기] ${pp.xH}px · 자판 안 띄움(초점 = 창)` : `#600 PC = 버튼 옆에 뜨는 창 — 화면 안(${(pp.rect || []).join(',')})`);
+            if (!phone) {   // #602(대표 10/9): 목록 창은 연 버튼에 붙어 화면과 함께 움직인다(모니터에 고정되지 않는다)
+                const geo602 = () => pg.evaluate(() => { const p = document.getElementById('qty-pickpanel'), b = document.querySelector('.qty-pick[aria-expanded="true"]'), sc = (document.querySelector('.qty-pick[aria-expanded="true"]').closest('.is-full') || document.scrollingElement), pr = p.getBoundingClientRect(), br = b.getBoundingClientRect(), sr = sc === document.scrollingElement ? { top: 0, bottom: innerHeight } : sc.getBoundingClientRect(), up = p.dataset.up === '1';
+                    return { open: !p.hidden, vis: getComputedStyle(p).visibility, gap: Math.round(up ? br.top - pr.bottom : pr.top - br.bottom), bt: Math.round(br.top), bb: Math.round(br.bottom), pt: Math.round(pr.top), h: Math.round(pr.height), w: Math.round(pr.width), y: Math.round(sc.scrollTop), room: Math.round(sc.scrollHeight - sc.clientHeight - sc.scrollTop), head: Math.round(br.top - sr.top), scTop: Math.round(sr.top) }; });
+                const move602 = async d => { await pg.evaluate(d => { const sc = (document.querySelector('.qty-pick[aria-expanded="true"]').closest('.is-full') || document.scrollingElement); sc.scrollTop += d; }, d); await pg.waitForTimeout(250); };
+                const m0 = await geo602(), d1 = Math.min(300, m0.room, m0.head - 10) >= 40 ? Math.min(300, m0.room, m0.head - 10) : -Math.min(300, m0.y);
+                await move602(d1); const m1 = await geo602();
+                ok(Math.abs(d1) >= 40 && m1.open && m1.vis === 'visible' && Math.abs(m1.gap - m0.gap) <= 1 && Math.abs((m1.bt - m0.bt) + d1) <= 1 && Math.abs((m1.pt - m0.pt) + d1) <= 1 && m1.h === m0.h && m1.w === m0.w, ` #602 화면을 ${d1}px 움직이면 목록 창도 버튼에 붙어 같이 움직임(버튼과의 틈 ${m0.gap} → ${m1.gap}px · 창 위치 ${m0.pt} → ${m1.pt} · 크기 그대로)`, JSON.stringify({ m0, m1 }));
+                await move602(-d1); const m2 = await geo602(), d2 = m2.bb - m2.scTop + 30;
+                if (m2.room >= d2) { await move602(d2); const m3 = await geo602(); await move602(-d2); const m4 = await geo602();
+                    ok(m3.open && m3.bb < m3.scTop && m3.vis === 'hidden' && m4.open && m4.vis === 'visible' && Math.abs(m4.gap - m0.gap) <= 1 && Math.abs(m4.pt - m0.pt) <= 1, ` #602 버튼이 화면 밖으로 나가면 창도 안 보임(열린 채) · 돌아오면 제자리(틈 ${m4.gap}px)`, JSON.stringify({ m3, m4 })); }
+                else note(` #602 버튼을 화면 밖으로 내보낼 만큼 스크롤 여유가 없어 건너뜀(여유 ${m2.room} < ${d2})`);
+            }
             await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
             const esc1 = await pg.evaluate(() => ({ open: !document.getElementById('qty-pickpanel').hidden, tool: !document.getElementById('desk-qty').hidden && document.querySelectorAll('.qty-xrow').length, focus: document.activeElement.className, exp: document.querySelectorAll('.qty-pick[aria-expanded="true"]').length }));
             ok(!esc1.open && esc1.tool === 1 && /qty-xp/.test(esc1.focus) && esc1.exp === 0, '#600 Esc = 목록 창만 닫힘(중간발주 카드·행 그대로) · 초점은 거래처 버튼으로');
