@@ -1069,10 +1069,23 @@
         F.es.forEach(e => { const k = keyOf(e), np = Object.assign({}, st.patch.get(k) || {}, set, { by: 'card' }); if (set.opt != null) delete np.optAll;
             if ('boxes' in set) { if (set.boxes) { delete np.tail; delete np.tailBy; } else { delete np.boxes; delete np.boxesBy; } } else if (set.tail != null) { delete np.boxes; delete np.boxesBy; }   // #601: 꼬리 하나 ↔ 박스별은 한쪽만
             st.patch.set(k, np); });
-        if (set.boxes && cd.type === 'sizeup' && st.dec.get(cd.id) === undefined) st.dec.set(cd.id, 'skip');   // #601: 업그레이드 카드에서 박스별로 정했으면 그 카드는 끝난 것
         st.fixDraft.set(id, { open: true }); box.dataset.skip = '1';
+        // #608(대표 10/9 「[적용]을 누르면 [이대로 넣기]처럼 — [적용] 누르고 또 [이대로 넣기]를 누르게 돼 있다」): 배송메세지·보내는이 카드가 아직 열려 있으면
+        //   그 카드의 칸(배송메세지 · 보내는 분 이름·번호·주소)에 보이는 값 그대로 [이대로 넣기]를 누른 것과 같이 끝낸다(보내는 분 이름이 비어 있으면 [안 바꿈]/[넣지 않음]).
+        //   꼬리는 직접 고치기 쪽(st.patch.tail·boxes)이 tailOf 에서 먼저이므로 카드 쪽 꼬리는 겹쳐 적지 않는다. 업그레이드 카드는 꼬리·박스별을 정했으면 끝(#601).
+        //   주문 확인(오늘 발송/제외)·메모 확인(AI 못 읽음) 카드는 묻는 것이 다른 질문이라 그대로 열어 둔다.
+        let ended = false;
+        if (!closed(cd) && (cd.type === 'memo-edit' || cd.type === 'sender-edit' || cd.type === 'sender-order')) {
+            const card = box.closest('.fo-card'), gf = f => { const el = card && card.querySelector(`[data-f="${f}"]`); return el ? String(el.value || '').replace(/\r/g, '').trim() : null; };
+            const tailSet = F.es.some(e => { const p = st.patch.get(keyOf(e)); return !!p && (p.tail != null || !!p.boxes); }), tl = tailSet ? '' : (gf('tail') || '');
+            let v;
+            if (cd.type === 'memo-edit') { const m = gf('memo'); v = { use: true, memo: m == null ? cd.memo.rest : m, ...(tl ? { tail: tl } : {}) }; }
+            else { const name = gf('name') || ''; v = name ? { use: true, name, phone: gf('phone') || '', addr: gf('addr') || '', ...(gf('memo') != null ? { memo: gf('memo') } : {}), ...(tl ? { tail: tl } : {}) } : { use: false }; }
+            saveDrafts(); st.draft.delete(cd.id); st.ai.tag.delete(cd.id); st.dec.set(cd.id, v); (cd.fix || []).forEach(k => st.fixOpen.add(k)); ended = true;
+        }
+        if (cd.type === 'sizeup' && st.dec.get(cd.id) === undefined && (set.boxes || set.tail)) { st.dec.set(cd.id, 'skip'); (cd.fix || []).forEach(k => st.fixOpen.add(k)); ended = true; }   // #601·#608: 업그레이드 카드에서 박스별·꼬리를 정했으면 그 카드는 끝난 것
         const had = st.phase === 'result' && st.files.length > 0;
-        st.out = null; st.files = []; $('fo-result').hidden = true; clearMsg(); renderSummaryOnly(); syncChat(); toast('고친 내용을 적용했어요');
+        st.out = null; st.files = []; $('fo-result').hidden = true; clearMsg(); renderSummaryOnly(); syncChat(); toast(ended ? '고친 내용을 적용하고 이 카드를 끝냈어요' : '고친 내용을 적용했어요');
         if (had) await remake();
     }
     async function fixUndo(id) {
@@ -1195,7 +1208,8 @@
             acts = `<span class="fo-done">참고 목록에서 연 주문이에요 — 아래에서 고치고 [적용]을 눌러요.</span><button type="button" class="fo-btn sm" data-fix-close="${esc(cd.fix[0])}">닫기</button>`;
         } else if (cd.type === 'sizeup') {
             const Fz = cd.fix && cd.fix.length === 1 ? fixCur(cd) : null, ez = Fz && Fz.es.length === 1 ? Fz.es[0] : null, bz = ez ? boxesOf(ez) : null, boxBtn = ez && cd.okN === 1 && qtyNow(ez) >= 2 ? `<button type="button" class="fo-btn sm" data-boxopen="${esc(cd.id)}">박스별로 다르게</button>` : '';   // #601
-            acts = done ? `<span class="fo-done">${v === 'skip' ? (bz ? '박스별 꼬리 ' + esc(boxText(bz)) : '넘어감') : `${esc(v)}사이즈로! · 귤 로얄과 ${cd.okN}건`}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
+            const tz = (() => { const p = cd.fix && cd.fix.length ? st.patch.get(cd.fix[0]) : null; return p && p.tailBy === 'card' && p.tail ? p.tail : ''; })();   // #608: 직접 고치기에서 꼬리를 정해 끝낸 카드
+            acts = done ? `<span class="fo-done">${v === 'skip' ? (bz ? '박스별 꼬리 ' + esc(boxText(bz)) : tz ? esc(tz) + ' · 직접 고침' : '넘어감') : `${esc(v)}사이즈로! · 귤 로얄과 ${cd.okN}건`}</span><button type="button" class="fo-btn sm" data-undo="${esc(cd.id)}">바꾸기</button>`
                 : (cd.sizes.length ? `<div class="fo-sizes" role="group" aria-label="사이즈 고르기">${cd.sizes.map(z => `<button type="button" class="fo-btn fo-size" data-size="${z}" data-fo-act="size-${z}" data-id="${esc(cd.id)}">${z}</button>`).join('')}</div>` : '') + boxBtn + `<button type="button" class="fo-btn sm" data-choice="skip" data-fo-act="skip" data-id="${esc(cd.id)}">넘어감</button>`;
         } else if (done) {
             const om = cd.type === 'order' && v === 'send' && st.ordMemo && st.ordMemo.has(cd.id) ? ` · 배송메세지 「${st.ordMemo.get(cd.id) || '기본 문구'}」` : '';
