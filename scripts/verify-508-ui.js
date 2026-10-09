@@ -2515,7 +2515,7 @@ async function resolveCards(pg, type) {
                     return { nBox: st.sizeBoxes.size, boxes: [...st.sizeBoxes.values()].map(b => b.map(x => (x.tail || '-') + '×' + x.qty).join(',')), tails: [...st.sizeTail.values()], asks: [...st.boxAsk.values()].map(a => a.why || a.note), bad: (st.sizeBad || []).map(b => b.why), gut,
                         cards: st.cards.map(c => ({ id: c.id.split(':')[0], title: c.title, lines: (c.lines || []).map(l => l.join(' ')).join(' / ') })), info: (st.info || []).map(x => (typeof x === 'string' ? x : x.t)) }; }, SEL.hidden);
                 const s0 = await stt();
-                ok(s0.boxes.includes('S사이즈로!×1,M사이즈로!×1') && s0.info.some(t => /메모 줄로 박스별 사이즈/.test(t) && /S 1 · M 1/.test(t)) && s0.gut.some(g => /박스별 사이즈 S 1 · M 1/.test(g)), '㊶ 🔴 「s사이즈 1건만 1건은 m사이즈」 → 그 주문(2박스)에 박스별 꼬리 S 1 · M 1(전부 S 로 붙지 않음) · 참고 줄 · 줄 표시', JSON.stringify({ boxes: s0.boxes, gut: s0.gut }));
+                ok(s0.boxes.includes('S사이즈로!×1,M사이즈로!×1') && s0.info.some(t => /메모 줄로 박스별 사이즈/.test(t) && /S사이즈 1박스 · M사이즈 1박스/.test(t)) && s0.gut.some(g => /박스별 사이즈 S사이즈 1박스 · M사이즈 1박스/.test(g)), '㊶ 🔴 「s사이즈 1건만 1건은 m사이즈」 → 그 주문(2박스)에 박스별 꼬리 S사이즈 1박스 · M사이즈 1박스(#607 글 · 전부 S 로 붙지 않음) · 참고 줄 · 줄 표시', JSON.stringify({ boxes: s0.boxes, gut: s0.gut }));
                 const cB = s0.cards.filter(c => c.id === 'lbox');
                 ok(cB.length === 2 && cB.some(c => /메모 줄은 3건인데 주문은 2박스예요/.test(c.lines) && /붙이지 않았어요/.test(c.lines)) && cB.some(c => /꼬리 없는 박스 1/.test(c.lines)) && s0.boxes.includes('S사이즈로!×1,M사이즈로!×1,-×1'), '㊶ 합이 어긋나면 확인 카드 — 3건 > 2박스 = 안 붙이고 이유 그대로 · 2건 < 3박스 = 붙이되 「꼬리 없는 박스 1」', JSON.stringify(cB.map(c => c.lines.slice(0, 70))));
                 ok(s0.bad.length === 1 && s0.cards.some(c => /육|6666/.test(c.title + c.lines) && /박스별 사이즈를 못 읽었어요/.test(c.lines) && /S사이즈 1건 M사이즈 1건/.test(c.lines)) && s0.gut.some(g => /박스별 사이즈 못 읽음/.test(g)), '㊶ 건수 짝이 안 맞는 줄(「S사이즈 M사이즈 1건」) = 사이즈를 하나도 안 붙이고 카드에 「박스별 사이즈를 못 읽었어요 → 이렇게 적어 주세요」', JSON.stringify({ bad: s0.bad, gut: s0.gut }));
@@ -2523,7 +2523,7 @@ async function resolveCards(pg, type) {
                 // 카드 머리 · 수량 1 주문엔 토글 없음
                 const find = async nm => { await w.pg.fill('#fo-find-q', nm); await w.pg.waitForTimeout(250); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(900); };
                 await find('육가'); const h1 = await card('육가').locator('.fo-card-top b').innerText();
-                ok(/\[S 1 · M 1\]/.test(h1) && /2박스/.test(h1), '㊶ 카드 머리에 「[S 1 · M 1]」', h1);
+                ok(/\[S사이즈 1박스 · M사이즈 1박스\]/.test(h1) && /2박스/.test(h1), '㊶ 카드 머리에 「[S사이즈 1박스 · M사이즈 1박스]」(#607)', h1);
                 await find('육마'); const tg1 = await card('육마').locator('[data-boxtoggle]').count();
                 ok(tg1 === 0 && (await card('육마').locator('[data-x="tail"]').count()) === 1, '㊶ 수량 1박스 주문에는 「박스별로 다르게」 없음(꼬리 칸은 그대로)');
                 // 카드 칩: 육라(2박스 · 메모 줄 없음) → 박스 1 = 2S · 박스 2 = L
@@ -2538,7 +2538,7 @@ async function resolveCards(pg, type) {
                 await c4.locator('[data-fix-apply]').click(); await settle(w.pg);
                 const p1 = await w.pg.evaluate(() => { const st = window.AkmFinalOrder.state, c = st.cards.find(c => c.title.includes('육라')), p = c && st.patch.get(c.fix[0]); return { p: p ? { boxes: p.boxes, boxesBy: p.boxesBy, tail: p.tail, by: p.by } : null, list: document.getElementById('fo-patches').innerText, head: c ? c.title : '' }; });
                 const h4 = await card('육라').locator('.fo-card-top b').innerText();
-                ok(!!p1.p && JSON.stringify(p1.p.boxes) === JSON.stringify([{ tail: '2S사이즈로!', qty: 1 }, { tail: 'L사이즈로!', qty: 1 }]) && p1.p.boxesBy === 'card' && p1.p.tail == null && /박스별 꼬리: .*육라.*2S 1 · L 1/.test(p1.list) && /되돌리기/.test(p1.list) && /\[2S 1 · L 1\]/.test(h4), '㊶ [적용] → st.patch.boxes(card) · 「말로 바꾼 것」 「박스별 꼬리: … → 2S 1 · L 1」 + [되돌리기] · 카드 머리 갱신', JSON.stringify({ p: p1.p, list: p1.list.slice(0, 120), h4 }));
+                ok(!!p1.p && JSON.stringify(p1.p.boxes) === JSON.stringify([{ tail: '2S사이즈로!', qty: 1 }, { tail: 'L사이즈로!', qty: 1 }]) && p1.p.boxesBy === 'card' && p1.p.tail == null && /박스별 꼬리: .*육라.*2S사이즈 1박스 · L사이즈 1박스/.test(p1.list) && /되돌리기/.test(p1.list) && /\[2S사이즈 1박스 · L사이즈 1박스\]/.test(h4), '㊶ [적용] → st.patch.boxes(card) · 「말로 바꾼 것」 「박스별 꼬리: … → 2S사이즈 1박스 · L사이즈 1박스」 + [되돌리기] · 카드 머리 갱신', JSON.stringify({ p: p1.p, list: p1.list.slice(0, 120), h4 }));
                 // 파일: 남은 카드 닫고 만들기
                 for (let k = 0; k < 20; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
                 ok((await w.pg.locator('#fo-cards .fo-card[data-state="open"]').count()) === 0 && !(await w.pg.isDisabled(SEL.make)), '㊶ 준비: 열린 카드 0 · [파일 만들기] 켜짐', JSON.stringify(await cardCount(w.pg)));
@@ -2598,7 +2598,7 @@ async function resolveCards(pg, type) {
                 ok(!!ex && ex.hl.length === 1 && ex.hl[0] === '메모 줄 요청일 ' + md42 && ex.hlBg === 'rgb(255, 243, 163)', '㊷ 「오늘 안 나감 … — 메모 줄 요청일 ' + md42 + '」 줄에 형광 1곳(손님 메모와 같은 노랑)', JSON.stringify(ex));
                 const s1 = i0.rows.find(r => /^메모 줄로 사이즈 지정/.test(r.text)), s2 = i0.rows.find(r => /^메모 줄로 박스별 사이즈/.test(r.text));
                 ok(!!s1 && s1.hl.join() === SZ1 && s1.em.join() === 'S사이즈로!' && s1.hlBg === 'rgb(255, 243, 163)' && s1.emC === 'rgb(67, 56, 202)', '㊷ 사이즈 줄 = 메모 줄 원문 형광 → 결과 「S사이즈로!」 굵게(다른 줄과 같은 꼴)', JSON.stringify(s1));
-                ok(!!s2 && s2.hl.join() === SZ2 && s2.em.join() === 'S 1 · M 1', '㊷ 박스별 사이즈 줄(#601)도 같은 꼴 — 원문 형광 → 「S 1 · M 1」 굵게', JSON.stringify(s2));
+                ok(!!s2 && s2.hl.join() === SZ2 && s2.em.join() === 'S사이즈 1박스 · M사이즈 1박스', '㊷ 박스별 사이즈 줄(#601)도 같은 꼴 — 원문 형광 → 「S사이즈 1박스 · M사이즈 1박스」 굵게(#607)', JSON.stringify(s2));
                 // 줄을 눌러 가기(자리표가 바뀌어도 그 주문으로)
                 await w.pg.locator('#fo-info li', { hasText: '칠삼' }).first().locator('[data-info-go]').click(); await w.pg.waitForTimeout(600);
                 ok((await w.pg.locator('#fo-cards .fo-card').filter({ hasText: '칠삼' }).count()) >= 1, '㊷ 순서가 바뀌어도 줄의 [고치기]는 그 주문 카드로 감(칠삼)');

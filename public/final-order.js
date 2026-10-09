@@ -440,7 +440,7 @@
             const hit = s.merged.filter(e => (z.digits.length >= 8 && !NO_TEL.has(z.digits) && buyerTel(e) === z.digits) || idsOf(e).includes(z.key));
             if (!hit.length) { const rv = recvMatches(z); res.set(z.srcLine, rv.length ? { k: 'warn', t: '받는 분 번호', rv } : { k: 'none', t: '주문 없음' }); return; }
             if (z.parts) {   // #601(대표 10/9 「1건 S · 1건 M」): 박스마다 다른 사이즈 — 귤 로얄과 주문의 박스 수에 맞춰 나눈다(안 맞으면 붙이지 않고 확인 카드)
-                const okP = hit.filter(e => sizeItem(e.conv['옵션정보'])), txt = z.parts.map(p => p.size + ' ' + p.n).join(' · ');
+                const okP = hit.filter(e => sizeItem(e.conv['옵션정보'])), txt = z.parts.map(p => p.size + '사이즈 ' + p.n + '박스').join(' · ');   // #607: 「S사이즈 1박스 · M사이즈 1박스」
                 if (!okP.length) { res.set(z.srcLine, { k: 'warn', t: '귤 로얄과 주문 없음', tip: '사이즈를 붙일 귤 로얄과 주문이 없어요' }); return; }
                 const sum = z.parts.reduce((a, p) => a + p.n, 0), qs = okP.map(qtyNow), T = qs.reduce((a, b) => a + b, 0);
                 let done = [], why = '', note = '';
@@ -1226,7 +1226,7 @@
     // #604(대표 10/9 「메모 원문 강조 → 수정 강조 · 다른 배송메모처럼」): 확인 카드도 참고 줄과 같은 꼴 — 원문(손님 메모·직원 메모 줄) = 형광(mark.fo-hl) · 바뀌는 결과 = 굵게(b.fo-em). 글자는 바꾸지 않고 태그만 씌운다
     const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄']);
     const textMark = h => h.replace(/「([^」]*)」 → 「([^」]*)」/g, '「<mark class="fo-hl">$1</mark>」 → 「<b class="fo-em">$2</b>」').replace(/→ 「([^」<]*)」/g, '→ 「<b class="fo-em">$1</b>」').replace(/(손님 메모|메모 줄) 「([^」<]*)」/g, '$1 「<mark class="fo-hl">$2</mark>」');
-    const lineMark = (k, t) => (SRC_KEYS.has(k) && t && t !== '(없음)' ? `<mark class="fo-hl">${esc(t)}</mark>` : k === '클코가 고친 줄' ? `<b class="fo-em">${esc(t)}</b>` : textMark(esc(t)));
+    const lineMark = (k, t) => (SRC_KEYS.has(k) && t && t !== '(없음)' ? `<mark class="fo-hl">${esc(t)}</mark>` : k === '클코가 고친 줄' ? `<b class="fo-em">${esc(t)}</b>` : k === '이유' ? `<span class="fo-why">${textMark(esc(t))}</span>` : textMark(esc(t)));   // #606(대표 10/9 「이유 줄도 빨강」): 카드를 띄운 이유 글은 빨강
     const doneMark = t => t.replace(/「([^」]*)」/g, '「<b class="fo-em">$1</b>」').replace(/((?:2S|2L|S|M|L)사이즈로!|\d+과로!|박스별 꼬리 [^·]+|보내는이 [^·]+?(?= ·|$)|오늘 발송|오늘 안 나감|제외)/g, x => (/fo-em/.test(x) ? x : '<b class="fo-em">' + x + '</b>'));
     function infoHtml(it, i) {
         const t = typeof it === 'string' ? it : it.t, go = typeof it === 'object' && ((it.keys && it.keys.length) || it.line != null || !!it.card);
@@ -1773,7 +1773,7 @@
     // #601 박스별 꼬리 — boxes = [{ tail: '○사이즈로!' | null, qty }] · 합이 그 주문 박스 수와 같을 때만 쓴다(수량을 말로 바꿨으면 버린다).
     //   사람이 카드에서 정한 것(st.patch.boxes)이 먼저 · 사람이 꼬리 하나로 정했으면(st.patch.tail) 박스별은 없음 · 그다음 메모 줄(st.sizeBoxes)
     const boxLabel = t => (t ? String(t).replace(/사이즈로!$/, '').replace(/로!$/, '') : '꼬리 없음');
-    const boxText = bx => bx.map(b => boxLabel(b.tail) + ' ' + b.qty).join(' · ');
+    const boxText = bx => bx.map(b => (b.tail ? String(b.tail).replace(/로!$/, '') : '꼬리 없음') + ' ' + b.qty + '박스').join(' · ');   // #607(대표 10/9 「직원도 알게」): 「S 1 · M 1」 → 「S사이즈 1박스 · M사이즈 1박스」(과수는 「15과 1박스」)
     const boxGroup = tails => { const out = []; tails.forEach(t => { t = t || null; const g = out.find(x => x.tail === t); if (g) g.qty++; else out.push({ tail: t, qty: 1 }); }); return out; };
     const boxFlat = bx => bx.flatMap(b => Array(b.qty).fill(b.tail || ''));
     const BOX_BAD_TIP = b => `박스별 사이즈를 못 읽었어요(${b.why}) — 「번호 S사이즈 1건 M사이즈 1건」처럼 사이즈마다 건수를 붙여 적어 주세요. 지금은 사이즈를 하나도 붙이지 않았어요.`;

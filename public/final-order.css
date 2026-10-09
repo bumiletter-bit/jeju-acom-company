@@ -445,6 +445,8 @@ html[data-ao-theme="dark"] #fo-rejudge.stale { background: #3A2E12; color: #FBBF
 .fo-ibadge[data-k="warn"] { background: #FEF0C7; color: #93370D; }
 .fo-ibadge[data-k="indiv"] { background: #FEE4E2; color: #B42318; }
 .fo-em { color: #4338CA; font-weight: 800; }
+.fo-why { color: #B42318; font-weight: 700; }   /* #606(대표 10/9): 카드 「이유」 줄 빨강 — 흰 바탕 대비 6.5:1 */
+html[data-ao-theme="dark"] .fo-why { color: #FDA29B; }   /* 남색 바탕 대비 7:1 이상 */
 .fo-btn.sm.fo-igo { min-height: 32px; padding: 0 10px; font-size: 12.5px; color: var(--f-accent); border-color: #C7CBFF; }
 @media (max-width: 640px) { .fo-btn.sm.fo-igo { min-height: 44px; } .fo-btn.fo-size { min-width: 60px; } .fo-stale { min-height: 36px; } }
 /* 야간 */
