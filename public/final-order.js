@@ -1073,15 +1073,23 @@
         // #608(대표 10/9 「[적용]을 누르면 [이대로 넣기]처럼 — [적용] 누르고 또 [이대로 넣기]를 누르게 돼 있다」): 배송메세지·보내는이 카드가 아직 열려 있으면
         //   그 카드의 칸(배송메세지 · 보내는 분 이름·번호·주소)에 보이는 값 그대로 [이대로 넣기]를 누른 것과 같이 끝낸다(보내는 분 이름이 비어 있으면 [안 바꿈]/[넣지 않음]).
         //   꼬리는 직접 고치기 쪽(st.patch.tail·boxes)이 tailOf 에서 먼저이므로 카드 쪽 꼬리는 겹쳐 적지 않는다. 업그레이드 카드는 꼬리·박스별을 정했으면 끝(#601).
-        //   주문 확인(오늘 발송/제외)·메모 확인(AI 못 읽음) 카드는 묻는 것이 다른 질문이라 그대로 열어 둔다.
+        //   #609(대표 10/9 「주문 확인·메모 확인 카드도 적용으로 끝내줘」): 주문 확인 카드 = 카드의 배송메세지 칸 그대로 [오늘 발송] · 메모 확인(AI 못 읽음) 카드 = [그대로 두기].
+        //   「메모 재확인」(빨강 · 클코가 고친 줄을 다시 보라는 카드)은 날짜 오판 위험이 있어 그대로 열어 둔다(사람이 [오늘 발송]/[제외]).
         let ended = false;
+        const endCard = v => { saveDrafts(); st.draft.delete(cd.id); st.ai.tag.delete(cd.id); st.dec.set(cd.id, v); (cd.fix || []).forEach(k => st.fixOpen.add(k)); ended = true; };
+        if (!closed(cd) && cd.type === 'order' && !cd.recheck) {   // #609: [오늘 발송]을 누른 것과 같이(카드 배송메세지 칸 = 1428행 선택 처리와 같은 규칙)
+            const card = box.closest('.fo-card'), el = card && card.querySelector('[data-f="memo"]'), val = el ? String(el.value || '').replace(/\r/g, '').trim() : null;
+            st.ordMemo = st.ordMemo || new Map(); if (val != null && val !== (cd.memoOrig || '')) st.ordMemo.set(cd.id, val); else st.ordMemo.delete(cd.id);
+            endCard('send');
+        }
+        if (!closed(cd) && cd.type === 'ai-miss') endCard('keep');   // #609: [그대로 두기]와 같이(손님 글 그대로 · 오늘 발송)
         if (!closed(cd) && (cd.type === 'memo-edit' || cd.type === 'sender-edit' || cd.type === 'sender-order')) {
             const card = box.closest('.fo-card'), gf = f => { const el = card && card.querySelector(`[data-f="${f}"]`); return el ? String(el.value || '').replace(/\r/g, '').trim() : null; };
             const tailSet = F.es.some(e => { const p = st.patch.get(keyOf(e)); return !!p && (p.tail != null || !!p.boxes); }), tl = tailSet ? '' : (gf('tail') || '');
             let v;
             if (cd.type === 'memo-edit') { const m = gf('memo'); v = { use: true, memo: m == null ? cd.memo.rest : m, ...(tl ? { tail: tl } : {}) }; }
             else { const name = gf('name') || ''; v = name ? { use: true, name, phone: gf('phone') || '', addr: gf('addr') || '', ...(gf('memo') != null ? { memo: gf('memo') } : {}), ...(tl ? { tail: tl } : {}) } : { use: false }; }
-            saveDrafts(); st.draft.delete(cd.id); st.ai.tag.delete(cd.id); st.dec.set(cd.id, v); (cd.fix || []).forEach(k => st.fixOpen.add(k)); ended = true;
+            endCard(v);
         }
         if (cd.type === 'sizeup' && st.dec.get(cd.id) === undefined && (set.boxes || set.tail)) { st.dec.set(cd.id, 'skip'); (cd.fix || []).forEach(k => st.fixOpen.add(k)); ended = true; }   // #601·#608: 업그레이드 카드에서 박스별·꼬리를 정했으면 그 카드는 끝난 것
         const had = st.phase === 'result' && st.files.length > 0;

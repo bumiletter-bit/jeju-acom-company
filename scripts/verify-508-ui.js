@@ -2305,12 +2305,17 @@ async function resolveCards(pg, type) {
                 await w2.pg.click('#fo-ai-stop'); await w2.pg.waitForTimeout(600); await settle(w2.pg);
                 const o0 = await view(w2.pg);
                 ok(o0.n === 3 && o0.band && /AI 읽기가 꺼져 있어 손님 메모 3건을 사람이 확인해야 해요/.test(o0.bandT) && /모두 그대로 두기/.test(o0.bandT) && o0.make, '㊳ AI 꺼짐(창구가 안 집어 [그만두기]) → 띠 「AI 읽기가 꺼져 있어 손님 메모 3건을 사람이 확인해야 해요」 + 카드 3장', JSON.stringify({ n: o0.n, band: o0.bandT }));
+                // #609(대표 10/9): 「메모 확인」 카드도 직접 고치기 [적용] 한 번 = [그대로 두기]로 끝남(손님 글 그대로 · 오늘 발송)
+                const mc2 = nm => w2.pg.locator('#fo-cards .fo-card[data-fo-card="ai-miss"]').filter({ hasText: nm }).first();
+                await mc2('팔가').locator('details.fo-fix > summary').click(); await w2.pg.waitForTimeout(150); await mc2('팔가').locator('[data-x="name"]').fill('홍길동'); await mc2('팔가').locator('[data-fix-apply]').click(); await settle(w2.pg);
+                const o9 = await mc2('팔가').evaluate(c => { const st = window.AkmFinalOrder.state; return { state: c.dataset.state, dec: st.dec.get(c.dataset.id), done: (c.querySelector('.fo-done') || {}).textContent || '', fixOpen: !!c.querySelector('details.fo-fix[open]'), undo: c.querySelectorAll('[data-fix-undo]').length, pend: document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length }; });
+                ok(o9.state === 'done' && o9.dec === 'keep' && /그대로 두기/.test(o9.done) && o9.fixOpen && o9.undo === 1 && o9.pend === 2, '㊳ 🔴 #609 메모 확인 카드 직접 고치기 [적용] 한 번 = [그대로 두기]로 끝남 · 직접 고치기 펼친 채 [되돌리기] · 확인할 것 3 → 2', JSON.stringify(o9));
                 await w2.pg.locator('#fo-ai-miss [data-miss-keep]').click(); await w2.pg.waitForTimeout(300);
                 const oq = await w2.pg.evaluate(() => { const mb = document.getElementById('fo-ai-miss'), y = mb.querySelector('[data-miss-keep-yes]'); return { ask: (mb.querySelector('[data-miss-ask]') || {}).textContent || '', yes: !!y, no: !!mb.querySelector('[data-miss-keep-no]'), filled: y ? y.classList.contains('primary') : null, pend: document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length }; });
-                ok(/3건을 손님 글 그대로 둡니다/.test(oq.ask) && oq.yes && oq.no && oq.filled === false && oq.pend === 3, '㊳ [모두 그대로 두기]는 한 번 더 확인(「3건을 손님 글 그대로 둡니다」 [그대로 두기]/[취소] · 채운 색 아님) — 아직 바뀐 것 없음', JSON.stringify(oq));
+                ok(/2건을 손님 글 그대로 둡니다/.test(oq.ask) && oq.yes && oq.no && oq.filled === false && oq.pend === 2, '㊳ [모두 그대로 두기]는 한 번 더 확인(「2건을 손님 글 그대로 둡니다」 [그대로 두기]/[취소] · 채운 색 아님) — 아직 바뀐 것 없음(#609 뒤 남은 2건)', JSON.stringify(oq));
                 await w2.pg.locator('#fo-ai-miss [data-miss-keep-yes]').click(); await w2.pg.waitForTimeout(300);
                 const o1 = await view(w2.pg);
-                ok(o1.pend === 0 && !o1.make && o1.n === 3, '㊳ [남은 3건 모두 그대로 두기] → 확인할 것 0 · [파일 만들기] 켜짐', JSON.stringify({ pend: o1.pend, make: o1.make }));
+                ok(o1.pend === 0 && !o1.make && o1.n === 3, '㊳ [남은 2건 모두 그대로 두기] → 확인할 것 0 · [파일 만들기] 켜짐', JSON.stringify({ pend: o1.pend, make: o1.make }));
                 const lowM = await w2.pg.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark');
                     const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; };
                     const rgb = s => { const m = String(s).match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(',').map(x => parseFloat(x)); return { c: p.slice(0, 3), a: p[3] == null ? 1 : p[3] }; };
@@ -2458,10 +2463,13 @@ async function resolveCards(pg, type) {
                     await w.pg.evaluate(id => { const sc = document.querySelector('#fo-panel .fo-body'), c = [...document.querySelectorAll('#fo-cards .fo-card')].find(x => x.innerText.includes(id)); sc.scrollTop += c.getBoundingClientRect().top - sc.getBoundingClientRect().top - 40; }, nm(4)); await w.pg.waitForTimeout(200);
                     await c4.locator('[data-x="tail"]').fill('2s'); await arm(w.pg); await c4.locator('[data-tailset="M사이즈로!"]').click(); await w.pg.waitForTimeout(200); const g0 = await got(w.pg);
                     ok(!!g0 && Math.abs(g0.now - g0.was) <= 8, `㊵ ${tag} 칩을 눌러도 그 카드가 제자리(차이 ≤ 8px)`, JSON.stringify(g0));
+                    // #609(대표 10/9): 주문 확인 카드의 직접 고치기 [적용] = [오늘 발송]까지 → 카드가 끝나 아래로 내려가고 다음 카드가 그 자리에(종전 「열린 채 제자리」 기대는 낡음)
                     await c4.locator('[data-x="name"]').fill('홍길동'); await arm(w.pg); await c4.locator('[data-fix-apply]').click(); await settle(w.pg); const g1 = await got(w.pg);
-                    ok(!!g1 && g1.now != null && Math.abs(g1.now - g1.was) <= 8 && g1.fixOpen && g1.focusIn && g1.state === 'open', `㊵ ${tag} 🔴 직접 고치기 [적용] 뒤에도 그 카드가 같은 자리(차이 ≤ 8px) · 접이식은 펼친 채 · 초점은 그 카드 안`, JSON.stringify(g1));
+                    ok(!!g1 && g1.state === 'done' && g1.fixOpen && g1.nextNow != null && Math.abs(g1.nextNow - g1.was) <= 8 && g1.focusNext, `㊵ ${tag} 🔴 #609 직접 고치기 [적용] = 카드가 끝나 아래로(직접 고치기 펼친 채) · 바로 다음 카드가 그 자리에(차이 ≤ 8px) · 초점도 다음 카드`, JSON.stringify(g1));
+                    await arm(w.pg); await cardOf(w.pg, 4).locator('[data-undo]').click(); await settle(w.pg); const g1b = await got(w.pg);
+                    ok(!!g1b && g1b.state === 'open' && g1b.now != null && Math.abs(g1b.now - g1b.was) <= 8 && g1b.fixOpen, `㊵ ${tag} [바꾸기] → 다시 열린 카드가 같은 자리(차이 ≤ 8px) · 직접 고치기 펼친 채`, JSON.stringify(g1b));
                     await arm(w.pg); await cardOf(w.pg, 4).locator('[data-fix-undo]').click(); await settle(w.pg); const g2 = await got(w.pg);
-                    ok(!!g2 && Math.abs(g2.now - g2.was) <= 8 && g2.fixOpen, `㊵ ${tag} [되돌리기] 뒤에도 같은 자리 · 펼친 채`, JSON.stringify(g2));
+                    ok(!!g2 && g2.state === 'open' && Math.abs(g2.now - g2.was) <= 8 && g2.fixOpen, `㊵ ${tag} [되돌리기] 뒤에도 같은 자리 · 펼친 채`, JSON.stringify(g2));
                     // 카드가 끝나서 아래로 내려가면 다음 카드가 그 자리에
                     await arm(w.pg); await cardOf(w.pg, 4).locator('[data-fo-act="send"]').click(); await w.pg.waitForTimeout(500); const g3 = await got(w.pg);
                     ok(!!g3 && g3.state === 'done' && g3.nextNow != null && Math.abs(g3.nextNow - g3.was) <= 8 && g3.focusNext, `㊵ ${tag} [오늘 발송]으로 카드가 끝나면(아래로 내려감) 바로 다음 카드가 그 자리에 · 초점도 다음 카드`, JSON.stringify(g3));
@@ -2673,7 +2681,7 @@ async function resolveCards(pg, type) {
                 ok(w.errs.length === 0, '㊸ 오류 0', w.errs.join(' | ')); await w.ctx.close();
             }
 
-            // ── ㊹ #608(대표 10/9) — 열린 배송메세지·보내는이 카드의 「직접 고치기」 [적용] = [이대로 넣기]까지(또 누르지 않게) · 업그레이드 카드는 꼬리 정하면 끝 · 주문 확인 카드는 그대로 ──
+            // ── ㊹ #608·#609(대표 10/9) — 열린 배송메세지·보내는이 카드의 「직접 고치기」 [적용] = [이대로 넣기]까지(또 누르지 않게) · 업그레이드 카드는 꼬리 정하면 끝 · #609 주문 확인 카드 = [오늘 발송]으로 끝(메모 확인 카드는 ㊳) ──
             console.log('\n㊹ #608 직접 고치기 [적용] = [이대로 넣기]처럼');
             {
                 const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
@@ -2703,10 +2711,10 @@ async function resolveCards(pg, type) {
                 await card('구을').locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(150); await pickOpt(w.pg, card('구을'), other); await card('구을').locator('[data-fix-apply]').click(); await settle(w.pg);
                 const v2 = await view('구을');
                 ok(v2.state === 'done' && v2.use === 0 && v2.p && v2.p.opt === other && v2.dec && v2.dec.use === true && v2.dec.name === '김보냄' && /보내는이 김보냄 드림/.test(v2.done) && v2.pend === v1.pend - 1, '㊹② 🔴 보내는이 카드 직접 고치기(옵션명) [적용] 한 번으로 카드가 끝남 — 이름 칸에 보이던 「김보냄」 그대로 [이대로 넣기]한 것과 같음', JSON.stringify({ state: v2.state, p: v2.p, dec: v2.dec, done: v2.done }));
-                // ③ 주문 확인 카드(오늘 발송/제외)는 묻는 것이 달라 [적용] 뒤에도 열린 채(발송일은 사람이 누른다)
-                await card('구정').locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(150); await card('구정').locator('[data-x="name"]').fill('홍길동'); await card('구정').locator('[data-fix-apply]').click(); await settle(w.pg);
-                const v3 = await view('구정');
-                ok(v3.state === 'open' && v3.send === 1 && v3.p && v3.p.by === 'card' && v3.dec === null, '㊹③ 주문 확인 카드(오늘 발송/제외)는 직접 고치기 [적용] 뒤에도 열린 채(발송일은 따로 누름 · 종전과 같음)', JSON.stringify({ state: v3.state, send: v3.send, p: v3.p }));
+                // ③ #609(대표 10/9): 주문 확인 카드(오늘 발송/제외)도 [적용] 한 번 = 카드의 배송메세지 칸 그대로 [오늘 발송]
+                await card('구정').locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(150); await card('구정').locator('[data-f="memo"]').fill('경비실에 맡겨주세요'); await card('구정').locator('[data-x="name"]').fill('홍길동'); await w.pg.evaluate(() => { window.__toasts = []; }); await card('구정').locator('[data-fix-apply]').click(); await settle(w.pg);
+                const v3 = await view('구정'), t3 = await toastT(), om3 = await w.pg.evaluate(() => { const st = window.AkmFinalOrder.state, cd = st.cards.find(c => c.type === 'order' && !c.recheck); return st.ordMemo && cd ? st.ordMemo.get(cd.id) : null; });
+                ok(v3.state === 'done' && v3.send === 0 && v3.p && v3.p.by === 'card' && v3.dec === 'send' && om3 === '경비실에 맡겨주세요' && /오늘 발송 · 배송메세지 「경비실에 맡겨주세요」/.test(v3.done) && v3.pend === v2.pend - 1 && v3.fixOpen && /적용하고 이 카드를 끝냈어요/.test(t3), '㊹③ 🔴 #609 주문 확인 카드 직접 고치기 [적용] 한 번 = 카드 배송메세지 칸 그대로 [오늘 발송]으로 끝남 · 직접 고치기 펼친 채 · 안내 글', JSON.stringify({ state: v3.state, send: v3.send, dec: v3.dec, om: om3, done: v3.done, pend: [v2.pend, v3.pend] }));
                 // ④ 업그레이드 카드: 직접 고치기에서 꼬리 하나 [S] → [적용] → 끝남(「S사이즈로! · 직접 고침」)
                 await card(T(5)).locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(150); await card(T(5)).locator('[data-tailset="S사이즈로!"]').click(); await card(T(5)).locator('[data-fix-apply]').click(); await settle(w.pg);
                 const v4 = await view(T(5));
@@ -2721,8 +2729,9 @@ async function resolveCards(pg, type) {
                 await w.pg.click(SEL.make); await idle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 20000 }); await w.pg.waitForTimeout(400);
                 const names = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save), pr = [];
                 for (const nm of names.filter(v => /xlsx$/i.test(v) && !v.includes('스마트스토어'))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's49-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff); if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => pr.push(r)); }
-                const rA = pr.find(r => r[3] === '구갑'), rB = pr.find(r => r[3] === '구을');
+                const rA = pr.find(r => r[3] === '구갑'), rB = pr.find(r => r[3] === '구을'), rC = pr.find(r => r[3] === '구정');
                 ok(!!rA && String(rA[4]) === royalName + ' M사이즈로!' && String(rA[9]) === '문 앞에 놔주세요' && !!rB && String(rB[0]) === '김보냄 드림' && String(rB[4]) === other, '㊹⑥ 파일: 구갑 = 옵션 끝 「M사이즈로!」 + J 「문 앞에 놔주세요」 · 구을 = A 「김보냄 드림」 + 바꾼 옵션명', JSON.stringify({ a: rA && [rA[4], rA[9]], b: rB && [rB[0], rB[4]] }));
+                ok(!!rC && String(rC[9]) === '경비실에 맡겨주세요' && /홍길동/.test(String(rC[0])), '㊹⑥ #609 파일: 구정(주문 확인 카드 [적용]) = 오늘 발송 줄 있음 · J = 카드 칸 글 「경비실에 맡겨주세요」 · A 에 직접 고친 보내는 분 「홍길동」', JSON.stringify({ c: rC && [rC[0], rC[9]] }));
                 ok(w.errs.length === 0, '㊹ 오류 0', w.errs.join(' | ')); await w.ctx.close();
             }
 
