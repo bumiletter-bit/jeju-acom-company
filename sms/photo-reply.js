@@ -7,10 +7,11 @@
  *      · 종류·정도·개수는 judge.staff_summary 로 직원에게만 간다(이 파일은 그 값을 읽지 않는다).
  *      · 금액·반품 접수·포인트 지급은 직원 몫 — 글은 「상황 인정 + 사과 + 선택지」까지만.
  *   kind 별
- *      damage    : 대표 원문 + 범위 되묻기(「다른 박스·나머지도 같으실까요?」)
+ *      damage    : 확신 high 일 때만 대표 원문 + 범위 되묻기(「다른 박스·나머지도 같으실까요?」) · low 면 되묻기 글(멀쩡한 과일에 「부패과가 나왔군요」가 나가지 않게)
  *      size      : 「크기가 작았군요」 + (confidence high 일 때만 「사진으로는 ○○ 정도로 보여요」) + 기준 + 지난 주문 + 배송메세지 안내
  *      other·unclear : 「사진 확인했어요, 어떤 점이 불편하셨는지 알려주세요」
  *      not_fruit : null(손님 답 없음 · 직원만)
+ *      error     : null(판독 실패 — 손님 답 없음 · 직원 몫)
  *   sms 채널은 이모지 0(알리고·문자에서 「?」로 찍힌다 — 메모리 jeju-sms-no-emoji).
  *
  *   ⚠️ 이 파일은 톡톡봇 저장소(photo-reply.js)에 **같은 내용 복사본**이 있다(별도 배포라 require 를 못 함).
@@ -56,15 +57,17 @@ function reply(judge, opt) {
     const kind = j.kind;
     const lines = [];
 
-    if (kind === 'not_fruit') return null;
+    if (kind === 'not_fruit' || kind === 'error') return null;
 
-    if (kind === 'damage') {
+    if (kind === 'damage' && j.confidence === 'high') {
         lines.push(head(channel), DAMAGE_CORE, DAMAGE_ASK, STAFF_TAIL);
     } else if (kind === 'size') {
         // 손님이 「크다」고 한 사진이면 「작았군요」가 틀린 말이 된다 → 방향을 모르면 「달랐군요」
         //   size_dir 칸이 아예 없으면(옛 호출) 기본 글 「작았군요」 · null(판독이 방향을 모름)이면 「달랐군요」
-        const first = j.size_dir === 'big' ? '크기가 생각하신 것보다 컸군요, 불편드려 죄송합니다.'
-            : j.size_dir === null ? '크기가 생각하신 것과 달랐군요, 불편드려 죄송합니다.'
+        //   방향과 추정 사이즈가 안 맞으면(작다는데 L · 크다는데 2S) 어느 쪽도 단정하지 않고 「달랐군요」
+        const clash = (j.size_dir === 'small' && j.size_guess === 'L') || (j.size_dir === 'big' && j.size_guess === '2S');
+        const first = clash || j.size_dir === null ? '크기가 생각하신 것과 달랐군요, 불편드려 죄송합니다.'
+            : j.size_dir === 'big' ? '크기가 생각하신 것보다 컸군요, 불편드려 죄송합니다.'
                 : '크기가 작았군요, 불편드려 죄송합니다.';
         lines.push(head(channel), first);
         // 확신이 낮으면(흐림 · 기준물 없음) 사이즈 글자를 적지 않는다 — 기준 설명만
@@ -74,7 +77,7 @@ function reply(judge, opt) {
         else if (prev) lines.push(`저번에 받으신 건 ${prev}였어요.`);
         lines.push(SIZE_GUIDE, SIZE_MEMO, SIZE_RETURN, STAFF_TAIL);
     } else {
-        // other · unclear · 알 수 없는 값 — 전부 되묻기 한 벌
+        // other · unclear · 확신 낮은 damage · 알 수 없는 값 — 전부 되묻기 한 벌
         lines.push(head(channel), ASK_CORE);
     }
     return lines.join('\n');
@@ -85,8 +88,12 @@ function reply(judge, opt) {
 function leakCheck(text) {
     const t = String(text || '').replace(/2S/g, '');
     if (/[0-9０-９]/.test(t)) return '숫자';
-    if (/(한두|두세|서너|몇|여러)\s*(개|알|과|박스|상자)/.test(t)) return '개수 표현';
-    if (/(퍼센트|%|％|절반|반\s*정도|대부분|전부\s*다|분의)/.test(t)) return '비율 표현';
+    // 한글 수사 + 세는 말(「세 개」「다섯 알」) · 「하나가」「둘 정도」 · 어림수(「한두 개」「몇 개」)
+    if (/(한두|두세|두어|서너|너댓|대여섯|몇|여러)\s*(개|알|과|박스|상자|군데|쪽)/.test(t)) return '개수 표현';
+    if (/(^|[^가-힣])(한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(개|알|과|박스|상자|군데|쪽)(?![가-힣]*사이즈)/.test(t)) return '개수 표현';
+    if (/(^|[^가-힣])(하나|둘|셋|넷)\s*(가|이|만|은|는|정도|쯤)(?![가-힣])/.test(t)) return '개수 표현';
+    if (/(퍼센트|%|％|절반|대부분|전부\s*다|분의|일부)/.test(t)) return '비율 표현';
+    if (/(^|[^가-힣])반\s*(정도|쯤|가량|이상|넘|이나)/.test(t) || /(^|[^가-힣])반\s*(은|이)(?![가-힣])/.test(t)) return '비율 표현';   // 「반품」「반드시」는 안 걸리게 앞뒤를 본다
     return '';
 }
 

@@ -227,6 +227,7 @@ async function fetchInvoiceOrders(days) {
                     '주문상품명(세트상품 포함)': [it.product_name, it.option_value].filter(Boolean).join(' ').trim(),
                     '수량': qty,
                     _orderId: String(od.order_id || ''), _itemCode: String(it.order_item_code || ''),
+                    _paidAt: (t => t ? new Date(t).toISOString() : '')(Date.parse(od.payment_date || od.order_date || '')),   // #610-G 발송 전 주문 보관용 · ISO 로
                 });
             }
             if (!sampleRaw) sampleRaw = od;

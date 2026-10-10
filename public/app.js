@@ -1171,11 +1171,12 @@ function notiGo(link) {
     const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
     if (navItem) navItem.click();
     if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
-    const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10);
-    if (!(oid > 0) && !(rid > 0)) return;
+    const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10), sid = parseInt(prm.get('sms'), 10);   // #610 ?sms=대화번호 → 문자 카드 그 대화
+    if (!(oid > 0) && !(rid > 0) && !(sid > 0)) return;
     setTimeout(() => {
         try {
             if (page === 'agent-office' && oid > 0 && window.AkmAoDesk && typeof window.AkmAoDesk.open === 'function') window.AkmAoDesk.open(oid);
+            else if (page === 'agent-office' && sid > 0 && window.AkmAoDesk && typeof window.AkmAoDesk.openSms === 'function') window.AkmAoDesk.openSms(sid);
             else if (page === 'expense' && rid > 0 && typeof window.viewExpenseDetail === 'function') window.viewExpenseDetail(rid);
             else if (page === 'document' && rid > 0 && typeof window.viewDocDetail === 'function') window.viewDocDetail(rid);
         } catch (_) { /* 그 창을 못 열어도 메뉴까지는 간다 */ }

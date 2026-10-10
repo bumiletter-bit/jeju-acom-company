@@ -1,12 +1,18 @@
 // #610-F 손님 셀프 조회 「내 주문 어디쯤?」 — 공개 페이지(로그인 없음 · noindex) · AI 호출 없음 · 문자 발송 없음
 //   GET  /track-order            화면(받는 분 성함 + 번호 끝 4자리)
 //   POST /api/track-order        { name, tail } → { ok, match:'one'|'many'|'none', order? }   · 시도 제한 넘으면 429
-//   GET  /track-order/go?t=토큰   서버가 운송장 전체로 택배사 조회 페이지에 넘긴다(302) — 운송장 전체는 화면·응답에 싣지 않는다
-//   장착: require('./selfcheck.js')(app, { pool, lookup, cjTrack, holidays, log, secret?, contact?, limits? })
+//   GET  /track-order/go?t=토큰   서버가 운송장 전체로 택배사 조회 페이지에 넘긴다(302)
+//        🔴 운송장 전체가 밖으로 나가는 곳은 이 /go 응답의 Location 머리글 하나뿐이다(성함+끝자리를 맞춘 사람에게 · 10분). 화면·JSON 응답·토큰 글자에는 없다.
+//   장착: require('./selfcheck.js')(app, { pool, lookup, cjTrack, holidays, log, secret?, contact?, limits?, notifyTelegram? })
 //     pool      = pg Pool(.query)                    lookup = require('./lookup.js')(normalizeName · refreshOrder 를 쓴다)
 //     cjTrack   = require('../cj-track.js')           holidays = async () => loadShippingHolidayInfo() 결과({ arriveOff:Set, reasons:Map })
 //     secret    = 토큰·시도 기록 열쇠(없으면 JWT_SECRET · 그것도 없으면 켤 때 만든 임시 값 → 재시작하면 앞서 준 조회 링크는 만료)
-//     contact   = 문의 번호(기본 010-6687-4031)       limits = { windowMin:10, perIp:5, perName:5, days:30, minMs:300, tokenMin:10 }
+//     contact   = 문의 번호(기본 010-6687-4031)       notifyTelegram = async (글) => …(전체 상한에 걸리면 1시간에 한 번)
+//     limits    = { windowMin:10, perIp:5, perName:30, perTail:20, perAll:200, noneStreak:10, lockMin:60, maxRunning:8, days:30, minMs:300, tokenMin:10 }
+//   시도 제한(F1 · 워커2 R2 반영) — 전부 windowMin(10분) 창 · 넘으면 429:
+//     ip   같은 IP perIp 회          IP = x-forwarded-for 의 **마지막** 값(프록시가 붙인 값 · 손님이 꾸민 앞쪽 값은 안 믿는다) · 없으면 req.ip
+//     name 같은 성함 perName 회      tail 같은 끝 4자리 perTail 회(이름을 바꿔 가며 한 번호를 찍는 것)      all 전체 perAll 회(넘으면 텔레그램)
+//     없음이 noneStreak 회 이어진 IP 는 lockMin 분 잠금(맞히면 처음부터) · 동시에 maxRunning 건까지만 조회(넘으면 429 「잠시 뒤」)
 //   🔴 밖으로 안 나가는 것 = 주소 · 전화번호 전체 · 운송장 전체 · 받는 분 이름(입력한 글만 화면이 되비춘다 · 서버 응답에는 이름이 없다) · 거래처 · 기사 정보 · 배송메모.
 //      SELECT 가 그 칸들을 아예 읽지 않고, 응답은 허용 목록(PUBLIC)만 싣는다.
 //   🔴 DB 쓰기 = sms_selfcheck_hits(시도 횟수) 한 표뿐. 열쇠는 해시로만 적는다(IP·이름 원문을 남기지 않는다) · 하루 지난 줄은 조회 때 가끔 지운다.
@@ -14,7 +20,9 @@
 const crypto = require('crypto');
 const path = require('path');
 
-const DEF = { windowMin: 10, perIp: 5, perName: 5, days: 30, minMs: 300, tokenMin: 10 };
+const DEF = { windowMin: 10, perIp: 5, perName: 30, perTail: 20, perAll: 200, noneStreak: 10, lockMin: 60, maxRunning: 8, days: 30, minMs: 300, tokenMin: 10 };
+// 시도 기록 정리 — 하루 지난 줄 삭제(총괄이 03:50 보관 정리 때 부른다 · db = pool)
+async function purge(db) { const r = await db.query(`DELETE FROM sms_selfcheck_hits WHERE at < now() - interval '1 day'`); return r.rowCount || 0; }
 const DOW = '일월화수목금토';
 const mdDow = ymd => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || '')); if (!m) return ''; const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return `${+m[2]}/${+m[3]}(${DOW[d.getUTCDay()]})`; };
 const kstYmd = ms => new Date((ms || Date.now()) + 9 * 3600e3).toISOString().slice(0, 10);
@@ -37,9 +45,9 @@ const SQL_FIND = `
            array_remove(array_agg(DISTINCT NULLIF(btrim(s.option_text), '')), NULL) AS options,
            COALESCE(sum(s.qty), 0)::int AS qty
       FROM delivery_shipments s
-     WHERE s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - $3::int
+     WHERE ((right(s.phone_digits, 4) = $2 AND length(s.phone_digits) >= 9) OR (right(s.buyer_digits, 4) = $2 AND length(s.buyer_digits) >= 9))   -- idx_ds_tail_phone · idx_ds_tail_buyer(식이 같아야 색인을 탄다)
+       AND s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - $3::int
        AND regexp_replace(COALESCE(s.recipient, ''), '[[:space:]]+', '', 'g') = $1
-       AND ((length(s.phone_digits) >= 9 AND right(s.phone_digits, 4) = $2) OR (length(s.buyer_digits) >= 9 AND right(s.buyer_digits, 4) = $2))
      GROUP BY s.ship_date, s.phone_digits
      ORDER BY s.ship_date DESC
      LIMIT 5`;
@@ -73,6 +81,9 @@ module.exports = function mountSelfcheck(app, deps) {
     async function initDB() {
         await pool.query(`CREATE TABLE IF NOT EXISTS sms_selfcheck_hits (id bigserial PRIMARY KEY, kind text NOT NULL, key_hash text NOT NULL, at timestamptz NOT NULL DEFAULT now())`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_sms_selfcheck_hits ON sms_selfcheck_hits(kind, key_hash, at)`);
+        // 끝 4자리로 먼저 좁히는 색인(송장 표 · 식 색인이라 표 내용은 안 바뀐다) — 없으면 조회마다 30일치 줄을 다 읽는다
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_ds_tail_phone ON delivery_shipments (right(phone_digits, 4)) WHERE length(phone_digits) >= 9`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_ds_tail_buyer ON delivery_shipments (right(buyer_digits, 4)) WHERE length(buyer_digits) >= 9`);
     }
 
     // ── 조회 링크 토큰 — 운송장을 암호화해 담는다(AES-256-GCM · 풀어 볼 수 없다 · 기한 tokenMin 분)
@@ -91,17 +102,42 @@ module.exports = function mountSelfcheck(app, deps) {
         } catch (e) { return null; }
     }
 
-    // ── 시도 제한 — IP 당 · 같은 이름 당 windowMin 분에 perIp / perName 회. 넘으면 적지 않고 막는다.
-    async function allow(ip, name) {
-        const hi = keyHash('ip', ip), hn = keyHash('name', name);
+    // ── 시도 제한 — 창(windowMin) 안 IP · 성함 · 끝자리 · 전체 횟수 + 「없음」이 이어진 IP 잠금. 넘으면 적지 않고 막는다. 돌려주는 값 = null(통과) | 막힌 까닭
+    const H_ALL = keyHash('all', '');
+    let _allAlertAt = 0;
+    async function allow(ip, name, tail) {
+        const hi = keyHash('ip', ip), hn = keyHash('name', name), ht = keyHash('tail', tail);
         const r = (await pool.query(
-            `SELECT count(*) FILTER (WHERE kind = 'ip' AND key_hash = $1)::int AS ip, count(*) FILTER (WHERE kind = 'name' AND key_hash = $2)::int AS nm
-               FROM sms_selfcheck_hits WHERE at > now() - ($3::int * interval '1 minute') AND ((kind = 'ip' AND key_hash = $1) OR (kind = 'name' AND key_hash = $2))`, [hi, hn, L.windowMin])).rows[0];
-        if (r.ip >= L.perIp || r.nm >= L.perName) return false;
-        await pool.query(`INSERT INTO sms_selfcheck_hits (kind, key_hash) VALUES ('ip', $1), ('name', $2)`, [hi, hn]);
-        if (Math.random() < 0.05) pool.query(`DELETE FROM sms_selfcheck_hits WHERE at < now() - interval '1 day'`).catch(() => { });
-        return true;
+            `SELECT count(*) FILTER (WHERE kind = 'ip' AND key_hash = $1 AND at > now() - ($5::int * interval '1 minute'))::int AS ip,
+                    count(*) FILTER (WHERE kind = 'name' AND key_hash = $2 AND at > now() - ($5::int * interval '1 minute'))::int AS nm,
+                    count(*) FILTER (WHERE kind = 'tail' AND key_hash = $3 AND at > now() - ($5::int * interval '1 minute'))::int AS tl,
+                    count(*) FILTER (WHERE kind = 'all' AND key_hash = $4 AND at > now() - ($5::int * interval '1 minute'))::int AS al,
+                    count(*) FILTER (WHERE kind = 'lock' AND key_hash = $1 AND at > now() - ($6::int * interval '1 minute'))::int AS lk
+               FROM sms_selfcheck_hits
+              WHERE at > now() - (GREATEST($5::int, $6::int) * interval '1 minute')
+                AND ((kind IN ('ip', 'lock') AND key_hash = $1) OR (kind = 'name' AND key_hash = $2) OR (kind = 'tail' AND key_hash = $3) OR (kind = 'all' AND key_hash = $4))`,
+            [hi, hn, ht, H_ALL, L.windowMin, L.lockMin])).rows[0];
+        if (r.al >= L.perAll) {
+            if (Date.now() - _allAlertAt > 3600e3) { _allAlertAt = Date.now(); if (typeof d.notifyTelegram === 'function') Promise.resolve().then(() => d.notifyTelegram(`🚧 손님 셀프 조회(내 주문 어디쯤?)가 ${L.windowMin}분에 ${L.perAll}회를 넘어 잠시 막았어요. 누가 번호를 찍어 보는 것일 수 있어요.`)).catch(() => { }); }
+            return 'all';
+        }
+        if (r.lk > 0) return 'lock';
+        if (r.ip >= L.perIp) return 'ip';
+        if (r.nm >= L.perName) return 'name';
+        if (r.tl >= L.perTail) return 'tail';
+        await pool.query(`INSERT INTO sms_selfcheck_hits (kind, key_hash) VALUES ('ip', $1), ('name', $2), ('tail', $3), ('all', $4)`, [hi, hn, ht, H_ALL]);
+        return null;
     }
+    // 「없음」이 이어지면 그 IP 를 잠근다 · 맞히면(one·many) 처음부터
+    async function noteResult(ip, match) {
+        const hi = keyHash('ip', ip);
+        if (match !== 'none') { await pool.query(`DELETE FROM sms_selfcheck_hits WHERE kind = 'none' AND key_hash = $1`, [hi]); return; }
+        await pool.query(`INSERT INTO sms_selfcheck_hits (kind, key_hash) VALUES ('none', $1)`, [hi]);
+        const n = (await pool.query(`SELECT count(*)::int AS n FROM sms_selfcheck_hits WHERE kind = 'none' AND key_hash = $1`, [hi])).rows[0].n;   // 하루 지난 줄은 purge 가 지운다
+        if (n >= L.noneStreak) { await pool.query(`INSERT INTO sms_selfcheck_hits (kind, key_hash) VALUES ('lock', $1)`, [hi]); await pool.query(`DELETE FROM sms_selfcheck_hits WHERE kind = 'none' AND key_hash = $1`, [hi]); }
+    }
+    const clientIp = req => { const xf = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean); return (xf.length ? xf[xf.length - 1] : String(req.ip || '')) || 'unknown'; };
+    let running = 0;
 
     // ── 도착 예정 글 — 계산기는 shipping-schedule.computeArrival 하나만. 「내일·모레」는 보낸 날 기준 말이라 나중에 보면 틀리므로 날짜로 적는다.
     async function arriveText(shipYmd, delivered, now) {
@@ -143,9 +179,13 @@ module.exports = function mountSelfcheck(app, deps) {
         try {
             const inp = cleanInput(req.body);
             if (inp.error) return done(400, { ok: false, error: inp.error, field: inp.field });
-            const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim() || 'unknown';
-            if (!(await allow(ip, inp.name))) return done(429, { ok: false, error: `조회를 여러 번 하셨어요. ${L.windowMin}분쯤 뒤에 다시 해 주세요.` });
-            const r = await find(inp.name, inp.tail, Date.now());
+            const ip = clientIp(req);
+            const why = await allow(ip, inp.name, inp.tail);
+            if (why) return done(429, { ok: false, error: why === 'lock' ? `조회가 여러 번 맞지 않아 잠시 막아 두었어요. ${L.lockMin}분쯤 뒤에 다시 해 주시거나 문자로 문의해 주세요.` : why === 'all' ? '지금 조회가 몰려 잠시 쉬고 있어요. 조금 뒤에 다시 해 주세요.' : `조회를 여러 번 하셨어요. ${L.windowMin}분쯤 뒤에 다시 해 주세요.` });
+            if (running >= L.maxRunning) return done(429, { ok: false, error: '지금 조회가 몰려 있어요. 잠시 뒤 다시 눌러 주세요.' });   // 한꺼번에 몰려도 DB·택배사 조회가 쌓이지 않게
+            running++;
+            let r; try { r = await find(inp.name, inp.tail, Date.now()); } finally { running--; }
+            try { await noteResult(ip, r.match); } catch (e) { log.error && log.error('[selfcheck] 시도 기록 실패(무시):', e && e.message); }
             return done(200, Object.assign({ ok: true }, r));
         } catch (e) {
             log.error && log.error('[selfcheck] 조회 오류:', e && e.message);
@@ -159,9 +199,10 @@ module.exports = function mountSelfcheck(app, deps) {
         res.redirect(302, 'https://www.cjlogistics.com/ko/tool/parcel/tracking?gnbInvcNo=' + tr);
     });
 
-    return { initDB, find, allow, keyHash, makeToken, readToken, cleanInput, limits: L };
+    return { initDB, find, allow, noteResult, purge: () => purge(pool), keyHash, makeToken, readToken, cleanInput, limits: L };
 };
 module.exports.cleanInput = cleanInput;
+module.exports.purge = purge;
 module.exports.stageOf = stageOf;
 module.exports.PUBLIC = PUBLIC;
 
@@ -172,7 +213,7 @@ function pageHtml(contact) {
     return `<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow"><meta name="referrer" content="no-referrer"><title>제주아꼼이네 · 내 주문 어디쯤?</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.css" integrity="sha384-SN6A48CJQjx946+DRb8wsoifC4a8ur9ZS6R+HCTgnBHOKCa6GLXAR3Qn8d1jztxg" crossorigin="anonymous">
 <style>
   :root {
     --primary:#4F46E5; --primary-dark:#4338CA; --primary-light:#EEF0FF; --primary-ring:rgba(79,70,229,.15);

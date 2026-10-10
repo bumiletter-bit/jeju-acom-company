@@ -38,6 +38,8 @@ if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost'))
 }
 const pool = new Pool(dbConfig);
 
+app.disable('x-powered-by');   // #610 검토: 서버 종류 노출 안 함
+app.use('/api/track-order', express.json({ limit: '2kb' }));   // #610 손님 셀프 조회(공개)는 작은 본문만 — 전역 15MB 파서 앞에
 app.use(express.json({ limit: '15mb', verify: (req, res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/sms/webhook')) req.rawBody = buf.toString('utf8'); } }));   // #610 문자 webhook 서명 검증용 원문(그 라우트만)
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -10039,6 +10041,8 @@ async function deliveryInitDB() {
         checked_at timestamptz DEFAULT now(), first_trouble_at timestamptz)`);
     // #597 처리함 — 직원이 이상 건을 봤다고 표시(누가 · 언제) · 상태가 새로 조회돼도 유지
     await pool.query(`ALTER TABLE delivery_status ADD COLUMN IF NOT EXISTS handled_at timestamptz, ADD COLUMN IF NOT EXISTS handled_by text`);
+    // #610-C 구매자 번호 칸 — 엑셀 올리기 INSERT 가 이 칸을 쓰므로 sms 표 생성과 무관하게 여기서 보장(생성 칸·인덱스는 sms/index.js initDB)
+    await pool.query(`ALTER TABLE delivery_shipments ADD COLUMN IF NOT EXISTS buyer_phone text`);
 }
 const kstDateStr = ms => new Date((ms || Date.now()) + 9 * 3600e3).toISOString().slice(0, 10);
 const isYmd = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
@@ -10296,6 +10300,9 @@ async function coupangFetchInvoiceOrders(days) {
                     '노출상품명(옵션명)': it.vendorItemName || '',
                     '구매수(수량)': qty,
                     _orderId: String(sheet.orderId || ''),
+                    // #610-G 발송 전 주문 보관용(sms/preorders.js) — 결제 시각은 ISO 로(시간대 없는 글자를 그대로 넘기면 9시간 어긋남) · 배송번호·옵션번호는 열쇠
+                    _paidAt: (t => t ? new Date(t).toISOString() : '')(Date.parse(sheet.paidAt || sheet.orderedAt || '')),
+                    _shipmentBoxId: String(sheet.shipmentBoxId || ''), _vendorItemId: String(it.vendorItemId || ''),
                 });
             }
         }

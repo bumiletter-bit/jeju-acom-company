@@ -41,7 +41,7 @@ let judgeMode = 'byTag';
 async function fakeJudge(images, opt) {
     judgeCalls.push({ n: images.length, opt, bytes: images.map(i => i.buf.length), types: images.map(i => i.contentType) });
     if (judgeMode === 'throw') throw new Error('boom');
-    if (judgeMode === 'error') return { kind: 'unclear', confidence: 'low', size_guess: null, size_dir: null, staff_summary: '사진 판독을 하지 못했습니다', raw: { error: 'AI 키 없음' } };
+    if (judgeMode === 'error') return { kind: 'error', confidence: 'low', size_guess: null, size_dir: null, staff_summary: '사진 판독을 하지 못했습니다', raw: { error: 'AI 키 없음' } };
     const tag = (images[0].buf.toString('latin1').match(/TAG:([a-z_]+)/) || [])[1] || 'damage';
     const base = { confidence: 'high', size_guess: null, size_dir: null, staff_summary: '직원용: 곰팡이 3개 · 전체의 20% 정도', raw: { usage: { input_tokens: 1700, output_tokens: 90 }, resized: 0 } };
     if (tag === 'size') return Object.assign(base, { kind: 'size', size_guess: '2S', size_dir: 'small' });
@@ -132,10 +132,10 @@ function runTool(args, env) {
         // 판독 실패
         judgeMode = 'error';
         r = await req('POST', '/api/sms/photo-test', 'admin', one('damage'));
-        ok(r.status === 200 && r.data.ok === false && r.data.kind === 'unclear' && /키 없음/.test(r.data.error), '판독 실패(키 없음) → ok false + error', r.data);
+        ok(r.status === 200 && r.data.ok === false && r.data.kind === 'error' && r.data.customer_reply === null && /키 없음/.test(r.data.error), '판독 실패(키 없음) → ok false · kind error · 손님 글 없음', r.data);
         judgeMode = 'throw';
         r = await req('POST', '/api/sms/photo-test', 'admin', one('damage'));
-        ok(r.status === 200 && r.data.ok === false && r.data.kind === 'unclear', '판독 함수가 던져도 500 아님');
+        ok(r.status === 200 && r.data.ok === false && r.data.kind === 'error' && r.data.customer_reply === null, '판독 함수가 던져도 500 아님 · kind error · 손님 글 없음', r.data);
         judgeMode = 'byTag';
         // 깨진 JSON 본문
         r = await req('POST', '/api/sms/photo-test', 'admin', '{"images": [');
@@ -151,6 +151,24 @@ function runTool(args, env) {
         ok(r.status === 200 && r.data.used === 1, '날이 바뀌면 다시 1부터');
         ok(usedBefore === 6, '성공·실패 판독만 셈에 들어감(6회)', usedBefore);
         ok(sent.length === 0, '손님 발송·DB 쓰기 0');
+
+        // R5 S1: sms/index.js 는 log 로 console **객체**를 넘긴다 → 그 꼴로 장착해도 정상 200(종전엔 판독 뒤 500)
+        {
+            const mk = (deps) => { let h = null; mount({ post: (p, a, fn) => { h = fn; } }, Object.assign({ authMiddleware: fakeAuth, judge: fakeJudge }, deps)); return h; };
+            const call = (h) => new Promise(resolve => { const res = { code: 200, status(c) { this.code = c; return this; }, json(o) { resolve({ status: this.code, data: o }); } }; h({ user: { id: 1, name: '대표', role: 'admin' }, body: one('damage') }, res); });
+            const lines = []; const obj = { log: (...a) => lines.push(a.join(' ')), error() { } };
+            let x = await call(mk({ log: obj }));
+            ok(x.status === 200 && x.data.ok === true && x.data.kind === 'damage' && lines.length === 1 && lines[0].includes('[사진시험]'), 'log 가 console 꼴 객체 → 200 · 그 객체의 log 로 한 줄', { x, lines });
+            const saved = console.log; let viaConsole = 0; console.log = (...a) => { if (String(a[0]).includes('[사진시험]')) viaConsole++; };
+            try { x = await call(mk({ log: console })); } finally { console.log = saved; }
+            ok(x.status === 200 && x.data.ok === true && viaConsole === 1, 'log: console(실서버 장착 꼴) → 200', x);
+            x = await call(mk({ log: () => { throw new Error('log down'); } }));
+            ok(x.status === 200 && x.data.ok === true && x.data.kind === 'damage', '로그가 던져도 응답은 정상 200', x);
+            console.log = () => { }; try { x = await call(mk({ log: { nope: 1 } })); } finally { console.log = saved; }
+            ok(x.status === 200 && x.data.ok === true, 'log 가 엉뚱한 객체여도 200(기본 로그로)', x);
+            console.log = () => { }; try { x = await call(mk({})); } finally { console.log = saved; }
+            ok(x.status === 200 && x.data.ok === true, 'log 없이 장착 → 200');
+        }
         console.log(`  → ${pass}/${pass + fail}`);
 
         // ── 도구 ──

@@ -1017,8 +1017,10 @@
     //   새 폴링 없음 — 기존 1초 tick 에 얹는다(요약 30초 · 카드가 열려 있으면 목록 10초 · 펼친 대화 5초 · 가려진 동안은 안 받음)
     //   서버에 문자 라우트가 없으면(요약이 실패하면) 알약 자체가 안 보인다 → 종전 화면 그대로
     const SMS = { sum: null, sumAt: 0, sumSig: '', items: null, sig: '', err: '', pick: null, q: '', qt: 0, seq: 0, lbusy: false, listAt: 0, all: null, open: 0, thread: null, tsig: '', tseq: 0, tbusy: false, thAt: 0, sending: false, texts: new Map(), filled: 0, imgs: new Map() };
-    const SMS_ST = { staff_needed: ['직원 몫', 'ask'], bot_replied: ['봇 답변', 'work'], cooldown: ['쿨다운', 'wait'], staff_replied: ['직원 답변', 'done'], closed: ['끝난 대화', 'mute'] };
-    const SMS_CELLS = [['staff_needed', '직원 몫'], ['bot_replied', '봇 답'], ['cooldown', '쿨다운'], ['staff_replied', '처리됨']];
+    const SMS_ST = { staff_needed: ['직원 몫', 'ask'], draft: ['초안 대기', 'wait'], bot_replied: ['봇 답변', 'work'], cooldown: ['봇 답변', 'work'], staff_replied: ['직원 답변', 'done'], closed: ['끝난 대화', 'mute'], new: ['새 문자', 'mute'], ignored: ['안 봐도 됨', 'mute'] };
+    // 숫자 칸(F1): 직원 몫 · 초안 대기 · 봇 답 · 처리됨 — 「쿨다운」은 서버가 그 상태를 넣지 않아 뺐다. 사람이 볼 것 = 직원 몫 + 초안 대기(알약 숫자 · 챙길 일)
+    const SMS_CELLS = [['staff_needed', '직원 몫'], ['draft', '초안 대기'], ['bot_replied', '봇 답'], ['staff_replied', '처리됨']];
+    const smsNeed = () => { const d = SMS.sum || {}, c = d.counts && typeof d.counts === 'object' ? d.counts : {}; return { staff: Number(d.staff_needed) || 0, draft: Number('draft' in c ? c.draft : d.drafts) || 0 }; };
     const SMS_MODE = { record: ['기록만', '봇은 답하지 않고 받은 문자만 기록해요'], draft: ['초안', '봇이 답 초안을 만들고, 사람이 보내요'], auto: ['자동 답변', '간단한 문의는 봇이 바로 답해요'] };
     const SMS_WHO = { bot: '봇', staff_phone: '직원(폰)', staff_desk: '직원(오피스)' };
     const SMS_STATE = { queued: '보내는 중', sent: '보냄', delivered: '전달됨', failed: '보내지 못함' };
@@ -1049,16 +1051,17 @@
         const d = SMS.sum;
         b.hidden = !d;
         if (!d) { if (smsVisible()) toolShow(null); return; }
-        const need = Number(d.staff_needed) || 0, dead = smsDead();
+        const nd = smsNeed(), need = nd.staff + nd.draft, dead = smsDead();
         n.hidden = !(need > 0); n.textContent = need > 99 ? '99+' : String(need);
         b.dataset.dead = dead ? '1' : '';
-        b.setAttribute('aria-label', '문자' + (need > 0 ? `, 직원이 답할 것 ${need}건` : '') + (dead ? ', 회사폰 연결 끊김' : ''));
+        b.setAttribute('aria-label', '문자' + (need > 0 ? `, 볼 것 ${need}건(직원 몫 ${nd.staff} · 초안 대기 ${nd.draft})` : '') + (dead ? ', 회사폰 연결 끊김' : ''));
     }
     function smsCounts() {
         const d = SMS.sum || {}, c = d.counts && typeof d.counts === 'object' ? d.counts : null, a = SMS.all;
         const out = {};
         SMS_CELLS.forEach(([k]) => { out[k] = c && k in c ? Number(c[k]) || 0 : (a ? a.filter(x => x.status === k).length : null); });
         if (!c && d.staff_needed != null) out.staff_needed = Number(d.staff_needed) || 0;
+        if (!(c && 'draft' in c) && d.drafts != null) out.draft = Number(d.drafts) || 0;
         return out;
     }
     function smsHead() {
@@ -1070,7 +1073,7 @@
         else if (smsDead()) smsNote(`회사폰 전달 앱 연결이 끊겼어요${d.gateway.last_ping_at ? '. 마지막 연결 ' + smsWhen(d.gateway.last_ping_at) : ''}. 회사폰이 켜져 있는지, 앱이 돌고 있는지 확인해 주세요. 그동안 온 문자는 여기에 안 보여요.`, 'err');
         else smsNote('');
         const c = smsCounts();
-        $('sms-stat').innerHTML = SMS_CELLS.map(([k, label]) => { const v = c[k], on = Number(v) > 0; return `<li data-k="${k === 'staff_needed' && on ? 'ask' : ''}"${on ? ` data-b="${k}" role="button" tabindex="0" aria-pressed="${String(SMS.pick === k)}"` : ''}><span>${label}</span><b>${v == null ? '-' : nfmt(v)}</b></li>`; }).join('');
+        $('sms-stat').innerHTML = SMS_CELLS.map(([k, label]) => { const v = c[k], on = Number(v) > 0; return `<li data-k="${(k === 'staff_needed' || k === 'draft') && on ? 'ask' : ''}"${on ? ` data-b="${k}" role="button" tabindex="0" aria-pressed="${String(SMS.pick === k)}"` : ''}><span>${label}</span><b>${v == null ? '-' : nfmt(v)}</b></li>`; }).join('');
         const all = $('sms-all'); if (all) all.hidden = !SMS.pick;
         if (document.getElementById('sms-text')) smsSync();
     }
@@ -1289,11 +1292,39 @@
         if (!SMS.lbusy && t - SMS.listAt > 10000) smsList(true);
         if (SMS.open && !SMS.tbusy && !SMS.sending && t - SMS.thAt > 5000) smsThread(true);
     }
+    // 알림에서 그 문자 대화로(F1) — app.js 가 메뉴를 바꾼 뒤 window.AkmAoDesk.openSms(대화 id) 를 부른다(link = agent-office?sms=ID)
+    //   카드를 전체 목록으로 열고 그 대화를 펼친다 · 목록 50건 밖이면 그 대화만 따로 받아 맨 위에 둔다 · 없는 번호면 카드만 열고 false
+    let smsOpenSeq = 0;
+    async function smsOpenById(threadId) {
+        const id = Number(threadId); if (!Number.isInteger(id) || id <= 0) return false;
+        const seq = ++smsOpenSeq, stale = () => seq !== smsOpenSeq || !S.mounted || !pageActive();
+        try {
+            for (let i = 0; i < 50 && !(S.mounted && pageActive()); i++) await new Promise(r => setTimeout(r, 100));   // 메뉴 전환·첫 그리기(최대 5초)
+            if (stale()) return false;
+            if (!SMS.sum) await smsSummary();
+            if (stale() || !SMS.sum) return false;
+            if (S.full) closeFull();
+            if (SMS.open && SMS.open !== id) smsThreadClose(false);
+            toolShow('desk-sms');
+            SMS.pick = null; SMS.q = ''; $('sms-q').value = ''; SMS.sig = '';
+            smsHead(); await smsList();
+            if (stale()) return false;
+            if (!(SMS.items || []).some(x => x.id === id)) {
+                let d = null; try { d = await api('/api/sms/threads/' + id); } catch (e) { d = null; }
+                if (stale() || !(d && d.thread)) return false;
+                SMS.items = [d.thread].concat(SMS.items || []); SMS.sig = ''; smsRenderList();
+            }
+            if (SMS.open !== id) smsThreadOpen(id);
+            const row = document.querySelector('#sms-list .sms-item[data-id="' + id + '"]');
+            if (row) { row.scrollIntoView({ block: 'nearest' }); flashEl(row.querySelector('.sms-row'), 1600); }
+            return SMS.open === id;
+        } catch (e) { return false; }
+    }
     function smsTodoHtml() {
         const d = SMS.sum; if (!d || d.enabled === false) return '';
-        const need = Number(d.staff_needed) || 0;
+        const nd = smsNeed(), need = nd.staff + nd.draft;
         return (smsDead() ? `<li class="sms-todo dead" data-sms="all" role="button" tabindex="0"><span>회사폰 전달 앱 연결 끊김</span><b>확인</b><small>${d.gateway.last_ping_at ? '마지막 연결 ' + esc(smsWhen(d.gateway.last_ping_at)) + ' · ' : ''}회사폰이 켜져 있는지 봐 주세요</small></li>` : '')
-            + (need > 0 ? `<li class="sms-todo" data-sms="staff_needed" role="button" tabindex="0"><span>문자 답할 것</span><b>${nfmt(need)}건</b><small>에이전트 오피스 &gt; 문자 (눌러서 열기)</small></li>` : '');
+            + (need > 0 ? `<li class="sms-todo" data-sms="${nd.staff > 0 ? 'staff_needed' : 'draft'}" role="button" tabindex="0"><span>문자 답할 것</span><b>${nfmt(need)}건</b><small>${nd.draft > 0 ? `직원 몫 ${nfmt(nd.staff)} · 초안 대기 ${nfmt(nd.draft)} · ` : ''}에이전트 오피스 &gt; 문자 (눌러서 열기)</small></li>` : '');
     }
     function smsBind() {
         $('desk-sms-now').addEventListener('click', () => { if (smsVisible()) smsCloseCard(); else smsOpen(); });
@@ -2462,7 +2493,7 @@
             return 'all';
         } catch (e) { return false; }
     }
-    window.AkmAoDesk = { open: openOrder };
+    window.AkmAoDesk = { open: openOrder, openSms: smsOpenById };
 
     window.aoDeskEnter = async function () {
         mount();

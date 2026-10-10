@@ -3,7 +3,7 @@
 //   ① /api/sms/* = 총괄 확정 계약 그대로(GET summary · threads · threads/:id · images/:id / POST reply · handled · send-draft · close)
 //   ② 화면 파일 = public/ 그대로 · 그 밖의 /api 는 화면이 뜰 만큼만 빈 값(실서버 아님)
 //   ③ 시험용: GET /__mock/log(받은 쓰기 목록) · POST /__mock/reset · POST /__mock/set { alive, mode, enabled, counts:false(=summary 에서 counts 빼기), fail:'reply'|'' }
-//   🔵 계약에 없는데 넣어 둔 제안 필드: summary.counts{상태별 대화 수} (없어도 화면은 목록으로 센다)
+//   실서버(sms/index.js)와 맞춘 것(F1): 상태 = new · staff_needed · draft · bot_replied · staff_replied · closed · ignored('cooldown' 은 서버가 안 넣는다) · summary.counts·drafts · [이대로 보내기]는 직원 이름으로 나감
 const http = require('http'), fs = require('fs'), path = require('path');
 const PUB = path.join(__dirname, '..', 'public');
 const PORT = Number(process.argv[2] || process.env.PORT610 || 3461);
@@ -22,7 +22,7 @@ function seed() {
     ST = {
         enabled: true, mode: 'draft', alive: true, last_ping_at: iso(1), withCounts: true, fail: '', log: [],
         threads: [
-            T(1, '1234', 'staff_needed', '효돈 · 10/9 발송 · 하우스감귤 4kg', [
+            T(1, '1234', 'draft', '효돈 · 10/9 발송 · 하우스감귤 4kg', [
                 m('in', 'customer', '귤 받았는데요', 62), m('in', 'customer', '', 61, { kind: 'mms', image_ids: [901, 902] }),
                 m('in', 'customer', '몇 개가 터져서 왔어요. 어떻게 하면 되나요?', 60),
             ], { order: ORD({ status_label: '배송완료', arrive_text: '10/10(토) 도착' }), draft_text: '부패과가 나왔군요, 불편드려 죄송합니다. 괜찮은 상품 드셔보시고 입맛에도 안 맞으시면 무료 수거 및 반품처리도 가능합니다.' }),
@@ -35,10 +35,10 @@ function seed() {
                 m('in', 'customer', '오늘 주문하면 언제 발송되나요?', 95), m('out', 'bot', '오늘 8시 이후 주문은 내일 오전에 발송돼요. 보통 발송 다음 날 도착합니다.', 94),
             ], { order: ORD({ option_text: '하우스감귤 가정용 - 2.5kg(소과)' }), bot_count_today: 1 }),
             T(5, '9090', 'bot_replied', null, [m('in', 'customer', '귤 보관은 어떻게 해요?', 130), m('out', 'bot', '서늘하고 바람이 통하는 곳에 두시고, 오래 두실 때는 냉장 보관을 권해요.', 129)], { bot_count_today: 1 }),
-            T(6, '3141', 'cooldown', '효돈 · 10/9 발송 · 하우스감귤 4kg', [
+            T(6, '3141', 'bot_replied', '효돈 · 10/9 발송 · 하우스감귤 4kg', [
                 m('in', 'customer', '송장번호 알려주세요', 20), m('out', 'bot', '송장 끝 5592 로 10/9(금)에 출발했어요.', 19), m('in', 'customer', '네 감사합니다', 18),
             ], { order: ORD({ tracking_tail: '5592' }), bot_count_today: 1 }),
-            T(7, '2718', 'cooldown', null, [m('in', 'customer', '가격표 좀 보내주세요', 12), m('out', 'bot', '지금 판매 중인 상품과 가격은 스마트스토어에서 보실 수 있어요.', 11)], { bot_count_today: 1 }),
+            T(7, '2718', 'bot_replied', null, [m('in', 'customer', '가격표 좀 보내주세요', 12), m('out', 'bot', '지금 판매 중인 상품과 가격은 스마트스토어에서 보실 수 있어요.', 11)], { bot_count_today: 1 }),
             T(8, '4444', 'staff_replied', '대성 · 10/7 발송 · 한라봉 3kg', [
                 m('in', 'customer', '', 300, { kind: 'mms', image_ids: [903] }), m('in', 'customer', '크기가 저번보다 작아요', 299),
                 m('out', 'staff_phone', '크기가 작았군요, 불편드려 죄송합니다. 사진 확인했어요. 다음 주문 때 배송메세지에 사이즈를 적어 주시면 맞춰 보내드릴게요.', 280),
@@ -57,13 +57,13 @@ seed();
 const lastOf = (t, dir) => t.messages.filter(x => x.direction === dir).pop() || null;
 function row(t) {
     const li = lastOf(t, 'in'), lo = lastOf(t, 'out');
-    return { id: t.id, phone_tail: t.phone_tail, phone_masked: t.phone_masked, customer_hint: t.customer_hint, status: t.status, last_in_text: li ? String(li.body || '').slice(0, 120) : '', last_in_at: li ? li.event_at : null, last_out_text: lo ? String(lo.body || '').slice(0, 120) : null, last_out_at: lo ? lo.event_at : null, has_image: t.messages.some(x => x.image_ids && x.image_ids.length), draft_text: ST.mode === 'draft' ? t.draft_text : null, staff_name: t.staff_name, handled_at: t.handled_at, bot_count_today: t.bot_count_today };
+    return { id: t.id, phone_tail: t.phone_tail, phone_masked: t.phone_masked, customer_hint: t.customer_hint, status: t.status, last_in_text: li ? String(li.body || '').slice(0, 120) : '', last_in_at: li ? li.event_at : null, last_out_text: lo ? String(lo.body || '').slice(0, 120) : null, last_out_at: lo ? lo.event_at : null, has_image: t.messages.some(x => x.image_ids && x.image_ids.length), draft_text: ST.mode === 'draft' ? t.draft_text : null, staff_name: t.staff_name, handled_at: t.handled_at, bot_count_today: t.bot_count_today, last_out_state: lo ? lo.state : null };
 }
 const latest = t => Math.max(...t.messages.map(x => Date.parse(x.event_at)));
 function summary() {
-    const c = {}; ['staff_needed', 'bot_replied', 'cooldown', 'staff_replied', 'closed'].forEach(k => { c[k] = ST.threads.filter(t => t.status === k).length; });
+    const c = {}; ['new', 'staff_needed', 'draft', 'bot_replied', 'staff_replied', 'closed', 'ignored'].forEach(k => { c[k] = ST.threads.filter(t => t.status === k).length; });
     const day = Date.now() - 86400000, all = ST.threads.flatMap(t => t.messages).filter(x => Date.parse(x.event_at) > day);
-    const s = { enabled: ST.enabled, mode: ST.mode, staff_needed: c.staff_needed, today_in: all.filter(x => x.direction === 'in').length, today_bot: all.filter(x => x.sender === 'bot').length, today_staff: all.filter(x => /^staff/.test(x.sender)).length, gateway: { last_ping_at: ST.alive ? iso(0) : iso(190), alive: ST.alive } };
+    const s = { enabled: ST.enabled, mode: ST.mode, staff_needed: c.staff_needed, drafts: c.draft, today_in: all.filter(x => x.direction === 'in').length, today_bot: all.filter(x => x.sender === 'bot').length, today_staff: all.filter(x => /^staff/.test(x.sender)).length, gateway: { last_ping_at: ST.alive ? iso(0) : iso(190), alive: ST.alive } };
     if (ST.withCounts) s.counts = c;
     return s;
 }
@@ -93,7 +93,7 @@ http.createServer(async (req, res) => {
                 const st = u.searchParams.get('status') || 'all', q = (u.searchParams.get('q') || '').trim(), lim = Math.min(200, Number(u.searchParams.get('limit')) || 50);
                 let list = ST.threads.filter(t => st === 'all' || t.status === st);
                 if (q) list = list.filter(t => t.phone_tail.includes(q) || t.messages.some(x => String(x.body || '').includes(q)) || String(t.customer_hint || '').includes(q));
-                list = list.slice().sort((a, b) => (b.status === 'staff_needed') - (a.status === 'staff_needed') || latest(b) - latest(a));
+                list = list.slice().sort((a, b) => (['staff_needed', 'draft'].includes(b.status) - ['staff_needed', 'draft'].includes(a.status)) || latest(b) - latest(a));
                 return send(res, 200, { items: list.slice(0, lim).map(row) });
             }
             if (M === 'GET' && (m = /^\/api\/sms\/images\/(\d+)$/.exec(p))) { const s = IMAGES[m[1]]; return s ? send(res, 200, s, 'image/svg+xml') : send(res, 404, { error: '사진이 없습니다' }); }
@@ -108,9 +108,8 @@ http.createServer(async (req, res) => {
                     if (m[2] === 'reply' || m[2] === 'send-draft') {
                         const text = m[2] === 'reply' ? String(b.text || '').trim() : String(t.draft_text || '');
                         if (!text) return send(res, 400, { error: '보낼 글이 없습니다' });
-                        const msg = { id: 9000 + ST.log.length, direction: 'out', kind: 'sms', body: text, sender: m[2] === 'reply' ? 'staff_desk' : 'bot', state: 'queued', image_ids: [], event_at: new Date().toISOString() };
-                        t.messages.push(msg); t.draft_text = null; t.status = m[2] === 'reply' ? 'staff_replied' : 'bot_replied';
-                        if (m[2] === 'reply') { t.staff_name = '시험직원'; t.handled_at = msg.event_at; }
+                        const msg = { id: 9000 + ST.log.length, direction: 'out', kind: 'sms', body: text, sender: 'staff_desk', state: 'queued', image_ids: [], event_at: new Date().toISOString() };
+                        t.messages.push(msg); t.draft_text = null; t.status = 'staff_replied'; t.staff_name = '시험직원'; t.handled_at = msg.event_at;
                         return send(res, 200, { ok: true, message_id: msg.id });
                     }
                     if (m[2] === 'handled') { t.status = 'staff_replied'; t.staff_name = '시험직원'; t.handled_at = new Date().toISOString(); return send(res, 200, { ok: true }); }

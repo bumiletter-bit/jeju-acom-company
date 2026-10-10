@@ -21,13 +21,20 @@ const SECRET_ADDR = '시험특별시 비밀로 610번길 61', SECRET_MEMO = '비
     const cjCalls = [];
     const cjTrack = { TROUBLE_BUCKETS: ['미배송', '사고', '기타', '정보없음', '조회실패'], trackOne: async tr => { cjCalls.push(tr); return { bucket: '간선상하차', code: '41', label: '간선상차', msg: '시험기사 홍길동 010-9999-8888', time: '2026-10-10 03:00', branch: '시험Hub', driver: { name: '시험기사', phone: '010-9999-8888' }, events: [], delivered: false }; } };
     const app = express(); app.use(express.json({ limit: '100kb' })); app.use(express.static(path.join(ROOT, 'public')));
-    const api = mount(app, { pool, lookup, cjTrack, holidays: async () => ({ arriveOff: new Set(), reasons: new Map() }), log: { error() { } }, secret: 'verify610-' + Date.now() });
+    const hits = new Set();
+    // 시험이 적은 시도 기록(해시)을 전부 모아 끝에 지운다 — 열쇠가 실행마다 달라 실서비스 기록과 겹치지 않는다
+    const tpool = { query: (q, p) => { if (/INSERT INTO sms_selfcheck_hits/.test(String(q))) (p || []).forEach(v => hits.add(String(v))); return pool.query(q, p); } };
+    const holidays = async () => ({ arriveOff: new Set(), reasons: new Map() });
+    const api = mount(app, { pool: tpool, lookup, cjTrack, holidays, log: { error() { } }, secret: 'verify610-' + Date.now() });
+    // 상한을 낮춘 따로 띄운 장착(포트는 빈 것 아무거나) — 기본 상한(200회 등)을 실제로 채우지 않고 갈래를 본다
+    const variants = [];
+    const variant = async (limits, extra) => { const a = express(); a.use(express.json({ limit: '100kb' })); const tg = []; const ap = mount(a, Object.assign({ pool: tpool, lookup, cjTrack, holidays, log: { error() { } }, secret: 'v610-' + variants.length + '-' + Date.now(), limits, notifyTelegram: async t => { tg.push(t); } }, extra || {})); const sv = http.createServer(a); await new Promise(r => sv.listen(0, r)); const o = { api: ap, base: 'http://localhost:' + sv.address().port, sv, tg }; variants.push(o); return o; };
     const server = http.createServer(app); await new Promise(r => server.listen(PORT, r));
-    const hits = new Set(); let ipN = 0;
-    const post = async (name, tail, ip) => {
+    let ipN = 0;
+    const post = async (name, tail, ip, V) => {
         ip = ip || '10.61.' + Math.floor(++ipN / 250) + '.' + (ipN % 250);
         hits.add(api.keyHash('ip', ip)); hits.add(api.keyHash('name', String(name).replace(/\s+/g, '')));
-        const t0 = Date.now(); const r = await fetch(BASE + '/api/track-order', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip }, body: JSON.stringify({ name, tail }) });
+        const t0 = Date.now(); const r = await fetch((V ? V.base : BASE) + '/api/track-order', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip }, body: JSON.stringify({ name, tail }) });
         const text = await r.text(); let j = {}; try { j = JSON.parse(text); } catch (e) { /* 글 그대로 */ }
         return { s: r.status, j, text, ms: Date.now() - t0 };
     };
@@ -107,13 +114,54 @@ const SECRET_ADDR = '시험특별시 비밀로 610번길 61', SECRET_MEMO = '비
         const ipA = '10.99.61.1', r1 = [];
         for (let i = 0; i < 6; i++) r1.push(await post('시험육일공사' + '가나다라마바'[i], '9999', ipA));
         ok(r1.slice(0, 5).every(x => x.s === 200) && r1[5].s === 429 && /뒤에 다시/.test(r1[5].j.error || ''), `같은 IP 10분에 5회까지 · 6회째 429(${r1.map(x => x.s).join(',')}) 「${r1[5].j.error}」`);
-        const r2 = [];
-        for (let i = 0; i < 6; i++) r2.push(await post('시험육일공아', '000' + i, '10.98.61.' + (i + 1)));
-        ok(r2.slice(0, 5).every(x => x.s === 200) && r2[5].s === 429, `같은 이름으로 끝자리를 바꿔 가며 찍기 → 5회까지 · 6회째 429(IP 를 바꿔도 · ${r2.map(x => x.s).join(',')})`);
+        ok(api.limits.perName === 30 && api.limits.perTail === 20 && api.limits.perAll === 200 && api.limits.noneStreak === 10 && api.limits.lockMin === 60 && api.limits.maxRunning === 8 && api.limits.perIp === 5, `기본 상한 = IP 5 · 성함 30 · 끝자리 20 · 전체 200(10분) · 없음 10번 이어지면 60분 잠금 · 동시 8(${JSON.stringify(api.limits)})`);
+        // ① IP = x-forwarded-for 의 마지막 값 — 앞쪽을 꾸며 바꿔도 같은 IP 로 센다
+        const rx = [];
+        for (let i = 0; i < 6; i++) rx.push(await post('시험육일공자' + '가나다라마바'[i], '9998', '1.2.3.' + (i + 1) + ', 10.96.61.7'));
+        ok(rx.slice(0, 5).every(x => x.s === 200) && rx[5].s === 429, `IP 는 x-forwarded-for 의 마지막 값 — 앞 값을 매번 바꿔도 6회째 429(${rx.map(x => x.s).join(',')})`);
+        const ry = [];
+        for (let i = 0; i < 6; i++) ry.push(await post('시험육일공차' + '가나다라마바'[i], '9997', '10.96.61.8, 10.95.' + i + '.1'));
+        ok(ry.every(x => x.s === 200), `앞 값이 같아도 마지막 값이 다르면 서로 다른 IP(${ry.map(x => x.s).join(',')})`);
+        // 성함 상한 · 끝자리 상한 · 전체 상한 · 없음 잠금 · 동시 상한 — 상한을 낮춘 장착으로
+        const VN = await variant({ perName: 5 }), r2 = [];
+        for (let i = 0; i < 6; i++) r2.push(await post('시험육일공아', '000' + i, '10.98.61.' + (i + 1), VN));
+        ok(r2.slice(0, 5).every(x => x.s === 200) && r2[5].s === 429, `같은 성함으로 끝자리를 바꿔 가며 찍기 → 상한(시험 5)까지 · 다음은 429(IP 를 바꿔도 · ${r2.map(x => x.s).join(',')})`);
+        const VT = await variant({ perTail: 3 }), r3 = [];
+        for (let i = 0; i < 4; i++) r3.push(await post('시험육일공카' + '가나다라'[i], '6101', '10.94.61.' + (i + 1), VT));
+        ok(r3.slice(0, 3).every(x => x.s === 200) && r3[3].s === 429, `③ 같은 끝 4자리를 성함·IP 를 바꿔 가며 찍기 → 상한(시험 3)까지 · 다음은 429(${r3.map(x => x.s).join(',')})`);
+        const VA = await variant({ perAll: 3 }), r4 = [];
+        for (let i = 0; i < 6; i++) r4.push(await post('시험육일공타' + '가나다라마바'[i], '700' + i, '10.93.61.' + (i + 1), VA));
+        await new Promise(r => setTimeout(r, 100));
+        ok(r4.slice(0, 3).every(x => x.s === 200) && r4.slice(3).every(x => x.s === 429) && /몰려/.test(r4[5].j.error || ''), `② 전체 상한(시험 3) → 넘으면 누구든 429 「${r4[5].j.error}」(${r4.map(x => x.s).join(',')})`);
+        ok(VA.tg.length === 1 && /셀프 조회/.test(VA.tg[0]) && !/시험육일공|700\d|10\.93/.test(VA.tg[0]), `② 텔레그램은 1시간에 한 번만(3번 막혔는데 ${VA.tg.length}통) · 글에 성함·번호·IP 없음`);
+        const VL = await variant({ perIp: 100, noneStreak: 3, lockMin: 60 }), ipL = '10.92.61.1', r5 = [];
+        r5.push(await post('시험육일공파가', '1111', ipL, VL)); r5.push(await post('시험육일공파나', '1112', ipL, VL));
+        r5.push(await post('시험육일공가', '6101', ipL, VL));                                             // 맞힘 → 이어진 「없음」 처음부터
+        r5.push(await post('시험육일공파다', '1113', ipL, VL)); r5.push(await post('시험육일공파라', '1114', ipL, VL));
+        const notYet = await post('시험육일공가', '6101', ipL, VL);                                         // 없음 2번뿐 → 아직 안 잠김(그리고 다시 처음부터)
+        for (const t of ['1115', '1116', '1117']) r5.push(await post('시험육일공파마', t, ipL, VL));       // 없음 3번 이어짐 → 잠금
+        const locked = await post('시험육일공가', '6101', ipL, VL), other = await post('시험육일공가', '6101', '10.92.61.2', VL);
+        ok(r5.every(x => x.s === 200) && notYet.j.match === 'one' && locked.s === 429 && !locked.j.order && /잠시 막아/.test(locked.j.error || '') && other.j.match === 'one', `④ 「없음」이 상한(시험 3)만큼 이어진 IP 는 잠금(맞는 값도 429 「${locked.j.error}」) · 중간에 맞히면 처음부터 · 다른 IP 는 그대로`);
+        const slow = Object.assign({}, lookup, { refreshOrder: async (...a) => { await new Promise(r => setTimeout(r, 2500)); return lookup.refreshOrder(...a); } });
+        const VC = await variant({ maxRunning: 2, perName: 100, perTail: 100 }, { lookup: slow });
+        const r6 = await Promise.all([1, 2, 3, 4, 5].map(i => post('시험육일공가', '6101', '10.91.61.' + i, VC)));
+        console.log("    (동시 시험 응답: " + r6.map(x => x.s + "/" + x.ms + "ms/" + (x.j.match || x.j.error || "").slice(0, 12)).join(" · ") + ")");
+        const okN = r6.filter(x => x.s === 200 && x.j.match === 'one').length, busyN = r6.filter(x => x.s === 429 && /몰려/.test(x.j.error || '')).length;
+        ok(okN === 2 && busyN === 3, `⑧ 동시에 상한(시험 2)까지만 조회 · 나머지는 429 「잠시 뒤」(조회 ${okN} · 막힘 ${busyN})`);
+        const again = await post('시험육일공가', '6101', '10.91.61.9', VC);
+        ok(again.j.match === 'one', '⑧ 끝난 뒤에는 다시 조회됨(셈이 풀림)');
+        // ⑥ 정리 · ⑦ 색인
+        await pool.query(`INSERT INTO sms_selfcheck_hits (kind, key_hash, at) VALUES ('ip', 'verify610old', now() - interval '2 days'), ('ip', 'verify610new', now())`); hits.add('verify610old'); hits.add('verify610new');
+        const purged = await api.purge(), leftOld = (await pool.query(`SELECT key_hash FROM sms_selfcheck_hits WHERE key_hash IN ('verify610old', 'verify610new')`)).rows.map(x => x.key_hash).join();
+        ok(purged >= 1 && leftOld === 'verify610new' && typeof mount.purge === 'function', `⑥ purge = 하루 지난 시도 기록만 지움(${purged}줄 · 남은 것 ${leftOld}) · 모듈에서도 부를 수 있음(mount.purge(pool))`);
+        const idx = (await pool.query(`SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'delivery_shipments' AND indexname IN ('idx_ds_tail_phone', 'idx_ds_tail_buyer')`)).rows;
+        ok(idx.length === 2 && idx.every(x => /"?right"?\(/.test(x.indexdef) && /length\(/.test(x.indexdef)), `⑦ 끝 4자리 색인 2개(받는 분 · 구매자) 있음`);
+        const plan = (await pool.query(`EXPLAIN SELECT 1 FROM delivery_shipments s WHERE ((right(s.phone_digits, 4) = '6101' AND length(s.phone_digits) >= 9) OR (right(s.buyer_digits, 4) = '6101' AND length(s.buyer_digits) >= 9)) AND s.ship_date >= current_date - 30`)).rows.map(x => x['QUERY PLAN']).join('\n');
+        ok(/idx_ds_tail_phone/.test(plan) && /idx_ds_tail_buyer/.test(plan), `⑦ 조회가 그 색인을 탐(${/Seq Scan/.test(plan) ? '전체 읽기 섞임' : '색인만'})`);
         const blocked = await post('시험육일공가', '6101', ipA);
         ok(blocked.s === 429 && !blocked.j.order && blocked.ms >= 300, '막힌 IP 는 맞는 값을 넣어도 429(내용 없음)');
-        const hr = (await pool.query(`SELECT kind, key_hash FROM sms_selfcheck_hits WHERE key_hash = ANY($1::text[])`, [[...hits]])).rows;
-        ok(hr.length > 10 && hr.every(x => /^[0-9a-f]{40}$/.test(x.key_hash) && ['ip', 'name'].includes(x.kind)), `시도 기록은 해시로만(IP·이름 원문 없음 · ${hr.length}줄)`);
+        const hr = (await pool.query(`SELECT kind, key_hash FROM sms_selfcheck_hits WHERE key_hash = ANY($1::text[])`, [[...hits].filter(h => !/^verify610/.test(h))])).rows;
+        ok(hr.length > 10 && hr.every(x => /^[0-9a-f]{40}$/.test(x.key_hash) && ['ip', 'name', 'tail', 'all', 'none', 'lock'].includes(x.kind)), `시도 기록은 해시로만(IP·성함·끝자리 원문 없음 · ${hr.length}줄 · 종류 ${[...new Set(hr.map(x => x.kind))].sort().join('/')})`);
 
         console.log('\n── 화면');
         const pg0 = await fetch(BASE + '/track-order'); const html = await pg0.text();
@@ -125,7 +173,7 @@ const SECRET_ADDR = '시험특별시 비밀로 610번길 61', SECRET_MEMO = '비
         const vals = [...root.matchAll(/(--[a-z-]+)\s*:\s*([^;]+);/g)].map(m => [m[1], m[2].trim()]);
         const off = vals.filter(([k, val]) => (val.match(/#[0-9a-fA-F]{6}\b/g) || []).some(h => !guide.includes(h.toUpperCase())) || (/rgba\(/.test(val) && !guide.includes(val.toUpperCase().replace(/\s/g, '').split('),')[0].replace(/\)$/, '')))).map(([k, val]) => k + ' ' + val);
         ok(off.every(x => /^--danger-(dark|light) /.test(x)), `토큰 값 ${vals.length}개 = 디자인 가이드에 있는 값(가이드 밖 = ${off.join(' / ') || '없음'} · 빨강 글자·옅은 빨강 바탕은 앱에서 이미 쓰는 값)`);
-        ok(/Pretendard/.test(style) && /pretendard\.min\.css/.test(html) && /src="\/akkomi\.png"/.test(html) && !/—/.test(html.replace(/<script>[\s\S]*<\/script>/, '').replace(/<style>[\s\S]*<\/style>/, '')), 'Pretendard · 아꼼이 로고 · 긴 줄표 없음');
+        ok(/Pretendard/.test(style) && /pretendard@1\.3\.9\/dist\/web\/static\/pretendard\.css" integrity="sha384-[A-Za-z0-9+\/=]{64}" crossorigin="anonymous"/.test(html) && /src="\/akkomi\.png"/.test(html) && !/—/.test(html.replace(/<script>[\s\S]*<\/script>/, '').replace(/<style>[\s\S]*<\/style>/, '')), 'Pretendard(고정 판 + 무결성 값) · 아꼼이 로고 · 긴 줄표 없음');
         const { chromium } = require('playwright');
         browser = await chromium.launch();
         for (const [label, vw, phone] of [['폰 390', { width: 390, height: 844 }, true], ['PC', { width: 1280, height: 800 }, false]]) {
@@ -174,7 +222,7 @@ const SECRET_ADDR = '시험특별시 비밀로 610번길 61', SECRET_MEMO = '비
     } finally {
         if (browser) await browser.close().catch(() => { });
         try { await cleanup(); const left = (await pool.query(`SELECT (SELECT count(*) FROM delivery_shipments WHERE tracking LIKE '9996100000%')::int a, (SELECT count(*) FROM delivery_status WHERE tracking LIKE '9996100000%')::int b, (SELECT count(*) FROM sms_selfcheck_hits WHERE key_hash = ANY($1::text[]))::int c`, [[...hits]])).rows[0]; ok(left.a === 0 && left.b === 0 && left.c === 0, `시험 줄 전부 지움(송장 ${left.a} · 상태 ${left.b} · 시도 기록 ${left.c})`); } catch (e) { fail++; console.log('  ❌ 시험 줄 지우기 실패: ' + e.message); }
-        server.close(); await pool.end().catch(() => { });
+        server.close(); for (const v of variants) v.sv.close(); await pool.end().catch(() => { });
     }
     console.log(`\n결과: ${pass}/${pass + fail}`);
     process.exit(fail ? 1 : 0);

@@ -68,6 +68,13 @@ const len = s => Array.from(String(s || '')).length;
             count(*) FILTER (WHERE direction = 'out' AND state = 'cancelled')::int AS cancelled_n
             FROM sms_messages WHERE (created_at + interval '9 hours')::date = (now() + interval '9 hours')::date`))[0];
         out.status_counts = {}; for (const r of await q(`SELECT status, count(*)::int AS n FROM sms_threads GROUP BY status ORDER BY 2 DESC`)) out.status_counts[r.status] = r.n;
+        // 처리 중 죽은 글 후보: 상태 new · 마지막 받은 글이 2분 넘음 · 그 글 뒤에 보낸 줄(out) 없음 — record 모드·꺼짐에서는 new 가 정상이라 경고는 draft/auto 에서만
+        out.stuck_new = await q(`SELECT t.id, t.phone_digits, t.last_in_at, t.last_in_text,
+                (SELECT m.bucket FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' ORDER BY m.id DESC LIMIT 1) AS bucket
+            FROM sms_threads t
+            WHERE t.status = 'new' AND t.last_in_at < now() - interval '2 minutes' AND t.last_in_at > now() - interval '7 days'
+              AND NOT EXISTS (SELECT 1 FROM sms_messages o WHERE o.thread_id = t.id AND o.direction = 'out' AND o.created_at >= t.last_in_at)
+            ORDER BY t.last_in_at DESC LIMIT 20`);
 
         // ── 줄(기간 안) ──
         const msgSql = `SELECT m.id, m.thread_id, m.direction, m.kind, m.body, m.sender, m.state, m.gateway_id, m.sim_number, m.bucket, m.rule_kind,
@@ -137,6 +144,12 @@ const len = s => Array.from(String(s || '')).length;
         const noEnv = ins.filter(r => !r.env).length;
         out.notes = [];
         if (!cfgRaw) out.notes.push('설정 행(sms_gateway)이 없음 = 꺼짐 · 받은 글은 기록만');
+        if (out.stuck_new.length) {
+            const list = out.stuck_new.slice(0, 8).map(t => `대화 ${t.id} 끝 ${String(t.phone_digits || '').slice(-4)} ${ago(t.last_in_at)}${t.bucket ? ' 갈래:' + t.bucket : ''}`).join(', ');
+            if (cfg.enabled && cfg.mode !== 'record') out.notes.push(`상태 new 인데 받은 지 2분 넘게 보낸 줄이 없는 대화 ${out.stuck_new.length}건 — 처리 도중 멈춘 글일 수 있음(서버 재시작·오류 · sweepStuck 이 staff_needed 로 넘겨야 함): ${list}`);
+            else out.notes.push(`(참고) 상태 new 로 남은 대화 ${out.stuck_new.length}건 — 지금 모드(${cfg.enabled ? cfg.mode : '꺼짐'})에서는 정상(봇이 답하지 않는 모드): ${list}`);
+        }
+        out.stuck_new = out.stuck_new.map(t => ({ id: t.id, phone: maskPhone(t.phone_digits), last_in_at: t.last_in_at, bucket: t.bucket || null, text: safeText(t.last_in_text, 80) }));
         if (noEnv) out.notes.push(`봉투 id 없는 받은 줄 ${noEnv}개(재시도 중복을 DB 가 못 거름 — 시험·수동 입력 줄이면 정상)`);
         if (out.queue.sending > 0 && out.queue.oldest_sending && Date.now() - new Date(out.queue.oldest_sending).getTime() > cfg.ttl_sec * 1000 + 120000) out.notes.push('sending 상태가 ttl 을 넘겨 남아 있음 — sms:sent/failed webhook 이 안 온 것(폰 꺼짐·webhook 미등록 의심)');
         if (out.queue.queued > 0 && out.queue.oldest_send_after && Date.now() - new Date(out.queue.oldest_send_after).getTime() > 120000) out.notes.push('보낼 시각이 2분 넘게 지난 queued 줄이 있음 — 서버 보내기 틱·시간당 상한(hourly_send_cap)·enabled 확인');

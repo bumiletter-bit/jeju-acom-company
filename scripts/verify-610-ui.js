@@ -44,7 +44,7 @@ const logOf = async () => (await mock('/__mock/log')).log;
             await mock('/__mock/reset', {});
             const P = await open(vw, phone, theme), pg = P.pg, T = P.toasts;
             // ① 알약 · 새 폴링 없음
-            ok(await pg.locator('#desk-sms-now').isVisible() && (await pg.locator('#sms-chip-n').innerText()) === '4', `[${label}] 알약 「문자」 보임 · 답할 것 숫자 4`);
+            ok(await pg.locator('#desk-sms-now').isVisible() && (await pg.locator('#sms-chip-n').innerText()) === '4', `[${label}] 알약 「문자」 보임 · 볼 것 숫자 4(직원 몫 3 + 초안 대기 1)`);
             const n0 = P.sms.length; await pg.waitForTimeout(3200);
             ok(P.sms.length === n0 && n0 <= 2, `[${label}] 카드를 안 열면 문자 요청은 요약뿐(처음 ${n0}회 · 3초 동안 추가 ${P.sms.length - n0}회)`);
             await pg.click('#desk-sms-now'); await pg.waitForTimeout(700);
@@ -52,21 +52,22 @@ const logOf = async () => (await mock('/__mock/log')).log;
             ok(await rows(pg) === 12, `[${label}] 목록 12줄(${await rows(pg)})`);
             ok((await pg.locator('#sms-mode').innerText()) === '초안', `[${label}] 모드 칩 「초안」`);
             const cells = await pg.locator('#sms-stat li b').allInnerTexts();
-            ok(cells.join(',') === '4,3,2,2', `[${label}] 숫자 칸 직원 몫 4 · 봇 답 3 · 쿨다운 2 · 처리됨 2 (${cells.join(',')})`);
+            const cellNames = (await pg.locator('#sms-stat li span').allInnerTexts()).join('/');
+            ok(cells.join(',') === '3,1,5,2' && cellNames === '직원 몫/초안 대기/봇 답/처리됨', `[${label}] 숫자 칸 = ${cellNames}(「쿨다운」 없음) · ${cells.join(',')}`);
             ok(await sw(pg) <= vw.width, `[${label}] 목록 가로 넘침 없음(${await sw(pg)} ≤ ${vw.width})`);
             const r1 = await pg.evaluate(() => { const li = document.querySelector('#sms-list .sms-item[data-id="1"]'); return { tail: li.querySelector('.sms-tail').textContent, hint: li.querySelector('.sms-hint').textContent, badge: li.querySelector('.desk-badge').textContent, pic: !!li.querySelector('.sms-pic'), tag: !!li.querySelector('.sms-tag'), time: li.querySelector('.sms-time').textContent }; });
-            ok(r1.tail === '끝 1234' && /효돈/.test(r1.hint) && r1.badge === '직원 몫' && r1.pic && r1.tag && /^\d\d:\d\d$|\d+\/\d+ \d\d:\d\d/.test(r1.time), `[${label}] 줄 = 끝 4자리 · 손님 힌트 · 상태 배지 · 시각 · 사진 · 초안 표시(${JSON.stringify(r1)})`);
+            ok(r1.tail === '끝 1234' && /효돈/.test(r1.hint) && r1.badge === '초안 대기' && r1.pic && r1.tag && /^\d\d:\d\d$|\d+\/\d+ \d\d:\d\d/.test(r1.time), `[${label}] 줄 = 끝 4자리 · 손님 힌트 · 상태 배지 · 시각 · 사진 · 초안 표시(${JSON.stringify(r1)})`);
             ok((await pg.locator('#sms-list .sms-item[data-id="2"] .sms-hint').innerText()) === '주문을 찾지 못한 번호', `[${label}] 힌트 없는 번호 안내`);
             // ③ 거르기
             await pg.click('#sms-stat li[data-b="staff_needed"]'); await pg.waitForTimeout(600);
             const f = await pg.evaluate(() => ({ n: document.querySelectorAll('#sms-list .sms-item').length, all: Array.from(document.querySelectorAll('#sms-list .sms-item')).every(x => x.dataset.st === 'staff_needed'), pressed: document.querySelector('#sms-stat li[data-b="staff_needed"]').getAttribute('aria-pressed'), btn: !document.getElementById('sms-all').hidden }));
-            ok(f.n === 4 && f.all && f.pressed === 'true' && f.btn, `[${label}] 「직원 몫」 칸 누름 → 4줄 전부 직원 몫 · 눌린 표시 · [전체] 보임(${JSON.stringify(f)})`);
+            ok(f.n === 3 && f.all && f.pressed === 'true' && f.btn, `[${label}] 「직원 몫」 칸 누름 → 3줄 전부 직원 몫 · 눌린 표시 · [전체] 보임(${JSON.stringify(f)})`);
             ok(P.sms.some(x => /threads\?status=staff_needed/.test(x)), `[${label}] 거르기는 서버에 status=staff_needed 로 물어봄`);
             await pg.click('#sms-all'); await pg.waitForTimeout(600);
             ok(await rows(pg) === 12, `[${label}] [전체] → 12줄`);
-            await pg.focus('#sms-stat li[data-b="cooldown"]'); await pg.keyboard.press('Enter'); await pg.waitForTimeout(600);
-            ok(await rows(pg) === 2, `[${label}] 자판(Enter)으로 「쿨다운」 → 2줄`);
-            await pg.click('#sms-stat li[data-b="cooldown"]'); await pg.waitForTimeout(600);
+            await pg.focus('#sms-stat li[data-b="draft"]'); await pg.keyboard.press('Enter'); await pg.waitForTimeout(600);
+            ok(await rows(pg) === 1 && P.sms.some(x => /threads\?status=draft/.test(x)), `[${label}] 자판(Enter)으로 「초안 대기」 → 1줄(서버에 status=draft)`);
+            await pg.click('#sms-stat li[data-b="draft"]'); await pg.waitForTimeout(600);
             ok(await rows(pg) === 12, `[${label}] 같은 칸 다시 누름 → 전체`);
             // ④ 찾기
             await pg.fill('#sms-q', '7007'); await pg.waitForTimeout(900);
@@ -111,7 +112,7 @@ const logOf = async () => (await mock('/__mock/log')).log;
             let log = await logOf();
             const d1 = await pg.evaluate(() => ({ last: (Array.from(document.querySelectorAll('#sms-msgs .sms-msg.out small')).pop() || {}).textContent, ta: document.getElementById('sms-text').value, chip: document.getElementById('sms-chip-n').textContent, badge: document.querySelector('.sms-item[data-id="1"] .desk-badge').textContent }));
             ok(log.length === 1 && log[0].action === 'send-draft' && log[0].id === 1, `[${label}] [이대로 보내기] → 가짜 서버에 send-draft 1건 도착(${JSON.stringify(log.map(l => l.action + ':' + l.id))})`);
-            ok(/봇/.test(d1.last || '') && /보내는 중/.test(d1.last || '') && d1.ta === '' && d1.chip === '3' && T.some(t => /답을 보냈어요/.test(t)), `[${label}] 보낸 답이 대화에 「${d1.last}」 · 답 칸 비움 · 알약 3 · 안내 띠`);
+            ok(/직원\(오피스\)/.test(d1.last || '') && /보내는 중/.test(d1.last || '') && d1.ta === '' && d1.chip === '3' && d1.badge === '직원 답변' && T.some(t => /답을 보냈어요/.test(t)), `[${label}] 보낸 답이 대화에 「${d1.last}」 · 답 칸 비움 · 알약 3(초안 대기 0) · 「직원 답변」 · 안내 띠`);
             // ⑧ 직접 적어 보내기 (다른 대화)
             await openThread(pg, 2);
             ok(await pg.evaluate(() => document.getElementById('sms-send').disabled && document.getElementById('sms-send').textContent === '답 보내기' && document.getElementById('sms-draft').hidden && document.getElementById('sms-text').value === ''), `[${label}] 초안 없는 대화 = 빈 답 칸 · [답 보내기] 꺼짐`);
@@ -154,7 +155,7 @@ const logOf = async () => (await mock('/__mock/log')).log;
             await pg.click('#sms-stat li[data-b="staff_needed"]'); await pg.waitForTimeout(600);
             await openThread(pg, 2); await pg.click('#sms-handled'); await pg.waitForTimeout(1300);
             const mv = await pg.evaluate(() => ({ th: !!document.getElementById('sms-thread'), moved: !!document.querySelector('#sms-list .sms-item.moved[data-id="2"]'), n: document.querySelectorAll('#sms-list .sms-item').length }));
-            ok(mv.th && mv.moved && mv.n === 4, `[${label}] 「직원 몫」만 보다가 처리함 → 열어 둔 대화는 안 사라지고 안내와 함께 남음(${JSON.stringify(mv)})`);
+            ok(mv.th && mv.moved && mv.n === 3, `[${label}] 「직원 몫」만 보다가 처리함 → 열어 둔 대화는 안 사라지고 안내와 함께 남음(${JSON.stringify(mv)})`);
             await pg.keyboard.press('Escape'); await pg.click('#sms-all'); await pg.waitForTimeout(500);
             // ⑬ 끊김 · 지금 챙길 일
             await mock('/__mock/set', { alive: false }); await wake(pg);
@@ -171,16 +172,16 @@ const logOf = async () => (await mock('/__mock/log')).log;
             const tb = await box(pg, '#desk-board .sms-todo[data-sms="staff_needed"]');
             await pg.locator('#desk-board .sms-todo[data-sms="staff_needed"]').click(); await pg.waitForTimeout(800);
             const tg = await pg.evaluate(() => ({ vis: !document.getElementById('desk-sms').hidden, pressed: (document.querySelector('#sms-stat li[data-b="staff_needed"]') || { getAttribute: () => '' }).getAttribute('aria-pressed'), n: document.querySelectorAll('#sms-list .sms-item').length }));
-            ok(tg.vis && tg.pressed === 'true' && tg.n === 3 && (!phone || (tb && tb.h >= 44)), `[${label}] 챙길 일 「문자 답할 것」 누름 → 문자 카드가 직원 몫만으로 열림(${JSON.stringify(tg)} · 줄 높이 ${tb ? tb.h : '?'})`);
+            ok(tg.vis && tg.pressed === 'true' && tg.n === 2 && (!phone || (tb && tb.h >= 44)), `[${label}] 챙길 일 「문자 답할 것」 누름 → 문자 카드가 직원 몫만으로 열림(${JSON.stringify(tg)} · 줄 높이 ${tb ? tb.h : '?'})`);
             ok(await sw(pg) <= vw.width, `[${label}] 끝까지 가로 넘침 없음(${await sw(pg)})`);
-            if (theme) { await openThread(pg, 1); const a = await H.audit(pg, '#desk-sms, #desk-board .desk-todo'); ok(a.fails.length === 0, `[${label}] 끊김 안내·챙길 일 줄까지 야간 대비 미달 0(글자 ${a.texts}개${a.fails.length ? ' · ' + a.fails.slice(0, 4).join(' / ') : ''})`); await pg.keyboard.press('Escape'); }
+            if (theme) { await openThread(pg, 3); const a = await H.audit(pg, '#desk-sms, #desk-board .desk-todo'); ok(a.fails.length === 0, `[${label}] 끊김 안내·챙길 일 줄까지 야간 대비 미달 0(글자 ${a.texts}개${a.fails.length ? ' · ' + a.fails.slice(0, 4).join(' / ') : ''})`); await pg.keyboard.press('Escape'); }
             // ⑭ 꺼짐 · 모드 칩 · counts 없는 서버
             await mock('/__mock/set', { alive: true, enabled: false, mode: 'record', counts: false }); await wake(pg);
             const off = await pg.evaluate(() => ({ note: document.getElementById('sms-note').textContent, mode: document.getElementById('sms-mode').textContent, todo: document.querySelectorAll('#desk-board .sms-todo').length, cells: Array.from(document.querySelectorAll('#sms-stat li b')).map(b => b.textContent).join(',') }));
             ok(/연동이 꺼져 있어요/.test(off.note) && off.mode === '기록만' && off.todo === 0, `[${label}] 꺼짐 안내 · 모드 「${off.mode}」 · 챙길 일 줄 없음`);
             await pg.click('#sms-all').catch(() => { }); await pg.waitForTimeout(700);
             const c2 = (await pg.locator('#sms-stat li b').allInnerTexts()).join(',');
-            ok(c2 === '3,3,2,3', `[${label}] 요약에 counts 가 없어도 숫자 칸은 목록으로 셈(${c2})`);
+            ok(c2 === '2,1,5,3', `[${label}] 요약에 counts 가 없어도 숫자 칸은 목록으로 셈(${c2})`);
             ok(P.errors.length === 0, `[${label}] 화면 오류 ${P.errors.length}${P.errors.length ? ' · ' + P.errors.slice(0, 2).join(' / ') : ''}`);
             await P.ctx.close();
         }
@@ -207,6 +208,29 @@ const logOf = async () => (await mock('/__mock/log')).log;
             ok(await pg.locator('#desk-sms').isVisible() && !(await pg.locator('#desk-ship').isVisible()) && await rows(pg) === 12, '[도구] 문자를 다시 열면 배송조회가 닫히고 목록이 뜸');
             await pg.click('#desk-sms-now'); await pg.waitForTimeout(300);
             ok(!(await pg.locator('#desk-sms').isVisible()), '[도구] 알약을 한 번 더 누르면 닫힘');
+            // 알림 link(agent-office?sms=ID) → app.js 가 부를 함수 = window.AkmAoDesk.openSms(id)
+            ok(await pg.evaluate(() => typeof window.AkmAoDesk.openSms === 'function' && typeof window.AkmAoDesk.open === 'function'), '[알림] window.AkmAoDesk.openSms 있음(종전 open 도 그대로)');
+            const o1 = await pg.evaluate(() => window.AkmAoDesk.openSms(3)); await pg.waitForTimeout(700);
+            const g1 = await pg.evaluate(() => ({ card: !document.getElementById('desk-sms').hidden, open: (document.getElementById('sms-thread') || { closest: () => ({ dataset: {} }) }).closest('.sms-item').dataset.id, bub: document.querySelectorAll('#sms-msgs .sms-bub').length, pick: document.querySelectorAll('#sms-stat li[aria-pressed="true"]').length }));
+            ok(o1 === true && g1.card && g1.open === '3' && g1.bub >= 2 && g1.pick === 0, `[알림] 카드가 닫혀 있어도 openSms(3) → 카드 열림 · 그 대화 펼침(${JSON.stringify(g1)})`);
+            const o2 = await pg.evaluate(() => window.AkmAoDesk.openSms(8)); await pg.waitForTimeout(700);
+            ok(o2 === true && await pg.evaluate(() => document.getElementById('sms-thread').closest('.sms-item').dataset.id === '8' && document.querySelectorAll('#sms-thread').length === 1), '[알림] 다른 대화가 열려 있을 때 openSms(8) → 그 대화로 바뀜(한 개만 열림)');
+            const o3 = await pg.evaluate(() => window.AkmAoDesk.openSms(8)); await pg.waitForTimeout(400);
+            ok(o3 === true && await pg.evaluate(() => !!document.getElementById('sms-thread')), '[알림] 이미 열린 대화를 또 부르면 그대로 열려 있음(접히지 않음)');
+            await pg.click('#sms-stat li[data-b="staff_needed"]'); await pg.waitForTimeout(500);
+            const o4 = await pg.evaluate(() => window.AkmAoDesk.openSms(10)); await pg.waitForTimeout(700);
+            ok(o4 === true && await pg.evaluate(() => document.getElementById('sms-thread').closest('.sms-item').dataset.id === '10' && document.querySelectorAll('#sms-list .sms-item').length === 12), '[알림] 거르기 중이어도 openSms(10) → 전체로 풀고 그 대화(끝난 대화)까지 열림');
+            const o5 = await pg.evaluate(() => window.AkmAoDesk.openSms(9999)), o6 = await pg.evaluate(() => window.AkmAoDesk.openSms('x'));
+            ok(o5 === false && o6 === false && await pg.locator('#desk-sms').isVisible(), '[알림] 없는 번호·틀린 값 → false(카드만 열린 채 · 오류 없음)');
+            // 직원 몫 0 · 초안만 있을 때: 알약 숫자·챙길 일 줄이 초안 대기로
+            await pg.keyboard.press('Escape'); await pg.click('#sms-close');
+            for (const id of [2, 3, 11]) await fetch(BASE + '/api/sms/threads/' + id + '/handled', { method: 'POST', headers: { Authorization: 'Bearer x', 'Content-Type': 'application/json' }, body: '{}' });
+            await wake(pg);
+            const dr = await pg.evaluate(() => ({ chip: document.getElementById('sms-chip-n').textContent, hid: document.getElementById('sms-chip-n').hidden, label: document.getElementById('desk-sms-now').getAttribute('aria-label'), todo: (document.querySelector('#desk-board .sms-todo') || { dataset: {} }).dataset.sms, todoText: (document.querySelector('#desk-board .sms-todo') || { textContent: '' }).textContent }));
+            ok(dr.chip === '1' && !dr.hid && /초안 대기 1/.test(dr.label) && dr.todo === 'draft' && /1건/.test(dr.todoText), `[초안만] 직원 몫 0 · 초안 대기 1 → 알약 숫자 1 · 챙길 일 줄은 초안 대기로 열림(${dr.label})`);
+            if (await pg.locator('#desk-board-fold').isVisible() && await pg.evaluate(() => document.getElementById('desk-board').classList.contains('folded'))) { await pg.click('#desk-board-fold'); await pg.waitForTimeout(300); }
+            await pg.locator('#desk-board .sms-todo').click(); await pg.waitForTimeout(700);
+            ok(await pg.evaluate(() => (document.querySelector('#sms-stat li[data-b="draft"]') || { getAttribute: () => '' }).getAttribute('aria-pressed') === 'true' && document.querySelectorAll('#sms-list .sms-item').length === 1 && document.querySelector('#sms-list .sms-item').dataset.st === 'draft'), '[초안만] 챙길 일 줄 누름 → 「초안 대기」만 1줄');
             ok(P.errors.length === 0, `[도구] 화면 오류 ${P.errors.length}`);
             await P.ctx.close();
         }

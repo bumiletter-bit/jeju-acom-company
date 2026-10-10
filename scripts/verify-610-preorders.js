@@ -68,7 +68,7 @@ const CAFE1 = [c24('M001', 'i1', '010-0000-0301', '한자사', '010-0000-0301', 
 
         // ── B. 첫 수집 ──
         let r = await P.collect(c, deps);
-        eq([r.ok, r.days, r.total, r.channels.naver.rows, r.channels.coupang.rows, r.channels.cafe24.rows, daysSeen], [true, 3, 15, 11, 2, 2, [3]], '수집 1회: 15줄(네이버 11 · 쿠팡 2 · 자사몰 2 · 배열 반환도 받음) · days 3');
+        eq([r.ok, r.days, r.total, r.channels.naver.rows, r.channels.coupang.rows, r.channels.cafe24.rows, daysSeen], [true, 7, 15, 11, 2, 2, [7]], '수집 1회: 15줄(네이버 11 · 쿠팡 2 · 자사몰 2 · 배열 반환도 받음) · days 기본 7');
         const cols = (await c.query(`SELECT * FROM sms_preorders LIMIT 1`)).fields.map(f => f.name).sort();
         eq(cols, ['buyer_digits', 'channel', 'created_at', 'id', 'miss', 'option_text', 'order_key', 'paid_at', 'qty', 'recipient_digits', 'recipient_initial', 'seen_at'], '표 칸 12개(주소·이름·메모·전체 번호 글자 칸 없음)');
         const dump = JSON.stringify((await c.query(`SELECT * FROM sms_preorders`)).rows);
@@ -92,6 +92,7 @@ const CAFE1 = [c24('M001', 'i1', '010-0000-0301', '한자사', '010-0000-0301', 
         r = await look('01000000106'); eq([r.match, r.role], ['one', 'recipient'], '⑥구매자 빈칸 줄 — 받는 분 번호로 찾음');
         r = await look('01000000109'); eq([r.match, r.why], ['many', 'multi-orders'], '⑦선물 2건 = many');
         r = await look('01000000109', { recipientName: '임열매님' }); eq([r.match, r.role, r.narrowed, r.order.recipient_initial], ['one', 'buyer', 'surname', '임'], '⑦이름으로 좁히기(발송 전은 성 한 글자 비교)');
+        r = await look('01000000109', { recipientName: '임씨' }); eq([r.match, r.why], ['many', 'name-no-match'], '⑦두 글자 입력은 성 비교 안 함(F4)'); r = await look('01000000109', { recipientName: '장요' }); eq(r.match, 'many', '⑦한 글자 이름도 안 함');
         r = await look('01000000109', { recipientName: '홍길동' }); eq([r.match, r.why], ['many', 'name-no-match'], '⑦안 맞는 이름 = many');
         r = await look('0503-0000-0202'); eq([r.match, r.order.channel, r.order.paid_known, r.order.qty], ['one', 'coupang', false, 3], '쿠팡 안심번호로는 찾힘(실제 손님 번호와는 안 맞음) · 결제 시각 모름 표시');
         r = await look('01000000301'); eq([r.match, r.order.channel, r.order.qty], ['one', 'cafe24', 2], '자사몰 주문');
@@ -126,7 +127,11 @@ const CAFE1 = [c24('M001', 'i1', '010-0000-0301', '한자사', '010-0000-0301', 
         coupangFail = true; coupangRows = []; r = await P.collect(c, deps);
         eq([r.ok, r.channels.coupang.error, (await c.query(`SELECT count(*)::int n, max(miss)::int m FROM sms_preorders WHERE channel = 'coupang'`)).rows[0]], [false, 'coupang_relay_error_500', { n: 2, m: 0 }], '쿠팡 조회 실패: 줄 그대로 · miss 안 올림 · 다른 채널은 계속');
         ok(r.channels.naver.rows === 10 && r.channels.cafe24.rows === 2, '실패해도 네이버·자사몰은 수집');
-        coupangFail = false; await P.collect(c, deps); r = await P.collect(c, deps); eq(r.channels.coupang.removed, 2, '쿠팡 0건이 두 번 = 삭제');
+        coupangFail = false; r = await P.collect(c, deps); eq([r.channels.coupang.grace, r.channels.coupang.missed, (await c.query(`SELECT count(*)::int n, max(miss)::int m FROM sms_preorders WHERE channel = 'coupang'`)).rows[0]], [true, 0, { n: 2, m: 0 }], '쿠팡 0건 첫 회 = 유예(줄·miss 그대로 · F4)');
+        r = await P.collect(c, deps); eq([r.channels.coupang.grace, r.channels.coupang.missed], [undefined, 2], '쿠팡 0건 둘째 회 = miss 1'); r = await P.collect(c, deps); eq(r.channels.coupang.removed, 2, '쿠팡 0건 셋째 회 = 삭제');
+        coupangRows = COUPANG1; await P.collect(c, deps); coupangRows = []; r = await P.collect(c, deps); eq(r.channels.coupang.grace, true, '다시 줄이 생긴 뒤 0건 = 또 한 회 유예'); coupangRows = COUPANG1; await P.collect(c, deps);
+        eq(P.mapRows('coupang', [Object.assign(cp('C9', '', 'a', '', '옵션 이름', 1), { _shipmentBoxId: 'B77', _vendorItemId: 'V88' })])[0].order_key, 'B77|V88', '쿠팡 열쇠: 배송번호|옵션번호가 있으면 그것(F4)');
+        r = await P.collect(c, deps, { days: 99 }); eq(r.days, 10, 'days 상한 10');
         // collect(deps) 꼴 · DB 없음
         r = await P.collect(Object.assign({ pool: c }, deps), { days: 2 }); eq([r.days, daysSeen[daysSeen.length - 1]], [2, 2], 'collect(deps, opts) 꼴도 받음 · days 전달');
         let threw = ''; try { await P.collect(deps); } catch (e) { threw = e.message; } ok(/DB/.test(threw), 'DB 없으면 분명한 오류');
@@ -137,20 +142,7 @@ const CAFE1 = [c24('M001', 'i1', '010-0000-0301', '한자사', '010-0000-0301', 
         await c.query(`UPDATE sms_preorders SET paid_at = now() - interval '20 days' WHERE order_key = 'N006'`);
         eq((await look('01000000104')).match, 'one', '조회 창(14일) 밖 결제 건은 안 봄 → 남은 1건으로 one');
 
-        // ── F. 주기 실행(tick) ──
-        const store = {}; const cfgDeps = Object.assign({ cfgGet: async k => store[k] || null, cfgSet: async (k, v) => { store[k] = v; } }, deps);
-        const noon = Date.parse(kst(0) + 'T03:00:00Z');   // 한국 낮 12시
-        calls = { naver: 0, coupang: 0, cafe24: 0 };
-        eq(await P.tick(c, cfgDeps, { now: noon }), { ran: false, why: 'off' }, 'tick: 설정이 없으면 안 돎(기본 꺼짐)');
-        store.sms_gateway = { enabled: true, preorders: false }; eq((await P.tick(c, cfgDeps, { now: noon })).why, 'off', 'tick: preorders false = 안 돎'); eq(calls.naver, 0, 'tick: 꺼져 있으면 조회 0');
-        store.sms_gateway.preorders = true; r = await P.tick(c, cfgDeps, { now: noon });
-        eq([r.ran, calls, !!store.sms_preorders_last.at, store.sms_preorders_last.started_at, typeof store.sms_preorders_last.result.total], [true, { naver: 1, coupang: 1, cafe24: 1 }, true, new Date(noon).toISOString(), 'number'], 'tick: 켜면 1회 · 채널마다 1번 · 시각 기록');
-        ok(!JSON.stringify(store.sms_preorders_last).match(/0100000\d{4}/), 'tick: 기록에 번호 없음');
-        store.sms_preorders_last.at = new Date(noon).toISOString();
-        eq([(await P.tick(c, cfgDeps, { now: noon + 59 * 60000 })).why, calls.naver], ['not-due', 1], 'tick: 59분 뒤 = 아직');
-        eq([(await P.tick(c, cfgDeps, { now: noon + 61 * 60000 })).ran, calls.naver], [true, 2], 'tick: 61분 뒤 = 돎');
-        store.sms_preorders_last = {}; eq([(await P.tick(c, cfgDeps, { now: Date.parse(kst(0) + 'T19:30:00Z') })).why, calls.naver], ['quiet', 2], 'tick: 새벽 4시 반(한국) = 쉼');
-        eq((await P.tick(Object.assign({ pool: c }, cfgDeps), { now: noon + 5 * 3600e3 })).ran, true, 'tick(deps, opts) 꼴도 받음');
+        ok(typeof P.tick === 'undefined', '주기 함수는 없음 — sms/index.js 가 돈다(F4)');
     } finally {
         try { await c.query('ROLLBACK'); } catch (e) { /* 무시 */ }
         for (const t of ['sms_preorders', 'delivery_shipments', 'delivery_status']) { try { await c.query('DROP TABLE IF EXISTS pg_temp.' + t); } catch (e) { /* 반드시 pg_temp. */ } }

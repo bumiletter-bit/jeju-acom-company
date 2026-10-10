@@ -16,7 +16,7 @@
  *
  *   돌려주는 값
  *     null                       규칙으로 답할 수 없음(주문 못 찾음·배송 물음 아님) → 호출부가 AI 로
- *     { staff:true,  text:'' }   규칙이 「사람이 봐야 한다」고 판단(예약 상품 · 발송 예정일 지남 · 도착 예정일 지남) — why 에 까닭
+ *     { staff:true,  text:'' }   규칙이 「사람이 봐야 한다」고 판단(예약 상품 · 발송 예정일 지남 · 도착 예정일 지남 · 새 주문이 따로 있음 · 택배 문제 상태 · 완료인데 못 받음 · 결제 시각 모름) — why 에 까닭
  *     { staff:false, text, kind } 손님에게 보낼 글. kind = 'ship_before'(아직 안 나감) · 'ship_after'(나감) · 'tracking'(송장을 물음) · null(되묻기)
  *
  *   🔴 발송일·도착일은 shipping-schedule.js 의 computeShipping / computeArrival 만 쓴다(계산기 하나 — 알림톡·톡톡과 같은 답).
@@ -58,6 +58,19 @@ function reasonTail(calcText) {
     return m ? m[1].trim() : '';
 }
 const clean = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
+// 택배 상태(우리 분류) → 손님에게 하는 말. 여기 없는 분류는 말하지 않는다. 문제 분류(미배송·사고·기타·정보없음·조회실패)는 사람에게 넘긴다
+let TROUBLE = ['미배송', '사고', '기타', '정보없음', '조회실패'];
+try { const t = require('../cj-track.js').TROUBLE_BUCKETS; if (Array.isArray(t) && t.length) TROUBLE = t; } catch (_) { /* 못 읽으면 위 기본값 */ }
+function statusPhrase(label) {
+    const s = String(label || '');
+    if (/배송\s*완료/.test(s)) return '배송 완료로 확인돼요';
+    if (/배송\s*출발/.test(s)) return '오늘 배송 출발했어요';
+    if (/간선/.test(s)) return '배송 지역으로 이동 중이에요';
+    if (/집화/.test(s)) return '택배사에 접수됐어요';
+    return '';
+}
+// 거래처 이름 — 괄호 안(「대성(시온)」)은 떼고 앞 글자만
+const partnerName = s => String(s == null ? '' : s).replace(/\s*[(（\[][^)）\]]*[)）\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12);
 const tail4 = s => { const d = String(s == null ? '' : s).replace(/[^0-9]/g, ''); return d.length >= 4 ? d.slice(-4) : ''; };
 
 function answer(input) {
@@ -73,15 +86,22 @@ function answer(input) {
     const today = kstYmd(nowMs);
     const askedTracking = /송장|운송장/.test(String(a.text || ''));
     const tail = tail4(o.tracking_tail);
-    const partner = clean(o.partner, 12);
+    const partner = partnerName(o.partner);
     const status = clean(o.status_label, 20);
+    const q = String(a.text || '');
 
     // ── 이미 나간 주문 ──
-    if (o.ship_date && /^\d{4}-\d{2}-\d{2}$/.test(String(o.ship_date))) {
-        const ship = String(o.ship_date);
+    const shipYmd = o.ship_date ? String(o.ship_date).slice(0, 10) : '';   // 'YYYY-MM-DD' 또는 ISO 글자 어느 쪽이 와도 앞 10자
+    if (/^\d{4}-\d{2}-\d{2}$/.test(shipYmd)) {
+        const ship = shipYmd;
+        // 새로 넣은 주문이 따로 있으면(발송 전 주문 pre_pending) 지난 송장으로 답하지 않는다 — 손님은 새 주문을 묻는 것일 수 있다
+        if (Number(found.pre_pending) >= 1) return { text: '', kind: null, staff: true, why: 'new_order_pending' };
+        if (TROUBLE.includes(status)) return { text: '', kind: null, staff: true, why: 'trouble' };   // 미배송·사고 등은 그 낱말을 손님에게 말하지 않고 사람이 본다
         const head = `${mdDow(ship)} ${partner ? partner + '에서 ' : ''}출발했어요`;
         const tr = tail ? `송장 끝 ${tail}` : '';
         if (o.delivered) {
+            if (/못\s*받|받지|분실|없어요|어디/.test(q)) return { text: '', kind: null, staff: true, why: 'not_received' };   // 배송 완료로 찍혔는데 못 받았다는 글
+            if (!/도착했|받았|완료|송장|운송장/.test(q)) return null;   // 「언제 와요」류 — 이미 받은 지난 주문 이야기가 아닐 수 있다 → 규칙으로 답하지 않는다(AI)
             const parts = [head, tr, '배송 완료로 확인돼요'].filter(Boolean);
             return { text: parts.join(' · ') + '.', kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'delivered' };
         }
@@ -92,7 +112,8 @@ function answer(input) {
         const parts = [head, tr, arrive + (r.reason ? ` (${clean(r.reason, 30)})` : '')].filter(Boolean);
         let text = parts.join(' · ');
         text += /[.!?]$/.test(text) ? '' : '.';
-        if (status) text += ` 배송 상태: ${status}`;
+        const phrase = o.stale ? '' : statusPhrase(status);   // 택배사 조회가 실패해 옛 상태면(stale) 상태는 말하지 않는다
+        if (phrase && !/완료/.test(phrase)) text += ` 지금은 ${phrase}.`;
         return { text, kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'shipped' };
     }
 
@@ -101,7 +122,7 @@ function answer(input) {
     // #610-H 발송 전 주문(order.pre === true — 3채널 「배송준비」에서 찾은 주문 · 송장 없음)
     //   결제 시각을 모르면 계산하지 않는다(「지금」 기준으로 세면 어제 주문을 내일 발송이라 말할 수 있다) · 배송메세지에 날짜 요청이 있으면 사람에게(알림톡은 그 날짜로 안내했을 수 있다)
     const pre = o.pre === true;
-    if (pre && !o.paid_at) return { text: '', kind: null, staff: true, why: 'pre_no_paid_at' };
+    if (pre && (!o.paid_at || o.paid_known === false)) return { text: '', kind: null, staff: true, why: 'pre_no_paid_at' };   // paid_known false = 결제 시각 자리에 「수집기가 처음 본 시각」이 들어 있다(쿠팡·자사몰)
     if (pre && o.memo) {
         let memoLine = null;
         try { memoLine = shippingSchedule.memoShipLine(o.memo, new Date(toMs(o.paid_at)), h.set || null, h.reasons || null, { arriveOff: h.arriveOff || null }); } catch (_) { memoLine = { kind: 'ack' }; }

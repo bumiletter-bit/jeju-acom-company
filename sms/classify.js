@@ -38,6 +38,8 @@ const CLAIM_WORDS = [
     '안 왔', '안왔', '안 와', '안와', '안 옴', '안옴', '못 받', '못받', '안 받았', '안받았', '도착 안', '도착안', '배송 안', '배송안', '안 오네', '안오네', '아직도',
     '다른 상품', '다른상품', '다른 게 왔', '다른게 왔', '잘못 왔', '잘못왔', '잘못 온', '오배송', '누락', '빠졌', '빠져', '모자라', '덜 왔', '덜왔', '개수가', '갯수가',
     '맛없', '맛이 없', '맛이 이상', '시어', '너무 셔', '싱거', '실망', '화가', '화나', '짜증', '어이없', '항의', '신고', '소비자원', '사기',
+    '깨진', '깨짐', '터진', '터짐', '곪', '골았', '짓무', '물컹', '상함', '변질', '불량', '하자', '덜 익', '안 익', '말랐', '말라', '딱딱', '쓴맛', '먹을 수가 없', '못 먹', '버렸', '버림',
+    '받지 못', '못 받았', '미도착', '안 도착', '안받음', '분실', '늦네', '늦어', '너무 늦', '오래 걸', '연락이 없', '답이 없', '최악', '엉망',
     '작아요', '작네요', '너무 작', '크기가 다', '사이즈가 다', '사진이랑 다', '사진과 다', '저번이랑 다', '지난번이랑 다', '저번과 다', '지난번과 다',
 ];
 // 배송·발송 물음
@@ -73,11 +75,19 @@ function classify(text, ctx) {
     const shortCode = !!c.fromShortCode || (c.from != null && SHORT_CODE_RE.test(digits(c.from)));
     const webSent = WEB_SENT_RE.test(t);
 
+    // 손님 글의 표시 — 물음이거나 배송·주문·불만 낱말이 있다(기계 문자로 잘못 버리지 않게 먼저 본다)
+    const asks = QUESTION_RE.test(t);
+    const custWords = hits(t, SHIP_WORDS).length + hits(t, ORDER_WORDS).length;
+    const claimWords = hits(t, CLAIM_WORDS).length;
+    const personal = !shortCode && !webSent && (/^01\d{8,9}$/.test(digits(c.from)) || c.isKnownCustomer === true);   // 휴대폰 번호에서 온 글(또는 주문 손님)
+
     // ① 기계가 보낸 문자 — 답하지 않는다
+    //    인증·승인 낱말이 있어도 손님 글(「입금했어요 승인번호 … 확인 부탁」)이면 여기서 버리지 않는다 → 짧은 번호·[Web발신] 이거나, 물음·배송/주문 낱말이 없을 때만
     let w = hits(t, OTP_WORDS);
-    if (w.length && (/\d{4,8}/.test(t) || shortCode || webSent)) return { bucket: 'otp', words: w, reason: '인증·승인 문자' };
+    if (w.length && (shortCode || webSent || (!asks && !custWords))) return { bucket: 'otp', words: w, reason: '인증·승인 문자' };
+    //    광고 낱말이 있어도 휴대폰 손님 글에 물음·배송/주문/불만 낱말이 있으면 광고가 아니다(「대출 문자 말고 제 귤 언제 와요」「수신거부 했는데 환불은요」)
     w = hits(t, AD_WORDS);
-    if (w.length) return { bucket: 'ad', words: w, reason: '광고·수신거부 문구' };
+    if (w.length && !(personal && (asks || custWords || claimWords))) return { bucket: 'ad', words: w, reason: '광고·수신거부 문구' };
     w = hits(t, CARRIER_WORDS);
     if (shortCode) return { bucket: 'carrier', words: w, reason: '대표번호·짧은 번호에서 온 문자' };
     if (w.length && !c.isKnownCustomer && (webSent || !QUESTION_RE.test(t))) return { bucket: 'carrier', words: w, reason: '통신사 안내' };

@@ -18,11 +18,12 @@ const lookupable = d => /^0\d{8,11}$/.test(String(d || ''));
 // ── 구매자 번호 짝짓기(송장 올리기 공용) ──  송장 엑셀 첫 시트의 「받는 분 번호 + 받는 분 이름 → 구매자 번호」.
 //   운송장 시트에는 구매자 번호가 없어 이 열쇠로 붙인다. 같은 열쇠에 구매자 번호가 둘 이상(두 사람이 같은 분께 같은 날 보냄)이면 붙이지 않는다 — 틀린 번호보다 빈칸.
 const pairKey = (scope, phone, name) => String(scope || '') + '\u0001' + normalizePhone(phone) + '\u0001' + String(name || '').replace(/\s+/g, '');
+const NO_BUYER = '(없음)';
 function makeBuyerIndex() {
     const m = new Map();
     return {
         add(scope, recipientPhone, recipientName, buyerPhone) {
-            const b = normalizePhone(buyerPhone); if (!lookupable(b)) return;
+            let b = normalizePhone(buyerPhone); if (!lookupable(b)) b = NO_BUYER;   // F4: 구매자 번호가 비었거나 꼴이 아닌 줄도 「한 종류」로 센다 — 번호 있는 줄과 섞이면 ambiguous(누구 주문인지 못 가림)
             const k = pairKey(scope, recipientPhone, recipientName); let s = m.get(k); if (!s) { s = new Set(); m.set(k, s); } s.add(b);
         },
         // 돌려주는 값 = { buyer: '010…' | null, why: 'one' | 'ambiguous' | 'none' }
@@ -30,6 +31,7 @@ function makeBuyerIndex() {
             const s = m.get(pairKey(scope, recipientPhone, recipientName));
             if (!s || !s.size) return { buyer: null, why: 'none' };
             if (s.size > 1) return { buyer: null, why: 'ambiguous' };
+            if (s.has(NO_BUYER)) return { buyer: null, why: 'none' };
             return { buyer: [...s][0], why: 'one' };
         },
         size: () => m.size,
@@ -77,7 +79,7 @@ function normalizeName(s) {
     return n.slice(0, 20);
 }
 // db = pool 또는 client(.query 만 쓴다). 돌려주는 값 = { match, role, order, candidates, why? }
-//   opts.recipientName = many 일 때 되묻기로 받은 받는 분 성함. 이름 전체가 맞는 묶음이 하나면 one · 없으면 앞글자(성만 · 두 글자까지)가 맞는 묶음이 하나일 때만 one · 그 밖은 many 그대로.
+//   opts.recipientName = many 일 때 되묻기로 받은 받는 분 성함. 이름 전체(2글자 이상)가 맞는 묶음이 하나면 one · 그 밖은 many 그대로(성만·앞글자 비교 안 함 — F4).
 async function lookupShipped(db, phone, opts) {
     const days = Math.max(1, Math.min(60, parseInt(opts && opts.days, 10) || 14));
     const d = normalizePhone(phone);
@@ -92,9 +94,9 @@ async function lookupShipped(db, phone, opts) {
     else if (R.length === 0 && B.length === 1) { pick = B[0]; role = 'buyer'; }
     let narrowed;
     if (!pick && name) {   // 2차 조회 — 이름으로 좁히기(역할은 그 묶음 것)
-        const exact = groups.filter(g => g.name_exact); const pre = exact.length || name.length > 2 ? [] : groups.filter(g => g.name_prefix);
-        const hit = exact.length ? exact : pre;
-        if (hit.length === 1) { pick = hit[0]; role = pick.is_recipient ? 'recipient' : 'buyer'; narrowed = exact.length ? 'name' : 'surname'; }
+        // F4(R4 M5): 이름 전체가 맞을 때만 좁힌다 — 성만·앞글자 비교는 하지 않는다(「정말요」「최고예요」 같은 말이 이름으로 읽혀 엉뚱한 주문이 골라지던 길)
+        const hit = name.length >= 2 ? groups.filter(g => g.name_exact) : [];
+        if (hit.length === 1) { pick = hit[0]; role = pick.is_recipient ? 'recipient' : 'buyer'; narrowed = 'name'; }
         else return { match: 'many', role: null, order: null, candidates, why: hit.length ? 'name-multi' : 'name-no-match' };
     }
     if (!pick) return { match: 'many', role: null, order: null, candidates, why: R.length && B.length ? 'both-roles' : 'multi-orders' };

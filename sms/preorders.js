@@ -33,7 +33,8 @@ function paidOf(v) {
 const short = (s, n) => str(s).replace(/\s+/g, ' ').slice(0, n);
 const MAPPERS = {
     naver: r => ({ key: str(r._pid), buyer: r['구매자연락처'], recip: r['수취인연락처1'] || r['수취인연락처2'], name: r['수취인명'], opt: r['옵션정보'], qty: r['수량'], paid: (r._x && r._x.paymentDate) || r._paidAt }),
-    coupang: r => ({ key: str(r._orderId) ? str(r._orderId) + '|' + short(r['노출상품명(옵션명)'] || r['등록상품명'], 60) : '', buyer: r['구매자전화번호'], recip: r['수취인전화번호'], name: r['수취인이름'], opt: r['노출상품명(옵션명)'] || r['등록상품명'], qty: r['구매수(수량)'], paid: r._paidAt }),
+    // 쿠팡 열쇠: 줄에 _shipmentBoxId · _vendorItemId 가 있으면 그것(옵션 이름을 바꿔도 안 변함) · 없으면 종전(주문번호|옵션 글자)
+    coupang: r => ({ key: (str(r._shipmentBoxId) || str(r._orderId)) && str(r._vendorItemId) ? (str(r._shipmentBoxId) || str(r._orderId)) + '|' + str(r._vendorItemId) : (str(r._orderId) ? str(r._orderId) + '|' + short(r['노출상품명(옵션명)'] || r['등록상품명'], 60) : ''), buyer: r['구매자전화번호'], recip: r['수취인전화번호'], name: r['수취인이름'], opt: r['노출상품명(옵션명)'] || r['등록상품명'], qty: r['구매수(수량)'], paid: r._paidAt }),
     cafe24: r => ({ key: str(r._orderId) ? str(r._orderId) + '|' + str(r._itemCode) : '', buyer: r['주문자 휴대전화'], recip: r['수령인 휴대전화'], name: r['수령인'], opt: r['주문상품명(세트상품 포함)'], qty: r['수량'], paid: r._paidAt }),
 };
 function mapRows(channel, rows) {
@@ -60,11 +61,12 @@ const SQL_UPSERT = `
 
 // 한 번 모으기 — 돌려주는 값 = { ok, days, channels: { naver: { rows, upserted, missed, removed } | { error } , … }, total }
 const CHANNELS = [['naver', 'fetchNaver'], ['coupang', 'fetchCoupang'], ['cafe24', 'fetchCafe24']];
+const _emptyOnce = {};   // 채널 → 직전 수집이 「0건 유예」였는가
 // 부르는 꼴 둘 다 받는다: collect(db, deps, opts) · collect(deps, opts)  (뒤쪽이면 deps.pool 을 쓴다)
 const argsOf = (a, b, c) => (a && typeof a.query === 'function') ? [a, b || {}, c] : [a && (a.pool || a.db), a || {}, b];
 async function collect(a, b, c) {
     const [db, deps, opts] = argsOf(a, b, c); if (!db || typeof db.query !== 'function') throw new Error('preorders.collect: DB(pool)가 없습니다');
-    const days = Math.max(1, Math.min(7, parseInt(opts && opts.days, 10) || 3)); const out = { ok: true, days, channels: {} };
+    const days = Math.max(1, Math.min(10, parseInt(opts && opts.days, 10) || 7)); const out = { ok: true, days, channels: {} };
     for (const [ch, fn] of CHANNELS) {
         if (!deps || typeof deps[fn] !== 'function') continue;
         let rows;
@@ -76,6 +78,11 @@ async function collect(a, b, c) {
             upserted += (await db.query(SQL_UPSERT, [ch, p.map(x => x.order_key), p.map(x => x.buyer_digits), p.map(x => x.recipient_digits), p.map(x => x.recipient_initial),
                 p.map(x => x.option_text), p.map(x => x.qty), p.map(x => x.paid_at)])).rowCount;
         }
+        // F4(R3 M4): 조회는 성공했는데 0건이고 표에는 이 채널 줄이 있으면 — 일시적인 빈 응답일 수 있어 한 회는 그대로 둔다(연속 두 번째 0건부터 평소대로 센다 · 셈은 메모리)
+        if (!rows.length) {
+            const have = (await db.query(`SELECT count(*)::int AS n FROM sms_preorders WHERE channel = $1`, [ch])).rows[0].n;
+            if (have > 0 && !_emptyOnce[ch]) { _emptyOnce[ch] = true; out.channels[ch] = { rows: 0, upserted: 0, missed: 0, removed: 0, grace: true }; continue; }
+        } else _emptyOnce[ch] = false;
         const keys = rows.map(x => x.order_key);   // 이번에 안 보인 줄 = miss+1 · 두 번째면 삭제
         const missed = (await db.query(`UPDATE sms_preorders SET miss = miss + 1 WHERE channel = $1 AND NOT (order_key = ANY($2::text[]))`, [ch, keys])).rowCount;
         const removed = (await db.query(`DELETE FROM sms_preorders WHERE channel = $1 AND miss >= 2`, [ch])).rowCount;
@@ -90,40 +97,16 @@ async function purge(db, days) {
     return (await db.query(`DELETE FROM sms_preorders WHERE seen_at < now() - ($1 || ' days')::interval`, [String(d)])).rowCount;
 }
 
-// ── 주기 실행 ──  server.js watchTick(1분)에서 부른다. 60분에 한 번 · 설정 sms_gateway.preorders === true 일 때만 돈다(기본 꺼짐).
-//   deps.cfgGet(key) / deps.cfgSet(key, value) = naverCfgGet / naverCfgSet(agent_office_config). 시각은 'sms_preorders_last' { at, started_at, result }.
-//   먼저 started_at 을 적고 시작한다(재시작·겹침 방지). opts.quietHours = [시작, 끝] KST(기본 [1, 7]) 에는 쉰다 — 네이버 새벽 수집(04:30 · 05:10)과 안 겹치게.
-let _busy = false;
-async function tick(a, b, c) {
-    const [db, deps, opts] = argsOf(a, b, c);
-    const o = opts || {}; const now = o.now == null ? Date.now() : o.now; const every = (o.intervalMin || 60) * 60000;
-    if (_busy) return { ran: false, why: 'busy' };
-    const cfg = (await deps.cfgGet('sms_gateway')) || {};
-    if (cfg.preorders !== true) return { ran: false, why: 'off' };   // 기본 꺼짐 — 설정 sms_gateway.preorders === true 일 때만(총괄 10/10)
-    const hour = new Date(now + 9 * 3600e3).getUTCHours(); const quiet = o.quietHours || [1, 7];
-    if (hour >= quiet[0] && hour < quiet[1]) return { ran: false, why: 'quiet' };
-    const last = (await deps.cfgGet('sms_preorders_last')) || {};
-    const lastMs = Math.max(Date.parse(last.started_at || 0) || 0, Date.parse(last.at || 0) || 0);
-    if (now - lastMs < every) return { ran: false, why: 'not-due' };
-    _busy = true;
-    try {
-        await deps.cfgSet('sms_preorders_last', Object.assign({}, last, { started_at: new Date(now).toISOString() }));
-        const result = await collect(db, deps, { days: o.days || cfg.preorders_days || 3 });
-        const purged = await purge(db, 7);
-        const brief = { ok: result.ok, total: result.total, purged, channels: result.channels };
-        await deps.cfgSet('sms_preorders_last', { at: new Date().toISOString(), started_at: new Date(now).toISOString(), result: brief });
-        return { ran: true, result: brief };
-    } finally { _busy = false; }
-}
+// 주기 실행은 sms/index.js watchTick 이 한다(설정 sms_gateway.preorders === true · 60분 1회 · 한국 01~07시 쉼 · 'sms_preorders_last' 기록) — 여기에는 주기 함수를 두지 않는다(F4).
 
 // ── 번호로 찾기(발송 전) ──  같은 채널 · 같은 받는 분(번호 + 성) · 같은 결제일(한국 날짜) = 한 건.
-//   name = 되묻기로 받은 받는 분 성함(다듬은 것) — 여기에는 성 한 글자만 있어 첫 글자로만 좁힌다.
+//   name = 되묻기로 받은 받는 분 성함(다듬은 것) — 여기에는 성 한 글자만 있어 첫 글자로만 좁힌다 · 🔴 이름이 3글자 이상일 때만(F4 — 「정말」「최고」 같은 두 글자 말이 성으로 읽히지 않게).
 const SQL_PRE = `
     SELECT p.channel, min(p.recipient_initial) AS recipient_initial,
            bool_or(p.recipient_digits = $1) AS is_recipient, bool_or(p.buyer_digits = $1) AS is_buyer,
            min(COALESCE(p.paid_at, p.created_at)) AS paid_at, bool_and(p.paid_at IS NOT NULL) AS paid_known,
            array_remove(array_agg(DISTINCT NULLIF(btrim(p.option_text), '')), NULL) AS options, COALESCE(sum(p.qty), 0)::int AS qty, count(*)::int AS lines,
-           ($3 <> '' AND min(p.recipient_initial) = left($3, 1)) AS name_prefix
+           (char_length($3) >= 3 AND min(p.recipient_initial) = left($3, 1)) AS name_prefix
       FROM sms_preorders p
      WHERE (p.recipient_digits = $1 OR p.buyer_digits = $1) AND p.miss = 0
        AND COALESCE(p.paid_at, p.created_at) >= now() - ($2 || ' days')::interval
@@ -152,4 +135,4 @@ async function lookupPre(db, phone, opts) {
     return out;
 }
 
-module.exports = { DDL, initDB, mapRows, collect, purge, tick, lookupPre, MAPPERS };
+module.exports = { DDL, initDB, mapRows, collect, purge, lookupPre, MAPPERS, _resetGrace: () => { for (const k of Object.keys(_emptyOnce)) delete _emptyOnce[k]; } };

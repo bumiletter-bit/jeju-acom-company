@@ -6,7 +6,7 @@
  *       judge          : 없으면 sms/photo-judge.js 의 judge
  *       reply          : 없으면 sms/photo-reply.js 의 reply
  *       leakCheck      : 없으면 sms/photo-reply.js 의 leakCheck
- *       log            : 없으면 console.log (한 줄 요약만 — 사진·손님 글은 안 찍음)
+ *       log            : 함수(log(글)) 또는 console 꼴 객체({ log(){} }) 둘 다 받음 · 없으면 console.log (한 줄 요약만 — 사진·손님 글은 안 찍음)
  *
  *   POST /api/sms/photo-test   (관리자만 · req.user.role === 'admin')
  *     body { images:[{ name, contentType, data(base64) }], text?, channel:'sms'|'talk', expect? }
@@ -21,7 +21,7 @@
 const MAX_IMAGES = 4;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const DAILY_MAX = 100;
-const KINDS = ['damage', 'size', 'other', 'not_fruit', 'unclear'];
+const KINDS = ['damage', 'size', 'other', 'not_fruit', 'unclear'];   // 기대값(expect)으로 받는 종류 — 'error'(판독 실패)는 기대값이 될 수 없다
 
 function kstDay() { return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10); }
 
@@ -32,7 +32,9 @@ module.exports = function mountPhotoTest(app, deps) {
     const judge = d.judge || require('./photo-judge.js').judge;
     const reply = d.reply || require('./photo-reply.js').reply;
     const leakCheck = d.leakCheck || require('./photo-reply.js').leakCheck;
-    const log = d.log || ((...a) => console.log(...a));
+    // sms/index.js 는 console 객체를 넘긴다(R5 S1: 함수로만 받다가 성공 요청마다 500) → 둘 다 받고, 로그가 실패해도 응답은 그대로 나가게
+    const rawLog = typeof d.log === 'function' ? d.log : (d.log && typeof d.log.log === 'function' ? d.log.log.bind(d.log) : (...a) => console.log(...a));
+    const log = (...a) => { try { rawLog(...a); } catch (e) { /* 로그 실패는 무시 */ } };
     const state = { day: '', used: 0 };
 
     app.post('/api/sms/photo-test', d.authMiddleware, async (req, res) => {
@@ -66,7 +68,7 @@ module.exports = function mountPhotoTest(app, deps) {
             const t0 = Date.now();
             let j;
             try { j = await judge(images, { text, channel }); }
-            catch (e) { j = { kind: 'unclear', confidence: 'low', size_guess: null, size_dir: null, staff_summary: '', raw: { error: String((e && e.message) || e).slice(0, 160) } }; }
+            catch (e) { j = { kind: 'error', confidence: 'low', size_guess: null, size_dir: null, staff_summary: '', raw: { error: String((e && e.message) || e).slice(0, 160) } }; }
             j = j || {};
             const raw = j.raw || {};
             let customer_reply = null;

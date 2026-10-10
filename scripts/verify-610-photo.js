@@ -41,15 +41,19 @@ function testReply() {
             // damage
             const d = reply({ kind: 'damage', confidence, staff_summary: '곰팡이 3개 · 무름 2개 · 전체의 20%' }, { channel });
             all.push(['damage/' + confidence + '/' + channel, d]);
-            ok(d.includes(OWNER), `damage ${confidence} ${channel}: 대표 원문 포함`);
-            ok(d.includes('다른 박스·나머지도 같으실까요?') && d.includes(DAMAGE_ASK), `damage ${confidence} ${channel}: 범위 되묻기`);
+            if (confidence === 'high') {
+                ok(d.includes(OWNER), `damage high ${channel}: 대표 원문 포함`);
+                ok(d.includes('다른 박스·나머지도 같으실까요?') && d.includes(DAMAGE_ASK), `damage high ${channel}: 범위 되묻기`);
+            } else {
+                ok(d.includes(ASK_CORE) && !d.includes('부패') && !d.includes('보상') && !d.includes('반품'), `damage low ${channel}: 되묻기 글(「부패과가 나왔군요」·보상·반품 안 나감)`, d);
+            }
             ok(!d.includes('곰팡이') && !d.includes('20%'), `damage ${confidence} ${channel}: 직원용 요약이 손님 글에 없음`);
 
             // size
             for (const size_guess of ['2S', 'S', 'M', 'L', null]) {
                 const s = reply({ kind: 'size', confidence, size_guess, size_dir: 'small' }, { channel });
                 all.push([`size/${confidence}/${size_guess}/${channel}`, s]);
-                ok(s.includes('크기가 작았군요'), `size ${confidence} ${size_guess} ${channel}: 「크기가 작았군요」`);
+                ok(size_guess === 'L' ? s.includes('달랐군요') && !s.includes('작았군요') : s.includes('크기가 작았군요'), `size ${confidence} ${size_guess} ${channel}: 「크기가 작았군요」(작다는데 L 이면 「달랐군요」)`);
                 const shows = /사진으로는 .+ 정도로 보여요/.test(s);
                 ok(shows === (confidence === 'high' && !!size_guess), `size ${confidence} ${size_guess} ${channel}: 사이즈 글자는 확신 높을 때만`, shows);
                 if (confidence === 'high' && size_guess) ok(s.includes(`사진으로는 ${size_guess} 정도로 보여요.`), `size high ${size_guess} ${channel}: 추정 사이즈 글`);
@@ -72,12 +76,16 @@ function testReply() {
             }
             // not_fruit
             ok(reply({ kind: 'not_fruit', confidence }, { channel }) === null, `not_fruit ${confidence} ${channel}: 답 없음(null)`);
+            ok(reply({ kind: 'error', confidence, staff_summary: '판독 실패', raw: { error: 'x' } }, { channel }) === null, `error ${confidence} ${channel}: 판독 실패 = 답 없음(null · 직원 몫)`);
         }
     }
     // 방향
     ok(reply({ kind: 'size', confidence: 'high', size_guess: 'M', size_dir: 'big' }, {}).includes('컸군요'), 'size 방향 big → 「컸군요」');
     ok(reply({ kind: 'size', confidence: 'low', size_guess: null, size_dir: null }, {}).includes('달랐군요'), 'size 방향 모름(null) → 「달랐군요」');
     ok(reply({ kind: 'size', confidence: 'low' }, {}).includes('작았군요'), 'size 방향 칸 없음 → 기본 「작았군요」');
+    ok(reply({ kind: 'size', confidence: 'high', size_guess: '2S', size_dir: 'big' }, {}).includes('달랐군요'), 'size 크다는데 2S → 「달랐군요」(안 맞으면 단정 안 함)');
+    ok(reply({ kind: 'size', confidence: 'high', size_guess: 'M', size_dir: 'small' }, {}).includes('작았군요') && reply({ kind: 'size', confidence: 'high', size_guess: 'S', size_dir: 'big' }, {}).includes('컸군요'), 'size 맞는 짝(small+M · big+S)은 그대로');
+    ok(reply({ kind: 'damage' }, {}).includes(ASK_CORE) && reply({ kind: 'damage', confidence: 'HIGH' }, {}).includes(ASK_CORE), 'damage 확신 칸 없음·모르는 값 → 되묻기(안전한 쪽)');
     ok(reply(null, {}) && reply(undefined).includes(ASK_CORE), '판독 값 없음 → 되묻기 글(죽지 않음)');
 
     // 유출·이모지 전수
@@ -94,6 +102,9 @@ function testReply() {
     ok(leakCheck('몇 개가 상했네요') === '개수 표현', 'leakCheck: 개수 표현 잡음');
     ok(leakCheck('절반 정도가 무르네요') === '비율 표현', 'leakCheck: 비율 표현 잡음');
     ok(leakCheck('사진으로는 2S 정도로 보여요.') === '', 'leakCheck: 「2S」 는 통과');
+    for (const t of ['곰팡이 세 개가 보여요', '귤 다섯 알이 무르네요', '하나가 터졌어요', '둘 정도 상했어요', '두 박스 다 그렇네요', '열 개쯤이요', '한두 개요', '몇 개 상했네요', '네 군데가 눌렸어요']) ok(leakCheck(t) === '개수 표현', 'leakCheck 한글 수사: ' + t, leakCheck(t));
+    for (const t of ['반 정도가 무르네요', '반이 상했어요', '일부가 상했네요', '대부분 괜찮아요']) ok(leakCheck(t) === '비율 표현', 'leakCheck 비율: ' + t, leakCheck(t));
+    for (const t of ['무료 수거 및 반품처리도 가능합니다', '반드시 확인하겠습니다', '2S·S·M 중 한 사이즈', '다른 박스·나머지도 같으실까요?', '제주아꼼이네입니다', '세심하게 살펴보겠습니다', '네, 확인했어요']) ok(leakCheck(t) === '', 'leakCheck 오탐 없음: ' + t, leakCheck(t));
 }
 
 // ─────────────────────────── ② photo-judge ───────────────────────────
@@ -165,30 +176,30 @@ async function testJudge() {
     // JSON 깨짐
     c = fakeClient(() => aiText('죄송하지만 잘 모르겠습니다'));
     r = await judge([{ buf: JPEG }], { client: c });
-    ok(r.kind === 'unclear' && r.confidence === 'low' && r.raw.error, 'JSON 깨짐 → unclear + error', r);
+    ok(r.kind === 'error' && r.confidence === 'low' && r.raw.error, 'JSON 깨짐 → error + error', r);
     // 거절 · 잘림
     c = fakeClient(() => ({ stop_reason: 'refusal', content: [], usage: {} }));
     r = await judge([{ buf: JPEG }], { client: c });
-    ok(r.kind === 'unclear' && /refusal/.test(r.raw.error), '거절 → unclear', r.raw);
+    ok(r.kind === 'error' && /refusal/.test(r.raw.error), '거절 → error', r.raw);
     c = fakeClient(() => aiText('{"kind":"dam', { stop_reason: 'max_tokens' }));
     r = await judge([{ buf: JPEG }], { client: c });
-    ok(r.kind === 'unclear' && /max_tokens/.test(r.raw.error), '잘림 → unclear');
+    ok(r.kind === 'error' && /max_tokens/.test(r.raw.error), '잘림 → error');
     // API 오류(크레딧 부족 꼴)
     c = fakeClient(() => { const e = new Error('400 Your credit balance is too low'); e.status = 400; throw e; });
     r = await judge([{ buf: JPEG }], { client: c });
-    ok(r.kind === 'unclear' && r.confidence === 'low' && /credit/.test(r.raw.error) && r.raw.status === 400, 'API 오류 → unclear(죽지 않음)', r.raw);
+    ok(r.kind === 'error' && r.confidence === 'low' && /credit/.test(r.raw.error) && r.raw.status === 400, 'API 오류 → error(죽지 않음)', r.raw);
     ok(r.staff_summary.includes('직접 확인'), '실패 때 직원용 글 = 「직접 확인」');
     // 시간 초과
     c = fakeClient(() => new Promise(res => setTimeout(() => res(aiText({ kind: 'damage', confidence: 'high', size_guess: null, size_dir: null, staff_summary: 'x' })), 400)));
     const t0 = Date.now();
     r = await judge([{ buf: JPEG }], { client: c, timeoutMs: 60 });
-    ok(r.kind === 'unclear' && /시간 초과/.test(r.raw.error) && Date.now() - t0 < 350, '시간 초과 → unclear(기다리지 않음)', r.raw);
+    ok(r.kind === 'error' && /시간 초과/.test(r.raw.error) && Date.now() - t0 < 350, '시간 초과 → error(기다리지 않음)', r.raw);
     // 사진 없음 · 못 쓰는 사진
     c = fakeClient(() => aiText({}));
     r = await judge([], { client: c });
-    ok(r.kind === 'unclear' && c.calls.length === 0, '사진 없음 → AI 안 부르고 unclear');
+    ok(r.kind === 'error' && c.calls.length === 0, '사진 없음 → AI 안 부르고 error');
     r = await judge([{ buf: Buffer.from('not an image at all....'), contentType: 'text/html' }], { client: c });
-    ok(r.kind === 'unclear' && c.calls.length === 0, '사진 아닌 내용 → AI 안 부르고 unclear');
+    ok(r.kind === 'error' && c.calls.length === 0, '사진 아닌 내용 → AI 안 부르고 error');
     // 사진 아닌 내용이지만 https 주소가 있으면 주소로
     c = fakeClient(() => aiText({ kind: 'other', confidence: 'low', size_guess: null, size_dir: null, staff_summary: 'x' }));
     await judge([{ buf: Buffer.alloc(0), url: 'https://example.com/a.jpg' }], { client: c });
@@ -196,10 +207,30 @@ async function testJudge() {
     // 키 없음
     const saved = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
     r = await judge([{ buf: JPEG }], {});
-    ok(r.kind === 'unclear' && /키 없음/.test(r.raw.error), 'AI 키 없음 → unclear');
+    ok(r.kind === 'error' && /키 없음/.test(r.raw.error), 'AI 키 없음 → error');
     if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
     // 판독 결과 → 글
-    ok(photoReply.reply(r, { channel: 'sms' }).includes('어떤 점이 불편하셨는지'), '실패 판독 → 되묻기 글로 이어짐');
+    ok(photoReply.reply(r, { channel: 'sms' }) === null && photoReply.reply(r, { channel: 'talk' }) === null, '실패 판독(error) → 손님 답 없음(null)');
+    // AI 가 스스로 unclear 라고 한 것은 error 가 아니다(되묻기 글이 나간다)
+    c = fakeClient(() => aiText({ kind: 'unclear', confidence: 'low', size_guess: null, size_dir: null, staff_summary: '흐려서 판단 어려움' }));
+    r = await judge([{ buf: JPEG }], { client: c });
+    ok(r.kind === 'unclear' && !r.raw.error && photoReply.reply(r, { channel: 'sms' }).includes('어떤 점이 불편하셨는지'), 'AI 가 고른 unclear = 오류 아님 → 되묻기 글', r);
+    ok(!photoJudge.KINDS.includes('error') && !photoJudge.SCHEMA.properties.kind.enum.includes('error'), "'error' 는 AI 가 고를 수 없는 값(스키마에 없음)");
+    // 크기 한도 — 한 장 base64 10MB · 합계 28MB(요청 32MB 안)
+    ok(photoJudge.MAX_B64_BYTES === 10 * 1024 * 1024 && photoJudge.MAX_REQUEST_B64_BYTES === 28 * 1024 * 1024, '한도 상수: 한 장 10MB · 합계 28MB');
+    const BIG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(8 * 1024 * 1024, 1)]);   // base64 약 10.7MB
+    c = fakeClient(() => aiText({ kind: 'other', confidence: 'low', size_guess: null, size_dir: null, staff_summary: 'x' }));
+    r = await judge([{ buf: BIG, contentType: 'image/jpeg' }], { client: c });
+    ok(r.kind === 'error' && /한도 초과/.test(r.raw.error) && r.raw.too_big === 1 && c.calls.length === 0, '한 장 10MB 초과(주소 없음) → error 「사진 한도 초과」 · AI 안 부름', r.raw);
+    r = await judge([{ buf: BIG, contentType: 'image/jpeg' }, { buf: JPEG, contentType: 'image/jpeg' }], { client: c });
+    ok(r.kind === 'other' && r.raw.sent === 1 && r.raw.too_big === 1 && c.calls[0].params.messages[0].content.filter(b => b.type === 'image').length === 1, '큰 사진만 빼고 나머지로 판독(too_big 1)', r.raw);
+    c = fakeClient(() => aiText({ kind: 'other', confidence: 'low', size_guess: null, size_dir: null, staff_summary: 'x' }));
+    r = await judge([{ buf: BIG, contentType: 'image/jpeg', url: 'https://example.com/big.jpg' }], { client: c });
+    ok(r.kind === 'other' && c.calls[0].params.messages[0].content[0].source.type === 'url', '한 장 한도 초과 + https 주소 → 주소로 넘김');
+    const MID = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(6.5 * 1024 * 1024, 1)]);   // base64 약 8.7MB × 3 = 26MB(들어감) · × 4 = 34.7MB(넘침)
+    c = fakeClient(() => aiText({ kind: 'other', confidence: 'low', size_guess: null, size_dir: null, staff_summary: 'x' }));
+    r = await judge([MID, MID, MID, MID].map(buf => ({ buf, contentType: 'image/jpeg' })), { client: c });
+    ok(r.raw.sent === 3 && r.raw.too_big === 1 && c.calls[0].params.messages[0].content.filter(b => b.type === 'image').length === 3, '합계가 요청 한도에 닿으면 뒤 사진을 뺌(4장 → 3장)', r.raw);
 }
 
 // ─────────────────────────── ③ 복사본 대조 ───────────────────────────

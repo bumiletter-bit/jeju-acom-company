@@ -14,7 +14,7 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     const cfgStore = { sms_gateway: { enabled: true, mode: 'record', hold_sec: 0, max_chars: 70 } }; const notes = [], tg = [], sent = []; let aiAnswer = null;
     const deps = {
         pool, authMiddleware: (req, res, next) => { try { req.user = jwt.verify(String(req.headers.authorization || '').replace('Bearer ', ''), JWT); next(); } catch (e) { res.status(401).json({ error: 'auth' }); } },
-        naverCfgGet: async k => cfgStore[k] === undefined ? null : cfgStore[k], naverCfgSet: async (k, v) => { cfgStore[k] = v; },
+        naverCfgGet: async k => cfgStore[k] === undefined ? null : cfgStore[k], naverCfgSet: async (k, v) => { cfgStore[k] = v; }, stateMerge: async o => { cfgStore.sms_gateway_state = Object.assign({}, cfgStore.sms_gateway_state || {}, o); },
         writeAudit: async () => { }, createNotification: async (uid, type, title, message, link) => { notes.push({ uid, type, title, message, link }); },
         notifyTelegram: async t => { tg.push(t); }, loadShippingHolidayInfo: async () => ({ set: new Set(), arriveOff: new Set(), reasons: new Map() }),
         qnaGenerate: async (q, pn, sd, ch) => { ok(ch === 'sms', 'qnaGenerate 채널 sms'); return aiAnswer; },
@@ -79,7 +79,7 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     const dupEnv = env('sms:received', { messageId: 'a4', message: '또 보냄', phoneNumber: '+82' + P3.slice(1) });
     await hook(dupEnv); await hook(dupEnv);
     ok((await msgs(P3)).length === 2, '봉투 id 같은 재시도 → 1건만 ' + (await msgs(P3)).length);
-    ok((await thread(P3)).status === 'staff_needed' && notes.length === 2, '직원 몫 대화에 다시 옴 → 잠금 유지 + 알림');
+    ok((await thread(P3)).status === 'staff_needed' && notes.length === 1, '직원 몫 대화에 다시 옴 → 잠금 유지 · 알림은 5분 1회(두 번째 안 감)');
 
     console.log('④ auto 모드 — 규칙/AI 답 · 유예 · 쿨다운 · 하루 1번');
     sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 70, staff_ids: [1], cooldown_min: 30, daily_cap: 1 };
@@ -92,7 +92,7 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     ok(outs.every(o => !/😊|톡톡/.test(o.body)), 'auto: 이모지·톡톡 제거');
     let st = await sms.sendTick(); ok(Array.isArray(st) && st.filter(x => x.sent).length === outs.length, 'sendTick 발송 ' + JSON.stringify(st));
     ok(sent.length === outs.length && sent.every(x => x.digits === P4 && x.id), '가짜 게이트웨이로 보냄 · 우리 id 지정');
-    t4 = await thread(P4); ok(t4.cooldown_until && new Date(t4.cooldown_until) > new Date() && t4.bot_count === outs.length, '쿨다운·bot_count ' + t4.bot_count);
+    t4 = await thread(P4); ok(t4.cooldown_until && new Date(t4.cooldown_until) > new Date() && t4.bot_count === 1, '쿨다운·bot_count 답당 1 ' + t4.bot_count);
     m4 = await msgs(P4); ok(m4.filter(x => x.direction === 'out').every(x => x.state === 'sending' && x.gateway_id), '202 뒤 out 상태 sending + gateway_id');
     ok(m4.filter(x => x.direction === 'out').map(x => x.priority).join(',') === '9,8' || m4.filter(x => x.direction === 'out').map(x => x.priority).join(',').startsWith('9,8'), '조각 priority 9,8… ' + m4.filter(x => x.direction === 'out').map(x => x.priority).join(','));
     ok(sent.length >= 2 && sent[0].text === m4.filter(x => x.direction === 'out')[0].body, '첫 조각이 먼저 나감');
@@ -163,7 +163,7 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     const P9 = T + '1009'; await hook(env('sms:received', { messageId: 'g1', message: '발송 됐나요', phoneNumber: '+82' + P9.slice(1) }));
     let t9 = await thread(P9); ok(t9.status === 'draft' && t9.draft_text === '초안 답입니다.' && (await msgs(P9)).filter(x => x.direction === 'out').length === 0, 'draft: 초안 저장 · 발송 0');
     r = await api('GET', `/api/sms/threads?status=draft`); ok(r.status === 200 && r.json.items.some(x => x.id === t9.id && x.draft_text === '초안 답입니다.' && x.phone_tail === P9.slice(-4) && !JSON.stringify(x).includes(P9)), '목록 draft · 전체 번호 없음');
-    r = await api('POST', `/api/sms/threads/${t9.id}/send-draft`, {}); ok(r.status === 200, '[이대로 보내기]');
+    r = await api('POST', `/api/sms/threads/${t9.id}/send-draft`, {}); ok(r.status === 200, '[이대로 보내기] ' + r.status + ' ' + JSON.stringify(r.json));
     await sms.sendTick(); t9 = await thread(P9); ok(t9.status === 'staff_replied' && !t9.draft_text && (await msgs(P9)).some(x => x.sender === 'staff_desk' && x.state === 'sending'), 'send-draft → staff_desk 발송 · 초안 비움');
 
     console.log('⑦ MMS 사진 · 두 이벤트 묶기 · 이미지 라우트');

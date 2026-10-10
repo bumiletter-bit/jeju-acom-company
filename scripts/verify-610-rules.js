@@ -96,11 +96,11 @@ const R = [];
 // 1 발송 뒤 — 10/8(목) 출발 · 10/9 도착불가 → 토(10/10) · 일요일 배달 없음 → 최단일만
 R.push(['발송 뒤(휴무일 끼임) = 오늘 도착 예정 한 날만 + 사유',
     rules.answer({ text: '언제 와요?', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: '2026-10-08', partner: '효돈', option: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, tracking_tail: '1234', delivered: false, status_label: '간선상하차' }) }),
-    { kind: 'ship_after', staff: false, text: '10/8(목) 효돈에서 출발했어요 · 송장 끝 1234 · 오늘(10/10(토)) 도착 예정이에요 (공휴일(한글날)). 배송 상태: 간선상하차' }]);
+    { kind: 'ship_after', staff: false, text: '10/8(목) 효돈에서 출발했어요 · 송장 끝 1234 · 오늘(10/10(토)) 도착 예정이에요 (공휴일(한글날)). 지금은 배송 지역으로 이동 중이에요.' }]);
 // 2 발송 뒤 — 송장을 물음 → kind tracking
 R.push(['발송 뒤 + 「송장」 물음 = kind tracking',
-    rules.answer({ text: '송장번호 알려주세요', bucket: 'ship_q', now: '2026-10-13T09:00:00+09:00', holidays: H, order: one({ ship_date: '2026-10-12', partner: '대성', tracking_tail: '601234567890', delivered: false, status_label: '집화처리' }) }),
-    { kind: 'tracking', staff: false, text: '10/12(월) 대성에서 출발했어요 · 송장 끝 7890 · 오늘(10/13(화))~수요일(10/14) 사이 도착 예정이에요. 배송 상태: 집화처리' }]);
+    rules.answer({ text: '송장번호 알려주세요', bucket: 'ship_q', now: '2026-10-13T09:00:00+09:00', holidays: H, order: one({ ship_date: '2026-10-12', partner: '대성(시온)', tracking_tail: '601234567890', delivered: false, status_label: '집화' }) }),
+    { kind: 'tracking', staff: false, text: '10/12(월) 대성에서 출발했어요 · 송장 끝 7890 · 오늘(10/13(화))~수요일(10/14) 사이 도착 예정이에요. 지금은 택배사에 접수됐어요.' }]);
 // 3 배송 완료
 R.push(['배송 완료 = 도착 예정 문장 없음',
     rules.answer({ text: '도착했나요', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: '2026-10-07', partner: '효돈', tracking_tail: '5678', delivered: true, status_label: '배송완료' }) }),
@@ -149,6 +149,53 @@ R.forEach(([name, got, want], i) => {
     const texts = R.map(x => x[1] && x[1].text).filter(Boolean).join('\n');
     ok('규칙 답 전체 — 이모지 0 · 운송장 5자리 이상 숫자 0 · 전화번호 꼴 0', !EMOJI_RE.test(texts) && !/\d{5,}/.test(texts) && !/01\d-?\d{3,4}-?\d{4}/.test(texts), texts);
 }
+
+// ───────────────────────── ②-a 수정 F3(총검토 R3·R4) — 지난 주문·문제 상태·결제 시각 ─────────────────────────
+console.log('②-a 규칙 답 수정 F3');
+{
+    const shipped = (o, extra) => Object.assign({ match: 'one', order: Object.assign({ ship_date: '2026-10-08', partner: '효돈', tracking_tail: '1234', delivered: false, status_label: '간선상하차' }, o) }, extra || {});
+    const ask = (text, order, now) => rules.answer({ text, bucket: 'ship_q', now: now || NOW, holidays: H, order });
+    const isStaff = (r, why) => !!r && r.staff === true && r.text === '' && r.why === why;
+    ok('01 새 주문이 따로 있음(pre_pending 1) = 사람 — 지난 송장으로 답하지 않음', isStaff(ask('언제 와요', shipped({ delivered: true, status_label: '배송완료' }, { pre_pending: 1 })), 'new_order_pending'), ask('언제 와요', shipped({}, { pre_pending: 1 })));
+    ok('02 pre_pending 이 있으면 배송 중인 주문이어도 사람', isStaff(ask('언제 와요', shipped({}, { pre_pending: 2 })), 'new_order_pending'));
+    ok('03 배송 완료 + 「언제 와요」 = null(AI 로 — 지난 주문 이야기가 아닐 수 있다)', ask('언제 와요?', shipped({ delivered: true, status_label: '배송완료' })) === null, ask('언제 와요?', shipped({ delivered: true, status_label: '배송완료' })));
+    const d1 = ask('도착했나요', shipped({ delivered: true, status_label: '배송완료' }));
+    ok('04 배송 완료 + 「도착했나요」 = 완료 답', !!d1 && d1.staff === false && d1.text === '10/8(목) 효돈에서 출발했어요 · 송장 끝 1234 · 배송 완료로 확인돼요.', d1);
+    const d2 = ask('송장번호 알려주세요', shipped({ delivered: true, status_label: '배송완료' }));
+    ok('05 배송 완료 + 「송장」 물음 = 완료 답(kind tracking)', !!d2 && d2.kind === 'tracking' && /배송 완료로 확인돼요\.$/.test(d2.text), d2);
+    ok('06 배송 완료인데 「못 받았어요」「어디 있나요」「분실」 = 사람', isStaff(ask('배송완료라는데 못 받았어요', shipped({ delivered: true })), 'not_received') && isStaff(ask('택배 어디 있나요', shipped({ delivered: true })), 'not_received') && isStaff(ask('분실된 건가요 송장 알려주세요', shipped({ delivered: true })), 'not_received'));
+    ok('07 문제 상태(미배송·사고·기타·정보없음·조회실패) = 사람 · 그 낱말이 답에 안 나감', ['미배송', '사고', '기타', '정보없음', '조회실패'].every(s => isStaff(ask('언제 와요', shipped({ status_label: s })), 'trouble')));
+    const s1 = ask('언제 와요', shipped({ status_label: '배송출발' }));
+    ok('08 상태를 손님 말로 — 배송출발 → 「오늘 배송 출발했어요」 · 분류 낱말 그대로는 안 나감', !!s1 && /지금은 오늘 배송 출발했어요\.$/.test(s1.text) && !/배송 상태|간선|집화|배송출발/.test(s1.text), s1);
+    const s2 = ask('언제 와요', shipped({ status_label: '간선상하차', stale: true })), s3 = ask('언제 와요', shipped({ status_label: '알 수 없는 분류' })), s4 = ask('언제 와요', shipped({ status_label: null }));
+    ok('09 조회 실패로 옛 상태(stale) · 모르는 분류 · 상태 없음 = 상태 문장 생략', [s2, s3, s4].every(r => !!r && r.staff === false && /도착 예정이에요 \(공휴일\(한글날\)\)\.$/.test(r.text)), [s2, s3, s4].map(r => r && r.text));
+    const iso = ask('언제 와요', shipped({ ship_date: '2026-10-08T00:00:00.000Z' }));
+    ok('10 ship_date 가 ISO 글자여도 앞 10자로 읽음', !!iso && /^10\/8\(목\) 효돈에서 출발했어요/.test(iso.text), iso);
+    const pn = ask('언제 와요', shipped({ partner: '대성(시온)' })), pn2 = ask('언제 와요', shipped({ partner: '효돈 (2차)' }));
+    ok('11 거래처 이름의 괄호 안은 뗌(「대성(시온)」 → 「대성에서」)', !!pn && /대성에서 출발했어요/.test(pn.text) && !/시온|\(시/.test(pn.text) && /효돈에서 출발했어요/.test(pn2.text), pn && pn.text);
+    const pk = rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: { match: 'one', order: { pre: true, channel: 'coupang', ship_date: null, option_text: '하우스감귤 4kg', paid_at: '2026-10-13T09:10:00+09:00', paid_known: false } } });
+    ok('12 발송 전 — 결제 시각 모름(paid_known false · 수집 시각이 들어 있음) = 사람', isStaff(pk, 'pre_no_paid_at'), pk);
+    const pk2 = rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: { match: 'one', order: { pre: true, channel: 'naver', ship_date: null, option_text: '하우스감귤 4kg', paid_at: '2026-10-13T09:10:00+09:00', paid_known: true } } });
+    ok('13 발송 전 — paid_known true 면 종전대로 답', !!pk2 && pk2.staff === false && pk2.why === 'pre' && /^주문 확인됐어요 · 내일 수요일\(10\/14\)/.test(pk2.text), pk2);
+}
+
+// ───────────────────────── ①-b 가르기 수정 F3 — 새 문장 20 ─────────────────────────
+console.log('①-b 가르기 수정 F3');
+const C2 = [
+    ['claim', '귤이 깨진 채로 왔어요', {}], ['claim', '상자가 터짐', { hasImage: true }], ['claim', '몇 개가 곪았어요', {}], ['claim', '짓무른 게 많네요', {}], ['claim', '덜 익은 게 왔어요', {}],
+    ['claim', '너무 딱딱하고 쓴맛이 나요', {}], ['claim', '먹을 수가 없어서 다 버렸어요', {}], ['claim', '아직 받지 못했습니다', { isKnownCustomer: true }], ['claim', '미도착인데요', {}], ['claim', '배송이 너무 늦네요', {}],
+    ['claim', '문의했는데 답이 없네요', {}], ['claim', '포장 상태 최악이에요', {}], ['claim', '불량이 섞여 있어요', {}],
+    // 인증·광고 낱말이 있어도 손님 글이면 버리지 않는다
+    ['order_q', '입금했습니다 승인번호 1234 확인 부탁드려요', { from: '010-1234-5678' }],
+    ['ship_q', '인증번호 문자 말고 제 귤 언제 오나요?', { from: '01012345678' }],
+    ['claim', '수신거부 했는데 환불은 언제 되나요', { from: '01012345678' }],
+    ['ship_q', '대출 광고 아니고요 배송 언제 되나요', { isKnownCustomer: true }],
+    // 기계 문자는 그대로
+    ['otp', '[Web발신] 인증번호 482913 배송 조회용', {}],
+    ['otp', '본인확인 인증번호 [5521]', { from: '16441234' }],
+    ['ad', '(광고) 배송비 무료 이벤트 수신거부 0801234567', {}],
+];
+C2.forEach(([want, text, ctx], i) => { const r = classify(text, ctx); ok(`${String(i + 1).padStart(2, '0')} ${want.padEnd(8)} 「${text.slice(0, 28)}」`, r.bucket === want, r); });
 
 // ───────────────────────── ②-b 발송 전 주문(#610-H · order.pre) ─────────────────────────
 console.log('②-b 발송 전 주문(rules.answer · order.pre)');
@@ -203,6 +250,25 @@ F.forEach(([text, want], i) => {
     ok(`${String(i + 3).padStart(2, '0')} parseNameReply 「${text}」 → ${want.name || '이름 없음'}${want.sure ? '' : want.name ? '(sure 아님)' : ''}`, got.name === want.name && got.sure === want.sure && (want.why === undefined || got.why === want.why), got);
 });
 {
+    // 수정 F3 — 조사·맞장구가 이름을 깎지 않게 · 말끝 꼴 · 불만/주문 변경 글
+    const F2 = [
+        ['이영희요', { name: '이영희', sure: true }],                 // 「이」를 조사로 떼면 「영희」가 된다
+        ['받는 분 이영희', { name: '이영희', sure: true }],
+        ['받는 분이 가영희예요', { name: '가영희', sure: true }],
+        ['예지원이요', { name: '예지원', sure: true }],               // 「예」를 맞장구로 떼면 안 된다
+        ['아영이에요', { name: '아영', sure: true }],
+        ['네, 은지수입니다', { name: '은지수', sure: true }],
+        ['보냈어요', { name: null, sure: false }],
+        ['좋아요', { name: null, sure: false }],
+        ['취소요', { name: null, sure: false }],
+        ['진짜요', { name: null, sure: false }],
+        ['김영희인데요', { name: '김영희', sure: true }],
+        ['받는 분 김영희요 환불해주세요', { name: '김영희', sure: false }],
+        ['수령인 김영희 주소 변경 부탁드려요', { name: '김영희', sure: false }],
+    ];
+    F2.forEach(([text, want], i) => { const got = followup.parseNameReply(text); ok(`F3-${String(i + 1).padStart(2, '0')} parseNameReply 「${text}」 → ${want.name || '이름 없음'}${want.sure ? '' : want.name ? '(sure 아님)' : ''}`, got.name === want.name && got.sure === want.sure, got); });
+}
+{
     const lk = require(path.join(root, 'sms/lookup.js'));
     const a = followup.secondLookupArgs('김영희 님이요');
     ok('15 secondLookupArgs — lookup.normalizeName 과 같은 정리', a.recipientName === lk.normalizeName('김영희 님이요') && a.recipientName === '김영희' && Object.keys(a).length === 1, a);
@@ -248,6 +314,24 @@ S.forEach(([name, got, want], i) => ok(`${String(i + 1).padStart(2, '0')} ${name
         for (const x of samples) if (smsSafeBase(x) !== kn.smsSafe(x)) { same = false; diff = x; break; }
     } catch (e) { same = false; diff = 'kakao-notify.js 를 못 읽음: ' + e.message; }
     ok('10 smsSafeBase = kakao-notify.js smsSafe(#549) 와 글자까지 같음(7문장)', same, diff);
+}
+
+// ───────────────────────── ④-b 문자 다듬기 수정 F3 ─────────────────────────
+console.log('④-b 문자 다듬기 수정 F3');
+{
+    const S2 = [
+        ['회사 번호로 연락하라는 문장만 빼고 같은 줄의 다른 안내는 남김', smsSafe('내일 오전 발송됩니다. 궁금하신 점은 010-6687-4031 로 연락 주세요. 맛있게 드세요.'), '내일 오전 발송됩니다. 맛있게 드세요.'],
+        ['그 문장뿐인 줄은 줄째 사라짐', smsSafe('내일 발송됩니다.\n문의는 ☎ 010-6687-4031 로 전화 주세요\n감사합니다.'), '내일 발송됩니다.\n감사합니다.'],
+        ['번호만 있고 연락 낱말이 없는 문장은 남김', smsSafe('고객센터 번호는 010-6687-4031 입니다.'), '고객센터 번호는 010-6687-4031 입니다.'],
+        ['표시 그림을 글자로 — ✅ → 가능 · ❌ → 불가', smsSafe('토요일 배송 ✅ / 일요일 배송 ❌'), '토요일 배송 가능 / 일요일 배송 불가'],
+        ['이미 글자가 있으면 겹쳐 쓰지 않음', smsSafe('냉장 보관 가능 ✅ 상온 장기 보관은 불가 ❌'), '냉장 보관 가능 상온 장기 보관은 불가'],
+        ['「톡톡 문의」「네이버 톡톡」 변형도 문자로', smsSafe('톡톡 문의 주시면 안내드려요. 네이버 톡톡도 됩니다.'), '문자 주시면 안내드려요. 문자도 됩니다.'],
+    ];
+    S2.forEach(([name, got, want], i) => ok(`${String(i + 1).padStart(2, '0')} ${name}`, got === want, got));
+    const dec = '하우스감귤은 2.5kg 과 4.5kg 두 가지입니다. ' + '귤은 서늘한 곳에 보관해 주세요. '.repeat(3);
+    const cut = smsSafe(dec, { maxBytes: 30 });
+    ok('07 소수점에서 끊지 않음(「2.5kg」) — 30바이트 한도면 「하우스감귤은 2.」로 끝나지 않는다', !/2\.$/.test(cut) && smsBytes(cut) <= 30, cut);
+    ok('08 소수점 든 문장은 통째로 실리거나 통째로 빠짐', smsSafe(dec, { maxBytes: 60 }) === '하우스감귤은 2.5kg 과 4.5kg 두 가지입니다.', smsSafe(dec, { maxBytes: 60 }));
 }
 
 console.log(`\n결과 ${pass}/${total}`);

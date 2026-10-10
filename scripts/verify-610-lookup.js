@@ -72,6 +72,9 @@ const STAT = [
     eq(bi.find('f1', '01000000003', '박세찌'), { buyer: null, why: 'none' }, '짝짓기: 구매자 번호 빈칸 = none');
     eq(bi.find('f2', '01000000001', '김하나'), { buyer: '01000000094', why: 'one' }, '짝짓기: 파일이 다르면 따로');
     eq(bi.find('f3', '01000000001', '김하나'), { buyer: null, why: 'none' }, '짝짓기: 없는 파일');
+    bi.add('f4', '01000000005', '정오성', '01000000095'); bi.add('f4', '01000000005', '정오성', ''); bi.add('f4', '01000000006', '강육각', '010****0006'); bi.add('f4', '01000000006', '강육각', '');
+    eq(bi.find('f4', '01000000005', '정오성'), { buyer: null, why: 'ambiguous' }, '짝짓기(F4): 구매자 번호 있는 줄 + 빈 줄 = ambiguous');
+    eq(bi.find('f4', '01000000006', '강육각'), { buyer: null, why: 'none' }, '짝짓기(F4): 빈 줄·가림값뿐 = none');
 
     const c = await pool.connect();
     try {
@@ -121,13 +124,13 @@ const STAT = [
         // ── C2. 되묻기 답(받는 분 성함)으로 좁히기 ──
         eq(['강 어머니 님', '장구슬이요', ' 임열매 입니다.', '정', '', null, '강어머니께'].map(L.normalizeName), ['강어머니', '장구슬', '임열매', '정', '', '', '강어머니'], 'normalizeName 7종');
         r = await look('01000000009', { recipientName: '장 구슬' }); eq([r.match, r.role, r.narrowed, r.candidates, r.order && r.order.recipient_initial, r.order && r.order.tracking_tail], ['one', 'buyer', 'name', 2, '장', '0012'], '이름: 선물 2건 중 이름 전체로 one/buyer');
-        r = await look('01000000009', { recipientName: '임' }); eq([r.match, r.role, r.narrowed, r.order && r.order.tracking_tail], ['one', 'buyer', 'surname', '0013'], '이름: 성만 — 그 성이 하나면 one');
+        r = await look('01000000009', { recipientName: '임' }); eq([r.match, r.why, r.order], ['many', 'name-no-match', null], '이름: 성만 = 좁히지 않음(F4 — many 유지)');
         r = await look('01000000006', { recipientName: '강어머니님' }); eq([r.match, r.role, r.narrowed, r.order && r.order.tracking_tail], ['one', 'buyer', 'name', '0009'], '이름: 양쪽 역할 — 보낸 선물 쪽');
         r = await look('01000000006', { recipientName: '강육각' }); eq([r.match, r.role, r.order && r.order.tracking_tail], ['one', 'recipient', '0008'], '이름: 양쪽 역할 — 본인 주문 쪽');
-        r = await look('01000000006', { recipientName: '강' }); eq([r.match, r.why, r.order, r.candidates], ['many', 'name-multi', null, 2], '이름: 성만인데 같은 성 둘 = many 유지');
+        r = await look('01000000006', { recipientName: '강' }); eq([r.match, r.why, r.order, r.candidates], ['many', 'name-no-match', null, 2], '이름: 성만(같은 성 둘) = many 유지');
         r = await look('01000000005', { recipientName: '정오성' }); eq([r.match, r.why], ['many', 'name-multi'], '이름: 같은 분께 2건(날짜 다름) = many 유지');
         r = await look('01000000009', { recipientName: '홍길동' }); eq([r.match, r.why, r.order], ['many', 'name-no-match', null], '이름: 안 맞는 이름 = many 유지');
-        r = await look('01000000009', { recipientName: '장구' }); eq([r.match, r.narrowed], ['one', 'surname'], '이름: 두 글자 앞부분도 하나면 one'); r = await look('01000000009', { recipientName: '장구슬이' }); eq(r.match, 'many', '이름: 세 글자 넘는 틀린 이름은 앞글자 비교 안 함');
+        r = await look('01000000009', { recipientName: '장구' }); eq([r.match, r.why], ['many', 'name-no-match'], '이름: 두 글자 앞부분 = 좁히지 않음(F4)'); r = await look('01000000009', { recipientName: '장구슬이' }); eq(r.match, 'many', '이름: 틀린 이름은 앞글자 비교 안 함'); r = await look('01000000009', { recipientName: '정말요' }); eq([r.match, r.why], ['many', 'name-no-match'], '이름: 「정말요」 같은 말은 아무 주문도 못 고름');
         r = await look('010-0000-0001', { recipientName: '홍길동' }); eq([r.match, r.role, r.narrowed], ['one', 'recipient', undefined], '이름: 원래 one 이면 이름과 무관하게 그대로');
         r = await look('01000000099', { recipientName: '김하나' }); eq(r.match, 'none', '이름: 번호가 없으면 이름만으로는 안 찾음');
         r = await look('01000000009', { recipientName: "장'; DROP--%_" }); eq([r.match, r.why], ['many', 'name-no-match'], '이름: 기호 섞인 입력은 글자만 남겨 비교');
