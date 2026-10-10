@@ -360,7 +360,7 @@ module.exports = function mountSms(app, deps) {
         // 기록만(꺼짐 · record 모드) — 아무 것도 보내지 않음 · 알림은 클레임·사진만
         if (!c.enabled || c.mode === 'record') {
             const toStaff = bucket === 'claim' || bucket === 'photo' || bucket === 'account' || hasImage;   // #628
-            await setThread(thread.id, Object.assign(patch, toStaff ? { status: 'staff_needed' } : (thread.status === 'ignored' ? { status: 'new' } : {})));
+            await setThread(thread.id, Object.assign(patch, toStaff ? { status: 'staff_needed' } : (thread.status === 'ignored' || thread.status === 'closed' ? { status: 'new' } : {})));   // #630: 끝난 대화에 손님이 다시 보내면 record 모드에서도 다시 떠야 한다
             if (toStaff && c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} ${hasImage ? '사진' : '확인 필요'}`, STAFF_MSG);
             return done('recorded');
         }
@@ -763,7 +763,7 @@ module.exports = function mountSms(app, deps) {
         await writeAudit({ action: 'update', targetType: 'sms_gateway', changes: { after: { webhooks: r } }, source: 'sms', actor: who(req) });
         res.json(Object.assign({ ok: true }, r));
     }));
-    const pub = t => ({ id: t.id, phone_tail: phoneTail(t.phone_digits), phone_masked: phoneMasked(t.phone_digits), phone_full: String(t.phone_digits || ""),   // #624 대표 확정 10/10 「번호 다 뜨게」 — 카드는 전체 번호(화면에서 010-0000-0000 꼴) · 60일 보관 그대로 customer_hint: t.order_hint || null, status: t.status,
+    const pub = t => ({ id: t.id, phone_tail: phoneTail(t.phone_digits), phone_masked: phoneMasked(t.phone_digits), phone_full: String(t.phone_digits || ""), customer_hint: t.order_hint || null, status: t.status,   // #624 phone_full = 전체 번호(화면에서 010-0000-0000 꼴 · 60일 보관 그대로) · 🔴 #630: 종전 총괄 패치가 이 주석을 같은 줄 앞에 붙여 customer_hint·status 가 주석에 먹혔음(목록 배지 「확인」·끝난 대화 숨김 안 됨)
         last_in_text: String(t.last_in_text || '').slice(0, 120), last_in_at: t.last_in_at, last_out_text: String(t.last_out_text || '').slice(0, 120), last_out_at: t.last_out_at,
         has_image: !!t.has_image, draft_text: t.draft_text || null, staff_name: t.staff_name || null, handled_at: t.handled_at, bot_count_today: botCountToday(t), last_out_state: t.last_out_state || null });
     app.get('/api/sms/summary', authMiddleware, wrap(async (req, res) => {
