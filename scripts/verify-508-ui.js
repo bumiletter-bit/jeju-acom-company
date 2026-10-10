@@ -2992,8 +2992,8 @@ async function resolveCards(pg, type) {
                 await c2.locator('[data-fix-apply]').click(); await settle(w.pg); const s2 = await stOf('사팔가');
                 ok(s2.p && JSON.stringify(s2.p.boxes) === JSON.stringify([{ tail: null, qty: 1 }, { tail: null, qty: 1, skip: true }]) && s2.p.boxesBy === 'card' && !s2.excluded, '㊽ 🔴 [적용] → st.patch.boxes 둘째 박스 skip:true(주문 자체는 오늘 발송)', JSON.stringify(s2.p));
                 const h2 = await c2.locator('.fo-card-top b').first().innerText().catch(() => '');
-                ok(/2박스 중 1박스만/.test(h2) && /이번에 안 보냄 1박스/.test(h2), '㊽ 카드 머리 「… 2박스 중 1박스만」', h2);
-                ok(s2.info.some(x => /^박스 2 다음 발송\(사람\)/.test(x.t) && /2박스 중 1박스만/.test(x.t) && x.badge === '사람이 바꿈'), '㊽ 참고 줄 「박스 2 다음 발송(사람): … 2박스 중 1박스만 이번에 나가요」 · 배지 「사람이 바꿈」', JSON.stringify(s2.info));
+                ok(/2박스 중 1박스만\(스토어 수기\)/.test(h2) && /이번에 안 보냄 1박스/.test(h2), '㊽ 카드 머리 「… 2박스 중 1박스만(스토어 수기)」(#627)', h2);
+                ok(s2.info.some(x => /^박스 2 다음 발송\(사람\)/.test(x.t) && /2박스 중 1박스만 이번에 나가요 · 스마트스토어 양식에서 뺌\(수기 입력\)/.test(x.t) && x.badge === '사람이 바꿈'), '㊽ 참고 줄 「박스 2 다음 발송(사람): … 2박스 중 1박스만 이번에 나가요 · 스마트스토어 양식에서 뺌(수기 입력)」(#627) · 배지 「사람이 바꿈」', JSON.stringify(s2.info));
                 // 3박스: 박스 1 = S · 박스 3 = 안 보냄
                 await find('사팔다'); const c3 = card('사팔다');
                 await c3.locator('[data-box="0"] [data-boxset="S사이즈로!"]').click(); await c3.locator('[data-box="2"] [data-bskip]').check(); await w.pg.waitForTimeout(120); await c3.locator('[data-fix-apply]').click(); await settle(w.pg); const s3 = await stOf('사팔다');
@@ -3013,24 +3013,27 @@ async function resolveCards(pg, type) {
                 // 파일
                 for (let k = 0; k < 20; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(250); }
                 await settle(w.pg);
-                const dl48 = async tag => { await w.pg.waitForSelector(SEL.save, { timeout: 20000 }); await w.pg.waitForTimeout(400); const names = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save), rows = [], store = [], qty = [];
+                const dl48 = async tag => { await w.pg.waitForSelector(SEL.save, { timeout: 20000 }); await w.pg.waitForTimeout(400); const names = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save), rows = [], store = [], storeAll = [], qty = [];
                     for (const nm of names.filter(v => /xlsx$/i.test(v))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's48-' + tag + '-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff);
-                        if (nm.includes('스마트스토어')) { XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }).forEach(r => { if (r.some(v => /사팔/.test(String(v)))) store.push(r.map(String)); }); continue; }
+                        if (nm.includes('스마트스토어')) { XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }).forEach(r => { storeAll.push(r.map(String)); if (r.some(v => /사팔/.test(String(v)))) store.push(r.map(String)); }); continue; }
                         if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => rows.push([String(r[3]), String(r[4]), Number(r[5])]));
                         if (wb.Sheets['수량']) XLSX.utils.sheet_to_json(wb.Sheets['수량'], { header: 1, defval: '' }).forEach(r => qty.push(r)); }
-                    const mine = rows.filter(r => /^사팔/.test(r[0])); return { mine, store, qty, R: nm => mine.filter(r => r[0] === nm).map(r => r[1].replace(royalName, '').trim() + '×' + r[2]).sort().join(' | ') }; };
+                    const mine = rows.filter(r => /^사팔/.test(r[0])); return { mine, store, storeAll, qty, R: nm => mine.filter(r => r[0] === nm).map(r => r[1].replace(royalName, '').trim() + '×' + r[2]).sort().join(' | ') }; };
                 await w.pg.click(SEL.make); await idle(w.pg); const g1 = await dl48('a');
                 ok(g1.R('사팔가') === '×1' && g1.R('사팔다') === 'S사이즈로!×1 | ×1' && g1.R('사팔마') === '×1', '㊽ 🔴 택배사 양식: 사팔가(2박스 중 박스 2 안 보냄) = 한 줄·수량 1 / 사팔다(3박스) = S 1 · 꼬리 없음 1(셋째 박스 빠짐) / 손 안 댄 사팔마 = 그대로', JSON.stringify(g1.mine));
                 ok(g1.R('사팔나') === '' && g1.R('사팔라') === '' && g1.mine.reduce((n, r) => n + r[2], 0) === 4, '㊽ [오늘 발송 제외] 사팔나 · 전부 체크한 사팔라 = 양식에 없음 · 시험 주문 박스 합 4(1 + 2 + 1)', JSON.stringify(g1.mine));
                 const sumQ = g1.qty.filter(r => String(r[0]).startsWith(royalName)).reduce((n, r) => n + Number(r[1] || 0), 0), sumR = g1.mine.reduce((n, r) => n + r[2], 0);
                 ok(sumQ >= sumR && g1.qty.length > 0, '㊽ 수량 표 합이 양식 줄 합과 맞음(안 보내는 박스는 수량 표에도 없음)', JSON.stringify({ sumQ, sumR }));
                 const stA = g1.store.filter(r => r.some(v => /사팔가/.test(v)));
-                ok(stA.length <= 1 && (stA.length === 0 || stA[0].includes('2')), '㊽ 스마트스토어 양식은 무접촉(사팔가 = 한 줄 · 수량 원문 2 · 줄이 있을 때)', JSON.stringify(stA));
+                const stD = g1.store.filter(r => r.some(v => /사팔다/.test(v))), stE = g1.store.filter(r => r.some(v => /사팔마/.test(v)));
+                ok(stA.length === 0 && stD.length === 0 && stE.length === 1, '㊽ #627 🔴 스마트스토어 양식: 「이번에 안 보냄」 박스가 있는 주문(사팔가·사팔다)은 줄째 빠짐(수기 입력) · 손 안 댄 사팔마는 한 줄 그대로', JSON.stringify({ a: stA.length, d: stD.length, e: stE.length }));
+                ok(g1.storeAll.length > 2 && g1.storeAll.slice(2).every(r => String(r[0] || '').trim() !== '') && /일부 박스만 보내는 2건은 뺐어요\(수기 입력\)/.test(await w.pg.evaluate(() => (document.querySelector('#fo-result .fo-file.store header p') || {}).textContent || '')), '㊽ #627 스토어 시트에 빈 줄 없음(위로 당김) · 결과 카드 「일부 박스만 보내는 2건은 뺐어요(수기 입력)」', await w.pg.evaluate(() => (document.querySelector('#fo-result .fo-file.store header p') || {}).textContent || ''));
                 // 되돌리기
                 await c2.locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(250); await c2.locator('[data-fix-undo]').click(); await settle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 30000 }); const s5 = await stOf('사팔가'), h5 = await c2.locator('.fo-card-top b').first().innerText().catch(() => '');
                 ok((!s5.p || !s5.p.boxes) && !/중 1박스만/.test(h5) && !s5.info.some(x => /다음 발송\(사람\)/.test(x.t)), '㊽ [되돌리기] → 박스 나눔·안 보냄 사라짐(머리·참고 줄 원래대로)', JSON.stringify({ p: s5.p, h5 }));
                 const g2 = await dl48('b');
                 ok(g2.R('사팔가') === '×2', '㊽ 되돌린 뒤 다시 만든 양식: 사팔가 = 한 줄·수량 2(종전)', JSON.stringify(g2.mine));
+                { const stA2 = g2.store.filter(r => r.some(v => /사팔가/.test(v))); ok(stA2.length === 1 && stA2[0].includes('2'), '㊽ #627 되돌린 뒤 스마트스토어 양식: 사팔가 다시 한 줄 · 수량 원문 2', JSON.stringify(stA2).slice(0, 200)); }
                 await w.pg.locator('#fo-info li', { hasText: '사팔나' }).first().locator('[data-info-flip]').click(); await settle(w.pg); await w.pg.waitForTimeout(500); const s6 = await stOf('사팔나');
                 ok(!s6.excluded && (!s6.p || s6.p.excl === undefined), '㊽ 참고 줄 [오늘 발송으로] → [오늘 발송 제외] 되돌림(다시 오늘 발송)', JSON.stringify({ e: s6.excluded, p: s6.p }));
                 ok(w.errs.length === 0, '㊽ 오류 0', w.errs.join(' | ')); await w.ctx.close();
