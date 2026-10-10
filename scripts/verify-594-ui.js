@@ -180,29 +180,30 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
                 const q = s => document.querySelector(s), qa = s => Array.from(document.querySelectorAll(s));
                 return { head: (q('#ship-dh') || {}).textContent || '', q: !!q('#ship-q'), qph: (q('#ship-q') || {}).placeholder || '', qval: (q('#ship-q') || {}).value || '', all: !!q('#ship-all'), note: q('#ship-dnote') && !q('#ship-dnote').hidden ? q('#ship-dnote').textContent : '',
                     pressed: qa('#ship-out [aria-pressed="true"]').map(e => (e.dataset.d ? e.dataset.d + ' ' + e.dataset.p + ' ' : '') + (e.dataset.b || '송장')),
-                    rows: qa('.ship-tr tbody tr').map(tr => ({ done: tr.classList.contains('done'), box: (tr.querySelector('.ship-box') || {}).textContent || '', trk: Array.from(tr.querySelectorAll('.ship-trk')).map(s => s.textContent), warn: (tr.querySelector('td.num.warn') || {}).textContent || '', days: tr.children[4].textContent, act: tr.querySelector('.ship-act').innerText.replace(/\s+/g, ' ').trim(), badge: tr.querySelector('.desk-badge').textContent, btnH: Math.round(tr.querySelector('.ship-act button').getBoundingClientRect().height) })) };
+                    rows: qa('.ship-tr tbody tr').map(tr => ({ done: tr.classList.contains('done'), box: (tr.querySelector('.ship-box') || {}).textContent || '', trk: Array.from(tr.querySelectorAll('.ship-trk')).map(s => s.textContent), date: tr.children[4].textContent, state: tr.querySelector('.ship-state').innerText.replace(/\s+/g, ' ').trim(), late: !!tr.querySelector('.ship-st.late'), arrived: !!tr.querySelector('.ship-st.ok'), btns: tr.querySelectorAll('button').length, badge: tr.querySelector('.desk-badge').textContent })),
+                    heads: qa('.ship-tr thead th').map(th => th.textContent) };
             });
             const waitHead = re => pg.waitForFunction(s => new RegExp(s).test((document.getElementById('ship-dh') || {}).textContent || ''), re.source, { timeout: 6000 }).catch(() => { });
             const statBtn = await pg.evaluate(() => Array.from(document.querySelectorAll('#ship-out .ship-stat li')).map(li => li.querySelector('span').textContent + ':' + (li.getAttribute('role') === 'button' && li.tabIndex === 0 && li.getAttribute('aria-pressed') === 'false' ? '버튼' : '-')));
             ok(statBtn.join() === '배송완료:버튼,배송출발:버튼,간선상하차:버튼,집화:버튼,미배송:버튼,사고:-,기타:-,조회실패:-', `#597 상태 칸 = 건수 있는 칸만 버튼(role·tabindex·aria-pressed) · 0건은 안 눌림 — ${statBtn.join(' ')}`);
             const d0 = await det();
-            ok(d0.head === '확인할 건 4' && d0.q && d0.qph === '이름 · 받는 분 연락처 끝 4자리 · 운송장' && !d0.all && d0.rows.every(x => x.act === '처리함' && x.btnH >= 44) && d0.rows.map(x => x.warn).join() === ',,,', `처음 = 「${d0.head}」 · #613 조회 직후부터 검색 칸 있음(자리 글 「${d0.qph}」) · [전체] 없음 · 줄마다 [처리함](높이 ${d0.rows[0].btnH}) · 2일째까지는 빨강 아님`);
-            await pg.click('.ship-stat li[data-b="미배송"]'); await waitHead(/^미배송 3/);
+            ok(d0.head === '확인할 건 4' && d0.q && d0.qph === '이름 · 받는 분 연락처 끝 4자리 · 운송장' && !d0.all, `처음 = 「${d0.head}」 · #613 조회 직후부터 검색 칸 있음(자리 글 「${d0.qph}」) · [전체] 없음`);
+            const md619 = d => Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10));
+            ok(d0.heads.join('|') === '상태|받는 분|품목|상태 내용|발송일|담당기사|운송장|진행상황', `#619 표 머리 = ${d0.heads.join(' · ')}(「며칠째」 → 발송일 · 「처리」 → 진행상황)`);
+            ok(d0.rows.every(x => x.btns === 0 && !x.done && x.date === md619(Y) && /^미도착/.test(x.state) && !x.arrived) && d0.rows.map(x => x.state).join() === '미도착 2일째,미도착 1일째,미도착 1일째,미도착 2일째' && d0.rows.every(x => !x.late), `#619 줄마다 버튼 없음([처리함] 뺌) · 발송일 「${d0.rows[0].date}」 · 진행상황 「${d0.rows[0].state}」(2일째까지는 보통 빨강)`);
+            await pg.click('#ship-out .ship-stat li[data-b="미배송"]'); await waitHead(/^미배송 3/);
             const d1 = await det(), l1 = st.lists[st.lists.length - 1] || {};
             ok(st.lists.length === 1 && JSON.stringify(l1) === JSON.stringify({ from: Y, to: Y, bucket: '미배송', limit: '300' }), `미배송 칸 누름 → GET list 1회 ${JSON.stringify(l1)}`);
             ok(d1.head === '미배송 3' && d1.q && d1.all && d1.pressed.join() === '미배송' && d1.rows.length === 2, `머리 「${d1.head}」 · 표 ${d1.rows.length}줄(3상자) · 고른 칸 강조 = ${d1.pressed.join()} · 검색 칸·[전체] 생김`);
             ok(d1.rows[0].box === '× 2상자' && d1.rows[0].trk.join() === '680012345671,680012345675' && d1.rows[1].box === '' && d1.rows[1].trk.length === 1, `같은 분 2상자 = 한 줄 「${d1.rows[0].box}」 · 운송장 ${d1.rows[0].trk.join(' / ')}`);
-            ok(d1.rows[0].warn === '3일째' && d1.rows[1].warn === '' && d1.rows[1].days === '1일째', `3일 이상이면 빨강(「${d1.rows[0].warn}」) · 1일째는 그대로`);
-            // 처리함(묶은 줄 = 운송장마다 POST)
-            await pg.click('.ship-tr tbody tr:first-child .ship-done'); await pg.waitForFunction(() => document.querySelector('.ship-tr tr.done'), null, { timeout: 6000 }).catch(() => { });
-            const d2 = await det(), hm = `${Number(Y.slice(5, 7))}/${Number(Y.slice(8, 10))} 21:05`;
-            ok(JSON.stringify(st.hposts) === JSON.stringify([{ tracking: '680012345671', on: true }, { tracking: '680012345675', on: true }]), `[처리함] → POST handled ${JSON.stringify(st.hposts)}`);
-            ok(d2.rows.length === 2 && !d2.rows[0].done && d2.rows[1].done && d2.rows[1].box === '× 2상자' && d2.rows[1].act === `처리 시험직원 · ${hm} 되돌리기` && d2.head === '미배송 3 (처리 2)', `처리한 줄 = class done · 아래로 · 「${d2.rows[1].act}」 · 머리 「${d2.head}」`);
-            if (theme) { const a = await H.audit(pg, '#ship-detail'); ok(a.fails.length === 0, `야간 대비(처리한 줄 포함) 미달 ${a.fails.length}${a.fails.length ? ' — ' + a.fails.slice(0, 3).join(' / ') : ''}`); }
+            ok(d1.rows[0].state === '미도착 3일째' && d1.rows[0].late && d1.rows[1].state === '미도착 1일째' && !d1.rows[1].late, `#619 미도착 3일 이상이면 진한 빨강(「${d1.rows[0].state}」) · 1일째는 보통 빨강`);
+            const stCss = await pg.evaluate(() => { const cs = e => getComputedStyle(e), a = document.querySelector('.ship-st.late'), b = document.querySelector('.ship-st.no:not(.late)'), sm = document.querySelector('.ship-state small'); return { lateFw: cs(a).fontWeight, lateBg: cs(a).backgroundColor, noFw: cs(b).fontWeight, noBg: cs(b).backgroundColor, color: cs(b).color, ink: cs(document.querySelector('.ship-tr td')).color, smFs: Math.round(parseFloat(cs(sm).fontSize)), smDisp: cs(sm).display }; });
+            ok(Number(stCss.lateFw) >= 800 && stCss.lateBg !== stCss.noBg && Number(stCss.noFw) < 800 && stCss.color !== stCss.ink && stCss.smDisp === 'block' && stCss.smFs <= 12, `#619 미도착 = 빨강 글(${stCss.color}) · 3일 이상은 굵게 + 알약 배경(${stCss.lateBg}) · 며칠째는 아래 작은 글`);
+            // #619: [처리함]·[되돌리기] 버튼 없음 — 서버로 handled 요청이 가지 않는다
+            const d2 = await det();
+            ok(d2.rows.length === 2 && d2.rows.every(x => x.btns === 0 && !x.done) && !(await pg.locator('#ship-detail .ship-done, #ship-detail .ship-undo, #ship-detail .ship-act').count()) && st.hposts.length === 0 && d2.head === '미배송 3', `#619 미배송 목록에도 버튼 없음 · handled 요청 0 · 머리 「${d2.head}」(처리 수 표시 없음)`);
+            if (theme) { const a = await H.audit(pg, '#ship-detail'); ok(a.fails.length === 0, `야간 대비(미도착 줄 포함) 미달 ${a.fails.length}${a.fails.length ? ' — ' + a.fails.slice(0, 3).join(' / ') : ''}`); }
             await shot(pg, '597-' + label.replace(/\s/g, '') + '-미배송');
-            await pg.click('.ship-tr tr.done .ship-undo'); await pg.waitForFunction(() => !document.querySelector('.ship-tr tr.done'), null, { timeout: 6000 }).catch(() => { });
-            const d3 = await det();
-            ok(st.hposts.length === 4 && st.hposts.slice(2).every(b => b.on === false) && d3.rows.every(x => !x.done) && d3.rows[0].box === '× 2상자' && d3.head === '미배송 3', `[되돌리기] → POST on:false 2회 · done 풀림 · 머리 「${d3.head}」`);
             // [전체] → 확인할 건
             await pg.click('#ship-all'); await waitHead(/^확인할 건 4/);
             const d4 = await det();
@@ -217,9 +218,9 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
                 ok(c1.length === 1 && JSON.stringify(c1[0]) === JSON.stringify({ from: Y, to: Y, q: '이현', limit: '300' }), `#613 확인할 건에서 찾기 → 서버로 1회(상태·거래처 조건 없이 기간 전체) ${JSON.stringify(c1[0])}`);
                 ok(f1.head === '찾은 건 2' && f1.rows.length === 2 && !f1.all && /송장 전체 1,609건 중에서 찾았어요/.test(f1.note) && await pg.evaluate(() => document.activeElement === document.getElementById('ship-q')), `#613 머리 「${f1.head}」 · 안내 「${f1.note}」 · 초점은 검색 칸에 그대로`);
                 const hm613 = `${Number(D2.slice(5, 7))}/${Number(D2.slice(8, 10))} 15:34`;
-                ok(f1.rows[0].badge === '배송출발' && f1.rows[0].days === '3일째' && f1.rows[0].warn === '3일째' && f1.rows[1].badge === '배송완료' && f1.rows[1].days === `2일째(완료 ${hm613})` && f1.rows[1].warn === '', `#613 며칠째 = 미완료 「${f1.rows[0].days}」(3일 이상 빨강) · 완료 건 「${f1.rows[1].days}」`);
-                const finCss = await pg.evaluate(() => { const e = document.querySelector('.ship-tr .ship-fin'); return e ? getComputedStyle(e).display + '|' + Math.round(parseFloat(getComputedStyle(e).fontSize)) : ''; });
-                ok((finCss === 'block|12' || finCss === 'block|11') && await overflow(pg) <= vw.width, `#613 완료 시각은 며칠째 아래 작은 글(${finCss}) · 가로 넘침 없음`);
+                ok(f1.rows[0].badge === '배송출발' && f1.rows[0].state === '미도착 3일째' && f1.rows[0].late && !f1.rows[0].arrived && f1.rows[1].badge === '배송완료' && f1.rows[1].state === `도착 ${hm613}` && f1.rows[1].arrived && !f1.rows[1].late && f1.rows.every(x => x.date === md619(D3) && x.btns === 0), `#619 진행상황 = 미도착 「${f1.rows[0].state}」(3일 이상 진한 빨강) · 완료 건 「${f1.rows[1].state}」 · 발송일 「${f1.rows[0].date}」`);
+                const okCss = await pg.evaluate(() => { const e = document.querySelector('.ship-st.ok'), sm = e && e.parentElement.querySelector('small'), w = document.querySelector('.ship-tw'), t = document.querySelector('.ship-tr'); return e ? { c: getComputedStyle(e).color, ink: getComputedStyle(document.querySelector('.ship-tr td')).color, sm: sm ? getComputedStyle(sm).display + '|' + Math.round(parseFloat(getComputedStyle(sm).fontSize)) : '', minW: getComputedStyle(t).minWidth, tw: w.scrollWidth >= w.clientWidth } : null; });
+                ok(okCss && okCss.c !== okCss.ink && okCss.sm === 'block|12' && okCss.minW === '790px' && okCss.tw && await overflow(pg) <= vw.width, `#619 도착 = 초록 글(${okCss && okCss.c}) · 완료 시각은 아래 작은 글 · 표 최소 폭 ${okCss && okCss.minW} 그대로 · 가로 넘침 없음`);
                 n0 = st.lists.length;
                 await pg.fill('#ship-q', ''); await waitHead(/^확인할 건 4/);
                 ok((await det()).head === '확인할 건 4' && st.lists.length === n0, '#613 찾는 글을 지우면 확인할 건으로(서버에 안 물음)');
@@ -254,10 +255,8 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
                 await waitHead(/^확인할 건 4/); st.outsideDay = null;
                 await pg.waitForFunction(() => (document.getElementById('ship-q') || {}).value === '', null, { timeout: 4000 }).catch(() => { });
             }
-            await pg.click('.ship-tr tbody tr:first-child .ship-done'); await pg.waitForFunction(() => document.querySelector('.ship-tr tr.done'), null, { timeout: 6000 }).catch(() => { });
             const d5 = await det();
-            ok(d5.head === '확인할 건 4 (처리 1)' && d5.rows[3].done && d5.rows[3].badge === '미배송' && d5.rows[0].badge === '집화 정체' && st.hposts[4].tracking === '680012345671' && st.hposts[4].on === true, `확인할 건 표에서 [처리함] → 「${d5.head}」 · 그 줄이 맨 아래로`);
-            await pg.click('.ship-tr tr.done .ship-undo'); await pg.waitForFunction(() => !document.querySelector('.ship-tr tr.done'), null, { timeout: 6000 }).catch(() => { });
+            ok(d5.head === '확인할 건 4' && d5.rows.map(x => x.badge).join() === '미배송,집화 정체,조회실패,사고' && st.hposts.length === 0, `#619 확인할 건 = 서버가 준 순서 그대로(${d5.rows.map(x => x.badge).join(' · ')}) · 처리 표시로 줄이 움직이지 않음`);
             // 발송일·거래처 표의 숫자
             const cells = await pg.evaluate(() => { const tr = document.querySelectorAll('.ship-by tbody tr'); return { btn0: tr[0].querySelectorAll('button.ship-cell').length, btn1: tr[1].querySelectorAll('button.ship-cell').length, zero: tr[1].querySelectorAll('td i').length, h: Math.round(tr[0].querySelector('button.ship-cell').getBoundingClientRect().height), w: Math.round(tr[0].querySelector('button.ship-cell').getBoundingClientRect().width) }; });
             ok(cells.btn0 === 6 && cells.btn1 === 4 && cells.zero === 2 && cells.h >= (phone ? 44 : 32) && cells.w >= 44, `발송일 표 숫자 = 버튼(효돈 ${cells.btn0} · 대성 ${cells.btn1}) · 0 은 안 눌림(${cells.zero}칸) · 크기 ${cells.w}×${cells.h}`);
@@ -270,14 +269,14 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             await pg.click(`.ship-cell[data-p="대성"][data-b=""]`); await waitHead(/^확인할 건 4/);
             ok((await det()).head === '확인할 건 4', '같은 칸을 다시 누르면 확인할 건으로');
             // 자판(Enter) · 많은 상태 · 검색
-            await pg.focus('.ship-stat li[data-b="배송완료"]'); await pg.keyboard.press('Enter'); await waitHead(/^배송완료 1,262/);
+            await pg.focus('#ship-out .ship-stat li[data-b="배송완료"]'); await pg.keyboard.press('Enter'); await waitHead(/^배송완료 1,262/);
             const d8 = await det();
             ok(d8.head === '배송완료 1,262' && d8.rows.length === 300 && d8.note === '300건까지 보여요. 이름·끝 4자리·운송장으로 찾아보세요.' && d8.pressed.join() === '배송완료', `자판 Enter 로도 고름 → 「${d8.head}」 · ${d8.rows.length}줄 · 「${d8.note.slice(0, 11)}」`);
             const nL = st.lists.length;
             await pg.click('#ship-q'); await pg.keyboard.type('0007', { delay: 40 }); await pg.waitForTimeout(1200);
             const d9 = await det(), qCalls = st.lists.slice(nL);
             ok(qCalls.length === 1 && qCalls[0].q === '0007' && qCalls[0].bucket === '배송완료' && d9.head === '배송완료 1' && d9.rows.length === 1 && d9.note === '' && await pg.evaluate(() => document.activeElement === document.getElementById('ship-q') && document.getElementById('ship-q').value === '0007'), `검색 4글자 → 300ms 뒤 list 1회(q=${qCalls[0] && qCalls[0].q}) · 「${d9.head}」 · 초점은 검색 칸에 그대로`);
-            const g7 = await pg.evaluate(() => { const R = s => { const e = document.querySelector(s); const b = e.getBoundingClientRect(); return Math.round(b.height); }; return { all: R('#ship-all'), q: R('#ship-q'), li: Math.min(...Array.from(document.querySelectorAll('.ship-stat li[role="button"]')).map(e => Math.round(e.getBoundingClientRect().height))), sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
+            const g7 = await pg.evaluate(() => { const R = s => { const e = document.querySelector(s); const b = e.getBoundingClientRect(); return Math.round(b.height); }; return { all: R('#ship-all'), q: R('#ship-q'), li: Math.min(...Array.from(document.querySelectorAll('#ship-out .ship-stat li[role="button"]')).map(e => Math.round(e.getBoundingClientRect().height))), sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
             ok(g7.all >= 44 && g7.q >= 44 && g7.li >= 44 && g7.sw <= vw.width, `누르는 것 높이 — [전체] ${g7.all} · 검색 칸 ${g7.q} · 상태 칸 ${g7.li} · 가로 넘침 없음(${g7.sw} ≤ ${vw.width})`);
             if (theme) { const a = await H.audit(pg, '#desk-ship'); ok(a.fails.length === 0, `야간 대비(목록 모드) 미달 ${a.fails.length}${a.fails.length ? ' — ' + a.fails.slice(0, 3).join(' / ') : ''}`); }
             // 전부 다시 조회(force)
@@ -412,7 +411,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
                 ok(Object.entries(api.counts).every(([k, n]) => String(v.stat[k]) === String(n)), `상태별 건수 = 서버 counts ${JSON.stringify(api.counts)}`);
                 // #597: 같은 분·같은 상태는 한 줄로 묶이므로 줄 수 = 묶은 수(종전 = trouble.length)
                 ok(v.tr === groupedLines(api.trouble) && v.by === api.by_date.length, `확인할 건 ${v.tr}줄(서버 ${api.trouble.length}건 · 묶으면 ${groupedLines(api.trouble)}) · 발송일·거래처 ${v.by}줄(서버 ${api.by_date.length}) · 배지 ${v.badges.join(' ')} · 기사 전화 링크 ${v.tels}`);
-                const rb = await pg.evaluate(() => { const li = document.querySelector('.ship-stat li[role="button"][data-b="미배송"]') || document.querySelector('.ship-stat li[role="button"]:nth-of-type(2)') || document.querySelector('.ship-stat li[role="button"]'); if (!li) return ''; li.scrollIntoView({ block: 'center' }); li.click(); return li.dataset.b; });
+                const rb = await pg.evaluate(() => { const li = document.querySelector('#ship-out .ship-stat li[role="button"][data-b="미배송"]') || document.querySelector('#ship-out .ship-stat li[role="button"]:nth-of-type(2)') || document.querySelector('#ship-out .ship-stat li[role="button"]'); if (!li) return ''; li.scrollIntoView({ block: 'center' }); li.click(); return li.dataset.b; });
                 if (rb) {
                     await pg.waitForFunction(() => /\d/.test((document.querySelector('#ship-dh b') || {}).textContent || '') && document.getElementById('ship-q') && !document.getElementById('ship-dbody').hasAttribute('aria-busy'), null, { timeout: 20000 }).catch(() => { });
                     const la = await pg.evaluate(([d, b]) => fetch('/api/delivery/list?from=' + d + '&to=' + d + '&bucket=' + encodeURIComponent(b) + '&limit=300', { headers: { Authorization: 'Bearer ' + localStorage.getItem('jwt_token') } }).then(r => r.json()), [REAL, rb]);

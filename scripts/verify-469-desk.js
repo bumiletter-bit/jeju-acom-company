@@ -312,7 +312,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         await A.pg.route('**/api/agent-office/desk/board', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channels: [], ship: [], sales: [], is_admin: true, todo: [{ key: 'remind', when: '내일', label: '9/30(수) 14:00 황금향 특가 문자 [문자발송]', count: 1, where: '일정 · 문자발송' }, { key: 'reward', label: '룰렛 당첨 미지급', count: 2, where: '문의 관리 · 당첨 지급' }] }) }));
         await A.pg.evaluate(() => __aoDesk.loadBoard());
         await A.pg.waitForTimeout(600);
-        const todoTxt = await A.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-board .desk-todo li')).map(li => li.querySelector('span').textContent + '|' + li.querySelector('b').textContent + '|' + li.querySelector('small').textContent));
+        const todoTxt = await A.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-board .desk-todo li:not(.sms-todo)')).map(li => li.querySelector('span').textContent + '|' + li.querySelector('b').textContent + '|' + li.querySelector('small').textContent));
         ok('할 일 칸 표시 = 일정 줄은 「내일」 · 다른 항목은 건수', todoTxt.length === 2 && todoTxt[0] === '9/30(수) 14:00 황금향 특가 문자 [문자발송]|내일|일정 · 문자발송' && /\|2건\|/.test(todoTxt[1]), todoTxt.join(' / '));
         await A.pg.unroute('**/api/agent-office/desk/board');
         // 확인표 창(기존 모달) 열기 — 가짜 확인표

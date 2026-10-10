@@ -13,6 +13,7 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     // 가짜 의존
     const cfgStore = { sms_gateway: { enabled: true, mode: 'record', hold_sec: 0, max_chars: 70 } }; const notes = [], tg = [], sent = []; let aiAnswer = null;
     const deps = {
+        testMode: true,   // 실서버가 시험 번호 줄을 집지 않게(index.js TEST_SKIP) · 검증은 자기 줄을 집음
         pool, authMiddleware: (req, res, next) => { try { req.user = jwt.verify(String(req.headers.authorization || '').replace('Bearer ', ''), JWT); next(); } catch (e) { res.status(401).json({ error: 'auth' }); } },
         naverCfgGet: async k => cfgStore[k] === undefined ? null : cfgStore[k], naverCfgSet: async (k, v) => { cfgStore[k] = v; }, stateMerge: async o => { cfgStore.sms_gateway_state = Object.assign({}, cfgStore.sms_gateway_state || {}, o); },
         writeAudit: async () => { }, createNotification: async (uid, type, title, message, link) => { notes.push({ uid, type, title, message, link }); },

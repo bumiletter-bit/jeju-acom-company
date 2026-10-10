@@ -33,6 +33,7 @@ async function cleanup() {
     const cfgStore = { sms_gateway: { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 70, staff_ids: [1], cooldown_min: 30, daily_cap: 1, ttl_sec: 600, image_days: 30, ping_alert_hours: 3 }, db_retention: { enabled: true } };
     const notes = [], tg = [], sent = [], audits = [];
     const deps = {
+        testMode: true,   // 실서버가 시험 번호 줄을 집지 않게(index.js TEST_SKIP)
         pool, authMiddleware: (req, res, next) => res.status(401).end(),
         naverCfgGet: async k => cfgStore[k] === undefined ? null : cfgStore[k], naverCfgSet: async (k, v) => { cfgStore[k] = v; },
         writeAudit: async a => { audits.push(a); }, createNotification: async (uid, type, title, message, link) => { notes.push({ uid, type, title, message, link }); },

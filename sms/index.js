@@ -533,14 +533,17 @@ module.exports = function mountSms(app, deps) {
         return { url, before: list.length, result: out };
     }
     // 멈춘 줄 정리(sendTick 머리 · watchTick) — 재시작·폰 꺼짐·처리 중 죽음 뒤에도 손님 글이 조용히 사라지지 않게
+    // 시험 번호(0999…) 줄은 실서버가 집지 않는다 — verify-610-server 가 실DB 에 만든 큐를 실서버 sendTick·정리가 가로채 가짜 게이트웨이 판정이 어긋나던 것(10/10 실측 · 폰 연동 켠 뒤). 검증은 deps.testMode 로 켜서 자기 줄을 집는다.
+    const TEST_SKIP_T = deps.testMode ? '' : "AND t.phone_digits NOT LIKE '0999%'";
+    const TEST_SKIP_M = deps.testMode ? '' : "AND thread_id NOT IN (SELECT id FROM sms_threads WHERE phone_digits LIKE '0999%')";
     async function sweepStuck() {
         const c = await cfg(); const out = {};
         // ① 보낼 시각이 15분 넘게 지난 queued(꺼 둔 사이 쌓인 큐) → 취소 + 직원 몫(며칠 뒤 켰을 때 옛 답이 나가지 않게)
-        const stale = await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:stale' WHERE direction = 'out' AND state = 'queued' AND send_after < now() - interval '15 minutes' RETURNING thread_id`);
+        const stale = await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:stale' WHERE direction = 'out' AND state = 'queued' AND send_after < now() - interval '15 minutes' ${TEST_SKIP_M} RETURNING thread_id`);
         for (const r of stale.rows) await setThread(r.thread_id, { status: 'staff_needed' });
         out.stale = stale.rowCount || 0;
         // ② 202 를 못 받고 죽은 sending(sent_at 없음 · 2분) → 같은 gateway_id 로 다시 queued(게이트웨이 409 = 이미 들어간 것)
-        const re = await pool.query(`UPDATE sms_messages SET state = 'queued' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NULL AND created_at < now() - interval '2 minutes' RETURNING id`);
+        const re = await pool.query(`UPDATE sms_messages SET state = 'queued' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NULL AND created_at < now() - interval '2 minutes' ${TEST_SKIP_M} RETURNING id`);
         out.requeued = re.rowCount || 0;
         // ③ 202 뒤 ttl+10분이 지나도 sms:sent/failed 가 안 옴 → 보내지 못함으로 + 직원 몫
         const lost = await pool.query(`UPDATE sms_messages SET state = 'failed', fail_reason = 'no_result' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NOT NULL AND sent_at < now() - make_interval(secs => $1::int) RETURNING thread_id, id`, [c.ttl_sec + 600]);
@@ -573,7 +576,7 @@ module.exports = function mountSms(app, deps) {
             const botCapHit = hourN >= c.hourly_send_cap;
             if (botCapHit && Date.now() - _capAlertAt > 3600e3) { _capAlertAt = Date.now(); if (notifyTelegram) await notifyTelegram(`⚠️ 회사폰 문자 봇 답이 시간당 상한(${c.hourly_send_cap})에 걸렸어요 — 봇 답은 멈추고 직원 답만 나가요`); }
             const rows = (await pool.query(`SELECT m.*, t.phone_digits, t.status AS thread_status FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
-                WHERE m.direction = 'out' AND m.state = 'queued' AND (m.send_after IS NULL OR m.send_after <= now()) ${botCapHit ? "AND m.sender <> 'bot'" : ''} ORDER BY m.priority DESC, m.id LIMIT 5`)).rows;
+                WHERE m.direction = 'out' AND m.state = 'queued' AND (m.send_after IS NULL OR m.send_after <= now()) ${botCapHit ? "AND m.sender <> 'bot'" : ''} ${TEST_SKIP_T} ORDER BY m.priority DESC, m.id LIMIT 5`)).rows;
             const out = [];
             for (const m of rows) {
                 // 유예 사이에 직원이 답했으면(상태 바뀜) 취소

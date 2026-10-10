@@ -624,13 +624,13 @@
             const g = k && at.get(k);
             if (g) g.items.push(x); else { const n = { items: [x] }; out.push(n); if (k) at.set(k, n); }
         });
-        out.forEach(g => { g.done = g.items.every(x => x.handled_at); });
-        return out.filter(g => !g.done).concat(out.filter(g => g.done));
+        return out;   // #619(대표 10/10 「처리함은 의미 없음」): 처리한 줄을 아래로 보내지 않는다 — 서버가 준 순서 그대로
     }
+    const shipMd = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? Number(m[2]) + '/' + Number(m[3]) : ''; };
     function shipTable(rows) {
         const tel = p => { const g = String(p || '').replace(/[^\d+]/g, ''); return g ? `<a class="ship-tel" href="tel:${esc(g)}">${esc(p)}</a>` : ''; };
         const uniq = a => a.filter((v, i) => v && a.indexOf(v) === i);
-        return `<div class="desk-md-tw ship-tw"><table class="desk-md-t ship-tr"><thead><tr><th>상태</th><th>받는 분</th><th>품목</th><th>상태 내용</th><th class="num">며칠째</th><th>담당기사</th><th>운송장</th><th>처리</th></tr></thead><tbody>`
+        return `<div class="desk-md-tw ship-tw"><table class="desk-md-t ship-tr"><thead><tr><th>상태</th><th>받는 분</th><th>품목</th><th>상태 내용</th><th class="num">발송일</th><th>담당기사</th><th>운송장</th><th>진행상황</th></tr></thead><tbody>`
             + shipGroup(rows).map(g => {
                 const x = g.items[0], n = g.items.length;
                 const dr = g.items.map(i => i.driver).find(v => v && (v.name || v.phone)) || {}, days = Math.max(...g.items.map(i => Number(i.days) || 0));
@@ -638,18 +638,18 @@
                 const what = [x.label, x.msg && x.msg !== x.label ? x.msg : ''].filter(Boolean).map(esc).join('<br>');
                 const where = [x.event_time ? kst(x.event_time, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '', x.branch].filter(Boolean).map(esc).join(' · ');
                 const opts = uniq(g.items.map(i => esc(i.option || '') + (Number(i.qty) > 1 ? ` <b>× ${nfmt(i.qty)}</b>` : ''))).join('<br>');
-                const trs = g.items.map(i => String(i.tracking || '')).filter(Boolean), last = g.items.filter(i => i.handled_at).pop();
-                const act = g.done
-                    ? `<small class="ship-hby">처리 ${esc([last.handled_by, shipHm(last.handled_at)].filter(Boolean).join(' · '))}</small><button type="button" class="desk-btn sm ship-undo" data-tr="${esc(trs.join(','))}">되돌리기</button>`
-                    : `<button type="button" class="desk-btn sm ship-done" data-tr="${esc(trs.join(','))}">처리함</button>`;
-                return `<tr${g.done ? ' class="done"' : ''}><td><span class="desk-badge" data-k="${SHIP_BADGE[x.bucket] || 'mute'}">${esc(x.bucket || '확인')}</span></td>`
+                const trs = g.items.map(i => String(i.tracking || '')).filter(Boolean);
+                // #619: 진행상황 = 도착(완료 시각) / 미도착(3일 이상이면 진한 빨강 · 며칠째는 그 아래 작은 글) — [처리함] 버튼은 뺐다(서버 라우트·handled_at 은 그대로 있다)
+                const state = fin ? `<b class="ship-st ok">도착</b>${finAt ? `<small>${esc(finAt)}</small>` : ''}`
+                    : `<b class="ship-st no${days >= 3 ? ' late' : ''}">미도착</b>${days > 0 ? `<small>${days}일째</small>` : ''}`;
+                return `<tr><td><span class="desk-badge" data-k="${SHIP_BADGE[x.bucket] || 'mute'}">${esc(x.bucket || '확인')}</span></td>`
                     + `<td class="ship-who">${esc(x.recipient || '')}${n > 1 ? ` <em class="ship-box">× ${n}상자</em>` : ''}${x.phone_tail ? `<small>끝 ${esc(x.phone_tail)}</small>` : ''}${x.region ? `<small>${esc(x.region)}</small>` : ''}</td>`
                     + `<td class="ship-opt">${opts}</td>`
                     + `<td class="ship-what">${what || '<i>내용 없음</i>'}${where ? `<small>${where}</small>` : ''}${x.memo ? `<small class="memo" title="${esc(x.memo)}">손님 메모 · ${esc(x.memo)}</small>` : ''}</td>`
-                    + `<td class="num ship-days${days >= 3 ? ' warn' : ''}">${days > 0 ? days + '일째' : ''}${fin ? `<small class="ship-fin">(완료${finAt ? ' ' + esc(finAt) : ''})</small>` : ''}</td>`
+                    + `<td class="num ship-date">${esc(uniq(g.items.map(i => shipMd(i.ship_date))).join(' · '))}</td>`
                     + `<td class="ship-drv">${esc(dr.name || '')}${tel(dr.phone)}</td>`
-                    + `<td class="ship-no">${trs.map(t => `<span class="ship-trk">${esc(t)}</span>`).join('')}<small>${esc(uniq(g.items.map(i => [mdOf(i.ship_date) + ' 발송', i.partner].filter(Boolean).join(' · '))).join(' / '))}</small></td>`
-                    + `<td class="ship-act">${act}</td></tr>`;
+                    + `<td class="ship-no">${trs.map(t => `<span class="ship-trk">${esc(t)}</span>`).join('')}<small>${esc(uniq(g.items.map(i => i.partner || '')).join(' / '))}</small></td>`
+                    + `<td class="ship-state">${state}</td></tr>`;
             }).join('') + '</tbody></table></div>';
     }
     function shipDetail() {
@@ -661,9 +661,8 @@
             box.innerHTML = `<div class="ship-dhead"><h4 class="ship-h" id="ship-dh"></h4>${p ? `<button type="button" class="desk-btn sm" id="ship-all" title="확인할 건으로 돌아가요">전체</button>` : ''}<input type="search" class="ship-q" id="ship-q" autocomplete="off" maxlength="40" placeholder="이름 · 받는 분 연락처 끝 4자리 · 운송장" aria-label="${p ? '이 목록에서 찾기' : '이 기간 송장 전체에서 찾기'}" value="${esc(SHIP.q || '')}"></div><div class="ship-dnote" id="ship-dnote" role="status" hidden></div><div id="ship-dbody"></div>`;
         }
         const useL = !!p || finding, L = useL ? SHIP.list : null, rows = useL ? (L ? L.rows : []) : (Array.isArray(d.trouble) ? d.trouble : []);
-        const doneN = rows.filter(x => x.handled_at).length, doneT = doneN ? ` <small>(처리 ${nfmt(doneN)})</small>` : '';
         const label = p ? (p.from ? `${mdOf(p.from)} ${p.partner} · ${p.bucket || '전체'}` : p.bucket) : finding ? '찾은 건' : '확인할 건';
-        $('ship-dh').innerHTML = `${esc(label)} <b>${useL && !L ? '…' : nfmt(useL ? L.total : rows.length)}</b>${doneT}`;
+        $('ship-dh').innerHTML = `${esc(label)} <b>${useL && !L ? '…' : nfmt(useL ? L.total : rows.length)}</b>`;
         const note = $('ship-dnote'), body = $('ship-dbody');
         const more = L && !L.error && L.total > rows.length, rg = shipRange(), span = rg.from === rg.to ? mdOf(rg.from) : mdOf(rg.from) + '~' + mdOf(rg.to);
         const noteText = more ? `${nfmt(rows.length)}건까지 보여요. 이름·끝 4자리·운송장으로 찾아보세요.` : (finding && L && !L.error ? `발송일 ${span} 송장 전체${Number(d.shipments) > 0 ? ' ' + nfmt(d.shipments) + '건 중' : ''}에서 찾았어요.${rows.length ? '' : ' 안 보이면 위에서 발송일 기간을 넓혀 [조회]해 보세요.'}` : '');
@@ -701,21 +700,6 @@
         const rows = !err && Array.isArray(d.rows) ? d.rows : [];
         SHIP.list = { rows, total: err ? 0 : Math.max(Number(d.total) || 0, rows.length), error: err, outside: !err && d.outside && Number(d.outside.n) > 0 ? d.outside : null };
         shipDetail();
-    }
-    async function shipHandled(btn) {
-        const key = btn.dataset.tr || '', trs = key.split(',').filter(Boolean), on = btn.classList.contains('ship-done');
-        btn.disabled = true;
-        try {
-            for (const t of trs) {
-                const res = await api('/api/delivery/handled', 'POST', { tracking: t, on });
-                if (res && res.ok === false) throw new Error(res.error || '다시 시도해 주세요');
-                const at = on ? (res && res.handled_at) || new Date().toISOString() : null, by = on ? (res && res.handled_by) || '' : '';
-                [SHIP.data && SHIP.data.trouble, SHIP.list && SHIP.list.rows].forEach(a => (a || []).forEach(x => { if (String(x.tracking) === t) { x.handled_at = at; x.handled_by = by; } }));
-            }
-        } catch (e) { showToast('처리 표시를 저장하지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요')); }
-        shipDetail();
-        const again = Array.from(document.querySelectorAll('#ship-dbody [data-tr]')).find(b => b.dataset.tr === key);
-        if (again) again.focus({ preventScroll: true });
     }
     async function shipGo(force) {
         if (SHIP.busy) return;
@@ -1519,7 +1503,7 @@
         }
         const items = [], at = new Map();   // 같은 품목끼리(처음 나온 순서 — 서버가 어긋난 묶음을 앞에 둔다)
         list.forEach(x => { const name = pcLabel(x.g.label || x.g.key).item; let it = at.get(name); if (!it) { it = { name, list: [] }; at.set(name, it); items.push(it); } it.list.push(x); });
-        out.innerHTML = items.map(it => { const bad = it.list.reduce((a, x) => a + x.sh.bad.length, 0); return `<section class="pc-item" data-item="${esc(it.name)}"><h3 class="pc-item-h"><span>${esc(it.name)}</span><small>규격 ${nfmt(it.list.length)}개${bad ? ' · 어긋남 ' + nfmt(bad) + '건' : ''}</small></h3>${it.list.map(({ g, sh }) => pcGroupHtml(g, sh, PRICE.kind)).join('')}</section>`; }).join('');
+        out.innerHTML = items.map(it => { const bad = it.list.reduce((a, x) => a + x.sh.bad.length, 0); return `<section class="pc-item${bad ? ' pc-item-bad' : ''}" data-item="${esc(it.name)}"><h3 class="pc-item-h"><span>${esc(it.name)}</span><small>규격 ${nfmt(it.list.length)}개${bad ? ' · 어긋남 ' + nfmt(bad) + '건' : ''}</small></h3>${it.list.map(({ g, sh }) => pcGroupHtml(g, sh, PRICE.kind)).join('')}</section>`; }).join('');
     }
     function pcSummaryText() {
         const d = PRICE.data; if (!d) return '';
@@ -1632,7 +1616,6 @@
                 SHIP.rkey = day + '|' + day; SHIP.pick = null; SHIP.list = null; SHIP.lseq++;
                 shipLoad();
             }
-            else if (e.target.closest('.ship-done, .ship-undo')) shipHandled(e.target.closest('.ship-done, .ship-undo'));
             else { const c = e.target.closest('.ship-stat li[role="button"], .ship-cell'); if (c) shipPick(c); }
         });
         $('ship-out').addEventListener('keydown', e => {

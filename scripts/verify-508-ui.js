@@ -2010,9 +2010,9 @@ async function resolveCards(pg, type) {
                     await fc().locator('[data-flip="send"]').click(); await settle(w.pg);
                     const s2 = await stOf(w.pg, '삼가'), i2 = await infoOf(w.pg, '삼가');
                     ok(!s2.excluded && s2.excl === false && s2.by === 'card' && s2.memo === '' && /오늘 발송으로: /.test(s2.list) && /되돌리기/.test(s2.list), `㉝c① ${tag} [오늘 발송으로] → 그 주문이 오늘 발송 · 「말로 바꾼 것」 목록에 「오늘 발송으로」 + [되돌리기]`, JSON.stringify(s2).slice(0, 300));
-                    ok(!!i2 && /오늘 발송으로 바꿈\(사람\)/.test(i2.t) && i2.badge === '사람이 바꿈' && i2.flip === '오늘 안 나감으로', `㉝c① ${tag} 참고 줄 = 「오늘 발송으로 바꿈(사람)」 · 배지 「사람이 바꿈」 · 반대 버튼 [오늘 안 나감으로]`, JSON.stringify(i2));
+                    ok(!!i2 && /오늘 발송으로 바꿈\(사람\)/.test(i2.t) && i2.badge === '사람이 바꿈' && i2.flip === '오늘 발송 제외', `㉝c① ${tag} 참고 줄 = 「오늘 발송으로 바꿈(사람)」 · 배지 「사람이 바꿈」 · 반대 버튼 [오늘 발송 제외](#618)`, JSON.stringify(i2));
                     const c2 = await fc().evaluate(c => ({ now: (c.querySelector('.fo-flip-now') || {}).textContent || '', btn: (c.querySelector('[data-flip]') || {}).textContent || '', memo: (c.querySelector('[data-x="memo"]') || {}).value, t: c.innerText.replace(/\s+/g, ' ').slice(0, 160) }));
-                    ok(/지금: 오늘 발송 \(사람이 바꿈\)/.test(c2.now) && c2.btn === '오늘 안 나감으로' && c2.memo === '', `㉝c② ${tag} 그 주문 카드 = 「지금: 오늘 발송 (사람이 바꿈)」 + [오늘 안 나감으로] · 배송메세지 칸은 비운 그대로`, JSON.stringify(c2));
+                    ok(/지금: 오늘 발송 \(사람이 바꿈\)/.test(c2.now) && c2.btn === '오늘 발송 제외' && c2.memo === '', `㉝c② ${tag} 그 주문 카드 = 「지금: 오늘 발송 (사람이 바꿈)」 + [오늘 발송 제외](#618) · 배송메세지 칸은 비운 그대로`, JSON.stringify(c2));
                     return { w, fc };
                 };
                 const A = await run33({ width: 1400, height: 900 }, false, 'PC');
@@ -2361,7 +2361,7 @@ async function resolveCards(pg, type) {
                 const pend0 = await w.pg.evaluate(() => document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length);
                 await find(w.pg, '구가'); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(600);
                 const c1 = await w.pg.evaluate(() => { const c = [...document.querySelectorAll('#fo-cards .fo-card[data-fo-card="fix"]')].find(x => x.innerText.includes('구가')); if (!c) return null; const d = c.querySelector('details.fo-fix'), r = c.getBoundingClientRect(); return { open: !!(d && d.open), inView: r.top < innerHeight && r.bottom > 0, fields: [...c.querySelectorAll('[data-x]')].map(e => e.dataset.x).join(','), flip: (c.querySelector('[data-flip]') || {}).textContent || '', close: !!c.querySelector('[data-fix-close]'), q: document.getElementById('fo-find-q').value, list: !document.getElementById('fo-find-list').hidden, pend: document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length }; });
-                ok(!!c1 && c1.open && c1.inView && c1.fields === 'name,phone,addr,memo,opt,tail,rname,rtel,rtel2,raddr' && c1.flip === '오늘 안 나감으로' && c1.close && c1.q === '' && !c1.list && c1.pend === pend0, '㊴ Enter 로 고르면 그 주문의 「직접 고치기」 카드가 새로 뜸(보내는 분·주소·배송메세지·옵션명·꼬리·받는 분 4칸(#611) · [오늘 안 나감으로] · [닫기]) · 확인할 것에 안 셈 · 검색칸 비워짐', JSON.stringify(c1));
+                ok(!!c1 && c1.open && c1.inView && c1.fields === 'name,phone,addr,memo,opt,tail,rname,rtel,rtel2,raddr' && c1.flip === '오늘 발송 제외' && c1.close && c1.q === '' && !c1.list && c1.pend === pend0, '㊴ Enter 로 고르면 그 주문의 「직접 고치기」 카드가 새로 뜸(보내는 분·주소·배송메세지·옵션명·꼬리·받는 분 4칸(#611) · [오늘 안 나감으로] · [닫기]) · 확인할 것에 안 셈 · 검색칸 비워짐', JSON.stringify(c1));
                 const card = nm => w.pg.locator('#fo-cards .fo-card[data-fo-card="fix"]').filter({ hasText: nm }).first();
                 if (other !== royalName) await pickOpt(w.pg, card('구가'), other);
                 await card('구가').locator('[data-x="tail"]').fill('2s'); await card('구가').locator('[data-x="name"]').fill('홍길동'); await card('구가').locator('[data-fix-apply]').click(); await settle(w.pg);
@@ -2947,6 +2947,86 @@ async function resolveCards(pg, type) {
                 ok(mine.length === 6 && !mine.some(r => /L\s*사이즈/.test(r[1])), '㊼ 🔴 택배사 양식: 옵션 칸에 L 꼬리 0(시험 주문 ' + mine.length + '줄)', JSON.stringify(mine.map(r => r[1].replace(royalName, '').trim())));
                 ok(R('사칠다') === '×1' && R('사칠마') === '×2' && R('사칠나') === '2S사이즈로!×1 | M사이즈로!×1' && R('사칠가') === '×1', '㊼ L 줄 주문(사칠다 · 사칠마) = 꼬리 없이 한 줄 그대로 · 박스별로 정한 사칠나 = 2S 1 · M 1 · 되돌린 사칠가 = 꼬리 없음', JSON.stringify(['사칠가', '사칠나', '사칠다', '사칠라', '사칠마'].map(R)));
                 ok(w.errs.length === 0, '㊼ 오류 0', w.errs.join(' | ')); await w.ctx.close();
+            }
+
+            // ── ㊽ #618(대표 10/10 오후) — 직접 고치기 [오늘 발송 제외](메모 없이 갑자기 빼야 할 때) · 박스 줄 「이번에 안 보냄」(2건 중 1건만) ──
+            console.log('\n㊽ #618 오늘 발송 제외 · 박스별 이번에 안 보냄');
+            {
+                const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
+                const T = n => '010-9618-' + String(n).repeat(4);
+                const royalName = (cat.byPartner[FX.P_HYODON] || []).find(n => String(base['옵션정보'] || '').includes(n)) || (cat.byPartner[FX.P_HYODON] || [])[0];
+                const rows48 = [mk('사팔가', { tel: T(1), qty: 2 }), mk('사팔나', { tel: T(2) }), mk('사팔다', { tel: T(3), qty: 3 }), mk('사팔라', { tel: T(4), qty: 2 }), mk('사팔마', { tel: T(5) })];
+                const w = await mkChat(false, rows48); w.chat.memoAns = () => ({ memo: '그대로', sure: true });
+                await setCash(w.pg, null); await startWithMemo(w.pg, ''); await settle(w.pg);
+                const card = nm => w.pg.locator('#fo-cards .fo-card').filter({ hasText: nm }).first();
+                const find = async nm => { await w.pg.fill('#fo-find-q', nm); await w.pg.waitForTimeout(250); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(900); };
+                const stOf = nm => w.pg.evaluate(a => { const i = document.querySelector(a.sel).contentWindow.__ivt, st = window.AkmFinalOrder.state, e = i.S.merged.find(x => x.conv['수취인명'] === a.nm || String(x.conv['구매자명'] || '').includes(a.nm)), c = st.cards.find(c => c.title.includes(a.nm) && c.fix), p = c && st.patch.get(c.fix[0]);
+                    return { excluded: !!(e && e.excluded), p: p ? JSON.parse(JSON.stringify(p)) : null, head: c ? c.title : '', list: document.getElementById('fo-patches').innerText.replace(/\s+/g, ' '),
+                        info: [...document.querySelectorAll('#fo-info li')].filter(x => x.textContent.includes(a.nm)).map(x => ({ t: x.querySelector('.fo-itext').textContent, badge: (x.querySelector('.fo-ibadge') || {}).textContent || '', flip: (x.querySelector('[data-info-flip]') || {}).textContent || '' })) }; }, { sel: SEL.hidden, nm });
+                const toastNow = () => w.pg.evaluate(() => [...document.querySelectorAll('.toast-message')].map(t => t.textContent.trim()));
+                // ① 수량 1 주문: 체크 없음 · [오늘 발송 제외] 글·자리·색·크기
+                await find('사팔나'); const c1 = card('사팔나');
+                const b0 = await c1.evaluate(c => { const d = c.querySelector('details.fo-fix'), b = d.querySelector('[data-flip="excl"]'), ed = d.querySelector('.fo-edit'), cs = b ? getComputedStyle(b) : null, r = b ? b.getBoundingClientRect() : null;
+                    return { skipN: c.querySelectorAll('[data-bskip]').length, text: b ? b.textContent.trim() : '', h: r ? Math.round(r.height) : 0, above: !!r && r.bottom <= ed.getBoundingClientRect().top + 1, first: d.children[1] === d.querySelector('.fo-flip'), bd: cs ? cs.borderTopColor : '', col: cs ? cs.color : '', bw: cs ? parseFloat(cs.borderTopWidth) : 0, now: (d.querySelector('.fo-flip-now') || {}).textContent || '', old: d.innerText.includes('오늘 안 나감으로') }; });
+                ok(b0.skipN === 0 && b0.text === '오늘 발송 제외' && !b0.old, '㊽ 수량 1 주문 카드: 「이번에 안 보냄」 체크 없음 · 버튼 글 [오늘 발송 제외](종전 [오늘 안 나감으로] 없음)', JSON.stringify(b0));
+                ok(b0.h >= 44 && b0.first && b0.above && b0.bd === 'rgb(217, 45, 32)' && b0.col === 'rgb(180, 35, 24)' && b0.bw >= 1.4 && /지금: 오늘 발송/.test(b0.now), '㊽ 자리 = 직접 고치기 머리 바로 아래(칸들보다 위) · 44px 이상 · 빨강 테두리·빨강 글자', JSON.stringify(b0));
+                await c1.locator('[data-flip="excl"]').click(); await w.pg.waitForTimeout(350); const t1 = await toastNow(); await settle(w.pg); const s1 = await stOf('사팔나');
+                ok(s1.excluded && s1.p && s1.p.excl === true && s1.p.exclBy === 'card' && t1.includes('오늘 발송에서 뺐어요'), '㊽ 🔴 [오늘 발송 제외] → 그 주문 오늘 안 나감(st.patch.excl · exclBy card) · 토스트 「오늘 발송에서 뺐어요」', JSON.stringify({ e: s1.excluded, p: s1.p, t1 }));
+                ok(/오늘 발송 제외: [^|]*사팔나/.test(s1.list) && /되돌리기/.test(s1.list) && s1.info.some(x => /^오늘 발송 제외\(사람\)/.test(x.t) && x.badge === '사람이 바꿈' && x.flip === '오늘 발송으로'), '㊽ 「말로 바꾼 것」 「오늘 발송 제외: …」 + [되돌리기] · 참고 줄 「오늘 발송 제외(사람)」 · 배지 「사람이 바꿈」 · 반대 버튼 [오늘 발송으로]', JSON.stringify({ list: s1.list.slice(0, 120), info: s1.info }));
+                const n1 = await c1.evaluate(c => ({ now: (c.querySelector('.fo-flip-now') || {}).textContent || '', btn: (c.querySelector('[data-flip]') || {}).textContent || '' }));
+                ok(/지금: 오늘 발송 제외\(사람\)/.test(n1.now) && n1.btn === '오늘 발송으로', '㊽ 그 카드 글 = 「지금: 오늘 발송 제외(사람)」 + [오늘 발송으로](되돌리는 길)', JSON.stringify(n1));
+                // ② 2박스 주문: 박스 2 「이번에 안 보냄」
+                await find('사팔가'); const c2 = card('사팔가');
+                const k0 = await c2.evaluate(c => ({ rows: [...c.querySelectorAll('[data-box]')].map(r => { const l = r.querySelector('.fo-boxskip'), i = r.querySelector('[data-bskip]'); return l && i ? [l.textContent.trim(), i.checked, Math.round(l.getBoundingClientRect().height)] : null; }), excl: !!c.querySelector('[data-flip="excl"]') }));
+                ok(k0.rows.length === 2 && k0.rows.every(r => r && r[0] === '이번에 안 보냄' && r[1] === false && r[2] >= 33) && k0.excl, '㊽ 2박스 주문: 박스 줄마다 체크 [이번에 안 보냄](기본 꺼짐) · 카드에 [오늘 발송 제외]도 있음', JSON.stringify(k0));
+                await c2.locator('[data-box="1"] [data-bskip]').check(); await w.pg.waitForTimeout(150);
+                const k1 = await c2.evaluate(c => [...c.querySelectorAll('[data-box]')].map(r => r.classList.contains('skip')));
+                ok(k1[0] === false && k1[1] === true, '㊽ 체크한 박스 줄만 흐리게(skip)', JSON.stringify(k1));
+                await c2.locator('[data-fix-apply]').click(); await settle(w.pg); const s2 = await stOf('사팔가');
+                ok(s2.p && JSON.stringify(s2.p.boxes) === JSON.stringify([{ tail: null, qty: 1 }, { tail: null, qty: 1, skip: true }]) && s2.p.boxesBy === 'card' && !s2.excluded, '㊽ 🔴 [적용] → st.patch.boxes 둘째 박스 skip:true(주문 자체는 오늘 발송)', JSON.stringify(s2.p));
+                const h2 = await c2.locator('.fo-card-top b').first().innerText().catch(() => '');
+                ok(/2박스 중 1박스만/.test(h2) && /이번에 안 보냄 1박스/.test(h2), '㊽ 카드 머리 「… 2박스 중 1박스만」', h2);
+                ok(s2.info.some(x => /^박스 2 다음 발송\(사람\)/.test(x.t) && /2박스 중 1박스만/.test(x.t) && x.badge === '사람이 바꿈'), '㊽ 참고 줄 「박스 2 다음 발송(사람): … 2박스 중 1박스만 이번에 나가요」 · 배지 「사람이 바꿈」', JSON.stringify(s2.info));
+                // 3박스: 박스 1 = S · 박스 3 = 안 보냄
+                await find('사팔다'); const c3 = card('사팔다');
+                await c3.locator('[data-box="0"] [data-boxset="S사이즈로!"]').click(); await c3.locator('[data-box="2"] [data-bskip]').check(); await w.pg.waitForTimeout(120); await c3.locator('[data-fix-apply]').click(); await settle(w.pg); const s3 = await stOf('사팔다');
+                ok(s3.p && JSON.stringify(s3.p.boxes) === JSON.stringify([{ tail: 'S사이즈로!', qty: 1 }, { tail: null, qty: 1 }, { tail: null, qty: 1, skip: true }]) && s3.info.some(x => /^박스 3 다음 발송\(사람\)/.test(x.t)), '㊽ 3박스: 박스 1 = S · 박스 3 = 안 보냄 → boxes 세 묶음(셋째 skip) · 참고 줄 「박스 3 다음 발송(사람)」', JSON.stringify({ p: s3.p, info: s3.info.map(x => x.t.slice(0, 40)) }));
+                // 전부 체크 = 오늘 발송 제외와 같은 길
+                await find('사팔라'); const c4 = card('사팔라');
+                await c4.locator('[data-box="0"] [data-bskip]').check(); await c4.locator('[data-box="1"] [data-bskip]').check(); await c4.locator('[data-fix-apply]').click(); await w.pg.waitForTimeout(350); const t4 = await toastNow(); await settle(w.pg); const s4 = await stOf('사팔라');
+                ok(s4.excluded && s4.p && s4.p.excl === true && s4.p.exclBy === 'card' && !s4.p.boxes && t4.includes('오늘 발송에서 뺐어요') && s4.info.some(x => /^오늘 발송 제외\(사람\)/.test(x.t)), '㊽ 🔴 박스 전부 체크 + [적용] = [오늘 발송 제외]와 같음(excl · boxes 없음 · 참고 줄)', JSON.stringify({ e: s4.excluded, p: s4.p, t4 }));
+                // 야간 대비
+                const dk = await w.pg.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark'); return new Promise(res => setTimeout(() => {
+                    const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; };
+                    const rgb = s => { const x = String(s).match(/rgba?\(([^)]+)\)/); if (!x) return null; const p = x[1].split(',').map(v => parseFloat(v)); return { c: p.slice(0, 3), a: p[3] == null ? 1 : p[3] }; };
+                    const bgOf = el => { for (let e = el; e; e = e.parentElement) { const b = rgb(getComputedStyle(e).backgroundColor); if (b && b.a > .5) return b.c; } return [14, 17, 34]; };
+                    const out = [...document.querySelectorAll('#fo-cards .fo-exclbtn, #fo-cards .fo-boxskip span, #fo-cards .fo-flip-now')].filter(e => e.getClientRects().length).map(e => { const f = rgb(getComputedStyle(e).color).c, b = bgOf(e), L1 = lum(f), L2 = lum(b); return { k: e.className || e.tagName, cr: Math.round((Math.max(L1, L2) + .05) / (Math.min(L1, L2) + .05) * 100) / 100, white: b.every(v => v > 240) }; });
+                    document.documentElement.removeAttribute('data-ao-theme'); res(out); }, 500)); });
+                ok(dk.length >= 3 && dk.every(x => x.cr >= 4.5 && !x.white), '㊽ 야간: [오늘 발송 제외]·「이번에 안 보냄」 글 대비 4.5 이상 · 흰 칸 없음(' + dk.length + '개)', JSON.stringify(dk.filter(x => x.cr < 4.5 || x.white)));
+                // 파일
+                for (let k = 0; k < 20; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(250); }
+                await settle(w.pg);
+                const dl48 = async tag => { await w.pg.waitForSelector(SEL.save, { timeout: 20000 }); await w.pg.waitForTimeout(400); const names = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save), rows = [], store = [], qty = [];
+                    for (const nm of names.filter(v => /xlsx$/i.test(v))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's48-' + tag + '-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff);
+                        if (nm.includes('스마트스토어')) { XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }).forEach(r => { if (r.some(v => /사팔/.test(String(v)))) store.push(r.map(String)); }); continue; }
+                        if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => rows.push([String(r[3]), String(r[4]), Number(r[5])]));
+                        if (wb.Sheets['수량']) XLSX.utils.sheet_to_json(wb.Sheets['수량'], { header: 1, defval: '' }).forEach(r => qty.push(r)); }
+                    const mine = rows.filter(r => /^사팔/.test(r[0])); return { mine, store, qty, R: nm => mine.filter(r => r[0] === nm).map(r => r[1].replace(royalName, '').trim() + '×' + r[2]).sort().join(' | ') }; };
+                await w.pg.click(SEL.make); await idle(w.pg); const g1 = await dl48('a');
+                ok(g1.R('사팔가') === '×1' && g1.R('사팔다') === 'S사이즈로!×1 | ×1' && g1.R('사팔마') === '×1', '㊽ 🔴 택배사 양식: 사팔가(2박스 중 박스 2 안 보냄) = 한 줄·수량 1 / 사팔다(3박스) = S 1 · 꼬리 없음 1(셋째 박스 빠짐) / 손 안 댄 사팔마 = 그대로', JSON.stringify(g1.mine));
+                ok(g1.R('사팔나') === '' && g1.R('사팔라') === '' && g1.mine.reduce((n, r) => n + r[2], 0) === 4, '㊽ [오늘 발송 제외] 사팔나 · 전부 체크한 사팔라 = 양식에 없음 · 시험 주문 박스 합 4(1 + 2 + 1)', JSON.stringify(g1.mine));
+                const sumQ = g1.qty.filter(r => String(r[0]).startsWith(royalName)).reduce((n, r) => n + Number(r[1] || 0), 0), sumR = g1.mine.reduce((n, r) => n + r[2], 0);
+                ok(sumQ >= sumR && g1.qty.length > 0, '㊽ 수량 표 합이 양식 줄 합과 맞음(안 보내는 박스는 수량 표에도 없음)', JSON.stringify({ sumQ, sumR }));
+                const stA = g1.store.filter(r => r.some(v => /사팔가/.test(v)));
+                ok(stA.length <= 1 && (stA.length === 0 || stA[0].includes('2')), '㊽ 스마트스토어 양식은 무접촉(사팔가 = 한 줄 · 수량 원문 2 · 줄이 있을 때)', JSON.stringify(stA));
+                // 되돌리기
+                await c2.locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(250); await c2.locator('[data-fix-undo]').click(); await settle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 30000 }); const s5 = await stOf('사팔가'), h5 = await c2.locator('.fo-card-top b').first().innerText().catch(() => '');
+                ok((!s5.p || !s5.p.boxes) && !/중 1박스만/.test(h5) && !s5.info.some(x => /다음 발송\(사람\)/.test(x.t)), '㊽ [되돌리기] → 박스 나눔·안 보냄 사라짐(머리·참고 줄 원래대로)', JSON.stringify({ p: s5.p, h5 }));
+                const g2 = await dl48('b');
+                ok(g2.R('사팔가') === '×2', '㊽ 되돌린 뒤 다시 만든 양식: 사팔가 = 한 줄·수량 2(종전)', JSON.stringify(g2.mine));
+                await w.pg.locator('#fo-info li', { hasText: '사팔나' }).first().locator('[data-info-flip]').click(); await settle(w.pg); await w.pg.waitForTimeout(500); const s6 = await stOf('사팔나');
+                ok(!s6.excluded && (!s6.p || s6.p.excl === undefined), '㊽ 참고 줄 [오늘 발송으로] → [오늘 발송 제외] 되돌림(다시 오늘 발송)', JSON.stringify({ e: s6.excluded, p: s6.p }));
+                ok(w.errs.length === 0, '㊽ 오류 0', w.errs.join(' | ')); await w.ctx.close();
             }
 
             // 창구가 안 집음(40초)

@@ -583,7 +583,7 @@
         const c = core(), s = S(), cards = [], info = [];
         const orderLine = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
         // #583-i(대표 실물 10/8): 카드 머리는 「지금 나갈 옵션」(고친 옵션명·꼬리 반영)으로 — 고쳐도 머리가 옛 꼬리(「S사이즈로!」)로 남아 안 바뀐 것처럼 보였다. 참고 줄 글은 종전대로 주문 원문.
-        const orderLineNow = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${boxesOf(e) ? core().stripTail(String(optOf(e)), inCatalog) + ' [' + boxText(boxesOf(e)) + ']' : optOf(e)} · ${e.conv['수량']}박스${boxesOf(e) && boxHasX(boxesOf(e)) ? ' · ' + boxExtraText(boxesOf(e)) : ''}`;   // #601: 박스별 꼬리는 「S 1 · M 1」
+        const orderLineNow = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${boxesOf(e) ? core().stripTail(String(optOf(e)), inCatalog) + ' [' + boxText(boxesOf(e)) + ']' : optOf(e)} · ${e.conv['수량']}박스${boxSkipN(boxesOf(e)) ? ` 중 ${Number(e.conv['수량']) - boxSkipN(boxesOf(e))}박스만` : ''}${boxesOf(e) && boxHasX(boxesOf(e)) ? ' · ' + boxExtraText(boxesOf(e)) : ''}`;   // #601: 박스별 꼬리는 「S 1 · M 1」
         const memoOf = e => String(e.conv['배송메세지'] || '').trim();
         const sm = senderMap();
         // ① 주문 확인(v2 확인필요)
@@ -759,7 +759,7 @@
         const handExcl = e => { const p = st.patch.get(keyOf(e)); return p && typeof p.excl === 'boolean' && !e.individual ? p : null; };
         s.merged.forEach(e => { if (!e.individual && e.excluded && !e.userTouched && !handExcl(e)) info.push({ t: `오늘 안 나감: ${orderLine(e)} — ${e.req ? `메모 줄 요청일 ${md(e.req.date)}` : `손님 메모 「${memoOf(e)}」`}`, keys: [keyOf(e)], flip: 'send', ...(e.req ? { line: e.req.srcLine } : {}) }); });
         // #583-c(대표 10/8 「오늘 안 나감을 오늘 발송으로 되살리는 길」): 사람이 버튼으로 발송일 판정을 뒤집은 주문 — 참고 줄에 남기고 반대 버튼을 둔다
-        s.merged.forEach(e => { const p = handExcl(e); if (p && p.exclBy === 'card') info.push({ t: `${p.excl ? '오늘 안 나감으로' : '오늘 발송으로'} 바꿈(사람): ${orderLine(e)}${memoOf(e) ? ` — 손님 메모 「${memoOf(e)}」` : ''}`, keys: [keyOf(e)], flip: p.excl ? 'send' : 'excl' }); });
+        s.merged.forEach(e => { const p = handExcl(e); if (p && p.exclBy === 'card') info.push({ t: `${p.excl ? '오늘 발송 제외(사람)' : '오늘 발송으로 바꿈(사람)'}: ${orderLine(e)}${memoOf(e) ? ` — 손님 메모 「${memoOf(e)}」` : ''}`, keys: [keyOf(e)], flip: p.excl ? 'send' : 'excl' }); });
         s.merged.forEach(e => { const k = keyOf(e); if (st.ai.memo.has(k) && goingOut(e)) info.push(`AI가 배송메세지 정리: ${orderLine(e)} — 「${memoOf(e)}」 → 「${st.ai.memo.get(k) || '기본 문구'}」`); });
         // #583-f(대표 10/8): AI 읽기가 실패했거나 꺼져 있으면, AI 에 올렸던 메모 가운데 다른 확인 카드가 없는 것을 전부 「메모 확인」 카드로 — 사람이 [그대로 두기]/[기본 문구로]/[제외]를 정해야 파일을 만들 수 있다.
         //   기본 문구·기사님에게 하는 말뿐인 메모는 애초에 AI 에 안 올리므로 카드도 없다. AI 가 다시 읽어 성공하면 이 카드들은 사라지고 AI 결과(AI 처리 카드·확인 카드)로 바뀐다.
@@ -777,6 +777,7 @@
         s.merged.forEach(e => { const p = st.patch.get(keyOf(e)); if (p && p.tailBy === 'card' && p.tail != null) info.push({ t: p.tail ? `꼬리 지정(사람): ${orderLine(e)}에 「${p.tail}」` : `꼬리 뗌(사람): ${orderLine(e)}`, keys: [keyOf(e)] }); });   // #583-g2
         s.merged.forEach(e => { const p = st.patch.get(keyOf(e)); if (p && p.boxes && boxesOf(e)) info.push({ t: `박스별 꼬리(사람): ${orderLine(e)} → ${boxText(p.boxes)}`, keys: [keyOf(e)] }); });   // #601
         s.merged.forEach(e => { const p = st.patch.get(keyOf(e)); if (!p) return;   // #611
+            if (p.boxes && boxesOf(e) && boxSkipN(p.boxes)) info.push({ t: `박스 ${boxSkipNos(p.boxes).join('·')} 다음 발송(사람): ${orderLine(e)} — ${qtyNow(e)}박스 중 ${qtyNow(e) - boxSkipN(p.boxes)}박스만 이번에 나가요`, keys: [keyOf(e)] });   // #618
             if (p.boxes && boxesOf(e) && boxHasX(p.boxes)) info.push({ t: `박스별 받는 분(사람): ${orderLine(e)} → ${boxExtraText(p.boxes)}`, keys: [keyOf(e)] });
             if (p.rcBy === 'card') info.push({ t: `받는 분 바꿈(사람): ${orderLine(e)} → ${[p.recv != null ? '받는 분 ' + p.recv : '', p.rtel != null || p.rtel2 != null ? '번호' : '', p.addr != null ? '주소' : ''].filter(Boolean).join('·')} 바꿈`, keys: [keyOf(e)] }); });
         // #583 ⑨: 참고 줄에서 연 「직접 고치기」 카드(카드가 없는 주문) — 확인할 것에 세지 않는다
@@ -1001,7 +1002,7 @@
     }
     // #611(대표 10/10 「수량 2 이상이면 토글 없이 박스마다 줄 · 택배사 양식 한 줄의 칸 전부」): 한 박스 = { t 꼬리 · o 옵션명 · n 받는 분 · p 번호1 · p2 번호2 · a 주소 · m 배송메세지 }
     //   o~m 은 주문 값과 다를 때만 채운다(빈 글 = 주문 그대로). 값은 숨은 칸(data-x="boxes" · 박스 수만큼의 배열 JSON)에 둔다 — 다시 그려도 적던 것이 남는다. 옛 꼴(꼬리 글자 배열)도 읽는다.
-    const BOX_F = ['t', 'o', 'n', 'p', 'p2', 'a', 'm'];
+    const BOX_F = ['t', 'o', 'n', 'p', 'p2', 'a', 'm', 's'];   // s = 이번에 안 보냄(#618 · '1' 또는 빈 글)
     const BOX_RC = [['n', '받는 분', 20, ''], ['p', '받는 분 번호', 14, ''], ['p2', '받는 분 번호 2', 14, ''], ['a', '받는 분 주소', 200, 'wide'], ['m', '배송메세지', 300, 'wide']];
     const boxArr = (bv, q) => { try { const j = bv ? JSON.parse(bv) : null; return Array.isArray(j) && j.length === q ? j.map(x => { const o = {}; BOX_F.forEach(f => { o[f] = x && typeof x === 'object' ? String(x[f] || '') : (f === 't' ? String(x || '') : ''); }); return o; }) : null; } catch (e) { return null; } };
     const boxCtx = wrap => { let rc = null; try { rc = wrap.dataset.rc ? JSON.parse(wrap.dataset.rc) : null; } catch (e) { rc = null; } return { id: wrap.dataset.id || '', rc }; };
@@ -1013,22 +1014,24 @@
             const eo = b.o || opt, size = sizeItem(eo), cands = size ? ['2S', 'S', 'M'].map(z => [z + '사이즈로!', z]) : MANGAM.test(eo) ? (st.tailRecent || []).map(v => [v, v.replace(/로!$/, '')]) : [], tn = tailNorm(b.t);
             const chips = cands.map(([v, lab]) => `<button type="button" class="fo-chip${tn === v ? ' on' : ''}" data-boxset="${esc(v)}" aria-pressed="${tn === v}">${esc(lab)}</button>`).join('')
                 + (size ? '' : `<input type="text" class="fo-boxin" data-boxin value="${esc(b.t)}" maxlength="40" placeholder="예: 15" aria-label="박스 ${i + 1} 꼬리" autocomplete="off">`)
-                + `<button type="button" class="fo-chip clear${tn ? '' : ' on'}" data-boxset="" aria-pressed="${!tn}">꼬리 없음</button>`;
+                + `<button type="button" class="fo-chip clear${tn ? '' : ' on'}" data-boxset="" aria-pressed="${!tn}">꼬리 없음</button>`
+                + `<label class="fo-boxskip"><input type="checkbox" data-bskip${b.s ? ' checked' : ''} aria-label="박스 ${i + 1} 이번에 안 보냄"><span>이번에 안 보냄</span></label>`;   // #618(대표 10/10 「2건 주문인데 1건만 보내 달라」)
             const more = rc ? `<div class="fo-boxopt${b.o ? ' changed' : ''}"><span class="fo-optlab">옵션명</span><input type="hidden" data-bopt value="${esc(eo)}"><button type="button" class="fo-boptbtn" data-boptbtn="${esc(id)}#b${i}" data-cur="${esc(opt)}" aria-haspopup="listbox" aria-expanded="false" aria-label="박스 ${i + 1} 옵션명 고르기 — 지금: ${esc(eo)}"><span class="fo-optbtn-t">${esc(eo)}</span><span class="fo-optbtn-ar" aria-hidden="true"></span></button></div>`
                 + `<div class="fo-boxrc">${rcFields(rc, f => b[f] || rc[f] || '', f => `data-brc="${f}" aria-label="박스 ${i + 1} ${BOX_RC.find(x => x[0] === f)[1]}"`)}</div>` : '';
-            return `<div class="fo-boxrow${rc ? ' full' : ''}${rc && BOX_F.some(f => f !== 't' && b[f]) ? ' changed' : ''}" data-box="${i}" role="group" aria-label="박스 ${i + 1}"><span class="fo-boxno">박스 ${i + 1}</span>${rc ? `<div class="fo-boxtail">${chips}</div>` : chips}${more}</div>`;
-        }).join('') + '<p class="fo-chiphint">박스마다 고르고 [적용]을 누르면 택배사 양식에서 줄이 나뉘어 나가요.</p>';
+            return `<div class="fo-boxrow${rc ? ' full' : ''}${rc && BOX_F.some(f => f !== 't' && f !== 's' && b[f]) ? ' changed' : ''}${b.s ? ' skip' : ''}" data-box="${i}" role="group" aria-label="박스 ${i + 1}"><span class="fo-boxno">박스 ${i + 1}</span>${rc ? `<div class="fo-boxtail">${chips}</div>` : chips}${more}</div>`;
+        }).join('') + '<p class="fo-chiphint">박스마다 고르고 [적용]을 누르면 택배사 양식에서 줄이 나뉘어 나가요. 「이번에 안 보냄」에 체크한 박스는 이번 양식에서 빠져요.</p>';
     }
     // 화면의 박스 줄(옵션명·받는 분 칸) → 숨은 칸. 주문 값과 같거나 비운 칸은 「안 바꿈」
     function boxRead(fx) {
         const wrap = fx && fx.querySelector('[data-boxes]'), hid = fx && fx.querySelector('[data-x="boxes"]'); if (!wrap || !hid) return null;
         const cur = boxArr(hid.value, Number(wrap.dataset.q)); if (!cur) return null;
         const rc = boxCtx(wrap).rc, opt0 = wrap.dataset.opt || '';
+        wrap.querySelectorAll('[data-box]').forEach(row => { const b = cur[Number(row.dataset.box)], ck = row.querySelector('[data-bskip]'); if (b && ck) { b.s = ck.checked ? '1' : ''; row.classList.toggle('skip', ck.checked); } });   // #618
         if (rc) wrap.querySelectorAll('[data-box]').forEach(row => {
             const b = cur[Number(row.dataset.box)]; if (!b) return;
             const bo = row.querySelector('[data-bopt]'); if (bo) b.o = bo.value && bo.value !== opt0 ? bo.value : '';
             row.querySelectorAll('[data-brc]').forEach(el => { const f = el.dataset.brc, v = String(el.value || '').replace(/\r/g, '').trim(); b[f] = v && v !== String(rc[f] || '') ? v : ''; });
-            row.classList.toggle('changed', BOX_F.some(f => f !== 't' && b[f]));
+            row.classList.toggle('changed', BOX_F.some(f => f !== 't' && f !== 's' && b[f]));
         });
         hid.value = JSON.stringify(cur); return cur;
     }
@@ -1064,6 +1067,7 @@
         { const wrap = fx.querySelector('[data-boxes]'); if (wrap) { const redraw = wrap.dataset.opt !== opt || (wrap.dataset.k != null && wrap.dataset.k !== kind); wrap.dataset.k = kind; if (redraw) { boxRead(fx); boxDraw(fx); } } }   // #601·#611: 옵션명·칩 종류가 바뀌면 박스 줄을 다시 그린다(적던 칸은 먼저 떠 둔다)
     }
     function onFixInput(e) {
+        const sk = e.target.closest && e.target.closest('input[data-bskip]'); if (sk) { boxRead(sk.closest('.fo-fix')); return; }   // #618 이번에 안 보냄
         const ti = e.target.closest && e.target.closest('input[data-x="tail"]'); if (ti) { const fx = ti.closest('.fo-fix'); tailSync(fx); boxAll(fx); return; }   // #611: 위쪽 꼬리 칸 = 모든 박스에
         const bi = e.target.closest && e.target.closest('input[data-boxin]');   // #601 박스별 꼬리 글 칸(만감류 과수 등)
         if (bi) { const fx = bi.closest('.fo-fix'), row = bi.closest('[data-box]'), arr = boxRead(fx); if (!arr) return;
@@ -1089,8 +1093,9 @@
             : `<label${wide(f)}>${FIX_LABEL[f]}<input type="text" data-x="${f}" value="${val(f)}" maxlength="${f === 'name' ? 20 : f === 'phone' ? 14 : 120}"${f === 'phone' ? ' inputmode="tel"' : ''}></label>`;
         const open = !fixFold().has(cd.id) && (cd.type === 'fix' || fd.open || F.byCard || (opts && opts.open));   // 여기서 고친 것이 있으면 펼쳐 둔다([되돌리기]가 보이게)
         // #583-c: 발송일 판정 뒤집기 줄 — 참고 줄에서 연 카드와 사람이 뒤집은 주문 카드에만(열린 주문 확인 카드는 [오늘 발송]/[제외]가 이미 있다)
-        const flipOk = (cd.type === 'fix' || (opts && opts.flip)) && F.es.every(e => !e.individual), exN = F.es.filter(e => e.excluded).length, hand = F.es.some(e => typeof (st.patch.get(keyOf(e)) || {}).excl === 'boolean');
-        const flipRow = !flipOk || (exN && exN < F.es.length) ? '' : `<div class="fo-flip" data-flip-row="${exN ? 'excl' : 'send'}"><span class="fo-flip-now" data-k="${exN ? 'excl' : 'send'}">지금: ${exN ? '오늘 안 나감' : '오늘 발송'}${hand ? ' (사람이 바꿈)' : ''}</span><button type="button" class="fo-btn sm${exN ? ' primary' : ''}" data-flip="${exN ? 'send' : 'excl'}" data-id="${esc(cd.id)}">${exN ? '오늘 발송으로' : '오늘 안 나감으로'}</button><p class="fo-flip-note">${exN ? '배송메세지 칸은 택배사 양식 글만 바꿔요 · 발송일을 바꾸려면 [오늘 발송으로]를 눌러요(이번 발주 파일에 들어가요).' : '배송메세지 칸은 택배사 양식 글만 바꿔요 · 오늘 보내지 않으려면 [오늘 안 나감으로]를 눌러요.'}</p></div>`;
+        // #618(대표 10/10 「오늘 발송인데 갑자기 연락 와서 빼야 할 때」): 오늘 나가는 주문이면 어느 카드의 직접 고치기에서든 [오늘 발송 제외] — 열린 주문 확인 카드만 빼고(그 카드엔 [제외]가 이미 있다)
+        const exN = F.es.filter(e => e.excluded).length, flipOk = F.es.every(e => !e.individual) && (cd.type === 'fix' || (opts && opts.flip) || (exN === 0 && !((cd.type === 'order' || cd.type === 'split') && !closed(cd)))), hand = F.es.some(e => typeof (st.patch.get(keyOf(e)) || {}).excl === 'boolean');
+        const flipRow = !flipOk || (exN && exN < F.es.length) ? '' : `<div class="fo-flip" data-flip-row="${exN ? 'excl' : 'send'}"><span class="fo-flip-now" data-k="${exN ? 'excl' : 'send'}">지금: ${exN ? (hand ? '오늘 발송 제외(사람)' : '오늘 안 나감') : '오늘 발송' + (hand ? ' (사람이 바꿈)' : '')}</span><button type="button" class="fo-btn ${exN ? 'sm primary' : 'fo-exclbtn'}" data-flip="${exN ? 'send' : 'excl'}" data-id="${esc(cd.id)}">${exN ? '오늘 발송으로' : '오늘 발송 제외'}</button><p class="fo-flip-note">${exN ? '배송메세지 칸은 택배사 양식 글만 바꿔요 · 발송일을 바꾸려면 [오늘 발송으로]를 눌러요(이번 발주 파일에 들어가요).' : '갑자기 연락이 와서 오늘 빼야 하면 [오늘 발송 제외]를 눌러요(이번 발주 파일에서 빠져요 · 되돌릴 수 있어요).'}</p></div>`;
         return `<details class="fo-fix" data-compact data-fix="${esc(cd.id)}"${open ? ' open' : ''}><summary><span class="fo-fix-t">이 주문 직접 고치기</span>${F.byCard ? ' <span class="fo-fix-ok">적용됨</span>' : ''} <small>${cd.fixF.map(f => ({ name: '보내는 분', phone: '', addr: '보내는이 주소', memo: '배송메세지', opt: '옵션명' }[f])).filter(Boolean).concat(rc1 ? ['받는 분'] : []).join(' · ')}${F.es.length > 1 ? ` · 묶인 ${F.es.length}건 모두` : ''}</small></summary>${flipRow}<div class="fo-edit">${cd.fixF.map(field).join('')}</div>${rcMain}<div class="fo-card-acts"><button type="button" class="fo-btn sm primary" data-fix-apply="${esc(cd.id)}">적용</button>${F.byCard ? `<button type="button" class="fo-btn sm" data-fix-undo="${esc(cd.id)}">되돌리기</button>` : ''}<span class="fo-msg" data-fix-msg role="status">${F.byCard ? '여기서 고친 것이 있어요(결과 파일의 연보라 칸).' : ''}</span></div></details>`;
     }
     async function fixApply(id, btn) {
@@ -1119,6 +1124,10 @@
             if (arr0 && arr0.length === qtyNow(e1)) {
                 const arr = arr0.map(b => Object.assign({}, b, { t: tailNorm(b.t) }));
                 if (arr.some(b => b.o && !inCatalog(b.o))) { say('품목별 금액(단가표)에 없는 이름이에요 — 박스 옵션명을 목록에서 골라 주세요.'); return; }
+                if (arr.every(b => b.s)) {   // #618: 전부 「이번에 안 보냄」 = 오늘 발송 제외와 같은 길
+                    if (e1.individual) { say('입력삭제 주문은 현금파일 줄로 나가요 — 전부 안 보내려면 현금파일에서 그 줄을 빼 주세요.'); return; }
+                    st.fixDraft.delete(id); box.dataset.skip = '1'; await exclFlip([keyOf(e1)], false); return;
+                }
                 const cur = boxesOf(e1), g = boxGroupX(arr);
                 if (g.length > 1) { if (!cur || JSON.stringify(boxExpand(cur)) !== JSON.stringify(arr)) { set.boxes = g; set.boxesBy = 'card'; delete set.tail; delete set.tailBy; arr.forEach(b => recent(b.t)); } }
                 else {   // 전부 같게 골랐으면 보통 주문처럼 값 하나로(박스 나눔 없음)
@@ -1186,7 +1195,7 @@
             await run(judge); m = byKey();
             keys.forEach(k => { const e = m.get(k); if (e && !e.individual && !!e.excluded === toSend) st.patch.set(k, Object.assign({}, st.patch.get(k) || {}, { excl: !toSend, exclBy: 'card' })); });   // 엔진 판정이 바라는 쪽과 다르면 사람 결정으로 남긴다
         }
-        applyOrderDecisions(); renderSummaryOnly(); syncChat(); toast(toSend ? '오늘 발송으로 바꿨어요' : '오늘 안 나감으로 바꿨어요');
+        applyOrderDecisions(); renderSummaryOnly(); syncChat(); toast(toSend ? '오늘 발송으로 바꿨어요' : '오늘 발송에서 뺐어요');
         if (had) await remake();
         return true;
     }
@@ -1248,7 +1257,7 @@
         const pd = patchDec(cd), v = pd ? pd.v : st.dec.get(cd.id), done = v !== undefined;
         const byBtn = !!pd && keysOf(cd).every(k => (st.patch.get(k) || {}).exclBy === 'card');   // #583-c: 버튼으로 발송일 판정을 뒤집은 것
         if (pd) {   // 말로 정한 카드 — 무엇으로 정했는지와 [바꾸기](그 말을 되돌림)
-            const lab = cd.type === 'order' || cd.type === 'split' ? ((cd.choices.find(c => c[0] === v) || [])[1] || (v === 'send' ? '오늘 발송' : '제외'))
+            const lab = byBtn && v === 'excl' ? '오늘 발송 제외(사람)' : cd.type === 'order' || cd.type === 'split' ? ((cd.choices.find(c => c[0] === v) || [])[1] || (v === 'send' ? '오늘 발송' : '제외'))
                 : cd.type === 'sender-order' ? `보내는이 ${/드림$/.test(v.name) ? v.name : v.name + ' 드림'}${v.phone ? ' · ' + v.phone : ''}${typeof v.memo === 'string' ? ` · 배송메세지 「${v.memo || '기본 문구'}」` : ''}${v.tail ? ` · 품목 뒤 「${v.tail}」` : ''}`
                 : `배송메세지 「${v.memo || '기본 문구'}」${v.tail ? ` · 품목 뒤 「${v.tail}」` : ''}`;
             return `<article class="fo-card" data-id="${esc(cd.id)}" data-fo-card="${kindOf(cd)}" data-fo-done="1" data-by-chat="1" data-type="${cd.type}" data-state="done"><div class="fo-card-top"><span class="fo-tag" data-k="${cd.type}">${esc(cd.tag)}</span><b>${esc(cd.title)}</b><span class="fo-aibadge fo-chatbadge" data-chat-badge="1">${byBtn ? '사람이 정함' : '말로 정함'}</span></div><div class="fo-card-acts"><span class="fo-done">${esc(lab)} · ${byBtn ? '사람이 정함' : '말로 정함'}</span><button type="button" class="fo-btn sm" data-unpatch-card="${esc(cd.id)}">바꾸기</button></div>${cd.type === 'order' && (cd.fix || []).some(k => st.fixOpen.has(k)) ? fixHtml(Object.assign({}, cd, { fixF: ['name', 'phone', 'addr', 'memo', 'opt'] }), { flip: true, open: true }) : ''}</article>`;
@@ -1307,7 +1316,7 @@
     }
     const isAiDone = cd => st.dec.has(cd.id) && st.ai.tag.has(cd.id) && !patchDec(cd);
     // #583 ⑨(대표 10/8): 참고 줄 — 종류 배지 · 손님 메모 원문 형광 · 바뀐 결과(「기본 문구」「2S사이즈로!」) 굵은 인디고 · 누르면 그 주문 카드·메모 줄로
-    const INFO_KIND = [[/^오늘 (?:발송|안 나감)으로 바꿈|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
+    const INFO_KIND = [[/^오늘 (?:발송|안 나감)으로 바꿈|^오늘 발송 제외\(사람\)|^박스 [\d·]+ 다음 발송\(사람\)|^박스별 받는 분\(사람\)|^받는 분 바꿈\(사람\)/, '사람이 바꿈', 'hand'], [/^꼬리 (?:지정|뗌)\(사람\)/, '사이즈·과수', 'size'], [/^AI가|^배송메세지를 기본 문구로/, '배송메세지', 'memo'], [/^사이즈 지정 대상 아님|^사이즈를 붙일|^건수 다름/, '사이즈 확인', 'warn'], [/사이즈 지정/, '사이즈', 'size'], [/^오늘 안 나감/, '오늘 안 나감', 'warn'], [/^주문 없음/, '주문 없음', 'warn'], [/^입력삭제 · 현금파일 미확인/, '현금파일 미확인', 'warn'], [/개별발송|입력삭제/, '개별발송', 'indiv'], [/^요일 풀이/, '요일', 'plain'], [/현금파일/, '현금파일', 'plain'], [/받는 분 번호/, '메모 줄', 'plain']];
     // #604(대표 10/9 「메모 원문 강조 → 수정 강조 · 다른 배송메모처럼」): 확인 카드도 참고 줄과 같은 꼴 — 원문(손님 메모·직원 메모 줄) = 형광(mark.fo-hl) · 바뀌는 결과 = 굵게(b.fo-em). 글자는 바꾸지 않고 태그만 씌운다
     const SRC_KEYS = new Set(['손님 메모', '직원 메모 줄', '원래 적은 줄', '메모 줄']);
     const textMark = h => h.replace(/「([^」]*)」 → 「([^」]*)」/g, '「<mark class="fo-hl">$1</mark>」 → 「<b class="fo-em">$2</b>」').replace(/→ 「([^」<]*)」/g, '→ 「<b class="fo-em">$1</b>」').replace(/(손님 메모|메모 줄) 「([^」<]*)」/g, '$1 「<mark class="fo-hl">$2</mark>」');
@@ -1327,7 +1336,7 @@
             .replace(/^(주문 없음: |사이즈를 붙일 귤 로얄과 주문이 없어요: )(.+?)(?= \(받는 분 번호|$)/, '$1<mark class="fo-hl">$2</mark>');
         const fromMemo = (typeof it === 'object' && it.line != null) || /메모 줄/.test(t) || /^받는 분 번호로 적은 줄/.test(t);   // #611(대표 10/10): 직원이 메모 칸에 적은 줄에서 나온 참고 줄 — 손님 메모에서 온 줄과 구분
         const badge = (kd ? `<span class="fo-ibadge" data-k="${kd[2]}">${kd[1]}</span>` : '') + (fromMemo ? SRC_BADGE : '');
-        return `<li data-info="${i}"${kd ? ` data-info-kind="${kd[2]}"` : ''}${fromMemo ? ' data-info-src="memo"' : ''}>${badge}<span class="fo-itext">${h}</span>${typeof it === 'object' && it.flip && it.keys && it.keys.length ? `<button type="button" class="fo-btn sm fo-igo fo-iflip" data-info-flip="${i}">${it.flip === 'send' ? '오늘 발송으로' : '오늘 안 나감으로'}</button>` : ''}${go ? `<button type="button" class="fo-btn sm fo-igo" data-info-go="${i}">${typeof it === 'object' && it.card ? '카드 보기' : typeof it === 'object' && it.keys && it.keys.length ? '고치기' : '줄 보기'}</button>` : ''}</li>`;
+        return `<li data-info="${i}"${kd ? ` data-info-kind="${kd[2]}"` : ''}${fromMemo ? ' data-info-src="memo"' : ''}>${badge}<span class="fo-itext">${h}</span>${typeof it === 'object' && it.flip && it.keys && it.keys.length ? `<button type="button" class="fo-btn sm fo-igo fo-iflip" data-info-flip="${i}">${it.flip === 'send' ? '오늘 발송으로' : '오늘 발송 제외'}</button>` : ''}${go ? `<button type="button" class="fo-btn sm fo-igo" data-info-go="${i}">${typeof it === 'object' && it.card ? '카드 보기' : typeof it === 'object' && it.keys && it.keys.length ? '고치기' : '줄 보기'}</button>` : ''}</li>`;
     }
     function renderReview() {
         const peek = anchorLive() ? null : anchorPeek();   // #583-j
@@ -1339,7 +1348,7 @@
         $('fo-sum').innerHTML = `<span>기준 발송일 <b>${esc(dateLabel(s.shipDate))}</b></span><span>주문 <b>${n}</b>건</span><span>택배사 양식 <b>${n - indiv - excl}</b>건</span><span>입력삭제 <b>${indiv}</b>건</span><span>오늘 안 나감 <b>${excl}</b>건</span><span>현금파일 <b>${cashRows}</b>행</span><span id="fo-jeju">제주도 배송 <b>${esc(jejuText())}</b></span>${st.loadedAt ? `<span>주문 불러온 시각 <b>${hm(st.loadedAt)}</b></span>` : ''}`;
         {   // #603(대표 10/9 「여기서 보내야 할 것을 안 보내는 경우가 많다」): 기본으로 펼쳐 두고(접으면 이 화면 동안 기억) · 「오늘 안 나감」 → 배송메세지 → 사이즈 → 그 밖 순(같은 종류 안은 종전 순) · data-info 는 st.info 의 원래 자리 그대로
           const cur = $('fo-info').querySelector('details'); if (cur) st.infoClosed = !cur.open;
-          const rank = it => { const t = typeof it === 'string' ? it : it.t, kd = INFO_KIND.find(k => k[0].test(t)); return /^오늘 안 나감/.test(t) ? 0 : kd && kd[2] === 'memo' ? 1 : kd && (kd[2] === 'size' || kd[1] === '사이즈 확인') ? 2 : 3; };
+          const rank = it => { const t = typeof it === 'string' ? it : it.t, kd = INFO_KIND.find(k => k[0].test(t)); return /^오늘 안 나감|^오늘 발송 제외\(사람\)/.test(t) ? 0 : kd && kd[2] === 'memo' ? 1 : kd && (kd[2] === 'size' || kd[1] === '사이즈 확인') ? 2 : 3; };
           const order = st.info.map((it, i) => [rank(it), i]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
           $('fo-info').innerHTML = st.info.length ? `<details${st.infoClosed ? '' : ' open'}><summary>참고 ${st.info.length}건 (확인만 하면 돼요 · 줄을 누르면 그 주문·메모 줄로 가요 · 여기를 누르면 접혀요)</summary><ul>${order.map(([, i]) => infoHtml(st.info[i], i)).join('')}</ul></details>` : ''; }
         const open = pending(), ordOpen = open.filter(cd => cd.type === 'order').length;
@@ -1585,7 +1594,8 @@
         const program2 = [];
         list.forEach((e, i) => { const bx = boxesOf(e), row = program[i]; if (!bx) { program2.push(row); return; }
             const c = row.cells, base = core().stripTail(String(c[4].v), inCatalog), lil = v => ({ v, t: typeof v === 'number' ? 'n' : 's', s: patchStyle(c[3].s) });
-            bx.forEach(b => { const cells = c.slice(), bo = b.opt || base, r = b.rcpt; cells[4] = lil(b.tail ? bo + ' ' + b.tail : bo); cells[5] = lil(b.qty);
+            bx.forEach(b => { if (b.skip) return;   // #618 이번에 안 보내는 박스는 양식에 안 넣는다(스토어 시트는 한 줄 그대로)
+                const cells = c.slice(), bo = b.opt || base, r = b.rcpt; cells[4] = lil(b.tail ? bo + ' ' + b.tail : bo); cells[5] = lil(b.qty);
                 if (r) { if (r.name) cells[3] = lil(r.name); if (r.tel) cells[6] = lil(r.tel); if (r.tel2) cells[7] = lil(r.tel2); if (r.addr) cells[8] = lil(r.addr); if (r.memo) cells[9] = lil(r.memo); }   // #611: 바꾼 박스만 그 값으로(연보라) · 안 바꾼 칸은 주문 그대로
                 program2.push({ key: row.key, cells }); }); });
         const out = core().buildRows({ program: program2, cash: cashRowsWithSize(st.cash && st.cash.ok ? st.cash.rows : []), byPartner: st.byPartner, picks, senderByKey: sby, defaultMemo: DEFAULT_MEMO });
@@ -1866,14 +1876,16 @@
     // #601 박스별 꼬리 — boxes = [{ tail: '○사이즈로!' | null, qty }] · 합이 그 주문 박스 수와 같을 때만 쓴다(수량을 말로 바꿨으면 버린다).
     //   사람이 카드에서 정한 것(st.patch.boxes)이 먼저 · 사람이 꼬리 하나로 정했으면(st.patch.tail) 박스별은 없음 · 그다음 메모 줄(st.sizeBoxes)
     const boxLabel = t => (t ? String(t).replace(/사이즈로!$/, '').replace(/로!$/, '') : '꼬리 없음');
-    const boxText = bx => bx.map(b => (b.tail ? String(b.tail).replace(/로!$/, '') : '꼬리 없음') + ' ' + b.qty + '박스').join(' · ');   // #607(대표 10/9 「직원도 알게」): 「S 1 · M 1」 → 「S사이즈 1박스 · M사이즈 1박스」(과수는 「15과 1박스」)
+    const boxText = bx => bx.map(b => (b.skip ? '이번에 안 보냄' : b.tail ? String(b.tail).replace(/로!$/, '') : '꼬리 없음') + ' ' + b.qty + '박스').join(' · ');   // #607(대표 10/9 「직원도 알게」): 「S 1 · M 1」 → 「S사이즈 1박스 · M사이즈 1박스」(과수는 「15과 1박스」)
     const boxGroup = tails => { const out = []; tails.forEach(t => { t = t || null; const g = out.find(x => x.tail === t); if (g) g.qty++; else out.push({ tail: t, qty: 1 }); }); return out; };
     const boxFlat = bx => bx.flatMap(b => Array(b.qty).fill(b.tail || ''));
     // #611: 박스 묶음에 옵션명(opt)·받는 분(rcpt { name, tel, tel2, addr, memo })이 붙을 수 있다 — 없으면 종전 꼴({ tail, qty }) 그대로
-    const boxGroupX = arr => { const out = []; arr.forEach(b => { const k = BOX_F.map(f => b[f] || '').join('\u0001'); let g = out.find(x => x.k === k); if (g) { g.qty++; return; } g = { k, tail: b.t || null, qty: 1 }; if (b.o) g.opt = b.o;
+    const boxGroupX = arr => { const out = []; arr.forEach(b => { const k = BOX_F.map(f => b[f] || '').join('\u0001'); let g = out.find(x => x.k === k); if (g) { g.qty++; return; } g = { k, tail: b.t || null, qty: 1 }; if (b.s) g.skip = true; if (b.o) g.opt = b.o;
         if (b.n || b.p || b.p2 || b.a || b.m) { g.rcpt = {}; if (b.n) g.rcpt.name = b.n; if (b.p) g.rcpt.tel = b.p; if (b.p2) g.rcpt.tel2 = b.p2; if (b.a) g.rcpt.addr = b.a; if (b.m) g.rcpt.memo = b.m; } out.push(g); }); out.forEach(g => { delete g.k; }); return out; };
-    const boxExpand = bx => bx.flatMap(g => Array(g.qty).fill(0).map(() => { const r = g.rcpt || {}; return { t: g.tail || '', o: g.opt || '', n: r.name || '', p: r.tel || '', p2: r.tel2 || '', a: r.addr || '', m: r.memo || '' }; }));
+    const boxExpand = bx => bx.flatMap(g => Array(g.qty).fill(0).map(() => { const r = g.rcpt || {}; return { t: g.tail || '', o: g.opt || '', n: r.name || '', p: r.tel || '', p2: r.tel2 || '', a: r.addr || '', m: r.memo || '', s: g.skip ? '1' : '' }; }));
     const boxHasX = bx => !!bx && bx.some(g => g.opt || g.rcpt);
+    const boxSkipN = bx => (bx ? bx.reduce((n, g) => n + (g.skip ? g.qty : 0), 0) : 0);   // #618 이번에 안 보내는 박스 수
+    const boxSkipNos = bx => { let n = 0; const out = []; (bx || []).forEach(g => { for (let i = 0; i < g.qty; i++) { n++; if (g.skip) out.push(n); } }); return out; };
     // 박스별로 무엇을 바꿨는지(화면 글) — 주소·번호 글자는 싣지 않는다(결과 파일의 연보라 칸에서 본다)
     function boxExtraText(bx) { let n = 0; const out = []; bx.forEach(g => { const no = Array(g.qty).fill(0).map(() => ++n).join('·'), w = []; if (g.opt) w.push('옵션 ' + g.opt); const r = g.rcpt; if (r) { const x = [r.name ? '받는 분 ' + r.name : '', r.tel || r.tel2 ? '번호' : '', r.addr ? '주소' : '', r.memo ? '배송메세지' : ''].filter(Boolean); if (x.length) w.push(x.join('·') + ' 바꿈'); } if (w.length) out.push('박스' + no + ' ' + w.join(' · ')); }); return out.join(' / '); }
     // 지금 나갈 받는 분(말·카드로 바꾼 값 포함) — 직접 고치기 칸의 기본값이자 「바꿨는가」의 기준
@@ -1923,7 +1935,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
             if (p.rtel != null || p.rtel2 != null) add('받는 분 번호 변경', who, b);   // 번호 글자는 싣지 않는다
                         if (p.sender && p.sender.name) add('보내는이 변경', `${who} — ${p.sender.name} 드림`, `${b}: ${p.sender.name} 드림`);
             if (p.memo != null) add('배송메세지 변경', `${who} — 「${p.memo || '기본 문구'}」`, b);
-            if (p.excl === true) add('오늘 제외', who, b);
+            if (p.excl === true) add(p.exclBy === 'card' ? '오늘 발송 제외' : '오늘 제외', who, b);
             if (p.excl === false) add('오늘 발송으로', who, b);
         });
         // #535: 품목 통째로 바꾼 묶음은 한 줄로(되돌리기 = 그 묶음 전부)
@@ -1978,7 +1990,7 @@ if (p.boxes && boxesOf(e)) add('박스별 꼬리', `${who} → ${boxText(p.boxes
         S().merged.forEach(e => { const p = st.patch.get(keyOf(e)); if (e.individual && p && p.boxes) { const d = buyerTel(e); if (d && d.length >= 8) hb.set(d, p.boxes); } });   // #601: 입력삭제 손님 주문에 사람이 정한 박스별 꼬리
         if (!by.size && !hand.size && !pb.size && !hb.size) return rows;
         // #601: 그 번호의 현금파일 줄(박스 수가 맞는 줄)을 박스 묶음 수만큼 나눈다 — 사람이 정한 것이 먼저 · 메모 줄은 귤 로얄과 줄에만
-        const cut = (r, bx) => bx.map(b => { const o = b.tail ? withTail(String(r.opt || ''), b.tail) : core().stripTail(String(r.opt || ''), inCatalog), cells = r.cells.slice(); cells[4] = o; cells[5] = String(b.qty); return Object.assign({}, r, { opt: o, qty: b.qty, cells }); });
+        const cut = (r, bx) => bx.filter(b => !b.skip).map(b => { const o = b.tail ? withTail(String(r.opt || ''), b.tail) : core().stripTail(String(r.opt || ''), inCatalog), cells = r.cells.slice(); cells[4] = o; cells[5] = String(b.qty); return Object.assign({}, r, { opt: o, qty: b.qty, cells }); });
         const plan = new Map();   // 현금 줄 → 박스 묶음
         hb.forEach((bx, dg) => { const sum = bx.reduce((n, b) => n + b.qty, 0), r = rows.find(x => String(x.digits || '') === dg && x.qty === sum); if (r) plan.set(r, bx); });
         pb.forEach((parts, dg) => { if (hb.has(dg) || hand.has(dg)) return; const rs = rows.filter(x => String(x.digits || '') === dg && sizeItem(x.opt) && !/사이즈로!$/.test(String(x.opt || ''))); if (!rs.length) return;

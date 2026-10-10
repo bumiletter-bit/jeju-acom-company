@@ -96,6 +96,26 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
             ok(it.hFs >= (phone ? 17 : 18) && Number(it.hFw) >= 800 && it.hBg !== it.cardBg && it.hBg !== 'rgba(0, 0, 0, 0)' && it.hiColor !== it.hsColor, `[${label}] #614 머리 ${it.hFs}px 굵게 · 띠 배경(${it.hBg}) · 품목은 강조색(${it.hiColor})`);
             ok(it.dots === 2 && it.dotBad && it.indent >= 8 && it.nameFs <= 13 && it.priceFs > it.nameFs, `[${label}] #614 어긋난 묶음 머리에만 빨간 점(${it.dots}) · 페이지 줄 들여쓰기 ${it.indent}px · 페이지 이름 ${it.nameFs}px < 값 ${it.priceFs}px`);
             ok(it.gap >= 28 && it.line === '1px', `[${label}] #614 품목 사이 간격 ${it.gap}px + 구분선`);
+            // #618-b 품목 이름 글자색 = 페이지 줄·숫자와 확실히 다른 색(밝은 화면 진한 인디고 · 야간 라임) + 색 점
+            const col = await pg.evaluate(() => {
+                const rgb = c => (c.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+                const lum = c => { const [r, g, b] = rgb(c).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+                const ratio = (a, b) => { const x = lum(a), y = lum(b); return Math.round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) * 100) / 100; };
+                const bgOf = e => { for (let n = e; n; n = n.parentElement) { const b = getComputedStyle(n).backgroundColor; if (b && !/rgba\(0, 0, 0, 0\)|transparent/.test(b)) return b; } return 'rgb(255, 255, 255)'; };
+                const items = Array.from(document.querySelectorAll('#pc-out > .pc-item')), cs = (e, p) => getComputedStyle(e, p || null);
+                const gold = items.find(x => x.dataset.item === '황금향'), lemon = items.find(x => x.dataset.item === '그린레몬'), house = items.find(x => x.dataset.item === '하우스감귤');
+                const ihs = gold.querySelector('.pc-item-h > span'), hi = gold.querySelector('.pc-hi'), hs = gold.querySelector('.pc-hs'), price = gold.querySelector('.pc-price b'), pname = gold.querySelector('.pc-pname');
+                return { ih: cs(ihs).color, hi: cs(hi).color, hs: cs(hs).color, hsFw: cs(hs).fontWeight, price: cs(price).color, pname: cs(pname).color,
+                    ihR: ratio(cs(ihs).color, bgOf(ihs)), hiR: ratio(cs(hi).color, bgOf(hi)),
+                    dotOk: cs(lemon.querySelector('.pc-item-h'), '::before').backgroundColor, dotBad: cs(house.querySelector('.pc-item-h'), '::before').backgroundColor, dotW: cs(lemon.querySelector('.pc-item-h'), '::before').width,
+                    badCls: items.map(x => x.dataset.item + (x.classList.contains('pc-item-bad') ? '!' : '')).join(' '), hdots: document.querySelectorAll('#pc-out .pc-hdot').length };
+            });
+            const wantCol = theme ? 'rgb(197, 238, 79)' : 'rgb(55, 48, 163)';
+            ok(col.ih === wantCol && col.hi === wantCol, `[${label}] #618-b 품목 이름 색 = ${theme ? '라임' : '진한 인디고'}(대제목 ${col.ih} · 규격 머리 ${col.hi})`);
+            ok(col.hi !== col.price && col.hi !== col.pname && col.hi !== col.hs && Number(col.hsFw) >= 800, `[${label}] #618-b 품목 색 ≠ 규격 글자(${col.hs} · 굵기 ${col.hsFw}) ≠ 값·페이지 이름(${col.price})`);
+            ok(col.ihR >= 7 && col.hiR >= 7, `[${label}] #618-b 품목 이름 대비 7 이상(대제목 ${col.ihR} · 띠 배경 위 ${col.hiR})`);
+            ok(col.dotOk === wantCol && col.dotW === '10px' && col.dotBad === (theme ? col.dotBad : 'rgb(217, 45, 32)') && col.dotBad !== col.dotOk, `[${label}] #618-b 대제목 앞 색 점(${col.dotOk}) · 어긋남 있는 품목은 빨간 점(${col.dotBad})`);
+            ok(col.badCls === '하우스감귤! 황금향! 그린레몬 한라봉' && col.hdots === 2, `[${label}] #618-b 빨간 점 = 어긋남 있는 품목·규격에만(${col.badCls} · 규격 머리 점 ${col.hdots})`);
             const lines = await pg.evaluate(() => { const g = Array.from(document.querySelectorAll('#pc-out .pc-group')).find(x => /황금향 선물용 - 3kg/.test(x.dataset.label)); return { bad: g.querySelectorAll('tr.pc-bad').length, li: Array.from(g.querySelectorAll('.pc-issues li')).map(l => l.querySelector('.desk-badge').textContent + '(' + l.querySelector('.desk-badge').dataset.k + '): ' + l.querySelector('span').textContent) }; });
             ok(lines.bad === 3 && lines.li.length === 2 && /^자사몰≠네이버\(err\): 네이버 「제주 황금향 가정용 선물용」 41,800원 ↔ 자사몰 「제주 황금향 가정용 선물용」 42,800원/.test(lines.li[0]) && /^VIP가 더 비쌈\(err\)/.test(lines.li[1]), `[${label}] 자사몰≠네이버 = 두 줄 다 빨강 + VIP가 더 비쌈 줄 빨강 · 표 아래 이유 줄(종류 칩 + 서버 글)`);
             const ign = await pg.evaluate(() => { const t = document.querySelector('#pc-out tr[data-page="naver:6"]'); return t.className + '|' + t.querySelector('.pc-price small').textContent; });
