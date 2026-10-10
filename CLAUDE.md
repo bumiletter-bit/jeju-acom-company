@@ -81,12 +81,12 @@
 - 톡톡봇 = 커밋 2개(8fd54fc · abb8a1e) **미push(대표 몫)**: image_url·image_meta 기록(항상) · 사진 판독 스위치 `bot_timing.photo_judge`(기본 꺼짐 · 켜기 전 며칠 주소만 모아 네이버 사진 도메인 허용 목록 넣기) · AI 오류 텔레그램 1회(종류별 1시간). 🔴 톡톡봇 Render 에 TELEGRAM env 가 있는지 미확인(없으면 알림이 로그만) · 톡톡봇 SDK 0.52 에서 output_config 실호출 미확인 · 9/22~26 봇 침묵 = **콘솔 잔액 소진**(코드 아님 · 대표 자동 충전 확인).
 
 ### 미확인·함정(새 세션이 알 것)
-- 🔴 **총검토 뒤 동작 규칙(v5.9.480)**: 봇은 한 대화 하루 1번(큐에 넣는 순간 셈 · 유예 창 안 둘째 글도 직원 몫) · staff_needed/staff_replied/draft 대화는 사람이 풀 때까지 봇 침묵 · 직원 알림은 대화당 5분 1회(본문에 손님 글 없음) · 사진은 글이 뭐든 판독(실패·확신 낮음·한도 초과 = 직원) · AI 글에 약속 낱말 = 직원 · 송장 60일 삭제는 세기만(`purge_shipments:true` 로 켬) · 문자 검증 server/ops 는 한 번에 하나씩 · 가짜 stateMerge 없이 index.js 를 장착하면 실 `sms_gateway_state` 가 더럽혀짐.
+- 🔴 **총검토 뒤 동작 규칙(v5.9.480)**: 봇은 한 대화 하루 1번(큐에 넣는 순간 셈 · 유예 창 안 둘째 글도 직원 몫) · staff_needed/staff_replied/draft 대화는 사람이 풀 때까지 봇 침묵 · 직원 알림은 대화당 5분 1회(본문에 손님 글 없음) · 사진은 글이 뭐든 판독(실패·확신 낮음·한도 초과 = 직원) · AI 글에 약속 낱말 = 직원 · 송장 60일 삭제 = **대표 확정 10/10 「진행」 → `sms_gateway` {"purge_shipments":true} 켬**(공유폴더 엑셀이 정본 · 첫 삭제 12월 초 · 배송조회 카드는 60일 안만) · 문자 검증 server/ops 는 한 번에 하나씩 · 가짜 stateMerge 없이 index.js 를 장착하면 실 `sms_gateway_state` 가 더럽혀짐.
 - 국내 통신사에서 **한글 70자 초과가 분할 SMS 로 가는지**(시험 b-2) → 확정 전 봇 답은 70자 조각 여러 통(max_chars) · 확정되면 설정 max_chars 를 1000 으로 · MMS 는 삼성 메시지 「자동으로 가져오기」 켜져 있어야 mms:downloaded 가 옴 · 발송 한도(시간당 30 보수적 · 앱 상한도 따로) · sms:received messageId 는 고유 보장 없음 → 중복은 봉투 id(envelope_id UNIQUE) · 서명 = HMAC(원문 body + X-Timestamp) → server.js express.json verify 로 그 라우트만 rawBody.
 - 자동답변 엔진 'sms' 갈래 = system 배열에 `sms/ai-note.js` SMS_SYSTEM_NOTE 한 블록 추가 + QNA_TAIL 안 붙임(공용 블록 글자 무변경 · 캐시 유지) · AI 가 15회 중 1회 이모지·꼬리를 스스로 붙임 → **smsSafe 가 마지막 관문(빼면 안 됨)** · 클레임 시나리오는 톡톡 채널이라 재료에 없음(의도 · 클레임 = 사람) · 「발송 전 주문」 규칙 답은 1단계에서 안 나옴(lookup 이 송장 표만 · 3채널 배송준비 조회는 2단계 후보) · 가격 답에 행사 한 줄이 붙을 수 있음(광고성 판단 대표).
 - lookup = 수취인 번호 → 구매자 번호 · 14일 · 안심번호 8% 는 구매자 길로만 · many(선물 단골 9~11% · 주문 물음일 때만) 는 되묻기 글 → 60분 안 이름 답 → `recipientName` 2차 조회(이름 전체 일치만 · 발송 전은 3글자↑) · 알림톡 로그 가림 번호는 **열쇠로 쓰면 남의 주문 노출(금지)** · 네이버 주문번호 ↔ 운송장 연결 열쇠 없음 · 「발송 전」 답은 sms_preorders(설정 `preorders:true` · 7일 창 · 쿠팡·자사몰 결제시각 = `_paidAt` ISO) 가 켜졌을 때.
 - 검증(v5.9.480 기준): `verify-610-server.js`(실DB · 시험 번호 0999… · 가짜 게이트웨이·stateMerge · 포트 3458 · 83) · `verify-610-ops.js`(보관 정리·멈춘 줄·동시 발송 · 실DB 가드 · 39 · 🔴 폰 시험 시작 뒤엔 돌리지 말 것) · selfcheck 71 · ui 209 · rules 152 · lookup 93 · preorders 63 · photo 466 · phototest 59 · 469-desk 는 알약 순서 기대에 desk-sms 허용 · 579-db 「대상 세기 … 지시 첨부 0건」 1건 = 10/9 첫 정리 뒤 대상 0 이 된 낡은 기대(코드 무변경) · gen568 함정은 제거됨(#605 13줄 MARK 앞 · 손 글 있으면 exit 1).
-- 후보(대표 「고」 대기 · 재제안 금지): private 서버(렌더 빈 서비스) · 사진 판독 톡톡 HTTP 공용 라우트 · staff_replied 잠금 24시간 자동 해제 · 셀프 조회 색을 /guide(초록) 계열로 · sms_preorders 배송메세지 칸 · 송장 60일 실제 삭제 켜기(`purge_shipments`).
+- 후보(대표 「고」 대기 · 재제안 금지): private 서버(렌더 빈 서비스) · 사진 판독 톡톡 HTTP 공용 라우트 · staff_replied 잠금 24시간 자동 해제 · 셀프 조회 색을 /guide(초록) 계열로 · sms_preorders 배송메세지 칸.
 
 ## ★★★★★ 10/9 낮·저녁 인수인계(#600~#609 · v5.9.477)
 
