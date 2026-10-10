@@ -12,6 +12,7 @@
  *   ad       광고·수신거부·[Web발신] 안내         기록만
  *   carrier  통신사·대표번호(15xx/16xx/18xx/080)  기록만
  *   claim    파손·썩음·곰팡이·환불·교환·안 옴     직원 몫(봇 답 없음 — 사진이 있으면 사진 판독 쪽)
+ *   account  계좌·이체·입금·무통장·송금           직원 몫(봇 답·초안 없음 — 문자로 주문·입금하는 손님은 사람이 받는다 · #628 대표 「고」 10/10)
  *   photo    사진만 왔거나 글이 아주 짧음         사진 판독 → 직원 몫
  *   ship_q   언제 와요·발송·도착·송장             규칙 답(rules.js) → 안 되면 AI
  *   order_q  주문·결제·취소·변경·주소·사이즈      AI(확인이 필요하면 [사람])
@@ -30,6 +31,8 @@ const AD_WORDS = ['(광고)', '[광고]', '수신거부', '수신 거부', '무�
 const CARRIER_WORDS = ['통신요금', '요금 안내', '요금안내', '청구서', '청구 금액', '미납', '데이터 사용량', '데이터 소진', '부가서비스', 'SKT', 'SK텔레콤', 'LG U+', 'LGU+', '유플러스', '알뜰폰', '로밍'];
 const WEB_SENT_RE = /^\s*\[(Web발신|web발신|WEB발신|국제발신|국외발신)\]/;
 
+// #628(대표 10/10 「계좌이체 문의는 직원으로」): 계좌·입금 — 봇이 답도 초안도 만들지 않는다(톡톡 시나리오 「스토어로만」 글이 문자 단골 주문에는 맞지 않음)
+const ACCOUNT_WORDS = ['계좌', '이체', '입금', '무통장', '송금', '입금확인', '입금 확인', '계좌번호'];
 // 불만·문제 — 여기 걸리면 봇은 답하지 않는다
 const CLAIM_WORDS = [
     '파손', '깨졌', '깨져', '터졌', '터져', '찌그러', '짓눌', '으깨', '멍들', '눌려', '눌렸',
@@ -96,6 +99,9 @@ function classify(text, ctx) {
     // ② 불만·문제 — 사람
     w = hits(t, CLAIM_WORDS);
     if (w.length) return { bucket: 'claim', words: w, reason: '불만·문제 낱말' };
+    // ②-b 계좌·입금 — 사람(#628)
+    w = hits(t, ACCOUNT_WORDS);
+    if (w.length) return { bucket: 'account', words: w, reason: '계좌·입금 낱말' };
 
     // ③ 사진만
     if (c.hasImage && bare.length <= PHOTO_SHORT_LEN) return { bucket: 'photo', words: [], reason: bare ? '사진 + 짧은 글' : '사진만' };
@@ -119,4 +125,4 @@ function classify(text, ctx) {
     return { bucket: 'other', words: [], reason: '그 밖' };
 }
 
-module.exports = { classify, OTP_WORDS, AD_WORDS, CARRIER_WORDS, CLAIM_WORDS, SHIP_WORDS, ORDER_WORDS, GREETING_WORDS };
+module.exports = { classify, OTP_WORDS, AD_WORDS, CARRIER_WORDS, CLAIM_WORDS, ACCOUNT_WORDS, SHIP_WORDS, ORDER_WORDS, GREETING_WORDS };

@@ -256,7 +256,7 @@ module.exports = function mountSms(app, deps) {
         const text = String(inMsg.body || '');
         const bucket = inMsg.bucket || 'other';
         if (['otp', 'ad', 'carrier', 'greeting'].includes(bucket)) return { text: null, kind: null, toStaff: false, why: 'ignore:' + bucket };
-        if (bucket === 'claim' || bucket === 'photo') return { text: null, kind: null, toStaff: true, why: bucket };
+        if (bucket === 'claim' || bucket === 'photo' || bucket === 'account') return { text: null, kind: null, toStaff: true, why: bucket };   // #628 account = 계좌·입금(사람)
         if (lookup && lookup.match === 'many') return { text: lookupMod && lookupMod.askText ? lookupMod.askText() : '주문을 여러 건 찾았어요. 어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 확인해 드릴게요.', kind: 'ask', toStaff: false, why: 'many' };
         if (rulesMod && typeof rulesMod.answer === 'function') {
             try {
@@ -359,7 +359,7 @@ module.exports = function mountSms(app, deps) {
         }
         // 기록만(꺼짐 · record 모드) — 아무 것도 보내지 않음 · 알림은 클레임·사진만
         if (!c.enabled || c.mode === 'record') {
-            const toStaff = bucket === 'claim' || bucket === 'photo' || hasImage;
+            const toStaff = bucket === 'claim' || bucket === 'photo' || bucket === 'account' || hasImage;   // #628
             await setThread(thread.id, Object.assign(patch, toStaff ? { status: 'staff_needed' } : (thread.status === 'ignored' ? { status: 'new' } : {})));
             if (toStaff && c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} ${hasImage ? '사진' : '확인 필요'}`, STAFF_MSG);
             return done('recorded');
@@ -464,7 +464,7 @@ module.exports = function mountSms(app, deps) {
         }
         return rows.length;
     }
-    const labelWhy = w => ({ claim: '불만·클레임', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사' }[w] || w || '');
+    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사' }[w] || w || '');
 
     // 사진 판독(워커5 모듈 · 톡톡과 같은 규칙: 직원이 30분 안에 답한 대화면 침묵 + 직원 요약만) — 손님 문구는 photo-reply 가 3벌에서 고름(숫자 없음)
     async function composePhotoAnswer(thread, msg, c, lookup, images, text) {

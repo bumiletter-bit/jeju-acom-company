@@ -89,7 +89,7 @@ function parseNameReply(text) {
     const onlyInde = /^인데요?[\s.!~]*$/.test(tailAll);                                // 「김영희인데요」 = 이름만 말한 것
     // 이름 2글자 이상 + 글이 불만·주문 변경(환불·취소·주소 …)으로 갈리지 않을 때만 sure — 그런 글은 이름이 보여도 사람이 본다
     const bucket = classify(tailAll, {}).bucket;   // 머리말(「받는 분은」)과 이름을 뺀 나머지 글로 본다
-    const sure = name.length >= 2 && bucket !== 'claim' && bucket !== 'order_q' && (onlyInde || (!hasQuestion && TAIL_OK_RE.test(tailAll)));
+    const sure = name.length >= 2 && bucket !== 'claim' && bucket !== 'order_q' && bucket !== 'account' && (onlyInde || (!hasQuestion && TAIL_OK_RE.test(tailAll)));
     // 「받는 분은」 같은 머리말도 없이 뒤에 다른 말이 길게 붙으면(「어제 주문했는데요」 꼴) 이름으로 보지 않는다
     if (!sure && !hadLead && !/^(님|씨|요|이요|입니다|이에요|예요)/.test(firstTail)) return { name: null, sure: false, why: 'no_name' };
     return { name, sure, why: sure ? '' : 'mixed' };
