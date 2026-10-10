@@ -45,7 +45,7 @@ function expectName(thread, now) {
     const n = now == null ? Date.now() : new Date(now).getTime();
     if (!Number.isFinite(at) || !Number.isFinite(n)) return false;
     const gapMin = (n - at) / 60000;
-    return gapMin >= 0 && gapMin <= ASK_WINDOW_MIN;
+    return gapMin >= -5 && gapMin <= ASK_WINDOW_MIN;   // DB 시계(ask_at)가 서버 시계보다 몇백 ms 앞설 수 있어 음수 5분까지 허용(총괄 10/10 실측 · 실DB 가 360ms 앞섬)
 }
 
 // 이름 꼴인지 — 말꼬리를 뗀 뒤 한글 2~5자 / 영문 2~20자 · 흔한 낱말 제외

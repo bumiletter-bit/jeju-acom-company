@@ -272,7 +272,7 @@
 ### 워커 구성(10/8 밤)
 총괄 claude-9e(이 창) · 워커1 claude-67(화면 · ao-desk·app.js 편집권 → 미션 끝나 반납) · 워커2 claude-e8(조사·창구 도구). 새 창이면 ListAgents 로 재확인. 포트 총괄 3457(검증 3464) · 워커1 3461·3463 · 워커2 3462.
 
-**현행 버전(10/10 오후): 회사 v5.9.484 / app.js v=406 · ao-desk.js v=62 · ao-desk.css v=47 · ao-dark.css v=2 · final-order.js v=32 · final-order.css v=23 · final-order-core.js v=12 · invoice-v2.js v=27 · styles.css v=125 · theme.css v=15.** 다음 지시 번호 = **#616**(#610 문자 · #611·#615 최종발주 · #612·#614 가격 확인 · #613 배송조회 = 위 10/10 절).
+**현행 버전(10/10 오후): 회사 v5.9.485 / app.js v=406 · ao-desk.js v=62 · ao-desk.css v=47 · ao-dark.css v=2 · final-order.js v=32 · final-order.css v=23 · final-order-core.js v=12 · invoice-v2.js v=27 · styles.css v=125 · theme.css v=15.** 다음 지시 번호 = **#616**(#610 문자 · #611·#615 최종발주 · #612·#614 가격 확인 · #613 배송조회 = 위 10/10 절).
 
 ## ★★★★ 10/8 저녁 세션 마감 인수인계(#577~#591 · v5.9.467) — ②날짜 일은 여전히 유효
 
