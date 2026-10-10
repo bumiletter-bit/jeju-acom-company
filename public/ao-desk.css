@@ -853,6 +853,100 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 }
 @keyframes qty-pick-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .qty-pickpanel { animation: none; } .qty-pick, .qty-pick-ar { transition: none; } }
+/* ── #610-E 문자(회사폰 반자동 응대) — 알약 [문자] → 대화 목록 · 펼친 대화 · 답 칸. 틀은 배송조회 카드(.desk-tool · .ship-stat · .ship-q · .ship-note)를 그대로 쓰고, 여기는 문자에만 있는 것. 색은 토큰과 이미 쓰던 색만 */
+.sms-chip { display: inline-flex; align-items: center; gap: 6px; }
+.sms-n { font-style: normal; min-width: 20px; padding: 0 6px; border-radius: 999px; background: #B42318; color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+.sms-chip[data-dead="1"]::after { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #B42318; }
+.sms-mode { flex: none; font-style: normal; padding: 3px 9px; border-radius: 999px; background: var(--d-accent-soft); color: var(--d-accent); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.sms-mode[data-m="record"] { background: var(--d-soft); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
+.sms-mode[data-m="auto"] { background: #E7F8EF; color: #067647; }
+.sms-stat { margin-top: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ship-note:not([hidden]) + .sms-stat { margin-top: 12px; }
+.sms-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.sms-bar .desk-btn { flex: none; min-height: 44px; }
+.sms-q { flex: 1 1 220px; }
+.sms-count { color: var(--d-sub); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.sms-list { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--d-line); }
+.sms-list > .desk-empty { border-bottom: 1px solid var(--d-line); }
+.sms-item { border-bottom: 1px solid var(--d-line); min-width: 0; }
+.sms-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "tail hint badge time" "last last last last" "out out out out" "tags tags tags tags"; align-items: center; gap: 4px 10px; width: 100%; min-height: 44px; padding: 12px 8px; border: 0; border-radius: 10px; background: none; color: var(--d-ink); font: inherit; text-align: left; cursor: pointer; transition: background-color 160ms var(--d-ease); }
+.sms-row:hover { background: var(--d-soft); }
+.sms-row:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.sms-item.open > .sms-row { background: var(--d-soft); }
+.sms-item.open > .sms-row .sms-tail { color: var(--d-accent); }
+.sms-tail { grid-area: tail; font-size: 14.5px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sms-hint { grid-area: hint; min-width: 0; color: var(--d-sub); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-row > .desk-badge { grid-area: badge; }
+.sms-time { grid-area: time; color: var(--d-sub); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sms-last { grid-area: last; min-width: 0; color: var(--d-sub); font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sms-item[data-st="staff_needed"] .sms-last { color: var(--d-ink); font-weight: 600; }
+.sms-pic { font-style: normal; display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); font-size: 11.5px; font-weight: 700; line-height: 19px; vertical-align: 1px; }
+.sms-out { grid-area: out; min-width: 0; color: var(--d-sub); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-tags { grid-area: tags; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.sms-tag { font-style: normal; padding: 1px 8px; border-radius: 999px; background: var(--d-accent-soft); color: var(--d-accent); font-size: 11.5px; font-weight: 700; }
+.sms-by { color: var(--d-sub); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* 펼친 대화 — PC 는 그 줄 아래 · 폰은 아래에서 올라오는 시트(같은 요소) */
+.sms-back { display: none; }
+.sms-thread { display: flex; flex-direction: column; min-height: 0; margin: 4px 8px 12px; border: 1px solid var(--d-line); border-radius: 12px; background: var(--d-card); overflow: hidden; }
+.sms-th-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 14px; border-bottom: 1px solid var(--d-line); }
+.sms-th-head b { font-size: 14.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sms-th-x { flex: none; margin-left: auto; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--d-sub); font: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
+.sms-th-x:hover { background: var(--d-soft); color: var(--d-ink); }
+.sms-th-x:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.sms-order { padding: 8px 14px; border-bottom: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-sub); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.sms-order b { margin-right: 6px; color: var(--d-ink); }
+.sms-msgs { display: flex; flex-direction: column; gap: 8px; max-height: 380px; padding: 12px 14px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.sms-msgs:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.sms-msg { display: flex; flex-direction: column; align-items: flex-start; align-self: flex-start; gap: 3px; max-width: 78%; min-width: 0; }
+.sms-msg.out { align-items: flex-end; align-self: flex-end; }
+.sms-bub { padding: 9px 12px; border: 1px solid var(--d-line); border-radius: 14px; background: var(--d-soft); font-size: 14.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sms-msg.out .sms-bub { background: var(--d-accent-soft); border-color: #D8DBFF; }
+.sms-msg[data-s="failed"] .sms-bub { background: #FEECEB; border-color: #FECDCA; }
+.sms-msg small { color: var(--d-sub); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.sms-msg[data-s="failed"] small { color: #B42318; font-weight: 700; }
+.sms-day { align-self: center; margin: 4px 0; }
+.sms-day span { padding: 2px 10px; border-radius: 999px; background: var(--d-soft); color: var(--d-sub); font-size: 11.5px; }
+.sms-pics { display: flex; gap: 6px; flex-wrap: wrap; }
+.sms-thumb { width: 96px; height: 96px; padding: 0; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-soft); overflow: hidden; cursor: zoom-in; }
+.sms-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.sms-thumb img:not([src]) { visibility: hidden; }
+.sms-thumb:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.sms-thumb.fail { width: auto; height: auto; padding: 8px 10px; color: var(--d-sub); font: inherit; font-size: 12px; cursor: default; }
+.sms-reply { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--d-line); }
+.sms-draft { color: var(--d-accent); font-size: 12.5px; font-weight: 600; }
+.sms-warn { padding: 8px 10px; border-radius: 8px; background: #FEF6E7; color: #B54708; font-size: 12.5px; line-height: 1.5; }
+.sms-text { width: 100%; min-height: 76px; padding: 10px 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14.5px; line-height: 1.5; resize: vertical; }
+.sms-text::placeholder { color: var(--d-sub); }
+.sms-text:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }
+.sms-reply-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sms-reply-row .desk-btn { flex: none; min-height: 44px; }
+.sms-reply-row .desk-btn:disabled { opacity: .5; cursor: default; }
+.sms-reply-row .desk-btn[aria-busy="true"] { opacity: .7; cursor: progress; }
+.sms-len { margin-right: auto; color: var(--d-sub); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sms-view { position: fixed; inset: 0; z-index: 985; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; background: rgba(16, 24, 40, .86); }
+.sms-view .sms-view-x { flex: none; align-self: flex-end; min-height: 44px; }
+.sms-view img { min-height: 0; max-width: 100%; max-height: calc(100% - 60px); border-radius: 8px; object-fit: contain; }
+.sms-view img:not([src]) { visibility: hidden; }
+.desk-todo li.sms-todo { margin: -6px -8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.desk-todo li.sms-todo:hover { background: var(--d-soft); }
+.desk-todo li.sms-todo:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.desk-todo li.sms-todo.dead span, .desk-todo li.sms-todo.dead b { color: #B42318; }
+@media (max-width: 720px) {
+    .sms-stat { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .sms-stat li { padding: 8px 6px; }
+    .desk-todo li.sms-todo { min-height: 44px; align-content: center; }
+}
+@media (max-width: 640px) {
+    .sms-row { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "tail badge time" "hint hint hint" "last last last" "out out out" "tags tags tags"; padding: 12px 4px; }
+    .sms-q { font-size: 16px; }
+    .sms-back { display: block; position: fixed; inset: 0; z-index: 969; background: rgba(16, 24, 40, .45); }
+    .sms-thread { position: fixed; left: 0; right: 0; bottom: var(--sms-kb, 0px); z-index: 970; height: calc(var(--sms-vh, 100vh) * .88); max-height: calc(var(--sms-vh, 100vh) - 16px); margin: 0; border-width: 1px 0 0; border-radius: 16px 16px 0 0; box-shadow: 0 -12px 32px -8px rgba(16, 24, 40, .28); padding-bottom: env(safe-area-inset-bottom, 0); animation: qty-pick-up 220ms var(--d-ease); }
+    .sms-msgs { flex: 1 1 auto; min-height: 0; max-height: none; }
+    .sms-msg { max-width: 86%; }
+    .sms-text { min-height: 64px; font-size: 16px; }
+    .sms-reply-row .desk-btn.primary { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: reduce) { .sms-row { transition: none; } .sms-thread { animation: none; } }
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -902,7 +996,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (356규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (408규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1267,6 +1361,60 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 @media (max-width: 640px) {
     :where(html[data-ao-theme="dark"]) .qty-pickback { background: rgba(16, 24, 40, .45); }
     :where(html[data-ao-theme="dark"]) .qty-pickpanel { border-width: 1px 0 0; }
+}
+:where(html[data-ao-theme="dark"]) .sms-n { background: #D92D20; color: #fff; }
+:where(html[data-ao-theme="dark"]) .sms-chip[data-dead="1"]::after { background: #D92D20; }
+:where(html[data-ao-theme="dark"]) .sms-mode { background: var(--d-accent-soft); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-mode[data-m="record"] { background: var(--d-soft); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-mode[data-m="auto"] { background: rgba(61, 214, 140, .15); color: #7BE3AE; }
+:where(html[data-ao-theme="dark"]) .sms-count { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-list { border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-list > .desk-empty { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-item { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-row { border: 0; background: none; color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-row:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .sms-row:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .sms-item.open > .sms-row { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .sms-item.open > .sms-row .sms-tail { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-hint { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-time { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-last { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-item[data-st="staff_needed"] .sms-last { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-pic { background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-out { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-tag { background: var(--d-accent-soft); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-by { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-thread { border: 1px solid var(--d-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .sms-th-head { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-th-x { border: 0; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-th-x:hover { background: var(--d-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-th-x:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .sms-order { border-bottom: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-order b { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-msgs:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .sms-bub { border: 1px solid var(--d-line); background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .sms-msg.out .sms-bub { background: var(--d-accent-soft); border-color: #333B73; }
+:where(html[data-ao-theme="dark"]) .sms-msg[data-s="failed"] .sms-bub { background: rgba(255, 122, 110, .16); border-color: rgba(255, 122, 110, .38); }
+:where(html[data-ao-theme="dark"]) .sms-msg small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-msg[data-s="failed"] small { color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .sms-day span { background: var(--d-soft); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-thumb { border: 1px solid var(--d-line); background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .sms-thumb:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .sms-thumb.fail { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-reply { border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-draft { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-warn { background: rgba(251, 191, 74, .15); color: #FBBF4A; }
+:where(html[data-ao-theme="dark"]) .sms-text { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-text::placeholder { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-text:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }
+:where(html[data-ao-theme="dark"]) .sms-len { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-view { background: rgba(16, 24, 40, .86); }
+:where(html[data-ao-theme="dark"]) .desk-todo li.sms-todo:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-todo li.sms-todo:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .desk-todo li.sms-todo.dead span, :where(html[data-ao-theme="dark"]) .desk-todo li.sms-todo.dead b { color: #FF9B91; }
+@media (max-width: 640px) {
+    :where(html[data-ao-theme="dark"]) .sms-back { background: rgba(16, 24, 40, .45); }
+    :where(html[data-ao-theme="dark"]) .sms-thread { border-width: 1px 0 0; box-shadow: 0 -12px 32px -8px rgba(0, 0, 0, 0.53); }
 }
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */

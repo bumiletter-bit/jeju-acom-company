@@ -38,7 +38,7 @@ if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost'))
 }
 const pool = new Pool(dbConfig);
 
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '15mb', verify: (req, res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/sms/webhook')) req.rawBody = buf.toString('utf8'); } }));   // #610 문자 webhook 서명 검증용 원문(그 라우트만)
 app.use(express.static(path.join(__dirname, 'public')));
 
 // === JWT 인증 미들웨어 ===
@@ -8646,6 +8646,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
     const baseScenarios = await qnaScenarios();
     if (!baseScenarios.length) return null;
     const isMall = channel === 'mall';
+    const isSms = channel === 'sms';   // #610 회사폰 문자 — 재료는 네이버 꼴 그대로 · 채널 안내 블록(sms/ai-note.js)만 더하고 꼬리(톡톡·전화 유도)는 안 붙인다
     const scenarios = isMall
         ? [...mallMaterial([...baseScenarios, ...(await seasonScenariosToday(simDate, 'mall')), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday())]), ...mallChannelRule()]   // #565 자사몰 챗: 네이버 주소·결제 줄을 거른 재료 + #892 대신 자사몰 규칙(893)
         : [...baseScenarios, ...(await seasonScenariosToday(simDate)), ...(await shippingScenarioToday(simDate)), ...(await citrusNamingToday()), ...paymentWordingRule()];   // #108 시기 지식 + #379 발송 일정표 + #380 감귤 이름 규칙 (없으면 기존 동일)
@@ -8665,6 +8666,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
         system: [
             { type: 'text', text: qnaBuildSystem(scenarios), cache_control: { type: 'ephemeral' } },
             ...(isMall ? [{ type: 'text', text: MALL_SYSTEM_NOTE }] : []),   // #565: 자사몰 챗일 때만 채널 안내 블록(네이버 쪽은 블록 2개 그대로)
+            ...(isSms ? [{ type: 'text', text: require('./sms/ai-note.js').SMS_SYSTEM_NOTE }] : []),   // #610: 문자일 때만(공용 블록 글자는 무변경 · 캐시 유지)
             { type: 'text', text: storeBlock },
         ],
         messages: [{ role: 'user', content: userContent }],
@@ -8689,7 +8691,7 @@ async function qnaGenerate(question, productName, simDate, channel) {   // simDa
        재료(시나리오·시기지식)에 'SKIP' 문자열은 0건이라 오탐 위험 없음 → 본문 어디든 있으면 답변하지 않는다. */
     if (/SKIP/.test(answer)) { console.error('[문의생성] 본문에 SKIP 판정 혼입 → 답변 보류'); return null; }
     used = used.filter(n => scenarios.some(s => s.name === n));   // 재료 목록에 있는 이름만 기록
-    if (!answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;   // 고객센터 안내 항상 유지 (안전망)
+    if (!isSms && !answer.includes('010-6687-4031')) answer += '\n\n' + QNA_TAIL;   // 고객센터 안내 항상 유지 (안전망) — #610 문자는 제외(회사폰 자기 번호로 연락하라는 글이 됨 · sms/index.js 가 smsSafe 로 다듬음)
     if (isMall) answer = mallPostAnswer(answer);   // #565: 자사몰 챗 — 네이버 스토어 주소 제거·「톡톡」 → 「카카오톡 채널」
     // 품목 필터용 텍스트: 질문 + 상품명(용량 숫자는 다른 품목까지 매칭시키므로 제거 — 봇과 동일)
     const filterText = (String(question || '') + ' ' + String(productName || '').replace(/\d+(?:\.\d+)?\s*kg/gi, ' ')).trim();
@@ -10205,20 +10207,39 @@ app.post('/api/delivery/shipments/upload', authMiddleware, async (req, res) => {
             }
         });
         if (!rows.length) return res.json({ ok: false, error: '운송장번호 머리글이 있는 시트를 못 찾았어요(LOIS 엑셀 Sheet2 인지 확인)' });
-        const merged = {}; for (const x of rows) { const m = merged[x.tr]; if (!m) merged[x.tr] = Object.assign({}, x); else { if (x.op && !m.op.includes(x.op)) m.op = m.op ? m.op + ' / ' + x.op : x.op; m.q = (m.q || 0) + (x.q || 0) || m.q; } }
+        const merged = {}; for (const x of rows) { const m = merged[x.tr]; if (!m) merged[x.tr] = Object.assign({}, x); else { if (x.op && !m.op.includes(x.op)) m.op = m.op ? m.op + ' / ' + x.op : x.op; m.q = (m.q || 0) + (x.q || 0) || x.q; } }
+        // #610-C: 구매자 번호 = 첫 시트(머리글 「구매자연락처」)에서 「받는 분 번호 + 이름」으로 짝지어 붙임(선물 주문 손님이 문자로 물을 때 찾히게) · 못 찾으면 비움
+        let buyerN = 0;
+        try {
+            const smsLookup = require('./sms/lookup.js'); const bidx = smsLookup.makeBuyerIndex();
+            wb.eachSheet(ws => {
+                let h = 0, m = {};
+                for (let r = 1; r <= Math.min(8, ws.rowCount) && !h; r++) { const mm = {}; ws.getRow(r).eachCell((c, i) => { const t = cellStr(c.value).replace(/\s/g, ''); if (t) mm[t] = i; }); if (mm['구매자연락처']) { h = r; m = mm; } }
+                if (!h) return; const cN = m['수취인명'], cT = m['수취인연락처1'], cB = m['구매자연락처']; if (!cN || !cT || !cB) return;
+                for (let r = h + 1; r <= ws.rowCount; r++) { const row = ws.getRow(r); bidx.add('', cellStr(row.getCell(cT).value), cellStr(row.getCell(cN).value), cellStr(row.getCell(cB).value)); }
+            });
+            for (const x of Object.values(merged)) { const f = bidx.find('', x.tel, x.nm); x.bp = f && f.buyer ? f.buyer : null; if (x.bp) buyerN++; }
+        } catch (e) { console.error('[배송조회] 구매자 번호 붙이기 실패(무시):', e.message); }
         let n = 0;
         for (const x of Object.values(merged)) {
-            await pool.query(`INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, addr, option_text, qty, memo, source, uploaded_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upload',now()) ON CONFLICT (tracking) DO UPDATE SET ship_date = EXCLUDED.ship_date, partner = COALESCE(NULLIF(delivery_shipments.partner,''), EXCLUDED.partner),
+            await pool.query(`INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, addr, option_text, qty, memo, source, uploaded_at, buyer_phone)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upload',now(),$10) ON CONFLICT (tracking) DO UPDATE SET ship_date = EXCLUDED.ship_date, partner = COALESCE(NULLIF(delivery_shipments.partner,''), EXCLUDED.partner),
                 recipient = COALESCE(NULLIF(EXCLUDED.recipient,''), delivery_shipments.recipient), phone = COALESCE(NULLIF(EXCLUDED.phone,''), delivery_shipments.phone),
                 addr = COALESCE(NULLIF(EXCLUDED.addr,''), delivery_shipments.addr), option_text = COALESCE(NULLIF(EXCLUDED.option_text,''), delivery_shipments.option_text),
-                qty = COALESCE(EXCLUDED.qty, delivery_shipments.qty), memo = COALESCE(NULLIF(EXCLUDED.memo,''), delivery_shipments.memo), source = 'upload', uploaded_at = now()`,
-                [x.tr, date, partner, x.nm, x.tel, x.ad, x.op, x.q, x.ms]); n++;
+                qty = COALESCE(EXCLUDED.qty, delivery_shipments.qty), memo = COALESCE(NULLIF(EXCLUDED.memo,''), delivery_shipments.memo), source = 'upload', uploaded_at = now(),
+                buyer_phone = COALESCE(NULLIF(EXCLUDED.buyer_phone,''), delivery_shipments.buyer_phone)`,
+                [x.tr, date, partner, x.nm, x.tel, x.ad, x.op, x.q, x.ms, x.bp || null]); n++;
         }
-        res.json({ ok: true, date, partner, rows: rows.length, upserted: n });
+        res.json({ ok: true, date, partner, rows: rows.length, upserted: n, buyer_phone: buyerN });
     } catch (e) { res.status(500).json({ ok: false, error: '엑셀을 읽지 못했어요: ' + String(e.message).slice(0, 120) }); }
 });
 // ===== #594 택배 배송조회 — 끝 =====
+
+// ===== #610 회사폰 문자 반자동 응대 — 시작 (대표 「고」 10/10 · 핵심은 sms/index.js · 표 sms_threads/sms_messages/sms_images · webhook /api/sms/webhook · 화면 API /api/sms/*) =====
+//   켜기 = agent_office_config 'sms_gateway' {"enabled":true,"mode":"record"} (record → draft → auto 순 · auto 는 대표 「고」 뒤) · env SMSGATE_USER/PASS/SIGNING_KEY(Render) · webhook 등록 = POST /api/sms/register-webhooks(관리자 1회)
+//   무회귀: 설정 행이 없으면 webhook 은 받아 기록만 하고 아무 것도 보내지 않는다 · 다른 기능과 표를 공유하지 않음(delivery_shipments 에 buyer_phone 칸만 추가)
+const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus });
+// ===== #610 회사폰 문자 반자동 응대 — 끝 =====
 
 // 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).
 //   안전장치 = [자동 불러오기]가 항상 실행 시점 신규 조회. 타이머 수집분은 현황·통계용(변환 재사용 안 함).
@@ -16054,7 +16075,9 @@ app.get('*', (req, res) => {
 });
 
 // 서버 시작
-initDB().then(() => deliveryInitDB().catch(e => console.error('[배송조회] 표 생성 실패:', e.message))).then(() => {
+initDB().then(() => deliveryInitDB().catch(e => console.error('[배송조회] 표 생성 실패:', e.message)))
+    .then(() => smsDesk.initDB().then(() => smsDesk.start()).catch(e => console.error('[문자] 표 생성 실패:', e.message)))   // #610
+    .then(() => {
     app.listen(PORT, () => {
         console.log(`서버 실행 중: http://localhost:${PORT}`);
         // 6차: 기존 피드백 교훈 소급 추출 (미처리분만 — 멱등)

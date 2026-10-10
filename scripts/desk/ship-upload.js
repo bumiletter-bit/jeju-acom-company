@@ -4,7 +4,10 @@
 //   기본 = 어제 하루. --days N = 오늘까지 최근 N일(오늘 · 어제 · …). 색인이 60분 넘게 오래됐으면 share-index.js 를 먼저 돌린다(바뀐 엑셀만 다시 읽음 · 1~2분).
 //   같은 운송장이 여러 줄(한 상자에 주문 줄 여럿)이면 옵션을 「 + 」로 잇고 수량을 더해 한 줄로 올린다. 번호·주소는 전체를 올린다(CS 연락용 · 화면이 가린다).
 //   색인(324MB)을 통째로 읽지 않고 흘려 읽어 메모리 옵션 없이 돈다. 다른 도구(ship-status.js)가 scanRows·readAddrs 를 불러 쓴다.
+//   #610-C: 구매자 번호(색인 tb)도 함께 올린다 — 표에 buyer_phone 칸이 있을 때만(없으면 종전 문장 그대로). 운송장 시트에는 구매자 번호가 없어
+//   「받는 분 번호 + 이름」으로 첫 시트 줄과 맞춘다(같은 열쇠에 구매자가 둘이면 비움). 종전 9칸 값은 그대로다 — `--dry --compare` 가 DB 에 있는 줄과 견줘 준다(SELECT 만).
 const fs = require('fs'), path = require('path'); const { execFileSync } = require('child_process');
+const { makeBuyerIndex } = require(path.join(__dirname, '..', '..', 'sms', 'lookup.js'));
 const OUT = path.join(process.env.LOCALAPPDATA || require('os').homedir(), 'akkome', '공유폴더_색인');
 const INV_JSON = path.join(OUT, 'invoices.json'), ADDR_JSON = path.join(OUT, 'invoices-addr.json');
 const DDL = [
@@ -106,7 +109,7 @@ module.exports = { scanRows, readAddrs, refreshIndex, ensureTables, kstDay, INV_
 
 if (require.main === module) (async () => {
     const args = process.argv.slice(2); const opt = {};
-    for (let i = 0; i < args.length; i++) { const a = args[i]; if (a === '--date') opt.date = args[++i]; else if (a === '--from') opt.from = args[++i]; else if (a === '--to') opt.to = args[++i]; else if (a === '--days') opt.days = +args[++i]; else if (a === '--no-update') opt.noUpdate = true; else if (a === '--dry') opt.dry = true; }
+    for (let i = 0; i < args.length; i++) { const a = args[i]; if (a === '--date') opt.date = args[++i]; else if (a === '--from') opt.from = args[++i]; else if (a === '--to') opt.to = args[++i]; else if (a === '--days') opt.days = +args[++i]; else if (a === '--no-update') opt.noUpdate = true; else if (a === '--dry') opt.dry = true; else if (a === '--compare') opt.compare = true; }
     const say = o => console.log(JSON.stringify(o, null, 1));
     let dates;
     if (opt.date) dates = [opt.date];
@@ -118,17 +121,19 @@ if (require.main === module) (async () => {
     if (!fs.existsSync(INV_JSON)) { say({ ok: false, error: '송장 색인이 없습니다 — 공유폴더(사무실 네트워크) 연결을 확인하고 node scripts/desk/share-index.js 를 먼저 실행하세요', detail: idxInfo.index_error }); process.exit(2); }
     const needles = dates.map(d => Buffer.from('"d":"' + d + '"')); const set = new Set(dates);
     const byTr = new Map(); const perDate = {}; let rows = 0, noTr = 0; const files = new Map();   // 파일 → { d, pt }
+    const bidx = makeBuyerIndex();   // #610-C 파일 안에서 「받는 분 번호 + 이름 → 구매자 번호」
     await scanRows(ob => needles.some(nd => ob.includes(nd)), (r, i) => {
         if (!set.has(r.d)) return;
         rows++; const pd = perDate[r.d] = perDate[r.d] || { rows: 0, tracking: 0, no_tracking: 0 }; pd.rows++;
         if (r.f && !files.has(r.f)) files.set(r.f, { d: r.d, pt: r.pt || null });
+        bidx.add(r.f, r.t1, r.nm, r.tb);
         // 색인 줄의 운송장: trs(한 분께 상자 여럿 · #582-b) 가 있으면 전부, 없으면 tr 하나. 여럿이면 수량은 상자마다 1로 본다
         const trList = (r.trs && r.trs.length ? r.trs : [r.tr]).map(x => String(x || '').replace(/\D/g, '')).filter(x => /^\d{10}(\d{2})?$/.test(x));
         if (!trList.length) { noTr++; pd.no_tracking++; return; }
         for (const tr of trList) {
             const q = trList.length > 1 ? 1 : (parseInt(r.q, 10) || 0); const cur = byTr.get(tr);
             if (cur) { if (r.op && !cur.opts.includes(r.op)) cur.opts.push(r.op); cur.qty += q; }
-            else { pd.tracking++; byTr.set(tr, { tr, f: r.f, d: r.d, pt: r.pt || null, nm: r.nm || null, ph: String(r.t1 || r.tb || '').replace(/\D/g, '') || null, opts: r.op ? [r.op] : [], qty: q, ms: r.ms || null, i }); }
+            else { pd.tracking++; byTr.set(tr, { tr, f: r.f, d: r.d, pt: r.pt || null, nm: r.nm || null, ph: String(r.t1 || r.tb || '').replace(/\D/g, '') || null, opts: r.op ? [r.op] : [], qty: q, ms: r.ms || null, i, t1: r.t1 || '' }); }
         }
     });
     // 파일마다 둘째 시트를 직접 읽어 그 파일의 운송장을 통째로 바꿔 넣는다(읽히면 색인 줄은 버림 · 안 읽히면 색인 줄 그대로)
@@ -144,14 +149,56 @@ if (require.main === module) (async () => {
         fileInfo.push({ file: path.basename(rel), date: meta.d, from: s2 ? '둘째 시트' : '색인', tracking: s2 ? s2.length : fromIdx, index_tracking: fromIdx, error: err });
     }
     const list = [...byTr.values()];
+    // #610-C 구매자 번호 붙이기 — 색인 줄은 그 줄의 받는 분 번호(t1)로, 둘째 시트 줄은 시트의 받는 분 번호로 찾는다
+    const buyer = { one: 0, ambiguous: 0, none: 0, same_as_recipient: 0, differs: 0, safe_recipient: 0, safe_recipient_with_buyer: 0 };
+    for (const x of list) {
+        const hit = bidx.find(x.f, x.i >= 0 ? x.t1 : x.ph, x.nm); x.bp = hit.buyer; buyer[hit.why]++;
+        if (x.bp) { if (x.bp === String(x.ph || '')) buyer.same_as_recipient++; else buyer.differs++; }
+        if (/^050/.test(String(x.ph || ''))) { buyer.safe_recipient++; if (x.bp) buyer.safe_recipient_with_buyer++; }
+    }
+    buyer.filled_pct = list.length ? +(buyer.one / list.length * 100).toFixed(1) : 0;
     const addrs = await readAddrs(new Set(list.filter(x => x.i >= 0).map(x => x.i)));
     const base = { ok: true, dates, index_refreshed: !!idxInfo.refreshed, index_error: idxInfo.index_error, rows, tracking: list.length, no_tracking_rows: noTr, by_date: perDate, files: fileInfo };
-    if (opt.dry) { say(Object.assign(base, { dry: true, addr_found: list.filter(x => x.ad || addrs.get(x.i)).length, seconds: Math.round((Date.now() - t0) / 1000) })); return; }
+    base.buyer = buyer;
+    const legacy = x => [x.tr, x.d, x.pt, x.nm, x.ph, x.ad || addrs.get(x.i) || null, x.opts.join(' + ') || null, x.qty, x.ms];   // 종전 9칸(올리는 값 그대로)
+    if (opt.dry) {
+        const out = Object.assign(base, { dry: true, addr_found: list.filter(x => x.ad || addrs.get(x.i)).length });
+        if (opt.compare) {   // DB 에 있는 줄(종전 코드가 올린 것)과 종전 9칸을 견준다 — SELECT 만 · 값은 내지 않고 건수만
+            const { pool } = require('./_db');
+            try {
+                const db = await pool.query(`SELECT tracking, ship_date::text AS d, partner, recipient, phone, addr, option_text, qty, memo, source FROM delivery_shipments WHERE ship_date = ANY($1::date[])`, [dates]);
+                const by = new Map(db.rows.map(r => [r.tracking, r])); const cols = ['tracking', 'd', 'partner', 'recipient', 'phone', 'addr', 'option_text', 'qty', 'memo'];
+                const cmp = { db_rows: db.rows.length, new_rows: list.length, same: 0, diff: 0, missing_in_db: 0, only_in_db: 0, diff_by_col: {}, diff_by_source: {} };
+                const seen = new Set();
+                for (const x of list) {
+                    const r = by.get(x.tr); if (!r) { cmp.missing_in_db++; continue; } seen.add(x.tr);
+                    const v = legacy(x); const bad = cols.filter((c, i) => (v[i] == null ? null : v[i]) !== (r[c] == null ? null : r[c]));
+                    if (!bad.length) cmp.same++; else { cmp.diff++; for (const c of bad) cmp.diff_by_col[c] = (cmp.diff_by_col[c] || 0) + 1; cmp.diff_by_source[r.source || ''] = (cmp.diff_by_source[r.source || ''] || 0) + 1; }
+                }
+                cmp.only_in_db = db.rows.filter(r => !seen.has(r.tracking)).length;
+                out.compare = cmp;
+            } finally { await pool.end(); }
+        }
+        say(Object.assign(out, { seconds: Math.round((Date.now() - t0) / 1000) })); return;
+    }
     const { pool } = require('./_db');
     try {
         await ensureTables(pool); let upserted = 0;
+        // #610-C 표에 buyer_phone 칸이 생긴 뒤(서버 배포 뒤)에만 구매자 번호를 올린다 — 칸이 없으면 아래 종전 문장 그대로
+        const hasBuyer = (await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'delivery_shipments' AND column_name = 'buyer_phone'`)).rowCount > 0;
+        base.buyer_column = hasBuyer;
         for (let k = 0; k < list.length; k += 500) {
             const part = list.slice(k, k + 500);
+            if (hasBuyer) {   // 종전 9칸은 아래 문장과 같고 buyer_phone 만 더한다(새로 못 찾은 날에 있던 값을 지우지 않는다)
+                const res2 = await pool.query(
+                    `INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, addr, option_text, qty, memo, buyer_phone, source, uploaded_at)
+                     SELECT t, d::date, pt, nm, ph, ad, op, q, ms, bp, 'index', now()
+                       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[], $9::text[], $10::text[]) AS x(t, d, pt, nm, ph, ad, op, q, ms, bp)
+                     ON CONFLICT (tracking) DO UPDATE SET ship_date = EXCLUDED.ship_date, partner = EXCLUDED.partner, recipient = EXCLUDED.recipient, phone = EXCLUDED.phone, addr = EXCLUDED.addr,
+                            option_text = EXCLUDED.option_text, qty = EXCLUDED.qty, memo = EXCLUDED.memo, buyer_phone = COALESCE(EXCLUDED.buyer_phone, delivery_shipments.buyer_phone), source = 'index', uploaded_at = now()`,
+                    [...[0, 1, 2, 3, 4, 5, 6, 7, 8].map(c => part.map(x => legacy(x)[c])), part.map(x => x.bp || null)]);
+                upserted += res2.rowCount; continue;
+            }
             const res = await pool.query(
                 `INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, addr, option_text, qty, memo, source, uploaded_at)
                  SELECT t, d::date, pt, nm, ph, ad, op, q, ms, 'index', now()
