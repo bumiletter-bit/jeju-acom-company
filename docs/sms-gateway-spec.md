@@ -291,8 +291,8 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 - `POST /api/sms/webhook`(로그인 없음 · 서명으로 보호). 원문은 server.js 41행 `express.json({ limit: '15mb', verify })` 가 이 주소일 때만 `req.rawBody` 에 담는다 → body 한도 **15MB**(사진 Base64 포함).
 - 순서: 서명 검사 → 실패면 `401 {error: no_sig|bad_sig|stale}` · 키 없음 `503 webhook locked` → 통과면 **즉시 200** `{ ok, accepted, event }` → 처리는 뒤에서(`setImmediate`).
 - 중복 제거: ①메모리 1차(봉투 id · 3일) ②**정본 = `sms_messages.envelope_id` 부분 UNIQUE**(받은 줄 INSERT 가 `ON CONFLICT DO NOTHING` → 재시작 뒤에도 같은 봉투는 한 번만).
-- 어떤 이벤트든 오면 `agent_office_config 'sms_gateway_state'` 의 `last_ping_at`·`last_event_at`·`last_event` 를 갱신(= 「앱이 살아 있다」). `system:ping`·`app:started` 는 그것만 하고 끝. ping 간격 이력은 남기지 않는다.
-- 끊김 감시(켜져 있을 때만): 마지막 신호가 `ping_alert_hours`(기본 3시간) 넘게 없으면 텔레그램 1회 · 돌아오면 복구 1회.
+- 신호 기록(`agent_office_config 'sms_gateway_state'`): `system:ping`·`app:started` 만 `last_ping_at` 을 갱신하고(`app:started` 는 `started_at` 과 횟수 `starts` 도), 그 밖의 이벤트는 `last_event_at`·`last_event` 만 갱신한다. **살아 있음 = 둘 중 최근 시각**이 `ping_alert_hours` 안. ping 하나하나의 이력은 남기지 않는다.
+- 끊김 감시(켜져 있을 때만): 마지막 신호(위의 「둘 중 최근」)가 `ping_alert_hours`(기본 3시간) 넘게 없으면 텔레그램 1회 · 돌아오면 복구 1회.
 
 ### 10-2. 이벤트 처리
 | 이벤트 | 서버가 하는 일 |
@@ -322,7 +322,7 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 - 요청: `{ id: 우리 UUID, textMessage:{text}, phoneNumbers:[+82…], ttl: ttl_sec(기본 600), priority }`. 봇 답을 여러 통으로 나눌 때 1통째 9 · 2통째 8 …(앱 기본이 나중 것 먼저라서 · 100 미만이라 앱 상한은 그대로 적용).
 - 응답 202 → 줄은 **`sending` 유지** · `sent_at` 기록 · (봇이면) 쿨다운·오늘 횟수 올림. 실제 `sent`/`delivered`/`failed` 는 webhook 이 적는다. 409 = 같은 id 가 이미 있음 = 성공으로 봄. 20초 타임아웃이면 같은 id 로 1회 더. 그 밖 오류 → 줄 `failed` + 대화 `staff_needed` + 알림.
 - 🔴 `sending` 에 머문 줄 = 202 는 받았는데 폰이 아직 안 보냄(폰 꺼짐·오프라인) 또는 결과 webhook 이 안 옴. ttl 이 지나면 앱이 `sms:failed` 를 올려 `failed` 로 바뀌어야 한다 — 안 바뀌면 webhook 등록을 본다.
-- **나누기는 봇 자동 답에만 적용된다**(`max_chars` 기본 70 · 문장 경계). 🔴 직원이 화면에서 보내는 글(`/reply`)과 초안 보내기(`/send-draft`)는 **나누지 않고 한 통**으로 넣는다 → 70자를 넘으면 앱이 분할 SMS 로 보냄(시험 b-2 결과가 그대로 적용되는 길).
+- **나누기**(`max_chars` 기본 70 · 문장 경계): 봇 자동 답과 직원 화면 발송(`/reply`)·초안 보내기(`/send-draft`) 모두 조각으로 나눠 큐에 넣는다(v5.9.479 · sms/index.js queueStaffReply). 다듬은 뒤 글이 비면 400.
 
 ### 10-5. 화면·관리 API(전부 로그인 필요)
 | 주소 | 뜻 |
@@ -355,4 +355,4 @@ node scripts/sms-inspect.js --json          # 그대로 JSON
 ```
 - 번호는 가림값·손님 글 80자·주소 꼴 「[주소]」·글 속 전화번호 가림. SELECT 만 · 외부 호출 없음.
 - 판정은 「자료로 보이는 것」만: a 받은 줄 · b 우리 발송의 state · b-2 70자 넘는 한 통/나눠 보낸 조각 · c `gateway_other` 줄 유무 · d 사진 바이트 · e 마지막 신호 · f 문자 시각과 서버 도착 시각 차이·같은 글 중복. 폰 화면에서만 보이는 것(대화창 표시·한 덩어리 여부·순서)은 판정하지 않는다.
-- DB 에 안 남는 것: `partsCount`(조각 수) · 서명 실패 횟수 · ping 간격 이력 · 처리 결과 action(`late_to_staff` 등) → 렌더 로그의 「[문자] … → …」 줄로 본다.
+- DB 에 안 남는 것: `partsCount`(조각 수) · 서명 실패 횟수 · ping 하나하나의 이력(마지막 ping·앱 시작 횟수는 남음) · 처리 결과 action(`late_to_staff` 등) → 렌더 로그의 「[문자] … → …」 줄로 본다.

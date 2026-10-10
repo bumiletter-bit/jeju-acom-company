@@ -49,10 +49,11 @@ const len = s => Array.from(String(s || '')).length;
         const st = parseVal((cfgRows.find(r => r.key === 'sms_gateway_state') || {}).value) || {};
         const cfg = Object.assign({ enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 1, hourly_send_cap: 30, hold_sec: 75, ping_alert_hours: 3, max_chars: 70, ttl_sec: 600 }, cfgRaw || {});
         cfg.enabled = cfgRaw ? cfgRaw.enabled === true : false;
-        const lastPingMs = st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0;
+        const pingMs = st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0;
+        const lastPingMs = Math.max(pingMs, st.last_event_at ? new Date(st.last_event_at).getTime() : 0);   // 서버와 같은 판정: ping·다른 이벤트 중 최근
         const alive = !!lastPingMs && Date.now() - lastPingMs < cfg.ping_alert_hours * 3600e3;
         out.config = { row: !!cfgRaw, enabled: cfg.enabled, mode: cfg.mode, cooldown_min: cfg.cooldown_min, daily_cap: cfg.daily_cap, hourly_send_cap: cfg.hourly_send_cap, hold_sec: cfg.hold_sec, max_chars: cfg.max_chars, ttl_sec: cfg.ttl_sec, ping_alert_hours: cfg.ping_alert_hours, staff_ids: cfg.staff_ids || [] };
-        out.gateway = { last_ping_at: st.last_ping_at || null, last_event_at: st.last_event_at || null, last_event: st.last_event || null, alive, alerted: !!st.alerted };
+        out.gateway = { last_ping_at: st.last_ping_at || null, last_event_at: st.last_event_at || null, last_event: st.last_event || null, started_at: st.started_at || null, starts: st.starts || 0, alive, alerted: !!st.alerted };
 
         // ── 큐·오늘 통계 ──
         out.queue = (await q(`SELECT count(*) FILTER (WHERE state = 'queued')::int AS queued, count(*) FILTER (WHERE state = 'sending')::int AS sending,
@@ -127,7 +128,7 @@ const len = s => Array.from(String(s || '')).length;
         const pending = mm.filter(r => r.bucket === 'photo_pending');
         j('d 사진', withData.length ? '통과' : (mm.length ? '사진 바이트 없음' : '미확인'), mm.length ? mm.map(r => `#${r.id} ${r.bucket || '-'} ${r.img || '사진 0'}`).join(', ') + (pending.length ? ` · 내려받기 대기 ${pending.length}줄(5분 넘으면 직원 몫으로 바뀜 — 삼성 메시지 MMS 자동 가져오기 확인)` : '') : 'MMS 줄 없음');
         // e ping
-        j('e 살아 있음', alive ? (Date.now() - lastPingMs < 15 * 60000 ? '통과' : '신호 오래됨') : '신호 없음', `마지막 신호 ${ago(st.last_ping_at)}(${kst(st.last_ping_at)}) · 마지막 이벤트 ${st.last_event || '-'} ${ago(st.last_event_at)} · 🔵 last_ping_at 은 어떤 이벤트가 와도 갱신됨 → 강제 종료·재부팅 시험은 「종료 뒤 시각 < 마지막 이벤트 시각」이고 last_event 가 app:started/system:ping 인지로 판정(간격 이력은 DB 에 없음)`);
+        j('e 살아 있음', alive ? (pingMs && Date.now() - pingMs < 15 * 60000 ? '통과' : 'ping 오래됨') : '신호 없음', `마지막 ping ${ago(st.last_ping_at)}(${kst(st.last_ping_at)}) · 앱 시작 ${st.starts || 0}회 · 마지막 시작 ${ago(st.started_at)}(${kst(st.started_at)}) · 마지막 이벤트 ${st.last_event || '-'} ${ago(st.last_event_at)} · 강제 종료·재부팅 시험 = 「종료한 시각 뒤에 마지막 시작 시각이 찍히고 그 뒤 ping 이 이어지는지」`);
         // f 늦게 온 글
         const late = ins.filter(r => r.lag_sec != null && r.lag_sec > 60);
         const dupText = (() => { const seen = {}; const d = []; for (const r of ins) { const k = r.tail + '|' + r.text; if (seen[k] && Math.abs(new Date(r.event_at) - new Date(seen[k].event_at)) < 5000) d.push(`#${seen[k].id}=#${r.id}`); seen[k] = r; } return d; })();
@@ -146,7 +147,7 @@ const len = s => Array.from(String(s || '')).length;
         const L = console.log;
         L(`━━━ 문자 연동 점검 · ${kst(new Date())} KST · ${threadId ? '대화 ' + threadId : '최근 ' + (sinceMin >= 60 ? (sinceMin / 60) + '시간' : sinceMin + '분')} ━━━`);
         L(`설정   ${out.config.row ? '' : '(행 없음) '}켜짐 ${cfg.enabled ? '예' : '아니오'} · 모드 ${cfg.mode} · 쿨다운 ${cfg.cooldown_min}분 · 하루 봇 답 ${cfg.daily_cap}회 · 시간당 발송 ${cfg.hourly_send_cap} · 유예 ${cfg.hold_sec}초 · 한 통 ${cfg.max_chars}자 · ttl ${cfg.ttl_sec}초`);
-        L(`신호   ${alive ? '살아 있음' : '🔴 끊김'} · 마지막 ${ago(st.last_ping_at)}(${kst(st.last_ping_at)}) · 마지막 이벤트 ${st.last_event || '-'} ${ago(st.last_event_at)}${st.alerted ? ' · 끊김 알림 나간 상태' : ''}`);
+        L(`신호   ${alive ? '살아 있음' : '🔴 끊김'} · 마지막 ping ${ago(st.last_ping_at)}(${kst(st.last_ping_at)}) · 앱 시작 ${st.starts || 0}회(마지막 ${ago(st.started_at)}) · 마지막 이벤트 ${st.last_event || '-'} ${ago(st.last_event_at)}${st.alerted ? ' · 끊김 알림 나간 상태' : ''}`);
         L(`큐     queued ${out.queue.queued} · sending ${out.queue.sending}${out.queue.oldest_send_after ? ' · 가장 오래된 보낼 시각 ' + kst(out.queue.oldest_send_after) + '(' + ago(out.queue.oldest_send_after) + ')' : ''}`);
         L(`오늘   받음 ${out.today.in_n} · 봇 ${out.today.bot_n} · 직원 ${out.today.staff_n} · 그 밖 발신 ${out.today.other_n} · 실패 ${out.today.failed_n} · 취소 ${out.today.cancelled_n}`);
         L(`대화   ` + (Object.keys(out.status_counts).length ? Object.entries(out.status_counts).map(([k, v]) => `${k} ${v}`).join(' · ') : '없음'));
