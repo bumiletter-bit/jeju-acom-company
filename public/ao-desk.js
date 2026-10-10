@@ -222,7 +222,7 @@
                 <div class="desk-tool-head"><b>문자</b><em class="sms-mode" id="sms-mode" hidden></em><span id="sms-sub">회사폰으로 온 문자</span><button type="button" class="desk-btn sm desk-tool-x" id="sms-close">닫기</button></div>
                 <div class="ship-note" id="sms-note" role="status" hidden></div>
                 <ul class="ship-stat sms-stat" id="sms-stat" aria-label="상태별 대화 수(누르면 그 상태만)"></ul>
-                <div class="sms-bar"><button type="button" class="desk-btn sm" id="sms-all" title="거르기를 풀고 전부 봐요" hidden>전체</button><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 글로 찾기"><span class="sms-count" id="sms-count" role="status"></span></div>
+                <div class="sms-bar"><button type="button" class="desk-btn sm" id="sms-all" title="거르기를 풀고 전부 봐요" hidden>전체</button><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn" id="sms-done" aria-pressed="false" title="끝낸 대화와 안 봐도 될 문자(인증번호·광고)까지 보여요">끝난 대화도</button><span class="sms-count" id="sms-count" role="status"></span></div>
                 <ul class="sms-list" id="sms-list"></ul>
                 <div class="sms-back" id="sms-back" hidden></div>
                 <div class="sms-view" id="sms-view" role="dialog" aria-modal="true" aria-label="사진 크게 보기" hidden><button type="button" class="desk-btn sm sms-view-x" id="sms-view-x">닫기</button><img id="sms-view-img" alt="문자로 온 사진"></div>
@@ -1022,7 +1022,7 @@
     //         POST /api/sms/threads/:id/reply { text } · /handled · /send-draft · /close
     //   새 폴링 없음 — 기존 1초 tick 에 얹는다(요약 30초 · 카드가 열려 있으면 목록 10초 · 펼친 대화 5초 · 가려진 동안은 안 받음)
     //   서버에 문자 라우트가 없으면(요약이 실패하면) 알약 자체가 안 보인다 → 종전 화면 그대로
-    const SMS = { sum: null, sumAt: 0, sumSig: '', items: null, sig: '', err: '', pick: null, q: '', qt: 0, seq: 0, lbusy: false, listAt: 0, all: null, open: 0, thread: null, tsig: '', tseq: 0, tbusy: false, thAt: 0, sending: false, texts: new Map(), filled: 0, imgs: new Map() };
+    const SMS = { showDone: false, sum: null, sumAt: 0, sumSig: '', items: null, sig: '', err: '', pick: null, q: '', qt: 0, seq: 0, lbusy: false, listAt: 0, all: null, open: 0, thread: null, tsig: '', tseq: 0, tbusy: false, thAt: 0, sending: false, texts: new Map(), filled: 0, imgs: new Map() };
     const SMS_ST = { staff_needed: ['직원 몫', 'ask'], draft: ['초안 대기', 'wait'], bot_replied: ['봇 답변', 'work'], cooldown: ['봇 답변', 'work'], staff_replied: ['직원 답변', 'done'], closed: ['끝난 대화', 'mute'], new: ['새 문자', 'mute'], ignored: ['안 봐도 됨', 'mute'] };
     // 숫자 칸(F1): 직원 몫 · 초안 대기 · 봇 답 · 처리됨 — 「쿨다운」은 서버가 그 상태를 넣지 않아 뺐다. 사람이 볼 것 = 직원 몫 + 초안 대기(알약 숫자 · 챙길 일)
     const SMS_CELLS = [['staff_needed', '직원 몫'], ['draft', '초안 대기'], ['bot_replied', '봇 답'], ['staff_replied', '처리됨']];
@@ -1132,10 +1132,12 @@
     }
     function smsRenderList() {
         const ul = $('sms-list'); if (!ul) return;
-        const items = (SMS.items || []).slice();
+        // #629(대표 10/10 「대화 끝내기를 눌러도 채팅창에 남아 있다」): 거르기·찾기가 없을 때는 끝난 대화(closed)·안 봐도 될 문자(ignored)를 숨긴다 — [끝난 대화도]를 켜면 전부. 열어 둔 대화는 끝내도 접히기 전까지 남는다.
+        const hideDone = !SMS.pick && !SMS.q && !SMS.showDone;
+        const items = (SMS.items || []).filter(x => !hideDone || !(x.status === 'closed' || x.status === 'ignored') || x.id === SMS.open);
         const cur = SMS.open && SMS.thread && SMS.thread.thread && SMS.thread.thread.id === SMS.open ? SMS.thread.thread : null;
         const moved = !!(SMS.open && cur && !items.some(x => x.id === SMS.open));
-        const sig = JSON.stringify([items, SMS.pick, SMS.q, SMS.open, SMS.err, moved ? cur : 0]);
+        const sig = JSON.stringify([items, SMS.pick, SMS.q, SMS.open, SMS.err, SMS.showDone, moved ? cur : 0]);
         const cnt = $('sms-count'); if (cnt) cnt.textContent = SMS.err ? '' : (items.length >= 50 ? '50건까지 보여요. 끝 4자리나 글로 찾아보세요.' : nfmt(items.length) + '건');
         if (sig === SMS.sig && ul.firstChild) return;
         SMS.sig = sig;
@@ -1325,6 +1327,10 @@
                 if (stale() || !(d && d.thread)) return false;
                 SMS.items = [d.thread].concat(SMS.items || []); SMS.sig = ''; smsRenderList();
             }
+            {   // #629: 알림으로 연 대화가 끝난 대화(숨김)면 [끝난 대화도]를 켜서 줄이 보이게 한 뒤 연다
+                const it = (SMS.items || []).find(x => x.id === id);
+                if (it && (it.status === 'closed' || it.status === 'ignored') && !SMS.showDone) { SMS.showDone = true; const b = $('sms-done'); if (b) b.setAttribute('aria-pressed', 'true'); SMS.sig = ''; smsRenderList(); }
+            }
             if (SMS.open !== id) smsThreadOpen(id);
             const row = document.querySelector('#sms-list .sms-item[data-id="' + id + '"]');
             if (row) { row.scrollIntoView({ block: 'nearest' }); flashEl(row.querySelector('.sms-row'), 1600); }
@@ -1340,6 +1346,7 @@
     function smsBind() {
         $('desk-sms-now').addEventListener('click', () => { if (smsVisible()) smsCloseCard(); else smsOpen(); });
         $('sms-close').addEventListener('click', smsCloseCard);
+        $('sms-done').addEventListener('click', () => { SMS.showDone = !SMS.showDone; $('sms-done').setAttribute('aria-pressed', String(SMS.showDone)); smsRenderList(); });   // #629
         $('sms-all').addEventListener('click', () => smsPick(null));
         const statPick = e => { const li = e.target.closest && e.target.closest('#sms-stat li[role="button"]'); if (li) smsPick(li.dataset.b); return li; };
         $('sms-stat').addEventListener('click', statPick);
