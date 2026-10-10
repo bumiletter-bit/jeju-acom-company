@@ -596,6 +596,17 @@ console.log('⑫ #601 박스마다 다른 사이즈 — sizeLines parts · boxTa
         ok(l5.text === '\n\n그냥 L 글' && eq(l5.sizes.map(z => [z.srcLine, z.size]), [[0, 'M']]) && eq(l5.bad.map(b => [b.srcLine, b.size, b.digits]), [[1, 'L', '01099998888']]), '#615 여러 줄: M 줄은 종전대로 · L 줄만 bad · 번호 없는 「L」 글은 손 안 댐', JSON.stringify(l5));
     }
 
+    // #623 sizeOnlyMemo — 「사이즈 말 + 부탁 말씨」뿐인 메모만 참
+    ok(typeof core.sizeOnlyMemo === 'function', '#623 core.sizeOnlyMemo 있음');
+    if (typeof core.sizeOnlyMemo === 'function') {
+        const T = ['소과로 부탁드립니다', '소과로 부탁드려요!', '2S 사이즈로 보내주세요', '꼭 2S로 보내주세요', '꼭 S로 부탁드립니다~', '작은 걸로 주세요', 'm사이즈요', 's사이즈로 보내주세요', '에스 사이즈 부탁합니다', '소과'];
+        const F = ['소과로 부탁드립니다 문 앞에 놔주세요', '2S로 주세요 문 앞에 놔주세요', '소과로 부탁드립니다 10/12 도착', 'S사이즈 2박스', '맛있는 걸로 부탁드립니다', '부탁드립니다', '소과 말고 큰 걸로', '홍길동 S로', '문 앞에 놔주세요', '', null];
+        const bt = T.filter(t => core.sizeOnlyMemo(t) !== true), bf = F.filter(t => core.sizeOnlyMemo(t) !== false);
+        ok(bt.length === 0, `#623 사이즈 말 + 부탁 말씨뿐 = 참(${T.length}문장 · 대표 실주문 「소과로 부탁드립니다」 포함)`, bt.join(' | '));
+        ok(bf.length === 0, `#623 기사님 말·날짜·수량·이름·다른 부탁이 섞이거나 사이즈 말이 없으면 거짓(${F.length}문장 · 종전대로 AI)`, bf.join(' | '));
+        ok(core.sizeOnlyMemo('소과로 부탁드립니다') === true && core.sizeOnlyMemo('소과로 부탁드립니다') === true, '#623 두 번 불러도 같은 답(전역 정규식 lastIndex 무관)');
+    }
+
     // boxTails
     const parts = P('S', 1, 'M', 1), keepP = JSON.stringify(parts);
     const e = core.boxTails(parts, 2), lt = core.boxTails(parts, 4), gt = core.boxTails(P('S', 2, 'M', 1), 2);

@@ -39,6 +39,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
         view: (document.querySelector('#pc-views button[aria-pressed="true"]') || { dataset: {} }).dataset.view || '', count: document.getElementById('pc-count').textContent, sub: document.getElementById('pc-sub').textContent,
     }));
     const size = (pg, sel) => pg.evaluate(s => Array.from(document.querySelectorAll(s)).filter(e => e.offsetParent !== null).map(e => { const r = e.getBoundingClientRect(); return { id: e.id || e.className || e.textContent.slice(0, 8), w: Math.round(r.width), h: Math.round(r.height) }; }), sel);
+    const SELL = { g: 6, r: 14 };   // [판매중] 기대(가짜 자료 8옵션·21줄에서 안 파는·제외 줄 7을 뺀 것) — 아래에서 채움
     const view = async (pg, v) => { await pg.click(`#pc-views button[data-view="${v}"]`); await pg.waitForTimeout(200); };
 
     try {
@@ -58,15 +59,14 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
             await pg.click('#desk-price-now'); await loaded(pg);
             let s = await stat(pg);
             ok(P.reqs.join(',') === 'GET /api/price-check', `[${label}] 열 때 요청 1회(refresh 없음 · ${P.reqs.join(',')})`);
-            ok(s.sub === '어긋남 4건', `[${label}] 머리 = 어긋남 4건(참고 2건은 안 셈 · 「${s.sub}」)`);
+            ok(s.sub === '이상 있음 4건', `[${label}] 머리 = 이상 있음 4건(참고 2건은 안 셈 · 「${s.sub}」)`);
             const wh = await pg.evaluate(() => { const w = document.getElementById('pc-when'); const b = w.querySelector('b'); return { hid: w.hidden, b: b.textContent, fs: parseFloat(getComputedStyle(b).fontSize), fw: getComputedStyle(b).fontWeight, span: w.querySelector('span').textContent, em: !!w.querySelector('em') }; });
             ok(!wh.hid && /^네이버 \d+\/\d+ \d\d:\d\d 값$/.test(wh.b) && wh.fs >= 16 && Number(wh.fw) >= 700, `[${label}] 스냅샷 시각 크게(「${wh.b}」 · ${wh.fs}px · 굵기 ${wh.fw})`);
             ok(/자사몰은 방금 값/.test(wh.span) && /낮에 고친 네이버 가격은 내일 새벽 뒤에 확인/.test(wh.span) && /확인 \d+\/\d+ \d\d:\d\d/.test(wh.span) && !wh.em, `[${label}] 안내 = 자사몰은 방금 값 · 네이버는 새벽 값 · 낮에 고친 건 내일 새벽 뒤`);
-            const cells = await pg.evaluate(() => Array.from(document.querySelectorAll('#pc-stat li')).map(li => li.querySelector('span').textContent.trim() + ' ' + li.querySelector('b').textContent + (li.dataset.ref ? '(참고칩)' : li.dataset.k ? '(' + li.dataset.k + ')' : '')).join(' / '));
-            ok(cells === '페이지끼리 값 다름 1(err) / 자사몰≠네이버 1(err) / VIP가 더 비쌈 1(err) / 한쪽만 안 바뀜 1(wait) / 자사몰에 없음 참고 1(참고칩) / VIP와 일반 값 같음 참고 1(참고칩)', `[${label}] 칩 = 어긋남 4종 + 참고 2종(회색 따로) — ${cells}`);
-            ok(s.view === (phone ? 'issue' : 'multi'), `[${label}] 보기 기본 = ${phone ? '어긋난 것만(폰)' : '여러 페이지(PC)'}(${s.view})`);
-            if (phone) ok(s.groups === 2 && s.rows === 7, `[${label}] 폰 기본 = 어긋난 옵션 2 · 페이지 줄 7(${s.groups} · ${s.rows})`);
-            else ok(s.groups === 7 && s.rows === 20, `[${label}] PC 기본 = 여러 페이지에 걸린 옵션 7 · 줄 20(${s.groups} · ${s.rows})`);
+            const cells = await pg.evaluate(() => { const m = document.getElementById('pc-sum'); return { gone: !document.getElementById('pc-stat'), hid: m.hidden, text: m.textContent.replace(/\s+/g, ' ').trim(), k: m.dataset.k, badge: (m.querySelector('.desk-badge') || { dataset: {} }).dataset.k || '', items: new Set(Array.from(document.querySelectorAll('#pc-out > .pc-item')).map(x => x.dataset.item)).size, badItems: document.querySelectorAll('#pc-out > .pc-item.pc-item-bad').length }; });
+            ok(cells.gone && !cells.hid && cells.text === `판매 중 ${cells.items}품목이상 있음 ${cells.badItems}품목참고 2건` && cells.k === 'err' && cells.badge === 'err' && cells.badItems === 2, `[${label}] #622 종류별 숫자 칸 6개 없음 → 한 줄 요약 「${cells.text}」(품목 수 = 화면의 품목 대제목 수 · 이상 품목 = 빨간 품목 수 · 참고는 따로)`);
+            ok(s.view === 'selling', `[${label}] #622 보기 기본 = 판매중(폰·PC 같음 · ${s.view})`);
+            ok(s.groups === SELL.g && s.rows === SELL.r && s.off === 0 && s.bad === 4, `[${label}] #622 [판매중] = 파는 줄이 있는 옵션 ${s.groups} · 줄 ${s.rows} · 안 파는·제외 줄 0 · 빨간 줄 4`);
             ok(/쿠팡은 가격 조회 API가 없어/.test(await pg.locator('.pc-hint').innerText()), `[${label}] 쿠팡 빠짐 안내 한 줄`);
 
             // ③ 표: 전체 보기에서 줄 표시
@@ -79,7 +79,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
             ok(g1.price.join(' ') === '34,500원 33,500원 38,999원 33,500원' && /페이지끼리 값 다름 · 한쪽만 안 바뀜/.test(g1.small[0]) && g1.small[2] === '판매 안 함', `[${label}] 결제가(천 단위) + 줄 아래 이유(「${g1.small[0]}」) · 「판매 안 함」`);
             ok(/^\d+\/\d+ 이전부터 그대로$/.test(g1.chg[0]) && /^바뀜 \d+\/\d+ · 앞 값 34,500$/.test(g1.chg[1]) && g1.chg[2] === '바뀐 날 모름', `[${label}] 바뀐 날 = 「${g1.chg[0]}」 · 「${g1.chg[1]}」 · 자사몰 「${g1.chg[2]}」`);
             ok(g1.bg !== g1.bg1 && g1.sepTop === '2px' && g1.thead, `[${label}] 빨간 줄 배경이 다름(${g1.bg} ≠ ${g1.bg1}) · VIP 구분선 2px · 표 머리(읽기 프로그램용)`);
-            ok(/어긋남 2/.test(g1.head) && /참고 1/.test(g1.head), `[${label}] 묶음 머리에 어긋남·참고 수(「${g1.head.slice(-16)}」)`);
+            ok(/이상 있음 2건/.test(g1.head) && /참고 1/.test(g1.head), `[${label}] 묶음 머리에 이상·참고 수(「${g1.head.slice(-16)}」)`);
             // #614 품목이 메인 — 품목 대제목 > 규격 머리(인디고 띠) > 페이지 줄(들여쓰기 · 작은 글)
             const it = await pg.evaluate(() => {
                 const items = Array.from(document.querySelectorAll('#pc-out > .pc-item')), gold = items.find(x => x.dataset.item === '황금향'), g = gold.querySelector('.pc-group'), h = g.querySelector('.pc-h'), ih = gold.querySelector('.pc-item-h'), cs = e => getComputedStyle(e);
@@ -91,7 +91,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
                     gap: Math.round(items[1].getBoundingClientRect().top - items[0].querySelector('.pc-group:last-child').getBoundingClientRect().bottom), line: cs(items[1]).borderTopWidth, title: h.getAttribute('title') };
             });
             ok(it.names.join(' ') === '하우스감귤:1 황금향:4 그린레몬:2 한라봉:1', `[${label}] #614 같은 품목끼리 한 번 더 묶음(${it.names.join(' ')})`);
-            ok(it.ihText === '황금향규격 4개 · 어긋남 2건' && it.ihFs >= 20, `[${label}] #614 품목 대제목 「${it.ihText}」 ${it.ihFs}px`);
+            ok(it.ihText === '황금향규격 4개이상 있음 2건' && it.ihFs >= 20, `[${label}] #614 품목 대제목 「${it.ihText}」 ${it.ihFs}px`);
             ok(it.hi === '황금향' && it.hs === '선물용 3kg' && it.hx === '(중대과 7~15과)' && /황금향 선물용 - 3kg/.test(it.title), `[${label}] #614 규격 머리 = 품목 「${it.hi}」 + 규격 「${it.hs}」 두 덩이 + 덧글 「${it.hx}」(원래 이름은 title)`);
             ok(it.hFs >= (phone ? 17 : 18) && Number(it.hFw) >= 800 && it.hBg !== it.cardBg && it.hBg !== 'rgba(0, 0, 0, 0)' && it.hiColor !== it.hsColor, `[${label}] #614 머리 ${it.hFs}px 굵게 · 띠 배경(${it.hBg}) · 품목은 강조색(${it.hiColor})`);
             ok(it.dots === 2 && it.dotBad && it.indent >= 8 && it.nameFs <= 13 && it.priceFs > it.nameFs, `[${label}] #614 어긋난 묶음 머리에만 빨간 점(${it.dots}) · 페이지 줄 들여쓰기 ${it.indent}px · 페이지 이름 ${it.nameFs}px < 값 ${it.priceFs}px`);
@@ -127,22 +127,47 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
             ok(tw === 0, `[${label}] 표가 틀 안에 다 들어감(옆으로 밀 일 없음 · 넘치는 표 ${tw})`);
             const clip = await pg.evaluate(() => Array.from(document.querySelectorAll('#pc-out .pc-price b, #pc-out .pc-pname')).filter(e => e.scrollWidth > e.clientWidth + 1).length);
             ok(clip === 0, `[${label}] 가격·페이지 이름 잘림 없음(${clip})`);
-            if (phone) { const small = (await size(pg, '#desk-price button, #desk-price #pc-stat li, #desk-price #pc-q, #desk-price summary')).filter(b => b.h < 44); ok(small.length === 0, `[${label}] 누르는 것 전부 44px 이상(미달 ${small.length}${small.length ? ' · ' + JSON.stringify(small.slice(0, 3)) : ''})`); }
+            if (phone) { const small = (await size(pg, '#desk-price button, #desk-price [data-fold], #desk-price #pc-q, #desk-price summary')).filter(b => b.h < 44); ok(small.length === 0, `[${label}] 누르는 것 전부 44px 이상(미달 ${small.length}${small.length ? ' · ' + JSON.stringify(small.slice(0, 3)) : ''})`); }
             else { const small = (await size(pg, '#desk-price button, #desk-price #pc-q')).filter(b => b.h < 40); ok(small.length === 0, `[${label}] 버튼·찾기 칸 40px 이상(미달 ${small.length})`); }
             { const a = await H.audit(pg, '#desk-price'); ok(a.fails.length === 0 && (!theme || (a.dark === 'dark' && a.white.length === 0)), `[${label}] 글자 대비 미달 0${theme ? ' · 야간 흰 칸 0' : ''}(글자 ${a.texts}개 · 최소 ${a.minR}${a.fails.length ? ' · ' + a.fails.slice(0, 4).join(' / ') : ''}${theme && a.white.length ? ' · 흰 칸 ' + a.white.slice(0, 3).join(' / ') : ''})`); }
 
             // ⑤ 보기 · 종류 칩 · 찾기
-            await view(pg, 'issue'); s = await stat(pg);
-            ok(s.groups === 2 && s.rows === 7 && s.bad === 4, `[${label}] [어긋난 것만] → 옵션 2 · 줄 7(페이지 전부 보여 견줌) · 빨간 줄 4`);
-            await view(pg, 'multi'); s = await stat(pg);
-            ok(s.groups === 7, `[${label}] [여러 페이지] → 한 페이지뿐인 옵션 빼고 7`);
-            await pg.click('#pc-stat li[data-kind="mall_vs_naver"]'); await pg.waitForTimeout(200); s = await stat(pg);
-            ok(s.groups === 1 && s.lines === 1 && s.view === '' && /자사몰≠네이버/.test(s.count) && (await pg.getAttribute('#pc-stat li[data-kind="mall_vs_naver"]', 'aria-pressed')) === 'true', `[${label}] 칩 「자사몰≠네이버」 → 그 옵션 1 · 그 종류 이유 줄만 1 · 눌린 표시(${s.count})`);
-            await pg.focus('#pc-stat li[data-kind="vip_same"]'); await pg.keyboard.press('Enter'); await pg.waitForTimeout(200); s = await stat(pg);
-            ok(s.groups === 1 && s.lines === 1 && /VIP와 일반 값 같음/.test(await pg.locator('#pc-out .pc-issues li').innerText()), `[${label}] 자판(Enter)으로 참고 칩 「VIP와 일반 값 같음」 → 옵션 1`);
-            await pg.click('#pc-stat li[data-kind="vip_same"]'); await pg.waitForTimeout(200); s = await stat(pg);
-            ok(s.groups === 7 && s.view === 'multi', `[${label}] 같은 칩 다시 누름 → 앞서 고른 보기(여러 페이지)로`);
-            await view(pg, 'all');
+            // #622: [판매중]/[전체상품] · [이상 있는 것만] · 품목마다 「이상 있음 N건」/「이상 없음」 배지 · 눌러 접기
+            await pg.click('#pc-only'); await pg.waitForTimeout(200); s = await stat(pg);
+            ok(s.groups === 2 && s.rows === 7 && s.bad === 4 && /이상 있는 것만/.test(s.count) && (await pg.getAttribute('#pc-only', 'aria-pressed')) === 'true', `[${label}] #622 [전체상품] + [이상 있는 것만] → 옵션 2 · 줄 7(페이지 전부 보여 견줌) · 빨간 줄 4 · 눌린 표시`);
+            await pg.click('#pc-only'); await pg.waitForTimeout(200);
+            await view(pg, 'selling'); s = await stat(pg);
+            ok(s.view === 'selling' && s.groups === SELL.g && s.rows === SELL.r && s.off === 0, `[${label}] #622 [판매중] → 옵션 ${s.groups} · 줄 ${s.rows}(안 파는 줄 0)`);
+            await view(pg, 'all'); s = await stat(pg);
+            ok(s.view === 'all' && s.groups === 8 && s.rows === 21 && s.off === 7, `[${label}] #622 [전체상품] → 옵션 8 · 줄 21(안 파는·제외 줄 7 포함)`);
+            const fl = await pg.evaluate(() => Array.from(document.querySelectorAll('#pc-out > .pc-item')).map(it => { const f = it.querySelector('.pc-item-h .pc-flag'), bad = it.querySelectorAll('.pc-group .pc-h .desk-badge[data-k="err"]'); let n = 0; bad.forEach(b => { n += Number((b.textContent.match(/\d+/) || [0])[0]); }); return { item: it.dataset.item, text: f ? f.textContent : '', k: f ? f.dataset.k : '', n }; }));
+            ok(fl.length >= 4 && fl.every(x => (x.n ? x.text === '이상 있음 ' + x.n + '건' && x.k === 'err' : x.text === '이상 없음' && x.k === 'done')) && fl.reduce((a, x) => a + x.n, 0) === 4, `[${label}] #622 품목 대제목 배지 = 그 품목 이상 수 합(「이상 있음 N건」 빨강 / 「이상 없음」 초록 · 전체 합 4) — ${fl.map(x => x.item + ':' + x.text).join(' · ')}`);
+            // 접기: 규격 띠 · 줄 · 품목 대제목 — 같은 꼴(역할·화살표) · 다시 그려도 기억
+            const fold0 = await pg.evaluate(() => { const heads = Array.from(document.querySelectorAll('#pc-out [data-fold]')); const cs = e => getComputedStyle(e.querySelector('.pc-chev')); return { n: heads.length, items: document.querySelectorAll('#pc-out .pc-item-h[data-fold]').length, groups: document.querySelectorAll('#pc-out .pc-h[data-fold]').length, role: heads.every(h => h.getAttribute('role') === 'button' && h.tabIndex === 0 && h.getAttribute('aria-expanded') === 'true' && !!h.querySelector('.pc-chev')), chev: new Set(heads.map(h => [cs(h).width, cs(h).height, cs(h).borderRightWidth, cs(h).transform].join('|'))).size, minH: Math.min(...heads.map(h => Math.round(h.getBoundingClientRect().height))), sumChev: getComputedStyle(document.querySelector('#desk-price details.pc-fold > summary'), '::after').width }; });
+            ok(fold0.groups === 8 && fold0.items >= 4 && fold0.role && fold0.chev === 1 && fold0.minH >= 44 && fold0.sumChev === '7px', `[${label}] #622 접는 머리 = 품목 대제목 ${fold0.items} + 규격 띠 ${fold0.groups} · 전부 같은 꼴(role button · 화살표 한 가지 · 44px 이상 · 아래 접이식과 같은 7px 화살표)`, JSON.stringify(fold0));
+            const gsel = '#pc-out .pc-group[data-label*="하우스감귤 선물용"]';
+            const fstate = () => pg.evaluate(sel => { const g = document.querySelector(sel), h = g.querySelector('.pc-h'), it = g.closest('.pc-item'); return { shut: g.classList.contains('pc-shut'), exp: h.getAttribute('aria-expanded'), tw: g.querySelector('.pc-tw').offsetParent !== null, iss: !g.querySelector('.pc-issues') || g.querySelector('.pc-issues').offsetParent !== null, head: h.offsetParent !== null, itemShut: it.classList.contains('pc-shut'), others: Array.from(document.querySelectorAll('#pc-out .pc-group')).filter(x => x !== g && x.classList.contains('pc-shut')).length }; }, gsel);
+            await pg.click(gsel + ' .pc-hs'); await pg.waitForTimeout(150); let f1 = await fstate();
+            ok(f1.shut && f1.exp === 'false' && !f1.tw && !f1.iss && f1.head && f1.others === 0, `[${label}] #622 규격 띠를 누르면 그 규격만 접힘(표·이유 줄 숨음 · 띠는 남음 · 다른 규격 그대로)`, JSON.stringify(f1));
+            await pg.fill('#pc-q', '감귤'); await pg.waitForTimeout(450); await pg.fill('#pc-q', ''); await pg.waitForTimeout(450); f1 = await fstate();
+            ok(f1.shut && f1.exp === 'false', `[${label}] #622 다시 그려도(찾기) 접힘 기억`);
+            await pg.focus(gsel + ' .pc-h'); await pg.keyboard.press('Enter'); await pg.waitForTimeout(150); f1 = await fstate();
+            ok(!f1.shut && f1.exp === 'true' && f1.tw, `[${label}] #622 자판(Enter)으로 다시 펼침`);
+            await pg.click(gsel + ' tbody tr:first-child .pc-pname'); await pg.waitForTimeout(150); f1 = await fstate();
+            ok(f1.shut && !f1.tw, `[${label}] #622 줄(페이지 줄)을 눌러도 그 규격이 접힘`);
+            await pg.click(gsel + ' .pc-h .pc-chev'); await pg.waitForTimeout(150);
+            const ih = await pg.evaluate(sel => { const it = document.querySelector(sel).closest('.pc-item'); return it.dataset.item; }, gsel);
+            await pg.click(`#pc-out > .pc-item[data-item="${ih}"] > .pc-item-h > span`); await pg.waitForTimeout(150);
+            const f2 = await pg.evaluate(nm => { const it = document.querySelector('#pc-out > .pc-item[data-item="' + nm + '"]'); return { shut: it.classList.contains('pc-shut'), exp: it.querySelector('.pc-item-h').getAttribute('aria-expanded'), vis: Array.from(it.querySelectorAll('.pc-group')).filter(g => g.offsetParent !== null).length, head: it.querySelector('.pc-item-h').offsetParent !== null, flag: it.querySelector('.pc-flag').offsetParent !== null }; }, ih);
+            ok(f2.shut && f2.exp === 'false' && f2.vis === 0 && f2.head && f2.flag, `[${label}] #622 품목 대제목을 누르면 그 품목 전체가 접힘(대제목·배지는 남음)`, JSON.stringify(f2));
+            await view(pg, 'selling'); await view(pg, 'all');
+            ok(await pg.evaluate(nm => document.querySelector('#pc-out > .pc-item[data-item="' + nm + '"]').classList.contains('pc-shut'), ih), `[${label}] #622 보기를 바꿔도 접은 품목은 접힌 채`);
+            await pg.click(`#pc-out > .pc-item[data-item="${ih}"] > .pc-item-h`); await pg.waitForTimeout(150);
+            // 찾기 칸 명암: 테두리 ↔ 카드 바탕 대비 3 이상
+            const fq = await pg.evaluate(() => { const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; }; const rgb = s => String(s).match(/[\d.]+/g).slice(0, 3).map(Number); const cr = (a, b) => { const x = lum(rgb(a)), y = lum(rgb(b)); return Math.round((Math.max(x, y) + .05) / (Math.min(x, y) + .05) * 100) / 100; };
+                const q = document.getElementById('pc-q'), cs = getComputedStyle(q); let bg = 'rgb(255,255,255)'; for (let e = q.parentElement; e; e = e.parentElement) { const b = getComputedStyle(e).backgroundColor; if (b && !/rgba\(.*,\s*0\)$|transparent/.test(b)) { bg = b; break; } }
+                return { bw: parseFloat(cs.borderTopWidth), border: cr(cs.borderTopColor, bg), ph: cr(getComputedStyle(q, '::placeholder').color, cs.backgroundColor), fill: cs.backgroundColor !== bg }; });
+            ok(fq.bw >= 2 && fq.border >= 3 && fq.ph >= 4.5 && fq.fill, `[${label}] #622 찾기 칸 명암 = 테두리 ${fq.bw}px · 카드 바탕과 대비 ${fq.border} · 안내 글 대비 ${fq.ph} · 바탕색 다름`, JSON.stringify(fq));
             await pg.fill('#pc-q', '레몬'); await pg.waitForTimeout(450); s = await stat(pg);
             ok(s.groups === 2, `[${label}] 찾기 「레몬」(옵션 이름) → 2`);
             await pg.fill('#pc-q', '추석 과일'); await pg.waitForTimeout(450); s = await stat(pg);
@@ -231,7 +256,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
         {
             const P = await open(PC, false, null, STAFF), pg = P.pg;
             await pg.click('#desk-price-now'); await loaded(pg);
-            ok((await stat(pg)).groups === 7 && await pg.evaluate(() => document.getElementById('pc-set').hidden), `[직원] 표는 보이고 「페이지 등급 설정」은 숨김`);
+            ok((await stat(pg)).groups === 6 && await pg.evaluate(() => document.getElementById('pc-set').hidden), `[직원] 표는 보이고 「페이지 등급 설정」은 숨김`);
             ok(!P.reqs.some(r => /pages/.test(r)) && P.errors.length === 0 && !(await logOf()).some(x => x.action === 'save'), `[직원] 설정 요청 0 · 저장 0 · 화면 오류 0`);
             await P.ctx.close();
         }
@@ -239,10 +264,12 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
         {
             const P = await open(PH, true, null, ADMIN), pg = P.pg;
             await pg.click('#desk-price-now'); await loaded(pg);
-            const e = await pg.evaluate(() => ({ sub: document.getElementById('pc-sub').textContent, k: document.getElementById('pc-sub').dataset.k, out: document.getElementById('pc-out').textContent, copy: document.getElementById('pc-copy').disabled, chips: Array.from(document.querySelectorAll('#pc-stat li b')).map(b => b.textContent).join(''), off: document.getElementById('pc-off').hidden }));
-            ok(e.sub === '어긋난 가격 없음' && !e.k && /어긋난 가격이 없어요/.test(e.out) && e.copy && e.chips === '000000' && !e.off, `[어긋남 0 · 폰] 머리 「어긋난 가격 없음」 · 빈 안내 · [요약 복사] 꺼짐 · 안 파는 옵션 구획은 그대로`);
-            await pg.click('#pc-views button[data-view="multi"]'); await pg.waitForTimeout(200);
-            ok((await stat(pg)).groups === 7 && await pg.evaluate(() => document.querySelectorAll('#pc-out tr.pc-bad, #pc-out .pc-issues li').length === 0), `[어긋남 0 · 폰] [여러 페이지] → 옵션 7 · 빨간 줄·이유 줄 0`);
+            const e = await pg.evaluate(() => ({ sub: document.getElementById('pc-sub').textContent, k: document.getElementById('pc-sub').dataset.k, out: document.getElementById('pc-out').textContent, copy: document.getElementById('pc-copy').disabled, chips: document.getElementById('pc-sum').textContent.replace(/\s+/g, ' ').trim(), sumK: document.getElementById('pc-sum').dataset.k, flags: Array.from(document.querySelectorAll('#pc-out .pc-flag')).map(f => f.textContent), off: document.getElementById('pc-off').hidden }));
+            ok(e.sub === '이상 없음' && !e.k && e.copy && /이상 없음/.test(e.chips) && e.sumK === 'ok' && e.flags.length >= 3 && e.flags.every(t => t === '이상 없음') && !e.off, `[이상 0 · 폰] 머리 「이상 없음」 · 한 줄 요약 「${e.chips}」 · 품목 배지 전부 「이상 없음」 · [요약 복사] 꺼짐 · 안 파는 옵션 구획은 그대로`);
+            await pg.click('#pc-only'); await pg.waitForTimeout(200);
+            ok(/이상 있는 가격이 없어요/.test(await pg.locator('#pc-out').innerText()), `[이상 0 · 폰] [이상 있는 것만] → 빈 안내 「이상 있는 가격이 없어요…」`);
+            await pg.click('#pc-only'); await pg.click('#pc-views button[data-view="all"]'); await pg.waitForTimeout(200);
+            ok((await stat(pg)).groups === 8 && await pg.evaluate(() => document.querySelectorAll('#pc-out tr.pc-bad, #pc-out .pc-issues li').length === 0), `[이상 0 · 폰] [전체상품] → 옵션 8 · 빨간 줄·이유 줄 0`);
             ok(await sw(pg) <= 390, `[어긋남 0 · 폰] 가로 넘침 없음`);
             await P.ctx.close();
         }
@@ -256,7 +283,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
             ok(/가격을 먼저 불러와야/.test(await pg.locator('#pc-set-list').innerText()) && !P.reqs.some(r => /pages/.test(r)), `[첫 요청 실패] 설정을 펼쳐도 「가격을 먼저 불러와야」 · 요청 0`);
             await mock('/__mock/set', { fail: '' });
             await pg.click('#pc-refresh'); await loaded(pg); await pg.waitForTimeout(400);
-            ok((await stat(pg)).groups === 7 && await pg.evaluate(() => document.getElementById('pc-note').hidden) && await pg.locator('#pc-set-list .pc-set-row').count() === 13, `[첫 요청 실패] [다시 확인]으로 복구(안내 사라짐 · 옵션 7 · 펼쳐 둔 설정 줄 13)`);
+            ok((await stat(pg)).groups === 6 && await pg.evaluate(() => document.getElementById('pc-note').hidden) && await pg.locator('#pc-set-list .pc-set-row').count() === 13, `[첫 요청 실패] [다시 확인]으로 복구(안내 사라짐 · 옵션 6 · 펼쳐 둔 설정 줄 13)`);
             ok(P.errors.length === 0, `[첫 요청 실패] 화면 오류 0`);
             await P.ctx.close();
         }

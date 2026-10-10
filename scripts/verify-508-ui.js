@@ -278,6 +278,7 @@ async function resolveCards(pg, type) {
         ok(!!use7 && use7.r[0] === U.A && String(use7.r[12]) === U.M && fillOf(use7.s1['A' + use7.ref]) === 'DDEBF7' && fillOf(use7.s1['M' + use7.ref]) === 'DDEBF7', '④ 애매한 보내는이 줄 칸을 채워 [이대로 넣기] = A 「이름 드림」 · M 주소 + 연파랑', use7 && JSON.stringify([use7.r[0], use7.r[12]]));
         const c20 = find('받는20'); ok(!!c20 && c20.r[0] === '홍길동 드림' && fillOf(c20.s1['A' + c20.ref]) === 'DDEBF7', '④ 손님 메모 보내는이(v2 자동) 그대로 유지', c20 && c20.r[0]);
         const sz = find(fx.expect.sizeRow); ok(!!sz && /S사이즈로!$/.test(sz.r[4]), '④ 사이즈 요청 행 = 옵션에 꼬리 유지 · 수량 시트에 별도 줄', sz && String(sz.r[4]).slice(-10));
+        ok(!!sz && sz.r[9] === FX.DEFAULT_MEMO, '④ #623 사이즈 요청뿐인 손님 메모(「s사이즈로 보내주세요」) = 택배사 양식 배송메세지는 기본 문구(원문 안 실림 · AI 없이 규칙)', sz && String(sz.r[9]).slice(0, 20));
         if (fS) {
             const wb = XLSX.readFile(files[fS], { cellStyles: true }); const s2 = wb.Sheets['발주발송관리']; const a = s2 ? XLSX.utils.sheet_to_json(s2, { header: 1, defval: '' }) : [];
             ok(!!s2 && JSON.stringify(a[1]) === JSON.stringify(V2_HDR27), '④ [스토어] 「발주발송관리」 시트 · 머리글 27열(네이버 원본 양식)', a[1] && a[1].length);
@@ -1333,24 +1334,30 @@ async function resolveCards(pg, type) {
             console.log('\n㉑ #523 사이즈 요청 메모');
             {
                 const sizeBase = fx.naver.find(r => /사이즈/.test(String(r['배송메세지'] || '')));   // 가짜 재료의 「s사이즈로 보내주세요」 주문(옵션에 사이즈 꼬리가 붙는 품목)
-                const S1 = '꼭 2S로 보내주세요', S2 = '2S로 주세요 문 앞에 놔주세요', S3 = '문 앞에 놔주세요';
-                const rows21 = [mk('이일가', { base: sizeBase, memo: S1 }), mk('이일나', { base: sizeBase, memo: S2 }), mk('이일다', { base: sizeBase, memo: S3 }), mk('이일라', { base: sizeBase })];
+                const S1 = '꼭 2S로 보내주세요', S2 = '2S로 주세요 문 앞에 놔주세요', S3 = '문 앞에 놔주세요', S5 = '소과로 부탁드립니다';   // #623: S1·S5 = 사이즈 말 + 부탁 말씨뿐 → AI 없이 규칙으로 기본 문구
+                const rows21 = [mk('이일가', { base: sizeBase, memo: S1 }), mk('이일나', { base: sizeBase, memo: S2 }), mk('이일다', { base: sizeBase, memo: S3 }), mk('이일라', { base: sizeBase }), mk('이일마', { base: sizeBase, memo: S5, tel: '010-8210-5555' })];
                 const u = await mkChat(false, rows21);
                 u.chat.memoAns = it => (it.memo === S1 ? { memo: '기본', sure: true, why: '사이즈는 옵션에 반영됨' } : it.memo === S2 ? { memo: '문 앞에 놔주세요', sure: true, why: '사이즈 글만 뗌' } : {});
                 await setCash(u.pg, null); await u.pg.click(SEL.start); await idle(u.pg); await u.pg.waitForTimeout(500);
                 const J21 = (await readJudge(u.pg)).judge, mp21 = u.chat.memoPosts[0] || { items: [] };
                 ok(/2S사이즈로!$/.test(J21['이일가'].opt) && /2S사이즈로!$/.test(J21['이일나'].opt) && !/사이즈로!$/.test(J21['이일다'].opt), '㉑ 준비: 「2S로」 메모 주문은 옵션에 「2S사이즈로!」 꼬리 · 사이즈 말이 없는 주문은 꼬리 없음', J21['이일가'].opt.slice(-20));
                 const sent21 = mp21.items.map(it => it.memo);
-                ok(sent21.includes(S1) && sent21.includes(S2) && !sent21.includes(S3) && mp21.items.filter(it => /사이즈/.test(it.memo) || it.memo === S1 || it.memo === S2).every(it => /사이즈 요청은 옵션에 반영됨/.test(it.hint)), '㉑1 사이즈 꼬리가 붙은 주문의 메모는 AI 묶음에 들어가고 hint 「사이즈 요청은 옵션에 반영됨」 · 꼬리 없는 주문의 「문 앞에 놔주세요」는 안 보냄', JSON.stringify(mp21.items.map(it => [it.memo.slice(0, 12), it.hint])));
-                ok((await pendingN(u.pg)) === 0 && (await u.pg.evaluate(() => document.querySelectorAll('#fo-cards .fo-card[data-fo-card="memo-edit"][data-ai-done]').length)) === 2, '㉑2 응답 「기본」·「남길 글」(확실) → 「AI가 처리」 카드 2장(#583 · 확인할 것 0)', JSON.stringify(await cardCount(u.pg)));
+                ok(/ 2S사이즈로!$/.test(J21['이일마'].opt) && !/ S사이즈로!$/.test(J21['이일마'].opt.replace(/2S사이즈로!$/, '')), '㉑ #623 로얄과 주문의 「소과로 부탁드립니다」 = 옵션 꼬리 「2S사이즈로!」(S 아님)', J21['이일마'].opt.slice(-20));
+                ok(!sent21.includes(S1) && !sent21.includes(S5) && sent21.includes(S2) && !sent21.includes(S3) && mp21.items.filter(it => it.memo === S2).every(it => /사이즈 요청은 옵션에 반영됨/.test(it.hint)), '㉑1 #623 사이즈 말뿐인 메모(「꼭 2S로…」「소과로 부탁드립니다」)는 AI 에 안 보냄 · 기사님 말이 같이 있는 메모는 종전대로 AI 묶음 + hint 「사이즈 요청은 옵션에 반영됨」 · 꼬리 없는 주문의 「문 앞에 놔주세요」는 안 보냄', JSON.stringify(mp21.items.map(it => [it.memo.slice(0, 12), it.hint])));
+                ok((await pendingN(u.pg)) === 0 && (await u.pg.evaluate(() => document.querySelectorAll('#fo-cards .fo-card[data-fo-card="memo-edit"][data-ai-done]').length)) === 1, '㉑2 응답 「남길 글」(확실) → 「AI가 처리」 카드 1장(#583 · 확인할 것 0 · #623 사이즈 말뿐인 메모는 카드 없음)', JSON.stringify(await cardCount(u.pg)));
+                const inf21 = await u.pg.evaluate(() => [...document.querySelectorAll('#fo-panel li[data-info]')].filter(li => /^\s*사이즈 지정\(손님 메모\)/.test(li.querySelector('.fo-itext').textContent)).map(li => ({ t: li.querySelector('.fo-itext').textContent, kind: li.getAttribute('data-info-kind'), hl: [...li.querySelectorAll('mark.fo-hl')].map(x => x.textContent), em: [...li.querySelectorAll('b.fo-em')].map(x => x.textContent), src: li.getAttribute('data-info-src') })));
+                const i5 = inf21.find(x => x.hl.includes(S5)), i1 = inf21.find(x => x.hl.includes(S1));
+                ok(inf21.length === 2 && !!i5 && !!i1 && i5.kind === 'size' && i5.em.includes('2S사이즈로!') && i5.em.includes('기본 문구') && i5.src !== 'memo', '㉑ #623 참고 줄 「사이즈 지정(손님 메모)」 2줄 — 원문 형광(「소과로 부탁드립니다」) → 결과 굵게(「2S사이즈로!」 · 「기본 문구」) · 배지 「사이즈」 · 직원 메모 표식 없음', JSON.stringify(inf21).slice(0, 300));
+                ok((await u.pg.evaluate(k => [...document.querySelectorAll('#fo-cards [data-fo-card]')].filter(c => c.textContent.includes(k)).length, S5)) === 0, '㉑ #623 「소과로 부탁드립니다」 주문 = 확인 카드 0');
                 await u.pg.click(SEL.make); await idle(u.pg); await u.pg.waitForSelector(SEL.save, { timeout: 15000 }); await u.pg.waitForTimeout(300);
                 const n21 = await u.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save); const a21 = []; let st21 = null;
                 for (const nm of n21) { const [dl] = await Promise.all([u.pg.waitForEvent('download', { timeout: 20000 }), u.pg.locator(`[data-fo-save="${nm}"]`).click()]); const f = path.join(TMP, 's21-' + Date.now() + '.xlsx'); await dl.saveAs(f); const wb = XLSX.readFile(f);
                     if (nm.includes('스마트스토어')) st21 = XLSX.utils.sheet_to_json(wb.Sheets['발주발송관리'], { header: 1, defval: '' }); else XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => a21.push(r)); }
                 const j21 = nm => (a21.find(r => r[3] === nm) || [])[9];
+                ok(j21('이일마') === FX.DEFAULT_MEMO && / 2S사이즈로!$/.test(String((a21.find(r => r[3] === '이일마') || [])[4])), '㉑ #623 택배사 파일: 「소과로 부탁드립니다」 → J 기본 문구 · 옵션 끝 「2S사이즈로!」', JSON.stringify((a21.find(r => r[3] === '이일마') || []).filter((x, i) => i === 4 || i === 9)));
                 ok(j21('이일가') === FX.DEFAULT_MEMO && j21('이일나') === '문 앞에 놔주세요' && j21('이일다') === S3 && j21('이일라') === FX.DEFAULT_MEMO, '㉑2 택배사 파일 J: 「꼭 2S로…」 → 기본 문구 · 「2S로 주세요 문 앞에…」 → 「문 앞에 놔주세요」 · 사이즈 말 없는 메모는 그대로', JSON.stringify([j21('이일가').slice(0, 6), j21('이일나')]));
                 const hdr21 = st21 ? st21[1] : [], cM = hdr21.indexOf('배송메세지'), cR = hdr21.indexOf('수취인명'); const stMemo = nm => { const r = (st21 || []).find(x => x[cR] === nm); return r ? r[cM] : null; };
-                ok(cM >= 0 && stMemo('이일가') === S1 && stMemo('이일나') === S2, '㉑2 스토어 양식의 배송메세지는 손님 원문 그대로', JSON.stringify([stMemo('이일가'), stMemo('이일나')]));
+                ok(cM >= 0 && stMemo('이일가') === S1 && stMemo('이일나') === S2 && stMemo('이일마') === S5, '㉑2 스토어 양식의 배송메세지는 손님 원문 그대로', JSON.stringify([stMemo('이일가'), stMemo('이일나')]));
                 ok(u.errs.length === 0, '㉑ 오류 0', u.errs.join(' | ')); await u.ctx.close();
             }
 

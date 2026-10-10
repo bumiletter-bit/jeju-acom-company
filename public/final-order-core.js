@@ -805,7 +805,17 @@
         return ws;
     }
 
-    const api = { prepLines, sizeLines, boxTails, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
+    // #623(대표 10/10 「소과로 부탁드립니다」가 양식에 그대로 실림): 손님 메모가 「사이즈 말 + 부탁 말씨」뿐인가 — 사이즈 말과 부탁 말씨를 지우고 글자·숫자가 하나도 안 남을 때만 참.
+    //   화면은 그 요청이 이미 옵션 꼬리(「…2S사이즈로!」)로 붙은 주문에만 쓴다 → AI 에 보내지 않고 규칙으로 기본 문구. 기사님 말·날짜·이름 등 다른 글이 한 글자라도 있으면 거짓(종전대로 AI).
+    const SO_SIZE = /투\s*에스|2\s*에스|에스|스몰|엠|미디엄|미듐|2\s*s|(?<![a-z])[sm](?![a-z])|소과|작은|작게|작다|작아|작았으면/gi;
+    const SO_WORDS = /사이즈|싸이즈|size|크기|로얄과|귤|것|걸|거|알|부탁\s*(?:드립니다|드려요|드릴게요|드리겠습니다|드림|합니다|해요)?|보내\s*(?:주세요|주시면|주십시오|주셔요|줘요)|해\s*주(?:세요|시면|십시오|셔요)?|주세요|주시면|주십시오|주셔요|원합니다|원해요|희망합니다|희망해요|희망|바랍니다|좋겠습니다|좋겠어요|감사\s*(?:합니다|해요|드립니다|드려요)?|입니다|이에요|예요|이요|꼭|되도록|가능하면|가능하시면|으로|로|는|은|을|를|요/g;
+    function sizeOnlyMemo(memoRaw) {
+        const m = String(memoRaw == null ? '' : memoRaw).replace(/\s+/g, ' ').trim(); if (!m) return false;
+        SO_SIZE.lastIndex = 0; if (!SO_SIZE.test(m)) return false;
+        return !/[가-힣A-Za-z0-9]/.test(m.replace(SO_SIZE, ' ').replace(SO_WORDS, ' '));
+    }
+
+    const api = { sizeOnlyMemo, prepLines, sizeLines, boxTails, parseCash, cashCheck, splitSignal, partnerOf, stripTail, shortPartner, isJeju, applySenders, buildRows, buildOutput: buildRows, sheetOf, qtySheetOf, senderHint, senderCue, sameDayOnly, memoRest,
         parseDate, fmtPhone, readSender, DEFAULT_MEMO, HEADERS, WIDTHS, CAT_RGB };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     if (root) root.FinalOrderCore = api;

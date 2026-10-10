@@ -129,6 +129,13 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.getElementById('desk-qty').hidden), '처음엔 도구 카드 둘 다 닫혀 있음');
             await pg.evaluate(() => document.getElementById('desk-ship-now').scrollIntoView({ block: 'center', inline: 'center' }));
             await pg.click('#desk-ship-now'); await pg.waitForFunction(() => document.querySelector('#ship-out .ship-empty'), null, { timeout: 8000 }).catch(() => { });
+            {   // #621(대표 10/10): 찾기 칸 = 위쪽 [조회] 옆 · 명암(테두리·바탕 대비) · 조회 전에는 꺼짐
+                const fq = await pg.evaluate(() => { const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; }; const rgb = s => String(s).match(/[\d.]+/g).slice(0, 3).map(Number); const cr = (a, b) => { const x = lum(rgb(a)), y = lum(rgb(b)); return Math.round((Math.max(x, y) + .05) / (Math.min(x, y) + .05) * 100) / 100; };
+                    const q = document.getElementById('ship-q'), go = document.getElementById('ship-go'), f = document.getElementById('ship-form'), cs = getComputedStyle(q), r = q.getBoundingClientRect(), g = go.getBoundingClientRect(); let bg = 'rgb(255,255,255)'; for (let e = q.parentElement; e; e = e.parentElement) { const b = getComputedStyle(e).backgroundColor; if (b && !/rgba\(.*,\s*0\)$|transparent/.test(b)) { bg = b; break; } }
+                    q.disabled = false; const en = getComputedStyle(q), o = { n: document.querySelectorAll('#ship-q').length, inForm: q.parentElement === f, afterGo: !!(go.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING), dis: true, sameRow: Math.abs((r.top + r.height / 2) - (g.top + g.height / 2)) < 4, right: r.left >= g.right, h: Math.round(r.height), ph: q.placeholder, bw: parseFloat(en.borderTopWidth), border: cr(en.borderTopColor, bg), phC: cr(getComputedStyle(q, '::placeholder').color, en.backgroundColor), fill: en.backgroundColor !== bg }; q.disabled = true; o.dis = cs.cursor === 'not-allowed'; return o; });
+                ok(fq.n === 1 && fq.inForm && fq.afterGo && fq.dis && fq.h >= 44 && /이름 · 받는 분 연락처 끝 4자리/.test(fq.ph) && (phone || (fq.sameRow && fq.right)), `#621 찾기 칸 = 발송일 줄의 [조회] 바로 뒤${phone ? '(폰은 아래 줄)' : '(같은 줄 오른쪽)'} · 44px · 조회 전에는 꺼짐`, JSON.stringify(fq));
+                ok(fq.bw >= 2 && fq.border >= 3 && fq.phC >= 4.5 && fq.fill, `#621 찾기 칸 명암 = 테두리 ${fq.bw}px · 카드 바탕과 대비 ${fq.border} · 안내 글 대비 ${fq.phC} · 바탕색 다름`, JSON.stringify(fq));
+            }
             const o1 = await pg.evaluate(() => ({ open: !document.getElementById('desk-ship').hidden, from: document.getElementById('ship-from').value, to: document.getElementById('ship-to').value, empty: (document.querySelector('#ship-out .ship-empty') || {}).textContent || '' }));
             ok(o1.open && o1.from === Y && o1.to === Y, `누르면 카드가 열리고 기간 = 어제~어제(${o1.from} ~ ${o1.to})`);
             ok(/1,609건이 올라와 있고 아직 조회하지 않았어요/.test(o1.empty) && st.posts.length === 0 && st.calls.some(c => c.startsWith('GET /api/delivery/track/status')), `열 때는 묻지 않고 안내만(「${o1.empty.slice(0, 26)}…」 · POST ${st.posts.length})`);
@@ -213,7 +220,9 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
                 const paste = t => pg.evaluate(text => { const el = document.getElementById('ship-q'); el.focus(); el.select(); const dt = new DataTransfer(); dt.setData('text/plain', text); const go = el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); if (go) { el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); } }, t);
                 const lastQ = () => st.lists[st.lists.length - 1] || {};
                 let n0 = st.lists.length;
+                ok(await pg.evaluate(() => { const q = document.getElementById('ship-q'); return !q.disabled && !q.closest('#ship-out') && !document.querySelector('#ship-detail input'); }), '#621 조회 뒤 찾기 칸 켜짐 · 아래 표 머리에는 찾기 칸 없음(위쪽 하나뿐)');
                 await pg.click('#ship-q'); await pg.keyboard.type('이현', { delay: 40 }); await waitHead(/^찾은 건 2/);
+                { await pg.keyboard.press('Enter'); await pg.waitForTimeout(400); ok(await pg.evaluate(() => document.getElementById('ship-prog').hidden && !document.getElementById('ship-go').disabled && document.getElementById('ship-q').value === '이현'), '#621 찾기 칸에서 Enter → [조회](CJ 다시 묻기)가 돌지 않음 · 찾는 글 그대로'); }
                 const f1 = await det(), c1 = st.lists.slice(n0);
                 ok(c1.length === 1 && JSON.stringify(c1[0]) === JSON.stringify({ from: Y, to: Y, q: '이현', limit: '300' }), `#613 확인할 건에서 찾기 → 서버로 1회(상태·거래처 조건 없이 기간 전체) ${JSON.stringify(c1[0])}`);
                 ok(f1.head === '찾은 건 2' && f1.rows.length === 2 && !f1.all && /송장 전체 1,609건 중에서 찾았어요/.test(f1.note) && await pg.evaluate(() => document.activeElement === document.getElementById('ship-q')), `#613 머리 「${f1.head}」 · 안내 「${f1.note}」 · 초점은 검색 칸에 그대로`);
@@ -403,11 +412,11 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             await pg.waitForFunction(() => document.querySelector('#ship-out > *'), null, { timeout: 30000 }).catch(() => { });
             await pg.waitForTimeout(800);
             const api = await pg.evaluate(d => fetch('/api/delivery/summary?from=' + d + '&to=' + d, { headers: { Authorization: 'Bearer ' + localStorage.getItem('jwt_token') } }).then(r => r.json()), REAL);
-            const v = await pg.evaluate(() => { const qa = s => Array.from(document.querySelectorAll(s)); return { sum: (document.getElementById('ship-sum-text') || {}).textContent, stat: Object.fromEntries(qa('#ship-out .ship-stat li').map(li => [li.querySelector('span').textContent, li.querySelector('b').textContent.replace(/,/g, '')])), tr: qa('.ship-tr tbody tr').length, badges: [...new Set(qa('.ship-tr .desk-badge').map(b => b.textContent + ':' + b.dataset.k))], by: qa('.ship-by tbody tr').length, empty: (document.querySelector('#ship-out .ship-empty') || {}).textContent || '', text: document.getElementById('desk-ship').innerText, tels: qa('.ship-tr a.ship-tel').length }; });
+            const v = await pg.evaluate(() => { const qa = s => Array.from(document.querySelectorAll(s)); return { sum: (document.getElementById('ship-sum-text') || {}).textContent, wait: (document.getElementById('ship-sum-wait') || {}).textContent || '', stat: Object.fromEntries(qa('#ship-out .ship-stat li').map(li => [li.querySelector('span').textContent, li.querySelector('b').textContent.replace(/,/g, '')])), tr: qa('.ship-tr tbody tr').length, badges: [...new Set(qa('.ship-tr .desk-badge').map(b => b.textContent + ':' + b.dataset.k))], by: qa('.ship-by tbody tr').length, empty: (document.querySelector('#ship-out .ship-empty') || {}).textContent || '', text: document.getElementById('desk-ship').innerText, tels: qa('.ship-tr a.ship-tel').length }; });
             if (!api || !(api.shipments > 0)) { ok(/송장이 아직 안 올라왔어요/.test(v.empty), `그날 송장 0건 → 안내(「${v.empty.slice(0, 24)}…」) — 다른 날은 --real YYYY-MM-DD`); }
             else if (!(api.checked > 0)) { ok(/아직 조회하지 않았어요/.test(v.empty), `송장 ${api.shipments}건 · 미조회 → 「${v.empty.slice(0, 30)}…」`); }
             else {
-                ok(v.sum === api.summary_text, `요약 글 = 서버 값(${JSON.stringify(String(v.sum).split('\n')[0])})`);
+                ok(v.sum == null && /카톡에 올릴 요약은 \[조회\]를 누르면 떠요/.test(v.wait) && /마지막으로 조회한 결과/.test(v.wait) && /기준/.test(v.wait), `#626 [조회] 전에는 요약 글 대신 안내 「${v.wait.slice(0, 40)}…」(앞 조회 글을 지금 것처럼 안 보임)`);
                 ok(Object.entries(api.counts).every(([k, n]) => String(v.stat[k]) === String(n)), `상태별 건수 = 서버 counts ${JSON.stringify(api.counts)}`);
                 // #597: 같은 분·같은 상태는 한 줄로 묶이므로 줄 수 = 묶은 수(종전 = trouble.length)
                 ok(v.tr === groupedLines(api.trouble) && v.by === api.by_date.length, `확인할 건 ${v.tr}줄(서버 ${api.trouble.length}건 · 묶으면 ${groupedLines(api.trouble)}) · 발송일·거래처 ${v.by}줄(서버 ${api.by_date.length}) · 배지 ${v.badges.join(' ')} · 기사 전화 링크 ${v.tels}`);
@@ -424,6 +433,17 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             if (theme) { const a = await H.audit(pg, '#desk-ship'); ok(a.fails.length === 0, `야간 대비 미달 ${a.fails.length}(글자 ${a.texts}개)${a.fails.length ? ' — ' + a.fails.slice(0, 3).join(' / ') : ''}`); }
             ok(P.errors.length === 0 && P.writes.length === 0, `화면 오류 ${P.errors.length} · 쓰기 ${P.writes.length}`);
             await shot(pg, '594-실서버-' + label.replace(/\s/g, ''));
+            await P.ctx.close();
+        }
+        // ── #620(대표 10/10 「새로고침하면 가끔 빈 화면」): ao-desk.js 가 app.js 의 첫 메뉴 진입보다 늦게 와도 스스로 그린다 — ao-desk.js 만 500ms 늦춘 채 새로고침 10회
+        console.log('\n■ #620 늦게 온 ao-desk.js — 새로고침 10회');
+        {
+            const P = await h.open(h.users.직원, PC, { page: 'agent-office' }); const pg = P.pg;
+            await pg.route('**/ao-desk.js*', async r => { await new Promise(x => setTimeout(x, 500)); r.continue(); });
+            const got = [];
+            for (let i = 0; i < 10; i++) { await pg.reload({ waitUntil: 'domcontentloaded' }); await pg.waitForFunction(() => document.querySelectorAll('#ao-desk-root .desk-chip').length > 0, null, { timeout: 8000 }).catch(() => { }); got.push(await pg.evaluate(() => ({ chips: document.querySelectorAll('#ao-desk-root .desk-chip').length, active: !!document.querySelector('#page-agent-office.active'), roots: document.querySelectorAll('#ao-desk-root .desk-topbox').length }))); }
+            ok(got.length === 10 && got.every(g => g.active && g.chips > 0 && g.roots === 1), '#620 ao-desk.js 를 500ms 늦춰도 새로고침 10회 전부 화면이 뜸(알약 > 0 · 두 번 그리지 않음)', JSON.stringify(got.map(g => g.chips + '/' + g.roots)));
+            ok(P.errors.length === 0, '#620 화면 오류 0', P.errors.join(' | '));
             await P.ctx.close();
         }
     } finally { await h.stop(); }

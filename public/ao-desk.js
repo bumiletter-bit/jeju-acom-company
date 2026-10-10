@@ -200,6 +200,7 @@
                     <span class="ship-tilde" aria-hidden="true">~</span>
                     <input type="text" class="akm-date ship-date" id="ship-to" readonly autocomplete="off" placeholder="날짜 선택" aria-label="발송일 끝">
                     <button type="submit" class="desk-btn primary" id="ship-go">조회</button>
+                    <label class="desk-sr" for="ship-q">이름·받는 분 연락처 끝 4자리·운송장으로 찾기</label><input type="search" class="ship-q desk-find ship-find" id="ship-q" autocomplete="off" maxlength="40" placeholder="이름 · 받는 분 연락처 끝 4자리 · 운송장" title="이 기간 송장에서 찾아요(조회한 뒤에 쓸 수 있어요)" disabled>
                 </form>
                 <div class="ship-prog" id="ship-prog" role="status" hidden><div class="ship-prog-line"><span id="ship-prog-text">조회 중</span><b id="ship-prog-n"></b></div><div class="ship-track"><i id="ship-prog-bar"></i></div></div>
                 <div class="ship-note" id="ship-note" role="status" hidden></div>
@@ -519,7 +520,7 @@
 
     // ── #594 배송조회(대표 10/8) — 알약 [배송조회 확인하기] → 서버가 CJ대한통운에 직접 물어본 결과를 이 카드에 그린다(창구·AI를 거치지 않는다)
     //   서버: POST /api/delivery/track · GET /api/delivery/track/status · GET /api/delivery/summary · POST /api/delivery/shipments/upload
-    const SHIP = { timer: 0, data: null, busy: false, seq: 0, pick: null, q: '', list: null, lseq: 0, qt: 0, rkey: '' };
+    const SHIP = { timer: 0, data: null, busy: false, seq: 0, pick: null, q: '', list: null, lseq: 0, qt: 0, rkey: '', asked: '' };   // asked = 이 카드에서 [조회]를 누른 기간(from|to) — 「카톡에 올릴 요약」은 그 기간에만 뜬다(대표 10/10 저녁)
     const kstDay = off => new Date(Date.now() + 9 * 3600e3 + (off || 0) * 86400e3).toISOString().slice(0, 10);
     const nfmt = n => (Number(n) || 0).toLocaleString('ko-KR');
     const mdOf = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[2] + '/' + m[3] : String(d || ''); };
@@ -552,6 +553,7 @@
     function shipOpen() {
         toolShow('desk-ship');
         if (!$('ship-from').value) { $('ship-from').value = kstDay(-1); $('ship-to').value = kstDay(-1); }   // 기본 = 어제 발송분
+        SHIP.asked = '';   // 카드를 열 때마다 요약은 숨긴 채로 — [조회]를 눌러 지금 상태를 확인한 뒤에만 보인다(앞 조회 결과 숫자는 「○ 기준」과 함께 그대로)
         shipCheck(true);
     }
     // 열 때·[조회] 뒤: 서버에 도는 조회가 있으면 진행 줄, 없으면 마지막 결과를 그린다
@@ -563,7 +565,7 @@
         try { st = await api('/api/delivery/track/status'); } catch (e) { shipProg(null); shipNote('조회 상태를 불러오지 못했어요: ' + (e && e.message ? e.message : '다시 시도해 주세요'), 'err'); return; }
         if (seq !== SHIP.seq || $('desk-ship').hidden) return;
         if (st && st.state === 'running') {
-            if (first && st.from) { $('ship-from').value = st.from; $('ship-to').value = st.to || st.from; }
+            if (first && st.from) { $('ship-from').value = st.from; $('ship-to').value = st.to || st.from; SHIP.asked = st.from + '|' + (st.to || st.from); }   // 이미 도는 조회에 붙었으면 끝난 뒤 요약이 뜬다
             shipProg(st); shipNote('');
             SHIP.timer = setTimeout(() => shipCheck(false), 2000);
             return;
@@ -598,7 +600,8 @@
         const byCols = SHIP_KEYS.filter(k => bd.some(x => x.counts && Number(x.counts[k]) > 0) || ['배송완료', '배송출발', '간선상하차'].includes(k));
         const byTable = bd.length ? `<h4 class="ship-h">발송일·거래처별</h4><div class="desk-md-tw ship-tw"><table class="desk-md-t ship-by"><thead><tr><th>발송일</th><th>거래처</th><th class="num">송장</th>${byCols.map(k => `<th class="num">${esc(k)}</th>`).join('')}</tr></thead><tbody>`
             + bd.map(x => `<tr><td>${esc(mdOf(x.date))}</td><td>${esc(x.partner || '')}</td><td class="num">${Number(x.n) > 0 ? cell(x, '', x.n) : nfmt(x.n)}</td>${byCols.map(k => { const v = Number(x.counts && x.counts[k]) || 0; return `<td class="num${v && (k === '미배송' || k === '사고') ? ' warn' : ''}">${v ? cell(x, k, v) : '<i>0</i>'}</td>`; }).join('')}</tr>`).join('') + '</tbody></table></div>' : '';
-        return `<section class="desk-sec ship-sum" aria-label="카톡에 올릴 요약"><div class="desk-sec-head"><b>카톡에 올릴 요약</b><button type="button" class="desk-sec-copy" id="ship-copy" aria-label="요약 복사">복사</button></div><div class="desk-sec-body"><div class="ship-sum-text" id="ship-sum-text">${esc(d.summary_text || '')}</div></div></section>`
+        const asked = !!SHIP.asked && SHIP.asked === SHIP.rkey;   // [조회]를 누르기 전에는 요약을 안 보인다(앞 조회 때 글을 지금 것처럼 복사해 올리지 않게)
+        return (!asked ? `<div class="desk-empty ship-sum-wait" id="ship-sum-wait">카톡에 올릴 요약은 [조회]를 누르면 떠요. 아래 숫자는 마지막으로 조회한 결과예요${when ? '(' + esc(when) + ' 기준)' : ''}.</div>` : `<section class="desk-sec ship-sum" aria-label="카톡에 올릴 요약"><div class="desk-sec-head"><b>카톡에 올릴 요약</b><button type="button" class="desk-sec-copy" id="ship-copy" aria-label="요약 복사">복사</button></div><div class="desk-sec-body"><div class="ship-sum-text" id="ship-sum-text">${esc(d.summary_text || '')}</div></div></section>`)
             + `<ul class="ship-stat" aria-label="상태별 건수">${stat}</ul>`
             + `<div class="ship-meta"><span>송장 ${nfmt(d.shipments)}건 중 ${nfmt(d.checked)}건 조회${Number(d.shipments) > Number(d.checked) ? ' (아직 ' + nfmt(d.shipments - d.checked) + '건은 [조회]를 눌러야 해요)' : ''}${d.dup && Number(d.dup.person) > 0 ? ' · 같은 분 여러 상자 ' + nfmt(d.dup.person) + '건' : ''}${when ? ' · ' + esc(when) + ' 기준' : ''}</span><button type="button" class="desk-btn sm" id="ship-force" title="배송완료로 확인된 건까지 전부 다시 물어봐요">전부 다시 조회</button></div>`
             + byTable
@@ -656,9 +659,10 @@
         const box = document.getElementById('ship-detail'); if (!box) return;
         const p = SHIP.pick, d = SHIP.data || {}, key = shipKey(p), mode = p ? 'L' + key : 'T', finding = !p && !!SHIP.q;   // finding = 「확인할 건」에서 찾는 중(그 기간 전체)
         $('ship-out').querySelectorAll('[aria-pressed]').forEach(el => el.setAttribute('aria-pressed', String(!!p && [el.dataset.b || '', el.dataset.d || '', el.dataset.p || ''].join('|') === key)));
+        { const qi = $('ship-q'); if (qi) { qi.disabled = false; if (shipQNorm(qi.value) !== SHIP.q) qi.value = SHIP.q || ''; } }   // #621: 찾기 칸은 위쪽 [조회] 옆에 늘 있다 — 칸을 바꾸면(SHIP.q 비움) 칸 글도 비운다
         if (box.dataset.mode !== mode) {   // 머리(검색 칸)는 칸을 바꿀 때만 새로 그린다 — 검색어를 적는 동안 초점이 날아가지 않게
             box.dataset.mode = mode;
-            box.innerHTML = `<div class="ship-dhead"><h4 class="ship-h" id="ship-dh"></h4>${p ? `<button type="button" class="desk-btn sm" id="ship-all" title="확인할 건으로 돌아가요">전체</button>` : ''}<input type="search" class="ship-q" id="ship-q" autocomplete="off" maxlength="40" placeholder="이름 · 받는 분 연락처 끝 4자리 · 운송장" aria-label="${p ? '이 목록에서 찾기' : '이 기간 송장 전체에서 찾기'}" value="${esc(SHIP.q || '')}"></div><div class="ship-dnote" id="ship-dnote" role="status" hidden></div><div id="ship-dbody"></div>`;
+            box.innerHTML = `<div class="ship-dhead"><h4 class="ship-h" id="ship-dh"></h4>${p ? `<button type="button" class="desk-btn sm" id="ship-all" title="확인할 건으로 돌아가요">전체</button>` : ''}</div><div class="ship-dnote" id="ship-dnote" role="status" hidden></div><div id="ship-dbody"></div>`;
         }
         const useL = !!p || finding, L = useL ? SHIP.list : null, rows = useL ? (L ? L.rows : []) : (Array.isArray(d.trouble) ? d.trouble : []);
         const label = p ? (p.from ? `${mdOf(p.from)} ${p.partner} · ${p.bucket || '전체'}` : p.bucket) : finding ? '찾은 건' : '확인할 건';
@@ -713,6 +717,7 @@
                 else shipNote((res && res.error) || '조회를 시작하지 못했어요', 'err');
                 return;
             }
+            SHIP.asked = r.from + '|' + r.to;
             if (res.job && res.job.state === 'running') shipProg(res.job);
             SHIP.timer = setTimeout(() => shipCheck(false), res.job && res.job.state === 'running' ? 2000 : 0);
         } catch (e) {
@@ -1105,13 +1110,18 @@
         if (!err && !pick && !q) SMS.all = d.items;
         smsHead(); smsRenderList();
     }
+    // #624(대표 10/10 「번호 다 뜨게」): 서버가 phone_full(숫자만)을 주면 전체 번호를 010-1234-5678 꼴로 — 없으면(옛 서버) 종전 가림 글. 대화 머리의 번호는 누르면 전화(tel:)
+    const smsFmtNo = d => { d = String(d || '').replace(/\D/g, ''); return d.length === 11 ? d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7) : d.length === 10 ? (d.startsWith('02') ? '02-' + d.slice(2, 6) + '-' + d.slice(6) : d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6)) : d.length === 12 ? d.slice(0, 4) + '-' + d.slice(4, 8) + '-' + d.slice(8) : d; };
+    const smsFull = x => String((x && x.phone_full) || '').replace(/\D/g, '');
+    const smsNo = x => (smsFull(x) ? smsFmtNo(smsFull(x)) : '끝 ' + (x.phone_tail || ''));   // 목록 줄 — 옛 응답이면 종전 「끝 1234」
+    const smsNoHtml = x => (smsFull(x) ? `<a class="sms-tel" href="tel:${esc(smsFull(x))}" aria-label="${esc(smsFmtNo(smsFull(x)))} 로 전화 걸기">${esc(smsFmtNo(smsFull(x)))}</a>` : esc(x.phone_masked || '끝 ' + (x.phone_tail || '')));
     function smsRowHtml(x, moved) {
         const open = SMS.open === x.id, outLater = x.last_out_at && (!x.last_in_at || tms(x.last_out_at) > tms(x.last_in_at));
         const at = outLater ? x.last_out_at : x.last_in_at;
         const done = x.status === 'staff_replied' && (x.staff_name || x.handled_at) ? `<span class="sms-by">처리 ${esc([x.staff_name, smsWhen(x.handled_at)].filter(Boolean).join(' · '))}</span>` : '';
         return `<li class="sms-item${open ? ' open' : ''}${moved ? ' moved' : ''}" data-id="${x.id}" data-st="${esc(x.status || '')}">`
             + `<button type="button" class="sms-row" aria-expanded="${String(open)}" aria-controls="sms-thread">`
-            + `<span class="sms-tail">끝 ${esc(x.phone_tail || '')}</span>`
+            + `<span class="sms-tail">${esc(smsNo(x))}</span>`
             + `<span class="sms-hint${x.customer_hint ? '' : ' none'}">${esc(x.customer_hint || '주문을 찾지 못한 번호')}</span>`
             + smsBadge(x.status)
             + `<time class="sms-time">${esc(smsWhen(at))}</time>`
@@ -1154,7 +1164,7 @@
         SMS.open = id; SMS.thread = null; SMS.tsig = ''; SMS.filled = 0;
         const th = document.createElement('div');
         th.className = 'sms-thread'; th.id = 'sms-thread'; th.setAttribute('role', 'region'); th.setAttribute('aria-label', '끝 ' + (x.phone_tail || '') + ' 번호와 주고받은 문자');
-        th.innerHTML = `<div class="sms-th-head"><b id="sms-th-phone">${esc(x.phone_masked || '끝 ' + (x.phone_tail || ''))}</b><span id="sms-th-badge">${smsBadge(x.status)}</span><button type="button" class="sms-th-x" id="sms-th-x" aria-label="이 대화 접기" title="접기 (Esc)">×</button></div>`
+        th.innerHTML = `<div class="sms-th-head"><b id="sms-th-phone">${smsNoHtml(x)}</b><span id="sms-th-badge">${smsBadge(x.status)}</span><button type="button" class="sms-th-x" id="sms-th-x" aria-label="이 대화 접기" title="접기 (Esc)">×</button></div>`
             + `<div class="sms-order" id="sms-order">주문을 찾는 중</div>`
             + `<div class="sms-msgs" id="sms-msgs" tabindex="0" aria-label="주고받은 문자"><div class="desk-empty ship-empty">불러오는 중</div></div>`
             + `<form class="sms-reply" id="sms-reply" autocomplete="off">`
@@ -1201,7 +1211,7 @@
         const first = !SMS.tsig, bottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
         SMS.tsig = sig;
         const t = d.thread, o = d.order;
-        $('sms-th-phone').textContent = t.phone_masked || '끝 ' + (t.phone_tail || '');
+        $('sms-th-phone').innerHTML = smsNoHtml(t);
         $('sms-th-badge').innerHTML = smsBadge(t.status);
         $('sms-order').innerHTML = o
             ? `<b>주문</b> ${esc([o.ship_date ? mdOf(o.ship_date) + ' 발송' : '', o.partner, (o.option_text || '') + (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : ''), o.tracking_tail ? '송장 끝 ' + o.tracking_tail : '', o.status_label, o.arrive_text].filter(Boolean).join(' · '))}`
@@ -1364,7 +1374,7 @@
     //   묶음 하나 = 「같은 옵션」 · 줄 = 그 옵션이 걸린 페이지 → 값이 세로로 나란히 놓인다(폰에서도 옆으로 밀 일이 없다)
     //   설정 = GET /api/price-check/pages { config } · POST(관리자)는 **통째로 갈아 끼움** → 있던 설정 + 바꾼 것을 함께 보낸다 · 키는 naver:번호 · cafe24:번호(보고의 mall: 을 바꿔 보냄)
     //   카드는 처음 열 때 만든다(닫힌 화면의 칸 순서를 안 바꾼다) · 읽기 전용 · 쓰기는 「페이지 등급 설정」 저장뿐
-    const PRICE = { data: null, busy: false, kind: null, q: '', view: null, seq: 0, qt: 0, cfg: null, setBusy: false };
+    const PRICE = { data: null, busy: false, kind: null, q: '', view: null, only: false, fold: new Set(), seq: 0, qt: 0, cfg: null, setBusy: false };   // #622: view = selling|all · only = 이상 있는 것만 · fold = 접은 품목('i:이름')·규격('g:키') — 이 화면 동안 기억
     const PC_BAD = [['tier_mismatch', '페이지끼리 값 다름'], ['mall_vs_naver', '자사몰≠네이버'], ['vip_not_lower', 'VIP가 더 비쌈'], ['stale', '한쪽만 안 바뀜']];
     const PC_REF = [['missing', '자사몰에 없음'], ['vip_same', 'VIP와 일반 값 같음']];   // 참고(어긋남으로 세지 않는다)
     const PC_KIND_LABEL = Object.fromEntries(PC_BAD.concat(PC_REF));
@@ -1372,17 +1382,19 @@
     const PC_TIERS = [['normal', '일반', 'mute'], ['vip', 'VIP', 'work'], ['gift', '선물', 'done'], ['bulk', '대용량', 'wait']];
     const PC_TIER = Object.fromEntries(PC_TIERS.map(t => [t[0], t]));
     const PC_CH = { naver: '네이버', mall: '자사몰', cafe24: '자사몰' };
-    const PC_VIEWS = [['issue', '어긋난 것만'], ['multi', '여러 페이지'], ['all', '전체']];
+    const PC_VIEWS = [['selling', '판매중'], ['all', '전체상품']];   // #622(대표 10/10): 판매 중인 상품만 / 안 파는 것까지 전부
+    const pcLive = r => !(r.sold === false || r.ignore);   // 지금 파는 줄
     const PC_HTML = `
             <section class="desk-tool pc-card" id="desk-price" aria-label="전체 가격 확인" hidden>
                 <div class="desk-tool-head"><b>전체 가격 확인</b><span id="pc-sub">네이버·자사몰 옵션 결제가</span><button type="button" class="desk-btn sm pc-re" id="pc-refresh">다시 확인</button><button type="button" class="desk-btn sm desk-tool-x" id="pc-close">닫기</button></div>
                 <div class="ship-prog" id="pc-prog" role="status" hidden><div class="ship-prog-line"><span>가격을 모으는 중(1분쯤 걸릴 수 있어요)</span></div><div class="ship-track busy"><i></i></div></div>
                 <div class="ship-note" id="pc-note" role="status" hidden></div>
                 <div class="pc-when" id="pc-when" hidden></div>
-                <ul class="ship-stat pc-stat" id="pc-stat" aria-label="어긋난 종류별 건수(누르면 그 종류만)"></ul>
+                <p class="pc-sum" id="pc-sum" role="status" hidden></p>
                 <div class="pc-bar">
                     <div class="pc-views" id="pc-views" role="group" aria-label="보기">${PC_VIEWS.map(v => `<button type="button" class="desk-btn sm" data-view="${v[0]}" aria-pressed="false">${v[1]}</button>`).join('')}</div>
-                    <label class="desk-sr" for="pc-q">품목·옵션·페이지 찾기</label><input type="search" class="ship-q pc-q" id="pc-q" maxlength="40" autocomplete="off" placeholder="품목 · 옵션 · 페이지로 찾기">
+                    <button type="button" class="desk-btn sm pc-only" id="pc-only" aria-pressed="false">이상 있는 것만</button>
+                    <label class="desk-sr" for="pc-q">품목·옵션·페이지 찾기</label><input type="search" class="ship-q desk-find pc-q" id="pc-q" maxlength="40" autocomplete="off" placeholder="품목 · 옵션 · 페이지로 찾기">
                     <span class="pc-count" id="pc-count" role="status"></span>
                     <button type="button" class="desk-btn sm pc-copy" id="pc-copy">요약 복사</button>
                 </div>
@@ -1397,7 +1409,7 @@
                 <p class="pc-hint">쿠팡은 가격 조회 API가 없어 빠져 있어요.</p>
             </section>`;
     const pcVisible = () => { const c = $('desk-price'); return !!c && !c.hidden; };
-    const pcView = () => PRICE.view || (window.matchMedia('(max-width: 640px)').matches ? 'issue' : 'multi');   // 폰은 「어긋난 것만」이 기본
+    const pcView = () => PRICE.view || 'selling';   // #622: 기본 = 판매중
     const pcKst = t => { const d = t ? new Date(t) : null; return (!d || isNaN(d)) ? null : new Date(d.getTime() + 9 * 3600e3); };
     const pcMd = t => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(t || '')); if (m) return Number(m[2]) + '/' + Number(m[3]); const k = pcKst(t); return k ? (k.getUTCMonth() + 1) + '/' + k.getUTCDate() : ''; };
     const pcWhen = t => { const k = pcKst(t); return k ? (k.getUTCMonth() + 1) + '/' + k.getUTCDate() + ' ' + String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0') : ''; };
@@ -1429,12 +1441,11 @@
         const d = PRICE.data, q = PRICE.q.toLowerCase(), view = pcView(), kind = PRICE.kind, out = [];
         (d && Array.isArray(d.groups) ? d.groups : []).forEach(g => {
             if (!g) return;
-            const sh = pcShape(g);
-            if (kind) { if (!sh.issues.some(is => is.kind === kind)) return; }
-            else if (view === 'issue') { if (!sh.bad.length) return; }
-            else if (view === 'multi') { if (sh.rows.length < 2 && !sh.issues.length) return; }
+            const sh = pcShape(g), live = sh.rows.filter(pcLive);
+            if (view === 'selling' && !live.length) return;   // 파는 줄이 하나도 없는 규격은 [전체상품]에서만
+            if (PRICE.only && !sh.bad.length) return;
             if (q && !(String(g.label || '').toLowerCase().includes(q) || sh.rows.some(r => String(r.option_text || '').toLowerCase().includes(q) || String(pcPage(r.page_key).name || '').toLowerCase().includes(q)))) return;
-            out.push({ g, sh });
+            out.push({ g, sh, rows: view === 'selling' ? live : sh.rows });
         });
         return out;
     }
@@ -1452,9 +1463,11 @@
         return p > 0 ? { item, spec: rest.slice(0, p).trim(), extra: rest.slice(p).trim() } : { item, spec: rest, extra: '' };
     }
     const pcChanged = r => r.changed_at ? '바뀜 ' + pcMd(r.changed_at) + (r.prev_price != null ? ' · 앞 값 ' + pcWon(r.prev_price) : '') : r.changed_unknown ? '바뀐 날 모름' : r.unchanged_since ? pcMd(r.unchanged_since) + ' 이전부터 그대로' : '';
-    function pcGroupHtml(g, sh, kind) {
-        let prevVip = null;
-        const body = sh.rows.map(r => {
+    const pcFoldAttr = key => ` role="button" tabindex="0" data-fold="${esc(key)}" aria-expanded="${!PRICE.fold.has(key)}"`;   // #622: 품목 대제목·규격 띠 = 눌러 접는 머리(같은 꼴 · 같은 화살표)
+    const PC_CHEV = '<i class="pc-chev" aria-hidden="true"></i>';
+    function pcGroupHtml(g, sh, kind, rows) {
+        let prevVip = null; const fk = 'g:' + g.key;
+        const body = (rows || sh.rows).map(r => {
             const p = pcPage(r.page_key), t = PC_TIER[r.tier || p.tier] || [r.tier, r.tier || '등급 없음', 'mute'], f = sh.flag.get(String(r.page_key)) || { bad: [], stale: [], ref: [] };
             const off = r.sold === false || r.ignore, cls = ['pc-r'];
             const vip = (r.tier || p.tier) === 'vip'; if (prevVip !== null && prevVip !== vip) cls.push('pc-sep'); prevVip = vip;
@@ -1469,8 +1482,8 @@
         }).join('');
         const lines = (kind ? sh.issues.filter(is => is.kind === kind) : sh.issues).map(is => `<li data-kind="${esc(is.kind)}"><i class="desk-badge" data-k="${pcIsRef(is.kind) ? 'mute' : is.kind === 'stale' ? 'wait' : 'err'}">${esc(PC_KIND_LABEL[is.kind] || is.kind)}</i><span>${esc(is.detail || '')}</span></li>`).join('');
         const L = pcLabel(g.label || g.key);
-        return `<section class="pc-group" data-g="${esc(g.key)}" data-label="${esc(g.label || g.key)}">
-                <h4 class="pc-h${sh.bad.length ? ' pc-h-bad' : ''}" title="${esc(g.label || g.key)}">${sh.bad.length ? '<i class="pc-hdot" aria-hidden="true"></i>' : ''}<span class="pc-hi">${esc(L.item)}</span>${L.spec ? `<span class="pc-hs">${esc(L.spec)}</span>` : ''}${L.extra ? `<small class="pc-hx">${esc(L.extra)}</small>` : ''}${sh.bad.length ? `<i class="desk-badge" data-k="err">어긋남 ${sh.bad.length}</i>` : ''}${sh.ref.length ? `<i class="desk-badge" data-k="mute">참고 ${sh.ref.length}</i>` : ''}</h4>
+        return `<section class="pc-group${PRICE.fold.has(fk) ? ' pc-shut' : ''}" data-g="${esc(g.key)}" data-label="${esc(g.label || g.key)}">
+                <h4 class="pc-h${sh.bad.length ? ' pc-h-bad' : ''}" title="${esc(g.label || g.key)}"${pcFoldAttr(fk)}>${sh.bad.length ? '<i class="pc-hdot" aria-hidden="true"></i>' : ''}<span class="pc-hi">${esc(L.item)}</span>${L.spec ? `<span class="pc-hs">${esc(L.spec)}</span>` : ''}${L.extra ? `<small class="pc-hx">${esc(L.extra)}</small>` : ''}${sh.bad.length ? `<i class="desk-badge" data-k="err">이상 있음 ${sh.bad.length}건</i>` : ''}${sh.ref.length ? `<i class="desk-badge" data-k="mute">참고 ${sh.ref.length}</i>` : ''}${PC_CHEV}</h4>
                 <div class="pc-tw"><table class="pc-t"><thead class="desk-sr"><tr><th scope="col">페이지</th><th scope="col">결제가</th><th scope="col">바뀐 날</th></tr></thead><tbody>${body}</tbody></table></div>
                 ${lines ? `<ul class="pc-issues">${lines}</ul>` : ''}
             </section>`;
@@ -1479,7 +1492,7 @@
         const d = PRICE.data, out = $('pc-out'); if (!out) return;
         const by = {}; let bad = 0, off = [];
         if (d) (d.groups || []).forEach(g => { if (!g) return; (g.issues || []).forEach(is => { by[is.kind] = (by[is.kind] || 0) + 1; if (!pcIsRef(is.kind)) bad++; }); if (g.offseason_mismatch) off.push(g); });
-        $('pc-sub').textContent = d ? (bad ? '어긋남 ' + nfmt(bad) + '건' : '어긋난 가격 없음') : '네이버·자사몰 옵션 결제가';
+        $('pc-sub').textContent = d ? (bad ? '이상 있음 ' + nfmt(bad) + '건' : '이상 없음') : '네이버·자사몰 옵션 결제가';
         $('pc-sub').dataset.k = bad ? 'err' : '';
         const src = d && d.source ? d.source : {}, snap = pcWhen(src.naver_snapshot_at), wh = $('pc-when');
         wh.hidden = !d;
@@ -1488,22 +1501,30 @@
             const mallBad = src.mall === 'error' || src.mall === 'none';
             wh.innerHTML = `<b>네이버 ${snap ? esc(snap) + ' 값' : '새벽 값'}</b><span>${mallBad ? '' : '자사몰은 방금 값 · '}네이버는 새벽에 찍어 둔 값이에요. 낮에 고친 네이버 가격은 내일 새벽 뒤에 확인돼요.${pcWhen(d.generated_at) ? ' (확인 ' + esc(pcWhen(d.generated_at)) + ')' : ''}</span>${mallBad ? '<em>' + esc(notes.join(' · ') || '자사몰은 조회하지 못해 네이버 페이지끼리만 견줬어요') + '</em>' : ''}`;
         }
-        const chip = ([k, label], ref) => { const n = by[k] || 0; return `<li role="button" tabindex="0" data-kind="${k}" aria-pressed="${PRICE.kind === k}"${ref ? ' data-ref="1"' : n ? ' data-k="' + (k === 'stale' ? 'wait' : 'err') + '"' : ''}><span>${esc(label)}${ref ? ' <i>참고</i>' : ''}</span><b>${nfmt(n)}</b></li>`; };
-        $('pc-stat').innerHTML = d ? PC_BAD.map(x => chip(x, false)).join('') + PC_REF.map(x => chip(x, true)).join('') : '';
-        const view = pcView(); $('pc-views').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(!PRICE.kind && b.dataset.view === view)));
+        // #622(대표 10/10 「문구 줄 빼고 이상 있고 없고를」): 종류별 숫자 칸 6개 대신 한 줄 요약 — 판매 중인 품목 수 · 그 가운데 이상 있는 품목 수 · 참고 건수(참고는 이상에 안 셈)
+        const sum = $('pc-sum'); sum.hidden = !d;
+        if (d) {
+            const its = new Map(); let refN = 0;
+            (d.groups || []).forEach(g => { if (!g) return; const sh = pcShape(g); if (!sh.rows.some(pcLive)) return; const nm = pcLabel(g.label || g.key).item; its.set(nm, (its.get(nm) || 0) + sh.bad.length); refN += sh.ref.length; });
+            const badIt = [...its.values()].filter(n => n > 0).length;
+            sum.dataset.k = badIt ? 'err' : 'ok';
+            sum.innerHTML = `<span>판매 중 <b>${nfmt(its.size)}</b>품목</span><i class="desk-badge" data-k="${badIt ? 'err' : 'done'}">${badIt ? '이상 있음 ' + nfmt(badIt) + '품목' : '이상 없음'}</i><span>참고 <b>${nfmt(refN)}</b>건</span>`;
+        }
+        const view = pcView(); $('pc-views').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
+        $('pc-only').setAttribute('aria-pressed', String(!!PRICE.only));
         $('pc-copy').disabled = !bad;
         const offBox = $('pc-off'); offBox.hidden = !off.length;
         if (off.length) { $('pc-off-sum').textContent = '지금 안 파는 옵션끼리 값이 다름 ' + nfmt(off.length) + '건(참고)'; $('pc-off-out').innerHTML = off.map(g => pcGroupHtml(g, pcShape(g), null)).join(''); }
         if (!d) { out.innerHTML = PRICE.busy ? '' : '<div class="desk-empty">아직 불러온 가격이 없어요. [다시 확인]을 눌러 주세요.</div>'; $('pc-count').textContent = ''; return; }
         const list = pcGroups();
-        $('pc-count').textContent = '옵션 ' + nfmt(list.length) + '개' + (PRICE.kind ? ' · ' + PC_KIND_LABEL[PRICE.kind] : '');
+        $('pc-count').textContent = '옵션 ' + nfmt(list.length) + '개' + (PRICE.only ? ' · 이상 있는 것만' : '');
         if (!list.length) {
-            out.innerHTML = `<div class="desk-empty">${PRICE.q ? '찾는 품목·옵션·페이지가 없어요.' : PRICE.kind ? '이 종류에 해당하는 것은 없어요.' : view === 'issue' ? '어긋난 가격이 없어요. 다른 옵션은 [여러 페이지]·[전체]에서 볼 수 있어요.' : '가격을 확인할 옵션이 없어요.'}</div>`;
+            out.innerHTML = `<div class="desk-empty">${PRICE.q ? '찾는 품목·옵션·페이지가 없어요.' : PRICE.only ? '이상 있는 가격이 없어요. [이상 있는 것만]을 끄면 전부 볼 수 있어요.' : view === 'selling' ? '지금 파는 옵션이 없어요. [전체상품]에서 볼 수 있어요.' : '가격을 확인할 옵션이 없어요.'}</div>`;
             return;
         }
         const items = [], at = new Map();   // 같은 품목끼리(처음 나온 순서 — 서버가 어긋난 묶음을 앞에 둔다)
         list.forEach(x => { const name = pcLabel(x.g.label || x.g.key).item; let it = at.get(name); if (!it) { it = { name, list: [] }; at.set(name, it); items.push(it); } it.list.push(x); });
-        out.innerHTML = items.map(it => { const bad = it.list.reduce((a, x) => a + x.sh.bad.length, 0); return `<section class="pc-item${bad ? ' pc-item-bad' : ''}" data-item="${esc(it.name)}"><h3 class="pc-item-h"><span>${esc(it.name)}</span><small>규격 ${nfmt(it.list.length)}개${bad ? ' · 어긋남 ' + nfmt(bad) + '건' : ''}</small></h3>${it.list.map(({ g, sh }) => pcGroupHtml(g, sh, PRICE.kind)).join('')}</section>`; }).join('');
+        out.innerHTML = items.map(it => { const bad = it.list.reduce((a, x) => a + x.sh.bad.length, 0); const fk = 'i:' + it.name; return `<section class="pc-item${bad ? ' pc-item-bad' : ''}${PRICE.fold.has(fk) ? ' pc-shut' : ''}" data-item="${esc(it.name)}"><h3 class="pc-item-h"${pcFoldAttr(fk)}><span>${esc(it.name)}</span><small>규격 ${nfmt(it.list.length)}개</small><i class="desk-badge pc-flag" data-k="${bad ? 'err' : 'done'}">${bad ? '이상 있음 ' + nfmt(bad) + '건' : '이상 없음'}</i>${PC_CHEV}</h3>${it.list.map(({ g, sh, rows }) => pcGroupHtml(g, sh, null, rows)).join('')}</section>`; }).join('');
     }
     function pcSummaryText() {
         const d = PRICE.data; if (!d) return '';
@@ -1540,12 +1561,20 @@
         $('desk-listbox').insertAdjacentHTML('beforebegin', PC_HTML);
         $('pc-close').addEventListener('click', () => pcClose());
         $('pc-refresh').addEventListener('click', () => pcLoad(true));
-        $('pc-views').addEventListener('click', e => { const b = e.target.closest('button[data-view]'); if (!b) return; PRICE.view = b.dataset.view; PRICE.kind = null; pcRender(); });
+        $('pc-views').addEventListener('click', e => { const b = e.target.closest('button[data-view]'); if (!b) return; PRICE.view = b.dataset.view; pcRender(); });
+        $('pc-only').addEventListener('click', () => { PRICE.only = !PRICE.only; pcRender(); });
+        // #622: 품목 대제목 · 규격 띠 · 그 아래 줄 어디를 눌러도 접힌다(대제목 = 그 품목 전체 · 띠와 줄 = 그 규격) — 다시 그리지 않고 그 자리에서만
+        const pcFold = head => { const key = head.dataset.fold, shut = !PRICE.fold.has(key); if (shut) PRICE.fold.add(key); else PRICE.fold.delete(key);
+            $('desk-price').querySelectorAll('[data-fold]').forEach(h => { if (h.dataset.fold !== key) return; h.setAttribute('aria-expanded', String(!shut)); h.parentElement.classList.toggle('pc-shut', shut); }); };
+        $('desk-price').addEventListener('click', e => {
+            const t = e.target; if (!t.closest || t.closest('a, button, input, select, summary, label')) return;
+            const head = t.closest('[data-fold]'); if (head) return pcFold(head);
+            const row = t.closest('.pc-group .pc-tw, .pc-group .pc-issues'); if (!row || String(window.getSelection && window.getSelection()).length) return;   // 글을 긁는 중이면 접지 않는다
+            const h = row.closest('.pc-group').querySelector('[data-fold]'); if (h) pcFold(h);
+        });
+        $('desk-price').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[data-fold]')) { e.preventDefault(); pcFold(e.target); } });
         $('pc-copy').addEventListener('click', () => { const t = pcSummaryText(); if (t) copyText(t, '어긋난 가격 요약을 복사했어요', $('pc-out')); });
         $('pc-q').addEventListener('input', e => { clearTimeout(PRICE.qt); PRICE.qt = setTimeout(() => { PRICE.q = e.target.value.trim(); pcRender(); }, 180); });
-        const pick = li => { const k = li.dataset.kind; PRICE.kind = PRICE.kind === k ? null : k; pcRender(); const again = $('pc-stat').querySelector('li[data-kind="' + k + '"]'); if (again) again.focus({ preventScroll: true }); };
-        $('pc-stat').addEventListener('click', e => { const li = e.target.closest('li[role="button"]'); if (li) pick(li); });
-        $('pc-stat').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('li[role="button"]')) { e.preventDefault(); pick(e.target); } });
         $('desk-price').addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented) { if (e.target.id === 'pc-q' && e.target.value) return; e.preventDefault(); pcClose(); } });
         $('pc-set').hidden = !isAdmin();
         $('pc-set').addEventListener('toggle', () => { if ($('pc-set').open) pcSetLoad(); });
@@ -1623,20 +1652,21 @@
             const li = e.target.closest && e.target.closest('.ship-stat li[role="button"]');
             if (li && e.target === li) { e.preventDefault(); shipPick(li); }
         });
-        $('ship-out').addEventListener('input', e => {
+        $('ship-form').addEventListener('keydown', e => { if (e.target.id === 'ship-q' && e.key === 'Enter') e.preventDefault(); });   // #621: 찾기 칸의 Enter 가 [조회](CJ 다시 묻기)를 누르지 않게
+        $('ship-form').addEventListener('input', e => {
             if (e.target.id !== 'ship-q') return;
             clearTimeout(SHIP.qt);
             SHIP.qt = setTimeout(() => { const v = shipQNorm(e.target.value); if (v === SHIP.q) return; SHIP.q = v; SHIP.list = null; shipDetail(); shipList(); }, 300);
         });
         // #613: 붙여 넣은 운송장의 하이픈·빈칸을 빼고, 전화번호 통째면 끝 4자리만 남겨 칸에도 그렇게 보여 준다(손으로 치는 동안은 칸을 안 바꾸고 찾는 글만 다듬는다 → 칸은 벗어날 때 바꿈)
-        $('ship-out').addEventListener('paste', e => {
+        $('ship-form').addEventListener('paste', e => {
             if (e.target.id !== 'ship-q') return;
             const raw = (e.clipboardData && e.clipboardData.getData('text')) || '', norm = shipQNorm(raw);
             if (!raw.trim() || norm === raw.trim()) return;
             e.preventDefault(); e.target.value = norm;
             clearTimeout(SHIP.qt); if (norm !== SHIP.q) { SHIP.q = norm; SHIP.list = null; shipDetail(); shipList(); }
         });
-        $('ship-out').addEventListener('change', e => { if (e.target.id !== 'ship-q') return; const n = shipQNorm(e.target.value); if (n !== e.target.value) e.target.value = n; });
+        $('ship-form').addEventListener('change', e => { if (e.target.id !== 'ship-q') return; const n = shipQNorm(e.target.value); if (n !== e.target.value) e.target.value = n; });
         $('ship-pick').addEventListener('click', () => $('ship-file').click());
         $('ship-file').addEventListener('change', e => { const f = (e.target.files || [])[0]; e.target.value = ''; shipUpload(f); });
         const drop = $('ship-drop');
@@ -2762,4 +2792,7 @@
         if (!S.visBound) { S.visBound = true; document.addEventListener('visibilitychange', () => { if (document.hidden || !S.mounted || !pageActive()) return; tickElapsed(); if (!S.loading) loadOrders(false); loadStatus(); smsTick(true); }); }
     };
     window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList, loadInbox, renderInbox };
+    // #620(대표 10/10 「새로고침하면 가끔 화면이 빈다」): app.js 의 로그인 확인이 이 파일보다 먼저 끝나면 switchPage 가 aoDeskEnter 를 못 찾아 옛 화면 길로 빠지고, 그 뒤로는 아무도 그리지 않았다
+    //   → 이 파일이 실행된 순간 에이전트 오피스가 이미 떠 있으면 스스로 들어간다(mount 는 S.mounted 로 한 번만).
+    if (pageActive()) window.aoDeskEnter().catch(console.error);
 })();

@@ -962,9 +962,6 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .pc-when b { font-size: 16px; font-weight: 800; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .pc-when span { color: var(--d-sub); font-size: 12.5px; line-height: 1.5; }
 .pc-when em { color: #B54708; font-size: 12.5px; font-style: normal; font-weight: 700; line-height: 1.5; }
-.pc-stat { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
-.pc-stat li span i { font-style: normal; font-size: 11px; color: var(--d-sub); }
-.pc-stat li[data-ref="1"] b { color: var(--d-sub); }
 .pc-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .pc-bar .desk-btn { flex: none; min-height: 44px; }
 .pc-views { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1050,7 +1047,6 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .pc-set-msg[data-k="err"] { color: #B42318; }
 .pc-set-msg[data-k="ok"] { color: #067647; }
 @media (max-width: 640px) {
-    .pc-stat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pc-views { flex: 1 1 100%; }
     .pc-views .desk-btn { flex: 1 1 0; padding: 0 6px; }
     .pc-bar .pc-q { flex: 1 1 100%; max-width: none; font-size: 16px; }
@@ -1079,6 +1075,33 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
     .desk-h-item:has(> .desk-h-del):has(> .desk-h-copy) > .desk-h-row { padding-right: 152px; }
     .desk-h-foot .desk-btn[data-act="histdel"], .desk-chatbar > .desk-h-note { min-height: 44px; }
 }
+/* #624(대표 10/10): 문자 대화 머리의 손님 번호 = 누르면 전화 */
+.sms-tel { display: inline-flex; align-items: center; min-height: 44px; color: inherit; font: inherit; font-variant-numeric: tabular-nums; text-decoration: underline; text-underline-offset: 3px; }
+.sms-tel:hover { color: var(--d-accent); }
+.sms-tel:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; border-radius: 6px; }
+/* ── #621·#622(대표 10/10) 찾기 칸 명암 · 가격 카드 한 줄 요약 · 눌러 접는 머리(품목 대제목·규격 띠·줄 = 같은 꼴) — 색은 토큰과 이미 쓰던 배지 색만 ── */
+.ship-q.desk-find { border: 2px solid var(--d-sub); background: var(--d-soft); color: var(--d-ink); font-weight: 600; }
+.ship-q.desk-find::placeholder { color: var(--d-sub); font-weight: 500; }
+.ship-q.desk-find:hover { border-color: var(--d-ink); }
+.ship-q.desk-find:focus-visible { border-color: var(--d-accent); background: var(--d-card); outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.ship-q.desk-find:disabled { opacity: .55; cursor: not-allowed; }
+.ship-form .ship-find { flex: 1 1 250px; max-width: 360px; }
+.pc-sum { display: flex; align-items: center; gap: 6px 18px; flex-wrap: wrap; margin: 12px 0 0; padding: 10px 14px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-soft); color: var(--d-ink); font-size: 14px; }
+.pc-sum b { font-weight: 800; font-variant-numeric: tabular-nums; }
+.pc-sum .desk-badge { font-style: normal; }
+.pc-only[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
+[data-fold] { cursor: pointer; min-height: 44px; -webkit-user-select: none; user-select: none; }
+[data-fold]:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; border-radius: 10px; }
+.pc-chev { flex: none; align-self: center; width: 7px; height: 7px; margin: 0 4px 0 auto; border-right: 2px solid var(--d-sub); border-bottom: 2px solid var(--d-sub); transform: rotate(45deg); transition: transform 160ms var(--d-ease); }
+[data-fold][aria-expanded="true"] > .pc-chev { transform: rotate(-135deg); }
+.desk-badge ~ .pc-chev { margin-left: 8px; }
+.pc-item-h .pc-flag { align-self: center; margin-left: auto; font-style: normal; font-size: 12.5px; letter-spacing: 0; }
+.pc-item-h { align-items: center; }
+.pc-group .pc-tw, .pc-group .pc-issues { cursor: pointer; }
+.pc-group.pc-shut > .pc-tw, .pc-group.pc-shut > .pc-issues, .pc-item.pc-shut > .pc-group { display: none; }
+.pc-group.pc-shut > .pc-h { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .pc-chev { transition: none; } }
+@media (max-width: 640px) { .ship-form .ship-find { flex: 1 1 100%; max-width: none; font-size: 16px; } .pc-only { flex: 1 1 100%; } }
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -1128,7 +1151,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (463규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (472규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1556,8 +1579,6 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .pc-when { border: 1px solid var(--d-line); background: var(--d-soft); }
 :where(html[data-ao-theme="dark"]) .pc-when span { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .pc-when em { color: #FBBF4A; }
-:where(html[data-ao-theme="dark"]) .pc-stat li span i { color: var(--d-sub); }
-:where(html[data-ao-theme="dark"]) .pc-stat li[data-ref="1"] b { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .pc-views .desk-btn[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
 :where(html[data-ao-theme="dark"]) .pc-count { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .pc-hint { color: var(--d-sub); }
@@ -1603,6 +1624,17 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .pc-set-msg { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .pc-set-msg[data-k="err"] { color: #FF9B91; }
 :where(html[data-ao-theme="dark"]) .pc-set-msg[data-k="ok"] { color: #7BE3AE; }
+:where(html[data-ao-theme="dark"]) .sms-tel { color: inherit; }
+:where(html[data-ao-theme="dark"]) .sms-tel:hover { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-tel:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .ship-q.desk-find { border: 2px solid var(--d-sub); background: var(--d-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .ship-q.desk-find::placeholder { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ship-q.desk-find:hover { border-color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .ship-q.desk-find:focus-visible { border-color: var(--d-accent); background: var(--d-card); outline: 2px solid var(--d-accent); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .pc-sum { border: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .pc-only[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) [data-fold]:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .pc-chev { border-right: 2px solid var(--d-sub); border-bottom: 2px solid var(--d-sub); }
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */
 /* 「중간발주·최종발주·정산 이미지」 = 「대기 중」 알약과 같은 꼴(흰 글씨 · 같은 바탕 · 같은 테두리) */

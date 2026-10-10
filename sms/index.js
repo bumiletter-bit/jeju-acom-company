@@ -9,14 +9,15 @@
 //   설정 = agent_office_config 'sms_gateway' { enabled, mode:'record'|'draft'|'auto', cooldown_min:30, daily_cap:1, hourly_send_cap:30, hold_sec:75,
 //                                             staff_ids:[], ping_alert_hours:3, image_days:30, lookup_days:14, max_chars:70, ttl_sec:600 }  · 행이 없으면 enabled false = webhook 은 받되 기록만.
 //   🔴 워커2 소스 확인(10/10): 직원이 삼성 메시지에서 손으로 보낸 문자는 앱이 서버로 올리지 않는다(앱 자신이 보낸 것의 결과만) → 「직원 답변됨」은 화면(에이전트 오피스) 발송으로만 생긴다.
-//      그래서 ①봇은 한 대화에 하루 한 번만 답하고(daily_cap 1) 그 뒤 손님 글은 전부 직원 몫 ②직원 몫·직원 답변 상태의 대화는 사람이 풀 때까지 봇 침묵(잠금) ③webhook 은 즉시 200 을 주고 뒤에서 처리(30초 넘으면 2일간 재시도 → 이중 답변).
+//      그래서 ①봇은 한 대화에 하루 daily_cap(#625 = 3)번까지 답하고 쿨다운(10분) 안 둘째 글·같은 질문 되풀이는 직원 몫 ②직원 몫·직원 답변 상태의 대화는 사람이 풀거나 staff_open_hours(6)/staff_lock_hours(24) 가 지날 때까지 봇 침묵(잠금) ③webhook 은 즉시 200 을 주고 뒤에서 처리(30초 넘으면 2일간 재시도 → 이중 답변).
 //      ④한글 70자 넘는 글은 앱이 분할 SMS 로 보냄(국내 통신사 동작 미확인 · 시험 b-2) → 확정 전까지 봇 답은 max_chars(70) 단위 문장 경계로 나눠 여러 통.
 //   env = SMSGATE_SIGNING_KEY(webhook 서명 키 · 폰 Settings → Webhooks · 없으면 webhook 503 잠김) · SMSGATE_USER · SMSGATE_PASS(cloud 모드 아이디·비번) · SMSGATE_API_BASE(기본 https://api.sms-gate.app/3rdparty/v1)
 //         · SMS_PUBLIC_URL(webhook 등록용 우리 주소 · 기본 https://jeju-acom-company.onrender.com)
 'use strict';
 const crypto = require('crypto');
 
-const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 1, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24 };   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
+// #625(대표 「고」 10/10 저녁): 봇은 앞 대화를 읽고 답한다 · 하루 3번 · 쿨다운 10분(그 안 둘째 글만 직원) · 같은 질문 되풀이 = 직원 · 직원 몫(staff_needed)도 staff_open_hours 지나면 저절로 끝남(종전 = 하루 1번 · 30분 · 직원 몫은 사람이 풀 때까지)
+const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 10, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, context_msgs: 6 };   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
 const WEBHOOK_EVENTS = ['sms:received', 'sms:sent', 'sms:delivered', 'sms:failed', 'sms:cancelled', 'mms:received', 'mms:downloaded', 'system:ping', 'app:started'];
 const MODES = ['record', 'draft', 'auto'];
 const STATUSES = ['new', 'bot_replied', 'cooldown', 'staff_needed', 'draft', 'staff_replied', 'closed', 'ignored'];
@@ -90,6 +91,8 @@ module.exports = function mountSms(app, deps) {
             max_chars: num(v.max_chars, DEFAULT_CFG.max_chars, 40, 2000),
             ttl_sec: num(v.ttl_sec, DEFAULT_CFG.ttl_sec, 5, 86400),
             staff_lock_hours: num(v.staff_lock_hours, DEFAULT_CFG.staff_lock_hours, 0, 720),
+            staff_open_hours: num(v.staff_open_hours, DEFAULT_CFG.staff_open_hours, 0, 720),   // #625
+            context_msgs: num(v.context_msgs, DEFAULT_CFG.context_msgs, 0, 20),
         };
     }
     let _cfgCache = null, _cfgAt = 0;
@@ -233,6 +236,21 @@ module.exports = function mountSms(app, deps) {
         return Object.assign({ line, role: r.role || null }, pubo);
     }
 
+    // #625: AI 에 줄 글 = 「앞 대화(오래된 순 · 손님/우리) + 이번 손님 글」 — 앞 대화가 없으면 이번 글만(종전과 같음). 무시 갈래·취소/실패한 발신은 뺀다.
+    const normQ = t => String(t || '').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+    async function recentTurns(thread, inMsg, n) {
+        if (!(n > 0) || !thread || !thread.id) return [];
+        const rows = (await pool.query(`SELECT direction, body, sender, bucket, state FROM sms_messages WHERE thread_id = $1 AND id < $2 AND body IS NOT NULL AND body <> ''
+            AND created_at > now() - interval '48 hours' AND (direction = 'in' OR state NOT IN ('cancelled','failed')) AND COALESCE(bucket, 'other') NOT IN ('otp','ad','carrier','photo_pending')
+            ORDER BY id DESC LIMIT $3`, [thread.id, inMsg.id || 0, n])).rows;
+        return rows.reverse();
+    }
+    async function withContext(thread, inMsg, text, c) {
+        let turns = []; try { turns = await recentTurns(thread, inMsg, c.context_msgs); } catch (e) { log.error('[문자] 앞 대화 읽기 실패(무시):', e.message); }
+        if (!turns.length) return text;
+        const lines = turns.map(t => (t.direction === 'in' ? '손님: ' : '우리: ') + String(t.body).replace(/\s+/g, ' ').trim().slice(0, 300));
+        return '[앞 대화 — 이 손님과 최근에 주고받은 문자 · 오래된 순 · 참고만]\n' + lines.join('\n') + '\n\n[이번 손님 글 — 여기에 답하세요]\n' + text;
+    }
     // ── 답 만들기: 규칙 → AI. 결과 { text, kind:'rule'|'ai'|'ask', toStaff:boolean, why } ──
     async function composeAnswer(thread, inMsg, c, lookup) {
         const text = String(inMsg.body || '');
@@ -250,7 +268,7 @@ module.exports = function mountSms(app, deps) {
         }
         if (typeof qnaGenerate === 'function') {
             try {
-                const g = await qnaGenerate(text, null, undefined, 'sms');
+                const g = await qnaGenerate(await withContext(thread, inMsg, text, c), null, undefined, 'sms');   // #625: 앞 대화(최근 context_msgs 통 · 48시간 안)를 질문 앞에 붙여 되풀이 답을 막는다
                 if (g && g.answer) {
                     const parsed = aiNote && typeof aiNote.parse === 'function' ? aiNote.parse(g.answer) : { toStaff: /^\[사람\]/.test(g.answer), text: g.answer.replace(/^\[사람\]\s*/, '') };
                     if (parsed.toStaff) return { text: null, kind: null, toStaff: true, why: 'ai_to_staff' };
@@ -359,6 +377,15 @@ module.exports = function mountSms(app, deps) {
             await setThread(thread.id, Object.assign(patch, { status: 'staff_needed' }));
             await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇 답 뒤 다시 왔어요`, STAFF_MSG);
             return done('cooldown_to_staff');
+        }
+        // #625: 같은 질문을 또 보냄(24시간 안 · 띄어쓰기·기호만 다름) = 봇 답이 안 통한 것 → 직원 몫(되풀이 답 금지)
+        if (botCountToday(thread) > 0 && normQ(bodyText).length >= 2) {
+            const prevIn = (await pool.query(`SELECT body FROM sms_messages WHERE thread_id = $1 AND direction = 'in' AND id < $2 AND created_at > now() - interval '24 hours' AND COALESCE(bucket,'other') NOT IN ('otp','ad','carrier','greeting','photo_pending') ORDER BY id DESC LIMIT 5`, [thread.id, msg.id])).rows;
+            if (prevIn.some(r => normQ(r.body) === normQ(bodyText))) {
+                await setThread(thread.id, Object.assign(patch, { status: 'staff_needed' }));
+                await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 같은 질문을 다시 보냈어요`, STAFF_MSG);
+                return done('repeat_to_staff');
+            }
         }
         // 번호로 주문 찾기 → 답 만들기
         const lookup = await orderFor(digits, c);
@@ -554,6 +581,11 @@ module.exports = function mountSms(app, deps) {
             const rel = await pool.query(`UPDATE sms_threads SET status = 'closed' WHERE status = 'staff_replied' AND COALESCE(handled_at, updated_at) < now() - make_interval(hours => $1::int) RETURNING id`, [c.staff_lock_hours]);
             out.auto_closed = rel.rowCount || 0;
         }
+        // #625(대표 「고」 10/10): 직원 몫(staff_needed · 아무도 안 답함)도 손님 마지막 글 뒤 staff_open_hours 지나면 저절로 끝남 — [처리함]을 안 눌러도 봇이 영영 침묵하지 않게(직원은 폰에서 답하는 구조)
+        if (c.staff_open_hours > 0) {
+            const rel2 = await pool.query(`UPDATE sms_threads SET status = 'closed' WHERE status = 'staff_needed' AND COALESCE(last_in_at, updated_at) < now() - make_interval(hours => $1::int) ${TEST_SKIP_T.replace('t.phone_digits', 'phone_digits')} RETURNING id`, [c.staff_open_hours]);
+            out.auto_closed_open = rel2.rowCount || 0;
+        }
         // ④ 받은 글은 있는데 판정 전에 죽어 status new 로 남은 대화(2분) → 직원 몫
         if (c.enabled && c.mode !== 'record') {   // record 모드는 new 가 정상 종착(워커2 ops 검증)
             const stuck = await pool.query(`UPDATE sms_threads t SET status = 'staff_needed' WHERE t.status = 'new' AND t.last_in_at IS NOT NULL AND t.last_in_at < now() - interval '2 minutes'
@@ -731,7 +763,7 @@ module.exports = function mountSms(app, deps) {
         await writeAudit({ action: 'update', targetType: 'sms_gateway', changes: { after: { webhooks: r } }, source: 'sms', actor: who(req) });
         res.json(Object.assign({ ok: true }, r));
     }));
-    const pub = t => ({ id: t.id, phone_tail: phoneTail(t.phone_digits), phone_masked: phoneMasked(t.phone_digits), customer_hint: t.order_hint || null, status: t.status,
+    const pub = t => ({ id: t.id, phone_tail: phoneTail(t.phone_digits), phone_masked: phoneMasked(t.phone_digits), phone_full: String(t.phone_digits || ""),   // #624 대표 확정 10/10 「번호 다 뜨게」 — 카드는 전체 번호(화면에서 010-0000-0000 꼴) · 60일 보관 그대로 customer_hint: t.order_hint || null, status: t.status,
         last_in_text: String(t.last_in_text || '').slice(0, 120), last_in_at: t.last_in_at, last_out_text: String(t.last_out_text || '').slice(0, 120), last_out_at: t.last_out_at,
         has_image: !!t.has_image, draft_text: t.draft_text || null, staff_name: t.staff_name || null, handled_at: t.handled_at, bot_count_today: botCountToday(t), last_out_state: t.last_out_state || null });
     app.get('/api/sms/summary', authMiddleware, wrap(async (req, res) => {

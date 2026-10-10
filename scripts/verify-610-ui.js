@@ -56,7 +56,7 @@ const logOf = async () => (await mock('/__mock/log')).log;
             ok(cells.join(',') === '3,1,5,2' && cellNames === '직원 몫/초안 대기/봇 답/처리됨', `[${label}] 숫자 칸 = ${cellNames}(「쿨다운」 없음) · ${cells.join(',')}`);
             ok(await sw(pg) <= vw.width, `[${label}] 목록 가로 넘침 없음(${await sw(pg)} ≤ ${vw.width})`);
             const r1 = await pg.evaluate(() => { const li = document.querySelector('#sms-list .sms-item[data-id="1"]'); return { tail: li.querySelector('.sms-tail').textContent, hint: li.querySelector('.sms-hint').textContent, badge: li.querySelector('.desk-badge').textContent, pic: !!li.querySelector('.sms-pic'), tag: !!li.querySelector('.sms-tag'), time: li.querySelector('.sms-time').textContent }; });
-            ok(r1.tail === '끝 1234' && /효돈/.test(r1.hint) && r1.badge === '초안 대기' && r1.pic && r1.tag && /^\d\d:\d\d$|\d+\/\d+ \d\d:\d\d/.test(r1.time), `[${label}] 줄 = 끝 4자리 · 손님 힌트 · 상태 배지 · 시각 · 사진 · 초안 표시(${JSON.stringify(r1)})`);
+            ok(r1.tail === '010-1234-1234' && /효돈/.test(r1.hint) && r1.badge === '초안 대기' && r1.pic && r1.tag && /^\d\d:\d\d$|\d+\/\d+ \d\d:\d\d/.test(r1.time), `[${label}] 줄 = 전체 번호(#624 · 글자만) · 손님 힌트 · 상태 배지 · 시각 · 사진 · 초안 표시(${JSON.stringify(r1)})`);
             ok((await pg.locator('#sms-list .sms-item[data-id="2"] .sms-hint').innerText()) === '주문을 찾지 못한 번호', `[${label}] 힌트 없는 번호 안내`);
             // ③ 거르기
             await pg.click('#sms-stat li[data-b="staff_needed"]'); await pg.waitForTimeout(600);
@@ -84,6 +84,21 @@ const logOf = async () => (await mock('/__mock/log')).log;
             ok(/10\/09 발송/.test(th.order) && /송장 끝 4821/.test(th.order) && /배송완료/.test(th.order), `[${label}] 주문 힌트 한 줄(${th.order.slice(0, 60)})`);
             ok(/^부패과가 나왔군요/.test(th.ta) && th.btn === '이대로 보내기' && !th.dis && th.draft, `[${label}] 초안 모드 · 봇 초안이 답 칸에 미리 · 버튼 「${th.btn}」`);
             ok(await sw(pg) <= vw.width, `[${label}] 펼친 뒤 가로 넘침 없음(${await sw(pg)})`);
+            {   // #624(대표 10/10 「번호 다 뜨게」): 목록 줄 = 전체 번호 글자 · 대화 머리 = 누르면 전화(tel:) · phone_full 없는 옛 응답이면 종전 가림 글
+                const ph = () => pg.evaluate(() => { const li = document.querySelector('#sms-list .sms-item[data-id="1"]'), t = li.querySelector('.sms-tail'), h = document.getElementById('sms-th-phone'), a = h && h.querySelector('a.sms-tel'), r = a ? a.getBoundingClientRect() : null, row = li.querySelector('.sms-row').getBoundingClientRect(), tr = t.getBoundingClientRect();
+                    return { tail: t.textContent, tailLink: !!t.querySelector('a') || !!t.closest('a'), tailIn: tr.left >= row.left - 1 && tr.right <= row.right + 1, head: h ? h.textContent : '', href: a ? a.getAttribute('href') : '', h: r ? Math.round(r.height) : 0, label: (document.getElementById('sms-thread') || { getAttribute() { return ''; } }).getAttribute('aria-label') || '', todo: Array.from(document.querySelectorAll('#desk-board-list li, .desk-todo li')).map(x => x.textContent).filter(x => /문자/.test(x)).join(' | '), all: Array.from(document.querySelectorAll('#sms-list .sms-tail')).map(x => x.textContent) }; });
+                const p1 = await ph();
+                ok(p1.tail === '010-1234-1234' && !p1.tailLink && p1.tailIn && p1.all.length >= 5 && p1.all.every(t => /^010-1234-\d{4}$/.test(t)), `[${label}] #624 목록 줄 = 전체 번호(글자만 · 링크 아님 · 줄 안에 들어감 · ${p1.all.length}줄 전부)`, JSON.stringify(p1));
+                ok(p1.head === '010-1234-1234' && p1.href === 'tel:01012341234' && p1.h >= 44, `[${label}] #624 대화 머리 번호 = 누르면 전화(href ${p1.href} · ${p1.h}px)`, JSON.stringify(p1));
+                ok(/끝 1234/.test(p1.label) && !/010-1234-1234/.test(p1.todo), `[${label}] #624 「지금 챙길 일」·구역 이름은 그대로(전체 번호 없음)`, JSON.stringify({ label: p1.label, todo: p1.todo }));
+                ok(await sw(pg) <= vw.width, `[${label}] #624 전체 번호로도 가로 넘침 없음(${await sw(pg)} ≤ ${vw.width})`);
+                await mock('/__mock/set', { full: false }); await wake(pg);
+                await pg.waitForFunction(() => { const t = document.querySelector('#sms-list .sms-item[data-id="1"] .sms-tail'), h = document.getElementById('sms-th-phone'); return t && t.textContent === '끝 1234' && h && !h.querySelector('a'); }, null, { timeout: 15000 }).catch(() => { });
+                const p2 = await ph();
+                ok(p2.tail === '끝 1234' && p2.head === '010****1234' && !p2.href, `[${label}] #624 phone_full 없는 옛 응답 = 종전 글(줄 「끝 1234」 · 머리 가림 번호 · 링크 없음)`, JSON.stringify(p2));
+                await mock('/__mock/set', { full: true }); await wake(pg);
+                await pg.waitForFunction(() => { const h = document.getElementById('sms-th-phone'); return h && !!h.querySelector('a.sms-tel'); }, null, { timeout: 15000 }).catch(() => { });
+            }
             if (phone) {
                 const g = await pg.evaluate(() => { const t = document.getElementById('sms-thread').getBoundingClientRect(), b = document.getElementById('sms-back'), cs = getComputedStyle(document.getElementById('sms-thread')); return { pos: cs.position, bottom: Math.round(window.innerHeight - t.bottom), left: Math.round(t.left), w: Math.round(t.width), top: Math.round(t.top), back: getComputedStyle(b).display !== 'none' && !b.hidden }; });
                 ok(g.pos === 'fixed' && g.bottom === 0 && g.left === 0 && g.w === vw.width && g.top > 40 && g.back, `[${label}] 폰은 아래에서 올라오는 시트(${JSON.stringify(g)})`);

@@ -17,7 +17,7 @@ let ST;
 function seed() {
     let mid = 5000;
     const m = (direction, sender, body, minAgo, o) => Object.assign({ id: ++mid, direction, kind: 'sms', body, sender, state: direction === 'in' ? 'received' : 'delivered', image_ids: [], event_at: iso(minAgo) }, o || {});
-    const T = (id, tail, status, hint, msgs, o) => ({ id, phone_tail: tail, phone_masked: '010****' + tail, customer_hint: hint, status, staff_name: null, handled_at: null, bot_count_today: 0, draft_text: null, order: null, messages: msgs, ...(o || {}) });
+    const T = (id, tail, status, hint, msgs, o) => ({ id, phone_tail: tail, phone_masked: '010****' + tail, phone_full: '0101234' + tail,   /* #624: 서버가 주는 전체 번호(숫자만) */ customer_hint: hint, status, staff_name: null, handled_at: null, bot_count_today: 0, draft_text: null, order: null, messages: msgs, ...(o || {}) });
     const ORD = (o) => Object.assign({ ship_date: '2026-10-09', partner: '효돈', option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, tracking_tail: '4821', status_label: '배송출발', arrive_text: '오늘 도착 예정' }, o || {});
     ST = {
         enabled: true, mode: 'draft', alive: true, last_ping_at: iso(1), withCounts: true, fail: '', log: [],
@@ -57,7 +57,8 @@ seed();
 const lastOf = (t, dir) => t.messages.filter(x => x.direction === dir).pop() || null;
 function row(t) {
     const li = lastOf(t, 'in'), lo = lastOf(t, 'out');
-    return { id: t.id, phone_tail: t.phone_tail, phone_masked: t.phone_masked, customer_hint: t.customer_hint, status: t.status, last_in_text: li ? String(li.body || '').slice(0, 120) : '', last_in_at: li ? li.event_at : null, last_out_text: lo ? String(lo.body || '').slice(0, 120) : null, last_out_at: lo ? lo.event_at : null, has_image: t.messages.some(x => x.image_ids && x.image_ids.length), draft_text: ST.mode === 'draft' ? t.draft_text : null, staff_name: t.staff_name, handled_at: t.handled_at, bot_count_today: t.bot_count_today, last_out_state: lo ? lo.state : null };
+    return { id: t.id, phone_tail: t.phone_tail, phone_masked: t.phone_masked, ...(ST.noFull ? {} : { phone_full: t.phone_full }),   // #624: /__mock/set { full:false } = phone_full 없는 옛 서버 응답
+        customer_hint: t.customer_hint, status: t.status, last_in_text: li ? String(li.body || '').slice(0, 120) : '', last_in_at: li ? li.event_at : null, last_out_text: lo ? String(lo.body || '').slice(0, 120) : null, last_out_at: lo ? lo.event_at : null, has_image: t.messages.some(x => x.image_ids && x.image_ids.length), draft_text: ST.mode === 'draft' ? t.draft_text : null, staff_name: t.staff_name, handled_at: t.handled_at, bot_count_today: t.bot_count_today, last_out_state: lo ? lo.state : null };
 }
 const latest = t => Math.max(...t.messages.map(x => Date.parse(x.event_at)));
 function summary() {
@@ -84,7 +85,7 @@ http.createServer(async (req, res) => {
     try {
         if (p === '/__mock/log') return send(res, 200, { log: ST.log });
         if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
-        if (p === '/__mock/set') { const b = await readBody(req); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; return send(res, 200, { ok: true }); }
+        if (p === '/__mock/set') { const b = await readBody(req); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; return send(res, 200, { ok: true }); }
         if (p.startsWith('/api/sms/')) {
             if (!/^Bearer .+/.test(req.headers.authorization || '')) return send(res, 401, { error: '로그인이 필요합니다' });
             let m;

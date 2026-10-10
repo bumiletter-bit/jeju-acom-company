@@ -1173,14 +1173,18 @@ function notiGo(link) {
     if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
     const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10), sid = parseInt(prm.get('sms'), 10);   // #610 ?sms=대화번호 → 문자 카드 그 대화
     if (!(oid > 0) && !(rid > 0) && !(sid > 0)) return;
-    setTimeout(() => {
+    // #620: 새로고침 직후 알림 해시로 올 때 ao-desk.js(258KB)가 아직 안 내려왔을 수 있다 → agent-office 갈래는 AkmAoDesk 가 생길 때까지 100ms 간격 최대 5초 기다렸다 연다(워커4 원인 조사 · 화면 자체는 ao-desk.js 끝 한 줄이 그림)
+    let waited = 0;
+    const go = () => {
         try {
+            if (page === 'agent-office' && (oid > 0 || sid > 0) && !(window.AkmAoDesk && typeof window.AkmAoDesk.open === 'function')) { if ((waited += 100) <= 5000) return setTimeout(go, 100); return; }
             if (page === 'agent-office' && oid > 0 && window.AkmAoDesk && typeof window.AkmAoDesk.open === 'function') window.AkmAoDesk.open(oid);
             else if (page === 'agent-office' && sid > 0 && window.AkmAoDesk && typeof window.AkmAoDesk.openSms === 'function') window.AkmAoDesk.openSms(sid);
             else if (page === 'expense' && rid > 0 && typeof window.viewExpenseDetail === 'function') window.viewExpenseDetail(rid);
             else if (page === 'document' && rid > 0 && typeof window.viewDocDetail === 'function') window.viewDocDetail(rid);
         } catch (_) { /* 그 창을 못 열어도 메뉴까지는 간다 */ }
-    }, 300);
+    };
+    setTimeout(go, 300);
 }
 window.notiGo = notiGo;
 
@@ -6165,7 +6169,8 @@ function addSizeSuffix(optionInfo, msg) {
     // #554(대표 확정 10/6): 사이즈(2S·S·M) 지정은 「귤 로얄과」만 — 선물용 제외 · 소과·중대과·황금향·레몬·키위는 손님 메모에 사이즈 말이 있어도 꼬리를 붙이지 않는다(그대로 나감)
     const sizeOk = /귤/.test(optionInfo) && /로얄과/.test(optionInfo) && !/선물용/.test(optionInfo);
     let detectedSize = sizeOk ? detectSize(msg) : null;
-    if (sizeOk && !detectedSize && /작은|작게|작다|작아|소과/.test(msg)) detectedSize = 'S';
+    // #623(대표 확정 10/10): 로얄과 주문의 「소과」「작은·작게·작다·작아」 = 2S(로얄과에서 가장 작은 사이즈 · 종전 S)
+    if (sizeOk && !detectedSize && /작은|작게|작다|작아|소과/.test(msg)) detectedSize = '2S';
     if (detectedSize) optionInfo = optionInfo.trim() + ' ' + detectedSize + '사이즈로!';
     return optionInfo;
 }

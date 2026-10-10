@@ -669,6 +669,21 @@
             const id = 'memo:' + keyOf(e); es.forEach(x => st.memoCard.set(keyOf(x), id));
             cards.push({ id, keys: es.map(keyOf), fix: es.map(keyOf), fixF: ['name', 'phone', 'addr', 'opt'], type: 'memo-edit', tag: '배송메세지', title: groupTitle(es), lines: [telLine(e), ['손님 메모', memoOf(e)], ['처리', '보내는이·발송일 부탁 글을 빼고 택배사 양식에 남길 글을 확인해 주세요. 비우면 기본 문구가 들어가요.'], ...groupLines(es)], memo: { rest: r.rest, orig: memoOf(e) }, ...(tail ? { tail } : {}) });
         });
+        // #623(대표 10/10): 손님 메모의 사이즈 요청이 이미 옵션 꼬리로 붙은 주문(v2 addSizeSuffix)인데 메모가 「사이즈 말 + 부탁 말씨」뿐이면 AI 에 보내지 않고 규칙으로 기본 문구.
+        //   카드가 걸린 주문·보내는이·날짜 확인·AI 가 이미 물어본 메모는 건드리지 않는다(종전 길 그대로) · 기사님 말이 같이 있으면 sizeOnlyMemo 가 거짓 → 종전대로 AI.
+        if (typeof c.sizeOnlyMemo === 'function') {
+            const carded = new Set(); cards.forEach(cd => [...(cd.keys || []), ...(cd.fix || [])].forEach(k => carded.add(k)));
+            groupBy(s.merged.filter(e => {
+                const k = keyOf(e), tl = String(e.conv['옵션정보'] || '').match(/\s((?:2S|S|M)사이즈로!)\s*$/);
+                if (!tl || e.individual || (e.excluded && !e.userTouched) || !memoOf(e) || e.sender || e.flag || e.req || e.reqKind) return false;
+                if (carded.has(k) || st.sambCard.has(k) || st.memoAuto.get(k) || st.memoCard.has(k) || st.ai.memoAsk.has(k) || st.ai.tailAsk.has(k)) return false;
+                return c.sizeOnlyMemo(memoOf(e));
+            }), sameBuyerMemo).forEach(es => {
+                const e = es[0], tl = String(e.conv['옵션정보'] || '').match(/\s((?:2S|S|M)사이즈로!)\s*$/)[1];
+                es.forEach(x => st.memoAuto.set(keyOf(x), true));
+                info.push({ t: `사이즈 지정(손님 메모): ${groupTitle(es)} — 손님 메모 「${memoOf(e)}」 → 「${tl}」 · 배송메세지 → 「기본 문구」`, keys: es.map(keyOf) });
+            });
+        }
         // #548 「번호 + 사이즈」 줄 — 귤 주문에만 자동으로 꼬리 · 받는 분 번호였으면 확인 카드
         info.push(...sizeApply());
         (st.sizeLines || []).forEach(z => {
