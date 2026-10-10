@@ -1,3 +1,7 @@
+## v5.9.482 (2026-10-10) — #610 직원 답변 뒤 24시간 자동 해제(대표 확정 「그렇게 진행」) (sms/index.js · 총괄)
+
+- 직원이 카드에서 답한 대화(staff_replied)는 [대화 끝내기]를 안 눌러도 **24시간 뒤 저절로 「끝남」** → 다음 문자부터 봇이 다시 답함. 설정 `sms_gateway.staff_lock_hours`(기본 24 · 0 = 안 품 · 최대 720). 「직원 몫」(아직 아무도 안 답한 staff_needed)은 그대로 사람이 풀 때까지. sweepStuck ⑤ · verify-610-server 85/85(+2). 같이 확정된 것 = 송장 표 60일 실제 삭제 켬(`purge_shipments:true` · 10/10). 스펙 10-3 꼬리 문장 갱신.
+
 ## v5.9.481 (2026-10-10) — #610 셀프 조회 IP 판정 = cf-connecting-ip 먼저 (sms/selfcheck.js 한 줄 · 총괄)
 
 - v5.9.480 라이브 응답 헤더에 `server: cloudflare` → Render 앞에 Cloudflare 가 있어 x-forwarded-for 마지막 값이 프록시 IP 일 수 있음(워커1 F1 함정 3) → Cloudflare 가 넣는 `cf-connecting-ip`(없으면 `true-client-ip`)를 먼저 쓰고, 없으면 종전(XFF 마지막 → req.ip). verify-610-selfcheck 재통과. CLAUDE.md 현행 버전 줄만 갱신.

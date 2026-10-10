@@ -16,7 +16,7 @@
 'use strict';
 const crypto = require('crypto');
 
-const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 1, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600 };
+const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 1, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24 };   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
 const WEBHOOK_EVENTS = ['sms:received', 'sms:sent', 'sms:delivered', 'sms:failed', 'sms:cancelled', 'mms:received', 'mms:downloaded', 'system:ping', 'app:started'];
 const MODES = ['record', 'draft', 'auto'];
 const STATUSES = ['new', 'bot_replied', 'cooldown', 'staff_needed', 'draft', 'staff_replied', 'closed', 'ignored'];
@@ -89,6 +89,7 @@ module.exports = function mountSms(app, deps) {
             lookup_days: num(v.lookup_days, DEFAULT_CFG.lookup_days, 3, 60),
             max_chars: num(v.max_chars, DEFAULT_CFG.max_chars, 40, 2000),
             ttl_sec: num(v.ttl_sec, DEFAULT_CFG.ttl_sec, 5, 86400),
+            staff_lock_hours: num(v.staff_lock_hours, DEFAULT_CFG.staff_lock_hours, 0, 720),
         };
     }
     let _cfgCache = null, _cfgAt = 0;
@@ -543,6 +544,11 @@ module.exports = function mountSms(app, deps) {
         const lost = await pool.query(`UPDATE sms_messages SET state = 'failed', fail_reason = 'no_result' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NOT NULL AND sent_at < now() - make_interval(secs => $1::int) RETURNING thread_id, id`, [c.ttl_sec + 600]);
         for (const r of lost.rows) { await setThread(r.thread_id, { status: 'staff_needed', last_out_state: 'failed' }); if (c.enabled) await notifyStaff(c, { id: r.thread_id }, '문자 · 보낸 결과가 안 와요(폰 꺼짐?)', STAFF_MSG); }
         out.no_result = lost.rowCount || 0;
+        // ⑤ 직원이 답한 뒤(staff_replied) staff_lock_hours 지나면 저절로 「끝남」 — 끝내기를 안 눌러도 다음 문자부터 봇이 다시 답함(대표 확정 10/10 · 「직원 몫」(staff_needed · 아직 아무도 안 답함)은 그대로)
+        if (c.staff_lock_hours > 0) {
+            const rel = await pool.query(`UPDATE sms_threads SET status = 'closed' WHERE status = 'staff_replied' AND COALESCE(handled_at, updated_at) < now() - make_interval(hours => $1::int) RETURNING id`, [c.staff_lock_hours]);
+            out.auto_closed = rel.rowCount || 0;
+        }
         // ④ 받은 글은 있는데 판정 전에 죽어 status new 로 남은 대화(2분) → 직원 몫
         if (c.enabled && c.mode !== 'record') {   // record 모드는 new 가 정상 종착(워커2 ops 검증)
             const stuck = await pool.query(`UPDATE sms_threads t SET status = 'staff_needed' WHERE t.status = 'new' AND t.last_in_at IS NOT NULL AND t.last_in_at < now() - interval '2 minutes'

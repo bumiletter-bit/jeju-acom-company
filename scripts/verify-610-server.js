@@ -192,6 +192,16 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     const m13 = await msgs(P13); ok(m13.length === 1 && m13[0].kind === 'sms' && m13[0].body.includes('환불') && m13[0].bucket === 'claim' && (await thread(P13)).status === 'staff_needed', '글만 든 MMS → 글로 가르기(claim) · 사진 아님 ' + JSON.stringify({ k: m13[0].kind, b: m13[0].bucket }));
     ok((await pool.query(`SELECT count(*)::int AS n FROM sms_images WHERE message_id = $1 AND data IS NOT NULL`, [m13[0].id])).rows[0].n === 0, 'smil·text 조각은 사진으로 저장 안 함');
 
+    // 직원 답변 뒤 24시간 자동 해제(대표 확정 10/10) · 직원 몫(staff_needed)은 그대로
+    const P15 = T + '1015', P16 = T + '1016';
+    await pool.query(`INSERT INTO sms_threads (phone_digits, status, handled_at) VALUES ($1, 'staff_replied', now() - interval '25 hours'), ($2, 'staff_needed', now() - interval '25 hours')`, [P15, P16]);
+    sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
+    const sw = await sms.sweepStuck();
+    ok(sw.auto_closed >= 1 && (await thread(P15)).status === 'closed' && (await thread(P16)).status === 'staff_needed', '직원 답변 25시간 → closed · 직원 몫은 그대로 ' + JSON.stringify(sw));
+    sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1], staff_lock_hours: 0 };
+    await pool.query(`UPDATE sms_threads SET status = 'staff_replied' WHERE phone_digits = $1`, [P15]);
+    const sw2 = await sms.sweepStuck(); ok(!sw2.auto_closed && (await thread(P15)).status === 'staff_replied', 'staff_lock_hours 0 = 안 품');
+
     console.log('⑧ summary · config · 끊김 감시');
     r = await api('GET', '/api/sms/summary'); ok(r.status === 200 && typeof r.json.staff_needed === 'number' && r.json.gateway && 'alive' in r.json.gateway && r.json.mode === 'record', 'summary 모양 ' + JSON.stringify(r.json).slice(0, 120));
     r = await api('GET', '/api/sms/config'); ok(r.status === 200 && r.json.modules && r.json.gateway_env, 'config 모양');
