@@ -8,7 +8,7 @@
 >
 > 표기: **[문서]** 공식 문서 문장 · **[OpenAPI]** swagger.json · **[소스]** 앱 코드 · **[미확인]** 근거 못 찾음(실기기 시험으로 확정).
 > 🔴 실기기 확인 전 숫자·동작은 문서상 값이다. 시험 결과가 다르면 이 문서를 고친다.
-> 🔵 2026-10-10 2차: 서버 구현(`sms/index.js` · server.js 41행)을 읽고 **10절 「서버 구현 현황」** 을 더함. 1~9절은 앱 쪽 사실, 10절은 우리 서버가 실제로 하는 일.
+> 🔵 2026-10-10 2차·3차: 서버 구현(`sms/index.js` · `sms/selfcheck.js` · server.js)을 읽고 **10절 「서버 구현 현황」** 을 더함(3차 = v5.9.480 총검토 반영분). 1~9절은 앱 쪽 사실, 10절은 우리 서버가 실제로 하는 일.
 
 ## 0. 한눈에
 
@@ -288,17 +288,17 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 ## 10. 서버 구현 현황(`sms/index.js` 를 읽은 대로 · 2026-10-10)
 
 ### 10-1. 받는 길
-- `POST /api/sms/webhook`(로그인 없음 · 서명으로 보호). 원문은 server.js 41행 `express.json({ limit: '15mb', verify })` 가 이 주소일 때만 `req.rawBody` 에 담는다 → body 한도 **15MB**(사진 Base64 포함).
-- 순서: 서명 검사 → 실패면 `401 {error: no_sig|bad_sig|stale}` · 키 없음 `503 webhook locked` → 통과면 **즉시 200** `{ ok, accepted, event }` → 처리는 뒤에서(`setImmediate`).
+- `POST /api/sms/webhook`(로그인 없음 · 서명으로 보호). 원문은 server.js `express.json({ limit: '15mb', verify })` 가 이 주소일 때만 `req.rawBody` 에 담는다 → body 한도 **15MB**(사진 Base64 포함). 🔴 **env `SMSGATE_SIGNING_KEY` 를 넣는 순간부터 받은 글이 표에 적힌다** — 설정 `enabled` 와 무관(꺼져 있어도 기록 · 알림·발송만 없음). 키가 없으면 503 잠김.
+- 순서: 서명 검사 → 실패면 `401 {error: no_sig|bad_sig|stale}` · 키 없음 `503 webhook locked` → 통과면 **즉시 200** `{ ok, accepted, event }` → 처리는 뒤에서(`setImmediate`). 같은 번호의 글은 한 줄로 차례대로 처리한다(동시에 두 건이 판정되지 않게). 처리 중 예외 → 그 대화 `staff_needed` + 텔레그램.
 - 중복 제거: ①메모리 1차(봉투 id · 3일) ②**정본 = `sms_messages.envelope_id` 부분 UNIQUE**(받은 줄 INSERT 가 `ON CONFLICT DO NOTHING` → 재시작 뒤에도 같은 봉투는 한 번만).
 - 신호 기록(`agent_office_config 'sms_gateway_state'`): `system:ping`·`app:started` 만 `last_ping_at` 을 갱신하고(`app:started` 는 `started_at` 과 횟수 `starts` 도), 그 밖의 이벤트는 `last_event_at`·`last_event` 만 갱신한다. **살아 있음 = 둘 중 최근 시각**이 `ping_alert_hours` 안. ping 하나하나의 이력은 남기지 않는다.
-- 끊김 감시(켜져 있을 때만): 마지막 신호(위의 「둘 중 최근」)가 `ping_alert_hours`(기본 3시간) 넘게 없으면 텔레그램 1회 · 돌아오면 복구 1회.
+- 끊김 감시(켜져 있을 때만 · 1분 틱): 마지막 신호(위의 「둘 중 최근」)가 `ping_alert_hours`(기본 3시간) 넘게 없으면 텔레그램 1회 · 돌아오면 복구 1회. **신호 기록이 한 번도 없으면(켠 직후 · 폰 설치 전) 끊김으로 보지 않는다.**
 
 ### 10-2. 이벤트 처리
 | 이벤트 | 서버가 하는 일 |
 |---|---|
 | `sms:received` | 번호(`payload.sender`) 없으면 건너뜀 → 받은 줄 기록 → 가르기·답(10-3) |
-| `mms:received` | **기록만**(갈래 `photo_pending` · 답·알림 없음) |
+| `mms:received` | **기록만**(갈래 `photo_pending` · 답·알림 없음). 같은 번호에 최근 10분 안 사진 있는 MMS 줄이 이미 있으면(downloaded 가 먼저 옴) 건너뜀 |
 | `mms:downloaded` | 같은 번호의 최근 **10분** 안 `photo_pending` 줄에 사진·글을 붙이고 그 줄로 가르기·답. 없으면 새 수신으로. 첨부는 `image/*` 만 사진 · `text/plain` 조각은 글로(사진 0장이면 일반 글 = 손님의 긴 글) |
 | (5분 안에 downloaded 가 안 옴) | 그 줄을 `photo` 로 바꾸고 대화를 `staff_needed` · 「사진을 못 받았어요」 알림 |
 | `sms:sent`·`delivered`·`failed` | `payload.messageId` 로 우리 발송 줄(gateway_id)을 찾아 상태 갱신(이미 delivered 인 줄은 되돌리지 않음) · failed 면 대화 `staff_needed` + 알림. 번호는 `payload.recipient` |
@@ -307,22 +307,24 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 
 ### 10-3. 받은 글 가르기·답(위에서부터 먼저 걸리는 것)
 1. 갈래 `otp`·`ad`·`carrier`(대화 중이 아닌 번호) → `ignored` · 기록만.
-2. 대화 상태가 `staff_replied`·`staff_needed`(잠금) → 봇 침묵 · `staff_needed` · 「손님이 다시 보냈어요」 알림.
-3. **꺼짐 또는 `record` 모드** → 아무것도 안 보냄. 클레임·사진만 `staff_needed`(알림은 켜져 있을 때만), 나머지 `new`.
+2. 대화 상태가 `staff_replied`·`staff_needed`(잠금) 또는 **`draft`(초안 대기)** → 봇 침묵 · `staff_needed`(초안 글은 남김 · AI 를 다시 부르지 않음) · 「손님이 다시 보냈어요」 알림.
+3. **꺼짐 또는 `record` 모드** → 아무것도 안 보냄. 클레임·사진(사진이 붙은 글 전부)만 `staff_needed`(알림은 켜져 있을 때만), 나머지는 상태를 바꾸지 않음(`new`).
 4. 문자 시각이 **30분 넘게 지난 글**(재시도·비행기 모드 뒤) → 답 없이 `staff_needed`(`late_to_staff`).
-5. 쿨다운 안이거나 오늘 봇이 이미 `daily_cap`(기본 1)번 답함 → `staff_needed`.
-6. 번호로 주문 찾기 → 사진이면 사진 판독, 아니면 규칙 답 → AI 답. 답이 없거나 「사람」 판정이면 `staff_needed`(초안이 있으면 `draft_text` 에).
+5. 쿨다운 안 · 오늘 봇이 이미 `daily_cap`(기본 1)번 답함 · **유예 중인 봇 답이 큐에 있음**(유예 75초 안에 온 둘째 글) → `staff_needed`. 🔵 쿨다운과 「오늘 답한 횟수」는 **봇 답을 큐에 넣는 순간 1번** 오른다(조각 수와 무관 · 보낸 뒤가 아님).
+6. 번호로 주문 찾기 → **사진이 붙었으면 글이 클레임이어도 사진 판독**(판독 실패·한도 초과·파손 확신 낮음·문구 검사 걸림 → 직원), 아니면 규칙 답 → AI 답. AI 글에 약속 낱말(환불·반품·교환·보상·무료 수거·취소 처리·포인트·적립·쿠폰·할인·재발송·재배송)이 있으면 직원. 답이 없거나 「사람」 판정이면 `staff_needed`(초안이 있으면 `draft_text` 에). 주문이 여러 건이면 주문 물음(발송·주문)일 때만 「받는 분 성함」을 1회 되묻는다.
 7. `draft` 모드 → 대화 `draft` + 초안 알림(직원이 [이대로 보내기]). `auto` 모드 → `hold_sec`(기본 75초) 뒤 보낼 줄을 큐에 · 대화 `bot_replied`.
 - 대화 상태 값: `new · bot_replied · cooldown · staff_needed · draft · staff_replied · closed · ignored`.
+- **직원 알림은 대화당 5분에 한 번**(손님이 연달아 보내도 푸시가 쏟아지지 않게 · `sms_threads.last_notify_at`) · 알림 본문에는 손님 원문을 싣지 않는다(「에이전트 오피스 「문자」 카드에서 확인해 주세요」 · 제목에 끝 4자리만).
+- 🔵 `staff_replied` 잠금은 직원이 [대화 끝내기]를 누를 때까지 풀리지 않는다(자동 해제 없음 — 대표 결정 대기).
 - 줄의 `sender`: `customer`(받음) · `bot` · `staff_desk`(화면에서 직원 발송) · `gateway_other`. 줄의 `state`: `received` / `queued → sending → sent → delivered` · `failed` · `cancelled`.
 
 ### 10-4. 보내기
-- 큐 틱 **10초마다 · 한 번에 5줄**. 꺼져 있으면(`enabled` false) 큐를 돌리지 않는다. 최근 1시간 발송이 `hourly_send_cap`(기본 30) 이상이면 쉼.
+- 큐 틱 **10초마다 · 한 번에 5줄**(우선순위 높은 것 먼저). 꺼져 있으면(`enabled` false) 큐를 돌리지 않는다. **시간당 상한 `hourly_send_cap`(기본 30)은 봇 답에만** 걸린다 — 걸리면 봇 답은 쉬고 직원 답은 나감 · 텔레그램 1시간 1회.
 - 봇 줄은 보내기 직전에 대화 상태를 다시 본다 — `staff_replied`·`staff_needed`·`closed` 면 `cancelled`(유예 사이 직원이 답함).
-- 요청: `{ id: 우리 UUID, textMessage:{text}, phoneNumbers:[+82…], ttl: ttl_sec(기본 600), priority }`. 봇 답을 여러 통으로 나눌 때 1통째 9 · 2통째 8 …(앱 기본이 나중 것 먼저라서 · 100 미만이라 앱 상한은 그대로 적용).
-- 응답 202 → 줄은 **`sending` 유지** · `sent_at` 기록 · (봇이면) 쿨다운·오늘 횟수 올림. 실제 `sent`/`delivered`/`failed` 는 webhook 이 적는다. 409 = 같은 id 가 이미 있음 = 성공으로 봄. 20초 타임아웃이면 같은 id 로 1회 더. 그 밖 오류 → 줄 `failed` + 대화 `staff_needed` + 알림.
-- 🔴 `sending` 에 머문 줄 = 202 는 받았는데 폰이 아직 안 보냄(폰 꺼짐·오프라인) 또는 결과 webhook 이 안 옴. ttl 이 지나면 앱이 `sms:failed` 를 올려 `failed` 로 바뀌어야 한다 — 안 바뀌면 webhook 등록을 본다.
-- **나누기**(`max_chars` 기본 70 · 문장 경계): 봇 자동 답과 직원 화면 발송(`/reply`)·초안 보내기(`/send-draft`) 모두 조각으로 나눠 큐에 넣는다(v5.9.479 · sms/index.js queueStaffReply). 다듬은 뒤 글이 비면 400.
+- 요청: `{ id, textMessage:{text}, phoneNumbers:[+82…], ttl: ttl_sec(기본 600), priority }`. **id 는 줄마다 고정**(`akk-<줄 id>-<해시 8자>` → gateway_id 에 저장) — 같은 줄을 다시 보내도 같은 id 라 게이트웨이가 409 로 막는다. 줄 집기는 `UPDATE … WHERE state='queued' RETURNING` 으로 한 번만(틱 두 번·인스턴스 둘이 겹쳐도 1통). 여러 통으로 나눌 때 1통째 9 · 2통째 8 …(앱 기본이 나중 것 먼저라서 · 100 미만이라 앱 상한은 그대로 적용).
+- 응답 202 → 줄은 **`sending` 유지** · `sent_at` 기록. 실제 `sent`/`delivered`/`failed` 는 webhook 이 적는다. 409 = 같은 id 가 이미 있음 = 성공으로 봄. 20초 타임아웃이면 같은 id 로 1회 더. 그 밖 오류 → 줄 `failed` + 대화 `staff_needed` + 알림.
+- **멈춘 줄 정리 `sweepStuck`**(보내기 틱·감시 틱마다): ①보낼 시각이 15분 넘게 지난 `queued`(꺼 둔 사이 쌓인 큐) → `cancelled:stale` + 대화 `staff_needed`(며칠 뒤 켰을 때 옛 답이 나가지 않게) ②`sending` 인데 `sent_at` 없음(202 를 못 받고 죽음) · 만든 지 2분 → 같은 id 로 다시 `queued` ③`sent_at` 뒤 `ttl_sec + 600초` 가 지나도 결과 webhook 이 없음 → `failed`(`no_result`) + 대화 `staff_needed` + 「보낸 결과가 안 와요(폰 꺼짐?)」 알림 ④받은 지 2분 넘었는데 `new` 로 남고 보낸 줄이 없는 대화(판정 전에 죽음) → `staff_needed` + 알림 — **켜져 있고 record 모드가 아닐 때만**(record 에서는 `new` 가 정상) · 인증번호·광고·통신사·인사·사진 대기 갈래는 제외 · 만든 지 하루 안 대화만.
+- **나누기**(`max_chars` 기본 70 · 문장 경계): 봇 자동 답과 직원 화면 발송(`/reply`)·초안 보내기(`/send-draft`) 모두 조각으로 나눠 큐에 넣는다. 다듬은 뒤 글이 비면 400. 초안 보내기는 두 번 눌러도 1회만 나간다.
 
 ### 10-5. 화면·관리 API(전부 로그인 필요)
 | 주소 | 뜻 |
@@ -345,6 +347,19 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 | 2 초안 | `mode:'draft'` | 봇이 초안만 · 직원이 [이대로 보내기] |
 | 3 자동 | `mode:'auto'` | 유예 뒤 자동 발송 — 🔴 첫 전환은 대표 「고」 뒤 |
 
+### 10-5b. 보관 정리(매일 03:50 KST · `retentionRun`)
+- `agent_office_config 'db_retention'.enabled` 가 **불리언 true** 일 때만 돈다(#579 스위치 · 지금 켜져 있음). 실패하면 다음 틱에 다시.
+- 사진: `sms_images` 만든 지 `image_days`(기본 30)일 지난 줄의 `data` 를 비움(`purged_at`). 발송 전 주문 표(`sms_preorders`) 7일.
+- **송장 표(`delivery_shipments`) 60일 = 세기만.** 대상 건수를 `agent_office_config 'sms_retention_last'.shipments_target` 에 적을 뿐 지우지 않는다. 설정 `sms_gateway.purge_shipments === true` 일 때만 실제 삭제(한 번에 5,000행) + 주인 없는 `delivery_status`(60일) 삭제. 켜는 것은 대표 「고」 뒤.
+- audit 은 사진 비움 또는 송장 삭제가 1건 이상일 때만 1줄(source `db_retention` · 번호·이름 없음).
+- 셀프 조회 시도 표(`sms_selfcheck_hits`)의 하루 지난 줄 정리는 보관 스위치와 무관하게 돈다.
+
+### 10-5c. 손님 셀프 조회 「내 주문 어디쯤?」(`sms/selfcheck.js` · 공개 · 로그인 없음)
+- `GET /track-order`(화면) · `POST /api/track-order {name, tail}`(본문 2kb 한도) · `GET /track-order/go?t=토큰`(10분 암호 토큰 → CJ 조회 화면으로 302 · 🔵 그 Location 에는 운송장 전체가 실린다).
+- 찾는 범위: 최근 30일 송장 표 · 받는 분 성함 전체 일치 + (받는 분 또는 구매자) 번호 끝 4자리. 응답 = 보낸 날·품목·상자 수·운송장 끝 4자리·단계·도착 예정(주소·전체 번호·이름 없음). 여러 건이면 「여러 건」만.
+- **시도 제한(10분 창)**: IP 5회 · 성함 30회 · 끝자리 20회 · **전체 200회**(넘으면 429 + 텔레그램 1시간 1회) · 「없음」이 10번 이어진 IP 는 60분 잠금 · 동시 조회 8건. IP = `x-forwarded-for` 의 **마지막 값**(프록시가 붙인 값 · 🔵 렌더가 실제로 그렇게 붙이는지는 배포 뒤 헤더로 확인할 것). 응답 최소 300ms. 열쇠는 해시로만 저장.
+- 헤더: `X-Robots-Tag: noindex, nofollow` · `Cache-Control: no-store` · `Referrer-Policy: no-referrer`.
+
 ### 10-6. 점검 도구 — `scripts/sms-inspect.js`(읽기만)
 ```
 node scripts/sms-inspect.js                 # 최근 2시간 요약 + 시험 a~f 판정 + 대화별 줄
@@ -355,4 +370,12 @@ node scripts/sms-inspect.js --json          # 그대로 JSON
 ```
 - 번호는 가림값·손님 글 80자·주소 꼴 「[주소]」·글 속 전화번호 가림. SELECT 만 · 외부 호출 없음.
 - 판정은 「자료로 보이는 것」만: a 받은 줄 · b 우리 발송의 state · b-2 70자 넘는 한 통/나눠 보낸 조각 · c `gateway_other` 줄 유무 · d 사진 바이트 · e 마지막 신호 · f 문자 시각과 서버 도착 시각 차이·같은 글 중복. 폰 화면에서만 보이는 것(대화창 표시·한 덩어리 여부·순서)은 판정하지 않는다.
+- 「보관」 줄 = 마지막 보관 정리 결과(`sms_retention_last`: 사진 비움 · 송장 60일 대상 건수 · 세기만/삭제).
 - DB 에 안 남는 것: `partsCount`(조각 수) · 서명 실패 횟수 · ping 하나하나의 이력(마지막 ping·앱 시작 횟수는 남음) · 처리 결과 action(`late_to_staff` 등) → 렌더 로그의 「[문자] … → …」 줄로 본다.
+
+### 10-7. 검증 스크립트 쓰는 규칙
+- 서버 흐름 `scripts/verify-610-server.js` · 운영 갈래 `scripts/verify-610-ops.js`(보관 정리 · 멈춘 줄 정리 · 보내기 동시 실행 · 봉투 중복 · 사진 순서 뒤집힘 · 켠 직후 알림). 둘 다 **실DB + 가짜 deps**(설정·알림·텔레그램·발송·audit 은 가짜).
+- 🔴 **문자 검증(server · ops)은 한 번에 하나씩.** `sendTick`·`sweepStuck`·`retentionRun` 은 표 전체를 보므로 둘을 같이 돌리면 서로의 시험 줄을 집는다(상대 줄을 가짜 게이트웨이로 「보냄」 처리 · staff_needed 로 바꿈).
+- 🔴 **가짜 `deps.stateMerge` 를 반드시 넘긴다.** 안 넘기면 시험 신호가 실 설정 행 `sms_gateway_state` 에 남아, 화면에 가짜 「마지막 신호」가 보이고 「신호 기록이 없으면 끊김 알림 안 함」이 깨진다(10/10 실제로 남아 총괄이 행 삭제).
+- 🔴 **실사용이 시작된 뒤에는 ops 검증을 돌리지 않는다**(가짜 게이트웨이가 실제 대기 문자를 「보낸 것」으로 만든다). ops 는 시작할 때 실제 줄(60일 지난 송장 · 30일 지난 사진 · 대기 발송 · 최근 1시간 new 대화)을 세어 1건이라도 있으면 exit 3 으로 멈춘다 — `--force` 는 쓰지 말 것.
+- 시험 줄: server = 번호 `0999000…` · ops = 번호 `0999600…` + 운송장 `9996000000xx`. 끝에 그 줄만 지운다.

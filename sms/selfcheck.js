@@ -10,7 +10,7 @@
 //     contact   = 문의 번호(기본 010-6687-4031)       notifyTelegram = async (글) => …(전체 상한에 걸리면 1시간에 한 번)
 //     limits    = { windowMin:10, perIp:5, perName:30, perTail:20, perAll:200, noneStreak:10, lockMin:60, maxRunning:8, days:30, minMs:300, tokenMin:10 }
 //   시도 제한(F1 · 워커2 R2 반영) — 전부 windowMin(10분) 창 · 넘으면 429:
-//     ip   같은 IP perIp 회          IP = x-forwarded-for 의 **마지막** 값(프록시가 붙인 값 · 손님이 꾸민 앞쪽 값은 안 믿는다) · 없으면 req.ip
+//     ip   같은 IP perIp 회          IP = cf-connecting-ip(Cloudflare) → x-forwarded-for 의 **마지막** 값(프록시가 붙인 값 · 손님이 꾸민 앞쪽 값은 안 믿는다) → req.ip
 //     name 같은 성함 perName 회      tail 같은 끝 4자리 perTail 회(이름을 바꿔 가며 한 번호를 찍는 것)      all 전체 perAll 회(넘으면 텔레그램)
 //     없음이 noneStreak 회 이어진 IP 는 lockMin 분 잠금(맞히면 처음부터) · 동시에 maxRunning 건까지만 조회(넘으면 429 「잠시 뒤」)
 //   🔴 밖으로 안 나가는 것 = 주소 · 전화번호 전체 · 운송장 전체 · 받는 분 이름(입력한 글만 화면이 되비춘다 · 서버 응답에는 이름이 없다) · 거래처 · 기사 정보 · 배송메모.
@@ -136,7 +136,8 @@ module.exports = function mountSelfcheck(app, deps) {
         const n = (await pool.query(`SELECT count(*)::int AS n FROM sms_selfcheck_hits WHERE kind = 'none' AND key_hash = $1`, [hi])).rows[0].n;   // 하루 지난 줄은 purge 가 지운다
         if (n >= L.noneStreak) { await pool.query(`INSERT INTO sms_selfcheck_hits (kind, key_hash) VALUES ('lock', $1)`, [hi]); await pool.query(`DELETE FROM sms_selfcheck_hits WHERE kind = 'none' AND key_hash = $1`, [hi]); }
     }
-    const clientIp = req => { const xf = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean); return (xf.length ? xf[xf.length - 1] : String(req.ip || '')) || 'unknown'; };
+    // 실서버는 Cloudflare → Render 뒤라 cf-connecting-ip(Cloudflare 가 넣는 진짜 손님 IP)를 먼저 · 없으면 x-forwarded-for 마지막 값 · 없으면 req.ip(총괄 10/10 라이브 헤더 확인: server: cloudflare)
+    const clientIp = req => { const cf = String(req.headers['cf-connecting-ip'] || req.headers['true-client-ip'] || '').trim(); if (cf) return cf; const xf = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean); return (xf.length ? xf[xf.length - 1] : String(req.ip || '')) || 'unknown'; };
     let running = 0;
 
     // ── 도착 예정 글 — 계산기는 shipping-schedule.computeArrival 하나만. 「내일·모레」는 보낸 날 기준 말이라 나중에 보면 틀리므로 날짜로 적는다.

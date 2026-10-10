@@ -44,9 +44,10 @@ const len = s => Array.from(String(s || '')).length;
         if (!has.t || !has.m || !has.i) { console.log('문자 표가 아직 없어요(sms_threads/sms_messages/sms_images) — 서버가 배포돼 initDB 가 돈 뒤 다시 실행하세요.'); return; }
 
         // ── 설정·신호 ──
-        const cfgRows = await q(`SELECT key, value FROM agent_office_config WHERE key IN ('sms_gateway','sms_gateway_state')`);
+        const cfgRows = await q(`SELECT key, value FROM agent_office_config WHERE key IN ('sms_gateway','sms_gateway_state','sms_retention_last')`);
         const cfgRaw = parseVal((cfgRows.find(r => r.key === 'sms_gateway') || {}).value) || null;
         const st = parseVal((cfgRows.find(r => r.key === 'sms_gateway_state') || {}).value) || {};
+        const rl = parseVal((cfgRows.find(r => r.key === 'sms_retention_last') || {}).value) || null;
         const cfg = Object.assign({ enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 1, hourly_send_cap: 30, hold_sec: 75, ping_alert_hours: 3, max_chars: 70, ttl_sec: 600 }, cfgRaw || {});
         cfg.enabled = cfgRaw ? cfgRaw.enabled === true : false;
         const pingMs = st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0;
@@ -54,6 +55,9 @@ const len = s => Array.from(String(s || '')).length;
         const alive = !!lastPingMs && Date.now() - lastPingMs < cfg.ping_alert_hours * 3600e3;
         out.config = { row: !!cfgRaw, enabled: cfg.enabled, mode: cfg.mode, cooldown_min: cfg.cooldown_min, daily_cap: cfg.daily_cap, hourly_send_cap: cfg.hourly_send_cap, hold_sec: cfg.hold_sec, max_chars: cfg.max_chars, ttl_sec: cfg.ttl_sec, ping_alert_hours: cfg.ping_alert_hours, staff_ids: cfg.staff_ids || [] };
         out.gateway = { last_ping_at: st.last_ping_at || null, last_event_at: st.last_event_at || null, last_event: st.last_event || null, started_at: st.started_at || null, starts: st.starts || 0, alive, alerted: !!st.alerted };
+
+        out.retention = rl ? { date: rl.date || null, sms_images: rl.sms_images || 0, shipments_target: rl.shipments_target || 0, shipments_deleted: rl.shipments_deleted || 0, status_deleted: rl.status_deleted || 0, purge_shipments: rl.purge_shipments === true, preorders: rl.preorders || 0, selfcheck_hits: rl.selfcheck_hits || 0 } : null;
+        out.config.purge_shipments = !!(cfgRaw && cfgRaw.purge_shipments === true);
 
         // ── 큐·오늘 통계 ──
         out.queue = (await q(`SELECT count(*) FILTER (WHERE state = 'queued')::int AS queued, count(*) FILTER (WHERE state = 'sending')::int AS sending,
@@ -163,6 +167,7 @@ const len = s => Array.from(String(s || '')).length;
         L(`신호   ${alive ? '살아 있음' : '🔴 끊김'} · 마지막 ping ${ago(st.last_ping_at)}(${kst(st.last_ping_at)}) · 앱 시작 ${st.starts || 0}회(마지막 ${ago(st.started_at)}) · 마지막 이벤트 ${st.last_event || '-'} ${ago(st.last_event_at)}${st.alerted ? ' · 끊김 알림 나간 상태' : ''}`);
         L(`큐     queued ${out.queue.queued} · sending ${out.queue.sending}${out.queue.oldest_send_after ? ' · 가장 오래된 보낼 시각 ' + kst(out.queue.oldest_send_after) + '(' + ago(out.queue.oldest_send_after) + ')' : ''}`);
         L(`오늘   받음 ${out.today.in_n} · 봇 ${out.today.bot_n} · 직원 ${out.today.staff_n} · 그 밖 발신 ${out.today.other_n} · 실패 ${out.today.failed_n} · 취소 ${out.today.cancelled_n}`);
+        L(`보관   ` + (out.retention ? `마지막 정리 ${out.retention.date || '-'} · 사진 비움 ${out.retention.sms_images} · 송장 60일 대상 ${out.retention.shipments_target}행(${out.retention.purge_shipments ? '삭제 ' + out.retention.shipments_deleted + ' · 상태 줄 ' + out.retention.status_deleted : '세기만 — 지우려면 설정 purge_shipments:true'}) · 발송 전 주문 ${out.retention.preorders} · 조회 시도 ${out.retention.selfcheck_hits}` : '정리 기록 없음(03:50 첫 실행 전 또는 db_retention 꺼짐)') + (out.config.purge_shipments ? ' · 지금 설정 = 송장 삭제 켜짐' : ''));
         L(`대화   ` + (Object.keys(out.status_counts).length ? Object.entries(out.status_counts).map(([k, v]) => `${k} ${v}`).join(' · ') : '없음'));
         L('');
         L('── 시험 판정(자료로 보이는 것만 · 폰 화면 확인은 따로) ──');

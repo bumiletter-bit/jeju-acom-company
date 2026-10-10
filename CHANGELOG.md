@@ -1,3 +1,7 @@
+## v5.9.481 (2026-10-10) — #610 셀프 조회 IP 판정 = cf-connecting-ip 먼저 (sms/selfcheck.js 한 줄 · 총괄)
+
+- v5.9.480 라이브 응답 헤더에 `server: cloudflare` → Render 앞에 Cloudflare 가 있어 x-forwarded-for 마지막 값이 프록시 IP 일 수 있음(워커1 F1 함정 3) → Cloudflare 가 넣는 `cf-connecting-ip`(없으면 `true-client-ip`)를 먼저 쓰고, 없으면 종전(XFF 마지막 → req.ip). verify-610-selfcheck 재통과. CLAUDE.md 현행 버전 줄만 갱신.
+
 ## v5.9.480 (2026-10-10) — #610 총검토 반영 — 이중 답변·유출·잠금 우회 15건 + 중간 30여 건 수정 (sms/ 전 모듈 · server.js · cafe24.js · app.js v=406 · ao-desk.js v=59 · 총괄 + 워커1~5 + 코드리뷰)
 
 - **대표 「지금까지 진행한 거 총 검토해줘」(10/10)** → 워커 다섯이 서로 모듈을 바꿔 적대적 검토 + 코드 리뷰 도구(v5.9.477→HEAD). 심각 15 · 중간 30여 · 사소 30여 → **auto 켜기 전 필수 전부 반영**. 배포 동작 변화 = 문자 연동은 여전히 꺼짐 · 셀프 조회 페이지 제한 강화 · 송장 60일 삭제는 **세기만**(설정 `purge_shipments:true` 전까지).
