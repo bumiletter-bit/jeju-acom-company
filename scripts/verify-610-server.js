@@ -149,6 +149,14 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     await hook(env('sms:batch:received', { messages: [{ messageId: 'bb1', message: '옛 글', phoneNumber: '+82' + (T + '1099').slice(1) }] }));
     ok((await pool.query(`SELECT count(*)::int AS n FROM sms_threads WHERE phone_digits LIKE $1`, [T + '%'])).rows[0].n === nb, 'batch:received 무시(대화 안 생김)');
 
+    // 되묻기 뒤 이름 답(followup.js) — 가르기보다 먼저 · 2차 조회 none → 직원 몫 · ask_kind 비움 · 「네 김영희요」가 인사로 버려지지 않음
+    const P14 = T + '1014'; sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 70, staff_ids: [1] };
+    await pool.query(`INSERT INTO sms_threads (phone_digits, status, ask_kind, ask_at, bot_count_day, bot_count) VALUES ($1, 'bot_replied', 'name', now(), CURRENT_DATE, 1)`, [P14]);
+    aiAnswer = { answer: '답입니다.', used: [] };
+    await hook(env('sms:received', { messageId: 'n1', message: '네 김영희요', phoneNumber: '+82' + P14.slice(1) }));
+    const t14 = await thread(P14); ok(t14.status === 'staff_needed' && t14.ask_kind === null && (await msgs(P14)).filter(x => x.direction === 'out').length === 0, '이름 답 → 2차 조회 없음 → 직원 몫 · ask_kind 비움 · 봇 답 0 ' + JSON.stringify({ s: t14.status, a: t14.ask_kind }));
+    ok(notes.some(n => n.title.includes('받는 분 확인')), '받는 분 확인 알림');
+
     console.log('⑥ draft 모드 · 초안 보내기');
     sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'draft', hold_sec: 0, max_chars: 70, staff_ids: [1] };
     aiAnswer = { answer: '초안 답입니다.', used: [] };

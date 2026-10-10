@@ -116,6 +116,12 @@ function emit(nodes, indent) {
 const gen = emit(tree, '');
 if (unknown.size) { console.error('바꿈표에 없는 색:\n' + [...unknown].join('\n')); process.exit(1); }
 const hand = fs.readFileSync(HAND, 'utf8').replace(/\r\n/g, '\n').replace(/\s+$/, '');
+// #610-F: 이 도구는 MARK 뒤를 통째로 갈아 끼운다 → 야간 블록 뒤에 손으로 덧붙인 규칙이 있으면 말없이 지워진다(#605 13줄 실사고). 그런 글이 있으면 쓰지 않고 멈춘다 — MARK 앞으로 옮긴 뒤 다시 돌릴 것
+if (at >= 0) {
+    const last = hand.split('\n').pop().trim(), old = src.slice(at).replace(/\r\n/g, '\n'), k = old.lastIndexOf(last);
+    const extra = (k >= 0 ? old.slice(k + last.length) : '').trim();
+    if (extra) { console.error('야간 블록 뒤에 손으로 붙인 글이 있어요(' + extra.split('\n').length + '줄 · 「' + extra.split('\n')[0].slice(0, 60) + '」). 이 도구는 그 자리를 갈아 끼우므로 지워집니다 → 「' + MARK + '」 줄 앞으로 옮긴 뒤 다시 돌려 주세요.'); process.exit(1); }
+}
 const block = [
     MARK + ' (대표 10/6) ═══',
     ' * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).',

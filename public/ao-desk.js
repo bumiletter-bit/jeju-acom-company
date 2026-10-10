@@ -1249,7 +1249,7 @@
         const closed = !!(t && t.status === 'closed'), handled = !!(t && (t.status === 'staff_replied' || closed));
         $('sms-handled').disabled = !SMS.thread || handled || SMS.sending; $('sms-end').disabled = !SMS.thread || closed || SMS.sending;
         const w = $('sms-warn'), dead = smsDead();
-        w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 바로 안 나갈 수 있어요.' : '';
+        w.hidden = !dead; w.textContent = dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 답은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : '';
     }
     async function smsAct(kind) {
         const id = SMS.open; if (!id || SMS.sending || !SMS.thread) return;

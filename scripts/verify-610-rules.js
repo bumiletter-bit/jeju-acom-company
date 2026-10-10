@@ -11,6 +11,7 @@ const rules = require(path.join(root, 'sms/rules.js'));
 const aiNote = require(path.join(root, 'sms/ai-note.js'));
 const { smsSafe, smsSafeBase, smsBytes } = require(path.join(root, 'sms/sms-safe.js'));
 const shippingSchedule = require(path.join(root, 'shipping-schedule.js'));
+const followup = require(path.join(root, 'sms/followup.js'));
 
 const SHOW = process.argv.includes('--show');
 let pass = 0, total = 0;
@@ -147,6 +148,64 @@ R.forEach(([name, got, want], i) => {
     ok('계산기 대조 — 발송 뒤 답의 도착일 = computeArrival 결과', a.arriveStart === '2026-10-10' && a.arriveEnd === '2026-10-12' && R[0][1].text.includes('10/10'), a);
     const texts = R.map(x => x[1] && x[1].text).filter(Boolean).join('\n');
     ok('규칙 답 전체 — 이모지 0 · 운송장 5자리 이상 숫자 0 · 전화번호 꼴 0', !EMOJI_RE.test(texts) && !/\d{5,}/.test(texts) && !/01\d-?\d{3,4}-?\d{4}/.test(texts), texts);
+}
+
+// ───────────────────────── ②-b 발송 전 주문(#610-H · order.pre) ─────────────────────────
+console.log('②-b 발송 전 주문(rules.answer · order.pre)');
+const pre = o => one(Object.assign({ pre: true, channel: 'naver', ship_date: null, option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, recipient_initial: '김' }, o));
+const PRE = [
+    ['발송 전 — 오전 8시 전 결제 = 오늘 오전 발송',
+        rules.answer({ text: '언제 발송돼요?', bucket: 'ship_q', now: '2026-10-13T08:30:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T07:40:00+09:00' }) }),
+        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 오늘(10/13(화)) 오전 발송 예정이에요 · 내일 수요일(10/14)~목요일(10/15) 사이 도착 예정이에요.' }],
+    ['발송 전 — 8시 넘어 결제 = 내일 발송',
+        rules.answer({ text: '배송 언제 오나요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T10:10:00+09:00', channel: 'coupang' }) }),
+        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 내일 수요일(10/14) 오전 발송 예정이에요 · 목요일(10/15)~금요일(10/16) 사이 도착 예정이에요.' }],
+    ['발송 전 — 휴무일로 밀림(10/8 낮 결제 → 10/11 일 발송) + 사유',
+        rules.answer({ text: '언제 받을 수 있나요', bucket: 'ship_q', now: '2026-10-09T11:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-08T13:00:00+09:00', channel: 'mall' }) }),
+        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 일요일(10/11) 오전 발송 예정이에요 · 월요일(10/12)~화요일(10/13) 사이 도착 예정이에요. (한글날 연휴 휴무로 일요일 발송이에요)' }],
+    ['발송 전 — 예약 상품 = 사람', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: NOW, holidays: H, order: pre({ paid_at: '2026-10-09T10:00:00+09:00', option_text: '[예약] 레드향 3kg' }) }), { kind: null, staff: true, why: 'reserve', text: '' }],
+    ['발송 전 — 결제 시각 없음 = 사람(지금 기준으로 세지 않음)', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: NOW, holidays: H, order: pre({}) }), { kind: null, staff: true, why: 'pre_no_paid_at', text: '' }],
+    ['발송 전 — 배송메세지에 날짜 요청 = 사람', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T10:10:00+09:00', memo: '20일 발송 부탁드려요' }) }), { kind: null, staff: true, why: 'memo_date', text: '' }],
+    ['발송 전 — 배송메세지가 기사님 말뿐이면 그대로 답', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T10:10:00+09:00', memo: '문 앞에 놓아주세요' }) }),
+        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 내일 수요일(10/14) 오전 발송 예정이에요 · 목요일(10/15)~금요일(10/16) 사이 도착 예정이에요.' }],
+    ['발송 전 — 발송 예정일이 지남 = 사람', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-14T10:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-08T13:00:00+09:00' }) }), { kind: null, staff: true, why: 'ship_overdue', text: '' }],
+];
+PRE.forEach(([name, got, want], i) => ok(`${String(i + 1).padStart(2, '0')} ${name}`, !!got && got.kind === want.kind && got.staff === want.staff && got.text === want.text && got.why === want.why, got));
+{
+    const s = shippingSchedule.computeShipping(new Date('2026-10-13T10:10:00+09:00'), H.set, H.reasons, { arriveOff: H.arriveOff });
+    ok('계산기 대조 — 발송 전(pre) 답의 날짜 = computeShipping(결제 시각) 결과', s.shipDate === '2026-10-14' && s.arriveStart === '2026-10-15' && s.arriveEnd === '2026-10-16' && PRE[1][1].text.includes('10/14') && PRE[1][1].text.includes('10/15') && PRE[1][1].text.includes('10/16'), s);
+    const texts = PRE.map(x => x[1] && x[1].text).filter(Boolean).join('\n');
+    ok('발송 전 답 전체 — 이모지 0 · 5자리 이상 숫자 0 · 받는 분 이름·첫 글자 0', !EMOJI_RE.test(texts) && !/\d{5,}/.test(texts) && !/김/.test(texts), texts);
+}
+
+// ───────────────────────── ②-c 되묻기 답 읽기(followup) ─────────────────────────
+console.log('②-c 되묻기 답 읽기(followup)');
+const ASK_AT = '2026-10-10T10:00:00+09:00';
+ok('01 expectName — 되물은 지 20분 = true', followup.expectName({ ask_kind: 'name', ask_at: ASK_AT }, '2026-10-10T10:20:00+09:00') === true);
+ok('02 expectName — 61분 지남 = false · ask_kind 없음 = false · ask_at 없음 = false · thread 없음 = false',
+    followup.expectName({ ask_kind: 'name', ask_at: ASK_AT }, '2026-10-10T11:01:00+09:00') === false && followup.expectName({ ask_kind: null, ask_at: ASK_AT }, '2026-10-10T10:05:00+09:00') === false && followup.expectName({ ask_kind: 'name' }, ASK_AT) === false && followup.expectName(null) === false);
+const F = [
+    ['김영희요', { name: '김영희', sure: true }],
+    ['받는 분은 김영희예요', { name: '김영희', sure: true }],
+    ['김영희 입니다', { name: '김영희', sure: true }],
+    ['네 김영희님이요', { name: '김영희', sure: true }],
+    ['박철수 앞으로 보낸 거예요', { name: '박철수', sure: true }],
+    ['Kim Younghee', { name: 'KimYounghee', sure: true }],
+    ['김영희요 근데 언제 와요?', { name: '김영희', sure: false }],
+    ['받는 분 김영희인데 주소도 바꿔주세요', { name: '김영희', sure: false }],
+    ['몰라요', { name: null, sure: false, why: 'unknown' }],
+    ['모르겠어요', { name: null, sure: false, why: 'unknown' }],
+    ['어제 주문했는데요', { name: null, sure: false, why: 'no_name' }],
+    ['감사합니다', { name: null, sure: false, why: 'no_name' }],
+];
+F.forEach(([text, want], i) => {
+    const got = followup.parseNameReply(text);
+    ok(`${String(i + 3).padStart(2, '0')} parseNameReply 「${text}」 → ${want.name || '이름 없음'}${want.sure ? '' : want.name ? '(sure 아님)' : ''}`, got.name === want.name && got.sure === want.sure && (want.why === undefined || got.why === want.why), got);
+});
+{
+    const lk = require(path.join(root, 'sms/lookup.js'));
+    const a = followup.secondLookupArgs('김영희 님이요');
+    ok('15 secondLookupArgs — lookup.normalizeName 과 같은 정리', a.recipientName === lk.normalizeName('김영희 님이요') && a.recipientName === '김영희' && Object.keys(a).length === 1, a);
 }
 
 // ───────────────────────── ③ parse 5건 ─────────────────────────

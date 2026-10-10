@@ -10238,7 +10238,9 @@ app.post('/api/delivery/shipments/upload', authMiddleware, async (req, res) => {
 // ===== #610 회사폰 문자 반자동 응대 — 시작 (대표 「고」 10/10 · 핵심은 sms/index.js · 표 sms_threads/sms_messages/sms_images · webhook /api/sms/webhook · 화면 API /api/sms/*) =====
 //   켜기 = agent_office_config 'sms_gateway' {"enabled":true,"mode":"record"} (record → draft → auto 순 · auto 는 대표 「고」 뒤) · env SMSGATE_USER/PASS/SIGNING_KEY(Render) · webhook 등록 = POST /api/sms/register-webhooks(관리자 1회)
 //   무회귀: 설정 행이 없으면 webhook 은 받아 기록만 하고 아무 것도 보내지 않는다 · 다른 기능과 표를 공유하지 않음(delivery_shipments 에 buyer_phone 칸만 추가)
-const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus });
+const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus,
+    // #610-G 발송 전 주문 보관(sms/preorders.js · 설정 sms_gateway.preorders 가 true 일 때만 60분 1회) — cafe24 는 const 가 뒤(10324행)라 지연 참조(TDZ)
+    fetchNaver: d => naverFetchInvoiceOrders(d, { extended: true }), fetchCoupang: d => coupangFetchInvoiceOrders(d), fetchCafe24: d => require('./cafe24.js').fetchInvoiceOrders(d) });
 // ===== #610 회사폰 문자 반자동 응대 — 끝 =====
 
 // 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).

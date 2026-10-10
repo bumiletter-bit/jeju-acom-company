@@ -8,6 +8,7 @@
 >
 > 표기: **[문서]** 공식 문서 문장 · **[OpenAPI]** swagger.json · **[소스]** 앱 코드 · **[미확인]** 근거 못 찾음(실기기 시험으로 확정).
 > 🔴 실기기 확인 전 숫자·동작은 문서상 값이다. 시험 결과가 다르면 이 문서를 고친다.
+> 🔵 2026-10-10 2차: 서버 구현(`sms/index.js` · server.js 41행)을 읽고 **10절 「서버 구현 현황」** 을 더함. 1~9절은 앱 쪽 사실, 10절은 우리 서버가 실제로 하는 일.
 
 ## 0. 한눈에
 
@@ -126,7 +127,7 @@
 - 식: `HMAC-SHA256(key = 서명 키, message = 원문 body 문자열 + X-Timestamp 문자열)` → hex. **body 가 먼저, timestamp 가 뒤 · 구분자 없음.**
 - 원문 body = **JSON 파싱 전 바이트 그대로**. Express 에서는 이 라우트만 `express.raw({ type: 'application/json', limit: '25mb' })` 로 받고 `req.body.toString('utf8')` 로 서명 → 그 뒤 `JSON.parse`.
 - 서명 키 = 첫 요청 때 앱이 무작위 생성 · 앱 **Settings → Webhooks → Signing Key** 에서 보고 바꿈. 🔴 **폰에만 있는 값**(웹 대시보드·cloud API 로 못 다룸 — OpenAPI 「Must not be used with Cloud Server」) → 설치 때 폰 화면에서 읽어 Render env 로.
-- 시각 검사: 문서 권고 ±5분. 🔴 단 **재시도는 최대 약 2일 뒤에도 온다** — 재시도 요청의 `X-Timestamp` 가 처음 시각인지 재전송 시각인지 **[미확인]**. 처음 시각이면 ±5분 검사가 재시도를 전부 버린다 → **1단계는 서명만 검사하고 시각은 기록만**, 시험 e 뒤에 판단.
+- 시각 검사: 문서 권고 ±5분. 🔴 단 **재시도는 최대 약 2일 뒤에도 온다** — 재시도 요청의 `X-Timestamp` 가 처음 시각인지 재전송 시각인지 **[미확인]**. → **서버 구현 = 서명 일치 + 시각 차 3일 미만**(재시도를 버리지 않음 · 10절).
 
 ```js
 // 문서의 JavaScript 예시 그대로
@@ -144,7 +145,7 @@ function verifySignature(secretKey, payload, timestamp, signature) {
 
 [문서] 2xx 를 30초 안에 못 받으면: 10초 뒤 → 20초 → 40초 … 두 배씩 · 기본 **14회(약 2일)** · 횟수는 앱 Settings → Webhooks 에서 변경. 인터넷이 없으면 붙을 때까지 기다림(기본 「Require Internet connection」 켜짐).
 - 의미: 우리 서버 배포 중(약 2분)·렌더 점검 때 온 문자는 **잃지 않고 늦게 온다**. 반대로 같은 사건이 두 번 올 수 있다 → 봉투 `id` 로 중복 제거 필수.
-- 🔴 4xx 를 주면 그 사건도 2일간 재시도한다(문서는 2xx 아니면 전부 재시도). 서명 실패·모르는 이벤트에는 **기록 후 200** 을 주는 편이 낫다(서명 실패를 401 로 두면 공격자 구분은 되지만 키를 잘못 넣은 날 2일치가 쌓임 → 총괄 판단).
+- 🔴 4xx·5xx 를 주면 그 사건도 2일간 재시도한다(문서는 2xx 아니면 전부 재시도). → **서버 구현 = 서명 실패 401 · 키 없음 503 을 그대로 둠**(키를 잘못 넣은 날의 문자가 버려지지 않고 키를 고치면 뒤늦게 들어옴) + 뒤늦게 들어온 글(문자 시각이 30분 넘게 지남)은 봇이 답하지 않고 직원 몫. 모르는 이벤트는 200 + 무시.
 
 ## 2. 보내기 API
 
@@ -251,7 +252,11 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 | `SMSGATE_USER` / `SMSGATE_PASS` | 앱 Cloud Server 칸의 아이디·비밀번호 |
 | `SMSGATE_SIGNING_KEY` | 앱 Settings → Webhooks → Signing Key |
 | `SMSGATE_API_BASE` | `https://api.sms-gate.app/3rdparty/v1`(private 로 옮길 때 이것만 바꿈) |
-| `SMSGATE_DEVICE_ID` | (선택) 봉투 `deviceId` 와 대조 — 다른 기기 사칭 차단 |
+| `SMS_PUBLIC_URL` | (선택) webhook 등록에 쓸 우리 주소 · 기본 `https://jeju-acom-company.onrender.com` |
+
+- 코드가 읽는 다른 이름(같은 뜻 · 예비): `SMSGATE_WEBHOOK_SECRET`(= SIGNING_KEY) · `SMSGATE_LOGIN`/`SMSGATE_PASSWORD` · `SMSGATE_API`.
+- 봉투 `deviceId` 대조(`SMSGATE_DEVICE_ID`)는 **구현돼 있지 않다** — 서명 키가 폰에만 있으므로 서명 검증이 그 역할을 한다.
+- 값이 들어갔는지는 `GET /api/sms/config` 응답의 `gateway_env { user, pass, signing_key }`(참/거짓만)로 본다.
 
 ## 8. private 서버(추후 · 간단히)
 
@@ -263,6 +268,8 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 - API 경로는 같음(`/3rdparty/v1/…`) → `SMSGATE_API_BASE` 만 바꾸면 서버 코드 무변경.
 
 ## 9. 미확인 목록(실기기 시험·추가 조사로 확정)
+
+> 시험 때 자료 확인은 `node scripts/sms-inspect.js`(10-6절).
 
 1. 직원 수동 발신 — 소스상 「안 온다」. 실기기 시험 c 로 최종 확인.
 2. 70자 넘는 한글 글이 국내 통신사에서 어떻게 가는지(분할 SMS · LMS · 실패) · 글만 있는 `mmsMessage` 가 기본 앱이 아닌 상태에서 나가는지.
@@ -277,3 +284,75 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 11. 「Start on boot」 설정의 정확한 위치(문서는 이름만 언급) · 삼성 「사용하지 않는 앱 절전」 예외 경로.
 12. 국내 통신사 시간당·일 발송 한도 · 무제한 요금제의 상업적 발송 약관.
 13. private 서버의 PostgreSQL 지원 여부.
+
+## 10. 서버 구현 현황(`sms/index.js` 를 읽은 대로 · 2026-10-10)
+
+### 10-1. 받는 길
+- `POST /api/sms/webhook`(로그인 없음 · 서명으로 보호). 원문은 server.js 41행 `express.json({ limit: '15mb', verify })` 가 이 주소일 때만 `req.rawBody` 에 담는다 → body 한도 **15MB**(사진 Base64 포함).
+- 순서: 서명 검사 → 실패면 `401 {error: no_sig|bad_sig|stale}` · 키 없음 `503 webhook locked` → 통과면 **즉시 200** `{ ok, accepted, event }` → 처리는 뒤에서(`setImmediate`).
+- 중복 제거: ①메모리 1차(봉투 id · 3일) ②**정본 = `sms_messages.envelope_id` 부분 UNIQUE**(받은 줄 INSERT 가 `ON CONFLICT DO NOTHING` → 재시작 뒤에도 같은 봉투는 한 번만).
+- 어떤 이벤트든 오면 `agent_office_config 'sms_gateway_state'` 의 `last_ping_at`·`last_event_at`·`last_event` 를 갱신(= 「앱이 살아 있다」). `system:ping`·`app:started` 는 그것만 하고 끝. ping 간격 이력은 남기지 않는다.
+- 끊김 감시(켜져 있을 때만): 마지막 신호가 `ping_alert_hours`(기본 3시간) 넘게 없으면 텔레그램 1회 · 돌아오면 복구 1회.
+
+### 10-2. 이벤트 처리
+| 이벤트 | 서버가 하는 일 |
+|---|---|
+| `sms:received` | 번호(`payload.sender`) 없으면 건너뜀 → 받은 줄 기록 → 가르기·답(10-3) |
+| `mms:received` | **기록만**(갈래 `photo_pending` · 답·알림 없음) |
+| `mms:downloaded` | 같은 번호의 최근 **10분** 안 `photo_pending` 줄에 사진·글을 붙이고 그 줄로 가르기·답. 없으면 새 수신으로. 첨부는 `image/*` 만 사진 · `text/plain` 조각은 글로(사진 0장이면 일반 글 = 손님의 긴 글) |
+| (5분 안에 downloaded 가 안 옴) | 그 줄을 `photo` 로 바꾸고 대화를 `staff_needed` · 「사진을 못 받았어요」 알림 |
+| `sms:sent`·`delivered`·`failed` | `payload.messageId` 로 우리 발송 줄(gateway_id)을 찾아 상태 갱신(이미 delivered 인 줄은 되돌리지 않음) · failed 면 대화 `staff_needed` + 알림. 번호는 `payload.recipient` |
+| 우리 id 가 아닌 발신 결과 | `sender = gateway_other` 줄(글 없음 → 「(전달 앱이 보낸 글 · 내용 없음)」) + 그 대화의 대기 발송 취소 + `staff_replied`(잠금). 🔴 직원이 삼성 메시지에서 손으로 보낸 글은 여기로 **오지 않는다**(1-2절) — 대시보드·다른 클라이언트 발신일 때만 |
+| `sms:cancelled`·묶음(`*:batch:*`)·모르는 이벤트 | 200 + 무시 |
+
+### 10-3. 받은 글 가르기·답(위에서부터 먼저 걸리는 것)
+1. 갈래 `otp`·`ad`·`carrier`(대화 중이 아닌 번호) → `ignored` · 기록만.
+2. 대화 상태가 `staff_replied`·`staff_needed`(잠금) → 봇 침묵 · `staff_needed` · 「손님이 다시 보냈어요」 알림.
+3. **꺼짐 또는 `record` 모드** → 아무것도 안 보냄. 클레임·사진만 `staff_needed`(알림은 켜져 있을 때만), 나머지 `new`.
+4. 문자 시각이 **30분 넘게 지난 글**(재시도·비행기 모드 뒤) → 답 없이 `staff_needed`(`late_to_staff`).
+5. 쿨다운 안이거나 오늘 봇이 이미 `daily_cap`(기본 1)번 답함 → `staff_needed`.
+6. 번호로 주문 찾기 → 사진이면 사진 판독, 아니면 규칙 답 → AI 답. 답이 없거나 「사람」 판정이면 `staff_needed`(초안이 있으면 `draft_text` 에).
+7. `draft` 모드 → 대화 `draft` + 초안 알림(직원이 [이대로 보내기]). `auto` 모드 → `hold_sec`(기본 75초) 뒤 보낼 줄을 큐에 · 대화 `bot_replied`.
+- 대화 상태 값: `new · bot_replied · cooldown · staff_needed · draft · staff_replied · closed · ignored`.
+- 줄의 `sender`: `customer`(받음) · `bot` · `staff_desk`(화면에서 직원 발송) · `gateway_other`. 줄의 `state`: `received` / `queued → sending → sent → delivered` · `failed` · `cancelled`.
+
+### 10-4. 보내기
+- 큐 틱 **10초마다 · 한 번에 5줄**. 꺼져 있으면(`enabled` false) 큐를 돌리지 않는다. 최근 1시간 발송이 `hourly_send_cap`(기본 30) 이상이면 쉼.
+- 봇 줄은 보내기 직전에 대화 상태를 다시 본다 — `staff_replied`·`staff_needed`·`closed` 면 `cancelled`(유예 사이 직원이 답함).
+- 요청: `{ id: 우리 UUID, textMessage:{text}, phoneNumbers:[+82…], ttl: ttl_sec(기본 600), priority }`. 봇 답을 여러 통으로 나눌 때 1통째 9 · 2통째 8 …(앱 기본이 나중 것 먼저라서 · 100 미만이라 앱 상한은 그대로 적용).
+- 응답 202 → 줄은 **`sending` 유지** · `sent_at` 기록 · (봇이면) 쿨다운·오늘 횟수 올림. 실제 `sent`/`delivered`/`failed` 는 webhook 이 적는다. 409 = 같은 id 가 이미 있음 = 성공으로 봄. 20초 타임아웃이면 같은 id 로 1회 더. 그 밖 오류 → 줄 `failed` + 대화 `staff_needed` + 알림.
+- 🔴 `sending` 에 머문 줄 = 202 는 받았는데 폰이 아직 안 보냄(폰 꺼짐·오프라인) 또는 결과 webhook 이 안 옴. ttl 이 지나면 앱이 `sms:failed` 를 올려 `failed` 로 바뀌어야 한다 — 안 바뀌면 webhook 등록을 본다.
+- **나누기는 봇 자동 답에만 적용된다**(`max_chars` 기본 70 · 문장 경계). 🔴 직원이 화면에서 보내는 글(`/reply`)과 초안 보내기(`/send-draft`)는 **나누지 않고 한 통**으로 넣는다 → 70자를 넘으면 앱이 분할 SMS 로 보냄(시험 b-2 결과가 그대로 적용되는 길).
+
+### 10-5. 화면·관리 API(전부 로그인 필요)
+| 주소 | 뜻 |
+|---|---|
+| `GET /api/sms/summary` | 켜짐·모드·상태별 건수·오늘 받음/봇/직원·`gateway { last_ping_at, alive }` |
+| `GET /api/sms/threads?status=&q=&limit=` · `GET /api/sms/threads/:id` · `GET /api/sms/images/:id` | 대화 목록·한 건·사진(번호는 끝 4자리·가림값만 나감) |
+| `POST /api/sms/threads/:id/reply` `{text}` | 직원 답 발송(큐에 · 대화 `staff_replied`) — 꺼져 있으면 409 |
+| `POST /api/sms/threads/:id/send-draft` | 봇 초안 그대로 발송 |
+| `POST /api/sms/threads/:id/handled` | **[처리함]** — 대기 발송 취소 + `staff_replied`(직원이 폰에서 답했을 때) |
+| `POST /api/sms/threads/:id/close` | 종결(`closed`) |
+| `GET /api/sms/config` | 설정 + `gateway_env`(값 유무) + `modules`(가르기·규칙·주문 찾기·사진·AI 모듈 유무) |
+| `POST /api/sms/config`(관리자) | 설정 바꾸기 — 예 `{"enabled":true,"mode":"record"}`. 값 범위는 서버가 고름(틀리면 기본값) · audit 기록 · 10초 안 반영 |
+| `POST /api/sms/register-webhooks`(관리자) | webhook 9종 등록(있는 것은 `exists`). 응답 `{ url, before, result:[{event,status,id 또는 code,detail}] }` · 목록 조회 실패면 `{ error:'list 401', hint }` |
+
+**모드 3단계**(설정 `agent_office_config 'sms_gateway'` · 행이 없으면 꺼짐)
+| 단계 | 설정 | 동작 |
+|---|---|---|
+| 0 꺼짐 | 행 없음 또는 `enabled:false` | webhook 은 받아 기록만 · 알림 없음 · 보내기 큐 멈춤 · 화면 발송 409 |
+| 1 기록 | `enabled:true, mode:'record'` | 기록 + 클레임·사진 알림 · 봇은 아무것도 안 보냄 · 직원 화면 발송 가능 |
+| 2 초안 | `mode:'draft'` | 봇이 초안만 · 직원이 [이대로 보내기] |
+| 3 자동 | `mode:'auto'` | 유예 뒤 자동 발송 — 🔴 첫 전환은 대표 「고」 뒤 |
+
+### 10-6. 점검 도구 — `scripts/sms-inspect.js`(읽기만)
+```
+node scripts/sms-inspect.js                 # 최근 2시간 요약 + 시험 a~f 판정 + 대화별 줄
+node scripts/sms-inspect.js --since 30m     # 기간(30m · 2h · 1d)
+node scripts/sms-inspect.js --thread 12     # 대화 하나 전부
+node scripts/sms-inspect.js --events        # 들어온 순서대로 한 줄씩
+node scripts/sms-inspect.js --json          # 그대로 JSON
+```
+- 번호는 가림값·손님 글 80자·주소 꼴 「[주소]」·글 속 전화번호 가림. SELECT 만 · 외부 호출 없음.
+- 판정은 「자료로 보이는 것」만: a 받은 줄 · b 우리 발송의 state · b-2 70자 넘는 한 통/나눠 보낸 조각 · c `gateway_other` 줄 유무 · d 사진 바이트 · e 마지막 신호 · f 문자 시각과 서버 도착 시각 차이·같은 글 중복. 폰 화면에서만 보이는 것(대화창 표시·한 덩어리 여부·순서)은 판정하지 않는다.
+- DB 에 안 남는 것: `partsCount`(조각 수) · 서명 실패 횟수 · ping 간격 이력 · 처리 결과 action(`late_to_staff` 등) → 렌더 로그의 「[문자] … → …」 줄로 본다.

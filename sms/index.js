@@ -67,6 +67,8 @@ function optional(path) { try { return require(path); } catch (e) { if (e && e.c
 
 module.exports = function mountSms(app, deps) {
     const { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus, log = console } = deps;
+    const followup = optional('./followup.js'), selfcheck = optional('./selfcheck.js'), photoTest = optional('./photo-test.js'), preorders = optional('./preorders.js');
+    let selfcheckApi = null;   // 셀프 조회 페이지(워커1) 장착 결과 { initDB, … }
     const classifyMod = optional('./classify.js'), rulesMod = optional('./rules.js'), lookupMod = optional('./lookup.js'), photoJudge = optional('./photo-judge.js'), photoReply = optional('./photo-reply.js'), aiNote = optional('./ai-note.js'), safeMod = optional('./sms-safe.js');
     const smsSafe = t => (safeMod && typeof safeMod.smsSafe === 'function') ? safeMod.smsSafe(t) : smsSafeText(t);   // 워커3 sms-safe(꼬리 줄·「톡톡」·「네이버 페이」 제거 포함) 우선
 
@@ -105,7 +107,9 @@ module.exports = function mountSms(app, deps) {
             staff_user_id integer, staff_name text, handled_at timestamptz, draft_text text, draft_kind text, order_hint text, order_json jsonb, last_out_state text,
             created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_sms_threads_status ON sms_threads(status, updated_at DESC)`);
-        await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS last_out_state text`);
+        await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS last_out_state text, ADD COLUMN IF NOT EXISTS ask_kind text, ADD COLUMN IF NOT EXISTS ask_at timestamptz`);
+        if (preorders && typeof preorders.initDB === 'function') await preorders.initDB(pool);
+        if (selfcheckApi && typeof selfcheckApi.initDB === 'function') await selfcheckApi.initDB();   // sms_selfcheck_hits(시도 제한 · 해시만)
         await pool.query(`CREATE TABLE IF NOT EXISTS sms_messages (
             id serial PRIMARY KEY, thread_id integer NOT NULL REFERENCES sms_threads(id), direction text NOT NULL, kind text NOT NULL DEFAULT 'sms',
             body text, sender text NOT NULL, state text NOT NULL DEFAULT 'received', gateway_id text, sim_number integer,
@@ -200,8 +204,11 @@ module.exports = function mountSms(app, deps) {
         if (!(r && r.match === 'one' && r.order)) return null;
         const pubo = (typeof lookupMod.toPublic === 'function') ? lookupMod.toPublic(r) : null;
         if (!pubo) return null;
-        const d = pubo.ship_date ? String(pubo.ship_date).slice(5).replace('-', '/') : '';
-        const line = [pubo.partner, d ? d + ' 발송' : '', pubo.option_text, pubo.boxes > 1 ? pubo.boxes + '상자' : '', pubo.status_label].filter(Boolean).join(' · ');
+        const o = pubo.order || {};   // toPublic = { match, role, candidates, order:{…} }(워커4 지적 · 평평하게 읽으면 늘 빈 줄)
+        const md = x => x ? String(x).slice(5, 10).replace('-', '/') : '';
+        const line = o.pre
+            ? ['발송 전', o.paid_at ? '결제 ' + md(o.paid_at) + (o.paid_known === false ? '쯤' : '') : '', o.option_text, o.qty > 1 ? o.qty + '개' : ''].filter(Boolean).join(' · ')
+            : [o.partner, o.ship_date ? md(o.ship_date) + ' 발송' : '', o.option_text, o.boxes > 1 ? o.boxes + '상자' : '', o.status_label, pubo.pre_pending ? '새 주문 ' + pubo.pre_pending + '건 대기' : ''].filter(Boolean).join(' · ');
         return Object.assign({ line, role: r.role || null }, pubo);
     }
 
@@ -274,6 +281,30 @@ module.exports = function mountSms(app, deps) {
         const digits = thread.phone_digits, hasImage = images.length > 0, bucket = msg.bucket;
         const patch = { last_in_at: msg.event_at, last_in_text: bodyText.slice(0, 300), has_image: thread.has_image || hasImage };
         const done = (action, extra) => Object.assign({ thread_id: thread.id, message_id: msg.id, bucket, action }, extra || {});
+        // 되묻기(받는 분 성함) 뒤 답 — 🔴 가르기(무시·인사)보다 먼저: 「네 김영희요」가 인사로 버려지지 않게 · followup.js(워커3) · 60분 안 · 이 답 한 번은 쿨다운·하루 1번 검사에서 뺀다(되묻기 1회만 · 또 many 면 직원 몫)
+        let askedName = null;
+        if (thread.ask_kind === 'name' && followup && typeof followup.expectName === 'function' && followup.expectName(thread)) {
+            let parsed = null; try { parsed = followup.parseNameReply(bodyText); } catch (e) { log.error('[문자] 이름 답 읽기 실패(무시):', e.message); }
+            await setThread(thread.id, { ask_kind: null, ask_at: null });
+            if (parsed && parsed.name && parsed.sure !== false && lookupMod && typeof lookupMod.lookupByPhone === 'function') {
+                askedName = parsed.name;
+                try {
+                    let r2 = await lookupMod.lookupByPhone(pool, digits, { days: c.lookup_days, recipientName: askedName });
+                    if (r2 && r2.match === 'one' && typeof lookupMod.refreshOrder === 'function') { try { r2 = await lookupMod.refreshOrder(pool, r2, { maxBoxes: 3 }); } catch (_) { } }
+                    if (r2 && r2.match === 'one' && r2.order) {
+                        const hint2 = orderHintOf(r2); if (hint2) Object.assign(patch, { order_hint: hint2.line || null, order_json: hint2 });
+                        r2.order = Object.assign({}, r2.order, { option: r2.order.option_text || r2.order.option });
+                        const prevQ = (await pool.query(`SELECT body FROM sms_messages WHERE thread_id = $1 AND direction = 'in' AND id < $2 ORDER BY id DESC LIMIT 1`, [thread.id, msg.id])).rows[0];   // 되묻기 전 원래 물음(「송장」 물음도 살게)
+                        const ans2 = await composeAnswer(thread, Object.assign({}, msg, { bucket: 'ship_q', body: (prevQ && prevQ.body) || bodyText }), c, r2);
+                        if (ans2 && ans2.text && !ans2.toStaff && ans2.kind !== 'ask') return await queueBotAnswer(thread, msg, c, patch, ans2, { bypassCap: true });
+                    }
+                } catch (e) { log.error('[문자] 2차 조회 실패(무시):', e.message); }
+            }
+            // 이름을 못 읽었거나 여전히 여럿·없음 → 직원 몫
+            await setThread(thread.id, Object.assign(patch, { status: 'staff_needed' }));
+            await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 받는 분 확인 뒤에도 주문을 못 골랐어요`, bodyText.slice(0, 80));
+            return done('ask_to_staff', { name: askedName ? '있음' : '없음' });
+        }
         // 무시 갈래(인증번호·광고·통신사) — 기록만 · 상태 ignored(이미 대화 중인 손님 글은 상태 유지)
         if (['otp', 'ad', 'carrier'].includes(bucket) && !['bot_replied', 'staff_needed', 'draft', 'cooldown', 'staff_replied'].includes(thread.status)) {
             await setThread(thread.id, Object.assign(patch, { status: 'ignored' })); return done('ignored');
@@ -326,18 +357,25 @@ module.exports = function mountSms(app, deps) {
             await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇 초안 확인`, ans.text.slice(0, 100));
             return done('draft', { kind: ans.kind });
         }
-        // auto — 유예(hold_sec) 뒤 발송 큐에(그 사이 직원이 화면에서 답하면 취소) · 여러 통은 priority 9,8,7… 로 순서 보장(앱 기본 LIFO)
+        return await queueBotAnswer(thread, msg, c, patch, ans);
+    }
+    // auto — 유예(hold_sec) 뒤 발송 큐에(그 사이 직원이 화면에서 답하면 취소) · 여러 통은 priority 9,8,7… 로 순서 보장(앱 기본 LIFO)
+    //   되묻기(kind 'ask')면 thread.ask_kind='name' 을 적어 다음 글을 이름으로 읽는다(followup.js) · bypassCap = 되묻기 뒤 2차 답(상한에서 뺌 · bot_count 는 올림)
+    async function queueBotAnswer(thread, msg, c, patch, ans, opts = {}) {
+        const digits = thread.phone_digits, bucket = msg.bucket;
+        const done = (action, extra) => Object.assign({ thread_id: thread.id, message_id: msg.id, bucket, action }, extra || {});
         const sendAfter = new Date(Date.now() + c.hold_sec * 1000);
         const pieces = splitForSms(ans.text, c.max_chars);
         let out = null;
         for (let i = 0; i < pieces.length; i++) {
-            const m = await addMessage({ thread_id: thread.id, direction: 'out', kind: 'sms', body: pieces[i], sender: 'bot', state: 'queued', rule_kind: ans.rule_kind || ans.kind, priority: Math.max(0, 9 - i), ai_json: Object.assign({ why: ans.why, part: i + 1, parts: pieces.length }, ans.used ? { used: ans.used } : {}), send_after: sendAfter });
+            const m = await addMessage({ thread_id: thread.id, direction: 'out', kind: 'sms', body: pieces[i], sender: 'bot', state: 'queued', rule_kind: ans.rule_kind || ans.kind, priority: Math.max(0, 9 - i), ai_json: Object.assign({ why: ans.why, part: i + 1, parts: pieces.length, second: !!opts.bypassCap }, ans.used ? { used: ans.used } : {}), send_after: sendAfter });
             if (!out) out = m;
         }
-        await setThread(thread.id, Object.assign(patch, { status: 'bot_replied', draft_text: null, draft_kind: null }));
-        if (ans.kind === 'ask') await setThread(thread.id, { ask_count: (thread.ask_count || 0) + 1 });
+        const ask = ans.kind === 'ask';
+        await setThread(thread.id, Object.assign(patch, { status: 'bot_replied', draft_text: null, draft_kind: null, ask_kind: ask ? 'name' : null, ask_at: ask ? new Date() : null }));
+        if (ask) await setThread(thread.id, { ask_count: (thread.ask_count || 0) + 1 });
         if (ans.staff_summary) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇이 답했어요(사진)`, ans.staff_summary.slice(0, 100));
-        return done('queued', { out_id: out.id, parts: pieces.length, kind: ans.kind, send_after: sendAfter.toISOString() });
+        return done('queued', { out_id: out.id, parts: pieces.length, kind: ans.kind, second: !!opts.bypassCap, send_after: sendAfter.toISOString() });
     }
     // mms:downloaded — 같은 번호의 최근 10분 안 「사진 받는 중」 줄에 사진·글을 붙이고 그 줄로 판정(없으면 새 수신으로)
     async function attachDownloaded(e) {
@@ -504,9 +542,20 @@ module.exports = function mountSms(app, deps) {
         try {
             const c = await cfg();
             try { await pendingPhotoTick(); } catch (e) { log.error('[문자] 사진 대기 정리 실패(무시):', e.message); }
+            // 발송 전 주문 짧은 보관(sms/preorders.js · 워커4) — 설정 preorders === true 일 때만 · 60분에 1회 · 네이버 자동수집·중간발주 조회와 겹치지 않게 시각 기록
+            const rawCfg = (await naverCfgGet('sms_gateway')) || {};
+            if (preorders && typeof preorders.collect === 'function' && rawCfg.preorders === true) {
+                const lastP = (await naverCfgGet('sms_preorders_last')) || {};
+                const kh = new Date(Date.now() + 9 * 3600e3).getUTCHours();   // 한국 01~07시는 쉼(04:30 스냅샷 · 05:10 자사몰 점검과 겹침 방지)
+                if (!(kh >= 1 && kh < 7) && (!lastP.at || Date.now() - new Date(lastP.at).getTime() > 60 * 60000)) {
+                    await naverCfgSet('sms_preorders_last', Object.assign(lastP, { at: new Date().toISOString(), running: true }));
+                    try { const r = await preorders.collect({ pool, fetchNaver: deps.fetchNaver, fetchCoupang: deps.fetchCoupang, fetchCafe24: deps.fetchCafe24, log }); await naverCfgSet('sms_preorders_last', { at: new Date().toISOString(), running: false, result: r }); log.log('[문자] 발송 전 주문 수집', JSON.stringify(r).slice(0, 200)); }
+                    catch (e) { await naverCfgSet('sms_preorders_last', { at: new Date().toISOString(), running: false, error: String(e.message).slice(0, 200) }); log.error('[문자] 발송 전 주문 수집 실패:', e.message); }
+                }
+            }
             if (c.enabled) {
                 const st = (await naverCfgGet('sms_gateway_state')) || {};
-                const last = st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0;
+                const last = Math.max(st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0, st.last_event_at ? new Date(st.last_event_at).getTime() : 0);
                 const dead = !last || Date.now() - last > c.ping_alert_hours * 3600e3;
                 if (dead && !_pingAlerted && !st.alerted) { _pingAlerted = true; await naverCfgSet('sms_gateway_state', Object.assign(st, { alerted: true, alerted_at: new Date().toISOString() })); if (notifyTelegram) await notifyTelegram(`📵 회사폰 문자 앱 신호가 ${c.ping_alert_hours}시간 넘게 없어요 — 폰·앱·채팅+ 설정을 확인해 주세요`); }
                 if (!dead && (st.alerted || _pingAlerted)) { _pingAlerted = false; await naverCfgSet('sms_gateway_state', Object.assign(st, { alerted: false })); if (notifyTelegram) await notifyTelegram('✅ 회사폰 문자 앱 신호 복구'); }
@@ -517,6 +566,8 @@ module.exports = function mountSms(app, deps) {
                 const ret = await naverCfgGet('db_retention');
                 if (ret && ret.enabled === true) {
                     const r = await pool.query(`UPDATE sms_images SET data = NULL, purged_at = now() WHERE purged_at IS NULL AND data IS NOT NULL AND created_at < now() - make_interval(days => $1::int)`, [c.image_days]);
+                    if (preorders && typeof preorders.purge === 'function') { try { await preorders.purge(pool, 7); } catch (e) { log.error('[문자] 발송 전 주문 정리 실패(무시):', e.message); } }
+                    if (selfcheck && typeof selfcheck.purge === 'function') { try { await selfcheck.purge(pool); } catch (e) { log.error('[문자] 셀프 조회 시도 표 정리 실패(무시):', e.message); } }
                     const s = await pool.query(`DELETE FROM delivery_shipments WHERE tracking IN (SELECT tracking FROM delivery_shipments WHERE ship_date < (now() AT TIME ZONE 'Asia/Seoul')::date - 60 LIMIT 5000)`);
                     await pool.query(`DELETE FROM delivery_status t WHERE NOT EXISTS (SELECT 1 FROM delivery_shipments s WHERE s.tracking = t.tracking) AND t.checked_at < now() - interval '60 days'`);
                     if ((r.rowCount || 0) + (s.rowCount || 0) > 0) { await writeAudit({ action: 'purge', targetType: 'sms_retention', changes: { after: { sms_images: r.rowCount, delivery_shipments: s.rowCount, image_days: c.image_days, shipments_days: 60 } }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } }); log.log(`[문자] 보관 정리 — 사진 ${r.rowCount}건 · 송장 ${s.rowCount}행`); }
@@ -542,8 +593,8 @@ module.exports = function mountSms(app, deps) {
         const e = parseEvent(body);
         const st = (await naverCfgGet('sms_gateway_state')) || {};
         const stamp = { last_event_at: new Date().toISOString(), last_event: e.ev };
-        if (e.ev === 'system:ping' || e.ev === 'app:started') { await naverCfgSet('sms_gateway_state', Object.assign(st, stamp, { last_ping_at: new Date().toISOString() })); return { ok: true, event: e.ev }; }
-        await naverCfgSet('sms_gateway_state', Object.assign(st, stamp, { last_ping_at: new Date().toISOString() }));   // 어떤 이벤트든 앱이 살아 있다는 뜻
+        if (e.ev === 'system:ping' || e.ev === 'app:started') { await naverCfgSet('sms_gateway_state', Object.assign(st, stamp, { last_ping_at: new Date().toISOString() }, e.ev === 'app:started' ? { started_at: new Date().toISOString(), starts: (Number(st.starts) || 0) + 1 } : {})); return { ok: true, event: e.ev }; }
+        await naverCfgSet('sms_gateway_state', Object.assign(st, stamp));   // 다른 이벤트는 last_event_at 만(ping 간격·재시작 이력이 남게 · 살아 있음 판정은 둘 중 최근)
         const dupKey = e.envelope_id ? 'env:' + e.envelope_id : (e.gateway_id ? e.ev + ':' + e.gateway_id : null);   // 중복 제거는 봉투 id 로(messageId 는 내용 기반 · 고유 보장 없음)
         if (dupKey && seenOnce(dupKey)) return { ok: true, event: e.ev, dup: true };
         if (e.ev === 'sms:received') { if (!e.digits) return { ok: true, event: e.ev, skipped: 'no_phone' }; return Object.assign({ ok: true, event: e.ev }, await handleInbound({ digits: e.digits, body: e.body, kind: 'sms', gateway_id: e.gateway_id, sim_number: e.sim_number, event_at: e.event_at, envelope_id: e.envelope_id })); }
@@ -584,7 +635,7 @@ module.exports = function mountSms(app, deps) {
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date) AS today_in,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date) AS today_bot,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender IN ('staff_phone','staff_desk') AND (event_at + interval '9 hours')::date = $1::date) AS today_staff`, [today])).rows[0];
-        const lastPing = st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0;
+        const lastPing = Math.max(st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0, st.last_event_at ? new Date(st.last_event_at).getTime() : 0);
         const counts = {}; for (const row of (await pool.query(`SELECT status, count(*)::int AS n FROM sms_threads GROUP BY status`)).rows) counts[row.status] = row.n;   // 숫자 칸(워커1 계약 제안 1)
         res.json(Object.assign({ enabled: c.enabled, mode: c.mode, counts }, r, { gateway: { last_ping_at: st.last_ping_at || null, alive: !!lastPing && Date.now() - lastPing < c.ping_alert_hours * 3600e3 } }));
     }));
@@ -615,8 +666,10 @@ module.exports = function mountSms(app, deps) {
     const who = req => ({ id: req.user.id, name: req.user.name || req.user.username || '' });
     async function queueStaffReply(t, text, req, kind) {
         const body = smsSafe(text); if (!body) return null;
-        const m = await addMessage({ thread_id: t.id, direction: 'out', kind: 'sms', body, sender: 'staff_desk', state: 'queued', rule_kind: kind || null, send_after: new Date() });
-        await cancelPendingExcept(t.id, m.id);
+        const c = await cfg(); const pieces = splitForSms(body, c.max_chars);   // 직원·초안 발송도 봇 답과 같이 max_chars 조각(워커2 지적 · b-2 뒤 1000 으로 올리면 한 통)
+        let m = null;
+        for (let i = 0; i < pieces.length; i++) { const x = await addMessage({ thread_id: t.id, direction: 'out', kind: 'sms', body: pieces[i], sender: 'staff_desk', state: 'queued', rule_kind: kind || null, priority: Math.max(0, 9 - i), ai_json: { part: i + 1, parts: pieces.length }, send_after: new Date() }); if (!m) m = x; }
+        await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff_desk' WHERE thread_id = $1 AND direction = 'out' AND state = 'queued' AND sender <> 'staff_desk'`, [t.id]);
         await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null });
         await writeAudit({ action: 'create', targetType: 'sms_reply', targetId: m.id, changes: { after: { thread: t.id, kind: kind || 'staff', bytes: byteLen(body) } }, source: 'sms', actor: who(req) });
         return m;
@@ -627,13 +680,13 @@ module.exports = function mountSms(app, deps) {
         const t = await loadThread(req, res); if (!t) return;
         const text = String(req.body && req.body.text || '').trim(); if (!text) return res.status(400).json({ ok: false, error: '보낼 글이 비었어요' });
         const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' });
-        const m = await queueStaffReply(t, text, req, 'staff'); res.json({ ok: true, message_id: m.id });
+        const m = await queueStaffReply(t, text, req, 'staff'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' }); res.json({ ok: true, message_id: m.id });
     }));
     app.post('/api/sms/threads/:id/send-draft', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;
         if (!t.draft_text) return res.status(409).json({ ok: false, error: '보낼 초안이 없어요' });
         const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요' });
-        const m = await queueStaffReply(t, t.draft_text, req, 'draft:' + (t.draft_kind || '')); res.json({ ok: true, message_id: m.id });
+        const m = await queueStaffReply(t, t.draft_text, req, 'draft:' + (t.draft_kind || '')); if (!m) return res.status(400).json({ ok: false, error: '초안에 문자로 보낼 글자가 없어요' }); res.json({ ok: true, message_id: m.id });
     }));
     app.post('/api/sms/threads/:id/handled', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;
@@ -648,7 +701,7 @@ module.exports = function mountSms(app, deps) {
         res.json({ ok: true, cancelled });
     }));
     // 설정 보기·바꾸기(관리자 · 모드 전환은 여기서 — 첫 자동 발송(auto) 전환은 대표 「고」 뒤)
-    app.get('/api/sms/config', authMiddleware, wrap(async (req, res) => { const c = await cfg(true); res.json(Object.assign({}, c, { gateway_env: { user: !!gwEnv().user, pass: !!gwEnv().pass, signing_key: !!(process.env.SMSGATE_SIGNING_KEY || process.env.SMSGATE_WEBHOOK_SECRET) }, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), ai_note: !!aiNote } })); }));
+    app.get('/api/sms/config', authMiddleware, wrap(async (req, res) => { const c = await cfg(true); res.json(Object.assign({}, c, { gateway_env: { user: !!gwEnv().user, pass: !!gwEnv().pass, signing_key: !!(process.env.SMSGATE_SIGNING_KEY || process.env.SMSGATE_WEBHOOK_SECRET) }, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), ai_note: !!aiNote, followup: !!followup, selfcheck: !!selfcheck, photo_test: !!photoTest, preorders: !!preorders } })); }));
     app.post('/api/sms/config', authMiddleware, wrap(async (req, res) => {
         if (req.user.role !== 'admin') return res.status(403).json({ ok: false, error: '관리자만' });
         const prev = (await naverCfgGet('sms_gateway')) || {}; const next = Object.assign({}, prev, req.body || {});
@@ -657,6 +710,9 @@ module.exports = function mountSms(app, deps) {
         _cfgCache = null; res.json({ ok: true, config: c });
     }));
 
+    // 하위 모듈 장착(워커 몫 · 없으면 건너뜀): 셀프 조회 페이지 · 사진 판독 시험 라우트
+    try { const sm = typeof selfcheck === 'function' ? selfcheck : (selfcheck && selfcheck.mount); if (typeof sm === 'function') selfcheckApi = sm(app, { pool, lookup: lookupMod, cjTrack, holidays: loadShippingHolidayInfo, log, secret: process.env.JWT_SECRET }); } catch (e) { log.error('[문자] 셀프 조회 페이지 장착 실패:', e.message); }   // /track-order · /api/track-order · /track-order/go
+    try { const pm = typeof photoTest === 'function' ? photoTest : (photoTest && photoTest.mount); if (typeof pm === 'function') pm(app, { authMiddleware, log }); } catch (e) { log.error('[문자] 사진 시험 라우트 장착 실패:', e.message); }   // sms/photo-test.js(워커5) · judge·reply 는 모듈이 스스로 require
     const timers = [];
     function start() {
         timers.push(setInterval(() => { sendTick(); }, 10 * 1000));

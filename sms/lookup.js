@@ -78,7 +78,7 @@ function normalizeName(s) {
 }
 // db = pool 또는 client(.query 만 쓴다). 돌려주는 값 = { match, role, order, candidates, why? }
 //   opts.recipientName = many 일 때 되묻기로 받은 받는 분 성함. 이름 전체가 맞는 묶음이 하나면 one · 없으면 앞글자(성만 · 두 글자까지)가 맞는 묶음이 하나일 때만 one · 그 밖은 many 그대로.
-async function lookupByPhone(db, phone, opts) {
+async function lookupShipped(db, phone, opts) {
     const days = Math.max(1, Math.min(60, parseInt(opts && opts.days, 10) || 14));
     const d = normalizePhone(phone);
     if (!lookupable(d)) return { match: 'none', role: null, order: null, candidates: 0, why: 'bad-phone' };
@@ -106,6 +106,19 @@ async function lookupByPhone(db, phone, opts) {
     return narrowed ? { match: 'one', role, order, candidates, narrowed } : { match: 'one', role, order, candidates };
 }
 
+// #610-G 송장 표에 없으면 「발송 전 주문」(sms_preorders · sms/preorders.js)을 본다. 송장 표에 하나라도 있으면 그쪽이 먼저다(이미 나간 것 우선) —
+//   그때 발송 전 주문도 있으면 건수만 pre_pending 으로 알려 준다(「새로 주문한 건」을 묻는 것일 수 있다 · 답 글을 만드는 쪽이 판단).
+//   발송 전 주문의 order = { pre:true, channel, paid_at, paid_known, option_text, qty, recipient_initial, ship_date:null, delivered:false, status_label:null, tracking_tail:null }
+//   opts.pre === false 면 송장 표만 본다.
+async function lookupByPhone(db, phone, opts) {
+    const r = await lookupShipped(db, phone, opts);
+    if (r.why === 'bad-phone' || (opts && opts.pre === false)) return r;
+    const pre = await require('./preorders.js').lookupPre(db, phone, { days: opts && opts.days, name: normalizeName(opts && opts.recipientName) });
+    if (r.match === 'none') return pre.match === 'none' ? r : pre;
+    if (pre.candidates) r.pre_pending = pre.candidates;
+    return r;
+}
+
 // ── 배송 상태 새로 묻기 ──  배송완료가 아니고 마지막 확인이 maxAgeMs(기본 2시간)보다 오래됐으면 CJ 에 한 건 다시 묻고 표에 적는다.
 //   적는 꼴은 server.js deliveryUpsertStatus 와 같다(handled_at/by 는 건드리지 않는다). 조회 실패면 있던 줄을 그대로 두고 stale:true 로 돌려준다.
 const SQL_UPSERT = `INSERT INTO delivery_status (tracking, bucket, code, label, msg, event_time, branch, driver_name, driver_phone, events, delivered, checked_at, first_trouble_at)
@@ -130,7 +143,7 @@ async function refreshStatus(db, tracking, opts) {
 }
 // 찾은 주문(one)의 상자들 상태를 새로 묻고 결과에 다시 채운다 — 한 번에 maxBoxes(기본 3) 상자까지만
 async function refreshOrder(db, result, opts) {
-    if (!result || result.match !== 'one' || !result.order) return result;
+    if (!result || result.match !== 'one' || !result.order || result.order.pre || !Array.isArray(result.order.trackings)) return result;   // 발송 전 주문은 물을 운송장이 없다
     const o = opts || {}; let stale = false;
     for (const tr of result.order.trackings.slice(0, o.maxBoxes || 3)) { const r = await refreshStatus(db, tr, o); if (r && r.stale) stale = true; }
     fillStatus(result.order, (await db.query(SQL_STATUS, [result.order.trackings])).rows);
@@ -139,11 +152,12 @@ async function refreshOrder(db, result, opts) {
 }
 
 // ── 답 글에 써도 되는 것만 ──  허용 목록 방식(새 칸이 생겨도 여기 적지 않으면 밖으로 안 나간다)
-const PUBLIC_ORDER = ['ship_date', 'partner', 'option_text', 'qty', 'boxes', 'boxes_delivered', 'tracking_tail', 'recipient_initial', 'delivered', 'status_label', 'event_time', 'checked_at', 'stale'];
+const PUBLIC_ORDER = ['ship_date', 'partner', 'option_text', 'qty', 'boxes', 'boxes_delivered', 'tracking_tail', 'recipient_initial', 'delivered', 'status_label', 'event_time', 'checked_at', 'stale', 'pre', 'channel', 'paid_at', 'paid_known'];
 function toPublic(result) {
     const r = result || {}; const out = { match: r.match || 'none', role: r.role || null, candidates: r.candidates || 0, order: null };
+    if (r.pre_pending) out.pre_pending = r.pre_pending;
     if (r.match === 'one' && r.order) { out.order = {}; for (const k of PUBLIC_ORDER) if (r.order[k] !== undefined) out.order[k] = r.order[k]; }
     return out;
 }
 
-module.exports = { normalizeName, normalizePhone, lookupable, makeBuyerIndex, lookupByPhone, refreshStatus, refreshOrder, toPublic, PUBLIC_ORDER };
+module.exports = { lookupShipped, normalizeName, normalizePhone, lookupable, makeBuyerIndex, lookupByPhone, refreshStatus, refreshOrder, toPublic, PUBLIC_ORDER };
