@@ -546,9 +546,9 @@ console.log('⑫ #601 박스마다 다른 사이즈 — sizeLines parts · boxTa
         ['S사이즈 1건 M사이즈 1건', P('S', 1, 'M', 1), 'S', 2],
         ['1건 S 1건 M', P('S', 1, 'M', 1), 'S', 2],
         ['S 1건만 1건은 M사이즈', P('S', 1, 'M', 1), 'S', 2],
-        ['2S사이즈로! 2건 L 1건', P('2S', 2, 'L', 1), '2S', 3],
+        ['2S사이즈로! 2건 M 1건', P('2S', 2, 'M', 1), '2S', 3],   // #615: 종전 「L 1건」 — L 은 로얄과 사이즈가 아니라 아래 L 갈래로 옮김
         ['1건은 s사이즈로 2건은 m사이즈로 부탁', P('S', 1, 'M', 2), 'S', 3],
-        ['S 1건 M 1건 2L 1건', P('S', 1, 'M', 1, '2L', 1), 'S', 3],
+        ['S 1건 M 1건 2S 1건', P('S', 1, 'M', 1, '2S', 1), 'S', 3],   // #615: 종전 「2L 1건」
         ['m 1건씩 s 1건씩', P('M', 1, 'S', 1), 'M', 2],
     ];
     const badG = GOOD.filter(g => { const r = sl(g[0]), z = r.sizes[0]; return !(r.text === '' && r.sizes.length === 1 && eq(z.parts, g[1]) && z.size === g[2] && z.expect === g[3] && z.key === K && z.digits === '01012345678' && z.srcLine === 0 && z.raw === K + ' ' + g[0] && r.bad.length === 0); });
@@ -573,20 +573,28 @@ console.log('⑫ #601 박스마다 다른 사이즈 — sizeLines parts · boxTa
         ['업그레이드', '{"text":"","sizes":[],"ups":[{"srcLine":0,"raw":"010-1234-5678 업그레이드","key":"010-1234-5678","digits":"01012345678","expect":null}]}'],
         ['업그레이드 2건', '{"text":"","sizes":[],"ups":[{"srcLine":0,"raw":"010-1234-5678 업그레이드 2건","key":"010-1234-5678","digits":"01012345678","expect":2}]}'],
         ['4kg 업그레이드', '{"text":"010-1234-5678 4kg 업그레이드","sizes":[],"ups":[]}'],
-        ['10/12 L 사이즈 요청', '{"text":"010-1234-5678 10/12","sizes":[{"srcLine":0,"raw":"010-1234-5678 10/12 L 사이즈 요청","key":"010-1234-5678","digits":"01012345678","size":"L","expect":null}],"ups":[]}'],
+        ['10/12 L 사이즈 요청', '{"text":"010-1234-5678 10/12","sizes":[],"ups":[],"bad":[{"srcLine":0,"raw":"010-1234-5678 10/12 L 사이즈 요청","key":"010-1234-5678","digits":"01012345678","why":"로얄과 사이즈가 아니에요(2S·S·M)","kind":"size","size":"L"}]}', true],   // #615: 종전 = sizes 에 L → 지금 = 사이즈 안 붙임 · bad(확인 카드) · 요청일 글은 그대로 남음
         ['2건', '{"text":"010-1234-5678 2건","sizes":[],"ups":[]}'],
         ['S사이즈 문 앞', '{"text":"010-1234-5678 문 앞","sizes":[{"srcLine":0,"raw":"010-1234-5678 S사이즈 문 앞","key":"010-1234-5678","digits":"01012345678","size":"S","expect":null}],"ups":[]}'],
         ['2s 2건 10/13 자사몰', '{"text":"010-1234-5678 10/13 자사몰","sizes":[{"srcLine":0,"raw":"010-1234-5678 2s 2건 10/13 자사몰","key":"010-1234-5678","digits":"01012345678","size":"2S","expect":2}],"ups":[]}'],
     ];
     const old3 = r => JSON.stringify({ text: r.text, sizes: r.sizes, ups: r.ups });   // 종전 세 칸(bad 는 #601 새 칸)
-    const badO = OLD.filter(o => old3(sl(o[0])) !== o[1] || sl(o[0]).bad.length);
+    const badO = OLD.filter(o => o[2] ? JSON.stringify(sl(o[0])) !== o[1] : (old3(sl(o[0])) !== o[1] || sl(o[0]).bad.length));   // #615: 셋째 칸 true = bad 까지 통째 비교(L 줄)
     ok(badO.length === 0, `종전 줄 ${OLD.length}개(한 짝·업그레이드·빈칸 줄) 결과 바이트 동일 · parts 칸 없음`, badO.map(o => o[0] + ' → ' + JSON.stringify(sl(o[0]))).join(' | '));
     const t1 = core.sizeLines(K + '\t\t\tM사이즈 3건'), t2 = core.sizeLines(K + '\t10/11\t네이버\tS'), nk = core.sizeLines('홍길동 S 1건 M 1건');
     ok(old3(t1) === '{"text":"","sizes":[{"srcLine":0,"raw":"010-1234-5678\\t\\t\\tM사이즈 3건","key":"010-1234-5678","digits":"01012345678","size":"M","expect":3}],"ups":[]}' && t2.text === K + '\t10/11\t네이버\t' && t2.sizes[0].parts === undefined && nk.text === '홍길동 S 1건 M 1건' && nk.sizes.length === 0, '종전 탭 줄 바이트 동일 · 번호 없는 줄은 손대지 않음', JSON.stringify([t1, t2.text, nk]));
     const w1 = sl('S 2건만'), w2 = sl('업그레이드 1건은');
     ok(w1.text === '' && w1.sizes[0].expect === 2 && w1.sizes[0].parts === undefined && w2.ups.length === 1 && w2.ups[0].expect === 1 && w2.text === '', '「N건만·N건은」도 건수로 읽음(한 짝 줄 · 업그레이드 줄)', JSON.stringify([w1, w2]));
-    const multi = core.sizeLines([K + ' S 1건 M 1건', '010-9999-8888 2s', '그냥 글', '010-7777-6666 1건 L 2건 2L'].join('\n'));
-    ok(multi.text === '\n\n그냥 글\n' && eq(multi.sizes.map(z => [z.srcLine, z.size, z.expect, z.parts ? z.parts.length : 0]), [[0, 'S', 2, 2], [1, '2S', null, 0], [3, 'L', 3, 2]]), '여러 줄: 줄 수·줄 번호 그대로', JSON.stringify(multi.text));
+    const multi = core.sizeLines([K + ' S 1건 M 1건', '010-9999-8888 2s', '그냥 글', '010-7777-6666 1건 S 2건 M'].join('\n'));
+    ok(multi.text === '\n\n그냥 글\n' && eq(multi.sizes.map(z => [z.srcLine, z.size, z.expect, z.parts ? z.parts.length : 0]), [[0, 'S', 2, 2], [1, '2S', null, 0], [3, 'S', 3, 2]]), '여러 줄: 줄 수·줄 번호 그대로', JSON.stringify(multi.text));
+    // #615(대표 10/10 「L은 로얄이 아니야」): L·2L 이 적힌 줄은 사이즈를 붙이지 않고 bad[](kind size) — 사이즈 낱말은 줄에서 떼고 나머지 글은 그대로
+    {
+        const l1 = sl('L사이즈'), l2 = sl('2건 l 사이즈로 부탁'), l3 = sl('S 1건 L 1건'), l4 = sl('2L'), l5 = core.sizeLines([K + ' M', '010-9999-8888 L사이즈', '그냥 L 글'].join('\n'));
+        const isBad = (r, size) => r.sizes.length === 0 && r.bad.length === 1 && r.bad[0].kind === 'size' && r.bad[0].size === size && r.bad[0].why === '로얄과 사이즈가 아니에요(2S·S·M)' && r.bad[0].key === K && r.bad[0].srcLine === 0;
+        ok(isBad(l1, 'L') && l1.text === '' && isBad(l2, 'L') && l2.text === '' && isBad(l4, '2L') && l4.text === '', '#615 「번호 L사이즈」「2건 l 사이즈로 부탁」「2L」 → sizes 0 · bad(kind size) · 줄은 빈 줄(사이즈·건수·군더더기 낱말 뗌)', JSON.stringify([l1, l2, l4]));
+        ok(isBad(l3, 'L') && l3.text === '' && l3.bad[0].raw === K + ' S 1건 L 1건', '#615 박스별 짝에 L 이 하나라도 있으면 그 줄 전체를 안 붙임(S 1건도) · bad 한 건', JSON.stringify(l3));
+        ok(l5.text === '\n\n그냥 L 글' && eq(l5.sizes.map(z => [z.srcLine, z.size]), [[0, 'M']]) && eq(l5.bad.map(b => [b.srcLine, b.size, b.digits]), [[1, 'L', '01099998888']]), '#615 여러 줄: M 줄은 종전대로 · L 줄만 bad · 번호 없는 「L」 글은 손 안 댐', JSON.stringify(l5));
+    }
 
     // boxTails
     const parts = P('S', 1, 'M', 1), keepP = JSON.stringify(parts);

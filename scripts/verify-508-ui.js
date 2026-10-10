@@ -926,6 +926,8 @@ async function resolveCards(pg, type) {
             const mkChat = async (withClock, rowsX, vp, mobile) => {
                 const hitsC = { naver: 0, cafe24: 0, coupang: 0, cancel: 0, ai: 0 }; const ctxC = await newCtx(br, rowsX ? { ...fx16, naver: rowsX } : fx16, hitsC, vp || { width: 1400, height: 900 }, !!mobile, {});
                 if (withClock) await ctxC.clock.install();
+                // #615: [적용] 뒤 「직접 고치기」가 접힌다 — 종전 구간(㉜~㊻)은 「사람이 머리를 눌러 다시 펼친」 상태로 이어서 본다(펼치면 접힘 기억이 지워져 종전과 같은 화면). 접힘 자체는 ㊼ 에서 본다(window.__reFix = false)
+                await ctxC.addInitScript(() => { window.__reFix = true; new MutationObserver(() => { if (!window.__reFix) return; document.querySelectorAll('#fo-cards details.fo-fix:not([open])').forEach(d => { if (d.querySelector('summary .fo-fix-ok')) d.open = true; }); }).observe(document, { subtree: true, childList: true }); });
                 const NOJUSO = { results: { common: { errorCode: '0', errorMessage: '정상', totalCount: '0' }, juso: [] } };
                 const chat = { posts: [], memoPosts: [], fixPosts: [], fixAnswer: () => ({ reply: '', actions: [] }), dels: 0, mode: 'done', status: '처리중', answer: () => ({ reply: '', actions: [] }), jusoQ: [], juso: () => NOJUSO };
                 // #528: 주소 검색(도로명주소 프록시)은 늘 가짜 응답 — 기본은 「0건」
@@ -1870,7 +1872,7 @@ async function resolveCards(pg, type) {
                     ok(look.tag === '메모 재확인' && look.bc === 'rgb(240, 68, 56)' && look.bw === '2px' && look.tbg === 'rgb(254, 228, 226)' && look.tfg === 'rgb(180, 35, 24)' && kinds.some(k => /^메모 재확인 \d/.test(k)), `㉜⑤ ${tag} 메모 재확인 카드 = 빨강 테두리 2px · 빨강 배지 · 칩 「메모 재확인 N」`, JSON.stringify({ look, kinds }));
                     ok((await up2.locator('[data-size]').count()) === 0 && /귤 로얄과 주문에만/.test(await up2.innerText()), `㉜⑥ ${tag} 황금향 손님 = 사이즈 버튼 없음 + 안 되는 이유`, (await up2.innerText()).replace(/\s+/g, ' ').slice(0, 140));
                     const szBox = await up1.locator('[data-size]').evaluateAll(bs => bs.map(b => { const r = b.getBoundingClientRect(); return [b.textContent, Math.round(r.width), Math.round(r.height)]; }));
-                    ok(szBox.map(x => x[0]).join(',') === '2S,S,M,L' && szBox.every(x => x[1] >= 44 && x[2] >= 44), `㉜⑥ ${tag} 사이즈 버튼 2S·S·M·L · 44px 이상`, JSON.stringify(szBox));
+                    ok(szBox.map(x => x[0]).join(',') === '2S,S,M' && szBox.every(x => x[1] >= 44 && x[2] >= 44), `㉜⑥ ${tag} 사이즈 버튼 2S·S·M(#615 L 없음) · 44px 이상`, JSON.stringify(szBox));
                     await up1.locator('[data-size="M"]').click(); await w.pg.waitForTimeout(250);
                     const opt1 = await w.pg.evaluate(sel => { const i = document.querySelector(sel).contentWindow.__ivt; const st = window.AkmFinalOrder.state; const e = i.S.merged.find(x => x.conv['수취인명'] === '이가'); return { tails: [...st.sizeTail.values()], gut: (document.querySelector('#fo-memo-gut .m') || {}).textContent, done: [...document.querySelectorAll('#fo-cards .fo-card[data-fo-card="size-up"][data-fo-done]')].map(c => c.querySelector('.fo-done').textContent) }; }, SEL.hidden);
                     ok(opt1.tails.includes('M사이즈로!') && /사이즈 지정 1건/.test(opt1.gut) && opt1.done.some(t => /M사이즈로! · 귤 로얄과 1건/.test(t)), `㉜⑥ ${tag} [M]을 누르면 그 손님 귤 로얄과 주문에 「M사이즈로!」 · 줄 표시 「사이즈 지정 1건」 · 카드 닫힘`, JSON.stringify(opt1));
@@ -2216,7 +2218,7 @@ async function resolveCards(pg, type) {
                 const patchOf = nm => w.pg.evaluate(a => { const i = document.querySelector(a.sel).contentWindow.__ivt, st = window.AkmFinalOrder.state, e = i.S.merged.find(x => x.conv['수취인명'] === a.nm); const key = [...st.patch.keys()].find(k => { const c = st.cards.find(cd => (cd.fix || []).includes(k)); return c && c.title.includes(a.nm); }); const p = key ? st.patch.get(key) : null; return p ? { tail: p.tail, tailBy: p.tailBy, opt: p.opt } : null; }, { sel: SEL.hidden, nm });
                 await openFix('칠가');
                 const t0 = await tb('칠가');
-                ok(!!t0 && t0.val === '' && t0.chips.join(',') === '2S,S,M,L' && !t0.warn && !t0.clear, '㊲ 귤 로얄과 주문: 옵션명 아래 꼬리 칸 + 빠른 선택 [2S][S][M][L]', JSON.stringify(t0));
+                ok(!!t0 && t0.val === '' && t0.chips.join(',') === '2S,S,M' && !t0.warn && !t0.clear, '㊲ 귤 로얄과 주문: 옵션명 아래 꼬리 칸 + 빠른 선택 [2S][S][M](#615 L 없음)', JSON.stringify(t0));
                 await card('칠가').locator('[data-tailset="M사이즈로!"]').click(); await w.pg.waitForTimeout(150); const t1 = await tb('칠가');
                 ok(t1.val === 'M사이즈로!' && t1.on.join() === 'M' && t1.clear, '㊲ [M]을 누르면 칸에 「M사이즈로!」 · 고른 칩 표시 · [꼬리 없음] 생김', JSON.stringify(t1));
                 await card('칠가').locator('[data-x="tail"]').fill('2s'); await card('칠가').locator('[data-x="name"]').focus(); await w.pg.waitForTimeout(200); const t2 = await tb('칠가');
@@ -2514,7 +2516,7 @@ async function resolveCards(pg, type) {
                 const rows41 = [mk('육가', { tel: T(1), qty: 2 }), mk('육나', { tel: T(2), qty: 2 }), mk('육다', { tel: T(3), qty: 3 }), mk('육라', { tel: T(4), qty: 2 }), mk('육마', { tel: T(5), qty: 1 }), mk('육바', { tel: T(6), qty: 2 }), mk('육사', { tel: T(7), qty: 2 }), mk('육아', { tel: T(8), qty: 1 }), mk('육아', { recv: '육아둘', tel: T(8), qty: 1 })];
                 const DEP = '제주특별자치도 제주시 연삼로 1066-31, 제주아꼼이네';
                 const cash41 = writeXlsx(path.join(TMP, '가짜_현금_박스별.xlsx'), [FX.CASH_HDR, ['시험구매(제주아꼼이네)', '010-7300-0000', DEP, '현육받는', royalName, 2, '010-7400-4101', '', '서울특별시 가짜구 현금로 41', '', T(7), '', '']]);
-                const memo41 = [T(1) + ' s사이즈 1건만 1건은 m사이즈', T(2) + ' S사이즈 1건 M사이즈 1건 L사이즈 1건', T(3) + ' S사이즈 1건 M사이즈 1건', T(6) + ' S사이즈 M사이즈 1건', T(7) + ' 입력o삭제x S사이즈 1건 M사이즈 1건', T(8) + ' 2S사이즈 1건 M사이즈 1건'];
+                const memo41 = [T(1) + ' s사이즈 1건만 1건은 m사이즈', T(2) + ' S사이즈 1건 M사이즈 1건 2S사이즈 1건', T(3) + ' S사이즈 1건 M사이즈 1건', T(6) + ' S사이즈 M사이즈 1건', T(7) + ' 입력o삭제x S사이즈 1건 M사이즈 1건', T(8) + ' 2S사이즈 1건 M사이즈 1건'];
                 const w = await mkChat(false, rows41); w.chat.memoAns = () => ({ memo: '그대로', sure: true });
                 await setCash(w.pg, cash41); await startWithMemo(w.pg, memo41.join('\n')); await settle(w.pg);
                 const card = nm => w.pg.locator('#fo-cards .fo-card').filter({ hasText: nm }).first();
@@ -2540,13 +2542,13 @@ async function resolveCards(pg, type) {
                 const b0 = await bx();
                 ok(!!b0 && b0.on === 'none' && b0.rows.length === 2 && !b0.tailDis, '㊶ 2박스 주문: 토글 없이 처음부터 박스 2줄(#611) · 위쪽 꼬리 칸은 그대로 쓸 수 있음(모든 박스에)', JSON.stringify(b0));
                 const b1 = b0;
-                ok(b1.rows.length === 2 && b1.rows[0].no === '박스 1' && b1.rows.every(r => r.chips === '2S,S,M,L,꼬리 없음' && r.on === '꼬리 없음' && r.h >= 36), '㊶ 박스 1·2 줄마다 [2S][S][M][L][꼬리 없음]', JSON.stringify(b1));
-                await c4.locator('[data-box="0"] [data-boxset="2S사이즈로!"]').click(); await c4.locator('[data-box="1"] [data-boxset="L사이즈로!"]').click(); await w.pg.waitForTimeout(120); const b2 = await bx();
-                ok(b2.rows[0].on === '2S' && b2.rows[1].on === 'L', '㊶ 박스마다 칩 고름(박스 1 = 2S · 박스 2 = L)', JSON.stringify(b2.rows.map(r => r.on)));
+                ok(b1.rows.length === 2 && b1.rows[0].no === '박스 1' && b1.rows.every(r => r.chips === '2S,S,M,꼬리 없음' && r.on === '꼬리 없음' && r.h >= 36), '㊶ 박스 1·2 줄마다 [2S][S][M][꼬리 없음]', JSON.stringify(b1));
+                await c4.locator('[data-box="0"] [data-boxset="2S사이즈로!"]').click(); await c4.locator('[data-box="1"] [data-boxset="M사이즈로!"]').click(); await w.pg.waitForTimeout(120); const b2 = await bx();
+                ok(b2.rows[0].on === '2S' && b2.rows[1].on === 'M', '㊶ 박스마다 칩 고름(박스 1 = 2S · 박스 2 = M)', JSON.stringify(b2.rows.map(r => r.on)));
                 await c4.locator('[data-fix-apply]').click(); await settle(w.pg);
                 const p1 = await w.pg.evaluate(() => { const st = window.AkmFinalOrder.state, c = st.cards.find(c => c.title.includes('육라')), p = c && st.patch.get(c.fix[0]); return { p: p ? { boxes: p.boxes, boxesBy: p.boxesBy, tail: p.tail, by: p.by } : null, list: document.getElementById('fo-patches').innerText, head: c ? c.title : '' }; });
                 const h4 = await card('육라').locator('.fo-card-top b').innerText();
-                ok(!!p1.p && JSON.stringify(p1.p.boxes) === JSON.stringify([{ tail: '2S사이즈로!', qty: 1 }, { tail: 'L사이즈로!', qty: 1 }]) && p1.p.boxesBy === 'card' && p1.p.tail == null && /박스별 꼬리: .*육라.*2S사이즈 1박스 · L사이즈 1박스/.test(p1.list) && /되돌리기/.test(p1.list) && /\[2S사이즈 1박스 · L사이즈 1박스\]/.test(h4), '㊶ [적용] → st.patch.boxes(card) · 「말로 바꾼 것」 「박스별 꼬리: … → 2S사이즈 1박스 · L사이즈 1박스」 + [되돌리기] · 카드 머리 갱신', JSON.stringify({ p: p1.p, list: p1.list.slice(0, 120), h4 }));
+                ok(!!p1.p && JSON.stringify(p1.p.boxes) === JSON.stringify([{ tail: '2S사이즈로!', qty: 1 }, { tail: 'M사이즈로!', qty: 1 }]) && p1.p.boxesBy === 'card' && p1.p.tail == null && /박스별 꼬리: .*육라.*2S사이즈 1박스 · M사이즈 1박스/.test(p1.list) && /되돌리기/.test(p1.list) && /\[2S사이즈 1박스 · M사이즈 1박스\]/.test(h4), '㊶ [적용] → st.patch.boxes(card) · 「말로 바꾼 것」 「박스별 꼬리: … → 2S사이즈 1박스 · M사이즈 1박스」 + [되돌리기] · 카드 머리 갱신', JSON.stringify({ p: p1.p, list: p1.list.slice(0, 120), h4 }));
                 // 파일: 남은 카드 닫고 만들기
                 for (let k = 0; k < 20; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(200); }
                 ok((await w.pg.locator('#fo-cards .fo-card[data-state="open"]').count()) === 0 && !(await w.pg.isDisabled(SEL.make)), '㊶ 준비: 열린 카드 0 · [파일 만들기] 켜짐', JSON.stringify(await cardCount(w.pg)));
@@ -2559,12 +2561,12 @@ async function resolveCards(pg, type) {
                 await w.pg.click(SEL.make); await idle(w.pg); const g1 = await dl41('a');
                 const R = nm => g1.of(nm).map(x => x.opt.replace(royalName, '').trim() + '×' + x.q).sort().join(' | ');
                 ok(R('육가') === 'M사이즈로!×1 | S사이즈로!×1' && g1.of('육가').every(x => /E4DFEC/i.test(String(x.fill[0])) && /E4DFEC/i.test(String(x.fill[1])) && !/E4DFEC/i.test(String(x.fill[2]))), '㊶ 🔴 택배사 양식: 육가(2박스) = 두 줄(「… S사이즈로!」 1 · 「… M사이즈로!」 1) · 옵션·수량 칸 연보라 · 다른 칸은 그대로', JSON.stringify(g1.of('육가')));
-                ok(R('육라') === '2S사이즈로!×1 | L사이즈로!×1' && R('육다') === 'M사이즈로!×1 | S사이즈로!×1 | ×1' && R('육나') === '×2' && R('육마') === '×1' && R('육바') === '×2', '㊶ 카드에서 정한 육라 = 2S 1 · L 1 / 육다(3박스) = S 1 · M 1 · 꼬리 없음 1 / 합이 넘친 육나·못 읽은 육바·1박스 육마 = 한 줄 그대로(꼬리 없음)', JSON.stringify(['육라', '육다', '육나', '육마', '육바'].map(R)));
+                ok(R('육라') === '2S사이즈로!×1 | M사이즈로!×1' && R('육다') === 'M사이즈로!×1 | S사이즈로!×1 | ×1' && R('육나') === '×2' && R('육마') === '×1' && R('육바') === '×2', '㊶ 카드에서 정한 육라 = 2S 1 · M 1 / 육다(3박스) = S 1 · M 1 · 꼬리 없음 1 / 합이 넘친 육나·못 읽은 육바·1박스 육마 = 한 줄 그대로(꼬리 없음)', JSON.stringify(['육라', '육다', '육나', '육마', '육바'].map(R)));
                 ok(R('현육받는') === 'M사이즈로!×1 | S사이즈로!×1' && g1.of('육사').length === 0, '㊶ 입력삭제 손님: 현금파일 줄(2박스)이 두 줄로(S 1 · M 1) · 주문 줄은 양식에서 빠짐(종전 규칙)', JSON.stringify(g1.of('현육받는')));
                 ok(R('육아') === '2S사이즈로!×1' && R('육아둘') === 'M사이즈로!×1', '㊶ 같은 구매자 두 줄 = 2S 한 줄 · M 한 줄', JSON.stringify([R('육아'), R('육아둘')]));
                 const qOf = t => g1.qty.filter(r => String(r[0]) === royalName + (t ? ' ' + t : '')).reduce((n, r) => n + Number(r[1]), 0);
                 const sumQ = g1.qty.filter(r => String(r[0]).startsWith(royalName)).reduce((n, r) => n + Number(r[1]), 0), sumR = g1.rows.filter(r => String(r[4]).startsWith(royalName)).reduce((n, r) => n + Number(r[5]), 0);
-                ok(qOf('S사이즈로!') === 3 && qOf('M사이즈로!') === 4 && qOf('2S사이즈로!') === 2 && qOf('L사이즈로!') === 1 && sumQ === sumR && sumR === 2 + 2 + 3 + 2 + 1 + 2 + 2 + 1 + 1, '㊶ 수량 표가 꼬리별로 갈림(S 3 · M 4 · 2S 2 · L 1) · 박스 합계는 그대로(' + sumR + ')', JSON.stringify(g1.qty.filter(r => String(r[0]).startsWith(royalName)).map(r => [String(r[0]).replace(royalName, '').trim(), r[1]])));
+                ok(qOf('S사이즈로!') === 3 && qOf('M사이즈로!') === 5 && qOf('2S사이즈로!') === 2 && qOf('L사이즈로!') === 0 && sumQ === sumR && sumR === 2 + 2 + 3 + 2 + 1 + 2 + 2 + 1 + 1, '㊶ 수량 표가 꼬리별로 갈림(S 3 · M 5 · 2S 2 · L 0(#615)) · 박스 합계는 그대로(' + sumR + ')', JSON.stringify(g1.qty.filter(r => String(r[0]).startsWith(royalName)).map(r => [String(r[0]).replace(royalName, '').trim(), r[1]])));
                 ok(g1.store === rows41.length, '㊶ 스마트스토어 발주발송관리 시트는 종전대로 주문 한 줄씩(' + g1.store + '행)');
                 // 되돌리기
                 await w.pg.locator('#fo-patches [data-unpatch]').first().click(); await settle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 30000 }).catch(() => { }); await settle(w.pg);
@@ -2572,9 +2574,9 @@ async function resolveCards(pg, type) {
                 ok((await w.pg.evaluate(() => window.AkmFinalOrder.state.patch.size)) === 0 && R2('육라') === '×2' && R2('육가') === 'M사이즈로!×1 | S사이즈로!×1', '㊶ [되돌리기] → 육라는 한 줄 2박스로 돌아감 · 메모 줄로 정한 육가는 그대로', JSON.stringify([R2('육라'), R2('육가')]));
                 // 박스별을 「전부 같게」 고르면 보통 꼬리 하나 · 메모 줄 박스별을 끄면 꼬리 하나로
                 await find('육라'); await card('육라').locator('[data-box="0"] [data-boxset="M사이즈로!"]').click(); await card('육라').locator('[data-box="1"] [data-boxset="M사이즈로!"]').click(); await card('육라').locator('[data-fix-apply]').click(); await settle(w.pg);
-                await find('육가'); const tg = (await card('육가').evaluate(c => [...c.querySelectorAll('[data-box] .fo-chip.on')].map(b => b.textContent).join(','))) === 'S,M' ? 'true' : 'false'; await card('육가').locator('[data-tailset="L사이즈로!"]').click(); await w.pg.waitForTimeout(120); await card('육가').locator('[data-fix-apply]').click(); await settle(w.pg);
+                await find('육가'); const tg = (await card('육가').evaluate(c => [...c.querySelectorAll('[data-box] .fo-chip.on')].map(b => b.textContent).join(','))) === 'S,M' ? 'true' : 'false'; await card('육가').locator('[data-tailset="2S사이즈로!"]').click(); await w.pg.waitForTimeout(120); await card('육가').locator('[data-fix-apply]').click(); await settle(w.pg);
                 const p3 = await w.pg.evaluate(() => { const st = window.AkmFinalOrder.state, f = nm => { const c = st.cards.find(c => c.title.includes(nm)), p = c && st.patch.get(c.fix[0]); return p ? { tail: p.tail, boxes: p.boxes || null } : null; }; return { ra: f('육라'), ga: f('육가') }; });
-                ok(p3.ra && p3.ra.tail === 'M사이즈로!' && !p3.ra.boxes && tg === 'true' && p3.ga && p3.ga.tail === 'L사이즈로!' && !p3.ga.boxes, '㊶ 박스를 전부 같게(M·M) 고르면 보통 꼬리 하나 · 메모 줄로 나뉜 박스(육가 S·M)에 위쪽 칩 [L](모든 박스에) → 꼬리 하나 「L사이즈로!」', JSON.stringify(p3));
+                ok(p3.ra && p3.ra.tail === 'M사이즈로!' && !p3.ra.boxes && tg === 'true' && p3.ga && p3.ga.tail === '2S사이즈로!' && !p3.ga.boxes, '㊶ 박스를 전부 같게(M·M) 고르면 보통 꼬리 하나 · 메모 줄로 나뉜 박스(육가 S·M)에 위쪽 칩 [2S](모든 박스에) → 꼬리 하나 「2S사이즈로!」', JSON.stringify(p3));
                 // 야간 대비 · 폰 폭
                 await find('육다'); await card('육다').locator('[data-boxes]').scrollIntoViewIfNeeded();
                 const dk = await w.pg.evaluate(() => { document.documentElement.setAttribute('data-ao-theme', 'dark'); return new Promise(res => setTimeout(() => {
@@ -2706,7 +2708,7 @@ async function resolveCards(pg, type) {
                 const t1 = await toastT(), v1 = await view('구갑');
                 ok(v1.state === 'done' && v1.use === 0 && v1.p && v1.p.tail === 'M사이즈로!' && v1.p.tailBy === 'card' && v1.dec && v1.dec.use === true && v1.dec.memo === '문 앞에 놔주세요' && !v1.dec.tail && /배송메세지 「문 앞에 놔주세요」/.test(v1.done) && v1.pend === v0a.pend - 1, '㊹① 🔴 배송메세지 카드 직접 고치기 [M] → [적용] 한 번으로 카드가 끝남(배송메세지 = 칸의 글 · 꼬리 = 직접 고치기 쪽) · [이대로 넣기]를 다시 누를 필요 없음 · 확인할 것 1 줄어듦', JSON.stringify({ state: v1.state, use: v1.use, p: v1.p, dec: v1.dec, done: v1.done, pend: [v0a.pend, v1.pend] }));
                 ok(v1.fixOpen && v1.undo === 1 && / M사이즈로!/.test(v1.head), '㊹① 끝난 카드에도 직접 고치기가 펼친 채 남고 [되돌리기] · 카드 머리에 새 꼬리', JSON.stringify({ fixOpen: v1.fixOpen, undo: v1.undo, head: v1.head }));
-                ok(/적용하고 이 카드를 끝냈어요/.test(t1), '㊹① 안내 글 「고친 내용을 적용하고 이 카드를 끝냈어요」', t1.slice(0, 80));
+                ok(/고친 내용이 적용되었습니다/.test(t1), '㊹① 안내 글 「고친 내용이 적용되었습니다」(#615)', t1.slice(0, 80));
                 // ② 보내는이 카드: 직접 고치기에서 옵션명만 바꿔 [적용] → 카드 칸의 이름(AI 추정 「김보냄」) 그대로 [이대로 넣기]한 것과 같음
                 await card('구을').locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(150); await pickOpt(w.pg, card('구을'), other); await card('구을').locator('[data-fix-apply]').click(); await settle(w.pg);
                 const v2 = await view('구을');
@@ -2714,7 +2716,7 @@ async function resolveCards(pg, type) {
                 // ③ #609(대표 10/9): 주문 확인 카드(오늘 발송/제외)도 [적용] 한 번 = 카드의 배송메세지 칸 그대로 [오늘 발송]
                 await card('구정').locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(150); await card('구정').locator('[data-f="memo"]').fill('경비실에 맡겨주세요'); await card('구정').locator('[data-x="name"]').fill('홍길동'); await w.pg.evaluate(() => { window.__toasts = []; }); await card('구정').locator('[data-fix-apply]').click(); await settle(w.pg);
                 const v3 = await view('구정'), t3 = await toastT(), om3 = await w.pg.evaluate(() => { const st = window.AkmFinalOrder.state, cd = st.cards.find(c => c.type === 'order' && !c.recheck); return st.ordMemo && cd ? st.ordMemo.get(cd.id) : null; });
-                ok(v3.state === 'done' && v3.send === 0 && v3.p && v3.p.by === 'card' && v3.dec === 'send' && om3 === '경비실에 맡겨주세요' && /오늘 발송 · 배송메세지 「경비실에 맡겨주세요」/.test(v3.done) && v3.pend === v2.pend - 1 && v3.fixOpen && /적용하고 이 카드를 끝냈어요/.test(t3), '㊹③ 🔴 #609 주문 확인 카드 직접 고치기 [적용] 한 번 = 카드 배송메세지 칸 그대로 [오늘 발송]으로 끝남 · 직접 고치기 펼친 채 · 안내 글', JSON.stringify({ state: v3.state, send: v3.send, dec: v3.dec, om: om3, done: v3.done, pend: [v2.pend, v3.pend] }));
+                ok(v3.state === 'done' && v3.send === 0 && v3.p && v3.p.by === 'card' && v3.dec === 'send' && om3 === '경비실에 맡겨주세요' && /오늘 발송 · 배송메세지 「경비실에 맡겨주세요」/.test(v3.done) && v3.pend === v2.pend - 1 && v3.fixOpen && /고친 내용이 적용되었습니다/.test(t3), '㊹③ 🔴 #609 주문 확인 카드 직접 고치기 [적용] 한 번 = 카드 배송메세지 칸 그대로 [오늘 발송]으로 끝남 · 직접 고치기 펼친 채 · 안내 글', JSON.stringify({ state: v3.state, send: v3.send, dec: v3.dec, om: om3, done: v3.done, pend: [v2.pend, v3.pend] }));
                 // ④ 업그레이드 카드: 직접 고치기에서 꼬리 하나 [S] → [적용] → 끝남(「S사이즈로! · 직접 고침」)
                 await card(T(5)).locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(150); await card(T(5)).locator('[data-tailset="S사이즈로!"]').click(); await card(T(5)).locator('[data-fix-apply]').click(); await settle(w.pg);
                 const v4 = await view(T(5));
@@ -2762,7 +2764,7 @@ async function resolveCards(pg, type) {
                 // 2박스 = 박스 2줄 기본 · 칸 전부
                 const bx = await cA.evaluate(c => ({ toggle: c.querySelectorAll('[data-boxtoggle]').length, rcMain: c.querySelectorAll('[data-x="rname"]').length, rows: [...c.querySelectorAll('[data-box]')].map(r => ({ no: r.querySelector('.fo-boxno').textContent, chips: [...r.querySelectorAll('.fo-chip')].map(b => b.textContent).join(','), opt: (r.querySelector('[data-boptbtn] .fo-optbtn-t') || {}).textContent || '', f: [...r.querySelectorAll('[data-brc]')].map(i => i.dataset.brc + '=' + i.value), h: Math.min(...[...r.querySelectorAll('input[type="text"]')].map(e => Math.round(e.getBoundingClientRect().height))), hb: Math.min(...[...r.querySelectorAll('.fo-boptbtn, .fo-chip')].map(e => Math.round(e.getBoundingClientRect().height))) })), body: (() => { const d = c.querySelector('details.fo-fix'), hOf = () => Math.round(d.getBoundingClientRect().height - d.querySelector('summary').getBoundingClientRect().height); const now = hOf(), parts = [...d.querySelectorAll('.fo-edit > *, .fo-tailbox > *, [data-box="0"] > *, .fo-card-acts')].map(x => String(x.className || x.tagName).split(' ').pop() + ':' + Math.round(x.getBoundingClientRect().height)).join(' ') + ' w' + Math.round(d.getBoundingClientRect().width); d.removeAttribute('data-compact'); const was = hOf(); d.setAttribute('data-compact', ''); return { now, was, parts }; })() }));
                 ok(bx.toggle === 0 && bx.rows.length === 2 && bx.rows[0].no === '박스 1' && bx.rows[1].no === '박스 2' && bx.rcMain === 0, '㊺ 수량 2 주문 = 토글 없이 처음부터 박스 2줄', JSON.stringify(bx.rows.map(r => r.no)));
-                ok(bx.rows.every(r => r.chips === '2S,S,M,L,꼬리 없음' && r.opt === royalName && r.f.length === 5 && r.f[0] === 'n=사오가' && r.f[1] === 'p=010-7411-0001' && /^p2=/.test(r.f[2]) && r.f[3] === 'a=' + A1 && /^m=/.test(r.f[4]) && r.h >= 32 && r.hb >= 33), '㊺ 박스 줄마다 옵션명 · 꼬리 칩 · 받는 분 · 번호 1·2 · 주소 · 배송메세지(기본값 = 주문 원문 · 누르는 것 36 이상)', JSON.stringify(bx.rows[1]));
+                ok(bx.rows.every(r => r.chips === '2S,S,M,꼬리 없음' && r.opt === royalName && r.f.length === 5 && r.f[0] === 'n=사오가' && r.f[1] === 'p=010-7411-0001' && /^p2=/.test(r.f[2]) && r.f[3] === 'a=' + A1 && /^m=/.test(r.f[4]) && r.h >= 32 && r.hb >= 33), '㊺ 박스 줄마다 옵션명 · 꼬리 칩 · 받는 분 · 번호 1·2 · 주소 · 배송메세지(기본값 = 주문 원문 · 누르는 것 36 이상)', JSON.stringify(bx.rows[1]));
                 ok(bx.body.now > 0 && bx.body.now <= bx.body.was * 0.8, '㊺ 펼친 칸 묶음 높이 = 줄이기 전의 80% 이하(보충 2 · 같은 주문 ' + bx.body.was + ' → ' + bx.body.now + 'px · ' + Math.round(bx.body.now / bx.body.was * 100) + '%)', bx.body.parts);
                 // 박스 2 의 받는 분 이름·번호·주소·배송메세지를 바꾸고 박스 1 은 S
                 await cA.locator('[data-box="0"] [data-boxset="S사이즈로!"]').click();
@@ -2867,6 +2869,84 @@ async function resolveCards(pg, type) {
                 const lt = await w.pg.evaluate(() => { const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; }; const e = document.querySelector('#fo-info .fo-isrc'), p = s => (String(s).match(/[\d.]+/g) || []).slice(0, 3).map(Number); const f = p(getComputedStyle(e).color), L1 = lum(f), L2 = lum([255, 255, 255]); return +((Math.max(L1, L2) + .05) / (Math.min(L1, L2) + .05)).toFixed(2); });
                 ok(lt >= 4.5, '㊻ 밝은 화면: 「메모」 표식 글자 대비 ' + lt);
                 ok(w.errs.length === 0, '㊻ 오류 0', w.errs.join(' | ')); await w.ctx.close();
+            }
+
+            // ── ㊼ #615(대표 10/10) — 직접 고치기 [적용] = 토스트 「고친 내용이 적용되었습니다」 + 접힘 · 로얄과 사이즈는 2S·S·M(L 없음 — 칩 3곳 · 메모 줄 L = 확인 카드 · 양식에 L 꼬리 0) ──
+            console.log('\n㊼ #615 [적용] 뒤 접힘 · 로얄과 L 없음');
+            {
+                const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
+                const T = n => '010-9615-' + String(n).repeat(4);
+                const royalName = (cat.byPartner[FX.P_HYODON] || []).find(n => String(base['옵션정보'] || '').includes(n)) || (cat.byPartner[FX.P_HYODON] || [])[0];
+                const rows47 = [mk('사칠가', { tel: T(1) }), mk('사칠나', { tel: T(2), qty: 2 }), mk('사칠다', { tel: T(3) }), mk('사칠라', { tel: T(4) }), mk('사칠마', { tel: T(5), qty: 2 })];
+                const memo47 = [T(3) + ' L사이즈', T(4) + ' 업그레이드', T(5) + ' S사이즈 1건 L사이즈 1건'];
+                const w = await mkChat(false, rows47); w.chat.memoAns = () => ({ memo: '그대로', sure: true });
+                await w.pg.evaluate(() => { window.__reFix = false; }); await setCash(w.pg, null); await startWithMemo(w.pg, memo47.join('\n')); await settle(w.pg);
+                const card = nm => w.pg.locator('#fo-cards .fo-card').filter({ hasText: nm }).first();
+                const find = async nm => { await w.pg.fill('#fo-find-q', nm); await w.pg.waitForTimeout(250); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(900); };
+                const pOf = nm => w.pg.evaluate(n => { const st = window.AkmFinalOrder.state, c = st.cards.find(c => c.title.includes(n) && c.fix), p = c && st.patch.get(c.fix[0]); return p ? JSON.parse(JSON.stringify(p)) : null; }, nm);
+                const fx = nm => card(nm).evaluate(c => { const d = c.querySelector('details.fo-fix'); return d ? { open: d.open, ok: !!d.querySelector('summary .fo-fix-ok'), undo: !!d.querySelector('[data-fix-undo]'), sumH: Math.round(d.querySelector('summary').getBoundingClientRect().height), bodyH: Math.round((d.querySelector('.fo-edit') || d).getBoundingClientRect().height) } : null; });
+                const toastNow = () => w.pg.evaluate(() => [...document.querySelectorAll('.toast-message')].map(t => t.textContent.trim()));
+                // 메모 줄 「번호 L사이즈」 = 사이즈 안 붙임 · 확인 카드 · 줄 표시
+                const s0 = await w.pg.evaluate(() => { const st = window.AkmFinalOrder.state; return { bad: (st.sizeBad || []).map(b => [b.kind, b.size, b.srcLine]), sizes: (st.sizeLines || []).map(z => z.size), tails: [...st.sizeTail.values()], boxes: [...st.sizeBoxes.values()].map(b => b.map(x => x.tail).join(',')),
+                    cards: st.cards.filter(c => /^lpbad:|^l[a-z]+:/.test(c.id)).map(c => ({ id: c.id.split(':')[0], recheck: !!c.recheck, title: c.title, lines: (c.lines || []).map(l => l.join(' ')).join(' / ') })), gut: Array.from(document.querySelectorAll('#fo-memo-gut .m')).map(m => (m.textContent || '').trim()) }; });
+                ok(JSON.stringify(s0.bad) === JSON.stringify([['size', 'L', 0], ['size', 'L', 2]]) && s0.sizes.length === 0 && !s0.tails.some(t => /L사이즈/.test(t)) && !s0.boxes.some(t => /사이즈/.test(t)), '㊼ 🔴 메모 줄 「번호 L사이즈」「S 1건 L 1건」 = 사이즈를 하나도 안 붙임(sizeBad kind size 2줄 · 꼬리·박스별 0)', JSON.stringify(s0));
+                const cL = s0.cards.filter(c => /로얄과 사이즈가 아니에요\(2S·S·M\)/.test(c.lines));
+                ok(cL.length === 2 && cL.every(c => c.recheck && /L/.test(c.title)) && s0.gut.filter(g => /로얄과 사이즈 아님/.test(g)).length === 2, '㊼ 그 두 줄 = 「메모 재확인」 확인 카드(「로얄과 사이즈가 아니에요(2S·S·M)」) · 메모 칸 줄 표시 「로얄과 사이즈 아님」', JSON.stringify({ cL, gut: s0.gut }));
+                const cardL = w.pg.locator('#fo-cards .fo-card[data-recheck]').filter({ hasText: '로얄과 사이즈가 아니에요' }).first();
+                ok((await cardL.locator('[data-fo-act], [data-choice]').count()) >= 1 && (await cardL.getAttribute('data-state')) === 'open', '㊼ 확인 카드는 열린 채 [확인함] 버튼(사람이 본다)', await cardL.innerText().catch(() => ''));
+                // 칩 3곳: 업그레이드 카드 버튼 · 직접 고치기 꼬리 칩 · 박스 줄 칩
+                const up = await card('업그레이드').evaluate(c => [...c.querySelectorAll('.fo-size')].map(b => b.textContent.trim()).join(','));
+                ok(up === '2S,S,M', '㊼ ① 업그레이드 카드 사이즈 버튼 = 2S·S·M(L 없음)', up);
+                await find('사칠가'); const c1 = card('사칠가');
+                const chips1 = await c1.evaluate(c => [...c.querySelectorAll('[data-tailchips] .fo-chip:not(.clear)')].map(b => b.textContent.trim()).join(','));
+                ok(chips1 === '2S,S,M', '㊼ ② 직접 고치기 꼬리 칩 = 2S·S·M(L 없음)', chips1);
+                await find('사칠나'); const chips2 = await card('사칠나').evaluate(c => [...c.querySelectorAll('[data-box]')].map(r => [...r.querySelectorAll('.fo-chip')].map(b => b.textContent.trim()).join(',')));
+                ok(chips2.length === 2 && chips2.every(x => x === '2S,S,M,꼬리 없음'), '㊼ ③ 박스 줄 칩 = 2S·S·M·꼬리 없음(L 없음)', JSON.stringify(chips2));
+                // [적용] → 토스트 · 접힘 · 「적용됨」
+                const f0 = await fx('사칠가');
+                await c1.locator('[data-tailset="S사이즈로!"]').click(); await c1.locator('[data-fix-apply]').click(); await w.pg.waitForTimeout(350);
+                const t1 = await toastNow(); await settle(w.pg); const f1 = await fx('사칠가'), p1 = await pOf('사칠가');
+                ok(t1.includes('고친 내용이 적용되었습니다'), '㊼ 🔴 [적용] → 토스트 「고친 내용이 적용되었습니다」', JSON.stringify(t1));
+                ok(!!f0 && f0.open && !!f1 && !f1.open && f1.ok && p1 && p1.tail === 'S사이즈로!' && p1.tailBy === 'card', '㊼ 🔴 [적용] 뒤 「이 주문 직접 고치기」 접힘(details open false) · 머리에 「적용됨」 · 값은 적용됨(S사이즈로!)', JSON.stringify({ f0, f1, p1 }));
+                const head1 = await c1.locator('.fo-card-top b').first().innerText().catch(() => '');
+                ok(/S사이즈로!/.test(head1), '㊼ 카드 머리 = 지금 나갈 옵션(「… S사이즈로!」)', head1);
+                await w.pg.waitForTimeout(2600); const t1b = await toastNow();
+                ok(!t1b.includes('고친 내용이 적용되었습니다'), '㊼ 토스트는 2.5초 뒤 사라짐', JSON.stringify(t1b));
+                // 다른 카드를 건드려 다시 그려도 접힌 채
+                await find('사칠나'); await w.pg.waitForTimeout(300); const f1b = await fx('사칠가');
+                ok(!!f1b && !f1b.open, '㊼ 다른 주문을 찾아 열어도(다시 그림) 적용한 카드는 접힌 채', JSON.stringify(f1b));
+                // 다시 펼치면 [되돌리기] → 되돌린 뒤 펼친 채
+                await c1.locator('details.fo-fix > summary').click(); await w.pg.waitForTimeout(250); const f2 = await fx('사칠가');
+                ok(f2.open && f2.undo, '㊼ 머리를 눌러 다시 펼치면 [되돌리기]가 보임', JSON.stringify(f2));
+                await find('사칠다'); await w.pg.waitForTimeout(300); const f2b = await fx('사칠가');
+                ok(!!f2b && f2b.open, '㊼ 사람이 펼친 것은 다시 그려도 펼친 채(접힘 기억 지움)', JSON.stringify(f2b));
+                await c1.locator('[data-fix-undo]').click(); await settle(w.pg); const f3 = await fx('사칠가'), p3 = await pOf('사칠가');
+                ok(!!f3 && f3.open && !f3.ok && (!p3 || p3.tail == null), '㊼ [되돌리기] → 값 원래대로 · 펼친 채(종전) · 「적용됨」 사라짐', JSON.stringify({ f3, p3 }));
+                // 박스별 줄 [적용]도 같은 동작
+                const c2 = card('사칠나');
+                await c2.locator('[data-box="0"] [data-boxset="2S사이즈로!"]').click(); await c2.locator('[data-box="1"] [data-boxset="M사이즈로!"]').click(); await w.pg.waitForTimeout(120);
+                await c2.locator('[data-fix-apply]').click(); await w.pg.waitForTimeout(350); const t2 = await toastNow(); await settle(w.pg); const g2 = await fx('사칠나'), p2 = await pOf('사칠나');
+                ok(t2.includes('고친 내용이 적용되었습니다') && !!g2 && !g2.open && g2.ok && p2 && JSON.stringify(p2.boxes) === JSON.stringify([{ tail: '2S사이즈로!', qty: 1 }, { tail: 'M사이즈로!', qty: 1 }]), '㊼ 박스별 줄 [적용] → 같은 토스트 · 접힘 · st.patch.boxes(2S 1 · M 1)', JSON.stringify({ t2, g2, p2 }));
+                // 꼬리 칸에 L 을 손으로 적으면: 꼴을 맞춰 주지 않고(「L사이즈로!」로 안 바뀜) 빨강 안내
+                await c1.locator('[data-x="tail"]').fill('L'); await c1.locator('[data-x="tail"]').blur(); await w.pg.waitForTimeout(200);
+                const tl = await c1.evaluate(c => { const i = c.querySelector('[data-x="tail"]'), w = c.querySelector('[data-tailwarn]'); return { v: i.value, warn: !w.hidden, text: w.textContent, color: getComputedStyle(w).color, on: [...c.querySelectorAll('[data-tailchips] .fo-chip.on')].length }; });
+                ok(tl.v !== 'L사이즈로!' && tl.warn && /로얄과 사이즈는 2S · S · M/.test(tl.text) && tl.on === 0, '㊼ 꼬리 칸에 「L」 → 「L사이즈로!」로 안 만들고 빨강 안내 「로얄과 사이즈는 2S · S · M …」 · 켜진 칩 없음', JSON.stringify(tl));
+                await c1.locator('[data-x="tail"]').fill('m'); await c1.locator('[data-x="tail"]').blur(); await w.pg.waitForTimeout(200);
+                const tm = await c1.evaluate(c => ({ v: c.querySelector('[data-x="tail"]').value, warn: !c.querySelector('[data-tailwarn]').hidden }));
+                ok(tm.v === 'M사이즈로!' && !tm.warn, '㊼ 「m」은 종전대로 「M사이즈로!」 · 안내 없음', JSON.stringify(tm));
+                await c1.locator('[data-x="tail"]').fill(''); await c1.locator('[data-x="tail"]').blur();
+                // 파일: L 꼬리 0
+                for (let k = 0; k < 20; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(250); }
+                await settle(w.pg);
+                ok((await w.pg.locator('#fo-cards .fo-card[data-state="open"]').count()) === 0 && !(await w.pg.isDisabled(SEL.make)), '㊼ 준비: 열린 카드 0 · [파일 만들기] 켜짐', JSON.stringify(await cardCount(w.pg)));
+                await w.pg.click(SEL.make); await idle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 20000 }); await w.pg.waitForTimeout(400);
+                const names = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save), opts = [];
+                for (const nm of names.filter(v => /xlsx$/i.test(v) && !v.includes('스마트스토어'))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's47-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff);
+                    if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => opts.push([String(r[3]), String(r[4]), Number(r[5])])); }
+                const mine = opts.filter(r => /^사칠/.test(r[0])), R = nm => mine.filter(r => r[0] === nm).map(r => r[1].replace(royalName, '').trim() + '×' + r[2]).sort().join(' | ');
+                ok(mine.length === 6 && !mine.some(r => /L\s*사이즈/.test(r[1])), '㊼ 🔴 택배사 양식: 옵션 칸에 L 꼬리 0(시험 주문 ' + mine.length + '줄)', JSON.stringify(mine.map(r => r[1].replace(royalName, '').trim())));
+                ok(R('사칠다') === '×1' && R('사칠마') === '×2' && R('사칠나') === '2S사이즈로!×1 | M사이즈로!×1' && R('사칠가') === '×1', '㊼ L 줄 주문(사칠다 · 사칠마) = 꼬리 없이 한 줄 그대로 · 박스별로 정한 사칠나 = 2S 1 · M 1 · 되돌린 사칠가 = 꼬리 없음', JSON.stringify(['사칠가', '사칠나', '사칠다', '사칠라', '사칠마'].map(R)));
+                ok(w.errs.length === 0, '㊼ 오류 0', w.errs.join(' | ')); await w.ctx.close();
             }
 
             // 창구가 안 집음(40초)

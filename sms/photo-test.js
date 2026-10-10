@@ -77,7 +77,7 @@ module.exports = function mountPhotoTest(app, deps) {
             const usage = raw.usage || null;
             const out = {
                 ok: !raw.error,
-                kind: j.kind, confidence: j.confidence, size_guess: j.size_guess == null ? null : j.size_guess, size_dir: j.size_dir == null ? null : j.size_dir,
+                kind: j.kind, confidence: j.confidence, size_guess: j.size_guess == null ? null : j.size_guess, size_dir: j.size_dir == null ? null : j.size_dir, item: j.item == null ? null : j.item,
                 staff_summary: j.staff_summary || '',
                 customer_reply, leak,
                 tokens: usage ? { input: usage.input_tokens == null ? null : usage.input_tokens, output: usage.output_tokens == null ? null : usage.output_tokens } : null,

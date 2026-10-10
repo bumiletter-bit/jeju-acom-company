@@ -703,6 +703,8 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .ship-tw { margin: 0; -webkit-overflow-scrolling: touch; }
 .ship-by { min-width: 420px; }
 .ship-tr { min-width: 790px; }
+.ship-days { white-space: nowrap; }
+.ship-tr .ship-days small.ship-fin { margin-top: 1px; color: var(--d-sub); font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .ship-by td i, .ship-what i { font-style: normal; color: var(--d-dim); }
 .ship-by td.warn { color: #B42318; font-weight: 800; }
 .ship-tr td { line-height: 1.45; }
@@ -967,17 +969,28 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .pc-copy:disabled { opacity: .5; cursor: default; }
 .pc-hint { margin: 14px 0 0; color: var(--d-sub); font-size: 12.5px; line-height: 1.5; }
 .pc-out { margin-top: 4px; }
-.pc-group { margin-top: 18px; min-width: 0; }
-.pc-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font-size: 14.5px; font-weight: 800; letter-spacing: -.01em; line-height: 1.4; }
-.pc-h span { min-width: 0; overflow-wrap: anywhere; }
-.pc-h .desk-badge { font-style: normal; }
-.pc-tw { border: 1px solid var(--d-line); border-radius: 10px; overflow: hidden; }
+/* #614(대표 10/10): 품목이 메인 — 품목 대제목 > 규격 머리(인디고 띠 · 18px) > 페이지 줄(들여쓰기 · 작은 글) */
+.pc-item { margin-top: 30px; padding-top: 20px; border-top: 1px solid #DEE0E7; min-width: 0; }
+.pc-out > .pc-item:first-child { margin-top: 16px; padding-top: 0; border-top: 0; }
+.pc-item-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -.02em; line-height: 1.25; }
+.pc-item-h small { color: var(--d-sub); font-size: 12.5px; font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.pc-group { margin-top: 14px; min-width: 0; }
+.pc-h { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; margin: 0 0 8px; padding: 10px 12px; border-radius: 10px; background: var(--d-accent-soft); font-size: 18px; font-weight: 800; letter-spacing: -.015em; line-height: 1.3; }
+.pc-hi { color: var(--d-lime, var(--d-accent)); }   /* --d-lime 은 야간에만 있다 → 밝은 화면 = 인디고 · 야간 = 라임 */
+.pc-hs { min-width: 0; color: var(--d-ink); overflow-wrap: anywhere; }
+.pc-hx { color: #475467; font-size: 13px; font-weight: 500; letter-spacing: 0; }
+.pc-hdot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #D92D20; }
+.pc-h .desk-badge { font-style: normal; letter-spacing: 0; }
+.pc-h .desk-badge:first-of-type { margin-left: auto; }
+.pc-tw { margin-left: 14px; border: 1px solid var(--d-line); border-radius: 10px; overflow: hidden; }
+.pc-group .pc-issues { margin-left: 14px; }
+.pc-fold-body .pc-h { background: var(--d-card); }
 .pc-t { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: 100%; font-size: 13.5px; }
 .pc-t th, .pc-t td { padding: 8px 12px; border-bottom: 1px solid var(--d-line); vertical-align: top; text-align: left; font-weight: 400; }
 .pc-t tbody tr:last-child th, .pc-t tbody tr:last-child td { border-bottom: 0; }
 .pc-t .pc-sep th, .pc-t .pc-sep td { border-top: 2px solid #DEE0E7; }
 .pc-pg { min-width: 0; }
-.pc-pname { display: block; color: var(--d-ink); font-weight: 700; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
+.pc-pname { display: block; color: var(--d-ink); font-size: 13px; font-weight: 600; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
 .pc-pmeta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .pc-pmeta i { font-style: normal; }
 .pc-ch { color: var(--d-sub); font-size: 12px; }
@@ -1032,6 +1045,9 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
     .pc-views .desk-btn { flex: 1 1 0; padding: 0 6px; }
     .pc-bar .pc-q { flex: 1 1 100%; max-width: none; font-size: 16px; }
     .pc-copy { margin-left: auto; }
+    .pc-item-h { font-size: 20px; }
+    .pc-h { font-size: 17px; padding: 9px 10px; }
+    .pc-tw, .pc-group .pc-issues { margin-left: 8px; }
     .pc-t th, .pc-t td { padding: 8px 10px; }
     .pc-t .pc-price { width: 132px; }
     .pc-t .pc-chg { display: none; }
@@ -1102,7 +1118,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (447규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (457규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1409,6 +1425,7 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .ship-stat li[data-k="ask"] span, :where(html[data-ao-theme="dark"]) .ship-stat li[data-k="ask"] b, :where(html[data-ao-theme="dark"]) .ship-stat li[data-k="wait"] span, :where(html[data-ao-theme="dark"]) .ship-stat li[data-k="wait"] b { color: #FBBF4A; }
 :where(html[data-ao-theme="dark"]) .ship-meta { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .ship-h b { color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .ship-tr .ship-days small.ship-fin { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .ship-by td i, :where(html[data-ao-theme="dark"]) .ship-what i { color: var(--d-dim); }
 :where(html[data-ao-theme="dark"]) .ship-by td.warn { color: #FF9B91; }
 :where(html[data-ao-theme="dark"]) .ship-tr small { color: var(--d-sub); }
@@ -1531,7 +1548,16 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .pc-views .desk-btn[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
 :where(html[data-ao-theme="dark"]) .pc-count { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .pc-hint { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-item { border-top: 1px solid #3A4168; }
+:where(html[data-ao-theme="dark"]) .pc-out > .pc-item:first-child { border-top: 0; }
+:where(html[data-ao-theme="dark"]) .pc-item-h small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-h { background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .pc-hi { color: var(--d-lime, var(--d-accent)); }
+:where(html[data-ao-theme="dark"]) .pc-hs { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .pc-hx { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-hdot { background: #C8281C; }
 :where(html[data-ao-theme="dark"]) .pc-tw { border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .pc-fold-body .pc-h { background: var(--d-card); }
 :where(html[data-ao-theme="dark"]) .pc-t th, :where(html[data-ao-theme="dark"]) .pc-t td { border-bottom: 1px solid var(--d-line); }
 :where(html[data-ao-theme="dark"]) .pc-t tbody tr:last-child th, :where(html[data-ao-theme="dark"]) .pc-t tbody tr:last-child td { border-bottom: 0; }
 :where(html[data-ao-theme="dark"]) .pc-t .pc-sep th, :where(html[data-ao-theme="dark"]) .pc-t .pc-sep td { border-top: 2px solid #3A4168; }

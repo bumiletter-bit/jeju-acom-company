@@ -535,6 +535,9 @@
         boxes.push({ tail: null, qty: q - sum });
         return { ok: true, boxes, note: `꼬리 없는 박스 ${q - sum}` };
     }
+    // #615(대표 10/10 「L은 로얄이 아니야」): 로얄과 사이즈는 2S·S·M 세 가지 — 「L」「2L」이 적힌 줄은 사이즈를 붙이지 않고 bad[](kind 'size')로 알린다.
+    //   사이즈 낱말은 종전처럼 줄에서 뗀다(남기면 「번호 L사이즈」가 「오늘 발송·손님 메모 무시」 줄로 읽힌다 — #570 과 같은 이유) · 요청일 같은 나머지 글은 그대로 읽힌다.
+    const ROYAL_SIZE = new Set(['2S', 'S', 'M']), NOT_ROYAL = '로얄과 사이즈가 아니에요(2S·S·M)';
     function sizeLines(text) {
         const lines = String(text == null ? '' : text).split('\n'), sizes = [], ups = [], bad = [];
         const out = lines.map((raw, srcLine) => {
@@ -545,6 +548,7 @@
             const key = toks.find(t => /^0\d{1,2}[-.]?\d{3,4}[-.]?\d{4}$/.test(t) || /^\d{8}-\d{7}$/.test(t) || /^\d{10,}$/.test(t)) || toks.find(hasKey);
             if (!key) return raw;
             const mp = sizeParts(line, key);   // #601: 사이즈 낱말이 둘 이상일 때만 값이 온다
+            if (mp && mp.parts && mp.parts.some(p => !ROYAL_SIZE.has(p.size))) { bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why: NOT_ROYAL, kind: 'size', size: mp.parts.filter(p => !ROYAL_SIZE.has(p.size)).map(p => p.size).join('·') }); return mp.text; }
             if (mp && mp.parts) { sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: mp.first, expect: mp.expect, parts: mp.parts }); return mp.text; }
             if (mp && mp.bad) { bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why: mp.bad }); return raw; }   // 짝이 안 맞으면 사이즈를 하나도 붙이지 않고 줄도 그대로(사람이 정한다)
             let expect = null, kept = rest;
@@ -553,7 +557,8 @@
             if (cnt) { expect = parseInt(cnt.match(SIZE_CNT)[1], 10); drop(cnt); }
             // #572: 「번호 사이즈 S 로 부탁」처럼 사이즈 낱말과 글자가 떨어져 있거나 「요청」「부탁」이 붙은 꼴 — 남는 군더더기 낱말은 메모 줄에 두지 않는다(남으면 「오늘 발송·메모 무시」 줄로 읽힌다)
             toks.filter(t => t !== key && SIZE_FILLER.test(t)).forEach(drop);
-            sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: m[2].toUpperCase(), expect });
+            if (!ROYAL_SIZE.has(m[2].toUpperCase())) bad.push({ srcLine, raw: line.trim(), key, digits: dg(key), why: NOT_ROYAL, kind: 'size', size: m[2].toUpperCase() });
+            else sizes.push({ srcLine, raw: line.trim(), key, digits: dg(key), size: m[2].toUpperCase(), expect });
             if (toks.length === 1) return '';
             return kept.replace(/[ ]{2,}/g, ' ').replace(/[ ]+(\t)/g, '$1').replace(/(\t)[ ]+/g, '$1').replace(/[ ]+$/, '');   // 탭 줄은 탭 칸을 그대로(비고 칸만 비워짐) · 빈칸 줄은 빈칸 하나로
         });

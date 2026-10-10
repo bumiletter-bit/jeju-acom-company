@@ -647,6 +647,8 @@ html[data-ao-theme="dark"] .fo-boxrow.full { background: var(--fd-bg); border-co
 html[data-ao-theme="dark"] .fo-boxrow.full.changed { border-color: var(--fd-lime); }
 html[data-ao-theme="dark"] .fo-boptbtn { background: var(--fd-card); color: var(--f-ink); border-color: var(--f-card-line); }
 html[data-ao-theme="dark"] .fo-boxopt.changed .fo-boptbtn { background: var(--f-accent-soft); border-color: var(--f-accent); }
+.fo-fix-ok { margin-left: 6px; padding: 1px 7px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--f-accent); color: var(--f-accent); font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: 2px; }   /* #615 [적용] 뒤 접힌 머리에 */
+html[data-ao-theme="dark"] .fo-fix-ok { box-shadow: inset 0 0 0 1px var(--fd-lime); color: var(--fd-lime); }
 html[data-ao-theme="dark"] .fo-isrc { box-shadow: inset 0 0 0 1px var(--fd-lime); color: var(--fd-lime); }
 html[data-ao-theme="dark"] .fo-info li[data-info-src="memo"] { background: color-mix(in srgb, var(--f-accent) 12%, var(--f-soft)); border-color: var(--fd-accent-line); }
 /* #611 보충 2(대표 10/10 「주소 칸까지 들어가면 너무 커진다」): 펼친 칸 묶음은 75% 크기로 — 글 칸·라벨·간격을 줄이고, 누르는 것(칩·버튼)의 높이는 그대로(PC 36 · 폰 44) */

@@ -450,6 +450,8 @@ module.exports = function mountSms(app, deps) {
             if (!j || j.kind === 'error' || (j.raw && j.raw.error)) return { text: null, toStaff: true, why: (j && j.raw && j.raw.too_big) ? 'photo_too_big' : 'photo_ai_error', staff_summary: staffSummary || ((j && j.raw && j.raw.too_big) ? '사진이 커서 판독 못 함 · 직접 확인' : '사진 판독 실패(AI) · 직접 확인'), ai_json: j };   // 판독 실패에 「확인했어요」가 나가지 않게
             if (j.kind === 'not_fruit') return { text: null, toStaff: true, why: 'photo_not_fruit', staff_summary: staffSummary, ai_json: j };
             if (j.kind === 'damage' && j.confidence !== 'high') return { text: null, toStaff: true, why: 'photo_damage_low', staff_summary: staffSummary || '파손 의심(확신 낮음)', ai_json: j };   // 보상 문구는 확신 높을 때만
+            // 🔴 대표 확정(10/10): 사진이 온 손님은 불만 상황 — 봇이 알아본 경우(damage·size 확신 높음)만 답하고 그 밖(other·unclear·size 낮음)은 되묻기 없이 직원 연결
+            if (!((j.kind === 'damage' || j.kind === 'size') && j.confidence === 'high')) return { text: null, toStaff: true, why: 'photo_unclear', staff_summary: staffSummary || '사진 상황 불명확 · 직접 확인', ai_json: j };
             const reply = photoReply.reply(j, { channel: 'sms', lastOrder, prevOrder: lookup && lookup.prev ? lookup.prev : null });
             if (!reply) return { text: null, toStaff: true, why: 'photo_unclear', staff_summary: staffSummary, ai_json: j };
             if (typeof photoReply.leakCheck === 'function') { const leak = photoReply.leakCheck(reply); if (leak) return { text: null, toStaff: true, why: 'photo_leak', staff_summary: (staffSummary || '') + ' · 문구 검사: ' + leak, ai_json: j }; }   // 발송 직전 숫자·약속 안전망

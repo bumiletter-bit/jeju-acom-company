@@ -10142,15 +10142,18 @@ app.get('/api/delivery/summary', authMiddleware, async (req, res) => {
 function deliveryRow(x, today) {
     const tail4 = t => { const d = String(t || '').replace(/\D/g, ''); return d ? d.slice(-4) : ''; };
     const region = ad => String(ad || '').trim().split(/\s+/).slice(0, 2).join(' ');
-    const days = Math.round((new Date(today || kstDateStr()) - new Date(x.ship_date)) / 86400e3);
     const b = x.bucket || '미조회';
+    // #613(대표 10/10): 며칠째 = 발송일 기준 — 배송완료 건은 완료된 날까지(발송 다음 날 도착 = 1일째) · 아직이면 오늘까지(종전은 늘 오늘 기준이라 완료 건도 날마다 늘었음)
+    const doneDay = (x.delivered || b === '배송완료') && /^\d{4}-\d{2}-\d{2}/.test(String(x.event_time || '')) ? String(x.event_time).slice(0, 10) : null;
+    const days = Math.round((new Date(doneDay || today || kstDateStr()) - new Date(x.ship_date)) / 86400e3);
     return { tracking: cjTrack.fmtTracking(x.tracking), ship_date: x.ship_date, partner: x.partner || '', recipient: x.recipient || '', phone_tail: tail4(x.phone), region: region(x.addr),
         option: x.option_text || '', qty: x.qty, bucket: b === '집화' && days >= 1 ? '집화 정체' : b, label: x.label || '', msg: x.msg || '', event_time: x.event_time || '', branch: x.branch || '',
-        driver: x.driver_name ? { name: x.driver_name, phone: x.driver_phone || '' } : null, days, since_trouble: x.first_trouble_at, memo: x.memo || '',
+        driver: x.driver_name ? { name: x.driver_name, phone: x.driver_phone || '' } : null, days, delivered: !!(x.delivered || b === '배송완료'), delivered_at: doneDay ? String(x.event_time) : null, since_trouble: x.first_trouble_at, memo: x.memo || '',
         handled_at: x.handled_at || null, handled_by: x.handled_by || '' };
 }
 // #597 상태별 목록 — 숫자 칸·발송일 표 숫자를 눌렀을 때(bucket · partner · q = 이름|끝 4자리|운송장 · 미처리 먼저)
 app.get('/api/delivery/list', authMiddleware, async (req, res) => {
+  try {
     const from = req.query.from, to = req.query.to || from;
     if (!isYmd(from) || !isYmd(to) || from > to) return res.status(400).json({ ok: false, error: '기간을 YYYY-MM-DD 로 주세요' });
     const bucket = String(req.query.bucket || '').trim(), partner = String(req.query.partner || '').trim(), q = String(req.query.q || '').trim().slice(0, 40);
@@ -10159,17 +10162,34 @@ app.get('/api/delivery/list', authMiddleware, async (req, res) => {
     if (bucket) { if (bucket === '미조회') where.push('t.bucket IS NULL'); else { args.push(bucket === '집화 정체' ? '집화' : bucket); where.push(`t.bucket = $${args.length}`); } }
     if (partner) { args.push(partner); where.push(`COALESCE(s.partner, '') = $${args.length}`); }
     if (q) {
+        // #613(대표 10/10): 숫자는 하이픈·공백이 섞여도 숫자만으로 — 4자리 = 받는 분 연락처 끝 4자리 · 10~11자리(전화번호 통째) = 끝 4자리로 · 그 밖 5자리↑ = 운송장 일부/전체 · 글자 = 받는 분 이름(공백 무시)
         const digits = q.replace(/\D/g, '');
-        if (digits.length >= 4 && digits.length === q.length) { args.push(digits); where.push(`(regexp_replace(COALESCE(s.phone, ''), '\\D', '', 'g') LIKE '%' || $${args.length} OR s.tracking LIKE '%' || $${args.length} || '%')`); }
-        else { args.push('%' + q + '%'); where.push(`s.recipient ILIKE $${args.length}`); }
+        const hasLetters = /[^\d\s\-.()+]/.test(q);
+        if (!hasLetters && digits.length >= 4) {
+            if (digits.length === 4) { args.push(digits); where.push(`right(regexp_replace(COALESCE(s.phone, ''), '\\D', '', 'g'), 4) = $${args.length}`); }   // 끝 4자리
+            else if ((digits.length >= 10 && digits.length <= 11) || (digits.length === 12 && digits.startsWith('050'))) { args.push(digits); where.push(`regexp_replace(COALESCE(s.phone, ''), '\\D', '', 'g') = $${args.length}`); }   // 전체 번호(안심번호 0507… 12자리 포함) = 숫자 전체 일치(끝자리 같은 다른 분이 섞이지 않게 · 워커1 지적)
+            else { args.push(digits); where.push(`s.tracking LIKE '%' || $${args.length} || '%'`); }
+        }
+        else { args.push('%' + q.replace(/\s+/g, '') + '%'); where.push(`replace(s.recipient, ' ', '') ILIKE $${args.length}`); }
     }
     const sql = `FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE ${where.join(' AND ')}`;
     const cnt = await pool.query(`SELECT count(*)::int AS n ${sql}`, args);
     const r = await pool.query(`SELECT s.tracking, s.ship_date::text AS ship_date, s.partner, s.recipient, s.phone, s.addr, s.option_text, s.qty, s.memo,
-            t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at, t.handled_at, t.handled_by
+            t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at, t.handled_at, t.handled_by, t.delivered
         ${sql} ORDER BY (t.handled_at IS NOT NULL), s.ship_date, s.partner, s.tracking LIMIT ${limit}`, args);
     const today = kstDateStr();
-    res.json({ ok: true, from, to, bucket, partner, q, total: cnt.rows[0].n, limit, rows: r.rows.map(x => deliveryRow(x, today)) });
+    // #613(워커5 제안): 검색어가 있는데 이 기간에 없으면 기간 밖(최근 60일) 같은 조건의 발송일을 알려 줌 → 카드가 「10/7 발송분에 1건 있어요」(이수현 사고 = 발송일이 조회 기간 밖)
+    let outside = null;
+    if (q && cnt.rows[0].n === 0 && where.length >= 2) {
+        const qWhere = where.slice(1).filter(w => !w.startsWith('t.bucket') && !w.startsWith('COALESCE(s.partner'));
+        const qArgs = args.slice(2);
+        if (qWhere.length === 1 && qArgs.length === 1) {
+            const o = await pool.query(`SELECT s.ship_date::text AS d, count(*)::int AS n FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - 60 AND ${qWhere[0].replace(/\$\d+/g, '$1')} GROUP BY 1 ORDER BY 1 DESC LIMIT 5`, qArgs);
+            if (o.rowCount) outside = { n: o.rows.reduce((s, x) => s + x.n, 0), ship_dates: o.rows.map(x => ({ date: x.d, n: x.n })) };
+        }
+    }
+    res.json({ ok: true, from, to, bucket, partner, q, total: cnt.rows[0].n, limit, outside, rows: r.rows.map(x => deliveryRow(x, today)) });
+  } catch (e) { console.error('[배송조회] 목록 조회 실패:', e.message); res.status(500).json({ ok: false, error: '조회 중 문제가 생겼어요. 잠시 뒤 다시 눌러 주세요' }); }
 });
 // #597 처리함 표시 — 직원 누구나 · 상태 행이 아직 없으면(미조회) 행을 만들어 표시만
 app.post('/api/delivery/handled', authMiddleware, async (req, res) => {

@@ -51,6 +51,7 @@ function routesFor(state) {
             }
             if (m === 'GET' && u.pathname === '/api/delivery/summary') {
                 const from = u.searchParams.get('from');
+                if (from === state.outsideDay) return json(route, Object.assign(summaryDone(), { from, to: from }));   // #613-b: [그 날짜로 보기]로 간 날
                 if (from !== Y) return json(route, state.uploaded === from ? Object.assign(summaryNotChecked(), { from, to: from, shipments: 12 }) : summaryEmpty(from));
                 return json(route, state.done ? withHandled(state, summaryDone(), 'trouble') : summaryNotChecked());
             }
@@ -88,8 +89,14 @@ function routesFor(state) {
 }
 const newState = () => ({ calls: [], posts: [], uploads: [], job: null, done: false, uploaded: null, lists: [], hposts: [], handled: {} });
 // #597 가짜 목록(GET /api/delivery/list) — 줄 모양은 summary.trouble 과 같다
-const lrow = (i, o) => Object.assign({ tracking: String(690000000000 + i), ship_date: Y, partner: '효돈', recipient: '손*' + i, phone_tail: String(i).padStart(4, '0'), region: '서울 중구', option: '하우스감귤 가정용 - 4.5kg(로얄과)', qty: 1, bucket: '배송완료', label: '배송완료', msg: '', event_time: Y + 'T15:00:00+09:00', branch: '중구', driver: null, days: 1, memo: '' }, o);
+const lrow = (i, o) => { const r = lrow0(i, o); r.delivered = r.bucket === '배송완료'; r.delivered_at = r.delivered ? (o && o.delivered_at) || Y + ' 15:00' : null; return r; };   // #613: 서버가 완료 여부·완료 시각을 준다
+const lrow0 = (i, o) => Object.assign({ tracking: String(690000000000 + i), ship_date: Y, partner: '효돈', recipient: '손*' + i, phone_tail: String(i).padStart(4, '0'), region: '서울 중구', option: '하우스감귤 가정용 - 4.5kg(로얄과)', qty: 1, bucket: '배송완료', label: '배송완료', msg: '', event_time: Y + 'T15:00:00+09:00', branch: '중구', driver: null, days: 1, memo: '' }, o);
 function listFor(q) {
+    if (q.q && !q.bucket && !q.partner) {   // #613: 「확인할 건」에서 찾기 = 그 기간 송장 전체(상태·거래처 조건 없음)
+        if (/없는/.test(q.q)) return { total: 0, rows: [] };
+        if (/기간밖/.test(q.q)) return q.from === Y ? { total: 0, rows: [], outside: { n: 1, ship_dates: [{ date: D2, n: 1 }] } } : { total: 1, rows: [lrow(41, { recipient: '기*밖', ship_date: D2, days: 1, delivered_at: Y + ' 11:20' })], outside: null };   // #613-b: 이 기간엔 없고 다른 발송일에 있음
+        return { total: 2, rows: [lrow(31, { recipient: '이*현', phone_tail: '3516', region: '경기 가평군', bucket: '배송출발', label: '배송출발', ship_date: D3, days: 3 }), lrow(32, { recipient: '이*현', phone_tail: '3516', region: '경기 가평군', ship_date: D3, days: 2, delivered_at: D2 + ' 15:34' })] };
+    }
     if (q.bucket === '미배송') {   // 같은 분 2상자(2일째·3일째) + 다른 분 1상자
         const a = summaryDone().trouble[0];
         return { total: 3, rows: [a, Object.assign({}, a, { tracking: '680012345675', days: 3, driver: null }), lrow(9001, { bucket: '미배송', label: '미배송(섬지역 익일)', region: '인천 옹진군' })] };
@@ -118,7 +125,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             const chip = await pg.evaluate(() => { const b = document.getElementById('desk-ship-now'); if (!b) return null; const r = b.getBoundingClientRect(); const all = Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).map(x => x.textContent.trim()); return { text: b.textContent.trim(), h: Math.round(r.height), vis: b.getClientRects().length > 0, all }; });
             ok(chip && chip.vis && chip.text === '배송조회 확인하기' && chip.h >= 44, `알약 「${chip && chip.text}」 높이 ${chip && chip.h}px · 자주 쓰는 일 = ${chip && chip.all.join(' / ')}`);
             const chipsIn = await pg.evaluate(() => { const box = document.querySelector('.desk-topbox').getBoundingClientRect(); const rs = Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).map(b => b.getBoundingClientRect()); return { n: rs.length, allIn: rs.every(r => r.left >= box.left - 1 && r.right <= box.right + 1 && r.left >= 0 && r.right <= window.innerWidth && r.width > 20), rows: new Set(rs.map(r => Math.round(r.top))).size, minH: Math.min(...rs.map(r => Math.round(r.height))), sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
-            ok(chipsIn.n === 4 && chipsIn.allIn && chipsIn.minH >= 44 && chipsIn.sw <= vw.width && (phone ? chipsIn.rows <= 2 : chipsIn.rows === 1), `알약 4개가 밀지 않아도 전부 보임(${chipsIn.rows}줄 · 높이 ${chipsIn.minH}px 이상 · 가로 넘침 0)`);
+            ok(chipsIn.n >= 5 && chipsIn.n <= 6 && chipsIn.allIn && chipsIn.minH >= 44 && chipsIn.sw <= vw.width && (phone ? chipsIn.rows <= 3 : chipsIn.rows === 1), `알약 ${chipsIn.n}개(#612 가격 확인 · 문자는 서버에 있을 때)가 밀지 않아도 전부 보임(${chipsIn.rows}줄 · 높이 ${chipsIn.minH}px 이상 · 가로 넘침 0)`);
             ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.getElementById('desk-qty').hidden), '처음엔 도구 카드 둘 다 닫혀 있음');
             await pg.evaluate(() => document.getElementById('desk-ship-now').scrollIntoView({ block: 'center', inline: 'center' }));
             await pg.click('#desk-ship-now'); await pg.waitForFunction(() => document.querySelector('#ship-out .ship-empty'), null, { timeout: 8000 }).catch(() => { });
@@ -141,7 +148,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             const r = await pg.evaluate(() => {
                 const q = s => document.querySelector(s), qa = s => Array.from(document.querySelectorAll(s));
                 return { sum: (q('#ship-sum-text') || {}).textContent || '', prog: !q('#ship-prog').hidden, go: q('#ship-go').disabled,
-                    stat: qa('.ship-stat li').map(li => li.querySelector('span').textContent + ' ' + li.querySelector('b').textContent + (li.dataset.k ? ' [' + li.dataset.k + ']' : '')),
+                    stat: qa('#ship-out .ship-stat li').map(li => li.querySelector('span').textContent + ' ' + li.querySelector('b').textContent + (li.dataset.k ? ' [' + li.dataset.k + ']' : '')),
                     by: qa('.ship-by tbody tr').map(tr => tr.innerText.replace(/\s+/g, ' ').trim()), byHead: qa('.ship-by thead th').map(x => x.textContent),
                     tr: qa('.ship-tr tbody tr').map(tr => ({ badge: tr.querySelector('.desk-badge').textContent, k: tr.querySelector('.desk-badge').dataset.k, text: tr.innerText.replace(/\s+/g, ' ').trim(), tel: (tr.querySelector('a.ship-tel') || {}).href || '' })),
                     meta: (q('.ship-meta span') || {}).textContent || '', h: (qa('.ship-h').pop() || {}).textContent || '', all: q('#desk-ship').innerText };
@@ -171,15 +178,15 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             // ── #597 숫자 칸 누르면 그 상태만 · 같은 분 묶기 · 처리함 · 3일 빨강
             const det = () => pg.evaluate(() => {
                 const q = s => document.querySelector(s), qa = s => Array.from(document.querySelectorAll(s));
-                return { head: (q('#ship-dh') || {}).textContent || '', q: !!q('#ship-q'), all: !!q('#ship-all'), note: q('#ship-dnote') && !q('#ship-dnote').hidden ? q('#ship-dnote').textContent : '',
+                return { head: (q('#ship-dh') || {}).textContent || '', q: !!q('#ship-q'), qph: (q('#ship-q') || {}).placeholder || '', qval: (q('#ship-q') || {}).value || '', all: !!q('#ship-all'), note: q('#ship-dnote') && !q('#ship-dnote').hidden ? q('#ship-dnote').textContent : '',
                     pressed: qa('#ship-out [aria-pressed="true"]').map(e => (e.dataset.d ? e.dataset.d + ' ' + e.dataset.p + ' ' : '') + (e.dataset.b || '송장')),
                     rows: qa('.ship-tr tbody tr').map(tr => ({ done: tr.classList.contains('done'), box: (tr.querySelector('.ship-box') || {}).textContent || '', trk: Array.from(tr.querySelectorAll('.ship-trk')).map(s => s.textContent), warn: (tr.querySelector('td.num.warn') || {}).textContent || '', days: tr.children[4].textContent, act: tr.querySelector('.ship-act').innerText.replace(/\s+/g, ' ').trim(), badge: tr.querySelector('.desk-badge').textContent, btnH: Math.round(tr.querySelector('.ship-act button').getBoundingClientRect().height) })) };
             });
             const waitHead = re => pg.waitForFunction(s => new RegExp(s).test((document.getElementById('ship-dh') || {}).textContent || ''), re.source, { timeout: 6000 }).catch(() => { });
-            const statBtn = await pg.evaluate(() => Array.from(document.querySelectorAll('.ship-stat li')).map(li => li.querySelector('span').textContent + ':' + (li.getAttribute('role') === 'button' && li.tabIndex === 0 && li.getAttribute('aria-pressed') === 'false' ? '버튼' : '-')));
+            const statBtn = await pg.evaluate(() => Array.from(document.querySelectorAll('#ship-out .ship-stat li')).map(li => li.querySelector('span').textContent + ':' + (li.getAttribute('role') === 'button' && li.tabIndex === 0 && li.getAttribute('aria-pressed') === 'false' ? '버튼' : '-')));
             ok(statBtn.join() === '배송완료:버튼,배송출발:버튼,간선상하차:버튼,집화:버튼,미배송:버튼,사고:-,기타:-,조회실패:-', `#597 상태 칸 = 건수 있는 칸만 버튼(role·tabindex·aria-pressed) · 0건은 안 눌림 — ${statBtn.join(' ')}`);
             const d0 = await det();
-            ok(d0.head === '확인할 건 4' && !d0.q && !d0.all && d0.rows.every(x => x.act === '처리함' && x.btnH >= 44) && d0.rows.map(x => x.warn).join() === ',,,', `처음 = 「${d0.head}」 · 검색 칸·[전체] 없음 · 줄마다 [처리함](높이 ${d0.rows[0].btnH}) · 2일째까지는 빨강 아님`);
+            ok(d0.head === '확인할 건 4' && d0.q && d0.qph === '이름 · 받는 분 연락처 끝 4자리 · 운송장' && !d0.all && d0.rows.every(x => x.act === '처리함' && x.btnH >= 44) && d0.rows.map(x => x.warn).join() === ',,,', `처음 = 「${d0.head}」 · #613 조회 직후부터 검색 칸 있음(자리 글 「${d0.qph}」) · [전체] 없음 · 줄마다 [처리함](높이 ${d0.rows[0].btnH}) · 2일째까지는 빨강 아님`);
             await pg.click('.ship-stat li[data-b="미배송"]'); await waitHead(/^미배송 3/);
             const d1 = await det(), l1 = st.lists[st.lists.length - 1] || {};
             ok(st.lists.length === 1 && JSON.stringify(l1) === JSON.stringify({ from: Y, to: Y, bucket: '미배송', limit: '300' }), `미배송 칸 누름 → GET list 1회 ${JSON.stringify(l1)}`);
@@ -199,7 +206,54 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             // [전체] → 확인할 건
             await pg.click('#ship-all'); await waitHead(/^확인할 건 4/);
             const d4 = await det();
-            ok(d4.head === '확인할 건 4' && !d4.q && d4.pressed.length === 0 && d4.rows.length === 4 && st.lists.length === 1, `[전체] → 「${d4.head}」 ${d4.rows.length}줄 · 강조 풀림 · 검색 칸 사라짐 · 서버에 더 묻지 않음`);
+            ok(d4.head === '확인할 건 4' && d4.q && d4.qval === '' && !d4.all && d4.pressed.length === 0 && d4.rows.length === 4 && st.lists.length === 1, `[전체] → 「${d4.head}」 ${d4.rows.length}줄 · 강조 풀림 · [전체] 사라짐(검색 칸은 비워진 채 남음) · 서버에 더 묻지 않음`);
+            // ── #613(대표 10/10): 「확인할 건」에서도 바로 찾기 = 그 기간 송장 전체를 서버로 · 하이픈 제거 · 전화번호는 끝 4자리 · 완료 시각 · 며칠째
+            {
+                const paste = t => pg.evaluate(text => { const el = document.getElementById('ship-q'); el.focus(); el.select(); const dt = new DataTransfer(); dt.setData('text/plain', text); const go = el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); if (go) { el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); } }, t);
+                const lastQ = () => st.lists[st.lists.length - 1] || {};
+                let n0 = st.lists.length;
+                await pg.click('#ship-q'); await pg.keyboard.type('이현', { delay: 40 }); await waitHead(/^찾은 건 2/);
+                const f1 = await det(), c1 = st.lists.slice(n0);
+                ok(c1.length === 1 && JSON.stringify(c1[0]) === JSON.stringify({ from: Y, to: Y, q: '이현', limit: '300' }), `#613 확인할 건에서 찾기 → 서버로 1회(상태·거래처 조건 없이 기간 전체) ${JSON.stringify(c1[0])}`);
+                ok(f1.head === '찾은 건 2' && f1.rows.length === 2 && !f1.all && /송장 전체 1,609건 중에서 찾았어요/.test(f1.note) && await pg.evaluate(() => document.activeElement === document.getElementById('ship-q')), `#613 머리 「${f1.head}」 · 안내 「${f1.note}」 · 초점은 검색 칸에 그대로`);
+                const hm613 = `${Number(D2.slice(5, 7))}/${Number(D2.slice(8, 10))} 15:34`;
+                ok(f1.rows[0].badge === '배송출발' && f1.rows[0].days === '3일째' && f1.rows[0].warn === '3일째' && f1.rows[1].badge === '배송완료' && f1.rows[1].days === `2일째(완료 ${hm613})` && f1.rows[1].warn === '', `#613 며칠째 = 미완료 「${f1.rows[0].days}」(3일 이상 빨강) · 완료 건 「${f1.rows[1].days}」`);
+                const finCss = await pg.evaluate(() => { const e = document.querySelector('.ship-tr .ship-fin'); return e ? getComputedStyle(e).display + '|' + Math.round(parseFloat(getComputedStyle(e).fontSize)) : ''; });
+                ok((finCss === 'block|12' || finCss === 'block|11') && await overflow(pg) <= vw.width, `#613 완료 시각은 며칠째 아래 작은 글(${finCss}) · 가로 넘침 없음`);
+                n0 = st.lists.length;
+                await pg.fill('#ship-q', ''); await waitHead(/^확인할 건 4/);
+                ok((await det()).head === '확인할 건 4' && st.lists.length === n0, '#613 찾는 글을 지우면 확인할 건으로(서버에 안 물음)');
+                await paste('6800-1234-5671'); await waitHead(/^찾은 건/);
+                const f2 = await det();
+                ok(f2.qval === '680012345671' && lastQ().q === '680012345671' && !lastQ().bucket, `#613 운송장 붙여넣기 → 하이픈 자동 제거(칸 「${f2.qval}」 · q=${lastQ().q})`);
+                await paste(FULL_PHONE); await pg.waitForTimeout(500);
+                const f3 = await det();
+                ok(f3.qval === '5432' && lastQ().q === '5432' && !(await pg.locator('#desk-ship').innerText()).includes(FULL_PHONE), `#613 전화번호 통째 붙여넣기 → 끝 4자리만 남김(칸 「${f3.qval}」 · q=${lastQ().q})`);
+                await pg.fill('#ship-q', ''); await waitHead(/^확인할 건 4/);
+                n0 = st.lists.length;
+                await pg.click('#ship-q'); await pg.keyboard.type('6800-12', { delay: 40 }); await pg.waitForTimeout(700);
+                const f4 = await det(), c4 = st.lists.slice(n0);
+                ok(c4.length >= 1 && c4[c4.length - 1].q === '680012' && f4.qval === '6800-12', `#613 손으로 치는 동안은 칸을 안 바꾸고 찾는 글만 다듬음(칸 「${f4.qval}」 · q=${c4.length && c4[c4.length - 1].q})`);
+                await pg.keyboard.press('Tab'); await pg.waitForTimeout(150);
+                ok((await det()).qval === '680012', '#613 칸을 벗어나면 칸 글도 다듬어짐(680012)');
+                await pg.fill('#ship-q', '없는손님'); await pg.waitForFunction(() => /찾은 건이 없어요/.test((document.getElementById('ship-dbody') || {}).textContent || ''), null, { timeout: 6000 }).catch(() => { });
+                const f5 = await det(), body5 = await pg.locator('#ship-dbody').innerText();
+                ok(f5.head === '찾은 건 0' && /「없는손님」로 찾은 건이 없어요/.test(body5) && f5.note.includes('기간을 넓혀 [조회]'), `#613 없으면 「${body5.trim()}」 + 기간을 넓히라는 안내(머리 「${f5.head}」 · 「${f5.note}」)`);
+                if (theme) { const a = await H.audit(pg, '#ship-detail'); ok(a.fails.length === 0, `#613 야간 대비(찾기 모드) 미달 ${a.fails.length}${a.fails.length ? ' — ' + a.fails.slice(0, 3).join(' / ') : ''}`); }
+                await pg.fill('#ship-q', ''); await waitHead(/^확인할 건 4/);
+                // #613-b: 이 기간엔 없는데 다른 발송일에 있으면 그 날짜로 가는 버튼
+                st.outsideDay = D2;
+                await pg.fill('#ship-q', '기간밖손님'); await pg.waitForFunction(() => document.querySelector('#ship-dnote .ship-out-go'), null, { timeout: 6000 }).catch(() => { });
+                const o1 = await pg.evaluate(() => { const n = document.getElementById('ship-dnote'), b = n.querySelector('.ship-out-go'); return { t: n.textContent.replace(/\s+/g, ' ').trim(), d: b ? b.dataset.d : '', h: b ? Math.round(b.getBoundingClientRect().height) : 0, sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
+                const md2 = D2.slice(5).replace('-', '/');
+                ok(o1.t.includes(`${md2} 발송분에 1건 있어요 그 날짜로 보기`) && o1.d === D2 && o1.h >= 44 && o1.sw <= vw.width, `#613-b 이 기간 0건 + 다른 발송일에 있음 → 「${o1.t}」 · 버튼 높이 ${o1.h}`);
+                await pg.click('#ship-dnote .ship-out-go'); await waitHead(/^찾은 건 1/);
+                const o2 = await det(), lq = st.lists[st.lists.length - 1] || {};
+                ok(JSON.stringify(lq) === JSON.stringify({ from: D2, to: D2, q: '기간밖손님', limit: '300' }) && o2.qval === '기간밖손님' && o2.head === '찾은 건 1' && o2.rows.length === 1 && await pg.evaluate(d => document.getElementById('ship-from').value === d && document.getElementById('ship-to').value === d, D2), `#613-b [그 날짜로 보기] → 기간이 그 발송일로 · 같은 검색어로 다시 찾음 ${JSON.stringify(lq)} · 「${o2.head}」`);
+                await pg.evaluate(d => { const f = document.getElementById('ship-from'), t = document.getElementById('ship-to'); f.value = d; t.value = d; f.dispatchEvent(new Event('change', { bubbles: true })); }, Y);
+                await waitHead(/^확인할 건 4/); st.outsideDay = null;
+                await pg.waitForFunction(() => (document.getElementById('ship-q') || {}).value === '', null, { timeout: 4000 }).catch(() => { });
+            }
             await pg.click('.ship-tr tbody tr:first-child .ship-done'); await pg.waitForFunction(() => document.querySelector('.ship-tr tr.done'), null, { timeout: 6000 }).catch(() => { });
             const d5 = await det();
             ok(d5.head === '확인할 건 4 (처리 1)' && d5.rows[3].done && d5.rows[3].badge === '미배송' && d5.rows[0].badge === '집화 정체' && st.hposts[4].tracking === '680012345671' && st.hposts[4].on === true, `확인할 건 표에서 [처리함] → 「${d5.head}」 · 그 줄이 맨 아래로`);
@@ -270,7 +324,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             await pg.evaluate(d => { const f = document.getElementById('ship-from'), t = document.getElementById('ship-to'); f.value = d; t.value = d; f.dispatchEvent(new Event('change', { bubbles: true })); }, Y);
             await pg.waitForFunction(() => document.getElementById('ship-dh'), null, { timeout: 8000 }).catch(() => { });
             const d11 = await det();
-            ok(d11.head === '확인할 건 4' && d11.pressed.length === 0 && !d11.q && st.lists.every(q => q.from === Y && q.to === Y), `날짜를 바꿨다 돌아오면 「${d11.head}」(고른 칸·검색어 풀림)`);
+            ok(d11.head === '확인할 건 4' && d11.pressed.length === 0 && d11.qval === '' && st.lists.every(q => /기간밖/.test(q.q || '') || (q.from === Y && q.to === Y)), `날짜를 바꿨다 돌아오면 「${d11.head}」(고른 칸·검색어 풀림)`);
             // 닫기
             await pg.click('#ship-close'); await pg.waitForTimeout(200);
             ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.activeElement === document.getElementById('desk-ship-now')), '[닫기] → 카드 닫힘 · 초점은 알약으로');
@@ -350,7 +404,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             await pg.waitForFunction(() => document.querySelector('#ship-out > *'), null, { timeout: 30000 }).catch(() => { });
             await pg.waitForTimeout(800);
             const api = await pg.evaluate(d => fetch('/api/delivery/summary?from=' + d + '&to=' + d, { headers: { Authorization: 'Bearer ' + localStorage.getItem('jwt_token') } }).then(r => r.json()), REAL);
-            const v = await pg.evaluate(() => { const qa = s => Array.from(document.querySelectorAll(s)); return { sum: (document.getElementById('ship-sum-text') || {}).textContent, stat: Object.fromEntries(qa('.ship-stat li').map(li => [li.querySelector('span').textContent, li.querySelector('b').textContent.replace(/,/g, '')])), tr: qa('.ship-tr tbody tr').length, badges: [...new Set(qa('.ship-tr .desk-badge').map(b => b.textContent + ':' + b.dataset.k))], by: qa('.ship-by tbody tr').length, empty: (document.querySelector('#ship-out .ship-empty') || {}).textContent || '', text: document.getElementById('desk-ship').innerText, tels: qa('.ship-tr a.ship-tel').length }; });
+            const v = await pg.evaluate(() => { const qa = s => Array.from(document.querySelectorAll(s)); return { sum: (document.getElementById('ship-sum-text') || {}).textContent, stat: Object.fromEntries(qa('#ship-out .ship-stat li').map(li => [li.querySelector('span').textContent, li.querySelector('b').textContent.replace(/,/g, '')])), tr: qa('.ship-tr tbody tr').length, badges: [...new Set(qa('.ship-tr .desk-badge').map(b => b.textContent + ':' + b.dataset.k))], by: qa('.ship-by tbody tr').length, empty: (document.querySelector('#ship-out .ship-empty') || {}).textContent || '', text: document.getElementById('desk-ship').innerText, tels: qa('.ship-tr a.ship-tel').length }; });
             if (!api || !(api.shipments > 0)) { ok(/송장이 아직 안 올라왔어요/.test(v.empty), `그날 송장 0건 → 안내(「${v.empty.slice(0, 24)}…」) — 다른 날은 --real YYYY-MM-DD`); }
             else if (!(api.checked > 0)) { ok(/아직 조회하지 않았어요/.test(v.empty), `송장 ${api.shipments}건 · 미조회 → 「${v.empty.slice(0, 30)}…」`); }
             else {

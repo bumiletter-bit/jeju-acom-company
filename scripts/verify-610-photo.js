@@ -30,65 +30,56 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ─────────────────────────── ① photo-reply ───────────────────────────
 function testReply() {
-    section('① photo-reply — 글 고르기');
+    section('① photo-reply — 글 고르기(#617: 봇이 답하는 것은 확실한 파손·확실한 감귤 사이즈뿐 · 그 밖은 null = 직원 몫)');
     const { reply, leakCheck, DAMAGE_CORE, DAMAGE_ASK, SIZE_GUIDE, ASK_CORE } = photoReply;
     const OWNER = '부패과가 나왔군요, 불편드려 죄송합니다. 괜찮은 상품 드셔보시고 입맛에도 안 맞으시면 무료 수거 및 반품처리도 가능합니다. 괜찮다고 하시면 위 부분 좀 더 하여 보상처리 가능합니다.';
     ok(DAMAGE_CORE === OWNER, '파손 글 = 대표 원문 글자 그대로');
+    ok(typeof ASK_CORE === 'string' && ASK_CORE.includes('어떤 점이 불편하셨는지'), '되묻기 글 상수는 남아 있음(직원이 손으로 쓸 때용 · 자동 발송 안 함)');
 
     const all = [];
     for (const channel of ['talk', 'sms']) {
-        for (const confidence of ['high', 'low']) {
-            // damage
-            const d = reply({ kind: 'damage', confidence, staff_summary: '곰팡이 3개 · 무름 2개 · 전체의 20%' }, { channel });
-            all.push(['damage/' + confidence + '/' + channel, d]);
-            if (confidence === 'high') {
-                ok(d.includes(OWNER), `damage high ${channel}: 대표 원문 포함`);
-                ok(d.includes('다른 박스·나머지도 같으실까요?') && d.includes(DAMAGE_ASK), `damage high ${channel}: 범위 되묻기`);
-            } else {
-                ok(d.includes(ASK_CORE) && !d.includes('부패') && !d.includes('보상') && !d.includes('반품'), `damage low ${channel}: 되묻기 글(「부패과가 나왔군요」·보상·반품 안 나감)`, d);
-            }
-            ok(!d.includes('곰팡이') && !d.includes('20%'), `damage ${confidence} ${channel}: 직원용 요약이 손님 글에 없음`);
-
-            // size
-            for (const size_guess of ['2S', 'S', 'M', 'L', null]) {
-                const s = reply({ kind: 'size', confidence, size_guess, size_dir: 'small' }, { channel });
-                all.push([`size/${confidence}/${size_guess}/${channel}`, s]);
-                ok(size_guess === 'L' ? s.includes('달랐군요') && !s.includes('작았군요') : s.includes('크기가 작았군요'), `size ${confidence} ${size_guess} ${channel}: 「크기가 작았군요」(작다는데 L 이면 「달랐군요」)`);
-                const shows = /사진으로는 .+ 정도로 보여요/.test(s);
-                ok(shows === (confidence === 'high' && !!size_guess), `size ${confidence} ${size_guess} ${channel}: 사이즈 글자는 확신 높을 때만`, shows);
-                if (confidence === 'high' && size_guess) ok(s.includes(`사진으로는 ${size_guess} 정도로 보여요.`), `size high ${size_guess} ${channel}: 추정 사이즈 글`);
-                ok(s.includes(SIZE_GUIDE) && s.includes('골프공') && s.includes('종이컵'), `size ${confidence} ${size_guess} ${channel}: 기준(골프공·종이컵)`);
-                ok(s.includes('배송메세지'), `size ${confidence} ${size_guess} ${channel}: 배송메세지 안내`);
-            }
-            // 지난 주문
-            const p = reply({ kind: 'size', confidence, size_guess: '2S', size_dir: 'small' }, { channel, prevOrder: { size: '소과' } });
-            all.push([`size+prev/${confidence}/${channel}`, p]);
-            ok(p.includes('저번에 받으신 건 소과'), `size ${confidence} ${channel}: 지난 주문 견줌`);
-            const p2 = reply({ kind: 'size', confidence, size_guess: '2S' }, { channel, prevOrder: { size: '모르는값' } });
-            ok(!p2.includes('저번에 받으신'), `size ${confidence} ${channel}: 모르는 사이즈 말은 안 적음`);
-
-            // unclear · other
-            for (const kind of ['unclear', 'other', '없는값', undefined]) {
-                const u = reply({ kind, confidence }, { channel });
-                all.push([`${kind}/${confidence}/${channel}`, u]);
-                ok(u.includes('사진 확인했어요, 어떤 점이 불편하셨는지 알려주세요') && u.includes(ASK_CORE), `${kind} ${confidence} ${channel}: 되묻기 글`);
-                ok(!u.includes('부패') && !u.includes('크기가'), `${kind} ${confidence} ${channel}: 파손·사이즈 글 안 섞임`);
-            }
-            // not_fruit
-            ok(reply({ kind: 'not_fruit', confidence }, { channel }) === null, `not_fruit ${confidence} ${channel}: 답 없음(null)`);
-            ok(reply({ kind: 'error', confidence, staff_summary: '판독 실패', raw: { error: 'x' } }, { channel }) === null, `error ${confidence} ${channel}: 판독 실패 = 답 없음(null · 직원 몫)`);
+        // damage high = 대표 원문 + 범위 되묻기
+        const d = reply({ kind: 'damage', confidence: 'high', staff_summary: '곰팡이 3개 · 무름 2개 · 전체의 20%' }, { channel });
+        all.push(['damage/high/' + channel, d]);
+        ok(typeof d === 'string' && d.includes(OWNER), `damage high ${channel}: 대표 원문 포함`);
+        ok(d.includes('다른 박스·나머지도 같으실까요?') && d.includes(DAMAGE_ASK), `damage high ${channel}: 범위 되묻기`);
+        ok(!d.includes('곰팡이') && !d.includes('20%'), `damage high ${channel}: 직원용 요약이 손님 글에 없음`);
+        // size high + 추정 사이즈
+        for (const size_guess of ['2S', 'S', 'M', 'L']) {
+            const t = reply({ kind: 'size', confidence: 'high', size_guess, size_dir: 'small' }, { channel });
+            all.push([`size/high/${size_guess}/${channel}`, t]);
+            ok(typeof t === 'string' && (size_guess === 'L' ? t.includes('달랐군요') && !t.includes('작았군요') : t.includes('크기가 작았군요')), `size high ${size_guess} ${channel}: 「크기가 작았군요」(작다는데 L 이면 「달랐군요」)`);
+            ok(t.includes(`사진으로는 ${size_guess} 정도로 보여요.`), `size high ${size_guess} ${channel}: 추정 사이즈 글`);
+            ok(t.includes(SIZE_GUIDE) && t.includes('골프공') && t.includes('종이컵') && t.includes('배송메세지'), `size high ${size_guess} ${channel}: 기준(골프공·종이컵) + 배송메세지 안내`);
         }
+        const p = reply({ kind: 'size', confidence: 'high', size_guess: '2S', size_dir: 'small' }, { channel, prevOrder: { size: '소과' } });
+        all.push([`size+prev/high/${channel}`, p]);
+        ok(p.includes('저번에 받으신 건 소과'), `size high ${channel}: 지난 주문 견줌`);
+        ok(!reply({ kind: 'size', confidence: 'high', size_guess: '2S' }, { channel, prevOrder: { size: '모르는값' } }).includes('저번에 받으신'), `size high ${channel}: 모르는 사이즈 말은 안 적음`);
+
+        // #617 — 그 밖은 전부 null(손님 답 없음 · 직원 몫)
+        const NULLS = [
+            ['damage low', { kind: 'damage', confidence: 'low' }], ['damage 확신 칸 없음', { kind: 'damage' }], ['damage 모르는 확신 값', { kind: 'damage', confidence: 'HIGH' }],
+            ['size low', { kind: 'size', confidence: 'low', size_guess: null, size_dir: null }], ['size low + 추정 있음', { kind: 'size', confidence: 'low', size_guess: 'S', size_dir: 'small' }],
+            ['size high 인데 추정 없음', { kind: 'size', confidence: 'high', size_guess: null, size_dir: 'small' }], ['size high 인데 모르는 사이즈', { kind: 'size', confidence: 'high', size_guess: 'XL' }],
+            ['other high', { kind: 'other', confidence: 'high' }], ['other low', { kind: 'other', confidence: 'low' }],
+            ['unclear low', { kind: 'unclear', confidence: 'low' }], ['unclear high', { kind: 'unclear', confidence: 'high' }],
+            ['not_fruit high', { kind: 'not_fruit', confidence: 'high' }], ['not_fruit low', { kind: 'not_fruit', confidence: 'low' }],
+            ['error', { kind: 'error', confidence: 'low', raw: { error: 'x' } }], ['error high', { kind: 'error', confidence: 'high' }],
+            ['모르는 kind', { kind: '없는값', confidence: 'high' }], ['kind 없음', { confidence: 'high' }], ['빈 값', {}],
+        ];
+        for (const [label, j] of NULLS) ok(reply(j, { channel }) === null, `#617 ${label} ${channel}: 답 없음(null · 직원 몫)`, reply(j, { channel }));
+        ok(reply(null, { channel }) === null && reply(undefined, { channel }) === null, `#617 판독 값 없음 ${channel}: null(죽지 않음)`);
     }
     // 방향
     ok(reply({ kind: 'size', confidence: 'high', size_guess: 'M', size_dir: 'big' }, {}).includes('컸군요'), 'size 방향 big → 「컸군요」');
-    ok(reply({ kind: 'size', confidence: 'low', size_guess: null, size_dir: null }, {}).includes('달랐군요'), 'size 방향 모름(null) → 「달랐군요」');
-    ok(reply({ kind: 'size', confidence: 'low' }, {}).includes('작았군요'), 'size 방향 칸 없음 → 기본 「작았군요」');
+    ok(reply({ kind: 'size', confidence: 'high', size_guess: 'S', size_dir: null }, {}).includes('달랐군요'), 'size 방향 모름(null) → 「달랐군요」');
+    ok(reply({ kind: 'size', confidence: 'high', size_guess: 'S' }, {}).includes('작았군요'), 'size 방향 칸 없음 → 기본 「작았군요」');
     ok(reply({ kind: 'size', confidence: 'high', size_guess: '2S', size_dir: 'big' }, {}).includes('달랐군요'), 'size 크다는데 2S → 「달랐군요」(안 맞으면 단정 안 함)');
     ok(reply({ kind: 'size', confidence: 'high', size_guess: 'M', size_dir: 'small' }, {}).includes('작았군요') && reply({ kind: 'size', confidence: 'high', size_guess: 'S', size_dir: 'big' }, {}).includes('컸군요'), 'size 맞는 짝(small+M · big+S)은 그대로');
-    ok(reply({ kind: 'damage' }, {}).includes(ASK_CORE) && reply({ kind: 'damage', confidence: 'HIGH' }, {}).includes(ASK_CORE), 'damage 확신 칸 없음·모르는 값 → 되묻기(안전한 쪽)');
-    ok(reply(null, {}) && reply(undefined).includes(ASK_CORE), '판독 값 없음 → 되묻기 글(죽지 않음)');
+    ok(all.every(([, t]) => typeof t === 'string' && !t.includes(ASK_CORE)), '#617 자동으로 나가는 글 어디에도 「사진 확인했어요, 어떤 점이…」 되묻기 없음');
 
-    // 유출·이모지 전수
+    // 유출·이모지 전수(나가는 글 = damage high · size high 뿐)
     for (const [label, text] of all) {
         ok(leakCheck(text) === '', `숫자·개수·비율 유출 0 — ${label}`, leakCheck(text));
         ok(!/[0-9]/.test(text.replace(/2S/g, '')), `숫자 0(「2S」 제외) — ${label}`);
@@ -128,7 +119,7 @@ async function testJudge() {
     let r = await judge([{ buf: JPEG, contentType: 'image/jpeg' }, { buf: PNG, contentType: 'image/png' }], { text: '귤이 썩었어요', channel: 'talk', client: c });
     ok(r.kind === 'damage' && r.confidence === 'high' && r.size_guess === null, '정상: damage/high', r);
     ok(r.staff_summary.includes('3개'), '정상: 직원용 요약은 개수 포함 가능');
-    ok(['kind', 'confidence', 'size_guess', 'staff_summary', 'raw'].every(k => k in r), '정상: 약속한 칸 전부 있음', Object.keys(r));
+    ok(['kind', 'confidence', 'size_guess', 'size_dir', 'item', 'staff_summary', 'raw'].every(k => k in r), '정상: 약속한 칸 전부 있음(item 포함)', Object.keys(r));
     ok(r.raw.model === MODEL && r.raw.usage && r.raw.sent === 2 && r.raw.images === 2, '정상: raw(모델·usage·사진 수)', r.raw);
     const p = c.calls[0].params;
     ok(p.model === 'claude-sonnet-5-5', '요청: 모델');
@@ -214,8 +205,45 @@ async function testJudge() {
     // AI 가 스스로 unclear 라고 한 것은 error 가 아니다(되묻기 글이 나간다)
     c = fakeClient(() => aiText({ kind: 'unclear', confidence: 'low', size_guess: null, size_dir: null, staff_summary: '흐려서 판단 어려움' }));
     r = await judge([{ buf: JPEG }], { client: c });
-    ok(r.kind === 'unclear' && !r.raw.error && photoReply.reply(r, { channel: 'sms' }).includes('어떤 점이 불편하셨는지'), 'AI 가 고른 unclear = 오류 아님 → 되묻기 글', r);
+    ok(r.kind === 'unclear' && !r.raw.error && photoReply.reply(r, { channel: 'sms' }) === null, 'AI 가 고른 unclear = 오류는 아니지만 #617 로 손님 답 없음(직원 몫)', r);
     ok(!photoJudge.KINDS.includes('error') && !photoJudge.SCHEMA.properties.kind.enum.includes('error'), "'error' 는 AI 가 고를 수 없는 값(스키마에 없음)");
+    // ── #616 품목 범위: 우리 상품은 감귤류만이 아니다(실사진 시험에서 미니 밤호박을 not_fruit 으로 본 것 교정) ──
+    {
+        const SYS = photoJudge.SYSTEM;
+        ok(/미니 밤호박/.test(SYS) && /레몬/.test(SYS) && /키위/.test(SYS) && /황금향/.test(SYS) && /하우스감귤/.test(SYS), '#616 시스템 글에 우리 상품 목록(감귤류 · 만감류 · 밤호박 · 레몬 · 키위)');
+        ok(/not_fruit : 농산물이나 그 상자 사진이 아닐 때만/.test(SYS) && /감귤이 아닌 농산물을 not_fruit 으로 하지 않는다/.test(SYS) && /목록에 없는 과일·채소라도 농산물이면 우리 상품/.test(SYS), '#616 not_fruit = 농산물 사진이 아닐 때만(밤호박·레몬·키위 제외 명시)');
+        ok(!/제주 감귤·만감류를 파는 가게/.test(SYS), '#616 「감귤·만감류를 파는 가게」 문장 없음(품목을 좁히던 글)');
+        ok(photoJudge.SCHEMA.required.includes('item') && photoJudge.SCHEMA.properties.item && /item : 사진 속 품목을 한 낱말로/.test(SYS) && /맨 앞에 품목 추정/.test(SYS), '#616 스키마에 item(품목 추정) · 요약 맨 앞에 품목');
+        // 밤호박 파손
+        c = fakeClient(() => aiText({ kind: 'damage', confidence: 'high', size_guess: null, size_dir: null, item: '밤호박', staff_summary: '밤호박으로 보임. 꼭지 주변에 곰팡이가 핀 것 2개.' }));
+        r = await judge([{ buf: JPEG }], { text: '밤호박에 곰팡이가 폈어요', client: c });
+        ok(r.kind === 'damage' && r.confidence === 'high' && r.item === '밤호박' && /^밤호박으로 보임/.test(r.staff_summary), '#616 밤호박 파손 → damage/high · item 밤호박 · 요약에 품목', r);
+        ok(photoReply.reply(r, { channel: 'sms' }).includes(photoReply.DAMAGE_CORE) && photoReply.leakCheck(photoReply.reply(r, { channel: 'sms' })) === '' && !photoReply.reply(r, { channel: 'sms' }).includes('밤호박'), '#616 밤호박 파손 → 손님에게 대표 원문(품목·개수는 손님 글에 없음)');
+        // 요약에 품목이 빠져 오면 프로그램이 붙인다
+        c = fakeClient(() => aiText({ kind: 'damage', confidence: 'low', size_guess: null, size_dir: null, item: '레몬', staff_summary: '껍질에 갈색 얼룩이 보임.' }));
+        r = await judge([{ buf: JPEG }], { client: c });
+        ok(r.item === '레몬' && r.staff_summary === '레몬으로 보임. 껍질에 갈색 얼룩이 보임.', '#616 요약에 품목이 없으면 맨 앞에 붙임', r.staff_summary);
+        // 감귤이 아닌 품목의 크기 사진 → other(로얄과 사이즈 글이 안 나감)
+        c = fakeClient(() => aiText({ kind: 'size', confidence: 'high', size_guess: 'S', size_dir: 'small', item: '밤호박', staff_summary: '밤호박으로 보임. 손바닥보다 작음.' }));
+        r = await judge([{ buf: JPEG }], { client: c });
+        const rt = photoReply.reply(r, { channel: 'talk' });
+        ok(r.kind === 'other' && r.size_guess === null && r.size_dir === null && rt === null, '#616·#617 밤호박 크기 사진 → other → 손님 답 없음(로얄과 사이즈 기준 글 안 나감 · 직원 몫)', r);
+        r = normalize({ kind: 'size', confidence: 'high', size_guess: 'M', size_dir: 'small', item: '황금향', staff_summary: '황금향으로 보임' });
+        ok(r.kind === 'other' && r.size_guess === null, '#616 황금향(만감류) 크기 사진도 other(사이즈 기준은 감귤뿐)');
+        for (const it of ['감귤', '하우스감귤', '청귤', '귤']) { r = normalize({ kind: 'size', confidence: 'high', size_guess: '2S', size_dir: 'small', item: it, staff_summary: it + '로 보임' }); ok(r.kind === 'size' && r.size_guess === '2S' && r.confidence === 'high', '#616 ' + it + ' 크기 사진은 그대로 size', r); }
+        r = normalize({ kind: 'size', confidence: 'high', size_guess: 'S', size_dir: 'small', item: null, staff_summary: '과일 크기 사진' });
+        ok(r.kind === 'size' && r.size_guess === 'S' && r.item === null, '#616 품목을 모르면(null) size 그대로');
+        // not_fruit 은 그대로 답 없음 · item 칸 모양
+        r = normalize({ kind: 'not_fruit', confidence: 'high', size_guess: null, size_dir: null, item: null, staff_summary: '주소 입력 화면 캡처' });
+        ok(r.kind === 'not_fruit' && r.item === null && r.staff_summary === '주소 입력 화면 캡처' && photoReply.reply(r, { channel: 'sms' }) === null, '#616 농산물이 아닌 사진(주소 캡처)은 종전대로 not_fruit · 답 없음');
+        r = normalize({ kind: 'other', confidence: 'low', item: '  미니   밤호박  ', staff_summary: '미니 밤호박으로 보임. 멀쩡함.' });
+        ok(r.item === '미니 밤호박' && r.staff_summary === '미니 밤호박으로 보임. 멀쩡함.', '#616 item 빈칸 정리 · 이미 요약에 있으면 안 붙임');
+        r = normalize({ kind: 'other', confidence: 'low', item: 123, staff_summary: 'x' });
+        ok(r.item === null, '#616 item 이 글자가 아니면 null');
+        c = fakeClient(() => { const e = new Error('boom'); throw e; });
+        r = await judge([{ buf: JPEG }], { client: c });
+        ok(r.kind === 'error' && 'item' in r && r.item === null, '#616 판독 실패에도 item 칸(null)');
+    }
     // 크기 한도 — 한 장 base64 10MB · 합계 28MB(요청 32MB 안)
     ok(photoJudge.MAX_B64_BYTES === 10 * 1024 * 1024 && photoJudge.MAX_REQUEST_B64_BYTES === 28 * 1024 * 1024, '한도 상수: 한 장 10MB · 합계 28MB');
     const BIG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(8 * 1024 * 1024, 1)]);   // base64 약 10.7MB
@@ -405,7 +433,21 @@ async function testBotFlow() {
         reset(); st.judgeResult = J('unclear', 'low', { staff_summary: '흐려서 판단 어려움' });
         fire({ event: 'send', user: 'uG', imageContent: { imageUrl: 'https://img.example.com/g.jpg' } });
         await sleep(WAIT);
-        ok(st.sends.length === 1 && st.sends[0].text.includes('사진 확인했어요, 어떤 점이 불편하셨는지 알려주세요'), 'g: 애매 · 사진만 → 되묻기 글', st.sends);
+        ok(st.sends.length === 0 && st.aiCalls.length === 0 && st.tele.length === 1 && st.tele[0].includes('판독 불가') && st.tele[0].includes('답 안 함') && st.tele[0].includes('직원 확인') && st.tele[0].includes('흐려서 판단 어려움'), 'g(#617): 애매 · 사진만 → 손님 답 없음 + 직원 알림(요약 포함)', { sends: st.sends, tele: st.tele });
+        ok(sqlHas(/SET image_meta/).length === 1 && sqlHas(/SET answered = \$1, bot_response = \$2/).length === 0, 'g(#617): 판독 결과는 저장 · 사진 행은 「[이미지-무응답]」 그대로');
+        // g-3) 확신 낮은 파손 · 사진만 → 침묵 + 직원 알림 / 기타(멀쩡해 보임) · 사진만 → 침묵
+        for (const [tag, jr, word] of [['damage low', J('damage', 'low', { staff_summary: '상자가 젖어 보임' }), '파손·부패'], ['other high', J('other', 'high', { staff_summary: '멀쩡해 보이는 귤' }), '기타'], ['size low', J('size', 'low', { staff_summary: '크기 사진 · 견줄 물건 없음' }), '사이즈']]) {
+            reset(); st.judgeResult = jr;
+            fire({ event: 'send', user: 'uG3' + tag.replace(/\s/g, ''), imageContent: { imageUrl: 'https://img.example.com/g3.jpg' } });
+            await sleep(WAIT);
+            ok(st.sends.length === 0 && st.aiCalls.length === 0 && st.tele.length === 1 && st.tele[0].includes(word) && st.tele[0].includes('확신 ' + (jr.confidence === 'high' ? '높음' : '낮음')) && st.tele[0].includes('직접 확인해 주세요'), `g-3(#617): ${tag} · 사진만 → 손님 답 없음 + 직원 알림`, { sends: st.sends, tele: st.tele });
+        }
+        // g-4) 확신 낮은 파손 + 글 → 글만 평소 봇 답 길(사진 글은 안 나감)
+        reset(); st.judgeResult = J('damage', 'low');
+        fire({ event: 'send', user: 'uG4', imageContent: { imageUrl: 'https://img.example.com/g4.jpg' } });
+        fire({ event: 'send', user: 'uG4', textContent: { text: '상자가 좀 젖어서 왔네요' } });
+        await sleep(WAIT + 20);
+        ok(st.aiCalls.length === 1 && st.sends.length === 1 && st.sends[0].text === '평소 봇 답' && st.tele.length === 1 && st.tele[0].includes('글은 평소 봇 답으로 처리'), 'g-4(#617): 확신 낮은 파손 + 글 → 글은 평소 봇 답 길 1번 · 사진 글 없음 · 직원 알림', { sends: st.sends, tele: st.tele });
         // g-2) 애매 + 글 → 평소 길
         reset();
         fire({ event: 'send', user: 'uG2', imageContent: { imageUrl: 'https://img.example.com/g.jpg' } });
