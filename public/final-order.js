@@ -583,7 +583,7 @@
         const c = core(), s = S(), cards = [], info = [];
         const orderLine = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${e.conv['옵션정보']} · ${e.conv['수량']}박스`;
         // #583-i(대표 실물 10/8): 카드 머리는 「지금 나갈 옵션」(고친 옵션명·꼬리 반영)으로 — 고쳐도 머리가 옛 꼬리(「S사이즈로!」)로 남아 안 바뀐 것처럼 보였다. 참고 줄 글은 종전대로 주문 원문.
-        const orderLineNow = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${boxesOf(e) ? core().stripTail(String(optOf(e)), inCatalog) + ' [' + boxText(boxesOf(e)) + ']' : optOf(e)} · ${e.conv['수량']}박스${boxSkipN(boxesOf(e)) ? ` 중 ${Number(e.conv['수량']) - boxSkipN(boxesOf(e))}박스만${e.ch === 'naver' ? '(스토어 수기)' : ''}` : ''}${boxesOf(e) && boxHasX(boxesOf(e)) ? ' · ' + boxExtraText(boxesOf(e)) : ''}`;   // #601: 박스별 꼬리는 「S 1 · M 1」
+        const orderLineNow = e => `${CH_LABEL[e.ch]} · ${buyerName(e)}${e.conv['수취인명'] && e.conv['수취인명'] !== buyerName(e) ? ' → ' + e.conv['수취인명'] : ''} · ${boxesOf(e) ? core().stripTail(String(optOf(e)), inCatalog) + ' [' + boxText(boxesOf(e)) + ']' : optOf(e)} · ${e.conv['수량']}박스${boxSkipN(boxesOf(e)) ? ` 중 ${Number(e.conv['수량']) - boxSkipN(boxesOf(e))}박스만` : ''}${boxesOf(e) && boxHasX(boxesOf(e)) ? ' · ' + boxExtraText(boxesOf(e)) : ''}`;   // #601: 박스별 꼬리는 「S 1 · M 1」
         const memoOf = e => String(e.conv['배송메세지'] || '').trim();
         const sm = senderMap();
         // ① 주문 확인(v2 확인필요)
@@ -792,7 +792,7 @@
         s.merged.forEach(e => { const p = st.patch.get(keyOf(e)); if (p && p.tailBy === 'card' && p.tail != null) info.push({ t: p.tail ? `꼬리 지정(사람): ${orderLine(e)}에 「${p.tail}」` : `꼬리 뗌(사람): ${orderLine(e)}`, keys: [keyOf(e)] }); });   // #583-g2
         s.merged.forEach(e => { const p = st.patch.get(keyOf(e)); if (p && p.boxes && boxesOf(e)) info.push({ t: `박스별 꼬리(사람): ${orderLine(e)} → ${boxText(p.boxes)}`, keys: [keyOf(e)] }); });   // #601
         s.merged.forEach(e => { const p = st.patch.get(keyOf(e)); if (!p) return;   // #611
-            if (p.boxes && boxesOf(e) && boxSkipN(p.boxes)) info.push({ t: `박스 ${boxSkipNos(p.boxes).join('·')} 다음 발송(사람): ${orderLine(e)} — ${qtyNow(e)}박스 중 ${qtyNow(e) - boxSkipN(p.boxes)}박스만 이번에 나가요${e.ch === 'naver' ? ' · 스마트스토어 양식에서 뺌(수기 입력)' : ''}`, keys: [keyOf(e)] });   // #618 · #627
+            if (p.boxes && boxesOf(e) && boxSkipN(p.boxes)) info.push({ t: `박스 ${boxSkipNos(p.boxes).join('·')} 다음 발송(사람): ${orderLine(e)} — ${qtyNow(e)}박스 중 ${qtyNow(e) - boxSkipN(p.boxes)}박스만 이번에 나가요`, keys: [keyOf(e)] });   // #618
             if (p.boxes && boxesOf(e) && boxHasX(p.boxes)) info.push({ t: `박스별 받는 분(사람): ${orderLine(e)} → ${boxExtraText(p.boxes)}`, keys: [keyOf(e)] });
             if (p.rcBy === 'card') info.push({ t: `받는 분 바꿈(사람): ${orderLine(e)} → ${[p.recv != null ? '받는 분 ' + p.recv : '', p.rtel != null || p.rtel2 != null ? '번호' : '', p.addr != null ? '주소' : ''].filter(Boolean).join('·')} 바꿈`, keys: [keyOf(e)] }); });
         // #583 ⑨: 참고 줄에서 연 「직접 고치기」 카드(카드가 없는 주문) — 확인할 것에 세지 않는다
@@ -1609,7 +1609,7 @@
         const program2 = [];
         list.forEach((e, i) => { const bx = boxesOf(e), row = program[i]; if (!bx) { program2.push(row); return; }
             const c = row.cells, base = core().stripTail(String(c[4].v), inCatalog), lil = v => ({ v, t: typeof v === 'number' ? 'n' : 's', s: patchStyle(c[3].s) });
-            bx.forEach(b => { if (b.skip) return;   // #618 이번에 안 보내는 박스는 양식에 안 넣는다(#627: 스토어 시트에서는 그 주문 줄을 통째로 뺀다 — 아래 storeDrop)
+            bx.forEach(b => { if (b.skip) return;   // #618 이번에 안 보내는 박스는 양식에 안 넣는다(스토어 시트는 한 줄 그대로)
                 const cells = c.slice(), bo = b.opt || base, r = b.rcpt; cells[4] = lil(b.tail ? bo + ' ' + b.tail : bo); cells[5] = lil(b.qty);
                 if (r) { if (r.name) cells[3] = lil(r.name); if (r.tel) cells[6] = lil(r.tel); if (r.tel2) cells[7] = lil(r.tel2); if (r.addr) cells[8] = lil(r.addr); if (r.memo) cells[9] = lil(r.memo); }   // #611: 바꾼 박스만 그 값으로(연보라) · 안 바꾼 칸은 주문 그대로
                 program2.push({ key: row.key, cells }); }); });
@@ -1627,10 +1627,7 @@
             files.push({ kind: 'partner', short: p.short, name: `제주아꼼이네송장(${p.short}) ${dot}.xlsx`, wb: pw, partner: p, png: `수량(${p.short}) ${dot}.png` });
         });
         const store = wb.Sheets['발주발송관리'];
-        // #627(대표 10/10 밤 「1박스 이번에 안 보냄은 네이버 발주는 빼야 해 · 우리가 수기로」): 박스 일부만 이번에 보내는 주문을 발송처리 파일로 올리면 주문 전체가 발송된 것이 된다
-        //   → 그 주문 줄은 스토어 양식에서 통째로 뺀다(택배사 양식은 남은 박스만 그대로). 줄 찾기 = A열 상품주문번호 · 안내 1행·머리글 2행 아래 자료 줄만 위로 당긴다.
-        const held = store ? storeDrop(w.XLSX, store, s.merged.filter(e => e.ch === 'naver' && !e.individual && !e.excluded && boxSkipN(boxesOf(e)) > 0)) : 0;
-        if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length, held }); }
+        if (store) { const sw = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(sw, store, '발주발송관리'); const rg = w.XLSX.utils.decode_range(store['!ref']); files.push({ kind: 'store', name: `스마트스토어 발주발송관리 ${dot}.xlsx`, wb: sw, rows: Math.max(rg.e.r - 1, 0), indiv: s.merged.filter(e => e.ch === 'naver' && e.individual && !e.excluded).length }); }
         st.out = out; st.files = files; st.colorOf = colorOf; st.phase = 'result';
         renderResult(D().getElementById('msg-coupang').textContent || '');
         sendLog();   // #525: 전체 지시에 남길 정리 기록 1건(다시 만들면 같은 기록을 고쳐 씀) — 실패해도 파일 만들기는 성공
@@ -1639,7 +1636,7 @@
         const el = $('fo-result'); el.hidden = false;
         const qtyTable = p => `<table class="fo-qty" id="fo-qty-${esc(p.short)}"><tbody>${p.qty.map(q => `<tr><td style="background:#${st.colorOf(q.name) || 'FFFFFF'}">${esc(q.name)}</td><td class="n">${q.qty}</td></tr>`).join('')}<tr class="tot"><td></td><td class="n">${p.total}</td></tr></tbody></table>`;
         const partner = f => { const p = f.partner, cash = p.rows.filter(r => r.src === 'cash').length, jeju = p.rows.filter(r => r.jeju).length; return `<article class="fo-file" data-short="${esc(f.short)}"><header><h4>${esc(f.short)}</h4><p>${p.rows.length}행 · ${p.total}박스${cash ? ` · 현금파일 ${cash}행 포함` : ''}${jeju ? ` · 제주 ${jeju}행(맨 아래)` : ''}</p></header>${qtyTable(p)}<div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">택배사 양식 저장</button><button type="button" class="fo-btn" data-fo-png="${esc(f.short)}">수량 이미지 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`; };
-        const store = f => `<article class="fo-file store"><header><h4>스마트스토어</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}${f.held ? ` · 일부 박스만 보내는 ${f.held}건은 뺐어요(수기 입력)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">스토어 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
+        const store = f => `<article class="fo-file store"><header><h4>스마트스토어</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">스토어 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
         const ps = st.files.filter(f => f.kind === 'partner'), ss = st.files.filter(f => f.kind === 'store');
         const pl = patchLines();
         el.innerHTML = `<div class="fo-cards-head"><h3>결과 파일</h3><button type="button" class="fo-btn" id="fo-save-all" title="엑셀 파일만 받아요. 수량 이미지는 엑셀의 수량 시트에도 있고, 아래 버튼으로 따로 받을 수 있어요">파일 ${st.files.length}개 전부 저장</button></div>
@@ -1904,21 +1901,6 @@
     const boxHasX = bx => !!bx && bx.some(g => g.opt || g.rcpt);
     const boxSkipN = bx => (bx ? bx.reduce((n, g) => n + (g.skip ? g.qty : 0), 0) : 0);   // #618 이번에 안 보내는 박스 수
     const boxSkipNos = bx => { let n = 0; const out = []; (bx || []).forEach(g => { for (let i = 0; i < g.qty; i++) { n++; if (g.skip) out.push(n); } }); return out; };
-    // #627: 스토어 시트(발주발송관리)에서 그 주문들의 줄을 뺀다 — 돌려주는 값 = 뺀 주문 수. 셀 객체(서식 포함)를 그대로 위로 옮기고 범위(!ref)만 줄인다(병합·행 높이는 안내 1행뿐이라 그대로)
-    function storeDrop(X, ws, orders) {
-        if (!orders.length || !ws['!ref']) return 0;
-        const ids = new Set(); orders.forEach(e => idsOf(e).forEach(v => ids.add(String(v))));
-        const rg = X.utils.decode_range(ws['!ref']), at = (r, c) => X.utils.encode_cell({ r, c });
-        let to = 2, hit = 0;
-        for (let r = 2; r <= rg.e.r; r++) {
-            const a = ws[at(r, 0)], drop = !!a && a.v != null && ids.has(String(a.v).trim());
-            if (drop) { hit++; for (let c = rg.s.c; c <= rg.e.c; c++) delete ws[at(r, c)]; continue; }
-            if (to !== r) for (let c = rg.s.c; c <= rg.e.c; c++) { const x = ws[at(r, c)]; if (x) ws[at(to, c)] = x; else delete ws[at(to, c)]; delete ws[at(r, c)]; }
-            to++;
-        }
-        if (hit) { rg.e.r = Math.max(to - 1, 1); ws['!ref'] = X.utils.encode_range(rg); }
-        return hit ? orders.length : 0;
-    }
     // 박스별로 무엇을 바꿨는지(화면 글) — 주소·번호 글자는 싣지 않는다(결과 파일의 연보라 칸에서 본다)
     function boxExtraText(bx) { let n = 0; const out = []; bx.forEach(g => { const no = Array(g.qty).fill(0).map(() => ++n).join('·'), w = []; if (g.opt) w.push('옵션 ' + g.opt); const r = g.rcpt; if (r) { const x = [r.name ? '받는 분 ' + r.name : '', r.tel || r.tel2 ? '번호' : '', r.addr ? '주소' : '', r.memo ? '배송메세지' : ''].filter(Boolean); if (x.length) w.push(x.join('·') + ' 바꿈'); } if (w.length) out.push('박스' + no + ' ' + w.join(' · ')); }); return out.join(' / '); }
     // 지금 나갈 받는 분(말·카드로 바꾼 값 포함) — 직접 고치기 칸의 기본값이자 「바꿨는가」의 기준
