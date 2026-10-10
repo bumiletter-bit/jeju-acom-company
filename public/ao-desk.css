@@ -947,6 +947,99 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
     .sms-reply-row .desk-btn.primary { flex: 1 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) { .sms-row { transition: none; } .sms-thread { animation: none; } }
+/* #612(대표 10/10) 전체 가격 확인하기 카드 — 옵션 묶음마다 페이지별 결제가를 세로로 나란히 · 어긋난 줄 빨강 · 색은 기존 값만(야간은 gen568 이 옮김) */
+.pc-card .desk-tool-head span[data-k="err"] { color: #B42318; font-weight: 700; }
+.pc-re { flex: none; min-height: 44px; }
+.pc-when { display: grid; gap: 2px; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-soft); }
+.pc-when b { font-size: 16px; font-weight: 800; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.pc-when span { color: var(--d-sub); font-size: 12.5px; line-height: 1.5; }
+.pc-when em { color: #B54708; font-size: 12.5px; font-style: normal; font-weight: 700; line-height: 1.5; }
+.pc-stat { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
+.pc-stat li span i { font-style: normal; font-size: 11px; color: var(--d-sub); }
+.pc-stat li[data-ref="1"] b { color: var(--d-sub); }
+.pc-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.pc-bar .desk-btn { flex: none; min-height: 44px; }
+.pc-views { display: flex; gap: 6px; flex-wrap: wrap; }
+.pc-views .desk-btn[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
+.pc-bar .pc-q { flex: 1 1 200px; max-width: 300px; }
+.pc-count { color: var(--d-sub); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pc-copy { margin-left: auto; }
+.pc-copy:disabled { opacity: .5; cursor: default; }
+.pc-hint { margin: 14px 0 0; color: var(--d-sub); font-size: 12.5px; line-height: 1.5; }
+.pc-out { margin-top: 4px; }
+.pc-group { margin-top: 18px; min-width: 0; }
+.pc-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font-size: 14.5px; font-weight: 800; letter-spacing: -.01em; line-height: 1.4; }
+.pc-h span { min-width: 0; overflow-wrap: anywhere; }
+.pc-h .desk-badge { font-style: normal; }
+.pc-tw { border: 1px solid var(--d-line); border-radius: 10px; overflow: hidden; }
+.pc-t { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: 100%; font-size: 13.5px; }
+.pc-t th, .pc-t td { padding: 8px 12px; border-bottom: 1px solid var(--d-line); vertical-align: top; text-align: left; font-weight: 400; }
+.pc-t tbody tr:last-child th, .pc-t tbody tr:last-child td { border-bottom: 0; }
+.pc-t .pc-sep th, .pc-t .pc-sep td { border-top: 2px solid #DEE0E7; }
+.pc-pg { min-width: 0; }
+.pc-pname { display: block; color: var(--d-ink); font-weight: 700; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
+.pc-pmeta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.pc-pmeta i { font-style: normal; }
+.pc-ch { color: var(--d-sub); font-size: 12px; }
+.pc-otxt { display: block; margin-top: 3px; color: var(--d-sub); font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-t .pc-price { width: 124px; text-align: right; font-variant-numeric: tabular-nums; }
+.pc-price b { display: block; font-size: 15px; font-weight: 800; letter-spacing: -.01em; white-space: nowrap; }
+.pc-price b i { margin-left: 1px; font-style: normal; font-size: 12px; font-weight: 600; }
+.pc-price small { display: block; margin-top: 2px; color: var(--d-sub); font-size: 11.5px; line-height: 1.35; }
+.pc-price .pc-chg2 { display: none; }
+.pc-t .pc-chg { width: 168px; color: var(--d-sub); font-size: 12.5px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.pc-r.pc-bad th, .pc-r.pc-bad td { background: #FEECEB; }
+.pc-r.pc-bad .pc-price b, .pc-r.pc-bad .pc-price small { color: #B42318; }
+.pc-r.pc-bad .pc-price .pc-chg2, .pc-r.pc-stale .pc-price .pc-chg2 { color: #475467; font-weight: 400; }
+.pc-r.pc-bad .pc-price small { font-weight: 700; }
+.pc-r.pc-bad .pc-ch, .pc-r.pc-bad .pc-otxt, .pc-r.pc-bad .pc-chg, .pc-r.pc-stale .pc-ch, .pc-r.pc-stale .pc-otxt { color: #475467; }
+.pc-r.pc-stale th, .pc-r.pc-stale td { background: #FEF6E7; }
+.pc-r.pc-stale .pc-price small, .pc-r.pc-stale .pc-chg { color: #B54708; font-weight: 700; }
+.pc-r.pc-off th, .pc-r.pc-off td { background: var(--d-soft); }
+.pc-r.pc-off .pc-pname, .pc-r.pc-off .pc-price b { color: var(--d-sub); font-weight: 500; }
+.pc-r.pc-off .pc-price b { text-decoration: line-through; }
+.pc-issues { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.pc-issues li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; }
+.pc-issues .desk-badge { flex: none; margin-top: 1px; font-style: normal; }
+.pc-issues span { min-width: 0; overflow-wrap: anywhere; }
+.pc-fold { margin-top: 20px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-soft); }
+.pc-fold > summary { display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13.5px; font-weight: 700; cursor: pointer; list-style: none; }
+.pc-fold > summary::-webkit-details-marker { display: none; }
+.pc-fold > summary::after { content: ""; width: 7px; height: 7px; margin-left: auto; border-right: 2px solid var(--d-sub); border-bottom: 2px solid var(--d-sub); transform: rotate(45deg); transition: transform 160ms var(--d-ease); }
+.pc-fold[open] > summary::after { transform: rotate(-135deg); }
+.pc-fold > summary:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; border-radius: 10px; }
+.pc-fold + .pc-fold { margin-top: 10px; }
+.pc-fold-body { padding: 0 14px 14px; }
+.pc-fold-body .pc-group:first-child { margin-top: 4px; }
+.pc-fold-body .pc-tw { background: var(--d-card); }
+.pc-set-help { margin: 0; padding: 0 14px 10px; color: var(--d-sub); font-size: 12.5px; line-height: 1.5; }
+.pc-set-list { border-top: 1px solid var(--d-line); background: var(--d-card); }
+.pc-set-row { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--d-line); }
+.pc-set-name { flex: 1 1 auto; min-width: 0; }
+.pc-set-name b { display: block; font-size: 13.5px; font-weight: 700; overflow-wrap: anywhere; }
+.pc-set-name small { display: block; margin-top: 1px; color: var(--d-sub); font-size: 12px; overflow-wrap: anywhere; }
+.pc-sel { flex: none; min-height: 44px; min-width: 104px; padding: 0 10px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14px; }
+.pc-sel:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.pc-ign { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 4px; font-size: 13.5px; cursor: pointer; }
+.pc-ign input { width: 18px; height: 18px; accent-color: var(--d-accent); }
+.pc-set-foot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 14px; }
+.pc-set-msg { min-width: 0; color: var(--d-sub); font-size: 13px; overflow-wrap: anywhere; }
+.pc-set-msg[data-k="err"] { color: #B42318; }
+.pc-set-msg[data-k="ok"] { color: #067647; }
+@media (max-width: 640px) {
+    .pc-stat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pc-views { flex: 1 1 100%; }
+    .pc-views .desk-btn { flex: 1 1 0; padding: 0 6px; }
+    .pc-bar .pc-q { flex: 1 1 100%; max-width: none; font-size: 16px; }
+    .pc-copy { margin-left: auto; }
+    .pc-t th, .pc-t td { padding: 8px 10px; }
+    .pc-t .pc-price { width: 132px; }
+    .pc-t .pc-chg { display: none; }
+    .pc-price .pc-chg2 { display: block; }
+    .pc-set-row { flex-wrap: wrap; }
+    .pc-set-name { flex-basis: 100%; }
+    .pc-sel { flex: 1 1 auto; font-size: 16px; }
+}
 /* #605(대표 10/9) 이전 채팅 이력 줄 [지우기] — 자리·크기만(색은 .desk-btn 그대로 · 야간 규칙 없음) */
 .desk-h-item > .desk-h-del { position: absolute; right: 36px; top: 50%; transform: translateY(-50%); min-height: 32px; min-width: 56px; padding: 0 10px; }
 .desk-h-item:has(> .desk-h-del) > .desk-h-copy { right: 98px; }
@@ -1009,7 +1102,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (408규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (447규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1429,6 +1522,45 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
     :where(html[data-ao-theme="dark"]) .sms-back { background: rgba(16, 24, 40, .45); }
     :where(html[data-ao-theme="dark"]) .sms-thread { border-width: 1px 0 0; box-shadow: 0 -12px 32px -8px rgba(0, 0, 0, 0.53); }
 }
+:where(html[data-ao-theme="dark"]) .pc-card .desk-tool-head span[data-k="err"] { color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .pc-when { border: 1px solid var(--d-line); background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .pc-when span { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-when em { color: #FBBF4A; }
+:where(html[data-ao-theme="dark"]) .pc-stat li span i { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-stat li[data-ref="1"] b { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-views .desk-btn[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .pc-count { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-hint { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-tw { border: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .pc-t th, :where(html[data-ao-theme="dark"]) .pc-t td { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .pc-t tbody tr:last-child th, :where(html[data-ao-theme="dark"]) .pc-t tbody tr:last-child td { border-bottom: 0; }
+:where(html[data-ao-theme="dark"]) .pc-t .pc-sep th, :where(html[data-ao-theme="dark"]) .pc-t .pc-sep td { border-top: 2px solid #3A4168; }
+:where(html[data-ao-theme="dark"]) .pc-pname { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .pc-ch { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-otxt { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-price small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-t .pc-chg { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-bad th, :where(html[data-ao-theme="dark"]) .pc-r.pc-bad td { background: rgba(255, 122, 110, .16); }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-bad .pc-price b, :where(html[data-ao-theme="dark"]) .pc-r.pc-bad .pc-price small { color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-bad .pc-price .pc-chg2, :where(html[data-ao-theme="dark"]) .pc-r.pc-stale .pc-price .pc-chg2 { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-bad .pc-ch, :where(html[data-ao-theme="dark"]) .pc-r.pc-bad .pc-otxt, :where(html[data-ao-theme="dark"]) .pc-r.pc-bad .pc-chg, :where(html[data-ao-theme="dark"]) .pc-r.pc-stale .pc-ch, :where(html[data-ao-theme="dark"]) .pc-r.pc-stale .pc-otxt { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-stale th, :where(html[data-ao-theme="dark"]) .pc-r.pc-stale td { background: rgba(251, 191, 74, .15); }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-stale .pc-price small, :where(html[data-ao-theme="dark"]) .pc-r.pc-stale .pc-chg { color: #FBBF4A; }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-off th, :where(html[data-ao-theme="dark"]) .pc-r.pc-off td { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .pc-r.pc-off .pc-pname, :where(html[data-ao-theme="dark"]) .pc-r.pc-off .pc-price b { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-fold { border: 1px solid var(--d-line); background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .pc-fold > summary::after { border-right: 2px solid var(--d-sub); border-bottom: 2px solid var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-fold > summary:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .pc-fold-body .pc-tw { background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .pc-set-help { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-set-list { border-top: 1px solid var(--d-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .pc-set-row { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .pc-set-name small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-sel { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .pc-sel:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .pc-set-msg { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .pc-set-msg[data-k="err"] { color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .pc-set-msg[data-k="ok"] { color: #7BE3AE; }
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */
 /* 「중간발주·최종발주·정산 이미지」 = 「대기 중」 알약과 같은 꼴(흰 글씨 · 같은 바탕 · 같은 테두리) */

@@ -183,6 +183,7 @@
                                 <button type="button" class="desk-chip" id="desk-final-now" title="현금파일과 메모를 넣으면 거래처별 택배사 양식, 수량 표, 스토어 양식을 만들어요">최종발주</button>
                                 <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
                                 <button type="button" class="desk-chip" id="desk-ship-now" title="발송한 택배가 어디까지 갔는지 CJ대한통운에 바로 물어봐요">배송조회 확인하기</button>
+                                <button type="button" class="desk-chip" id="desk-price-now" title="네이버·자사몰 페이지의 옵션 가격이 서로 맞는지 한 번에 봐요">전체 가격 확인하기</button>
                                 <button type="button" class="desk-chip sms-chip" id="desk-sms-now" title="회사폰으로 온 문자를 보고 여기서 답해요" hidden>문자<i class="sms-n" id="sms-chip-n" hidden></i></button>
                             </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
@@ -526,7 +527,7 @@
     const SHIP_BADGE = { '사고': 'err', '미배송': 'ask', '집화': 'wait', '집화 정체': 'wait', '기타': 'mute', '조회실패': 'mute', '미조회': 'mute' };
     const SHIP_EMPTY = '그 기간 송장이 아직 안 올라왔어요. 아래에 택배사 엑셀을 끌어다 놓거나, 대표 PC에서 송장이 올라오기를 기다려 주세요.';
     function toolShow(id) {   // 도구 카드는 한 번에 하나만
-        ['desk-ship', 'desk-qty', 'desk-sms'].forEach(k => { const el = $(k); if (el) el.hidden = k !== id; });
+        ['desk-ship', 'desk-qty', 'desk-sms', 'desk-price'].forEach(k => { const el = $(k); if (el) el.hidden = k !== id; });   // desk-price(#612)는 처음 열 때 생긴다
         if (id !== 'desk-ship') clearTimeout(SHIP.timer);
         const el = id && $(id); if (el) el.scrollIntoView({ block: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }
@@ -1357,8 +1358,233 @@
         if (window.visualViewport) { window.visualViewport.addEventListener('resize', smsVv); window.visualViewport.addEventListener('scroll', smsVv); }
     }
 
+    // ── #612 전체 가격 확인하기(대표 10/10) — 같은 옵션이 걸린 페이지(네이버·자사몰)의 결제가를 나란히 놓고 어긋난 줄을 짚는다 ──
+    //   자료 = GET /api/price-check[?refresh=1] (price-check.js build 보고 · 10분 캐시): { generated_at, source{ naver_snapshot_at, mall }, pages[{ key 'naver:번호'|'mall:번호', channel, name, tier, sold, ignore, note }],
+    //          groups[{ key, label, sold_rows, rows[{ page_key, channel, option_text, price, tier, changed_at, prev_price, unchanged_since, changed_unknown, sold, ignore }], issues[{ kind, detail, … }], offseason_mismatch? }], summary, notes[] }
+    //   묶음 하나 = 「같은 옵션」 · 줄 = 그 옵션이 걸린 페이지 → 값이 세로로 나란히 놓인다(폰에서도 옆으로 밀 일이 없다)
+    //   설정 = GET /api/price-check/pages { config } · POST(관리자)는 **통째로 갈아 끼움** → 있던 설정 + 바꾼 것을 함께 보낸다 · 키는 naver:번호 · cafe24:번호(보고의 mall: 을 바꿔 보냄)
+    //   카드는 처음 열 때 만든다(닫힌 화면의 칸 순서를 안 바꾼다) · 읽기 전용 · 쓰기는 「페이지 등급 설정」 저장뿐
+    const PRICE = { data: null, busy: false, kind: null, q: '', view: null, seq: 0, qt: 0, cfg: null, setBusy: false };
+    const PC_BAD = [['tier_mismatch', '페이지끼리 값 다름'], ['mall_vs_naver', '자사몰≠네이버'], ['vip_not_lower', 'VIP가 더 비쌈'], ['stale', '한쪽만 안 바뀜']];
+    const PC_REF = [['missing', '자사몰에 없음'], ['vip_same', 'VIP와 일반 값 같음']];   // 참고(어긋남으로 세지 않는다)
+    const PC_KIND_LABEL = Object.fromEntries(PC_BAD.concat(PC_REF));
+    const pcIsRef = k => PC_REF.some(x => x[0] === k);
+    const PC_TIERS = [['normal', '일반', 'mute'], ['vip', 'VIP', 'work'], ['gift', '선물', 'done'], ['bulk', '대용량', 'wait']];
+    const PC_TIER = Object.fromEntries(PC_TIERS.map(t => [t[0], t]));
+    const PC_CH = { naver: '네이버', mall: '자사몰', cafe24: '자사몰' };
+    const PC_VIEWS = [['issue', '어긋난 것만'], ['multi', '여러 페이지'], ['all', '전체']];
+    const PC_HTML = `
+            <section class="desk-tool pc-card" id="desk-price" aria-label="전체 가격 확인" hidden>
+                <div class="desk-tool-head"><b>전체 가격 확인</b><span id="pc-sub">네이버·자사몰 옵션 결제가</span><button type="button" class="desk-btn sm pc-re" id="pc-refresh">다시 확인</button><button type="button" class="desk-btn sm desk-tool-x" id="pc-close">닫기</button></div>
+                <div class="ship-prog" id="pc-prog" role="status" hidden><div class="ship-prog-line"><span>가격을 모으는 중(1분쯤 걸릴 수 있어요)</span></div><div class="ship-track busy"><i></i></div></div>
+                <div class="ship-note" id="pc-note" role="status" hidden></div>
+                <div class="pc-when" id="pc-when" hidden></div>
+                <ul class="ship-stat pc-stat" id="pc-stat" aria-label="어긋난 종류별 건수(누르면 그 종류만)"></ul>
+                <div class="pc-bar">
+                    <div class="pc-views" id="pc-views" role="group" aria-label="보기">${PC_VIEWS.map(v => `<button type="button" class="desk-btn sm" data-view="${v[0]}" aria-pressed="false">${v[1]}</button>`).join('')}</div>
+                    <label class="desk-sr" for="pc-q">품목·옵션·페이지 찾기</label><input type="search" class="ship-q pc-q" id="pc-q" maxlength="40" autocomplete="off" placeholder="품목 · 옵션 · 페이지로 찾기">
+                    <span class="pc-count" id="pc-count" role="status"></span>
+                    <button type="button" class="desk-btn sm pc-copy" id="pc-copy">요약 복사</button>
+                </div>
+                <div class="pc-out" id="pc-out"></div>
+                <details class="pc-fold" id="pc-off" hidden><summary id="pc-off-sum">지금 안 파는 옵션끼리 값이 다름</summary><div class="pc-fold-body" id="pc-off-out"></div></details>
+                <details class="pc-fold pc-set" id="pc-set" hidden>
+                    <summary>페이지 등급 설정</summary>
+                    <p class="pc-set-help">같은 등급끼리 값을 견줘요. VIP 페이지는 VIP끼리만 견주고, 「제외」를 켠 페이지는 셈에서 빠집니다.</p>
+                    <div class="pc-set-list" id="pc-set-list"></div>
+                    <div class="pc-set-foot"><span class="pc-set-msg" id="pc-set-msg" role="status"></span><button type="button" class="desk-btn primary" id="pc-set-save">저장</button></div>
+                </details>
+                <p class="pc-hint">쿠팡은 가격 조회 API가 없어 빠져 있어요.</p>
+            </section>`;
+    const pcVisible = () => { const c = $('desk-price'); return !!c && !c.hidden; };
+    const pcView = () => PRICE.view || (window.matchMedia('(max-width: 640px)').matches ? 'issue' : 'multi');   // 폰은 「어긋난 것만」이 기본
+    const pcKst = t => { const d = t ? new Date(t) : null; return (!d || isNaN(d)) ? null : new Date(d.getTime() + 9 * 3600e3); };
+    const pcMd = t => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(t || '')); if (m) return Number(m[2]) + '/' + Number(m[3]); const k = pcKst(t); return k ? (k.getUTCMonth() + 1) + '/' + k.getUTCDate() : ''; };
+    const pcWhen = t => { const k = pcKst(t); return k ? (k.getUTCMonth() + 1) + '/' + k.getUTCDate() + ' ' + String(k.getUTCHours()).padStart(2, '0') + ':' + String(k.getUTCMinutes()).padStart(2, '0') : ''; };
+    const pcWon = n => (n == null || n === '' || isNaN(Number(n))) ? '' : nfmt(n);
+    function pcNote(text, kind) { const n = $('pc-note'); if (!n) return; n.hidden = !text; n.textContent = text || ''; n.dataset.k = kind || ''; }
+    const pcPage = key => { const d = PRICE.data; const p = d && Array.isArray(d.pages) ? d.pages.find(x => x && x.key === key) : null; return p || { key, name: key, tier: null, channel: String(key).split(':')[0] }; };
+    // 어긋남 하나가 가리키는 페이지 → { 빨강(bad) · 노랑(stale) · 참고(ref) }
+    function pcIssuePages(is) {
+        const arr = v => (Array.isArray(v) ? v : (v ? [v] : [])).map(String);
+        if (is.kind === 'tier_mismatch') return { bad: arr(is.odd_pages) };
+        if (is.kind === 'mall_vs_naver') return { bad: arr(is.mall).concat(arr(is.naver)) };
+        if (is.kind === 'vip_not_lower') return { bad: arr(is.vip) };
+        if (is.kind === 'stale') return { stale: arr(is.page) };
+        if (is.kind === 'vip_same') return { ref: arr(is.vip) };
+        if (is.kind === 'missing') return { ref: arr(is.naver) };
+        return { bad: arr(is.page_keys).concat(arr(is.page_key)) };   // 모르는 종류 — 페이지 칸이 있으면 그 줄만
+    }
+    function pcShape(g) {
+        const order = PRICE.data && Array.isArray(PRICE.data.pages) ? PRICE.data.pages.map(p => p.key) : [];
+        const idx = k => { const i = order.indexOf(k); return i < 0 ? 999 : i; };
+        const rank = r => (r.tier === 'vip' ? 10 : 0) + (r.channel === 'naver' ? 0 : 1);
+        const rows = (Array.isArray(g.rows) ? g.rows.filter(r => r && r.page_key != null) : []).slice().sort((a, b) => rank(a) - rank(b) || idx(a.page_key) - idx(b.page_key));
+        const issues = Array.isArray(g.issues) ? g.issues.filter(Boolean) : [];
+        const flag = new Map(); const put = (k, f, is) => { if (!flag.has(k)) flag.set(k, { bad: [], stale: [], ref: [] }); flag.get(k)[f].push(is); };
+        issues.forEach(is => { const p = pcIssuePages(is); ['bad', 'stale', 'ref'].forEach(f => (p[f] || []).forEach(k => put(k, f, is))); });
+        return { rows, issues, flag, bad: issues.filter(is => !pcIsRef(is.kind)), ref: issues.filter(is => pcIsRef(is.kind)) };
+    }
+    function pcGroups() {   // 지금 거르기에 맞는 묶음만
+        const d = PRICE.data, q = PRICE.q.toLowerCase(), view = pcView(), kind = PRICE.kind, out = [];
+        (d && Array.isArray(d.groups) ? d.groups : []).forEach(g => {
+            if (!g) return;
+            const sh = pcShape(g);
+            if (kind) { if (!sh.issues.some(is => is.kind === kind)) return; }
+            else if (view === 'issue') { if (!sh.bad.length) return; }
+            else if (view === 'multi') { if (sh.rows.length < 2 && !sh.issues.length) return; }
+            if (q && !(String(g.label || '').toLowerCase().includes(q) || sh.rows.some(r => String(r.option_text || '').toLowerCase().includes(q) || String(pcPage(r.page_key).name || '').toLowerCase().includes(q)))) return;
+            out.push({ g, sh });
+        });
+        return out;
+    }
+    const pcChanged = r => r.changed_at ? '바뀜 ' + pcMd(r.changed_at) + (r.prev_price != null ? ' · 앞 값 ' + pcWon(r.prev_price) : '') : r.changed_unknown ? '바뀐 날 모름' : r.unchanged_since ? pcMd(r.unchanged_since) + ' 이전부터 그대로' : '';
+    function pcGroupHtml(g, sh, kind) {
+        let prevVip = null;
+        const body = sh.rows.map(r => {
+            const p = pcPage(r.page_key), t = PC_TIER[r.tier || p.tier] || [r.tier, r.tier || '등급 없음', 'mute'], f = sh.flag.get(String(r.page_key)) || { bad: [], stale: [], ref: [] };
+            const off = r.sold === false || r.ignore, cls = ['pc-r'];
+            const vip = (r.tier || p.tier) === 'vip'; if (prevVip !== null && prevVip !== vip) cls.push('pc-sep'); prevVip = vip;
+            if (off) cls.push('pc-off'); else if (f.bad.length) cls.push('pc-bad'); else if (f.stale.length) cls.push('pc-stale');
+            const why = f.bad.concat(f.stale).map(is => PC_KIND_LABEL[is.kind] || is.kind).join(' · ');
+            const state = r.ignore ? '제외한 페이지' : r.sold === false ? '판매 안 함' : '';
+            return `<tr class="${cls.join(' ')}" data-page="${esc(r.page_key)}">
+                <th scope="row" class="pc-pg"><span class="pc-pname">${esc(p.name || r.page_key)}</span><span class="pc-pmeta"><i class="desk-badge" data-k="${t[2]}">${esc(t[1])}</i><i class="pc-ch">${esc(PC_CH[r.channel || p.channel] || r.channel || '')}</i></span><span class="pc-otxt" title="${esc(r.option_text || '')}">${esc(r.option_text || '')}</span></th>
+                <td class="pc-price"><b>${esc(pcWon(r.price))}<i>원</i></b>${state ? '<small>' + state + '</small>' : why ? '<small>' + esc(why) + '</small>' : ''}${pcChanged(r) ? '<small class="pc-chg2">' + esc(pcChanged(r)) + '</small>' : ''}</td>
+                <td class="pc-chg">${esc(pcChanged(r))}</td>
+            </tr>`;
+        }).join('');
+        const lines = (kind ? sh.issues.filter(is => is.kind === kind) : sh.issues).map(is => `<li data-kind="${esc(is.kind)}"><i class="desk-badge" data-k="${pcIsRef(is.kind) ? 'mute' : is.kind === 'stale' ? 'wait' : 'err'}">${esc(PC_KIND_LABEL[is.kind] || is.kind)}</i><span>${esc(is.detail || '')}</span></li>`).join('');
+        return `<section class="pc-group" data-g="${esc(g.key)}">
+                <h4 class="pc-h"><span>${esc(g.label || g.key)}</span>${sh.bad.length ? `<i class="desk-badge" data-k="err">어긋남 ${sh.bad.length}</i>` : ''}${sh.ref.length ? `<i class="desk-badge" data-k="mute">참고 ${sh.ref.length}</i>` : ''}</h4>
+                <div class="pc-tw"><table class="pc-t"><thead class="desk-sr"><tr><th scope="col">페이지</th><th scope="col">결제가</th><th scope="col">바뀐 날</th></tr></thead><tbody>${body}</tbody></table></div>
+                ${lines ? `<ul class="pc-issues">${lines}</ul>` : ''}
+            </section>`;
+    }
+    function pcRender() {
+        const d = PRICE.data, out = $('pc-out'); if (!out) return;
+        const by = {}; let bad = 0, off = [];
+        if (d) (d.groups || []).forEach(g => { if (!g) return; (g.issues || []).forEach(is => { by[is.kind] = (by[is.kind] || 0) + 1; if (!pcIsRef(is.kind)) bad++; }); if (g.offseason_mismatch) off.push(g); });
+        $('pc-sub').textContent = d ? (bad ? '어긋남 ' + nfmt(bad) + '건' : '어긋난 가격 없음') : '네이버·자사몰 옵션 결제가';
+        $('pc-sub').dataset.k = bad ? 'err' : '';
+        const src = d && d.source ? d.source : {}, snap = pcWhen(src.naver_snapshot_at), wh = $('pc-when');
+        wh.hidden = !d;
+        if (d) {
+            const notes = (Array.isArray(d.notes) ? d.notes : []).filter(n => /자사몰/.test(String(n)));
+            const mallBad = src.mall === 'error' || src.mall === 'none';
+            wh.innerHTML = `<b>네이버 ${snap ? esc(snap) + ' 값' : '새벽 값'}</b><span>${mallBad ? '' : '자사몰은 방금 값 · '}네이버는 새벽에 찍어 둔 값이에요. 낮에 고친 네이버 가격은 내일 새벽 뒤에 확인돼요.${pcWhen(d.generated_at) ? ' (확인 ' + esc(pcWhen(d.generated_at)) + ')' : ''}</span>${mallBad ? '<em>' + esc(notes.join(' · ') || '자사몰은 조회하지 못해 네이버 페이지끼리만 견줬어요') + '</em>' : ''}`;
+        }
+        const chip = ([k, label], ref) => { const n = by[k] || 0; return `<li role="button" tabindex="0" data-kind="${k}" aria-pressed="${PRICE.kind === k}"${ref ? ' data-ref="1"' : n ? ' data-k="' + (k === 'stale' ? 'wait' : 'err') + '"' : ''}><span>${esc(label)}${ref ? ' <i>참고</i>' : ''}</span><b>${nfmt(n)}</b></li>`; };
+        $('pc-stat').innerHTML = d ? PC_BAD.map(x => chip(x, false)).join('') + PC_REF.map(x => chip(x, true)).join('') : '';
+        const view = pcView(); $('pc-views').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(!PRICE.kind && b.dataset.view === view)));
+        $('pc-copy').disabled = !bad;
+        const offBox = $('pc-off'); offBox.hidden = !off.length;
+        if (off.length) { $('pc-off-sum').textContent = '지금 안 파는 옵션끼리 값이 다름 ' + nfmt(off.length) + '건(참고)'; $('pc-off-out').innerHTML = off.map(g => pcGroupHtml(g, pcShape(g), null)).join(''); }
+        if (!d) { out.innerHTML = PRICE.busy ? '' : '<div class="desk-empty">아직 불러온 가격이 없어요. [다시 확인]을 눌러 주세요.</div>'; $('pc-count').textContent = ''; return; }
+        const list = pcGroups();
+        $('pc-count').textContent = '옵션 ' + nfmt(list.length) + '개' + (PRICE.kind ? ' · ' + PC_KIND_LABEL[PRICE.kind] : '');
+        if (!list.length) {
+            out.innerHTML = `<div class="desk-empty">${PRICE.q ? '찾는 품목·옵션·페이지가 없어요.' : PRICE.kind ? '이 종류에 해당하는 것은 없어요.' : view === 'issue' ? '어긋난 가격이 없어요. 다른 옵션은 [여러 페이지]·[전체]에서 볼 수 있어요.' : '가격을 확인할 옵션이 없어요.'}</div>`;
+            return;
+        }
+        out.innerHTML = list.map(({ g, sh }) => pcGroupHtml(g, sh, PRICE.kind)).join('');
+    }
+    function pcSummaryText() {
+        const d = PRICE.data; if (!d) return '';
+        const L = []; let n = 0;
+        (d.groups || []).forEach(g => {
+            if (!g) return; const sh = pcShape(g); if (!sh.bad.length) return;
+            L.push('', '■ ' + (g.label || g.key));
+            sh.rows.forEach(r => { const p = pcPage(r.page_key), f = sh.flag.get(String(r.page_key)); const t = PC_TIER[r.tier || p.tier]; L.push('  ' + (f && (f.bad.length || f.stale.length) ? '▶ ' : '   ') + pcWon(r.price) + '원 · ' + (PC_CH[r.channel || p.channel] || '') + ' ' + (p.name || r.page_key) + (t && t[0] !== 'normal' ? ' [' + t[1] + ']' : '') + (r.sold === false ? ' (판매 안 함)' : '') + (r.changed_at ? ' · ' + pcMd(r.changed_at) + ' 바뀜' : '')); });
+            sh.bad.forEach(is => { n++; L.push('  → [' + (PC_KIND_LABEL[is.kind] || is.kind) + '] ' + String(is.detail || '')); });
+        });
+        const snap = pcWhen(d.source && d.source.naver_snapshot_at);
+        return '[가격 확인' + (snap ? ' · 네이버 ' + snap + ' 값' : '') + '] 어긋난 것 ' + n + '건' + L.join('\n');
+    }
+    async function pcLoad(refresh) {
+        if (PRICE.busy) return;
+        PRICE.busy = true; const seq = ++PRICE.seq;
+        $('pc-prog').hidden = false; $('pc-refresh').disabled = true; pcNote('');
+        if (!PRICE.data) pcRender();
+        try {
+            const d = await api('/api/price-check' + (refresh ? '?refresh=1' : ''));
+            if (seq !== PRICE.seq) return;
+            if (!d || typeof d !== 'object' || d.ok === false || !Array.isArray(d.groups)) throw new Error(d && d.error ? d.error : '가격 자료가 비어 있어요');
+            PRICE.data = d;
+            if (refresh) showToast('가격을 다시 확인했어요');
+        } catch (e) {
+            if (seq !== PRICE.seq) return;
+            pcNote((PRICE.data ? '새로 불러오지 못해 앞서 받은 가격을 보여 드려요. ' : '가격을 불러오지 못했어요. ') + '[다시 확인]을 눌러 주세요.' + (e && e.message ? ' (' + e.message + ')' : ''), 'err');
+        } finally {
+            if (seq === PRICE.seq) { PRICE.busy = false; if ($('pc-prog')) { $('pc-prog').hidden = true; $('pc-refresh').disabled = false; pcRender(); if ($('pc-set').open) pcSetLoad(); } }
+        }
+    }
+    function pcMount() {
+        if ($('desk-price')) return;
+        $('desk-listbox').insertAdjacentHTML('beforebegin', PC_HTML);
+        $('pc-close').addEventListener('click', () => pcClose());
+        $('pc-refresh').addEventListener('click', () => pcLoad(true));
+        $('pc-views').addEventListener('click', e => { const b = e.target.closest('button[data-view]'); if (!b) return; PRICE.view = b.dataset.view; PRICE.kind = null; pcRender(); });
+        $('pc-copy').addEventListener('click', () => { const t = pcSummaryText(); if (t) copyText(t, '어긋난 가격 요약을 복사했어요', $('pc-out')); });
+        $('pc-q').addEventListener('input', e => { clearTimeout(PRICE.qt); PRICE.qt = setTimeout(() => { PRICE.q = e.target.value.trim(); pcRender(); }, 180); });
+        const pick = li => { const k = li.dataset.kind; PRICE.kind = PRICE.kind === k ? null : k; pcRender(); const again = $('pc-stat').querySelector('li[data-kind="' + k + '"]'); if (again) again.focus({ preventScroll: true }); };
+        $('pc-stat').addEventListener('click', e => { const li = e.target.closest('li[role="button"]'); if (li) pick(li); });
+        $('pc-stat').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('li[role="button"]')) { e.preventDefault(); pick(e.target); } });
+        $('desk-price').addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented) { if (e.target.id === 'pc-q' && e.target.value) return; e.preventDefault(); pcClose(); } });
+        $('pc-set').hidden = !isAdmin();
+        $('pc-set').addEventListener('toggle', () => { if ($('pc-set').open) pcSetLoad(); });
+        $('pc-set-save').addEventListener('click', () => pcSetSave());
+    }
+    function pcOpen() { pcMount(); toolShow('desk-price'); if (!PRICE.data) pcLoad(false); else pcRender(); }
+    function pcClose() { toolShow(null); const b = $('desk-price-now'); if (b) b.focus(); }
+    // 페이지 등급 설정(관리자) — 저장 키는 naver:번호 · cafe24:번호
+    const pcCfgKey = k => String(k).replace(/^mall:/i, 'cafe24:');
+    const pcSetMsg = (t, k) => { const m = $('pc-set-msg'); m.textContent = t || ''; m.dataset.k = k || ''; };
+    async function pcSetLoad() {
+        const box = $('pc-set-list'), pages = PRICE.data && Array.isArray(PRICE.data.pages) ? PRICE.data.pages : [];
+        pcSetMsg('');
+        if (!pages.length) { box.innerHTML = '<div class="desk-empty">가격을 먼저 불러와야 페이지 목록이 보여요.</div>'; PRICE.cfg = null; return; }
+        box.innerHTML = '<div class="desk-empty">설정을 불러오는 중</div>';
+        try {
+            const r = await api('/api/price-check/pages');
+            if (!r || r.ok === false) throw new Error(r && r.error ? r.error : '설정이 비어 있어요');
+            const cfg = {}; Object.entries(r.config && typeof r.config === 'object' ? r.config : {}).forEach(([k, v]) => { if (v && typeof v === 'object') cfg[pcCfgKey(k)] = v; });
+            PRICE.cfg = cfg;
+            box.innerHTML = pages.map((p, i) => `<div class="pc-set-row" data-key="${esc(p.key)}" data-tier="${esc(p.tier || 'normal')}" data-ignore="${p.ignore ? '1' : ''}">
+                <div class="pc-set-name"><b>${esc(p.name || p.key)}</b><small>${esc(PC_CH[p.channel] || p.channel || '')} · ${esc(pcCfgKey(p.key))}${p.options != null ? ' · 옵션 ' + nfmt(p.options) + '개' : ''}${p.sold === false ? ' · 판매 안 함' : ''}</small></div>
+                <label class="desk-sr" for="pc-tier-${i}">${esc(p.name || p.key)} 등급</label><select class="pc-sel" id="pc-tier-${i}" data-f="tier">${PC_TIERS.map(t => `<option value="${t[0]}"${t[0] === (p.tier || 'normal') ? ' selected' : ''}>${t[1]}</option>`).join('')}</select>
+                <label class="pc-ign"><input type="checkbox" data-f="ignore"${p.ignore ? ' checked' : ''}><span>제외</span></label>
+            </div>`).join('');
+        } catch (e) { box.innerHTML = ''; PRICE.cfg = null; pcSetMsg('설정을 불러오지 못했어요.' + (e && e.message ? ' (' + e.message + ')' : ''), 'err'); }
+    }
+    async function pcSetSave() {
+        if (PRICE.setBusy || !PRICE.cfg) return;
+        const pages = PRICE.data && Array.isArray(PRICE.data.pages) ? PRICE.data.pages : [];
+        // 서버는 받은 것으로 통째로 갈아 끼운다 → 있던 설정을 먼저 싣고(등급이 비어 있던 설정은 지금 등급으로) 바꾼 줄을 덮는다
+        const body = {};
+        Object.entries(PRICE.cfg).forEach(([k, v]) => { const p = pages.find(x => pcCfgKey(x.key) === k); body[k] = { tier: PC_TIER[v.tier] ? v.tier : (p && p.tier) || 'normal', note: String(v.note || ''), ignore: v.ignore === true }; });
+        let n = 0;
+        $('pc-set-list').querySelectorAll('.pc-set-row').forEach(row => {
+            const tier = row.querySelector('[data-f="tier"]').value, ignore = row.querySelector('[data-f="ignore"]').checked;
+            if (tier === row.dataset.tier && ignore === (row.dataset.ignore === '1')) return;
+            const k = pcCfgKey(row.dataset.key); n++;
+            body[k] = { tier, note: (body[k] && body[k].note) || '', ignore };
+        });
+        if (!n) { pcSetMsg('바뀐 것이 없어요.'); return; }
+        PRICE.setBusy = true; $('pc-set-save').disabled = true; pcSetMsg('저장하는 중');
+        try {
+            const r = await api('/api/price-check/pages', 'POST', body);
+            if (r && r.ok === false) throw new Error(r.error || '저장하지 못했어요');
+            showToast('페이지 등급을 저장했어요');
+            await pcLoad(true);
+            pcSetMsg(n + '개 페이지를 저장하고 가격을 다시 확인했어요.', 'ok');
+        } catch (e) { pcSetMsg('저장하지 못했어요. 다시 눌러 주세요.' + (e && e.message ? ' (' + e.message + ')' : ''), 'err'); }
+        finally { PRICE.setBusy = false; $('pc-set-save').disabled = false; }
+    }
+
     function bindTools() {
         smsBind();   // #610-E 문자
+        $('desk-price-now').addEventListener('click', () => { if (pcVisible()) pcClose(); else pcOpen(); });   // #612 전체 가격 확인하기
         $('desk-ship-now').addEventListener('click', () => shipOpen());
         $('ship-close').addEventListener('click', () => { toolShow(null); $('desk-ship-now').focus(); });
         $('qty-close').addEventListener('click', () => { pkClose(false); toolShow(null); $('desk-qty-now').focus(); });

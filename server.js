@@ -10247,6 +10247,59 @@ const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgG
     fetchNaver: d => naverFetchInvoiceOrders(d, { extended: true }), fetchCoupang: d => coupangFetchInvoiceOrders(d), fetchCafe24: d => require('./cafe24.js').fetchInvoiceOrders(d) });
 // ===== #610 회사폰 문자 반자동 응대 — 끝 =====
 
+// ===== #612 전체 가격 확인하기 — 시작 (대표 10/10 「직원이 가격을 고칠 때 자사몰·귤 페이지를 빼먹는 사고 방지」 · 모듈 price-check.js(워커4) · 카드 ao-desk.js(워커5)) =====
+//   GET /api/price-check[?refresh=1] = 네이버 스냅샷 + 자사몰 variants 를 품목·옵션 열쇠로 묶어 페이지(등급 normal/vip/gift/bulk)별 가격을 나란히 · 어긋남(issues) · 10분 캐시 · 직원 가능
+//   GET/POST /api/price-check/pages = 페이지 등급 설정(agent_office_config 'price_check_pages' · POST 는 관리자) · 쿠팡은 가격 조회 API 가 없어 제외
+let _priceCheckCache = null, _priceCheckBusy = null;
+function priceCheckModule() { try { return require('./price-check.js'); } catch (e) { if (e && e.code === 'MODULE_NOT_FOUND' && /price-check/.test(String(e.message))) return null; throw e; } }
+app.get('/api/price-check', authMiddleware, async (req, res) => {
+    try {
+        const mod = priceCheckModule(); if (!mod || typeof mod.build !== 'function') return res.status(503).json({ ok: false, error: '가격 확인 모듈이 아직 없어요' });
+        const fresh = String(req.query.refresh || '') === '1';
+        if (!fresh && _priceCheckCache && Date.now() - _priceCheckCache.at < 10 * 60000) return res.json(Object.assign({ ok: true, cached: true }, _priceCheckCache.report));
+        if (!_priceCheckBusy) _priceCheckBusy = (async () => {
+            const report = await mod.build({ pool, cafe24Get: require('./cafe24.js').apiGet, cfg: { naverCfgGet }, log: console });   // 워커4 계약 · 자사몰 옵션 조회 약 20~25회 · 15초
+            _priceCheckCache = { at: Date.now(), report };
+            try { if (report && report.source && report.source.mall === 'live' && Array.isArray(report.mall_raw)) await naverCfgSet('price_check_last', { at: new Date().toISOString(), mall: report.mall_raw }); } catch (_) { }   // 창구 도구(scripts/desk/price-check.js)가 12시간 안 자료로 씀
+            return report;
+        })().finally(() => { _priceCheckBusy = null; });
+        const report = await _priceCheckBusy;
+        res.json(Object.assign({ ok: true, cached: false }, report));
+    } catch (e) { console.error('[가격 확인] 실패:', e.message); res.status(500).json({ ok: false, error: '가격 확인 중 문제: ' + String(e.message).slice(0, 160) }); }
+});
+app.get('/api/price-check/pages', authMiddleware, async (req, res) => {
+    try {
+        const cfg = (await naverCfgGet('price_check_pages')) || {};
+        const pages = (_priceCheckCache && _priceCheckCache.report && Array.isArray(_priceCheckCache.report.pages)) ? _priceCheckCache.report.pages : [];   // 보고를 한 번 만든 뒤의 페이지 목록(없으면 빈 배열 · 화면은 먼저 /api/price-check 를 부름)
+        const mod = priceCheckModule();
+        res.json({ ok: true, pages, config: cfg, tiers: mod && mod.TIERS ? mod.TIERS : ['normal', 'vip', 'gift', 'bulk'], defaults: mod && mod.DEFAULT_PAGES ? mod.DEFAULT_PAGES : {} });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e.message).slice(0, 160) }); }
+});
+app.post('/api/price-check/pages', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const body = (req.body && typeof req.body === 'object') ? req.body : {};
+        const TIERS = ['normal', 'vip', 'gift', 'bulk'];
+        const prev = (await naverCfgGet('price_check_pages')) || {};
+        const next = Object.assign({}, prev);   // 🔴 병합 저장(워커5 지적) — 보낸 키만 갱신 · name 은 유지 · tier 를 안 보내면 종전/이름 규칙 그대로 · null 을 보내면 그 키 삭제
+        for (const [k, v] of Object.entries(body)) {
+            if (!/^(naver|cafe24):[A-Za-z0-9_-]{1,40}$/.test(k)) continue;
+            if (v === null) { delete next[k]; continue; }
+            if (!v || typeof v !== 'object') continue;
+            const cur = Object.assign({}, prev[k] || {});
+            if (TIERS.includes(v.tier)) cur.tier = v.tier; else if (v.tier === '' || v.tier === null) delete cur.tier;
+            if (v.note !== undefined) cur.note = String(v.note || '').slice(0, 80);
+            if (v.ignore !== undefined) cur.ignore = v.ignore === true;
+            if (typeof v.name === 'string' && v.name.trim()) cur.name = v.name.trim().slice(0, 80);
+            next[k] = cur;
+        }
+        await naverCfgSet('price_check_pages', next);
+        await writeAudit({ action: 'update', targetType: 'price_check_pages', changes: { before: prev, after: next }, source: 'price_check', actor: { id: req.user.id, name: req.user.name || req.user.username } });
+        _priceCheckCache = null;
+        res.json({ ok: true, config: next });
+    } catch (e) { res.status(500).json({ ok: false, error: String(e.message).slice(0, 160) }); }
+});
+// ===== #612 전체 가격 확인하기 — 끝 =====
+
 // 대표 7/25(확정): 변환 직전 취소 재확인 기능 제외 — 취소·반품은 배송준비와 무관(취소는 PAYED 자동 이탈).
 //   안전장치 = [자동 불러오기]가 항상 실행 시점 신규 조회. 타이머 수집분은 현황·통계용(변환 재사용 안 함).
 

@@ -613,3 +613,67 @@ html[data-ao-theme="dark"] .fo-fbtn { background: var(--fd-card); border-color: 
 html[data-ao-theme="dark"] .fo-fbtn:hover { background: #232948; }
 html[data-ao-theme="dark"] .fo-fbtn.next { background: var(--fd-fill); border-color: var(--fd-fill); color: #fff; }
 html[data-ao-theme="dark"] .fo-fbtn.back { border-color: var(--f-card-line); color: var(--f-sub); }
+
+/* #611(대표 10/10): ① 2박스 이상 = 처음부터 박스마다 줄(옵션명 · 꼬리 · 받는 분 · 배송메세지) ② 「이 주문 직접 고치기」 머리를 눈에 띄게 ③ 직원 메모 줄에서 온 참고 줄·카드에 「메모」 표식. 색은 토큰만 */
+.fo-fix > summary { padding: 6px 12px; border-radius: 10px; background: var(--f-accent-soft); transition: background-color 160ms var(--f-ease); }
+.fo-fix > summary::-webkit-details-marker { display: none; }
+.fo-fix > summary::before { content: "▸"; flex: none; width: 16px; font-size: 15px; line-height: 1; color: var(--f-accent); }
+.fo-fix[open] > summary::before { content: "▾"; }
+.fo-fix > summary:hover { background: color-mix(in srgb, var(--f-accent) 14%, transparent); }
+.fo-fix-t { font-size: 16px; font-weight: 800; letter-spacing: -.01em; color: var(--f-accent); }
+.fo-boxhead { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--f-sub); }
+.fo-boxrow.full { align-items: flex-start; padding: 10px; border: 1px solid var(--f-card-line); border-radius: 12px; background: var(--f-soft); }
+.fo-boxrow.full.changed { border-color: var(--f-accent); }
+.fo-boxrow.full > .fo-boxno { flex: 0 0 100%; font-size: 13px; color: var(--f-ink); }
+.fo-boxtail { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; min-width: 0; }
+.fo-boxopt { display: flex; flex-direction: column; gap: 4px; flex: 1 1 100%; min-width: 0; }
+.fo-boptbtn { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--f-card-line); border-radius: 10px; background: var(--f-card, #fff); color: var(--f-ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: border-color 160ms var(--f-ease), background-color 160ms var(--f-ease); }
+.fo-boptbtn:hover { border-color: var(--f-accent); }
+.fo-boptbtn:focus-visible, .fo-boptbtn[aria-expanded="true"] { outline: 2px solid var(--f-accent); outline-offset: 1px; border-color: var(--f-accent); }
+.fo-boptbtn[aria-expanded="true"] .fo-optbtn-ar { transform: rotate(225deg); margin: 4px 4px 0 0; }
+.fo-boxopt.changed .fo-boptbtn { border-color: var(--f-accent); background: var(--f-accent-soft); }
+.fo-boxrc { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; flex: 1 1 100%; min-width: 0; align-items: end; }
+.fo-boxrc label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--f-sub); }
+.fo-boxrc label.wide { grid-column: 1 / -1; }
+.fo-rcbox { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fo-isrc { flex: none; padding: 1px 7px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--f-accent); color: var(--f-accent); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.fo-info li[data-info-src="memo"] { background: color-mix(in srgb, var(--f-accent) 5%, var(--f-card, #fff)); border-color: color-mix(in srgb, var(--f-accent) 22%, var(--f-line)); }
+@media (max-width: 640px) { .fo-fix-t { font-size: 17px; } .fo .fo-boxrc input { font-size: 16px; } }
+@media (prefers-reduced-motion: reduce) { .fo-fix > summary, .fo-boptbtn { transition: none; } }
+html[data-ao-theme="dark"] .fo-fix > summary { background: var(--f-accent-soft); }
+html[data-ao-theme="dark"] .fo-fix > summary:hover { background: color-mix(in srgb, var(--fd-lime) 12%, var(--f-accent-soft)); }
+html[data-ao-theme="dark"] .fo-fix-t, html[data-ao-theme="dark"] .fo-fix > summary::before { color: var(--fd-lime); }
+html[data-ao-theme="dark"] .fo-boxrow.full { background: var(--fd-bg); border-color: var(--f-card-line); }
+html[data-ao-theme="dark"] .fo-boxrow.full.changed { border-color: var(--fd-lime); }
+html[data-ao-theme="dark"] .fo-boptbtn { background: var(--fd-card); color: var(--f-ink); border-color: var(--f-card-line); }
+html[data-ao-theme="dark"] .fo-boxopt.changed .fo-boptbtn { background: var(--f-accent-soft); border-color: var(--f-accent); }
+html[data-ao-theme="dark"] .fo-isrc { box-shadow: inset 0 0 0 1px var(--fd-lime); color: var(--fd-lime); }
+html[data-ao-theme="dark"] .fo-info li[data-info-src="memo"] { background: color-mix(in srgb, var(--f-accent) 12%, var(--f-soft)); border-color: var(--fd-accent-line); }
+/* #611 보충 2(대표 10/10 「주소 칸까지 들어가면 너무 커진다」): 펼친 칸 묶음은 75% 크기로 — 글 칸·라벨·간격을 줄이고, 누르는 것(칩·버튼)의 높이는 그대로(PC 36 · 폰 44) */
+.fo-fix[data-compact][open] { gap: 8px; }
+.fo-fix[data-compact] .fo-edit, .fo-fix[data-compact] .fo-boxrc { gap: 6px; }
+.fo-fix[data-compact] .fo-edit label, .fo-fix[data-compact] .fo-boxrc label, .fo-fix[data-compact] .fo-optpick, .fo-fix[data-compact] .fo-boxopt { gap: 3px; font-size: 11.5px; }
+.fo-fix[data-compact] .fo-optlab, .fo-fix[data-compact] .fo-boxhead, .fo-fix[data-compact] .fo-chiphint { font-size: 11.5px; }
+.fo .fo-fix[data-compact] input[type="text"], .fo .fo-fix[data-compact] textarea { min-height: 33px; padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.fo .fo-fix[data-compact] .fo-edit textarea { min-height: 48px; }
+.fo-fix[data-compact] .fo-optbtn, .fo-fix[data-compact] .fo-boptbtn { min-height: 36px; padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.fo-fix[data-compact] .fo-chip { min-width: 44px; padding: 0 10px; font-size: 12.5px; }
+.fo-fix[data-compact] .fo-boxes { gap: 5px; margin-top: 6px; }
+.fo-fix[data-compact] .fo-boxrow.full { padding: 8px; gap: 5px; border-radius: 10px; }
+.fo-fix[data-compact] .fo-boxtail { gap: 5px; }
+@media (max-width: 640px) {
+    .fo-fix[data-compact] .fo-edit, .fo-fix[data-compact] .fo-boxrc { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .fo .fo-fix[data-compact] input[type="text"], .fo .fo-fix[data-compact] textarea { min-height: 44px; font-size: 16px; }   /* 폰: 글 칸도 손가락으로 누르는 것이라 44px · 글자 16px 그대로(더 작으면 아이폰이 화면을 확대한다) — 줄이는 것은 라벨·간격과 두 칸 배치로 */
+    .fo-fix[data-compact] .fo-optbtn, .fo-fix[data-compact] .fo-boptbtn { min-height: 44px; }
+}
+@media (min-width: 641px) {   /* PC(마우스): 누르는 것도 한 단 낮게 — 폰은 위 44px 그대로 */
+    .fo-fix[data-compact] .fo-optbtn, .fo-fix[data-compact] .fo-boptbtn { min-height: 33px; padding: 5px 10px; }
+    .fo-fix[data-compact] .fo-card-acts .fo-btn { min-height: 34px; }
+    .fo .fo-fix[data-compact] .fo-edit textarea { min-height: 40px; }
+    .fo-fix[data-compact] .fo-boxrow.full > .fo-boxopt { flex: 1 1 320px; }
+    .fo-fix[data-compact] .fo-boxrow.full > .fo-boxtail { flex: 0 1 auto; align-self: flex-end; }
+    .fo-fix[data-compact] .fo-boxrc { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .fo-fix[data-compact] .fo-boxrc label { grid-column: span 2; }
+    .fo-fix[data-compact] .fo-boxrc label:nth-child(4) { grid-column: span 4; }
+    .fo-fix[data-compact] .fo-rcbox .fo-boxrc label:nth-child(4) { grid-column: 1 / -1; }
+}

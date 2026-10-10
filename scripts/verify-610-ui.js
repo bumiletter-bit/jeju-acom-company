@@ -190,7 +190,7 @@ const logOf = async () => (await mock('/__mock/log')).log;
             await mock('/__mock/reset', {});
             const P = await open(PC, false, null, pg => pg.route('**/api/sms/**', r => r.fulfill({ status: 404, contentType: 'text/html', body: '<pre>Cannot GET</pre>' })));
             const g = await P.pg.evaluate(() => ({ sms: document.getElementById('desk-sms-now').hidden, chips: Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => b.textContent.trim()), card: document.getElementById('desk-sms').hidden, todo: document.querySelectorAll('.sms-todo').length }));
-            ok(g.sms && g.card && g.todo === 0 && g.chips.join('|') === '중간발주|최종발주|정산 이미지|배송조회 확인하기', `[없는 서버] 알약 숨김 · 종전 알약 4개 그대로(${g.chips.join('|')})`);
+            ok(g.sms && g.card && g.todo === 0 && g.chips.join('|') === '중간발주|최종발주|정산 이미지|배송조회 확인하기|전체 가격 확인하기', `[없는 서버] 알약 숨김 · 종전 알약 4개 그대로(${g.chips.join('|')})`);
             await P.pg.waitForTimeout(3000);
             ok(P.sms.length <= 1 && P.errors.length === 0, `[없는 서버] 요약은 한 번만 물어보고 그만둠(${P.sms.length}회) · 화면 오류 ${P.errors.length}`);
             await P.pg.click('#desk-ship-now'); await P.pg.waitForTimeout(400);
