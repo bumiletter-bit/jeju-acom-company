@@ -8308,12 +8308,13 @@ async function collectInquiry() {
 
 // 공개 게시판 게시 차단 검사 — 회사 공개 연락처만 예외
 const QNA_PII_WHITELIST = ['010-6687-4031', '010 6687 4031', 'bumiletter@naver.com'];
-function qnaPiiCheck(text) {
+function qnaPiiCheck(text, opts) {
     let t = String(text || '');
     for (const w of QNA_PII_WHITELIST) t = t.split(w).join(' ');
     const rules = [
+        ...((opts && opts.skipPhone) ? [] : [   // #658: 주문문의를 문의 대화 창에서 등록할 때만 뺀다
         [/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/, '전화번호로 보이는 숫자'],
-        [/\d{2,4}[-\s.]\d{3,4}[-\s.]\d{4}/, '전화번호로 보이는 숫자'],
+        [/\d{2,4}[-\s.]\d{3,4}[-\s.]\d{4}/, '전화번호로 보이는 숫자']]),
         [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/, '이메일 주소'],
         [/\d{14,}/, '주문번호로 보이는 긴 숫자'],
         [/(시|군|구)\s?\S{0,12}(로|길)\s?\d/, '주소로 보이는 문구'],
@@ -9002,12 +9003,12 @@ async function inquiryGenerate(item) {
 }
 
 // 🔴 고객문의 쓰기 함수 — PII·미답변 검증·audit 내장. 호출 지점: collectInquiry 자동·수동 게시 라우트 2곳뿐.
-async function naverPostInquiryAnswer(inquiryNo, content, actor) {
+async function naverPostInquiryAnswer(inquiryNo, content, actor, opts) {   // opts.skipPhone = #658(문의 대화 창 · 비공개 게시판이라 전화번호 검사만 제외)
     let text = String(content || '').trim();
     if (!text) throw { status: 400, message: '답변 내용이 비어 있습니다' };
     text = await qnaRenderPlaceholders(text, text);
     if (text.length > 2000) throw { status: 400, message: '답변이 2,000자를 넘습니다 — 줄여주세요' };
-    const pii = qnaPiiCheck(text);
+    const pii = qnaPiiCheck(text, opts);
     if (!pii.ok) throw { status: 403, message: pii.reason };
     const cur = await pool.query('SELECT answered, posted_at FROM naver_inquiries WHERE inquiry_id=$1', [String(inquiryNo)]);
     if (!cur.rows.length) throw { status: 404, message: '해당 문의를 찾을 수 없습니다 (수집 후 다시 시도해주세요)' };
@@ -16396,7 +16397,9 @@ app.delete('/mcp/:secret', (req, res) => {
 //   저장 = lucky_events 테이블(첫 요청 때 생성 · initDB·타이머·설정 행 무접촉) · 공개 3종은 마스킹·레이트리밋 · 관리는 회사 로그인
 require('./lucky-event.js')(app, { pool, authMiddleware, adminOnly, writeAudit });
 // #474 확인 필요 문의(톡톡·상품 Q&A·주문 문의) + 사람이 확인한 톡톡 답변 배달 — 표·칸은 첫 요청 때 생성
-require('./desk-inbox.js')(app, { pool, authMiddleware, writeAudit });
+const deskInbox = require('./desk-inbox.js')(app, { pool, authMiddleware, writeAudit });
+// #658 문의 대화 창(톡톡 · 상품문의 · 주문문의 — 문자 전용 창과 같은 꼴) — 등록은 위 naverPost* 함수 그대로 · 톡톡은 talk_outbox → 배달부 · 초안은 버튼을 눌렀을 때만
+require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
 
 // claude.ai MCP 커넥터 OAuth 탐색 경로 — 인증 없는(authless) 서버임을 정직하게 404로 응답
 // SPA 캐치올이 200+HTML을 주면 claude.ai 신규 연결 절차가 OAuth 서버로 오인해 등록 실패함 (2026-07-18 진단)
