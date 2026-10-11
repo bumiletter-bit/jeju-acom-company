@@ -5834,6 +5834,41 @@ app.use('/api/mall', mallApi.createMallRouter({ pool, express, cfgGet: naverCfgG
 function guideEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 // 지시 #235: "다른 상품들" 섹션 비노출 (대표 확정 — 옵션 나열이 뒤엉켜 혼동) — 숏클립과 동일한 플래그 OFF 방식(마크업·로직 보존, 정리 후 true로 재활성)
 const GUIDE_SHOW_OTHERS = false;
+// #639(10/11): 고른 품목이 없을 때(링크에 번호가 없음 · 못 찾음 · 안내문 없음)만 「판매 중 상품 안내」 목록을 보여 줄지 — 같은 안내문끼리 품목 단위로 묶어서. 끄면(false) 종전처럼 안내 글 한 줄만.
+//   고른 품목이 있을 때의 「다른 상품들」은 위 GUIDE_SHOW_OTHERS(#235 대표 확정 · 숨김) 그대로다.
+const GUIDE_LIST_WHEN_EMPTY = true;
+// 묶음 제목 = 묶인 품목 이름들의 공통 품목명(「고당도 하우스감귤 / 상품 및 과수: 가정용 - 2.5kg…」들 → 「고당도 하우스감귤」) · 공통 부분을 못 뽑으면 이름들을 「·」로
+function guideGroupName(names) {   // → { title, detail } · detail = 같은 품목명의 묶음이 여럿일 때 가르는 꼬리(예 「황금향 못난이」)
+    const strip = s => String(s || '').trim().replace(/^[^:\/]{1,12}:\s*/, '');   // 「과수 및 크기: 」 같은 앞 꼬리표
+    const list = [...new Set((names || []).map(s => String(s || '').trim()).filter(Boolean))];
+    if (!list.length) return { title: '', detail: '' };
+    const tidy = s => s.replace(/\s*[\d.]+\s*(kg|g|개|과|입)?\s*(\([^)]*\)?)?$/i, '').replace(/[\s\/\-:(·,~]+$/, '').trim();   // 끝의 무게·괄호 꼬리와 구분 글자
+    const lcp = arr => {
+        let p = arr[0]; for (const s of arr) { let i = 0; while (i < p.length && i < s.length && p[i] === s[i]) i++; p = p.slice(0, i); }
+        if (arr.includes(p)) return p;
+        const numNext = arr.every(s => /\d/.test(s[p.length] || '')), edge = /[\s\/\-:(·]$/.test(p);   // 무게 숫자 앞·구분 글자 뒤에서 끊긴 것은 그대로, 낱말 가운데면 앞 구분 글자까지 물린다
+        if (!numNext && !edge) { const cut = Math.max(p.lastIndexOf(' '), p.lastIndexOf('/'), p.lastIndexOf('-'), p.lastIndexOf(':'), p.lastIndexOf('('), p.lastIndexOf('·')); p = cut > 0 ? p.slice(0, cut) : ''; }
+        return p;
+    };
+    const heads = list.map(s => { const i = s.indexOf(' / '); return i > 0 ? s.slice(0, i).trim() : null; });
+    if (heads.every(Boolean) && new Set(heads).size === 1) {   // 「품목 / 상품 및 과수: 옵션」 꼴 — 앞쪽이 품목명
+        const rest = list.map(s => strip(s.slice(s.indexOf(' / ') + 3)));
+        return { title: heads[0], detail: list.length > 1 ? tidy(lcp(rest)) : '' };
+    }
+    const bare = list.map(strip);
+    const p = tidy(list.length === 1 ? bare[0] : lcp(bare));
+    if (p.length >= 2) return { title: p, detail: '' };
+    const uniq = [...new Set(bare.map(tidy).filter(Boolean))];
+    return { title: uniq.length <= 4 ? uniq.join(' · ') : uniq.slice(0, 4).join(' · ') + ' 외 ' + (uniq.length - 4), detail: '' };
+}
+function guideGroups(rows) {   // 안내문 글이 같은 판매중 행을 한 장으로
+    const m = new Map();
+    for (const r of rows || []) { const k = String(r.shipping_guide || '').trim(); if (!k) continue; if (!m.has(k)) m.set(k, { shipping_guide: r.shipping_guide, names: [] }); m.get(k).names.push(r.name); }
+    const out = [...m.values()].map(g => Object.assign(guideGroupName(g.names), { shipping_guide: g.shipping_guide, count: g.names.length }));
+    const seen = {}; for (const g of out) seen[g.title] = (seen[g.title] || 0) + 1;
+    for (const g of out) g.name = (seen[g.title] > 1 && g.detail && !g.title.includes(g.detail)) ? g.title + ' (' + g.detail + ')' : g.title;   // 같은 품목명이 여럿이면 꼬리로 가름
+    return out.sort((x, y) => x.name.localeCompare(y.name, 'ko'));
+}
 // #449(대표 GO 9/16 — 추석 이벤트 1회성): 발송안내 알림톡 [맛있게 드시는 법·보관법] 버튼 페이지(/guide) 상단 이벤트 안내 블록.
 //   설정 = agent_office_config 'guide_event_card' {enabled, title, lines[], btn, url(https만), start, end}(start/end = KST 'YYYY-MM-DD', 포함).
 //   설정이 없거나 꺼졌거나 기간 밖이면 '' → 페이지 출력은 종전과 바이트 동일(스타일도 블록 안에만 둠). 알림톡 템플릿·버튼 URL 무접촉(재심사 없음).
@@ -5878,9 +5913,11 @@ app.get('/guide', async (req, res) => {
             try {
                 picked = (await pool.query(
                     `SELECT id, name, shipping_guide FROM bot_products
-                     WHERE id = $1 AND deleted_at IS NULL AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> ''`, [pid])).rows[0] || null;
+                     WHERE id = $1 AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> ''`, [pid])).rows[0] || null;   // #639(10/11): 삭제된 행이어도 보여 준다 — 행사 종료로 지운 품목(555)의 이미 나간 링크가 빈 페이지가 된 실사고(#540 과 같은 꼴)
             } catch (_) { picked = null; }
         }
+        const groups = (!picked && GUIDE_LIST_WHEN_EMPTY) ? guideGroups(rows) : [];   // #639: 고른 품목이 없을 때만 — 번호 없이 나간 링크가 빈 화면이 되지 않게
+        const listEmpty = groups.length > 0;
         const others = rows.filter(r => !picked || r.id !== picked.id);
         let evCard = ''; try { evCard = guideEventCardHtml(await naverCfgGet('guide_event_card'), Date.now()); } catch (_) { evCard = ''; }   // #449: 이벤트 블록(설정 없으면 '' — 출력 무변경)
         const card = (r, open) => `
@@ -5915,8 +5952,8 @@ app.get('/guide', async (req, res) => {
 </style></head><body><div class="wrap">
     <div class="hd"><h1><img class="hd-logo" src="/akkomi.png" alt="아꼼이">제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p><span class="hd-badge">제주에서 우리집까지, 사랑스러운 제주 속으로</span></div>${evCard}
     ${picked ? `<div class="sec-title">주문하신 상품</div>${card(picked, true)}` : ''}
-    ${GUIDE_SHOW_OTHERS && others.length ? `<div class="sec-title">${picked ? '아꼼이네의 다른 상품들도 만나보세요' : '판매 상품 안내'}</div>${others.map(r => card(r, !picked && rows.length === 1)).join('')}` : ''}
-    ${!picked ? '<p style="text-align:center; color:#767a83; font-size:14px; line-height:1.7; margin-top:28px;">주문 알림톡의 「맛있게 드시는 법」 버튼으로 접속하시면<br>주문하신 상품의 안내를 보실 수 있습니다 🍊</p>' : ''}
+    ${listEmpty ? `<p style="text-align:center; color:#475467; font-size:14px; line-height:1.7; margin:18px 4px 2px;">주문하신 상품의 안내를 아래에서 골라 보세요 🍊</p><div class="sec-title">판매 중 상품 안내</div>${groups.map(g => card(g, groups.length === 1)).join('')}` : GUIDE_SHOW_OTHERS && others.length ? `<div class="sec-title">${picked ? '아꼼이네의 다른 상품들도 만나보세요' : '판매 상품 안내'}</div>${others.map(r => card(r, !picked && rows.length === 1)).join('')}` : ''}
+    ${!picked && !listEmpty ? '<p style="text-align:center; color:#767a83; font-size:14px; line-height:1.7; margin-top:28px;">주문 알림톡의 「맛있게 드시는 법」 버튼으로 접속하시면<br>주문하신 상품의 안내를 보실 수 있습니다 🍊</p>' : ''}
     <div class="ft">문의 📞 010-6687-4031 · 제주아꼼이네</div>
 </div></body></html>`);
     } catch (err) {
