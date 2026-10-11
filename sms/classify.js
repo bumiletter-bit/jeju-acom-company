@@ -4,7 +4,8 @@
  *     ctx = { hasImage       : 사진(MMS)이 같이 왔는가
  *             isKnownCustomer: 보낸 번호가 우리 주문(3채널·송장 색인)에 있는가
  *             fromShortCode  : 보낸 번호가 짧은 번호·대표번호인가(호출부가 알면 넘김)
- *             from           : 보낸 번호 글자(있으면 여기서도 한 번 더 본다) }
+ *             from           : 보낸 번호 글자(있으면 여기서도 한 번 더 본다)
+ *             hasOrder       : 그 번호로 주문이 있다(one·many) — 있으면 기사 안내문·뜻 없는 글로 무시하지 않는다(#650) }
  *
  *   bucket   뜻                                   서버가 할 일(총괄 설계)
  *   ───────  ───────────────────────────────────  ─────────────────────────
@@ -16,7 +17,11 @@
  *   photo    사진만 왔거나 글이 아주 짧음         사진 판독 → 직원 몫
  *   ship_q   언제 와요·발송·도착·송장             규칙 답(rules.js) → 안 되면 AI
  *   order_q  주문·결제·취소·변경·주소·사이즈      AI(확인이 필요하면 [사람])
- *   greeting 감사·잘 받았어요·잘 도착했어요·네    답·초안 없음 · 직원 몫 아님(안 읽음으로만 뜬다 · #641)
+ *   request  주문합니다·보내주세요·취소·변경·영수증  직원 몫(봇 답·초안 없음 — 주문을 넣거나 바꾸는 글은 사람이 받는다 · #650)
+ *   call     전화 주세요·통화 가능하세요            직원 몫(봇 답·초안 없음)
+ *   wrong    잘못 보내셨어요·누구세요·○○님 아닙니다  직원 몫(개인정보 오발송일 수 있다 — 무시하지 않는다)
+ *   refuse   수신거부·그만 보내·보내지 마세요       직원 몫 + 그 번호에는 봇이 다시 답하지 않는다(index.js 가 기억)
+ *   greeting 감사·잘 받았어요·잘 도착했어요·네    답·초안 없음 · 직원 몫 아님(안 읽음으로만 뜬다 · #641) — 반응 문자(「…에 좋아요를 표시함」)·뜻 없는 글(「123」「?」)도 여기
  *   other    그 밖                                AI
  *
  *   🔴 순서가 규칙이다: 기계 문자(otp → ad → carrier) → 불만(claim) → 사진(photo) → 배송(ship_q) → 주문(order_q) → 인사 → 그 밖.
@@ -56,6 +61,30 @@ const ORDER_CHANGE_WORDS = ['취소', '변경', '바꿔', '바꾸', '주소', '�
 const GREETING_WORDS = ['감사', '고맙', '고마워', '잘 받았', '잘받았', '잘 먹', '잘먹', '맛있', '수고', '알겠', '네네', '넵', '넹', '확인했', '좋은 하루', '안녕'];
 const GREETING_ONLY_RE = /^(네|넵|넹|예|응|ㅇㅇ|ㅇㅋ|ok|okay|ㄳ|ㄱㅅ|감사|ㅎㅎ+|ㅋㅋ+)+[\s.!~^♥]*$/i;
 
+// #649·#650(문자 최종 점검 — 워커4 54문장 · 워커5 33문장 + 실제 받은 글 28통)
+const CLAIM_EXTRA_RE = /(귤|맛|너무|좀|많이|엄청|조금)이?\s*(시네|시어|셔요|셔서|십니다|시고)|신\s*맛|시큼|물렁|별로|상태가?\s*(안|별로|영)|안\s*좋|기대\s*이하|안\s*시킬|다시는?\s*안|이게\s*(뭐|뭡|무슨)/;
+const CALL_RE = /전화\s*(좀\s*)?(주세요|주시|부탁|해\s*주|드릴|가능|바랍|요망)|통화\s*(가능|좀|부탁|하고|할\s*수|원해|요망)|연락\s*(좀\s*)?(주세요|주시|부탁|바랍)/;
+// 요청형 — 톡톡의 TALKTALK_REQUEST_RE(server.js) 낱말표 + 문자 주문 꼴(「한 박스 주문합니다」「받는사람 …」「4키로 두 박스 보내주세요」「현금영수증 해주세요」)
+const REQUEST_RE = new RegExp([
+    '(배송지|주소|옵션|연락처|받는\\s*분|수취인|사이즈|수량|날짜|발송일)[\\s\\S]{0,40}(변경|바꿔|바꾸|수정)', '(변경|바꿔|바꾸|수정)[\\s\\S]{0,40}(배송지|주소|옵션|연락처|사이즈|수량)',
+    '주문[\\s\\S]{0,20}취소', '취소[\\s\\S]{0,20}(해\\s*주|부탁|요청|하고\\s*싶|가능|되나|되요|될까|하려|할래|하고싶)',
+    '주문\\s*(합니다|할게|할께|할래|해요|드려요|드립니다|하겠|넣어|접수|부탁|이요)', '(\\d+\\s*(박스|상자|kg|키로|킬로|k\\b)|한\\s*(박스|상자)|두\\s*(박스|상자)|세\\s*(박스|상자))[^.?!\\n]{0,30}(보내|주문|부탁|주세요)',
+    '받는\\s*(사람|분|이)\\s*[:：]?\\s*[가-힣]', '보내는\\s*(사람|분|이)\\s*[:：]?\\s*[가-힣]', '(현금)?\\s*영수증', '세금\\s*계산서', '계산서\\s*발행',
+    '[가-힣]{1,5}(시|군|구)\\s+[가-힣0-9\\s]{0,20}(로|길|동|읍|면|리)\\s*\\d',
+].join('|'));
+const REACTION_RE = /메시지에\s*.{1,8}을\(를\)\s*(추가|표시)함|에\s*좋아요를\s*표시함|에\s*(공감|하트|좋아요)(을|를)?\s*(추가|표시)|^(Liked|Loved|Emphasized|Laughed at|Disliked|Questioned)\s+[“"']/;
+const BRACKET_HEAD_RE = /^\s*\[[^\]]{0,14}(택배|통운|물류|로지스|익스프레스|우체국|은행|카드|페이|증권|보험|캐피탈|공단|세무서|구청|시청|군청|주민센터|병원|의원|약국)[^\]]{0,6}\]/;   // 알려진 발신처 머리만(「[한진택배] …」「[○○은행] …」) — 「[주문] …」처럼 손님이 붙인 대괄호는 아니다
+const DRIVER_RE = /기사입니다|두고\s*갑니다|놓고\s*갑니다|맡겼습니다|맡겨\s*(두|놓)었습니다|(배송|배달|방문)\s*예정입니다|배송\s*완료\s*(했|하였|되었)습니다/;   // 보내는 쪽 말끝일 때만
+const ASK_FAVOR_RE = /주세요|주실|주시|부탁|알려|전해|바랍|해\s*줘|주십/;   // 부탁 말끝이 있으면 손님 글이다(「부재 시 문 앞에 놓아주세요」「기사님 전화번호 좀 알려주세요」)
+// 불만 낱말이 들어 있어도 칭찬·잘 받았다는 글(「파손 없이 잘 받았습니다」「썩은 거 하나도 없이 잘 왔어요 감사합니다」) — 「…는데/지만」이 없고 물음이 아닐 때만 인사 갈래
+const PRAISE_NEG_RE = /없이|하나도\s*없|없고|없네|없어요|없습니다|없었/;
+const PRAISE_POS_RE = /잘\s*받|잘\s*왔|잘\s*도착|감사|고맙|맛있|싱싱|좋네|좋아요|좋습니다|만족/;
+const REPORTED_RE = /없어요|없는데|못\s*받|안\s*왔|했는데|라는데|라고\s*(하|했|문자)|하던데|왔는데/;   // 손님이 기사 말을 옮겨 적은 글(「문 앞에 두고 갑니다 했는데 없어요」)은 기사 문자가 아니다
+const REFUSE_RE = /수신\s*거부|문자\s*(좀\s*)?(그만|보내지)|그만\s*보내|보내지\s*마|연락\s*하지\s*마|연락하지마/;
+const WRONG_RE = /잘못\s*보내셨|잘못\s*보낸|번호\s*잘못|문자\s*잘못|누구세요|누구시죠|누구신지|님\s*아닙니다|님이?\s*아닌데|저\s*[가-힣]{2,4}\s*(님)?\s*아닙니다|모르는\s*(번호|분)/;
+const OTP_RE = /is your [\w\s]{0,30}code|your [\w\s]{0,20}code is|verification|\b\d{4,8}\b[^\d]{0,14}(code|코드|인증)|(code|코드|인증)[^\d]{0,14}\b\d{4,8}\b/i;
+const NOISE_WORD_RE = /^(저기요|여보세요|계세요|저기|여기요)[\s.!?~]*$/;
+
 const SHORT_CODE_RE = /^(15|16|18)\d{6}$|^080\d{6,8}$|^1\d{2}$|^\d{3,6}$/;   // 1588-0000 · 080 · 114 · 짧은 번호
 const QUESTION_RE = /\?|？|까요|나요|가요|ㄴ가|인지|언제|어디|얼마|어떻게|뭐|무슨|왜|되나|될까|있나|있을까|해주|해 주|주세요|부탁/;
 const ASK_STRICT_RE = /\?|？|언제|어디|얼마|어떻게|되나|될까|주세요|부탁|며칠|몇\s*일|송장|운송장/;
@@ -88,11 +117,24 @@ function classify(text, ctx) {
     const custWords = hits(t, SHIP_WORDS).length + hits(t, ORDER_WORDS).length;
     const claimWords = hits(t, CLAIM_WORDS).length;
     const personal = !shortCode && !webSent && (/^01\d{8,9}$/.test(digits(c.from)) || c.isKnownCustomer === true);   // 휴대폰 번호에서 온 글(또는 주문 손님)
+    const fromDigits = digits(c.from), foreign = !!fromDigits && !fromDigits.startsWith('0') && !shortCode;   // +1 … 처럼 국내 꼴이 아닌 번호
+
+    // ⓪ 반응 문자(「…메시지에 👍을(를) 추가함」「Liked “…”」) — 인용된 글의 낱말(발송·주문)로 가르지 않는다
+    if (REACTION_RE.test(t)) return { bucket: 'greeting', words: [], reason: '반응 문자(좋아요·공감 표시)' };
 
     // ① 기계가 보낸 문자 — 답하지 않는다
     //    인증·승인 낱말이 있어도 손님 글(「입금했어요 승인번호 … 확인 부탁」)이면 여기서 버리지 않는다 → 짧은 번호·[Web발신] 이거나, 물음·배송/주문 낱말이 없을 때만
     let w = hits(t, OTP_WORDS);
-    if (w.length && (shortCode || webSent || (!asks && !custWords))) return { bucket: 'otp', words: w, reason: '인증·승인 문자' };
+    if (w.length && (shortCode || webSent || foreign || (!asks && !custWords))) return { bucket: 'otp', words: w, reason: '인증·승인 문자' };
+    if (OTP_RE.test(t) && (shortCode || webSent || foreign || (!asks && !custWords && !claimWords))) return { bucket: 'otp', words: [], reason: '인증번호 꼴(코드 + 숫자)' };
+    //    택배사·기사·기관 안내문 — 「[한진택배] …배송 예정」 발신처 머리 · 「배송기사입니다」「문 앞에 두고 갑니다」(물음이 아니고, 손님이 옮겨 적은 글이 아닐 때)
+    if (!c.hasOrder && BRACKET_HEAD_RE.test(t) && !webSent && !ASK_STRICT_RE.test(t.replace(BRACKET_HEAD_RE, '')) && !ASK_FAVOR_RE.test(t)) return { bucket: 'carrier', words: [t.match(BRACKET_HEAD_RE)[0].trim()], reason: '발신처 머리가 붙은 안내문' };
+    if (!c.hasOrder && DRIVER_RE.test(t) && !claimWords && !REPORTED_RE.test(t) && !ASK_FAVOR_RE.test(t) && !/\?|？/.test(t)) return { bucket: 'carrier', words: [], reason: '택배 기사·기관 안내문' };
+    //    거부·오발신 — 광고 꼬리(「무료수신거부 080…」)가 아니라 사람이 쓴 글일 때
+    if (!shortCode && !webSent && !foreign && !/\(광고\)|\[광고\]|080/.test(t)) {   // 사람이 쓴 글(짧은 번호·웹 발신·해외 번호가 아님)
+        if (REFUSE_RE.test(t) && !claimWords && !custWords) return { bucket: 'refuse', words: [], reason: '수신거부·그만 보내 달라는 글' };
+        if (WRONG_RE.test(t)) return { bucket: 'wrong', words: [], reason: '잘못 온 문자라는 글' };
+    }
     //    광고 낱말이 있어도 휴대폰 손님 글에 물음·배송/주문/불만 낱말이 있으면 광고가 아니다(「대출 문자 말고 제 귤 언제 와요」「수신거부 했는데 환불은요」)
     w = hits(t, AD_WORDS);
     if (w.length && !(personal && (asks || custWords || claimWords))) return { bucket: 'ad', words: w, reason: '광고·수신거부 문구' };
@@ -103,10 +145,15 @@ function classify(text, ctx) {
 
     // ② 불만·문제 — 사람
     w = hits(t, CLAIM_WORDS);
+    if (w.length && PRAISE_NEG_RE.test(t) && PRAISE_POS_RE.test(t) && !CONTRAST_RE.test(t) && !QUESTION_RE.test(t) && bare.length <= RECEIVED_MAX_LEN) return { bucket: 'greeting', words: [], reason: '칭찬·잘 받았다는 글(불만 낱말 + 「없이·없고」)' };
     if (w.length) return { bucket: 'claim', words: w, reason: '불만·문제 낱말' };
+    if (CLAIM_EXTRA_RE.test(t)) return { bucket: 'claim', words: [], reason: '불만·문제 꼴(시다·물렁·별로·안 좋다·기대 이하)' };
     // ②-b 계좌·입금 — 사람(#628)
     w = hits(t, ACCOUNT_WORDS);
     if (w.length) return { bucket: 'account', words: w, reason: '계좌·입금 낱말' };
+    // ②-c 요청형(주문·변경·취소·영수증) · 전화 요청 — 사람(#650)
+    if (REQUEST_RE.test(t)) return { bucket: 'request', words: [], reason: '주문·변경·취소·영수증 요청' };
+    if (CALL_RE.test(t)) return { bucket: 'call', words: [], reason: '전화·통화 요청' };
 
     // ③ 사진만
     if (c.hasImage && bare.length <= PHOTO_SHORT_LEN) return { bucket: 'photo', words: [], reason: bare ? '사진 + 짧은 글' : '사진만' };
@@ -129,6 +176,8 @@ function classify(text, ctx) {
     if (thanksOnly) return { bucket: 'greeting', words: wg, reason: received ? '받았다는 알림(물음 아님)' : '인사·맺음' };
 
     if (c.hasImage) return { bucket: 'photo', words: [], reason: '사진 + 글(불만 낱말 없음)' };
+    // 뜻 없는 글(「123」「ㄱㅡ」「?」「저기요」) — AI 를 부르지 않는다(안 읽음으로만)
+    if (!c.hasOrder && ((!/[가-힣]{2,}/.test(t) && !/[A-Za-z]{3,}/.test(t) && bare.length <= 6) || NOISE_WORD_RE.test(t))) return { bucket: 'greeting', words: [], reason: '뜻 없는 글' };
     return { bucket: 'other', words: [], reason: '그 밖' };
 }
 

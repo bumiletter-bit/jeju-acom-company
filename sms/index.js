@@ -285,8 +285,15 @@ module.exports = function mountSms(app, deps) {
     //   ① 「내 주문」을 묻는 배송·주문 물음인데 그 번호로 주문을 못 찾으면 AI 에 넘기지 않는다 → 고정 문구(성함·연락처를 여쭘) + 직원 확인(staff_why order_not_found)
     //      「지금 주문하면 언제 와요」「얼마예요」처럼 사기 전 물음(GENERAL_Q_RE)은 종전대로 AI(일반 안내)
     //   ② AI 는 주문 정보를 받지 않는다 → AI 글에 그 손님의 발송·도착을 단정하는 말이 있으면 보내지 않고 직원 몫(ai_assert). 조건을 단 일반 안내(「8시 이전 주문은 당일 발송」)는 막지 않는다
-    const NOT_FOUND_TEXT = '안녕하세요 고객님 ^^ 보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';
-    const GENERAL_Q_RE = /주문하면|주문\s*시(?![켰킨키])|주문할|주문하려|주문하고\s*싶|주문\s*하려|시키면|시킬|구매하면|구매\s*시|구매하려|구매할|(^|[\s,.!?])사면|사려|살려|사고\s*싶|얼마(?!나)|가격|방법|어떻게\s*주문/;
+    const NOT_FOUND_TEXT = '안녕하세요 고객님 ^^ 보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';   // 규칙 모듈이 없을 때의 물러남 글(평소엔 rules.notFoundText)
+    const notFound = o => smsSafe((rulesMod && typeof rulesMod.notFoundText === 'function') ? rulesMod.notFoundText(o) : NOT_FOUND_TEXT);
+    // #646 오늘(한국 날짜) 이 대화에 우리가 보낸 글(직원·봇 · 취소·실패 제외)이 이미 있는가 — 있으면 둘째 답부터 머리 인사를 줄인다
+    async function repliedToday(thread, inMsg) {
+        try { return (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND id <> $2 AND direction = 'out' AND state NOT IN ('cancelled','failed') AND (created_at + interval '9 hours')::date = (now() + interval '9 hours')::date LIMIT 1`, [thread.id, inMsg.id || 0])).rowCount > 0; }
+        catch (e) { return false; }
+    }
+    const GENERAL_CORE_RE = /주문하면|주문\s*시(?![켰킨키])|주문할(?!게|께|래|거|겁|건)|주문하려|주문하고\s*싶|주문\s*하려|시키면|시킬|구매하면|구매\s*시|구매하려|구매할|(^|[\s,.!?])사면|사려|살려|사고\s*싶|얼마(?!나|\s*전|\s*안|\s*동안)|(주문|구매|결제)\s*방법|어떻게\s*(주문|구매)|(주문|구매)[은을]?\s*어떻게/;
+    const GENERAL_Q_RE = { test: t => { const s = String(t || ''); return GENERAL_CORE_RE.test(s) || (/가격/.test(s) && /얼마|알려|궁금|\?|？|문의|가격표/.test(s)); } };   // #650 C: 「얼마 전」「그 방법으로」「이 가격에 이 품질」은 사기 전 물음이 아니다 — 「방법」은 주문·구매·결제 방법일 때만 · 「가격」은 물음과 같이 있을 때만
     const AI_COND_RE = /주문하시면|주문하면|주문\s*시(?![켰킨키])|이전\s*주문|이후\s*주문|전에\s*주문|까지\s*주문|결제하시면|결제\s*시|경우|보통|대부분|평균/;   // 조건·일반론 문장 표시(「주문 건·주문은·주문분」은 그 손님 주문을 가리킬 수 있어 조건으로 보지 않는다)
     const AI_PAST_RE = /말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)|출발했|출발해서|출발하여|발송됐|발송되었|발송했|발송해\s*드렸|발송\s*완료|보내\s*드렸|도착했|배송\s*중이|배송\s*시작|이동\s*중|나갑니다|나갔|나갈\s*예정|가고\s*있|오고\s*있|곧\s*(도착|받|출발|발송|나가)/;
     const AI_DATE_RE = /(오늘|내일|모레|\d{1,2}\s*일|\d{1,2}\/\d{1,2}|[월화수목금토일]요일(?!은|엔|에는|마다|도))[^.!?\n]{0,24}(출발|발송|도착|배송|받으실|받아\s*보실|나갑|나가|나갈)/;   // 「토요일은 발송을 쉬고」 같은 요일 일반론은 뺀다
@@ -297,19 +304,36 @@ module.exports = function mountSms(app, deps) {
         const text = String(inMsg.body || '');
         const bucket = inMsg.bucket || 'other';
         if (['otp', 'ad', 'carrier', 'greeting'].includes(bucket)) return { text: null, kind: null, toStaff: false, why: 'ignore:' + bucket };
-        if (bucket === 'claim' || bucket === 'photo' || bucket === 'account') return { text: null, kind: null, toStaff: true, why: bucket };   // #628 account = 계좌·입금(사람)
-        if (lookup && lookup.match === 'many') return { text: (rulesMod && rulesMod.ASK_NAME_TEXT) || (lookupMod && lookupMod.askText ? lookupMod.askText() : '주문을 여러 건 찾았어요. 어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 확인해 드릴게요.'), kind: 'ask', toStaff: false, why: 'many' };
+        if (bucket === 'photo' || bucket === 'account') return { text: null, kind: null, toStaff: true, why: bucket };   // #628 account = 계좌·입금(사람)
+        if (bucket === 'request' || bucket === 'call') return { text: null, kind: null, toStaff: true, why: bucket };     // #650 주문·변경·취소 요청 · 전화 요청 = 사람(봇 답·초안 없음)
+        if (bucket === 'wrong' || bucket === 'refuse') return { text: null, kind: null, toStaff: true, why: bucket === 'wrong' ? 'wrong_number' : 'refuse' };
+        const again = await repliedToday(thread, inMsg);
+        const askName = () => (rulesMod && typeof rulesMod.askNameText === 'function') ? rulesMod.askNameText(again) : ((rulesMod && rulesMod.ASK_NAME_TEXT) || (lookupMod && lookupMod.askText ? lookupMod.askText() : '주문을 여러 건 찾았어요. 어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 확인해 드릴게요.'));
+        // #646(대표 10/11 「주문자나 수취인이 연락 오면 톡톡처럼 그대로 응대 · 없으면 주문자나 수취인을 물어보는 구도」): 불만 글
+        //   주문을 찾았으면 톡톡 시나리오 뜻의 고정 답을 보내고 직원 확인(staff_why claim) — 그 대화에 한 번만 · 못 찾았으면 성함·연락처 되묻기 · 여럿이면 받는 분 되묻기. 미도착·오배송류와 규칙 모듈이 없을 때는 종전대로 사람 몫
+        if (bucket === 'claim') {
+            if (!(rulesMod && typeof rulesMod.claimText === 'function')) return { text: null, kind: null, toStaff: true, why: 'claim' };
+            if (lookup && lookup.match === 'many') return { text: askName(), kind: 'ask', toStaff: false, why: 'many', staff_flag: 'claim', auto_ok: true };
+            if (!(lookup && lookup.match === 'one')) return { text: notFound({ claim: true }), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'claim' };
+            const ct = rulesMod.claimText({ text });
+            if (!ct) return { text: null, kind: null, toStaff: true, why: 'claim' };
+            let sentBefore = true;
+            try { sentBefore = (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND rule_kind = 'claim' AND state NOT IN ('cancelled','failed') AND created_at > now() - interval '30 days' LIMIT 1`, [thread.id])).rowCount > 0; } catch (e) { sentBefore = true; }
+            if (sentBefore) return { text: null, kind: null, toStaff: true, why: 'claim' };   // 불만 답은 한 번만 — 이어지는 불만 글은 사람이 받는다
+            return { text: smsSafe(ct), kind: 'rule', rule_kind: 'claim', toStaff: false, why: 'claim_reply', staff_flag: 'claim', auto_ok: (typeof rulesMod.claimAuto === 'function') ? rulesMod.claimAuto({ text }) : false };   // #650 ③ 상태 낱말이 있고 물음이 아닐 때만 자동 · 「환불·반품·교환」만 있는 글·물음 꼴은 초안
+        }
+        if (lookup && lookup.match === 'many') return { text: askName(), kind: 'ask', toStaff: false, why: 'many', auto_ok: true };   // #650 ④
         if (rulesMod && typeof rulesMod.answer === 'function') {
             try {
                 const holidays = loadShippingHolidayInfo ? await loadShippingHolidayInfo() : null;
-                const r = rulesMod.answer({ text, bucket, order: lookup, holidays, now: Date.now() });
+                const r = rulesMod.answer({ text, bucket, order: lookup, holidays, now: Date.now(), again });
                 if (r && r.staff) return { text: null, kind: null, toStaff: true, why: 'rule_' + (r.why || 'staff') };   // 예약 상품 · 발송/도착 예정일 지남 = 규칙이 「사람」으로 판정
-                if (r && r.text) return { text: smsSafe(r.text), kind: 'rule', rule_kind: r.kind || null, toStaff: false, why: 'rule' };
+                if (r && r.text) return { text: smsSafe(r.text), kind: 'rule', rule_kind: r.kind || null, toStaff: false, why: 'rule', auto_ok: !!(lookup && lookup.match === 'one') };   // #650 ① 주문을 찾은 손님의 규칙 답
             } catch (e) { log.error('[문자] 규칙 답 실패(무시):', e.message); }
         }
         if ((bucket === 'ship_q' || bucket === 'order_q') && !lookup && !GENERAL_Q_RE.test(text)) return { text: null, kind: null, toStaff: true, why: 'lookup_error' };   // 주문 찾기 실패(DB 오류·모듈 없음) = 틀린 「주문이 확인되지 않습니다」를 보내지 않는다
         if ((bucket === 'ship_q' || bucket === 'order_q') && !(lookup && lookup.match === 'one') && !GENERAL_Q_RE.test(text))   // #645 ① 주문을 못 찾은 「내 주문」 물음 — AI 호출 없음
-            return { text: smsSafe(NOT_FOUND_TEXT), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'order_not_found' };
+            return { text: notFound({ again }), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'order_not_found' };
         if (typeof qnaGenerate === 'function') {
             try {
                 const g = await qnaGenerate(await withContext(thread, inMsg, text, c), null, undefined, 'sms');   // #625: 앞 대화(최근 context_msgs 통 · 48시간 안)를 질문 앞에 붙여 되풀이 답을 막는다
@@ -318,7 +342,7 @@ module.exports = function mountSms(app, deps) {
                     if (parsed.toStaff) return { text: null, kind: null, toStaff: true, why: 'ai_to_staff' };
                     if (/환불|반품|교환|보상|무료\s*수거|취소\s*(해|처리)|포인트|적립|쿠폰|할인해|보내\s*드리겠|재발송|재배송/.test(parsed.text)) return { text: null, kind: null, toStaff: true, why: 'ai_promise' };   // 약속 낱말은 사람(안내 블록만 믿지 않음)
                     if (aiAsserts(parsed.text)) return { text: null, kind: null, toStaff: true, why: 'ai_assert' };   // #645 ② 주문 정보 없이 발송·도착을 단정한 글 = 사람
-                    return { text: smsSafe(parsed.text), kind: 'ai', toStaff: false, why: 'ai', used: g.used };
+                    return { text: smsSafe(parsed.text), kind: 'ai', toStaff: false, why: 'ai', used: g.used, auto_ok: GENERAL_Q_RE.test(text) };   // #650 ② 명백한 사기 전 물음에 대한 AI 답만 자동 · 그 밖 AI 답은 초안
                 }
                 return { text: null, kind: null, toStaff: true, why: 'ai_skip' };
             } catch (e) { log.error('[문자] AI 답 실패:', e.message); return { text: null, kind: null, toStaff: true, why: 'ai_error' }; }
@@ -346,12 +370,24 @@ module.exports = function mountSms(app, deps) {
         const imgs = imageOnly(images);
         const bodyText = String(body || '').trim() || textParts(images).join('\n');
         const hasImage = imgs.length > 0;
-        const bucket = recordOnly ? 'photo_pending' : bucketOf(bodyText, digits, hasImage, thread.status !== 'new' || !!thread.order_hint);
+        const bucket = recordOnly ? 'photo_pending' : await bucketSmart(bodyText, digits, hasImage, thread.status !== 'new' || !!thread.order_hint);
         const msg = await addMessage({ thread_id: thread.id, direction: 'in', kind: kind || (hasImage ? 'mms' : 'sms'), body: bodyText, sender: 'customer', state: 'received', gateway_id, sim_number, bucket, event_at, envelope_id });
         if (!msg) return { thread_id: thread.id, dup: true, action: 'dup' };
         if (hasImage) await saveImages(msg.id, imgs);
         if (recordOnly) { await setThread(thread.id, { last_in_at: msg.event_at, last_in_text: thread.last_in_text || '', has_image: thread.has_image || hasImage }); return { thread_id: thread.id, message_id: msg.id, bucket, action: 'pending_photo' }; }
         return decideInbound(thread, msg, c, { bodyText, images: imgs });
+    }
+    // #650 B: 가르기 결과가 「기사 안내문·발신처 머리 안내문·뜻 없는 글」이면 그 번호로 주문이 있는지 한 번 보고, 있으면 그 판정 없이 다시 가른다(주문 손님의 글이 무시되지 않게)
+    async function bucketSmart(bodyText, digits, hasImage, known) {
+        const b = bucketOf(bodyText, digits, hasImage, known);
+        if (!(classifyMod && typeof classifyMod.classify === 'function' && lookupMod && typeof lookupMod.lookupByPhone === 'function')) return b;
+        let reason = ''; try { reason = (classifyMod.classify(bodyText, { hasImage, isKnownCustomer: !!known, from: digits, fromShortCode: digits.length < 10 }) || {}).reason || ''; } catch (e) { reason = ''; }
+        if (!/기사·기관 안내문|발신처 머리|뜻 없는 글/.test(reason)) return b;
+        try {
+            const r = await lookupMod.lookupByPhone(pool, digits, { days: 14 });
+            if (r && (r.match === 'one' || r.match === 'many')) return (classifyMod.classify(bodyText, { hasImage, isKnownCustomer: true, hasOrder: true, from: digits, fromShortCode: digits.length < 10 }) || {}).bucket || b;
+        } catch (e) { log.error('[문자] 가르기용 주문 확인 실패(무시):', e.message); }
+        return b;
     }
     function bucketOf(bodyText, digits, hasImage, known) {
         let bucket = null;
@@ -370,9 +406,9 @@ module.exports = function mountSms(app, deps) {
         if (lookup && lookup.match === 'one' && lookup.order) lookup.order = Object.assign({}, lookup.order, { option: lookup.order.option_text || lookup.order.option });   // rules.js 는 option/option_text 둘 다 읽음
         let ans;
         const orderQ = bucket === 'ship_q' || bucket === 'order_q';
-        if (hasImage && !gated && photoJudge && photoReply) ans = await composePhotoAnswer(thread, msg, c, lookup, images, bodyText);   // 사진이 있으면 글이 클레임이어도 사진 판독 쪽(대표 📱 ④ · 결정은 사람)
+        if (hasImage && !gated && photoJudge && photoReply) { ans = await composePhotoAnswer(thread, msg, c, lookup, images, bodyText); if (ans && ans.text) ans.auto_ok = !!(lookup && lookup.match === 'one'); }   // #650: 사진 답은 주문을 찾은 손님에게만 자동(#617) · 주문 없는 번호의 사진 답은 초안   // 사진이 있으면 글이 클레임이어도 사진 판독 쪽(대표 📱 ④ · 결정은 사람)
         else if (hasImage) ans = { text: null, toStaff: true, why: 'photo' };
-        else ans = await composeAnswer(thread, msg, c, orderQ ? lookup : (lookup && lookup.match === 'one' ? lookup : null));   // 주문 물음이 아니면 many 되묻기 안 함(보관법 물음에 「받는 분 성함」 묻지 않게)
+        else ans = await composeAnswer(thread, msg, c, (orderQ || bucket === 'claim') ? lookup : (lookup && lookup.match === 'one' ? lookup : null));   // 주문 물음이 아니면 many 되묻기 안 함(보관법 물음에 「받는 분 성함」 묻지 않게)
         if (ans.ai_json || (ans.toStaff && ans.why)) await pool.query(`UPDATE sms_messages SET ai_json = $2::jsonb WHERE id = $1`, [msg.id, JSON.stringify(Object.assign({}, ans.ai_json || {}, ans.toStaff && ans.why ? { staff_why: ans.why } : {}))]).catch(() => { });   // #633: 직원 몫으로 넘긴 사유를 받은 글에 남김(「지금 챙길 일 · 봇 실패」 셈)
         return ans;
     }
@@ -388,6 +424,11 @@ module.exports = function mountSms(app, deps) {
             await pool.query(`UPDATE sms_messages SET ai_json = COALESCE(ai_json, '{}'::jsonb) || '{"staff_why":"ai_error"}'::jsonb WHERE id = $1`, [msg.id]).catch(() => { });   // #633 「봇 실패」 셈과 같은 자리
             return { draft_text: null, draft_kind: null, staff_why: 'ai_error' };
         }
+    }
+    const isDomestic = d => /^0\d{8,10}$/.test(String(d || ''));   // 국내 휴대폰·유선 꼴(0 으로 시작 · 9~11자리)
+    async function refusedBefore(thread, msg) {
+        try { return (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND id <> $2 AND direction = 'in' AND bucket = 'refuse' AND created_at > now() - interval '180 days' LIMIT 1`, [thread.id, msg.id || 0])).rowCount > 0; }
+        catch (e) { return false; }
     }
     // 판정·답 — thread 는 이 글이 오기 전 상태 · msg 는 기록된 줄 · images 는 바이트 있는 사진만
     async function decideInbound(thread, msg, c, { bodyText, images }) {
@@ -410,7 +451,12 @@ module.exports = function mountSms(app, deps) {
                         r2.order = Object.assign({}, r2.order, { option: r2.order.option_text || r2.order.option });
                         const prevQ = (await pool.query(`SELECT body, bucket FROM sms_messages WHERE thread_id = $1 AND direction = 'in' AND id < $2 ORDER BY id DESC LIMIT 1`, [thread.id, msg.id])).rows[0];   // 되묻기 전 원래 물음(「송장」 물음도 살게 · 원래 갈래 유지)
                         const ans2 = await composeAnswer(thread, Object.assign({}, msg, { bucket: (prevQ && prevQ.bucket) || 'ship_q', body: (prevQ && prevQ.body) || bodyText }), c, r2);
-                        if (ans2 && ans2.text && !ans2.toStaff && ans2.kind !== 'ask') return await queueBotAnswer(thread, msg, c, patch, ans2, { bypassCap: true });
+                        if (ans2 && ans2.text && !ans2.toStaff && ans2.kind !== 'ask' && ans2.auto_ok) return await queueBotAnswer(thread, msg, c, patch, ans2, { bypassCap: true });
+                        if (ans2 && ans2.text && !ans2.toStaff && ans2.kind !== 'ask') {   // #650: 2차 답이 AI 글이면 초안으로
+                            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans2.text, draft_kind: ans2.kind, staff_why: ans2.staff_flag || null }));
+                            await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇 초안 확인`, STAFF_MSG);
+                            return done('draft', { kind: ans2.kind, second: true });
+                        }
                     }
                 } catch (e) { log.error('[문자] 2차 조회 실패(무시):', e.message); }
             }
@@ -421,21 +467,39 @@ module.exports = function mountSms(app, deps) {
         }
         // 무시 갈래(인증번호·광고·통신사) — 기록만 · 상태 ignored(이미 대화 중인 손님 글은 상태 유지)
         if (['otp', 'ad', 'carrier'].includes(bucket) && !['bot_replied', 'staff_needed', 'draft', 'cooldown', 'staff_replied'].includes(thread.status)) {
-            await setThread(thread.id, Object.assign(patch, { status: 'ignored' })); return done('ignored');
+            const hide = bucket !== 'carrier' || !isDomestic(digits) || digits.length < 10;   // #650 B: 국내 번호에서 온 「안내문 꼴」 글은 답 없이 안 읽음으로만(상태 그대로 · 목록에서 숨기지 않는다)
+            await setThread(thread.id, Object.assign(patch, hide ? { status: 'ignored' } : (thread.status === 'ignored' || thread.status === 'closed' ? { status: 'new' } : {}))); return done(hide ? 'ignored' : 'noop');
         }
         if (bucket === 'greeting' && thread.status !== 'new') { await setThread(thread.id, patch); return done('noop'); }
+        // #649 ③ 「수신거부·그만 보내」 = 답·초안 없음 + 이 번호에는 봇이 다시 답하지 않는다(받은 글의 갈래 refuse 가 기억 · 180일) — 직원 화면에는 사유로 보인다
+        if (bucket === 'refuse') {
+            await setThread(thread.id, Object.assign(patch, { status: 'staff_needed', draft_text: null, draft_kind: null, staff_why: 'refuse' }));
+            if (c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 수신거부·그만 보내 달라는 글이에요(봇 응대 끔)`, STAFF_MSG);
+            return done('refuse');
+        }
+        if (bucket !== 'greeting' && await refusedBefore(thread, msg)) {
+            await setThread(thread.id, Object.assign(patch, { status: 'staff_needed', draft_text: null, draft_kind: null, staff_why: 'no_bot' }));
+            if (c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇 응대를 끈 번호에서 글이 왔어요`, STAFF_MSG);
+            return done('no_bot');
+        }
+        // #649 ② 국내 꼴이 아닌 번호(+1 … 등)로는 봇이 절대 보내지 않는다 — 답·초안 없이 직원 몫
+        if (!isDomestic(digits) && !['otp', 'ad', 'carrier'].includes(bucket)) {
+            await setThread(thread.id, Object.assign(patch, { status: 'staff_needed', draft_text: null, draft_kind: null, staff_why: 'foreign_number' }));
+            if (c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 해외·알 수 없는 번호의 글이에요(봇 답 안 함)`, STAFF_MSG);
+            return done('foreign');
+        }
         // 직원 몫·직원 답변 상태(잠금)로 손님이 다시 보냄 → 봇 침묵 + 알림
-        if (thread.status === 'staff_replied' || thread.status === 'staff_needed' || thread.status === 'draft') {
+        if (thread.status === 'staff_replied' || thread.status === 'staff_needed' || (thread.status === 'draft' && (!!thread.staff_why || !c.enabled || c.mode !== 'auto'))) {   // #650 D: 자동 모드에서 「초안만 대기 중(사유 없음)」은 잠금이 아니다 → 아래 보통 흐름으로(주문 손님의 배송 물음은 늘 자동)
             const d = await draftForGated(thread, msg, c, patch, { bodyText, images });   // #635: 잠금은 자동 발송만 막는다 · 초안은 이번 글로 새로
-            const staffy = bucket === 'claim' || bucket === 'photo' || bucket === 'account' || hasImage;
-            await setThread(thread.id, Object.assign(patch, { status: 'staff_needed' }, d || Object.assign({ draft_text: thread.status === 'draft' ? thread.draft_text : null }, staffy ? { staff_why: hasImage ? 'photo' : bucket } : {})));   // record·꺼짐 = 종전(초안은 남기고 AI 안 부름)
+            const staffy = ['claim', 'photo', 'account', 'request', 'call', 'wrong'].includes(bucket) || hasImage;
+            await setThread(thread.id, Object.assign(patch, { status: 'staff_needed' }, d || Object.assign({ draft_text: thread.status === 'draft' ? thread.draft_text : null }, staffy ? { staff_why: hasImage ? 'photo' : (bucket === 'wrong' ? 'wrong_number' : bucket) } : {})));   // record·꺼짐 = 종전(초안은 남기고 AI 안 부름)
             if (c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 손님이 다시 보냈어요`, STAFF_MSG);
             return done('staff_again');
         }
         // 기록만(꺼짐 · record 모드) — 아무 것도 보내지 않음 · 알림은 클레임·사진만
         if (!c.enabled || c.mode === 'record') {
-            const toStaff = bucket === 'claim' || bucket === 'photo' || bucket === 'account' || hasImage;   // #628
-            await setThread(thread.id, Object.assign(patch, toStaff ? { status: 'staff_needed', staff_why: hasImage ? 'photo' : bucket } : (thread.status === 'ignored' || thread.status === 'closed' ? { status: 'new', draft_text: null, draft_kind: null } : {})));   // #630: 끝난 대화에 손님이 다시 보내면 record 모드에서도 다시 떠야 한다
+            const toStaff = ['claim', 'photo', 'account', 'request', 'call', 'wrong'].includes(bucket) || hasImage;   // #628 · #650
+            await setThread(thread.id, Object.assign(patch, toStaff ? { status: 'staff_needed', staff_why: hasImage ? 'photo' : (bucket === 'wrong' ? 'wrong_number' : bucket) } : (thread.status === 'ignored' || thread.status === 'closed' ? { status: 'new', draft_text: null, draft_kind: null } : {})));   // #630: 끝난 대화에 손님이 다시 보내면 record 모드에서도 다시 떠야 한다
             if (toStaff && c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} ${hasImage ? '사진' : '확인 필요'}`, STAFF_MSG);
             return done('recorded');
         }
@@ -464,16 +528,18 @@ module.exports = function mountSms(app, deps) {
         }
         // 번호로 주문 찾기 → 답 만들기
         const ans = await makeAnswer(thread, msg, c, patch, { bodyText, images });
-        if (ans.why && ans.why.startsWith('ignore:')) { await setThread(thread.id, Object.assign(patch, { status: (thread.status === 'new' && ans.why !== 'ignore:greeting') ? 'ignored' : thread.status })); return done(ans.why === 'ignore:greeting' ? 'noop' : 'ignored'); }   // #641: 인사·「잘 받았어요」는 답·초안 없이 안 읽음으로만(숨기지 않음)
+        if (ans.why && ans.why.startsWith('ignore:')) { await setThread(thread.id, Object.assign(patch, { status: (thread.status === 'new' && ans.why !== 'ignore:greeting' && !(ans.why === 'ignore:carrier' && isDomestic(digits) && digits.length >= 10)) ? 'ignored' : thread.status })); return done(ans.why === 'ignore:greeting' ? 'noop' : 'ignored'); }   // #641: 인사·「잘 받았어요」는 답·초안 없이 안 읽음으로만(숨기지 않음)
         if (ans.toStaff || !ans.text) {
             await setThread(thread.id, Object.assign(patch, { status: 'staff_needed', draft_text: null, draft_kind: null, staff_why: ans.why || 'staff' }));
             await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 직원 답 필요(${labelWhy(ans.why)})`, ans.staff_summary ? ans.staff_summary.slice(0, 120) : STAFF_MSG);
             return done('to_staff', { why: ans.why });
         }
-        if (c.mode === 'draft') {
+        // #650(대표 「고」 10/11 · 문자 최종 점검): 자동으로 나가도 되는 답(auto_ok)은 ①주문을 찾은 손님의 규칙 답 ②명백한 사기 전 물음의 AI 답 ③주문을 찾은 손님의 불만 고정 답 ④주문 여럿 되묻기 + 주문을 찾은 손님의 사진 답뿐 — 그 밖은 자동 모드에서도 초안만(직원이 [이대로 보내기])
+        if (c.mode === 'draft' || !ans.auto_ok) {
             await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans.text, draft_kind: ans.kind, staff_why: ans.staff_flag || null }));
-            await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇 초안 확인`, STAFF_MSG);
-            return done('draft', { kind: ans.kind });
+            const what = ans.staff_flag === 'order_not_found' ? '주문을 못 찾았어요 · 되묻기 초안 확인' : ans.staff_flag === 'claim' ? '불만 글 · 초안 확인' : '봇 초안 확인';
+            await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} ${what}`, ans.staff_summary ? ans.staff_summary.slice(0, 120) : STAFF_MSG);
+            return done('draft', { kind: ans.kind, held: c.mode !== 'draft' });
         }
         return await queueBotAnswer(thread, msg, c, patch, ans);
     }
@@ -481,6 +547,7 @@ module.exports = function mountSms(app, deps) {
     //   되묻기(kind 'ask')면 thread.ask_kind='name' 을 적어 다음 글을 이름으로 읽는다(followup.js) · bypassCap = 되묻기 뒤 2차 답(상한에서 뺌 · bot_count 는 올림)
     async function queueBotAnswer(thread, msg, c, patch, ans, opts = {}) {
         const digits = thread.phone_digits, bucket = msg.bucket;
+        if (!isDomestic(digits)) { await setThread(thread.id, Object.assign(patch, { status: 'staff_needed', draft_text: null, draft_kind: null, staff_why: 'foreign_number' })); return Object.assign({ thread_id: thread.id, message_id: msg.id, bucket, action: 'foreign' }); }   // 마지막 방어 — 봇은 국내 번호로만 보낸다
         const done = (action, extra) => Object.assign({ thread_id: thread.id, message_id: msg.id, bucket, action }, extra || {});
         const sendAfter = new Date(Date.now() + c.hold_sec * 1000);
         const pieces = splitForSms(ans.text, c.max_chars);
@@ -493,6 +560,7 @@ module.exports = function mountSms(app, deps) {
         await setThread(thread.id, Object.assign(patch, { status: 'bot_replied', draft_text: null, draft_kind: null, staff_why: ans.staff_flag || null, ask_kind: ask ? 'name' : null, ask_at: ask ? new Date() : null, cooldown_until: new Date(Date.now() + c.cooldown_min * 60000) }));
         await bumpBotCount(thread);   // 한 답에 1번(조각 수와 무관) · 큐에 넣는 순간 올려 유예 창에서도 상한이 먹게
         if (ask) await setThread(thread.id, { ask_count: (thread.ask_count || 0) + 1 });
+        if (ans.staff_flag === 'claim') await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 불만 글 — 봇이 ${ans.why === 'claim_reply' ? '사과·안내 답을 보냈어요' : '주문 확인을 여쭸어요'} · 이어받아 주세요`, STAFF_MSG, { force: true });   // #646
         if (ans.staff_flag === 'order_not_found') await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 주문을 못 찾았어요(봇이 성함·연락처를 여쭸어요)`, STAFF_MSG);   // #645
         if (ans.staff_summary) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇이 답했어요(사진) · 이어받아 주세요`, ans.staff_summary.slice(0, 120), { force: true });   // 대표 📷 규칙: 사진 답 뒤 직원 푸시는 반드시
         return done('queued', { out_id: out.id, parts: pieces.length, kind: ans.kind, second: !!opts.bypassCap, send_after: sendAfter.toISOString() });
@@ -512,7 +580,7 @@ module.exports = function mountSms(app, deps) {
         const thread = (await pool.query(`SELECT * FROM sms_threads WHERE id = $1`, [prev.thread_id])).rows[0];
         const n = await saveImages(prev.id, imgs);
         if (n) await pool.query(`DELETE FROM sms_images WHERE message_id = $1 AND data IS NULL AND purged_at IS NULL`, [prev.id]);
-        const bucket = bucketOf(bodyText, thread.phone_digits, n > 0, thread.status !== 'new' || !!thread.order_hint);
+        const bucket = await bucketSmart(bodyText, thread.phone_digits, n > 0, thread.status !== 'new' || !!thread.order_hint);
         await pool.query(`UPDATE sms_messages SET body = $2, bucket = $3, kind = $4 WHERE id = $1`, [prev.id, bodyText, bucket, n > 0 ? 'mms' : 'sms']);
         const msg = Object.assign({}, prev, { body: bodyText, bucket, kind: n > 0 ? 'mms' : 'sms' });
         const rows = n ? (await pool.query(`SELECT content_type, data FROM sms_images WHERE message_id = $1 AND data IS NOT NULL ORDER BY id`, [prev.id])).rows.map(r => ({ contentType: r.content_type, data: r.data.toString('base64') })) : [];
@@ -531,7 +599,7 @@ module.exports = function mountSms(app, deps) {
         }
         return rows.length;
     }
-    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', order_not_found: '주문 못 찾음', lookup_error: '주문 확인 실패', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
+    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', request: '요청(주문·변경·취소)', call: '전화 요청', wrong_number: '잘못 온 문자라는 글', refuse: '수신거부·그만 보내', no_bot: '봇 응대 끔(수신거부)', foreign_number: '해외·알 수 없는 번호', order_not_found: '주문 못 찾음', lookup_error: '주문 확인 실패', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
         rule_reserve: '예약 상품', rule_trouble: '배송 이상', rule_not_received: '못 받았다는 글', rule_arrive_overdue: '도착 예정일 지남', rule_ship_overdue: '발송 예정일 지남',
         rule_new_order_pending: '새 주문 대기', rule_pre_no_paid_at: '결제 시각 모름', rule_memo_date: '배송메세지 날짜 요청', rule_staff: '직원 확인' }[w] || (w ? '직원 확인' : ''));
 
@@ -852,6 +920,7 @@ module.exports = function mountSms(app, deps) {
         const r = (await pool.query(`SELECT
             (SELECT count(*)::int FROM sms_threads WHERE status = 'staff_needed' ${TEST_HIDE}) AS staff_needed,
             (SELECT count(*)::int FROM sms_threads WHERE draft_text IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS drafts,
+            (SELECT count(*)::int FROM sms_threads WHERE staff_why IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS staff_open,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread_threads,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND t.staff_why IS NOT NULL AND t.status <> 'closed') AS needs_staff,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_in,
@@ -889,10 +958,10 @@ module.exports = function mountSms(app, deps) {
         // #635: 여는 순간 읽음(staff_read_at = now · updated_at 은 안 건드림) — ?peek=1 이면 읽음으로 안 바꿈(상태만 다시 볼 때)
         const peek = String(req.query.peek || '') === '1';
         const t = (await pool.query(peek ? `SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE t.id = $1` : `UPDATE sms_threads SET staff_read_at = now() WHERE id = $1 RETURNING *, 0 AS unread`, [id])).rows[0]; if (!t) return res.status(404).json({ ok: false, error: '없는 대화예요' });
-        const ms = (await pool.query(`SELECT m.id, m.direction, m.kind, m.body, m.sender, m.state, m.bucket, m.rule_kind, m.event_at, m.sent_at, m.fail_reason,
+        const ms = (await pool.query(`SELECT m.id, m.direction, m.kind, m.body, m.sender, m.state, m.bucket, m.rule_kind, m.event_at, m.sent_at, m.fail_reason, m.send_after,
             COALESCE((SELECT array_agg(i.id ORDER BY i.id) FROM sms_images i WHERE i.message_id = m.id AND i.purged_at IS NULL AND i.data IS NOT NULL), '{}') AS image_ids
             FROM sms_messages m WHERE m.thread_id = $1 ORDER BY m.id LIMIT 300`, [id])).rows;
-        res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason })), order: t.order_json || null });
+        res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null });
     }));
     app.get('/api/sms/images/:id', authMiddleware, wrap(async (req, res) => {
         const id = parseInt(req.params.id, 10); if (!id) return res.status(400).end();
@@ -966,7 +1035,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

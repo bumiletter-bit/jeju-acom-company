@@ -39,7 +39,42 @@ const KST_MS = 9 * 3600 * 1000;
 const DAY_MS = 86400000;
 
 const HELLO = '안녕하세요 고객님 ^^', YES_HELLO = '네 고객님 ^^', BYE = '행복한 하루 되세요 ^^';
-const ASK_NAME_TEXT = HELLO + ' 주문이 여러 건 확인됩니다!\n어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 바로 확인해 드리겠습니다.';
+// #646(대표 10/11 「둘째부터 줄이고 마지막에는 감사 인사로」): again = 그 대화에 오늘 우리가 보낸 글이 이미 있음 → 머리 인사 없이 본문부터 · 맺음은 「감사합니다 ^^」
+const THANKS = '감사합니다 ^^';
+const hello = again => (again ? '' : HELLO + ' ');
+const bye = again => (again ? THANKS : BYE);
+const askNameText = again => hello(again) + '주문이 여러 건 확인됩니다!\n어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 바로 확인해 드리겠습니다.';
+const ASK_NAME_TEXT = askNameText(false);
+// #645·#646(대표 「주문자가 없으면 주문자나 수취인을 물어보는 구도」): 보낸 번호로 주문을 못 찾았을 때 — 불만 글이면 사과부터(「^^」 없이)
+function notFoundText(o) {
+    const a = o || {};
+    if (a.claim) return '고객님, 불편드려 죄송합니다.\n보내주신 번호로는 주문이 확인되지 않아, 주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';
+    return hello(a.again) + '보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';
+}
+// #646 불만 글 고정 답 — 톡톡 시나리오(inquiry_scenarios 3 「상품 파손/불량」· 4 「반품 요청」· 5 「교환 요청」)의 뜻 그대로 · 문자용(이모지·「톡톡」·번호 꼬리·「네이버 페이로」 없음)
+//   🔴 금액·개수·비율을 말하지 않는다 · 봇이 정하는 말(「환불해 드리겠습니다」)을 쓰지 않는다 — 「가능하니 말씀해 주시면」까지만. 결정은 직원.
+//   상품 상태(파손·부패·무름…)·환불/반품/교환 요청 글에만. 미도착·오배송·누락·수량 글은 이 답이 안 맞는다 → null(사람)
+const CLAIM_DAMAGE_RE = /파손|깨졌|깨져|깨진|깨짐|터졌|터져|터진|터짐|찌그러|짓눌|으깨|멍들|눌려|눌렸|썩|곰팡이|부패|상했|상해서|상한|상함|물러|물렀|무른|무름|흐물|시들|벌레|곪|골았|짓무|물컹|변질|불량|하자/;
+const CLAIM_REFUND_RE = /환불|반품|교환|보상/;
+const CLAIM_OTHER_RE = /안\s*왔|안\s*와|안\s*옴|안\s*오|못\s*받|안\s*받았|받지\s*못|도착\s*안|안\s*도착|배송\s*안|미도착|분실|다른\s*상품|다른\s*게|잘못\s*왔|잘못\s*온|오배송|누락|빠졌|빠져|모자라|덜\s*왔|개수|갯수|사기|신고|소비자원/;
+// #650 A: 불만 낱말이 있어도 불만이 아닌 글(「파손 없이 잘 받았습니다」「반품은 안 해도 될 것 같아요」「저번엔 물렀는데 이번엔 좋네요」)에는 이 답을 만들지 않는다
+const CLAIM_NOT_RE = /없이|없네|없어요|없습니다|없고|없었|하나도|안\s*해도|안해도|괜찮|좋네|좋아요|좋습니다|맛있|싱싱|잘\s*받|잘\s*왔|잘\s*도착|감사|고맙|만족/;
+const CLAIM_ASK_RE = /\?|？|되나요|될까요|되는지|가능한가요|가능할까요|가능한지|가능해요|언제|어떻게|얼마/;
+// 자동으로 보내도 되는가 — 상품 상태 낱말(파손·부패·무름…)이 있고 물음이 아닐 때만. 「환불·반품·교환」만 있는 글·물음 꼴은 같은 문구를 초안으로만(직원이 보고 보냄)
+function claimAuto(o) {
+    const t = String((o && o.text) || '');
+    return !!claimText(o) && CLAIM_DAMAGE_RE.test(t) && !CLAIM_ASK_RE.test(t);
+}
+function claimText(o) {
+    const t = String((o && o.text) || '');
+    const damage = CLAIM_DAMAGE_RE.test(t), refund = CLAIM_REFUND_RE.test(t);
+    if (!(damage || refund) || CLAIM_OTHER_RE.test(t) || CLAIM_NOT_RE.test(t)) return null;
+    return ['고객님, 불편드려 죄송합니다.',
+        (damage ? '배송 중에 약했던 부분이 상하거나 파손된 것 같습니다. ' : '') + '다음에는 더 꼼꼼하게 선별하겠습니다.',
+        '전체적으로 확인해 보시고 이상 있는 부분은 부분 환불 처리도 가능하고, 괜찮은 상품 드셔 보시고 입맛에 안 맞으시면 반품 처리도 가능하니 말씀해 주시면 빠르게 도와드리겠습니다.',
+        /교환/.test(t) ? '농산물 특성상 교환은 어려워, 새 상품을 원하시면 반품(무료 수거·전액 환불) 접수 후 재주문으로 도와드리고 있습니다.' : '',
+        '이상 있는 부분 사진을 찍어 보내 주시면 더 빠르게 처리해 드리겠습니다.'].filter(Boolean).join('\n');
+}
 const TRACK_URL = String(process.env.SMS_PUBLIC_URL || 'https://jeju-acom-company.onrender.com').replace(/\/+$/, '') + '/track?n=';   // 서버 /track = CJ 조회로 넘김(알림톡 [택배 배송조회] 버튼과 같은 주소)
 
 const toMs = v => (v == null ? Date.now() : new Date(v).getTime());
@@ -99,7 +134,8 @@ function answer(input) {
     const a = input || {};
     if (a.bucket !== 'ship_q') return null;
     const found = a.order || {};
-    if (found.match === 'many') return { text: ASK_NAME_TEXT, kind: null, staff: false, why: 'many' };
+    const again = a.again === true;   // #646 오늘 이 대화에 우리 글이 이미 있음
+    if (found.match === 'many') return { text: askNameText(again), kind: null, staff: false, why: 'many' };
     if (found.match !== 'one' || !found.order) return null;
 
     const o = found.order;
@@ -119,12 +155,12 @@ function answer(input) {
         if (TROUBLE.includes(status)) return { text: '', kind: null, staff: true, why: 'trouble' };   // 미배송·사고 등은 그 낱말을 손님에게 말하지 않고 사람이 본다
         if (gap(today, ship) > 0) return { text: '', kind: null, staff: true, why: 'ship_future' };   // 발송일이 앞날로 적힌 줄(자료 오류) — 「출발했어요」라는 틀린 말이 자동으로 나가지 않게 사람이 본다
         const yes = !NOT_YES_RE.test(q) && (YES_Q_RE.test(q) || (!!o.delivered && ARRIVED_Q_RE.test(q)));
-        const head = (yes ? YES_HELLO : HELLO) + ' ' + (gap(today, ship) === 0 ? '오늘' : mdDow(ship)) + ' 제주에서 출발했';   // #643 거래처 이름 없음 · 발송 당일이면 「오늘」 · 말끝은 아래에서
+        const head = (yes ? YES_HELLO + ' ' : hello(again)) + (gap(today, ship) === 0 ? '오늘' : mdDow(ship)) + ' 제주에서 출발했';   // #643 거래처 이름 없음 · 발송 당일이면 「오늘」 · 말끝은 아래에서
         const tr = trackingText(o);
         if (o.delivered) {
             if (/못\s*받|받지|분실|없어요|어디/.test(q)) return { text: '', kind: null, staff: true, why: 'not_received' };   // 배송 완료로 찍혔는데 못 받았다는 글
             if (!/도착했|받았|완료|송장|운송장/.test(q)) return null;   // 「언제 와요」류 — 이미 받은 지난 주문 이야기가 아닐 수 있다 → 규칙으로 답하지 않는다(AI)
-            const lines = [head + '고, 배송 완료로 확인됩니다!', tr, '감사합니다 ^^'].filter(Boolean);
+            const lines = [head + '고, 배송 완료로 확인됩니다!', tr, THANKS].filter(Boolean);
             return { text: lines.join('\n'), kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'delivered' };
         }
         // 발송일 낮 12시(KST) 기준으로 계산기에 넣는다 — computeArrival 은 그 날짜의 달력일만 쓴다
@@ -136,7 +172,7 @@ function answer(input) {
         const lines = [head + '습니다!', tr, arrive + '입니다.' + (r.reason ? ` (${clean(r.reason, 30)})` : ''),
             (phrase && !/완료/.test(phrase)) ? `지금은 ${phrase}.` : '',
             first ? `배송조회 ${TRACK_URL}${first}` : '',   // 상자가 여럿이어도 주소는 첫 송장 하나(번호는 위 줄에 전부)
-            BYE].filter(Boolean);
+            bye(again)].filter(Boolean);
         return { text: lines.join('\n'), kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'shipped' };
     }
 
@@ -161,11 +197,11 @@ function answer(input) {
         : `${relDay(r.shipDate, today)} 오전 발송 예정`;
     const arrive = arriveSentence(r.arriveStart, r.arriveEnd, today);
     const why = reasonTail(r.text);
-    const lines = [HELLO + (pre ? ' 주문 확인됐습니다!' : ''),
+    const lines = [[again ? '' : HELLO, pre ? '주문 확인됐습니다!' : ''].filter(Boolean).join(' '),
         shipWhen + (arrive ? `이고, ${arrive}입니다.` : '입니다.') + (why ? ` (${why})` : ''),
         askedTracking ? `송장번호는 발송되면 ${o.channel === 'coupang' ? '문자로' : '알림톡으로'} 안내드리겠습니다.` : '',   // 발송안내 = 네이버·자사몰은 알림톡 · 쿠팡은 문자
-        '잘 포장해서 보내드리겠습니다. ' + BYE].filter(Boolean);
+        '잘 포장해서 보내드리겠습니다. ' + bye(again)].filter(Boolean);
     return { text: lines.join('\n'), kind: 'ship_before', staff: false, why: pre ? 'pre' : 'not_shipped' };
 }
 
-module.exports = { answer, ASK_NAME_TEXT, TRACK_URL };
+module.exports = { answer, ASK_NAME_TEXT, askNameText, notFoundText, claimText, claimAuto, TRACK_URL };

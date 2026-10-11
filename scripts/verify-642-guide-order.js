@@ -59,7 +59,7 @@ const TAG = '[시험642]', KEY = 'v642';
 
         // 시험 줄 만들기
         const mkP = async (name, guide, status) => (await db.query(`INSERT INTO bot_products (name, status, price, shipping_guide) VALUES ($1, $2, '', $3) RETURNING id`, [TAG + ' ' + name, status || '준비중', guide])).rows[0].id;
-        const mkLog = async (key, name) => { await db.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status) VALUES ($1, $2, '010-****-0000', 'dry-run', 'sent') ON CONFLICT (order_key) DO NOTHING`, [key, name]); };
+        const mkLog = async (key, name) => { await db.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status) VALUES ($1, $2, '010-****-0000', 'dry-run', 'sent') ON CONFLICT (order_key) DO NOTHING`, [key, name]); await db.query(`UPDATE lms_guide_log SET created_at = NOW() - interval '400 days' WHERE order_key = $1`, [key]); };   // 시험 줄을 400일 전 날짜로 — 도는 동안 「오늘 발송안내 건수」·알림 발송 이력(기본 90일)에 비치지 않게
         const nmA = '가품목 / 상품 및 과수: 시험옵션 - 1kg(로얄과)', nmB = '나품목 / 상품 및 과수: 시험옵션 - 2kg(로얄과)', nmC = '다품목 / 상품 및 과수: 시험옵션 - 3kg(로얄과)';
         const optOf = nm => '아꼼이네 상품선택: ' + TAG + ' ' + nm;   // 옵션 원문에 품목 이름이 통째로 들어 있는 꼴(통째 포함 연결)
         const A = await mkP(nmA, '시험642 안내문 가\n둘째 줄'), B = await mkP(nmB, '시험642 안내문 나');

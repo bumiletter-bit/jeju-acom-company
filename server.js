@@ -10126,6 +10126,10 @@ setInterval(() => { deskMorningTick(); }, 60 * 1000);
 //   결과 = delivery_status(운송장별 마지막 상태 · 배송완료 확정 건은 force 아니면 다시 안 묻는다) · 조회 모듈 cj-track.js(동시 5 · 간격 350ms · 연속 3건 실패면 멈춤)
 //   매일 루틴 없음(대표 확정 — 버튼으로 그때마다) · 셈 기준 = 운송장 단위 전건 · 「중복」= 같은 받는 분(이름+번호) 초과 건수 표시만
 const cjTrack = require('./cj-track.js');
+// 검증 스크립트가 실DB 송장 표에 잠깐 넣는 시험 송장(운송장이 9996 으로 시작 — 실제 CJ 운송장은 6 으로 시작)은 배송조회 화면·셈·CJ 조회에서 뺀다.
+//   규칙은 여기 한 곳: 새 검증도 시험 운송장을 9996… 으로 지으면 저절로 안 비친다(문자 쪽 시험 번호 0999 · 지시 쪽 시험 계정 990000 과 같은 생각).
+const DELIVERY_TEST_TR_PREFIX = '9996';
+const deliveryNoTestSql = alias => ` AND ${alias ? alias + '.' : ''}tracking NOT LIKE '${DELIVERY_TEST_TR_PREFIX}%'`;   // SQL 조각(글자 상수만 · 자리표 없음)
 async function deliveryInitDB() {
     await pool.query(`CREATE TABLE IF NOT EXISTS delivery_shipments (
         tracking text PRIMARY KEY, ship_date date NOT NULL, partner text, recipient text, phone text, addr text,
@@ -10158,7 +10162,7 @@ let deliveryJob = null;
 async function deliveryRunJob(job) {
     try {
         const r = await pool.query(`SELECT s.tracking FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking
-            WHERE s.ship_date BETWEEN $1 AND $2 AND ($3 OR t.tracking IS NULL OR t.delivered IS NOT TRUE) ORDER BY s.ship_date, s.tracking`, [job.from, job.to, !!job.force]);
+            WHERE s.ship_date BETWEEN $1 AND $2 AND ($3 OR t.tracking IS NULL OR t.delivered IS NOT TRUE)${deliveryNoTestSql('s')} ORDER BY s.ship_date, s.tracking`, [job.from, job.to, !!job.force]);
         job.total = r.rows.length; job.done = 0;
         if (!job.total) { job.state = 'done'; job.done_at = new Date().toISOString(); return; }
         const out = await cjTrack.trackMany(r.rows.map(x => x.tracking), { conc: 5, gap: 350, onEach: async (k) => { job.done++; await deliveryUpsertStatus(k); } });
@@ -10181,6 +10185,135 @@ async function deliveryTestTick() {
     finally { _deliveryTestBusy = false; }
 }
 setInterval(deliveryTestTick, 60 * 1000);
+// ── #647-b 사진 판독 시험 러너(로그인 없이 — 총괄이 DB 플래그로) — 시작
+//   agent_office_config 'photo_test_request' { ids:[message_logs id…] | urls:[…] | sms_image_ids:[…], channel:'talk'|'sms', text? } → 'photo_test_result'
+//   하는 일 = 사진을 받아 판독기(sms/photo-judge.js)에 한 장씩 넣고 결과(종류·확신·직원용 요약·토큰 수·걸린 시간)를 적는 것뿐. 손님 답을 만들지도 보내지도 않는다.
+//   받는 사진 = ①sms_images 에 저장된 바이트(sms_image_ids — 늘 됨) ②message_logs.image_url 에 실제로 적혀 있는 주소(ids · 또는 urls 로 준 글자가 그 칸에 그대로 있을 때만).
+//   🔴 image_url 칸은 톡톡봇이 받은 값을 그대로 적는 칸이라 바깥에서 심을 수 있다 → 주소 검사가 실제 방어선:
+//      설정 photo_test { hosts:[…] } 에 적힌 도메인으로 끝나는 주소만(비어 있으면 바깥 주소는 아예 안 받는다) · https · 포트 지정 없음 · 계정 없음 · 숫자 주소·안쪽 이름 거절 ·
+//      받기 전에 이름을 풀어 사설·루프백·링크로컬 주소면 거절 · 다른 주소로 넘기는 응답은 안 따라감.
+//   한 번에 20장 · 하루 100장(설정 photo_test { daily }) · 한 장 10MB(읽는 도중 넘으면 끊음) · 15초. 결과에 손님 번호·이름·주소 없음(요약 글의 긴 숫자는 가림).
+const PHOTO_TEST_MAX = 20, PHOTO_TEST_DAILY = 100, PHOTO_TEST_BYTES = 10 * 1024 * 1024, PHOTO_TEST_TIMEOUT_MS = 15000;
+const photoTestHosts = hosts => (Array.isArray(hosts) ? hosts : []).map(s => String(s || '').trim().toLowerCase().replace(/^\.+|\.+$/g, '')).filter(s => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(s));
+function photoTestUrlOk(u, hosts) {
+    let x; try { x = new URL(String(u)); } catch (_) { return false; }
+    if (x.protocol !== 'https:' || x.username || x.password || x.port) return false;
+    const h = x.hostname.toLowerCase().replace(/\.+$/, '');   // 끝에 점이 붙은 이름(localhost.)도 같은 이름으로 본다
+    if (!h.includes('.') || /^[0-9.]+$/.test(h) || h.includes(':') || h.includes('[') || /(^|\.)(localhost|local|internal|lan|home|corp)$/.test(h)) return false;   // 숫자 주소·안쪽 이름은 받지 않는다
+    const list = photoTestHosts(hosts);
+    return list.length > 0 && list.some(d => h === d || h.endsWith('.' + d));   // 허용 도메인이 없으면 전부 거절
+}
+function photoTestPrivateIp(ip) {
+    const s = String(ip || '').toLowerCase();
+    const m = s.match(/^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m) { const a = Number(m[1]), b = Number(m[2]); return a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127) || a >= 224; }
+    if (!s.includes(':')) return true;   // 주소 꼴이 아니면 막는다
+    return s === '::1' || s === '::' || /^f[cd]/.test(s) || /^fe[89ab]/.test(s);   // 루프백 · fc00::/7 · fe80::/10
+}
+async function photoTestFetch(url, fetchImpl, lookup) {
+    try {
+        const host = new URL(url).hostname.replace(/\.+$/, '');
+        const found = await (lookup || (h => require('dns').promises.lookup(h, { all: true })))(host);
+        const addrs = (Array.isArray(found) ? found : [found]).map(a => (a && a.address) || a).filter(Boolean);
+        if (!addrs.length || addrs.some(photoTestPrivateIp)) return { error: '허용하지 않는 주소(안쪽 주소)' };
+    } catch (_) { return { error: '주소를 찾지 못함' }; }
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), PHOTO_TEST_TIMEOUT_MS);
+    try {
+        const r = await (fetchImpl || fetch)(url, { redirect: 'error', signal: ctl.signal, headers: { 'User-Agent': 'akkome-photo-test' } });
+        if (!r.ok) return { error: '받기 실패 ' + r.status };
+        const type = String((r.headers && r.headers.get && r.headers.get('content-type')) || '').split(';')[0].trim().toLowerCase();
+        if (type && !/^image\//.test(type)) return { error: '사진 형식이 아님(' + type.slice(0, 40) + ')' };
+        const len = Number(r.headers && r.headers.get && r.headers.get('content-length')) || 0;
+        if (len > PHOTO_TEST_BYTES) return { error: '사진이 너무 큼(10MB 초과)' };
+        let buf;
+        if (r.body && typeof r.body.getReader === 'function') {   // 읽으면서 센다 — 길이를 안 알려 주는 응답도 10MB 넘는 순간 끊는다
+            const rd = r.body.getReader(); const parts = []; let n = 0;
+            for (;;) { const { done, value } = await rd.read(); if (done) break; n += value.length; if (n > PHOTO_TEST_BYTES) { try { await rd.cancel(); } catch (_) { } ctl.abort(); return { error: '사진이 너무 큼(10MB 초과)' }; } parts.push(Buffer.from(value)); }
+            buf = Buffer.concat(parts);
+        } else buf = Buffer.from(await r.arrayBuffer());
+        if (!buf.length) return { error: '빈 사진' };
+        if (buf.length > PHOTO_TEST_BYTES) return { error: '사진이 너무 큼(10MB 초과)' };
+        return { buf, contentType: type || 'image/jpeg' };
+    } catch (e) { return { error: e && e.name === 'AbortError' ? '받기 시간 초과' : '받기 실패' }; }
+    finally { clearTimeout(timer); }
+}
+const photoTestMask = s => String(s || '').replace(/\d(?:[\s\-.]?\d){7,}/g, '(숫자 가림)').slice(0, 300);   // 사진 속 송장 라벨·전화번호를 옮겨 적은 글자 가림(숫자 8자리 이상)
+// deps = { pool, judge, fetchImpl, lookup, cfgGet, cfgSet, today } — 검증이 가짜로 갈아 끼운다
+async function photoTestRun(req, deps) {
+    const d = deps || {}; const db = d.pool;
+    const conf = (await d.cfgGet('photo_test')) || {};
+    const daily = Number.isInteger(conf.daily) && conf.daily >= 0 ? conf.daily : PHOTO_TEST_DAILY;
+    const hosts = photoTestHosts(conf.hosts);
+    const st0 = (await d.cfgGet('photo_test_state')) || {};
+    const day = d.today(); let used = st0.day === day ? (Number(st0.used) || 0) : 0;
+    const jobs = [], skipped = [];
+    const ints = (a, kind) => { const all = [...new Set((Array.isArray(a) ? a : []).map(n => parseInt(n, 10)).filter(n => Number.isInteger(n) && n > 0))]; for (const id of all.slice(PHOTO_TEST_MAX)) skipped.push({ ref: kind + ':' + id, error: '한 번에 ' + PHOTO_TEST_MAX + '장까지' }); return all.slice(0, PHOTO_TEST_MAX); };   // 조회 전에 자른다(바이트를 통째로 올리기 전)
+    const channel = req.channel === 'sms' ? 'sms' : 'talk';
+    const text = typeof req.text === 'string' ? req.text.slice(0, 600) : '';
+    const imgIds = ints(req.sms_image_ids, 'sms_image');
+    const logIds = ints(req.ids, 'log');
+    const urls = [...new Set((Array.isArray(req.urls) ? req.urls : []).map(u => String(u || '').trim()).filter(Boolean))].slice(0, PHOTO_TEST_MAX);
+    if (!hosts.length) {   // 허용 도메인이 정해지기 전에는 바깥 주소를 아예 받지 않는다
+        for (const id of logIds) skipped.push({ ref: 'log:' + id, error: '허용 도메인 미설정(photo_test.hosts)' });
+        urls.forEach((u, i) => skipped.push({ ref: 'url:' + (i + 1), error: '허용 도메인 미설정(photo_test.hosts)' }));
+    } else {
+        if (logIds.length) {
+            const rows = (await db.query(`SELECT id, image_url FROM message_logs WHERE id = ANY($1::int[]) ORDER BY id`, [logIds])).rows;
+            for (const id of logIds) { const r = rows.find(x => x.id === id); if (!r) skipped.push({ ref: 'log:' + id, error: '없는 줄' }); else if (!r.image_url) skipped.push({ ref: 'log:' + id, error: '사진 주소가 없는 줄' }); else jobs.push({ ref: 'log:' + id, url: r.image_url }); }
+        }
+        if (urls.length) {
+            const known = new Set((await db.query(`SELECT image_url FROM message_logs WHERE image_url = ANY($1::text[])`, [urls])).rows.map(r => r.image_url));
+            urls.forEach((u, i) => { if (known.has(u)) jobs.push({ ref: 'url:' + (i + 1), url: u }); else skipped.push({ ref: 'url:' + (i + 1), error: '톡톡 기록에 없는 주소(임의 주소는 받지 않음)' }); });
+        }
+    }
+    if (imgIds.length) {
+        const meta = (await db.query(`SELECT id FROM sms_images WHERE id = ANY($1::int[]) AND purged_at IS NULL AND data IS NOT NULL ORDER BY id`, [imgIds])).rows.map(r => r.id);
+        for (const id of imgIds) { if (meta.includes(id)) jobs.push({ ref: 'sms_image:' + id, imageId: id }); else skipped.push({ ref: 'sms_image:' + id, error: '없거나 비워진 사진' }); }
+    }
+    const items = []; let called = 0;
+    for (const job of jobs) {
+        if (called >= PHOTO_TEST_MAX) { skipped.push({ ref: job.ref, error: '한 번에 ' + PHOTO_TEST_MAX + '장까지' }); continue; }
+        if (used >= daily) { skipped.push({ ref: job.ref, error: '하루 상한(' + daily + '장)' }); continue; }
+        const t0 = Date.now(); let img = null;
+        if (job.imageId) {   // 바이트는 차례가 온 한 장씩만 읽는다
+            const r = (await db.query(`SELECT content_type, data FROM sms_images WHERE id = $1 AND purged_at IS NULL AND data IS NOT NULL`, [job.imageId])).rows[0];
+            if (!r) { items.push({ ref: job.ref, error: '없거나 비워진 사진', ms: 0 }); continue; }
+            img = { buf: r.data, contentType: r.content_type || 'image/jpeg' };
+        } else {
+            if (!photoTestUrlOk(job.url, hosts)) { items.push({ ref: job.ref, error: '허용하지 않는 주소', ms: 0 }); continue; }
+            const got = await photoTestFetch(job.url, d.fetchImpl, d.lookup);
+            if (got.error) { items.push({ ref: job.ref, error: got.error, ms: Date.now() - t0 }); continue; }
+            img = got;
+        }
+        if (img.buf.length > PHOTO_TEST_BYTES) { items.push({ ref: job.ref, error: '사진이 너무 큼(10MB 초과)', ms: 0 }); continue; }
+        used++; called++;   // 판독기를 부르는 순간 센다(실패해도 한 번 쓴 것) — 도중에 죽어도 셈이 남게 바로 적는다
+        try { await d.cfgSet('photo_test_state', { day, used }); } catch (_) { /* 셈 저장 실패는 넘어간다 */ }
+        try {
+            const j = (await d.judge([{ buf: img.buf, contentType: img.contentType }], { text, channel })) || {};
+            const raw = j.raw || {};
+            items.push({ ref: job.ref, bytes: img.buf.length, kind: j.kind || null, confidence: j.confidence || null, size: j.size || null, staff_summary: photoTestMask(j.staff_summary),
+                usage: raw.usage ? { input_tokens: raw.usage.input_tokens, output_tokens: raw.usage.output_tokens } : null, model: raw.model || null, ms: Date.now() - t0, error: raw.error ? photoTestMask(raw.error).slice(0, 120) : null });
+        } catch (e) { items.push({ ref: job.ref, bytes: img.buf.length, error: '판독 실패: ' + photoTestMask((e && e.message) || e).slice(0, 120), ms: Date.now() - t0 }); }
+    }
+    return { at: new Date().toISOString(), channel, asked: (Array.isArray(req.ids) ? req.ids.length : 0) + (Array.isArray(req.urls) ? req.urls.length : 0) + (Array.isArray(req.sms_image_ids) ? req.sms_image_ids.length : 0), judged: items.filter(x => x.kind).length, used_today: used, daily, hosts_set: hosts.length > 0, items, skipped };
+}
+let _photoTestBusy = false;
+async function photoTestTick() {
+    if (_photoTestBusy) return; _photoTestBusy = true;
+    try {
+        const req = await naverCfgGet('photo_test_request'); if (!req || typeof req !== 'object') return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = 'photo_test_request'`);   // 선제거 — 반복 실행 방지
+        let out;
+        try {
+            const pj = require('./sms/photo-judge.js');
+            out = await photoTestRun(req, { pool, judge: pj.judge, fetchImpl: null, lookup: null, cfgGet: naverCfgGet, cfgSet: naverCfgSet, today: () => kstTodayStr() });
+        } catch (e) { out = { at: new Date().toISOString(), error: String((e && e.message) || e).slice(0, 200), items: [], skipped: [] }; }
+        await naverCfgSet('photo_test_result', Object.assign({ where: process.env.RENDER ? 'render' : 'local' }, out));
+    } catch (e) { console.error('[사진 시험] 러너 오류:', e.message); }
+    finally { _photoTestBusy = false; }
+}
+setInterval(photoTestTick, 60 * 1000);
+// ── #647-b 사진 판독 시험 러너 — 끝
 // 연결 시험(관리자) — 렌더에서 CJ 누리집이 닿는지 운송장 1건으로
 app.get('/api/delivery/test', authMiddleware, adminOnly, async (req, res) => {
     const t0 = Date.now(); const tr = cjTrack.normTracking(req.query.tr || '');
@@ -10194,7 +10327,7 @@ app.post('/api/delivery/track', authMiddleware, async (req, res) => {
     if (!isYmd(from) || !isYmd(to) || from > to) return res.status(400).json({ ok: false, error: '기간을 YYYY-MM-DD 로 주세요(시작 ≤ 끝)' });
     if ((new Date(to) - new Date(from)) / 86400e3 > 31) return res.status(400).json({ ok: false, error: '기간은 31일 안으로 해 주세요' });
     if (deliveryJob && deliveryJob.state === 'running') return res.json({ ok: true, already: true, job: deliveryJob });
-    const n = await pool.query(`SELECT count(*)::int AS n FROM delivery_shipments WHERE ship_date BETWEEN $1 AND $2`, [from, to]);
+    const n = await pool.query(`SELECT count(*)::int AS n FROM delivery_shipments WHERE ship_date BETWEEN $1 AND $2${deliveryNoTestSql('')}`, [from, to]);
     if (!n.rows[0].n) return res.json({ ok: false, need_upload: true, error: '그 기간 송장이 아직 안 올라왔어요 — 엑셀을 끌어다 놓거나 대표 PC 색인 올리기를 기다려 주세요' });
     deliveryJob = { id: Date.now(), from, to, force, state: 'running', total: 0, done: 0, started_at: new Date().toISOString(), by: req.user?.name || req.user?.username || '' };
     try { await pool.query(`INSERT INTO audit_logs (action, target_type, target_id, changes, source, actor_id, actor_name) VALUES ('delivery_track','delivery',$1,$2,'delivery',$3,$4)`,
@@ -10213,7 +10346,7 @@ app.get('/api/delivery/summary', authMiddleware, async (req, res) => {
     if (!isYmd(from) || !isYmd(to) || from > to) return res.status(400).json({ ok: false, error: '기간을 YYYY-MM-DD 로 주세요' });
     const r = await pool.query(`SELECT s.tracking, s.ship_date::text AS ship_date, s.partner, s.recipient, s.phone, s.addr, s.option_text, s.qty, s.memo,
             t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at, t.handled_at, t.handled_by
-        FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE s.ship_date BETWEEN $1 AND $2 ORDER BY s.ship_date, s.partner, s.tracking`, [from, to]);
+        FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE s.ship_date BETWEEN $1 AND $2${deliveryNoTestSql('s')} ORDER BY s.ship_date, s.partner, s.tracking`, [from, to]);
     const today = kstDateStr(); const counts = {}, byKey = {}; let checked = 0, checkedAt = null; const trouble = []; const persons = {}; const undelivered = {};
     for (const x of r.rows) {
         const pk = (x.recipient || '') + '|' + String(x.phone || '').replace(/\D/g, ''); persons[pk] = (persons[pk] || 0) + 1;
@@ -10268,7 +10401,7 @@ app.get('/api/delivery/list', authMiddleware, async (req, res) => {
         }
         else { args.push('%' + q.replace(/\s+/g, '') + '%'); where.push(`replace(s.recipient, ' ', '') ILIKE $${args.length}`); }
     }
-    const sql = `FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE ${where.join(' AND ')}`;
+    const sql = `FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE ${where.join(' AND ')}${deliveryNoTestSql('s')}`;
     const cnt = await pool.query(`SELECT count(*)::int AS n ${sql}`, args);
     const r = await pool.query(`SELECT s.tracking, s.ship_date::text AS ship_date, s.partner, s.recipient, s.phone, s.addr, s.option_text, s.qty, s.memo,
             t.bucket, t.code, t.label, t.msg, t.event_time, t.branch, t.driver_name, t.driver_phone, t.checked_at, t.first_trouble_at, t.handled_at, t.handled_by, t.delivered
@@ -10280,7 +10413,7 @@ app.get('/api/delivery/list', authMiddleware, async (req, res) => {
         const qWhere = where.slice(1).filter(w => !w.startsWith('t.bucket') && !w.startsWith('COALESCE(s.partner'));
         const qArgs = args.slice(2);
         if (qWhere.length === 1 && qArgs.length === 1) {
-            const o = await pool.query(`SELECT s.ship_date::text AS d, count(*)::int AS n FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - 60 AND ${qWhere[0].replace(/\$\d+/g, '$1')} GROUP BY 1 ORDER BY 1 DESC LIMIT 5`, qArgs);
+            const o = await pool.query(`SELECT s.ship_date::text AS d, count(*)::int AS n FROM delivery_shipments s LEFT JOIN delivery_status t ON t.tracking = s.tracking WHERE s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - 60 AND ${qWhere[0].replace(/\$\d+/g, '$1')}${deliveryNoTestSql('s')} GROUP BY 1 ORDER BY 1 DESC LIMIT 5`, qArgs);
             if (o.rowCount) outside = { n: o.rows.reduce((s, x) => s + x.n, 0), ship_dates: o.rows.map(x => ({ date: x.d, n: x.n })) };
         }
     }
@@ -14227,7 +14360,7 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                 if (!pr) out.push({ key: 'pricing', label: '이번 주 품목별 금액 미등록', count: 1, where: '품목별 금액' });
                 // #633(대표 10/11 「텔레그램 알림을 줄이려고 — 화면에서 보이게」): 봇이 답을 못 낸 건 한 줄
                 //   톡톡 = 손님 마지막 글이 [SKIP-무응답]이고 직원 답·[확인]이 아직 없는 것(낱말표는 텔레그램 「📮 톡톡 확인 · 봇이 답 못함」과 같은 NEEDS_STAFF_RE · 최근 3일 · 자사몰 채팅은 #374-r 대로 뺌)
-                //   문자 = 직원 몫(staff_needed) 가운데 AI·발송 실패로 넘어온 것(받은 글 ai_json.staff_why · 보낸 글 실패 last_out_state) · 시험 번호 0999 제외
+                //   문자 = 직원 몫(staff_needed) 가운데 AI·발송 실패로 넘어온 것(대화 칸 staff_why · 보낸 글 실패 last_out_state) · 시험 번호 0999 제외
                 try {
                     const tk = (await pool.query(`SELECT message FROM (SELECT DISTINCT ON (user_id) message, bot_response, staff_response, reviewed_at FROM message_logs
                         WHERE received_at > NOW() - interval '3 days' AND user_id NOT LIKE 'mall:%' ORDER BY user_id, received_at DESC, id DESC) x
@@ -14236,9 +14369,8 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                     let sm = 0;
                     try {
                         sm = (await pool.query(`SELECT COUNT(*)::int AS c FROM sms_threads t WHERE t.status = 'staff_needed' AND t.phone_digits NOT LIKE '0999%'
-                            AND (t.last_out_state = 'failed' OR (SELECT m.ai_json->>'staff_why' FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' ORDER BY m.id DESC LIMIT 1)
-                                 IN ('ai_error', 'ai_skip', 'no_engine', 'ai_promise', 'photo_ai_error', 'photo_too_big'))`)).rows[0].c;
-                    } catch (e) { sm = 0; /* 문자 표가 아직 없는 서버 */ }
+                            AND (t.last_out_state = 'failed' OR t.staff_why IN ('ai_error', 'ai_skip', 'no_engine', 'ai_promise', 'ai_assert', 'lookup_error', 'stuck', 'send_failed', 'photo_ai_error', 'photo_too_big'))`)).rows[0].c;   // 대화 칸(sms_threads.staff_why · #635) 기준 — 봇이 못 낸 것만(주문 못 찾음·AI 가 사람에게 넘김·불만·계좌·사진은 봇 실패가 아니다)
+                    } catch (e) { sm = 0; /* 문자 표·staff_why 칸이 아직 없는 서버 */ }
                     if (tk + sm > 0) out.push({ key: 'botfail', label: '봇 실패', count: tk + sm, talk: tk, sms: sm, where: `톡톡 ${tk} · 문자 ${sm}` });
                 } catch (e) { console.error('desk/board botfail:', e.message); }
                 // #469-b: 오늘 할 일 알림 — 일정표의 발송·이벤트 일정(오늘·내일). /today-reminders와 같은 조건
