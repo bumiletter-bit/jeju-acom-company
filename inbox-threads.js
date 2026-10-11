@@ -6,7 +6,8 @@
  *   kick() = 톡톡 배달부(desk-inbox.js deliver)를 바로 한 번 깨움(없으면 4초 틱을 기다림)
  *
  * · 읽는 표 = message_logs(톡톡봇과 같은 DB) · naver_qnas · naver_inquiries — 「확인 필요 문의」 칸(desk-inbox.js)·문의 관리 화면과 같은 reviewed_at 을 쓴다
- *   reviewed_at([확인] 버튼 · 「확인 필요 문의」 칸·아침 정리가 보는 칸)은 **이 창에서 답을 보내 성공했을 때만** 찍는다.
+ *   reviewed_at([확인] 버튼 · 「확인 필요 문의」 칸·아침 정리가 보는 칸) = 이 창의 [확인](/api/inbox/done)과 **같은 표식**(#661 — 어느 쪽에서 눌러도 양쪽에서 빠진다) · 이 창에서 답을 보내 성공해도 찍는다.
+ *   「확인 필요 문의」 칸(desk-inbox.js GET)은 이 모듈의 판정(cardData = scope=open 과 같은 줄)을 불러 쓴다 — 판정은 한 곳.
  *   이 창의 「열면 읽음」은 따로 둔 표식(inbox_thread_reads)이다 — 열어만 보고 답 안 한 글이 다른 화면에서 조용히 사라지지 않게(교차 점검 ②).
  * · 톡톡 보내기 = talk_outbox 에 넣고 배달 결과(sent/failed)를 최대 30초 기다린다. 카카오(kakao:)·자사몰(mall:) 손님은 볼 수만 있다.
  * · 상품문의·주문문의 보내기 = 누르면 바로 등록(대표 확정 — 고칠 때는 스마트스토어 센터). 둘이 같은 순간 눌러도 한 번만(posting_at 집기).
@@ -23,8 +24,14 @@ const ageOf = at => { const t = Date.parse(at); return Number.isFinite(t) ? (Dat
 const TALK_SEND_DAYS = 7;        // 톡톡봇 /send 가 받는 기간(최근 7일 안에 대화한 손님)
 const TALK_MAX = 1000, POST_MAX = 2000;
 const PAY_WORDS = /계좌|입금|이체|무통장|송금|현금\s*결제|현금으로/;   // 톡톡봇 /send 와 같은 낱말(네이버가 낱말만 보고 경고)
-const AD_RE = /https?:\/\/|www\.|\.(kr|com|net|co\.kr)\b|순위\s*올리|상위\s*노출|리워드|마케팅\s*(대행|제안)|체험단|제휴\s*(문의|제안)|광고\s*(대행|문의|제안)|▰|▱/i;   // desk-inbox.js 와 같은 거름(업체 제안 글)
+const AD_RE = /https?:\/\/|www\.|\.(kr|com|net|co\.kr)\b|순위\s*올리|상위\s*노출|리워드|마케팅\s*(대행|제안)|체험단|제휴\s*(문의|제안)|광고\s*(대행|문의|제안)|최상단\s*(노출|등록|가능|보장)|순위\s*(추적|보장)|▰|▱/i;   // desk-inbox.js 의 거름(업체 제안 글) + #660 「최상단 노출·등록·가능·보장 · 순위 추적/보장」(손님 글 「상자 최상단 귤」은 안 걸리게 좁게)
 const STAFF_ONLY = '[직원 직접답변]', PHOTO_ONLY = '[이미지 전송]';
+// #660 미답변 판정 — 톡톡봇 server.js 의 표식 뜻(코드 확인): [직원응답]·[직원응답-발송취소] = 직원이 센터에서 먼저 답해 봇이 접은 줄(직원 답 글은 앞 줄에 붙음) ·
+//   [SKIP-무응답] = AI 가 재료로 답할 수 없어 넘긴 글(광고 판정이 아님 — 진짜 질문도 든다 → 미답변으로 둔다) · 「이 상품을 문의합니다.」 = 상품 페이지에서 들어올 때 네이버가 넣는 입장 글
+const ENTRY = '이 상품을 문의합니다.', ENTRY2 = '이 상품을 문의합니다';
+const STAFF_FIRST = /^\[직원응답/;
+const entryOnly = m => !String(m || '').split('\n').map(s => s.replace(/^\[메시지\d+\]\s*/, '').trim()).filter(s => s && s !== ENTRY && s !== ENTRY2).length;   // 입장 글뿐인 글(묶인 글 포함)
+const isEntryRow = x => { const m = String(x.message || '').trim(); return (m === ENTRY || m === ENTRY2) && !String(x.staff_response || '').trim(); };   // 마지막 글 고를 때 건너뛰는 줄(직원 답이 붙은 입장 글은 건너뛰지 않는다)
 const ALREADY = '이미 답변한 문의예요 — 수정은 스마트스토어 센터에서 해 주세요';
 const CHS = ['talk', 'qna', 'inquiry'];
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
@@ -41,7 +48,12 @@ module.exports = function mountInboxThreads(app, deps) {
     const KEY = `substr(md5($1::text || user_id), 1, 16)`;   // 가린 열쇠($1 = SALT)
     const keyOf = uid => crypto.createHash('md5').update(SALT + String(uid)).digest('hex').slice(0, 16);
     const log = { error: (...a) => console.error(...a) };
+    const desk = (() => { try { return require('./desk-inbox.js'); } catch (e) { return null; } })();   // #661 카드 쪽과 주고받는 고리(hook) — 없으면 없는 대로 돈다
+    const hook = k => (desk && typeof desk.hook === 'function') ? desk.hook(k) : null;
 
+    // #662 직원 답 시각(message_logs.staff_at timestamptz · 톡톡봇이 직원 답을 붙일 때 적는다 · 옛 줄은 null). 칸이 아직 없으면(만들기 실패) 없는 대로 돈다
+    let hasStaffAt = false;
+    const SAT = a => hasStaffAt ? `(${a}staff_at AT TIME ZONE 'UTC')` : 'NULL::timestamp';
     let ready = null;
     // 표·칸은 없는 것만 만든다. message_logs 는 톡톡봇이 계속 쓰는 표라 잠금을 오래 기다리지 않는다(3초) — 실패하면 적어 두고 1분 뒤 다시(라우트는 계속 돈다)
     function ensure() {
@@ -52,6 +64,8 @@ module.exports = function mountInboxThreads(app, deps) {
                 if (!(await hasCol(t, 'reviewed_at'))) await ddl(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP`);
                 if (!(await hasCol(t, 'reviewed_by'))) await ddl(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(50)`);
             }
+            try { if (!(await hasCol(T.logs, 'staff_at'))) await ddl(`ALTER TABLE ${T.logs} ADD COLUMN IF NOT EXISTS staff_at TIMESTAMPTZ`); hasStaffAt = true; }
+            catch (e) { hasStaffAt = await hasCol(T.logs, 'staff_at').catch(() => false); log.error('[문의 창] staff_at 칸 준비 실패(없는 대로 돈다):', e.message); }
             for (const t of [T.qnas, T.inquiries]) if (!(await hasCol(t, 'posting_at'))) await ddl(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS posting_at TIMESTAMP`);   // 집기 칸(등록하는 중)
             await pool.query(`CREATE TABLE IF NOT EXISTS ${T.outbox} (id SERIAL PRIMARY KEY, log_id INTEGER, user_id TEXT NOT NULL, body TEXT NOT NULL, order_id INTEGER, requested_by VARCHAR(50),
                 status VARCHAR(12) DEFAULT 'queued', error TEXT, created_at TIMESTAMP DEFAULT NOW(), sent_at TIMESTAMP)`);
@@ -63,6 +77,18 @@ module.exports = function mountInboxThreads(app, deps) {
     // 이 창의 읽음 표식(교차 점검 ②) — reviewed_at 과 따로다
     async function readMarks(ch) { const m = new Map(); for (const x of (await pool.query(`SELECT tkey, ${iso('read_at')} AS at, forced_unread FROM ${T.reads} WHERE ch = $1`, [ch])).rows) m.set(x.tkey, { at: x.at, forced: !!x.forced_unread }); return m; }
     async function readMark(ch, key) { const x = (await pool.query(`SELECT ${iso('read_at')} AS at, forced_unread FROM ${T.reads} WHERE ch = $1 AND tkey = $2`, [ch, String(key)])).rows[0]; return x ? { at: x.at, forced: !!x.forced_unread } : null; }
+    // #660·#661 「확인」 = reviewed_at(「확인 필요 문의」 칸의 [확인]과 같은 표식) — 손님 새 글이 오기 전까지 숫자(안 읽음·답 안 한 것)에서 뺀다. undo = 표식만 지움(읽음은 그대로)
+    //   톡톡: 판정하는 줄(lq)에 찍는다 · undo 는 그 줄부터 뒤 줄 전부 비움(뒤에 온 입장 글에 찍힌 옛 표식 포함)
+    async function setDone(ch, key, name, undo, talk) {
+        if (ch === 'talk') {
+            if (undo) await pool.query(`UPDATE ${T.logs} SET reviewed_at = NULL, reviewed_by = NULL WHERE user_id = $1 AND id >= $2`, [talk.uid, talk.rowId]);
+            else await pool.query(`UPDATE ${T.logs} SET reviewed_at = NOW(), reviewed_by = $2 WHERE id = $1`, [talk.rowId, clip(name, 50)]);
+        } else {
+            const P = POST[ch];
+            await pool.query(`UPDATE ${P.table()} SET reviewed_at = ${undo ? 'NULL' : 'NOW()'}, reviewed_by = $2 WHERE ${P.id}::text = $1`, [String(key), undo ? null : clip(name, 50)]);
+        }
+        if (!undo) await setRead(ch, key, name, false);
+    }
     async function setRead(ch, key, name, undo) {
         await pool.query(`INSERT INTO ${T.reads} (ch, tkey, read_at, read_by, forced_unread) VALUES ($1, $2, NOW(), $3, $4) ON CONFLICT (ch, tkey) DO UPDATE SET ${undo ? '' : 'read_at = NOW(), read_by = EXCLUDED.read_by, '}forced_unread = EXCLUDED.forced_unread`, [ch, String(key), clip(name, 50), !!undo]);
     }
@@ -98,35 +124,42 @@ module.exports = function mountInboxThreads(app, deps) {
         const params = [SALT, String(DAYS)]; let qsql = '';
         if (q) { params.push(like(q)); qsql = `WHERE l.user_id IN (SELECT user_id FROM w WHERE message ILIKE $3 OR (answered AND bot_response ILIKE $3) OR staff_response ILIKE $3 OR ${KEY} ILIKE $3)`; }
         const r = await pool.query(`
-            WITH w AS (SELECT id, user_id, item, message, answered, bot_response, staff_response, received_at, reviewed_at FROM ${T.logs} WHERE received_at > NOW() - ($2 || ' days')::interval AND user_id IS NOT NULL),
+            WITH w AS (SELECT id, user_id, item, message, answered, bot_response, staff_response, received_at, reviewed_at, reviewed_by, scenario_name, ${SAT('')} AS sat FROM ${T.logs} WHERE received_at > NOW() - ($2 || ' days')::interval AND user_id IS NOT NULL),
                  r AS (SELECT user_id, COALESCE(max(id) FILTER (WHERE reviewed_at IS NOT NULL), 0) AS rid FROM w GROUP BY user_id),
-                 u AS (SELECT w.user_id, array_agg(${iso('w.received_at')}) AS cand FROM w JOIN r USING (user_id) WHERE w.id > r.rid AND w.reviewed_at IS NULL AND btrim(COALESCE(w.message, '')) NOT IN ('', '${STAFF_ONLY}') GROUP BY w.user_id),
-                 l AS (SELECT DISTINCT ON (user_id) * FROM w ORDER BY user_id, received_at DESC, id DESC)
-            SELECT l.id, l.user_id, l.item, l.message, l.answered, l.bot_response, l.staff_response, ${iso('l.received_at')} AS at, u.cand,
-                   ${KEY.replace('user_id', 'l.user_id')} AS tkey, EXTRACT(EPOCH FROM (NOW() - l.received_at)) / 86400 AS age
-            FROM l LEFT JOIN u USING (user_id) ${qsql} ORDER BY l.received_at DESC LIMIT 200`, params);
+                 u AS (SELECT w.user_id, array_agg(${iso('w.received_at')}) AS cand FROM w JOIN r USING (user_id) WHERE w.id > r.rid AND w.reviewed_at IS NULL AND btrim(COALESCE(w.message, '')) NOT IN ('', '${STAFF_ONLY}', '${ENTRY}', '${ENTRY2}') GROUP BY w.user_id),
+                 l AS (SELECT DISTINCT ON (user_id) * FROM w ORDER BY user_id, (btrim(COALESCE(message, '')) IN ('${ENTRY}', '${ENTRY2}') AND btrim(COALESCE(staff_response, '')) = '') ASC, received_at DESC, id DESC)
+            SELECT l.id, l.user_id, l.item, l.message, l.answered, l.bot_response, l.staff_response, l.reviewed_by, l.scenario_name, COALESCE(r.rid, 0) AS rid, ${iso('l.received_at')} AS at, ${iso('GREATEST(l.received_at, l.sat)')} AS lat, u.cand,
+                   ${KEY.replace('user_id', 'l.user_id')} AS tkey, EXTRACT(EPOCH FROM (NOW() - l.received_at)) / 86400 AS age,
+                   EXTRACT(EPOCH FROM (NOW() - (SELECT max(w2.received_at) FROM w w2 WHERE w2.user_id = l.user_id))) / 86400 AS sage
+            FROM l LEFT JOIN u USING (user_id) LEFT JOIN r USING (user_id) ${qsql} ORDER BY GREATEST(l.received_at, l.sat) DESC LIMIT 200`, params);   // #662 최근 대화순 = 손님 글·직원 답 중 늦은 시각
         const dk = new Set((await pool.query(`SELECT d.tkey FROM ${T.drafts} d WHERE d.ch = 'talk'`)).rows.map(x => x.tkey));
         const marks = await readMarks('talk'); const out = [];
         for (const x of r.rows) {
             const msg = String(x.message || '').trim(); const staff = staffParts(x.staff_response); const bot = x.answered ? String(x.bot_response || '') : '';
             const ad = !x.answered && !staff.length && AD_RE.test(msg); const mk = marks.get(x.tkey) || null; const age = Number(x.age) || 0;
+            const c = chOfUser(x.user_id);
+            const handled = staff.length > 0 || STAFF_FIRST.test(String(x.bot_response || ''));          // #660 직원이 답함(이 줄에 붙었거나 · 먼저 답해 봇이 접은 줄)
+            const entry = !handled && !x.answered && entryOnly(msg);                                      // #660 입장 글뿐
+            const done = Number(x.rid) >= Number(x.id);                                                   // #660·#661 「확인」(reviewed_at — 카드의 [확인]과 같은 표식) · 그 뒤 손님 새 글이 오면 새 줄이라 풀린다
             x.unread = (x.cand || []).filter(t => !mk || t > mk.at).length;                               // 이 창에서 마지막으로 읽은 뒤(또는 [확인]한 줄 뒤)에 온 손님 글
-            if (staff.length || !fresh(x.answered ? 'ai' : 'open', age)) x.unread = 0;                    // 마지막 글에 직원이 이미 답했으면(센터에서 친 답 포함) 안 읽음으로 세지 않는다
+            if (handled || entry || done || !fresh(x.answered ? 'ai' : 'open', age)) x.unread = 0;        // 마지막 글에 직원이 이미 답했으면(센터에서 친 답 포함) 안 읽음으로 세지 않는다
             if (mk && mk.forced) x.unread = Math.max(1, x.unread);                                        // 「안 읽음으로」 되돌린 대화
-            const needs = !ad && !x.answered && !staff.length && !!msg && msg !== STAFF_ONLY && age <= OPEN_DAYS;   // 답이 필요한데 아직 아무도 안 답함(읽음과 무관)
+            const needs = !ad && !x.answered && !handled && !entry && !done && c === 'talk' && !!msg && msg !== STAFF_ONLY && age <= OPEN_DAYS;   // 답이 필요한데 아직 아무도 안 답함(읽음과 무관) · 카카오·자사몰은 보낼 길이 없어 세지 않는다
             if (scope === 'active' && (x.unread <= 0 || ad)) continue;
             if (scope === 'open' && !needs) continue;
-            const c = chOfUser(x.user_id);
-            out.push({ ch: 'talk', id: x.tkey, sub_ch: c, title: CH_NAME[c] + ' 손님 ' + x.tkey.slice(-4), sub: x.item && x.item !== '기타' ? clip(x.item, 40) : '',
-                last_text: clip(staff.length ? staff[staff.length - 1].body : (bot || (msg === PHOTO_ONLY ? '사진' : msg)), 120), last_at: x.at, last_dir: (staff.length || bot) ? 'out' : 'in',
-                unread: ad ? 0 : x.unread, state: staff.length ? 'staff' : x.answered ? 'ai' : 'open', why: (x.answered || staff.length) ? '' : botSilent(x.bot_response),
-                needs_reply: needs, has_draft: dk.has(x.tkey), can_send: !talkCannot(x.user_id, age) });
+            const th = { ch: 'talk', id: x.tkey, sub_ch: c, title: CH_NAME[c] + ' 손님 ' + x.tkey.slice(-4), sub: x.item && x.item !== '기타' ? clip(x.item, 40) : '',
+                last_text: clip(staff.length ? staff[staff.length - 1].body : (bot || (msg === PHOTO_ONLY ? '사진' : msg)), 120), last_at: staff.length ? (x.lat || x.at) : x.at, last_dir: (staff.length || bot) ? 'out' : 'in',
+                unread: ad ? 0 : x.unread, state: handled ? 'staff' : x.answered ? 'ai' : 'open', why: (x.answered || staff.length) ? '' : entry ? '상품 페이지에서 들어온 자동 글' : botSilent(x.bot_response),
+                needs_reply: needs, done, has_draft: dk.has(x.tkey), can_send: !talkCannot(x.user_id, Number(x.sage) || age) };
+            // 「확인 필요 문의」 칸이 쓰는 줄(응답 JSON 에는 안 실림 — 셀 수 없는 칸)
+            Object.defineProperty(th, '_card', { value: { kind: 'talk', id: x.id, tkey: x.tkey, at: x.at, item: th.sub, state: th.state, why: th.why, question: clip(msg === PHOTO_ONLY ? '사진' : msg, 600), answer: clip(bot, 1200), staff: clip(String(x.staff_response || '').trim(), 1200), scenario: x.scenario_name || '', seen_by: x.reviewed_by || '' } });
+            out.push(th);
         }
         return out;
     }
     async function talkRows(tkey) {
         if (!/^[0-9a-f]{16}$/.test(String(tkey || ''))) return [];
-        const r = await pool.query(`SELECT id, user_id, item, message, answered, bot_response, staff_response, image_url, reviewed_at, ${iso('received_at')} AS at, EXTRACT(EPOCH FROM (NOW() - received_at)) / 86400 AS age
+        const r = await pool.query(`SELECT id, user_id, item, message, answered, bot_response, staff_response, image_url, reviewed_at, ${iso('received_at')} AS at, ${iso(SAT(''))} AS sat, EXTRACT(EPOCH FROM (NOW() - received_at)) / 86400 AS age
             FROM ${T.logs} WHERE received_at > NOW() - ($2 || ' days')::interval AND user_id IS NOT NULL AND ${KEY} = $3 ORDER BY received_at DESC, id DESC LIMIT 300`, [SALT, String(DAYS), tkey]);
         return r.rows.reverse();
     }
@@ -142,17 +175,21 @@ module.exports = function mountInboxThreads(app, deps) {
             const msg = String(x.message || '').trim();
             if (msg && msg !== STAFF_ONLY) messages.push({ id: 'i' + x.id, direction: 'in', sender: 'customer', body: msg === PHOTO_ONLY ? '' : clip(msg, 2000), at: x.at, image_url: x.image_url || null, note: x.answered ? '' : botSilent(x.bot_response) });
             if (x.answered && x.bot_response) messages.push({ id: 'b' + x.id, direction: 'out', sender: 'bot', body: clip(x.bot_response, 3000), at: x.at });
-            staffParts(x.staff_response).forEach((p, i) => messages.push({ id: 's' + x.id + '_' + i, direction: 'out', sender: 'staff', by: p.by, via: p.via, body: clip(p.body, 3000), at: x.at }));
+            staffParts(x.staff_response).forEach((p, i) => messages.push({ id: 's' + x.id + '_' + i, direction: 'out', sender: 'staff', by: p.by, via: p.via, body: clip(p.body, 3000), at: (x.sat && x.sat > x.at) ? x.sat : x.at }));   // #662 답 시각(한 줄에 여러 답이면 마지막 답 시각 · 없으면 손님 글 시각)
         }
-        const cannot = talkCannot(last.user_id, Number(last.age) || 0); const staffN = staffParts(last.staff_response).length;
+        const cannot = talkCannot(last.user_id, Number(last.age) || 0);
+        const lq = [...rows].reverse().find(x => !isEntryRow(x)) || last;   // #660 판정하는 줄 = 입장 글(직원 답 없는 것)을 건너뛴 마지막 줄 — 목록 SQL 의 l 과 같은 줄
+        const lqMsg = String(lq.message || '').trim(); const lqAge = Number(lq.age) || 0;
+        const staffN = (staffParts(lq.staff_response).length || STAFF_FIRST.test(String(lq.bot_response || ''))) ? 1 : 0;
+        const entry = !staffN && !lq.answered && entryOnly(lqMsg);
         const rid = rows.reduce((m, x) => x.reviewed_at && x.id > m ? x.id : m, 0); const mk = await readMark('talk', tkey);
-        let unread = rows.filter(x => x.id > rid && !x.reviewed_at && !['', STAFF_ONLY].includes(String(x.message || '').trim()) && (!mk || x.at > mk.at)).length * ((staffN || !fresh(last.answered ? 'ai' : 'open', Number(last.age) || 0)) ? 0 : 1);   // 목록의 셈과 같은 규칙
+        const done = rid >= lq.id;   // 목록과 같은 규칙(확인 = reviewed_at)
+        let unread = rows.filter(x => x.id > rid && !x.reviewed_at && !['', STAFF_ONLY, ENTRY, ENTRY2].includes(String(x.message || '').trim()) && (!mk || x.at > mk.at)).length * ((staffN || entry || done || !fresh(lq.answered ? 'ai' : 'open', lqAge)) ? 0 : 1);   // 목록의 셈과 같은 규칙
         if (mk && mk.forced) unread = Math.max(1, unread);
-        const lastMsg = String(last.message || '').trim();
-        const needs = !last.answered && !staffN && !!lastMsg && lastMsg !== STAFF_ONLY && !AD_RE.test(lastMsg) && (Number(last.age) || 0) <= OPEN_DAYS;
-        return { rows, last,
-            thread: { ch: 'talk', id: tkey, sub_ch: c, title: CH_NAME[c] + ' 손님 ' + tkey.slice(-4), sub: last.item && last.item !== '기타' ? clip(last.item, 40) : '', state: staffN ? 'staff' : last.answered ? 'ai' : 'open', unread, needs_reply: needs, last_at: last.at },
-            messages, draft: await talkDraft(tkey, rows), can_send: !cannot, cannot_why: cannot, can_draft: !cannot, limits: { max_chars: TALK_MAX, confirm: false, time_note: '봇·직원 답의 시각은 손님 글 시각으로 보여요(톡톡은 답 시각을 따로 남기지 않아요)' } };
+        const needs = !lq.answered && !staffN && !entry && !done && c === 'talk' && !!lqMsg && lqMsg !== STAFF_ONLY && !AD_RE.test(lqMsg) && lqAge <= OPEN_DAYS;
+        return { rows, last, lq,
+            thread: { ch: 'talk', id: tkey, sub_ch: c, title: CH_NAME[c] + ' 손님 ' + tkey.slice(-4), sub: last.item && last.item !== '기타' ? clip(last.item, 40) : '', state: staffN ? 'staff' : lq.answered ? 'ai' : 'open', unread, needs_reply: needs, done, last_at: (lq.sat && lq.sat > lq.at && staffParts(lq.staff_response).length) ? lq.sat : lq.at },
+            messages, draft: await talkDraft(tkey, rows), can_send: !cannot, cannot_why: cannot, can_draft: !cannot, limits: { max_chars: TALK_MAX, confirm: false, time_note: '봇 답과 시각이 없는 옛 직원 답은 손님 글 시각으로 보여요' } };
     }
     async function talkRead(tkey, name, undo) {
         const rows = await talkRows(tkey); if (!rows.length) throw bad(404, '없는 대화예요');
@@ -228,13 +265,14 @@ module.exports = function mountInboxThreads(app, deps) {
         qna: { table: () => T.qnas, id: 'question_id', okId: v => /^\d{1,15}$/.test(v), at: raw => raw.create_date, q: raw => clip(raw.question, 2000), a: raw => raw.answer, sub: () => '', why: () => '', fn: () => deps.postQna, arg: v => Number(v), opts: undefined, name: '상품문의' },
         inquiry: { table: () => T.inquiries, id: 'inquiry_id', okId: v => /^\d{1,30}$/.test(v), at: raw => raw.registered_at, q: raw => clip([raw.title, raw.content].filter(Boolean).join('\n'), 2000), a: raw => raw.answer_content, sub: raw => clip(raw.product_option, 60), why: raw => clip(raw.category, 20), fn: () => deps.postInquiry, arg: v => String(v), opts: { skipPhone: true }, name: '주문문의' },   // ⑤ 주문문의는 비공개라 전화번호 검사만 뺀다(대표 10/11)
     };
-    const POST_COLS = c => `${POST[c].id}::text AS id, raw, answered, ai_status, ai_draft, posted_by, post_error, ${iso('posted_at')} AS posted_at, ${iso('reviewed_at')} AS reviewed_at, ${iso('collected_at')} AS collected_at`;
+    const POST_COLS = c => `${POST[c].id}::text AS id, raw, answered, ai_status, ai_draft, posted_by, post_error, reviewed_by, ${iso('posted_at')} AS posted_at, ${iso('reviewed_at')} AS reviewed_at, ${iso('collected_at')} AS collected_at`;
     function postShape(c, x, mk) {
         const P = POST[c], raw = x.raw || {}; const done = !!(x.answered || x.posted_at); const auto = done && x.posted_by === 'auto';
         const ans = done ? String(P.a(raw) || x.ai_draft || '') : ''; const draft = !done && x.ai_draft ? String(x.ai_draft) : null;
         const at = P.at(raw) || x.collected_at; const question = P.q(raw);
         const thread = { ch: c, id: String(x.id), title: clip(raw.product_name, 60) || P.name, sub: P.sub(raw), last_text: clip(done ? (ans || '답변함') : question, 120), last_at: done ? (x.posted_at || at) : at, last_dir: done ? 'out' : 'in',
-            unread: ((mk && mk.forced) || (!mk && !x.reviewed_at && (!done || auto) && fresh(done ? 'ai' : 'open', ageOf(at)))) ? 1 : 0, needs_reply: !done && ageOf(at) <= OPEN_DAYS, state: !done ? 'open' : auto ? 'ai' : 'done', why: done ? '' : (x.post_error ? '자동 등록 실패' : x.ai_status === 'claim' ? '반품·교환·환불 분류' : x.ai_status === 'skip' ? '봇이 넘긴 글' : (P.why(raw) || '')), has_draft: !!draft, can_send: !done };
+            unread: ((mk && mk.forced) || (!mk && !x.reviewed_at && (!done || auto) && fresh(done ? 'ai' : 'open', ageOf(at)))) ? 1 : 0, needs_reply: !done && !x.reviewed_at && ageOf(at) <= OPEN_DAYS, done: !!x.reviewed_at, state: !done ? 'open' : auto ? 'ai' : 'done', why: done ? '' : (x.post_error ? '자동 등록 실패' : x.ai_status === 'claim' ? '반품·교환·환불 분류' : x.ai_status === 'skip' ? '봇이 넘긴 글' : (P.why(raw) || '')), has_draft: !!draft, can_send: !done };
+        Object.defineProperty(thread, '_card', { value: { kind: c, id: String(x.id), at, item: clip(raw.product_name, 60), state: !done ? 'open' : auto ? 'ai' : 'staff', why: P.why(raw), question: clip(question, 600), answer: clip(ans, 1200), draft: clip(draft || '', 1200), seen_by: x.reviewed_by || '' } });
         return { thread, raw, done, auto, ans, draft, at, question };
     }
     async function postThreads(c, { scope, q }) {
@@ -298,9 +336,24 @@ module.exports = function mountInboxThreads(app, deps) {
     async function countsCached() { if (_cnt && Date.now() - _cnt.at < (deps.testMode ? 0 : 8000)) return _cnt.v; const v = await counts(); _cnt = { at: Date.now(), v }; return v; }
     async function counts() {
         const one = async fn => { try { const l = await fn(); return { unread: l.filter(x => x.unread > 0).length, open: l.filter(x => x.needs_reply).length }; } catch (e) { log.error('[문의 창] 셈 실패:', e.message); return null; } };
-        const [talk, qna, inquiry] = await Promise.all([one(() => talkThreads({ scope: 'all' })), one(() => postThreads('qna', { scope: 'all' })), one(() => postThreads('inquiry', { scope: 'all' }))]);
-        return { talk, qna, inquiry };
+        const [talk, qna, inquiry, sms] = await Promise.all([one(() => talkThreads({ scope: 'all' })), one(() => postThreads('qna', { scope: 'all' })), one(() => postThreads('inquiry', { scope: 'all' })), smsOpen()]);
+        return { talk, qna, inquiry, sms: sms ? { unread: sms.unread, open: sms.open } : null };   // #661 문자(문자 모듈이 없으면 null)
     }
+    async function smsOpen() { const f = hook('sms'); if (typeof f !== 'function') return null; try { return await f(); } catch (e) { log.error('[문의 창] 문자 셈 실패:', e.message); return null; } }
+    // #661 「확인 필요 문의」 칸 = 이 창의 전체 목록(scope=all)을 간단히(대표 10/12 — 네이버 톡톡상담관리 꼴): 최근 대화순 · 채널당 CARD_MAX 줄(대기 줄은 빠짐없이 먼저 담는다) ·
+    //   줄마다 needs_reply(= 대기 · 칩 숫자가 세는 것)·done·last_* 를 단다. 숫자(counts.open)는 이 창의 「답 안 한 것」과 같은 값. more = 카드에 못 실은 줄 수(창에서 봄)
+    const CARD_MAX = 30;
+    const cardPick = l => { const w = l.filter(x => x.needs_reply), r = l.filter(x => !x.needs_reply); return w.concat(r.slice(0, Math.max(0, CARD_MAX - w.length))).sort((a, b) => String(b.last_at || '').localeCompare(String(a.last_at || ''))); };
+    async function cardData() {
+        const one = async fn => { try { const l = await fn(); const p = cardPick(l); return { n: l.filter(x => x.needs_reply).length, more: l.length - p.length,
+            items: p.map(x => Object.assign({}, x._card, { seen: !!x.done, done: !!x.done, needs_reply: !!x.needs_reply, unread: x.unread, title: x.title, sub: x.sub, sub_ch: x.sub_ch, last_dir: x.last_dir, last_text: x.last_text, last_at: x.last_at, can_send: x.can_send })) }; } catch (e) { log.error('[문의 창] 카드 줄 실패:', e.message); return null; } };
+        const [talk, qna, inquiry, sms] = await Promise.all([one(() => talkThreads({ scope: 'all' })), one(() => postThreads('qna', { scope: 'all' })), one(() => postThreads('inquiry', { scope: 'all' })), smsOpen()]);
+        const cnt = v => v ? { open: v.n, ai: 0, staff: 0 } : null;
+        return { days: DAYS, talk: talk && talk.items, qna: qna && qna.items, inquiry: inquiry && inquiry.items, sms: sms ? sms.items : null,
+            counts: { talk: cnt(talk), qna: cnt(qna), inquiry: cnt(inquiry), sms: sms ? { open: sms.open } : null },
+            more: { talk: talk ? talk.more : 0, qna: qna ? qna.more : 0, inquiry: inquiry ? inquiry.more : 0, sms: sms ? (sms.more || 0) : 0 }, at: new Date().toISOString() };
+    }
+    if (desk && typeof desk.hook === 'function' && !deps.testMode) { desk.hook('card', async seen => { await ensure(); return cardData(seen); }); desk.hook('changed', () => { _cnt = null; }); }
 
     // ───────── 라우트 ─────────
     const chOf = v => { const c = String(v || ''); if (!CHS.includes(c)) throw bad(400, '채널은 talk · qna · inquiry 중 하나예요'); return c; };
@@ -321,6 +374,15 @@ module.exports = function mountInboxThreads(app, deps) {
         if (c === 'talk') await talkRead(id, who(req).name, undo); else await postRead(c, id, who(req).name, undo);
         _cnt = null; res.json({ ok: true });
     });
+    // #660 「확인」 — 그 대화를 손님 새 글이 오기 전까지 숫자에서 뺀다(undo = 되돌림). 응답에 바뀐 탭 숫자를 같이 준다
+    app.post('/api/inbox/done', authMiddleware, wrap(async (req, res) => {
+        const b = req.body || {}; const c = chOf(b.ch), id = String(b.id == null ? '' : b.id), undo = b.undo === true || b.undo === 'true' || b.undo === 1;
+        let talk = null;
+        if (c === 'talk') { const d = await talkDetail(id); talk = { uid: d.last.user_id, rowId: d.lq.id }; }
+        else { if (!POST[c].okId(id)) throw bad(400, '어느 문의인지 알 수 없어요'); await postRow(c, id); }
+        await setDone(c, id, who(req).name, undo, talk); _cnt = null;
+        res.json({ ok: true, done: !undo, counts: await countsCached() });
+    }));
     app.post('/api/inbox/threads/:ch/:id/read', authMiddleware, readRoute(false));
     app.post('/api/inbox/threads/:ch/:id/unread', authMiddleware, readRoute(true));
     app.post('/api/inbox/threads/:ch/:id/send', authMiddleware, wrap(async (req, res) => {
@@ -341,5 +403,5 @@ module.exports = function mountInboxThreads(app, deps) {
         res.json(await talkMakeDraft(String(req.params.id || ''), who(req)));
     }));
 
-    return { ensure, counts, keyOf, tables: T, _talkThreads: talkThreads, _postThreads: postThreads };
+    return { ensure, counts, keyOf, tables: T, _talkThreads: talkThreads, _postThreads: postThreads, _cardData: cardData };
 };

@@ -14,6 +14,8 @@ const DAYS = 3;
 const AD_RE = /https?:\/\/|www\.|\.(kr|com|net|co\.kr)\b|순위\s*올리|상위\s*노출|리워드|마케팅\s*(대행|제안)|체험단|제휴\s*(문의|제안)|광고\s*(대행|문의|제안)|▰|▱/i;
 const NOT_TEXT = ['[이미지 전송]', '[직원 직접답변]'];
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
+// #661 고리(hook): 'card'(문의 대화 창 모듈이 주는 카드 내용 — 판정은 그쪽 한 곳) · 'sms'(문자 미답변 줄) · 'changed'([확인] 뒤 창의 숫자 기억 지움)
+const hooks = {};
 
 module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit }) {
     let ready = null;
@@ -123,6 +125,7 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
         try {
             await ensure();
             const seen = req.query.seen === '1';
+            if (typeof hooks.card === 'function') return res.json(await hooks.card(seen));   // #661 손님 연락 창의 「답 안 한 것」과 같은 줄·같은 숫자(+ 문자). 아래는 그 모듈이 없을 때의 종전 길
             const safe = async fn => { try { return await fn(seen); } catch (e) { console.error('[inbox]', e.message); return null; } };
             const [talk, qna, inquiry] = await Promise.all([safe(talkItems), safe(qnaItems), safe(inquiryItems)]);
             const count = list => Array.isArray(list) ? { open: list.filter(x => x.state === 'open' && !x.seen).length, ai: list.filter(x => x.state === 'ai' && !x.seen).length, staff: list.filter(x => x.state === 'staff' && !x.seen).length } : null;
@@ -143,6 +146,7 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
                 `UPDATE ${T[0]} SET reviewed_at = ${undo ? 'NULL' : 'NOW()'}, reviewed_by = $2 WHERE ${T[1]} = $1 RETURNING ${T[1]}`,
                 [T[2](id), undo ? null : who]);
             if (!r.rows.length) return res.status(404).json({ error: '없는 문의입니다' });
+            if (typeof hooks.changed === 'function') { try { hooks.changed(); } catch (e) { } }
             if (writeAudit) await writeAudit({ action: 'update', targetType: 'desk_inbox', targetId: kind === 'talk' ? parseInt(id, 10) : null,
                 changes: { after: { kind, id, reviewed: !undo } }, source: 'agent_office', actor: { id: req.user.id, name: who } });
             res.json({ message: undo ? '다시 목록에 올렸습니다' : '확인했습니다' });
@@ -189,3 +193,4 @@ module.exports = function mountDeskInbox(app, { pool, authMiddleware, writeAudit
 
     return { ensure, deliver, talkItems, AD_RE };
 };
+module.exports.hook = (k, fn) => { if (fn !== undefined) hooks[k] = fn; return hooks[k] || null; };

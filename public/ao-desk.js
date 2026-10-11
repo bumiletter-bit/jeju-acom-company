@@ -112,7 +112,7 @@
         fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
         view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(), boxOpen: new Set(), todoAll: false,
         hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false, delAsk: 0 }, endAsk: 0, pin: new Set(), q: { mine: '', all: '' }, mineLimit: 60, pickImg: false,
-        inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
+        inbox: null, inboxKind: 'all', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
     // #469-d(대표 9/29): 예시는 일을 통째로 맡기는 문장으로 — 괄호는 직원이 채울 내용 안내
     const HINTS = ['정산관리 오늘 발주수량이야 올려줘', '단골고객에게 문자발송할 예정이야 (쿠폰, 행사내용, 기간 넣어주기)', '지금 네이버 자사몰 쿠팡 가격 맞는지 확인해줘', '신규품목 보고서 작성해줘 (핵심내용 두서없이 쓰기)'];
@@ -238,7 +238,7 @@
                 <div class="ship-note" id="sms-note" role="status" hidden></div>
                 <div class="sms-tabs" id="sms-tabs" role="tablist" aria-label="손님 연락 채널" hidden></div>
                 <div class="sms-cols"><div class="sms-left">
-                <div class="sms-bar"><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 전체 번호 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="sms-staff" aria-pressed="false" title="읽었어도 아직 사람 답이 필요한 대화만 봐요. 다시 누르면 새 문자만" hidden>직원 확인 <b id="sms-staff-n"></b></button><button type="button" class="desk-btn sm sms-done-btn" id="sms-scope" aria-pressed="false" title="읽은 대화·끝난 대화까지 전부 봐요. 다시 누르면 새 문자만">이전 대화 보기</button><span class="sms-count" id="sms-count" role="status"></span></div>
+                <div class="sms-bar"><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 전체 번호 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="sms-staff" aria-pressed="false" title="읽었어도 아직 사람 답이 필요한 대화만 봐요. 다시 누르면 전체 대화" hidden>직원 확인 <b id="sms-staff-n"></b></button><button type="button" class="desk-btn sm sms-done-btn" id="sms-scope" aria-pressed="false" title="안 읽은 글이 있거나 사람 답이 필요한 대화만 봐요. 다시 누르면 전체 대화">답 안 한 것만 <b id="sms-open-n" hidden></b></button><span class="sms-count" id="sms-count" role="status"></span></div>
                 <ul class="sms-list" id="sms-list"></ul>
                 </div><div class="sms-pane" id="sms-pane"><div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div></div></div>
                 <div class="inb-host" id="inb-host" hidden></div>
@@ -271,15 +271,16 @@
                 <div class="desk-list" id="desk-list" aria-live="polite"></div>
                 <button type="button" class="desk-more-all" id="desk-list-more" data-full-open="desk-listbox">자세히 확인하기<span class="n"></span><span class="chev" aria-hidden="true">›</span></button>
             </section>
-            <section class="desk-inbox" id="desk-inbox" aria-label="확인 필요 문의">
+            <section class="desk-inbox" id="desk-inbox" aria-label="손님 연락">
                 <div class="desk-inbox-head">
-                    <b>확인 필요 문의</b>
-                    <div class="desk-inbox-tabs" id="desk-inbox-tabs" role="tablist">
-                        <button type="button" role="tab" data-k="talk" aria-selected="true">톡톡 <i id="inbox-n-talk">0</i></button>
+                    <b>손님 연락</b>
+                    <div class="desk-inbox-tabs" id="desk-inbox-tabs" role="tablist" aria-label="채널 고르기 · 숫자는 답 안 한 것">
+                        <button type="button" role="tab" data-k="all" aria-selected="true">전체</button>
+                        <button type="button" role="tab" data-k="sms" aria-selected="false" hidden>문자 <i id="inbox-n-sms">0</i></button>
+                        <button type="button" role="tab" data-k="talk" aria-selected="false">톡톡 <i id="inbox-n-talk">0</i></button>
                         <button type="button" role="tab" data-k="qna" aria-selected="false">상품 Q&amp;A <i id="inbox-n-qna">0</i></button>
                         <button type="button" role="tab" data-k="inquiry" aria-selected="false">주문 문의 <i id="inbox-n-inquiry">0</i></button>
                     </div>
-                    <label class="desk-inbox-seen"><input type="checkbox" id="desk-inbox-seen"> 확인한 건도 보기</label>
                     <button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button>
                 </div>
                 <div class="desk-inbox-list" id="desk-inbox-list"><div class="desk-empty">불러오는 중</div></div>
@@ -350,47 +351,25 @@
         ask.addEventListener('dragover', e => { e.preventDefault(); ask.classList.add('drag'); });
         ask.addEventListener('dragleave', () => ask.classList.remove('drag'));
         ask.addEventListener('drop', e => { e.preventDefault(); ask.classList.remove('drag'); addFiles(Array.from(e.dataTransfer.files || [])); });
-        // #474 확인 필요 문의 — 채널 고르기 · 확인한 건 보기 · [확인] · [문구 부탁]
+        // #661 손님 연락 카드 — 채널 칩(다시 누르면 전체) · 줄 = 그 대화로 · [확인]/[확인함](되돌리기)
         $('desk-inbox-tabs').addEventListener('click', e => {
             const b = e.target.closest('button[data-k]'); if (!b) return;
-            S.inboxKind = b.dataset.k;
-            document.querySelectorAll('#desk-inbox-tabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
+            S.inboxKind = (b.dataset.k === S.inboxKind) ? 'all' : b.dataset.k;
             renderInbox();
         });
-        $('desk-inbox-seen').addEventListener('change', e => { S.inboxSeen = e.target.checked; loadInbox(); });
         $('desk-inbox-list').addEventListener('click', async e => {
-            let b = e.target.closest('button[data-ib]');
-            if (!b) {
-                // #485: 표의 줄을 눌러도 펼친다(버튼·링크·글자 드래그 제외)
-                const tr = e.target.closest('tr.desk-ib-row');
-                if (!tr || e.target.closest('button, input, textarea, select, a')) return;
-                const sel = window.getSelection && window.getSelection();
-                if (sel && String(sel).length) return;
-                b = tr.querySelector('[data-ib="detail"]');
-                if (!b) return;
-            }
-            const act = b.dataset.ib;
-            if (act === 'win') { const k = b.dataset.kind; inbOpen(k === 'qna' ? 'qna' : k === 'inquiry' ? 'inquiry' : 'talk', k === 'talk' ? undefined : b.dataset.id); return; }   // #658: 톡톡 줄은 대화 열쇠가 달라 탭만 연다
-            if (act === 'detail') {
-                const key = b.dataset.kind + ':' + b.dataset.id;
-                if (S.ibDetail.has(key)) S.ibDetail.delete(key); else S.ibDetail.add(key);
-                renderInbox(); return;
-            }
-            if (act === 'ask') {
-                closeFull();
-                const line = b.dataset.kind === 'talk' ? '지금 처리 안 된 톡톡 건들 답변 예시문구 만들어줘' : '지금 답변 안 된 ' + (b.dataset.kind === 'qna' ? '상품 Q&A' : '주문 문의') + ' 답변 예시문구 만들어줘';
-                const cur = input.value.trim();
-                input.value = !cur ? line : cur.includes(line) ? input.value : input.value.replace(/\s+$/, '') + '\n' + line; // #476 적던 지시는 지우지 않는다
-                input.dispatchEvent(new Event('input')); input.focus(); input.scrollIntoView({ block: 'center' });
-                return;
-            }
-            if (act === 'go') { if (typeof switchPage === 'function') switchPage('inquiry'); return; }
-            if (act === 'more') { const box = b.closest('.desk-ib'); if (box) box.classList.toggle('open'); b.textContent = box && box.classList.contains('open') ? '접기' : '전체 보기'; return; }
+            const b = e.target.closest('button[data-ib]'); if (!b) return;
+            const act = b.dataset.ib, row = b.closest('.desk-cu');
+            if (act === 'open') { cuOpen(row ? row.dataset.kind : '', b.dataset.open || ''); return; }
+            if (act === 'win') { cuOpen(S.inboxKind === 'all' ? '' : S.inboxKind, ''); return; }
+            if (!row || (act !== 'ok' && act !== 'undo')) return;
             b.disabled = true;
             try {
-                const r = await api('/api/agent-office/desk/inbox/review', 'POST', { kind: b.dataset.kind, id: b.dataset.id, undo: act === 'undo' });
-                showToast(r.message || '확인했습니다');
+                const r = await api('/api/agent-office/desk/inbox/review', 'POST', { kind: row.dataset.kind, id: row.dataset.id, undo: act === 'undo' });
+                showToast(r.message || (act === 'undo' ? '다시 대기로 돌렸어요' : '확인했습니다'));
                 await loadInbox();
+                const a = inbApi(); try { if (a && a.refresh) a.refresh(true); } catch (err) { /* 창 숫자는 다음 주기에 */ }   // 창의 [답 안 한 것만 n]·탭 숫자도 같은 표식이라 바로 다시 받는다
+                const nb = document.querySelector('#desk-inbox-list .desk-cu[data-kind="' + row.dataset.kind + '"][data-id="' + String(row.dataset.id).replace(/"/g, '') + '"] .desk-cu-ok'); if (nb) nb.focus({ preventScroll: true });
             } catch (err) { showToast(err && err.message ? err.message : '처리하지 못했어요'); b.disabled = false; }
         });
         $('desk-fs').addEventListener('change', e => { S.fs = e.target.value; S.sig = ''; renderList(); });
@@ -432,7 +411,7 @@
         });
     }
 
-    const PREVIEW_LIST = 5, PREVIEW_INBOX = 3;
+    const PREVIEW_LIST = 5, PREVIEW_INBOX = 5;
     function openFull(sec) {
         if (!sec || S.full === sec) return;
         if (S.full) closeFull();
@@ -1126,7 +1105,7 @@
     //     [이전 대화 보기](scope=all)·찾기(q = 서버가 전체에서)로 지난 대화를 본다 · 숫자 네 칸·[처리함]·[대화 끝내기]는 없앴다(서버 라우트는 그대로 있다)
     //   새 폴링 없음 — 기존 1초 tick 에 얹는다(요약 30초 · 카드가 열려 있으면 목록 10초 · 펼친 대화 5초 · 가려진 동안은 안 받음)
     //   서버에 문자 라우트가 없으면(요약이 실패하면) 알약 자체가 안 보인다 → 종전 화면 그대로
-    const SMS = { scope: 'active', only: false, sum: null, sumAt: 0, sumSig: '', items: null, sig: '', err: '', q: '', qt: 0, seq: 0, lbusy: false, listAt: 0, open: 0, openRow: null, openAt: 0, thread: null, tsig: '', tseq: 0, tbusy: false, thAt: 0, sending: false, texts: new Map(), filled: 0, fillText: '', newDraft: '', actAt: Date.now(), readAt: 0, itemsAt: 0, imgs: new Map() };   // scope = active(새 문자만)|all(이전 대화까지) — 이 화면 동안 기억 · only = 직원 확인이 필요한 대화만(#633 봇 실패 알약에서 올 때)
+    const SMS = { scope: 'all', only: false, sum: null, sumAt: 0, sumSig: '', items: null, sig: '', err: '', q: '', qt: 0, seq: 0, lbusy: false, listAt: 0, open: 0, openRow: null, openAt: 0, thread: null, tsig: '', tseq: 0, tbusy: false, thAt: 0, sending: false, buyOpen: new Set(), texts: new Map(), filled: 0, fillText: '', newDraft: '', actAt: Date.now(), readAt: 0, itemsAt: 0, imgs: new Map() };   // scope = all(전체 대화 · 기본 #660)|open(답 안 한 것만) — 이 화면 동안 기억 · only = 직원 확인이 필요한 대화만(#633 봇 실패 알약에서 올 때)
     const SMS_ST = { staff_needed: ['직원 몫', 'ask'], draft: ['초안 대기', 'wait'], bot_replied: ['봇 답변', 'work'], cooldown: ['봇 답변', 'work'], staff_replied: ['직원 답변', 'done'], closed: ['끝난 대화', 'mute'], new: ['새 문자', 'mute'], ignored: ['안 봐도 됨', 'mute'] };
     // #635: 볼 것 = 안 읽은 글이 있는 대화(unread_threads) · 그중 사람 몫(needs_staff) · 안 보낸 초안이 있는 대화(drafts) — 옛 서버(칸 없음)면 종전 셈(직원 몫 + 초안 대기)
     const smsNeed = () => { const d = SMS.sum || {}, c = d.counts && typeof d.counts === 'object' ? d.counts : {}, old = !('unread_threads' in d), st = Number(d.staff_needed) || 0, dr = Number(old && 'draft' in c ? c.draft : d.drafts) || 0; return old ? { unread: st + dr, staff: st, draft: dr, old: true } : { unread: Number(d.unread_threads) || 0, staff: Number(d.needs_staff) || 0, draft: dr, old: false }; };
@@ -1188,7 +1167,7 @@
         if (d.enabled === false) smsNote('문자 연동이 꺼져 있어요. 지금은 받은 문자가 여기에 들어오지 않아요.', '');
         else if (smsDead()) smsNote(`회사폰 전달 앱 연결이 끊겼어요${d.gateway.last_ping_at ? '. 마지막 연결 ' + smsWhen(d.gateway.last_ping_at) : ''}. 회사폰이 켜져 있는지, 앱이 돌고 있는지 확인해 주세요. 그동안 온 문자는 여기에 안 보여요.`, 'err');
         else smsNote('');
-        const sc = $('sms-scope'); if (sc) sc.setAttribute('aria-pressed', String(SMS.scope === 'all' && !SMS.only));
+        const sc = $('sms-scope'); if (sc) { sc.setAttribute('aria-pressed', String(SMS.scope === 'open' && !SMS.only)); const on = $('sms-open-n'), n = Number(d.open_threads); if (on) { on.hidden = !(n > 0); on.textContent = n > 99 ? '99+' : String(n || ''); } }   // #660 숫자 = 서버 요약 open_threads(옛 서버엔 없음 → 숫자 없이 단추만)
         // 셈 = 서버 요약의 staff_open(사유가 남아 있는 열린 대화 수 · 읽음 여부 무관) — 그 칸이 없으면 상태가 「직원 몫」인 대화 수(staff_needed)로 대신
         { const sb = $('sms-staff'), n = Number('staff_open' in d ? d.staff_open : d.staff_needed) || 0; if (sb) { sb.hidden = !(n > 0 || SMS.only); sb.setAttribute('aria-pressed', String(!!SMS.only)); $('sms-staff-n').textContent = n > 99 ? '99+' : String(n); } }
         if (document.getElementById('sms-text')) smsSync();
@@ -1210,7 +1189,7 @@
         const out = {}; INB_CH.forEach(([k]) => { const x = c && c[k]; out[k] = { unread: Number(x && x.unread) || 0, needs: Number(x && (x.needs != null ? x.needs : x.open)) || 0 }; });
         return out;
     }
-    const inbUnread = () => { if (!inbOk()) return 0; const c = inbCounts(); return INB_CH.reduce((n, [k]) => n + c[k].unread, 0); };
+    const inbUnread = () => { if (!inbOk()) return 0; const c = inbCounts(); return INB_CH.reduce((n, [k]) => n + c[k].needs, 0); };   // #660: 톡톡·문의는 「답 안 한 것」(needs = 서버 counts.open · [확인]·답으로 줄어듦)
     function inbSub() {
         const sub = $('sms-sub'), md = $('sms-mode'); if (!sub) return;
         if (INB.ch === 'sms') return;
@@ -1223,15 +1202,15 @@
         if (ttl) ttl.textContent = on ? '손님 연락' : '문자';
         if (!on) { el.hidden = true; return; }
         const c = inbCounts(), smsN = SMS.sum ? smsNeed().unread : 0;
-        const tabs = (SMS.sum ? [['sms', '문자', smsN]] : []).concat(INB_CH.map(([k, name]) => [k, name, c[k].unread]));
-        const html = tabs.map(([k, name, n]) => `<button type="button" class="sms-tab" role="tab" data-ch="${k}" aria-selected="${String(INB.ch === k)}" tabindex="${INB.ch === k ? 0 : -1}">${name}${n > 0 ? `<i class="sms-n" aria-label="안 읽음 ${n}">${n > 99 ? '99+' : n}</i>` : ''}</button>`).join('');
+        const tabs = (SMS.sum ? [['sms', '문자', smsN]] : []).concat(INB_CH.map(([k, name]) => [k, name, c[k].needs]));
+        const html = tabs.map(([k, name, n]) => `<button type="button" class="sms-tab" role="tab" data-ch="${k}" aria-selected="${String(INB.ch === k)}" tabindex="${INB.ch === k ? 0 : -1}">${name}${n > 0 ? `<i class="sms-n" aria-label="${k === 'sms' ? '안 읽음' : '답 안 한 것'} ${n}">${n > 99 ? '99+' : n}</i>` : ''}</button>`).join('');
         if (el.dataset.sig !== html) {
             const had = document.activeElement && document.activeElement.closest && document.activeElement.closest('#sms-tabs') ? document.activeElement.dataset.ch : '';
             el.dataset.sig = html; el.innerHTML = html;
             if (had) { const b = el.querySelector('[data-ch="' + had + '"]'); if (b) b.focus({ preventScroll: true }); }
         }
         el.hidden = false;
-        INB_CH.forEach(([k]) => { const n = $('inb-n-' + k); if (n) { n.hidden = !(c[k].unread > 0); n.textContent = c[k].unread > 99 ? '99+' : String(c[k].unread); } });
+        INB_CH.forEach(([k]) => { const n = $('inb-n-' + k); if (n) { n.hidden = !(c[k].needs > 0); n.textContent = c[k].needs > 99 ? '99+' : String(c[k].needs); } });
     }
     // 사람이 화면에서 톡톡·문의 대화를 펴고 접을 때 AkmInbox 가 부른다 → 뒤로가기 칸(창 'win' 위의 'th')을 문자와 같은 방식으로
     function inbOnThread(open) {
@@ -1268,7 +1247,7 @@
     // 바로가기 「손님 n」·챙길 일 줄: 안 읽음이 있는 첫 탭으로(문자 먼저)
     function inbOpenFirst() {
         const c = inbCounts(), smsN = SMS.sum ? smsNeed().unread : 0;
-        const hit = smsN > 0 ? 'sms' : (INB_CH.find(([k]) => c[k].unread > 0) || INB_CH.find(([k]) => c[k].needs > 0) || [SMS.sum ? 'sms' : 'talk'])[0];
+        const hit = smsN > 0 ? 'sms' : (INB_CH.find(([k]) => c[k].needs > 0) || [SMS.sum ? 'sms' : 'talk'])[0];
         if (hit === 'sms') smsOpen(); else inbOpen(hit);
     }
     // 틱마다: AkmInbox 가 늦게 실려도(스크립트 순서) 숫자 알림을 한 번 걸고, 간격은 AkmInbox 가 스스로 지킨다
@@ -1300,7 +1279,7 @@
     }
     function smsWinCleanup() {
         if (!document.body.classList.contains('sms-win-open')) return;
-        smsThreadClose(false, true); smsViewClose();
+        smsThreadClose(false, true); smsViewClose(); SMS.buyOpen.clear(); setTimeout(() => { try { loadInbox(); } catch (e) { /* 다음 주기에 */ } }, 400);   // #661 창에서 답·[확인]한 것이 손님 연락 카드에 바로
         if (INB.ch !== 'sms') {   // #658 톡톡·문의 탭을 보던 채 닫으면: 그 칸을 걷고 다음에는 문자 탭부터
             const a = inbApi(); try { if (a) a.unmount(); } catch (e) { /* 칸은 숨긴다 */ }
             INB.ch = 'sms'; const h = $('inb-host'), c = document.querySelector('#desk-sms .sms-cols'); if (h) h.hidden = true; if (c) c.hidden = false; inbTabs();
@@ -1313,17 +1292,17 @@
         if (S.full) { smsAfterFull(() => smsOpen(scope)); return; }
         smsWinShow();
         if (INB.ch !== 'sms') inbShow('sms');
-        if (scope === 'active' || scope === 'all') { SMS.scope = scope; SMS.only = false; SMS.q = ''; $('sms-q').value = ''; SMS.items = null; SMS.sig = ''; }
+        if (scope === 'active' || scope === 'open' || scope === 'all') { SMS.scope = scope === 'all' ? 'all' : 'open'; SMS.only = false; SMS.q = ''; $('sms-q').value = ''; SMS.items = null; SMS.sig = ''; }
         smsHead(); smsList();
         if (Date.now() - SMS.sumAt > 3000) smsSummary();
     }
     function smsStaffOnly(on) {   // 직원 확인이 필요한 대화만(이전 대화까지 받아 화면에서 거른다 · 최근 50건 안)
-        if (!on) { smsScope('active'); return; }
+        if (!on) { smsScope('all'); return; }
         if (S.full) { smsAfterFull(() => smsStaffOnly(true)); return; }
         smsOpen('all'); SMS.only = true; SMS.sig = ''; smsHead(); smsRenderList();
     }
     function smsScope(v) {
-        v = v === 'all' ? 'all' : 'active';
+        v = v === 'open' ? 'open' : 'all';
         if (v === SMS.scope && !SMS.only) return;
         const same = v === SMS.scope; SMS.scope = v; SMS.only = false; SMS.sig = '';
         if (same) { smsHead(); smsRenderList(); return; }   // 거르기만 푼다(받아 둔 목록 그대로)
@@ -1341,7 +1320,7 @@
         SMS.lbusy = true; SMS.listAt = asked;
         if (!quiet && !SMS.items) $('sms-list').innerHTML = '<li class="desk-empty ship-empty">불러오는 중</li>';
         let d, err = '';
-        try { d = await api('/api/sms/threads?scope=' + SMS.scope + '&q=' + encodeURIComponent(q) + '&limit=50'); } catch (e) { err = (e && e.message) || '불러오지 못했어요'; }
+        try { d = await api('/api/sms/threads?scope=' + (SMS.scope === 'open' && SMS.sum && !('open_threads' in SMS.sum) ? 'active' : SMS.scope) + '&q=' + encodeURIComponent(q) + '&limit=50'); } catch (e) { err = (e && e.message) || '불러오지 못했어요'; }
         if (seq !== SMS.seq) return;
         SMS.lbusy = false;
         if (!err && !(d && Array.isArray(d.items))) err = (d && d.error) || '불러오지 못했어요';
@@ -1393,7 +1372,7 @@
             : SMS.q ? `<li class="desk-empty ship-empty">${esc(`「${SMS.q}」로 찾은 문자가 없어요.`)}</li>`
             : SMS.only ? '<li class="desk-empty ship-empty">직원 확인이 필요한 대화가 없어요.</li>'
             : SMS.scope === 'all' ? '<li class="desk-empty ship-empty">아직 들어온 문자가 없어요.</li>'
-            : '<li class="desk-empty ship-empty sms-none"><span>새 문자가 없어요.</span><button type="button" class="desk-btn sm sms-empty-go">이전 대화 보기</button></li>';
+            : '<li class="desk-empty ship-empty sms-none"><span>답 안 한 문자가 없어요.</span><button type="button" class="desk-btn sm sms-empty-go">전체 대화 보기</button></li>';
         const top = ul.scrollTop;
         ul.innerHTML = html;
         ul.scrollTop = top;
@@ -1405,7 +1384,7 @@
         const li = document.querySelector('#sms-list .sms-item[data-id="' + id + '"]');
         if (!li) { if (smsHistAt() === 'th') smsHistBack(1); return; }
         const x = (SMS.items || []).find(i => i.id === id) || {};
-        SMS.open = id; SMS.thread = null; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyMore = 0; SMS.buyShow = 5; SMS.readAt = Date.now(); SMS.actAt = Date.now();
+        SMS.open = id; SMS.thread = null; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyShow = 5; SMS.readAt = Date.now(); SMS.actAt = Date.now();
         SMS.openAt = Math.max(0, (SMS.items || []).findIndex(i => i.id === id)); SMS.openRow = x.id ? x : null;
         { const un = li.querySelector('.sms-un'); if (un) un.remove(); li.classList.remove('unread'); li.dataset.un = '0'; }   // #635 여는 순간 읽음(서버도 GET 에서 읽음으로)
         const th = document.createElement('div');
@@ -1437,7 +1416,7 @@
         const read = !!SMS.thread;
         SMS.open = 0; SMS.thread = null; SMS.tseq++; SMS.tbusy = false; SMS.openRow = null;
         // #635 접으면 읽은 대화는 「새 문자」 목록에서 빠진다(이전 대화 보기·찾기 중에는 그대로 · 옛 서버 줄은 그대로)
-        if (read && SMS.scope === 'active' && !SMS.q && SMS.items) SMS.items = SMS.items.filter(i => i.id !== id || smsOld(i));
+        if (read && SMS.scope === 'open' && !SMS.q && SMS.items) SMS.items = SMS.items.filter(i => i.id !== id || smsOld(i) || smsWhy(i));   // #660 [답 안 한 것만]: 읽은 대화는 빠진다(사람 몫 사유가 남은 대화는 그대로)
         const pane = $('sms-pane'); if (pane) pane.innerHTML = '<div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div>';
         const card = $('desk-sms'); if (card) card.classList.remove('sms-open');
         if (!keepHist && smsHistAt() === 'th') smsHistBack(1);   // 화면에서 접었으면 쌓아 둔 뒤로가기 칸도 되돌린다
@@ -1450,7 +1429,7 @@
     //         history 가 없으면(옛 서버) 종전 order(판정에 쓴 최근 14일 1건)로. 송장 = 전체 번호(누르면 복사 · [조회] = 우리 배송조회 새 창) · 옛 응답이면 「끝 1234」.
     function smsBuyItem(o) {
         if (!o || typeof o !== 'object') return '';
-        const row = (k, name, html, key) => html ? `<div class="sms-buy-r"><dt>${name}</dt><dd data-k="${k}"${key ? ' class="key"' : ''}>${html}</dd></div>` : '';
+        const row = (k, name, html, key) => html ? `<div class="sms-buy-r r-${k}${key ? ' key' : ''}"><dt>${name}</dt><dd data-k="${k}"${key ? ' class="key"' : ''}>${html}</dd></div>` : '';
         const badge = (text, k) => text ? `<span class="desk-badge" data-k="${k}">${esc(text)}</span>` : '';
         const role = o.role === 'buyer' ? '<small class="sms-buy-role">이 번호가 주문한 건</small>' : o.role === 'both' ? '' : o.role === 'recipient' ? '<small class="sms-buy-role">이 번호가 받는 건</small>' : '';
         const item = esc((o.option_text || '') + (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : '') + (Number(o.boxes) > 1 ? ' · ' + nfmt(o.boxes) + '상자' : ''));
@@ -1473,7 +1452,7 @@
         // #657 송장별 품목: 상자가 2개 이상이면 「[송장][조회] 품목 × n · 상태」 한 줄씩 짝지어(서버 boxes_detail · 없으면 종전 꼴)
         const bd = (Array.isArray(o.boxes_detail) ? o.boxes_detail : []).map(b => ({ n: String((b && b.tracking) == null ? '' : b.tracking).replace(/[^0-9]/g, ''), opt: String((b && b.option_text) || '').trim(), qty: Number(b && b.qty) || 0, st: String((b && (b.status_text || b.status_label)) || '').trim() || (b && b.delivered ? '배송완료' : '') })).filter(b => /^[0-9]{10,12}$/.test(b.n));
         const byBox = bd.length >= 2;
-        const boxHtml = byBox ? `<div class="sms-buy-r wide"><dt>송장별</dt><dd data-k="boxes"><ul class="sms-box-l">${bd.map(b => `<li>${trk1(b.n)}<span class="sms-box-it">${esc(b.opt || '품목 확인 전')}${b.qty > 1 ? ' × ' + nfmt(b.qty) : ''}</span>${b.st ? badge(b.st, stK(b.st)) : ''}</li>`).join('')}</ul></dd></div>` : '';
+        const boxHtml = byBox ? `<div class="sms-buy-r r-boxes wide"><dt>송장별</dt><dd data-k="boxes"><ul class="sms-box-l">${bd.map(b => `<li>${trk1(b.n)}<span class="sms-box-it">${esc(b.opt || '품목 확인 전')}${b.qty > 1 ? ' × ' + nfmt(b.qty) : ''}</span>${b.st ? badge(b.st, stK(b.st)) : ''}</li>`).join('')}</ul></dd></div>` : '';
         return `<div class="sms-buy-i"><div class="sms-buy-s">${badge(st || '상태 확인 전', stK(st))}${role}</div><dl class="sms-buy-g">`
             + row('ship', '발송일', o.ship_date ? esc(mdOf(o.ship_date)) + (o.partner ? ` <small>${esc(o.partner)}</small>` : '') : '', true)
             + (byBox ? '' : row('trk', '송장', trkHtml)) + row('who', '받는 분', who) + (byBox && bd.every(b => b.opt) ? '' : row('item', '품목', item)) + boxHtml + (o.arrive_text ? row('arrive', '도착', esc(o.arrive_text)) : '') + '</dl></div>';
@@ -1485,14 +1464,14 @@
         const list = hasHist ? d.history.map(smsBuyItem).filter(Boolean) : [smsBuyItem(o)].filter(Boolean);
         let html = '';
         if (list.length) {
-            const rest = list.length - 1, open = SMS.buyMore === SMS.open, shown = Math.min(rest, Math.max(5, Number(SMS.buyShow) || 5)), left = rest - shown;   // #657: 펼치면 한 번에 5건씩(60일 안 수십 건 손님 — 대화 칸을 가리지 않게)
+            const rest = list.length - 1, open = SMS.buyOpen.has(SMS.open), shown = Math.min(rest, Math.max(5, Number(SMS.buyShow) || 5)), left = rest - shown;   // #657: 펼치면 한 번에 5건씩(60일 안 수십 건 손님 — 대화 칸을 가리지 않게)
             html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 ${days}일${list.length > 1 ? ' · ' + nfmt(list.length) + '건' : ''}</small></div>` + list[0]
-                + (rest > 0 ? `<button type="button" class="sms-buy-more" id="sms-buy-more" aria-expanded="${String(open)}" aria-controls="sms-buy-rest">${open ? '구매이력 접기' : '구매이력 ' + nfmt(rest) + '건 더보기'}</button><div class="sms-buy-rest" id="sms-buy-rest"${open ? '' : ' hidden'}>${list.slice(1, 1 + shown).join('')}${left > 0 ? `<button type="button" class="sms-buy-more next" id="sms-buy-next">${nfmt(Math.min(5, left))}건 더보기 <small>남은 ${nfmt(left)}건</small></button>` : (d.history_more ? `<p class="sms-buy-cap">${nfmt(list.length)}건까지 보여요.</p>` : '')}</div>` : '');
+                + (rest > 0 ? `<button type="button" class="sms-buy-more" id="sms-buy-more" aria-expanded="${String(open)}" aria-controls="sms-buy-rest" aria-label="${open ? '구매이력 접기' : '구매이력 ' + nfmt(rest) + '건 더보기'}">${open ? '접기' : '+' + nfmt(rest) + '건 더보기'}</button><div class="sms-buy-rest" id="sms-buy-rest"${open ? '' : ' hidden'}>${list.slice(1, 1 + shown).join('')}${left > 0 ? `<button type="button" class="sms-buy-more next" id="sms-buy-next">${nfmt(Math.min(5, left))}건 더보기 <small>남은 ${nfmt(left)}건</small></button>` : (d.history_more ? `<p class="sms-buy-cap">${nfmt(list.length)}건까지 보여요.</p>` : '')}</div>` : '');
         } else if (!hasHist) {
             const line = String((ow && ow.line) || t.order_hint || '').trim();   // 칸이 없는 옛 응답은 서버가 지어 준 한 줄
             if (line) html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 14일</small></div><div class="sms-buy-i"><dl class="sms-buy-g">${`<div class="sms-buy-r"><dt>요약</dt><dd data-k="line">${esc(line)}</dd></div>`}</dl></div>`;
         }
-        box.classList.toggle('none', !html);
+        box.classList.toggle('none', !html); box.classList.toggle('has-more', list.length > 1);   // #659 2건 이상이면 판 아무 곳이나 눌러 펼침·접힘
         const sig = html || 'none:' + days;
         if (box.dataset.sig === sig) return;   // 폴링마다 다시 그리지 않는다(더보기 누르던 초점 유지)
         box.dataset.sig = sig;
@@ -1701,10 +1680,8 @@
     }
     function smsTodoHtml() {
         if (!inbOk()) return smsTodoHtml0(false);
-        // #658: 문자(안 읽음) + 톡톡·상품문의·주문문의(답 안 한 것)를 한 줄로 — 채널 알약을 누르면 그 탭으로
-        const c = inbCounts(), sn = SMS.sum && SMS.sum.enabled !== false ? smsNeed().unread : 0;
-        const parts = [['sms', '문자', sn]].concat(INB_CH.map(([k, name]) => [k, name, c[k].needs])).filter(x => x[2] > 0), tot = parts.reduce((n, x) => n + x[2], 0);
-        return smsTodoHtml0(true) + (tot > 0 ? `<li class="sms-todo cust" data-sms="cust" role="button" tabindex="0"><span>손님 연락</span><b>${nfmt(tot)}건</b><small>${parts.map(([k, name, v]) => `<button type="button" class="bf-go cu-go" data-cu="${k}" aria-label="${name} ${nfmt(v)}건 열기">${name} ${nfmt(v)}</button>`).join('')}<i>눌러서 열기</i></small></li>` : '');
+        // #661(대표 10/12 「2곳에 보일 필요 없음」): 챙길 일에는 「손님 연락 n건」 줄을 두지 않는다 — 숫자·들어가는 길은 아래 「손님 연락」 카드(문자|톡톡|상품 Q&A|주문 문의 칩)에만. 회사폰 연결 끊김 줄은 그대로
+        return smsTodoHtml0(true);
     }
     function smsTodoHtml0(noUnread) {
         const d = SMS.sum; if (!d || d.enabled === false) return '';
@@ -1724,7 +1701,7 @@
         });
         ['keydown', 'pointerdown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, () => { SMS.actAt = Date.now(); }, { capture: true, passive: true }));
         // (scroll 은 세지 않는다 — 새 글이 붙으며 대화 창이 스스로 내려가는 것도 scroll 이라, 자리를 비웠는데 조작으로 잡힌다. 사람이 굴리면 wheel·touch 가 먼저 온다)
-        $('sms-scope').addEventListener('click', () => smsScope(SMS.scope === 'all' && !SMS.only ? 'active' : 'all'));
+        $('sms-scope').addEventListener('click', () => smsScope(SMS.scope === 'open' && !SMS.only ? 'all' : 'open'));
         $('sms-staff').addEventListener('click', () => smsStaffOnly(!SMS.only));
         // 찾기 = 0.4초 멈추면 · Enter 면 바로(서버가 이전 대화까지 전체에서 찾는다)
         const qGo = v => { clearTimeout(SMS.qt); v = String(v || '').trim(); if (v === SMS.q) return; SMS.q = v; SMS.only = false; SMS.items = null; SMS.sig = ''; smsList(); };
@@ -1739,7 +1716,14 @@
             { const tk = e.target.closest('.sms-trk'); if (tk) { copyText(tk.dataset.trk, '송장번호를 복사했어요', tk); return; } }   // #644
             if (e.target.closest('.sms-hold')) { smsHold(); return; }   // #651
             if (e.target.closest('#sms-buy-next')) { const had = document.querySelectorAll('#sms-buy-rest .sms-buy-i').length; SMS.buyShow = (Number(SMS.buyShow) || 5) + 5; smsBuyRender(); const nx = document.getElementById('sms-buy-next') || document.getElementById('sms-buy-more'); if (nx) nx.focus({ preventScroll: true }); const it = document.querySelectorAll('#sms-buy-rest .sms-buy-i')[had]; if (it && it.scrollIntoView) it.scrollIntoView({ block: 'nearest' }); return; }
-            if (e.target.closest('#sms-buy-more')) { SMS.buyMore = SMS.buyMore === SMS.open ? 0 : SMS.open; SMS.buyShow = 5; smsBuyRender(); const b = document.getElementById('sms-buy-more'); if (b) b.focus({ preventScroll: true }); return; }   // #653 구매이력 더보기·접기
+            {   // #659(대표 10/12): 구매이력 판 아무 곳이나(또는 「+n건 더보기」) 누르면 펼침·접힘 — 송장 복사·[조회]·[5건 더보기] 같은 안쪽 단추와 글자를 끌어 고르는 중에는 그대로. 펼침은 대화별로 이 창을 여는 동안 기억
+                const bo = e.target.closest('#sms-order.has-more'), mb = e.target.closest('#sms-buy-more');
+                if (bo && SMS.open && (mb || (!e.target.closest('a, button, input, textarea, label') && !String(window.getSelection ? window.getSelection() : '').trim()))) {
+                    if (SMS.buyOpen.has(SMS.open)) SMS.buyOpen.delete(SMS.open); else SMS.buyOpen.add(SMS.open);
+                    SMS.buyShow = 5; smsBuyRender(); bo.scrollTop = 0;
+                    const b = document.getElementById('sms-buy-more'); if (b && mb) b.focus({ preventScroll: true }); return;
+                }
+            }   // #653 구매이력 더보기·접기
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
@@ -2892,80 +2876,62 @@
         }
     }
 
-    // #474 확인 필요 문의 — 톡톡·상품 Q&A·주문 문의 미처리 건(최근 3일). [확인]을 누른 건은 빠진다.
+    // #661(대표 10/12 「2곳이 정확히 같아야 해 · 문자도 들어가게 · 누르면 그 해당 칸으로 · 간단하게 볼 수만 있게」) 손님 연락 카드
+    //   = 문자·톡톡·상품 Q&A·주문 문의 전체 대화를 최근 대화순 한 목록으로(네이버 톡톡상담관리 「전체」처럼). 칩 숫자 = 대기(답 안 한 것 · 서버 counts.{ch}.open 그대로 = 손님 연락 창의 [답 안 한 것만 n])
+    //   줄 = 채널 · 손님 · 마지막 글 한 줄(우리가 마지막이면 「나:」) · 시각. 대기 줄 = 점 + 굵게 + [확인] · 확인한 줄 = [확인함](다시 누르면 대기로) · 답한 줄은 흐리게. 줄을 누르면 손님 연락 창의 그 대화로
+    //   서버: GET /api/agent-office/desk/inbox → { days, sms[]|null, talk[], qna[], inquiry[], counts, more } · POST …/desk/inbox/review { kind, id, undo }(창의 [확인]과 같은 표식)
+    const CU_KINDS = ['sms', 'talk', 'qna', 'inquiry'], CU_NAME = { sms: '문자', talk: '톡톡', qna: '상품 Q&A', inquiry: '주문 문의' };
     async function loadInbox() {
-        try { S.inbox = await api('/api/agent-office/desk/inbox' + (S.inboxSeen ? '?seen=1' : '')); S.inboxAt = Date.now(); renderInbox(); }
-        catch (e) { const box = $('desk-inbox-list'); if (box && !S.inbox) box.innerHTML = '<div class="desk-empty">문의 현황을 읽지 못했어요. 잠시 뒤 다시 열어 주세요.</div>'; }
+        try { S.inbox = await api('/api/agent-office/desk/inbox'); S.inboxAt = Date.now(); renderInbox(); }
+        catch (e) { const box = $('desk-inbox-list'); if (box && !S.inbox) box.innerHTML = '<div class="desk-empty">손님 연락 현황을 읽지 못했어요. 잠시 뒤 다시 열어 주세요.</div>'; }
+    }
+    function cuOpen(kind, id) {
+        if (kind === 'sms') { if (id) smsOpenById(Number(id)); else smsOpen(); return; }
+        if (!kind) { inbOpenFirst(); return; }
+        if (inbOk()) { inbOpen(kind, id || undefined); return; }
+        if (S.full) closeFull();
+        if (typeof switchPage === 'function') switchPage('inquiry');   // 손님 연락 창이 없는 서버·옛 캐시면 종전 문의 관리로
+    }
+    function cuRow(x, i) {
+        const sms = x.kind === 'sms', wait = !!x.needs_reply, done = !wait && !sms && !!(x.done || x.seen) && x.state !== 'done' && x.state !== 'staff', out = x.last_dir === 'out';
+        const who = sms ? smsNo(x) : String(x.title || CU_NAME[x.kind] + ' 손님'), sub = String(sms ? (x.customer_hint || '') : (x.sub || x.item || ''));
+        const text = String(x.last_text || (sms ? (out ? x.last_out_text : x.last_in_text) : x.question) || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+        const at = x.last_at || x.at, oid = sms ? x.id : x.kind === 'talk' ? (x.tkey || '') : x.id;
+        return `<div class="desk-cu${wait ? ' wait' : ''}${done ? ' done' : ''}${i >= PREVIEW_INBOX ? ' ov' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">`
+            + `<button type="button" class="desk-cu-row" data-ib="open" data-open="${esc(oid == null ? '' : oid)}" title="눌러서 이 대화 열기">`
+            + `<i class="desk-cu-ch" data-ch="${x.kind}">${CU_NAME[x.kind]}</i>`
+            + `<span class="desk-cu-who">${wait ? '<i class="desk-cu-dot" aria-label="답 안 한 것"></i>' : ''}<b>${esc(who)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>`
+            + `<time class="desk-cu-at">${esc(at ? smsWhen(at) : '')}</time>`
+            + `<span class="desk-cu-last">${out ? '<b class="sms-me">나:</b> ' : ''}${esc(text || '(글 없음)')}</span></button>`
+            + (sms ? '' : wait ? '<button type="button" class="desk-btn sm primary desk-cu-ok" data-ib="ok" title="답할 필요가 없는 글이면 눌러서 대기에서 빼요">확인</button>'
+                : done ? '<button type="button" class="desk-btn sm desk-cu-ok" data-ib="undo" aria-pressed="true" title="다시 누르면 대기로 되돌려요">확인함</button>' : '')
+            + '</div>';
     }
     function renderInbox() {
         const d = S.inbox, box = $('desk-inbox-list');
         if (!d || !box) return;
-        const opened = new Set(Array.from(box.querySelectorAll('.desk-ib.open')).map(el => el.dataset.kind + ':' + el.dataset.id));
-        renderInboxNow(d, box);
-        if (opened.size) box.querySelectorAll('.desk-ib').forEach(el => { if (opened.has(el.dataset.kind + ':' + el.dataset.id)) { el.classList.add('open'); const b = el.querySelector('[data-ib="more"]'); if (b) b.textContent = '접기'; } });
-    }
-    function renderInboxNow(d, box) {
-        for (const k of ['talk', 'qna', 'inquiry']) {
-            const n = $('inbox-n-' + k), c = d.counts && d.counts[k];
-            if (n) { const v = c ? c.open + c.ai + (c.staff || 0) : 0; n.textContent = c ? v : '?'; n.className = v ? 'on' : ''; }
+        const hasSms = Array.isArray(d.sms);
+        if (S.inboxKind === 'sms' && !hasSms) S.inboxKind = 'all';
+        CU_KINDS.forEach(k => {
+            const n = $('inbox-n-' + k), c = d.counts && d.counts[k], v = c ? (Number(c.open) || 0) : null;
+            if (n) { n.textContent = v == null ? '?' : (v > 99 ? '99+' : String(v)); n.className = v ? 'on' : ''; if (k === 'sms') n.parentNode.hidden = !hasSms; }
+        });
+        document.querySelectorAll('#desk-inbox-tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.k === S.inboxKind)));
+        const kinds = S.inboxKind === 'all' ? CU_KINDS : [S.inboxKind];
+        let html;
+        if (S.inboxKind !== 'all' && !Array.isArray(d[S.inboxKind])) { html = '<div class="desk-empty">이 채널은 지금 읽지 못했어요.</div>'; setMore('desk-inbox-more', 0); }
+        else {
+            const list = [].concat(...kinds.map(k => Array.isArray(d[k]) ? d[k].map(x => Object.assign({}, x, { kind: k })) : []));
+            list.sort((a, b) => (tms(b.last_at || b.at) || 0) - (tms(a.last_at || a.at) || 0));   // 최근 대화순(채널별 시각 글 꼴이 달라 Date 로 견준다)
+            const more = kinds.reduce((n, k) => n + (Number(d.more && d.more[k]) || 0), 0);
+            setMore('desk-inbox-more', Math.max(0, list.length - PREVIEW_INBOX) + more);
+            html = list.length ? list.map(cuRow).join('') + (more > 0 ? `<button type="button" class="desk-cu-morewin${list.length >= PREVIEW_INBOX ? ' ov' : ''}" data-ib="win">여기에 못 실은 ${nfmt(more)}건 더 · 손님 연락 창에서 보기</button>` : '')
+                : `<div class="desk-empty">최근 ${nfmt(Number(d.days) || 30)}일 동안 온 손님 연락이 없어요.</div>`;
         }
-        const list = d[S.inboxKind];
-        if (!Array.isArray(list)) { box.innerHTML = '<div class="desk-empty">이 채널은 지금 읽지 못했어요.</div>'; return; }
-        setMore('desk-inbox-more', Array.isArray(list) ? Math.max(0, list.length - PREVIEW_INBOX) : 0);
-        if (!list.length) {
-            box.innerHTML = '<div class="desk-empty">' + (S.inboxSeen ? '최근 ' + d.days + '일 기록이 없어요.' : '확인할 문의가 없어요.') + '</div>';
-            return;
-        }
-        const name = { talk: '톡톡', qna: '상품 Q&A', inquiry: '주문 문의' }[S.inboxKind];
-        const hasOpen = list.some(x => x.state === 'open' && !x.seen);
-        const top = (hasOpen ? `<div class="desk-ib-top"><button type="button" class="desk-btn sm primary" data-ib="ask" data-kind="${S.inboxKind}">미답변 ${esc(name)} 답변 문구 부탁하기</button><span>입력칸에 지시가 들어갑니다. 보내면 클코가 건별로 문구를 만들어요.</span></div>` : '');
-        // #486: 톡톡은 직원이 답해도 [확인] 전까지 남는다 → 상태 3종(미답변 · 봇 답변 · 직원 답변)
-        const badge = x => `<span class="desk-badge" data-k="${x.seen ? 'done' : x.state === 'staff' ? 'done' : x.state === 'ai' ? 'work' : 'ask'}">${x.seen ? '확인함' : x.state === 'staff' ? '직원 답변함 · 확인 전' : x.state === 'ai' ? '봇 답변함 · 확인 전' : '미답변'}</span>`;
-        const bands = x => `${x.answer ? `<div class="desk-a answer"><div class="desk-a-label">${x.kind === 'talk' ? '봇이 보낸 답' : '자동으로 등록된 답'}</div>${esc(x.answer)}</div>` : ''}
-            ${x.staff ? `<div class="desk-a answer"><div class="desk-a-label">직원이 보낸 답</div>${esc(x.staff)}</div>` : ''}
-            ${x.draft ? `<div class="desk-a answer draft"><div class="desk-a-label">AI 초안 · 아직 등록 안 됨</div>${esc(x.draft)}</div>` : ''}`;
-        const acts = x => `${x.seen
-            ? `<button type="button" class="desk-btn sm" data-ib="undo" data-kind="${x.kind}" data-id="${esc(x.id)}">다시 목록에 올리기</button>`
-            : `<button type="button" class="desk-btn sm primary" data-ib="ok" data-kind="${x.kind}" data-id="${esc(x.id)}">확인</button>`}
-            ${x.kind !== 'talk' && x.state === 'open' ? `<button type="button" class="desk-btn sm" data-ib="go">문의 관리에서 답하기</button>` : ''}
-            ${inbOk() ? `<button type="button" class="desk-btn sm" data-ib="win" data-kind="${x.kind}" data-id="${esc(x.id)}">대화 창에서 답하기</button>` : ''}`;
-        // #485(대표 9/30): PC = 지시 목록과 같은 표 — 줄을 누르면 손님 문의 전문 + 답변 띠 + 확인 버튼이 펼쳐진다 · 폰 = 카드(종전)
-        if (S.wide) {
-            const rows = list.map((x, i) => {
-                const key = x.kind + ':' + x.id, open = S.ibDetail.has(key), oc = i >= PREVIEW_INBOX ? ' ov' : '';
-                return `<tr class="row clickable desk-ib-row${oc}${open ? ' opened' : ''}${x.seen ? ' seen' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}" title="${open ? '접기' : '눌러서 문의·답변 보기'}">
-                    <td>${badge(x)}</td>
-                    <td class="c-id">${esc(kst(x.at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}${x.item ? `<br><small>${esc(x.item)}</small>` : ''}${x.seen && x.seen_by ? `<br><small>확인: ${esc(x.seen_by)}</small>` : ''}</td>
-                    <td class="c-q">${esc(String(x.question || '').replace(/\s+/g, ' ').slice(0, 120))}</td>
-                    <td class="c-r">${esc(String(x.staff ? '(직원) ' + x.staff : x.draft ? '(초안) ' + x.draft : x.answer || x.why || '').replace(/\s+/g, ' ').slice(0, 90))}</td>
-                    <td class="c-x"><button type="button" class="desk-more" data-ib="detail" data-kind="${x.kind}" data-id="${esc(x.id)}" aria-expanded="${open}" aria-label="자세히">${open ? '▴' : '⋯'}</button></td>
-                </tr>${open ? `<tr class="detailrow${oc}"><td class="detail" colspan="5">
-                    <div class="desk-q-full"><div class="desk-a-label">손님 문의</div>${esc(x.question || '')}${x.why ? ` <small>· ${esc(x.why)}</small>` : ''}</div>
-                    ${bands(x)}
-                    <div class="desk-acts desk-a-acts">${acts(x)}</div></td></tr>` : ''}`;
-            }).join('');
-            box.innerHTML = top + `<div class="table-scroll-wrapper"><table class="desk-table"><thead><tr><th>상태</th><th>시각 · 품목</th><th>손님 문의</th><th>답변</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
-            return;
-        }
-        box.innerHTML = top
-            + list.map((x, i) => {
-                const long = (x.question || '').length > 140 || (x.answer || '').length > 160;
-                return `<article class="desk-ib ${x.seen ? 'seen' : ''}${i >= PREVIEW_INBOX ? ' ov' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">
-                    <div class="desk-ib-head">
-                        <span class="desk-badge" data-k="${x.seen ? 'done' : x.state === 'ai' ? 'work' : 'ask'}">${x.seen ? '확인함' : x.state === 'ai' ? '답변완료 · AI 답변 확인 전' : '미답변'}</span>
-                        <span>${esc(kst(x.at, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
-                        ${x.item ? `<span>${esc(x.item)}</span>` : ''}
-                        ${x.why ? `<span>${esc(x.why)}</span>` : ''}
-                        ${x.seen && x.seen_by ? `<span>확인: ${esc(x.seen_by)}</span>` : ''}
-                    </div>
-                    <p class="desk-ib-q">${esc(x.question)}</p>
-                    ${bands(x).replace(/class="desk-a answer/g, 'class="desk-ib-a desk-a answer')}
-                    <div class="desk-acts desk-a-acts">
-                        ${acts(x)}
-                        ${long ? `<button type="button" class="desk-btn sm pv-only" data-ib="more">전체 보기</button>` : ''}
-                    </div>
-                </article>`;
-            }).join('');
+        if (box.dataset.sig === html) return;   // 주기마다 다시 그리지 않는다(누르던 초점 유지)
+        const had = document.activeElement && document.activeElement.closest ? document.activeElement.closest('#desk-inbox-list .desk-cu') : null, hk = had ? [had.dataset.kind, had.dataset.id, document.activeElement.classList.contains('desk-cu-ok')] : null;
+        box.dataset.sig = html; box.innerHTML = html;
+        if (hk) { const el = Array.from(box.querySelectorAll('.desk-cu')).find(r => r.dataset.kind === hk[0] && r.dataset.id === hk[1]); const t = el && (hk[2] ? el.querySelector('.desk-cu-ok') : null) || (el && el.querySelector('.desk-cu-row')); if (t) t.focus({ preventScroll: true }); }
     }
 
     async function loadBoard() {

@@ -289,6 +289,8 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         const ta = await thread(PA);
         r = await api('GET', '/api/sms/threads?scope=active'); let it = find(r.json, ta.id);
         ok(r.status === 200 && r.json.scope === 'active' && it && it.unread === 2 && it.last_dir === 'in' && it.last_at && it.needs_staff === false && it.staff_why === null && 'draft_text' in it, '#635 in 2통 → unread 2 · last_dir in · needs_staff false ' + JSON.stringify(it || r.json).slice(0, 200));
+        r = await api('GET', '/api/sms/threads?scope=open'); const sumO = (await api('GET', '/api/sms/summary')).json;
+        ok(r.status === 200 && r.json.scope === 'open' && !!find(r.json, ta.id) && find(r.json, ta.id).unread === 2 && typeof sumO.open_threads === 'number' && sumO.open_threads >= 1, '#660 scope=open: 안 읽은 대화 포함 · 줄 꼴 같음 · summary.open_threads ' + sumO.open_threads);
         r = await api('GET', '/api/sms/threads'); ok(r.json.scope === 'active' && !!find(r.json, ta.id), '#635 인자 없으면 scope=active 기본');
         r = await api('GET', '/api/sms/threads?status=all'); ok(r.status === 200 && r.json.scope === 'legacy' && !!find(r.json, ta.id), '#635 종전 status=all 그대로(옛 화면)');
         r = await api('GET', '/api/sms/threads?scope=bogus'); ok(r.status === 400, '#635 scope 값 검사 400');
@@ -297,6 +299,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         r = await api('GET', `/api/sms/threads/${ta.id}`); let ta2 = await thread(PA);
         ok(r.status === 200 && r.json.thread.unread === 0 && r.json.messages.length === 2 && !!ta2.staff_read_at && String(ta2.updated_at) === String(upd0), '#635 열면 읽음(staff_read_at) · 응답 unread 0 · updated_at 안 건드림');
         r = await api('GET', '/api/sms/threads?scope=active'); ok(!find(r.json, ta.id), '#635 읽은 대화는 active 목록에서 빠짐');
+        r = await api('GET', '/api/sms/threads?scope=open'); ok(!find(r.json, ta.id) && (await api('GET', '/api/sms/summary')).json.open_threads === sumO.open_threads - 1, '#660 읽었고 사람 몫이 아닌 대화는 open 에서 빠짐 · open_threads −1');
         r = await api('GET', '/api/sms/threads?scope=all'); it = find(r.json, ta.id); ok(r.json.scope === 'all' && it && it.unread === 0, '#635 scope=all 에는 남음(unread 0)');
         await hook(env('sms:received', { messageId: 'u3', message: '혹시 확인되셨나요', phoneNumber: '+82' + PA.slice(1) }));
         r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, ta.id); ok(it && it.unread === 1, '#635 손님이 다시 보내면 다시 뜸 · unread 1 ' + (it && it.unread));
@@ -329,12 +332,21 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         await hook(env('sms:received', { messageId: 'u8', message: '귤이 다 썩어서 왔어요 환불해주세요', phoneNumber: '+82' + PC.slice(1) }));
         tc = await thread(PC); ok(tc.status === 'staff_needed' && tc.draft_text === NFC && tc.staff_why === 'claim', '#635·#646 잠금 중 불만 글(주문 못 찾음) = 자동 발송 0 · 초안 = 성함·연락처 되묻기 + staff_why claim ' + tc.staff_why);
         r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tc.id); ok(it && it.needs_staff === true && it.staff_why === 'claim' && it.staff_why_label === '불만·클레임' && it.draft_text === NFC && it.unread === 4, '#635 목록: needs_staff true · 사유 · unread 4 ' + JSON.stringify(it || {}).slice(0, 160));
+        {   // #660 사람 몫인 대화는 읽어도 open 에 남는다(읽음 칸만 잠깐 바꿔 보고 되돌림)
+            const keep = (await pool.query(`SELECT staff_read_at FROM sms_threads WHERE id = $1`, [tc.id])).rows[0].staff_read_at;
+            await pool.query(`UPDATE sms_threads SET staff_read_at = now() WHERE id = $1`, [tc.id]);
+            const ro = await api('GET', '/api/sms/threads?scope=open&limit=200'), ra = await api('GET', '/api/sms/threads?scope=active&limit=200'); const io = find(ro.json, tc.id);
+            ok(io && io.unread === 0 && io.needs_staff === true && !find(ra.json, tc.id) && (ro.json.items || []).every(x => !['closed', 'ignored'].includes(x.status) && (x.unread > 0 || x.needs_staff)), '#660 사람 몫 대화는 읽어도 open 에 남음(active 에서는 빠짐) · open 줄은 전부 안 읽음 또는 사람 몫 · 끝난·무시 없음');
+            await pool.query(`UPDATE sms_threads SET staff_read_at = $2 WHERE id = $1`, [tc.id, keep]);
+        }
         const sumB = (await api('GET', '/api/sms/summary')).json;
         ok(typeof sumB.unread_threads === 'number' && typeof sumB.needs_staff === 'number' && typeof sumB.drafts === 'number' && typeof sumB.staff_needed === 'number' && sumB.unread_threads >= 1 && sumB.needs_staff === sumA.needs_staff + 1 && sumB.drafts === sumA.drafts && sumB.unread_threads === sumA.unread_threads, '#635 summary 새 칸 unread_threads·needs_staff · drafts = 안 보낸 초안 수 ' + JSON.stringify({ a: [sumA.unread_threads, sumA.needs_staff, sumA.drafts], b: [sumB.unread_threads, sumB.needs_staff, sumB.drafts] }));
         // 라. 직원 답 = 읽음 + 사유 비움 · 자동 발송 큐 그대로 직원 글만
         r = await api('POST', `/api/sms/threads/${tc.id}/reply`, { text: '확인해서 다시 연락드리겠습니다' }); tc = await thread(PC);
         ok(r.status === 200 && tc.status === 'staff_replied' && !tc.staff_why && !!tc.staff_read_at, '#635 직원 답 → 사유 비움 · 읽음');
         r = await api('GET', '/api/sms/threads?scope=active'); ok(!find(r.json, tc.id), '#635 답한 대화는 active 에서 빠짐');
+        r = await api('GET', '/api/sms/threads?scope=open&limit=200'); ok(!find(r.json, tc.id), '#660 답한 대화는 open 에서도 빠짐');
+        r = await api('GET', '/api/sms/threads?scope=open&q=' + PC.slice(-4)); ok(r.json.scope === 'all' && !!find(r.json, tc.id), '#660 q 가 있으면 scope=open 이어도 전체에서 찾음');
         aiAnswer = { answer: '직원 답 뒤 새 글 초안.', used: [] };
         await hook(env('sms:received', { messageId: 'u9', message: '네 그런데 귤은 몇 개쯤 들어 있어요?', phoneNumber: '+82' + PC.slice(1) }));
         tc = await thread(PC); r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tc.id);

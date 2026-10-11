@@ -417,7 +417,7 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 
 | 라우트 | 응답 |
 |---|---|
-| `GET /api/sms/threads?scope=active\|all&q=&limit=` | `{ scope, items }`. `scope` 를 안 주면 **active**. active = 안 읽은 글이 있는 대화(상태 무관 · 단 `ignored` 는 뺀다). all = 전부(`closed`·`ignored` 포함). `q` 가 있으면 scope 와 무관하게 전체에서 찾는다(숫자 3~4자리 = 번호 끝자리 일치 · 숫자 5자리 이상(하이픈·빈칸 허용) = 전체 번호가 같을 때만 · 숫자 1~2자리뿐 = 0건 · 그 밖 = 오간 글 전체 — 글에서는 숫자를 빼고 찾으며 `%`·`_`·`\` 는 글자로 취급). 정렬 = 마지막 글 시각 내림차순. 종전 `status=` 인자는 그대로(주면 옛 동작 · 응답 scope `status`/`legacy`) |
+| `GET /api/sms/threads?scope=active\|open\|all&q=&limit=` | **#660: `scope=open`(미답변) = 끝난(closed)·무시(ignored)가 아닌 대화 중 안 읽은 손님 글이 있거나 사람 몫(needs_staff)인 것 — 사람 몫은 읽어도 남고, 그 밖은 열어 읽으면 빠진다 · 그 수 = `/api/sms/summary` 의 `open_threads`.** `{ scope, items }`. `scope` 를 안 주면 **active**. active = 안 읽은 글이 있는 대화(상태 무관 · 단 `ignored` 는 뺀다). all = 전부(`closed`·`ignored` 포함). `q` 가 있으면 scope 와 무관하게 전체에서 찾는다(숫자 3~4자리 = 번호 끝자리 일치 · 숫자 5자리 이상(하이픈·빈칸 허용) = 전체 번호가 같을 때만 · 숫자 1~2자리뿐 = 0건 · 그 밖 = 오간 글 전체 — 글에서는 숫자를 빼고 찾으며 `%`·`_`·`\` 는 글자로 취급). 정렬 = 마지막 글 시각 내림차순. 종전 `status=` 인자는 그대로(주면 옛 동작 · 응답 scope `status`/`legacy`) |
 | `GET /api/sms/threads/:id` | 여는 순간 `staff_read_at = now()`(읽음) · `thread.unread` 0. `?peek=1` 이면 읽음으로 바꾸지 않는다 |
 | `GET /api/sms/summary` | 종전 칸 + `unread_threads`(active 대화 수) · `needs_staff`(그중 사유 있는 수) · `drafts`(안 보낸 초안이 있는 대화 수 — 종전 = 상태 `draft` 수) |
 | `POST …/reply` · `/send-draft` · `/handled` · `/close` | 종전 동작 + `staff_why = null` · `staff_read_at = now()` |

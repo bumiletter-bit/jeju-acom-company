@@ -44,7 +44,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
     const openThread = async (pg, id) => { await sheetDown(pg);
         await pg.locator(`#sms-list .sms-item[data-id="${id}"] > .sms-row`).click({ timeout: 4000 }); await pg.waitForFunction(i => { const t = document.getElementById('sms-thread'); return t && t.dataset.id === String(i) && !document.querySelector('#sms-msgs .desk-empty'); }, id, { timeout: 5000 }).catch(() => { }); await pg.waitForTimeout(350); };
     const closeThread = async pg => { await pg.keyboard.press('Escape'); await pg.waitForTimeout(350); };
-    const scopeBtn = async (pg, want) => { await sheetDown(pg); if ((await pg.getAttribute('#sms-scope', 'aria-pressed')) !== String(want)) { await pg.click('#sms-scope'); await pg.waitForTimeout(700); } };
+    const scopeBtn = async (pg, want) => { await sheetDown(pg); if ((await pg.getAttribute('#sms-scope', 'aria-pressed')) !== String(!want)) { await pg.click('#sms-scope'); await pg.waitForTimeout(700); } };
     const box = async (pg, sel) => { const b = await pg.locator(sel).first().boundingBox(); return b ? { w: Math.round(b.width), h: Math.round(b.height), x: Math.round(b.x), y: Math.round(b.y) } : null; };
     const ctxGrant = async ctx => { try { await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE }); } catch (e) { /* 권한 이름을 모르는 브라우저면 그대로 */ } };
     const unfold = async pg => { if (await pg.locator('#desk-board-fold').isVisible() && await pg.evaluate(() => document.getElementById('desk-board').classList.contains('folded'))) { await pg.evaluate(() => document.getElementById('desk-board-fold').click()); await pg.waitForTimeout(400); } };   // 문자 창이 떠 있으면 뒤 화면을 못 누르므로 스크립트로 펼친다(현황판 글만 읽는 용도)
@@ -52,7 +52,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
         return { tail: t('.sms-tail'), hint: t('.sms-hint'), un: t('.sms-un'), dun: li.dataset.un, badge: !!q('.desk-badge'), time: t('.sms-time'), last: t('.sms-last'), me: !!q('.sms-me'), pic: !!q('.sms-pic'), why: t('.sms-why'), tag: t('.sms-tag'), bold: li.classList.contains('unread') }; }, id);
 
     try {
-        for (const [label, vw, phone, theme] of [['PC', PC, false, null], ['폰', PH, true, null], ['PC 야간', PC, false, 'dark'], ['폰 야간', PH, true, 'dark']]) {
+        for (const [label, vw, phone, theme] of [['PC', PC, false, null], ['폰', PH, true, null], ['PC 야간', PC, false, 'dark'], ['폰 야간', PH, true, 'dark']].filter(x => !process.env.ONLY610 || process.env.ONLY610.split(',').includes(x[0]))) {
             console.log('\n── ' + label);
             await mock('/__mock/reset', {});
             const P = await open(vw, phone, theme), pg = P.pg, T = P.toasts;
@@ -68,11 +68,16 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                 const w = await pg.evaluate(() => { const m = document.getElementById('desk-sms'), r = m.getBoundingClientRect(), cs = getComputedStyle(m), win = document.querySelector('.sms-win').getBoundingClientRect(); return { pos: cs.position, full: Math.round(r.width) === window.innerWidth && Math.round(r.height) === window.innerHeight, role: m.getAttribute('role'), lock: document.body.classList.contains('sms-win-open') && getComputedStyle(document.body).overflow === 'hidden', winW: Math.round(win.width), winH: Math.round(win.height), pane: !!document.querySelector('#sms-pane .sms-pane-empty'), hist: (history.state || {}).smsWin || '' }; });
                 ok(w.pos === 'fixed' && w.full && w.role === 'dialog' && w.lock && w.hist === 'win' && (phone ? w.winW === vw.width && w.winH === vw.height : w.winW <= 1180 && w.winH <= vw.height - 40), `[${label}] #653 문자 창이 화면을 덮음(창 ${w.winW}×${w.winH} · 뒤 화면 스크롤 잠금 · 뒤로가기 칸 1)`);
                 const cx = await box(pg, '#sms-close'), qx = await box(pg, '#sms-q'), sx = await box(pg, '#sms-scope');
-                ok(cx && qx && sx && (!phone || (cx.h >= 44 && qx.h >= 44 && sx.h >= 44)), `[${label}] #653 창 머리 [닫기] ${cx && cx.h}px · 찾기 ${qx && qx.h}px · [이전 대화 보기] ${sx && sx.h}px`);
+                ok(cx && qx && sx && (!phone || (cx.h >= 44 && qx.h >= 44 && sx.h >= 44)), `[${label}] #653 창 머리 [닫기] ${cx && cx.h}px · 찾기 ${qx && qx.h}px · [답 안 한 것만] ${sx && sx.h}px`);
             }
             // ② 목록 = 안 읽은 대화만 · 숫자 칸·[처리함]·[끝내기] 없음
-            ok(await rows(pg) === 7 && (await ids(pg)) === '12,11,7,6,3,2,1' && P.sms.some(x => /threads\?scope=active&q=&limit=50/.test(x)), `[${label}] 목록 = 안 읽은 대화 7줄 · 마지막 글 최신순(${await ids(pg)}) · 서버에 scope=active`);
-            ok(await pg.evaluate(() => !document.querySelector('#sms-stat, #sms-all, #sms-done, #sms-handled, #sms-end, .sms-stat')) && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'false' && (await pg.locator('#sms-count').innerText()) === '7건', `[${label}] 숫자 네 칸·[전체]·[끝난 대화도] 없음 · [이전 대화 보기] 꺼짐 · 「7건」`);
+            {   // #660(대표 10/12 「이전 대화를 기본으로 보고 미답변 건을 볼 수 있게」) 문자 탭 기본 = 전체 대화 · [답 안 한 것만 n]
+                const d0 = await pg.evaluate(() => { const b = document.getElementById('sms-scope'), n = document.getElementById('sms-open-n'); return { rows: document.querySelectorAll('#sms-list .sms-item').length, un: document.querySelectorAll('#sms-list .sms-item.unread').length, pressed: b.getAttribute('aria-pressed'), text: b.textContent.replace(/\s+/g, ' ').trim(), n: n && !n.hidden ? n.textContent : '', cnt: document.getElementById('sms-count').textContent }; });
+                ok(d0.rows === 13 && d0.un === 8 && d0.pressed === 'false' && d0.text === '답 안 한 것만 7' && d0.n === '7' && P.sms.some(x => /threads\?scope=all&q=&limit=50/.test(x)) && !P.sms.some(x => /scope=(active|open)/.test(x)), `[${label}] #660 문자 탭 기본 = 전체 대화 13줄(안 읽은 줄 ${d0.un} = 답 안 한 7 + 무시 1 · 배지 그대로) · 서버에 scope=all · 단추 「${d0.text}」 꺼짐`);
+                await pg.click('#sms-scope'); await pg.waitForTimeout(700);
+            }
+            ok(await rows(pg) === 7 && (await ids(pg)) === '12,11,7,6,3,2,1' && P.sms.some(x => /threads\?scope=open&q=&limit=50/.test(x)), `[${label}] #660 [답 안 한 것만] → 7줄 · 마지막 글 최신순(${await ids(pg)}) · 서버에 scope=open`);
+            ok(await pg.evaluate(() => !document.querySelector('#sms-stat, #sms-all, #sms-done, #sms-handled, #sms-end, .sms-stat')) && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'true' && (await pg.locator('#sms-count').innerText()) === '7건', `[${label}] 숫자 네 칸·[전체]·[끝난 대화도] 없음 · [답 안 한 것만] 켜짐 · 「7건」`);
             ok((await pg.locator('#sms-mode').innerText()) === '초안', `[${label}] 모드 칩 「초안」`);
             ok(await sw(pg) <= vw.width, `[${label}] 목록 가로 넘침 없음(${await sw(pg)} ≤ ${vw.width})`);
             {   // #651 [직원 확인 n] · 무시 대화는 새 문자 목록·셈에 없음 · 「새 주문 n건 대기」 힌트
@@ -90,17 +95,18 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             // ③ 이전 대화 보기
             await scopeBtn(pg, true);
             const a1 = await rowOf(pg, 4), a10 = await rowOf(pg, 10);
-            ok(await rows(pg) === 13 && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'true' && P.sms.some(x => /threads\?scope=all&q=&limit=50/.test(x)), `[${label}] [이전 대화 보기] → 13줄(읽은·끝난·무시 대화 포함) · 눌린 표시 · 서버에 scope=all`);
+            ok(await rows(pg) === 13 && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'false' && P.sms.some(x => /threads\?scope=all&q=&limit=50/.test(x)), `[${label}] [답 안 한 것만] 끔 → 13줄(읽은·끝난·무시 대화 포함) · 서버에 scope=all`);
             ok(a1 && a1.un === '' && a1.dun === '0' && !a1.badge && !a1.bold && a1.me && a10 && a10.me, `[${label}] 읽은 대화는 배지 없음 · 굵지 않음 · 「나:」 머리(${JSON.stringify(a1)})`);
             await scopeBtn(pg, false);
-            ok(await rows(pg) === 7 && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'false', `[${label}] 다시 누르면 새 문자만(7줄)`);
+            ok(await rows(pg) === 7 && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'true', `[${label}] 다시 누르면 답 안 한 것만(7줄)`);
             {   // #651 [직원 확인 n] = 읽었어도 사람 답이 필요한 대화만 · 보낸 글 상태(취소·보내는 중·전달 앱)
-                await openThread(pg, 2); await closeThread(pg);   // 직원 몫 대화를 열어만 보고 접음 → 새 문자 목록에서는 빠진다
+                await openThread(pg, 2); await closeThread(pg);   // 직원 몫 대화를 열어만 보고 접음 → #660 [답 안 한 것만]에는 남는다(사람 몫)
+                ok(await rows(pg) === 7 && !!(await pg.locator('.sms-item[data-id="2"]').count()) && (await rowOf(pg, 2)).un === '', `[${label}] #660 사람 몫 대화(5678)는 읽고 접어도 [답 안 한 것만]에 남음(배지만 0)`);
                 await pg.click('#sms-staff'); await pg.waitForTimeout(900);
                 const so = await pg.evaluate(() => ({ ids: Array.from(document.querySelectorAll('#sms-list .sms-item')).map(x => x.dataset.id).sort().join(','), why: document.querySelectorAll('#sms-list .sms-item .sms-why').length, cnt: document.getElementById('sms-count').textContent, pressed: document.getElementById('sms-staff').getAttribute('aria-pressed'), scope: document.getElementById('sms-scope').getAttribute('aria-pressed'), n: document.getElementById('sms-staff-n').textContent }));
                 ok(so.ids === '11,2,3' && so.why === 3 && so.cnt === '직원 확인만 · 3건' && so.pressed === 'true' && so.scope === 'false' && so.n === '3', `[${label}] #651 열어 보고 접은 직원 몫 대화(5678)도 [직원 확인] 보기에는 남음(${JSON.stringify(so)})`);
                 await pg.click('#sms-staff'); await pg.waitForTimeout(800);
-                ok(await rows(pg) === 6 && (await pg.getAttribute('#sms-staff', 'aria-pressed')) === 'false' && !(await pg.locator('.sms-item[data-id="2"]').count()), `[${label}] #651 다시 누르면 새 문자만(6줄 · 열어 본 5678 은 빠져 있음)`);
+                ok(await rows(pg) === 13 && (await pg.getAttribute('#sms-staff', 'aria-pressed')) === 'false' && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'false', `[${label}] #651 다시 누르면 전체 대화(13줄)`); await scopeBtn(pg, false);
                 await scopeBtn(pg, true); await openThread(pg, 9);
                 const ms = await pg.evaluate(() => Array.from(document.querySelectorAll('#sms-msgs .sms-msg.out')).map(m => { const b = m.querySelector('.sms-bub'), cs = getComputedStyle(b); return m.dataset.s + '|' + m.querySelector('small').textContent.replace(/\s+/g, ' ').trim().replace(/\d\d:\d\d|\d+\/\d+ /g, '').replace(/ · · /g, ' · ') + '|' + (/line-through/.test(cs.textDecorationLine || cs.textDecoration) ? '줄' : '') + (cs.borderTopStyle === 'dashed' ? '점선' : ''); }));
                 ok(ms[0] === 'cancelled|봇 · · 안 보냄 · 직원이 먼저 답해서 취소|줄점선'.replace(' · · ', ' · ') || /^cancelled\|봇 · .*안 보냄 · 직원이 먼저 답해서 취소\|줄점선$/.test(ms[0]), `[${label}] #651 직원이 먼저 답해 취소된 봇 글 = 줄 긋기·점선 + 「안 보냄 · 직원이 먼저 답해서 취소」(${ms[0]})`);
@@ -108,11 +114,18 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                 await closeThread(pg); await openThread(pg, 3);
                 {   // #653 구매이력 여러 건 = 맨 위 1건 + [n건 더보기] → 같은 틀로 펼침 · 다시 누르면 접힘 · 폴링 뒤에도 펼친 채
                     const h1 = await buyOf();
+                    {   // #659(대표 10/12) 카드 높이 = 종전(#657 · v5.9.510 실측)의 0.6~0.7배 · 글자 12px 이상 · 한 건 = 세 줄
+                        const z = await pg.evaluate(() => { const el = document.getElementById('sms-order'), it = el.querySelector('.sms-buy-i'), fs = s => { const e = el.querySelector(s); return e ? parseFloat(getComputedStyle(e).fontSize) : 0; }, top = s => { const e = it.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : -1; };
+                            return { h: Math.round(el.getBoundingClientRect().height), dd: fs('dd[data-k="who"]'), key: fs('dd.key'), more: fs('#sms-buy-more'), l1: top('.desk-badge') - top('dd[data-k="ship"]'), l2: top('dd[data-k="who"]') > top('dd[data-k="ship"]') + 8, l3: top('dd[data-k="item"]') >= top('dd[data-k="who"]'), hasMore: el.classList.contains('has-more'), cur: getComputedStyle(el).cursor }; });
+                        const was = phone ? 289 : 207, rt = +(z.h / was).toFixed(2);
+                        ok(rt >= 0.6 && rt <= 0.7, `[${label}] #659 구매이력 카드(접힘 · 3건 손님) 높이 ${z.h}px = 종전 ${was}px 의 ${rt}배(0.6~0.7)`);
+                        ok(z.dd >= 12 && z.key >= 12 && z.more >= 12 && Math.abs(z.l1) <= 6 && z.l2 && z.l3 && z.hasMore && z.cur === 'pointer', `[${label}] #659 글자 ${z.dd}/${z.key}px(12 이상) · 배지와 발송일이 한 줄 · 송장·받는 분 아랫줄 · 2건 이상이면 판이 눌리는 꼴(${z.cur})`);
+                    }
                     await pg.click('#sms-buy-more'); await pg.waitForTimeout(250);
                     const h2 = await buyOf();
                     const rest = await pg.evaluate(() => Array.from(document.querySelectorAll('#sms-buy-rest .sms-buy-i')).map(i => (i.querySelector('.desk-badge') || {}).textContent + '|' + (i.querySelector('dd[data-k="ship"]') || {}).textContent + '|' + (i.querySelector('dd[data-k="who"]') || {}).textContent + '|' + i.querySelectorAll('.sms-trk').length + '|' + ((i.querySelector('.sms-buy-role') || {}).textContent || '')));
-                    ok(h1.days === '최근 60일 · 3건' && h1.n === 3 && h1.shown === 1 && /^구매이력 2건 더보기\|false\|/.test(h1.more) && Number(h1.more.split('|')[2]) >= (phone ? 44 : 32) && h1.ship === '10/08 대성', `[${label}] #653 구매이력 3건 = 맨 위 1건(${h1.ship}) + [${h1.more.split('|')[0]}](${h1.more.split('|')[2]}px)`);
-                    ok(h2.shown === 3 && /^구매이력 접기\|true\|/.test(h2.more) && h2.cap && rest[0] === '배송완료|09/22 효돈|홍길동|1|이 번호가 받는 건' && rest[1] === '배송 중 · 이동|08/30 길영|이순자|2|이 번호가 주문한 건', `[${label}] #653 더보기 → 나머지 2건이 같은 틀로(${rest.join(' / ')}) · 「20건까지」 안내`);
+                    ok(h1.days === '최근 60일 · 3건' && h1.n === 3 && h1.shown === 1 && /^\+2건 더보기\|false\|/.test(h1.more) && h1.ship === '10/08 대성', `[${label}] #653 구매이력 3건 = 맨 위 1건(${h1.ship}) + [${h1.more.split('|')[0]}](${h1.more.split('|')[2]}px)`);
+                    ok(h2.shown === 3 && /^접기\|true\|/.test(h2.more) && h2.cap && rest[0] === '배송완료|09/22 효돈|홍길동|1|이 번호가 받는 건' && rest[1] === '배송 중 · 이동|08/30 길영|이순자|2|이 번호가 주문한 건', `[${label}] #653 더보기 → 나머지 2건이 같은 틀로(${rest.join(' / ')}) · 「20건까지」 안내`);
                     {   // #657 송장별 품목 줄 · 배지 글 = status_text · 송장 글자 크기 · 명암
                         const b7 = await pg.evaluate(() => { const it = document.querySelectorAll('#sms-buy-rest .sms-buy-i')[1], cs = (e, p) => getComputedStyle(e)[p]; const lis = Array.from(it.querySelectorAll('dd[data-k="boxes"] .sms-box-l li'));
                             const trk = document.querySelector('#sms-order .sms-trk'), dd = document.querySelector('#sms-order dd[data-k="who"]'), panel = document.getElementById('sms-order'), item = document.querySelector('#sms-order .sms-buy-i'), msgs = document.getElementById('sms-msgs');
@@ -120,20 +133,26 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                                 trkFs: parseFloat(cs(trk, 'fontSize')), trkFw: cs(trk, 'fontWeight'), ddFs: parseFloat(cs(dd, 'fontSize')), trkH: Math.round(trk.getBoundingClientRect().height), goH: Math.round(document.querySelector('#sms-order .sms-trk-go').getBoundingClientRect().height), panelBg: cs(panel, 'backgroundColor'), itemBg: cs(item, 'backgroundColor'), itemBd: cs(item, 'borderTopWidth'), msgBg: msgs ? cs(msgs, 'backgroundColor') : '', hFs: parseFloat(cs(panel.querySelector('.sms-buy-h b'), 'fontSize')) }; });
                         ok(b7.rows.length === 2 && b7.rows[0] === '590123450002|조회|미니밤호박 특품 5kg|배송완료:done' && b7.rows[1] === '590123450003|조회|미니밤호박 보우짱 3kg|배송 중 · 집화 전:work' && !b7.trkRow && !b7.itemRow && b7.head === '배송 중 · 이동:work', `[${label}] #657 상자 2개 = 송장마다 한 줄 「[송장][조회] 품목 · 상태」(${b7.rows.join(' / ')}) · 따로 있던 송장·품목 줄 없음 · 배지 글 = status_text(${b7.head})`);
                         ok(b7.trkFs <= b7.ddFs + 0.6 && Number(b7.trkFw) <= 600 && (phone ? b7.trkH >= 44 && b7.goH >= 44 : b7.trkH <= 32), `[${label}] #657 송장 글자 = 값 글자 크기(${b7.trkFs}px ≤ 값 ${b7.ddFs}px · 굵기 ${b7.trkFw}) · 누르는 높이 ${b7.trkH}px${phone ? '(폰 44 유지)' : ''}`);
-                        ok(b7.panelBg !== b7.itemBg && b7.panelBg !== 'rgba(0, 0, 0, 0)' && b7.itemBd === '1px' && b7.hFs >= 14, `[${label}] #657 명암: 구매이력 판(${b7.panelBg}) 위에 건별 칸(${b7.itemBg} · 테두리 1px) · 머리 글자 ${b7.hFs}px`);
+                        ok(b7.panelBg !== b7.itemBg && b7.panelBg !== 'rgba(0, 0, 0, 0)' && b7.itemBd === '1px' && b7.hFs >= 13, `[${label}] #657 명암: 구매이력 판(${b7.panelBg}) 위에 건별 칸(${b7.itemBg} · 테두리 1px) · 머리 글자 ${b7.hFs}px`);
                         await mock('/__mock/set', { many: true }); await closeThread(pg); await openThread(pg, 3);
+                        {   // #659 펼침은 대화별로 창을 여는 동안 기억 · 판 아무 곳이나 누르면 접힘/펼침 · 안쪽 단추(송장 복사)는 그대로
+                            const k0 = await buyOf();
+                            await pg.locator('#sms-order .sms-buy-h').click(); await pg.waitForTimeout(250); const k1 = await buyOf();
+                            const t0 = T.length; await pg.locator('#sms-order .sms-buy-i .sms-trk').first().click(); await pg.waitForTimeout(300); const k2 = await buyOf();
+                            ok(/^접기\|true/.test(k0.more) && k1.shown === 1 && /^\+11건 더보기\|false/.test(k1.more) && k2.shown === 1 && T.slice(t0).some(t => /송장번호를 복사했어요/.test(t)), `[${label}] #659 다른 대화를 보고 와도 펼친 채(${k0.more.split('|')[0]}) · 머리 줄을 누르면 접힘 · 송장 복사를 눌러도 접힌 그대로`);
+                        }
                         const m0 = await buyOf();
-                        await pg.click('#sms-buy-more'); await pg.waitForTimeout(250);
+                        await pg.locator('#sms-order .sms-buy-i dd[data-k="item"], #sms-order .sms-buy-i dd[data-k="who"]').first().click(); await pg.waitForTimeout(250);
                         const mm = () => pg.evaluate(() => { const nx = document.getElementById('sms-buy-next'), box = document.getElementById('sms-order'), pane = document.getElementById('sms-pane'); return { shown: document.querySelectorAll('#sms-buy-rest .sms-buy-i').length, next: nx ? nx.textContent.replace(/\s+/g, ' ').trim() + '|' + Math.round(nx.getBoundingClientRect().height) : '', focus: (document.activeElement || {}).id, cap: (document.querySelector('#sms-buy-rest .sms-buy-cap') || {}).textContent || '', ratio: +(box.getBoundingClientRect().height / ((document.querySelector('#sms-pane .sms-thread') || pane).getBoundingClientRect().height || 1)).toFixed(2), scroll: box.scrollHeight > box.clientHeight + 2 }; });
                         const m1 = await mm(); await pg.click('#sms-buy-next'); await pg.waitForTimeout(250);
                         const m2 = await mm(); await pg.click('#sms-buy-next'); await pg.waitForTimeout(250);
                         const m3 = await mm(); await wake(pg); const m4 = await mm();
-                        ok(m0.days === '최근 60일 · 12건' && /^구매이력 11건 더보기\|false/.test(m0.more) && m1.shown === 5 && /^5건 더보기 남은 6건\|/.test(m1.next) && Number(m1.next.split('|')[1]) >= (phone ? 44 : 32) && m2.shown === 10 && /^1건 더보기 남은 1건\|/.test(m2.next) && m2.focus === 'sms-buy-next' && m3.shown === 11 && m3.next === '' && m4.shown === 11, `[${label}] #657 12건 손님: 맨 위 1건 + [11건 더보기] → 5건(${m1.next.split('|')[0]}) → 10건 → 11건 전부(단추 없음) · 다시 받아도 펼친 채(${m4.shown})`);
+                        ok(m0.days === '최근 60일 · 12건' && /^\+11건 더보기\|false/.test(m0.more) && m1.shown === 5 && /^5건 더보기 남은 6건\|/.test(m1.next) && Number(m1.next.split('|')[1]) >= (phone ? 44 : 32) && m2.shown === 10 && /^1건 더보기 남은 1건\|/.test(m2.next) && m2.focus === 'sms-buy-next' && m3.shown === 11 && m3.next === '' && m4.shown === 11, `[${label}] #657 12건 손님: 맨 위 1건 + [11건 더보기] → 5건(${m1.next.split('|')[0]}) → 10건 → 11건 전부(단추 없음) · 다시 받아도 펼친 채(${m4.shown})`);
                         ok(m3.ratio <= 0.5 && m3.scroll && await sw(pg) <= vw.width, `[${label}] #657 전부 펼쳐도 구매이력은 대화 칸의 절반 이하(${m3.ratio}) · 넘치는 건 카드 안에서 스크롤 · 가로 넘침 없음`);
                         await pg.click('#sms-buy-more'); await pg.waitForTimeout(250); await pg.click('#sms-buy-more'); await pg.waitForTimeout(250);
                         const m5 = await mm(); ok(m5.shown === 5, `[${label}] #657 접었다 다시 펴면 5건부터(${m5.shown})`);
                         if (theme) { const a = await H.audit(pg, '#sms-order'); ok(a.fails.length === 0 && a.white.length === 0, `[${label}] #657 야간: 구매이력 카드 대비 미달 ${a.fails.length} · 흰 칸 ${a.white.length}(글자 ${a.texts}개 · 최소 ${a.minR}${a.fails.length ? ' · ' + a.fails.slice(0, 3).join(' / ') : ''})`); }
-                        await mock('/__mock/set', { many: false }); await closeThread(pg); await openThread(pg, 3); await pg.click('#sms-buy-more'); await pg.waitForTimeout(250);
+                        await mock('/__mock/set', { many: false }); await closeThread(pg); await openThread(pg, 3);   // #659 펼친 채로 다시 열린다
                     }
                     await wake(pg); const h3 = await buyOf();
                     await pg.click('#sms-buy-more'); await pg.waitForTimeout(250); const h4 = await buyOf();
@@ -151,7 +170,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             }
             // ④ 찾기 = 이전 대화까지 전체에서 · 0.4초 멈춤 · Enter 는 바로
             await pg.fill('#sms-q', '7007'); await pg.waitForTimeout(900);
-            ok(await rows(pg) === 1 && P.sms.some(x => /threads\?scope=active&q=7007/.test(x)), `[${label}] 찾기 「7007」(끝 4자리) → 1줄`);
+            ok(await rows(pg) === 1 && P.sms.some(x => /threads\?scope=open&q=7007/.test(x)), `[${label}] 찾기 「7007」(끝 4자리) → 1줄`);
             await pg.fill('#sms-q', '냉장'); const qn = P.sms.length; await pg.keyboard.press('Enter'); await pg.waitForTimeout(350);
             const q5 = await rowOf(pg, 5);
             ok(P.sms.length >= qn + 1 && await rows(pg) === 1 && q5 && q5.dun === '0', `[${label}] Enter 는 기다리지 않고 바로 찾음 · 읽은 대화(9090)도 찾힘 = 전체에서`);
@@ -267,7 +286,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             ok(/sms-row/.test(String(foc)), `[${label}] 접은 뒤 초점은 남은 줄로`);
             await scopeBtn(pg, true);
             const k1 = await rowOf(pg, 1);
-            ok(k1 && k1.dun === '0' && k1.tag === '초안', `[${label}] 이전 대화 보기에는 그대로 있음(배지 0 · 「초안」 표시 유지)`);
+            ok(k1 && k1.dun === '0' && k1.tag === '초안', `[${label}] 전체 대화에는 그대로 있음(배지 0 · 「초안」 표시 유지)`);
             await scopeBtn(pg, false);
             // ⑧ 손님이 또 보내면 다시 뜸
             await mock('/__mock/push', { id: 1, body: '답이 없으셔서 다시 보냅니다' }); await wake(pg);
@@ -317,7 +336,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             await mock('/__mock/set', { fail: '' });
             await pg.fill('#sms-text', '');
             await closeThread(pg);
-            ok(await rows(pg) === 13 && !!(await pg.locator('.sms-item[data-id="11"]').count()), `[${label}] 이전 대화 보기에서는 접어도 줄이 남음(13줄)`);
+            ok(await rows(pg) === 13 && !!(await pg.locator('.sms-item[data-id="11"]').count()), `[${label}] 전체 대화에서는 접어도 줄이 남음(13줄)`);
 if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.waitForTimeout(350); ok(!(await pg.locator('#sms-thread').count()) && await pg.locator('#desk-sms').isVisible(), `[${label}] #653 [목록] 누름 → 대화만 접히고 목록으로`); }
             await scopeBtn(pg, false);
             // ⑫ 열어 둔 사이 손님이 또 보내면: 열린 채 새 글이 붙고(읽음) 접으면 빠진다
@@ -447,7 +466,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             const tb = await box(pg, '#desk-todo-box .sms-todo[data-sms="active"]');
             await pg.locator('#desk-todo-box .sms-todo[data-sms="active"]').click(); await pg.waitForTimeout(900);
             const tg = await pg.evaluate(() => ({ vis: !document.getElementById('desk-sms').hidden, pressed: document.getElementById('sms-scope').getAttribute('aria-pressed'), n: document.querySelectorAll('#sms-list .sms-item').length, un: document.querySelectorAll('#sms-list .sms-item.unread').length }));
-            ok(tg.vis && tg.pressed === 'false' && tg.n === 6 && tg.un === 6 && (!phone || (tb && tb.h >= 44)), `[${label}] 챙길 일 「안 읽은 문자」 누름 → 이전 대화 보기를 켜 뒀어도 새 문자만으로 열림(${JSON.stringify(tg)} · 줄 높이 ${tb ? tb.h : '?'})`);
+            ok(tg.vis && tg.pressed === 'true' && tg.n === 7 && tg.un === 6 && (!phone || (tb && tb.h >= 44)), `[${label}] 챙길 일 「안 읽은 문자」 누름 → 전체 대화를 보던 중이어도 [답 안 한 것만]으로 열림(${JSON.stringify(tg)} · 줄 높이 ${tb ? tb.h : '?'})`);
             // #633 「봇 실패 N건」 줄 — 문자 알약 = 직원 확인이 필요한 대화만
             const bf = await pg.evaluate(() => { const li = document.querySelector('#desk-todo-box .bot-fail'); if (!li) return null; const bs = Array.from(li.querySelectorAll('.bf-go')), cs = e => getComputedStyle(e).color, plain = document.querySelector('#desk-todo-box .desk-todo li:not(.bot-fail):not(.sms-todo) b');
                 return { t: li.querySelector('span').textContent + '|' + li.querySelector('b').textContent, bs: bs.map(b => b.textContent).join(','), h: Math.min(...bs.map(b => Math.round(b.getBoundingClientRect().height))), n: document.querySelectorAll('#desk-todo-box .bot-fail').length, note: li.querySelector('small i').textContent, red: !!plain && cs(li.querySelector('b')) !== cs(plain) }; });
@@ -459,9 +478,10 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             const bg = await pg.evaluate(() => ({ vis: !document.getElementById('desk-sms').hidden, pressed: document.getElementById('sms-staff').getAttribute('aria-pressed'), n: document.querySelectorAll('#sms-list .sms-item').length, why: document.querySelectorAll('#sms-list .sms-item .sms-why').length, cnt: document.getElementById('sms-count').textContent, page: document.getElementById('page-agent-office').classList.contains('active') }));
             ok(bg.vis && bg.n === 3 && bg.why === 3 && /^직원 확인만 · 3건$/.test(bg.cnt) && bg.pressed === 'true' && bg.page, `[${label}] #633 「문자 1」 알약 누름 → 문자 카드가 「직원 확인이 필요한 대화만」으로 열림(읽은 것 포함 · ${JSON.stringify(bg)})`);
             await pg.click('#sms-scope'); await pg.waitForTimeout(500);
-            ok(await rows(pg) === 13 && (await pg.getAttribute('#sms-staff', 'aria-pressed')) === 'false' && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'true', `[${label}] 거른 채 [이전 대화 보기]를 누르면 거르기만 풀려 전체(13줄)`);
+            ok(await rows(pg) === 7 && (await pg.getAttribute('#sms-staff', 'aria-pressed')) === 'false' && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'true', `[${label}] 직원 확인만 보던 중 [답 안 한 것만]을 누르면 그쪽으로 바뀜(7줄 = 안 읽은 6 + 읽었지만 사람 몫 1)`);
+            await scopeBtn(pg, true); ok(await rows(pg) === 13, `[${label}] 끄면 전체(13줄)`);
             await scopeBtn(pg, false);
-            ok(await rows(pg) === 6 && (await pg.locator('#sms-count').innerText()) === '6건', `[${label}] 다시 누르면 새 문자만(6줄)`);
+            ok(await rows(pg) === 7 && (await pg.locator('#sms-count').innerText()) === '7건', `[${label}] 다시 켜면 답 안 한 것만(7줄)`);
             ok(await sw(pg) <= vw.width, `[${label}] 끝까지 가로 넘침 없음(${await sw(pg)})`);
             if (theme) { await openThread(pg, 3); const a = await H.audit(pg, '#desk-sms, #desk-todo-box .desk-todo'); ok(a.fails.length === 0, `[${label}] 끊김 안내·챙길 일 줄까지 야간 대비 미달 0(글자 ${a.texts}개${a.fails.length ? ' · ' + a.fails.slice(0, 4).join(' / ') : ''})`); await closeThread(pg); }
             {   // 교차 점검 A: 「자세히 확인하기」 전체 화면이 떠 있는 채 알림으로 문자를 열어도 창·대화가 보인다(창이 닫히고 읽음만 찍히던 결함)
@@ -479,13 +499,14 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             }
             // ⑭ 빈 목록 · 꺼짐 · 모드 칩
             await mock('/__mock/reset', {});
+            await mock('/__mock/set', { clearWhy: true });   // #660 사람 몫 사유가 남은 대화는 읽어도 [답 안 한 것만]에 남는다 → 빈 목록 시험은 사유를 비우고
             for (const id of [1, 2, 3, 6, 7, 11, 12]) await fetch(BASE + '/api/sms/threads/' + id, { headers: { Authorization: 'Bearer x' } });   // 전부 읽음으로
             await wake(pg);
             await rowsAre(pg, 0);
             const em = await pg.evaluate(() => { const li = document.querySelector('#sms-list .sms-none'), b = li && li.querySelector('.sms-empty-go'); return { text: li ? li.querySelector('span').textContent : '', btn: b ? b.textContent : '', h: b ? Math.round(b.getBoundingClientRect().height) : 0, chip: document.getElementById('sms-chip-n').hidden, todo: document.querySelectorAll('#desk-todo-box .sms-todo[data-sms="active"]').length }; });
-            ok(em.text === '새 문자가 없어요.' && em.btn === '이전 대화 보기' && em.h >= 44 && em.chip && em.todo === 0, `[${label}] 다 읽으면 「${em.text}」 + [${em.btn}](${em.h}px) · 알약 숫자·챙길 일 줄 없음`);
+            ok(em.text === '답 안 한 문자가 없어요.' && em.btn === '전체 대화 보기' && em.h >= 44 && em.chip && em.todo === 0, `[${label}] 다 읽으면 「${em.text}」 + [${em.btn}](${em.h}px) · 알약 숫자·챙길 일 줄 없음`);
             await pg.click('#sms-list .sms-empty-go'); await pg.waitForTimeout(700);
-            ok(await rows(pg) === 13 && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'true', `[${label}] 빈 목록의 [이전 대화 보기] → 13줄`);
+            ok(await rows(pg) === 13 && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'false', `[${label}] 빈 목록의 [전체 대화 보기] → 13줄`);
             await scopeBtn(pg, false);
             await mock('/__mock/reset', {}); await mock('/__mock/set', { alive: true, enabled: false, mode: 'record' }); await wake(pg);
             const off = await pg.evaluate(() => ({ note: document.getElementById('sms-note').textContent, mode: document.getElementById('sms-mode').textContent, todo: document.querySelectorAll('#desk-todo-box .sms-todo').length }));
@@ -537,17 +558,42 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             await plusGo(pg, '#desk-ship-now'); await pg.waitForTimeout(500);
             ok(await pg.locator('#desk-ship').isVisible(), '[도구] 배송조회 카드는 종전대로 열림');
             await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(800);
-            ok(await pg.locator('#desk-sms').isVisible() && !(await pg.locator('#desk-ship').isVisible()) && await rows(pg) === 6, `[도구] 문자를 열면 배송조회가 닫히고 목록이 뜸(${await rows(pg)}줄 · 읽은 1234 는 빠짐)`);
+            ok(await pg.locator('#desk-sms').isVisible() && !(await pg.locator('#desk-ship').isVisible()) && await rows(pg) === 13, `[도구] 문자를 열면 배송조회가 닫히고 목록이 뜸(${await rows(pg)}줄 · #660 기본 = 전체 대화)`);
             await pg.click('#sms-close'); await pg.waitForTimeout(400);
             ok(!(await pg.locator('#desk-sms').isVisible()), '[도구] [닫기] → 창 닫힘');
+            {   // #661(대표 10/12 「2곳이 정확히 같아야 해 · 문자도 들어가게 · 누르면 그 해당 칸으로」) 손님 연락 카드
+                await mock('/__mock/reset', {}); await wake(pg);
+                await pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await pg.waitForTimeout(500);
+                const cu = () => pg.evaluate(() => { const rows = Array.from(document.querySelectorAll('#desk-inbox-list .desk-cu')), n = k => document.getElementById('inbox-n-' + k).textContent;
+                    return { title: document.querySelector('#desk-inbox .desk-inbox-head > b').textContent, chips: ['sms', 'talk', 'qna', 'inquiry'].map(n).join('|'), sel: (document.querySelector('#desk-inbox-tabs [aria-selected="true"]') || { dataset: {} }).dataset.k, n: rows.length, sms: rows.filter(r => r.dataset.kind === 'sms').length, wait: rows.filter(r => r.classList.contains('wait')).length, ok9101: ((document.querySelector('.desk-cu[data-id="9101"] .desk-cu-ok') || {}).textContent || '') + '|' + ((document.querySelector('.desk-cu[data-id="9101"]') || { className: '' }).className.includes('wait')), smsBtn: document.querySelectorAll('.desk-cu[data-kind="sms"] .desk-cu-ok').length, morewin: (document.querySelector('#desk-inbox-list .desk-cu-morewin') || {}).textContent || '', todoCust: document.querySelectorAll('#desk-todo-box .sms-todo.cust').length, seen: !!document.getElementById('desk-inbox-seen'), over: document.documentElement.scrollWidth }; });
+                const c0 = await cu();
+                await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(800);
+                const winN = await pg.evaluate(() => { const b = document.getElementById('sms-open-n'); return b && !b.hidden ? b.textContent : ''; });
+                await pg.click('#sms-close'); await pg.waitForTimeout(900);
+                ok(c0.title === '손님 연락' && c0.sel === 'all' && c0.chips === '7|2|1|1' && c0.chips.split('|')[0] === winN && c0.n === 18 && c0.sms === 12 && c0.wait === 11 && c0.smsBtn === 0 && !c0.seen && c0.todoCust === 0 && c0.over <= 1440, `[카드] #661 손님 연락 카드 = 문자 12 + 톡톡 3 + 상품 2 + 주문 1 전체 대화 한 목록 · 칩(대기) ${c0.chips} · 문자 칩 = 창의 [답 안 한 것만 ${winN}] · 문자 줄엔 [확인] 없음 · 챙길 일에 손님 연락 줄 없음`);
+                await pg.locator('#desk-inbox-list .desk-cu[data-kind="sms"][data-id="12"] .desk-cu-row').click(); await pg.waitForTimeout(1200);
+                const o1 = await pg.evaluate(() => ({ win: document.body.classList.contains('sms-win-open'), id: (document.getElementById('sms-thread') || { dataset: {} }).dataset.id }));
+                await pg.click('#sms-close'); await pg.waitForTimeout(1300);
+                const c1 = await cu();
+                ok(o1.win && o1.id === '12' && c1.chips === '6|2|1|1', `[카드] #661 문자 줄 누름 → 손님 연락 창의 그 대화(${o1.id}) · 읽고 닫으면 카드 문자 칩도 줄어듦(${c0.chips.split('|')[0]} → ${c1.chips.split('|')[0]})`);
+                await pg.locator('#desk-inbox-tabs button[data-k="talk"]').click(); await pg.waitForTimeout(300);
+                const t0 = await cu();
+                await pg.locator('#desk-inbox-list .desk-cu[data-id="9101"] .desk-cu-ok').click(); await pg.waitForTimeout(900); const t1 = await cu();
+                await pg.locator('#desk-inbox-list .desk-cu[data-id="9101"] .desk-cu-ok').click(); await pg.waitForTimeout(900); const t2 = await cu();
+                ok(t0.sel === 'talk' && t0.n === 3 && t0.ok9101 === '확인|true' && t1.chips === '6|1|1|1' && t1.ok9101 === '확인함|false' && t1.n === 3 && t2.chips === '6|2|1|1' && t2.ok9101 === '확인|true', `[카드] #661 톡톡 칩 → 톡톡만 3줄 · [확인] → 대기 2 → 1 · 줄은 남고 [확인함] · 다시 누르면 대기로(${t2.chips})`);
+                await mock('/__mock/set', { cuMore: true }); await pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await pg.waitForTimeout(500);
+                const m1 = await cu(), m1more = await pg.locator('#desk-inbox-more').innerText(); await pg.locator('#desk-inbox-tabs button[data-k="talk"]').click(); await pg.waitForTimeout(300);
+                ok(/못 실은 4건 더/.test(m1.morewin) && /4건 더/.test(m1more), `[카드] #661 카드에 못 실은 줄은 「${m1.morewin}」`);
+                await mock('/__mock/set', { cuMore: false }); await mock('/__mock/reset', {}); await wake(pg);
+            }
             // 알림 link(agent-office?sms=ID) → app.js 가 부를 함수 = window.AkmAoDesk.openSms(id)
             ok(await pg.evaluate(() => typeof window.AkmAoDesk.openSms === 'function' && typeof window.AkmAoDesk.open === 'function'), '[알림] window.AkmAoDesk.openSms 있음(종전 open 도 그대로)');
             const o1 = await pg.evaluate(() => window.AkmAoDesk.openSms(3)); await pg.waitForTimeout(700);
             const g1 = await pg.evaluate(() => ({ card: !document.getElementById('desk-sms').hidden, open: (document.getElementById('sms-thread') || { dataset: {} }).dataset.id, bub: document.querySelectorAll('#sms-msgs .sms-bub').length, scope: document.getElementById('sms-scope').getAttribute('aria-pressed') }));
-            ok(o1 === true && g1.card && g1.open === '3' && g1.bub >= 2 && g1.scope === 'false', `[알림] 카드가 닫혀 있어도 openSms(3) → 카드 열림 · 안 읽은 대화면 새 문자 목록에서 펼침(${JSON.stringify(g1)})`);
+            ok(o1 === true && g1.card && g1.open === '3' && g1.bub >= 2, `[알림] 카드가 닫혀 있어도 openSms(3) → 카드 열림 · 보던 목록에 있으면 거기서 펼침(${JSON.stringify(g1)})`);
             const o2 = await pg.evaluate(() => window.AkmAoDesk.openSms(8)); await pg.waitForTimeout(900);
             const g2 = await pg.evaluate(() => ({ open: (document.getElementById('sms-thread') || { dataset: {} }).dataset.id, one: document.querySelectorAll('#sms-thread').length, scope: document.getElementById('sms-scope').getAttribute('aria-pressed'), n: document.querySelectorAll('#sms-list .sms-item').length }));
-            ok(o2 === true && g2.open === '8' && g2.one === 1 && g2.scope === 'true' && g2.n === 13, `[알림] 이미 읽은 대화(4444)면 「이전 대화 보기」로 넘겨서 펼침 · 앞 대화는 접힘(${JSON.stringify(g2)})`);
+            ok(o2 === true && g2.open === '8' && g2.one === 1 && g2.scope === 'false' && g2.n === 13, `[알림] 보던 목록에 없는 대화(4444)면 전체 대화로 넘겨서 펼침 · 앞 대화는 접힘(${JSON.stringify(g2)})`);
             const o3 = await pg.evaluate(() => window.AkmAoDesk.openSms(8)); await pg.waitForTimeout(400);
             ok(o3 === true && await pg.evaluate(() => !!document.getElementById('sms-thread')), '[알림] 이미 열린 대화를 또 부르면 그대로 열려 있음(접히지 않음)');
             const o5 = await pg.evaluate(() => window.AkmAoDesk.openSms(9999)), o6 = await pg.evaluate(() => window.AkmAoDesk.openSms('x'));

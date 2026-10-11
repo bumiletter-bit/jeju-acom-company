@@ -237,6 +237,98 @@ async function api(method, url, body, user) {
         const many = await Promise.all([0, 1, 2].map(i => api('POST', `/api/inbox/threads/talk/${kk[i]}/draft`)));
         const stN = (await pool.query(`SELECT value FROM agent_office_config WHERE key = 'inbox_threads_verify_state'`)).rows[0].value.n;
         ok(many.filter(x => x.status === 200).length === 2 && many.filter(x => x.status === 429).length === 1 && gens.length === g0 + 2 && stN === 4, '초안 상한 4 · 이미 2번 쓴 상태에서 3명이 같이 누름 = 2번만 통과(AI 2회) · 셈 4 ' + many.map(x => x.status).join());
+        console.log('⑦-나 #660 미답변 판정 · 「확인」 · 범위');
+        {
+            const V = { sf: 'vt658userSF', en: 'vt658userEN', en2: 'vt658userEN2', en3: 'vt658userEN3', en4: 'vt658userEN4', ad2: 'vt658userAD2', ml: 'mall:vt658M2', kk: 'kakao:vt658K2', sk: 'vt658userSK' };
+            const K = {}; for (const k of Object.keys(V)) K[k] = mod.keyOf(V[k]);
+            const c0 = (await api('GET', '/api/inbox/counts')).json.counts;
+            await lg(V.sf, '배송 언제 되나요', { ago: 20, mark: '[SKIP-무응답]', staff: '내일 출발합니다' }); await lg(V.sf, '주소도 바꿀 수 있나요', { ago: 18, mark: '[직원응답-발송취소]' });
+            await lg(V.en, '이 상품을 문의합니다.', { ago: 8, mark: '[쿨다운-무응답]' });
+            await lg(V.en2, '선물 포장 되나요', { ago: 30, mark: '[SKIP-무응답]' }); await lg(V.en2, '이 상품을 문의합니다.', { ago: 5, mark: '[쿨다운-무응답]' });
+            await lg(V.en3, '이 상품을 문의합니다.', { ago: 7, mark: '[SKIP-무응답]', staff: '무엇을 도와드릴까요' });
+            await lg(V.en4, '[메시지1] 이 상품을 문의합니다.\n[메시지2] 이 상품을 문의합니다', { ago: 6, mark: '[SKIP-무응답]' });
+            await lg(V.ad2, '10일 이내 최상단 가능합니다. 매일 모니터링 순위 추적 보고', { ago: 9, mark: '[SKIP-무응답]' });
+            await lg(V.ml, '취소 언제 되나요?', { ago: 12 }); await lg(V.kk, '카카오 질문입니다', { ago: 11, mark: '[SKIP-무응답]' });
+            await lg(V.sk, '보관은 냉장인가요', { ago: 4, mark: '[SKIP-무응답]' }); const kTop = mod.keyOf('vt658userTOP'); await lg('vt658userTOP', '상자 최상단에 있던 귤이 터졌어요', { ago: 3, mark: '[SKIP-무응답]' });
+            const all = async () => (await api('GET', '/api/inbox/threads?ch=talk&scope=all')).json.threads; const open = async () => (await api('GET', '/api/inbox/threads?ch=talk&scope=open')).json.threads;
+            let A = await all(), O = await open(); const g = (l, k) => l.find(x => x.id === K[k]);
+            ok(g(A, 'sf') && g(A, 'sf').needs_reply === false && g(A, 'sf').state === 'staff' && g(A, 'sf').unread === 0 && g(A, 'sf').why === '직원이 먼저 답함' && !g(O, 'sf'), '①직원이 먼저 답해 봇이 접은 줄([직원응답-발송취소]) = 미답변 아님 · state staff · 안 읽음 0 ' + JSON.stringify(g(A, 'sf') || {}).slice(0, 160));
+            ok(g(A, 'en') && g(A, 'en').needs_reply === false && g(A, 'en').unread === 0 && /자동 글/.test(g(A, 'en').why) && !g(O, 'en') && g(A, 'en4') && g(A, 'en4').needs_reply === false, '①입장 글뿐(「이 상품을 문의합니다」 · 묶인 글 포함) = 미답변 아님 · 목록 all 에는 보임');
+            ok(g(A, 'en2') && g(A, 'en2').needs_reply === true && g(A, 'en2').last_text === '선물 포장 되나요' && g(A, 'en2').unread === 1 && !!g(O, 'en2'), '①진짜 질문 뒤에 입장 글이 와도 질문이 가려지지 않음(미답변 유지 · 안 읽음 1) ' + JSON.stringify(g(A, 'en2') || {}).slice(0, 140));
+            ok(g(A, 'en3') && g(A, 'en3').state === 'staff' && g(A, 'en3').needs_reply === false, '①입장 글에 직원 답이 붙었으면 직원 답함');
+            ok(g(A, 'ad2') && g(A, 'ad2').needs_reply === false && g(A, 'ad2').unread === 0 && !g(O, 'ad2'), '①광고 글(최상단 · 순위 추적) = 미답변 아님');
+            ok(g(A, 'ml') && g(A, 'ml').needs_reply === false && g(A, 'ml').can_send === false && !g(O, 'ml') && g(A, 'kk') && g(A, 'kk').needs_reply === false, '①자사몰·카카오(보낼 길 없음) = 셈에서 뺌 · 목록 all 에는 보임');
+            ok(g(A, 'sk') && g(A, 'sk').needs_reply === true && g(A, 'sk').done === false && !!g(O, 'sk'), '①봇이 넘긴 진짜 질문([SKIP]) = 종전대로 미답변');
+            let d = (await api('GET', '/api/inbox/threads/talk/' + K.sf + '?peek=1')).json; ok(d.thread.needs_reply === false && d.thread.state === 'staff', '①대화 응답도 같은 판정(직원 먼저 답함)');
+            d = (await api('GET', '/api/inbox/threads/talk/' + K.en2 + '?peek=1')).json; ok(d.thread.needs_reply === true && d.thread.unread === 1 && d.messages.length === 2, '①대화 응답도 같은 판정(질문 + 입장 글 · 글은 둘 다 보임)');
+            const c1 = (await api('GET', '/api/inbox/counts')).json.counts;
+            ok(!!O.find(x => x.id === kTop) && A.find(x => x.id === kTop).unread === 1, '①손님 글 「상자 최상단에 있던 귤」은 광고로 안 빠짐(미답변 · 안 읽음 1)');
+            ok(c1.talk.open === c0.talk.open + 3 && O.every(x => x.needs_reply) && O.length === c1.talk.open, '③counts.open = scope=open 줄 수(새 줄 12개 중 미답변 3개만 늘어남) ' + c0.talk.open + ' → ' + c1.talk.open);
+            {   // #661 카드(확인 필요 문의) = 창의 「답 안 한 것」과 같은 줄
+                const cd = await mod._cardData(false); const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+                const oq = (await api('GET', '/api/inbox/threads?ch=qna&scope=open')).json.threads, oi = (await api('GET', '/api/inbox/threads?ch=inquiry&scope=open')).json.threads;
+                const W = l => l.filter(x => x.needs_reply);
+                ok(cd.talk.length <= 30 && cd.talk.length > W(cd.talk).length && cd.more.talk === A.length - cd.talk.length && cd.talk.every((x, i) => !i || String(cd.talk[i - 1].last_at) >= String(x.last_at)) && cd.talk.every(x => 'last_dir' in x && 'last_text' in x && 'done' in x && x.tkey), '#661 카드 = 전체 목록(답한 대화 포함) · 최근 대화순 · 30줄까지 · more = 못 실은 줄 수 ' + cd.talk.length + '+' + cd.more.talk);
+                ok(same(W(cd.talk).map(x => x.tkey), O.map(x => x.id)) && same(W(cd.qna).map(x => x.id), oq.map(x => x.id)) && same(W(cd.inquiry).map(x => x.id), oi.map(x => x.id)) && cd.counts.talk.open === c1.talk.open && cd.counts.qna.open === c1.qna.open && cd.counts.inquiry.open === c1.inquiry.open, '#661 카드의 대기 줄 집합 = 창 scope=open 줄 집합(세 채널) · 숫자도 같음 ' + JSON.stringify(cd.counts));
+                const ci = cd.talk.find(x => x.tkey === K.sk); ok(ci && ci.kind === 'talk' && Number.isInteger(ci.id) && ci.question === '보관은 냉장인가요' && ci.state === 'open' && ci.seen === false && 'answer' in ci && 'staff' in ci && cd.sms === null && cd.counts.sms === null, '#661 카드 줄 꼴(종전 칸 + tkey) · 문자 모듈 없으면 sms null');
+                ok(!('_card' in JSON.parse(JSON.stringify(O[0]))) && !JSON.stringify(O).includes('vt658user'), '#661 목록 응답에 카드용 칸·손님 식별값이 안 실림');
+                // 카드의 [확인](reviewed_at 을 줄 번호로 찍음)을 그대로 흉내 → 창에서도 빠짐 → 되돌리면 다시 뜸
+                await pool.query(`UPDATE ${TB.logs} SET reviewed_at = NOW(), reviewed_by = '카드확인' WHERE id = $1`, [ci.id]);
+                let t1 = (await all()).find(x => x.id === K.sk); const cd2 = await mod._cardData(); const c2i = cd2.talk.find(x => x.tkey === K.sk);
+                ok(t1.done === true && t1.needs_reply === false && t1.unread === 0 && c2i && c2i.needs_reply === false && c2i.done === true && c2i.seen_by === '카드확인' && cd2.counts.talk.open === cd.counts.talk.open - 1, '#661 카드에서 [확인] → 창에서도 done · 숫자 −1 · 카드에는 대기 아님으로 남음');
+                const ans = cd2.talk.find(x => !x.needs_reply && !x.done && x.state !== 'open'); await pool.query(`UPDATE ${TB.logs} SET reviewed_at = NOW() WHERE id = $1`, [ans.id]); const cd4 = await mod._cardData();
+                ok(cd4.counts.talk.open === cd2.counts.talk.open && cd4.talk.find(x => x.tkey === ans.tkey).needs_reply === false, '#661 이미 답한 줄에 [확인]이 와도 무해(숫자 그대로)'); await pool.query(`UPDATE ${TB.logs} SET reviewed_at = NULL WHERE id = $1`, [ans.id]);
+                await pool.query(`UPDATE ${TB.logs} SET reviewed_at = NULL, reviewed_by = NULL WHERE id = $1`, [ci.id]);
+                t1 = (await all()).find(x => x.id === K.sk); ok(t1.done === false && t1.needs_reply === true && t1.unread === 1, '#661 카드에서 되돌리면 창에도 다시 뜸');
+            }
+            const Act = (await api('GET', '/api/inbox/threads?ch=talk&scope=active')).json.threads;
+            ok(Act.every(x => x.unread > 0) && !!g(Act, 'sk') && !g(Act, 'sf') && !g(Act, 'en') && A.length > O.length && A.length > Act.length, '③범위 세 가지: all = 전부 · open = 미답변만 · active = 안 읽음만');
+            // ② 확인
+            r = await api('POST', '/api/inbox/done', { ch: 'talk', id: K.sk }, null); ok(r.status === 401, '②로그인 없이 = 401');
+            r = await api('POST', '/api/inbox/done', { ch: 'sms', id: K.sk }); ok(r.status === 400, '②없는 채널 = 400');
+            r = await api('POST', '/api/inbox/done', { ch: 'talk', id: '0123456789abcdef' }); ok(r.status === 404 && r.json.ok === false, '②없는 대화 = 404');
+            r = await api('POST', '/api/inbox/done', { ch: 'talk', id: K.sk }, { id: 990659, name: '일반직원', role: 'user' });
+            ok(r.status === 200 && r.json.ok === true && r.json.done === true && r.json.counts.talk.open === c1.talk.open - 1 && r.json.counts.talk.unread === c1.talk.unread - 1, '②확인 → 응답 counts 에 바로 반영(답 안 한 것 −1 · 안 읽음 −1) ' + JSON.stringify(r.json.counts.talk));
+            A = await all(); O = await open(); d = (await api('GET', '/api/inbox/threads/talk/' + K.sk + '?peek=1')).json;
+            ok(g(A, 'sk').done === true && g(A, 'sk').needs_reply === false && g(A, 'sk').unread === 0 && !g(O, 'sk') && d.thread.done === true && d.thread.needs_reply === false && d.thread.unread === 0, '②확인한 대화: done true · needs_reply false · unread 0 · open 목록에서 빠짐 · all 에는 남음');
+            const rv = (await pool.query(`SELECT count(*)::int n FROM ${TB.logs} WHERE user_id = $1 AND reviewed_at IS NOT NULL`, [V.sk])).rows[0].n; ok(rv === 1 && (await mod._cardData()).talk.find(x => x.tkey === K.sk).needs_reply === false, '#661 창의 [확인] = reviewed_at 에 찍힘(카드와 같은 표식) → 카드에서도 빠짐');
+            r = await api('POST', '/api/inbox/done', { ch: 'talk', id: K.sk, undo: true }); A = await all();
+            ok(r.status === 200 && r.json.done === false && r.json.counts.talk.open === c1.talk.open && g(A, 'sk').done === false && g(A, 'sk').needs_reply === true && g(A, 'sk').unread === 0, '②undo → 다시 미답변(읽음은 그대로 · unread 0)');
+            await api('POST', '/api/inbox/done', { ch: 'talk', id: K.sk }); await sleep(1100); await lg(V.sk, '실온에 둬도 되나요', { ago: 0, mark: '[쿨다운-무응답]' }); A = await all();
+            ok(g(A, 'sk').done === false && g(A, 'sk').needs_reply === true && g(A, 'sk').unread === 1, '②확인 뒤 손님 새 글이 오면 다시 뜸(done false · 미답변 · 안 읽음 1) ' + JSON.stringify(g(A, 'sk')).slice(0, 160));
+            await api('POST', '/api/inbox/done', { ch: 'talk', id: K.sk }); await sleep(1100); await lg(V.sk, '이 상품을 문의합니다.', { ago: 0, mark: '[쿨다운-무응답]' }); A = await all();
+            ok(g(A, 'sk').done === true && g(A, 'sk').needs_reply === false, '②확인 뒤 입장 글만 다시 오면 그대로 확인 상태');
+            r = await api('POST', '/api/inbox/threads/talk/' + K.sk + '/unread'); A = await all(); ok(g(A, 'sk').unread === 1 && g(A, 'sk').needs_reply === false && g(A, 'sk').done === true, '②확인 뒤 [안 읽음으로] = unread 1 · 미답변 셈은 그대로 빠짐');
+            // 문의
+            await qn(990658020, { status: 'skip', ago: 3 }); await iq(990658120, { status: 'skip', ago: 3 });
+            for (const [c, id] of [['qna', '990658020'], ['inquiry', '990658120']]) {
+                const b0 = (await api('GET', '/api/inbox/counts')).json.counts[c];
+                r = await api('POST', '/api/inbox/done', { ch: c, id }); let l = (await api('GET', '/api/inbox/threads?ch=' + c + '&scope=all')).json.threads.find(x => x.id === id); let lo = (await api('GET', '/api/inbox/threads?ch=' + c + '&scope=open')).json.threads;
+                d = (await api('GET', '/api/inbox/threads/' + c + '/' + id + '?peek=1')).json;
+                ok(r.status === 200 && r.json.counts[c].open === b0.open - 1 && r.json.counts[c].unread === b0.unread - 1 && l && l.done === true && l.needs_reply === false && l.unread === 0 && !lo.find(x => x.id === id) && lo.every(x => x.needs_reply) && d.thread.done === true && d.can_send === true, '②' + c + ' 확인 → 숫자 −1 · done · open 목록에서 빠짐 · 답은 여전히 보낼 수 있음');
+                r = await api('POST', '/api/inbox/done', { ch: c, id, undo: true }); l = (await api('GET', '/api/inbox/threads?ch=' + c + '&scope=all')).json.threads.find(x => x.id === id);
+                ok(r.json.done === false && r.json.counts[c].open === b0.open && l.done === false && l.needs_reply === true, '②' + c + ' undo → 다시 미답변');
+            }
+            r = await api('POST', '/api/inbox/done', { ch: 'qna', id: '990658999' }); ok(r.status === 404, '②없는 문의 = 404');
+            const rv2 = (await pool.query(`SELECT (SELECT reviewed_at FROM ${TB.qnas} WHERE question_id = 990658020) a, (SELECT reviewed_at FROM ${TB.inquiries} WHERE inquiry_id = '990658120') b`)).rows[0]; ok(!rv2.a && !rv2.b, '②문의 undo 뒤 reviewed_at 비움(카드에도 다시 뜸)');
+        }
+        console.log('⑦-다 #662 직원 답 시각(staff_at)');
+        {
+            const hasCol = (await pool.query(`SELECT data_type FROM information_schema.columns WHERE table_name = $1 AND column_name = 'staff_at'`, [TB.logs])).rows[0];
+            ok(hasCol && hasCol.data_type === 'timestamp with time zone', '시험 표에 staff_at(timestamptz) 칸이 생김(첫 요청 때)');
+            const u1 = 'vt658userST1', u2 = 'vt658userST2', u3 = 'vt658userST3'; const k1 = mod.keyOf(u1), k2 = mod.keyOf(u2), k3 = mod.keyOf(u3);
+            const i1 = await lg(u1, '세 시간 전 질문', { ago: 180, mark: '[SKIP-무응답]', staff: '첫 답 | 둘째 답' }); await pool.query(`UPDATE ${TB.logs} SET staff_at = NOW() - interval '2 minutes' WHERE id = $1`, [i1]);
+            await lg(u2, '한 시간 전 질문(옛 답 · 시각 없음)', { ago: 60, mark: '[SKIP-무응답]', staff: '옛 답' });
+            await lg(u3, '삼십 분 전 봇이 답한 글', { ago: 30, bot: '봇 답입니다.' });
+            const l = (await api('GET', '/api/inbox/threads?ch=talk&scope=all')).json.threads; const p = k => l.findIndex(x => x.id === k); const t1 = l[p(k1)], t2 = l[p(k2)];
+            const near = (iso, min) => Math.abs((Date.now() - Date.parse(iso)) / 60000 - min) < 1.5;
+            ok(p(k1) >= 0 && p(k1) < p(k3) && p(k3) < p(k2) && near(t1.last_at, 2) && t1.last_text === '둘째 답' && t1.last_dir === 'out', '직원 답 시각이 있으면 목록 순서·last_at 이 그 시각(3시간 전 글 · 2분 전 답 → 30분 전 대화보다 위) ' + t1.last_at);
+            ok(near(t2.last_at, 60), '시각 없는 옛 답(null)은 종전대로 손님 글 시각 ' + t2.last_at);
+            let d = (await api('GET', '/api/inbox/threads/talk/' + k1 + '?peek=1')).json; const sm = d.messages.filter(m => m.sender === 'staff'), cm = d.messages.find(m => m.sender === 'customer');
+            ok(sm.length === 2 && sm.every(m => near(m.at, 2)) && near(cm.at, 180) && near(d.thread.last_at, 2) && /옛 직원 답/.test(d.limits.time_note), '대화: 직원 답 메시지 at = staff_at · 손님 글 at 은 그대로 · thread.last_at 도 답 시각');
+            d = (await api('GET', '/api/inbox/threads/talk/' + k2 + '?peek=1')).json; ok(near(d.messages.find(m => m.sender === 'staff').at, 60) && near(d.thread.last_at, 60), '대화: 시각 없는 옛 답 = 손님 글 시각');
+            const cd = await mod._cardData(); const c1 = cd.talk.find(x => x.tkey === k1); ok(c1 && near(c1.last_at, 2) && cd.talk.findIndex(x => x.tkey === k1) < cd.talk.findIndex(x => x.tkey === k3), '카드 줄도 같은 시각·순서');
+        }
         console.log('⑧ 라이브 표 무접촉');
         const live1 = (await pool.query(`SELECT (SELECT count(*) FROM message_logs)::int a, (SELECT count(*) FROM naver_qnas)::int b, (SELECT count(*) FROM naver_inquiries)::int c, (SELECT count(*) FROM talk_outbox)::int d`)).rows[0];
         const marks = (await pool.query(`SELECT (SELECT count(*) FROM message_logs WHERE user_id LIKE '%vt658%')::int a, (SELECT count(*) FROM naver_qnas WHERE question_id BETWEEN 990658000 AND 990658999)::int b, (SELECT count(*) FROM naver_inquiries WHERE inquiry_id LIKE '990658%')::int c, (SELECT count(*) FROM talk_outbox WHERE user_id LIKE '%vt658%')::int d`)).rows[0];

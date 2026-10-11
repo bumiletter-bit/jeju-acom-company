@@ -461,7 +461,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const side = ['desk-live', 'desk-today', 'desk-prog'].map(id => { const e = document.getElementById(id); return e ? e.textContent.trim().length > 0 : false; });
             return {
                 table: !!q('#desk-list .desk-table'), card: !!q('#desk-list .desk-card'), th,
-                side, quick: document.querySelectorAll('#desk-inbox-tabs button').length, inboxList: !!document.querySelector('#desk-inbox-list .desk-ib, #desk-inbox-list .desk-ib-row, #desk-inbox-list .desk-empty'), oldQuick: !!document.getElementById('desk-quick'),
+                side, quick: document.querySelectorAll('#desk-inbox-tabs button').length, inboxList: !!document.querySelector('#desk-inbox-list .desk-cu, #desk-inbox-list .desk-empty'), oldQuick: !!document.getElementById('desk-quick'),
                 filter: !!q('#desk-fs'), weather: /날씨|구름|℃/.test(document.getElementById('ao-desk-root').textContent),
                 light: getComputedStyle(q('.desk-panel')).backgroundColor,
                 overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2,
@@ -469,27 +469,37 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         });
         ok('PC = 표 보기(카드 아님) · 머리글 6칸', wide.table && !wide.card && wide.th.length === 6, wide.th.join(' | '));
         ok('오른쪽 칸 3개가 내용을 그린다', wide.side.every(Boolean), JSON.stringify(wide.side));
-        ok('확인 필요 문의 칸(채널 3개 · 목록) · 빠른 실행 없음 · 상태 고르개 · 날씨 없음', wide.quick === 3 && wide.inboxList && !wide.oldQuick && wide.filter && !wide.weather, '채널 ' + wide.quick + '개');
-        await W.pg.route('**/api/agent-office/desk/inbox*', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ days: 3, counts: { talk: { open: 2, ai: 1, staff: 1 }, qna: { open: 0, ai: 0 }, inquiry: { open: 0, ai: 0 } },
-            talk: [{ kind: 'talk', id: 'v1', state: 'open', at: new Date().toISOString(), question: '유라조생 언제부터 받을 수 있나요? 선물로 보내려고요' }, { kind: 'talk', id: 'v2', state: 'ai', at: new Date().toISOString(), question: '그린레몬 2kg도 있나요?', answer: '안녕하세요 제주아꼼이네입니다 😊 그린레몬은 3kg·5kg로 준비돼 있어요' }, { kind: 'talk', id: 'v3', state: 'open', at: new Date().toISOString(), question: '세 번째' }, { kind: 'talk', id: 'v4', state: 'staff', at: new Date().toISOString(), question: '네 번째(직원 답변)', answer: '봇 답', staff: '직원이 답한 글' }], qna: [], inquiry: [] }) }));
-        // #637 뒤: 페이지가 먼저 보낸 실제 inbox 조회가 아직 가는 중이면 loadInbox 가 그 답(실제 자료)을 나눠 받는다 → 가짜 줄(v2)이 보일 때까지 다시 받는다
-        for (let i = 0; i < 12; i++) { await W.pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await W.pg.waitForTimeout(600); if (await W.pg.locator('#desk-inbox-list tr.desk-ib-row[data-id="v2"]').count()) break; }
-        await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v2"] .c-q'); await W.pg.waitForTimeout(400);
-        const ibt = await W.pg.evaluate(() => {
-            const rows = Array.from(document.querySelectorAll('#desk-inbox-list tr.desk-ib-row'));
-            const d = document.querySelector('#desk-inbox-list .detailrow td.detail'); const a = d && d.querySelector('.desk-a.answer');
-            return { table: !!document.querySelector('#desk-inbox-list .desk-table'), rows: rows.length, visible: rows.filter(r => r.offsetParent !== null).length, opened: !!d, q: !!(d && d.querySelector('.desk-q-full')), label: a && a.querySelector('.desk-a-label').textContent, band: a && getComputedStyle(a).borderLeftWidth, acts: !!(d && d.querySelector('.desk-a-acts [data-ib="ok"]')), more: document.getElementById('desk-inbox-more').textContent };
-        });
-        ok('#485 확인 필요 문의 = PC 표 · 3건 미리보기(4건 중) · 줄 클릭 = 손님 문의 전문 + 「봇이 보낸 답」 띠 + [확인] 띠', ibt.table && ibt.rows === 4 && ibt.visible === 3 && ibt.opened && ibt.q && ibt.label === '봇이 보낸 답' && ibt.band === '4px' && ibt.acts && /1건 더/.test(ibt.more), JSON.stringify(ibt));
-        await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v2"] .c-q'); await W.pg.waitForTimeout(300);
-        ok('#485 다시 누르면 접힘', await W.pg.evaluate(() => !document.querySelector('#desk-inbox-list .detailrow')));
-        // #486: 직원 답변 건도 [확인] 전까지 보임 — 배지 「직원 답변함 · 확인 전」 + 봇 답·직원 답 띠 둘 다 + 채널 숫자에 포함
-        await W.pg.click('#desk-inbox-more'); await W.pg.waitForTimeout(300);
-        await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v4"] .c-q'); await W.pg.waitForTimeout(400);
-        const st = await W.pg.evaluate(() => { const tr = document.querySelector('#desk-inbox-list tr.desk-ib-row[data-id="v4"]'); const d = document.querySelector('#desk-inbox-list .detailrow td.detail'); return { badge: tr && tr.querySelector('.desk-badge').textContent, labels: d ? Array.from(d.querySelectorAll('.desk-a-label')).map(e => e.textContent) : [], n: document.getElementById('inbox-n-talk').textContent }; });
-        ok('#486 직원 답변 건 = 「직원 답변함 · 확인 전」 · 봇 답+직원 답 띠 · 톡톡 숫자에 포함', st.badge === '직원 답변함 · 확인 전' && st.labels.join(',') === '손님 문의,봇이 보낸 답,직원이 보낸 답' && st.n === '4', JSON.stringify(st));
-        await W.pg.keyboard.press('Escape'); await W.pg.waitForTimeout(300);
-        await W.pg.unroute('**/api/agent-office/desk/inbox*');
+        ok('#661 손님 연락 칸(전체 + 채널 4개 · 목록) · 빠른 실행 없음 · 상태 고르개 · 날씨 없음', wide.quick === 5 && wide.inboxList && !wide.oldQuick && wide.filter && !wide.weather, '채널 ' + wide.quick + '개');
+        {   // #661(대표 10/12) 손님 연락 카드 = 전체 대화 한 목록(문자·톡톡·상품 Q&A·주문 문의 · 최근 대화순) · 칩 숫자 = 대기(서버 counts.open 그대로) · 대기 줄만 [확인]
+            const at = m => new Date(Date.now() - m * 60000).toISOString(), posts = [];
+            const body = () => ({ days: 30, at: at(0), counts: { sms: { open: 1 }, talk: { open: 2, ai: 0, staff: 0 }, qna: { open: 0, ai: 0, staff: 0 }, inquiry: { open: 1, ai: 0, staff: 0 } }, more: { sms: 0, talk: 3, qna: 0, inquiry: 0 },
+                sms: [{ kind: 'sms', id: 901, phone_full: '01012345678', customer_hint: '효돈 · 10/9 발송', last_text: '언제 오나요', last_dir: 'in', last_at: at(1), unread: 1, needs_reply: true, done: false }],
+                talk: [{ kind: 'talk', id: 'v1', tkey: 'k1', title: '톡톡 손님 711a', sub: '하우스감귤', last_text: '유라조생 언제부터 받을 수 있나요?', last_dir: 'in', last_at: at(2), state: 'open', needs_reply: true, done: false },
+                    { kind: 'talk', id: 'v2', tkey: 'k2', title: '톡톡 손님 22bc', last_text: '그린레몬은 3kg·5kg로 준비돼 있어요', last_dir: 'out', last_at: at(3), state: 'ai', needs_reply: false, done: false },
+                    { kind: 'talk', id: 'v3', tkey: 'k3', title: '톡톡 손님 9f01', last_text: '세 번째', last_dir: 'in', last_at: at(5), state: 'open', needs_reply: true, done: false },
+                    { kind: 'talk', id: 'v4', tkey: 'k4', title: '톡톡 손님 4d2e', last_text: '네 번째(확인한 글)', last_dir: 'in', last_at: at(6), state: 'open', needs_reply: false, done: true, seen: true }],
+                qna: [{ kind: 'qna', id: 7201, title: '황금향 가정용 3kg', sub: 'kim***', last_text: '안내드린 대로 내일 출고됩니다', last_dir: 'out', last_at: at(4), state: 'staff', needs_reply: false, done: false }],
+                inquiry: [{ kind: 'inquiry', id: 8301, title: '미니밤호박 특품 5kg', sub: '박**', last_text: '주소 변경 부탁드려요', last_dir: 'in', last_at: at(7), state: 'open', needs_reply: true, done: false }] });
+            await W.pg.route('**/api/agent-office/desk/inbox**', r => { if (r.request().method() === 'POST') { posts.push(r.request().postDataJSON()); return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, message: '확인했습니다' }) }); } return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body()) }); });
+            // #637 뒤: 페이지가 먼저 보낸 실제 inbox 조회가 아직 가는 중이면 loadInbox 가 그 답(실제 자료)을 나눠 받는다 → 가짜 줄(v2)이 보일 때까지 다시 받는다
+            for (let i = 0; i < 12; i++) { await W.pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await W.pg.waitForTimeout(600); if (await W.pg.locator('#desk-inbox-list .desk-cu[data-id="v2"]').count()) break; }
+            const cu = () => W.pg.evaluate(() => { const rows = Array.from(document.querySelectorAll('#desk-inbox-list .desk-cu')), n = k => document.getElementById('inbox-n-' + k).textContent;
+                return { title: document.querySelector('#desk-inbox .desk-inbox-head > b').textContent, chips: ['sms', 'talk', 'qna', 'inquiry'].map(n).join('|'), smsTab: !document.querySelector('#desk-inbox-tabs [data-k="sms"]').hidden, sel: (document.querySelector('#desk-inbox-tabs [aria-selected="true"]') || { dataset: {} }).dataset.k, seen: !!document.getElementById('desk-inbox-seen'),
+                    ids: rows.map(r => r.dataset.kind + ':' + r.dataset.id).join(','), visible: rows.filter(r => r.offsetParent !== null).length, wait: rows.filter(r => r.classList.contains('wait')).map(r => r.dataset.id).join(','), dots: rows.filter(r => r.querySelector('.desk-cu-dot')).length,
+                    btns: rows.map(r => { const b = r.querySelector('.desk-cu-ok'); return b ? b.textContent : '-'; }).join(','), me: rows.filter(r => r.querySelector('.desk-cu-last .sms-me')).map(r => r.dataset.id).join(','), who0: rows[0] ? rows[0].querySelector('.desk-cu-who b').textContent : '', ch: rows.map(r => r.querySelector('.desk-cu-ch').textContent).join(','), more: document.getElementById('desk-inbox-more').textContent, over: document.getElementById('desk-inbox').scrollWidth > document.getElementById('desk-inbox').clientWidth + 1 }; });
+            const c1 = await cu();
+            ok('#661 손님 연락 카드 = 네 채널 전체 대화 한 목록(최근 대화순 7줄 · 5줄 미리보기) · 칩 = 대기 수(문자 1 · 톡톡 2 · 상품 0 · 주문 1) · 「확인한 건도 보기」 없음', c1.title === '손님 연락' && c1.chips === '1|2|0|1' && c1.smsTab && c1.sel === 'all' && !c1.seen && c1.ids === 'sms:901,talk:v1,talk:v2,qna:7201,talk:v3,talk:v4,inquiry:8301' && c1.visible === 5 && c1.who0 === '010-1234-5678' && c1.ch === '문자,톡톡,톡톡,상품 Q&A,톡톡,톡톡,주문 문의' && /5건 더/.test(c1.more) && !c1.over, JSON.stringify(c1));
+            ok('#661 대기 줄만 점·[확인](문자는 단추 없음) · 확인한 줄 = [확인함] · 답한 줄은 단추 없이 「나:」', c1.wait === '901,v1,v3,8301' && c1.dots === 4 && c1.btns === '-,확인,-,-,확인,확인함,확인' && c1.me === 'v2,7201', JSON.stringify(c1));
+            await W.pg.click('#desk-inbox-tabs button[data-k="talk"]'); await W.pg.waitForTimeout(300); const c2 = await cu();
+            await W.pg.click('#desk-inbox-tabs button[data-k="talk"]'); await W.pg.waitForTimeout(300); const c3 = await cu();
+            ok('#661 칩을 누르면 그 채널만(톡톡 4줄 · 못 실은 3건 포함 「n건 더」) · 다시 누르면 전체', c2.sel === 'talk' && c2.ids === 'talk:v1,talk:v2,talk:v3,talk:v4' && /3건 더/.test(c2.more) && c3.sel === 'all' && c3.ids === c1.ids, JSON.stringify([c2.ids, c2.more, c3.sel]));
+            await W.pg.click('#desk-inbox-list .desk-cu[data-id="v1"] .desk-cu-ok'); await W.pg.waitForTimeout(700);
+            await W.pg.click('#desk-inbox-more'); await W.pg.waitForTimeout(300);
+            await W.pg.click('#desk-inbox-list .desk-cu[data-id="v4"] .desk-cu-ok'); await W.pg.waitForTimeout(700);
+            ok('#661 [확인] = review { kind, id, undo:false } · [확인함] 다시 누름 = undo:true', posts.length === 2 && posts[0].kind === 'talk' && posts[0].id === 'v1' && posts[0].undo === false && posts[1].id === 'v4' && posts[1].undo === true, JSON.stringify(posts));
+            await W.pg.keyboard.press('Escape'); await W.pg.waitForTimeout(300);
+        }
+        await W.pg.unroute('**/api/agent-office/desk/inbox**');
         ok('밝은 화면 · 가로 넘침 없음', /255, 255, 255/.test(wide.light) && !wide.overflow, wide.light);
         const more = await W.pg.$('#desk-list .desk-more');
         if (more) {

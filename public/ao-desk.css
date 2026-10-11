@@ -1293,6 +1293,68 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
 .sms-tab .sms-n { min-width: 18px; padding: 0 5px; font-size: 11.5px; line-height: 18px; }
 .desk-todo li.sms-todo.cust small { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .desk-todo li.sms-todo.cust small i { font-style: normal; color: var(--d-sub); }
+/* ── #659 (대표 10/12 폴드 접은 폭 「구매이력이 화면 1/3 — 65% 정도로 · 2건 이상이면 +몇 건만」) 구매이력 카드 줄이기: 한 건 = 「배지 · 발송일 거래처」 / 「송장 [조회] · 받는 분」 / 품목 세 줄 · 맨 위 1건 + 「+n건 더보기」(판 아무 곳이나 눌러 펼침·접힘) ── */
+.sms-pane .sms-order.sms-buy { padding: 8px 10px 9px; }
+.sms-pane .sms-buy.has-more { cursor: pointer; }
+.sms-pane .sms-buy .sms-buy-h { margin: 0 2px 6px; gap: 6px; line-height: 1.3; }
+.sms-pane .sms-buy .sms-buy-h b { font-size: 13px; }
+.sms-pane .sms-buy .sms-buy-h small { font-size: 11.5px; }
+.sms-pane .sms-buy .sms-buy-i { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; padding: 8px 10px; line-height: 1.4; cursor: auto; }
+.sms-pane .sms-buy.has-more .sms-buy-i { cursor: pointer; }
+.sms-pane .sms-buy .sms-buy-i::after { content: ""; order: 3; flex: 0 0 100%; height: 0; }
+.sms-pane .sms-buy .sms-buy-rest, .sms-pane .sms-buy .sms-buy-rest > .sms-buy-i, .sms-pane .sms-buy .sms-buy-i + .sms-buy-i { margin-top: 6px; }
+.sms-pane .sms-buy .sms-buy-s, .sms-pane .sms-buy .sms-buy-g { display: contents; }
+.sms-pane .sms-buy .sms-buy-role { order: 2; font-size: 11.5px; }
+.sms-pane .sms-buy .sms-buy-r { order: 4; display: flex; align-items: baseline; gap: 5px; flex: 1 1 100%; min-width: 0; }
+.sms-pane .sms-buy .sms-buy-r.key { order: 1; flex: 0 1 auto; }
+.sms-pane .sms-buy .sms-buy-r.r-trk { flex: 0 1 auto; align-items: center; }
+.sms-pane .sms-buy .sms-buy-r.r-who { flex: 1 1 auto; }
+.sms-pane .sms-buy .sms-buy-r dt { flex: none; padding: 0; font-size: 11.5px; }
+.sms-pane .sms-buy .sms-buy-r.r-ship dt, .sms-pane .sms-buy .sms-buy-r.r-trk dt, .sms-pane .sms-buy .sms-buy-r.r-item dt, .sms-pane .sms-buy .sms-buy-r.r-boxes dt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sms-pane .sms-buy .sms-buy-r dd { font-size: 12.5px; line-height: 1.4; }
+.sms-pane .sms-buy .sms-buy-r dd.key { font-size: 13px; }
+.sms-pane .sms-buy .sms-buy-r dd small { font-size: 11.5px; }
+.sms-pane .sms-buy .sms-trk { min-height: 32px; padding: 0 7px; font-size: 12.5px; }
+.sms-pane .sms-buy .sms-trk-go { min-height: 32px; padding: 0 4px; font-size: 12px; }
+.sms-pane .sms-buy .sms-box-l { gap: 2px; }
+.sms-pane .sms-buy .sms-box-it { font-size: 12.5px; }
+.sms-pane .sms-buy .sms-buy-more:not(.next) { position: relative; display: block; width: 100%; min-height: 22px; margin-top: 5px; padding: 0; border: 0; border-radius: 6px; background: transparent; font-size: 12px; text-align: center; }
+.sms-pane .sms-buy .sms-buy-more:not(.next)::after { content: ""; position: absolute; inset: -11px 0; }
+.sms-pane .sms-buy .sms-buy-more:not(.next):hover { text-decoration: underline; text-underline-offset: 2px; }
+@media (min-width: 1081px) {
+    .sms-pane .sms-buy .sms-buy-h { margin-bottom: 4px; }
+    .sms-pane .sms-buy .sms-buy-i { padding: 6px 10px; }
+    .sms-pane .sms-buy .sms-buy-r.r-who { flex: 0 1 auto; }
+    .sms-pane .sms-buy .sms-buy-r.r-item { flex: 1 1 240px; }
+}
+@media (max-width: 640px) {
+    .sms-pane .sms-buy .sms-trk, .sms-pane .sms-buy .sms-trk-go { min-height: 44px; }
+    .sms-pane .sms-buy .sms-trk { padding: 0 8px; font-size: 13px; }
+    .sms-pane .sms-buy .sms-trk-go { padding: 0 8px; font-size: 12px; }
+}
+/* ── #661 (대표 10/12) 손님 연락 카드 = 전체 대화 한 목록: 줄 = 채널 · 손님 · 마지막 글 · 시각 · 대기 줄만 점·굵게·[확인] ── */
+.desk-inbox .desk-inbox-list { gap: 6px; }
+.desk-cu { display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 8px; border: 1px solid var(--d-line); border-radius: 12px; background: var(--d-card); }
+.desk-cu-row { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 230px) minmax(0, 1fr) auto; grid-template-areas: "ch who last at"; align-items: center; gap: 2px 10px; min-height: 48px; padding: 7px 4px 7px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--d-sub); font: inherit; font-size: 13.5px; line-height: 1.4; text-align: left; cursor: pointer; }
+.desk-cu-row:hover { background: var(--d-soft); }
+.desk-cu-row:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.desk-cu-ch { grid-area: ch; padding: 2px 8px; border: 1px solid var(--d-line); border-radius: 999px; background: var(--d-soft); color: var(--d-sub); font-style: normal; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.desk-cu-who { grid-area: who; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.desk-cu-who b { flex: 0 1 auto; min-width: 0; color: var(--d-sub); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-cu-who small { flex: 1 1 0; min-width: 0; color: var(--d-sub); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-cu-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--d-err); }
+.desk-cu-last { grid-area: last; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-cu-at { grid-area: at; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.desk-cu.wait .desk-cu-who b, .desk-cu.wait .desk-cu-last { color: var(--d-ink); font-weight: 700; }
+.desk-cu-ok { flex: none; }
+.desk-cu-ok[aria-pressed="true"] { color: var(--d-sub); font-weight: 600; }
+.desk-cu-morewin { min-height: 44px; padding: 0 14px; border: 1px dashed var(--d-line); border-radius: 12px; background: transparent; color: var(--d-accent); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.desk-cu-morewin:hover { background: var(--d-accent-soft); }
+.desk-cu-morewin:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+@media (max-width: 720px) {
+    .desk-cu-row { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "ch who at" "last last last"; padding-left: 10px; }
+    .desk-cu-ok { min-height: 44px; }
+}
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -1342,7 +1404,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (558규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (572규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1920,6 +1982,20 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .sms-tab[aria-selected="true"] { color: var(--d-accent); border-bottom-color: var(--d-accent); }
 :where(html[data-ao-theme="dark"]) .sms-tab:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -3px; }
 :where(html[data-ao-theme="dark"]) .desk-todo li.sms-todo.cust small i { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-pane .sms-buy .sms-buy-more:not(.next) { border: 0; background: transparent; }
+:where(html[data-ao-theme="dark"]) .desk-cu { border: 1px solid var(--d-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-cu-row { border: 0; background: transparent; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-cu-row:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-cu-row:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .desk-cu-ch { border: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-cu-who b { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-cu-who small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-cu-dot { background: var(--d-err); }
+:where(html[data-ao-theme="dark"]) .desk-cu.wait .desk-cu-who b, :where(html[data-ao-theme="dark"]) .desk-cu.wait .desk-cu-last { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-cu-ok[aria-pressed="true"] { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-cu-morewin { border: 1px dashed var(--d-line); background: transparent; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-cu-morewin:hover { background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .desk-cu-morewin:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */
 /* 「중간발주·최종발주·정산 이미지」 = 「대기 중」 알약과 같은 꼴(흰 글씨 · 같은 바탕 · 같은 테두리) */

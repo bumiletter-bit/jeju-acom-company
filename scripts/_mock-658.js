@@ -1,6 +1,6 @@
 // #658 톡톡 | 상품문의 | 주문문의 탭(public/ao-inbox.js) 시공용 가짜 서버 — DB·외부 호출 0 · 메모리 안 지어낸 자료
 //   사용: node scripts/_mock-658.js [포트=3466]   (verify-658-ui.js 가 스스로 띄운다)
-//   ① /api/inbox/* = docs/inbox-threads-spec.md(워커3) 꼴: GET counts · GET threads?ch=&scope=&q= · GET threads/:ch/:id(?peek=1 = 읽음 안 바꿈) · POST …/send { text, seen } · …/read · …/unread · …/draft(톡톡)
+//   ① /api/inbox/* = docs/inbox-threads-spec.md(워커3) 꼴: GET counts · GET threads?ch=&scope=&q= · GET threads/:ch/:id(?peek=1 = 읽음 안 바꿈) · POST …/send { text, seen } · …/read · …/unread · …/draft(톡톡) · #660 POST /api/inbox/done { ch, id, undo } = [확인](답 안 한 것에서 뺌 · undo 로 되돌림)
 //   ② /__inbox.html = 문자 창과 같은 틀(.desk > #desk-sms.sms-modal > .sms-win)에 탭 줄과 #inb-host 만 둔 시험 화면(ao-desk.js 없이 ao-inbox.js 만)
 //   ③ 시험용: GET /__mock/log · POST /__mock/reset · POST /__mock/set { fail:'send'|'draft'|'list'|'', gone:true(=404 로 라우트 없음), swap:'새 초안'(=다음 send 전에 서버 초안을 바꿔 409) } · POST /__mock/push { ch, id, body }
 const http = require('http'), fs = require('fs'), path = require('path');
@@ -14,7 +14,7 @@ let ST;
 function seed() {
     let mid = 100;
     const m = (direction, sender, body, minAgo, o) => Object.assign({ id: ++mid, direction, sender, body, at: iso(minAgo), image_url: null }, o || {});
-    const T = (ch, id, title, msgs, o) => Object.assign({ ch, id, title, sub: null, state: 'open', why: null, read: false, draft: null, can_send: true, cannot_why: null, messages: msgs }, o || {});
+    const T = (ch, id, title, msgs, o) => Object.assign({ ch, id, title, sub: null, state: 'open', why: null, read: false, done: false, draft: null, can_send: true, cannot_why: null, messages: msgs }, o || {});
     ST = {
         fail: '', gone: false, swap: '', log: [],
         threads: [
@@ -33,10 +33,11 @@ function seed() {
     };
 }
 seed();
-const unreadOf = t => (t.read ? 0 : t.messages.filter(x => x.direction === 'in').length);
+const needsOf = t => t.state === 'open' && !t.done && t.can_send !== false;   /* 실서버 꼴: [확인]한 대화 · 보낼 길 없는 대화(카카오·자사몰)는 미답변으로 안 센다 */
+const unreadOf = t => (t.read || t.done ? 0 : t.messages.filter(x => x.direction === 'in').length);
 const last = t => t.messages[t.messages.length - 1] || {};
-const row = t => { const l = last(t); return { ch: t.ch, id: t.id, title: t.title, sub: t.sub, last_text: l.body || (l.image_url ? '(사진)' : ''), last_at: l.at, last_dir: l.direction || 'in', unread: unreadOf(t), state: t.state, why: t.why, needs_reply: t.state === 'open', has_draft: !!t.draft, can_send: t.can_send }; };
-const counts = () => { const o = {}; ['talk', 'qna', 'inquiry'].forEach(ch => { const a = ST.threads.filter(t => t.ch === ch); o[ch] = { unread: a.filter(t => unreadOf(t) > 0).length, open: a.filter(t => t.state === 'open').length }; }); return o; };   /* open = 답 안 한 대화 수(읽음 무관) */
+const row = t => { const l = last(t); return { ch: t.ch, id: t.id, title: t.title, sub: t.sub, last_text: l.body || (l.image_url ? '(사진)' : ''), last_at: l.at, last_dir: l.direction || 'in', unread: unreadOf(t), state: t.state, why: t.why, needs_reply: needsOf(t), done: !!t.done, has_draft: !!t.draft, can_send: t.can_send }; };
+const counts = () => { const o = {}; ['talk', 'qna', 'inquiry'].forEach(ch => { const a = ST.threads.filter(t => t.ch === ch); o[ch] = { unread: a.filter(t => unreadOf(t) > 0).length, open: a.filter(needsOf).length }; }); return o; };   /* open = 답 안 한 대화 수(읽음 무관 · [확인]한 것은 뺌) */
 const send = (res, code, obj, type) => { const b = typeof obj === 'string' || Buffer.isBuffer(obj) ? obj : JSON.stringify(obj); res.writeHead(code, { 'Content-Type': type || 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(b); };
 const body = req => new Promise(r => { let s = ''; req.on('data', c => { s += c; }); req.on('end', () => { try { r(s ? JSON.parse(s) : {}); } catch (e) { r({}); } }); });
 
@@ -53,7 +54,7 @@ window.__on=[];</script><script src="/ao-inbox.js"></script>
 <script>(function(){var host=document.getElementById('inb-host'),p=new URLSearchParams(location.search);if(p.get('dark'))document.documentElement.setAttribute('data-ao-theme','dark');
 function go(ch,openId){document.querySelectorAll('#sms-tabs button').forEach(function(b){b.setAttribute('aria-selected',String(b.dataset.ch===ch))});AkmInbox.mount(host,{ch:ch,openId:openId,onThread:function(o){window.__on.push(o)}})}
 document.getElementById('sms-tabs').addEventListener('click',function(e){var b=e.target.closest('button');if(b)go(b.dataset.ch)});
-AkmInbox.onCounts(function(c){window.__counts=c;document.querySelectorAll('#sms-tabs button').forEach(function(b){var n=c&&c[b.dataset.ch]?c[b.dataset.ch].unread:0;b.querySelector('b').textContent=n?n:''})});
+AkmInbox.onCounts(function(c){window.__counts=c;document.querySelectorAll('#sms-tabs button').forEach(function(b){var n=c&&c[b.dataset.ch]?c[b.dataset.ch].needs:0;b.querySelector('b').textContent=n?n:''})});
 document.addEventListener('keydown',function(e){if(e.key==='Escape')window.__esc=AkmInbox.back()});
 window.__go=go;if(!p.get('nomount'))go(p.get('ch')||'talk',p.get('open')||undefined);setInterval(function(){AkmInbox.refresh()},1000)})();</script></body></html>`;
 
@@ -61,19 +62,28 @@ http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x'), p = u.pathname;
     if (p === '/__inbox.html') return send(res, 200, HARNESS, MIME['.html']);
     if (p === '/__mock/pic.svg') return send(res, 200, PIC, MIME['.svg']);
-    if (p === '/__mock/log') return send(res, 200, { log: ST.log, threads: ST.threads.map(t => ({ id: t.id, read: t.read, state: t.state, draft: t.draft, n: t.messages.length })) });
+    if (p === '/__mock/log') return send(res, 200, { log: ST.log, threads: ST.threads.map(t => ({ id: t.id, read: t.read, done: !!t.done, state: t.state, draft: t.draft, n: t.messages.length })) });
     if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
     if (p === '/__mock/set') { Object.assign(ST, await body(req)); return send(res, 200, { ok: true }); }
-    if (p === '/__mock/push') { const b = await body(req), t = ST.threads.find(x => x.ch === b.ch && x.id === b.id); if (t) { t.messages.push({ id: Date.now(), direction: 'in', sender: 'customer', body: b.body || '또 문의드려요', at: new Date().toISOString(), image_url: null }); t.read = false; if (b.draft) t.draft = b.draft; } return send(res, 200, { ok: !!t }); }
+    if (p === '/__mock/push') { const b = await body(req), t = ST.threads.find(x => x.ch === b.ch && x.id === b.id); if (t) { t.messages.push({ id: Date.now(), direction: 'in', sender: 'customer', body: b.body || '또 문의드려요', at: new Date().toISOString(), image_url: null }); t.read = false; t.done = false; if (t.state !== 'open') t.state = 'open'; if (b.draft) t.draft = b.draft; } return send(res, 200, { ok: !!t }); }
     if (p.startsWith('/api/inbox/')) {
         if (ST.gone) return send(res, 404, { error: 'not found' });
         if (p === '/api/inbox/counts') return send(res, 200, { counts: counts() });
+        if (p === '/api/inbox/done' && req.method === 'POST') {
+            const b = await body(req), t = ST.threads.find(x => x.ch === b.ch && x.id === String(b.id));
+            if (!t) return send(res, 404, { ok: false, error: '대화를 찾지 못했어요' });
+            if (ST.fail === 'nodone') return send(res, 404, { error: 'not found' });
+            if (ST.fail === 'done') return send(res, 500, { ok: false, error: '저장하지 못했어요' });
+            t.done = !b.undo; ST.log.push({ op: 'done', ch: t.ch, id: t.id, undo: !!b.undo });
+            return send(res, 200, { ok: true, done: t.done, counts: counts() });
+        }
         if (p === '/api/inbox/threads' && req.method === 'GET') {
             if (ST.fail === 'list') return send(res, 500, { error: 'boom' });
             const ch = u.searchParams.get('ch'), scope = u.searchParams.get('scope') || 'active', q = (u.searchParams.get('q') || '').trim();
+            ST.log.push({ op: 'list', ch, scope, q });
             let a = ST.threads.filter(t => t.ch === ch);
             if (q) a = a.filter(t => (t.title + ' ' + t.messages.map(x => x.body).join(' ')).includes(q));
-            else if (scope === 'open') a = a.filter(t => t.state === 'open');
+            else if (scope === 'open') a = a.filter(needsOf);
             else if (scope !== 'all') a = a.filter(t => unreadOf(t) > 0);
             a.sort((x, y) => String(last(y).at).localeCompare(String(last(x).at)));
             return send(res, 200, { threads: a.map(row), counts: counts() });

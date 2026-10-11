@@ -1014,6 +1014,19 @@ module.exports = function mountSms(app, deps) {
     // #635: 안 읽음 = 직원이 마지막으로 연 뒤(staff_read_at) 들어온 손님 글 수 — 서버가 받은 시각(created_at) 기준(폰 시계·늦은 재시도와 무관)
     const UNREAD_SQL = `(SELECT count(*)::int FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' AND m.created_at > COALESCE(t.staff_read_at, 'epoch'::timestamptz))`;
     const ACTIVE_SQL = `t.status <> 'ignored' AND ${UNREAD_SQL} > 0 ${TEST_HIDE_T2}`;   // 목록(scope=active): 안 읽은 글이 있는 대화 · 인증번호·광고·통신사만 온 번호(ignored)는 뺀다
+    const OPEN_SQL = `t.status NOT IN ('closed','ignored') AND (${UNREAD_SQL} > 0 OR t.staff_why IS NOT NULL) ${TEST_HIDE_T2}`;   // #660 목록(scope=open · 미답변): 끝난·무시가 아닌 대화 중 안 읽은 글이 있거나 사람 몫인 것
+    // #661 「확인 필요 문의」 칸·손님 연락 창 숫자에 문자 미답변(scope=open 과 같은 식)을 내준다 — desk-inbox.js 의 고리로(server.js 무접촉)
+    try {
+        require('../desk-inbox.js').hook('sms', async () => {
+            const n = (await pool.query(`SELECT (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open, (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread`)).rows[0];
+            // 카드 줄 = 전체 대화(무시 갈래 제외) 최근순 30 — 대기(미답변 = scope=open 과 같은 식) 줄을 빠짐없이 먼저 담는다
+            const rows = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread, (${OPEN_SQL}) AS is_open, count(*) OVER ()::int AS total FROM sms_threads t WHERE t.status <> 'ignored' ${TEST_HIDE_T2}
+                ORDER BY (${OPEN_SQL}) DESC, COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT 30`)).rows;
+            const items = rows.map(t => { const p = pub(t); return Object.assign({ kind: 'sms', needs_reply: !!t.is_open, done: false, last_text: p.last_dir === 'out' ? p.last_out_text : p.last_in_text }, p); })
+                .sort((a, b) => new Date(b.last_at || 0) - new Date(a.last_at || 0));
+            return { open: n.open, unread: n.unread, more: rows.length ? Math.max(0, rows[0].total - rows.length) : 0, items };
+        });
+    } catch (e) { }
     app.get('/api/sms/summary', authMiddleware, wrap(async (req, res) => {
         const c = await cfg(); const st = (await naverCfgGet('sms_gateway_state')) || {};
         const today = kstDate();
@@ -1022,6 +1035,7 @@ module.exports = function mountSms(app, deps) {
             (SELECT count(*)::int FROM sms_threads WHERE draft_text IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS drafts,
             (SELECT count(*)::int FROM sms_threads WHERE staff_why IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS staff_open,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread_threads,
+            (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open_threads,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND t.staff_why IS NOT NULL AND t.status <> 'closed') AS needs_staff,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_in,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_bot,
@@ -1035,11 +1049,12 @@ module.exports = function mountSms(app, deps) {
         const hasStatus = req.query.status !== undefined && req.query.status !== '';
         const status = String(req.query.status || 'all'), q = String(req.query.q || '').trim().slice(0, 40), limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
         const scope = String(req.query.scope || (hasStatus ? '' : 'active'));
-        if (scope && !['active', 'all'].includes(scope)) return res.status(400).json({ ok: false, error: '범위 값이 틀려요' });
+        if (scope && !['active', 'all', 'open'].includes(scope)) return res.status(400).json({ ok: false, error: '범위 값이 틀려요' });
         const where = [], args = [];
         if (hasStatus && status !== 'all') { if (!STATUSES.includes(status)) return res.status(400).json({ ok: false, error: '상태 값이 틀려요' }); args.push(status); where.push(`t.status = $${args.length}`); }
         else if (q || scope === 'all') where.push('TRUE');
         else if (scope === 'active') where.push(ACTIVE_SQL);
+        else if (scope === 'open') where.push(OPEN_SQL);   // #660
         else where.push(`t.status <> 'ignored'`);   // 종전 status=all
         if (q) {
             const qd = /^[\d\s-]+$/.test(q) ? q.replace(/\D/g, '') : '', qt = q.replace(/\d/g, '').trim();

@@ -86,11 +86,27 @@ function row(t, peekUnread) {
     return Object.assign(base, { unread: peekUnread === 0 ? 0 : unreadOf(t), needs_staff: !!t.staff_why && !['closed', 'ignored'].includes(t.status), staff_why: t.staff_why || null, staff_why_label: t.staff_why ? (WHY[t.staff_why] || '직원 확인') : null, draft_kind: draftOf(t) ? 'ai' : null, staff_read_at: t.read_at || null, last_dir: last ? last.direction : null, last_at: last ? last.event_at : null });
 }
 const latest = t => Math.max(...t.messages.map(x => Date.parse(x.event_at)));
+const isOpen = t => !['closed', 'ignored'].includes(t.status) && (isActive(t) || !!t.staff_why);
+// #661-b 손님 연락 카드 응답(실서버 꼴): 채널별 전체 대화(최근순) · needs_reply = 대기 · counts.{ch}.open = 대기 수 · more = 못 실은 줄 수
+function cuOf() {
+    if (!ST.cu) { const r = (kind, id, min, o) => Object.assign({ kind, id, at: iso(min), last_at: iso(min), state: 'open', seen: false, done: false, unread: 0, can_send: true, last_dir: 'in' }, o, { wait0: !!o.needs_reply });
+        ST.cu = { talk: [r('talk', 9101, 5, { tkey: 't-711a', title: '톡톡 손님 711a', sub: '하우스감귤 가정용', last_text: '오늘 주문하면 언제 받나요?', needs_reply: true }), r('talk', 9102, 50, { tkey: 't-22bc', title: '톡톡 손님 22bc', sub: '', last_text: '네 감사합니다 확인했어요', state: 'staff', last_dir: 'out' }), r('talk', 9103, 400, { tkey: 't-9f01', title: '톡톡 손님 9f01', sub: '황금향', last_text: '선물 포장 되나요', needs_reply: true })],
+            qna: [r('qna', 7201, 30, { title: '황금향 가정용 3kg', sub: 'kim***', last_text: '당도가 어느 정도인가요?', needs_reply: true }), r('qna', 7202, 900, { title: '하우스감귤 4kg', sub: 'lee***', last_text: '안내드린 대로 내일 출고됩니다', state: 'ai', last_dir: 'out' })],
+            inquiry: [r('inquiry', 8301, 120, { title: '미니밤호박 특품 5kg', sub: '박**', last_text: '주소 변경 부탁드려요', needs_reply: true })] }; }
+    return ST.cu;
+}
+function deskInbox() {
+    const cu = cuOf(), strip = x => { const o = Object.assign({}, x); delete o.wait0; return o; };
+    const sms = ST.enabled === false && ST.noSmsCard ? null : ST.threads.filter(t => t.status !== 'ignored').map(t => Object.assign(row(t), { kind: 'sms', needs_reply: isOpen(t), done: false, last_text: String((t.messages[t.messages.length - 1] || {}).body || '').slice(0, 120) })).sort((a, b) => Date.parse(b.last_at) - Date.parse(a.last_at));
+    const cnt = a => ({ open: a.filter(x => x.needs_reply).length, ai: 0, staff: 0 });
+    return { days: 30, talk: cu.talk.map(strip), qna: cu.qna.map(strip), inquiry: cu.inquiry.map(strip), sms, counts: { talk: cnt(cu.talk), qna: cnt(cu.qna), inquiry: cnt(cu.inquiry), sms: sms ? { open: sms.filter(x => x.needs_reply).length } : null }, more: { sms: 0, talk: ST.cuMore ? 4 : 0, qna: 0, inquiry: 0 }, at: new Date().toISOString() };
+}
 function summary() {
     const c = {}; ['new', 'staff_needed', 'draft', 'bot_replied', 'staff_replied', 'closed', 'ignored'].forEach(k => { c[k] = ST.threads.filter(t => t.status === k).length; });
     const day = Date.now() - 86400000, all = ST.threads.flatMap(t => t.messages).filter(x => Date.parse(x.event_at) > day);
     const s = { enabled: ST.enabled, mode: ST.mode, staff_needed: c.staff_needed, drafts: ST.legacy ? c.draft : ST.threads.filter(t => draftOf(t) && !['closed', 'ignored'].includes(t.status)).length, today_in: all.filter(x => x.direction === 'in').length, today_bot: all.filter(x => x.sender === 'bot').length, today_staff: all.filter(x => /^staff/.test(x.sender)).length, gateway: { last_ping_at: ST.alive ? iso(0) : iso(190), alive: ST.alive } };
     if (!ST.legacy && !ST.noStaffOpen) s.staff_open = ST.threads.filter(t => t.staff_why && !['closed', 'ignored'].includes(t.status)).length;
+    if (!ST.legacy && !ST.noOpen) s.open_threads = ST.threads.filter(isOpen).length;   // #660 답 안 한 것(끝남·무시 아님 + 안 읽음 또는 사람 몫)
     if (!ST.legacy) { s.unread_threads = ST.threads.filter(isActive).length; s.needs_staff = ST.threads.filter(t => isActive(t) && t.staff_why).length; }
     if (ST.withCounts) s.counts = c;
     return s;
@@ -112,7 +128,7 @@ http.createServer(async (req, res) => {
     try {
         if (p === '/__mock/log') return send(res, 200, { log: ST.log });
         if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
-        if (p === '/__mock/set') { const b = await readBody(req); if ('many' in b) ST.many = !!b.many; if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; if ('staffOpen' in b) ST.noStaffOpen = !b.staffOpen; if ('history' in b) ST.noHistory = !b.history; return send(res, 200, { ok: true }); }
+        if (p === '/__mock/set') { const b = await readBody(req); if ('many' in b) ST.many = !!b.many; if ('noOpen' in b) ST.noOpen = !!b.noOpen; if ('cuMore' in b) ST.cuMore = !!b.cuMore; if (b.clearWhy) ST.threads.forEach(t => { t.staff_why = null; }); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; if ('staffOpen' in b) ST.noStaffOpen = !b.staffOpen; if ('history' in b) ST.noHistory = !b.history; return send(res, 200, { ok: true }); }
         if (p === '/__mock/draft') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.draft_text = b.text ? String(b.text) : null; return send(res, 200, { ok: true }); }   // 봇 초안이 뒤늦게 생김
         if (p === '/__mock/push') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.messages.push({ id: 7000 + t.messages.length + t.id * 10, direction: 'in', kind: 'sms', body: String(b.body || '또 보냅니다'), sender: 'customer', state: 'received', image_ids: [], event_at: new Date().toISOString() }); if (t.status === 'closed') t.status = 'new'; return send(res, 200, { ok: true }); }
         if (p.startsWith('/api/sms/')) {
@@ -126,6 +142,8 @@ http.createServer(async (req, res) => {
                 if (hasSt && st !== 'all') list = ST.threads.filter(t => t.status === st);
                 else if (q || scope === 'all') list = ST.threads.slice();
                 else if (scope === 'active') list = ST.threads.filter(isActive);
+                else if (scope === 'open' && !ST.noOpen) list = ST.threads.filter(isOpen);
+                else if (scope === 'open') return send(res, 400, { ok: false, error: '범위 값이 틀려요' });   // 옛 서버
                 else list = ST.threads.filter(t => t.status !== 'ignored');   // 종전 status=all · 옛 서버
                 if (q) {   // 실서버와 같게: 숫자 3~4자리 = 끝자리 일치 · 5자리 이상 = 전체 번호 일치만 · 1~2자리 = 0건 · 글은 숫자를 뺀 글로
                     const dg = q.replace(/\D/g, ''), txt = q.replace(/\d/g, '').trim();
@@ -171,6 +189,9 @@ http.createServer(async (req, res) => {
             }
             return send(res, 404, { error: '없는 주소입니다' });
         }
+        if (p === '/api/agent-office/desk/inbox' && M === 'GET') return send(res, 200, deskInbox());
+        if (p === '/api/agent-office/desk/inbox/review' && M === 'POST') { const b = await readBody(req); const x = (cuOf()[b.kind] || []).find(r => String(r.id) === String(b.id)); if (!x) return send(res, 404, { error: '없는 문의입니다' }); x.done = x.seen = !b.undo; x.needs_reply = b.undo ? !!x.wait0 : false; ST.log.push({ at: Date.now(), path: p, action: b.undo ? 'review-undo' : 'review', kind: b.kind, id: b.id }); return send(res, 200, { ok: true, message: b.undo ? '다시 대기로 돌렸어요' : '확인했습니다' }); }
+        if (p.startsWith('/api/inbox/')) return send(res, 404, { error: '없는 주소입니다' });   // #658 뒤: 이 가짜 서버는 문자만(빈 200 을 주면 화면이 톡톡·문의 창이 있는 서버로 안다)
         if (p.startsWith('/api/')) {
             const hit = STUB.find(([re]) => re.test(p));
             if (M !== 'GET') { ST.log.push({ at: Date.now(), path: p, action: 'other-write' }); return send(res, 200, { ok: true }); }

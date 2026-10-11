@@ -50,19 +50,19 @@ const tmp = o => { const f = path.join(os.tmpdir(), 'v474-' + Math.random().toSt
         ok('직원도 확인 필요 문의를 본다 · 채널 3개', i1.status === 200 && Array.isArray(i1.j.talk) && Array.isArray(i1.j.qna) && Array.isArray(i1.j.inquiry), `톡톡 ${talk.length} · Q&A ${(i1.j.qna || []).length} · 주문 문의 ${(i1.j.inquiry || []).length}`);
         ok('미답변 = open · 사유 표시', !!fa && fa.state === 'open' && /30분/.test(fa.why), fa ? fa.why : '없음');
         ok('봇이 답한 건 = AI 답변 확인 전 · 손님 글과 봇 답이 함께', !!fb && fb.state === 'ai' && /검증용 봇 답변/.test(fb.answer));
-        ok('광고·업체 제안 글은 목록에서 빠진다', !fc);
+        ok('광고·업체 제안 글은 대기가 아니다(#661 카드 = 전체 목록 · 줄은 보임)', !!fc && fc.needs_reply === false && !!fa && fa.needs_reply === true && !!fb && fb.needs_reply === false);
         ok('손님 식별값은 화면으로 나가지 않는다', !JSON.stringify(i1.j).includes('v474-open'));
         const before = i1.j.counts.talk;
 
         const r1 = await call(tok(staff || boss), 'POST', '/api/agent-office/desk/inbox/review', { kind: 'talk', id: a });
         const i2 = await call(tok(boss), 'GET', '/api/agent-office/desk/inbox');
-        ok('[확인] = 목록에서 빠짐 · 건수 1 감소', r1.status === 200 && !(i2.j.talk || []).find(x => x.id === a) && i2.j.counts.talk.open === before.open - 1, `${before.open} → ${i2.j.counts.talk.open}`);
+        ok('[확인] = 대기에서 빠짐(줄은 남고 done) · 건수 1 감소', r1.status === 200 && ((i2.j.talk || []).find(x => x.id === a) || {}).needs_reply === false && ((i2.j.talk || []).find(x => x.id === a) || {}).done === true && i2.j.counts.talk.open === before.open - 1, `${before.open} → ${i2.j.counts.talk.open}`);
         const i3 = await call(tok(boss), 'GET', '/api/agent-office/desk/inbox?seen=1');
         const sa = (i3.j.talk || []).find(x => x.id === a);
         ok('「확인한 건도 보기」 = 다시 보임 · 누가 확인했는지', !!sa && sa.seen === true && !!sa.seen_by, sa ? sa.seen_by : '');
         await call(tok(boss), 'POST', '/api/agent-office/desk/inbox/review', { kind: 'talk', id: a, undo: true });
         const i4 = await call(tok(boss), 'GET', '/api/agent-office/desk/inbox');
-        ok('되돌리기 = 목록에 다시 올라옴', !!(i4.j.talk || []).find(x => x.id === a));
+        ok('되돌리기 = 다시 대기', ((i4.j.talk || []).find(x => x.id === a) || {}).needs_reply === true);
         const row = (await pool.query(`SELECT message, bot_response, answered FROM message_logs WHERE id = $1`, [a])).rows[0];
         ok('[확인]은 표시만 바꾼다(손님 글·봇 기록 무변경)', /언제 받나요/.test(row.message) && row.bot_response === '[쿨다운-무응답]' && row.answered === false);
         const bad = await call(tok(boss), 'POST', '/api/agent-office/desk/inbox/review', { kind: 'nope', id: 1 });
