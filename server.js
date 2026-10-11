@@ -948,6 +948,9 @@ async function initDB() {
     // #401-c(대표): 「일시(주문)」 = 실제 주문 시각 — 이력에 order_at 신설(additive·기존 행 NULL = 종전 표시 유지)
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS order_at TIMESTAMP`);
     await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS order_at TIMESTAMP`);
+    // #642: 주문 표식(버튼 링크) · 옵션 원문 · 네이버 상품번호 · 발송 때 연결된 판매현황 행(실패면 NULL)
+    await pool.query(`ALTER TABLE lms_guide_log ADD COLUMN IF NOT EXISTS guide_token VARCHAR(20), ADD COLUMN IF NOT EXISTS guide_opt TEXT, ADD COLUMN IF NOT EXISTS guide_pno BIGINT, ADD COLUMN IF NOT EXISTS guide_pid INTEGER`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_lms_guide_log_token ON lms_guide_log (guide_token) WHERE guide_token IS NOT NULL`);
     // #419(대표 GO 8/28): 쿠팡만 성함·안심번호 DB 저장(대표 확정 예외 — 단건 재조회 API 부재·050 안심번호는 기간 후 회수라 노출 위험 낮음).
     //   네이버·자사몰은 종전 원칙(마스킹만 저장·표시 시점 재조회) 그대로 — cp: 행 외에는 이 컬럼을 쓰지 않는다.
     await pool.query(`ALTER TABLE kakao_notify_log ADD COLUMN IF NOT EXISTS cp_name VARCHAR(50)`);
@@ -5877,6 +5880,47 @@ function guideGroups(rows) {   // 안내문 글이 같은 판매중 행을 한 �
     for (const g of out) g.name = (seen[g.title] > 1 && g.detail && !g.title.includes(g.detail)) ? g.title + ' (' + g.detail + ')' : g.title;   // 같은 품목명이 여럿이면 꼬리로 가름
     return out.sort((x, y) => x.name.localeCompare(y.name, 'ko'));
 }
+// #642(대표 10/11 「그 손님의 주문건만 맛있게 먹는 법이 뜨도록 · 그 주문건과 보관법을 매칭 · 계속 살려놓고」):
+//   알림톡 버튼 링크의 #{상품코드} 에 판매현황 행 번호 대신 **주문 표식**(숫자 13자리)을 싣는다 → 페이지가 열릴 때 그 주문의 품목으로 안내문을 찾는다.
+//   그러면 판매현황 행을 지우든·이름을 바꾸든·발송 때 연결이 실패했든, 나중에 판매현황만 고치면 이미 나간 링크도 살아난다.
+//   표식 = 주문 열쇠의 서명값(주문번호를 링크에 그대로 싣지 않음 · 같은 주문은 다시 보내도 같은 값) · 숫자만인 이유 = 같은 버튼 묶음의 #{송장번호}(숫자 12자리)와 같은 꼴이라 알림톡 변수로 실증된 모양.
+//   종전 링크(p = 판매현황 행 번호 · 한참 작은 수)와는 크기로 가른다. 화면에는 상품 안내문만 나간다(주문번호·이름·번호 0).
+const GUIDE_TOKEN_MIN = 1000000000000;   // 10^12 이상이면 주문 표식(13자리 · 8로 시작) — 2^53 보다 작아 숫자로 안전
+function guideOrderToken(orderKey) {
+    const h = crypto.createHmac('sha256', String(JWT_SECRET || 'akkome-guide')).update('guide:' + String(orderKey || '')).digest('hex');
+    return '8' + (BigInt('0x' + h.slice(0, 15)) % 1000000000000n).toString().padStart(12, '0');
+}
+// 발송 기록 줄에 표식·옵션 원문·그때 연결된 행을 남긴다(기록 INSERT 뒤에 부른다 · 실패해도 발송·기록 흐름을 막지 않는다).
+//   guide_pid 가 NULL 인 발송 줄 = 「발송 때 판매현황 연결 실패」 → 나중에 셀 수 있다.
+async function guideLogMeta(orderKey, meta) {
+    try {
+        if (!orderKey) return;
+        const m = meta || {};
+        await pool.query(`UPDATE lms_guide_log SET guide_token = $2, guide_opt = COALESCE($3, guide_opt), guide_pno = COALESCE($4::bigint, guide_pno), guide_pid = $5 WHERE order_key = $1`,
+            [String(orderKey), guideOrderToken(orderKey), m.opt ? String(m.opt).slice(0, 500) : null, /^\d{1,18}$/.test(String(m.pno || '')) ? String(m.pno) : null, Number.isInteger(m.pid) ? m.pid : null]);
+    } catch (e) { console.error('guideLogMeta(무시):', e.message); }
+}
+// 표식 → 안내문 줄 찾기. 차례: ⓐ그때 연결된 행(살아 있음) → ⓑ옵션 원문으로 지금 판매현황 다시 연결(발송 때와 같은 함수) → ⓐ'그때 연결된 행(삭제됨) → ⓒ같은 원문으로 삭제된 행 → ⓓ같은 네이버 상품의 판매중 행(안내문이 전부 같은 글일 때만) → 없으면 null(묶음 목록으로) · 원칙 = 틀린 안내보다 묶음 목록
+async function guideResolveByToken(token) {
+    try {
+        const log = (await pool.query(`SELECT order_key, guide_opt, guide_pno, guide_pid FROM lms_guide_log WHERE guide_token = $1 ORDER BY id DESC LIMIT 1`, [String(token)])).rows[0];
+        if (!log) return null;
+        const has = r => !!(r && r.shipping_guide && String(r.shipping_guide).trim());
+        const linked = log.guide_pid ? (await pool.query(`SELECT id, name, shipping_guide, deleted_at FROM bot_products WHERE id = $1`, [log.guide_pid])).rows[0] : null;
+        if (has(linked) && !linked.deleted_at) return linked;   // ⓐ 그때 연결된 행이 살아 있으면 그것(이름·상태가 바뀌어도 번호로 따라간다)
+        const opt = String(log.guide_opt || '').trim();
+        const match = /^(c24|cp):/.test(String(log.order_key || '')) ? kakaoNotify.matchNotifyProductLoose : kakaoNotify.matchNotifyProduct;   // 발송 때 쓴 함수 그대로(네이버 = 엄격 · 자사몰·쿠팡 = 느슨)
+        const all = opt ? (await pool.query(`SELECT id, name, shipping_guide, deleted_at FROM bot_products ORDER BY id`)).rows : [];   // 안내문 없는 행까지 전부 — 진짜 짝에 안내문이 없을 때 이름이 더 짧은 형제 행이 대신 잡히지 않게(틀린 안내보다 묶음 목록)
+        if (opt) { const live = match(opt, all.filter(r => !r.deleted_at)); if (has(live)) return live; }   // ⓑ 옵션 원문으로 지금 판매현황 다시 연결 — 행을 지우고 새로 만들었으면 새 행이 먼저
+        if (has(linked)) return linked;   // ⓐ' 그때 연결된 행이 삭제됐어도 안내문이 남아 있으면
+        if (opt) { const dead = match(opt, all.filter(r => r.deleted_at).reverse()); if (has(dead)) return dead; }   // ⓒ 삭제된 것 가운데서는 나중 것부터
+        if (log.guide_pno) {
+            const sib = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE naver_product_no = $1 AND deleted_at IS NULL AND status = '판매중' AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> '' ORDER BY name`, [log.guide_pno])).rows;
+            if (sib.length && new Set(sib.map(r => String(r.shipping_guide).trim())).size === 1) return sib[0];   // 그 상품의 판매중 행 안내문이 전부 같은 글일 때만(옵션마다 글이 다르면 어느 것인지 모른다 → 묶음 목록)
+        }
+        return null;
+    } catch (e) { console.error('guideResolveByToken(무시):', e.message); return null; }
+}
 // #449(대표 GO 9/16 — 추석 이벤트 1회성): 발송안내 알림톡 [맛있게 드시는 법·보관법] 버튼 페이지(/guide) 상단 이벤트 안내 블록.
 //   설정 = agent_office_config 'guide_event_card' {enabled, title, lines[], btn, url(https만), start, end}(start/end = KST 'YYYY-MM-DD', 포함).
 //   설정이 없거나 꺼졌거나 기간 밖이면 '' → 페이지 출력은 종전과 바이트 동일(스타일도 블록 안에만 둠). 알림톡 템플릿·버튼 URL 무접촉(재심사 없음).
@@ -5904,7 +5948,9 @@ function guideEventCardHtml(cfg, nowMs) {
 }
 app.get('/guide', async (req, res) => {
     try {
-        const pid = parseInt(req.query.p, 10) || 0;
+        const pRaw = parseInt(req.query.p, 10) || 0;
+        const isToken = Number.isSafeInteger(pRaw) && pRaw >= GUIDE_TOKEN_MIN;   // #642 주문 표식
+        const pid = (!isToken && pRaw > 0 && pRaw <= 2147483647) ? pRaw : 0;   // 판매현황 행 번호(정수 칸 범위 밖은 번호 없음으로)
         const rows = (await pool.query(
             `SELECT id, name, shipping_guide FROM bot_products
              WHERE deleted_at IS NULL AND status = '판매중' AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> ''
@@ -5915,7 +5961,7 @@ app.get('/guide', async (req, res) => {
         const renderGuide = (g) => guideEsc(shippingSchedule.renderGuidePlaceholders(g, now, hinfo.arriveOff))   /* #336: 요일 치환은 도착불가 기준 */
             .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--primary); word-break:break-all;">$1</a>')   // #164: 안내문 내 URL 클릭 가능 링크
             .replace(/\n/g, '<br>');
-        let picked = rows.find(r => r.id === pid) || null;
+        let picked = isToken ? await guideResolveByToken(pRaw) : (rows.find(r => r.id === pid) || null);   // #642: 표식이면 그 주문의 품목으로(못 찾으면 아래 묶음 목록)
         // #540(10/5): 알림톡 링크로 지정된 품목은 판매 상태와 무관하게 안내문을 보여 준다 — 「준비중·시즌종료」로 돌린 품목의 이미 나간 링크가 빈 페이지가 되던 것(행사로 2.5kg 로얄과를 준비중으로 돌린 실사고). 목록(others)은 종전대로 판매중만.
         if (!picked && pid) {
             try {
@@ -6393,6 +6439,7 @@ app.post('/api/agent-office/lms-guide/:orderKey/send', authMiddleware, adminOnly
                 created_at=NOW(), resend_count=COALESCE(lms_guide_log.resend_count,0)+1`,
             [orderKey, ((out.matched ? out.matched.name : (po.productName || '')) + (out.noGuide ? ' (안내문 미등록)' : '')).slice(0, 200),
              kakaoNotify.maskPhone((out && out.recvTel) || od.ordererTel || (po.shippingAddress && (po.shippingAddress.tel1 || po.shippingAddress.tel2)) || ''), out.message, out.res.mode, out.res.status, out.res.error || null]);
+        await guideLogMeta(orderKey, { opt: `${po.productName || ''} ${po.productOption || ''}`, pno: po.productId || po.originalProductId || '', pid: out.matched ? out.matched.id : null });   // #642
         await writeAudit({ action: 'manual_send', targetType: 'lms_guide', targetId: null,
             changes: { after: { order_key: orderKey, mode: out.res.mode, status: out.res.status } }, source: 'lms-guide', actor: adminActor(req) });
         res.json({ ok: true, mode: out.res.mode, status: out.res.status });
@@ -8079,7 +8126,7 @@ async function lmsGuideBuildAndSend(orderKey, po, od, bp, holidayInfo, trackingN
             '상품명': notifyNameWithTail(po.productOption || po.productName || '', kakaoNotify.cleanProductName(po.productOption || po.productName || '주문 상품'), 80),   /* #542 꼬리(설정 없으면 종전과 같음) · #416(대표 8/26): 발송안내도 주문안내(#146)와 동일 정제 — 「아꼼이네 상품선택: 1. …」 원문 통째 노출 교정 */
             '도착안내': 도착안내,
             '발송일': kstMdDow(Date.now()),   // #587: 발송안내4(「#{발송일} 출발했습니다!」)용 — 옛 템플릿(UK_5756)은 이 변수를 안 써 무해
-            '상품코드': String((matched && matched.id) || ''),   // 버튼 링크 /guide?p=상품코드 (지시 #94 — 미매칭이면 빈값=가이드 홈)
+            '상품코드': guideOrderToken(orderKey),   // 버튼 링크 /guide?p=상품코드 — #642: 판매현황 행 번호 대신 주문 표식(연결이 실패했어도 나중에 판매현황만 고치면 열린다)
             '송장번호': String(trackingNumber || '').replace(/[^0-9]/g, ''),   // 버튼 링크 /track?n=송장번호 (지시 #99 — 없으면 빈값=조회 홈)
         },
         fallback: lmsMessage ? { subject: '제주아꼼이네 배송 안내', message: lmsMessage } : undefined,   // #173: 안내문 없으면 SMS 대체 문면은 E 문면 그대로(sendShippingGuideAlimtalk 내부)
@@ -8119,10 +8166,12 @@ async function collectLmsGuide() {
             const od = c.order || it.order || po.order || {};
             const orderKey = String(po.productOrderId || od.productOrderId || '').slice(0, 50);
             if (!orderKey) continue;
+            let gMatched;   // #642: 발송에 쓴 연결 결과(undefined = 발송 전에 실패)
             try {
                 // 송장번호(지시 #99): 상세조회 응답 배송 정보에서 방어적 추출 — 발송처리(DISPATCHED) 주문은 송장 보유
                 const tracking = (c.delivery && c.delivery.trackingNumber) || (po.delivery && po.delivery.trackingNumber) || po.trackingNumber || '';
                 const out = await lmsGuideBuildAndSend(orderKey, po, od, bp, hinfo, tracking);
+                gMatched = out.matched || null;   // #642
                 if (out.skip) {
                     skipped++;
                     await pool.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status)
@@ -8143,6 +8192,8 @@ async function collectLmsGuide() {
                     [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
             } finally {
                 // #401-e: 일시(주문) = 결제 시각 기록 (주문안내와 동일 — 표시 전용)
+                { const _gOpt = `${po.productName || ''} ${po.productOption || ''}`; let _gM = gMatched; if (_gM === undefined) { try { _gM = kakaoNotify.matchNotifyProduct(_gOpt, bp); } catch (_) { _gM = null; } }
+                  await guideLogMeta(orderKey, { opt: _gOpt, pno: po.productId || po.originalProductId || '', pid: _gM ? _gM.id : null }); }   // #642(기록 INSERT 뒤 · 실패해도 흐름 무관)
                 try {
                     const _oa = Date.parse(od.paymentDate || od.orderDate || '');
                     if (_oa) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(_oa)]);
@@ -10605,6 +10656,7 @@ async function collectCafe24Guide() {
         const orderKey = ('c24:' + o.order_id).slice(0, 50);
         const orderAtMs = Date.parse(o.order_date || '') || null;   // #401-c: 일시(주문) 표시용
         let telSeed = String((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '').trim();
+        let gMeta = null;   // #642
         try {
             const it0 = (o.items || []).find(it => it.tracking_no && it.shipped_date && !it.claim_code);
             // 안전망: 발송한 지 48시간이 지난 건은 "오늘 출발" 안내가 거짓이 됨(수집 공백 복구 시) — 발송 없이 기록만
@@ -10617,6 +10669,7 @@ async function collectCafe24Guide() {
             }
             const optText = `${it0.product_name || ''} ${it0.option_value || ''}`;
             const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            gMeta = { opt: optText, pid: matched ? matched.id : null };   // #642
             const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
             const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), hinfo.arriveOff) : null;
             const 도착안내 = shippingSchedule.computeArrival(Date.now(), hinfo.arriveOff, hinfo.reasons).text;
@@ -10625,7 +10678,7 @@ async function collectCafe24Guide() {
                 '상품명': kakaoNotify.cleanProductName(c24OptClean(it0.option_value) || it0.product_name || '주문 상품').slice(0, 80),   /* #416: 「1. 」 번호 접두 제거 — 자사몰 주문안내(#401-278)와 동일 정제 */
                 '도착안내': 도착안내,
                 '발송일': kstMdDow(Date.now()),   // #587
-                '상품코드': String((matched && matched.id) || ''),
+                '상품코드': guideOrderToken(orderKey),   // #642 주문 표식
                 '송장번호': String(it0.tracking_no || '').replace(/[^0-9]/g, ''),
             };
             const recvTel = String((o.buyer && (o.buyer.cellphone || o.buyer.phone)) || '').trim();
@@ -10659,6 +10712,7 @@ async function collectCafe24Guide() {
                 VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
                 [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
         } finally {
+            if (gMeta) await guideLogMeta(orderKey, gMeta);   // #642(기록 INSERT 뒤)
             try {
                 if (orderAtMs) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
                 if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((o.buyer && o.buyer.name) || ''), at: Date.now() });   /* #405 */
@@ -10868,10 +10922,12 @@ async function collectCoupangGuide() {
         const orderKey = ('cp:' + s.orderId).slice(0, 50);
         const orderAtMs = Date.parse(s.paidAt || s.orderedAt || '') || null;   // #401-c
         let telSeed = coupangRecvTel(s);
+        let gMeta = null;   // #642(쿠팡은 버튼이 없지만 연결 실패를 셀 수 있게 같은 칸을 채운다)
         try {
             const first = (s.orderItems || [])[0] || {};
             const optText = String(first.vendorItemName || first.sellerProductName || '');
             const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            gMeta = { opt: optText, pid: matched ? matched.id : null };
             const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
             const tracking = String(first.invoiceNumber || s.invoiceNumber || '').replace(/[^0-9]/g, '');
             let message;
@@ -10907,6 +10963,7 @@ async function collectCoupangGuide() {
                 VALUES ($1,'dry-run','build-failed',$2) ON CONFLICT (order_key) DO NOTHING`,
                 [orderKey, String(e.message || e).slice(0, 300)]).catch(() => {});
         } finally {
+            if (gMeta) await guideLogMeta(orderKey, gMeta);   // #642(기록 INSERT 뒤)
             try {
                 if (orderAtMs) await pool.query(`UPDATE lms_guide_log SET order_at=$2 WHERE order_key=$1 AND order_at IS NULL`, [orderKey, new Date(orderAtMs)]);
                 if (telSeed) _telCache.set(orderKey, { tel: telSeed, name: String((s.orderer && s.orderer.name) || ''), at: Date.now() });   /* #405 */

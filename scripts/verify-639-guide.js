@@ -1,13 +1,14 @@
 // #639 검증: 알림톡 [맛있게 드시는 법·보관법] 링크(/guide?p=번호)
 //   ①링크 번호가 가리키는 품목은 삭제돼도 안내문이 뜬다 ②고른 품목이 없을 때(번호 없음·못 찾음·안내문 없음)만 「판매 중 상품 안내」 묶음 목록(스위치 GUIDE_LIST_WHEN_EMPTY)
 //   ③고른 품목이 있으면 종전 서버(git HEAD)와 바이트 동일 ④스위치를 끄면 ①만 남고 나머지는 종전과 바이트 동일
-//   서버 셋을 차례로 띄운다: 새 서버(SERVER639 · 없으면 ./server.js · 포트 3466) + 종전(git HEAD → _server_old_639.js · 3467) → 종전을 내리고 스위치 끈 사본(_server_off_639.js · 3467). 두 임시 파일은 끝에 지운다.
+//   서버 셋을 차례로 띄운다: 새 서버(SERVER639 · 없으면 ./server.js · 포트 3466) + 종전(#639 바로 앞 커밋 82d828f^ → _server_old_639.js · 3467) → 종전을 내리고 스위치 끈 사본(_server_off_639.js · 3467). 두 임시 파일은 끝에 지운다.
 //   실DB 읽기만(쓰기 0 · 스케줄러 막음). 브라우저 없음(HTML 수준 — 폰 390 가로 넘침은 따로).
 //   실행: node scripts/verify-639-guide.js
 require('dotenv').config();
 const path = require('path'), fs = require('fs'); const { spawn, execFileSync } = require('child_process'); const { Client } = require('pg');
 const ROOT = path.join(__dirname, '..'), NEW = Number(process.env.PORT639 || 3466), ALT = NEW + 1, OLD_FILE = '_server_old_639.js', OFF_FILE = '_server_off_639.js';
 const SERVER = process.env.SERVER639 || './server.js';
+const OLD_REF = process.env.OLD639 || '82d828f^';   // 「종전」 = #639 가 들어가기 바로 앞 커밋(v5.9.495 = 82d828f 의 부모). HEAD 로 두면 #639 가 배포된 뒤에는 견줄 대상이 자기 자신이 된다
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let pass = 0, fail = 0; const ok = (c, m, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + m + (d != null && !c ? ' — ' + String(d).slice(0, 260) : '')); };
 const start = (file, port) => spawn(process.execPath, ['-e', `global.setInterval=()=>({unref(){},ref(){}}); process.env.ANTHROPIC_API_KEY=''; require(${JSON.stringify(file)});`], { cwd: ROOT, env: { ...process.env, JWT_SECRET: 'verifytest', PORT: String(port) }, stdio: 'ignore' });
@@ -18,7 +19,7 @@ const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(
 
 (async () => {
     const src = fs.readFileSync(path.join(ROOT, SERVER), 'utf8');
-    fs.writeFileSync(path.join(ROOT, OLD_FILE), execFileSync('git', ['show', 'HEAD:server.js'], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 }));
+    fs.writeFileSync(path.join(ROOT, OLD_FILE), execFileSync('git', ['show', OLD_REF + ':server.js'], { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 }));
     const offSrc = src.replace('const GUIDE_LIST_WHEN_EMPTY = true;', 'const GUIDE_LIST_WHEN_EMPTY = false;');
     fs.writeFileSync(path.join(ROOT, OFF_FILE), offSrc);
     const sNew = start(SERVER, NEW); let sAlt = start('./' + OLD_FILE, ALT);
