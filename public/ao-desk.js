@@ -110,7 +110,7 @@
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
-        view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(),
+        view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(), boxOpen: new Set(), todoAll: false,
         hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false, delAsk: 0 }, endAsk: 0, pin: new Set(), q: { mine: '', all: '' }, mineLimit: 60, pickImg: false,
         inbox: null, inboxKind: 'talk', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
@@ -284,11 +284,13 @@
             <section class="desk-board folded" id="desk-board" aria-label="현황판"></section>
         </div>
         <aside class="desk-side">
+            <div class="desk-panel desk-todo-box" id="desk-todo-box" aria-label="지금 챙길 일"><h3>지금 챙길 일 <span id="desk-todo-n"></span></h3><div id="desk-todo"><div class="desk-empty">불러오는 중</div></div><button type="button" class="desk-todo-more" id="desk-todo-more" aria-controls="desk-todo" hidden></button></div>
             <div class="desk-panel"><h3>LIVE 로그 <span>내 채팅 처리 현황</span></h3><div id="desk-live"></div></div>
             <div class="desk-panel"><h3>오늘 일정 <span id="desk-today-n"></span></h3><div id="desk-today"></div></div>
             <div class="desk-panel"><h3>주요 업무 현황 <span>오늘 기준</span></h3><div id="desk-prog"></div></div>
         </aside>`;
         bind();
+        todoBind();
         S.mounted = true;
         // #477 안내 문구는 관리자·직원 같다(대표 9/30 — 직원도 바로 실행)
     }
@@ -312,7 +314,7 @@
             const f = Array.from((e.clipboardData && e.clipboardData.files) || [])[0];
             if (f) { e.preventDefault(); setReplyImg(id, f); }
         });
-        $('desk-list').addEventListener('input', e => { if (e.target && e.target.classList && e.target.classList.contains('desk-reply-in')) { fitReply(e.target); syncSendBtns(); } });
+        $('desk-list').addEventListener('input', e => { if (e.target && e.target.classList && e.target.classList.contains('desk-reply-in')) { const tbx = e.target.closest('.desk-thread-box'); if (tbx && tbx.dataset.th) S.boxOpen.add(Number(tbx.dataset.th)); fitReply(e.target); syncSendBtns(); } });
         let histT = 0;   // #543 검색 — 치는 즉시(한글 조합 중에도) 받은 목록을 화면에서 거른다. 이력 탭은 250ms 뒤 서버에서 찾아 바꿔 끼운다
         const onSearch = () => {
             const v = $('desk-hist-q').value; S.q[S.tab] = v; $('desk-hist-x').hidden = !v;
@@ -543,21 +545,14 @@
     const SHIP_EMPTY = '그 기간 송장이 아직 안 올라왔어요. 아래에 택배사 엑셀을 끌어다 놓거나, 대표 PC에서 송장이 올라오기를 기다려 주세요.';
     // ── #653-나(대표 10/11 「+ 를 누르면 파일·이미지, 중간발주, 최종발주, 정산이미지 … 보기 좋게」) ──
     //   입력 칸 왼쪽 [+] 하나 → 묶음별 판(첨부 · 발주 · 확인 · 손님). PC = 단추 아래 팝오버 · 폰 = 아래에서 올라오는 시트. ↑↓ Home End · Enter · Esc · 바깥 누름.
-    //   [+] 옆 바로가기 = 최근에 쓴 것 2개(처음엔 중간발주 · 최종발주 · 이 브라우저에 기억) + 안 읽은 문자가 있으면 「문자 n」. 바로가기는 메뉴 항목을 대신 눌러 주는 것뿐(동작은 한 곳).
+    //   [+] 옆 바로가기 = 안 읽은 문자가 있으면 「문자 n」 하나뿐(종전 「최근에 쓴 것 2개」는 대표 10/11 지시로 뺌). 바로가기는 메뉴 항목을 대신 눌러 주는 것뿐(동작은 한 곳).
     const PLUS_ID = { attach: 'desk-attach', settle: 'desk-settle-now', qty: 'desk-qty-now', final: 'desk-final-now', ship: 'desk-ship-now', price: 'desk-price-now', sms: 'desk-sms-now' };
     const PLUS_NAME = { settle: '정산 이미지', qty: '중간발주', final: '최종발주', ship: '배송조회', price: '가격 확인', sms: '문자' };
     const PLUS_KEY = 'akm_desk_plus_recent';
-    function plusRecent() {
-        let a = []; try { a = JSON.parse(localStorage.getItem(PLUS_KEY) || '[]'); } catch (e) { a = []; }
-        a = (Array.isArray(a) ? a : []).filter(k => k in PLUS_NAME && k !== 'sms');
-        for (const k of ['qty', 'final']) if (a.length < 2 && !a.includes(k)) a.push(k);
-        return a.slice(0, 2);
-    }
-    function plusUsed(k) {
-        if (!(k in PLUS_NAME) || k === 'sms') return;
-        try { const a = [k].concat(plusRecent().filter(x => x !== k)).slice(0, 2); localStorage.setItem(PLUS_KEY, JSON.stringify(a)); } catch (e) { /* 기억 못 해도 동작은 그대로 */ }
-        plusShorts();
-    }
+    // 대표 10/11(라이브 실물): 「중간발주·최종발주 뜨는 건 없도록」 → 기본·최근 바로가기는 없앤다(메뉴는 [+] 안에서만). 남는 바로가기 = 안 읽은 문자가 있을 때의 「문자 n」 하나
+    try { localStorage.removeItem(PLUS_KEY); } catch (e) { /* 옛 기억 지우기 — 못 지워도 쓰지 않는다 */ }
+    function plusRecent() { return []; }
+    function plusUsed() { /* 최근 기억 없음 */ }
     function plusShorts() {
         const box = $('desk-shorts'); if (!box) return;
         const sm = SMS.sum ? smsNeed() : null, keys = plusRecent().concat(sm && sm.unread > 0 ? ['sms'] : []);
@@ -2415,11 +2410,13 @@
         const ths = threadsOf(S.orders).filter(t => t.items.some(o => keep.has(o.id)));   // 상태로 거를 때: 대화 안 한 건이라도 맞으면 대화 통째로
         let shownN = 0, hidden = 0;
         const hm = { hour: '2-digit', minute: '2-digit' };
-        const html = ths.map(t => {
+        const html = ths.map((t, ti) => {
             const needs = t.items.some(o => NEEDS.includes(o.status));
             const ov = !S.qOn && !needs && !t.items.some(o => S.pin.has(o.id)) && ++shownN > PREVIEW_LIST;
             if (ov) hidden++;
             const first = t.items[0];
+            // #653-다 ②: 답 칸은 맨 위(가장 최근) 대화만 펼친다 — 나머지는 「이어서 지시」 한 줄(누르거나 대화를 누르면 펼쳐짐 · 쓰던 글·붙인 그림·종료 확인 중이면 펼친 채)
+            const boxOpen = ti === 0 || S.boxOpen.has(t.id) || S.endAsk === t.id || S.replyImg.has(t.last);
             const canHide = t.items.every(o => CLOSED_FOR_HIDE(o) || o.status === '질문');   // #605(대표 10/9): 되묻기에 답하지 않고도 끝낼 수 있게 — 종료 때 「질문」은 먼저 닫는다(질문종결)
             const busyEnd = !canHide && t.items.some(o => ['판독완료', '확인표작성', '승인대기'].includes(o.status));
             // #538: 대화 머리 = 시작 시각 + 첫 글 한 줄 → 어디서부터 다른 대화인지 바로 보인다
@@ -2430,7 +2427,7 @@
             const endIn = `<span class="desk-end-ask in" role="group" aria-label="채팅 종료 확인 — 이전 채팅 이력에서 다시 볼 수 있어요"><button type="button" class="desk-endbtn yes" data-act="hidethread" data-id="${t.id}">종료하기</button><button type="button" class="desk-endbtn no" data-act="endno" data-id="${t.id}">취소</button></span>`;
             // #571(대표 10/7 「PC 에서도 모바일처럼」): 답 상자가 없는 대화(최종발주 기록)도 같은 자리에서 — 종전 넓은 확인 칸은 PC 에서 [종료]가 오른쪽 끝(600px 넘게)으로 떨어졌다. 이제 [채팅 종료]가 있던 그 자리에 [종료하기]·[취소](.solo)
             const endBtn = canHide ? `<button type="button" class="desk-endbtn" data-act="endchat" data-id="${t.id}">채팅 종료</button>` : '';
-            const lastHtml = o => { const rb = resultBody(o, true), f = followHtml(o), asking = S.endAsk === t.id; const wrap = (a, b) => a + `<div class="desk-chatbar">${b}</div>`;
+            const lastHtml = o => { const rb = resultBody(o, true), f0 = followHtml(o), f = !boxOpen && f0.indexOf('data-cbox="') >= 0 ? `<div class="desk-follow-line"><button type="button" class="desk-follow-open" data-act="openbox" data-id="${t.id}" aria-expanded="false">이어서 지시</button><!--endslot--></div>` : f0, asking = S.endAsk === t.id; const wrap = (a, b) => a + `<div class="desk-chatbar">${b}</div>`;
                 if (!endBtn) return wrap(rb, f + (busyEnd ? '<span class="desk-h-note">처리 중이라 끝난 뒤 종료할 수 있어요.</span>' : ''));
                 if (f.indexOf('<!--endslot-->') >= 0) return wrap(rb, f.replace('<!--endslot-->', asking ? endIn : endBtn));
                 if (rb.indexOf('<!--endslot-->') >= 0) return wrap(rb.replace('<!--endslot-->', asking ? endIn : endBtn), f);   // #605 되묻기 답 상자 안 「+」 옆
@@ -2545,6 +2542,12 @@
     // 그 대화의 답 칸으로 옮겨 커서를 둔다(답 칸이 없는 대화면 대화 틀로만 옮긴다)
     function focusThread(box, noFocus) {
         if (!box) return;
+        if (box.dataset && box.dataset.th && box.querySelector('.desk-follow-open')) {   // #653-다 ②: 접힌 답 칸이면 먼저 펼친다
+            const th = box.dataset.th;
+            S.boxOpen.add(Number(th)); renderList();
+            box = document.querySelector('#desk-list .desk-thread-box[data-th="' + th + '"]');
+            if (!box) return;
+        }
         const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         const ta = box.querySelector('.desk-turn.last .desk-reply-in');
         const target = ta ? (ta.closest('.desk-cbox') || ta) : box;
@@ -2679,6 +2682,7 @@
             try { await aoDownloadFile(Number(b.dataset.file)); } finally { b.disabled = false; }
             return;
         }
+        if (act === 'openbox') { focusThread(document.querySelector('#desk-list .desk-thread-box[data-th="' + id + '"]')); return; }
         if (act === 'endchat') { S.endAsk = id; renderList(); const y = document.querySelector('#desk-list .desk-end-ask [data-act="hidethread"]'); if (y) y.focus(); return; }
         if (act === 'endno') { S.endAsk = 0; renderList(); return; }
         if (act === 'histopen') { S.hist.delAsk = 0; if (S.hist.open.has(id)) S.hist.open.delete(id); else S.hist.open.add(id); renderList(); return; }
@@ -2856,6 +2860,38 @@
         const nav = document.querySelector('.nav-item[data-page="inquiry"]');
         if (nav) { nav.click(); setTimeout(() => { try { if (typeof switchInquiryTab === 'function') switchInquiryTab('unanswered'); } catch (e) { /* 메뉴만 열려도 된다 */ } }, 0); }   // 문의 관리의 「톡톡 문의」 탭까지
     }
+    // #653-다(대표 10/11): 「지금 챙길 일」을 현황판 맨 아래에서 꺼내 — PC(오른쪽 칸이 있는 폭) = 오른쪽 칸 맨 위 · 그보다 좁으면(폰 · 폴드 펼침 900) 입력 칸 바로 아래(도구 카드 뒤 · 채팅 목록 앞)
+    //   좁은 폭에서는 4건까지만 보이고 [N건 더 보기] — 채팅 목록을 화면 밖으로 밀지 않게
+    const TODO_WIDE = '(min-width: 1181px)', TODO_CUT = 4;
+    function todoPlace() {
+        const box = $('desk-todo-box'), lb = $('desk-listbox'), side = document.querySelector('#ao-desk-root .desk-side');
+        if (!box || !lb || !side) return;
+        if (window.matchMedia(TODO_WIDE).matches) { if (side.firstElementChild !== box) side.prepend(box); }
+        else if (lb.previousElementSibling !== box) lb.before(box);
+    }
+    function todoRender(html) {
+        const el = $('desk-todo'), box = $('desk-todo-box');
+        if (!el || !box) return;
+        el.innerHTML = html;
+        const n = el.querySelectorAll('.desk-todo > li').length, more = $('desk-todo-more'), cnt = $('desk-todo-n');
+        if (cnt) cnt.textContent = n ? n + '건' : '';
+        box.classList.toggle('cut', n > TODO_CUT && !S.todoAll);
+        box.classList.toggle('none', !n);
+        if (more) { more.hidden = n <= TODO_CUT; more.textContent = S.todoAll ? '접기' : (n - TODO_CUT) + '건 더 보기'; more.setAttribute('aria-expanded', String(!!S.todoAll)); }
+        todoPlace();
+    }
+    function todoBind() {
+        const box = $('desk-todo-box');
+        if (!box) return;
+        box.addEventListener('click', e => {
+            if (e.target.closest('#desk-todo-more')) { S.todoAll = !S.todoAll; if (S.board) renderBoard(); return; }
+            const bf = e.target.closest('.bf-go'); if (bf) { botFailGo(bf.dataset.bf); return; }
+            const li = e.target.closest('.sms-todo'); if (li) smsOpen(li.dataset.sms === 'active' ? 'active' : undefined);
+        });
+        box.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('sms-todo')) { e.preventDefault(); e.target.click(); } });
+        todoPlace();
+        try { window.matchMedia(TODO_WIDE).addEventListener('change', todoPlace); } catch (e) { /* 옛 브라우저: 다음 현황판 갱신 때 자리를 다시 잡는다 */ }
+    }
     function renderBoard() {
         const d = S.board, box = $('desk-board');
         if (!d || !box) return;
@@ -2884,6 +2920,7 @@
                 ? `<ul class="desk-todo">${smsLi}${d.todo.map(t => t.key === 'botfail' ? botFailHtml(t) : `<li><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
                 : '<div class="desk-empty">지금 챙길 일이 없어요.</div>';
         }
+        todoRender(todoHtml);
         let salesHtml = '';
         if (d.is_admin && Array.isArray(d.sales)) {
             salesHtml = `<div class="desk-panel"><h3>네이버 정산 회차별 결제금액 <span>대표만 보임</span></h3>${d.sales.length
@@ -2893,7 +2930,6 @@
         box.innerHTML = `
             <div class="desk-panel"><h3>채널별 주문 <span>오늘 · 주문 안내 기준</span></h3>${chHtml}</div>
             <div class="desk-panel"><h3>최근 7일 발송 박스 <span>정산관리 입력 기준</span></h3>${shipHtml}</div>
-            <div class="desk-panel"><h3>지금 챙길 일</h3>${todoHtml}</div>
             ${salesHtml}`;
         renderSide(d);
     }

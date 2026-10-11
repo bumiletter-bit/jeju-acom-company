@@ -118,7 +118,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
                     turns: Array.from(b.querySelectorAll('.desk-turn')).map(t => ({ id: Number(t.dataset.oid), last: t.classList.contains('last'), me: (t.querySelector('.desk-bub.me .desk-q') || {}).textContent, meta: (t.querySelector('.desk-bub-meta') || {}).textContent,
                         badge: (t.querySelector('.desk-bub.ai .desk-badge') || {}).textContent, ai: (t.querySelector('.desk-bub.ai') || {}).textContent.replace(/\s+/g, ' ').trim().slice(0, 160),
                         reply: Array.from(t.querySelectorAll('textarea.desk-reply-in[id^="reply-"]')).filter(vis).length, send: Array.from(t.querySelectorAll('[data-act="sendreply"]')).filter(vis).map(b => b.getAttribute('aria-label') || b.textContent.trim()), imgBtn: Array.from(t.querySelectorAll('[data-act="replyimg"]')).filter(vis).length,
-                        followVis: Array.from(t.querySelectorAll('[data-act="follow"]')).filter(vis).length, followDom: t.querySelectorAll('[data-act="follow"]').length })),
+                        followVis: Array.from(t.querySelectorAll('[data-act="follow"]')).filter(vis).length, followDom: t.querySelectorAll('[data-act="follow"]').length, fold: Array.from(t.querySelectorAll('.desk-follow-open')).filter(vis).map(b => b.textContent.trim()).join() })),
                 })),
                 more: (document.getElementById('desk-list-more') || {}).textContent.replace(/\s+/g, ' ').trim(), full: document.getElementById('desk-listbox').classList.contains('is-full'),
                 rootOverflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2, docOverflow: document.documentElement.scrollWidth > window.innerWidth + 2,
@@ -151,7 +151,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         ok('내 말풍선 = 지시 글 + 「n번 · 시각」 · 클코 말풍선 = 답(끝난 차례엔 배지 없음)', T(200).turns[0].me === '추석 감사 문자 문구 만들어줘' && /^200번 · /.test(T(200).turns[0].meta) && !T(200).turns[0].badge && /1번 문구/.test(T(200).turns[0].ai) && /201번 답변/.test(T(200).turns[1].ai));
         const allTurns = c.threads.flatMap(t => t.turns.map(x => Object.assign({ th: t.th }, x)));
         const DONE = [120, 130, 202, 212];   // 미리보기에 보이는 끝난 대화의 마지막 차례(10·11·12는 [자세히 확인하기] 안)
-        ok('#500 대화 보기 = 끝난 대화의 마지막 차례마다 답 칸이 누르지 않아도 열려 있음([이어서 보내기]·[이미지 첨부]) · [이어서 지시]·[취소] 버튼 없음', DONE.every(id => { const x = allTurns.find(t => t.id === id); return x && x.last && x.reply === 1 && x.send.join() === '이어서 보내기' && x.imgBtn === 1; }) && allTurns.every(x => x.followDom === 0), JSON.stringify(allTurns.filter(x => DONE.includes(x.id)).map(x => [x.id, x.reply, x.imgBtn])));
+        ok('#500 → #653-다 대화 보기 = 맨 위(가장 최근) 대화의 마지막 차례만 답 칸이 열려 있음([이어서 보내기]·[이미지 첨부]) · 나머지 끝난 대화는 「이어서 지시」 한 줄(답 칸 0) · 옛 [이어서 지시]·[취소] 버튼(data-act=follow) 없음', DONE.every(id => { const x = allTurns.find(t => t.id === id); if (!x || !x.last) return false; return id === 212 ? (x.reply === 1 && x.send.join() === '이어서 보내기' && x.imgBtn === 1 && x.fold === '') : (x.reply === 0 && x.imgBtn === 0 && x.fold === '이어서 지시'); }) && allTurns.every(x => x.followDom === 0), JSON.stringify(allTurns.filter(x => DONE.includes(x.id)).map(x => [x.id, x.reply, x.imgBtn, x.fold])));
         ok('#500 가운데 차례(200·201·210·211)엔 답 칸 없음 · 처리 중(140)·승인대기(160·161) 대화에도 없음 · 되묻기(150)는 답 칸 1개만(「답 보내기」)', [200, 201, 210, 211, 140, 160, 161].every(id => allTurns.find(t => t.id === id).reply === 0) && allTurns.find(t => t.id === 150).reply === 1 && allTurns.find(t => t.id === 150).send.join() === '답 보내기', JSON.stringify(allTurns.map(x => [x.id, x.reply])));
         ok('× = 끝난 대화에만 · 진행 중·되묻기·승인대기 든 대화엔 없음', T(200).x && T(210).x && T(130).x && T(120).x && !T(140).x && !T(160).x && !T(161).x, JSON.stringify(c.threads.map(t => [t.th, t.x])));
         info(`참고: 되묻기(질문) 대화의 × = ${T(150).x} (hide-mine 서버 규칙은 「질문」 상태를 지울 수 있는 것으로 봄)`);
@@ -198,6 +198,8 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         ok('답한 뒤 = 같은 대화 아래에 내 답이 붙고(2번 주고받음) 그 대화가 맨 위로', !!afterQ && afterQ.s.threads[0].th === 150 && JSON.stringify(afterQ.t.turns.map(x => x.id)) === '[150,300]' && afterQ.t.turns[1].me === '30명이야' && /2번 주고받음/.test(afterQ.t.head) && afterQ.t.turns[0].badge !== '확인 필요', afterQ ? afterQ.t.head + ' · 앞 차례 배지 ' + afterQ.t.turns[0].badge : '');
 
         // 이어서 지시(마지막 차례)
+        await A.pg.click('#desk-list .desk-thread-box[data-th="200"] .desk-follow-open'); await A.pg.waitForTimeout(350);   // #653-다: 맨 위가 아닌 대화는 「이어서 지시」 한 줄을 눌러 답 칸을 편다
+        ok('#653-다 접힌 「이어서 지시」를 누르면 그 대화의 답 칸이 펴지고 커서가 들어감 · 목록이 다시 그려져도 펴진 채', await A.pg.evaluate(() => { const t = document.getElementById('reply-202'); return !!t && document.activeElement === t && !document.querySelector('#desk-list .desk-thread-box[data-th="200"] .desk-follow-open'); }));
         const f0 = await A.pg.evaluate(() => { const ta = document.getElementById('reply-202'); return { ta: !!ta && ta.getClientRects().length > 0, focus: true, rows: ta ? ta.rows : 0 }; });   // #500 누르지 않아도 열려 있다
         await A.pg.fill('#reply-202', '한 줄 더 짧게');
         await A.pg.click('#desk-list .desk-turn[data-oid="202"] [data-act="sendreply"]');
@@ -209,6 +211,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
 
         // ── #500 답 칸에 이미지 1장 · Enter 보내기
         await A.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="130"]'); if (t) t.scrollIntoView({ block: 'center' }); });
+        await A.pg.click('#desk-list .desk-thread-box[data-th="130"] .desk-follow-open'); await A.pg.waitForTimeout(350);   // #653-다: 접힌 답 칸을 편다
         const i0 = await rst(A.pg, 130);
         const pp = await pasteImg(A.pg, '#reply-130');
         const i1 = await waitFor(async () => { const x = await rst(A.pg, 130); return x && x.thumb ? x : null; }, 4000);
@@ -244,8 +247,10 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         // 글·이미지 둘 다 없으면 안 보냄 → 이미지만으로는 보냄
         await A.pg.click('#desk-list-more');   // 120번 대화는 미리보기 5개 밖 → 크게 보기에서
         await sleep(300);
-        const inFull = await A.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="120"]'); if (t) t.scrollIntoView({ block: 'center' }); const ta = document.getElementById('reply-120'); return !!ta && ta.getClientRects().length > 0; });
-        ok('#500 [자세히 확인하기] 크게 보기 안의 대화에도 답 칸이 열려 있음', inFull);
+        const fold120 = await A.pg.evaluate(() => { const b = document.querySelector('#desk-list .desk-thread-box[data-th="120"] .desk-follow-open'); return !!b && b.getClientRects().length > 0 && !document.getElementById('reply-120'); });
+        await A.pg.click('#desk-list .desk-thread-box[data-th="120"] .desk-th-head'); await sleep(350);   // #653-다: 대화(머리 줄)를 눌러도 접힌 답 칸이 펴진다
+        const inFull = fold120 && await A.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-thread-box[data-th="120"]'); if (t) t.scrollIntoView({ block: 'center' }); const ta = document.getElementById('reply-120'); return !!ta && ta.getClientRects().length > 0; });
+        ok('#500 → #653-다 [자세히 확인하기] 크게 보기 안의 대화 = 「이어서 지시」 한 줄 → 대화 머리 줄을 누르면 답 칸이 펴짐', inFull);
         // #538: 비어 있으면 보내기 버튼이 꺼져 있다(누를 수 없음)
         const dis120 = await A.pg.evaluate(() => document.querySelector('#desk-list .desk-turn[data-oid="120"] [data-act="sendreply"]').disabled);
         ok('#500 글·이미지 둘 다 없으면 보내지 않음(#538 보내기 버튼이 꺼져 있음)', dis120 === true && posts(A, /\/orders\/120\/reply$/).length === 0);
@@ -374,7 +379,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         // 1440: 현황판 접기 버튼 안 보임 · 현황판 보임
         const bd = pg => pg.evaluate(() => { const b = document.getElementById('desk-board-fold'), s = document.getElementById('desk-board'); const vis = el => !!el && el.getClientRects().length > 0; return { btn: vis(b), text: b ? b.textContent.trim() : '', exp: b ? b.getAttribute('aria-expanded') : null, board: vis(s), panels: s ? s.querySelectorAll('.desk-panel').length : 0, folded: s ? s.classList.contains('folded') : null, btnH: b ? Math.round(b.getBoundingClientRect().height) : 0, order: Array.from(document.querySelectorAll('#ao-desk-root .desk-main > section')).map(x => x.id || x.className.split(' ')[0]) }; });
         const b14 = await bd(A.pg);
-        ok('1440px — 현황판 접기 버튼 안 보임 · 현황판은 늘 보임(4칸)', !b14.btn && b14.board && b14.panels === 4, JSON.stringify(b14));
+        ok('1440px — 현황판 접기 버튼 안 보임 · 현황판은 늘 보임(3칸 — #653-다 「지금 챙길 일」은 오른쪽 칸 맨 위)', !b14.btn && b14.board && b14.panels === 3 && await A.pg.evaluate(() => document.querySelector('#ao-desk-root .desk-side').firstElementChild === document.getElementById('desk-todo-box')), JSON.stringify(b14));
         ok('칸 순서 그대로(지시하기 → 지시 목록 → 확인 필요 문의 → 현황판)', JSON.stringify(b14.order) === '["desk-top","desk-ship","desk-qty","desk-sms","desk-listbox","desk-inbox","desk-board"]'   /* 도구 카드 칸(#594 배송조회 · #595 중간발주 · #610 문자)은 접힌 section 으로 늘 있다 */, JSON.stringify(b14.order));
         ok('1440px — pageerror 0 · console error 0', A.errors.length === 0 && A.cons.length === 0, [...A.errors, ...A.cons].join(' | ').slice(0, 400));
         const otherWrites = A.st.writes.filter(w => !/\/orders(\/\d+\/(reply|hide-mine|approve|reject))?$/.test(w.p));
@@ -406,6 +411,9 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
              follow: hs('#desk-list [data-act="replyimg"], #desk-list textarea.desk-reply-in'), act: hs('#desk-list [data-act="approve"], #desk-list [data-act="reject"], #desk-list [data-act="sendreply"]') }; });
         ok('390px — 누르는 것 높이 44px 이상(×·보기 전환·답 칸·이미지 첨부·승인/반려/보내기)', [...tp.x, ...tp.view, ...tp.follow, ...tp.act].every(h => h >= 44), JSON.stringify({ x: Math.min(...tp.x), view: tp.view[0], follow: Math.min(...tp.follow), act: Math.min(...tp.act) }));
         await shot(P.pg, '6-390-대화보기', '#desk-listbox');
+        const fo130 = await P.pg.evaluate(() => { const b = document.querySelector('#desk-list .desk-thread-box[data-th="130"] .desk-follow-open'); if (!b) return null; const r = b.getBoundingClientRect(); b.scrollIntoView({ block: 'center' }); return Math.round(r.height); });
+        ok('390px — #653-다 접힌 「이어서 지시」 한 줄 높이 44px 이상', fo130 >= 44, String(fo130));
+        await P.pg.click('#desk-list .desk-thread-box[data-th="130"] .desk-follow-open'); await sleep(350);
         const rp0 = await P.pg.evaluate(() => { const t = document.querySelector('#desk-list .desk-turn[data-oid="130"]'), b = t.getBoundingClientRect(); const els = [document.getElementById('reply-130'), t.querySelector('[data-act="sendreply"]'), t.querySelector('[data-act="replyimg"]')]; return { all: els.every(Boolean), inCard: els.every(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.left >= b.left - 1 && r.right <= b.right + 1; }), h: els.map(e => Math.round(e.getBoundingClientRect().height)), overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2 }; });
         ok('#500 390px — 답 칸·[이어서 보내기]·[이미지 첨부]가 카드 안 · 44px 이상 · 넘침 없음', rp0.all && rp0.inCard && rp0.h.every(h => h >= 44) && !rp0.overflow, JSON.stringify(rp0));
         await P.pg.tap('#reply-130');

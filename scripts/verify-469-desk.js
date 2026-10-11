@@ -272,7 +272,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         });
         ok('새 화면 표시 · 종전 조직도·입력바·법인/오션라운지 필터 숨김', v.root && !v.legacyOffice && !v.legacyBar && !v.biz);
         ok('#501 첫 칸 = 한 카드(시계 + 지시 입력칸 「지시 내용」 · [지시 보내기]) · 창구 상태 · 캐릭터 그림 로드', v.title === '지시 내용' && v.sendLabel === '지시 보내기' && v.oneCard && /\d\d:\d\d/.test(v.clock) && !!v.state && v.img > 0, `${v.clock} / ${v.state}`);
-        ok('현황판 4칸(대표: 채널·발송·할 일·정산 회차) · 날씨 없음 · 「마루」 글자 없음', v.panels === 4 && !v.weather && !v.maru);
+        ok('현황판 3칸(대표: 채널·발송·정산 회차 — #653-다 「지금 챙길 일」은 오른쪽 칸 맨 위 · 오른쪽 칸이 없는 폭(1180 이하)은 채팅 목록 바로 앞) · 날씨 없음 · 「마루」 글자 없음', v.panels === 3 && !v.weather && !v.maru && await A.pg.evaluate(() => { const b = document.getElementById('desk-todo-box'), s = document.querySelector('#ao-desk-root .desk-side'); const lb = document.getElementById('desk-listbox'); return !!b && !!s && (window.innerWidth > 1180 ? s.firstElementChild === b : lb.previousElementSibling === b) && !document.querySelector('#desk-board .desk-todo'); }));
         ok('#566 대표 = 승인 결재함 탭 없음 · 가로 넘침 없음', !v.approvalTab && !v.overflow);
         // 지시 보내기(실클릭) — POST는 가로채 실DB 무변경
         const posts = [];
@@ -344,15 +344,15 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         await A.pg.route('**/api/agent-office/desk/board', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channels: [], ship: [], sales: [], is_admin: true, todo: [{ key: 'remind', when: '내일', label: '9/30(수) 14:00 황금향 특가 문자 [문자발송]', count: 1, where: '일정 · 문자발송' }, { key: 'reward', label: '룰렛 당첨 미지급', count: 2, where: '문의 관리 · 당첨 지급' }] }) }));
         await A.pg.evaluate(() => __aoDesk.loadBoard());
         await A.pg.waitForTimeout(600);
-        const todoTxt = await A.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-board .desk-todo li:not(.sms-todo)')).map(li => li.querySelector('span').textContent + '|' + li.querySelector('b').textContent + '|' + li.querySelector('small').textContent));
+        const todoTxt = await A.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-todo-box .desk-todo li:not(.sms-todo)')).map(li => li.querySelector('span').textContent + '|' + li.querySelector('b').textContent + '|' + li.querySelector('small').textContent));
         ok('할 일 칸 표시 = 일정 줄은 「내일」 · 다른 항목은 건수', todoTxt.length === 2 && todoTxt[0] === '9/30(수) 14:00 황금향 특가 문자 [문자발송]|내일|일정 · 문자발송' && /\|2건\|/.test(todoTxt[1]), todoTxt.join(' / '));
-        ok('#633 봇 실패 항목이 없으면 줄도 없음', await A.pg.evaluate(() => document.querySelectorAll('#desk-board .bot-fail, #desk-board .bf-go').length === 0));
+        ok('#633 봇 실패 항목이 없으면 줄도 없음', await A.pg.evaluate(() => document.querySelectorAll('#desk-todo-box .bot-fail, #desk-todo-box .bf-go').length === 0));
         await A.pg.unroute('**/api/agent-office/desk/board');
         await A.pg.route('**/api/agent-office/desk/board', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channels: [], ship: [], sales: [], is_admin: true, todo: [{ key: 'botfail', label: '봇 실패', count: 4, talk: 4, sms: 0, where: '톡톡 4 · 문자 0' }], live: [], today: [], progress: [] }) }));
         await A.pg.waitForTimeout(1400);   // (#631 의 1.2초 재사용 창은 #637 로 없어짐 — 이 대기는 이제 필요 없지만 무해해 그대로 둠)
         await A.pg.evaluate(() => __aoDesk.loadBoard());
         await A.pg.waitForTimeout(600);
-        const bf633 = await A.pg.evaluate(() => { const li = document.querySelector('#desk-board .bot-fail'); return li ? { t: li.querySelector('span').textContent + '|' + li.querySelector('b').textContent, bs: Array.from(li.querySelectorAll('.bf-go')).map(b => b.textContent + ':' + b.dataset.bf).join(','), note: li.querySelector('small i').textContent } : null; });
+        const bf633 = await A.pg.evaluate(() => { const li = document.querySelector('#desk-todo-box .bot-fail'); return li ? { t: li.querySelector('span').textContent + '|' + li.querySelector('b').textContent, bs: Array.from(li.querySelectorAll('.bf-go')).map(b => b.textContent + ':' + b.dataset.bf).join(','), note: li.querySelector('small i').textContent } : null; });
         ok('#633 봇 실패 줄 = 톡톡만 있으면 톡톡 알약 하나 · 문자 겹침 안내 글 없음', !!bf633 && bf633.t === '봇 실패|4건' && bf633.bs === '톡톡 4:talk' && !/문자/.test(bf633.note), JSON.stringify(bf633));
         await A.pg.unroute('**/api/agent-office/desk/board');
         // 확인표 창(기존 모달) 열기 — 가짜 확인표
@@ -367,7 +367,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const B = await open(tokS, { id: staff.id, name: staff.name, position: staff.position || '', role: 'staff' }, { width: 390, height: 844 });
         const w = await B.pg.evaluate(() => ({ approvalTab: !!document.getElementById('desk-tab-approval'), panels: document.querySelectorAll('#desk-board .desk-panel').length, overflow: document.documentElement.scrollWidth > window.innerWidth + 2,
             sendH: document.getElementById('desk-send').getBoundingClientRect().height, mineOnly: Array.from(document.querySelectorAll('#desk-list .desk-card')).length }));
-        ok('직원(390px) = 대표 확인함 탭 없음 · 현황판 3칸(정산 회차 없음) · 가로 넘침 없음 · 버튼 44px 이상', !w.approvalTab && w.panels === 3 && !w.overflow && w.sendH >= 44, JSON.stringify(w));
+        ok('직원(390px) = 대표 확인함 탭 없음 · 현황판 2칸(정산 회차 없음 · #653-다 챙길 일은 입력 칸 아래로) · 가로 넘침 없음 · 버튼 44px 이상', !w.approvalTab && w.panels === 2 && !w.overflow && w.sendH >= 44 && await B.pg.evaluate(() => { const b = document.getElementById('desk-todo-box'), lb = document.getElementById('desk-listbox'); return !!b && lb.previousElementSibling === b && b.getBoundingClientRect().height > 0; }), JSON.stringify(w));
         // 내 지시 × 실클릭(직원 · 390px)
         await B.pg.click('#desk-list-more'); await B.pg.waitForTimeout(400); // #476 오래된 카드는 크게 보기에서
         const xInfo = await B.pg.evaluate(ids => { const c = id => document.querySelector(`#desk-list .desk-card[data-oid="${id}"]`); const done = c(ids[0]), wait = c(ids[1]); const x = done && done.querySelector('.desk-x'); const r = x ? x.getBoundingClientRect() : null; return { doneX: !!x, size: r ? [Math.round(r.width), Math.round(r.height)] : null, waitX: !!(wait && wait.querySelector('.desk-x')), waitCard: !!wait }; }, [p1.j.order.id, pw.j.order.id]);

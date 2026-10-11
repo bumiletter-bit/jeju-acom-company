@@ -50,11 +50,11 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
             // ① 알약 · 닫힌 화면은 종전 그대로
             const chips = await pg.evaluate(() => Array.from(document.querySelectorAll('#desk-plus .desk-mi')).filter(b => !b.hidden).map(b => b.querySelector('strong').textContent.trim()));
             const shorts0 = await pg.evaluate(() => Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).map(b => b.textContent.trim()).join('|'));
-            ok(chips.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기|전체 가격 확인하기' && shorts0 === '중간발주|최종발주', `[${label}] #653-나 [+] 메뉴 6개 · 「전체 가격 확인하기」가 배송조회 옆(${chips.join('|')}) · 바로가기 「${shorts0}」`);
+            ok(chips.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기|전체 가격 확인하기' && shorts0 === '', `[${label}] #653-나 [+] 메뉴 6개 · 「전체 가격 확인하기」가 배송조회 옆(${chips.join('|')}) · 바로가기 「${shorts0}」`);
             ok(await pg.evaluate(() => !document.getElementById('desk-price')) && P.reqs.length === 0, `[${label}] 누르기 전에는 카드도 요청도 없음(칸 순서 종전 그대로 · 요청 ${P.reqs.length}회)`);
             const chipBox = await size(pg, '.desk-quick2 .desk-chip');
             ok(await sw(pg) <= vw.width && (!phone || chipBox.every(b => b.h >= 44)), `[${label}] 알약 줄 가로 넘침 없음(${await sw(pg)} ≤ ${vw.width})${phone ? ' · 알약 높이 44 이상(' + Math.min(...chipBox.map(b => b.h)) + ')' : ''}`);
-            if (phone) { const tops = await pg.evaluate(() => [...new Set(Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => Math.round(b.getBoundingClientRect().top)))].length); ok(tops === 1, `[${label}] 폰 바로가기는 한 줄(${tops}줄 · 나머지는 [+] 메뉴)`); }
+            if (phone) { const tops = await pg.evaluate(() => [...new Set(Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => Math.round(b.getBoundingClientRect().top)))].length); ok(tops <= 1, `[${label}] 폰 바로가기는 한 줄 이하(${tops}줄 · 나머지는 [+] 메뉴)`); }
 
             // ② 열기 · 머리 · 스냅샷 시각 · 칩
             await plusGo(pg, '#desk-price-now'); await loaded(pg);
@@ -238,7 +238,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
 
             // ⑩ Esc · 닫기 · 다시 열기(재요청 없음) · 다른 도구와 한 번에 하나
             await pg.focus('#pc-q'); await pg.keyboard.press('Escape'); await pg.waitForTimeout(250);
-            ok(await pg.evaluate(() => document.getElementById('desk-price').hidden && document.activeElement && document.activeElement.id === 'desk-short-price'), `[${label}] Esc → 카드 닫힘 · 초점이 그 일의 바로가기로`);
+            ok(await pg.evaluate(() => document.getElementById('desk-price').hidden && document.activeElement && document.activeElement.id === 'desk-plus-btn'), `[${label}] Esc → 카드 닫힘 · 초점이 [+] 로`);
             const n2 = P.reqs.length; await plusGo(pg, '#desk-price-now'); await pg.waitForTimeout(300);
             ok(await pg.locator('#desk-price').isVisible() && P.reqs.length === n2 && (await stat(pg)).groups > 0, `[${label}] 다시 열면 받은 자료 그대로(재요청 0)`);
             await plusGo(pg, '#desk-ship-now'); await pg.waitForTimeout(400);

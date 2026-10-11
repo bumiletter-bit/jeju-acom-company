@@ -13,7 +13,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
     await new Promise(r => setTimeout(r, 1500));
     const browser = await chromium.launch();
     try {
-        for (const [name, vw, phone, theme] of [['pc', { width: 1440, height: 900 }, false, null], ['phone', { width: 390, height: 844 }, true, null], ['pc-dark', { width: 1440, height: 900 }, false, 'dark'], ['phone-dark', { width: 390, height: 844 }, true, 'dark']]) {
+        for (const [name, vw, phone, theme] of [['pc', { width: 1440, height: 900 }, false, null], ['phone', { width: 390, height: 844 }, true, null], ['fold', { width: 900, height: 1000 }, false, null] /* 대표·회사폰 = 폴드 펼침(약 900) */, ['pc-dark', { width: 1440, height: 900 }, false, 'dark'], ['phone-dark', { width: 390, height: 844 }, true, 'dark']]) {
             await fetch(BASE + '/__mock/reset', { method: 'POST' });
             const ctx = await browser.newContext(Object.assign({ viewport: vw, deviceScaleFactor: 2, serviceWorkers: 'block', reducedMotion: 'reduce' }, phone ? { isMobile: true, hasTouch: true } : {}));
             const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(String(e)));
@@ -21,7 +21,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
             await pg.evaluate(th => { localStorage.setItem('jwt_token', 'mock.token.x'); localStorage.setItem('jwt_user', JSON.stringify({ id: 8, name: '시험직원', position: '대리', role: 'user' })); localStorage.setItem('akm_last_page', 'agent-office'); if (th) localStorage.setItem('akm_ao_theme', th); else localStorage.removeItem('akm_ao_theme'); localStorage.removeItem('akm_desk_plus_recent'); }, theme);
             await pg.reload({ waitUntil: 'networkidle' }).catch(() => { }); await pg.waitForTimeout(1800);
             const s0 = await pg.evaluate(() => ({ shorts: Array.from(document.querySelectorAll('#desk-shorts .desk-short')).map(b => b.textContent.trim()).join('|'), plusN: document.getElementById('desk-plus-n').textContent + '|' + document.getElementById('desk-plus-n').hidden, menu: document.getElementById('desk-plus').hidden, over: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }));
-            ok(s0.shorts === '중간발주|최종발주|문자7' && s0.plusN === '7|false' && s0.menu && s0.over <= vw.width, `[${name}] 처음: 바로가기 「${s0.shorts}」 · [+] 배지 ${s0.plusN} · 메뉴 닫힘 · 가로 ${s0.over}`);
+            ok(s0.shorts === '문자7' && s0.plusN === '7|false' && s0.menu && s0.over <= vw.width, `[${name}] 처음: 바로가기 「${s0.shorts}」 · [+] 배지 ${s0.plusN} · 메뉴 닫힘 · 가로 ${s0.over}`);
             if (OUT) await pg.screenshot({ path: path.join(OUT, `plus-${name}-closed.png`), clip: phone ? undefined : { x: 240, y: 0, width: 1200, height: 420 } });
             await pg.click('#desk-plus-btn'); await pg.waitForTimeout(350);
             const m1 = await pg.evaluate(() => { const m = document.getElementById('desk-plus'), r = m.getBoundingClientRect(); const items = Array.from(m.querySelectorAll('.desk-mi')).filter(b => !b.hidden); return { open: !m.hidden, exp: document.getElementById('desk-plus-btn').getAttribute('aria-expanded'), names: items.map(b => b.querySelector('strong').textContent).join('|'), groups: Array.from(m.querySelectorAll('.desk-plus-g')).filter(g => !g.hidden).map(g => g.querySelector('b').textContent).join('|'), minH: Math.min(...items.map(b => Math.round(b.getBoundingClientRect().height))), inView: r.left >= 0 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1 && r.top >= 0, focus: (document.activeElement || {}).id, pos: getComputedStyle(m).position, w: Math.round(r.width), smsN: document.getElementById('sms-chip-n').textContent }; });
@@ -37,7 +37,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 ok(f2 === 'desk-qty-now' && f3 === 'desk-sms-now' && f4 === 'desk-attach' && f5.menu && f5.focus === 'desk-plus-btn', `[${name}] 키보드: ↓↓ = ${f2} · End = ${f3} · ↓(돌아옴) = ${f4} · Esc → 닫힘 + 초점 [+]`);
                 await pg.keyboard.press('ArrowDown'); await pg.waitForTimeout(200); await pg.keyboard.press('End'); await pg.keyboard.press('ArrowUp'); await pg.keyboard.press('Enter'); await pg.waitForTimeout(700);
                 const p1 = await pg.evaluate(() => ({ menu: document.getElementById('desk-plus').hidden, price: !!document.getElementById('desk-price') && !document.getElementById('desk-price').hidden, shorts: Array.from(document.querySelectorAll('#desk-shorts .desk-short')).map(b => b.textContent.trim()).join('|') }));
-                ok(p1.menu && p1.price && p1.shorts === '가격 확인|중간발주|문자7', `[${name}] ↓ 로 열고 Enter 로 「전체 가격 확인하기」 → 카드 열림 · 메뉴 닫힘 · 바로가기가 최근 것으로(「${p1.shorts}」)`);
+                ok(p1.menu && p1.price && p1.shorts === '문자7' && await pg.evaluate(() => { try { return localStorage.getItem('akm_desk_plus_recent') === null; } catch (e) { return false; } }), `[${name}] ↓ 로 열고 Enter 로 「전체 가격 확인하기」 → 카드 열림 · 메뉴 닫힘 · 바로가기는 그대로 「문자 n」 하나(최근 쓴 것은 안 뜸 · 기억도 안 남김 · 「${p1.shorts}」)`);
                 await pg.click('#desk-plus-btn'); await pg.waitForTimeout(250); await pg.mouse.click(1000, 700); await pg.waitForTimeout(250);
                 ok(await pg.evaluate(() => document.getElementById('desk-plus').hidden), `[${name}] 바깥 누름 → 닫힘`);
                 await pg.click('#desk-plus-btn'); await pg.waitForTimeout(250); await pg.keyboard.press('Tab'); await pg.waitForTimeout(200);
@@ -50,7 +50,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 ok(oc === true && await pg.evaluate(() => document.getElementById('desk-plus').hidden && document.getElementById('desk-plus-btn').getAttribute('aria-expanded') === 'false' && !document.getElementById('desk-sms').hidden), `[${name}] 메뉴가 열린 채 문자 창이 뜨면(알림) 메뉴는 닫힘`);
                 await pg.keyboard.press('Escape'); await pg.waitForTimeout(350); await pg.keyboard.press('Escape'); await pg.waitForTimeout(450);
                 const bz = await pg.evaluate(() => { const it = document.getElementById('desk-qty-now'); it.disabled = true; window.__aoDesk.plusBusy(); const sc = document.getElementById('desk-short-qty'); const r = { busy: it.dataset.busy || '', short: sc ? sc.disabled + '|' + sc.textContent.trim() : '(바로가기 없음)' }; it.disabled = false; window.__aoDesk.plusBusy(); const sc2 = document.getElementById('desk-short-qty'); r.after = (it.dataset.busy || '') + '|' + (sc2 ? sc2.disabled + '|' + sc2.textContent.trim() : ''); return r; });
-                ok(bz.busy === '집계 중' && /^true\|중간발주집계 중$/.test(bz.short) && /^\|false\|중간발주$/.test(bz.after), `[${name}] 집계 중이면 메뉴 항목·바로가기 둘 다 꺼진 모양 + 「집계 중」 · 끝나면 원래대로(${JSON.stringify(bz)})`);
+                ok(bz.busy === '집계 중' && bz.short === '(바로가기 없음)' && bz.after === '|', `[${name}] 집계 중이면 메뉴 항목에 「집계 중」(중간발주 바로가기는 이제 없음) · 끝나면 원래대로(${JSON.stringify(bz)})`);
             } else {
                 await pg.touchscreen.tap(195, 60); await pg.waitForTimeout(300);
                 ok(await pg.evaluate(() => document.getElementById('desk-plus').hidden && document.getElementById('desk-plus-back').hidden), `[${name}] 시트 바깥(어두운 곳) 누름 → 닫힘`);
@@ -77,6 +77,72 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
             ok(!!chooser && await pg.evaluate(() => document.getElementById('desk-plus').hidden), `[${name}] 「파일 · 이미지」 → 파일 고르기 창 · 메뉴 닫힘`);
             const over = await pg.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth));
             ok(over <= vw.width && errs.length === 0, `[${name}] 끝까지 가로 넘침 없음(${over}) · 화면 오류 ${errs.length}${errs.length ? ' ' + errs[0].slice(0, 120) : ''}`);
+            await ctx.close();
+        }
+        // ════ #653-다(대표 10/11 「모두 진행해」): ①대화 틀 한 겹 ②맨 위 대화만 답 칸 ③흐린 「채팅 종료」 ④챙길 일 자리 ⑤초록은 [복사] 글자에만 — PC · 폴드 900 · 폰 (+ 야간)
+        const now = Date.now(), ago = m => new Date(now - m * 60000).toISOString();
+        const O = (id, min, content, extra) => Object.assign({ id, content, status: '완료', created_at: ago(min), processed_at: ago(min - 0.5), created_by: '시험직원 대리', created_by_id: 8, mine_hidden: false, has_image: false, reply_to: null, followed_by: null, steps: [], result: { type: 'desk_answer', answer: '답변입니다.' } }, extra || {});
+        const ORDERS = [
+            O(2301, 6, '오늘 황금향 판매현황 알려줘', { result: { type: 'desk_answer', answer: '━━━ ① 오늘 주문 ━━━\n스마트스토어 42건\n\n━━━ ② 품목별 ━━━\n황금향 가정용 3kg 21건' } }),
+            O(2302, 4, '선물용만 다시 보여줘', { reply_to: 2301, result: { type: 'desk_answer', answer: '황금향 선물용 5kg 9건이에요.' } }),
+            O(2290, 35, '내일 발송 휴무 안내 문구 써줘', { result: { type: 'desk_answer', answer: '내일은 발송을 쉬어 갑니다.' } }),
+            O(2285, 48, '보관법 알려줘', { result: { type: 'desk_answer', answer: '서늘한 곳에 두세요.' } }),
+            O(2280, 70, '정산관리에 올려줘', { status: '질문', processed_at: ago(69), result: { type: 'desk_question', question: '거래처가 효돈인지 대성인지 알려 주세요.' } }),
+        ];
+        const BOARD = { is_admin: false, channels: [{ ch: 'naver', today: 42, yesterday: 51 }], ship: [], live: [], today: [], progress: [],
+            todo: [{ key: 'botfail', label: '봇 실패', count: 3, talk: 2, sms: 1, where: '톡톡 2 · 문자 1' }, { key: 'fail', label: '알림 발송 실패', count: 2, where: '문의 관리 · 알림 발송 이력' }, { key: 'reward', label: '룰렛 당첨 미지급', count: 1, where: '문의 관리 · 당첨 지급' }, { key: 'remind', when: '오늘', label: '황금향 특가 문자 [문자발송]', count: 1, where: '일정 · 문자발송' }, { key: 'remind', when: '내일', label: '톡톡 단체 발송 [톡톡발송]', count: 1, where: '일정 · 톡톡발송' }] };
+        for (const [name, vw, phone, theme] of [['다-pc', { width: 1440, height: 900 }, false, null], ['다-fold', { width: 900, height: 1000 }, false, null], ['다-phone', { width: 390, height: 844 }, true, null], ['다-fold-dark', { width: 900, height: 1000 }, false, 'dark'], ['다-phone-dark', { width: 390, height: 844 }, true, 'dark']]) {
+            await fetch(BASE + '/__mock/reset', { method: 'POST' });
+            const ctx = await browser.newContext(Object.assign({ viewport: vw, deviceScaleFactor: 2, serviceWorkers: 'block', reducedMotion: 'reduce' }, phone ? { isMobile: true, hasTouch: true } : {}));
+            const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(String(e)));
+            const json = (r, b) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(b) });
+            await pg.route('**/api/agent-office/desk/orders*', r => r.request().method() === 'GET' ? json(r, { orders: ORDERS }) : r.fallback());
+            await pg.route('**/api/agent-office/desk/board*', r => json(r, BOARD));
+            await pg.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+            await pg.evaluate(th => { localStorage.setItem('jwt_token', 'mock.token.x'); localStorage.setItem('jwt_user', JSON.stringify({ id: 8, name: '시험직원', position: '대리', role: 'user' })); localStorage.setItem('akm_last_page', 'agent-office'); if (th) localStorage.setItem('akm_ao_theme', th); else localStorage.removeItem('akm_ao_theme'); }, theme);
+            await pg.reload({ waitUntil: 'networkidle' }).catch(() => { }); await pg.waitForTimeout(2200);
+            const wide = vw.width > 1180;
+            // ④ 챙길 일 자리
+            const td = await pg.evaluate(() => { const b = document.getElementById('desk-todo-box'), lb = document.getElementById('desk-listbox'), top = document.querySelector('.desk-top1'), side = document.querySelector('#ao-desk-root .desk-side'); const r = b.getBoundingClientRect(), tr = top.getBoundingClientRect(), lr = lb.getBoundingClientRect(); const lis = Array.from(b.querySelectorAll('.desk-todo > li')); const vis = e => e.getClientRects().length > 0; const more = document.getElementById('desk-todo-more');
+                return { inSide: side.firstElementChild === b, beforeList: lb.previousElementSibling === b, belowTop: r.top >= tr.bottom - 1, aboveList: r.bottom <= lr.top + 1, rightOfMain: r.left >= lr.right - 1, inBoard: !!document.querySelector('#desk-board .desk-todo'), n: lis.length, shown: lis.filter(vis).length, more: vis(more) ? more.textContent.trim() : '', moreH: vis(more) ? Math.round(more.getBoundingClientRect().height) : 0, cnt: document.getElementById('desk-todo-n').textContent, w: Math.round(r.width), over: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth), cols: new Set(lis.filter(vis).map(li => { const q = li.getBoundingClientRect(); return Math.round((q.left + q.right) / 2 / 40); })).size /* 문자 줄은 누름 칸 여백(-8px)이 있어 가운데로 센다 */, firstY: Math.round(r.top) }; });
+            if (wide) ok(td.inSide && td.rightOfMain && !td.inBoard && td.n === 6 && td.shown === 6 && td.more === '' && td.cnt === '6건' && td.over <= vw.width, `[${name}] ④ 「지금 챙길 일」 = 오른쪽 칸 맨 위 · 현황판에는 없음 · 6건 전부 보임(더 보기 없음 · ${JSON.stringify(td)})`);
+            else ok(!td.inSide && td.beforeList && td.belowTop && td.aboveList && !td.inBoard && td.n === 6 && td.shown === 4 && td.more === '2건 더 보기' && td.moreH >= 44 && td.cnt === '6건' && td.over <= vw.width && td.cols === (vw.width > 640 ? 2 : 1) && td.firstY < vw.height, `[${name}] ④ 「지금 챙길 일」 = 입력 칸 바로 아래(채팅 목록 앞 · 첫 화면 안 y=${td.firstY}) · 4건 + 「2건 더 보기」(44px) · ${td.cols}단 · 가로 ${td.over}`);
+            if (!wide) {
+                await pg.click('#desk-todo-more'); await pg.waitForTimeout(250);
+                const t2 = await pg.evaluate(() => ({ shown: Array.from(document.querySelectorAll('#desk-todo-box .desk-todo > li')).filter(e => e.getClientRects().length > 0).length, more: document.getElementById('desk-todo-more').textContent.trim(), exp: document.getElementById('desk-todo-more').getAttribute('aria-expanded') }));
+                await pg.waitForTimeout(5500);   // 현황판이 다시 그려져도 펼친 채
+                const t3 = await pg.evaluate(() => Array.from(document.querySelectorAll('#desk-todo-box .desk-todo > li')).filter(e => e.getClientRects().length > 0).length);
+                ok(t2.shown === 6 && t2.more === '접기' && t2.exp === 'true' && t3 === 6, `[${name}] ④ [더 보기] → 6건 전부 · 단추 「접기」 · 다시 그려져도 펼친 채(${t3})`);
+            }
+            const bfGo = await pg.evaluate(() => { const b = document.querySelector('#desk-todo-box .bf-go[data-bf="sms"]'); return !!b && b.getClientRects().length > 0; });
+            if (bfGo) { await pg.click('#desk-todo-box .bf-go[data-bf="sms"]'); await pg.waitForTimeout(900); ok(await pg.evaluate(() => !document.getElementById('desk-sms').hidden), `[${name}] ④ 옮긴 칸에서도 봇 실패 「문자」 단추 → 문자 창 열림`);
+                if (name === '다-fold') { const two = await pg.evaluate(() => { const l = document.querySelector('#desk-sms .sms-left'), p = document.getElementById('sms-pane'); const a = l.getBoundingClientRect(), b = p.getBoundingClientRect(); return { lw: Math.round(a.width), pw: Math.round(b.width), side: b.left >= a.right - 1 && Math.abs(a.top - b.top) < 4, pos: getComputedStyle(p).position }; }); ok(two.lw > 200 && two.pw > 300 && two.side && two.pos !== 'fixed', `[${name}] 폴드 900: 문자 창 = 2단(목록 ${two.lw} + 대화 ${two.pw} 나란히 · 대표가 맘에 들어 한 꼴 그대로)`); }
+                await pg.keyboard.press('Escape'); await pg.waitForTimeout(350); await pg.keyboard.press('Escape'); await pg.waitForTimeout(450); if (await pg.evaluate(() => !document.getElementById('desk-sms').hidden)) { await pg.evaluate(() => document.getElementById('sms-close') && document.getElementById('sms-close').click()); await pg.waitForTimeout(400); } }
+            else ok(false, `[${name}] ④ 봇 실패 「문자」 단추가 보이지 않음`);
+            // ①②③⑤ 대화 틀
+            const th = await pg.evaluate(() => { const cs = (e, p) => e ? getComputedStyle(e)[p] : null; const boxes = Array.from(document.querySelectorAll('#desk-list .desk-thread-box')).filter(b => b.getClientRects().length > 0);
+                const one = b => ({ th: Number(b.dataset.th), ta: b.querySelectorAll('.desk-turn.last textarea.desk-reply-in').length, fold: Array.from(b.querySelectorAll('.desk-follow-open')).map(x => x.textContent.trim() + ':' + Math.round(x.getBoundingClientRect().height)).join(), end: Array.from(b.querySelectorAll('[data-act="endchat"]')).map(x => cs(x, 'color') + '/' + cs(x, 'backgroundColor') + '/' + cs(x, 'borderTopColor') + '/' + Math.round(x.getBoundingClientRect().height)).join(), bw: cs(b, 'borderTopWidth') });
+                const a = document.querySelector('#desk-list .desk-a.answer'), sh = document.querySelector('#desk-list .desk-sec-head'), sc = document.querySelector('#desk-list .desk-sec-copy:not(.desk-a-copy)'), acts = document.querySelector('#desk-list .desk-a-acts');
+                return { boxes: boxes.map(one), aBorder: cs(a, 'borderLeftWidth') + '|' + cs(a, 'borderTopWidth') + '|' + cs(a, 'boxShadow'), secBg: cs(sh, 'backgroundColor'), secB: cs(sh.querySelector('b'), 'color'), copy: cs(sc, 'color'), actsBg: cs(acts, 'backgroundColor'), actsBl: cs(acts, 'borderLeftWidth'), over: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
+            const B = id => th.boxes.find(b => b.th === id) || {};
+            ok(th.boxes.length === 4 && th.boxes[0].th === 2301 && B(2301).ta === 1 && B(2301).fold === '' && B(2290).ta === 0 && /^이어서 지시:(4[4-9]|[5-9]\d)$/.test(B(2290).fold) && B(2285).ta === 0 && /^이어서 지시:/.test(B(2285).fold) && B(2280).ta === 1 && B(2280).fold === '', `[${name}] ② 답 칸 = 맨 위 대화만 펼침 · 나머지 끝난 대화는 「이어서 지시」 한 줄(44px 이상) · 되묻기(확인 필요)는 답 칸 그대로(${JSON.stringify(th.boxes.map(b => [b.th, b.ta, b.fold]))})`);
+            ok(th.boxes.every(b => b.bw === '1px') && th.aBorder === '0px|0px|none' && th.actsBl === '0px' && th.actsBg === 'rgba(0, 0, 0, 0)', `[${name}] ① 대화 틀 테두리 한 겹(1px) · 답 카드·복사 띠의 안쪽 상자 없음(${th.aBorder} · 띠 ${th.actsBg})`);
+            if (!theme) ok(th.boxes.filter(b => b.end).every(b => /^rgb\(102, 112, 133\)\/rgba\(0, 0, 0, 0\)\/rgba\(0, 0, 0, 0\)\/(4[4-9]|[5-9]\d)$/.test(b.end)) && th.boxes.filter(b => b.end).length >= 3 && th.secBg === 'rgb(248, 249, 252)' && th.secB === 'rgb(16, 24, 40)' && th.copy === 'rgb(5, 96, 58)', `[${name}] ③ 「채팅 종료」 = 흐린 글자 단추(회색 글 · 바탕·테두리 없음 · 44px) ⑤ 묶음 머리 = 옅은 회색 + 진한 글 · 초록은 [복사] 글자에만(${th.secBg} · ${th.secB} · ${th.copy})`);
+            else { const H = require(path.join(ROOT, 'scripts/ao-dark/harness.js')); const a = await H.audit(pg, '#desk-todo-box, #desk-list .desk-thread-box'); ok(a.fails.length === 0 && a.white.length === 0, `[${name}] 야간 대비 미달 ${a.fails.length} · 흰 칸 ${a.white.length}(글자 ${a.texts}개 · 최소 ${a.minR}${a.fails.length ? ' · ' + a.fails.slice(0, 3).join(' / ') : ''})`); }
+            // ② 접힌 줄 → 누르면 펼쳐지고 커서 · 종료 확인은 빨강 그대로
+            await pg.click('#desk-list .desk-thread-box[data-th="2290"] .desk-follow-open'); await pg.waitForTimeout(450);
+            const op = await pg.evaluate(() => ({ focus: (document.activeElement || {}).id, fold: !!document.querySelector('#desk-list .desk-thread-box[data-th="2290"] .desk-follow-open'), top: !!document.getElementById('reply-2302') }));
+            await pg.fill('#reply-2290', '쓰던 글'); await pg.waitForTimeout(2600);
+            const keep = await pg.evaluate(() => { const t = document.getElementById('reply-2290'); return t ? t.value : null; });
+            ok(op.focus === 'reply-2290' && !op.fold && op.top && keep === '쓰던 글', `[${name}] ② 「이어서 지시」 누름 → 답 칸 펼침 + 커서 · 맨 위 대화 답 칸은 그대로 · 다시 그려져도 쓰던 글 유지`);
+            await pg.click('#desk-list .desk-thread-box[data-th="2285"] .desk-th-head'); await pg.waitForTimeout(450);
+            ok(await pg.evaluate(() => (document.activeElement || {}).id) === 'reply-2285', `[${name}] ② 접힌 대화의 머리 줄을 눌러도 답 칸이 펴지고 커서`);
+            await pg.evaluate(() => { const b = document.querySelector('#desk-list .desk-thread-box[data-th="2285"] [data-act="endchat"]'); b.scrollIntoView({ block: 'center' }); }); await pg.click('#desk-list .desk-thread-box[data-th="2285"] [data-act="endchat"]'); await pg.waitForTimeout(350);
+            const ask = await pg.evaluate(() => { const y = document.querySelector('#desk-list [data-act="hidethread"]'); return y ? getComputedStyle(y).backgroundColor + '|' + y.textContent.trim() + '|' + (document.activeElement === y) : ''; });
+            ok(theme ? /\|종료하기\|true$/.test(ask) : /^rgb\((217, 45, 32|180, 35, 24)\)\|종료하기\|true$/.test(ask) /* 빨강(마우스가 올라가 있으면 진한 빨강) */, `[${name}] ③ 누르면 그 자리에 [종료하기](빨강 · 초점) — 확인 단추는 종전대로(${ask})`);
+            const over = await pg.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth));
+            ok(over <= vw.width && errs.length === 0, `[${name}] 가로 넘침 없음(${over} ≤ ${vw.width}) · 화면 오류 ${errs.length}${errs.length ? ' ' + errs[0].slice(0, 120) : ''}`);
+            if (OUT) await pg.screenshot({ path: path.join(OUT, `da-${name}.png`), fullPage: true });
             await ctx.close();
         }
     } finally { await browser.close().catch(() => { }); srv.kill(); }

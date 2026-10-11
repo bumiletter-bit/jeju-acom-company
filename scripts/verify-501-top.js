@@ -130,11 +130,11 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         ok('#550 둥근 버튼 2개 = 44×44 · 「+」(첨부)는 아래 줄 왼쪽 끝 · ↑(보내기)는 오른쪽 끝 · 답 상자와 같은 버튼(.desk-cbtn · 원)', t.attach.l - t.comp.l <= 20 && /desk-cbtn/.test(t.btnCls[0]) && /desk-cbtn primary/.test(t.btnCls[1]) && t.btnRound.every(v => v === '50%') && t.svgs.join() === '1,1' && t.attach.w === 44 && t.attach.h === 44 && t.send.w === 44 && t.send.h === 44 && inside(t.attach, t.comp) && inside(t.send, t.comp) && t.comp.r - t.send.r <= 16 && t.comp.b - t.send.b <= 16 && t.attach.r <= t.send.l && Math.abs(t.attach.t - t.send.t) <= 1 && t.send.t >= t.inp.b - 2, JSON.stringify({ attach: t.attach, send: t.send, comp: t.comp }));
         ok('aria-label = 「이미지 첨부」·「지시 보내기」 · 보내기는 submit · 버튼 안에 글자 없음(아이콘)', t.attachLabel === '할 일 고르기 — 첨부 · 발주 · 확인 · 문자' && t.plusPopup === 'menu|false' && t.fileLabel === '이미지·파일 첨부' &&   /* #653-나: 둥근 「+」 = 메뉴 열기 · 「파일 · 이미지」 항목이 종전 첨부(aria-label 그대로) */ t.sendLabel === '지시 보내기' && t.sendType === 'submit' && t.sendText === '');
         ok('「Enter 보내기…」 안내 글 없음 · 보내기 버튼 설명(title)에 Enter·Shift+Enter', t.hint === 0 && /Enter/.test(t.sendTitle) && /Shift\+Enter/.test(t.sendTitle), t.sendTitle);
-        ok('#653-나 자주 쓰는 일 = [+] 메뉴 안(「파일 · 이미지」「정산 이미지」「중간발주」「최종발주」「배송조회 확인하기」 · 톡톡 답변 추천 없음 · 닫힌 채) · 바로가기 2개가 입력 상자 안 아래 줄의 「+」와 ↑ 사이 · 한 줄 · 묶음 이름(aria-label)', t.talkGone && t.menu.role === 'menu' && t.menu.label === '할 일 고르기' && t.menu.hidden && t.menu.inCard && t.menu.names.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기' && t.chips.map(c => c.text).join('|') === '중간발주|최종발주' && new Set(t.chips.map(c => c.t)).size === 1 && t.chips.every(c => c.vis && inside(c, t.comp) && c.l >= t.attach.r && c.r <= t.send.l && Math.abs((c.t + c.b) / 2 - (t.attach.t + t.attach.b) / 2) <= 2) && t.quick.head === 0 && t.quick.label === '바로가기', JSON.stringify(t.chips.map(c => [c.text, c.t])));
+        ok('#653-나 자주 쓰는 일 = [+] 메뉴 안(「파일 · 이미지」「정산 이미지」「중간발주」「최종발주」「배송조회 확인하기」 · 톡톡 답변 추천 없음 · 닫힌 채) · 기본 바로가기 없음(「+」와 ↑ 사이 줄은 비어 있음 — 안 읽은 문자 때만 「문자 n」) · 묶음 이름(aria-label)', t.talkGone && t.menu.role === 'menu' && t.menu.label === '할 일 고르기' && t.menu.hidden && t.menu.inCard && t.menu.names.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기' && /^(문자\d+\+?)?$/.test(t.chips.map(c => c.text).join('|')) /* 대표 10/11: 기본·최근 바로가기 없음 — 실DB 에 안 읽은 문자가 있으면 「문자 n」 하나 */ && new Set(t.chips.map(c => c.t)).size <= 1 && t.chips.every(c => c.vis && inside(c, t.comp) && c.l >= t.attach.r && c.r <= t.send.l && Math.abs((c.t + c.b) / 2 - (t.attach.t + t.attach.b) / 2) <= 2) && t.quick.head === 0 && t.quick.label === '바로가기', JSON.stringify(t.chips.map(c => [c.text, c.t])));
         ok('상태 한 줄: 상태 알약 + 인사 글이 같은 줄 · idle 인사 = 「무엇을 도와드릴까요?」 · 「대기 중」', t.state.text === '대기 중' && t.say.text === '무엇을 도와드릴까요?' && t.say.vis && Math.abs((t.state.box.t + t.state.box.b) / 2 - (t.say.box.t + t.say.box.b) / 2) <= 6 && t.say.box.l >= t.state.box.r, JSON.stringify({ state: t.state.box, say: t.say.box }));
         ok('창구가 켜져 있으면(idle) 깨우기 버튼 숨김 · 「창구 켜짐」 글자 없음', !t.wake.vis && !t.onText);
         ok('아꼼이 그림 로드 · 카드 안 오른쪽 · 입력 상자 위', t.img.nat > 0 && inside(t.img, t.card) && t.img.r >= t.card.r - 40 && t.img.b <= t.comp.t + 2 && /akkomi-idle/.test(t.img.src), JSON.stringify(t.img));
-        info(`배치(1440): 카드 ${t.card.w}×${t.card.h} · 아꼼이 아래 ↔ 입력 상자 위 ${t.comp.t - t.img.b}px · 상태 줄 아래 ↔ 입력 상자 위 ${t.comp.t - t.state.box.b}px · 입력 상자 아래 ↔ 버튼 줄 ${t.chips[0].t - t.comp.b}px · ✦ 위치 x=${t.spark && t.spark.l - t.comp.l}px y=${t.spark && t.spark.t - t.comp.t}px(상자 기준) · 글 시작 x=${t.inp.l - t.comp.l}px`);
+        info(`배치(1440): 카드 ${t.card.w}×${t.card.h} · 아꼼이 아래 ↔ 입력 상자 위 ${t.comp.t - t.img.b}px · 상태 줄 아래 ↔ 입력 상자 위 ${t.comp.t - t.state.box.b}px · 입력 상자 아래 ↔ 버튼 줄 ${t.attach.t - t.comp.b}px · ✦ 위치 x=${t.spark && t.spark.l - t.comp.l}px y=${t.spark && t.spark.t - t.comp.t}px(상자 기준) · 글 시작 x=${t.inp.l - t.comp.l}px`);
         ok('#550 ✦ 장식 없음(답 상자와 같게)', !t.spark);
         // 대비
         const cPh = ratio(t.phColor, 'rgb(255,255,255)'), cSay = ratio(t.say.color, t.cardBg), cChip = Math.min(...t.chips.map(c => ratio(c.color, c.bg))), cSend = ratio(t.sendColors[1], t.sendColors[0]), cAtt = ratio(t.attachColors[1], t.attachColors[0]), cBorder = ratio(t.compBorder, t.cardBg);
@@ -169,7 +169,7 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         await A.pg.fill('#desk-input', Array.from({ length: 40 }, (_, i) => `${i + 1}번째 줄 — 길게 적는 지시`).join('\n'));
         const g2 = await top(A.pg);
         ok('긴 글 → 입력칸 높이가 늘어남(6줄) · 더 길면 240px에서 멈추고 안쪽 스크롤', g1.inp.h > h0 + 40 && g1.inpScroll <= 2 && g2.inp.h <= 242 && g2.inp.h >= 200 && g2.inpScroll > 0 && inside(g2.send, g2.comp), `빈칸 ${h0}px → 6줄 ${g1.inp.h}px → 40줄 ${g2.inp.h}px`);
-        ok('긴 글에서도 버튼·자주 쓰는 일은 상자 안 아래 줄 · 넘침 없음', g2.send.t >= g2.inp.b - 2 && inside(g2.chips[0], g2.comp) && g2.chips[0].t >= g2.inp.b - 2 && !g2.rootOverflow);
+        ok('긴 글에서도 버튼·자주 쓰는 일은 상자 안 아래 줄 · 넘침 없음', g2.send.t >= g2.inp.b - 2 && inside(g2.attach, g2.comp) && g2.attach.t >= g2.inp.b - 2 && g2.chips.every(c => inside(c, g2.comp) && c.t >= g2.inp.b - 2) /* 기본 바로가기가 없어 [+] 단추로 잰다 */ && !g2.rootOverflow);
 
         // 이미지: 붙여넣기 · 첨부 · 끌어 놓기
         const pv = await pasteImg(A.pg, '#desk-input');
@@ -281,7 +281,7 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         // ════ 1000px
         const B = await open({ width: 1000, height: 900 }, admin);
         const tb = await top(B.pg);
-        ok('1000px — 한 카드 · 입력 상자가 카드 너비를 거의 다 씀 · 버튼 4개 한 줄 · 아이콘 상자 안', tb.oneCard && tb.comp.w >= (tb.card.w - tb.cardPadL - tb.cardPadR) * 0.98 && new Set(tb.chips.map(c => c.t)).size === 1 && inside(tb.send, tb.comp) && inside(tb.attach, tb.comp), `카드 ${tb.card.w} · 상자 ${tb.comp.w}`);
+        ok('1000px — 한 카드 · 입력 상자가 카드 너비를 거의 다 씀 · 버튼 4개 한 줄 · 아이콘 상자 안', tb.oneCard && tb.comp.w >= (tb.card.w - tb.cardPadL - tb.cardPadR) * 0.98 && new Set(tb.chips.map(c => c.t)).size <= 1 && inside(tb.send, tb.comp) && inside(tb.attach, tb.comp), `카드 ${tb.card.w} · 상자 ${tb.comp.w}`);
         ok('1000px — 가로 넘침 없음 · 오류 0', !tb.rootOverflow && !tb.docOverflow && B.errors.length === 0 && B.cons.length === 0);
         await shot(B.pg, '5-1000-첫화면');
         await B.ctx.close();

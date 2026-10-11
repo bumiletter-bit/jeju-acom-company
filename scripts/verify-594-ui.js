@@ -127,7 +127,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             ok(chip && chip.vis && chip.text === '배송조회 확인하기' && chip.h >= 44, `[+] 메뉴 항목 「${chip && chip.text}」 높이 ${chip && chip.h}px · 메뉴 = ${chip && chip.all.join(' / ')}`);
             await pg.keyboard.press('Escape'); await pg.waitForTimeout(200);
             const chipsIn = await pg.evaluate(() => { const box = document.querySelector('.desk-topbox').getBoundingClientRect(); const rs = Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).map(b => b.getBoundingClientRect()); return { n: rs.length, allIn: rs.every(r => r.left >= box.left - 1 && r.right <= box.right + 1 && r.left >= 0 && r.right <= window.innerWidth && r.width > 20), rows: new Set(rs.map(r => Math.round(r.top))).size, minH: Math.min(...rs.map(r => Math.round(r.height))), sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
-            ok(chipsIn.n >= 2 && chipsIn.n <= 3 && chipsIn.allIn && chipsIn.minH >= (phone ? 44 : 36) && chipsIn.sw <= vw.width && chipsIn.rows === 1, `[+] 옆 바로가기 ${chipsIn.n}개(최근 쓴 2개 · 안 읽은 문자가 있으면 +1)가 한 줄에 전부 보임(높이 ${chipsIn.minH}px 이상 · 가로 넘침 0)`);
+            ok(chipsIn.n <= 1 && chipsIn.allIn && chipsIn.minH >= (phone ? 44 : 36) && chipsIn.sw <= vw.width && chipsIn.rows <= 1, `[+] 옆 바로가기 ${chipsIn.n}개(기본·최근 없음 · 안 읽은 문자가 있을 때만 1)가 한 줄에 전부 보임(높이 ${chipsIn.minH}px 이상 · 가로 넘침 0)`);
             ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.getElementById('desk-qty').hidden), '처음엔 도구 카드 둘 다 닫혀 있음');
             await pg.evaluate(() => document.getElementById('desk-ship-now').scrollIntoView({ block: 'center', inline: 'center' }));
             await plusGo(pg, '#desk-ship-now'); await pg.waitForFunction(() => document.querySelector('#ship-out .ship-empty'), null, { timeout: 8000 }).catch(() => { });
@@ -337,7 +337,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             ok(d11.head === '확인할 건 4' && d11.pressed.length === 0 && d11.qval === '' && st.lists.every(q => /기간밖/.test(q.q || '') || (q.from === Y && q.to === Y)), `날짜를 바꿨다 돌아오면 「${d11.head}」(고른 칸·검색어 풀림)`);
             // 닫기
             await pg.click('#ship-close'); await pg.waitForTimeout(200);
-            ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.activeElement && document.activeElement.id === 'desk-short-ship'), '[닫기] → 카드 닫힘 · 초점은 그 일의 바로가기로');
+            ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.activeElement && document.activeElement.id === 'desk-plus-btn'), '[닫기] → 카드 닫힘 · 초점은 [+] 로');
             const nAfter = st.calls.length; await pg.waitForTimeout(2600);
             ok(st.calls.length === nAfter, '닫은 뒤에는 서버에 더 묻지 않음');
             const writes = P.writes.filter(w => !/\/api\/delivery\//.test(w));
@@ -400,7 +400,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             const q2 = await pg.evaluate(() => ({ note: document.getElementById('qty-note').textContent, figs: document.querySelectorAll('#qty-out .qty-fig').length, meta: (document.querySelector('#qty-out .ship-meta span') || {}).textContent || '' }));
             ok(/불러오지 못한 채널은 빼고 집계했어요 · 네이버:/.test(q2.note) && q2.figs >= 1 && /네이버 실패/.test(q2.meta), `[다시 집계] 네이버 실패 → 「${q2.note.slice(0, 40)}…」 · 그림 ${q2.figs}장`);
             await pg.click('#qty-close'); await pg.waitForTimeout(200);
-            ok(await pg.evaluate(() => document.getElementById('desk-qty').hidden && document.activeElement && document.activeElement.id === 'desk-short-qty'), '[닫기] → 카드 닫힘 · 초점은 그 일의 바로가기로');
+            ok(await pg.evaluate(() => document.getElementById('desk-qty').hidden && document.activeElement && document.activeElement.id === 'desk-plus-btn'), '[닫기] → 카드 닫힘 · 초점은 [+] 로');
             ok(P.errors.length === 0, `화면 오류 ${P.errors.length}${P.errors.length ? ' — ' + P.errors[0].slice(0, 140) : ''}`);
             await P.ctx.close();
         }
@@ -443,8 +443,8 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             const P = await h.open(h.users.직원, PC, { page: 'agent-office' }); const pg = P.pg;
             await pg.route('**/ao-desk.js*', async r => { await new Promise(x => setTimeout(x, 500)); r.continue(); });
             const got = [];
-            for (let i = 0; i < 10; i++) { await pg.reload({ waitUntil: 'domcontentloaded' }); await pg.waitForFunction(() => document.querySelectorAll('#ao-desk-root .desk-chip').length > 0, null, { timeout: 8000 }).catch(() => { }); got.push(await pg.evaluate(() => ({ chips: document.querySelectorAll('#ao-desk-root .desk-chip').length, active: !!document.querySelector('#page-agent-office.active'), roots: document.querySelectorAll('#ao-desk-root .desk-topbox').length }))); }
-            ok(got.length === 10 && got.every(g => g.active && g.chips > 0 && g.roots === 1), '#620 ao-desk.js 를 500ms 늦춰도 새로고침 10회 전부 화면이 뜸(알약 > 0 · 두 번 그리지 않음)', JSON.stringify(got.map(g => g.chips + '/' + g.roots)));
+            for (let i = 0; i < 10; i++) { await pg.reload({ waitUntil: 'domcontentloaded' }); await pg.waitForFunction(() => document.querySelectorAll('#ao-desk-root #desk-plus .desk-mi').length > 0, null, { timeout: 8000 }).catch(() => { }); got.push(await pg.evaluate(() => ({ chips: document.querySelectorAll('#ao-desk-root #desk-plus .desk-mi').length, active: !!document.querySelector('#page-agent-office.active'), roots: document.querySelectorAll('#ao-desk-root .desk-topbox').length }))); }
+            ok(got.length === 10 && got.every(g => g.active && g.chips > 0 && g.roots === 1), '#620 ao-desk.js 를 500ms 늦춰도 새로고침 10회 전부 화면이 뜸([+] 메뉴 항목 > 0 — 바로가기 알약은 이제 기본으로 없음 · 두 번 그리지 않음)', JSON.stringify(got.map(g => g.chips + '/' + g.roots)));
             ok(P.errors.length === 0, '#620 화면 오류 0', P.errors.join(' | '));
             await P.ctx.close();
         }

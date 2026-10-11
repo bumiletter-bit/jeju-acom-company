@@ -384,7 +384,7 @@ async function ui() {
         // (f) 「중간발주 바로 받기」
         await A.pg.click('#desk-plus-btn'); await sleep(250);   // #653-나: 「중간발주」는 [+] 메뉴 안
         const btn = await A.pg.evaluate(() => { const b = document.getElementById('desk-qty-now'), sc = document.getElementById('desk-short-qty'); return b ? { vis: b.getClientRects().length > 0, text: b.querySelector('strong').textContent.trim(), h: Math.round(b.getBoundingClientRect().height), short: !!sc && sc.getClientRects().length > 0 } : null; });
-        ok('(f) #desk-qty-now 버튼이 보임([+] 메뉴 안 · 바로가기도 떠 있음)', !!btn && btn.vis && btn.text === '중간발주' && btn.h >= 44 && btn.short, btn ? `「${btn.text}」 높이 ${btn.h}px` : '없음');
+        ok('(f) #desk-qty-now 버튼이 보임([+] 메뉴 안 · 중간발주 바로가기는 없음 — 대표 10/11)', !!btn && btn.vis && btn.text === '중간발주' && btn.h >= 44 && !btn.short, btn ? `「${btn.text}」 높이 ${btn.h}px` : '없음');
         await plusGo(A.pg, '#desk-qty-now');
         await sleep(1500);
         ok('(f) #595 클릭 → 창구 지시를 보내지 않음(POST 0) · 중간발주 카드가 열림(브라우저가 바로 집계)', A.st.posts.length === 0 && await A.pg.evaluate(() => !document.getElementById('desk-qty').hidden), 'POST ' + A.st.posts.length);
@@ -521,7 +521,7 @@ async function ui() {
         await M.pg.keyboard.press('Escape'); await sleep(200);
         ok('(quick) #653-나 입력칸 아래 [+] 메뉴(role menu · aria-label 「할 일 고르기」)에 버튼 3종 · 높이 44 이상', q.group && q.below && q.inGroup.every(Boolean) && q.vis.every(Boolean) && q.role === 'menu' && q.label === '할 일 고르기' && q.h.every(h => h >= 44), q.text.join(' / ') + ' · 높이 ' + q.h.join('/'));
         ok('(quick) #550 버튼 = 「중간발주」「최종발주」「정산 이미지」 · 「톡톡 답변 추천」은 없음', q.text.join('|') === '중간발주|최종발주|정산 이미지' && await M.pg.evaluate(() => !document.getElementById('desk-talk-now')), q.text.join(' / '));
-        ok('(quick) #653-나 [+] 옆 바로가기(처음 = 중간발주·최종발주)가 한 줄', q.oneRow && q.shorts === '중간발주|최종발주', q.shorts);
+        ok('(quick) #653-나 [+] 옆에 기본·최근 바로가기 없음(대표 10/11 — 안 읽은 문자가 있을 때의 「문자 n」만)', /^(문자\d+\+?)?$/.test(q.shorts) /* 실DB 에 안 읽은 문자가 있으면 「문자 n」 하나 */, q.shorts);
         const meta = await M.pg.evaluate(() => { const b = document.getElementById('desk-send'), c = document.getElementById('desk-count'); return { title: b.getAttribute('title') || '', label: b.getAttribute('aria-label'), hint: document.querySelectorAll('.desk-keyhint, .desk-ask-meta').length, cntHidden: c.hidden, cnt: c.textContent }; });
         ok('(enter) #501 입력 안내 글은 없애고 보내기 버튼 설명(title)에 「Enter · Shift+Enter」 · 글자 수는 평소 숨김', /Enter/.test(meta.title) && /Shift\+Enter/.test(meta.title) && meta.label === '지시 보내기' && meta.hint === 0 && meta.cntHidden === true, JSON.stringify(meta));
         const p0 = M.st.posts.length;
@@ -573,7 +573,7 @@ async function ui() {
         const pFine = await P.pg.evaluate(() => window.matchMedia('(pointer: fine)').matches);
         await P.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'); if (g) g.scrollIntoView({ block: 'end' }); });
         const pq2 = await P.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'), r = g.getBoundingClientRect(); const bs = Array.from(g.querySelectorAll('button')).map(b => b.getBoundingClientRect()); return { inView: r.left >= 0 && r.right <= window.innerWidth + 1, btnIn: bs.every(b => b.left >= r.left - 1 && b.right <= r.right + 1), minH: Math.min(...bs.map(b => Math.round(b.height))), rows: new Set(bs.map(b => Math.round(b.top))).size, overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2 }; });
-        ok('(quick) 390 폰 — #653-나 [+] 옆 바로가기가 전부 화면 안 · 한 줄 · 가로 넘침 없음 · 누를 높이 44px 이상', pq2.inView && pq2.btnIn && pq2.rows === 1 && !pq2.overflow && pq2.minH >= 44, JSON.stringify(pq2));
+        ok('(quick) 390 폰 — #653-나 [+] 옆 바로가기 줄이 화면 안 · 한 줄 이하(기본 바로가기 없음) · 가로 넘침 없음 · 누를 높이 44px 이상', pq2.inView && pq2.btnIn && pq2.rows <= 1 && !pq2.overflow && pq2.minH >= 44, JSON.stringify(pq2));
         await shot(P.pg, '5-390-입력칸');
         await P.pg.tap('#desk-input');
         await P.pg.keyboard.type('폰 첫 줄');

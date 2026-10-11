@@ -290,6 +290,36 @@ async function resolveCards(pg, type) {
         const pngN = await pg.locator(SEL.png).count(); let pngOk = pngN >= 2;
         for (let i = 0; i < pngN; i++) { const [d] = await Promise.all([pg.waitForEvent('download', { timeout: 20000 }), pg.locator(SEL.png).nth(i).click()]); const f = path.join(TMP, 'q' + i + '.png'); await d.saveAs(f); const b = fs.readFileSync(f); if (!(b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47 && b.length > 1000 && /^수량\((효돈|대성)\) \d\d\.\d\d\.png$/.test(d.suggestedFilename()))) pngOk = false; }
         ok(pngOk, '④ 수량 이미지 저장 = 거래처마다 PNG', `${pngN}개`);
+        // #656(대표 10/11 「중간발주처럼 그림 복사로」) 거래처별 수량 = 표 그림 + [그림 복사] + [내려받기]
+        {
+            const q6 = await pg.evaluate(() => [...document.querySelectorAll('#fo-result .fo-file[data-short]')].map(a => { const fg = a.querySelector('.fo-qfig'), im = fg && fg.querySelector('img'), t = a.querySelector('.fo-qty'), nums = t ? [...t.querySelectorAll('td.n')].map(td => Number(td.textContent)) : [], cap = fg ? fg.querySelector('.fo-qcap').textContent : '', sr = t ? t.closest('.fo-sr') : null, tr = sr ? sr.getBoundingClientRect() : null;
+                return { short: a.dataset.short, fig: !!fg, png: !!im && /^data:image\/png;base64,/.test(im.src) && im.complete && im.naturalWidth > 200, w2: !!im && im.naturalWidth === Number(im.getAttribute('width')) * 2, alt: im ? im.alt : '', cap, rows: nums.length - 1, body: nums.slice(0, -1).reduce((s, v) => s + v, 0), total: nums[nums.length - 1], head: a.querySelector('header p').textContent, copy: a.querySelectorAll('[data-fo-copy]').length, dl: a.querySelectorAll('[data-fo-png]').length, save: a.querySelectorAll('[data-fo-save]').length, tableSeen: !tr || tr.width > 2 || tr.height > 2 || getComputedStyle(sr).overflow !== 'hidden' }; }));
+            ok(q6.length === pngN && q6.length === Object.keys(sums).length && q6.every(x => x.fig && x.png && x.w2 && x.copy === 1 && x.dl === 1 && x.save === 1), '④ #656 거래처 수 = 수량 그림 수 · 그림은 PNG(2배율) · 거래처마다 [그림 복사]·[내려받기]·[택배사 양식 저장] 하나씩', JSON.stringify(q6.map(x => [x.short, x.fig, x.png, x.w2, x.copy, x.dl, x.save])));
+            const capOk = q6.every(x => x.cap === `수량 ${x.rows}종 · 합계 ${x.total}박스` && x.body === x.total && new RegExp('· ' + x.total + '박스').test(x.head) && x.alt.includes(x.total + '박스'));
+            const fileSums = Object.values(sums).map(x => x.rows.reduce((s, r) => s + (parseInt(r[5]) || 0), 0)).sort((a, b) => a - b);
+            ok(capOk && JSON.stringify(q6.map(x => x.total).sort((a, b) => a - b)) === JSON.stringify(fileSums), '④ #656 그림 수량 합 = 머리 박스 수 = 택배사 양식 수량 합(거래처별)', `그림 ${q6.map(x => x.short + ' ' + x.total).join(' · ')} / 파일 ${fileSums.join(' · ')}`);
+            ok(q6.every(x => !x.tableSeen), '④ #656 글자 표는 화면에 안 보임(낭독용으로만 남김)');
+            await pg.context().grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => { });
+            await pg.locator('[data-fo-copy]').first().click();
+            let clip = null; for (let i = 0; i < 20 && !clip; i++) { await pg.waitForTimeout(150); clip = await pg.evaluate(async () => { try { const items = await navigator.clipboard.read(); for (const it of items) if (it.types.includes('image/png')) { const b = await it.getType('image/png'); const u = new Uint8Array(await b.arrayBuffer()); return { size: b.size, sig: [u[0], u[1], u[2], u[3]].join() }; } return null; } catch (e) { return { err: String(e && e.message) }; } }); if (clip && clip.err) break; }
+            const tst = await pg.evaluate(() => [...document.querySelectorAll('.toast, #toast, [class*="toast"]')].map(n => n.textContent).join(' | '));
+            if (clip && clip.err) note('④ #656 [그림 복사] 클립보드 읽기를 이 브라우저가 막음 — 미검증', clip.err);
+            else ok(!!clip && clip.sig === '137,80,78,71' && clip.size > 1000 && /그림을 복사했어요/.test(tst), '④ #656 [그림 복사] → 클립보드에 image/png · 「그림을 복사했어요」 안내', JSON.stringify(clip) + ' · ' + tst.slice(0, 40));
+            await pg.evaluate(() => { window.__ci656 = window.ClipboardItem; try { window.ClipboardItem = undefined; } catch (_) { } });
+            await pg.waitForTimeout(2600); await pg.locator('[data-fo-copy]').first().click(); await pg.waitForTimeout(400);
+            const tst2 = await pg.evaluate(() => { const t = [...document.querySelectorAll('.toast, #toast, [class*="toast"]')].map(n => n.textContent).join(' | '); try { window.ClipboardItem = window.__ci656; } catch (_) { } return t; });
+            ok(/그림 복사를 막고 있어요.*길게 눌러 복사하거나 \[내려받기\]/.test(tst2), '④ #656 그림 복사를 못 하는 브라우저 = 「길게 눌러 복사하거나 [내려받기]」 안내', tst2.slice(0, 80));
+            const vp0 = pg.viewportSize();
+            for (const [w, h, nm] of [[390, 844, '폰 390'], [1440, 900, 'PC 1440'], [900, 1100, '폴드 900']]) {
+                await pg.setViewportSize({ width: w, height: h }); await pg.waitForTimeout(350);
+                const m = await pg.evaluate(() => { const out = { over: [], small: [], doc: document.documentElement.scrollWidth - window.innerWidth };
+                    document.querySelectorAll('#fo-result .fo-file[data-short]').forEach(a => { const ar = a.getBoundingClientRect(); if (a.scrollWidth > a.clientWidth + 1) out.over.push(a.dataset.short + ' 카드'); a.querySelectorAll('.fo-qfig img, .fo-qfig button, .fo-acts button').forEach(n => { const r = n.getBoundingClientRect(); if (r.right > ar.right + 1 || r.left < ar.left - 1) out.over.push(a.dataset.short + ' ' + (n.tagName === 'IMG' ? '그림' : n.textContent)); if (n.tagName === 'BUTTON' && (r.height < 44 || r.width < 44)) out.small.push(n.textContent + ' ' + Math.round(r.width) + 'x' + Math.round(r.height)); }); });
+                    const p = document.getElementById('fo-panel'); if (p && p.scrollWidth > p.clientWidth + 1) out.over.push('패널'); return out; });
+                ok(m.over.length === 0 && m.small.length === 0 && m.doc <= 1, `④ #656 ${nm}: 수량 그림·버튼이 카드 안(가로 넘침 0) · 버튼 44px 이상`, JSON.stringify(m));
+            }
+            if (process.env.SHOT_DIR) { fs.mkdirSync(process.env.SHOT_DIR, { recursive: true }); try { fs.copyFileSync(path.join(TMP, 'q0.png'), path.join(process.env.SHOT_DIR, 'fo-656-qty.png')); await pg.locator('#fo-result .fo-file[data-short]').first().screenshot({ path: path.join(process.env.SHOT_DIR, 'fo-656-card.png') }); } catch (_) { } }
+            await pg.setViewportSize(vp0); await pg.waitForTimeout(300);
+        }
 
         // ⑤ 무회귀
         console.log('\n⑤ 무회귀');

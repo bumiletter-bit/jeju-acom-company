@@ -232,15 +232,16 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 if (who === '대표') {
                     // 대표 확정 3가지 실측
                     const m = await D.pg.evaluate(() => { const g = (s, p) => { const el = document.querySelector(s); return el ? getComputedStyle(el)[p] : null; }; return {
-                        chip: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-short-qty', p)), state: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-state', p)),
+                        chip: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-plus-btn', p)), state: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-state', p)),
                         label: g('#desk-list .desk-a.answer .desk-a-label', 'color'), title: g('#desk-list .desk-a.answer .desk-a-title', 'color'), bar: g('#desk-list .desk-a.answer', 'borderLeftColor'), lime: getComputedStyle(document.documentElement).getPropertyValue('--d-lime').trim() }; });
                     const hex = c => { const p = c.match(/\d+/g).map(Number); return '#' + p.slice(0, 3).map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase(); };
-                    ok(`B [${tag}] 「중간발주」 버튼 = 「대기 중」 알약과 같은 바탕·테두리·흰 글씨`, m.chip[0] === m.state[0] && m.chip[1] === m.state[1] && m.chip[2] === m.state[2] && m.chip[2] === 'rgb(255, 255, 255)', JSON.stringify([m.chip, m.state]));
+                    { const lum = c => { const v = (String(c).match(/[d.]+/g) || []).slice(0, 3).map(Number).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; }, cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+                    ok(`B [${tag}] [+] 단추(#653-나 · 종전 「중간발주」 바로가기 자리 — 대표 10/11 바로가기 뺌) = 야간에서 흰 바탕 아님 · 아이콘 대비 3 이상`, !!m.chip[0] && m.chip[0] !== 'rgb(255, 255, 255)' && !/rgba(0, 0, 0, 0)/.test(m.chip[0]) && cr(m.chip[2], m.chip[0]) >= 3, JSON.stringify([m.chip, cr(m.chip[2], m.chip[0]).toFixed(2)])); }
                     ok(`B [${tag}] 「클코 답변」 표지 · 답 제목 · 답 상자 왼쪽 선 = 라임(${m.lime})`, !!m.label && [m.label, m.title, m.bar].every(c => hex(c) === m.lime.toUpperCase()), [m.label, m.title, m.bar].join(' / '));
                 }
                 // 상태: hover · focus · active(누르고 있는 중) — 상태를 건 채로 다시 측정
                 const stFails = [];
-                for (const sel of ['#desk-short-qty', '#desk-list .desk-a-acts .desk-btn', '#desk-list .desk-sec-copy', '#desk-tabs .desk-tab[data-tab="all"]', '#desk-list .desk-endbtn', '#desk-theme', '.sidebar .nav-item[data-page="schedule"]', '#desk-list-more']) {
+                for (const sel of ['#desk-plus-btn', '#desk-list .desk-a-acts .desk-btn', '#desk-list .desk-sec-copy', '#desk-tabs .desk-tab[data-tab="all"]', '#desk-list .desk-endbtn', '#desk-theme', '.sidebar .nav-item[data-page="schedule"]', '#desk-list-more']) {
                     const loc = D.pg.locator(sel).first(); if (!(await loc.count()) || !(await loc.isVisible().catch(() => false))) continue;
                     if (!phone) { await loc.hover().catch(() => { }); await D.pg.waitForTimeout(120); const h = await audit(D.pg); h.fails.forEach(f => stFails.push('hover ' + sel + ' → ' + f)); h.white.forEach(f => stFails.push('hover 흰 칸 ' + f)); await D.pg.mouse.down(); await D.pg.waitForTimeout(80); const ac = await audit(D.pg); ac.fails.forEach(f => stFails.push('active ' + sel + ' → ' + f)); await D.pg.mouse.move(2, 2); await D.pg.mouse.up(); }
                     await loc.focus().catch(() => { }); await D.pg.waitForTimeout(80); const fo = await audit(D.pg); fo.fails.forEach(f => stFails.push('focus ' + sel + ' → ' + f));

@@ -597,10 +597,10 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 /* ── #552(대표 10/6 폰 실물) 글 쓰는 칸 글씨 17px(상자를 키운 만큼) · 답변 묶음별 [복사] ── */
 .desk-cbox .desk-reply-in, .desk-top1 .desk-topbox .desk-input { font-size: 17px; line-height: 1.45; padding: 16px 2px 15px; min-height: 56px; }
 /* #556(대표 폰 실물 10/6): 묶음마다 틀 — 머리 띠(이름 + [복사])와 본문을 한 상자로 묶어 「이 [복사]가 어디까지인지」 보이게. 전체 [답변 복사](인디고)와 헷갈리지 않게 묶음은 초록 계열 */
-.desk-sec { margin: 14px 0 0; border: 1.5px solid #A6E9C4; border-radius: 14px; background: #fff; overflow: hidden; }
+.desk-sec { margin: 14px 0 0; border: 1px solid var(--d-line); border-radius: 14px; background: #fff; overflow: hidden; }
 .desk-sec + .desk-sec { margin-top: 12px; }
-.desk-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; padding: 4px 6px 4px 14px; background: #ECFDF3; border-bottom: 1.5px solid #A6E9C4; }
-.desk-sec-head b { min-width: 0; font-size: 14.5px; font-weight: 800; color: #05603A; overflow-wrap: anywhere; }
+.desk-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; padding: 4px 6px 4px 14px; background: var(--d-soft); border-bottom: 1px solid var(--d-line); }
+.desk-sec-head b { min-width: 0; font-size: 14.5px; font-weight: 800; color: var(--d-ink); overflow-wrap: anywhere; }
 .desk-sec-body { padding: 10px 14px 12px; }
 .desk-sec-body > :first-child { margin-top: 0; } .desk-sec-body > :last-child { margin-bottom: 0; }
 .desk-sec-copy { flex: none; min-height: 44px; padding: 0 14px; border: 0; border-radius: 999px; background: none; color: #05603A; font: inherit; font-size: 13.5px; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background-color .16s var(--d-ease), transform .12s var(--d-ease); }
@@ -1235,6 +1235,30 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
     .desk-short { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { .desk-plus, .desk-plus-btn svg { animation: none; transition: none; } }
+/* ── #653-다 (대표 10/11 「모두 진행해」) ①대화 틀 한 겹 ②접힌 답 칸 ③흐린 「채팅 종료」 ④챙길 일 자리 ⑤아래 복사 띠 얇게 ── */
+.desk-chat .desk-thread-box, .desk-chat .desk-thread-box:first-child { border: 1px solid var(--d-card-line); padding: 14px 16px 16px; }
+.desk-chat .desk-thread-box:focus-within { border-color: #C7CBFF; box-shadow: none; }
+.desk-chat .desk-a.answer:not(.draft) { border: 0; border-radius: 0; box-shadow: none; background: none; padding: 2px 0 0; }
+.desk-chat .desk-a.answer:not(.draft) > .desk-a-copy { margin-right: 0; }
+.desk-chat .desk-a-acts { margin-top: 8px; padding: 6px 0 0; border: 0; border-top: 1px solid var(--d-line); border-radius: 0; background: none; }
+.desk-chat .desk-a.answer + .desk-files, .desk-chat .desk-media + .desk-files { border: 0; background: none; padding: 8px 0 0; }
+.desk-chat .desk-a-acts .desk-btn { border-color: var(--d-line); font-weight: 600; }
+.desk-follow-line { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.desk-follow-open { flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 16px; border: 1px solid var(--d-line); border-radius: 22px; background: var(--d-soft); color: var(--d-sub); font: inherit; font-size: 14.5px; text-align: left; cursor: text; transition: border-color .16s var(--d-ease), background-color .16s var(--d-ease); }
+.desk-follow-open:hover { border-color: #C7CBFF; background: var(--d-card); }
+.desk-follow-open:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.desk-endbtn:not(.yes):not(.no) { padding: 0 10px; border-color: transparent; background: none; color: var(--d-sub); font-weight: 600; }
+.desk-endbtn:not(.yes):not(.no):hover { border-color: transparent; background: var(--d-soft); color: var(--d-ink); }
+.desk-endbtn:not(.yes):not(.no):focus-visible { outline-color: var(--d-accent); }
+.desk-todo-more { display: none; }
+@media (max-width: 1180px) {
+    .desk-todo-box { padding: 12px 16px; }
+    .desk-todo-box h3 { margin-bottom: 8px; }
+    .desk-todo-box.cut .desk-todo > li:nth-child(n+5) { display: none; }
+    .desk-todo-more:not([hidden]) { display: block; width: 100%; min-height: 44px; margin: 8px 0 -6px; border: 0; border-top: 1px solid var(--d-line); background: none; color: var(--d-accent); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+}
+@media (min-width: 641px) and (max-width: 1180px) { .desk-todo-box .desk-todo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 28px; } }
+@media (prefers-reduced-motion: reduce) { .desk-follow-open { transition: none; } }
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -1284,7 +1308,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (532규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (545규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1554,9 +1578,9 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .desk-top1 .desk-topbox .desk-chip { border: 1px solid #333B73; background: var(--d-accent-soft); color: #B4BAFF; }
 :where(html[data-ao-theme="dark"]) .desk-top1 .desk-topbox .desk-chip:hover { background: #2C3566; border-color: #3D468A; color: #FFFFFF; }
 :where(html[data-ao-theme="dark"]) .desk-cbtn.primary[disabled] { color: var(--d-dim); }
-:where(html[data-ao-theme="dark"]) .desk-sec { border: 1.5px solid rgba(61, 214, 140, .38); background: var(--d-card); }
-:where(html[data-ao-theme="dark"]) .desk-sec-head { background: rgba(61, 214, 140, .12); border-bottom: 1.5px solid rgba(61, 214, 140, .38); }
-:where(html[data-ao-theme="dark"]) .desk-sec-head b { color: #7BE3AE; }
+:where(html[data-ao-theme="dark"]) .desk-sec { border: 1px solid var(--d-line); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-sec-head { background: var(--d-soft); border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-sec-head b { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-sec-copy { border: 0; background: none; color: #7BE3AE; }
 :where(html[data-ao-theme="dark"]) .desk-sec-copy::before { background: currentColor; }
 :where(html[data-ao-theme="dark"]) .desk-sec-copy:hover { background: rgba(61, 214, 140, .24); }
@@ -1833,6 +1857,21 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
     :where(html[data-ao-theme="dark"]) .desk-plus-back:not([hidden]) { background: rgba(16, 24, 40, .45); }
     :where(html[data-ao-theme="dark"]) .desk-plus { border-width: 1px 0 0; box-shadow: 0 -12px 32px -8px rgba(0, 0, 0, 0.6); }
     :where(html[data-ao-theme="dark"]) .desk-plus-g + .desk-plus-g { border-top: 1px solid var(--d-line); }
+}
+:where(html[data-ao-theme="dark"]) .desk-chat .desk-thread-box, :where(html[data-ao-theme="dark"]) .desk-chat .desk-thread-box:first-child { border: 1px solid var(--d-card-line); }
+:where(html[data-ao-theme="dark"]) .desk-chat .desk-thread-box:focus-within { border-color: #3D468A; box-shadow: none; }
+:where(html[data-ao-theme="dark"]) .desk-chat .desk-a.answer:not(.draft) { border: 0; box-shadow: none; background: none; }
+:where(html[data-ao-theme="dark"]) .desk-chat .desk-a-acts { border: 0; border-top: 1px solid var(--d-line); background: none; }
+:where(html[data-ao-theme="dark"]) .desk-chat .desk-a.answer + .desk-files, :where(html[data-ao-theme="dark"]) .desk-chat .desk-media + .desk-files { border: 0; background: none; }
+:where(html[data-ao-theme="dark"]) .desk-chat .desk-a-acts .desk-btn { border-color: var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-follow-open { border: 1px solid var(--d-line); background: var(--d-soft); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-follow-open:hover { border-color: #3D468A; background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-follow-open:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .desk-endbtn:not(.yes):not(.no) { border-color: transparent; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-endbtn:not(.yes):not(.no):hover { border-color: transparent; background: var(--d-soft); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-endbtn:not(.yes):not(.no):focus-visible { outline-color: var(--d-accent); }
+@media (max-width: 1180px) {
+    :where(html[data-ao-theme="dark"]) .desk-todo-more:not([hidden]) { border: 0; border-top: 1px solid var(--d-line); background: none; color: var(--d-accent); }
 }
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */

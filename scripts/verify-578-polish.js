@@ -122,7 +122,8 @@ async function modal(h) {
         if (!phone) {
             const P = await h.open(h.users['대표'], PC, { routes: extOff, page: 'agent-office' });
             await H.navTo(P.pg, 'agent-office', false); await idle(P.pg, 8000);
-            const chip = P.pg.locator('.desk-chip', { hasText: '최종발주' }).first();
+            await P.pg.click('#desk-plus-btn', { timeout: 3000 }).catch(() => { }); await P.pg.waitForTimeout(250);   // #653-나: 「최종발주」는 [+] 메뉴 안(바로가기 없음)
+            const chip = P.pg.locator('#desk-final-now');
             if (await chip.count()) {
                 await chip.click({ timeout: 3000 }).catch(() => { }); await P.pg.waitForTimeout(1200);
                 const foOpen = () => P.pg.evaluate(() => { const p = document.getElementById('fo-panel'); return !!p && p.getClientRects().length > 0 && getComputedStyle(p).display !== 'none'; });
