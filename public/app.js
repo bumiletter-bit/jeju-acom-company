@@ -78,7 +78,21 @@ if (!isStandalone) {
 let _lastUserAct = Date.now();
 ['click', 'keydown', 'touchstart', 'scroll'].forEach(ev =>
     window.addEventListener(ev, () => { _lastUserAct = Date.now(); }, { passive: true, capture: true }));
+// #631(대표 10/11 「정산 달력 입금 체크가 버퍼링」): 같은 GET 을 1.2초 안에 겹쳐 부르면(달력·목록·주간이 같은 달 자료를 따로 청함) 한 번만 보내고 같은 답을 나눠 쓴다.
+//   쓰기(GET 아님)가 한 번이라도 나가면 세대(_apiGen)가 올라가 그 전 답은 다시 안 쓴다 → 저장 직후 다시 읽을 때 옛 값이 섞이지 않는다. 실패한 요청은 나누지 않는다.
+let _apiGen = 0; const _apiInflight = new Map();   // url → { gen, at, p }
 async function api(url, method = 'GET', body = null) {
+    if (method === 'GET' && !body) {
+        const hit = _apiInflight.get(url), now = Date.now();
+        if (hit && hit.gen === _apiGen && now - hit.at < 1200) return hit.p;
+        const p = _apiRaw(url, method, body); const ent = { gen: _apiGen, at: now, p }; _apiInflight.set(url, ent);
+        p.catch(() => { if (_apiInflight.get(url) === ent) _apiInflight.delete(url); });
+        return p;
+    }
+    _apiGen++; _apiInflight.clear();
+    return _apiRaw(url, method, body);
+}
+async function _apiRaw(url, method = 'GET', body = null) {
     const options = { method, headers: {} };
     const token = localStorage.getItem('jwt_token');
     if (token) options.headers['Authorization'] = `Bearer ${token}`;
@@ -1536,11 +1550,12 @@ async function renderSettlementCalendar() {
     document.getElementById('cj-payment-label').textContent = 'CJ택배';
 
     const monthStr = `${settlementCalYear}-${String(monthNum).padStart(2, '0')}`;
-    const [settlements, prepayments, cjCarryoverData, cjDailyPayments] = await Promise.all([
+    const [settlements, prepayments, cjCarryoverData, cjDailyPayments, totalUnpaidP] = await Promise.all([
         api(`/api/settlements?month=${monthStr}`),
         api('/api/prepayments'),
         api(`/api/cj-carryover?month=${monthStr}`).catch(() => ({ amount: 0, note: '' })),
-        api(`/api/cj-daily-payments?month=${monthStr}`).catch(() => [])
+        api(`/api/cj-daily-payments?month=${monthStr}`).catch(() => []),
+        api('/api/settlements/total-unpaid').catch(e => e)   // #631: 미입금 합계도 같이 청함(아래에서 종전 자리에 그대로 씀 · 실패는 종전처럼 아래 try 로)
     ]);
     // CJ 일별 결제완료 맵
     const cjPaidMap = {};
@@ -1638,7 +1653,7 @@ async function renderSettlementCalendar() {
 
     // 전체 미정산 합계 API 호출 (모든 월 합산)
     try {
-        const totalUnpaid = await api('/api/settlements/total-unpaid');
+        const totalUnpaid = totalUnpaidP instanceof Error ? await api('/api/settlements/total-unpaid') : totalUnpaidP;   // #631
         document.getElementById('daesung-payment').textContent = `${(totalUnpaid.daesung || 0).toLocaleString()} 원`;
         document.getElementById('hyodon-payment').textContent = `${(totalUnpaid.hyodon || 0).toLocaleString()} 원`;
         document.getElementById('aewol-payment').textContent = `${(totalUnpaid.aewol || 0).toLocaleString()} 원`;
@@ -1816,9 +1831,7 @@ window.toggleSettlementPaid = async function(id) {
         await api(`/api/settlements/${id}/toggle-paid`, 'PUT');
         const modal = document.getElementById('settlement-day-modal');
         const dateStr = modal ? modal.dataset.date : null;
-        await renderSettlementCalendar();
-        await renderSettlementList();
-        await renderWeeklySettlement();
+        await Promise.all([renderSettlementCalendar(), renderSettlementList(), renderWeeklySettlement()]);   // #631: 셋을 동시에(차례로 기다리던 것 · 같은 달 자료는 api() 가 한 번만 청함)
         // 창 유지(대표 지시): 갱신된 데이터로 같은 날짜 모달을 다시 그림 — 여러 건 연속 체크 후 닫기 가능
         if (modal) { modal.remove(); if (dateStr) showSettlementDayModal(dateStr); }
     } catch (err) {
@@ -1830,8 +1843,7 @@ window.toggleCjDailyPaid = async function(date, amount) {
     try {
         await api('/api/cj-daily-payments/toggle-paid', 'POST', { date, amount });
         const modal = document.getElementById('settlement-day-modal');
-        await renderSettlementCalendar();
-        await renderWeeklySettlement();
+        await Promise.all([renderSettlementCalendar(), renderWeeklySettlement()]);   // #631
         // 창 유지(대표 지시): 갱신된 데이터로 같은 날짜 모달을 다시 그림
         if (modal) { modal.remove(); showSettlementDayModal(date); }
     } catch (err) {
