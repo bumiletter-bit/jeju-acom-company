@@ -1196,6 +1196,45 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
     .sms-th-head .sms-th-x { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .sms-win { animation: none; } }
+/* ═ #653-나(대표 10/11): 입력 칸 [+] 메뉴 — 첨부 · 발주 · 확인 · 손님. PC = 단추 아래 팝오버 · 폰 = 아래 시트. 색은 기존 토큰만. ═ */
+.desk-cbox-row { position: relative; }
+.desk-plus-btn { position: relative; }
+.desk-plus-btn svg { transition: transform .16s var(--d-ease); }
+.desk-plus-btn[aria-expanded="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
+.desk-plus-btn[aria-expanded="true"] svg { transform: rotate(45deg); }
+.desk-plus-btn[data-dead="1"]::after { content: ""; position: absolute; right: 2px; bottom: 2px; width: 9px; height: 9px; border-radius: 50%; background: #B42318; box-shadow: 0 0 0 2px var(--d-card); }
+.desk-plus-n { position: absolute; top: -2px; right: -2px; width: 11px; min-width: 0; height: 11px; padding: 0; font-size: 0; line-height: 0; box-shadow: 0 0 0 2px var(--d-card); }   /* [+] 에는 점만 — 숫자는 옆 「문자 n」 바로가기와 메뉴 줄에 */
+.desk-cbox-row .desk-shorts { flex: 0 1 auto; min-width: 0; margin: 0 0 0 8px; padding: 0; border: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.desk-cbox-row .desk-shorts::-webkit-scrollbar { display: none; }
+.desk-short { flex: none; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.desk-plus { position: absolute; left: 0; top: calc(100% + 8px); z-index: 60; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 6px; align-content: start; width: 600px; max-width: calc(100vw - 32px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; background: var(--d-card); border: 1px solid var(--d-card-line); border-radius: 14px; box-shadow: 0 16px 40px -12px rgba(16, 24, 40, .35); transform-origin: 22px 0; animation: desk-plus-in 160ms var(--d-ease); }
+@keyframes desk-plus-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+.desk-plus[hidden] { display: none; }
+.desk-plus-g:nth-child(n+3) { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--d-line); }
+.desk-plus-g > b { display: block; padding: 8px 10px 2px; color: var(--d-sub); font-size: 11.5px; font-weight: 700; letter-spacing: .02em; }
+.desk-mi { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 7px 10px; border: 0; border-radius: 10px; background: none; color: var(--d-ink); font: inherit; text-align: left; cursor: pointer; transition: background-color .12s var(--d-ease); }
+.desk-mi:hover { background: var(--d-soft); }
+.desk-mi:focus-visible { background: var(--d-soft); outline: 2px solid var(--d-accent); outline-offset: -2px; }
+.desk-mi:active { transform: scale(.99); }
+.desk-mi:disabled { opacity: .5; cursor: default; }
+.desk-mi-ic { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--d-accent-soft); color: var(--d-accent); font-style: normal; }
+.desk-mi-t { min-width: 0; flex: 1 1 auto; }
+.desk-mi-t strong { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.desk-mi-t small { display: block; margin-top: 1px; color: var(--d-sub); font-size: 12px; line-height: 1.4; }
+.desk-mi > .sms-n { flex: none; }
+.desk-plus-back { display: none; }
+.desk-mi[data-busy]::after { content: attr(data-busy); flex: none; padding: 2px 8px; border-radius: 999px; background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); font-size: 11.5px; font-weight: 700; }
+.desk-short:disabled { opacity: .55; cursor: default; }
+.desk-short small { color: var(--d-sub); font-size: 11.5px; font-weight: 700; }
+@media (max-width: 720px) {
+    body.desk-plus-open { overflow: hidden; }
+    .desk-plus-back:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 940; background: rgba(16, 24, 40, .45); }
+    .desk-plus { position: fixed; left: 0; right: 0; top: auto; bottom: 0; z-index: 941; grid-template-columns: minmax(0, 1fr); width: auto; max-width: none; max-height: 82vh; padding: 10px 10px calc(12px + env(safe-area-inset-bottom, 0px)); border-width: 1px 0 0; border-radius: 16px 16px 0 0; box-shadow: 0 -12px 32px -8px rgba(16, 24, 40, .35); transform-origin: 50% 100%; animation: qty-pick-up 220ms var(--d-ease); }
+    .desk-plus-g + .desk-plus-g { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--d-line); }
+    .desk-mi { min-height: 56px; }
+    .desk-short { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .desk-plus, .desk-plus-btn svg { animation: none; transition: none; } }
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -1245,7 +1284,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (515규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (532규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1775,6 +1814,25 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
     :where(html[data-ao-theme="dark"]) .sms-left { border-right: 0; }
     :where(html[data-ao-theme="dark"]) .sms-pane { background: none; }
     :where(html[data-ao-theme="dark"]) .sms-pane > .sms-thread { border: 0; box-shadow: none; background: var(--d-card); }
+}
+:where(html[data-ao-theme="dark"]) .desk-plus-btn[aria-expanded="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-plus-btn[data-dead="1"]::after { background: #D92D20; box-shadow: 0 0 0 2px var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-plus-n { box-shadow: 0 0 0 2px var(--d-card); }
+:where(html[data-ao-theme="dark"]) .desk-cbox-row .desk-shorts { border: 0; }
+:where(html[data-ao-theme="dark"]) .desk-plus { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6); }
+:where(html[data-ao-theme="dark"]) .desk-plus-g:nth-child(n+3) { border-top: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .desk-plus-g > b { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-mi { border: 0; background: none; color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .desk-mi:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .desk-mi:focus-visible { background: var(--d-soft); outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .desk-mi-ic { background: var(--d-accent-soft); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .desk-mi-t small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-mi[data-busy]::after { background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-short small { color: var(--d-sub); }
+@media (max-width: 720px) {
+    :where(html[data-ao-theme="dark"]) .desk-plus-back:not([hidden]) { background: rgba(16, 24, 40, .45); }
+    :where(html[data-ao-theme="dark"]) .desk-plus { border-width: 1px 0 0; box-shadow: 0 -12px 32px -8px rgba(0, 0, 0, 0.6); }
+    :where(html[data-ao-theme="dark"]) .desk-plus-g + .desk-plus-g { border-top: 1px solid var(--d-line); }
 }
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */

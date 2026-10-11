@@ -282,7 +282,8 @@
         if (!st.open) return; st.open = false;
         $('fo-panel').hidden = true; document.body.classList.remove('fo-open');
         if (!fromPop && history.state && history.state.foPanel) { st.skipPop = true; history.back(); }
-        const b = $('desk-final-now'); if (b) b.focus({ preventScroll: true });
+        if (window.__aoDesk && typeof window.__aoDesk.plusFocus === 'function') window.__aoDesk.plusFocus('final');   // #653-나: 「최종발주」는 [+] 메뉴 안 → 그 일의 바로가기(없으면 [+])로
+        else { const b = $('desk-final-now'); if (b) b.focus({ preventScroll: true }); }
     }
     async function loadCatalog() {
         const r = typeof window.api === 'function' ? await window.api('/api/invoice/catalog') : await (await fetch('/api/invoice/catalog', { headers: { Authorization: 'Bearer ' + localStorage.getItem('jwt_token') } })).json();

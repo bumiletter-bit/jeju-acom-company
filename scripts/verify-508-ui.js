@@ -70,7 +70,7 @@ async function openFO(br, fx, mode) {
     const hits = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }; const ctx = await newCtx(br, fx, hits, { width: 1400, height: 900 }, false, mode);
     const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('dialog', d => d.accept());
     await pg.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pg.waitForTimeout(2500); await pg.evaluate(() => switchPage('agent-office')); await pg.waitForTimeout(1000);
-    await pg.click(SEL.btn); await pg.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
+    await plusGo(pg, SEL.btn); await pg.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
     await pg.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await idle(pg);
     return { ctx, pg, hits, errs };
 }
@@ -162,7 +162,7 @@ async function resolveCards(pg, type) {
             ok(false, `① [최종발주] 버튼(${SEL.btn})이 에이전트 오피스 화면에 없음 — 제품 파일이 아직 올라오지 않았습니다(여기서 멈춤)`);
             code = 2; throw new Error('STOP');
         }
-        await pg.click(SEL.btn);
+        await plusGo(pg, SEL.btn);
         await pg.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
         ok(true, '① 버튼 클릭 → 패널 열림');
         await pg.waitForFunction(sel => { const f = document.querySelector(sel.hidden); return f && f.contentWindow && f.contentWindow.__ivt && f.contentWindow.__ivt.S.calendar && /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value); }, SEL, { timeout: 40000 });
@@ -305,7 +305,7 @@ async function resolveCards(pg, type) {
         // 390px
         const hitsM = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }; const ctxM = await newCtx(br, fx, hitsM, { width: 390, height: 844 }, true); const pm = await ctxM.newPage(); const errM = []; pm.on('pageerror', e => errM.push(e.message));
         await pm.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pm.waitForTimeout(2500); await pm.evaluate(() => switchPage('agent-office')); await pm.waitForTimeout(1000);
-        await pm.evaluate(sel => document.querySelector(sel).scrollIntoView(), SEL.btn); await pm.click(SEL.btn); await pm.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
+        await pm.evaluate(sel => document.querySelector(sel).scrollIntoView(), SEL.btn); await plusGo(pm, SEL.btn); await pm.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
         await pm.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await idle(pm);
         await pm.setInputFiles(SEL.cash, cashFile); await startWithMemo(pm, fx.memo); await pm.waitForSelector(SEL.card, { timeout: 15000 });
         const wM = await pm.evaluate(sel => { const p = document.querySelector(sel.panel); const wide = [...p.querySelectorAll('*')].filter(el => el.getBoundingClientRect().right > window.innerWidth + 1 && !el.closest('.table-scroll-wrapper, [data-fo-scroll]')).length; return { doc: document.documentElement.scrollWidth, panel: p.scrollWidth, inner: window.innerWidth, wide }; }, SEL);
@@ -465,7 +465,7 @@ async function resolveCards(pg, type) {
             let clockOk = true; try { await ctxB.clock.install(); } catch (e) { clockOk = false; }
             const pb = await ctxB.newPage(); const errB = []; pb.on('pageerror', e => errB.push(e.message)); pb.on('dialog', d => d.accept());
             await pb.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pb.waitForTimeout(2500); await pb.evaluate(() => switchPage('agent-office')); await pb.waitForTimeout(1000);
-            await pb.click(SEL.btn); await pb.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
+            await plusGo(pb, SEL.btn); await pb.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
             await pb.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await idle(pb);
             await setCash(pb, null); await pb.click(SEL.start); await idle(pb); await pb.waitForSelector(SEL.card, { timeout: 15000 });
             const has3 = (await cardOf(pb, CARD.order, '쿠팡받는1').count()) && (await cardOf(pb, CARD.order, '쿠팡받는2').count()) && (await cardOf(pb, CARD.order, '쿠팡받는3').count());
@@ -740,7 +740,7 @@ async function resolveCards(pg, type) {
             // ⓘ 390px 칩 줄
             const hm = { naver: 0, cafe24: 0, coupang: 0, cancel: 0 }; const cm = await newCtx(br, fx14, hm, { width: 390, height: 844 }, true, {}); const pm2 = await cm.newPage(); const em2 = []; pm2.on('pageerror', e => em2.push(e.message));
             await pm2.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pm2.waitForTimeout(2500); await pm2.evaluate(() => switchPage('agent-office')); await pm2.waitForTimeout(1000);
-            await pm2.evaluate(sel => document.querySelector(sel).scrollIntoView(), SEL.btn); await pm2.click(SEL.btn); await pm2.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
+            await pm2.evaluate(sel => document.querySelector(sel).scrollIntoView(), SEL.btn); await plusGo(pm2, SEL.btn); await pm2.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
             await pm2.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await idle(pm2);
             await pm2.check(SEL.cashNone); await pm2.click(SEL.start); await idle(pm2); await pm2.waitForSelector('#fo-cards .fo-kinds .fo-kind', { timeout: 15000 });
             const km = await pm2.evaluate(() => { const k = document.querySelector('#fo-cards .fo-kinds'); const bs = [...k.querySelectorAll('.fo-kind')]; return { n: bs.length, right: Math.max(...bs.map(b => b.getBoundingClientRect().right)), inner: window.innerWidth, sw: k.scrollWidth, cw: k.clientWidth, minH: Math.min(...bs.map(b => b.getBoundingClientRect().height)), doc: document.documentElement.scrollWidth }; });
@@ -799,7 +799,7 @@ async function resolveCards(pg, type) {
                 });
                 const pgA = await ctxA.newPage(); const errsA = []; pgA.on('pageerror', e => errsA.push(e.message)); pgA.on('dialog', d => d.accept());
                 await pgA.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pgA.waitForTimeout(2500); await pgA.evaluate(() => switchPage('agent-office')); await pgA.waitForTimeout(1000);
-                await pgA.click(SEL.btn); await pgA.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
+                await plusGo(pgA, SEL.btn); await pgA.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
                 await pgA.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await busyIdle(pgA);
                 return { ctx: ctxA, pg: pgA, errs: errsA, ai, hits: hitsA };
             };
@@ -944,7 +944,7 @@ async function resolveCards(pg, type) {
                 });
                 const pgC = await ctxC.newPage(); const errsC = []; pgC.on('pageerror', e => errsC.push(e.message)); pgC.on('dialog', d => d.accept());
                 await pgC.goto(BASE + '/', { waitUntil: 'domcontentloaded' }); await pgC.waitForTimeout(2500); await pgC.evaluate(() => switchPage('agent-office')); await pgC.waitForTimeout(1000);
-                await pgC.click(SEL.btn); await pgC.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
+                await plusGo(pgC, SEL.btn); await pgC.waitForSelector(SEL.panel, { state: 'visible', timeout: 10000 });
                 await pgC.waitForFunction(sel => /^\d{4}-\d{2}-\d{2}$/.test(document.querySelector(sel.ship).value), SEL, { timeout: 40000 }); await idle(pgC);
                 return { ctx: ctxC, pg: pgC, errs: errsC, chat, hits: hitsC };
             };
@@ -3056,3 +3056,9 @@ async function resolveCards(pg, type) {
     console.log(`\n결과: ${pass}/${pass + fail}${code === 2 ? ' (제품 파일 대기 — ⓪ 가짜 재료 점검까지만 수행)' : ''}`);
     setTimeout(() => process.exit(code), 300);
 })();
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

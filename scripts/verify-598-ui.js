@@ -60,7 +60,7 @@ const watchToasts = pg => pg.evaluate(() => { new MutationObserver(ms => ms.forE
 // 중간발주 카드를 열고 그림이 다 뜰 때까지
 async function openQty(pg) {
     await pg.evaluate(() => document.getElementById('desk-qty-now').scrollIntoView({ block: 'center', inline: 'center' }));
-    await pg.click('#desk-qty-now');
+    await plusGo(pg, '#desk-qty-now');
     await pg.waitForFunction(() => document.querySelectorAll('#qty-out .qty-fig img').length > 0 && document.getElementById('qty-prog').hidden, null, { timeout: 40000 }).catch(() => { });
     await pg.waitForFunction(() => Array.from(document.querySelectorAll('#qty-out .qty-fig img')).every(i => i.complete && i.naturalWidth > 0), null, { timeout: 8000 }).catch(() => { });
 }
@@ -322,3 +322,9 @@ const stored = pg => pg.evaluate(() => { try { return JSON.parse(sessionStorage.
     console.log(`\n결과: ${pass}/${pass + fail}` + (fail ? ' ❌' : ' ✅'));
     process.exit(fail ? 1 : 0);
 })();
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

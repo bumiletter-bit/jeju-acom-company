@@ -232,7 +232,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 if (who === '대표') {
                     // 대표 확정 3가지 실측
                     const m = await D.pg.evaluate(() => { const g = (s, p) => { const el = document.querySelector(s); return el ? getComputedStyle(el)[p] : null; }; return {
-                        chip: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-qty-now', p)), state: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-state', p)),
+                        chip: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-short-qty', p)), state: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-state', p)),
                         label: g('#desk-list .desk-a.answer .desk-a-label', 'color'), title: g('#desk-list .desk-a.answer .desk-a-title', 'color'), bar: g('#desk-list .desk-a.answer', 'borderLeftColor'), lime: getComputedStyle(document.documentElement).getPropertyValue('--d-lime').trim() }; });
                     const hex = c => { const p = c.match(/\d+/g).map(Number); return '#' + p.slice(0, 3).map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase(); };
                     ok(`B [${tag}] 「중간발주」 버튼 = 「대기 중」 알약과 같은 바탕·테두리·흰 글씨`, m.chip[0] === m.state[0] && m.chip[1] === m.state[1] && m.chip[2] === m.state[2] && m.chip[2] === 'rgb(255, 255, 255)', JSON.stringify([m.chip, m.state]));
@@ -240,7 +240,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 }
                 // 상태: hover · focus · active(누르고 있는 중) — 상태를 건 채로 다시 측정
                 const stFails = [];
-                for (const sel of ['#desk-qty-now', '#desk-list .desk-a-acts .desk-btn', '#desk-list .desk-sec-copy', '#desk-tabs .desk-tab[data-tab="all"]', '#desk-list .desk-endbtn', '#desk-theme', '.sidebar .nav-item[data-page="schedule"]', '#desk-list-more']) {
+                for (const sel of ['#desk-short-qty', '#desk-list .desk-a-acts .desk-btn', '#desk-list .desk-sec-copy', '#desk-tabs .desk-tab[data-tab="all"]', '#desk-list .desk-endbtn', '#desk-theme', '.sidebar .nav-item[data-page="schedule"]', '#desk-list-more']) {
                     const loc = D.pg.locator(sel).first(); if (!(await loc.count()) || !(await loc.isVisible().catch(() => false))) continue;
                     if (!phone) { await loc.hover().catch(() => { }); await D.pg.waitForTimeout(120); const h = await audit(D.pg); h.fails.forEach(f => stFails.push('hover ' + sel + ' → ' + f)); h.white.forEach(f => stFails.push('hover 흰 칸 ' + f)); await D.pg.mouse.down(); await D.pg.waitForTimeout(80); const ac = await audit(D.pg); ac.fails.forEach(f => stFails.push('active ' + sel + ' → ' + f)); await D.pg.mouse.move(2, 2); await D.pg.mouse.up(); }
                     await loc.focus().catch(() => { }); await D.pg.waitForTimeout(80); const fo = await audit(D.pg); fo.fails.forEach(f => stFails.push('focus ' + sel + ' → ' + f));
@@ -315,3 +315,9 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         setTimeout(() => process.exit(pass === results.length ? 0 : 1), 300);
     }
 })();
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

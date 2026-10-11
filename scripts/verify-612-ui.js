@@ -48,15 +48,16 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
             await mock('/__mock/reset', {});
             const P = await open(vw, phone, theme), pg = P.pg, T = P.toasts;
             // ① 알약 · 닫힌 화면은 종전 그대로
-            const chips = await pg.evaluate(() => Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => b.textContent.trim()));
-            ok(chips.join('|') === '중간발주|최종발주|정산 이미지|배송조회 확인하기|전체 가격 확인하기', `[${label}] 알약 5개 · 「전체 가격 확인하기」가 배송조회 옆(${chips.join('|')})`);
+            const chips = await pg.evaluate(() => Array.from(document.querySelectorAll('#desk-plus .desk-mi')).filter(b => !b.hidden).map(b => b.querySelector('strong').textContent.trim()));
+            const shorts0 = await pg.evaluate(() => Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).map(b => b.textContent.trim()).join('|'));
+            ok(chips.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기|전체 가격 확인하기' && shorts0 === '중간발주|최종발주', `[${label}] #653-나 [+] 메뉴 6개 · 「전체 가격 확인하기」가 배송조회 옆(${chips.join('|')}) · 바로가기 「${shorts0}」`);
             ok(await pg.evaluate(() => !document.getElementById('desk-price')) && P.reqs.length === 0, `[${label}] 누르기 전에는 카드도 요청도 없음(칸 순서 종전 그대로 · 요청 ${P.reqs.length}회)`);
             const chipBox = await size(pg, '.desk-quick2 .desk-chip');
             ok(await sw(pg) <= vw.width && (!phone || chipBox.every(b => b.h >= 44)), `[${label}] 알약 줄 가로 넘침 없음(${await sw(pg)} ≤ ${vw.width})${phone ? ' · 알약 높이 44 이상(' + Math.min(...chipBox.map(b => b.h)) + ')' : ''}`);
-            if (phone) { const tops = await pg.evaluate(() => [...new Set(Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => Math.round(b.getBoundingClientRect().top)))].length); ok(tops >= 2 && tops <= 3, `[${label}] 폰 알약은 줄바꿈(${tops}줄)`); }
+            if (phone) { const tops = await pg.evaluate(() => [...new Set(Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => Math.round(b.getBoundingClientRect().top)))].length); ok(tops === 1, `[${label}] 폰 바로가기는 한 줄(${tops}줄 · 나머지는 [+] 메뉴)`); }
 
             // ② 열기 · 머리 · 스냅샷 시각 · 칩
-            await pg.click('#desk-price-now'); await loaded(pg);
+            await plusGo(pg, '#desk-price-now'); await loaded(pg);
             let s = await stat(pg);
             ok(P.reqs.join(',') === 'GET /api/price-check', `[${label}] 열 때 요청 1회(refresh 없음 · ${P.reqs.join(',')})`);
             ok(s.sub === '이상 있음 4건', `[${label}] 머리 = 이상 있음 4건(참고 2건은 안 셈 · 「${s.sub}」)`);
@@ -237,12 +238,12 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
 
             // ⑩ Esc · 닫기 · 다시 열기(재요청 없음) · 다른 도구와 한 번에 하나
             await pg.focus('#pc-q'); await pg.keyboard.press('Escape'); await pg.waitForTimeout(250);
-            ok(await pg.evaluate(() => document.getElementById('desk-price').hidden && document.activeElement && document.activeElement.id === 'desk-price-now'), `[${label}] Esc → 카드 닫힘 · 초점이 알약으로`);
-            const n2 = P.reqs.length; await pg.click('#desk-price-now'); await pg.waitForTimeout(300);
+            ok(await pg.evaluate(() => document.getElementById('desk-price').hidden && document.activeElement && document.activeElement.id === 'desk-short-price'), `[${label}] Esc → 카드 닫힘 · 초점이 그 일의 바로가기로`);
+            const n2 = P.reqs.length; await plusGo(pg, '#desk-price-now'); await pg.waitForTimeout(300);
             ok(await pg.locator('#desk-price').isVisible() && P.reqs.length === n2 && (await stat(pg)).groups > 0, `[${label}] 다시 열면 받은 자료 그대로(재요청 0)`);
-            await pg.click('#desk-ship-now'); await pg.waitForTimeout(400);
+            await plusGo(pg, '#desk-ship-now'); await pg.waitForTimeout(400);
             ok(await pg.evaluate(() => document.getElementById('desk-price').hidden && !document.getElementById('desk-ship').hidden), `[${label}] 배송조회를 열면 가격 카드는 닫힘(한 번에 하나)`);
-            await pg.click('#desk-price-now'); await pg.waitForTimeout(300);
+            await plusGo(pg, '#desk-price-now'); await pg.waitForTimeout(300);
             ok(await pg.evaluate(() => !document.getElementById('desk-price').hidden && document.getElementById('desk-ship').hidden), `[${label}] 가격 카드를 열면 배송조회는 닫힘`);
             await pg.click('#pc-close'); await pg.waitForTimeout(200);
             ok(await pg.evaluate(() => document.getElementById('desk-price').hidden), `[${label}] [닫기]`);
@@ -255,7 +256,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
         await mock('/__mock/reset', {});
         {
             const P = await open(PC, false, null, STAFF), pg = P.pg;
-            await pg.click('#desk-price-now'); await loaded(pg);
+            await plusGo(pg, '#desk-price-now'); await loaded(pg);
             ok((await stat(pg)).groups === 6 && await pg.evaluate(() => document.getElementById('pc-set').hidden), `[직원] 표는 보이고 「페이지 등급 설정」은 숨김`);
             ok(!P.reqs.some(r => /pages/.test(r)) && P.errors.length === 0 && !(await logOf()).some(x => x.action === 'save'), `[직원] 설정 요청 0 · 저장 0 · 화면 오류 0`);
             await P.ctx.close();
@@ -263,7 +264,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
         await mock('/__mock/set', { clean: true });
         {
             const P = await open(PH, true, null, ADMIN), pg = P.pg;
-            await pg.click('#desk-price-now'); await loaded(pg);
+            await plusGo(pg, '#desk-price-now'); await loaded(pg);
             const e = await pg.evaluate(() => ({ sub: document.getElementById('pc-sub').textContent, k: document.getElementById('pc-sub').dataset.k, out: document.getElementById('pc-out').textContent, copy: document.getElementById('pc-copy').disabled, chips: document.getElementById('pc-sum').textContent.replace(/\s+/g, ' ').trim(), sumK: document.getElementById('pc-sum').dataset.k, flags: Array.from(document.querySelectorAll('#pc-out .pc-flag')).map(f => f.textContent), off: document.getElementById('pc-off').hidden }));
             ok(e.sub === '이상 없음' && !e.k && e.copy && /이상 없음/.test(e.chips) && e.sumK === 'ok' && e.flags.length >= 3 && e.flags.every(t => t === '이상 없음') && !e.off, `[이상 0 · 폰] 머리 「이상 없음」 · 한 줄 요약 「${e.chips}」 · 품목 배지 전부 「이상 없음」 · [요약 복사] 꺼짐 · 안 파는 옵션 구획은 그대로`);
             await pg.click('#pc-only'); await pg.waitForTimeout(200);
@@ -276,7 +277,7 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
         await mock('/__mock/set', { clean: false, fail: 'report' });
         {
             const P = await open(PC, false, null, ADMIN), pg = P.pg;
-            await pg.click('#desk-price-now'); await loaded(pg); await pg.waitForTimeout(300);
+            await plusGo(pg, '#desk-price-now'); await loaded(pg); await pg.waitForTimeout(300);
             const e = await pg.evaluate(() => ({ t: document.getElementById('pc-note').textContent, k: document.getElementById('pc-note').dataset.k, out: document.getElementById('pc-out').textContent, dis: document.getElementById('pc-refresh').disabled, when: document.getElementById('pc-when').hidden }));
             ok(e.k === 'err' && /가격을 불러오지 못했어요/.test(e.t) && /네이버 스냅샷을 읽지 못했습니다/.test(e.t) && /아직 불러온 가격이 없어요/.test(e.out) && !e.dis && e.when, `[첫 요청 실패] 빨간 안내(서버 글 포함) + 빈 안내 · [다시 확인] 켜짐`);
             await pg.click('#pc-set > summary'); await pg.waitForTimeout(300);
@@ -294,3 +295,9 @@ const sorted = o => JSON.stringify(Object.keys(o).sort().reduce((a, k) => (a[k] 
     console.log(`\n결과: ${pass}/${pass + fail}` + (fail ? `  (실패 ${fail})` : '  전부 통과'));
     process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

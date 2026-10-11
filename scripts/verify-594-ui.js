@@ -122,13 +122,15 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             await P.ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://localhost:${PORT}` }).catch(() => { });
             const toasts = []; await pg.exposeFunction('__toast', t => toasts.push(t));
             await pg.evaluate(() => { new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1 && /toast/i.test(n.className || '')) window.__toast(n.textContent.trim()); }))).observe(document.body, { childList: true, subtree: true }); });
-            const chip = await pg.evaluate(() => { const b = document.getElementById('desk-ship-now'); if (!b) return null; const r = b.getBoundingClientRect(); const all = Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).map(x => x.textContent.trim()); return { text: b.textContent.trim(), h: Math.round(r.height), vis: b.getClientRects().length > 0, all }; });
-            ok(chip && chip.vis && chip.text === '배송조회 확인하기' && chip.h >= 44, `알약 「${chip && chip.text}」 높이 ${chip && chip.h}px · 자주 쓰는 일 = ${chip && chip.all.join(' / ')}`);
+            await pg.click('#desk-plus-btn'); await pg.waitForTimeout(250);   // #653-나: 알약은 [+] 메뉴 안
+            const chip = await pg.evaluate(() => { const b = document.getElementById('desk-ship-now'); if (!b) return null; const r = b.getBoundingClientRect(); const all = Array.from(document.querySelectorAll('#desk-plus .desk-mi')).filter(x => !x.hidden).map(x => x.querySelector('strong').textContent.trim()); return { text: b.querySelector('strong').textContent.trim(), h: Math.round(r.height), vis: b.getClientRects().length > 0, all }; });
+            ok(chip && chip.vis && chip.text === '배송조회 확인하기' && chip.h >= 44, `[+] 메뉴 항목 「${chip && chip.text}」 높이 ${chip && chip.h}px · 메뉴 = ${chip && chip.all.join(' / ')}`);
+            await pg.keyboard.press('Escape'); await pg.waitForTimeout(200);
             const chipsIn = await pg.evaluate(() => { const box = document.querySelector('.desk-topbox').getBoundingClientRect(); const rs = Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).map(b => b.getBoundingClientRect()); return { n: rs.length, allIn: rs.every(r => r.left >= box.left - 1 && r.right <= box.right + 1 && r.left >= 0 && r.right <= window.innerWidth && r.width > 20), rows: new Set(rs.map(r => Math.round(r.top))).size, minH: Math.min(...rs.map(r => Math.round(r.height))), sw: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
-            ok(chipsIn.n >= 5 && chipsIn.n <= 6 && chipsIn.allIn && chipsIn.minH >= 44 && chipsIn.sw <= vw.width && (phone ? chipsIn.rows <= 3 : chipsIn.rows === 1), `알약 ${chipsIn.n}개(#612 가격 확인 · 문자는 서버에 있을 때)가 밀지 않아도 전부 보임(${chipsIn.rows}줄 · 높이 ${chipsIn.minH}px 이상 · 가로 넘침 0)`);
+            ok(chipsIn.n >= 2 && chipsIn.n <= 3 && chipsIn.allIn && chipsIn.minH >= (phone ? 44 : 36) && chipsIn.sw <= vw.width && chipsIn.rows === 1, `[+] 옆 바로가기 ${chipsIn.n}개(최근 쓴 2개 · 안 읽은 문자가 있으면 +1)가 한 줄에 전부 보임(높이 ${chipsIn.minH}px 이상 · 가로 넘침 0)`);
             ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.getElementById('desk-qty').hidden), '처음엔 도구 카드 둘 다 닫혀 있음');
             await pg.evaluate(() => document.getElementById('desk-ship-now').scrollIntoView({ block: 'center', inline: 'center' }));
-            await pg.click('#desk-ship-now'); await pg.waitForFunction(() => document.querySelector('#ship-out .ship-empty'), null, { timeout: 8000 }).catch(() => { });
+            await plusGo(pg, '#desk-ship-now'); await pg.waitForFunction(() => document.querySelector('#ship-out .ship-empty'), null, { timeout: 8000 }).catch(() => { });
             {   // #621(대표 10/10): 찾기 칸 = 위쪽 [조회] 옆 · 명암(테두리·바탕 대비) · 조회 전에는 꺼짐
                 const fq = await pg.evaluate(() => { const lum = c => { const a = c.map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; }; const rgb = s => String(s).match(/[\d.]+/g).slice(0, 3).map(Number); const cr = (a, b) => { const x = lum(rgb(a)), y = lum(rgb(b)); return Math.round((Math.max(x, y) + .05) / (Math.min(x, y) + .05) * 100) / 100; };
                     const q = document.getElementById('ship-q'), go = document.getElementById('ship-go'), f = document.getElementById('ship-form'), cs = getComputedStyle(q), r = q.getBoundingClientRect(), g = go.getBoundingClientRect(); let bg = 'rgb(255,255,255)'; for (let e = q.parentElement; e; e = e.parentElement) { const b = getComputedStyle(e).backgroundColor; if (b && !/rgba\(.*,\s*0\)$|transparent/.test(b)) { bg = b; break; } }
@@ -335,7 +337,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             ok(d11.head === '확인할 건 4' && d11.pressed.length === 0 && d11.qval === '' && st.lists.every(q => /기간밖/.test(q.q || '') || (q.from === Y && q.to === Y)), `날짜를 바꿨다 돌아오면 「${d11.head}」(고른 칸·검색어 풀림)`);
             // 닫기
             await pg.click('#ship-close'); await pg.waitForTimeout(200);
-            ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.activeElement === document.getElementById('desk-ship-now')), '[닫기] → 카드 닫힘 · 초점은 알약으로');
+            ok(await pg.evaluate(() => document.getElementById('desk-ship').hidden && document.activeElement && document.activeElement.id === 'desk-short-ship'), '[닫기] → 카드 닫힘 · 초점은 그 일의 바로가기로');
             const nAfter = st.calls.length; await pg.waitForTimeout(2600);
             ok(st.calls.length === nAfter, '닫은 뒤에는 서버에 더 묻지 않음');
             const writes = P.writes.filter(w => !/\/api\/delivery\//.test(w));
@@ -345,7 +347,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             console.log('■ #595 중간발주 — ' + label);
             const c0 = st.calls.length;
             await pg.evaluate(() => document.getElementById('desk-qty-now').scrollIntoView({ block: 'center', inline: 'center' }));
-            await pg.click('#desk-qty-now');
+            await plusGo(pg, '#desk-qty-now');
             await pg.waitForFunction(() => document.querySelectorAll('#qty-out .qty-fig img').length > 0 && document.getElementById('qty-prog').hidden, null, { timeout: 40000 }).catch(() => { });
             await pg.waitForFunction(() => Array.from(document.querySelectorAll('#qty-out .qty-fig img')).every(i => i.complete && i.naturalWidth > 0), null, { timeout: 8000 }).catch(() => { });
             const q = await pg.evaluate(async () => {
@@ -398,7 +400,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
             const q2 = await pg.evaluate(() => ({ note: document.getElementById('qty-note').textContent, figs: document.querySelectorAll('#qty-out .qty-fig').length, meta: (document.querySelector('#qty-out .ship-meta span') || {}).textContent || '' }));
             ok(/불러오지 못한 채널은 빼고 집계했어요 · 네이버:/.test(q2.note) && q2.figs >= 1 && /네이버 실패/.test(q2.meta), `[다시 집계] 네이버 실패 → 「${q2.note.slice(0, 40)}…」 · 그림 ${q2.figs}장`);
             await pg.click('#qty-close'); await pg.waitForTimeout(200);
-            ok(await pg.evaluate(() => document.getElementById('desk-qty').hidden && document.activeElement === document.getElementById('desk-qty-now')), '[닫기] → 카드 닫힘 · 초점은 알약으로');
+            ok(await pg.evaluate(() => document.getElementById('desk-qty').hidden && document.activeElement && document.activeElement.id === 'desk-short-qty'), '[닫기] → 카드 닫힘 · 초점은 그 일의 바로가기로');
             ok(P.errors.length === 0, `화면 오류 ${P.errors.length}${P.errors.length ? ' — ' + P.errors[0].slice(0, 140) : ''}`);
             await P.ctx.close();
         }
@@ -407,7 +409,7 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
         for (const [label, user, vw, phone, theme] of [['직원 PC', h.users.직원, PC, false, null], ['직원 폰 야간', h.users.직원, PH, true, 'dark']]) {
             console.log(`\n■ 실서버 응답 ${REAL} — ` + label);
             const P = await h.open(user, vw, { phone, page: 'agent-office', theme }); const pg = P.pg;
-            await pg.click('#desk-ship-now'); await pg.waitForTimeout(600);
+            await plusGo(pg, '#desk-ship-now'); await pg.waitForTimeout(600);
             await pg.evaluate(d => { const f = document.getElementById('ship-from'), t = document.getElementById('ship-to'); f.value = d; t.value = d; f.dispatchEvent(new Event('change', { bubbles: true })); }, REAL);
             await pg.waitForFunction(() => document.querySelector('#ship-out > *'), null, { timeout: 30000 }).catch(() => { });
             await pg.waitForTimeout(800);
@@ -450,3 +452,9 @@ const shot = async (pg, name) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, { rec
     console.log(`\n결과: ${pass}/${pass + fail}${fail ? ' · 실패 ' + fail : ''}`);
     process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

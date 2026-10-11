@@ -382,9 +382,10 @@ async function ui() {
         info(`관찰: 진행 중 지시가 없을 때 5초간 목록 요청 ${A.st.gets - gC}회(느린 주기로 돌아감)`);
 
         // (f) 「중간발주 바로 받기」
-        const btn = await A.pg.evaluate(() => { const b = document.getElementById('desk-qty-now'); return b ? { vis: b.getClientRects().length > 0, text: b.textContent.trim(), h: Math.round(b.getBoundingClientRect().height) } : null; });
-        ok('(f) #desk-qty-now 버튼이 보임', !!btn && btn.vis, btn ? `「${btn.text}」 높이 ${btn.h}px` : '없음');
-        await A.pg.click('#desk-qty-now');
+        await A.pg.click('#desk-plus-btn'); await sleep(250);   // #653-나: 「중간발주」는 [+] 메뉴 안
+        const btn = await A.pg.evaluate(() => { const b = document.getElementById('desk-qty-now'), sc = document.getElementById('desk-short-qty'); return b ? { vis: b.getClientRects().length > 0, text: b.querySelector('strong').textContent.trim(), h: Math.round(b.getBoundingClientRect().height), short: !!sc && sc.getClientRects().length > 0 } : null; });
+        ok('(f) #desk-qty-now 버튼이 보임([+] 메뉴 안 · 바로가기도 떠 있음)', !!btn && btn.vis && btn.text === '중간발주' && btn.h >= 44 && btn.short, btn ? `「${btn.text}」 높이 ${btn.h}px` : '없음');
+        await plusGo(A.pg, '#desk-qty-now');
         await sleep(1500);
         ok('(f) #595 클릭 → 창구 지시를 보내지 않음(POST 0) · 중간발주 카드가 열림(브라우저가 바로 집계)', A.st.posts.length === 0 && await A.pg.evaluate(() => !document.getElementById('desk-qty').hidden), 'POST ' + A.st.posts.length);
         await A.pg.waitForFunction(() => !document.getElementById('desk-qty-now').disabled, null, { timeout: 60000 }).catch(() => { });
@@ -515,29 +516,31 @@ async function ui() {
         ok('(enter) 빈 입력칸에서 Enter = 보내지 않음', M.st.posts.length === 1 && (await M.pg.inputValue('#desk-input')) === '');
 
         // 자주 쓰는 일 3종
-        const q = await M.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'); const ids = ['desk-qty-now', 'desk-final-now', 'desk-settle-now']; const inp = document.getElementById('desk-input').getBoundingClientRect();   /* #550 자주 쓰는 일 = 중간발주·최종발주·정산 이미지(입력 상자 안 아래 줄) */ return { group: !!g, inGroup: ids.map(i => !!(g && g.querySelector('#' + i))), vis: ids.map(i => { const b = document.getElementById(i); return !!b && b.getClientRects().length > 0; }), text: ids.map(i => (document.getElementById(i) || {}).textContent), h: ids.map(i => Math.round(document.getElementById(i).getBoundingClientRect().height)), below: g ? g.getBoundingClientRect().top >= inp.bottom - 1 : false, oneRow: new Set(ids.map(i => Math.round(document.getElementById(i).getBoundingClientRect().top))).size === 1, label: g ? g.getAttribute('aria-label') : '' }; });
-        ok('(quick) 입력칸 아래 「자주 쓰는 일」 묶음(aria-label)에 버튼 3종', q.group && q.below && q.inGroup.every(Boolean) && q.vis.every(Boolean) && q.label === '자주 쓰는 일', q.text.join(' / ') + ' · 높이 ' + q.h.join('/'));
+        await M.pg.click('#desk-plus-btn'); await sleep(250);   // #653-나: 자주 쓰는 일 = [+] 메뉴(#desk-plus) 안 · 바로가기(.desk-quick2)는 [+] 옆 한 줄
+        const q = await M.pg.evaluate(() => { const g = document.getElementById('desk-plus'); const ids = ['desk-qty-now', 'desk-final-now', 'desk-settle-now']; const inp = document.getElementById('desk-input').getBoundingClientRect();   /* #550 자주 쓰는 일 = 중간발주·최종발주·정산 이미지(입력 상자 안 아래 줄) */ return { group: !!g, inGroup: ids.map(i => !!(g && g.querySelector('#' + i))), vis: ids.map(i => { const b = document.getElementById(i); return !!b && b.getClientRects().length > 0; }), text: ids.map(i => ((document.getElementById(i) || { querySelector: () => null }).querySelector('strong') || {}).textContent), h: ids.map(i => Math.round(document.getElementById(i).getBoundingClientRect().height)), below: g ? g.getBoundingClientRect().top >= inp.bottom - 1 : false, oneRow: (() => { const sh = Array.from(document.querySelectorAll('#desk-shorts .desk-short')); return sh.length >= 2 && new Set(sh.map(b => Math.round(b.getBoundingClientRect().top))).size === 1; })(), shorts: Array.from(document.querySelectorAll('#desk-shorts .desk-short')).map(b => b.textContent.trim()).join('|'), role: g ? g.getAttribute('role') : '', label: g ? g.getAttribute('aria-label') : '' }; });
+        await M.pg.keyboard.press('Escape'); await sleep(200);
+        ok('(quick) #653-나 입력칸 아래 [+] 메뉴(role menu · aria-label 「할 일 고르기」)에 버튼 3종 · 높이 44 이상', q.group && q.below && q.inGroup.every(Boolean) && q.vis.every(Boolean) && q.role === 'menu' && q.label === '할 일 고르기' && q.h.every(h => h >= 44), q.text.join(' / ') + ' · 높이 ' + q.h.join('/'));
         ok('(quick) #550 버튼 = 「중간발주」「최종발주」「정산 이미지」 · 「톡톡 답변 추천」은 없음', q.text.join('|') === '중간발주|최종발주|정산 이미지' && await M.pg.evaluate(() => !document.getElementById('desk-talk-now')), q.text.join(' / '));
-        ok('(quick) #501 버튼 3개가 한 줄', q.oneRow);
+        ok('(quick) #653-나 [+] 옆 바로가기(처음 = 중간발주·최종발주)가 한 줄', q.oneRow && q.shorts === '중간발주|최종발주', q.shorts);
         const meta = await M.pg.evaluate(() => { const b = document.getElementById('desk-send'), c = document.getElementById('desk-count'); return { title: b.getAttribute('title') || '', label: b.getAttribute('aria-label'), hint: document.querySelectorAll('.desk-keyhint, .desk-ask-meta').length, cntHidden: c.hidden, cnt: c.textContent }; });
         ok('(enter) #501 입력 안내 글은 없애고 보내기 버튼 설명(title)에 「Enter · Shift+Enter」 · 글자 수는 평소 숨김', /Enter/.test(meta.title) && /Shift\+Enter/.test(meta.title) && meta.label === '지시 보내기' && meta.hint === 0 && meta.cntHidden === true, JSON.stringify(meta));
         const p0 = M.st.posts.length;
         await M.pg.evaluate(() => { window.__foOpen = 0; window.AkmFinalOrder = { open() { window.__foOpen++; } }; });   // #550 톡톡 답변 추천 대신 최종발주 버튼(화면은 열지 않고 불렸는지만)
-        await M.pg.click('#desk-final-now');
+        await plusGo(M.pg, '#desk-final-now');
         const tk = await M.pg.evaluate(() => ({ v: document.getElementById('desk-input').value, focus: document.activeElement === document.getElementById('desk-input'), count: document.getElementById('desk-count').textContent }));
         await sleep(400);
         ok('(quick) #550 「최종발주」 = 최종발주 화면 열기 · 지시는 보내지 않음 · 입력칸 그대로(빈칸)', (await M.pg.evaluate(() => window.__foOpen)) === 1 && tk.v === '' && M.st.posts.length === p0, JSON.stringify(tk));
         const KEEP = '어제 발송분 정산 올려줘';   // #550: 예전엔 「톡톡 답변 추천」이 채운 글로 봤다 → 직접 적은 글로
         await M.pg.fill('#desk-input', KEEP);
-        const [fc1] = await Promise.all([M.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), M.pg.click('#desk-settle-now')]);
+        const [fc1] = await Promise.all([M.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), plusGo(M.pg, '#desk-settle-now')]);
         const sv1 = await M.pg.inputValue('#desk-input');
         ok('(quick) 「정산 이미지 올리기」 — 입력칸에 글이 있으면 그대로 두고 파일 고르기 열림', !!fc1 && sv1 === KEEP, '입력칸 ' + JSON.stringify(sv1));
         await M.pg.fill('#desk-input', '');
-        const [fc2] = await Promise.all([M.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), M.pg.click('#desk-settle-now')]);
+        const [fc2] = await Promise.all([M.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), plusGo(M.pg, '#desk-settle-now')]);
         const sv2 = await M.pg.evaluate(() => ({ v: document.getElementById('desk-input').value, count: document.getElementById('desk-count').textContent }));
         ok('(quick) 「정산 이미지 올리기」 — 입력칸이 비었으면 「정산관리에 올려줘」 채우고 파일 고르기 열림 · 보내지 않음', !!fc2 && sv2.v === '정산관리에 올려줘' && M.st.posts.length === p0, JSON.stringify(sv2));
         await M.pg.fill('#desk-input', '');
-        await M.pg.click('#desk-qty-now');
+        await plusGo(M.pg, '#desk-qty-now');
         await sleep(1500);
         ok('(quick) #595 「중간발주」 = POST 0 · 중간발주 카드가 열림', M.st.posts.length === p0 && await M.pg.evaluate(() => !document.getElementById('desk-qty').hidden));
         await M.pg.waitForFunction(() => !document.getElementById('desk-qty-now').disabled, null, { timeout: 60000 }).catch(() => { });
@@ -570,7 +573,7 @@ async function ui() {
         const pFine = await P.pg.evaluate(() => window.matchMedia('(pointer: fine)').matches);
         await P.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'); if (g) g.scrollIntoView({ block: 'end' }); });
         const pq2 = await P.pg.evaluate(() => { const g = document.querySelector('.desk-quick2'), r = g.getBoundingClientRect(); const bs = Array.from(g.querySelectorAll('button')).map(b => b.getBoundingClientRect()); return { inView: r.left >= 0 && r.right <= window.innerWidth + 1, btnIn: bs.every(b => b.left >= r.left - 1 && b.right <= r.right + 1), minH: Math.min(...bs.map(b => Math.round(b.height))), rows: new Set(bs.map(b => Math.round(b.top))).size, overflow: document.getElementById('ao-desk-root').scrollWidth > window.innerWidth + 2 }; });
-        ok('(quick) 390 폰 — 「자주 쓰는 일」 버튼 4개가 전부 화면 안(#594 두 줄로 접힘) · 가로 넘침 없음 · 누를 높이 44px 이상', pq2.inView && pq2.btnIn && pq2.rows <= 2 && !pq2.overflow && pq2.minH >= 44, JSON.stringify(pq2));
+        ok('(quick) 390 폰 — #653-나 [+] 옆 바로가기가 전부 화면 안 · 한 줄 · 가로 넘침 없음 · 누를 높이 44px 이상', pq2.inView && pq2.btnIn && pq2.rows === 1 && !pq2.overflow && pq2.minH >= 44, JSON.stringify(pq2));
         await shot(P.pg, '5-390-입력칸');
         await P.pg.tap('#desk-input');
         await P.pg.keyboard.type('폰 첫 줄');
@@ -610,3 +613,9 @@ async function ui() {
     console.log(`\n결과: ${pass}/${results.length}` + (pass === results.length ? ' ✅' : ' — 실패: ' + results.filter(r => !r.pass).map(r => r.name).join(' / ')));
     process.exit(pass === results.length ? 0 : 1);
 })();
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

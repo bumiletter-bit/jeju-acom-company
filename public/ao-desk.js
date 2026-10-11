@@ -177,14 +177,25 @@
                         <div class="desk-cbox-row">
                             <input type="file" id="desk-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" multiple hidden>
                             <input type="file" id="desk-reply-file" accept="image/*,.xlsx,.xls,.csv,.pdf,.txt" hidden>
-                            <button type="button" class="desk-cbtn" id="desk-attach" aria-label="이미지·파일 첨부" title="이미지·파일 첨부 (붙여넣기·끌어 놓기도 돼요 · 파일은 엑셀·CSV·PDF·텍스트 1개)">${ICON_PLUS}</button>
-                            <div class="desk-quick2" role="group" aria-label="자주 쓰는 일">
-                                <button type="button" class="desk-chip" id="desk-qty-now" title="AI를 거치지 않고 바로 집계해요 (1~2분)">중간발주</button>
-                                <button type="button" class="desk-chip" id="desk-final-now" title="현금파일과 메모를 넣으면 거래처별 택배사 양식, 수량 표, 스토어 양식을 만들어요">최종발주</button>
-                                <button type="button" class="desk-chip" id="desk-settle-now" title="발송목록 이미지를 고르면 정산 확인표를 만들어요">정산 이미지</button>
-                                <button type="button" class="desk-chip" id="desk-ship-now" title="발송한 택배가 어디까지 갔는지 CJ대한통운에 바로 물어봐요">배송조회 확인하기</button>
-                                <button type="button" class="desk-chip" id="desk-price-now" title="네이버·자사몰 페이지의 옵션 가격이 서로 맞는지 한 번에 봐요">전체 가격 확인하기</button>
-                                <button type="button" class="desk-chip sms-chip" id="desk-sms-now" title="회사폰으로 온 문자를 보고 여기서 답해요" hidden>문자<i class="sms-n" id="sms-chip-n" hidden></i></button>
+                            <button type="button" class="desk-cbtn desk-plus-btn" id="desk-plus-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="desk-plus" aria-label="할 일 고르기 — 첨부 · 발주 · 확인 · 문자" title="첨부 · 발주 · 확인 · 문자">${ICON_PLUS}<i class="sms-n desk-plus-n" id="desk-plus-n" hidden></i></button>
+                            <div class="desk-quick2 desk-shorts" id="desk-shorts" role="group" aria-label="바로가기"></div>
+                            <div class="desk-plus-back" id="desk-plus-back" hidden></div>
+                            <div class="desk-plus" id="desk-plus" role="menu" aria-label="할 일 고르기" hidden>
+                                <div class="desk-plus-g" role="group" aria-label="첨부"><b>첨부</b>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-attach" data-mk="attach" aria-label="이미지·파일 첨부"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.9l8.5-8.5"/></svg></i><span class="desk-mi-t"><strong>파일 · 이미지</strong><small>엑셀 · PDF · 사진을 지시에 붙여요</small></span></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-settle-now" data-mk="settle"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg></i><span class="desk-mi-t"><strong>정산 이미지</strong><small>발송목록 사진으로 정산 확인표를 만들어요</small></span></button>
+                                </div>
+                                <div class="desk-plus-g" role="group" aria-label="발주"><b>발주</b>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-qty-now" data-mk="qty"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i><span class="desk-mi-t"><strong>중간발주</strong><small>들어온 주문을 거래처별로 바로 집계해요</small></span></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-final-now" data-mk="final"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5h10a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V10z"/><path d="M9 5v5H4"/><path d="M9 14l2 2 4-4"/></svg></i><span class="desk-mi-t"><strong>최종발주</strong><small>현금파일 · 메모로 택배사 양식을 만들어요</small></span></button>
+                                </div>
+                                <div class="desk-plus-g" role="group" aria-label="확인"><b>확인</b>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-ship-now" data-mk="ship"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg></i><span class="desk-mi-t"><strong>배송조회 확인하기</strong><small>발송한 택배가 어디까지 갔는지 물어봐요</small></span></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-price-now" data-mk="price"><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg></i><span class="desk-mi-t"><strong>전체 가격 확인하기</strong><small>네이버 · 자사몰 가격이 서로 맞는지 봐요</small></span></button>
+                                </div>
+                                <div class="desk-plus-g" role="group" aria-label="손님" id="desk-plus-cust"><b>손님</b>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-sms-now" data-mk="sms" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></i><span class="desk-mi-t"><strong>문자</strong><small>회사폰으로 온 문자를 보고 여기서 답해요</small></span><i class="sms-n" id="sms-chip-n" hidden></i></button>
+                                </div>
                             </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
                             <button type="submit" class="desk-cbtn primary" id="desk-send" disabled aria-label="지시 보내기" title="보내기 (Enter) · 줄바꿈은 Shift+Enter">${ICON_UP}</button>
@@ -292,6 +303,7 @@
         });
         $('desk-ask').addEventListener('submit', e => { e.preventDefault(); send(); });
         $('desk-attach').addEventListener('click', () => { S.pickImg = false; $('desk-file').accept = ACCEPT_ALL; $('desk-file').click(); });
+        plusBind();   // #653-나 [+] 메뉴 · 바로가기
         $('desk-reply-file').addEventListener('change', e => { const f = (e.target.files || [])[0]; e.target.value = ''; if (f && S.replyTarget) setReplyImg(S.replyTarget, f); });
         const replyId = el => el && el.classList && el.classList.contains('desk-reply-in') && /^reply-\d+$/.test(el.id) ? Number(el.id.slice(6)) : 0;
         $('desk-list').addEventListener('paste', e => {
@@ -529,7 +541,93 @@
     const SHIP_KEYS = ['배송완료', '배송출발', '간선상하차', '집화', '미배송', '사고', '기타', '조회실패', '미조회'];
     const SHIP_BADGE = { '사고': 'err', '미배송': 'ask', '집화': 'wait', '집화 정체': 'wait', '기타': 'mute', '조회실패': 'mute', '미조회': 'mute' };
     const SHIP_EMPTY = '그 기간 송장이 아직 안 올라왔어요. 아래에 택배사 엑셀을 끌어다 놓거나, 대표 PC에서 송장이 올라오기를 기다려 주세요.';
+    // ── #653-나(대표 10/11 「+ 를 누르면 파일·이미지, 중간발주, 최종발주, 정산이미지 … 보기 좋게」) ──
+    //   입력 칸 왼쪽 [+] 하나 → 묶음별 판(첨부 · 발주 · 확인 · 손님). PC = 단추 아래 팝오버 · 폰 = 아래에서 올라오는 시트. ↑↓ Home End · Enter · Esc · 바깥 누름.
+    //   [+] 옆 바로가기 = 최근에 쓴 것 2개(처음엔 중간발주 · 최종발주 · 이 브라우저에 기억) + 안 읽은 문자가 있으면 「문자 n」. 바로가기는 메뉴 항목을 대신 눌러 주는 것뿐(동작은 한 곳).
+    const PLUS_ID = { attach: 'desk-attach', settle: 'desk-settle-now', qty: 'desk-qty-now', final: 'desk-final-now', ship: 'desk-ship-now', price: 'desk-price-now', sms: 'desk-sms-now' };
+    const PLUS_NAME = { settle: '정산 이미지', qty: '중간발주', final: '최종발주', ship: '배송조회', price: '가격 확인', sms: '문자' };
+    const PLUS_KEY = 'akm_desk_plus_recent';
+    function plusRecent() {
+        let a = []; try { a = JSON.parse(localStorage.getItem(PLUS_KEY) || '[]'); } catch (e) { a = []; }
+        a = (Array.isArray(a) ? a : []).filter(k => k in PLUS_NAME && k !== 'sms');
+        for (const k of ['qty', 'final']) if (a.length < 2 && !a.includes(k)) a.push(k);
+        return a.slice(0, 2);
+    }
+    function plusUsed(k) {
+        if (!(k in PLUS_NAME) || k === 'sms') return;
+        try { const a = [k].concat(plusRecent().filter(x => x !== k)).slice(0, 2); localStorage.setItem(PLUS_KEY, JSON.stringify(a)); } catch (e) { /* 기억 못 해도 동작은 그대로 */ }
+        plusShorts();
+    }
+    function plusShorts() {
+        const box = $('desk-shorts'); if (!box) return;
+        const sm = SMS.sum ? smsNeed() : null, keys = plusRecent().concat(sm && sm.unread > 0 ? ['sms'] : []);
+        const off = k => { const t = $(PLUS_ID[k]); return !!(t && t.disabled); };
+        const html = keys.map(k => `<button type="button" class="desk-chip desk-short${k === 'sms' ? ' sms-chip' : ''}" id="desk-short-${k}" data-go="${k}"${k === 'sms' && smsDead() ? ' data-dead="1"' : ''}${off(k) ? ' disabled' : ''}>${PLUS_NAME[k]}${off(k) && k === 'qty' ? '<small>집계 중</small>' : ''}${k === 'sms' ? `<i class="sms-n">${sm.unread > 99 ? '99+' : sm.unread}</i>` : ''}</button>`).join('');
+        if (box.dataset.sig === html) return;
+        const had = document.activeElement && document.activeElement.closest && document.activeElement.closest('#desk-shorts') ? document.activeElement.id : '';
+        box.dataset.sig = html; box.innerHTML = html;
+        if (had && document.getElementById(had)) document.getElementById(had).focus({ preventScroll: true });
+    }
+    const plusItems = () => Array.from(document.querySelectorAll('#desk-plus .desk-mi')).filter(b => !b.hidden && !b.disabled);
+    const PLUS = { hist: false, skip: 0, after: null, replay: false };
+    const plusSheet = () => window.matchMedia('(max-width: 720px)').matches;   // 폰 = 아래 시트
+    function plusOpen() {
+        const m = $('desk-plus'), b = $('desk-plus-btn'); if (!m || !m.hidden) return;
+        const cust = $('desk-plus-cust'); if (cust) cust.hidden = $('desk-sms-now').hidden;   // 문자 연동이 없는 서버면 「손님」 묶음째 숨김
+        m.hidden = false; $('desk-plus-back').hidden = false; b.setAttribute('aria-expanded', 'true');
+        m.style.maxHeight = getComputedStyle(m).position === 'absolute' ? Math.max(220, Math.round(window.innerHeight - m.getBoundingClientRect().top - 16)) + 'px' : '';   // PC 팝오버는 화면 아래로 넘치지 않게(넘치면 판 안에서 스크롤)
+        document.body.classList.add('desk-plus-open');   // 폰 시트가 떠 있는 동안 뒤 화면 스크롤 잠금(CSS 가 폰 폭에서만)
+        if (plusSheet()) { try { history.pushState({ deskPlus: 1 }, ''); PLUS.hist = true; } catch (e) { PLUS.hist = false; } }   // 폰: 뒤로가기 = 시트 닫기(페이지를 떠나지 않게 · 문자 창과 같은 방식)
+        const first = plusItems()[0]; if (first) first.focus({ preventScroll: true });
+    }
+    // 돌려주는 값 true = 닫으면서 기록을 한 칸 되돌리는 중(곧 popstate 가 온다 — 이어서 기록을 쌓을 일은 그 뒤에)
+    function plusClose(focusBtn, fromPop) {
+        const m = $('desk-plus'); if (!m || m.hidden) return false;
+        m.hidden = true; $('desk-plus-back').hidden = true; const b = $('desk-plus-btn'); b.setAttribute('aria-expanded', 'false');
+        document.body.classList.remove('desk-plus-open');
+        if (focusBtn) b.focus({ preventScroll: true });
+        const had = PLUS.hist; PLUS.hist = false;
+        if (had && !fromPop && history.state && history.state.deskPlus) { PLUS.skip++; try { history.back(); return true; } catch (e) { PLUS.skip--; } }
+        return false;
+    }
+    // 도구를 닫았을 때 초점이 돌아갈 곳 — 그 일의 바로가기가 떠 있으면 거기, 아니면 [+]
+    function plusFocus(k) { const el = document.getElementById('desk-short-' + k) || $('desk-plus-btn'); if (el && !el.hidden) el.focus({ preventScroll: true }); }
+    // E: 중간발주가 집계 중이면 메뉴 항목·바로가기 둘 다 꺼진 모양 + 「집계 중」
+    function plusBusy() { const it = $('desk-qty-now'); if (it) { if (it.disabled) it.dataset.busy = '집계 중'; else delete it.dataset.busy; } plusShorts(); }
+    function plusBind() {
+        const btn = $('desk-plus-btn'), menu = $('desk-plus');
+        btn.addEventListener('click', () => { if (menu.hidden) plusOpen(); else plusClose(true); });
+        $('desk-plus-back').addEventListener('click', () => plusClose(true));
+        const runAfter = () => { const fn = PLUS.after; PLUS.after = null; if (fn) fn(); };
+        // 폰 시트에서 항목을 고르면: 시트의 기록 칸을 먼저 되돌리고(popstate) 그 뒤에 항목을 실행한다 — 문자·최종발주 창이 곧바로 자기 칸을 쌓는데, 되돌리기가 뒤늦게 오면 그 칸을 빼 버리기 때문
+        menu.addEventListener('click', e => {
+            const it = e.target.closest('.desk-mi'); if (!it || PLUS.replay) return;
+            if (PLUS.hist && history.state && history.state.deskPlus) {
+                e.stopPropagation(); e.preventDefault();
+                PLUS.after = () => { PLUS.replay = true; try { it.click(); } finally { PLUS.replay = false; } };
+                if (!plusClose(false)) runAfter(); else setTimeout(runAfter, 400);
+            }
+        }, true);
+        menu.addEventListener('click', e => { const it = e.target.closest('.desk-mi'); if (!it) return; plusClose(false); plusUsed(it.dataset.mk); });   // 항목 자신의 누름 처리가 먼저 돈 뒤 판을 닫는다
+        window.addEventListener('popstate', () => {
+            if (PLUS.skip > 0) { PLUS.skip--; runAfter(); return; }
+            if (!menu.hidden && !(history.state && history.state.deskPlus)) plusClose(true, true);   // 뒤로가기 = 시트 닫기
+        });
+        menu.addEventListener('keydown', e => {
+            const items = plusItems(), i = items.indexOf(document.activeElement);
+            const go = n => { e.preventDefault(); const t = items[(n + items.length) % items.length]; if (t) t.focus({ preventScroll: true }); };
+            if (e.key === 'ArrowDown') go(i + 1); else if (e.key === 'ArrowUp') go(i - 1); else if (e.key === 'Home') go(0); else if (e.key === 'End') go(items.length - 1);
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); plusClose(true); }
+            else if (e.key === 'Tab') { e.preventDefault(); plusClose(true); }   // G: Tab 으로 나가면 판을 닫고 초점은 [+] 로
+        });
+        btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown' && menu.hidden) { e.preventDefault(); plusOpen(); } });
+        document.addEventListener('mousedown', e => { if (!menu.hidden && !e.target.closest('#desk-plus, #desk-plus-btn, #desk-plus-back')) plusClose(false); });
+        $('desk-shorts').addEventListener('click', e => { const s = e.target.closest('.desk-short'); if (!s) return; const t = $(PLUS_ID[s.dataset.go]); if (t && !t.disabled) { t.click(); plusUsed(s.dataset.go); } });
+        try { if (history.state && history.state.deskPlus) history.replaceState(null, ''); } catch (e) { /* 그대로 */ }   // 새로고침 뒤 남은 칸
+        plusShorts();
+    }
     function toolShow(id) {   // 도구 카드는 한 번에 하나만
+        plusClose(false);   // #653-나: 다른 카드·창이 뜨면 [+] 메뉴는 닫는다
         if (id !== 'desk-sms') smsWinCleanup();   // #653: 문자 창이 떠 있었으면 창 흔적(스크롤 잠금·뒤로가기 기록)을 걷는다
         ['desk-ship', 'desk-qty', 'desk-sms', 'desk-price'].forEach(k => { const el = $(k); if (el) el.hidden = k !== id; });   // desk-price(#612)는 처음 열 때 생긴다
         if (id !== 'desk-ship') clearTimeout(SHIP.timer);
@@ -794,7 +892,7 @@
     async function qtyRun() {
         if (QTY.busy) return;
         if (typeof matchProduct !== 'function' || typeof addSizeSuffix !== 'function' || typeof qtyCategory !== 'function' || typeof aoItemPartner !== 'function') { qtyNote('중간발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요', 'err'); return; }
-        QTY.busy = true; $('desk-qty-now').disabled = true;
+        QTY.busy = true; $('desk-qty-now').disabled = true; plusBusy();
         const out = $('qty-out'), prog = $('qty-prog'), ptxt = $('qty-prog-text');
         QTY.urls.forEach(u => URL.revokeObjectURL(u)); QTY.urls = []; QTY.blobs.clear();
         pkClose(false); out.innerHTML = ''; qtyNote(''); prog.hidden = false;
@@ -848,7 +946,7 @@
             if (fails.length) qtyNote('불러오지 못한 채널은 빼고 집계했어요 · ' + fails.join(' / '), 'err');
         } catch (e) {
             qtyNote('집계하지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요'), 'err');
-        } finally { prog.hidden = true; QTY.busy = false; $('desk-qty-now').disabled = false; }
+        } finally { prog.hidden = true; QTY.busy = false; $('desk-qty-now').disabled = false; plusBusy(); }
     }
     // 거래처별 그림을 (다시) 그린다 — 집계(QTY.base) + 직접 추가(QTY.extra). 추가 행이 없으면 종전과 같은 표·같은 순서
     async function qtyDraw() {
@@ -1069,9 +1167,13 @@
         const b = $('desk-sms-now'), n = $('sms-chip-n'); if (!b) return;
         const d = SMS.sum;
         b.hidden = !d;
-        if (!d) { if (smsVisible()) toolShow(null); return; }
+        const pn = $('desk-plus-n'), pb = $('desk-plus-btn');
+        if (!d) { if (pn) pn.hidden = true; if (pb) pb.dataset.dead = ''; plusShorts(); if (smsVisible()) toolShow(null); return; }
         const nd = smsNeed(), need = nd.unread, dead = smsDead();
         n.hidden = !(need > 0); n.textContent = need > 99 ? '99+' : String(need);
+        if (pn) { pn.hidden = n.hidden; pn.textContent = n.textContent; }   // #653-나: [+] 단추에도 안 읽은 문자 수
+        if (pb) pb.dataset.dead = dead ? '1' : '';
+        plusShorts();
         b.dataset.dead = dead ? '1' : '';
         b.setAttribute('aria-label', '문자' + (need > 0 ? `, 안 읽은 대화 ${need}건(직원 확인 ${nd.staff} · 초안 ${nd.draft})` : '') + (dead ? ', 회사폰 연결 끊김' : ''));
     }
@@ -1143,7 +1245,7 @@
     function smsCloseCard() {
         smsWinCleanup();
         SMS.imgs.forEach(p => p.then(u => { if (u) URL.revokeObjectURL(u); }).catch(() => { })); SMS.imgs.clear();
-        toolShow(null); const b = $('desk-sms-now'); if (b && !b.hidden) b.focus();
+        toolShow(null); plusFocus('sms');
     }
     async function smsList(quiet) {
         if (!smsVisible()) return;
@@ -1507,7 +1609,7 @@
             + (nd.unread > 0 ? `<li class="sms-todo" data-sms="active" role="button" tabindex="0"><span>${nd.old ? '문자 답할 것' : '안 읽은 문자'}</span><b>${nfmt(nd.unread)}건</b><small>${sub ? sub + ' · ' : ''}에이전트 오피스 &gt; 문자 (눌러서 열기)</small></li>` : '');
     }
     function smsBind() {
-        $('desk-sms-now').addEventListener('click', () => { if (smsVisible()) smsCloseCard(); else smsOpen(); });
+        $('desk-sms-now').addEventListener('click', () => smsOpen());   // #653-나: 고르면 항상 연다(닫기는 창의 [닫기]·Esc·뒤로가기)
         $('sms-close').addEventListener('click', smsCloseCard);
         ['keydown', 'pointerdown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, () => { SMS.actAt = Date.now(); }, { capture: true, passive: true }));
         // (scroll 은 세지 않는다 — 새 글이 붙으며 대화 창이 스스로 내려가는 것도 scroll 이라, 자리를 비웠는데 조작으로 잡힌다. 사람이 굴리면 wheel·touch 가 먼저 온다)
@@ -1767,7 +1869,7 @@
         $('pc-set-save').addEventListener('click', () => pcSetSave());
     }
     function pcOpen() { pcMount(); toolShow('desk-price'); if (!PRICE.data) pcLoad(false); else pcRender(); }
-    function pcClose() { toolShow(null); const b = $('desk-price-now'); if (b) b.focus(); }
+    function pcClose() { toolShow(null); plusFocus('price'); }
     // 페이지 등급 설정(관리자) — 저장 키는 naver:번호 · cafe24:번호
     const pcCfgKey = k => String(k).replace(/^mall:/i, 'cafe24:');
     const pcSetMsg = (t, k) => { const m = $('pc-set-msg'); m.textContent = t || ''; m.dataset.k = k || ''; };
@@ -1815,10 +1917,10 @@
 
     function bindTools() {
         smsBind();   // #610-E 문자
-        $('desk-price-now').addEventListener('click', () => { if (pcVisible()) pcClose(); else pcOpen(); });   // #612 전체 가격 확인하기
+        $('desk-price-now').addEventListener('click', () => { pcOpen(); const x = document.querySelector('#desk-price .desk-tool-x'); if (x) x.focus({ preventScroll: true }); });   // #612 전체 가격 확인하기 · #653-나: 고르면 항상 연다(이미 열려 있으면 그 카드로 — 닫기는 카드의 [닫기])
         $('desk-ship-now').addEventListener('click', () => shipOpen());
-        $('ship-close').addEventListener('click', () => { toolShow(null); $('desk-ship-now').focus(); });
-        $('qty-close').addEventListener('click', () => { pkClose(false); toolShow(null); $('desk-qty-now').focus(); });
+        $('ship-close').addEventListener('click', () => { toolShow(null); plusFocus('ship'); });
+        $('qty-close').addEventListener('click', () => { pkClose(false); toolShow(null); plusFocus('qty'); });
         $('ship-form').addEventListener('submit', e => { e.preventDefault(); shipGo(false); });
         ['ship-from', 'ship-to'].forEach(id => $(id).addEventListener('change', () => { shipRange(); shipNote(''); shipLoad(); }));
         $('ship-out').addEventListener('click', e => {
@@ -2993,7 +3095,7 @@
         // #580: 다른 탭·앱에 갔다 돌아오면 다음 차례를 기다리지 않고 바로 다시 받는다(가려진 동안은 안 받으므로 돌아온 순간이 가장 낡아 있다)
         if (!S.visBound) { S.visBound = true; document.addEventListener('visibilitychange', () => { if (document.hidden || !S.mounted || !pageActive()) return; tickElapsed(); if (!S.loading) loadOrders(false); loadStatus(); smsTick(true); }); }
     };
-    window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList, loadInbox, renderInbox };
+    window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList, loadInbox, renderInbox, plusFocus, plusBusy };
     // #620(대표 10/10 「새로고침하면 가끔 화면이 빈다」): app.js 의 로그인 확인이 이 파일보다 먼저 끝나면 switchPage 가 aoDeskEnter 를 못 찾아 옛 화면 길로 빠지고, 그 뒤로는 아무도 그리지 않았다
     //   → 이 파일이 실행된 순간 에이전트 오피스가 이미 떠 있으면 스스로 들어간다(mount 는 S.mounted 로 한 번만).
     if (pageActive()) window.aoDeskEnter().catch(console.error);

@@ -334,7 +334,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         // ══ ⑧ #544 파일 첨부 ══════════════════════════════════════════════════════════════
         const mkFile = (name, type, size) => ({ name, mimeType: type, buffer: Buffer.alloc(size || 2048, 0x41) });
         const topInfo = pg => pg.evaluate(() => ({ accept: document.getElementById('desk-file').accept, label: document.getElementById('desk-attach').getAttribute('aria-label'), chips: Array.from(document.querySelectorAll('#desk-thumbs .desk-filechip')).map(c => [c.querySelector('.desk-filechip-name').textContent, c.querySelector('.desk-filechip-size').textContent, !!c.querySelector('button')]), thumbs: document.querySelectorAll('#desk-thumbs .desk-thumb').length }));
-        const pick = async (pg, sel, files) => { const [fc] = await Promise.all([pg.waitForEvent('filechooser', { timeout: 5000 }), pg.click(sel)]); await fc.setFiles(files); await pg.waitForTimeout(500); };
+        const pick = async (pg, sel, files) => { const [fc] = await Promise.all([pg.waitForEvent('filechooser', { timeout: 5000 }), /^#desk-(attach|settle-now)$/.test(sel) ? plusGo(pg, sel) : pg.click(sel)]); await fc.setFiles(files); await pg.waitForTimeout(500); };
         await goTab(C.pg, 'mine', '#desk-list .desk-thread-box');
         await pick(C.pg, '#desk-attach', [mkFile('발주명단.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 3000)]);
         let ti = await topInfo(C.pg);
@@ -357,7 +357,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         const w8b = C.st.writes.length; await C.pg.fill('#desk-input', '그림 봐줘'); await C.pg.click('#desk-send');
         const p8b = await waitFor(async () => C.st.writes.slice(w8b).find(w => w.p === '/api/agent-office/orders'), 5000); await C.pg.waitForTimeout(700);
         ok('⑧ 이미지는 종전대로(썸네일 · 요청 본문에 file_name 없음)', ti.thumbs === 1 && ti.chips.length === 0 && !!p8b && /^data:image\/png;base64,/.test(p8b.body.image_data) && p8b.body.file_name === undefined, p8b && JSON.stringify(Object.keys(p8b.body)));
-        const [fcS] = await Promise.all([C.pg.waitForEvent('filechooser', { timeout: 5000 }), C.pg.click('#desk-settle-now')]); const accS = await C.pg.evaluate(() => document.getElementById('desk-file').accept); await fcS.setFiles([]);
+        const [fcS] = await Promise.all([C.pg.waitForEvent('filechooser', { timeout: 5000 }), plusGo(C.pg, '#desk-settle-now')]); const accS = await C.pg.evaluate(() => document.getElementById('desk-file').accept); await fcS.setFiles([]);
         ok('⑧ 「정산 이미지」 버튼은 이미지 전용 그대로(accept = image/*)', accS === 'image/*', accS); await C.pg.fill('#desk-input', '');
         // 답 상자
         await pick(C.pg, '#desk-list .desk-thread-box[data-th="870"] ~ .desk-thread-box [data-act="replyimg"], #desk-list .desk-turn[data-oid="700"] [data-act="replyimg"]', [mkFile('수정본.pdf', 'application/pdf', 5000)]);
@@ -501,3 +501,9 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
         setTimeout(() => process.exit(pass === results.length ? 0 : 1), 300);
     }
 })();
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

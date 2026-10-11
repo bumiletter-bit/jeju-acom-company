@@ -83,7 +83,8 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
             const R = el => { const r = el.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) }; };
             const card = document.querySelector('.desk-top.desk-top1'), comp = document.querySelector('.desk-compose'), inp = $('desk-input'), form = $('desk-ask');
             const cs = getComputedStyle(comp), ccs = getComputedStyle(card), ics = getComputedStyle(inp);
-            const chips = ['desk-qty-now', 'desk-final-now', 'desk-settle-now', 'desk-ship-now'].map(i => $(i));   // #550 자주 쓰는 일 = 3개(톡톡 답변 추천은 뺌) → #594 「배송조회 확인하기」 더해 4개
+            const chips = Array.from(document.querySelectorAll('#desk-shorts .desk-short'));   // #653-나: 입력 상자 아래 줄에 보이는 것 = 바로가기(항목 자체는 [+] 메뉴 안 — 아래 menu 로 따로 잰다)
+            const PLUS_BTN = $('desk-plus-btn'), menuItems = ['desk-attach', 'desk-settle-now', 'desk-qty-now', 'desk-final-now', 'desk-ship-now'].map(i => $(i));   // #550 자주 쓰는 일 = 3개(톡톡 답변 추천은 뺌) → #594 「배송조회 확인하기」 더해 4개
             const quick = document.querySelector('.desk-quick2'), hero = document.querySelector('.desk-top1 .desk-hero');
             const lab = form.querySelector('label[for="desk-input"]');
             const spark = document.querySelector('.desk-spark');
@@ -94,15 +95,15 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
                 noHead: form.querySelectorAll('h2, p').length, label: lab ? lab.textContent : null, labelBox: lab ? R(lab) : null,
                 comp: R(comp), compBorder: cs.borderTopColor, compBorderW: cs.borderTopWidth, compShadow: cs.boxShadow, compRadius: cs.borderTopLeftRadius, compBg: cs.backgroundColor,
                 inp: R(inp), rows: inp.rows, ph: inp.placeholder, phColor: getComputedStyle(inp, '::placeholder').color, inpColor: ics.color, inpFont: ics.fontSize, inpOutline: ics.outlineStyle, maxlength: inp.maxLength, inpScroll: inp.scrollHeight - inp.clientHeight, value: inp.value,
-                attach: R($('desk-attach')), send: R($('desk-send')), attachLabel: $('desk-attach').getAttribute('aria-label'), sendLabel: $('desk-send').getAttribute('aria-label'), sendType: $('desk-send').type, sendText: $('desk-send').textContent.trim(), sendDisabled: $('desk-send').disabled, sendBusy: $('desk-send').getAttribute('aria-busy'),
-                sendColors: [getComputedStyle($('desk-send')).backgroundColor, getComputedStyle($('desk-send')).color], attachColors: [getComputedStyle($('desk-attach')).backgroundColor, getComputedStyle($('desk-attach')).color],
+                attach: R(PLUS_BTN), send: R($('desk-send')), attachLabel: PLUS_BTN.getAttribute('aria-label'), fileLabel: $('desk-attach').getAttribute('aria-label'), plusPopup: PLUS_BTN.getAttribute('aria-haspopup') + '|' + PLUS_BTN.getAttribute('aria-expanded'), menu: { role: $('desk-plus').getAttribute('role'), label: $('desk-plus').getAttribute('aria-label'), hidden: $('desk-plus').hidden, inCard: card.contains($('desk-plus')), names: menuItems.map(b => b && b.querySelector('strong') ? b.querySelector('strong').textContent.trim() : null) }, sendLabel: $('desk-send').getAttribute('aria-label'), sendType: $('desk-send').type, sendText: $('desk-send').textContent.trim(), sendDisabled: $('desk-send').disabled, sendBusy: $('desk-send').getAttribute('aria-busy'),
+                sendColors: [getComputedStyle($('desk-send')).backgroundColor, getComputedStyle($('desk-send')).color], attachColors: [getComputedStyle(PLUS_BTN).backgroundColor, getComputedStyle(PLUS_BTN).color],
                 count: { vis: vis($('desk-count')), hidden: $('desk-count').hidden, text: $('desk-count').textContent, box: vis($('desk-count')) ? R($('desk-count')) : null },
                 chips: chips.map(c => Object.assign(R(c), { text: c.textContent.trim(), vis: vis(c), color: getComputedStyle(c).color, bg: getComputedStyle(c).backgroundColor })), quick: Object.assign(R(quick), { sw: quick.scrollWidth, cw: quick.clientWidth, ox: getComputedStyle(quick).overflowX, label: quick.getAttribute('aria-label'), head: quick.querySelectorAll('.desk-quick2-label').length }),
                 hint: Array.from(document.querySelectorAll('.desk-keyhint, .desk-ask-meta')).filter(vis).length, sendTitle: $('desk-send').title,
                 state: { text: $('desk-state-text').textContent, s: $('desk-state').dataset.s, box: R($('desk-state')) }, say: { text: $('desk-say').textContent, box: R($('desk-say')), color: getComputedStyle($('desk-say')).color, vis: vis($('desk-say')) },
                 wake: { vis: vis($('desk-wake-btn')), hidden: $('desk-wake-btn').hidden, disabled: $('desk-wake-btn').disabled, text: $('desk-wake-btn').textContent.trim(), note: $('desk-wake-note').textContent, box: vis($('desk-wake-btn')) ? R($('desk-wake-btn')) : null },
                 onText: /창구 켜짐/.test(card.innerText), img: Object.assign(R($('desk-char')), { src: $('desk-char').getAttribute('src'), nat: $('desk-char').naturalWidth }), hero: R(hero), clock: R($('desk-clock')),
-                talkGone: !$('desk-talk-now'), sameAsReply: comp.classList.contains('desk-cbox'), btnCls: [$('desk-attach').className, $('desk-send').className], btnRound: [getComputedStyle($('desk-attach')).borderTopLeftRadius, getComputedStyle($('desk-send')).borderTopLeftRadius], svgs: [$('desk-attach').querySelectorAll('svg').length, $('desk-send').querySelectorAll('svg').length],
+                talkGone: !$('desk-talk-now'), sameAsReply: comp.classList.contains('desk-cbox'), btnCls: [PLUS_BTN.className, $('desk-send').className], btnRound: [getComputedStyle(PLUS_BTN).borderTopLeftRadius, getComputedStyle($('desk-send')).borderTopLeftRadius], svgs: [PLUS_BTN.querySelectorAll('svg').length, $('desk-send').querySelectorAll('svg').length],
                 spark: spark ? Object.assign(R(spark), { hidden: spark.getAttribute('aria-hidden'), color: getComputedStyle(spark).color }) : null,
                 thumbs: Array.from(document.querySelectorAll('#desk-thumbs .desk-thumb')).map(R), thumbsHidden: $('desk-thumbs').hidden, drag: form.classList.contains('drag'),
                 order: Array.from(document.querySelectorAll('#ao-desk-root .desk-main > section')).map(x => x.id || x.className.split(' ')[0]),
@@ -121,15 +122,15 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         ok('첫 칸 = 한 카드: 날짜·시계·상태·아꼼이 + 지시 입력 상자 + 자주 쓰는 일이 같은 카드 안', t.oneCard && t.cardBorder !== '0px' && t.innerBoxes.every(x => /^0px\|none\|rgba\(0, 0, 0, 0\)$/.test(x)), JSON.stringify(t.innerBoxes));
         ok('입력 폼의 제목·설명 글 없음 · 「지시 내용」 label은 화면에서만 숨김(읽기 프로그램용 1px)', t.noHead === 0 && t.label === '지시 내용' && t.labelBox.w <= 1 && t.labelBox.h <= 1);
         ok('마크업 id 전부 그대로', t.ids.length === 0, t.ids.join(','));
-        ok('칸 순서 그대로(desk-top → [#594·#595 도구 카드 2개 · 닫힌 채] → desk-listbox → desk-inbox → desk-board)', JSON.stringify(t.order) === '["desk-top","desk-ship","desk-qty","desk-listbox","desk-inbox","desk-board"]' && await A.pg.evaluate(() => document.getElementById('desk-ship').hidden && document.getElementById('desk-qty').hidden && !document.getElementById('desk-ship').getClientRects().length), JSON.stringify(t.order));
+        ok('칸 순서 그대로(desk-top → [#594·#595 도구 카드 2개 · 닫힌 채] → desk-listbox → desk-inbox → desk-board)', JSON.stringify(t.order) === '["desk-top","desk-ship","desk-qty","desk-sms","desk-listbox","desk-inbox","desk-board"]' && await A.pg.evaluate(() => document.getElementById('desk-ship').hidden && document.getElementById('desk-qty').hidden && !document.getElementById('desk-ship').getClientRects().length), JSON.stringify(t.order));
         const innerW = t.card.w - t.cardPadL - t.cardPadR;
         ok('입력 상자가 카드 너비를 거의 다 씀(안쪽 너비의 98% 이상)', t.comp.w >= innerW * 0.98 && inside(t.comp, t.card), `상자 ${t.comp.w}px / 카드 안쪽 ${Math.round(innerW)}px`);
         ok('#550 입력 상자 = 채팅 탭 답 상자와 같은 모양(.desk-cbox · 옅은 인디고 테두리 #C7CBFF · 둥글기 22px · 흰 바탕)', t.sameAsReply && t.compBorder === 'rgb(199, 203, 255)' && parseFloat(t.compBorderW) >= 1 && parseFloat(t.compBorderW) <= 2 && parseFloat(t.compRadius) === 22 && t.compBg === 'rgb(255, 255, 255)', `${t.compBorder} ${t.compBorderW} r=${t.compRadius}`);
         ok('입력칸 rows 1(답 상자와 같음 · 적는 만큼 늘어남) · 안내 글 「원하시는 작업을 입력해 주세요」 · 글자 15px 이상 · maxlength 2000', t.rows === 1 && t.inp.h >= 44 && t.ph === '원하시는 작업을 입력해 주세요' && parseFloat(t.inpFont) >= 15 && t.maxlength === 2000);
         ok('#550 둥근 버튼 2개 = 44×44 · 「+」(첨부)는 아래 줄 왼쪽 끝 · ↑(보내기)는 오른쪽 끝 · 답 상자와 같은 버튼(.desk-cbtn · 원)', t.attach.l - t.comp.l <= 20 && /desk-cbtn/.test(t.btnCls[0]) && /desk-cbtn primary/.test(t.btnCls[1]) && t.btnRound.every(v => v === '50%') && t.svgs.join() === '1,1' && t.attach.w === 44 && t.attach.h === 44 && t.send.w === 44 && t.send.h === 44 && inside(t.attach, t.comp) && inside(t.send, t.comp) && t.comp.r - t.send.r <= 16 && t.comp.b - t.send.b <= 16 && t.attach.r <= t.send.l && Math.abs(t.attach.t - t.send.t) <= 1 && t.send.t >= t.inp.b - 2, JSON.stringify({ attach: t.attach, send: t.send, comp: t.comp }));
-        ok('aria-label = 「이미지 첨부」·「지시 보내기」 · 보내기는 submit · 버튼 안에 글자 없음(아이콘)', t.attachLabel === '이미지·파일 첨부' &&   /* #544 파일도 첨부 */ t.sendLabel === '지시 보내기' && t.sendType === 'submit' && t.sendText === '');
+        ok('aria-label = 「이미지 첨부」·「지시 보내기」 · 보내기는 submit · 버튼 안에 글자 없음(아이콘)', t.attachLabel === '할 일 고르기 — 첨부 · 발주 · 확인 · 문자' && t.plusPopup === 'menu|false' && t.fileLabel === '이미지·파일 첨부' &&   /* #653-나: 둥근 「+」 = 메뉴 열기 · 「파일 · 이미지」 항목이 종전 첨부(aria-label 그대로) */ t.sendLabel === '지시 보내기' && t.sendType === 'submit' && t.sendText === '');
         ok('「Enter 보내기…」 안내 글 없음 · 보내기 버튼 설명(title)에 Enter·Shift+Enter', t.hint === 0 && /Enter/.test(t.sendTitle) && /Shift\+Enter/.test(t.sendTitle), t.sendTitle);
-        ok('#550·#594 자주 쓰는 일 = 4개(「중간발주」「최종발주」「정산 이미지」「배송조회 확인하기」 · 톡톡 답변 추천 없음) · 입력 상자 안 아래 줄의 「+」와 ↑ 사이 · 한 줄 · 묶음 이름(aria-label)', t.talkGone && t.chips.map(c => c.text).join('|') === '중간발주|최종발주|정산 이미지|배송조회 확인하기' && new Set(t.chips.map(c => c.t)).size === 1 && t.chips.every(c => c.vis && inside(c, t.comp) && c.l >= t.attach.r && c.r <= t.send.l && Math.abs((c.t + c.b) / 2 - (t.attach.t + t.attach.b) / 2) <= 2) && t.quick.head === 0 && t.quick.label === '자주 쓰는 일', JSON.stringify(t.chips.map(c => [c.text, c.t])));
+        ok('#653-나 자주 쓰는 일 = [+] 메뉴 안(「파일 · 이미지」「정산 이미지」「중간발주」「최종발주」「배송조회 확인하기」 · 톡톡 답변 추천 없음 · 닫힌 채) · 바로가기 2개가 입력 상자 안 아래 줄의 「+」와 ↑ 사이 · 한 줄 · 묶음 이름(aria-label)', t.talkGone && t.menu.role === 'menu' && t.menu.label === '할 일 고르기' && t.menu.hidden && t.menu.inCard && t.menu.names.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기' && t.chips.map(c => c.text).join('|') === '중간발주|최종발주' && new Set(t.chips.map(c => c.t)).size === 1 && t.chips.every(c => c.vis && inside(c, t.comp) && c.l >= t.attach.r && c.r <= t.send.l && Math.abs((c.t + c.b) / 2 - (t.attach.t + t.attach.b) / 2) <= 2) && t.quick.head === 0 && t.quick.label === '바로가기', JSON.stringify(t.chips.map(c => [c.text, c.t])));
         ok('상태 한 줄: 상태 알약 + 인사 글이 같은 줄 · idle 인사 = 「무엇을 도와드릴까요?」 · 「대기 중」', t.state.text === '대기 중' && t.say.text === '무엇을 도와드릴까요?' && t.say.vis && Math.abs((t.state.box.t + t.state.box.b) / 2 - (t.say.box.t + t.say.box.b) / 2) <= 6 && t.say.box.l >= t.state.box.r, JSON.stringify({ state: t.state.box, say: t.say.box }));
         ok('창구가 켜져 있으면(idle) 깨우기 버튼 숨김 · 「창구 켜짐」 글자 없음', !t.wake.vis && !t.onText);
         ok('아꼼이 그림 로드 · 카드 안 오른쪽 · 입력 상자 위', t.img.nat > 0 && inside(t.img, t.card) && t.img.r >= t.card.r - 40 && t.img.b <= t.comp.t + 2 && /akkomi-idle/.test(t.img.src), JSON.stringify(t.img));
@@ -174,7 +175,7 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         const pv = await pasteImg(A.pg, '#desk-input');
         const i1 = await waitFor(async () => { const x = await top(A.pg); return x.thumbs.length === 1 ? x : null; }, 4000);
         ok('이미지 붙여넣기 → 썸네일 1장 · 입력 상자 안 글 칸 위(답 상자와 같은 자리)', pv && !!i1 && inside(i1.thumbs[0], i1.comp) && i1.thumbs[0].b <= i1.inp.t + 2, i1 ? JSON.stringify(i1.thumbs[0]) : '썸네일 없음');
-        const [fc] = await Promise.all([A.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), A.pg.click('#desk-attach')]);
+        const [fc] = await Promise.all([A.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), plusGo(A.pg, '#desk-attach')]);
         if (fc) await fc.setFiles({ name: '목록.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(PNG, 'base64') });
         const i2 = await waitFor(async () => { const x = await top(A.pg); return x.thumbs.length === 2 ? x : null; }, 4000);
         ok('클립 버튼 → 파일 고르기 → 썸네일 2장', !!fc && !!i2);
@@ -218,13 +219,13 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
         // 자주 쓰는 일 동작
         const w0 = posts(A, /\/orders$/).length;
         await A.pg.evaluate(() => { window.__foOpen = 0; window.AkmFinalOrder = { open() { window.__foOpen++; } }; });   // #550 최종발주 화면은 열지 않고 불렸는지만 본다
-        await A.pg.click('#desk-final-now');
+        await plusGo(A.pg, '#desk-final-now');
         ok('「최종발주」 = 최종발주 화면 열기(지시를 보내지 않음)', (await A.pg.evaluate(() => window.__foOpen)) === 1 && posts(A, /\/orders$/).length === w0);
         await A.pg.fill('#desk-input', '');
-        const [fc2] = await Promise.all([A.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), A.pg.click('#desk-settle-now')]);
+        const [fc2] = await Promise.all([A.pg.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null), plusGo(A.pg, '#desk-settle-now')]);
         ok('「정산 이미지」 = 빈칸이면 「정산관리에 올려줘」 채우고 파일 고르기', !!fc2 && (await A.pg.inputValue('#desk-input')) === '정산관리에 올려줘');
         await A.pg.fill('#desk-input', '');
-        await A.pg.click('#desk-qty-now');
+        await plusGo(A.pg, '#desk-qty-now');
         await sleep(1500);
         ok('#595 「중간발주」 = 창구 지시를 보내지 않고(POST 0) 중간발주 카드가 열림', posts(A, /\/orders$/).length === w0 && await A.pg.evaluate(() => !document.getElementById('desk-qty').hidden));
         await A.pg.waitForFunction(() => !document.getElementById('desk-qty-now').disabled, null, { timeout: 60000 }).catch(() => { });
@@ -332,3 +333,9 @@ const ratio = (a, b) => { const A = rgb(a), B = rgb(b); if (!A || !B) return 0; 
     console.log(`\n결과: ${pass}/${results.length}` + (pass === results.length ? ' ✅' : ' — 실패: ' + results.filter(r => !r.pass).map(r => r.name).join(' / ')));
     process.exit(pass === results.length ? 0 : 1);
 })();
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}

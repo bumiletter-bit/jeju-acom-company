@@ -60,10 +60,10 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                 return { title: h ? h.textContent : '', badge: bd ? bd.textContent + '|' + bd.dataset.k : '', plan: q('plan'), ship: q('ship'), trk: q('trk'), who: q('who'), item: q('item'), paid: q('paid'), order: Array.from(i0.querySelectorAll('dd[data-k]')).map(d => d.dataset.k).join(','), none: el.classList.contains('none'), days: hs ? hs.textContent : '', n: el.querySelectorAll('.sms-buy-i').length, shown: Array.from(el.querySelectorAll('.sms-buy-i')).filter(x => x.getClientRects().length).length, more: more ? more.textContent + '|' + more.getAttribute('aria-expanded') + '|' + Math.round(more.getBoundingClientRect().height) : '', cap: !!el.querySelector('.sms-buy-cap'), text: el.textContent.replace(/\s+/g, ' ').trim(), nums: bs.map(b => b.textContent).join(','), hrefs: as.map(a => a.getAttribute('href') + '|' + a.target).join(','), h: bs.length ? Math.min(...bs.concat(as).map(x => Math.round(x.getBoundingClientRect().height))) : 0, over: el.scrollWidth > el.clientWidth + 1, keyFw: (el.querySelector('dd.key') ? Number(getComputedStyle(el.querySelector('dd.key')).fontWeight) : 0) }; });
             // ① 알약 · 새 폴링 없음
             const chipLabel = await pg.getAttribute('#desk-sms-now', 'aria-label');
-            ok(await pg.locator('#desk-sms-now').isVisible() && (await pg.locator('#sms-chip-n').innerText()) === '7' && /안 읽은 대화 7건\(직원 확인 3 · 초안 1\)/.test(chipLabel || ''), `[${label}] 알약 「문자」 · 숫자 7 = 안 읽은 대화 수(${chipLabel})`);
+            ok(await pg.locator('#desk-short-sms').isVisible() && (await pg.locator('#desk-short-sms').innerText()).replace(/\s+/g, '') === '문자7' && await pg.evaluate(() => !document.getElementById('desk-plus-n').hidden && document.getElementById('sms-chip-n').textContent === '7') && /안 읽은 대화 7건\(직원 확인 3 · 초안 1\)/.test(chipLabel || ''), `[${label}] #653-나 바로가기 「문자 7」 · [+] 에 점 · 메뉴 줄 숫자 7 = 안 읽은 대화 수(${chipLabel})`);
             const n0 = P.sms.length; await pg.waitForTimeout(3200);
             ok(P.sms.length === n0 && n0 <= 2, `[${label}] 카드를 안 열면 문자 요청은 요약뿐(처음 ${n0}회 · 3초 동안 추가 ${P.sms.length - n0}회)`);
-            await pg.click('#desk-sms-now'); await pg.waitForTimeout(700);
+            await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(700);
             {   // #653 문자 = 화면을 덮는 전용 창(최종발주처럼)
                 const w = await pg.evaluate(() => { const m = document.getElementById('desk-sms'), r = m.getBoundingClientRect(), cs = getComputedStyle(m), win = document.querySelector('.sms-win').getBoundingClientRect(); return { pos: cs.position, full: Math.round(r.width) === window.innerWidth && Math.round(r.height) === window.innerHeight, role: m.getAttribute('role'), lock: document.body.classList.contains('sms-win-open') && getComputedStyle(document.body).overflow === 'hidden', winW: Math.round(win.width), winH: Math.round(win.height), pane: !!document.querySelector('#sms-pane .sms-pane-empty'), hist: (history.state || {}).smsWin || '' }; });
                 ok(w.pos === 'fixed' && w.full && w.role === 'dialog' && w.lock && w.hist === 'win' && (phone ? w.winW === vw.width && w.winH === vw.height : w.winW <= 1180 && w.winH <= vw.height - 40), `[${label}] #653 문자 창이 화면을 덮음(창 ${w.winW}×${w.winH} · 뒤 화면 스크롤 잠금 · 뒤로가기 칸 1)`);
@@ -215,14 +215,14 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                 const b2 = await pg.evaluate(() => ({ win: !document.getElementById('desk-sms').hidden, lock: document.body.classList.contains('sms-win-open'), page: document.getElementById('page-agent-office').classList.contains('active'), url: location.pathname, st: (history.state || {}).smsWin || '' }));
                 ok(!b2.win && !b2.lock && b2.page && b2.url === '/' && !b2.st, `[${label}] #653 뒤로가기 2번 더 = 목록 → 창 닫힘 · 페이지는 에이전트 오피스 그대로(${JSON.stringify(b2)})`);
                 // Esc 도 같은 순서 · 화면에서 닫으면 뒤로가기 칸도 정리(남은 칸 없이)
-                await pg.click('#desk-sms-now'); await pg.waitForTimeout(700); await openThread(pg, 4);
+                await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(700); await openThread(pg, 4);
                 await pg.keyboard.press('Escape'); await pg.waitForTimeout(350);
                 const e1 = await pg.evaluate(() => ({ th: !!document.getElementById('sms-thread'), win: !document.getElementById('desk-sms').hidden, st: (history.state || {}).smsWin || '' }));
                 await pg.keyboard.press('Escape'); await pg.waitForTimeout(450);
                 const e2 = await pg.evaluate(() => ({ win: !document.getElementById('desk-sms').hidden, lock: document.body.classList.contains('sms-win-open'), st: (history.state || {}).smsWin || '', focus: (document.activeElement || {}).id || '' }));
-                ok(!e1.th && e1.win && e1.st === 'win' && !e2.win && !e2.lock && !e2.st && e2.focus === 'desk-sms-now', `[${label}] #653 Esc 1번 = 대화 · 2번 = 창 닫힘(뒤로가기 칸 남지 않음 · 초점은 [문자] 알약)`);
+                ok(!e1.th && e1.win && e1.st === 'win' && !e2.win && !e2.lock && !e2.st && e2.focus === 'desk-short-sms', `[${label}] #653 Esc 1번 = 대화 · 2번 = 창 닫힘(뒤로가기 칸 남지 않음 · 초점은 [문자] 바로가기)`);
                 await mock('/__mock/reset', {});   // 다음 단계(⑦)가 기대하는 처음 상태로: 1234 대화를 안 읽음에서 다시 연다
-                await pg.click('#desk-sms-now'); await pg.waitForTimeout(700); await scopeBtn(pg, false); await wake(pg); await rowsAre(pg, 7); await openThread(pg, 1);
+                await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(700); await scopeBtn(pg, false); await wake(pg); await rowsAre(pg, 7); await openThread(pg, 1);
             }
             {   // #655 쓰는 중 폴링(대화 5초 · 목록 10초)이 지나가도 답 칸 위치·초점·값·스크롤, 말풍선·목록 줄이 그대로(다시 만들지 않음)
                 await pg.fill('#sms-text', ''); await pg.focus('#sms-text');
@@ -453,7 +453,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
                 ok(oA === true && !gA.full && gA.win && gA.th === '3' && gA.st === 'th' && gA.bub >= 2 && un3 === 0, `[${label}] 전체 화면이 떠 있는 채 openSms(3) → 전체 화면이 닫히고 문자 창·대화가 보임(읽음 ${un3 === 0} · ${JSON.stringify(gA)})`);
                 await pg.goBack().catch(() => { }); await pg.waitForTimeout(400); await pg.goBack().catch(() => { }); await pg.waitForTimeout(400);
                 ok(await pg.evaluate(() => document.getElementById('desk-sms').hidden && !document.body.classList.contains('sms-win-open') && !((history.state || {}).smsWin) && !((history.state || {}).deskFull) && document.getElementById('page-agent-office').classList.contains('active')), `[${label}] 그 뒤 뒤로가기 2번 = 대화 → 창 닫힘 · 남은 칸 없음`);
-                await pg.click('#desk-sms-now'); await pg.waitForTimeout(700); await scopeBtn(pg, false);
+                await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(700); await scopeBtn(pg, false);
             }
             // ⑭ 빈 목록 · 꺼짐 · 모드 칩
             await mock('/__mock/reset', {});
@@ -495,11 +495,11 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             console.log('\n── 문자 라우트 없는 서버');
             await mock('/__mock/reset', {});
             const P = await open(PC, false, null, pg => pg.route('**/api/sms/**', r => r.fulfill({ status: 404, contentType: 'text/html', body: '<pre>Cannot GET</pre>' })));
-            const g = await P.pg.evaluate(() => ({ sms: document.getElementById('desk-sms-now').hidden, chips: Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => b.textContent.trim()), card: document.getElementById('desk-sms').hidden, todo: document.querySelectorAll('.sms-todo').length }));
-            ok(g.sms && g.card && g.todo === 0 && g.chips.join('|') === '중간발주|최종발주|정산 이미지|배송조회 확인하기|전체 가격 확인하기', `[없는 서버] 알약 숨김 · 종전 알약 그대로(${g.chips.join('|')})`);
+            const g = await P.pg.evaluate(() => ({ sms: document.getElementById('desk-sms-now').hidden, chips: Array.from(document.querySelectorAll('.desk-quick2 .desk-chip')).filter(b => !b.hidden).map(b => b.textContent.trim()), menu: Array.from(document.querySelectorAll('#desk-plus .desk-mi')).filter(b => !b.hidden).map(b => b.querySelector('strong').textContent.trim()), dot: document.getElementById('desk-plus-n').hidden, card: document.getElementById('desk-sms').hidden, todo: document.querySelectorAll('.sms-todo').length }));
+            ok(g.sms && g.card && g.todo === 0 && g.dot && g.chips.join('|') === '중간발주|최종발주' && g.menu.join('|') === '파일 · 이미지|정산 이미지|중간발주|최종발주|배송조회 확인하기|전체 가격 확인하기', `[없는 서버] 문자 항목·바로가기·점 없음 · 나머지 메뉴 그대로(${g.menu.join('|')}) · 바로가기 「${g.chips.join('|')}」`);
             await P.pg.waitForTimeout(3000);
             ok(P.sms.length <= 1 && P.errors.length === 0, `[없는 서버] 요약은 한 번만 물어보고 그만둠(${P.sms.length}회) · 화면 오류 ${P.errors.length}`);
-            await P.pg.click('#desk-ship-now'); await P.pg.waitForTimeout(400);
+            await plusGo(P.pg, '#desk-ship-now'); await P.pg.waitForTimeout(400);
             ok(await P.pg.locator('#desk-ship').isVisible(), '[없는 서버] 배송조회 카드는 종전대로 열림');
             await P.ctx.close();
         }
@@ -507,14 +507,14 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             console.log('\n── 다른 도구 카드와 함께 · 알림');
             await mock('/__mock/reset', {});
             const P = await open(PC, false, null), pg = P.pg;
-            await pg.click('#desk-sms-now'); await pg.waitForTimeout(500); await openThread(pg, 1);
-            const covered = await pg.evaluate(() => { const b = document.getElementById('desk-ship-now').getBoundingClientRect(), top = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return !!top && !!top.closest('#desk-sms'); });
-            ok(covered, '[도구] #653 문자 창이 떠 있는 동안 뒤의 알약은 창에 가려 눌리지 않음');
+            await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(500); await openThread(pg, 1);
+            const covered = await pg.evaluate(() => { const b = document.getElementById('desk-plus-btn').getBoundingClientRect(), top = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return !!top && !!top.closest('#desk-sms'); });
+            ok(covered, '[도구] #653 문자 창이 떠 있는 동안 뒤의 [+] 단추는 창에 가려 눌리지 않음');
             await pg.mouse.click(6, 6); await pg.waitForTimeout(450);   // 창 바깥(어두운 곳)
             ok(!(await pg.locator('#desk-sms').isVisible()) && await pg.evaluate(() => !document.body.classList.contains('sms-win-open') && !((history.state || {}).smsWin)), '[도구] #653 창 바깥(어두운 곳) 누름 → 창 닫힘(대화 포함 · 뒤로가기 칸 정리)');
-            await pg.click('#desk-ship-now'); await pg.waitForTimeout(500);
+            await plusGo(pg, '#desk-ship-now'); await pg.waitForTimeout(500);
             ok(await pg.locator('#desk-ship').isVisible(), '[도구] 배송조회 카드는 종전대로 열림');
-            await pg.click('#desk-sms-now'); await pg.waitForTimeout(800);
+            await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(800);
             ok(await pg.locator('#desk-sms').isVisible() && !(await pg.locator('#desk-ship').isVisible()) && await rows(pg) === 6, `[도구] 문자를 열면 배송조회가 닫히고 목록이 뜸(${await rows(pg)}줄 · 읽은 1234 는 빠짐)`);
             await pg.click('#sms-close'); await pg.waitForTimeout(400);
             ok(!(await pg.locator('#desk-sms').isVisible()), '[도구] [닫기] → 창 닫힘');
@@ -544,3 +544,9 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
     console.log(`\n결과: ${pass}/${pass + fail}`);
     process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e.stack || e.message); process.exit(1); });
+
+// #653-나: 자주 쓰는 일 알약이 입력 칸 [+] 메뉴 안으로 들어갔다 → 메뉴를 열고 그 항목을 누른다(메뉴가 없는 옛 화면이면 바로 누름)
+async function plusGo(pg, sel) {
+    if (await pg.evaluate(() => { const m = document.getElementById('desk-plus'); return !!m && m.hidden; })) { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(200); }
+    await pg.click(sel);
+}
