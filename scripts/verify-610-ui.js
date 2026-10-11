@@ -195,6 +195,17 @@ const logOf = async () => (await mock('/__mock/log')).log;
             await pg.locator('#desk-board .sms-todo[data-sms="staff_needed"]').click(); await pg.waitForTimeout(800);
             const tg = await pg.evaluate(() => ({ vis: !document.getElementById('desk-sms').hidden, pressed: (document.querySelector('#sms-stat li[data-b="staff_needed"]') || { getAttribute: () => '' }).getAttribute('aria-pressed'), n: document.querySelectorAll('#sms-list .sms-item').length }));
             ok(tg.vis && tg.pressed === 'true' && tg.n === 2 && (!phone || (tb && tb.h >= 44)), `[${label}] 챙길 일 「문자 답할 것」 누름 → 문자 카드가 직원 몫만으로 열림(${JSON.stringify(tg)} · 줄 높이 ${tb ? tb.h : '?'})`);
+            // #633 「지금 챙길 일 · 봇 실패 N건」 한 줄 — 톡톡·문자 알약 · 문자 알약은 문자 카드 「직원 몫」으로
+            const bf = await pg.evaluate(() => { const li = document.querySelector('#desk-board .bot-fail'); if (!li) return null; const bs = Array.from(li.querySelectorAll('.bf-go')), cs = e => getComputedStyle(e).color, plain = document.querySelector('#desk-board .desk-todo li:not(.bot-fail):not(.sms-todo) b');
+                return { t: li.querySelector('span').textContent + '|' + li.querySelector('b').textContent, bs: bs.map(b => b.textContent).join(','), h: Math.min(...bs.map(b => Math.round(b.getBoundingClientRect().height))), n: document.querySelectorAll('#desk-board .bot-fail').length, note: li.querySelector('small i').textContent, red: !!plain && cs(li.querySelector('b')) !== cs(plain) }; });
+            ok(bf && bf.t === '봇 실패|3건' && bf.bs === '톡톡 2,문자 1' && bf.n === 1 && bf.red && /문자 답할 것/.test(bf.note), `[${label}] #633 챙길 일에 「봇 실패 3건」 한 줄 · 알약 「${bf && bf.bs}」 · 건수는 빨강 · 겹침 안내 글(${bf && bf.note})`);
+            ok(bf && bf.h >= (phone ? 44 : 32), `[${label}] #633 알약 높이 ${bf && bf.h}px`);
+            await pg.click('#sms-close'); await pg.waitForTimeout(300);
+            await pg.locator('#desk-board .bf-go[data-bf="sms"]').scrollIntoViewIfNeeded();
+            await pg.locator('#desk-board .bf-go[data-bf="sms"]').click(); await pg.waitForTimeout(800);
+            const bg = await pg.evaluate(() => ({ vis: !document.getElementById('desk-sms').hidden, pressed: (document.querySelector('#sms-stat li[data-b="staff_needed"]') || { getAttribute: () => '' }).getAttribute('aria-pressed'), n: document.querySelectorAll('#sms-list .sms-item').length, page: document.getElementById('page-agent-office').classList.contains('active') }));
+            ok(bg.vis && bg.pressed === 'true' && bg.n === 2 && bg.page, `[${label}] #633 「문자 1」 알약 누름 → 문자 카드가 직원 몫만으로 열림(${JSON.stringify(bg)})`);
+            await pg.waitForTimeout(1400);   // 같은 GET 1.2초 겹침 제거(#631) 창이 지난 뒤 다음 단계가 요약을 새로 받게
             ok(await sw(pg) <= vw.width, `[${label}] 끝까지 가로 넘침 없음(${await sw(pg)})`);
             if (theme) { await openThread(pg, 3); const a = await H.audit(pg, '#desk-sms, #desk-board .desk-todo'); ok(a.fails.length === 0, `[${label}] 끊김 안내·챙길 일 줄까지 야간 대비 미달 0(글자 ${a.texts}개${a.fails.length ? ' · ' + a.fails.slice(0, 4).join(' / ') : ''})`); await pg.keyboard.press('Escape'); }
             // ⑭ 꺼짐 · 모드 칩 · counts 없는 서버
@@ -254,6 +265,11 @@ const logOf = async () => (await mock('/__mock/log')).log;
             await pg.locator('#desk-board .sms-todo').click(); await pg.waitForTimeout(700);
             ok(await pg.evaluate(() => (document.querySelector('#sms-stat li[data-b="draft"]') || { getAttribute: () => '' }).getAttribute('aria-pressed') === 'true' && document.querySelectorAll('#sms-list .sms-item').length === 1 && document.querySelector('#sms-list .sms-item').dataset.st === 'draft'), '[초안만] 챙길 일 줄 누름 → 「초안 대기」만 1줄');
             ok(P.errors.length === 0, `[도구] 화면 오류 ${P.errors.length}`);
+            // #633 「톡톡 2」 알약 → 문의 관리 메뉴로(맨 끝에서 — 메뉴가 바뀌므로)
+            await pg.keyboard.press('Escape'); await pg.click('#sms-close').catch(() => { });
+            if (await pg.locator('#desk-board-fold').isVisible() && await pg.evaluate(() => document.getElementById('desk-board').classList.contains('folded'))) { await pg.click('#desk-board-fold'); await pg.waitForTimeout(300); }
+            await pg.locator('#desk-board .bf-go[data-bf="talk"]').click(); await pg.waitForTimeout(700);
+            ok(await pg.evaluate(() => document.getElementById('page-inquiry').classList.contains('active') && !document.getElementById('page-agent-office').classList.contains('active')), '[#633] 「톡톡 2」 알약 누름 → 문의 관리 메뉴가 열림');
             await P.ctx.close();
         }
     } finally { await browser.close().catch(() => { }); srv.kill(); }

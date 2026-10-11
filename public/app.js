@@ -78,18 +78,20 @@ if (!isStandalone) {
 let _lastUserAct = Date.now();
 ['click', 'keydown', 'touchstart', 'scroll'].forEach(ev =>
     window.addEventListener(ev, () => { _lastUserAct = Date.now(); }, { passive: true, capture: true }));
-// #631(대표 10/11 「정산 달력 입금 체크가 버퍼링」): 같은 GET 을 1.2초 안에 겹쳐 부르면(달력·목록·주간이 같은 달 자료를 따로 청함) 한 번만 보내고 같은 답을 나눠 쓴다.
-//   쓰기(GET 아님)가 한 번이라도 나가면 세대(_apiGen)가 올라가 그 전 답은 다시 안 쓴다 → 저장 직후 다시 읽을 때 옛 값이 섞이지 않는다. 실패한 요청은 나누지 않는다.
-let _apiGen = 0; const _apiInflight = new Map();   // url → { gen, at, p }
+// #631(대표 10/11 「정산 달력 입금 체크가 버퍼링」): 같은 GET 이 **아직 끝나지 않았을 때** 또 부르면(달력·목록·주간이 같은 달 자료를 동시에 청함) 한 번만 보내고 같은 답을 나눠 쓴다.
+//   #637 로 범위 축소: 끝난 요청(성공·실패 모두)은 바로 지운다 — 사람이 [다시 확인]을 눌러 다시 부르면 반드시 서버에 간다(종전 「끝난 뒤 1.2초 안 재사용」이 옛 답을 돌려줘 실패 안내가 안 떴음).
+//   쓰기(GET 아님)가 나가면 걸려 있던 것도 비운다 → 저장 직후 다시 읽을 때 저장 전에 떠난 요청의 답을 나눠 쓰지 않는다.
+const _apiInflight = new Map();   // url → 아직 안 끝난 요청
 async function api(url, method = 'GET', body = null) {
     if (method === 'GET' && !body) {
-        const hit = _apiInflight.get(url), now = Date.now();
-        if (hit && hit.gen === _apiGen && now - hit.at < 1200) return hit.p;
-        const p = _apiRaw(url, method, body); const ent = { gen: _apiGen, at: now, p }; _apiInflight.set(url, ent);
-        p.catch(() => { if (_apiInflight.get(url) === ent) _apiInflight.delete(url); });
+        const hit = _apiInflight.get(url);
+        if (hit) return hit;
+        const p = _apiRaw(url, method, body); _apiInflight.set(url, p);
+        const done = () => { if (_apiInflight.get(url) === p) _apiInflight.delete(url); };
+        p.then(done, done);
         return p;
     }
-    _apiGen++; _apiInflight.clear();
+    _apiInflight.clear();
     return _apiRaw(url, method, body);
 }
 async function _apiRaw(url, method = 'GET', body = null) {

@@ -1370,7 +1370,7 @@
             if (smsViewClose()) { e.stopPropagation(); return; }
             if (SMS.open) { e.stopPropagation(); smsThreadClose(true); }
         });
-        $('desk-board').addEventListener('click', e => { const li = e.target.closest('.sms-todo'); if (li) { if (S.full) closeFull(); smsOpen(li.dataset.sms === 'all' ? null : li.dataset.sms); } });
+        $('desk-board').addEventListener('click', e => { const bf = e.target.closest('.bf-go'); if (bf) { botFailGo(bf.dataset.bf); return; } const li = e.target.closest('.sms-todo'); if (li) { if (S.full) closeFull(); smsOpen(li.dataset.sms === 'all' ? null : li.dataset.sms); } });
         $('desk-board').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('sms-todo')) { e.preventDefault(); e.target.click(); } });
         if (window.visualViewport) { window.visualViewport.addEventListener('resize', smsVv); window.visualViewport.addEventListener('scroll', smsVv); }
     }
@@ -1839,6 +1839,7 @@
             if (S.seenConfirm.has(o.id)) continue;
             S.seenConfirm.add(o.id);
             if (mineId != null && o.created_by_id !== mineId) continue;
+            if (/^\[검증469\]/.test(String(o.content || ''))) continue;   // #636: 검증 스크립트의 시험 지시는 실화면에 확인표 창을 띄우지 않는다(이중 안전망)
             openConfirm(o.result);
         }
     }
@@ -2560,6 +2561,20 @@
     async function loadBoard() {
         try { S.board = await api('/api/agent-office/desk/board'); S.boardAt = Date.now(); renderBoard(); } catch (e) { /* 다음 주기에 다시 */ }
     }
+    // #633(대표 10/11): 봇이 답을 못 낸 건 한 줄 — 톡톡은 문의 관리로 · 문자는 문자 카드 「직원 몫」으로(문자 n 은 「문자 답할 것」 수에 이미 들어 있다 → 작은 글로 알림)
+    function botFailHtml(t) {
+        const tk = Number(t.talk) || 0, sm = Number(t.sms) || 0;
+        return `<li class="bot-fail"><span>봇 실패</span><b>${nfmt(tk + sm)}건</b><small>`
+            + (tk > 0 ? `<button type="button" class="bf-go" data-bf="talk">톡톡 ${nfmt(tk)}</button>` : '')
+            + (sm > 0 ? `<button type="button" class="bf-go" data-bf="sms">문자 ${nfmt(sm)}</button>` : '')
+            + `<i>봇이 답을 못 낸 건 · 눌러서 열기${sm > 0 ? ' · 문자는 「문자 답할 것」에 든 수' : ''}</i></small></li>`;
+    }
+    function botFailGo(k) {
+        if (S.full) closeFull();
+        if (k === 'sms') { smsOpen('staff_needed'); return; }
+        const nav = document.querySelector('.nav-item[data-page="inquiry"]');
+        if (nav) nav.click();
+    }
     function renderBoard() {
         const d = S.board, box = $('desk-board');
         if (!d || !box) return;
@@ -2585,7 +2600,7 @@
         if (!Array.isArray(d.todo) && smsLi) todoHtml = `<ul class="desk-todo">${smsLi}</ul>`;
         if (Array.isArray(d.todo)) {
             todoHtml = d.todo.length || smsLi
-                ? `<ul class="desk-todo">${smsLi}${d.todo.map(t => `<li><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
+                ? `<ul class="desk-todo">${smsLi}${d.todo.map(t => t.key === 'botfail' ? botFailHtml(t) : `<li><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
                 : '<div class="desk-empty">지금 챙길 일이 없어요.</div>';
         }
         let salesHtml = '';

@@ -1,4 +1,4 @@
-// #631 정산관리 달력 입금 체크 버퍼링(대표 10/11) — 체크 한 번에 나가는 요청 수·겹침·걸린 시간 + api() GET 겹침 제거·쓰기 뒤 무효화 + 무회귀(달력·목록·주간·날짜 창 그대로)
+// #631 정산관리 달력 입금 체크 버퍼링(대표 10/11) — 체크 한 번에 나가는 요청 수·겹침·걸린 시간 + api() 동시 GET 겹침 제거(#637: 아직 안 끝난 요청만 · 끝난 뒤 다시 부르면 다시 청함) + 무회귀(달력·목록·주간·날짜 창 그대로)
 //   로컬 서버(포트 PORT631 · 없으면 3466 · 스케줄러 막음 · 실DB 읽기) · 쓰기 요청(PUT/POST/DELETE)은 전부 가로채 가짜 응답 → DB 쓰기 0
 //   실행: node scripts/verify-631-settle-speed.js
 const { spawn } = require('child_process'); const path = require('path'); const jwt = require('jsonwebtoken'); const { chromium } = require('playwright');
@@ -26,7 +26,7 @@ let pass = 0, fail = 0; const ok = (c, m, d) => { c ? pass++ : fail++; console.l
         const cnt = from => reqs.slice(from).filter(r => r.u.indexOf('/api/prepayments') === 0).length;   // 배경 폴링(알림 등)은 빼고 그 주소만 센다
         const idle = async (ms = 1200) => { let last = reqs.length, quiet = 0; for (let i = 0; i < 60; i++) { await sleep(200); if (reqs.length === last) { quiet += 200; if (quiet >= ms) return; } else { last = reqs.length; quiet = 0; } } };
 
-        console.log('① api() 겹침 제거 · 쓰기 뒤 무효화(단위)');
+        console.log('① api() 동시 겹침만 제거 · 끝난 뒤에는 다시 청함(단위 · #637)');
         {
             const n0 = reqs.length;
             const r1 = await pg.evaluate(async () => { const a = api('/api/prepayments'), b = api('/api/prepayments'); const [x, y] = await Promise.all([a, b]); return { same: true, eq: JSON.stringify(x) === JSON.stringify(y) }; });
@@ -35,11 +35,11 @@ let pass = 0, fail = 0; const ok = (c, m, d) => { c ? pass++ : fail++; console.l
             const n1 = reqs.length;
             await pg.evaluate(async () => { await api('/api/prepayments'); await api('/api/settlements/999999/toggle-paid', 'PUT'); await api('/api/prepayments'); });
             await idle(600);
-            ok(cnt(n1) === 1 && writes.some(w => /PUT .*999999\/toggle-paid/.test(w)), '쓰기(PUT) 뒤의 같은 GET 은 다시 청함(옛 답 안 씀) · 1.2초 안 재사용은 1번', JSON.stringify({ n: cnt(n1) }));
+            ok(cnt(n1) === 2 && writes.some(w => /PUT .*999999\/toggle-paid/.test(w)), '#637 쓰기(PUT) 앞뒤의 같은 GET 은 각각 청함(2번 · 옛 답 안 씀)', JSON.stringify({ n: cnt(n1) }));
             const n2 = reqs.length;
-            await pg.evaluate(async () => { await new Promise(r => setTimeout(r, 1400)); await api('/api/prepayments'); await new Promise(r => setTimeout(r, 1400)); await api('/api/prepayments'); });
+            await pg.evaluate(async () => { await api('/api/prepayments'); await api('/api/prepayments'); });
             await idle(600);
-            ok(cnt(n2) === 2, '1.2초가 지나면 다시 청함', String(cnt(n2)));
+            ok(cnt(n2) === 2, '#637 끝난 뒤 바로 다시 부르면(연달아 · 사람이 다시 누름) 다시 청함 = 2번', String(cnt(n2)));
             const r4 = await pg.evaluate(async () => { try { await api('/api/no-such-route-631'); return 'no-throw'; } catch (e) { try { await api('/api/no-such-route-631'); return 'no-throw2'; } catch (e2) { return 'threw'; } } });
             ok(r4 === 'threw', '실패한 요청은 나누지 않고 둘 다 오류를 던짐', r4);
         }

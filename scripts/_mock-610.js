@@ -75,7 +75,7 @@ const readBody = req => new Promise(r => { let s = ''; req.on('data', d => { s +
 const STUB = [
     [/^\/api\/agent-office\/desk\/status/, () => ({ ok: true, state: 'idle', online: true, engine: 'desk', busy: 0, queue: 0, others_busy: 0 })],
     [/^\/api\/agent-office\/desk\/orders/, () => ({ orders: [] })],
-    [/^\/api\/agent-office\/desk\/board/, () => ({ channels: [{ ch: 'naver', today: 12, yesterday: 30 }, { ch: 'mall', today: 2, yesterday: 4 }, { ch: 'coupang', today: 1, yesterday: 3 }], ship: [], todo: [{ key: 'talk', label: '톡톡 미답변', count: 2, where: '문의 관리 > 톡톡' }], live: [], today: [], progress: [], is_admin: false })],
+    [/^\/api\/agent-office\/desk\/board/, () => ({ channels: [{ ch: 'naver', today: 12, yesterday: 30 }, { ch: 'mall', today: 2, yesterday: 4 }, { ch: 'coupang', today: 1, yesterday: 3 }], ship: [], todo: [{ key: 'talk', label: '톡톡 미답변', count: 2, where: '문의 관리 > 톡톡' }, { key: 'botfail', label: '봇 실패', count: 3, talk: 2, sms: 1, where: '톡톡 2 · 문자 1' }], live: [], today: [], progress: [], is_admin: false })],
     [/^\/api\/agent-office\/desk\/inbox/, () => ({ talk: [], qna: [], inquiry: [], counts: { talk: 0, qna: 0, inquiry: 0 } })],
     [/^\/api\/version/, () => ({ version: 'mock-610' })],
 ];

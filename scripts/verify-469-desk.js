@@ -33,6 +33,9 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const staff = (await db.query(`SELECT id, name, position FROM users WHERE role <> 'admin' AND deleted_at IS NULL ORDER BY id LIMIT 1`)).rows[0];
         const tokA = jwt.sign({ id: ceo.id, name: ceo.name, position: '대표', role: 'admin' }, 'verifytest', { expiresIn: '20m' });
         const tokS = jwt.sign({ id: staff.id, name: staff.name, position: staff.position || '', role: 'staff' }, 'verifytest', { expiresIn: '20m' });
+        // #636: 정산 이미지 시험은 없는 직원 번호(990469)로 넣는다 — 대표 이름으로 넣으면 대표가 열어 둔 실화면이 그 확인표를 「내 것」으로 보고 저장 확인 창을 띄운다
+        const GHOST = { id: 990469, name: '시험469', position: '사원', role: 'user' };
+        const tokG = jwt.sign(GHOST, 'verifytest', { expiresIn: '20m' });
         const call = async (tok, method, url, body) => {
             const opt = { method, headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json', Connection: 'close' }, body: body ? JSON.stringify(body) : undefined };
             let r; try { r = await fetch(`http://localhost:${PORT}${url}`, opt); } catch (e) { await sleep(300); r = await fetch(`http://localhost:${PORT}${url}`, opt); } // 끊긴 keep-alive 소켓 재시도
@@ -138,9 +141,10 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const D = (await db.query(`SELECT to_char((NOW()+interval '9 hours')::date,'YYYY-MM-DD') d`)).rows[0].d; // 오늘(KST) — 단가표가 있는 날짜
             const stCount = async () => (await db.query(`SELECT COUNT(*)::int c, COALESCE(SUM(amount),0)::text a FROM settlements WHERE date::text=$1`, [D])).rows[0];
             const st0 = await stCount();
-            const p4 = await call(tokA, 'POST', '/api/agent-office/orders', { content: '[검증469] 효돈 정산관리에 올려줘', image_data: 'data:image/png;base64,iVBORw0KGgo=', image_mime: 'image/png' });
+            const p4 = await call(tokG, 'POST', '/api/agent-office/orders', { content: '[검증469] 효돈 정산관리에 올려줘', image_data: 'data:image/png;base64,iVBORw0KGgo=', image_mime: 'image/png' });
             made.push(p4.j.order.id);
             ok('이미지 지시도 AI 없이 대기', p4.j.order.status === '대기');
+            ok('#636 정산 시험 지시 = 시험 번호 이름(대표·실제 직원 화면의 확인표 창 조건 밖)', (await row(p4.j.order.id)).created_by_id === GHOST.id && GHOST.id !== ceo.id && GHOST.id !== staff.id);
             const g4 = JSON.parse(desk('get.js', p4.j.order.id));
             ok('첨부 이미지를 파일로 받음', !!g4.image_path && fs.existsSync(g4.image_path));
             try { fs.unlinkSync(g4.image_path); } catch (_) { }
@@ -155,16 +159,23 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const st1 = await stCount();
             ok('확인 전에는 정산관리에 저장되지 않음(오늘 정산 행·금액 무변동)', st1.c === st0.c && st1.a === st0.a);
             // "아니오" 즉답 = AI 없이 서버가 취소 처리
-            const no = await call(tokA, 'POST', '/api/agent-office/orders', { content: '아니오' });
-            made.push(no.j.order.id);
-            const r7 = await row(p4.j.order.id);
-            ok('"아니오" = 즉시 취소(창구 거치지 않음) · 저장 0', no.j.order.status === '안내' && r7.status === '취소' && (await stCount()).a === st0.a, `${no.j.order.status} / ${r7.status}`);
+            // #636: 「아니오」는 최근 1시간 안 가장 새 확인표를 누구 것이든 취소한다 → 469 확인표가 실제로 생겼을 때만 보낸다(못 만들었으면 대표의 진짜 확인표를 취소할 수 있음)
+            if (r6.status === '질문' && c.type === 'settlement_ocr_confirm') {
+                const no = await call(tokG, 'POST', '/api/agent-office/orders', { content: '아니오' });
+                made.push(no.j.order.id);
+                const r7 = await row(p4.j.order.id);
+                ok('"아니오" = 즉시 취소(창구 거치지 않음) · 저장 0', no.j.order.status === '안내' && r7.status === '취소' && (await stCount()).a === st0.a, `${no.j.order.status} / ${r7.status}`);
+            } else ok('"아니오" = 즉시 취소(창구 거치지 않음) · 저장 0', false, '469 확인표가 안 생겨 「아니오」를 보내지 않음');
         }
 
         // ── 6. 현황판
         const bS = await call(tokS, 'GET', '/api/agent-office/desk/board');
         const bA = await call(tokA, 'GET', '/api/agent-office/desk/board');
         ok('현황판 200 · 채널·발송·할 일 배열', bS.status === 200 && Array.isArray(bS.j.channels) && Array.isArray(bS.j.ship) && Array.isArray(bS.j.todo));
+        {   // #633 봇 실패 항목 — 실DB 값이라 건수는 못 박고 꼴만(0건이면 항목 없음 · 있으면 톡톡+문자 = 합)
+            const bfT = (bS.j.todo || []).filter(t => t.key === 'botfail');
+            ok('#633 현황판 「봇 실패」 항목 = 0건이면 없음 · 있으면 한 줄(톡톡+문자 = 합 · where 글)', bfT.length <= 1 && bfT.every(t => t.count > 0 && Number.isInteger(t.talk) && Number.isInteger(t.sms) && t.talk + t.sms === t.count && t.label === '봇 실패' && t.where === `톡톡 ${t.talk} · 문자 ${t.sms}`), JSON.stringify(bfT));
+        }
         ok('매출(정산 회차)은 대표에게만', bS.j.sales === undefined && Array.isArray(bA.j.sales));
         const mine = await call(tokS, 'GET', '/api/agent-office/desk/orders?mine=1');
         ok('내 지시 목록 = 내 것만 · 이미지 원문 미포함', mine.j.orders.length >= 3 && mine.j.orders.every(o => o.created_by_id === staff.id && o.image_data === undefined));
@@ -314,6 +325,14 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         await A.pg.waitForTimeout(600);
         const todoTxt = await A.pg.evaluate(() => Array.from(document.querySelectorAll('#desk-board .desk-todo li:not(.sms-todo)')).map(li => li.querySelector('span').textContent + '|' + li.querySelector('b').textContent + '|' + li.querySelector('small').textContent));
         ok('할 일 칸 표시 = 일정 줄은 「내일」 · 다른 항목은 건수', todoTxt.length === 2 && todoTxt[0] === '9/30(수) 14:00 황금향 특가 문자 [문자발송]|내일|일정 · 문자발송' && /\|2건\|/.test(todoTxt[1]), todoTxt.join(' / '));
+        ok('#633 봇 실패 항목이 없으면 줄도 없음', await A.pg.evaluate(() => document.querySelectorAll('#desk-board .bot-fail, #desk-board .bf-go').length === 0));
+        await A.pg.unroute('**/api/agent-office/desk/board');
+        await A.pg.route('**/api/agent-office/desk/board', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channels: [], ship: [], sales: [], is_admin: true, todo: [{ key: 'botfail', label: '봇 실패', count: 4, talk: 4, sms: 0, where: '톡톡 4 · 문자 0' }], live: [], today: [], progress: [] }) }));
+        await A.pg.waitForTimeout(1400);   // 같은 GET 1.2초 겹침 제거(#631) 창이 지난 뒤 새로 받게
+        await A.pg.evaluate(() => __aoDesk.loadBoard());
+        await A.pg.waitForTimeout(600);
+        const bf633 = await A.pg.evaluate(() => { const li = document.querySelector('#desk-board .bot-fail'); return li ? { t: li.querySelector('span').textContent + '|' + li.querySelector('b').textContent, bs: Array.from(li.querySelectorAll('.bf-go')).map(b => b.textContent + ':' + b.dataset.bf).join(','), note: li.querySelector('small i').textContent } : null; });
+        ok('#633 봇 실패 줄 = 톡톡만 있으면 톡톡 알약 하나 · 문자 겹침 안내 글 없음', !!bf633 && bf633.t === '봇 실패|4건' && bf633.bs === '톡톡 4:talk' && !/문자/.test(bf633.note), JSON.stringify(bf633));
         await A.pg.unroute('**/api/agent-office/desk/board');
         // 확인표 창(기존 모달) 열기 — 가짜 확인표
         await A.pg.click('.desk-tab[data-tab="all"]');
@@ -486,13 +505,18 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         try {
             if (db) {
                 if (made.length) {
-                    await db.query(`UPDATE pending_orders SET is_deleted=true WHERE id = ANY($1::int[])`, [made]);
+                    // #636: 숨기기만 하면 「처리중·대기」 상태가 그대로 남는다 → 안 끝난 줄은 취소로 닫고 내 지시·이력에서도 내린다
+                    await db.query(`UPDATE pending_orders SET status='취소' WHERE id = ANY($1::int[]) AND status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨')`, [made]);
+                    await db.query(`UPDATE pending_orders SET is_deleted=true, mine_hidden=true, hist_hidden=true WHERE id = ANY($1::int[])`, [made]);
                     await db.query(`UPDATE agent_runs SET is_deleted=true WHERE id IN (SELECT run_id FROM pending_orders WHERE id = ANY($1::int[]) AND run_id IS NOT NULL)`, [made]);
                 }
                 if (madeFiles.filter(Boolean).length) await db.query(`UPDATE report_files SET is_deleted=true WHERE id = ANY($1::int[])`, [madeFiles.filter(Boolean)]);
                 if (S_nid0 != null) await db.query(`DELETE FROM notifications WHERE type='desk' AND id > $1`, [S_nid0]);
                 await db.query(`DELETE FROM agent_office_config WHERE key='desk_heartbeat'`);
-                const left = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE content LIKE '[검증469]%' AND is_deleted=false`)).rows[0].c;
+                // 앞선 실행이 중간에 죽어 남긴 시험 줄도 같이 닫는다(시험 번호 이름이거나 [검증469] 머리말 · 안 끝난 것만)
+                await db.query(`UPDATE pending_orders SET status='취소', mine_hidden=true, hist_hidden=true, is_deleted=true
+                                 WHERE (content LIKE '[검증469]%' OR created_by_id = 990469) AND status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨')`);
+                const left = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE (content LIKE '[검증469]%' OR created_by_id = 990469) AND (is_deleted=false OR status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨'))`)).rows[0].c;
                 ok('시험 지시 정리(숨김 처리) · 시험 알림 삭제', left === 0, `시험 지시 ${made.length}건`);
                 await db.end();
             }
