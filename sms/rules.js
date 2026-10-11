@@ -204,4 +204,18 @@ function answer(input) {
     return { text: lines.join('\n'), kind: 'ship_before', staff: false, why: pre ? 'pre' : 'not_shipped' };
 }
 
-module.exports = { answer, ASK_NAME_TEXT, askNameText, notFoundText, claimText, claimAuto, TRACK_URL };
+// #654 직원 화면용: 발송 전 주문의 발송 예정일 글자('10/12(월)') — 위 발송 전 답과 같은 조건·같은 계산기. 답을 만들지 않는 경우(결제 시각 모름 · 예약 상품 · 배송메세지 날짜 요청 · 예정일 지남)는 null
+function prePlan(input) {
+    try {
+        const o = (input && input.order) || {}; const h = (input && input.holidays) || {}; const nowMs = (input && input.now) || Date.now();
+        if (o.pre !== true || !o.paid_at || o.paid_known === false) return null;
+        if (/예약/.test(String(o.option || o.option_text || ''))) return null;
+        if (o.memo) { let ml = null; try { ml = shippingSchedule.memoShipLine(o.memo, new Date(toMs(o.paid_at)), h.set || null, h.reasons || null, { arriveOff: h.arriveOff || null }); } catch (_) { ml = { kind: 'ack' }; } if (ml) return null; }
+        const r = shippingSchedule.computeShipping(new Date(toMs(o.paid_at)), h.set || null, h.reasons || null, { arriveOff: h.arriveOff || null });
+        const today = new Date(nowMs + KST_MS).toISOString().slice(0, 10);
+        if (gap(today, r.shipDate) < 0) return null;
+        return mdDow(r.shipDate);
+    } catch (e) { return null; }
+}
+
+module.exports = { prePlan, answer, ASK_NAME_TEXT, askNameText, notFoundText, claimText, claimAuto, TRACK_URL };

@@ -164,7 +164,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         await pool.query(`UPDATE sms_threads SET status = 'new' WHERE id = $1`, [tR.id]);   // (라)가 떨어졌어도 다음 항목에 영향 없게 되돌림
         await pool.query(`DELETE FROM sms_messages WHERE thread_id = $1`, [tR.id]); await pool.query(`DELETE FROM sms_threads WHERE id = $1`, [tR.id]);
         await sms.sweepStuck();
-        ok((await thread(P(16))).status === 'new', '(마) otp 갈래 글만 있는 new 대화는 그대로');
+        ok(['new', 'ignored'].includes((await thread(P(16))).status) && !(await thread(P(16))).staff_why, '(마) otp 갈래 글만 있는 new 대화는 직원 몫으로 안 바뀜(#652 다시 판정이 무시 갈래로 정리 = ignored) ' + (await thread(P(16))).status);
 
         console.log('④ sendTick 동시 2회 → 게이트웨이 호출 1회');
         // ③(나)에서 queued 로 돌아온 줄 1개가 대기 중. 그 밖 sending 대조 줄은 큐 대상 아님.

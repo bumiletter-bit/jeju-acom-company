@@ -370,6 +370,21 @@ console.log('②-h 손질 A·B(#650)');
     ok('B07 주문이 있는 번호(hasOrder)의 글은 기사 안내문·뜻 없는 글로 무시하지 않음', classify('택배 문 앞에 두고 갑니다', { from: '01012345678', hasOrder: true }).bucket !== 'carrier' && classify('123', { from: '01012345678', hasOrder: true }).bucket !== 'greeting');
 }
 
+// ───────────────────────── ②-i 발송 전 주문의 발송 예정일 글자(#654 ship_plan) ─────────────────────────
+console.log('②-i 발송 전 발송 예정일 글자(#654)');
+{
+    const H0 = { set: new Set(), arriveOff: new Set(), reasons: new Map() };
+    const now = Date.parse('2026-10-12T01:00:00Z');   // KST 10/12(월) 10:00
+    const paid = '2026-10-12T00:30:00Z';              // KST 10/12(월) 09:30 결제
+    const o = { pre: true, paid_at: paid, paid_known: true, option_text: '하우스감귤 3kg' };
+    const p = rules.prePlan({ order: o, holidays: H0, now });
+    const ans = rules.answer({ text: '언제 발송되나요', bucket: 'ship_q', order: { match: 'one', role: 'buyer', order: Object.assign({ option: o.option_text }, o) }, holidays: H0, now });
+    ok('01 prePlan = 「M/D(요일)」 꼴 · 발송 전 답 글의 발송일과 같은 날', /^\d{1,2}\/\d{1,2}\([일월화수목금토]\)$/.test(p || '') && !!(ans && ans.text) && ans.text.includes(p.replace(/\((.)\)$/, '')), [p, ans && ans.text]);
+    ok('02 결제 시각 모름(paid_known false · paid_at 없음) · 예약 상품 · 발송분(pre 아님) = null', rules.prePlan({ order: Object.assign({}, o, { paid_known: false }), holidays: H0, now }) === null && rules.prePlan({ order: Object.assign({}, o, { paid_at: null }), holidays: H0, now }) === null
+        && rules.prePlan({ order: Object.assign({}, o, { option_text: '타이벡감귤 예약 3kg' }), holidays: H0, now }) === null && rules.prePlan({ order: Object.assign({}, o, { pre: false }), holidays: H0, now }) === null);
+    ok('03 예정일이 이미 지남(일주일 전 결제) = null(답도 사람 몫인 경우)', rules.prePlan({ order: Object.assign({}, o, { paid_at: '2026-10-05T00:30:00Z' }), holidays: H0, now }) === null);
+}
+
 // ───────────────────────── ②-f 불만 글 고정 답 · 주문 못 찾음 되묻기 · 둘째 답 인사 줄이기(#646) ─────────────────────────
 console.log('②-f 불만 글 고정 답 · 되묻기 · 둘째 답(#646)');
 {

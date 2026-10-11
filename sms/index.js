@@ -17,7 +17,7 @@
 const crypto = require('crypto');
 
 // #625(대표 「고」 10/10 저녁): 봇은 앞 대화를 읽고 답한다 · 하루 3번 · 쿨다운 10분(그 안 둘째 글만 직원) · 같은 질문 되풀이 = 직원 · 직원 몫(staff_needed)도 staff_open_hours 지나면 저절로 끝남(종전 = 하루 1번 · 30분 · 직원 몫은 사람이 풀 때까지)
-const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, context_msgs: 6 };   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
+const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, context_msgs: 6, draft_daily_cap: 20, history_days: 60 };   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
 // #635(대표 「고」 10/11 · 폰 문자함 구도): 목록 = 안 읽은 글이 있는 대화(staff_read_at 뒤 들어온 글 수) · 열면 0 · 초안은 손님 글이 올 때마다 새로(쿨다운·하루 상한·잠금·되풀이는 자동 발송만 막는다) · 쿨다운 기본 30분
 const WEBHOOK_EVENTS = ['sms:received', 'sms:sent', 'sms:delivered', 'sms:failed', 'sms:cancelled', 'mms:received', 'mms:downloaded', 'system:ping', 'app:started'];
 const MODES = ['record', 'draft', 'auto'];
@@ -90,6 +90,8 @@ module.exports = function mountSms(app, deps) {
             ping_alert_hours: num(v.ping_alert_hours, DEFAULT_CFG.ping_alert_hours, 1, 48),
             image_days: num(v.image_days, DEFAULT_CFG.image_days, 3, 365),
             lookup_days: num(v.lookup_days, DEFAULT_CFG.lookup_days, 3, 60),
+            draft_daily_cap: num(v.draft_daily_cap, DEFAULT_CFG.draft_daily_cap, 0, 1000),   // #652
+            history_days: num(v.history_days, DEFAULT_CFG.history_days, 1, 60),               // #654(송장 표가 60일 뒤 지워져 60이 상한)
             max_chars: num(v.max_chars, DEFAULT_CFG.max_chars, 40, 2000),
             ttl_sec: num(v.ttl_sec, DEFAULT_CFG.ttl_sec, 5, 86400),
             staff_lock_hours: num(v.staff_lock_hours, DEFAULT_CFG.staff_lock_hours, 0, 720),
@@ -116,7 +118,7 @@ module.exports = function mountSms(app, deps) {
         const prev = _lanes.get(key) || Promise.resolve();
         const run = prev.catch(() => { }).then(fn);
         _lanes.set(key, run);
-        run.finally(() => { if (_lanes.get(key) === run) _lanes.delete(key); });
+        run.finally(() => { if (_lanes.get(key) === run) _lanes.delete(key); }).catch(() => { });   // #652: finally 가 돌려주는 약속도 받아 둔다(fn 이 던지면 「받지 않은 거부」로 프로세스가 죽을 수 있다)
         return run;
     }
     // ── 표 ──
@@ -131,6 +133,13 @@ module.exports = function mountSms(app, deps) {
         await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS last_out_state text, ADD COLUMN IF NOT EXISTS ask_kind text, ADD COLUMN IF NOT EXISTS ask_at timestamptz, ADD COLUMN IF NOT EXISTS last_notify_at timestamptz`);
         // #635: staff_read_at = 직원이 마지막으로 연 시각(그 뒤 들어온 글 수 = 안 읽음) · staff_why = 사람 몫 사유(초안이 생기면 null)
         //   칸을 처음 만들 때만: 이미 끝났거나 봇이 답한 옛 대화는 「읽음」으로(안 그러면 옛 대화 전부가 안 읽음으로 뜬다) · 직원 몫·초안 대기는 안 읽음 그대로 + 초안 없는 직원 몫엔 사유 'staff'
+        // #652: 받은 글을 먼저 적고 판정은 그 뒤 — 판정이 끝난 글에 decided_at. 처음 칸이 생길 때 있던 글은 전부 「끝난 글」로(옛 글을 다시 판정하지 않게)
+        const had652 = (await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'sms_messages' AND column_name = 'decided_at'`)).rowCount > 0;
+        await pool.query(`ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS decided_at timestamptz`);
+        if (!had652) await pool.query(`UPDATE sms_messages SET decided_at = COALESCE(created_at, now()) WHERE decided_at IS NULL`);
+        await pool.query(`ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS deciding_at timestamptz`);   // 판정을 집은 시각(같은 글을 after 와 다시 판정 틱이 둘 다 판정하지 않게 · 5분 넘게 안 끝나면 죽은 것으로 보고 다시 집힘)
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_sms_messages_undecided ON sms_messages(id) WHERE direction = 'in' AND decided_at IS NULL`);
+        await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS gated_ai_n integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS gated_ai_day text`);   // #652 초안 하루 상한 셈(KST 날짜 글자)
         const had635 = (await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'sms_threads' AND column_name = 'staff_read_at'`)).rowCount > 0;
         await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS staff_read_at timestamptz, ADD COLUMN IF NOT EXISTS staff_why text`);
         if (!had635) {
@@ -180,6 +189,11 @@ module.exports = function mountSms(app, deps) {
 
     // #648 시험 번호 = 검증 스크립트가 쓰는 0999… — 검증 인스턴스(deps.testMode)가 아니면 집지도·세지도·보여 주지도·알리지도 않는다
     const isTestDigits = d => String(d || '').startsWith('0999');
+    // #652 A(워커4 교차 점검): **틱·정리처럼 표를 고치는 문장**은 따로 거른다 — 라이브 = 시험 번호 빼고 / 검증 인스턴스(testMode) = 시험 번호 줄**만**.
+    //   종전에는 testMode 면 거름이 없어, 검증이 부르는 sendTick·sweepStuck·다시 판정이 실제 손님 줄을 집을 수 있었다(가짜 게이트웨이로 「보냄」 처리 · 가짜 AI 로 판정)
+    const TICK_T = deps.testMode ? "AND t.phone_digits LIKE '0999%'" : "AND t.phone_digits NOT LIKE '0999%'";     // 별칭 t(sms_threads)
+    const TICK_P = deps.testMode ? "AND phone_digits LIKE '0999%'" : "AND phone_digits NOT LIKE '0999%'";         // sms_threads 별칭 없이
+    const TICK_M = deps.testMode ? "AND thread_id IN (SELECT id FROM sms_threads WHERE phone_digits LIKE '0999%')" : "AND thread_id NOT IN (SELECT id FROM sms_threads WHERE phone_digits LIKE '0999%')";   // sms_messages
     const TEST_HIDE = deps.testMode ? '' : "AND phone_digits NOT LIKE '0999%'";                                   // sms_threads 를 별칭 없이 읽는 문장용
     const TEST_HIDE_T2 = deps.testMode ? '' : "AND t.phone_digits NOT LIKE '0999%'";                               // 별칭 t
     const TEST_HIDE_MSG = deps.testMode ? '' : "AND thread_id NOT IN (SELECT id FROM sms_threads WHERE phone_digits LIKE '0999%')";   // sms_messages 문장용
@@ -246,6 +260,14 @@ module.exports = function mountSms(app, deps) {
         } catch (e) { log.error('[문자] 주문 찾기 실패(무시):', e.message); return null; }
     }
     // 화면·힌트용(허용 목록만 · 주소·손님 이름 전체 없음) — 직원 화면에만 쓰는 꼴 + 한 줄 요약. #644: 운송장은 전체 번호(order.trackings)를 싣는다(직원 화면 전용 · 알림·한 줄 요약에는 안 넣는다)
+    // #654: 발송 전 주문의 발송 예정일 글자 — rules.prePlan(발송 전 답과 같은 계산기·같은 조건). 모듈·달력을 못 읽으면 null
+    async function prePlanOf(order) {
+        try {
+            if (!(rulesMod && typeof rulesMod.prePlan === 'function')) return null;
+            const holidays = loadShippingHolidayInfo ? await loadShippingHolidayInfo() : null;
+            return rulesMod.prePlan({ order, holidays, now: Date.now() }) || null;
+        } catch (e) { return null; }
+    }
     async function orderHintOf(r) {
         if (!(r && r.match === 'one' && r.order)) return null;
         // #644(대표 10/11 「이름도 모두 그대로」): 받는 분 이름 전체는 직원 화면용으로만 여기서 따로 읽는다 — 주문 찾기 결과(lookup · 규칙·AI·사진 답의 재료)에는 이름 전체를 싣지 않는다(그쪽 SELECT 가 안 읽음 · 손님 글로 샐 길 없음)
@@ -256,6 +278,7 @@ module.exports = function mountSms(app, deps) {
         } catch (e) { log.error('[문자] 받는 분 이름 읽기 실패(무시):', e.message); }
         const pubo = (typeof lookupMod.toStaff === 'function') ? lookupMod.toStaff(r) : (typeof lookupMod.toPublic === 'function') ? lookupMod.toPublic(r) : null;
         if (!pubo) return null;
+        if (pubo.order && pubo.order.pre) pubo.order.ship_plan = await prePlanOf(Object.assign({}, r.order));   // #654 직원 화면 「발송 전 · 10/12(월) 발송 예정」(계산 못 하면 null)
         if (pubo.order && recipientName) pubo.order.recipient_name = recipientName;   // 한 줄 요약(line)·알림에는 넣지 않는다
         const o = pubo.order || {};   // toPublic = { match, role, candidates, order:{…} }(워커4 지적 · 평평하게 읽으면 늘 빈 줄)
         const md = x => x ? String(x).slice(5, 10).replace('-', '/') : '';
@@ -300,7 +323,7 @@ module.exports = function mountSms(app, deps) {
     function aiAsserts(text) {   // 한 문장이라도 「조건 없이」 발송·도착을 단정하면 true
         return String(text || '').split(/(?<=[.!?。])\s+|\n+/).some(sen => { const s = sen.trim(); if (!s) return false; if (/말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)/.test(s)) return true; if (AI_COND_RE.test(s)) return false; return AI_PAST_RE.test(s) || AI_DATE_RE.test(s); });
     }
-    async function composeAnswer(thread, inMsg, c, lookup) {
+    async function composeAnswer(thread, inMsg, c, lookup, opts) {
         const text = String(inMsg.body || '');
         const bucket = inMsg.bucket || 'other';
         if (['otp', 'ad', 'carrier', 'greeting'].includes(bucket)) return { text: null, kind: null, toStaff: false, why: 'ignore:' + bucket };
@@ -334,8 +357,10 @@ module.exports = function mountSms(app, deps) {
         if ((bucket === 'ship_q' || bucket === 'order_q') && !lookup && !GENERAL_Q_RE.test(text)) return { text: null, kind: null, toStaff: true, why: 'lookup_error' };   // 주문 찾기 실패(DB 오류·모듈 없음) = 틀린 「주문이 확인되지 않습니다」를 보내지 않는다
         if ((bucket === 'ship_q' || bucket === 'order_q') && !(lookup && lookup.match === 'one') && !GENERAL_Q_RE.test(text))   // #645 ① 주문을 못 찾은 「내 주문」 물음 — AI 호출 없음
             return { text: notFound({ again }), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'order_not_found' };
+        if (opts && opts.noAi) return { text: null, kind: null, toStaff: true, why: 'draft_cap' };   // #652 초안 하루 상한을 넘은 번호 — AI 를 부르지 않는다(규칙 답·고정 문구는 위에서 이미 나갔다)
         if (typeof qnaGenerate === 'function') {
             try {
+                if (opts) opts.aiUsed = true;
                 const g = await qnaGenerate(await withContext(thread, inMsg, text, c), null, undefined, 'sms');   // #625: 앞 대화(최근 context_msgs 통 · 48시간 안)를 질문 앞에 붙여 되풀이 답을 막는다
                 if (g && g.answer) {
                     const parsed = aiNote && typeof aiNote.parse === 'function' ? aiNote.parse(g.answer) : { toStaff: /^\[사람\]/.test(g.answer), text: g.answer.replace(/^\[사람\]\s*/, '') };
@@ -364,18 +389,57 @@ module.exports = function mountSms(app, deps) {
         return n;
     }
     // 받은 문자 기록 — { recordOnly } 면 상태 판정 없이 줄만(mms:received 메타 단계) · 봉투 중복이면 { dup:true }
-    async function handleInbound({ digits, body, kind, gateway_id, sim_number, event_at, images, envelope_id, recordOnly }) {
-        const c = await cfg();
+    // #652: 적기와 판정을 나눈다 — webhook 은 「줄 적기」까지 끝낸 뒤 200 을 주고(배포·재시작 순간에도 글이 남는다) 판정·AI·주문 찾기는 그 뒤.
+    //   recordInbound → { done }(중복·메타만 = 판정 없음) 또는 { thread, msg, bodyText, imgs } · decideRecorded 가 판정하고 끝나면 decided_at 을 찍는다(실패해도 찍는다 — 실패는 inboundSafe 가 직원 몫으로)
+    const markDecided = id => pool.query(`UPDATE sms_messages SET decided_at = now() WHERE id = $1`, [id]).catch(() => { });
+    async function recordInbound({ digits, body, kind, gateway_id, sim_number, event_at, images, envelope_id, recordOnly }) {
         const thread = await threadFor(digits);
         const imgs = imageOnly(images);
         const bodyText = String(body || '').trim() || textParts(images).join('\n');
         const hasImage = imgs.length > 0;
         const bucket = recordOnly ? 'photo_pending' : await bucketSmart(bodyText, digits, hasImage, thread.status !== 'new' || !!thread.order_hint);
         const msg = await addMessage({ thread_id: thread.id, direction: 'in', kind: kind || (hasImage ? 'mms' : 'sms'), body: bodyText, sender: 'customer', state: 'received', gateway_id, sim_number, bucket, event_at, envelope_id });
-        if (!msg) return { thread_id: thread.id, dup: true, action: 'dup' };
+        if (!msg) return { done: { thread_id: thread.id, dup: true, action: 'dup' } };
         if (hasImage) await saveImages(msg.id, imgs);
-        if (recordOnly) { await setThread(thread.id, { last_in_at: msg.event_at, last_in_text: thread.last_in_text || '', has_image: thread.has_image || hasImage }); return { thread_id: thread.id, message_id: msg.id, bucket, action: 'pending_photo' }; }
-        return decideInbound(thread, msg, c, { bodyText, images: imgs });
+        if (recordOnly) { await setThread(thread.id, { last_in_at: msg.event_at, last_in_text: thread.last_in_text || '', has_image: thread.has_image || hasImage }); await markDecided(msg.id); return { done: { thread_id: thread.id, message_id: msg.id, bucket, action: 'pending_photo' } }; }
+        return { thread, msg, bodyText, imgs };
+    }
+    async function decideRecorded(rec) {
+        if (!rec || rec.done) return Object.assign({}, rec && rec.extra, rec && rec.done);
+        // D: 한 글은 한 번만 판정 — 아직 안 끝났고 다른 쪽이 집지 않은(또는 5분 넘게 멈춘) 글만 집는다
+        const got = await pool.query(`UPDATE sms_messages SET deciding_at = now() WHERE id = $1 AND decided_at IS NULL AND (deciding_at IS NULL OR deciding_at < now() - interval '5 minutes') RETURNING id`, [rec.msg.id]);
+        if (!got.rowCount) return Object.assign({}, rec.extra, { thread_id: rec.thread.id, message_id: rec.msg.id, action: 'already_decided' });
+        try {
+            const thread = (await pool.query(`SELECT * FROM sms_threads WHERE id = $1`, [rec.thread.id])).rows[0] || rec.thread;   // 적은 뒤 사이에 다른 글이 상태를 바꿨을 수 있다
+            return Object.assign({}, rec.extra, await decideInbound(thread, rec.msg, await cfg(), { bodyText: rec.bodyText, images: rec.imgs }));
+        } finally { await markDecided(rec.msg.id); }
+    }
+    async function handleInbound(args) { return decideRecorded(await recordInbound(args)); }
+    // 적고 나서 판정 전에 죽은 글(배포·재시작)을 다시 판정 — 새 번호·기존 대화 모두. 그 글 뒤에 이미 보낸 글이 있으면(판정은 됐고 표시만 못 찍음) 표시만 찍는다. 30분 넘은 글은 decideInbound 의 늦은 글 규칙이 자동 답을 막는다
+    async function redecideTick() {
+        // #652 B: 기준 시각(sms_gateway_state.decide_since) 뒤에 적힌 글만 다시 판정한다 — 이 코드가 처음 도는 순간을 한 번 적고(있으면 유지), 그 전 글은 「옛 코드가 이미 판정한 글」로 본다(배포 순간 옛 글 재판정 방지)
+        const st0 = (await naverCfgGet('sms_gateway_state').catch(() => null)) || {};
+        let since = st0.decide_since;
+        if (!since || isNaN(new Date(since).getTime())) { since = new Date().toISOString(); await stateMerge({ decide_since: since }); return 0; }
+        const rows = (await pool.query(`SELECT m.id, t.phone_digits FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
+            WHERE m.direction = 'in' AND m.decided_at IS NULL AND m.created_at < now() - interval '2 minutes' AND m.created_at > now() - interval '1 day' AND m.created_at > $1::timestamptz
+              AND (m.deciding_at IS NULL OR m.deciding_at < now() - interval '5 minutes') ${TICK_T} ORDER BY m.id LIMIT 20`, [since])).rows;
+        let n = 0;
+        for (const r of rows) {
+            await withLane(r.phone_digits, async () => {
+                const msg = (await pool.query(`SELECT * FROM sms_messages WHERE id = $1 AND decided_at IS NULL AND (deciding_at IS NULL OR deciding_at < now() - interval '5 minutes')`, [r.id])).rows[0]; if (!msg) return;
+                const thread = (await pool.query(`SELECT * FROM sms_threads WHERE id = $1`, [msg.thread_id])).rows[0]; if (!thread) return;
+                const answered = (await pool.query(`SELECT 1 FROM sms_messages WHERE thread_id = $1 AND direction = 'out' AND created_at >= $2 LIMIT 1`, [thread.id, msg.created_at])).rowCount > 0;
+                if (answered || msg.bucket === 'photo_pending') { await markDecided(msg.id); return; }
+                const imgs = (await pool.query(`SELECT content_type, data FROM sms_images WHERE message_id = $1 AND data IS NOT NULL ORDER BY id`, [msg.id])).rows.map(x => ({ contentType: x.content_type, data: x.data.toString('base64') }));
+                try { await decideRecorded({ thread, msg, bodyText: String(msg.body || ''), imgs }); n++; log.log(`[문자] 판정 못 한 글 다시 판정: 끝 ${phoneTail(r.phone_digits)}`); }
+                catch (err) {
+                    log.error('[문자] 다시 판정 실패:', err.message);
+                    try { await setThread(thread.id, { status: 'staff_needed', staff_why: thread.staff_why || 'stuck' }); const c = await cfg(); if (c.enabled) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(r.phone_digits)} 처리 중 오류`, STAFF_MSG); } catch (_) { }
+                }
+            }).catch(e => log.error('[문자] 다시 판정 줄 실패(무시):', e.message));
+        }
+        return n;
     }
     // #650 B: 가르기 결과가 「기사 안내문·발신처 머리 안내문·뜻 없는 글」이면 그 번호로 주문이 있는지 한 번 보고, 있으면 그 판정 없이 다시 가른다(주문 손님의 글이 무시되지 않게)
     async function bucketSmart(bodyText, digits, hasImage, known) {
@@ -398,7 +462,7 @@ module.exports = function mountSms(app, deps) {
         return bucket;
     }
     // #635: 번호로 주문 찾기 → 답 만들기(규칙 → AI · 사진은 판독). patch 에 주문 힌트를 얹는다 · gated = 자동 발송이 막힌 갈래(사진은 판독하지 않고 사람 몫)
-    async function makeAnswer(thread, msg, c, patch, { bodyText, images, gated }) {
+    async function makeAnswer(thread, msg, c, patch, { bodyText, images, gated, aiOpts }) {
         const digits = thread.phone_digits, hasImage = images.length > 0, bucket = msg.bucket;
         const lookup = await orderFor(digits, c);
         const hint = await orderHintOf(lookup);
@@ -408,8 +472,8 @@ module.exports = function mountSms(app, deps) {
         const orderQ = bucket === 'ship_q' || bucket === 'order_q';
         if (hasImage && !gated && photoJudge && photoReply) { ans = await composePhotoAnswer(thread, msg, c, lookup, images, bodyText); if (ans && ans.text) ans.auto_ok = !!(lookup && lookup.match === 'one'); }   // #650: 사진 답은 주문을 찾은 손님에게만 자동(#617) · 주문 없는 번호의 사진 답은 초안   // 사진이 있으면 글이 클레임이어도 사진 판독 쪽(대표 📱 ④ · 결정은 사람)
         else if (hasImage) ans = { text: null, toStaff: true, why: 'photo' };
-        else ans = await composeAnswer(thread, msg, c, (orderQ || bucket === 'claim') ? lookup : (lookup && lookup.match === 'one' ? lookup : null));   // 주문 물음이 아니면 many 되묻기 안 함(보관법 물음에 「받는 분 성함」 묻지 않게)
-        if (ans.ai_json || (ans.toStaff && ans.why)) await pool.query(`UPDATE sms_messages SET ai_json = $2::jsonb WHERE id = $1`, [msg.id, JSON.stringify(Object.assign({}, ans.ai_json || {}, ans.toStaff && ans.why ? { staff_why: ans.why } : {}))]).catch(() => { });   // #633: 직원 몫으로 넘긴 사유를 받은 글에 남김(「지금 챙길 일 · 봇 실패」 셈)
+        else ans = await composeAnswer(thread, msg, c, (orderQ || bucket === 'claim') ? lookup : (lookup && lookup.match === 'one' ? lookup : null), aiOpts);   // 주문 물음이 아니면 many 되묻기 안 함(보관법 물음에 「받는 분 성함」 묻지 않게)
+        if (ans.why !== 'draft_cap' && (ans.ai_json || (ans.toStaff && ans.why))) await pool.query(`UPDATE sms_messages SET ai_json = $2::jsonb WHERE id = $1`, [msg.id, JSON.stringify(Object.assign({}, ans.ai_json || {}, ans.toStaff && ans.why ? { staff_why: ans.why } : {}))]).catch(() => { });   // #633: 직원 몫으로 넘긴 사유를 받은 글에 남김(「지금 챙길 일 · 봇 실패」 셈)
         return ans;
     }
     // 답 → 대화에 적을 초안 칸(#635): 무시 갈래 = 안 건드림 · 사람 몫 = 초안 없음 + 사유 · 그 밖 = 초안 + 사유 비움
@@ -418,9 +482,20 @@ module.exports = function mountSms(app, deps) {
     // 자동 발송이 막힌 갈래(잠금·쿨다운·상한·되풀이·늦은 사건)에서도 초안은 새로 만든다 — record·꺼짐이면 안 만든다(AI 호출 0)
     async function draftForGated(thread, msg, c, patch, ctx) {
         if (!c.enabled || c.mode === 'record') return null;
-        try { return draftFields(await makeAnswer(thread, msg, c, patch, Object.assign({}, ctx, { gated: true }))); }
+        // #652(대표 10/11): 번호당 하루(KST) draft_daily_cap 번까지만 AI 초안 — 넘으면 AI 를 부르지 않고 초안 없이 안 읽음으로만(사유는 종전 그대로). 규칙 답 초안(AI 호출 없음)은 세지 않는다
+        const aiOpts = { noAi: false, aiUsed: false }; const day = kstDate();
+        if (c.draft_daily_cap > 0) {
+            try { const g = (await pool.query(`SELECT gated_ai_n, gated_ai_day FROM sms_threads WHERE id = $1`, [thread.id])).rows[0]; aiOpts.noAi = !!(g && g.gated_ai_day === day && Number(g.gated_ai_n) >= c.draft_daily_cap); } catch (e) { aiOpts.noAi = false; }
+        }
+        const bump = async () => { if (aiOpts.aiUsed) await pool.query(`UPDATE sms_threads SET gated_ai_n = CASE WHEN gated_ai_day = $2 THEN gated_ai_n + 1 ELSE 1 END, gated_ai_day = $2 WHERE id = $1`, [thread.id, day]).catch(() => { }); };
+        try {
+            const ans = await makeAnswer(thread, msg, c, patch, Object.assign({}, ctx, { gated: true, aiOpts }));
+            await bump();
+            if (ans && ans.why === 'draft_cap') return {};   // 새 초안 없음 — 앞서 만든 초안·사유는 그대로 둔다(안 읽음으로만 뜸)
+            return draftFields(ans);
+        }
         catch (e) {
-            log.error('[문자] 초안 만들기 실패:', e.message);
+            log.error('[문자] 초안 만들기 실패:', e.message); await bump();
             await pool.query(`UPDATE sms_messages SET ai_json = COALESCE(ai_json, '{}'::jsonb) || '{"staff_why":"ai_error"}'::jsonb WHERE id = $1`, [msg.id]).catch(() => { });   // #633 「봇 실패」 셈과 같은 자리
             return { draft_text: null, draft_kind: null, staff_why: 'ai_error' };
         }
@@ -566,30 +641,31 @@ module.exports = function mountSms(app, deps) {
         return done('queued', { out_id: out.id, parts: pieces.length, kind: ans.kind, second: !!opts.bypassCap, send_after: sendAfter.toISOString() });
     }
     // mms:downloaded — 같은 번호의 최근 10분 안 「사진 받는 중」 줄에 사진·글을 붙이고 그 줄로 판정(없으면 새 수신으로)
-    async function attachDownloaded(e) {
+    async function recordDownloaded(e) {
         const prev = e.digits ? (await pool.query(`SELECT m.*, t.phone_digits FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
             WHERE t.phone_digits = $1 AND m.direction = 'in' AND m.kind = 'mms' AND m.bucket IN ('photo_pending','photo') AND m.event_at > now() - interval '15 minutes'
               AND NOT EXISTS (SELECT 1 FROM sms_images i WHERE i.message_id = m.id AND i.data IS NOT NULL) ORDER BY m.id DESC LIMIT 1`, [e.digits])).rows[0] : null;   // 5분 뒤 photo 로 바뀐 줄도 15분 안이면 같은 줄에(코드리뷰)
         const imgs = imageOnly(e.attachments);
         const bodyText = String(e.body || '').trim() || textParts(e.attachments).join('\n');
         if (!prev) {
-            if (!e.digits) return { ok: true, event: e.ev, skipped: 'no_phone' };
-            return Object.assign({ ok: true, event: e.ev }, await handleInbound({ digits: e.digits, body: bodyText, kind: imgs.length ? 'mms' : 'sms', gateway_id: e.gateway_id, sim_number: e.sim_number, event_at: e.event_at, images: imgs, envelope_id: e.envelope_id }));
+            if (!e.digits) return { done: { skipped: 'no_phone' } };
+            return recordInbound({ digits: e.digits, body: bodyText, kind: imgs.length ? 'mms' : 'sms', gateway_id: e.gateway_id, sim_number: e.sim_number, event_at: e.event_at, images: imgs, envelope_id: e.envelope_id });
         }
-        const c = await cfg();
         const thread = (await pool.query(`SELECT * FROM sms_threads WHERE id = $1`, [prev.thread_id])).rows[0];
         const n = await saveImages(prev.id, imgs);
         if (n) await pool.query(`DELETE FROM sms_images WHERE message_id = $1 AND data IS NULL AND purged_at IS NULL`, [prev.id]);
         const bucket = await bucketSmart(bodyText, thread.phone_digits, n > 0, thread.status !== 'new' || !!thread.order_hint);
-        await pool.query(`UPDATE sms_messages SET body = $2, bucket = $3, kind = $4 WHERE id = $1`, [prev.id, bodyText, bucket, n > 0 ? 'mms' : 'sms']);
+        await pool.query(`UPDATE sms_messages SET body = $2, bucket = $3, kind = $4, decided_at = NULL WHERE id = $1`, [prev.id, bodyText, bucket, n > 0 ? 'mms' : 'sms']);   // 사진이 붙었으니 다시 「판정 전」(집기 표시도 푼다)
+        await pool.query(`UPDATE sms_messages SET deciding_at = NULL WHERE id = $1`, [prev.id]);
         const msg = Object.assign({}, prev, { body: bodyText, bucket, kind: n > 0 ? 'mms' : 'sms' });
         const rows = n ? (await pool.query(`SELECT content_type, data FROM sms_images WHERE message_id = $1 AND data IS NOT NULL ORDER BY id`, [prev.id])).rows.map(r => ({ contentType: r.content_type, data: r.data.toString('base64') })) : [];
-        return Object.assign({ ok: true, event: e.ev, attached: n }, await decideInbound(thread, msg, c, { bodyText, images: rows }));
+        return { thread, msg, bodyText, imgs: rows, extra: { attached: n } };
     }
+    async function attachDownloaded(e) { return Object.assign({ ok: true, event: e.ev }, await decideRecorded(await recordDownloaded(e))); }
     // mms:received 뒤 mms:downloaded 가 5분 안 안 오면 「사진 못 받음」 → 직원 몫(삼성 메시지 자동 가져오기 꺼짐 등)
     async function pendingPhotoTick() {
         const rows = (await pool.query(`SELECT m.id, m.thread_id, t.phone_digits, t.status FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
-            WHERE m.direction = 'in' AND m.bucket = 'photo_pending' AND m.event_at < now() - interval '5 minutes' ${TEST_HIDE_T2} ORDER BY m.id LIMIT 20`)).rows;
+            WHERE m.direction = 'in' AND m.bucket = 'photo_pending' AND m.event_at < now() - interval '5 minutes' ${TICK_T} ORDER BY m.id LIMIT 20`)).rows;
         const c = await cfg();
         for (const r of rows) {
             await pool.query(`UPDATE sms_messages SET bucket = 'photo' WHERE id = $1`, [r.id]);
@@ -698,36 +774,36 @@ module.exports = function mountSms(app, deps) {
     }
     // 멈춘 줄 정리(sendTick 머리 · watchTick) — 재시작·폰 꺼짐·처리 중 죽음 뒤에도 손님 글이 조용히 사라지지 않게
     // 시험 번호(0999…) 줄은 실서버가 집지 않는다 — verify-610-server 가 실DB 에 만든 큐를 실서버 sendTick·정리가 가로채 가짜 게이트웨이 판정이 어긋나던 것(10/10 실측 · 폰 연동 켠 뒤). 검증은 deps.testMode 로 켜서 자기 줄을 집는다.
-    const TEST_SKIP_T = deps.testMode ? '' : "AND t.phone_digits NOT LIKE '0999%'";
-    const TEST_SKIP_M = deps.testMode ? '' : "AND thread_id NOT IN (SELECT id FROM sms_threads WHERE phone_digits LIKE '0999%')";
     async function sweepStuck() {
         const c = await cfg(); const out = {};
         // ① 보낼 시각이 15분 넘게 지난 queued(꺼 둔 사이 쌓인 큐) → 취소 + 직원 몫(며칠 뒤 켰을 때 옛 답이 나가지 않게)
-        const stale = await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:stale' WHERE direction = 'out' AND state = 'queued' AND send_after < now() - interval '15 minutes' ${TEST_SKIP_M} RETURNING thread_id`);
+        const stale = await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:stale' WHERE direction = 'out' AND state = 'queued' AND send_after < now() - interval '15 minutes' ${TICK_M} RETURNING thread_id`);
         for (const r of stale.rows) await setThread(r.thread_id, { status: 'staff_needed', staff_why: 'send_failed' });
         out.stale = stale.rowCount || 0;
         // ② 202 를 못 받고 죽은 sending(sent_at 없음 · 2분) → 같은 gateway_id 로 다시 queued(게이트웨이 409 = 이미 들어간 것)
-        const re = await pool.query(`UPDATE sms_messages SET state = 'queued' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NULL AND created_at < now() - interval '2 minutes' ${TEST_SKIP_M} RETURNING id`);
+        const re = await pool.query(`UPDATE sms_messages SET state = 'queued' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NULL AND created_at < now() - interval '2 minutes' ${TICK_M} RETURNING id`);
         out.requeued = re.rowCount || 0;
         // ③ 202 뒤 ttl+10분이 지나도 sms:sent/failed 가 안 옴 → 보내지 못함으로 + 직원 몫
-        const lost = await pool.query(`UPDATE sms_messages SET state = 'failed', fail_reason = 'no_result' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NOT NULL AND sent_at < now() - make_interval(secs => $1::int) ${TEST_HIDE_MSG} RETURNING thread_id, id`, [c.ttl_sec + 600]);
+        const lost = await pool.query(`UPDATE sms_messages SET state = 'failed', fail_reason = 'no_result' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NOT NULL AND sent_at < now() - make_interval(secs => $1::int) ${TICK_M} RETURNING thread_id, id`, [c.ttl_sec + 600]);
         for (const r of lost.rows) { await setThread(r.thread_id, { status: 'staff_needed', last_out_state: 'failed', staff_why: 'send_failed' }); if (c.enabled) await notifyStaff(c, { id: r.thread_id }, '문자 · 보낸 결과가 안 와요(폰 꺼짐?)', STAFF_MSG); }
         out.no_result = lost.rowCount || 0;
         // ⑤ 직원이 답한 뒤(staff_replied) staff_lock_hours 지나면 저절로 「끝남」 — 끝내기를 안 눌러도 다음 문자부터 봇이 다시 답함(대표 확정 10/10 · 「직원 몫」(staff_needed · 아직 아무도 안 답함)은 그대로)
         if (c.staff_lock_hours > 0) {
-            const rel = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_replied' AND COALESCE(handled_at, updated_at) < now() - make_interval(hours => $1::int) ${TEST_HIDE} RETURNING id`, [c.staff_lock_hours]);
+            const rel = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_replied' AND COALESCE(handled_at, updated_at) < now() - make_interval(hours => $1::int) ${TICK_P} RETURNING id`, [c.staff_lock_hours]);
             out.auto_closed = rel.rowCount || 0;
         }
         // #625(대표 「고」 10/10): 직원 몫(staff_needed · 아무도 안 답함)도 손님 마지막 글 뒤 staff_open_hours 지나면 저절로 끝남 — [처리함]을 안 눌러도 봇이 영영 침묵하지 않게(직원은 폰에서 답하는 구조)
         if (c.staff_open_hours > 0) {
-            const rel2 = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_needed' AND COALESCE(last_in_at, updated_at) < now() - make_interval(hours => $1::int) ${TEST_SKIP_T.replace('t.phone_digits', 'phone_digits')} RETURNING id`, [c.staff_open_hours]);
+            const rel2 = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_needed' AND COALESCE(last_in_at, updated_at) < now() - make_interval(hours => $1::int) ${TICK_P} RETURNING id`, [c.staff_open_hours]);
             out.auto_closed_open = rel2.rowCount || 0;
         }
+        // ⑥(#652) 적었는데 판정 전에 죽은 글 → 다시 판정(새 번호·기존 대화 모두). 아래 ④는 그래도 남은 것의 마지막 그물
+        try { out.redecided = await redecideTick(); } catch (e) { log.error('[문자] 다시 판정 실패(무시):', e.message); out.redecided = 0; }
         // ④ 받은 글은 있는데 판정 전에 죽어 status new 로 남은 대화(2분) → 직원 몫
         if (c.enabled && c.mode !== 'record') {   // record 모드는 new 가 정상 종착(워커2 ops 검증)
             const stuck = await pool.query(`UPDATE sms_threads t SET status = 'staff_needed', staff_why = COALESCE(t.staff_why, 'stuck') WHERE t.status = 'new' AND t.last_in_at IS NOT NULL AND t.last_in_at < now() - interval '2 minutes'
                 AND EXISTS (SELECT 1 FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' AND COALESCE(m.bucket, 'other') NOT IN ('otp','ad','carrier','greeting','photo_pending') AND m.created_at < now() - interval '2 minutes')
-                AND NOT EXISTS (SELECT 1 FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'out') AND t.created_at > now() - interval '1 day' ${TEST_HIDE_T2} RETURNING id`);   // #648: 검증이 옛 시각으로 넣은 시험 대화를 라이브가 집어 「처리되지 않은 글」 헛알림을 보냈음
+                AND NOT EXISTS (SELECT 1 FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'out') AND t.created_at > now() - interval '1 day' ${TICK_T} RETURNING id`);   // #648: 검증이 옛 시각으로 넣은 시험 대화를 라이브가 집어 「처리되지 않은 글」 헛알림을 보냈음
             for (const r of stuck.rows) await notifyStaff(c, { id: r.id }, '문자 · 처리되지 않은 글이 있어요', STAFF_MSG);
             out.stuck_new = stuck.rowCount || 0;
         }
@@ -741,11 +817,11 @@ module.exports = function mountSms(app, deps) {
             if (!c.enabled) return null;
             try { await sweepStuck(); } catch (e) { log.error('[문자] 멈춘 줄 정리 실패(무시):', e.message); }
             // 시간당 상한은 봇 답에만(직원 답이 막히지 않게) · 걸리면 텔레그램 1시간 1회
-            const hourN = (await pool.query(`SELECT count(*)::int AS n FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered','sending') AND sent_at > now() - interval '1 hour' ${TEST_HIDE_MSG}`)).rows[0].n;
+            const hourN = (await pool.query(`SELECT count(*)::int AS n FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered','sending') AND sent_at > now() - interval '1 hour' ${TICK_M}`)).rows[0].n;
             const botCapHit = hourN >= c.hourly_send_cap;
             if (botCapHit && Date.now() - _capAlertAt > 3600e3) { _capAlertAt = Date.now(); if (notifyTelegram) await notifyTelegram(`⚠️ 회사폰 문자 봇 답이 시간당 상한(${c.hourly_send_cap})에 걸렸어요 — 봇 답은 멈추고 직원 답만 나가요`); }
             const rows = (await pool.query(`SELECT m.*, t.phone_digits, t.status AS thread_status FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
-                WHERE m.direction = 'out' AND m.state = 'queued' AND (m.send_after IS NULL OR m.send_after <= now()) ${botCapHit ? "AND m.sender <> 'bot'" : ''} ${TEST_SKIP_T} ORDER BY m.priority DESC, m.id LIMIT 5`)).rows;
+                WHERE m.direction = 'out' AND m.state = 'queued' AND (m.send_after IS NULL OR m.send_after <= now()) ${botCapHit ? "AND m.sender <> 'bot'" : ''} ${TICK_T} ORDER BY m.priority DESC, m.id LIMIT 5`)).rows;
             const out = [];
             for (const m of rows) {
                 // 유예 사이에 직원이 답했으면(상태 바뀜) 취소
@@ -813,7 +889,7 @@ module.exports = function mountSms(app, deps) {
             if (scPurge0) { try { await scPurge0(pool); } catch (e) { log.error('[문자] 셀프 조회 시도 표 정리 실패(무시):', e.message); } }   // 시도 기록(해시)은 보관 정리 스위치와 무관하게 하루 지난 것 정리
             const ret = await naverCfgGet('db_retention');
             if (!(ret && ret.enabled === true)) return { skipped: 'db_retention_off' };
-            const r = await pool.query(`UPDATE sms_images SET data = NULL, purged_at = now() WHERE purged_at IS NULL AND data IS NOT NULL AND created_at < now() - make_interval(days => $1::int)`, [c.image_days]);
+            const r = await pool.query(`UPDATE sms_images SET data = NULL, purged_at = now() WHERE purged_at IS NULL AND data IS NOT NULL AND created_at < now() - make_interval(days => $1::int) ${deps.testMode ? "AND message_id IN (SELECT m.id FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id WHERE t.phone_digits LIKE '0999%')" : ''}`, [c.image_days]);
             let pre = 0, hits = 0;
             if (preorders && typeof preorders.purge === 'function') { try { pre = (await preorders.purge(pool, 7)) || 0; } catch (e) { log.error('[문자] 발송 전 주문 정리 실패(무시):', e.message); } }
             const scPurge = (selfcheckApi && typeof selfcheckApi.purge === 'function') ? selfcheckApi.purge : (selfcheck && typeof selfcheck.purge === 'function' ? selfcheck.purge : null);
@@ -821,14 +897,14 @@ module.exports = function mountSms(app, deps) {
             const target = (await pool.query(`SELECT count(*)::int AS n FROM delivery_shipments WHERE ship_date < (now() AT TIME ZONE 'Asia/Seoul')::date - 60`)).rows[0].n;
             let shipDeleted = 0, statusDeleted = 0;
             if (raw.purge_shipments === true && target > 0) {
-                shipDeleted = (await pool.query(`DELETE FROM delivery_shipments WHERE tracking IN (SELECT tracking FROM delivery_shipments WHERE ship_date < (now() AT TIME ZONE 'Asia/Seoul')::date - 60 LIMIT 5000)`)).rowCount || 0;
-                statusDeleted = (await pool.query(`DELETE FROM delivery_status t WHERE NOT EXISTS (SELECT 1 FROM delivery_shipments s WHERE s.tracking = t.tracking) AND t.checked_at < now() - interval '60 days'`)).rowCount || 0;
+                shipDeleted = (await pool.query(`DELETE FROM delivery_shipments WHERE tracking IN (SELECT tracking FROM delivery_shipments WHERE ship_date < (now() AT TIME ZONE 'Asia/Seoul')::date - 60 ${deps.testMode ? "AND tracking LIKE '9996000%'" : ''} LIMIT 5000)`)).rowCount || 0;
+                statusDeleted = (await pool.query(`DELETE FROM delivery_status t WHERE NOT EXISTS (SELECT 1 FROM delivery_shipments s WHERE s.tracking = t.tracking) AND t.checked_at < now() - interval '60 days' ${deps.testMode ? "AND t.tracking LIKE '9996000%'" : ''}`)).rowCount || 0;
             }
             // #644: 직원 화면용 주문 칸(order_json)에 실린 받는 분 이름 전체·운송장 전체는 마지막 글이 60일 지난 대화에서 비운다(송장 표 보관 기간과 같게 · 끝 4자리·성 한 글자는 남김)
             let ojCleared = 0;
             try { ojCleared = (await pool.query(`UPDATE sms_threads SET order_json = (order_json #- '{order,recipient_name}') #- '{order,trackings}'
                 WHERE order_json IS NOT NULL AND (order_json #> '{order,recipient_name}' IS NOT NULL OR order_json #> '{order,trackings}' IS NOT NULL)
-                  AND COALESCE(GREATEST(last_in_at, last_out_at), updated_at) < now() - interval '60 days' ${TEST_HIDE}`)).rowCount || 0; } catch (e) { log.error('[문자] 주문 칸 이름·송장 비우기 실패(무시):', e.message); }
+                  AND COALESCE(GREATEST(last_in_at, last_out_at), updated_at) < now() - interval '60 days' ${TICK_P}`)).rowCount || 0; } catch (e) { log.error('[문자] 주문 칸 이름·송장 비우기 실패(무시):', e.message); }
             const result = { date: kstDate(), order_json_cleared: ojCleared, sms_images: r.rowCount || 0, preorders: pre, selfcheck_hits: hits, shipments_target: target, shipments_deleted: shipDeleted, status_deleted: statusDeleted, purge_shipments: raw.purge_shipments === true };
             await naverCfgSet('sms_retention_last', result);
             if ((r.rowCount || 0) + shipDeleted > 0) await writeAudit({ action: 'purge', targetType: 'sms_retention', changes: { after: result }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } });
@@ -851,7 +927,7 @@ module.exports = function mountSms(app, deps) {
     const seenEvents = new Map();   // 같은 이벤트 재시도(2일간 14회) 1차 거름 — 3일 기억(정본은 sms_messages.envelope_id UNIQUE · 재시작 뒤에도 거름)
     function seenOnce(key) { const now = Date.now(); if (seenEvents.size > 5000) for (const [k, t] of seenEvents) if (now - t > 3 * 86400e3) seenEvents.delete(k); if (seenEvents.has(key)) return true; seenEvents.set(key, now); return false; }
 
-    async function handleWebhook(body) {
+    async function handleWebhook(body, opts) {
         const e = parseEvent(body);
         const nowIso = new Date().toISOString();
         if (e.ev === 'system:ping' || e.ev === 'app:started') {
@@ -866,12 +942,21 @@ module.exports = function mountSms(app, deps) {
             try { return await withLane(e.digits || 'x', fn); }
             catch (err) {
                 log.error('[문자] 받은 글 처리 실패:', err.message);
-                try { if (e.digits) { const t = await threadFor(e.digits); await setThread(t.id, { status: 'staff_needed', last_in_at: new Date(), last_in_text: String(e.body || '').slice(0, 300) }); const c = await cfg(); if (c.enabled) await notifyStaff(c, t, `문자 · 끝 ${phoneTail(e.digits)} 처리 중 오류 · 직접 확인`, STAFF_MSG, { force: true }); } } catch (_) { }
+                try { if (e.digits) { const t = await threadFor(e.digits); await setThread(t.id, { status: 'staff_needed', staff_why: t.staff_why || 'stuck', last_in_at: new Date(), last_in_text: String(e.body || '').slice(0, 300) }); const c = await cfg(); if (c.enabled) await notifyStaff(c, t, `문자 · 끝 ${phoneTail(e.digits)} 처리 중 오류 · 직접 확인`, STAFF_MSG, { force: true }); } } catch (_) { }
                 if (notifyTelegram && (deps.testMode || !isTestDigits(e.digits))) { try { await notifyTelegram('⚠️ 회사폰 문자 처리 중 오류: ' + String(err.message).slice(0, 120)); } catch (_) { } }
                 return { ok: false, event: e.ev, error: String(err.message).slice(0, 200), action: 'error_to_staff' };
             }
         };
-        if (e.ev === 'sms:received') { if (!e.digits) return { ok: true, event: e.ev, skipped: 'no_phone' }; return Object.assign({ ok: true, event: e.ev }, await inboundSafe(() => handleInbound({ digits: e.digits, body: e.body, kind: 'sms', gateway_id: e.gateway_id, sim_number: e.sim_number, event_at: e.event_at, envelope_id: e.envelope_id }))); }
+        // #652: opts.split = 줄 적기만 끝내고 { recorded:true, after } 를 돌려준다(라우트가 200 을 준 뒤 after 로 판정). 적다가 실패하면 던진다 → 라우트가 500 → 앱이 다시 보냄(봉투 id 로 한 번만 적힌다)
+        const inbound = async (recFn) => {
+            if (opts && opts.split) {
+                let rec;
+                try { rec = await withLane(e.digits || 'x', recFn); } catch (err) { if (dupKey) seenEvents.delete(dupKey); throw err; }
+                return { ok: true, event: e.ev, recorded: true, after: async () => Object.assign({ ok: true, event: e.ev }, await inboundSafe(() => decideRecorded(rec))) };
+            }
+            return Object.assign({ ok: true, event: e.ev }, await inboundSafe(async () => decideRecorded(await recFn())));
+        };
+        if (e.ev === 'sms:received') { if (!e.digits) return { ok: true, event: e.ev, skipped: 'no_phone' }; return inbound(() => recordInbound({ digits: e.digits, body: e.body, kind: 'sms', gateway_id: e.gateway_id, sim_number: e.sim_number, event_at: e.event_at, envelope_id: e.envelope_id })); }
         if (e.ev === 'sms:batch:received') return { ok: true, event: e.ev, ignored: true, n: Array.isArray(e.p.messages) ? e.p.messages.length : 0 };   // 받은함 다시 읽기(옛 글 내보내기) — 답하면 옛 글마다 봇이 답함 · 등록도 안 함
         // 정상 순서 = mms:received(메타만 · 기록) → mms:downloaded(사진·글 · 여기서 판정). received 가 유실되면 downloaded 가 새 수신으로.
         if (e.ev === 'mms:received') {
@@ -879,21 +964,36 @@ module.exports = function mountSms(app, deps) {
             // downloaded 가 먼저 와서 이미 사진이 붙은 줄이 10분 안에 있으면 메타 줄을 새로 만들지 않음(거짓 「사진 못 받음」 알림 방지)
             const already = (await pool.query(`SELECT 1 FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id WHERE t.phone_digits = $1 AND m.direction = 'in' AND m.kind = 'mms' AND m.event_at > now() - interval '10 minutes' AND EXISTS (SELECT 1 FROM sms_images i WHERE i.message_id = m.id AND i.data IS NOT NULL) LIMIT 1`, [e.digits])).rowCount;
             if (already) return { ok: true, event: e.ev, skipped: 'already_downloaded' };
-            return Object.assign({ ok: true, event: e.ev }, await inboundSafe(() => handleInbound({ digits: e.digits, body: '', kind: 'mms', gateway_id: e.gateway_id, sim_number: e.sim_number, event_at: e.event_at, images: [{ contentType: null, size: e.p.size || null, data: null }], envelope_id: e.envelope_id, recordOnly: true })));
+            return inbound(() => recordInbound({ digits: e.digits, body: '', kind: 'mms', gateway_id: e.gateway_id, sim_number: e.sim_number, event_at: e.event_at, images: [{ contentType: null, size: e.p.size || null, data: null }], envelope_id: e.envelope_id, recordOnly: true }));
         }
-        if (e.ev === 'mms:downloaded') return inboundSafe(() => attachDownloaded(e));
+        if (e.ev === 'mms:downloaded') return inbound(() => recordDownloaded(e));
         if (e.ev === 'sms:cancelled') return Object.assign({ ok: true, event: e.ev }, await handleSent({ gateway_id: e.gateway_id, digits: e.digits, body: e.body, state: 'failed', reason: 'cancelled', event_at: e.event_at, sim_number: e.sim_number }));
         if (e.ev === 'sms:sent' || e.ev === 'sms:delivered' || e.ev === 'sms:failed') return Object.assign({ ok: true, event: e.ev }, await handleSent({ gateway_id: e.gateway_id, digits: e.digits, body: e.body, state: e.ev.split(':')[1], reason: e.reason, event_at: e.event_at, sim_number: e.sim_number }));
         return { ok: true, event: e.ev, ignored: true };
     }
 
     // ── 라우트 ──
+    let _recFailAt = 0;
     const wrap = fn => async (req, res) => { try { await fn(req, res); } catch (e) { log.error('[문자] 라우트 오류:', e.message); res.status(500).json({ ok: false, error: '문자 처리 중 문제가 생겼어요: ' + e.message }); } };
     // 🔴 즉시 200 → 뒤에서 처리(앱은 30초 안 2xx 아니면 2일간 재시도 → 늦게 답하면 같은 사건이 두 번 와 봇이 두 번 답함) · 서명은 req.rawBody(server.js express.json verify 로 잡은 원문)로 검사
     app.post('/api/sms/webhook', wrap(async (req, res) => {
         const v = verifySignature(req);
         if (!v.ok) { if (v.why === 'no_secret') return res.status(503).json({ ok: false, error: 'webhook locked' }); return res.status(401).json({ ok: false, error: v.why }); }
         const body = req.body || {};
+        const say = r => { if (r && r.action) log.log(`[문자] ${r.event || ''} → ${r.action}${r.why ? '(' + r.why + ')' : ''}`); };
+        // #652(대표 10/11): 받은 글 사건은 「줄 적기」까지 끝낸 뒤 200(배포·재시작 순간에 글이 사라지지 않게) — 판정·AI·주문 찾기는 종전대로 200 뒤. 적다가 실패하면 500(앱이 다시 보낸다). 보낸 쪽 사건은 종전대로
+        if (['sms:received', 'mms:received', 'mms:downloaded'].includes(String(body.event || ''))) {
+            let r;
+            try { r = await handleWebhook(body, { split: true }); }
+            catch (e) {
+                log.error('[문자] 받은 글 적기 실패(500 → 앱이 다시 보냄):', e.message);
+                if (notifyTelegram && Date.now() - _recFailAt > 3600e3) { _recFailAt = Date.now(); notifyTelegram('⚠️ 회사폰 문자를 받아 적지 못했어요(앱이 다시 보냅니다 · 계속되면 DB 확인): ' + String(e.message).slice(0, 120)).catch(() => { }); }   // 조용한 유실 방지 · 1시간 1회
+                return res.status(500).json({ ok: false, error: 'record_failed' });
+            }
+            res.json({ ok: true, accepted: true, event: body.event || null, recorded: !!(r && r.recorded) });
+            if (r && typeof r.after === 'function') setImmediate(() => { r.after().then(say).catch(e => log.error('[문자] webhook 처리 오류:', e.message)); }); else say(r);
+            return;
+        }
         res.json({ ok: true, accepted: true, event: body.event || null });
         setImmediate(() => { handleWebhook(body).then(r => { if (r && r.action) log.log(`[문자] ${r.event || ''} → ${r.action}${r.why ? '(' + r.why + ')' : ''}`); }).catch(e => log.error('[문자] webhook 처리 오류:', e.message)); });
     }));
@@ -961,8 +1061,48 @@ module.exports = function mountSms(app, deps) {
         const ms = (await pool.query(`SELECT m.id, m.direction, m.kind, m.body, m.sender, m.state, m.bucket, m.rule_kind, m.event_at, m.sent_at, m.fail_reason, m.send_after,
             COALESCE((SELECT array_agg(i.id ORDER BY i.id) FROM sms_images i WHERE i.message_id = m.id AND i.purged_at IS NULL AND i.data IS NOT NULL), '{}') AS image_ids
             FROM sms_messages m WHERE m.thread_id = $1 ORDER BY m.id LIMIT 300`, [id])).rows;
-        res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null });
+        const cH = await cfg(); let hist = { items: [], more: false };
+        try { hist = await staffHistory(t.phone_digits, cH); } catch (e) { log.error('[문자] 구매이력 읽기 실패(무시):', e.message); }   // #654 실패해도 대화는 열린다
+        res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null, history: hist.items, history_days: cH.history_days, history_more: hist.more });
     }));
+    // #654(대표 10/11 「60일 구매이력으로」): 직원 화면 전용 — 그 번호가 받는 분 또는 구매자인 송장 묶음(발송일 + 받는 분) history_days 일치 전부 + 발송 전 주문. 최신순 · 최대 20건.
+    //   🔴 봇의 자동 답 판정용 주문 찾기(lookup_days 14일)와는 따로다 · CJ 재조회 없음(저장된 상태만) · 손님에게 나가는 글·알림·한 줄 요약에는 쓰지 않는다
+    const _histCache = new Map(); let _histTtl = deps.testMode ? 0 : 45000;   // 번호 → { at, val } · 45초(검증은 0 = 기억 안 함 · _setHistTtl 로 시험)
+    async function staffHistory(digits, c) {
+        const d = String(digits || ''); if (!/^0\d{8,11}$/.test(d)) return { items: [], more: false };
+        const hit = _histTtl > 0 ? _histCache.get(d) : null;
+        if (hit && Date.now() - hit.at < _histTtl) return hit.val;
+        const val = await staffHistoryRead(d, c);
+        if (_histTtl > 0) { if (_histCache.size > 300) _histCache.clear(); _histCache.set(d, { at: Date.now(), val }); }
+        return val;
+    }
+    async function staffHistoryRead(d, c) {
+        const MAX = 20, items = [];
+        try {
+            const pre = (await pool.query(`SELECT p.channel, min(p.recipient_initial) AS recipient_initial, bool_or(p.recipient_digits = $1) AS is_r, bool_or(p.buyer_digits = $1) AS is_b,
+                    min(COALESCE(p.paid_at, p.created_at)) AS paid_at, bool_and(p.paid_at IS NOT NULL) AS paid_known, array_remove(array_agg(DISTINCT NULLIF(btrim(p.option_text), '')), NULL) AS options, COALESCE(sum(p.qty), 0)::int AS qty
+                FROM sms_preorders p WHERE (p.recipient_digits = $1 OR p.buyer_digits = $1) AND p.miss = 0 AND COALESCE(p.paid_at, p.created_at) >= now() - make_interval(days => $2::int)
+                GROUP BY p.channel, p.recipient_digits, p.recipient_initial, (COALESCE(p.paid_at, p.created_at) AT TIME ZONE 'Asia/Seoul')::date ORDER BY min(COALESCE(p.paid_at, p.created_at)) DESC LIMIT 10`, [d, c.history_days])).rows;
+            for (const p of pre) items.push({ pre: true, ship_date: null, recipient_name: p.recipient_initial || null, option_text: (p.options || []).join(' + ') || null, qty: p.qty || null, boxes: null, trackings: [],
+                status_label: null, delivered: false, event_time: null, partner: null, role: p.is_r && p.is_b ? 'both' : (p.is_r ? 'recipient' : 'buyer'), channel: p.channel || null, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null,
+                ship_plan: await prePlanOf({ pre: true, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null, paid_known: !!p.paid_known, option_text: (p.options || []).join(' + ') }) });
+        } catch (e) { if (!(e && e.code === '42P01')) log.error('[문자] 구매이력(발송 전) 읽기 실패(무시):', e.message); }
+        const g = (await pool.query(`SELECT s.ship_date::text AS ship_date, btrim(min(s.recipient)) AS recipient_name, bool_or(s.phone_digits = $1) AS is_r, bool_or(s.buyer_digits = $1) AS is_b,
+                array_agg(s.tracking ORDER BY s.tracking) AS trackings, array_remove(array_agg(DISTINCT NULLIF(btrim(s.partner), '')), NULL) AS partners,
+                array_remove(array_agg(DISTINCT NULLIF(btrim(s.option_text), '')), NULL) AS options, COALESCE(sum(s.qty), 0)::int AS qty
+            FROM delivery_shipments s WHERE (s.phone_digits = $1 OR s.buyer_digits = $1) AND s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - $2::int ${deps.testMode ? '' : "AND COALESCE(s.source, '') NOT LIKE 'verify%'"}
+            GROUP BY s.ship_date, regexp_replace(COALESCE(s.recipient, ''), '[[:space:]]+', '', 'g') ORDER BY s.ship_date DESC LIMIT ${MAX + 1}`, [d, c.history_days])).rows;
+        const all = [].concat(...g.map(x => x.trackings || [])).filter(Boolean);
+        const st = new Map(all.length ? (await pool.query(`SELECT tracking, bucket, label, event_time, delivered FROM delivery_status WHERE tracking = ANY($1::text[])`, [all])).rows.map(r => [r.tracking, r]) : []);
+        for (const x of g) {
+            const trs = (x.trackings || []).filter(Boolean); const ss = trs.map(t => st.get(t) || null);
+            const pend = ss.findIndex(v => !(v && v.delivered)); const rep1 = ss[pend >= 0 ? pend : 0] || null;   // 안 끝난 상자가 있으면 그 상자가 대표(lookup.fillStatus 와 같은 규칙)
+            items.push({ pre: false, ship_date: x.ship_date, recipient_name: String(x.recipient_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) || null, option_text: (x.options || []).join(' + ') || null, qty: x.qty || null, boxes: trs.length,
+                trackings: [...new Set(trs.map(t => String(t).replace(/[^0-9]/g, '')).filter(t => /^\d{10,12}$/.test(t)))].slice(0, 5), status_label: rep1 ? (rep1.bucket || rep1.label || null) : null, delivered: trs.length > 0 && pend < 0,
+                event_time: rep1 ? (rep1.event_time || null) : null, partner: (x.partners || []).join(' · ') || null, role: x.is_r && x.is_b ? 'both' : (x.is_r ? 'recipient' : 'buyer') });
+        }
+        return { items: items.slice(0, MAX), more: items.length > MAX };
+    }
     app.get('/api/sms/images/:id', authMiddleware, wrap(async (req, res) => {
         const id = parseInt(req.params.id, 10); if (!id) return res.status(400).end();
         const r = (await pool.query(`SELECT content_type, data FROM sms_images WHERE id = $1 AND purged_at IS NULL AND data IS NOT NULL`, [id])).rows[0];
@@ -1035,7 +1175,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, _redecideTick: redecideTick, _staffHistory: staffHistory, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

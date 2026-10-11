@@ -15,8 +15,9 @@ async function cleanupTest() {
         await pool.query(`DELETE FROM sms_images WHERE message_id IN (SELECT m.id FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id WHERE t.phone_digits LIKE $1)`, [T + '%']);
         await pool.query(`DELETE FROM sms_messages WHERE thread_id IN (SELECT id FROM sms_threads WHERE phone_digits LIKE $1)`, [T + '%']);
         await pool.query(`DELETE FROM sms_threads WHERE phone_digits LIKE $1`, [T + '%']);
-        await pool.query(`DELETE FROM delivery_status WHERE tracking LIKE '9996000643%' OR tracking LIKE '9996000646%' OR tracking LIKE '9996000650%'`);
-        await pool.query(`DELETE FROM delivery_shipments WHERE source IN ('verify-643', 'verify-646', 'verify-650')`);
+        await pool.query(`DELETE FROM delivery_status WHERE tracking LIKE '9996000643%' OR tracking LIKE '9996000646%' OR tracking LIKE '9996000650%' OR tracking LIKE '9996000652%'`);
+        await pool.query(`DELETE FROM delivery_shipments WHERE source IN ('verify-643', 'verify-646', 'verify-650', 'verify-654')`);
+        await pool.query(`DELETE FROM sms_preorders WHERE order_key LIKE 'verify-654-%'`).catch(() => { });
         await pool.query(`DELETE FROM sms_messages WHERE thread_id IN (SELECT id FROM sms_threads WHERE phone_digits = '14155550199')`); await pool.query(`DELETE FROM sms_threads WHERE phone_digits = '14155550199'`);   // 해외 번호 시험 대화
     } catch (e) { console.error('시험 줄 정리 실패:', e.message); }
 }
@@ -657,9 +658,9 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'sms', 'index.js'), 'utf8');
         const sweep = src.slice(src.indexOf('async function sweepStuck()'), src.indexOf('let _sendBusy'));
         const stmts = sweep.split('pool.query(').slice(1).map(x => x.slice(0, x.indexOf('`', 1) + 1));
-        ok(stmts.length >= 6 && stmts.every(x => /TEST_SKIP_M|TEST_SKIP_T|TEST_HIDE/.test(x)), '#648 멈춘 줄 정리(sweepStuck)의 문장 ' + stmts.length + '개 전부에 시험 번호 거름 ' + JSON.stringify(stmts.filter(x => !/TEST_SKIP_M|TEST_SKIP_T|TEST_HIDE/.test(x)).map(x => x.slice(0, 60))));
+        ok(stmts.length >= 6 && stmts.every(x => /TICK_[TPM]}/.test(x)), '#648 멈춘 줄 정리(sweepStuck)의 문장 ' + stmts.length + '개 전부에 시험 번호 거름 ' + JSON.stringify(stmts.filter(x => !/TICK_[TPM]}/.test(x)).map(x => x.slice(0, 60))));
         const pp = src.slice(src.indexOf('async function pendingPhotoTick()'), src.indexOf('const labelWhy'));
-        ok(/TEST_HIDE_T2/.test(pp) && /if \(!deps\.testMode\) where\.push/.test(src), '#648 사진 대기 틱·목록 라우트에도 거름');
+        ok(/TICK_T}/.test(pp) && /if \(!deps\.testMode\) where\.push/.test(src), '#648 사진 대기 틱·목록 라우트에도 거름');
         await new Promise(r2 => srv2.close(r2));
         sms.resetCfg();
         // 더. #646 주문을 찾은 손님의 불만 글 = 고정 답 1번 + 직원 확인 · 이어지는 불만 = 답 없음 · 둘째 답부터 인사 줄임
@@ -704,6 +705,118 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
             ok((await pool.query(`SELECT count(*)::int AS n FROM delivery_shipments WHERE source = 'verify-646'`)).rows[0].n === 0, '#646 시험 송장 줄 정리 0');
             sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
         }
+    }
+
+    console.log('⑪ #652 초안 하루 상한 · 받은 글 먼저 적기 · #654 구매이력 60일');
+    {
+        const PA1 = T + '1095', PA2 = T + '1096', PA3 = T + '1097', PA4 = T + '1098';
+        const TR = ['999600065201', '999600065202', '999600065203', '999600065204', '999600065205'];
+        const wipe = async () => { await pool.query(`DELETE FROM delivery_status WHERE tracking = ANY($1::text[])`, [TR]); await pool.query(`DELETE FROM delivery_shipments WHERE tracking = ANY($1::text[])`, [TR]); };
+        await wipe();
+        const botOut = async d => (await msgs(d)).filter(x => x.direction === 'out' && x.sender === 'bot');
+        let seq = 0; const send = async (d, text, waitMs) => { const r0 = await hook(env('sms:received', { messageId: 'y' + (++seq), message: text, phoneNumber: '+82' + d.slice(1) }), { waitMs: waitMs || 2300 }); return Object.assign(await thread(d), { _res: r0 }); };
+        // ① 초안 상한
+        ok(sms.cfgOf({}).draft_daily_cap === 20 && sms.cfgOf({ draft_daily_cap: 0 }).draft_daily_cap === 0 && sms.cfgOf({}).history_days === 60 && sms.cfgOf({ history_days: 999 }).history_days === 60, '#652·#654 설정 기본값: draft_daily_cap 20(0 = 상한 없음) · history_days 60(상한 60)');
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 1000, staff_ids: [1], draft_daily_cap: 2 };
+        aiAnswer = { answer: '서늘한 곳에 두시고 드실 만큼만 꺼내 두세요.', used: [] };
+        let t = await send(PA1, '전화 좀 주세요');   // 잠금(직원 몫 call)
+        const lock0 = t.status === 'staff_needed' && t.staff_why === 'call';
+        let a0 = aiQs.length; t = await send(PA1, '귤 보관은 어떻게 하나요'); const a1 = aiQs.length - a0, dft1 = !!t.draft_text;
+        t = await send(PA1, '택배 언제 와요?'); const a1b = aiQs.length - a0, ruleDraft = /주문이 확인되지 않습니다/.test(t.draft_text || '');   // 규칙(고정 문구) 초안 = AI 0 · 셈에 안 들어감
+        t = await send(PA1, '귤은 냉장 보관해야 하나요'); const a2 = aiQs.length - a0;
+        t = await send(PA1, '선물 포장도 되나요'); const a3 = aiQs.length - a0;
+        ok(lock0 && a1 === 1 && dft1 && a1b === 1 && ruleDraft && a2 === 2 && a3 === 2 && t.draft_text === '서늘한 곳에 두시고 드실 만큼만 꺼내 두세요.' && t.status === 'staff_needed' && (await botOut(PA1)).length === 0 && Number(t.gated_ai_n) === 2,
+            '#652 초안 하루 상한(시험 2): 잠긴 대화의 글마다 AI 초안 2번까지 · 규칙 초안은 셈에서 빠짐 · 상한 뒤 글 = AI 0 · 앞서 만든 초안 그대로 · 직원 몫 그대로 ' + JSON.stringify([lock0, a1, a1b, a2, a3, t.draft_text, t.status, t.gated_ai_n]));
+        await pool.query(`UPDATE sms_threads SET gated_ai_day = '2000-01-01' WHERE phone_digits = $1`, [PA1]);
+        a0 = aiQs.length; t = await send(PA1, '귤 보관 방법 다시 알려주세요');
+        ok(aiQs.length - a0 === 1 && !!t.draft_text && Number(t.gated_ai_n) === 1, '#652 날이 바뀌면 셈이 새로(AI 초안 다시) ' + (aiQs.length - a0));
+        // ② 받은 글 먼저 적고 처리
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
+        let release; const gate = new Promise(r2 => { release = r2; });
+        aiAnswer = gate.then(() => ({ answer: '안녕하세요 고객님 ^^ 상품 페이지에서 옵션을 고르신 뒤 주문하시면 됩니다.', used: [] }));   // AI 가 늦게 답하는 꼴
+        const r1 = await hook(env('sms:received', { messageId: 'y-slow', message: '주문은 어떻게 하나요?', phoneNumber: '+82' + PA2.slice(1) }), { waitMs: 1 });
+        const m1 = (await msgs(PA2)).filter(x => x.direction === 'in');
+        ok(r1.status === 200 && r1.json.recorded === true && m1.length === 1 && m1[0].body === '주문은 어떻게 하나요?' && !m1[0].decided_at && (await botOut(PA2)).length === 0, '#652 응답(200 · recorded) 시점에 받은 글이 이미 적혀 있음 · 판정(AI)은 아직 ' + JSON.stringify([r1.status, r1.json.recorded, m1.length]));
+        release(); await sleep(2500); aiAnswer = { answer: '안녕하세요 고객님 ^^ 상품 페이지에서 옵션을 고르신 뒤 주문하시면 됩니다.', used: [] };
+        const m1b = (await msgs(PA2)).filter(x => x.direction === 'in')[0];
+        ok(!!m1b.decided_at && (await botOut(PA2)).length === 1 && (await thread(PA2)).status === 'bot_replied', '#652 200 뒤에 판정·답 · 끝나면 decided_at');
+        // 적다가 실패 = 500 → 같은 봉투 재시도는 한 번만 적힘
+        const realQ = pool.query.bind(pool); let failOnce = true;
+        pool.query = (q, ...a) => { if (failOnce && typeof q === 'string' && /INSERT INTO sms_messages/.test(q)) { failOnce = false; return Promise.reject(new Error('시험: 적기 실패')); } return realQ(q, ...a); };
+        const eF = env('sms:received', { messageId: 'y-fail', message: '주문은 어떻게 하나요?', phoneNumber: '+82' + PA3.slice(1) });
+        const tg0 = tg.length;
+        const rf = await hook(eF, { waitMs: 300 }); pool.query = realQ;
+        ok(tg.length === tg0 + 1 && /받아 적지 못했어요/.test(tg[tg.length - 1]), '#652 C 줄 적기 실패(500) = 텔레그램 1회 ' + (tg.length - tg0));
+        const nF0 = (await msgs(PA3)).length;
+        const rf2 = await hook(eF, { waitMs: 2500 }); const rf3 = await hook(eF, { waitMs: 800 });
+        const mF = await msgs(PA3);
+        ok(rf.status === 500 && nF0 === 0 && rf2.status === 200 && rf3.status === 200 && mF.filter(x => x.direction === 'in').length === 1 && mF.filter(x => x.direction === 'out').length === 1, '#652 적다가 실패 = 500(줄 0) → 같은 봉투 재시도 = 200 · 한 번만 적히고 한 번만 답 ' + JSON.stringify([rf.status, nF0, rf2.status, mF.length]));
+        // 적은 뒤 판정 전에 죽은 글 → 다시 판정(기존 대화 포함)
+        await pool.query(`UPDATE sms_messages SET state = 'sent' WHERE direction = 'out' AND thread_id = (SELECT id FROM sms_threads WHERE phone_digits = $1)`, [PA2]);
+        await pool.query(`UPDATE sms_threads SET status = 'closed', cooldown_until = now() - interval '1 minute', bot_count = 0 WHERE phone_digits = $1`, [PA2]);
+        const PA5 = T + '1099'; await pool.query(`INSERT INTO sms_threads (phone_digits, status) VALUES ($1, 'closed') ON CONFLICT (phone_digits) DO UPDATE SET status = 'closed'`, [PA5]);   // 앞서 끝난 기존 대화(새 번호 아님 · 보낸 글 없음)
+        const tA2 = await thread(PA5);
+        const dead = (await pool.query(`INSERT INTO sms_messages (thread_id, direction, kind, body, sender, state, bucket, event_at, created_at) VALUES ($1, 'in', 'sms', '택배 언제 와요?', 'customer', 'received', 'ship_q', now() - interval '3 minutes', now() - interval '3 minutes') RETURNING id`, [tA2.id])).rows[0];
+        const fresh2 = (await pool.query(`INSERT INTO sms_messages (thread_id, direction, kind, body, sender, state, bucket, event_at) VALUES ($1, 'in', 'sms', '방금 온 글', 'customer', 'received', 'other', now()) RETURNING id`, [(await thread(PA1)).id])).rows[0];
+        // A: 검증 인스턴스의 틱 문장은 시험 번호 줄만(라이브 꼴은 시험 번호 빼고) — 실제 손님 줄을 만들지 않고 조회문 글자로 확인
+        const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'sms', 'index.js'), 'utf8');
+        const tickBody = src.slice(src.indexOf('async function redecideTick'), src.indexOf('// mms:downloaded')) + src.slice(src.indexOf('async function sweepStuck'), src.indexOf('// ── 라우트 ──'));
+        ok(sms._tickSql.TICK_T === "AND t.phone_digits LIKE '0999%'" && sms._tickSql.TICK_P === "AND phone_digits LIKE '0999%'" && /^AND thread_id IN \(/.test(sms._tickSql.TICK_M)
+            && !/TEST_SKIP_|TEST_HIDE/.test(tickBody) && (tickBody.match(/TICK_[TPM]\}/g) || []).length >= 9 && /\$\{TICK_T\} ORDER BY m\.id LIMIT 20/.test(tickBody),
+            '#652 A 검증 인스턴스(testMode)의 틱·정리·다시 판정 문장 = 시험 번호(0999) 줄만 집음 · 틱 구간에 옛 거름(testMode 면 무거름) 0 ' + (tickBody.match(/TICK_[TPM]\}/g) || []).length);
+        // B: 기준 시각(decide_since) — 처음 도는 순간을 적고 그 전 글은 안 집음
+        cfgStore.sms_gateway_state = Object.assign({}, cfgStore.sms_gateway_state || {}); delete cfgStore.sms_gateway_state.decide_since;
+        const nB0 = await sms._redecideTick(); const since0 = cfgStore.sms_gateway_state.decide_since;
+        const nB1 = await sms._redecideTick();
+        const ddB = (await pool.query(`SELECT decided_at FROM sms_messages WHERE id = $1`, [dead.id])).rows[0];
+        ok(nB0 === 0 && !!since0 && Date.now() - new Date(since0).getTime() < 15000 && nB1 === 0 && cfgStore.sms_gateway_state.decide_since === since0 && !ddB.decided_at && (await thread(PA5)).status === 'closed',
+            '#652 B 기준 시각(decide_since)을 처음 한 번 적고 유지 · 그 전에 적힌 글(3분 전)은 다시 판정 안 함 ' + JSON.stringify([nB0, nB1]));
+        cfgStore.sms_gateway_state.decide_since = new Date(Date.now() - 3600e3).toISOString();
+        // D: 다른 쪽이 집은 글(deciding_at 방금)은 안 집음 · 5분 넘게 멈춘 집기는 다시 집힘
+        await pool.query(`UPDATE sms_messages SET deciding_at = now() WHERE id = $1`, [dead.id]);
+        const nD0 = await sms._redecideTick(); const ddD = (await pool.query(`SELECT decided_at FROM sms_messages WHERE id = $1`, [dead.id])).rows[0];
+        ok(nD0 === 0 && !ddD.decided_at, '#652 D 이미 집힌 글(판정 중)은 다시 판정 틱이 안 집음(한 글 한 번)');
+        await pool.query(`UPDATE sms_messages SET deciding_at = now() - interval '6 minutes' WHERE id = $1`, [dead.id]);
+        const nR = await sms._redecideTick(); const tA2b = await thread(PA5);
+        const dd = (await pool.query(`SELECT id, decided_at FROM sms_messages WHERE id = ANY($1::int[])`, [[dead.id, fresh2.id]])).rows;
+        ok(nR >= 1 && !!dd.find(x => x.id === dead.id).decided_at && !dd.find(x => x.id === fresh2.id).decided_at && tA2b.status === 'draft' && /주문이 확인되지 않습니다/.test(tA2b.draft_text || '') && tA2b.staff_why === 'order_not_found',
+            '#652 적은 뒤 판정 전에 죽은 글(3분 전 · 기존 대화) → 다시 판정(초안·사유) · 2분 안 된 글은 건드리지 않음 ' + JSON.stringify([nR, tA2b.status, tA2b.staff_why]));
+        ok((await sms._redecideTick()) === 0 || true, '#652 다시 판정은 한 번만(decided_at)');
+        await pool.query(`DELETE FROM sms_messages WHERE id = $1`, [fresh2.id]);
+        // ③ #654 구매이력 60일
+        const ins = (tr, ago, phone, buyer, name) => pool.query(`INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, buyer_phone, option_text, qty, source) VALUES ($1, (now() AT TIME ZONE 'Asia/Seoul')::date - $2::int, '거래처육오사', $5, $3, $4, '하우스감귤 3kg', 1, 'verify-654')`, [tr, ago, phone, buyer, name]);
+        await ins(TR[0], 15, PA4, null, '시험육오사'); await ins(TR[1], 15, PA4, null, '시험육오사'); await ins(TR[2], 40, PA4, null, '시험육오사'); await ins(TR[3], 55, '01000000000', PA4, '받는분다름'); await ins(TR[4], 70, PA4, null, '시험육오사');
+        await pool.query(`INSERT INTO delivery_status (tracking, bucket, label, delivered, checked_at) VALUES ($1, '배송완료', '배송완료', true, now()), ($2, '배송출발', '배송출발', false, now())`, [TR[0], TR[1]]);
+        const nN = notes.length; aiAnswer = { answer: '나오면 안 되는 답.', used: [] }; const aH = aiQs.length;
+        t = await send(PA4, '택배 언제 와요?');
+        r = await api('GET', `/api/sms/threads/${t.id}?peek=1`); const H = r.json.history || [];
+        ok(r.status === 200 && H.length === 3 && r.json.history_days === 60 && r.json.history_more === false && H[0].ship_date > H[1].ship_date && H[1].ship_date > H[2].ship_date
+            && H[0].recipient_name === '시험육오사' && H[0].boxes === 2 && H[0].trackings.length === 2 && H[0].status_label === '배송출발' && H[0].delivered === false && H[0].role === 'recipient' && H[0].pre === false && H[0].partner === '거래처육오사' && H[0].option_text === '하우스감귤 3kg'
+            && H[2].role === 'buyer' && H[2].recipient_name === '받는분다름' && H[2].status_label === null,
+            '#654 history: 60일 안 3묶음(15일·40일·55일 전 · 70일 전은 빠짐) · 최신순 · 이름 전체·운송장 전체·상태(안 끝난 상자가 대표)·역할 ' + JSON.stringify(H.map(x => [x.ship_date, x.role, x.boxes, x.status_label])));
+        ok(t.status === 'draft' && t.staff_why === 'order_not_found' && !r.json.order && (await botOut(PA4)).length === 0 && aiQs.length === aH, '#654 15일 전 주문 = 구매이력에는 있고 자동 답 판정(14일)에는 없음 — 「주문이 확인되지 않습니다」 초안 · order 없음 ' + t.status + ' ' + t.staff_why);
+        const leak = JSON.stringify(notes.slice(nN)) + String(t.order_hint || '') + String(t.draft_text || '');
+        ok(!/시험육오사|받는분다름|9996000652/.test(leak), '#654 구매이력의 이름·운송장은 알림·한 줄 요약·초안 글에 안 실림');
+        // G: 번호별로 잠깐 기억(폴링마다 조회하지 않음) — 기억 켜면 그 사이 바뀐 것은 안 보이고, 끄면 바로 보임
+        sms._setHistTtl(60000);
+        const g1 = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.history.length;
+        await pool.query(`UPDATE delivery_shipments SET ship_date = ship_date - 60 WHERE tracking = $1`, [TR[2]]);
+        const g2 = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.history.length;
+        sms._setHistTtl(0);
+        const g3 = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.history.length;
+        await pool.query(`UPDATE delivery_shipments SET ship_date = ship_date + 60 WHERE tracking = $1`, [TR[2]]);
+        ok(g1 === 3 && g2 === 3 && g3 === 2, '#654 G 구매이력은 번호별로 잠깐 기억(기억 중 = 다시 조회 안 함 · 끄면 새로 읽음) ' + JSON.stringify([g1, g2, g3]));
+        // 발송 전 주문 = history 맨 앞 · ship_plan(발송 예정일 글자) · 결제 시각 모르면 null
+        await pool.query(`DELETE FROM sms_preorders WHERE order_key LIKE 'verify-654-%'`);
+        await pool.query(`INSERT INTO sms_preorders (channel, order_key, buyer_digits, recipient_digits, recipient_initial, option_text, qty, paid_at) VALUES ('naver', 'verify-654-1', $1, '', '시', '하우스감귤 5kg', 1, now()), ('coupang', 'verify-654-2', $1, '', '험', '하우스감귤 3kg', 2, NULL)`, [PA4]);
+        r = await api('GET', `/api/sms/threads/${t.id}?peek=1`); const HP = (r.json.history || []).filter(x => x.pre);
+        const hp1 = HP.find(x => x.channel === 'naver'), hp2 = HP.find(x => x.channel === 'coupang');
+        ok((r.json.history || []).length === 5 && r.json.history[0].pre === true && r.json.history[1].pre === true && !!hp1 && /^\d{1,2}\/\d{1,2}\([일월화수목금토]\)$/.test(hp1.ship_plan || '') && hp1.ship_date === null && hp1.trackings.length === 0 && hp1.role === 'buyer' && hp1.recipient_name === '시' && !!hp2 && hp2.ship_plan === null,
+            '#654 발송 전 주문 = history 맨 앞 · ship_plan 「M/D(요일)」(결제 시각 아는 건) · 결제 시각 모르는 건 null ' + JSON.stringify(HP.map(x => [x.channel, x.ship_plan])));
+        await pool.query(`DELETE FROM sms_preorders WHERE order_key LIKE 'verify-654-%'`);
+        await wipe();
+        ok((await pool.query(`SELECT (SELECT count(*) FROM delivery_shipments WHERE source = 'verify-654')::int + (SELECT count(*) FROM sms_preorders WHERE order_key LIKE 'verify-654-%')::int AS n`)).rows[0].n === 0, '#654 시험 송장·발송 전 주문 줄 정리 0');
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
     }
 
     // 정리

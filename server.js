@@ -16407,6 +16407,8 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// #652: 받지 않은 약속 거부 하나로 서버가 통째로 죽지 않게(Node 15+ 기본 = 프로세스 종료 → 그 순간 처리 중이던 문자·발송이 끊긴다) — 로그만 남기고 계속 돈다
+process.on('unhandledRejection', (reason) => { try { console.error('[서버] 받지 않은 약속 거부(계속 실행):', (reason && reason.stack) || reason); } catch (_) { /* 로그 실패는 무시 */ } });
 // 서버 시작
 initDB().then(() => deliveryInitDB().catch(e => console.error('[배송조회] 표 생성 실패:', e.message)))
     .then(() => smsDesk.initDB().then(() => smsDesk.start()).catch(e => console.error('[문자] 표 생성 실패:', e.message)))   // #610
