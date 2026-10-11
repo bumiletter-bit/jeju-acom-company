@@ -344,6 +344,8 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 
 > **#652 교차 점검 손질(워커4 · 2026-10-11)**: **A** 표를 고치는 틱 문장(sendTick · sweepStuck ①~⑥ · pendingPhotoTick · 다시 판정 · 보관 정리)은 `TICK_T/TICK_P/TICK_M` 으로 거른다 — 라이브 = 시험 번호(0999) 빼고 · **검증 인스턴스(testMode) = 시험 번호 줄만**(종전엔 testMode 면 거름이 없어 검증이 실제 손님 줄을 집을 수 있었다). 보관 정리도 testMode 면 시험 번호 대화의 사진·시험 운송장(9996000…)만. 화면용 읽기 거름(TEST_HIDE*)은 종전대로. **B** 다시 판정은 `sms_gateway_state.decide_since`(이 코드가 처음 도는 순간 한 번 적고 유지) 뒤에 적힌 글만 — 배포 순간 옛 글 재판정 방지. **C** 줄 적기 실패(500) = 텔레그램 1시간 1회. **D** 판정은 `deciding_at` 으로 집은 쪽만(5분 넘게 안 끝난 집기는 다시 집힘) — after 와 다시 판정 틱의 이중 판정 방지. **G** 구매이력은 번호별 45초 기억 · 라이브는 source 가 verify 로 시작하는 시험 송장 제외. **H** 받은 글 처리 실패 = staff_why stuck. **I** 초안 상한을 넘은 글은 앞서 만든 초안·사유를 그대로 둔다.
 
+> **#657(대표 2026-10-11) 송장별 품목 · 상태 이름 · 60건**: history 는 **최대 60건**(종전 20 · 넘으면 history_more). 발송분 한 건에 `boxes_detail: [{ tracking, option_text, qty, status_label, status_text, delivered, event_time }]`(송장 한 줄 = delivery_shipments 한 줄 · 운송장 순 · 최대 20 · 상자 1개면 길이 1 · 발송 전 건은 빈 배열)와 `status_text`(직원 화면에 보일 상태 이름)가 붙는다. status_text = 배송완료 → 「배송완료」 · 집화 → 「배송 중 · 집화」 · 간선상하차 → 「배송 중 · 이동」 · 배송출발 → 「배송 중 · 배송 출발」 · 정보없음(또는 조회 기록 없음) → 발송 2일 안이면 「배송 중 · 집화 전」 · 3일 넘으면 「조회 안 됨」 · 미배송·사고·기타 → 그대로 · 발송 전 건은 null. **status_label 원값과 묶음 칸(option_text·trackings·qty·boxes)은 그대로** — 배송조회 카드·봇 규칙 답(statusPhrase)·order(판정용 · toStaff)는 바뀌지 않았다.
+>
 > **#654 ship_plan**: history 의 발송 전(pre) 건과 order(pre)에 `ship_plan`(「10/12(월)」 꼴 · rules.prePlan = 발송 전 답과 같은 계산기·조건 · 결제 시각 모름·예약 상품·예정일 지남이면 null).
 
 ### 10-4. 보내기

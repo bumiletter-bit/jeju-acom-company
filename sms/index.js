@@ -1065,7 +1065,7 @@ module.exports = function mountSms(app, deps) {
         try { hist = await staffHistory(t.phone_digits, cH); } catch (e) { log.error('[문자] 구매이력 읽기 실패(무시):', e.message); }   // #654 실패해도 대화는 열린다
         res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null, history: hist.items, history_days: cH.history_days, history_more: hist.more });
     }));
-    // #654(대표 10/11 「60일 구매이력으로」): 직원 화면 전용 — 그 번호가 받는 분 또는 구매자인 송장 묶음(발송일 + 받는 분) history_days 일치 전부 + 발송 전 주문. 최신순 · 최대 20건.
+    // #654(대표 10/11 「60일 구매이력으로」): 직원 화면 전용 — 그 번호가 받는 분 또는 구매자인 송장 묶음(발송일 + 받는 분) history_days 일치 전부 + 발송 전 주문. 최신순 · 최대 60건(#657 · 종전 20).
     //   🔴 봇의 자동 답 판정용 주문 찾기(lookup_days 14일)와는 따로다 · CJ 재조회 없음(저장된 상태만) · 손님에게 나가는 글·알림·한 줄 요약에는 쓰지 않는다
     const _histCache = new Map(); let _histTtl = deps.testMode ? 0 : 45000;   // 번호 → { at, val } · 45초(검증은 0 = 기억 안 함 · _setHistTtl 로 시험)
     async function staffHistory(digits, c) {
@@ -1076,19 +1076,35 @@ module.exports = function mountSms(app, deps) {
         if (_histTtl > 0) { if (_histCache.size > 300) _histCache.clear(); _histCache.set(d, { at: Date.now(), val }); }
         return val;
     }
+    // #657(대표 10/11 「정보 없음으로 왜 나오는 거야 · 배송 중이나」): 직원 화면에 보일 상태 이름. status_label(우리 분류 원값)은 그대로 두고 이 글자만 따로 준다
+    //   정보없음(또는 아직 조회한 적 없음) = 송장은 발행됐는데 CJ 전산에 아직 안 올라온 것 → 발송 2일 안이면 「배송 중 · 집화 전」 · 3일 넘으면 「조회 안 됨」
+    function staffStatusText(label, shipDate, delivered) {
+        const l = String(label || '');
+        if (delivered || l === '배송완료') return '배송완료';
+        if (l === '집화') return '배송 중 · 집화';
+        if (l === '간선상하차') return '배송 중 · 이동';
+        if (l === '배송출발') return '배송 중 · 배송 출발';
+        if (!l || l === '정보없음' || l === '조회실패') {
+            const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+            const gap = shipDate ? Math.round((Date.parse(today + 'T00:00:00Z') - Date.parse(String(shipDate).slice(0, 10) + 'T00:00:00Z')) / 86400e3) : 99;
+            return gap <= 2 ? '배송 중 · 집화 전' : '조회 안 됨';
+        }
+        return l;   // 미배송 · 사고 · 기타 = 그대로
+    }
     async function staffHistoryRead(d, c) {
-        const MAX = 20, items = [];
+        const MAX = 60, items = [];   // #657 대표 「수십 건 고객도 있으니」 — 화면이 접어서 보여 준다(종전 20)
         try {
             const pre = (await pool.query(`SELECT p.channel, min(p.recipient_initial) AS recipient_initial, bool_or(p.recipient_digits = $1) AS is_r, bool_or(p.buyer_digits = $1) AS is_b,
                     min(COALESCE(p.paid_at, p.created_at)) AS paid_at, bool_and(p.paid_at IS NOT NULL) AS paid_known, array_remove(array_agg(DISTINCT NULLIF(btrim(p.option_text), '')), NULL) AS options, COALESCE(sum(p.qty), 0)::int AS qty
                 FROM sms_preorders p WHERE (p.recipient_digits = $1 OR p.buyer_digits = $1) AND p.miss = 0 AND COALESCE(p.paid_at, p.created_at) >= now() - make_interval(days => $2::int)
                 GROUP BY p.channel, p.recipient_digits, p.recipient_initial, (COALESCE(p.paid_at, p.created_at) AT TIME ZONE 'Asia/Seoul')::date ORDER BY min(COALESCE(p.paid_at, p.created_at)) DESC LIMIT 10`, [d, c.history_days])).rows;
             for (const p of pre) items.push({ pre: true, ship_date: null, recipient_name: p.recipient_initial || null, option_text: (p.options || []).join(' + ') || null, qty: p.qty || null, boxes: null, trackings: [],
-                status_label: null, delivered: false, event_time: null, partner: null, role: p.is_r && p.is_b ? 'both' : (p.is_r ? 'recipient' : 'buyer'), channel: p.channel || null, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null,
+                status_label: null, status_text: null, boxes_detail: [], delivered: false, event_time: null, partner: null, role: p.is_r && p.is_b ? 'both' : (p.is_r ? 'recipient' : 'buyer'), channel: p.channel || null, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null,
                 ship_plan: await prePlanOf({ pre: true, paid_at: p.paid_at ? new Date(p.paid_at).toISOString() : null, paid_known: !!p.paid_known, option_text: (p.options || []).join(' + ') }) });
         } catch (e) { if (!(e && e.code === '42P01')) log.error('[문자] 구매이력(발송 전) 읽기 실패(무시):', e.message); }
         const g = (await pool.query(`SELECT s.ship_date::text AS ship_date, btrim(min(s.recipient)) AS recipient_name, bool_or(s.phone_digits = $1) AS is_r, bool_or(s.buyer_digits = $1) AS is_b,
                 array_agg(s.tracking ORDER BY s.tracking) AS trackings, array_remove(array_agg(DISTINCT NULLIF(btrim(s.partner), '')), NULL) AS partners,
+                json_agg(json_build_object('t', s.tracking, 'o', btrim(COALESCE(s.option_text, '')), 'q', s.qty) ORDER BY s.tracking) AS lines,
                 array_remove(array_agg(DISTINCT NULLIF(btrim(s.option_text), '')), NULL) AS options, COALESCE(sum(s.qty), 0)::int AS qty
             FROM delivery_shipments s WHERE (s.phone_digits = $1 OR s.buyer_digits = $1) AND s.ship_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - $2::int ${deps.testMode ? '' : "AND COALESCE(s.source, '') NOT LIKE 'verify%'"}
             GROUP BY s.ship_date, regexp_replace(COALESCE(s.recipient, ''), '[[:space:]]+', '', 'g') ORDER BY s.ship_date DESC LIMIT ${MAX + 1}`, [d, c.history_days])).rows;
@@ -1097,7 +1113,13 @@ module.exports = function mountSms(app, deps) {
         for (const x of g) {
             const trs = (x.trackings || []).filter(Boolean); const ss = trs.map(t => st.get(t) || null);
             const pend = ss.findIndex(v => !(v && v.delivered)); const rep1 = ss[pend >= 0 ? pend : 0] || null;   // 안 끝난 상자가 있으면 그 상자가 대표(lookup.fillStatus 와 같은 규칙)
-            items.push({ pre: false, ship_date: x.ship_date, recipient_name: String(x.recipient_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) || null, option_text: (x.options || []).join(' + ') || null, qty: x.qty || null, boxes: trs.length,
+            // #657 송장 한 줄 = 그 송장의 품목·수량·상태(대표 「송장별 품목 다른 경우도 그 품목이랑 송장 뜨는 거지?」) — 묶음 칸(option_text·trackings·status_label)은 종전 그대로
+            const detail = (Array.isArray(x.lines) ? x.lines : []).map(ln => {
+                const tr = String(ln && ln.t == null ? '' : ln.t).replace(/[^0-9]/g, ''); if (!/^\d{10,12}$/.test(tr)) return null;
+                const v = st.get(ln.t) || null; const lab = v ? (v.bucket || v.label || null) : null; const dv = !!(v && v.delivered);
+                return { tracking: tr, option_text: String(ln.o || '').slice(0, 200) || null, qty: Number(ln.q) > 0 ? Number(ln.q) : null, status_label: lab, status_text: staffStatusText(lab, x.ship_date, dv), delivered: dv, event_time: v ? (v.event_time || null) : null };
+            }).filter(Boolean).slice(0, 20);
+            items.push({ pre: false, status_text: staffStatusText(rep1 ? (rep1.bucket || rep1.label || null) : null, x.ship_date, trs.length > 0 && pend < 0), boxes_detail: detail, ship_date: x.ship_date, recipient_name: String(x.recipient_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) || null, option_text: (x.options || []).join(' + ') || null, qty: x.qty || null, boxes: trs.length,
                 trackings: [...new Set(trs.map(t => String(t).replace(/[^0-9]/g, '')).filter(t => /^\d{10,12}$/.test(t)))].slice(0, 5), status_label: rep1 ? (rep1.bucket || rep1.label || null) : null, delivered: trs.length > 0 && pend < 0,
                 event_time: rep1 ? (rep1.event_time || null) : null, partner: (x.partners || []).join(' · ') || null, role: x.is_r && x.is_b ? 'both' : (x.is_r ? 'recipient' : 'buyer') });
         }

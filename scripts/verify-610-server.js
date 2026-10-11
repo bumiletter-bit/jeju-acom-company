@@ -797,6 +797,40 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         ok(t.status === 'draft' && t.staff_why === 'order_not_found' && !r.json.order && (await botOut(PA4)).length === 0 && aiQs.length === aH, '#654 15일 전 주문 = 구매이력에는 있고 자동 답 판정(14일)에는 없음 — 「주문이 확인되지 않습니다」 초안 · order 없음 ' + t.status + ' ' + t.staff_why);
         const leak = JSON.stringify(notes.slice(nN)) + String(t.order_hint || '') + String(t.draft_text || '');
         ok(!/시험육오사|받는분다름|9996000652/.test(leak), '#654 구매이력의 이름·운송장은 알림·한 줄 요약·초안 글에 안 실림');
+        // #657 송장별 품목(boxes_detail) · 직원 화면용 상태 이름(status_text) · 최대 60건
+        {
+            await pool.query(`UPDATE delivery_shipments SET option_text = '레드키위 5kg', qty = 2 WHERE tracking = $1`, [TR[1]]);
+            let h = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.history || []; const b = h[0].boxes_detail || [];
+            ok(h.length === 3 && b.length === 2 && b[0].tracking === TR[0] && b[0].option_text === '하우스감귤 3kg' && b[0].qty === 1 && b[0].status_label === '배송완료' && b[0].status_text === '배송완료' && b[0].delivered === true
+                && b[1].tracking === TR[1] && b[1].option_text === '레드키위 5kg' && b[1].qty === 2 && b[1].status_label === '배송출발' && b[1].status_text === '배송 중 · 배송 출발' && b[1].delivered === false
+                && h[0].boxes === 2 && h[0].trackings.length === 2 && h[0].status_label === '배송출발' && h[0].status_text === '배송 중 · 배송 출발' && /하우스감귤 3kg/.test(h[0].option_text) && /레드키위 5kg/.test(h[0].option_text) && h[0].qty === 3,
+                '#657 boxes_detail: 송장 한 줄마다 그 송장의 품목·수량·상태(품목이 다른 2상자) · 묶음 칸은 종전 그대로 ' + JSON.stringify(b.map(v => [v.option_text, v.qty, v.status_text])));
+            ok(h[1].boxes_detail.length === 1 && h[1].boxes_detail[0].tracking === TR[2] && h[1].status_label === null && h[1].status_text === '조회 안 됨' && h[1].boxes_detail[0].status_text === '조회 안 됨',
+                '#657 상자 1개 = boxes_detail 길이 1 · 조회 기록 없는 40일 전 송장 = 「조회 안 됨」(status_label 원값 null 그대로)');
+            // 오늘 발송 · CJ 전산에 아직 없음(정보없음) = 「배송 중 · 집화 전」 → 4일 전이면 「조회 안 됨」 · 집화 · 간선상하차 · 미배송
+            await pool.query(`UPDATE delivery_shipments SET ship_date = (now() AT TIME ZONE 'Asia/Seoul')::date WHERE tracking = $1`, [TR[2]]);
+            await pool.query(`INSERT INTO delivery_status (tracking, bucket, label, delivered, checked_at) VALUES ($1, '정보없음', '조회 내역 없음', false, now())`, [TR[2]]);
+            const one = async () => ((await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.history || []).find(v => v.trackings[0] === TR[2]);
+            const s0 = await one();
+            await pool.query(`UPDATE delivery_shipments SET ship_date = (now() AT TIME ZONE 'Asia/Seoul')::date - 2 WHERE tracking = $1`, [TR[2]]); const s2 = await one();
+            await pool.query(`UPDATE delivery_shipments SET ship_date = (now() AT TIME ZONE 'Asia/Seoul')::date - 4 WHERE tracking = $1`, [TR[2]]); const s4 = await one();
+            const txt = [];
+            for (const bk of ['집화', '간선상하차', '미배송', '사고']) { await pool.query(`UPDATE delivery_status SET bucket = $2, label = $2 WHERE tracking = $1`, [TR[2], bk]); const v = await one(); txt.push(v.status_text + '|' + v.status_label + '|' + v.boxes_detail[0].status_text); }
+            ok(s0.status_label === '정보없음' && s0.status_text === '배송 중 · 집화 전' && s0.boxes_detail[0].status_text === '배송 중 · 집화 전' && s2.status_text === '배송 중 · 집화 전' && s4.status_label === '정보없음' && s4.status_text === '조회 안 됨',
+                '#657 status_text: 정보없음 = 발송 2일 안 「배송 중 · 집화 전」 · 4일 전 「조회 안 됨」 · status_label 원값은 「정보없음」 그대로 ' + JSON.stringify([s0.status_text, s2.status_text, s4.status_text]));
+            ok(txt.join(' / ') === '배송 중 · 집화|집화|배송 중 · 집화 / 배송 중 · 이동|간선상하차|배송 중 · 이동 / 미배송|미배송|미배송 / 사고|사고|사고', '#657 status_text: 집화·간선상하차 = 「배송 중 · …」 · 미배송·사고 = 그대로 ' + txt.join(' / '));
+            await pool.query(`DELETE FROM delivery_status WHERE tracking = $1`, [TR[2]]);
+            await pool.query(`UPDATE delivery_shipments SET ship_date = (now() AT TIME ZONE 'Asia/Seoul')::date - 40 WHERE tracking = $1`, [TR[2]]);
+            await pool.query(`UPDATE delivery_shipments SET option_text = '하우스감귤 3kg', qty = 1 WHERE tracking = $1`, [TR[1]]);
+            // 최대 60건 + history_more(날마다 한 건씩 61일치 → 묶음 64)
+            await pool.query(`INSERT INTO delivery_shipments (tracking, ship_date, partner, recipient, phone, buyer_phone, option_text, qty, source)
+                SELECT '9996000657' || lpad(g::text, 2, '0'), (now() AT TIME ZONE 'Asia/Seoul')::date - g, '거래처육오사', '시험육오칠', $1, NULL, '하우스감귤 3kg', 1, 'verify-654' FROM generate_series(0, 60) g`, [PA4]);
+            const big = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json;
+            await pool.query(`DELETE FROM delivery_shipments WHERE source = 'verify-654' AND tracking LIKE '9996000657%'`);
+            h = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.history || [];
+            ok(big.history.length === 60 && big.history_more === true && big.history.every(v => Array.isArray(v.boxes_detail) && v.boxes_detail.length >= 1) && h.length === 3 && h[0].option_text === '하우스감귤 3kg' && h[1].trackings[0] === TR[2],
+                '#657 history 최대 60건(64묶음 → 60 + history_more) · 시험 줄 되돌린 뒤 3건 ' + JSON.stringify([big.history.length, big.history_more, h.length]));
+        }
         // G: 번호별로 잠깐 기억(폴링마다 조회하지 않음) — 기억 켜면 그 사이 바뀐 것은 안 보이고, 끄면 바로 보임
         sms._setHistTtl(60000);
         const g1 = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.history.length;
