@@ -216,7 +216,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 await openBoard(D.pg);
                 let a = await audit(D.pg); report(tag + ' 채팅+현황판+문의', a);
                 const ibN = await D.pg.evaluate(() => ({ rows: document.querySelectorAll('#desk-inbox-list tr.desk-ib-row, #desk-inbox-list .desk-ib').length, badge: document.getElementById('inbox-n-talk').textContent, wrap: document.querySelectorAll('#desk-inbox-list .table-scroll-wrapper').length, panels: document.querySelectorAll('#desk-board .desk-panel').length }));
-                ok('B [' + tag + '] 시험 자료가 실제로 떴음 — 문의 ' + ibN.rows + '줄 · 톡톡 배지 ' + ibN.badge + ' · 현황판 ' + ibN.panels + '칸' + (phone ? '' : ' · 표 감싼 칸 ' + ibN.wrap), ibN.rows === 3 && ibN.badge === '3' && ibN.panels === (who === '대표' ? 4 : 3) && (phone || ibN.wrap === 1), JSON.stringify(ibN));
+                ok('B [' + tag + '] 시험 자료가 실제로 떴음 — 문의 ' + ibN.rows + '줄 · 톡톡 배지 ' + ibN.badge + ' · 현황판 ' + ibN.panels + '칸' + (phone ? '' : ' · 표 감싼 칸 ' + ibN.wrap), ibN.rows === 3 && ibN.badge === '3' && ibN.panels === (who === '대표' ? 3 : 2) /* #653-다: 「지금 챙길 일」이 현황판에서 나감 */ && (phone || ibN.wrap === 1), JSON.stringify(ibN));
                 for (const k of ['talk', 'qna', 'inquiry']) {
                     await ibSeen(D.pg, false); await ibTab(D.pg, k); a = await audit(D.pg); report(tag + ' 문의 ' + k, a);
                     await ibOpenFirst(D.pg); a = await audit(D.pg); report(tag + ' 문의 ' + k + ' 줄 펼침', a);
@@ -235,9 +235,9 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                         chip: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-plus-btn', p)), state: ['backgroundColor', 'borderTopColor', 'color'].map(p => g('#desk-state', p)),
                         label: g('#desk-list .desk-a.answer .desk-a-label', 'color'), title: g('#desk-list .desk-a.answer .desk-a-title', 'color'), bar: g('#desk-list .desk-a.answer', 'borderLeftColor'), lime: getComputedStyle(document.documentElement).getPropertyValue('--d-lime').trim() }; });
                     const hex = c => { const p = c.match(/\d+/g).map(Number); return '#' + p.slice(0, 3).map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase(); };
-                    { const lum = c => { const v = (String(c).match(/[d.]+/g) || []).slice(0, 3).map(Number).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; }, cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+                    { const lum = c => { const v = (String(c).match(/[\d.]+/g) || []).slice(0, 3).map(Number).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; }, cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
                     ok(`B [${tag}] [+] 단추(#653-나 · 종전 「중간발주」 바로가기 자리 — 대표 10/11 바로가기 뺌) = 야간에서 흰 바탕 아님 · 아이콘 대비 3 이상`, !!m.chip[0] && m.chip[0] !== 'rgb(255, 255, 255)' && !/rgba(0, 0, 0, 0)/.test(m.chip[0]) && cr(m.chip[2], m.chip[0]) >= 3, JSON.stringify([m.chip, cr(m.chip[2], m.chip[0]).toFixed(2)])); }
-                    ok(`B [${tag}] 「클코 답변」 표지 · 답 제목 · 답 상자 왼쪽 선 = 라임(${m.lime})`, !!m.label && [m.label, m.title, m.bar].every(c => hex(c) === m.lime.toUpperCase()), [m.label, m.title, m.bar].join(' / '));
+                    ok(`B [${tag}] 「클코 답변」 표지 · 답 제목 · 답 제목 = 라임(${m.lime}) · #653-다 답 상자의 왼쪽 선은 없앰(대화 틀 한 겹)`, !!m.label && [m.label, m.title].every(c => hex(c) === m.lime.toUpperCase()), [m.label, m.title, m.bar].join(' / '));
                 }
                 // 상태: hover · focus · active(누르고 있는 중) — 상태를 건 채로 다시 측정
                 const stFails = [];

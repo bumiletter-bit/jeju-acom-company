@@ -36,7 +36,8 @@ function seed() {
             ], { order: ORD({ ship_date: '2026-10-08', partner: '대성', option_text: '황금향 가정용 3kg', tracking_tail: '7730', status_label: '간선상하차', arrive_text: '내일 도착 예정' }), bot_count_today: 1, staff_why: 'claim',
                 history_extra: [   // 같은 번호의 지난 구매 2건(#654 꼴 — 60일 안 · 한 건은 이 번호가 구매자였던 선물)
                     { pre: false, ship_date: '2026-09-22', recipient_name: '홍길동', option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, boxes: 1, trackings: ['590123450001'], status_label: '배송완료', delivered: true, event_time: '2026-09-23 14:10', partner: '효돈', role: 'recipient' },
-                    { pre: false, ship_date: '2026-08-30', recipient_name: '이순자', option_text: '미니밤호박 특품 5kg', qty: 2, boxes: 2, trackings: ['590123450002', '590123450003'], status_label: null, delivered: true, event_time: null, partner: '길영', role: 'buyer' },
+                    { pre: false, ship_date: '2026-08-30', recipient_name: '이순자', option_text: '미니밤호박 특품 5kg', qty: 2, boxes: 2, trackings: ['590123450002', '590123450003'], status_label: null, delivered: false, event_time: null, partner: '길영', role: 'buyer', status_text: '배송 중 · 이동',
+                      boxes_detail: [{ tracking: '590123450002', option_text: '미니밤호박 특품 5kg', qty: 1, status_label: '배송완료', status_text: '배송완료', delivered: true, event_time: '2026-08-31 13:00' }, { tracking: '590123450003', option_text: '미니밤호박 보우짱 3kg', qty: 1, status_label: '정보없음', status_text: '배송 중 · 집화 전', delivered: false, event_time: null }] },
                 ], history_more: true }),
             T(4, '1357', 'bot_replied', '효돈 · 10/9 발송 · 하우스감귤 2.5kg(소과)', [
                 m('in', 'customer', '오늘 주문하면 언제 발송되나요?', 95), m('out', 'bot', '오늘 8시 이후 주문은 내일 오전에 발송돼요. 보통 발송 다음 날 도착합니다.', 94),
@@ -111,7 +112,7 @@ http.createServer(async (req, res) => {
     try {
         if (p === '/__mock/log') return send(res, 200, { log: ST.log });
         if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
-        if (p === '/__mock/set') { const b = await readBody(req); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; if ('staffOpen' in b) ST.noStaffOpen = !b.staffOpen; if ('history' in b) ST.noHistory = !b.history; return send(res, 200, { ok: true }); }
+        if (p === '/__mock/set') { const b = await readBody(req); if ('many' in b) ST.many = !!b.many; if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; if ('staffOpen' in b) ST.noStaffOpen = !b.staffOpen; if ('history' in b) ST.noHistory = !b.history; return send(res, 200, { ok: true }); }
         if (p === '/__mock/draft') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.draft_text = b.text ? String(b.text) : null; return send(res, 200, { ok: true }); }   // 봇 초안이 뒤늦게 생김
         if (p === '/__mock/push') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.messages.push({ id: 7000 + t.messages.length + t.id * 10, direction: 'in', kind: 'sms', body: String(b.body || '또 보냅니다'), sender: 'customer', state: 'received', image_ids: [], event_at: new Date().toISOString() }); if (t.status === 'closed') t.status = 'new'; return send(res, 200, { ok: true }); }
         if (p.startsWith('/api/sms/')) {
@@ -146,6 +147,7 @@ http.createServer(async (req, res) => {
                     if (!ST.noHistory && !ST.noTrk && !ST.legacy) {   // #654: 최근 60일 구매이력(발송 전 먼저 → 발송일 최신순) · order 와 같은 건이 맨 위쪽에 또 들어 있다
                         const first = oj && oj.order ? Object.assign({ role: oj.role || 'recipient' }, oj.order) : null; if (first) delete first.tracking_tail;
                         out.history = [].concat(first ? [first] : [], t.history_extra || []); out.history_days = 60; out.history_more = !!t.history_more;
+                        if (ST.many) out.history = out.history.concat(Array.from({ length: 9 }, (_, i) => ({ pre: false, ship_date: '2026-08-' + String(20 - i).padStart(2, '0'), recipient_name: '홍길동', option_text: '하우스감귤 가정용 - 2.5kg(소과)', qty: 1, boxes: 1, trackings: ['5901234511' + String(i).padStart(2, '0')], status_label: '배송완료', status_text: '배송완료', delivered: true, partner: '효돈', role: 'recipient', boxes_detail: [{ tracking: '5901234511' + String(i).padStart(2, '0'), option_text: '하우스감귤 가정용 - 2.5kg(소과)', qty: 1, status_text: '배송완료', delivered: true }] })));   // #657 수십 건 손님(5건씩 더보기)
                     }
                     return send(res, 200, out);
                 }

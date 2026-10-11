@@ -1254,11 +1254,45 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
 @media (max-width: 1180px) {
     .desk-todo-box { padding: 12px 16px; }
     .desk-todo-box h3 { margin-bottom: 8px; }
-    .desk-todo-box.cut .desk-todo > li:nth-child(n+5) { display: none; }
+    .desk-todo-box.cut .desk-todo > li.cut-x { display: none; }
     .desk-todo-more:not([hidden]) { display: block; width: 100%; min-height: 44px; margin: 8px 0 -6px; border: 0; border-top: 1px solid var(--d-line); background: none; color: var(--d-accent); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
 }
 @media (min-width: 641px) and (max-width: 1180px) { .desk-todo-box .desk-todo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 28px; } }
 @media (prefers-reduced-motion: reduce) { .desk-follow-open { transition: none; } }
+/* ── #657 (대표 10/11) 구매이력 카드: ①송장 글자 = 값 글자 크기 ②명암(옅은 인디고 판 위에 흰 건별 칸 · 머리 또렷이) ③송장별 품목 줄 ⑤5건씩 더보기 ── */
+.sms-pane .sms-order.sms-buy { background: var(--d-accent-soft); border-bottom: 1px solid #C7CBFF; padding: 10px 12px 12px; }
+.sms-pane .sms-buy.none { background: var(--d-soft); border-bottom-color: var(--d-line); }
+.sms-buy .sms-buy-h { margin: 0 2px 8px; }
+.sms-buy .sms-buy-h b { font-size: 14.5px; letter-spacing: -.01em; }
+.sms-buy .sms-buy-h small { color: var(--d-ink); font-weight: 600; opacity: .72; }
+.sms-buy .sms-buy-i, .sms-buy .sms-buy-i + .sms-buy-i, .sms-buy .sms-buy-rest > .sms-buy-i { margin-top: 0; padding: 10px 12px; border: 1px solid #C7CBFF; border-radius: 10px; background: var(--d-card); }
+.sms-buy .sms-buy-i + .sms-buy-i, .sms-buy .sms-buy-rest > .sms-buy-i, .sms-buy .sms-buy-rest { margin-top: 8px; }
+.sms-buy .sms-buy-r dt { color: var(--d-ink); font-weight: 600; opacity: .68; }
+.sms-buy .sms-buy-r dd:not(.key) { font-weight: 700; }
+.sms-buy .sms-trk { padding: 0 7px; font-size: 13.5px; font-weight: 600; letter-spacing: 0; }
+.sms-buy .sms-trk-go { padding: 0 4px; font-size: 12px; }
+.sms-buy-r.wide { grid-column: 1 / -1; }
+.sms-box-l { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sms-box-l li { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.sms-box-it { min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.sms-buy .sms-buy-more { background: var(--d-card); border-color: #C7CBFF; }
+.sms-buy-more.next { display: block; width: 100%; margin-top: 8px; border-radius: 10px; }
+.sms-buy-more.next small { margin-left: 6px; color: var(--d-sub); font-weight: 600; }
+@media (max-width: 640px) {
+    .sms-buy .sms-trk, .sms-buy .sms-trk-go { min-height: 44px; }
+    .sms-buy .sms-trk { padding: 0 9px; font-size: 14px; }
+    .sms-buy .sms-trk-go { padding: 0 8px; font-size: 12.5px; }
+}
+/* ── #658 (대표 10/11) 문자 창 채널 탭(문자 | 톡톡 | 상품문의 | 주문문의) · 「손님 연락」 줄 — 톡톡·문의 본문은 ao-inbox.css ── */
+.sms-tabs { flex: none; display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--d-line); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.sms-tabs::-webkit-scrollbar { display: none; }
+.sms-tab { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-bottom: -1px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--d-sub); font: inherit; font-size: 14.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.sms-tab:hover { color: var(--d-ink); }
+.sms-tab[aria-selected="true"] { color: var(--d-accent); border-bottom-color: var(--d-accent); font-weight: 800; }
+.sms-tab:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -3px; border-radius: 8px; }
+.sms-tab .sms-n { min-width: 18px; padding: 0 5px; font-size: 11.5px; line-height: 18px; }
+.desk-todo li.sms-todo.cust small { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.desk-todo li.sms-todo.cust small i { font-style: normal; color: var(--d-sub); }
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -1308,7 +1342,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (545규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (558규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1873,6 +1907,19 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 @media (max-width: 1180px) {
     :where(html[data-ao-theme="dark"]) .desk-todo-more:not([hidden]) { border: 0; border-top: 1px solid var(--d-line); background: none; color: var(--d-accent); }
 }
+:where(html[data-ao-theme="dark"]) .sms-pane .sms-order.sms-buy { background: var(--d-accent-soft); border-bottom: 1px solid #3D468A; }
+:where(html[data-ao-theme="dark"]) .sms-pane .sms-buy.none { background: var(--d-soft); border-bottom-color: var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-buy .sms-buy-h small { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-buy .sms-buy-i, :where(html[data-ao-theme="dark"]) .sms-buy .sms-buy-i + .sms-buy-i, :where(html[data-ao-theme="dark"]) .sms-buy .sms-buy-rest > .sms-buy-i { border: 1px solid #3D468A; background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .sms-buy .sms-buy-r dt { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-buy .sms-buy-more { background: var(--d-card); border-color: #3D468A; }
+:where(html[data-ao-theme="dark"]) .sms-buy-more.next small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-tabs { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-tab { border: 0; border-bottom: 2px solid transparent; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-tab:hover { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-tab[aria-selected="true"] { color: var(--d-accent); border-bottom-color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-tab:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -3px; }
+:where(html[data-ao-theme="dark"]) .desk-todo li.sms-todo.cust small i { color: var(--d-sub); }
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */
 /* 「중간발주·최종발주·정산 이미지」 = 「대기 중」 알약과 같은 꼴(흰 글씨 · 같은 바탕 · 같은 테두리) */

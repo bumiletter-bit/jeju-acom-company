@@ -195,6 +195,9 @@
                                 </div>
                                 <div class="desk-plus-g" role="group" aria-label="손님" id="desk-plus-cust"><b>손님</b>
                                     <button type="button" class="desk-mi" role="menuitem" id="desk-sms-now" data-mk="sms" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></i><span class="desk-mi-t"><strong>문자</strong><small>회사폰으로 온 문자를 보고 여기서 답해요</small></span><i class="sms-n" id="sms-chip-n" hidden></i></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-inb-talk" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>톡톡</strong><small>톡톡 문의를 보고 여기서 답해요</small></span><i class="sms-n" id="inb-n-talk" hidden></i></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-inb-qna" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>상품문의</strong><small>답하면 스마트스토어에 바로 등록돼요</small></span><i class="sms-n" id="inb-n-qna" hidden></i></button>
+                                    <button type="button" class="desk-mi" role="menuitem" id="desk-inb-inquiry" data-mk="inb" hidden><i class="desk-mi-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></i><span class="desk-mi-t"><strong>주문문의</strong><small>답하면 스마트스토어에 바로 등록돼요</small></span><i class="sms-n" id="inb-n-inquiry" hidden></i></button>
                                 </div>
                             </div>
                             <span class="desk-count" id="desk-count" hidden>0 / 2000</span>
@@ -231,12 +234,14 @@
             </section>
             <section class="desk-tool sms-modal" id="desk-sms" role="dialog" aria-modal="true" aria-label="문자" hidden>
               <div class="sms-win">
-                <div class="desk-tool-head"><b>문자</b><em class="sms-mode" id="sms-mode" hidden></em><span id="sms-sub">회사폰으로 온 문자</span><button type="button" class="desk-btn sm desk-tool-x" id="sms-close">닫기</button></div>
+                <div class="desk-tool-head"><b id="sms-title">문자</b><em class="sms-mode" id="sms-mode" hidden></em><span id="sms-sub">회사폰으로 온 문자</span><button type="button" class="desk-btn sm desk-tool-x" id="sms-close">닫기</button></div>
                 <div class="ship-note" id="sms-note" role="status" hidden></div>
+                <div class="sms-tabs" id="sms-tabs" role="tablist" aria-label="손님 연락 채널" hidden></div>
                 <div class="sms-cols"><div class="sms-left">
                 <div class="sms-bar"><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 전체 번호 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="sms-staff" aria-pressed="false" title="읽었어도 아직 사람 답이 필요한 대화만 봐요. 다시 누르면 새 문자만" hidden>직원 확인 <b id="sms-staff-n"></b></button><button type="button" class="desk-btn sm sms-done-btn" id="sms-scope" aria-pressed="false" title="읽은 대화·끝난 대화까지 전부 봐요. 다시 누르면 새 문자만">이전 대화 보기</button><span class="sms-count" id="sms-count" role="status"></span></div>
                 <ul class="sms-list" id="sms-list"></ul>
                 </div><div class="sms-pane" id="sms-pane"><div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div></div></div>
+                <div class="inb-host" id="inb-host" hidden></div>
               </div>
                 <div class="sms-view" id="sms-view" role="dialog" aria-modal="true" aria-label="사진 크게 보기" hidden><button type="button" class="desk-btn sm sms-view-x" id="sms-view-x">닫기</button><img id="sms-view-img" alt="문자로 온 사진"></div>
             </section>
@@ -365,6 +370,7 @@
                 if (!b) return;
             }
             const act = b.dataset.ib;
+            if (act === 'win') { const k = b.dataset.kind; inbOpen(k === 'qna' ? 'qna' : k === 'inquiry' ? 'inquiry' : 'talk', k === 'talk' ? undefined : b.dataset.id); return; }   // #658: 톡톡 줄은 대화 열쇠가 달라 탭만 연다
             if (act === 'detail') {
                 const key = b.dataset.kind + ':' + b.dataset.id;
                 if (S.ibDetail.has(key)) S.ibDetail.delete(key); else S.ibDetail.add(key);
@@ -555,9 +561,9 @@
     function plusUsed() { /* 최근 기억 없음 */ }
     function plusShorts() {
         const box = $('desk-shorts'); if (!box) return;
-        const sm = SMS.sum ? smsNeed() : null, keys = plusRecent().concat(sm && sm.unread > 0 ? ['sms'] : []);
+        const sm = SMS.sum ? smsNeed() : null, custN = (sm ? sm.unread : 0) + inbUnread(), keys = plusRecent().concat(custN > 0 ? ['sms'] : []);
         const off = k => { const t = $(PLUS_ID[k]); return !!(t && t.disabled); };
-        const html = keys.map(k => `<button type="button" class="desk-chip desk-short${k === 'sms' ? ' sms-chip' : ''}" id="desk-short-${k}" data-go="${k}"${k === 'sms' && smsDead() ? ' data-dead="1"' : ''}${off(k) ? ' disabled' : ''}>${PLUS_NAME[k]}${off(k) && k === 'qty' ? '<small>집계 중</small>' : ''}${k === 'sms' ? `<i class="sms-n">${sm.unread > 99 ? '99+' : sm.unread}</i>` : ''}</button>`).join('');
+        const html = keys.map(k => `<button type="button" class="desk-chip desk-short${k === 'sms' ? ' sms-chip' : ''}" id="desk-short-${k}" data-go="${k}"${k === 'sms' && smsDead() ? ' data-dead="1"' : ''}${off(k) ? ' disabled' : ''}>${k === 'sms' && inbOk() ? '손님' : PLUS_NAME[k]}${off(k) && k === 'qty' ? '<small>집계 중</small>' : ''}${k === 'sms' ? `<i class="sms-n">${custN > 99 ? '99+' : custN}</i>` : ''}</button>`).join('');
         if (box.dataset.sig === html) return;
         const had = document.activeElement && document.activeElement.closest && document.activeElement.closest('#desk-shorts') ? document.activeElement.id : '';
         box.dataset.sig = html; box.innerHTML = html;
@@ -568,7 +574,7 @@
     const plusSheet = () => window.matchMedia('(max-width: 720px)').matches;   // 폰 = 아래 시트
     function plusOpen() {
         const m = $('desk-plus'), b = $('desk-plus-btn'); if (!m || !m.hidden) return;
-        const cust = $('desk-plus-cust'); if (cust) cust.hidden = $('desk-sms-now').hidden;   // 문자 연동이 없는 서버면 「손님」 묶음째 숨김
+        const cust = $('desk-plus-cust'); if (cust) cust.hidden = $('desk-sms-now').hidden && !inbOk();   // 문자 연동이 없는 서버면 「손님」 묶음째 숨김
         m.hidden = false; $('desk-plus-back').hidden = false; b.setAttribute('aria-expanded', 'true');
         m.style.maxHeight = getComputedStyle(m).position === 'absolute' ? Math.max(220, Math.round(window.innerHeight - m.getBoundingClientRect().top - 16)) + 'px' : '';   // PC 팝오버는 화면 아래로 넘치지 않게(넘치면 판 안에서 스크롤)
         document.body.classList.add('desk-plus-open');   // 폰 시트가 떠 있는 동안 뒤 화면 스크롤 잠금(CSS 가 폰 폭에서만)
@@ -617,7 +623,7 @@
         });
         btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown' && menu.hidden) { e.preventDefault(); plusOpen(); } });
         document.addEventListener('mousedown', e => { if (!menu.hidden && !e.target.closest('#desk-plus, #desk-plus-btn, #desk-plus-back')) plusClose(false); });
-        $('desk-shorts').addEventListener('click', e => { const s = e.target.closest('.desk-short'); if (!s) return; const t = $(PLUS_ID[s.dataset.go]); if (t && !t.disabled) { t.click(); plusUsed(s.dataset.go); } });
+        $('desk-shorts').addEventListener('click', e => { const s = e.target.closest('.desk-short'); if (!s) return; if (s.dataset.go === 'sms' && inbOk()) { inbOpenFirst(); return; } const t = $(PLUS_ID[s.dataset.go]); if (t && !t.disabled) { t.click(); plusUsed(s.dataset.go); } });
         try { if (history.state && history.state.deskPlus) history.replaceState(null, ''); } catch (e) { /* 그대로 */ }   // 새로고침 뒤 남은 칸
         plusShorts();
     }
@@ -1163,16 +1169,18 @@
         const d = SMS.sum;
         b.hidden = !d;
         const pn = $('desk-plus-n'), pb = $('desk-plus-btn');
-        if (!d) { if (pn) pn.hidden = true; if (pb) pb.dataset.dead = ''; plusShorts(); if (smsVisible()) toolShow(null); return; }
+        if (!d) { const t0 = inbUnread(); if (pn) { pn.hidden = !(t0 > 0); pn.textContent = t0 > 99 ? '99+' : String(t0); } if (pb) pb.dataset.dead = ''; plusShorts(); inbTabs(); if (smsVisible() && !inbOk()) toolShow(null); return; }
         const nd = smsNeed(), need = nd.unread, dead = smsDead();
         n.hidden = !(need > 0); n.textContent = need > 99 ? '99+' : String(need);
-        if (pn) { pn.hidden = n.hidden; pn.textContent = n.textContent; }   // #653-나: [+] 단추에도 안 읽은 문자 수
+        { const tot = need + inbUnread(); if (pn) { pn.hidden = !(tot > 0); pn.textContent = tot > 99 ? '99+' : String(tot); } }   // #653-나 [+] 단추의 점 = 안 읽은 문자 + (#658) 톡톡·상품문의·주문문의
+        inbTabs();
         if (pb) pb.dataset.dead = dead ? '1' : '';
         plusShorts();
         b.dataset.dead = dead ? '1' : '';
         b.setAttribute('aria-label', '문자' + (need > 0 ? `, 안 읽은 대화 ${need}건(직원 확인 ${nd.staff} · 초안 ${nd.draft})` : '') + (dead ? ', 회사폰 연결 끊김' : ''));
     }
     function smsHead() {
+        if (INB.ch !== 'sms') { inbSub(); return; }   // #658 톡톡·문의 탭에서는 머리 글을 그 탭 것으로
         const d = SMS.sum; if (!d || !$('sms-mode')) return;
         const md = SMS_MODE[d.mode] || [d.mode || '', ''], el = $('sms-mode');
         el.textContent = md[0]; el.title = md[1]; el.dataset.m = d.mode || ''; el.hidden = !md[0];
@@ -1189,6 +1197,86 @@
     // #653-가(대표 10/11 「최종발주처럼 창으로 · 뒤로가기 버튼이 되게」): 문자 = 화면을 덮는 전용 창. 폰·PC 의 뒤로가기는 「대화 → 목록 → 창 닫힘」 순.
     //   기록(history)에 창 1칸 · 대화 1칸을 쌓고, 화면에서 닫을 때는 그만큼 스스로 되돌린다(뒤로가기로 페이지가 나가 버리지 않게). 다른 대화로 옮길 때는 칸을 다시 쌓지 않는다.
     //   🔴 판단은 「우리가 몇 칸 쌓았나」가 아니라 **지금 기록 맨 위 칸(history.state.smsWin)** 으로 한다 — 다른 화면(자세히 보기 전체 화면·최종발주)이 같은 순간 기록을 되돌려도 어긋나지 않게.
+    // ── #658(대표 10/11 「톡톡·상품·주문 문의도 여기서 문자처럼 답장」) 문자 창의 채널 탭 — 문자 | 톡톡 | 상품문의 | 주문문의
+    //   톡톡·문의 탭의 본문은 public/ao-inbox.js(window.AkmInbox · 워커4)가 #inb-host 안에 그린다. 이 파일이 맡는 것 = 탭 줄 · 탭 전환(mount/unmount) · 뒤로가기 칸 · Esc · 창 닫기 · 들어오는 길([+] 메뉴 · 바로가기 · 챙길 일 · 확인 필요 문의 줄)
+    //   AkmInbox 가 없거나(옛 캐시) 서버에 /api/inbox 가 없으면 탭 줄·항목이 안 보이고 전부 종전 문자 창 그대로
+    const INB = { ch: 'sms', bound: false };
+    const INB_CH = [['talk', '톡톡'], ['qna', '상품문의'], ['inquiry', '주문문의']];
+    const INB_SUB = { talk: '톡톡 문의 · 여기서 답하면 손님 톡톡으로 바로 보내져요', qna: '상품문의 · 답하면 스마트스토어에 바로 등록돼요(누구나 보는 글)', inquiry: '주문문의 · 답하면 스마트스토어에 바로 등록돼요' };
+    const inbApi = () => (window.AkmInbox && typeof window.AkmInbox.mount === 'function') ? window.AkmInbox : null;
+    const inbOk = () => { const a = inbApi(); try { return !!(a && typeof a.available === 'function' && a.available()); } catch (e) { return false; } };
+    function inbCounts() {
+        const a = inbApi(); let c = null; try { c = a && a.counts ? a.counts() : null; } catch (e) { c = null; }
+        const out = {}; INB_CH.forEach(([k]) => { const x = c && c[k]; out[k] = { unread: Number(x && x.unread) || 0, needs: Number(x && (x.needs != null ? x.needs : x.open)) || 0 }; });
+        return out;
+    }
+    const inbUnread = () => { if (!inbOk()) return 0; const c = inbCounts(); return INB_CH.reduce((n, [k]) => n + c[k].unread, 0); };
+    function inbSub() {
+        const sub = $('sms-sub'), md = $('sms-mode'); if (!sub) return;
+        if (INB.ch === 'sms') return;
+        sub.textContent = INB_SUB[INB.ch] || ''; if (md) md.hidden = true; smsNote('');
+    }
+    function inbTabs() {
+        const el = $('sms-tabs'), ttl = $('sms-title'); if (!el) return;
+        const on = inbOk();
+        INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k); if (b) b.hidden = !on; });
+        if (ttl) ttl.textContent = on ? '손님 연락' : '문자';
+        if (!on) { el.hidden = true; return; }
+        const c = inbCounts(), smsN = SMS.sum ? smsNeed().unread : 0;
+        const tabs = (SMS.sum ? [['sms', '문자', smsN]] : []).concat(INB_CH.map(([k, name]) => [k, name, c[k].unread]));
+        const html = tabs.map(([k, name, n]) => `<button type="button" class="sms-tab" role="tab" data-ch="${k}" aria-selected="${String(INB.ch === k)}" tabindex="${INB.ch === k ? 0 : -1}">${name}${n > 0 ? `<i class="sms-n" aria-label="안 읽음 ${n}">${n > 99 ? '99+' : n}</i>` : ''}</button>`).join('');
+        if (el.dataset.sig !== html) {
+            const had = document.activeElement && document.activeElement.closest && document.activeElement.closest('#sms-tabs') ? document.activeElement.dataset.ch : '';
+            el.dataset.sig = html; el.innerHTML = html;
+            if (had) { const b = el.querySelector('[data-ch="' + had + '"]'); if (b) b.focus({ preventScroll: true }); }
+        }
+        el.hidden = false;
+        INB_CH.forEach(([k]) => { const n = $('inb-n-' + k); if (n) { n.hidden = !(c[k].unread > 0); n.textContent = c[k].unread > 99 ? '99+' : String(c[k].unread); } });
+    }
+    // 사람이 화면에서 톡톡·문의 대화를 펴고 접을 때 AkmInbox 가 부른다 → 뒤로가기 칸(창 'win' 위의 'th')을 문자와 같은 방식으로
+    function inbOnThread(open) {
+        if (!document.body.classList.contains('sms-win-open') || INB.ch === 'sms') return;
+        if (open) { if (smsHistAt() === 'win') smsHistPush('th'); }
+        else if (smsHistAt() === 'th') smsHistBack(1);
+    }
+    // 창이 떠 있는 채로 탭을 바꾼다(ch = sms|talk|qna|inquiry · openId = 그 대화를 바로 폄)
+    function inbShow(ch, openId) {
+        const host = $('inb-host'), cols = document.querySelector('#desk-sms .sms-cols'); if (!host || !cols) return;
+        const a = inbApi(), ok = inbOk();
+        if (ch !== 'sms' && !(ok && INB_CH.some(x => x[0] === ch))) ch = 'sms';
+        if (ch === 'sms' && !SMS.sum && ok) ch = 'talk';
+        const from = INB.ch; let hadTh = false;
+        if (from === 'sms') { if (ch !== 'sms' && SMS.open) { smsThreadClose(false, true); hadTh = true; } }
+        else if (a && ch !== from) { try { hadTh = !!a.isOpen(); } catch (e) { hadTh = false; } }
+        INB.ch = ch;
+        if (ch === 'sms') {
+            if (a && from !== 'sms') { try { a.unmount(); } catch (e) { /* 칸은 아래에서 숨긴다 */ } }
+            host.hidden = true; cols.hidden = false;
+            if (from !== 'sms') { SMS.sig = ''; smsHead(); smsList(); }
+        } else {
+            cols.hidden = true; host.hidden = false;
+            try { a.mount(host, { ch, openId: openId == null || openId === '' ? undefined : openId, onThread: inbOnThread }); } catch (e) { /* 못 그리면 빈 칸 — 탭으로 돌아갈 수 있다 */ }
+        }
+        if (hadTh && !openId && smsHistAt() === 'th') smsHistBack(1);   // 떠난 탭에서 펴 둔 대화의 칸을 되돌린다(새 대화를 바로 펼 때는 그 칸을 이어 쓴다)
+        inbTabs(); if (ch === 'sms') smsHead(); else inbSub();
+    }
+    function inbOpen(ch, openId) {
+        if (!inbOk() || ch === 'sms') { if (SMS.sum) smsOpen(); return !!SMS.sum; }
+        if (S.full) { smsAfterFull(() => inbOpen(ch, openId)); return true; }
+        smsWinShow(); inbShow(ch, openId); return true;
+    }
+    // 바로가기 「손님 n」·챙길 일 줄: 안 읽음이 있는 첫 탭으로(문자 먼저)
+    function inbOpenFirst() {
+        const c = inbCounts(), smsN = SMS.sum ? smsNeed().unread : 0;
+        const hit = smsN > 0 ? 'sms' : (INB_CH.find(([k]) => c[k].unread > 0) || INB_CH.find(([k]) => c[k].needs > 0) || [SMS.sum ? 'sms' : 'talk'])[0];
+        if (hit === 'sms') smsOpen(); else inbOpen(hit);
+    }
+    // 틱마다: AkmInbox 가 늦게 실려도(스크립트 순서) 숫자 알림을 한 번 걸고, 간격은 AkmInbox 가 스스로 지킨다
+    function inbHook() {
+        const a = inbApi(); if (!a) return;
+        if (!INB.bound) { INB.bound = true; try { if (a.onCounts) a.onCounts(() => { inbTabs(); smsChip(); if (S.board) renderBoard(); if (S.inbox) renderInbox(); }); } catch (e) { /* 숫자는 다음 틱에 */ } }
+        try { if (a.refresh) a.refresh(); } catch (e) { /* 다음 틱에 */ }
+    }
     const smsHist = { skip: 0 };
     const smsHistAt = () => { try { return (history.state && history.state.smsWin) || ''; } catch (e) { return ''; } };   // '' | 'win' | 'th'
     const smsHistPush = k => { try { history.pushState({ smsWin: k }, ''); } catch (e) { /* 기록 없이도 닫기·Esc 로 닫힌다 */ } };
@@ -1213,6 +1301,10 @@
     function smsWinCleanup() {
         if (!document.body.classList.contains('sms-win-open')) return;
         smsThreadClose(false, true); smsViewClose();
+        if (INB.ch !== 'sms') {   // #658 톡톡·문의 탭을 보던 채 닫으면: 그 칸을 걷고 다음에는 문자 탭부터
+            const a = inbApi(); try { if (a) a.unmount(); } catch (e) { /* 칸은 숨긴다 */ }
+            INB.ch = 'sms'; const h = $('inb-host'), c = document.querySelector('#desk-sms .sms-cols'); if (h) h.hidden = true; if (c) c.hidden = false; inbTabs();
+        }
         document.body.classList.remove('sms-win-open');
         const at = smsHistAt(); smsHistBack(at === 'th' ? 2 : at === 'win' ? 1 : 0);
     }
@@ -1220,6 +1312,7 @@
         if (!SMS.sum) return;
         if (S.full) { smsAfterFull(() => smsOpen(scope)); return; }
         smsWinShow();
+        if (INB.ch !== 'sms') inbShow('sms');
         if (scope === 'active' || scope === 'all') { SMS.scope = scope; SMS.only = false; SMS.q = ''; $('sms-q').value = ''; SMS.items = null; SMS.sig = ''; }
         smsHead(); smsList();
         if (Date.now() - SMS.sumAt > 3000) smsSummary();
@@ -1312,7 +1405,7 @@
         const li = document.querySelector('#sms-list .sms-item[data-id="' + id + '"]');
         if (!li) { if (smsHistAt() === 'th') smsHistBack(1); return; }
         const x = (SMS.items || []).find(i => i.id === id) || {};
-        SMS.open = id; SMS.thread = null; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyMore = 0; SMS.readAt = Date.now(); SMS.actAt = Date.now();
+        SMS.open = id; SMS.thread = null; SMS.tsig = ''; SMS.filled = 0; SMS.fillText = ''; SMS.newDraft = ''; SMS.chgAt = 0; SMS.lockUntil = 0; SMS.buyMore = 0; SMS.buyShow = 5; SMS.readAt = Date.now(); SMS.actAt = Date.now();
         SMS.openAt = Math.max(0, (SMS.items || []).findIndex(i => i.id === id)); SMS.openRow = x.id ? x : null;
         { const un = li.querySelector('.sms-un'); if (un) un.remove(); li.classList.remove('unread'); li.dataset.un = '0'; }   // #635 여는 순간 읽음(서버도 GET 에서 읽음으로)
         const th = document.createElement('div');
@@ -1372,11 +1465,18 @@
         }
         if (!(o.ship_date || o.option_text || o.tracking_tail || o.status_label || (Array.isArray(o.trackings) && o.trackings.length))) return '';
         const trks = [...new Set((Array.isArray(o.trackings) ? o.trackings : []).map(x => String(x == null ? '' : x).replace(/[^0-9]/g, '')).filter(x => /^[0-9]{10,12}$/.test(x)))];
-        const trkHtml = trks.length ? `<span class="sms-trks">${trks.map(n => `<span class="sms-trk1"><button type="button" class="sms-trk" data-trk="${n}" title="눌러서 복사" aria-label="송장번호 ${n} 복사">${n}</button><a class="sms-trk-go" href="/track?n=${n}" target="_blank" rel="noopener" aria-label="송장번호 ${n} 배송조회(새 창)">조회</a></span>`).join('')}</span>` : (o.tracking_tail ? esc('끝 ' + o.tracking_tail) : '');
-        const st = String(o.status_label || '').trim() || (o.delivered ? '배송완료' : '');
-        return `<div class="sms-buy-i"><div class="sms-buy-s">${badge(st || '상태 확인 전', /완료/.test(st) ? 'done' : /미배송|사고|반송|실패|없음/.test(st) ? 'ask' : st ? 'work' : 'mute')}${role}</div><dl class="sms-buy-g">`
+        const trk1 = n => `<span class="sms-trk1"><button type="button" class="sms-trk" data-trk="${n}" title="눌러서 복사" aria-label="송장번호 ${n} 복사">${n}</button><a class="sms-trk-go" href="/track?n=${n}" target="_blank" rel="noopener" aria-label="송장번호 ${n} 배송조회(새 창)">조회</a></span>`;
+        const trkHtml = trks.length ? `<span class="sms-trks">${trks.map(trk1).join('')}</span>` : (o.tracking_tail ? esc('끝 ' + o.tracking_tail) : '');
+        // #657(대표 10/11): 배지 글 = 서버가 지어 준 status_text(「배송 중 · 집화 전」「조회 안 됨」…) — 없으면(옛 서버) status_label. 색 = 배송완료 초록 · 배송 중 인디고 · 조회 안 됨·미배송·사고 주황
+        const stK = s => /완료/.test(s) ? 'done' : /조회 안 됨|미배송|사고|반송|실패|없음/.test(s) ? 'ask' : s ? 'work' : 'mute';
+        const st = String(o.status_text || o.status_label || '').trim() || (o.delivered ? '배송완료' : '');
+        // #657 송장별 품목: 상자가 2개 이상이면 「[송장][조회] 품목 × n · 상태」 한 줄씩 짝지어(서버 boxes_detail · 없으면 종전 꼴)
+        const bd = (Array.isArray(o.boxes_detail) ? o.boxes_detail : []).map(b => ({ n: String((b && b.tracking) == null ? '' : b.tracking).replace(/[^0-9]/g, ''), opt: String((b && b.option_text) || '').trim(), qty: Number(b && b.qty) || 0, st: String((b && (b.status_text || b.status_label)) || '').trim() || (b && b.delivered ? '배송완료' : '') })).filter(b => /^[0-9]{10,12}$/.test(b.n));
+        const byBox = bd.length >= 2;
+        const boxHtml = byBox ? `<div class="sms-buy-r wide"><dt>송장별</dt><dd data-k="boxes"><ul class="sms-box-l">${bd.map(b => `<li>${trk1(b.n)}<span class="sms-box-it">${esc(b.opt || '품목 확인 전')}${b.qty > 1 ? ' × ' + nfmt(b.qty) : ''}</span>${b.st ? badge(b.st, stK(b.st)) : ''}</li>`).join('')}</ul></dd></div>` : '';
+        return `<div class="sms-buy-i"><div class="sms-buy-s">${badge(st || '상태 확인 전', stK(st))}${role}</div><dl class="sms-buy-g">`
             + row('ship', '발송일', o.ship_date ? esc(mdOf(o.ship_date)) + (o.partner ? ` <small>${esc(o.partner)}</small>` : '') : '', true)
-            + row('trk', '송장', trkHtml) + row('who', '받는 분', who) + row('item', '품목', item) + (o.arrive_text ? row('arrive', '도착', esc(o.arrive_text)) : '') + '</dl></div>';
+            + (byBox ? '' : row('trk', '송장', trkHtml)) + row('who', '받는 분', who) + (byBox && bd.every(b => b.opt) ? '' : row('item', '품목', item)) + boxHtml + (o.arrive_text ? row('arrive', '도착', esc(o.arrive_text)) : '') + '</dl></div>';
     }
     function smsBuyRender() {
         const box = document.getElementById('sms-order'), d = SMS.thread; if (!box || !d) return;
@@ -1385,9 +1485,9 @@
         const list = hasHist ? d.history.map(smsBuyItem).filter(Boolean) : [smsBuyItem(o)].filter(Boolean);
         let html = '';
         if (list.length) {
-            const rest = list.length - 1, open = SMS.buyMore === SMS.open;
+            const rest = list.length - 1, open = SMS.buyMore === SMS.open, shown = Math.min(rest, Math.max(5, Number(SMS.buyShow) || 5)), left = rest - shown;   // #657: 펼치면 한 번에 5건씩(60일 안 수십 건 손님 — 대화 칸을 가리지 않게)
             html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 ${days}일${list.length > 1 ? ' · ' + nfmt(list.length) + '건' : ''}</small></div>` + list[0]
-                + (rest > 0 ? `<button type="button" class="sms-buy-more" id="sms-buy-more" aria-expanded="${String(open)}" aria-controls="sms-buy-rest">${open ? '구매이력 접기' : '구매이력 ' + nfmt(rest) + '건 더보기'}</button><div class="sms-buy-rest" id="sms-buy-rest"${open ? '' : ' hidden'}>${list.slice(1).join('')}${d.history_more ? '<p class="sms-buy-cap">20건까지 보여요.</p>' : ''}</div>` : '');
+                + (rest > 0 ? `<button type="button" class="sms-buy-more" id="sms-buy-more" aria-expanded="${String(open)}" aria-controls="sms-buy-rest">${open ? '구매이력 접기' : '구매이력 ' + nfmt(rest) + '건 더보기'}</button><div class="sms-buy-rest" id="sms-buy-rest"${open ? '' : ' hidden'}>${list.slice(1, 1 + shown).join('')}${left > 0 ? `<button type="button" class="sms-buy-more next" id="sms-buy-next">${nfmt(Math.min(5, left))}건 더보기 <small>남은 ${nfmt(left)}건</small></button>` : (d.history_more ? `<p class="sms-buy-cap">${nfmt(list.length)}건까지 보여요.</p>` : '')}</div>` : '');
         } else if (!hasHist) {
             const line = String((ow && ow.line) || t.order_hint || '').trim();   // 칸이 없는 옛 응답은 서버가 지어 준 한 줄
             if (line) html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 14일</small></div><div class="sms-buy-i"><dl class="sms-buy-g">${`<div class="sms-buy-r"><dt>요약</dt><dd data-k="line">${esc(line)}</dd></div>`}</dl></div>`;
@@ -1559,6 +1659,7 @@
     }
     function smsVv() { if (SMS.vvRaf) return; SMS.vvRaf = requestAnimationFrame(smsVvNow); }   // #655: 한 프레임에 한 번
     function smsTick(now) {
+        inbHook();
         if (now) { SMS.sumAt = 0; SMS.listAt = 0; SMS.thAt = 0; }
         const t = Date.now();
         if (t - SMS.sumAt > (SMS.sum ? 30000 : 300000)) smsSummary();   // 문자 라우트가 없는 서버면 5분에 한 번만 다시 본다
@@ -1580,6 +1681,7 @@
             if (S.full) { await new Promise(r => smsAfterFull(r)); if (stale()) return false; }
             if (SMS.open && SMS.open !== id) smsThreadClose(false, true);
             smsWinShow();
+            if (INB.ch !== 'sms') inbShow('sms');
             SMS.q = ''; $('sms-q').value = ''; SMS.sig = '';
             smsHead(); await smsList();
             if (stale()) return false;
@@ -1598,14 +1700,28 @@
         } catch (e) { return false; }
     }
     function smsTodoHtml() {
+        if (!inbOk()) return smsTodoHtml0(false);
+        // #658: 문자(안 읽음) + 톡톡·상품문의·주문문의(답 안 한 것)를 한 줄로 — 채널 알약을 누르면 그 탭으로
+        const c = inbCounts(), sn = SMS.sum && SMS.sum.enabled !== false ? smsNeed().unread : 0;
+        const parts = [['sms', '문자', sn]].concat(INB_CH.map(([k, name]) => [k, name, c[k].needs])).filter(x => x[2] > 0), tot = parts.reduce((n, x) => n + x[2], 0);
+        return smsTodoHtml0(true) + (tot > 0 ? `<li class="sms-todo cust" data-sms="cust" role="button" tabindex="0"><span>손님 연락</span><b>${nfmt(tot)}건</b><small>${parts.map(([k, name, v]) => `<button type="button" class="bf-go cu-go" data-cu="${k}" aria-label="${name} ${nfmt(v)}건 열기">${name} ${nfmt(v)}</button>`).join('')}<i>눌러서 열기</i></small></li>` : '');
+    }
+    function smsTodoHtml0(noUnread) {
         const d = SMS.sum; if (!d || d.enabled === false) return '';
         const nd = smsNeed(), sub = [nd.staff > 0 ? `직원 확인 ${nfmt(nd.staff)}` : '', nd.draft > 0 ? `초안 ${nfmt(nd.draft)}` : ''].filter(Boolean).join(' · ');
         return (smsDead() ? `<li class="sms-todo dead" data-sms="keep" role="button" tabindex="0"><span>회사폰 전달 앱 연결 끊김</span><b>확인</b><small>${d.gateway.last_ping_at ? '마지막 연결 ' + esc(smsWhen(d.gateway.last_ping_at)) + ' · ' : ''}회사폰이 켜져 있는지 봐 주세요</small></li>` : '')
-            + (nd.unread > 0 ? `<li class="sms-todo" data-sms="active" role="button" tabindex="0"><span>${nd.old ? '문자 답할 것' : '안 읽은 문자'}</span><b>${nfmt(nd.unread)}건</b><small>${sub ? sub + ' · ' : ''}에이전트 오피스 &gt; 문자 (눌러서 열기)</small></li>` : '');
+            + (!noUnread && nd.unread > 0 ? `<li class="sms-todo" data-sms="active" role="button" tabindex="0"><span>${nd.old ? '문자 답할 것' : '안 읽은 문자'}</span><b>${nfmt(nd.unread)}건</b><small>${sub ? sub + ' · ' : ''}에이전트 오피스 &gt; 문자 (눌러서 열기)</small></li>` : '');
     }
     function smsBind() {
         $('desk-sms-now').addEventListener('click', () => smsOpen());   // #653-나: 고르면 항상 연다(닫기는 창의 [닫기]·Esc·뒤로가기)
         $('sms-close').addEventListener('click', smsCloseCard);
+        INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k); if (b) b.addEventListener('click', () => inbOpen(k)); });
+        $('sms-tabs').addEventListener('click', e => { const b = e.target.closest('.sms-tab'); if (b && b.dataset.ch !== INB.ch) inbShow(b.dataset.ch); });
+        $('sms-tabs').addEventListener('keydown', e => {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+            const bs = Array.from(document.querySelectorAll('#sms-tabs .sms-tab')), i = bs.indexOf(document.activeElement); if (i < 0) return;
+            e.preventDefault(); const nx = bs[(i + (e.key === 'ArrowRight' ? 1 : bs.length - 1)) % bs.length]; inbShow(nx.dataset.ch); const f = document.querySelector('#sms-tabs .sms-tab[data-ch="' + INB.ch + '"]'); if (f) f.focus({ preventScroll: true });
+        });
         ['keydown', 'pointerdown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, () => { SMS.actAt = Date.now(); }, { capture: true, passive: true }));
         // (scroll 은 세지 않는다 — 새 글이 붙으며 대화 창이 스스로 내려가는 것도 scroll 이라, 자리를 비웠는데 조작으로 잡힌다. 사람이 굴리면 wheel·touch 가 먼저 온다)
         $('sms-scope').addEventListener('click', () => smsScope(SMS.scope === 'all' && !SMS.only ? 'active' : 'all'));
@@ -1615,14 +1731,15 @@
         $('sms-q').addEventListener('input', e => { clearTimeout(SMS.qt); SMS.qt = setTimeout(() => qGo(e.target.value), 400); });
         $('sms-q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); qGo(e.target.value); } });
         const list = $('desk-sms');   // 대화(오른쪽 칸)·목록 둘 다 이 안에 있다
-        list.addEventListener('click', e => {
+        list.addEventListener('click', e => { if (e.target.closest('#inb-host')) return;   // #658 톡톡·문의 탭 안의 누름은 ao-inbox.js 가 받는다(같은 class 라 문자 쪽 처리가 가로채지 않게)
             if (e.target.closest('#sms-th-back')) { smsThreadClose(true); return; }
             const th = e.target.closest('.sms-thumb'); if (th) { if (!th.disabled) smsView(th.dataset.img, th); return; }
             if (e.target.closest('#sms-th-x')) { smsThreadClose(true); return; }
             if (e.target.closest('.sms-empty-go')) { smsScope('all'); return; }
             { const tk = e.target.closest('.sms-trk'); if (tk) { copyText(tk.dataset.trk, '송장번호를 복사했어요', tk); return; } }   // #644
             if (e.target.closest('.sms-hold')) { smsHold(); return; }   // #651
-            if (e.target.closest('#sms-buy-more')) { SMS.buyMore = SMS.buyMore === SMS.open ? 0 : SMS.open; smsBuyRender(); const b = document.getElementById('sms-buy-more'); if (b) b.focus({ preventScroll: true }); return; }   // #653 구매이력 더보기·접기
+            if (e.target.closest('#sms-buy-next')) { const had = document.querySelectorAll('#sms-buy-rest .sms-buy-i').length; SMS.buyShow = (Number(SMS.buyShow) || 5) + 5; smsBuyRender(); const nx = document.getElementById('sms-buy-next') || document.getElementById('sms-buy-more'); if (nx) nx.focus({ preventScroll: true }); const it = document.querySelectorAll('#sms-buy-rest .sms-buy-i')[had]; if (it && it.scrollIntoView) it.scrollIntoView({ block: 'nearest' }); return; }
+            if (e.target.closest('#sms-buy-more')) { SMS.buyMore = SMS.buyMore === SMS.open ? 0 : SMS.open; SMS.buyShow = 5; smsBuyRender(); const b = document.getElementById('sms-buy-more'); if (b) b.focus({ preventScroll: true }); return; }   // #653 구매이력 더보기·접기
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
@@ -1635,19 +1752,26 @@
             if (smsHist.skip > 0) { smsHist.skip--; return; }
             const at = smsHistAt();   // 뒤로가기 뒤에 맨 위가 된 칸
             if (at === 'th') return;                                                   // 아직 대화 칸 위에 있다(다른 화면이 자기 칸을 뺀 것)
-            if (at === 'win') { if (SMS.open) smsThreadClose(true, true); return; }    // 대화 칸이 빠짐 → 대화만 접는다
+            if (at === 'win') {                                                        // 대화 칸이 빠짐 → 대화만 접는다
+                if (INB.ch !== 'sms') { const a = inbApi(); try { for (let i = 0; a && i < 3 && a.isOpen(); i++) a.back(); } catch (e) { /* 다음 조작에서 맞춰진다 */ } }
+                else if (SMS.open) smsThreadClose(true, true);
+                return;
+            }
             if (document.body.classList.contains('sms-win-open')) smsCloseCard();      // 창 칸까지 빠짐 → 창 닫기
         });
         $('sms-view').addEventListener('click', e => { if (e.target.id !== 'sms-view-img') smsViewClose(); });
         document.addEventListener('keydown', e => {
             if (e.key !== 'Escape' || !smsVisible() || !pageActive()) return;
             if (Array.from(document.querySelectorAll('.modal-overlay')).some(m => getComputedStyle(m).display !== 'none')) return;   // 안내·확인 창이 위에 떠 있으면 그 창이 먼저 닫힌다
+            if (INB.ch !== 'sms') {   // #658 톡톡·문의 탭: 사진 → 대화 → 창 순서는 AkmInbox.back() 이 안다(접을 것이 없으면 false)
+                const a = inbApi(); let did = false;
+                try { const was = !!(a && a.isOpen()); did = !!(a && a.back()); if (did && was && !a.isOpen() && smsHistAt() === 'th') smsHistBack(1); } catch (er) { did = false; }
+                e.stopPropagation(); if (!did) smsCloseCard(); return;
+            }
             if (smsViewClose()) { e.stopPropagation(); return; }
             if (SMS.open) { e.stopPropagation(); smsThreadClose(true); return; }
             if (document.body.classList.contains('sms-win-open')) { e.stopPropagation(); smsCloseCard(); }   // Esc 도 같은 순서: 사진 → 대화 → 창
         });
-        $('desk-board').addEventListener('click', e => { const bf = e.target.closest('.bf-go'); if (bf) { botFailGo(bf.dataset.bf); return; } const li = e.target.closest('.sms-todo'); if (li) smsOpen(li.dataset.sms === 'active' ? 'active' : undefined); });
-        $('desk-board').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('sms-todo')) { e.preventDefault(); e.target.click(); } });
         if (window.visualViewport) { window.visualViewport.addEventListener('resize', smsVv); window.visualViewport.addEventListener('scroll', smsVv); }
     }
 
@@ -2803,7 +2927,8 @@
         const acts = x => `${x.seen
             ? `<button type="button" class="desk-btn sm" data-ib="undo" data-kind="${x.kind}" data-id="${esc(x.id)}">다시 목록에 올리기</button>`
             : `<button type="button" class="desk-btn sm primary" data-ib="ok" data-kind="${x.kind}" data-id="${esc(x.id)}">확인</button>`}
-            ${x.kind !== 'talk' && x.state === 'open' ? `<button type="button" class="desk-btn sm" data-ib="go">문의 관리에서 답하기</button>` : ''}`;
+            ${x.kind !== 'talk' && x.state === 'open' ? `<button type="button" class="desk-btn sm" data-ib="go">문의 관리에서 답하기</button>` : ''}
+            ${inbOk() ? `<button type="button" class="desk-btn sm" data-ib="win" data-kind="${x.kind}" data-id="${esc(x.id)}">대화 창에서 답하기</button>` : ''}`;
         // #485(대표 9/30): PC = 지시 목록과 같은 표 — 줄을 누르면 손님 문의 전문 + 답변 띠 + 확인 버튼이 펼쳐진다 · 폰 = 카드(종전)
         if (S.wide) {
             const rows = list.map((x, i) => {
@@ -2863,6 +2988,7 @@
     // #653-다(대표 10/11): 「지금 챙길 일」을 현황판 맨 아래에서 꺼내 — PC(오른쪽 칸이 있는 폭) = 오른쪽 칸 맨 위 · 그보다 좁으면(폰 · 폴드 펼침 900) 입력 칸 바로 아래(도구 카드 뒤 · 채팅 목록 앞)
     //   좁은 폭에서는 4건까지만 보이고 [N건 더 보기] — 채팅 목록을 화면 밖으로 밀지 않게
     const TODO_WIDE = '(min-width: 1181px)', TODO_CUT = 4;
+    const todoPr = t => t.key === 'botfail' ? 0 : t.key === 'remind' && (t.when || '오늘') === '오늘' ? 1 : 2;   // 봇 실패 · 오늘 일정 알림은 맨 앞(좁은 폭에서 접히지 않는다)
     function todoPlace() {
         const box = $('desk-todo-box'), lb = $('desk-listbox'), side = document.querySelector('#ao-desk-root .desk-side');
         if (!box || !lb || !side) return;
@@ -2873,11 +2999,14 @@
         const el = $('desk-todo'), box = $('desk-todo-box');
         if (!el || !box) return;
         el.innerHTML = html;
-        const n = el.querySelectorAll('.desk-todo > li').length, more = $('desk-todo-more'), cnt = $('desk-todo-n');
+        const lis = Array.from(el.querySelectorAll('.desk-todo > li')), n = lis.length, more = $('desk-todo-more'), cnt = $('desk-todo-n');
+        const pin = li => li.matches('.sms-todo, .bot-fail, .pin');
+        let free = Math.max(0, TODO_CUT - lis.filter(pin).length), hid = 0;
+        lis.forEach(li => { const x = !pin(li) && free-- <= 0; li.classList.toggle('cut-x', x); if (x) hid++; });
         if (cnt) cnt.textContent = n ? n + '건' : '';
-        box.classList.toggle('cut', n > TODO_CUT && !S.todoAll);
+        box.classList.toggle('cut', hid > 0 && !S.todoAll);
         box.classList.toggle('none', !n);
-        if (more) { more.hidden = n <= TODO_CUT; more.textContent = S.todoAll ? '접기' : (n - TODO_CUT) + '건 더 보기'; more.setAttribute('aria-expanded', String(!!S.todoAll)); }
+        if (more) { more.hidden = hid === 0; more.textContent = S.todoAll ? '접기' : hid + '건 더 보기'; more.setAttribute('aria-expanded', String(!!S.todoAll)); }
         todoPlace();
     }
     function todoBind() {
@@ -2885,8 +3014,9 @@
         if (!box) return;
         box.addEventListener('click', e => {
             if (e.target.closest('#desk-todo-more')) { S.todoAll = !S.todoAll; if (S.board) renderBoard(); return; }
+            const cu = e.target.closest('.cu-go'); if (cu) { if (cu.dataset.cu === 'sms') smsOpen('active'); else inbOpen(cu.dataset.cu); return; }
             const bf = e.target.closest('.bf-go'); if (bf) { botFailGo(bf.dataset.bf); return; }
-            const li = e.target.closest('.sms-todo'); if (li) smsOpen(li.dataset.sms === 'active' ? 'active' : undefined);
+            const li = e.target.closest('.sms-todo'); if (li) { if (li.dataset.sms === 'cust') inbOpenFirst(); else smsOpen(li.dataset.sms === 'active' ? 'active' : undefined); }
         });
         box.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('sms-todo')) { e.preventDefault(); e.target.click(); } });
         todoPlace();
@@ -2917,7 +3047,7 @@
         if (!Array.isArray(d.todo) && smsLi) todoHtml = `<ul class="desk-todo">${smsLi}</ul>`;
         if (Array.isArray(d.todo)) {
             todoHtml = d.todo.length || smsLi
-                ? `<ul class="desk-todo">${smsLi}${d.todo.map(t => t.key === 'botfail' ? botFailHtml(t) : `<li><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
+                ? `<ul class="desk-todo">${smsLi}${d.todo.slice().sort((a, b) => todoPr(a) - todoPr(b)).map(t => t.key === 'botfail' ? botFailHtml(t) : `<li${todoPr(t) === 1 ? ' class="pin"' : ''}><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
                 : '<div class="desk-empty">지금 챙길 일이 없어요.</div>';
         }
         todoRender(todoHtml);
@@ -3119,7 +3249,7 @@
             return 'all';
         } catch (e) { return false; }
     }
-    window.AkmAoDesk = { open: openOrder, openSms: smsOpenById };
+    window.AkmAoDesk = { open: openOrder, openSms: smsOpenById, openInbox: (ch, id) => inbOpen(String(ch || ''), id) };   // openInbox = 알림 링크용(#658 · ch = talk|qna|inquiry)
 
     window.aoDeskEnter = async function () {
         mount();
