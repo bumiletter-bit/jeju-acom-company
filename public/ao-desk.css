@@ -926,6 +926,16 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-msg[data-s="failed"] .sms-bub { background: #FEECEB; border-color: #FECDCA; }
 .sms-msg small { color: var(--d-sub); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .sms-msg[data-s="failed"] small { color: #B42318; font-weight: 700; }
+/* #651: 취소된 글 = 손님에게 안 나간 글(줄 긋기 · 점선 · 흐린 글) · 「보내지 않기」 · 새 초안으로 바뀐 순간 강조 · [직원 확인 n] */
+.sms-msg[data-s="cancelled"] .sms-bub { background: var(--d-soft); border-style: dashed; color: var(--d-sub); text-decoration: line-through; }
+.sms-msg[data-s="cancelled"] small { font-weight: 700; }
+.sms-hold { margin-left: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--d-line); border-radius: 999px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.sms-hold:hover { background: var(--d-soft); }
+.sms-hold:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.sms-text.sms-text-new { border-color: var(--d-accent); box-shadow: 0 0 0 3px var(--d-accent-soft); }
+.sms-draft[data-k="chg"] { color: #B54708; }
+.sms-staff-btn b { font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .sms-hold { min-height: 44px; padding: 0 14px; font-size: 13px; } }
 .sms-day { align-self: center; margin: 4px 0; }
 .sms-day span { padding: 2px 10px; border-radius: 999px; background: var(--d-soft); color: var(--d-sub); font-size: 11.5px; }
 .sms-pics { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1126,6 +1136,66 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .pc-group.pc-shut > .pc-h { margin-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .pc-chev { transition: none; } }
 @media (max-width: 640px) { .ship-form .ship-find { flex: 1 1 100%; max-width: none; font-size: 16px; } .pc-only { flex: 1 1 100%; } }
+/* ═ #653-가(대표 10/11): 문자 = 화면을 덮는 전용 창 — PC 는 왼쪽 목록 + 오른쪽 대화, 폰은 목록 → 대화 전체 화면. 색은 기존 토큰만. ═ */
+#desk-sms.sms-modal:not([hidden]) { position: fixed; inset: 0; z-index: 965; display: flex; align-items: stretch; justify-content: center; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: rgba(16, 24, 40, .45); }
+body.sms-win-open { overflow: hidden; }
+body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibility: hidden; }
+.sms-win { display: flex; flex-direction: column; min-height: 0; min-width: 0; width: 100%; max-width: 1180px; background: var(--d-card); color: var(--d-ink); animation: sms-win-in 220ms var(--d-ease); }
+@keyframes sms-win-in { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+.sms-win > .desk-tool-head { flex: none; margin: 0; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--d-line); }
+.sms-win > .ship-note { flex: none; margin: 10px 16px 0; }
+.sms-cols { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); }
+.sms-left { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--d-line); }
+.sms-left > .sms-bar { flex: none; margin: 0; padding: 12px; }
+.sms-left > .sms-list { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.sms-left .sms-row { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "tail badge time" "hint hint hint" "last last last" "tags tags tags"; border-radius: 0; padding: 12px; }
+.sms-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--d-soft); }
+.sms-pane-empty { margin: auto; padding: 24px; color: var(--d-sub); font-size: 14px; text-align: center; }
+.sms-pane > .sms-thread { flex: 1 1 auto; min-height: 0; margin: 0; border: 0; border-radius: 0; }
+.sms-pane .sms-msgs { flex: 1 1 auto; min-height: 0; max-height: none; }
+.sms-th-back { display: none; flex: none; min-height: 44px; margin-left: -8px; padding: 0 10px 0 6px; border: 0; border-radius: 10px; background: none; color: var(--d-accent); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.sms-th-back::before { content: "‹"; margin-right: 4px; font-size: 20px; line-height: 1; vertical-align: -1px; }
+.sms-th-back:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+/* 「구매이력」 카드 — 직원만 보는 주문 정보 */
+.sms-buy { padding: 12px 14px; }
+.sms-buy-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.sms-buy-h small { color: var(--d-sub); font-size: 12px; }
+.sms-buy-s { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.sms-buy-role { color: var(--d-sub); font-size: 12px; }
+.sms-buy-i + .sms-buy-i, .sms-buy-rest > .sms-buy-i { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--d-line); }
+.sms-buy-more { margin-top: 10px; min-height: 32px; padding: 0 12px; border: 1px solid var(--d-line); border-radius: 999px; background: var(--d-card); color: var(--d-accent); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.sms-buy-more:hover { background: var(--d-accent-soft); }
+.sms-buy-more:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+.sms-buy-cap { margin: 10px 0 0; color: var(--d-sub); font-size: 12px; }
+.sms-pane .sms-order.sms-buy { flex: none; max-height: 46%; overflow-y: auto; overscroll-behavior: contain; }
+@media (max-width: 720px) { .sms-buy-more { min-height: 44px; padding: 0 16px; font-size: 13.5px; } }
+.sms-buy-h b, .sms-buy.none b { margin: 0; color: var(--d-ink); font-size: 13.5px; font-weight: 800; }
+.sms-buy-g { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
+.sms-buy-r { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: start; gap: 8px; min-width: 0; }
+.sms-buy-r dt { padding-top: 2px; color: var(--d-sub); font-size: 12.5px; white-space: nowrap; }
+.sms-buy-r dd { margin: 0; min-width: 0; color: var(--d-ink); font-size: 14px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.sms-buy-r dd.key { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sms-buy-r dd small { margin-left: 4px; color: var(--d-sub); font-size: 12.5px; font-weight: 600; }
+.sms-buy-r dd .sms-trks { margin-top: 0; }
+.sms-buy.none { color: var(--d-sub); }
+.sms-buy.none b { color: var(--d-sub); font-weight: 700; }
+.sms-buy.none small { font-size: 12.5px; }
+@media (min-width: 900px) {
+    #desk-sms.sms-modal:not([hidden]) { padding: 24px; }
+    .sms-win { border: 1px solid var(--d-card-line); border-radius: 16px; box-shadow: 0 24px 64px -12px rgba(16, 24, 40, .35); overflow: hidden; }
+}
+@media (max-width: 1080px) { .sms-buy-g { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 720px) {
+    .sms-cols { grid-template-columns: minmax(0, 1fr); }
+    .sms-left { border-right: 0; }
+    .sms-pane { flex: none; height: 0; min-height: 0; overflow: visible; background: none; }
+    .sms-pane-empty { display: none; }
+    .sms-pane > .sms-thread { position: fixed; left: 0; right: 0; top: var(--sms-vt, 0px); bottom: var(--sms-kb, 0px); z-index: 966; height: auto; max-height: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; padding-bottom: env(safe-area-inset-bottom, 0); background: var(--d-card); animation: none; }
+    .sms-th-back { display: inline-flex; align-items: center; }
+    .sms-th-head { padding-left: 14px; }
+    .sms-th-head .sms-th-x { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .sms-win { animation: none; } }
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -1175,7 +1245,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (483규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (515규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1586,6 +1656,12 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .sms-msg[data-s="failed"] .sms-bub { background: rgba(255, 122, 110, .16); border-color: rgba(255, 122, 110, .38); }
 :where(html[data-ao-theme="dark"]) .sms-msg small { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .sms-msg[data-s="failed"] small { color: #FF9B91; }
+:where(html[data-ao-theme="dark"]) .sms-msg[data-s="cancelled"] .sms-bub { background: var(--d-soft); border-style: dashed; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-hold { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-hold:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .sms-hold:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .sms-text.sms-text-new { border-color: var(--d-accent); box-shadow: 0 0 0 3px var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .sms-draft[data-k="chg"] { color: #FBBF4A; }
 :where(html[data-ao-theme="dark"]) .sms-day span { background: var(--d-soft); color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .sms-thumb { border: 1px solid var(--d-line); background: var(--d-soft); }
 :where(html[data-ao-theme="dark"]) .sms-thumb:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
@@ -1670,6 +1746,36 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .pc-only[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }
 :where(html[data-ao-theme="dark"]) [data-fold]:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
 :where(html[data-ao-theme="dark"]) .pc-chev { border-right: 2px solid var(--d-sub); border-bottom: 2px solid var(--d-sub); }
+:where(html[data-ao-theme="dark"]) #desk-sms.sms-modal:not([hidden]) { border: 0; box-shadow: none; background: rgba(16, 24, 40, .45); }
+:where(html[data-ao-theme="dark"]) .sms-win { background: var(--d-card); color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-win > .desk-tool-head { border-bottom: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-left { border-right: 1px solid var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-pane { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .sms-pane-empty { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-pane > .sms-thread { border: 0; }
+:where(html[data-ao-theme="dark"]) .sms-th-back { border: 0; background: none; color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-th-back:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .sms-buy-h small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-buy-role { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-buy-i + .sms-buy-i, :where(html[data-ao-theme="dark"]) .sms-buy-rest > .sms-buy-i { border-top: 1px dashed var(--d-line); }
+:where(html[data-ao-theme="dark"]) .sms-buy-more { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-buy-more:hover { background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .sms-buy-more:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .sms-buy-cap { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-buy-h b, :where(html[data-ao-theme="dark"]) .sms-buy.none b { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-buy-r dt { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-buy-r dd { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-buy-r dd small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-buy.none { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .sms-buy.none b { color: var(--d-sub); }
+@media (min-width: 900px) {
+    :where(html[data-ao-theme="dark"]) .sms-win { border: 1px solid var(--d-card-line); box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.6); }
+}
+@media (max-width: 720px) {
+    :where(html[data-ao-theme="dark"]) .sms-left { border-right: 0; }
+    :where(html[data-ao-theme="dark"]) .sms-pane { background: none; }
+    :where(html[data-ao-theme="dark"]) .sms-pane > .sms-thread { border: 0; box-shadow: none; background: var(--d-card); }
+}
 
 /* ③ 대표 확정 — 손으로 맞춘 곳(② 보다 뒤 · 속성 선택자라 ② 를 이긴다) */
 /* 「중간발주·최종발주·정산 이미지」 = 「대기 중」 알약과 같은 꼴(흰 글씨 · 같은 바탕 · 같은 테두리) */

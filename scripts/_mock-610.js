@@ -33,25 +33,30 @@ function seed() {
             T(3, '2468', 'staff_needed', '대성 · 10/8 발송 · 황금향 3kg', [
                 m('in', 'customer', '황금향 언제 오나요', 190), m('out', 'bot', '10/8(목)에 출발했어요. 송장 끝 7730, 오늘 도착 예정입니다.', 189),
                 m('in', 'customer', '아직도 안 왔는데요 확인 좀 해주세요', 25),
-            ], { order: ORD({ ship_date: '2026-10-08', partner: '대성', option_text: '황금향 가정용 3kg', tracking_tail: '7730', status_label: '간선상하차', arrive_text: '내일 도착 예정' }), bot_count_today: 1, staff_why: 'claim' }),
+            ], { order: ORD({ ship_date: '2026-10-08', partner: '대성', option_text: '황금향 가정용 3kg', tracking_tail: '7730', status_label: '간선상하차', arrive_text: '내일 도착 예정' }), bot_count_today: 1, staff_why: 'claim',
+                history_extra: [   // 같은 번호의 지난 구매 2건(#654 꼴 — 60일 안 · 한 건은 이 번호가 구매자였던 선물)
+                    { pre: false, ship_date: '2026-09-22', recipient_name: '홍길동', option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, boxes: 1, trackings: ['590123450001'], status_label: '배송완료', delivered: true, event_time: '2026-09-23 14:10', partner: '효돈', role: 'recipient' },
+                    { pre: false, ship_date: '2026-08-30', recipient_name: '이순자', option_text: '미니밤호박 특품 5kg', qty: 2, boxes: 2, trackings: ['590123450002', '590123450003'], status_label: null, delivered: true, event_time: null, partner: '길영', role: 'buyer' },
+                ], history_more: true }),
             T(4, '1357', 'bot_replied', '효돈 · 10/9 발송 · 하우스감귤 2.5kg(소과)', [
                 m('in', 'customer', '오늘 주문하면 언제 발송되나요?', 95), m('out', 'bot', '오늘 8시 이후 주문은 내일 오전에 발송돼요. 보통 발송 다음 날 도착합니다.', 94),
             ], { order: ORD({ option_text: '하우스감귤 가정용 - 2.5kg(소과)' }), bot_count_today: 1, read_at: iso(90) }),
             T(5, '9090', 'bot_replied', null, [m('in', 'customer', '귤 보관은 어떻게 해요?', 130), m('out', 'bot', '서늘하고 바람이 통하는 곳에 두시고, 오래 두실 때는 냉장 보관을 권해요.', 129)], { bot_count_today: 1, read_at: iso(120) }),
-            T(6, '3141', 'bot_replied', '효돈 · 10/9 발송 · 하우스감귤 4kg', [
+            T(6, '3141', 'bot_replied', '효돈 · 10/09 발송 · 하우스감귤 4kg · 배송출발 · 새 주문 1건 대기', [
                 m('in', 'customer', '송장번호 알려주세요', 20), m('out', 'bot', '송장 끝 5592 로 10/9(금)에 출발했어요.', 19), m('in', 'customer', '네 감사합니다', 18),
             ], { order: ORD({ tracking_tail: '5592' }), bot_count_today: 1 }),
-            T(7, '2718', 'bot_replied', null, [m('in', 'customer', '가격표 좀 보내주세요', 12), m('out', 'bot', '지금 판매 중인 상품과 가격은 스마트스토어에서 보실 수 있어요.', 11)], { bot_count_today: 1, order_raw: { line: '발송 전 · 결제 10/10 · 하우스감귤 가정용 - 4kg(로얄과) · 2개', role: 'buyer', match: 'one', candidates: 1, order: { pre: true, channel: 'naver', paid_at: '2026-10-10T03:00:00.000Z', paid_known: true, option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 2, ship_date: null, delivered: false, status_label: null, tracking_tail: null, boxes: null } } }),
+            T(7, '2718', 'bot_replied', null, [m('in', 'customer', '가격표 좀 보내주세요', 12), m('out', 'bot', '지금 판매 중인 상품과 가격은 스마트스토어에서 보실 수 있어요.', 11)], { bot_count_today: 1, order_raw: { line: '발송 전 · 결제 10/10 · 하우스감귤 가정용 - 4kg(로얄과) · 2개', role: 'buyer', match: 'one', candidates: 1, order: { pre: true, channel: 'naver', paid_at: '2026-10-10T03:00:00.000Z', paid_known: true, option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 2, ship_date: null, delivered: false, status_label: null, tracking_tail: null, boxes: null, ship_plan: '10/12(월)' } } }),
             T(8, '4444', 'staff_replied', '대성 · 10/7 발송 · 한라봉 3kg', [
                 m('in', 'customer', '', 300, { kind: 'mms', image_ids: [903] }), m('in', 'customer', '크기가 저번보다 작아요', 299),
-                m('out', 'staff_phone', '크기가 작았군요, 불편드려 죄송합니다. 사진 확인했어요. 다음 주문 때 배송메세지에 사이즈를 적어 주시면 맞춰 보내드릴게요.', 280),
+                m('out', 'gateway_other', '크기가 작았군요, 불편드려 죄송합니다. 사진 확인했어요. 다음 주문 때 배송메세지에 사이즈를 적어 주시면 맞춰 보내드릴게요.', 280),
             ], { order: ORD({ ship_date: '2026-10-07', partner: '대성', option_text: '한라봉 가정용 3kg', tracking_tail: '1180', status_label: '배송완료', arrive_text: '10/8(목) 도착' }), staff_name: '조가영', handled_at: iso(280), read_at: iso(280) }),
-            T(9, '8282', 'staff_replied', null, [m('in', 'customer', '전화 부탁드려요', 400), m('out', 'staff_desk', '네, 곧 전화드리겠습니다.', 395)], { staff_name: '현승협', handled_at: iso(395), read_at: iso(395) }),
-            T(10, '6060', 'closed', '효돈 · 10/6 발송 · 하우스감귤 4kg', [m('in', 'customer', '잘 받았습니다 맛있어요', 1500), m('out', 'staff_phone', '감사합니다. 맛있게 드세요.', 1490)], { order: ORD({ ship_date: '2026-10-06', status_label: '배송완료', arrive_text: '10/7(수) 도착' }), staff_name: '조가영', handled_at: iso(1490), read_at: iso(1490) }),
+            T(9, '8282', 'staff_replied', null, [m('in', 'customer', '전화 부탁드려요', 400), m('out', 'bot', '안녕하세요 고객님 ^^ 문의 주셔서 감사합니다.', 399, { state: 'cancelled', fail_reason: 'cancelled:staff_desk' }), m('out', 'bot', '오래돼 취소된 봇 답', 398, { state: 'cancelled', fail_reason: 'cancelled:stale' }), m('out', 'staff_desk', '네, 곧 전화드리겠습니다.', 395), m('out', 'staff_desk', '긴 글의 첫 조각입니다.', 394, { state: 'sending' }), m('out', 'staff_desk', '긴 글의 둘째 조각입니다.', 394, { state: 'sending' })], { staff_name: '현승협', handled_at: iso(395), read_at: iso(395) }),
+            T(10, '6060', 'closed', '효돈 · 10/6 발송 · 하우스감귤 4kg', [m('in', 'customer', '잘 받았습니다 맛있어요', 1500), m('out', 'gateway_other', '감사합니다. 맛있게 드세요.', 1490)], { order: ORD({ ship_date: '2026-10-06', status_label: '배송완료', arrive_text: '10/7(수) 도착' }), staff_name: '조가영', handled_at: iso(1490), read_at: iso(1490) }),
             T(11, '7007', 'staff_needed', '효돈 · 10/9 발송 · 하우스감귤 4kg × 2', [
-                m('in', 'customer', '환불해 주세요. 상한 게 너무 많습니다.', 8), m('out', 'staff_desk', '확인하고 바로 연락드리겠습니다.', 6, { state: 'failed' }),
+                m('in', 'customer', '환불해 주세요. 상한 게 너무 많습니다.', 8), m('out', 'staff_desk', '확인하고 바로 연락드리겠습니다.', 6, { state: 'failed', fail_reason: 'sendSMS: Sending SMS message: uid 10283 does not have android.permission.SEND_SMS.' }),
             ], { order: ORD({ qty: 2, tracking_tail: '3306', status_label: '배송완료', arrive_text: '10/10(토) 도착', recipient_name: '김영희', recipient_initial: '김' }), staff_why: 'send_failed' }),
-            T(12, '1001', 'bot_replied', null, [m('in', 'customer', '아주아주 긴 문의입니다. ' + '도착 시간과 보관 방법, 그리고 선물 포장이 되는지도 함께 알려주시면 좋겠습니다. '.repeat(4), 3), m('out', 'bot', '안내드릴게요. 발송 다음 날 도착하고, 서늘한 곳에 보관해 주세요. 선물 포장은 선물용 상품에서만 됩니다.', 2, { state: 'queued' })], { bot_count_today: 1 }),
+            T(12, '1001', 'bot_replied', null, [m('in', 'customer', '아주아주 긴 문의입니다. ' + '도착 시간과 보관 방법, 그리고 선물 포장이 되는지도 함께 알려주시면 좋겠습니다. '.repeat(4), 3), m('out', 'bot', '안내드릴게요. 발송 다음 날 도착하고, 서늘한 곳에 보관해 주세요.', 2, { state: 'queued' }), m('out', 'bot', '선물 포장은 선물용 상품에서만 됩니다.', 2, { state: 'queued' })], { bot_count_today: 1 }),
+            T(13, '0114', 'ignored', null, [m('in', 'customer', '[Web발신] [KT안내] 요금제 이용안내', 50)]),   // 무시 대화 — 새 문자 목록·셈에는 안 들고 이전 대화 보기에만
         ],
     };
 }
@@ -84,6 +89,7 @@ function summary() {
     const c = {}; ['new', 'staff_needed', 'draft', 'bot_replied', 'staff_replied', 'closed', 'ignored'].forEach(k => { c[k] = ST.threads.filter(t => t.status === k).length; });
     const day = Date.now() - 86400000, all = ST.threads.flatMap(t => t.messages).filter(x => Date.parse(x.event_at) > day);
     const s = { enabled: ST.enabled, mode: ST.mode, staff_needed: c.staff_needed, drafts: ST.legacy ? c.draft : ST.threads.filter(t => draftOf(t) && !['closed', 'ignored'].includes(t.status)).length, today_in: all.filter(x => x.direction === 'in').length, today_bot: all.filter(x => x.sender === 'bot').length, today_staff: all.filter(x => /^staff/.test(x.sender)).length, gateway: { last_ping_at: ST.alive ? iso(0) : iso(190), alive: ST.alive } };
+    if (!ST.legacy && !ST.noStaffOpen) s.staff_open = ST.threads.filter(t => t.staff_why && !['closed', 'ignored'].includes(t.status)).length;
     if (!ST.legacy) { s.unread_threads = ST.threads.filter(isActive).length; s.needs_staff = ST.threads.filter(t => isActive(t) && t.staff_why).length; }
     if (ST.withCounts) s.counts = c;
     return s;
@@ -105,7 +111,7 @@ http.createServer(async (req, res) => {
     try {
         if (p === '/__mock/log') return send(res, 200, { log: ST.log });
         if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
-        if (p === '/__mock/set') { const b = await readBody(req); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; return send(res, 200, { ok: true }); }
+        if (p === '/__mock/set') { const b = await readBody(req); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; if ('staffOpen' in b) ST.noStaffOpen = !b.staffOpen; if ('history' in b) ST.noHistory = !b.history; return send(res, 200, { ok: true }); }
         if (p === '/__mock/draft') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.draft_text = b.text ? String(b.text) : null; return send(res, 200, { ok: true }); }   // 봇 초안이 뒤늦게 생김
         if (p === '/__mock/push') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.messages.push({ id: 7000 + t.messages.length + t.id * 10, direction: 'in', kind: 'sms', body: String(b.body || '또 보냅니다'), sender: 'customer', state: 'received', image_ids: [], event_at: new Date().toISOString() }); if (t.status === 'closed') t.status = 'new'; return send(res, 200, { ok: true }); }
         if (p.startsWith('/api/sms/')) {
@@ -136,12 +142,19 @@ http.createServer(async (req, res) => {
                 if (M === 'GET' && !m[2]) {
                     const peek = u.searchParams.get('peek') === '1';
                     if (!peek && !ST.legacy) t.read_at = new Date().toISOString();   // 여는 순간 읽음
-                    return send(res, 200, { thread: row(t, peek ? undefined : 0), messages: t.messages, order: orderJson(t) });
+                    const oj = orderJson(t), out = { thread: row(t, peek ? undefined : 0), messages: t.messages, order: oj };
+                    if (!ST.noHistory && !ST.noTrk && !ST.legacy) {   // #654: 최근 60일 구매이력(발송 전 먼저 → 발송일 최신순) · order 와 같은 건이 맨 위쪽에 또 들어 있다
+                        const first = oj && oj.order ? Object.assign({ role: oj.role || 'recipient' }, oj.order) : null; if (first) delete first.tracking_tail;
+                        out.history = [].concat(first ? [first] : [], t.history_extra || []); out.history_days = 60; out.history_more = !!t.history_more;
+                    }
+                    return send(res, 200, out);
                 }
                 if (M === 'POST' && m[2]) {
                     const b = await readBody(req);
                     ST.log.push({ at: Date.now(), path: p, action: m[2], id: t.id, body: b });
                     if (ST.fail === m[2]) return send(res, 500, { error: '회사폰에 보내지 못했습니다' });
+                    if ((m[2] === 'reply' || m[2] === 'send-draft') && !ST.enabled) return send(res, 409, { ok: false, error: m[2] === 'reply' ? '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' : '문자 연동이 꺼져 있어요' });
+                    if (m[2] === 'send-draft' && !t.draft_text) return send(res, 409, { ok: false, error: '보낼 초안이 없어요(이미 보냈을 수 있어요)' });
                     if (m[2] === 'send-draft' && !ST.legacy && typeof b.seen === 'string' && String(t.draft_text || '') && b.seen.trim() !== String(t.draft_text).trim()) return send(res, 409, { ok: false, error: 'draft_changed', draft_text: t.draft_text });   // #635-C: 내가 본 초안과 다르면 보내지 않는다
                     if (m[2] === 'reply' || m[2] === 'send-draft') {
                         const text = m[2] === 'reply' ? String(b.text || '').trim() : String(t.draft_text || '');
@@ -150,7 +163,7 @@ http.createServer(async (req, res) => {
                         t.messages.push(msg); t.draft_text = null; t.status = 'staff_replied'; t.staff_name = '시험직원'; t.handled_at = msg.event_at; t.staff_why = null; t.read_at = msg.event_at;
                         return send(res, 200, { ok: true, message_id: msg.id });
                     }
-                    if (m[2] === 'handled') { t.status = 'staff_replied'; t.staff_name = '시험직원'; t.handled_at = new Date().toISOString(); t.staff_why = null; t.read_at = t.handled_at; return send(res, 200, { ok: true }); }
+                    if (m[2] === 'handled') { let cancelled = 0; t.messages.forEach(x => { if (x.direction === 'out' && x.state === 'queued') { x.state = 'cancelled'; x.fail_reason = 'cancelled:handled'; cancelled++; } }); t.status = 'staff_replied'; t._cancelled = cancelled; t.staff_name = '시험직원'; t.handled_at = new Date().toISOString(); t.staff_why = null; t.read_at = t.handled_at; return send(res, 200, { ok: true, cancelled: t._cancelled }); }
                     if (m[2] === 'close') { t.status = 'closed'; t.staff_why = null; t.read_at = new Date().toISOString(); return send(res, 200, { ok: true }); }
                 }
             }
