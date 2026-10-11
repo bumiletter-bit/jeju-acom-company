@@ -9,6 +9,18 @@ const PORT = Number(process.env.PORT610 || 3458), SECRET = 'verify610secret', JW
 process.env.SMSGATE_SIGNING_KEY = SECRET; process.env.SMSGATE_USER = 'u'; process.env.SMSGATE_PASS = 'p';
 let pass = 0, fail = 0; const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  ✗', m); } };
 const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4 = T + '1004', P5 = T + '1005', P6 = T + '1006';
+// #648: 도중에 죽거나 끊어도(오류·Ctrl+C) 시험 줄을 지운다 — 남은 시험 대화가 라이브 화면에 뜨지 않게
+async function cleanupTest() {
+    try {
+        await pool.query(`DELETE FROM sms_images WHERE message_id IN (SELECT m.id FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id WHERE t.phone_digits LIKE $1)`, [T + '%']);
+        await pool.query(`DELETE FROM sms_messages WHERE thread_id IN (SELECT id FROM sms_threads WHERE phone_digits LIKE $1)`, [T + '%']);
+        await pool.query(`DELETE FROM sms_threads WHERE phone_digits LIKE $1`, [T + '%']);
+        await pool.query(`DELETE FROM delivery_status WHERE tracking LIKE '9996000643%' OR tracking LIKE '9996000646%'`);
+        await pool.query(`DELETE FROM delivery_shipments WHERE source IN ('verify-643', 'verify-646')`);
+    } catch (e) { console.error('시험 줄 정리 실패:', e.message); }
+}
+let _stopping = false;
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () => { if (_stopping) return; _stopping = true; console.log('\n끊김 — 시험 줄을 지웁니다'); await cleanupTest(); try { await pool.end(); } catch (_) { } process.exit(130); });
 (async () => {
     // 가짜 의존
     const cfgStore = { sms_gateway: { enabled: true, mode: 'record', hold_sec: 0, max_chars: 70 } }; const notes = [], tg = [], sent = []; let aiAnswer = null;
@@ -512,6 +524,38 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
         }
     }
 
+    // #648 시험 번호 대화는 검증 인스턴스가 아닌 서버(= 라이브)의 화면·알림·틱에서 안 보인다 — 같은 DB 에 testMode 없는 인스턴스를 하나 더 붙여 확인(읽기 라우트와 알림만 부른다 · 틱은 진짜 줄을 건드리므로 부르지 않고 SQL 글자로 확인)
+    {
+        const app2 = express(); app2.use(express.json());
+        const notes2 = []; const sms2 = mount(app2, Object.assign({}, deps, { testMode: false, createNotification: async (...a) => { notes2.push(a); }, notifyTelegram: async m => { notes2.push(['tg', m]); } }));
+        const srv2 = app2.listen(PORT + 1); const base2 = `http://127.0.0.1:${PORT + 1}`;
+        const api2 = async p => { const r = await fetch(base2 + p, { headers: { authorization: 'Bearer ' + token } }); return { status: r.status, json: await r.json().catch(() => ({})) }; };
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
+        const PZ = T + '1080';
+        await hook(env('sms:received', { messageId: 'z1', message: '귤이 다 썩어서 왔어요 환불해주세요', phoneNumber: '+82' + PZ.slice(1) }));
+        const tz = await thread(PZ);
+        const mineA = (await api('GET', '/api/sms/threads?scope=active&limit=200')).json, mineS = (await api('GET', '/api/sms/summary')).json;
+        const liveA = (await api2('/api/sms/threads?scope=active&limit=200')).json, liveAll = (await api2('/api/sms/threads?scope=all&limit=200')).json, liveQ = (await api2('/api/sms/threads?q=' + PZ.slice(-4))).json, liveSt = (await api2('/api/sms/threads?status=staff_needed&limit=200')).json, liveS = (await api2('/api/sms/summary')).json;
+        const isT = x => String(x.phone_full || '').startsWith('0999');
+        ok(mineA.items.some(x => x.id === tz.id) && mineS.unread_threads >= 1, '#648 검증 인스턴스(testMode)에는 시험 대화가 종전대로 보임');
+        ok([liveA, liveAll, liveQ, liveSt].every(j => Array.isArray(j.items) && !j.items.some(isT)), '#648 라이브 꼴 인스턴스: 목록 4갈래(active·all·찾기·상태)에 시험 번호 대화 0 ' + JSON.stringify([liveA, liveAll, liveQ, liveSt].map(j => (j.items || []).filter(isT).length)));
+        const testN = (await pool.query(`SELECT count(*) FILTER (WHERE status = 'staff_needed')::int AS sn, count(*)::int AS n FROM sms_threads WHERE phone_digits LIKE '0999%'`)).rows[0];
+        ok(testN.sn >= 1 && liveS.staff_needed === mineS.staff_needed - testN.sn && liveS.unread_threads <= mineS.unread_threads - 1 && Object.values(liveS.counts || {}).reduce((a, b) => a + b, 0) === Object.values(mineS.counts || {}).reduce((a, b) => a + b, 0) - testN.n && liveS.today_in < mineS.today_in,
+            '#648 라이브 꼴 인스턴스: summary 셈(직원 몫·안 읽음·상태별·오늘 받은 글)에서 시험 대화 빠짐 ' + JSON.stringify({ live: [liveS.staff_needed, liveS.unread_threads, liveS.today_in], mine: [mineS.staff_needed, mineS.unread_threads, mineS.today_in], test: testN }));
+        const n2 = notes2.length;
+        const sent2 = await sms2._notifyStaff(await sms2.cfg(), { id: tz.id }, '시험 알림(나가면 안 됨)', 'x', { force: true });
+        const sent2b = await sms2._notifyStaff(await sms2.cfg(), tz, '시험 알림(나가면 안 됨)', 'x', { force: true });
+        ok(sent2 === 0 && sent2b === 0 && notes2.length === n2, '#648 라이브 꼴 인스턴스: 시험 번호 대화는 알림을 만들지 않음(대화 번호만 받아도 · 강제 알림이어도)');
+        const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'sms', 'index.js'), 'utf8');
+        const sweep = src.slice(src.indexOf('async function sweepStuck()'), src.indexOf('let _sendBusy'));
+        const stmts = sweep.split('pool.query(').slice(1).map(x => x.slice(0, x.indexOf('`', 1) + 1));
+        ok(stmts.length >= 6 && stmts.every(x => /TEST_SKIP_M|TEST_SKIP_T|TEST_HIDE/.test(x)), '#648 멈춘 줄 정리(sweepStuck)의 문장 ' + stmts.length + '개 전부에 시험 번호 거름 ' + JSON.stringify(stmts.filter(x => !/TEST_SKIP_M|TEST_SKIP_T|TEST_HIDE/.test(x)).map(x => x.slice(0, 60))));
+        const pp = src.slice(src.indexOf('async function pendingPhotoTick()'), src.indexOf('const labelWhy'));
+        ok(/TEST_HIDE_T2/.test(pp) && /if \(!deps\.testMode\) where\.push/.test(src), '#648 사진 대기 틱·목록 라우트에도 거름');
+        await new Promise(r2 => srv2.close(r2));
+        sms.resetCfg();
+    }
+
     // 정리
     await pool.query(`DELETE FROM sms_images WHERE message_id IN (SELECT m.id FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id WHERE t.phone_digits LIKE $1)`, [T + '%']);
     await pool.query(`DELETE FROM sms_messages WHERE thread_id IN (SELECT id FROM sms_threads WHERE phone_digits LIKE $1)`, [T + '%']);
@@ -519,4 +563,4 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     const left = (await pool.query(`SELECT count(*)::int AS n FROM sms_threads WHERE phone_digits LIKE $1`, [T + '%'])).rows[0].n; ok(left === 0, '시험 줄 정리 0');
     srv.close(); await pool.end();
     console.log(`\n결과 ${pass}/${pass + fail}`); process.exit(fail ? 1 : 0);
-})().catch(async e => { console.error('ERR', e); try { await pool.end(); } catch (_) { } process.exit(1); });
+})().catch(async e => { console.error('ERR', e); await cleanupTest(); try { await pool.end(); } catch (_) { } process.exit(1); });

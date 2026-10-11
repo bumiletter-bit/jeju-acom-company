@@ -178,6 +178,11 @@ module.exports = function mountSms(app, deps) {
         return { ok: true };
     }
 
+    // #648 시험 번호 = 검증 스크립트가 쓰는 0999… — 검증 인스턴스(deps.testMode)가 아니면 집지도·세지도·보여 주지도·알리지도 않는다
+    const isTestDigits = d => String(d || '').startsWith('0999');
+    const TEST_HIDE = deps.testMode ? '' : "AND phone_digits NOT LIKE '0999%'";                                   // sms_threads 를 별칭 없이 읽는 문장용
+    const TEST_HIDE_T2 = deps.testMode ? '' : "AND t.phone_digits NOT LIKE '0999%'";                               // 별칭 t
+    const TEST_HIDE_MSG = deps.testMode ? '' : "AND thread_id NOT IN (SELECT id FROM sms_threads WHERE phone_digits LIKE '0999%')";   // sms_messages 문장용
     // ── 대화·메시지 ──
     async function threadFor(digits) {
         const r = await pool.query(`INSERT INTO sms_threads (phone_digits) VALUES ($1) ON CONFLICT (phone_digits) DO UPDATE SET updated_at = now() RETURNING *`, [digits]);
@@ -204,6 +209,11 @@ module.exports = function mountSms(app, deps) {
     }
     // 직원 알림(화면 알림 + 폰 푸시 · type 'sms' · 손님 번호·이름 없이 끝 4자리만)
     async function notifyStaff(c, thread, title, message, opts = {}) {
+        if (!deps.testMode) {   // #648: 시험 번호(0999…) 대화는 라이브 서버가 알리지 않는다 — 검증이 넣은 줄을 라이브 틱이 집어 진짜 직원에게 헛알림이 가던 것
+            let pd = thread && thread.phone_digits;
+            if (!pd && thread && thread.id) { try { pd = ((await pool.query(`SELECT phone_digits FROM sms_threads WHERE id = $1`, [thread.id])).rows[0] || {}).phone_digits; } catch (e) { pd = ''; } }
+            if (isTestDigits(pd)) return 0;
+        }
         if (!opts.force) {   // 같은 대화는 5분에 한 번만(손님이 연속으로 보내도 관리자 전원에게 푸시가 쏟아지지 않게)
             const r = (await pool.query(`UPDATE sms_threads SET last_notify_at = now() WHERE id = $1 AND (last_notify_at IS NULL OR last_notify_at < now() - interval '5 minutes') RETURNING id`, [thread.id])).rowCount;
             if (!r) return 0;
@@ -511,7 +521,7 @@ module.exports = function mountSms(app, deps) {
     // mms:received 뒤 mms:downloaded 가 5분 안 안 오면 「사진 못 받음」 → 직원 몫(삼성 메시지 자동 가져오기 꺼짐 등)
     async function pendingPhotoTick() {
         const rows = (await pool.query(`SELECT m.id, m.thread_id, t.phone_digits, t.status FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
-            WHERE m.direction = 'in' AND m.bucket = 'photo_pending' AND m.event_at < now() - interval '5 minutes' ORDER BY m.id LIMIT 20`)).rows;
+            WHERE m.direction = 'in' AND m.bucket = 'photo_pending' AND m.event_at < now() - interval '5 minutes' ${TEST_HIDE_T2} ORDER BY m.id LIMIT 20`)).rows;
         const c = await cfg();
         for (const r of rows) {
             await pool.query(`UPDATE sms_messages SET bucket = 'photo' WHERE id = $1`, [r.id]);
@@ -632,12 +642,12 @@ module.exports = function mountSms(app, deps) {
         const re = await pool.query(`UPDATE sms_messages SET state = 'queued' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NULL AND created_at < now() - interval '2 minutes' ${TEST_SKIP_M} RETURNING id`);
         out.requeued = re.rowCount || 0;
         // ③ 202 뒤 ttl+10분이 지나도 sms:sent/failed 가 안 옴 → 보내지 못함으로 + 직원 몫
-        const lost = await pool.query(`UPDATE sms_messages SET state = 'failed', fail_reason = 'no_result' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NOT NULL AND sent_at < now() - make_interval(secs => $1::int) RETURNING thread_id, id`, [c.ttl_sec + 600]);
+        const lost = await pool.query(`UPDATE sms_messages SET state = 'failed', fail_reason = 'no_result' WHERE direction = 'out' AND state = 'sending' AND sent_at IS NOT NULL AND sent_at < now() - make_interval(secs => $1::int) ${TEST_HIDE_MSG} RETURNING thread_id, id`, [c.ttl_sec + 600]);
         for (const r of lost.rows) { await setThread(r.thread_id, { status: 'staff_needed', last_out_state: 'failed', staff_why: 'send_failed' }); if (c.enabled) await notifyStaff(c, { id: r.thread_id }, '문자 · 보낸 결과가 안 와요(폰 꺼짐?)', STAFF_MSG); }
         out.no_result = lost.rowCount || 0;
         // ⑤ 직원이 답한 뒤(staff_replied) staff_lock_hours 지나면 저절로 「끝남」 — 끝내기를 안 눌러도 다음 문자부터 봇이 다시 답함(대표 확정 10/10 · 「직원 몫」(staff_needed · 아직 아무도 안 답함)은 그대로)
         if (c.staff_lock_hours > 0) {
-            const rel = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_replied' AND COALESCE(handled_at, updated_at) < now() - make_interval(hours => $1::int) RETURNING id`, [c.staff_lock_hours]);
+            const rel = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_replied' AND COALESCE(handled_at, updated_at) < now() - make_interval(hours => $1::int) ${TEST_HIDE} RETURNING id`, [c.staff_lock_hours]);
             out.auto_closed = rel.rowCount || 0;
         }
         // #625(대표 「고」 10/10): 직원 몫(staff_needed · 아무도 안 답함)도 손님 마지막 글 뒤 staff_open_hours 지나면 저절로 끝남 — [처리함]을 안 눌러도 봇이 영영 침묵하지 않게(직원은 폰에서 답하는 구조)
@@ -649,7 +659,7 @@ module.exports = function mountSms(app, deps) {
         if (c.enabled && c.mode !== 'record') {   // record 모드는 new 가 정상 종착(워커2 ops 검증)
             const stuck = await pool.query(`UPDATE sms_threads t SET status = 'staff_needed', staff_why = COALESCE(t.staff_why, 'stuck') WHERE t.status = 'new' AND t.last_in_at IS NOT NULL AND t.last_in_at < now() - interval '2 minutes'
                 AND EXISTS (SELECT 1 FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' AND COALESCE(m.bucket, 'other') NOT IN ('otp','ad','carrier','greeting','photo_pending') AND m.created_at < now() - interval '2 minutes')
-                AND NOT EXISTS (SELECT 1 FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'out') AND t.created_at > now() - interval '1 day' RETURNING id`);
+                AND NOT EXISTS (SELECT 1 FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'out') AND t.created_at > now() - interval '1 day' ${TEST_HIDE_T2} RETURNING id`);   // #648: 검증이 옛 시각으로 넣은 시험 대화를 라이브가 집어 「처리되지 않은 글」 헛알림을 보냈음
             for (const r of stuck.rows) await notifyStaff(c, { id: r.id }, '문자 · 처리되지 않은 글이 있어요', STAFF_MSG);
             out.stuck_new = stuck.rowCount || 0;
         }
@@ -663,7 +673,7 @@ module.exports = function mountSms(app, deps) {
             if (!c.enabled) return null;
             try { await sweepStuck(); } catch (e) { log.error('[문자] 멈춘 줄 정리 실패(무시):', e.message); }
             // 시간당 상한은 봇 답에만(직원 답이 막히지 않게) · 걸리면 텔레그램 1시간 1회
-            const hourN = (await pool.query(`SELECT count(*)::int AS n FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered','sending') AND sent_at > now() - interval '1 hour'`)).rows[0].n;
+            const hourN = (await pool.query(`SELECT count(*)::int AS n FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered','sending') AND sent_at > now() - interval '1 hour' ${TEST_HIDE_MSG}`)).rows[0].n;
             const botCapHit = hourN >= c.hourly_send_cap;
             if (botCapHit && Date.now() - _capAlertAt > 3600e3) { _capAlertAt = Date.now(); if (notifyTelegram) await notifyTelegram(`⚠️ 회사폰 문자 봇 답이 시간당 상한(${c.hourly_send_cap})에 걸렸어요 — 봇 답은 멈추고 직원 답만 나가요`); }
             const rows = (await pool.query(`SELECT m.*, t.phone_digits, t.status AS thread_status FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id
@@ -750,7 +760,7 @@ module.exports = function mountSms(app, deps) {
             let ojCleared = 0;
             try { ojCleared = (await pool.query(`UPDATE sms_threads SET order_json = (order_json #- '{order,recipient_name}') #- '{order,trackings}'
                 WHERE order_json IS NOT NULL AND (order_json #> '{order,recipient_name}' IS NOT NULL OR order_json #> '{order,trackings}' IS NOT NULL)
-                  AND COALESCE(GREATEST(last_in_at, last_out_at), updated_at) < now() - interval '60 days'`)).rowCount || 0; } catch (e) { log.error('[문자] 주문 칸 이름·송장 비우기 실패(무시):', e.message); }
+                  AND COALESCE(GREATEST(last_in_at, last_out_at), updated_at) < now() - interval '60 days' ${TEST_HIDE}`)).rowCount || 0; } catch (e) { log.error('[문자] 주문 칸 이름·송장 비우기 실패(무시):', e.message); }
             const result = { date: kstDate(), order_json_cleared: ojCleared, sms_images: r.rowCount || 0, preorders: pre, selfcheck_hits: hits, shipments_target: target, shipments_deleted: shipDeleted, status_deleted: statusDeleted, purge_shipments: raw.purge_shipments === true };
             await naverCfgSet('sms_retention_last', result);
             if ((r.rowCount || 0) + shipDeleted > 0) await writeAudit({ action: 'purge', targetType: 'sms_retention', changes: { after: result }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } });
@@ -789,7 +799,7 @@ module.exports = function mountSms(app, deps) {
             catch (err) {
                 log.error('[문자] 받은 글 처리 실패:', err.message);
                 try { if (e.digits) { const t = await threadFor(e.digits); await setThread(t.id, { status: 'staff_needed', last_in_at: new Date(), last_in_text: String(e.body || '').slice(0, 300) }); const c = await cfg(); if (c.enabled) await notifyStaff(c, t, `문자 · 끝 ${phoneTail(e.digits)} 처리 중 오류 · 직접 확인`, STAFF_MSG, { force: true }); } } catch (_) { }
-                if (notifyTelegram) { try { await notifyTelegram('⚠️ 회사폰 문자 처리 중 오류: ' + String(err.message).slice(0, 120)); } catch (_) { } }
+                if (notifyTelegram && (deps.testMode || !isTestDigits(e.digits))) { try { await notifyTelegram('⚠️ 회사폰 문자 처리 중 오류: ' + String(err.message).slice(0, 120)); } catch (_) { } }
                 return { ok: false, event: e.ev, error: String(err.message).slice(0, 200), action: 'error_to_staff' };
             }
         };
@@ -835,20 +845,20 @@ module.exports = function mountSms(app, deps) {
         last_at: (t.last_out_at && (!t.last_in_at || new Date(t.last_out_at) > new Date(t.last_in_at))) ? t.last_out_at : (t.last_in_at || null), staff_name: t.staff_name || null, handled_at: t.handled_at, bot_count_today: botCountToday(t), last_out_state: t.last_out_state || null });
     // #635: 안 읽음 = 직원이 마지막으로 연 뒤(staff_read_at) 들어온 손님 글 수 — 서버가 받은 시각(created_at) 기준(폰 시계·늦은 재시도와 무관)
     const UNREAD_SQL = `(SELECT count(*)::int FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' AND m.created_at > COALESCE(t.staff_read_at, 'epoch'::timestamptz))`;
-    const ACTIVE_SQL = `t.status <> 'ignored' AND ${UNREAD_SQL} > 0`;   // 목록(scope=active): 안 읽은 글이 있는 대화 · 인증번호·광고·통신사만 온 번호(ignored)는 뺀다
+    const ACTIVE_SQL = `t.status <> 'ignored' AND ${UNREAD_SQL} > 0 ${TEST_HIDE_T2}`;   // 목록(scope=active): 안 읽은 글이 있는 대화 · 인증번호·광고·통신사만 온 번호(ignored)는 뺀다
     app.get('/api/sms/summary', authMiddleware, wrap(async (req, res) => {
         const c = await cfg(); const st = (await naverCfgGet('sms_gateway_state')) || {};
         const today = kstDate();
         const r = (await pool.query(`SELECT
-            (SELECT count(*)::int FROM sms_threads WHERE status = 'staff_needed') AS staff_needed,
-            (SELECT count(*)::int FROM sms_threads WHERE draft_text IS NOT NULL AND status NOT IN ('closed','ignored')) AS drafts,
+            (SELECT count(*)::int FROM sms_threads WHERE status = 'staff_needed' ${TEST_HIDE}) AS staff_needed,
+            (SELECT count(*)::int FROM sms_threads WHERE draft_text IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS drafts,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread_threads,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND t.staff_why IS NOT NULL AND t.status <> 'closed') AS needs_staff,
-            (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date) AS today_in,
-            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date) AS today_bot,
-            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender IN ('gateway_other','staff_desk') AND (event_at + interval '9 hours')::date = $1::date) AS today_staff`, [today])).rows[0];
+            (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_in,
+            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_bot,
+            (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender IN ('gateway_other','staff_desk') AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_staff`, [today])).rows[0];
         const lastPing = Math.max(st.last_ping_at ? new Date(st.last_ping_at).getTime() : 0, st.last_event_at ? new Date(st.last_event_at).getTime() : 0);
-        const counts = {}; for (const row of (await pool.query(`SELECT status, count(*)::int AS n FROM sms_threads GROUP BY status`)).rows) counts[row.status] = row.n;   // 숫자 칸(워커1 계약 제안 1)
+        const counts = {}; for (const row of (await pool.query(`SELECT status, count(*)::int AS n FROM sms_threads WHERE TRUE ${TEST_HIDE} GROUP BY status`)).rows) counts[row.status] = row.n;   // 숫자 칸(워커1 계약 제안 1)
         res.json(Object.assign({ enabled: c.enabled, mode: c.mode, counts }, r, { gateway: { last_ping_at: st.last_ping_at || null, alive: !!lastPing && Date.now() - lastPing < c.ping_alert_hours * 3600e3 } }));
     }));
     app.get('/api/sms/threads', authMiddleware, wrap(async (req, res) => {
@@ -869,6 +879,7 @@ module.exports = function mountSms(app, deps) {
             else if (!qt) where.push('FALSE');   // 숫자 1~2자리뿐 = 찾지 않음
             else { args.push('%' + qt.replace(/[\\%_]/g, '\\$&') + '%'); where.push(`(t.last_in_text ILIKE $${args.length} ESCAPE '\\' OR t.last_out_text ILIKE $${args.length} ESCAPE '\\' OR EXISTS (SELECT 1 FROM sms_messages x WHERE x.thread_id = t.id AND x.body ILIKE $${args.length} ESCAPE '\\'))`); }   // #635 「이전 대화 보기」 검색 = 오간 글 전체에서
         }
+        if (!deps.testMode) where.push(`t.phone_digits NOT LIKE '0999%'`);   // #648: 목록 전 갈래(active·all·찾기·상태)에서 시험 번호 대화를 뺀다(대화 한 건 조회는 id 직접이라 그대로)
         args.push(limit);
         const rows = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE ${where.join(' AND ')} ORDER BY COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT $${args.length}`, args)).rows;
         res.json({ scope: (hasStatus && status !== 'all') ? 'status' : q ? 'all' : (scope || 'legacy'), items: rows.map(pub) });
@@ -955,7 +966,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

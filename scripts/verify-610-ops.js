@@ -28,6 +28,9 @@ async function cleanup() {
     await pool.query(`DELETE FROM delivery_shipments WHERE tracking LIKE '9996000000%'`);
 }
 
+// #648: 끊어도(Ctrl+C) 시험 줄을 지운다 — 남은 시험 대화가 라이브 화면에 뜨지 않게
+let _stopping = false;
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () => { if (_stopping) return; _stopping = true; console.log('끊김 — 시험 줄을 지웁니다'); try { await cleanup(); await pool.end(); } catch (_) { } process.exit(130); });
 (async () => {
     // ── 가짜 의존 ──
     const cfgStore = { sms_gateway: { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 70, staff_ids: [1], cooldown_min: 30, daily_cap: 1, ttl_sec: 600, image_days: 30, ping_alert_hours: 3 }, db_retention: { enabled: true } };
