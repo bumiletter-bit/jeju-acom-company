@@ -75,7 +75,7 @@ const tmp = o => { const f = path.join(os.tmpdir(), 'v474-' + Math.random().toSt
         ok('창구 뽑기에도 손님 식별값 없음', !p.out.includes('v474-'));
 
         // 보내기 안전장치 — 실서버 배달부가 집지 않도록 전부 「막히는 경우」만 시험한다
-        const mkOrder = async (text, status) => { const r = await pool.query(`INSERT INTO pending_orders (content, status, created_by, created_by_id) VALUES ($1, $2, $3, $4) RETURNING id`, [text, status, boss.name, boss.id]); made.orders.push(r.rows[0].id); return r.rows[0].id; };
+        const mkOrder = async (text, status) => { const r = await pool.query(`INSERT INTO pending_orders (content, status, created_by, created_by_id) VALUES ($1, $2, $3, $4) RETURNING id`, [text, status, '시험474', 990474]); made.orders.push(r.rows[0].id); return r.rows[0].id; };   // #638: 시험 번호 계정 이름으로(대표 화면·상태 카드에 안 뜨게)
         const oTest = await mkOrder('[검증469] 그대로 보내', '처리중');
         const s1 = desk('talk-send.js', oTest, tmp({ items: [{ talk_no: a, text: '검증용 글' }] }));
         ok('시험 지시로는 손님에게 보내지 않는다', !s1.ok && /시험 지시/.test(s1.out));
@@ -94,12 +94,14 @@ const tmp = o => { const f = path.join(os.tmpdir(), 'v474-' + Math.random().toSt
         const s4 = desk('talk-send.js', oReal, tmp({ items: [{ talk_no: a, text: '검증용 글' }] }));
         const j4 = s4.ok ? JSON.parse(s4.out) : { results: [{}] };
         ok('그 사이 직원이 답한 손님에게는 보내지 않는다', s4.ok && j4.sent === 0 && /이미 답했습니다/.test(j4.results[0].error || ''));
+        const leak = (await pool.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE id = ANY($1::int[]) AND created_by_id IN (SELECT id FROM users)`, [made.orders])).rows[0].c;
+        ok('#638 실행 도중 실제 계정 이름으로 들어간 시험 지시 0', leak === 0 && made.orders.length === 3, leak + '건');
         const q = (await pool.query(`SELECT COUNT(*)::int c FROM talk_outbox WHERE order_id = ANY($1::int[])`, [made.orders])).rows[0].c;
         ok('검증 중 「보낼 글」 표에 올라간 것 0건(손님에게 나간 것 없음)', q === 0, q + '건');
 
         // 요금 나누기 — 대기 프로그램 코드의 판정식을 그대로 실행
         const src = fs.readFileSync(path.join(ROOT, 'scripts', 'desk', 'launcher.js'), 'utf8');
-        ok('대기 프로그램: 대표 지시는 키 없이 · 나머지는 콘솔 키', /await handle\(o, \(st\.sub \|\| mine\) \? null : key\);/.test(src) && /username = 'admin'/.test(src) && /created_by_id/.test(src));
+        ok('대기 프로그램: 대표 지시는 키 없이 · 나머지는 콘솔 키', /handle\(o, \(st\.sub \|\| mine\) \? null : key\)/.test(src) && /username = 'admin'/.test(src) && /created_by_id/.test(src));
         const ids = (await pool.query(`SELECT id FROM users WHERE username = 'admin' AND deleted_at IS NULL`)).rows.map(r => r.id);
         const jo = users.find(u => u.role === 'admin' && u.username !== 'admin');
         ok('대표 요금제 대상 = 대표 한 명(조가영·직원은 콘솔)', ids.length === 1 && ids[0] === boss.id && (!jo || !ids.includes(jo.id)) && (!staff || !ids.includes(staff.id)), '대표 id ' + ids.join(','));
@@ -114,7 +116,7 @@ const tmp = o => { const f = path.join(os.tmpdir(), 'v474-' + Math.random().toSt
     finally {
         srv.kill();
         if (made.logs.length) await pool.query(`DELETE FROM message_logs WHERE id = ANY($1::int[]) AND user_id LIKE 'v474-%'`, [made.logs]);
-        if (made.orders.length) await pool.query(`UPDATE pending_orders SET is_deleted = true WHERE id = ANY($1::int[])`, [made.orders]);
+        if (made.orders.length) await pool.query(`UPDATE pending_orders SET is_deleted = true, mine_hidden = true, hist_hidden = true, status = CASE WHEN status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨') THEN '취소' ELSE status END WHERE id = ANY($1::int[])`, [made.orders]);   // #638: 상태(처리중)까지 닫는다
         const left = (await pool.query(`SELECT COUNT(*)::int c FROM message_logs WHERE user_id LIKE 'v474-%'`)).rows[0].c;
         ok('시험 흔적 정리', left === 0);
         await pool.end();

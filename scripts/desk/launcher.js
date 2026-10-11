@@ -421,6 +421,7 @@ async function nextOrder(onlyId) {
         `SELECT ${ORDER_COLS} FROM pending_orders o
          WHERE o.is_deleted = false AND o.status IN ('대기', '승인됨')
            AND o.content NOT LIKE '[검증469]%'
+           AND COALESCE(o.created_by_id, 0) < 990000   -- #638: 시험 번호 계정 지시는 스스로 집지 않는다(번호를 집어 주는 --ids 길은 그대로)
          ORDER BY (o.status = '승인됨') DESC, o.id ASC LIMIT 20`);
     // #503 같은 사람의 지시는 한 번에 하나(이어서 지시가 앞 답을 받아야 하므로 차례를 지킨다) · 돌고 있는 건 제외 · 중간발주(바로 처리)는 조회 통로가 하나라 한 번에 하나
     for (const o of r.rows) if (!blocked(o)) return o;

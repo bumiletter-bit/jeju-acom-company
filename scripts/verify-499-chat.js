@@ -375,7 +375,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         const bd = pg => pg.evaluate(() => { const b = document.getElementById('desk-board-fold'), s = document.getElementById('desk-board'); const vis = el => !!el && el.getClientRects().length > 0; return { btn: vis(b), text: b ? b.textContent.trim() : '', exp: b ? b.getAttribute('aria-expanded') : null, board: vis(s), panels: s ? s.querySelectorAll('.desk-panel').length : 0, folded: s ? s.classList.contains('folded') : null, btnH: b ? Math.round(b.getBoundingClientRect().height) : 0, order: Array.from(document.querySelectorAll('#ao-desk-root .desk-main > section')).map(x => x.id || x.className.split(' ')[0]) }; });
         const b14 = await bd(A.pg);
         ok('1440px — 현황판 접기 버튼 안 보임 · 현황판은 늘 보임(4칸)', !b14.btn && b14.board && b14.panels === 4, JSON.stringify(b14));
-        ok('칸 순서 그대로(지시하기 → 지시 목록 → 확인 필요 문의 → 현황판)', JSON.stringify(b14.order) === '["desk-top","desk-listbox","desk-inbox","desk-board"]', JSON.stringify(b14.order));
+        ok('칸 순서 그대로(지시하기 → 지시 목록 → 확인 필요 문의 → 현황판)', JSON.stringify(b14.order) === '["desk-top","desk-ship","desk-qty","desk-sms","desk-listbox","desk-inbox","desk-board"]'   /* 도구 카드 칸(#594 배송조회 · #595 중간발주 · #610 문자)은 접힌 section 으로 늘 있다 */, JSON.stringify(b14.order));
         ok('1440px — pageerror 0 · console error 0', A.errors.length === 0 && A.cons.length === 0, [...A.errors, ...A.cons].join(' | ').slice(0, 400));
         const otherWrites = A.st.writes.filter(w => !/\/orders(\/\d+\/(reply|hide-mine|approve|reject))?$/.test(w.p));
         info('가로챈 쓰기 요청 ' + A.st.writes.length + '건(전부 실서버 미도달)' + (otherWrites.length ? ' · 예상 밖: ' + otherWrites.map(w => w.m + ' ' + w.p).join(', ') : ''));
@@ -438,7 +438,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         await sleep(300);
         const p2 = await bd(P.pg);
         ok('다시 누름 → 접힘', !p2.board && p2.text === '현황판 보기' && p2.exp === 'false');
-        ok('390px — 칸 순서 그대로(버튼은 section이 아님)', JSON.stringify(p0.order) === '["desk-top","desk-listbox","desk-inbox","desk-board"]', JSON.stringify(p0.order));
+        ok('390px — 칸 순서 그대로(버튼은 section이 아님)', JSON.stringify(p0.order) === '["desk-top","desk-ship","desk-qty","desk-sms","desk-listbox","desk-inbox","desk-board"]'   /* 도구 카드 칸(#594 배송조회 · #595 중간발주 · #610 문자)은 접힌 section 으로 늘 있다 */, JSON.stringify(p0.order));
         ok('390px — pageerror 0 · console error 0', P.errors.length === 0 && P.cons.length === 0, [...P.errors, ...P.cons].join(' | ').slice(0, 400));
         await P.ctx.close();
         // ════ #500 서버 reply 라우트 실검증(실DB · [검증469] 시험 지시 2건만 — 끝에 숨김·취소)
@@ -447,11 +447,13 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
             const db2 = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
             await db2.connect();
             const made = [];
+            // #638: 시험 지시는 시험 번호 계정 이름으로(대표 화면에 안 뜨게) — reply 라우트는 본인·대표만 이어서 지시할 수 있어 시험 번호 본인 토큰으로 부른다
+            const G = { id: 990499, name: '시험499', position: '대표', role: 'admin' }; const tokG = jwt.sign(G, 'verifytest', { expiresIn: '20m' });
             try {
                 const PNG_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-                const parent = (await db2.query(`INSERT INTO pending_orders (content, status, created_by, created_by_id, result, processed_at) VALUES ($1, '완료', $2, $3, $4, NOW()) RETURNING id`, ['[검증469] #500 부모 지시', user.name, user.id, JSON.stringify({ type: 'desk_answer', answer: '시험 답' })])).rows[0].id;
+                const parent = (await db2.query(`INSERT INTO pending_orders (content, status, created_by, created_by_id, result, processed_at) VALUES ($1, '완료', $2, $3, $4, NOW()) RETURNING id`, ['[검증469] #500 부모 지시', G.name, G.id, JSON.stringify({ type: 'desk_answer', answer: '시험 답' })])).rows[0].id;
                 made.push(parent);
-                const call = async body => { const r = await fetch(`http://localhost:${PORT}/api/agent-office/orders/${parent}/reply`, { method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json', Connection: 'close' }, body: JSON.stringify(body) }); let j = null; try { j = await r.json(); } catch (_) { } return { status: r.status, j }; };
+                const call = async body => { const r = await fetch(`http://localhost:${PORT}/api/agent-office/orders/${parent}/reply`, { method: 'POST', headers: { Authorization: 'Bearer ' + tokG, 'Content-Type': 'application/json', Connection: 'close' }, body: JSON.stringify(body) }); let j = null; try { j = await r.json(); } catch (_) { } return { status: r.status, j }; };
                 const cnt = async () => (await db2.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE reply_to = $1`, [parent])).rows[0].c;
                 const e1 = await call({ content: '', image_data: '' });
                 ok('#500 서버: 글·이미지 둘 다 없으면 400', e1.status === 400 && (await cnt()) === 0, `${e1.status} ${e1.j && (e1.j.error || e1.j.message) || ''}`);
@@ -462,14 +464,16 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
                 const okr = await call({ content: '[검증469] #500 이어서(이미지)', image_data: PNG_URL, image_mime: 'image/png' });
                 const nid = okr.j && okr.j.order && okr.j.order.id; if (nid) made.push(nid);
                 const row = nid ? (await db2.query(`SELECT status, reply_to, created_by_id, image_mime, (image_data = $2) AS same, content FROM pending_orders WHERE id = $1`, [nid, PNG_URL])).rows[0] : null;
-                ok('#500 서버: 이미지 붙인 이어서 지시 = 200 · 새 지시(대기)에 reply_to·image_data(보낸 값 그대로)·image_mime 저장 · 부모는 완료 그대로', okr.status === 200 && !!row && row.status === '대기' && row.reply_to === parent && row.same === true && row.image_mime === 'image/png' && row.created_by_id === user.id && (await db2.query(`SELECT status FROM pending_orders WHERE id=$1`, [parent])).rows[0].status === '완료', JSON.stringify(row && { status: row.status, reply_to: row.reply_to, same: row.same, mime: row.image_mime }));
-                const lst = await fetch(`http://localhost:${PORT}/api/agent-office/desk/orders?limit=200`, { headers: { Authorization: 'Bearer ' + tok, Connection: 'close' } }).then(r => r.json());
+                ok('#500 서버: 이미지 붙인 이어서 지시 = 200 · 새 지시(대기)에 reply_to·image_data(보낸 값 그대로)·image_mime 저장 · 부모는 완료 그대로', okr.status === 200 && !!row && row.status === '대기' && row.reply_to === parent && row.same === true && row.image_mime === 'image/png' && row.created_by_id === G.id && (await db2.query(`SELECT status FROM pending_orders WHERE id=$1`, [parent])).rows[0].status === '완료', JSON.stringify(row && { status: row.status, reply_to: row.reply_to, same: row.same, mime: row.image_mime }));
+                const lst = await fetch(`http://localhost:${PORT}/api/agent-office/desk/orders?limit=200`, { headers: { Authorization: 'Bearer ' + tokG, Connection: 'close' } }).then(r => r.json());
                 const li = (lst.orders || []).find(o => o.id === nid), lp = (lst.orders || []).find(o => o.id === parent);
                 ok('#500 서버: 목록 응답에 has_image=true·reply_to · 이미지 원문은 안 내려감 · 부모의 followed_by = 새 지시', !!li && li.has_image === true && li.reply_to === parent && li.image_data === undefined && !!lp && lp.followed_by === nid, JSON.stringify(li && { has_image: li.has_image, reply_to: li.reply_to }));
+                const lstReal = await fetch(`http://localhost:${PORT}/api/agent-office/desk/orders?limit=200`, { headers: { Authorization: 'Bearer ' + tok, Connection: 'close' } }).then(r => r.json());
+                ok('#638 실제 대표 토큰의 전체 지시 목록에는 시험 번호 지시가 없음', Array.isArray(lstReal.orders) && !lstReal.orders.some(o => o.id === nid || o.id === parent), String((lstReal.orders || []).length));
             } catch (e) { ok('#500 서버 라우트 검증 실행', false, e.message); }
             finally {
                 if (made.length) {
-                    await db2.query(`UPDATE pending_orders SET is_deleted = true, status = '취소' WHERE id = ANY($1::int[])`, [made]);
+                    await db2.query(`UPDATE pending_orders SET is_deleted = true, mine_hidden = true, hist_hidden = true, status = CASE WHEN status IN ('대기','처리중','질문','승인대기','승인됨') THEN '취소' ELSE status END WHERE id = ANY($1::int[])`, [made]);
                     const left = (await db2.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE id = ANY($1::int[]) AND is_deleted = false`, [made])).rows[0].c;
                     ok('#500 시험 지시 ' + made.length + '건 정리(숨김·취소)', left === 0 && made.length === 2, made.join(','));
                 }

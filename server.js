@@ -100,6 +100,14 @@ function adminOnly(req, res, next) {
 }
 // #561(대표 10/6): 관리자 계정 가운데 「대표만」 — 조가영 과장(관리자·경리)은 정산·지출결의는 그대로 쓰되 남의 채팅 이력·승인 결재함·데이터관리는 막는다
 const isOwnerUser = u => !!u && u.role === 'admin' && u.position === '대표';
+// #638(대표 「고」 10/11): 검증이 넣는 시험 지시는 「시험 번호 계정」(created_by_id ≥ 990000 · 실제 계정은 한참 아래) 이름으로 넣는다 → 실제 사용자의 목록·이력·상태 카드·알림·「응/아니오」 짝짓기에 끼지 않는다.
+//   규칙은 여기 한 곳. 시험 번호 본인이 볼 때는 자기 것이 보여야 하므로(검증이 「내 지시」를 본다) 보는 사람이 시험 번호면 거르지 않는다.
+const DESK_TEST_UID_MIN = 990000;
+const deskIsTestUid = id => Number(id) >= DESK_TEST_UID_MIN;
+const deskNoTestSql = (alias, viewerId) => deskIsTestUid(viewerId) ? '' : ` AND COALESCE(${alias ? alias + '.' : ''}created_by_id, 0) < ${DESK_TEST_UID_MIN}`;   // SQL 조각(숫자 상수만 · 자리표 없음)
+const deskRunNoTestSql = (alias, viewerId) => deskIsTestUid(viewerId) ? '' : ` AND NOT EXISTS (SELECT 1 FROM pending_orders tp WHERE tp.run_id = ${alias || 'agent_runs'}.id AND COALESCE(tp.created_by_id, 0) >= ${DESK_TEST_UID_MIN})`;   // 시험 번호 지시의 실행 기록 제외(alias 가 비면 표 이름으로 — 안쪽 tp.id 로 읽히지 않게)
+const deskRunSameSideSql = (alias, viewerId) => ` AND (EXISTS (SELECT 1 FROM pending_orders tp WHERE tp.run_id = ${alias || 'agent_runs'}.id AND COALESCE(tp.created_by_id, 0) >= ${DESK_TEST_UID_MIN})) = ${deskIsTestUid(viewerId) ? 'TRUE' : 'FALSE'}`;   // 실행 기록도 시험은 시험끼리 · 실제는 실제끼리
+const deskSameSideSql = (alias, viewerId) => ` AND (COALESCE(${alias ? alias + '.' : ''}created_by_id, 0) >= ${DESK_TEST_UID_MIN}) = ${deskIsTestUid(viewerId) ? 'TRUE' : 'FALSE'}`;   // 「응/아니오」 짝: 시험은 시험끼리 · 실제는 실제끼리
 function ownerOnly(req, res, next) {
     if (!isOwnerUser(req.user)) return res.status(403).json({ error: '대표만 할 수 있습니다' });
     next();
@@ -6956,7 +6964,7 @@ app.get('/api/agent-office/agents', authMiddleware, /* 직원 가능 (대표 7/2
              WHERE is_deleted = false AND status = 'active' GROUP BY agent_id`)).rows;
         const lastRuns = (await pool.query(
             `SELECT DISTINCT ON (agent_id) agent_id, id, status, result, started_at, finished_at
-             FROM agent_runs WHERE is_deleted = false AND is_test = false ORDER BY agent_id, started_at DESC`)).rows;
+             FROM agent_runs WHERE is_deleted = false AND is_test = false${deskRunNoTestSql('', req.user.id)} ORDER BY agent_id, started_at DESC`)).rows;   // #638
         const merged = agents.map(a => ({
             ...a,
             tools: tools.filter(t => t.agent_id === a.id),
@@ -6982,7 +6990,7 @@ app.get('/api/agent-office/agents/:id', authMiddleware, /* 직원 가능 (대표
         const runs = (await pool.query(
             `SELECT id, status, steps, result, started_at, finished_at, COALESCE(is_deleted, false) AS is_deleted
              FROM agent_runs
-             WHERE agent_id = $1 AND is_test = false ORDER BY started_at DESC LIMIT 8`, [agent.id])).rows;
+             WHERE agent_id = $1 AND is_test = false${deskRunNoTestSql('', req.user.id)} ORDER BY started_at DESC LIMIT 8`, [agent.id])).rows;   // #638
         const feedback = (await pool.query(
             `SELECT f.id, f.run_id, f.feedback_type, f.comment, f.corrected_output, f.created_at,
                     r.result->>'summary' AS run_summary
@@ -7001,7 +7009,7 @@ app.post('/api/agent-office/agents/:id/run', authMiddleware, adminOnly, async (r
         if (!agent.is_active) throw { status: 400, message: '비활성 상태의 에이전트입니다' };
         if (agent.role !== 'worker') throw { status: 400, message: '1차에서는 팀원(worker)만 실행 가능합니다. 실장·팀장 실행은 다음 업데이트에서 연결 예정입니다.' };
         const running = await pool.query(
-            `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false LIMIT 1`, [agent.id]);
+            `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false${deskRunNoTestSql('', null)} LIMIT 1`, [agent.id]);   // #638
         if (running.rows.length > 0) throw { status: 409, message: '이미 실행 중인 작업이 있습니다' };
         const mgr = await pool.query(
             `SELECT name FROM agents WHERE team = $1 AND role = 'manager' AND is_deleted = false AND is_active = true LIMIT 1`, [agent.team]);
@@ -11165,6 +11173,7 @@ app.get('/api/agent-office/runs', authMiddleware, /* 직원 가능 (대표 7/26 
         const cond = [req.query.include_archived === 'true' ? 'TRUE' : 'r.is_deleted = false'];
         // 1-4: 역량 테스트 실행분은 보고서함·LIVE 로그에서 제외 — 성적표 화면(only_test)에서만 조회
         cond.push(req.query.only_test === 'true' ? 'r.is_test = true' : 'r.is_test = false');
+        cond.push('TRUE' + deskRunNoTestSql('r', req.user.id));   // #638 시험 번호 지시의 실행 기록은 실제 사용자 목록에서 뺌
         const params = [];
         if (req.query.agent_id) { params.push(req.query.agent_id); cond.push(`r.agent_id = $${params.length}`); }
         if (req.query.team) { params.push(req.query.team); cond.push(`a.team = $${params.length}`); }
@@ -13013,7 +13022,7 @@ async function maruTryScheduleConfirm(order, actor) {
         `SELECT * FROM pending_orders
          WHERE status = '질문' AND is_deleted = false
            AND result->>'type' IN ('schedule_confirm', 'settlement_confirm', 'query_confirm')
-           AND created_at > NOW() - interval '1 hour' AND id != $1
+           AND created_at > NOW() - interval '1 hour' AND id != $1${deskSameSideSql('', order.created_by_id)}
          ORDER BY created_at DESC LIMIT 1`, [order.id]);
     const pending = pendingQ.rows[0];
     if (!pending) return false;
@@ -13090,7 +13099,7 @@ async function dispatchLiveAgent(order, route, conditions, actor, mirrorOrderId 
 
     // 연결된 요원(세미) → 실제 실행 (기존 실행 파이프라인 재사용)
     const running = await pool.query(
-        `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false LIMIT 1`, [agent.id]);
+        `SELECT id FROM agent_runs WHERE agent_id = $1 AND status = 'running' AND is_deleted = false${deskRunNoTestSql('', null)} LIMIT 1`, [agent.id]);   // #638
     if (running.rows.length > 0) {
         await finish('안내', {
             ...routeInfo,
@@ -13330,7 +13339,7 @@ async function maruTrySettlementPartnerReply(order, actor) {
     const pend = (await pool.query(
         `SELECT * FROM pending_orders WHERE status='질문' AND is_deleted=false
            AND result->>'type' = 'settlement_ocr_need_partner'
-           AND created_at > NOW() - interval '1 hour' AND id != $1
+           AND created_at > NOW() - interval '1 hour' AND id != $1${deskSameSideSql('', order.created_by_id)}
          ORDER BY created_at DESC LIMIT 1`, [order.id])).rows[0];
     if (!pend) return false;
     const readItems = (pend.result && pend.result.read_items) || [];
@@ -13395,7 +13404,7 @@ async function maruTrySettlementOcrConfirm(order, actor) {
     const pend = (await pool.query(
         `SELECT * FROM pending_orders WHERE status='질문' AND is_deleted=false
            AND result->>'type' = 'settlement_ocr_confirm'
-           AND created_at > NOW() - interval '1 hour' AND id != $1
+           AND created_at > NOW() - interval '1 hour' AND id != $1${deskSameSideSql('', order.created_by_id)}
          ORDER BY created_at DESC LIMIT 1`, [order.id])).rows[0];
     if (!pend) return false;
     const r = pend.result;
@@ -13451,7 +13460,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         const pqRow = (await pool.query(
             `SELECT id, content, result FROM pending_orders
              WHERE status='질문' AND is_deleted=false AND id != $1
-               AND created_at > NOW() - interval '1 hour' AND result->>'type' = 'clarify'
+               AND created_at > NOW() - interval '1 hour' AND result->>'type' = 'clarify'${deskSameSideSql('', order.created_by_id)}
              ORDER BY id DESC LIMIT 1`, [order.id])).rows[0];
         if (pqRow) {
             combinedFrom = pqRow;
@@ -13469,7 +13478,7 @@ async function processOrderWithMaru(order, actor, opts = {}) {
             const openRows = (await pool.query(
                 `SELECT o.id, o.content, o.result, r.result AS run_result
                  FROM pending_orders o JOIN agent_runs r ON o.run_id = r.id
-                 WHERE o.is_deleted=false AND o.status='완료' AND o.id != $1
+                 WHERE o.is_deleted=false AND o.status='완료' AND o.id != $1${deskSameSideSql('o', order.created_by_id)}
                    AND o.created_at > NOW() - interval '1 hour'
                    AND r.is_deleted = false AND r.status='done'
                    AND o.result->>'type' = 'route'
@@ -13495,9 +13504,9 @@ async function processOrderWithMaru(order, actor, opts = {}) {
         const superseded = await pool.query(
             pqRow
                 ? `UPDATE pending_orders SET status='대체됨', processed_at=NOW()
-                   WHERE status='질문' AND is_deleted=false AND id != $1 AND id != $2 RETURNING id`
+                   WHERE status='질문' AND is_deleted=false AND id != $1 AND id != $2${deskSameSideSql('', order.created_by_id)} RETURNING id`
                 : `UPDATE pending_orders SET status='대체됨', processed_at=NOW()
-                   WHERE status='질문' AND is_deleted=false AND id != $1 RETURNING id`,
+                   WHERE status='질문' AND is_deleted=false AND id != $1${deskSameSideSql('', order.created_by_id)} RETURNING id`,
             pqRow ? [order.id, pqRow.id] : [order.id]);
         for (const row of superseded.rows) {
             await writeAudit({
@@ -13658,8 +13667,8 @@ async function processOrderWithMaru(order, actor, opts = {}) {
                 return;
             }
             const lastRun = await pool.query(
-                `SELECT id, result FROM agent_runs WHERE agent_id = $1 AND status = 'done' AND is_deleted = false AND is_test = false
-                 ORDER BY started_at DESC LIMIT 1`, [target.id]);
+                `SELECT id, result FROM agent_runs WHERE agent_id = $1 AND status = 'done' AND is_deleted = false AND is_test = false${deskRunSameSideSql('', order.created_by_id)}
+                 ORDER BY started_at DESC LIMIT 1`, [target.id]);   // #638
             const kindMap = { '칭찬': 'good', '수정': 'edited', '지적': 'bad', '코멘트': 'comment' };
             const fbType = kindMap[d.feedback_kind] || 'comment';
             const original = lastRun.rows[0]?.result ? JSON.stringify(lastRun.rows[0].result) : null;
@@ -13919,7 +13928,7 @@ async function deskOcrTick() {
             const partnerHint = normalizePartnerName(o.content) || normalizePartnerName(r.partner);
             const settleDate = r.date || parseSettlementDate(o.content, kstTodayStr());
             await settlementOcrBuildConfirm(o, partnerHint, items, o.run_id, settleDate);
-            if (o.created_by_id) await createNotification(o.created_by_id, 'desk', '📋 정산 확인표가 준비됐어요', '에이전트 오피스에서 거래처·금액을 확인하고 저장해 주세요', 'agent-office?o=' + o.id);
+            if (o.created_by_id && !deskIsTestUid(o.created_by_id)) await createNotification(o.created_by_id, 'desk', '📋 정산 확인표가 준비됐어요', '에이전트 오피스에서 거래처·금액을 확인하고 저장해 주세요', 'agent-office?o=' + o.id);
         } catch (err) {
             await pool.query(`UPDATE pending_orders SET status='오류', result=$2, processed_at=NOW() WHERE id=$1`,
                 [o.id, JSON.stringify({ type: 'error', error: '확인표 생성 실패: ' + err.message })]);
@@ -13947,7 +13956,7 @@ app.get('/api/agent-office/desk-status', authMiddleware, async (req, res) => {
             pool.query(`SELECT o.id, LEFT(o.content, 80) AS content, o.reply_to,
                                (SELECT LEFT(p.content, 80) FROM pending_orders p WHERE p.id = o.reply_to) AS parent_content
                         FROM pending_orders o WHERE o.is_deleted=false AND o.created_by_id = $1 AND o.status IN ('처리중','판독완료','확인표작성') ORDER BY o.id ASC LIMIT 8`, [me]),
-            pool.query(`SELECT EXISTS(SELECT 1 FROM pending_orders WHERE is_deleted=false AND created_by_id IS DISTINCT FROM $1 AND status IN ('처리중','판독완료','확인표작성')) AS b`, [me]),
+            pool.query(`SELECT EXISTS(SELECT 1 FROM pending_orders WHERE is_deleted=false AND created_by_id IS DISTINCT FROM $1 AND status IN ('처리중','판독완료','확인표작성')${deskNoTestSql('', me)}) AS b`, [me]),   // #638
         ]);
         const hb = hbq.rows[0] ? hbq.rows[0].value : null;
         // #470 대기 프로그램(대표 PC에서 도는 창구 관리자) — 2분 안에 소식이 있어야 살아 있는 것으로 본다
@@ -14049,7 +14058,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         const mine = !history && (req.query.mine === '1' || !seeAll);
         const params = [];
         // #525: 최종발주 화면이 창구에 보낸 중간 요청(메모 읽기·대화 한마디)은 목록에 안 보인다 — 정리 기록(「[최종발주] …」) 1건만 보인다
-        let where = `o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'`;
+        let where = `o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'` + deskNoTestSql('o', req.user.id);   // #638 시험 번호 지시는 실제 사용자에게 안 보임
         if (mine) { params.push(req.user.id); where += ` AND o.created_by_id = $${params.length} AND COALESCE(o.mine_hidden, false) = false`; }
         if (history) {
             where += ` AND o.content NOT LIKE '[검증%'`;
@@ -14063,7 +14072,7 @@ app.get('/api/agent-office/desk/orders', authMiddleware, async (req, res) => {
         const r = await pool.query(
             `SELECT o.id, o.content, o.status, o.result, o.run_id, o.created_at, o.processed_at, o.created_by, o.created_by_id, COALESCE(o.mine_hidden, false) AS mine_hidden, COALESCE(o.hist_hidden, false) AS hist_hidden,
                     (o.image_data IS NOT NULL AND o.file_name IS NULL) AS has_image, o.file_name, o.reply_to,
-                    (SELECT MIN(c.id) FROM pending_orders c WHERE c.reply_to = o.id AND c.is_deleted = false) AS followed_by,
+                    (SELECT MIN(c.id) FROM pending_orders c WHERE c.reply_to = o.id AND c.is_deleted = false${deskNoTestSql('c', req.user.id)}) AS followed_by,
                     (SELECT r.steps FROM agent_runs r WHERE r.id = o.run_id) AS steps
              FROM pending_orders o WHERE ${where} ORDER BY o.id DESC LIMIT ${limit}`, params);
         res.json({ orders: r.rows });
@@ -14495,7 +14504,7 @@ app.get('/api/agent-office/orders', authMiddleware, /* 직원 가능 (대표 7/2
              FROM pending_orders o
              LEFT JOIN agent_runs r ON o.run_id = r.id
              WHERE o.is_deleted = false AND o.content NOT LIKE '[최종발주 메모 읽기]%' AND o.content NOT LIKE '[최종발주 대화]%'
-               ${onlyMine ? 'AND o.created_by_id = $1' : ''}
+               ${onlyMine ? 'AND o.created_by_id = $1' : ''}${deskNoTestSql('o', req.user.id)}
                AND (${showHidden ? 'TRUE' : `
                     o.status IN ('대기', '처리중', '오류', '질문')
                     OR (r.id IS NOT NULL AND r.is_deleted = false)`})
@@ -14542,12 +14551,12 @@ app.get('/api/agent-office/misroute-stats', authMiddleware, adminOnly, async (re
         const days = Math.min(Math.max(parseInt(req.query.days) || 7, 1), 90);
         const [orders, retries, cancels, misFb] = await Promise.all([
             pool.query(`SELECT COUNT(*)::int AS c FROM pending_orders
-                        WHERE is_deleted = false AND created_at > NOW() - ($1 || ' days')::interval`, [days]),
+                        WHERE is_deleted = false${deskNoTestSql('', null)} AND created_at > NOW() - ($1 || ' days')::interval`, [days]),
             pool.query(`SELECT COUNT(*)::int AS c FROM audit_logs
                         WHERE action = 'maru_route' AND (changes->'after'->>'polluted_retry') = 'true'
                           AND created_at > NOW() - ($1 || ' days')::interval`, [days]),
             pool.query(`SELECT COUNT(*)::int AS c FROM pending_orders
-                        WHERE is_deleted = false AND result->>'type' = 'confirm_cancelled'
+                        WHERE is_deleted = false${deskNoTestSql('', null)} AND result->>'type' = 'confirm_cancelled'
                           AND processed_at > NOW() - ($1 || ' days')::interval`, [days]),
             pool.query(`SELECT COUNT(*)::int AS c FROM agent_feedback f
                         JOIN agents a ON f.agent_id = a.id
@@ -15930,7 +15939,7 @@ async function svcGetLiveLog({ limit }, actor) {
     const n = Math.min(Math.max(parseInt(limit) || 20, 1), 100);
     const r = await pool.query(
         `SELECT id, content, status, result, run_id, created_at, processed_at, created_by
-         FROM pending_orders ORDER BY id DESC LIMIT $1`, [n]);
+         FROM pending_orders WHERE TRUE${deskNoTestSql('', null)} ORDER BY id DESC LIMIT $1`, [n]);   // #638
     await mcpObserveAudit('get_live_log', { limit: n }, actor);
     return {
         count: r.rows.length,
@@ -15981,7 +15990,7 @@ async function svcGetReports({ id, limit }, actor) {
         const r = await pool.query(
             `SELECT r.id, r.status, r.started_at, r.finished_at, r.result, r.is_deleted, a.name AS agent_name, a.team
              FROM agent_runs r JOIN agents a ON a.id = r.agent_id
-             WHERE r.id = $1 AND COALESCE(r.is_test, false) = false`, [id]);
+             WHERE r.id = $1 AND COALESCE(r.is_test, false) = false${deskRunNoTestSql('r', null)}`, [id]);   // #638
         if (!r.rows.length) throw new Error(`보고서 #${id}를 찾을 수 없습니다`);
         const row = r.rows[0];
         const res = row.result || {};
@@ -16012,8 +16021,8 @@ async function svcGetReports({ id, limit }, actor) {
                 (r.result->'report'->>'file_id') IS NOT NULL AS has_file,
                 r.is_deleted AS confirmed_hidden
          FROM agent_runs r JOIN agents a ON a.id = r.agent_id
-         WHERE COALESCE(r.is_test, false) = false
-         ORDER BY r.id DESC LIMIT $1`, [n]);
+         WHERE COALESCE(r.is_test, false) = false${deskRunNoTestSql('r', null)}
+         ORDER BY r.id DESC LIMIT $1`, [n]);   // #638
     await mcpObserveAudit('get_reports', { limit: n }, actor);
     return { count: r.rows.length, reports: r.rows };
 }

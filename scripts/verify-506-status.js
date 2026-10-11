@@ -26,8 +26,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         for (let i = 0; i < 60; i++) { await sleep(1000); try { const r = await fetch(`http://localhost:${PORT}/`); if (r.status) { up = true; break; } } catch (_) { } }
         ok('로컬 실서버 기동(' + PORT + ')', up);
         if (!up) throw new Error('server not up');
-        const ceo = (await db.query(`SELECT id, name FROM users WHERE position='대표' AND deleted_at IS NULL LIMIT 1`)).rows[0];
-        const staff = (await db.query(`SELECT id, name, position FROM users WHERE role <> 'admin' AND deleted_at IS NULL ORDER BY id LIMIT 1`)).rows[0];
+        // #638: 시험 지시는 시험 번호 계정 이름으로(실제 계정 화면에 안 뜨게) — 「본인」 = 990506 · 「다른 계정」 = 990507(시험 번호끼리는 서로의 처리 중이 others_busy 로 보인다)
+        const realStaff = (await db.query(`SELECT id, name, position FROM users WHERE role <> 'admin' AND deleted_at IS NULL ORDER BY id LIMIT 1`)).rows[0];
+        const realIds = (await db.query(`SELECT id FROM users`)).rows.map(r => r.id);
+        const ceo = { id: 990506, name: '시험506대표' }, staff = { id: 990507, name: '시험506직원', position: '사원' };
+        const tokR = jwt.sign({ id: realStaff.id, name: realStaff.name, position: realStaff.position || '', role: 'staff' }, 'verifytest', { expiresIn: '20m' });
         const tokA = jwt.sign({ id: ceo.id, name: ceo.name, position: '대표', role: 'admin' }, 'verifytest', { expiresIn: '20m' });
         const tokS = jwt.sign({ id: staff.id, name: staff.name, position: staff.position || '', role: 'staff' }, 'verifytest', { expiresIn: '20m' });
         const get = async tok => { const r = await fetch(`http://localhost:${PORT}/api/agent-office/desk-status`, { headers: { Authorization: 'Bearer ' + tok, Connection: 'close' } }); return { status: r.status, j: await r.json() }; };
@@ -57,6 +60,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
             const raw2 = JSON.stringify(s2.j);
             ok('#596 다른 계정(직원) 응답에 남의 지시 없음 — 목록에 시험 지시 없음 · 그 글·이름 글자 0 · 건수는 본인 것만', s2.status === 200 && Array.isArray(s2.j.working_list) && !s2.j.working_list.some(x => x.id === child || x.id === parent) && !/검증469|시험506|created_by|나나나|가가가/.test(raw2) && s2.j.working === staffBusy && s2.j.working_list.length === Math.min(staffBusy, 8), `working=${s2.j.working}(본인 처리 중 ${staffBusy}) · list=${s2.j.working_list.length}`);
             ok('#596 다른 계정 state = 본인 지시가 없으면 idle(남의 것이 돌아도) · order_id 없음 · others_busy = true(참/거짓만)', s2.j.state === (staffBusy > 0 ? 'busy' : 'idle') && (staffBusy > 0 || s2.j.order_id == null) && s2.j.others_busy === true, `state=${s2.j.state} order_id=${s2.j.order_id} others_busy=${s2.j.others_busy}`);
+            // #638: 실제 계정에는 시험 번호 지시가 「남의 처리 중」으로도 안 보인다
+            const realOthers = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE is_deleted=false AND created_by_id IS DISTINCT FROM $1 AND COALESCE(created_by_id,0) < 990000 AND status IN ('처리중','판독완료','확인표작성')`, [realStaff.id])).rows[0].c;
+            const s3 = await get(tokR);
+            ok('#638 실제 계정 응답 = 시험 번호 지시 없음(목록·글 0) · others_busy 는 실제 지시만으로 셈', s3.status === 200 && !(s3.j.working_list || []).some(x => x.id === child || x.id === parent) && !/검증469|시험506/.test(JSON.stringify(s3.j)) && s3.j.others_busy === (realOthers > 0), `others_busy=${s3.j.others_busy} 실제 남의 처리중 ${realOthers}`);
+            const leak = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE id = ANY($1::int[]) AND created_by_id = ANY($2::int[])`, [made, realIds])).rows[0].c;
+            ok('#638 실행 도중 실제 계정 이름으로 들어간 시험 지시 0', leak === 0, String(leak));
         } else {
             ok('(offline) working_list 는 빈 배열 · working 수에는 시험 지시 포함', Array.isArray(s1.j.working_list) && s1.j.working_list.length === 0 && s1.j.working >= 1, `working=${s1.j.working}`);
             info('온라인 때의 항목 내용 검사는 창구가 켜진 뒤 다시 돌려야 함');
@@ -67,7 +76,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         ok('검증 실행', false, e.message);
     } finally {
         if (made.length) {
-            await db.query(`UPDATE pending_orders SET is_deleted = true, status = '취소' WHERE id = ANY($1::int[])`, [made]);
+            await db.query(`UPDATE pending_orders SET is_deleted = true, mine_hidden = true, hist_hidden = true, status = CASE WHEN status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨') THEN '취소' ELSE status END WHERE id = ANY($1::int[])`, [made]);
             const left = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE id = ANY($1::int[]) AND is_deleted = false`, [made])).rows[0].c;
             ok('시험 지시 ' + made.length + '건 정리(숨김·취소)', left === 0, made.join(','));
         }

@@ -112,7 +112,7 @@ async function uploadAttachments(list, runId) {
     // 종 알림: 완료·질문·안내·오류 → 요청자 / 승인대기 → 활성 관리자. 텔레그램 0
     // 시험 지시([검증469])는 알림을 만들지 않는다 — 시험 54건이 대표 화면을 뒤덮은 일이 있었다(2026-09-29)
     try {
-        const isTest = String(o.content || '').startsWith('[검증469]');
+        const isTest = String(o.content || '').startsWith('[검증469]') || Number(o.created_by_id) >= 990000;   // #638: 시험 번호 계정 지시도 시험으로(머리말이 달라도 실제 관리자에게 승인 알림이 가지 않게)
         if (isTest && process.env.DESK_TEST_NOTIFY !== '1') throw new Error('시험 지시라 알림 생략');
         // 검증 스크립트가 알림 기록을 확인할 때(DESK_TEST_NOTIFY=1)는 적되, 폰으로는 나가지 않게 「이미 보냄」으로 표시한다
         const pushed = isTest ? 'NOW()' : 'NULL';

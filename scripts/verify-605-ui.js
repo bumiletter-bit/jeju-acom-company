@@ -8,6 +8,8 @@ const H = require(path.join(ROOT, 'scripts/ao-dark/harness.js'));
 const PORT = Number(process.env.PORT605) || 3462;
 const PC = { width: 1440, height: 900 }, PH = { width: 390, height: 844 };
 const GHOST = { id: 990605, name: '시험605', position: '사원', role: 'user' };
+// #638: 시험 번호 지시는 실제 대표의 전체 이력에 안 보인다(서버 거름) → 「대표는 지운 것까지 전부 본다」는 시험 번호 대표(990606)로 본다
+const BOSS = { id: 990606, name: '시험605대표', position: '대표', role: 'admin' };
 let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  ❌ ') + m); };
 (async () => {
     const { Client } = require('pg');
@@ -140,13 +142,16 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 await P2.ctx.close();
             }
             // ── ③ 대표: 전체 이력에는 지운 것까지 그대로(실서버 응답)
-            const tok = jwt.sign(h.users.대표, 'verifytest', { expiresIn: '10m' });
+            const tok = jwt.sign(BOSS, 'verifytest', { expiresIn: '10m' });
+            const tokReal = jwt.sign(h.users.대표, 'verifytest', { expiresIn: '10m' });
+            const jr = await (await fetch(`http://localhost:${PORT}/api/agent-office/desk/orders?history=1&limit=200&q=${encodeURIComponent('시험605')}`, { headers: { Authorization: 'Bearer ' + tokReal } })).json();
+            ok(Array.isArray(jr.orders) && jr.orders.length === 0, `[${label}] #638 실제 대표의 전체 이력에는 시험 번호 지시가 0줄(${(jr.orders || []).length})`);
             const j = await (await fetch(`http://localhost:${PORT}/api/agent-office/desk/orders?history=1&limit=200&q=${encodeURIComponent('시험605')}`, { headers: { Authorization: 'Bearer ' + tok } })).json();
             const seen = new Set((j.orders || []).map(o => o.id));
             ok([A, B, C].every(id => seen.has(id)), `[${label}] 대표 전체 이력 응답에 종료·지운 대화 3건 모두 있음(${[A, B, C].map(id => id + ':' + seen.has(id)).join(' ')})`);
         }
         {   // 대표 화면: 전체 이력에 줄이 보이고 [지우기]는 없다(대표는 전부 보는 자리)
-            const P = await h.open(h.users.대표, PC, { page: 'agent-office' }); const pg = P.pg;
+            const P = await h.open(BOSS, PC, { page: 'agent-office', routes: async pg => { await pg.route('**/api/auth/me', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: BOSS.id, username: 'test605boss', name: BOSS.name, position: BOSS.position, color: '#4F46E5', role: 'admin', annualLeave: 0, hasSignature: false }) })); } }); const pg = P.pg;
             await pg.evaluate(() => document.querySelector('#desk-tabs .desk-tab[data-tab="all"]').click()); await pg.waitForTimeout(1500);
             await pg.fill('#desk-hist-q', '시험605'); await pg.waitForTimeout(2500);
             const n = await pg.locator('#desk-list .desk-h-item').count(), nd = await pg.locator('#desk-list [data-act="histdel"]').count();

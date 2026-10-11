@@ -13,6 +13,7 @@ const CHECK_MS = 10000, BEAT_MS = 30000;
                  FROM pending_orders
                  WHERE is_deleted = false AND status IN ('대기', '승인됨')
                    AND content NOT LIKE '[검증469]%' -- 검증 스크립트의 시험 지시는 집지 않는다
+                   AND COALESCE(created_by_id, 0) < 990000 -- #638: 시험 번호 계정 지시도(머리말이 달라도) 집지 않는다
                  ORDER BY (status = '승인됨') DESC, id ASC LIMIT 10`);
             if (r.rows.length) {
                 console.log('새 지시 ' + r.rows.length + '건');

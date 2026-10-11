@@ -33,7 +33,7 @@ async function makeOrders(db, users, spec) {   // spec = [{u:0|1, content}] → 
 }
 async function closeOrders(db, ids) {
     if (!ids.length) return;
-    await db.query(`UPDATE pending_orders SET is_deleted = true WHERE id = ANY($1::int[])`, [ids]);
+    await db.query(`UPDATE pending_orders SET is_deleted = true, mine_hidden = true, hist_hidden = true WHERE id = ANY($1::int[])`, [ids]);   // #638
     await db.query(`UPDATE pending_orders SET status = '취소' WHERE id = ANY($1::int[]) AND status IN ('대기', '처리중', '승인됨')`, [ids]);
     await db.query(`UPDATE agent_runs SET is_deleted = true WHERE id IN (SELECT run_id FROM pending_orders WHERE id = ANY($1::int[]) AND run_id IS NOT NULL)`, [ids]);
     await db.query(`UPDATE report_files SET is_deleted = true WHERE run_id IN (SELECT run_id FROM pending_orders WHERE id = ANY($1::int[]) AND run_id IS NOT NULL)`, [ids]);
@@ -83,11 +83,11 @@ function analyze(run, ids, userOf, directIds) {
     await db.connect();
     const made = [];
     try {
-        const ceo = (await db.query(`SELECT id, name FROM users WHERE position='대표' AND deleted_at IS NULL LIMIT 1`)).rows[0];
-        const other = (await db.query(`SELECT id, name FROM users WHERE role = 'admin' AND deleted_at IS NULL AND id <> $1 ORDER BY id LIMIT 1`, [ceo.id])).rows[0]
-            || (await db.query(`SELECT id, name FROM users WHERE deleted_at IS NULL AND id <> $1 ORDER BY id LIMIT 1`, [ceo.id])).rows[0];
-        const users = [{ id: ceo.id, name: '시험503-' + ceo.name }, { id: other.id, name: '시험503-' + other.name }];
-        info(`시험 계정 2명 = id ${ceo.id} · ${other.id} (이름은 지시 created_by 에만 「시험503-」 접두)`);
+        // #638: 시험 지시는 시험 번호 계정 2개 이름으로(실제 대표·관리자 화면에 안 뜨게). 과금은 계정과 무관 — runLauncher 가 --sub + API 키 없이 띄우므로 늘 대표 요금제(구독) 길(launcher: (st.sub || mine) ? null : key)
+        const users = [{ id: 990503, name: '시험503-가' }, { id: 990504, name: '시험503-나' }];
+        const realHit = (await db.query(`SELECT COUNT(*)::int c FROM users WHERE id = ANY($1::int[])`, [users.map(u => u.id)])).rows[0].c;
+        if (realHit) throw new Error('시험 번호가 실제 계정과 겹침');
+        info(`시험 계정 2개 = id ${users[0].id} · ${users[1].id} (없는 번호 · 대기 프로그램은 --ids 로 집어 줄 때만 처리)`);
         const hbBefore = (await db.query(`SELECT value FROM agent_office_config WHERE key='desk_launcher'`)).rows[0];
         if (hbBefore && hbBefore.value && hbBefore.value.on) info('⚠️ 실서버 대기 프로그램이 켜져 있음(host ' + hbBefore.value.host + ') — [검증469] 지시는 집지 않으므로 무관 · heartbeat는 서로 덮어쓸 수 있음');
 
@@ -96,7 +96,7 @@ function analyze(run, ids, userOf, directIds) {
         ok('PARALLEL = DESK_PARALLEL 환경값(1~8) · 기본 4', /const PARALLEL = Math\.max\(1, Math\.min\(8, parseInt\(process\.env\.DESK_PARALLEL, 10\) \|\| 4\)\)/.test(LAUNCHER));
         ok('nextOrder: 돌고 있는 지시 · 돌고 있는 사람 · 바로 처리 중일 때 다른 바로 처리 = 건너뜀(blocked)', /st\.running\.has\(o\.id\)/.test(LAUNCHER) && /busyUsers\.has\(Number\(o\.created_by_id\)\)/.test(LAUNCHER) && /st\.directBusy && [^\n]*lane === 'direct_qty'/.test(LAUNCHER) && /for \(const o of r\.rows\) if \(!blocked\(o\)\) return o;/.test(LAUNCHER));
         ok('tick: 자리(running < PARALLEL)가 있으면 기다리지 않고 다음 건(상주·--ids 는 await 안 함)', /if \(st\.running\.size >= PARALLEL\) return false;/.test(LAUNCHER) && /if \(mode && !st\.multi\) await p;/.test(LAUNCHER));
-        ok('handle: 실패해도 running에서 빠지고(heartbeat 갱신) · tick의 handle 호출에 catch + finally(directBusy 해제) · runDesk는 try/finally(keepalive 정리)', /st\.running\.delete\(order\.id\);\s*\n\s*if \(st\.running\.size\) await heartbeat\('busy', firstRunning\(\)\); else await heartbeat\('idle'\);/.test(LAUNCHER) && /handle\(o, [^\n]*\)\.catch\(e => log\([^\n]*\)\.finally\(\(\) => \{ if \(direct\) st\.directBusy = false; \}\)/.test(LAUNCHER) && /\} catch \(e\) \{ log\(`#\$\{order\.id\} 처리 중 오류: \$\{e\.message\}`\); \}\s*\n\s*finally \{ clearInterval\(keep\); \}/.test(LAUNCHER));
+        ok('handle: 실패해도 running에서 빠지고(heartbeat 갱신) · tick의 handle 호출에 catch + finally(directBusy 해제) · runDesk는 try/finally(keepalive 정리)', /st\.running\.delete\(order\.id\);\s*\n\s*if \(st\.running\.size\) await heartbeat\('busy', firstRunning\(\)\); else await heartbeat\('idle'\);/.test(LAUNCHER) && /handle\(o, [^\n]*\)\.catch\(e => log\([^\n]*\)\.finally\(\(\) => \{ if \(direct\) st\.directBusy = false; \}\)/.test(LAUNCHER) && /\} catch \(e\) \{ log\(`#\$\{order\.id\} 처리 중 오류: \$\{e\.message\}`\); \}\s*\n\s*finally \{ clearInterval\(keep\);/.test(LAUNCHER));   // #598 A 뒤로 finally 에 곁파일 치우기가 더 붙어 닫는 중괄호까지는 보지 않는다(뜻 = catch 로 로그 + finally 에서 keepalive 정리)
         ok('heartbeat = 가장 먼저 시작한 건(firstRunning) · desk_launcher 에 running[]·parallel', /const firstRunning = \(\) => \{ const it = st\.running\.keys\(\)\.next\(\)/.test(LAUNCHER) && /heartbeat\('busy', firstRunning\(\) \|\| order\.id\)/.test(LAUNCHER) && /running: \[\.\.\.st\.running\.keys\(\)\], parallel: PARALLEL/.test(LAUNCHER));
         ok('--ids: 같은 규칙으로 자리 날 때 띄우고 전부 끝나길 기다림', /while \(left\.length && Date\.now\(\) - t0 < RUN_TIMEOUT_MS\)/.test(LAUNCHER) && /while \(st\.running\.size\) await new Promise/.test(LAUNCHER));
 

@@ -88,9 +88,10 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const got2 = JSON.parse(desk('get.js', p1.j.order.id));
         ok('같은 지시 두 번 집기 불가', got2.ok === false);
         // ⚠️ 대표 PC의 대기 프로그램이 돌고 있으면 30초마다 heartbeat(idle)를 덮어쓴다 → 한 번 더 확인한다(#472)
+        let extraStep = 0;
         let s1 = await call(tokS, 'GET', '/api/agent-office/desk-status');
         if (!(s1.j.state === 'busy' && s1.j.order_id === p1.j.order.id)) {
-            desk('step.js', p1.j.order.id, '검증', '중');
+            desk('step.js', p1.j.order.id, '검증', '중'); extraStep = 1;   // 이 길로 오면 단계가 한 줄 더 생긴다(아래 「단계 3줄」 기대에 반영)
             s1 = await call(tokS, 'GET', '/api/agent-office/desk-status');
         }
         ok('처리 중 상태 표시(busy · 지시 번호)', s1.j.state === 'busy' && s1.j.order_id === p1.j.order.id, s1.j.state + ' / ' + s1.j.order_id);
@@ -98,7 +99,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         desk('respond.js', p1.j.order.id, tmpJson({ kind: 'answer', title: '오늘 발송 박스', answer: '검증용 답변입니다.\n둘째 줄' }));
         const r3 = await row(p1.j.order.id);
         const run3 = (await db.query(`SELECT status, steps, result FROM agent_runs WHERE id=$1`, [r3.run_id])).rows[0];
-        ok('답변 저장 = 완료 · desk_answer · 실행 기록 done · 단계 3줄 · 행위자 클코', r3.status === '완료' && r3.result.type === 'desk_answer' && run3.status === 'done' && run3.steps.length === 3 && run3.steps[0].actor === '클코' && run3.result.lines.length === 2);
+        ok('답변 저장 = 완료 · desk_answer · 실행 기록 done · 단계 3줄 · 행위자 클코', r3.status === '완료' && r3.result.type === 'desk_answer' && run3.status === 'done' && run3.steps.length === 3 + extraStep && run3.steps[0].actor === '클코' && run3.result.lines.length === 2);
         const n1 = (await db.query(`SELECT COUNT(*)::int c FROM notifications WHERE type='desk' AND id > $1 AND link = $2`, [nid0, 'agent-office?o=' + p1.j.order.id])).rows[0].c;
         ok('#636 시험 답변은 종 알림을 만들지 않음(실제 계정 알림 0)', n1 === 0, String(n1));
         let again = ''; try { desk('respond.js', p1.j.order.id, tmpJson({ kind: 'answer', answer: 'x' })); } catch (e) { again = String(e.stderr || e.message); }
@@ -471,7 +472,8 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('확인 필요 문의 칸(채널 3개 · 목록) · 빠른 실행 없음 · 상태 고르개 · 날씨 없음', wide.quick === 3 && wide.inboxList && !wide.oldQuick && wide.filter && !wide.weather, '채널 ' + wide.quick + '개');
         await W.pg.route('**/api/agent-office/desk/inbox*', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ days: 3, counts: { talk: { open: 2, ai: 1, staff: 1 }, qna: { open: 0, ai: 0 }, inquiry: { open: 0, ai: 0 } },
             talk: [{ kind: 'talk', id: 'v1', state: 'open', at: new Date().toISOString(), question: '유라조생 언제부터 받을 수 있나요? 선물로 보내려고요' }, { kind: 'talk', id: 'v2', state: 'ai', at: new Date().toISOString(), question: '그린레몬 2kg도 있나요?', answer: '안녕하세요 제주아꼼이네입니다 😊 그린레몬은 3kg·5kg로 준비돼 있어요' }, { kind: 'talk', id: 'v3', state: 'open', at: new Date().toISOString(), question: '세 번째' }, { kind: 'talk', id: 'v4', state: 'staff', at: new Date().toISOString(), question: '네 번째(직원 답변)', answer: '봇 답', staff: '직원이 답한 글' }], qna: [], inquiry: [] }) }));
-        await W.pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await W.pg.waitForTimeout(600);
+        // #637 뒤: 페이지가 먼저 보낸 실제 inbox 조회가 아직 가는 중이면 loadInbox 가 그 답(실제 자료)을 나눠 받는다 → 가짜 줄(v2)이 보일 때까지 다시 받는다
+        for (let i = 0; i < 12; i++) { await W.pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await W.pg.waitForTimeout(600); if (await W.pg.locator('#desk-inbox-list tr.desk-ib-row[data-id="v2"]').count()) break; }
         await W.pg.click('#desk-inbox-list tr.desk-ib-row[data-id="v2"] .c-q'); await W.pg.waitForTimeout(400);
         const ibt = await W.pg.evaluate(() => {
             const rows = Array.from(document.querySelectorAll('#desk-inbox-list tr.desk-ib-row'));
