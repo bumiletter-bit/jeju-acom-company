@@ -1635,8 +1635,11 @@
     }
     function renderResult(cpMsg) {
         const el = $('fo-result'); el.hidden = false;
-        const qtyTable = p => `<table class="fo-qty" id="fo-qty-${esc(p.short)}"><tbody>${p.qty.map(q => `<tr><td style="background:#${st.colorOf(q.name) || 'FFFFFF'}">${esc(q.name)}</td><td class="n">${q.qty}</td></tr>`).join('')}<tr class="tot"><td></td><td class="n">${p.total}</td></tr></tbody></table>`;
-        const partner = f => { const p = f.partner, cash = p.rows.filter(r => r.src === 'cash').length, jeju = p.rows.filter(r => r.jeju).length; return `<article class="fo-file" data-short="${esc(f.short)}"><header><h4>${esc(f.short)}</h4><p>${p.rows.length}행 · ${p.total}박스${cash ? ` · 현금파일 ${cash}행 포함` : ''}${jeju ? ` · 제주 ${jeju}행(맨 아래)` : ''}</p></header>${qtyTable(p)}<div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">택배사 양식 저장</button><button type="button" class="fo-btn" data-fo-png="${esc(f.short)}">수량 이미지 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`; };
+        const qtyTable = p => `<div class="fo-sr"><table class="fo-qty" id="fo-qty-${esc(p.short)}"><tbody>${p.qty.map(q => `<tr><td style="background:#${st.colorOf(q.name) || 'FFFFFF'}">${esc(q.name)}</td><td class="n">${q.qty}</td></tr>`).join('')}<tr class="tot"><td></td><td class="n">${p.total}</td></tr></tbody></table></div>`;
+        // #656(대표 10/11 「중간발주처럼 그림 복사로」): 거래처별 수량 = 표 그림 + [그림 복사](카톡에 붙여넣기) + [내려받기] · 그림은 [내려받기]·정리 기록 첨부와 같은 qtyCanvas · 글자 표는 화면 낭독용으로만 남긴다
+        const cvs = new Map(); st.qtyBlob = new Map();
+        const qtyFig = f => { const p = f.partner, cv = qtyCanvas(f); cvs.set(f.short, cv); return `<figure class="fo-qfig" data-fo-qfig="${esc(f.short)}"><figcaption><span class="fo-qcap">수량 ${p.qty.length}종 · 합계 ${p.total}박스</span><span class="fo-qacts"><button type="button" class="fo-btn sm" data-fo-copy="${esc(f.short)}">그림 복사</button><button type="button" class="fo-btn sm" data-fo-png="${esc(f.short)}">내려받기</button></span></figcaption><div class="fo-qimg"><img src="${cv.toDataURL('image/png')}" width="${cv.width / 2}" height="${cv.height / 2}" alt="${esc(f.short)} 수량 표 ${p.qty.length}종 합계 ${p.total}박스"></div></figure>`; };
+        const partner = f => { const p = f.partner, cash = p.rows.filter(r => r.src === 'cash').length, jeju = p.rows.filter(r => r.jeju).length; return `<article class="fo-file" data-short="${esc(f.short)}"><header><h4>${esc(f.short)}</h4><p>${p.rows.length}행 · ${p.total}박스${cash ? ` · 현금파일 ${cash}행 포함` : ''}${jeju ? ` · 제주 ${jeju}행(맨 아래)` : ''}</p></header>${qtyFig(f)}${qtyTable(p)}<div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">택배사 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`; };
         const store = f => `<article class="fo-file store"><header><h4>스마트스토어</h4><p>${f.rows}행${f.indiv ? ` · 입력삭제 ${f.indiv}행은 노란 줄(맨 아래)` : ''}</p></header><div class="fo-acts"><button type="button" class="fo-btn primary" data-fo-save="${esc(f.name)}">스토어 양식 저장</button></div><p class="fo-fname">${esc(f.name)}</p></article>`;
         const ps = st.files.filter(f => f.kind === 'partner'), ss = st.files.filter(f => f.kind === 'store');
         const pl = patchLines();
@@ -1646,6 +1649,7 @@
             ${/재확인 실패/.test(cpMsg) ? `<p class="fo-hint err">${esc(cpMsg.replace(/^⚠️?\s*/, ''))}</p>` : /취소/.test(cpMsg) && /자동 제외/.test(cpMsg) ? `<p class="fo-hint">${esc(cpMsg.replace(/^🛡️\s*/, ''))}</p>` : ''}
             <div class="fo-files">${ps.map(partner).join('')}${ss.map(store).join('')}</div>
             <p class="fo-hint">색이 칠해진 배송메세지 칸(보내는이·사이즈·날짜 요청)은 송장변환과 같아요. 확인하고 지워 주세요. 메모나 현금파일을 고치면 [다시 판정] 후 다시 만들어요.</p>`;
+        cvs.forEach((cv, short) => { const m = st.qtyBlob; cv.toBlob(b => { if (b) m.set(short, b); }, 'image/png'); });   // [그림 복사]가 누르는 순간 바로 쓰게 미리 만들어 둔다
         if (anchorLive()) anchorApply(st.anchor, true);   // #583-j: 카드에서 고쳐서 다시 만든 파일 — 작업하던 카드 자리 그대로
         else el.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }
@@ -1654,7 +1658,16 @@
         const f = st.files.find(x => x.short === short); if (!f) return;
         qtyCanvas(f).toBlob(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = f.png; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
     }
-    // 수량 표 그림(거래처별) — [수량 이미지 저장] 과 정리 기록 첨부(#570)가 같은 그림을 쓴다. 화면 색과 무관하게 흰 바탕·검은 글자·품목 색을 직접 그린다
+    async function copyPng(short) {
+        const f = st.files.find(x => x.short === short); if (!f) return;
+        const FAIL = '이 브라우저는 그림 복사를 막고 있어요. 그림을 길게 눌러 복사하거나 [내려받기]를 눌러 주세요';
+        if (!(navigator.clipboard && window.ClipboardItem)) return toast(FAIL, 5000);
+        try {
+            const blob = (st.qtyBlob && st.qtyBlob.get(short)) || await new Promise(res => qtyCanvas(f).toBlob(res, 'image/png'));
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); toast('그림을 복사했어요. 카톡에 붙여 넣으세요');
+        } catch (_) { toast(FAIL, 5000); }
+    }
+    // 수량 표 그림(거래처별) — 화면 그림·[그림 복사]·[내려받기] 와 정리 기록 첨부(#570)가 같은 그림을 쓴다. 화면 색과 무관하게 흰 바탕·검은 글자·품목 색을 직접 그린다
     function qtyCanvas(f) {
         const p = f.partner, dpr = 2, rowH = 34, padX = 12, font = '600 15px Pretendard, "Malgun Gothic", sans-serif';
         const cv = document.createElement('canvas'), g = cv.getContext('2d'); g.font = font;
@@ -1670,6 +1683,7 @@
     async function onResultClick(e) {
         const b = e.target.closest('button'); if (!b) return;
         if (b.dataset.foSave) { saveFile(b.dataset.foSave); toast('저장했어요: ' + b.dataset.foSave); return; }
+        if (b.dataset.foCopy) { await copyPng(b.dataset.foCopy); return; }
         if (b.dataset.foPng) { savePng(b.dataset.foPng); return; }
         if (b.id === 'fo-save-all') { b.disabled = true; try { for (const f of st.files) { saveFile(f.name); await sleep(350); } toast(`파일 ${st.files.length}개를 저장했어요(수량 이미지는 아래 버튼으로 따로)`); /* #548(대표 10/6): 수량 이미지는 엑셀 수량 시트에 이미 있어 전부 저장에서는 뺀다 */ } finally { b.disabled = false; } }
     }
