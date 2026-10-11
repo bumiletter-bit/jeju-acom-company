@@ -73,7 +73,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             // ② 목록 = 안 읽은 대화만 · 숫자 칸·[처리함]·[끝내기] 없음
             {   // #660(대표 10/12 「이전 대화를 기본으로 보고 미답변 건을 볼 수 있게」) 문자 탭 기본 = 전체 대화 · [답 안 한 것만 n]
                 const d0 = await pg.evaluate(() => { const b = document.getElementById('sms-scope'), n = document.getElementById('sms-open-n'); return { rows: document.querySelectorAll('#sms-list .sms-item').length, un: document.querySelectorAll('#sms-list .sms-item.unread').length, pressed: b.getAttribute('aria-pressed'), text: b.textContent.replace(/\s+/g, ' ').trim(), n: n && !n.hidden ? n.textContent : '', cnt: document.getElementById('sms-count').textContent }; });
-                ok(d0.rows === 13 && d0.un === 8 && d0.pressed === 'false' && d0.text === '답 안 한 것만 7' && d0.n === '7' && P.sms.some(x => /threads\?scope=all&q=&limit=50/.test(x)) && !P.sms.some(x => /scope=(active|open)/.test(x)), `[${label}] #660 문자 탭 기본 = 전체 대화 13줄(안 읽은 줄 ${d0.un} = 답 안 한 7 + 무시 1 · 배지 그대로) · 서버에 scope=all · 단추 「${d0.text}」 꺼짐`);
+                ok(d0.rows === 13 && d0.un === 8 && d0.pressed === 'false' && d0.text === '미처리 7' && d0.n === '7' && P.sms.some(x => /threads\?scope=all&q=&limit=50/.test(x)) && !P.sms.some(x => /scope=(active|open)/.test(x)), `[${label}] #660 문자 탭 기본 = 전체 대화 13줄(안 읽은 줄 ${d0.un} = 답 안 한 7 + 무시 1 · 배지 그대로) · 서버에 scope=all · 단추 「${d0.text}」 꺼짐`);
                 await pg.click('#sms-scope'); await pg.waitForTimeout(700);
             }
             ok(await rows(pg) === 7 && (await ids(pg)) === '12,11,7,6,3,2,1' && P.sms.some(x => /threads\?scope=open&q=&limit=50/.test(x)), `[${label}] #660 [답 안 한 것만] → 7줄 · 마지막 글 최신순(${await ids(pg)}) · 서버에 scope=open`);
@@ -504,7 +504,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             await wake(pg);
             await rowsAre(pg, 0);
             const em = await pg.evaluate(() => { const li = document.querySelector('#sms-list .sms-none'), b = li && li.querySelector('.sms-empty-go'); return { text: li ? li.querySelector('span').textContent : '', btn: b ? b.textContent : '', h: b ? Math.round(b.getBoundingClientRect().height) : 0, chip: document.getElementById('sms-chip-n').hidden, todo: document.querySelectorAll('#desk-todo-box .sms-todo[data-sms="active"]').length }; });
-            ok(em.text === '답 안 한 문자가 없어요.' && em.btn === '전체 대화 보기' && em.h >= 44 && em.chip && em.todo === 0, `[${label}] 다 읽으면 「${em.text}」 + [${em.btn}](${em.h}px) · 알약 숫자·챙길 일 줄 없음`);
+            ok(em.text === '미처리 문자가 없어요.' && em.btn === '전체 대화 보기' && em.h >= 44 && em.chip && em.todo === 0, `[${label}] 다 읽으면 「${em.text}」 + [${em.btn}](${em.h}px) · 알약 숫자·챙길 일 줄 없음`);
             await pg.click('#sms-list .sms-empty-go'); await pg.waitForTimeout(700);
             ok(await rows(pg) === 13 && (await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'false', `[${label}] 빈 목록의 [전체 대화 보기] → 13줄`);
             await scopeBtn(pg, false);
@@ -565,12 +565,12 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
                 await mock('/__mock/reset', {}); await wake(pg);
                 await pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await pg.waitForTimeout(500);
                 const cu = () => pg.evaluate(() => { const rows = Array.from(document.querySelectorAll('#desk-inbox-list .desk-cu')), n = k => document.getElementById('inbox-n-' + k).textContent;
-                    return { title: document.querySelector('#desk-inbox .desk-inbox-head > b').textContent, chips: ['sms', 'talk', 'qna', 'inquiry'].map(n).join('|'), sel: (document.querySelector('#desk-inbox-tabs [aria-selected="true"]') || { dataset: {} }).dataset.k, n: rows.length, sms: rows.filter(r => r.dataset.kind === 'sms').length, wait: rows.filter(r => r.classList.contains('wait')).length, ok9101: ((document.querySelector('.desk-cu[data-id="9101"] .desk-cu-ok') || {}).textContent || '') + '|' + ((document.querySelector('.desk-cu[data-id="9101"]') || { className: '' }).className.includes('wait')), smsBtn: document.querySelectorAll('.desk-cu[data-kind="sms"] .desk-cu-ok').length, morewin: (document.querySelector('#desk-inbox-list .desk-cu-morewin') || {}).textContent || '', todoCust: document.querySelectorAll('#desk-todo-box .sms-todo.cust').length, seen: !!document.getElementById('desk-inbox-seen'), over: document.documentElement.scrollWidth }; });
+                    return { title: document.querySelector('#desk-inbox .desk-inbox-head > b').textContent, chips: ['sms', 'talk', 'qna', 'inquiry'].map(n).join('|'), sel: (document.querySelector('#desk-inbox-tabs [aria-selected="true"]') || { dataset: {} }).dataset.k, n: rows.length, sms: rows.filter(r => r.dataset.kind === 'sms').length, wait: rows.filter(r => r.classList.contains('wait')).length, ok9101: ((document.querySelector('.desk-cu[data-id="9101"] .desk-cu-ok') || {}).textContent || '') + '|' + ((document.querySelector('.desk-cu[data-id="9101"]') || { className: '' }).className.includes('wait')), smsBtn: document.querySelectorAll('.desk-cu[data-kind="sms"] .desk-cu-ok').length, morewin: (document.querySelector('#desk-inbox-list .desk-cu-morewin') || {}).textContent || '', todoCust: document.querySelectorAll('#desk-todo-box .sms-todo.cust').length, chBg: new Set(rows.map(r => getComputedStyle(r.querySelector('.desk-cu-ch')).backgroundColor)).size, chFg: new Set(rows.map(r => getComputedStyle(r.querySelector('.desk-cu-ch')).color)).size, none: (document.querySelector('#desk-inbox-list .desk-cu-none') || {}).textContent || '', link: !!document.querySelector('#desk-inbox-list .desk-cu-none .desk-cu-link'), seen: !!document.getElementById('desk-inbox-seen'), over: document.documentElement.scrollWidth }; });
                 const c0 = await cu();
                 await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(800);
                 const winN = await pg.evaluate(() => { const b = document.getElementById('sms-open-n'); return b && !b.hidden ? b.textContent : ''; });
                 await pg.click('#sms-close'); await pg.waitForTimeout(900);
-                ok(c0.title === '손님 연락' && c0.sel === 'all' && c0.chips === '7|2|1|1' && c0.chips.split('|')[0] === winN && c0.n === 18 && c0.sms === 12 && c0.wait === 11 && c0.smsBtn === 0 && !c0.seen && c0.todoCust === 0 && c0.over <= 1440, `[카드] #661 손님 연락 카드 = 문자 12 + 톡톡 3 + 상품 2 + 주문 1 전체 대화 한 목록 · 칩(대기) ${c0.chips} · 문자 칩 = 창의 [답 안 한 것만 ${winN}] · 문자 줄엔 [확인] 없음 · 챙길 일에 손님 연락 줄 없음`);
+                ok(c0.title === '손님 연락' && c0.sel === 'all' && c0.chips === '7|2|1|1' && c0.chips.split('|')[0] === winN && c0.n === 11 && c0.sms === 7 && c0.wait === 11 && c0.chBg === 4 && c0.chFg === 4 && c0.smsBtn === 0 && !c0.seen && c0.todoCust === 0 && c0.over <= 1440, `[카드] #663 손님 연락 카드 = 미처리(대기) 줄만 ${c0.n}줄(문자 7 + 톡톡 2 + 상품 1 + 주문 1 — 전체 18줄 중) · 채널 배지 색 ${c0.chBg}가지 · 칩(대기) ${c0.chips} · 문자 칩 = 창의 [답 안 한 것만 ${winN}] · 문자 줄엔 [확인] 없음 · 챙길 일에 손님 연락 줄 없음`);
                 await pg.locator('#desk-inbox-list .desk-cu[data-kind="sms"][data-id="12"] .desk-cu-row').click(); await pg.waitForTimeout(1200);
                 const o1 = await pg.evaluate(() => ({ win: document.body.classList.contains('sms-win-open'), id: (document.getElementById('sms-thread') || { dataset: {} }).dataset.id }));
                 await pg.click('#sms-close'); await pg.waitForTimeout(1300);
@@ -579,11 +579,14 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
                 await pg.locator('#desk-inbox-tabs button[data-k="talk"]').click(); await pg.waitForTimeout(300);
                 const t0 = await cu();
                 await pg.locator('#desk-inbox-list .desk-cu[data-id="9101"] .desk-cu-ok').click(); await pg.waitForTimeout(900); const t1 = await cu();
-                await pg.locator('#desk-inbox-list .desk-cu[data-id="9101"] .desk-cu-ok').click(); await pg.waitForTimeout(900); const t2 = await cu();
-                ok(t0.sel === 'talk' && t0.n === 3 && t0.ok9101 === '확인|true' && t1.chips === '6|1|1|1' && t1.ok9101 === '확인함|false' && t1.n === 3 && t2.chips === '6|2|1|1' && t2.ok9101 === '확인|true', `[카드] #661 톡톡 칩 → 톡톡만 3줄 · [확인] → 대기 2 → 1 · 줄은 남고 [확인함] · 다시 누르면 대기로(${t2.chips})`);
+                ok(t0.sel === 'talk' && t0.n === 2 && t0.ok9101 === '확인|true' && t1.chips === '6|1|1|1' && t1.ok9101 === '|false' && t1.n === 1, `[카드] #663 톡톡 칩 → 톡톡 대기만 2줄 · [확인] → 대기 2 → 1 · 그 줄은 카드에서 빠짐(${t1.n}줄 남음)`);
+                await pg.locator('#desk-inbox-tabs button[data-k="qna"]').click(); await pg.waitForTimeout(300);
+                await pg.locator('#desk-inbox-list .desk-cu[data-kind="qna"] .desk-cu-ok').click(); await pg.waitForTimeout(900); const e1 = await cu();
+                ok(e1.sel === 'qna' && e1.n === 0 && /상품 Q&A 미처리 건이 없어요/.test(e1.none) && /손님 연락 창 열기/.test(e1.none) && e1.link && e1.chips === '6|1|0|1', `[카드] #663 대기 0 이면 빈 상태 한 줄 「${e1.none.trim()}」`);
+                await pg.locator('#desk-inbox-tabs button[data-k="talk"]').click(); await pg.waitForTimeout(300);
                 await mock('/__mock/set', { cuMore: true }); await pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await pg.waitForTimeout(500);
                 const m1 = await cu(), m1more = await pg.locator('#desk-inbox-more').innerText(); await pg.locator('#desk-inbox-tabs button[data-k="talk"]').click(); await pg.waitForTimeout(300);
-                ok(/못 실은 4건 더/.test(m1.morewin) && /4건 더/.test(m1more), `[카드] #661 카드에 못 실은 줄은 「${m1.morewin}」`);
+                ok(/못 실은 미처리 4건 더/.test(m1.morewin) && /4건 더/.test(m1more) && m1.chips.split('|')[1] === '5', `[카드] #663 서버 대기 수(톡톡 ${m1.chips.split('|')[1]})가 받은 줄보다 많으면 「${m1.morewin}」`);
                 await mock('/__mock/set', { cuMore: false }); await mock('/__mock/reset', {}); await wake(pg);
             }
             // 알림 link(agent-office?sms=ID) → app.js 가 부를 함수 = window.AkmAoDesk.openSms(id)

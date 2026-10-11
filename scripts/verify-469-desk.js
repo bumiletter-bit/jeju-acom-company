@@ -472,7 +472,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('#661 손님 연락 칸(전체 + 채널 4개 · 목록) · 빠른 실행 없음 · 상태 고르개 · 날씨 없음', wide.quick === 5 && wide.inboxList && !wide.oldQuick && wide.filter && !wide.weather, '채널 ' + wide.quick + '개');
         {   // #661(대표 10/12) 손님 연락 카드 = 전체 대화 한 목록(문자·톡톡·상품 Q&A·주문 문의 · 최근 대화순) · 칩 숫자 = 대기(서버 counts.open 그대로) · 대기 줄만 [확인]
             const at = m => new Date(Date.now() - m * 60000).toISOString(), posts = [];
-            const body = () => ({ days: 30, at: at(0), counts: { sms: { open: 1 }, talk: { open: 2, ai: 0, staff: 0 }, qna: { open: 0, ai: 0, staff: 0 }, inquiry: { open: 1, ai: 0, staff: 0 } }, more: { sms: 0, talk: 3, qna: 0, inquiry: 0 },
+            const body = () => ({ days: 30, at: at(0), counts: { sms: { open: 1 }, talk: { open: 5, ai: 0, staff: 0 }, qna: { open: 0, ai: 0, staff: 0 }, inquiry: { open: 1, ai: 0, staff: 0 } }, more: { sms: 0, talk: 3, qna: 0, inquiry: 0 },
                 sms: [{ kind: 'sms', id: 901, phone_full: '01012345678', customer_hint: '효돈 · 10/9 발송', last_text: '언제 오나요', last_dir: 'in', last_at: at(1), unread: 1, needs_reply: true, done: false }],
                 talk: [{ kind: 'talk', id: 'v1', tkey: 'k1', title: '톡톡 손님 711a', sub: '하우스감귤', last_text: '유라조생 언제부터 받을 수 있나요?', last_dir: 'in', last_at: at(2), state: 'open', needs_reply: true, done: false },
                     { kind: 'talk', id: 'v2', tkey: 'k2', title: '톡톡 손님 22bc', last_text: '그린레몬은 3kg·5kg로 준비돼 있어요', last_dir: 'out', last_at: at(3), state: 'ai', needs_reply: false, done: false },
@@ -488,15 +488,15 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
                     ids: rows.map(r => r.dataset.kind + ':' + r.dataset.id).join(','), visible: rows.filter(r => r.offsetParent !== null).length, wait: rows.filter(r => r.classList.contains('wait')).map(r => r.dataset.id).join(','), dots: rows.filter(r => r.querySelector('.desk-cu-dot')).length,
                     btns: rows.map(r => { const b = r.querySelector('.desk-cu-ok'); return b ? b.textContent : '-'; }).join(','), me: rows.filter(r => r.querySelector('.desk-cu-last .sms-me')).map(r => r.dataset.id).join(','), who0: rows[0] ? rows[0].querySelector('.desk-cu-who b').textContent : '', ch: rows.map(r => r.querySelector('.desk-cu-ch').textContent).join(','), more: document.getElementById('desk-inbox-more').textContent, over: document.getElementById('desk-inbox').scrollWidth > document.getElementById('desk-inbox').clientWidth + 1 }; });
             const c1 = await cu();
-            ok('#661 손님 연락 카드 = 네 채널 전체 대화 한 목록(최근 대화순 7줄 · 5줄 미리보기) · 칩 = 대기 수(문자 1 · 톡톡 2 · 상품 0 · 주문 1) · 「확인한 건도 보기」 없음', c1.title === '손님 연락' && c1.chips === '1|2|0|1' && c1.smsTab && c1.sel === 'all' && !c1.seen && c1.ids === 'sms:901,talk:v1,talk:v2,qna:7201,talk:v3,talk:v4,inquiry:8301' && c1.visible === 5 && c1.who0 === '010-1234-5678' && c1.ch === '문자,톡톡,톡톡,상품 Q&A,톡톡,톡톡,주문 문의' && /5건 더/.test(c1.more) && !c1.over, JSON.stringify(c1));
-            ok('#661 대기 줄만 점·[확인](문자는 단추 없음) · 확인한 줄 = [확인함] · 답한 줄은 단추 없이 「나:」', c1.wait === '901,v1,v3,8301' && c1.dots === 4 && c1.btns === '-,확인,-,-,확인,확인함,확인' && c1.me === 'v2,7201', JSON.stringify(c1));
+            ok('#663 손님 연락 카드 = 미처리(대기) 줄만(네 채널 · 최근 대화순 4줄 — 받은 7줄 중) · 칩 = 서버 대기 수(문자 1 · 톡톡 5 · 상품 0 · 주문 1) · 못 실은 대기 3건 = 「n건 더」', c1.title === '손님 연락' && c1.chips === '1|5|0|1' && c1.smsTab && c1.sel === 'all' && !c1.seen && c1.ids === 'sms:901,talk:v1,talk:v3,inquiry:8301' && c1.visible === 4 && c1.who0 === '010-1234-5678' && c1.ch === '문자,톡톡,톡톡,주문 문의' && /3건 더/.test(c1.more) && !c1.over, JSON.stringify(c1));
+            ok('#663 줄마다 [확인](문자는 단추 없음) · 답한 줄·확인한 줄은 카드에 없음', c1.wait === '901,v1,v3,8301' && c1.btns === '-,확인,확인,확인' && c1.me === '', JSON.stringify(c1));
             await W.pg.click('#desk-inbox-tabs button[data-k="talk"]'); await W.pg.waitForTimeout(300); const c2 = await cu();
             await W.pg.click('#desk-inbox-tabs button[data-k="talk"]'); await W.pg.waitForTimeout(300); const c3 = await cu();
-            ok('#661 칩을 누르면 그 채널만(톡톡 4줄 · 못 실은 3건 포함 「n건 더」) · 다시 누르면 전체', c2.sel === 'talk' && c2.ids === 'talk:v1,talk:v2,talk:v3,talk:v4' && /3건 더/.test(c2.more) && c3.sel === 'all' && c3.ids === c1.ids, JSON.stringify([c2.ids, c2.more, c3.sel]));
+            ok('#663 칩을 누르면 그 채널 대기만(톡톡 2줄 · 못 실은 3건 「n건 더」) · 다시 누르면 전체', c2.sel === 'talk' && c2.ids === 'talk:v1,talk:v3' && /3건 더/.test(c2.more) && c3.sel === 'all' && c3.ids === c1.ids, JSON.stringify([c2.ids, c2.more, c3.sel]));
             await W.pg.click('#desk-inbox-list .desk-cu[data-id="v1"] .desk-cu-ok'); await W.pg.waitForTimeout(700);
             await W.pg.click('#desk-inbox-more'); await W.pg.waitForTimeout(300);
-            await W.pg.click('#desk-inbox-list .desk-cu[data-id="v4"] .desk-cu-ok'); await W.pg.waitForTimeout(700);
-            ok('#661 [확인] = review { kind, id, undo:false } · [확인함] 다시 누름 = undo:true', posts.length === 2 && posts[0].kind === 'talk' && posts[0].id === 'v1' && posts[0].undo === false && posts[1].id === 'v4' && posts[1].undo === true, JSON.stringify(posts));
+            await W.pg.click('#desk-inbox-list .desk-cu[data-id="v3"] .desk-cu-ok'); await W.pg.waitForTimeout(700);
+            ok('#663 [확인] = review { kind, id, undo:false }(카드에 되돌리기 단추 없음)', posts.length === 2 && posts[0].kind === 'talk' && posts[0].id === 'v1' && posts[0].undo === false && posts[1].id === 'v3' && posts[1].undo === false && !(await W.pg.locator('#desk-inbox-list [data-ib="undo"]').count()), JSON.stringify(posts));
             await W.pg.keyboard.press('Escape'); await W.pg.waitForTimeout(300);
         }
         await W.pg.unroute('**/api/agent-office/desk/inbox**');

@@ -25,6 +25,10 @@ html[data-ao-theme="dark"], html[data-ao-theme="dark"] .desk {
     --d-ok: #3DD68C;
     --d-warn: #FBBF4A;
     --d-err: #FF7A6E;
+    --d-ch-sms-bg: #2D3282; --d-ch-sms-fg: #C7D7FE;           /* #663 채널 색 */
+    --d-ch-talk-bg: #054F31; --d-ch-talk-fg: #A6F4C5;
+    --d-ch-qna-bg: #7A2E0E; --d-ch-qna-fg: #FEDF89;
+    --d-ch-inquiry-bg: #851651; --d-ch-inquiry-fg: #FCCEEE;
     --d-lime: #C5EE4F;              /* 답변 강조(대표 「라임」) */
     --d-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px -2px rgba(0, 0, 0, .45);
 }

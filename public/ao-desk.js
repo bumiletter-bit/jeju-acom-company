@@ -238,7 +238,7 @@
                 <div class="ship-note" id="sms-note" role="status" hidden></div>
                 <div class="sms-tabs" id="sms-tabs" role="tablist" aria-label="손님 연락 채널" hidden></div>
                 <div class="sms-cols"><div class="sms-left">
-                <div class="sms-bar"><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 전체 번호 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="sms-staff" aria-pressed="false" title="읽었어도 아직 사람 답이 필요한 대화만 봐요. 다시 누르면 전체 대화" hidden>직원 확인 <b id="sms-staff-n"></b></button><button type="button" class="desk-btn sm sms-done-btn" id="sms-scope" aria-pressed="false" title="안 읽은 글이 있거나 사람 답이 필요한 대화만 봐요. 다시 누르면 전체 대화">답 안 한 것만 <b id="sms-open-n" hidden></b></button><span class="sms-count" id="sms-count" role="status"></span></div>
+                <div class="sms-bar"><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 전체 번호 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="sms-staff" aria-pressed="false" title="읽었어도 아직 사람 답이 필요한 대화만 봐요. 다시 누르면 전체 대화" hidden>직원 확인 <b id="sms-staff-n"></b></button><button type="button" class="desk-btn sm sms-done-btn" id="sms-scope" aria-pressed="false" title="직원이 챙겨야 하는 대화만 봐요. 다시 누르면 전체 대화">미처리 <b id="sms-open-n" hidden></b></button><span class="sms-count" id="sms-count" role="status"></span></div>
                 <ul class="sms-list" id="sms-list"></ul>
                 </div><div class="sms-pane" id="sms-pane"><div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div></div></div>
                 <div class="inb-host" id="inb-host" hidden></div>
@@ -1372,7 +1372,7 @@
             : SMS.q ? `<li class="desk-empty ship-empty">${esc(`「${SMS.q}」로 찾은 문자가 없어요.`)}</li>`
             : SMS.only ? '<li class="desk-empty ship-empty">직원 확인이 필요한 대화가 없어요.</li>'
             : SMS.scope === 'all' ? '<li class="desk-empty ship-empty">아직 들어온 문자가 없어요.</li>'
-            : '<li class="desk-empty ship-empty sms-none"><span>답 안 한 문자가 없어요.</span><button type="button" class="desk-btn sm sms-empty-go">전체 대화 보기</button></li>';
+            : '<li class="desk-empty ship-empty sms-none"><span>미처리 문자가 없어요.</span><button type="button" class="desk-btn sm sms-empty-go">전체 대화 보기</button></li>';
         const top = ul.scrollTop;
         ul.innerHTML = html;
         ul.scrollTop = top;
@@ -2880,6 +2880,8 @@
     //   = 문자·톡톡·상품 Q&A·주문 문의 전체 대화를 최근 대화순 한 목록으로(네이버 톡톡상담관리 「전체」처럼). 칩 숫자 = 대기(답 안 한 것 · 서버 counts.{ch}.open 그대로 = 손님 연락 창의 [답 안 한 것만 n])
     //   줄 = 채널 · 손님 · 마지막 글 한 줄(우리가 마지막이면 「나:」) · 시각. 대기 줄 = 점 + 굵게 + [확인] · 확인한 줄 = [확인함](다시 누르면 대기로) · 답한 줄은 흐리게. 줄을 누르면 손님 연락 창의 그 대화로
     //   서버: GET /api/agent-office/desk/inbox → { days, sms[]|null, talk[], qna[], inquiry[], counts, more } · POST …/desk/inbox/review { kind, id, undo }(창의 [확인]과 같은 표식)
+    // #663(대표 10/12 「메인에서는 미처리 건만 · 누르면 창으로 가니까 메인은 확인만 · 색 다르게 구별되게」): 이 카드 목록 = 대기(needs_reply) 줄만. 전체 대화는 손님 연락 창에서(창은 그대로).
+    //   [확인]을 누르면 줄이 카드에서 빠진다(되돌리기는 창의 그 대화에서) · 「n건 더」 = 서버 대기 수(counts.open) 중 여기 못 실은 것 · 채널 배지·칩 점은 채널마다 다른 색(--d-ch-*)
     const CU_KINDS = ['sms', 'talk', 'qna', 'inquiry'], CU_NAME = { sms: '문자', talk: '톡톡', qna: '상품 Q&A', inquiry: '주문 문의' };
     async function loadInbox() {
         try { S.inbox = await api('/api/agent-office/desk/inbox'); S.inboxAt = Date.now(); renderInbox(); }
@@ -2893,18 +2895,17 @@
         if (typeof switchPage === 'function') switchPage('inquiry');   // 손님 연락 창이 없는 서버·옛 캐시면 종전 문의 관리로
     }
     function cuRow(x, i) {
-        const sms = x.kind === 'sms', wait = !!x.needs_reply, done = !wait && !sms && !!(x.done || x.seen) && x.state !== 'done' && x.state !== 'staff', out = x.last_dir === 'out';
+        const sms = x.kind === 'sms', out = x.last_dir === 'out';
         const who = sms ? smsNo(x) : String(x.title || CU_NAME[x.kind] + ' 손님'), sub = String(sms ? (x.customer_hint || '') : (x.sub || x.item || ''));
         const text = String(x.last_text || (sms ? (out ? x.last_out_text : x.last_in_text) : x.question) || '').replace(/\s+/g, ' ').trim().slice(0, 140);
         const at = x.last_at || x.at, oid = sms ? x.id : x.kind === 'talk' ? (x.tkey || '') : x.id;
-        return `<div class="desk-cu${wait ? ' wait' : ''}${done ? ' done' : ''}${i >= PREVIEW_INBOX ? ' ov' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">`
+        return `<div class="desk-cu wait${i >= PREVIEW_INBOX ? ' ov' : ''}" data-kind="${x.kind}" data-id="${esc(x.id)}">`
             + `<button type="button" class="desk-cu-row" data-ib="open" data-open="${esc(oid == null ? '' : oid)}" title="눌러서 이 대화 열기">`
             + `<i class="desk-cu-ch" data-ch="${x.kind}">${CU_NAME[x.kind]}</i>`
-            + `<span class="desk-cu-who">${wait ? '<i class="desk-cu-dot" aria-label="답 안 한 것"></i>' : ''}<b>${esc(who)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>`
+            + `<span class="desk-cu-who"><b>${esc(who)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>`
             + `<time class="desk-cu-at">${esc(at ? smsWhen(at) : '')}</time>`
             + `<span class="desk-cu-last">${out ? '<b class="sms-me">나:</b> ' : ''}${esc(text || '(글 없음)')}</span></button>`
-            + (sms ? '' : wait ? '<button type="button" class="desk-btn sm primary desk-cu-ok" data-ib="ok" title="답할 필요가 없는 글이면 눌러서 대기에서 빼요">확인</button>'
-                : done ? '<button type="button" class="desk-btn sm desk-cu-ok" data-ib="undo" aria-pressed="true" title="다시 누르면 대기로 되돌려요">확인함</button>' : '')
+            + (sms ? '' : '<button type="button" class="desk-btn sm primary desk-cu-ok" data-ib="ok" title="답할 필요가 없는 글이면 눌러서 대기에서 빼요">확인</button>')
             + '</div>';
     }
     function renderInbox() {
@@ -2921,12 +2922,12 @@
         let html;
         if (S.inboxKind !== 'all' && !Array.isArray(d[S.inboxKind])) { html = '<div class="desk-empty">이 채널은 지금 읽지 못했어요.</div>'; setMore('desk-inbox-more', 0); }
         else {
-            const list = [].concat(...kinds.map(k => Array.isArray(d[k]) ? d[k].map(x => Object.assign({}, x, { kind: k })) : []));
+            const list = [].concat(...kinds.map(k => Array.isArray(d[k]) ? d[k].filter(x => x && x.needs_reply).map(x => Object.assign({}, x, { kind: k })) : []));   // #663 대기 줄만
             list.sort((a, b) => (tms(b.last_at || b.at) || 0) - (tms(a.last_at || a.at) || 0));   // 최근 대화순(채널별 시각 글 꼴이 달라 Date 로 견준다)
-            const more = kinds.reduce((n, k) => n + (Number(d.more && d.more[k]) || 0), 0);
+            const open = kinds.reduce((n, k) => n + (Array.isArray(d[k]) ? Number(d.counts && d.counts[k] && d.counts[k].open) || 0 : 0), 0), more = Math.max(0, open - list.length);   // 못 실은 대기 = 서버 대기 수 − 받은 대기 줄
             setMore('desk-inbox-more', Math.max(0, list.length - PREVIEW_INBOX) + more);
-            html = list.length ? list.map(cuRow).join('') + (more > 0 ? `<button type="button" class="desk-cu-morewin${list.length >= PREVIEW_INBOX ? ' ov' : ''}" data-ib="win">여기에 못 실은 ${nfmt(more)}건 더 · 손님 연락 창에서 보기</button>` : '')
-                : `<div class="desk-empty">최근 ${nfmt(Number(d.days) || 30)}일 동안 온 손님 연락이 없어요.</div>`;
+            html = (list.length || more) ? list.map(cuRow).join('') + (more > 0 ? `<button type="button" class="desk-cu-morewin${list.length >= PREVIEW_INBOX ? ' ov' : ''}" data-ib="win">여기에 못 실은 미처리 ${nfmt(more)}건 더 · 손님 연락 창에서 보기</button>` : '')
+                : `<div class="desk-empty desk-cu-none">${S.inboxKind === 'all' ? '미처리 손님 연락이 없어요.' : esc(CU_NAME[S.inboxKind]) + ' 미처리 건이 없어요.'} <button type="button" class="desk-cu-link" data-ib="win">손님 연락 창 열기</button></div>`;
         }
         if (box.dataset.sig === html) return;   // 주기마다 다시 그리지 않는다(누르던 초점 유지)
         const had = document.activeElement && document.activeElement.closest ? document.activeElement.closest('#desk-inbox-list .desk-cu') : null, hk = had ? [had.dataset.kind, had.dataset.id, document.activeElement.classList.contains('desk-cu-ok')] : null;

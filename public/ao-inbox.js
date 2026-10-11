@@ -2,7 +2,7 @@
 //   이 파일은 그 세 탭의 목록·대화·입력·보내기·읽음·초안만 맡는다. 탭 줄·기록(history)·Esc·창 닫기는 ao-desk.js 가 맡고, 아래 window.AkmInbox 로 만난다.
 //   모양은 문자 창과 같은 class(.sms-cols · .sms-row · .sms-msg …)를 그대로 써서 2단·폰 전체 화면·야간이 같은 CSS 로 나온다(id 는 전부 inb- 로 시작).
 //   서버 계약 = docs/inbox-threads-spec.md: GET /api/inbox/counts · GET /api/inbox/threads?ch=&scope=&q= · GET /api/inbox/threads/:ch/:id(?peek=1) · POST …/send { text, seen } · …/read · …/unread · …/draft(톡톡)
-//   #660(대표 10/12 「이전 대화를 기본으로 · 미답변 건을 볼 수 있게 · 확인 누르면 0이 되게」): 기본 목록 = 전체 대화(scope=all) · [답 안 한 것만 n](scope=open · 탭별 기억) · 대화 머리 [확인](POST /api/inbox/done { ch, id, undo } — 답할 필요 없는 글 · 다시 누르면 되돌림)
+//   #660(대표 10/12 「이전 대화를 기본으로 · 미답변 건을 볼 수 있게 · 확인 누르면 0이 되게」): 기본 목록 = 전체 대화(scope=all) · [미처리 n](scope=open · 탭별 기억 · #664 이름 바꿈 — 종전 「답 안 한 것만」) · 대화 머리 [확인](POST /api/inbox/done { ch, id, undo } — 답할 필요 없는 글 · 다시 누르면 되돌림)
 //   타이머를 따로 두지 않는다 — ao-desk.js 의 틱이 AkmInbox.refresh() 를 부르고, 간격은 여기서 지킨다.
 (function () {
     'use strict';
@@ -35,11 +35,11 @@
     };
     const away = () => document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus()) || Date.now() - I.actAt > 120000;
     const mounted = () => !!(I.host && I.host.isConnected && I.ch);
-    // [답 안 한 것만] 을 켜 둔 탭은 다음에 열 때도 켠 채로(이 기기에만 · 못 쓰는 브라우저면 늘 전체)
+    // [미처리] 를 켜 둔 탭은 다음에 열 때도 켠 채로(이 기기에만 · 못 쓰는 브라우저면 늘 전체)
     const scopeGet = ch => { try { return localStorage.getItem('akm_inb_only_open_' + ch) === '1' ? 'open' : 'all'; } catch (e) { return 'all'; } };
     const scopePut = (ch, v) => { try { if (v === 'open') localStorage.setItem('akm_inb_only_open_' + ch, '1'); else localStorage.removeItem('akm_inb_only_open_' + ch); } catch (e) { /* 기억 못 해도 그대로 쓴다 */ } };
     const isConf = t => !!(t && t.done) && t.state !== 'done' && t.state !== 'staff';   // [확인]을 누른 대화(답은 없지만 볼 일이 끝남)
-    const needsOf = t => !!t && !isConf(t) && (t.needs_reply != null ? !!t.needs_reply : !!t.why);   // 답 안 한 대화 — counts.open 이 세는 것
+    const needsOf = t => !!t && !isConf(t) && (t.needs_reply != null ? !!t.needs_reply : !!t.why);   // 미처리 대화(아직 답도 [확인]도 안 한 것) — counts.open 이 세는 것
 
     // ── 서버 ─────────────────────────────────────────────
     // api() 는 오류 응답의 본문을 넘겨주지 않아(409 의 새 초안) 직접 부른다. 돌려주는 값 = { status, ok, body }
@@ -78,7 +78,7 @@
         const c = CH[I.ch];
         I.host.innerHTML = `<div class="sms-cols inb-cols" data-ch="${I.ch}"><div class="sms-left">`
             + `<div class="sms-bar"><label class="desk-sr" for="inb-q">${c.label} 찾기</label><input type="search" class="ship-q sms-q" id="inb-q" maxlength="40" autocomplete="off" placeholder="${esc(c.find)}">`
-            + `<button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="inb-open" aria-pressed="false" title="아직 아무도 답하지 않은 대화만 봐요. 다시 누르면 전체 대화">답 안 한 것만 <b id="inb-open-n"></b></button>`
+            + `<button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="inb-open" aria-pressed="false" title="아직 답하거나 확인하지 않은 대화만 봐요. 다시 누르면 전체 대화">미처리 <b id="inb-open-n"></b></button>`
             + `<span class="sms-count" id="inb-count" role="status"></span></div>`
             + `<ul class="sms-list" id="inb-list" aria-label="${c.label} 목록"></ul>`
             + `</div><div class="sms-pane" id="inb-pane"><div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div></div></div>`
@@ -102,12 +102,12 @@
     function renderList() {
         const ul = $('inb-list'); if (!ul) return;
         const items = (I.items || []).slice();
-        if (I.open) {   // 열어 둔 대화는 답·[확인]으로 「답 안 한 것만」 목록에서 빠져도 접기 전까지 제자리에 둔다
+        if (I.open) {   // 열어 둔 대화는 답·[확인]으로 「미처리」 목록에서 빠져도 접기 전까지 제자리에 둔다
             const at = items.findIndex(x => key(x.ch || I.ch, x.id) === I.open);
             if (at >= 0) { I.openRow = items[at]; I.openAt = at; }
             else if (I.openRow) items.splice(Math.min(I.openAt, items.length), 0, I.openRow);
         }
-        const cnt = $('inb-count'); if (cnt) cnt.textContent = I.err || I.items == null ? '' : (I.scope === 'open' ? '답 안 한 것만 · ' : '') + (items.length >= 200 ? '최근 ' + nfmt(items.length) + '건까지 보여요. 이름이나 글로 찾아보세요.' : nfmt(items.length) + '건');
+        const cnt = $('inb-count'); if (cnt) cnt.textContent = I.err || I.items == null ? '' : (I.scope === 'open' ? '미처리 · ' : '') + (items.length >= 200 ? '최근 ' + nfmt(items.length) + '건까지 보여요. 이름이나 글로 찾아보세요.' : nfmt(items.length) + '건');
         const sig = JSON.stringify([items, I.scope, I.q, I.open, I.err, I.items == null]);
         if (sig === I.sig && ul.firstChild) return;
         I.sig = sig;
@@ -115,12 +115,12 @@
         if (!html) html = I.err ? `<li class="desk-empty ship-empty">${esc(I.err)}</li>`
             : I.items == null ? '<li class="desk-empty ship-empty">불러오는 중</li>'
             : I.q ? `<li class="desk-empty ship-empty">${esc(`「${I.q}」로 찾은 글이 없어요.`)}</li>`
-            : I.scope === 'open' ? '<li class="desk-empty ship-empty sms-none"><span>답 안 한 대화가 없어요.</span><button type="button" class="desk-btn sm" id="inb-empty-go">전체 대화 보기</button></li>'
+            : I.scope === 'open' ? '<li class="desk-empty ship-empty sms-none"><span>미처리 대화가 없어요.</span><button type="button" class="desk-btn sm" id="inb-empty-go">전체 대화 보기</button></li>'
             : '<li class="desk-empty ship-empty">아직 들어온 글이 없어요.</li>';
         const top = ul.scrollTop; ul.innerHTML = html; ul.scrollTop = top;
         headSync();
     }
-    // [답 안 한 것만 n] 단추 — 숫자는 탭 숫자와 같은 counts(open)에서 · 열기만 해서는 안 줄고 답·[확인]으로 준다
+    // [미처리 n] 단추 — 숫자는 탭 숫자와 같은 counts(open)에서 · 열기만 해서는 안 줄고 답·[확인]으로 준다
     function headSync() {
         const ob = $('inb-open'); if (!ob) return;
         const n = (I.counts && I.counts[I.ch] && I.counts[I.ch].needs) || 0;
@@ -161,7 +161,7 @@
         const th = document.createElement('div');
         th.className = 'sms-thread inb-thread'; th.id = 'inb-thread'; th.dataset.id = String(id); th.dataset.ch = I.ch; th.setAttribute('role', 'region'); th.setAttribute('aria-label', c.label + ' 대화');
         th.innerHTML = `<div class="sms-th-head"><button type="button" class="sms-th-back" id="inb-back" aria-label="목록으로 돌아가기">목록</button><i class="inb-dot" data-ch="${I.ch}" aria-hidden="true"></i><b class="inb-th-title" id="inb-th-title">${esc(x.title || c.label)}</b><span id="inb-th-badge"></span>`
-            + `<span class="inb-acts"><button type="button" class="desk-btn sm inb-done" id="inb-done" aria-pressed="false" hidden>확인</button><button type="button" class="desk-btn sm inb-unread" id="inb-unread" title="이 대화를 안 읽음으로 돌려요">안 읽음으로</button></span><button type="button" class="sms-th-x" id="inb-x" aria-label="이 대화 접기" title="접기 (Esc)">×</button></div>`
+            + `<span class="inb-acts"><button type="button" class="desk-btn sm inb-done" id="inb-done" aria-pressed="false" hidden>확인</button></span><button type="button" class="sms-th-x" id="inb-x" aria-label="이 대화 접기" title="접기 (Esc)">×</button></div>`
             + `<div class="sms-order inb-meta" id="inb-meta" hidden></div>`
             + `<div class="sms-msgs" id="inb-msgs" tabindex="0" aria-label="주고받은 글"><div class="desk-empty ship-empty">불러오는 중</div></div>`
             + `<form class="sms-reply" id="inb-reply" autocomplete="off"></form>`;
@@ -180,7 +180,7 @@
         const ta = $('inb-text');
         if (ta) { const v = ta.value; if (v.trim() && v.trim() !== curDraft().trim()) I.texts.set(k, v); else I.texts.delete(k); }
         I.open = ''; I.thread = null; I.tseq++; I.tbusy = false; I.openRow = null;
-        if (I.scope === 'open' && !I.q && I.items) I.items = I.items.filter(i => String(i.id) !== id || needsOf(i));   // 「답 안 한 것만」에서는 답했거나 [확인]한 대화가 접을 때 빠진다(전체 대화·찾기 중에는 그대로)
+        if (I.scope === 'open' && !I.q && I.items) I.items = I.items.filter(i => String(i.id) !== id || needsOf(i));   // 「미처리」에서는 답했거나 [확인]한 대화가 접을 때 빠진다(전체 대화·찾기 중에는 그대로)
         const pane = $('inb-pane'); if (pane) pane.innerHTML = '<div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div>';
         if (I.host) I.host.classList.remove('inb-open');
         if (!keep && I.onThread) { try { I.onThread(false); } catch (e) { /* 그대로 둔다 */ } }
@@ -320,13 +320,13 @@
         const ta = $('inb-text'); if (ta && !I.newDraft) ta.focus({ preventScroll: true });
         toast(I.newDraft ? '초안을 만들었어요. 적던 글은 그대로 뒀어요' : '초안을 칸에 넣었어요. 읽어 보고 보내 주세요', 3500);
     }
-    // [확인] — 답할 필요 없는 글·센터에서 이미 답한 글. 답 안 한 것 셈에서 빠지고, 다시 누르면 되돌린다
+    // [확인] — 답할 필요 없는 글·센터에서 이미 답한 글. 미처리 셈에서 빠지고, 다시 누르면 되돌린다
     function doneSync() {
         const b = $('inb-done'); if (!b) return;
         const t = I.thread && I.thread.thread, conf = isConf(t);
         b.hidden = I.noDone || !(conf || needsOf(t)); b.setAttribute('aria-pressed', String(conf)); b.disabled = I.doneBusy;
         b.textContent = conf ? '확인함' : '확인';
-        b.title = conf ? '다시 누르면 답 안 한 것으로 되돌려요' : '답할 필요가 없는 글이면 눌러 주세요. 답 안 한 것에서 빠져요';
+        b.title = conf ? '다시 누르면 미처리로 되돌려요' : '답할 필요가 없는 글이면 눌러 주세요. 미처리에서 빠져요';
     }
     async function markDone() {
         const k = I.open; if (!k || !I.thread || I.doneBusy) return;
@@ -340,21 +340,13 @@
         if (msg) { doneSync(); toast((undo ? '되돌리지 못했어요: ' : '확인 처리를 하지 못했어요: ') + msg, 5000); return; }
         const now = r.body.done != null ? !!r.body.done : !undo;
         if (r.body.counts) { setCounts(r.body.counts, true); I.cAt = Date.now(); } else I.cAt = 0;
-        toast(now ? '확인했어요. 답 안 한 것에서 뺐어요' : '확인을 되돌렸어요');
+        toast(now ? '확인했어요. 미처리에서 뺐어요' : '확인을 되돌렸어요');
         if (I.open !== k || ch !== I.ch) { doneSync(); loadList(true); return; }
         if (I.thread) { const t = I.thread.thread; t.done = now; if (now) { t.needs_reply = false; t.unread = 0; } else if (r.body.needs_reply != null) t.needs_reply = !!r.body.needs_reply;
             const it = (I.items || []).find(i => String(i.id) === id); if (it) Object.assign(it, t); else I.openRow = Object.assign({}, I.openRow, t); }
         doneSync(); $('inb-th-badge').innerHTML = needsOf(I.thread && I.thread.thread) ? `<i class="sms-why${I.thread.thread.why ? '' : ' inb-gen'}">${esc(I.thread.thread.why || '답 필요')}</i>` : '';
         I.sig = ''; renderList();
         I.tsig = ''; await loadThread(true); loadList(true);
-    }
-    async function markUnread() {
-        const k = I.open; if (!k || !I.thread) return;
-        const ch = I.ch, id = k.slice(k.indexOf(':') + 1);
-        try { const r = await call('/api/inbox/threads/' + ch + '/' + encodeURIComponent(id) + '/unread', 'POST', {}); if (!r.ok || r.body.ok === false) throw new Error(errText(r)); }
-        catch (e) { toast('안 읽음으로 돌리지 못했어요: ' + ((e && e.message) || '다시 시도해 주세요'), 5000); return; }
-        if (I.open === k) threadClose(true);
-        I.cAt = 0; loadList(true); toast('안 읽음으로 돌렸어요');
     }
     function viewOpen(u, from) { const v = $('inb-view'); if (!v) return; $('inb-view-img').src = u; v.hidden = false; v._from = from || null; $('inb-view-x').focus({ preventScroll: true }); }
     function viewClose() { const v = $('inb-view'); if (!v || v.hidden) return false; v.hidden = true; $('inb-view-img').removeAttribute('src'); const f = v._from; v._from = null; if (f && f.isConnected) f.focus({ preventScroll: true }); return true; }
@@ -382,7 +374,6 @@
             if (t.closest('#inb-empty-go')) { setScope('all'); return; }
             if (t.closest('#inb-back') || t.closest('#inb-x')) { threadClose(true); return; }
             if (t.closest('#inb-done')) { markDone(); return; }
-            if (t.closest('#inb-unread')) { markUnread(); return; }
             if (t.closest('#inb-mkdraft')) { makeDraft(); return; }
             if (t.closest('#inb-draft-new')) { const ta = $('inb-text'), dt = curDraft(); if (ta && dt) { ta.value = dt; I.fillText = dt; I.filled = I.open + '|' + dt; I.newDraft = ''; sync(); ta.focus({ preventScroll: true }); } return; }
             const th = t.closest('.sms-thumb'); if (th && th.dataset.view) { viewOpen(th.dataset.view, th); return; }

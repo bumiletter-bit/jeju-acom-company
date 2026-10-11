@@ -1,5 +1,5 @@
 /* #658 문자 전용 창의 톡톡 | 상품문의 | 주문문의 탭(ao-inbox.js) — 틀·목록·말풍선·입력 칸은 문자 창의 class(.sms-*)를 그대로 쓴다(ao-desk.css).
- * 여기에는 이 탭에만 있는 것만: 끼우는 칸 · 긴 제목 줄임 · 안 읽은 줄 명암 · 답 안 한 줄의 점 · 채널 점 · [확인] 단추 · 공개 게시판 한 줄 · 등록됨/보낼 수 없음 칸.
+ * 여기에는 이 탭에만 있는 것만: 끼우는 칸 · 긴 제목 줄임 · 안 읽은 줄 명암 · 미처리 줄의 점 · 채널 점 · [확인] 단추 · 공개 게시판 한 줄 · 등록됨/보낼 수 없음 칸.
  * 색은 --d-* 토큰(야간에 저절로 바뀜) + 따로 고른 색은 맨 아래 야간 규칙. */
 .inb-host { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .inb-host[hidden] { display: none; }
@@ -12,7 +12,7 @@
 .inb-host .sms-item.unread .inb-title { font-weight: 800; }
 .inb-host .sms-item.open > .sms-row { background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); }
 .inb-host .sms-item.needs .sms-why { box-shadow: inset 0 0 0 1px rgba(181, 71, 8, .28); }
-/* #660 전체 대화가 기본 — 답 안 한 줄은 제목 앞 점 + 진한 제목, 답했거나 [확인]한 줄은 한 단 흐리게 */
+/* #660 전체 대화가 기본 — 미처리(답 안 한) 줄은 제목 앞 점 + 진한 제목, 답했거나 [확인]한 줄은 한 단 흐리게 */
 .inb-host .inb-need { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #DC6803; vertical-align: 1px; }
 .inb-host .sms-item.needs .inb-title { font-weight: 800; }
 .inb-host .sms-item:not(.needs):not(.unread) .inb-title { font-weight: 600; color: var(--d-sub); }
@@ -27,8 +27,7 @@
 .inb-thread #inb-th-badge { flex: none; white-space: nowrap; }
 .inb-thread #inb-th-badge:empty { display: none; }
 .inb-thread .inb-acts { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.inb-thread .inb-unread, .inb-thread .inb-done { flex: none; min-height: 36px; padding: 0 11px; font-size: 12.5px; white-space: nowrap; background: var(--d-card); color: var(--d-sub); }
-.inb-thread .inb-unread:hover { color: var(--d-ink); }
+.inb-thread .inb-done { flex: none; min-height: 36px; padding: 0 11px; font-size: 12.5px; white-space: nowrap; background: var(--d-card); color: var(--d-sub); }
 .inb-thread .inb-done { color: var(--d-accent); font-weight: 800; box-shadow: inset 0 0 0 1.5px var(--d-accent); }
 .inb-thread .inb-done[hidden] { display: none; }
 .inb-thread .inb-done:hover { background: var(--d-accent-soft); }
@@ -56,7 +55,7 @@
 .inb-lock span { min-width: 0; overflow-wrap: anywhere; }
 
 @media (max-width: 720px) {
-    .inb-thread .inb-unread, .inb-thread .inb-done { min-height: 44px; padding: 0 9px; }
+    .inb-thread .inb-done { min-height: 44px; padding: 0 9px; }
     .inb-thread .inb-acts { gap: 4px; }
     .inb-thread #inb-th-badge .inb-gen { display: none; }   /* 좁은 폭 — 사유 없는 「답 필요」는 [확인] 단추가 대신 말한다 */
     .inb-th-title { font-size: 15px; }

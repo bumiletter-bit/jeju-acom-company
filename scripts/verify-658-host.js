@@ -109,6 +109,16 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
             const k2 = await cu(), a2 = await st();
             ok(k2.chips.split('|')[1] === String(NO[0] - 1) && k2.win.split('|')[0] === String(NO[0] - 1) && a2.items.split('|')[0] === String(NO[0] - 1) && a2.short === '손님' + (Number(a2.dot)) && Number(a2.dot) === (await pg.evaluate(() => Number((document.getElementById('sms-chip-n') || {}).textContent) || 0)) + NO.reduce((x, y) => x + y, 0) - 1, `[${name}] ⑦ #661 카드에서 톡톡 [확인] → 카드 칩 ${NO[0]} → ${k2.chips.split('|')[1]} · 창 숫자·[+] 메뉴·바로가기도 같이 줄어듦(${a2.short} · 카드 ${k2.chips} · 창 ${k2.win} · 메뉴 ${a2.items})`);
             await pg.click('#desk-inbox-tabs button[data-k="talk"]'); await pg.waitForTimeout(200);
+            {   // #663 카드 = 대기 줄만 · 대기 0 이면 빈 상태 + 「손님 연락 창 열기」
+                const w0 = await pg.evaluate(() => { const r = Array.from(document.querySelectorAll('#desk-inbox-list .desk-cu')); return { n: r.length, wait: r.filter(x => x.classList.contains('wait')).length, bg: new Set(r.map(x => getComputedStyle(x.querySelector('.desk-cu-ch')).backgroundColor)).size }; });
+                await pg.click('#desk-inbox-tabs button[data-k="inquiry"]'); await pg.waitForTimeout(300);
+                for (let i = 0; i < 6 && await pg.locator('#desk-inbox-list .desk-cu[data-kind="inquiry"] .desk-cu-ok').count(); i++) { await pg.evaluate(() => document.querySelector('#desk-inbox-list .desk-cu[data-kind="inquiry"] .desk-cu-ok').scrollIntoView({ block: 'center' })); await pg.click('#desk-inbox-list .desk-cu[data-kind="inquiry"] .desk-cu-ok'); await pg.waitForTimeout(1300); }
+                const w1 = await pg.evaluate(() => ({ none: (document.querySelector('#desk-inbox-list .desk-cu-none') || {}).textContent || '', chip: document.getElementById('inbox-n-inquiry').textContent, win: window.AkmInbox.counts().inquiry.needs }));
+                await pg.evaluate(() => document.querySelector('#desk-inbox-list .desk-cu-link').scrollIntoView({ block: 'center' })); await pg.click('#desk-inbox-list .desk-cu-link'); await pg.waitForTimeout(1300);
+                const w2 = await st(); await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(900);
+                await pg.click('#desk-inbox-tabs button[data-k="inquiry"]'); await pg.waitForTimeout(200);
+                ok(w0.n > 0 && w0.n === w0.wait && w0.n === SUM - 1 && w0.bg === 4 && /주문 문의 미처리 건이 없어요/.test(w1.none) && w1.chip === '0' && w1.win === 0 && w2.win && w2.hostCh === 'inquiry', `[${name}] ⑦ #663 카드 = 대기 줄만 ${w0.n}줄(= 칩 합) · 채널 색 ${w0.bg}가지 · 주문 문의를 다 [확인]하면 「${w1.none.trim()}」 · 링크 → 손님 연락 창 주문문의 탭`);
+            }
             await pg.evaluate(() => window.scrollTo(0, 0)); await pg.click('#desk-plus-btn'); await pg.waitForTimeout(300); await pg.click('#desk-sms-now'); await pg.waitForTimeout(1000);
             const f3 = await st();
             ok(f3.win && f3.tabs.split('|')[0].endsWith('*') && f3.cols && !f3.host, `[${name}] ⑦ 「문자」로 다시 열면 문자 탭`);

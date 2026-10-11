@@ -1014,12 +1014,12 @@ module.exports = function mountSms(app, deps) {
     // #635: 안 읽음 = 직원이 마지막으로 연 뒤(staff_read_at) 들어온 손님 글 수 — 서버가 받은 시각(created_at) 기준(폰 시계·늦은 재시도와 무관)
     const UNREAD_SQL = `(SELECT count(*)::int FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' AND m.created_at > COALESCE(t.staff_read_at, 'epoch'::timestamptz))`;
     const ACTIVE_SQL = `t.status <> 'ignored' AND ${UNREAD_SQL} > 0 ${TEST_HIDE_T2}`;   // 목록(scope=active): 안 읽은 글이 있는 대화 · 인증번호·광고·통신사만 온 번호(ignored)는 뺀다
-    const OPEN_SQL = `t.status NOT IN ('closed','ignored') AND (${UNREAD_SQL} > 0 OR t.staff_why IS NOT NULL) ${TEST_HIDE_T2}`;   // #660 목록(scope=open · 미답변): 끝난·무시가 아닌 대화 중 안 읽은 글이 있거나 사람 몫인 것
+    const OPEN_SQL = `t.status NOT IN ('closed','ignored') AND t.staff_why IS NOT NULL ${TEST_HIDE_T2}`;   // #664 목록(scope=open · 미처리) = 사람 몫(직원 확인 필요)만 — 끝난·무시 제외 · 안 읽음은 안 섞는다(읽어도 남고 · 직원이 답하거나 끝내면 빠짐)
     // #661 「확인 필요 문의」 칸·손님 연락 창 숫자에 문자 미답변(scope=open 과 같은 식)을 내준다 — desk-inbox.js 의 고리로(server.js 무접촉)
     try {
         require('../desk-inbox.js').hook('sms', async () => {
             const n = (await pool.query(`SELECT (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open, (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread`)).rows[0];
-            // 카드 줄 = 전체 대화(무시 갈래 제외) 최근순 30 — 대기(미답변 = scope=open 과 같은 식) 줄을 빠짐없이 먼저 담는다
+            // 카드 줄 = 전체 대화(무시 갈래 제외) 최근순 30 — 미처리(사람 몫 = scope=open 과 같은 식 · #664) 줄을 빠짐없이 먼저 담는다
             const rows = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread, (${OPEN_SQL}) AS is_open, count(*) OVER ()::int AS total FROM sms_threads t WHERE t.status <> 'ignored' ${TEST_HIDE_T2}
                 ORDER BY (${OPEN_SQL}) DESC, COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT 30`)).rows;
             const items = rows.map(t => { const p = pub(t); return Object.assign({ kind: 'sms', needs_reply: !!t.is_open, done: false, last_text: p.last_dir === 'out' ? p.last_out_text : p.last_in_text }, p); })

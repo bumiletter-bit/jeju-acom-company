@@ -99,7 +99,7 @@ function deskInbox() {
     const cu = cuOf(), strip = x => { const o = Object.assign({}, x); delete o.wait0; return o; };
     const sms = ST.enabled === false && ST.noSmsCard ? null : ST.threads.filter(t => t.status !== 'ignored').map(t => Object.assign(row(t), { kind: 'sms', needs_reply: isOpen(t), done: false, last_text: String((t.messages[t.messages.length - 1] || {}).body || '').slice(0, 120) })).sort((a, b) => Date.parse(b.last_at) - Date.parse(a.last_at));
     const cnt = a => ({ open: a.filter(x => x.needs_reply).length, ai: 0, staff: 0 });
-    return { days: 30, talk: cu.talk.map(strip), qna: cu.qna.map(strip), inquiry: cu.inquiry.map(strip), sms, counts: { talk: cnt(cu.talk), qna: cnt(cu.qna), inquiry: cnt(cu.inquiry), sms: sms ? { open: sms.filter(x => x.needs_reply).length } : null }, more: { sms: 0, talk: ST.cuMore ? 4 : 0, qna: 0, inquiry: 0 }, at: new Date().toISOString() };
+    return { days: 30, talk: cu.talk.map(strip), qna: cu.qna.map(strip), inquiry: cu.inquiry.map(strip), sms, counts: { talk: Object.assign(cnt(cu.talk), ST.cuMore ? { open: cnt(cu.talk).open + 4 } : {}), qna: cnt(cu.qna), inquiry: cnt(cu.inquiry), sms: sms ? { open: sms.filter(x => x.needs_reply).length } : null }, more: { sms: 0, talk: ST.cuMore ? 4 : 0, qna: 0, inquiry: 0 }, at: new Date().toISOString() };
 }
 function summary() {
     const c = {}; ['new', 'staff_needed', 'draft', 'bot_replied', 'staff_replied', 'closed', 'ignored'].forEach(k => { c[k] = ST.threads.filter(t => t.status === k).length; });
