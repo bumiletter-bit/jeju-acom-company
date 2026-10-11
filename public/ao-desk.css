@@ -868,8 +868,6 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-mode { flex: none; font-style: normal; padding: 3px 9px; border-radius: 999px; background: var(--d-accent-soft); color: var(--d-accent); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
 .sms-mode[data-m="record"] { background: var(--d-soft); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
 .sms-mode[data-m="auto"] { background: #E7F8EF; color: #067647; }
-.sms-stat { margin-top: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.ship-note:not([hidden]) + .sms-stat { margin-top: 12px; }
 .sms-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .sms-bar .desk-btn { flex: none; min-height: 44px; }
 .sms-bar .sms-done-btn[aria-pressed="true"] { background: var(--d-accent-soft); border-color: var(--d-accent); color: var(--d-accent); }   /* #629 — 가격 카드 보기 단추와 같은 켜짐 색 */
@@ -888,7 +886,13 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-row > .desk-badge { grid-area: badge; }
 .sms-time { grid-area: time; color: var(--d-sub); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sms-last { grid-area: last; min-width: 0; color: var(--d-sub); font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.sms-item[data-st="staff_needed"] .sms-last { color: var(--d-ink); font-weight: 600; }
+.sms-item.unread .sms-last { color: var(--d-ink); font-weight: 600; }
+/* #635(대표 10/11 「폰 문자함처럼」): 안 읽음 배지(알약 숫자와 같은 빨강) · 「나:」 머리 · 사람 몫 사유 알약 · 빈 목록의 [이전 대화 보기] */
+.sms-row > .sms-un { grid-area: badge; }
+.sms-me { font-weight: 700; }
+.sms-why { font-style: normal; padding: 1px 8px; border-radius: 999px; background: #FEF6E7; color: #B54708; font-size: 11.5px; font-weight: 700; }
+.sms-list > .sms-none { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.sms-none .desk-btn { min-height: 44px; }
 .sms-pic { font-style: normal; display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); font-size: 11.5px; font-weight: 700; line-height: 19px; vertical-align: 1px; }
 .sms-out { grid-area: out; min-width: 0; color: var(--d-sub); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sms-tags { grid-area: tags; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
@@ -923,6 +927,9 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-thumb.fail { width: auto; height: auto; padding: 8px 10px; color: var(--d-sub); font: inherit; font-size: 12px; cursor: default; }
 .sms-reply { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--d-line); }
 .sms-draft { color: var(--d-accent); font-size: 12.5px; font-weight: 600; }
+.sms-draft[data-k="new"] { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sms-draft[data-k="new"][hidden] { display: none; }
+.sms-draft .desk-btn { flex: none; min-height: 44px; }
 .sms-warn { padding: 8px 10px; border-radius: 8px; background: #FEF6E7; color: #B54708; font-size: 12.5px; line-height: 1.5; }
 .sms-text { width: 100%; min-height: 76px; padding: 10px 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 14.5px; line-height: 1.5; resize: vertical; }
 .sms-text::placeholder { color: var(--d-sub); }
@@ -950,8 +957,6 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .bf-go:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
 @media (max-width: 720px) { .bf-go { min-height: 44px; padding: 0 16px; font-size: 13.5px; } }
 @media (max-width: 720px) {
-    .sms-stat { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    .sms-stat li { padding: 8px 6px; }
     .desk-todo li.sms-todo { min-height: 44px; align-content: center; }
 }
 @media (max-width: 640px) {
@@ -1161,7 +1166,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (478규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (479규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -1549,7 +1554,8 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .sms-hint { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .sms-time { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .sms-last { color: var(--d-sub); }
-:where(html[data-ao-theme="dark"]) .sms-item[data-st="staff_needed"] .sms-last { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-item.unread .sms-last { color: var(--d-ink); }
+:where(html[data-ao-theme="dark"]) .sms-why { background: rgba(251, 191, 74, .15); color: #FBBF4A; }
 :where(html[data-ao-theme="dark"]) .sms-pic { background: var(--d-soft); box-shadow: inset 0 0 0 1px var(--d-line); color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .sms-out { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .sms-tag { background: var(--d-accent-soft); color: var(--d-accent); }

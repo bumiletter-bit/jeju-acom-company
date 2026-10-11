@@ -2,7 +2,7 @@
 //   로컬 실서버(3457 · 5초 이하 주기만 살리고 나머지 setInterval 무력화) + 실DB. 시험 지시는 끝에 soft-delete, 시험 알림은 삭제.
 //   🔴 ANTHROPIC_API_KEY를 비워 기동 → AI 경로가 불리면 오류가 나므로 "AI 호출 0"이 기계적으로 증명된다.
 require('dotenv').config();
-process.env.DESK_TEST_NOTIFY = '1';   // 시험 지시도 알림 기록은 남기게(폰으로는 안 나감) — respond.js 참고
+delete process.env.DESK_TEST_NOTIFY;   // #636: 시험 지시는 알림을 만들지 않는다(respond.js 기본) — 켜면 승인 요청 알림이 실제 관리자 종에 뜬다
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs'), os = require('os'), path = require('path');
 const jwt = require('jsonwebtoken');
@@ -17,6 +17,16 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
     let srv = null, browser = null, db = null;
     const made = [], madeFiles = [];
     let S_nid0 = null;
+    // #636: Ctrl+C 로 끊겨도 시험 줄을 닫고 숨긴다(finally 는 신호로 죽으면 안 돈다) — 새 연결로 한 번에
+    process.on('SIGINT', async () => {
+        try {
+            const { Client } = require('pg'); const k = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); await k.connect();
+            await k.query(`UPDATE pending_orders SET status = CASE WHEN status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨') THEN '취소' ELSE status END, is_deleted=true, mine_hidden=true, hist_hidden=true
+                           WHERE (id = ANY($1::int[]) OR created_by_id IN (990469, 990470, 990471)) AND is_deleted=false`, [made]);
+            await k.end(); console.log('끊김 — 시험 지시 ' + made.length + '건 닫고 숨김');
+        } catch (e) { console.error('끊김 정리 실패:', e.message); }
+        if (browser) await browser.close().catch(() => { }); if (srv) srv.kill(); process.exit(130);
+    });
     try {
         const env = { ...process.env, JWT_SECRET: 'verifytest', PORT: String(PORT) };
         delete env.ANTHROPIC_API_KEY;
@@ -29,8 +39,14 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const { Client } = require('pg');
         db = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
         await db.connect();
-        const ceo = (await db.query(`SELECT id, name FROM users WHERE position='대표' AND deleted_at IS NULL LIMIT 1`)).rows[0];
-        const staff = (await db.query(`SELECT id, name, position FROM users WHERE role <> 'admin' AND deleted_at IS NULL ORDER BY id LIMIT 1`)).rows[0];
+        // #636: 시험 지시는 **만들어지는 순간부터** 어느 실제 계정 화면에도 안 보여야 한다 → 대표·직원 대신 없는 시험 번호 이름으로 넣는다(권한·「내 것만」은 토큰의 role·id 로만 갈리므로 검증 뜻 그대로)
+        const realIds = (await db.query(`SELECT id FROM users`)).rows.map(r => r.id);
+        const ceo = { id: 990471, name: '시험469대표' };
+        const staff = { id: 990470, name: '시험469직원', position: '사원' };
+        if (realIds.includes(ceo.id) || realIds.includes(staff.id) || realIds.includes(990469)) throw new Error('시험 번호가 실제 계정과 겹침');
+        // 실행 도중 실제 계정 화면에 보일 시험 줄 수(늘 0 이어야 함) — 구간마다 재서 끝에 한 항목으로
+        const leaks = [];
+        const leakCheck = async tag => { const r = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE (content LIKE '[검증469]%' OR content = '아니오') AND (mine_hidden IS NOT TRUE) AND is_deleted = false AND created_by_id = ANY($1::int[]) AND id >= $2`, [realIds, id0])).rows[0].c; leaks.push(tag + ' ' + r); return r; };
         const tokA = jwt.sign({ id: ceo.id, name: ceo.name, position: '대표', role: 'admin' }, 'verifytest', { expiresIn: '20m' });
         const tokS = jwt.sign({ id: staff.id, name: staff.name, position: staff.position || '', role: 'staff' }, 'verifytest', { expiresIn: '20m' });
         // #636: 정산 이미지 시험은 없는 직원 번호(990469)로 넣는다 — 대표 이름으로 넣으면 대표가 열어 둔 실화면이 그 확인표를 「내 것」으로 보고 저장 확인 창을 띄운다
@@ -42,6 +58,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             let j = null; try { j = await r.json(); } catch (_) { }
             return { status: r.status, j };
         };
+        const id0 = (await db.query(`SELECT COALESCE(MAX(id),0)::int + 1 AS m FROM pending_orders`)).rows[0].m;
         const nid0 = (await db.query(`SELECT COALESCE(MAX(id),0)::int m FROM notifications`)).rows[0].m;
         S_nid0 = nid0;
         const row = async id => (await db.query(`SELECT id, status, result, run_id, created_by_id FROM pending_orders WHERE id=$1`, [id])).rows[0];
@@ -82,8 +99,8 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         const r3 = await row(p1.j.order.id);
         const run3 = (await db.query(`SELECT status, steps, result FROM agent_runs WHERE id=$1`, [r3.run_id])).rows[0];
         ok('답변 저장 = 완료 · desk_answer · 실행 기록 done · 단계 3줄 · 행위자 클코', r3.status === '완료' && r3.result.type === 'desk_answer' && run3.status === 'done' && run3.steps.length === 3 && run3.steps[0].actor === '클코' && run3.result.lines.length === 2);
-        const n1 = (await db.query(`SELECT title FROM notifications WHERE user_id=$1 AND type='desk' AND id > $2 ORDER BY id DESC LIMIT 1`, [staff.id, nid0])).rows[0];
-        ok('요청자 종 알림 기록', !!n1 && /답했어요/.test(n1.title));
+        const n1 = (await db.query(`SELECT COUNT(*)::int c FROM notifications WHERE type='desk' AND id > $1 AND link = $2`, [nid0, 'agent-office?o=' + p1.j.order.id])).rows[0].c;
+        ok('#636 시험 답변은 종 알림을 만들지 않음(실제 계정 알림 0)', n1 === 0, String(n1));
         let again = ''; try { desk('respond.js', p1.j.order.id, tmpJson({ kind: 'answer', answer: 'x' })); } catch (e) { again = String(e.stderr || e.message); }
         ok('완료된 지시에 다시 답 올리기 거부', /상태라 결과를 올릴 수 없습니다/.test(again));
         // #477 끝난 지시에 [이어서 지시] = 새 지시(reply_to) · 원 지시 상태 그대로 · 창구가 앞 답을 follow_of로 받음
@@ -110,9 +127,9 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         desk('get.js', p2.j.order.id);
         desk('respond.js', p2.j.order.id, tmpJson({ kind: 'approval', action: 'coupon', summary: '[검증469] 5% 쿠폰 1장 발급', impact: '회원 1명 · 쿠폰 1장', plan: '승인되면 발급 후 보유 확인' }));
         ok('승인 요청 = 승인대기', (await row(p2.j.order.id)).status === '승인대기');
-        const nA = (await db.query(`SELECT COUNT(*)::int c FROM notifications WHERE type='desk' AND title LIKE '%승인 요청%' AND id > $1`, [nid0])).rows[0].c;
-        const admins = (await db.query(`SELECT COUNT(*)::int c FROM users WHERE role='admin' AND deleted_at IS NULL`)).rows[0].c;
-        ok('승인 요청 알림 = 활성 관리자 수만큼', nA === admins, `${nA}/${admins}`);
+        const nA = (await db.query(`SELECT COUNT(*)::int c FROM notifications WHERE type='desk' AND id > $1 AND link = $2`, [nid0, 'agent-office?o=' + p2.j.order.id])).rows[0].c;
+        ok('#636 시험 승인 요청은 실제 관리자에게 알림을 만들지 않음(0)', nA === 0, String(nA));
+        await leakCheck('승인');
         const ap0 = await call(tokS, 'POST', `/api/agent-office/orders/${p2.j.order.id}/approve`);
         ok('직원은 승인 불가(403)', ap0.status === 403 && (await row(p2.j.order.id)).status === '승인대기');
         const ap1 = await call(tokA, 'POST', `/api/agent-office/orders/${p2.j.order.id}/approve`);
@@ -168,6 +185,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             } else ok('"아니오" = 즉시 취소(창구 거치지 않음) · 저장 0', false, '469 확인표가 안 생겨 「아니오」를 보내지 않음');
         }
 
+        await leakCheck('정산');
         // ── 6. 현황판
         const bS = await call(tokS, 'GET', '/api/agent-office/desk/board');
         const bA = await call(tokA, 'GET', '/api/agent-office/desk/board');
@@ -220,6 +238,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         try { desk('respond.js', pb.j.order.id, tmpJson({ kind: 'answer', answer: 'x', attachments: [pbad] })); } catch (e) { badExt = String(e.stderr || e.message); }
         ok('허용하지 않는 형식은 거부 · 지시는 처리중 그대로', /올릴 수 없는 형식/.test(badExt) && (await row(pb.j.order.id)).status === '처리중');
 
+        await leakCheck('목록·첨부');
         // ── 7. 실렌더
         const { chromium } = require('playwright');
         browser = await chromium.launch();
@@ -228,6 +247,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
             const pg = await ctx.newPage();
             const errors = []; pg.on('pageerror', e => errors.push(String(e)));
             pg.on('dialog', d => d.accept());
+            await pg.route('**/api/auth/me', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: user.id, username: 'test469', name: user.name, position: user.position || '', color: '#4F46E5', role: user.role === 'admin' ? 'admin' : 'user', annualLeave: 0, hasSignature: false }) }));   // #636: 없는 시험 번호라 실제 응답은 404(→ 로그인 화면)
             await pg.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
             await pg.evaluate(([t, u]) => { localStorage.setItem('jwt_token', t); localStorage.setItem('jwt_user', JSON.stringify(u)); localStorage.setItem('akm_last_page', 'agent-office'); localStorage.setItem('akm_desk_view', 'table'); }, [tok, user]);
             await pg.reload({ waitUntil: 'networkidle' });
@@ -328,7 +348,7 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         ok('#633 봇 실패 항목이 없으면 줄도 없음', await A.pg.evaluate(() => document.querySelectorAll('#desk-board .bot-fail, #desk-board .bf-go').length === 0));
         await A.pg.unroute('**/api/agent-office/desk/board');
         await A.pg.route('**/api/agent-office/desk/board', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channels: [], ship: [], sales: [], is_admin: true, todo: [{ key: 'botfail', label: '봇 실패', count: 4, talk: 4, sms: 0, where: '톡톡 4 · 문자 0' }], live: [], today: [], progress: [] }) }));
-        await A.pg.waitForTimeout(1400);   // 같은 GET 1.2초 겹침 제거(#631) 창이 지난 뒤 새로 받게
+        await A.pg.waitForTimeout(1400);   // (#631 의 1.2초 재사용 창은 #637 로 없어짐 — 이 대기는 이제 필요 없지만 무해해 그대로 둠)
         await A.pg.evaluate(() => __aoDesk.loadBoard());
         await A.pg.waitForTimeout(600);
         const bf633 = await A.pg.evaluate(() => { const li = document.querySelector('#desk-board .bot-fail'); return li ? { t: li.querySelector('span').textContent + '|' + li.querySelector('b').textContent, bs: Array.from(li.querySelectorAll('.bf-go')).map(b => b.textContent + ':' + b.dataset.bf).join(','), note: li.querySelector('small i').textContent } : null; });
@@ -499,6 +519,8 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
         });
         ok('상태 고르개 = 고른 것만 남는다', filtered.bad === 0, JSON.stringify(filtered));
         ok('넓은 화면 페이지 오류 0', W.errors.length === 0, W.errors.slice(0, 2).join(' | '));
+        await leakCheck('화면');
+        ok('#636 실행 도중 실제 계정 화면에 보이는 시험 지시 0(승인·정산·목록·화면 구간마다)', leaks.length === 4 && leaks.every(x => / 0$/.test(x)), leaks.join(' · '));
     } catch (e) {
         ok('검증 중 예외 없음', false, e.message);
     } finally {
@@ -508,15 +530,16 @@ const tmpJson = obj => { const f = path.join(os.tmpdir(), 'desk469-' + Date.now(
                     // #636: 숨기기만 하면 「처리중·대기」 상태가 그대로 남는다 → 안 끝난 줄은 취소로 닫고 내 지시·이력에서도 내린다
                     await db.query(`UPDATE pending_orders SET status='취소' WHERE id = ANY($1::int[]) AND status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨')`, [made]);
                     await db.query(`UPDATE pending_orders SET is_deleted=true, mine_hidden=true, hist_hidden=true WHERE id = ANY($1::int[])`, [made]);
+                    await db.query(`UPDATE pending_orders SET is_deleted=true, mine_hidden=true, hist_hidden=true WHERE created_by_id IN (990469, 990470, 990471) AND is_deleted=false`);   // made 에 못 담긴 채 죽은 줄
                     await db.query(`UPDATE agent_runs SET is_deleted=true WHERE id IN (SELECT run_id FROM pending_orders WHERE id = ANY($1::int[]) AND run_id IS NOT NULL)`, [made]);
                 }
                 if (madeFiles.filter(Boolean).length) await db.query(`UPDATE report_files SET is_deleted=true WHERE id = ANY($1::int[])`, [madeFiles.filter(Boolean)]);
-                if (S_nid0 != null) await db.query(`DELETE FROM notifications WHERE type='desk' AND id > $1`, [S_nid0]);
+                if (S_nid0 != null && made.length) await db.query(`DELETE FROM notifications WHERE type='desk' AND id > $1 AND link = ANY($2::text[])`, [S_nid0, made.map(x => 'agent-office?o=' + x)]);   // #636: 시험 지시의 알림만(종전엔 그 사이 생긴 실제 창구 알림까지 지웠음)
                 await db.query(`DELETE FROM agent_office_config WHERE key='desk_heartbeat'`);
                 // 앞선 실행이 중간에 죽어 남긴 시험 줄도 같이 닫는다(시험 번호 이름이거나 [검증469] 머리말 · 안 끝난 것만)
                 await db.query(`UPDATE pending_orders SET status='취소', mine_hidden=true, hist_hidden=true, is_deleted=true
-                                 WHERE (content LIKE '[검증469]%' OR created_by_id = 990469) AND status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨')`);
-                const left = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE (content LIKE '[검증469]%' OR created_by_id = 990469) AND (is_deleted=false OR status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨'))`)).rows[0].c;
+                                 WHERE (content LIKE '[검증469]%' OR created_by_id IN (990469, 990470, 990471)) AND status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨')`);
+                const left = (await db.query(`SELECT COUNT(*)::int c FROM pending_orders WHERE (content LIKE '[검증469]%' OR created_by_id IN (990469, 990470, 990471)) AND (is_deleted=false OR status IN ('대기','처리중','판독완료','확인표작성','질문','승인대기','승인됨'))`)).rows[0].c;
                 ok('시험 지시 정리(숨김 처리) · 시험 알림 삭제', left === 0, `시험 지시 ${made.length}건`);
                 await db.end();
             }

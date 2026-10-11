@@ -280,6 +280,25 @@ F.forEach(([text, want], i) => {
     ok('15 secondLookupArgs — lookup.normalizeName 과 같은 정리', a.recipientName === lk.normalizeName('김영희 님이요') && a.recipientName === '김영희' && Object.keys(a).length === 1, a);
 }
 
+// ───────────────────────── ②-d 받았다는 알림 = 인사 갈래(#641) ─────────────────────────
+console.log('②-d 받았다는 알림 = 인사 갈래(#641)');
+{
+    const CUST = { from: '01012345678', isKnownCustomer: true };
+    const G = [
+        ['귤 잘 도착했습니다.^^', 'greeting'], ['감사합니다.^^', 'greeting'], ['네^^', 'greeting'],
+        ['잘 받았습니다', 'greeting'], ['택배 잘 받았어요 감사합니다', 'greeting'], ['오늘 도착했어요~', 'greeting'], ['배송 완료됐네요 감사해요', 'greeting'],
+        ['잘 받았습니다 맛있게 먹겠습니다 번창하세요', 'greeting'], ['네 알겠습니다', 'greeting'], ['귤 왔어요 맛있네요', 'greeting'],
+        // 섞이면 앞 갈래가 먼저
+        ['잘 받았는데 썩은 게 있어요', 'claim'], ['잘 도착했는데 상자가 터졌어요', 'claim'], ['도착했는데 하나가 비어 있네요', 'ship_q'],
+        ['잘 받았습니다 그런데 송장번호 좀 알려주세요', 'ship_q'], ['도착했나요?', 'ship_q'], ['언제 도착했어요?', 'ship_q'], ['배송 완료됐나요', 'ship_q'],
+        ['잘 받았어요 다음엔 주소 바꿔서 보내주세요', 'order_q'], ['잘 받았습니다 입금은 어디로 하나요', 'account'],
+        ['아직 안 도착했어요', 'claim'], ['받았어요 근데 양이 적네요', 'other'],
+    ];
+    G.forEach(([text, want], i) => { const got = classify(text, CUST); ok(`${String(i + 1).padStart(2, '0')} 「${text}」 → ${want}`, got.bucket === want, got); });
+    const a1 = rules.answer({ text: '귤 잘 도착했습니다.^^', bucket: classify('귤 잘 도착했습니다.^^', CUST).bucket, order: null, holidays: H, now: NOW });
+    ok(`${G.length + 1} 인사 갈래는 규칙 답이 없다(rules.answer null) — 배송 조회 답이 붙지 않음`, a1 === null, a1);
+}
+
 // ───────────────────────── ③ parse 5건 ─────────────────────────
 console.log('③ 첫 줄 헤더 파서(ai-note.parse)');
 const P = [

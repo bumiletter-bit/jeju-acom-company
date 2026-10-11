@@ -310,13 +310,17 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 2. 대화 상태가 `staff_replied`·`staff_needed`(잠금) 또는 **`draft`(초안 대기)** → 봇 침묵 · `staff_needed`(초안 글은 남김 · AI 를 다시 부르지 않음) · 「손님이 다시 보냈어요」 알림.
 3. **꺼짐 또는 `record` 모드** → 아무것도 안 보냄. 클레임·사진(사진이 붙은 글 전부)만 `staff_needed`(알림은 켜져 있을 때만), 나머지는 상태를 바꾸지 않음(`new`).
 4. 문자 시각이 **30분 넘게 지난 글**(재시도·비행기 모드 뒤) → 답 없이 `staff_needed`(`late_to_staff`).
-5. 쿨다운(`cooldown_min` · #625 기본 10분) 안 · 오늘 봇이 이미 `daily_cap`(#625 기본 3)번 답함 · 같은 질문을 24시간 안에 또 보냄(#625 · 띄어쓰기·기호만 다른 글 = 같은 글) · **유예 중인 봇 답이 큐에 있음**(유예 75초 안에 온 둘째 글) → `staff_needed`. 🔵 쿨다운과 「오늘 답한 횟수」는 **봇 답을 큐에 넣는 순간 1번** 오른다(조각 수와 무관 · 보낸 뒤가 아님).
+5. 쿨다운(`cooldown_min` · #625 때 10분 → #635 에서 30분) 안 · 오늘 봇이 이미 `daily_cap`(#625 기본 3)번 답함 · 같은 질문을 24시간 안에 또 보냄(#625 · 띄어쓰기·기호만 다른 글 = 같은 글) · **유예 중인 봇 답이 큐에 있음**(유예 75초 안에 온 둘째 글) → `staff_needed`. 🔵 쿨다운과 「오늘 답한 횟수」는 **봇 답을 큐에 넣는 순간 1번** 오른다(조각 수와 무관 · 보낸 뒤가 아님).
 6. 번호로 주문 찾기 → **사진이 붙었으면 글이 클레임이어도 사진 판독**(판독 실패·한도 초과·파손 확신 낮음·문구 검사 걸림 → 직원), 아니면 규칙 답 → AI 답. AI 글에 약속 낱말(환불·반품·교환·보상·무료 수거·취소 처리·포인트·적립·쿠폰·할인·재발송·재배송)이 있으면 직원. 답이 없거나 「사람」 판정이면 `staff_needed`(초안이 있으면 `draft_text` 에). 주문이 여러 건이면 주문 물음(발송·주문)일 때만 「받는 분 성함」을 1회 되묻는다.
 7. `draft` 모드 → 대화 `draft` + 초안 알림(직원이 [이대로 보내기]). `auto` 모드 → `hold_sec`(기본 75초) 뒤 보낼 줄을 큐에 · 대화 `bot_replied`.
 - 대화 상태 값: `new · bot_replied · cooldown · staff_needed · draft · staff_replied · closed · ignored`.
 - **직원 알림은 대화당 5분에 한 번**(손님이 연달아 보내도 푸시가 쏟아지지 않게 · `sms_threads.last_notify_at`) · 알림 본문에는 손님 원문을 싣지 않는다(「에이전트 오피스 「문자」 카드에서 확인해 주세요」 · 제목에 끝 4자리만).
 - 🔵 `staff_replied` 잠금은 직원이 [대화 끝내기]를 누를 때까지 풀리지 않는다(자동 해제 없음 — 대표 결정 대기).
 - 줄의 `sender`: `customer`(받음) · `bot` · `staff_desk`(화면에서 직원 발송) · `gateway_other`. 줄의 `state`: `received` / `queued → sending → sent → delivered` · `failed` · `cancelled`.
+
+> **#635(2026-10-11) 로 바뀐 점**: 위 2·4·5번(잠금 · 늦은 글 · 쿨다운·하루 상한·같은 질문)은 **자동 발송만 막는다.** `record`·꺼짐이 아니면 이 갈래에서도 답을 만들어 `draft_text`·`draft_kind` 에 **이번 글 기준으로 새로** 적는다(상태는 종전대로 `staff_needed` · 알림 규칙 그대로 · 사진은 이 갈래에서 판독하지 않고 사람 몫). 클레임·계좌·사진·AI 실패는 초안 없이 사유만 남긴다(아래 10-5a). 쿨다운 기본값은 **30분**으로 되돌렸다(`DEFAULT_CFG.cooldown_min`).
+
+> **#641(2026-10-11) 인사·받았다는 알림**: 「잘 도착했습니다」「받았어요」「감사합니다」「네」처럼 물음이 아닌 글은 `greeting` 갈래다(classify.js `RECEIVED_RE` · 말끝이 맺어진 꼴만 · 60자 안 · 물음·불만·계좌·변경 낱말이나 「…는데/지만/근데」가 있으면 앞 갈래가 먼저). 이 갈래는 답도 초안도 만들지 않고 직원 몫(`staff_why`)도 아니다. 대화 상태는 그대로 두므로(새 번호면 `new` — `ignored` 로 숨기지 않는다) 안 읽음 목록에는 뜬다. 앞 글로 만든 초안이 있으면 지우지 않는다. `ignored` 는 인증번호·광고·통신사 문자만 온 번호에만 쓴다.
 
 ### 10-4. 보내기
 - 큐 틱 **10초마다 · 한 번에 5줄**(우선순위 높은 것 먼저). 꺼져 있으면(`enabled` false) 큐를 돌리지 않는다. **시간당 상한 `hourly_send_cap`(기본 30)은 봇 답에만** 걸린다 — 걸리면 봇 답은 쉬고 직원 답은 나감 · 텔레그램 1시간 1회.
@@ -346,6 +350,56 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 | 1 기록 | `enabled:true, mode:'record'` | 기록 + 클레임·사진 알림 · 봇은 아무것도 안 보냄 · 직원 화면 발송 가능 |
 | 2 초안 | `mode:'draft'` | 봇이 초안만 · 직원이 [이대로 보내기] |
 | 3 자동 | `mode:'auto'` | 유예 뒤 자동 발송 — 🔴 첫 전환은 대표 「고」 뒤 |
+
+### 10-5a. 폰 문자함 구도(#635 · 2026-10-11 · 화면 계약)
+
+대화 목록을 상태 칸이 아니라 **안 읽은 글 수**로 본다. 열면 0, 손님이 다시 보내면 이전 대화와 함께 다시 뜬다.
+
+**새 칸(`sms_threads`)**
+
+| 칸 | 뜻 |
+|---|---|
+| `staff_read_at timestamptz` | 직원이 그 대화를 마지막으로 연 시각. 그 뒤 들어온 손님 글(`direction='in'` · `created_at` 기준) 수 = 안 읽음 |
+| `staff_why text` | 사람 몫 사유. 초안이 생기거나 직원이 답·처리하면 `null` |
+
+- 칸을 처음 만드는 순간에만: 끝났거나 봇이 답한 옛 대화는 읽음으로, `staff_needed`·`draft` 는 안 읽음 그대로 두고 초안 없는 `staff_needed` 에는 사유 `staff` 를 넣는다.
+- 안 읽음은 서버가 받은 시각(`created_at`)으로 센다. 폰 시계(`event_at`)나 늦은 재시도와 무관하다.
+
+**사람 몫 사유(`staff_why`)는 두 곳에 같은 값으로 남는다**
+
+- `sms_threads.staff_why` = 그 대화의 **지금** 상태(화면 `needs_staff`).
+- `sms_messages.ai_json->>'staff_why'` = 사유가 생긴 **그 받은 글**(#633 「봇 실패」 셈 · 지워지지 않음). 답 만들기를 거친 갈래만 적힌다(아래 표의 ○).
+
+| 값 | 뜻 | 받은 글 ai_json |
+|---|---|---|
+| `claim` · `account` · `photo` | 불만·클레임 · 계좌·입금 · 사진 | ○(record 모드는 대화 칸만) |
+| `ai_to_staff` · `ai_promise` | AI 가 사람에게 넘김 · AI 글에 약속 낱말 | ○ |
+| `ai_skip` · `ai_error` · `no_engine` | AI 답 없음 · AI 오류 · 엔진 없음 | ○ |
+| `rule_reserve` · `rule_…` | 규칙이 사람으로 판정(예약 · 예정일 지남 등 · `rule_` + rules.js why) | ○ |
+| `photo_not_fruit` · `photo_unclear` · `photo_ai_error` · `photo_too_big` · `photo_damage_low` · `photo_leak` | 사진 판독 결과 | ○ |
+| `ask_failed` | 받는 분 성함 확인 뒤에도 주문을 못 고름 | × |
+| `send_failed` | 보내지 못함(발송 실패 · 결과 없음 · 묵은 큐 취소) | × |
+| `stuck` | 판정 전에 멈춘 글 | × |
+| `staff` | 옛 직원 몫(칸을 만들 때 채움) | × |
+
+- 화면 글(`staff_why_label`)은 서버가 한글로 준다. 표에 없는 값은 「직원 확인」으로 나간다(영문 값이 화면에 안 나오게).
+- 대화가 저절로 끝날 때(`staff_open_hours`·`staff_lock_hours`) `staff_why` 를 비운다. 초안(`draft_text`)은 남긴다 — 닫힌 대화를 나중에 열어도 답 초안이 보이게. `needs_staff`(목록 칸·summary)와 `drafts` 는 둘 다 `closed`·`ignored` 를 빼고 센다. 닫힌 대화라도 안 읽은 글이 있으면 active 목록에는 뜬다.
+- 초안 만들기 자체가 실패하면(예외) 대화 칸과 그 받은 글 ai_json 둘 다 `ai_error`.
+- `staff_read_at` 은 DB 시계(`now()`)로만 적는다(안 읽음을 세는 `created_at` 과 같은 시계).
+
+**라우트**
+
+| 라우트 | 응답 |
+|---|---|
+| `GET /api/sms/threads?scope=active\|all&q=&limit=` | `{ scope, items }`. `scope` 를 안 주면 **active**. active = 안 읽은 글이 있는 대화(상태 무관 · 단 `ignored` 는 뺀다). all = 전부(`closed`·`ignored` 포함). `q` 가 있으면 scope 와 무관하게 전체에서 찾는다(숫자 3~4자리 = 번호 끝자리 일치 · 숫자 5자리 이상(하이픈·빈칸 허용) = 전체 번호가 같을 때만 · 숫자 1~2자리뿐 = 0건 · 그 밖 = 오간 글 전체 — 글에서는 숫자를 빼고 찾으며 `%`·`_`·`\` 는 글자로 취급). 정렬 = 마지막 글 시각 내림차순. 종전 `status=` 인자는 그대로(주면 옛 동작 · 응답 scope `status`/`legacy`) |
+| `GET /api/sms/threads/:id` | 여는 순간 `staff_read_at = now()`(읽음) · `thread.unread` 0. `?peek=1` 이면 읽음으로 바꾸지 않는다 |
+| `GET /api/sms/summary` | 종전 칸 + `unread_threads`(active 대화 수) · `needs_staff`(그중 사유 있는 수) · `drafts`(안 보낸 초안이 있는 대화 수 — 종전 = 상태 `draft` 수) |
+| `POST …/reply` · `/send-draft` · `/handled` · `/close` | 종전 동작 + `staff_why = null` · `staff_read_at = now()` |
+| `POST …/send-draft` `{ seen }` | `seen` = 화면에 보이던 초안 글. 주면 DB 초안과 같을 때만(앞뒤 빈칸 무시) 보낸다. 다르거나 초안이 사라졌으면 보내지 않고 `409 { ok:false, error:'draft_changed', draft_text:<지금 초안 또는 null>, draft_kind }`. `seen` 을 안 주면(옛 화면) 종전 동작 그대로 |
+
+**목록 한 줄(items[])에 더해진 칸**: `unread`(수) · `needs_staff`(bool = staff_why 있음) · `staff_why` · `staff_why_label`(한글) · `draft_text` · `draft_kind`(`rule`·`ai`·`ask`·`photo`) · `last_dir`(`in`|`out`) · `last_at` · `staff_read_at`. 종전 칸(`status` · `phone_tail` · `customer_hint` …)은 그대로.
+
+직원 답 뒤 24시간 봇 침묵(`staff_lock_hours`)과 직원 몫 6시간 자동 종료(`staff_open_hours`)는 그대로다. 목록은 안 읽음 기준이라 영향이 없고, 침묵 중에도 초안은 만든다.
 
 ### 10-5b. 보관 정리(매일 03:50 KST · `retentionRun`)
 - `agent_office_config 'db_retention'.enabled` 가 **불리언 true** 일 때만 돈다(#579 스위치 · 지금 켜져 있음). 실패하면 다음 틱에 다시.

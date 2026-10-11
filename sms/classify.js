@@ -16,7 +16,7 @@
  *   photo    사진만 왔거나 글이 아주 짧음         사진 판독 → 직원 몫
  *   ship_q   언제 와요·발송·도착·송장             규칙 답(rules.js) → 안 되면 AI
  *   order_q  주문·결제·취소·변경·주소·사이즈      AI(확인이 필요하면 [사람])
- *   greeting 감사·잘 받았어요·네                  답 안 함
+ *   greeting 감사·잘 받았어요·잘 도착했어요·네    답·초안 없음 · 직원 몫 아님(안 읽음으로만 뜬다 · #641)
  *   other    그 밖                                AI
  *
  *   🔴 순서가 규칙이다: 기계 문자(otp → ad → carrier) → 불만(claim) → 사진(photo) → 배송(ship_q) → 주문(order_q) → 인사 → 그 밖.
@@ -62,6 +62,11 @@ const ASK_STRICT_RE = /\?|？|언제|어디|얼마|어떻게|되나|될까|주�
 
 const PHOTO_SHORT_LEN = 8;     // 사진과 같이 온 글이 이 길이(공백 뺀 글자 수) 이하면 「사진만」으로 본다
 const GREETING_MAX_LEN = 30;   // 인사로 볼 글의 최대 길이
+// #641(대표 10/11 실물: 「귤 잘 도착했습니다.^^」에 배송 조회 초안이 붙음): 「받았다·도착했다」는 알림이지 물음이 아니다 → 인사 갈래
+//   말끝이 맺어진 꼴만 본다(「도착했는데…」「받았는데…」는 뒤에 사연이 오므로 인사가 아니다) · 물음·불만·계좌·변경 낱말이 있으면 앞 갈래가 먼저다
+const RECEIVED_RE = /잘\s*(도착|왔|받|수령|먹)|(도착|수령|배송\s*완료)\s*(했습니다|했어요|했네요|했음|했어|하였습니다|완료|됐습니다|됐어요|됐네요|되었습니다|되었어요)|받았(습니다|어요|네요|음|어)|왔(습니다|어요|네요)/;
+const CONTRAST_RE = /는데|은데|인데|던데|지만|근데|그런데|그러나|다만|하지만|그치만/;   // 뒤에 사연이 이어지는 글 = 인사만이 아니다
+const RECEIVED_MAX_LEN = 60;   // 받았다는 알림으로 볼 글의 최대 길이(「잘 받았습니다 맛있게 먹겠습니다 번창하세요」 정도)
 
 function hits(text, list) {
     const out = [];
@@ -110,7 +115,9 @@ function classify(text, ctx) {
     // ④ 배송 물음 → ⑤ 주문 물음
     const ws = hits(t, SHIP_WORDS), wo = hits(t, ORDER_WORDS), wg = hits(t, GREETING_WORDS);
     // 「배송 잘 받았어요 감사합니다」처럼 물음 없이 인사만인 글은 배송 물음이 아니다
-    const thanksOnly = wg.length > 0 && bare.length <= GREETING_MAX_LEN && !ASK_STRICT_RE.test(t);
+    const contrast = CONTRAST_RE.test(t), changeWord = wo.some(x => ORDER_CHANGE_WORDS.includes(x));
+    const received = RECEIVED_RE.test(t) && bare.length <= RECEIVED_MAX_LEN && !QUESTION_RE.test(t) && !contrast && !changeWord;   // #641 「잘 도착했습니다」「받았어요」 = 알림
+    const thanksOnly = received || (wg.length > 0 && bare.length <= GREETING_MAX_LEN && !ASK_STRICT_RE.test(t) && !contrast);
     if (ws.length && !thanksOnly) {
         if (wo.some(x => ORDER_CHANGE_WORDS.includes(x))) return { bucket: 'order_q', words: wo.concat(ws), reason: '주문 변경 + 배송 낱말' };
         return { bucket: 'ship_q', words: ws, reason: '배송·발송 물음' };
@@ -119,10 +126,10 @@ function classify(text, ctx) {
 
     // ⑥ 인사
     if (GREETING_ONLY_RE.test(t)) return { bucket: 'greeting', words: [t], reason: '짧은 대답' };
-    if (thanksOnly) return { bucket: 'greeting', words: wg, reason: '인사·맺음' };
+    if (thanksOnly) return { bucket: 'greeting', words: wg, reason: received ? '받았다는 알림(물음 아님)' : '인사·맺음' };
 
     if (c.hasImage) return { bucket: 'photo', words: [], reason: '사진 + 글(불만 낱말 없음)' };
     return { bucket: 'other', words: [], reason: '그 밖' };
 }
 
-module.exports = { classify, OTP_WORDS, AD_WORDS, CARRIER_WORDS, CLAIM_WORDS, ACCOUNT_WORDS, SHIP_WORDS, ORDER_WORDS, GREETING_WORDS };
+module.exports = { classify, RECEIVED_RE, OTP_WORDS, AD_WORDS, CARRIER_WORDS, CLAIM_WORDS, ACCOUNT_WORDS, SHIP_WORDS, ORDER_WORDS, GREETING_WORDS };

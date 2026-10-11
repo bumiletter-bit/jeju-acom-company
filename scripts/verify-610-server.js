@@ -55,7 +55,7 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     ok(sms.splitForSms('짧은 글', 70).length === 1, 'split 1통');
     ok(sms.smsSafeText('안녕 😀 🍊 반가워요').indexOf('😀') < 0, 'smsSafeText 이모지 제거');
     const c0 = sms.cfgOf({ mode: 'bogus', daily_cap: 999, max_chars: 10 });
-    ok(c0.mode === 'record' && c0.daily_cap === 3 && c0.cooldown_min === 10 && c0.staff_open_hours === 6 && c0.context_msgs === 6 && c0.max_chars === 70, '#625 cfgOf 기본값 = 하루 3번 · 쿨다운 10분 · 직원 몫 6시간 · 앞 대화 6통 ' + JSON.stringify(c0));
+    ok(c0.mode === 'record' && c0.daily_cap === 3 && c0.cooldown_min === 30 && mount.DEFAULT_CFG.cooldown_min === 30 && c0.staff_open_hours === 6 && c0.context_msgs === 6 && c0.max_chars === 70, '#625·#635 cfgOf 기본값 = 하루 3번 · 쿨다운 30분(#635 되돌림) · 직원 몫 6시간 · 앞 대화 6통 ' + JSON.stringify(c0));
     const pe = sms.parseEvent(env('sms:received', { messageId: 'm1', message: '안녕', phoneNumber: '+821012345678', simNumber: 1, receivedAt: '2026-10-10T01:00:00+09:00' }));
     ok(pe.ev === 'sms:received' && pe.digits === '01012345678' && pe.body === '안녕' && pe.gateway_id === 'm1' && pe.envelope_id && pe.event_at instanceof Date, 'parseEvent');
 
@@ -134,21 +134,21 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
         await sentAll(); await pool.query(`UPDATE sms_threads SET cooldown_until = now() - interval '1 minute' WHERE phone_digits = $1`, [P7]);   // 봇 답은 나갔고 쿨다운 10분이 지난 것처럼
         await hook(env('sms:received', { messageId: 'r2', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + P7.slice(1) }));
         t7 = await thread(P7);
-        ok(t7.status === 'staff_needed' && t7.bot_count === 1 && aiQs.length === n0 + 1 && /같은 질문을 다시 보냈어요/.test((notes[notes.length - 1] || {}).title || ''), '#625 같은 질문을 또 보냄(기호만 달라도) → 봇 안 답하고 직원 몫 · AI 안 부름 ' + t7.status);
+        ok(t7.status === 'staff_needed' && t7.bot_count === 1 && aiQs.length === n0 + 2 && t7.draft_text === '귤은 서늘한 곳에 두고 드실 만큼만 꺼내 두세요.' && !t7.staff_why && /같은 질문을 다시 보냈어요/.test((notes[notes.length - 1] || {}).title || ''), '#625 같은 질문을 또 보냄(기호만 달라도) → 자동 발송 0(직원 몫) · 초안은 새로 만듦(#635) ' + t7.status);
         await sentAll(); await pool.query(`UPDATE sms_threads SET status = 'closed', cooldown_until = now() - interval '1 minute' WHERE phone_digits = $1`, [P7]);
         aiAnswer = { answer: '네, 냉장 보관하시면 2주쯤 괜찮아요.', used: [] };
         await hook(env('sms:received', { messageId: 'r3', message: '냉장고에 넣어도 돼요?', phoneNumber: '+82' + P7.slice(1) }));
         t7 = await thread(P7);
         const q3 = aiQs[aiQs.length - 1] || '';
         ok(t7.status === 'bot_replied' && t7.bot_count === 2, '#625 다른 질문(쿨다운 뒤) → 하루 두 번째 봇 답 ' + t7.status + ' ' + t7.bot_count);
-        ok(aiQs.length === n0 + 2 && /^\[앞 대화/.test(q3) && /손님: 귤 보관 어떻게 해요\?/.test(q3) && /우리: 귤은 서늘한 곳에/.test(q3) && /\[이번 손님 글[^\]]*\]\n냉장고에 넣어도 돼요\?$/.test(q3) && !/귤 보관 어떻게 해요\?\n손님: 귤 보관/.test(q3), '#625 AI 질문 = 앞 대화(손님·우리 · 오래된 순) + 이번 글 ' + JSON.stringify(q3).slice(0, 160));
+        ok(aiQs.length === n0 + 3 && /^\[앞 대화/.test(q3) && /손님: 귤 보관 어떻게 해요\?/.test(q3) && /우리: 귤은 서늘한 곳에/.test(q3) && /\[이번 손님 글[^\]]*\]\n냉장고에 넣어도 돼요\?$/.test(q3) && !/귤 보관 어떻게 해요\?\n손님: 귤 보관/.test(q3), '#625 AI 질문 = 앞 대화(손님·우리 · 오래된 순) + 이번 글 ' + JSON.stringify(q3).slice(0, 160));
         await sentAll(); await pool.query(`UPDATE sms_threads SET status = 'closed', cooldown_until = now() - interval '1 minute' WHERE phone_digits = $1`, [P7]);
         await hook(env('sms:received', { messageId: 'r4', message: '얼마예요?', phoneNumber: '+82' + P7.slice(1) }));
         t7 = await thread(P7); ok(t7.status === 'bot_replied' && t7.bot_count === 3, '#625 세 번째 봇 답(하루 3번까지)');
         await sentAll(); await pool.query(`UPDATE sms_threads SET status = 'closed', cooldown_until = now() - interval '1 minute' WHERE phone_digits = $1`, [P7]);
         const n4 = aiQs.length;
         await hook(env('sms:received', { messageId: 'r5', message: '배송은요?', phoneNumber: '+82' + P7.slice(1) }));
-        t7 = await thread(P7); ok(t7.status === 'staff_needed' && t7.bot_count === 3 && aiQs.length === n4, '#625 네 번째 = 직원 몫(하루 3번 넘음 · AI 안 부름)');
+        t7 = await thread(P7); ok(t7.status === 'staff_needed' && t7.bot_count === 3 && aiQs.length === n4 + 1 && !!t7.draft_text && !t7.staff_why, '#625·#635 네 번째 = 자동 발송 0(하루 3번 넘음) · 초안은 만듦 ' + t7.status + ' ' + t7.draft_text);
         await sentAll();
         ok(sms.cfgOf({ context_msgs: 0 }).context_msgs === 0 && sms.cfgOf({ staff_open_hours: 0 }).staff_open_hours === 0, '#625 설정으로 끌 수 있음(context_msgs 0 · staff_open_hours 0)');
     }
@@ -254,6 +254,172 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
     cfgStore.sms_gateway_state.last_ping_at = new Date().toISOString(); await sms.watchTick(); ok(tg.length === 2 && tg[1].includes('복구'), '복구 알림 1회');
     const dsCols = (await pool.query(`SELECT column_name, is_generated FROM information_schema.columns WHERE table_name = 'delivery_shipments' AND column_name IN ('buyer_phone','phone_digits','buyer_digits') ORDER BY 1`)).rows;
     ok(dsCols.length === 3 && dsCols.filter(c => c.is_generated === 'ALWAYS').length === 2, 'delivery_shipments 칸 3개(생성 2) ' + JSON.stringify(dsCols));
+
+    console.log('⑨ #635 폰 문자함 구도 — 안 읽음 · scope · 초안 항상 · 사람 몫 사유');
+    {
+        const cols = (await pool.query(`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'sms_threads' AND column_name IN ('staff_read_at','staff_why') ORDER BY 1`)).rows;
+        ok(cols.length === 2 && cols[0].data_type === 'timestamp with time zone' && cols[1].data_type === 'text', '#635 새 칸 staff_read_at(timestamptz) · staff_why(text) ' + JSON.stringify(cols));
+        const find = (j, id) => (j.items || []).find(x => x.id === id);
+        // 가. record — 안 읽음 셈 · 열면 0 · 다시 오면 1
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
+        const PA = T + '1041';
+        await hook(env('sms:received', { messageId: 'u1', message: '귤 언제 보내주시나요', phoneNumber: '+82' + PA.slice(1) }));
+        await hook(env('sms:received', { messageId: 'u2', message: '주소는 그대로예요', phoneNumber: '+82' + PA.slice(1) }));
+        const ta = await thread(PA);
+        r = await api('GET', '/api/sms/threads?scope=active'); let it = find(r.json, ta.id);
+        ok(r.status === 200 && r.json.scope === 'active' && it && it.unread === 2 && it.last_dir === 'in' && it.last_at && it.needs_staff === false && it.staff_why === null && 'draft_text' in it, '#635 in 2통 → unread 2 · last_dir in · needs_staff false ' + JSON.stringify(it || r.json).slice(0, 200));
+        r = await api('GET', '/api/sms/threads'); ok(r.json.scope === 'active' && !!find(r.json, ta.id), '#635 인자 없으면 scope=active 기본');
+        r = await api('GET', '/api/sms/threads?status=all'); ok(r.status === 200 && r.json.scope === 'legacy' && !!find(r.json, ta.id), '#635 종전 status=all 그대로(옛 화면)');
+        r = await api('GET', '/api/sms/threads?scope=bogus'); ok(r.status === 400, '#635 scope 값 검사 400');
+        r = await api('GET', `/api/sms/threads/${ta.id}?peek=1`); ok(r.status === 200 && r.json.thread.unread === 2 && !(await thread(PA)).staff_read_at, '#635 peek=1 은 읽음으로 안 바꿈');
+        const upd0 = (await thread(PA)).updated_at;
+        r = await api('GET', `/api/sms/threads/${ta.id}`); let ta2 = await thread(PA);
+        ok(r.status === 200 && r.json.thread.unread === 0 && r.json.messages.length === 2 && !!ta2.staff_read_at && String(ta2.updated_at) === String(upd0), '#635 열면 읽음(staff_read_at) · 응답 unread 0 · updated_at 안 건드림');
+        r = await api('GET', '/api/sms/threads?scope=active'); ok(!find(r.json, ta.id), '#635 읽은 대화는 active 목록에서 빠짐');
+        r = await api('GET', '/api/sms/threads?scope=all'); it = find(r.json, ta.id); ok(r.json.scope === 'all' && it && it.unread === 0, '#635 scope=all 에는 남음(unread 0)');
+        await hook(env('sms:received', { messageId: 'u3', message: '혹시 확인되셨나요', phoneNumber: '+82' + PA.slice(1) }));
+        r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, ta.id); ok(it && it.unread === 1, '#635 손님이 다시 보내면 다시 뜸 · unread 1 ' + (it && it.unread));
+        await api('GET', `/api/sms/threads/${ta.id}`);
+        r = await api('GET', '/api/sms/threads?scope=active&q=' + PA.slice(-4)); it = find(r.json, ta.id); ok(r.json.scope === 'all' && it && it.unread === 0, '#635 q(끝 4자리)는 scope 와 무관하게 전체에서 찾음 · 종전 SQL 자리표 빠짐 고침');
+        r = await api('GET', '/api/sms/threads?q=' + encodeURIComponent('주소는 그대로')); ok(r.status === 200 && !!find(r.json, ta.id), '#635 q(글)는 오간 글 전체에서(마지막 글이 아니어도)');
+        // 나. 인증번호만 온 번호 = active 에 안 뜸 · all 에는 있음
+        const PB = T + '1042';
+        await hook(env('sms:received', { messageId: 'u4', message: '[Web발신] 인증번호 654321 을 입력하세요', phoneNumber: '+82' + PB.slice(1) }));
+        const tb = await thread(PB);
+        r = await api('GET', '/api/sms/threads?scope=active'); const inAct = !!find(r.json, tb.id);
+        r = await api('GET', '/api/sms/threads?scope=all&limit=200'); ok(tb.status === 'ignored' && !inAct && !!find(r.json, tb.id), '#635 무시 갈래(ignored)는 active 에 없음 · all 에는 있음');
+        // 다. auto — 쿨다운 안 둘째 글 = 초안 저장 + 자동 발송 0 · 그 뒤 클레임 = 초안 없음 + 사유
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
+        const PC = T + '1043';
+        aiAnswer = { answer: '첫 번째 답입니다.', used: [] };
+        await hook(env('sms:received', { messageId: 'u5', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + PC.slice(1) }));
+        let tc = await thread(PC); const outs0 = (await msgs(PC)).filter(x => x.direction === 'out').length;
+        ok(tc.status === 'bot_replied' && outs0 === 1 && !tc.draft_text && !tc.staff_why && new Date(tc.cooldown_until) - Date.now() > 25 * 60000, '#635 첫 글 = 자동 답 큐 · 쿨다운 기본 30분');
+        aiAnswer = { answer: '두 번째 글에 맞춘 새 초안입니다.', used: [] };
+        const nq = aiQs.length;
+        await hook(env('sms:received', { messageId: 'u6', message: '냉장고에 넣어도 돼요?', phoneNumber: '+82' + PC.slice(1) }));
+        tc = await thread(PC);
+        ok(tc.status === 'staff_needed' && tc.draft_text === '두 번째 글에 맞춘 새 초안입니다.' && tc.draft_kind === 'ai' && !tc.staff_why && aiQs.length === nq + 1 && (await msgs(PC)).filter(x => x.direction === 'out').length === outs0 && tc.bot_count === 1, '#635 쿨다운 안 둘째 글 = 초안 저장 + 자동 발송 0 ' + tc.status + ' ' + tc.draft_text);
+        r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tc.id); ok(it && it.unread === 2 && it.needs_staff === false && it.draft_text === '두 번째 글에 맞춘 새 초안입니다.' && it.draft_kind === 'ai', '#635 목록: 초안 있음 · needs_staff false · unread 2');
+        aiAnswer = { answer: '세 번째 글 초안.', used: [] };
+        await hook(env('sms:received', { messageId: 'u7', message: '그럼 며칠이나 두고 먹을 수 있어요?', phoneNumber: '+82' + PC.slice(1) }));
+        tc = await thread(PC); ok(tc.status === 'staff_needed' && tc.draft_text === '세 번째 글 초안.', '#635 잠금(직원 몫) 중에도 글이 올 때마다 초안을 새로 ' + tc.draft_text);
+        const sumA = (await api('GET', '/api/sms/summary')).json;
+        await hook(env('sms:received', { messageId: 'u8', message: '귤이 다 썩어서 왔어요 환불해주세요', phoneNumber: '+82' + PC.slice(1) }));
+        tc = await thread(PC); ok(tc.status === 'staff_needed' && !tc.draft_text && tc.staff_why === 'claim', '#635 클레임 = 초안 없음 + staff_why claim ' + tc.draft_text + ' ' + tc.staff_why);
+        r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tc.id); ok(it && it.needs_staff === true && it.staff_why === 'claim' && it.staff_why_label === '불만·클레임' && it.draft_text === null && it.unread === 4, '#635 목록: needs_staff true · 사유 · unread 4 ' + JSON.stringify(it || {}).slice(0, 160));
+        const sumB = (await api('GET', '/api/sms/summary')).json;
+        ok(typeof sumB.unread_threads === 'number' && typeof sumB.needs_staff === 'number' && typeof sumB.drafts === 'number' && typeof sumB.staff_needed === 'number' && sumB.unread_threads >= 1 && sumB.needs_staff === sumA.needs_staff + 1 && sumB.drafts === sumA.drafts - 1 && sumB.unread_threads === sumA.unread_threads, '#635 summary 새 칸 unread_threads·needs_staff · drafts = 안 보낸 초안 수 ' + JSON.stringify({ a: [sumA.unread_threads, sumA.needs_staff, sumA.drafts], b: [sumB.unread_threads, sumB.needs_staff, sumB.drafts] }));
+        // 라. 직원 답 = 읽음 + 사유 비움 · 자동 발송 큐 그대로 직원 글만
+        r = await api('POST', `/api/sms/threads/${tc.id}/reply`, { text: '확인해서 다시 연락드리겠습니다' }); tc = await thread(PC);
+        ok(r.status === 200 && tc.status === 'staff_replied' && !tc.staff_why && !!tc.staff_read_at, '#635 직원 답 → 사유 비움 · 읽음');
+        r = await api('GET', '/api/sms/threads?scope=active'); ok(!find(r.json, tc.id), '#635 답한 대화는 active 에서 빠짐');
+        aiAnswer = { answer: '직원 답 뒤 새 글 초안.', used: [] };
+        await hook(env('sms:received', { messageId: 'u9', message: '네 그런데 택배사는 어디예요?', phoneNumber: '+82' + PC.slice(1) }));
+        tc = await thread(PC); r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tc.id);
+        ok(tc.status === 'staff_needed' && tc.draft_text === '직원 답 뒤 새 글 초안.' && it && it.unread === 1 && (it.last_dir === 'in' || it.last_dir === 'out') && (await msgs(PC)).filter(x => x.direction === 'out' && x.sender === 'bot').length === outs0, '#635 직원 답 뒤(24시간 잠금) 다시 옴 = 다시 뜸 · 초안 새로 · 봇 자동 발송 0');
+        // 마. 새 번호 클레임(auto) · draft 모드 = 전부 초안
+        const PD = T + '1044';
+        await hook(env('sms:received', { messageId: 'u10', message: '상자가 터져서 왔어요 환불해주세요', phoneNumber: '+82' + PD.slice(1) }));
+        let td = await thread(PD); ok(td.status === 'staff_needed' && !td.draft_text && td.staff_why === 'claim' && (await msgs(PD)).filter(x => x.direction === 'out').length === 0, '#635 새 번호 클레임 = 초안 없음 + 사유 · 발송 0');
+        // 바. 사람 몫 사유는 두 곳에 같은 값: 대화 칸 sms_threads.staff_why(지금 상태) + 그 받은 글 sms_messages.ai_json.staff_why(#633 「봇 실패」 셈)
+        const lastIn = async d => (await msgs(d)).filter(x => x.direction === 'in').pop();
+        ok(((await lastIn(PD)).ai_json || {}).staff_why === 'claim', '#635 받은 글 ai_json.staff_why = claim(대화 칸과 같은 값)');
+        const PF = T + '1046'; aiAnswer = null;
+        await hook(env('sms:received', { messageId: 'u13', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + PF.slice(1) }));
+        const tf = await thread(PF); const mf = await lastIn(PF);
+        ok(tf.status === 'staff_needed' && tf.staff_why === 'ai_skip' && !tf.draft_text && (mf.ai_json || {}).staff_why === 'ai_skip', '#635 AI 답 없음 = 대화 칸·받은 글 둘 다 staff_why ai_skip ' + tf.staff_why + ' ' + JSON.stringify(mf.ai_json));
+        r = await api('GET', '/api/sms/threads?scope=active'); it = find(r.json, tf.id); ok(it && it.needs_staff === true && it.staff_why_label === 'AI 답 없음', '#635 목록 사유 글 「AI 답 없음」');
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'draft', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
+        const PE = T + '1045'; aiAnswer = { answer: '초안 하나.', used: [] };
+        await hook(env('sms:received', { messageId: 'u11', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + PE.slice(1) }));
+        aiAnswer = { answer: '초안 둘.', used: [] };
+        await hook(env('sms:received', { messageId: 'u12', message: '선물 포장도 되나요?', phoneNumber: '+82' + PE.slice(1) }));
+        const te = await thread(PE); ok(te.draft_text === '초안 둘.' && !te.staff_why && (await msgs(PE)).filter(x => x.direction === 'out').length === 0, '#635 draft 모드 = 글마다 초안 새로 · 발송 0 ' + te.status + ' ' + te.draft_text);
+        // 사. auto + 늦게 들어온 글(40분 전 시각) = 발송 큐 0 · 초안만
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
+        const PG = T + '1047'; aiAnswer = { answer: '늦은 글 초안.', used: [] };
+        await hook(env('sms:received', { messageId: 'u14', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + PG.slice(1), receivedAt: new Date(Date.now() - 40 * 60000).toISOString() }));
+        const tg7 = await thread(PG);
+        ok(tg7.status === 'staff_needed' && tg7.draft_text === '늦은 글 초안.' && !tg7.staff_why && (await msgs(PG)).filter(x => x.direction === 'out').length === 0 && !tg7.bot_count, '#635 auto + 늦은 글 = 발송 큐 0 · 초안만 ' + tg7.status + ' ' + tg7.draft_text);
+        // 아. record + 잠금 갈래 = AI 호출 0 · 초안 안 만듦
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
+        const nRec = aiQs.length;
+        await hook(env('sms:received', { messageId: 'u15', message: '혹시 냉장 보관해도 되나요?', phoneNumber: '+82' + PG.slice(1) }));
+        const tg8 = await thread(PG);
+        ok(aiQs.length === nRec && tg8.status === 'staff_needed' && !tg8.draft_text && (await msgs(PG)).filter(x => x.direction === 'out').length === 0, '#635 record + 잠금(직원 몫) 갈래 = AI 호출 0 · 발송 0 ' + (aiQs.length - nRec));
+        // 자. 저절로 끝날 때 사유 비움 · 닫힌 대화는 needs_staff 아님(초안 셈과 같은 기준)
+        const idD = (await thread(PD)).id;
+        await pool.query(`UPDATE sms_threads SET last_in_at = now() - interval '7 hours', updated_at = now() - interval '7 hours' WHERE id = $1`, [idD]);
+        const swA = await sms.sweepStuck(); let tdc = await thread(PD);
+        ok(swA.auto_closed_open >= 1 && tdc.status === 'closed' && tdc.staff_why === null, '#635 직원 몫 6시간 → closed 때 staff_why 비움 ' + tdc.status + ' ' + tdc.staff_why);
+        const sumC = (await api('GET', '/api/sms/summary')).json;
+        await pool.query(`UPDATE sms_threads SET staff_why = 'claim' WHERE id = $1`, [idD]);   // 닫힌 대화에 사유가 남은 옛 줄을 흉내
+        r = await api('GET', '/api/sms/threads?scope=active&limit=200'); it = find(r.json, idD); const sumD = (await api('GET', '/api/sms/summary')).json;
+        ok(it && it.unread >= 1 && it.status === 'closed' && it.needs_staff === false && sumD.needs_staff === sumC.needs_staff, '#635 닫힌 대화 = 안 읽음이면 active 에 뜨되 needs_staff false · summary.needs_staff 에도 안 셈');
+        // 차. 검색: 전체 번호 일치 · 5자리 이상 부분 번호 = 0건 · % _ 는 글자
+        const idA = (await thread(PA)).id;
+        r = await api('GET', '/api/sms/threads?q=' + PA); ok(r.status === 200 && r.json.items.length === 1 && r.json.items[0].id === idA, '#635 q = 전체 번호 → 그 대화 하나 ' + r.json.items.length);
+        r = await api('GET', '/api/sms/threads?q=' + encodeURIComponent(PA.slice(0, 3) + '-' + PA.slice(3, 7) + '-' + PA.slice(7))); ok(r.json.items.length === 1 && r.json.items[0].id === idA, '#635 q = 하이픈 낀 전체 번호도 같음');
+        r = await api('GET', '/api/sms/threads?q=' + PA.slice(0, 7) + '&limit=200'); ok(r.status === 200 && r.json.items.length === 0, '#635 q = 숫자 5자리 이상 부분 번호 → 0건(종전엔 전부 나왔음) ' + r.json.items.length);
+        r = await api('GET', '/api/sms/threads?q=12&limit=200'); ok(r.status === 200 && r.json.items.length === 0, '#635 q = 숫자 1~2자리 → 0건 ' + r.json.items.length);
+        r = await api('GET', '/api/sms/threads?q=' + encodeURIComponent('%') + '&limit=200'); const pct = r.json.items.length;
+        r = await api('GET', '/api/sms/threads?q=' + encodeURIComponent('_') + '&limit=200');
+        ok(r.status === 200 && !find(r.json, idA) && pct < 200 && !(await api('GET', '/api/sms/threads?q=' + encodeURIComponent('%') + '&limit=200')).json.items.some(x => x.id === idA), '#635 q 의 % · _ 는 글자로 취급(전부 나오지 않음)');
+        // 카. 사유 한글: rule_… · 모르는 값 = 「직원 확인」
+        await pool.query(`UPDATE sms_threads SET staff_why = 'rule_reserve', status = 'staff_needed' WHERE id = $1`, [idA]);
+        r = await api('GET', '/api/sms/threads?q=' + PA); const lab1 = r.json.items[0].staff_why_label;
+        await pool.query(`UPDATE sms_threads SET staff_why = 'zz_unknown_why' WHERE id = $1`, [idA]);
+        r = await api('GET', '/api/sms/threads?q=' + PA); const lab2 = r.json.items[0].staff_why_label;
+        ok(lab1 === '예약 상품' && lab2 === '직원 확인' && r.json.items[0].needs_staff === true, '#635 사유 글: rule_reserve → 「예약 상품」 · 모르는 값 → 「직원 확인」(영문 안 나옴) ' + lab1 + ' / ' + lab2);
+        // 타. 읽음 시각 = DB 시계(직원 답 뒤 곧바로 온 글이 안 읽음으로 세어짐)
+        const dbNow = (await pool.query(`SELECT now() AS n`)).rows[0].n; await api('POST', `/api/sms/threads/${idA}/handled`, {});
+        const ta9 = await thread(PA); ok(ta9.staff_read_at && Math.abs(new Date(ta9.staff_read_at) - new Date(dbNow)) < 5000 && !ta9.staff_why, '#635 [처리함] → staff_read_at = DB now() · 사유 비움');
+        // 파. #641 받았다는 알림·감사 = 답·초안 없음 · 직원 몫 아님 · 안 읽음으로만 뜸(새 번호여도 숨기지 않음)
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'draft', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
+        const PH = T + '1048'; const nTh = aiQs.length, nNote = notes.length; aiAnswer = { answer: '나오면 안 되는 초안.', used: [] };
+        await hook(env('sms:received', { messageId: 'u16', message: '귤 잘 도착했습니다.^^', phoneNumber: '+82' + PH.slice(1) }));
+        await hook(env('sms:received', { messageId: 'u17', message: '감사합니다.^^', phoneNumber: '+82' + PH.slice(1) }));
+        await hook(env('sms:received', { messageId: 'u18', message: '네^^', phoneNumber: '+82' + PH.slice(1) }));
+        const th = await thread(PH), mh = await msgs(PH);
+        ok(mh.length === 3 && mh.every(x => x.bucket === 'greeting') && !th.draft_text && !th.staff_why && th.status === 'new' && aiQs.length === nTh && notes.length === nNote && mh.every(x => x.direction === 'in'),
+            '#641 「잘 도착했습니다」「감사합니다」「네」 3통 = 인사 갈래 · 초안 없음 · 사유 없음 · AI 0 · 알림 0 · 발송 0 ' + JSON.stringify({ b: mh.map(x => x.bucket), st: th.status, d: th.draft_text }));
+        r = await api('GET', '/api/sms/threads?scope=active&limit=200'); it = find(r.json, th.id);
+        ok(it && it.unread === 3 && it.needs_staff === false && it.draft_text === null && it.status !== 'ignored', '#641 목록: 안 읽음 3 으로 뜸 · needs_staff false · 초안 없음(숨김 아님) ' + JSON.stringify(it ? { u: it.unread, n: it.needs_staff, s: it.status } : null));
+        // 물음 → 초안 → 뒤에 온 「감사합니다」는 앞 초안을 지우지 않는다(답할 물음이 남아 있다)
+        const PI = T + '1049'; aiAnswer = { answer: '보관 초안.', used: [] };
+        await hook(env('sms:received', { messageId: 'u19', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + PI.slice(1) }));
+        await hook(env('sms:received', { messageId: 'u20', message: '감사합니다', phoneNumber: '+82' + PI.slice(1) }));
+        const ti = await thread(PI); ok(ti.draft_text === '보관 초안.' && ti.status === 'draft', '#641 물음 뒤 「감사합니다」 = 앞 초안 그대로 ' + ti.status + ' ' + ti.draft_text);
+        // 섞인 글은 종전 갈래: 「잘 받았는데 썩은 게 있어요」 = claim → 사람 몫
+        const PJ = T + '1050';
+        await hook(env('sms:received', { messageId: 'u21', message: '잘 받았는데 썩은 게 있어요', phoneNumber: '+82' + PJ.slice(1) }));
+        const tj = await thread(PJ); ok(tj.status === 'staff_needed' && tj.staff_why === 'claim' && !tj.draft_text, '#641 「잘 받았는데 썩은 게 있어요」 = claim(사람 몫) ' + tj.staff_why);
+        // 하. #635-C send-draft 「내가 본 초안」 대조: 같음 = 발송 · 다름 = 409·발송 0 · 사라짐 = 409 + null · seen 없음 = 종전
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'draft', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
+        const PK = T + '1051'; aiAnswer = { answer: '첫 초안입니다.', used: [] };
+        await hook(env('sms:received', { messageId: 'u22', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + PK.slice(1) }));
+        aiAnswer = { answer: '둘째 글에 맞춘 새 초안입니다.', used: [] };
+        await hook(env('sms:received', { messageId: 'u23', message: '선물 포장도 되나요?', phoneNumber: '+82' + PK.slice(1) }));
+        let tk = await thread(PK); const outsK = async () => (await msgs(PK)).filter(x => x.direction === 'out');
+        r = await api('POST', `/api/sms/threads/${tk.id}/send-draft`, { seen: '첫 초안입니다.' });
+        ok(r.status === 409 && r.json.ok === false && r.json.error === 'draft_changed' && r.json.draft_text === '둘째 글에 맞춘 새 초안입니다.' && r.json.draft_kind === 'ai' && (await outsK()).length === 0 && (await thread(PK)).draft_text === '둘째 글에 맞춘 새 초안입니다.',
+            '#635-C 본 초안과 다름 = 409 draft_changed + 지금 초안 · 발송 0 · 초안 그대로 ' + r.status + ' ' + JSON.stringify(r.json));
+        r = await api('POST', `/api/sms/threads/${tk.id}/send-draft`, { seen: '  둘째 글에 맞춘 새 초안입니다.\n' });
+        let ok1 = await outsK(); tk = await thread(PK);
+        ok(r.status === 200 && r.json.ok === true && ok1.length === 1 && ok1[0].body === '둘째 글에 맞춘 새 초안입니다.' && ok1[0].sender === 'staff_desk' && !tk.draft_text && tk.status === 'staff_replied', '#635-C 본 초안과 같음(앞뒤 빈칸 무시) = 발송 1 · 초안 비움 ' + r.status);
+        r = await api('POST', `/api/sms/threads/${tk.id}/send-draft`, { seen: '둘째 글에 맞춘 새 초안입니다.' });
+        ok(r.status === 409 && r.json.error === 'draft_changed' && r.json.draft_text === null && r.json.draft_kind === null && (await outsK()).length === 1, '#635-C 초안이 사라짐(이미 보냄) = 409 draft_changed + draft_text null · 더 안 나감');
+        const PL = T + '1052'; aiAnswer = { answer: '옛 화면용 초안.', used: [] };
+        await hook(env('sms:received', { messageId: 'u24', message: '귤 보관 어떻게 해요?', phoneNumber: '+82' + PL.slice(1) }));
+        const tl = await thread(PL);
+        r = await api('POST', `/api/sms/threads/${tl.id}/send-draft`, {});
+        const outsL = (await msgs(PL)).filter(x => x.direction === 'out');
+        ok(r.status === 200 && outsL.length === 1 && outsL[0].body === '옛 화면용 초안.', '#635-C seen 없음(옛 화면) = 종전 그대로 발송');
+        r = await api('POST', `/api/sms/threads/${tl.id}/send-draft`, {});
+        ok(r.status === 409 && r.json.error !== 'draft_changed' && /초안이 없어요/.test(r.json.error || ''), '#635-C seen 없이 초안 없음 = 종전 안내 글 409');
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
+    }
 
     // 정리
     await pool.query(`DELETE FROM sms_images WHERE message_id IN (SELECT m.id FROM sms_messages m JOIN sms_threads t ON t.id = m.thread_id WHERE t.phone_digits LIKE $1)`, [T + '%']);
