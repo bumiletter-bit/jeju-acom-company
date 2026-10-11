@@ -248,6 +248,55 @@ module.exports = function mountSms(app, deps) {
         return (thread.bot_count_day && kstDate(new Date(thread.bot_count_day).getTime() + 12 * 3600e3) === today) ? (thread.bot_count || 0) : 0;
     }
 
+    // ── #665(대표 10/12): 문자가 왔는데 주문을 못 찾으면 그 순간 최근 주문을 1회 받아와 다시 찾는다 ──
+    //   발송 전 주문 수집은 60분 1회라 주문 직후 문자는 「주문을 찾지 못한 번호」가 된다 → 필요할 때만 조회(주기 단축 대신 · 네이버 호출·429 위험 최소).
+    //   조건: 설정 preorders === true · lookup_refresh.enabled !== false · 같은 번호 per_number_min(10)분에 1회 · 전체 1시간 hourly_cap(20)회 · 주기 수집이 5분 안에 돌았거나 도는 중이면 생략 ·
+    //   한꺼번에 한 번만(겹친 문자는 같은 조회를 기다림) · timeout_sec(10) 넘거나 실패하면 종전대로 「주문 없음」. 받아온 줄은 얹기만(preorders.collect merge — 옛 줄 셈·삭제 없음)
+    const _rfNum = new Map(); let _rfHour = [], _rfBusy = null;
+    const channelBusy = () => { try { return typeof deps.ordersBusy === 'function' && !!deps.ordersBusy(); } catch (e) { return false; } };
+    function refreshCfg(raw) {
+        const v = (raw && typeof raw.lookup_refresh === 'object' && raw.lookup_refresh) || {}; const num = (x, d, min, max) => { const n = Math.floor(Number(x)); return Number.isFinite(n) && n >= min && n <= max ? n : d; };
+        return { on: !!raw && raw.preorders === true && v.enabled !== false, per_number_min: num(v.per_number_min, 10, 1, 1440), hourly_cap: num(v.hourly_cap, 20, 1, 500), timeout_sec: num(v.timeout_sec, 10, 1, 30), days: num(v.days, 2, 1, 3) };
+    }
+    async function refreshPreorders(digits) {
+        if (!(preorders && typeof preorders.collect === 'function')) return 'off';
+        const fns = { fetchNaver: deps.fetchNaver, fetchCoupang: deps.fetchCoupang, fetchCafe24: deps.fetchCafe24 };
+        if (!Object.values(fns).some(f => typeof f === 'function')) return 'off';
+        const rc = refreshCfg((await naverCfgGet('sms_gateway')) || {}); if (!rc.on) return 'off';
+        if (channelBusy()) return 'skip:busy';   // 송장변환·중간발주 등 다른 주문 조회가 도는 중(서버가 deps.ordersBusy 로 알려 줄 때만) → 겹치지 않게 생략(종전 길)
+        if (_rfBusy) return _rfBusy;   // 지금 도는 조회가 있으면 그 결과를 같이 기다린다(호출 겹침 없음)
+        const now = Date.now(); const lastN = _rfNum.get(digits);
+        if (lastN && now - lastN < rc.per_number_min * 60000) return 'skip:number';
+        _rfHour = _rfHour.filter(t => now - t < 3600e3); if (_rfHour.length >= rc.hourly_cap) return 'skip:hourly';
+        const lastP = (await naverCfgGet('sms_preorders_last').catch(() => null)) || {}; const age = lastP.at ? now - new Date(lastP.at).getTime() : Infinity;
+        if (age < 5 * 60000) return lastP.running ? 'skip:running' : 'skip:recent';   // 주기 수집이 방금 돌았거나(5분) 도는 중
+        _rfNum.set(digits, now); _rfHour.push(now); if (_rfNum.size > 500) for (const [k, t] of _rfNum) if (now - t > 86400e3) _rfNum.delete(k);
+        const run = (async () => {
+            try { const r = await preorders.collect({ pool, fetchNaver: fns.fetchNaver, fetchCoupang: fns.fetchCoupang, fetchCafe24: fns.fetchCafe24, log }, { days: rc.days, merge: true }); return { r }; }
+            catch (e) { return { error: String(e && e.message || e).slice(0, 160) }; }
+        })();
+        const limit = Number(deps.refreshTimeoutMs) > 0 ? Number(deps.refreshTimeoutMs) : rc.timeout_sec * 1000;
+        const job = (async () => {
+            let timer; const o = await Promise.race([run, new Promise(res => { timer = setTimeout(() => res({ timeout: true }), limit); if (timer.unref) timer.unref(); })]); clearTimeout(timer);
+            return o.timeout ? 'timeout' : (o.error ? 'error' : 'done');
+        })();
+        _rfBusy = job; run.then(o => { if (_rfBusy === job) _rfBusy = null; if (o.error) log.error('[문자] 즉시 주문 조회 실패(종전대로 주문 없음):', o.error); });   // 시간 초과여도 실제 조회가 끝날 때까지는 다음 조회·주기 수집을 막는다
+        return job;
+    }
+    async function orderForFresh(digits, c, bucket, first) {
+        if (!(first && first.match === 'none') || first.why === 'bad-phone' || !isDomestic(digits) || digits.length < 10) return first;
+        if (['otp', 'ad', 'carrier', 'greeting', 'wrong', 'refuse'].includes(bucket)) return first;   // 무시 갈래(인증번호·광고·통신사·감사 인사)와 잘못 온 글·수신 거부는 조회하지 않는다
+        let how = 'off', t0 = Date.now(), again = first;
+        try { how = await refreshPreorders(digits); if (how === 'done') { const r2 = await orderFor(digits, c); if (r2) again = r2; } }
+        catch (e) { how = 'error'; log.error('[문자] 즉시 주문 조회 실패(무시):', e.message); }
+        if (how === 'off') return first;
+        const found = !!(again && again.match !== 'none');
+        log.log('[문자] 즉시 주문 조회 끝 ' + phoneTail(digits) + ' → ' + how + (how === 'done' ? (found ? ' · 찾음' : ' · 없음') : '') + ' · ' + (Date.now() - t0) + 'ms');
+        try { const st = ((await naverCfgGet('sms_gateway_state').catch(() => null)) || {}).lookup_refresh || {}; const day = kstDate(); const base = st.day === day ? st : { day, tried: 0, found: 0, skipped: 0 };
+            await stateMerge({ lookup_refresh: { day, tried: base.tried + (/^skip/.test(how) ? 0 : 1), found: base.found + (found ? 1 : 0), skipped: base.skipped + (/^skip/.test(how) ? 1 : 0), last_at: new Date().toISOString(), last: how, last_found: found, last_ms: Date.now() - t0 } }); } catch (e) { }
+        if (found) again.refreshed = true;
+        return again;
+    }
     // ── 번호 → 주문(워커4 lookup.js 가 오기 전엔 null) ──
     async function orderFor(digits, c) {
         if (!lookupMod || typeof lookupMod.lookupByPhone !== 'function') return null;
@@ -464,8 +513,9 @@ module.exports = function mountSms(app, deps) {
     // #635: 번호로 주문 찾기 → 답 만들기(규칙 → AI · 사진은 판독). patch 에 주문 힌트를 얹는다 · gated = 자동 발송이 막힌 갈래(사진은 판독하지 않고 사람 몫)
     async function makeAnswer(thread, msg, c, patch, { bodyText, images, gated, aiOpts }) {
         const digits = thread.phone_digits, hasImage = images.length > 0, bucket = msg.bucket;
-        const lookup = await orderFor(digits, c);
+        const lookup = await orderForFresh(digits, c, bucket, await orderFor(digits, c));   // #665 못 찾았으면 최근 주문을 1회 받아와 다시 찾는다
         const hint = await orderHintOf(lookup);
+        if (hint && lookup.refreshed) hint.refreshed = true;   // 직원 화면용 표시(방금 조회해 찾은 주문)
         if (hint) Object.assign(patch, { order_hint: hint.line || null, order_json: hint });
         if (lookup && lookup.match === 'one' && lookup.order) lookup.order = Object.assign({}, lookup.order, { option: lookup.order.option_text || lookup.order.option });   // rules.js 는 option/option_text 둘 다 읽음
         let ans;
@@ -859,7 +909,7 @@ module.exports = function mountSms(app, deps) {
             if (preorders && typeof preorders.collect === 'function' && rawCfg.preorders === true) {
                 const lastP = (await naverCfgGet('sms_preorders_last')) || {};
                 const kh = new Date(Date.now() + 9 * 3600e3).getUTCHours();   // 한국 01~07시는 쉼(04:30 스냅샷 · 05:10 자사몰 점검과 겹침 방지)
-                if (!(kh >= 1 && kh < 7) && (!lastP.at || Date.now() - new Date(lastP.at).getTime() > 60 * 60000)) {
+                if (!_rfBusy && !channelBusy() && !(kh >= 1 && kh < 7) && (!lastP.at || Date.now() - new Date(lastP.at).getTime() > 60 * 60000)) {   // #665 즉시 조회가 도는 중이면 다음 틱에
                     await naverCfgSet('sms_preorders_last', Object.assign(lastP, { at: new Date().toISOString(), running: true }));
                     try { const r = await preorders.collect({ pool, fetchNaver: deps.fetchNaver, fetchCoupang: deps.fetchCoupang, fetchCafe24: deps.fetchCafe24, log }); await naverCfgSet('sms_preorders_last', { at: new Date().toISOString(), running: false, result: r }); log.log('[문자] 발송 전 주문 수집', JSON.stringify(r).slice(0, 200)); }
                     catch (e) { await naverCfgSet('sms_preorders_last', { at: new Date().toISOString(), running: false, error: String(e.message).slice(0, 200) }); log.error('[문자] 발송 전 주문 수집 실패:', e.message); }

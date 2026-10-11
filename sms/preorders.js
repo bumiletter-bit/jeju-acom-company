@@ -78,6 +78,8 @@ async function collect(a, b, c) {
             upserted += (await db.query(SQL_UPSERT, [ch, p.map(x => x.order_key), p.map(x => x.buyer_digits), p.map(x => x.recipient_digits), p.map(x => x.recipient_initial),
                 p.map(x => x.option_text), p.map(x => x.qty), p.map(x => x.paid_at)])).rowCount;
         }
+        // #665 merge(= 최근 며칠만 받아 얹기 · 문자가 왔는데 주문을 못 찾았을 때의 즉시 조회): 넣기만 하고 「안 보인 줄」 셈·삭제는 하지 않는다(짧은 창이라 옛 주문이 전부 안 보인 것으로 세어지면 안 된다 · 0건 유예 기억도 안 건드림)
+        if (opts && opts.merge === true) { out.channels[ch] = { rows: rows.length, upserted, merge: true }; continue; }
         // F4(R3 M4): 조회는 성공했는데 0건이고 표에는 이 채널 줄이 있으면 — 일시적인 빈 응답일 수 있어 한 회는 그대로 둔다(연속 두 번째 0건부터 평소대로 센다 · 셈은 메모리)
         if (!rows.length) {
             const have = (await db.query(`SELECT count(*)::int AS n FROM sms_preorders WHERE channel = $1`, [ch])).rows[0].n;

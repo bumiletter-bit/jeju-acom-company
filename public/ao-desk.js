@@ -110,7 +110,7 @@
         mounted: false, tab: 'mine', status: null, orders: [], board: null, sig: '', boardAt: 0,
         images: [], open: new Set(), seenConfirm: null, tick: 0, sending: false, loading: false,
         fs: 'all', wide: false, detail: new Set(), autoOpened: new Set(), pend: new Map(), media: new Map(), replyImg: new Map(), replyTarget: 0,
-        view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(), boxOpen: new Set(), todoAll: false,
+        view: (() => { try { return localStorage.getItem('akm_desk_view') === 'table' ? 'table' : 'chat'; } catch (e) { return 'chat'; } })(), closed: new Set(), follow: new Set(), boxOpen: new Set(),
         hist: { q: '', mineOnly: false, older: [], more: false, open: new Set(), busy: false, delAsk: 0 }, endAsk: 0, pin: new Set(), q: { mine: '', all: '' }, mineLimit: 60, pickImg: false,
         inbox: null, inboxKind: 'all', inboxSeen: false, inboxAt: 0, ibDetail: new Set(),
     };
@@ -290,7 +290,6 @@
             <section class="desk-board folded" id="desk-board" aria-label="현황판"></section>
         </div>
         <aside class="desk-side">
-            <div class="desk-panel desk-todo-box" id="desk-todo-box" aria-label="지금 챙길 일"><h3>지금 챙길 일 <span id="desk-todo-n"></span></h3><div id="desk-todo"><div class="desk-empty">불러오는 중</div></div><button type="button" class="desk-todo-more" id="desk-todo-more" aria-controls="desk-todo" hidden></button></div>
             <div class="desk-panel"><h3>LIVE 로그 <span>내 채팅 처리 현황</span></h3><div id="desk-live"></div></div>
             <div class="desk-panel"><h3>오늘 일정 <span id="desk-today-n"></span></h3><div id="desk-today"></div></div>
             <div class="desk-panel"><h3>주요 업무 현황 <span>오늘 기준</span></h3><div id="desk-prog"></div></div>
@@ -2952,42 +2951,19 @@
         const nav = document.querySelector('.nav-item[data-page="inquiry"]');
         if (nav) { nav.click(); setTimeout(() => { try { if (typeof switchInquiryTab === 'function') switchInquiryTab('unanswered'); } catch (e) { /* 메뉴만 열려도 된다 */ } }, 0); }   // 문의 관리의 「톡톡 문의」 탭까지
     }
-    // #653-다(대표 10/11): 「지금 챙길 일」을 현황판 맨 아래에서 꺼내 — PC(오른쪽 칸이 있는 폭) = 오른쪽 칸 맨 위 · 그보다 좁으면(폰 · 폴드 펼침 900) 입력 칸 바로 아래(도구 카드 뒤 · 채팅 목록 앞)
-    //   좁은 폭에서는 4건까지만 보이고 [N건 더 보기] — 채팅 목록을 화면 밖으로 밀지 않게
-    const TODO_WIDE = '(min-width: 1181px)', TODO_CUT = 4;
-    const todoPr = t => t.key === 'botfail' ? 0 : t.key === 'remind' && (t.when || '오늘') === '오늘' ? 1 : 2;   // 봇 실패 · 오늘 일정 알림은 맨 앞(좁은 폭에서 접히지 않는다)
-    function todoPlace() {
-        const box = $('desk-todo-box'), lb = $('desk-listbox'), side = document.querySelector('#ao-desk-root .desk-side');
-        if (!box || !lb || !side) return;
-        if (window.matchMedia(TODO_WIDE).matches) { if (side.firstElementChild !== box) side.prepend(box); }
-        else if (lb.previousElementSibling !== box) lb.before(box);
-    }
-    function todoRender(html) {
-        const el = $('desk-todo'), box = $('desk-todo-box');
-        if (!el || !box) return;
-        el.innerHTML = html;
-        const lis = Array.from(el.querySelectorAll('.desk-todo > li')), n = lis.length, more = $('desk-todo-more'), cnt = $('desk-todo-n');
-        const pin = li => li.matches('.sms-todo, .bot-fail, .pin');
-        let free = Math.max(0, TODO_CUT - lis.filter(pin).length), hid = 0;
-        lis.forEach(li => { const x = !pin(li) && free-- <= 0; li.classList.toggle('cut-x', x); if (x) hid++; });
-        if (cnt) cnt.textContent = n ? n + '건' : '';
-        box.classList.toggle('cut', hid > 0 && !S.todoAll);
-        box.classList.toggle('none', !n);
-        if (more) { more.hidden = hid === 0; more.textContent = S.todoAll ? '접기' : hid + '건 더 보기'; more.setAttribute('aria-expanded', String(!!S.todoAll)); }
-        todoPlace();
-    }
+    // #666(대표 10/12 「지금 챙길 일을 밑으로 — 원래 있던 자리에」): #653-다에서 위(PC 오른쪽 칸 맨 위 · 좁은 폭 채팅 목록 앞)로 올렸던 것을 되돌림
+    //   = 현황판 셋째 칸(채널별 주문 · 최근 7일 발송 박스 다음). 현황판을 다시 그릴 때마다 같이 그려지므로 누름은 현황판(#desk-board)에 한 번만 건다. 좁은 폭의 「N건 더 보기」 접기는 없앰(전부 보임)
+    const todoPr = t => t.key === 'botfail' ? 0 : t.key === 'remind' && (t.when || '오늘') === '오늘' ? 1 : 2;   // 봇 실패 · 오늘 일정 알림은 맨 앞
     function todoBind() {
-        const box = $('desk-todo-box');
+        const box = $('desk-board');
         if (!box) return;
         box.addEventListener('click', e => {
-            if (e.target.closest('#desk-todo-more')) { S.todoAll = !S.todoAll; if (S.board) renderBoard(); return; }
+            if (!e.target.closest('#desk-todo-box')) return;
             const cu = e.target.closest('.cu-go'); if (cu) { if (cu.dataset.cu === 'sms') smsOpen('active'); else inbOpen(cu.dataset.cu); return; }
             const bf = e.target.closest('.bf-go'); if (bf) { botFailGo(bf.dataset.bf); return; }
             const li = e.target.closest('.sms-todo'); if (li) { if (li.dataset.sms === 'cust') inbOpenFirst(); else smsOpen(li.dataset.sms === 'active' ? 'active' : undefined); }
         });
-        box.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('sms-todo')) { e.preventDefault(); e.target.click(); } });
-        todoPlace();
-        try { window.matchMedia(TODO_WIDE).addEventListener('change', todoPlace); } catch (e) { /* 옛 브라우저: 다음 현황판 갱신 때 자리를 다시 잡는다 */ }
+        box.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('sms-todo') && e.target.closest('#desk-todo-box')) { e.preventDefault(); e.target.click(); } });
     }
     function renderBoard() {
         const d = S.board, box = $('desk-board');
@@ -3017,7 +2993,7 @@
                 ? `<ul class="desk-todo">${smsLi}${d.todo.slice().sort((a, b) => todoPr(a) - todoPr(b)).map(t => t.key === 'botfail' ? botFailHtml(t) : `<li${todoPr(t) === 1 ? ' class="pin"' : ''}><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
                 : '<div class="desk-empty">지금 챙길 일이 없어요.</div>';
         }
-        todoRender(todoHtml);
+        const todoN = (todoHtml.match(/<li[\s>]/g) || []).length;
         let salesHtml = '';
         if (d.is_admin && Array.isArray(d.sales)) {
             salesHtml = `<div class="desk-panel"><h3>네이버 정산 회차별 결제금액 <span>대표만 보임</span></h3>${d.sales.length
@@ -3027,6 +3003,7 @@
         box.innerHTML = `
             <div class="desk-panel"><h3>채널별 주문 <span>오늘 · 주문 안내 기준</span></h3>${chHtml}</div>
             <div class="desk-panel"><h3>최근 7일 발송 박스 <span>정산관리 입력 기준</span></h3>${shipHtml}</div>
+            <div class="desk-panel desk-todo-box${todoN ? '' : ' none'}" id="desk-todo-box" aria-label="지금 챙길 일"><h3>지금 챙길 일 <span id="desk-todo-n">${todoN ? todoN + '건' : ''}</span></h3><div id="desk-todo">${todoHtml}</div></div>
             ${salesHtml}`;
         renderSide(d);
     }

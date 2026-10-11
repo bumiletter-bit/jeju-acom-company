@@ -7168,8 +7168,18 @@ app.get('/api/agent-office/naver/settlements', authMiddleware, adminOnly, async 
 // 대표 7/25: 네이버는 '현재 배송준비 상태 전체'를 한 번에 주는 API가 없음(상태 목록조회 불가).
 //   결제일(PAYED_DATETIME) 기준으로만 조회 가능 · 1회 최대 24시간 · 최대 180일. → days일을 24h씩 훑어 취합.
 //   중복방지(이미 올림 기록)는 제거 — 중간발주 연동상 매번 '배송준비 전체'를 그대로 넘겨야 함(신규주문은 수기 발주확인).
-async function naverFetchInvoiceOrders(days, opts) {
+// #667-b: 문자 수집이 아닌 곳(송장변환·최종발주·중간발주·러너·라우트)이 주문을 조회하는 동안을 센다 — 문자 봇(sms/index.js deps.ordersBusy)이 그 사이 즉시 조회를 건너뛰어 네이버 429 겹침을 피한다.
+//   문자 수집 자신은 아래 Core 를 바로 불러 세지 않는다(장착 줄). 바깥 이름·인자·결과는 종전 그대로.
+let _ordersBusy = 0;
+async function naverFetchInvoiceOrders(days, opts) { _ordersBusy++; try { return await _naverFetchInvoiceOrdersCore(days, opts); } finally { _ordersBusy--; } }
+async function _naverFetchInvoiceOrdersCore(days, opts) {
     opts = opts || {};   // #452: { extended: true } = 네이버 원본 양식(시트2) 재료 _x 동봉 — 기존 호출(미지정)은 종전 출력과 동일
+    // #667: { placeStatuses: ['OK','NOT_YET'] } = 발주확인 전(NOT_YET) 주문도 — 문자 봇의 발송 전 주문 수집에서만 켠다(송장변환·중간발주·최종발주는 미지정 = 종전 그대로 OK 한 번).
+    //   공식 문서(조건형 상품 주문 상세 내역 조회): placeOrderStatusType = NOT_YET·OK·CANCEL 중 한 값 · 「생략 = 전부」라는 글이 없어 값마다 따로 조회한다(호출 수 = 값 개수배 · 간격·재시도 동일).
+    const PLACE_OK = ['NOT_YET', 'OK', 'CANCEL'];
+    const placeList = Array.isArray(opts.placeStatuses) ? [...new Set(opts.placeStatuses.map(String))].filter(s => PLACE_OK.includes(s)) : [];
+    const places = placeList.length ? placeList : ['OK'];
+    const placeTag = placeList.length > 0;   // 켰을 때만 행에 발주 상태를 싣는다(미지정 호출의 결과는 한 글자도 안 바뀜)
     const now = Date.now();
     const isoKst = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().replace('Z', '+09:00');
     const pick = (o, ...ks) => { for (const k of ks) { if (o && o[k] != null) return o[k]; } return undefined; };
@@ -7194,21 +7204,22 @@ async function naverFetchInvoiceOrders(days, opts) {
     for (let d = 0; d < days; d++) {                    // 최근 days일을 24시간 단위로 순회(조회 범위 안전)
         const to = now - d * 24 * 3600 * 1000;
         const from = to - 24 * 3600 * 1000;
+      for (let pi = 0; pi < places.length; pi++) {     // #667: 발주 상태 값마다 한 바퀴(미지정 = 'OK' 한 번 — 종전과 같은 요청 순서)
         let page = 1, got = 0;
         do {
-            if (d > 0 || page > 1) await sleep(350);    // 초당 제한 완화용 호출 간격
+            if (d > 0 || pi > 0 || page > 1) await sleep(350);    // 초당 제한 완화용 호출 간격
             const r = await callWithRetry({
                 method: 'GET', path: '/external/v1/pay-order/seller/product-orders',
                 query: {
                     from: isoKst(from), to: isoKst(to),
-                    rangeType: 'PAYED_DATETIME', productOrderStatuses: 'PAYED', placeOrderStatusType: 'OK',
+                    rangeType: 'PAYED_DATETIME', productOrderStatuses: 'PAYED', placeOrderStatusType: places[pi],
                     pageSize: PAGE_SIZE, page,
                 },
             });
             const body = (r && r.data) ? r.data : r;
             const items = pick(body, 'contents', 'data', 'elements', 'list') || (Array.isArray(body) ? body : []);
             got = Array.isArray(items) ? items.length : 0;
-            if (got) raws = raws.concat(items);
+            if (got) raws = raws.concat(placeTag ? items.map(it => ({ __place: places[pi], it })) : items);
             if (!pageInfo && got) {                     // 진단: 페이지 필드명 확인용(항목 제외 상위 키만, PII 없음)
                 const top = {}; for (const k of Object.keys(body || {})) { if (!Array.isArray(body[k])) top[k] = body[k]; }
                 pageInfo = naverMaskPII(top);
@@ -7218,9 +7229,11 @@ async function naverFetchInvoiceOrders(days, opts) {
             //   (배송준비 1298건 중 999건만 오던 원인 추정: 예약주문 몰린 날 2페이지 이상이 버려짐).
             //   → "꽉 채워(300건) 왔으면 다음 페이지가 있다"로 판단. 덜 채워 오면 그 날은 끝. 상한 50p(=하루 15,000건).
         } while (got === PAGE_SIZE && page <= 50);
+      }
     }
     const seen = new Set(); const rows = []; let rawKeys = null; let partialAdjusted = 0;
-    for (const it of raws) {
+    for (const raw of raws) {
+        const it = placeTag ? raw.it : raw, askedPlace = placeTag ? raw.__place : '';
         // 대표 7/24: 네이버 응답 중첩 방어 — 항목이 content 래퍼 안에 있을 수 있음(data[].content.{order,productOrder})
         const c = it.content || it;
         const po = c.productOrder || it.productOrder || c;
@@ -7253,11 +7266,13 @@ async function naverFetchInvoiceOrders(days, opts) {
                 expectedSettlementAmount: (po.expectedSettlementAmount != null ? Number(po.expectedSettlementAmount) : null),
                 shippingDueDate: po.shippingDueDate || '', inflowPath: String(po.inflowPath || ''), deliveryMethod: String(po.deliveryMethod || ''),
                 productOrderStatus: String(po.productOrderStatus || ''),
+                ...(placeTag ? { placeOrderStatus: String(po.placeOrderStatus || askedPlace) } : {}),   // #667: 응답 값이 먼저 · 없으면 조회에 쓴 값
             } } : {}),
+            ...(placeTag && !opts.extended ? { _place: String(po.placeOrderStatus || askedPlace) } : {}),
         });
     }
     // 진단용: 첫 응답 항목을 개인정보 가림 처리해 구조만 노출(품목 필드는 보이게 — 미매칭 원인 파악용)
-    const sample = raws.length ? naverMaskPII(raws[0]) : null;
+    const sample = raws.length ? naverMaskPII(placeTag ? raws[0].it : raws[0]) : null;
     return { fetched: seen.size, rows, rawKeys, sample, pageInfo, partialAdjusted };
 }
 
@@ -10494,7 +10509,9 @@ app.post('/api/delivery/shipments/upload', authMiddleware, async (req, res) => {
 //   무회귀: 설정 행이 없으면 webhook 은 받아 기록만 하고 아무 것도 보내지 않는다 · 다른 기능과 표를 공유하지 않음(delivery_shipments 에 buyer_phone 칸만 추가)
 const smsDesk = require('./sms/index.js')(app, { pool, authMiddleware, naverCfgGet, naverCfgSet, writeAudit, createNotification, notifyTelegram, loadShippingHolidayInfo, qnaGenerate, cjTrack, deliveryUpsertStatus,
     // #610-G 발송 전 주문 보관(sms/preorders.js · 설정 sms_gateway.preorders 가 true 일 때만 60분 1회) — cafe24 는 const 가 뒤(10324행)라 지연 참조(TDZ)
-    fetchNaver: d => naverFetchInvoiceOrders(d, { extended: true }), fetchCoupang: d => coupangFetchInvoiceOrders(d), fetchCafe24: d => require('./cafe24.js').fetchInvoiceOrders(d) });
+    // #667 발주확인 전 주문도(네이버 NOT_YET · 쿠팡 ACCEPT) — 대표가 아침에 손으로 발주확인하기 전에 문자한 손님도 찾게. 이 줄에서만 켠다(행에 _x.placeOrderStatus · _status 가 실림)
+    ordersBusy: () => _ordersBusy > 0,   // #667-b: 다른 곳이 주문을 조회 중이면 true(문자 수집 자신의 조회는 Core 직행이라 안 셈)
+    fetchNaver: d => _naverFetchInvoiceOrdersCore(d, { extended: true, placeStatuses: ['OK', 'NOT_YET'] }), fetchCoupang: d => _coupangFetchInvoiceOrdersCore(d, { statuses: ['ACCEPT', 'INSTRUCT'] }), fetchCafe24: d => require('./cafe24.js').fetchInvoiceOrders(d) });
 // ===== #610 회사폰 문자 반자동 응대 — 끝 =====
 
 // ===== #612 전체 가격 확인하기 — 시작 (대표 10/10 「직원이 가격을 고칠 때 자사몰·귤 페이지를 빼먹는 사고 방지」 · 모듈 price-check.js(워커4) · 카드 ao-desk.js(워커5)) =====
@@ -10572,14 +10589,22 @@ async function coupangCallWithRetry(reqObj) {
 }
 
 // 상품준비중(INSTRUCT) 주문 조회 → convertDataCoupang이 읽는 9키로 매핑 (변환 로직 무수정)
-async function coupangFetchInvoiceOrders(days) {
+async function coupangFetchInvoiceOrders(days, opts) { _ordersBusy++; try { return await _coupangFetchInvoiceOrdersCore(days, opts); } finally { _ordersBusy--; } }   // #667-b: 문자 수집이 아닌 호출만 센다
+async function _coupangFetchInvoiceOrdersCore(days, opts) {
+    // #667: { statuses: ['ACCEPT','INSTRUCT'] } = 결제완료(발주확인 전)도 — 문자 봇의 발송 전 주문 수집에서만 켠다. 미지정 = 종전 그대로 INSTRUCT 한 번(결과 동일).
+    const ST_OK = ['ACCEPT', 'INSTRUCT'];
+    const stList = (opts && Array.isArray(opts.statuses)) ? [...new Set(opts.statuses.map(String))].filter(s => ST_OK.includes(s)) : [];
+    const statuses = stList.length ? stList : ['INSTRUCT'];
+    const stTag = stList.length > 0, seenKey = new Set();
     const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
     const d = (off) => { const t = new Date(kstNow); t.setUTCDate(t.getUTCDate() + off); return t.toISOString().slice(0, 10); };
     const from = d(-(Math.max(1, days) - 1)), to = d(0);
     let nextToken = '', rows = [], fetchedSheets = 0, partialAdjusted = 0, sample = null;
+    for (let si = 0; si < statuses.length; si++) {
+    nextToken = '';
     for (let page = 0; page < 20; page++) {
-        if (page > 0) await new Promise(r => setTimeout(r, 350));
-        const query = { createdAtFrom: from + '+09:00', createdAtTo: to + '+09:00', status: 'INSTRUCT', maxPerPage: 50 };
+        if (page > 0 || si > 0) await new Promise(r => setTimeout(r, 350));
+        const query = { createdAtFrom: from + '+09:00', createdAtTo: to + '+09:00', status: statuses[si], maxPerPage: 50 };
         if (nextToken) query.nextToken = nextToken;
         const body = await coupangCallWithRetry({ method: 'GET', path: COUPANG_ORDERSHEETS_PATH, query });
         const list = Array.isArray(body && body.data) ? body.data : [];
@@ -10592,6 +10617,10 @@ async function coupangFetchInvoiceOrders(days) {
                 const qty = shipping - ((Number(it.holdCountForCancel) || 0) + (Number(it.cancelCount) || 0));
                 if (qty !== shipping) partialAdjusted++;
                 if (qty <= 0) continue;               // 전량 취소(예정 포함) → 발주 대상 아님
+                if (stTag) {   // #667: 두 상태를 잇달아 묻는 사이 발주확인되면 같은 줄이 양쪽에 온다 → 먼저 본 것만
+                    const k = String(sheet.shipmentBoxId || sheet.orderId || '') + '|' + String(it.vendorItemId || '');
+                    if (k !== '|') { if (seenKey.has(k)) continue; seenKey.add(k); }
+                }
                 rows.push({
                     '구매자': o.name || '',
                     '구매자전화번호': o.ordererNumber || o.safeNumber || '',
@@ -10606,12 +10635,14 @@ async function coupangFetchInvoiceOrders(days) {
                     // #610-G 발송 전 주문 보관용(sms/preorders.js) — 결제 시각은 ISO 로(시간대 없는 글자를 그대로 넘기면 9시간 어긋남) · 배송번호·옵션번호는 열쇠
                     _paidAt: (t => t ? new Date(t).toISOString() : '')(Date.parse(sheet.paidAt || sheet.orderedAt || '')),
                     _shipmentBoxId: String(sheet.shipmentBoxId || ''), _vendorItemId: String(it.vendorItemId || ''),
+                    ...(stTag ? { _status: String(sheet.status || statuses[si]) } : {}),
                 });
             }
         }
         if (!sample && list.length) sample = naverMaskPII(list[0]);
         nextToken = String((body && body.nextToken) || '');
         if (!nextToken) break;
+    }
     }
     return { fetched: fetchedSheets, rows, sample, partialAdjusted };
 }
