@@ -21,7 +21,7 @@ function seed() {
     let mid = 5000;
     const m = (direction, sender, body, minAgo, o) => Object.assign({ id: ++mid, direction, kind: 'sms', body, sender, state: direction === 'in' ? 'received' : 'delivered', image_ids: [], event_at: iso(minAgo) }, o || {});
     const T = (id, tail, status, hint, msgs, o) => ({ id, phone_tail: tail, phone_masked: '010****' + tail, phone_full: '0101234' + tail,   /* #624: 서버가 주는 전체 번호(숫자만) */ customer_hint: hint, status, staff_name: null, handled_at: null, bot_count_today: 0, draft_text: null, read_at: null, staff_why: null, order: null, messages: msgs, ...(o || {}) });
-    const ORD = (o) => Object.assign({ ship_date: '2026-10-09', partner: '효돈', option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, tracking_tail: '4821', status_label: '배송출발', arrive_text: '오늘 도착 예정' }, o || {});
+    const ORD = (o) => Object.assign({ recipient_name: '홍길동', recipient_initial: '홍', ship_date: '2026-10-09', partner: '효돈', option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, tracking_tail: '4821', status_label: '배송출발', arrive_text: '오늘 도착 예정' }, o || {});
     ST = {
         enabled: true, mode: 'draft', alive: true, last_ping_at: iso(1), withCounts: true, fail: '', log: [],
         threads: [
@@ -50,7 +50,7 @@ function seed() {
             T(10, '6060', 'closed', '효돈 · 10/6 발송 · 하우스감귤 4kg', [m('in', 'customer', '잘 받았습니다 맛있어요', 1500), m('out', 'staff_phone', '감사합니다. 맛있게 드세요.', 1490)], { order: ORD({ ship_date: '2026-10-06', status_label: '배송완료', arrive_text: '10/7(수) 도착' }), staff_name: '조가영', handled_at: iso(1490), read_at: iso(1490) }),
             T(11, '7007', 'staff_needed', '효돈 · 10/9 발송 · 하우스감귤 4kg × 2', [
                 m('in', 'customer', '환불해 주세요. 상한 게 너무 많습니다.', 8), m('out', 'staff_desk', '확인하고 바로 연락드리겠습니다.', 6, { state: 'failed' }),
-            ], { order: ORD({ qty: 2, tracking_tail: '3306', status_label: '배송완료', arrive_text: '10/10(토) 도착' }), staff_why: 'send_failed' }),
+            ], { order: ORD({ qty: 2, tracking_tail: '3306', status_label: '배송완료', arrive_text: '10/10(토) 도착', recipient_name: '김영희', recipient_initial: '김' }), staff_why: 'send_failed' }),
             T(12, '1001', 'bot_replied', null, [m('in', 'customer', '아주아주 긴 문의입니다. ' + '도착 시간과 보관 방법, 그리고 선물 포장이 되는지도 함께 알려주시면 좋겠습니다. '.repeat(4), 3), m('out', 'bot', '안내드릴게요. 발송 다음 날 도착하고, 서늘한 곳에 보관해 주세요. 선물 포장은 선물용 상품에서만 됩니다.', 2, { state: 'queued' })], { bot_count_today: 1 }),
         ],
     };
@@ -66,7 +66,9 @@ const md5 = x => (x ? String(x).slice(5, 10).replace('-', '/') : '');
 function orderJson(t) {
     if (t.order_raw) return t.order_raw;
     if (!t.order) return null;
-    const { arrive_text, ...o } = t.order; o.boxes = o.boxes || 1; o.delivered = o.status_label === '배송완료';
+    const { arrive_text, ...o } = t.order; o.boxes = o.boxes || (Number(o.qty) > 1 ? Number(o.qty) : 1); o.delivered = o.status_label === '배송완료';
+    if (ST.noTrk) delete o.recipient_name;   // 옛 응답 = 이름 전체·전체 번호 없음(첫 글자만)
+    if (!ST.noTrk && o.tracking_tail) o.trackings = Array.from({ length: o.boxes }, (_, i) => '59012345' + String(Number(o.tracking_tail) + i).padStart(4, '0'));   // #644 전체 번호(상자마다 하나)
     return { line: [o.partner, o.ship_date ? md5(o.ship_date) + ' 발송' : '', o.option_text, o.boxes > 1 ? o.boxes + '상자' : '', o.status_label].filter(Boolean).join(' · '), role: 'recipient', match: 'one', candidates: 1, order: o };
 }
 const isActive = t => t.status !== 'ignored' && unreadOf(t) > 0;
@@ -103,7 +105,7 @@ http.createServer(async (req, res) => {
     try {
         if (p === '/__mock/log') return send(res, 200, { log: ST.log });
         if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
-        if (p === '/__mock/set') { const b = await readBody(req); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; return send(res, 200, { ok: true }); }
+        if (p === '/__mock/set') { const b = await readBody(req); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; return send(res, 200, { ok: true }); }
         if (p === '/__mock/draft') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.draft_text = b.text ? String(b.text) : null; return send(res, 200, { ok: true }); }   // 봇 초안이 뒤늦게 생김
         if (p === '/__mock/push') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.messages.push({ id: 7000 + t.messages.length + t.id * 10, direction: 'in', kind: 'sms', body: String(b.body || '또 보냅니다'), sender: 'customer', state: 'received', image_ids: [], event_at: new Date().toISOString() }); if (t.status === 'closed') t.status = 'new'; return send(res, 200, { ok: true }); }
         if (p.startsWith('/api/sms/')) {

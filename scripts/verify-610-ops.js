@@ -84,9 +84,19 @@ async function cleanup() {
         const a0 = audits.length;
         const retA = await sms.retentionRun();
         ok((await pool.query(`SELECT count(*)::int AS n FROM delivery_shipments WHERE tracking LIKE '9996000000%'`)).rows[0].n === 2 && (await pool.query(`SELECT count(*)::int AS n FROM delivery_status WHERE tracking LIKE '9996000000%'`)).rows[0].n === 2, '세기만: 송장·상태 줄 그대로');
-        ok(retA && retA.shipments_target === 1 + real.ship_old && retA.shipments_deleted === 0 && retA.purge_shipments === false, '세기만: 대상 1 · 삭제 0 ' + JSON.stringify(retA));
+        ok(retA && retA.shipments_target >= 1 && retA.shipments_deleted === 0 && retA.purge_shipments === false, '세기만: 대상에 시험 줄 포함(1 이상 — 실제 표 건수는 실서버 보관 정리·송장 올리기와 겹쳐 흔들려 못 박지 않음) · 삭제 0 ' + JSON.stringify(retA));
         ok(cfgStore.sms_retention_last && cfgStore.sms_retention_last.shipments_target === retA.shipments_target, 'sms_retention_last 에 대상 건수 기록');
         ok(audits.length === a0 + 1 && audits[a0].changes && audits[a0].changes.after && audits[a0].changes.after.sms_images === 1 && audits[a0].changes.after.shipments_deleted === 0, '세기만: audit 1줄(사진 1 · 송장 삭제 0) ' + (audits.length - a0));
+        // #644: 마지막 글이 60일 지난 대화의 주문 칸에서 이름 전체·운송장 전체를 비움(끝 4자리·성 한 글자는 남김) · 59일은 그대로
+        {
+            const oj = JSON.stringify({ line: 'x', match: 'one', order: { tracking_tail: '4301', recipient_initial: '시', recipient_name: '시험644', trackings: ['999600064401'] } });
+            const tOld = await mkThread(P(41), 'closed', { at: ago(60 * 24 * 61) }), tNew = await mkThread(P(42), 'closed', { at: ago(60 * 24 * 59) });
+            await pool.query(`UPDATE sms_threads SET order_json = $2::jsonb WHERE id = ANY($1::int[])`, [[tOld.id, tNew.id], oj]);
+            const retO = await sms.retentionRun();
+            const jo = (await pool.query(`SELECT order_json FROM sms_threads WHERE id = $1`, [tOld.id])).rows[0].order_json, jn = (await pool.query(`SELECT order_json FROM sms_threads WHERE id = $1`, [tNew.id])).rows[0].order_json;
+            ok(retO && retO.order_json_cleared >= 1 && !('recipient_name' in jo.order) && !('trackings' in jo.order) && jo.order.tracking_tail === '4301' && jo.order.recipient_initial === '시' && jn.order.recipient_name === '시험644' && jn.order.trackings.length === 1,
+                '#644 61일 지난 대화 = 이름 전체·운송장 전체 비움(끝 4자리·성 남김) · 59일은 그대로 ' + JSON.stringify({ cleared: retO && retO.order_json_cleared, old: jo.order }));
+        }
         // 실제 삭제: purge_shipments true
         cfgStore.sms_gateway = Object.assign({}, cfgStore.sms_gateway, { purge_shipments: true });
         const a0b = audits.length;

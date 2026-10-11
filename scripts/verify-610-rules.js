@@ -101,16 +101,16 @@ const one = o => ({ match: 'one', order: o });
 const R = [];
 // 1 발송 뒤 — 10/8(목) 출발 · 10/9 도착불가 → 토(10/10) · 일요일 배달 없음 → 최단일만
 R.push(['발송 뒤(휴무일 끼임) = 오늘 도착 예정 한 날만 + 사유',
-    rules.answer({ text: '언제 와요?', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: '2026-10-08', partner: '효돈', option: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, tracking_tail: '1234', delivered: false, status_label: '간선상하차' }) }),
-    { kind: 'ship_after', staff: false, text: '10/8(목) 효돈에서 출발했어요 · 송장 끝 1234 · 오늘(10/10(토)) 도착 예정이에요 (공휴일(한글날)). 지금은 배송 지역으로 이동 중이에요.' }]);
+    rules.answer({ text: '언제 와요?', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: '2026-10-08', partner: '효돈', option: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, trackings: ['590123451234'], tracking_tail: '1234', delivered: false, status_label: '간선상하차' }) }),
+    { kind: 'ship_after', staff: false, text: '안녕하세요 고객님 ^^ 10/8(목) 제주에서 출발했습니다!\n송장번호 590123451234(CJ대한통운)\n오늘 토요일(10/10) 도착 예정입니다. (공휴일(한글날))\n지금은 배송 지역으로 이동 중입니다.\n배송조회 ' + rules.TRACK_URL + '590123451234\n행복한 하루 되세요 ^^' }]);
 // 2 발송 뒤 — 송장을 물음 → kind tracking
 R.push(['발송 뒤 + 「송장」 물음 = kind tracking',
-    rules.answer({ text: '송장번호 알려주세요', bucket: 'ship_q', now: '2026-10-13T09:00:00+09:00', holidays: H, order: one({ ship_date: '2026-10-12', partner: '대성(시온)', tracking_tail: '601234567890', delivered: false, status_label: '집화' }) }),
-    { kind: 'tracking', staff: false, text: '10/12(월) 대성에서 출발했어요 · 송장 끝 7890 · 오늘(10/13(화))~수요일(10/14) 사이 도착 예정이에요. 지금은 택배사에 접수됐어요.' }]);
+    rules.answer({ text: '송장번호 알려주세요', bucket: 'ship_q', now: '2026-10-13T09:00:00+09:00', holidays: H, order: one({ ship_date: '2026-10-12', partner: '대성(시온)', trackings: ['601234567890'], tracking_tail: '7890', delivered: false, status_label: '집화' }) }),
+    { kind: 'tracking', staff: false, text: '안녕하세요 고객님 ^^ 10/12(월) 제주에서 출발했습니다!\n송장번호 601234567890(CJ대한통운)\n오늘 화요일(10/13)~수요일(10/14) 사이 도착 예정입니다.\n지금은 택배사에 접수되었습니다.\n배송조회 ' + rules.TRACK_URL + '601234567890\n행복한 하루 되세요 ^^' }]);
 // 3 배송 완료
 R.push(['배송 완료 = 도착 예정 문장 없음',
-    rules.answer({ text: '도착했나요', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: '2026-10-07', partner: '효돈', tracking_tail: '5678', delivered: true, status_label: '배송완료' }) }),
-    { kind: 'ship_after', staff: false, text: '10/7(수) 효돈에서 출발했어요 · 송장 끝 5678 · 배송 완료로 확인돼요.' }]);
+    rules.answer({ text: '도착했나요', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: '2026-10-07', partner: '효돈', trackings: ['590123455678'], tracking_tail: '5678', delivered: true, status_label: '배송완료' }) }),
+    { kind: 'ship_after', staff: false, text: '네 고객님 ^^ 10/7(수) 제주에서 출발했고, 배송 완료로 확인됩니다!\n송장번호 590123455678(CJ대한통운)\n감사합니다 ^^' }]);
 // 4 도착 예정일 지남 → 사람
 R.push(['도착 예정일이 지났는데 완료 아님 = 사람',
     rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-14T10:00:00+09:00', holidays: H, order: one({ ship_date: '2026-10-07', partner: '효돈', tracking_tail: '5678', delivered: false, status_label: '간선하차' }) }),
@@ -118,15 +118,15 @@ R.push(['도착 예정일이 지났는데 완료 아님 = 사람',
 // 5 발송 전 — 토요일 주문 → 일요일 발송(일요일은 발송하는 날)
 R.push(['발송 전(토요일 주문) = 내일 일요일 발송',
     rules.answer({ text: '언제 발송돼요?', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: null, option: '하우스감귤 가정용 - 4kg(로얄과)', qty: 1, paid_at: '2026-10-10T09:30:00+09:00' }) }),
-    { kind: 'ship_before', staff: false, text: '내일 일요일(10/11) 오전 발송 예정이에요 · 월요일(10/12)~화요일(10/13) 사이 도착 예정이에요.' }]);
+    { kind: 'ship_before', staff: false, text: '안녕하세요 고객님 ^^\n내일 일요일(10/11) 오전 발송 예정이고, 월요일(10/12)~화요일(10/13) 사이 도착 예정입니다.\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^' }]);
 // 6 발송 전 — 휴무일 사유가 붙는 경우(10/8 낮 주문 → 10/9 휴무 · 10/10 토 → 10/11 일) · 물은 날 = 10/10(토) 저녁
 R.push(['발송 전(한글날 휴무로 밀림) = 사유 문장 포함',
     rules.answer({ text: '배송 언제 되나요', bucket: 'ship_q', now: '2026-10-10T19:00:00+09:00', holidays: H, order: one({ ship_date: null, option: '황금향 가정용 3kg', paid_at: '2026-10-08T13:00:00+09:00' }) }),
-    { kind: 'ship_before', staff: false, text: '내일 일요일(10/11) 오전 발송 예정이에요 · 월요일(10/12)~화요일(10/13) 사이 도착 예정이에요. (한글날 연휴 휴무로 일요일 발송이에요)' }]);
+    { kind: 'ship_before', staff: false, text: '안녕하세요 고객님 ^^\n내일 일요일(10/11) 오전 발송 예정이고, 월요일(10/12)~화요일(10/13) 사이 도착 예정입니다. (한글날 연휴 휴무로 일요일 발송이에요)\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^' }]);
 // 7 발송 전 — 오늘 발송분인데 낮 12시 넘음 + 송장 물음
 R.push(['발송 전(오늘 발송분 · 오후) = 「오전 발송 예정」이라 안 함 + 송장 안내',
     rules.answer({ text: '송장 나왔나요', bucket: 'ship_q', now: '2026-10-13T14:00:00+09:00', holidays: H, order: one({ ship_date: null, option: '하우스감귤 4kg', paid_at: '2026-10-13T07:10:00+09:00' }) }),
-    { kind: 'ship_before', staff: false, text: '오늘(10/13(화)) 발송분이에요 · 내일 수요일(10/14)~목요일(10/15) 사이 도착 예정이에요. 송장 번호는 발송되면 알림으로 보내 드려요.' }]);
+    { kind: 'ship_before', staff: false, text: '안녕하세요 고객님 ^^\n오늘 화요일(10/13) 발송분이고, 내일 수요일(10/14)~목요일(10/15) 사이 도착 예정입니다.\n송장번호는 발송되면 알림톡으로 안내드리겠습니다.\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^' }]);
 // 8 예약 상품 → 사람
 R.push(['발송 전 예약 상품 = 사람(계산기로 답하지 않음)',
     rules.answer({ text: '언제 와요', bucket: 'ship_q', now: NOW, holidays: H, order: one({ ship_date: null, option: '[예약] 레드향 3kg', paid_at: '2026-10-09T10:00:00+09:00' }) }),
@@ -153,7 +153,7 @@ R.forEach(([name, got, want], i) => {
     const a = shippingSchedule.computeArrival(new Date('2026-10-08T12:00:00+09:00'), H.arriveOff, H.reasons);
     ok('계산기 대조 — 발송 뒤 답의 도착일 = computeArrival 결과', a.arriveStart === '2026-10-10' && a.arriveEnd === '2026-10-12' && R[0][1].text.includes('10/10'), a);
     const texts = R.map(x => x[1] && x[1].text).filter(Boolean).join('\n');
-    ok('규칙 답 전체 — 이모지 0 · 운송장 5자리 이상 숫자 0 · 전화번호 꼴 0', !EMOJI_RE.test(texts) && !/\d{5,}/.test(texts) && !/01\d-?\d{3,4}-?\d{4}/.test(texts), texts);
+    ok('규칙 답 전체 — 이모지 0 · 전화번호 꼴 0 · 긴 숫자는 「송장번호 …(CJ대한통운)」 안에서만(#643) · 거래처 이름 0', !EMOJI_RE.test(texts) && !/01\d-?\d{3,4}-?\d{4}/.test(texts.replace(/송장번호 [\d, ]+( 외 \d+)?\(CJ대한통운\)/g, '').replace(/배송조회 \S+/g, '')) && !/\d{5,}/.test(texts.replace(/송장번호 [\d, ]+( 외 \d+)?\(CJ대한통운\)/g, '').replace(/배송조회 \S+/g, '')) && !/효돈|대성|시온|길영/.test(texts), texts);
 }
 
 // ───────────────────────── ②-a 수정 F3(총검토 R3·R4) — 지난 주문·문제 상태·결제 시각 ─────────────────────────
@@ -166,23 +166,23 @@ console.log('②-a 규칙 답 수정 F3');
     ok('02 pre_pending 이 있으면 배송 중인 주문이어도 사람', isStaff(ask('언제 와요', shipped({}, { pre_pending: 2 })), 'new_order_pending'));
     ok('03 배송 완료 + 「언제 와요」 = null(AI 로 — 지난 주문 이야기가 아닐 수 있다)', ask('언제 와요?', shipped({ delivered: true, status_label: '배송완료' })) === null, ask('언제 와요?', shipped({ delivered: true, status_label: '배송완료' })));
     const d1 = ask('도착했나요', shipped({ delivered: true, status_label: '배송완료' }));
-    ok('04 배송 완료 + 「도착했나요」 = 완료 답', !!d1 && d1.staff === false && d1.text === '10/8(목) 효돈에서 출발했어요 · 송장 끝 1234 · 배송 완료로 확인돼요.', d1);
+    ok('04 배송 완료 + 「도착했나요」 = 완료 답', !!d1 && d1.staff === false && d1.text === '네 고객님 ^^ 10/8(목) 제주에서 출발했고, 배송 완료로 확인됩니다!\n송장 끝 1234\n감사합니다 ^^', d1);   // 전체 번호가 없는 꼴(끝 4자리만 옴)이면 「송장 끝」으로 물러남
     const d2 = ask('송장번호 알려주세요', shipped({ delivered: true, status_label: '배송완료' }));
-    ok('05 배송 완료 + 「송장」 물음 = 완료 답(kind tracking)', !!d2 && d2.kind === 'tracking' && /배송 완료로 확인돼요\.$/.test(d2.text), d2);
+    ok('05 배송 완료 + 「송장」 물음 = 완료 답(kind tracking)', !!d2 && d2.kind === 'tracking' && /배송 완료로 확인됩니다!\n/.test(d2.text), d2);
     ok('06 배송 완료인데 「못 받았어요」「어디 있나요」「분실」 = 사람', isStaff(ask('배송완료라는데 못 받았어요', shipped({ delivered: true })), 'not_received') && isStaff(ask('택배 어디 있나요', shipped({ delivered: true })), 'not_received') && isStaff(ask('분실된 건가요 송장 알려주세요', shipped({ delivered: true })), 'not_received'));
     ok('07 문제 상태(미배송·사고·기타·정보없음·조회실패) = 사람 · 그 낱말이 답에 안 나감', ['미배송', '사고', '기타', '정보없음', '조회실패'].every(s => isStaff(ask('언제 와요', shipped({ status_label: s })), 'trouble')));
     const s1 = ask('언제 와요', shipped({ status_label: '배송출발' }));
-    ok('08 상태를 손님 말로 — 배송출발 → 「오늘 배송 출발했어요」 · 분류 낱말 그대로는 안 나감', !!s1 && /지금은 오늘 배송 출발했어요\.$/.test(s1.text) && !/배송 상태|간선|집화|배송출발/.test(s1.text), s1);
+    ok('08 상태를 손님 말로 — 배송출발 → 「배송 기사님이 배송을 시작했습니다」 · 분류 낱말 그대로는 안 나감', !!s1 && /\n지금은 배송 기사님이 배송을 시작했습니다\.\n/.test(s1.text) && !/배송 상태|간선|집화|배송출발/.test(s1.text), s1);
     const s2 = ask('언제 와요', shipped({ status_label: '간선상하차', stale: true })), s3 = ask('언제 와요', shipped({ status_label: '알 수 없는 분류' })), s4 = ask('언제 와요', shipped({ status_label: null }));
-    ok('09 조회 실패로 옛 상태(stale) · 모르는 분류 · 상태 없음 = 상태 문장 생략', [s2, s3, s4].every(r => !!r && r.staff === false && /도착 예정이에요 \(공휴일\(한글날\)\)\.$/.test(r.text)), [s2, s3, s4].map(r => r && r.text));
+    ok('09 조회 실패로 옛 상태(stale) · 모르는 분류 · 상태 없음 = 상태 문장 생략', [s2, s3, s4].every(r => !!r && r.staff === false && /도착 예정입니다\. \(공휴일\(한글날\)\)\n행복한 하루 되세요 \^\^$/.test(r.text)), [s2, s3, s4].map(r => r && r.text));
     const iso = ask('언제 와요', shipped({ ship_date: '2026-10-08T00:00:00.000Z' }));
-    ok('10 ship_date 가 ISO 글자여도 앞 10자로 읽음', !!iso && /^10\/8\(목\) 효돈에서 출발했어요/.test(iso.text), iso);
+    ok('10 ship_date 가 ISO 글자여도 앞 10자로 읽음', !!iso && /^안녕하세요 고객님 \^\^ 10\/8\(목\) 제주에서 출발했습니다!/.test(iso.text), iso);
     const pn = ask('언제 와요', shipped({ partner: '대성(시온)' })), pn2 = ask('언제 와요', shipped({ partner: '효돈 (2차)' }));
-    ok('11 거래처 이름의 괄호 안은 뗌(「대성(시온)」 → 「대성에서」)', !!pn && /대성에서 출발했어요/.test(pn.text) && !/시온|\(시/.test(pn.text) && /효돈에서 출발했어요/.test(pn2.text), pn && pn.text);
+    ok('11 #643 거래처 이름은 손님 글에 안 나감(「대성(시온)」「효돈 (2차)」 → 「제주에서」)', !!pn && /제주에서 출발했습니다!/.test(pn.text) && !/대성|시온|효돈|2차/.test(pn.text + pn2.text) && /제주에서 출발했습니다!/.test(pn2.text), pn && pn.text);
     const pk = rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: { match: 'one', order: { pre: true, channel: 'coupang', ship_date: null, option_text: '하우스감귤 4kg', paid_at: '2026-10-13T09:10:00+09:00', paid_known: false } } });
     ok('12 발송 전 — 결제 시각 모름(paid_known false · 수집 시각이 들어 있음) = 사람', isStaff(pk, 'pre_no_paid_at'), pk);
     const pk2 = rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: { match: 'one', order: { pre: true, channel: 'naver', ship_date: null, option_text: '하우스감귤 4kg', paid_at: '2026-10-13T09:10:00+09:00', paid_known: true } } });
-    ok('13 발송 전 — paid_known true 면 종전대로 답', !!pk2 && pk2.staff === false && pk2.why === 'pre' && /^주문 확인됐어요 · 내일 수요일\(10\/14\)/.test(pk2.text), pk2);
+    ok('13 발송 전 — paid_known true 면 종전대로 답', !!pk2 && pk2.staff === false && pk2.why === 'pre' && /^안녕하세요 고객님 \^\^ 주문 확인됐습니다!\n내일 수요일\(10\/14\) 오전 발송 예정이고, /.test(pk2.text), pk2);
 }
 
 // ───────────────────────── ①-b 가르기 수정 F3 — 새 문장 20 ─────────────────────────
@@ -209,18 +209,18 @@ const pre = o => one(Object.assign({ pre: true, channel: 'naver', ship_date: nul
 const PRE = [
     ['발송 전 — 오전 8시 전 결제 = 오늘 오전 발송',
         rules.answer({ text: '언제 발송돼요?', bucket: 'ship_q', now: '2026-10-13T08:30:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T07:40:00+09:00' }) }),
-        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 오늘(10/13(화)) 오전 발송 예정이에요 · 내일 수요일(10/14)~목요일(10/15) 사이 도착 예정이에요.' }],
+        { kind: 'ship_before', staff: false, why: 'pre', text: '안녕하세요 고객님 ^^ 주문 확인됐습니다!\n오늘 화요일(10/13) 오전 발송 예정이고, 내일 수요일(10/14)~목요일(10/15) 사이 도착 예정입니다.\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^' }],
     ['발송 전 — 8시 넘어 결제 = 내일 발송',
         rules.answer({ text: '배송 언제 오나요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T10:10:00+09:00', channel: 'coupang' }) }),
-        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 내일 수요일(10/14) 오전 발송 예정이에요 · 목요일(10/15)~금요일(10/16) 사이 도착 예정이에요.' }],
+        { kind: 'ship_before', staff: false, why: 'pre', text: '안녕하세요 고객님 ^^ 주문 확인됐습니다!\n내일 수요일(10/14) 오전 발송 예정이고, 목요일(10/15)~금요일(10/16) 사이 도착 예정입니다.\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^' }],
     ['발송 전 — 휴무일로 밀림(10/8 낮 결제 → 10/11 일 발송) + 사유',
         rules.answer({ text: '언제 받을 수 있나요', bucket: 'ship_q', now: '2026-10-09T11:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-08T13:00:00+09:00', channel: 'mall' }) }),
-        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 일요일(10/11) 오전 발송 예정이에요 · 월요일(10/12)~화요일(10/13) 사이 도착 예정이에요. (한글날 연휴 휴무로 일요일 발송이에요)' }],
+        { kind: 'ship_before', staff: false, why: 'pre', text: '안녕하세요 고객님 ^^ 주문 확인됐습니다!\n일요일(10/11) 오전 발송 예정이고, 월요일(10/12)~화요일(10/13) 사이 도착 예정입니다. (한글날 연휴 휴무로 일요일 발송이에요)\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^' }],
     ['발송 전 — 예약 상품 = 사람', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: NOW, holidays: H, order: pre({ paid_at: '2026-10-09T10:00:00+09:00', option_text: '[예약] 레드향 3kg' }) }), { kind: null, staff: true, why: 'reserve', text: '' }],
     ['발송 전 — 결제 시각 없음 = 사람(지금 기준으로 세지 않음)', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: NOW, holidays: H, order: pre({}) }), { kind: null, staff: true, why: 'pre_no_paid_at', text: '' }],
     ['발송 전 — 배송메세지에 날짜 요청 = 사람', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T10:10:00+09:00', memo: '20일 발송 부탁드려요' }) }), { kind: null, staff: true, why: 'memo_date', text: '' }],
     ['발송 전 — 배송메세지가 기사님 말뿐이면 그대로 답', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-13T10:10:00+09:00', memo: '문 앞에 놓아주세요' }) }),
-        { kind: 'ship_before', staff: false, why: 'pre', text: '주문 확인됐어요 · 내일 수요일(10/14) 오전 발송 예정이에요 · 목요일(10/15)~금요일(10/16) 사이 도착 예정이에요.' }],
+        { kind: 'ship_before', staff: false, why: 'pre', text: '안녕하세요 고객님 ^^ 주문 확인됐습니다!\n내일 수요일(10/14) 오전 발송 예정이고, 목요일(10/15)~금요일(10/16) 사이 도착 예정입니다.\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^' }],
     ['발송 전 — 발송 예정일이 지남 = 사람', rules.answer({ text: '언제 와요', bucket: 'ship_q', now: '2026-10-14T10:00:00+09:00', holidays: H, order: pre({ paid_at: '2026-10-08T13:00:00+09:00' }) }), { kind: null, staff: true, why: 'ship_overdue', text: '' }],
 ];
 PRE.forEach(([name, got, want], i) => ok(`${String(i + 1).padStart(2, '0')} ${name}`, !!got && got.kind === want.kind && got.staff === want.staff && got.text === want.text && got.why === want.why, got));
@@ -278,6 +278,52 @@ F.forEach(([text, want], i) => {
     const lk = require(path.join(root, 'sms/lookup.js'));
     const a = followup.secondLookupArgs('김영희 님이요');
     ok('15 secondLookupArgs — lookup.normalizeName 과 같은 정리', a.recipientName === lk.normalizeName('김영희 님이요') && a.recipientName === '김영희' && Object.keys(a).length === 1, a);
+}
+
+// ───────────────────────── ②-e 「제주에서」·송장 번호 전체(#643) ─────────────────────────
+console.log('②-e 「제주에서」·송장 번호 전체(#643)');
+{
+    const sh = (o, extra) => Object.assign({ match: 'one', order: Object.assign({ ship_date: '2026-10-12', partner: '효돈', trackings: ['590111112222'], tracking_tail: '2222', delivered: false, status_label: '집화' }, o) }, extra || {});
+    const ask = (text, order, now) => rules.answer({ text, bucket: 'ship_q', now: now || '2026-10-12T15:00:00+09:00', holidays: H, order });
+    const X = [
+        ['오늘 발송', ask('언제 와요?', sh({})), '안녕하세요 고객님 ^^ 오늘 제주에서 출발했습니다!\n송장번호 590111112222(CJ대한통운)\n내일 화요일(10/13)~수요일(10/14) 사이 도착 예정입니다.\n지금은 택배사에 접수되었습니다.\n배송조회 ' + rules.TRACK_URL + '590111112222\n행복한 하루 되세요 ^^'],
+        ['어제 발송', ask('언제 와요?', sh({}), '2026-10-13T10:00:00+09:00'), '안녕하세요 고객님 ^^ 10/12(월) 제주에서 출발했습니다!\n송장번호 590111112222(CJ대한통운)\n오늘 화요일(10/13)~수요일(10/14) 사이 도착 예정입니다.\n지금은 택배사에 접수되었습니다.\n배송조회 ' + rules.TRACK_URL + '590111112222\n행복한 하루 되세요 ^^'],
+        ['간선', ask('배송 어디쯤인가요', sh({ status_label: '간선상하차' }), '2026-10-13T10:00:00+09:00'), '안녕하세요 고객님 ^^ 10/12(월) 제주에서 출발했습니다!\n송장번호 590111112222(CJ대한통운)\n오늘 화요일(10/13)~수요일(10/14) 사이 도착 예정입니다.\n지금은 배송 지역으로 이동 중입니다.\n배송조회 ' + rules.TRACK_URL + '590111112222\n행복한 하루 되세요 ^^'],
+        ['배송 출발', ask('오늘 오나요?', sh({ status_label: '배송출발' }), '2026-10-13T10:00:00+09:00'), '안녕하세요 고객님 ^^ 10/12(월) 제주에서 출발했습니다!\n송장번호 590111112222(CJ대한통운)\n오늘 화요일(10/13)~수요일(10/14) 사이 도착 예정입니다.\n지금은 배송 기사님이 배송을 시작했습니다.\n배송조회 ' + rules.TRACK_URL + '590111112222\n행복한 하루 되세요 ^^'],
+        ['완료', ask('송장번호 알려주세요', sh({ delivered: true, status_label: '배송완료' }), '2026-10-14T10:00:00+09:00'), '안녕하세요 고객님 ^^ 10/12(월) 제주에서 출발했고, 배송 완료로 확인됩니다!\n송장번호 590111112222(CJ대한통운)\n감사합니다 ^^'],
+        ['상자 2개', ask('발송됐나요?', sh({ trackings: ['590111112222', '590111113333'], boxes: 2 })), '네 고객님 ^^ 오늘 제주에서 출발했습니다!\n송장번호 590111112222, 590111113333(CJ대한통운)\n내일 화요일(10/13)~수요일(10/14) 사이 도착 예정입니다.\n지금은 택배사에 접수되었습니다.\n배송조회 ' + rules.TRACK_URL + '590111112222\n행복한 하루 되세요 ^^'],
+    ];
+    X.forEach(([name, got, want], i) => ok(`0${i + 1} ${name} — ${want.slice(0, 40)}…`, !!got && got.staff === false && got.text === want, got));
+    const b4 = ask('언제 와요', sh({ trackings: ['590111112222', '590111113333', '590111114444', '590111115555', '590111112222'] }));
+    ok('07 상자 4개(겹친 번호 1) = 3개까지 + 「외 1」', !!b4 && /송장번호 590111112222, 590111113333, 590111114444 외 1\(CJ대한통운\)/.test(b4.text), b4 && b4.text);
+    const bad = ask('언제 와요', sh({ trackings: ['12345', 'abc', null], tracking_tail: '2222' }));
+    ok('08 번호 꼴이 아닌 값뿐이면 전체를 안 적고 「송장 끝 2222」', !!bad && /송장 끝 2222/.test(bad.text) && !/송장번호/.test(bad.text), bad && bad.text);
+    const many = rules.answer({ text: '송장번호 알려주세요', bucket: 'ship_q', now: NOW, holidays: H, order: { match: 'many', order: null, candidates: 3 } });
+    ok('09 주문 여럿(many) = 되묻기 글만 · 숫자 4자리 이상 0', !!many && many.text === rules.ASK_NAME_TEXT && !/\d{4,}/.test(many.text), many);
+    const yn = [['발송됐나요?', true], ['보내셨나요', true], ['출발했는지 궁금해요', true], ['물건 보냈나요', true], ['언제 와요?', false], ['송장번호 알려주세요', false], ['배송 어디쯤인가요', false],
+        ['도착했나요?', false], ['언제 발송했나요', false], ['발송 안 됐나요?', false], ['아직 발송 안됐나요', false], ['받으셨는지 확인 부탁드려요 송장', false], ['몇 시에 출발했나요', false], ['며칠에 보내셨나요', false], ['못 보내셨나요?', false]];
+    ok('10 머리 「네, 」는 사실이 「네」인 물음에만(배송 중 · 도착·때·부정 물음에는 안 붙음)', yn.every(([t, y]) => { const r = ask(t, sh({})); return !!r && /^네 고객님 \^\^ /.test(r.text) === y; }), yn.map(([t]) => (ask(t, sh({})) || {}).text));
+    const dn = [['도착했나요?', true], ['배송 완료됐나요 송장', true], ['발송됐나요? 송장 알려주세요', true], ['송장번호 알려주세요', false], ['아직 도착 안 했나요 송장', false], ['언제 도착했나요', false]];
+    ok('10-b 배송 완료 갈래: 「도착했나요?」에는 「네, …배송 완료로 확인돼요」 · 때·부정 물음에는 안 붙음', dn.every(([t, y]) => { const r = ask(t, sh({ delivered: true, status_label: '배송완료' }), '2026-10-14T10:00:00+09:00'); return !!r && r.staff === false && /배송 완료로 확인됩니다!\n/.test(r.text) && /^네 고객님 \^\^ /.test(r.text) === y; }), dn.map(([t]) => (ask(t, sh({ delivered: true, status_label: '배송완료' }), '2026-10-14T10:00:00+09:00') || {}).text));
+    const fut = ask('언제 와요?', sh({ ship_date: '2026-10-13' }), '2026-10-12T15:00:00+09:00');
+    ok('10-c 발송일이 앞날로 적힌 줄 = 답 없이 사람(「출발했어요」가 자동으로 안 나감)', !!fut && fut.staff === true && fut.text === '' && fut.why === 'ship_future', fut);
+    ok('10-d 문자용 AI 안내에 「거래처 이름 말하지 않기 · 출발지는 제주」 줄', /거래처·농장·출고지 이름/.test(aiNote.SMS_SYSTEM_NOTE) && /「제주」라고만/.test(aiNote.SMS_SYSTEM_NOTE));
+    const all = X.map(x => x[1] && x[1].text).concat([b4 && b4.text, bad && bad.text]).filter(Boolean).join('\n');
+    ok('11 어떤 답에도 거래처 이름·이모지·전화번호 꼴 없음 · sms-safe 를 지나도 글자 그대로', !/효돈|대성|시온|길영/.test(all) && !EMOJI_RE.test(all) && !/01\d-?\d{3,4}-?\d{4}/.test(all.replace(/송장번호 [\d, ]+( 외 \d+)?\(CJ대한통운\)/g, '').replace(/배송조회 \S+/g, '')) && X.every(x => smsSafe(x[1].text) === x[1].text), all);
+    ok('12 한 통 길이 — 상자 3개 + 외 N + 배송조회 주소까지 400바이트 안(장문 한 통)', smsBytes(b4.text) <= 400, smsBytes(b4.text));
+    const U = rules.TRACK_URL;
+    ok('13 배송조회 주소 = 완료 전 답에만 · 첫 송장 하나 · 서버 /track?n=', /\/track\?n=$/.test(U) && X.filter((x, i) => i !== 4).every(x => x[1].text.split('배송조회 ').length === 2 && x[1].text.includes('\n배송조회 ' + U + '590111112222\n'))
+        && !/배송조회|track/.test(X[4][1].text) && !X[5][1].text.includes(U + '590111113333') && !/배송조회/.test(bad.text) && !/배송조회|track/.test(many.text), [X[5][1].text, X[4][1].text]);
+    const pre1 = rules.answer({ text: '언제 발송돼요?', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: { match: 'one', order: { pre: true, channel: 'naver', ship_date: null, option_text: '하우스감귤 4kg', qty: 1, paid_at: '2026-10-13T10:10:00+09:00' } } });
+    ok('14 발송 전 답(글자 그대로)', !!pre1 && pre1.text === '안녕하세요 고객님 ^^ 주문 확인됐습니다!\n내일 수요일(10/14) 오전 발송 예정이고, 목요일(10/15)~금요일(10/16) 사이 도착 예정입니다.\n잘 포장해서 보내드리겠습니다. 행복한 하루 되세요 ^^', pre1 && pre1.text);
+    ok('15 되묻기 글(글자 그대로)', rules.ASK_NAME_TEXT === '안녕하세요 고객님 ^^ 주문이 여러 건 확인됩니다!\n어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 바로 확인해 드리겠습니다.', rules.ASK_NAME_TEXT);
+    const preTr = ch => rules.answer({ text: '송장번호 언제 나와요', bucket: 'ship_q', now: '2026-10-13T15:00:00+09:00', holidays: H, order: { match: 'one', order: { pre: true, channel: ch, ship_date: null, option_text: '하우스감귤 4kg', qty: 1, paid_at: '2026-10-13T10:10:00+09:00', paid_known: true } } });
+    ok('15-b 발송 전 + 송장 물음 = 「발송되면 알림톡으로 안내드리겠습니다」(쿠팡은 「문자로」 — 실제 발송안내 길 그대로)', /\n송장번호는 발송되면 알림톡으로 안내드리겠습니다\.\n/.test(preTr('naver').text) && /\n송장번호는 발송되면 알림톡으로 안내드리겠습니다\.\n/.test(preTr('cafe24').text) && /\n송장번호는 발송되면 문자로 안내드리겠습니다\.\n/.test(preTr('coupang').text), [preTr('naver').text, preTr('coupang').text]);
+    ok('15-c 괄호 겹침 없음 — 「오늘 화요일(10/13)」 꼴 · 상태 문구 말끝 「~습니다」', X.concat([[0, pre1]]).every(x => !/\(\d+\/\d+\([일월화수목금토]\)\)/.test(x[1].text)) && /오늘 화요일\(10\/13\)~수요일\(10\/14\) 사이 도착 예정입니다\./.test(X[1][1].text) && X.slice(0, 4).every(x => /\n지금은 [^\n]+(습니다|입니다)\.\n/.test(x[1].text)) && !X.some(x => /(됐어요|중이에요|했어요)\./.test(x[1].text)), X[1][1].text);
+    ok('15-d #645 문자용 AI 안내: 「이 손님 주문의 발송·도착을 말하지 않는다」「앞 대화의 날짜를 지금 사실로 옮기지 않는다 · 말씀드린 대로 금지」', /주문 정보를 받지 않았습니다/.test(aiNote.SMS_SYSTEM_NOTE) && /일반 안내로만/.test(aiNote.SMS_SYSTEM_NOTE) && /지금 사실로 옮기지 마세요/.test(aiNote.SMS_SYSTEM_NOTE) && /「말씀드린 대로」 같은 말도 쓰지 마세요/.test(aiNote.SMS_SYSTEM_NOTE));
+    const every = X.map(x => x[1].text).concat([pre1.text, rules.ASK_NAME_TEXT, b4.text]);
+    ok('16 말투: 전부 「고객님 ^^」로 시작 · 이모지 0 · 「 · 」로 잇는 나열 0 · 한 문장에 느낌표 1개 이하 · smsSafe 를 지나도 글자 그대로', every.every(t => /^(안녕하세요|네) 고객님 \^\^/.test(t) && !EMOJI_RE.test(t) && !/ · /.test(t) && !/!!/.test(t) && smsSafe(t) === t), every);
+    ok('17 문자용 AI 안내에 같은 말투 줄(「고객님 ^^」 시작 · 글자 표정 허용 · 이모지 금지 유지)', /안녕하세요 고객님 \^\^/.test(aiNote.SMS_SYSTEM_NOTE) && /글자 표정/.test(aiNote.SMS_SYSTEM_NOTE) && /이모지·그림 문자를 쓰지 마세요/.test(aiNote.SMS_SYSTEM_NOTE));
 }
 
 // ───────────────────────── ②-d 받았다는 알림 = 인사 갈래(#641) ─────────────────────────

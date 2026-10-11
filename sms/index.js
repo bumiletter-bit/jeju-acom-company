@@ -52,6 +52,7 @@ function splitForSms(text, maxChars) {
     const sentences = t.split(/(?<=[.!?。])\s+|\n+/).map(x => x.trim()).filter(Boolean);
     const out = []; let cur = '';
     for (let sen of sentences) {
+        if ((sen.includes('http://') || sen.includes('https://')) && len(sen) > maxChars) { if (cur) { out.push(cur); cur = ''; } out.push(sen); continue; }   // #643: 주소가 든 줄은 한도보다 길어도 자르지 않는다(끊긴 주소는 안 눌린다) — 그 줄만 한 통
         while (len(sen) > maxChars) {   // 문장 하나가 한도보다 길면 어절 경계로
             const words = sen.split(' '); let piece = '';
             while (words.length && len(piece + (piece ? ' ' : '') + words[0]) <= maxChars) piece += (piece ? ' ' : '') + words.shift();
@@ -234,11 +235,18 @@ module.exports = function mountSms(app, deps) {
             return r;
         } catch (e) { log.error('[문자] 주문 찾기 실패(무시):', e.message); return null; }
     }
-    // 화면·힌트용(허용 목록만 · 주소·전체 번호·운송장 전체 없음) — toPublic 이 돌려준 객체 + 한 줄 요약
-    function orderHintOf(r) {
+    // 화면·힌트용(허용 목록만 · 주소·손님 이름 전체 없음) — 직원 화면에만 쓰는 꼴 + 한 줄 요약. #644: 운송장은 전체 번호(order.trackings)를 싣는다(직원 화면 전용 · 알림·한 줄 요약에는 안 넣는다)
+    async function orderHintOf(r) {
         if (!(r && r.match === 'one' && r.order)) return null;
-        const pubo = (typeof lookupMod.toPublic === 'function') ? lookupMod.toPublic(r) : null;
+        // #644(대표 10/11 「이름도 모두 그대로」): 받는 분 이름 전체는 직원 화면용으로만 여기서 따로 읽는다 — 주문 찾기 결과(lookup · 규칙·AI·사진 답의 재료)에는 이름 전체를 싣지 않는다(그쪽 SELECT 가 안 읽음 · 손님 글로 샐 길 없음)
+        let recipientName = '';
+        try {
+            const trs = Array.isArray(r.order.trackings) ? r.order.trackings.filter(Boolean).slice(0, 5) : [];
+            if (trs.length) recipientName = String((await pool.query(`SELECT btrim(min(recipient)) AS n FROM delivery_shipments WHERE tracking = ANY($1::text[])`, [trs])).rows[0].n || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+        } catch (e) { log.error('[문자] 받는 분 이름 읽기 실패(무시):', e.message); }
+        const pubo = (typeof lookupMod.toStaff === 'function') ? lookupMod.toStaff(r) : (typeof lookupMod.toPublic === 'function') ? lookupMod.toPublic(r) : null;
         if (!pubo) return null;
+        if (pubo.order && recipientName) pubo.order.recipient_name = recipientName;   // 한 줄 요약(line)·알림에는 넣지 않는다
         const o = pubo.order || {};   // toPublic = { match, role, candidates, order:{…} }(워커4 지적 · 평평하게 읽으면 늘 빈 줄)
         const md = x => x ? String(x).slice(5, 10).replace('-', '/') : '';
         const line = o.pre
@@ -263,12 +271,24 @@ module.exports = function mountSms(app, deps) {
         return '[앞 대화 — 이 손님과 최근에 주고받은 문자 · 오래된 순 · 참고만]\n' + lines.join('\n') + '\n\n[이번 손님 글 — 여기에 답하세요]\n' + text;
     }
     // ── 답 만들기: 규칙 → AI. 결과 { text, kind:'rule'|'ai'|'ask', toStaff:boolean, why } ──
+    // #645(대표 실물 10/11 — 주문이 없는 번호의 「택배 언제 와요」에 AI 가 「말씀드린 대로 내일 오전 … 출발해서 모레 도착 예정」을 지어내 자동 발송):
+    //   ① 「내 주문」을 묻는 배송·주문 물음인데 그 번호로 주문을 못 찾으면 AI 에 넘기지 않는다 → 고정 문구(성함·연락처를 여쭘) + 직원 확인(staff_why order_not_found)
+    //      「지금 주문하면 언제 와요」「얼마예요」처럼 사기 전 물음(GENERAL_Q_RE)은 종전대로 AI(일반 안내)
+    //   ② AI 는 주문 정보를 받지 않는다 → AI 글에 그 손님의 발송·도착을 단정하는 말이 있으면 보내지 않고 직원 몫(ai_assert). 조건을 단 일반 안내(「8시 이전 주문은 당일 발송」)는 막지 않는다
+    const NOT_FOUND_TEXT = '안녕하세요 고객님 ^^ 보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';
+    const GENERAL_Q_RE = /주문하면|주문\s*시|주문할|주문하려|주문하고\s*싶|주문\s*하려|시키면|시킬|구매하면|구매\s*시|구매하려|구매할|사면|사려|살려|사고\s*싶|얼마|가격|방법|어떻게\s*주문/;
+    const AI_COND_RE = /주문하시면|주문하면|주문\s*시|주문\s*건|주문은|주문분|이전\s*주문|이후\s*주문|전에\s*주문|까지\s*주문|결제하시면|결제\s*시|경우|보통|대부분|평균/;   // 조건·일반론 문장 표시
+    const AI_PAST_RE = /말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)|출발했|출발해서|출발하여|발송됐|발송되었|발송했|발송해\s*드렸|보내\s*드렸|도착했|배송\s*중이|이동\s*중/;
+    const AI_DATE_RE = /(오늘|내일|모레|\d{1,2}\s*일|\d{1,2}\/\d{1,2}|[월화수목금토일]요일(?!은|엔|에는|마다|도))[^.!?\n]{0,24}(출발|발송|도착|배송)/;   // 「토요일은 발송을 쉬고」 같은 요일 일반론은 뺀다
+    function aiAsserts(text) {   // 한 문장이라도 「조건 없이」 발송·도착을 단정하면 true
+        return String(text || '').split(/(?<=[.!?。])\s+|\n+/).some(sen => { const s = sen.trim(); if (!s) return false; if (/말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)/.test(s)) return true; if (AI_COND_RE.test(s)) return false; return AI_PAST_RE.test(s) || AI_DATE_RE.test(s); });
+    }
     async function composeAnswer(thread, inMsg, c, lookup) {
         const text = String(inMsg.body || '');
         const bucket = inMsg.bucket || 'other';
         if (['otp', 'ad', 'carrier', 'greeting'].includes(bucket)) return { text: null, kind: null, toStaff: false, why: 'ignore:' + bucket };
         if (bucket === 'claim' || bucket === 'photo' || bucket === 'account') return { text: null, kind: null, toStaff: true, why: bucket };   // #628 account = 계좌·입금(사람)
-        if (lookup && lookup.match === 'many') return { text: lookupMod && lookupMod.askText ? lookupMod.askText() : '주문을 여러 건 찾았어요. 어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 확인해 드릴게요.', kind: 'ask', toStaff: false, why: 'many' };
+        if (lookup && lookup.match === 'many') return { text: (rulesMod && rulesMod.ASK_NAME_TEXT) || (lookupMod && lookupMod.askText ? lookupMod.askText() : '주문을 여러 건 찾았어요. 어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 확인해 드릴게요.'), kind: 'ask', toStaff: false, why: 'many' };
         if (rulesMod && typeof rulesMod.answer === 'function') {
             try {
                 const holidays = loadShippingHolidayInfo ? await loadShippingHolidayInfo() : null;
@@ -277,6 +297,8 @@ module.exports = function mountSms(app, deps) {
                 if (r && r.text) return { text: smsSafe(r.text), kind: 'rule', rule_kind: r.kind || null, toStaff: false, why: 'rule' };
             } catch (e) { log.error('[문자] 규칙 답 실패(무시):', e.message); }
         }
+        if ((bucket === 'ship_q' || bucket === 'order_q') && !(lookup && lookup.match === 'one') && !GENERAL_Q_RE.test(text))   // #645 ① 주문을 못 찾은 「내 주문」 물음 — AI 호출 없음
+            return { text: smsSafe(NOT_FOUND_TEXT), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'order_not_found' };
         if (typeof qnaGenerate === 'function') {
             try {
                 const g = await qnaGenerate(await withContext(thread, inMsg, text, c), null, undefined, 'sms');   // #625: 앞 대화(최근 context_msgs 통 · 48시간 안)를 질문 앞에 붙여 되풀이 답을 막는다
@@ -284,6 +306,7 @@ module.exports = function mountSms(app, deps) {
                     const parsed = aiNote && typeof aiNote.parse === 'function' ? aiNote.parse(g.answer) : { toStaff: /^\[사람\]/.test(g.answer), text: g.answer.replace(/^\[사람\]\s*/, '') };
                     if (parsed.toStaff) return { text: null, kind: null, toStaff: true, why: 'ai_to_staff' };
                     if (/환불|반품|교환|보상|무료\s*수거|취소\s*(해|처리)|포인트|적립|쿠폰|할인해|보내\s*드리겠|재발송|재배송/.test(parsed.text)) return { text: null, kind: null, toStaff: true, why: 'ai_promise' };   // 약속 낱말은 사람(안내 블록만 믿지 않음)
+                    if (aiAsserts(parsed.text)) return { text: null, kind: null, toStaff: true, why: 'ai_assert' };   // #645 ② 주문 정보 없이 발송·도착을 단정한 글 = 사람
                     return { text: smsSafe(parsed.text), kind: 'ai', toStaff: false, why: 'ai', used: g.used };
                 }
                 return { text: null, kind: null, toStaff: true, why: 'ai_skip' };
@@ -331,7 +354,7 @@ module.exports = function mountSms(app, deps) {
     async function makeAnswer(thread, msg, c, patch, { bodyText, images, gated }) {
         const digits = thread.phone_digits, hasImage = images.length > 0, bucket = msg.bucket;
         const lookup = await orderFor(digits, c);
-        const hint = orderHintOf(lookup);
+        const hint = await orderHintOf(lookup);
         if (hint) Object.assign(patch, { order_hint: hint.line || null, order_json: hint });
         if (lookup && lookup.match === 'one' && lookup.order) lookup.order = Object.assign({}, lookup.order, { option: lookup.order.option_text || lookup.order.option });   // rules.js 는 option/option_text 둘 다 읽음
         let ans;
@@ -344,7 +367,7 @@ module.exports = function mountSms(app, deps) {
     }
     // 답 → 대화에 적을 초안 칸(#635): 무시 갈래 = 안 건드림 · 사람 몫 = 초안 없음 + 사유 · 그 밖 = 초안 + 사유 비움
     const isIgnoreAns = ans => !!(ans && ans.why && ans.why.startsWith('ignore:'));
-    const draftFields = ans => isIgnoreAns(ans) ? {} : (!ans || ans.toStaff || !ans.text) ? { draft_text: null, draft_kind: null, staff_why: (ans && ans.why) || 'staff' } : { draft_text: ans.text, draft_kind: ans.kind || null, staff_why: null };
+    const draftFields = ans => isIgnoreAns(ans) ? {} : (!ans || ans.toStaff || !ans.text) ? { draft_text: null, draft_kind: null, staff_why: (ans && ans.why) || 'staff' } : { draft_text: ans.text, draft_kind: ans.kind || null, staff_why: ans.staff_flag || null };   // staff_flag = 답은 나가지만 직원도 봐야 하는 건(#645 주문 못 찾음)
     // 자동 발송이 막힌 갈래(잠금·쿨다운·상한·되풀이·늦은 사건)에서도 초안은 새로 만든다 — record·꺼짐이면 안 만든다(AI 호출 0)
     async function draftForGated(thread, msg, c, patch, ctx) {
         if (!c.enabled || c.mode === 'record') return null;
@@ -372,7 +395,7 @@ module.exports = function mountSms(app, deps) {
                     let r2 = await lookupMod.lookupByPhone(pool, digits, { days: c.lookup_days, recipientName: askedName });
                     if (r2 && r2.match === 'one' && typeof lookupMod.refreshOrder === 'function') { try { r2 = await lookupMod.refreshOrder(pool, r2, { maxBoxes: 3 }); } catch (_) { } }
                     if (r2 && r2.match === 'one' && r2.order) {
-                        const hint2 = orderHintOf(r2); if (hint2) Object.assign(patch, { order_hint: hint2.line || null, order_json: hint2 });
+                        const hint2 = await orderHintOf(r2); if (hint2) Object.assign(patch, { order_hint: hint2.line || null, order_json: hint2 });
                         r2.order = Object.assign({}, r2.order, { option: r2.order.option_text || r2.order.option });
                         const prevQ = (await pool.query(`SELECT body, bucket FROM sms_messages WHERE thread_id = $1 AND direction = 'in' AND id < $2 ORDER BY id DESC LIMIT 1`, [thread.id, msg.id])).rows[0];   // 되묻기 전 원래 물음(「송장」 물음도 살게 · 원래 갈래 유지)
                         const ans2 = await composeAnswer(thread, Object.assign({}, msg, { bucket: (prevQ && prevQ.bucket) || 'ship_q', body: (prevQ && prevQ.body) || bodyText }), c, r2);
@@ -437,7 +460,7 @@ module.exports = function mountSms(app, deps) {
             return done('to_staff', { why: ans.why });
         }
         if (c.mode === 'draft') {
-            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans.text, draft_kind: ans.kind, staff_why: null }));
+            await setThread(thread.id, Object.assign(patch, { status: 'draft', draft_text: ans.text, draft_kind: ans.kind, staff_why: ans.staff_flag || null }));
             await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇 초안 확인`, STAFF_MSG);
             return done('draft', { kind: ans.kind });
         }
@@ -456,9 +479,10 @@ module.exports = function mountSms(app, deps) {
             if (!out) out = m;
         }
         const ask = ans.kind === 'ask';
-        await setThread(thread.id, Object.assign(patch, { status: 'bot_replied', draft_text: null, draft_kind: null, staff_why: null, ask_kind: ask ? 'name' : null, ask_at: ask ? new Date() : null, cooldown_until: new Date(Date.now() + c.cooldown_min * 60000) }));
+        await setThread(thread.id, Object.assign(patch, { status: 'bot_replied', draft_text: null, draft_kind: null, staff_why: ans.staff_flag || null, ask_kind: ask ? 'name' : null, ask_at: ask ? new Date() : null, cooldown_until: new Date(Date.now() + c.cooldown_min * 60000) }));
         await bumpBotCount(thread);   // 한 답에 1번(조각 수와 무관) · 큐에 넣는 순간 올려 유예 창에서도 상한이 먹게
         if (ask) await setThread(thread.id, { ask_count: (thread.ask_count || 0) + 1 });
+        if (ans.staff_flag === 'order_not_found') await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 주문을 못 찾았어요(봇이 성함·연락처를 여쭸어요)`, STAFF_MSG);   // #645
         if (ans.staff_summary) await notifyStaff(c, thread, `문자 · 끝 ${phoneTail(digits)} 봇이 답했어요(사진) · 이어받아 주세요`, ans.staff_summary.slice(0, 120), { force: true });   // 대표 📷 규칙: 사진 답 뒤 직원 푸시는 반드시
         return done('queued', { out_id: out.id, parts: pieces.length, kind: ans.kind, second: !!opts.bypassCap, send_after: sendAfter.toISOString() });
     }
@@ -496,7 +520,7 @@ module.exports = function mountSms(app, deps) {
         }
         return rows.length;
     }
-    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
+    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', order_not_found: '주문 못 찾음', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
         rule_reserve: '예약 상품', rule_trouble: '배송 이상', rule_not_received: '못 받았다는 글', rule_arrive_overdue: '도착 예정일 지남', rule_ship_overdue: '발송 예정일 지남',
         rule_new_order_pending: '새 주문 대기', rule_pre_no_paid_at: '결제 시각 모름', rule_memo_date: '배송메세지 날짜 요청', rule_staff: '직원 확인' }[w] || (w ? '직원 확인' : ''));
 
@@ -721,7 +745,12 @@ module.exports = function mountSms(app, deps) {
                 shipDeleted = (await pool.query(`DELETE FROM delivery_shipments WHERE tracking IN (SELECT tracking FROM delivery_shipments WHERE ship_date < (now() AT TIME ZONE 'Asia/Seoul')::date - 60 LIMIT 5000)`)).rowCount || 0;
                 statusDeleted = (await pool.query(`DELETE FROM delivery_status t WHERE NOT EXISTS (SELECT 1 FROM delivery_shipments s WHERE s.tracking = t.tracking) AND t.checked_at < now() - interval '60 days'`)).rowCount || 0;
             }
-            const result = { date: kstDate(), sms_images: r.rowCount || 0, preorders: pre, selfcheck_hits: hits, shipments_target: target, shipments_deleted: shipDeleted, status_deleted: statusDeleted, purge_shipments: raw.purge_shipments === true };
+            // #644: 직원 화면용 주문 칸(order_json)에 실린 받는 분 이름 전체·운송장 전체는 마지막 글이 60일 지난 대화에서 비운다(송장 표 보관 기간과 같게 · 끝 4자리·성 한 글자는 남김)
+            let ojCleared = 0;
+            try { ojCleared = (await pool.query(`UPDATE sms_threads SET order_json = (order_json #- '{order,recipient_name}') #- '{order,trackings}'
+                WHERE order_json IS NOT NULL AND (order_json #> '{order,recipient_name}' IS NOT NULL OR order_json #> '{order,trackings}' IS NOT NULL)
+                  AND COALESCE(GREATEST(last_in_at, last_out_at), updated_at) < now() - interval '60 days'`)).rowCount || 0; } catch (e) { log.error('[문자] 주문 칸 이름·송장 비우기 실패(무시):', e.message); }
+            const result = { date: kstDate(), order_json_cleared: ojCleared, sms_images: r.rowCount || 0, preorders: pre, selfcheck_hits: hits, shipments_target: target, shipments_deleted: shipDeleted, status_deleted: statusDeleted, purge_shipments: raw.purge_shipments === true };
             await naverCfgSet('sms_retention_last', result);
             if ((r.rowCount || 0) + shipDeleted > 0) await writeAudit({ action: 'purge', targetType: 'sms_retention', changes: { after: result }, source: 'db_retention', actor: { id: null, name: '보관 정리(자동)' } });
             log.log(`[문자] 보관 정리 — 사진 ${r.rowCount}건 · 송장 60일 대상 ${target}행(${raw.purge_shipments === true ? '삭제 ' + shipDeleted : '세기만'})`);

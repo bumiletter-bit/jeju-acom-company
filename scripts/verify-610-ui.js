@@ -46,6 +46,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
     const closeThread = async pg => { await pg.keyboard.press('Escape'); await pg.waitForTimeout(350); };
     const scopeBtn = async (pg, want) => { await sheetDown(pg); if ((await pg.getAttribute('#sms-scope', 'aria-pressed')) !== String(want)) { await pg.click('#sms-scope'); await pg.waitForTimeout(700); } };
     const box = async (pg, sel) => { const b = await pg.locator(sel).first().boundingBox(); return b ? { w: Math.round(b.width), h: Math.round(b.height), x: Math.round(b.x), y: Math.round(b.y) } : null; };
+    const ctxGrant = async ctx => { try { await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE }); } catch (e) { /* 권한 이름을 모르는 브라우저면 그대로 */ } };
     const unfold = async pg => { if (await pg.locator('#desk-board-fold').isVisible() && await pg.evaluate(() => document.getElementById('desk-board').classList.contains('folded'))) { await pg.click('#desk-board-fold'); await pg.waitForTimeout(400); } };
     const rowOf = (pg, id) => pg.evaluate(i => { const li = document.querySelector('#sms-list .sms-item[data-id="' + i + '"]'); if (!li) return null; const q = s => li.querySelector('.sms-row ' + s), t = s => (q(s) || { textContent: '' }).textContent;
         return { tail: t('.sms-tail'), hint: t('.sms-hint'), un: t('.sms-un'), dun: li.dataset.un, badge: !!q('.desk-badge'), time: t('.sms-time'), last: t('.sms-last'), me: !!q('.sms-me'), pic: !!q('.sms-pic'), why: t('.sms-why'), tag: t('.sms-tag'), bold: li.classList.contains('unread') }; }, id);
@@ -102,7 +103,18 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             await pg.waitForFunction(() => Array.from(document.querySelectorAll('#sms-msgs .sms-thumb img')).every(i => i.naturalWidth > 0), null, { timeout: 4000 }).catch(() => { });
             const loaded = await pg.evaluate(() => Array.from(document.querySelectorAll('#sms-msgs .sms-thumb img')).map(i => i.naturalWidth > 0));
             ok(th.bub === 2 && loaded.length === 2 && loaded.every(Boolean) && th.exp === 'true', `[${label}] 대화 펼침 · 말풍선 2 · 사진 썸네일 2장 실제로 뜸(${JSON.stringify(loaded)})`);
-            ok(/^주문 10\/09 발송 · 효돈 · 하우스감귤 가정용 - 4kg\(로얄과\) · 송장 끝 4821 · 배송완료$/.test(th.order), `[${label}] 주문 줄 = 실서버 꼴(order 한 겹 안)에서 읽음(${th.order})`);
+            const od = await pg.evaluate(() => { const el = document.getElementById('sms-order'), bs = Array.from(el.querySelectorAll('.sms-trk')), as = Array.from(el.querySelectorAll('.sms-trk-go')); return { text: el.textContent.replace(/\s+/g, ' ').trim(), nums: bs.map(b => b.textContent).join(','), hrefs: as.map(a => a.getAttribute('href') + '|' + a.target).join(','), h: Math.min(...bs.concat(as).map(x => Math.round(x.getBoundingClientRect().height))) }; });
+            ok(/^주문 받는 분 홍길동 · 10\/09 발송 · 효돈 · 하우스감귤 가정용 - 4kg\(로얄과\) · 배송완료 송장 590123454821조회$/.test(od.text) && od.nums === '590123454821', `[${label}] 주문 줄 = 실서버 꼴(order 한 겹 안) · #644 받는 분 이름 전체 · 송장 전체 번호(${od.text})`);
+            ok(od.hrefs === '/track?n=590123454821|_blank' && od.h >= (phone ? 44 : 32), `[${label}] #644 번호 옆 [조회] = 우리 배송조회 새 창(${od.hrefs}) · 누름 높이 ${od.h}px`);
+            await ctxGrant(P.ctx); await pg.click('#sms-order .sms-trk'); await pg.waitForTimeout(400);
+            const clip = await pg.evaluate(() => navigator.clipboard.readText().catch(() => '(읽기 막힘)'));
+            ok(clip === '590123454821' && T.some(t => /송장번호를 복사했어요/.test(t)), `[${label}] #644 번호를 누르면 복사(클립보드 「${clip}」 · 안내 띠)`);
+            await mock('/__mock/set', { trk: false }); await wake(pg);
+            await pg.waitForFunction(() => !document.querySelector('#sms-order .sms-trk'), null, { timeout: 12000 }).catch(() => { });
+            const odOld = await pg.evaluate(() => document.getElementById('sms-order').textContent.replace(/\s+/g, ' ').trim());
+            ok(/^주문 받는 분 홍\*\* · 10\/09 발송 · .* · 송장 끝 4821 · 배송완료$/.test(odOld) && !(await pg.locator('#sms-order .sms-trk').count()), `[${label}] #644 옛 응답(이름 전체·trackings 없음) = 「받는 분 홍**」 · 「송장 끝 4821」(${odOld})`);
+            await mock('/__mock/set', { trk: true }); await wake(pg);
+            await pg.waitForFunction(() => !!document.querySelector('#sms-order .sms-trk'), null, { timeout: 12000 }).catch(() => { });
             ok(/^부패과가 나왔군요/.test(th.ta) && th.btn === '이대로 보내기' && !th.dis && th.draft && th.btns === '이대로 보내기', `[${label}] 봇 초안이 답 칸에 미리 · 버튼은 「${th.btns}」 하나([처리함]·[대화 끝내기] 없음)`);
             const o1 = await rowOf(pg, 1);
             ok(o1.un === '' && o1.dun === '0' && !o1.bold && await rows(pg) === 7, `[${label}] 열면 그 줄 배지 0 · 열어 둔 동안은 목록에 그대로(7줄)`);
@@ -188,6 +200,10 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             // ⑪ 못 나간 답 표시 · 적던 글 지키기 · 보내기 실패
             await scopeBtn(pg, true);
             await openThread(pg, 11);
+            {   // #644 상자가 둘이면 번호 둘 다 · 폰 폭에서도 가로 넘침 없음
+                const two = await pg.evaluate(() => { const el = document.getElementById('sms-order'); return { text: el.textContent.replace(/\s+/g, ' ').trim(), nums: Array.from(el.querySelectorAll('.sms-trk')).map(b => b.textContent).join(','), over: el.scrollWidth > el.clientWidth + 1 }; });
+                ok(/^주문 받는 분 김영희 · 10\/09 발송 · /.test(two.text) && two.nums === '590123453306,590123453307' && !two.over && await sw(pg) <= vw.width, `[${label}] #644 받는 분 이름 전체(${two.text.slice(3, 12)}) · 상자 2개 = 전체 번호 둘 다(${two.nums}) · 가로 넘침 없음(${await sw(pg)})`);
+            }
             const fl = await pg.evaluate(() => { const m = document.querySelector('#sms-msgs .sms-msg[data-s="failed"]'); return (m ? m.querySelector('small').textContent : '') + '|' + document.getElementById('sms-th-badge').textContent; });
             ok(/보내지 못함.*\|보내지 못함/.test(fl), `[${label}] 못 나간 답 표시 · 머리 사유(${fl})`);
             await pg.fill('#sms-text', '적다 만 글'); await openThread(pg, 4); await openThread(pg, 11);

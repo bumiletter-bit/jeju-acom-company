@@ -6,7 +6,7 @@
  *     bucket   classify.js 결과 — 'ship_q' 일 때만 답한다(그 밖 = null → AI 또는 사람)
  *     order    주문 찾기(워커4 lookup) 결과
  *              { match: 'one'|'many'|'none',
- *                order: { ship_date:'YYYY-MM-DD'|null, partner, option(또는 option_text — lookup.js 는 이 이름), qty, tracking_tail, delivered, status_label, arrive_text,
+ *                order: { ship_date:'YYYY-MM-DD'|null, partner, option(또는 option_text — lookup.js 는 이 이름), qty, trackings:[운송장 전체…], tracking_tail, delivered, status_label, arrive_text,
  *                         paid_at?(결제 시각 — 있으면 발송 전 계산의 기준) } }
  *              발송 전 주문(#610-H): order = { pre:true, channel, paid_at, option_text, qty, recipient_initial, ship_date:null, memo?(배송메세지) }
  *                → 「주문 확인됐어요 · ○/○(○) 오전 발송 예정이에요 · ○요일(○/○)~○요일(○/○) 사이 도착 예정이에요.」
@@ -21,7 +21,15 @@
  *
  *   🔴 발송일·도착일은 shipping-schedule.js 의 computeShipping / computeArrival 만 쓴다(계산기 하나 — 알림톡·톡톡과 같은 답).
  *      여기서는 그 결과 날짜를 「오늘 기준」 말로 옮길 뿐이다(계산기 글의 「내일」은 주문일·발송일 기준이라 며칠 뒤 문자에는 그대로 못 쓴다).
- *   🔴 주소·전화번호 전체·운송장 전체는 적지 않는다 — 운송장은 끝 4자리(tracking_tail)만. 이모지 없음.
+ *   🔴 주소·전화번호 전체는 적지 않는다. 이모지 없음.
+ *   #643(대표 10/11 「송장도 고객님 송장이니 다 알려주도록」): 운송장 번호는 전체를 적는다 — 「송장번호 123456789012(CJ대한통운)」 · 상자가 여럿이면 「, 」로 3개까지(넘으면 「외 N」).
+ *      조건은 맞춤 답이 나가는 조건 그대로(보낸 번호가 주문의 구매자·받는 분 번호와 전체 일치 + 주문 하나). 여럿(many)이면 되묻기 글만 나가고 번호는 없다.
+ *      전체 번호는 lookup 결과의 order.trackings 에서만 읽는다(화면·저장용 toPublic 꼴에는 끝 4자리뿐 — 그 꼴이 오면 「송장 끝 1234」로 물러난다).
+ *   #643(대표 10/11 「배송조회 링크 보내주고」「우리 사람 말투처럼 친절히 · ^^ 도 넣고」): 글은 직원이 손으로 쓴 꼴 —
+ *      인사(「안녕하세요 고객님 ^^」 · 예·아니오 물음이면 「네 고객님 ^^」) → 사실 한 줄씩(줄바꿈) → 맺음(「행복한 하루 되세요 ^^」).
+ *      말투 근거 = 직원이 실제로 쓴 톡톡 답(message_logs.staff_response 2,333건: 「^^」 46% · 「고객님」 31% · 「~니다」 말끝이 「~요」의 2.6배 · 「행복한 하루되세요」 맺음).
+ *      발송된(완료 전) 주문 답 끝에 배송조회 주소 한 줄(/track?n=첫 송장번호 — 알림톡 버튼과 같은 주소). 「^^」는 글자 표정이라 문자에서 안 깨진다 · 이모지(그림 글자)는 여전히 금지.
+ *   #643(대표 「효돈에서 아니고 제주에서」): 거래처 이름은 손님 글에 쓰지 않는다(내부 정보) — 「제주에서 출발했어요」. 발송 당일이면 「오늘 제주에서 출발했어요」.
  */
 'use strict';
 const shippingSchedule = require('../shipping-schedule.js');
@@ -30,7 +38,9 @@ const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 const KST_MS = 9 * 3600 * 1000;
 const DAY_MS = 86400000;
 
-const ASK_NAME_TEXT = '주문이 여러 건 확인돼요. 어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 바로 확인해 드릴게요.';
+const HELLO = '안녕하세요 고객님 ^^', YES_HELLO = '네 고객님 ^^', BYE = '행복한 하루 되세요 ^^';
+const ASK_NAME_TEXT = HELLO + ' 주문이 여러 건 확인됩니다!\n어느 분께 보내신 건인지 받는 분 성함을 알려 주시면 바로 확인해 드리겠습니다.';
+const TRACK_URL = String(process.env.SMS_PUBLIC_URL || 'https://jeju-acom-company.onrender.com').replace(/\/+$/, '') + '/track?n=';   // 서버 /track = CJ 조회로 넘김(알림톡 [택배 배송조회] 버튼과 같은 주소)
 
 const toMs = v => (v == null ? Date.now() : new Date(v).getTime());
 function kstYmd(ms) { return new Date(ms + KST_MS).toISOString().slice(0, 10); }
@@ -41,7 +51,7 @@ function gap(a, b) { return Math.round((dayOf(b) - dayOf(a)) / DAY_MS); }       
 // 오늘 기준 말: 오늘 · 내일 · 그 밖은 요일(날짜)
 function relDay(ymd, today) {
     const g = gap(today, ymd);
-    if (g === 0) return `오늘(${mdDow(ymd)})`;
+    if (g === 0) return `오늘 ${dowMd(ymd)}`;   // 「오늘 화요일(10/13)」 — 「내일 화요일(10/13)」과 같은 모양(괄호 겹침 없앰)
     if (g === 1) return `내일 ${dowMd(ymd)}`;
     return dowMd(ymd);
 }
@@ -49,8 +59,8 @@ function relDay(ymd, today) {
 function arriveSentence(a1, a2, today) {
     const left = [a1, a2].filter(d => d && gap(today, d) >= 0);
     if (!left.length) return null;                                                  // 둘 다 지남 → 호출부가 사람에게
-    if (left.length === 2 && gap(left[0], left[1]) === 1) return `${relDay(left[0], today)}~${dowMd(left[1])} 사이 도착 예정이에요`;
-    return `${relDay(left[0], today)} 도착 예정이에요`;
+    if (left.length === 2 && gap(left[0], left[1]) === 1) return `${relDay(left[0], today)}~${dowMd(left[1])} 사이 도착 예정`;
+    return `${relDay(left[0], today)} 도착 예정`;
 }
 // 계산기 글 끝의 「(한글날 연휴 휴무로 일요일 발송이에요)」 — 사유 문장만 꺼낸다(계산기가 만든 글자 그대로)
 function reasonTail(calcText) {
@@ -64,13 +74,25 @@ try { const t = require('../cj-track.js').TROUBLE_BUCKETS; if (Array.isArray(t) 
 function statusPhrase(label) {
     const s = String(label || '');
     if (/배송\s*완료/.test(s)) return '배송 완료로 확인돼요';
-    if (/배송\s*출발/.test(s)) return '오늘 배송 출발했어요';
-    if (/간선/.test(s)) return '배송 지역으로 이동 중이에요';
-    if (/집화/.test(s)) return '택배사에 접수됐어요';
+    if (/배송\s*출발/.test(s)) return '배송 기사님이 배송을 시작했습니다';   // #643: 「오늘」을 뺌(앞 문장 「오늘 도착 예정」과 겹침)
+    if (/간선/.test(s)) return '배송 지역으로 이동 중입니다';
+    if (/집화/.test(s)) return '택배사에 접수되었습니다';
     return '';
 }
-// 거래처 이름 — 괄호 안(「대성(시온)」)은 떼고 앞 글자만
-const partnerName = s => String(s == null ? '' : s).replace(/\s*[(（\[][^)）\]]*[)）\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12);
+// #643 운송장 글 — 전체 번호(숫자 10~12자리만 · 겹친 것 한 번) 최대 3개 + 택배사. 전체가 없으면 끝 4자리로 물러난다
+const CARRIER = 'CJ대한통운';   // 송장 표(delivery_shipments)는 CJ 접수분만 담는다
+const fullTrackings = o => [...new Set((Array.isArray(o.trackings) ? o.trackings : []).map(t => String(t == null ? '' : t).replace(/[^0-9]/g, '')).filter(t => /^\d{10,12}$/.test(t)))];
+function trackingText(o) {
+    const full = fullTrackings(o);
+    if (full.length) return `송장번호 ${full.slice(0, 3).join(', ')}${full.length > 3 ? ` 외 ${full.length - 3}` : ''}(${CARRIER})`;
+    const tail = tail4(o.tracking_tail);
+    return tail ? `송장 끝 ${tail}` : '';
+}
+// 「발송됐나요?」처럼 예·아니오로 묻는 글에만 머리에 「네, 」
+//   사실이 「네」일 때만 붙인다: 「보냈나요?」(이미 나감 = 네) · 「도착했나요?」는 배송 완료일 때만. 「언제·며칠·몇 시」(때를 묻는 글) · 「안/못/아직」(부정으로 묻는 글)이 있으면 안 붙인다 — 애매하면 안 붙이는 쪽
+const YES_Q_RE = /((발송|출발|출고|보내)[^.?!]{0,8}(됐|됬|했|셨|었)|보냈|나갔|부쳤)[^.?!]{0,4}(나요|는지|을까요|습니까|죠|\?|？)/;
+const ARRIVED_Q_RE = /(도착|배달|배송\s*완료)[^.?!]{0,8}(됐|됬|했|었)[^.?!]{0,4}(나요|는지|을까요|습니까|죠|\?|？)/;
+const NOT_YES_RE = /언제|며칠|몇\s*일|몇\s*시|안\s|안됐|안됬|안했|안왔|못\s|아직/;
 const tail4 = s => { const d = String(s == null ? '' : s).replace(/[^0-9]/g, ''); return d.length >= 4 ? d.slice(-4) : ''; };
 
 function answer(input) {
@@ -85,8 +107,6 @@ function answer(input) {
     const nowMs = toMs(a.now);
     const today = kstYmd(nowMs);
     const askedTracking = /송장|운송장/.test(String(a.text || ''));
-    const tail = tail4(o.tracking_tail);
-    const partner = partnerName(o.partner);
     const status = clean(o.status_label, 20);
     const q = String(a.text || '');
 
@@ -97,24 +117,27 @@ function answer(input) {
         // 새로 넣은 주문이 따로 있으면(발송 전 주문 pre_pending) 지난 송장으로 답하지 않는다 — 손님은 새 주문을 묻는 것일 수 있다
         if (Number(found.pre_pending) >= 1) return { text: '', kind: null, staff: true, why: 'new_order_pending' };
         if (TROUBLE.includes(status)) return { text: '', kind: null, staff: true, why: 'trouble' };   // 미배송·사고 등은 그 낱말을 손님에게 말하지 않고 사람이 본다
-        const head = `${mdDow(ship)} ${partner ? partner + '에서 ' : ''}출발했어요`;
-        const tr = tail ? `송장 끝 ${tail}` : '';
+        if (gap(today, ship) > 0) return { text: '', kind: null, staff: true, why: 'ship_future' };   // 발송일이 앞날로 적힌 줄(자료 오류) — 「출발했어요」라는 틀린 말이 자동으로 나가지 않게 사람이 본다
+        const yes = !NOT_YES_RE.test(q) && (YES_Q_RE.test(q) || (!!o.delivered && ARRIVED_Q_RE.test(q)));
+        const head = (yes ? YES_HELLO : HELLO) + ' ' + (gap(today, ship) === 0 ? '오늘' : mdDow(ship)) + ' 제주에서 출발했';   // #643 거래처 이름 없음 · 발송 당일이면 「오늘」 · 말끝은 아래에서
+        const tr = trackingText(o);
         if (o.delivered) {
             if (/못\s*받|받지|분실|없어요|어디/.test(q)) return { text: '', kind: null, staff: true, why: 'not_received' };   // 배송 완료로 찍혔는데 못 받았다는 글
             if (!/도착했|받았|완료|송장|운송장/.test(q)) return null;   // 「언제 와요」류 — 이미 받은 지난 주문 이야기가 아닐 수 있다 → 규칙으로 답하지 않는다(AI)
-            const parts = [head, tr, '배송 완료로 확인돼요'].filter(Boolean);
-            return { text: parts.join(' · ') + '.', kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'delivered' };
+            const lines = [head + '고, 배송 완료로 확인됩니다!', tr, '감사합니다 ^^'].filter(Boolean);
+            return { text: lines.join('\n'), kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'delivered' };
         }
         // 발송일 낮 12시(KST) 기준으로 계산기에 넣는다 — computeArrival 은 그 날짜의 달력일만 쓴다
         const r = shippingSchedule.computeArrival(new Date(ship + 'T12:00:00+09:00'), h.arriveOff || null, h.reasons || null);
         const arrive = arriveSentence(r.arriveStart, r.arriveEnd, today);
         if (!arrive) return { text: '', kind: null, staff: true, why: 'arrive_overdue' };   // 도착 예정일이 지났는데 완료가 아님 → 사람
-        const parts = [head, tr, arrive + (r.reason ? ` (${clean(r.reason, 30)})` : '')].filter(Boolean);
-        let text = parts.join(' · ');
-        text += /[.!?]$/.test(text) ? '' : '.';
         const phrase = o.stale ? '' : statusPhrase(status);   // 택배사 조회가 실패해 옛 상태면(stale) 상태는 말하지 않는다
-        if (phrase && !/완료/.test(phrase)) text += ` 지금은 ${phrase}.`;
-        return { text, kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'shipped' };
+        const first = fullTrackings(o)[0];
+        const lines = [head + '습니다!', tr, arrive + '입니다.' + (r.reason ? ` (${clean(r.reason, 30)})` : ''),
+            (phrase && !/완료/.test(phrase)) ? `지금은 ${phrase}.` : '',
+            first ? `배송조회 ${TRACK_URL}${first}` : '',   // 상자가 여럿이어도 주소는 첫 송장 하나(번호는 위 줄에 전부)
+            BYE].filter(Boolean);
+        return { text: lines.join('\n'), kind: askedTracking ? 'tracking' : 'ship_after', staff: false, why: 'shipped' };
     }
 
     // ── 아직 안 나간 주문 ──
@@ -134,14 +157,15 @@ function answer(input) {
     // 오늘 발송분인데 이미 오전이 지났으면 「오늘 오전 발송 예정」이라 말하지 않는다(송장 등록 전일 뿐일 수 있다)
     const kstHour = new Date(nowMs + KST_MS).getUTCHours();
     const shipWhen = gap(today, r.shipDate) === 0
-        ? (kstHour < 12 ? `오늘(${mdDow(r.shipDate)}) 오전 발송 예정이에요` : `오늘(${mdDow(r.shipDate)}) 발송분이에요`)
-        : `${relDay(r.shipDate, today)} 오전 발송 예정이에요`;
+        ? (kstHour < 12 ? `오늘 ${dowMd(r.shipDate)} 오전 발송 예정` : `오늘 ${dowMd(r.shipDate)} 발송분`)
+        : `${relDay(r.shipDate, today)} 오전 발송 예정`;
     const arrive = arriveSentence(r.arriveStart, r.arriveEnd, today);
     const why = reasonTail(r.text);
-    let text = (pre ? '주문 확인됐어요 · ' : '') + shipWhen + (arrive ? ` · ${arrive}` : '') + '.';
-    if (why) text += ` (${why})`;
-    if (askedTracking) text += ' 송장 번호는 발송되면 알림으로 보내 드려요.';
-    return { text, kind: 'ship_before', staff: false, why: pre ? 'pre' : 'not_shipped' };
+    const lines = [HELLO + (pre ? ' 주문 확인됐습니다!' : ''),
+        shipWhen + (arrive ? `이고, ${arrive}입니다.` : '입니다.') + (why ? ` (${why})` : ''),
+        askedTracking ? `송장번호는 발송되면 ${o.channel === 'coupang' ? '문자로' : '알림톡으로'} 안내드리겠습니다.` : '',   // 발송안내 = 네이버·자사몰은 알림톡 · 쿠팡은 문자
+        '잘 포장해서 보내드리겠습니다. ' + BYE].filter(Boolean);
+    return { text: lines.join('\n'), kind: 'ship_before', staff: false, why: pre ? 'pre' : 'not_shipped' };
 }
 
-module.exports = { answer, ASK_NAME_TEXT };
+module.exports = { answer, ASK_NAME_TEXT, TRACK_URL };

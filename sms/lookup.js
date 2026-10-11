@@ -162,4 +162,16 @@ function toPublic(result) {
     return out;
 }
 
-module.exports = { lookupShipped, normalizeName, normalizePhone, lookupable, makeBuyerIndex, lookupByPhone, refreshStatus, refreshOrder, toPublic, PUBLIC_ORDER };
+// #644(대표 10/11 「직원 화면 문자 전체 다 나오도록」): 직원 화면(로그인 뒤 문자 카드)용 — toPublic 에 운송장 전체 번호(order.trackings · 숫자만 · 최대 5)를 더한 것.
+//   🔴 손님에게 나가는 자리(셀프 조회 페이지 · 답 글 재료)와 알림·로그에는 쓰지 않는다 — 그쪽은 계속 toPublic(끝 4자리).
+function toStaff(result) {
+    const out = toPublic(result);
+    const src = result && result.order && Array.isArray(result.order.trackings) ? result.order.trackings : null;
+    if (out.order && src) {
+        const list = [...new Set(src.map(t => String(t == null ? '' : t).replace(/[^0-9]/g, '')).filter(t => /^\d{10,12}$/.test(t)))];
+        if (list.length) out.order.trackings = list.slice(0, 5);
+    }
+    return out;
+}
+
+module.exports = { toStaff, lookupShipped, normalizeName, normalizePhone, lookupable, makeBuyerIndex, lookupByPhone, refreshStatus, refreshOrder, toPublic, PUBLIC_ORDER };

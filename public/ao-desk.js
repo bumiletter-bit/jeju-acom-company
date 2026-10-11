@@ -1232,9 +1232,16 @@
         $('sms-th-phone').innerHTML = smsNoHtml(t);
         $('sms-th-badge').innerHTML = smsHeadBadge(t);
         // 발송 전 주문(o.pre)·칸이 하나도 없는 응답은 서버가 지어 준 한 줄(line)을 그대로
-        const oParts = o && !o.pre ? [o.ship_date ? mdOf(o.ship_date) + ' 발송' : '', o.partner, (o.option_text || '') + (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : ''), Number(o.boxes) > 1 ? nfmt(o.boxes) + '상자' : '', o.tracking_tail ? '송장 끝 ' + o.tracking_tail : '', o.status_label, o.arrive_text].filter(Boolean) : [];
-        const oLine = oParts.length ? oParts.join(' · ') : String((ow && ow.line) || (t.order_hint) || '').trim();
-        $('sms-order').innerHTML = oLine ? `<b>주문</b> ${esc(oLine)}` : '<b>주문</b> 이 번호로 찾은 최근 주문이 없어요.';
+        // #644(대표 10/11 「직원 화면 문자 전체 다 나오도록」): 송장 = 전체 번호(order.trackings · 숫자 10~12자리만 · 겹친 것 한 번) — 번호를 누르면 복사 · [조회] = 우리 배송조회 페이지(새 창).
+        //   서버가 아직 trackings 를 안 주면(옛 응답) 종전 「송장 끝 1234」
+        const trks = o && !o.pre ? [...new Set((Array.isArray(o.trackings) ? o.trackings : []).map(x => String(x == null ? '' : x).replace(/[^0-9]/g, '')).filter(x => /^[0-9]{10,12}$/.test(x)))] : [];
+        const trkHtml = trks.length ? `<span class="sms-trks">송장 ${trks.map(n => `<span class="sms-trk1"><button type="button" class="sms-trk" data-trk="${n}" title="눌러서 복사" aria-label="송장번호 ${n} 복사">${n}</button><a class="sms-trk-go" href="/track?n=${n}" target="_blank" rel="noopener" aria-label="송장번호 ${n} 배송조회(새 창)">조회</a></span>`).join('')}</span>` : '';
+        //   이름: 받는 분 전체(recipient_name · 옛 응답·발송 전 주문이면 첫 글자만 「홍**」) — 주문자 이름은 송장 표에 없어 안 적는다
+        const rName = o ? String(o.recipient_name || '').trim() : '', rInit = o ? String(o.recipient_initial || '').trim() : '';
+        const who = rName ? '받는 분 ' + rName : (rInit ? '받는 분 ' + rInit + '**' : '');
+        const oParts = o && !o.pre ? [esc(who), o.ship_date ? esc(mdOf(o.ship_date) + ' 발송') : '', esc(o.partner || ''), esc((o.option_text || '') + (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : '')), Number(o.boxes) > 1 ? esc(nfmt(o.boxes) + '상자') : '', (!trks.length && o.tracking_tail) ? esc('송장 끝 ' + o.tracking_tail) : '', esc(o.status_label || ''), esc(o.arrive_text || '')].filter(Boolean) : [];   // 전체 번호 묶음은 글 아래 제 줄로(아래 trkHtml)
+        const oLine = oParts.length ? oParts.join(' · ') : esc(String((ow && ow.line) || (t.order_hint) || '').trim());
+        $('sms-order').innerHTML = (oLine || trkHtml) ? `<b>주문</b> ${oLine} ${trkHtml}` : '<b>주문</b> 이 번호로 찾은 최근 주문이 없어요.';
         let day = '';
         box.innerHTML = d.messages.length ? d.messages.map(m => {
             const out = m.direction === 'out', dk = smsDay(m.event_at);
@@ -1393,6 +1400,7 @@
             const th = e.target.closest('.sms-thumb'); if (th) { if (!th.disabled) smsView(th.dataset.img, th); return; }
             if (e.target.closest('#sms-th-x')) { smsThreadClose(true); return; }
             if (e.target.closest('.sms-empty-go')) { smsScope('all'); return; }
+            { const tk = e.target.closest('.sms-trk'); if (tk) { copyText(tk.dataset.trk, '송장번호를 복사했어요', tk); return; } }   // #644
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
