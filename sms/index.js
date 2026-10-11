@@ -276,10 +276,10 @@ module.exports = function mountSms(app, deps) {
     //      「지금 주문하면 언제 와요」「얼마예요」처럼 사기 전 물음(GENERAL_Q_RE)은 종전대로 AI(일반 안내)
     //   ② AI 는 주문 정보를 받지 않는다 → AI 글에 그 손님의 발송·도착을 단정하는 말이 있으면 보내지 않고 직원 몫(ai_assert). 조건을 단 일반 안내(「8시 이전 주문은 당일 발송」)는 막지 않는다
     const NOT_FOUND_TEXT = '안녕하세요 고객님 ^^ 보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';
-    const GENERAL_Q_RE = /주문하면|주문\s*시|주문할|주문하려|주문하고\s*싶|주문\s*하려|시키면|시킬|구매하면|구매\s*시|구매하려|구매할|사면|사려|살려|사고\s*싶|얼마|가격|방법|어떻게\s*주문/;
-    const AI_COND_RE = /주문하시면|주문하면|주문\s*시|주문\s*건|주문은|주문분|이전\s*주문|이후\s*주문|전에\s*주문|까지\s*주문|결제하시면|결제\s*시|경우|보통|대부분|평균/;   // 조건·일반론 문장 표시
-    const AI_PAST_RE = /말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)|출발했|출발해서|출발하여|발송됐|발송되었|발송했|발송해\s*드렸|보내\s*드렸|도착했|배송\s*중이|이동\s*중/;
-    const AI_DATE_RE = /(오늘|내일|모레|\d{1,2}\s*일|\d{1,2}\/\d{1,2}|[월화수목금토일]요일(?!은|엔|에는|마다|도))[^.!?\n]{0,24}(출발|발송|도착|배송)/;   // 「토요일은 발송을 쉬고」 같은 요일 일반론은 뺀다
+    const GENERAL_Q_RE = /주문하면|주문\s*시(?![켰킨키])|주문할|주문하려|주문하고\s*싶|주문\s*하려|시키면|시킬|구매하면|구매\s*시|구매하려|구매할|(^|[\s,.!?])사면|사려|살려|사고\s*싶|얼마(?!나)|가격|방법|어떻게\s*주문/;
+    const AI_COND_RE = /주문하시면|주문하면|주문\s*시(?![켰킨키])|이전\s*주문|이후\s*주문|전에\s*주문|까지\s*주문|결제하시면|결제\s*시|경우|보통|대부분|평균/;   // 조건·일반론 문장 표시(「주문 건·주문은·주문분」은 그 손님 주문을 가리킬 수 있어 조건으로 보지 않는다)
+    const AI_PAST_RE = /말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)|출발했|출발해서|출발하여|발송됐|발송되었|발송했|발송해\s*드렸|발송\s*완료|보내\s*드렸|도착했|배송\s*중이|배송\s*시작|이동\s*중|나갑니다|나갔|나갈\s*예정|가고\s*있|오고\s*있|곧\s*(도착|받|출발|발송|나가)/;
+    const AI_DATE_RE = /(오늘|내일|모레|\d{1,2}\s*일|\d{1,2}\/\d{1,2}|[월화수목금토일]요일(?!은|엔|에는|마다|도))[^.!?\n]{0,24}(출발|발송|도착|배송|받으실|받아\s*보실|나갑|나가|나갈)/;   // 「토요일은 발송을 쉬고」 같은 요일 일반론은 뺀다
     function aiAsserts(text) {   // 한 문장이라도 「조건 없이」 발송·도착을 단정하면 true
         return String(text || '').split(/(?<=[.!?。])\s+|\n+/).some(sen => { const s = sen.trim(); if (!s) return false; if (/말씀\s*드린\s*대로|안내\s*드린\s*대로|앞서\s*(말씀|안내)/.test(s)) return true; if (AI_COND_RE.test(s)) return false; return AI_PAST_RE.test(s) || AI_DATE_RE.test(s); });
     }
@@ -297,6 +297,7 @@ module.exports = function mountSms(app, deps) {
                 if (r && r.text) return { text: smsSafe(r.text), kind: 'rule', rule_kind: r.kind || null, toStaff: false, why: 'rule' };
             } catch (e) { log.error('[문자] 규칙 답 실패(무시):', e.message); }
         }
+        if ((bucket === 'ship_q' || bucket === 'order_q') && !lookup && !GENERAL_Q_RE.test(text)) return { text: null, kind: null, toStaff: true, why: 'lookup_error' };   // 주문 찾기 실패(DB 오류·모듈 없음) = 틀린 「주문이 확인되지 않습니다」를 보내지 않는다
         if ((bucket === 'ship_q' || bucket === 'order_q') && !(lookup && lookup.match === 'one') && !GENERAL_Q_RE.test(text))   // #645 ① 주문을 못 찾은 「내 주문」 물음 — AI 호출 없음
             return { text: smsSafe(NOT_FOUND_TEXT), kind: 'rule', rule_kind: 'order_not_found', toStaff: false, why: 'order_not_found', staff_flag: 'order_not_found' };
         if (typeof qnaGenerate === 'function') {
@@ -520,7 +521,7 @@ module.exports = function mountSms(app, deps) {
         }
         return rows.length;
     }
-    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', order_not_found: '주문 못 찾음', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
+    const labelWhy = w => ({ claim: '불만·클레임', account: '계좌·입금 문의', photo: '사진', ai_to_staff: 'AI 판단', ai_skip: 'AI 답 없음', ai_error: 'AI 오류', ai_promise: 'AI 글에 약속 낱말', no_engine: '엔진 없음', order_not_found: '주문 못 찾음', lookup_error: '주문 확인 실패', ai_assert: 'AI 글에 발송·도착 단정', ask_failed: '받는 분 확인 실패', send_failed: '보내지 못함', stuck: '처리 안 된 글', staff: '직원 확인', photo_not_fruit: '과일 사진 아님', photo_unclear: '사진 불명확', photo_ai_error: '사진 판독 실패', photo_too_big: '사진 한도 초과', photo_damage_low: '파손 의심(확신 낮음)', photo_leak: '사진 문구 검사',
         rule_reserve: '예약 상품', rule_trouble: '배송 이상', rule_not_received: '못 받았다는 글', rule_arrive_overdue: '도착 예정일 지남', rule_ship_overdue: '발송 예정일 지남',
         rule_new_order_pending: '새 주문 대기', rule_pre_no_paid_at: '결제 시각 모름', rule_memo_date: '배송메세지 날짜 요청', rule_staff: '직원 확인' }[w] || (w ? '직원 확인' : ''));
 
@@ -954,7 +955,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; } };
+    return { initDB, start, stop, handleWebhook, handleInbound, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

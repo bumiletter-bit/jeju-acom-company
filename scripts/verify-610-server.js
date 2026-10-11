@@ -491,6 +491,23 @@ const T = '0999000'; const P1 = T + '1001', P2 = T + '1002', P3 = T + '1003', P4
             }
             r = await api('GET', '/api/sms/threads?q=' + (T + '1060')); ok(r.json.items[0] && r.json.items[0].staff_why_label === 'AI 글에 발송·도착 단정', '#645 사유 글 「AI 글에 발송·도착 단정」');
             void PR;
+            // #645 구멍 3개(워커5 37문장 점검): 단정 검사·사기 전 물음 판정을 문장으로 박아 둔다
+            const MUST_BLOCK = ['말씀드린 대로 내일 오전 효돈에서 출발해서 모레 도착 예정입니다.', '주문하신 상품은 오늘 발송됐습니다.', '내일 오전 발송 예정입니다.', '10/12 일요일에 도착합니다', '지금 배송 중이에요', '한글날 연휴로 11일 일요일 발송되는 점 양해부탁드립니다',
+                '고객님 주문 건은 내일 발송됩니다.', '곧 도착할 거예요', '발송 완료되었습니다', '오늘 나갑니다', '배송 시작되었어요', '택배가 가고 있어요', '월요일에 받으실 수 있어요', '내일 받아보실 수 있습니다', '고객님 주문분은 이미 나갔어요'];
+            const MUST_PASS = ['오전 8시 이전 주문은 당일 발송, 이후 주문은 다음 날 발송돼요.', '지금 주문하시면 내일 오전 발송되어 모레 도착 예정입니다.', '보통 발송 다음 날 도착합니다.', '서늘한 곳에 두시고 드실 만큼만 꺼내 두세요.', '토요일은 발송을 쉬고 일요일은 발송합니다.',
+                '안녕하세요 고객님 ^^\n택배는 CJ대한통운으로 발송됩니다.', '8시까지 주문 시 당일 발송됩니다.', '하우스감귤은 지금 단맛이 올라와 맛있는 시기예요.', '선물 포장은 선물용 상품에서만 됩니다.'];
+            ok(MUST_BLOCK.every(t => sms._aiAsserts(t) === true), '#645 단정 검사: 막혀야 할 15문장 전부 막힘(「주문 건은 내일 발송됩니다」「곧 도착할 거예요」「오늘 나갑니다」「월요일에 받으실 수 있어요」 포함) ' + JSON.stringify(MUST_BLOCK.filter(t => !sms._aiAsserts(t))));
+            ok(MUST_PASS.every(t => sms._aiAsserts(t) === false), '#645 단정 검사: 일반 안내 9문장은 통과(조건 문장·요일 일반론·보관법) ' + JSON.stringify(MUST_PASS.filter(t => sms._aiAsserts(t))));
+            const MINE = ['택배언제와요?!', '배송 언제 오나요?', '송장번호 알려주세요', '발송 됐나요', '주소 바꿔주세요', '주문 취소해주세요', '주문 시켰는데 언제 오나요', '주문시킨 거 발송됐나요', '어제 주문한 귤 얼마나 걸려요', '택배사면 어디인가요'];
+            const PREBUY = ['오늘 주문하면 언제 와요?', '지금 시키면 토요일에 받을 수 있나요', '배송비 얼마예요', '사이즈 변경 방법 알려주세요', '3kg 구매하려는데 배송 며칠 걸려요', '주문 시 배송메세지에 적으면 되나요', '두 박스 사면 배송비 어떻게 돼요'];
+            ok(MINE.every(t => sms._generalQ(t) === false) && PREBUY.every(t => sms._generalQ(t) === true), '#645 사기 전 물음 판정: 내 주문 물음 10개는 AI 로 안 흘림(「주문 시켰는데」「얼마나 걸려요」「택배사면」 포함) · 사기 전 물음 7개는 AI ' + JSON.stringify(MINE.filter(t => sms._generalQ(t)).concat(PREBUY.filter(t => !sms._generalQ(t)))));
+            // 곁(가): 주문 찾기 자체가 실패하면 「주문이 확인되지 않습니다」를 보내지 않고 직원 몫
+            sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 0, max_chars: 1000, staff_ids: [1] };
+            const LK = require('../sms/lookup.js'), keepLk = LK.lookupByPhone; LK.lookupByPhone = async () => { throw new Error('시험: DB 오류'); };
+            const PS = T + '1065'; const nE = aiQs.length;
+            try { await hook(env('sms:received', { messageId: 'u40', message: '택배 언제 와요?', phoneNumber: '+82' + PS.slice(1) })); } finally { LK.lookupByPhone = keepLk; }
+            const tse = await thread(PS);
+            ok(aiQs.length === nE && (await outOf(PS)).length === 0 && tse.status === 'staff_needed' && tse.staff_why === 'lookup_error' && !tse.draft_text, '#645 주문 찾기 실패(오류) = 고정 문구도 AI 도 없이 직원 몫(lookup_error) ' + tse.staff_why);
             sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
         }
     }
