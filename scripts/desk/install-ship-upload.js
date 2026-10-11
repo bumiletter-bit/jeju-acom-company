@@ -1,11 +1,11 @@
-// #594 송장 올리기를 이 PC 작업 스케줄러에 등록한다 — 매일 14:30 + 로그온 때 한 번, 창 없이 ship-upload.js --days 3 을 돌린다.
+// #594 송장 올리기를 이 PC 작업 스케줄러에 등록한다 — 매일 10:00 + 로그온 때 한 번, 창 없이 ship-upload.js --days 3 을 돌린다.
 //   등록: node scripts/desk/install-ship-upload.js --install
 //   상태: node scripts/desk/install-ship-upload.js --status      (등록 여부 · 다음 실행 · 마지막 실행 결과 · 로그 끝)
 //   제거: node scripts/desk/install-ship-upload.js --remove
 //   지금 한 번: node scripts/desk/install-ship-upload.js --run   (등록된 작업을 바로 실행)
 // 방식: 작업 이름 「아꼼이-송장-올리기」. 작업은 wscript 로 vbs 한 장을 부르고, vbs 가 창 없이 node 를 띄워 결과를 로그에 남긴다
 //       (경로에 한글이 있어 .cmd 는 쓰지 않는다 · vbs 와 작업 XML 은 UTF-16 으로 저장 — install-launcher.js 와 같은 이유).
-//       14:30 에 PC 가 꺼져 있었으면 켜진 뒤 바로 한 번 돈다(StartWhenAvailable). 창구 대기 프로그램과는 무관하다.
+//       10:00 에 PC 가 꺼져 있었으면 켜진 뒤 바로 한 번 돈다(StartWhenAvailable). 창구 대기 프로그램과는 무관하다.
 const fs = require('fs'), os = require('os'), path = require('path'); const { execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 const TASK = '아꼼이-송장-올리기';
@@ -30,7 +30,7 @@ function writeFiles() {
         + 'WScript.Quit rc\r\n';
     fs.writeFileSync(VBS, '﻿' + run, 'utf16le');
     const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + (process.env.USERNAME || os.userInfo().username);
-    const start = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10) + 'T14:30:00';
+    const start = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10) + 'T10:00:00';
     const xml = '<?xml version="1.0" encoding="UTF-16"?>\r\n'
         + '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\r\n'
         + ' <RegistrationInfo><Description>송장 색인의 최근 3일 운송장을 회사프로그램 DB(delivery_shipments)에 올립니다 (#594)</Description></RegistrationInfo>\r\n'
@@ -56,7 +56,7 @@ const arg = process.argv[2];
 try {
     if (arg === '--install') {
         writeFiles(); sch(['/Create', '/TN', TASK, '/XML', XML, '/F']);
-        console.log(JSON.stringify(Object.assign({ 설치됨: true, 안내: '매일 14:30 과 로그온 3분 뒤에 최근 3일 송장을 올립니다. 지금 한 번 돌리려면 --run' }, status()), null, 1));
+        console.log(JSON.stringify(Object.assign({ 설치됨: true, 안내: '매일 10:00 과 로그온 3분 뒤에 최근 3일 송장을 올립니다. 지금 한 번 돌리려면 --run' }, status()), null, 1));
     } else if (arg === '--remove') {
         try { sch(['/Delete', '/TN', TASK, '/F']); } catch (e) { /* 없으면 넘어간다 */ }
         for (const f of [VBS, XML]) { try { fs.unlinkSync(f); } catch (e) { /* 없으면 넘어간다 */ } }
