@@ -14393,17 +14393,13 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                 // #633(대표 10/11 「텔레그램 알림을 줄이려고 — 화면에서 보이게」): 봇이 답을 못 낸 건 한 줄
                 //   톡톡 = 손님 마지막 글이 [SKIP-무응답]이고 직원 답·[확인]이 아직 없는 것(낱말표는 텔레그램 「📮 톡톡 확인 · 봇이 답 못함」과 같은 NEEDS_STAFF_RE · 최근 3일 · 자사몰 채팅은 #374-r 대로 뺌)
                 //   문자 = 직원 몫(staff_needed) 가운데 AI·발송 실패로 넘어온 것(대화 칸 staff_why · 보낸 글 실패 last_out_state) · 시험 번호 0999 제외
+                // #676(대표 10/12 「어느 대화인지 모르고 확인해도 안 없어짐」): 셈을 손님 연락 창의 미처리 판정 한 곳(inbox-threads.js botFails · 문자는 sms/index.js)으로 — 직원 답·[확인]·[처리함] 뒤면 빠진다 · 14일 · items = 그 대화로 바로 열 목록(최대 10)
                 try {
-                    const tk = (await pool.query(`SELECT message FROM (SELECT DISTINCT ON (user_id) message, bot_response, staff_response, reviewed_at FROM message_logs
-                        WHERE received_at > NOW() - interval '3 days' AND user_id NOT LIKE 'mall:%' ORDER BY user_id, received_at DESC, id DESC) x
-                        WHERE bot_response = '[SKIP-무응답]' AND COALESCE(staff_response, '') = '' AND reviewed_at IS NULL`)).rows
-                        .filter(x => NEEDS_STAFF_RE.test(String(x.message || ''))).length;
-                    let sm = 0;
-                    try {
-                        sm = (await pool.query(`SELECT COUNT(*)::int AS c FROM sms_threads t WHERE t.status = 'staff_needed' AND t.phone_digits NOT LIKE '0999%'
-                            AND (t.last_out_state = 'failed' OR t.staff_why IN ('ai_error', 'ai_skip', 'no_engine', 'ai_promise', 'ai_assert', 'lookup_error', 'stuck', 'send_failed', 'photo_ai_error', 'photo_too_big'))`)).rows[0].c;   // 대화 칸(sms_threads.staff_why · #635) 기준 — 봇이 못 낸 것만(주문 못 찾음·AI 가 사람에게 넘김·불만·계좌·사진은 봇 실패가 아니다)
-                    } catch (e) { sm = 0; /* 문자 표·staff_why 칸이 아직 없는 서버 */ }
-                    if (tk + sm > 0) out.push({ key: 'botfail', label: '봇 실패', count: tk + sm, talk: tk, sms: sm, where: `톡톡 ${tk} · 문자 ${sm}` });
+                    const bf = require('./desk-inbox.js').hook('botfail');
+                    if (typeof bf === 'function') {
+                        const r = await bf({ needsRe: NEEDS_STAFF_RE });
+                        if (r && r.count > 0) out.push({ key: 'botfail', label: '봇 실패', count: r.count, talk: r.talk, sms: r.sms, where: `톡톡 ${r.talk} · 문자 ${r.sms}`, items: r.items, more: r.more, talk_ids: r.items.filter(x => x.ch === 'talk').map(x => x.id), sms_ids: r.items.filter(x => x.ch === 'sms').map(x => x.id) });
+                    }
                 } catch (e) { console.error('desk/board botfail:', e.message); }
                 // #469-b: 오늘 할 일 알림 — 일정표의 발송·이벤트 일정(오늘·내일). /today-reminders와 같은 조건
                 const today = kstTodayStr();

@@ -891,7 +891,7 @@ module.exports = function mountSms(app, deps) {
                     out.push({ id: m.id, sent: true, gateway_id: r.id });
                 } catch (e) {
                     await pool.query(`UPDATE sms_messages SET state = 'failed', fail_reason = $2 WHERE id = $1`, [m.id, String(e.message).replace(/\+?82\s?1\d[\d\s-]{7,}|01\d[\d\s-]{7,}/g, '[번호]').slice(0, 200)]);
-                    await setThread(m.thread_id, { status: 'staff_needed', last_out_state: 'failed' });
+                    await setThread(m.thread_id, { status: 'staff_needed', last_out_state: 'failed', staff_why: 'send_failed' });   // #676 사유도 적는다 — 사유가 비면 미처리(#664 OPEN_SQL)에 안 떠서 발송 실패가 창에서 안 보였음
                     await notifyStaff(c, { id: m.thread_id }, `문자 · 끝 ${phoneTail(m.phone_digits)} 발송 실패`, STAFF_MSG, { force: true });
                     out.push({ id: m.id, failed: e.message });
                 }
@@ -1084,6 +1084,14 @@ module.exports = function mountSms(app, deps) {
         };
         require('../desk-inbox.js').hook('sms', () => _cardSms());
     } catch (e) { }
+    // #676 「지금 챙길 일 · 봇 실패」의 문자 몫 = 미처리(OPEN_SQL · #664)와 같은 집합 가운데 봇이 못 낸 것(AI·조회·발송 실패 갈래) · 14일 — [처리함](#675)·답 보내기·끝내기 뒤면 staff_why 가 비어 빠진다
+    //   (주문 못 찾음·AI 가 사람에게 넘김·불만·계좌·사진은 봇 실패가 아니다 — #633 과 같은 갈래)
+    const BOTFAIL_WHY = { ai_error: '봇이 답을 만들지 못함', ai_skip: '봇이 답을 만들지 못함', no_engine: '봇이 답을 만들지 못함', ai_promise: '봇 답을 막음(약속 낱말)', ai_assert: '봇 답을 막음(지어낸 내용)', lookup_error: '주문 조회 실패', stuck: '처리 중 멈춤', send_failed: '발송 실패', photo_ai_error: '사진 판독 실패', photo_too_big: '사진이 너무 큼' };
+    const _botFailSms = async () => (await pool.query(`SELECT t.id, t.phone_digits, t.staff_why, t.last_out_state, COALESCE(t.last_in_at, t.updated_at) AS at FROM sms_threads t
+        WHERE ${OPEN_SQL} AND (t.last_out_state = 'failed' OR t.staff_why = ANY($1::text[])) AND COALESCE(t.last_in_at, t.updated_at) > now() - interval '14 days'
+        ORDER BY COALESCE(t.last_in_at, t.updated_at) DESC, t.id DESC LIMIT 100`, [Object.keys(BOTFAIL_WHY)])).rows
+        .map(t => ({ ch: 'sms', id: t.id, why: BOTFAIL_WHY[t.staff_why] || (t.last_out_state === 'failed' ? '발송 실패' : '봇 실패'), at: t.at ? new Date(t.at).toISOString() : null, who: '끝 ' + phoneTail(t.phone_digits) }));
+    try { require('../desk-inbox.js').hook('botfail_sms', () => _botFailSms()); } catch (e) { }
     app.get('/api/sms/summary', authMiddleware, wrap(async (req, res) => {
         const c = await cfg(); const st = (await naverCfgGet('sms_gateway_state')) || {};
         const today = kstDate();
@@ -1319,7 +1327,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, _cardSms: () => _cardSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

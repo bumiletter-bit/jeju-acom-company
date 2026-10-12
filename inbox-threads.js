@@ -152,6 +152,7 @@ module.exports = function mountInboxThreads(app, deps) {
                 unread: ad ? 0 : x.unread, state: handled ? 'staff' : x.answered ? 'ai' : 'open', why: (x.answered || staff.length) ? '' : entry ? '상품 페이지에서 들어온 자동 글' : botSilent(x.bot_response),
                 needs_reply: needs, done, has_draft: dk.has(x.tkey), can_send: !talkCannot(x.user_id, Number(x.sage) || age) };
             // 「확인 필요 문의」 칸이 쓰는 줄(응답 JSON 에는 안 실림 — 셀 수 없는 칸)
+            Object.defineProperty(th, '_bot', { value: { b: String(x.bot_response || ''), msg } });   // #676 봇 실패 판정 재료(응답 JSON 에는 안 실림)
             Object.defineProperty(th, '_card', { value: { kind: 'talk', id: x.id, tkey: x.tkey, at: x.at, item: th.sub, state: th.state, why: th.why, question: clip(msg === PHOTO_ONLY ? '사진' : msg, 600), answer: clip(bot, 1200), staff: clip(String(x.staff_response || '').trim(), 1200), scenario: x.scenario_name || '', seen_by: x.reviewed_by || '' } });
             out.push(th);
         }
@@ -339,6 +340,22 @@ module.exports = function mountInboxThreads(app, deps) {
         const [talk, qna, inquiry, sms] = await Promise.all([one(() => talkThreads({ scope: 'all' })), one(() => postThreads('qna', { scope: 'all' })), one(() => postThreads('inquiry', { scope: 'all' })), smsOpen()]);
         return { talk, qna, inquiry, sms: sms ? { unread: sms.unread, open: sms.open } : null };   // #661 문자(문자 모듈이 없으면 null)
     }
+    // #676(대표 10/12 실물 — 「지금 챙길 일 · 봇 실패 n건」이 어느 대화인지 모르고 확인해도 안 없어짐): 봇 실패 = 이 창의 미처리(needs_reply)와 같은 집합 가운데 봇이 답을 못 낸 것
+    //   톡톡 = 미처리 줄(직원 답·[확인] 뒤면 빠짐 · 14일) 중 [AI에러…] 또는 [SKIP-무응답]인데 물음·요청 낱말이 있는 글(needsRe = 텔레그램 「봇이 답 못함」과 같은 낱말표 · server.js 가 넘겨 줌)
+    //   문자 = 문자 모듈의 고리(botfail_sms — 미처리(OPEN_SQL) 중 AI·발송 실패 갈래 · [처리함]·답 뒤면 빠짐)
+    //   items = 그 대화로 바로 열 재료(ch · id = 이 창의 대화 id · why · at · who) 최근순 최대 10 · more = 못 실은 수
+    async function botFails(opts) {
+        const needsRe = opts && opts.needsRe instanceof RegExp ? opts.needsRe : null; let talk = [], sms = [];
+        try {
+            talk = (await talkThreads({ scope: 'open' })).filter(th => { const o = th._bot || {}; return /^\[AI에러/.test(o.b) || (o.b === '[SKIP-무응답]' && (!needsRe || needsRe.test(o.msg || ''))); })
+                .map(th => ({ ch: 'talk', id: th.id, why: /^\[AI에러/.test(th._bot.b) ? '봇이 답을 만들지 못함' : '봇이 답하지 않고 넘긴 글', at: th.last_at, who: th.title }));
+        } catch (e) { log.error('[문의 창] 봇 실패(톡톡) 셈 실패:', e.message); }
+        const f = hook('botfail_sms');
+        if (typeof f === 'function') { try { sms = (await f()) || []; } catch (e) { log.error('[문의 창] 봇 실패(문자) 셈 실패:', e.message); } }
+        const all = talk.concat(sms).sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+        return { count: all.length, talk: talk.length, sms: sms.length, items: all.slice(0, 10), more: Math.max(0, all.length - 10) };
+    }
+    if (desk && typeof desk.hook === 'function' && !deps.testMode) desk.hook('botfail', async opts => { await ensure(); return botFails(opts); });
     async function smsOpen() { const f = hook('sms'); if (typeof f !== 'function') return null; try { return await f(); } catch (e) { log.error('[문의 창] 문자 셈 실패:', e.message); return null; } }
     // #661 「확인 필요 문의」 칸 = 이 창의 전체 목록(scope=all)을 간단히(대표 10/12 — 네이버 톡톡상담관리 꼴): 최근 대화순 · 채널당 CARD_MAX 줄(대기 줄은 빠짐없이 먼저 담는다) ·
     //   줄마다 needs_reply(= 대기 · 칩 숫자가 세는 것)·done·last_* 를 단다. 숫자(counts.open)는 이 창의 「답 안 한 것」과 같은 값. more = 카드에 못 실은 줄 수(창에서 봄)
@@ -403,5 +420,5 @@ module.exports = function mountInboxThreads(app, deps) {
         res.json(await talkMakeDraft(String(req.params.id || ''), who(req)));
     }));
 
-    return { ensure, counts, keyOf, tables: T, _talkThreads: talkThreads, _postThreads: postThreads, _cardData: cardData };
+    return { ensure, counts, keyOf, tables: T, _talkThreads: talkThreads, _postThreads: postThreads, _cardData: cardData, _botFails: botFails };
 };

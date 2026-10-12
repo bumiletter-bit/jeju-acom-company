@@ -146,6 +146,34 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 ok(q3.rows === 0 && q4.rows === 4 && q4.nums === q2.nums && await pg.evaluate(() => { try { const v = JSON.parse(localStorage.getItem('akm_desk_cust')); return v.sms === true && v.inb === true; } catch (e) { return false; } }), `[${name}] #668 이 브라우저에서 처음(기억 없음)이면 답이 온 뒤 ${q4.rows}줄(${q3.rows} → ${q4.rows}) · 그때 기억해 다음부터 바로`);
                 await pg.unroute('**/api/inbox/counts**', slow); await pg.unroute('**/api/sms/summary**', slow);
             }
+            {   // #676(대표 10/12 폴드 실물): 챙길 일 「봇 실패」 알약 = 문의 관리로 보내지 않고 손님 연락 창의 그 대화로 · 거기서 [확인]하면 줄이 바로 빠짐 · 뒤로가기 = 에이전트 오피스 그대로
+                await fetch(BASE + '/__mock/reset', { method: 'POST' }); await fetch(INB + '/__mock/reset', { method: 'POST' });
+                const openIds = async () => ((await jget(INB + '/api/inbox/threads?ch=talk&scope=open')).threads || []).map(x => x.id);
+                const all0 = await openIds(); let pick = all0.slice(0, 1), smsIds = [2];
+                const bRoute = async r => { const now = await openIds(), tk = pick.filter(i => now.includes(i)), sm = smsIds.length; const todo = [{ key: 'fail', label: '알림 발송 실패', count: 2, where: '문의 관리 · 알림 발송 이력' }];
+                    if (tk.length + sm > 0) todo.unshift({ key: 'botfail', label: '봇 실패', count: tk.length + sm, talk: tk.length, sms: sm, where: '톡톡 ' + tk.length + ' · 문자 ' + sm, talk_ids: tk, sms_ids: smsIds, items: [], more: 0 });
+                    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channels: [], ship: [], todo, live: [], today: [], progress: [], is_admin: false }) }); };
+                await pg.route('**/api/agent-office/desk/board*', bRoute);
+                const reB = async () => { await pg.evaluate(() => __aoDesk.loadBoard()); await pg.waitForTimeout(300); if (await pg.evaluate(() => { const b = document.getElementById('desk-board-fold'); return !!b && b.getClientRects().length > 0 && !document.querySelector('#desk-todo-box').getClientRects().length; })) { await pg.evaluate(() => document.getElementById('desk-board-fold').scrollIntoView({ block: 'center' })); await pg.click('#desk-board-fold'); await pg.waitForTimeout(300); } };
+                const pill = async k => { await pg.evaluate(k => document.querySelector('#desk-todo-box .bf-go[data-bf="' + k + '"]').scrollIntoView({ block: 'center' }), k); await pg.click('#desk-todo-box .bf-go[data-bf="' + k + '"]'); await pg.waitForTimeout(1500); };
+                const bf = () => pg.evaluate(() => { const li = document.querySelector('#desk-todo-box .bot-fail'), vis = e => !!e && e.getClientRects().length > 0, th = document.getElementById('inb-thread');
+                    return { pills: li ? Array.from(li.querySelectorAll('.bf-go')).map(b => b.textContent).join(',') : '', note: li ? li.querySelector('small i').textContent : '', h: li ? Math.min(...Array.from(li.querySelectorAll('.bf-go')).map(b => Math.round(b.getBoundingClientRect().height))) : 0, page: document.getElementById('page-agent-office').classList.contains('active') && !document.getElementById('page-inquiry').classList.contains('active'), win: document.body.classList.contains('sms-win-open'), ch: (document.querySelector('#sms-tabs .sms-tab[aria-selected="true"]') || { dataset: {} }).dataset.ch || '', open: (window.AkmInbox._state.open || ''), title: vis(th) ? (document.getElementById('inb-th-title') || {}).textContent || '' : '', rows: document.querySelectorAll('#inb-list .sms-item').length, only: (document.getElementById('inb-open') || { getAttribute() { return ''; } }).getAttribute('aria-pressed'), hist: (history.state || {}).smsWin || '', smsOpen: (document.querySelector('#sms-list .sms-item.open') || { dataset: {} }).dataset.id || '', over: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) }; });
+                await reB(); const f0 = await bf();
+                await pill('talk'); const f1 = await bf();
+                ok(f0.pills === '톡톡 1,문자 1' && f0.note === '봇이 답을 못 낸 건 · 누르면 그 대화로' && f0.h >= (vw.width <= 720 ? 44 : 32) && f1.page && f1.win && f1.ch === 'talk' && f1.open.indexOf(pick[0]) >= 0 && f1.hist === 'th' && f1.over <= vw.width, `[${name}] #676 「톡톡 1」 알약(${f0.h}px · 「${f0.note}」) → 문의 관리가 아니라 손님 연락 창 톡톡 탭의 그 대화(${f1.title}) · 메뉴는 에이전트 오피스 그대로 · 가로 ${f1.over}`, JSON.stringify(f1));
+                await pg.click('#inb-done'); await pg.waitForTimeout(2600); const f2 = await bf();
+                ok(f2.pills === '문자 1' && f2.win, `[${name}] #676 그 대화에서 [확인] → 챙길 일 「봇 실패」 줄에서 톡톡이 바로 빠짐(「${f0.pills}」 → 「${f2.pills}」)`, JSON.stringify(f2));
+                await pg.goBack(); await pg.waitForTimeout(500); const g1 = await bf(); await pg.goBack(); await pg.waitForTimeout(700); const g2 = await bf();
+                ok(g1.win && !g1.title && g1.page && !g2.win && g2.page, `[${name}] #676 뒤로가기 실클릭: 대화 → 목록 → 창 닫힘 · 끝까지 에이전트 오피스(다른 메뉴로 안 나감)`, JSON.stringify([g1.win, g1.title, g2.win, g2.page]));
+                pick = (await openIds()).slice(0, 2); await reB(); const f3 = await bf();
+                await pill('talk'); const f4 = await bf(); const on = (await openIds()).length;
+                ok(f3.pills === '톡톡 2,문자 1' && f4.win && f4.ch === 'talk' && !f4.title && f4.only === 'true' && f4.rows === on && f4.page, `[${name}] #676 톡톡 여러 건 → 톡톡 탭 [미처리] 켜진 목록(${f4.rows}줄 = 미처리 ${on})`, JSON.stringify(f4));
+                await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(900); await reB();
+                await pill('sms'); const f5 = await bf();
+                ok(f5.win && f5.ch === 'sms' && f5.smsOpen === '2' && f5.page, `[${name}] #676 「문자 1」 알약 → 문자 탭의 그 대화(대화 ${f5.smsOpen})`, JSON.stringify(f5));
+                await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(900);
+                await pg.evaluate(() => localStorage.removeItem('akm_inb_only_open_talk')); await pg.unroute('**/api/agent-office/desk/board*', bRoute);
+            }
             await ctx.close();
         }
     } finally { await browser.close().catch(() => { }); s1.kill(); s2.kill(); }

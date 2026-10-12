@@ -354,6 +354,14 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
             const d3 = await api('POST', `/api/sms/threads/${tc.id}/done`, { undo: true });
             ok(a1.status === 'staff_needed' && !!a1.staff_why && (await inOpen()) && find((await api('GET', '/api/sms/threads?scope=open&limit=200')).json, tc.id).done === false && d3.status === 409, '#675 처리함 뒤 손님 새 글 = 다시 판정(사람 몫 · 미처리에 다시) · 그 뒤 되돌리기는 409 ' + JSON.stringify([a1.status, a1.staff_why, d3.status]));
             ok((await api('POST', '/api/sms/threads/999999999/done', {})).status === 404, '#675 없는 대화 404');
+            // #676 「봇 실패」 문자 몫 = 미처리 가운데 봇이 못 낸 갈래만 · [처리함] 뒤 빠짐 · 목록 id = 대화 id
+            const whyKeep = (await thread(PC)).staff_why, readKeep = (await thread(PC)).staff_read_at; const bfHas = async () => (await sms._botFailSms()).find(x => x.id === tc.id);
+            await pool.query(`UPDATE sms_threads SET staff_why = 'claim' WHERE id = $1`, [tc.id]); const bf0 = await bfHas();
+            await pool.query(`UPDATE sms_threads SET staff_why = 'ai_error' WHERE id = $1`, [tc.id]); const bf1 = await bfHas(); const openIds676 = ((await api('GET', '/api/sms/threads?scope=open&limit=200')).json.items || []).map(x => x.id);
+            ok(!bf0 && bf1 && bf1.ch === 'sms' && bf1.why === '봇이 답을 만들지 못함' && /^끝 \d{4}$/.test(bf1.who) && !isNaN(Date.parse(bf1.at)) && (await sms._botFailSms()).every(x => openIds676.includes(x.id)), '#676 봇 실패(문자) = 미처리 중 AI·발송 실패 갈래만(불만 갈래는 아님) · 줄 = ch·id·why·at·끝 4자리 · id 전부 미처리 목록 안');
+            await api('POST', `/api/sms/threads/${tc.id}/done`, {}); const bf2 = await bfHas(); await api('POST', `/api/sms/threads/${tc.id}/done`, { undo: true }); const bf3 = await bfHas();
+            ok(!bf2 && !!bf3, '#676 [처리함] 뒤 봇 실패에서 빠짐 · 되돌리면 다시');
+            await pool.query(`UPDATE sms_threads SET staff_why = $2, staff_read_at = $3 WHERE id = $1`, [tc.id, whyKeep, readKeep]);
         }
         const sumB = (await api('GET', '/api/sms/summary')).json;
         ok(typeof sumB.unread_threads === 'number' && typeof sumB.needs_staff === 'number' && typeof sumB.drafts === 'number' && typeof sumB.staff_needed === 'number' && sumB.unread_threads >= 1 && sumB.needs_staff === sumA.needs_staff + 1 && sumB.drafts === sumA.drafts && sumB.unread_threads === sumA.unread_threads, '#635 summary 새 칸 unread_threads·needs_staff · drafts = 안 보낸 초안 수 ' + JSON.stringify({ a: [sumA.unread_threads, sumA.needs_staff, sumA.drafts], b: [sumB.unread_threads, sumB.needs_staff, sumB.drafts] }));

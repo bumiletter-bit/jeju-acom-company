@@ -329,6 +329,24 @@ async function api(method, url, body, user) {
             d = (await api('GET', '/api/inbox/threads/talk/' + k2 + '?peek=1')).json; ok(near(d.messages.find(m => m.sender === 'staff').at, 60) && near(d.thread.last_at, 60), '대화: 시각 없는 옛 답 = 손님 글 시각');
             const cd = await mod._cardData(); const c1 = cd.talk.find(x => x.tkey === k1); ok(c1 && near(c1.last_at, 2) && cd.talk.findIndex(x => x.tkey === k1) < cd.talk.findIndex(x => x.tkey === k3), '카드 줄도 같은 시각·순서');
         }
+        console.log('⑨ #676 봇 실패 = 미처리와 같은 집합 + 대상 목록');
+        {
+            const RE = /\?|언제|환불/; const F = { a: 'vt658userBF1', b: 'vt658userBF2', c: 'vt658userBF3', d: 'vt658userBF4' }; const KF = {}; for (const k of Object.keys(F)) KF[k] = mod.keyOf(F[k]);
+            await lg(F.a, '귤 언제 오나요?', { ago: 3, mark: '[SKIP-무응답]' }); const ib = await lg(F.b, '안녕하세요', { ago: 2, mark: '[AI에러-무응답]' });
+            await lg(F.c, '네 감사합니다', { ago: 2, mark: '[SKIP-무응답]' }); await lg(F.d, '언제 와요?', { ago: 1, mark: '[쿨다운-무응답]' });
+            const openIds = async () => new Set((await api('GET', '/api/inbox/threads?ch=talk&scope=open')).json.threads.map(x => x.id));
+            let r = await mod._botFails({ needsRe: RE }); let ids = r.items.map(x => x.id); let op = await openIds();
+            const ia = r.items.find(x => x.id === KF.a), ibm = r.items.find(x => x.id === KF.b);
+            ok(ia && ibm && !ids.includes(KF.c) && !ids.includes(KF.d), '봇 실패 = [SKIP]+물음 낱말 · [AI에러] 만(낱말 없는 SKIP·쿨다운은 아님)');
+            ok(r.items.every(x => x.ch !== 'talk' || op.has(x.id)) && r.count === r.talk + r.sms && r.items.length <= 10 && r.more === Math.max(0, r.count - 10), '목록 id = 창 톡톡 [미처리] 줄 id(전부 그 안) · count = talk + sms · 최대 10 + more ' + JSON.stringify({ count: r.count, talk: r.talk, sms: r.sms, more: r.more }));
+            ok(ia.ch === 'talk' && ia.who === '톡톡 손님 ' + KF.a.slice(-4) && ia.why === '봇이 답하지 않고 넘긴 글' && ibm.why === '봇이 답을 만들지 못함' && !isNaN(Date.parse(ia.at)) && !JSON.stringify(r).includes('vt658user'), '줄 = ch·id·why·at·who(가린 열쇠 끝 4자리 · 손님 원래 id 없음)');
+            const n0 = r.talk;
+            await api('POST', '/api/inbox/done', { ch: 'talk', id: KF.a }); r = await mod._botFails({ needsRe: RE });
+            ok(!r.items.some(x => x.id === KF.a) && r.talk === n0 - 1 && !(await openIds()).has(KF.a), '[확인] 뒤 빠짐(목록·수 · 창 미처리에서도)');
+            await api('POST', '/api/inbox/done', { ch: 'talk', id: KF.a, undo: true }); r = await mod._botFails({ needsRe: RE }); ok(r.items.some(x => x.id === KF.a) && r.talk === n0, '되돌리면 다시 뜸');
+            await pool.query(`UPDATE ${TB.logs} SET staff_response = '확인해 드릴게요' WHERE id = $1`, [ib]); r = await mod._botFails({ needsRe: RE }); ok(!r.items.some(x => x.id === KF.b) && r.talk === n0 - 1, '직원이 답하면 빠짐');
+            r = await mod._botFails({}); ok(r.items.some(x => x.id === KF.c) || r.talk > n0 - 1, '낱말표를 안 주면 SKIP 전부(옛 호출 꼴 방어)');
+        }
         console.log('⑧ 라이브 표 무접촉');
         const live1 = (await pool.query(`SELECT (SELECT count(*) FROM message_logs)::int a, (SELECT count(*) FROM naver_qnas)::int b, (SELECT count(*) FROM naver_inquiries)::int c, (SELECT count(*) FROM talk_outbox)::int d`)).rows[0];
         const marks = (await pool.query(`SELECT (SELECT count(*) FROM message_logs WHERE user_id LIKE '%vt658%')::int a, (SELECT count(*) FROM naver_qnas WHERE question_id BETWEEN 990658000 AND 990658999)::int b, (SELECT count(*) FROM naver_inquiries WHERE inquiry_id LIKE '990658%')::int c, (SELECT count(*) FROM talk_outbox WHERE user_id LIKE '%vt658%')::int d`)).rows[0];

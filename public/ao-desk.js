@@ -1140,6 +1140,7 @@
         const sig = JSON.stringify(d);
         if (sig === SMS.sumSig) { if (first) smsChip(); return; }
         SMS.sumSig = sig;
+        if (!first) boardSoon();   // #676 문자 미처리가 바뀌면 챙길 일(봇 실패 줄)도 바로
         smsChip(); smsHead();
         if (S.board) renderBoard();
     }
@@ -1282,7 +1283,7 @@
     // 틱마다: AkmInbox 가 늦게 실려도(스크립트 순서) 숫자 알림을 한 번 걸고, 간격은 AkmInbox 가 스스로 지킨다
     function inbHook() {
         const a = inbApi(); if (!a) return;
-        if (!INB.bound) { INB.bound = true; try { if (a.onCounts) a.onCounts(() => { INB.known = true; inbTabs(); smsChip(); plusShorts(); if (S.board) renderBoard(); if (S.inbox) renderInbox(); }); } catch (e) { /* 숫자는 다음 틱에 */ } }
+        if (!INB.bound) { INB.bound = true; try { if (a.onCounts) a.onCounts(() => { const was = INB.known; INB.known = true; inbTabs(); smsChip(); plusShorts(); if (S.board) renderBoard(); if (S.inbox) renderInbox(); if (was) boardSoon(); }); } catch (e) { /* 숫자는 다음 틱에 */ } }
         try { if (a.refresh) a.refresh(); } catch (e) { /* 다음 틱에 */ }
         if (!INB.known && inbOk()) { INB.known = true; inbTabs(); plusShorts(); }
     }
@@ -1309,7 +1310,7 @@
     }
     function smsWinCleanup() {
         if (!document.body.classList.contains('sms-win-open')) return;
-        smsThreadClose(false, true); smsViewClose(); SMS.buyOpen.clear(); setTimeout(() => { try { loadInbox(); } catch (e) { /* 다음 주기에 */ } }, 400);   // #661 창에서 답·[확인]한 것이 손님 연락 카드에 바로
+        smsThreadClose(false, true); smsViewClose(); SMS.buyOpen.clear(); setTimeout(() => { try { loadInbox(); boardSoon(); } catch (e) { /* 다음 주기에 */ } }, 400);   // #661 창에서 답·[확인]한 것이 손님 연락 카드에 바로
         if (INB.ch !== 'sms') {   // #658 톡톡·문의 탭을 보던 채 닫으면: 그 칸을 걷고 다음에는 문자 탭부터
             const a = inbApi(); try { if (a) a.unmount(); } catch (e) { /* 칸은 숨긴다 */ }
             INB.ch = 'sms'; const h = $('inb-host'), c = document.querySelector('#desk-sms .sms-cols'); if (h) h.hidden = true; if (c) c.hidden = false; inbTabs();
@@ -2992,19 +2993,36 @@
         if (hk) { const el = Array.from(box.querySelectorAll('.desk-cu')).find(r => r.dataset.kind === hk[0] && r.dataset.id === hk[1]); const t = el && (hk[2] ? el.querySelector('.desk-cu-ok') : null) || (el && el.querySelector('.desk-cu-row')); if (t) t.focus({ preventScroll: true }); }
     }
 
+    function boardSoon() { if (S.board && Date.now() - (S.boardAt || 0) > 1500) loadBoard(); }   // #676 손님 연락 창에서 처리한 것이 「봇 실패」 줄에 바로(잇단 호출은 1.5초에 한 번)
     async function loadBoard() {
         try { S.board = await api('/api/agent-office/desk/board'); S.boardAt = Date.now(); renderBoard(); } catch (e) { /* 다음 주기에 다시 */ }
     }
-    // #633(대표 10/11): 봇이 답을 못 낸 건 한 줄 — 톡톡은 문의 관리로 · 문자는 문자 카드의 「직원 확인이 필요한 대화만」으로
+    // #633(대표 10/11): 봇이 답을 못 낸 건 한 줄
+    // #676(대표 10/12 폴드 실물 「문의 관리로 가는데 어떤 건인지 모르겠고 · 없애는 법도 모르겠고 · 뒤로가기로 못 돌아옴」): 알약은 다른 메뉴로 보내지 않고 손님 연락 창의 그 대화로
+    //   서버가 대상 목록(talk_ids · sms_ids)을 주면 1건 = 바로 그 대화 · 여러 건 = 그 탭의 미처리 목록(톡톡 [미처리] 켬 · 문자 「직원 확인만」). 거기서 [확인]/[처리함]/답 보내기로 처리하면 줄 숫자도 같이 준다
+    //   손님 연락 창이 없는 옛 서버에서만 종전대로 문의 관리 메뉴로
     function botFailHtml(t) {
         const tk = Number(t.talk) || 0, sm = Number(t.sms) || 0;
         return `<li class="bot-fail"><span>봇 실패</span><b>${nfmt(tk + sm)}건</b><small>`
             + (tk > 0 ? `<button type="button" class="bf-go" data-bf="talk">톡톡 ${nfmt(tk)}</button>` : '')
             + (sm > 0 ? `<button type="button" class="bf-go" data-bf="sms">문자 ${nfmt(sm)}</button>` : '')
-            + `<i>봇이 답을 못 낸 건 · 눌러서 열기</i></small></li>`;
+            + `<i>봇이 답을 못 낸 건 · 누르면 그 대화로</i></small></li>`;
     }
+    const bfIds = v => Array.isArray(v) ? v.map(x => x && typeof x === 'object' ? x.id : x).filter(x => x != null && x !== '').map(String) : [];
     function botFailGo(k) {
-        if (k === 'sms') { smsStaffOnly(true); return; }   // 전체 화면이 떠 있으면 smsStaffOnly 가 닫힘을 기다린 뒤 연다
+        const t = ((S.board && S.board.todo) || []).find(x => x && x.key === 'botfail') || {};
+        if (k === 'sms') {
+            const ids = bfIds(t.sms_ids);
+            if (ids.length === 1 && (Number(t.sms) || 0) === 1 && Number(ids[0]) > 0) { smsOpenById(Number(ids[0])).then(ok => { if (!ok && !document.body.classList.contains('sms-win-open')) smsStaffOnly(true); }); return; }
+            smsStaffOnly(true); return;   // 전체 화면이 떠 있으면 smsStaffOnly 가 닫힘을 기다린 뒤 연다
+        }
+        if (inbOk()) {
+            const ids = bfIds(t.talk_ids);
+            if (ids.length === 1 && (Number(t.talk) || 0) === 1) { inbOpen('talk', ids[0]); return; }   // ids 는 최근 10건까지만 온다 — 전체 수(talk)가 1일 때만 바로 그 대화
+            try { localStorage.setItem('akm_inb_only_open_talk', '1'); } catch (e) { /* 못 적으면 전체 목록 */ }   // ao-inbox.js 의 [미처리] 기억과 같은 열쇠 — 그 탭을 미처리만으로 연다
+            if (INB.ch === 'talk') { const a = inbApi(); try { if (a) a.unmount(); } catch (e) { /* 다시 그린다 */ } INB.ch = 'sms'; }   // 이미 톡톡 탭을 보던 중이면 새로 그려야 [미처리]가 먹는다
+            inbOpen('talk'); return;
+        }
         if (S.full) closeFull();   // #635: 상태 칸이 없어져 「직원 확인이 필요한 대화만」(needs_staff)으로 연다 — [이전 대화 보기]·찾기를 누르면 풀린다
         const nav = document.querySelector('.nav-item[data-page="inquiry"]');
         if (nav) { nav.click(); setTimeout(() => { try { if (typeof switchInquiryTab === 'function') switchInquiryTab('unanswered'); } catch (e) { /* 메뉴만 열려도 된다 */ } }, 0); }   // 문의 관리의 「톡톡 문의」 탭까지

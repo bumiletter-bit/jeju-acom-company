@@ -61,3 +61,10 @@
 ## 안 되는 것
 
 카카오·자사몰 손님에게 보내기 · 이미 답한 문의 고치기 · 톡톡 손님의 이름·번호·구매이력(네이버가 식별값만 줌) · 톡톡 사진 보내기.
+
+## #676 「지금 챙길 일 · 봇 실패」 = 이 창의 미처리와 같은 집합 (10/12)
+
+- 셈 한 곳: `inbox-threads.js botFails({ needsRe })`(고리 `botfail` · desk/board 가 부름) — 톡톡 = `talkThreads(scope=open)` 줄 가운데 `[AI에러…]` 또는 `[SKIP-무응답]` + 물음·요청 낱말(server.js `NEEDS_STAFF_RE`) · 문자 = `sms/index.js _botFailSms`(고리 `botfail_sms` · OPEN_SQL 가운데 AI·조회·발송 실패 갈래 · 14일).
+- 그래서 직원 답·[확인](톡톡) · [처리함]·답 보내기·끝내기(문자) 뒤면 창 미처리와 같이 빠진다. 광고·입장 글·카카오·자사몰은 창 미처리가 아니므로 봇 실패에도 안 든다(종전엔 광고 글이 남았음).
+- desk/board todo 줄: `{ key:'botfail', label, count, talk, sms, where, items:[{ch, id, why, at, who}], more, talk_ids, sms_ids }` — items·ids 는 최근순 최대 10(`id` = 이 창의 대화 id: 톡톡 tkey · 문자 sms_threads.id) · count/talk/sms 는 전체 수. 0건이면 줄 없음.
+- 문자 발송 실패(sendTick) 때 `staff_why = 'send_failed'` 도 적는다(종전엔 사유가 비어 미처리에 안 떴음).

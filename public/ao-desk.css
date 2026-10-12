@@ -979,7 +979,7 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .bf-go:hover { background: var(--d-soft); }
 .bf-go:active { transform: scale(.97); }
 .bf-go:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; }
-@media (max-width: 720px) { .bf-go { min-height: 44px; padding: 0 16px; font-size: 13.5px; } }
+@media (max-width: 960px), (pointer: coarse) { .bf-go { min-height: 44px; padding: 0 16px; font-size: 13.5px; } }
 @media (max-width: 720px) {
     .desk-todo li.sms-todo { min-height: 44px; align-content: center; }
 }
