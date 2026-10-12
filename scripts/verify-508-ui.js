@@ -3066,6 +3066,100 @@ async function resolveCards(pg, type) {
                 ok(w.errs.length === 0, '㊽ 오류 0', w.errs.join(' | ')); await w.ctx.close();
             }
 
+            // ── ㊾ #669(대표 10/12 「묶음 카드에 묶인 주문도 기본 카드처럼 주문마다 전부 따로」) — 묶음 카드(같은 구매자·같은 메모) 안 주문별 「직접 고치기」 한 벌 ──
+            console.log('\n㊾ #669 묶음 카드 — 주문마다 따로 고치기');
+            {
+                const settle = async pg => { await idle(pg); await pg.waitForTimeout(900); await pg.waitForFunction(() => { const t = window.AkmFinalOrder.state; return !t.busy && !t.memoAsk && !t.ai.running; }, null, { timeout: 60000 }); await idle(pg); await pg.waitForTimeout(300); };
+                const T = n => '010-9669-' + String(n).repeat(4);
+                const other = fx.naver.find(r => r['옵션정보'] !== base['옵션정보'] && !String(r['옵션정보']).startsWith('[')), optA = String(base['옵션정보']), optB = String(other['옵션정보']);
+                const MEMO = '다음주에 보내주세요';   // 날짜가 애매한 글 → 「주문 확인」 카드(같은 구매자·같은 메모는 한 장으로 묶인다)
+                const rows49 = [mk('육구', { recv: '육구가', tel: T(1), memo: MEMO }), mk('육구', { recv: '육구나', tel: T(1), memo: MEMO, base: other }), mk('육구', { recv: '육구다', tel: T(1), memo: MEMO, qty: 2 }),
+                    mk('칠구', { recv: '칠구가', tel: T(2), memo: MEMO }), mk('칠구', { recv: '칠구나', tel: T(2), memo: MEMO }), mk('팔구', { tel: T(3) })];
+                const w = await mkChat(false, rows49); w.chat.memoAns = () => ({ ship: 'ask', memo: '그대로', sure: false });
+                await setCash(w.pg, null); await startWithMemo(w.pg, ''); await settle(w.pg);
+                const find = async nm => { await w.pg.fill('#fo-find-q', nm); await w.pg.waitForTimeout(250); await w.pg.keyboard.press('Enter'); await w.pg.waitForTimeout(900); };
+                let ORD3 = ['육구가', '육구나', '육구다'];   // 묶음 안 주문 순서 — 아래에서 화면(주문 벌)을 읽어 맞춘다
+                const G = () => w.pg.evaluate(ord3 => { const st = window.AkmFinalOrder.state, gs = st.cards.filter(c => (c.fix || []).length > 1), byName = {};
+                    gs.forEach(c => (c.fix.length === 3 ? ord3 : ['칠구가', '칠구나']).forEach((n, i) => { byName[n] = c.fix[i]; }));
+                    const P = {}; Object.keys(byName).forEach(n => { const p = st.patch.get(byName[n]); P[n] = p ? JSON.parse(JSON.stringify(p)) : null; });
+                    return { groups: gs.map(c => ({ id: c.id, type: c.type, n: c.fix.length, title: c.title })), byName, P, patchN: st.patch.size, list: document.getElementById('fo-patches').innerText.replace(/s+/g, ' ') }; }, ORD3);
+                const card = nm => w.pg.locator('#fo-cards .fo-card').filter({ has: w.pg.locator('.fo-fixsub .fo-fix-t', { hasText: nm }) }).first();
+                const sub = nm => w.pg.locator('#fo-cards .fo-fixsub').filter({ has: w.pg.locator('summary .fo-fix-t', { hasText: nm }) }).first();
+                const openSub = async nm => { if (!(await sub(nm).evaluate(d => d.open))) { await sub(nm).locator('summary').click(); await w.pg.waitForTimeout(200); } };
+                // ② 「주문 찾아 고치기」에서 한 주문을 집으면 그 주문의 벌이 펼쳐진 채로
+                await find('육구나'); const g0 = await G();
+                const a0 = await w.pg.evaluate(() => { const a = document.activeElement, s = a && a.closest('.fo-fixsub'); return { sub: s ? s.querySelector('.fo-fix-t').textContent : '', open: !!(s && s.open), card: a && a.closest('.fo-card') ? a.closest('.fo-card').dataset.id : '' }; });
+                ok(g0.groups.length === 2 && g0.groups.some(g => g.n === 3 && /외 2건/.test(g.title)) && g0.groups.some(g => g.n === 2), '㊾ 준비: 묶음 카드 2장(육구 3건 · 칠구 2건)', JSON.stringify(g0.groups));
+                ok(/^육구나 · /.test(a0.sub) && a0.open && a0.card === g0.groups.find(g => g.n === 3).id, '㊾ 「주문 찾아 고치기」에서 육구나를 고르면 묶음 카드의 그 주문 벌이 펼쳐지고 거기에 초점', JSON.stringify(a0));
+                // ① 묶음 카드: 머리 칸(묶인 n건 모두) + 주문마다 한 벌
+                const c6 = card('육구나');
+                const s1 = await c6.evaluate(c => { const outer = c.querySelector('details.fo-fix:not(.fo-fixsub)'), subs = [...c.querySelectorAll('.fo-fixsubs > .fo-fixsub')], W = window.innerWidth;
+                    return { outerSmall: outer.querySelector('summary small').textContent, outerOptDis: outer.querySelector('[data-optbtn]').disabled, outerTailDis: outer.querySelector('[data-x="tail"]').disabled, outerInSubs: !!outer.closest('.fo-fixsubs'), subsInOuter: subs.some(s => outer.contains(s)), head: (c.querySelector('.fo-fixsubs-h') || {}).textContent || '',
+                        subs: subs.map(s => ({ t: s.querySelector('.fo-fix-t').textContent, open: s.open, opt: !s.querySelector('[data-optbtn]').disabled, tail: !s.querySelector('[data-x="tail"]').disabled, rc: ['rname', 'rtel', 'rtel2', 'raddr'].filter(x => s.querySelector('[data-x="' + x + '"]')).length, memo: !!s.querySelector('textarea[data-x="memo"]'), boxes: s.querySelectorAll('[data-boxes] [data-box]').length, brc: s.querySelectorAll('[data-box="0"] [data-brc]').length, flip: !!s.querySelector('[data-flip]'), apply: s.querySelector('[data-fix-apply]').textContent, sender: !!s.querySelector('[data-x="name"]'), over: s.getBoundingClientRect().right > c.getBoundingClientRect().right + 1 })), doc: document.documentElement.scrollWidth - W }; });
+                ORD3 = s1.subs.map(s => s.t.split(' · ')[0]); const SB = n => s1.subs.find(s => s.t.startsWith(n + ' · '));
+                ok(/묶인 3건 모두/.test(s1.outerSmall) && s1.outerOptDis && s1.outerTailDis && !s1.subsInOuter && !s1.outerInSubs && /주문마다 따로 고치기 — 묶인 3건/.test(s1.head), '㊾ 머리 칸은 종전대로(「묶인 3건 모두」 · 품목이 달라 옵션명·꼬리 잠김) · 그 아래 「주문마다 따로 고치기 — 묶인 3건」', JSON.stringify({ s: s1.outerSmall, h: s1.head }));
+                ok(s1.subs.length === 3 && s1.subs.every(s => s.open && s.opt && s.tail && s.memo && !s.flip && !s.sender && !s.over && s.apply === '이 주문에 적용') && ORD3.slice().sort().join() === '육구가,육구나,육구다' && SB('육구가').t.includes(optA) && SB('육구나').t.includes(optB) && /1박스$/.test(SB('육구가').t) && /2박스$/.test(SB('육구다').t), '㊾ 주문마다 한 벌(받는 분 · 품목 · 박스 수) — 품목이 섞인 묶음은 처음부터 펼침 · 옵션명·꼬리·배송메세지 칸이 열려 있음 · 보내는 분 칸·발송 뒤집기는 머리에만', JSON.stringify(s1.subs.map(s => [s.t, s.open, s.opt, s.tail, s.memo, s.flip])));
+                ok(SB('육구가').rc === 4 && SB('육구나').rc === 4 && SB('육구가').boxes === 0 && SB('육구다').boxes === 2 && SB('육구다').brc === 5 && s1.doc <= 0, '㊾ 1박스 주문 = 받는 분·번호 1·2·주소 칸 / 2박스 주문 = 박스 2줄(줄마다 받는 분·번호·주소·배송메세지 5칸) — 한 건짜리 카드와 같은 꼴 · 가로 넘침 0', JSON.stringify(s1.subs.map(s => [s.rc, s.boxes, s.brc])));
+                // 주문마다 다르게 적는다: 육구가 = 꼬리 15 / 육구나 = 꼬리 13 + 받는 분·주소·배송메세지 / 육구다 = 박스 1만 꼬리 11
+                await sub('육구가').locator('[data-x="tail"]').fill('15'); await sub('육구가').locator('[data-x="tail"]').blur();
+                await sub('육구나').locator('[data-x="tail"]').fill('13'); await sub('육구나').locator('[data-x="rname"]').fill('바꾼받는'); await sub('육구나').locator('[data-x="raddr"]').fill('부산광역시 가짜구 따로로 9'); await sub('육구나').locator('[data-x="memo"]').fill('경비실에 맡겨 주세요');
+                await sub('육구나').locator('[data-fix-apply]').click(); await settle(w.pg);
+                const g1 = await G(), keep = await sub('육구가').locator('[data-x="tail"]').inputValue(), st1 = await c6.evaluate(c => { const who = f => [...c.querySelectorAll('.fo-fixsub')].filter(f).map(s => s.querySelector('.fo-fix-t').textContent.split(' · ')[0]).join(); return { state: c.dataset.state, ok: who(s => !!s.querySelector('summary .fo-fix-ok')), undo: who(s => !!s.querySelector('[data-fix-undo]')) }; });
+                ok(g1.P['육구나'] && g1.P['육구나'].tail === '13과로!' && g1.P['육구나'].recv === '바꾼받는' && g1.P['육구나'].addr === '부산광역시 가짜구 따로로 9' && g1.P['육구나'].memo === '경비실에 맡겨 주세요' && g1.P['육구나'].by === 'card' && !g1.P['육구가'] && !g1.P['육구다'] && g1.patchN === 1, '㊾ 🔴 [이 주문에 적용] → 그 주문 key 의 st.patch 에만(꼬리·받는 분·주소·배송메세지) · 묶인 다른 주문은 무변경', JSON.stringify(g1.P));
+                ok(keep === '15과로!' && st1.ok === '육구나' && st1.undo === '육구나' && /육구나|바꾼받는/.test(g1.list) && /되돌리기/.test(g1.list), '㊾ 다른 주문 벌에 적어 둔 글(15과로!)은 다시 그려도 남음 · 고친 주문에만 「따로 고침」+[되돌리기] · 「말로 바꾼 것」 목록에 올라감', JSON.stringify({ keep, st1, list: g1.list.slice(0, 160) }));
+                await sub('육구가').locator('[data-fix-apply]').click(); await settle(w.pg);
+                await openSub('육구다'); await sub('육구다').locator('[data-box="0"] [data-boxset="S사이즈로!"]').click(); await w.pg.waitForTimeout(150); await sub('육구다').locator('[data-fix-apply]').click(); await settle(w.pg);
+                const g2 = await G();
+                ok(g2.P['육구가'] && g2.P['육구가'].tail === '15과로!' && g2.P['육구나'].tail === '13과로!' && g2.P['육구다'] && JSON.stringify((g2.P['육구다'].boxes || []).map(x => [x.tail || '', x.qty])) === JSON.stringify([['S사이즈로!', 1], ['', 1]]) && g2.patchN === 3, '㊾ 세 주문에 각각 다른 꼬리(15과 · 13과 · 박스 1만 S사이즈) — 주문별 patch 3개', JSON.stringify([g2.P['육구가'], g2.P['육구다']]));
+                // 품목이 같은 묶음(칠구 2건): 머리 칸으로 모두에게 + 한 주문만 따로 덮어쓰기
+                await find('칠구나'); const c7 = card('칠구나');
+                const s7 = await c7.evaluate(c => { const outer = c.querySelector('details.fo-fix:not(.fo-fixsub)'); return { tailDis: outer.querySelector('[data-x="tail"]').disabled, subs: [...c.querySelectorAll('.fo-fixsub')].map(s => [s.querySelector('.fo-fix-t').textContent.split(' · ')[0], s.open]) }; });
+                ok(!s7.tailDis && s7.subs.length === 2 && s7.subs.find(x => x[0] === '칠구가')[1] === false && s7.subs.find(x => x[0] === '칠구나')[1] === true, '㊾ 품목이 같은 묶음: 머리 꼬리 칸이 열려 있음(모두에게) · 주문 벌은 접힌 채 — 찾아서 집은 주문(칠구나)만 펼침', JSON.stringify(s7));
+                await c7.locator('details.fo-fix:not(.fo-fixsub) [data-x="tail"]').fill('20'); await c7.locator('details.fo-fix:not(.fo-fixsub) [data-fix-apply]').click(); await settle(w.pg);
+                await find('칠구나'); await openSub('칠구나'); await sub('칠구나').locator('[data-x="tail"]').fill('25'); await sub('칠구나').locator('[data-fix-apply]').click(); await settle(w.pg);
+                const g3 = await G();
+                ok(g3.P['칠구가'] && g3.P['칠구가'].tail === '20과로!' && !g3.P['칠구가'].subBy && g3.P['칠구나'].tail === '25과로!' && !!g3.P['칠구나'].subBy, '㊾ 머리 칸 [적용] = 묶인 2건 모두 20과 → 한 주문 벌에서 25과 = 그 주문만 덮어씀(따로 적은 것이 우선)', JSON.stringify([g3.P['칠구가'], g3.P['칠구나']]));
+                // 묶음이 아닌 카드는 종전 그대로
+                await find('팔구'); const solo = await w.pg.locator('#fo-cards .fo-card').filter({ hasText: '팔구' }).first().evaluate(c => ({ subs: c.querySelectorAll('.fo-fixsub, .fo-fixsubs').length, fix: c.querySelectorAll('details.fo-fix').length, t: c.querySelector('.fo-fix-t').textContent }));
+                ok(solo.subs === 0 && solo.fix === 1 && solo.t === '이 주문 직접 고치기', '㊾ 묶음이 아닌 카드: 주문별 벌 없음 · 「이 주문 직접 고치기」 하나(종전)', JSON.stringify(solo));
+                // 파일
+                for (let k = 0; k < 20; k++) { const b = w.pg.locator('#fo-cards .fo-card[data-state="open"] [data-fo-act]').first(); if (!(await b.count())) break; await b.click(); await w.pg.waitForTimeout(250); }
+                await settle(w.pg);
+                const openN = await w.pg.locator('#fo-cards .fo-card[data-state="open"]').count(), exN = await w.pg.evaluate(sel => document.querySelector(sel).contentWindow.__ivt.S.merged.filter(e => e.excluded).length, SEL.hidden);
+                ok(openN === 0 && exN === 0 && !(await w.pg.isDisabled(SEL.make)), '㊾ 준비: 열린 카드 0 · 전부 오늘 발송 · [파일 만들기] 켜짐', JSON.stringify({ openN, exN }));
+                const dl49 = async tag => { await w.pg.waitForSelector(SEL.save, { timeout: 20000 }); await w.pg.waitForTimeout(400); const names = await w.pg.evaluate(sel => [...document.querySelectorAll(sel)].map(b => b.getAttribute('data-fo-save')), SEL.save), rows = [], store = [];
+                    for (const nm of names.filter(v => /xlsx$/i.test(v))) { const [dl] = await Promise.all([w.pg.waitForEvent('download', { timeout: 20000 }), w.pg.locator('[data-fo-save="' + nm + '"]').click()]); const ff = path.join(TMP, 's49-' + tag + '-' + Date.now() + '.xlsx'); await dl.saveAs(ff); const wb = XLSX.readFile(ff, { cellStyles: true });
+                        if (nm.includes('스마트스토어')) { XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }).forEach(r => { if (r.some(v => /^(육구|칠구|팔구)/.test(String(v)))) store.push(r.map(String)); }); continue; }
+                        if (wb.Sheets.Sheet1) XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1, defval: '' }).slice(1).forEach(r => rows.push(r.map(String))); }
+                    return { rows, store, of: nm => rows.filter(r => r[3] === nm), R: nm => rows.filter(r => r[3] === nm).map(r => r[4] + '×' + r[5]).sort().join(' | ') }; };
+                await w.pg.click(SEL.make); await idle(w.pg); const f1 = await dl49('a');
+                ok(f1.R('육구가') === optA + ' 15과로!×1' && f1.R('바꾼받는') === optB + ' 13과로!×1' && f1.of('육구나').length === 0, '㊾ 🔴 택배사 양식: 묶음 2건의 꼬리가 줄마다 각각(육구가 = 15과로! · 육구나(→ 바꾼받는) = 13과로!)', JSON.stringify([f1.R('육구가'), f1.R('바꾼받는'), f1.of('육구나').length]));
+                const rB = f1.of('바꾼받는')[0] || [], rA = f1.of('육구가')[0] || [];
+                ok(rB.includes('부산광역시 가짜구 따로로 9') && rB.includes('경비실에 맡겨 주세요') && !rA.includes('부산광역시 가짜구 따로로 9') && !rA.includes('경비실에 맡겨 주세요') && rA.some(v => /가짜구 대화로/.test(v)), '㊾ 🔴 택배사 양식: 받는 분·주소·배송메세지는 고친 주문 줄에만(같은 묶음의 다른 줄은 주문 그대로)', JSON.stringify([rA.slice(3, 10), rB.slice(3, 10)]));
+                ok(f1.R('육구다') === [optA + ' S사이즈로!×1', optA + '×1'].sort().join(' | ') && f1.R('칠구가') === optA + ' 20과로!×1' && f1.R('칠구나') === optA + ' 25과로!×1' && f1.R('팔구') === optA + '×1', '㊾ 택배사 양식: 2박스 주문은 박스별 두 줄(S사이즈 · 꼬리 없음) · 칠구가 20과 · 칠구나 25과 · 안 고친 주문(팔구)은 그대로', JSON.stringify([f1.R('육구다'), f1.R('칠구가'), f1.R('칠구나'), f1.R('팔구')]));
+                ok(f1.store.length === 6, '㊾ 스마트스토어 양식은 주문 한 줄씩(6행)', String(f1.store.length));
+                // 되돌리기 — 주문 벌의 [되돌리기]는 그 주문만
+                await find('육구나'); await openSub('육구나'); await sub('육구나').locator('[data-fix-undo]').click(); await settle(w.pg); await w.pg.waitForSelector(SEL.save, { timeout: 30000 }); await settle(w.pg);
+                const g4 = await G(), f2 = await dl49('b');
+                ok(!g4.P['육구나'] && g4.P['육구가'] && g4.P['육구가'].tail === '15과로!' && g4.P['육구다'] && g4.patchN === 4, '㊾ 주문 벌 [되돌리기] → 그 주문의 고침만 사라짐(묶인 다른 주문은 그대로)', JSON.stringify({ n: g4.patchN, na: g4.P['육구나'] }));
+                ok(f2.R('육구나') === optB + '×1' && f2.of('바꾼받는').length === 0 && f2.R('육구가') === optA + ' 15과로!×1' && (f2.of('육구나')[0] || []).some(v => /가짜구 대화로/.test(v)), '㊾ 되돌린 뒤 다시 만든 양식: 육구나는 주문 그대로(받는 분·주소·꼬리 없음) · 육구가는 15과 유지', JSON.stringify([f2.R('육구나'), f2.R('육구가')]));
+                ok(w.errs.length === 0, '㊾ 오류 0', w.errs.join(' | ')); await w.ctx.close();
+                // 폰 390 · 야간: 넘침·누르는 크기
+                const m = await mkChat(false, rows49, { width: 390, height: 844 }, true); m.chat.memoAns = () => ({ ship: 'ask', memo: '그대로', sure: false });
+                await setCash(m.pg, null); await startWithMemo(m.pg, ''); await settle(m.pg);
+                await m.pg.fill('#fo-find-q', '육구나'); await m.pg.waitForTimeout(250); await m.pg.keyboard.press('Enter'); await m.pg.waitForTimeout(900);
+                const mm = await m.pg.evaluate(() => new Promise(res => { const W = window.innerWidth, c = [...document.querySelectorAll('#fo-cards .fo-card')].find(x => x.querySelector('.fo-fixsub'));
+                    const meas = () => ({ n: c.querySelectorAll('.fo-fixsub').length, doc: document.documentElement.scrollWidth - W, over: [...c.querySelectorAll('.fo-fixsubs *')].filter(n => n.getClientRects().length && n.getBoundingClientRect().right > W + 1).length, small: [...c.querySelectorAll('.fo-fixsubs summary, .fo-fixsubs button:not(.fo-chip), .fo-fixsubs input[type="text"], .fo-fixsubs textarea')].filter(n => n.getClientRects().length && n.getBoundingClientRect().height < 43.5).map(n => (n.className || n.tagName) + ' ' + Math.round(n.getBoundingClientRect().height)).slice(0, 5) });
+                    const lum = s => { const a = s.match(/[\d.]+/g).map(Number).slice(0, 3).map(x => { x /= 255; return x <= .03928 ? x / 12.92 : Math.pow((x + .055) / 1.055, 2.4); }); return .2126 * a[0] + .7152 * a[1] + .0722 * a[2]; };
+                    const bgOf = el => { for (let n = el; n; n = n.parentElement) { const b = getComputedStyle(n).backgroundColor, a = b.match(/[\d.]+/g).map(Number); if (a.length < 4 || a[3] > 0.5) return b; } return 'rgb(255,255,255)'; };
+                    const cr = el => { const f = lum(getComputedStyle(el).color), b = lum(bgOf(el)); return (Math.max(f, b) + .05) / (Math.min(f, b) + .05); };
+                    const light = meas(); document.documentElement.setAttribute('data-ao-theme', 'dark');
+                    setTimeout(() => { const dark = meas(), crs = [...c.querySelectorAll('.fo-fixsubs-h, .fo-fixsub .fo-fix-t, .fo-fixsub summary small')].filter(n => n.getClientRects().length).map(cr); document.documentElement.removeAttribute('data-ao-theme'); res({ light, dark, crMin: Math.min(...crs), crN: crs.length }); }, 500); }));
+                ok(mm.light.n === 3 && mm.light.doc <= 0 && mm.light.over === 0 && mm.light.small.length === 0, '㊾ 폰 390: 주문 벌 3개 · 가로 넘침 0 · 틀 밖 0 · 머리·단추·글 칸 44px 이상', JSON.stringify(mm.light));
+                ok(mm.dark.doc <= 0 && mm.dark.over === 0 && mm.crN >= 3 && mm.crMin >= 4.5, '㊾ 폰 390 야간: 넘침 0 · 주문 벌 머리 글 대비 4.5 이상', JSON.stringify({ d: mm.dark, cr: mm.crMin }));
+                ok(m.errs.length === 0, '㊾ 폰 오류 0', m.errs.join(' | ')); await m.ctx.close();
+            }
+
             // 창구가 안 집음(40초)
             let e2; try { e2 = await mkChat(true); } catch (_) { e2 = null; }
             if (e2) {

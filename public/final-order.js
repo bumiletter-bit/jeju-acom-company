@@ -866,6 +866,19 @@
     //   [적용] = 대화 칸에서 말로 바꾼 것과 같은 길(st.patch → 결과 파일의 연보라 칸 · 「말로 바꾼 것」 목록 · [되돌리기]). 그 카드에 이미 있는 입력칸(배송메세지·보내는이)은 겹쳐 두지 않는다(cd.fixF).
     st.fixDraft = new Map(); st.fixOpen = new Set(); st.fixFold = new Set();
     const FIX_LABEL = { name: '보내는 분 이름(바꿀 때만 · 「드림」 자동)', phone: '보내는 분 번호(바꿀 때만)', addr: '보내는이 주소(바꿀 때만)', memo: '택배사 양식 배송메세지(비우면 기본 문구)', opt: '옵션명(품목별 금액에 있는 이름만)' };
+    // #669(대표 10/12 「묶음 카드에 묶인 주문도 기본 카드처럼 주문마다 전부 따로」): 묶음 카드(같은 구매자·같은 메모 N건) 안에 주문마다 「직접 고치기」 한 벌.
+    //   한 벌 = 주문 한 건짜리 가짜 카드({ id: 묶음 카드 id + '~sub~' + 주문 key · fix: [key] }) — st.cards 에는 넣지 않고 cardOf(id) 가 그때그때 만든다.
+    //   그래서 한 건짜리 카드의 길(옵션명·꼬리·박스별·받는 분·주소·번호·배송메세지 · [적용] = 그 주문 key 의 st.patch · [되돌리기])을 그대로 탄다. 묶음 머리의 칸은 종전대로 「묶인 n건 모두」.
+    const SUB_SEP = '~sub~';
+    const subCard = (cd, k) => ({ id: cd.id + SUB_SEP + k, type: 'fixsub', parent: cd.id, keys: [k], fix: [k], fixF: ['opt', 'memo'] });
+    function cardOf(id) {
+        const c = st.cards.find(x => x.id === id); if (c) return c;
+        const i = String(id || '').indexOf(SUB_SEP); if (i < 0) return undefined;
+        const p = st.cards.find(x => x.id === id.slice(0, i)), k = id.slice(i + SUB_SEP.length);
+        if (!p || !(p.fix || []).includes(k) || p.fix.length < 2) return undefined;
+        const e = S().merged.find(x => keyOf(x) === k); if (!e) return undefined;
+        return Object.assign(subCard(p, k), e.individual || p.tailOnly ? { tailOnly: true, fixF: ['opt'] } : {});
+    }
     function fixCur(cd) {
         const byKey = new Map(S().merged.map(e => [keyOf(e), e])), es = (cd.fix || []).map(k => byKey.get(k)).filter(Boolean); if (!es.length) return null;
         const e = es[0], p = st.patch.get(keyOf(e)) || {}, sd = p.sender || {};
@@ -1107,15 +1120,22 @@
         const field = f => f === 'memo' ? `<label class="wide">${FIX_LABEL.memo}<textarea data-x="memo" rows="2" maxlength="300">${val('memo')}</textarea></label>`
             : f === 'opt' ? optBox()
             : `<label${wide(f)}>${FIX_LABEL[f]}<input type="text" data-x="${f}" value="${val(f)}" maxlength="${f === 'name' ? 20 : f === 'phone' ? 14 : 120}"${f === 'phone' ? ' inputmode="tel"' : ''}></label>`;
-        const open = !fixFold().has(cd.id) && (cd.type === 'fix' || fd.open || F.byCard || (opts && opts.open));   // 여기서 고친 것이 있으면 펼쳐 둔다([되돌리기]가 보이게)
+        const sub = cd.type === 'fixsub';
+        const open = !fixFold().has(cd.id) && (cd.type === 'fix' || fd.open || (sub ? (st.patch.get(cd.fix[0]) || {}).by === 'card' && !!subMine(cd.fix[0]) : F.byCard) || (opts && opts.open));   // 여기서 고친 것이 있으면 펼쳐 둔다([되돌리기]가 보이게)
         // #583-c: 발송일 판정 뒤집기 줄 — 참고 줄에서 연 카드와 사람이 뒤집은 주문 카드에만(열린 주문 확인 카드는 [오늘 발송]/[제외]가 이미 있다)
         // #618(대표 10/10 「오늘 발송인데 갑자기 연락 와서 빼야 할 때」): 오늘 나가는 주문이면 어느 카드의 직접 고치기에서든 [오늘 발송 제외] — 열린 주문 확인 카드만 빼고(그 카드엔 [제외]가 이미 있다)
-        const exN = F.es.filter(e => e.excluded).length, flipOk = F.es.every(e => !e.individual) && (cd.type === 'fix' || (opts && opts.flip) || (exN === 0 && !((cd.type === 'order' || cd.type === 'split') && !closed(cd)))), hand = F.es.some(e => typeof (st.patch.get(keyOf(e)) || {}).excl === 'boolean');
+        const exN = F.es.filter(e => e.excluded).length, flipOk = !sub && F.es.every(e => !e.individual) && (cd.type === 'fix' || (opts && opts.flip) || (exN === 0 && !((cd.type === 'order' || cd.type === 'split') && !closed(cd)))), hand = F.es.some(e => typeof (st.patch.get(keyOf(e)) || {}).excl === 'boolean');
         const flipRow = !flipOk || (exN && exN < F.es.length) ? '' : `<div class="fo-flip" data-flip-row="${exN ? 'excl' : 'send'}"><span class="fo-flip-now" data-k="${exN ? 'excl' : 'send'}">지금: ${exN ? (hand ? '오늘 발송 제외(사람)' : '오늘 안 나감') : '오늘 발송' + (hand ? ' (사람이 바꿈)' : '')}</span><button type="button" class="fo-btn ${exN ? 'sm primary' : 'fo-exclbtn'}" data-flip="${exN ? 'send' : 'excl'}" data-id="${esc(cd.id)}">${exN ? '오늘 발송으로' : '오늘 발송 제외'}</button><p class="fo-flip-note">${exN ? '배송메세지 칸은 택배사 양식 글만 바꿔요 · 발송일을 바꾸려면 [오늘 발송으로]를 눌러요(이번 발주 파일에 들어가요).' : '갑자기 연락이 와서 오늘 빼야 하면 [오늘 발송 제외]를 눌러요(이번 발주 파일에서 빠져요 · 되돌릴 수 있어요).'}</p></div>`;
-        return `<details class="fo-fix" data-compact data-fix="${esc(cd.id)}"${open ? ' open' : ''}><summary><span class="fo-fix-t">이 주문 직접 고치기</span>${F.byCard ? ' <span class="fo-fix-ok">적용됨</span>' : ''} <small>${cd.fixF.map(f => ({ name: '보내는 분', phone: '', addr: '보내는이 주소', memo: '배송메세지', opt: '옵션명' }[f])).filter(Boolean).concat(rc1 ? ['받는 분'] : []).join(' · ')}${F.es.length > 1 ? ` · 묶인 ${F.es.length}건 모두` : ''}</small></summary>${flipRow}<div class="fo-edit">${cd.fixF.map(field).join('')}</div>${rcMain}<div class="fo-card-acts"><button type="button" class="fo-btn sm primary" data-fix-apply="${esc(cd.id)}">적용</button>${F.byCard ? `<button type="button" class="fo-btn sm" data-fix-undo="${esc(cd.id)}">되돌리기</button>` : ''}<span class="fo-msg" data-fix-msg role="status">${F.byCard ? '여기서 고친 것이 있어요(결과 파일의 연보라 칸).' : ''}</span></div></details>`;
+        // #669: 묶음 카드면 묶인 주문마다 한 벌씩 뒤에 붙인다(품목이 서로 다르면 머리 칸으로는 옵션명·꼬리를 못 바꾸므로 처음부터 펼쳐 둔다)
+        const subs = !sub && F.es.length > 1 ? `<div class="fo-fixsubs" data-fixsubs role="group" aria-label="묶인 주문마다 따로 고치기"><p class="fo-fixsubs-h">주문마다 따로 고치기 — 묶인 ${F.es.length}건(여기서 적은 것이 그 주문에만 들어가요)</p>${F.es.map(e => fixHtml(cardOf(cd.id + SUB_SEP + keyOf(e)) || { }, { open: !F.sameOpt })).join('')}</div>` : '';
+        const subT = sub ? `${F.es[0].conv['수취인명'] || ''} · ${optOf(F.es[0])} · ${qtyNow(F.es[0])}박스` : '';
+        if (sub) return `<details class="fo-fix fo-fixsub" data-compact data-fix="${esc(cd.id)}" data-subkey="${esc(cd.fix[0])}"${open ? ' open' : ''}><summary><span class="fo-fix-t">${esc(subT)}</span>${subMine(cd.fix[0]) ? ' <span class="fo-fix-ok">따로 고침</span>' : ''} <small>${cd.tailOnly ? '입력삭제 — 꼬리만' : '옵션명 · 꼬리 · 받는 분 · 배송메세지'}</small></summary><div class="fo-edit">${cd.fixF.map(field).join('')}</div>${rcMain}<div class="fo-card-acts"><button type="button" class="fo-btn sm primary" data-fix-apply="${esc(cd.id)}">이 주문에 적용</button>${subMine(cd.fix[0]) ? `<button type="button" class="fo-btn sm" data-fix-undo="${esc(cd.id)}">되돌리기</button>` : ''}<span class="fo-msg" data-fix-msg role="status">${subMine(cd.fix[0]) ? '이 주문만 따로 고친 것이 있어요(결과 파일의 연보라 칸).' : ''}</span></div></details>`;
+        return `<details class="fo-fix" data-compact data-fix="${esc(cd.id)}"${open ? ' open' : ''}><summary><span class="fo-fix-t">이 주문 직접 고치기</span>${F.byCard ? ' <span class="fo-fix-ok">적용됨</span>' : ''} <small>${cd.fixF.map(f => ({ name: '보내는 분', phone: '', addr: '보내는이 주소', memo: '배송메세지', opt: '옵션명' }[f])).filter(Boolean).concat(rc1 ? ['받는 분'] : []).join(' · ')}${F.es.length > 1 ? ` · 묶인 ${F.es.length}건 모두` : ''}</small></summary>${flipRow}<div class="fo-edit">${cd.fixF.map(field).join('')}</div>${rcMain}<div class="fo-card-acts"><button type="button" class="fo-btn sm primary" data-fix-apply="${esc(cd.id)}">적용</button>${F.byCard ? `<button type="button" class="fo-btn sm" data-fix-undo="${esc(cd.id)}">되돌리기</button>` : ''}<span class="fo-msg" data-fix-msg role="status">${F.byCard ? '여기서 고친 것이 있어요(결과 파일의 연보라 칸).' : ''}</span></div></details>${subs}`;
     }
+    // #669: 그 주문에 「주문별 벌」로 고친 것이 있는지(st.patch 의 subBy 표식 — 묶음 머리에서 고친 것과 구분)
+    function subMine(k) { const p = st.patch.get(k); return !!(p && p.subBy); }
     async function fixApply(id, btn) {
-        const cd = st.cards.find(c => c.id === id), box = btn.closest('.fo-fix'), F = cd && fixCur(cd); if (!cd || !box || !F || st.busy) return;
+        const cd = cardOf(id), box = btn.closest('.fo-fix'), F = cd && fixCur(cd); if (!cd || !box || !F || st.busy) return;
         const msg = box.querySelector('[data-fix-msg]'), say = t => { msg.textContent = t; msg.classList.add('err'); };
         const get = f => { const el = box.querySelector(`[data-x="${f}"]`); return el && !el.disabled ? String(el.value || '').replace(/\r/g, '').trim() : null; };
         const v = { name: get('name'), phone: get('phone'), addr: get('addr'), memo: get('memo'), opt: get('opt') }, set = {};
@@ -1154,7 +1174,7 @@
             }
         }
                 if (!Object.keys(set).length) { say(F.byCard ? '바꾼 것이 없어요 — 앞서 고친 내용은 이미 적용돼 있어요(위 카드 머리와 「말로 바꾼 것」 목록에서 볼 수 있어요).' : '바꾼 것이 없어요.'); return; }
-        F.es.forEach(e => { const k = keyOf(e), np = Object.assign({}, st.patch.get(k) || {}, set, { by: 'card' }); if (set.opt != null) delete np.optAll;
+        F.es.forEach(e => { const k = keyOf(e), np = Object.assign({}, st.patch.get(k) || {}, set, { by: 'card' }, cd.type === 'fixsub' ? { subBy: 1 } : {}); if (set.opt != null) delete np.optAll;
             if ('boxes' in set) { if (set.boxes) { delete np.tail; delete np.tailBy; } else { delete np.boxes; delete np.boxesBy; } } else if (set.tail != null) { delete np.boxes; delete np.boxesBy; }   // #601: 꼬리 하나 ↔ 박스별은 한쪽만
             st.patch.set(k, np); });
         st.fixDraft.delete(id); fixFold().add(id); box.dataset.skip = '1';   // #615(대표 10/10): [적용] 뒤에는 접는다(펼치면 [되돌리기])
@@ -1185,8 +1205,8 @@
         if (had) await remake();
     }
     async function fixUndo(id) {
-        const cd = st.cards.find(c => c.id === id), F = cd && fixCur(cd); if (!F || st.busy) return;
-        F.es.forEach(e => { const k = keyOf(e), p = Object.assign({}, st.patch.get(k) || {}); if (p.by !== 'card') return; ['sender', 'memo', 'opt', 'optAll', 'by'].forEach(f => delete p[f]); if (p.tailBy === 'card') { delete p.tail; delete p.tailBy; } if (p.boxesBy === 'card') { delete p.boxes; delete p.boxesBy; } if (p.rcBy === 'card') ['recv', 'rtel', 'rtel2', 'addr', 'rcBy'].forEach(f => delete p[f]); if (Object.keys(p).length) st.patch.set(k, p); else st.patch.delete(k); });
+        const cd = cardOf(id), F = cd && fixCur(cd); if (!F || st.busy) return;
+        F.es.forEach(e => { const k = keyOf(e), p = Object.assign({}, st.patch.get(k) || {}); if (p.by !== 'card') return; ['sender', 'memo', 'opt', 'optAll', 'by', 'subBy'].forEach(f => delete p[f]); if (p.tailBy === 'card') { delete p.tail; delete p.tailBy; } if (p.boxesBy === 'card') { delete p.boxes; delete p.boxesBy; } if (p.rcBy === 'card') ['recv', 'rtel', 'rtel2', 'addr', 'rcBy'].forEach(f => delete p[f]); if (Object.keys(p).length) st.patch.set(k, p); else st.patch.delete(k); });
         fixFold().delete(id); st.fixDraft.set(id, { open: true }); const box = document.querySelector(`#fo-cards .fo-fix[data-fix="${window.CSS && CSS.escape ? CSS.escape(id) : id}"]`); if (box) box.dataset.skip = '1';
         const had = st.phase === 'result' && st.files.length > 0;
         st.out = null; st.files = []; $('fo-result').hidden = true; clearMsg(); renderSummaryOnly(); syncChat();
@@ -1216,7 +1236,7 @@
         return true;
     }
     async function onFlipClick(b) {
-        const cd = st.cards.find(c => c.id === b.dataset.id), F = cd && fixCur(cd); if (!F) return;
+        const cd = cardOf(b.dataset.id), F = cd && fixCur(cd); if (!F) return;
         const toSend = b.dataset.flip === 'send', box = b.closest('.fo-fix'), el = box && box.querySelector('[data-x="memo"]'), mv = el ? String(el.value || '').replace(/\r/g, '').trim() : null;
         const keys = F.es.map(keyOf); keys.forEach(k => st.fixOpen.add(k)); fixFold().delete(cd.id); st.fixDraft.set(cd.id, { open: true }); if (box) box.dataset.skip = '1';
         await exclFlip(keys, toSend, toSend && mv != null && mv !== F.cur.memo ? mv : null);   // #583-j: 카드 안에서 누른 것이라 자리 그대로(참고 줄의 버튼만 그 카드로 이동)
@@ -1263,9 +1283,12 @@
             const find = () => [...document.querySelectorAll('#fo-cards .fo-card')].find(c => c.dataset.id === cd.id); let el = find(); if (!el) return;
             if (!el.querySelector('.fo-fix')) { st.fixOpen.add(keys.find(k => cd.fix.includes(k))); renderReview(); el = find(); if (!el) return; }   // 끝난 카드에도 「직접 고치기」를 띄운다
             fixFold().delete(cd.id); const d = el.querySelector('.fo-fix'); if (d) d.open = true;
-            el.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+            // #669: 묶음 카드에 한 주문을 집어 왔으면 그 주문의 벌을 펼치고 거기로 간다
+            const sd = cd.fix.length > 1 && keys.length === 1 ? [...el.querySelectorAll('.fo-fixsub')].find(x => x.dataset.subkey === keys[0]) : null;
+            if (sd) { fixFold().delete(sd.dataset.fix); sd.open = true; }
+            (sd || el).scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
             el.classList.add('fo-flash'); setTimeout(() => el.classList.remove('fo-flash'), 1800);
-            const f = el.querySelector('.fo-fix [data-x]:not([disabled]):not([type="hidden"])'); if (f) f.focus({ preventScroll: true });
+            const f = sd ? sd.querySelector('[data-optbtn]:not([disabled]), [data-x]:not([disabled]):not([type="hidden"])') : el.querySelector('.fo-fix [data-x]:not([disabled]):not([type="hidden"])'); if (f) f.focus({ preventScroll: true });
             return true;
         }
     }

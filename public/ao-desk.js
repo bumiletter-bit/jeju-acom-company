@@ -539,9 +539,9 @@
     function plusUsed() { /* 최근 기억 없음 */ }
     function plusShorts() {
         const box = $('desk-shorts'); if (!box) return;
-        const sm = SMS.sum ? smsNeed() : null, custN = (sm ? sm.unread : 0) + inbUnread(), keys = plusRecent().concat(custN > 0 ? ['sms'] : []);
+        const custN = custNums().total, keys = plusRecent().concat(custN > 0 ? ['sms'] : []);
         const off = k => { const t = $(PLUS_ID[k]); return !!(t && t.disabled); };
-        const html = keys.map(k => `<button type="button" class="desk-chip desk-short${k === 'sms' ? ' sms-chip' : ''}" id="desk-short-${k}" data-go="${k}"${k === 'sms' && smsDead() ? ' data-dead="1"' : ''}${off(k) ? ' disabled' : ''}>${k === 'sms' && inbOk() ? '손님' : PLUS_NAME[k]}${off(k) && k === 'qty' ? '<small>집계 중</small>' : ''}${k === 'sms' ? `<i class="sms-n">${custN > 99 ? '99+' : custN}</i>` : ''}</button>`).join('');
+        const html = keys.map(k => `<button type="button" class="desk-chip desk-short${k === 'sms' ? ' sms-chip' : ''}" id="desk-short-${k}" data-go="${k}"${k === 'sms' && smsDead() ? ' data-dead="1"' : ''}${off(k) ? ' disabled' : ''}>${k === 'sms' && custHasInb() ? '손님' : PLUS_NAME[k]}${off(k) && k === 'qty' ? '<small>집계 중</small>' : ''}${k === 'sms' ? `<i class="sms-n">${custN > 99 ? '99+' : custN}</i>` : ''}</button>`).join('');
         if (box.dataset.sig === html) return;
         const had = document.activeElement && document.activeElement.closest && document.activeElement.closest('#desk-shorts') ? document.activeElement.id : '';
         box.dataset.sig = html; box.innerHTML = html;
@@ -552,7 +552,7 @@
     const plusSheet = () => window.matchMedia('(max-width: 720px)').matches;   // 폰 = 아래 시트
     function plusOpen() {
         const m = $('desk-plus'), b = $('desk-plus-btn'); if (!m || !m.hidden) return;
-        const cust = $('desk-plus-cust'); if (cust) cust.hidden = $('desk-sms-now').hidden && !inbOk();   // 문자 연동이 없는 서버면 「손님」 묶음째 숨김
+        custMenu();   // #668 「손님」 묶음 = 지난 기억으로 바로(답이 오면 그대로 맞춰진다)
         m.hidden = false; $('desk-plus-back').hidden = false; b.setAttribute('aria-expanded', 'true');
         m.style.maxHeight = getComputedStyle(m).position === 'absolute' ? Math.max(220, Math.round(window.innerHeight - m.getBoundingClientRect().top - 16)) + 'px' : '';   // PC 팝오버는 화면 아래로 넘치지 않게(넘치면 판 안에서 스크롤)
         document.body.classList.add('desk-plus-open');   // 폰 시트가 떠 있는 동안 뒤 화면 스크롤 잠금(CSS 가 폰 폭에서만)
@@ -1134,9 +1134,9 @@
         if (!d || typeof d !== 'object' || !('mode' in d || 'enabled' in d)) d = null;
         if (!d && SMS.sum && (SMS.sumFail = (SMS.sumFail || 0) + 1) < 3) { SMS.sumAt = Date.now() - 20000; return; }   // 앞 요약을 그대로 두고 10초 뒤 다시(답을 쓰던 창이 사라지지 않게)
         SMS.sumFail = 0;
-        SMS.sum = d;
+        SMS.sum = d; const first = !SMS.sumDone; SMS.sumDone = true;
         const sig = JSON.stringify(d);
-        if (sig === SMS.sumSig) return;
+        if (sig === SMS.sumSig) { if (first) smsChip(); return; }
         SMS.sumSig = sig;
         smsChip(); smsHead();
         if (S.board) renderBoard();
@@ -1145,17 +1145,14 @@
     function smsChip() {
         const b = $('desk-sms-now'), n = $('sms-chip-n'); if (!b) return;
         const d = SMS.sum;
-        b.hidden = !d;
-        const pn = $('desk-plus-n'), pb = $('desk-plus-btn');
-        if (!d) { const t0 = inbUnread(); if (pn) { pn.hidden = !(t0 > 0); pn.textContent = t0 > 99 ? '99+' : String(t0); } if (pb) pb.dataset.dead = ''; plusShorts(); inbTabs(); if (smsVisible() && !inbOk()) toolShow(null); return; }
-        const nd = smsNeed(), need = nd.unread, dead = smsDead();
-        n.hidden = !(need > 0); n.textContent = need > 99 ? '99+' : String(need);
-        { const tot = need + inbUnread(); if (pn) { pn.hidden = !(tot > 0); pn.textContent = tot > 99 ? '99+' : String(tot); } }   // #653-나 [+] 단추의 점 = 안 읽은 문자 + (#658) 톡톡·상품문의·주문문의
+        const pb = $('desk-plus-btn');
+        if (!d) { if (pb) pb.dataset.dead = ''; plusShorts(); inbTabs(); if (smsVisible() && !inbOk()) toolShow(null); return; }
+        const nd = smsNeed(), need = smsOpenN(), dead = smsDead();   // #668 숫자 = 미처리(open_threads) · [+] 점 = 네 채널 미처리 합(custMenu)
         inbTabs();
         if (pb) pb.dataset.dead = dead ? '1' : '';
         plusShorts();
         b.dataset.dead = dead ? '1' : '';
-        b.setAttribute('aria-label', '문자' + (need > 0 ? `, 안 읽은 대화 ${need}건(직원 확인 ${nd.staff} · 초안 ${nd.draft})` : '') + (dead ? ', 회사폰 연결 끊김' : ''));
+        b.setAttribute('aria-label', '문자' + (need > 0 ? `, 미처리 대화 ${need}건(직원 확인 ${nd.staff} · 초안 ${nd.draft})` : '') + (dead ? ', 회사폰 연결 끊김' : ''));
     }
     function smsHead() {
         if (INB.ch !== 'sms') { inbSub(); return; }   // #658 톡톡·문의 탭에서는 머리 글을 그 탭 것으로
@@ -1178,7 +1175,39 @@
     // ── #658(대표 10/11 「톡톡·상품·주문 문의도 여기서 문자처럼 답장」) 문자 창의 채널 탭 — 문자 | 톡톡 | 상품문의 | 주문문의
     //   톡톡·문의 탭의 본문은 public/ao-inbox.js(window.AkmInbox · 워커4)가 #inb-host 안에 그린다. 이 파일이 맡는 것 = 탭 줄 · 탭 전환(mount/unmount) · 뒤로가기 칸 · Esc · 창 닫기 · 들어오는 길([+] 메뉴 · 바로가기 · 챙길 일 · 확인 필요 문의 줄)
     //   AkmInbox 가 없거나(옛 캐시) 서버에 /api/inbox 가 없으면 탭 줄·항목이 안 보이고 전부 종전 문자 창 그대로
-    const INB = { ch: 'sms', bound: false };
+    const INB = { ch: 'sms', bound: false, known: false };
+    // #668(대표 10/12 「[+] 처음 누르면 손님 건이 늦게 나오던데」): 원인 = 문자 줄은 /api/sms/summary, 톡톡·문의 줄은 /api/inbox/counts 답이 온 뒤에야 보였고, 그 counts 조회는 첫 화면의 다섯 조회가 다 끝난 뒤(+1초)에야 시작됐다
+    //   → ⓐ 마지막으로 확인한 「있다/없다」와 숫자를 이 브라우저에 기억해 답이 오기 전에는 그대로 먼저 보여 주고(답이 「없음」으로 확정되면 그때 숨김) ⓑ counts 조회를 화면이 뜨는 즉시 시작
+    //   숫자는 전부 미처리(문자 = summary.open_threads · 톡톡·문의 = counts.open) = 손님 연락 카드 칩과 같은 수
+    const CUST_KEY = 'akm_desk_cust';
+    const CUST = (() => { try { const v = JSON.parse(localStorage.getItem(CUST_KEY) || 'null'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; } })();   // { sms: bool, inb: bool, n: { sms, talk, qna, inquiry } }
+    function custSave() {
+        const n = custNums(), v = { sms: SMS.sumDone ? !!SMS.sum : !!CUST.sms, inb: INB.known ? inbOk() : !!CUST.inb, n: { sms: n.sms, talk: n.talk, qna: n.qna, inquiry: n.inquiry } };
+        const j = JSON.stringify(v); if (j === CUST.j) return; CUST.j = j; CUST.sms = v.sms; CUST.inb = v.inb; CUST.n = v.n;
+        try { localStorage.setItem(CUST_KEY, j); } catch (e) { /* 기억 못 해도 답이 오면 보인다 */ }
+    }
+    const custHasSms = () => SMS.sumDone ? !!SMS.sum : !!(SMS.sum || CUST.sms);       // 문자 줄을 보일지(답 오기 전 = 지난 기억)
+    const custHasInb = () => INB.known ? inbOk() : (inbOk() || !!CUST.inb);            // 톡톡·문의 줄을 보일지
+    const smsOpenN = () => { const d = SMS.sum; if (!d) return 0; return d.open_threads != null ? (Number(d.open_threads) || 0) : smsNeed().unread; };   // 문자 미처리(옛 서버면 종전 안 읽음)
+    function custNums() {
+        const m = CUST.n || {}, c = inbCounts(), inb = INB.known || inbOk();
+        const out = { sms: SMS.sumDone || SMS.sum ? smsOpenN() : (CUST.sms ? Number(m.sms) || 0 : 0) };
+        INB_CH.forEach(([k]) => { out[k] = inb ? (inbOk() ? c[k].needs : 0) : (CUST.inb ? Number(m[k]) || 0 : 0); });
+        out.total = out.sms + out.talk + out.qna + out.inquiry;
+        return out;
+    }
+    function custMenu() {
+        const n = custNums(), hs = custHasSms(), hi = custHasInb();
+        const sb = $('desk-sms-now'), sn = $('sms-chip-n'); if (sb) sb.hidden = !hs;
+        if (sn) { sn.hidden = !(n.sms > 0); sn.textContent = n.sms > 99 ? '99+' : String(n.sms); }
+        INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k), i = $('inb-n-' + k); if (b) b.hidden = !hi; if (i) { i.hidden = !(n[k] > 0); i.textContent = n[k] > 99 ? '99+' : String(n[k]); } });
+        const g = $('desk-plus-cust'); if (g) g.hidden = !hs && !hi;   // 둘 다 없는 서버면 「손님」 묶음째 숨김
+        const pn = $('desk-plus-n'); if (pn) { pn.hidden = !(n.total > 0); pn.textContent = n.total > 99 ? '99+' : String(n.total); }
+        if (SMS.sumDone && (INB.known || !inbApi())) custSave();
+    }
+    // 답이 오기 전에 줄을 눌렀으면(기억으로 보이는 줄) 답을 잠깐 기다렸다가 연다
+    function custWait(ready, go) { let i = 0; const t = () => { if (ready() || ++i > 40) { go(); return; } setTimeout(t, 100); }; t(); }
+    function inbSoon() { let i = 0; const t = () => { if (inbApi()) { inbHook(); return; } if (++i < 50) setTimeout(t, 100); else { INB.known = true; custMenu(); plusShorts(); } }; t(); }   // ao-inbox.js 는 이 파일 뒤에 실린다
     const INB_CH = [['talk', '톡톡'], ['qna', '상품문의'], ['inquiry', '주문문의']];
     const INB_SUB = { talk: '톡톡 문의 · 여기서 답하면 손님 톡톡으로 바로 보내져요', qna: '상품문의 · 답하면 스마트스토어에 바로 등록돼요(누구나 보는 글)', inquiry: '주문문의 · 답하면 스마트스토어에 바로 등록돼요' };
     const inbApi = () => (window.AkmInbox && typeof window.AkmInbox.mount === 'function') ? window.AkmInbox : null;
@@ -1197,19 +1226,18 @@
     function inbTabs() {
         const el = $('sms-tabs'), ttl = $('sms-title'); if (!el) return;
         const on = inbOk();
-        INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k); if (b) b.hidden = !on; });
+        custMenu();
         if (ttl) ttl.textContent = on ? '손님 연락' : '문자';
         if (!on) { el.hidden = true; return; }
-        const c = inbCounts(), smsN = SMS.sum ? smsNeed().unread : 0;
+        const c = inbCounts(), smsN = smsOpenN();
         const tabs = (SMS.sum ? [['sms', '문자', smsN]] : []).concat(INB_CH.map(([k, name]) => [k, name, c[k].needs]));
-        const html = tabs.map(([k, name, n]) => `<button type="button" class="sms-tab" role="tab" data-ch="${k}" aria-selected="${String(INB.ch === k)}" tabindex="${INB.ch === k ? 0 : -1}">${name}${n > 0 ? `<i class="sms-n" aria-label="${k === 'sms' ? '안 읽음' : '답 안 한 것'} ${n}">${n > 99 ? '99+' : n}</i>` : ''}</button>`).join('');
+        const html = tabs.map(([k, name, n]) => `<button type="button" class="sms-tab" role="tab" data-ch="${k}" aria-selected="${String(INB.ch === k)}" tabindex="${INB.ch === k ? 0 : -1}">${name}${n > 0 ? `<i class="sms-n" aria-label="미처리 ${n}">${n > 99 ? '99+' : n}</i>` : ''}</button>`).join('');
         if (el.dataset.sig !== html) {
             const had = document.activeElement && document.activeElement.closest && document.activeElement.closest('#sms-tabs') ? document.activeElement.dataset.ch : '';
             el.dataset.sig = html; el.innerHTML = html;
             if (had) { const b = el.querySelector('[data-ch="' + had + '"]'); if (b) b.focus({ preventScroll: true }); }
         }
         el.hidden = false;
-        INB_CH.forEach(([k]) => { const n = $('inb-n-' + k); if (n) { n.hidden = !(c[k].needs > 0); n.textContent = c[k].needs > 99 ? '99+' : String(c[k].needs); } });
     }
     // 사람이 화면에서 톡톡·문의 대화를 펴고 접을 때 AkmInbox 가 부른다 → 뒤로가기 칸(창 'win' 위의 'th')을 문자와 같은 방식으로
     function inbOnThread(open) {
@@ -1245,15 +1273,16 @@
     }
     // 바로가기 「손님 n」·챙길 일 줄: 안 읽음이 있는 첫 탭으로(문자 먼저)
     function inbOpenFirst() {
-        const c = inbCounts(), smsN = SMS.sum ? smsNeed().unread : 0;
+        const c = inbCounts(), smsN = smsOpenN();
         const hit = smsN > 0 ? 'sms' : (INB_CH.find(([k]) => c[k].needs > 0) || [SMS.sum ? 'sms' : 'talk'])[0];
         if (hit === 'sms') smsOpen(); else inbOpen(hit);
     }
     // 틱마다: AkmInbox 가 늦게 실려도(스크립트 순서) 숫자 알림을 한 번 걸고, 간격은 AkmInbox 가 스스로 지킨다
     function inbHook() {
         const a = inbApi(); if (!a) return;
-        if (!INB.bound) { INB.bound = true; try { if (a.onCounts) a.onCounts(() => { inbTabs(); smsChip(); if (S.board) renderBoard(); if (S.inbox) renderInbox(); }); } catch (e) { /* 숫자는 다음 틱에 */ } }
+        if (!INB.bound) { INB.bound = true; try { if (a.onCounts) a.onCounts(() => { INB.known = true; inbTabs(); smsChip(); plusShorts(); if (S.board) renderBoard(); if (S.inbox) renderInbox(); }); } catch (e) { /* 숫자는 다음 틱에 */ } }
         try { if (a.refresh) a.refresh(); } catch (e) { /* 다음 틱에 */ }
+        if (!INB.known && inbOk()) { INB.known = true; inbTabs(); plusShorts(); }
     }
     const smsHist = { skip: 0 };
     const smsHistAt = () => { try { return (history.state && history.state.smsWin) || ''; } catch (e) { return ''; } };   // '' | 'win' | 'th'
@@ -1678,8 +1707,8 @@
         } catch (e) { return false; }
     }
     function smsTodoHtml() {
-        if (!inbOk()) return smsTodoHtml0(false);
         // #661(대표 10/12 「2곳에 보일 필요 없음」): 챙길 일에는 「손님 연락 n건」 줄을 두지 않는다 — 숫자·들어가는 길은 아래 「손님 연락」 카드(문자|톡톡|상품 Q&A|주문 문의 칩)에만. 회사폰 연결 끊김 줄은 그대로
+        // #668-b(대표 10/12): 손님 연락 창이 없는 서버에서도 「안 읽은 문자 n건」 줄은 두지 않는다(「손님 0」인데 건수가 뜨면 어긋남 · 숫자는 [+]·손님 연락 카드에)
         return smsTodoHtml0(true);
     }
     function smsTodoHtml0(noUnread) {
@@ -1689,9 +1718,9 @@
             + (!noUnread && nd.unread > 0 ? `<li class="sms-todo" data-sms="active" role="button" tabindex="0"><span>${nd.old ? '문자 답할 것' : '안 읽은 문자'}</span><b>${nfmt(nd.unread)}건</b><small>${sub ? sub + ' · ' : ''}에이전트 오피스 &gt; 문자 (눌러서 열기)</small></li>` : '');
     }
     function smsBind() {
-        $('desk-sms-now').addEventListener('click', () => smsOpen());   // #653-나: 고르면 항상 연다(닫기는 창의 [닫기]·Esc·뒤로가기)
+        $('desk-sms-now').addEventListener('click', () => custWait(() => SMS.sumDone, () => smsOpen()));   // #653-나: 고르면 항상 연다(닫기는 창의 [닫기]·Esc·뒤로가기)
         $('sms-close').addEventListener('click', smsCloseCard);
-        INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k); if (b) b.addEventListener('click', () => inbOpen(k)); });
+        INB_CH.forEach(([k]) => { const b = $('desk-inb-' + k); if (b) b.addEventListener('click', () => custWait(() => INB.known || inbOk(), () => inbOpen(k))); });
         $('sms-tabs').addEventListener('click', e => { const b = e.target.closest('.sms-tab'); if (b && b.dataset.ch !== INB.ch) inbShow(b.dataset.ch); });
         $('sms-tabs').addEventListener('keydown', e => {
             if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -3200,6 +3229,7 @@
         if (!S.mounted) return;
         try { if (typeof aoBindEventsOnce === 'function') aoBindEventsOnce(); } catch (e) { console.error('보고서함 연결 실패:', e); }
         clock();
+        custMenu(); plusShorts(); inbSoon();   // #668
         await Promise.all([loadStatus(), loadOrders(true), loadBoard(), loadInbox(), smsSummary()]);
         if (!S.timer) S.timer = setInterval(tick, 1000);
         // #580: 다른 탭·앱에 갔다 돌아오면 다음 차례를 기다리지 않고 바로 다시 받는다(가려진 동안은 안 받으므로 돌아온 순간이 가장 낡아 있다)

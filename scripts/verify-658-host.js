@@ -128,6 +128,24 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
             await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(600);
             const z = await st();
             ok(!z.win && !z.hist && z.over <= vw.width && errs.length === 0, `[${name}] 끝: 창 닫힘 · 남은 뒤로가기 칸 없음 · 가로 넘침 없음(${z.over}) · 화면 오류 ${errs.length}${errs.length ? ' ' + errs[0].slice(0, 160) : ''}`);
+            {   // #668(대표 10/12 「[+] 처음 누르면 손님 건이 늦게 나오던데」): 문자 요약·톡톡 숫자 답이 2초 늦게 와도 [+] 를 누른 직후 「손님」 네 줄이 보인다(지난 기억) · 숫자 = 손님 연락 카드 칩과 같은 수 · 답이 온 뒤 메뉴 높이 그대로
+                const slow = r => setTimeout(() => r.fallback().catch(() => { }), 2000);
+                await pg.route('**/api/inbox/counts**', slow); await pg.route('**/api/sms/summary**', slow);
+                const menu = () => pg.evaluate(() => { const vis = e => !!e && !e.hidden && e.getClientRects().length > 0, ids = ['desk-sms-now', 'desk-inb-talk', 'desk-inb-qna', 'desk-inb-inquiry'], nid = ['sms-chip-n', 'inb-n-talk', 'inb-n-qna', 'inb-n-inquiry'];
+                    return { rows: ids.filter(i => vis(document.getElementById(i))).length, nums: nid.map(i => { const n = document.getElementById(i); return n.hidden ? '0' : n.textContent; }).join('|'), h: Math.round(document.getElementById('desk-plus').getBoundingClientRect().height), dot: (() => { const n = document.getElementById('desk-plus-n'); return n.hidden ? '0' : n.textContent; })(), short: Array.from(document.querySelectorAll('#desk-shorts .desk-short')).map(b => b.textContent.replace(/\s+/g, '')).join(','), chips: ['sms', 'talk', 'qna', 'inquiry'].map(k => document.getElementById('inbox-n-' + k).textContent).join('|'), sumDone: !!window.AkmInbox && window.AkmInbox.available() }; });
+                await pg.reload({ waitUntil: 'domcontentloaded' }); await pg.waitForSelector('#desk-plus-btn', { state: 'visible' });
+                await pg.click('#desk-plus-btn'); await pg.waitForTimeout(150); const q1 = await menu();
+                await pg.waitForTimeout(4200); const q2 = await menu(); const tot = q2.chips.split('|').reduce((n, v) => n + Number(v), 0);
+                await pg.keyboard.press('Escape'); await pg.waitForTimeout(400);
+                ok(q1.rows === 4 && !q1.sumDone && q2.sumDone && q1.nums === q2.nums && q2.nums === q2.chips && q1.h === q2.h && q2.dot === String(tot) && q1.dot === q2.dot && q2.short === (tot > 0 ? '손님' + tot : ''), `[${name}] #668 숫자 답이 2초 늦어도 [+] 누른 직후 「손님」 ${q1.rows}줄(기억한 숫자 ${q1.nums}) → 답 뒤 ${q2.nums} = 카드 칩 ${q2.chips} · [+] 점·바로가기 ${q2.dot}(네 채널 미처리 합) · 메뉴 높이 ${q1.h} → ${q2.h}`);
+                await pg.evaluate(() => localStorage.removeItem('akm_desk_cust'));
+                await pg.reload({ waitUntil: 'domcontentloaded' }); await pg.waitForSelector('#desk-plus-btn', { state: 'visible' });
+                await pg.click('#desk-plus-btn'); await pg.waitForTimeout(150); const q3 = await menu();
+                await pg.waitForTimeout(4200); const q4 = await menu();
+                await pg.keyboard.press('Escape'); await pg.waitForTimeout(400);
+                ok(q3.rows === 0 && q4.rows === 4 && q4.nums === q2.nums && await pg.evaluate(() => { try { const v = JSON.parse(localStorage.getItem('akm_desk_cust')); return v.sms === true && v.inb === true; } catch (e) { return false; } }), `[${name}] #668 이 브라우저에서 처음(기억 없음)이면 답이 온 뒤 ${q4.rows}줄(${q3.rows} → ${q4.rows}) · 그때 기억해 다음부터 바로`);
+                await pg.unroute('**/api/inbox/counts**', slow); await pg.unroute('**/api/sms/summary**', slow);
+            }
             await ctx.close();
         }
     } finally { await browser.close().catch(() => { }); s1.kill(); s2.kill(); }

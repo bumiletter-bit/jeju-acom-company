@@ -60,7 +60,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                 return { title: h ? h.textContent : '', badge: bd ? bd.textContent + '|' + bd.dataset.k : '', plan: q('plan'), ship: q('ship'), trk: q('trk'), who: q('who'), item: q('item'), paid: q('paid'), order: Array.from(i0.querySelectorAll('dd[data-k]')).map(d => d.dataset.k).join(','), none: el.classList.contains('none'), days: hs ? hs.textContent : '', n: el.querySelectorAll('.sms-buy-i').length, shown: Array.from(el.querySelectorAll('.sms-buy-i')).filter(x => x.getClientRects().length).length, more: more ? more.textContent + '|' + more.getAttribute('aria-expanded') + '|' + Math.round(more.getBoundingClientRect().height) : '', cap: !!el.querySelector('.sms-buy-cap'), text: el.textContent.replace(/\s+/g, ' ').trim(), nums: bs.map(b => b.textContent).join(','), hrefs: as.map(a => a.getAttribute('href') + '|' + a.target).join(','), h: bs.length ? Math.min(...bs.concat(as).map(x => Math.round(x.getBoundingClientRect().height))) : 0, over: el.scrollWidth > el.clientWidth + 1, keyFw: (el.querySelector('dd.key') ? Number(getComputedStyle(el.querySelector('dd.key')).fontWeight) : 0) }; });
             // ① 알약 · 새 폴링 없음
             const chipLabel = await pg.getAttribute('#desk-sms-now', 'aria-label');
-            ok(await pg.locator('#desk-short-sms').isVisible() && (await pg.locator('#desk-short-sms').innerText()).replace(/\s+/g, '') === '문자7' && await pg.evaluate(() => !document.getElementById('desk-plus-n').hidden && document.getElementById('sms-chip-n').textContent === '7') && /안 읽은 대화 7건\(직원 확인 3 · 초안 1\)/.test(chipLabel || ''), `[${label}] #653-나 바로가기 「문자 7」 · [+] 에 점 · 메뉴 줄 숫자 7 = 안 읽은 대화 수(${chipLabel})`);
+            ok(await pg.locator('#desk-short-sms').isVisible() && (await pg.locator('#desk-short-sms').innerText()).replace(/\s+/g, '') === '문자7' && await pg.evaluate(() => !document.getElementById('desk-plus-n').hidden && document.getElementById('sms-chip-n').textContent === '7') && /미처리 대화 7건\(직원 확인 3 · 초안 1\)/.test(chipLabel || ''), `[${label}] #653-나 바로가기 「문자 7」 · [+] 에 점 · 메뉴 줄 숫자 7 = 미처리 대화 수(#668)(${chipLabel})`);
             const n0 = P.sms.length; await pg.waitForTimeout(3200);
             ok(P.sms.length === n0 && n0 <= 2, `[${label}] 카드를 안 열면 문자 요청은 요약뿐(처음 ${n0}회 · 3초 동안 추가 ${P.sms.length - n0}회)`);
             await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(700);
@@ -454,7 +454,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             await unfold(pg);
             const dd = await pg.evaluate(() => { const li = document.querySelector('#desk-todo-box .sms-todo[data-sms="active"]'); return { note: document.getElementById('sms-note').textContent, k: document.getElementById('sms-note').dataset.k, hid: document.getElementById('sms-note').hidden, chip: document.getElementById('desk-sms-now').dataset.dead, todoDead: !!document.querySelector('#desk-todo-box .sms-todo.dead'), name: li ? li.querySelector('span').textContent : '', n: li ? li.querySelector('b').textContent : '', sub: li ? li.querySelector('small').textContent : '' }; });
             ok(!dd.hid && dd.k === 'err' && /연결이 끊겼어요/.test(dd.note) && /마지막 연결/.test(dd.note) && dd.chip === '1', `[${label}] 전달 앱 끊김 → 카드에 빨강 안내 · 알약 표시(${dd.note.slice(0, 34)}…)`);
-            ok(dd.todoDead && dd.name === '안 읽은 문자' && dd.n === '7건' && /^직원 확인 3 · 초안 1 · /.test(dd.sub), `[${label}] 「지금 챙길 일」에 끊김 한 줄 + 「${dd.name} ${dd.n}」(${dd.sub.slice(0, 20)})`);
+            ok(dd.todoDead && dd.name === '' && dd.n === '', `[${label}] 「지금 챙길 일」에 끊김 한 줄 · #668-b 「안 읽은 문자 n건」 줄은 없음`);
             await openThread(pg, 2);
             ok(/연결이 끊겨 있어요/.test(await pg.locator('#sms-warn').innerText()), `[${label}] 답 칸 위에 끊김 주의`);
             await closeThread(pg);
@@ -462,11 +462,10 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             await pg.click('#sms-close'); await pg.waitForTimeout(300);
             ok(!(await pg.locator('#desk-sms').isVisible()), `[${label}] [닫기] → 카드 닫힘`);
             await unfold(pg);
-            await pg.locator('#desk-todo-box .sms-todo[data-sms="active"]').scrollIntoViewIfNeeded();
-            const tb = await box(pg, '#desk-todo-box .sms-todo[data-sms="active"]');
-            await pg.locator('#desk-todo-box .sms-todo[data-sms="active"]').click(); await pg.waitForTimeout(900);
+            await pg.evaluate(() => window.scrollTo(0, 0)); const tb = await box(pg, '#desk-short-sms');
+            await pg.locator('#desk-short-sms').click(); await pg.waitForTimeout(900);   // #668-b 챙길 일 줄이 없어져 바로가기 「문자 n」으로 연다
             const tg = await pg.evaluate(() => ({ vis: !document.getElementById('desk-sms').hidden, pressed: document.getElementById('sms-scope').getAttribute('aria-pressed'), n: document.querySelectorAll('#sms-list .sms-item').length, un: document.querySelectorAll('#sms-list .sms-item.unread').length }));
-            ok(tg.vis && tg.pressed === 'true' && tg.n === 7 && tg.un === 6 && (!phone || (tb && tb.h >= 44)), `[${label}] 챙길 일 「안 읽은 문자」 누름 → 전체 대화를 보던 중이어도 [답 안 한 것만]으로 열림(${JSON.stringify(tg)} · 줄 높이 ${tb ? tb.h : '?'})`);
+            ok(tg.vis && tg.pressed === 'false' && tg.n === 13 && tg.un === 7 && (!phone || (tb && tb.h >= 40)), `[${label}] 바로가기 「문자 n」 누름 → 손님 연락 창 문자 탭(기본 = 전체 대화)으로 열림(${JSON.stringify(tg)} · 줄 높이 ${tb ? tb.h : '?'})`);
             // #633 「봇 실패 N건」 줄 — 문자 알약 = 직원 확인이 필요한 대화만
             const bf = await pg.evaluate(() => { const li = document.querySelector('#desk-todo-box .bot-fail'); if (!li) return null; const bs = Array.from(li.querySelectorAll('.bf-go')), cs = e => getComputedStyle(e).color, plain = document.querySelector('#desk-todo-box .desk-todo li:not(.bot-fail):not(.sms-todo) b');
                 return { t: li.querySelector('span').textContent + '|' + li.querySelector('b').textContent, bs: bs.map(b => b.textContent).join(','), h: Math.min(...bs.map(b => Math.round(b.getBoundingClientRect().height))), n: document.querySelectorAll('#desk-todo-box .bot-fail').length, note: li.querySelector('small i').textContent, red: !!plain && cs(li.querySelector('b')) !== cs(plain) }; });
@@ -527,7 +526,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             await rowsAre(pg, 12);
             const s0 = await sumOf();
             const lg = await pg.evaluate(() => { const li = document.querySelector('#desk-todo-box .sms-todo[data-sms="active"]'); return { n: document.querySelectorAll('#sms-list .sms-item').length, badges: document.querySelectorAll('#sms-list .sms-row > .desk-badge').length, un: document.querySelectorAll('#sms-list .sms-un').length, chip: document.getElementById('sms-chip-n').textContent, name: li ? li.querySelector('span').textContent : '', why: Array.from(document.querySelectorAll('#sms-list .sms-why')).map(x => x.textContent).join(',') }; });
-            ok(!('unread_threads' in s0) && lg.n === 12 && lg.badges === 12 && lg.un === 0 && lg.chip === String(s0.staff_needed + s0.counts.draft) && lg.name === '문자 답할 것' && lg.why === '직원 확인,직원 확인,직원 확인', `[${label}] 옛 서버 응답 = 종전 목록(12줄 · 줄마다 상태 배지 · 안 읽음 배지 없음) · 알약 ${lg.chip} = 직원 몫 + 초안 대기 · 챙길 일 「${lg.name}」 · 직원 몫 줄에 「직원 확인」`);
+            ok(!('unread_threads' in s0) && lg.n === 12 && lg.badges === 12 && lg.un === 0 && lg.chip === String(s0.staff_needed + s0.counts.draft) && lg.name === '' && lg.why === '직원 확인,직원 확인,직원 확인', `[${label}] 옛 서버 응답 = 종전 목록(12줄 · 줄마다 상태 배지 · 안 읽음 배지 없음) · 알약 ${lg.chip} = 직원 몫 + 초안 대기 · 챙길 일에 문자 줄 없음 · 직원 몫 줄에 「직원 확인」`);
             await openThread(pg, 2); await closeThread(pg);
             ok(await rows(pg) === 12 && !!(await pg.locator('.sms-item[data-id="2"]').count()), `[${label}] 옛 서버에서는 접어도 줄이 그대로(읽음 정보가 없으니 안 뺌)`);
             await mock('/__mock/set', { legacy: false });
