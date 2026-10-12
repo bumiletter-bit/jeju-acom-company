@@ -1116,7 +1116,7 @@
     const SMS_STATE = { queued: '보내는 중', sending: '보내는 중', sent: '보냄', delivered: '전달됨', failed: '보내지 못함', cancelled: '안 보냄(취소)' };
     // #651: 취소된 글은 손님에게 안 나간 글이다 — 사유를 붙여 한눈에(직원이 먼저 답함 · 시간이 지남). 봇 답이 유예 중(queued)이면 「곧 발송」
     const smsStateLabel = m => {
-        if (m.state === 'cancelled') { const r = String(m.fail_reason || ''); return '안 보냄 · ' + (/stale/.test(r) ? '시간이 지나 취소' : /staff|gateway|handled|close/.test(r) ? '직원이 먼저 답해서 취소' : '취소'); }
+        if (m.state === 'cancelled') { const r = String(m.fail_reason || ''); return '안 보냄 · ' + (/stale/.test(r) ? '시간이 지나 취소' : /handover/.test(r) ? '손님이 이어서 보내 직원 확인으로 넘김' : /staff|gateway|handled|close/.test(r) ? '직원이 먼저 답해서 취소' : '취소'); }
         if (m.state === 'queued' && m.sender === 'bot') return '곧 발송';
         return SMS_STATE[m.state] || '';
     };
@@ -1419,7 +1419,7 @@
         { const un = li.querySelector('.sms-un'); if (un) un.remove(); li.classList.remove('unread'); li.dataset.un = '0'; }   // #635 여는 순간 읽음(서버도 GET 에서 읽음으로)
         const th = document.createElement('div');
         th.className = 'sms-thread'; th.id = 'sms-thread'; th.dataset.id = String(id); th.setAttribute('role', 'region'); th.setAttribute('aria-label', '끝 ' + (x.phone_tail || '') + ' 번호와 주고받은 문자');
-        th.innerHTML = `<div class="sms-th-head"><button type="button" class="sms-th-back" id="sms-th-back" aria-label="목록으로 돌아가기">목록</button><b id="sms-th-phone">${smsNoHtml(x)}</b><span id="sms-th-badge">${smsHeadBadge(x)}</span><button type="button" class="sms-th-x" id="sms-th-x" aria-label="이 대화 접기" title="접기 (Esc)">×</button></div>`
+        th.innerHTML = `<div class="sms-th-head"><button type="button" class="sms-th-back" id="sms-th-back" aria-label="목록으로 돌아가기">목록</button><b id="sms-th-phone">${smsNoHtml(x)}</b><span id="sms-th-badge">${smsHeadBadge(x)}</span><button type="button" class="desk-btn sm sms-done" id="sms-done" aria-pressed="false" hidden>처리함</button><button type="button" class="sms-th-x" id="sms-th-x" aria-label="이 대화 접기" title="접기 (Esc)">×</button></div>`
             + `<div class="sms-order sms-buy" id="sms-order">구매이력을 찾는 중</div>`
             + `<div class="sms-msgs" id="sms-msgs" tabindex="0" aria-label="주고받은 문자"><div class="desk-empty ship-empty">불러오는 중</div></div>`
             + `<form class="sms-reply" id="sms-reply" autocomplete="off">`
@@ -1534,6 +1534,7 @@
         const t = d.thread, ow = d.order && typeof d.order === 'object' ? d.order : null, o = ow ? (ow.order && typeof ow.order === 'object' ? ow.order : ow) : null;
         $('sms-th-phone').innerHTML = smsNoHtml(t);
         $('sms-th-badge').innerHTML = smsHeadBadge(t);
+        smsDoneSync(t);
         smsBuyRender();
         let day = '', holdShown = false;
         box.innerHTML = d.messages.length ? d.messages.map(m => {
@@ -1636,6 +1637,30 @@
         if (!okDone || SMS.open !== id) return;
         SMS.tsig = ''; await smsThread(true);
         smsSummary(); smsList(true);
+    }
+    // #675(대표 10/12 「전화로 처리한 사진 손님이 미처리 1로 남음」) 대화 머리 [처리함] — 톡톡의 [확인]과 같은 자리·꼴. 사람 몫(needs_staff) 대화에만 보이고, 누르면 미처리에서 빠진다(봇은 이 대화에 더 답하지 않음 · 손님이 새 글을 보내면 다시 판정)
+    //   눌린 뒤 = 「처리함 · 되돌리기」(done) — 다시 누르면 원래 사유로 되돌림(그 사이 손님 새 글이 왔으면 서버가 409). 서버: POST /api/sms/threads/:id/done { undo? } · 요약에 done_route 가 없는 옛 서버면 단추 숨김
+    function smsDoneSync(t) {
+        const b = $('sms-done'); if (!b) return;
+        const on = !!(SMS.sum && SMS.sum.done_route), done = !!(t && t.done), need = !!(t && t.needs_staff);
+        b.hidden = !on || !(done || need); b.setAttribute('aria-pressed', String(done)); b.disabled = !!SMS.doneBusy;
+        b.textContent = done ? '처리함 · 되돌리기' : '처리함';
+        b.title = done ? ((t.done_by ? t.done_by + ' 님이 처리함 · ' : '') + '다시 누르면 미처리로 되돌려요') : '전화 등으로 이미 처리했으면 눌러 주세요. 미처리에서 빠져요';
+    }
+    async function smsDone() {
+        const id = SMS.open, t = SMS.thread && SMS.thread.thread; if (!id || !t || SMS.doneBusy) return;
+        const undo = !!t.done;
+        SMS.doneBusy = true; smsDoneSync(t);
+        try {
+            const r = await api('/api/sms/threads/' + id + '/done', 'POST', undo ? { undo: true } : {});
+            if (r && r.ok === false) throw new Error(r.error || '다시 시도해 주세요');
+            showToast(r && r.noop ? '이미 미처리가 아닌 대화예요' : undo ? '미처리로 되돌렸어요' : '처리함으로 넘겼어요' + (r && r.cancelled > 0 ? ' · 보내려던 봇 답은 취소했어요' : ''));
+        } catch (e) { showToast((undo ? '되돌리지 못했어요: ' : '처리함으로 넘기지 못했어요: ') + ((e && e.message) || '다시 시도해 주세요'), '', 5000); }
+        SMS.doneBusy = false;
+        if (SMS.open !== id) return;
+        SMS.tsig = ''; await smsThread(true);
+        if (SMS.thread && SMS.thread.thread) smsDoneSync(SMS.thread.thread);
+        smsSummary(); smsList(true); S.inboxAt = 0; loadInbox();   // 미처리 숫자([미처리 n]·탭·[+]·손님 n)와 메인 카드 문자 줄을 바로 다시 받는다
     }
     // #651 유예 중(곧 발송)인 봇 답을 보내지 않기 — 서버 /handled(대기 발송 취소 + 직원 답변으로 표시 = 봇이 이 대화에 더 답하지 않음)
     async function smsHold() {
@@ -1742,6 +1767,7 @@
             if (e.target.closest('#sms-th-back')) { smsThreadClose(true); return; }
             const th = e.target.closest('.sms-thumb'); if (th) { if (!th.disabled) smsView(th.dataset.img, th); return; }
             if (e.target.closest('#sms-th-x')) { smsThreadClose(true); return; }
+            if (e.target.closest('#sms-done')) { smsDone(); return; }
             if (e.target.closest('.sms-empty-go')) { smsScope('all'); return; }
             { const tk = e.target.closest('.sms-trk'); if (tk) { copyText(tk.dataset.trk, '송장번호를 복사했어요', tk); return; } }   // #644
             if (e.target.closest('.sms-hold')) { smsHold(); return; }   // #651

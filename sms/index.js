@@ -142,6 +142,7 @@ module.exports = function mountSms(app, deps) {
         await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS gated_ai_n integer NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS gated_ai_day text`);   // #652 초안 하루 상한 셈(KST 날짜 글자)
         const had635 = (await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'sms_threads' AND column_name = 'staff_read_at'`)).rowCount > 0;
         await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS staff_read_at timestamptz, ADD COLUMN IF NOT EXISTS staff_why text`);
+        await pool.query(`ALTER TABLE sms_threads ADD COLUMN IF NOT EXISTS done_json jsonb`);   // #675 [처리함](전화 등으로 처리) — 되돌리기용으로 그때의 사유·상태·초안을 적어 둔다
         if (!had635) {
             await pool.query(`UPDATE sms_threads SET staff_read_at = now() WHERE status NOT IN ('staff_needed','draft')`);
             await pool.query(`UPDATE sms_threads SET staff_why = 'staff' WHERE status = 'staff_needed' AND draft_text IS NULL`);
@@ -877,7 +878,7 @@ module.exports = function mountSms(app, deps) {
             const out = [];
             for (const m of rows) {
                 // 유예 사이에 직원이 답했으면(상태 바뀜) 취소
-                if (m.sender === 'bot' && ['staff_replied', 'staff_needed', 'closed'].includes(m.thread_status)) { await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff' WHERE id = $1 AND state = 'queued'`, [m.id]); out.push({ id: m.id, cancelled: true }); continue; }
+                if (m.sender === 'bot' && ['staff_replied', 'staff_needed', 'closed'].includes(m.thread_status)) { await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = $2 WHERE id = $1 AND state = 'queued'`, [m.id, m.thread_status === 'staff_needed' ? 'cancelled:handover' : 'cancelled:staff']); out.push({ id: m.id, cancelled: true }); continue; }   // #675 staff_needed = 직원이 답한 것이 아니라 사람 몫으로 넘어간 것(유예 중 손님이 이어서 보냄 등)
                 // 🔴 원자적으로 집기(두 인스턴스·직원 답과 겹침 방지) · id 는 줄 번호로 고정(겹쳐도 게이트웨이 409)
                 const ourId = m.gateway_id || ('akk-' + m.id + '-' + crypto.createHash('sha1').update(String(m.created_at || m.id)).digest('hex').slice(0, 8));
                 const got = await pool.query(`UPDATE sms_messages SET state = 'sending', gateway_id = $2 WHERE id = $1 AND state = 'queued' RETURNING id`, [m.id, ourId]);
@@ -1060,6 +1061,7 @@ module.exports = function mountSms(app, deps) {
     const pub = t => ({ id: t.id, phone_tail: phoneTail(t.phone_digits), phone_masked: phoneMasked(t.phone_digits), phone_full: String(t.phone_digits || ""), customer_hint: t.order_hint || null, status: t.status,   // #624 phone_full = 전체 번호(화면에서 010-0000-0000 꼴 · 60일 보관 그대로) · 🔴 #630: 종전 총괄 패치가 이 주석을 같은 줄 앞에 붙여 customer_hint·status 가 주석에 먹혔음(목록 배지 「확인」·끝난 대화 숨김 안 됨)
         last_in_text: String(t.last_in_text || '').slice(0, 120), last_in_at: t.last_in_at, last_out_text: String(t.last_out_text || '').slice(0, 120), last_out_at: t.last_out_at,
         has_image: !!t.has_image, draft_text: t.draft_text || null, draft_kind: t.draft_kind || null,
+        done: !!(t.done_json && t.status === 'staff_replied' && !t.staff_why), done_by: (t.done_json && t.done_json.by) || null, done_at: (t.done_json && t.done_json.at) || null,   // #675 [처리함]으로 넘긴 대화(손님 새 글이 오면 상태가 바뀌어 false)
         unread: Number(t.unread) || 0, needs_staff: !!t.staff_why && t.status !== 'closed' && t.status !== 'ignored', staff_why: t.staff_why || null, staff_why_label: t.staff_why ? labelWhy(t.staff_why) : null, staff_read_at: t.staff_read_at || null,   // #635 폰 문자함 구도
         last_dir: (t.last_out_at && (!t.last_in_at || new Date(t.last_out_at) > new Date(t.last_in_at))) ? 'out' : (t.last_in_at ? 'in' : null),
         last_at: (t.last_out_at && (!t.last_in_at || new Date(t.last_out_at) > new Date(t.last_in_at))) ? t.last_out_at : (t.last_in_at || null), staff_name: t.staff_name || null, handled_at: t.handled_at, bot_count_today: botCountToday(t), last_out_state: t.last_out_state || null });
@@ -1090,7 +1092,7 @@ module.exports = function mountSms(app, deps) {
             (SELECT count(*)::int FROM sms_threads WHERE draft_text IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS drafts,
             (SELECT count(*)::int FROM sms_threads WHERE staff_why IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS staff_open,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread_threads,
-            (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open_threads,
+            (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open_threads, true AS done_route,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND t.staff_why IS NOT NULL AND t.status <> 'closed') AS needs_staff,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_in,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_bot,
@@ -1234,7 +1236,7 @@ module.exports = function mountSms(app, deps) {
         let m = null;
         for (let i = 0; i < pieces.length; i++) { const x = await addMessage({ thread_id: t.id, direction: 'out', kind: 'sms', body: pieces[i], sender: 'staff_desk', state: 'queued', rule_kind: kind || null, priority: Math.max(0, 9 - i), ai_json: { part: i + 1, parts: pieces.length }, send_after: new Date() }); if (!m) m = x; }
         await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff_desk' WHERE thread_id = $1 AND direction = 'out' AND state = 'queued' AND sender <> 'staff_desk'`, [t.id]);
-        await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW });
+        await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: null });
         await writeAudit({ action: 'create', targetType: 'sms_reply', targetId: m.id, changes: { after: { thread: t.id, kind: kind || 'staff', bytes: byteLen(body) } }, source: 'sms', actor: who(req) });
         return m;
     }
@@ -1264,13 +1266,37 @@ module.exports = function mountSms(app, deps) {
     app.post('/api/sms/threads/:id/handled', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;
         const cancelled = await cancelPending(t.id, 'handled');
-        await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW });
+        await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: null });
         res.json({ ok: true, cancelled });
+    }));
+    // #675(대표 10/12 실물 — 사진 손님을 전화로 처리했는데 문자 「미처리」가 안 빠짐): [처리함] = 사람 몫 표시를 내린다(답 글 없이) · undo = 되돌림
+    //   처리함 = 종전 [처리함](handled)과 같은 잠금(staff_replied · 봇 침묵 · staff_lock_hours 뒤 저절로 끝) + 그때의 사유·상태·초안을 done_json 에 적어 둔다.
+    //   손님이 새 글을 보내면 평소대로 다시 판정된다(잠금 중 재수신 길) — 그 뒤에는 되돌릴 수 없다(409).
+    const openCount = async () => (await pool.query(`SELECT count(*)::int AS n FROM sms_threads t WHERE ${OPEN_SQL}`)).rows[0].n;
+    const withUnread = async id => (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE t.id = $1`, [id])).rows[0];
+    app.post('/api/sms/threads/:id/done', authMiddleware, wrap(async (req, res) => {
+        const t = await loadThread(req, res); if (!t) return;
+        const undo = !!(req.body && req.body.undo === true);
+        if (!undo) {
+            if (!t.staff_why || t.status === 'closed' || t.status === 'ignored') return res.json({ ok: true, done: false, noop: true, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled: 0 });
+            const keep = { why: t.staff_why, status: t.status, draft_text: t.draft_text || null, draft_kind: t.draft_kind || null, by: who(req).name, by_id: req.user.id, at: new Date().toISOString(), last_in_at: t.last_in_at ? new Date(t.last_in_at).toISOString() : null };
+            const cancelled = await cancelPending(t.id, 'handled');
+            await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: keep });
+            await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { after: { done: true, why: keep.why } }, source: 'sms', actor: who(req) });
+            return res.json({ ok: true, done: true, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled });
+        }
+        const k = t.done_json;
+        if (!k || !k.why) return res.status(409).json({ ok: false, error: '되돌릴 것이 없어요' });
+        const sameIn = String(k.last_in_at || '') === String(t.last_in_at ? new Date(t.last_in_at).toISOString() : '');
+        if (t.status !== 'staff_replied' || t.staff_why || !sameIn) return res.status(409).json({ ok: false, error: '그 뒤 손님 글이 와서(또는 답을 보내서) 되돌릴 수 없어요' });
+        await setThread(t.id, { status: k.status || 'staff_needed', staff_why: k.why, draft_text: k.draft_text || null, draft_kind: k.draft_kind || null, done_json: null });
+        await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { after: { done: false, why: k.why } }, source: 'sms', actor: who(req) });
+        res.json({ ok: true, done: false, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled: 0 });
     }));
     app.post('/api/sms/threads/:id/close', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;
         const cancelled = await cancelPending(t.id, 'close');
-        await setThread(t.id, { status: 'closed', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW });
+        await setThread(t.id, { status: 'closed', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: null });
         res.json({ ok: true, cancelled });
     }));
     // 설정 보기·바꾸기(관리자 · 모드 전환은 여기서 — 첫 자동 발송(auto) 전환은 대표 「고」 뒤)

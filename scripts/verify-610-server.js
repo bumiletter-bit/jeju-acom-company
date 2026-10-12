@@ -340,6 +340,21 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
             ok(io && io.unread === 0 && io.needs_staff === true && !find(ra.json, tc.id) && (ro.json.items || []).every(x => !['closed', 'ignored'].includes(x.status) && x.needs_staff === true) && (await api('GET', '/api/sms/summary')).json.open_threads === sumO.open_threads + 1, '#664 사람 몫 대화는 읽어도 open 에 남음(active 에서는 빠짐) · open 줄은 전부 사람 몫 · 끝난·무시 없음 · open_threads +1');
             await pool.query(`UPDATE sms_threads SET staff_read_at = $2 WHERE id = $1`, [tc.id, keep]);
         }
+        {   // #675 [처리함](전화 등으로 처리) — 답 글 없이 사람 몫에서 내림 · 되돌리기 · 손님 새 글 뒤에는 되돌릴 수 없음
+            const o0 = (await api('GET', '/api/sms/summary')).json; const before = await thread(PC);
+            let d = await api('POST', `/api/sms/threads/${tc.id}/done`, {}); let a1 = await thread(PC);
+            const inOpen = async () => !!find((await api('GET', '/api/sms/threads?scope=open&limit=200')).json, tc.id);
+            ok(o0.done_route === true && d.status === 200 && d.json.done === true && d.json.thread.done === true && d.json.thread.needs_staff === false && d.json.thread.done_by === '검증' && d.json.open_threads === o0.open_threads - 1 && a1.status === 'staff_replied' && !a1.staff_why && !a1.draft_text && !(await inOpen()),
+                '#675 [처리함] → 사유 비움 · staff_replied(잠금) · 미처리에서 바로 빠짐 · open_threads −1 · 줄에 done·done_by ' + JSON.stringify([d.status, d.json.done, d.json.open_threads, o0.open_threads]));
+            const d2 = await api('POST', `/api/sms/threads/${tc.id}/done`, {}); ok(d2.status === 200 && d2.json.noop === true, '#675 이미 처리한 대화에 다시 = 아무것도 안 바꿈');
+            d = await api('POST', `/api/sms/threads/${tc.id}/done`, { undo: true }); a1 = await thread(PC);
+            ok(d.status === 200 && d.json.done === false && a1.staff_why === before.staff_why && a1.status === before.status && a1.draft_text === before.draft_text && !a1.done_json && d.json.open_threads === o0.open_threads && (await inOpen()), '#675 되돌리기 → 사유·상태·초안 그대로 복구 · 미처리에 다시');
+            await api('POST', `/api/sms/threads/${tc.id}/done`, {});
+            await hook(env('sms:received', { messageId: 'd675-1', message: '사진 다시 보내드려요 상한 게 더 있어요', phoneNumber: '+82' + PC.slice(1) })); a1 = await thread(PC);
+            const d3 = await api('POST', `/api/sms/threads/${tc.id}/done`, { undo: true });
+            ok(a1.status === 'staff_needed' && !!a1.staff_why && (await inOpen()) && find((await api('GET', '/api/sms/threads?scope=open&limit=200')).json, tc.id).done === false && d3.status === 409, '#675 처리함 뒤 손님 새 글 = 다시 판정(사람 몫 · 미처리에 다시) · 그 뒤 되돌리기는 409 ' + JSON.stringify([a1.status, a1.staff_why, d3.status]));
+            ok((await api('POST', '/api/sms/threads/999999999/done', {})).status === 404, '#675 없는 대화 404');
+        }
         const sumB = (await api('GET', '/api/sms/summary')).json;
         ok(typeof sumB.unread_threads === 'number' && typeof sumB.needs_staff === 'number' && typeof sumB.drafts === 'number' && typeof sumB.staff_needed === 'number' && sumB.unread_threads >= 1 && sumB.needs_staff === sumA.needs_staff + 1 && sumB.drafts === sumA.drafts && sumB.unread_threads === sumA.unread_threads, '#635 summary 새 칸 unread_threads·needs_staff · drafts = 안 보낸 초안 수 ' + JSON.stringify({ a: [sumA.unread_threads, sumA.needs_staff, sumA.drafts], b: [sumB.unread_threads, sumB.needs_staff, sumB.drafts] }));
         // 라. 직원 답 = 읽음 + 사유 비움 · 자동 발송 큐 그대로 직원 글만

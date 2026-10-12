@@ -588,6 +588,20 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
                 ok(/못 실은 미처리 4건 더/.test(m1.morewin) && /4건 더/.test(m1more) && m1.chips.split('|')[1] === '5', `[카드] #663 서버 대기 수(톡톡 ${m1.chips.split('|')[1]})가 받은 줄보다 많으면 「${m1.morewin}」`);
                 await mock('/__mock/set', { cuMore: false }); await mock('/__mock/reset', {}); await wake(pg);
             }
+            {   // #675(대표 10/12) 문자 대화 머리 [처리함] — 사람 몫 대화에만 · 누르면 미처리에서 빠지고 「처리함 · 되돌리기」 · 다시 누르면 원래대로 · 옛 서버(done_route 없음)면 단추 없음
+                await mock('/__mock/reset', {}); await wake(pg);
+                await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(800);
+                const dn = () => pg.evaluate(() => { const b = document.getElementById('sms-done'), n = document.getElementById('sms-open-n'), x = document.getElementById('sms-th-x'); const r = b && b.getClientRects().length ? b.getBoundingClientRect() : null;
+                    return { vis: !!r && !b.hidden, text: b ? b.textContent : '', pressed: b ? b.getAttribute('aria-pressed') : '', h: r ? Math.round(r.height) : 0, left: r && x && x.getClientRects().length ? r.right <= x.getBoundingClientRect().left + 1 : true, openN: n && !n.hidden ? n.textContent : '0', chip: document.getElementById('inbox-n-sms').textContent, dot: (() => { const p = document.getElementById('desk-plus-n'); return p.hidden ? '0' : p.textContent; })(), why: (document.getElementById('sms-th-badge') || {}).textContent || '', over: document.documentElement.scrollWidth }; });
+                await openThread(pg, 2); const d0 = await dn();
+                await pg.click('#sms-done'); await pg.waitForTimeout(1500); const d1 = await dn();
+                await pg.click('#sms-done'); await pg.waitForTimeout(1500); const d2 = await dn();
+                ok(d0.vis && d0.text === '처리함' && d0.pressed === 'false' && d0.h >= 36 && d0.left && d0.openN === '7' && d1.vis && d1.pressed === 'true' && d1.text === '처리함 · 되돌리기' && d1.openN === '6' && d1.chip === '6' && d1.dot === '6' && d1.why !== d0.why && d2.pressed === 'false' && d2.text === '처리함' && d2.openN === '7' && d2.chip === '7' && d2.why === d0.why && d2.over <= 1440, `[도구] #675 사람 몫 대화 머리에 [처리함](${d0.h}px) → 누르면 「${d1.text}」 · 미처리 ${d0.openN} → ${d1.openN}(창 단추·카드 칩·[+] 점 같이) · 다시 누르면 원래대로(${d2.openN}) · 머리 배지 「${d0.why}」 → 「${d1.why}」 → 「${d2.why}」`);
+                await closeThread(pg); await openThread(pg, 12); const d3 = await dn();
+                await closeThread(pg); await mock('/__mock/set', { noDone: true }); await wake(pg); await openThread(pg, 2); const d4 = await dn();
+                ok(!d3.vis && !d4.vis, '[도구] #675 사람 몫이 아닌 대화엔 [처리함] 없음 · 옛 서버(done_route 없음)면 사람 몫 대화에도 없음');
+                await closeThread(pg); await mock('/__mock/set', { noDone: false }); await mock('/__mock/reset', {}); await pg.click('#sms-close'); await pg.waitForTimeout(900); await wake(pg);
+            }
             // 알림 link(agent-office?sms=ID) → app.js 가 부를 함수 = window.AkmAoDesk.openSms(id)
             ok(await pg.evaluate(() => typeof window.AkmAoDesk.openSms === 'function' && typeof window.AkmAoDesk.open === 'function'), '[알림] window.AkmAoDesk.openSms 있음(종전 open 도 그대로)');
             const o1 = await pg.evaluate(() => window.AkmAoDesk.openSms(3)); await pg.waitForTimeout(700);

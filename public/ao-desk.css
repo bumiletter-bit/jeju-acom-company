@@ -1255,6 +1255,14 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
 .desk-endbtn:not(.yes):not(.no) { padding: 0 10px; border-color: transparent; background: none; color: var(--d-sub); font-weight: 600; }
 .desk-endbtn:not(.yes):not(.no):hover { border-color: transparent; background: var(--d-soft); color: var(--d-ink); }
 .desk-endbtn:not(.yes):not(.no):focus-visible { outline-color: var(--d-accent); }
+/* ── #675 (대표 10/12) 문자 대화 머리 [처리함] — 톡톡·문의의 [확인](ao-inbox .inb-done)과 같은 꼴: 테두리 인디고 → 눌린 뒤 옅은 회색 ── */
+.sms-thread .sms-done { flex: none; margin-left: auto; min-height: 36px; padding: 0 11px; font-size: 12.5px; font-weight: 800; white-space: nowrap; background: var(--d-card); color: var(--d-accent); border-color: transparent; box-shadow: inset 0 0 0 1.5px var(--d-accent); }
+.sms-thread .sms-done[hidden] { display: none; }
+.sms-thread .sms-done:hover { background: var(--d-accent-soft); }
+.sms-thread .sms-done[aria-pressed="true"] { background: var(--d-soft); color: var(--d-sub); font-weight: 700; box-shadow: inset 0 0 0 1px var(--d-line); }
+.sms-thread .sms-done:disabled { opacity: .6; }
+.sms-thread .sms-done:not([hidden]) + .sms-th-x { margin-left: 0; }
+@media (max-width: 960px), (pointer: coarse) { .sms-thread .sms-done { min-height: 44px; padding: 0 9px; margin-right: 6px; } }
 /* #666: 「지금 챙길 일」은 다시 현황판 셋째 칸(#653-다의 좁은 폭 접기·두 줄 꼴 규칙은 뺌) */
 /* #666-b: 폰(640 이하)에서 현황판을 접어 둬도 「지금 챙길 일」 칸만은 늘 보인다(대표가 폴드를 접어 쓸 때) — 접힌 동안은 이 칸이 [현황판 보기] 단추 위 · 펼치면 종전 순서(채널 · 발송 · 챙길 일) */
 @media (max-width: 640px) {
@@ -1441,7 +1449,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (582규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (585규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -2003,6 +2011,9 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .desk-endbtn:not(.yes):not(.no) { border-color: transparent; background: none; color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .desk-endbtn:not(.yes):not(.no):hover { border-color: transparent; background: var(--d-soft); color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-endbtn:not(.yes):not(.no):focus-visible { outline-color: var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-thread .sms-done { background: var(--d-card); color: var(--d-accent); border-color: transparent; box-shadow: inset 0 0 0 1.5px var(--d-accent); }
+:where(html[data-ao-theme="dark"]) .sms-thread .sms-done:hover { background: var(--d-accent-soft); }
+:where(html[data-ao-theme="dark"]) .sms-thread .sms-done[aria-pressed="true"] { background: var(--d-soft); color: var(--d-sub); box-shadow: inset 0 0 0 1px var(--d-line); }
 :where(html[data-ao-theme="dark"]) .sms-pane .sms-order.sms-buy { background: var(--d-accent-soft); border-bottom: 1px solid #3D468A; }
 :where(html[data-ao-theme="dark"]) .sms-pane .sms-buy.none { background: var(--d-soft); border-bottom-color: var(--d-line); }
 :where(html[data-ao-theme="dark"]) .sms-buy .sms-buy-h small { color: var(--d-ink); }
