@@ -7,7 +7,7 @@ const { spawn } = require('child_process');
 const ROOT = path.join(__dirname, '..'), OUT = process.env.SHOTS || '';
 const P1 = Number(process.env.PORT658H || 3465), P2 = Number(process.env.PORT658I || 3457), BASE = 'http://localhost:' + P1, INB = 'http://localhost:' + P2;
 const { chromium } = require(path.join(ROOT, 'node_modules/playwright'));
-let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log((c ? '  ok  ' : '  FAIL ') + m); };
+let pass = 0, fail = 0; const ok = (c, m, x) => { c ? pass++ : fail++; console.log((c ? '  ok  ' : '  FAIL ') + m + (!c && x ? ' :: ' + x : '')); };
 (async () => {
     if (OUT) fs.mkdirSync(OUT, { recursive: true });
     const s1 = spawn(process.execPath, [path.join(ROOT, 'scripts/_mock-610.js'), String(P1)], { stdio: 'ignore' });
@@ -15,7 +15,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
     await new Promise(r => setTimeout(r, 1600));
     const browser = await chromium.launch();
     try {
-        for (const [name, vw, phone, theme] of [['pc', { width: 1440, height: 900 }, false, null], ['fold', { width: 900, height: 1000 }, false, null], ['phone', { width: 390, height: 844 }, true, null], ['fold-dark', { width: 900, height: 1000 }, false, 'dark'], ['phone-dark', { width: 390, height: 844 }, true, 'dark']]) {
+        for (const [name, vw, phone, theme] of [['pc', { width: 1440, height: 900 }, false, null], ['fold', { width: 900, height: 1000 }, false, null], ['phone', { width: 390, height: 844 }, true, null], ['fold-dark', { width: 900, height: 1000 }, false, 'dark'], ['phone-dark', { width: 390, height: 844 }, true, 'dark']].filter(v => !process.env.ONLY658 || process.env.ONLY658.split(',').includes(v[0]))) {
             await fetch(BASE + '/__mock/reset', { method: 'POST' }); await fetch(INB + '/__mock/reset', { method: 'POST' });
             const ctx = await browser.newContext(Object.assign({ viewport: vw, deviceScaleFactor: 2, serviceWorkers: 'block', reducedMotion: 'reduce' }, phone ? { isMobile: true, hasTouch: true } : {}));
             const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(String(e)));
@@ -173,6 +173,77 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 ok(f5.win && f5.ch === 'sms' && f5.smsOpen === '2' && f5.page, `[${name}] #676 「문자 1」 알약 → 문자 탭의 그 대화(대화 ${f5.smsOpen})`, JSON.stringify(f5));
                 await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(900);
                 await pg.evaluate(() => localStorage.removeItem('akm_inb_only_open_talk')); await pg.unroute('**/api/agent-office/desk/board*', bRoute);
+            }
+            {   // #677(대표 10/12 「에이전트 오피스에서 뭐 누르고 뒤로가기 누르면 꺼지지 않고 전으로」): 눌러서 연 겹마다 뒤로가기 1번 = 맨 위 겹만 닫힘 · 메뉴는 에이전트 오피스 그대로 · 화면 단추로 닫으면 쌓아 둔 칸도 걷힘(d = 기록에 적힌 겹 수 · st = 열린 겹 순서)
+                await fetch(BASE + '/__mock/reset', { method: 'POST' }); await fetch(INB + '/__mock/reset', { method: 'POST' });
+                await pg.reload({ waitUntil: 'domcontentloaded' }); await pg.waitForSelector('#desk-plus-btn', { state: 'visible' }); await pg.waitForTimeout(1500);
+                const touch = vw.width <= 960 || phone, e0 = errs.length;
+                const hs = () => pg.evaluate(() => { if (!document.getElementById('page-agent-office')) return { page: false, gone: location.href, d: -1, st: '?' }; const vis = id => { const e = document.getElementById(id); return !!e && !e.hidden && e.getClientRects().length > 0; };
+                    return { page: document.getElementById('page-agent-office').classList.contains('active'), d: (history.state || {}).aoDesk || 0, st: __aoDesk.HB.stack.map(e => e.k).join('>'), ship: vis('desk-ship'), price: vis('desk-price'), plus: vis('desk-plus'), tab: (document.querySelector('#desk-tabs .desk-tab[aria-selected="true"]') || { dataset: {} }).dataset.tab || '', full: !!document.querySelector('#ao-desk-root .is-full'), win: document.body.classList.contains('sms-win-open'), th: !!document.getElementById('sms-thread') || !!(window.AkmInbox && window.AkmInbox.isOpen()), view: vis('sms-view') || vis('inb-view'), buy: (document.getElementById('sms-buy-more') || { getAttribute() { return ''; } }).getAttribute('aria-expanded') || '', conf: !!document.querySelector('.ao-settle-overlay'), fo: document.body.classList.contains('fo-open'), over: document.documentElement.scrollWidth }; });
+                const back = async () => { await pg.goBack().catch(() => { }); await pg.waitForTimeout(500); return hs(); };
+                const tool = async id => { await pg.click('#desk-plus-btn'); await pg.waitForTimeout(250); await pg.click('#' + id); await pg.waitForTimeout(700); return hs(); };
+                const J = v => JSON.stringify(v);
+                // ① 도구 카드(배송조회) → 뒤로가기
+                const a1 = await tool('desk-ship-now'), a2 = await back();
+                ok(a1.ship && a1.st === 'tool' && a1.d === 1 && !a2.ship && a2.page && a2.d === 0 && a2.st === '', `[${name}] #677 배송조회 카드 열고 뒤로가기 → 카드만 닫힘 · 에이전트 오피스 그대로`, J([a1.st, a1.d, a2.ship, a2.page, a2.d]));
+                // ② 카드끼리 바꿔도 한 칸 · 화면 [닫기]로 닫으면 칸도 걷힘(다음 뒤로가기가 헛돌지 않음)
+                const b1 = await tool('desk-ship-now'), b2 = await tool('desk-price-now');
+                await pg.evaluate(() => document.getElementById('pc-close').click()); await pg.waitForTimeout(500); const b3 = await hs();
+                const b4 = await tool('desk-ship-now'), b5 = await back();
+                ok(b1.d === 1 && b2.price && !b2.ship && b2.st === 'tool' && b2.d === 1 && !b3.price && b3.d === 0 && b3.st === '' && b4.ship && b4.d === 1 && !b5.ship && b5.page && b5.d === 0, `[${name}] #677 배송조회 → 가격 확인으로 바꿔도 한 겹(${b2.d}) · [닫기]로 닫으면 칸 0 · 다시 열고 뒤로가기 1번에 닫힘`, J([b2, b3.d, b4.d, b5.d]));
+                // ③ [+] 메뉴(폰·폴드 = 겹 · PC 팝오버 = 겹 아님)
+                await pg.click('#desk-plus-btn'); await pg.waitForTimeout(300); const c1 = await hs();
+                let c2; if (touch) c2 = await back(); else { await pg.keyboard.press('Escape'); await pg.waitForTimeout(300); c2 = await hs(); }
+                await pg.click('#desk-plus-btn'); await pg.waitForTimeout(300); await pg.keyboard.press('Escape'); await pg.waitForTimeout(500); const c3 = await hs();
+                ok(c1.plus && c1.d === (touch ? 1 : 0) && !c2.plus && c2.page && c2.d === 0 && !c3.plus && c3.d === 0 && c3.st === '', `[${name}] #677 [+] 메뉴 ${touch ? '열고 뒤로가기 → 메뉴만 닫힘' : '(PC 팝오버 = 뒤로가기 칸 없음)'} · Esc 로 닫은 뒤 남은 칸 0`, J([c1.st, c1.d, c2.plus, c2.page, c3.d]));
+                // ④ 겹 순서: 탭(이전 채팅 이력) → 배송조회 카드 → 뒤로가기 2번 = 카드 → 탭 순
+                await pg.evaluate(() => document.querySelector('#desk-tabs .desk-tab[data-tab="all"]').scrollIntoView({ block: 'center' })); await pg.click('#desk-tabs .desk-tab[data-tab="all"]'); await pg.waitForTimeout(700); const e1 = await hs();
+                const e2 = await tool('desk-ship-now'), e3 = await back(), e4 = await back();
+                ok(e1.tab === 'all' && e1.st === 'tab' && e1.d === 1 && e2.st === 'tab>tool' && e2.d === 2 && !e3.ship && e3.tab === 'all' && e3.d === 1 && e4.tab === 'mine' && e4.page && e4.d === 0, `[${name}] #677 「이전 채팅 이력」 탭 → 배송조회 카드 → 뒤로가기 = 카드 닫힘(탭 그대로) → 한 번 더 = 「채팅」 탭 · 끝까지 에이전트 오피스`, J([e1.st, e2.st, e3.tab, e3.d, e4.tab, e4.page]));
+                // ⑤ 자세히 확인하기(전체 화면) — 뒤로가기 / 화면 [닫기]
+                const fullGo = async () => { await pg.evaluate(() => { const b = document.getElementById('desk-list-more'); b.scrollIntoView({ block: 'center' }); b.click(); }); await pg.waitForTimeout(400); return hs(); };
+                const f1 = await fullGo(), f2 = await back(), f3 = await fullGo();
+                await pg.evaluate(() => document.querySelector('#ao-desk-root .is-full .desk-close').click()); await pg.waitForTimeout(500); const f4 = await hs();
+                ok(f1.full && f1.st === 'full' && f1.d === 1 && !f2.full && f2.page && f2.d === 0 && f3.full && !f4.full && f4.d === 0 && f4.st === '', `[${name}] #677 「자세히 확인하기」 전체 화면 → 뒤로가기로 닫힘 · [닫기]로 닫으면 칸 0`, J([f1.st, f2.full, f2.page, f4.d]));
+                // ⑥ 손님 연락 창: 구매이력 펼침 → 뒤로가기 = 접힘(대화 그대로) / 사진 크게 → 사진 → 대화 → 창 순
+                await pg.evaluate(() => window.AkmAoDesk.openSms(3)); await pg.waitForTimeout(1600); const g1 = await hs();
+                await pg.evaluate(() => { const b = document.getElementById('sms-buy-more'); b.scrollIntoView({ block: 'center' }); b.click(); }); await pg.waitForTimeout(400); const g2 = await hs();
+                const g3 = await back();
+                ok(g1.win && g1.th && g1.st === 'sms-win>sms-th' && g1.d === 2 && g2.buy === 'true' && g2.st === 'sms-win>sms-th>sms-buy' && g2.d === 3 && g3.buy === 'false' && g3.th && g3.win && g3.d === 2, `[${name}] #677 손님 연락 창 대화의 구매이력 펼침 → 뒤로가기 = 접힘만(대화·창 그대로)`, J([g1.st, g2.st, g3.buy, g3.th, g3.d]));
+                let pid = 0; for (const id of [1, 2, 4, 5, 6, 7, 8]) { await pg.evaluate(i => window.AkmAoDesk.openSms(i), id); await pg.waitForTimeout(1300); if (await pg.locator('#sms-msgs .sms-thumb').count()) { pid = id; break; } }
+                await pg.evaluate(() => { const t = document.querySelector('#sms-msgs .sms-thumb'); t.scrollIntoView({ block: 'center' }); t.click(); }); await pg.waitForTimeout(500); const h1 = await hs();
+                const h2 = await back(), h3 = await back(), h4 = await back();
+                ok(pid > 0 && h1.view && h1.st === 'sms-win>sms-th>sms-view' && h1.d === 3 && !h2.view && h2.th && h2.d === 2 && !h3.th && h3.win && h3.d === 1 && !h4.win && h4.page && h4.d === 0 && h4.st === '', `[${name}] #677 문자 사진 크게(대화 ${pid}) → 뒤로가기 3번 = 사진 → 대화 → 창 순으로 하나씩 · 끝까지 에이전트 오피스`, J([h1.st, h2.view, h2.th, h3.th, h3.win, h4.win, h4.page]));
+                await pg.evaluate(i => window.AkmAoDesk.openSms(i), pid); await pg.waitForTimeout(1300);
+                await pg.evaluate(() => document.querySelector('#sms-msgs .sms-thumb').click()); await pg.waitForTimeout(400); await pg.evaluate(() => document.getElementById('sms-view-x').click()); await pg.waitForTimeout(500); const h5 = await hs();
+                await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(900); const h6 = await hs();
+                ok(!h5.view && h5.st === 'sms-win>sms-th' && h5.d === 2 && !h6.win && h6.d === 0 && h6.st === '', `[${name}] #677 사진 [닫기] → 칸 2(창·대화)로 · 창 [닫기] → 칸 0(헛도는 뒤로가기 없음)`, J([h5.st, h5.d, h6.d]));
+                // ⑦ 톡톡 탭의 사진 크게 보기도 한 칸
+                const picR = async r => { try { const x = await fetch(INB + '/__mock/pic.svg'); r.fulfill({ status: 200, contentType: 'image/svg+xml', body: await x.text() }); } catch (e) { r.abort(); } };   // 사진은 둘째 가짜 서버에 있다
+                await pg.route('**/__mock/pic.svg', picR);
+                await pg.evaluate(() => window.AkmAoDesk.openInbox('talk', 't2')); await pg.waitForTimeout(1700);
+                await pg.evaluate(() => { const t = document.querySelector('#inb-msgs .sms-thumb'); t.scrollIntoView({ block: 'center' }); t.click(); }); await pg.waitForTimeout(500); const i1 = await hs();
+                const i2 = i1.view ? await back() : i1, i3 = i1.view ? await back() : i1, i4 = i1.view ? await back() : i1; await pg.unroute('**/__mock/pic.svg', picR);
+                ok(i1.view && i1.st === 'sms-win>sms-th>sms-view' && i1.d === 3 && !i2.view && i2.th && i2.d === 2 && !i3.th && i3.win && !i4.win && i4.page && i4.d === 0, `[${name}] #677 톡톡 사진 크게 → 뒤로가기 3번 = 사진 → 대화 → 창 순 · 에이전트 오피스 그대로`, J([i1.st, i2.view, i2.th, i3.th, i3.win, i4.win, i4.page]));
+                // ⑧ 확인표 창(app.js 가 body 에 붙이는 .ao-settle-overlay — 같은 꼴의 시험 창) = 한 칸 · × 로 닫으면 칸 0
+                const conf = () => pg.evaluate(() => { const o = document.createElement('div'); o.className = 'modal-overlay ao-settle-overlay'; const m = document.createElement('div'); m.className = 'modal'; const x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '×'; x.onclick = () => o.remove(); m.appendChild(x); o.appendChild(m); document.body.appendChild(o); });
+                await conf(); await pg.waitForTimeout(400); const k1 = await hs(), k2 = await back();
+                await conf(); await pg.waitForTimeout(400); await pg.evaluate(() => document.querySelector('.ao-settle-overlay .modal-close').click()); await pg.waitForTimeout(500); const k3 = await hs();
+                ok(k1.conf && k1.st === 'confirm' && k1.d === 1 && !k2.conf && k2.page && k2.d === 0 && !k3.conf && k3.d === 0 && k3.st === '', `[${name}] #677 확인표 창 → 뒤로가기 = 창만 닫힘 · × 로 닫으면 칸 0`, J([k1.st, k2.conf, k2.page, k3.d]));
+                // ⑨ 최종발주 창([+] 메뉴에서) — 메뉴 칸을 걷다가 방금 연 창을 닫아 버리지 않는다 · 뒤로가기 = 그 창만 닫힘
+                const n1 = await tool('desk-final-now'); await pg.waitForTimeout(500); const n1b = await hs(), n2 = await back();
+                ok(n1b.fo && !n1b.plus && !n2.fo && n2.page && n2.d === 0 && n2.st === '', `[${name}] #677 [+] → 최종발주 창이 열린 채 유지 → 뒤로가기 = 그 창만 닫힘 · 남은 칸 0`, J([n1.fo, n1b.fo, n2.fo, n2.page, n2.d]));
+                // ⑩ 열린 채 새로고침 → 남은 칸이 걷힘 · 그 뒤에도 정상
+                await pg.evaluate(() => window.AkmAoDesk.openSms(3)); await pg.waitForTimeout(1500); const r0 = await hs();
+                await pg.reload({ waitUntil: 'domcontentloaded' }); await pg.waitForSelector('#desk-plus-btn', { state: 'visible' }); await pg.waitForTimeout(1800); const r1 = await hs();
+                const r2 = await tool('desk-ship-now'), r3 = await back();
+                ok(r0.d === 2 && !r1.win && r1.page && r1.d === 0 && r1.st === '' && r2.ship && r2.d === 1 && !r3.ship && r3.page && r3.d === 0, `[${name}] #677 대화를 연 채 새로고침 → 창 닫힌 첫 화면 · 남은 칸 0 · 그 뒤 카드 열고 뒤로가기 정상`, J([r0.d, r1.win, r1.d, r2.d, r3.ship, r3.page]));
+                // ⑪ 카드를 연 채 다른 메뉴로 → 칸 걷힘(그 메뉴의 뒤로가기가 헛돌지 않음) · 돌아오면 카드가 다시 겹
+                await tool('desk-ship-now'); await pg.evaluate(() => switchPage('worklog')); await pg.waitForTimeout(1900); const m1 = await pg.evaluate(() => ({ d: (history.state || {}).aoDesk || 0, st: __aoDesk.HB.stack.length, page: document.getElementById('page-agent-office').classList.contains('active') }));
+                await pg.evaluate(() => switchPage('agent-office')); await pg.waitForTimeout(1500); const m2 = await hs(), m3 = await back();
+                ok(!m1.page && m1.d === 0 && m1.st === 0 && m2.ship && m2.st === 'tool' && m2.d === 1 && !m3.ship && m3.page && m3.d === 0, `[${name}] #677 카드를 연 채 다른 메뉴로 → 칸 0 · 돌아오면 카드가 다시 한 겹 → 뒤로가기로 닫힘`, J([m1, m2.st, m2.d, m3.ship, m3.page]));
+                const z7 = await hs();
+                ok(z7.over <= vw.width && errs.length === e0, `[${name}] #677 끝: 가로 넘침 없음(${z7.over}) · 화면 오류 ${errs.length - e0}건`, errs.slice(e0).join(' | '));
             }
             await ctx.close();
         }

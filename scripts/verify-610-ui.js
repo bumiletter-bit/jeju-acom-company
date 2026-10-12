@@ -486,7 +486,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             {   // 교차 점검 A: 「자세히 확인하기」 전체 화면이 떠 있는 채 알림으로 문자를 열어도 창·대화가 보인다(창이 닫히고 읽음만 찍히던 결함)
                 await sheetDown(pg); await pg.click('#sms-close').catch(() => { }); await pg.waitForTimeout(400);
                 await mock('/__mock/reset', {}); await wake(pg);
-                await pg.evaluate(() => { const sec = document.getElementById('desk-listbox'), S = window.__aoDesk.S; S.full = sec; sec.classList.add('is-full'); document.body.classList.add('desk-full-open'); history.pushState({ deskFull: sec.id }, ''); });   // openFull 이 하는 일 그대로
+                await pg.evaluate(() => document.getElementById('desk-list-more').click()); await pg.waitForTimeout(200);   // #677: 전체 화면은 실제 단추로 연다(뒤로가기 칸을 HB 가 한 곳에서 쌓으므로 손으로 pushState 하던 흉내는 낡음)
                 const a0 = P.sms.length;
                 const oA = await pg.evaluate(() => window.AkmAoDesk.openSms(3)); await pg.waitForTimeout(900);
                 const gA = await pg.evaluate(() => ({ full: !!window.__aoDesk.S.full, win: !document.getElementById('desk-sms').hidden && document.body.classList.contains('sms-win-open'), th: (document.getElementById('sms-thread') || { dataset: {} }).dataset.id || '', st: (history.state || {}).smsWin || '', bub: document.querySelectorAll('#sms-msgs .sms-bub').length }));

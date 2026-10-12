@@ -297,6 +297,7 @@ function checkAuth() {
                     }
                 }
             } catch (_) { /* 복원 실패 = 종전 동작(메인) */ }
+            try { if (window.akmNavInit) window.akmNavInit(); } catch (_) { /* #678 뒤로가기 기록 — 못 써도 화면은 그대로 */ }
         }).catch(() => {
             showLoginPage();
         });
@@ -1211,13 +1212,106 @@ function notiApplyHash() {
     if (!h) return;
     try { h = decodeURIComponent(h); } catch (_) { /* 그대로 */ }
     if (!/^[a-z][a-z-]*(?::[a-z-]+)?(?:\?[\w=&%-]*)?$/.test(h)) return;
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (_) { /* 무시 */ }
+    try { history.replaceState(history.state, '', location.pathname + location.search); } catch (_) { /* 무시 */ }   // #678: 지금 칸의 표식(메뉴·탭·겹)은 그대로
     const page = h.split('?')[0].split(':')[0];
     if (!document.getElementById('page-' + (page === 'documents' ? 'document' : page))) return;
     setTimeout(() => notiGo(h), 400);   // 자동 로그인의 「보던 메뉴 복원」(#407) 뒤에
 }
 // 앱이 이미 열려 있을 때 푸시를 누르면 sw.js 가 해시만 바꾼다(새로고침 없음) → 그때도 같은 길로
 window.addEventListener('hashchange', () => { if (currentUser) notiApplyHash(); });
+
+// ── #678(대표 10/12 「정산관리 누르고 정산현황이든 하나 누르고 다음 탭 누를 경우도 다 뒤로가기로」) 폰 뒤로가기 = 바로 전 화면 ──
+//   메뉴 이동·메뉴 안 탭 전환을 기록(history)에 쌓는다 → 뒤로가기 1번 = 직전 탭/직전 메뉴(앞으로가기도) · 떠 있는 공통 창(.modal-overlay · 알림 종 판 · 이전 알림 · 달력 · 폰 사이드바)이 있으면 그 창만 닫힌다.
+//   기록 칸 = history.state.akmNav { p: 메뉴, t: [켜진 탭 키] } + akmM(열린 공통 창 수). 화면이 바뀐 것은 class/style 변화로 알아챈다(누르는 곳마다 줄을 넣지 않는다 — 탭 처리기는 종전 그대로).
+//   워커5(ao-desk.js #677)와의 약속: 기록 칸은 서로의 키를 이어 싣는다(ao-desk = aoDesk 겹 수 · app.js = akmNav·akmM) · 메뉴가 바뀌는 칸만 새 객체 · popstate 는 각자 자기 키가 줄었을 때만 닫는다 ·
+//   에이전트 오피스에서 app.js 의 pushState·back 은 AkmAoDesk.histIdle 로 감싼다 · 확인표 창은 에이전트 오피스에서는 ao-desk 가, 그 밖 공통 창은 app.js 가 맡는다 · 최종발주 창이 맨 위일 때는 둘 다 칸을 쌓지 않는다.
+(function () {
+    const TABSEL = '.settlement-tab, .doc-main-tab, .doc-tab, .ps-tab, #schedule-view-toggle button';
+    const N = { ready: false, cur: null, busy: false, bt: 0, at: 0, queued: false, hold: 0, gest: true };
+    const st = () => { try { return history.state || {}; } catch (_) { return {}; } };
+    const pageEl = () => document.querySelector('.page.active');
+    const pageName = () => { const p = pageEl(); return p ? p.id.replace(/^page-/, '') : ''; };
+    const isAo = () => pageName() === 'agent-office';
+    const tabKey = b => b.id || ['tab', 'docMain', 'docType', 'expenseTab', 'pstab', 'view'].map(k => b.dataset[k] ? k + '=' + b.dataset[k] : '').find(Boolean) || '';
+    const tabOn = b => b.classList.contains('active') || b.classList.contains('on');
+    const tabBtns = () => { const p = pageEl(); return (!p || p.id === 'page-agent-office') ? [] : [...p.querySelectorAll(TABSEL)].filter(tabKey); };   // 에이전트 오피스 안쪽 탭은 ao-desk 의 겹
+    const readNav = () => ({ p: pageName(), t: tabBtns().filter(tabOn).map(tabKey) });
+    const same = (a, b) => !!a && !!b && a.p === b.p && a.t.length === b.t.length && a.t.every(k => b.t.includes(k));
+    const shown = el => !!el && el.isConnected && getComputedStyle(el).display !== 'none';
+    // 지금 떠 있는 공통 창 — 뒤쪽이 위(뒤로가기는 맨 뒤 것부터 닫는다)
+    function layers() {
+        const L = [], ao = isAo();
+        const sb = document.querySelector('.sidebar.mobile-open'); if (sb) L.push({ k: 'side', close: () => window.closeMobileSidebar() });
+        const dd = document.getElementById('notification-dropdown'); if (dd && dd.style.display !== 'none' && shown(dd)) L.push({ k: 'noti', close: () => { dd.style.display = 'none'; } });
+        const nh = document.getElementById('noti-hist'); if (nh && !nh.hidden) L.push({ k: 'hist', close: () => window.closeNotiHistory() });
+        document.querySelectorAll('.modal-overlay').forEach(ov => {
+            if (!shown(ov)) return;
+            if (ao && ov.classList.contains('ao-settle-overlay') && ov.parentNode === document.body) return;   // 확인표 창: 에이전트 오피스에서는 ao-desk 의 'confirm' 겹
+            L.push({ k: 'modal', close: () => window.akmCloseOverlay(ov) });
+        });
+        if ([...document.querySelectorAll('.akm-cal')].some(c => c.getClientRects().length)) L.push({ k: 'cal', close: () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) });
+        return L;
+    }
+    // 에이전트 오피스에서는 ao-desk 가 기록을 되돌리는 중일 수 있다 → 끝난 뒤에(방금 쌓은 칸이 빠지지 않게)
+    const hist = fn => { const d = window.AkmAoDesk; if (isAo() && d && typeof d.histIdle === 'function') d.histIdle(fn); else fn(); };
+    const wait = () => { N.busy = true; clearTimeout(N.bt); N.bt = setTimeout(() => { N.busy = false; sync(); }, 700); };
+    function applyTabs(keys) { tabBtns().forEach(b => { if (keys.includes(tabKey(b)) && !tabOn(b)) b.click(); }); }   // 손으로 누른 것과 같은 길(자료도 그때처럼 다시 읽는다)
+    function sync() {
+        N.queued = false;
+        if (!N.ready || N.busy || !currentUser) return;
+        let S = st();
+        const now = readNav();
+        if (!now.p) return;
+        try {
+            if (!same(now, N.cur)) {
+                const open = layers().length, fresh = !N.cur || now.p !== N.cur.p;
+                const next = Object.assign(fresh ? {} : Object.assign({}, S), { akmNav: now, akmM: 0 });   // 메뉴가 바뀌는 칸만 새 객체(ao-desk 키를 싣지 않는다)
+                // 방금(0.35초 안) 쌓은 칸에 이어 바뀐 것(알림 → 메뉴 → 탭 · 새로고침 복원) · 닫히면서 메뉴가 바뀐 창의 칸(사이드바·알림 종 판) = 그 칸을 갈아 쓴다
+                const mine = !S.aoDesk && !S.foPanel, reuse = mine && (Date.now() - N.at < 350 || (!N.gest && Date.now() < N.hold) || (S.akmM | 0) > open || !S.akmNav);   // 표식 없는 칸(알림 해시로 생긴 칸)도 갈아 쓴다
+                N.cur = now; N.at = Date.now();
+                if (reuse) history.replaceState(next, ''); else hist(() => history.pushState(next, ''));
+                S = st();
+            }
+            const open = layers().length, m = S.akmM | 0;
+            if (open > m) { if (!S.foPanel) hist(() => { if ((st().akmM | 0) < open) history.pushState(Object.assign({}, st(), { akmM: open }), ''); }); }
+            else if (open < m) { wait(); hist(() => history.back()); }   // 화면에서 닫은 창의 칸을 되돌린다(popstate 뒤 다시 맞춘다)
+        } catch (_) { /* 기록을 못 써도 화면은 그대로 쓴다 */ }
+    }
+    ['pointerdown', 'keydown', 'click'].forEach(t => document.addEventListener(t, () => { N.gest = true; }, true));   // 사람이 누른 뒤의 변화는 언제나 새 칸
+    const queue = () => { if (N.queued) return; N.queued = true; Promise.resolve().then(sync); };
+    window.addEventListener('popstate', () => {
+        if (!N.ready || !currentUser) return;
+        N.busy = false; clearTimeout(N.bt);
+        const S = st(), m = S.akmM | 0;
+        // 자기 키(akmM)가 줄었을 때만 닫는다 — ao-desk 의 겹 칸은 akmM 을 그대로 이어 싣는다
+        for (let i = 0; i < 12; i++) { const L = layers(); if (L.length <= m) break; try { L[L.length - 1].close(); } catch (e) { console.error(e); } if (layers().length >= L.length) break; }
+        if (S.akmNav && S.akmNav.p && Array.isArray(S.akmNav.t) && !same(S.akmNav, readNav())) {
+            try {
+                if (S.akmNav.p !== pageName() && document.getElementById('page-' + S.akmNav.p)) switchPage(S.akmNav.p);
+                if (S.akmNav.p === pageName()) applyTabs(S.akmNav.t);
+            } catch (e) { console.error(e); }
+            N.cur = readNav(); N.hold = Date.now() + 1500; N.gest = false;   // 옮긴 직후 사람이 누르지 않았는데 화면이 스스로 탭을 고쳐 잡으면(늦게 끝나는 초기화) 새 칸을 쌓지 않고 이 칸을 갈아 쓴다(뒤로가기가 제자리에서 돌지 않게)
+            if (!same(N.cur, S.akmNav)) { try { history.replaceState(Object.assign({}, S, { akmNav: N.cur }), ''); } catch (_) { /* 그대로 */ } }   // 권한 밖 메뉴 등으로 다른 곳에 선 경우
+        } else if (S.akmNav) N.cur = readNav();
+        queue();
+    });
+    // 로그인(새로고침) 뒤 한 번 — 지금 칸에 메뉴·탭을 적는다. 새로고침 전 칸의 탭이 남아 있으면 그 탭으로(같은 메뉴일 때만)
+    window.akmNavInit = function () {
+        if (N.ready) return;
+        try {
+            const S = st();
+            if (S.akmNav && Array.isArray(S.akmNav.t) && S.akmNav.p === pageName()) applyTabs(S.akmNav.t);
+            N.cur = readNav(); N.at = Date.now();
+            history.replaceState(Object.assign({}, S, { akmNav: N.cur, akmM: S.akmM | 0 }), '');
+        } catch (_) { N.cur = readNav(); }
+        N.ready = true;
+        try {
+            new MutationObserver(queue).observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class', 'style', 'hidden'] });
+            new MutationObserver(queue).observe(document.body, { childList: true });
+        } catch (_) { document.addEventListener('click', () => setTimeout(sync, 0), true); }
+        queue();
+    };
+})();
 
 window.clickNotification = async function(id, link) {
     try {
@@ -8932,7 +9026,7 @@ document.querySelectorAll('.settlement-tab').forEach(tab => {
            아무것도 다시 켜지 못해, 다음 정산관리 진입이 빈 화면이 됐다(#179는 TypeError만 막았던 것).
            data-tab 없는 버튼은 정산 탭이 아니므로 여기서 끝낸다(각자의 onclick이 전담). */
         if (!tab.dataset.tab) return;
-        document.querySelectorAll('.settlement-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.settlement-tab[data-tab]').forEach(t => t.classList.remove('active'));   // #678: 정산 탭만(종전에는 문의 관리 탭·서브탭의 켜짐 표시까지 꺼져 그 메뉴에 가면 어느 탭인지 안 보였다)
         document.querySelectorAll('.settlement-tab-content').forEach(c => c.classList.remove('active'));
         tab.classList.add('active');
         document.getElementById(tab.dataset.tab)?.classList.add('active');

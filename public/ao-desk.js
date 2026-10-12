@@ -344,7 +344,7 @@
         bindTools();   // #594 배송조회 · #595 중간발주
         $('desk-theme').addEventListener('click', () => setTheme(!themeOn));   // #568
         applyTheme();
-        $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) window.AkmFinalOrder.open(); else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
+        $('desk-final-now').addEventListener('click', () => { if (window.AkmFinalOrder) { plusClose(false); hbIdle(() => window.AkmFinalOrder.open()); } else showToast('최종발주 화면을 불러오지 못했어요. 새로고침 후 다시 눌러 주세요'); });   // #508
         $('desk-settle-now').addEventListener('click', () => { if (!input.value.trim()) { input.value = '정산관리에 올려줘'; syncInput(); } S.pickImg = true; $('desk-file').accept = 'image/*'; $('desk-file').click(); });   // 정산 이미지는 이미지 전용 그대로
         $('desk-wake-btn').addEventListener('click', () => wake());
         $('desk-file').addEventListener('change', e => { const fl = Array.from(e.target.files || []); addFiles(S.pickImg ? fl.filter(isImg) : fl); e.target.value = ''; });
@@ -400,18 +400,60 @@
             if (e.target.closest('[data-full-close]')) closeFull();
         });
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape') { const z = $('desk-zoom'); if (z && !z.hidden) { z.hidden = true; return; } }
+            if (e.key === 'Escape') { const z = $('desk-zoom'); if (z && !z.hidden) { zoomClose(); return; } }
             if (e.key !== 'Escape' || !S.full) return;
             // 확인표 창 같은 다른 창이 위에 떠 있으면 그 창이 먼저 닫힌다
             if (Array.from(document.querySelectorAll('.modal-overlay')).some(m => getComputedStyle(m).display !== 'none')) return;
             closeFull();
         });
-        window.addEventListener('popstate', () => {
-            if (S.skipPop) { S.skipPop = false; return; }
-            if (S.full) closeFull(true);
-        });
+        window.addEventListener('popstate', hbPop);   // #677 뒤로가기는 이 한 곳에서
+        hbSync();   // 새로고침 뒤 남은 칸을 걷는다
+        try { new MutationObserver(() => {   // 확인표 창(app.js 가 body 에 붙였다 뗀다)도 겹으로 — 뒤로가기 = 그 창의 × 와 같음
+            if (pageActive() && document.querySelector('body > .ao-settle-overlay')) hbPush('confirm', () => { document.querySelectorAll('body > .ao-settle-overlay .modal-close').forEach(b => b.click()); }, { deskConfirm: 1 });
+            else hbDrop('confirm');
+        }).observe(document.body, { childList: true }); } catch (e) { /* 창은 ×·저장으로 닫힌다 */ }
     }
 
+    // ── #677(대표 10/12 「에이전트 오피스에서 뭐 누르고 뒤로가기 누르면 꺼지지 않고 전으로」) 뒤로가기 한 곳 ──
+    //   눌러서 열리는 겹(자세히 보기 · [+] 메뉴 · 도구 카드 · 손님 연락 창·대화·사진·구매이력 · 고르기 창 · 사진 크게 · 확인표 창 · 탭)을 연 순서대로 HB.stack 에 쌓고, 기록(history)에는 「몇 겹째」(aoDesk)만 적는다.
+    //   뒤로가기 = 맨 위 겹 하나만 닫힘(그 겹의 close) · 화면에서 닫으면(닫기·×·Esc) hbDrop 이 그 칸을 되돌린다 · 기록을 되돌리는 중(moving)에는 새 칸을 쌓지 않고 끝난 뒤에(겹이 꼬이지 않게 한 줄로)
+    //   최종발주 창(foPanel · final-order.js)이 맨 위에 있는 동안에는 기록을 건드리지 않는다(그 창은 뒤로가기가 오면 스스로 닫힌다) · tag = 종전 표식(smsWin·deskFull·deskPlus) 그대로
+    const HB = { stack: [], moving: false, mt: 0, idle: [] };
+    const hbAt = () => { try { return Number(history.state && history.state.aoDesk) || 0; } catch (e) { return 0; } };
+    const hbFo = () => { try { return !!(history.state && history.state.foPanel); } catch (e) { return false; } };
+    const hbHas = k => HB.stack.some(e => e.k === k);
+    // 다른 곳(app.js 의 메뉴 칸 등)이 지금 칸에 적어 둔 값은 그대로 이어 싣는다 — 우리 표식만 갈아 끼운다(#678 과 맞춘 약속)
+    const HB_KEYS = ['aoDesk', 'k', 'smsWin', 'deskFull', 'deskPlus', 'deskTool', 'deskTab', 'deskZoom', 'deskPick', 'deskConfirm'];
+    const hbBase = () => { const o = {}; let n = 0; try { const st = history.state; if (st && typeof st === 'object') Object.keys(st).forEach(k => { if (!HB_KEYS.includes(k)) { o[k] = st[k]; n++; } }); } catch (e) { /* 빈 값 */ } return n ? o : null; };
+    const hbTouch = () => window.matchMedia('(max-width: 960px), (pointer: coarse)').matches;   // 폰·폴드(뒤로가기 단추가 있는 기기) — 작은 팝오버([+] 메뉴·고르기 창)는 여기서만 겹으로 센다
+    function hbFlush() { if (HB.moving) return; const q = HB.idle.splice(0); q.forEach(fn => { try { fn(); } catch (e) { console.error(e); } }); }
+    function hbIdle(fn) { if (HB.moving) HB.idle.push(fn); else fn(); }   // 기록을 되돌리는 중이면 끝난 뒤에(최종발주 창처럼 스스로 칸을 쌓는 것을 열 때)
+    function hbSync() {
+        if (HB.moving || hbFo()) return;
+        const d = hbAt(), want = HB.stack.length;
+        try {
+            if (d > want) {
+                HB.moving = true; clearTimeout(HB.mt);
+                HB.mt = setTimeout(() => { HB.moving = false; try { if (hbAt() > HB.stack.length) history.replaceState(hbBase(), ''); } catch (e) { /* 그대로 */ } hbSync(); hbFlush(); }, 700);   // 되돌릴 칸이 없었으면(답 없음) 지금 칸을 바닥으로 삼는다
+                history.go(want - d);
+            } else for (let i = d; i < want; i++) history.pushState(Object.assign(hbBase() || {}, { aoDesk: i + 1, k: HB.stack[i].k }, HB.stack[i].tag), '');
+        } catch (e) { HB.moving = false; }
+    }
+    function hbPush(k, close, tag) { if (hbHas(k) || hbFo()) return; HB.stack.push({ k, close, tag: tag || null }); hbSync(); }
+    function hbDrop() { let n = 0; for (let j = 0; j < arguments.length; j++) { const k = arguments[j], i = HB.stack.findIndex(e => e.k === k); if (i >= 0) { HB.stack.splice(i, 1); n++; } } if (n) hbSync(); return n > 0; }
+    function hbPop() {
+        const own = HB.moving; HB.moving = false; clearTimeout(HB.mt);
+        if (hbFo()) { hbFlush(); return; }
+        if (!own) { const d = hbAt(); while (HB.stack.length > d) { const e = HB.stack.pop(); try { e.close(); } catch (er) { console.error(er); } } }   // 사람이 누른 뒤로가기 = 빠진 칸만큼 위에서부터 닫는다
+        hbSync(); hbFlush();
+    }
+    const TOOLS = ['desk-ship', 'desk-qty', 'desk-price'];
+    function toolPop() { const k = TOOLS.find(x => { const el = $(x); return el && !el.hidden; }); pkClose(false); toolShow(null); if (k) plusFocus(k.slice(5)); }
+    const tabPop = () => { setTab('mine'); };
+    // app.js(#678)는 메뉴가 바뀐 것을 조금 뒤에 알아채 메뉴 칸을 쌓는다 → 그 칸(akmNav.p = agent-office)이 선 뒤에 겹을 다시 쌓는다(먼저 쌓으면 앞 메뉴 값을 이어 실은 칸이 메뉴 칸 밑에 깔린다)
+    function hbRestore(n) { let nav = null; try { nav = history.state && history.state.akmNav; } catch (e) { nav = null; } if (nav && nav.p && nav.p !== 'agent-office' && (n | 0) < 25) { setTimeout(() => { if (pageActive()) hbRestore((n | 0) + 1); }, 60); return; } if (TOOLS.some(x => { const el = $(x); return el && !el.hidden; })) hbPush('tool', toolPop, { deskTool: 1 }); if (S.tab && S.tab !== 'mine') hbPush('tab', tabPop, { deskTab: 1 }); }   // 다른 메뉴에 다녀온 뒤: 열려 있던 카드·탭을 다시 겹으로
+    function hbLeave() { if (!HB.stack.length) return; plusClose(false); pkClose(false); zoomClose(); HB.stack.length = 0; hbSync(); }   // 다른 메뉴로 넘어감: 쌓아 둔 칸을 걷는다(그 메뉴에서의 뒤로가기가 헛돌지 않게)
+    function zoomClose() { const z = $('desk-zoom'); if (z && !z.hidden) z.hidden = true; hbDrop('zoom'); }
     const PREVIEW_LIST = 5, PREVIEW_INBOX = 5;
     function openFull(sec) {
         if (!sec || S.full === sec) return;
@@ -419,7 +461,7 @@
         S.full = sec;
         sec.classList.add('is-full');
         document.body.classList.add('desk-full-open');
-        try { history.pushState({ deskFull: sec.id }, ''); } catch (e) { /* 기록 없이도 닫기·Esc로 닫힌다 */ }
+        hbPush('full', () => closeFull(true), { deskFull: sec.id });
         sec.scrollTop = 0;
         const c = sec.querySelector('.desk-close'); if (c) c.focus({ preventScroll: true });
     }
@@ -429,7 +471,7 @@
         S.full = null;
         sec.classList.remove('is-full');
         document.body.classList.remove('desk-full-open');
-        if (!fromPop && history.state && history.state.deskFull) { S.skipPop = true; history.back(); }
+        hbDrop('full');
         const m = sec.querySelector('.desk-more-all'); if (m && pageActive()) m.focus({ preventScroll: true });
     }
     function setMore(id, hidden) {
@@ -558,7 +600,7 @@
         m.hidden = false; $('desk-plus-back').hidden = false; b.setAttribute('aria-expanded', 'true');
         m.style.maxHeight = getComputedStyle(m).position === 'absolute' ? Math.max(220, Math.round(window.innerHeight - m.getBoundingClientRect().top - 16)) + 'px' : '';   // PC 팝오버는 화면 아래로 넘치지 않게(넘치면 판 안에서 스크롤)
         document.body.classList.add('desk-plus-open');   // 폰 시트가 떠 있는 동안 뒤 화면 스크롤 잠금(CSS 가 폰 폭에서만)
-        if (plusSheet()) { try { history.pushState({ deskPlus: 1 }, ''); PLUS.hist = true; } catch (e) { PLUS.hist = false; } }   // 폰: 뒤로가기 = 시트 닫기(페이지를 떠나지 않게 · 문자 창과 같은 방식)
+        if (hbTouch()) hbPush('plus', () => plusClose(true), { deskPlus: 1 });   // 폰: 뒤로가기 = 시트 닫기(페이지를 떠나지 않게 · 문자 창과 같은 방식)
         const first = plusItems()[0]; if (first) first.focus({ preventScroll: true });
     }
     // 돌려주는 값 true = 닫으면서 기록을 한 칸 되돌리는 중(곧 popstate 가 온다 — 이어서 기록을 쌓을 일은 그 뒤에)
@@ -567,8 +609,7 @@
         m.hidden = true; $('desk-plus-back').hidden = true; const b = $('desk-plus-btn'); b.setAttribute('aria-expanded', 'false');
         document.body.classList.remove('desk-plus-open');
         if (focusBtn) b.focus({ preventScroll: true });
-        const had = PLUS.hist; PLUS.hist = false;
-        if (had && !fromPop && history.state && history.state.deskPlus) { PLUS.skip++; try { history.back(); return true; } catch (e) { PLUS.skip--; } }
+        hbDrop('plus');
         return false;
     }
     // 도구를 닫았을 때 초점이 돌아갈 곳 — 그 일의 바로가기가 떠 있으면 거기, 아니면 [+]
@@ -579,21 +620,7 @@
         const btn = $('desk-plus-btn'), menu = $('desk-plus');
         btn.addEventListener('click', () => { if (menu.hidden) plusOpen(); else plusClose(true); });
         $('desk-plus-back').addEventListener('click', () => plusClose(true));
-        const runAfter = () => { const fn = PLUS.after; PLUS.after = null; if (fn) fn(); };
-        // 폰 시트에서 항목을 고르면: 시트의 기록 칸을 먼저 되돌리고(popstate) 그 뒤에 항목을 실행한다 — 문자·최종발주 창이 곧바로 자기 칸을 쌓는데, 되돌리기가 뒤늦게 오면 그 칸을 빼 버리기 때문
-        menu.addEventListener('click', e => {
-            const it = e.target.closest('.desk-mi'); if (!it || PLUS.replay) return;
-            if (PLUS.hist && history.state && history.state.deskPlus) {
-                e.stopPropagation(); e.preventDefault();
-                PLUS.after = () => { PLUS.replay = true; try { it.click(); } finally { PLUS.replay = false; } };
-                if (!plusClose(false)) runAfter(); else setTimeout(runAfter, 400);
-            }
-        }, true);
         menu.addEventListener('click', e => { const it = e.target.closest('.desk-mi'); if (!it) return; plusClose(false); plusUsed(it.dataset.mk); });   // 항목 자신의 누름 처리가 먼저 돈 뒤 판을 닫는다
-        window.addEventListener('popstate', () => {
-            if (PLUS.skip > 0) { PLUS.skip--; runAfter(); return; }
-            if (!menu.hidden && !(history.state && history.state.deskPlus)) plusClose(true, true);   // 뒤로가기 = 시트 닫기
-        });
         menu.addEventListener('keydown', e => {
             const items = plusItems(), i = items.indexOf(document.activeElement);
             const go = n => { e.preventDefault(); const t = items[(n + items.length) % items.length]; if (t) t.focus({ preventScroll: true }); };
@@ -604,11 +631,11 @@
         btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown' && menu.hidden) { e.preventDefault(); plusOpen(); } });
         document.addEventListener('mousedown', e => { if (!menu.hidden && !e.target.closest('#desk-plus, #desk-plus-btn, #desk-plus-back')) plusClose(false); });
         $('desk-shorts').addEventListener('click', e => { const s = e.target.closest('.desk-short'); if (!s) return; if (s.dataset.go === 'sms' && inbOk()) { inbOpenFirst(); return; } const t = $(PLUS_ID[s.dataset.go]); if (t && !t.disabled) { t.click(); plusUsed(s.dataset.go); } });
-        try { if (history.state && history.state.deskPlus) history.replaceState(null, ''); } catch (e) { /* 그대로 */ }   // 새로고침 뒤 남은 칸
         plusShorts();
     }
     function toolShow(id) {   // 도구 카드는 한 번에 하나만
         plusClose(false);   // #653-나: 다른 카드·창이 뜨면 [+] 메뉴는 닫는다
+        if (TOOLS.includes(id)) hbPush('tool', toolPop, { deskTool: 1 }); else hbDrop('tool');   // #677 배송조회·중간발주·가격 카드 = 겹 하나(카드끼리 바꿔도 한 칸)
         if (id !== 'desk-sms') smsWinCleanup();   // #653: 문자 창이 떠 있었으면 창 흔적(스크롤 잠금·뒤로가기 기록)을 걷는다
         ['desk-ship', 'desk-qty', 'desk-sms', 'desk-price'].forEach(k => { const el = $(k); if (el) el.hidden = k !== id; });   // desk-price(#612)는 처음 열 때 생긴다
         if (id !== 'desk-ship') clearTimeout(SHIP.timer);
@@ -1065,10 +1092,11 @@
         if (PK.open) pkClose(false);
         const p = pkEl(); PK.open = true; PK.i = Number(row.dataset.i); PK.kind = btn.dataset.pick; PK.sel = btn.value; $('qty-pickq').value = '';
         p.hidden = false; $('qty-pickback').hidden = false; btn.setAttribute('aria-expanded', 'true'); pkDraw(); pkPlace();
+        if (hbTouch()) hbPush('pick', () => pkClose(false), { deskPick: 1 });
         if (pkMobile() || $('qty-pick-qbox').hidden) p.focus({ preventScroll: true }); else $('qty-pickq').focus({ preventScroll: true });   // 폰은 자판이 시트를 가리지 않게 거르기 칸에 바로 커서를 두지 않는다
     }
     function pkClose(focusBack) {
-        if (!PK.open) return; PK.open = false; const p = document.getElementById('qty-pickpanel'), bk = document.getElementById('qty-pickback'), b = pkBtn();
+        if (!PK.open) return; PK.open = false; hbDrop('pick'); const p = document.getElementById('qty-pickpanel'), bk = document.getElementById('qty-pickback'), b = pkBtn();
         if (p) p.hidden = true; if (bk) bk.hidden = true;
         if (b) { b.setAttribute('aria-expanded', 'false'); if (focusBack) b.focus({ preventScroll: true }); }
     }
@@ -1264,7 +1292,7 @@
             if (from !== 'sms') { SMS.sig = ''; smsHead(); smsList(); }
         } else {
             cols.hidden = true; host.hidden = false;
-            try { a.mount(host, { ch, openId: openId == null || openId === '' ? undefined : openId, onThread: inbOnThread }); } catch (e) { /* 못 그리면 빈 칸 — 탭으로 돌아갈 수 있다 */ }
+            try { a.mount(host, { ch, openId: openId == null || openId === '' ? undefined : openId, onThread: inbOnThread, onView: inbOnView }); } catch (e) { /* 못 그리면 빈 칸 — 탭으로 돌아갈 수 있다 */ }
         }
         if (hadTh && !openId && smsHistAt() === 'th') smsHistBack(1);   // 떠난 탭에서 펴 둔 대화의 칸을 되돌린다(새 대화를 바로 펼 때는 그 칸을 이어 쓴다)
         inbTabs(); if (ch === 'sms') smsHead(); else inbSub();
@@ -1287,19 +1315,20 @@
         try { if (a.refresh) a.refresh(); } catch (e) { /* 다음 틱에 */ }
         if (!INB.known && inbOk()) { INB.known = true; inbTabs(); plusShorts(); }
     }
-    const smsHist = { skip: 0 };
-    const smsHistAt = () => { try { return (history.state && history.state.smsWin) || ''; } catch (e) { return ''; } };   // '' | 'win' | 'th'
-    const smsHistPush = k => { try { history.pushState({ smsWin: k }, ''); } catch (e) { /* 기록 없이도 닫기·Esc 로 닫힌다 */ } };
-    const smsHistBack = n => { if (n > 0) { smsHist.skip++; try { history.go(-n); } catch (e) { smsHist.skip--; } } };
-    // 「자세히 확인하기」 전체 화면이 떠 있으면 먼저 닫고, 그 닫힘이 기록을 되돌리는 것(비동기)을 기다린 뒤에 이어 간다 — 바로 이어 창을 열면 뒤늦게 온 뒤로가기가 방금 연 문자 창의 칸을 빼 버린다
-    function smsAfterFull(fn) {
-        if (!S.full) { fn(); return; }
-        const willPop = !!(history.state && history.state.deskFull);
-        closeFull();
-        if (!willPop) { fn(); return; }
-        let done = false; const go = () => { if (done) return; done = true; window.removeEventListener('popstate', go); fn(); };
-        window.addEventListener('popstate', go); setTimeout(go, 400);
+    // #677: 창 'win' · 대화 'th' 칸은 HB 의 겹(sms-win · sms-th) — 그 위에 사진(sms-view)·구매이력 펼침(sms-buy)
+    const smsHistAt = () => hbHas('sms-th') ? 'th' : hbHas('sms-win') ? 'win' : '';   // '' | 'win' | 'th'
+    const smsHistPush = k => hbPush('sms-' + k, k === 'th' ? smsPopTh : smsPopWin, { smsWin: k });
+    const smsHistBack = n => { if (!(n > 0)) return; if (n >= 2 || !hbHas('sms-th')) hbDrop('sms-view', 'sms-buy', 'sms-th', 'sms-win'); else hbDrop('sms-view', 'sms-buy', 'sms-th'); };
+    function smsPopTh() {   // 뒤로가기로 대화 칸이 빠짐 → 대화만 접는다
+        if (INB.ch !== 'sms') { const a = inbApi(); try { for (let i = 0; a && i < 3 && a.isOpen(); i++) a.back(); } catch (e) { /* 다음 조작에서 맞춰진다 */ } }
+        else if (SMS.open) smsThreadClose(true, true);
     }
+    function smsPopWin() { if (document.body.classList.contains('sms-win-open')) smsCloseCard(); }   // 창 칸까지 빠짐 → 창 닫기
+    function smsPopView() { if (smsViewClose()) return; const v = document.getElementById('inb-view'), a = inbApi(); if (v && !v.hidden && a) { try { a.back(); } catch (e) { /* 그대로 */ } } }
+    function inbOnView(open) { if (open) hbPush('sms-view', smsPopView, { smsWin: 'th' }); else hbDrop('sms-view'); }   // 톡톡·문의 탭의 사진 크게 보기(AkmInbox 가 부른다)
+    function smsPopBuy() { if (SMS.open) SMS.buyOpen.delete(SMS.open); SMS.buyShow = 5; smsBuyRender(); const bo = document.getElementById('sms-order'); if (bo) bo.scrollTop = 0; }
+    function smsBuyLyr() { if (SMS.open && SMS.buyOpen.has(SMS.open) && document.querySelector('#sms-order.has-more')) hbPush('sms-buy', smsPopBuy, { smsWin: 'th' }); else hbDrop('sms-buy'); }
+    function smsAfterFull(fn) { if (S.full) closeFull(); fn(); }   // 「자세히 확인하기」 전체 화면이 떠 있으면 먼저 닫는다(기록 되돌리기는 HB 가 한 줄로 세운다)
     function smsWinShow() {
         const was = smsVisible() && document.body.classList.contains('sms-win-open');
         toolShow('desk-sms');
@@ -1450,7 +1479,7 @@
         if (read && SMS.scope === 'open' && !SMS.q && SMS.items) SMS.items = SMS.items.filter(i => i.id !== id || smsOld(i) || smsWhy(i));   // #660 [답 안 한 것만]: 읽은 대화는 빠진다(사람 몫 사유가 남은 대화는 그대로)
         const pane = $('sms-pane'); if (pane) pane.innerHTML = '<div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div>';
         const card = $('desk-sms'); if (card) card.classList.remove('sms-open');
-        if (!keepHist && smsHistAt() === 'th') smsHistBack(1);   // 화면에서 접었으면 쌓아 둔 뒤로가기 칸도 되돌린다
+        if (!keepHist && smsHistAt() === 'th') smsHistBack(1); else hbDrop('sms-view', 'sms-buy');   // 화면에서 접었으면 쌓아 둔 뒤로가기 칸도 되돌린다
         smsVv();
         SMS.sig = ''; smsRenderList();
         if (focusRow) { const r = document.querySelector('#sms-list .sms-item[data-id="' + id + '"] .sms-row') || document.querySelector('#sms-list .sms-row') || document.querySelector('#sms-list .sms-empty-go') || $('sms-q'); if (r) r.focus({ preventScroll: true }); }
@@ -1502,7 +1531,7 @@
             const line = String((ow && ow.line) || t.order_hint || '').trim();   // 칸이 없는 옛 응답은 서버가 지어 준 한 줄
             if (line) html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 14일</small></div><div class="sms-buy-i"><dl class="sms-buy-g">${`<div class="sms-buy-r"><dt>요약</dt><dd data-k="line">${esc(line)}</dd></div>`}</dl></div>`;
         }
-        box.classList.toggle('none', !html); box.classList.toggle('has-more', list.length > 1);   // #659 2건 이상이면 판 아무 곳이나 눌러 펼침·접힘
+        box.classList.toggle('none', !html); box.classList.toggle('has-more', list.length > 1); smsBuyLyr();   // #659 2건 이상이면 판 아무 곳이나 눌러 펼침·접힘
         const sig = html || 'none:' + days;
         if (box.dataset.sig === sig) return;   // 폴링마다 다시 그리지 않는다(더보기 누르던 초점 유지)
         box.dataset.sig = sig;
@@ -1584,11 +1613,11 @@
     }
     function smsView(id, from) {
         const v = $('sms-view'), img = $('sms-view-img');
-        img.removeAttribute('src'); v.hidden = false; v._from = from || null;
+        img.removeAttribute('src'); v.hidden = false; v._from = from || null; hbPush('sms-view', smsPopView, { smsWin: 'th' });
         smsImg(id).then(u => { if (!v.hidden) img.src = u; }).catch(() => { smsViewClose(); showToast('사진을 불러오지 못했어요'); });
         $('sms-view-x').focus({ preventScroll: true });
     }
-    function smsViewClose() { const v = $('sms-view'); if (!v || v.hidden) return false; v.hidden = true; const f = v._from; v._from = null; if (f && f.isConnected) f.focus({ preventScroll: true }); return true; }
+    function smsViewClose() { const v = $('sms-view'); if (!v || v.hidden) return false; v.hidden = true; hbDrop('sms-view'); const f = v._from; v._from = null; if (f && f.isConnected) f.focus({ preventScroll: true }); return true; }
     // 답 칸 — 봇 초안 그대로면 [이대로 보내기](send-draft) · 고쳤으면 [고쳐서 보내기](reply) · 초안이 없으면 [답 보내기]
     const smsIsDraft = () => { const t = SMS.thread && SMS.thread.thread, ta = document.getElementById('sms-text'); return !!(t && t.draft_text && ta && ta.value.trim() === String(t.draft_text).trim()); };
     function smsSync() {
@@ -1787,19 +1816,7 @@
         list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } });
         list.addEventListener('input', e => { if (e.target.id === 'sms-text') smsSync(); });
         list.addEventListener('keydown', e => { if (e.target.id === 'sms-text' && e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); smsAct('send'); } });
-        try { if (smsHistAt() && !document.body.classList.contains('sms-win-open')) history.replaceState(null, ''); } catch (e) { /* 그대로 둔다 */ }
         $('desk-sms').addEventListener('mousedown', e => { if (e.target === $('desk-sms')) smsCloseCard(); });   // 창 바깥(어두운 곳) 누름 = 닫기
-        window.addEventListener('popstate', () => {   // 뒤로가기: 대화 → 목록 → 창 닫힘
-            if (smsHist.skip > 0) { smsHist.skip--; return; }
-            const at = smsHistAt();   // 뒤로가기 뒤에 맨 위가 된 칸
-            if (at === 'th') return;                                                   // 아직 대화 칸 위에 있다(다른 화면이 자기 칸을 뺀 것)
-            if (at === 'win') {                                                        // 대화 칸이 빠짐 → 대화만 접는다
-                if (INB.ch !== 'sms') { const a = inbApi(); try { for (let i = 0; a && i < 3 && a.isOpen(); i++) a.back(); } catch (e) { /* 다음 조작에서 맞춰진다 */ } }
-                else if (SMS.open) smsThreadClose(true, true);
-                return;
-            }
-            if (document.body.classList.contains('sms-win-open')) smsCloseCard();      // 창 칸까지 빠짐 → 창 닫기
-        });
         $('sms-view').addEventListener('click', e => { if (e.target.id !== 'sms-view-img') smsViewClose(); });
         document.addEventListener('keydown', e => {
             if (e.key !== 'Escape' || !smsVisible() || !pageActive()) return;
@@ -2163,6 +2180,7 @@
     function setTab(tab) {
         if (!TAB_NAME[tab]) tab = 'mine';
         S.tab = tab;
+        if (tab === 'mine') hbDrop('tab'); else hbPush('tab', tabPop, { deskTab: 1 });   // #677 다른 탭에서 뒤로가기 = 「채팅」 탭으로
         document.querySelectorAll('#desk-tabs .desk-tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === tab)));
         const list = $('desk-list');
         S.sig = ''; S.endAsk = 0;
@@ -2513,9 +2531,9 @@
     // 사진 크게 보기(누르면 열리고, 다시 누르거나 Esc 로 닫힘)
     function zoomMedia(src, label) {
         let z = $('desk-zoom');
-        if (!z) { z = document.createElement('div'); z.id = 'desk-zoom'; z.className = 'desk-zoom'; z.setAttribute('role', 'dialog'); z.setAttribute('aria-label', '사진 크게 보기'); z.addEventListener('click', () => { z.hidden = true; }); document.body.appendChild(z); }
+        if (!z) { z = document.createElement('div'); z.id = 'desk-zoom'; z.className = 'desk-zoom'; z.setAttribute('role', 'dialog'); z.setAttribute('aria-label', '사진 크게 보기'); z.addEventListener('click', zoomClose); document.body.appendChild(z); }
         z.innerHTML = `<img src="${src}" alt="${esc(label || '')}"><div class="desk-zoom-cap">${esc(label || '')} · 누르면 닫혀요</div>`;
-        z.hidden = false;
+        z.hidden = false; hbPush('zoom', zoomClose, { deskZoom: 1 });
     }
     function renderListNow() {
         const box = $('desk-list');
@@ -3125,6 +3143,7 @@
     function tick() {
         if (S.full && !pageActive()) closeFull();
         if (!pageActive() && document.body.classList.contains('sms-win-open')) smsCloseCard();   // 다른 메뉴로 넘어갔으면 문자 창을 걷는다(스크롤 잠금이 남지 않게)
+        if (!pageActive()) hbLeave();
         if (!S.mounted || !pageActive()) return;
         S.tick++;
         clock();
@@ -3269,20 +3288,20 @@
             return 'all';
         } catch (e) { return false; }
     }
-    window.AkmAoDesk = { open: openOrder, openSms: smsOpenById, openInbox: (ch, id) => inbOpen(String(ch || ''), id) };   // openInbox = 알림 링크용(#658 · ch = talk|qna|inquiry)
+    window.AkmAoDesk = { open: openOrder, openSms: smsOpenById, openInbox: (ch, id) => inbOpen(String(ch || ''), id), histIdle: hbIdle, histDepth: () => HB.stack.length };   // openInbox = 알림 링크용(#658 · ch = talk|qna|inquiry)
 
     window.aoDeskEnter = async function () {
         mount();
         if (!S.mounted) return;
         try { if (typeof aoBindEventsOnce === 'function') aoBindEventsOnce(); } catch (e) { console.error('보고서함 연결 실패:', e); }
-        clock();
+        clock(); hbRestore();
         custMenu(); plusShorts(); inbSoon();   // #668
         await Promise.all([loadStatus(), loadOrders(true), loadBoard(), loadInbox(), smsSummary()]);
         if (!S.timer) S.timer = setInterval(tick, 1000);
         // #580: 다른 탭·앱에 갔다 돌아오면 다음 차례를 기다리지 않고 바로 다시 받는다(가려진 동안은 안 받으므로 돌아온 순간이 가장 낡아 있다)
         if (!S.visBound) { S.visBound = true; document.addEventListener('visibilitychange', () => { if (document.hidden || !S.mounted || !pageActive()) return; tickElapsed(); if (!S.loading) loadOrders(false); loadStatus(); smsTick(true); }); }
     };
-    window.__aoDesk = { S, loadOrders, loadStatus, loadBoard, setTab, renderList, loadInbox, renderInbox, plusFocus, plusBusy };
+    window.__aoDesk = { HB, S, loadOrders, loadStatus, loadBoard, setTab, renderList, loadInbox, renderInbox, plusFocus, plusBusy };
     // #620(대표 10/10 「새로고침하면 가끔 화면이 빈다」): app.js 의 로그인 확인이 이 파일보다 먼저 끝나면 switchPage 가 aoDeskEnter 를 못 찾아 옛 화면 길로 빠지고, 그 뒤로는 아무도 그리지 않았다
     //   → 이 파일이 실행된 순간 에이전트 오피스가 이미 떠 있으면 스스로 들어간다(mount 는 S.mounted 로 한 번만).
     if (pageActive()) window.aoDeskEnter().catch(console.error);

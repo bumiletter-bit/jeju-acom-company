@@ -348,8 +348,8 @@
         I.sig = ''; renderList();
         I.tsig = ''; await loadThread(true); loadList(true);
     }
-    function viewOpen(u, from) { const v = $('inb-view'); if (!v) return; $('inb-view-img').src = u; v.hidden = false; v._from = from || null; $('inb-view-x').focus({ preventScroll: true }); }
-    function viewClose() { const v = $('inb-view'); if (!v || v.hidden) return false; v.hidden = true; $('inb-view-img').removeAttribute('src'); const f = v._from; v._from = null; if (f && f.isConnected) f.focus({ preventScroll: true }); return true; }
+    function viewOpen(u, from) { const v = $('inb-view'); if (!v) return; $('inb-view-img').src = u; v.hidden = false; v._from = from || null; $('inb-view-x').focus({ preventScroll: true }); if (I.onView) { try { I.onView(true); } catch (e) { /* 기록 없이도 닫힌다 */ } } }
+    function viewClose() { const v = $('inb-view'); if (!v || v.hidden) return false; v.hidden = true; if (I.onView) { try { I.onView(false); } catch (e) { /* 그대로 */ } } $('inb-view-img').removeAttribute('src'); const f = v._from; v._from = null; if (f && f.isConnected) f.focus({ preventScroll: true }); return true; }
 
     // 폰 자판이 올라오면 대화 화면을 자판 위로(문자 창과 같은 변수 이름 · 값은 우리 칸에 따로 단다)
     function vvNow() {
@@ -403,7 +403,7 @@
         if (!host) return;
         if (I.host && I.host !== host) unmount();
         const same = I.host === host && I.ch === ch && host.firstChild;
-        I.host = host; I.onThread = typeof opt.onThread === 'function' ? opt.onThread : I.onThread;
+        I.host = host; I.onThread = typeof opt.onThread === 'function' ? opt.onThread : I.onThread; I.onView = typeof opt.onView === 'function' ? opt.onView : I.onView;   /* #677 사진 크게 보기도 뒤로가기 한 칸(ao-desk 가 맡는다) */
         bind(host);
         if (!same) {
             if (I.open) threadClose(false, true);
@@ -426,7 +426,7 @@
         clearTimeout(I.qTimer);
         ['--sms-vh', '--sms-kb', '--sms-vt'].forEach(p => I.host.style.removeProperty(p)); I.vvSig = '';
         I.host.classList.remove('inb-open'); I.host.innerHTML = ''; I.lseq++; I.tseq++;
-        I.host = null; I.ch = ''; I.items = null; I.sig = ''; I.onThread = null;
+        I.host = null; I.ch = ''; I.items = null; I.sig = ''; I.onThread = null; I.onView = null;
     }
     function back() { if (viewClose()) return true; if (I.open) { threadClose(true, true); return true; } return false; }   // 기록(history)에서 부르는 용 — onThread 는 안 부른다
     function refresh(now) {
