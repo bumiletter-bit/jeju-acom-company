@@ -32,14 +32,16 @@ function templateByKey(key) {
 //   손님이 [문의하기]를 누르면 알림톡 원문이 채널 상담 채팅에 첨부 = 카카오 문의 고객 즉시 특정(#398).
 //   롤백 = env(또는 이 표)를 구코드(order UJ_9084 · order_reserve UJ_9085 · guide UJ_9087)로 — 아래 MD_TPL_KEY 자동 일치로 버튼까지 함께 복귀.
 // #417(대표 GO 8/28): 가입환영2(UK_5877 — 혜택 3종 문구+[문의하기]) 검수 승인 실측 → 기본 투입. 롤백 = welcome을 UJ_9086으로.
-const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UK_5877', guide: 'UK_5756',
+// #679(10/12): 발송안내4(UM_2824 — 「#{발송일} 출발했습니다!」 · #587 등록 10/8 · 검수 APR) 기본 투입. 발송일 변수는 서버가 늘 채운다(server.js kstMdDow · 빠지면 그 줄이 지워져 카카오가 거절 → 대체 문자).
+//   롤백 = Render env ALIGO_TPL_CODE_GUIDE=UK_5756(배포 없이 · MD_TPL_KEY 자동 일치로 문안·버튼 함께 복귀) 또는 이 표의 guide 를 UK_5756 으로.
+const APPROVED_TPL = { order: 'UK_5754', order_reserve: 'UK_5755', welcome: 'UK_5877', guide: 'UM_2824',
     coupon_issue: 'UL_7570', coupon_expire: 'UL_7571' };   /* #467: 룰렛 쿠폰 안내 — 발급 안내 UL_7570 승인(9/27 투입) · 만료 안내 UL_7571 = 9/23 반려(사용 독려 문구) → 9/27 문안 수정 재검수 → 승인(APR · 문안·버튼 JSON과 바이트 동일 실측) → 대표 GO 투입 */
 // #467: 룰렛 쿠폰 안내 — 코드↔문안·버튼 세트(빈 코드 = 미승인 → 호출 측이 dry 처리)
 function couponTplCode(kind) { return kind === 'expire' ? (process.env.ALIGO_TPL_CODE_COUPON_EXPIRE || APPROVED_TPL.coupon_expire || '') : (process.env.ALIGO_TPL_CODE_COUPON_ISSUE || APPROVED_TPL.coupon_issue || ''); }
 function couponTemplate(kind) { return templateByKey(kind === 'expire' ? 'coupon_expire' : 'coupon_issue'); }
 // #414 🔴 문면·버튼·코드는 세트(불일치 = 알리고 발송 거부): 최종 결정된 tpl_code가 MD판이면 문안·버튼도 templates_md에서 취한다.
 //   env가 구코드(UJ)를 가리키면 자동으로 구버튼 세트 사용 — 어떤 env 상태에서도 코드↔버튼 불일치가 생기지 않는다.
-const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md', 'UK_5877': 'welcome2', 'UL_7570': 'coupon_issue', 'UL_7571': 'coupon_expire' };   /* #417 · #467 룰렛 쿠폰(테스트 발송 sendTestOne도 이 표로 문안·버튼 일치) */
+const MD_TPL_KEY = { 'UK_5754': 'order_normal_md', 'UK_5755': 'order_reserve_md', 'UK_5756': 'ship_guide_md', 'UM_2824': 'ship_guide4', 'UK_5877': 'welcome2', 'UL_7570': 'coupon_issue', 'UL_7571': 'coupon_expire' };   /* #417 · #467 룰렛 쿠폰(테스트 발송 sendTestOne도 이 표로 문안·버튼 일치) */
 // #417: 가입 환영 — 코드↔문안·버튼 자동 일치 (welcome-signup·테스트 발송 공용)
 function welcomeTplCode() { return process.env.ALIGO_TPL_CODE_WELCOME || APPROVED_TPL.welcome; }
 function welcomeTemplate() { const code = welcomeTplCode(); return templateByKey(MD_TPL_KEY[code] || 'welcome'); }
@@ -226,7 +228,7 @@ async function sendAlimtalk({ receiver, subject, message, tplCode, failoverMessa
 //    문면·버튼 = 문안 단일 소스(alimtalk-templates.json 'ship_guide')에서 생성 — 승인 템플릿과 자동 일치.
 //    버튼 링크의 #{상품코드}만 발송 시 실값 치환(버튼명은 변수 금지 — 가이드). E 코드 미투입·템플릿 부재 시 SMS(기존 LMS) 직행.
 async function sendShippingGuideAlimtalk({ receiver, vars, fallback }) {
-    const tplCode = process.env.ALIGO_TPL_CODE_GUIDE || APPROVED_TPL.guide;   // #137 env 우선 → #414 기본 = UK_5756(발송안내3·MD판)
+    const tplCode = process.env.ALIGO_TPL_CODE_GUIDE || APPROVED_TPL.guide;   // #137 env 우선 → #679 기본 = UM_2824(발송안내4 · 종전 UK_5756 발송안내3)
     const tpl = templateByKey(MD_TPL_KEY[tplCode] || 'ship_guide');           /* #414: 코드↔문안·버튼 자동 일치 */
     const messageText = tpl ? buildMessage(vars || {}, tpl.content) : ((fallback && fallback.message) || '');
     if (!switchOn()) return { mode: 'dry-run', status: 'switch-off', via: 'alimtalk-e', messageText };
@@ -321,15 +323,16 @@ async function selftest(opts) {
 // ── 지시 #153-4: 단건 테스트 실발송 — 이모지 실물 확정용. 🔴 대표 GO 후 플래그(aligo_test_send_request)로만 발동.
 //    KAKAO_NOTIFY 스위치와 무관하게 지정 번호 1건만 발송(스위치 전체 ON 없이 검증). 수신번호는 화이트리스트(대표 번호)로 하드 제한.
 const TEST_SEND_ALLOW = ['01066874031', '01065594031'];   // #161: 회사 + 대표 개인 — 이 2개 외 하드 차단
+function kstMdDowNow() { const d = new Date(Date.now() + 9 * 3600 * 1000); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '(' + '일월화수목금토'[d.getUTCDay()] + ')'; }   // #679 시험 발송 기본값만(실발송 값은 server.js kstMdDow 가 채운다)
 async function sendTestOne({ to, key, vars: extVars }) {
     const receiver = String(to || '').replace(/[^0-9]/g, '');
     if (!TEST_SEND_ALLOW.includes(receiver)) return { status: 'blocked', error: '허용 수신번호(대표) 아님' };
     if (!configured()) return { status: 'keys-missing' };
     const KEYMAP = { order: 'order_normal', order_reserve: 'order_reserve', welcome: 'welcome', guide: 'ship_guide' };   // APPROVED_TPL 별칭 → 문안 JSON key
-    const testTplCode = APPROVED_TPL[key || 'welcome'] || APPROVED_TPL.welcome;
+    const testTplCode = (key === 'guide' && process.env.ALIGO_TPL_CODE_GUIDE) || APPROVED_TPL[key || 'welcome'] || APPROVED_TPL.welcome;   // #679: 발송안내 시험은 실발송과 같은 코드로(env 롤백 중이면 그 코드)
     const tpl = templateByKey(MD_TPL_KEY[testTplCode] || KEYMAP[key || 'welcome'] || key);   /* #414: 테스트도 코드↔버튼 자동 일치 */
     if (!tpl) return { status: 'no-template', key };
-    const vars = Object.assign({ '고객명': '전승범', '상품명': '미니밤호박 특품최상급 특품 5kg(10~20개)', '발송안내': '내일 오전 발송 예정입니다.', '도착안내': '내일 (토) 도착 예정', '송장번호': '123456789012', '상품코드': '216' }, extVars || {});   // #161: 플래그의 실감 변수로 오버라이드
+    const vars = Object.assign({ '고객명': '전승범', '상품명': '미니밤호박 특품최상급 특품 5kg(10~20개)', '발송안내': '내일 오전 발송 예정입니다.', '도착안내': '내일 (토) 도착 예정', '발송일': kstMdDowNow(), '송장번호': '123456789012', '상품코드': '216' }, extVars || {});   // #161: 플래그의 실감 변수로 오버라이드
     const message = buildMessage(vars, tpl.content);
     let buttons = null;
     if (tpl.button) {

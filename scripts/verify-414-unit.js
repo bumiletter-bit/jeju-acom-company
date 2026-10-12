@@ -9,7 +9,7 @@ const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  �
 (async () => {
   // ① 기본 코드 = MD판
   ok(K.orderTplCode(false) === 'UK_5754' && K.orderTplCode(true) === 'UK_5755', '① 주문 코드 기본값 = UK_5754/UK_5755', K.orderTplCode(false) + '/' + K.orderTplCode(true));
-  ok(K.APPROVED_TPL.guide === 'UK_5756' && K.APPROVED_TPL.welcome === 'UK_5877', '① 발송안내 UK_5756 · 가입환영 UK_5877(가입환영2) 유지', K.APPROVED_TPL.welcome);   // #585: 가입환영은 UK_5877 로 바뀐 지 오래(기대값만 갱신)
+  ok(K.APPROVED_TPL.guide === 'UM_2824' && K.APPROVED_TPL.welcome === 'UK_5877', '① 발송안내 UM_2824(발송안내4 · #679) · 가입환영 UK_5877(가입환영2) 유지', K.APPROVED_TPL.guide);   // #585: 가입환영은 UK_5877 로 바뀐 지 오래(기대값만 갱신)
 
   // ② 코드↔문안·버튼 자동 일치 — 주문 템플릿이 MD판 엔트리를 집는다
   const tN = K.orderTemplate(false), tR = K.orderTemplate(true);
@@ -27,9 +27,24 @@ const ok = (c, t, d) => { c ? pass++ : fail++; console.log((c ? '  ✅ ' : '  �
   ok(same('ship_guide', 'ship_guide_md'), '③ 발송안내 문안 = 구판과 바이트 동일');
 
   // ④ 발송안내 dry 경로 — MD판 문안으로 조립(스위치 off → 실호출 0)
-  const vars = { '고객명': '검증', '상품명': '테스트 상품', '도착안내': '내일 도착 예정', '상품코드': '1', '송장번호': '123' };
+  const vars = { '고객명': '검증', '상품명': '테스트 상품', '도착안내': '내일 도착 예정', '발송일': '10/12(월)', '상품코드': '1', '송장번호': '123' };
   const dry = await K.sendShippingGuideAlimtalk({ receiver: '01000000000', vars, fallback: { message: 'FB' } });
   ok(dry.mode === 'dry-run' && dry.via === 'alimtalk-e' && dry.messageText.includes('검증님'), '④ 발송안내 dry 조립 정상(실호출 0)', dry.status);
+
+  // ⑥ #679 발송안내4(UM_2824) — 문안은 발송안내3과 「오늘」→「#{발송일}」 한 곳만 다르고 버튼 4개는 같다 · 발송일이 빠지면 그 줄이 지워진다(= 카카오 거절 → 대체 문자) · env 로 UK_5756 롤백
+  const g4 = K.templateByKey('ship_guide4');
+  ok(g4 && gMd.content.replace('오늘 출발했습니다!', '#{발송일} 출발했습니다!') === g4.content && JSON.stringify(g4.button) === JSON.stringify(gMd.button), '⑥ 발송안내4 문안 = 발송안내3 에서 한 곳만 · 버튼 4개 동일');
+  const v4 = vars; const noDay = Object.assign({}, vars); delete noDay['발송일'];
+  const dryNo = await K.sendShippingGuideAlimtalk({ receiver: '01000000000', vars: noDay, fallback: { message: 'FB' } });
+  const d4 = await K.sendShippingGuideAlimtalk({ receiver: '01000000000', vars: v4, fallback: { message: 'FB' } });
+  ok(d4.messageText === g4.content.replace('#{고객명}', '검증').replace('#{상품명}', '테스트 상품').replace('#{발송일}', '10/12(월)').replace('#{도착안내}', '내일 도착 예정') && !d4.messageText.includes('#{'), '⑥ 기본 코드 = 발송안내4 문안으로 조립(변수 4개 치환 · 남은 자리표 0)', d4.messageText.split(String.fromCharCode(10))[1]);
+  ok(!dryNo.messageText.includes('출발했습니다'), '⑥ 발송일 없이 부르면 그 줄이 빠진다(호출부 두 곳이 늘 채워야 함)');
+  const srv = require('fs').readFileSync(require('path').join(PROJ, 'server.js'), 'utf8');
+  ok(srv.split("'발송일': kstMdDow(Date.now())").length - 1 === 2 && srv.split('kakaoNotify.sendShippingGuideAlimtalk(').length - 1 === 2, '⑥ server.js 발송안내 호출 2곳 모두 발송일을 채움');
+  process.env.ALIGO_TPL_CODE_GUIDE = 'UK_5756';
+  const dOld = await K.sendShippingGuideAlimtalk({ receiver: '01000000000', vars: v4, fallback: { message: 'FB' } });
+  ok(dOld.messageText.includes('오늘 출발했습니다!') && !dOld.messageText.includes('10/12(월)'), '⑥ env=UK_5756 → 발송안내3 문안으로 자동 복귀(롤백)');
+  delete process.env.ALIGO_TPL_CODE_GUIDE;
 
   // ⑤ env 롤백 = 코드·문안·버튼 세트가 통째로 구판 복귀(불일치 원천 차단 증명)
   process.env.ALIGO_TPL_CODE = 'UJ_9084'; process.env.ALIGO_TPL_CODE_RESERVE = 'UJ_9085';
