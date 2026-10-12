@@ -435,7 +435,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         await P.pg.tap('#desk-list .desk-turn[data-oid="161"] [data-act="pendcancel"]');
         // 현황판 접기
         const p0 = await bd(P.pg);
-        ok('390px — 현황판 기본 접힘 · [현황판 보기] 버튼(44px 이상 · aria-expanded=false)', p0.btn && !p0.board && p0.text === '현황판 보기' && p0.exp === 'false' && p0.btnH >= 44 && p0.panels >= 3, JSON.stringify(p0));
+        ok('390px — 현황판 기본 접힘(#666-b 「지금 챙길 일」 칸만 보임) · [현황판 보기] 버튼(44px 이상 · aria-expanded=false)', p0.btn && p0.folded && p0.text === '현황판 보기' && p0.exp === 'false' && p0.btnH >= 44 && p0.panels >= 3, JSON.stringify(p0));
         await shot(P.pg, '7-390-현황판-접힘', '#desk-board-fold');
         await P.pg.tap('#desk-board-fold');
         await sleep(300);
@@ -445,7 +445,7 @@ const waitFor = async (fn, ms) => { const t = Date.now(); let v; while (Date.now
         await P.pg.tap('#desk-board-fold');
         await sleep(300);
         const p2 = await bd(P.pg);
-        ok('다시 누름 → 접힘', !p2.board && p2.text === '현황판 보기' && p2.exp === 'false');
+        ok('다시 누름 → 접힘', p2.folded && p2.text === '현황판 보기' && p2.exp === 'false');
         ok('390px — 칸 순서 그대로(버튼은 section이 아님)', JSON.stringify(p0.order) === '["desk-top","desk-ship","desk-qty","desk-sms","desk-listbox","desk-inbox","desk-board"]'   /* 도구 카드 칸(#594 배송조회 · #595 중간발주 · #610 문자)은 접힌 section 으로 늘 있다 */, JSON.stringify(p0.order));
         ok('390px — pageerror 0 · console error 0', P.errors.length === 0 && P.cons.length === 0, [...P.errors, ...P.cons].join(' | ').slice(0, 400));
         await P.ctx.close();

@@ -709,3 +709,16 @@ html[data-ao-theme="dark"] .fo-info li[data-info-src="memo"] { background: color
 .fo-qimg { overflow-x: auto; min-width: 0; }
 .fo-qimg img { display: block; max-width: 100%; height: auto; }
 .fo-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* ── #673(총검토 #670-A) 폴드 펼침(641~960)·터치 기기: 누르는 것 44px — 마우스 PC 의 낮춘 크기(#611)는 그대로. 640 이하는 위 규칙들이 이미 44px ── */
+@media (min-width: 641px) and (max-width: 960px), (min-width: 641px) and (pointer: coarse) {
+    .fo-theme { width: 44px; height: 44px; }
+    .fo .fo-btn, .fo .fo-btn.sm, .fo .fo-btn.sm.fo-igo { min-height: 44px; }
+    .fo-kind { min-height: 44px; }
+    .fo .fo-chip, .fo-fix[data-compact] .fo-chip { min-height: 44px; }
+    .fo .fo-fix[data-compact] input[type="text"], .fo .fo-fix[data-compact] textarea, .fo .fo-boxrow .fo-boxin { min-height: 44px; }
+    .fo-fix[data-compact] .fo-optbtn, .fo-fix[data-compact] .fo-boptbtn { min-height: 44px; }
+    .fo-fix[data-compact] .fo-card-acts .fo-btn { min-height: 44px; }
+    .fo-boxskip { min-height: 44px; }
+}
+/* #673 「직접 고치기」 머리의 작은 글 — 인디고 옅은 바탕 위 대비 4.39 → 5.3(주간만 · 야간은 토큰 그대로) */
+html:not([data-ao-theme="dark"]) .fo-fix > summary small { color: #586174; }

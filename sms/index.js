@@ -253,6 +253,7 @@ module.exports = function mountSms(app, deps) {
     //   조건: 설정 preorders === true · lookup_refresh.enabled !== false · 같은 번호 per_number_min(10)분에 1회 · 전체 1시간 hourly_cap(20)회 · 주기 수집이 5분 안에 돌았거나 도는 중이면 생략 ·
     //   한꺼번에 한 번만(겹친 문자는 같은 조회를 기다림) · timeout_sec(10) 넘거나 실패하면 종전대로 「주문 없음」. 받아온 줄은 얹기만(preorders.collect merge — 옛 줄 셈·삭제 없음)
     const _rfNum = new Map(); let _rfHour = [], _rfBusy = null;
+    const RF_LOCK_MS = Number(deps.refreshLockMs) > 0 ? Number(deps.refreshLockMs) : 120000;
     const channelBusy = () => { try { return typeof deps.ordersBusy === 'function' && !!deps.ordersBusy(); } catch (e) { return false; } };
     function refreshCfg(raw) {
         const v = (raw && typeof raw.lookup_refresh === 'object' && raw.lookup_refresh) || {}; const num = (x, d, min, max) => { const n = Math.floor(Number(x)); return Number.isFinite(n) && n >= min && n <= max ? n : d; };
@@ -280,7 +281,8 @@ module.exports = function mountSms(app, deps) {
             let timer; const o = await Promise.race([run, new Promise(res => { timer = setTimeout(() => res({ timeout: true }), limit); if (timer.unref) timer.unref(); })]); clearTimeout(timer);
             return o.timeout ? 'timeout' : (o.error ? 'error' : 'done');
         })();
-        _rfBusy = job; run.then(o => { if (_rfBusy === job) _rfBusy = null; if (o.error) log.error('[문자] 즉시 주문 조회 실패(종전대로 주문 없음):', o.error); });   // 시간 초과여도 실제 조회가 끝날 때까지는 다음 조회·주기 수집을 막는다
+        _rfBusy = job; const rel = setTimeout(() => { if (_rfBusy === job) { _rfBusy = null; log.error('[문자] 즉시 주문 조회가 ' + Math.round(RF_LOCK_MS / 1000) + '초 넘게 안 끝나 잠금을 풉니다'); } }, RF_LOCK_MS); if (rel.unref) rel.unref();   // #671 조회가 안 끝나도 잠금은 2분까지만(즉시 조회·주기 수집이 멈추지 않게)
+        run.then(o => { clearTimeout(rel); if (_rfBusy === job) _rfBusy = null; if (o.error) log.error('[문자] 즉시 주문 조회 실패(종전대로 주문 없음):', o.error); });   // 시간 초과여도 실제 조회가 끝날 때까지는 다음 조회·주기 수집을 막는다
         return job;
     }
     async function orderForFresh(digits, c, bucket, first) {
@@ -1066,16 +1068,19 @@ module.exports = function mountSms(app, deps) {
     const ACTIVE_SQL = `t.status <> 'ignored' AND ${UNREAD_SQL} > 0 ${TEST_HIDE_T2}`;   // 목록(scope=active): 안 읽은 글이 있는 대화 · 인증번호·광고·통신사만 온 번호(ignored)는 뺀다
     const OPEN_SQL = `t.status NOT IN ('closed','ignored') AND t.staff_why IS NOT NULL ${TEST_HIDE_T2}`;   // #664 목록(scope=open · 미처리) = 사람 몫(직원 확인 필요)만 — 끝난·무시 제외 · 안 읽음은 안 섞는다(읽어도 남고 · 직원이 답하거나 끝내면 빠짐)
     // #661 「확인 필요 문의」 칸·손님 연락 창 숫자에 문자 미답변(scope=open 과 같은 식)을 내준다 — desk-inbox.js 의 고리로(server.js 무접촉)
+    let _cardSms = async () => null;
     try {
-        require('../desk-inbox.js').hook('sms', async () => {
+        _cardSms = async () => {
             const n = (await pool.query(`SELECT (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open, (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread`)).rows[0];
             // 카드 줄 = 전체 대화(무시 갈래 제외) 최근순 30 — 미처리(사람 몫 = scope=open 과 같은 식 · #664) 줄을 빠짐없이 먼저 담는다
             const rows = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread, (${OPEN_SQL}) AS is_open, count(*) OVER ()::int AS total FROM sms_threads t WHERE t.status <> 'ignored' ${TEST_HIDE_T2}
                 ORDER BY (${OPEN_SQL}) DESC, COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT 30`)).rows;
+            await fillHints(rows);   // #672 카드의 문자 줄도 낡은 「주문을 찾지 못한 번호」를 구매이력으로 고친다(빈 줄만 · 같은 상한·기억)
             const items = rows.map(t => { const p = pub(t); return Object.assign({ kind: 'sms', needs_reply: !!t.is_open, done: false, last_text: p.last_dir === 'out' ? p.last_out_text : p.last_in_text }, p); })
                 .sort((a, b) => new Date(b.last_at || 0) - new Date(a.last_at || 0));
             return { open: n.open, unread: n.unread, more: rows.length ? Math.max(0, rows[0].total - rows.length) : 0, items };
-        });
+        };
+        require('../desk-inbox.js').hook('sms', () => _cardSms());
     } catch (e) { }
     app.get('/api/sms/summary', authMiddleware, wrap(async (req, res) => {
         const c = await cfg(); const st = (await naverCfgGet('sms_gateway_state')) || {};
@@ -1116,6 +1121,7 @@ module.exports = function mountSms(app, deps) {
         if (!deps.testMode) where.push(`t.phone_digits NOT LIKE '0999%'`);   // #648: 목록 전 갈래(active·all·찾기·상태)에서 시험 번호 대화를 뺀다(대화 한 건 조회는 id 직접이라 그대로)
         args.push(limit);
         const rows = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE ${where.join(' AND ')} ORDER BY COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT $${args.length}`, args)).rows;
+        await fillHints(rows);   // #672 「주문을 찾지 못한 번호」가 낡았으면 구매이력으로 고쳐 보여 준다
         res.json({ scope: (hasStatus && status !== 'all') ? 'status' : q ? 'all' : (scope || 'legacy'), items: rows.map(pub) });
     }));
     app.get('/api/sms/threads/:id', authMiddleware, wrap(async (req, res) => {
@@ -1128,10 +1134,35 @@ module.exports = function mountSms(app, deps) {
             FROM sms_messages m WHERE m.thread_id = $1 ORDER BY m.id LIMIT 300`, [id])).rows;
         const cH = await cfg(); let hist = { items: [], more: false };
         try { hist = await staffHistory(t.phone_digits, cH); } catch (e) { log.error('[문자] 구매이력 읽기 실패(무시):', e.message); }   // #654 실패해도 대화는 열린다
+        if (!t.order_hint) await saveHint(t, hist);   // #672 받은 뒤에 주문이 생긴 번호 — 여는 순간 목록 줄 글도 고친다
         res.json({ thread: pub(t), messages: ms.map(m => ({ id: m.id, direction: m.direction, kind: m.kind, body: m.body, sender: m.sender, state: m.state, bucket: m.bucket, rule_kind: m.rule_kind, image_ids: m.image_ids, event_at: m.event_at, fail_reason: m.fail_reason, send_after: (m.direction === 'out' && m.state === 'queued') ? (m.send_after || null) : null })), order: t.order_json || null, history: hist.items, history_days: cH.history_days, history_more: hist.more });
     }));
     // #654(대표 10/11 「60일 구매이력으로」): 직원 화면 전용 — 그 번호가 받는 분 또는 구매자인 송장 묶음(발송일 + 받는 분) history_days 일치 전부 + 발송 전 주문. 최신순 · 최대 60건(#657 · 종전 20).
     //   🔴 봇의 자동 답 판정용 주문 찾기(lookup_days 14일)와는 따로다 · CJ 재조회 없음(저장된 상태만) · 손님에게 나가는 글·알림·한 줄 요약에는 쓰지 않는다
+    // #672(워커4 발견 10/12): 목록 줄의 「주문을 찾지 못한 번호」(order_hint 빈값)는 글을 받은 순간의 판정이라, 그 뒤 주문이 생기거나(발송 전 주문·송장 올리기) 주문이 여러 건(봇 판정 many)이면 낡은 채 남는다 →
+    //   직원 화면용 구매이력(staffHistory · 60일)에 줄이 있으면 한 줄 요약을 만들어 order_hint 에 적는다(빈값일 때만 · updated_at 안 건드림 · order_json·봇 답 판정은 무접촉 · 손님 글에는 안 쓰임).
+    //   목록에서는 빈값인 줄만 한 번에 HINT_FILL_MAX 건까지 보고, 없었던 번호는 HINT_MISS_MS 동안 다시 안 본다(목록을 자주 불러도 조회가 쌓이지 않게)
+    const HINT_FILL_MAX = 15, HINT_MISS_MS = 10 * 60000; const _hintMiss = new Map();
+    const mdOf = v => { if (!v) return ''; const s = v instanceof Date ? kstDate(v.getTime()) : String(v); return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(5, 10).replace('-', '/') : ''; };
+    function hintLineOf(hist) {
+        const it = hist && Array.isArray(hist.items) ? hist.items : []; if (!it.length) return null; const f = it[0];
+        return [it.length > 1 ? '구매이력 ' + it.length + (hist.more ? '건 이상' : '건') : '', f.pre ? '발송 전' : (mdOf(f.ship_date) ? mdOf(f.ship_date) + ' 발송' : ''), f.option_text, f.pre ? '' : f.status_text].filter(Boolean).join(' · ').slice(0, 200) || null;
+    }
+    async function saveHint(t, hist) {
+        try { const line = hintLineOf(hist); if (!line) return false; t.order_hint = line; await pool.query(`UPDATE sms_threads SET order_hint = $2 WHERE id = $1 AND order_hint IS NULL`, [t.id, line]); return true; }
+        catch (e) { log.error('[문자] 주문 요약 고치기 실패(무시):', e.message); return false; }
+    }
+    async function fillHints(rows) {
+        try {
+            const c = await cfg(); const now = Date.now(); let n = 0;
+            for (const t of rows) {
+                if (t.order_hint || t.status === 'ignored' || !/^0\d{8,11}$/.test(String(t.phone_digits || ''))) continue;
+                const miss = _hintMiss.get(t.phone_digits); if (!deps.testMode && miss && now - miss < HINT_MISS_MS) continue;
+                if (++n > HINT_FILL_MAX) break;
+                if (!(await saveHint(t, await staffHistory(t.phone_digits, c)))) { if (_hintMiss.size > 2000) _hintMiss.clear(); _hintMiss.set(t.phone_digits, now); }
+            }
+        } catch (e) { log.error('[문자] 목록 주문 요약 고치기 실패(무시):', e.message); }
+    }
     const _histCache = new Map(); let _histTtl = deps.testMode ? 0 : 45000;   // 번호 → { at, val } · 45초(검증은 0 = 기억 안 함 · _setHistTtl 로 시험)
     async function staffHistory(digits, c) {
         const d = String(digits || ''); if (!/^0\d{8,11}$/.test(d)) return { items: [], more: false };
@@ -1262,7 +1293,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, _redecideTick: redecideTick, _staffHistory: staffHistory, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, _cardSms: () => _cardSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

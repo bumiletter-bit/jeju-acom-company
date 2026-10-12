@@ -103,6 +103,8 @@
     // #561(대표 10/6 A안): 관리자 중 대표만 — 모두의 이력 보기 · 승인/반려(#566 에서 승인 결재함 탭은 없앰). 창구 깨우기 · [다시 맡기기]는 관리자(isAdmin) 그대로
     const isOwner = () => isAdmin() && currentUser.position === '대표';
     const pageActive = () => { const p = $('page-agent-office'); return !!(p && p.classList.contains('active')); };
+    // #673: LIVE 로그 시각 — 오늘은 종전 꼴(오후 10:40) · 다른 날은 「10/11 22:40」(날짜가 없어 순서가 뒤섞여 보이던 것)
+    const liveWhen = t => { const day = kst(t, { year: 'numeric', month: '2-digit', day: '2-digit' }); if (!day || day === kst(new Date().toISOString(), { year: 'numeric', month: '2-digit', day: '2-digit' })) return kst(t, { hour: '2-digit', minute: '2-digit' }); const m = kst(t, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).match(/(\d+)\.\s*(\d+)\.\s*(\d+):(\d+)/); return m ? `${m[1]}/${m[2]} ${m[3] === '24' ? '00' : m[3]}:${m[4]}` : kst(t, { hour: '2-digit', minute: '2-digit' }); };
     const kst = (t, opt) => { try { return new Date(/Z|[+-]\d\d:?\d\d$/.test(String(t)) ? t : String(t).replace(' ', 'T') + 'Z').toLocaleString('ko-KR', Object.assign({ timeZone: 'Asia/Seoul' }, opt)); } catch (e) { return ''; } };
     const won = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
 
@@ -274,12 +276,12 @@
             <section class="desk-inbox" id="desk-inbox" aria-label="손님 연락">
                 <div class="desk-inbox-head">
                     <b>손님 연락</b>
-                    <div class="desk-inbox-tabs" id="desk-inbox-tabs" role="tablist" aria-label="채널 고르기 · 숫자는 답 안 한 것">
+                    <div class="desk-inbox-tabs" id="desk-inbox-tabs" role="tablist" aria-label="채널 고르기 · 숫자는 미처리">
                         <button type="button" role="tab" data-k="all" aria-selected="true">전체</button>
                         <button type="button" role="tab" data-k="sms" aria-selected="false" hidden>문자 <i id="inbox-n-sms">0</i></button>
                         <button type="button" role="tab" data-k="talk" aria-selected="false">톡톡 <i id="inbox-n-talk">0</i></button>
-                        <button type="button" role="tab" data-k="qna" aria-selected="false">상품 Q&amp;A <i id="inbox-n-qna">0</i></button>
-                        <button type="button" role="tab" data-k="inquiry" aria-selected="false">주문 문의 <i id="inbox-n-inquiry">0</i></button>
+                        <button type="button" role="tab" data-k="qna" aria-selected="false">상품문의 <i id="inbox-n-qna">0</i></button>
+                        <button type="button" role="tab" data-k="inquiry" aria-selected="false">주문문의 <i id="inbox-n-inquiry">0</i></button>
                     </div>
                     <button type="button" class="desk-btn sm desk-close" data-full-close>닫기</button>
                 </div>
@@ -2910,7 +2912,7 @@
     //   서버: GET /api/agent-office/desk/inbox → { days, sms[]|null, talk[], qna[], inquiry[], counts, more } · POST …/desk/inbox/review { kind, id, undo }(창의 [확인]과 같은 표식)
     // #663(대표 10/12 「메인에서는 미처리 건만 · 누르면 창으로 가니까 메인은 확인만 · 색 다르게 구별되게」): 이 카드 목록 = 대기(needs_reply) 줄만. 전체 대화는 손님 연락 창에서(창은 그대로).
     //   [확인]을 누르면 줄이 카드에서 빠진다(되돌리기는 창의 그 대화에서) · 「n건 더」 = 서버 대기 수(counts.open) 중 여기 못 실은 것 · 채널 배지·칩 점은 채널마다 다른 색(--d-ch-*)
-    const CU_KINDS = ['sms', 'talk', 'qna', 'inquiry'], CU_NAME = { sms: '문자', talk: '톡톡', qna: '상품 Q&A', inquiry: '주문 문의' };
+    const CU_KINDS = ['sms', 'talk', 'qna', 'inquiry'], CU_NAME = { sms: '문자', talk: '톡톡', qna: '상품문의', inquiry: '주문문의' }   /* #673: 손님 연락 창 탭 이름과 같게(종전 상품 Q&A · 주문 문의) */;
     async function loadInbox() {
         try { S.inbox = await api('/api/agent-office/desk/inbox'); S.inboxAt = Date.now(); renderInbox(); }
         catch (e) { const box = $('desk-inbox-list'); if (box && !S.inbox) box.innerHTML = '<div class="desk-empty">손님 연락 현황을 읽지 못했어요. 잠시 뒤 다시 열어 주세요.</div>'; }
@@ -2957,6 +2959,7 @@
             html = (list.length || more) ? list.map(cuRow).join('') + (more > 0 ? `<button type="button" class="desk-cu-morewin${list.length >= PREVIEW_INBOX ? ' ov' : ''}" data-ib="win">여기에 못 실은 미처리 ${nfmt(more)}건 더 · 손님 연락 창에서 보기</button>` : '')
                 : `<div class="desk-empty desk-cu-none">${S.inboxKind === 'all' ? '미처리 손님 연락이 없어요.' : esc(CU_NAME[S.inboxKind]) + ' 미처리 건이 없어요.'} <button type="button" class="desk-cu-link" data-ib="win">손님 연락 창 열기</button></div>`;
         }
+        { const mb = $('desk-inbox-more'); if (mb) mb.hidden = html.indexOf('desk-cu-none') >= 0; }   // #673: 빈 상태 = 링크 하나만(같은 곳으로 가는 줄을 둘 두지 않는다)
         if (box.dataset.sig === html) return;   // 주기마다 다시 그리지 않는다(누르던 초점 유지)
         const had = document.activeElement && document.activeElement.closest ? document.activeElement.closest('#desk-inbox-list .desk-cu') : null, hk = had ? [had.dataset.kind, had.dataset.id, document.activeElement.classList.contains('desk-cu-ok')] : null;
         box.dataset.sig = html; box.innerHTML = html;
@@ -3043,7 +3046,7 @@
         if (live) {
             const dot = st => ['오류', '오류확인', '반려'].includes(st) ? 'err' : ['질문', '승인대기'].includes(st) ? 'warn' : 'ok';
             live.innerHTML = Array.isArray(d.live) && d.live.length
-                ? `<ul class="desk-live">${d.live.map(x => `<li><time>${esc(kst(x.processed_at, { hour: '2-digit', minute: '2-digit' }))}</time><i class="${dot(x.status)}"></i><p>${esc(x.text || '')}</p></li>`).join('')}</ul>`
+                ? `<ul class="desk-live">${d.live.map(x => `<li><time>${esc(liveWhen(x.processed_at))}</time><i class="${dot(x.status)}"></i><p>${esc(x.text || '')}</p></li>`).join('')}</ul>`
                 : '<div class="desk-empty">아직 처리된 내 채팅이 없어요.</div>';
         }
         if (today) {

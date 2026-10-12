@@ -581,7 +581,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
                 ok(t0.sel === 'talk' && t0.n === 2 && t0.ok9101 === '확인|true' && t1.chips === '6|1|1|1' && t1.ok9101 === '|false' && t1.n === 1, `[카드] #663 톡톡 칩 → 톡톡 대기만 2줄 · [확인] → 대기 2 → 1 · 그 줄은 카드에서 빠짐(${t1.n}줄 남음)`);
                 await pg.locator('#desk-inbox-tabs button[data-k="qna"]').click(); await pg.waitForTimeout(300);
                 await pg.locator('#desk-inbox-list .desk-cu[data-kind="qna"] .desk-cu-ok').click(); await pg.waitForTimeout(900); const e1 = await cu();
-                ok(e1.sel === 'qna' && e1.n === 0 && /상품 Q&A 미처리 건이 없어요/.test(e1.none) && /손님 연락 창 열기/.test(e1.none) && e1.link && e1.chips === '6|1|0|1', `[카드] #663 대기 0 이면 빈 상태 한 줄 「${e1.none.trim()}」`);
+                ok(e1.sel === 'qna' && e1.n === 0 && /상품문의 미처리 건이 없어요/.test(e1.none) && /손님 연락 창 열기/.test(e1.none) && e1.link && e1.chips === '6|1|0|1', `[카드] #663 대기 0 이면 빈 상태 한 줄 「${e1.none.trim()}」`);
                 await pg.locator('#desk-inbox-tabs button[data-k="talk"]').click(); await pg.waitForTimeout(300);
                 await mock('/__mock/set', { cuMore: true }); await pg.evaluate(() => { __aoDesk.S.inboxAt = 0; return __aoDesk.loadInbox(); }); await pg.waitForTimeout(500);
                 const m1 = await cu(), m1more = await pg.locator('#desk-inbox-more').innerText(); await pg.locator('#desk-inbox-tabs button[data-k="talk"]').click(); await pg.waitForTimeout(300);

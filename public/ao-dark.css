@@ -49,7 +49,7 @@ html[data-ao-theme="dark"] .sidebar, html[data-ao-theme="dark"] .main-content { 
 /* 안내 글(placeholder) — 어두운 칸 위 4.5:1 */
 html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textarea::placeholder { color: #A6ADC6; }
 
-/* ── styles.css 에서 옮긴 것 (786규칙) ── */
+/* ── styles.css 에서 옮긴 것 (840규칙) ── */
 :where(html[data-ao-theme="dark"]) .btn-login { background: var(--d-accent-fill); color: #FFFFFF; border: none; }
 :where(html[data-ao-theme="dark"]) .btn-login:hover { background: var(--d-accent-hover); }
 :where(html[data-ao-theme="dark"]) .sidebar { background: var(--sidebar-bg); }
@@ -842,6 +842,60 @@ html[data-ao-theme="dark"] input::placeholder, html[data-ao-theme="dark"] textar
 :where(html[data-ao-theme="dark"]) .btn-mod-request { color: #F09B7F; border-color: #F0A44C; }
 :where(html[data-ao-theme="dark"]) .btn-mod-request:hover { background: #9A3412; border-color: #EB7851; color: #FFFFFF; }
 :where(html[data-ao-theme="dark"]) .data-table > tbody:empty::after { color: var(--text-mid); }
+:where(html[data-ao-theme="dark"]) .ps-tabs { border-bottom: 2px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .ps-tab { border: 0; border-bottom: 3px solid transparent; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-tab:hover { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ps-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+:where(html[data-ao-theme="dark"]) .ps-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+:where(html[data-ao-theme="dark"]) .ps-card h2 small { background: rgba(76, 94, 230, 0.14); color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .ps-note { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-empty { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-row { border: 1px solid var(--border); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .ps-row.new { border-color: rgba(82, 92, 224, 0.4); background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .ps-row-main b { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ps-row-sub { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-badge { background: rgba(76, 94, 230, 0.14); color: #ACA8E5; }
+:where(html[data-ao-theme="dark"]) .ps-badge.seen { background: rgba(76, 230, 139, 0.14); color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) .ps-btn { border: 1px solid #3A4168; background: var(--d-card); color: var(--text-dark); text-decoration: none; }
+:where(html[data-ao-theme="dark"]) .ps-btn:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .ps-btn:focus-visible, :where(html[data-ao-theme="dark"]) .ps-link:focus-visible, :where(html[data-ao-theme="dark"]) .ps-x:focus-visible, :where(html[data-ao-theme="dark"]) .ps-cell:focus-visible, :where(html[data-ao-theme="dark"]) .ps-drop:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+:where(html[data-ao-theme="dark"]) .ps-btn.primary { border-color: var(--primary); background: var(--d-accent-fill); color: #FFFFFF; }
+:where(html[data-ao-theme="dark"]) .ps-btn.primary:hover { background: #4338CA; }
+:where(html[data-ao-theme="dark"]) .ps-btn.danger { border-color: rgba(224, 92, 82, 0.4); color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .ps-link { border: 0; background: none; color: var(--primary); text-decoration: underline; }
+:where(html[data-ao-theme="dark"]) .ps-f { color: #A4B0C1; }
+:where(html[data-ao-theme="dark"]) .ps-in { border: 1px solid #3A4168; background: var(--d-card); color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ps-in:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+:where(html[data-ao-theme="dark"]) .ps-check { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ps-drop { border: 2px dashed rgba(82, 92, 224, 0.4); background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .ps-drop b { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ps-drop span { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-drop:hover, :where(html[data-ao-theme="dark"]) .ps-drop.over { border-color: var(--primary); background: rgba(76, 94, 230, 0.14); }
+:where(html[data-ao-theme="dark"]) .ps-file { border: 1px solid var(--border); background: var(--d-card); }
+:where(html[data-ao-theme="dark"]) .ps-file[data-st="ok"] { border-color: rgba(84, 222, 139, 0.4); background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .ps-file[data-st="err"], :where(html[data-ao-theme="dark"]) .ps-file[data-st="dup"] { border-color: #FEC84B; background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .ps-file-n { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ps-file-msg { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-file-msg[data-k="ok"] { color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) .ps-file-msg[data-k="err"], :where(html[data-ao-theme="dark"]) .ps-file-msg[data-k="dup"] { color: #F89963; }
+:where(html[data-ao-theme="dark"]) .ps-x { border: 0; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-x:hover { background: var(--d-soft); }
+:where(html[data-ao-theme="dark"]) .ps-msg { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-msg.err { color: #F19A93; }
+:where(html[data-ao-theme="dark"]) .ps-grid-wrap { border: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .ps-grid th, :where(html[data-ao-theme="dark"]) .ps-grid td { border-bottom: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .ps-grid thead th { background: var(--d-soft); color: #A4B0C1; }
+:where(html[data-ao-theme="dark"]) .ps-grid tbody th { background: var(--d-card); color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) .ps-grid tbody th small { color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-grid tbody tr:last-child th, :where(html[data-ao-theme="dark"]) .ps-grid tbody tr:last-child td { border-bottom: 0; }
+:where(html[data-ao-theme="dark"]) .ps-cell { border: 1px solid #FEC84B; background: rgba(230, 191, 76, 0.14); color: #F39B72; }
+:where(html[data-ao-theme="dark"]) .ps-cell.seen { border-color: rgba(84, 222, 139, 0.4); background: rgba(76, 230, 139, 0.14); color: #5AF7B5; }
+:where(html[data-ao-theme="dark"]) .ps-cell.none { border: 0; background: none; color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .ps-view { background: rgba(117, 144, 200, 0.66); }
+:where(html[data-ao-theme="dark"]) .ps-view-box { background: var(--d-card); box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.7); }
+:where(html[data-ao-theme="dark"]) .ps-view-head { border-bottom: 1px solid var(--border); }
+:where(html[data-ao-theme="dark"]) .ps-view-head b { color: var(--text-dark); }
+:where(html[data-ao-theme="dark"]) #ps-view-frame { border: 0; background: var(--d-soft); }
 
 /* ── theme.css 에서 옮긴 것 (160규칙) ── */
 :where(html[data-ao-theme="dark"]) .main-content { background: var(--page-bg); }

@@ -73,3 +73,5 @@ html[data-ao-theme="dark"] .inb-lock[data-k="done"] { background: rgba(61, 214, 
 html[data-ao-theme="dark"] .inb-lock[data-k="done"] i { background: #3DD68C; }
 
 @media (max-width: 720px) { .inb-thread .inb-acts { margin-right: 6px; } }
+/* #673 폴드 펼침·터치 기기: 대화 머리 [확인]도 44px(종전 720 이하에만) */
+@media (max-width: 960px), (pointer: coarse) { .inb-thread .inb-done { min-height: 44px; } }

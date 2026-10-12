@@ -41,7 +41,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 await pg.route('**/api/agent-office/**', async route => {
                     const rq = route.request(), u = new URL(rq.url());
                     if (rq.method() === 'GET' && u.pathname === '/api/agent-office/desk/orders') {   // 목록은 늘 새로(저장해 둔 응답을 쓰지 않는다) · D 는 「판독완료」로 보이게
-                        const r = await route.fetch(); const j = await r.json();
+                        let r, j; try { r = await route.fetch(); j = await r.json(); } catch (e) { return route.abort().catch(() => { }); }   // #670: 창을 닫는 순간 가던 목록 조회 — 검증이 통째로 끊겨 시험 지시가 정리 안 되던 것
                         (j.orders || []).forEach(o => { if (o.id === D && u.searchParams.get('mine') === '1') o.status = '판독완료'; });
                         return route.fulfill({ status: r.status(), contentType: 'application/json', body: JSON.stringify(j) });
                     }

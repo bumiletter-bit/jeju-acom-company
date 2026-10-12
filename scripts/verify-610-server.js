@@ -27,6 +27,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
     // 가짜 의존
     const cfgStore = { sms_gateway: { enabled: true, mode: 'record', hold_sec: 0, max_chars: 70 } }; const notes = [], tg = [], sent = []; let aiAnswer = null;
     const deps = {
+        refreshLockMs: 300,   // #671 즉시 조회 잠금 상한(시험용 · 실서버 2분)
         testMode: true,   // 실서버가 시험 번호 줄을 집지 않게(index.js TEST_SKIP) · 검증은 자기 줄을 집음
         pool, authMiddleware: (req, res, next) => { try { req.user = jwt.verify(String(req.headers.authorization || '').replace('Bearer ', ''), JWT); next(); } catch (e) { res.status(401).json({ error: 'auth' }); } },
         naverCfgGet: async k => cfgStore[k] === undefined ? null : cfgStore[k], naverCfgSet: async (k, v) => { cfgStore[k] = v; }, stateMerge: async o => { cfgStore.sms_gateway_state = Object.assign({}, cfgStore.sms_gateway_state || {}, o); },
@@ -859,6 +860,20 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         const hp1 = HP.find(x => x.channel === 'naver'), hp2 = HP.find(x => x.channel === 'coupang');
         ok((r.json.history || []).length === 5 && r.json.history[0].pre === true && r.json.history[1].pre === true && !!hp1 && /^\d{1,2}\/\d{1,2}\([일월화수목금토]\)$/.test(hp1.ship_plan || '') && hp1.ship_date === null && hp1.trackings.length === 0 && hp1.role === 'buyer' && hp1.recipient_name === '시' && !!hp2 && hp2.ship_plan === null,
             '#654 발송 전 주문 = history 맨 앞 · ship_plan 「M/D(요일)」(결제 시각 아는 건) · 결제 시각 모르는 건 null ' + JSON.stringify(HP.map(x => [x.channel, x.ship_plan])));
+        { const F672 = (j, id) => (j.items || []).find(x => x.id === id);   // #672 글을 받을 때는 주문이 없던 번호(order_hint 빈값) — 그 뒤 주문이 생기면 목록·대화 열기가 줄 글을 고친다
+            await pool.query(`UPDATE sms_threads SET order_hint = NULL WHERE id = $1`, [t.id]);
+            const l1 = F672((await api('GET', '/api/sms/threads?scope=all&limit=200')).json, t.id);
+            const saved1 = (await thread(PA4)).order_hint;
+            ok(l1 && /구매이력 \d+건/.test(l1.customer_hint || '') && /발송 전/.test(l1.customer_hint) && saved1 === l1.customer_hint, '#672 목록: 빈 주문 요약을 구매이력으로 고쳐 보여 주고 적어 둠 ' + JSON.stringify(l1 && l1.customer_hint));
+            await pool.query(`UPDATE sms_threads SET order_hint = NULL WHERE id = $1`, [t.id]);
+            const d1 = (await api('GET', `/api/sms/threads/${t.id}?peek=1`)).json.thread; const upd = await thread(PA4);
+            ok(d1.customer_hint === saved1 && upd.order_hint === saved1, '#672 대화 열기: 같은 글로 고침');
+            await pool.query(`UPDATE sms_threads SET order_hint = NULL WHERE id = $1`, [t.id]);
+            const cs = await sms._cardSms(); const ci = cs && (cs.items || []).find(x => x.id === t.id);
+            ok(ci && ci.customer_hint === saved1 && (await thread(PA4)).order_hint === saved1, '#672 메인 카드의 문자 줄에도 같은 보정 ' + JSON.stringify(ci && ci.customer_hint));
+            await pool.query(`UPDATE sms_threads SET order_hint = '손으로 적은 요약' WHERE id = $1`, [t.id]);
+            ok(F672((await api('GET', '/api/sms/threads?scope=all&limit=200')).json, t.id).customer_hint === '손으로 적은 요약', '#672 이미 요약이 있는 줄은 안 건드림');
+        }
         await pool.query(`DELETE FROM sms_preorders WHERE order_key LIKE 'verify-654-%'`);
         await wipe();
         ok((await pool.query(`SELECT (SELECT count(*) FROM delivery_shipments WHERE source = 'verify-654')::int + (SELECT count(*) FROM sms_preorders WHERE order_key LIKE 'verify-654-%')::int AS n`)).rows[0].n === 0, '#654 시험 송장·발송 전 주문 줄 정리 0');
@@ -910,7 +925,11 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         setCfg(); deps.refreshTimeoutMs = 60; delay = 500; rows = [nvRow('verify-665-7', P7)]; await pool.query(`DELETE FROM sms_preorders WHERE order_key = 'verify-665-old'`);
         const t0 = Date.now(); t = await sendIn(P7, 'r665-8', '주문한 귤 언제 발송되나요'); const took = Date.now() - t0;
         ok(calls.length === 3 && cfgStore.sms_gateway_state.lookup_refresh.last_ms < 400 && !(t.order_json && t.order_json.order) && cfgStore.sms_gateway_state.lookup_refresh.last === 'timeout', '#665 시간 초과 → 기다리지 않고 종전 「주문 없음」 길 조회 ' + cfgStore.sms_gateway_state.lookup_refresh.last_ms + 'ms · 처리 전체 ' + took + 'ms');
-        await sleep(700); delete deps.refreshTimeoutMs; delay = 0; deps.fetchNaver = undefined;
+        await sleep(700);
+        // #671 조회가 안 끝나도 잠금은 상한(시험 = 300ms)까지만 — 풀린 뒤 다른 번호의 조회가 새로 돈다
+        delay = 3000; rows = []; await sendIn(T + '6659', 'r665-9', '주문한 귤 언제 발송되나요'); const c9 = calls.length; await sleep(450); delay = 0; await sendIn(T + '6660', 'r665-10', '주문한 귤 언제 발송되나요');
+        ok(c9 === 4 && calls.length === 5, '#671 즉시 조회 잠금 상한 — 안 끝난 조회가 있어도 상한 뒤에는 새 조회가 돈다 ' + JSON.stringify([c9, calls.length]));
+        await sleep(3000); delete deps.refreshTimeoutMs; deps.fetchNaver = undefined;
         await wipe5(); ok((await pool.query(`SELECT count(*)::int AS n FROM sms_preorders WHERE order_key LIKE 'verify-665-%'`)).rows[0].n === 0, '#665 시험 발송 전 주문 줄 정리 0');
         sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
     }

@@ -216,7 +216,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
                 await openBoard(D.pg);
                 let a = await audit(D.pg); report(tag + ' 채팅+현황판+문의', a);
                 const ibN = await D.pg.evaluate(() => ({ rows: document.querySelectorAll('#desk-inbox-list tr.desk-ib-row, #desk-inbox-list .desk-ib, #desk-inbox-list .desk-cu').length, badge: document.getElementById('inbox-n-talk').textContent, wrap: document.querySelectorAll('#desk-inbox-list .table-scroll-wrapper').length, panels: document.querySelectorAll('#desk-board .desk-panel').length }));
-                ok('B [' + tag + '] 시험 자료가 실제로 떴음 — 문의 ' + ibN.rows + '줄 · 톡톡 배지 ' + ibN.badge + ' · 현황판 ' + ibN.panels + '칸' + (phone ? '' : ' · 표 감싼 칸 ' + ibN.wrap), ibN.rows === 3 && ibN.badge === '3' && ibN.panels === (who === '대표' ? 3 : 2) /* #653-다: 「지금 챙길 일」이 현황판에서 나감 */ && (phone || ibN.wrap === 1), JSON.stringify(ibN));
+                ok('B [' + tag + '] 시험 자료가 실제로 떴음 — 문의 ' + ibN.rows + '줄 · 톡톡 배지 ' + ibN.badge + ' · 현황판 ' + ibN.panels + '칸' + (phone ? '' : ' · 표 감싼 칸 ' + ibN.wrap), ibN.rows === 3 && ibN.badge === '1' && ibN.panels === (who === '대표' ? 4 : 3) /* #663 카드 = 대기 줄만(칩 = 대기 수) · #666 「지금 챙길 일」은 다시 현황판 셋째 칸 · 표 꼴 없음 */ && ibN.wrap === 0, JSON.stringify(ibN));
                 for (const k of ['talk', 'qna', 'inquiry']) {
                     await ibSeen(D.pg, false); await ibTab(D.pg, k); a = await audit(D.pg); report(tag + ' 문의 ' + k, a);
                     await ibOpenFirst(D.pg); a = await audit(D.pg); report(tag + ' 문의 ' + k + ' 줄 펼침', a);

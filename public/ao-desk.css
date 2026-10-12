@@ -9,7 +9,7 @@
 .desk {
     --d-ink: var(--text-dark, #101828);
     --d-sub: var(--text-mid, #667085);
-    --d-dim: var(--text-light, #98A0AE);
+    --d-dim: #646D7F;   /* #673: 흐린 글도 대비 4.5 이상(종전 --text-light #98A0AE = 흰 바탕 2.6) · 야간 값은 아래 #568 블록 */
     --d-line: var(--border, #ECEDF1);
     --d-card: var(--card-bg, #fff);
     --d-soft: #F8F9FC;
@@ -91,7 +91,7 @@
 .desk-inbox-tabs button { min-height: 40px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--d-line); background: #fff; color: var(--d-sub); font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .desk-inbox-tabs button[aria-selected="true"] { background: var(--d-accent-soft); border-color: #D8DBFF; color: var(--d-accent); }
 .desk-inbox-tabs button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
-.desk-inbox-tabs i { font-style: normal; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--d-line); color: var(--d-sub); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.desk-inbox-tabs i { font-style: normal; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--d-line); color: var(--d-ink); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
 .desk-inbox-tabs i.on { background: var(--d-err); color: #fff; }
 .desk-inbox-seen { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--d-sub); cursor: pointer; min-height: 40px; }
 .desk-inbox-list { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; max-height: 520px; overflow-y: auto; }
@@ -140,8 +140,9 @@
 .desk-sales b { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
 .desk-sales b.minus { color: var(--d-err); }
 .desk-todo { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.desk-todo li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 13.5px; }
-.desk-todo b { font-variant-numeric: tabular-nums; color: var(--d-accent); font-size: 13px; }
+.desk-todo li { display: grid; grid-template-columns: minmax(0, 1fr) fit-content(46%); gap: 2px 10px; font-size: 13.5px; }
+.desk-todo li > span { min-width: 0; overflow-wrap: anywhere; }
+.desk-todo b { min-width: 0; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; color: var(--d-accent); font-size: 13px; }
 .desk-todo small { grid-column: 1 / -1; color: var(--d-dim); font-size: 11.5px; }
 
 /* ── 오른쪽: LIVE 로그 · 오늘 일정 · 업무 현황 ── */
@@ -1373,6 +1374,20 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
 .desk-cu-link:hover { background: var(--d-accent-soft); }
 .desk-cu-link:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
 @media (max-width: 720px) { .desk-cu-link { min-height: 44px; } }
+/* ── #673(총검토 #670-A) 손가락으로 누르는 크기 — 폴드 펼침(900 안팎)·터치 기기에서도 44px. 종전에는 720 이하에만 걸려 폴드에서 40·42·32 였다 ── */
+@media (max-width: 960px), (pointer: coarse) {
+    .desk-btn, .desk-btn.sm { min-height: 44px; }
+    .desk-x { width: 44px; height: 44px; }
+    .desk-inbox-tabs button { min-height: 44px; }
+    .desk-tab { min-height: 44px; }
+    #desk-hist-q, #desk-fs { min-height: 44px; }
+    .desk-theme { width: 44px; height: 44px; }
+    .desk-cu-link { min-height: 44px; }
+    .ship-cell, .ship-tel { min-height: 44px; }
+    /* 구매이력 카드는 대표 지시(#659)로 작게 둔 것 — 보이는 크기는 그대로 두고 누르는 자리만 44px 로 넓힌다 */
+    .sms-pane .sms-buy .sms-buy-more, .sms-pane .sms-buy .sms-trk, .sms-pane .sms-buy .sms-trk-go { position: relative; }
+    .sms-pane .sms-buy .sms-buy-more::after, .sms-pane .sms-buy .sms-trk::after, .sms-pane .sms-buy .sms-trk-go::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+}
 /* ═══ #568 야간 화면 (대표 10/6) ═══
  * 전부 html[data-ao-theme="dark"] 아래 — 이 속성은 에이전트 오피스 화면에 있고 사용자가 켰을 때만 붙는다(ao-desk.js applyTheme).
  * 위쪽 규칙은 한 글자도 안 바꿨다(밝은 화면 무변경). 아래 ①은 손으로 쓴 것, ②는 위 규칙의 박힌 색을 바꿈표로 옮긴 것(만든 도구 = 스크래치 gen568.js).
@@ -1461,7 +1476,7 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .desk-inbox-tabs button { border: 1px solid var(--d-line); background: var(--d-card); color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .desk-inbox-tabs button[aria-selected="true"] { background: var(--d-accent-soft); border-color: #333B73; color: var(--d-accent); }
 :where(html[data-ao-theme="dark"]) .desk-inbox-tabs button:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
-:where(html[data-ao-theme="dark"]) .desk-inbox-tabs i { background: var(--d-line); color: var(--d-sub); }
+:where(html[data-ao-theme="dark"]) .desk-inbox-tabs i { background: var(--d-line); color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-inbox-tabs i.on { background: var(--d-err); color: #fff; }
 :where(html[data-ao-theme="dark"]) .desk-inbox-seen { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .desk-ib-top { color: var(--d-dim); }

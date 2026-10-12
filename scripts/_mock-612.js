@@ -98,7 +98,7 @@ if (PRINT) {
             }
             return send(res, 404, { error: '없는 주소입니다' });
         }
-        if (p.startsWith('/api/sms/')) return send(res, 404, { error: '없는 주소입니다' });
+        if (p.startsWith('/api/sms/') || p.startsWith('/api/inbox/')) return send(res, 404, { error: '없는 주소입니다' });
         if (p === '/api/auth/me') return send(res, 200, /staff/.test(req.headers.authorization || '') ? { id: 8, name: '시험직원', position: '대리', role: 'user' } : { id: 1, name: '시험대표', position: '대표', role: 'admin' });
         if (p.startsWith('/api/')) {
             const hit = STUB.find(([re]) => re.test(p));

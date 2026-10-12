@@ -117,7 +117,7 @@ let pass = 0, fail = 0; const ok = (c, m) => { c ? pass++ : fail++; console.log(
                 await pg.evaluate(() => document.querySelector('#desk-inbox-list .desk-cu-link').scrollIntoView({ block: 'center' })); await pg.click('#desk-inbox-list .desk-cu-link'); await pg.waitForTimeout(1300);
                 const w2 = await st(); await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(900);
                 await pg.click('#desk-inbox-tabs button[data-k="inquiry"]'); await pg.waitForTimeout(200);
-                ok(w0.n > 0 && w0.n === w0.wait && w0.n === SUM - 1 && w0.bg === 4 && /주문 문의 미처리 건이 없어요/.test(w1.none) && w1.chip === '0' && w1.win === 0 && w2.win && w2.hostCh === 'inquiry', `[${name}] ⑦ #663 카드 = 대기 줄만 ${w0.n}줄(= 칩 합) · 채널 색 ${w0.bg}가지 · 주문 문의를 다 [확인]하면 「${w1.none.trim()}」 · 링크 → 손님 연락 창 주문문의 탭`);
+                ok(w0.n > 0 && w0.n === w0.wait && w0.n === SUM - 1 && w0.bg === 4 && /주문문의 미처리 건이 없어요/.test(w1.none) && w1.chip === '0' && w1.win === 0 && w2.win && w2.hostCh === 'inquiry', `[${name}] ⑦ #663 카드 = 대기 줄만 ${w0.n}줄(= 칩 합) · 채널 색 ${w0.bg}가지 · 주문 문의를 다 [확인]하면 「${w1.none.trim()}」 · 링크 → 손님 연락 창 주문문의 탭`);
             }
             await pg.evaluate(() => window.scrollTo(0, 0)); await pg.click('#desk-plus-btn'); await pg.waitForTimeout(300); await pg.click('#desk-sms-now'); await pg.waitForTimeout(1000);
             const f3 = await st();

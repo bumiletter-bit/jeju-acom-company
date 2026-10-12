@@ -14427,7 +14427,7 @@ app.get('/api/agent-office/desk/board', authMiddleware, async (req, res) => {
                         const ot = await naverCfgGet('owner_todo');
                         for (const it of ((ot && Array.isArray(ot.items)) ? ot.items : [])) {
                             if (!it || it.done || !String(it.text || '').trim()) continue;
-                            out.push({ key: 'owner', label: String(it.text).slice(0, 140), when: String(it.when || '').slice(0, 12), count: 1, where: String(it.where || '대표 확인').slice(0, 70) });
+                            out.push({ key: 'owner', label: String(it.text).slice(0, 140), when: String(it.when || '').slice(0, 24), count: 1, where: String(it.where || '대표 확인').slice(0, 70) });
                         }
                     } catch (e) { console.error('desk/board owner_todo:', e.message); }
                 }
@@ -16429,6 +16429,8 @@ app.delete('/mcp/:secret', (req, res) => {
 require('./lucky-event.js')(app, { pool, authMiddleware, adminOnly, writeAudit });
 // #474 확인 필요 문의(톡톡·상품 Q&A·주문 문의) + 사람이 확인한 톡톡 답변 배달 — 표·칸은 첫 요청 때 생성
 const deskInbox = require('./desk-inbox.js')(app, { pool, authMiddleware, writeAudit });
+// #674 급여명세서(내 정보 > 급여명세서 · 표 payslips · 파일만 보관 — 금액은 읽지도 저장하지도 않는다 · 올리기 = 관리자 · 지우기 = 대표)
+require('./payslip.js')(app, { pool, authMiddleware, adminOnly, ownerOnly, writeAudit, createNotification });
 // #658 문의 대화 창(톡톡 · 상품문의 · 주문문의 — 문자 전용 창과 같은 꼴) — 등록은 위 naverPost* 함수 그대로 · 톡톡은 talk_outbox → 배달부 · 초안은 버튼을 눌렀을 때만
 require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
 

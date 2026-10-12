@@ -13,14 +13,14 @@
     <!-- Pretendard 웹폰트 (실패해도 시스템 폰트로 폴백 — 하드 의존 없음) -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">
-    <link rel="stylesheet" href="styles.css?v=125">
+    <link rel="stylesheet" href="styles.css?v=126">
     <link rel="stylesheet" href="theme.css?v=15">
-    <link rel="stylesheet" href="ao-desk.css?v=61">
-    <link rel="stylesheet" href="ao-inbox.css?v=3">
-    <link rel="stylesheet" href="final-order.css?v=26">
+    <link rel="stylesheet" href="ao-desk.css?v=62">
+    <link rel="stylesheet" href="ao-inbox.css?v=4">
+    <link rel="stylesheet" href="final-order.css?v=27">
     <link rel="stylesheet" href="order-organizer.css?v=2">
     <link rel="stylesheet" href="noti-history.css?v=1">
-    <link rel="stylesheet" href="ao-dark.css?v=2">
+    <link rel="stylesheet" href="ao-dark.css?v=3">
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -2194,6 +2194,9 @@
             <!-- 내 정보 페이지 -->
             <div id="page-myinfo" class="page">
                 <h1>내 정보</h1>
+                <!-- #674 급여명세서 탭(payslip.js 가 그린다) -->
+                <div class="ps-tabs" id="myinfo-tabs" role="tablist" aria-label="내 정보 메뉴"><button type="button" class="ps-tab active" role="tab" data-pstab="info" aria-selected="true">내 정보</button><button type="button" class="ps-tab" role="tab" data-pstab="pay" aria-selected="false" tabindex="-1">급여명세서</button></div>
+                <div id="myinfo-pane-info">
 
                 <div class="card">
                     <h2>개인 정보</h2>
@@ -2244,6 +2247,11 @@
                         </div>
                         <button type="submit" class="btn-primary" style="margin-top:8px;">비밀번호 변경</button>
                     </form>
+                </div>
+                </div>
+                <div id="myinfo-pane-pay" hidden>
+                    <div id="payslip-root"></div>
+                    <div class="ps-view" id="ps-view" hidden role="dialog" aria-modal="true" aria-labelledby="ps-view-title"><div class="ps-view-box"><div class="ps-view-head"><b id="ps-view-title">급여명세서</b><a class="ps-btn" id="ps-view-dl" href="#" download>내려받기</a><button type="button" class="ps-btn danger" id="ps-view-del" hidden>지우기</button><button type="button" class="ps-btn" id="ps-view-x">닫기</button></div><iframe id="ps-view-frame" title="급여명세서 PDF"></iframe></div></div>
                 </div>
             </div>
 
@@ -2338,9 +2346,10 @@
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="app.js?v=409"></script>
-    <script src="ao-desk.js?v=77"></script>
+    <script src="app.js?v=410"></script>
+    <script src="ao-desk.js?v=78"></script>
     <script src="ao-inbox.js?v=3"></script>
+    <script src="payslip.js?v=1"></script>
     <script src="final-order-core.js?v=13"></script>
     <script src="final-order.js?v=39"></script>
     <style>.invoice-v2-frame { width:100%; border:0; display:block; min-height:70vh; background:transparent; }</style>
