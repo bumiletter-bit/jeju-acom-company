@@ -510,15 +510,15 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
             const NF = '안녕하세요 고객님 ^^ 보내주신 번호로는 주문이 확인되지 않습니다.\n주문하신 분 또는 받으시는 분 성함과 연락처를 알려 주시면 바로 확인해 드리겠습니다.';
             sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'auto', hold_sec: 75, max_chars: 1000, staff_ids: [1] };
             const outOf = async d => (await msgs(d)).filter(x => x.direction === 'out');
-            // 대화 338 재현: 앞 대화에 「내일 오전에 효돈에서 출발하고 모레 도착 예정」이라는 우리 글이 있어도 지어내지 않는다
-            const PN = T + '1054'; const tn0 = (await pool.query(`INSERT INTO sms_threads (phone_digits, status, last_out_at) VALUES ($1, 'closed', now() - interval '20 hours') RETURNING id`, [PN])).rows[0];
-            await pool.query(`INSERT INTO sms_messages (thread_id, direction, kind, body, sender, state, created_at, event_at) VALUES ($1, 'out', 'sms', '주문하신 하우스감귤은 내일 오전에 효돈에서 출발하고 모레 도착 예정이에요.', 'staff_desk', 'sent', now() - interval '20 hours', now() - interval '20 hours')`, [tn0.id]);
+            // 대화 338 재현: 앞 대화에 「내일 오전에 효돈에서 출발하고 모레 도착 예정」이라는 우리 글이 있어도 지어내지 않는다   // 🔵 앞 글은 30시간 전(20시간이면 KST 20~24시에 「오늘 이미 답함」이 되어 인사말이 빠져 흔들렸음 — 10/13 원인 확정)
+            const PN = T + '1054'; const tn0 = (await pool.query(`INSERT INTO sms_threads (phone_digits, status, last_out_at) VALUES ($1, 'closed', now() - interval '30 hours') RETURNING id`, [PN])).rows[0];
+            await pool.query(`INSERT INTO sms_messages (thread_id, direction, kind, body, sender, state, created_at, event_at) VALUES ($1, 'out', 'sms', '주문하신 하우스감귤은 내일 오전에 효돈에서 출발하고 모레 도착 예정이에요.', 'staff_desk', 'sent', now() - interval '30 hours', now() - interval '30 hours')`, [tn0.id]);
             aiAnswer = { answer: '말씀드린 대로 내일 오전 효돈에서 출발해서 모레 도착 예정입니다.', used: [] };
             let nA = aiQs.length, nN = notes.length;
             await hook(env('sms:received', { messageId: 'u26', message: '택배언제와요?!', phoneNumber: '+82' + PN.slice(1) }), { waitMs: 2600 });
             let tn = await thread(PN), on = await outOf(PN), mine = on.filter(x => x.sender === 'bot');
             ok(aiQs.length === nA && mine.length === 0 && tn.draft_text === NF && tn.draft_kind === 'rule' && !/효돈|말씀드린|출발|도착 예정/.test(tn.draft_text) && tn.staff_why === 'order_not_found' && tn.status === 'draft' && notes.length === nN + 1 && /주문을 못 찾았어요/.test(notes[notes.length - 1].title),
-                '#645·#650 주문 없는 번호 「택배언제와요?!」(앞 대화에 옛 발송 안내 있음) = AI 호출 0 · 자동 발송 0 · 되묻기 고정 문구는 초안으로 · 직원 확인(order_not_found) + 알림 ' + JSON.stringify({ ai: aiQs.length - nA, out: mine.length, st: tn.status, why: tn.staff_why }));
+                '#645·#650 주문 없는 번호 「택배언제와요?!」(앞 대화에 옛 발송 안내 있음) = AI 호출 0 · 자동 발송 0 · 되묻기 고정 문구는 초안으로 · 직원 확인(order_not_found) + 알림 ' + JSON.stringify({ ai: aiQs.length - nA, out: mine.length, st: tn.status, why: tn.staff_why, draft: tn.draft_text === NF, kind: tn.draft_kind, notes: notes.length - nN, title: (notes[notes.length - 1] || {}).title }));
             r = await api('GET', '/api/sms/threads?scope=active&limit=200'); it = (r.json.items || []).find(x => x.id === tn.id);
             ok(it && it.needs_staff === true && it.staff_why_label === '주문 못 찾음', '#645 목록: needs_staff true · 사유 「주문 못 찾음」');
             // 주문 변경 물음(order_q)도 같음 · 사기 전 물음은 종전대로 AI
@@ -955,6 +955,43 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         await sleep(3000); delete deps.refreshTimeoutMs; deps.fetchNaver = undefined;
         await wipe5(); ok((await pool.query(`SELECT count(*)::int AS n FROM sms_preorders WHERE order_key LIKE 'verify-665-%'`)).rows[0].n === 0, '#665 시험 발송 전 주문 줄 정리 0');
         sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] };
+    }
+
+    {   // #683 「○○님이 입력 중..」 — 메모리 표시(두 계정 · DB 쓰기 0)
+        sms.resetCfg(); cfgStore.sms_gateway = { enabled: true, mode: 'record', staff_ids: [1] }; await sms.cfg(true);
+        await hook(env('sms:received', { messageId: 'm-683-1', message: '귤 주문 문의드려요', phoneNumber: '+82' + (T + '6831').slice(1) }));
+        const th = await thread(T + '6831'); ok(!!th, '#683 시험 대화 준비');
+        if (th) {
+            const tokB = jwt.sign({ id: 990683, username: 'v683', name: '검증B', role: 'user' }, JWT);
+            const apiB = async (method, path, body) => { const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tokB }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, json: await r.json().catch(() => ({})) }; };
+            const P = `/api/sms/threads/${th.id}/typing`, K = String(th.id), J = JSON.stringify;
+            const cnt = async () => (await pool.query(`SELECT (SELECT count(*) FROM sms_messages WHERE thread_id = $1)::int AS m, (SELECT updated_at FROM sms_threads WHERE id = $1) AS u`, [th.id])).rows[0];
+            const shape = async () => J([(await api('GET', '/api/sms/threads?scope=all&limit=200')).json.items.find(x => x.id === th.id), Object.keys((await api('GET', '/api/sms/summary')).json).sort(), Object.keys((await api('GET', '/api/sms/threads/' + th.id + '?peek=1')).json).sort()]);
+            const shape0 = await shape(), c0 = await cnt();
+            const a = await api('POST', P, { on: true }); let gB = await apiB('GET', '/api/sms/typing'), gA = await api('GET', '/api/sms/typing');
+            ok(a.status === 200 && a.json.ok === true && Array.isArray(a.json.typing) && a.json.typing.length === 0, '#683 A on → 응답 typing 에 자기 자신 없음 ' + J(a.json));
+            ok(gB.status === 200 && gB.json.ttl_sec === 30 && J(gB.json.threads[K]) === J([{ id: 1, name: '검증' }]), '#683 B 의 GET /api/sms/typing 에 A 가 보임 · ttl_sec 30 ' + J(gB.json));
+            ok(gA.status === 200 && !gA.json.threads[K], '#683 A 자신의 GET 에는 안 보임');
+            const b = await apiB('POST', P, { on: true }); gA = await api('GET', '/api/sms/typing'); gB = await apiB('GET', '/api/sms/typing');
+            ok(J(b.json.typing) === J([{ id: 1, name: '검증' }]) && J(gA.json.threads[K]) === J([{ id: 990683, name: '검증B' }]) && gB.json.threads[K].length === 1 && gB.json.threads[K][0].id === 1, '#683 둘 다 on → 서로 보임(자기는 빠짐)');
+            ok(shape0 === await shape() && shape0.length > 50, '#683 입력 중이어도 종전 목록 줄·summary·상세 응답 꼴 그대로');
+            const off = await apiB('POST', P, { on: false }); gA = await api('GET', '/api/sms/typing');
+            ok(off.json.typing.length === 1 && off.json.typing[0].id === 1 && !gA.json.threads[K], '#683 on:false → 풀림(상대 것은 그대로 보임)');
+            await api('POST', P, { on: true }); sms._typingAge(28000); gB = await apiB('GET', '/api/sms/typing'); const in29 = !!gB.json.threads[K]; sms._typingAge(3000); gB = await apiB('GET', '/api/sms/typing');
+            ok(in29 && !gB.json.threads[K] && sms._typingSize() === 0, '#683 마지막 신호 뒤 30초 지나면 풀림(28초엔 보임 · 31초엔 없음 · 저장소 비워짐)');
+            const c1 = await cnt(); ok(c0.m === c1.m && String(c0.u) === String(c1.u), '#683 입력 신호는 DB 를 안 바꿈(문자 줄 수·대화 updated_at 그대로)');
+            cfgStore.sms_gateway.typing_ttl_sec = 10; await sms.cfg(true); await api('POST', P, { on: true }); sms._typingAge(11000); gB = await apiB('GET', '/api/sms/typing');
+            ok(gB.json.ttl_sec === 10 && !gB.json.threads[K], '#683 설정 typing_ttl_sec(10) 반영'); delete cfgStore.sms_gateway.typing_ttl_sec; await sms.cfg(true);
+            await api('POST', P, { on: true }); await apiB('POST', P, { on: true });
+            const rp = await api('POST', `/api/sms/threads/${th.id}/reply`, { text: '검증 답이에요' }); gB = await apiB('GET', '/api/sms/typing'); gA = await api('GET', '/api/sms/typing');
+            ok(rp.status === 200 && !gB.json.threads[K] && !!gA.json.threads[K] && gA.json.threads[K][0].id === 990683, '#683 답을 보내면 그 직원 것만 풀림(상대 B 는 그대로) ' + rp.status);
+            for (const act of ['handled', 'done', 'close']) { await apiB('POST', P, { on: true }); const r2 = await apiB('POST', `/api/sms/threads/${th.id}/${act}`, {}); gA = await api('GET', '/api/sms/typing'); ok(r2.status === 200 && !gA.json.threads[K], '#683 ' + act + ' 뒤 그 직원 입력 표시 풀림'); }
+            const n1 = await fetch(base + P, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"on":true}' }), n2 = await fetch(base + '/api/sms/typing');
+            ok(n1.status === 401 && n2.status === 401, '#683 비로그인 401 ' + n1.status + '/' + n2.status);
+            const bad = await api('POST', '/api/sms/threads/abc/typing', { on: true }), none = await api('POST', '/api/sms/threads/2147483000/typing', { on: true }), gid = await api('GET', '/api/sms/threads/' + th.id + '?peek=1');
+            ok(bad.status === 400 && none.status === 200 && none.json.typing.length === 0 && gid.status === 200, '#683 번호 꼴 아님 400 · 없는 대화 = 빈 배열 · 종전 상세 라우트 그대로 ' + J([bad.status, none.status, gid.status]));
+            await api('POST', '/api/sms/threads/2147483000/typing', { on: false }); await api('POST', P, { on: false });
+        }
     }
 
     // 정리

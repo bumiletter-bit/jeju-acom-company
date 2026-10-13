@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 
 // #625(대표 「고」 10/10 저녁): 봇은 앞 대화를 읽고 답한다 · 하루 3번 · 쿨다운 10분(그 안 둘째 글만 직원) · 같은 질문 되풀이 = 직원 · 직원 몫(staff_needed)도 staff_open_hours 지나면 저절로 끝남(종전 = 하루 1번 · 30분 · 직원 몫은 사람이 풀 때까지)
+const TYPING_TTL_MS = 30000;   // #683 「입력 중」 표시 = 마지막 신호 뒤 30초(설정 sms_gateway.typing_ttl_sec 5~120)
 const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, context_msgs: 6, draft_daily_cap: 20, history_days: 60 };   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
 // #635(대표 「고」 10/11 · 폰 문자함 구도): 목록 = 안 읽은 글이 있는 대화(staff_read_at 뒤 들어온 글 수) · 열면 0 · 초안은 손님 글이 올 때마다 새로(쿨다운·하루 상한·잠금·되풀이는 자동 발송만 막는다) · 쿨다운 기본 30분
 const WEBHOOK_EVENTS = ['sms:received', 'sms:sent', 'sms:delivered', 'sms:failed', 'sms:cancelled', 'mms:received', 'mms:downloaded', 'system:ping', 'app:started'];
@@ -97,6 +98,7 @@ module.exports = function mountSms(app, deps) {
             staff_lock_hours: num(v.staff_lock_hours, DEFAULT_CFG.staff_lock_hours, 0, 720),
             staff_open_hours: num(v.staff_open_hours, DEFAULT_CFG.staff_open_hours, 0, 720),   // #625
             context_msgs: num(v.context_msgs, DEFAULT_CFG.context_msgs, 0, 20),
+            typing_ttl_sec: num(v.typing_ttl_sec, TYPING_TTL_MS / 1000, 5, 120),   // #683 「입력 중」 표시 유효 시간
         };
     }
     let _cfgCache = null, _cfgAt = 0;
@@ -1238,6 +1240,17 @@ module.exports = function mountSms(app, deps) {
         res.set('content-type', r.content_type || 'image/jpeg'); res.set('cache-control', 'private, max-age=3600'); res.send(r.data);
     }));
     const who = req => ({ id: req.user.id, name: req.user.name || req.user.username || '' });
+    // #683(대표 「고」) 「○○님이 입력 중..」 — 같은 대화를 연 다른 직원에게 보여 주는 표시일 뿐(막는 것 없음). 메모리에만 둔다: DB 쓰기·audit 0.
+    //   Render 인스턴스 1개 전제 · 재시작하면 비워짐(30초짜리라 무해). 마지막 on 신호 뒤 typing_ttl_sec(기본 30) 지나면 풀림 · 답·처리함·끝내기를 하면 그 직원 것은 바로 풀림.
+    const _typing = new Map();   // 대화 번호 → Map(계정 번호 → { name, at })
+    let _typingSwept = 0;
+    const typingTtl = () => ((_cfgCache && _cfgCache.typing_ttl_sec) || TYPING_TTL_MS / 1000) * 1000;   // 설정은 틱이 읽어 둔 것만 본다(여기서 DB 를 읽지 않는다 — 화면이 3초마다 물음)
+    function typingSweep(force) {   // 지난 것 비움(Map 이 끝없이 자라지 않게 · 1분에 한 번 또는 500 대화 넘으면)
+        const now = Date.now(); if (!force && now - _typingSwept < 60000 && _typing.size < 500) return; _typingSwept = now; const ttl = typingTtl();
+        for (const [tid, m] of _typing) { for (const [uid, v] of m) if (now - v.at > ttl) m.delete(uid); if (!m.size) _typing.delete(tid); }
+    }
+    function typingClear(threadId, uid) { const m = _typing.get(Number(threadId)); if (!m) return; m.delete(Number(uid)); if (!m.size) _typing.delete(Number(threadId)); }
+    function typingOf(threadId, me) { const m = _typing.get(Number(threadId)); if (!m) return []; const now = Date.now(), ttl = typingTtl(), out = []; for (const [uid, v] of m) if (uid !== Number(me) && now - v.at <= ttl) out.push({ id: uid, name: v.name }); return out; }
     async function queueStaffReply(t, text, req, kind) {
         const body = smsSafe(text); if (!body) return null;
         const c = await cfg(); const pieces = splitForSms(body, c.max_chars);   // 직원·초안 발송도 봇 답과 같이 max_chars 조각(워커2 지적 · b-2 뒤 1000 으로 올리면 한 통)
@@ -1246,6 +1259,7 @@ module.exports = function mountSms(app, deps) {
         await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff_desk' WHERE thread_id = $1 AND direction = 'out' AND state = 'queued' AND sender <> 'staff_desk'`, [t.id]);
         await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: null });
         await writeAudit({ action: 'create', targetType: 'sms_reply', targetId: m.id, changes: { after: { thread: t.id, kind: kind || 'staff', bytes: byteLen(body) } }, source: 'sms', actor: who(req) });
+        typingClear(t.id, req.user.id);   // #683 답이 나가면 입력 중 풀림(reply · send-draft)
         return m;
     }
     async function cancelPendingExcept(threadId, keepId) { await pool.query(`UPDATE sms_messages SET state = 'cancelled', fail_reason = 'cancelled:staff_desk' WHERE thread_id = $1 AND direction = 'out' AND state = 'queued' AND id <> $2`, [threadId, keepId]); }
@@ -1275,6 +1289,7 @@ module.exports = function mountSms(app, deps) {
         const t = await loadThread(req, res); if (!t) return;
         const cancelled = await cancelPending(t.id, 'handled');
         await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: null });
+        typingClear(t.id, req.user.id);   // #683
         res.json({ ok: true, cancelled });
     }));
     // #675(대표 10/12 실물 — 사진 손님을 전화로 처리했는데 문자 「미처리」가 안 빠짐): [처리함] = 사람 몫 표시를 내린다(답 글 없이) · undo = 되돌림
@@ -1285,6 +1300,7 @@ module.exports = function mountSms(app, deps) {
     app.post('/api/sms/threads/:id/done', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;
         const undo = !!(req.body && req.body.undo === true);
+        typingClear(t.id, req.user.id);   // #683
         if (!undo) {
             if (!t.staff_why || t.status === 'closed' || t.status === 'ignored') return res.json({ ok: true, done: false, noop: true, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled: 0 });
             const keep = { why: t.staff_why, status: t.status, draft_text: t.draft_text || null, draft_kind: t.draft_kind || null, by: who(req).name, by_id: req.user.id, at: new Date().toISOString(), last_in_at: t.last_in_at ? new Date(t.last_in_at).toISOString() : null };
@@ -1305,7 +1321,23 @@ module.exports = function mountSms(app, deps) {
         const t = await loadThread(req, res); if (!t) return;
         const cancelled = await cancelPending(t.id, 'close');
         await setThread(t.id, { status: 'closed', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: null });
+        typingClear(t.id, req.user.id);   // #683
         res.json({ ok: true, cancelled });
+    }));
+    // #683 입력 중 신호 — body {on:true|false} · 응답 = 그 대화에서 나를 뺀 입력자. 대화가 있는지는 DB 로 확인하지 않는다(번호 꼴만 · 없는 번호면 빈 배열 — 30초 뒤 저절로 비워짐)
+    app.post('/api/sms/threads/:id/typing', authMiddleware, wrap(async (req, res) => {
+        const id = /^[0-9]{1,10}$/.test(String(req.params.id)) ? Number(req.params.id) : 0, uid = Number(req.user && req.user.id);
+        if (!(id > 0) || !(uid > 0)) return res.status(400).json({ ok: false, error: '대화 번호가 이상해요' });
+        typingSweep();
+        if (req.body && req.body.on === false) typingClear(id, uid);
+        else { let m = _typing.get(id); if (!m) { m = new Map(); _typing.set(id, m); } m.set(uid, { name: String(who(req).name || '').slice(0, 40), at: Date.now() }); }
+        res.json({ ok: true, typing: typingOf(id, uid) });
+    }));
+    // #683 지금 입력 중인 대화 전부(나를 뺀) — 화면이 3초마다 묻는다 · DB 조회 0
+    app.get('/api/sms/typing', authMiddleware, wrap(async (req, res) => {
+        typingSweep(); const me = Number(req.user && req.user.id), threads = {};
+        for (const tid of _typing.keys()) { const a = typingOf(tid, me); if (a.length) threads[String(tid)] = a; }
+        res.json({ ok: true, ttl_sec: Math.round(typingTtl() / 1000), threads });
     }));
     // 설정 보기·바꾸기(관리자 · 모드 전환은 여기서 — 첫 자동 발송(auto) 전환은 대표 「고」 뒤)
     app.get('/api/sms/config', authMiddleware, wrap(async (req, res) => { const c = await cfg(true); res.json(Object.assign({}, c, { gateway_env: { user: !!gwEnv().user, pass: !!gwEnv().pass, signing_key: !!(process.env.SMSGATE_SIGNING_KEY || process.env.SMSGATE_WEBHOOK_SECRET) }, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), ai_note: !!aiNote, followup: !!followup, selfcheck: !!selfcheck, photo_test: !!photoTest, preorders: !!preorders } })); }));
@@ -1327,7 +1359,7 @@ module.exports = function mountSms(app, deps) {
     }
     function stop() { for (const t of timers) clearInterval(t); timers.length = 0; }
 
-    return { initDB, start, stop, handleWebhook, handleInbound, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
+    return { initDB, start, stop, handleWebhook, handleInbound, _cardSms: () => _cardSms(), _botFailSms: () => _botFailSms(), _redecideTick: redecideTick, _staffHistory: staffHistory, _typingAge: ms => { for (const m of _typing.values()) for (const v of m.values()) v.at -= Number(ms) || 0; }, _typingSize: () => { typingSweep(true); return _typing.size; }, _setHistTtl: ms => { _histTtl = Number(ms) || 0; _histCache.clear(); }, _tickSql: { TICK_T, TICK_P, TICK_M }, handleSent, sendTick, watchTick, cfg, cfgOf, parseEvent, verifySignature, normalizePhone, smsSafeText, phoneMasked, phoneTail, modules: { classify: !!classifyMod, rules: !!rulesMod, lookup: !!lookupMod, photo: !!(photoJudge && photoReply), aiNote: !!aiNote }, _gatewaySend: gatewaySend, registerWebhooks, splitForSms, smsSafe, pendingPhotoTick, attachDownloaded, sweepStuck, retentionRun, stateMerge, resetCfg: () => { _cfgCache = null; }, _notifyStaff: notifyStaff, _classify: (t, ctx) => (classifyMod ? classifyMod.classify(t, ctx) : null), _aiAsserts: aiAsserts, _generalQ: t => GENERAL_Q_RE.test(String(t || '')) };   // _aiAsserts·_generalQ = 검증용(#645)
 };
 module.exports.normalizePhone = normalizePhone;
 module.exports.smsSafeText = smsSafeText;

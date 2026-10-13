@@ -1157,6 +1157,64 @@
     const smsVisible = () => { const c = $('desk-sms'); return !!c && !c.hidden; };
     function smsNote(text, kind) { const n = $('sms-note'); if (!n) return; n.hidden = !text; n.textContent = text || ''; n.dataset.k = kind || ''; }
     // 요약 — 알약 숫자 · 카드 머리 · 「지금 챙길 일」 한 줄
+    // #683(대표 10/13 「○○님이 입력 중..」): 문자 답 칸에 글을 치는 동안 같은 대화를 보는 다른 직원에게 알린다 — 막는 것은 없다(표시만).
+    //   보내기 = 답 칸 input 때 POST /api/sms/threads/:id/typing {on:true}(첫 글자 즉시 · 그 뒤 4초에 1번) · 빈 칸·보냄·대화 닫음 = {on:false}. 응답 typing = 나를 뺀 그 대화 입력자 → 2명 경고를 바로 그린다
+    //   받기 = 문자 탭이 보이는 동안만 GET /api/sms/typing 을 3초마다(창 닫힘·다른 탭·화면 숨김이면 멈춤) → 목록 줄 「A 입력 중」 · 답 칸 위 한 줄. 옛 서버(404)면 끄고 다시 묻지 않는다(토스트 없음)
+    const TYP = { off: false, pauseUntil: 0, ttl: 30000, others: {}, here: [], mine: 0, lastOn: 0, pollAt: 0, pbusy: false, sig: '', lsig: '' };
+    const typNames = v => (Array.isArray(v) ? v : []).map(p => String((p && p.name) || '').trim()).filter(Boolean);
+    const typMe = () => !!SMS.open && TYP.mine === SMS.open && Date.now() - TYP.lastOn < TYP.ttl;
+    async function typCall(path, body) {
+        if (TYP.off || Date.now() < TYP.pauseUntil) return null;
+        try {
+            const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') } }, body ? { method: 'POST', body: JSON.stringify(body), keepalive: true } : {}));
+            if (r.status === 404 || r.status === 405 || r.status === 501) { TYP.off = true; typClear(); return null; }   // 옛 서버 — 이 화면 동안 다시 묻지 않는다
+            if (!r.ok) throw new Error('http ' + r.status);
+            const d = await r.json(); return d && d.ok !== false ? d : null;
+        } catch (e) { TYP.pauseUntil = Date.now() + 60000; typClear(); return null; }   // 잠깐 끊김 — 조용히 숨기고 1분 쉰다
+    }
+    function typClear() { TYP.others = {}; TYP.here = []; typDraw(); }
+    function typDraw() {
+        const el = document.getElementById('sms-typing');
+        if (el) {
+            const names = TYP.off ? [] : typNames(TYP.here), me = typMe(), k = !names.length ? '' : me ? 'both' : 'one';
+            const who = names.map(n => n + '님').join('·');
+            const sig = k + '|' + who;
+            if (sig !== TYP.sig) {
+                TYP.sig = sig; el.hidden = !k; el.dataset.k = k;
+                el.innerHTML = !k ? '' : k === 'both' ? `<span class="sms-typing-t">⚠ ${esc(who)}도 같이 작성 중입니다 (${names.length + 1}명)</span>` : `<span class="sms-typing-d" aria-hidden="true"><i></i><i></i><i></i></span><span class="sms-typing-t">${esc(who)}이 입력 중..</span>`;
+            }
+        }
+        const lsig = TYP.off ? '' : JSON.stringify(Object.keys(TYP.others).sort().map(id => [id, typNames(TYP.others[id])]));
+        if (lsig !== TYP.lsig) { TYP.lsig = lsig; if (SMS.items) smsRenderList(); }
+    }
+    function typInput() {   // 답 칸을 손으로 고칠 때만 불린다(input) — 초안이 저절로 채워지는 것·[이대로 보내기]는 신호가 아니다
+        const id = SMS.open, ta = document.getElementById('sms-text'); if (!id || !ta || TYP.off) return;
+        if (!ta.value.trim()) { typStop(); return; }
+        if (smsIsDraft()) return;
+        const now = Date.now();
+        if (TYP.mine === id && now - TYP.lastOn < 4000) return;
+        if (TYP.mine && TYP.mine !== id) typStop();
+        TYP.mine = id; TYP.lastOn = now; typDraw();
+        typCall('/api/sms/threads/' + id + '/typing', { on: true }).then(d => { if (d && SMS.open === id && Array.isArray(d.typing)) { TYP.here = d.typing; TYP.others[id] = d.typing; if (!d.typing.length) delete TYP.others[id]; typDraw(); } });
+    }
+    function typStop(quiet) {   // 빈 칸 · 보냄 · 대화 닫음 · 다른 대화로 옮김
+        const id = TYP.mine; if (!id) return;
+        TYP.mine = 0; TYP.lastOn = 0;
+        if (!quiet) typCall('/api/sms/threads/' + id + '/typing', { on: false });
+        typDraw();
+    }
+    function typTick() {
+        if (TYP.off || TYP.pbusy || document.hidden || !smsVisible() || INB.ch !== 'sms') return;
+        const now = Date.now(); if (now - TYP.pollAt < 3000) return;
+        TYP.pollAt = now; TYP.pbusy = true;
+        typCall('/api/sms/typing').then(d => {
+            TYP.pbusy = false; if (!d) return;
+            if (Number(d.ttl_sec) > 0) TYP.ttl = Number(d.ttl_sec) * 1000;
+            TYP.others = d.threads && typeof d.threads === 'object' ? d.threads : {};
+            TYP.here = SMS.open ? (TYP.others[SMS.open] || TYP.others[String(SMS.open)] || []) : [];
+            typDraw();
+        });
+    }
     async function smsSummary() {
         SMS.sumAt = Date.now();
         let d = null;
@@ -1403,6 +1461,7 @@
         const at = x.last_at || (out ? x.last_out_at : x.last_in_at), why = smsWhy(x);
         const text = out ? (x.last_out_text || '') : (x.last_in_text || '');
         const draft = !!x.draft_text && x.status !== 'closed' && x.status !== 'ignored';   // 끝난 대화에 남은 초안은 표시하지 않는다(보낼 일이 없다)
+        const typ = TYP.off ? '' : typNames(TYP.others[x.id]).join('·');   // #683 누가 답을 쓰는 중인지(나는 빼고)
         return `<li class="sms-item${open ? ' open' : ''}${un > 0 ? ' unread' : ''}" data-id="${x.id}" data-st="${esc(x.status || '')}" data-un="${un}">`
             + `<button type="button" class="sms-row" aria-expanded="${String(open)}" aria-controls="sms-thread">`
             + `<span class="sms-tail">${esc(smsNo(x))}</span>`
@@ -1410,7 +1469,7 @@
             + (un > 0 ? `<i class="sms-n sms-un" aria-label="안 읽은 글 ${un}개">${un > 99 ? '99+' : un}</i>` : old ? smsBadge(x.status) : '')
             + `<time class="sms-time">${esc(smsWhen(at))}</time>`
             + `<span class="sms-last">${out ? '<b class="sms-me">나:</b> ' : ''}${!out && x.has_image ? '<i class="sms-pic">사진</i>' : ''}${esc(text || (!out && x.has_image ? '' : '(글 없음)'))}</span>`
-            + ((why || draft) ? `<span class="sms-tags">${why ? `<i class="sms-why">${esc(why)}</i>` : ''}${draft ? '<i class="sms-tag">초안</i>' : ''}</span>` : '')
+            + ((why || draft || typ) ? `<span class="sms-tags">${why ? `<i class="sms-why">${esc(why)}</i>` : ''}${draft ? '<i class="sms-tag">초안</i>' : ''}${typ ? `<i class="sms-typ">${esc(typ)} 입력 중</i>` : ''}</span>` : '')
             + '</button></li>';
     }
     function smsRenderList() {
@@ -1423,7 +1482,7 @@
             if (at >= 0) { SMS.openRow = items[at]; SMS.openAt = at; }
             else if (SMS.openRow) items.splice(Math.min(SMS.openAt, items.length), 0, SMS.openRow);
         }
-        const sig = smsSig([items, SMS.scope, SMS.only, SMS.q, SMS.open, SMS.err]);
+        const sig = smsSig([items, SMS.scope, SMS.only, SMS.q, SMS.open, SMS.err, TYP.lsig]);
         const cnt = $('sms-count'); if (cnt) cnt.textContent = SMS.err ? '' : (items.length >= 50 && !SMS.only ? '50건까지 보여요. 끝 4자리·전체 번호나 글로 찾아보세요.' : (SMS.only ? '직원 확인만 · ' : '') + nfmt(items.length) + '건' + (SMS.only && (SMS.items || []).length >= 50 ? ' · 최근 50건 안에서' : ''));
         if (sig === SMS.sig && ul.firstChild) return;
         SMS.sig = sig;
@@ -1453,12 +1512,14 @@
             + `<div class="sms-order sms-buy" id="sms-order">구매이력을 찾는 중</div>`
             + `<div class="sms-msgs" id="sms-msgs" tabindex="0" aria-label="주고받은 문자"><div class="desk-empty ship-empty">불러오는 중</div></div>`
             + `<form class="sms-reply" id="sms-reply" autocomplete="off">`
+            + `<div class="sms-typing" id="sms-typing" role="status" aria-live="polite" hidden></div>`
             + `<div class="sms-draft" id="sms-draft" hidden>봇이 만든 초안이에요. 그대로 보내거나 고쳐서 보낼 수 있어요.</div>`
             + `<div class="sms-warn" id="sms-warn" role="status" hidden></div>`
             + `<label class="desk-sr" for="sms-text">손님에게 보낼 답 문자</label>`
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
             + `<div class="sms-reply-row"><span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`
             + `</form>`;
+        TYP.sig = ''; TYP.here = TYP.off ? [] : (TYP.others[id] || []); setTimeout(typDraw, 0);   // #683 목록에서 이미 본 입력자를 여는 즉시
         if (window.ResizeObserver) {   // #681: 구매이력 판·초안 띠·답 칸이 늦게 커져 대화 칸이 줄면 마지막 글이 아래로 잘렸다 → 맨 아래를 보고 있었으면 다시 맨 아래로(위 글을 읽는 중이면 그대로)
             const ms = th.querySelector('#sms-msgs'); let stick = true;
             ms.addEventListener('scroll', () => { stick = ms.scrollHeight - ms.scrollTop - ms.clientHeight < 40; }, { passive: true });
@@ -1477,6 +1538,7 @@
     }
     function smsThreadClose(focusRow, keepHist) {
         const id = SMS.open; if (!id) return;
+        typStop(); TYP.here = []; TYP.sig = '';
         if (SMS.ro) { SMS.ro.disconnect(); SMS.ro = null; }
         const ta = document.getElementById('sms-text');
         if (ta) { const v = ta.value; const dr = SMS.thread && SMS.thread.thread && SMS.thread.thread.draft_text; if (v.trim() && v.trim() !== String(dr || '').trim()) SMS.texts.set(id, v); else SMS.texts.delete(id); }
@@ -1666,7 +1728,7 @@
                 if (!r.ok) throw new Error((res && res.error) || '다시 시도해 주세요');
             } else res = await api('/api/sms/threads/' + id + '/reply', 'POST', { text });
             if (res && res.ok === false) throw new Error(res.error || '다시 시도해 주세요');
-            okDone = true;
+            okDone = true; typStop(true);   // #683 보냄 = 서버가 내 입력 표시를 지운다
             if (SMS.open === id && ta.isConnected) ta.value = '';
             SMS.texts.delete(id); showToast('답을 보냈어요. 회사폰에서 나가면 「보냄」으로 바뀌어요');
         } catch (e) {
@@ -1732,7 +1794,7 @@
     }
     function smsVv() { if (SMS.vvRaf) return; SMS.vvRaf = requestAnimationFrame(smsVvNow); }   // #655: 한 프레임에 한 번
     function smsTick(now) {
-        inbHook();
+        inbHook(); typTick();
         if (now) { SMS.sumAt = 0; SMS.listAt = 0; SMS.thAt = 0; }
         const t = Date.now();
         if (t - SMS.sumAt > (SMS.sum ? 30000 : 300000)) smsSummary();   // 문자 라우트가 없는 서버면 5분에 한 번만 다시 본다
@@ -1823,7 +1885,7 @@
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
         list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } });
-        list.addEventListener('input', e => { if (e.target.id === 'sms-text') smsSync(); });
+        list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } });
         list.addEventListener('keydown', e => { if (e.target.id === 'sms-text' && e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); smsAct('send'); } });
         $('desk-sms').addEventListener('mousedown', e => { if (e.target === $('desk-sms')) smsCloseCard(); });   // 창 바깥(어두운 곳) 누름 = 닫기
         $('sms-view').addEventListener('click', e => { if (e.target.id !== 'sms-view-img') smsViewClose(); });

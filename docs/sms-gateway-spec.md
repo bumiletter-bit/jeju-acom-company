@@ -427,6 +427,13 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 
 직원 답 뒤 24시간 봇 침묵(`staff_lock_hours`)과 직원 몫 6시간 자동 종료(`staff_open_hours`)는 그대로다. 목록은 안 읽음 기준이라 영향이 없고, 침묵 중에도 초안은 만든다.
 
+### 10-5a-2. 「○○님이 입력 중..」 표시(#683 · 2026-10-13 · 화면 계약)
+- 표시일 뿐 막는 것은 없다. **서버 메모리에만** 둔다(DB 쓰기·audit 0 · Render 인스턴스 1개 전제 · 재시작하면 비워짐 — 30초짜리라 무해).
+- `POST /api/sms/threads/:id/typing` `{on:true|false}` → `{ok:true, typing:[{id,name}]}` = 그 대화에서 **나를 뺀** 입력자. 대화가 있는지는 확인하지 않는다(번호 꼴이 아니면 400 · 없는 번호면 빈 배열).
+- `GET /api/sms/typing` → `{ok:true, ttl_sec:30, threads:{"<대화 번호>":[{id,name}]}}` = 나를 뺀 전체(DB 조회 0 · 화면이 3초마다).
+- 풀림: 마지막 on 신호 뒤 `typing_ttl_sec`(설정 `sms_gateway` · 기본 30 · 5~120) · `on:false` · 그 직원이 `/reply`·`/send-draft`(성공)·`/handled`·`/done`·`/close` 를 부르면 그 직원 것만.
+- 종전 응답(목록·상세·summary)은 그대로 — 옛 서버 구분용 표식은 없다(화면은 404 를 한 번 받으면 끈다). 이름 = 로그인 토큰의 name(40자까지).
+
 ### 10-5b. 보관 정리(매일 03:50 KST · `retentionRun`)
 - `agent_office_config 'db_retention'.enabled` 가 **불리언 true** 일 때만 돈다(#579 스위치 · 지금 켜져 있음). 실패하면 다음 틱에 다시.
 - 사진: `sms_images` 만든 지 `image_days`(기본 30)일 지난 줄의 `data` 를 비움(`purged_at`). 발송 전 주문 표(`sms_preorders`) 7일.
