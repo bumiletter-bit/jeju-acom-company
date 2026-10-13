@@ -205,6 +205,39 @@ let pass = 0, fail = 0; const ok = (c, m, x) => { c ? pass++ : fail++; console.l
                 const f1 = await fullGo(), f2 = await back(), f3 = await fullGo();
                 await pg.evaluate(() => document.querySelector('#ao-desk-root .is-full .desk-close').click()); await pg.waitForTimeout(500); const f4 = await hs();
                 ok(f1.full && f1.st === 'full' && f1.d === 1 && !f2.full && f2.page && f2.d === 0 && f3.full && !f4.full && f4.d === 0 && f4.st === '', `[${name}] #677 「자세히 확인하기」 전체 화면 → 뒤로가기로 닫힘 · [닫기]로 닫으면 칸 0`, J([f1.st, f2.full, f2.page, f4.d]));
+                {   // #681(대표 10/13 폴드7 실물 「1개만 나오고 +n건 · 접어서 볼 때도 가려」): 한 주문에 송장 2개 → 접힌 판에는 1건(상태 칩 1개) + 「+1건 더보기」 · 판 높이 상한 · 마지막 글·답 칸이 판·화면 밖으로 안 잘림 · 누르면 펼침/접힘
+                    const TWO = { pre: false, ship_date: '2026-10-12', recipient_name: '홍길동', option_text: '하우스감귤 가정용 - 4kg(로얄과)', qty: 2, boxes: 2, trackings: ['590123456001', '590123456002'], status_label: null, delivered: false, partner: '효돈', role: 'both', status_text: '배송 중 · 이동',
+                        boxes_detail: [{ tracking: '590123456001', option_text: '하우스감귤 가정용 - 4kg(로얄과) / 사이즈 지정 없음 · 행사 중량 업그레이드', qty: 1, status_text: '배송 중 · 간선하차', delivered: false }, { tracking: '590123456002', option_text: '(제철)고당도 하우스감귤 선물용 - 3kg(로얄과)', qty: 1, status_text: '배송 중 · 집화 전', delivered: false }] };
+                    const two = async r => { if (r.request().method() !== 'GET' || !/\/threads\/1(\?|$)/.test(r.request().url())) return r.fallback(); const rs = await r.fetch(); const j = await rs.json(); if (Array.isArray(j.history)) j.history = HIST; await r.fulfill({ response: rs, json: j }); };
+                    let HIST = [TWO];
+                    await pg.route('**/api/sms/threads/1*', two);
+                    const bm = () => pg.evaluate(() => { const b = document.getElementById('sms-order'), th = document.getElementById('sms-thread'), ms = document.getElementById('sms-msgs'), ta = document.getElementById('sms-text'), sd = document.getElementById('sms-send'); if (!b || !th || !ms) return { none: true };
+                        const r = b.getBoundingClientRect(), tr = th.getBoundingClientRect(), mr = ms.getBoundingClientRect(), last = ms.lastElementChild, lr = last.getBoundingClientRect(), vis = Array.from(b.querySelectorAll('.sms-buy-i')).filter(x => x.getClientRects().length), it = vis[0].querySelector('dd[data-k="item"]');
+                        const tap = x => { const p = getComputedStyle(x, '::after'), h = parseFloat(p.height); return Math.max(x.getBoundingClientRect().height, p.content !== 'none' && h ? h : 0); };
+                        return { h: Math.round(r.height), ratio: +(r.height / tr.height).toFixed(2), units: b.querySelectorAll('.sms-buy-i').length, shown: vis.length, chips: vis.reduce((k, x) => k + x.querySelectorAll('.desk-badge').length, 0), trks: vis[0].querySelectorAll('.sms-trk').length, more: (document.getElementById('sms-buy-more') || {}).textContent || '', head: (b.querySelector('.sms-buy-h small') || {}).textContent || '', ship: (vis[0].querySelector('dd[data-k="ship"]') || {}).textContent || '',
+                            oneLine: it.getBoundingClientRect().height < 24, cut: it.scrollWidth > it.clientWidth, gap: Math.round(mr.top - r.bottom), lastIn: lr.top >= r.bottom - 1 && lr.bottom <= mr.bottom + 1, ta: ta.getBoundingClientRect().height > 0 && sd.getBoundingClientRect().bottom <= window.innerHeight + 1, inner: b.scrollHeight > b.clientHeight + 1,
+                            tap: Math.round(Math.min(...Array.from(b.querySelectorAll('.sms-trk, .sms-trk-go, #sms-buy-more')).filter(x => x.getClientRects().length).map(tap))), over: document.documentElement.scrollWidth, vw: window.innerWidth }; });
+                    const run = async tag => {
+                        await pg.evaluate(() => window.AkmAoDesk.openSms(1)); await pg.waitForTimeout(1700); const c0 = await bm();
+                        await pg.evaluate(() => document.getElementById('sms-buy-more').click()); await pg.waitForTimeout(400); const c1 = await bm();
+                        await pg.evaluate(() => document.querySelector('#sms-order .sms-buy-h b').click()); await pg.waitForTimeout(400); const c2 = await bm();
+                        const cap = c0.vw <= 720 ? 0.22 : 0.26;
+                        ok(c0.units === 2 && c0.shown === 1 && c0.chips === 1 && c0.trks === 1 && c0.more === '+1건 더보기' && c0.head === '최근 60일 · 2건' && /1\/2상자/.test(c0.ship) && c0.oneLine && c0.ratio <= cap && c0.h <= 150 && c0.gap >= 0 && c0.lastIn && c0.ta && c0.tap >= (touch ? 44 : 22) && c0.over <= c0.vw, `[${tag}] #681 송장 2개 한 주문 = 접힌 판에 1건(칩 ${c0.chips} · 송장 ${c0.trks}) + 「${c0.more}」 · 판 ${c0.h}px = 대화 칸의 ${c0.ratio}(상한 ${cap}) · 품목 한 줄 · 마지막 글·답 칸 안 가림`, J(c0));
+                        ok(c1.shown === 2 && c1.chips === 2 && c1.more === '접기' && c1.ratio <= 0.5 && c1.gap >= 0 && c1.lastIn && c1.ta && c2.shown === 1 && c2.more === '+1건 더보기' && c2.h === c0.h && c2.lastIn && c2.over <= c2.vw, `[${tag}] #681 누르면 펼침(2건 · 판 ${c1.h}px = ${c1.ratio} · 마지막 글 보임) → 머리 줄을 다시 누르면 접힘(${c2.h}px)`, J([c1, c2]));
+                        await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(600);
+                    };
+                    await run(name);
+                    if (phone) { await pg.setViewportSize({ width: 360, height: 740 }); await pg.waitForTimeout(300); await run(name + ' 360'); await pg.setViewportSize(vw); await pg.waitForTimeout(300); }
+                    {   // 보완: 구매이력이 1건뿐이면 펼칠 길이 없으므로 품목을 말줄임하지 않는다(긴 옵션명 뒤 「× 2」까지 보임) · 높이 상한 이하
+                        HIST = [{ pre: false, ship_date: '2026-10-12', recipient_name: '홍길동', option_text: '하우스감귤 가정용 - 4kg(로얄과) / 사이즈 지정 없음 · 행사 중량 업그레이드 · 선물 포장 요청', qty: 2, boxes: 1, trackings: ['590123456009'], status_text: '배송 중 · 이동', delivered: false, partner: '효돈', role: 'both' }];
+                        await pg.evaluate(() => window.AkmAoDesk.openSms(1)); await pg.waitForTimeout(1700);
+                        const o1 = await pg.evaluate(() => { const b = document.getElementById('sms-order'), it = b.querySelector('dd[data-k="item"]'), th = document.getElementById('sms-thread'), ms = document.getElementById('sms-msgs'), lr = ms.lastElementChild.getBoundingClientRect(), r = b.getBoundingClientRect(); return { units: b.querySelectorAll('.sms-buy-i').length, more: !!document.getElementById('sms-buy-more'), ws: getComputedStyle(it).whiteSpace, cut: it.scrollWidth > it.clientWidth + 1, tail: it.textContent.trim().slice(-3), ratio: +(r.height / th.getBoundingClientRect().height).toFixed(2), h: Math.round(r.height), lastIn: lr.top >= r.bottom - 1 && lr.bottom <= ms.getBoundingClientRect().bottom + 1, over: document.documentElement.scrollWidth, vw: window.innerWidth }; });
+                        ok(o1.units === 1 && !o1.more && o1.ws !== 'nowrap' && !o1.cut && o1.tail === '× 2' && o1.ratio <= (o1.vw <= 720 ? 0.22 : 0.26) && o1.lastIn && o1.over <= o1.vw, `[${name}] #681 구매이력 1건뿐인 손님 = 품목 전체 보임(말줄임 아님 · 끝 「${o1.tail}」) · 더보기 단추 없음 · 판 ${o1.h}px = ${o1.ratio}(상한 이하) · 마지막 글 보임`, J(o1));
+                        await pg.evaluate(() => document.getElementById('sms-close').click()); await pg.waitForTimeout(600);
+                    }
+                    await pg.unroute('**/api/sms/threads/1*', two);
+                    const z = await hs(); ok(z.d === 0 && z.st === '' && !z.win, `[${name}] #681 끝난 뒤 뒤로가기 칸 0 · 창 닫힘`, J([z.d, z.st, z.win]));
+                }
                 // ⑥ 손님 연락 창: 구매이력 펼침 → 뒤로가기 = 접힘(대화 그대로) / 사진 크게 → 사진 → 대화 → 창 순
                 await pg.evaluate(() => window.AkmAoDesk.openSms(3)); await pg.waitForTimeout(1600); const g1 = await hs();
                 await pg.evaluate(() => { const b = document.getElementById('sms-buy-more'); b.scrollIntoView({ block: 'center' }); b.click(); }); await pg.waitForTimeout(400); const g2 = await hs();

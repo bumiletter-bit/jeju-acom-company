@@ -1459,6 +1459,12 @@
             + `<textarea class="sms-text" id="sms-text" rows="3" maxlength="1000" placeholder="손님에게 보낼 문자를 적어 주세요"></textarea>`
             + `<div class="sms-reply-row"><span class="sms-len" id="sms-len"></span><button type="submit" class="desk-btn primary" id="sms-send" disabled>답 보내기</button></div>`
             + `</form>`;
+        if (window.ResizeObserver) {   // #681: 구매이력 판·초안 띠·답 칸이 늦게 커져 대화 칸이 줄면 마지막 글이 아래로 잘렸다 → 맨 아래를 보고 있었으면 다시 맨 아래로(위 글을 읽는 중이면 그대로)
+            const ms = th.querySelector('#sms-msgs'); let stick = true;
+            ms.addEventListener('scroll', () => { stick = ms.scrollHeight - ms.scrollTop - ms.clientHeight < 40; }, { passive: true });
+            if (SMS.ro) SMS.ro.disconnect();
+            SMS.ro = new ResizeObserver(() => { if (stick) ms.scrollTop = ms.scrollHeight; }); SMS.ro.observe(ms);
+        }
         document.querySelectorAll('#sms-list .sms-item.open').forEach(o => { o.classList.remove('open'); o.querySelector('.sms-row').setAttribute('aria-expanded', 'false'); });
         li.classList.add('open'); li.querySelector('.sms-row').setAttribute('aria-expanded', 'true');
         $('sms-pane').replaceChildren(th);
@@ -1471,6 +1477,7 @@
     }
     function smsThreadClose(focusRow, keepHist) {
         const id = SMS.open; if (!id) return;
+        if (SMS.ro) { SMS.ro.disconnect(); SMS.ro = null; }
         const ta = document.getElementById('sms-text');
         if (ta) { const v = ta.value; const dr = SMS.thread && SMS.thread.thread && SMS.thread.thread.draft_text; if (v.trim() && v.trim() !== String(dr || '').trim()) SMS.texts.set(id, v); else SMS.texts.delete(id); }
         const read = !!SMS.thread;
@@ -1487,9 +1494,10 @@
     // #653-가 「구매이력」 카드(대표 10/11) — 직원만 보는 주문 정보(손님에게 안 나감). 틀 = 상태 배지 + 칸 맞춘 줄(발송일 · 송장 · 받는 분 · 품목).
     //   자료: 서버 history(#654 · 최근 60일 · 최신순 · 최대 20건)가 있으면 그것 — 가장 위 1건을 보여 주고 나머지는 「구매이력 n건 더보기」로 같은 틀로 펼친다(그 대화를 보는 동안 기억).
     //         history 가 없으면(옛 서버) 종전 order(판정에 쓴 최근 14일 1건)로. 송장 = 전체 번호(누르면 복사 · [조회] = 우리 배송조회 새 창) · 옛 응답이면 「끝 1234」.
-    function smsBuyItem(o) {
-        if (!o || typeof o !== 'object') return '';
-        const row = (k, name, html, key) => html ? `<div class="sms-buy-r r-${k}${key ? ' key' : ''}"><dt>${name}</dt><dd data-k="${k}"${key ? ' class="key"' : ''}>${html}</dd></div>` : '';
+    //   #681(대표 10/13 폴드7 실물 「1개만 나오고 +n건 · 접어서 볼 때도 가려」): 「1건」 = 송장 1개(상자 1개). 한 주문에 송장이 2개면 2건으로 나눠, 접힌 판에는 맨 위 1건만 낮게(품목은 한 줄 말줄임) + 머리 줄 오른쪽 「+n건 더보기」
+    function smsBuyUnits(o) {
+        if (!o || typeof o !== 'object') return [];
+        const row = (k, name, html, key, tip) => html ? `<div class="sms-buy-r r-${k}${key ? ' key' : ''}"><dt>${name}</dt><dd data-k="${k}"${key ? ' class="key"' : ''}${tip ? ` title="${tip}"` : ''}>${html}</dd></div>` : '';
         const badge = (text, k) => text ? `<span class="desk-badge" data-k="${k}">${esc(text)}</span>` : '';
         const role = o.role === 'buyer' ? '<small class="sms-buy-role">이 번호가 주문한 건</small>' : o.role === 'both' ? '' : o.role === 'recipient' ? '<small class="sms-buy-role">이 번호가 받는 건</small>' : '';
         const item = esc((o.option_text || '') + (Number(o.qty) > 1 ? ' × ' + nfmt(o.qty) : '') + (Number(o.boxes) > 1 ? ' · ' + nfmt(o.boxes) + '상자' : ''));
@@ -1497,41 +1505,42 @@
         const who = esc(rName ? (rName.length === 1 ? rName + '**' : rName) : (rInit ? rInit + '**' : ''));
         if (o.pre) {
             const pd = smsKd(o.paid_at);
-            return `<div class="sms-buy-i"><div class="sms-buy-s">${badge('발송 전', 'wait')}${role}</div><dl class="sms-buy-g">`
+            return [`<div class="sms-buy-i"><div class="sms-buy-s">${badge('발송 전', 'wait')}${role}</div><dl class="sms-buy-g">`
                 + row('plan', '발송 예정', o.ship_plan ? esc(String(o.ship_plan).slice(0, 20)) : '', true)   // #654 서버가 달력으로 계산해 준 글자(없으면 줄 없음 — 결제 시각 모름·예약 상품·예정일 지남)
                 + row('paid', '결제', pd ? esc((pd.getUTCMonth() + 1) + '/' + pd.getUTCDate() + (o.paid_known === false ? '쯤' : '')) : '', !o.ship_plan)
-                + row('who', '받는 분', who) + row('item', '품목', item) + row('note', '안내', o.ship_plan ? '아직 발송 전이에요(송장은 발송 뒤에 생겨요)' : '아직 발송 전이에요(송장 없음)') + '</dl></div>';
+                + row('who', '받는 분', who) + row('item', '품목', item, false, item) + row('note', '안내', o.ship_plan ? '아직 발송 전이에요(송장은 발송 뒤에 생겨요)' : '아직 발송 전이에요(송장 없음)') + '</dl></div>'];
         }
-        if (!(o.ship_date || o.option_text || o.tracking_tail || o.status_label || (Array.isArray(o.trackings) && o.trackings.length))) return '';
+        if (!(o.ship_date || o.option_text || o.tracking_tail || o.status_label || (Array.isArray(o.trackings) && o.trackings.length))) return [];
         const trks = [...new Set((Array.isArray(o.trackings) ? o.trackings : []).map(x => String(x == null ? '' : x).replace(/[^0-9]/g, '')).filter(x => /^[0-9]{10,12}$/.test(x)))];
         const trk1 = n => `<span class="sms-trk1"><button type="button" class="sms-trk" data-trk="${n}" title="눌러서 복사" aria-label="송장번호 ${n} 복사">${n}</button><a class="sms-trk-go" href="/track?n=${n}" target="_blank" rel="noopener" aria-label="송장번호 ${n} 배송조회(새 창)">조회</a></span>`;
         const trkHtml = trks.length ? `<span class="sms-trks">${trks.map(trk1).join('')}</span>` : (o.tracking_tail ? esc('끝 ' + o.tracking_tail) : '');
         // #657(대표 10/11): 배지 글 = 서버가 지어 준 status_text(「배송 중 · 집화 전」「조회 안 됨」…) — 없으면(옛 서버) status_label. 색 = 배송완료 초록 · 배송 중 인디고 · 조회 안 됨·미배송·사고 주황
         const stK = s => /완료/.test(s) ? 'done' : /조회 안 됨|미배송|사고|반송|실패|없음/.test(s) ? 'ask' : s ? 'work' : 'mute';
         const st = String(o.status_text || o.status_label || '').trim() || (o.delivered ? '배송완료' : '');
-        // #657 송장별 품목: 상자가 2개 이상이면 「[송장][조회] 품목 × n · 상태」 한 줄씩 짝지어(서버 boxes_detail · 없으면 종전 꼴)
+        // #657 송장별 품목·상태(서버 boxes_detail) → #681 송장마다 따로 한 건(상태 배지 하나 · 발송일 거래처 · 송장 [조회] · 받는 분 · 그 상자 품목). 「n/m상자」 = 같은 주문의 몇째 상자
         const bd = (Array.isArray(o.boxes_detail) ? o.boxes_detail : []).map(b => ({ n: String((b && b.tracking) == null ? '' : b.tracking).replace(/[^0-9]/g, ''), opt: String((b && b.option_text) || '').trim(), qty: Number(b && b.qty) || 0, st: String((b && (b.status_text || b.status_label)) || '').trim() || (b && b.delivered ? '배송완료' : '') })).filter(b => /^[0-9]{10,12}$/.test(b.n));
-        const byBox = bd.length >= 2;
-        const boxHtml = byBox ? `<div class="sms-buy-r r-boxes wide"><dt>송장별</dt><dd data-k="boxes"><ul class="sms-box-l">${bd.map(b => `<li>${trk1(b.n)}<span class="sms-box-it">${esc(b.opt || '품목 확인 전')}${b.qty > 1 ? ' × ' + nfmt(b.qty) : ''}</span>${b.st ? badge(b.st, stK(b.st)) : ''}</li>`).join('')}</ul></dd></div>` : '';
-        return `<div class="sms-buy-i"><div class="sms-buy-s">${badge(st || '상태 확인 전', stK(st))}${role}</div><dl class="sms-buy-g">`
-            + row('ship', '발송일', o.ship_date ? esc(mdOf(o.ship_date)) + (o.partner ? ` <small>${esc(o.partner)}</small>` : '') : '', true)
-            + (byBox ? '' : row('trk', '송장', trkHtml)) + row('who', '받는 분', who) + (byBox && bd.every(b => b.opt) ? '' : row('item', '품목', item)) + boxHtml + (o.arrive_text ? row('arrive', '도착', esc(o.arrive_text)) : '') + '</dl></div>';
+        const unit = (s, trk, it, nth, of) => `<div class="sms-buy-i"><div class="sms-buy-s">${badge(s || '상태 확인 전', stK(s))}${role}</div><dl class="sms-buy-g">`
+            + row('ship', '발송일', o.ship_date || of ? (o.ship_date ? esc(mdOf(o.ship_date)) : '') + (o.partner ? ` <small>${esc(o.partner)}</small>` : '') + (of ? ` <small class="sms-buy-nth">${nth}/${of}상자</small>` : '') : '', true)
+            + row('trk', '송장', trk) + row('who', '받는 분', who) + row('item', '품목', it, false, it) + (o.arrive_text ? row('arrive', '도착', esc(o.arrive_text)) : '') + '</dl></div>';
+        if (bd.length >= 2) return bd.map((b, i) => unit(b.st || st, `<span class="sms-trks">${trk1(b.n)}</span>`, b.opt ? esc(b.opt + (b.qty > 1 ? ' × ' + nfmt(b.qty) : '')) : (item || '품목 확인 전'), i + 1, bd.length));
+        if (trks.length >= 2) return trks.map((n, i) => unit(st, `<span class="sms-trks">${trk1(n)}</span>`, item, i + 1, trks.length));   // 상자별 자료가 없는 응답 = 송장만 나눔(품목·상태는 주문 것)
+        return [unit(st, trkHtml, item)];
     }
     function smsBuyRender() {
         const box = document.getElementById('sms-order'), d = SMS.thread; if (!box || !d) return;
         const t = d.thread || {}, ow = d.order && typeof d.order === 'object' ? d.order : null, o = ow ? (ow.order && typeof ow.order === 'object' ? ow.order : ow) : null;
         const hasHist = Array.isArray(d.history), days = hasHist ? (Number(d.history_days) || 60) : 14;
-        const list = hasHist ? d.history.map(smsBuyItem).filter(Boolean) : [smsBuyItem(o)].filter(Boolean);
+        const list = hasHist ? d.history.flatMap(smsBuyUnits) : smsBuyUnits(o);
         let html = '';
         if (list.length) {
             const rest = list.length - 1, open = SMS.buyOpen.has(SMS.open), shown = Math.min(rest, Math.max(5, Number(SMS.buyShow) || 5)), left = rest - shown;   // #657: 펼치면 한 번에 5건씩(60일 안 수십 건 손님 — 대화 칸을 가리지 않게)
-            html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 ${days}일${list.length > 1 ? ' · ' + nfmt(list.length) + '건' : ''}</small></div>` + list[0]
-                + (rest > 0 ? `<button type="button" class="sms-buy-more" id="sms-buy-more" aria-expanded="${String(open)}" aria-controls="sms-buy-rest" aria-label="${open ? '구매이력 접기' : '구매이력 ' + nfmt(rest) + '건 더보기'}">${open ? '접기' : '+' + nfmt(rest) + '건 더보기'}</button><div class="sms-buy-rest" id="sms-buy-rest"${open ? '' : ' hidden'}>${list.slice(1, 1 + shown).join('')}${left > 0 ? `<button type="button" class="sms-buy-more next" id="sms-buy-next">${nfmt(Math.min(5, left))}건 더보기 <small>남은 ${nfmt(left)}건</small></button>` : (d.history_more ? `<p class="sms-buy-cap">${nfmt(list.length)}건까지 보여요.</p>` : '')}</div>` : '');
+            html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 ${days}일${list.length > 1 ? ' · ' + nfmt(list.length) + '건' : ''}</small>${rest > 0 ? `<button type="button" class="sms-buy-more" id="sms-buy-more" aria-expanded="${String(open)}" aria-controls="sms-buy-rest" aria-label="${open ? '구매이력 접기' : '구매이력 ' + nfmt(rest) + '건 더보기'}">${open ? '접기' : '+' + nfmt(rest) + '건 더보기'}</button>` : ''}</div>` + list[0]
+                + (rest > 0 ? `<div class="sms-buy-rest" id="sms-buy-rest"${open ? '' : ' hidden'}>${list.slice(1, 1 + shown).join('')}${left > 0 ? `<button type="button" class="sms-buy-more next" id="sms-buy-next">${nfmt(Math.min(5, left))}건 더보기 <small>남은 ${nfmt(left)}건</small></button>` : (d.history_more ? `<p class="sms-buy-cap">${nfmt(list.length)}건까지 보여요.</p>` : '')}</div>` : '');
         } else if (!hasHist) {
             const line = String((ow && ow.line) || t.order_hint || '').trim();   // 칸이 없는 옛 응답은 서버가 지어 준 한 줄
             if (line) html = `<div class="sms-buy-h"><b>구매이력</b><small>최근 14일</small></div><div class="sms-buy-i"><dl class="sms-buy-g">${`<div class="sms-buy-r"><dt>요약</dt><dd data-k="line">${esc(line)}</dd></div>`}</dl></div>`;
         }
-        box.classList.toggle('none', !html); box.classList.toggle('has-more', list.length > 1); smsBuyLyr();   // #659 2건 이상이면 판 아무 곳이나 눌러 펼침·접힘
+        box.classList.toggle('none', !html); box.classList.toggle('has-more', list.length > 1); box.classList.toggle('open', list.length > 1 && SMS.buyOpen.has(SMS.open)); smsBuyLyr();   // #659 2건 이상이면 판 아무 곳이나 눌러 펼침·접힘
         const sig = html || 'none:' + days;
         if (box.dataset.sig === sig) return;   // 폴링마다 다시 그리지 않는다(더보기 누르던 초점 유지)
         box.dataset.sig = sig;

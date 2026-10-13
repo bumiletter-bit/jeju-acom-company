@@ -1340,9 +1340,27 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
     .sms-pane .sms-buy .sms-buy-r.r-item { flex: 1 1 240px; }
 }
 @media (max-width: 640px) {
-    .sms-pane .sms-buy .sms-trk, .sms-pane .sms-buy .sms-trk-go { min-height: 44px; }
     .sms-pane .sms-buy .sms-trk { padding: 0 8px; font-size: 13px; }
     .sms-pane .sms-buy .sms-trk-go { padding: 0 8px; font-size: 12px; }
+}
+/* ── #681 (대표 10/13 폴드7 실물 「1개만 나오고 +n건 · 사이즈 조절 · 접어서 볼 때도 가려」) 구매이력 판: 「1건」 = 송장 1개. 접힘 = 맨 위 1건만(품목 한 줄 말줄임 · 발송 전 안내 줄 숨김) · 「+n건 더보기」는 머리 줄 오른쪽 · 높이 상한(접힘 26% · 펼침 46% → 판 안에서 스크롤)
+      송장·[조회]는 보이는 높이 32px + 누르는 자리 44px(::after · 아래 #673 블록) — 종전 폰 44px 줄이 판을 한 줄 더 높였다 ── */
+.sms-pane .sms-order.sms-buy:not(.none) { max-height: max(26%, 104px); }
+.sms-pane .sms-order.sms-buy.open { max-height: 46%; }
+.sms-pane .sms-buy .sms-buy-h { align-items: center; min-height: 22px; }
+.sms-pane .sms-buy .sms-buy-h small { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-pane .sms-buy .sms-buy-h .sms-buy-more:not(.next) { flex: none; display: inline-flex; align-items: center; width: auto; min-height: 22px; margin: 0 0 0 auto; padding: 0 2px; font-size: 12.5px; white-space: nowrap; }
+.sms-pane .sms-buy .sms-buy-nth { color: var(--d-sub); font-weight: 600; }
+.sms-pane .sms-buy .sms-buy-r.r-who, .sms-pane .sms-buy .sms-buy-r.r-arrive { flex: 0 1 auto; }
+.sms-pane .sms-buy .sms-buy-r.r-item { min-width: 0; }
+/* 말줄임·안내 줄 숨김은 펼칠 길이 있을 때(2건 이상)만 — 1건뿐이면 종전처럼 줄바꿈으로 전부 보인다(폰은 title 을 못 봄) */
+.sms-pane .sms-buy.has-more:not(.open) .sms-buy-r.r-item dd { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-pane .sms-buy.has-more:not(.open) .sms-buy-r.r-note { display: none; }
+@media (max-width: 720px) {
+    .sms-pane .sms-order.sms-buy:not(.none) { max-height: max(22%, 104px); }
+    .sms-pane .sms-order.sms-buy.open { max-height: 50%; }
+    .sms-pane .sms-order.sms-buy { padding: 6px 10px 7px; }
+    .sms-pane .sms-buy .sms-buy-i { padding: 5px 10px; gap: 1px 8px; }
 }
 /* ── #661 (대표 10/12) 손님 연락 카드 = 전체 대화 한 목록: 줄 = 채널 · 손님 · 마지막 글 · 시각 · 대기 줄만 점·굵게·[확인] ── */
 .desk-inbox .desk-inbox-list { gap: 6px; }
@@ -1449,7 +1467,7 @@ html[data-ao-theme="dark"] .sidebar {
 html[data-ao-theme="dark"] .sidebar .brand-logo { background: #232A52; box-shadow: none; }
 html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-noti-btn { background: #161A2E; color: var(--d-ink); border: 1px solid #2A3052; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
 
-/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (585규칙 · :where 라 우선순위는 원래와 같다) */
+/* ② 위 규칙의 색·바탕·테두리·그림자 줄을 순서 그대로 옮기고 박힌 색만 어두운 값으로 바꾼 것 (586규칙 · :where 라 우선순위는 원래와 같다) */
 @keyframes desk-flash-dk { 0%, 40% { background-color: var(--d-accent-soft); box-shadow: 0 0 0 2px #3D468A; } 100% { background-color: var(--d-card); box-shadow: 0 0 0 0 rgba(199, 203, 255, 0); } }
 :where(html[data-ao-theme="dark"]) .desk { color: var(--d-ink); }
 :where(html[data-ao-theme="dark"]) .desk-card-box { background: var(--d-card); border: 1px solid var(--d-card-line); box-shadow: var(--d-shadow); }
@@ -2028,6 +2046,7 @@ html[data-ao-theme="dark"] .mobile-menu-btn, html[data-ao-theme="dark"] .mobile-
 :where(html[data-ao-theme="dark"]) .sms-tab:focus-visible { outline: 2px solid var(--d-accent); outline-offset: -3px; }
 :where(html[data-ao-theme="dark"]) .desk-todo li.sms-todo.cust small i { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .sms-pane .sms-buy .sms-buy-more:not(.next) { border: 0; background: transparent; }
+:where(html[data-ao-theme="dark"]) .sms-pane .sms-buy .sms-buy-nth { color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .desk-cu { border: 1px solid var(--d-line); background: var(--d-card); }
 :where(html[data-ao-theme="dark"]) .desk-cu-row { border: 0; background: transparent; color: var(--d-sub); }
 :where(html[data-ao-theme="dark"]) .desk-cu-row:hover { background: var(--d-soft); }
