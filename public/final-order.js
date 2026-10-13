@@ -665,7 +665,7 @@
             // #518: AI가 「남길 글」을 제안했지만 확신이 없다고 한 메모는 그 글을 미리 채워 카드로
             const r = st.ai.memoAsk.has(keyOf(e)) ? { rest: st.ai.memoAsk.get(keyOf(e)), removed: '', sure: false } : restOf(e, (e.sender && !e.sender.ambiguous) || sm.line.has(keyOf(e)), sameDay(e));
             const tail = tailAskOf(es);
-            if (r.rest === memoOf(e) && !tail) return;                                   // 뺄 것이 없음 → 원문 그대로(종전과 같음)
+            if (r.rest === memoOf(e) && !tail && !st.ai.memoAsk.has(keyOf(e))) return;   // 뺄 것이 없음 → 원문 그대로(종전과 같음) · #680: AI 가 「확실하지 않다」고 한 메모는 글이 같아도 카드로
             if (r.sure && r.rest === '' && !tail) { es.forEach(x => st.memoAuto.set(keyOf(x), true)); info.push({ t: `배송메세지를 기본 문구로: ${groupTitle(es)} — 손님 메모 「${memoOf(e)}」 → 「기본 문구」`, keys: es.map(keyOf) }); return; }
             const id = 'memo:' + keyOf(e); es.forEach(x => st.memoCard.set(keyOf(x), id));
             cards.push({ id, keys: es.map(keyOf), fix: es.map(keyOf), fixF: ['name', 'phone', 'addr', 'opt'], type: 'memo-edit', tag: '배송메세지', title: groupTitle(es), lines: [telLine(e), ['손님 메모', memoOf(e)], ['처리', '보내는이·발송일 부탁 글을 빼고 택배사 양식에 남길 글을 확인해 주세요. 비우면 기본 문구가 들어가요.'], ...groupLines(es)], memo: { rest: r.rest, orig: memoOf(e) }, ...(tail ? { tail } : {}) });
@@ -1875,7 +1875,7 @@
         const unitFine = k => { const e = byKeyE.get(k); return !e || unitOk(memoRaw(e), unitOf(e)); };
         S().merged.forEach(e => {   // 카드가 없는 주문의 배송메세지: 확실하면 바로(동·호수가 배송지와 다르면 확실로 보지 않는다), 아니면 「남길 글」을 채운 카드로
             const k = keyOf(e), r = A.byKey.get(k); if (!r || carded.has(k) || r.ship !== 'go' || r.sender) return;
-            const orig = memoRaw(e); if (r.memoText === orig && !r.tail) return;
+            const orig = memoRaw(e); if (r.memoText === orig && !r.tail && r.sure) return;   // #680(대표 10/13 선물용 + 사이즈 메모가 조용히 그대로 나감): 글이 원문과 같아도 AI 가 확실하지 않다고 하면 넘기지 않고 카드로(사람 확인)
             A.memoAsk.set(k, r.memoText);   // #583 ①(대표 10/8 「AI 수정 건은 다 볼 수 있게」): 확실한 것도 카드 없이 조용히 바꾸지 않고 「배송메세지」 카드로 만들어 아래에서 AI가 닫는다(결과 파일 값은 같다)   // 품목 뒤에 붙일 말이 있으면 늘 카드로(사람 확인)
         });
         buildCards(); memoDec.forEach((v, id) => { if (!st.dec.has(id) && st.cards.some(cd => cd.id === id)) st.dec.set(id, v); }); applyOrderDecisions();

@@ -879,8 +879,8 @@ async function resolveCards(pg, type) {
             const info15 = await a.pg.evaluate(() => [...document.querySelectorAll('#fo-cards .fo-card[data-fo-card="memo-edit"][data-ai-done]')].map(c => ({ did: (c.querySelector('[data-ai-did] p') || {}).textContent || '', hl: !!c.querySelector('mark.fo-hl'), undo: !!c.querySelector('[data-undo]') })));
             ok(info15.length >= 3 && info15.every(x => /배송메세지 「[\s\S]*」 → 「/.test(x.did) && x.hl && x.undo) && (await a.pg.locator(SEL.card + '[data-ai-done]', { hasText: '에이P2' }).count()) === 1, '⑮4 카드 없는 주문: AI가 확실하다고 한 배송메세지 = 「AI가 처리」 카드(무엇 → 무엇 한 줄 · 손님 메모 형광 · [바꾸기]) — 종전엔 카드 없이 참고 목록에만', JSON.stringify(info15).slice(0, 300));
             // 5. 안전장치 · 6. 새 카드
-            const anyS1 = await a.pg.locator(SEL.card, { hasText: '에이S1' }).count(), s2Has = await openCard(a.pg, 'memo-edit', '에이S2').count();
-            ok(anyS1 === 0 && s2Has === 1, '⑮5 안전장치: 원문에 없는 글을 돌려주면 반영 안 됨(원문 유지) · 「문 앞」 메모를 「기본」으로 돌려주면 카드로', JSON.stringify({ S1카드: anyS1, S2카드: s2Has }));
+            const anyS1 = await openCard(a.pg, 'memo-edit', '에이S1').count(), s2Has = await openCard(a.pg, 'memo-edit', '에이S2').count();
+            ok(anyS1 === 1 && s2Has === 1, '⑮5 안전장치: 원문에 없는 글을 돌려주면 반영 안 됨(원문 유지 · #680: 확실하지 않은 답이라 열린 카드로 — 종전엔 카드 없이 지나감) · 「문 앞」 메모를 「기본」으로 돌려주면 카드로', JSON.stringify({ S1카드: anyS1, S2카드: s2Has }));
             const dN1 = await doneTxt(a.pg, CARD.senderMemo, '에이N1'), n1Name = dN1 && /박가짜 드림/.test(dN1) && /AI/.test(dN1) ? '박가짜' : null, dN2 = await doneTxt(a.pg, CARD.order, '에이N2');
             ok(n1Name === '박가짜' && !!dN2 && /AI/.test(dN2) && J15['에이N2'].excluded, '⑮6 규칙이 못 본 주문: AI가 보내는이를 찾으면 보내는이 카드가 새로 뜸(확실하면 AI가 끝냄 · [바꾸기] 가능) · 「오늘 안 나감」(확실)이면 주문 확인 카드가 제외로', JSON.stringify({ n1Name, N2: J15['에이N2'].excluded }));
             const btnTxt = await a.pg.evaluate(() => document.getElementById('fo-ai-read').textContent);
@@ -2336,6 +2336,26 @@ async function resolveCards(pg, type) {
                 const v3 = await view(w.pg), ai3 = await w.pg.evaluate(() => [...document.querySelectorAll('#fo-cards .fo-card[data-ai-done]')].map(c => (c.querySelector('.fo-card-top b') || {}).textContent || '').join(' | '));
                 ok(v3.n === 0 && !v3.band && /팔가/.test(ai3) && v3.ex['팔마'] === false, '㊳ [AI에게 다시 읽기]가 성공하면 「메모 확인」 카드·띠가 사라지고 AI 결과로 바뀜(팔가 = 「AI가 처리」 카드)', JSON.stringify({ n: v3.n, band: v3.band, ai3 }));
                 ok(w.errs.length === 0, '㊳ 오류 0(실패 → 다시 읽기)', w.errs.join(' | ')); await w.ctx.close();
+                // ── [680] #680(대표 10/13 「선물용 + 사이즈 요청 메모가 그대로 나감」) — 카드 없는 주문에서 AI 가 「확실하지 않다」고 하면 글이 원문과 같아도 「배송메세지」 카드 ──
+                {
+                    console.log('\n[680] #680 AI 가 확실하지 않다고 한 메모(원문 그대로) = 배송메세지 카드');
+                    const Z1 = '즐거운 하루 보내세요', Z2 = '큰 걸로 부탁드려요', Z3 = '맛있는 걸로 부탁해요', Z4 = '큰 걸로요 문 앞에 놔주세요';
+                    const q = await mkChat(false, [mk('육가', { tel: '010-9900-6111', memo: Z1 }), mk('육나', { tel: '010-9900-6222', memo: Z2 }), mk('육다', { tel: '010-9900-6333', memo: Z3 }), mk('육라', { tel: '010-9900-6444', memo: Z4 }), mk('육마', { tel: '010-9900-6555' })]);
+                    q.chat.memoAns = it => (it.memo === Z1 ? { memo: '그대로', sure: false, why: '인사말뿐 — 남길지 확인' } : it.memo === Z2 ? { memo: '기본', sure: false, why: '크기 요청 — 사람 확인' } : it.memo === Z4 ? { memo: '문 앞에 놔주세요', sure: false, why: '사이즈 요청 옵션 미반영' } : { memo: '그대로', sure: true });
+                    await setCash(q.pg, null); await q.pg.click(SEL.start); await idle(q.pg); await q.pg.waitForTimeout(1500); await settle(q.pg);
+                    const look = () => q.pg.evaluate(() => ({ cards: [...document.querySelectorAll('#fo-cards .fo-card[data-fo-card="memo-edit"]')].map(c => ({ who: (c.querySelector('.fo-card-top b') || {}).textContent || '', open: c.getAttribute('data-state') === 'open', ta: (c.querySelector('textarea[data-f="memo"]') || {}).value, acts: [...c.querySelectorAll('[data-fo-act]')].map(b => b.textContent.trim()).join(','), note: ((c.querySelector('[data-ai-note]') || {}).innerText || '').replace(/\s+/g, ' ') })), make: document.querySelector('#fo-make').disabled, pend: document.querySelectorAll('#fo-cards .fo-card[data-state="open"]').length }));
+                    const z0 = await look(), cardOf = nm => z0.cards.find(x => x.who.includes(nm));
+                    ok(z0.cards.length === 3 && z0.pend === 3 && z0.make && cardOf('육가') && cardOf('육나') && cardOf('육라') && !cardOf('육다') && !cardOf('육마'), '[680] sure false 3건(원문 그대로 1 · 기본 1 · 기사님 말만 1) = 열린 「배송메세지」 카드 3장 · [파일 만들기] 막힘 · sure true + 원문 그대로(육다)·메모 없는 주문은 카드 없음(종전)', JSON.stringify(z0.cards.map(x => [x.who.slice(0, 14), x.open, x.ta])));
+                    ok(cardOf('육가') && cardOf('육가').ta === Z1 && cardOf('육나').ta === '' && cardOf('육라').ta === '문 앞에 놔주세요' && z0.cards.every(x => x.open && x.acts === '이대로 넣기,원문 그대로' && /AI도 확실하지 않대요/.test(x.note)), '[680] 카드 칸 = AI 가 남긴 글(원문 그대로면 원문 · 기본이면 빈칸 · 기사님 말) · 단추 [이대로 넣기]/[원문 그대로] · 「AI도 확실하지 않대요」', JSON.stringify(z0.cards.map(x => [x.ta, x.acts, x.note.slice(0, 50)])));
+                    const zc = nm => q.pg.locator('#fo-cards .fo-card[data-fo-card="memo-edit"]').filter({ hasText: nm }).first();
+                    await zc('육가').locator('textarea[data-f="memo"]').fill(''); await zc('육가').locator('[data-fo-act="use"]').click(); await q.pg.waitForTimeout(250);
+                    await zc('육나').locator('[data-fo-act="keep"]').click(); await q.pg.waitForTimeout(250); await zc('육라').locator('[data-fo-act="use"]').click(); await q.pg.waitForTimeout(300);
+                    const z1 = await look(); ok(z1.pend === 0 && !z1.make, '[680] 세 장을 정하면 확인할 것 0 · [파일 만들기] 켜짐', JSON.stringify({ pend: z1.pend, make: z1.make }));
+                    await q.pg.click(SEL.make); await idle(q.pg); await q.pg.waitForSelector(SEL.save, { timeout: 15000 }); await q.pg.waitForTimeout(300);
+                    const zo = await q.pg.evaluate(() => { const o = {}; window.AkmFinalOrder.state.out.partners.forEach(p => p.rows.forEach(x => { o[String(x.cells[3].v)] = String(x.cells[9].v); })); return o; });
+                    ok(zo['육가'] === FX.DEFAULT_MEMO && zo['육나'] === Z2 && zo['육라'] === '문 앞에 놔주세요' && zo['육다'] === Z3 && zo['육마'] === FX.DEFAULT_MEMO, '[680] 결과 양식: 칸을 비워 [이대로 넣기] = 기본 문구 · [원문 그대로] = 손님 글 · 기사님 말만 [이대로 넣기] = 그 말 · 카드 없던 주문은 종전대로', JSON.stringify(zo));
+                    ok(q.errs.length === 0, '[680] 오류 0', q.errs.join(' | ')); await q.ctx.close();
+                }
                 // AI 꺼짐(창구가 안 집음 → [그만두기]) + 한꺼번에 그대로
                 const w2 = await mkChat(false, rows38);
                 await w2.ctx.route('**/api/agent-office/final-order/memo-read/9200', r => (r.request().method() === 'DELETE' ? r.fallback() : r.fulfill({ json: { ok: true, state: 'wait', status: '대기', data: null, message: '' } })));
