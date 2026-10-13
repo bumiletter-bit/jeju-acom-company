@@ -1362,6 +1362,36 @@ body.sms-win-open .mobile-menu-btn, body.sms-win-open .mobile-noti-btn { visibil
     .sms-pane .sms-order.sms-buy { padding: 6px 10px 7px; }
     .sms-pane .sms-buy .sms-buy-i { padding: 5px 10px; gap: 1px 8px; }
 }
+/* ── #682 (대표 10/13 「기능은 좋아 · 높이만 줄이면 만족 · 85%」) 구매이력 판을 #681 의 85% 높이로 — 글자·여백·칩·송장 단추·둥글기를 같은 비율로(글자는 11px 밑으로 안 내림). 폰·폴드의 누르는 자리 44px 는 #673 블록의 ::after 그대로 ── */
+.sms-pane .sms-order.sms-buy:not(.none) { max-height: max(26%, 90px); }
+.sms-pane .sms-order.sms-buy.open { max-height: 46%; }
+.sms-pane .sms-order.sms-buy { padding: 7px 9px 8px; }
+.sms-pane .sms-buy .sms-buy-h { margin: 0 2px 5px; min-height: 19px; line-height: 1.25; }
+.sms-pane .sms-buy .sms-buy-h b { font-size: 12px; }
+.sms-pane .sms-buy .sms-buy-h small { font-size: 11px; }
+.sms-pane .sms-buy .sms-buy-h .sms-buy-more:not(.next) { min-height: 19px; font-size: 11.5px; }
+.sms-pane .sms-buy .sms-buy-i { padding: 6px 9px; gap: 2px 7px; border-radius: 9px; line-height: 1.3; }
+.sms-pane .sms-buy .sms-buy-rest, .sms-pane .sms-buy .sms-buy-rest > .sms-buy-i, .sms-pane .sms-buy .sms-buy-i + .sms-buy-i { margin-top: 5px; }
+.sms-pane .sms-buy .desk-badge { padding: 2px 8px; font-size: 11px; line-height: 1.3; }
+.sms-pane .sms-buy .sms-buy-role, .sms-pane .sms-buy .sms-buy-r dt, .sms-pane .sms-buy .sms-buy-r dd small { font-size: 11px; }
+.sms-pane .sms-buy .sms-buy-r dd { font-size: 11.5px; line-height: 1.3; }
+.sms-pane .sms-buy .sms-buy-r dd.key { font-size: 12px; }
+.sms-pane .sms-buy .sms-trk, .sms-pane .sms-buy .sms-trk-go { min-height: 27px; }
+.sms-pane .sms-buy .sms-trk { padding: 0 6px; border-radius: 7px; font-size: 11.5px; }
+.sms-pane .sms-buy .sms-trk-go { padding: 0 4px; font-size: 11px; }
+@media (min-width: 1081px) {
+    .sms-pane .sms-buy .sms-buy-h { margin-bottom: 3px; }
+    .sms-pane .sms-buy .sms-buy-i { padding: 5px 9px; }
+}
+@media (max-width: 720px) {
+    .sms-pane .sms-order.sms-buy:not(.none) { max-height: max(22%, 90px); }
+    .sms-pane .sms-order.sms-buy.open { max-height: 50%; }
+    .sms-pane .sms-order.sms-buy { padding: 5px 9px 6px; }
+    .sms-pane .sms-buy .sms-buy-i { padding: 4px 9px; gap: 1px 7px; }
+    .sms-pane .sms-buy .sms-trk { padding: 0 7px; font-size: 11.5px; }
+    .sms-pane .sms-buy .sms-trk-go { padding: 0 7px; font-size: 11px; }
+}
+@media (max-width: 960px), (pointer: coarse) { .sms-pane .sms-buy .sms-trk, .sms-pane .sms-buy .sms-trk-go { min-height: 27px; } }
 /* ── #661 (대표 10/12) 손님 연락 카드 = 전체 대화 한 목록: 줄 = 채널 · 손님 · 마지막 글 · 시각 · 대기 줄만 점·굵게·[확인] ── */
 .desk-inbox .desk-inbox-list { gap: 6px; }
 .desk-cu { display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 8px; border: 1px solid var(--d-line); border-radius: 12px; background: var(--d-card); }

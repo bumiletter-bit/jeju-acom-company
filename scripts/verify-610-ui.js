@@ -118,8 +118,8 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                         const z = await pg.evaluate(() => { const el = document.getElementById('sms-order'), it = el.querySelector('.sms-buy-i'), fs = s => { const e = el.querySelector(s); return e ? parseFloat(getComputedStyle(e).fontSize) : 0; }, top = s => { const e = it.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : -1; };
                             return { h: Math.round(el.getBoundingClientRect().height), dd: fs('dd[data-k="who"]'), key: fs('dd.key'), more: fs('#sms-buy-more'), l1: top('.desk-badge') - top('dd[data-k="ship"]'), l2: top('dd[data-k="who"]') > top('dd[data-k="ship"]') + 8, l3: top('dd[data-k="item"]') >= top('dd[data-k="who"]'), hasMore: el.classList.contains('has-more'), cur: getComputedStyle(el).cursor }; });
                         const was = phone ? 289 : 207, rt = +(z.h / was).toFixed(2);
-                        ok(rt >= 0.4 && rt <= 0.7, `[${label}] #659·#681 구매이력 카드(접힘 · 4건 손님) 높이 ${z.h}px = 종전 ${was}px 의 ${rt}배(0.7 이하 · #681 뒤 더 낮아짐)`);
-                        ok(z.dd >= 12 && z.key >= 12 && z.more >= 12 && Math.abs(z.l1) <= 6 && z.l2 && z.l3 && z.hasMore && z.cur === 'pointer', `[${label}] #659 글자 ${z.dd}/${z.key}px(12 이상) · 배지와 발송일이 한 줄 · 송장·받는 분 아랫줄 · 2건 이상이면 판이 눌리는 꼴(${z.cur})`);
+                        ok(rt >= 0.3 && rt <= 0.7, `[${label}] #659·#681 구매이력 카드(접힘 · 4건 손님) 높이 ${z.h}px = 종전 ${was}px 의 ${rt}배(0.7 이하 · #681 뒤 더 낮아짐)`);
+                        ok(z.dd >= 11 && z.key >= 11 && z.more >= 11 && Math.abs(z.l1) <= 6 && z.l2 && z.l3 && z.hasMore && z.cur === 'pointer', `[${label}] #659·#682 글자 ${z.dd}/${z.key}px(11 이상) · 배지와 발송일이 한 줄 · 송장·받는 분 아랫줄 · 2건 이상이면 판이 눌리는 꼴(${z.cur})`);
                     }
                     await pg.click('#sms-buy-more'); await pg.waitForTimeout(250);
                     const h2 = await buyOf();
@@ -133,7 +133,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
                                 trkFs: parseFloat(cs(trk, 'fontSize')), trkFw: cs(trk, 'fontWeight'), ddFs: parseFloat(cs(dd, 'fontSize')), trkH: Math.round(trk.getBoundingClientRect().height), goH: Math.round(document.querySelector('#sms-order .sms-trk-go').getBoundingClientRect().height), panelBg: cs(panel, 'backgroundColor'), itemBg: cs(item, 'backgroundColor'), itemBd: cs(item, 'borderTopWidth'), msgBg: msgs ? cs(msgs, 'backgroundColor') : '', hFs: parseFloat(cs(panel.querySelector('.sms-buy-h b'), 'fontSize')) }; });
                         ok(b7.rows.length === 2 && b7.rows[0] === '590123450002|조회|미니밤호박 특품 5kg|배송완료:done' && b7.rows[1] === '590123450003|조회|미니밤호박 보우짱 3kg|배송 중 · 집화 전:work' && b7.trkRow && b7.itemRow && !b7.boxList && b7.head === '배송완료:done', `[${label}] #657·#681 상자 2개 = 송장마다 한 건 「[송장][조회] 품목 · 그 상자 상태」(${b7.rows.join(' / ')}) · 한 건에 상태 칩 하나(${b7.head})`);
                         ok(b7.trkFs <= b7.ddFs + 0.6 && Number(b7.trkFw) <= 600 && (phone ? b7.tapT >= 44 && b7.tapG >= 44 && b7.trkH <= 34 : b7.trkH <= 32), `[${label}] #657·#681 송장 글자 = 값 글자 크기(${b7.trkFs}px ≤ 값 ${b7.ddFs}px · 굵기 ${b7.trkFw}) · 보이는 높이 ${b7.trkH}px${phone ? ' · 누르는 자리 ' + b7.tapT + '/' + b7.tapG + 'px(폰 44 유지)' : ''}`);
-                        ok(b7.panelBg !== b7.itemBg && b7.panelBg !== 'rgba(0, 0, 0, 0)' && b7.itemBd === '1px' && b7.hFs >= 13, `[${label}] #657 명암: 구매이력 판(${b7.panelBg}) 위에 건별 칸(${b7.itemBg} · 테두리 1px) · 머리 글자 ${b7.hFs}px`);
+                        ok(b7.panelBg !== b7.itemBg && b7.panelBg !== 'rgba(0, 0, 0, 0)' && b7.itemBd === '1px' && b7.hFs >= 12, `[${label}] #657 명암: 구매이력 판(${b7.panelBg}) 위에 건별 칸(${b7.itemBg} · 테두리 1px) · 머리 글자 ${b7.hFs}px`);
                         await mock('/__mock/set', { many: true }); await closeThread(pg); await openThread(pg, 3);
                         {   // #659 펼침은 대화별로 창을 여는 동안 기억 · 판 아무 곳이나 누르면 접힘/펼침 · 안쪽 단추(송장 복사)는 그대로
                             const k0 = await buyOf();
@@ -191,7 +191,7 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
             ok(th.bub === 2 && loaded.length === 2 && loaded.every(Boolean) && th.exp === 'true', `[${label}] 대화 펼침 · 말풍선 2 · 사진 썸네일 2장 실제로 뜸(${JSON.stringify(loaded)})`);
             const od = await buyOf();
             ok(od.title === '구매이력' && od.badge === '배송완료|done' && od.ship === '10/09 효돈' && od.who === '홍길동' && od.item === '하우스감귤 가정용 - 4kg(로얄과)' && od.nums === '590123454821' && od.order === 'ship,trk,who,item' && od.keyFw >= 800 && !od.none && od.days === '최근 60일' && od.n === 1 && !od.more, `[${label}] #653 「구매이력」 카드 = 상태 배지 「${od.badge}」 · 발송일 ${od.ship}(굵게) · 송장 전체 · 받는 분 ${od.who} · 품목(순서 ${od.order})`);
-            ok(od.hrefs === '/track?n=590123454821|_blank' && od.h >= (phone ? 44 : 32), `[${label}] #644 번호 옆 [조회] = 우리 배송조회 새 창(${od.hrefs}) · 누름 높이 ${od.h}px`);
+            ok(od.hrefs === '/track?n=590123454821|_blank' && od.h >= (phone ? 44 : 27), `[${label}] #644 번호 옆 [조회] = 우리 배송조회 새 창(${od.hrefs}) · 누름 높이 ${od.h}px`);
             await ctxGrant(P.ctx); await pg.click('#sms-order .sms-trk'); await pg.waitForTimeout(400);
             const clip = await pg.evaluate(() => navigator.clipboard.readText().catch(() => '(읽기 막힘)'));
             ok(clip === '590123454821' && T.some(t => /송장번호를 복사했어요/.test(t)), `[${label}] #644 번호를 누르면 복사(클립보드 「${clip}」 · 안내 띠)`);
