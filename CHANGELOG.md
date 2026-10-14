@@ -1,3 +1,11 @@
+## v5.9.527 (2026-10-14) — #693 공개 창구 3곳(자사몰 상담·시즌 대기·웰컴 신청) 분당 상한의 접속자 판정 통일
+
+- **배경(#692 전체 진찰 · 워커3 발견 · 대표 「고」 10/14 오후)**: shop-chat · season-waitlist · welcome-signup 의 분당 상한이 X-Forwarded-For **첫 값**(손님이 보낸 글자)을 접속자로 믿어, 가짜 값을 매번 바꿔 보내면 상한을 전혀 안 탔음(라이브 실증 = 서로 다른 가짜 XFF 7회 → 429 없음 · 같은 값 7회 → 7번째 429) → shop-chat AI 호출(콘솔 과금)·welcome 카페24 호출 무제한.
+- **고침(워커3 · server.js 1파일 +28 −15)**: 도우미 `publicClientIp(req)` = cf-connecting-ip → true-client-ip → XFF 첫 값 → req.ip → 'unknown' · `publicRateHit(map, ip, now)` = 종전과 같은 60초 창 셈 + **1분에 한 번 2분 지난 항목 정리**(종전엔 정리 0 → 가짜 IP 마다 영구 누적). 3라우트 머리 6줄 → 3줄 · 상한 20·6·6 · 429 본문 · 뒤 로직(shop-chat 쿨다운 · welcome 48h 의 now) 무변경.
+- 🔴 **「XFF 마지막 값」은 쓰지 않는다**: 라이브는 Cloudflare → Render 꼴(Server: cloudflare · x-render-origin-server)이라 XFF = 「손님이 꾸민 값, 실제 IP, Cloudflare 홉 172.71.x, Render 내부 10.x」 → 마지막 값은 전 손님 공용(상한이 전체 공용이 되는 회귀). cf-connecting-ip 는 Cloudflare 가 TCP 연결에서 넣고 손님이 꾸미면 Cloudflare 가 403(error 1000)으로 거절(실측). sms/selfcheck.js clientIp 의 「XFF 마지막」 폴백은 cf 헤더가 늘 있어 실제론 안 타지만 같은 함정(후보 · 범위 밖).
+- 검증: 로컬 11/11(cf 고정 + XFF 변동 → 20·6·6 뒤 429 · 다른 cf 는 안 막힘 · true-client-ip·XFF 꾸밈 무시 · 헤더 없음 = req.ip) · 정상 400 응답 3종 기준선과 바이트 동일 · 도우미 단위 11/11 · 워커2 읽기 교차 점검 = 막을 것 0(후보 = cf 헤더 콤마 값 split 안 함 — Cloudflare 가 덮어써 현실 위험 0 · #275 rawWho 열쇠는 종전처럼 손님 글자 우선). 배포 = server.js 만(캐시 번호 변경 없음). 배포 뒤 라이브 확인 = welcome-signup 빈 본문 + 서로 다른 가짜 XFF 7회 → 7번째 429.
+- #692 진찰에서 대표가 「안 함」으로 정한 것: 스냅샷 하루 1회 수집기 실패 때 같은 날 재시도(「지금 챙길 일에 뜨면 돼」) · 세무사 계정 GET /api/rules(「상관없어 · 미이용」).
+
 ## v5.9.526 (2026-10-14) — #691 알림톡 안내 페이지(/guide)에 「네이버에서 구매하기」 버튼
 
 - **대표 「고」 10/14 낮 · 워커1 시공 · 워커3 읽기 점검**: /guide 품목 장마다 `네이버에서 구매하기 ›` 버튼(https://brand.naver.com/jejuakkome/products/{네이버 상품번호} · 새 탭 · noopener · 46px · 기존 .ev-btn 색 재사용 = 새 색 0). 「구매처 링크 준비 중」 고정 글자(#94 빈 자리)와 .buy-slot 제거. 번호가 숫자 6~18자리일 때만 · 없으면 버튼도 글자도 없음(지금 번호 없는 살아 있는 안내문 행 = 품절 황금향 못난이 363·364 뿐 · 다시 팔 때 11126666859 넣으면 생김).

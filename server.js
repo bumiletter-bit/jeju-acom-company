@@ -9454,6 +9454,28 @@ function maskWinnerName(name) {
 //   자사몰용 별도 응답 세트를 만들지 않는다(만들면 채널마다 답이 갈라진다).
 //   · 답을 못 만들면(SKIP·키 미설정) **지어내지 않고** answered:false로 내려보내 화면이 "연결 안 됨"을 표기하게 한다.
 //   · 쓰기 없음(네이버 게시 안 함) · PII 미수집 · 남용 방지를 위해 길이 제한과 분당 상한만 둔다.
+// #693(대표 「고」 10/14 · 워커3): 공개 POST 3곳(shop-chat · season-waitlist · welcome-signup) 분당 상한의 **접속자 판정 한 곳**.
+//   종전 = X-Forwarded-For 첫 값(손님이 보낸 글자) → 라이브 실증(10/14): 가짜 값을 매번 바꿔 보내면 상한을 전혀 안 탐(같은 값이면 7번째 429) = shop-chat AI 호출·welcome 카페24 호출 무제한.
+//   이제 = ①cf-connecting-ip(Render 의 가장자리 = Cloudflare 가 TCP 연결에서 넣는 손님 IP · 꾸민 값은 Cloudflare 가 403 error 1000 으로 거절 — 라이브 실측) → ②true-client-ip(Cloudflare 가 실제 값으로 덮어씀) → ③없으면 종전 첫 값(로컬 · 검증) → ④req.ip.
+//   🔴 XFF **마지막** 값은 쓰지 않는다 — Render 뒤 XFF 는 「손님이 꾸민 값, 실제 IP, Cloudflare 홉 172.71.x, Render 내부 10.x」 꼴이라(공개 실측 header-test) 마지막 값은 전 손님 공용 → 상한이 손님 전체 공용이 되는 회귀.
+//     sms/selfcheck.js clientIp 의 「XFF 마지막」 폴백은 cf 헤더가 늘 있어 실제론 안 쓰이지만 같은 함정(이번 범위 밖 · 보고).
+function publicClientIp(req) {
+    const h = (req && req.headers) || {};
+    const cf = String(h['cf-connecting-ip'] || h['true-client-ip'] || '').trim();
+    if (cf) return cf;
+    const first = String(h['x-forwarded-for'] || '').split(',')[0].trim();
+    return first || String((req && req.ip) || '') || 'unknown';
+}
+// 분당 세기 — map(ip → { n, at }) · 60초 창(종전과 같은 셈) · 돌려주는 값 = 이번 창의 횟수(상한 비교는 호출부 그대로).
+//   2분 넘은 항목은 1분에 한 번 지운다 — 종전엔 정리가 없어 가짜 IP 마다 항목이 영구히 쌓였음(메모리).
+function publicRateHit(map, ip, now) {
+    now = now || Date.now();
+    if (now - (map._sweptAt || 0) > 60000) { map._sweptAt = now; for (const [k, v] of map) if (now - v.at > 120000) map.delete(k); }
+    const cur = map.get(ip) || { n: 0, at: now };
+    if (now - cur.at > 60000) { cur.n = 0; cur.at = now; }
+    cur.n++; map.set(ip, cur);
+    return cur.n;
+}
 const _chatRate = new Map();   // ip → { n, at } (분당 상한 — 프로토타입 수준)
 const _chatCooldown = new Map();   // #275: 손님키 → 마지막 답변 시각(쿨다운 설정 시에만 사용)
 const _chatTurns = new Map();      // #275: 손님키 → 누적 턴 수(장문 상담 유도용)
@@ -9502,12 +9524,9 @@ app.options('/api/public/shop-chat', (req, res) => {
 app.post('/api/public/shop-chat', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     try {
-        const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+        const ip = publicClientIp(req);   // #693: cf-connecting-ip 우선(종전 XFF 첫 값은 손님이 꾸밀 수 있었음)
         const now = Date.now();
-        const cur = _chatRate.get(ip) || { n: 0, at: now };
-        if (now - cur.at > 60000) { cur.n = 0; cur.at = now; }
-        cur.n++; _chatRate.set(ip, cur);
-        if (cur.n > 20) return res.status(429).json({ answered: false, reason: 'rate-limited', message: '잠시 후 다시 시도해주세요' });
+        if (publicRateHit(_chatRate, ip, now) > 20) return res.status(429).json({ answered: false, reason: 'rate-limited', message: '잠시 후 다시 시도해주세요' });
 
         const question = String((req.body || {}).question || '').trim().slice(0, 500);
         const productName = String((req.body || {}).productName || '').trim().slice(0, 120);
@@ -9577,12 +9596,9 @@ app.options('/api/public/season-waitlist', (req, res) => {
 app.post('/api/public/season-waitlist', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     try {
-        const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+        const ip = publicClientIp(req);   // #693
         const now = Date.now();
-        const cur = _waitRate.get(ip) || { n: 0, at: now };
-        if (now - cur.at > 60000) { cur.n = 0; cur.at = now; }
-        cur.n++; _waitRate.set(ip, cur);
-        if (cur.n > 6) return res.status(429).json({ ok: false, message: '잠시 후 다시 시도해주세요' });
+        if (publicRateHit(_waitRate, ip, now) > 6) return res.status(429).json({ ok: false, message: '잠시 후 다시 시도해주세요' });
 
         const item = String((req.body || {}).item || '').trim().slice(0, 60);
         const contact = String((req.body || {}).contact || '').replace(/[^0-9]/g, '');
@@ -11168,12 +11184,9 @@ app.options('/api/public/welcome-signup', (req, res) => {
 app.post('/api/public/welcome-signup', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     try {
-        const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+        const ip = publicClientIp(req);   // #693
         const now = Date.now();
-        const cur = _wsigRate.get(ip) || { n: 0, at: now };
-        if (now - cur.at > 60000) { cur.n = 0; cur.at = now; }
-        cur.n++; _wsigRate.set(ip, cur);
-        if (cur.n > 6) return res.status(429).json({ ok: false });
+        if (publicRateHit(_wsigRate, ip, now) > 6) return res.status(429).json({ ok: false });
         const mid = String((req.body || {}).mid || '').trim();
         const tel = String((req.body || {}).tel || '').replace(/[^0-9]/g, '');
         let name = String((req.body || {}).name || '').trim().slice(0, 30);   // 인사말 표시용(검증 대상 아님 — 번호·ID가 정본 대조됨)
