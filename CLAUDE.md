@@ -389,7 +389,7 @@
 - **톡톡봇**(`C:\Users\전승범\OneDrive\문서\★제주아꼼이네 톡톡봇`, 별도 리포): `scenario-store.js`(5분 캐시·폴백) 커밋됨, **push는 대표가 직접**(마지막 1회). `SCENARIO_SOURCE=code`(기본)→검증 후 `db` 스위치. 비교 스크립트 `scripts/compare-scenarios.js` 47/47 일치 확인됨.
 - **대표 실행 절차**: `docs/문의시나리오_전환절차.md` (토큰 생성→Render env 2곳→봇 push→스위치→체크리스트).
 - 설계/계획: `docs/superpowers/specs/2026-07-25-inquiry-scenario-db-design.md`, `docs/superpowers/plans/2026-07-25-inquiry-scenario-db.md`. 진행 원장: `.superpowers/sdd/progress.md`.
-- ⚠️ 영업시간외 문구(0번)는 현재 봇이 미사용(코드에 import만 존재) — 화면 수정해도 봇 영향 없음, 재활성화는 별도 작업.
+- ⚠️ 영업시간외 문구(0번)는 봇이 미사용(코드에 import만 존재 · scenario-store 가 0번을 걸러 읽음) → **10/14 대표가 문의 관리에서 삭제(soft-delete · 되돌리기 가능)**. 야간 자동응대를 살리려면 톡톡봇 코드 + 새 문구(옛 문구는 「평일 09~18」로 낡음)가 필요한 별도 작업.
 - **품목별금액→판매현황 자동 연동 (v5.9.57 배포됨)**: pricing 저장(POST/PUT) 시 새 품목명이 bot_products에 **'준비중'(봇 미노출)·판매가 빈칸**으로 자동 등록(`syncPricingToBotProducts`, ON CONFLICT DO NOTHING — 삭제 품목 부활 금지). 판매가는 수기 세팅 후 [판매중] 전환 시 노출. 결제가·판매가는 이름만 공유(금액 복사 금지). 탭2 수동 [품목 추가] 버튼 제거(유입 일원화, POST API·복구 로직은 존치). 백필 19개 준비중 등록됨.
 - **판매현황·가격 탭 (v5.9.56 배포됨)**: `{{가격표}}`/`{{판매현황}}` 원본 = `bot_products`(회사프로그램과 **같은 DB**, 36건) → [문의 관리] 탭2에서 관리(저장 → 봇 1분 캐시 반영, 봇 무수정). ⚠️ **스마트스토어 판매가 — '품목별 금액'(거래처 결제가)과 절대 통합 금지.** 톡톡봇 정리 커밋(시드 하드코딩 제거·deleted_at 필터·PRODUCTS_PAGE 게이트) push 완료. ✅ **구 /products·/unmatched 페이지 은퇴 종결(7/28)** — Render `PRODUCTS_PAGE=off`·`UNMATCHED_PAGE=off` 적용·410 실측 확인. 시나리오는 **db 스위치 완료·실응답 정상**(대표 확인).
 - **에이전트 운용 원칙(대표 지시)**: 총괄(설계·판단·실서비스 섬세 작업)은 메인 모델 직접, 단순 시공만 Haiku 위임+Sonnet 검수, Task별 분류 선보고.
