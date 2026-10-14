@@ -1102,7 +1102,7 @@ module.exports = function mountSms(app, deps) {
             (SELECT count(*)::int FROM sms_threads WHERE draft_text IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS drafts,
             (SELECT count(*)::int FROM sms_threads WHERE staff_why IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS staff_open,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread_threads,
-            (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open_threads, true AS done_route,
+            (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open_threads, true AS done_route, true AS send_route,
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND t.staff_why IS NOT NULL AND t.status <> 'closed') AS needs_staff,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_in,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_bot,
@@ -1269,6 +1269,25 @@ module.exports = function mountSms(app, deps) {
         const text = String(req.body && req.body.text || '').trim(); if (!text) return res.status(400).json({ ok: false, error: '보낼 글이 비었어요' });
         const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' });
         const m = await queueStaffReply(t, text, req, 'staff'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' }); res.json({ ok: true, message_id: m.id });
+    }));
+    // #688(대표 「고」 10/14): 우리가 먼저 보내기 — 문자가 온 적 없는 번호(또는 아무 번호)에 에이전트 오피스에서 새 문자. 폰 삼성 메시지로 손 발송은 서버에 안 남아(SMSGate 한계) 「보내기는 전부 여기서」.
+    //   { phone, text } → 번호 정규화(받는 길과 같은 normalizePhone · 휴대폰 번호만) → 대화 찾기/만들기(threadFor) → 직원 답과 같은 길(queueStaffReply · sender staff_desk · 기존 발송 틱·한도·audit · 봇은 그 대화에 30분 침묵).
+    //   돌려주는 값 = { ok, thread_id, message_id, created(새 대화인지) } — 화면은 thread_id 로 그 대화를 바로 연다. 시험 번호(0999…)는 testMode 가 아니면 거절(실제 직원이 시험 줄을 만들지 않게).
+    const MOBILE_RE = /^01[016789]\d{7,8}$/;
+    app.post('/api/sms/send', authMiddleware, wrap(async (req, res) => {
+        const digits = normalizePhone(req.body && req.body.phone);
+        const text = String(req.body && req.body.text || '').trim();
+        if (!digits) return res.status(400).json({ ok: false, error: '받는 분 번호를 적어 주세요' });
+        if (isTestDigits(digits)) { if (!deps.testMode) return res.status(400).json({ ok: false, error: '그 번호(0999…)는 검증용이라 보낼 수 없어요' }); }   // 검증(testMode)만 시험 번호로 보냄
+        else if (!MOBILE_RE.test(digits)) return res.status(400).json({ ok: false, error: '휴대폰 번호(010-0000-0000 꼴)만 보낼 수 있어요' });
+        if (!text) return res.status(400).json({ ok: false, error: '보낼 글이 비었어요' });
+        const c = await cfg(); if (!c.enabled) return res.status(409).json({ ok: false, error: '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' });
+        const before = (await pool.query(`SELECT id FROM sms_threads WHERE phone_digits = $1`, [digits])).rows[0];
+        const t = await threadFor(digits);
+        const m = await queueStaffReply(t, text, req, 'staff_new'); if (!m) return res.status(400).json({ ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' });
+        const parts = Number(m.ai_json && m.ai_json.parts) || 1;
+        const fresh = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE t.id = $1`, [t.id])).rows[0] || t;
+        res.json({ ok: true, thread_id: t.id, message_id: m.id, created: !before, parts, phone_tail: phoneTail(digits), thread: pub(fresh) });   // thread = 목록 줄과 같은 꼴(워커2 화면 계약)
     }));
     app.post('/api/sms/threads/:id/send-draft', authMiddleware, wrap(async (req, res) => {
         const t = await loadThread(req, res); if (!t) return;

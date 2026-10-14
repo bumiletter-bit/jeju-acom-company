@@ -240,7 +240,7 @@
                 <div class="ship-note" id="sms-note" role="status" hidden></div>
                 <div class="sms-tabs" id="sms-tabs" role="tablist" aria-label="손님 연락 채널" hidden></div>
                 <div class="sms-cols"><div class="sms-left">
-                <div class="sms-bar"><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 전체 번호 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="sms-staff" aria-pressed="false" title="읽었어도 아직 사람 답이 필요한 대화만 봐요. 다시 누르면 전체 대화" hidden>직원 확인 <b id="sms-staff-n"></b></button><button type="button" class="desk-btn sm sms-done-btn" id="sms-scope" aria-pressed="false" title="직원이 챙겨야 하는 대화만 봐요. 다시 누르면 전체 대화">미처리 <b id="sms-open-n" hidden></b></button><span class="sms-count" id="sms-count" role="status"></span></div>
+                <div class="sms-bar"><label class="desk-sr" for="sms-q">문자 찾기</label><input type="search" class="ship-q sms-q" id="sms-q" maxlength="40" autocomplete="off" placeholder="끝 4자리 · 전체 번호 · 글로 찾기"><button type="button" class="desk-btn sm sms-done-btn sms-staff-btn" id="sms-staff" aria-pressed="false" title="읽었어도 아직 사람 답이 필요한 대화만 봐요. 다시 누르면 전체 대화" hidden>직원 확인 <b id="sms-staff-n"></b></button><button type="button" class="desk-btn sm sms-done-btn" id="sms-scope" aria-pressed="false" title="직원이 챙겨야 하는 대화만 봐요. 다시 누르면 전체 대화">미처리 <b id="sms-open-n" hidden></b></button><span class="sms-count" id="sms-count" role="status"></span><button type="button" class="desk-btn sm sms-new-btn" id="sms-new" title="번호를 적어 손님에게 먼저 문자를 보내요" hidden>새 문자</button></div>
                 <ul class="sms-list" id="sms-list"></ul>
                 </div><div class="sms-pane" id="sms-pane"><div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div></div></div>
                 <div class="inb-host" id="inb-host" hidden></div>
@@ -1134,7 +1134,7 @@
     //     [이전 대화 보기](scope=all)·찾기(q = 서버가 전체에서)로 지난 대화를 본다 · 숫자 네 칸·[처리함]·[대화 끝내기]는 없앴다(서버 라우트는 그대로 있다)
     //   새 폴링 없음 — 기존 1초 tick 에 얹는다(요약 30초 · 카드가 열려 있으면 목록 10초 · 펼친 대화 5초 · 가려진 동안은 안 받음)
     //   서버에 문자 라우트가 없으면(요약이 실패하면) 알약 자체가 안 보인다 → 종전 화면 그대로
-    const SMS = { scope: 'all', only: false, sum: null, sumAt: 0, sumSig: '', items: null, sig: '', err: '', q: '', qt: 0, seq: 0, lbusy: false, listAt: 0, open: 0, openRow: null, openAt: 0, thread: null, tsig: '', tseq: 0, tbusy: false, thAt: 0, sending: false, buyOpen: new Set(), texts: new Map(), filled: 0, fillText: '', newDraft: '', actAt: Date.now(), readAt: 0, itemsAt: 0, imgs: new Map() };   // scope = all(전체 대화 · 기본 #660)|open(답 안 한 것만) — 이 화면 동안 기억 · only = 직원 확인이 필요한 대화만(#633 봇 실패 알약에서 올 때)
+    const SMS = { scope: 'all', only: false, sum: null, sumAt: 0, sumSig: '', items: null, sig: '', err: '', q: '', qt: 0, seq: 0, lbusy: false, listAt: 0, open: 0, openRow: null, openAt: 0, thread: null, tsig: '', tseq: 0, tbusy: false, thAt: 0, sending: false, buyOpen: new Set(), texts: new Map(), filled: 0, fillText: '', newDraft: '', actAt: Date.now(), readAt: 0, itemsAt: 0, imgs: new Map(), neu: { on: false, phone: '', text: '', busy: false, touched: false, err: '' }, newOff: false };   // scope = all(전체 대화 · 기본 #660)|open(답 안 한 것만) — 이 화면 동안 기억 · only = 직원 확인이 필요한 대화만(#633 봇 실패 알약에서 올 때)
     const SMS_ST = { staff_needed: ['직원 몫', 'ask'], draft: ['초안 대기', 'wait'], bot_replied: ['봇 답변', 'work'], cooldown: ['봇 답변', 'work'], staff_replied: ['직원 답변', 'done'], closed: ['끝난 대화', 'mute'], new: ['새 문자', 'mute'], ignored: ['안 봐도 됨', 'mute'] };
     // #635: 볼 것 = 안 읽은 글이 있는 대화(unread_threads) · 그중 사람 몫(needs_staff) · 안 보낸 초안이 있는 대화(drafts) — 옛 서버(칸 없음)면 종전 셈(직원 몫 + 초안 대기)
     const smsNeed = () => { const d = SMS.sum || {}, c = d.counts && typeof d.counts === 'object' ? d.counts : {}, old = !('unread_threads' in d), st = Number(d.staff_needed) || 0, dr = Number(old && 'draft' in c ? c.draft : d.drafts) || 0; return old ? { unread: st + dr, staff: st, draft: dr, old: true } : { unread: Number(d.unread_threads) || 0, staff: Number(d.needs_staff) || 0, draft: dr, old: false }; };
@@ -1255,7 +1255,9 @@
         const sc = $('sms-scope'); if (sc) { sc.setAttribute('aria-pressed', String(SMS.scope === 'open' && !SMS.only)); const on = $('sms-open-n'), n = Number(d.open_threads); if (on) { on.hidden = !(n > 0); on.textContent = n > 99 ? '99+' : String(n || ''); } }   // #660 숫자 = 서버 요약 open_threads(옛 서버엔 없음 → 숫자 없이 단추만)
         // 셈 = 서버 요약의 staff_open(사유가 남아 있는 열린 대화 수 · 읽음 여부 무관) — 그 칸이 없으면 상태가 「직원 몫」인 대화 수(staff_needed)로 대신
         { const sb = $('sms-staff'), n = Number('staff_open' in d ? d.staff_open : d.staff_needed) || 0; if (sb) { sb.hidden = !(n > 0 || SMS.only); sb.setAttribute('aria-pressed', String(!!SMS.only)); $('sms-staff-n').textContent = n > 99 ? '99+' : String(n); } }
+        { const nb = $('sms-new'); if (nb) nb.hidden = !(d.send_route === true && !SMS.newOff); }   // #688 옛 서버(표식 없음)면 숨김
         if (document.getElementById('sms-text')) smsSync();
+        if (SMS.neu.on) smsNewSync();
     }
     // scope 를 주면 그 범위로 새로 연다(찾기 비움) · 안 주면 보던 범위 그대로
     // #653-가(대표 10/11 「최종발주처럼 창으로 · 뒤로가기 버튼이 되게」): 문자 = 화면을 덮는 전용 창. 폰·PC 의 뒤로가기는 「대화 → 목록 → 창 닫힘」 순.
@@ -1341,7 +1343,7 @@
         if (ch !== 'sms' && !(ok && INB_CH.some(x => x[0] === ch))) ch = 'sms';
         if (ch === 'sms' && !SMS.sum && ok) ch = 'talk';
         const from = INB.ch; let hadTh = false;
-        if (from === 'sms') { if (ch !== 'sms' && SMS.open) { smsThreadClose(false, true); hadTh = true; } }
+        if (from === 'sms') { if (ch !== 'sms' && SMS.open) { smsThreadClose(false, true); hadTh = true; } else if (ch !== 'sms' && SMS.neu.on) { smsNewClose(false, true); hadTh = true; } }
         else if (a && ch !== from) { try { hadTh = !!a.isOpen(); } catch (e) { hadTh = false; } }
         INB.ch = ch;
         if (ch === 'sms') {
@@ -1379,6 +1381,7 @@
     const smsHistBack = n => { if (!(n > 0)) return; if (n >= 2 || !hbHas('sms-th')) hbDrop('sms-view', 'sms-buy', 'sms-th', 'sms-win'); else hbDrop('sms-view', 'sms-buy', 'sms-th'); };
     function smsPopTh() {   // 뒤로가기로 대화 칸이 빠짐 → 대화만 접는다
         if (INB.ch !== 'sms') { const a = inbApi(); try { for (let i = 0; a && i < 3 && a.isOpen(); i++) a.back(); } catch (e) { /* 다음 조작에서 맞춰진다 */ } }
+        else if (SMS.neu.on) smsNewClose(true, true);
         else if (SMS.open) smsThreadClose(true, true);
     }
     function smsPopWin() { if (document.body.classList.contains('sms-win-open')) smsCloseCard(); }   // 창 칸까지 빠짐 → 창 닫기
@@ -1397,7 +1400,7 @@
     }
     function smsWinCleanup() {
         if (!document.body.classList.contains('sms-win-open')) return;
-        smsThreadClose(false, true); smsViewClose(); SMS.buyOpen.clear(); setTimeout(() => { try { loadInbox(); boardSoon(); } catch (e) { /* 다음 주기에 */ } }, 400);   // #661 창에서 답·[확인]한 것이 손님 연락 카드에 바로
+        smsThreadClose(false, true); smsNewClose(false, true); smsViewClose(); SMS.buyOpen.clear(); setTimeout(() => { try { loadInbox(); boardSoon(); } catch (e) { /* 다음 주기에 */ } }, 400);   // #661 창에서 답·[확인]한 것이 손님 연락 카드에 바로
         if (INB.ch !== 'sms') {   // #658 톡톡·문의 탭을 보던 채 닫으면: 그 칸을 걷고 다음에는 문자 탭부터
             const a = inbApi(); try { if (a) a.unmount(); } catch (e) { /* 칸은 숨긴다 */ }
             INB.ch = 'sms'; const h = $('inb-host'), c = document.querySelector('#desk-sms .sms-cols'); if (h) h.hidden = true; if (c) c.hidden = false; inbTabs();
@@ -1426,6 +1429,92 @@
         if (same) { smsHead(); smsRenderList(); return; }   // 거르기만 푼다(받아 둔 목록 그대로)
         SMS.items = null;
         smsHead(); smsList();
+    }
+    // ── #688(대표 10/14) 문자 먼저 보내기 — [새 문자] → 오른쪽 대화 칸에 「새 문자」 판(대화 한 건을 연 것과 같은 자리 · 같은 뒤로가기 칸 'th' · Esc)
+    //   서버: POST /api/sms/send { phone(숫자만), text } → { ok, thread_id, thread } · 실패 { ok:false, error } · 옛 서버 = 요약에 send_route 없음(단추 숨김) 또는 404(그때 끔)
+    //   번호 = 숫자만 남기고 +82 → 0 · 휴대폰 전체 번호(01x 10~11자리)만 통과 · 글의 이모지는 서버 smsSafe 가 빼므로 미리 알린다 · 단추 글에 번호를 적어 누르는 순간 보이게(확인 창 없음)
+    const smsNewNo = v => { let d = String(v || '').replace(/\D/g, ''); if (d.startsWith('82') && d.length >= 11) d = '0' + d.slice(2).replace(/^0/, ''); return d; };
+    const smsNewOk = d => /^01[016789]\d{7,8}$/.test(d);
+    const smsNewEmoji = t => { try { return (String(t || '').match(/\p{Extended_Pictographic}/gu) || []).length; } catch (e) { return 0; } };
+    function smsNewSync() {
+        const ph = document.getElementById('sms-new-phone'), ta = document.getElementById('sms-new-text'); if (!ph || !ta) return;
+        const N = SMS.neu, d = smsNewNo(ph.value), okNo = smsNewOk(d), has = !!ta.value.trim();
+        N.phone = ph.value; N.text = ta.value;
+        const btn = $('sms-new-send'); btn.disabled = !okNo || !has || N.busy; btn.textContent = N.busy ? '보내는 중' : okNo ? smsFmtNo(d) + ' 로 보내기' : '보내기';
+        if (N.busy) btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
+        const pe = $('sms-new-perr'), bad = !!d && !okNo && N.touched; pe.hidden = !bad; pe.textContent = bad ? '휴대폰 번호 전체를 적어 주세요(예: 010-1234-5678).' : ''; ph.setAttribute('aria-invalid', String(bad));
+        const hint = $('sms-new-hint'), old = okNo ? (SMS.items || []).find(x => smsFull(x) === d) : null, hk = old ? String(old.id) : '';
+        if (hint.dataset.k !== hk) { hint.dataset.k = hk; hint.hidden = !old; hint.innerHTML = old ? `이 번호와 나눈 대화가 있어요. <button type="button" class="sms-new-goto" id="sms-new-goto" data-id="${old.id}">그 대화 열기</button>` : ''; }
+        $('sms-new-len').textContent = has ? nfmt(ta.value.length) + '자' : (window.matchMedia('(pointer: fine)').matches ? 'Ctrl+Enter 로 보내기' : '');
+        const w = $('sms-new-warn'), em = smsNewEmoji(ta.value), dead = smsDead();
+        w.hidden = !(em || dead); w.textContent = [em ? '이모지 ' + nfmt(em) + '개는 문자에서 깨져서 빠진 채 나가요.' : '', dead ? '회사폰 연결이 끊겨 있어요. 지금 보낸 글은 연결이 돌아오면 나가요. 10분 넘으면 「보내지 못함」으로 바뀌어요.' : ''].filter(Boolean).join(' ');
+        const er = $('sms-new-err'); er.hidden = !N.err; er.textContent = N.err || '';
+    }
+    function smsNewOpen() {
+        if (SMS.newOff || !SMS.sum) return;
+        if (SMS.neu.on) { const f = document.getElementById('sms-new-phone'); if (f) f.focus({ preventScroll: true }); return; }
+        smsThreadClose(false, true);   // 보던 대화는 접는다 — 뒤로가기 칸은 그대로(아래에서 같은 칸을 쓴다)
+        const N = SMS.neu; N.on = true; N.err = ''; N.touched = !!smsNewNo(N.phone);
+        const box = document.createElement('div');
+        box.className = 'sms-thread sms-new'; box.id = 'sms-newbox'; box.setAttribute('role', 'region'); box.setAttribute('aria-label', '새 문자 보내기');
+        box.innerHTML = '<div class="sms-th-head"><button type="button" class="sms-th-back" id="sms-new-back" aria-label="목록으로 돌아가기">목록</button><b>새 문자</b><button type="button" class="sms-th-x" id="sms-new-x" aria-label="새 문자 닫기" title="닫기 (Esc)">×</button></div>'
+            + '<form class="sms-new-form" id="sms-new-form" autocomplete="off" novalidate>'
+            + '<p class="sms-new-lead">안내·답변용이에요. 행사·광고 글은 보내지 마세요.</p>'
+            + '<div class="sms-new-f"><label for="sms-new-phone">받는 번호</label><input type="tel" inputmode="numeric" class="sms-new-in" id="sms-new-phone" maxlength="17" placeholder="010-1234-5678" aria-describedby="sms-new-perr sms-new-hint" aria-invalid="false"><p class="sms-new-perr" id="sms-new-perr" role="alert" hidden></p><p class="sms-new-hint" id="sms-new-hint" hidden></p></div>'
+            + '<div class="sms-new-f grow"><label for="sms-new-text">보낼 글</label><textarea class="sms-text" id="sms-new-text" rows="6" maxlength="1000" aria-describedby="sms-new-tip"></textarea><p class="sms-new-tip" id="sms-new-tip">회사폰 번호로 나가요. 이모지는 문자에서 깨져서 빠져요.</p></div>'
+            + '<div class="sms-warn" id="sms-new-warn" role="status" hidden></div>'
+            + '<p class="sms-new-err" id="sms-new-err" role="alert" hidden></p>'
+            + '<div class="sms-reply-row"><span class="sms-len" id="sms-new-len"></span><button type="submit" class="desk-btn primary" id="sms-new-send" disabled>보내기</button></div>'
+            + '</form>';
+        $('sms-pane').replaceChildren(box);
+        $('desk-sms').classList.add('sms-open');
+        if (smsHistAt() !== 'th') smsHistPush('th');
+        const ph = $('sms-new-phone'), ta = $('sms-new-text'); ph.value = N.phone; ta.value = N.text;
+        smsNewSync(); smsVv();
+        (smsNewOk(smsNewNo(N.phone)) ? ta : ph).focus({ preventScroll: true });
+    }
+    function smsNewClose(focusBtn, keepHist) {
+        const N = SMS.neu; if (!N.on) return;
+        const ph = document.getElementById('sms-new-phone'), ta = document.getElementById('sms-new-text'); if (ph) N.phone = ph.value; if (ta) N.text = ta.value;   // 적던 것은 이 창을 여는 동안 기억
+        N.on = false; N.err = '';
+        const pane = $('sms-pane'); if (pane && document.getElementById('sms-newbox')) pane.innerHTML = '<div class="sms-pane-empty">왼쪽 목록에서 대화를 골라 주세요.</div>';
+        const card = $('desk-sms'); if (card) card.classList.remove('sms-open');
+        if (!keepHist && smsHistAt() === 'th') smsHistBack(1);
+        smsVv();
+        if (focusBtn) { const b = $('sms-new'); if (b && !b.hidden) b.focus({ preventScroll: true }); }
+    }
+    async function smsNewSend() {
+        const N = SMS.neu, ph = document.getElementById('sms-new-phone'), ta = document.getElementById('sms-new-text'); if (!N.on || N.busy || !ph || !ta) return;
+        const phone = smsNewNo(ph.value), text = ta.value.trim();
+        if (!smsNewOk(phone)) { N.touched = true; smsNewSync(); ph.focus({ preventScroll: true }); return; }
+        if (!text) { ta.focus({ preventScroll: true }); return; }
+        N.busy = true; N.err = ''; smsNewSync();
+        let res = null, status = 0;
+        try {
+            const r = await fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('jwt_token') || '') }, body: JSON.stringify({ phone, text }) });
+            status = r.status; res = await r.json().catch(() => ({}));
+            if (status === 401 && typeof akmSessionExpired === 'function') akmSessionExpired();
+        } catch (e) { res = { ok: false, error: '통신이 끊겼어요. 다시 눌러 주세요' }; }
+        N.busy = false;
+        if (status === 404) {   // 옛 서버 — 단추를 끄고 판을 걷는다(적던 글은 기억)
+            SMS.newOff = true; smsNewClose(false); smsHead(); showToast('이 서버에서는 아직 새 문자를 보낼 수 없어요', '', 5000); return;
+        }
+        if (!(status >= 200 && status < 300) || !res || res.ok === false) { N.err = '보내지 못했어요: ' + ((res && res.error) || '다시 시도해 주세요'); if (N.on) smsNewSync(); else showToast(N.err, '', 5000); return; }
+        N.phone = ''; N.text = ''; N.touched = false;
+        if (ph.isConnected) ph.value = ''; if (ta.isConnected) ta.value = '';
+        showToast(smsFmtNo(phone) + ' 로 문자를 보냈어요. 회사폰에서 나가면 「보냄」으로 바뀌어요');
+        const id = Number(res.thread_id) || 0;
+        smsNewClose(false, true);   // 뒤로가기 칸은 두고 그 자리에 보낸 대화를 연다
+        if (INB.ch === 'sms' && smsVisible()) {
+            SMS.scope = 'all'; SMS.only = false; SMS.q = ''; clearTimeout(SMS.qt); $('sms-q').value = ''; SMS.items = null; SMS.sig = '';
+            smsHead(); await smsList();
+            // 응답 직후엔 글이 큐에만 있어 서버 목록에서 그 대화의 마지막 글 시각이 비어 있을 수 있다(새 대화면 50건 밖일 수도) → 응답의 줄을 목록 맨 위에 올려 두고 연다(다음 목록 조회부터는 서버 순서)
+            if (id && Array.isArray(SMS.items) && !SMS.err) { const at = SMS.items.findIndex(x => x.id === id), row = Object.assign({}, res.thread && typeof res.thread === 'object' ? res.thread : {}, at >= 0 ? SMS.items[at] : {}, { id }); if (at >= 0) SMS.items.splice(at, 1);
+                if (smsLastDir(row) !== 'out' || !row.last_out_text) { const now = new Date().toISOString(); Object.assign(row, { last_dir: 'out', last_out_text: text.slice(0, 120), last_out_at: now, last_at: now }); }   /* 줄에 「나: 보낸 글」이 바로 보이게(서버 값이 채워지면 그것으로 바뀐다) */ if (at >= 0 || res.thread) { SMS.items.unshift(row); SMS.sig = ''; smsRenderList(); } }
+            if (id && document.querySelector('#sms-list .sms-item[data-id="' + id + '"]')) smsThreadOpen(id);
+            else if (smsHistAt() === 'th' && !SMS.open && !SMS.neu.on) smsHistBack(1);
+        }
+        smsSummary();
     }
     function smsCloseCard() {
         smsWinCleanup();
@@ -1500,6 +1589,7 @@
     function smsThreadOpen(id) {
         if (SMS.open === id) { if (window.matchMedia('(max-width: 720px)').matches) smsThreadClose(true); return; }   // PC 2단에서는 같은 줄을 또 눌러도 그대로 둔다
         smsThreadClose(false, true);   // 다른 대화로 옮김 — 뒤로가기 칸은 그대로 둔다
+        smsNewClose(false, true);   // #688 새 문자 판이 떠 있었으면 걷는다(적던 글은 기억)
         const li = document.querySelector('#sms-list .sms-item[data-id="' + id + '"]');
         if (!li) { if (smsHistAt() === 'th') smsHistBack(1); return; }
         const x = (SMS.items || []).find(i => i.id === id) || {};
@@ -1785,7 +1875,7 @@
         SMS.vvRaf = 0;
         const card = $('desk-sms'); if (!card) return;
         const vv = window.visualViewport;
-        const want = (!vv || !SMS.open) ? '' : [Math.round(vv.height), Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)), Math.max(0, Math.round(vv.offsetTop))].join(',');
+        const want = (!vv || !(SMS.open || SMS.neu.on)) ? '' : [Math.round(vv.height), Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)), Math.max(0, Math.round(vv.offsetTop))].join(',');
         if (want === (SMS.vvSig || '')) return;   // 같은 값이면 손대지 않는다(자판이 떠 있는 동안 스크롤 사건마다 다시 배치하면 화면이 떨린다)
         SMS.vvSig = want;
         if (!want) { card.style.removeProperty('--sms-vh'); card.style.removeProperty('--sms-kb'); card.style.removeProperty('--sms-vt'); return; }
@@ -1865,6 +1955,9 @@
         $('sms-q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); qGo(e.target.value); } });
         const list = $('desk-sms');   // 대화(오른쪽 칸)·목록 둘 다 이 안에 있다
         list.addEventListener('click', e => { if (e.target.closest('#inb-host')) return;   // #658 톡톡·문의 탭 안의 누름은 ao-inbox.js 가 받는다(같은 class 라 문자 쪽 처리가 가로채지 않게)
+            if (e.target.closest('#sms-new')) { smsNewOpen(); return; }   // #688
+            if (e.target.closest('#sms-new-back, #sms-new-x')) { smsNewClose(true); return; }
+            { const g = e.target.closest('#sms-new-goto'); if (g) { smsThreadOpen(Number(g.dataset.id)); return; } }
             if (e.target.closest('#sms-th-back')) { smsThreadClose(true); return; }
             const th = e.target.closest('.sms-thumb'); if (th) { if (!th.disabled) smsView(th.dataset.img, th); return; }
             if (e.target.closest('#sms-th-x')) { smsThreadClose(true); return; }
@@ -1884,9 +1977,10 @@
             if (e.target.closest('#sms-draft-new')) { const ta = $('sms-text'), t = SMS.thread && SMS.thread.thread; if (ta && t && t.draft_text) { ta.value = t.draft_text; SMS.fillText = t.draft_text; SMS.filled = SMS.open + '|' + t.draft_text; SMS.newDraft = ''; smsSync(); ta.focus({ preventScroll: true }); } return; }
             const row = e.target.closest('.sms-row'); if (row) smsThreadOpen(Number(row.closest('.sms-item').dataset.id));
         });
-        list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } });
-        list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } });
-        list.addEventListener('keydown', e => { if (e.target.id === 'sms-text' && e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); smsAct('send'); } });
+        list.addEventListener('submit', e => { if (e.target.id === 'sms-reply') { e.preventDefault(); smsAct('send'); } else if (e.target.id === 'sms-new-form') { e.preventDefault(); smsNewSend(); } });
+        list.addEventListener('input', e => { if (e.target.id === 'sms-text') { smsSync(); typInput(); } else if (e.target.id === 'sms-new-phone' || e.target.id === 'sms-new-text') { SMS.neu.err = ''; smsNewSync(); } });
+        list.addEventListener('focusout', e => { if (e.target.id === 'sms-new-phone') { const d = smsNewNo(e.target.value); if (d) { SMS.neu.touched = true; if (smsNewOk(d)) e.target.value = smsFmtNo(d); } smsNewSync(); } });
+        list.addEventListener('keydown', e => { if ((e.target.id === 'sms-text' || e.target.id === 'sms-new-text') && e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (e.target.id === 'sms-text') smsAct('send'); else smsNewSend(); } });
         $('desk-sms').addEventListener('mousedown', e => { if (e.target === $('desk-sms')) smsCloseCard(); });   // 창 바깥(어두운 곳) 누름 = 닫기
         $('sms-view').addEventListener('click', e => { if (e.target.id !== 'sms-view-img') smsViewClose(); });
         document.addEventListener('keydown', e => {
@@ -1898,6 +1992,7 @@
                 e.stopPropagation(); if (!did) smsCloseCard(); return;
             }
             if (smsViewClose()) { e.stopPropagation(); return; }
+            if (SMS.neu.on) { e.stopPropagation(); smsNewClose(true); return; }   // #688 새 문자 판 → 창
             if (SMS.open) { e.stopPropagation(); smsThreadClose(true); return; }
             if (document.body.classList.contains('sms-win-open')) { e.stopPropagation(); smsCloseCard(); }   // Esc 도 같은 순서: 사진 → 대화 → 창
         });

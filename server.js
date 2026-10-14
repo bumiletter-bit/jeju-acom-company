@@ -9894,7 +9894,10 @@ app.get('/api/public/store-snapshot', async (req, res) => {
                 ORDER BY id DESC LIMIT 1`);
             reviewsFreshAt = f.rows.length ? f.rows[0].run_at : null;
         } catch (_) { /* 산출 실패 시 null — 화면은 '수집 기준일 확인 불가' 폴백 */ }
-        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: r.rows[0].items, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt, store: r.rows[0].store_meta || null });   // 지시 #310: store = 관심고객수·누적 리뷰·가중 평점(매일 갱신)
+        // #689: 자사몰에는 「네이버 전용」 옵션(설정 cafe24_sync_ignore_opts · 연결표 상품 · 팔리는 옵션만)을 빼고 준다 — 설정을 못 읽으면 종전 그대로(원본)
+        let mallItems = r.rows[0].items;
+        try { const [mapCfg, ignoreCfg] = await Promise.all([naverCfgGet('cafe24_sync_map'), naverCfgGet('cafe24_sync_ignore_opts')]); mallItems = storeSnapshotForMall(r.rows[0].items, mapCfg, ignoreCfg); } catch (_) { mallItems = r.rows[0].items; }
+        res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: mallItems, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt, store: r.rows[0].store_meta || null });   // 지시 #310: store = 관심고객수·누적 리뷰·가중 평점(매일 갱신)
     } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
 });
 
@@ -15165,6 +15168,20 @@ function cafe24OptKey(s) {
     const grade = (t.match(/로얄과|중소과|중대과|소과|대과|랜덤과/) || [])[0] || '';
     return (fruit || use || weight) ? [fruit, use, weight, grade].join('|') : '';
 }
+// #689(대표 「고」 10/14 · 워커1 설계): 자사몰 공개 스냅샷(/api/public/store-snapshot)에서 「네이버 전용」 옵션을 뺀다 — 스킨 무접촉.
+//   네이버 전용 = 설정 cafe24_sync_ignore_opts.keys(05:10 경보·가격 확인·창구 mall-price 가 같이 쓰는 열쇠 한 곳)에 든 옵션 가운데, 연결표(cafe24_sync_map)에 있는 상품의 · 팔리는(usable · 재고 > 0) 옵션만.
+//   재고 0 옵션(황금향 못난이 등)은 그대로 둔다(스킨이 품절로 그린다) · 전부 빠지면 원본 유지(상품이 비어 보이지 않게) · 원본 배열·객체는 바꾸지 않고 복사본을 돌려준다.
+function storeSnapshotForMall(items, mapCfg, ignoreCfg) {
+    const map = (mapCfg && mapCfg.map && typeof mapCfg.map === 'object') ? mapCfg.map : {};
+    const keys = new Set(Array.isArray(ignoreCfg && ignoreCfg.keys) ? ignoreCfg.keys.map(String) : []);
+    if (!Array.isArray(items) || !keys.size || !Object.keys(map).length) return items;
+    return items.map(it => {
+        if (!it || !map[String(it.no)] || !Array.isArray(it.opts) || !it.opts.length) return it;
+        const kept = it.opts.filter(o => !(o && o.usable !== false && Number(o.stock) > 0 && keys.has(cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || '')))));
+        if (kept.length === it.opts.length || !kept.length) return it;
+        return Object.assign({}, it, { opts: kept });
+    });
+}
 async function collectCafe24Sync(modeOverride, opt) {
     const quiet = !!(opt && opt.quiet);   // 수동 러너 테스트용 — 텔레그램 억제
     const mapCfg = await naverCfgGet('cafe24_sync_map');
@@ -15260,7 +15277,7 @@ async function collectCafe24Sync(modeOverride, opt) {
             if (!sn || !cp || cp.display !== 'T') continue;
             const nOpts = {};
             for (const o of (sn.opts || [])) {
-                if (o.usable === false) continue;
+                if (o.usable === false || (o.stock != null && Number(o.stock) === 0)) continue;   // #689: 재고 0(품절 확인된) 옵션은 옵션명 불일치·결제가 비교에서 뺀다 — 황금향 못난이처럼 품절만 시킨 옵션이 매일 경보로 남지 않게 · 재고를 모르는(null) 옵션은 종전대로 비교
                 const k = cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || ''));
                 if (k) nOpts[k] = Number(sn.discPrice) + Number(o.price || 0);
             }

@@ -963,6 +963,27 @@ body.desk-full-open .mobile-menu-btn, body.desk-full-open .mobile-noti-btn { vis
 .sms-reply-row .desk-btn:disabled { opacity: .5; cursor: default; }
 .sms-reply-row .desk-btn[aria-busy="true"] { opacity: .7; cursor: progress; }
 .sms-len { margin-right: auto; color: var(--d-sub); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* ── #688(대표 10/14) 문자 먼저 보내기 — [새 문자] 단추 + 오른쪽 대화 칸의 「새 문자」 판. 틀은 .sms-thread 그대로 · 색은 토큰만(새 색 없음) ── */
+.sms-bar .sms-new-btn { margin-left: auto; background: var(--d-card); border-color: var(--d-accent); color: var(--d-accent); font-weight: 800; white-space: nowrap; }
+.sms-bar .sms-new-btn:hover { background: var(--d-accent-soft); }
+.sms-new-form { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 640px; padding: 16px; overflow-y: auto; overscroll-behavior: contain; }
+.sms-new-lead { margin: 0; color: var(--d-sub); font-size: 13px; line-height: 1.5; }
+.sms-new-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sms-new-f.grow { flex: 1 1 auto; min-height: 0; }
+.sms-new-f.grow .sms-text { flex: 1 1 auto; min-height: 132px; max-height: 320px; }
+.sms-new-f label { color: var(--d-ink); font-size: 13px; font-weight: 700; }
+.sms-new-in { width: 100%; max-width: 260px; min-height: 44px; padding: 0 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-ink); font: inherit; font-size: 16px; font-variant-numeric: tabular-nums; }
+.sms-new-in::placeholder { color: var(--d-sub); }
+.sms-new-in:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 1px; border-color: transparent; }
+.sms-new-in[aria-invalid="true"] { border-color: var(--d-err); }
+.sms-new-tip, .sms-new-hint { margin: 0; color: var(--d-sub); font-size: 12.5px; line-height: 1.5; }
+.sms-new-perr, .sms-new-err { margin: 0; color: var(--d-err); font-size: 12.5px; font-weight: 600; line-height: 1.5; }
+.sms-new-goto { padding: 0 2px; border: 0; background: none; color: var(--d-accent); font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.sms-new-goto:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; border-radius: 4px; }
+.sms-new .sms-reply-row { margin-top: auto; }
+.sms-new .sms-reply-row .desk-btn { font-variant-numeric: tabular-nums; }
+@media (max-width: 960px), (pointer: coarse) { .sms-new-goto { display: inline-flex; align-items: center; min-height: 44px; } .sms-new-in { max-width: none; } }
+@media (max-width: 720px) { .sms-new-form { max-width: none; padding: 14px; } .sms-new-f.grow .sms-text { max-height: none; } }
 .sms-view { position: fixed; inset: 0; z-index: 985; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; background: rgba(16, 24, 40, .86); }
 .sms-view .sms-view-x { flex: none; align-self: flex-end; min-height: 44px; }
 .sms-view img { min-height: 0; max-width: 100%; max-height: calc(100% - 60px); border-radius: 8px; object-fit: contain; }

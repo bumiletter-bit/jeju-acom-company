@@ -450,6 +450,19 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 - **시도 제한(10분 창)**: IP 5회 · 성함 30회 · 끝자리 20회 · **전체 200회**(넘으면 429 + 텔레그램 1시간 1회) · 「없음」이 10번 이어진 IP 는 60분 잠금 · 동시 조회 8건. IP = `x-forwarded-for` 의 **마지막 값**(프록시가 붙인 값 · 🔵 렌더가 실제로 그렇게 붙이는지는 배포 뒤 헤더로 확인할 것). 응답 최소 300ms. 열쇠는 해시로만 저장.
 - 헤더: `X-Robots-Tag: noindex, nofollow` · `Cache-Control: no-store` · `Referrer-Policy: no-referrer`.
 
+### 10-5d. 우리가 먼저 보내기(#688 · 2026-10-14 · 대표 「고」 · 화면 계약 — 워커2)
+배경: 폰 삼성 메시지 앱에서 손으로 보낸 문자는 전달 앱이 서버에 올리지 않는다(SMSGate 한계) → 「보내기는 전부 에이전트 오피스에서」. 문자가 온 적 없는 번호에도 여기서 새 문자를 보낼 수 있게 한 라우트.
+
+- `POST /api/sms/send` `{ phone, text }` (로그인 필요 · 전 직원 · 관리자 아님)
+  - `phone`: 화면은 숫자만 남겨 보내도 되고(01012345678) 하이픈·`+82` 꼴도 된다 — 서버가 받는 길과 같은 `normalizePhone` 으로 한 번 더 정규화(`+82 10…` → `010…`). **휴대폰 번호(`01[016789]` + 7~8자리)만** 받는다. 시험 번호(0999…)는 라이브에서 거절(testMode 검증만 통과).
+  - `text`: 직원 답과 같은 길 — `smsSafe`(이모지·깨지는 글자 제거) → `max_chars`(설정 · 지금 1000) 조각 → `sms_messages` `direction out · sender staff_desk · rule_kind 'staff_new' · state queued` → 기존 발송 틱이 회사폰으로 보냄(시간당 상한은 **봇 발송(sender bot)에만** 걸리고 직원 발송은 상한 없음 · 종전 `/reply` 와 같음).
+  - 대화: 그 번호 대화가 **있으면 그 대화에 붙이고**(`created:false`) 없으면 새로 만든다(`created:true`). 상태 = `staff_replied`(직원 답변 · `staff_user_id`·`staff_name`·`handled_at` 찍힘 · `staff_why`·초안·되묻기 비움) → 봇은 그 대화에 **직원 답 뒤 쿨다운 30분** 침묵(종전 `/reply` 와 같은 규칙 · 24시간은 아님) · 그 뒤 손님 글은 종전 판정. 그 대화에 큐에 남아 있던 봇 글은 취소(`cancelled:staff_desk`). 다른 직원의 「입력 중」 표시는 보낸 직원 것만 풀림. audit 1줄(source `sms` · targetType `sms_reply` · kind `staff_new`).
+  - 200 응답 = `{ ok:true, thread_id, message_id, created, parts(조각 수), phone_tail, thread }` — `thread` = **목록 `items[]` 한 줄과 같은 꼴**(`pub` · status 'staff_replied'·phone_tail·phone_full·customer_hint·unread 0·needs_staff false …). 🔵 응답 시점엔 글이 큐에만 있어 `last_dir`·`last_out_text`·`last_out_state` 는 아직 비어 있다(새 대화면 null) — 발송 틱(수 초)·회사폰 「보냄」 신호 뒤 목록·상세에 'out'·보낸 글로 채워진다(종전 `/reply` 와 같음) → 화면은 응답 뒤 대화 상세를 열어 메시지 줄(state queued → sending → sent)로 보여 주면 된다. 화면은 `thread_id` 로 그 대화를 바로 연다(`/api/sms/threads/:id`). 새 대화는 `scope=active`(안 읽은 글 있음) 목록에는 안 뜨고 `scope=all`·찾기·그 대화 열기로 보인다 — 손님이 답하면 active 에 뜬다.
+  - 실패(전부 `{ ok:false, error:<한글 한 줄> }` · 화면은 error 를 그대로 보여 줘도 됨): `400` 「받는 분 번호를 적어 주세요」(번호 없음) · 「휴대폰 번호(010-0000-0000 꼴)만 보낼 수 있어요」(유선·짧은 번호·해외) · 「그 번호(0999…)는 검증용이라 보낼 수 없어요」 · 「보낼 글이 비었어요」 · 「문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)」(smsSafe 뒤 빈 글 — 줄 안 만듦) / `409` 「문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)」 / `401` 비로그인 / `500` 「문자 처리 중 문제」. 잘못된 요청은 대화·줄을 만들지 않는다.
+  - 서버가 **막지 않는 것**(화면이 알 것): 수신거부 번호(문자 봇엔 수신거부 표가 없음 · 수신거부는 알림톡·LMS 쪽 설정) · 같은 번호 연속 발송(직원 판단) · 하루 상한(직원 발송엔 없음). 회사폰이 꺼져 있으면 `queued` 로 남아 켜지면 나간다(상태는 대화 상세의 `last_out_state`·메시지 state 로).
+- `GET /api/sms/summary` 에 `send_route:true` 추가(#675 `done_route` 와 같은 옛 서버 판별 · 없으면 화면은 [새 문자] 단추를 숨긴다).
+- 검증: `scripts/verify-610-server.js` #688 구간(새 번호 하이픈 꼴 · +82 꼴 재발송 = 같은 대화 · 잘못된 요청 5종 400 · 꺼짐 409 · 비로그인 401 · 발송 틱 digits · 목록 all 에 보임 · 응답 thread 꼴 · summary 표식) · testMode · 시험 번호 0999…1688.
+
 ### 10-6. 점검 도구 — `scripts/sms-inspect.js`(읽기만)
 ```
 node scripts/sms-inspect.js                 # 최근 2시간 요약 + 시험 a~f 판정 + 대화별 줄

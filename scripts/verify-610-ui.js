@@ -51,11 +51,102 @@ const sumOf = async () => (await fetch(BASE + '/api/sms/summary', { headers: { A
     const rowOf = (pg, id) => pg.evaluate(i => { const li = document.querySelector('#sms-list .sms-item[data-id="' + i + '"]'); if (!li) return null; const q = s => li.querySelector('.sms-row ' + s), t = s => (q(s) || { textContent: '' }).textContent;
         return { tail: t('.sms-tail'), hint: t('.sms-hint'), un: t('.sms-un'), dun: li.dataset.un, badge: !!q('.desk-badge'), time: t('.sms-time'), last: t('.sms-last'), me: !!q('.sms-me'), pic: !!q('.sms-pic'), why: t('.sms-why'), tag: t('.sms-tag'), bold: li.classList.contains('unread') }; }, id);
 
+
+    // ── #688(대표 10/14) 문자 먼저 보내기 — [새 문자] → 오른쪽 대화 칸의 「새 문자」 판. 문자 창이 열려 있는 채로 부른다(끝에 가짜 서버를 처음 상태로 되돌림)
+    //   ONLY688=1 이면 폭마다 이 구간만 돈다(작은 수정용 · 대표 10/13 「필요한 검증만」)
+    const t688 = async (pg, P, label, vw, phone) => {
+        const T = P.toasts, st = () => pg.evaluate(() => { const g = id => document.getElementById(id), b = g('sms-new-send'), v = el => !!el && !el.hidden && el.getClientRects().length > 0;
+            return { box: !!g('sms-newbox'), th: !!g('sms-thread'), btn: b ? b.textContent : null, dis: b ? b.disabled : null, perr: v(g('sms-new-perr')) ? g('sms-new-perr').textContent : '', hint: v(g('sms-new-hint')) ? g('sms-new-hint').textContent.replace(/\s+/g, ' ').trim() : '', warn: v(g('sms-new-warn')) ? g('sms-new-warn').textContent : '', err: v(g('sms-new-err')) ? g('sms-new-err').textContent : '', len: g('sms-new-len') ? g('sms-new-len').textContent : '', phone: g('sms-new-phone') ? g('sms-new-phone').value : null, text: g('sms-new-text') ? g('sms-new-text').value : null, inv: g('sms-new-phone') ? g('sms-new-phone').getAttribute('aria-invalid') : null, hist: __aoDesk.HB.stack.map(e => e.k).join('>'), focus: document.activeElement ? document.activeElement.id : '' }; });
+        const type = async (sel, v) => { await pg.fill(sel, v); await pg.waitForTimeout(80); };
+        const blur = async () => { await pg.evaluate(() => { const p = document.getElementById('sms-new-phone'); p.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); }); await pg.waitForTimeout(80); };
+        const back = async () => { if (phone) { await pg.click('#sms-new-back'); } else await pg.keyboard.press('Escape'); await pg.waitForTimeout(300); };
+        await mock('/__mock/reset', {}); await wake(pg);
+        if (await pg.evaluate(() => !!document.getElementById('sms-thread'))) await closeThread(pg);
+        if ((await pg.getAttribute('#sms-scope', 'aria-pressed')) === 'true') { await pg.click('#sms-scope'); await pg.waitForTimeout(700); }
+        // ① 단추
+        const b0 = await pg.evaluate(() => { const b = document.getElementById('sms-new'), r = b.getBoundingClientRect(), bar = document.querySelector('.sms-bar').getBoundingClientRect(); return { vis: !b.hidden && r.width > 0, t: b.textContent, h: Math.round(r.height), inBar: r.right <= bar.right + 1 && r.left >= bar.left - 1 }; });
+        ok(b0.vis && b0.t === '새 문자' && b0.h >= 44 && b0.inBar, '[' + label + '] #688 [새 문자] 단추가 찾기 줄 안에 보임(높이 ' + b0.h + 'px)');
+        // ② 판 열림 = 오른쪽 대화 칸 · 뒤로가기 칸 th · 번호 칸에 초점
+        const hist0 = await pg.evaluate(() => __aoDesk.HB.stack.map(e => e.k).join('>'));
+        await pg.click('#sms-new'); await pg.waitForTimeout(350);
+        const s1 = await st(), g1 = await pg.evaluate(() => { const b = document.getElementById('sms-newbox').getBoundingClientRect(), p = document.getElementById('sms-pane').getBoundingClientRect(), l = document.querySelector('.sms-left').getBoundingClientRect(), cs = getComputedStyle(document.getElementById('sms-newbox')); return { inPane: b.left >= p.left - 1 && b.right <= p.right + 1, rightOfList: b.left >= l.right - 2, pos: cs.position, w: Math.round(b.width), vw: window.innerWidth, lead: document.querySelector('.sms-new-lead').textContent, labels: Array.from(document.querySelectorAll('.sms-new-f label')).map(x => x.textContent).join('|'), modal: !!document.querySelector('#sms-newbox[aria-modal]') }; });
+        ok(s1.box && !s1.th && s1.btn === '보내기' && s1.dis === true && s1.focus === 'sms-new-phone' && g1.labels === '받는 번호|보낼 글' && /행사·광고 글은 보내지 마세요/.test(g1.lead) && !g1.modal, '[' + label + '] #688 「새 문자」 판: 받는 번호·보낼 글 칸 · 광고 안내 한 줄 · [보내기] 꺼짐 · 번호 칸에 초점');
+        ok(/sms-th$/.test(s1.hist) && (s1.hist.match(/sms-th/g) || []).length === 1 && (phone ? g1.pos === 'fixed' && g1.w === g1.vw : g1.inPane && g1.rightOfList && g1.pos !== 'fixed'), '[' + label + '] #688 ' + (phone ? '폰 = 화면을 덮는 판' : 'PC = 오른쪽 대화 칸 안(목록 옆 · 모달 아님)') + ' · 뒤로가기 칸 ' + hist0 + ' → ' + s1.hist);
+        ok(await sw(pg) <= vw.width, '[' + label + '] #688 판을 연 채 가로 넘침 없음(' + (await sw(pg)) + ' ≤ ' + vw.width + ')');
+        const hh = await pg.evaluate(ph => [document.getElementById('sms-new-phone'), document.getElementById('sms-new-send'), document.getElementById(ph ? 'sms-new-back' : 'sms-new-x')].map(el => Math.round(el.getBoundingClientRect().height)), phone);
+        ok(hh.every(h => h >= 44), '[' + label + '] #688 번호 칸·[보내기]·' + (phone ? '[목록]' : '[×]') + ' 높이 44px 이상(' + hh.join('·') + ')');
+        // ③ 번호 꼴 6가지
+        const tries = [['1234', false, ''], ['010-1234', false, ''], ['02-123-4567', false, ''], ['010-9876-5432', true, '010-9876-5432'], ['+82 10 9876 5432', true, '010-9876-5432'], ['01098765432', true, '010-9876-5432'], ['011-234-5678', true, '011-234-5678']];
+        const got = []; for (const [v] of tries) { await type('#sms-new-phone', v); await type('#sms-new-text', '안내드립니다'); await blur(); const s = await st(); got.push([v, !s.dis, s.dis ? '' : s.btn.replace(' 로 보내기', ''), s.perr ? 'E' : '', s.inv].join('/')); }
+        const want = tries.map(([v, okNo, fmt]) => [v, okNo, okNo ? fmt : '', okNo ? '' : 'E', String(!okNo)].join('/'));
+        ok(JSON.stringify(got) === JSON.stringify(want), '[' + label + '] #688 번호 꼴 7가지: 끝 4자리·짧은 번호·일반전화 = 막힘 + 칸 아래 안내 · 010/+82/011 = 통과 · 단추 글에 번호(' + got.filter((x, i) => x !== want[i]).join(' ') + ')');
+        { await type('#sms-new-phone', '+82 10 9876 5432'); await blur(); const s = await st(); ok(s.phone === '010-9876-5432' && s.btn === '010-9876-5432 로 보내기', '[' + label + '] #688 칸을 나가면 010-9876-5432 꼴로 정리 · 단추 「' + s.btn + '」'); }
+        // ④ 글 칸: 빈 글 = 꺼짐 · 이모지 띠 · 글자 수
+        await type('#sms-new-text', '   '); const s4a = await st();
+        await type('#sms-new-text', '안녕하세요 🍊 제주아꼼이네입니다 😀'); const s4b = await st();
+        await type('#sms-new-text', '안녕하세요 제주아꼼이네입니다'); const s4c = await st();
+        ok(s4a.dis === true && s4b.dis === false && /이모지 2개/.test(s4b.warn) && s4b.len === '21자' && !s4c.warn && s4c.len === '15자', '[' + label + '] #688 빈 글이면 꺼짐 · 이모지 2개 띠 · 글자 수(' + s4b.len + ' → ' + s4c.len + ') · 이모지를 지우면 띠 사라짐');
+        // ⑤ 같은 번호 대화가 목록에 있으면 알림 + [그 대화 열기]
+        await type('#sms-new-phone', '010-1234-1357'); await blur(); const s5 = await st();
+        ok(/이 번호와 나눈 대화가 있어요/.test(s5.hint) && s5.dis === false, '[' + label + '] #688 목록에 있는 번호면 「이 번호와 나눈 대화가 있어요 · 그 대화 열기」(보내기는 그대로 가능)');
+        await pg.click('#sms-new-goto'); await pg.waitForTimeout(600);
+        const s5b = await pg.evaluate(() => ({ th: (document.getElementById('sms-thread') || { dataset: {} }).dataset.id, box: !!document.getElementById('sms-newbox'), hist: __aoDesk.HB.stack.map(e => e.k).join('>') }));
+        ok(s5b.th === '4' && !s5b.box && (s5b.hist.match(/sms-th/g) || []).length === 1, '[' + label + '] #688 [그 대화 열기] → 그 대화(4)가 같은 자리에 열림 · 뒤로가기 칸은 그대로 1칸');
+        if (phone) { await pg.click('#sms-th-back'); await pg.waitForTimeout(300); } else await closeThread(pg);
+        // ⑥ 닫았다 열어도 적던 것이 남음 · Esc/[목록] 으로 닫힘 · 뒤로가기 칸 되돌림
+        await pg.click('#sms-new'); await pg.waitForTimeout(300); const s6a = await st();
+        await type('#sms-new-phone', '010-5555-0688'); await type('#sms-new-text', '적다 만 글'); await back();
+        const s6b = await pg.evaluate(() => ({ box: !!document.getElementById('sms-newbox'), win: !document.getElementById('desk-sms').hidden, hist: __aoDesk.HB.stack.map(e => e.k).join('>'), focus: document.activeElement ? document.activeElement.id : '' }));
+        ok(s6a.phone === '010-1234-1357' && !s6b.box && s6b.win && !/sms-th/.test(s6b.hist) && /sms-win/.test(s6b.hist) && s6b.focus === 'sms-new', '[' + label + '] #688 ' + (phone ? '[목록]' : 'Esc') + ' = 판만 닫힘(창은 그대로) · 뒤로가기 칸 ' + s6b.hist + ' · 초점은 [새 문자]');
+        await pg.click('#sms-new'); await pg.waitForTimeout(300); const s6c = await st();
+        ok(s6c.phone === '010-5555-0688' && s6c.text === '적다 만 글' && s6c.btn === '010-5555-0688 로 보내기' && s6c.focus === 'sms-new-text', '[' + label + '] #688 닫았다 열어도 적던 번호·글이 남음(번호가 맞으면 글 칸에 초점)');
+        // ⑦ 뒤로가기(브라우저) = 판만 닫힘
+        await pg.goBack().catch(() => { }); await pg.waitForTimeout(500);
+        const s7 = await pg.evaluate(() => ({ box: !!document.getElementById('sms-newbox'), win: !document.getElementById('desk-sms').hidden && document.body.classList.contains('sms-win-open'), hist: __aoDesk.HB.stack.map(e => e.k).join('>') }));
+        ok(!s7.box && s7.win && !/sms-th/.test(s7.hist), '[' + label + '] #688 브라우저 뒤로가기 = 판만 닫힘 · 창은 그대로(' + s7.hist + ')');
+        // ⑧ 실패 = 서버 사유 글 · 적던 글 남음
+        await pg.click('#sms-new'); await pg.waitForTimeout(300);
+        await mock('/__mock/set', { fail: 'send' }); const l0 = (await logOf()).length;
+        await pg.click('#sms-new-send'); await pg.waitForTimeout(700); const s8 = await st();
+        ok(s8.box && /보내지 못했어요: 회사폰에 보내지 못했습니다/.test(s8.err) && s8.text === '적다 만 글' && s8.phone === '010-5555-0688' && s8.dis === false && (await logOf()).length === l0 + 1, '[' + label + '] #688 실패 = 사유 글이 판에 뜸 · 적던 번호·글 그대로 · 단추 다시 켜짐');
+        await mock('/__mock/set', { fail: '' });
+        await type('#sms-new-text', '적다 만 글 고침'); ok(!(await st()).err, '[' + label + '] #688 글을 고치면 실패 글이 사라짐');
+        // ⑨ 성공(새 번호) = 요청 본문(숫자만 번호) · 토스트 · 그 대화가 목록 맨 위·열림 · 뒤로가기 1칸 · 판 비움
+        const t0 = T.length; await pg.fill('#sms-new-text', '안녕하세요 🍊 주문 건으로 연락드려요'); await pg.waitForTimeout(80);
+        if (phone) await pg.click('#sms-new-send'); else { await pg.focus('#sms-new-text'); await pg.keyboard.press('Control+Enter'); }
+        await pg.waitForFunction(() => !!document.getElementById('sms-thread') && !document.querySelector('#sms-msgs .desk-empty'), null, { timeout: 6000 }).catch(() => { }); await pg.waitForTimeout(400);
+        const lg = (await logOf()).filter(x => x.action === 'send').pop() || { body: {} };
+        const s9 = await pg.evaluate(() => { const th = document.getElementById('sms-thread'), first = document.querySelector('#sms-list .sms-item'), bubs = Array.from(document.querySelectorAll('#sms-msgs .sms-bub')); return { th: th ? th.dataset.id : '', firstId: first ? first.dataset.id : '', firstOpen: first ? first.classList.contains('open') : false, tail: first ? (first.querySelector('.sms-tail') || { textContent: '' }).textContent : '', me: first ? !!first.querySelector('.sms-me') && /주문 건으로 연락드려요/.test(first.querySelector('.sms-last').textContent) : false, headNo: (document.getElementById('sms-th-phone') || { textContent: '' }).textContent, bub: bubs.length ? bubs[bubs.length - 1].textContent : '', box: !!document.getElementById('sms-newbox'), scope: document.getElementById('sms-scope').getAttribute('aria-pressed'), q: document.getElementById('sms-q').value, hist: __aoDesk.HB.stack.map(e => e.k).join('>'), n: document.querySelectorAll('#sms-list .sms-item').length }; });
+        ok(lg.body.phone === '01055550688' && /주문 건으로 연락드려요/.test(lg.body.text || '') && T.slice(t0).some(x => /010-5555-0688 로 문자를 보냈어요/.test(x)), '[' + label + '] #688 ' + (phone ? '[보내기]' : 'Ctrl+Enter') + ' → POST /api/sms/send { phone: 숫자만 01055550688, text } · 토스트에 번호');
+        ok(s9.th && s9.th === s9.firstId && s9.firstOpen && s9.me && /0688/.test(s9.headNo + s9.tail) && /주문 건으로 연락드려요/.test(s9.bub) && !s9.box && s9.scope === 'false' && s9.q === '' && s9.n === 14 && (s9.hist.match(/sms-th/g) || []).length === 1, '[' + label + '] #688 성공 = 그 대화가 목록 맨 위에서 열림(대화 ' + s9.th + ' · 줄 ' + s9.n + ' · 뒤로가기 ' + s9.hist + ') · 판은 걷힘');
+        if (phone) { await pg.click('#sms-th-back'); await pg.waitForTimeout(300); } else await closeThread(pg);
+        await pg.click('#sms-new'); await pg.waitForTimeout(300); const s9b = await st();
+        ok(s9b.phone === '' && s9b.text === '' && s9b.dis === true, '[' + label + '] #688 보낸 뒤 다시 열면 빈 판');
+        // ⑩ 문자 꺼짐(409) = 서버 글 그대로
+        await mock('/__mock/set', { enabled: false }); await type('#sms-new-phone', '01055550688'); await type('#sms-new-text', '다시 보냅니다'); await pg.click('#sms-new-send'); await pg.waitForTimeout(700);
+        ok((await st()).err === '보내지 못했어요: 문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)', '[' + label + '] #688 문자 연동 꺼짐(409) = 서버 사유 글이 그대로 뜸');
+        await mock('/__mock/set', { enabled: true });
+        { const l1 = (await logOf()).filter(x => x.action === 'send').length; await type('#sms-new-text', '🍊😀'); const sE0 = await st(); await pg.click('#sms-new-send'); await pg.waitForTimeout(700); const sE = await st();
+          ok(sE0.dis === false && /이모지 2개/.test(sE0.warn) && sE.err === '보내지 못했어요: 문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' && sE.box && sE.text === '🍊😀' && (await logOf()).filter(x => x.action === 'send').length === l1 + 1, '[' + label + '] #688 이모지만 적으면 미리 알림 띠 + 서버 400 글 그대로(「문자로 보낼 글자가 없어요…」) · 판·글 그대로');
+          await type('#sms-new-text', '다시 보냅니다'); }
+        // ⑪ 옛 서버: 라우트 404 → 단추 끔 · 판 걷힘 / 표식 없음 → 단추 숨김
+        await mock('/__mock/set', { noSend: '404' }); await pg.click('#sms-new-send'); await pg.waitForTimeout(700);
+        const s11 = await pg.evaluate(() => ({ box: !!document.getElementById('sms-newbox'), hid: document.getElementById('sms-new').hidden, hist: __aoDesk.HB.stack.map(e => e.k).join('>') }));
+        ok(!s11.box && s11.hid && !/sms-th/.test(s11.hist) && T.some(x => /아직 새 문자를 보낼 수 없어요/.test(x)), '[' + label + '] #688 라우트가 404 인 서버 = 판 걷힘 · [새 문자] 숨김 · 안내 토스트');
+        await mock('/__mock/reset', {}); await mock('/__mock/set', { noSend: true }); await pg.reload({ waitUntil: 'networkidle' }).catch(() => { }); await pg.waitForTimeout(1800);
+        await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(900);
+        ok(await pg.evaluate(() => document.getElementById('sms-new').hidden && !document.getElementById('desk-sms').hidden), '[' + label + '] #688 요약에 표식이 없는 옛 서버 = [새 문자] 단추 숨김(문자 창은 그대로)');
+        await mock('/__mock/set', { noSend: false }); await mock('/__mock/reset', {}); await wake(pg);
+        ok(await pg.evaluate(() => !document.getElementById('sms-new').hidden), '[' + label + '] #688 표식이 돌아오면 단추 다시 보임');
+        ok(P.errors.length === 0, '[' + label + '] #688 화면 오류 ' + P.errors.length);
+    };
+
     try {
-        for (const [label, vw, phone, theme] of [['PC', PC, false, null], ['폰', PH, true, null], ['PC 야간', PC, false, 'dark'], ['폰 야간', PH, true, 'dark']].filter(x => !process.env.ONLY610 || process.env.ONLY610.split(',').includes(x[0]))) {
+        for (const [label, vw, phone, theme] of [['PC', PC, false, null], ['폰', PH, true, null], ['PC 야간', PC, false, 'dark'], ['폰 야간', PH, true, 'dark']].concat(process.env.ONLY688 ? [['폴드 900', { width: 900, height: 1000 }, false, null]] : []).filter(x => !process.env.ONLY610 || process.env.ONLY610.split(',').includes(x[0]))) {
             console.log('\n── ' + label);
             await mock('/__mock/reset', {});
             const P = await open(vw, phone, theme), pg = P.pg, T = P.toasts;
+            if (process.env.ONLY688) { await plusGo(pg, '#desk-sms-now'); await pg.waitForTimeout(900); await t688(pg, P, label, vw, phone); await P.ctx.close(); continue; }
             const buyOf = () => pg.evaluate(() => { const el = document.getElementById('sms-order'), q = k => { const d = (el.querySelector('.sms-buy-i') || el).querySelector('dd[data-k="' + k + '"]'); return d ? d.textContent.replace(/\s+/g, ' ').trim() : null; }, i0 = el.querySelector('.sms-buy-i') || el, bs = Array.from(i0.querySelectorAll('.sms-trk')), as = Array.from(i0.querySelectorAll('.sms-trk-go')), h = el.querySelector('.sms-buy-h b'), hs = el.querySelector('.sms-buy-h small'), bd = i0.querySelector('.sms-buy-s .desk-badge'), more = document.getElementById('sms-buy-more');
                 return { title: h ? h.textContent : '', badge: bd ? bd.textContent + '|' + bd.dataset.k : '', plan: q('plan'), ship: q('ship'), trk: q('trk'), who: q('who'), item: q('item'), paid: q('paid'), order: Array.from(i0.querySelectorAll('dd[data-k]')).map(d => d.dataset.k).join(','), none: el.classList.contains('none'), days: hs ? hs.textContent : '', n: el.querySelectorAll('.sms-buy-i').length, shown: Array.from(el.querySelectorAll('.sms-buy-i')).filter(x => x.getClientRects().length).length, more: more ? more.textContent + '|' + more.getAttribute('aria-expanded') + '|' + Math.round(more.getBoundingClientRect().height) : '', cap: !!el.querySelector('.sms-buy-cap'), text: el.textContent.replace(/\s+/g, ' ').trim(), nums: bs.map(b => b.textContent).join(','), hrefs: as.map(a => a.getAttribute('href') + '|' + a.target).join(','), h: bs.length ? Math.min(...bs.concat(as).map(x => { const p = getComputedStyle(x, '::after'), ph = parseFloat(p.height); return Math.round(Math.max(x.getBoundingClientRect().height, p.content !== 'none' && ph ? ph : 0)); })) : 0, over: el.scrollWidth > el.clientWidth + 1, keyFw: (el.querySelector('dd.key') ? Number(getComputedStyle(el.querySelector('dd.key')).fontWeight) : 0) }; });
             // ① 알약 · 새 폴링 없음
@@ -615,6 +706,7 @@ if (phone) { await openThread(pg, 4); await pg.click('#sms-th-back'); await pg.w
             const o5 = await pg.evaluate(() => window.AkmAoDesk.openSms(9999)), o6 = await pg.evaluate(() => window.AkmAoDesk.openSms('x'));
             ok(o5 === false && o6 === false && await pg.locator('#desk-sms').isVisible(), '[알림] 없는 번호·틀린 값 → false(카드만 열린 채 · 오류 없음)');
             ok(P.sms.some(x => /GET \/api\/sms\/threads\/9999\?peek=1/.test(x)) && !P.sms.some(x => x === 'GET /api/sms/threads/9999'), '[알림] 줄만 채우려는 조회는 peek=1(읽음으로 안 바꿈)');
+            if (!process.env.ONLY688) await t688(pg, P, "도구 PC", PC, false);   // #688 문자 먼저 보내기 — 전체 실행에서는 PC 한 번(다섯 폭은 ONLY688=1) · 끝에 가짜 서버 처음 상태
             ok(P.errors.length === 0, `[도구] 화면 오류 ${P.errors.length}`);
             // #633 「톡톡 2」 알약 → 문의 관리 메뉴의 「톡톡 문의」 탭(맨 끝에서 — 메뉴가 바뀌므로)
             await pg.keyboard.press('Escape'); await pg.click('#sms-close').catch(() => { });

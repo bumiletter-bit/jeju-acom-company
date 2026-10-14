@@ -107,6 +107,7 @@ function summary() {
     const s = { enabled: ST.enabled, mode: ST.mode, staff_needed: c.staff_needed, drafts: ST.legacy ? c.draft : ST.threads.filter(t => draftOf(t) && !['closed', 'ignored'].includes(t.status)).length, today_in: all.filter(x => x.direction === 'in').length, today_bot: all.filter(x => x.sender === 'bot').length, today_staff: all.filter(x => /^staff/.test(x.sender)).length, gateway: { last_ping_at: ST.alive ? iso(0) : iso(190), alive: ST.alive } };
     if (!ST.legacy && !ST.noStaffOpen) s.staff_open = ST.threads.filter(t => t.staff_why && !['closed', 'ignored'].includes(t.status)).length;
     if (!ST.legacy && !ST.noDone) s.done_route = true;   // #675 [처리함] 라우트가 있는 서버
+    if (!ST.legacy && !ST.noSend) s.send_route = true;   // #688 [새 문자] 라우트가 있는 서버(/__mock/set { noSend:true } = 표식 없는 옛 서버 · { noSend:'404' } = 표식은 있는데 라우트가 404)
     if (!ST.legacy && !ST.noOpen) s.open_threads = ST.threads.filter(isOpen).length;   // #660 답 안 한 것(끝남·무시 아님 + 안 읽음 또는 사람 몫)
     if (!ST.legacy) { s.unread_threads = ST.threads.filter(isActive).length; s.needs_staff = ST.threads.filter(t => isActive(t) && t.staff_why).length; }
     if (ST.withCounts) s.counts = c;
@@ -130,7 +131,7 @@ http.createServer(async (req, res) => {
         if (p === '/__mock/log') return send(res, 200, { log: ST.log, typPosts: ST.typPosts || [], typGets: ST.typGets || 0, typing: ST.typing || [] });
         if (p === '/__mock/typing') { const b = await readBody(req); ST.typing = (ST.typing || []).filter(x => !(x.tid === Number(b.thread) && x.id === Number(b.id))); if (b.on !== false) ST.typing.push({ tid: Number(b.thread), id: Number(b.id), name: String(b.name || ''), at: Date.now() }); return send(res, 200, { ok: true }); }   // #683 다른 사람 입력 상태 끼워 넣기
         if (p === '/__mock/reset') { seed(); return send(res, 200, { ok: true }); }
-        if (p === '/__mock/set') { const b = await readBody(req); if ('many' in b) ST.many = !!b.many; if ('noOpen' in b) ST.noOpen = !!b.noOpen; if ('noTyping' in b) ST.noTyping = !!b.noTyping; if ('typTtl' in b) ST.typTtl = Number(b.typTtl) || 0; if ('noDone' in b) ST.noDone = !!b.noDone; if ('cuMore' in b) ST.cuMore = !!b.cuMore; if (b.clearWhy) ST.threads.forEach(t => { t.staff_why = null; }); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; if ('staffOpen' in b) ST.noStaffOpen = !b.staffOpen; if ('history' in b) ST.noHistory = !b.history; return send(res, 200, { ok: true }); }
+        if (p === '/__mock/set') { const b = await readBody(req); if ('many' in b) ST.many = !!b.many; if ('noOpen' in b) ST.noOpen = !!b.noOpen; if ('noTyping' in b) ST.noTyping = !!b.noTyping; if ('typTtl' in b) ST.typTtl = Number(b.typTtl) || 0; if ('noDone' in b) ST.noDone = !!b.noDone; if ('noSend' in b) ST.noSend = b.noSend === '404' ? false : !!b.noSend, ST.send404 = b.noSend === '404'; if ('cuMore' in b) ST.cuMore = !!b.cuMore; if (b.clearWhy) ST.threads.forEach(t => { t.staff_why = null; }); if ('alive' in b) ST.alive = !!b.alive; if ('mode' in b) ST.mode = b.mode; if ('enabled' in b) ST.enabled = !!b.enabled; if ('counts' in b) ST.withCounts = !!b.counts; if ('fail' in b) ST.fail = b.fail || ''; if ('full' in b) ST.noFull = !b.full; if ('legacy' in b) ST.legacy = !!b.legacy; if ('trk' in b) ST.noTrk = !b.trk; if ('staffOpen' in b) ST.noStaffOpen = !b.staffOpen; if ('history' in b) ST.noHistory = !b.history; return send(res, 200, { ok: true }); }
         if (p === '/__mock/draft') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.draft_text = b.text ? String(b.text) : null; return send(res, 200, { ok: true }); }   // 봇 초안이 뒤늦게 생김
         if (p === '/__mock/push') { const b = await readBody(req), t = ST.threads.find(x => x.id === Number(b.id)); if (!t) return send(res, 404, { error: 'no thread' }); t.messages.push({ id: 7000 + t.messages.length + t.id * 10, direction: 'in', kind: 'sms', body: String(b.body || '또 보냅니다'), sender: 'customer', state: 'received', image_ids: [], event_at: new Date().toISOString() }); if (t.status === 'closed') t.status = 'new'; return send(res, 200, { ok: true }); }
         if (p.startsWith('/api/sms/')) {
@@ -148,6 +149,26 @@ http.createServer(async (req, res) => {
                 return send(res, 200, { ok: true, typing: typLive(tid).map(x => ({ id: x.id, name: x.name })) });
             }
             if (M === 'GET' && p === '/api/sms/summary') return send(res, 200, summary());
+            // #688 문자 먼저 보내기(화면 계약 = 워커2 요청 꼴) — POST /api/sms/send { phone, text } → { ok, thread_id, thread, parts } · 그 번호 대화가 있으면 거기에 붙고 없으면 새 대화
+            if (M === 'POST' && p === '/api/sms/send') {
+                if (ST.legacy || ST.noSend || ST.send404) return send(res, 404, { error: '없는 주소입니다' });
+                const b = await readBody(req); let dg = String(b.phone || '').replace(/\D/g, ''); if (dg.startsWith('82') && dg.length >= 11) dg = '0' + dg.slice(2).replace(/^0/, '');
+                const text = String(b.text || '').replace(/\p{Extended_Pictographic}/gu, '').trim();   // 실서버 smsSafe 흉내 = 이모지 뺌
+                ST.log.push({ at: Date.now(), path: p, action: 'send', body: b, phone: dg, text });
+                if (ST.fail === 'send') return send(res, 500, { ok: false, error: '회사폰에 보내지 못했습니다' });
+                // 오류 글·순서 = 실서버 sms/index.js 그대로(번호 없음 → 시험 번호 → 휴대폰 아님 → 빈 글 → 꺼짐 → 다듬은 뒤 빈 글)
+                if (!dg) return send(res, 400, { ok: false, error: '받는 분 번호를 적어 주세요' });
+                if (/^0999/.test(dg)) return send(res, 400, { ok: false, error: '그 번호(0999…)는 검증용이라 보낼 수 없어요' });
+                if (!/^01[016789]\d{7,8}$/.test(dg)) return send(res, 400, { ok: false, error: '휴대폰 번호(010-0000-0000 꼴)만 보낼 수 있어요' });
+                if (!String(b.text || '').trim()) return send(res, 400, { ok: false, error: '보낼 글이 비었어요' });
+                if (!ST.enabled) return send(res, 409, { ok: false, error: '문자 연동이 꺼져 있어요(설정 sms_gateway.enabled)' });
+                if (!text) return send(res, 400, { ok: false, error: '문자로 보낼 글자가 없어요(이모지만 있으면 지워져요)' });
+                const now = new Date().toISOString(); let t = ST.threads.find(x => x.phone_full === dg);
+                if (!t) { t = { id: Math.max(...ST.threads.map(x => x.id)) + 1, phone_tail: dg.slice(-4), phone_masked: dg.slice(0, 3) + '****' + dg.slice(-4), phone_full: dg, customer_hint: '', status: 'staff_replied', staff_name: null, handled_at: null, bot_count_today: 0, draft_text: null, read_at: null, staff_why: null, order: null, messages: [] }; ST.threads.push(t); }
+                t.messages.push({ id: 9500 + ST.log.length, direction: 'out', kind: 'sms', body: text, sender: 'staff_desk', state: 'queued', image_ids: [], event_at: now });
+                t.status = 'staff_replied'; t.staff_name = '시험직원'; t.handled_at = now; t.staff_why = null; t.read_at = now; t.draft_text = null;
+                return send(res, 200, { ok: true, thread_id: t.id, message_id: t.messages[t.messages.length - 1].id, created: t.messages.length === 1, parts: 1, phone_tail: t.phone_tail, thread: Object.assign(row(t), { last_dir: null, last_out_text: null, last_out_at: null, last_out_state: null, last_at: null }) });   // 실서버와 같게: 응답 시점엔 글이 큐에만 있어 줄의 마지막 보낸 글 칸이 비어 있다(워커3 10-5d)
+            }
             if (M === 'GET' && p === '/api/sms/threads') {
                 const hasSt = !!u.searchParams.get('status'), st = u.searchParams.get('status') || 'all', q = (u.searchParams.get('q') || '').trim(), lim = Math.min(200, Number(u.searchParams.get('limit')) || 50);
                 const scope = ST.legacy ? '' : (u.searchParams.get('scope') || (hasSt ? '' : 'active'));

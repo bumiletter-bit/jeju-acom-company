@@ -187,6 +187,28 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
     st = await sms.sendTick(); const lastOut = (await msgs(P6)).filter(x => x.direction === 'out').pop();
     ok(lastOut.sender === 'staff_desk' && lastOut.state === 'sending' && !lastOut.body.includes('😀'), '직원 답 발송(202) · 이모지 제거');
     ok(!(await thread(P6)).cooldown_until || true, '직원 답은 쿨다운 안 걸림(봇만)');
+    // #688 우리가 먼저 보내기(POST /api/sms/send) — 문자가 온 적 없는 번호에 새 대화 · 직원 답과 같은 길
+    {
+        const PN = T + '1688'; const sentN0 = sent.length;
+        r = await api('POST', '/api/sms/send', { phone: '0' + PN.slice(1, 3) + '-' + PN.slice(3, 7) + '-' + PN.slice(7), text: '안녕하세요 제주아꼼이네입니다. 주문 확인 부탁드려요 🍊' });
+        let tn = await thread(PN); const mn = await msgs(PN);
+        ok(r.status === 200 && r.json.ok && r.json.created === true && r.json.thread_id === (tn && tn.id) && r.json.message_id && r.json.phone_tail === PN.slice(-4) && r.json.parts === 1, '#688 새 번호(하이픈 꼴) → 200 · 새 대화 · thread_id·message_id·parts ' + r.status + ' ' + JSON.stringify(r.json).slice(0, 160));
+        ok(r.json.thread && r.json.thread.id === tn.id && r.json.thread.status === 'staff_replied' && (r.json.thread.last_dir === null || r.json.thread.last_dir === 'out') && r.json.thread.phone_tail === PN.slice(-4) && r.json.thread.unread === 0 && r.json.thread.needs_staff === false && 'customer_hint' in r.json.thread && 'last_out_state' in r.json.thread, '#688 응답 thread = 목록 줄과 같은 꼴(status · last_dir 은 발송 틱 전이라 null 허용 · phone_tail · unread 0 · needs_staff false · customer_hint) ' + JSON.stringify(r.json.thread).slice(0, 200));
+        { const sm = await api('GET', '/api/sms/summary'); ok(sm.status === 200 && sm.json.send_route === true && sm.json.done_route === true, '#688 summary 에 send_route:true(옛 서버 판별 · done_route 그대로)'); }
+        ok(tn && tn.status === 'staff_replied' && tn.staff_user_id && !tn.staff_why && mn.length === 1 && mn[0].direction === 'out' && mn[0].sender === 'staff_desk' && mn[0].rule_kind === 'staff_new' && mn[0].state === 'queued' && !mn[0].body.includes('🍊'), '#688 대화 = 직원 답변 상태 · 줄 1(out · staff_desk · staff_new · 큐 · 이모지 제거)');
+        st = await sms.sendTick(); const mn2 = await msgs(PN);
+        ok(sent.length === sentN0 + 1 && sent[sent.length - 1].digits === PN && mn2[0].state === 'sending', '#688 발송 틱이 회사폰으로 보냄(digits 일치 · sending)');
+        r = await api('POST', '/api/sms/send', { phone: '+82' + PN.slice(1), text: '두 번째 글입니다' }); tn = await thread(PN);
+        ok(r.status === 200 && r.json.created === false && r.json.thread_id === tn.id && (await msgs(PN)).length === 2, '#688 같은 번호(+82 꼴) 다시 → 같은 대화에 이어 붙임(created false)');
+        const bads = [[{ phone: '', text: 'x' }, 400, /번호를 적어/], [{ phone: '02-123-4567', text: 'x' }, 400, /휴대폰 번호/], [{ phone: '010-1234', text: 'x' }, 400, /휴대폰 번호/], [{ phone: PN, text: '   ' }, 400, /글이 비었/], [{ phone: PN, text: '😀😀' }, 400, /글자가 없어요/]];
+        let badOk = 0; for (const [b, code, re] of bads) { const x = await api('POST', '/api/sms/send', b); if (x.status === code && re.test(x.json.error || '')) badOk++; else console.log('   #688 어긋남', JSON.stringify(b), x.status, x.json && x.json.error); }
+        ok(badOk === bads.length, `#688 잘못된 요청 ${bads.length}종 → 400 + 사람 말(번호 없음 · 유선 · 짧은 번호 · 빈 글 · 이모지만)`);
+        ok((await msgs(PN)).length === 2, '#688 잘못된 요청은 줄을 만들지 않음');
+        cfgStore.sms_gateway.enabled = false; await sms.cfg(true); r = await api('POST', '/api/sms/send', { phone: PN, text: 'x' }); ok(r.status === 409, '#688 연동 꺼짐 → 409'); cfgStore.sms_gateway.enabled = true; await sms.cfg(true);
+        const nt = await fetch(base + '/api/sms/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); ok(nt.status === 401, '#688 비로그인 401');
+        const lst = await api('GET', '/api/sms/threads?scope=all&limit=50'); const row = (lst.json.items || []).find(x => x.id === tn.id);
+        ok(!!row && row.last_dir === 'out' && row.status === 'staff_replied' && row.phone_tail === PN.slice(-4) && !row.needs_staff, '#688 목록(all)에 새 대화가 「직원 답변 · 보낸 글」로 보임');
+    }
     // AI [사람]
     aiAnswer = { answer: '[사람] 불만 글이라 직원이 봐야 합니다', used: [] };
     const P7 = T + '1007'; await hook(env('sms:received', { messageId: 'e1', message: '주문 방법 좀 알려주세요', phoneNumber: '+82' + P7.slice(1) }));
