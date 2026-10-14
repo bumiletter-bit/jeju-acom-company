@@ -83,6 +83,7 @@ module.exports = function mountInboxThreads(app, deps) {
         if (ch === 'talk') {
             if (undo) await pool.query(`UPDATE ${T.logs} SET reviewed_at = NULL, reviewed_by = NULL WHERE user_id = $1 AND id >= $2`, [talk.uid, talk.rowId]);
             else await pool.query(`UPDATE ${T.logs} SET reviewed_at = NOW(), reviewed_by = $2 WHERE id = $1`, [talk.rowId, clip(name, 50)]);
+            talkInvalidate();   // #702 [확인]·되돌리기 뒤 즉시
         } else {
             const P = POST[ch];
             await pool.query(`UPDATE ${P.table()} SET reviewed_at = ${undo ? 'NULL' : 'NOW()'}, reviewed_by = $2 WHERE ${P.id}::text = $1`, [String(key), undo ? null : clip(name, 50)]);
@@ -91,6 +92,7 @@ module.exports = function mountInboxThreads(app, deps) {
     }
     async function setRead(ch, key, name, undo) {
         await pool.query(`INSERT INTO ${T.reads} (ch, tkey, read_at, read_by, forced_unread) VALUES ($1, $2, NOW(), $3, $4) ON CONFLICT (ch, tkey) DO UPDATE SET ${undo ? '' : 'read_at = NOW(), read_by = EXCLUDED.read_by, '}forced_unread = EXCLUDED.forced_unread`, [ch, String(key), clip(name, 50), !!undo]);
+        if (ch === 'talk') talkInvalidate();   // #702 읽음 표식이 바뀌면 톡톡 목록 기억 비움
     }
     const who = req => ({ id: req.user.id, name: clip(req.user.name || req.user.username || '', 50) || 'staff', position: req.user.position, role: req.user.role, source: 'inbox_threads' });
     const wrap = fn => async (req, res) => {
@@ -120,18 +122,35 @@ module.exports = function mountInboxThreads(app, deps) {
         if (lastAgeDays > TALK_SEND_DAYS) return '마지막 대화가 7일을 넘어 톡톡으로 보낼 수 없어요';
         return '';
     }
+    // #702(대표 「다 진행해」 10/14 · 워커2 측정 = DB 안 240~330ms · 열 때 2~3회 호출): ①마지막 글 시각(sage)을 줄마다 상관 하위 쿼리(SubPlan ×200)로 구하던 것 → s CTE 한 번 묶어 조인
+    //   ②같은 결과를 8초 안에 다시 쓰는 짧은 기억(counts 의 8초 캐시 꼴) — 열쇠 = 찾기(q) 없는 전체 목록 하나뿐(scope active·open 은 그 목록을 걸러 냄 · 읽음 표식 inbox_thread_reads 는 사용자별이 아니라 공용이라 목록 전체가 공용)
+    //   🔴 쓰기 뒤 즉시 무효화 = 읽음/안 읽음(setRead · 열기) · [확인](setDone) · 톡톡 답 보내기(talkSend) · 초안 만들기(talkMakeDraft · has_draft) · 카드 쪽 [확인](desk hook 'changed') — 세대(gen) 번호로, 쓰기 도중에 시작한 읽기가 옛 값을 다시 넣지 못하게 한다.
+    //   톡톡봇이 message_logs 에 새로 적는 손님 글은 최대 8초 늦게 보인다(counts 와 같은 기준). 찾기(q)가 있으면 기억을 안 쓴다. 시험 = deps.cacheMs(없으면 testMode 0 · 라이브 8000).
+    const TALK_TTL = deps.cacheMs != null ? Number(deps.cacheMs) : (deps.testMode ? 0 : 8000);
+    let _talk = null, _talkGen = 0;
+    const talkInvalidate = () => { _talkGen++; _talk = null; };
     async function talkThreads({ scope, q }) {
+        if (q) return talkThreadsRaw({ scope, q });
+        let all;
+        if (_talk && Date.now() - _talk.at < TALK_TTL) all = _talk.v;
+        else { const g = _talkGen; all = await talkThreadsRaw({ scope: 'all', q: '' }); if (TALK_TTL > 0 && g === _talkGen) _talk = { at: Date.now(), v: all }; }
+        if (scope === 'active') return all.filter(th => th.unread > 0);     // 원래 식: unread <= 0 또는 광고면 뺌(광고는 unread 0 으로 적힘)
+        if (scope === 'open') return all.filter(th => th.needs_reply);
+        return all.slice();
+    }
+    async function talkThreadsRaw({ scope, q }) {
         const params = [SALT, String(DAYS)]; let qsql = '';
         if (q) { params.push(like(q)); qsql = `WHERE l.user_id IN (SELECT user_id FROM w WHERE message ILIKE $3 OR (answered AND bot_response ILIKE $3) OR staff_response ILIKE $3 OR ${KEY} ILIKE $3)`; }
         const r = await pool.query(`
             WITH w AS (SELECT id, user_id, item, message, answered, bot_response, staff_response, received_at, reviewed_at, reviewed_by, scenario_name, ${SAT('')} AS sat FROM ${T.logs} WHERE received_at > NOW() - ($2 || ' days')::interval AND user_id IS NOT NULL),
                  r AS (SELECT user_id, COALESCE(max(id) FILTER (WHERE reviewed_at IS NOT NULL), 0) AS rid FROM w GROUP BY user_id),
                  u AS (SELECT w.user_id, array_agg(${iso('w.received_at')}) AS cand FROM w JOIN r USING (user_id) WHERE w.id > r.rid AND w.reviewed_at IS NULL AND btrim(COALESCE(w.message, '')) NOT IN ('', '${STAFF_ONLY}', '${ENTRY}', '${ENTRY2}') GROUP BY w.user_id),
-                 l AS (SELECT DISTINCT ON (user_id) * FROM w ORDER BY user_id, (btrim(COALESCE(message, '')) IN ('${ENTRY}', '${ENTRY2}') AND btrim(COALESCE(staff_response, '')) = '') ASC, received_at DESC, id DESC)
+                 l AS (SELECT DISTINCT ON (user_id) * FROM w ORDER BY user_id, (btrim(COALESCE(message, '')) IN ('${ENTRY}', '${ENTRY2}') AND btrim(COALESCE(staff_response, '')) = '') ASC, received_at DESC, id DESC),
+                 s AS (SELECT user_id, max(received_at) AS last_in FROM w GROUP BY user_id)
             SELECT l.id, l.user_id, l.item, l.message, l.answered, l.bot_response, l.staff_response, l.reviewed_by, l.scenario_name, COALESCE(r.rid, 0) AS rid, ${iso('l.received_at')} AS at, ${iso('GREATEST(l.received_at, l.sat)')} AS lat, u.cand,
                    ${KEY.replace('user_id', 'l.user_id')} AS tkey, EXTRACT(EPOCH FROM (NOW() - l.received_at)) / 86400 AS age,
-                   EXTRACT(EPOCH FROM (NOW() - (SELECT max(w2.received_at) FROM w w2 WHERE w2.user_id = l.user_id))) / 86400 AS sage
-            FROM l LEFT JOIN u USING (user_id) LEFT JOIN r USING (user_id) ${qsql} ORDER BY GREATEST(l.received_at, l.sat) DESC LIMIT 200`, params);   // #662 최근 대화순 = 손님 글·직원 답 중 늦은 시각
+                   EXTRACT(EPOCH FROM (NOW() - s.last_in)) / 86400 AS sage
+            FROM l LEFT JOIN u USING (user_id) LEFT JOIN r USING (user_id) LEFT JOIN s USING (user_id) ${qsql} ORDER BY GREATEST(l.received_at, l.sat) DESC LIMIT 200`, params);   // #662 최근 대화순 = 손님 글·직원 답 중 늦은 시각 · #702 sage = s 조인(상관 하위 쿼리 제거)
         const dk = new Set((await pool.query(`SELECT d.tkey FROM ${T.drafts} d WHERE d.ch = 'talk'`)).rows.map(x => x.tkey));
         const marks = await readMarks('talk'); const out = [];
         for (const x of r.rows) {
@@ -224,6 +243,7 @@ module.exports = function mountInboxThreads(app, deps) {
             await pool.query(`UPDATE ${T.logs} SET reviewed_at = COALESCE(reviewed_at, NOW()), reviewed_by = COALESCE(reviewed_by, $2) WHERE id = ANY($1::int[])`, [d.rows.map(x => x.id), clip(actor.name, 50)]);
             await pool.query(`DELETE FROM ${T.drafts} WHERE ch = 'talk' AND tkey = $1`, [tkey]);
             await setRead('talk', tkey, actor.name, false);
+            talkInvalidate();   // #702 답이 붙은 뒤 목록 기억 비움
             return { ok: true, state: 'staff' };
         }
         if (s && s.status === 'failed') throw bad(502, '톡톡으로 보내지 못했어요: ' + clip(s.error || '사유 없음', 200), { code: 'send_failed' });
@@ -257,6 +277,7 @@ module.exports = function mountInboxThreads(app, deps) {
             if (!body) return { ok: false, error: '이 글은 초안을 만들 재료가 없어요 — 직접 적어 주세요', code: 'no_draft' };
             const lastIn = [...d.rows].reverse().find(x => { const m = String(x.message || '').trim(); return m && m !== STAFF_ONLY; });
             await pool.query(`INSERT INTO ${T.drafts} (ch, tkey, body, src_id, made_by) VALUES ('talk', $1, $2, $3, $4) ON CONFLICT (ch, tkey) DO UPDATE SET body = EXCLUDED.body, src_id = EXCLUDED.src_id, made_by = EXCLUDED.made_by, made_at = NOW()`, [tkey, clip(body, TALK_MAX), lastIn.id, clip(actor.name, 50)]);
+            talkInvalidate();   // #702 has_draft 가 바뀜
             return { ok: true, draft: clip(body, TALK_MAX), used_today: n + 1, cap };
         } finally { drafting.delete(tkey); }
     }
@@ -370,7 +391,7 @@ module.exports = function mountInboxThreads(app, deps) {
             counts: { talk: cnt(talk), qna: cnt(qna), inquiry: cnt(inquiry), sms: sms ? { open: sms.open } : null },
             more: { talk: talk ? talk.more : 0, qna: qna ? qna.more : 0, inquiry: inquiry ? inquiry.more : 0, sms: sms ? (sms.more || 0) : 0 }, at: new Date().toISOString() };
     }
-    if (desk && typeof desk.hook === 'function' && !deps.testMode) { desk.hook('card', async seen => { await ensure(); return cardData(seen); }); desk.hook('changed', () => { _cnt = null; }); }
+    if (desk && typeof desk.hook === 'function' && !deps.testMode) { desk.hook('card', async seen => { await ensure(); return cardData(seen); }); desk.hook('changed', () => { _cnt = null; talkInvalidate(); });   /* #702 카드 쪽 [확인] 뒤 톡톡 목록 기억도 비움 */ }
 
     // ───────── 라우트 ─────────
     const chOf = v => { const c = String(v || ''); if (!CHS.includes(c)) throw bad(400, '채널은 talk · qna · inquiry 중 하나예요'); return c; };

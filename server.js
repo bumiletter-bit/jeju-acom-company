@@ -6880,7 +6880,7 @@ app.get('/api/scenarios', async (req, res) => {
             delivery_today: await shippingNowPhrase(),
             updated_max: all.reduce((m, x) => (!m || x.updated_at > m) ? x.updated_at : m, null),
         });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('[시나리오 API] 오류:', err.message); res.status(500).json({ error: '잠시 후 다시 시도해 주세요' }); }   // #704: 오류 원문은 로그에만(응답엔 고정 문구)
 });
 
 // ============================================================
@@ -9893,7 +9893,7 @@ app.get('/api/public/roulette-winners', async (req, res) => {
         } catch (_) { /* 설정 없으면 키 그대로 */ }
         res.json({ date: new Date().toISOString().slice(0, 10),
             winners: r.rows.map(x => ({ name: maskWinnerName(x.nickname), prize: labels[x.result_key] || x.result_key })) });
-    } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
+    } catch (e) { console.error('[공개 roulette-winners] 오류:', String(e.message || e).slice(0, 200)); res.status(500).json({ error: '잠시 후 다시 시도해 주세요' }); }   // #704: 오류 원문은 로그에만
 });
 
 // 지시 #228-④ (대표 확정): 공개 버전 엔드포인트 — 배포 반영 확인용. 버전 문자열만(인증 불요·다른 정보 0).
@@ -9920,7 +9920,7 @@ app.get('/api/public/store-snapshot', async (req, res) => {
         let mallItems = r.rows[0].items;
         try { const [mapCfg, ignoreCfg] = await Promise.all([naverCfgGet('cafe24_sync_map'), naverCfgGet('cafe24_sync_ignore_opts')]); mallItems = storeSnapshotForMall(r.rows[0].items, mapCfg, ignoreCfg); } catch (_) { mallItems = r.rows[0].items; }
         res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: mallItems, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt, store: r.rows[0].store_meta || null });   // 지시 #310: store = 관심고객수·누적 리뷰·가중 평점(매일 갱신)
-    } catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 200) }); }
+    } catch (e) { console.error('[공개 store-snapshot] 오류:', String(e.message || e).slice(0, 200)); res.status(500).json({ error: '잠시 후 다시 시도해 주세요' }); }   // #704: 오류 원문은 로그에만
 });
 
 let _naverTickBusy = false;

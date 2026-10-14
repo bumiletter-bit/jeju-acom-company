@@ -4814,3 +4814,16 @@ body.ps-view-open { overflow: hidden; }
 #cr-view-frame { flex: 1 1 auto; width: 100%; border: 0; }
 @media (max-width: 720px) { .cr-acts { flex: 1 1 100%; } .cr-acts .ps-btn { flex: 1 1 auto; } .cr-old .ps-list { margin-left: 0; } }
 @media (prefers-reduced-motion: reduce) { .ps-btn { transition: none; } .ps-btn:active { transform: none; } }
+
+/* #703(대표 10/14 「다 진행해」) 폰 손가락 닿는 영역 44px — 모양·자리·색은 그대로, 보이지 않는 히트 영역만 넓힌다(폰·터치 화면만 · PC 폭은 무변경).
+   단추 = 투명 ::before 를 단추 둘레로 펼침(누르면 그 단추가 눌림) · 감싼 label 이 있는 체크 = label 위아래 패딩 + 같은 크기 음수 여백(줄 높이 무변경). */
+@media (max-width: 960px), (pointer: coarse) {
+    .btn-refresh, .noti-read-all, .planner-dday-item, .planner-habit-item { position: relative; }
+    .btn-refresh::before, .noti-read-all::before, .habit-del::before { content: ''; position: absolute; }   /* 스위치(input.ui-switch)는 4711행에 이미 46×45 히트 영역(모든 폭) */
+    .btn-refresh::before { inset: -8px; }                    /* 일정·정산·재고 새로고침 30 → 44(테두리 1px 안쪽 기준이라 -8) */
+    .noti-read-all::before { inset: -11px 0; }               /* 알림 종 「이전 알림」·「모두 읽음」 높이 23 → 45 */
+    .habit-del::before { top: 0; bottom: 0; right: -12px; width: 45px; }   /* 플래너 D-day·습관 × 21×20 → 그 줄 높이(44) × 45 — 줄 기준이라 위아래 줄의 × 와 안 겹침(겹치면 다른 항목이 지워짐) */
+    #inquiry-auto-reply-wrap { padding-top: 14px; padding-bottom: 14px; margin-top: -14px; margin-bottom: -14px; }   /* 전체 자동응답 체크 13px — 감싼 label 위아래(오른쪽은 [+ 추가] 단추라 넓히지 않음) */
+    label:has(> input[id^="botprod-rsvon-"]) { padding: 14px 0 14px 16px; margin: -14px 0 -14px -16px; }   /* 판매현황 예약발송 체크 13px — 감싼 label 위아래·왼쪽 */
+    .ps-check { padding-left: 13px; margin-left: -13px; }    /* 내 정보 알림 체크 18px — label 높이는 이미 44 · 왼쪽만 */
+}

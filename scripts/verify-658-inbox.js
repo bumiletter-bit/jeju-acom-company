@@ -347,6 +347,39 @@ async function api(method, url, body, user) {
             await pool.query(`UPDATE ${TB.logs} SET staff_response = '확인해 드릴게요' WHERE id = $1`, [ib]); r = await mod._botFails({ needsRe: RE }); ok(!r.items.some(x => x.id === KF.b) && r.talk === n0 - 1, '직원이 답하면 빠짐');
             r = await mod._botFails({}); ok(r.items.some(x => x.id === KF.c) || r.talk > n0 - 1, '낱말표를 안 주면 SKIP 전부(옛 호출 꼴 방어)');
         }
+        console.log('⑩ #702 톡톡 목록 기억(캐시) — 기억 켠 장착(cacheMs 8000 · 포트 ' + (PORT - 1) + ') · 쓰기 뒤 즉시 새 값 · q 는 기억 안 씀');
+        {
+            // 같은 시험 표를 기억 켠 모듈로 한 번 더 장착 — 톡톡 목록 SQL(WITH w AS …) 호출 수를 세는 pool 겉옷(쓰기는 그대로 시험 표로)
+            const cnt = { n: 0 }; const pool2 = { query: (t, p) => { if (/WITH w AS/.test(String(t))) cnt.n++; return pool.query(t, p); }, connect: (...a) => pool.connect(...a) };
+            const app2 = express(); app2.use(express.json()); const PORT2 = PORT - 1, BASE2 = 'http://127.0.0.1:' + PORT2;
+            const mod2 = require(path.join(ROOT, 'inbox-threads.js'))(app2, { pool: pool2, authMiddleware, writeAudit: async () => { }, testMode: true, tables: TB, salt: 'verify658', cacheMs: 8000, postQna: async () => { }, postInquiry: async () => { }, generate: async () => genAnswer, kick: async () => { } });
+            const server2 = app2.listen(PORT2); await sleep(300);
+            const api2 = async (method, url, body) => { const h = { Connection: 'close', 'x-test-user': encodeURIComponent(JSON.stringify({ id: 990658, name: '시험육오팔', role: 'user' })) }; if (body) h['Content-Type'] = 'application/json'; const r = await fetch(BASE2 + url, { method, headers: h, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, json: await r.json().catch(() => ({})) }; };
+            try {
+                const n0 = cnt.n; const all0 = await mod2._talkThreads({ scope: 'all', q: '' }); const open0 = await mod2._talkThreads({ scope: 'open', q: '' }); const act0 = await mod2._talkThreads({ scope: 'active', q: '' }); const c0 = await mod2.counts();
+                ok(cnt.n === n0 + 1 && all0.length > 0, '#702 all → open → active → counts 4번 = 톡톡 SQL 1회(기억) · ' + (cnt.n - n0));
+                ok(open0.every(x => x.needs_reply) && act0.every(x => x.unread > 0) && open0.length === all0.filter(x => x.needs_reply).length && act0.length === all0.filter(x => x.unread > 0).length && c0.talk.open === open0.length && c0.talk.unread === act0.length, '#702 open = 전체 중 needs_reply · active = 전체 중 unread>0 · counts 와 같은 수');
+                const r1 = await api2('GET', '/api/inbox/threads?ch=talk&scope=all'); ok(r1.status === 200 && JSON.stringify(r1.json.threads) === JSON.stringify(all0) && cnt.n === n0 + 1, '#702 라우트도 같은 기억(바이트 동일 · SQL 0회 추가)');
+                // 읽기 → read 쓰기 → 즉시 다시 읽기 = 새 값(unread 0) → unread 쓰기 → 즉시 다시 = 안 읽음 복귀
+                const tgt = act0.find(x => x.sub_ch === 'talk' && x.unread > 0); ok(!!tgt, '#702 안 읽은 톡톡 대화 있음 ' + (tgt && tgt.id));
+                let n1 = cnt.n; let w = await api2('POST', `/api/inbox/threads/talk/${tgt.id}/read`, {}); let a1 = await api2('GET', '/api/inbox/threads?ch=talk&scope=active');
+                ok(w.status === 200 && a1.status === 200 && !a1.json.threads.some(x => x.id === tgt.id) && cnt.n === n1 + 1, '#702 읽음(read) 쓰기 → 바로 다음 조회가 새 값(active 에서 빠짐 · SQL 다시 1회)');
+                n1 = cnt.n; w = await api2('POST', `/api/inbox/threads/talk/${tgt.id}/unread`, {}); a1 = await api2('GET', '/api/inbox/threads?ch=talk&scope=active'); const back = a1.json.threads.find(x => x.id === tgt.id);
+                ok(w.status === 200 && back && back.unread >= 1 && cnt.n === n1 + 1, '#702 안 읽음(unread) 쓰기 → 바로 다음 조회가 새 값(다시 뜸 · unread ' + (back && back.unread) + ')');
+                // [확인] 뒤 counts 새 값
+                const od = open0.find(x => x.sub_ch === 'talk' && x.needs_reply && !x.done); ok(!!od, '#702 답 안 한 톡톡 대화 있음 ' + (od && od.id));
+                const cb = (await api2('GET', '/api/inbox/counts')).json.counts.talk.open;
+                n1 = cnt.n; const d1 = await api2('POST', '/api/inbox/done', { ch: 'talk', id: od.id }); const after = await mod2._talkThreads({ scope: 'all', q: '' });
+                ok(d1.status === 200 && d1.json.done === true && d1.json.counts.talk.open === cb - 1 && after.find(x => x.id === od.id).done === true && cnt.n === n1 + 1, '#702 [확인] 뒤 응답 counts 가 새 값(open −1) · 바로 뒤 목록도 done(새로 읽은 값 재사용 · SQL 1회)');
+                const d2 = await api2('POST', '/api/inbox/done', { ch: 'talk', id: od.id, undo: true }); ok(d2.status === 200 && d2.json.counts.talk.open === cb, '#702 되돌리기 뒤 counts 복귀');
+                n1 = cnt.n; await mod2._talkThreads({ scope: 'all', q: '귤' }); await mod2._talkThreads({ scope: 'all', q: '귤' }); ok(cnt.n === n1 + 2, '#702 찾기(q)는 기억을 안 씀(두 번 = SQL 2회)');
+                n1 = cnt.n; await mod2._talkThreads({ scope: 'all', q: '' }); ok(cnt.n === n1 + 0 || cnt.n === n1 + 1, '#702 q 뒤 q 없는 조회는 기억(또는 되돌리기로 비워진 뒤 1회) · ' + (cnt.n - n1));
+                const modT = require(path.join(ROOT, 'inbox-threads.js'))(express(), { pool: pool2, authMiddleware, testMode: true, tables: TB, salt: 'verify658' });
+                n1 = cnt.n; await modT._talkThreads({ scope: 'all', q: '' }); await modT._talkThreads({ scope: 'all', q: '' }); ok(cnt.n === n1 + 2, '#702 cacheMs 없는 testMode 장착 = 기억 0(종전 검증 그대로)');
+            } finally { await new Promise(r => server2.close(r)); }
+            const p2 = await new Promise(res => { const net = require('net'); const c = net.connect({ port: PORT2, host: '127.0.0.1' }, () => { c.destroy(); res(true); }); c.on('error', () => res(false)); });
+            ok(p2 === false, '#702 두 번째 포트(' + PORT2 + ') 비움');
+        }
         console.log('⑧ 라이브 표 무접촉');
         const live1 = (await pool.query(`SELECT (SELECT count(*) FROM message_logs)::int a, (SELECT count(*) FROM naver_qnas)::int b, (SELECT count(*) FROM naver_inquiries)::int c, (SELECT count(*) FROM talk_outbox)::int d`)).rows[0];
         const marks = (await pool.query(`SELECT (SELECT count(*) FROM message_logs WHERE user_id LIKE '%vt658%')::int a, (SELECT count(*) FROM naver_qnas WHERE question_id BETWEEN 990658000 AND 990658999)::int b, (SELECT count(*) FROM naver_inquiries WHERE inquiry_id LIKE '990658%')::int c, (SELECT count(*) FROM talk_outbox WHERE user_id LIKE '%vt658%')::int d`)).rows[0];

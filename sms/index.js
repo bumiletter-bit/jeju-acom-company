@@ -1040,7 +1040,7 @@ module.exports = function mountSms(app, deps) {
 
     // ── 라우트 ──
     let _recFailAt = 0;
-    const wrap = fn => async (req, res) => { try { await fn(req, res); } catch (e) { log.error('[문자] 라우트 오류:', e.message); res.status(500).json({ ok: false, error: '문자 처리 중 문제가 생겼어요: ' + e.message }); } };
+    const wrap = fn => async (req, res) => { try { await fn(req, res); } catch (e) { log.error('[문자] 라우트 오류:', e.message); res.status(500).json({ ok: false, error: '문자 처리 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요' }); } };   /* #704: 원문은 위 로그에만 */
     // 🔴 즉시 200 → 뒤에서 처리(앱은 30초 안 2xx 아니면 2일간 재시도 → 늦게 답하면 같은 사건이 두 번 와 봇이 두 번 답함) · 서명은 req.rawBody(server.js express.json verify 로 잡은 원문)로 검사
     app.post('/api/sms/webhook', wrap(async (req, res) => {
         const v = verifySignature(req);
