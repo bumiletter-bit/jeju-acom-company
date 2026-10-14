@@ -71,6 +71,19 @@ function trimLog() {
     try { const c = JSON.parse(fs.readFileSync(MEMO_CACHE, 'utf8')); const p = fast.memoCachePut(c, {}, []); if (Object.keys(p.items).length !== Object.keys(c.items || {}).length) fs.writeFileSync(MEMO_CACHE, JSON.stringify(p)); } catch (e) { /* 보관함 없음·깨짐 — 대조 때 없는 것으로 본다 */ }
     try { for (const f of fs.readdirSync(LOG_DIR)) { if (!/^memo-reuse-\d+\.json$/.test(f)) continue; const p = path.join(LOG_DIR, f); if (Date.now() - fs.statSync(p).mtimeMs > 86400e3) fs.unlinkSync(p); } } catch (e) { /* 폴더 없음 */ }
 }
+// #701(대표 「근본 고쳐줘」 10/14): 조용한 죽음 금지 — 어떤 예외든 로그 한 줄을 남기고 종료 코드 1 로 끝낸다(감시자 launcher-guard.js 가 다시 켠다) · 끝날 때도 한 줄.
+//   (DB 쉬는 연결의 'error' 는 _db.js 가 받아 죽지 않는다 · 여기는 그 밖의 예외와 신호)
+function dieLog(kind, e) {
+    log(kind + ' → 종료 1: ' + String(e && e.stack || e).replace(/\s+/g, ' ').slice(0, 600));
+    process.exitCode = 1;
+    try { pool.end().catch(() => { }); } catch (_) { /* 무시 */ }
+    setTimeout(() => process.exit(1), 300).unref();
+}
+process.on('uncaughtException', e => dieLog('치명 오류', e));
+process.on('unhandledRejection', e => dieLog('처리 안 된 거부', e));
+process.on('exit', code => log('종료 code=' + code + (process.env.DESK_GUARDED ? ' (감시자 아래)' : '')));
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SIGHUP']) { try { process.on(sig, () => { log('신호 ' + sig + ' → 종료'); process.exit(0); }); } catch (_) { /* 이 OS 에 없는 신호 */ } }
+
 async function cfgGet(key) {
     const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [key]);
     return r.rows[0] ? r.rows[0].value : null;
@@ -580,6 +593,34 @@ async function tick(mode) {
     return true;
 }
 
+// #701 보완(워커2 점검): 기동 복구 — 앞 대기 프로그램이 죽어 「처리중」으로 남은 창구 지시를 대기로 되돌린다(server.js 기동 복구와 같은 뜻 · 창구 몫만).
+//   대상 = status 처리중 · 창구가 집은 기록(audit desk_claim)이 있거나 만든 지 N분 넘음 · 마지막 집은 시각이 N분(기본 3) 전 · 시험 계정(≥990000) 제외
+//   · 살아 있는 다른 창구의 heartbeat 가 지금 그 지시를 가리키면(at 이 N분 안) 건너뜀. 시각 비교는 SQL 안에서(naive timestamp — 메모리 jeju-db-time-calc).
+//   deps 는 시험용 주입(가짜 pool·log·audit) · 돌려주는 값 = 되돌린 id 배열.
+const RECOVER_MIN = 3;
+async function recoverOrphans(deps) {
+    const d = Object.assign({ pool, log, audit: require('./_db').audit, minutes: RECOVER_MIN, now: Date.now }, deps || {});
+    const hb = ((await d.pool.query(`SELECT value FROM agent_office_config WHERE key = 'desk_heartbeat'`)).rows[0] || {}).value || null;
+    const hbFresh = !!(hb && hb.at && Number.isFinite(Date.parse(hb.at)) && d.now() - Date.parse(hb.at) < d.minutes * 60000);
+    const rows = (await d.pool.query(
+        `SELECT o.id, o.created_by_id, a.last_claim
+           FROM pending_orders o
+           LEFT JOIN (SELECT target_id, MAX(created_at) AS last_claim FROM audit_logs WHERE source = 'desk' AND action = 'desk_claim' AND target_type = 'pending_order' GROUP BY target_id) a ON a.target_id = o.id
+          WHERE o.status = '처리중' AND o.is_deleted = false AND COALESCE(o.created_by_id, 0) < 990000
+            AND COALESCE(a.last_claim, o.created_at) < now() - make_interval(mins => $1::int)
+          ORDER BY o.id`, [d.minutes])).rows;
+    const done = [];
+    for (const r of rows) {
+        if (hbFresh && hb && Number(hb.order_id) === Number(r.id)) { d.log(`기동 복구: #${r.id} 는 살아 있는 창구가 처리 중(heartbeat) — 그대로 둠`); continue; }
+        const u = await d.pool.query(`UPDATE pending_orders SET status = '대기', result = CASE WHEN result->>'type' = 'live' THEN NULL ELSE result END WHERE id = $1 AND status = '처리중' RETURNING id`, [r.id]);
+        if (!u.rows.length) continue;
+        done.push(r.id);
+        d.log(`기동 복구: #${r.id} 대기로(앞 창구가 집은 채 죽음 · ${d.minutes}분 넘음)`);
+        try { await d.audit('desk_recover', r.id, { status: '대기', why: '기동 복구 #701' }); } catch (e) { /* 기록 실패는 무시 */ }
+    }
+    return done;
+}
+
 async function main() {
     const mode = process.argv.includes('--dry') ? 'dry' : process.argv.includes('--once') ? 'once' : null;
     st.sub = process.argv.includes('--sub');
@@ -617,10 +658,12 @@ async function main() {
         srv.listen(LOCK_PORT, '127.0.0.1', () => resolve(srv));
     });
     trimLog();
-    log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + (FORCED_MODEL || '자동(sonnet/opus)') + ' #498 · 동시 ' + PARALLEL + '개 #503');
+    try { const ids = await recoverOrphans(); if (!ids.length) log('기동 복구: 되돌릴 「처리중」 없음'); } catch (e) { log('기동 복구 실패(무시 · 다음 기동 때 다시): ' + e.message); }   // #701 보완
+    log('대기 프로그램 시작 host=' + os.hostname() + ' model=' + (FORCED_MODEL || '자동(sonnet/opus)') + ' #498 · 동시 ' + PARALLEL + '개 #503' + (process.env.DESK_GUARDED ? ' · 감시자 아래(pid ' + process.pid + ') #701' : ' · 감시자 없음(pid ' + process.pid + ')'));
     for (;;) {
         try { await tick(null); } catch (e) { log('주기 오류(재시도): ' + e.message); }
         await new Promise(r => setTimeout(r, st.fast.poll ? POLL_MS : TICK_MS));
     }
 }
-main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
+if (require.main === module) main().catch(async e => { log('종료: ' + e.message); try { await pool.end(); } catch (_) { /* 무시 */ } process.exit(e.message === '이미 실행 중입니다' ? 0 : 1); });
+module.exports = { recoverOrphans };   // #701 시험용(직접 실행일 때만 main 이 돈다)
