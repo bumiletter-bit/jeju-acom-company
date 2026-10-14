@@ -5874,8 +5874,8 @@ function guideGroupName(names) {   // → { title, detail } · detail = 같은 �
 }
 function guideGroups(rows) {   // 안내문 글이 같은 판매중 행을 한 장으로
     const m = new Map();
-    for (const r of rows || []) { const k = String(r.shipping_guide || '').trim(); if (!k) continue; if (!m.has(k)) m.set(k, { shipping_guide: r.shipping_guide, names: [] }); m.get(k).names.push(r.name); }
-    const out = [...m.values()].map(g => Object.assign(guideGroupName(g.names), { shipping_guide: g.shipping_guide, count: g.names.length }));
+    for (const r of rows || []) { const k = String(r.shipping_guide || '').trim(); if (!k) continue; if (!m.has(k)) m.set(k, { shipping_guide: r.shipping_guide, names: [], pnos: new Set() }); m.get(k).names.push(r.name); if (r.naver_product_no) m.get(k).pnos.add(String(r.naver_product_no)); }
+    const out = [...m.values()].map(g => Object.assign(guideGroupName(g.names), { shipping_guide: g.shipping_guide, count: g.names.length, naver_product_no: g.pnos.size === 1 ? [...g.pnos][0] : null })   /* #691: 묶인 행의 네이버 상품이 하나일 때만 구매 버튼 */);
     const seen = {}; for (const g of out) seen[g.title] = (seen[g.title] || 0) + 1;
     for (const g of out) g.name = (seen[g.title] > 1 && g.detail && !g.title.includes(g.detail)) ? g.title + ' (' + g.detail + ')' : g.title;   // 같은 품목명이 여럿이면 꼬리로 가름
     return out.sort((x, y) => x.name.localeCompare(y.name, 'ko'));
@@ -5906,16 +5906,17 @@ async function guideResolveByToken(token) {
         const log = (await pool.query(`SELECT order_key, guide_opt, guide_pno, guide_pid FROM lms_guide_log WHERE guide_token = $1 ORDER BY id DESC LIMIT 1`, [String(token)])).rows[0];
         if (!log) return null;
         const has = r => !!(r && r.shipping_guide && String(r.shipping_guide).trim());
-        const linked = log.guide_pid ? (await pool.query(`SELECT id, name, shipping_guide, deleted_at FROM bot_products WHERE id = $1`, [log.guide_pid])).rows[0] : null;
-        if (has(linked) && !linked.deleted_at) return linked;   // ⓐ 그때 연결된 행이 살아 있으면 그것(이름·상태가 바뀌어도 번호로 따라간다)
+        const buy = r => (r && log.guide_pno) ? Object.assign({}, r, { naver_product_no: log.guide_pno }) : r;   // #691: 구매 버튼은 그 주문이 실제로 산 네이버 상품으로(같은 옵션이 여러 페이지에 걸려 있다) · 기록이 없으면 행의 번호
+        const linked = log.guide_pid ? (await pool.query(`SELECT id, name, shipping_guide, deleted_at, naver_product_no FROM bot_products WHERE id = $1`, [log.guide_pid])).rows[0] : null;
+        if (has(linked) && !linked.deleted_at) return buy(linked);   // ⓐ 그때 연결된 행이 살아 있으면 그것(이름·상태가 바뀌어도 번호로 따라간다)
         const opt = String(log.guide_opt || '').trim();
         const match = /^(c24|cp):/.test(String(log.order_key || '')) ? kakaoNotify.matchNotifyProductLoose : kakaoNotify.matchNotifyProduct;   // 발송 때 쓴 함수 그대로(네이버 = 엄격 · 자사몰·쿠팡 = 느슨)
-        const all = opt ? (await pool.query(`SELECT id, name, shipping_guide, deleted_at FROM bot_products ORDER BY id`)).rows : [];   // 안내문 없는 행까지 전부 — 진짜 짝에 안내문이 없을 때 이름이 더 짧은 형제 행이 대신 잡히지 않게(틀린 안내보다 묶음 목록)
-        if (opt) { const live = match(opt, all.filter(r => !r.deleted_at)); if (has(live)) return live; }   // ⓑ 옵션 원문으로 지금 판매현황 다시 연결 — 행을 지우고 새로 만들었으면 새 행이 먼저
-        if (has(linked)) return linked;   // ⓐ' 그때 연결된 행이 삭제됐어도 안내문이 남아 있으면
-        if (opt) { const dead = match(opt, all.filter(r => r.deleted_at).reverse()); if (has(dead)) return dead; }   // ⓒ 삭제된 것 가운데서는 나중 것부터
+        const all = opt ? (await pool.query(`SELECT id, name, shipping_guide, deleted_at, naver_product_no FROM bot_products ORDER BY id`)).rows : [];   // 안내문 없는 행까지 전부 — 진짜 짝에 안내문이 없을 때 이름이 더 짧은 형제 행이 대신 잡히지 않게(틀린 안내보다 묶음 목록)
+        if (opt) { const live = match(opt, all.filter(r => !r.deleted_at)); if (has(live)) return buy(live); }   // ⓑ 옵션 원문으로 지금 판매현황 다시 연결 — 행을 지우고 새로 만들었으면 새 행이 먼저
+        if (has(linked)) return buy(linked);   // ⓐ' 그때 연결된 행이 삭제됐어도 안내문이 남아 있으면
+        if (opt) { const dead = match(opt, all.filter(r => r.deleted_at).reverse()); if (has(dead)) return buy(dead); }   // ⓒ 삭제된 것 가운데서는 나중 것부터
         if (log.guide_pno) {
-            const sib = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE naver_product_no = $1 AND deleted_at IS NULL AND status = '판매중' AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> '' ORDER BY name`, [log.guide_pno])).rows;
+            const sib = (await pool.query(`SELECT id, name, shipping_guide, naver_product_no FROM bot_products WHERE naver_product_no = $1 AND deleted_at IS NULL AND status = '판매중' AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> '' ORDER BY name`, [log.guide_pno])).rows;
             if (sib.length && new Set(sib.map(r => String(r.shipping_guide).trim())).size === 1) return sib[0];   // 그 상품의 판매중 행 안내문이 전부 같은 글일 때만(옵션마다 글이 다르면 어느 것인지 모른다 → 묶음 목록)
         }
         return null;
@@ -5952,7 +5953,7 @@ app.get('/guide', async (req, res) => {
         const isToken = Number.isSafeInteger(pRaw) && pRaw >= GUIDE_TOKEN_MIN;   // #642 주문 표식
         const pid = (!isToken && pRaw > 0 && pRaw <= 2147483647) ? pRaw : 0;   // 판매현황 행 번호(정수 칸 범위 밖은 번호 없음으로)
         const rows = (await pool.query(
-            `SELECT id, name, shipping_guide FROM bot_products
+            `SELECT id, name, shipping_guide, naver_product_no FROM bot_products
              WHERE deleted_at IS NULL AND status = '판매중' AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> ''
              ORDER BY name`)).rows;
         const hinfo = await loadShippingHolidayInfo();
@@ -5966,7 +5967,7 @@ app.get('/guide', async (req, res) => {
         if (!picked && pid) {
             try {
                 picked = (await pool.query(
-                    `SELECT id, name, shipping_guide FROM bot_products
+                    `SELECT id, name, shipping_guide, naver_product_no FROM bot_products
                      WHERE id = $1 AND shipping_guide IS NOT NULL AND btrim(shipping_guide) <> ''`, [pid])).rows[0] || null;   // #639(10/11): 삭제된 행이어도 보여 준다 — 행사 종료로 지운 품목(555)의 이미 나간 링크가 빈 페이지가 된 실사고(#540 과 같은 꼴)
             } catch (_) { picked = null; }
         }
@@ -5974,11 +5975,13 @@ app.get('/guide', async (req, res) => {
         const listEmpty = groups.length > 0;
         const others = rows.filter(r => !picked || r.id !== picked.id);
         let evCard = ''; try { evCard = guideEventCardHtml(await naverCfgGet('guide_event_card'), Date.now()); } catch (_) { evCard = ''; }   // #449: 이벤트 블록(설정 없으면 '' — 출력 무변경)
+        // #691(대표 10/14): 품목 장마다 「네이버에서 구매하기」 — 그 행의 네이버 상품 번호로. 번호가 없으면 버튼도 글자도 없다(종전 「구매처 링크 준비 중」 글자 제거)
+        const buyBtn = (r) => /^\d{6,18}$/.test(String((r && r.naver_product_no) || '')) ? `
+                    <a class="buy-btn" href="https://brand.naver.com/jejuakkome/products/${r.naver_product_no}" target="_blank" rel="noopener">네이버에서 구매하기 ›</a>` : '';
         const card = (r, open) => `
             <details class="item"${open ? ' open' : ''}>
                 <summary>${guideEsc(r.name)}</summary>
-                <div class="guide-body">${renderGuide(r.shipping_guide)}
-                    <div class="buy-slot">구매처 링크 준비 중</div><!-- 구매 링크 자리: 스마트스토어·자사몰 URL 확정 시 여기에 (#94 크로스셀) -->
+                <div class="guide-body">${renderGuide(r.shipping_guide)}${buyBtn(r)}
                 </div>
             </details>`;
         res.set('Content-Type', 'text/html; charset=utf-8').send(`<!DOCTYPE html>
@@ -6001,7 +6004,10 @@ app.get('/guide', async (req, res) => {
   details.item summary::after { content:'▾'; color:var(--primary); }
   details.item[open] summary { background:var(--primary-light); }
   .guide-body { padding:12px 16px 16px; font-size:14px; line-height:1.75; border-top:1px solid #eef0f5; white-space:normal; }
-  .buy-slot { margin-top:12px; font-size:12px; color:#9aa0ab; border-top:1px dashed #e4e7ee; padding-top:10px; }
+  .buy-btn { display:flex; align-items:center; justify-content:center; min-height:46px; margin-top:14px; padding:0 16px; border-radius:12px; background:var(--navy); color:#FFFDF5; font-weight:700; font-size:15px; text-decoration:none; transition:transform 120ms cubic-bezier(0.23,1,0.32,1), background-color 120ms; }
+  .buy-btn:hover { background:#2E3B22; } .buy-btn:active { transform:scale(0.97); }
+  .buy-btn:focus-visible { outline:3px solid var(--primary-dark); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) { .buy-btn { transition:none; } }
   .ft { text-align:center; font-size:12px; color:#9aa0ab; margin-top:24px; }
 </style></head><body><div class="wrap">
     <div class="hd"><h1><img class="hd-logo" src="/akkomi.png" alt="아꼼이">제주아꼼이네</h1><p>상품별 맛있게 드시는 법 · 보관법 · 후숙 안내</p><span class="hd-badge">제주에서 우리집까지, 사랑스러운 제주 속으로</span></div>${evCard}
