@@ -138,6 +138,15 @@ function matchNotifyProduct(optionText, botProducts) {
 function matchNotifyProductLoose(optionText, botProducts) {
     return matchNotifyProductExact(optionText, botProducts) || matchNotifyProductTokens(optionText, botProducts, false);   // 자사몰·쿠팡 = 종전(#401) 그대로
 }
+// #696(대표 10/14): 자사몰·쿠팡 발송안내 연결표 — 위 두 규칙이 못 잡은 옵션만, 설정 notify_opt_alias {map:{"옵션 글": 판매현황 id}} 과
+//   글자가 **통째로 같을 때만** 그 행(규칙을 넓히지 않음 · 오매칭 > 미매칭). 비교 = 「옵션명=」·「1. 」 머리와 띄어쓰기를 뗀 글 · 삭제된 행(목록에 없음)이면 미매칭.
+function aliasKey(s) { return String(s || '').normalize('NFC').replace(/^[^=]{0,20}=\s*/, '').replace(/^\d+\.\s*/, '').replace(/\s+/g, ''); }
+function matchNotifyAlias(optionText, botProducts, aliasCfg) {
+    const map = aliasCfg && aliasCfg.map; if (!map || typeof map !== 'object') return null;
+    const k = aliasKey(optionText); if (!k) return null;
+    let pid = null; for (const [key, id] of Object.entries(map)) if (aliasKey(key) === k) { pid = Number(id); break; }
+    return pid ? ((botProducts || []).find(p => Number(p.id) === pid) || null) : null;
+}
 // strict(네이버 #482) = 괄호째 한 덩어리로 비교 — 「4.5kg(소과)」가 「4.5kg(중소과)」에 걸리지 않게(하우스귤·유라조생 동시 판매 대비 · 대표 9/30)
 function matchNotifyProductTokens(optionText, botProducts, strict) {
     const norm = (s) => String(s || '').normalize('NFC').replace(/\s+/g, '');
@@ -458,4 +467,4 @@ async function deleteTemplates(codes) {
     return out;
 }
 
-module.exports = { smsSafe, switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */
+module.exports = { smsSafe, switchOn, configured, maskPhone, buildMessage, cleanProductName, matchNotifyProduct, matchNotifyProductLoose, matchNotifyAlias, templateByKey, sendAlimtalk, sendShippingGuideAlimtalk, sendLms, selftest, registerTemplates, deleteTemplates, sendTestOne, DEFAULT_TEMPLATE, APPROVED_TPL, orderTemplate, orderTplCode, isReserveOrder, welcomeTplCode, welcomeTemplate, couponTplCode, couponTemplate };   /* #417 · #467 */

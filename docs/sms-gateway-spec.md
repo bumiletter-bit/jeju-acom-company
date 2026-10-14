@@ -388,6 +388,11 @@ curl -X POST -u "<아이디>:<비밀번호>" -H "Content-Type: application/json"
 | `staff_read_at timestamptz` | 직원이 그 대화를 마지막으로 연 시각. 그 뒤 들어온 손님 글(`direction='in'` · `created_at` 기준) 수 = 안 읽음 |
 | `staff_why text` | 사람 몫 사유. 초안이 생기거나 직원이 답·처리하면 `null` |
 
+> **#695(2026-10-14 · 대표 「고」) 초안만 남은 대화도 미처리**: `scope=open`·`summary.open_threads`·`needs_staff`·카드 칩·「손님 n」의 「사람 몫」 = `staff_why IS NOT NULL` **또는** `draft_text IS NOT NULL` · 끝난·무시 제외. 자동 발송 유예 중인 봇 답(큐 `queued`)은 `draft_text` 가 아니라(queueBotAnswer 가 비움 · status `bot_replied`) 저절로 미처리 밖 · 큐가 남은 채 둘째 글로 직원 초안이 생기면 그 대화는 미처리(사람이 보낼 초안이 있으니). 줄의 `needs_staff` 는 같은 뜻이고 사유가 없으면 `staff_why_label` = 「초안 확인(보내기 전)」. [처리함]은 초안만 남은 대화에도 먹고(`done_json.why` null · 초안 보관) 되돌리기는 초안을 복구한다. 「봇 실패」 셈(`BOTFAIL_WHY`)은 사유 기준이라 초안은 안 센다. `staff_why` 자체는 비워 둔다(622행 잠금 판정 · #650 D 유지). 발단 = 10/14 09:25 대화 6555(status `draft` · 사유 없음)가 어디에도 안 잡힘.
+>
+> - `summary.staff_open`([직원 확인 n] 단추 숫자)도 같은 「사람 몫」 식(사유 또는 초안) — 단추로 거른 목록(`needs_staff`)과 같은 수. 「봇 실패」 목록(`_botFailSms`)만 옛 식(사유 있는 대화)으로 고정 — 초안만 남은 대화로 봇 실패 수가 늘지 않게.
+> - **초안만 남은 대화 자동 종료(대표 10/14)**: status `draft` · 사유 없음 · 초안 있음 대화는 손님 마지막 글 뒤 `draft_open_hours`(기본 **1**시간 · 0 = 안 닫음) 지나면 `closed`(초안은 `done_json` {auto:"draft_timeout", draft_text, draft_kind, at} 에 보관 · 로그 「[문자] 초안 자동 종료」). 사유 있는 draft·`staff_needed` 는 `staff_open_hours`(6) 그대로 · 큐 대기 봇 답(`bot_replied`)은 대상 아님. 🔴 모드가 `draft`(모든 봇 답 = 초안)이면 모든 봇 초안이 1시간 뒤 닫힌다 — draft 모드로 바꿀 때 이 값을 늘리거나 0.
+
 - 칸을 처음 만드는 순간에만: 끝났거나 봇이 답한 옛 대화는 읽음으로, `staff_needed`·`draft` 는 안 읽음 그대로 두고 초안 없는 `staff_needed` 에는 사유 `staff` 를 넣는다.
 - 안 읽음은 서버가 받은 시각(`created_at`)으로 센다. 폰 시계(`event_at`)나 늦은 재시도와 무관하다.
 

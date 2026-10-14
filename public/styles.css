@@ -3057,6 +3057,18 @@ textarea.form-input {
 @media (max-width: 1024px) {
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+/* #698 정산관리 달력 머리(폰 · 대표 10/14) — 「2026 / 년 10 / 월」 세 줄 접힘 + [>] 다음 달이 카드 밖(390·360)으로 잘리던 것.
+   제목 묶음은 남는 폭만 쓰고 넘치는 것(갱신 시각·월 합계)은 그 안에서 다음 줄로 · 달 넘김은 첫 줄 오른쪽 고정 · 단추 40px(폰 손가락). 769 이상 무변경. */
+@media (max-width: 768px) {
+    #settlement-main .card-header-row { align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+    #settlement-main .calendar-title-group { flex: 1 1 0; min-width: 0; flex-wrap: wrap; gap: 6px 8px; }
+    #settlement-calendar-title { white-space: nowrap; }
+    #settlement-main .calendar-title-group .btn-refresh { width: 40px; height: 40px; margin-left: 0; }
+    #settlement-main .calendar-title-group .refresh-time,
+    #settlement-main .calendar-title-group .monthly-total-badge { margin-left: 0; }
+    #settlement-main .month-nav { flex: 0 0 auto; }
+    #settlement-main .month-nav .btn-nav { width: 40px; height: 40px; }
+}
 /* #673 정산관리 — 폴드 펼침(769~1100): 요약 카드 5칸이 오른쪽으로 넘치고(.stats-grid-5 가 위 규칙보다 세서 5칸 그대로였다) 달력 칸의 금액이 옆 칸과 겹치던 것. 768 이하(폰)는 종전 규칙 그대로 */
 @media (min-width: 769px) and (max-width: 1100px) {
     #page-settlement .stats-grid.stats-grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }

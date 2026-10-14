@@ -10841,6 +10841,7 @@ async function collectCafe24Guide() {
     const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     const live = await notifyChannelLive('c24');
+    const optAlias = await naverCfgGet('notify_opt_alias').catch(() => null);   // #696 연결표(글자 통째 일치만)
     let done = 0, failed = 0;
     for (const o of targets) {
         const orderKey = ('c24:' + o.order_id).slice(0, 50);
@@ -10858,7 +10859,7 @@ async function collectCafe24Guide() {
                 continue;
             }
             const optText = `${it0.product_name || ''} ${it0.option_value || ''}`;
-            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp) || kakaoNotify.matchNotifyAlias(it0.option_value, bp, optAlias);   // #696
             gMeta = { opt: optText, pid: matched ? matched.id : null };   // #642
             const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
             const lmsMessage = hasGuide ? shippingSchedule.renderGuidePlaceholders(matched.shipping_guide, Date.now(), hinfo.arriveOff) : null;
@@ -11107,6 +11108,7 @@ async function collectCoupangGuide() {
     const bp = (await pool.query(`SELECT id, name, shipping_guide FROM bot_products WHERE deleted_at IS NULL`)).rows;
     const hinfo = await loadShippingHolidayInfo();
     const live = await notifyChannelLive('cp');
+    const optAlias = await naverCfgGet('notify_opt_alias').catch(() => null);   // #696 연결표(글자 통째 일치만)
     let done = 0, failed = 0;
     for (const s of targets) {
         const orderKey = ('cp:' + s.orderId).slice(0, 50);
@@ -11116,7 +11118,7 @@ async function collectCoupangGuide() {
         try {
             const first = (s.orderItems || [])[0] || {};
             const optText = String(first.vendorItemName || first.sellerProductName || '');
-            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp);
+            const matched = kakaoNotify.matchNotifyProductLoose(optText, bp) || kakaoNotify.matchNotifyAlias(optText, bp, optAlias);   // #696
             gMeta = { opt: optText, pid: matched ? matched.id : null };
             const hasGuide = !!(matched && matched.shipping_guide && String(matched.shipping_guide).trim());
             const tracking = String(first.invoiceNumber || s.invoiceNumber || '').replace(/[^0-9]/g, '');

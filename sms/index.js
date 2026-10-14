@@ -18,7 +18,7 @@ const crypto = require('crypto');
 
 // #625(대표 「고」 10/10 저녁): 봇은 앞 대화를 읽고 답한다 · 하루 3번 · 쿨다운 10분(그 안 둘째 글만 직원) · 같은 질문 되풀이 = 직원 · 직원 몫(staff_needed)도 staff_open_hours 지나면 저절로 끝남(종전 = 하루 1번 · 30분 · 직원 몫은 사람이 풀 때까지)
 const TYPING_TTL_MS = 30000;   // #683 「입력 중」 표시 = 마지막 신호 뒤 30초(설정 sms_gateway.typing_ttl_sec 5~120)
-const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, context_msgs: 6, draft_daily_cap: 20, history_days: 60 };   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
+const DEFAULT_CFG = { enabled: false, mode: 'record', cooldown_min: 30, daily_cap: 3, hourly_send_cap: 30, hold_sec: 75, staff_ids: [], ping_alert_hours: 3, image_days: 30, lookup_days: 14, max_chars: 70, ttl_sec: 600, staff_lock_hours: 24, staff_open_hours: 6, draft_open_hours: 1, context_msgs: 6, draft_daily_cap: 20, history_days: 60 };   // draft_daily_cap = 자동 발송이 막힌 갈래에서 AI 초안을 만드는 번호당 하루 횟수(#652 · 0 = 상한 없음) · history_days = 직원 화면 구매이력 기간(#654)   // staff_open_hours = 직원 몫(아무도 안 답함)이 손님 마지막 글 뒤 그 시간 지나면 저절로 끝남(0 = 안 품) · context_msgs = AI 에 같이 주는 앞 대화 통 수(0 = 안 줌)   // staff_lock_hours = 직원이 답한 대화가 그 시간 지나면 저절로 「끝남」(대표 확정 10/10 · 0 이면 안 품)
 // #635(대표 「고」 10/11 · 폰 문자함 구도): 목록 = 안 읽은 글이 있는 대화(staff_read_at 뒤 들어온 글 수) · 열면 0 · 초안은 손님 글이 올 때마다 새로(쿨다운·하루 상한·잠금·되풀이는 자동 발송만 막는다) · 쿨다운 기본 30분
 const WEBHOOK_EVENTS = ['sms:received', 'sms:sent', 'sms:delivered', 'sms:failed', 'sms:cancelled', 'mms:received', 'mms:downloaded', 'system:ping', 'app:started'];
 const MODES = ['record', 'draft', 'auto'];
@@ -97,6 +97,7 @@ module.exports = function mountSms(app, deps) {
             ttl_sec: num(v.ttl_sec, DEFAULT_CFG.ttl_sec, 5, 86400),
             staff_lock_hours: num(v.staff_lock_hours, DEFAULT_CFG.staff_lock_hours, 0, 720),
             staff_open_hours: num(v.staff_open_hours, DEFAULT_CFG.staff_open_hours, 0, 720),   // #625
+            draft_open_hours: num(v.draft_open_hours, DEFAULT_CFG.draft_open_hours, 0, 720),   // #695 초안만 남은 대화 자동 종료(시간 · 0 = 안 닫음)
             context_msgs: num(v.context_msgs, DEFAULT_CFG.context_msgs, 0, 20),
             typing_ttl_sec: num(v.typing_ttl_sec, TYPING_TTL_MS / 1000, 5, 120),   // #683 「입력 중」 표시 유효 시간
         };
@@ -852,6 +853,16 @@ module.exports = function mountSms(app, deps) {
             const rel2 = await pool.query(`UPDATE sms_threads SET status = 'closed', staff_why = NULL WHERE status = 'staff_needed' AND COALESCE(last_in_at, updated_at) < now() - make_interval(hours => $1::int) ${TICK_P} RETURNING id`, [c.staff_open_hours]);
             out.auto_closed_open = rel2.rowCount || 0;
         }
+        // #695(대표 10/14 15:2x): 「초안만 남은 대화」(status draft · 사유 없음 · 초안 있음 = 자동 모드에서 자동 발송 5갈래 밖이라 사람이 보내야 하는 AI 초안)는 손님 마지막 글 뒤
+        //   draft_open_hours(기본 1시간 · 0 = 안 닫음) 지나면 저절로 끝남 — 사유 있는 draft(잠금)·staff_needed 는 위 6시간 규칙 그대로 · 큐 대기 봇 답(bot_replied)은 대상 아님.
+        //   초안 글은 done_json.draft_text 에 남긴다(auto 'draft_timeout' · 화면 [처리함] 되돌리기는 staff_replied 만이라 안 걸림 · 다시 열려면 손님 새 글 또는 직원 [새 문자]).
+        //   🔴 모드가 draft(모든 봇 답 = 초안)일 때는 모든 봇 초안이 이 갈래에 걸려 1시간 뒤 닫힌다 — draft 모드로 바꿀 때 draft_open_hours 를 늘리거나 0 으로.
+        if (c.draft_open_hours > 0) {
+            const rel3 = await pool.query(`UPDATE sms_threads SET status = 'closed', done_json = jsonb_build_object('auto', 'draft_timeout', 'draft_text', draft_text, 'draft_kind', draft_kind, 'at', now()), draft_text = NULL, draft_kind = NULL
+                WHERE status = 'draft' AND staff_why IS NULL AND draft_text IS NOT NULL AND COALESCE(last_in_at, updated_at) < now() - make_interval(hours => $1::int) ${TICK_P} RETURNING id`, [c.draft_open_hours]);
+            out.auto_closed_draft = rel3.rowCount || 0;
+            if (rel3.rowCount) log.log('[문자] 초안 자동 종료(' + c.draft_open_hours + '시간 · 사람이 안 보낸 초안):', rel3.rows.map(r => r.id).join(','));
+        }
         // ⑥(#652) 적었는데 판정 전에 죽은 글 → 다시 판정(새 번호·기존 대화 모두). 아래 ④는 그래도 남은 것의 마지막 그물
         try { out.redecided = await redecideTick(); } catch (e) { log.error('[문자] 다시 판정 실패(무시):', e.message); out.redecided = 0; }
         // ④ 받은 글은 있는데 판정 전에 죽어 status new 로 남은 대화(2분) → 직원 몫
@@ -1060,17 +1071,25 @@ module.exports = function mountSms(app, deps) {
         await writeAudit({ action: 'update', targetType: 'sms_gateway', changes: { after: { webhooks: r } }, source: 'sms', actor: who(req) });
         res.json(Object.assign({ ok: true }, r));
     }));
+    // #695: 줄 하나의 「사람 몫」 = 사유 있음 또는 초안 있음(끝난·무시 제외) — HUMAN_SQL 과 같은 뜻(큐의 봇 답은 draft_text 가 아니다 · queueBotAnswer 가 비움)
+    const DRAFT_LABEL = '초안 확인(보내기 전)';
+    const humanOf = t => (!!t.staff_why || !!t.draft_text) && t.status !== 'closed' && t.status !== 'ignored';
     const pub = t => ({ id: t.id, phone_tail: phoneTail(t.phone_digits), phone_masked: phoneMasked(t.phone_digits), phone_full: String(t.phone_digits || ""), customer_hint: t.order_hint || null, status: t.status,   // #624 phone_full = 전체 번호(화면에서 010-0000-0000 꼴 · 60일 보관 그대로) · 🔴 #630: 종전 총괄 패치가 이 주석을 같은 줄 앞에 붙여 customer_hint·status 가 주석에 먹혔음(목록 배지 「확인」·끝난 대화 숨김 안 됨)
         last_in_text: String(t.last_in_text || '').slice(0, 120), last_in_at: t.last_in_at, last_out_text: String(t.last_out_text || '').slice(0, 120), last_out_at: t.last_out_at,
         has_image: !!t.has_image, draft_text: t.draft_text || null, draft_kind: t.draft_kind || null,
         done: !!(t.done_json && t.status === 'staff_replied' && !t.staff_why), done_by: (t.done_json && t.done_json.by) || null, done_at: (t.done_json && t.done_json.at) || null,   // #675 [처리함]으로 넘긴 대화(손님 새 글이 오면 상태가 바뀌어 false)
-        unread: Number(t.unread) || 0, needs_staff: !!t.staff_why && t.status !== 'closed' && t.status !== 'ignored', staff_why: t.staff_why || null, staff_why_label: t.staff_why ? labelWhy(t.staff_why) : null, staff_read_at: t.staff_read_at || null,   // #635 폰 문자함 구도
+        unread: Number(t.unread) || 0, needs_staff: humanOf(t), staff_why: t.staff_why || null, staff_why_label: t.staff_why ? labelWhy(t.staff_why) : (humanOf(t) ? DRAFT_LABEL : null), staff_read_at: t.staff_read_at || null,   // #635 폰 문자함 구도 · #695 초안만 남은 대화 = needs_staff true + 「초안 확인(보내기 전)」(화면 [처리함]·사유 칩이 그대로 먹음)
         last_dir: (t.last_out_at && (!t.last_in_at || new Date(t.last_out_at) > new Date(t.last_in_at))) ? 'out' : (t.last_in_at ? 'in' : null),
         last_at: (t.last_out_at && (!t.last_in_at || new Date(t.last_out_at) > new Date(t.last_in_at))) ? t.last_out_at : (t.last_in_at || null), staff_name: t.staff_name || null, handled_at: t.handled_at, bot_count_today: botCountToday(t), last_out_state: t.last_out_state || null });
     // #635: 안 읽음 = 직원이 마지막으로 연 뒤(staff_read_at) 들어온 손님 글 수 — 서버가 받은 시각(created_at) 기준(폰 시계·늦은 재시도와 무관)
     const UNREAD_SQL = `(SELECT count(*)::int FROM sms_messages m WHERE m.thread_id = t.id AND m.direction = 'in' AND m.created_at > COALESCE(t.staff_read_at, 'epoch'::timestamptz))`;
     const ACTIVE_SQL = `t.status <> 'ignored' AND ${UNREAD_SQL} > 0 ${TEST_HIDE_T2}`;   // 목록(scope=active): 안 읽은 글이 있는 대화 · 인증번호·광고·통신사만 온 번호(ignored)는 뺀다
-    const OPEN_SQL = `t.status NOT IN ('closed','ignored') AND t.staff_why IS NOT NULL ${TEST_HIDE_T2}`;   // #664 목록(scope=open · 미처리) = 사람 몫(직원 확인 필요)만 — 끝난·무시 제외 · 안 읽음은 안 섞는다(읽어도 남고 · 직원이 답하거나 끝내면 빠짐)
+    // #695(대표 「고」 10/14): 「초안만 있고 사람이 보내야 하는 대화」(draft_text 있음 · 사유 없음 — status draft 또는 잠금 안 초안 staff_needed)도 미처리 — 10/14 09:25 대화 6555(주문 못 찾은 손님 「내일까지 배달될까요」 · AI 초안 · 자동 발송 5갈래 밖 · 초안만 + 알림)가
+    //   status draft · staff_why NULL 이라 「손님 n」·카드 칩·봇 실패 어디에도 안 잡힌 실사고. 자동 발송 유예 중인 봇 답(큐 queued·sending)은 초안이 아니다 — queueBotAnswer 가 draft_text 를 비우고 status bot_replied 로 두므로 저절로 미처리 밖.
+    //   (큐에 봇 답이 남은 채 둘째 글로 직원 초안이 생긴 대화는 사람이 보낼 초안이 있으니 미처리가 맞다 → 「큐 있으면 제외」 조건은 두지 않는다 · humanOf 와 같은 뜻)
+    //   직원이 [이대로 보내기]·답·[처리함]·[끝내기] 하면 draft_text 가 비어 빠진다(종전 흐름). staff_why 를 'draft' 로 채우는 길은 안 씀 — 622행 잠금 판정(「draft + 사유 = 잠금」)에 걸려 #650 D(자동 모드의 초안 대기는 잠금 아님)가 깨진다.
+    const HUMAN_SQL = `(t.staff_why IS NOT NULL OR t.draft_text IS NOT NULL)`;   // 사람 몫 = 사유 있음 또는 사람이 보내야 하는 초안(#695) · pub() 의 humanOf 와 같은 뜻
+    const OPEN_SQL = `t.status NOT IN ('closed','ignored') AND ${HUMAN_SQL} ${TEST_HIDE_T2}`;   // #664 목록(scope=open · 미처리) = 사람 몫(직원 확인 필요)만 — 끝난·무시 제외 · 안 읽음은 안 섞는다(읽어도 남고 · 직원이 답하거나 끝내면 빠짐) · #695 초안만 남은 대화 포함
     // #661 「확인 필요 문의」 칸·손님 연락 창 숫자에 문자 미답변(scope=open 과 같은 식)을 내준다 — desk-inbox.js 의 고리로(server.js 무접촉)
     let _cardSms = async () => null;
     try {
@@ -1090,7 +1109,7 @@ module.exports = function mountSms(app, deps) {
     //   (주문 못 찾음·AI 가 사람에게 넘김·불만·계좌·사진은 봇 실패가 아니다 — #633 과 같은 갈래)
     const BOTFAIL_WHY = { ai_error: '봇이 답을 만들지 못함', ai_skip: '봇이 답을 만들지 못함', no_engine: '봇이 답을 만들지 못함', ai_promise: '봇 답을 막음(약속 낱말)', ai_assert: '봇 답을 막음(지어낸 내용)', lookup_error: '주문 조회 실패', stuck: '처리 중 멈춤', send_failed: '발송 실패', photo_ai_error: '사진 판독 실패', photo_too_big: '사진이 너무 큼' };
     const _botFailSms = async () => (await pool.query(`SELECT t.id, t.phone_digits, t.staff_why, t.last_out_state, COALESCE(t.last_in_at, t.updated_at) AS at FROM sms_threads t
-        WHERE ${OPEN_SQL} AND (t.last_out_state = 'failed' OR t.staff_why = ANY($1::text[])) AND COALESCE(t.last_in_at, t.updated_at) > now() - interval '14 days'
+        WHERE t.status NOT IN ('closed','ignored') AND t.staff_why IS NOT NULL ${TEST_HIDE_T2} AND (t.last_out_state = 'failed' OR t.staff_why = ANY($1::text[]))   /* #695 보완: 봇 실패는 옛 식(사유 있는 대화만) 고정 — 초안만 남은 대화로 「발송 실패」 수가 늘지 않게 */ AND COALESCE(t.last_in_at, t.updated_at) > now() - interval '14 days'
         ORDER BY COALESCE(t.last_in_at, t.updated_at) DESC, t.id DESC LIMIT 100`, [Object.keys(BOTFAIL_WHY)])).rows
         .map(t => ({ ch: 'sms', id: t.id, why: BOTFAIL_WHY[t.staff_why] || (t.last_out_state === 'failed' ? '발송 실패' : '봇 실패'), at: t.at ? new Date(t.at).toISOString() : null, who: '끝 ' + phoneTail(t.phone_digits) }));
     try { require('../desk-inbox.js').hook('botfail_sms', () => _botFailSms()); } catch (e) { }
@@ -1100,10 +1119,10 @@ module.exports = function mountSms(app, deps) {
         const r = (await pool.query(`SELECT
             (SELECT count(*)::int FROM sms_threads WHERE status = 'staff_needed' ${TEST_HIDE}) AS staff_needed,
             (SELECT count(*)::int FROM sms_threads WHERE draft_text IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS drafts,
-            (SELECT count(*)::int FROM sms_threads WHERE staff_why IS NOT NULL AND status NOT IN ('closed','ignored') ${TEST_HIDE}) AS staff_open,
+            (SELECT count(*)::int FROM sms_threads t WHERE t.status NOT IN ('closed','ignored') AND ${HUMAN_SQL} ${TEST_HIDE_T2}) AS staff_open,   /* #695 보완: [직원 확인 n] 단추 숫자 = 그 단추로 거른 목록(needs_staff · 초안만 남은 대화 포함) */
             (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL}) AS unread_threads,
             (SELECT count(*)::int FROM sms_threads t WHERE ${OPEN_SQL}) AS open_threads, true AS done_route, true AS send_route,
-            (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND t.staff_why IS NOT NULL AND t.status <> 'closed') AS needs_staff,
+            (SELECT count(*)::int FROM sms_threads t WHERE ${ACTIVE_SQL} AND ${HUMAN_SQL} AND t.status <> 'closed') AS needs_staff,   /* #695: 초안만 남은 대화도 사람 몫 */
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'in' AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_in,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender = 'bot' AND state IN ('sent','delivered') AND (sent_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_bot,
             (SELECT count(*)::int FROM sms_messages WHERE direction = 'out' AND sender IN ('gateway_other','staff_desk') AND (event_at + interval '9 hours')::date = $1::date ${TEST_HIDE_MSG}) AS today_staff`, [today])).rows[0];
@@ -1321,18 +1340,18 @@ module.exports = function mountSms(app, deps) {
         const undo = !!(req.body && req.body.undo === true);
         typingClear(t.id, req.user.id);   // #683
         if (!undo) {
-            if (!t.staff_why || t.status === 'closed' || t.status === 'ignored') return res.json({ ok: true, done: false, noop: true, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled: 0 });
-            const keep = { why: t.staff_why, status: t.status, draft_text: t.draft_text || null, draft_kind: t.draft_kind || null, by: who(req).name, by_id: req.user.id, at: new Date().toISOString(), last_in_at: t.last_in_at ? new Date(t.last_in_at).toISOString() : null };
+            if (!humanOf(t)) return res.json({ ok: true, done: false, noop: true, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled: 0 });   // #695: 초안만 남은 대화도 [처리함]으로 내릴 수 있다(사유 없음 · why null 로 적어 둠)
+            const keep = { why: t.staff_why || null, status: t.status, draft_text: t.draft_text || null, draft_kind: t.draft_kind || null, by: who(req).name, by_id: req.user.id, at: new Date().toISOString(), last_in_at: t.last_in_at ? new Date(t.last_in_at).toISOString() : null };
             const cancelled = await cancelPending(t.id, 'handled');
             await setThread(t.id, { status: 'staff_replied', staff_user_id: req.user.id, staff_name: who(req).name, handled_at: new Date(), draft_text: null, draft_kind: null, ask_kind: null, ask_at: null, staff_why: null, staff_read_at: SQL_NOW, done_json: keep });
             await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { after: { done: true, why: keep.why } }, source: 'sms', actor: who(req) });
             return res.json({ ok: true, done: true, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled });
         }
         const k = t.done_json;
-        if (!k || !k.why) return res.status(409).json({ ok: false, error: '되돌릴 것이 없어요' });
+        if (!k || (!k.why && !k.draft_text)) return res.status(409).json({ ok: false, error: '되돌릴 것이 없어요' });   // #695: 초안만 있던 대화의 되돌리기(why null · 초안 복구)
         const sameIn = String(k.last_in_at || '') === String(t.last_in_at ? new Date(t.last_in_at).toISOString() : '');
         if (t.status !== 'staff_replied' || t.staff_why || !sameIn) return res.status(409).json({ ok: false, error: '그 뒤 손님 글이 와서(또는 답을 보내서) 되돌릴 수 없어요' });
-        await setThread(t.id, { status: k.status || 'staff_needed', staff_why: k.why, draft_text: k.draft_text || null, draft_kind: k.draft_kind || null, done_json: null });
+        await setThread(t.id, { status: k.status || 'staff_needed', staff_why: k.why || null, draft_text: k.draft_text || null, draft_kind: k.draft_kind || null, done_json: null });
         await writeAudit({ action: 'update', targetType: 'sms_thread', targetId: t.id, changes: { after: { done: false, why: k.why } }, source: 'sms', actor: who(req) });
         res.json({ ok: true, done: false, thread: pub(await withUnread(t.id)), open_threads: await openCount(), cancelled: 0 });
     }));
