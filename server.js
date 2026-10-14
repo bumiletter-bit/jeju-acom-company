@@ -16427,6 +16427,8 @@ require('./lucky-event.js')(app, { pool, authMiddleware, adminOnly, writeAudit }
 const deskInbox = require('./desk-inbox.js')(app, { pool, authMiddleware, writeAudit });
 // #674 급여명세서(내 정보 > 급여명세서 · 표 payslips · 파일만 보관 — 금액은 읽지도 저장하지도 않는다 · 올리기 = 관리자 · 지우기 = 대표)
 require('./payslip.js')(app, { pool, authMiddleware, adminOnly, ownerOnly, writeAudit, createNotification });
+// #687 회사 규정(내 정보 > 회사 규정 · 표 company_rules · 급여규정·인사규정 PDF 를 전 직원이 봄 · 올리기·지우기 = 관리자 · 올리면 전 직원 알림 type 'rules')
+require('./rules.js')(app, { pool, authMiddleware, adminOnly, writeAudit, createNotification });
 // #658 문의 대화 창(톡톡 · 상품문의 · 주문문의 — 문자 전용 창과 같은 꼴) — 등록은 위 naverPost* 함수 그대로 · 톡톡은 talk_outbox → 배달부 · 초안은 버튼을 눌렀을 때만
 require('./inbox-threads.js')(app, { pool, authMiddleware, writeAudit, postQna: naverPostQnaAnswer, postInquiry: naverPostInquiryAnswer, generate: (q, p) => qnaGenerate(q, p, undefined, 'sms'), kick: process.env.RENDER ? deskInbox.deliver : null });
 

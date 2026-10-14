@@ -57,6 +57,12 @@ const syncMap = { map: { 2: { c24: 10, minAdd: 0 }, 1: { c24: 11, minAdd: -5200 
     const ggm = G('황금향 못난이 - 5kg');
     eq(K(ggm, 'missing').map(i => [i.naver, i.mall]), [['naver:2', 'mall:10']], '⑤missing(참고): 네이버 황금향 페이지에는 있는데 자사몰 짝에는 없음');
     eq([ggm.issues.length, ggm.rows.length, ggm.rows.find(r => r.page_key === 'naver:6').ignore], [1, 3, true], '제외(ignore) 페이지 값(11,111)은 표에는 있고 셈에서 빠짐 · 귤 페이지의 자사몰 짝은 미판매라 missing 아님');
+    {   // #686: 「네이버 전용」 옵션(설정 cafe24_sync_ignore_opts.keys · 05:10 경보와 같은 열쇠) 은 missing 참고를 안 붙임 — 다른 판정은 그대로
+        const key = PC.cafe24OptKey(GM); const rep2 = await PC.build({ pool: null, snapshots, c24Products, pages, syncMap, pricingNames: [], now: NOW, ignoreKeys: [key] });
+        const ggm2 = rep2.groups.find(g => g.label.includes('황금향 못난이 - 5kg'));
+        eq([key, ggm2.issues.length, ggm2.rows.length, rep2.summary.issues_by_kind.missing, rep2.summary.issues_by_kind.mall_vs_naver, rep2.summary.issues_by_kind.tier_mismatch, rep2.summary.groups_with_issue], ['황금향|못난이|5kg|랜덤과', 0, 3, undefined, 1, 1, 2], '#686 네이버 전용 옵션(ignore 열쇠) = missing 0 · 줄은 표에 그대로 · 다른 판정 그대로');
+        eq(PC.cafe24OptKey('제주 그린레몬 못난이5kg(랜덤과)'), '레몬|못난이|5kg|랜덤과', '#686 그린레몬 못난이 열쇠 = server.js cafe24OptKey 와 같은 꼴(과일은 「레몬」으로 잡힘)');
+    }
     const gga = G('황금향 가정용 - 3kg');
     eq([gga.issues.length, gga.rows.length, gga.rows.filter(r => r.sold).length], [0, 4, 3], '값 같은 묶음 = 문제 0 · 품절 페이지(99,999)는 셈에서 빠짐');
     ok(!G('선물용 - 5kg').issues.length, '자사몰에만 있는 옵션은 문제 아님(일부러 둔 것)');

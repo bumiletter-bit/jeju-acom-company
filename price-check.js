@@ -64,6 +64,16 @@ function optionKey(parts, pricingNames) {
     return { key: textKey(ps), label: ps.map(x => x.replace(/^s*d+s*[.)]s*/, '')).join(' / '), by: 'text' };
 }
 
+// #686: 카페24 동기화 경보의 옵션 열쇠(server.js cafe24OptKey 와 글자 같은 복사 — 한쪽을 고치면 다른 쪽도) = 과일|용도|중량|등급. 설정 cafe24_sync_ignore_opts.keys 가 이 꼴이다
+function cafe24OptKey(s) {
+    const t = String(s || '').replace(/\s+/g, '');
+    const fruit = (t.match(/하우스감귤|황금향|한라봉|천혜향|레드향|청귤|풋귤|미니밤호박|밤호박|카라향|수라향|세미놀|자몽|레몬|블러드오렌지|하귤|취나물|옥수수/) || [])[0] || '';
+    const use = (t.match(/가정용|선물용|못난이|특품|프리미엄|한입/) || [])[0] || '';
+    const weight = (t.match(/\d+\.?\d*kg/) || [])[0] || (t.match(/\d+\+\d+개/) || [])[0] || '';
+    const grade = (t.match(/로얄과|중소과|중대과|소과|대과|랜덤과/) || [])[0] || '';
+    return (fruit || use || weight) ? [fruit, use, weight, grade].join('|') : '';
+}
+
 const kstDate = ms => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
 const won = n => (n == null || !Number.isFinite(Number(n))) ? null : Math.round(Number(n));
 function tierByName(name) { const s = String(name || ''); return /VIP/i.test(s) ? 'vip' : /선물\s*세트/.test(s) ? 'gift' : /대용량/.test(s) ? 'bulk' : 'normal'; }
@@ -111,6 +121,8 @@ async function build(opt) {
     const rawCfg = o.pages || (await loadCfg(pool, o.cfg, 'price_check_pages')) || {}; const pageCfg = Object.assign({}, DEFAULT_PAGES);
     for (const [k, v] of Object.entries(rawCfg)) if (v && typeof v === 'object') pageCfg[String(k).replace(/^cafe24:/i, 'mall:')] = v;
     const syncMap = ((o.syncMap || (await loadCfg(pool, o.cfg, 'cafe24_sync_map')) || {}).map) || {};   // { 네이버번호: { c24, minAdd } }
+    // #686: 「네이버 전용」으로 둔 옵션(설정 cafe24_sync_ignore_opts.keys — 05:10 카페24 동기화 경보·창구 mall-price 와 같은 열쇠 한 곳)은 「자사몰에 없음(참고)」을 붙이지 않는다
+    const ignoreKeys = new Set((o.ignoreKeys || ((await loadCfg(pool, o.cfg, 'cafe24_sync_ignore_opts')) || {}).keys) || []);
     const c24ToNaver = {}; for (const [nno, v] of Object.entries(syncMap)) if (v && v.c24) c24ToNaver[Number(v.c24)] = String(nno);
     let mall = o.c24Products || null, mallState = mall ? 'given' : 'none';
     if (!mall && typeof o.cafe24Get === 'function') {
@@ -179,7 +191,7 @@ async function build(opt) {
             const pg = pageByKey.get(r.page_key); if (!pg || !pg.linked || !mall) continue;
             const mate = g.rows.filter(x => x.page_key === pg.linked); const mateLive = mate.filter(x => x.sold && !x.ignore);
             if (mateLive.length) { for (const m of mateLive) if (m.price !== r.price && cls(m.tier) === cls(r.tier)) add(g, 'mall_vs_naver', `${pname(r.page_key)} ${fmt(r.price)} ↔ ${pname(m.page_key)} ${fmt(m.price)}`, { naver: r.page_key, mall: m.page_key, diff: m.price - r.price }); }
-            else { const mp = pageByKey.get(pg.linked); if (mp && mp.sold && !mp.ignore && !mp.error) add(g, 'missing', `${pname(r.page_key)}에서는 파는데 ${pname(pg.linked)}에는 ${mate.length ? '미노출·판매중지' : '없어요'}(참고)`, { naver: r.page_key, mall: pg.linked }); }
+            else { const mp = pageByKey.get(pg.linked); if (mp && mp.sold && !mp.ignore && !mp.error && !ignoreKeys.has(cafe24OptKey(r.option_text))) add(g, 'missing', `${pname(r.page_key)}에서는 파는데 ${pname(pg.linked)}에는 ${mate.length ? '미노출·판매중지' : '없어요'}(참고)`, { naver: r.page_key, mall: pg.linked }); }
         }
         // VIP 가 일반보다 비쌈
         const base = live.filter(r => r.tier !== 'vip'), vip = live.filter(r => r.tier === 'vip');
@@ -239,4 +251,4 @@ function toText(rep, optx) {
     return L.join('\n');
 }
 
-module.exports = { build, toText, optionKey, tierByName, fetchMall, DEFAULT_PAGES, TIERS, STALE_DAYS, NOTE_KINDS };
+module.exports = { build, toText, optionKey, cafe24OptKey, tierByName, fetchMall, DEFAULT_PAGES, TIERS, STALE_DAYS, NOTE_KINDS };

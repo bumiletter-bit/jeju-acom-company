@@ -1189,6 +1189,7 @@ function notiGo(link) {
     if (navItem) navItem.click();
     if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
     if (page === 'myinfo' && prm.get('pay')) setTimeout(() => { if (window.AkmPayslip) window.AkmPayslip.open(); }, 200);   // #674 급여명세서 알림 → 내 정보 > 급여명세서
+    if (page === 'myinfo' && prm.get('rules')) setTimeout(() => { if (window.AkmRules) window.AkmRules.open(); }, 200);   // #687 회사 규정 알림 → 내 정보 > 회사 규정
     const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10), sid = parseInt(prm.get('sms'), 10);   // #610 ?sms=대화번호 → 문자 카드 그 대화
     if (!(oid > 0) && !(rid > 0) && !(sid > 0)) return;
     // #620: 새로고침 직후 알림 해시로 올 때 ao-desk.js(258KB)가 아직 안 내려왔을 수 있다 → agent-office 갈래는 AkmAoDesk 가 생길 때까지 100ms 간격 최대 5초 기다렸다 연다(워커4 원인 조사 · 화면 자체는 ao-desk.js 끝 한 줄이 그림)
@@ -5990,6 +5991,7 @@ const PRODUCT_CATALOG = new Set([
     '과수 및 크기: 제주 그린레몬3kg(중소과)',
     '과수 및 크기: 제주 그린레몬5kg(중소과)',
     '과수 및 크기: 제주 그린레몬10kg(중소과)',
+    '과수 및 크기: 제주 그린레몬 못난이5kg(랜덤과)',   /* #686(10/14): 네이버 전용 신규 옵션 — 네이버 옵션 글자 그대로(「못난이5kg」 붙여 씀) */
     '과수 및 크기: 제주산 레드키위 3kg(로얄과)',
     '과수 및 크기: 제주산 레드키위 5kg(로얄과)',
     '과수 및 크기: 제주산 레드키위 10kg(로얄과)',
@@ -6148,7 +6150,9 @@ function matchProductRaw(rawText) {
        통째 포함 대조로 못 잡으므로 표준명 규칙 분기를 둔다(#406 못난이·#428 중대과와 같은 계열). 그린레몬·레드키위는 「레몬」·「감귤」보다 먼저 본다.
        🔴 「레몬」만 있고 「그린」이 없는 옵션(옛 이름 「제주 레몬3kg(중소과)」)은 종전대로 혼합과 표준명 → 등급 불일치 → [미매칭](대표 확인 10/1 "수기로"). */
     } else if (/그린\s*레몬/.test(t)) {
-        result = '과수 및 크기: 제주 그린레몬' + wStr + '(중소과)';
+        /* #686(대표 10/14 신규 · 네이버 전용): 「제주 그린레몬 못난이5kg(랜덤과)」 — 못난이 갈래가 없으면 단가표에 이름이 빠진 날 「5kg(중소과)」로 조용히 오매칭된다(#406 황금향 못난이와 같은 꼴) → 표준명을 따로 둔다. 단가표에 이름이 있으면 위 「통째 포함」이 먼저 잡는다. */
+        if (/못난이/.test(t)) result = '과수 및 크기: 제주 그린레몬 못난이' + wStr + '(랜덤과)';
+        else result = '과수 및 크기: 제주 그린레몬' + wStr + '(중소과)';
     } else if (/레드\s*키위|키위/.test(t)) {
         result = '과수 및 크기: 제주산 레드키위 ' + wStr + '(로얄과)';
     } else if (/유라/.test(t)) {

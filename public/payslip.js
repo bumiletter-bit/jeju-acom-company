@@ -19,11 +19,12 @@
     const S = { tab: 'info', mine: null, err: '', admin: null, aerr: '', files: [], busy: false, blobUrl: '', viewId: 0, lastFocus: null };
 
     // ── 탭(내 정보 | 급여명세서) ─────────────────────────────
+    const TABS = ['info', 'pay', 'rules'];   // #687: 셋째 탭 「회사 규정」(rules.js 가 판을 그린다) — 탭 켜고 끄기는 여기 한 곳
     function setTab(t) {
-        S.tab = t === 'pay' ? 'pay' : 'info';
+        S.tab = TABS.includes(t) ? t : 'info';
         document.querySelectorAll('#myinfo-tabs .ps-tab').forEach(b => { const on = b.dataset.pstab === S.tab; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; });
-        const a = $('myinfo-pane-info'), p = $('myinfo-pane-pay'); if (a) a.hidden = S.tab !== 'info'; if (p) p.hidden = S.tab !== 'pay';
-        if (S.tab === 'pay') load();
+        TABS.forEach(k => { const el = $('myinfo-pane-' + k); if (el) el.hidden = S.tab !== k; });
+        if (S.tab === 'pay') load(); else if (S.tab === 'rules' && window.AkmRules) window.AkmRules.load();
     }
 
     // ── 내 급여명세서 ────────────────────────────────────────
@@ -189,7 +190,7 @@
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape' && closeView()) { e.preventDefault(); return; }
             if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.id === 'ps-drop') { e.preventDefault(); const f = $('ps-file'); if (f) f.click(); }
-            const tb = e.target && e.target.closest && e.target.closest('#myinfo-tabs .ps-tab'); if (tb && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setTab(S.tab === 'pay' ? 'info' : 'pay'); const on = document.querySelector('#myinfo-tabs .ps-tab.active'); if (on) on.focus(); }
+            const tb = e.target && e.target.closest && e.target.closest('#myinfo-tabs .ps-tab'); if (tb && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setTab(TABS[(TABS.indexOf(S.tab) + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length]); const on = document.querySelector('#myinfo-tabs .ps-tab.active'); if (on) on.focus(); }
         });
         document.addEventListener('change', e => {
             const t = e.target; if (!t) return;
@@ -203,6 +204,6 @@
     // 메뉴에 들어올 때(app.js switchPage) · 알림에서 올 때(notiGo 'myinfo?pay=1')
     function render() { bind(); setTab(S.tab); }
     function open() { bind(); setTab('pay'); const t = document.querySelector('#myinfo-tabs .ps-tab[data-pstab="pay"]'); if (t) t.scrollIntoView({ block: 'nearest' }); }
-    window.AkmPayslip = { render, open, _state: S };
+    window.AkmPayslip = { render, open, setTab: t => { bind(); setTab(t); }, _state: S };   // #687: rules.js 가 setTab('rules') 로 자기 탭을 연다
     if (document.readyState !== 'loading') bind(); else document.addEventListener('DOMContentLoaded', bind);
 })();

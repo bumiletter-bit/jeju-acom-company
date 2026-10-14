@@ -4790,4 +4790,15 @@ body.ps-view-open { overflow: hidden; }
     .ps-view-box { border-radius: 0; }
 }
 @media (max-width: 960px), (pointer: coarse) { .ps-cell { min-height: 44px; } .ps-cell.none { min-height: 0; } }
+/* ── #687 회사 규정(내 정보 > 회사 규정 · public/rules.js) — ps-* 재사용 · 색은 새로 두지 않는다(야간 CSS 생성물 무변경) ── */
+.cr-list { max-width: 760px; }
+.cr-ver { margin-left: 6px; font-size: 13px; font-weight: 600; opacity: .8; }
+.cr-acts { flex: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.cr-oldwrap { list-style: none; }
+.cr-old summary { display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+.cr-old summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: 8px; }
+.cr-old .ps-list { margin: 4px 0 4px 14px; }
+.cr-prev .ps-row-main b { font-size: 14.5px; }
+#cr-view-frame { flex: 1 1 auto; width: 100%; border: 0; }
+@media (max-width: 720px) { .cr-acts { flex: 1 1 100%; } .cr-acts .ps-btn { flex: 1 1 auto; } .cr-old .ps-list { margin-left: 0; } }
 @media (prefers-reduced-motion: reduce) { .ps-btn { transition: none; } .ps-btn:active { transform: none; } }
