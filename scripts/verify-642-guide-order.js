@@ -26,7 +26,8 @@ const TAG = '[시험642]', KEY = 'v642';
     const sNew = start(SERVER, NEW), sOld = start('./' + OLD_FILE, ALT);
     const db = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
     // 시험 줄은 숨김이 아니라 DELETE 로 지운다(예외) — 판매현황·발송 기록 표에는 숨김으로 남겨도 화면·집계(발송 건수·연결 실패 셈)에 섞이기 때문. 이 검증이 넣은 「[시험642]」·「v642」 줄만 지운다.
-    const clean = async () => { await db.query(`DELETE FROM lms_guide_log WHERE order_key LIKE $1`, [KEY + '%']); await db.query(`DELETE FROM bot_products WHERE name LIKE $1`, [TAG + '%']); };
+    const madeP = [];   // #713: 이 검증이 INSERT 한 bot_products id(RETURNING) — 정리는 이 배열로 · 이름 LIKE 는 보조 가드(493 사고 = 제목 LIKE 에 기대다 바뀐 행이 남음)
+    const clean = async ids => { await db.query(`DELETE FROM lms_guide_log WHERE order_key LIKE $1`, [KEY + '%']); if (ids) await db.query(`DELETE FROM bot_products WHERE id = ANY($1::int[]) AND name LIKE $2`, [ids, TAG + '%']); else await db.query(`DELETE FROM bot_products WHERE name LIKE $1`, [TAG + '%']); };   // ids 없이(시작 때) = 앞 실행이 남긴 「[시험642]」 줄 쓸기
     try {
         console.log('⓪ 코드');
         const fa = src.indexOf('const GUIDE_TOKEN_MIN = '), fb = src.indexOf('\n}', src.indexOf('async function guideResolveByToken(')) + 2;
@@ -60,7 +61,7 @@ const TAG = '[시험642]', KEY = 'v642';
         ok(links.length >= 2 && `https://jeju-acom-company.onrender.com/guide?p=${t1}`.length < 80 && /^[0-9]+$/.test(t1), '템플릿 버튼 주소(…/guide?p=#{상품코드}) 그대로 · 치환 뒤 주소 ' + `https://jeju-acom-company.onrender.com/guide?p=${t1}`.length + '자 · 값은 숫자만(같은 묶음 #{송장번호}와 같은 꼴)');
 
         // 시험 줄 만들기
-        const mkP = async (name, guide, status) => (await db.query(`INSERT INTO bot_products (name, status, price, shipping_guide) VALUES ($1, $2, '', $3) RETURNING id`, [TAG + ' ' + name, status || '준비중', guide])).rows[0].id;
+        const mkP = async (name, guide, status) => { const id = (await db.query(`INSERT INTO bot_products (name, status, price, shipping_guide) VALUES ($1, $2, '', $3) RETURNING id`, [TAG + ' ' + name, status || '준비중', guide])).rows[0].id; madeP.push(id); return id; };
         const mkLog = async (key, name) => { await db.query(`INSERT INTO lms_guide_log (order_key, product_name, receiver_masked, mode, status) VALUES ($1, $2, '010-****-0000', 'dry-run', 'sent') ON CONFLICT (order_key) DO NOTHING`, [key, name]); await db.query(`UPDATE lms_guide_log SET created_at = NOW() - interval '400 days' WHERE order_key = $1`, [key]); };   // 시험 줄을 400일 전 날짜로 — 도는 동안 「오늘 발송안내 건수」·알림 발송 이력(기본 90일)에 비치지 않게
         const nmA = '가품목 / 상품 및 과수: 시험옵션 - 1kg(로얄과)', nmB = '나품목 / 상품 및 과수: 시험옵션 - 2kg(로얄과)', nmC = '다품목 / 상품 및 과수: 시험옵션 - 3kg(로얄과)';
         const optOf = nm => '아꼼이네 상품선택: ' + TAG + ' ' + nm;   // 옵션 원문에 품목 이름이 통째로 들어 있는 꼴(통째 포함 연결)
@@ -153,7 +154,7 @@ const TAG = '[시험642]', KEY = 'v642';
         }
     } catch (e) { fail++; console.log('  ✗ 중단: ' + (e && e.stack || e)); }
     finally {
-        try { await clean(); const l1 = (await db.query(`SELECT COUNT(*)::int c FROM lms_guide_log WHERE order_key LIKE $1`, [KEY + '%'])).rows[0].c + (await db.query(`SELECT COUNT(*)::int c FROM lms_guide_log WHERE order_key LIKE $1`, ['c24:' + KEY + '%'])).rows[0].c, l2 = (await db.query(`SELECT COUNT(*)::int c FROM bot_products WHERE name LIKE $1`, [TAG + '%'])).rows[0].c; if (l1) await db.query(`DELETE FROM lms_guide_log WHERE order_key LIKE $1`, ['c24:' + KEY + '%']); const l1b = (await db.query(`SELECT COUNT(*)::int c FROM lms_guide_log WHERE order_key LIKE $1 OR order_key LIKE $2`, [KEY + '%', 'c24:' + KEY + '%'])).rows[0].c; ok(l1b === 0 && l2 === 0, '정리: 시험 발송 기록·시험 판매현황 줄 전부 지움', l1b + ' / ' + l2); } catch (e) { fail++; console.log('  ✗ 정리 실패: ' + e.message); }
+        try { await clean(madeP); const l1 = (await db.query(`SELECT COUNT(*)::int c FROM lms_guide_log WHERE order_key LIKE $1`, [KEY + '%'])).rows[0].c + (await db.query(`SELECT COUNT(*)::int c FROM lms_guide_log WHERE order_key LIKE $1`, ['c24:' + KEY + '%'])).rows[0].c, l2 = (await db.query(`SELECT COUNT(*)::int c FROM bot_products WHERE id = ANY($1::int[]) OR name LIKE $2`, [madeP.length ? madeP : [0], TAG + '%'])).rows[0].c; if (l1) await db.query(`DELETE FROM lms_guide_log WHERE order_key LIKE $1`, ['c24:' + KEY + '%']); const l1b = (await db.query(`SELECT COUNT(*)::int c FROM lms_guide_log WHERE order_key LIKE $1 OR order_key LIKE $2`, [KEY + '%', 'c24:' + KEY + '%'])).rows[0].c; ok(l1b === 0 && l2 === 0, '정리: 시험 발송 기록·시험 판매현황 줄(id ' + madeP.length + '건) 전부 지움', l1b + ' / ' + l2); } catch (e) { fail++; console.log('  ✗ 정리 실패: ' + e.message); }
         await db.end().catch(() => { }); sNew.kill(); sOld.kill(); await sleep(600); try { fs.unlinkSync(path.join(ROOT, OLD_FILE)); } catch (_) { }
     }
     console.log(`\n결과 ${pass}/${pass + fail}`); process.exit(fail ? 1 : 0);

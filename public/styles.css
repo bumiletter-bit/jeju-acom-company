@@ -195,6 +195,16 @@ body {
     top: -2px;
     right: -2px;
 }
+/* #712 PC 에서도 모든 화면 오른쪽 위에 떠 있는 종(폰과 같은 단추 하나 · 메인 인사말 줄 종은 숨김 = 종 2개 방지 · 배지 갱신은 둘 다 그대로) */
+@media (min-width: 769px) {
+    .notification-bell-wrap { display: none; }
+    .mobile-noti-btn { display: flex; z-index: 940; top: 14px; right: 18px; border: 1px solid var(--border, #E4E7EC); box-shadow: 0 2px 10px rgba(16, 24, 40, .10); }
+    .mobile-noti-btn:hover { background: var(--bg, #F5F6F8); }
+    .mobile-noti-btn:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; }
+    body .notification-dropdown { top: 66px; right: 18px; max-height: min(440px, calc(100vh - 82px)); }   /* body = 아래 기본 .notification-dropdown 규칙보다 이기게 */
+    /* 맨 위 오른쪽 끝에 단추가 있는 머리 줄 = 종 자리(오른쪽 18 + 44)만큼 비움(검사로 찾은 2곳: 메인 📢 · 주문 정리기 ⚙ 설정) */
+    .welcome-section, #page-organizer > .card-header-row { padding-right: 64px; }
+}
 .noti-close-btn {
     display: none;
     background: none;

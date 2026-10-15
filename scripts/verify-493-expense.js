@@ -177,7 +177,8 @@ const testIds = [];
     await S.pg.close();
 })().catch(e => { console.error('ERR', e.message); fail++; })
 .finally(async () => {
-    try { if (db && testIds.length) { await db.query(`DELETE FROM expense_reports WHERE id = ANY($1) AND title LIKE '[검증493]%'`, [testIds]); console.log('  🧹 시험 행 삭제', testIds.join(',')); } } catch (e) { console.log('cleanup err', e.message); }
+    // #713: 정리는 id 배열(INSERT RETURNING 으로 즉시 모은 것)로 — 종전 `title LIKE '[검증493]%'` 조건은 검증 중 PUT 으로 제목이 「급여, 기타」로 바뀐 시험 행을 못 지워 운영 결재 대기에 남겼음(10/15 · id 401·403·405·407). items 의 note 「[검증493]」은 PUT 뒤에도 남아 보조 가드로만 쓴다
+    try { if (db && testIds.length) { const r = await db.query(`DELETE FROM expense_reports WHERE id = ANY($1::int[]) AND items::text LIKE '%[검증493]%' RETURNING id`, [testIds]); const left = (await db.query(`SELECT id, title FROM expense_reports WHERE id = ANY($1::int[])`, [testIds])).rows; console.log('  🧹 시험 행 삭제', r.rows.map(x => x.id).join(','), left.length ? '🔴 남음: ' + JSON.stringify(left) : '· 남음 0'); if (left.length) fail++; } } catch (e) { console.log('cleanup err', e.message); fail++; }
     try { await db?.end(); } catch {}
     try { await browser?.close(); } catch {}
     try { srv?.kill(); } catch {}

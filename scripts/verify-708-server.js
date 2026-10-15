@@ -49,7 +49,17 @@ async function main() {
   const sync = { cfgSet: async (k, v) => { cfgSets.push({ k, v }); }, scenarioUpsert: async s => { scen.push(s); return 999; } };
   const mount = require(path.join(__dirname, '..', 'lucky-event.js'));
   const app = express(); app.use(express.json({ limit: '15mb' }));
-  const L = mount(app, { pool, authMiddleware: fakeAuth, adminOnly, writeAudit, table: TABLE, sync, now: () => NOW, secret: 'v708secret', tick: false });
+  // #711 판매현황 가짜 행(운영 bot_products 무접촉) — 실DB 10/15 이름 꼴 그대로
+  let productCalls = 0;
+  const FAKE_PRODUCTS = [
+    { name: '과즙팡팡 황금향 / 상품 및 과수: 황금향 선물용 - 3kg(중대과 7~15과)', status: '판매중' }, { name: '과즙팡팡 황금향 / 상품 및 과수: 황금향 가정용 - 3kg(중소과 17과 전후)', status: '판매중' }, { name: '하우스황금향 가정용(중소과 17과 전후) 3kg', status: '품절' }, { name: '노지황금향 10kg', status: '준비중' },
+    { name: '고당도 하우스감귤 / 상품 및 과수: 가정용 - 2.5kg(로얄과)', status: '판매중' }, { name: '행사★하우스귤 2.5kg로얄과→중량up 4kg', status: '준비중' },
+    { name: '최상품 청귤(풋귤) 5kg', status: '시즌종료' }, { name: '최상품 청귤(풋귤) 10kg', status: '시즌종료' },
+    { name: '과수 및 크기: 제주산 레드키위 3kg(로얄과)', status: '판매중' }, { name: '과수 및 크기: 제주 그린레몬 못난이5kg(랜덤과)', status: '판매중' }, { name: '유라품종 노지감귤 / 상품 및 과수: 가정용 - 3kg(로얄과 2S~M)', status: '판매중' },
+    { name: '미니밤호박 특품최상급 / 상품 및 과수: 특품 5kg(10~20개)', status: '시즌종료' }, { name: '초당옥수수 중품 11개입', status: '품절' }, { name: '고구마', status: '품절' }, { name: '금귤(낑깡)', status: '품절' },
+    { name: '[검증]시험특가 품목', status: '준비중' }, { name: '테스트', status: '준비중' }, { name: '과즙팡팡 황금향 / 상품 및 과수: 황금향 선물용 - 3kg(중대과 7~15과)', status: '판매중' }
+  ];
+  const L = mount(app, { pool, authMiddleware: fakeAuth, adminOnly, writeAudit, table: TABLE, sync, now: () => NOW, secret: 'v708secret', tick: false, products: async () => { productCalls++; return FAKE_PRODUCTS; } });
   const servers = []; const listen = (a, port) => new Promise(r => { const s = a.listen(port, () => r(s)); servers.push(s); });
   if (L._assetTable !== TABLE + '_assets') { console.error('🔴 가짜 표 이름이 안 먹음(운영 표 보호) — 중단', L._assetTable); process.exit(2); }   // 10/15 실사고 재발 방지: 검증은 반드시 가짜 표에서만
   let threw = false; try { mount(express(), { pool, authMiddleware: fakeAuth, adminOnly, writeAudit, table: 'bad-name!', tick: false }); } catch (_) { threw = true; } ok(threw, '틀린 표 이름은 운영 표로 안 떨어지고 throw');
@@ -173,32 +183,37 @@ async function main() {
     const pb = await N('publish', { published: true }, 'staff'); ok(pb.status === 200 && pb.j.db.event.published === true, '직원 발표 200');
     const pub = await PUB(); ok(pub.j.event.state === 'published' && pub.j.event.published === true, 'state published');
     const w = await jf(B, '/api/lucky/winners'); ok(w.status === 200 && w.j.published && w.j.total === 15, '공개 당첨자 종전');
-    // HEAD 판 비교(같은 주문·같은 난수 → 당첨자·조회 결과 동일)
-    let headSrc = null; try { headSrc = execSync('git show HEAD:lucky-event.js', { cwd: path.join(__dirname, '..'), encoding: 'utf8', maxBuffer: 1 << 22 }); } catch (_) { }
-    if (!headSrc) console.log('  ⏭ HEAD 판을 못 읽어 동일성 비교 건너뜀');
-    else {
-      const hp = path.join(require('os').tmpdir(), 'lucky-event.head.' + process.pid + '.js'); fs.writeFileSync(hp, headSrc);
-      const appH = express(); appH.use(express.json({ limit: '15mb' })); require(hp)(appH, { pool, authMiddleware: fakeAuth, adminOnly, writeAudit, table: TABLE_HEAD });
-      await listen(appH, PORT + 1); const H = `http://localhost:${PORT + 1}`;
-      const EV = { title: '검증 708 회차', start: '2026-10-20', end: '2026-10-31', announce: '2026-11-01', prizes: [{ name: '황금향 5kg 선물용', count: 5 }, { name: '감귤 3kg', count: 10 }], excludeProducts: [] };   // 종전 칸만 같게(새 회차의 관리용 제목과 같아야 비교가 됨)
+    // 옛 판 비교(같은 주문·같은 난수 → 당첨자·조회 결과 동일) — 두 판: ①ac67689 = #708 앞 원본 이식판(종전 로직 정본 · HEAD 가 #708 코드가 된 뒤 고정 · #686 때와 같은 방식) ②HEAD = 직전 커밋(이번 손질이 추첨·조회를 안 건드렸는지) · 같은 가짜 표(TABLE_HEAD)를 번갈아 씀
+    seedRandom(4242); const dn = await N('draw', {}, 'staff'); await N('publish', { published: true });
+    const EV = { title: '검증 708 회차', start: '2026-10-20', end: '2026-10-31', announce: '2026-11-01', prizes: [{ name: '황금향 5kg 선물용', count: 5 }, { name: '감귤 3kg', count: 10 }], excludeProducts: [] };   // 종전 칸만 같게(새 회차의 관리용 제목과 같아야 비교가 됨)
+    const qs = [...new Set(orders.slice(0, 15).flatMap(o => [o.buyerPhone || o.recvPhone, o.buyer]))].concat(dn.j.db.winners.slice(0, 4).map(w => w.phone), ['없는사람', 'ㄱ', '010-0000-1111']);
+    const strip = j => { if (!j) return j; const c = JSON.parse(JSON.stringify(j)); if (c.event) { const e = {}; OLD_KEYS.forEach(k => { e[k] = c.event[k]; }); if (Array.isArray(e.prizes)) e.prizes = e.prizes.map(p => ({ name: p.name, count: p.count })); c.event = e; } return c; };
+    const pick = e => { const o = {}; OLD_KEYS.forEach(k => { o[k] = e[k]; }); o.prizes = o.prizes.map(p => ({ name: p.name, count: p.count })); return o; };
+    let hi = 0;
+    for (const [ref, label] of [['ac67689', '원본 이식판(#708 앞)'], ['HEAD', 'HEAD']]) {
+      let headSrc = null; try { headSrc = execSync(`git show ${ref}:lucky-event.js`, { cwd: path.join(__dirname, '..'), encoding: 'utf8', maxBuffer: 1 << 22 }); } catch (_) { }
+      if (!headSrc) { console.log(`  ⏭ ${label} 을 못 읽어 동일성 비교 건너뜀`); continue; }
+      await pool.query(`DROP TABLE IF EXISTS ${TABLE_HEAD}_assets`); await pool.query(`DROP TABLE IF EXISTS ${TABLE_HEAD}`);
+      const hp = path.join(require('os').tmpdir(), `lucky-event.${ref.toLowerCase()}.${process.pid}.js`); fs.writeFileSync(hp, headSrc);
+      const appH = express(); appH.use(express.json({ limit: '15mb' })); require(hp)(appH, { pool, authMiddleware: fakeAuth, adminOnly, writeAudit, table: TABLE_HEAD, tick: false, now: () => NOW });
+      const port = PORT + 1 + hi * 3; hi++;   // 3464 · 3467(3465 = ⑩ Host 앱 · 3466 = ② noSync)
+      const sH = await listen(appH, port); const H = `http://localhost:${port}`;
       await jf(H, '/api/agent-office/lucky/orders', { body: { orders, label: 'v708.xlsx' }, headers: { 'x-test-role': 'admin' } });
       await jf(H, '/api/agent-office/lucky/event', { body: { event: EV, excluded: ['010-9000-0001'] }, headers: { 'x-test-role': 'admin' } });
+      if (/go-live/.test(headSrc)) await jf(H, '/api/agent-office/lucky/go-live', { body: { mode: 'live' }, headers: { 'x-test-role': 'admin' } });   // #708 이후 판은 열어야 조회가 됨(원본 판은 늘 열림)
       seedRandom(4242); const dh = await jf(H, '/api/agent-office/lucky/draw', { body: {}, headers: { 'x-test-role': 'admin' } });
-      seedRandom(4242); const dn = await N('draw', {}, 'staff');
-      ok(JSON.stringify(dh.j.db.winners) === JSON.stringify(dn.j.db.winners) && dh.j.pool === dn.j.pool && dh.j.tickets === dn.j.tickets, `추첨 결과 HEAD 와 바이트 동일(당첨 ${dn.j.db.winners.length} · 응모 ${dn.j.pool})`);
-      await jf(H, '/api/agent-office/lucky/publish', { body: { published: true }, headers: { 'x-test-role': 'admin' } }); await N('publish', { published: true });
-      const qs = [...new Set(orders.slice(0, 15).flatMap(o => [o.buyerPhone || o.recvPhone, o.buyer]))].concat(dn.j.db.winners.slice(0, 4).map(w => w.phone), ['없는사람', 'ㄱ', '010-0000-1111']);
+      ok(JSON.stringify(dh.j.db.winners) === JSON.stringify(dn.j.db.winners) && dh.j.pool === dn.j.pool && dh.j.tickets === dn.j.tickets, `추첨 결과 ${label} 과 바이트 동일(당첨 ${dn.j.db.winners.length} · 응모 ${dn.j.pool})`);
+      await jf(H, '/api/agent-office/lucky/publish', { body: { published: true }, headers: { 'x-test-role': 'admin' } });
       let same = 0, diff = [];
       for (const q of qs) {
         const a = await jf(H, '/api/lucky/lookup', { body: { q } }), b = await jf(B, '/api/lucky/lookup', { body: { q } });
-        const strip = j => { if (!j) return j; const c = JSON.parse(JSON.stringify(j)); if (c.event) { const e = {}; OLD_KEYS.forEach(k => { e[k] = c.event[k]; }); if (Array.isArray(e.prizes)) e.prizes = e.prizes.map(p => ({ name: p.name, count: p.count })); c.event = e; } return c; };
         if (a.status === b.status && JSON.stringify(strip(a.j)) === JSON.stringify(strip(b.j))) same++; else diff.push(q);
       }
-      ok(same === qs.length, `lookup 결과(종전 칸) HEAD 와 동일 ${same}/${qs.length}${diff.length ? ' 다름: ' + diff.slice(0, 3).join(',') : ''}`);
-      const wh = await jf(H, '/api/lucky/winners'), wn = await jf(B, '/api/lucky/winners'); ok(JSON.stringify(wh.j) === JSON.stringify(wn.j), '공개 당첨자(마스킹) HEAD 와 동일');
-      const eh = await jf(H, '/api/lucky/event'), en = await PUB(); const pick = e => { const o = {}; OLD_KEYS.forEach(k => { o[k] = e[k]; }); o.prizes = o.prizes.map(p => ({ name: p.name, count: p.count })); return o; };
-      ok(JSON.stringify(pick(eh.j.event)) === JSON.stringify(pick(en.j.event)) && JSON.stringify(eh.j.counts) === JSON.stringify(en.j.counts), '공개 /event 종전 7칸·counts HEAD 와 동일');
-      fs.rmSync(hp, { force: true });
+      ok(same === qs.length, `lookup 결과(종전 칸) ${label} 과 동일 ${same}/${qs.length}${diff.length ? ' 다름: ' + diff.slice(0, 3).join(',') : ''}`);
+      const wh = await jf(H, '/api/lucky/winners'), wn = await jf(B, '/api/lucky/winners'); ok(JSON.stringify(wh.j) === JSON.stringify(wn.j), `공개 당첨자(마스킹) ${label} 과 동일`);
+      const eh = await jf(H, '/api/lucky/event'), en = await PUB();
+      ok(JSON.stringify(pick(eh.j.event)) === JSON.stringify(pick(en.j.event)) && JSON.stringify(eh.j.counts) === JSON.stringify(en.j.counts), `공개 /event 종전 7칸·counts ${label} 과 동일`);
+      sH.close(); fs.rmSync(hp, { force: true });
     }
   }
 
@@ -251,6 +266,52 @@ async function main() {
     ok(!/010-?9\d{3}-?\d{4}/.test(txt), '감사 기록에 번호 0');
     let got429 = false; for (let i = 0; i < 45; i++) { const r = await fetch(B + '/api/lucky/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': '203.0.113.9', 'x-forwarded-for': '10.1.1.' + i }, body: JSON.stringify({ q: '홍길동' }) }); if (r.status === 429) got429 = true; }
     ok(got429, 'cf-connecting-ip 기준 40회/분 초과 → 429(XFF 바꿔도 우회 안 됨)');
+  }
+
+  console.log('⑪ #711 판매현황 품목 묶음(/products) · 봇 답·카드 미리보기(/bot-preview) — 저장 0 · 동기화 0 · 운영 bot_products 무접촉');
+  {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lucky-event.js'), 'utf8');
+    const sel = (src.match(/SELECT name, status FROM bot_products[^`]*/) || [''])[0];
+    ok(/deleted_at IS NULL/.test(sel) && !/INSERT|UPDATE|DELETE/.test(sel), '기본 판매현황 읽기 = SELECT(deleted_at IS NULL)만 · 쓰기 글자 0 ' + JSON.stringify(sel));
+    // 낱말 묶음 앞 10개 = 화면(event-admin.js ITEM_GROUPS · #709)과 같은 순서(둘이 어긋나면 사진 매칭과 제외 묶음이 다르게 묶인다)
+    try { const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'event-admin.js'), 'utf8'); const m = ui.match(/const ITEM_GROUPS = (\[[^\n]*\]);/); const uiGroups = m ? new Function('return ' + m[1])() : null;
+      ok(Array.isArray(uiGroups) && JSON.stringify(L._itemGroups.slice(0, uiGroups.length)) === JSON.stringify(uiGroups), '서버 ITEM_GROUPS 앞부분 = 화면 ITEM_GROUPS(#709) 글자·순서 동일 ' + (uiGroups ? uiGroups.length : 'x') + '묶음'); } catch (e) { ok(false, '화면 ITEM_GROUPS 대조 실패 ' + e.message); }
+    const unauth = await jf(B, '/api/agent-office/lucky/products'); ok(unauth.status === 401, '/products 로그인 없이 401');
+    const p1 = await N('products'); const G = p1.j && p1.j.groups || [];
+    const byName = n => G.find(g => g.name === n);
+    ok(p1.status === 200 && p1.j.ok === true && G.length >= 9 && G.every(g => g.name && Array.isArray(g.words) && typeof g.selling === 'boolean' && Array.isArray(g.options) && g.options.every(o => typeof o.name === 'string' && typeof o.status === 'string')), '/products 200 · groups[{name,words,selling,options[{name,status}]}] ' + G.length + '묶음');
+    const gold = byName('황금향');
+    ok(gold && gold.selling === true && gold.words.join() === '황금향' && gold.options.length === 4 && gold.options.some(o => o.name === '노지황금향 10kg') && gold.options.some(o => /^하우스황금향/.test(o.name)) && gold.options.filter(o => /선물용 - 3kg/.test(o.name)).length === 1, '황금향 묶음 = 과즙팡팡 2 + 하우스황금향 + 노지황금향(먼저 맞는 묶음이 이김) · 같은 이름 중복 1 ' + JSON.stringify(gold && gold.options.map(o => o.name)));
+    const house = byName('하우스감귤');
+    ok(house && house.words.includes('하우스귤') && house.options.length === 2 && house.options.some(o => /^행사★하우스귤/.test(o.name)) && house.selling === true, '하우스감귤 묶음 = 고당도 하우스감귤 + 행사★하우스귤(words 하우스귤 포함)');
+    const cg = byName('청귤');
+    ok(cg && cg.words.includes('풋귤') && cg.selling === false && cg.options.length === 2 && cg.options.every(o => o.status === '시즌종료'), '청귤 묶음 = 시즌종료 2 · selling false · words 풋귤');
+    ok(byName('레드키위') && byName('그린레몬') && byName('노지감귤') && byName('미니밤호박') && byName('초당옥수수'), '머리말(과수 및 크기:)·「 / 」 뒤 꼴도 묶음에 듦(레드키위·그린레몬·노지감귤·미니밤호박·초당옥수수)');
+    const sweet = byName('고구마'), kum = byName('금귤');
+    ok(sweet && sweet.options.length === 1 && sweet.selling === false && kum && kum.options[0].name === '금귤(낑깡)', '묶음 표에 없는 이름 = 품목 머리로 묶음 하나(고구마 · 금귤(낑깡) → 금귤)');
+    ok(!G.some(g => g.options.some(o => /검증|테스트/.test(o.name))), '시험 품목([검증]·테스트) 거름');
+    const firstOff = G.findIndex(g => !g.selling), lastOn = G.map(g => g.selling).lastIndexOf(true);
+    ok(firstOff > 0 && lastOn < firstOff && G.slice(0, firstOff).map(g => g.name).join() === G.slice(0, firstOff).map(g => g.name).sort((a, b) => a.localeCompare(b, 'ko')).join(), '묶음 순서 = 판매중 있는 묶음 먼저 · 그 안은 가나다 ' + JSON.stringify(G.map(g => g.name)));
+    ok(G.every(g => g.options.map(o => o.name).join() === g.options.map(o => o.name).sort((a, b) => a.localeCompare(b, 'ko')).join()), '묶음 안 옵션 가나다');
+    ok(!/010|\d{2,},\d{3}/.test(JSON.stringify(p1.j)), '응답에 번호·금액 없음');
+    const calls0 = productCalls; await N('products'); await N('products'); ok(productCalls === calls0 && calls0 === 1, '30초 안 두 번 더 불러도 판매현황 읽기 1회(기억)');
+    NOW += 31e3; await N('products'); ok(productCalls === 2, '31초 지나면 다시 읽음');
+    ok(L.groupProducts([{ name: '최상품 청귤(풋귤) 5kg', status: '판매중' }])[0].name === '청귤' && L.groupProducts([]).length === 0, 'groupProducts 단위: 청귤 · 빈 목록 []');
+
+    // /bot-preview
+    const before = await N('state'); const cfgN = cfgSets.length, scenN = scen.length, audN = audits.length;
+    const unauth2 = await jf(B, '/api/agent-office/lucky/bot-preview', { body: { event: {} } }); ok(unauth2.status === 401, '/bot-preview 로그인 없이 401');
+    const pv = await N('bot-preview', { event: { display_title: '미리보기 제목', start: '2026-12-01', end: '2026-12-10', announce: '2026-12-11', coupon_text: ' 2,000원 할인 쿠폰 ', prizes: [{ name: '황금향 5kg', count: 3 }], guide_card: { custom: true, title: '🎁 쿠폰 이벤트', lines: ['할인 10%', '기간 안 주문 자동 응모', ''], btn: '보기' } } });
+    const bt = pv.j && pv.j.bot && pv.j.bot.text || '', cd = pv.j && pv.j.card || {};
+    ok(pv.status === 200 && pv.j.ok === true && bt.includes('🎟 2,000원 할인 쿠폰') && bt.includes('🎁 미리보기 제목 (12월 1일 ~ 12월 10일 주문 고객 대상)') && bt.includes('총 3명 추첨: 1등 황금향 5kg(3명)') && bt.includes('https://event.akkome.com/lucky.html') && pv.j.bot.custom === false && pv.j.bot.keywords.includes('이벤트'), '봇 답 = 서버 autoBot 그대로(🎟 쿠폰 줄 · 제목 · 기간 · 경품 · 주소) ' + JSON.stringify(bt.split('\n').slice(3, 7)));
+    ok(cd.title === '🎁 이벤트 안내' && JSON.stringify(cd.lines) === JSON.stringify(['기간 안 주문 자동 응모']) && cd.btn === '보기' && cd.dropped.includes('할인 10%') && cd.dropped.includes('🎁 쿠폰 이벤트') && cd.custom === true && typeof pv.j.state === 'string', '카드 = 광고성 줄·제목 빠지고 dropped 로 돌려줌 ' + JSON.stringify(cd));
+    const after = await N('state');
+    ok(JSON.stringify(after.j.db.event) === JSON.stringify(before.j.db.event) && after.j.db.event.display_title !== '미리보기 제목' && cfgSets.length === cfgN && scen.length === scenN && audits.length === audN, '미리보기 뒤 저장 0 · 동기화 0 · 감사 0(회차 그대로)');
+    const pvC = await N('bot-preview', { event: { bot_reply: { custom: true, response: '손으로 쓴 봇 답' } } }); ok(pvC.status === 200 && pvC.j.bot.text === '손으로 쓴 봇 답' && pvC.j.bot.custom === true, '손으로 고친 봇 답(custom)은 그 글 그대로');
+    const pvE = await N('bot-preview', {}); ok(pvE.status === 200 && pvE.j.bot.text.includes('제주아꼼이네') && pvE.j.card.title.startsWith('🎁'), '빈 몸 = 지금 회차 글(자동)');
+    const pvB = await N('bot-preview', { event: [] }); ok(pvB.status === 400 && pvB.j.error === 'BODY', 'event 가 배열이면 400 BODY');
+    // syncOut 과 같은 글(composeOut 한 곳) — 열렸을 때 썼던 카드·#59 값과 그 시점 초안의 composeOut 이 같은지는 ⑥의 cfgSets 기대가 보증 · 여기선 함수 노출만
+    ok(typeof L.composeOut === 'function' && L.composeOut(await (async () => { const s = await N('state'); return { event: s.j.db.event }; })()).bot.text.includes('제주아꼼이네'), 'composeOut 노출(동기화와 미리보기가 같은 함수)');
   }
 
   console.log('⑩ server.js Host 분기 1줄(express.static 앞) · 그 줄만 떼어 실행');

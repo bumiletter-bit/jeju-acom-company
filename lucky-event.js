@@ -15,6 +15,9 @@
  *   · 미리보기 키(1시간 HMAC) · 회차 복사 · 열기/예약/내리기 · 틱(1시간 · 예약 열기 · 내리는 날 지나면 내림)
  *   · 동기화 = 이벤트 설정 1곳 → agent_office_config 'guide_event_card'(server.js guideEventCardHtml 은 무접촉 · 값만 써 넣음) + inquiry_scenarios #59 upsert(손으로 고친 custom 은 안 덮음)
  *   · 권한 = 추첨·발표·새 회차·초기화도 직원(대표 10/15) · 복원만 관리자 그대로
+ * #711(대표 10/15 라이브 지적 7가지 · 계약 docs/711-event-design.md) — 더한 것 둘 · 종전 응답·대조·저장 꼴 무변경:
+ *   · GET  …/lucky/products  = 판매현황(bot_products · 삭제 안 된 전 상태)을 #709 낱말 묶음(ITEM_GROUPS)으로 묶어 돌려줌 → 화면 「응모 제외 품목」 칩 고르기(저장값은 종전 excludeProducts 글자 배열 그대로 · exProdOf 무변경)
+ *   · POST …/lucky/bot-preview = 초안을 얹어 봇 답(autoBot)·/guide 카드(autoCard + 광고성 줄 dropped)를 만들어 돌려줌(저장 0 · 동기화 0) → 화면이 치는 대로 보여 줌(화면 사본 제거)
  *
  * 마운트(server.js 1줄): require('./lucky-event.js')(app, { pool, authMiddleware, adminOnly, writeAudit });
  * 🔴 initDB·타이머·설정 행을 만들지 않는다(#467 시드 사고 교훈) — 테이블은 첫 요청 때 CREATE IF NOT EXISTS. 검증은 table 인자로 가짜 표 이름(그림 표 = <table>_assets) · sync 인자로 가짜 받이(실DB agent_office_config·inquiry_scenarios 쓰기 0).
@@ -22,7 +25,7 @@
 'use strict';
 const crypto = require('crypto');
 
-module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly, writeAudit, table, sync, now, secret, tick }) {
+module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly, writeAudit, table, sync, now, secret, tick, products }) {
   if (!table && process.env.LUCKY_TABLE && !process.env.RENDER) table = process.env.LUCKY_TABLE;   // 로컬 실서버 통합 확인용(env · 라이브 Render 에선 무시) — 가짜 표 + 동기화·틱 기본 꺼짐이 같이 걸린다
   if (table && !/^[a-z][a-z0-9_]*$/.test(table)) throw new Error('lucky-event: 표 이름이 틀려요 — ' + table);
   if (table === 'lucky_events' || table === 'lucky_assets') throw new Error('lucky-event: 검증 표 이름이 운영 표와 같아요 — ' + table);   // 🔴 검증이 준 표 이름이 틀리면 운영 표로 떨어지지 않게 멈춘다(10/15 실사고: 숫자 든 이름이 가드를 못 넘어 운영 lucky_events 에 시험 줄 2행)
@@ -52,6 +55,41 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
   };
   const TEXT_KEYS = Object.keys(TEXT_DEFAULTS);
   const BOT_KEYWORDS = ['이벤트', '추첨', '응모', '경품', '당첨자', '이벤트 당첨', '이벤트당첨', '당첨 확인', '당첨확인', '럭키', '할인쿠폰', '할인 쿠폰', '이벤트 안내', '이벤트안내'];
+  // #711 낱말 묶음 — 앞 10개는 화면(event-admin.js ITEM_GROUPS · #709)과 같은 순서(먼저 맞는 묶음이 이긴다: 노지황금향·하우스황금향 → 황금향) · 그 뒤는 품목 사진 26장 라벨 품목
+  //   🔴 맨 「귤」·「감귤」은 묶음 아님(#709 규칙) · 첫 낱말 = 묶음 대표 이름(칩에 저장되는 글자 · 주문 글 부분 일치 대조 exProdOf 그대로)
+  const ITEM_GROUPS = [['청귤', '풋귤'], ['황금향'], ['한라봉'], ['천혜향'], ['레드향'], ['레드키위', '키위'], ['노란레몬'], ['그린레몬', '레몬'], ['노지감귤', '노지', '유라조생', '유라'], ['하우스감귤', '하우스귤', '하우스'],
+    ['미니밤호박', '밤호박', '한입밤호박'], ['타이벡감귤', '타이벡'], ['카라향'], ['탐라향'], ['하귤'], ['산하홍'], ['수라향'], ['블러드오렌지'], ['세미놀'], ['자몽'], ['청견오렌지'], ['초당옥수수', '옥수수'], ['브로콜리'], ['고깔양배추', '양배추']];
+  const groupOf = s => { const n = String(s || '').replace(/\s+/g, ''); return ITEM_GROUPS.findIndex(g => g.some(k => n.includes(k))); };
+  // 어느 묶음에도 안 드는 판매현황 이름 → 품목 머리(머리말 「…:」 · 「 / 」 뒤 · 무게·개입 이하 · ★행사 글자 떼기)로 묶음 하나
+  const itemHead = s => String(s || '').split(' / ')[0].replace(/^[^:]*:\s*/, '').replace(/[★☆\[\]【】]/g, ' ').replace(/\s*\d+(\.\d+)?\s*(kg|개입|과|구).*$/i, '').replace(/^(최상품|제철|제주산|제주|고당도|과즙팡팡)\s*/, '').replace(/\(.*?\)/g, '').trim();
+  const TEST_PRODUCT_RE = /^\s*(\[검증\]|테스트|시험)/;
+  // 판매현황 행 → {groups:[{name, words, selling, options:[{name,status}]}]} (판매중 있는 묶음 먼저 · 가나다)
+  function groupProducts(rows) {
+    const map = new Map();
+    (rows || []).forEach(r => {
+      const name = String(r.name || '').trim(); if (!name || TEST_PRODUCT_RE.test(name)) return;
+      const gi = groupOf(name); const key = gi >= 0 ? 'g' + gi : 'h' + (itemHead(name) || name).replace(/\s+/g, '');
+      if (!map.has(key)) map.set(key, { name: gi >= 0 ? ITEM_GROUPS[gi][0] : (itemHead(name) || name), words: gi >= 0 ? ITEM_GROUPS[gi].slice() : [itemHead(name) || name], selling: false, options: [] });
+      const g = map.get(key); const status = String(r.status || '').trim();
+      if (status === '판매중') g.selling = true;
+      if (!g.options.some(o => o.name === name)) g.options.push({ name, status });
+    });
+    const ko = (a, b) => a.localeCompare(b, 'ko');
+    const groups = [...map.values()];
+    groups.forEach(g => g.options.sort((a, b) => ko(a.name, b.name)));
+    groups.sort((a, b) => (a.selling === b.selling ? ko(a.name, b.name) : a.selling ? -1 : 1));
+    return groups;
+  }
+  const defaultProducts = async () => (await pool.query(`SELECT name, status FROM bot_products WHERE deleted_at IS NULL ORDER BY id`)).rows;
+  const P = typeof products === 'function' ? products : defaultProducts;   // 검증은 가짜 행(운영 bot_products 무접촉)
+  let productsCache = null;   // {at, groups} · 30초
+  async function productGroups() {
+    const t = nowMs();
+    if (productsCache && t - productsCache.at < 30e3) return productsCache.groups;
+    const groups = groupProducts(await P());
+    productsCache = { at: t, groups };
+    return groups;
+  }
   const DEFAULT = () => ({
     event: {
       title: '제주아꼼이네 고객 감사 이벤트',
@@ -289,19 +327,14 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
   async function syncOut(db, req) {
     const e = db.event, st = stateOf(db), on = isOpen(st);
     const out = { card: false, bot: false, card_dropped: [] };
+    const made = composeOut(db);   // #711: 글 만들기는 composeOut 한 곳(/bot-preview 가 같은 글을 미리 보여 준다) · 손질 ②: 제목·단추 글에 할인·쿠폰·금액이 들면 중립 글로
     try {
-      const gc = e.guide_card || {}, auto = autoCard(db);
-      const title = gc.custom && gc.title ? gc.title : auto.title;
-      const srcLines = gc.custom && Array.isArray(gc.lines) && gc.lines.length ? gc.lines : auto.lines;
-      const lines = []; srcLines.forEach(l => { const s = String(l || '').trim(); if (!s) return; if (BAN_RE.test(s)) out.card_dropped.push(s); else lines.push(s); });
-      const btn0 = (gc.custom && gc.btn) || auto.btn;   // 손질 ②: 제목(display_title 포함)·단추 글에도 할인·쿠폰·금액이 들면 중립 글로
-      const cfg = { enabled: on && gc.enabled !== false, title: BAN_RE.test(title) ? '🎁 이벤트 안내' : title, lines: lines.slice(0, 3), btn: BAN_RE.test(btn0) ? '접수·당첨 확인 바로가기' : btn0, url: PUBLIC_URL, start: e.start || '', end: pageUntilOf(e) || '' };
-      if (BAN_RE.test(title)) out.card_dropped.push(title); if (BAN_RE.test(btn0)) out.card_dropped.push(btn0);
+      out.card_dropped = made.card.dropped.slice();
+      const cfg = { enabled: on && made.card.enabled, title: made.card.title, lines: made.card.lines, btn: made.card.btn, url: PUBLIC_URL, start: e.start || '', end: pageUntilOf(e) || '' };
       out.card = (await S.cfgSet('guide_event_card', cfg)) !== false;   // 받이가 false 를 돌려주면 안 쓴 것(가짜 표 모드)
     } catch (err) { console.error('[lucky] 카드 동기화 실패(무시):', err && err.message); }
     try {
-      const br = e.bot_reply || {};
-      const row = { scenario_no: 59, name: '이벤트 안내(자동)', keywords: (br.custom && Array.isArray(br.keywords) && br.keywords.length ? br.keywords : BOT_KEYWORDS).slice(0, 20), response: br.custom && br.response ? br.response : autoBot(db), enabled: on && br.enabled !== false, channel: '공통', updated_by: '이벤트 관리' };
+      const row = { scenario_no: 59, name: '이벤트 안내(자동)', keywords: made.bot.keywords, response: made.bot.text, enabled: on && made.bot.enabled, channel: '공통', updated_by: '이벤트 관리' };
       out.bot = (await S.scenarioUpsert(row)) !== false;
     } catch (err) { console.error('[lucky] 봇 답(#59) 동기화 실패(무시):', err && err.message); }
     try { await writeAudit({ action: 'lucky_sync', targetType: 'lucky_event', targetId: cacheId, changes: { state: st, card: out.card, bot: out.bot, dropped: out.card_dropped.length }, source: 'lucky_admin', actor: req ? actorOf(req) : null }); } catch (_) { }
@@ -466,30 +499,48 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
   // 설정 저장 — 종전 칸 + #708 칸(화이트리스트 · 길이 자름) · live_mode 는 /go-live 로만 · 열려 있을 때만 카드·봇 동기화
   const cut = (v, n) => String(v == null ? '' : v).slice(0, n);
   const intOrNull = v => { if (v === null || v === '' || v === undefined) return null; const n = Number(v); return Number.isInteger(n) && n > 0 && n <= INT_MAX ? n : null; };   // 손질 ⑥: int 범위 밖은 없음으로(SQL int[] 캐스트 오류 방지)
+  // 저장 몸 → db 에 얹기(화이트리스트 · 길이 자름) — /event 저장과 #711 /bot-preview(저장 안 함)가 같은 함수를 쓴다
+  function applyEventPatch(db, e, excluded) {
+    e = e || {};
+    ['title', 'start', 'end', 'announce'].forEach(k => { if (e[k] != null) db.event[k] = String(e[k]).slice(0, 80); });
+    if (Array.isArray(e.excludeProducts)) db.event.excludeProducts = e.excludeProducts.map(x => String(x).trim()).filter(Boolean);
+    if (Array.isArray(e.prizes)) db.event.prizes = e.prizes.filter(p => p && p.name).map(p => ({ name: String(p.name).slice(0, 60), count: Math.max(0, Number(p.count) || 0), desc: cut(p.desc, 120), note: cut(p.note, 40), image_id: intOrNull(p.image_id) }));
+    if (Array.isArray(excluded)) db.excluded = excluded.map(x => digits(x) || norm(x)).filter(Boolean);
+    // #708
+    if (e.display_title != null) db.event.display_title = cut(e.display_title, 60).trim();
+    if (e.page_until != null) db.event.page_until = isDate(e.page_until) ? e.page_until : '';
+    if (e.coupon_text != null) db.event.coupon_text = cut(e.coupon_text, 80).trim();
+    ['hero_image_id', 'winner_image_id', 'result_image_id'].forEach(k => { if (k in e) db.event[k] = intOrNull(e[k]); });
+    if (e.texts && typeof e.texts === 'object') { TEXT_KEYS.forEach(k => { if (k in e.texts) { const v = cut(e.texts[k], 120).trim(); if (v) db.event.texts[k] = v; else delete db.event.texts[k]; } }); }
+    if (e.guide_card && typeof e.guide_card === 'object') {
+      const g = e.guide_card, cur = db.event.guide_card;
+      db.event.guide_card = { enabled: g.enabled == null ? cur.enabled !== false : g.enabled !== false, title: cut(g.title != null ? g.title : cur.title, 60), lines: (Array.isArray(g.lines) ? g.lines : cur.lines || []).slice(0, 3).map(l => cut(l, 120)), btn: cut(g.btn != null ? g.btn : cur.btn, 30), custom: g.custom == null ? !!cur.custom : !!g.custom };
+    }
+    if (e.bot_reply && typeof e.bot_reply === 'object') {
+      const b = e.bot_reply, cur = db.event.bot_reply;
+      db.event.bot_reply = { enabled: b.enabled == null ? cur.enabled !== false : b.enabled !== false, keywords: (Array.isArray(b.keywords) ? b.keywords : cur.keywords || []).slice(0, 20).map(k => cut(k, 20).trim()).filter(Boolean), response: cut(b.response != null ? b.response : cur.response, 2000), custom: b.custom == null ? !!cur.custom : !!b.custom };
+    }
+    if (Array.isArray(e.pending_art)) db.event.pending_art = e.pending_art.slice(0, 20).map(x => ({ order_id: intOrNull(x && x.order_id), slot: cut(x && x.slot, 20), at: cut(x && x.at, 40) })).filter(x => x.order_id);
+    return db;
+  }
+  // 카드·봇 글 만들기(저장 때 syncOut 이 쓰는 것과 같은 규칙) — 카드는 광고성 줄을 빼고 뺀 줄을 dropped 로
+  function composeOut(db) {
+    const e = db.event, gc = e.guide_card || {}, auto = autoCard(db), br = e.bot_reply || {};
+    const title = gc.custom && gc.title ? gc.title : auto.title;
+    const srcLines = gc.custom && Array.isArray(gc.lines) && gc.lines.length ? gc.lines : auto.lines;
+    const lines = [], dropped = []; srcLines.forEach(l => { const s = String(l || '').trim(); if (!s) return; if (BAN_RE.test(s)) dropped.push(s); else lines.push(s); });
+    const btn0 = (gc.custom && gc.btn) || auto.btn;
+    if (BAN_RE.test(title)) dropped.push(title); if (BAN_RE.test(btn0)) dropped.push(btn0);
+    return {
+      card: { title: BAN_RE.test(title) ? '🎁 이벤트 안내' : title, lines: lines.slice(0, 3), btn: BAN_RE.test(btn0) ? '접수·당첨 확인 바로가기' : btn0, dropped, custom: !!gc.custom, enabled: gc.enabled !== false },
+      bot: { text: br.custom && br.response ? br.response : autoBot(db), custom: !!(br.custom && br.response), keywords: (br.custom && Array.isArray(br.keywords) && br.keywords.length ? br.keywords : BOT_KEYWORDS).slice(0, 20), enabled: br.enabled !== false }
+    };
+  }
   app.post(A + '/event', authMiddleware, async (req, res) => {
     try {
       const r = await withLock(async () => {
         const db = await loadCurrent(true);
-        const e = req.body.event || {};
-        ['title', 'start', 'end', 'announce'].forEach(k => { if (e[k] != null) db.event[k] = String(e[k]).slice(0, 80); });
-        if (Array.isArray(e.excludeProducts)) db.event.excludeProducts = e.excludeProducts.map(x => String(x).trim()).filter(Boolean);
-        if (Array.isArray(e.prizes)) db.event.prizes = e.prizes.filter(p => p && p.name).map(p => ({ name: String(p.name).slice(0, 60), count: Math.max(0, Number(p.count) || 0), desc: cut(p.desc, 120), note: cut(p.note, 40), image_id: intOrNull(p.image_id) }));
-        if (Array.isArray(req.body.excluded)) db.excluded = req.body.excluded.map(x => digits(x) || norm(x)).filter(Boolean);
-        // #708
-        if (e.display_title != null) db.event.display_title = cut(e.display_title, 60).trim();
-        if (e.page_until != null) db.event.page_until = isDate(e.page_until) ? e.page_until : '';
-        if (e.coupon_text != null) db.event.coupon_text = cut(e.coupon_text, 80).trim();
-        ['hero_image_id', 'winner_image_id', 'result_image_id'].forEach(k => { if (k in e) db.event[k] = intOrNull(e[k]); });
-        if (e.texts && typeof e.texts === 'object') { TEXT_KEYS.forEach(k => { if (k in e.texts) { const v = cut(e.texts[k], 120).trim(); if (v) db.event.texts[k] = v; else delete db.event.texts[k]; } }); }
-        if (e.guide_card && typeof e.guide_card === 'object') {
-          const g = e.guide_card, cur = db.event.guide_card;
-          db.event.guide_card = { enabled: g.enabled == null ? cur.enabled !== false : g.enabled !== false, title: cut(g.title != null ? g.title : cur.title, 60), lines: (Array.isArray(g.lines) ? g.lines : cur.lines || []).slice(0, 3).map(l => cut(l, 120)), btn: cut(g.btn != null ? g.btn : cur.btn, 30), custom: g.custom == null ? !!cur.custom : !!g.custom };
-        }
-        if (e.bot_reply && typeof e.bot_reply === 'object') {
-          const b = e.bot_reply, cur = db.event.bot_reply;
-          db.event.bot_reply = { enabled: b.enabled == null ? cur.enabled !== false : b.enabled !== false, keywords: (Array.isArray(b.keywords) ? b.keywords : cur.keywords || []).slice(0, 20).map(k => cut(k, 20).trim()).filter(Boolean), response: cut(b.response != null ? b.response : cur.response, 2000), custom: b.custom == null ? !!cur.custom : !!b.custom };
-        }
-        if (Array.isArray(e.pending_art)) db.event.pending_art = e.pending_art.slice(0, 20).map(x => ({ order_id: intOrNull(x && x.order_id), slot: cut(x && x.slot, 20), at: cut(x && x.at, 40) })).filter(x => x.order_id);
+        applyEventPatch(db, req.body.event || {}, req.body.excluded);
         await save(db);
         const synced = isOpen(stateOf(db)) ? await syncOut(db, req) : { card: false, bot: false };
         return { db, synced };
@@ -497,6 +548,24 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
       audit(req, 'lucky_event_settings', { title: r.db.event.title, start: r.db.event.start, end: r.db.event.end, announce: r.db.event.announce, page_until: pageUntilOf(r.db.event), prizes: r.db.event.prizes.map(p => ({ name: p.name, count: p.count })), excludeProducts: r.db.event.excludeProducts, excludedCount: r.db.excluded.length, state: stateOf(r.db) });
       res.json(await withMeta(r.db, { synced: r.synced }));
     } catch (e) { fail(res, e); }
+  });
+
+  // #711 봇 답·/guide 카드 미리보기 — 초안을 현재 회차 사본에 얹어 저장 때와 같은 글을 만든다(저장 0 · 동기화 0 · 감사 0) · 화면이 300ms 디바운스로 부름
+  app.post(A + '/bot-preview', authMiddleware, async (req, res) => {
+    try {
+      if (limited(req.user && req.user.id ? 'u' + req.user.id : ipOf(req), 'botpv', 300)) return res.status(429).json({ error: 'RATE' });   // 사람(로그인 id)마다 분당 300 — 사무실 공인 IP 하나로 여럿이 ④ 를 고쳐도 429 안 남(워커2 점검)
+      const body = req.body || {}; const e = body.event;
+      if (e != null && (typeof e !== 'object' || Array.isArray(e))) return res.status(400).json({ error: 'BODY' });
+      const cur = await loadCurrent(true);
+      const db = applyEventPatch(merge(JSON.parse(JSON.stringify(cur))), e || {}, body.excluded);   // 깊은 사본 · 캐시(cur) 무변경
+      const made = composeOut(db);
+      res.json({ ok: true, bot: made.bot, card: made.card, state: stateOf(db) });
+    } catch (e) { fail(res, e); }
+  });
+
+  // #711 판매현황 품목 묶음(응모 제외 품목 칩 고르기) — 읽기만 · 30초 기억 · 개인정보·금액 없음
+  app.get(A + '/products', authMiddleware, async (_req, res) => {
+    try { res.json({ ok: true, groups: await productGroups() }); } catch (e) { fail(res, e); }
   });
 
   // #708 그림 올리기(브라우저가 webp 로 줄여 base64 로) · 목록 · 지우기
@@ -700,5 +769,5 @@ module.exports = function mountLuckyEvent(app, { pool, authMiddleware, adminOnly
     const t = setInterval(() => { tickOnce().catch(() => { }); }, 3600e3); if (t.unref) t.unref();
   }
 
-  return { tickOnce, stateOf, checklistOf, pkValid, makePk, _assetTable: AT };
+  return { tickOnce, stateOf, checklistOf, pkValid, makePk, _assetTable: AT, _itemGroups: ITEM_GROUPS, groupProducts, composeOut };
 };

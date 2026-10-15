@@ -254,6 +254,7 @@ function drawWinners(){
   $('#wmodal').classList.add('on'); document.body.style.overflow='hidden';
 }
 async function openWinners(force){
+  if(PREVIEW){ if(force) previewShow('winners'); return; }   /* #711 미리보기 = 실 명단 호출 0 · 가짜 발표 창 */
   let seen=false; try{ seen=sessionStorage.getItem('lk_winners_seen')==='1'; }catch(_){}
   if(!force && seen) return;
   try{
@@ -273,6 +274,7 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('#wmodal').class
 async function lookup(){
   const q=$('#q').value.trim(); const box=$('#result');
   if(!q){ $('#q').focus(); return; }
+  if(PREVIEW){ previewShow('received'); return; }   /* #711 미리보기 = 실조회 0 · 표본 「접수 확인」 장 */
   box.innerHTML='<div class="res single"><div class="body"><div class="sub">조회 중...</div></div></div>';
   try{
     const r=await fetch('/api/lucky/lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});
@@ -322,6 +324,7 @@ function previewShow(kind){
   const o={ by:'buyer', inRange:kind!=='outside'&&kind!=='noitem', noitem:kind==='noitem', date:EV.start||'', vendor:'', product:kind==='noitem'?((EV.excludeProducts||[])[0]||'제외 품목')+' (미리보기)':'(미리보기) 주문 상품', qty:1, buyer:'홍*동', buyerPhone:'010-****-1234', recv:'홍*동', recvPhone:'010-****-1234', addr:'제주특별자치도 서귀포시 …', tracking:'', status:kind, prize:kind==='win'?p0:null };
   show({ ok:true, mode:'name', by:'buyer', results:[o], event:EV }, '홍길동');
 }
+if(PREVIEW) document.addEventListener('click',ev=>{ const a=ev.target.closest&&ev.target.closest('a[href]'); if(a) ev.preventDefault(); },true);   /* #711 미리보기 안 링크([스토어 가기] 등)는 밖으로 안 나감 */
 if(PREVIEW) window.addEventListener('message',ev=>{
   if(ev.origin!==location.origin||ev.source!==window.parent) return;
   const d=ev.data; if(!d||d.type!=='lucky:preview'||!d.event||typeof d.event!=='object') return;

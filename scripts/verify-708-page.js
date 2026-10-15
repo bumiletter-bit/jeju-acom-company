@@ -11,7 +11,7 @@ const { chromium } = require('playwright');
 const ROOT = path.join(__dirname, '..');
 const PORT = Number(process.env.PORT708 || 3462);
 const BASE = `http://127.0.0.1:${PORT}`;
-const OLD_REF = process.env.OLD_REF || 'HEAD';
+const OLD_REF = process.env.OLD_REF || 'ac67689';   // #708 앞 lucky.html(HEAD 는 #708 뒤라 옛 비교 기준이 못 됨)
 let pass = 0, failN = 0;
 const ok = (m, c, d) => { if (c) { pass++; console.log('  ✅', m); } else { failN++; console.log('  ❌', m, d !== undefined ? '→ ' + (typeof d === 'string' ? d : JSON.stringify(d)).slice(0, 400) : ''); } };
 
@@ -47,8 +47,9 @@ window.send=m=>document.getElementById('f').contentWindow.postMessage(m,location
 app.use('/img', express.static(path.join(ROOT, 'public', 'img')));
 let EVENT_HITS = 0;
 app.get('/api/lucky/event', (q, r) => { EVENT_HITS++; const o = JSON.parse(JSON.stringify(EVENT_RES)); if (q.query.pk === 'goodkey') o.event.preview = true; r.json(o); });
-app.get('/api/lucky/winners', (_q, r) => r.json(WIN_RES));
-app.post('/api/lucky/lookup', (q, r) => { const f = LOOKUP[String(q.body.q || '').trim()] || LOOKUP.none; const v = f(); if (Array.isArray(v)) return r.status(v[0]).json(v[1]); r.json(Object.assign({ event: EVENT_RES.event }, v)); });
+let WIN_HITS = 0, LOOKUP_HITS = 0;
+app.get('/api/lucky/winners', (_q, r) => { WIN_HITS++; r.json(WIN_RES); });
+app.post('/api/lucky/lookup', (q, r) => { LOOKUP_HITS++; const f = LOOKUP[String(q.body.q || '').trim()] || LOOKUP.none; const v = f(); if (Array.isArray(v)) return r.status(v[0]).json(v[1]); r.json(Object.assign({ event: EVENT_RES.event }, v)); });
 app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
 
 (async () => {
@@ -229,11 +230,36 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     ok('scene default 로 돌아오면 본 화면(상태 장 사라짐 · 카드 다시 보임)', await fr().evaluate(() => !document.getElementById('stCard') && [...document.querySelectorAll('.wrap > .card')].every(c => getComputedStyle(c).display !== 'none')));
     await pg.evaluate(() => window.send({ type: 'other', event: { title: 'X', prizes: [] } })); await pg.evaluate(() => window.send('문자열')); await pg.evaluate(() => window.send({ type: 'lucky:preview' })); await pg.waitForTimeout(150);
     ok('다른 꼴 메시지는 무시(화면 그대로)', await fr().evaluate(() => document.querySelector('.prize .n').textContent === '초안 경품 레몬'));
+    console.log('⑦-b #711 미리보기 장(docs/711-event-design.md 1절)');
+    WIN_HITS = 0; LOOKUP_HITS = 0;
+    const PNG1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const draft2 = JSON.parse(JSON.stringify(draft)); draft2.images.result = PNG1;
+    for (const k of ['received', 'win', 'lose', 'noitem', 'outside']) { await pg.evaluate(([d, k2]) => window.send({ type: 'lucky:preview', event: d, scene: k2 }), [draft2, k]); await pg.waitForTimeout(150); const src = await fr().evaluate(() => ((document.querySelector('#result img.pic') || {}).getAttribute ? document.querySelector('#result img.pic').getAttribute('src') : '') || ''); ok(`(a) images.result 바꾸면 ${k} 장 왼쪽 그림 = 새 그림`, src === PNG1, src.slice(0, 40)); }
+    await pg.evaluate(d => window.send({ type: 'lucky:preview', event: d, scene: 'winners' }), draft2); await pg.waitForTimeout(200);
+    v = await fr().evaluate(() => ({ m: document.querySelector('.mhero img').getAttribute('src'), pic: !!document.querySelector('#wmodal img.pic') }));
+    ok('(a) 결과 그림은 발표 창에 안 쓰임(발표 창 그림 = winner 슬롯 · 기본 그림 그대로)', v.m === 'img/lucky_winner_hero.webp' && !v.pic, v);
+    const draft3 = JSON.parse(JSON.stringify(draft)); draft3.published = true; draft3.state = 'published'; draft3.images.winner = PNG1;
+    await pg.evaluate(d => window.send({ type: 'lucky:preview', event: d, scene: 'default' }), draft3); await pg.waitForTimeout(300);
+    v = await fr().evaluate(() => ({ info: document.getElementById('evInfo').innerText, on: document.getElementById('wmodal').classList.contains('on'), btn: !!document.querySelector('#evInfo .wbtn') }));
+    ok('default + published → 「당첨자 발표 완료」 띠 + [명단 보기] · 발표 창 저절로 안 뜸 · 실 winners 호출 0', /당첨자 발표 완료/.test(v.info) && v.btn && !v.on && WIN_HITS === 0, Object.assign(v, { WIN_HITS }));
+    await fr().click('#evInfo .wbtn'); await pg.waitForTimeout(300);
+    v = await fr().evaluate(() => ({ on: document.getElementById('wmodal').classList.contains('on'), g: document.querySelectorAll('#wbody .wg').length, nm: (document.querySelector('#wbody .nm') || {}).textContent, m: document.querySelector('.mhero img').getAttribute('src').slice(0, 22) }));
+    ok('미리보기 [명단 보기] 실클릭 → 가짜 발표 창(초안 경품 2묶음 · 홍*동 · 초안 발표 그림) · 실 winners 호출 0', v.on && v.g === 2 && v.nm === '홍*동' && v.m === 'data:image/png;base64,' && WIN_HITS === 0, Object.assign(v, { WIN_HITS }));
+    await fr().click('#wclose'); await pg.waitForTimeout(150);
+    await pg.evaluate(d => window.send({ type: 'lucky:preview', event: d, scene: 'default' }), draft); await pg.waitForTimeout(200);
+    await fr().fill('#q', '홍길동'); await fr().click('#btn'); await pg.waitForTimeout(300);
+    v = await fr().evaluate(() => (document.querySelector('#result .big') || {}).textContent || '');
+    ok('미리보기 조회 칸 실클릭 → 표본 「접수되었습니다」 장 · 실 lookup 호출 0', /접수되었습니다/.test(v) && LOOKUP_HITS === 0, { v, LOOKUP_HITS });
+    await pg.evaluate(d => window.send({ type: 'lucky:preview', event: d, scene: 'closed' }), draft); await pg.waitForTimeout(200);
+    let popups = 0; ctx.on('page', () => popups++);
+    const frUrl = fr().url(); await fr().click('#stCard a.buy'); await pg.waitForTimeout(500);
+    ok('미리보기 [스토어 가기] 실클릭 → 새 창 0 · iframe 그대로(밖으로 안 나감)', popups === 0 && fr() && fr().url() === frUrl, { popups });
     await ctx.close();
     setEvent();
     P = await open('/lucky.html');
     await P.pg.evaluate(() => window.postMessage({ type: 'lucky:preview', event: { title: '가짜', prizes: [{ name: '가짜 경품', count: 1 }] } }, location.origin)); await P.pg.waitForTimeout(200);
     ok('preview=1 이 아닌 손님 페이지는 postMessage 무시', await P.pg.evaluate(() => document.querySelector('.prize .n').textContent === '황금향 5kg 선물용'));
+    { const h0 = LOOKUP_HITS; await P.pg.fill('#q', '홍길동'); await P.pg.click('#btn'); await P.pg.waitForTimeout(300); ok('일반 접속 조회는 종전대로 서버 lookup 호출(미리보기 막기가 새지 않음)', LOOKUP_HITS === h0 + 1, { h0, LOOKUP_HITS }); }
     await P.ctx.close();
 
     console.log('⑧ 콘솔 오류');
