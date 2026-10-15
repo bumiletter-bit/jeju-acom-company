@@ -49,9 +49,14 @@
         winner: { label: '발표 창 그림', w: 900, h: 471, pose: '기쁨', field: 'winner_image_id' },
         result: { label: '결과 그림', w: 400, h: 400, pose: '인사', field: 'result_image_id' },
         prize: { label: '경품 그림', w: 480, h: 480, pose: '귤들기', field: 'image_id' },
+        brand: { label: '품목 사진', w: 480, h: 480 },
     };
     const POSES = ['인사', '귤들기', '상자들기', '기쁨', '엄지척', '안내'];
-    const BRAND_FALLBACK = ['고당도 하우스귤', '그린레몬', '노란레몬', '유라조생', '황금향'];
+    const BRAND_FALLBACK = ['고당도 하우스귤', '그린레몬', '노란레몬', '유라조생', '황금향', '레드키위'];
+    // 품목 알아보기(#709) — ①사진 이름(label)이 경품 이름에 글자 그대로 들어 있으면 그 사진(가장 긴 이름) ②없으면 같은 낱말 묶음 ③어느 묶음에도 안 들면 붙이지 않음
+    //   🔴 맨 「귤」·「감귤」은 묶음에 넣지 않는다 — 다른 품목 사진이 손님 화면에 붙지 않게(업무지식 「유라를 하우스 사진으로 대신하지 않는다」 · 청귤에 하우스 사진 금지)
+    const ITEM_GROUPS = [['청귤', '풋귤'], ['황금향'], ['한라봉'], ['천혜향'], ['레드향'], ['레드키위', '키위'], ['노란레몬'], ['그린레몬', '레몬'], ['노지감귤', '노지', '유라조생', '유라'], ['하우스귤', '하우스감귤', '하우스']];
+    const groupOf = s => { const n = String(s || '').replace(/\s+/g, ''); return ITEM_GROUPS.findIndex(g => g.some(k => n.includes(k))); };
     const STEP_TITLE = ['', '기간·제목', '경품', '상단 그림', '문구', '미리보기', '열기·운영'];
     const STATE_LABEL = { preparing: ['준비 중', 'ev-pill-off'], scheduled: ['예약됨', 'ev-pill-wait'], live: ['진행 중', 'ev-pill-ok'], published: ['발표 중', 'ev-pill-ok'], down: ['내려감', 'ev-pill-off'] };
     const AD_WORDS = /할인|쿠폰|%|\d\s*원/;   // /guide 카드 글엔 넣지 않음(광고성 선 · 설계 5절)
@@ -100,11 +105,13 @@
     const brandNames = () => { const n = brandAssets().map(a => a.label).filter(Boolean); return n.length ? [...new Set(n)] : BRAND_FALLBACK; };
     // 경품 이름에서 품목을 알아봄(설계 0-ㄷ) — 「브랜드」 실사진이 올라가 있으면 그 그림
     function brandFor(name) {
-        const n = String(name || '').replace(/\s+/g, '');
-        const keys = [['황금향', '황금향'], ['레드키위', '레드키위'], ['노란레몬', '노란레몬'], ['그린레몬', '그린레몬'], ['레몬', '그린레몬'], ['유라', '유라조생'], ['하우스', '고당도 하우스귤'], ['감귤', '고당도 하우스귤'], ['귤', '고당도 하우스귤']];
-        const hit = keys.find(([k]) => n.includes(k)); if (!hit) return null;
-        const a = brandAssets().find(x => String(x.label || '').replace(/\s+/g, '').includes(hit[1].replace(/\s+/g, '')));
-        return { id: a ? a.id : null, name: hit[1] };
+        const n = String(name || '').replace(/\s+/g, ''); if (!n) return null;
+        const all = brandAssets().slice().sort((x, y) => y.id - x.id);   // 같은 이름이면 최근 것
+        const exact = all.filter(x => { const l = String(x.label || '').replace(/\s+/g, ''); return l && n.includes(l); }).sort((x, y) => String(y.label).length - String(x.label).length)[0];
+        if (exact) return { id: exact.id, name: exact.label };
+        const g = groupOf(name); if (g < 0) return null;
+        const a = all.find(x => groupOf(x.label) === g);
+        return { id: a ? a.id : null, name: a ? a.label : ITEM_GROUPS[g][0] };
     }
     const prizeImg = p => {
         if (p && p.image_id) { const a = assetById(p.image_id); return { url: assetUrl(p.image_id), how: a && a.slot === 'brand' ? '품목 사진' : '올린 그림' }; }
@@ -128,7 +135,7 @@
         out[2] = { ok: !miss2.length, miss: miss2, sum: miss2.length ? '빠짐: ' + miss2.join(' · ') : `경품 ${ps.length}개 · 총 ${people}명` };
         const heroOn = !!e.hero_image_id, winOn = !!e.winner_image_id;
         out[3] = { ok: true, miss: [], sum: `배너 ${heroOn ? '올린 그림' : '기본 그림'} · 발표 ${winOn ? '올린 그림' : '기본 그림'}${(e.pending_art || []).length ? ' · 아꼼이가 만드는 중 ' + e.pending_art.length + '건' : ''}` };
-        const tx = e.texts || {}, filled = TEXT_LABEL.filter(([k]) => String(tx[k] || '').trim()).length;
+        const tx = e.texts || {}, filled = TEXT_LABEL.filter(([k]) => String(tx[k] || '').trim() && String(tx[k]).trim() !== TEXT_DEFAULT[k]).length;   // 서버가 기본 글자를 채워 주므로 기본과 다른 것만 「바꿈」
         out[4] = { ok: true, miss: [], sum: `손글씨 ${filled ? filled + '곳 바꿈' : '기본 글자'}${e.coupon_text ? ' · 쿠폰 문구 있음' : ''}` };
         out[5] = { ok: seen(), miss: seen() ? [] : ['미리보기 한 번 열어 보기'], sum: seen() ? '확인함' : '아직 안 열어 봄' };
         const st = stateOf();
@@ -241,7 +248,49 @@
                     <div class="ev-row">${btn('↑', `data-ev="pup" data-i="${i}" aria-label="${i + 1}등 위로"${i ? '' : ' disabled'}`, 'sm icon')}${btn('↓', `data-ev="pdown" data-i="${i}" aria-label="${i + 1}등 아래로"${i < ps.length - 1 ? '' : ' disabled'}`, 'sm icon')}${btn('빼기', `data-ev="pdel" data-i="${i}" aria-label="${i + 1}등 빼기"`, 'sm danger')}</div>
                 </div></li>`;
         }).join('')}</ol>${ps.length ? '' : '<p class="ev-empty">아직 경품이 없어요.</p>'}${btn('+ 경품 추가', 'data-ev="padd"')}
-        <p class="ev-note">경품 그림을 안 올리면 경품 이름에서 품목을 알아봐 실제 품목 사진을 써요(황금향·레몬·하우스귤·유라조생).</p>`;
+        <p class="ev-note">경품 그림을 안 올리면 경품 이름에서 품목을 알아봐 아래 「품목 사진」을 써요.</p>${brandBox()}`;
+    }
+    // #709(대표 「직원이 직접」) 품목 사진 관리 — 경품 그림 기본값으로 쓰는 실제 품목 사진(slot brand · label = 품목 이름) · 품목이 바뀌어도 직원이 올림
+    function brandBox() {
+        const list = brandAssets().slice().sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), 'ko') || b.id - a.id);
+        const names = [...new Set(BRAND_FALLBACK.concat(S.itemNames || []))];
+        return `<div class="ev-sub ev-brand" id="ev-brand"><div class="ev-sub-h"><b>품목 사진</b><span class="ev-f-h">경품 그림을 안 올렸을 때 쓰는 실제 상품 사진 · 품목이 바뀌면 여기서 올려요</span></div>
+            ${list.length ? `<ul class="ev-blist">${list.map(a => `<li class="ev-bitem" data-id="${a.id}"><img src="${esc(assetUrl(a.id))}" alt="${esc(a.label || '품목 사진')}" loading="lazy"><b>${esc(a.label || '(이름 없음)')}</b>
+                <span class="ev-row">${btn('바꾸기', `data-ev="brep" data-id="${a.id}" data-label="${esc(a.label || '')}" aria-label="${esc(a.label || '')} 사진 바꾸기"`, 'sm')}${btn('지우기', `data-ev="bdel" data-id="${a.id}" aria-label="${esc(a.label || '')} 사진 지우기"`, 'sm danger')}</span></li>`).join('')}</ul>` : '<p class="ev-empty">아직 올린 품목 사진이 없어요.</p>'}
+            <div class="ev-badd"><label class="ev-f"><span class="ev-f-l">품목 이름</span><input type="text" class="ev-in" id="ev-blabel" list="ev-bnames" maxlength="30" placeholder="예: 황금향 · 고르거나 직접 입력" autocomplete="off"></label>
+                <datalist id="ev-bnames">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+                ${btn('품목 사진 올리기', 'data-ev="badd"', 'primary')}</div></div>`;
+    }
+    async function loadItemNames() {
+        if (S.itemNames) return;
+        S.itemNames = [];
+        const r = await call('/api/agent-office/bot-products');
+        const ps = r.body && Array.isArray(r.body.products) ? r.body.products : [];
+        // 판매현황 이름의 「 / 」 앞(품목) · 「…:」 머리말 · 무게 이하를 뗀 품목 이름
+        S.itemNames = [...new Set(ps.filter(p => !p.deleted_at).map(p => String(p.name || '').split(' / ')[0].replace(/^[^:]*:\s*/, '').replace(/\s*\d+(\.\d+)?\s*kg.*$/i, '').replace(/^(최상품|제철)\s*/, '').trim()).filter(n => n && n.length <= 30))];
+        const dl = $('ev-bnames'); if (dl) dl.innerHTML = [...new Set(BRAND_FALLBACK.concat(S.itemNames))].map(n => `<option value="${esc(n)}">`).join('');
+    }
+    async function uploadBrand(file, label, replaceId) {
+        label = String(label || '').trim().slice(0, 30);
+        if (!label) { toast('품목 이름을 먼저 적어 주세요', 'error'); const el = $('ev-blabel'); if (el) el.focus(); return; }
+        if (!/^image\/(png|jpe?g|webp)$/.test(file.type || '')) { toast('그림 파일(png·jpg·webp)만 올릴 수 있어요', 'error'); return; }
+        toast('사진을 줄여서 올리는 중', undefined, 1600);
+        let s; try { s = await shrink(file, 'brand'); } catch (e) { toast(e.message, 'error'); return; }
+        const r = await call(A + '/assets', 'POST', { slot: 'brand', mime: s.blob.type, data: await b64(s.blob), width: s.w, height: s.h, label });
+        if (!r.ok || !r.body.asset) { toast(errText(r.body), 'error', 3600); return; }
+        S.assets = S.assets.concat([r.body.asset]);
+        let msg = `「${label}」 사진을 올렸어요`;
+        if (replaceId) {
+            const d = await call(A + '/assets/' + replaceId, 'DELETE');
+            if (d.ok) S.assets = S.assets.filter(a => String(a.id) !== String(replaceId));
+            else if (d.status === 409) msg += ' · 옛 사진은 지금 회차 경품이 쓰고 있어 남겨 뒀어요(새 경품부터 새 사진)';
+        }
+        toast(msg, 'lime', 3600); render(); postPreview();
+    }
+    function pickBrand(label, replaceId) {
+        const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/png,image/jpeg,image/webp'; f.hidden = true;
+        f.onchange = () => { const x = f.files && f.files[0]; f.remove(); if (x) uploadBrand(x, label, replaceId); };
+        document.body.appendChild(f); f.click();
     }
     function slotBox(slot) {
         const d = SLOTS[slot], e = S.ev;
@@ -470,11 +519,18 @@
         const url = URL.createObjectURL(blob);
         try {
             const im = await loadImg(url);
-            const maxW = d.w, maxH = slot === 'hero' ? 1200 : Math.max(d.h, d.w);
-            const sc = Math.min(1, maxW / im.naturalWidth, maxH / im.naturalHeight);
-            const w = Math.max(1, Math.round(im.naturalWidth * sc)), h = Math.max(1, Math.round(im.naturalHeight * sc));
-            const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-            cv.getContext('2d').drawImage(im, 0, 0, w, h);
+            let w, h; const cv = document.createElement('canvas');
+            if (slot === 'brand') {   // 품목 사진 = 정사각 가운데 자르기(cover) · 480×480(원본이 작으면 그 짧은 변)
+                const side = Math.min(im.naturalWidth, im.naturalHeight); w = h = Math.max(1, Math.min(d.w, side));
+                cv.width = w; cv.height = h;
+                cv.getContext('2d').drawImage(im, (im.naturalWidth - side) / 2, (im.naturalHeight - side) / 2, side, side, 0, 0, w, h);
+            } else {
+                const maxW = d.w, maxH = slot === 'hero' ? 1200 : Math.max(d.h, d.w);
+                const sc = Math.min(1, maxW / im.naturalWidth, maxH / im.naturalHeight);
+                w = Math.max(1, Math.round(im.naturalWidth * sc)); h = Math.max(1, Math.round(im.naturalHeight * sc));
+                cv.width = w; cv.height = h;
+                cv.getContext('2d').drawImage(im, 0, 0, w, h);
+            }
             let q = 0.86, out = null;
             for (let i = 0; i < 6; i++) { out = await new Promise(r => cv.toBlob(r, 'image/webp', q)); if (!out) break; if (out.size <= 400 * 1024) break; q -= 0.12; }
             if (!out || out.type !== 'image/webp') out = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.82));
@@ -596,12 +652,21 @@
         const E = S.ev;
         switch (a) {
             case 'reload': return enter(true);
-            case 'fold': { const k = +b.dataset.step; S.open.has(k) ? S.open.delete(k) : S.open.add(k); if (k === 5 && S.open.has(5)) { markSeen(); } render(); if (S.open.has(k)) { const sec = $('ev-step-' + k); if (sec && sec.getBoundingClientRect().top < 0) sec.scrollIntoView({ block: 'start' }); } return; }
+            case 'fold': { const k = +b.dataset.step; if (k === 2) loadItemNames(); S.open.has(k) ? S.open.delete(k) : S.open.add(k); if (k === 5 && S.open.has(5)) { markSeen(); } render(); if (S.open.has(k)) { const sec = $('ev-step-' + k); if (sec && sec.getBoundingClientRect().top < 0) sec.scrollIntoView({ block: 'start' }); } return; }
             case 'save': return save();
             case 'padd': E.prizes.push({ name: '', count: 1, desc: '', note: '' }); S.dirty = true; render(); { const el = document.querySelector(`#event-root [data-k="prizes.${E.prizes.length - 1}.name"]`); if (el) el.focus(); } postPreview(); return;
             case 'pdel': E.prizes.splice(i, 1); S.dirty = true; render(); postPreview(); return;
             case 'pup': case 'pdown': { const j = a === 'pup' ? i - 1 : i + 1; if (j < 0 || j >= E.prizes.length) return; [E.prizes[i], E.prizes[j]] = [E.prizes[j], E.prizes[i]]; S.dirty = true; render(); postPreview(); return; }
             case 'upload': return pickFile(b.dataset.slot, i);
+            case 'badd': { const v = ($('ev-blabel') || {}).value || ''; if (!v.trim()) { toast('품목 이름을 먼저 적어 주세요', 'error'); $('ev-blabel').focus(); return; } return pickBrand(v); }
+            case 'brep': return pickBrand(b.dataset.label, +b.dataset.id);
+            case 'bdel': {
+                if (!await confirmBox('이 품목 사진을 지울까요?', '지운 사진은 경품 그림 기본값으로 더 쓰이지 않아요. 지난 회차 복사본에서도 빠져요.', '지우기', true)) return;
+                const d = await call(A + '/assets/' + b.dataset.id, 'DELETE');
+                if (d.status === 409) { toast('지금 회차 경품이 이 사진을 쓰고 있어 지울 수 없어요. 경품 그림을 바꾼 뒤 지워 주세요', 'error', 4600); return; }
+                if (!d.ok) { toast(errText(d.body), 'error'); return; }
+                S.assets = S.assets.filter(a => String(a.id) !== b.dataset.id); toast('지웠어요', 'lime'); render(); return;
+            }
             case 'art': return artSheet(b.dataset.slot, i);
             case 'unset': { const s = b.dataset.slot; E[SLOTS[s].field] = null; S.dirty = true; render(); postPreview(); return; }
             case 'candx': E.pending_art = E.pending_art.filter(p => String(p.order_id) !== b.dataset.order); S.dirty = true; render(); return;

@@ -32,6 +32,7 @@ function fakeServer(opt) {
         if (p === '/api/agent-office/lucky/state') return F.body();
         if (p === '/api/agent-office/lucky/new-round') { F.id = (F.id || 41) + 1; F.db.event = { title: body.title || '새 이벤트', start: '', end: '', announce: '', page_until: '', prizes: [], published: false, excludeProducts: [], live_mode: 'draft', texts: Object.assign({}, SRV_TEXTS), guide_card: { enabled: true, custom: false }, bot_reply: { enabled: true, custom: false }, pending_art: [] }; return { ok: true, db: F.db }; }   // 실서버처럼 id·state 없음
         if (p === '/api/agent-office/lucky/assets' && method === 'GET') return { ok: true, assets: F.assets };
+        if (/^\/api\/agent-office\/lucky\/assets\/\d+$/.test(p) && method === 'DELETE') { const id = +p.split('/').pop(); const e = F.db.event; const used = [e.hero_image_id, e.winner_image_id, e.result_image_id].concat((e.prizes || []).map(x => x.image_id)).includes(id); if (used) return { status: 409, json: { error: 'IN_USE' } }; F.assets = F.assets.filter(a => a.id !== id); return { ok: true }; }
         if (p === '/api/agent-office/lucky/assets') { const id = F.nextAsset++; const a = { id, slot: body.slot, label: body.label, mime: body.mime, url: `/api/lucky/asset/${id}?v=bbbb${id}`, width: body.width, height: body.height }; F.assets.push(a); return { ok: true, asset: a }; }
         if (p === '/api/agent-office/lucky/event') { const e = body.event || {}; Object.assign(F.db.event, e, { live_mode: F.db.event.live_mode }); if (!F.db.event.page_until && F.db.event.announce) F.db.event.page_until = addDays(F.db.event.announce, 3); F.db.excluded = body.excluded || []; return F.body({ synced: { card: false, bot: false } }); }
         if (p === '/api/agent-office/lucky/go-live') { if (['live', 'scheduled'].includes(body.mode) && !checklist().ready) return { status: 400, json: { error: 'NOT_READY', missing: checklist().missing } }; F.db.event.live_mode = body.mode; return F.body({ synced: { card: true, bot: true } }); }
@@ -102,7 +103,7 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
         const overflow = pg => pg.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
 
         // ── #708-B 손질: 회차 없음(0행) · 서버 기본 글자 줄바꿈 · 경품 설명 줄바꿈 · 인원 숫자 ──
-        for (const [label, vw, phone] of [['390', { width: 390, height: 844 }, true], ['1280', { width: 1280, height: 900 }, false]]) {
+        for (const [label, vw, phone] of (process.env.V708_ONLY === 'brand' ? [] : [['390', { width: 390, height: 844 }, true], ['1280', { width: 1280, height: 900 }, false]])) {
             const X = await open(vw, { phone, noRound: true }); const { pg, F } = X; const tag = label + ' 손질';
             await goEvent(pg, phone);
             const z = await pg.evaluate(() => ({ cards: document.querySelectorAll('#event-root .ev-card').length, pill: (document.querySelector('.ev-head .ev-pill') || {}).textContent, btns: [...document.querySelectorAll('#event-root [data-ev]')].map(b => b.dataset.ev) }));
@@ -127,7 +128,49 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             ok(`${tag}: 오류 0`, !X.st.errors.length && !X.st.console.length, X.st.errors.concat(X.st.console).slice(0, 3).join(' | '));
             await X.ctx.close();
         }
-        if (process.env.V708_ONLY === 'fix') throw { done: true };
+        if (process.env.V708_ONLY === 'fix') throw { done: true };   // 손질 구간만
+        // ── #709 품목 사진 관리(② 카드 아래) ──
+        for (const [label, vw, phone] of [['390', { width: 390, height: 844 }, true], ['1280', { width: 1280, height: 900 }, false]]) {
+            const X = await open(vw, { phone }); const { pg, F } = X; const tag = label + ' 품목 사진';
+            await goEvent(pg, phone); await openCard(pg, 2); await pg.waitForTimeout(1200);
+            const b0 = await pg.evaluate(() => ({ items: [...document.querySelectorAll('#ev-brand .ev-bitem')].map(li => li.querySelector('b').textContent + (li.querySelector('img') ? ':img' : '')), opts: document.querySelectorAll('#ev-bnames option').length, btns: [...document.querySelectorAll('#ev-brand [data-ev]')].map(x => x.dataset.ev) }));
+            ok(`${tag}: ② 카드 아래 목록 = 올린 품목 사진(황금향 · 썸네일 · [바꾸기][지우기]) + 품목 이름 고르기(판매현황 이름 포함) + [품목 사진 올리기]`, b0.items.join() === '황금향:img' && b0.btns.join() === 'brep,bdel,badd' && b0.opts > 6, JSON.stringify(b0));
+            const w0 = F.writes.length; await pg.click('[data-ev="badd"]'); await pg.waitForTimeout(400);
+            ok(`${tag}: 품목 이름 없이 누르면 안내만(파일 창·서버 호출 0)`, F.writes.length === w0 && await pg.evaluate(() => document.activeElement && document.activeElement.id === 'ev-blabel'));
+            await pg.fill('#ev-blabel', '고당도 하우스감귤');
+            { const [fc] = await Promise.all([pg.waitForEvent('filechooser'), pg.click('[data-ev="badd"]')]); await fc.setFiles({ name: 'gyul.png', mimeType: 'image/png', buffer: PNG }); await pg.waitForTimeout(1500); }
+            const ub = F.writes.filter(w => w.p.endsWith('/assets')).pop();
+            ok(`${tag}: 올리기 = POST /assets {slot:brand · label · webp · 480×480 가운데 자르기}`, ub && ub.body.slot === 'brand' && ub.body.label === '고당도 하우스감귤' && ub.body.mime === 'image/webp' && ub.body.width === 480 && ub.body.height === 480, ub && JSON.stringify({ slot: ub.body.slot, label: ub.body.label, w: ub.body.width, h: ub.body.height }));
+            await pg.fill('#ev-blabel', '유라조생');
+            { const [fc] = await Promise.all([pg.waitForEvent('filechooser'), pg.click('[data-ev="badd"]')]); await fc.setFiles({ name: 'yura.png', mimeType: 'image/png', buffer: PNG }); await pg.waitForTimeout(1500); }
+            const yid = F.assets.find(a => a.label === '유라조생').id, hid = F.assets.find(a => a.label === '고당도 하우스감귤').id;
+            await pg.click('[data-ev="padd"]'); await setVal(pg, 'prizes.0.name', '청귤 1kg'); await setVal(pg, 'prizes.0.count', '1');
+            await pg.click('[data-ev="padd"]'); await setVal(pg, 'prizes.1.name', '노지감귤 5kg'); await setVal(pg, 'prizes.1.count', '1');
+            await pg.click('[data-ev="padd"]'); await setVal(pg, 'prizes.2.name', '제철 감귤 3kg'); await setVal(pg, 'prizes.2.count', '1');
+            await pg.click('[data-ev="save"]'); await pg.waitForTimeout(700);
+            const svm = F.writes.filter(w => w.p.endsWith('/event')).pop().body.event.prizes.map(p => p.image_id);
+            ok(`${tag}: 매칭 = 청귤 1kg → 사진 안 붙음 · 노지감귤 5kg → 유라조생 사진 · 맨 「감귤」 → 안 붙음(하우스 사진 금지)`, svm[0] === null && svm[1] === yid && svm[2] === null, JSON.stringify({ svm, yid, hid }));
+            await pg.click('[data-ev="pdel"][data-i="2"]'); await pg.click('[data-ev="pdel"][data-i="1"]'); await pg.click('[data-ev="pdel"][data-i="0"]'); await pg.waitForTimeout(300);
+            await pg.click('[data-ev="padd"]'); await setVal(pg, 'prizes.0.name', '고당도 하우스감귤 3kg 선물용'); await setVal(pg, 'prizes.0.count', '2'); await pg.click('[data-ev="save"]'); await pg.waitForTimeout(700);
+            const pz = await pg.evaluate(() => (document.querySelector('.ev-prize .ev-prize-img > span') || {}).textContent);
+            const sv = F.writes.filter(w => w.p.endsWith('/event')).pop();
+            ok(`${tag}: 「고당도 하우스감귤 3kg」 경품 = 같은 이름 품목 사진 자동(글자 일치 · 저장 image_id = 그 사진)`, /품목 사진/.test(pz || '') && F.assets.find(a => a.label === '고당도 하우스감귤').id === sv.body.event.prizes[0].image_id, (pz || '') + ' · ' + JSON.stringify(sv.body.event.prizes[0]));
+            // 바꾸기(황금향 · 안 쓰는 사진) → 새로 올리고 옛 것 지움
+            { const [fc] = await Promise.all([pg.waitForEvent('filechooser'), pg.click('#ev-brand .ev-bitem[data-id="7"] [data-ev="brep"]')]); await fc.setFiles({ name: 'hgh.png', mimeType: 'image/png', buffer: PNG }); await pg.waitForTimeout(1500); }
+            const rep = F.writes.slice(-2);
+            ok(`${tag}: [바꾸기] = 같은 이름으로 새로 올리고 옛 사진 DELETE · 목록 1장 유지`, rep[0].p.endsWith('/assets') && rep[0].body.label === '황금향' && rep[1].method === 'DELETE' && /assets\/7$/.test(rep[1].p) && await pg.evaluate(() => [...document.querySelectorAll('#ev-brand .ev-bitem b')].filter(b => b.textContent === '황금향').length === 1), JSON.stringify(rep.map(w => w.method + ' ' + w.p)));
+            // 지우기 — 쓰는 사진(감귤)이면 409 안내 · 남아 있음
+            const gid = F.assets.find(a => a.label === '고당도 하우스감귤').id;
+            await pg.click(`#ev-brand .ev-bitem[data-id="${gid}"] [data-ev="bdel"]`); await pg.waitForSelector('.ev-dlg'); await pg.click('.ev-dlg [data-x="1"]'); await pg.waitForTimeout(700);
+            const st409 = await pg.evaluate(gid => ({ still: !!document.querySelector(`#ev-brand .ev-bitem[data-id="${gid}"]`), toast: [...document.querySelectorAll('.toast-message')].map(t => t.textContent).join(' ') }), gid);
+            ok(`${tag}: 경품이 쓰는 사진 [지우기] = 409 → 「쓰고 있어 지울 수 없어요」 안내 · 목록에 남음`, st409.still && /쓰고 있어/.test(st409.toast), JSON.stringify(st409));
+            const sm = phone ? await small44(pg) : [];
+            if (phone) ok(`${tag}: 44px`, sm.length === 0, sm.join(', '));
+            ok(`${tag}: 가로 넘침 0 · 오류 0`, !(await overflow(pg)) && !X.st.errors.length && !X.st.console.length, X.st.errors.concat(X.st.console).slice(0, 3).join(' | '));
+            if (SHOT) await pg.screenshot({ path: path.join(SHOT, `709-${label}.png`), fullPage: true });
+            await X.ctx.close();
+        }
+        if (process.env.V708_ONLY === 'brand') throw { done: true };
         for (const [label, vw, phone] of [['390', { width: 390, height: 844 }, true], ['900', { width: 900, height: 1000 }, true], ['1440', { width: 1440, height: 1000 }, false]]) {
             const X = await open(vw, { phone }); const { pg, F } = X; const tag = label + ' 밝음';
             await goEvent(pg, phone);

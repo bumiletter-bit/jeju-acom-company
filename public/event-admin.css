@@ -97,6 +97,15 @@ select.ev-in { padding-right: 28px; }
 .ev-cnt { text-align: right; font-variant-numeric: tabular-nums; }
 .ev-unit { font-size: 13px; color: var(--text-mid, #667085); }
 
+/* ② 품목 사진(#709) */
+.ev-blist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.ev-bitem { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border, #ECEDF1); border-radius: 12px; background: var(--ev-soft); min-width: 0; }
+.ev-bitem img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: var(--card-bg, #fff); }
+.ev-bitem b { font-size: 13px; color: var(--text-dark, #101828); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-bitem .ev-row { gap: 6px; }
+.ev-badd { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+@media (max-width: 640px) { .ev-blist { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ev-badd { grid-template-columns: 1fr; } }
+
 /* ③ 그림 자리 */
 .ev-slot { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border, #ECEDF1); border-radius: 12px; }
 .ev-slot-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; color: var(--text-dark, #101828); }
