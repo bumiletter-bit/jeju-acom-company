@@ -399,6 +399,7 @@ function switchPage(pageName) {
         renderMallGameConfig().catch(console.error);   // 지시 #85 STEP3 — 게임 운영 설정
     }
     if (pageName === 'myinfo') { renderMyInfoPage(); if (window.AkmPayslip) window.AkmPayslip.render(); }   // #674 급여명세서 탭(payslip.js)
+    if (pageName === 'event' && window.AkmEvent) window.AkmEvent.enter();   // #708-B 이벤트 관리(event-admin.js)
     // #469: 에이전트 오피스 = 클코 창구 화면(ao-desk.js). 파일이 없으면 종전 화면으로
     if (pageName === 'agent-office') Promise.resolve(window.aoDeskEnter ? window.aoDeskEnter() : renderAgentOffice()).catch(console.error);
 }
@@ -1196,6 +1197,7 @@ function notiGo(link) {
     if (tabKey) setTimeout(() => { const tb = document.querySelector(`.settlement-tab[data-tab="${tabKey}"]`); if (tb) tb.click(); }, 150);
     if (page === 'myinfo' && prm.get('pay')) setTimeout(() => { if (window.AkmPayslip) window.AkmPayslip.open(); }, 200);   // #674 급여명세서 알림 → 내 정보 > 급여명세서
     if (page === 'myinfo' && prm.get('rules')) setTimeout(() => { if (window.AkmRules) window.AkmRules.open(); }, 200);   // #687 회사 규정 알림 → 내 정보 > 회사 규정
+    if (page === 'event' && prm.get('step')) setTimeout(() => { if (window.AkmEvent) window.AkmEvent.open(prm.get('step')); }, 200);   // #708-B 「아꼼이 그림 왔어요」 알림 → 이벤트 관리 그 단계 카드
     const oid = parseInt(prm.get('o'), 10), rid = parseInt(prm.get('id'), 10), sid = parseInt(prm.get('sms'), 10);   // #610 ?sms=대화번호 → 문자 카드 그 대화
     if (!(oid > 0) && !(rid > 0) && !(sid > 0)) return;
     // #620: 새로고침 직후 알림 해시로 올 때 ao-desk.js(258KB)가 아직 안 내려왔을 수 있다 → agent-office 갈래는 AkmAoDesk 가 생길 때까지 100ms 간격 최대 5초 기다렸다 연다(워커4 원인 조사 · 화면 자체는 ao-desk.js 끝 한 줄이 그림)

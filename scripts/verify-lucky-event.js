@@ -50,7 +50,9 @@ async function main() {
   const adminOnly = (req, res, next) => req.user.role === 'admin' ? next() : res.status(403).json({ error: '관리자 권한이 필요합니다' });
   const mount = require(path.join(__dirname, '..', 'lucky-event.js'));
 
-  function makeNewApp() { const app = express(); app.use(express.json({ limit: '15mb' })); app.use(express.static(path.join(__dirname, '..', 'public'))); mount(app, { pool, authMiddleware: fakeAuth, adminOnly, writeAudit, table: TABLE }); return app; }
+  // #708: 가짜 동기화 받이·tick:false — 운영 agent_office_config 'guide_event_card'·inquiry_scenarios #59 무접촉(10/15 2차 실사고: 받이 없이 띄워 운영 값을 덮음 · table 인자가 있으면 모듈도 기본 꺼짐)
+  const syncSink = { cfgSet: async () => { }, scenarioUpsert: async () => null };
+  function makeNewApp() { const app = express(); app.use(express.json({ limit: '15mb' })); app.use(express.static(path.join(__dirname, '..', 'public'))); mount(app, { pool, authMiddleware: fakeAuth, adminOnly, writeAudit, table: TABLE, sync: syncSink, tick: false }); return app; }
   const servers = [];
   const listen = (app, port) => new Promise(r => { const s = app.listen(port, () => r(s)); servers.push(s); });
 
@@ -133,7 +135,8 @@ async function main() {
   ok(st.status === 200 && st.j.db, '직원 계정 → 상태 조회 가능');
   const stOrd = await N('orders', { orders: [{ vendor: '효돈', date: '2026-09-20', buyer: '직원등록테스트', buyerPhone: '010-9999-0001', recv: '직원등록테스트', recvPhone: '010-9999-0001', product: '황금향 가정용 - 5kg', tracking: '699999999991' }], label: 'staff' }, 'staff');
   ok(stOrd.status === 200 && stOrd.j.added === 1, '직원 계정 → 송장 업로드 가능');
-  for (const p of ['restore', 'reset', 'new-round']) { const r = await N(p, { confirm: p === 'reset' ? 'RESET' : 'NEW', db: { orders: [] } }, 'staff'); ok(r.status === 403, `직원 계정 → ${p} 차단(403)`); }
+  { const r = await N('restore', { db: { orders: [] } }, 'staff'); ok(r.status === 403, '직원 계정 → restore 차단(403 · #708 에서도 관리자만)'); }
+  for (const p of ['reset', 'new-round']) { const r = await N(p, { confirm: 'X' }, 'staff'); ok(r.status === 400, `직원 계정 → ${p} 허용(#708 대표 10/15 · 확인 글자 없으면 400 · 자료 무변경)`); }
   const rsNo = await N('reset', { confirm: 'X' }, 'admin');
   ok(rsNo.status === 400, '초기화는 RESET 확인 없으면 거부');
   const aTxt = JSON.stringify(audits);
@@ -183,11 +186,14 @@ async function main() {
     ok((await N('state')).j.db.event.title === '화면 검증 이벤트', '설정 저장 → DB 반영');
     await pg.click('#btnDraw'); await pg.waitForFunction(() => document.querySelectorAll('#tblWin tbody tr td b').length > 0, null, { timeout: 8000 });
     ok((await pg.locator('#tblWin tbody tr').count()) === 16, '추첨 → 당첨자 표 16행');
-    await pg.click('#btnPublish'); await pg.waitForTimeout(700);
+    await pg.click('#btnPublish'); await pg.waitForFunction(() => /발표중/.test(document.querySelector('#sPub')?.textContent || ''), null, { timeout: 8000 }).catch(() => { });   // 700ms 고정 대기는 흔들림(10/15 1회) → 글자가 바뀔 때까지 최대 8초
     ok((await pg.textContent('#sPub')).includes('발표중'), '발표 시작 → 상태 「발표중」');
+    // #708: 0행에서 만들어진 회차는 「초안」으로 시작(손님에겐 준비 중) → 손님 화면을 보기 전에 열기(내리는 날은 멀리 · 옛 lucky-admin 화면엔 열기 단추가 없어 API 로)
+    await N('event', { event: { page_until: '2027-12-31' } }); const gl = await N('go-live', { mode: 'live' });
+    ok(gl.status === 200 && gl.j.state === 'published', '#708 열기(go-live live) → state published(발표 중)');
     ok((await pg.evaluate(() => localStorage.getItem('lucky_backup'))) === null, '브라우저에 명단 백업 저장 안 함(개인정보)');
-    const staffNew = await pg.evaluate(async () => { const r = await fetch('/api/agent-office/lucky/new-round', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer staff' }, body: '{"confirm":"NEW"}' }); return r.status; });
-    ok(staffNew === 403, '직원 화면에서 새 회차 요청 → 403');
+    const staffNew = await pg.evaluate(async () => { const r = await fetch('/api/agent-office/lucky/new-round', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer staff' }, body: '{"confirm":"X"}' }); return r.status; });
+    ok(staffNew === 400, '직원 화면에서 새 회차 요청 → 허용(#708 · 확인 글자 없으면 400 · 자료 무변경)');
     // 손님 화면
     const cp = await ctx.newPage(); cp.on('pageerror', e => errs.push(e.message));
     await new Promise(r => setTimeout(r, 15500));   // 공개 캐시 15초

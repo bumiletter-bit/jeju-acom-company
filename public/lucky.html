@@ -109,6 +109,17 @@ body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic
 @media (max-width:360px){ .wl{grid-template-columns:1fr} }
 @media (max-width:380px){ .pimg img{width:88px} .prize{grid-template-columns:36px 1fr 88px;gap:6px} .rank{width:36px;height:36px;font-size:11px} .info .n{font-size:14px} .res{grid-template-columns:90px 1fr} .res .pic{width:90px} }
 @media (max-width:350px){ .prize{grid-template-columns:44px 1fr auto} .rank{width:40px;height:40px;font-size:12px} .pimg img{width:96px} }
+/* #708 설정에서 오는 칸 — 아래 요소는 설정 값이 있을 때만 JS 가 만든다(설정이 비면 화면은 종전과 같음) */
+.evhead{text-align:center;padding:12px 8px 2px}
+.evhead .t{font-size:22px;font-weight:900;letter-spacing:-.5px;line-height:1.25;word-break:keep-all}
+.evhead .p{font-size:12.5px;color:var(--mid);margin-top:4px;word-break:keep-all}
+.stcard{text-align:center;padding:26px 18px 22px}
+.stcard .big{font-size:20px;font-weight:900;line-height:1.35;word-break:keep-all;letter-spacing:-.3px}
+.stcard .sub{font-size:14px;color:var(--mid);margin-top:8px;line-height:1.6;word-break:keep-all;white-space:pre-line}
+.stcard .hand{display:block;margin-top:12px;font-size:20px;white-space:normal}
+.stcard .buy{display:inline-flex;align-items:center;justify-content:center;min-height:46px;margin-top:16px;padding:0 22px;border-radius:12px;background:var(--primary);color:#fff;font-weight:800;font-size:15px;text-decoration:none;box-shadow:0 6px 16px -6px rgba(84,71,244,.6)}
+.stcard .buy:active{background:var(--primary-deep)}
+.pvbadge{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:60;background:#1c1d3a;color:#fff;font-size:12px;font-weight:800;padding:4px 12px;border-radius:999px;opacity:.85;pointer-events:none}
 </style>
 </head>
 <body>
@@ -157,28 +168,98 @@ const fmtDate=d=>{ if(!d) return ''; const [y,m,dd]=d.split('-'); return `${+m}�
 const DESC=['제주의 달콤함, 프리미엄 하우스 황금향<br>소중한 분께 전하는 특별한 선물','황금향이 가득한 제주 황금향<br>달콤한 행복을 선물하세요','언제나 맛있는 제주 감귤<br>제주의 따뜻한 마음을 담았습니다'];
 const NOTE=['프리미엄 황금향!','달콤한 선물!','신선한 제주 감귤!'];
 const IMG=['img/lucky_box1.webp','img/lucky_box2.webp','img/lucky_box3.webp'];
+/* #708 이벤트 설정에서 오는 칸(그림·문구·상태) — 칸이 비면 지금 박힌 그림·글자 그대로(화면 무변경) · 응답 꼴 정본 = docs/708-api.md 2절
+   event 안: display_title(비면 서버가 title 로 채움) · state(preparing|live|published|down) · images{hero,winner,result}(주소|null) · texts{…}(서버가 기본값을 늘 채움 → 서버 기본값과 같은 손글씨는 지금 HTML 그대로) · prizes[].desc/note/image · store_url · preview
+   ?pk=… = 직원 미리보기 키(서버가 초안을 줌) · ?preview=1 = 관리 화면 iframe(서버 조회 없이 postMessage 초안만 · 4절) */
+const QS=new URLSearchParams(location.search);
+const PK=QS.get('pk')||''; const PREVIEW=QS.get('preview')==='1';
+const DEF_GIRL='img/lucky_girl_bottom.webp', STORE_URL='https://brand.naver.com/jejuakkome';
+const DEF={ title:document.title, heroSrc:$('.hero .banner').getAttribute('src'), heroAlt:$('.hero .banner').getAttribute('alt'), winSrc:$('.mhero img').getAttribute('src'),
+  hands:{ prize_head_hand:$('.card .head .hand').innerHTML, corner_hand:$('.note .r .hand').innerHTML, search_hand:$$('.card .head .hand')[1].innerHTML, winner_hand:$('.mtitle .hand').innerHTML, winner_foot:$('.mfoot .msg').innerHTML } };
+function $$(s){ return [...document.querySelectorAll(s)]; }
+const HAND_EL={ prize_head_hand:()=>$('.card .head .hand'), corner_hand:()=>$('.note .r .hand'), search_hand:()=>$$('.card .head .hand')[1], winner_hand:()=>$('.mtitle .hand'), winner_foot:()=>$('.mfoot .msg') };
+let CFG={ state:'', images:{}, texts:{}, display_title:'', store_url:'', preview:false };
+const str=v=>typeof v==='string'?v.trim():'';
+const escMl=s=>esc(s).replace(/\r?\n/g,'<br>');   // 직원이 쓴 글 = 이스케이프 + 줄바꿈만
+const safeUrl=u=>{ u=str(u); if(!u) return ''; if(/^data:image\/(webp|png|jpeg);base64,[A-Za-z0-9+\/=]+$/.test(u)) return u; if(/^(img\/|\/(?!\/))[^\s"'<>]*$/.test(u)||/^https:\/\/[A-Za-z0-9.\-]+(:\d+)?(\/[^\s"'<>]*)?$/.test(u)) return u; return ''; };
+const imgUrl=v=>safeUrl(typeof v==='string'?v:(v&&(v.url||v.src))||'');
+const SRV_DEF={ prize_head_hand:'제주의 좋은 마음을 선물합니다! ♡', corner_hand:'늘 함께해 주셔서\n감사합니다! ♡', search_hand:'성함·번호로 확인해보세요! ♡', winner_hand:'함께해 주신 모든 분께 감사드립니다! ♡', winner_foot:'당첨되신 분께는 순차적으로 연락드리며, 경품은 주문 시 배송지로 보내드립니다 🍊', noitem_products:'감귤·황금향 등' };
+const nlz=s=>String(s==null?'':s).replace(/\r\n/g,'\n').trim();
+function readCfg(j){
+  const e=j.event||{}, pick=k=>(e[k]!=null?e[k]:j[k]);
+  const im=Object.assign({},j.images||{},e.images||{}), raw=Object.assign({},j.texts||{},e.texts||{}), texts={};
+  Object.keys(raw).forEach(k=>{ const v=nlz(raw[k]); texts[k]=(SRV_DEF[k]!=null&&v===nlz(SRV_DEF[k]))?'':v; });   // 서버 기본값 = 「설정 없음」(지금 HTML 의 굵은 글씨·줄 그대로)
+  const dt=str(pick('display_title'));
+  return { state:str(pick('state')), images:{ hero:imgUrl(im.hero), winner:imgUrl(im.winner), result:imgUrl(im.result) },
+    texts, display_title:dt&&dt!==str(e.title)?dt:'', store_url:safeUrl(pick('store_url'))||'', preview:!!(e.preview||j.preview||PREVIEW), forceState:!!j._forceState };
+}
+const fbAttr=fb=>` onerror="this.onerror=null;${fb?`this.src='${fb}'`:"this.style.display='none'"}"`;
 async function loadEvent(){
-  try{ const r=await fetch('/api/lucky/event'); const j=await r.json(); EV=j.event; render(j); }catch(e){ $('#evInfo').textContent='이벤트 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'; }
+  if(PREVIEW){ if(window.parent!==window){ try{ window.parent.postMessage({type:'lucky:ready'},location.origin); }catch(_){} } return; }   // 관리 화면 iframe = 서버 조회 없이 초안 메시지만
+  try{ const r=await fetch('/api/lucky/event'+(PK?'?pk='+encodeURIComponent(PK):'')); const j=await r.json(); render(j); }catch(e){ $('#evInfo').textContent='이벤트 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'; }
+}
+function applyLook(){
+  const t=CFG.texts, dt=CFG.display_title;
+  document.title=dt?`${dt} — 접수·당첨 확인`:DEF.title;
+  const hb=$('.hero .banner'), hs=CFG.images.hero||DEF.heroSrc;
+  if(hb.getAttribute('src')!==hs){ hb.onerror=CFG.images.hero?function(){ this.onerror=null; this.src=DEF.heroSrc; }:null; hb.setAttribute('src',hs); }
+  const ha=str(t.hero_alt)||dt||DEF.heroAlt; if(hb.getAttribute('alt')!==ha) hb.setAttribute('alt',ha);
+  const wi=$('.mhero img'), ws=CFG.images.winner||DEF.winSrc;
+  if(wi.getAttribute('src')!==ws){ wi.onerror=CFG.images.winner?function(){ this.onerror=null; this.src=DEF.winSrc; }:null; wi.setAttribute('src',ws); }
+  Object.keys(HAND_EL).forEach(k=>{ const el=HAND_EL[k](); if(!el) return; const v=str(t[k]); const h=v?escMl(v):DEF.hands[k]; if(el.innerHTML!==h) el.innerHTML=h; });
+  // 새 배너(글자 없는 그림)를 올리면 큰 제목은 그림 밖 글자로 — 기본 배너는 그림 안에 제목이 있어 만들지 않음
+  let hd=$('#evHead');
+  if(CFG.images.hero&&dt){ if(!hd){ hd=document.createElement('div'); hd.id='evHead'; hd.className='evhead'; $('.hero').insertAdjacentElement('afterend',hd); } hd.innerHTML=`<div class="t">${esc(dt)}</div><div class="p">${esc($('#evPeriod').textContent)}</div>`; }
+  else if(hd) hd.remove();
+  let pb=$('#pvBadge'); if(CFG.preview&&!pb){ pb=document.createElement('div'); pb.id='pvBadge'; pb.className='pvbadge'; pb.textContent='미리보기'; document.body.appendChild(pb); } else if(!CFG.preview&&pb) pb.remove();
+}
+// state = 서버가 계산(preparing·down 은 한 장만) · 미리보기(?pk·iframe)는 준비 중이어도 본 화면으로 · 값이 없으면 종전 화면
+function applyState(e){
+  const st=CFG.state, cards=$$('.wrap > .card:not(#stCard)');
+  let sc=$('#stCard');
+  const one=(st==='preparing'&&(!CFG.preview||CFG.forceState))||st==='down';
+  cards.forEach(c=>{ c.style.display=one?'none':''; if(!c.getAttribute('style')) c.removeAttribute('style'); });
+  if(!one){ if(sc) sc.remove(); return false; }
+  if(!sc){ sc=document.createElement('div'); sc.id='stCard'; sc.className='card stcard'; cards[cards.length-1].insertAdjacentElement('afterend',sc); }
+  const t=CFG.texts;
+  if(st==='preparing'){
+    const when=e&&e.start?`${fmtDate(e.start)}부터 시작해요.`:'';
+    sc.innerHTML=`<div class="big">${escMl(str(t.preparing_title)||'이벤트 준비 중이에요 🍊')}</div><div class="sub">${escMl((str(t.preparing_line)||'곧 열립니다. 조금만 기다려 주세요!')+(when?'\n'+when:''))}</div><span class="hand">조금만 기다려 주세요! ♡</span>`;
+  } else {
+    const url=CFG.store_url||STORE_URL;
+    sc.innerHTML=`<div class="big">${escMl(str(t.closed_title)||'이벤트가 끝났어요 🙏')}</div><div class="sub">${escMl(str(t.closed_line)||'함께해 주셔서 감사합니다. 당첨되신 분께는 순차적으로 연락드려요.')}</div><a class="buy" href="${esc(url)}" target="_blank" rel="noopener">${esc(str(t.store_btn)||'제주아꼼이네 스토어 가기')} ›</a>`;
+  }
+  return true;
 }
 function render(j){
+  CFG=readCfg(j); EV=j.event; WIN=null;
   const e=j.event; const t=e.title.replace(/\s*(고객 감사 이벤트|이벤트)\s*$/,'');
-  $('#evTitle').textContent=e.title;
+  $('#evTitle').textContent=CFG.display_title||e.title;   // display_title 이 title 과 같으면 readCfg 가 '' 로(설정 없음)
   $('#evPeriod').textContent=`${fmtDate(e.start)} ~ ${fmtDate(e.end)} 주문 고객 대상 · ${fmtDate(e.announce)} 당첨자 발표`;
-  $('#prizes').innerHTML=e.prizes.map((p,i)=>`<div class="prize"><div class="rank"><span class="cr">👑</span>${i+1}등</div><div class="info"><div class="n">${esc(p.name)}</div><div class="d">${DESC[i]||''}</div></div><div class="pimg">${IMG[i]?`<img src="${IMG[i]}" alt="">`:''}<span class="cnt">${p.count}명</span><span class="hand">${NOTE[i]||''}</span></div></div>`).join('');
+  applyLook();
+  if(applyState(e)) return;
+  $('#prizes').innerHTML=e.prizes.map((p,i)=>{
+    const d=str(p.desc), n=str(p.note), cu=imgUrl(p.image);   // null = i<3 종전 그림 · 그 밖 그림 없음
+    const im=cu?`<img src="${esc(cu)}" alt=""${fbAttr(IMG[i]||'')}>`:(IMG[i]?`<img src="${IMG[i]}" alt="">`:'');
+    return `<div class="prize"><div class="rank"><span class="cr">👑</span>${i+1}등</div><div class="info"><div class="n">${esc(p.name)}</div><div class="d">${d?escMl(d):(DESC[i]||'')}</div></div><div class="pimg">${im}<span class="cnt">${p.count}명</span><span class="hand">${n?esc(n):(NOTE[i]||'')}</span></div></div>`;
+  }).join('');
   const total=e.prizes.reduce((a,p)=>a+p.count,0);
   $('#evInfo').innerHTML=e.published?`🎉 <b>당첨자 발표 완료!</b> 아래에서 확인하세요 (총 ${total}분)<br><button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>`:`🎁 총 <b>${total}분</b> 추첨 · 현재 접수 ${j.counts.customers}분 · 기간 내 주문 건은 자동 접수됩니다.<br><span style="color:var(--light)">(송장 등록 후 반영)</span>`;
-  if(e.published) openWinners(false);
+  if(e.published&&!PREVIEW) openWinners(false);
 }
 let WIN=null;
+function drawWinners(){
+  $('#wsub').textContent=`${fmtDate(WIN.announce)} 발표 · 총 ${WIN.total}분`;
+  $('#wbody').innerHTML=WIN.groups.map(g=>`<div class="wg"><div class="wh"><div class="rank"><span class="cr">👑</span>${g.rank}등</div><div class="n">${esc(g.prize)}</div><span class="cnt">${g.winners.length}명</span></div><div class="wl">${g.winners.map(w=>`<div class="w"><span class="nm">${esc(w.name)}</span><span class="ph">${esc(w.phone)}</span></div>`).join('')||'<div class="w" style="grid-column:1/-1;color:var(--light)">당첨자 없음</div>'}</div></div>`).join('');
+  $('#wmodal').classList.add('on'); document.body.style.overflow='hidden';
+}
 async function openWinners(force){
   let seen=false; try{ seen=sessionStorage.getItem('lk_winners_seen')==='1'; }catch(_){}
   if(!force && seen) return;
   try{
-    if(!WIN){ const r=await fetch('/api/lucky/winners'); WIN=await r.json(); }
+    if(!WIN){ const r=await fetch('/api/lucky/winners'+(PK?'?pk='+encodeURIComponent(PK):'')); WIN=await r.json(); }
     if(!WIN.published) return;
-    $('#wsub').textContent=`${fmtDate(WIN.announce)} 발표 · 총 ${WIN.total}분`;
-    $('#wbody').innerHTML=WIN.groups.map(g=>`<div class="wg"><div class="wh"><div class="rank"><span class="cr">👑</span>${g.rank}등</div><div class="n">${esc(g.prize)}</div><span class="cnt">${g.winners.length}명</span></div><div class="wl">${g.winners.map(w=>`<div class="w"><span class="nm">${esc(w.name)}</span><span class="ph">${esc(w.phone)}</span></div>`).join('')||'<div class="w" style="grid-column:1/-1;color:var(--light)">당첨자 없음</div>'}</div></div>`).join('');
-    $('#wmodal').classList.add('on'); document.body.style.overflow='hidden';
+    drawWinners();
     try{ sessionStorage.setItem('lk_winners_seen','1'); }catch(_){}
   }catch(e){}
 }
@@ -196,14 +277,14 @@ async function lookup(){
   try{
     const r=await fetch('/api/lucky/lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});
     const j=await r.json();
-    if(!r.ok){ box.innerHTML=`<div class="res none single"><div class="body"><div class="big">${j.error==='SHORT'?'성함은 2글자 이상 입력해주세요':j.error==='RATE'?'잠시 후 다시 시도해주세요':'조회할 수 없어요'}</div></div></div>`; return; }
+    if(!r.ok){ box.innerHTML=`<div class="res none single"><div class="body"><div class="big">${j.error==='SHORT'?'성함은 2글자 이상 입력해주세요':j.error==='RATE'?'잠시 후 다시 시도해주세요':j.error==='PREPARING'?'이벤트 준비 중이에요. 열리면 조회할 수 있어요':j.error==='CLOSED'?'이벤트가 끝나 조회가 닫혔어요':'조회할 수 없어요'}</div></div></div>`; return; }
     show(j,q);
   }catch(e){ box.innerHTML='<div class="res none single"><div class="body"><div class="big">연결이 불안정해요</div><div class="sub">잠시 후 다시 시도해주세요.</div></div></div>'; }
 }
-const girl='<img class="pic" src="img/lucky_girl_bottom.webp" alt="">';
+const girlImg=()=>CFG.images.result?`<img class="pic" src="${esc(CFG.images.result)}" alt=""${fbAttr(DEF_GIRL)}>`:'<img class="pic" src="img/lucky_girl_bottom.webp" alt="">';
 const deco=(t)=>`<div class="rrow"><span class="hand2">${t}</span><img class="deco" src="img/lucky_orange_bl.webp" alt=""></div>`;
 function show(j,q){
-  const box=$('#result'); const e=j.event;
+  const box=$('#result'); const e=j.event; const girl=girlImg();
   if(!j.results.length){
     box.innerHTML=`<div class="res none">${girl}<div class="body"><div class="big">접수된 주문이 없습니다 😳</div><ul><li>'${esc(q)}'으로 등록된 ${j.mode==='phone'?'연락처가':'성함이'} 없어요.</li><li>주문하신 분 성함이나 휴대폰 번호로 다시 검색해보세요.</li><li>선물하기 주문은 받는 분 연락처로 검색됩니다.</li><li>오늘 주문하셨다면 송장 등록 후(보통 다음날) 반영돼요.</li></ul></div>${deco('다음엔<br>꼭 만나요!')}</div>`; return;
   }
@@ -215,7 +296,7 @@ function show(j,q){
   } else if(first.status==='lose'){
     head=`<div class="res lose">${girl}<div class="body"><div class="big">아쉽지만 다음 기회에… 🙏</div><div class="sub">이번엔 당첨되지 않으셨어요. 다음 이벤트에서 <b>더 좋은 상품으로 보답</b>드리겠습니다. 이용해주셔서 진심으로 감사합니다!</div></div>${deco('다음엔<br>꼭 만나요!')}</div>`;
   } else if(first.status==='noitem'){
-    head=`<div class="res none">${girl}<div class="body"><div class="big">이 상품은 이벤트 대상이 아니에요 🙏</div><div class="sub">주문은 확인되지만 <b>${esc((e.excludeProducts||[]).join(', '))}</b> 상품은 이번 이벤트 응모 대상에서 제외돼요. 감귤·황금향 등 다른 상품 주문은 자동 접수됩니다!</div></div></div>`;
+    head=`<div class="res none">${girl}<div class="body"><div class="big">이 상품은 이벤트 대상이 아니에요 🙏</div><div class="sub">주문은 확인되지만 <b>${esc((e.excludeProducts||[]).join(', '))}</b> 상품은 이번 이벤트 응모 대상에서 제외돼요. ${esc(str(CFG.texts.noitem_products)||'감귤·황금향 등')} 다른 상품 주문은 자동 접수됩니다!</div></div></div>`;
   } else if(first.status==='outside'){
     head=`<div class="res none">${girl}<div class="body"><div class="big">이벤트 기간 밖 주문이에요 🙏</div><div class="sub">주문은 확인되지만 <b>${fmtDate(e.start)}~${fmtDate(e.end)}</b> 사이 주문만 응모 대상이에요. 기간 내에 주문하시면 자동으로 접수됩니다!</div></div></div>`;
   } else {
@@ -229,6 +310,31 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 $('#btn').onclick=lookup; $('#q').addEventListener('keydown',e=>{ if(e.key==='Enter') lookup(); });
 $('#q').addEventListener('input',()=>$('#field').classList.toggle('has',!!$('#q').value));
 $('#clr').onclick=()=>{ $('#q').value=''; $('#field').classList.remove('has'); $('#result').innerHTML=''; $('#q').focus(); };
+/* #708 관리 화면 미리보기(docs/708-api.md 4절) — 같은 출처 부모 창만 · {type:'lucky:preview', event, counts, scene} = 저장 전 초안으로 다시 그림
+   scene = default|received|win|lose|noitem|outside(가짜 결과 · 실조회 아님) · winners(가짜 발표 창) · preparing|closed(상태 장) → 그린 뒤 {type:'lucky:rendered', scene} */
+const PV_NAMES=[['홍*동','010-****-1234'],['김*희','010-****-5678']];
+function previewShow(kind){
+  if(!EV) return;
+  closeWinners(false); const box=$('#result'); box.innerHTML='';
+  if(kind==='winners'){ WIN={ published:true, announce:EV.announce, total:EV.prizes.reduce((a,p)=>a+(+p.count||0),0), groups:EV.prizes.map((p,i)=>({ rank:i+1, prize:p.name, count:p.count, winners:PV_NAMES.map(([name,phone])=>({name,phone})) })) }; drawWinners(); WIN=null; return; }
+  if(!['received','win','lose','noitem','outside'].includes(kind)) return;
+  const p0=(EV.prizes[0]||{}).name||'경품';
+  const o={ by:'buyer', inRange:kind!=='outside'&&kind!=='noitem', noitem:kind==='noitem', date:EV.start||'', vendor:'', product:kind==='noitem'?((EV.excludeProducts||[])[0]||'제외 품목')+' (미리보기)':'(미리보기) 주문 상품', qty:1, buyer:'홍*동', buyerPhone:'010-****-1234', recv:'홍*동', recvPhone:'010-****-1234', addr:'제주특별자치도 서귀포시 …', tracking:'', status:kind, prize:kind==='win'?p0:null };
+  show({ ok:true, mode:'name', by:'buyer', results:[o], event:EV }, '홍길동');
+}
+if(PREVIEW) window.addEventListener('message',ev=>{
+  if(ev.origin!==location.origin||ev.source!==window.parent) return;
+  const d=ev.data; if(!d||d.type!=='lucky:preview'||!d.event||typeof d.event!=='object') return;
+  const scene=String(d.scene||'default');
+  try{
+    const e=Object.assign({},d.event); e.title=String(e.title||''); if(!Array.isArray(e.prizes)) e.prizes=[]; e.preview=true;
+    const st=scene==='preparing'?'preparing':scene==='closed'?'down':'';
+    if(st) e.state=st;
+    render({ event:e, counts:d.counts||{orders:0,customers:0}, _forceState:!!st });
+    if(!st) previewShow(scene);
+  }catch(err){ console.warn('[미리보기] 그리기 실패',err&&err.message); }
+  try{ window.parent.postMessage({type:'lucky:rendered',scene},location.origin); }catch(_){}
+});
 loadEvent();
 </script>
 </body>

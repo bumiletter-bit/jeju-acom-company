@@ -3332,7 +3332,7 @@
     let themeOn = (() => { try { return localStorage.getItem(THEME_KEY) === 'dark'; } catch (e) { return false; } })();
     // #569(대표 10/6 밤) 야간 화면을 모든 메뉴로 — 「끝난 메뉴 목록」에 든 메뉴를 보고 있을 때만 속성이 붙는다(목록 밖 메뉴는 켠 사람에게도 종전 밝은 화면)
     //   색은 ao-dark.css(생성물 · scripts/ao-dark) · 에이전트 오피스는 ao-desk.css #568 블록. 묶음이 검증을 통과할 때마다 여기에 이름만 넣는다.
-    const DARK_PAGES = ['agent-office', 'schedule', 'worklog', 'planner', 'rankings', 'myinfo', 'inquiry', 'settlement', 'pricing', 'inventory', 'document', 'expense', 'data', 'organizer', 'invoice'];
+    const DARK_PAGES = ['agent-office', 'schedule', 'worklog', 'planner', 'rankings', 'myinfo', 'inquiry', 'settlement', 'pricing', 'inventory', 'document', 'expense', 'data', 'organizer', 'invoice', 'event'];
     const curPage = () => { const p = document.querySelector('.main-content > .page.active, .page.active'); return p ? p.id.replace(/^page-/, '') : ''; };
     const loginShown = () => { const l = $('login-page'); return !!l && l.style.display !== 'none'; };
     const inScope = () => DARK_PAGES.includes(curPage());
