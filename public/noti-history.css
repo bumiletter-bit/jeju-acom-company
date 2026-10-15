@@ -76,3 +76,16 @@ html[data-ao-theme="dark"] .nh-time, html[data-ao-theme="dark"] .noti-hist-empty
 html[data-ao-theme="dark"] .noti-hist-item.unread .nh-time { color: var(--d-lime, #C5EE4F); }
 html[data-ao-theme="dark"] .nh-more { background: var(--d-soft, #1B2038); border-color: var(--d-line, #2A3052); }
 html[data-ao-theme="dark"] .nh-more:hover { background: var(--d-accent-soft, #232A52); }
+/* #706 알림 종 「알림」 판도 같은 줄 구도(.noti-hist-item/.nh-* 재사용) — 폰·폴드 폭(#703 규칙)에서 × 닿는 영역 44px · 「이전 알림」 창은 무접촉 */
+@media (max-width: 960px), (pointer: coarse) {
+    #noti-list .nh-del { min-width: 44px; min-height: 44px; }
+}
+/* #707-A 긴 본문 「더보기」(두 판 공용 · nhClampMore) — 펼치면 줄 수 제한만 풂 */
+.nh-msg.nh-msg-open { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.nh-msg-more { position: relative; display: inline-flex; align-items: center; min-height: 44px; margin: 0; padding: 0; border: none; background: none; color: var(--primary, #4F46E5); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.nh-msg-more::before { content: ''; position: absolute; inset: 0 -14px; }   /* 닿는 영역 = 단추 자체 높이 44px + 좌우만 넓힘(위 본문·아래 시각 줄은 안 덮음) */
+.nh-msg-more:hover { text-decoration: underline; }
+.nh-msg-more:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; border-radius: 4px; }
+html[data-ao-theme="dark"] .nh-msg-more { color: var(--d-accent, #8C94FF); }
+html[data-ao-theme="dark"] .nh-msg-more:focus-visible { outline-color: var(--d-lime, #C5EE4F); }
+.nh-msg { white-space: pre-line; }   /* #707-A 보완: 본문 「손님: …\n봇 초안: …\n사유: …」 줄바꿈을 살림(접힘·펼침 모두) */

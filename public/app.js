@@ -1157,22 +1157,28 @@ async function renderNotificationList() {
             listEl.innerHTML = '<div class="noti-empty">새로운 알림이 없습니다.</div>';
             return;
         }
+        // #706 줄 구도 = 「이전 알림」(nhRender)과 같게 — 아이콘 · 굵은 제목 · 글 한 줄 · HH:MM · 안 읽음 · 왼쪽 띠 · × (모양은 noti-history.css 의 .noti-hist-item/.nh-* 그대로)
         listEl.innerHTML = unreadNotis.map(n => {
             const isAnnouncement = n.type === 'announcement';
-            const icon = isAnnouncement ? '📢' : '';
-            const extraClass = isAnnouncement ? ' noti-announcement' : '';
             const clickAction = isAnnouncement
                 ? `showAnnouncementDetail(${n.id})`
-                : `clickNotification(${n.id}, '${n.link || 'documents'}')`;
-            return `<div class="noti-item unread${extraClass}" data-id="${n.id}">
-                <span class="noti-dot unread">${icon}</span>
-                <div class="noti-content" onclick="${clickAction}">
-                    <div class="noti-msg">${n.message}</div>
-                    <div class="noti-time">${timeAgo(n.createdAt)}</div>
+                : `clickNotification(${n.id}, '${nhEsc(String(n.link || 'documents').replace(/['\\]/g, ''))}')`;
+            const title = String(n.title || '').trim(), msg = String(n.message || '').trim();
+            const showMsg = msg && msg !== title && !(isAnnouncement && title.indexOf(msg.slice(0, 30)) >= 0 && msg.length <= 30);
+            const d = new Date(n.createdAt);
+            const hm = isNaN(d) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            const time = isNaN(d) || nhDayKey(d) === nhDayKey(new Date()) ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;   // 이 판엔 날짜 머리줄이 없어 오늘이 아니면 날짜를 붙임
+            return `<div class="noti-hist-item unread" data-id="${n.id}" role="button" tabindex="0" aria-label="${nhEsc(title || msg)}" onclick="${clickAction}" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();this.click();}">
+                <span class="nh-ic" aria-hidden="true">${nhIcon(n.type)}</span>
+                <div class="nh-body">
+                    <div class="nh-title">${nhEsc(title || msg)}</div>
+                    ${showMsg ? `<div class="nh-msg">${nhEsc(msg)}</div>` : ''}
+                    <div class="nh-time">${time} · 안 읽음</div>
                 </div>
-                <button class="noti-delete" onclick="deleteNotification(event, ${n.id})" title="삭제">×</button>
+                <button type="button" class="nh-del" onclick="deleteNotification(event, ${n.id})" aria-label="이 알림 삭제" title="삭제">×</button>
             </div>`;
         }).join('');
+        nhClampMore(listEl);   // #707-A
     } catch (err) {
         listEl.innerHTML = '<div class="noti-empty">알림을 불러올 수 없습니다.</div>';
     }
@@ -1380,6 +1386,19 @@ window.deleteNotification = async function(e, id) {
 const NH = { q: '', items: [], hasMore: false, busy: false, timer: null, seq: 0 };
 const nhEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const NH_ICON = { announcement: '📢', desk: '🤖', expense: '🧾', settle_recon: '📊' };
+// #707-A 본문이 3줄(.nh-msg line-clamp)을 넘으면 줄 아래 「더보기」 — 그 자리에서 펼침·접기만(줄 이동·읽음 없음) · 「알림」 판·「이전 알림」 창 공용 · 펼침은 다시 그리면 접힘
+function nhClampMore(root) {
+    if (!root) return;
+    root.querySelectorAll('.nh-msg').forEach(m => {
+        if (m.nextElementSibling && m.nextElementSibling.classList.contains('nh-msg-more')) return;
+        if (!(m.scrollHeight > m.clientHeight + 1)) return;
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'nh-msg-more'; b.textContent = '더보기'; b.setAttribute('aria-expanded', 'false');
+        b.addEventListener('click', e => { e.stopPropagation(); const open = m.classList.toggle('nh-msg-open'); b.textContent = open ? '접기' : '더보기'; b.setAttribute('aria-expanded', open ? 'true' : 'false'); });
+        b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); });
+        m.insertAdjacentElement('afterend', b);
+    });
+}
 function nhIcon(t) { return NH_ICON[t] || (/^(document_|modification_)/.test(String(t)) ? '📄' : '🔔'); }
 function nhDayKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function nhDayLabel(d) {
@@ -1495,6 +1514,7 @@ function nhRender() {
         </div>`;
     }
     list.innerHTML = html;
+    nhClampMore(list);   // #707-A
     moreBtn.hidden = !NH.hasMore;
 }
 async function nhOpen(id) {

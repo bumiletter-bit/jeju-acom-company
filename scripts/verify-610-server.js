@@ -1046,6 +1046,11 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         await hook(env('sms:received', { messageId: 'v695a', message: '사장님 여기 제주 영도에요. 혹시 내일까지 배달될까요', phoneNumber: '+82' + PE.slice(1) }));   // 10/14 09:25 대화 6555 와 같은 글(주문 없는 번호 · 사기 전 물음 아님 → AI 초안 · 자동 발송 밖)
         let te = await thread(PE); const outsE = (await msgs(PE)).filter(x => x.direction === 'out').length;
         ok(!!te && te.status === 'draft' && te.staff_why === null && te.draft_text === DRAFT && te.draft_kind === 'ai' && outsE === 0 && notes.length > n0, '#695 재현: 주문 없는 번호의 배달 물음 → status draft · 사유 null · 초안 · 자동 발송 0 · 직원 알림 ' + JSON.stringify(te && [te.status, te.staff_why, outsE]));
+        const nl = notes[notes.length - 1] || {};
+        ok(nl.type === 'sms' && nl.message === '손님: 사장님 여기 제주 영도에요. 혹시 내일까지 배달될까요\n봇 초안: ' + DRAFT && !String(nl.message).includes(PE),
+            '#707-B 알림 저장 본문 = 「손님: 글 전문」 줄바꿈 「봇 초안: 전문」(전체 번호 없음 · 고정 문구 아님) ' + JSON.stringify(nl.message));
+        const nL = notes.length; await sms._notifyStaff(await sms.cfg(), te, '문자 · 시험 긴 본문', '가'.repeat(500), { force: true });
+        ok(notes.length === nL + 1 && notes[notes.length - 1].message === '가'.repeat(500), '#707-B notifyStaff 120자 자름 없음(500자 그대로 저장) ' + String((notes[notes.length - 1] || {}).message || '').length);
         let ro = await api('GET', '/api/sms/threads?scope=open&limit=200'), ie = find(ro.json, te.id), sum1 = (await api('GET', '/api/sms/summary')).json;
         ok(!!ie && ie.needs_staff === true && ie.staff_why === null && ie.staff_why_label === '초안 확인(보내기 전)' && sum1.open_threads === base + 1, '#695 미처리(scope=open)에 들어감 · needs_staff true · 글 「초안 확인(보내기 전)」 · open_threads +1 ' + JSON.stringify([!!ie, sum1.open_threads, base]));
         ok(sum1.staff_open === sum0.staff_open + 1, '#695 보완 summary staff_open([직원 확인 n] 단추) = 초안만 남은 대화도 셈(+1 · 거른 목록과 같은 수) ' + JSON.stringify([sum0.staff_open, sum1.staff_open]));
@@ -1061,6 +1066,31 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, async () =>
         ro = await api('GET', '/api/sms/threads?scope=open&limit=200'); const sum2 = (await api('GET', '/api/sms/summary')).json;
         ok(s.status === 200 && s.json.ok === true && te.status === 'staff_replied' && !te.draft_text && !te.staff_why && outE.length === 1 && outE[0].sender === 'staff_desk' && !find(ro.json, te.id) && sum2.open_threads === base, '#695 [이대로 보내기] → staff_desk 1통 · 미처리에서 빠짐 · open_threads = 처음 값 ' + JSON.stringify([s.status, te.status, outE.length, sum2.open_threads, base]));
         ok(sent.length >= nSent, '#695 발송은 가짜 게이트웨이로만(실발송 0)');
+    }
+
+    console.log('⑰ #707-B 알림 본문 도우미(staffBody) · push.js 푸시 body 300자');
+    {
+        const sb = sms._staffBody; const FIX = '에이전트 오피스 「문자」 카드에서 확인해 주세요';
+        ok(typeof sb === 'function' && sb({ text: ' 안녕 ', images: [1, 2], draft: '초안글', why: '사유글' }) === '손님: 안녕 (사진 2장)\n봇 초안: 초안글\n사유: 사유글', '#707-B staffBody: 손님·(사진 n장)·봇 초안·사유 세 줄');
+        ok(sb({ text: '안녕', sent: '보낸글' }) === '손님: 안녕\n봇 답: 보낸글' && sb({ text: '안녕', draft: '초안', sent: '보낸글' }) === '손님: 안녕\n봇 초안: 초안' && sb({ images: 1 }) === '손님: (사진 1장)' && sb({}) === FIX && sb({ text: '', images: [], draft: null, why: undefined }) === FIX, '#707-B staffBody: 초안 있으면 초안 · 없으면 봇 답 · 사진만 · 빈 것은 고정 문구');
+        const cut = sb({ text: '가'.repeat(2500) }); ok(cut.length === 2000 && cut.endsWith('…') && cut.startsWith('손님: 가가'), '#707-B staffBody 상한 2,000자 · 그 위만 「…」 ' + cut.length);
+        // push.js deliver() — 표의 message 를 그대로 보내고 body 는 앞 300자(종전 120 · 제목 60 · link 60 은 그대로) · 다른 type 도 message 그대로
+        const webpush = require('web-push'); const keepSend = webpush.sendNotification; const payloads = [];
+        webpush.sendNotification = async (sub, payload) => { payloads.push(JSON.parse(payload)); return {}; };
+        const MSG = '손님: ' + '나'.repeat(400) + '\n봇 초안: 다', DESK_LONG = '승인 요청: ' + '라'.repeat(400);
+        const fakePool = { query: async (sql) => {
+            if (/webpush_vapid/.test(sql)) return { rows: [{ value: Object.assign({ subject: 'mailto:verify@akkome.test' }, webpush.generateVAPIDKeys()) }] };
+            if (/UPDATE notifications SET pushed_at/.test(sql)) return { rows: [{ id: 1, user_id: 1, type: 'sms', title: '문자 · 끝 0001 봇 초안 확인', message: MSG, link: 'agent-office?sms=1', fresh: true }, { id: 2, user_id: 1, type: 'desk', title: '창구', message: '짧은 글', link: 'agent-office', fresh: true }, { id: 3, user_id: 1, type: 'desk', title: '창구 승인 요청', message: DESK_LONG, link: 'agent-office?o=1', fresh: true }] };
+            if (/push_scope/.test(sql)) return { rows: [] };
+            if (/FROM push_subscriptions/.test(sql)) return { rows: [{ id: 1, endpoint: 'https://example.invalid/sub', p256dh: 'p', auth: 'a' }] };
+            return { rows: [], rowCount: 0 };
+        } };
+        const push = require('../push.js')({ get() { }, post() { } }, { pool: fakePool, authMiddleware: (q, s, n) => n() });
+        try { await push.deliver(); } finally { webpush.sendNotification = keepSend; }
+        const want = MSG.replace(/\s+/g, ' ').trim().slice(0, 300);
+        ok(payloads.length === 3 && payloads[0].body === want && payloads[0].body.length === 300 && payloads[0].title === '문자 · 끝 0001 봇 초안 확인' && payloads[0].link === 'agent-office?sms=1' && payloads[1].body === '짧은 글',
+            '#707-B push.js: sms 푸시 body = message 앞 300자 · 제목·link 그대로 · 짧은 다른 type 은 message 그대로 ' + JSON.stringify(payloads.map(p => (p.body || '').length)));
+        ok(payloads.length === 3 && payloads[2].body === DESK_LONG.slice(0, 120) && payloads[2].body.length === 120, '#707-B push.js: 다른 type(desk 승인 요청)은 종전처럼 120자(문자 한정 300 · 워커2 점검) ' + ((payloads[2] || {}).body || '').length);
     }
 
     // 정리

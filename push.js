@@ -6,7 +6,8 @@
  * · 열쇠(VAPID)는 첫 실행 때 한 번 만들어 agent_office_config 'webpush_vapid' 에 둔다(사람이 넣을 것 없음).
  * · 구독(어느 폰으로 보낼지)은 push_subscriptions 표에 쌓인다. 폰에서 알림을 끄면 그 줄만 지운다.
  * · 무엇을 보낼지는 agent_office_config 'push_scope' 로 고른다(기본 = 꼭 필요한 것만).
- * 🔴 손님 개인정보는 푸시 본문에 넣지 않는다 — 잠금 화면에 그대로 뜨기 때문.
+ * 🔴 손님 개인정보(이름·전체 번호·주소)는 푸시 본문에 넣지 않는다 — 잠금 화면에 그대로 뜨기 때문.
+ *    (#707-B · 대표 10/15: 문자 알림(type 'sms')의 손님 글·봇 답 전문은 잠금 화면에 떠도 된다고 정함 → 문자만 본문 상한 300자 · 다른 type 은 120 그대로 · sms/index.js staffBody 가 적는 글 그대로)
  */
 'use strict';
 const webpush = require('web-push');
@@ -76,7 +77,7 @@ module.exports = function mountPush(app, { pool, authMiddleware }) {
             await init();
             const subs = (await pool.query(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1`, [userId])).rows;
             if (!subs.length) return { sent: 0, skip: 'no-sub' };
-            const payload = JSON.stringify({ title: clip(title, 60) || '제주아꼼이네', body: clip(message, 120), link: clip(link, 60) || '' });
+            const payload = JSON.stringify({ title: clip(title, 60) || '제주아꼼이네', body: clip(message, type === 'sms' ? 300 : 120), link: clip(link, 60) || '' });   // #707-B(대표 10/15): 문자(type 'sms') 본문만 120 → 300(손님 글·봇 답이 실림 · 잠금 화면에 떠도 된다 = 대표 · 문자 한정) · 다른 type·제목·link 상한은 그대로
             let sent = 0, gone = 0;
             for (const s of subs) {
                 try {
