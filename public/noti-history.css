@@ -32,7 +32,7 @@ body.noti-hist-open { overflow: hidden; }
 .nh-time { margin-top: 4px; font-size: 11.5px; color: #667085; }
 .noti-hist-item.unread .nh-time { color: var(--primary, #4F46E5); font-weight: 600; }
 .nh-del { flex: 0 0 auto; align-self: center; min-width: 36px; min-height: 36px; border: none; border-radius: 8px; background: none; color: #98A2B3; font-size: 18px; line-height: 1; cursor: pointer; }
-.nh-del:hover { background: #FEE4E2; color: #B42318; }
+.nh-del:hover { background: var(--primary-light, #EEF0FF); color: var(--primary, #4F46E5); }   /* #719 × = 읽음(삭제 아님) → 빨강 대신 인디고 */
 .noti-hist-empty { padding: 44px 20px; text-align: center; color: #667085; font-size: 14px; line-height: 1.5; }
 .nh-foot { padding: 8px 14px 12px; border-top: 1px solid var(--border, #ECEDF1); }
 .nh-foot:has(.nh-more[hidden]) { display: none; }
@@ -61,7 +61,7 @@ html[data-ao-theme="dark"] .nh-link { color: var(--d-accent, #8C94FF); }
 html[data-ao-theme="dark"] .nh-link:hover { background: var(--d-accent-soft, #232A52); }
 html[data-ao-theme="dark"] .nh-close, html[data-ao-theme="dark"] .nh-x, html[data-ao-theme="dark"] .nh-del { color: var(--d-dim, #9299B4); }
 html[data-ao-theme="dark"] .nh-close:hover, html[data-ao-theme="dark"] .nh-x:hover { background: var(--d-soft, #1B2038); color: var(--d-ink, #E9EBF5); }
-html[data-ao-theme="dark"] .nh-del:hover { background: rgba(255, 122, 110, .18); color: var(--d-err, #FF7A6E); }
+html[data-ao-theme="dark"] .nh-del:hover { background: rgba(255, 255, 255, .08); color: var(--d-text, #E6E8F2); }   /* #719 */
 html[data-ao-theme="dark"] .nh-search input { background: var(--d-soft, #1B2038); border-color: var(--d-line, #2A3052); color: var(--d-ink, #E9EBF5); }
 html[data-ao-theme="dark"] .nh-search input::placeholder { color: var(--d-dim, #9299B4); }
 html[data-ao-theme="dark"] .nh-search input:focus { border-color: var(--d-accent, #8C94FF); box-shadow: 0 0 0 3px rgba(140, 148, 255, .25); }

@@ -1176,7 +1176,7 @@ async function renderNotificationList() {
                     ${showMsg ? `<div class="nh-msg">${nhEsc(msg)}</div>` : ''}
                     <div class="nh-time">${time} · 안 읽음</div>
                 </div>
-                <button type="button" class="nh-del" onclick="deleteNotification(event, ${n.id})" aria-label="이 알림 삭제" title="삭제">×</button>
+                <button type="button" class="nh-del" onclick="readNotification(event, ${n.id})" aria-label="이 알림 읽음으로" title="읽음">×</button>
             </div>`;
         }).join('');
         nhClampMore(listEl);   // #707-A
@@ -1372,13 +1372,14 @@ window.markAllNotificationsRead = async function(e) {
     } catch (err) { akmAlert('실패: ' + err.message); }
 };
 
-window.deleteNotification = async function(e, id) {
+// #719 × = 읽음 처리(삭제 아님 · 대표 「× 눌러도 사라지는 게 아니야」) → 이 판(안 읽음만)에서 빠지고 「이전 알림」엔 읽은 줄로 남아 검색됨 · DELETE 라우트는 서버에 남겨 두되 화면에선 안 부름
+window.readNotification = async function(e, id) {
     e.stopPropagation();
     try {
-        await api(`/api/notifications/${id}`, 'DELETE');
+        await api(`/api/notifications/${id}/read`, 'PUT');
         fetchUnreadCount();
         await renderNotificationList();
-    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
+    } catch (err) { akmAlert('읽음 처리 실패: ' + err.message); }
 };
 
 // =============================================
@@ -1440,7 +1441,7 @@ function nhBuild() {
         const item = e.target.closest('.noti-hist-item');
         if (!item) return;
         const id = Number(item.dataset.id);
-        if (del) { e.stopPropagation(); nhDelete(id); return; }
+        if (del) { e.stopPropagation(); nhMarkRead(id); return; }
         nhOpen(id);
     });
     ov.querySelector('#noti-hist-list').addEventListener('keydown', e => {
@@ -1512,8 +1513,8 @@ function nhRender() {
                 ${showMsg ? `<div class="nh-msg">${nhEsc(msg)}</div>` : ''}
                 <div class="nh-time">${time}${n.isRead ? '' : ' · 안 읽음'}</div>
             </div>
-            <button type="button" class="nh-del" aria-label="이 알림 삭제" title="삭제">×</button>
-        </div>`;
+            ${n.isRead ? '' : '<button type="button" class="nh-del" aria-label="이 알림 읽음으로" title="읽음">×</button>'}
+        </div>`;   // #719 × = 안 읽은 줄에만(읽음 처리 · 줄은 남음)
     }
     list.innerHTML = html;
     nhClampMore(list);   // #707-A
@@ -1526,11 +1527,13 @@ async function nhOpen(id) {
     n.isRead = true;
     return clickNotification(id, n.link || 'documents');
 }
-async function nhDelete(id) {
+// #719 이전 알림 × = 삭제 아님 → 읽음 처리만(줄은 남고 안 읽음 표식·띠만 사라짐)
+async function nhMarkRead(id) {
+    const n = NH.items.find(x => x.id === id); if (!n || n.isRead) return;
     try {
-        await api(`/api/notifications/${id}`, 'DELETE');
-        NH.items = NH.items.filter(x => x.id !== id); window._notiHistCache = NH.items; nhRender(); fetchUnreadCount();
-    } catch (err) { akmAlert('삭제 실패: ' + err.message); }
+        await api(`/api/notifications/${id}/read`, 'PUT');
+        n.isRead = true; nhRender(); fetchUnreadCount();
+    } catch (err) { akmAlert('읽음 처리 실패: ' + err.message); }
 }
 
 // =============================================
