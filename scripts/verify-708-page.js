@@ -84,7 +84,8 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     ok('첫 화면 body DOM·제목 동일(접수 중)', r.a.html === r.b.html && r.a.title === r.b.title, firstDiff(r.a.html, r.b.html));
     for (const k of ['none', 'received', 'win', 'lose', 'noitem', 'outside', 'receiver', 'short']) {
       r = await both('', doLookup(k));
-      ok(`조회 결과 「${k}」 DOM 동일`, r.a.html === r.b.html, firstDiff(r.a.html, r.b.html));
+      { const n717 = h => String(h).replace(/감귤·황금향 등 다른 상품|그 밖의 다른 상품/g, '§');   // #717 대상 아님 문장만 의도한 바뀜
+      ok(`조회 결과 「${k}」 DOM 동일${k === 'noitem' ? '(#717 문장 한 곳 빼고)' : ''}`, n717(r.a.html) === n717(r.b.html), firstDiff(n717(r.a.html), n717(r.b.html))); }
     }
     r = await both('', doLookup('preparing'));
     ok('조회 400 PREPARING = 새 안내(종전 「조회할 수 없어요」 · 의도된 변화)', /조회할 수 없어요/.test(r.a.html) && /이벤트 준비 중이에요. 열리면 조회할 수 있어요/.test(r.b.html) && r.a.html.replace(/<div class="big">[^<]*<\/div>/, '') === r.b.html.replace(/<div class="big">[^<]*<\/div>/, ''), firstDiff(r.a.html, r.b.html));
@@ -106,7 +107,8 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     EVENT_RES = { event: srvEv(), counts: { orders: 12, customers: 9 } };
     r = await both('');
     ok('기본값 칸(texts 전부·display_title=title·images null·prizes desc/note "" image null·state live) = 종전 DOM', r.a.html === r.b.html && r.a.title === r.b.title, firstDiff(r.a.html, r.b.html));
-    for (const k of ['noitem', 'win']) { r = await both('', doLookup(k)); ok(`기본값 칸 + 조회 「${k}」 DOM 동일`, r.a.html === r.b.html, firstDiff(r.a.html, r.b.html)); }
+    const n717 = h => String(h).replace(/감귤·황금향 등 다른 상품|그 밖의 다른 상품/g, '§');   // #717 대상 아님 문장 = 의도한 바뀜(「감귤·황금향 등」 → 「그 밖의」) · 그 밖은 같아야
+    for (const k of ['noitem', 'win']) { r = await both('', doLookup(k)); ok(`기본값 칸 + 조회 「${k}」 DOM 동일${k === 'noitem' ? '(#717 문장 한 곳 빼고)' : ''}`, n717(r.a.html) === n717(r.b.html), firstDiff(n717(r.a.html), n717(r.b.html))); }
     EVENT_RES = { event: Object.assign(srvEv({ published: true }), { state: 'published' }), counts: { orders: 12, customers: 9 } };
     WIN_RES = { published: true, announce: '2026-11-02', total: 1, groups: [{ rank: 1, prize: '황금향 5kg 선물용', count: 5, winners: [{ name: '김*수', phone: '010-****-1234' }] }] };
     r = await both('');
@@ -134,7 +136,7 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     ok('경품 4(4등 · 종전엔 그림 없음): 설정 그림·설명·손글씨', v.prizes[3].img === '/img/lucky_box2.webp' && v.prizes[3].d === '키위 설명' && v.prizes[3].n === '키위!', v.prizes[3]);
     await doLookup('noitem')(P.pg);
     v = await P.pg.evaluate(() => ({ sub: document.querySelector('#result .sub').textContent, pic: document.querySelector('#result .pic').getAttribute('src') }));
-    ok('대상 외 문장 품목 = noitem_products · 결과 그림 = images.result', v.sub.includes('레몬·하우스귤 등 다른 상품 주문은 자동 접수') && v.pic === '/img/lucky_box1.webp', v);
+    ok('(#717) 대상 외 문장 = 「그 밖의 다른 상품」(옛 저장값 noitem_products 무시) · 결과 그림 = images.result', v.sub.includes('그 밖의 다른 상품 주문은 자동 접수됩니다!') && !v.sub.includes('레몬·하우스귤') && v.pic === '/img/lucky_box1.webp', v);
     ok('일반 손님 주소에는 「미리보기」 표시 없음', !(await P.pg.evaluate(() => !!document.getElementById('pvBadge'))));
     await P.ctx.close();
 

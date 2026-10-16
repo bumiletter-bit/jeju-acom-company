@@ -34,7 +34,6 @@
         search_hand: '성함·번호로 확인해보세요! ♡',
         winner_hand: '함께해 주신 모든 분께 감사드립니다! ♡',
         winner_foot: '당첨되신 분께는 순차적으로 연락드리며, 경품은 주문 시 배송지로 보내드립니다 🍊',
-        noitem_products: '감귤·황금향 등',
     };
     // 셋째 = 글자 상한(서버 120) · 넷째 = 줄바꿈 칸(textarea)
     const TEXT_LABEL = [
@@ -43,7 +42,6 @@
         ['search_hand', '조회 칸 손글씨', 40],
         ['winner_hand', '발표 창 손글씨', 40],
         ['winner_foot', '발표 창 아래 안내', 120, true],
-        ['noitem_products', '대상 아님 안내에 넣을 다른 상품 이름(예: 감귤·황금향 등)', 40],
     ];
     // where = 손님 화면 어디에 쓰이는지(#711 · 결과·발표·상단 혼동 방지)
     const SLOTS = {
@@ -204,10 +202,10 @@
         return '';
     }
 
-    // #711 ④ 치는 대로 바뀌는 미리보기 — 대상 아님 문장(lucky.html 299행과 같은 글) · 봇 답(자동일 때만)
+    // #711 치는 대로 바뀌는 미리보기 — 대상 아님 문장(lucky.html noitem 장과 같은 글 · #717 「다른 상품 이름」 칸 없앰 → 이름 없이 「그 밖의 다른 상품」) · 봇 답(자동일 때만)
     function noitemHtml() {
-        const e = S.ev, x = (e.excludeProducts || []).join(', '), v = String((e.texts || {}).noitem_products || '').trim() || TEXT_DEFAULT.noitem_products;
-        return `주문은 확인되지만 <b>${esc(x || '(제외 품목)')}</b> 상품은 이번 이벤트 응모 대상에서 제외돼요. <mark>${esc(v)}</mark> 다른 상품 주문은 자동 접수됩니다!`;
+        const e = S.ev, x = (e.excludeProducts || []).join(', ');
+        return `주문은 확인되지만 <b>${esc(x || '(제외 품목)')}</b> 상품은 이번 이벤트 응모 대상에서 제외돼요. 그 밖의 다른 상품 주문은 자동 접수됩니다!`;
     }
     function refreshNoitem() { const p = $('ev-noitem-pv'); if (p) p.innerHTML = noitemHtml(); }
     // #711 봇 답·/guide 카드 = 서버 POST /bot-preview(저장 0 · docs/711 4-1) · 300ms 디바운스 · 옛 서버(404)면 저장된 값 그대로
@@ -275,7 +273,7 @@
             ${field('응모 시작', dateIn('start', e.start))}${field('응모 끝', dateIn('end', e.end))}
             ${field('발표일', dateIn('announce', e.announce))}
             ${field('페이지 내리는 날', dateIn('page_until', e.page_until), e.announce ? `기본 = 발표일 + 3일(${mdw(addDays(e.announce, 3))}) · 이날까지 당첨 확인 가능` : '발표일을 고르면 3일 뒤로 채워져요')}
-        </div>${chipBox('xp')}${chipBox('xc')}`;
+        </div>${chipBox('xp')}<div class="ev-sent"><span class="ev-f-l">손님이 보는 문장(대상 아님 장)</span><p id="ev-noitem-pv" aria-live="polite">${noitemHtml()}</p></div>${chipBox('xc')}`;
     }
     // #711 칩 고르기 — xp = 응모 제외 품목(S.ev.excludeProducts · 글자 포함이면 제외) · xc = 추첨 제외 연락처(S.excluded) · 저장 꼴은 종전 배열 그대로
     const fmtPhone = v => { const d = digits(v); return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : String(v); };
@@ -499,8 +497,7 @@
         const e = S.ev, tx = e.texts || {}, g = e.guide_card, b = e.bot_reply;
         const gl = cardView(), botText = botView();
         const adWarn = g.custom && [gl.title].concat(gl.lines || []).some(x => AD_WORDS.test(String(x || '')));
-        return `<div class="ev-grid">${TEXT_LABEL.map(([k, l, max, multi]) => field(l, (multi ? area : inp)('texts.' + k, tx[k] || '', TEXT_DEFAULT[k], `maxlength="${max}"`))
-                + (k === 'noitem_products' ? `<div class="ev-sent"><span class="ev-f-l">손님이 보는 문장(대상 아님 장)</span><p id="ev-noitem-pv" aria-live="polite">${noitemHtml()}</p></div>` : '')).join('')}</div>
+        return `<div class="ev-grid">${TEXT_LABEL.map(([k, l, max, multi]) => field(l, (multi ? area : inp)('texts.' + k, tx[k] || '', TEXT_DEFAULT[k], `maxlength="${max}"`))).join('')}</div>
             <div class="ev-sub" id="ev-botbox"><div class="ev-sub-h"><b>봇 답(톡톡·상품문의)</b>${btn(b.custom ? '자동으로 되돌리기' : '다시 생성', 'data-ev="botauto"', 'sm ghost')}</div>
                 <p class="ev-f-h ev-bot-what">손님이 톡톡·상품문의에서 이벤트를 물으면 봇이 이렇게 답해요(시나리오 #59 · [이벤트 열기] 때 자동 등록 · 손님 페이지엔 안 나가요).</p>
                 <textarea class="ev-in ev-ta" id="ev-bot" data-k="bot_reply.response" rows="6" aria-label="봇 답 글">${esc(botText)}</textarea>
@@ -527,7 +524,7 @@
     }
     function refreshPvBar() { document.querySelectorAll('#event-root .ev-pv-bar, #ev-pv-ov .ev-pv-bar').forEach(el => { const t = document.createElement('div'); t.innerHTML = pvBarHtml(); el.replaceWith(t.firstElementChild); }); }
     // 그림·글을 고치면 그것이 쓰이는 장으로 미리보기를 돌림(#711 · #716 = 글 입력도 늘 이김 · 손으로 고른 탭은 다음 입력까지만)
-    const VIEW_FOR = { hero: 'default', winner: 'winners', result: 'win', prize: 'default', 'texts.noitem_products': 'noitem', excludeProducts: 'noitem', 'texts.winner_hand': 'winners', 'texts.winner_foot': 'winners', 'texts.prize_head_hand': 'default', 'texts.corner_hand': 'default', 'texts.search_hand': 'received', title: 'default', display_title: 'default', start: 'default', end: 'default', announce: 'default', page_until: 'default', 'texts.preparing_title': 'preparing', 'texts.preparing_line': 'preparing', 'texts.closed_title': 'closed', 'texts.closed_line': 'closed', 'texts.store_btn': 'closed' };
+    const VIEW_FOR = { hero: 'default', winner: 'winners', result: 'win', prize: 'default', excludeProducts: 'noitem', 'texts.winner_hand': 'winners', 'texts.winner_foot': 'winners', 'texts.prize_head_hand': 'default', 'texts.corner_hand': 'default', 'texts.search_hand': 'received', title: 'default', display_title: 'default', start: 'default', end: 'default', announce: 'default', page_until: 'default', 'texts.preparing_title': 'preparing', 'texts.preparing_line': 'preparing', 'texts.closed_title': 'closed', 'texts.closed_line': 'closed', 'texts.store_btn': 'closed' };
     function autoView(key) {
         const k = /^prizes\./.test(key) ? 'prize' : key, v = VIEW_FOR[k];
         if (!v || v === S.view) return;
@@ -665,7 +662,6 @@
         setK(el.dataset.k, el.value);
         S.dirty = true;
         if (el.dataset.k === 'announce') { const pu = document.querySelector('#event-root [data-k="page_until"]'); if (pu) pu.value = S.ev.page_until || ''; }
-        if (el.dataset.k === 'texts.noitem_products') refreshNoitem();
         if (el.dataset.k !== 'bot_reply.response') refreshBot();
         autoView(el.dataset.k);
         refreshStatus(); postPreview(focusOf(el.dataset.k));

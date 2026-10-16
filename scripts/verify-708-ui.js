@@ -246,13 +246,13 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             // 자동 전환 — 조회 결과 그림 → 당첨 · 발표 그림 → 발표 뒤 · 대상 아님 글 → 대상 아님(그림은 손으로 고른 탭도 이김)
             await openCard(pg, 3); await upload(pg, '.ev-slot[data-slot="result"] [data-ev="upload"]'); const a1 = await lastMsg();
             await upload(pg, '.ev-slot[data-slot="winner"] [data-ev="upload"]'); const a2 = await lastMsg();
-            await openCard(pg, 4); await setVal(pg, 'texts.noitem_products', '레몬·한라봉 등'); const a3 = await lastMsg();
-            ok(`${tag}: 자동 전환 3 = 조회 결과 그림 → win · 발표 그림 → winners · 대상 아님 글 → noitem(탭 표시도 같이)`, a1.scene === 'win' && (phone || /asset\/\d+/.test(String(a1.event && a1.event.images.result))) && a2.scene === 'winners' && a3.scene === 'noitem' && await pg.evaluate(() => [...document.querySelectorAll('[data-ev="view"].on')].every(b => b.dataset.v === 'noitem')), JSON.stringify([a1.scene, a2.scene, a3.scene]));
+            await openCard(pg, 1); await pg.fill('#ev-xp-in', '레몬'); await pg.keyboard.press('Enter'); const a3 = await lastMsg();   // #717 「다른 상품 이름」 칸 없앰 → 제외 품목 칩으로 noitem 전환
+            ok(`${tag}: 자동 전환 3 = 조회 결과 그림 → win · 발표 그림 → winners · 제외 품목 칩 → noitem(탭 표시도 같이)`, a1.scene === 'win' && (phone || /asset\/\d+/.test(String(a1.event && a1.event.images.result))) && a2.scene === 'winners' && a3.scene === 'noitem' && await pg.evaluate(() => [...document.querySelectorAll('[data-ev="view"].on')].every(b => b.dataset.v === 'noitem')), JSON.stringify([a1.scene, a2.scene, a3.scene]));
             // ④ 문장 미리보기 · 봇 답 미리보기
             const sent = await pg.evaluate(() => document.getElementById('ev-noitem-pv').textContent);
-            ok(`${tag}: ④ 대상 아님 문장 = 치는 대로(제외 품목 칩 + 입력값)`, sent === '주문은 확인되지만 키위, 청귤 상품은 이번 이벤트 응모 대상에서 제외돼요. 레몬·한라봉 등 다른 상품 주문은 자동 접수됩니다!', sent);
+            ok(`${tag}: ① 대상 아님 문장 = 치는 대로(제외 품목 칩 · #717 「그 밖의 다른 상품」)`, sent === '주문은 확인되지만 키위, 청귤, 레몬 상품은 이번 이벤트 응모 대상에서 제외돼요. 그 밖의 다른 상품 주문은 자동 접수됩니다!', sent);
             const lab4 = await pg.evaluate(() => [...document.querySelectorAll('#ev-step-4 .ev-f-l, #ev-step-4 .ev-sub-h b')].map(x => x.textContent).join('|'));
-            ok(`${tag}: ④ 라벨 = 사람 말(대상 아님 안내 · 쿠폰 안내(봇 답에만) · 알림톡 단추 페이지(/guide) 맨 위 카드 + 설명)`, /대상 아님 안내에 넣을 다른 상품 이름/.test(lab4) && /쿠폰 한 줄\(봇 답에만\)/.test(lab4) && /알림톡 단추 페이지\(\/guide\) 맨 위 카드/.test(lab4) && await pg.evaluate(() => /맛있게 드시는 법/.test(document.getElementById('ev-step-4').textContent)), lab4);
+            ok(`${tag}: ④ 라벨 = 사람 말(#717 대상 아님 칸 없음 · 쿠폰 안내(봇 답에만) · 알림톡 단추 페이지(/guide) 맨 위 카드 + 설명)`, !/대상 아님 안내에 넣을 다른 상품 이름/.test(lab4) && /쿠폰 한 줄\(봇 답에만\)/.test(lab4) && /알림톡 단추 페이지\(\/guide\) 맨 위 카드/.test(lab4) && await pg.evaluate(() => /맛있게 드시는 법/.test(document.getElementById('ev-step-4').textContent)), lab4);
             await setVal(pg, 'coupon_text', '응모 고객께 다음 주문 쿠폰'); await pg.waitForTimeout(700);
             const bot = await pg.evaluate(() => ({ v: document.getElementById('ev-bot').value, drop: (document.getElementById('ev-gdrop-box') || {}).textContent || '', title: document.querySelector('[data-k="guide_card.title"]').value }));
             ok(`${tag}: ④ 봇 답·카드 = 서버 bot-preview 글(🎟 쿠폰 줄) · 쿠폰 줄은 「카드에 안 실려요」 · 디바운스(호출 ${F.bp}회)`, /🎟 응모 고객께 다음 주문 쿠폰/.test(bot.v) && /카드에 안 실려요/.test(bot.drop) && /쿠폰 응모 고객께/.test(bot.drop) && /^🎁 /.test(bot.title) && F.bp >= 1 && F.bp <= 6, JSON.stringify(bot).slice(0, 300));

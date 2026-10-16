@@ -298,7 +298,7 @@ function show(j,q){
   } else if(first.status==='lose'){
     head=`<div class="res lose">${girl}<div class="body"><div class="big">아쉽지만 다음 기회에… 🙏</div><div class="sub">이번엔 당첨되지 않으셨어요. 다음 이벤트에서 <b>더 좋은 상품으로 보답</b>드리겠습니다. 이용해주셔서 진심으로 감사합니다!</div></div>${deco('다음엔<br>꼭 만나요!')}</div>`;
   } else if(first.status==='noitem'){
-    head=`<div class="res none">${girl}<div class="body"><div class="big">이 상품은 이벤트 대상이 아니에요 🙏</div><div class="sub">주문은 확인되지만 <b>${esc((e.excludeProducts||[]).join(', '))}</b> 상품은 이번 이벤트 응모 대상에서 제외돼요. ${esc(str(CFG.texts.noitem_products)||'감귤·황금향 등')} 다른 상품 주문은 자동 접수됩니다!</div></div></div>`;
+    head=`<div class="res none">${girl}<div class="body"><div class="big">이 상품은 이벤트 대상이 아니에요 🙏</div><div class="sub">주문은 확인되지만 <b>${esc((e.excludeProducts||[]).join(', '))}</b> 상품은 이번 이벤트 응모 대상에서 제외돼요. 그 밖의 다른 상품 주문은 자동 접수됩니다!</div></div></div>`;
   } else if(first.status==='outside'){
     head=`<div class="res none">${girl}<div class="body"><div class="big">이벤트 기간 밖 주문이에요 🙏</div><div class="sub">주문은 확인되지만 <b>${fmtDate(e.start)}~${fmtDate(e.end)}</b> 사이 주문만 응모 대상이에요. 기간 내에 주문하시면 자동으로 접수됩니다!</div></div></div>`;
   } else {
@@ -342,9 +342,9 @@ if(PREVIEW) window.addEventListener('message',ev=>{
   try{ window.parent.postMessage(focus?{type:'lucky:rendered',scene,focus}:{type:'lucky:rendered',scene},location.origin); }catch(_){}
 });
 /* #716 미리보기 「바뀐 자리 강조」 — ?preview=1 일 때만(손님 화면엔 CSS·속성 0 · 리스너도 PREVIEW 안) · 메시지의 focus 키(표 = 워커3 #716-B) → 그 요소에 data-pv 를 달고 pv-hl 2초
-   글 칸 = prize_head_hand·corner_hand·search_hand·winner_hand·winner_foot·noitem_products·excludeProducts · title·display_title · start·end·announce·page_until · prizes.N.name|count|desc|note · images.hero|winner|result · 없는 키·없는 요소 = 무시 */
+   글 칸 = prize_head_hand·corner_hand·search_hand·winner_hand·winner_foot·excludeProducts(#717 noitem_products 칸 없앰) · title·display_title · start·end·announce·page_until · prizes.N.name|count|desc|note · images.hero|winner|result · 없는 키·없는 요소 = 무시 */
 const PV_FIXED={ prize_head_hand:()=>HAND_EL.prize_head_hand(), corner_hand:()=>HAND_EL.corner_hand(), search_hand:()=>HAND_EL.search_hand(), winner_hand:()=>HAND_EL.winner_hand(), winner_foot:()=>HAND_EL.winner_foot(),
-  noitem_products:()=>$('#result .res .sub'), excludeProducts:()=>$('#result .res .sub b'),
+  excludeProducts:()=>$('#result .res .sub b'),
   title:()=>$('#evHead .t')||$('.hero'), display_title:()=>$('#evHead .t')||$('.hero'),
   start:()=>$('#evHead .p')||$('#evInfo'), end:()=>$('#evHead .p')||$('#evInfo'), announce:()=>$('#evHead .p')||$('#evInfo'), page_until:()=>$('#evHead .p')||$('#evInfo'),
   'images.hero':()=>$('.hero .banner'), 'images.winner':()=>$('.mhero img'), 'images.result':()=>$('#result .res .pic') };
