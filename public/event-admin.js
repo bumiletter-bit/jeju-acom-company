@@ -2,6 +2,8 @@
 //   직원이 터미널 없이 한 회차를 처음부터 끝까지: 머리띠(상태 · 준비 n/5 · 지난 회차 복사 · 새 회차) + 단계 카드 5개(#716 부터 · 종전 6개)
 //   ①기간·제목 ②경품 ③그림 ④문구 ⑤열기·운영 · 미리보기 = 2단(본문 900↑)은 오른쪽 판 고정 · 한 줄(폰·폴드7 펼침)은 아래 떠 있는 단추 → 전체 화면 겹(#716 · 뒤로가기 = 겹만 닫힘 · app.js #678 .modal-overlay 규약).
 //   #716: 글·그림을 고치면 미리보기가 그 장으로 저절로 넘어가고 postMessage 에 focus(고친 칸 이름 · lucky.html 이 그 자리를 강조)를 싣는다 — 손으로 고른 탭은 다음 입력이 오면 다시 자동(60초 보호 없음).
+//   #718(대표 「직원 누구나 보고 바로 쓰게」): 「손님 화면 제목」 칸 삭제(회차 이름 하나 · 저장 몸에 display_title 안 보냄) · 드물게 쓰는 칸은 카드 안 「더 보기」(details · 기본 닫힘 · 값이 있으면 처음 열림)
+//     ① 페이지 내리는 날·추첨 제외 연락처 ② 경품 손글씨 한마디·품목 사진 관리 ④ 손글씨 5곳·봇 답·쿠폰·알림톡 카드(④ 는 기본이 자동 글이라 한 줄 안내만) · 미리보기 판 = 링크 복사 · ⑤ 아래 [초기화] 중복 삭제(머리띠 것만).
 //   저장은 「초안」(손님에게 안 보임) · [이벤트 열기]가 손님 페이지·/guide 카드·봇 답(#59)에 한 번에 반영(서버 lucky-event.js).
 //   서버 계약 = docs/708-event-design.md 3절(관리 API /api/agent-office/lucky/* · 응답 {ok, db}) · 미리보기 = iframe /lucky.html?preview=1 에 postMessage(초안 그대로 · 서버 왕복 0).
 //   그림 = 브라우저가 canvas 로 webp 로 줄여 POST /assets · 「AI로 그림 맡기기」 = 에이전트 오피스 지시([이벤트그림] 머리말) → 후보(report_files) → [이 그림 쓰기].
@@ -45,9 +47,9 @@
     ];
     // where = 손님 화면 어디에 쓰이는지(#711 · 결과·발표·상단 혼동 방지)
     const SLOTS = {
-        hero: { label: '상단 그림', w: 1200, h: 350, pose: '상자들기', field: 'hero_image_id', where: '손님 페이지 맨 위 배너' },
-        winner: { label: '발표 그림', w: 900, h: 471, pose: '기쁨', field: 'winner_image_id', where: '당첨자 발표 창 맨 위 그림' },
-        result: { label: '조회 결과 그림', w: 400, h: 400, pose: '인사', field: 'result_image_id', where: '손님이 이름·번호로 조회한 결과 장 왼쪽 아꼼이 자리(접수됨·당첨·미당첨·대상 아님) · 발표 창 그림은 위 「발표 그림」' },
+        hero: { label: '상단 그림', w: 1200, h: 350, pose: '상자들기', field: 'hero_image_id', where: '손님 페이지 맨 위 배너 · 제목은 그림 안에(#718 배너 아래 큰 제목 없앰)' },
+        winner: { label: '발표 그림', w: 900, h: 471, pose: '기쁨', field: 'winner_image_id', where: '당첨자 발표 창 맨 위' },
+        result: { label: '조회 결과 그림', w: 400, h: 400, pose: '인사', field: 'result_image_id', where: '조회 결과 장(접수됨·당첨·미당첨·대상 아님) 왼쪽 아꼼이 자리' },
         prize: { label: '경품 그림', w: 480, h: 480, pose: '귤들기', field: 'image_id' },
         brand: { label: '품목 사진', w: 480, h: 480 },
     };
@@ -78,8 +80,17 @@
     const S = {
         db: null, id: null, ev: null, excluded: [], dirty: false, saving: false, loadErr: '',
         rounds: null, assets: [], open: new Set([1]), view: 'default', frame: 'phone',
-        cand: {}, busy: '', ordersPending: [], previewTimer: 0, mounted: false, pvOpen: false, focus: '',
+        cand: {}, busy: '', ordersPending: [], previewTimer: 0, mounted: false, pvOpen: false, focus: '', more: null,
     };
+    // #718 「더 보기」 처음 열림 = 그 안 칸에 기본값 아닌 값이 있을 때(한 번만 셈 · 그 뒤는 직원이 연/닫은 대로)
+    function seedMore() {
+        if (S.more) return; S.more = new Set();
+        const e = S.ev || {}, tx = e.texts || {};
+        if (S.excluded.length || (e.page_until && e.announce && e.page_until !== addDays(e.announce, 3))) S.more.add('1');
+        if ((e.prizes || []).some(p => String(p.note || '').trim())) S.more.add('2');
+        if (TEXT_LABEL.some(([k]) => String(tx[k] || '').trim() && String(tx[k]).trim() !== TEXT_DEFAULT[k]) || String(e.coupon_text || '').trim() || (e.bot_reply && e.bot_reply.custom) || (e.guide_card && e.guide_card.custom)) S.more.add('4');
+    }
+    const moreHtml = (k, label, inner) => `<details class="ev-more" data-more="${k}"${S.more && S.more.has(k) ? ' open' : ''}><summary>더 보기 · ${label}</summary><div class="ev-more-b">${inner}</div></details>`;
 
     // ── 서버 값 → 초안(ev) ─────────────────────────────────
     function takeDb(db, id, body) {
@@ -95,7 +106,7 @@
         e.excludeProducts = Array.isArray(e.excludeProducts) ? e.excludeProducts : [];
         if (!e.page_until && e.announce) e.page_until = addDays(e.announce, 3);
         S.ev = e; S.excluded = Array.isArray(db && db.excluded) ? db.excluded.slice() : [];
-        S.dirty = false;
+        S.dirty = false; seedMore();
     }
     // 서버 state(설계 2-3)가 있으면 그것 · 없으면 같은 규칙으로 계산(옛 서버)
     function stateOf() {
@@ -134,9 +145,9 @@
     // ── 준비 상태(설계 1-3 완료 기준 · 서버 checklist 가 오면 그 값 우선) ──
     function check() {
         const e = S.ev || {}, out = {};
-        const t = (e.display_title || e.title || '').trim();
+        const t = (e.title || '').trim();   // #718 손님 화면 제목 칸 없음 → 회차 이름 하나
         const miss1 = [];
-        if (!t) miss1.push('제목'); if (!e.start) miss1.push('응모 시작'); if (!e.end) miss1.push('응모 끝'); if (!e.announce) miss1.push('발표일'); if (!e.page_until) miss1.push('내리는 날');
+        if (!t) miss1.push('회차 이름'); if (!e.start) miss1.push('응모 시작'); if (!e.end) miss1.push('응모 끝'); if (!e.announce) miss1.push('발표일'); if (!e.page_until) miss1.push('내리는 날');
         if (!miss1.length && !(e.start <= e.end && e.end <= e.announce && e.announce <= e.page_until)) miss1.push('날짜 순서(시작 ≤ 끝 ≤ 발표 ≤ 내림)');
         out[1] = { ok: !miss1.length, miss: miss1, sum: miss1.length ? '빠짐: ' + miss1.join(' · ') : `${mdw(e.start)} ~ ${mdw(e.end)} · 발표 ${mdw(e.announce)} · 내림 ${mdw(e.page_until)}` };
         const ps = e.prizes || [], miss2 = [];
@@ -160,7 +171,7 @@
     function autoGuide() {
         const e = S.ev, ps = e.prizes || [], people = ps.reduce((a, p) => a + (Number(p.count) || 0), 0);
         return {
-            title: e.display_title || e.title || '',
+            title: e.title || '',
             lines: [
                 `응모 기간 ${mdw(e.start)} ~ ${mdw(e.end)} 주문 고객 자동 응모`,
                 ps.length ? `총 ${people}명 추첨: ` + ps.map((p, i) => `${i + 1}등 ${p.name} ${p.count}명`).join(' · ') : '',
@@ -174,7 +185,7 @@
     function previewPayload() {
         const e = S.ev;
         return {
-            title: e.title, display_title: e.display_title || e.title, start: e.start, end: e.end, announce: e.announce, page_until: e.page_until,
+            title: e.title, start: e.start, end: e.end, announce: e.announce, page_until: e.page_until,   // #718 display_title 안 보냄(lucky.html 이 title 로)
             excludeProducts: e.excludeProducts, published: ['winners', 'published'].includes(S.view), state: ['winners', 'published'].includes(S.view) ? 'published' : 'live', live_mode: e.live_mode || 'draft',
             prizes: (e.prizes || []).map(p => { const im = prizeImg(p); return { name: p.name, count: Number(p.count) || 0, desc: p.desc || '', note: p.note || '', image: im ? im.url : null }; }),
             images: { hero: e.hero_image_id ? assetUrl(e.hero_image_id) : null, winner: e.winner_image_id ? assetUrl(e.winner_image_id) : null, result: e.result_image_id ? assetUrl(e.result_image_id) : null },
@@ -198,7 +209,7 @@
         k = String(k || '');
         if (k.startsWith('texts.')) return k.slice(6);
         if (/^prizes\.\d+\.(name|count|desc|note)$/.test(k)) return k;
-        if (['title', 'display_title', 'start', 'end', 'announce', 'page_until', 'excludeProducts'].includes(k)) return k;
+        if (['title', 'start', 'end', 'announce', 'page_until', 'excludeProducts'].includes(k)) return k;
         return '';
     }
 
@@ -268,12 +279,11 @@
     function step1() {
         const e = S.ev;
         return `<div class="ev-grid">
-            ${field('회차 이름(관리용)', inp('title', e.title, '예: 2026 가을 고객 감사'))}
-            ${field('손님 화면 제목', inp('display_title', e.display_title, e.title || '비우면 회차 이름'), '배너 그림 밖 큰 글자 · 그림 속엔 글자를 넣지 마세요')}
+            ${field('회차 이름', inp('title', e.title, '예: 2026 가을 고객 감사'), '알림톡 카드·봇 답 제목으로도 쓰여요 · 손님이 봐도 되는 이름으로')}
             ${field('응모 시작', dateIn('start', e.start))}${field('응모 끝', dateIn('end', e.end))}
             ${field('발표일', dateIn('announce', e.announce))}
-            ${field('페이지 내리는 날', dateIn('page_until', e.page_until), e.announce ? `기본 = 발표일 + 3일(${mdw(addDays(e.announce, 3))}) · 이날까지 당첨 확인 가능` : '발표일을 고르면 3일 뒤로 채워져요')}
-        </div>${chipBox('xp')}<div class="ev-sent"><span class="ev-f-l">손님이 보는 문장(대상 아님 장)</span><p id="ev-noitem-pv" aria-live="polite">${noitemHtml()}</p></div>${chipBox('xc')}`;
+        </div>${chipBox('xp')}<div class="ev-sent"><span class="ev-f-l">손님이 보는 문장(대상 아님 장)</span><p id="ev-noitem-pv" aria-live="polite">${noitemHtml()}</p></div>
+        ${moreHtml('1', '페이지 내리는 날 · 추첨 제외 연락처', `<div class="ev-grid">${field('페이지 내리는 날', dateIn('page_until', e.page_until), '기본 = 발표일 + 3일 · 이날까지 당첨 확인 가능')}</div>${chipBox('xc')}`)}`;
     }
     // #711 칩 고르기 — xp = 응모 제외 품목(S.ev.excludeProducts · 글자 포함이면 제외) · xc = 추첨 제외 연락처(S.excluded) · 저장 꼴은 종전 배열 그대로
     const fmtPhone = v => { const d = digits(v); return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : String(v); };
@@ -285,7 +295,7 @@
             <ul class="ev-chips" aria-labelledby="ev-${kind}-l">${list.map((v, i) => `<li class="ev-chip${!isP && digits(v) && !/^\d{10,11}$/.test(digits(v)) ? ' bad' : ''}"><span>${esc(isP ? v : fmtPhone(v))}</span><button type="button" class="ev-chip-x" data-ev="chipx" data-kind="${kind}" data-i="${i}" aria-label="${esc(isP ? v : fmtPhone(v))} 빼기">×</button></li>`).join('') || `<li class="ev-chip-none">${isP ? '없음 · 기간 안 모든 주문이 응모돼요' : '없음'}</li>`}</ul>
             <div class="ev-chip-add"><input type="${isP ? 'search' : 'tel'}" class="ev-in" id="ev-${kind}-in" data-chip="${kind}" maxlength="${isP ? 40 : 20}" autocomplete="off" ${isP ? 'placeholder="품목 찾기 · 예: 청귤" aria-controls="ev-xp-pick"' : 'inputmode="numeric" placeholder="예: 010-1234-5678"'} aria-label="${lab} 추가">${btn('+ 추가', `data-ev="chipadd" data-kind="${kind}" aria-label="${lab} 추가"`)}</div>
             ${isP ? `<div class="ev-pick" id="ev-xp-pick" role="listbox" aria-label="품목 목록">${pickHtml()}</div>` : ''}
-            <span class="ev-f-h">${isP ? '주문 상품 이름에 이 글자가 들어 있으면 응모에서 빠져요 · 목록에서 누르거나 직접 적고 [+ 추가] · 품목 전체는 묶음(짧은 이름)을 권해요(손님 화면에 그대로 떠요)' : '직원·시험 주문 번호(숫자만 · 10~11자리) · 이 번호는 추첨에서 빠져요 · 빨간 칩 = 자릿수 확인'}</span></div>`;
+            <span class="ev-f-h">${isP ? '주문 상품 이름에 이 글자가 들어 있으면 응모에서 빠져요 · 목록에서 누르거나 적고 [+ 추가]' : '직원·시험 주문 번호 · 숫자만 10~11자리 · 이 번호는 추첨에서 빠져요'}</span></div>`;
     }
     function addChip(kind, v) {
         v = String(v || '').trim(); if (!v) { toast(kind === 'xp' ? '품목 이름을 적어 주세요' : '연락처를 적어 주세요', 'error'); return false; }
@@ -346,17 +356,18 @@
                     <div class="ev-prize-top"><b class="ev-rank">${i + 1}등</b>${inp(`prizes.${i}.name`, p.name, '경품 이름 · 예: 황금향 5kg 선물용', 'aria-label="' + (i + 1) + '등 경품 이름"')}
                         <input type="number" class="ev-in ev-cnt" data-k="prizes.${i}.count" value="${esc(p.count)}" min="1" inputmode="numeric" aria-label="${i + 1}등 인원"><span class="ev-unit">명</span></div>
                     ${area(`prizes.${i}.desc`, p.desc, '설명 1~2줄(120자 · 줄바꿈 가능)', 'maxlength="120" aria-label="' + (i + 1) + '등 설명"')}
-                    ${inp(`prizes.${i}.note`, p.note, '손글씨 한마디(40자)', 'maxlength="40" aria-label="' + (i + 1) + '등 손글씨"')}
+                    ${inp(`prizes.${i}.note`, p.note, '손글씨 한마디(40자)', 'maxlength="40" aria-label="' + (i + 1) + '등 손글씨"' + (S.more && S.more.has('2') ? '' : ' hidden'))}
                     ${candBand('prize:' + i)}
                     <div class="ev-row">${btn('↑', `data-ev="pup" data-i="${i}" aria-label="${i + 1}등 위로"${i ? '' : ' disabled'}`, 'sm icon')}${btn('↓', `data-ev="pdown" data-i="${i}" aria-label="${i + 1}등 아래로"${i < ps.length - 1 ? '' : ' disabled'}`, 'sm icon')}${btn('빼기', `data-ev="pdel" data-i="${i}" aria-label="${i + 1}등 빼기"`, 'sm danger')}</div>
                 </div></li>`;
         }).join('')}</ol>${ps.length ? '' : '<p class="ev-empty">아직 경품이 없어요.</p>'}${btn('+ 경품 추가', 'data-ev="padd"')}
-        <p class="ev-note">경품 그림을 안 올리면 경품 이름에서 품목을 알아봐 아래 「품목 사진」을 써요.</p>${brandBox()}`;
+        <p class="ev-note">그림을 안 올리면 경품 이름으로 품목 사진을 찾아 써요.</p>
+        ${moreHtml('2', '경품 손글씨 한마디 · 품목 사진 관리', brandBox())}`;
     }
     // #709(대표 「직원이 직접」) 품목 사진 관리 — 경품 그림 기본값으로 쓰는 실제 품목 사진(slot brand · label = 품목 이름) · 품목이 바뀌어도 직원이 올림
     function brandBox() {
         // #711 검색 칸이 맨 위 · 글자를 쳐야 목록(26장을 늘 펼치지 않음) · 같은 칸 글자가 올릴 때 품목 이름
-        return `<div class="ev-sub ev-brand" id="ev-brand"><div class="ev-sub-h"><b>품목 사진</b><span class="ev-f-h">경품 상품을 대표상품 참고하여 이미지 제작을 합니다.</span></div>
+        return `<div class="ev-sub ev-brand" id="ev-brand"><div class="ev-sub-h"><b>품목 사진</b><span class="ev-f-h">경품 그림 기본값으로 쓰는 품목 실사진 · 새 품목이면 여기에 올려요</span></div>
             <div class="ev-badd"><label class="ev-f"><span class="ev-f-l">품목 이름 찾기 · 올릴 때 이름</span><input type="search" class="ev-in" id="ev-blabel" maxlength="30" value="${esc(S.bq || '')}" placeholder="예: 황금향" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ev-bnpanel"></label>
                 ${btn('품목 사진 올리기', 'data-ev="badd"', 'primary')}</div>
             <div id="ev-bres" aria-live="polite">${brandResults()}</div></div>`;
@@ -479,8 +490,7 @@
             ${candBand(slot)}</div>`;
     }
     function step3() {
-        return `<p class="ev-note">그림 속에는 글자를 넣지 마세요(오타가 나도 고칠 수 없어요). 제목은 ①에서 글자로 넣어요.</p>
-            ${slotBox('hero')}${slotBox('winner')}${slotBox('result')}`;
+        return `${slotBox('hero')}${slotBox('winner')}${slotBox('result')}`;
     }
     function candBand(key) {
         const pend = (S.ev.pending_art || []).filter(p => p.slot === key);
@@ -497,19 +507,21 @@
         const e = S.ev, tx = e.texts || {}, g = e.guide_card, b = e.bot_reply;
         const gl = cardView(), botText = botView();
         const adWarn = g.custom && [gl.title].concat(gl.lines || []).some(x => AD_WORDS.test(String(x || '')));
-        return `<div class="ev-grid">${TEXT_LABEL.map(([k, l, max, multi]) => field(l, (multi ? area : inp)('texts.' + k, tx[k] || '', TEXT_DEFAULT[k], `maxlength="${max}"`))).join('')}</div>
+        // #718 기본은 전부 자동(손글씨 기본 글자 · 봇 답·카드 글은 기간·경품·발표일로 서버가 만듦) → 한 줄 안내 + 「더 보기」
+        return `<p class="ev-note">봇 답·알림톡 카드 글은 기간·경품·발표일로 자동으로 만들어져요 · 손글씨는 기본 글자예요 · 고칠 때만 아래를 열어요.</p>
+            ${moreHtml('4', '손글씨 5곳 · 봇 답 · 쿠폰 · 알림톡 카드', `<div class="ev-grid">${TEXT_LABEL.map(([k, l, max, multi]) => field(l, (multi ? area : inp)('texts.' + k, tx[k] || '', TEXT_DEFAULT[k], `maxlength="${max}"`))).join('')}</div>
             <div class="ev-sub" id="ev-botbox"><div class="ev-sub-h"><b>봇 답(톡톡·상품문의)</b>${btn(b.custom ? '자동으로 되돌리기' : '다시 생성', 'data-ev="botauto"', 'sm ghost')}</div>
                 <p class="ev-f-h ev-bot-what">손님이 톡톡·상품문의에서 이벤트를 물으면 봇이 이렇게 답해요(시나리오 #59 · [이벤트 열기] 때 자동 등록 · 손님 페이지엔 안 나가요).</p>
                 <textarea class="ev-in ev-ta" id="ev-bot" data-k="bot_reply.response" rows="6" aria-label="봇 답 글">${esc(botText)}</textarea>
                 <p class="ev-f-h ev-bot-note" id="ev-bot-note" role="status" hidden>잠시 뒤 다시 보여 드려요(미리보기 요청이 많아요 · 아래 글은 바로 앞 글)</p>
-                <p class="ev-f-h">봇 답은 여기가 정본이에요. 문의 관리에서 고치면 다음 저장 때 덮여요.${b.custom ? ' · 손으로 고친 글(자동 갱신 안 함)' : ' · 칸을 고치면 손으로 고친 글로 남아요'}</p>
-                ${field('쿠폰 한 줄', inp('coupon_text', e.coupon_text, '예: 응모 고객께 다음 주문 할인 쿠폰'), '이 한 줄은 위 봇 답의 🎟 줄에만 들어가요 · 손님 페이지·알림톡 카드엔 안 나가요(광고성)')}</div>
+                <p class="ev-f-h">${b.custom ? '손으로 고친 글 · 자동으로 안 바뀌어요(문의 관리에서 고친 글은 다음 저장 때 이 글로 덮여요)' : '칸을 고치면 손으로 고친 글로 남아요'}</p>
+                ${field('쿠폰 한 줄', inp('coupon_text', e.coupon_text, '예: 응모 고객께 다음 주문 할인 쿠폰'), '위 봇 답의 🎟 줄에만 들어가요 · 손님 페이지·알림톡 카드엔 안 나가요(광고성)')}</div>
             <div class="ev-sub"><div class="ev-sub-h"><b>알림톡 단추 페이지(/guide) 맨 위 카드</b>${btn(g.custom ? '자동으로 되돌리기' : '다시 생성', 'data-ev="guideauto"', 'sm ghost')}</div>
-                <p class="ev-f-h">발송안내 알림톡의 [맛있게 드시는 법] 단추를 누르면 열리는 페이지 맨 위에 이벤트 기간 동안 이 카드가 붙어요(할인·쿠폰·금액 글자는 자동으로 빠져요).</p>
+                <p class="ev-f-h">발송안내 알림톡 [맛있게 드시는 법] 페이지 맨 위에 이벤트 기간 동안 붙는 카드 · 할인·쿠폰·금액 글자는 자동으로 빠져요.</p>
                 <div class="ev-gcard"><input type="text" class="ev-in ev-gtitle" data-k="guide_card.title" value="${esc(gl.title)}" aria-label="카드 제목">
                     ${[0, 1, 2].map(i => `<input type="text" class="ev-in" data-k="guide_card.lines.${i}" value="${esc((gl.lines || [])[i] || '')}" maxlength="120" aria-label="카드 ${i + 1}째 줄">`).join('')}
                     <span class="ev-gbtn">${esc(gl.btn || '접수·당첨 확인 바로가기')}</span></div><div id="ev-gdrop-box">${dropHtml(gl)}</div>
-                ${adWarn ? '<p class="ev-warn" role="alert">카드 글에 할인·쿠폰·금액 글자가 있어요. 광고성으로 걸릴 수 있으니 빼 주세요(쿠폰은 봇 답에만).</p>' : ''}</div>`;
+                ${adWarn ? '<p class="ev-warn" role="alert">카드 글에 할인·쿠폰·금액 글자가 있어요. 광고성으로 걸릴 수 있으니 빼 주세요(쿠폰은 봇 답에만).</p>' : ''}</div>`)}`;
     }
     // #711 손님 화면 미리보기 — 상태 탭(lucky.html 미리보기 장) · PC 2단 = 오른쪽 판에만 · 한 줄 = 떠 있는 단추 → 전체 화면 겹(#716)
     // 장 이름(scene) = docs/711-event-design.md 1절 · 「발표 뒤 첫 화면」만 화면 쪽 이름 published(= scene default + event.published)
@@ -524,14 +536,15 @@
     }
     function refreshPvBar() { document.querySelectorAll('#event-root .ev-pv-bar, #ev-pv-ov .ev-pv-bar').forEach(el => { const t = document.createElement('div'); t.innerHTML = pvBarHtml(); el.replaceWith(t.firstElementChild); }); }
     // 그림·글을 고치면 그것이 쓰이는 장으로 미리보기를 돌림(#711 · #716 = 글 입력도 늘 이김 · 손으로 고른 탭은 다음 입력까지만)
-    const VIEW_FOR = { hero: 'default', winner: 'winners', result: 'win', prize: 'default', excludeProducts: 'noitem', 'texts.winner_hand': 'winners', 'texts.winner_foot': 'winners', 'texts.prize_head_hand': 'default', 'texts.corner_hand': 'default', 'texts.search_hand': 'received', title: 'default', display_title: 'default', start: 'default', end: 'default', announce: 'default', page_until: 'default', 'texts.preparing_title': 'preparing', 'texts.preparing_line': 'preparing', 'texts.closed_title': 'closed', 'texts.closed_line': 'closed', 'texts.store_btn': 'closed' };
+    const VIEW_FOR = { hero: 'default', winner: 'winners', result: 'win', prize: 'default', excludeProducts: 'noitem', 'texts.winner_hand': 'winners', 'texts.winner_foot': 'winners', 'texts.prize_head_hand': 'default', 'texts.corner_hand': 'default', 'texts.search_hand': 'received', title: 'default', start: 'default', end: 'default', announce: 'default', page_until: 'default', 'texts.preparing_title': 'preparing', 'texts.preparing_line': 'preparing', 'texts.closed_title': 'closed', 'texts.closed_line': 'closed', 'texts.store_btn': 'closed' };
     function autoView(key) {
         const k = /^prizes\./.test(key) ? 'prize' : key, v = VIEW_FOR[k];
         if (!v || v === S.view) return;
         S.view = v; refreshPvBar();
     }
-    const pvActs = () => `<div class="ev-row ev-pv-acts">${btn(S.frame === 'phone' ? '넓게 보기' : '폰으로 보기', 'data-ev="frame"', 'sm ghost')}${btn('미리보기 링크 복사', 'data-ev="pvlink"', 'sm')}</div>
-            <p class="ev-f-h">링크는 1시간 동안 열려요 · 다른 직원·대표 폰으로 보낼 때.</p>`;
+    // #718 링크 복사 = 「더 보기」 안(드물게 씀) · [넓게 보기] 는 그대로
+    const pvActs = () => `<div class="ev-row ev-pv-acts">${btn(S.frame === 'phone' ? '넓게 보기' : '폰으로 보기', 'data-ev="frame"', 'sm ghost')}</div>
+            ${moreHtml('pv', '다른 폰으로 보는 링크', `<div class="ev-row">${btn('미리보기 링크 복사', 'data-ev="pvlink"', 'sm')}<span class="ev-f-h">1시간 동안 열려요 · 다른 직원·대표 폰으로 보낼 때</span></div>`)}`;
     const frameHtml = () => `<div class="ev-frame-wrap ${S.frame}"><iframe id="ev-frame" title="손님 화면 미리보기" src="/lucky.html?preview=1" loading="lazy"></iframe></div>`;
     // #716-E 한 줄(폰·폴드7 펼침)에서는 미리보기가 떠 있는 단추 → 전체 화면 겹. class modal-overlay = app.js #678 가 공통 창으로 세어 뒤로가기·Esc 로 닫아 줌(× = .modal-close 를 눌러 닫음)
     const fabHtml = () => `<button type="button" class="ev-btn primary ev-pv-fab" data-ev="pvopen" aria-haspopup="dialog">손님 화면 미리보기</button>`;
@@ -580,7 +593,7 @@
                 <div class="ev-scroll"><table class="ev-tbl"><thead><tr><th>#</th><th>경품</th><th>고객</th><th>연락처</th><th>주문</th></tr></thead><tbody>
                 ${winners.map((w, i) => `<tr><td>${i + 1}</td><td><b>${esc(w.prize)}</b></td><td>${esc(w.name)}</td><td>${esc(w.phone)}</td><td>${esc(String(w.product || '').slice(0, 24))} · ${w.orders || 1}건</td></tr>`).join('') || '<tr><td colspan="5" class="ev-empty">아직 추첨 전이에요</td></tr>'}</tbody></table></div>
                 <div class="ev-row">${btn('당첨자 복사', `data-ev="wcopy"${winners.length ? '' : ' disabled'}`, 'sm')}${btn('당첨자 엑셀', `data-ev="wxlsx"${winners.length ? '' : ' disabled'}`, 'sm')}</div></div>
-            <div class="ev-sub ev-danger-zone"><div class="ev-row">${open || st === 'scheduled' ? btn('페이지 내리기', 'data-ev="down"', 'danger') : ''}${btn('초기화', 'data-ev="reset" aria-label="이 회차 초기화"', 'danger ghost')}</div></div>`;
+            ${open || st === 'scheduled' ? `<div class="ev-sub ev-danger-zone"><div class="ev-row">${btn('페이지 내리기', 'data-ev="down"', 'danger')}</div></div>` : ''}`;   // #718 아래 [초기화] 는 머리띠 것과 중복이라 없앰
     }
     function upPreview() {
         if (!S.ordersPending.length) return '';
@@ -673,7 +686,7 @@
         if (!e.guide_card.custom) Object.assign(e.guide_card, autoGuide());
         if (!e.bot_reply.custom) e.bot_reply.response = '';
         e.prizes = (e.prizes || []).filter(p => String(p.name || '').trim()).map(p => { const b = p.image_id ? null : brandFor(p.name); return Object.assign({}, p, { name: String(p.name).trim(), count: Math.max(0, Number(p.count) || 0), image_id: p.image_id || (b && b.id) || null }); });   // 그림을 안 고른 경품 = 품목 실사진(설계 0-ㄷ)
-        delete e.state; delete e.live_mode; delete e.checklist;
+        delete e.state; delete e.live_mode; delete e.checklist; delete e.display_title;   // #718 손님 화면 제목 칸 없음 → 안 보냄(서버 옛 값 그대로 · 지금 회차는 빈 값)
         return { event: e, excluded: S.excluded };
     }
     async function save(quiet) {
@@ -990,6 +1003,10 @@
         root.addEventListener('input', onInput);
         root.addEventListener('change', onChange);
         root.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.dataset && e.target.dataset.chip) { e.preventDefault(); addChip(e.target.dataset.chip, e.target.value); } });   // 칩 칸 Enter = [+ 추가](한글 조합 중 제외)
+        // #718 「더 보기」 열고 닫음 기억(details toggle 은 안 번짐 → capture) · ② 는 경품 손글씨 칸을 같이 보임/숨김
+        const onMore = e => { const d = e.target; if (!(d instanceof HTMLDetailsElement) || !d.dataset.more) return; if (!S.more) S.more = new Set(); d.open ? S.more.add(d.dataset.more) : S.more.delete(d.dataset.more); if (d.dataset.more === '2') document.querySelectorAll('#event-root .ev-prize [data-k$=".note"]').forEach(el => { el.hidden = !d.open; }); };
+        root.addEventListener('toggle', onMore, true);
+        document.addEventListener('toggle', e => { if (e.target.closest && e.target.closest('#ev-pv-ov')) onMore(e); }, true);
         root.addEventListener('keydown', e => { if (e.target.id === 'ev-drop' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); $('ev-xlsx').click(); } });
         root.addEventListener('click', e => { if (e.target.closest('#ev-drop') && e.target.id !== 'ev-xlsx') $('ev-xlsx').click(); });
         // #716 품목 이름 찾기 목록 창 — 칸을 누르거나 초점이 오면 열림(빈 칸 = 전체) · 바깥 누름·Esc·Tab 닫힘 · 화면이 움직이면 따라감

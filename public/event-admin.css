@@ -83,6 +83,20 @@ select.ev-in { padding-right: 28px; }
 .ev-empty { margin: 0; color: var(--text-mid, #667085); font-size: 13px; padding: 6px 0; }
 .ev-loaderr { padding: 24px; background: var(--card-bg, #fff); border-radius: var(--radius, 14px); color: var(--ev-warn); font-weight: 600; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .ev-sub { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; border-top: 1px dashed var(--border, #ECEDF1); }
+/* #718 「더 보기」(드물게 쓰는 칸 · 기본 닫힘) */
+.ev-more { border-top: 1px dashed var(--border, #ECEDF1); }
+.ev-more > summary { display: flex; align-items: center; gap: 8px; min-height: 40px; list-style: none; cursor: pointer; color: var(--text-mid, #667085); font-size: 13px; font-weight: 600; user-select: none; }
+.ev-more > summary::-webkit-details-marker { display: none; }
+.ev-more > summary::before { content: ''; width: 8px; height: 8px; border-right: 2px solid var(--text-light, #98A0AE); border-bottom: 2px solid var(--text-light, #98A0AE); transform: rotate(45deg); margin: 0 4px 3px 2px; transition: transform .15s cubic-bezier(.23, 1, .32, 1); }
+.ev-more[open] > summary { color: var(--primary, #4F46E5); }
+.ev-more[open] > summary::before { transform: rotate(-135deg); margin-bottom: -2px; border-color: var(--primary, #4F46E5); }
+.ev-more > summary:hover { color: var(--primary, #4F46E5); }
+.ev-more > summary:focus-visible { outline: 2px solid var(--primary, #4F46E5); outline-offset: 2px; border-radius: 6px; }
+.ev-more-b { display: flex; flex-direction: column; gap: 14px; padding: 4px 0 6px; }
+.ev-more-b > .ev-sub { border-top: none; padding-top: 0; }
+.ev-pv-acts + .ev-more { border-top: none; }
+.ev-pv-acts + .ev-more > summary { min-height: 32px; font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { .ev-more > summary::before { transition: none; } }
 .ev-sub-h { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; color: var(--text-dark, #101828); font-size: 14px; }
 
 /* ② 경품 */
@@ -215,7 +229,7 @@ select.ev-in { padding-right: 28px; }
 
 /* 폰·폴드(#703 규칙과 같은 폭) — 누르는 것 44px */
 @media (max-width: 960px), (pointer: coarse) {
-    .ev-btn, .ev-btn.sm, .ev-seg-b, .ev-in, .ev-up .ev-in { min-height: 44px; }
+    .ev-btn, .ev-btn.sm, .ev-seg-b, .ev-in, .ev-up .ev-in, .ev-more > summary { min-height: 44px; }
     .ev-btn.icon { min-width: 44px; }
     .ev-chip, .ev-pick-b { min-height: 44px; }
     .ev-chip-x { width: 44px; height: 44px; }

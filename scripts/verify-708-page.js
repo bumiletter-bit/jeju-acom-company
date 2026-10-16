@@ -15,6 +15,11 @@ const OLD_REF = process.env.OLD_REF || 'ac67689';   // #708 앞 lucky.html(HEAD 
 let pass = 0, failN = 0;
 const ok = (m, c, d) => { if (c) { pass++; console.log('  ✅', m); } else { failN++; console.log('  ❌', m, d !== undefined ? '→ ' + (typeof d === 'string' ? d : JSON.stringify(d)).slice(0, 400) : ''); } };
 
+const OLD_DESC = ['제주의 달콤함, 프리미엄 하우스 황금향<br>소중한 분께 전하는 특별한 선물', '황금향이 가득한 제주 황금향<br>달콤한 행복을 선물하세요', '언제나 맛있는 제주 감귤<br>제주의 따뜻한 마음을 담았습니다'], OLD_NOTE = ['프리미엄 황금향!', '달콤한 선물!', '신선한 제주 감귤!'];
+const NORM = h => { let s = String(h).replace(/감귤·황금향 등 다른 상품|그 밖의 다른 상품/g, '§');   // #717 대상 아님 문장 = 의도한 바뀜
+    OLD_DESC.forEach(d => { s = s.split('<div class="d">' + d + '</div>').join(''); }); s = s.split('<div class="d"></div>').join('');   // #718-b 빈 설명 = 안 그림(옛 페이지의 기본 설명 줄)
+    OLD_NOTE.forEach(n => { s = s.split('<span class="hand">' + n + '</span>').join(''); }); s = s.split('<span class="hand"></span>').join('');   // #718-b 빈 손글씨 = 안 그림
+    return s; };
 const OLD_HTML = execSync(`git show ${OLD_REF}:public/lucky.html`, { cwd: ROOT, encoding: 'utf8' });
 const NEW_HTML = fs.readFileSync(path.join(ROOT, 'public', 'lucky.html'), 'utf8');
 
@@ -81,38 +86,37 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     console.log('① 설정 비움(종전 응답 꼴) = 고치기 전 페이지와 DOM 동일');
     setEvent();
     let r = await both('');
-    ok('첫 화면 body DOM·제목 동일(접수 중)', r.a.html === r.b.html && r.a.title === r.b.title, firstDiff(r.a.html, r.b.html));
+    ok('첫 화면 body DOM·제목 동일(접수 중)', NORM(r.a.html) === NORM(r.b.html) && r.a.title === r.b.title, firstDiff(NORM(r.a.html), NORM(r.b.html)));
     for (const k of ['none', 'received', 'win', 'lose', 'noitem', 'outside', 'receiver', 'short']) {
       r = await both('', doLookup(k));
-      { const n717 = h => String(h).replace(/감귤·황금향 등 다른 상품|그 밖의 다른 상품/g, '§');   // #717 대상 아님 문장만 의도한 바뀜
-      ok(`조회 결과 「${k}」 DOM 동일${k === 'noitem' ? '(#717 문장 한 곳 빼고)' : ''}`, n717(r.a.html) === n717(r.b.html), firstDiff(n717(r.a.html), n717(r.b.html))); }
+      {
+      ok(`조회 결과 「${k}」 DOM 동일${k === 'noitem' ? '(#717 문장 한 곳 빼고)' : ''}`, NORM(r.a.html) === NORM(r.b.html), firstDiff(NORM(r.a.html), NORM(r.b.html))); }
     }
     r = await both('', doLookup('preparing'));
-    ok('조회 400 PREPARING = 새 안내(종전 「조회할 수 없어요」 · 의도된 변화)', /조회할 수 없어요/.test(r.a.html) && /이벤트 준비 중이에요. 열리면 조회할 수 있어요/.test(r.b.html) && r.a.html.replace(/<div class="big">[^<]*<\/div>/, '') === r.b.html.replace(/<div class="big">[^<]*<\/div>/, ''), firstDiff(r.a.html, r.b.html));
+    ok('조회 400 PREPARING = 새 안내(종전 「조회할 수 없어요」 · 의도된 변화)', /조회할 수 없어요/.test(r.a.html) && /이벤트 준비 중이에요. 열리면 조회할 수 있어요/.test(r.b.html) && NORM(r.a.html).replace(/<div class="big">[^<]*<\/div>/, '') === NORM(r.b.html).replace(/<div class="big">[^<]*<\/div>/, ''), firstDiff(NORM(r.a.html), NORM(r.b.html)));
     setEvent({ published: true });
     WIN_RES = { published: true, announce: '2026-11-02', total: 3, groups: [{ rank: 1, prize: '황금향 5kg 선물용', count: 5, winners: [{ name: '김*수', phone: '010-****-1234' }] }, { rank: 2, prize: '황금향 3kg 선물용', count: 7, winners: [] }, { rank: 3, prize: '감귤 3kg 선물용', count: 10, winners: [{ name: '박*', phone: '010-****-9999' }] }] };
     r = await both('');
-    ok('발표 중(당첨자 창 자동 열림) DOM 동일', r.a.html === r.b.html && /wmodal" role="dialog" aria-modal="true" aria-labelledby="wtitle"|class="modal on"/.test(r.b.html), firstDiff(r.a.html, r.b.html));
+    ok('발표 중(당첨자 창 자동 열림) DOM 동일', NORM(r.a.html) === NORM(r.b.html) && /wmodal" role="dialog" aria-modal="true" aria-labelledby="wtitle"|class="modal on"/.test(r.b.html), firstDiff(NORM(r.a.html), NORM(r.b.html)));
     setEvent({ prizes: [{ name: '레몬 3kg', count: 2 }, { name: '감귤', count: 1 }, { name: '키위', count: 1 }, { name: '4등 경품', count: 3 }] });
     r = await both('');
-    ok('경품 4개(그림 3장 넘음 · 새 칸 없음) DOM 동일', r.a.html === r.b.html, firstDiff(r.a.html, r.b.html));
+    ok('경품 4개(그림 3장 넘음 · 새 칸 없음) DOM 동일', NORM(r.a.html) === NORM(r.b.html), firstDiff(NORM(r.a.html), NORM(r.b.html)));
     setEvent({}, { state: 'live' }); r = await both('');
-    ok('state live(새 칸 없음) = 종전 DOM', r.a.html === r.b.html, firstDiff(r.a.html, r.b.html));
+    ok('state live(새 칸 없음) = 종전 DOM', NORM(r.a.html) === NORM(r.b.html), firstDiff(NORM(r.a.html), NORM(r.b.html)));
     setEvent({ published: true }, { state: 'published' }); r = await both('');
-    ok('state published = 종전 DOM', r.a.html === r.b.html, firstDiff(r.a.html, r.b.html));
+    ok('state published = 종전 DOM', NORM(r.a.html) === NORM(r.b.html), firstDiff(NORM(r.a.html), NORM(r.b.html)));
     WIN_RES = { published: false, groups: [] };
 
     console.log('①-b 실제 서버 꼴(새 칸이 전부 기본값으로 채워져 옴) = 종전 DOM 동일');
     const srvEv = (extra = {}) => { const ev = Object.assign(BASE_EVENT(), extra); return Object.assign(ev, SRV_NEW(ev)); };
     EVENT_RES = { event: srvEv(), counts: { orders: 12, customers: 9 } };
     r = await both('');
-    ok('기본값 칸(texts 전부·display_title=title·images null·prizes desc/note "" image null·state live) = 종전 DOM', r.a.html === r.b.html && r.a.title === r.b.title, firstDiff(r.a.html, r.b.html));
-    const n717 = h => String(h).replace(/감귤·황금향 등 다른 상품|그 밖의 다른 상품/g, '§');   // #717 대상 아님 문장 = 의도한 바뀜(「감귤·황금향 등」 → 「그 밖의」) · 그 밖은 같아야
-    for (const k of ['noitem', 'win']) { r = await both('', doLookup(k)); ok(`기본값 칸 + 조회 「${k}」 DOM 동일${k === 'noitem' ? '(#717 문장 한 곳 빼고)' : ''}`, n717(r.a.html) === n717(r.b.html), firstDiff(n717(r.a.html), n717(r.b.html))); }
+    ok('기본값 칸(texts 전부·display_title=title·images null·prizes desc/note "" image null·state live) = 종전 DOM', NORM(r.a.html) === NORM(r.b.html) && r.a.title === r.b.title, firstDiff(NORM(r.a.html), NORM(r.b.html)));
+    for (const k of ['noitem', 'win']) { r = await both('', doLookup(k)); ok(`기본값 칸 + 조회 「${k}」 DOM 동일${k === 'noitem' ? '(#717 문장 한 곳 빼고)' : ''}`, NORM(r.a.html) === NORM(r.b.html), firstDiff(NORM(r.a.html), NORM(r.b.html))); }
     EVENT_RES = { event: Object.assign(srvEv({ published: true }), { state: 'published' }), counts: { orders: 12, customers: 9 } };
     WIN_RES = { published: true, announce: '2026-11-02', total: 1, groups: [{ rank: 1, prize: '황금향 5kg 선물용', count: 5, winners: [{ name: '김*수', phone: '010-****-1234' }] }] };
     r = await both('');
-    ok('기본값 칸 + published(발표 창 아래 안내 굵은 글씨 그대로) DOM 동일', r.a.html === r.b.html && r.b.html.includes('<b>순차적으로 연락</b>'), firstDiff(r.a.html, r.b.html));
+    ok('기본값 칸 + published(발표 창 아래 안내 굵은 글씨 그대로) DOM 동일', NORM(r.a.html) === NORM(r.b.html) && r.b.html.includes('<b>순차적으로 연락</b>'), firstDiff(NORM(r.a.html), NORM(r.b.html)));
     WIN_RES = { published: false, groups: [] };
 
     console.log('② 새 칸 = 그 값');
@@ -124,15 +128,15 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     let P = await open('/lucky.html');
     let v = await P.pg.evaluate(() => ({ title: document.title, hero: document.querySelector('.hero .banner').getAttribute('src'), heroAlt: document.querySelector('.hero .banner').getAttribute('alt'), head: (document.querySelector('#evHead .t') || {}).textContent, sr: document.getElementById('evTitle').textContent,
       win: document.querySelector('.mhero img').getAttribute('src'), hands: [...document.querySelectorAll('.card .head .hand')].map(e => e.innerHTML), corner: document.querySelector('.note .r .hand').innerHTML, wh: document.querySelector('.mtitle .hand').innerHTML, wf: document.querySelector('.mfoot .msg').innerHTML,
-      prizes: [...document.querySelectorAll('.prize')].map(p => ({ img: p.querySelector('.pimg img') ? p.querySelector('.pimg img').getAttribute('src') : null, d: p.querySelector('.d').innerHTML, n: p.querySelector('.pimg .hand').textContent })) }));
+      prizes: [...document.querySelectorAll('.prize')].map(p => ({ img: p.querySelector('.pimg img') ? p.querySelector('.pimg img').getAttribute('src') : null, d: (p.querySelector('.d') || {}).innerHTML || '', n: (p.querySelector('.pimg .hand') || {}).textContent || '' })) }));
     ok('<title>·배너 alt·숨은 제목 = display_title', v.title === '그린레몬 첫 수확 감사 이벤트 — 접수·당첨 확인' && v.heroAlt === '그린레몬 첫 수확 감사 이벤트' && v.sr === '그린레몬 첫 수확 감사 이벤트', v);
-    ok('새 배너 그림 + 그림 밖 큰 제목(#evHead)', v.hero === '/img/lucky_winner_hero.webp' && v.head === '그린레몬 첫 수확 감사 이벤트', v);
+    ok('(#718) 새 배너 그림 · 그림 밖 큰 제목(#evHead) 없음', v.hero === '/img/lucky_winner_hero.webp' && v.head === undefined && !(await P.pg.$('#evHead')), v);
     ok('발표 창 그림 = 설정 값', v.win === '/img/lucky_hero_full.webp', v.win);
     ok('손글씨 3곳(경품 카드·조회 카드·오른쪽 아래 줄바꿈)', v.hands[0] === T.prize_head_hand && v.hands[1] === T.search_hand && v.corner === '언제나<br>고맙습니다 ♡', v);
     ok('발표 창 손글씨·아래 안내(줄바꿈 → <br>)', v.wh === T.winner_hand && v.wf === '당첨되신 분께는 문자로 연락드려요.<br>경품은 11월 둘째 주 발송', v);
     ok('경품 1: 설명(줄바꿈)·손글씨·그림 = 설정', v.prizes[0].img === '/img/lucky_box3.webp' && v.prizes[0].d === '첫 수확 그린레몬<br>상큼함 그대로' && v.prizes[0].n === '상큼 그 자체!', v.prizes[0]);
-    ok('경품 2: 그림만 설정 · 설명·손글씨 "" 이면 종전 2등 값', v.prizes[1].img === '/img/lucky_box1.webp' && v.prizes[1].d === '황금향이 가득한 제주 황금향<br>달콤한 행복을 선물하세요' && v.prizes[1].n === '달콤한 선물!', v.prizes[1]);
-    ok('경품 3: image null = 종전 3등 그림 · 설명만 설정', v.prizes[2].img === 'img/lucky_box3.webp' && v.prizes[2].d === '감귤 설명' && v.prizes[2].n === '신선한 제주 감귤!', v.prizes[2]);
+    ok('(#718-b) 경품 2: 그림만 설정 · 설명·손글씨 "" 이면 안 그림(옛 기본 글 없음)', v.prizes[1].img === '/img/lucky_box1.webp' && v.prizes[1].d === '' && v.prizes[1].n === '', v.prizes[1]);
+    ok('(#718-b) 경품 3: image null = 종전 3등 그림 · 설명만 설정 · 손글씨 빈칸 = 안 그림', v.prizes[2].img === 'img/lucky_box3.webp' && v.prizes[2].d === '감귤 설명' && v.prizes[2].n === '', v.prizes[2]);
     ok('경품 4(4등 · 종전엔 그림 없음): 설정 그림·설명·손글씨', v.prizes[3].img === '/img/lucky_box2.webp' && v.prizes[3].d === '키위 설명' && v.prizes[3].n === '키위!', v.prizes[3]);
     await doLookup('noitem')(P.pg);
     v = await P.pg.evaluate(() => ({ sub: document.querySelector('#result .sub').textContent, pic: document.querySelector('#result .pic').getAttribute('src') }));
@@ -259,7 +263,7 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     await sendF('win', 'images.result', Object.assign(JSON.parse(JSON.stringify(draft)), { images: Object.assign({}, draft.images, { result: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' }) })); await pg.waitForTimeout(250);
     ok('scene win + images.result → 결과 장 왼쪽 그림에 강조', await fr().evaluate(() => !!document.querySelector('#result .res .pic.pv-hl')));
     await sendF('default', 'title'); await pg.waitForTimeout(150);
-    ok('title(상단 그림 있음 = #evHead 제목)', await fr().evaluate(() => !!document.querySelector('#evHead .t.pv-hl')));
+    ok('(#718) title = 상단 그림(.hero)에 강조 · #evHead 없음', await fr().evaluate(() => !!document.querySelector('.hero.pv-hl') && !document.querySelector('#evHead')));
     await sendF('default', 'zzz.unknown'); await pg.waitForTimeout(150);
     v = await pg.evaluate(() => window.RMSG.slice(-1)[0]);
     ok('모르는 키 = 강조 0 · 오류 0 · rendered 는 그대로', (await hl()).length === 0 && v.focus === 'zzz.unknown', v);
@@ -269,7 +273,7 @@ app.get('/api/lucky/asset/:id', (_q, r) => r.status(404).end());
     v = await pg.evaluate(() => window.RMSG.slice(-1)[0]);
     ok('focus 없는 메시지 = 강조 떼고 rendered 는 종전 꼴({type, scene} 두 칸)', (await hl()).length === 0 && JSON.stringify(v) === JSON.stringify({ type: 'lucky:rendered', scene: 'default' }), v);
     await pg.evaluate(() => { document.getElementById('f').style.width = '900px'; }); await pg.waitForTimeout(200);
-    await sendF('default', 'prizes.0.note'); await pg.waitForTimeout(250);
+    await sendF('default', 'prizes.0.note', Object.assign(JSON.parse(JSON.stringify(draft)), { prizes: draft.prizes.map((p, i) => i ? p : Object.assign({}, p, { note: p.note || '손글씨 시험' })) })); await pg.waitForTimeout(250);   // #718-b 빈 손글씨 = 안 그림 → 글이 있는 꼴로
     v = await fr().evaluate(() => { const el = document.querySelector('#prizes .prize .pimg .hand'); const r = el.getBoundingClientRect(); return { hl: el.classList.contains('pv-hl'), w: innerWidth, over: document.documentElement.scrollWidth - innerWidth, vis: r.bottom > 0 && r.top < innerHeight }; });
     ok('900px 미리보기에서도 prizes.0.note 강조 · 가로 넘침 0', v.hl && v.w === 900 && v.over <= 0 && v.vis, v);
     await pg.evaluate(() => { document.getElementById('f').style.width = '390px'; }); await pg.waitForTimeout(2100);

@@ -106,6 +106,8 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
         const overflow = pg => pg.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
         // #716 ⑤ 미리보기 카드 없앰 → 한 줄 폭(폰·폴드 펼침)은 오른쪽 아래 떠 있는 단추 → 전체 화면 겹(#ev-pv-ov) · 펼침(2단)은 오른쪽 판 그대로
         // #716 품목 이름 찾기 칸 = 우리 목록 창(fixed · 칸 아래) → 칸에 쓴 뒤 Esc 로 목록만 닫고 아래 결과를 누른다(목록 창 자체는 검증 716 몫)
+        // #718 드물게 쓰는 칸 = 카드 안 「더 보기」(details[data-more] · 기본 닫힘) → 그 칸을 누르기 전에 연다
+        const moreOpen = async (pg, k) => { const sel = `#event-root details.ev-more[data-more="${k}"]`; if (!(await pg.$eval(sel, d => d.open).catch(() => true))) { await pg.click(sel + ' > summary'); await pg.waitForTimeout(200); } };
         const pvOpen = async pg => { if (await pg.$('#ev-pv-ov')) return; await pg.click('#event-root .ev-pv-fab'); await pg.waitForSelector('#ev-pv-ov #ev-frame'); await pg.waitForTimeout(1200); };
         const pvClose = async pg => { if (!(await pg.$('#ev-pv-ov'))) return; await pg.click('#ev-pv-ov .ev-pv-x'); await pg.waitForTimeout(300); };
 
@@ -140,7 +142,7 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
         // ── #709 품목 사진 관리(② 카드 아래) ──
         for (const [label, vw, phone] of process.env.V708_ONLY === '711' ? [] : [['390', { width: 390, height: 844 }, true], ['1280', { width: 1280, height: 900 }, false]]) {
             const X = await open(vw, { phone }); const { pg, F } = X; const tag = label + ' 품목 사진';
-            await goEvent(pg, phone); await openCard(pg, 2); await pg.waitForTimeout(1200);
+            await goEvent(pg, phone); await openCard(pg, 2); await pg.waitForTimeout(1200); await moreOpen(pg, '2');   // #718 품목 사진 관리 = ② 「더 보기」 안
             const bItems = () => pg.evaluate(() => [...document.querySelectorAll('#ev-brand .ev-bitem')].map(li => li.querySelector('b').textContent + (li.querySelector('img') ? ':img' : '')));
             const b0 = await pg.evaluate(() => { const box = document.getElementById('ev-brand'), first = box.querySelector('input, .ev-bitem, [data-ev]'); return { items: box.querySelectorAll('.ev-bitem').length, hint: (box.querySelector('.ev-bhint') || {}).textContent, firstIsSearch: !!first && first.id === 'ev-blabel', guide: box.querySelector('.ev-sub-h').textContent, opts: document.querySelectorAll('#ev-bnames option').length, btns: [...box.querySelectorAll('[data-ev]')].map(x => x.dataset.ev) }; });
             ok(`${tag}: #711 품목 사진 = 검색 칸 맨 위 · 검색 전 목록 0 + 「검색하면 사진이 보여요 · 1장」 · 안내 글 · [품목 사진 올리기]`, b0.items === 0 && /검색하면 사진이 보여요 · 1장/.test(b0.hint || '') && b0.firstIsSearch && /경품 상품을 대표상품 참고하여 이미지 제작을 합니다/.test(b0.guide) && b0.btns.join() === 'badd' && b0.opts > 6, JSON.stringify(b0));
@@ -212,7 +214,8 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             const go = await pg.evaluate(() => [...document.querySelectorAll('#ev-xp-pick [data-ev="pick"]')].map(b => b.dataset.v + (b.disabled ? ':회색' : '')).concat([/네이버 주문에만/.test(document.getElementById('ev-xp-pick').textContent) ? '안내' : '']));
             await pg.fill('#ev-xp-in', ''); await pg.waitForTimeout(100);
             ok(`${tag}: ① 낱말(words) 「풋귤」 → 청귤 묶음 · 묶음 칩이 있으면 그 옵션은 회색 · 옵션 안내 한 줄`, gr.join() === '청귤:회색' && go.join() === '청귤:회색,청귤 1kg:회색,안내', JSON.stringify([gr, go]));
-            // ① 추첨 제외 연락처: 숫자 칩 · 짧으면 안내만
+            // ① 추첨 제외 연락처: 숫자 칩 · 짧으면 안내만(#718 ① 「더 보기」 안)
+            await moreOpen(pg, '1');
             await pg.fill('#ev-xc-in', '010-1111-2222'); await pg.click('[data-ev="chipadd"][data-kind="xc"]'); await pg.waitForTimeout(150);
             await pg.fill('#ev-xc-in', '1234'); await pg.press('#ev-xc-in', 'Enter'); await pg.waitForTimeout(300);
             const x1 = await chipsOf('xc'), tst = await pg.evaluate(() => [...document.querySelectorAll('.toast-message')].map(t => t.textContent).join(' '));
@@ -263,7 +266,7 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             ok(`${tag}: ② bot-preview 429 = 「잠시 뒤 다시 보여 드려요」 한 줄 · 옛 글 유지 → 다음 성공에 안내 사라짐`, b429.note && /🎟 응모 고객께 다음 주문 쿠폰/.test(b429.v) && b200, JSON.stringify(b429).slice(0, 200));
             const rs = await pg.evaluate(() => { const n = document.querySelector('.ev-head [data-ev="new"]').getBoundingClientRect(), r = document.querySelector('.ev-head [data-ev="reset"]').getBoundingClientRect(); return { gap: Math.round(r.left - n.right), same: Math.abs(r.top - n.top) < 4, t: document.querySelector('.ev-head [data-ev="reset"]').textContent }; });
             await openCard(pg, 5); const r6 = await pg.evaluate(() => [...document.querySelectorAll('#ev-step-5 [data-ev="reset"]')].map(b => b.textContent).join());
-            ok(`${tag}: ③ 초기화 이름 통일(머리띠·⑤ 열기·운영 「초기화」) · 머리띠는 [새 회차] 와 16px 이상`, rs.t === '초기화' && r6 === '초기화' && (!rs.same || rs.gap >= 16), JSON.stringify(rs) + ' ⑥ ' + r6);
+            ok(`${tag}: (#718) 초기화 = 머리띠 하나(⑤ 아래 [초기화] 없앰) · 머리띠는 [새 회차] 와 16px 이상`, rs.t === '초기화' && r6 === '' && (!rs.same || rs.gap >= 16), JSON.stringify(rs) + ' ⑥ ' + r6);
             // 머리띠 [초기화] = ⑤ 열기·운영 과 같은 확인 창 · 취소면 변화 0
             const wr = () => F.writes.filter(w => !/bot-preview$/.test(w.p)).length; await pg.waitForTimeout(500); const r0 = wr();
             await pg.click('.ev-head [data-ev="reset"]'); await pg.waitForSelector('.ev-dlg');
@@ -322,7 +325,7 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             const fr = pg.frames().find(f => /lucky\.html/.test(f.url()));
             const msgs = fr ? await fr.evaluate(() => window.__msgs) : [];
             const last = msgs[msgs.length - 1] || {};
-            ok(`${tag}: 미리보기 iframe 에 초안 postMessage(lucky:preview) · 배너·경품 그림 주소 · 저장 전 값`, last.type === 'lucky:preview' && /\/api\/lucky\/asset\/\d+/.test(String(last.event && last.event.images && last.event.images.hero)) && last.event.prizes.length === 2 && /asset\/\d+/.test(last.event.prizes[1].image || '') && last.event.display_title === '가을 감사 이벤트', JSON.stringify({ n: msgs.length, hero: last.event && last.event.images.hero, p1: last.event && last.event.prizes[1].image }));
+            ok(`${tag}: 미리보기 iframe 에 초안 postMessage(lucky:preview) · 배너·경품 그림 주소 · 저장 전 값(#718 display_title 안 보냄 · 회차 이름 하나)`, last.type === 'lucky:preview' && /\/api\/lucky\/asset\/\d+/.test(String(last.event && last.event.images && last.event.images.hero)) && last.event.prizes.length === 2 && /asset\/\d+/.test(last.event.prizes[1].image || '') && last.event.title === '가을 감사 이벤트' && !('display_title' in last.event), JSON.stringify({ n: msgs.length, hero: last.event && last.event.images.hero, p1: last.event && last.event.prizes[1].image }));
             // 상태 보기 단추(#716 ⑤ 카드 「미리보기가 그려지면 완료」 항목은 카드와 함께 없앰)
             await pg.click('[data-ev="view"][data-v="winners"]'); await pg.waitForTimeout(600);
             const m2 = (await (pg.frames().find(f => /lucky\.html/.test(f.url()))).evaluate(() => window.__msgs)).pop();

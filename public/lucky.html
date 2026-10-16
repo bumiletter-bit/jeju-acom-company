@@ -110,9 +110,6 @@ body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic
 @media (max-width:380px){ .pimg img{width:88px} .prize{grid-template-columns:36px 1fr 88px;gap:6px} .rank{width:36px;height:36px;font-size:11px} .info .n{font-size:14px} .res{grid-template-columns:90px 1fr} .res .pic{width:90px} }
 @media (max-width:350px){ .prize{grid-template-columns:44px 1fr auto} .rank{width:40px;height:40px;font-size:12px} .pimg img{width:96px} }
 /* #708 설정에서 오는 칸 — 아래 요소는 설정 값이 있을 때만 JS 가 만든다(설정이 비면 화면은 종전과 같음) */
-.evhead{text-align:center;padding:12px 8px 2px}
-.evhead .t{font-size:22px;font-weight:900;letter-spacing:-.5px;line-height:1.25;word-break:keep-all}
-.evhead .p{font-size:12.5px;color:var(--mid);margin-top:4px;word-break:keep-all}
 .stcard{text-align:center;padding:26px 18px 22px}
 .stcard .big{font-size:20px;font-weight:900;line-height:1.35;word-break:keep-all;letter-spacing:-.3px}
 .stcard .sub{font-size:14px;color:var(--mid);margin-top:8px;line-height:1.6;word-break:keep-all;white-space:pre-line}
@@ -165,8 +162,7 @@ body{font-family:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic
 const $=s=>document.querySelector(s);
 let EV=null;
 const fmtDate=d=>{ if(!d) return ''; const [y,m,dd]=d.split('-'); return `${+m}월 ${+dd}일`; };
-const DESC=['제주의 달콤함, 프리미엄 하우스 황금향<br>소중한 분께 전하는 특별한 선물','황금향이 가득한 제주 황금향<br>달콤한 행복을 선물하세요','언제나 맛있는 제주 감귤<br>제주의 따뜻한 마음을 담았습니다'];
-const NOTE=['프리미엄 황금향!','달콤한 선물!','신선한 제주 감귤!'];
+// #718-b 경품 설명·손글씨가 비면 안 그림(옛 기본 글 「프리미엄 황금향」 등이 다른 품목 경품에 붙던 것 없앰)
 const IMG=['img/lucky_box1.webp','img/lucky_box2.webp','img/lucky_box3.webp'];
 /* #708 이벤트 설정에서 오는 칸(그림·문구·상태) — 칸이 비면 지금 박힌 그림·글자 그대로(화면 무변경) · 응답 꼴 정본 = docs/708-api.md 2절
    event 안: display_title(비면 서버가 title 로 채움) · state(preparing|live|published|down) · images{hero,winner,result}(주소|null) · texts{…}(서버가 기본값을 늘 채움 → 서버 기본값과 같은 손글씨는 지금 HTML 그대로) · prizes[].desc/note/image · store_url · preview
@@ -207,10 +203,7 @@ function applyLook(){
   const wi=$('.mhero img'), ws=CFG.images.winner||DEF.winSrc;
   if(wi.getAttribute('src')!==ws){ wi.onerror=CFG.images.winner?function(){ this.onerror=null; this.src=DEF.winSrc; }:null; wi.setAttribute('src',ws); }
   Object.keys(HAND_EL).forEach(k=>{ const el=HAND_EL[k](); if(!el) return; const v=str(t[k]); const h=v?escMl(v):DEF.hands[k]; if(el.innerHTML!==h) el.innerHTML=h; });
-  // 새 배너(글자 없는 그림)를 올리면 큰 제목은 그림 밖 글자로 — 기본 배너는 그림 안에 제목이 있어 만들지 않음
-  let hd=$('#evHead');
-  if(CFG.images.hero&&dt){ if(!hd){ hd=document.createElement('div'); hd.id='evHead'; hd.className='evhead'; $('.hero').insertAdjacentElement('afterend',hd); } hd.innerHTML=`<div class="t">${esc(dt)}</div><div class="p">${esc($('#evPeriod').textContent)}</div>`; }
-  else if(hd) hd.remove();
+  // #718 배너 아래 큰 제목(#evHead) 없앰 — 손님 눈에 보이는 큰 글은 그림뿐(display_title 은 문서 제목·alt·evTitle 에만)
   let pb=$('#pvBadge'); if(CFG.preview&&!pb){ pb=document.createElement('div'); pb.id='pvBadge'; pb.className='pvbadge'; pb.textContent='미리보기'; document.body.appendChild(pb); } else if(!CFG.preview&&pb) pb.remove();
 }
 // state = 서버가 계산(preparing·down 은 한 장만) · 미리보기(?pk·iframe)는 준비 중이어도 본 화면으로 · 값이 없으면 종전 화면
@@ -241,7 +234,7 @@ function render(j){
   $('#prizes').innerHTML=e.prizes.map((p,i)=>{
     const d=str(p.desc), n=str(p.note), cu=imgUrl(p.image);   // null = i<3 종전 그림 · 그 밖 그림 없음
     const im=cu?`<img src="${esc(cu)}" alt=""${fbAttr(IMG[i]||'')}>`:(IMG[i]?`<img src="${IMG[i]}" alt="">`:'');
-    return `<div class="prize"><div class="rank"><span class="cr">👑</span>${i+1}등</div><div class="info"><div class="n">${esc(p.name)}</div><div class="d">${d?escMl(d):(DESC[i]||'')}</div></div><div class="pimg">${im}<span class="cnt">${p.count}명</span><span class="hand">${n?esc(n):(NOTE[i]||'')}</span></div></div>`;
+    return `<div class="prize"><div class="rank"><span class="cr">👑</span>${i+1}등</div><div class="info"><div class="n">${esc(p.name)}</div>${d?`<div class="d">${escMl(d)}</div>`:''}</div><div class="pimg">${im}<span class="cnt">${p.count}명</span>${n?`<span class="hand">${esc(n)}</span>`:''}</div></div>`;
   }).join('');
   const total=e.prizes.reduce((a,p)=>a+p.count,0);
   $('#evInfo').innerHTML=e.published?`🎉 <b>당첨자 발표 완료!</b> 아래에서 확인하세요 (총 ${total}분)<br><button class="wbtn" type="button" onclick="openWinners(true)">🏆 당첨자 명단 보기</button>`:`🎁 총 <b>${total}분</b> 추첨 · 현재 접수 ${j.counts.customers}분 · 기간 내 주문 건은 자동 접수됩니다.<br><span style="color:var(--light)">(송장 등록 후 반영)</span>`;
@@ -342,11 +335,11 @@ if(PREVIEW) window.addEventListener('message',ev=>{
   try{ window.parent.postMessage(focus?{type:'lucky:rendered',scene,focus}:{type:'lucky:rendered',scene},location.origin); }catch(_){}
 });
 /* #716 미리보기 「바뀐 자리 강조」 — ?preview=1 일 때만(손님 화면엔 CSS·속성 0 · 리스너도 PREVIEW 안) · 메시지의 focus 키(표 = 워커3 #716-B) → 그 요소에 data-pv 를 달고 pv-hl 2초
-   글 칸 = prize_head_hand·corner_hand·search_hand·winner_hand·winner_foot·excludeProducts(#717 noitem_products 칸 없앰) · title·display_title · start·end·announce·page_until · prizes.N.name|count|desc|note · images.hero|winner|result · 없는 키·없는 요소 = 무시 */
+   글 칸 = prize_head_hand·corner_hand·search_hand·winner_hand·winner_foot·excludeProducts(#717 noitem_products 칸 없앰) · title(#718 display_title 강조 없음) · start·end·announce·page_until · prizes.N.name|count|desc|note · images.hero|winner|result · 없는 키·없는 요소 = 무시 */
 const PV_FIXED={ prize_head_hand:()=>HAND_EL.prize_head_hand(), corner_hand:()=>HAND_EL.corner_hand(), search_hand:()=>HAND_EL.search_hand(), winner_hand:()=>HAND_EL.winner_hand(), winner_foot:()=>HAND_EL.winner_foot(),
   excludeProducts:()=>$('#result .res .sub b'),
-  title:()=>$('#evHead .t')||$('.hero'), display_title:()=>$('#evHead .t')||$('.hero'),
-  start:()=>$('#evHead .p')||$('#evInfo'), end:()=>$('#evHead .p')||$('#evInfo'), announce:()=>$('#evHead .p')||$('#evInfo'), page_until:()=>$('#evHead .p')||$('#evInfo'),
+  title:()=>$('.hero'),   // #718 #evHead 없앰 · display_title 강조 없음(손님 화면에 글자로 안 보임)
+  start:()=>$('#evInfo'), end:()=>$('#evInfo'), announce:()=>$('#evInfo'), page_until:()=>$('#evInfo'),
   'images.hero':()=>$('.hero .banner'), 'images.winner':()=>$('.mhero img'), 'images.result':()=>$('#result .res .pic') };
 const PV_PRIZE={ name:'.info .n', count:'.pimg .cnt', desc:'.info .d', note:'.pimg .hand' };
 function pvFind(key){
