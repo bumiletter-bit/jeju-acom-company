@@ -133,3 +133,27 @@ async function naverLive(nos) {
     return out;
 }
 module.exports.naverLive = naverLive;
+
+// ── #714 스냅샷 즉시 재수집 — apply-489-snapshot.js 와 같은 길(product_snapshot last_run_at 2일 되감기 → 서버 60초 틱이 수집 · 리뷰·공개지표까지 같이 모아 2~4분)
+//    새 행이 생길 때까지 최대 6분 기다린다. 실DB 쓰기는 그 되감기 한 줄뿐. 시각은 SQL 안에서 글자로(naive timestamp 를 JS Date 로 바꾸면 9시간 어긋남)
+async function refreshSnapshot(orderId, waitMs = 360000) {
+    const before = (await pool.query(`SELECT id FROM naver_product_snapshot ORDER BY id DESC LIMIT 1`)).rows[0];
+    const lastId = before ? before.id : 0;
+    await pool.query(`UPDATE naver_auto_collect SET last_run_at = last_run_at - interval '2 days' WHERE key = 'product_snapshot'`);
+    await stepLog(orderId, '자사몰 화면: 네이버 스냅샷 다시 받는 중(2~6분)');
+    const t0 = Date.now();
+    while (Date.now() - t0 < waitMs) {
+        await sleep(10000);
+        const q = await pool.query(`SELECT id, note, items, to_char(run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS') AS utc, to_char(run_at AT TIME ZONE 'Asia/Seoul','MM-DD HH24:MI') AS kst FROM naver_product_snapshot WHERE id > $1 ORDER BY id DESC LIMIT 1`, [lastId]);
+        if (q.rows.length) { const r = q.rows[0]; return { ok: true, prev_id: lastId, id: r.id, utc: r.utc, kst: r.kst, note: r.note || '', waited_sec: Math.round((Date.now() - t0) / 1000), items: Array.isArray(r.items) ? r.items : JSON.parse(r.items) }; }
+    }
+    return { ok: false, prev_id: lastId, waited_sec: Math.round((Date.now() - t0) / 1000) };
+}
+// 자사몰 화면이 실제로 받는 공개 응답(서버 캐시 없음 · 최신 행 그대로 · #689 네이버 전용 옵션 뺀 꼴)
+async function publicSnapshot() {
+    const r = await fetch('https://jeju-acom-company.onrender.com/api/public/store-snapshot?v=' + Date.now(), { headers: { 'cache-control': 'no-cache' } });
+    if (!r.ok) throw new Error('공개 스냅샷 응답 ' + r.status);
+    return r.json();
+}
+module.exports.refreshSnapshot = refreshSnapshot;
+module.exports.publicSnapshot = publicSnapshot;

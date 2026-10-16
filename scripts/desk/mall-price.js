@@ -1,7 +1,8 @@
 // #588-d(대표 GO 10/8) 창구용 — 자사몰(카페24) 옵션 결제가를 네이버 결제가에 맞추기
 //   node scripts/desk/mall-price.js preview                       오늘 새벽 자동 점검(05:10) 결과만 빨리 보기 — 어긋난 옵션·없는 옵션
 //   node scripts/desk/mall-price.js preview <상품> [--snapshot]    그 상품의 계획 표(쓰기 0) — 네이버 실시간 정본 ↔ 카페24 지금 값
-//   node scripts/desk/mall-price.js apply <상품> <지시 id>         계획대로 카페24 추가금(필요하면 기본가)을 바꿈 → 90초 뒤 다시 읽어 확인
+//   node scripts/desk/mall-price.js apply <상품> <지시 id>         계획대로 카페24 추가금(필요하면 기본가)을 바꿈 → 90초 뒤 다시 읽어 확인 → 이어서 screen(결과 JSON 의 screen 칸)
+//   node scripts/desk/mall-price.js screen <상품> [지시 id]         #714 스냅샷 즉시 재수집(최대 6분) → 자사몰 화면 가격 = 카페24 결제가인지 표(same/diff) · 공개 응답 at 확인 · 카페24 쓰기 0
 //   node scripts/desk/mall-price.js restore <상품> <지시 id>       이 도구로 바꾸기 직전 값으로 되돌림
 //   node scripts/desk/mall-price.js checkout <상품> [옵션 글자]     실제 결제창(비회원 · 주문은 안 함)의 최종 금액 = 네이버 결제가인지
 //   node scripts/desk/mall-price.js hide <상품> "<옵션 글자>"… [지시 id]   네이버에서 내린 옵션을 카페24에서도 미노출(판매 F · 진열 F)로 — 지시 id 를 빼면 계획만(쓰기 0)
@@ -10,6 +11,8 @@
 //   규칙: 카페24 결제가 = 기본가 + 옵션 추가금. 기본가 = 네이버 결제가 + 가장 싼 옵션 증감(새벽 자동 동기화와 같은 식 — 다르면 다음 날 되돌아감).
 //         옵션은 이름이 글자까지 같은 것끼리만 맞춘다(앞 번호 「1. 」만 무시). 이름이 다르면 바꾸지 않고 멈춘다 — 카페24 옵션 추가·이름 변경은 관리자 화면에서 사람만 할 수 있다.
 //         한 번에 50% 넘게 바뀌는 값은 막는다(총괄 확인). 미노출(F) 옵션은 건드리지 않는다.
+//   완료 = ① 카페24 결제가(apply) ② 결제창(checkout) ③ 화면 가격(screen — 자사몰 화면은 네이버 스냅샷으로 그려져 재수집 전엔 옛 값). ③이 안 되면 화면은 다음 새벽 04:30 수집 때.
+//         hide/show 에는 screen 을 안 붙인다(화면 옵션 줄은 네이버 스냅샷에서 그려 카페24 노출과 무관).
 const M = require('./_mall');
 const nrm = s => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim();
 const noNum = s => nrm(s).replace(/^\d+\.\s*/, '');
@@ -85,6 +88,39 @@ async function plan(arg, useSnap) {
     P.change_count = P.puts.length + (P.base_change ? 1 : 0); P.can_apply = !P.stops.length && (P.change_count > 0 || !!P.minAdd_change);
     return { P, c, nv, R };
 }
+// #714 화면 맞추기 — 스냅샷을 지금 다시 받아 자사몰 화면 가격(네이버 스냅샷 기준)이 카페24 결제가와 같은지까지 본다(카페24 쓰기 0)
+const SCREEN_LATE = '화면은 내일 새벽 04:30 수집 때 저절로 바뀝니다 · 지금 바꾸려면 총괄';
+async function screen(arg, orderId) {
+    const R = await resolve(arg, await M.latestSnapshot());
+    const rf = await M.refreshSnapshot(orderId);
+    const out = { nno: R.nno, cno: R.cno, snapshot_id: rf.ok ? rf.id : null, at: rf.ok ? rf.utc : null, at_kst: rf.ok ? rf.kst : undefined, public_at: null, same: [], diff: [], ok: false, note: '' };
+    if (!rf.ok) { out.note = `${Math.round(rf.waited_sec / 60)}분 기다려도 새 스냅샷이 안 생겼어요(직전 #${rf.prev_id}) — ${SCREEN_LATE}`; return out; }
+    // 공개 응답(화면이 받는 것)의 at 이 새 행과 같은지 — 서버 캐시는 없지만 깨우는 데 몇 초 걸릴 수 있어 세 번까지
+    let pub = null; const sameAt = p => Math.abs(Date.parse(p) - Date.parse(rf.utc + 'Z')) < 1000;   // postgres-date 가 ms 를 잘라 1ms 어긋날 수 있음 · 「오류: …」는 NaN → false
+    for (let k = 0; k < 3; k++) { try { pub = await M.publicSnapshot(); out.public_at = String(pub.at || ''); if (sameAt(out.public_at)) break; } catch (e) { out.public_at = '오류: ' + e.message.slice(0, 60); } if (k < 2) await M.sleep(10000); }
+    const atOk = sameAt(out.public_at);
+    const it = ((atOk ? pub.items : rf.items) || []).find(x => String(x.no) === R.nno);
+    const c = await M.c24Product(R.cno);
+    const ignore = new Set((((await M.cfgGet('cafe24_sync_ignore_opts')) || {}).keys) || []);
+    if (!it) out.diff.push({ opt: '(상품 전체)', why: '새 스냅샷에 그 상품이 없어요' });
+    else {
+        const base = Number(it.discPrice != null ? it.discPrice : it.salePrice);
+        for (const o of (it.opts || []).filter(o => o.usable !== false)) {
+            const txt = nText(o), shown = base + (Number(o.price) || 0); const k = optKey(txt); if (k && ignore.has(k)) continue;
+            let h = c.vars.filter(v => nrm(v.name) === nrm(txt)); if (!h.length) h = c.vars.filter(v => noNum(v.name) === noNum(txt));
+            const v = h.length === 1 ? h[0] : null, pay = v ? c.base + v.add : null;
+            if (!v) out.diff.push({ opt: txt, screen: shown, c24: null, why: h.length ? '이름 같은 카페24 옵션이 여럿' : '카페24에 그 옵션 없음' });
+            else if (!(v.selling === 'T' && v.display === 'T')) out.diff.push({ opt: txt, screen: shown, c24: pay, why: '카페24 미노출' });
+            else (pay === shown ? out.same : out.diff).push(pay === shown ? { opt: txt, price: shown } : { opt: txt, screen: shown, c24: pay, why: '화면 가격 ≠ 결제가' });
+        }
+    }
+    out.ok = atOk && !out.diff.length && out.same.length > 0;
+    out.note = !atOk ? `새 스냅샷 #${rf.id}은 생겼는데 공개 응답이 아직 옛 시각이에요 — 몇 분 뒤 자사몰을 새로고침해 보세요 · 그래도 옛 값이면 ${SCREEN_LATE}`
+        : out.diff.length ? `스냅샷 #${rf.id}로 화면은 새로 그려지지만 화면 가격과 결제가가 다른 옵션이 ${out.diff.length}개예요 — preview 로 결제가를 다시 보고, 네이버를 방금 바꿨으면 apply 를 다시 · 이름 차이면 총괄`
+        : `스냅샷 #${rf.id}(${rf.kst}) 반영 — 자사몰 화면 가격 = 카페24 결제가(${out.same.length}개 옵션). 손님 화면은 새로고침하면 새 값`;
+    await M.stepLog(orderId, '자사몰 화면: ' + (out.ok ? `스냅샷 #${rf.id} 반영 · 화면 = 결제가` : '화면 반영 확인 안 됨'));
+    return out;
+}
 const table = P => P.rows.map(r => `${r.state.padEnd(4)} | 네이버 ${r.naver == null ? '—' : won(r.naver)} | 자사몰 ${r.c24 == null ? '—' : won(r.c24)}${r.diff ? `(${r.diff > 0 ? '+' : ''}${won(r.diff)})` : ''}${r.add_new != null && r.add_new !== r.add_now ? ` | 추가금 ${won(r.add_now)}→${won(r.add_new)}` : ''} | ${r.opt}`);
 // 사람에게 보여 줄 「바뀌는 것」 — 결제가가 달라지는 옵션만 · 기본가 때문에 추가금만 옮기는 옵션은 건수로
 const changes = P => P.puts.filter(t => t.pay_before !== t.pay_after).map(t => `${t.name.slice(-30)}: ${won(t.pay_before)} → ${won(t.pay_after)}원`).concat(P.puts.some(t => t.pay_before === t.pay_after) ? [`결제가는 그대로 · 추가금만 옮기는 옵션 ${P.puts.filter(t => t.pay_before === t.pay_after).length}개`] : []);
@@ -159,7 +195,13 @@ async function checkout(nno, cases) {
         const aft = await M.c24Product(P.cno); const bad = [];
         if (aft.base !== P.target_base) bad.push(`기본가 ${aft.base} ≠ ${P.target_base}`);
         for (const t of P.puts) { const v = aft.vars.find(x => x.code === t.code); if (!v || aft.base + v.add !== t.pay_after) bad.push(`${t.name.slice(-24)} ${v ? aft.base + v.add : '없음'} ≠ ${t.pay_after}`); }
-        console.log(JSON.stringify({ ok: !bad.length && res.every(r => r.ok), changed: true, nno: P.nno, cno: P.cno, source: P.source, base: P.base_change || '그대로', changed_opts: changes(P), put_fail: res.filter(r => !r.ok), recheck_bad: bad, undo: `node scripts/desk/mall-price.js restore ${P.nno} <지시 id>`, next: `node scripts/desk/mall-price.js checkout ${P.nno}`, note: bad.length ? '다시 읽은 값이 아직 달라요 — 카페24 조회는 몇 분 늦을 수 있어요. 3분 뒤 preview 로 다시 확인하고, 그래도 다르면 총괄에게 알려 주세요' : '카페24 값이 계획대로 바뀌었어요 — checkout 으로 결제창까지 확인하세요(자사몰 화면 가격은 네이버 스냅샷을 따라 저절로 바뀝니다)' }, null, 1));
+        const okPay = !bad.length && res.every(r => r.ok);
+        // #714: 결제가를 맞춘 뒤 스냅샷을 다시 받아 화면 가격까지 — 실패해도 apply 성공(카페24 기준)은 그대로
+        let scr; try { scr = await screen(P.nno, orderId); } catch (e) { scr = { ok: false, error: e.message.slice(0, 160), note: `화면 확인 중 오류 — ${SCREEN_LATE}` }; }
+        console.log(JSON.stringify({ ok: okPay, changed: true, nno: P.nno, cno: P.cno, source: P.source, base: P.base_change || '그대로', changed_opts: changes(P), put_fail: res.filter(r => !r.ok), recheck_bad: bad, screen: scr, undo: `node scripts/desk/mall-price.js restore ${P.nno} <지시 id>`, next: `node scripts/desk/mall-price.js checkout ${P.nno}`, note: (bad.length ? '다시 읽은 값이 아직 달라요 — 카페24 조회는 몇 분 늦을 수 있어요. 3분 뒤 preview 로 다시 확인하고, 그래도 다르면 총괄에게 알려 주세요' : '① 카페24 결제가 맞춤 — 이어서 checkout 으로 ② 결제창 확인') + (scr.ok ? ` · ③ 화면 가격도 맞춤(${scr.note})` : ` · ③ 결제가는 맞춤 · 화면 반영은 실패 → 내일 새벽(${scr.note})`) }, null, 1));
+    } else if (cmd === 'screen') {
+        const orderId = args[1] && /^\d{1,9}$/.test(args[1]) ? parseInt(args[1], 10) : null;
+        console.log(JSON.stringify(await screen(args[0], orderId), null, 1));
     } else if (cmd === 'restore') {
         const orderId = parseInt(args[1], 10); if (!orderId) throw new Error('사용: mall-price.js restore <상품> <지시 id>');
         const actor = await M.who(orderId); const snap = await M.latestSnapshot(); const R = await resolve(args[0], snap);
@@ -217,6 +259,6 @@ async function checkout(nno, cases) {
         await M.stepLog(orderId, '자사몰 옵션 노출: 카페24가 새 값을 보여 줄 때까지 90초 대기'); await M.sleep(90000);
         const aft = await M.c24Product(P.cno), bad = picks.filter(p => { const v = aft.vars.find(x => x.code === p.code); return !v || v.selling !== want || v.display !== want; }).map(p => p.name);
         console.log(JSON.stringify({ ok: !bad.length && res.every(r => r.ok), changed: true, ...planOut, put_fail: res.filter(r => !r.ok), recheck_bad: bad, undo: `node scripts/desk/mall-price.js ${cmd === 'hide' ? 'show' : 'hide'} ${P.nno} ${picks.map(v => JSON.stringify(v.name)).join(' ')} <지시 id>`, note: bad.length ? '다시 읽은 값이 아직 달라요 — 카페24 조회는 몇 분 늦을 수 있어요. 3분 뒤 preview 로 확인하고 그래도 다르면 총괄에게' : (cmd === 'hide' ? '미노출로 바꿨어요' : '다시 노출했어요') + (priceNext ? ' — 이어서 가격 맞추기(apply)를 하세요' : '') }, null, 1));
-    } else throw new Error('사용: mall-price.js preview [상품] [--snapshot] | apply <상품> <지시 id> | restore <상품> <지시 id> | checkout <상품> [옵션 글자] | hide <상품> "<옵션 글자>"… [지시 id] | show <상품> "<옵션 글자>"… [지시 id]');
+    } else throw new Error('사용: mall-price.js preview [상품] [--snapshot] | apply <상품> <지시 id> | screen <상품> [지시 id] | restore <상품> <지시 id> | checkout <상품> [옵션 글자] | hide <상품> "<옵션 글자>"… [지시 id] | show <상품> "<옵션 글자>"… [지시 id]');
     await M.pool.end();
 })().catch(async e => { console.log(JSON.stringify({ ok: false, error: e.message })); try { await M.pool.end(); } catch (_) { } process.exit(1); });
