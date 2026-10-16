@@ -104,6 +104,10 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
         const upload = async (pg, sel) => { const [fc] = await Promise.all([pg.waitForEvent('filechooser'), pg.click(sel)]); await fc.setFiles({ name: 'test.png', mimeType: 'image/png', buffer: PNG }); await pg.waitForTimeout(1500); };
         const small44 = pg => pg.evaluate(() => [...document.querySelectorAll('#event-root button, #event-root input, #event-root select, #event-root textarea, #event-root [role="button"]')].filter(e => e.getClientRects().length && !e.hidden && e.type !== 'file').map(e => { const r = e.getBoundingClientRect(); return [e, r]; }).filter(([, r]) => r.height < 44 - 0.5).map(([e, r]) => (e.dataset.ev || e.dataset.k || e.className) + ':' + Math.round(r.height)));
         const overflow = pg => pg.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+        // #716 ⑤ 미리보기 카드 없앰 → 한 줄 폭(폰·폴드 펼침)은 오른쪽 아래 떠 있는 단추 → 전체 화면 겹(#ev-pv-ov) · 펼침(2단)은 오른쪽 판 그대로
+        // #716 품목 이름 찾기 칸 = 우리 목록 창(fixed · 칸 아래) → 칸에 쓴 뒤 Esc 로 목록만 닫고 아래 결과를 누른다(목록 창 자체는 검증 716 몫)
+        const pvOpen = async pg => { if (await pg.$('#ev-pv-ov')) return; await pg.click('#event-root .ev-pv-fab'); await pg.waitForSelector('#ev-pv-ov #ev-frame'); await pg.waitForTimeout(1200); };
+        const pvClose = async pg => { if (!(await pg.$('#ev-pv-ov'))) return; await pg.click('#ev-pv-ov .ev-pv-x'); await pg.waitForTimeout(300); };
 
         // ── #708-B 손질: 회차 없음(0행) · 서버 기본 글자 줄바꿈 · 경품 설명 줄바꿈 · 인원 숫자 ──
         for (const [label, vw, phone] of (['brand', '711'].includes(process.env.V708_ONLY) ? [] : [['390', { width: 390, height: 844 }, true], ['1280', { width: 1280, height: 900 }, false]])) {
@@ -113,16 +117,17 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             ok(`${tag}: 회차 없음(0행) = 카드 0 · 머리띠 「회차 없음」 · 단추는 「새 회차 시작」 하나`, z.cards === 0 && /회차 없음/.test(z.pill || '') && z.btns.join() === 'new', JSON.stringify(z));
             await pg.click('[data-ev="new"]'); await pg.waitForSelector('.ev-dlg'); await pg.click('.ev-dlg [data-x="1"]'); await pg.waitForTimeout(900);
             const z2 = await pg.evaluate(() => ({ cards: document.querySelectorAll('#event-root .ev-card').length, pill: (document.querySelector('.ev-head .ev-pill') || {}).textContent.trim() }));
-            ok(`${tag}: 새 회차 → 응답에 id 가 없어도 /state 로 다시 읽어 카드 6장 · 「준비 중」`, z2.cards === 6 && z2.pill === '준비 중' && F.writes.some(w => w.p.endsWith('/new-round') && w.body.confirm === 'NEW'), JSON.stringify(z2));
+            ok(`${tag}: 새 회차 → 응답에 id 가 없어도 /state 로 다시 읽어 카드 5장(#716 ⑤ 미리보기 카드 없앰) · 「준비 중」`, z2.cards === 5 && z2.pill === '준비 중' && F.writes.some(w => w.p.endsWith('/new-round') && w.body.confirm === 'NEW'), JSON.stringify(z2));
             await openCard(pg, 4);
             const ch = await pg.evaluate(() => { const t = document.querySelector('[data-k="texts.corner_hand"]'); return { tag: t.tagName, v: t.value }; });
             ok(`${tag}: 오른쪽 아래 손글씨 = 서버 기본 글자 그대로(줄바꿈 칸 · \\n 유지)`, ch.tag === 'TEXTAREA' && ch.v === '늘 함께해 주셔서\n감사합니다! ♡', JSON.stringify(ch));
             await openCard(pg, 2); await pg.click('[data-ev="padd"]'); await setVal(pg, 'prizes.0.name', '황금향 3kg'); await setVal(pg, 'prizes.0.count', '4');
             await pg.fill('[data-k="prizes.0.desc"]', '첫 줄\n둘째 줄'); await pg.waitForTimeout(300);
-            if (label === '390') await openCard(pg, 5);
+            if (label === '390') await pvOpen(pg);
             await pg.waitForTimeout(900);
             const m = (await (pg.frames().find(fr => /lucky\.html/.test(fr.url()))).evaluate(() => window.__msgs)).pop();
             ok(`${tag}: 미리보기 메시지 = 인원 숫자(4) · 설명 줄바꿈 · 손글씨 줄바꿈`, m.event.prizes[0].count === 4 && m.event.prizes[0].desc === '첫 줄\n둘째 줄' && m.event.texts.corner_hand === '늘 함께해 주셔서\n감사합니다! ♡', JSON.stringify({ c: m.event.prizes[0].count, d: m.event.prizes[0].desc, h: m.event.texts.corner_hand }));
+            await pvClose(pg);
             await pg.click('[data-ev="save"]'); await pg.waitForTimeout(600);
             const sv = F.writes.filter(w => w.p.endsWith('/event')).pop();
             ok(`${tag}: 저장 본문 = 인원 숫자 · 설명 줄바꿈 · 손글씨 줄바꿈`, sv && sv.body.event.prizes[0].count === 4 && sv.body.event.prizes[0].desc === '첫 줄\n둘째 줄' && sv.body.event.texts.corner_hand === '늘 함께해 주셔서\n감사합니다! ♡', sv && JSON.stringify(sv.body.event.prizes[0]));
@@ -139,17 +144,17 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             const bItems = () => pg.evaluate(() => [...document.querySelectorAll('#ev-brand .ev-bitem')].map(li => li.querySelector('b').textContent + (li.querySelector('img') ? ':img' : '')));
             const b0 = await pg.evaluate(() => { const box = document.getElementById('ev-brand'), first = box.querySelector('input, .ev-bitem, [data-ev]'); return { items: box.querySelectorAll('.ev-bitem').length, hint: (box.querySelector('.ev-bhint') || {}).textContent, firstIsSearch: !!first && first.id === 'ev-blabel', guide: box.querySelector('.ev-sub-h').textContent, opts: document.querySelectorAll('#ev-bnames option').length, btns: [...box.querySelectorAll('[data-ev]')].map(x => x.dataset.ev) }; });
             ok(`${tag}: #711 품목 사진 = 검색 칸 맨 위 · 검색 전 목록 0 + 「검색하면 사진이 보여요 · 1장」 · 안내 글 · [품목 사진 올리기]`, b0.items === 0 && /검색하면 사진이 보여요 · 1장/.test(b0.hint || '') && b0.firstIsSearch && /경품 상품을 대표상품 참고하여 이미지 제작을 합니다/.test(b0.guide) && b0.btns.join() === 'badd' && b0.opts > 6, JSON.stringify(b0));
-            await pg.fill('#ev-blabel', '황금'); await pg.waitForTimeout(200);
+            await pg.fill('#ev-blabel', '황금'); await pg.keyboard.press('Escape'); await pg.waitForTimeout(200);
             const b1 = await bItems();
             ok(`${tag}: #711 「황금」 검색 → 황금향 사진(썸네일 · [바꾸기][지우기]) · 지우면 다시 0`, b1.join() === '황금향:img' && await pg.evaluate(() => document.querySelectorAll('#ev-brand .ev-bitem [data-ev]').length === 2), JSON.stringify(b1));
-            await pg.fill('#ev-blabel', ''); await pg.waitForTimeout(150);
+            await pg.fill('#ev-blabel', ''); await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
             const w0 = F.writes.length; await pg.click('[data-ev="badd"]'); await pg.waitForTimeout(400);
             ok(`${tag}: 품목 이름 없이 누르면 안내만(파일 창·서버 호출 0)`, F.writes.length === w0 && await pg.evaluate(() => document.activeElement && document.activeElement.id === 'ev-blabel'));
-            await pg.fill('#ev-blabel', '고당도 하우스감귤');
+            await pg.fill('#ev-blabel', '고당도 하우스감귤'); await pg.keyboard.press('Escape');
             { const [fc] = await Promise.all([pg.waitForEvent('filechooser'), pg.click('[data-ev="badd"]')]); await fc.setFiles({ name: 'gyul.png', mimeType: 'image/png', buffer: PNG }); await pg.waitForTimeout(1500); }
             const ub = F.writes.filter(w => w.p.endsWith('/assets')).pop();
             ok(`${tag}: 올리기 = POST /assets {slot:brand · label · webp · 480×480 가운데 자르기}`, ub && ub.body.slot === 'brand' && ub.body.label === '고당도 하우스감귤' && ub.body.mime === 'image/webp' && ub.body.width === 480 && ub.body.height === 480, ub && JSON.stringify({ slot: ub.body.slot, label: ub.body.label, w: ub.body.width, h: ub.body.height }));
-            await pg.fill('#ev-blabel', '유라조생');
+            await pg.fill('#ev-blabel', '유라조생'); await pg.keyboard.press('Escape');
             { const [fc] = await Promise.all([pg.waitForEvent('filechooser'), pg.click('[data-ev="badd"]')]); await fc.setFiles({ name: 'yura.png', mimeType: 'image/png', buffer: PNG }); await pg.waitForTimeout(1500); }
             const yid = F.assets.find(a => a.label === '유라조생').id, hid = F.assets.find(a => a.label === '고당도 하우스감귤').id;
             await pg.click('[data-ev="padd"]'); await setVal(pg, 'prizes.0.name', '청귤 1kg'); await setVal(pg, 'prizes.0.count', '1');
@@ -164,12 +169,12 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             const sv = F.writes.filter(w => w.p.endsWith('/event')).pop();
             ok(`${tag}: 「고당도 하우스감귤 3kg」 경품 = 같은 이름 품목 사진 자동(글자 일치 · 저장 image_id = 그 사진)`, /품목 사진/.test(pz || '') && F.assets.find(a => a.label === '고당도 하우스감귤').id === sv.body.event.prizes[0].image_id, (pz || '') + ' · ' + JSON.stringify(sv.body.event.prizes[0]));
             // 바꾸기(황금향 · 안 쓰는 사진) → 새로 올리고 옛 것 지움
-            await pg.fill('#ev-blabel', '황금향'); await pg.waitForTimeout(150);
+            await pg.fill('#ev-blabel', '황금향'); await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
             { const [fc] = await Promise.all([pg.waitForEvent('filechooser'), pg.click('#ev-brand .ev-bitem[data-id="7"] [data-ev="brep"]')]); await fc.setFiles({ name: 'hgh.png', mimeType: 'image/png', buffer: PNG }); await pg.waitForTimeout(1500); }
             const rep = F.writes.slice(-2);
             ok(`${tag}: [바꾸기] = 같은 이름으로 새로 올리고 옛 사진 DELETE · 목록 1장 유지`, rep[0].p.endsWith('/assets') && rep[0].body.label === '황금향' && rep[1].method === 'DELETE' && /assets\/7$/.test(rep[1].p) && await pg.evaluate(() => [...document.querySelectorAll('#ev-brand .ev-bitem b')].filter(b => b.textContent === '황금향').length === 1), JSON.stringify(rep.map(w => w.method + ' ' + w.p)));
             // 지우기 — 쓰는 사진(감귤)이면 409 안내 · 남아 있음
-            const gid = F.assets.find(a => a.label === '고당도 하우스감귤').id; await pg.fill('#ev-blabel', '하우스'); await pg.waitForTimeout(150);
+            const gid = F.assets.find(a => a.label === '고당도 하우스감귤').id; await pg.fill('#ev-blabel', '하우스'); await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
             await pg.click(`#ev-brand .ev-bitem[data-id="${gid}"] [data-ev="bdel"]`); await pg.waitForSelector('.ev-dlg'); await pg.click('.ev-dlg [data-x="1"]'); await pg.waitForTimeout(700);
             const st409 = await pg.evaluate(gid => ({ still: !!document.querySelector(`#ev-brand .ev-bitem[data-id="${gid}"]`), toast: [...document.querySelectorAll('.toast-message')].map(t => t.textContent).join(' ') }), gid);
             ok(`${tag}: 경품이 쓰는 사진 [지우기] = 409 → 「쓰고 있어 지울 수 없어요」 안내 · 목록에 남음`, st409.still && /쓰고 있어/.test(st409.toast), JSON.stringify(st409));
@@ -185,7 +190,7 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             const X = await open(vw, { phone }); const { pg, F } = X; const tag = label + ' #711';
             F.assets.push({ id: 8, slot: 'brand', label: '초당옥수수', url: '/api/lucky/asset/8?v=cccc8888' });
             await goEvent(pg, phone); await pg.waitForTimeout(600);
-            const lastMsg = async () => { await pg.waitForTimeout(500); const fr = pg.frames().find(f => /lucky\.html/.test(f.url())); return fr ? (await fr.evaluate(() => window.__msgs)).pop() || {} : {}; };
+            const lastMsg = async () => { await pg.waitForTimeout(500); const fr = pg.frames().find(f => /lucky\.html/.test(f.url())); return fr ? (await fr.evaluate(() => window.__msgs)).pop() || {} : { scene: await pg.evaluate(() => window.AkmEvent._state.view), event: null }; };   // #716 한 줄 폭은 겹을 닫으면 프레임이 없음 → 화면이 고른 장(S.view)
             const chipsOf = k => pg.evaluate(k => [...document.querySelectorAll(`#ev-${k} .ev-chip > span`)].map(s => s.textContent), k);
             // ① 응모 제외 품목: 빈 칸 = 품목 묶음 단추 · 치면 옵션까지 · 누르면 칩 · 직접 입력 Enter · × 로 빼기
             const pk0 = await pg.evaluate(() => [...document.querySelectorAll('#ev-xp-pick [data-ev="pick"]')].map(b => b.dataset.v));
@@ -226,22 +231,23 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             await openCard(pg, 3);
             const wh = await pg.evaluate(() => [...document.querySelectorAll('.ev-slot')].map(s => s.dataset.slot + ':' + s.querySelector('.ev-slot-h b').textContent + ':' + ((s.querySelector('.ev-slot-where') || {}).textContent || '')));
             ok(`${tag}: ③ 그림 칸 3개 = 상단 · 발표 · 조회 결과 + 「쓰이는 곳」 한 줄(맨 위 · 발표 창 · 조회 결과 장)`, wh.length === 3 && /hero:상단 그림:.*맨 위/.test(wh[0]) && /winner:발표 그림:.*발표 창/.test(wh[1]) && /result:조회 결과 그림:.*조회한 결과 장/.test(wh[2]), JSON.stringify(wh));
-            // ⑤ 상태 탭(폰 = ⑤ 카드 · PC = 오른쪽 판 하나)
-            if (phone) await openCard(pg, 5);
-            const tabs = await pg.evaluate(() => ({ n: document.querySelectorAll('#event-root [data-ev="view"]').length, v: [...document.querySelectorAll('#event-root [data-ev="view"]')].map(b => b.textContent).join(','), bars: document.querySelectorAll('#event-root .ev-pv-bar').length, frames: document.querySelectorAll('#event-root iframe#ev-frame').length, inSide: !!document.querySelector('.ev-side .ev-pv-bar') }));
-            ok(`${tag}: ⑤ 상태 탭 10(docs/711 1절 순서) · 미리보기 판 하나(${phone ? '⑤ 카드' : '오른쪽 판'})`, tabs.n === 10 && tabs.v === '준비 중,접수 중,발표 뒤 첫 화면,접수 확인,당첨,미당첨,대상 아님,기간 밖,발표 창,끝남' && tabs.bars === 1 && tabs.frames === 1 && tabs.inSide === !phone, JSON.stringify(tabs));
+            // 미리보기 상태 탭(#716: 한 줄 폭 = 떠 있는 단추 → 겹 · 펼침 = 오른쪽 판 하나 · 조회 결과 5개 묶음에 「당첨 조회」 머리글)
+            if (phone) await pvOpen(pg);
+            const tabs = await pg.evaluate(() => { const q = s => [...document.querySelectorAll('#event-root ' + s + ', #ev-pv-ov ' + s)]; return { n: q('[data-ev="view"]').length, v: q('[data-ev="view"]').map(b => b.textContent).join(','), bars: q('.ev-pv-bar').length, frames: q('iframe#ev-frame').length, inSide: !!document.querySelector('.ev-side .ev-pv-bar'), inOv: !!document.querySelector('#ev-pv-ov .ev-pv-bar'), fab: !!document.querySelector('#event-root .ev-pv-fab'), grp: (q('.ev-pv-gl')[0] || {}).textContent, cards: document.querySelectorAll('#event-root .ev-card').length }; });
+            ok(`${tag}: 상태 탭 10(docs/711 1절 순서) · 「당첨 조회」 머리글 · 미리보기 판 하나(${phone ? '떠 있는 단추 → 겹' : '오른쪽 판'}) · 카드 5`, tabs.n === 10 && tabs.v === '준비 중,접수 중,발표 뒤 첫 화면,접수 확인,당첨,미당첨,대상 아님,기간 밖,발표 창,끝남' && tabs.grp === '당첨 조회' && tabs.bars === 1 && tabs.frames === 1 && tabs.inSide === !phone && tabs.inOv === phone && tabs.fab === phone && tabs.cards === 5, JSON.stringify(tabs));
             await pg.click('[data-ev="view"][data-v="closed"]'); const mc = await lastMsg();
             await pg.click('[data-ev="view"][data-v="preparing"]'); const mp = await lastMsg();
             await pg.click('[data-ev="view"][data-v="published"]'); const mpub = await lastMsg();
             await pg.click('[data-ev="view"][data-v="outside"]'); const mo = await lastMsg();
-            ok(`${tag}: ⑤ 탭 누름 = 그 장으로(closed · preparing · 발표 뒤 첫 화면 = default + published · outside)`, mc.scene === 'closed' && mp.scene === 'preparing' && mpub.scene === 'default' && mpub.event.published === true && mo.scene === 'outside' && mo.event.published === false, JSON.stringify([mc.scene, mp.scene, mpub.scene, mpub.event && mpub.event.published, mo.scene]));
-            await pg.click('[data-ev="view"][data-v="closed"]'); await pg.waitForTimeout(200); await openCard(pg, 1); await setVal(pg, 'title', '탭 고정 시험'); const pin = await lastMsg();
-            ok(`${tag}: ① 탭을 손으로 고른 뒤 글 입력(제목) = 탭 그대로(closed · 60초)`, pin.scene === 'closed', pin.scene);
+            ok(`${tag}: 탭 누름 = 그 장으로(closed · preparing · 발표 뒤 첫 화면 = default + published · outside)`, mc.scene === 'closed' && mp.scene === 'preparing' && mpub.scene === 'default' && mpub.event.published === true && mo.scene === 'outside' && mo.event.published === false, JSON.stringify([mc.scene, mp.scene, mpub.scene, mpub.event && mpub.event.published, mo.scene]));
+            await pg.click('[data-ev="view"][data-v="closed"]'); await pg.waitForTimeout(200); if (phone) await pvClose(pg); await openCard(pg, 1); await setVal(pg, 'title', '탭 고정 시험'); const pin = await lastMsg();
+            ok(`${tag}: (#716) 탭을 손으로 고른 뒤라도 글 입력(제목) = 그 글이 쓰이는 장으로(default · 60초 보호 없앰)`, pin.scene === 'default', pin.scene);
+            if (!phone) ok(`${tag}: (#716) 글 입력 = 미리보기에 focus(바뀐 자리 강조 키) 실림`, !!(pin.focus), JSON.stringify({ focus: pin.focus }));
             // 자동 전환 — 조회 결과 그림 → 당첨 · 발표 그림 → 발표 뒤 · 대상 아님 글 → 대상 아님(그림은 손으로 고른 탭도 이김)
             await openCard(pg, 3); await upload(pg, '.ev-slot[data-slot="result"] [data-ev="upload"]'); const a1 = await lastMsg();
             await upload(pg, '.ev-slot[data-slot="winner"] [data-ev="upload"]'); const a2 = await lastMsg();
             await openCard(pg, 4); await setVal(pg, 'texts.noitem_products', '레몬·한라봉 등'); const a3 = await lastMsg();
-            ok(`${tag}: 자동 전환 3 = 조회 결과 그림 → win · 발표 그림 → winners · 대상 아님 글 → noitem(탭 표시도 같이)`, a1.scene === 'win' && /asset\/\d+/.test(String(a1.event && a1.event.images.result)) && a2.scene === 'winners' && a3.scene === 'noitem' && await pg.evaluate(() => [...document.querySelectorAll('[data-ev="view"].on')].every(b => b.dataset.v === 'noitem')), JSON.stringify([a1.scene, a2.scene, a3.scene]));
+            ok(`${tag}: 자동 전환 3 = 조회 결과 그림 → win · 발표 그림 → winners · 대상 아님 글 → noitem(탭 표시도 같이)`, a1.scene === 'win' && (phone || /asset\/\d+/.test(String(a1.event && a1.event.images.result))) && a2.scene === 'winners' && a3.scene === 'noitem' && await pg.evaluate(() => [...document.querySelectorAll('[data-ev="view"].on')].every(b => b.dataset.v === 'noitem')), JSON.stringify([a1.scene, a2.scene, a3.scene]));
             // ④ 문장 미리보기 · 봇 답 미리보기
             const sent = await pg.evaluate(() => document.getElementById('ev-noitem-pv').textContent);
             ok(`${tag}: ④ 대상 아님 문장 = 치는 대로(제외 품목 칩 + 입력값)`, sent === '주문은 확인되지만 키위, 청귤 상품은 이번 이벤트 응모 대상에서 제외돼요. 레몬·한라봉 등 다른 상품 주문은 자동 접수됩니다!', sent);
@@ -256,9 +262,9 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             const b200 = await pg.evaluate(() => document.getElementById('ev-bot-note').hidden);
             ok(`${tag}: ② bot-preview 429 = 「잠시 뒤 다시 보여 드려요」 한 줄 · 옛 글 유지 → 다음 성공에 안내 사라짐`, b429.note && /🎟 응모 고객께 다음 주문 쿠폰/.test(b429.v) && b200, JSON.stringify(b429).slice(0, 200));
             const rs = await pg.evaluate(() => { const n = document.querySelector('.ev-head [data-ev="new"]').getBoundingClientRect(), r = document.querySelector('.ev-head [data-ev="reset"]').getBoundingClientRect(); return { gap: Math.round(r.left - n.right), same: Math.abs(r.top - n.top) < 4, t: document.querySelector('.ev-head [data-ev="reset"]').textContent }; });
-            await openCard(pg, 6); const r6 = await pg.evaluate(() => [...document.querySelectorAll('#ev-step-6 [data-ev="reset"]')].map(b => b.textContent).join());
-            ok(`${tag}: ③ 초기화 이름 통일(머리띠·⑥ 「초기화」) · 머리띠는 [새 회차] 와 16px 이상`, rs.t === '초기화' && r6 === '초기화' && (!rs.same || rs.gap >= 16), JSON.stringify(rs) + ' ⑥ ' + r6);
-            // 머리띠 [초기화] = ⑥ 과 같은 확인 창 · 취소면 변화 0
+            await openCard(pg, 5); const r6 = await pg.evaluate(() => [...document.querySelectorAll('#ev-step-5 [data-ev="reset"]')].map(b => b.textContent).join());
+            ok(`${tag}: ③ 초기화 이름 통일(머리띠·⑤ 열기·운영 「초기화」) · 머리띠는 [새 회차] 와 16px 이상`, rs.t === '초기화' && r6 === '초기화' && (!rs.same || rs.gap >= 16), JSON.stringify(rs) + ' ⑥ ' + r6);
+            // 머리띠 [초기화] = ⑤ 열기·운영 과 같은 확인 창 · 취소면 변화 0
             const wr = () => F.writes.filter(w => !/bot-preview$/.test(w.p)).length; await pg.waitForTimeout(500); const r0 = wr();
             await pg.click('.ev-head [data-ev="reset"]'); await pg.waitForSelector('.ev-dlg');
             const dl = await pg.evaluate(() => document.querySelector('.ev-dlg').textContent);
@@ -281,11 +287,11 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             await goEvent(pg, phone);
             ok(`${tag}: 메뉴 「이벤트 관리」 = 회사프로그램 안 페이지(#page-event 활성 · 새 탭 아님)`, await pg.evaluate(() => document.getElementById('page-event').classList.contains('active') && !document.querySelector('.nav-item[href*="lucky-admin"]')), '');
             const h0 = await head(pg), c0 = await cards(pg);
-            const want0 = label === '1440' ? ['001110', '3/6'] : ['001100', '2/6'];   // 펼침은 오른쪽 미리보기가 바로 그려져 ⑤ 완료
-            ok(`${tag}: 새 회차 = 준비 중 · 카드 완료 ③④${label === '1440' ? '⑤' : ''}만(${want0[0]}) · 준비 ${want0[1]}`, h0.pill.trim() === '준비 중' && c0 === want0[0] && h0.ready === want0[1], JSON.stringify(h0) + ' ' + c0);
+            const want0 = ['00110', '2/5'];   // #716 ⑤ 미리보기 카드 없앰 → 카드 5(①~④ + ⑤ 열기·운영)
+            ok(`${tag}: 새 회차 = 준비 중 · 카드 완료 ③④만(${want0[0]}) · 준비 ${want0[1]}`, h0.pill.trim() === '준비 중' && c0 === want0[0] && h0.ready === want0[1], JSON.stringify(h0) + ' ' + c0);
             const lay = await pg.evaluate(() => { const s = document.querySelector('.ev-side'); return { side: !!s, sticky: s ? getComputedStyle(s).position : '', frame: !!document.querySelector('.ev-side iframe#ev-frame') }; });
             ok(`${tag}: ${label === '1440' ? '펼침 = 왼쪽 카드 + 오른쪽 미리보기 고정(sticky)' : '폰 = 한 줄(오른쪽 미리보기 없음)'}`, label === '1440' ? lay.side && lay.sticky === 'sticky' && lay.frame : !lay.side, JSON.stringify(lay));
-            await openCard(pg, 6);
+            await openCard(pg, 5);
             const lock0 = await pg.evaluate(() => { const b = document.querySelector('[data-ev="live"]'); return { dis: b && b.disabled, msg: (document.getElementById('ev-lockmsg') || {}).textContent || '' }; });
             ok(`${tag}: 열기 단추 잠김 + 채울 것 이름 표시`, lock0.dis === true && /기간·제목/.test(lock0.msg) && /경품/.test(lock0.msg), JSON.stringify(lock0));
             // ① 채우기
@@ -310,27 +316,25 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             await openCard(pg, 3); await upload(pg, '.ev-slot[data-slot="hero"] [data-ev="upload"]');
             const upH = F.writes.filter(w => w.p.endsWith('/assets')).pop();
             ok(`${tag}: 배너 올리기 = 1200 폭 이하 webp`, upH.body.slot === 'hero' && upH.body.width <= 1200, JSON.stringify({ w: upH.body.width, h: upH.body.height }));
-            // 미리보기 열기(폰 = ⑤ 카드 안)
-            if (label !== '1440') { await openCard(pg, 5); await pg.waitForTimeout(1200); }
+            // 미리보기 열기(한 줄 폭 = 떠 있는 단추 → 겹)
+            if (label !== '1440') await pvOpen(pg);
             await pg.waitForTimeout(800);
             const fr = pg.frames().find(f => /lucky\.html/.test(f.url()));
             const msgs = fr ? await fr.evaluate(() => window.__msgs) : [];
             const last = msgs[msgs.length - 1] || {};
             ok(`${tag}: 미리보기 iframe 에 초안 postMessage(lucky:preview) · 배너·경품 그림 주소 · 저장 전 값`, last.type === 'lucky:preview' && /\/api\/lucky\/asset\/\d+/.test(String(last.event && last.event.images && last.event.images.hero)) && last.event.prizes.length === 2 && /asset\/\d+/.test(last.event.prizes[1].image || '') && last.event.display_title === '가을 감사 이벤트', JSON.stringify({ n: msgs.length, hero: last.event && last.event.images.hero, p1: last.event && last.event.prizes[1].image }));
-            await pg.waitForTimeout(400);
-            ok(`${tag}: 미리보기가 그려지면(lucky:rendered) ⑤ 완료`, (await cards(pg))[4] === '1', await cards(pg));
-            // 상태 보기 단추
-            if (label === '1440') await openCard(pg, 5);
+            // 상태 보기 단추(#716 ⑤ 카드 「미리보기가 그려지면 완료」 항목은 카드와 함께 없앰)
             await pg.click('[data-ev="view"][data-v="winners"]'); await pg.waitForTimeout(600);
             const m2 = (await (pg.frames().find(f => /lucky\.html/.test(f.url()))).evaluate(() => window.__msgs)).pop();
             ok(`${tag}: 「발표 창」 단추 = scene winners · state published`, m2.scene === 'winners' && m2.event.state === 'published', JSON.stringify({ scene: m2.scene, state: m2.event.state }));
             // 44px · 넘침 · 그림
+            if (label !== '1440') await pvClose(pg);
             const sm = phone ? await small44(pg) : [];
             if (phone) ok(`${tag}: 누르는 것 전부 44px 이상(펼친 카드 기준)`, sm.length === 0, sm.slice(0, 10).join(', '));
             ok(`${tag}: 가로 넘침 0`, !(await overflow(pg)));
             if (SHOT) await pg.screenshot({ path: path.join(SHOT, `708-${label}-채움.png`), fullPage: true });
-            // ⑥ 열기
-            await openCard(pg, 6);
+            // ⑤ 열기·운영(#716 종전 ⑥)
+            await openCard(pg, 5);
             const lock1 = await pg.evaluate(() => document.querySelector('[data-ev="live"]').disabled);
             ok(`${tag}: ①② 채우고 그림 올리자 열기 단추 풀림`, lock1 === false);
             await pg.click('[data-ev="live"]'); await pg.waitForSelector('.ev-dlg', { timeout: 3000 });
@@ -358,7 +362,7 @@ const AUDIT = sel => { const P = s => { const m = String(s).match(/rgba?\(([^)]+
             const upC = F.writes.filter(w => w.p.endsWith('/assets')).pop();
             ok(`${tag}: [이 그림 쓰기] → 줄여서 POST /assets(slot winner) → 발표 그림 자리에 들어감`, F.writes.filter(w => w.p.endsWith('/assets')).length === aBefore + 1 && upC.body.slot === 'winner' && upC.body.width <= 900 && await pg.evaluate(() => !!document.querySelector('.ev-slot[data-slot="winner"] .ev-slot-img img')), JSON.stringify({ slot: upC.body.slot, w: upC.body.width }));
             // 내리기 확인 창 · 취소하면 아무 일 없음
-            await openCard(pg, 6); const gl0 = F.writes.filter(w => w.p.endsWith('/go-live')).length;
+            await openCard(pg, 5); const gl0 = F.writes.filter(w => w.p.endsWith('/go-live')).length;
             await pg.click('[data-ev="down"]'); await pg.waitForSelector('.ev-dlg'); await pg.keyboard.press('Escape'); await pg.waitForTimeout(300);
             ok(`${tag}: 내리기 확인 창 Esc = 취소(서버 호출 0)`, F.writes.filter(w => w.p.endsWith('/go-live')).length === gl0 && !(await pg.$('.ev-dlg')));
             // 새 회차 확인 창(저장 안 한 변경 있으면 두 번 · 없으면 한 번) → new-round confirm NEW
