@@ -1,6 +1,7 @@
 // #708-B(대표 10/15 「지금 구도대로 고」) 이벤트 관리 — 회사프로그램 안 메뉴(data-page="event" · #page-event)
-//   직원이 터미널 없이 한 회차를 처음부터 끝까지: 머리띠(상태 · 준비 n/6 · 지난 회차 복사 · 새 회차) + 단계 카드 6개
-//   ①기간·제목 ②경품 ③상단 그림 ④문구 ⑤미리보기 ⑥열기·운영 · 오른쪽(펼침 900↑) = 미리보기 고정.
+//   직원이 터미널 없이 한 회차를 처음부터 끝까지: 머리띠(상태 · 준비 n/5 · 지난 회차 복사 · 새 회차) + 단계 카드 5개(#716 부터 · 종전 6개)
+//   ①기간·제목 ②경품 ③그림 ④문구 ⑤열기·운영 · 미리보기 = 2단(본문 900↑)은 오른쪽 판 고정 · 한 줄(폰·폴드7 펼침)은 아래 떠 있는 단추 → 전체 화면 겹(#716 · 뒤로가기 = 겹만 닫힘 · app.js #678 .modal-overlay 규약).
+//   #716: 글·그림을 고치면 미리보기가 그 장으로 저절로 넘어가고 postMessage 에 focus(고친 칸 이름 · lucky.html 이 그 자리를 강조)를 싣는다 — 손으로 고른 탭은 다음 입력이 오면 다시 자동(60초 보호 없음).
 //   저장은 「초안」(손님에게 안 보임) · [이벤트 열기]가 손님 페이지·/guide 카드·봇 답(#59)에 한 번에 반영(서버 lucky-event.js).
 //   서버 계약 = docs/708-event-design.md 3절(관리 API /api/agent-office/lucky/* · 응답 {ok, db}) · 미리보기 = iframe /lucky.html?preview=1 에 postMessage(초안 그대로 · 서버 왕복 0).
 //   그림 = 브라우저가 canvas 로 webp 로 줄여 POST /assets · 「AI로 그림 맡기기」 = 에이전트 오피스 지시([이벤트그림] 머리말) → 후보(report_files) → [이 그림 쓰기].
@@ -71,18 +72,16 @@
         groupsNow().forEach((g, i) => { const l = Math.max(0, ...g.words.map(w => String(w).replace(/\s+/g, '')).filter(w => w && n.includes(w)).map(w => w.length)); if (!l) return; const r = gRank(g.name); if (l > bl || (l === bl && r < br)) { best = i; bl = l; br = r; } });
         return best;
     }
-    const STEP_TITLE = ['', '기간·제목', '경품', '그림(상단·발표·조회 결과)', '문구', '손님 화면 미리보기', '열기·운영'];
+    const STEP_TITLE = ['', '기간·제목', '경품', '그림(상단·발표·조회 결과)', '문구', '열기·운영'];   // #716 ⑤ 미리보기 카드 없앰(2단 = 오른쪽 판 · 한 줄 = 떠 있는 단추) → ①~⑤
+    const STEPS = [1, 2, 3, 4, 5];
     const STATE_LABEL = { preparing: ['준비 중', 'ev-pill-off'], scheduled: ['예약됨', 'ev-pill-wait'], live: ['진행 중', 'ev-pill-ok'], published: ['발표 중', 'ev-pill-ok'], down: ['내려감', 'ev-pill-off'] };
     const AD_WORDS = /할인|쿠폰|%|\d\s*원/;   // /guide 카드 글엔 넣지 않음(광고성 선 · 설계 5절)
 
     const S = {
         db: null, id: null, ev: null, excluded: [], dirty: false, saving: false, loadErr: '',
         rounds: null, assets: [], open: new Set([1]), view: 'default', frame: 'phone',
-        cand: {}, busy: '', ordersPending: [], previewTimer: 0, mounted: false,
+        cand: {}, busy: '', ordersPending: [], previewTimer: 0, mounted: false, pvOpen: false, focus: '',
     };
-    const seenKey = () => 'akm_ev_seen_' + (S.id || 'new');
-    const seen = () => { try { return sessionStorage.getItem(seenKey()) === '1'; } catch (e) { return false; } };
-    const markSeen = () => { try { sessionStorage.setItem(seenKey(), '1'); } catch (e) { } };
 
     // ── 서버 값 → 초안(ev) ─────────────────────────────────
     function takeDb(db, id, body) {
@@ -151,11 +150,10 @@
         out[3] = { ok: true, miss: [], sum: `상단 ${heroOn ? '올린 그림' : '기본 그림'} · 발표 ${winOn ? '올린 그림' : '기본 그림'}${e.result_image_id ? ' · 조회 결과 올린 그림' : ''}${(e.pending_art || []).length ? ' · 아꼼이가 만드는 중 ' + e.pending_art.length + '건' : ''}` };
         const tx = e.texts || {}, filled = TEXT_LABEL.filter(([k]) => String(tx[k] || '').trim() && String(tx[k]).trim() !== TEXT_DEFAULT[k]).length;   // 서버가 기본 글자를 채워 주므로 기본과 다른 것만 「바꿈」
         out[4] = { ok: true, miss: [], sum: `손글씨 ${filled ? filled + '곳 바꿈' : '기본 글자'}${e.coupon_text ? ' · 쿠폰 문구 있음' : ''}` };
-        out[5] = { ok: seen(), miss: seen() ? [] : ['미리보기 한 번 열어 보기'], sum: seen() ? '확인함' : '아직 안 열어 봄' };
         const st = stateOf();
-        out[6] = { ok: ['live', 'published'].includes(st), miss: [], sum: STATE_LABEL[st][0] + (st === 'scheduled' ? ' ' + mdw(e.start) + ' 00:00' : '') };
+        out[5] = { ok: ['live', 'published'].includes(st), miss: [], sum: STATE_LABEL[st][0] + (st === 'scheduled' ? ' ' + mdw(e.start) + ' 00:00' : '') };
         const srv = S.srvCheck && S.srvCheck.steps; if (srv && !S.dirty) [[1, 'basics'], [2, 'prizes'], [3, 'images']].forEach(([k, n]) => { if (typeof srv[n] === 'boolean' && srv[n] !== out[k].ok) { out[k].ok = srv[n]; if (!srv[n] && !out[k].miss.length) out[k].miss = (S.srvCheck.missing || []).slice(); } });
-        out.n = [1, 2, 3, 4, 5, 6].filter(k => out[k].ok).length;
+        out.n = STEPS.filter(k => out[k].ok).length;
         out.openMiss = [1, 2, 3].filter(k => !out[k].ok).map(k => STEP_TITLE[k] + '(' + out[k].miss.join(', ') + ')');
         return out;
     }
@@ -185,12 +183,25 @@
             texts: Object.assign({}, TEXT_DEFAULT, Object.fromEntries(Object.entries(e.texts || {}).filter(([, v]) => String(v || '').trim()))),
         };
     }
-    function postPreview() {
+    // #716 focus = 방금 고친 칸 이름(lucky.html 이 그 자리를 강조 · 표 = 워커2에 보낸 focus 키 표) · 글·그림을 고쳐 보낼 때만 실림(탭·처음엔 없음) · 300ms 디바운스
+    function postPreview(focus) {
+        if (focus) S.focus = focus;
         clearTimeout(S.previewTimer);
         S.previewTimer = setTimeout(() => {
+            const fc = S.focus; S.focus = ''; if (fc && !S.readyResend) S.lastFocus = fc; S.readyResend = false;   // iframe 이 늦게 떠 ready 가 입력 뒤에 오면 그 focus 를 다시 실어 보냄
             const f = $('ev-frame'); if (!f || !f.contentWindow) return;
-            try { f.contentWindow.postMessage({ type: 'lucky:preview', event: previewPayload(), counts: { orders: 0, customers: 0 }, scene: S.view === 'published' ? 'default' : S.view }, location.origin); } catch (e) { }
-        }, 120);
+            const msg = { type: 'lucky:preview', event: previewPayload(), counts: { orders: 0, customers: 0 }, scene: S.view === 'published' ? 'default' : S.view };
+            if (fc) msg.focus = fc;
+            try { f.contentWindow.postMessage(msg, location.origin); } catch (e) { }
+        }, 300);
+    }
+    // data-k → focus 키(손님 페이지에 자리가 있는 칸만 · texts 는 칸 이름 그대로 · 없는 칸 = '' → focus 안 실림)
+    function focusOf(k) {
+        k = String(k || '');
+        if (k.startsWith('texts.')) return k.slice(6);
+        if (/^prizes\.\d+\.(name|count|desc|note)$/.test(k)) return k;
+        if (['title', 'display_title', 'start', 'end', 'announce', 'page_until', 'excludeProducts'].includes(k)) return k;
+        return '';
     }
 
     // #711 ④ 치는 대로 바뀌는 미리보기 — 대상 아님 문장(lucky.html 299행과 같은 글) · 봇 답(자동일 때만)
@@ -235,11 +246,11 @@
 
     function headHtml(ck) {
         const st = stateOf(), [lab, cls] = STATE_LABEL[st];
-        const dots = [1, 2, 3, 4, 5, 6].map(k => `<span class="ev-dot${ck[k].ok ? ' on' : ''}" title="${k}. ${STEP_TITLE[k]}"></span>`).join('');
+        const dots = STEPS.map(k => `<span class="ev-dot${ck[k].ok ? ' on' : ''}" title="${k}. ${STEP_TITLE[k]}"></span>`).join('');
         return `<div class="ev-head">
             <div class="ev-head-main"><h2 class="ev-round">${esc(S.ev.title || '이름 없는 회차')}</h2>
                 <span class="ev-pill ${cls}">${lab}${st === 'scheduled' ? ' ' + esc(mdw(S.ev.start)) + ' 00:00' : ''}</span>
-                <span class="ev-ready" aria-label="준비 ${ck.n}/6">준비 <span class="ev-dots" aria-hidden="true">${dots}</span> <b>${ck.n}/6</b></span></div>
+                <span class="ev-ready" aria-label="준비 ${ck.n}/${STEPS.length}">준비 <span class="ev-dots" aria-hidden="true">${dots}</span> <b>${ck.n}/${STEPS.length}</b></span></div>
             <div class="ev-head-acts">
                 <span class="ev-dirty" role="status">${S.saving ? '저장하는 중' : (S.dirty ? '저장 안 한 변경 있음' : '')}</span>
                 ${btn(S.saving ? '저장 중' : '변경 저장', `data-ev="save"${S.dirty && !S.saving ? '' : ' disabled'}`, 'primary')}
@@ -292,7 +303,7 @@
         }
         S.dirty = true; S.pq = '';
         if (kind === 'xp') autoView('excludeProducts');
-        reChips(kind); postPreview(); return true;
+        reChips(kind); postPreview(kind === 'xp' ? 'excludeProducts' : ''); return true;
     }
     // 품목 목록(워커3 GET /lucky/products) — 빈 칸 = 품목 묶음 단추 · 글자를 치면 묶음·옵션 이름 중 맞는 것(최대 12)
     function pickHtml() {
@@ -346,11 +357,9 @@
     }
     // #709(대표 「직원이 직접」) 품목 사진 관리 — 경품 그림 기본값으로 쓰는 실제 품목 사진(slot brand · label = 품목 이름) · 품목이 바뀌어도 직원이 올림
     function brandBox() {
-        const names = [...new Set(BRAND_FALLBACK.concat(S.itemNames || []))];
         // #711 검색 칸이 맨 위 · 글자를 쳐야 목록(26장을 늘 펼치지 않음) · 같은 칸 글자가 올릴 때 품목 이름
         return `<div class="ev-sub ev-brand" id="ev-brand"><div class="ev-sub-h"><b>품목 사진</b><span class="ev-f-h">경품 상품을 대표상품 참고하여 이미지 제작을 합니다.</span></div>
-            <div class="ev-badd"><label class="ev-f"><span class="ev-f-l">품목 이름 찾기 · 올릴 때 이름</span><input type="search" class="ev-in" id="ev-blabel" list="ev-bnames" maxlength="30" value="${esc(S.bq || '')}" placeholder="예: 황금향" autocomplete="off" aria-controls="ev-bres"></label>
-                <datalist id="ev-bnames">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+            <div class="ev-badd"><label class="ev-f"><span class="ev-f-l">품목 이름 찾기 · 올릴 때 이름</span><input type="search" class="ev-in" id="ev-blabel" maxlength="30" value="${esc(S.bq || '')}" placeholder="예: 황금향" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ev-bnpanel"></label>
                 ${btn('품목 사진 올리기', 'data-ev="badd"', 'primary')}</div>
             <div id="ev-bres" aria-live="polite">${brandResults()}</div></div>`;
     }
@@ -365,6 +374,71 @@
         return `<ul class="ev-blist">${list.map(a => `<li class="ev-bitem" data-id="${a.id}"><img src="${esc(assetUrl(a.id))}" alt="${esc(a.label || '품목 사진')}" loading="lazy"><b>${esc(a.label || '(이름 없음)')}</b>
                 <span class="ev-row">${btn('바꾸기', `data-ev="brep" data-id="${a.id}" data-label="${esc(a.label || '')}" aria-label="${esc(a.label || '')} 사진 바꾸기"`, 'sm')}${btn('지우기', `data-ev="bdel" data-id="${a.id}" aria-label="${esc(a.label || '')} 사진 지우기"`, 'sm danger')}</span></li>`).join('')}</ul>`;
     }
+    // #716 품목 이름 찾기 = 우리 목록 창(브라우저 기본 datalist 대신 · 중간발주 #qty-pickpanel 꼴) — 칸 하나가 검색 칸 · PC = 칸에 붙어 스크롤 따라감(자리 없으면 위) · 폰 = 칸 바로 아래 폭 꽉(자판 위까지)
+    const BN = { open: false, act: -1, n: 0, up: null };
+    const bnMobile = () => window.matchMedia('(max-width: 640px)').matches;
+    function bnRows() {
+        const q = nsp(S.bq), all = brandAssets().slice().sort((a, b) => b.id - a.id), seen = new Map();
+        BRAND_FALLBACK.concat(S.itemNames || [], all.map(a => a.label)).forEach(n => { n = String(n || '').trim(); const k = nsp(n); if (k && !seen.has(k)) seen.set(k, n); });
+        return [...seen].filter(([k]) => !q || k.includes(q)).map(([k, n]) => ({ n, ph: all.filter(a => nsp(a.label) === k) }))
+            .sort((a, b) => (b.ph.length ? 1 : 0) - (a.ph.length ? 1 : 0) || a.n.localeCompare(b.n, 'ko'));
+    }
+    function bnEl() {
+        let p = $('ev-bnpanel'); if (p) return p;
+        p = document.createElement('div'); p.id = 'ev-bnpanel'; p.className = 'ev-bnpanel'; p.hidden = true; p.setAttribute('role', 'listbox'); p.setAttribute('aria-label', '품목 이름');
+        p.addEventListener('pointerdown', e => e.preventDefault());   // 칸 초점 유지(폰 자판이 내려가지 않게)
+        p.addEventListener('click', e => { const r = e.target.closest('.ev-bn-row'); if (r) bnPick(r.dataset.v); });
+        document.body.appendChild(p); return p;
+    }
+    function bnDraw() {
+        const p = bnEl(), rows = bnRows(), raw = String(S.bq || '').trim().toLowerCase(); BN.n = rows.length;
+        const mark = n => { const k = raw ? n.toLowerCase().indexOf(raw) : -1; return k < 0 ? esc(n) : esc(n.slice(0, k)) + '<mark>' + esc(n.slice(k, k + raw.length)) + '</mark>' + esc(n.slice(k + raw.length)); };
+        p.innerHTML = rows.length ? rows.map((r, i) => `<div class="ev-bn-row" role="option" id="ev-bn-${i}" data-i="${i}" data-v="${esc(r.n)}" aria-selected="false">${r.ph.length ? `<img src="${esc(assetUrl(r.ph[0].id))}" alt="" loading="lazy">` : '<span class="ev-bn-noimg" aria-hidden="true"></span>'}<span class="ev-bn-t">${mark(r.n)}</span><small class="${r.ph.length ? '' : 'none'}">${r.ph.length ? r.ph.length + '장' : '사진 없음'}</small></div>`).join('')
+            : '<p class="ev-bn-none">맞는 품목이 없어요</p>';
+        bnAct(raw && rows.length ? 0 : -1);
+    }
+    function bnAct(i) {
+        BN.act = i; const p = $('ev-bnpanel'), inp = $('ev-blabel'); if (!p) return;
+        p.querySelectorAll('.ev-bn-row.act').forEach(r => { r.classList.remove('act'); r.setAttribute('aria-selected', 'false'); });
+        const r = i >= 0 ? p.querySelector(`.ev-bn-row[data-i="${i}"]`) : null;
+        if (r) { r.classList.add('act'); r.setAttribute('aria-selected', 'true'); if (inp) inp.setAttribute('aria-activedescendant', r.id); if (typeof r.scrollIntoView === 'function') r.scrollIntoView({ block: 'nearest' }); }
+        else if (inp) inp.removeAttribute('aria-activedescendant');
+    }
+    function bnPlace(follow) {
+        const p = $('ev-bnpanel'), inp = $('ev-blabel'); if (!p || !BN.open) return;
+        if (!inp || !inp.isConnected || !isActive()) return bnClose();
+        const r = inp.getBoundingClientRect(), vv = window.visualViewport, bot = vv ? vv.offsetTop + vv.height : window.innerHeight, vw = document.documentElement.clientWidth || window.innerWidth;
+        p.style.visibility = r.bottom < 0 || r.top > bot ? 'hidden' : '';   // 칸이 화면 밖이면 창도 안 보임(열린 채 · 돌아오면 제자리)
+        if (bnMobile() && !follow && bot - r.bottom < 240) { const top = (vv ? vv.offsetTop : 0) + 72; let sc = inp.parentElement; while (sc && sc !== document.body && !(/(auto|scroll)/.test(getComputedStyle(sc).overflowY) && sc.scrollHeight > sc.clientHeight)) sc = sc.parentElement; const dy = r.top - top; if (dy > 8) { if (sc && sc !== document.body) sc.scrollTop += dy; else window.scrollBy(0, dy); return bnPlace(true); } }   // 폰: 칸이 아래쪽(자판 바로 위)이면 칸을 위로 올려 목록 자리를 만든다
+        if (bnMobile()) { p.style.left = '12px'; p.style.width = (vw - 24) + 'px'; p.style.bottom = ''; p.style.top = (r.bottom + 4) + 'px'; p.style.maxHeight = Math.max(132, Math.min(420, bot - r.bottom - 12)) + 'px'; p.dataset.up = ''; return; }
+        const below = bot - r.bottom - 12, above = r.top - 12, w = Math.max(280, Math.min(480, r.width));
+        const up = follow && BN.up != null ? BN.up : (below < 240 && above > below); BN.up = up;
+        p.style.width = w + 'px'; p.style.left = Math.max(8, Math.min(vw - w - 8, r.left)) + 'px';
+        if (!follow) p.style.maxHeight = Math.max(160, Math.min(360, up ? above : below)) + 'px';
+        if (up) { p.style.top = ''; p.style.bottom = (window.innerHeight - r.top + 4) + 'px'; } else { p.style.bottom = ''; p.style.top = (r.bottom + 4) + 'px'; }
+        p.dataset.up = up ? '1' : '';
+    }
+    function bnOpen() {
+        const inp = $('ev-blabel'); if (!inp) return;
+        const p = bnEl(); if (!BN.open) { BN.open = true; BN.up = null; p.hidden = false; inp.setAttribute('aria-expanded', 'true'); }
+        bnDraw(); bnPlace();
+    }
+    function bnClose() {
+        if (!BN.open) return; BN.open = false; BN.act = -1; BN.up = null;
+        const p = $('ev-bnpanel'), inp = $('ev-blabel'); if (p) p.hidden = true;
+        if (inp) { inp.setAttribute('aria-expanded', 'false'); inp.removeAttribute('aria-activedescendant'); }
+    }
+    function bnPick(v) {
+        S.bq = v; const inp = $('ev-blabel'); if (inp) inp.value = v;
+        const r = $('ev-bres'); if (r) r.innerHTML = brandResults(); bnClose();
+    }
+    function bnKey(e) {
+        if (e.isComposing) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!BN.open) bnOpen(); if (BN.n) bnAct(BN.act < 0 ? (e.key === 'ArrowDown' ? 0 : BN.n - 1) : Math.max(0, Math.min(BN.n - 1, BN.act + (e.key === 'ArrowDown' ? 1 : -1)))); }
+        else if (e.key === 'Enter') { e.preventDefault(); if (BN.open && BN.act >= 0) { const r = $('ev-bnpanel').querySelector('.ev-bn-row.act'); if (r) bnPick(r.dataset.v); } else bnClose(); }
+        else if (e.key === 'Escape' && BN.open) { e.preventDefault(); e.stopPropagation(); bnClose(); }
+        else if (e.key === 'Tab') bnClose();
+    }
     async function loadItemNames() {
         if (S.itemNames) return;
         S.itemNames = [];
@@ -372,7 +446,7 @@
         const ps = r.body && Array.isArray(r.body.products) ? r.body.products : [];
         // 판매현황 이름의 「 / 」 앞(품목) · 「…:」 머리말 · 무게 이하를 뗀 품목 이름
         S.itemNames = [...new Set(ps.filter(p => !p.deleted_at).map(p => String(p.name || '').split(' / ')[0].replace(/^[^:]*:\s*/, '').replace(/\s*\d+(\.\d+)?\s*kg.*$/i, '').replace(/^(최상품|제철)\s*/, '').trim()).filter(n => n && n.length <= 30))];
-        const dl = $('ev-bnames'); if (dl) dl.innerHTML = [...new Set(BRAND_FALLBACK.concat(S.itemNames))].map(n => `<option value="${esc(n)}">`).join('');
+        if (BN.open) bnDraw();
     }
     async function uploadBrand(file, label, replaceId) {
         label = String(label || '').trim().slice(0, 30);
@@ -426,12 +500,13 @@
         const gl = cardView(), botText = botView();
         const adWarn = g.custom && [gl.title].concat(gl.lines || []).some(x => AD_WORDS.test(String(x || '')));
         return `<div class="ev-grid">${TEXT_LABEL.map(([k, l, max, multi]) => field(l, (multi ? area : inp)('texts.' + k, tx[k] || '', TEXT_DEFAULT[k], `maxlength="${max}"`))
-                + (k === 'noitem_products' ? `<div class="ev-sent"><span class="ev-f-l">손님이 보는 문장(대상 아님 장)</span><p id="ev-noitem-pv" aria-live="polite">${noitemHtml()}</p></div>` : '')).join('')}
-            ${field('쿠폰 한 줄(봇 답에만)', inp('coupon_text', e.coupon_text, '예: 응모 고객께 다음 주문 할인 쿠폰'), '봇 답의 🎟 줄로 들어가요 · 손님 페이지·알림톡 카드엔 안 나가요')}</div>
-            <div class="ev-sub"><div class="ev-sub-h"><b>봇 답 미리보기(#59)</b>${btn(b.custom ? '자동으로 되돌리기' : '다시 생성', 'data-ev="botauto"', 'sm ghost')}</div>
+                + (k === 'noitem_products' ? `<div class="ev-sent"><span class="ev-f-l">손님이 보는 문장(대상 아님 장)</span><p id="ev-noitem-pv" aria-live="polite">${noitemHtml()}</p></div>` : '')).join('')}</div>
+            <div class="ev-sub" id="ev-botbox"><div class="ev-sub-h"><b>봇 답(톡톡·상품문의)</b>${btn(b.custom ? '자동으로 되돌리기' : '다시 생성', 'data-ev="botauto"', 'sm ghost')}</div>
+                <p class="ev-f-h ev-bot-what">손님이 톡톡·상품문의에서 이벤트를 물으면 봇이 이렇게 답해요(시나리오 #59 · [이벤트 열기] 때 자동 등록 · 손님 페이지엔 안 나가요).</p>
                 <textarea class="ev-in ev-ta" id="ev-bot" data-k="bot_reply.response" rows="6" aria-label="봇 답 글">${esc(botText)}</textarea>
                 <p class="ev-f-h ev-bot-note" id="ev-bot-note" role="status" hidden>잠시 뒤 다시 보여 드려요(미리보기 요청이 많아요 · 아래 글은 바로 앞 글)</p>
-                <p class="ev-f-h">봇 답은 여기가 정본이에요. 문의 관리에서 고치면 다음 저장 때 덮여요.${b.custom ? ' · 손으로 고친 글(자동 갱신 안 함)' : ' · 칸을 고치면 손으로 고친 글로 남아요'}</p></div>
+                <p class="ev-f-h">봇 답은 여기가 정본이에요. 문의 관리에서 고치면 다음 저장 때 덮여요.${b.custom ? ' · 손으로 고친 글(자동 갱신 안 함)' : ' · 칸을 고치면 손으로 고친 글로 남아요'}</p>
+                ${field('쿠폰 한 줄', inp('coupon_text', e.coupon_text, '예: 응모 고객께 다음 주문 할인 쿠폰'), '이 한 줄은 위 봇 답의 🎟 줄에만 들어가요 · 손님 페이지·알림톡 카드엔 안 나가요(광고성)')}</div>
             <div class="ev-sub"><div class="ev-sub-h"><b>알림톡 단추 페이지(/guide) 맨 위 카드</b>${btn(g.custom ? '자동으로 되돌리기' : '다시 생성', 'data-ev="guideauto"', 'sm ghost')}</div>
                 <p class="ev-f-h">발송안내 알림톡의 [맛있게 드시는 법] 단추를 누르면 열리는 페이지 맨 위에 이벤트 기간 동안 이 카드가 붙어요(할인·쿠폰·금액 글자는 자동으로 빠져요).</p>
                 <div class="ev-gcard"><input type="text" class="ev-in ev-gtitle" data-k="guide_card.title" value="${esc(gl.title)}" aria-label="카드 제목">
@@ -439,34 +514,48 @@
                     <span class="ev-gbtn">${esc(gl.btn || '접수·당첨 확인 바로가기')}</span></div><div id="ev-gdrop-box">${dropHtml(gl)}</div>
                 ${adWarn ? '<p class="ev-warn" role="alert">카드 글에 할인·쿠폰·금액 글자가 있어요. 광고성으로 걸릴 수 있으니 빼 주세요(쿠폰은 봇 답에만).</p>' : ''}</div>`;
     }
-    // #711 ⑤ 손님 화면 미리보기 — 상태 탭(lucky.html 미리보기 장) · PC 2단 = 오른쪽 판에만 · 한 줄 = ⑤ 카드 안(같은 내용 하나)
+    // #711 손님 화면 미리보기 — 상태 탭(lucky.html 미리보기 장) · PC 2단 = 오른쪽 판에만 · 한 줄 = 떠 있는 단추 → 전체 화면 겹(#716)
     // 장 이름(scene) = docs/711-event-design.md 1절 · 「발표 뒤 첫 화면」만 화면 쪽 이름 published(= scene default + event.published)
     const VIEWS = [['preparing', '준비 중', 1], ['default', '접수 중', 1], ['published', '발표 뒤 첫 화면', 1], ['received', '접수 확인', 2], ['win', '당첨', 2], ['lose', '미당첨', 2], ['noitem', '대상 아님', 2], ['outside', '기간 밖', 2], ['winners', '발표 창', 3], ['closed', '끝남', 3]];
     const VIEW_HINT = { preparing: '열기 전 · 「준비 중」 한 장', default: '응모 기간 · 손님 페이지 첫 화면(상단 그림·경품·조회 칸)', published: '발표 시작 뒤 첫 화면 · 「당첨자 발표 완료」 띠 + [명단 보기]', received: '이름·번호 조회 → 「접수되었습니다」(조회 결과 그림)', win: '이름·번호 조회 → 당첨(조회 결과 그림 · 1등 경품)', lose: '이름·번호 조회 → 미당첨(조회 결과 그림)', noitem: '이름·번호 조회 → 제외 품목만 산 손님(대상 아님 문장)', outside: '이름·번호 조회 → 기간 밖 주문', winners: '당첨자 명단 창(발표 그림·발표 손글씨)', closed: '내리는 날 뒤 · 끝난 장 + 스토어 단추' };
     function pvBarHtml() {
         const seg = (list, lab) => `<div class="ev-seg" role="group" aria-label="${lab}">${list.map(([v, l]) => `<button type="button" class="ev-seg-b${S.view === v ? ' on' : ''}" data-ev="view" data-v="${v}" aria-pressed="${S.view === v}">${l}</button>`).join('')}</div>`;
         const g = n => VIEWS.filter(x => x[2] === n);
-        return `<div class="ev-pv-bar"><div class="ev-pv-tabs">${seg(g(1), '미리보기 상태')}<div class="ev-pv-grp"><span class="ev-pv-gl">당첨 조회</span>${seg(g(2), '당첨 조회 결과')}</div>${seg(g(3), '발표·끝')}</div>
+        // #716-A 「당첨 조회」 = 누르는 알약이 아니라 둘째 묶음 위 작은 회색 머리글(대표가 탭으로 보고 「안 눌린다」) — 옆 「접수 확인」 탭이 이미 그 장이라 단추로 두지 않음
+        return `<div class="ev-pv-bar"><div class="ev-pv-tabs">${seg(g(1), '미리보기 상태')}<div class="ev-pv-grp"><span class="ev-pv-gl" aria-hidden="true">당첨 조회 결과 ↓</span>${seg(g(2), '당첨 조회 결과')}</div>${seg(g(3), '발표·끝')}</div>
             <p class="ev-pv-hint" aria-live="polite">${esc(VIEW_HINT[S.view] || '')}</p></div>`;
     }
-    function refreshPvBar() { document.querySelectorAll('#event-root .ev-pv-bar').forEach(el => { const t = document.createElement('div'); t.innerHTML = pvBarHtml(); el.replaceWith(t.firstElementChild); }); }
-    // 그림·글을 고치면 그것이 쓰이는 장으로 미리보기를 돌림(#711)
-    const VIEW_FOR = { hero: 'default', winner: 'winners', result: 'win', prize: 'default', 'texts.noitem_products': 'noitem', excludeProducts: 'noitem', 'texts.winner_hand': 'winners', 'texts.winner_foot': 'winners', 'texts.prize_head_hand': 'default', 'texts.corner_hand': 'default', 'texts.search_hand': 'default', title: 'default', display_title: 'default', start: 'default', end: 'default', 'texts.preparing_title': 'preparing', 'texts.preparing_line': 'preparing', 'texts.closed_title': 'closed', 'texts.closed_line': 'closed', 'texts.store_btn': 'closed' };
-    function autoView(key, isImg) {
+    function refreshPvBar() { document.querySelectorAll('#event-root .ev-pv-bar, #ev-pv-ov .ev-pv-bar').forEach(el => { const t = document.createElement('div'); t.innerHTML = pvBarHtml(); el.replaceWith(t.firstElementChild); }); }
+    // 그림·글을 고치면 그것이 쓰이는 장으로 미리보기를 돌림(#711 · #716 = 글 입력도 늘 이김 · 손으로 고른 탭은 다음 입력까지만)
+    const VIEW_FOR = { hero: 'default', winner: 'winners', result: 'win', prize: 'default', 'texts.noitem_products': 'noitem', excludeProducts: 'noitem', 'texts.winner_hand': 'winners', 'texts.winner_foot': 'winners', 'texts.prize_head_hand': 'default', 'texts.corner_hand': 'default', 'texts.search_hand': 'received', title: 'default', display_title: 'default', start: 'default', end: 'default', announce: 'default', page_until: 'default', 'texts.preparing_title': 'preparing', 'texts.preparing_line': 'preparing', 'texts.closed_title': 'closed', 'texts.closed_line': 'closed', 'texts.store_btn': 'closed' };
+    function autoView(key) {
         const k = /^prizes\./.test(key) ? 'prize' : key, v = VIEW_FOR[k];
-        if (!v) return;
-        if (!isImg && S.viewPinnedAt && Date.now() - S.viewPinnedAt < 60000) return;   // 손으로 고른 탭 = 글 입력이 60초 동안 안 빼앗음
-        if (isImg) S.viewPinnedAt = 0;   // 그림은 늘 이김(대표 「올린 그림이 안 보인다」)
-        if (v === S.view) return;
+        if (!v || v === S.view) return;
         S.view = v; refreshPvBar();
     }
     const pvActs = () => `<div class="ev-row ev-pv-acts">${btn(S.frame === 'phone' ? '넓게 보기' : '폰으로 보기', 'data-ev="frame"', 'sm ghost')}${btn('미리보기 링크 복사', 'data-ev="pvlink"', 'sm')}</div>
             <p class="ev-f-h">링크는 1시간 동안 열려요 · 다른 직원·대표 폰으로 보낼 때.</p>`;
-    function step5(inline) {
-        if (!inline) return '<p class="ev-note">손님 화면 미리보기는 오른쪽 판이에요. 칸을 고치면 바로 바뀌고, 그림·글이 쓰이는 장으로 저절로 넘어가요(저장 전 초안).</p>';
-        return `${pvBarHtml()}${frameHtml()}${pvActs()}`;
-    }
     const frameHtml = () => `<div class="ev-frame-wrap ${S.frame}"><iframe id="ev-frame" title="손님 화면 미리보기" src="/lucky.html?preview=1" loading="lazy"></iframe></div>`;
+    // #716-E 한 줄(폰·폴드7 펼침)에서는 미리보기가 떠 있는 단추 → 전체 화면 겹. class modal-overlay = app.js #678 가 공통 창으로 세어 뒤로가기·Esc 로 닫아 줌(× = .modal-close 를 눌러 닫음)
+    const fabHtml = () => `<button type="button" class="ev-btn primary ev-pv-fab" data-ev="pvopen" aria-haspopup="dialog">손님 화면 미리보기</button>`;
+    function openPv() {
+        if (S.pvOpen || isWide()) return;
+        const root = $('event-root'); if (!root) return;
+        S.pvOpen = true;
+        const ov = document.createElement('div'); ov.className = 'modal-overlay ev-pv-ov'; ov.id = 'ev-pv-ov';
+        ov.innerHTML = `<div class="ev-pv-sheet" role="dialog" aria-modal="true" aria-labelledby="ev-pv-t"><div class="ev-pv-head"><b id="ev-pv-t">손님 화면 미리보기</b><span class="ev-f-h">저장 전 초안 · 뒤로가기로 닫혀요</span><button type="button" class="modal-close ev-pv-x" data-ev="pvclose" aria-label="미리보기 닫기">×</button></div>
+            ${pvBarHtml()}${frameHtml()}<div class="ev-side-acts">${pvActs()}</div></div>`;
+        ov.addEventListener('click', onClick);   // body 에 붙이므로(app.js #678 는 body 직계 자식 추가만 봄 → 겹 수 akmM 에 셈) 단추 위임을 겹에 직접
+        document.body.appendChild(ov);
+        hookFrame();
+        { const f = ov.querySelector('#ev-frame'); if (f) f.addEventListener('load', () => { try { f.contentWindow.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.isComposing) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }); } catch (e) { } }); }   // 같은 출처 iframe 의 Esc 를 부모로(app.js #678 이 겹을 닫음)
+        const x = ov.querySelector('.ev-pv-x'); if (x) x.focus();
+    }
+    function closePv() {
+        const ov = $('ev-pv-ov'); S.pvOpen = false;
+        if (ov) ov.remove();
+        const fab = document.querySelector('#event-root .ev-pv-fab'); if (fab) fab.focus();
+    }
     function step6(ck) {
         const st = stateOf(), d = S.db || {}, open = isOpen();
         const orders = Array.isArray(d.orders) ? d.orders : [], winners = Array.isArray(d.winners) ? d.winners : [];
@@ -506,6 +595,7 @@
     }
 
     function render(keepScroll) {
+        bnClose();   // #716 카드를 다시 그리면 칸이 바뀜 → 목록 창 닫음
         const root = $('event-root'); if (!root) return;
         if (S.loadErr) { root.dataset.mode = ''; root.innerHTML = `<div class="ev-loaderr" role="alert">${esc(S.loadErr)} ${btn('다시 불러오기', 'data-ev="reload"')}</div>`; return; }
         if (!S.ev) { root.dataset.mode = ''; root.innerHTML = '<p class="ev-empty">불러오는 중</p>'; return; }
@@ -520,16 +610,16 @@
         // 뼈대(머리 · 카드 칸 · 오른쪽 미리보기)는 폭 꼴이 바뀔 때만 새로 — 오른쪽 iframe 이 다시 그릴 때마다 새로 읽히지 않게
         const mode = wide ? 'two' : 'one';
         if (root.dataset.mode !== mode || !root.querySelector('.ev-cards')) {
+            if (S.pvOpen) closePv();   // 폭 꼴이 바뀌면 전체 화면 겹은 닫고(2단엔 오른쪽 판) 뼈대부터 새로
             root.dataset.mode = mode;
             root.innerHTML = `<div class="ev-headbox"></div><div class="ev-layout${wide ? ' two' : ''}"><div class="ev-cards"></div>
-                ${wide ? `<aside class="ev-side" aria-label="손님 화면 미리보기"><div class="ev-side-h"><b>손님 화면 미리보기</b><span class="ev-f-h">저장 전 초안</span></div>${pvBarHtml()}${frameHtml()}<div class="ev-side-acts">${pvActs()}</div></aside>` : ''}</div>`;
+                ${wide ? `<aside class="ev-side" aria-label="손님 화면 미리보기"><div class="ev-side-h"><b>손님 화면 미리보기</b><span class="ev-f-h">저장 전 초안 · 글·그림을 고치면 그 장으로 넘어가요</span></div>${pvBarHtml()}${frameHtml()}<div class="ev-side-acts">${pvActs()}</div></aside>` : fabHtml()}</div>`;
             if (wide) hookFrame();
-        } else if (wide) { const fw = root.querySelector('.ev-side .ev-frame-wrap'); if (fw) fw.className = 'ev-frame-wrap ' + S.frame; const sa = root.querySelector('.ev-side-acts'); if (sa) sa.innerHTML = pvActs(); }
+        } else { const fw = document.querySelector('#event-root .ev-side .ev-frame-wrap, #ev-pv-ov .ev-frame-wrap'); if (fw) fw.className = 'ev-frame-wrap ' + S.frame; const sa = document.querySelector('#event-root .ev-side-acts, #ev-pv-ov .ev-side-acts'); if (sa) sa.innerHTML = pvActs(); }
         root.querySelector('.ev-headbox').innerHTML = headHtml(ck);
-        root.querySelector('.ev-cards').innerHTML = `${cardHtml(1, ck, step1)}${cardHtml(2, ck, step2)}${cardHtml(3, ck, step3)}${cardHtml(4, ck, step4)}${cardHtml(5, ck, () => step5(!wide))}${cardHtml(6, ck, () => step6(ck))}`;
+        root.querySelector('.ev-cards').innerHTML = `${cardHtml(1, ck, step1)}${cardHtml(2, ck, step2)}${cardHtml(3, ck, step3)}${cardHtml(4, ck, step4)}${cardHtml(5, ck, () => step6(ck))}`;
         refreshPvBar();
         if (focusKey) { const el = root.querySelector(`[data-k="${CSS.escape(focusKey)}"]`); if (el) { el.focus(); try { if (selS != null) el.setSelectionRange(selS, selS); } catch (e) { } } }
-        if (!wide) hookFrame();
         loadCandImgs();
         if (S.open.has(1) && !S.products) loadProducts();   // 회차 없음 → [새 회차] 로 처음 카드가 그려질 때도 품목 목록을 읽음(#711 실왕복에서 찾음)
         if (S.open.has(4)) refreshBot();   // ④ 가 펼쳐져 있으면 서버 글로 다시(경품 추가·빼기 등 단추 변경 포함)
@@ -539,7 +629,7 @@
         const root = $('event-root'); if (!root || !S.ev || !S.id) return;
         const ck = check(), hb = root.querySelector('.ev-headbox');
         if (hb) hb.innerHTML = headHtml(ck);
-        [1, 2, 3, 4, 5, 6].forEach(k => { const sec = root.querySelector(`.ev-card[data-step="${k}"]`); if (!sec) return; sec.classList.toggle('done', ck[k].ok); const st = sec.querySelector('.ev-card-h .ev-st'); if (st) { st.className = 'ev-st ' + (ck[k].ok ? 'ok' : 'no'); st.textContent = ck[k].ok ? '완료' : '미완'; st.setAttribute('aria-label', ck[k].ok ? '완료' : '미완'); } const sm = sec.querySelector('.ev-card-sum'); if (sm) sm.textContent = ck[k].sum; });
+        STEPS.forEach(k => { const sec = root.querySelector(`.ev-card[data-step="${k}"]`); if (!sec) return; sec.classList.toggle('done', ck[k].ok); const st = sec.querySelector('.ev-card-h .ev-st'); if (st) { st.className = 'ev-st ' + (ck[k].ok ? 'ok' : 'no'); st.textContent = ck[k].ok ? '완료' : '미완'; st.setAttribute('aria-label', ck[k].ok ? '완료' : '미완'); } const sm = sec.querySelector('.ev-card-sum'); if (sm) sm.textContent = ck[k].sum; });
         const live = root.querySelector('[data-ev="live"]'); if (live) { live.disabled = !!ck.openMiss.length; }
         const lm = $('ev-lockmsg'); if (lm) lm.textContent = '열기 전에 채울 것: ' + ck.openMiss.join(' · ');
     }
@@ -550,8 +640,7 @@
     window.addEventListener('message', ev => {
         if (ev.origin !== location.origin || !ev.data || typeof ev.data !== 'object') return;
         const f = $('ev-frame'); if (!f || ev.source !== f.contentWindow) return;
-        if (ev.data.type === 'lucky:ready') postPreview();
-        if (ev.data.type === 'lucky:rendered' && !seen()) { markSeen(); refreshStatus(); }
+        if (ev.data.type === 'lucky:ready') { const lf = S.lastFocus || ''; S.lastFocus = ''; S.readyResend = !!lf; postPreview(lf); }   // 늦게 뜬 iframe 에 한 번만 다시 실음(겹을 닫았다 열면 옛 칸이 또 반짝이지 않게)
     });
 
     // ── 값 넣기(data-k 경로) ──────────────────────────────
@@ -569,7 +658,7 @@
     }
     function onInput(ev) {
         const el = ev.target;
-        if (el.id === 'ev-blabel') { S.bq = el.value; const r = $('ev-bres'); if (r) r.innerHTML = brandResults(); return; }   // 검색만(저장할 값 아님)
+        if (el.id === 'ev-blabel') { S.bq = el.value; const r = $('ev-bres'); if (r) r.innerHTML = brandResults(); bnOpen(); return; }   // 검색만(저장할 값 아님)
         if (el.dataset && el.dataset.chip === 'xp') { S.pq = el.value; const pk = $('ev-xp-pick'); if (pk) pk.innerHTML = pickHtml(); return; }
         if (!el.dataset || !el.dataset.k) return;
         if (el.dataset.k === 'announce') S._annWas = S.ev.announce;
@@ -579,7 +668,7 @@
         if (el.dataset.k === 'texts.noitem_products') refreshNoitem();
         if (el.dataset.k !== 'bot_reply.response') refreshBot();
         autoView(el.dataset.k);
-        refreshStatus(); postPreview();
+        refreshStatus(); postPreview(focusOf(el.dataset.k));
     }
 
     // ── 저장 · 서버 단추 ──────────────────────────────────
@@ -685,9 +774,9 @@
         const e = S.ev;
         if (slot === 'prize') { if (e.prizes[idx]) e.prizes[idx].image_id = a.id; }
         else e[SLOTS[slot].field] = a.id;
-        S.dirty = true; autoView(slot, true);
+        S.dirty = true; autoView(slot);
         toast(`${SLOTS[slot].label} 올렸어요 · 저장하면 반영돼요`, 'lime', 2800);
-        render(); postPreview();
+        render(); postPreview(slot === 'prize' ? '' : 'images.' + slot);   // 경품 그림 자리는 focus 표에 없음(장만 default)
     }
     function pickFile(slot, idx) {
         const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/png,image/jpeg,image/webp'; f.hidden = true;
@@ -789,9 +878,11 @@
         switch (a) {
             case 'reload': return enter(true);
             case 'chipadd': { const k = b.dataset.kind, el = $('ev-' + k + '-in'); addChip(k, el && el.value); return; }
-            case 'chipx': { const k = b.dataset.kind; if (k === 'xp') E.excludeProducts = E.excludeProducts.filter((_, j) => j !== i); else S.excluded = S.excluded.filter((_, j) => j !== i); S.dirty = true; if (k === 'xp') autoView('excludeProducts'); reChips(k); postPreview(); return; }
+            case 'chipx': { const k = b.dataset.kind; if (k === 'xp') E.excludeProducts = E.excludeProducts.filter((_, j) => j !== i); else S.excluded = S.excluded.filter((_, j) => j !== i); S.dirty = true; if (k === 'xp') autoView('excludeProducts'); reChips(k); postPreview(k === 'xp' ? 'excludeProducts' : ''); return; }
             case 'pick': addChip('xp', b.dataset.v); return;
-            case 'fold': { const k = +b.dataset.step; if (k === 2) loadItemNames(); if (k === 1 && !S.open.has(1)) loadProducts(true); S.open.has(k) ? S.open.delete(k) : S.open.add(k); if (k === 5 && S.open.has(5)) { markSeen(); } render(); if (S.open.has(k)) { const sec = $('ev-step-' + k); if (sec && sec.getBoundingClientRect().top < 0) sec.scrollIntoView({ block: 'start' }); } return; }
+            case 'pvopen': openPv(); postPreview(); return;
+            case 'pvclose': closePv(); return;
+            case 'fold': { const k = +b.dataset.step; if (k === 2) loadItemNames(); if (k === 1 && !S.open.has(1)) loadProducts(true); S.open.has(k) ? S.open.delete(k) : S.open.add(k); render(); if (S.open.has(k)) { const sec = $('ev-step-' + k); if (sec && sec.getBoundingClientRect().top < 0) sec.scrollIntoView({ block: 'start' }); } return; }
             case 'save': return save();
             case 'padd': E.prizes.push({ name: '', count: 1, desc: '', note: '' }); S.dirty = true; render(); { const el = document.querySelector(`#event-root [data-k="prizes.${E.prizes.length - 1}.name"]`); if (el) el.focus(); } postPreview(); return;
             case 'pdel': E.prizes.splice(i, 1); S.dirty = true; render(); postPreview(); return;
@@ -807,7 +898,7 @@
                 S.assets = S.assets.filter(a => String(a.id) !== b.dataset.id); toast('지웠어요', 'lime'); render(); return;
             }
             case 'art': return artSheet(b.dataset.slot, i);
-            case 'unset': { const s = b.dataset.slot; E[SLOTS[s].field] = null; S.dirty = true; autoView(s, true); render(); postPreview(); return; }
+            case 'unset': { const s = b.dataset.slot; E[SLOTS[s].field] = null; S.dirty = true; autoView(s); render(); postPreview('images.' + s); return; }
             case 'candx': E.pending_art = E.pending_art.filter(p => String(p.order_id) !== b.dataset.order); S.dirty = true; render(); return;
             case 'usecand': {
                 const key = b.dataset.slot, slot = key.startsWith('prize:') ? 'prize' : key, idx = slot === 'prize' ? +key.split(':')[1] : undefined;
@@ -816,7 +907,7 @@
             }
             case 'botauto': E.bot_reply.custom = false; E.bot_reply.response = ''; S.dirty = true; render(); return;
             case 'guideauto': E.guide_card.custom = false; Object.assign(E.guide_card, autoGuide()); S.dirty = true; render(); return;
-            case 'view': S.view = b.dataset.v; S.viewPinnedAt = Date.now(); markSeen(); render(); postPreview(); return;
+            case 'view': S.view = b.dataset.v; refreshPvBar(); postPreview(); return;   // 손으로 고른 장 = 탭 줄만 다시(카드·겹은 그대로) · 다음 글·그림 입력이 오면 다시 자동
             case 'frame': S.frame = S.frame === 'phone' ? 'wide' : 'phone'; render(); return;
             case 'pvlink': {
                 const r = await call(A + '/preview-key');
@@ -905,6 +996,15 @@
         root.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.dataset && e.target.dataset.chip) { e.preventDefault(); addChip(e.target.dataset.chip, e.target.value); } });   // 칩 칸 Enter = [+ 추가](한글 조합 중 제외)
         root.addEventListener('keydown', e => { if (e.target.id === 'ev-drop' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); $('ev-xlsx').click(); } });
         root.addEventListener('click', e => { if (e.target.closest('#ev-drop') && e.target.id !== 'ev-xlsx') $('ev-xlsx').click(); });
+        // #716 품목 이름 찾기 목록 창 — 칸을 누르거나 초점이 오면 열림(빈 칸 = 전체) · 바깥 누름·Esc·Tab 닫힘 · 화면이 움직이면 따라감
+        root.addEventListener('focusin', e => { if (e.target.id === 'ev-blabel') bnOpen(); });
+        root.addEventListener('click', e => { if (e.target.id === 'ev-blabel' && !BN.open) bnOpen(); });
+        root.addEventListener('keydown', e => { if (e.target.id === 'ev-blabel') bnKey(e); });
+        root.addEventListener('focusout', e => { if (e.target.id === 'ev-blabel') setTimeout(() => { if (document.activeElement !== $('ev-blabel')) bnClose(); }, 0); });
+        document.addEventListener('pointerdown', e => { if (BN.open && !(e.target.closest && (e.target.closest('#ev-bnpanel') || e.target.id === 'ev-blabel'))) bnClose(); }, true);
+        window.addEventListener('resize', () => { if (BN.open) bnPlace(); });
+        window.addEventListener('scroll', e => { if (BN.open && !(e.target && e.target.closest && e.target.closest('#ev-bnpanel'))) bnPlace(true); }, { passive: true, capture: true });
+        if (window.visualViewport) { window.visualViewport.addEventListener('resize', () => { if (BN.open) bnPlace(); }); window.visualViewport.addEventListener('scroll', () => { if (BN.open) bnPlace(true); }); }
         root.addEventListener('dragover', e => { const d = e.target.closest('#ev-drop'); if (d) { e.preventDefault(); d.classList.add('on'); } });
         root.addEventListener('dragleave', e => { const d = e.target.closest('#ev-drop'); if (d) d.classList.remove('on'); });
         root.addEventListener('drop', e => { const d = e.target.closest('#ev-drop'); if (d) { e.preventDefault(); d.classList.remove('on'); takeFiles([...e.dataTransfer.files]); } });
@@ -920,7 +1020,7 @@
     window.AkmEvent = {
         enter: () => enter(false),
         // 알림 링크 event?step=3 → 그 카드 펼쳐 보이기
-        open: async step => { await enter(false); const k = Math.min(6, Math.max(1, +step || 1)); S.open.add(k); render(); const sec = $('ev-step-' + k); if (sec) sec.scrollIntoView({ block: 'start' }); pollCand(); },
+        open: async step => { await enter(false); const k = Math.min(STEPS.length, Math.max(1, +step || 1)); S.open.add(k); render(); const sec = $('ev-step-' + k); if (sec) sec.scrollIntoView({ block: 'start' }); pollCand(); },
         _state: S,
     };
 })();
