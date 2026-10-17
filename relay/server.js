@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-10-18.1'; // #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-10-18.2'; // #729 쿠팡 상품 2차(전체 수정 PUT · 배송칸 partial PUT · 등록 POST · 승인 요청 PUT · 삭제 DELETE · 상태 이력 GET) · 종전 2026-10-18.1 = #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -198,7 +198,7 @@ app.post('/naver', async (req, res) => {
 });
 
 // ══════════════ 쿠팡 OPEN API 중계 (2026-07-26 — 지시문_쿠팡_송장변환_연동 v2) ══════════════
-// 원칙: 아래 허용목록 경로만(주문 조회 2 · 발주확인 · #728 상품 조회 3·가격·재고·판매중지/재개). 쿠팡 키는 이 서버 .env에만.
+// 원칙: 아래 허용목록 경로만(주문 조회 2 · 발주확인 · #728 상품 조회 3·가격·재고·판매중지/재개 · #729 상품 전체 수정·배송칸·등록·승인 요청·삭제·이력). 쿠팡 키는 이 서버 .env에만.
 // HMAC 서명 (쿠팡 공식 문서 PHP/Java 예제 그대로):
 //   datetime(UTC yyMMdd'T'HHmmss'Z') + METHOD + path + query → HMAC-SHA256(hex, secret)
 //   Authorization: CEA algorithm=HmacSHA256, access-key=…, signed-date=…, signature=…
@@ -230,6 +230,13 @@ const COUPANG_ALLOW = [
     { m: 'PUT', tpl: CP_MKT + '/vendor-items/{vendorItemId}/quantities/{quantity}' },    // 재고 변경
     { m: 'PUT', tpl: CP_MKT + '/vendor-items/{vendorItemId}/sales/stop' },               // 판매 중지
     { m: 'PUT', tpl: CP_MKT + '/vendor-items/{vendorItemId}/sales/resume' },             // 판매 재개
+    // #729 쿠팡 상품 2차(대표 「고」 10/18) — 상품 단위 · 승인 심사행 또는 임시저장(docs/728-coupang-write-api.md ③⑥) · 바디 vendorId 는 아래 핸들러가 .env 값으로 강제
+    { m: 'PUT', tpl: CP_MKT + '/seller-products' },                                     // 전체 수정(승인 필요 · 바디 sellerProductId · 경로에 번호 없음)
+    { m: 'PUT', tpl: CP_MKT + '/seller-products/{sellerProductId}/partial' },           // 배송·반품지 칸만 수정(승인 불요 · 임시저장은 못 고침)
+    { m: 'POST', tpl: CP_MKT + '/seller-products' },                                    // 등록(requested false = 임시저장 · 손님 노출 0)
+    { m: 'PUT', tpl: CP_MKT + '/seller-products/{sellerProductId}/approvals' },         // 승인 요청
+    { m: 'DELETE', tpl: CP_MKT + '/seller-products/{sellerProductId}' },                // 삭제(쿠팡이 임시저장·저장중만 받음)
+    { m: 'GET', tpl: CP_MKT + '/seller-products/{sellerProductId}/histories' },         // 상태 이력(반려 사유 comment)
 ];
 const CP_MAX = { '{price}': 10000000, '{quantity}': 999999 };   // 값 자리 상한(0 하나 더 붙인 실수 막기)
 // 요청 path → 허용 규칙 + 실제 경로(vendorId 치환) · 안 맞으면 null
