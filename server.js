@@ -16071,9 +16071,7 @@ async function naverProductWriteRun(req, deps) {
                                    FROM pending_orders o LEFT JOIN users u ON u.id = o.created_by_id WHERE o.id = $1`, [orderId])).rows[0];
     if (!ord || ord.is_deleted) return fail('지시를 찾지 못했어요');
     if (ord.status === '반려') return fail('반려된 지시라 실행하지 않아요');
-    // 쓰기(apply · revert force)는 서버도 승인을 본다 — 대표가 쓴 지시 · 화면 [승인]을 받은 지시 · 시험 번호 계정 지시(라이브 창구는 안 집음)
-    const approved = (ord.role === 'admin' && ord.position === '대표') || !!ord.approved_at || Number(ord.created_by_id) >= NPW_TEST_UID_MIN;
-    if ((op === 'apply' || op === 'create' || (op === 'revert' && req.force === true)) && !approved) return fail('승인 뒤 실행');
+    // #727(대표 10/18): 쓰기 승인 검사 없음 — 외부 설정은 누구나 승인 없이(9/30 규칙) · 지시가 있고 반려·삭제 아니면 실행 · 되묻기 1회는 창구 규칙 몫
     const by = req.created_by ? String(req.created_by).slice(0, 80) : null;
     // audit_logs.target_id 는 INTEGER — 상품 번호(10~11자리)는 넘치므로 null · 번호는 changes.product_no 에
     const auditW = (action, changes) => audit({ action, targetType: 'naver_product', targetId: null,

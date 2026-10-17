@@ -4,7 +4,7 @@
 //                                       | --opt <옵션 id> name1=…|price=…|stock=…|usable=… (옵션마다 한 번씩) | --sale-price <원> | --name "<글>"
 //                                                                              바뀌는 곳만 전/후 표 + 카드 글(보내지 않음 · 쓰기 0)
 //   node scripts/desk/naver-detail.js apply <backup_id> <지시 id> (plan 과 같은 인자)   실행 → 서버가 재조회해 바뀐 경로 대조 → 결과 카드
-//   node scripts/desk/naver-detail.js revert <backup_id> <지시 id> [--force]   보관해 둔 전체로 되돌림(적용 뒤 또 바뀐 곳이 있으면 멈춤 · 그래도 덮는 --force 는 관리자 계정 지시만)
+//   node scripts/desk/naver-detail.js revert <backup_id> <지시 id> [--force]   보관해 둔 전체로 되돌림(적용 뒤 또 바뀐 곳이 있으면 멈춤 · 그래도 덮는 --force 는 되묻기 1회 뒤 · 누구든 #727)
 //   node scripts/desk/naver-detail.js upload <지시 id> [지시 id …]              지시에 붙은 그림을 네이버에 올려 주소 목록(상세 HTML 에는 이 주소만)
 //   node scripts/desk/naver-detail.js create <지시 id> --from <본뜰 상품번호> --name "<새 이름>" [--opt-name1 "<이름1>[|<이름2>[|<이름3>]]=<추가금>" …] [--price <판매가>] [--stock <재고>] [--dry]
 //                                                                              #723 신규 등록(3차) — 기본 손님에게 안 보임(판매중지·전시중지·쇼핑 미노출) · 재고 기본 99999 · --dry = 카드만(보내지 않음)
@@ -420,11 +420,10 @@ async function main(argv, deps) {
         if (!row.applied_at) throw new Error('아직 적용하지 않은 보관본이에요 — 되돌릴 것이 없어요');
         if (row.reverted_at) throw new Error('이미 되돌린 보관본이에요');
         if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 급하면 총괄에게', note: '보낸 것 없음' });
-        if (o.force === true && !(await R.isAdmin(orderId))) throw new Error('--force(네이버에서 그 뒤 바뀐 것까지 덮기)는 관리자 계정 지시만 돼요 — 관리자에게 확인을 받아 주세요');
         const res = await R.send({ op: 'revert', order_id: orderId, backup_id: row.id, product_no: row.product_no, force: o.force === true, created_by: await R.orderBy(orderId) });
         if (!res.ok) return out({ ok: false, error: res.error || '되돌리기 실패', drift_paths: res.drift_paths || undefined, steps_done: res.steps_done || undefined,
             status_now: res.status_now || undefined, stock_restored: res.stock_restored == null ? undefined : res.stock_restored, attempts: res.attempts || undefined,
-            note: halfSale(res) || (res.drift_paths ? '적용한 뒤 네이버에서 또 바뀐 곳이 있어요 — 그 칸(drift_paths)을 요청자에게 보여 주고 「그래도 되돌려」면 --force' : '되돌리지 못했어요 — 총괄에게') });
+            note: halfSale(res) || (res.drift_paths ? '적용한 뒤 네이버에서 또 바뀐 곳이 있어요 — 그 칸(drift_paths)을 요청자에게 보여 주고(되묻기 1회) 「그래도 되돌려」면 --force' : '되돌리지 못했어요 — 총괄에게') });
         const name = (row.before_json.originProduct || {}).name;
         const resid = notDetail(res.residual_paths, res), same = !!res.same_as_before || (res.detail_filtered === true && !resid.length);
         const sb = saleOkSelf(row.before_json), lines = [same ? '보관해 둔 그대로 돌아왔어요(다시 읽어 확인)' : `⚠ 보관본과 아직 다른 칸 ${resid.length}곳: ${resid.slice(0, 5).join(' · ')}`];
@@ -464,7 +463,7 @@ async function main(argv, deps) {
         const res = await R.send(Object.assign(req, { created_by: await R.orderBy(orderId) }), 240000);
         if (!res.ok) {
             const e = String(res.error || '');
-            const note = /승인 뒤 실행/.test(e) ? '승인이 필요해요 — approval 로 올리고 [승인] 뒤 같은 명령'
+            const note = /승인 뒤 실행/.test(e) ? '서버가 아직 승인을 요구해요(되묻기 1회로 바뀐 규칙이 서버에 덜 들어감) — 다시 보내지 말고 총괄에게'
                 : /24시간/.test(e) ? '오늘 등록 상한(24시간 3개)이에요 — 내일 다시'
                 : /번호를 못 찾았어요/.test(e) ? '🔴 등록은 됐을 수 있어요 — 다시 보내지 말고 스마트스토어센터에서 확인 · 총괄에게'
                 : (res.invalid_fields || []).length ? `네이버가 받지 않은 칸: ${res.invalid_fields.join(' · ')} — 등록 안 됨 · 총괄에게(설정으로 고쳐 다시)`

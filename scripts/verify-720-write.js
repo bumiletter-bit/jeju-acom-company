@@ -325,17 +325,19 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
     {
         ok(audits.length > 0 && audits.every(x => x.targetId === null || (Number.isInteger(x.targetId) && x.targetId < 2 ** 31)), 'audit targetId = null 또는 2^31 미만(INTEGER 칸)', audits.map(x => x.targetId).slice(0, 5));
         ok(audits.filter(x => x.action !== 'naver_product_image_upload').every(x => x.changes && x.changes.product_no === CH), '상품 번호는 changes.product_no 에');
-        // 승인 강제
+        // #727(대표 10/18): 승인 검사 없음 — 직원 지시도 apply · revert force 실행
         const k = mk();
         const b = await run({ op: 'backup', product_no: CH, order_id: 103 }, k.deps);
         ok(b.ok, '직원 지시 backup(읽기)은 됨');
         const x1 = await run({ op: 'apply', order_id: 103, backup_id: b.backup_id, patch: { detail_html: NEW_HTML } }, k.deps);
-        ok(!x1.ok && x1.error === '승인 뒤 실행' && k.nv.puts.length === 0, '승인 없는 직원 지시 apply 거절(쓰기 0)', x1);
-        const x2 = await run({ op: 'apply', order_id: 104, backup_id: b.backup_id, patch: { detail_html: NEW_HTML } }, k.deps);
-        ok(x2.ok, '[승인] 받은 직원 지시 apply 됨', x2);
+        ok(x1.ok && k.nv.puts.length > 0, '#727: 승인 없는 직원 지시 apply 도 실행', x1);
         k.nv.product.originProduct.name = '누가 고침';
         const x3 = await run({ op: 'revert', order_id: 103, backup_id: b.backup_id, force: true }, k.deps);
-        ok(!x3.ok && x3.error === '승인 뒤 실행', '승인 없는 revert force 거절');
+        ok(x3.ok, '#727: 직원 지시 revert force 도 실행', x3);
+        const k2 = mk();
+        const b2 = await run({ op: 'backup', product_no: CH, order_id: 104 }, k2.deps);
+        const x2 = await run({ op: 'apply', order_id: 104, backup_id: b2.backup_id, patch: { detail_html: NEW_HTML } }, k2.deps);
+        ok(x2.ok, '[승인] 받은 직원 지시 apply 됨', x2);
         const t = mk();
         const bt = await run({ op: 'backup', product_no: CH, order_id: 105 }, t.deps);
         const xt = await run({ op: 'apply', order_id: 105, backup_id: bt.backup_id, patch: { detail_html: NEW_HTML } }, t.deps);
@@ -709,7 +711,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         ok(!m4.ok && /3개까지/.test(m4.error) && m.nv.creates.length === 3, '24시간 3개 상한', m4);
         // 승인·꼴·그림·네이버 400
         const x1 = await run({ op: 'create', order_id: 103, from_product_no: CH, name: TN }, mkc().deps);
-        ok(!x1.ok && x1.error === '승인 뒤 실행', '승인 없는 직원 지시 create 거절', x1);
+        ok(x1.ok && x1.hidden === true, '#727: 승인 없는 직원 지시 create 도 실행(비노출)', x1);
         const x2 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: '' }, mkc().deps);
         ok(!x2.ok && /이름/.test(x2.error), '이름 없음 거절');
         const x3 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN, options: [{ name1: '3kg', price: 0, stock: -1 }] }, mkc().deps);
