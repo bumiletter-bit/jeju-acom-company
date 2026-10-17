@@ -47,3 +47,25 @@ source `coupang-item-write` · targetType `coupang_item` · targetId null(번호
 1. **중계서버 COUPANG_ALLOW**(워커2 몫 · 728-coupang-write-api.md ⑥): 지금은 경로 글자 정확 일치라 번호가 든 경로(`vendor-items/{id}/…` · `seller-products/{id}`)가 전부 403 → 템플릿별 숫자 정규식 매칭 + GET 3종(목록·단건·inventories) · PUT 4종(prices·quantities·stop·resume).
 2. **목록 쿼리 vendorId**: 문서상 `seller-products` 목록은 쿼리에 `vendorId` 가 필요한데 회사프로그램은 vendorId 를 모름(중계 .env 에만) → 중계가 그 경로의 쿼리에 vendorId 를 넣어 줘야 함(경로·바디 주입과 같은 꼴). 안 되면 list 만 실패 · backup·apply·revert 는 무관(경로에 vendorId 없음).
 3. 실시험 가격은 **10원 단위**(±1 원 = 400) — 「현재가 그대로」는 서버가 「같아요」로 거절하므로 ±10 왕복.
+
+## 7. #729 2차 — 상품 단위(상품명·옵션명·상세·이미지·등록)
+> 같은 러너·같은 키(`coupang_item_write_request`) · 같은 표(`coupang_item_backups` · **kind 'product'** · vendor_item_id NULL 허용) · audit source 같음(action `coupang_product_*`). 근거 = 728-coupang-write-api.md ③④⑥.
+> 전체 수정 = `PUT …/seller-products`(경로에 id 없음 · 바디 = **조회 JSON 통째** + sellerProductId) → **쿠팡 승인행**(승인완료 상품은 심사 뒤 반영). 임시저장(SAVED) 상품은 승인 요청 없이 저장만.
+
+| op | 입력 | 하는 일 | 결과 |
+|---|---|---|---|
+| `get_full` | `{ order_id, seller_product_id }` | 단건 조회 JSON 통째 보관 | `backup_id` · `summary{ name, display_name, status, requested, items[{ sellerProductItemId, vendorItemId, itemName, salePrice, stock, contents(꼴 예 TEXT:TEXT), images(장수) }] }` · `saved` |
+| `update_full` | `{ order_id, backup_id, patch }` | 신선도(이름·옵션 번호·이름·상세·그림이 보관본과 같아야) → 보관본 깊은 복사 위에 그 칸만 → PUT → 재조회는 **상태만** | `saved` · `requested`(임시저장 false · 그 밖 true) · `status_after` · `approval_note` · `patch_keys` |
+| `revert_full` | `{ order_id, backup_id, force? }` | 보관본 그대로 같은 PUT(역시 승인행) · 조회가 보관본 또는 보낸 값과 같으면 통과(심사 중엔 조회가 옛 값) · 그 밖 = force | 위와 같은 꼴 |
+| `create_saved` | `{ order_id, from_seller_product_id, name, items?[{ itemName, price, stock? }] }` | 본뜰 상품 조회 JSON 복사 → 뺄 칸 제거 → 이름(sellerProductName·displayProductName) · `requested:false` → `POST …/seller-products` · items 주면 본뜰 옵션(같은 자리 · 없으면 마지막)을 틀로 이름·가격·재고(기본 99999)·할인 기준가(가격보다 작으면 가격) | `seller_product_id`(새 번호) · `items` · `saved_note`(조회는 약 10분 뒤) |
+| `approval` | `{ seller_product_id }`(지시 불필요 · 읽기만) | 단건 statusName + `GET …/{id}/histories`(최근 10) | `status` · `saved` · `denied` · `deny_reason`(이력 comment) · `histories` |
+| `request_approval` | `{ order_id, seller_product_id }` | 임시저장·승인반려 상품만 `PUT …/{id}/approvals`(= 승인 **요청** · 시험에선 안 씀) | `status_before` · `status_after` · 400 이면 note 「10분 뒤」 |
+| `delete_saved` | `{ order_id, seller_product_id }` | 임시저장 상품만 `DELETE …/{id}`(승인된 상품 = 거절 · Wing 에서) | `deleted` |
+
+- **patch(update_full)** = `name`(1~100자 · 같은 값 거절 · 노출 상품명이 같은 글이면 둘 다) · `item_names{ vendorItemId|sellerProductItemId|지금 옵션명 → 새 이름 }`(1~150자 · 하나로 찾아야 · 다른 옵션과 겹치면 거절) · `detail_html`(모든 옵션 상세가 「글 한 칸」(contents 1 · contentDetails 1 · TEXT)일 때만 그 글을 바꿈 · 아니면 구성 보여 주고 거절 · script 거절 · 32만 자) · `images[주소]`(**지금 그 상품에 있는 그림만** 고르고 순서 · 첫 장 = REPRESENTATION · 새 외부 주소 = 거절 「그림 올리기 길 문서 없음 · 미확정」) · 그 밖(가격·재고·판매) = 1차 옵션 op 로.
+- **뺄 칸(create_saved)** 기본 = sellerProductId · productId · statusName · status · mdId · mdName · createdAt · updatedAt · approvedAt · requestedAt · items.sellerProductItemId · items.vendorItemId · items.itemId · items.offerCondition → 첫 실등록 400 으로 확정 · 설정 `agent_office_config 'coupang_item_write'.create_strip`(배열 · 「items.칸」 꼴)이 있으면 그것으로 덮음(재배포 없이).
+- **하루 3개** = kind product 행의 result_json.op `create_saved`·`create_unknown`(24시간) · 쿠팡 거절(4xx·code ERROR) = `create_failed`(안 셈) · 연결·5xx = `create_unknown`(셈 · 「됐는지 모름 — Wing 임시저장 목록」).
+- 전체 수정 응답 `{ code:'200', data:{ code:'SUCCESS', data:<id> } }` — 안쪽 code 도 SUCCESS 여야 성공.
+- 실패 기록 = `result_json.update_failed` / `revert_failed{ code, at }` · applied_at·reverted_at 안 찍힘.
+- 1차 op(backup·apply·revert)에 상품 보관본 id 를 넣으면 거절 · update/revert 에 등록 기록 행을 넣어도 거절.
+- 🔵 미확정(첫 실시험에서 봄): 등록 400 이 요구하는 뺄 칸 · 단건 statusName 한글/영문 · 승인완료 상품 전체 수정 중 기존 판매 지속 여부(문서 없음 → 창구 되묻기 + 카드 안내) · 우리 상품 상세(contents) 꼴(글 한 칸이 아니면 detail_html 거절 — get_full 의 contents 요약으로 먼저 봄).

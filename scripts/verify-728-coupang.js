@@ -9,7 +9,7 @@ const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const a = src.indexOf('// #728 시작'), b = src.indexOf('// #728 끝');
 if (a < 0 || b <= a) { console.error('server.js 에서 #728 구간을 못 찾음'); process.exit(1); }
-const mod = new Function(src.slice(a, b) + '\nreturn { coupangItemWriteRun, cpwCheckPatch, cpwSaleCheck, cpwItemOf, CPW_PATH };')();
+const mod = new Function(src.slice(a, b) + '\nreturn { coupangItemWriteRun, cpwCheckPatch, cpwSaleCheck, cpwItemOf, CPW_PATH, cpwApplyFull };')();
 
 let pass = 0, failN = 0;
 const ok = (cond, name, extra) => { if (cond) { pass++; console.log('  ✅', name); } else { failN++; console.log('  ❌', name, extra !== undefined ? JSON.stringify(extra).slice(0, 400) : ''); } };
@@ -24,9 +24,22 @@ function fakePool(orders) {
         async query(sql, p = []) {
             if (/FROM pending_orders WHERE id = \$1/.test(sql)) return { rows: orders.filter(o => o.id === p[0]) };
             if (/^\s*INSERT INTO coupang_item_backups \(seller_product_id, vendor_item_id, order_id, before_json, created_by\)/.test(sql)) {
-                const r = { id: ++seq, seller_product_id: p[0], vendor_item_id: p[1], order_id: p[2], before_json: JSON.parse(p[3]), created_by: p[4], patch_json: null, after_json: null, applied_at: null, reverted_at: null, result_json: null };
+                const r = { id: ++seq, kind: 'item', seller_product_id: p[0], vendor_item_id: p[1], order_id: p[2], before_json: JSON.parse(p[3]), created_by: p[4], patch_json: null, after_json: null, applied_at: null, reverted_at: null, result_json: null };
                 backups.push(r); return { rows: [{ id: r.id }] };
             }
+            // #729 상품 단위
+            if (/FROM agent_office_config WHERE key = 'coupang_item_write'/.test(sql)) return { rows: this.cfg ? [{ value: this.cfg }] : [] };
+            if (/^\s*INSERT INTO coupang_item_backups \(kind, seller_product_id, vendor_item_id, order_id, before_json, created_by, result_json\) VALUES \('product', \$1, NULL/.test(sql)) {
+                const r = { id: ++seq, kind: 'product', seller_product_id: p[0], vendor_item_id: null, order_id: p[1], before_json: JSON.parse(p[2]), created_by: p[3], result_json: JSON.parse(p[4]), patch_json: null, after_json: null, applied_at: null, reverted_at: null, created_at: new Date() };
+                backups.push(r); return { rows: [{ id: r.id }] };
+            }
+            if (/^\s*INSERT INTO coupang_item_backups \(kind, seller_product_id, vendor_item_id, order_id, before_json, created_by\) VALUES \('product', \$1, NULL/.test(sql)) {
+                const r = { id: ++seq, kind: 'product', seller_product_id: p[0], vendor_item_id: null, order_id: p[1], before_json: JSON.parse(p[2]), created_by: p[3], result_json: null, patch_json: null, after_json: null, applied_at: null, reverted_at: null, created_at: new Date() };
+                backups.push(r); return { rows: [{ id: r.id }] };
+            }
+            if (/count\(\*\)::int AS n FROM coupang_item_backups WHERE kind = 'product' AND result_json->>'op' IN \('create_saved', 'create_unknown'\)/.test(sql))
+                return { rows: [{ n: backups.filter(x => x.kind === 'product' && x.result_json && ['create_saved', 'create_unknown'].includes(x.result_json.op)).length }] };
+            if (/SET patch_json = \$2::jsonb, applied_at = NOW\(\), after_json = \$3::jsonb, result_json = \$4::jsonb/.test(sql)) { const r = find(p[0]); r.patch_json = JSON.parse(p[1]); r.applied_at = new Date(); r.after_json = JSON.parse(p[2]); r.result_json = JSON.parse(p[3]); return { rows: [] }; }
             if (/SELECT \* FROM coupang_item_backups WHERE id = \$1/.test(sql)) { const r = find(p[0]); return { rows: r ? [JSON.parse(JSON.stringify(r))] : [] }; }
             if (/SET patch_json = \$2::jsonb, applied_at = COALESCE\(applied_at, NOW\(\)\)/.test(sql)) { const r = find(p[0]); r.patch_json = JSON.parse(p[1]); r.applied_at = r.applied_at || new Date(); return { rows: [] }; }
             if (/SET patch_json = \$2::jsonb, result_json = \$3::jsonb/.test(sql)) { const r = find(p[0]); r.patch_json = JSON.parse(p[1]); r.result_json = JSON.parse(p[2]); return { rows: [] }; }
@@ -364,6 +377,196 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
         ok(audits.filter(x => x.action !== 'coupang_item_backup').every(x => x.changes && x.changes.vendor_item_id && x.changes.order_id && x.changes.backup_id), '번호는 changes 에(옵션·지시·보관본)');
         ok(mod.cpwItemOf({ salePrice: '1000', amountInStock: '3', onSale: 'false' }).on_sale === false && mod.cpwItemOf({ salePrice: 1000, quantity: 2, saleStatus: 'ON_SALE' }).stock === 2, 'cpwItemOf 글자·다른 칸 이름도 읽음');
         ok(/\/vendor-items\/1\/prices\/1000$/.test(mod.CPW_PATH.price('1', 1000)) && /\/vendor-items\/1\/sales\/stop$/.test(mod.CPW_PATH.stop('1')), '경로 꼴');
+    }
+
+    console.log('⑨ #729 상품 단위 — get_full · update_full · revert_full · create_saved · approval · delete_saved · request_approval');
+    {
+        const SPC = '16109702671', SAVEDID = '17000000001';
+        const FULL = { sellerProductId: Number(SPC), sellerProductName: '제주아꼼이네 제철 새콤달콤 카라향', displayProductName: '제주아꼼이네 제철 새콤달콤 카라향', statusName: '승인완료', requested: true,
+            mdId: 'md', saleStartedAt: '2026-01-01T00:00:00', deliveryMethod: 'SEQUENCIAL',
+            items: [
+                { sellerProductItemId: 501, vendorItemId: 95059733579, itemName: '카라향 3kg', salePrice: 29800, originalPrice: 35000, maximumBuyCount: 0,
+                    images: [{ imageOrder: 0, imageType: 'REPRESENTATION', cdnPath: 'vendor_inventory/a.jpg' }, { imageOrder: 1, imageType: 'DETAIL', cdnPath: 'vendor_inventory/b.jpg' }],
+                    contents: [{ contentsType: 'TEXT', contentDetails: [{ content: '<p>카라향 상세</p>', detailType: 'TEXT' }] }] },
+                { sellerProductItemId: 502, vendorItemId: 95059733604, itemName: '카라향 5kg', salePrice: 43800, originalPrice: 50000, maximumBuyCount: 0,
+                    images: [{ imageOrder: 0, imageType: 'REPRESENTATION', cdnPath: 'vendor_inventory/a.jpg' }],
+                    contents: [{ contentsType: 'TEXT', contentDetails: [{ content: '<p>카라향 상세</p>', detailType: 'TEXT' }] }] },
+            ] };
+        const prodFake = (opts = {}) => {
+            const st = { prods: { [SPC]: JSON.parse(JSON.stringify(FULL)) }, posts: [], puts: [], deletes: [], approvals: [] };
+            const w = (data) => ({ code: 'SUCCESS', message: '', data });
+            st.call = async (r) => {
+                const m = r.path.match(/\/seller-products\/(\d+)(\/histories|\/approvals)?$/);
+                if (r.method === 'GET' && m && !m[2]) {
+                    if (!st.prods[m[1]]) { const e = new Error('x'); e.status = 400; e.data = { message: '상품 없음' }; throw e; }
+                    return w(JSON.parse(JSON.stringify(st.prods[m[1]])));
+                }
+                if (r.method === 'GET' && m && m[2] === '/histories') return w([{ status: '승인반려', comment: '상세에 금지 문구', createdAt: '2026-10-18T10:00:00', createdBy: 'SYSTEM' }, { status: '심사중', comment: null }]);
+                if (r.method === 'PUT' && m && m[2] === '/approvals') { st.approvals.push(m[1]); st.prods[m[1]].statusName = '심사중'; return w(null); }
+                if (r.method === 'DELETE' && m) { st.deletes.push(m[1]); delete st.prods[m[1]]; return w(null); }
+                if (r.method === 'POST' && r.path === P.products) {
+                    if (opts.postFail) { const e = new Error('x'); e.status = 400; e.data = { code: 'ERROR', message: '필수 속성 누락' }; throw e; }
+                    if (opts.postNet) { const e = new Error('relay_unreachable'); throw e; }
+                    st.posts.push(r.body);
+                    st.prods[SAVEDID] = { ...JSON.parse(JSON.stringify(r.body)), sellerProductId: Number(SAVEDID), statusName: '임시저장' };
+                    return { code: 'SUCCESS', message: '', data: Number(SAVEDID) };
+                }
+                if (r.method === 'PUT' && r.path === P.products) {
+                    if (opts.putFail) { const e = new Error('x'); e.status = 400; e.data = { code: 'ERROR', message: '수정 실패' }; throw e; }
+                    st.puts.push(r.body);
+                    const id = String(r.body.sellerProductId);
+                    if (cpwSavedName(st.prods[id])) st.prods[id] = { ...JSON.parse(JSON.stringify(r.body)), statusName: '임시저장' };   // 임시저장 = 바로 저장
+                    else st.prods[id].statusName = '심사중';   // 승인된 상품 = 심사행(조회는 옛 값 · 상태만)
+                    return { code: '200', data: { code: 'SUCCESS', data: Number(id) } };
+                }
+                throw new Error('가짜 쿠팡(상품)이 모르는 호출 ' + r.method + ' ' + r.path);
+            };
+            return st;
+        };
+        const cpwSavedName = (j) => j && ['임시저장', 'SAVED'].includes(j.statusName);
+        const mkp = (opts) => { const db = fakePool(ORDERS), cp = prodFake(opts); return { db, cp, deps: { pool: db, call: cp.call, audit, gapMs: 0, rereadMs: 0, reread2Ms: 0 } }; };
+        const base = { order_id: 101, created_by: '시험' };
+
+        // get_full
+        const k = mkp();
+        const g = await run({ op: 'get_full', ...base, seller_product_id: SPC }, k.deps);
+        ok(g.ok && g.backup_id && g.summary.name === FULL.sellerProductName && g.summary.status === '승인완료' && g.summary.items.length === 2 && g.summary.items[0].contents === 'TEXT:TEXT' && g.saved === false, 'get_full = 보관 · 요약(이름·상태·옵션·상세 꼴)', g);
+        ok(k.db.backups[0].kind === 'product' && k.db.backups[0].vendor_item_id === null && k.db.backups[0].before_json.items.length === 2, '표 kind product · 옵션 번호 없음 · 조회 JSON 통째');
+        const ng = await run({ op: 'get_full', seller_product_id: SPC }, k.deps);
+        ok(!ng.ok && /order_id/.test(ng.error), 'get_full 도 지시 필요');
+        // 1차 op 에 상품 보관본을 넣으면 거절
+        const x1 = await run({ op: 'apply', ...base, backup_id: g.backup_id, patch: { price: 29810 } }, k.deps);
+        ok(!x1.ok && /상품 보관본/.test(x1.error), '1차 apply 에 상품 보관본 = 거절', x1);
+
+        // update_full 검사
+        const t = async (patch, re, name) => { const x = await run({ op: 'update_full', ...base, backup_id: g.backup_id, patch }, k.deps); ok(!x.ok && re.test(x.error), name, x); };
+        await t({ price: 1 }, /허용되지 않은 칸 price/, '가격은 1차 op 로(거절)');
+        await t({}, /바꿀 칸이 없어요/, '빈 patch 거절');
+        await t({ name: 'x'.repeat(101) }, /1~100자/, '상품명 101자 거절');
+        await t({ name: FULL.sellerProductName }, /같아요/, '같은 상품명 거절');
+        await t({ item_names: { '없는 옵션': '새' } }, /하나로 찾지 못/, '없는 옵션명 거절');
+        await t({ item_names: { '카라향 3kg': 'y'.repeat(151) } }, /1~150자/, '옵션명 151자 거절');
+        await t({ item_names: { '카라향 3kg': '카라향 5kg' } }, /겹쳐요/, '다른 옵션과 같은 이름 거절');
+        await t({ detail_html: '<script>x</script>' }, /script/, '상세 script 거절');
+        await t({ images: ['https://evil.example/x.jpg'] }, /새 그림 주소는 못 넣어요.*미확정/, '새 외부 그림 주소 거절(미확정)');
+        await t({ images: ['vendor_inventory/b.jpg'] }, /남는 그림이 없어요/, '그림이 하나도 안 남는 옵션 거절');
+        ok(k.cp.puts.length === 0, '거절 동안 PUT 0');
+
+        // update_full 성공(승인된 상품 = requested true · 승인행)
+        const u = await run({ op: 'update_full', ...base, backup_id: g.backup_id, patch: { name: '테스트 카라향', item_names: { '95059733579': '카라향 3kg 새' }, detail_html: '<p>새 상세</p>', images: ['vendor_inventory/a.jpg'] } }, k.deps);
+        const pb = k.cp.puts[0];
+        ok(u.ok && u.saved === false && u.requested === true && u.status_after === '심사중' && /승인 전까지 손님 화면은 옛 모습/.test(u.approval_note), 'update_full = 승인행(requested true · 상태 심사중 · 안내)', u);
+        ok(pb && pb.sellerProductId === Number(SPC) && pb.sellerProductName === '테스트 카라향' && pb.displayProductName === '테스트 카라향' && pb.items[0].itemName === '카라향 3kg 새' && pb.items[1].itemName === '카라향 5kg'
+            && pb.items.every(it => it.contents[0].contentDetails[0].content === '<p>새 상세</p>') && pb.items[0].images.length === 1 && pb.items[0].images[0].imageType === 'REPRESENTATION'
+            && pb.items[0].vendorItemId === 95059733579 && pb.items[0].sellerProductItemId === 501 && pb.deliveryMethod === 'SEQUENCIAL', '바디 = 조회 JSON 통째 위에 그 칸만(번호·다른 칸 유지)', pb);
+        ok(k.cp.puts.length === 1 && P.products === mod.CPW_PATH.list, '전체 수정 = PUT …/seller-products(경로에 id 없음) 한 번');
+        const u2 = await run({ op: 'update_full', ...base, backup_id: g.backup_id, patch: { name: '또' } }, k.deps);
+        ok(!u2.ok && /이미 적용/.test(u2.error), '같은 보관본 두 번 update 거절');
+        // revert_full = 보관본 그대로 같은 PUT(조회가 아직 옛 값 = 통과)
+        const rv = await run({ op: 'revert_full', ...base, backup_id: g.backup_id }, k.deps);
+        ok(rv.ok && k.cp.puts.length === 2 && k.cp.puts[1].sellerProductName === FULL.sellerProductName && k.cp.puts[1].items[0].itemName === '카라향 3kg' && k.cp.puts[1].requested === true, 'revert_full = 보관본 그대로 PUT(역시 승인행)', rv);
+        const rv2 = await run({ op: 'revert_full', ...base, backup_id: g.backup_id }, k.deps);
+        ok(!rv2.ok && /이미 되돌린/.test(rv2.error), '두 번 revert 거절');
+        // 신선도: 보관 뒤 Wing 에서 이름이 바뀜 → update 거절
+        const k2 = mkp();
+        const g2 = await run({ op: 'get_full', ...base, seller_product_id: SPC }, k2.deps);
+        k2.cp.prods[SPC].sellerProductName = '누가 고침';
+        const d2 = await run({ op: 'update_full', ...base, backup_id: g2.backup_id, patch: { name: '테스트' } }, k2.deps);
+        ok(!d2.ok && /바뀐 곳/.test(d2.error) && k2.cp.puts.length === 0, '보관 뒤 바뀜 = update 거절 · PUT 0', d2);
+        // revert: 적용 뒤 제3의 값 → 거절 · force 면 덮음
+        const k3 = mkp();
+        const g3 = await run({ op: 'get_full', ...base, seller_product_id: SPC }, k3.deps);
+        await run({ op: 'update_full', ...base, backup_id: g3.backup_id, patch: { name: '테스트' } }, k3.deps);
+        k3.cp.prods[SPC].sellerProductName = '제3의 이름';
+        const r3 = await run({ op: 'revert_full', ...base, backup_id: g3.backup_id }, k3.deps);
+        ok(!r3.ok && /force/.test(r3.error), '적용 뒤 또 바뀜 = revert 거절', r3);
+        const r3f = await run({ op: 'revert_full', ...base, backup_id: g3.backup_id, force: true }, k3.deps);
+        ok(r3f.ok, 'force revert 는 덮음', r3f);
+        // 가격·재고 = 지금 값(cur)으로 덮음 — 주문으로 준 재고 · 1차로 바꾼 가격 유지
+        const k5 = mkp();
+        const g5 = await run({ op: 'get_full', ...base, seller_product_id: SPC }, k5.deps);
+        k5.cp.prods[SPC].items[0].maximumBuyCount = 0; k5.cp.prods[SPC].items[1].maximumBuyCount = 7;   // 보관 뒤 주문으로 재고 변화(보관본 0 → 지금 7 처럼 다른 값)
+        k5.cp.prods[SPC].items[0].salePrice = 29810; k5.cp.prods[SPC].items[0].originalPrice = 36000;   // 보관 뒤 1차 op 로 가격 바꿈
+        const u5 = await run({ op: 'update_full', ...base, backup_id: g5.backup_id, patch: { name: '테스트 카라향' } }, k5.deps);
+        const b5 = k5.cp.puts[0];
+        ok(u5.ok && b5.items[1].maximumBuyCount === 7 && b5.items[0].maximumBuyCount === 0, 'update 바디 재고 = 지금 값(주문으로 준 재고 유지 · 보관본 재고 안 실림)', b5 && b5.items.map(it => it.maximumBuyCount));
+        ok(b5.items[0].salePrice === 29810 && b5.items[0].originalPrice === 36000 && b5.items[1].salePrice === 43800, 'update 바디 가격 = 지금 값(1차로 바꾼 가격 유지)', b5 && b5.items.map(it => [it.salePrice, it.originalPrice]));
+        k5.cp.prods[SPC].items[1].maximumBuyCount = 3;
+        const r5 = await run({ op: 'revert_full', ...base, backup_id: g5.backup_id }, k5.deps);
+        ok(r5.ok && k5.cp.puts[1].items[1].maximumBuyCount === 3 && k5.cp.puts[1].items[0].salePrice === 29810 && k5.cp.puts[1].sellerProductName === FULL.sellerProductName, 'revert 바디도 가격·재고 = 지금 값 · 이름만 보관본', k5.cp.puts[1] && k5.cp.puts[1].items.map(it => [it.salePrice, it.maximumBuyCount]));
+        // 보관 뒤 옵션이 늘면 거절
+        const k6 = mkp();
+        const g6 = await run({ op: 'get_full', ...base, seller_product_id: SPC }, k6.deps);
+        k6.cp.prods[SPC].items.push({ sellerProductItemId: 503, vendorItemId: 95059733563, itemName: '선물용 2kg', salePrice: 24800, maximumBuyCount: 0, images: [], contents: [] });
+        const x6 = await run({ op: 'update_full', ...base, backup_id: g6.backup_id, patch: { name: '테스트' } }, k6.deps);
+        ok(!x6.ok && /옵션이 늘었어요|바뀐 곳/.test(x6.error) && k6.cp.puts.length === 0, '보관 뒤 옵션 늘어남 = 거절 · PUT 0', x6);
+        // PUT 실패 → 기록 · applied 안 됨
+        const k4 = mkp({ putFail: true });
+        const g4 = await run({ op: 'get_full', ...base, seller_product_id: SPC }, k4.deps);
+        const f4 = await quiet(() => run({ op: 'update_full', ...base, backup_id: g4.backup_id, patch: { name: '테스트' } }, k4.deps));
+        ok(!f4.ok && f4.coupang_message === '수정 실패' && !k4.db.backups[0].applied_at && k4.db.backups[0].result_json.update_failed.code === 400, '전체 수정 실패 = 기록 · applied 없음', f4);
+
+        // create_saved
+        const kc = mkp();
+        const c = await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트 카라향(시험용)' }, kc.deps);
+        const cb = kc.cp.posts[0];
+        ok(c.ok && c.seller_product_id === SAVEDID && /임시저장/.test(c.saved_note) && c.items.length === 2, 'create_saved = 새 번호 · 임시저장 안내', c);
+        ok(cb.requested === false && cb.sellerProductName === '테스트 카라향(시험용)' && cb.displayProductName === '테스트 카라향(시험용)' && !('sellerProductId' in cb) && !('statusName' in cb) && !('mdId' in cb)
+            && cb.items.every(it => !('vendorItemId' in it) && !('sellerProductItemId' in it)) && cb.deliveryMethod === 'SEQUENCIAL' && cb.items[0].images.length === 2, '등록 바디 = requested false · 번호·승인 칸 빠짐 · 나머지 복사', cb);
+        const c2 = await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트2', items: [{ itemName: '3kg', price: 20000, stock: 10 }, { itemName: '5kg', price: 30000 }] }, kc.deps);
+        const cb2 = kc.cp.posts[1];
+        ok(c2.ok && cb2.items.length === 2 && cb2.items[0].itemName === '3kg' && cb2.items[0].salePrice === 20000 && cb2.items[0].maximumBuyCount === 10 && cb2.items[1].maximumBuyCount === 99999 && cb2.items[1].originalPrice === 50000, 'items 지정 = 이름·가격·재고(기본 99999) · 할인 기준가 유지', cb2.items);
+        const cbad = async (req, re, name) => { const x = await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트', ...req }, kc.deps); ok(!x.ok && re.test(x.error), name, x); };
+        await cbad({ name: '' }, /1~100자/, '이름 없음 거절');
+        await cbad({ items: [{ itemName: 'a', price: 1005 }] }, /10원 단위/, '옵션 가격 10원 단위 거절');
+        await cbad({ items: [{ itemName: 'a', price: 1000, id: 1 }] }, /허용되지 않은 칸 id/, '옵션 id 칸 거절');
+        await cbad({ items: [{ itemName: 'a', price: 1000 }, { itemName: 'a', price: 2000 }] }, /겹쳐요/, '옵션명 겹침 거절');
+        await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트3' }, kc.deps);
+        const c4 = await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트4' }, kc.deps);
+        ok(!c4.ok && /3개까지/.test(c4.error) && kc.cp.posts.length === 3, '24시간 3개 상한', c4);
+        const kf = mkp({ postFail: true });
+        const cf = await quiet(() => run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트' }, kf.deps));
+        ok(!cf.ok && cf.coupang_message === '필수 속성 누락' && kf.db.backups[0].result_json.op === 'create_failed', '등록 400 = create_failed(상한에 안 셈)', cf);
+        const kn = mkp({ postNet: true });
+        const cn = await quiet(() => run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트' }, kn.deps));
+        ok(!cn.ok && /모름/.test(cn.unknown_note) && kn.db.backups[0].result_json.op === 'create_unknown', '연결 실패 = create_unknown(상한에 셈)', cn);
+        const kcs = mkp(); kcs.db.cfg = { create_strip: ['sellerProductId', 'statusName', 'items.sellerProductItemId', 'items.vendorItemId'] };
+        await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트' }, kcs.deps);
+        ok('mdId' in kcs.cp.posts[0], '설정 create_strip 이 기본 목록을 덮음(mdId 남음)');
+
+        // 등록 보관행으로 update 거절
+        const xc = await run({ op: 'update_full', ...base, backup_id: kc.db.backups[0].id, patch: { name: '테스트' } }, kc.deps);
+        ok(!xc.ok && /get_full 로 만든/.test(xc.error), '등록 기록 행으로 update 거절', xc);
+
+        // 임시저장 상품: get_full → update_full(requested false · 바로 저장) → approval → delete_saved
+        const gs = await run({ op: 'get_full', ...base, seller_product_id: SAVEDID }, kc.deps);
+        ok(gs.ok && gs.saved === true, '임시저장 get_full saved true', gs);
+        const us = await run({ op: 'update_full', ...base, backup_id: gs.backup_id, patch: { name: '테스트 카라향(시험용) 고침', detail_html: '<p>한 줄 고침</p>' } }, kc.deps);
+        const pu = kc.cp.puts[kc.cp.puts.length - 1];
+        ok(us.ok && us.saved === true && us.requested === false && pu.requested === false && us.status_after === '임시저장' && /임시저장/.test(us.approval_note), '임시저장 update = requested false(승인 요청 안 함)', us);
+        const ap = await run({ op: 'approval', seller_product_id: SAVEDID }, kc.deps);
+        ok(ap.ok && ap.status === '임시저장' && ap.saved === true && ap.histories.length === 2 && kc.cp.approvals.length === 0, 'approval = 상태 + 이력 읽기만(승인 요청 PUT 0) · 지시 불필요', ap);
+        const kd = mkp(); kd.cp.prods[SPC].statusName = '승인반려';
+        const apd = await run({ op: 'approval', seller_product_id: SPC }, kd.deps);
+        ok(apd.ok && apd.denied === true && apd.deny_reason === '상세에 금지 문구', '반려 = 사유(histories comment)', apd);
+        const del0 = await run({ op: 'delete_saved', ...base, seller_product_id: SPC }, kc.deps);
+        ok(!del0.ok && /임시저장 상품만/.test(del0.error) && kc.cp.deletes.length === 0, '승인완료 상품 삭제 거절', del0);
+        const del = await run({ op: 'delete_saved', ...base, seller_product_id: SAVEDID }, kc.deps);
+        ok(del.ok && del.deleted && kc.cp.deletes[0] === SAVEDID, '임시저장 삭제', del);
+        // request_approval: 승인완료 = 거절 · 반려 = 올림
+        const ra0 = await run({ op: 'request_approval', ...base, seller_product_id: SPC }, mkp().deps);
+        ok(!ra0.ok && /임시저장·승인반려 상품만/.test(ra0.error), '승인완료 상품 승인 요청 거절', ra0);
+        const kr = mkp(); kr.cp.prods[SPC].statusName = '승인반려';
+        const ra = await run({ op: 'request_approval', ...base, seller_product_id: SPC }, kr.deps);
+        ok(ra.ok && kr.cp.approvals[0] === SPC && ra.status_after === '심사중', '반려 상품 승인 요청 = PUT approvals', ra);
+        // 동시 · audit
+        const ks = mkp();
+        const slow = { ...ks.deps, call: async (r) => { await new Promise(res => setTimeout(res, 20)); return ks.cp.call(r); } };
+        const [q1, q2] = await Promise.all([run({ op: 'get_full', ...base, seller_product_id: SPC }, slow), run({ op: 'get_full', ...base, seller_product_id: SPC }, slow)]);
+        ok([q1, q2].filter(x => x.ok).length === 1, '같은 상품 동시 작업 하나만', [q1.error, q2.error]);
+        const pa = new Set(audits.map(x => x.action));
+        ok(['coupang_product_backup', 'coupang_product_update', 'coupang_product_revert', 'coupang_product_create_saved', 'coupang_product_create_failed', 'coupang_product_create_unknown', 'coupang_product_delete_saved', 'coupang_product_request_approval', 'coupang_product_update_failed'].every(x => pa.has(x))
+            && audits.every(x => x.targetId === null && x.source === 'coupang-item-write'), '상품 audit 9종 · targetId null', [...pa]);
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

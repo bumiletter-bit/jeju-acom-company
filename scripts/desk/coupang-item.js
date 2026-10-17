@@ -4,9 +4,19 @@
 //   node scripts/desk/coupang-item.js plan <backup_id> --price <원> | --stock <수> | --stop | --resume   전/후 카드(보내지 않음 · 쓰기 0 · 한 번에 한 칸)
 //   node scripts/desk/coupang-item.js apply <backup_id> <지시 id> (plan 과 같은 인자)   실행 → 서버가 다시 읽어 대조 → 결과 카드(끝 두 줄 = 판매 정상 전/후)
 //   node scripts/desk/coupang-item.js revert <backup_id> <지시 id> [--force]          적용한 칸만 보관한 값으로(그 뒤 쿠팡에서 또 바뀌었으면 멈춤 · 덮는 --force 는 되묻기 1회 뒤)
+//   ── #729 2차(상품 단위 · 쿠팡 승인 심사행 — 승인된 상품은 승인 전까지 손님 화면이 옛 모습 · 임시저장 상품은 저장만)
+//   node scripts/desk/coupang-item.js full <상품 번호> <지시 id>                       상품 통째 보관(get_full) → 이름 · 승인 상태 · 옵션 표 · 상세 꼴(글 한 칸인지)
+//   node scripts/desk/coupang-item.js plan-full <backup_id> --name "<글>" | --item-name <vendorItemId 또는 지금 옵션명>=<새 이름>(여러 번) | --detail <html 파일>   전/후 카드(보내지 않음)
+//   node scripts/desk/coupang-item.js apply-full <backup_id> <지시 id> (plan-full 과 같은 인자)   전체 수정 → 「🟡 쿠팡 승인 대기」 카드
+//   node scripts/desk/coupang-item.js revert-full <backup_id> <지시 id> [--force]      보관본 그대로 다시 저장(이것도 승인행)
+//   node scripts/desk/coupang-item.js approval <상품 번호>                             승인 상태 · 반려 사유(읽기만)
+//   node scripts/desk/coupang-item.js create-saved <지시 id> --from <본뜰 상품 번호> --name "<새 이름>" [--item "<옵션명>=<가격>[=<재고>]" …] [--dry]   임시저장 등록(손님 노출 0 · 24시간 3개)
+//   node scripts/desk/coupang-item.js delete-saved <상품 번호> <지시 id>                 임시저장 상품만 지움(승인된 상품은 윙에서)
+//   🔴 승인 「요청」(임시저장 → 실제 판매 심사)은 도구에 없다 — 윙에서 사람이 올린다
 //   길 = 요청 줄 agent_office_config 'coupang_item_write_request' → 실서버 20초 틱 → 'coupang_item_write_result'(계약 docs/728-coupang-contract.md)
 //        이 도구는 쿠팡 키도 주소도 모른다 — 요청 줄 INSERT 와 결과 읽기, 보관본(coupang_item_backups) 읽기뿐.
 //   🔴 평일 08:30~10:30(발송 직전)엔 apply·revert 를 하지 않는다(plan 은 됨). 밖 = 상품명·옵션명·상세·대표 그림·등록(쿠팡 승인 심사 = 2차 · 윙에서 직접)
+const fs = require('fs');
 const REQ_KEY = 'coupang_item_write_request', RES_KEY = 'coupang_item_write_result';
 const PRICE_MAX = 10000000, PRICE_UNIT = 10, STOCK_MAX = 99999;   // 서버 계약과 같게(10원 단위 · 재고 99999 이하 · 가격은 중계 상한)
 const BAD_KO = { on_sale: '판매중지', stock: '재고 0', price: '판매가', read: '다시 읽기 실패' };
@@ -26,6 +36,10 @@ function parseOpts(args) {
         else if (a === '--stop') o.stop = true;
         else if (a === '--resume') o.resume = true;
         else if (a === '--force') o.force = true;
+        else if (a === '--name' || a === '--detail' || a === '--from') o[a.slice(2)] = args[++i];
+        else if (a === '--item-name') (o.itemName = o.itemName || []).push(args[++i]);
+        else if (a === '--item') (o.item = o.item || []).push(args[++i]);
+        else if (a === '--dry') o.dry = true;
         else rest.push(a);
     }
     return { o, rest };
@@ -121,6 +135,82 @@ function resultRows(b, a) {
 }
 const KEY_KO = { price: '판매가', stock: '재고', on_sale: '판매 상태', sales: '판매 상태' };
 
+// ── #729 2차 도우미
+const isSavedJ = j => ['임시저장', 'SAVED'].includes(String((j && (j.statusName || j.status)) || ''));
+const oneText = it => { const cs = (it && it.contents) || []; if (cs.length !== 1) return null; const ds = cs[0].contentDetails || []; return ds.length === 1 && ds[0].detailType === 'TEXT' ? ds[0] : null; };
+const shapeOf = it => ((it && it.contents) || []).map(c => `${c.contentsType || '?'}:${(c.contentDetails || []).map(d => d.detailType || '?').join('+')}`).join(',') || '없음';
+// 상품 통째 보관본 + 인자 → { patch(계약 꼴), rows, errs } — 서버(cpwApplyFull)와 같은 거절을 먼저(보내지 않음)
+function planFull(before, o, readFile) {
+    const patch = {}, rows = [], errs = [], items = (before && before.items) || [];
+    if (o.name == null && !(o.itemName || []).length && o.detail == null) errs.push('바꿀 것을 주세요: --name "<글>" | --item-name <vendorItemId>=<새 이름> | --detail <html 파일>');
+    if (o.name != null) {
+        const n = String(o.name).trim();
+        if (!n || n.length > 100) errs.push('상품명은 1~100자예요');
+        else if (n === before.sellerProductName) errs.push('지금 상품명과 같아요');
+        else { patch.name = n; rows.push({ field: '상품명', before: before.sellerProductName || '(없음)', after: n }); }
+    }
+    if ((o.itemName || []).length) {
+        const m = {}, used = new Set(items.map(it => it.itemName));
+        for (const raw of o.itemName) {
+            const i = String(raw || '').indexOf('=');
+            const k = i > 0 ? String(raw).slice(0, i).trim() : '', v = i > 0 ? String(raw).slice(i + 1).trim() : '';
+            if (!k || !v) { errs.push(`--item-name 「${raw}」: <vendorItemId 또는 지금 옵션명>=<새 이름> 꼴로`); continue; }
+            const hit = items.filter(it => String(it.vendorItemId || '') === k || String(it.sellerProductItemId || '') === k || it.itemName === k);
+            if (hit.length !== 1) { errs.push(`옵션 「${k}」 을 하나로 찾지 못했어요(${hit.length}개) — full 의 옵션 번호로`); continue; }
+            if (v.length > 150) { errs.push('옵션명은 150자까지예요'); continue; }
+            if (v === hit[0].itemName) { errs.push(`옵션 「${k}」 은 이미 「${v}」예요`); continue; }
+            if (used.has(v)) { errs.push(`옵션명 「${v}」 이 다른 옵션과 겹쳐요`); continue; }
+            used.add(v); m[k] = v; rows.push({ field: `옵션명(${hit[0].vendorItemId || hit[0].sellerProductItemId || k})`, before: hit[0].itemName || '(없음)', after: v });
+        }
+        if (Object.keys(m).length) patch.item_names = m;
+    }
+    if (o.detail != null) {
+        let h = null;
+        try { h = readFile(String(o.detail)); } catch (e) { errs.push('--detail 파일을 못 읽었어요: ' + o.detail); }
+        if (h != null) {
+            const bad = items.filter(it => !oneText(it));
+            if (!String(h).trim() || h.length > 320000) errs.push('상세는 1~320,000자 글이에요');
+            else if (/<\s*\/?\s*script\b/i.test(h)) errs.push('상세에 script 는 못 넣어요');
+            else if (bad.length) errs.push(`상세 구성이 「글 한 칸」이 아닌 옵션이 있어 창구에서 못 바꿔요(${bad.map(it => `${it.itemName}: ${shapeOf(it)}`).join(' · ')}) — 상세는 윙에서`);
+            else { const cur = (oneText(items[0]) || {}).content || ''; if (cur === h) errs.push('지금 상세와 같아요'); else { patch.detail_html = h; rows.push({ field: '상세(모든 옵션)', before: `${won(cur.length)}자`, after: `${won(h.length)}자` }); } }
+        }
+    }
+    return { patch, rows, errs };
+}
+// create-saved --item "옵션명=가격[=재고]" → 계약 items[{ itemName, price, stock? }]
+function parseItems(list) {
+    const items = [], errs = [];
+    for (const raw of (list || [])) {
+        const p = String(raw || '').split('=').map(x => x.trim());
+        if (p.length < 2 || p.length > 3 || !p[0]) { errs.push(`--item 「${raw}」: "<옵션명>=<가격>[=<재고>]" 꼴로`); continue; }
+        const price = toInt(p[1]), stock = p.length === 3 ? toInt(p[2]) : null;
+        if (p[0].length > 150) { errs.push('옵션명은 150자까지예요'); continue; }
+        if (!(price > 0) || price % PRICE_UNIT) { errs.push(`--item 「${raw}」: 가격은 10원 단위 양의 정수`); continue; }
+        if (p.length === 3 && (stock == null || stock < 0 || stock > STOCK_MAX)) { errs.push(`--item 「${raw}」: 재고는 0~${won(STOCK_MAX)}`); continue; }
+        items.push(Object.assign({ itemName: p[0], price }, stock != null ? { stock } : {}));
+    }
+    if (items.length > 20) errs.push('옵션은 20개까지예요');
+    if (new Set(items.map(x => x.itemName)).size !== items.length) errs.push('옵션명이 겹쳐요');
+    return { items, errs };
+}
+function pcard(head, name, spid, rows, extra) {
+    const L = [`━━━ 쿠팡 상품 ${head} ━━━`, `상품: ${name || '(이름 모름)'} (상품 번호 ${spid || '?'})`];
+    if (Array.isArray(rows) && !rows.length) L.push('바뀌는 곳 없음');
+    for (const r of (rows || [])) L.push(`· ${r.field}: ${r.before} → ${r.after}`);
+    for (const x of (extra || [])) L.push(x);
+    return L.join('\n');
+}
+function failFull(res) {
+    const e = String((res && res.error) || '');
+    if (res && res.note) return res.note + ' — 다시 보내지 말고 기다렸다가';
+    if (/보관한 뒤 쿠팡에서 바뀐/.test(e)) return '보관한 뒤 쿠팡에서 상품이 또 바뀌었어요 — full 로 다시 보관한 뒤 plan-full 부터';
+    if (/또 바뀌었어요/.test(e)) return '적용한 뒤 쿠팡에서 또 바뀌었어요 — 지금 모습을 요청자에게 보여 주고(되묻기 1회) 「그래도 되돌려」면 --force';
+    if (/새 그림 주소/.test(e)) return '새 그림은 창구에서 못 넣어요 — 윙에서';
+    if (/글 한 칸/.test(e)) return '상세 구성이 글 한 칸이 아니라 창구에서 못 바꿔요 — 윙에서';
+    if (/진행 중/.test(e)) return '같은 상품에 다른 작업이 진행 중이에요 — 1분 뒤 다시';
+    return '바꾸지 못했어요 — 위 error 그대로 전하기 · 다시 보내기 전에 full 로 지금 모습 확인';
+}
+
 // ── 요청 줄 → 결과 (한 칸 · 다른 작업이 걸려 있으면 멈춤)
 function makeRunner(deps) {
     const { pool, sleep, now } = deps;
@@ -145,10 +235,10 @@ function makeRunner(deps) {
     async function backupRow(arg) {
         const id = parseInt(String(arg || '').replace(/\D/g, ''), 10);
         if (!(id > 0)) throw new Error('backup_id 가 필요해요(show 결과)');
-        const r = (await pool.query(`SELECT id, seller_product_id, vendor_item_id, order_id, before_json, patch_json, applied_at, reverted_at FROM coupang_item_backups WHERE id = $1`, [id])).rows[0];
+        const r = (await pool.query(`SELECT id, kind, seller_product_id, vendor_item_id, order_id, before_json, patch_json, applied_at, reverted_at, result_json FROM coupang_item_backups WHERE id = $1`, [id])).rows[0];
         if (!r) throw new Error(`보관본 ${id} 를 못 찾았어요 — 먼저 show`);
         const j = v => typeof v === 'string' ? JSON.parse(v) : v;
-        return Object.assign(r, { before_json: j(r.before_json), patch_json: j(r.patch_json) });
+        return Object.assign(r, { before_json: j(r.before_json), patch_json: j(r.patch_json), result_json: j(r.result_json) });
     }
     return { send, orderBy, backupRow };
 }
@@ -195,8 +285,10 @@ async function main(argv, deps) {
             card: card('지금 값', n, vid, null, [`판매가 ${won(n.price)}원 · 재고 ${won(n.stock)} · ${saleKo(n.on_sale)}`, saleLine('건들기 전', res.sale_ok || saleOkSelf(n))]),
             note: `다음 = plan ${res.backup_id} --price <원> | --stock <수> | --stop | --resume(한 칸씩)` });
     }
+    const itemRow = async a => { const row = await R.backupRow(a); if (row.kind === 'product') throw new Error(`보관본 ${row.id} 는 상품 통째 보관본이에요 — plan-full · apply-full · revert-full 로`); return row; };
+    const prodRow = async a => { const row = await R.backupRow(a); if (row.kind !== 'product' || /^create/.test(String((row.result_json || {}).op || ''))) throw new Error(`보관본 ${row.id} 는 full 로 만든 상품 보관본이 아니에요 — full <상품 번호> <지시 id> 부터`); return row; };
     if (cmd === 'plan' || cmd === 'apply') {
-        const row = await R.backupRow(rest[0]);
+        const row = await itemRow(rest[0]);
         if (row.applied_at) throw new Error(`보관본 ${row.id} 는 이미 적용했어요 — 새로 고치려면 show 부터`);
         if (row.reverted_at) throw new Error(`보관본 ${row.id} 는 되돌린 것이에요 — show 부터`);
         const P = planRows(row.before_json, o);
@@ -226,7 +318,7 @@ async function main(argv, deps) {
             note: red ? '🔴·⚠ 줄을 답 맨 위에 · 되돌리기 권하기' : '카드 그대로 전하기(전/후 + 판매 정상 두 줄)' });
     }
     if (cmd === 'revert') {
-        const row = await R.backupRow(rest[0]);
+        const row = await itemRow(rest[0]);
         const orderId = oid(rest[1]);
         if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 급하면 총괄에게', note: '보낸 것 없음' });
         const res = await R.send({ op: 'revert', order_id: orderId, backup_id: row.id, vendor_item_id: row.vendor_item_id, force: o.force === true, created_by: await R.orderBy(orderId) });
@@ -243,10 +335,95 @@ async function main(argv, deps) {
             card: card('되돌리기 결과', nb, row.vendor_item_id, from && to ? resultRows(from, to) : null, extra),
             note: '보관한 값으로 되돌렸어요 — 카드 그대로' });
     }
-    throw new Error('명령: list · show · plan · apply · revert');
+    // ── #729 2차(상품 단위)
+    if (cmd === 'full') {
+        const spid = num(rest[0], '상품 번호(sellerProductId)'), orderId = oid(rest[1]);
+        const res = await R.send({ op: 'get_full', order_id: orderId, seller_product_id: spid, created_by: await R.orderBy(orderId) });
+        if (!res.ok) return out({ ok: false, error: res.error || '보관 실패', code: res.code || null, note: res.note || '바꾼 것 없음' });
+        const sm = res.summary || {};
+        const L = [`상품명: ${sm.name || '(없음)'}${sm.display_name && sm.display_name !== sm.name ? ' · 노출 상품명 ' + sm.display_name : ''}`, `승인 상태: ${sm.status || '(모름)'}${res.saved ? ' — 임시저장(손님 노출 0 · 고쳐도 저장만)' : ' — 고치면 쿠팡 승인 심사(승인 전까지 손님 화면은 옛 모습)'}`];
+        for (const it of (sm.items || [])) L.push(`· 옵션 ${it.vendorItemId || '(번호 없음 · 승인 전)'} · ${it.itemName || ''} · ${won(it.salePrice)}원 · 재고 ${won(it.stock)} · 그림 ${it.images}장 · 상세 ${it.contents || '없음'}${it.contents === 'TEXT:TEXT' ? '(글 한 칸 = 창구에서 바꿀 수 있음)' : '(글 한 칸이 아니라 상세는 윙에서)'}`);
+        return out({ ok: true, backup_id: res.backup_id, saved: !!res.saved, summary: sm, card: L.join('\n'),
+            note: `다음 = plan-full ${res.backup_id} --name … | --item-name <vendorItemId>=… | --detail <html 파일>` });
+    }
+    if (cmd === 'plan-full' || cmd === 'apply-full') {
+        const row = await prodRow(rest[0]);
+        if (row.applied_at) throw new Error(`보관본 ${row.id} 는 이미 적용했어요 — 새로 고치려면 full 부터`);
+        const P = planFull(row.before_json, o, deps.readFile || (p => fs.readFileSync(p, 'utf8')));
+        if (P.errs.length) return out({ ok: false, stopped: true, stops: P.errs, can_apply: false, note: '보낸 것 없음 — 멈춘 문구 그대로 전하고 되묻기' });
+        const saved = isSavedJ(row.before_json);
+        const tail = saved ? ['임시저장 상품 — 저장만(승인 요청 안 함 · 손님 노출 0)'] : ['🟡 승인된 상품이라 쿠팡 승인 심사를 거쳐요 — 승인 전까지 손님 화면은 옛 모습 · 승인되면 반영 · 반려면 사유(며칠 걸릴 수 있음)'];
+        const pname = row.before_json.sellerProductName || '';
+        if (cmd === 'plan-full') return out({ ok: true, backup_id: row.id, patch: P.patch, can_apply: true,
+            card: pcard('고치기 계획(아직 안 보냄)', pname, row.seller_product_id, P.rows, tail.concat(['이대로 바꿀까요?'])), next: `apply-full ${row.id} <지시 id> ` + argv.slice(2).join(' ') });
+        const orderId = oid(rest[1]);
+        if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
+        const res = await R.send({ op: 'update_full', order_id: orderId, backup_id: row.id, patch: P.patch, created_by: await R.orderBy(orderId) });
+        if (!res.ok) return out({ ok: false, error: res.error || '쿠팡 상품 수정 실패', code: res.code || null, coupang_message: res.coupang_message || undefined, note: failFull(res) });
+        const L = [];
+        if (res.saved) L.push('임시저장 상품 — 저장했어요(승인 요청 안 함 · 손님 노출 0 · 조회는 약 10분 뒤)');
+        else L.push('🟡 쿠팡 승인 대기 — 승인 전까지 손님 화면은 옛 모습 · 승인되면 반영 · 반려면 사유', `지금 승인 상태: ${res.status_after || '(모름 — approval ' + row.seller_product_id + ' 로 확인)'}`, `확인: approval ${row.seller_product_id}`);
+        if (res.error_note) L.push('⚠ ' + res.error_note);
+        L.push(`되돌리기: revert-full ${row.id} <지시 id>(이것도 승인행)`);
+        return out({ ok: true, backup_id: row.id, saved: !!res.saved, status_after: res.status_after || null,
+            card: pcard(res.saved ? '고치기 결과(임시저장)' : '고치기 결과 — 🟡 쿠팡 승인 대기', pname, row.seller_product_id, P.rows, L),
+            note: res.saved ? '카드 그대로' : '「반영 완료」라고 쓰지 않는다 — 「쿠팡 승인 대기(승인되면 반영 · 며칠 걸릴 수 있음)」로 답하고 approval 로 뒤에 확인' });
+    }
+    if (cmd === 'revert-full') {
+        const row = await prodRow(rest[0]);
+        const orderId = oid(rest[1]);
+        if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 급하면 총괄에게', note: '보낸 것 없음' });
+        const res = await R.send({ op: 'revert_full', order_id: orderId, backup_id: row.id, force: o.force === true, created_by: await R.orderBy(orderId) });
+        if (!res.ok) return out({ ok: false, error: res.error || '되돌리기 실패', code: res.code || null, coupang_message: res.coupang_message || undefined, note: failFull(res) });
+        const L = [res.saved ? '임시저장 상품 — 보관본으로 다시 저장했어요(손님 노출 0)' : '🟡 보관본으로 다시 저장 — 이것도 쿠팡 승인 대기(승인되면 옛 모습으로)'];
+        if (res.error_note) L.push('⚠ ' + res.error_note);
+        return out({ ok: true, backup_id: row.id, saved: !!res.saved, status_after: res.status_after || null, card: pcard('되돌리기 결과', row.before_json.sellerProductName || '', row.seller_product_id, null, L), note: '카드 그대로' });
+    }
+    if (cmd === 'approval') {
+        const spid = num(rest[0], '상품 번호(sellerProductId)');
+        const res = await R.send({ op: 'approval', seller_product_id: spid });
+        if (!res.ok) return out({ ok: false, error: res.error || '승인 상태 조회 실패', code: res.code || null, note: res.note || '바꾼 것 없음' });
+        const L = [`상품: ${res.name || '(이름 모름)'} (${spid})`, `승인 상태: ${res.status || '(모름)'}${res.saved ? '(임시저장 · 손님 노출 0)' : ''}`];
+        if (res.denied) L.push(`🔴 승인 반려 — 사유: ${res.deny_reason || '(이력에 사유 없음 — 윙에서 확인)'}`);
+        for (const h of (res.histories || []).slice(0, 5)) L.push(`· ${h.at || ''} ${h.status || ''}${h.comment ? ' — ' + h.comment : ''}`);
+        if (res.hist_error) L.push('⚠ 이력은 못 읽었어요(윙에서 확인)');
+        return out({ ok: true, status: res.status, denied: !!res.denied, deny_reason: res.deny_reason || null, card: L.join('\n'),
+            note: res.denied ? '반려 사유를 그대로 전하고 고칠지 되묻기' : '상태 그대로 전하기' });
+    }
+    if (cmd === 'create-saved') {
+        const orderId = oid(rest[0]);
+        const from = num(o.from, '--from 본뜰 상품 번호'), name = String(o.name || '').trim();
+        if (!name) throw new Error('--name "<새 상품명>" 을 주세요');
+        if (name.length > 100) throw new Error('상품명은 100자까지예요');
+        const I = parseItems(o.item);
+        if (I.errs.length) throw new Error(I.errs.join(' · '));
+        const req = { op: 'create_saved', order_id: orderId, from_seller_product_id: from, name };
+        if (I.items.length) req.items = I.items;
+        const L = [`본뜰 상품: ${from}(배송·반품·고시·속성·상세·그림을 그대로 복사)`, `새 이름: ${name}`];
+        if (I.items.length) for (const x of I.items) L.push(`옵션: ${x.itemName} · ${won(x.price)}원 · 재고 ${won(x.stock != null ? x.stock : 99999)}`);
+        else L.push('옵션: 본뜬 상품 옵션 그대로');
+        L.push('임시저장(손님 노출 0 · 승인 요청 안 함) — 실제 판매는 윙에서 승인 요청');
+        if (o.dry) return out({ ok: true, dry: true, request: req, card: pcard('임시저장 등록 계획(아직 안 보냄)', name, '새 번호는 등록 뒤', null, L.concat(['이대로 등록할까요?'])), note: '미리 보기 — 보낸 것 없음' });
+        const res = await R.send(Object.assign(req, { created_by: await R.orderBy(orderId) }), 240000);
+        if (!res.ok) return out({ ok: false, error: res.error || '등록 실패', code: res.code || null, coupang_message: res.coupang_message || undefined,
+            note: res.unknown_note ? '🔴 ' + res.unknown_note + ' — 다시 보내지 말고 총괄에게' : /24시간/.test(String(res.error || '')) ? '오늘 등록 상한(24시간 3개)이에요 — 내일 다시' : (res.note || '등록 안 됨 — 위 error 그대로 · 총괄에게') });
+        const R2 = [`새 상품 번호: ${res.seller_product_id || '(응답에 없음)'} · 본뜬 상품 ${res.from_seller_product_id || from}`, `이름: ${name}`];
+        for (const x of (res.items || [])) R2.push(`옵션: ${x.itemName} · ${won(x.salePrice)}원 · 재고 ${won(x.stock)}`);
+        R2.push('임시저장(손님 노출 0) — 실제 판매는 윙에서 승인 요청 · 조회는 약 10분 뒤');
+        if (res.error_note) R2.push('⚠ ' + res.error_note);
+        if (res.seller_product_id) R2.push(`지우기: delete-saved ${res.seller_product_id} <지시 id>`);
+        return out({ ok: true, seller_product_id: res.seller_product_id || null, card: pcard(res.error_note ? '임시저장 등록 결과 — 🔴 확인 필요' : '임시저장 등록 결과', name, res.seller_product_id || '?', null, R2), note: '새 번호와 카드 그대로' });
+    }
+    if (cmd === 'delete-saved') {
+        const spid = num(rest[0], '상품 번호(sellerProductId)'), orderId = oid(rest[1]);
+        const res = await R.send({ op: 'delete_saved', order_id: orderId, seller_product_id: spid, created_by: await R.orderBy(orderId) });
+        if (!res.ok) return out({ ok: false, error: res.error || '삭제 실패', code: res.code || null, status: res.status || undefined, note: /임시저장 상품만/.test(String(res.error || '')) ? '임시저장이 아닌 상품은 창구에서 못 지워요 — 윙에서' : (res.note || '지우지 못했어요 — 위 error 그대로') });
+        return out({ ok: true, deleted: true, card: pcard('임시저장 삭제 결과', res.name || '', spid, null, ['지웠어요(임시저장 상품 · 손님 노출 없던 것)']), note: '카드 그대로' });
+    }
+    throw new Error('명령: list · show · plan · apply · revert · full · plan-full · apply-full · revert-full · approval · create-saved · delete-saved');
 }
 
-module.exports = { main, makeRunner, parseOpts, planRows, norm, saleOkSelf, saleLine, expectBad, resultRows, card, busyWindow, failNote, REQ_KEY, RES_KEY };
+module.exports = { main, makeRunner, parseOpts, planRows, norm, saleOkSelf, saleLine, expectBad, resultRows, card, busyWindow, failNote, planFull, parseItems, pcard, failFull, REQ_KEY, RES_KEY };
 
 if (require.main === module) {
     const { pool } = require('./_db');

@@ -1462,6 +1462,9 @@ async function initDB() {
         )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS coupang_item_backups_vid_idx ON coupang_item_backups (vendor_item_id, id DESC)`);
+    // #729: 상품 단위 보관(kind 'product' · 조회 JSON 통째) — 옵션 번호 없는 행이 생겨 NOT NULL 해제
+    await pool.query(`ALTER TABLE coupang_item_backups ADD COLUMN IF NOT EXISTS kind VARCHAR(10) NOT NULL DEFAULT 'item'`);
+    await pool.query(`ALTER TABLE coupang_item_backups ALTER COLUMN vendor_item_id DROP NOT NULL`);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -16661,7 +16664,7 @@ async function coupangItemWriteRun(req, deps) {
     const callG = async (r) => cpwData(await callRaw(r));
     const op = req && req.op;
     const fail = (error, extra) => ({ ok: false, op, error, ...(extra || {}) });
-    if (!['list', 'backup', 'apply', 'revert'].includes(op)) return fail('op 는 list·backup·apply·revert 중 하나');
+    if (!['list', 'backup', 'apply', 'revert', 'approval', ...CPW_PRODUCT_OPS].includes(op)) return fail('op 는 list·backup·apply·revert(옵션) · get_full·create_saved·update_full·revert_full·delete_saved·request_approval·approval(상품) 중 하나');
     const by = req.created_by ? String(req.created_by).slice(0, 80) : null;
     // audit_logs.target_id 는 INTEGER — 쿠팡 번호(10자리↑)는 넘치므로 null · 번호는 changes 에
     const auditW = (action, changes) => audit({ action, targetType: 'coupang_item', targetId: null,
@@ -16709,12 +16712,16 @@ async function coupangItemWriteRun(req, deps) {
         return { ok: true, op, q: q || null, products: out, truncated };
     }
 
+    if (op === 'approval') return cpwApproval(req, { callG, fail, cpErr });   // #729 읽기만 · 지시 불필요
+
     // 쓰기·보관은 지시가 있어야(누구 지시든 · 승인 검사 없음 — 되묻기 1회는 창구 규칙 몫 · #727 과 같음)
     const orderId = parseInt(req && req.order_id, 10);
     if (!(orderId > 0)) return fail('order_id 가 필요해요');
     const ord = (await db.query(`SELECT id, status, is_deleted, created_by_id FROM pending_orders WHERE id = $1`, [orderId])).rows[0];
     if (!ord || ord.is_deleted) return fail('지시를 찾지 못했어요');
     if (ord.status === '반려') return fail('반려된 지시라 실행하지 않아요');
+
+    if (CPW_PRODUCT_OPS.includes(op)) return cpwProductRun(op, req, { db, callG, fail, cpErr, auditW, orderId, by });   // #729 상품 단위
 
     let vid = String(req.vendor_item_id || '').replace(/\D/g, '');
     let row = null;
@@ -16723,6 +16730,7 @@ async function coupangItemWriteRun(req, deps) {
         if (!(bid > 0)) return fail('backup_id 가 필요해요');
         row = (await db.query(`SELECT * FROM coupang_item_backups WHERE id = $1`, [bid])).rows[0];
         if (!row) return fail('보관본을 찾지 못했어요');
+        if (row.kind === 'product') return fail('상품 보관본이에요 — update_full·revert_full 로');
         if (vid && vid !== row.vendor_item_id) return fail('보관본의 옵션 번호와 요청 옵션 번호가 달라요');
         vid = row.vendor_item_id;
     }
@@ -16839,6 +16847,301 @@ async function coupangItemWriteRun(req, deps) {
         return { ok: true, op, vendor_item_id: vid, backup_id: row.id, field: key, put: true, before_put: cur, now, same_as_before, unexpected, sale_ok: now ? cpwSaleCheck(now, before) : null,
             ...(now ? {} : { error_note: '되돌리기는 됐지만 재조회 실패 — Wing 에서 확인' }) };
     } finally { cpwInFlight.delete(vid); }
+}
+// ── #729 2차: 상품 단위(상품명·옵션명·상세·이미지·등록) — 전체 수정 PUT …/seller-products(조회 JSON 통째 · 경로에 id 없음 · 쿠팡 승인행)
+//   get_full(보관) → update_full(보관본 위에 그 칸만 → PUT → 재조회는 상태만) → revert_full(보관본 그대로 같은 PUT · 역시 승인행)
+//   create_saved = 본뜰 상품 조회 JSON 복사 → 번호·승인·날짜 칸 빼고 → requested:false(임시저장 SAVED · 노출 0) POST · 24시간 3개
+//   approval = 승인 상태(단건 statusName) + 이력(histories · 반려 사유 comment) 읽기만 — 🔴 PUT …/approvals(승인 「요청」)는 부르지 않는다
+//   delete_saved = 임시저장 상품만 DELETE(승인된 상품은 API 삭제 불가 · 거절)
+CPW_PATH.products = `${CPW_BASE}/seller-products`;                                   // PUT 전체 수정 · POST 등록(목록 GET 과 같은 경로 · 메서드만 다름)
+CPW_PATH.histories = (spid) => `${CPW_BASE}/seller-products/${spid}/histories`;      // GET 상태 이력(반려 사유)
+const CPW_PRODUCT_OPS = ['get_full', 'create_saved', 'update_full', 'revert_full', 'delete_saved', 'request_approval'];
+CPW_PATH.approvals = (spid) => `${CPW_BASE}/seller-products/${spid}/approvals`;   // PUT 승인 「요청」(임시저장을 실제로 올릴 때만)
+const CPW_APPROVABLE = ['임시저장', 'SAVED', '승인반려', 'DENIED'];
+const CPW_CREATE_DAILY_MAX = 3;
+const CPW_MAX_NAME = 100, CPW_MAX_ITEM_NAME = 150, CPW_MAX_DETAIL = 320000, CPW_MAX_CREATE_ITEMS = 20;
+const CPW_SAVED = ['임시저장', 'SAVED'];
+// 등록 바디에서 뺄 칸(점 경로 · items[] 는 「items.칸」) — 조회 응답의 번호·승인·날짜 칸 · 설정 'coupang_item_write'.create_strip(배열)이 있으면 그것으로 덮음(재배포 없이)
+const CPW_CREATE_STRIP = ['sellerProductId', 'productId', 'statusName', 'status', 'mdId', 'mdName', 'createdAt', 'updatedAt', 'approvedAt', 'requestedAt',
+    'items.sellerProductItemId', 'items.vendorItemId', 'items.itemId', 'items.offerCondition'];
+const CPW_SAVED_NOTE = '임시저장(SAVED) — 승인 요청 안 함 · 손님 노출 0 · 등록·수정 직후 조회는 약 10분 뒤';
+const CPW_APPROVAL_NOTE = '쿠팡 승인 전까지 손님 화면은 옛 모습 · 승인되면 반영 · 반려면 사유(approval 로 확인)';
+const cpwIsSaved = (j) => CPW_SAVED.includes(String((j && (j.statusName || j.status)) || ''));
+// 바뀌는지 볼 칸(신선도) — 이름 · 옵션(번호·이름·상세·이미지)
+const cpwFingerprint = (j) => JSON.stringify({ n: j && j.sellerProductName, d: j && j.displayProductName,
+    i: ((j && j.items) || []).map(it => [it.sellerProductItemId || null, it.vendorItemId || null, it.itemName || null, it.contents || null, it.images || null]) });
+// 상세(contents) 꼴 요약 — 「글 한 칸」 이어야 detail_html 로 바꿀 수 있음
+const cpwContentsShape = (it) => ((it && it.contents) || []).map(c => `${c.contentsType || '?'}:${((c.contentDetails) || []).map(d => d.detailType || '?').join('+')}`).join(',');
+function cpwOneText(it) {   // 그 옵션 상세의 「글 한 칸」 위치(contents 하나 · contentDetails 하나 · TEXT) — 아니면 null
+    const cs = (it && it.contents) || [];
+    if (cs.length !== 1) return null;
+    const ds = cs[0].contentDetails || [];
+    if (ds.length !== 1 || ds[0].detailType !== 'TEXT') return null;
+    return ds[0];
+}
+const cpwImgKey = (im) => String((im && (im.cdnPath || im.vendorPath)) || '');
+function cpwSummary(j) {
+    return { sellerProductId: j && j.sellerProductId != null ? String(j.sellerProductId) : null, name: j && j.sellerProductName || null, display_name: j && j.displayProductName || null,
+        status: j && (j.statusName || j.status) || null, requested: j ? j.requested : null,
+        items: ((j && j.items) || []).map(it => ({ sellerProductItemId: it.sellerProductItemId != null ? String(it.sellerProductItemId) : null, vendorItemId: it.vendorItemId != null ? String(it.vendorItemId) : null,
+            itemName: it.itemName || null, salePrice: it.salePrice != null ? Number(it.salePrice) : null, stock: it.maximumBuyCount != null ? Number(it.maximumBuyCount) : null,
+            contents: cpwContentsShape(it), images: ((it.images) || []).length })) };
+}
+// 전체 수정 응답 { code:'200', data:{ code:'SUCCESS', data:<id> } } — 안쪽 code 도 봄
+function cpwInner(d) {
+    if (d && typeof d === 'object' && 'code' in d && d.code !== 'SUCCESS') { const e = new Error('coupang_code_' + d.code); e.status = 200; e.data = d; throw e; }
+    return d && typeof d === 'object' && 'data' in d ? d.data : d;
+}
+// update_full patch 검사 + 적용(보관본 깊은 복사 위에 그 칸만) → { body } 또는 { error }
+function cpwApplyFull(before, patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return { error: 'patch 가 필요해요' };
+    const OK = ['name', 'item_names', 'detail_html', 'images'];
+    const bad = Object.keys(patch).filter(k => !OK.includes(k));
+    if (bad.length) return { error: '허용되지 않은 칸 ' + bad.join(', ') + ' — name · item_names · detail_html · images (가격·재고·판매는 1차 옵션 op)' };
+    if (!Object.keys(patch).length) return { error: '바꿀 칸이 없어요' };
+    const b = JSON.parse(JSON.stringify(before));
+    const items = b.items || [];
+    if ('name' in patch) {
+        const n = typeof patch.name === 'string' ? patch.name.trim() : '';
+        if (!n || n.length > CPW_MAX_NAME) return { error: `상품명은 1~${CPW_MAX_NAME}자` };
+        if (n === b.sellerProductName) return { error: '지금 상품명과 같아요' };
+        if (b.displayProductName && b.displayProductName === b.sellerProductName) b.displayProductName = n;   // 노출 상품명이 같은 글이면 둘 다
+        b.sellerProductName = n;
+    }
+    if ('item_names' in patch) {
+        const m = patch.item_names;
+        if (!m || typeof m !== 'object' || Array.isArray(m) || !Object.keys(m).length) return { error: 'item_names 는 { vendorItemId 또는 지금 옵션명: 새 이름 }' };
+        for (const [k, v] of Object.entries(m)) {
+            const hit = items.filter(it => String(it.vendorItemId || '') === k || String(it.sellerProductItemId || '') === k || it.itemName === k);
+            if (hit.length !== 1) return { error: `옵션 「${k}」 을 하나로 찾지 못했어요(${hit.length}개)` };
+            const nv = typeof v === 'string' ? v.trim() : '';
+            if (!nv || nv.length > CPW_MAX_ITEM_NAME) return { error: `옵션명은 1~${CPW_MAX_ITEM_NAME}자` };
+            if (items.some(it => it !== hit[0] && it.itemName === nv)) return { error: `옵션명 「${nv}」 이 다른 옵션과 겹쳐요` };
+            hit[0].itemName = nv;
+        }
+    }
+    if ('detail_html' in patch) {
+        const h = patch.detail_html;
+        if (typeof h !== 'string' || !h.trim() || h.length > CPW_MAX_DETAIL) return { error: `상세는 1~${CPW_MAX_DETAIL}자 글` };
+        if (/<\s*\/?\s*script\b/i.test(h)) return { error: '상세에 script 는 못 넣어요' };
+        for (const it of items) {
+            const d = cpwOneText(it);
+            if (!d) return { error: `옵션 「${it.itemName}」 상세 구성이 글 한 칸이 아니라 바꿀 수 없어요(구성 ${cpwContentsShape(it) || '없음'})` };
+            d.content = h;
+        }
+    }
+    if ('images' in patch) {
+        const list = patch.images;
+        if (!Array.isArray(list) || !list.length || list.some(x => typeof x !== 'string' || !x)) return { error: 'images 는 지금 그림 주소(cdnPath·vendorPath) 배열 — 순서 = 첫 장이 대표' };
+        // 쿠팡 그림 올리기 길은 문서에 없음(미확정) → 지금 그 상품에 있는 그림만 고르고 순서 바꾸기 · 새 외부 주소는 거절
+        const have = new Set(items.flatMap(it => (it.images || []).map(cpwImgKey)));
+        const unknown = list.filter(x => !have.has(x));
+        if (unknown.length) return { error: '새 그림 주소는 못 넣어요(쿠팡 그림 올리기 길 문서 없음 · 미확정) — 지금 있는 그림만 고르고 순서 바꾸기', unknown: unknown.slice(0, 5) };
+        for (const it of items) {
+            const byKey = new Map((it.images || []).map(im => [cpwImgKey(im), im]));
+            const next = list.filter(x => byKey.has(x)).map((x, i) => ({ ...byKey.get(x), imageOrder: i, imageType: i === 0 ? 'REPRESENTATION' : 'DETAIL' }));
+            if (!next.length) return { error: `옵션 「${it.itemName}」 에 남는 그림이 없어요` };
+            it.images = next;
+        }
+    }
+    return { body: b };
+}
+function cpwStrip(j, paths) {
+    for (const p of paths) {
+        const [a, k] = String(p).split('.');
+        if (k && a === 'items') { for (const it of (j.items || [])) delete it[k]; }
+        else if (!k) delete j[a];
+    }
+    return j;
+}
+
+async function cpwProductRun(op, req, x) {
+    const { db, callG, fail, cpErr, auditW, orderId, by } = x;
+    const spidOf = (v) => String(v || '').replace(/\D/g, '');
+    const getFull = async (spid) => callG({ method: 'GET', path: CPW_PATH.product(spid) });
+
+    if (op === 'create_saved') {
+        const from = spidOf(req.from_seller_product_id);
+        if (!from) return fail('from_seller_product_id 가 필요해요');
+        const name = typeof req.name === 'string' ? req.name.trim() : '';
+        if (!name || name.length > CPW_MAX_NAME) return fail(`상품명은 1~${CPW_MAX_NAME}자`);
+        const reqItems = req.items;
+        if (reqItems != null) {
+            if (!Array.isArray(reqItems) || !reqItems.length || reqItems.length > CPW_MAX_CREATE_ITEMS) return fail(`items 는 1~${CPW_MAX_CREATE_ITEMS}개`);
+            for (const it of reqItems) {
+                if (!it || typeof it !== 'object') return fail('items 꼴이 달라요');
+                const bad = Object.keys(it).filter(k => !['itemName', 'price', 'stock'].includes(k));
+                if (bad.length) return fail('items 에 허용되지 않은 칸 ' + bad.join(', '));
+                if (typeof it.itemName !== 'string' || !it.itemName.trim() || it.itemName.trim().length > CPW_MAX_ITEM_NAME) return fail(`옵션명은 1~${CPW_MAX_ITEM_NAME}자`);
+                if (!Number.isInteger(it.price) || it.price <= 0 || it.price % CPW_PRICE_UNIT !== 0) return fail(`옵션 가격은 ${CPW_PRICE_UNIT}원 단위 양의 정수`);
+                if (it.stock != null && (!Number.isInteger(it.stock) || it.stock < 0 || it.stock > CPW_MAX_STOCK)) return fail(`옵션 재고는 0~${CPW_MAX_STOCK} 정수`);
+            }
+            const names = reqItems.map(it => it.itemName.trim());
+            if (new Set(names).size !== names.length) return fail('옵션명이 겹쳐요');
+        }
+        if (cpwInFlight.has('create')) return fail('다른 등록이 진행 중이에요');
+        cpwInFlight.add('create');
+        try {
+            const made = (await db.query(`SELECT count(*)::int AS n FROM coupang_item_backups WHERE kind = 'product' AND result_json->>'op' IN ('create_saved', 'create_unknown') AND created_at > NOW() - INTERVAL '24 hours'`)).rows[0];
+            if (made && made.n >= CPW_CREATE_DAILY_MAX) return fail(`새 상품 등록은 24시간에 ${CPW_CREATE_DAILY_MAX}개까지`);
+            let src;
+            try { src = await getFull(from); } catch (e) { return cpErr(e, '본뜰 상품 조회'); }
+            if (!src || typeof src !== 'object' || !Array.isArray(src.items) || !src.items.length) return fail('본뜰 상품 응답에 옵션이 없어요');
+            const cfg = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'coupang_item_write'`)).rows[0] || {}).value || {};
+            const strip = Array.isArray(cfg.create_strip) ? cfg.create_strip.map(String) : CPW_CREATE_STRIP;
+            const body = cpwStrip(JSON.parse(JSON.stringify(src)), strip);
+            body.sellerProductName = name;
+            if ('displayProductName' in body) body.displayProductName = name;
+            body.requested = false;   // 🔴 임시저장(SAVED) — 승인 요청 안 함
+            if (reqItems) {
+                body.items = reqItems.map((it, i) => {
+                    const t = JSON.parse(JSON.stringify(body.items[Math.min(i, body.items.length - 1)]));
+                    t.itemName = it.itemName.trim();
+                    t.salePrice = it.price;
+                    if (t.originalPrice == null || Number(t.originalPrice) < it.price) t.originalPrice = it.price;
+                    t.maximumBuyCount = it.stock != null ? it.stock : CPW_MAX_STOCK;
+                    return t;
+                });
+            }
+            const rec = (opName, extra) => db.query(`INSERT INTO coupang_item_backups (kind, seller_product_id, vendor_item_id, order_id, before_json, created_by, result_json) VALUES ('product', $1, NULL, $2, $3::jsonb, $4, $5::jsonb) RETURNING id`,
+                [extra && extra.id || null, orderId, JSON.stringify({ from_seller_product_id: from, body }), by, JSON.stringify({ op: opName, from_seller_product_id: from, name, ...(extra || {}) })]);
+            let res;
+            try { res = cpwInner(await callG({ method: 'POST', path: CPW_PATH.products, body })); }
+            catch (e) {
+                const known = e && e.status != null && e.status >= 400 && e.status < 500 || e && e.status === 200;   // 쿠팡이 거절(코드 있음) = 안 만들어짐 · 그 밖(연결·5xx) = 만들어졌는지 모름
+                await rec(known ? 'create_failed' : 'create_unknown', { code: e && e.status || null });
+                await auditW(known ? 'coupang_product_create_failed' : 'coupang_product_create_unknown', { from_seller_product_id: from, order_id: orderId, name, code: e && e.status || null });
+                return cpErr(e, '임시저장 등록', known ? {} : { unknown_note: '등록이 됐는지 모름 — Wing 임시저장 목록에서 확인(24시간 3개에 셈)' });
+            }
+            const newId = spidOf(res && typeof res === 'object' ? (res.sellerProductId || res.data) : res);
+            const ins = await rec('create_saved', { id: newId || null });
+            const backup_id = ins.rows[0].id;
+            await auditW('coupang_product_create_saved', { seller_product_id: newId || null, from_seller_product_id: from, order_id: orderId, backup_id, name, items: body.items.map(it => it.itemName) });
+            return { ok: true, op, seller_product_id: newId || null, from_seller_product_id: from, backup_id, name, items: body.items.map(it => ({ itemName: it.itemName, salePrice: it.salePrice, stock: it.maximumBuyCount })),
+                saved_note: CPW_SAVED_NOTE, ...(newId ? {} : { error_note: '등록은 됐지만 응답에 상품 번호가 없어요 — Wing 임시저장 목록에서 확인' }) };
+        } finally { cpwInFlight.delete('create'); }
+    }
+
+    // get_full · update_full · revert_full · delete_saved — 상품 번호 하나씩 · 같은 번호 동시 실행 거절
+    let spid = spidOf(req.seller_product_id), row = null;
+    if (op === 'update_full' || op === 'revert_full') {
+        const bid = parseInt(req.backup_id, 10);
+        if (!(bid > 0)) return fail('backup_id 가 필요해요');
+        row = (await db.query(`SELECT * FROM coupang_item_backups WHERE id = $1`, [bid])).rows[0];
+        if (!row) return fail('보관본을 찾지 못했어요');
+        if (row.kind !== 'product' || (row.result_json && /^create/.test(String(row.result_json.op || '')))) return fail('get_full 로 만든 상품 보관본이 아니에요');
+        if (spid && spid !== row.seller_product_id) return fail('보관본의 상품 번호와 요청 상품 번호가 달라요');
+        spid = row.seller_product_id;
+    }
+    if (!spid) return fail('seller_product_id 가 필요해요');
+    const key = 'p' + spid;
+    if (cpwInFlight.has(key)) return fail('같은 상품에 다른 작업이 진행 중이에요');
+    cpwInFlight.add(key);
+    try {
+        if (op === 'get_full') {
+            let j;
+            try { j = await getFull(spid); } catch (e) { return cpErr(e, '상품 조회'); }
+            if (!j || typeof j !== 'object' || !Array.isArray(j.items)) return fail('쿠팡 응답에 상품 본문이 없어요');
+            const ins = await db.query(`INSERT INTO coupang_item_backups (kind, seller_product_id, vendor_item_id, order_id, before_json, created_by) VALUES ('product', $1, NULL, $2, $3::jsonb, $4) RETURNING id`,
+                [spid, orderId, JSON.stringify(j), by]);
+            const backup_id = ins.rows[0].id, summary = cpwSummary(j);
+            await auditW('coupang_product_backup', { seller_product_id: spid, order_id: orderId, backup_id, status: summary.status });
+            return { ok: true, op, seller_product_id: spid, backup_id, summary, saved: cpwIsSaved(j) };
+        }
+        if (op === 'delete_saved') {
+            let j;
+            try { j = await getFull(spid); } catch (e) { return cpErr(e, '상품 조회'); }
+            if (!j || typeof j !== 'object') return fail('쿠팡 응답에 상품 본문이 없어요');
+            if (!cpwIsSaved(j)) return fail('임시저장 상품만 지울 수 있어요(승인된 상품은 Wing 에서)', { status: j.statusName || j.status || null });
+            try { cpwInner(await callG({ method: 'DELETE', path: CPW_PATH.product(spid) })); } catch (e) { return cpErr(e, '임시저장 삭제'); }
+            await auditW('coupang_product_delete_saved', { seller_product_id: spid, order_id: orderId, name: j.sellerProductName || null });
+            return { ok: true, op, seller_product_id: spid, deleted: true, name: j.sellerProductName || null };
+        }
+        if (op === 'request_approval') {   // 임시저장(또는 반려) 상품을 쿠팡 심사에 올림 — 시험에선 안 씀 · 승인되면 손님 노출
+            let j;
+            try { j = await getFull(spid); } catch (e) { return cpErr(e, '상품 조회'); }
+            const st0 = j && (j.statusName || j.status) || null;
+            if (!CPW_APPROVABLE.includes(String(st0 || ''))) return fail('임시저장·승인반려 상품만 승인 요청할 수 있어요', { status: st0 });
+            try { cpwInner(await callG({ method: 'PUT', path: CPW_PATH.approvals(spid) })); } catch (e) { return cpErr(e, '승인 요청', e && e.status === 400 ? { note: '「등록·수정 중」이면 10분 뒤 다시' } : {}); }
+            let now = null;
+            try { now = await getFull(spid); } catch (_) { /* 상태만 못 봄 */ }
+            const status_after = now ? (now.statusName || now.status || null) : null;
+            await auditW('coupang_product_request_approval', { seller_product_id: spid, order_id: orderId, status_before: st0, status_after });
+            return { ok: true, op, seller_product_id: spid, status_before: st0, status_after, approval_note: '쿠팡 심사에 올림 — 승인되면 손님 노출 · 반려면 사유(approval 로 확인)' };
+        }
+        // update_full · revert_full
+        if (op === 'update_full' && row.applied_at) return fail('이미 적용한 보관본이에요 — 새로 get_full 하세요');
+        if (op === 'revert_full' && !row.applied_at) return fail('아직 적용하지 않은 보관본이에요');
+        if (op === 'revert_full' && row.reverted_at) return fail('이미 되돌린 보관본이에요');
+        const before = row.before_json;
+        let body;
+        if (op === 'update_full') {
+            const r = cpwApplyFull(before, req.patch);
+            if (r.error) return fail(r.error, r.unknown ? { unknown: r.unknown } : undefined);
+            body = r.body;
+        } else body = JSON.parse(JSON.stringify(before));
+        let cur;
+        try { cur = await getFull(spid); } catch (e) { return cpErr(e, '상품 조회'); }
+        if (!cur || typeof cur !== 'object' || !Array.isArray(cur.items)) return fail('쿠팡 응답에 상품 본문이 없어요');
+        // 신선도: update = 보관 뒤 바뀌었으면 거절 · revert = 적용 뒤 또 바뀌었으면 거절(force 면 덮음 · 승인 대기 중이면 조회가 옛 값일 수 있어 보관본·보낸 값 둘 중 하나와 같으면 통과)
+        if (op === 'update_full' && cpwFingerprint(cur) !== cpwFingerprint(before)) return fail('보관한 뒤 쿠팡에서 바뀐 곳이 있어요 — 새로 get_full 하세요');
+        if (op === 'revert_full' && req.force !== true && ![cpwFingerprint(before), cpwFingerprint(row.patch_json && row.patch_json.body || {})].includes(cpwFingerprint(cur)))
+            return fail('적용 뒤 쿠팡에서 또 바뀌었어요 — 덮으려면 force');
+        // 가격·재고는 지금 값(cur)으로 덮는다 — 보관본의 옛 가격·재고가 실려 가면 주문으로 준 재고가 되살아나 과판매 · 1차로 바꾼 가격이 되돌아감(#721 「지금 값 위에 바꾼 칸만」)
+        const optKey = (it) => it.sellerProductItemId != null ? 's' + it.sellerProductItemId : it.vendorItemId != null ? 'v' + it.vendorItemId : null;
+        const curBy = new Map((cur.items || []).map(it => [optKey(it), it]));
+        const bodyKeys = new Set((body.items || []).map(optKey));
+        const extra = [...curBy.keys()].filter(k => k && !bodyKeys.has(k));
+        if (extra.length) return fail('보관한 뒤 쿠팡에 옵션이 늘었어요(구성 바뀜) — 새로 get_full 하세요', { extra_options: extra.slice(0, 10) });
+        for (const it of (body.items || [])) {
+            const c = curBy.get(optKey(it));
+            if (!c) continue;   // 지금 쿠팡에 없는 옵션은 보관본 값 그대로(되돌리기에서 쿠팡이 판단)
+            for (const k of ['salePrice', 'originalPrice', 'maximumBuyCount']) if (k in c) it[k] = c[k];
+        }
+        const saved = cpwIsSaved(cur);
+        body.sellerProductId = Number(spid);
+        body.requested = !saved;   // 임시저장은 저장만 · 승인된 상품은 저장 + 승인 요청(승인 뒤 반영)
+        try { cpwInner(await callG({ method: 'PUT', path: CPW_PATH.products, body })); }
+        catch (e) {
+            await db.query(`UPDATE coupang_item_backups SET result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+                [row.id, JSON.stringify({ [op === 'update_full' ? 'update_failed' : 'revert_failed']: { code: e && e.status || null, at: new Date().toISOString() } })]);
+            await auditW(op === 'update_full' ? 'coupang_product_update_failed' : 'coupang_product_revert_failed', { seller_product_id: spid, order_id: orderId, backup_id: row.id, code: e && e.status || null });
+            return cpErr(e, op === 'update_full' ? '상품 전체 수정' : '상품 되돌리기', { backup_id: row.id });
+        }
+        let now = null;
+        try { now = await getFull(spid); } catch (e) { console.error('[#729 쿠팡 상품] 재조회 실패:', e && e.status); }
+        const status_after = now ? (now.statusName || now.status || null) : null;
+        const result = { op, put: true, saved, requested: body.requested, status_after };
+        if (op === 'update_full') {
+            await db.query(`UPDATE coupang_item_backups SET patch_json = $2::jsonb, applied_at = NOW(), after_json = $3::jsonb, result_json = $4::jsonb WHERE id = $1`,
+                [row.id, JSON.stringify({ patch: req.patch, body }), JSON.stringify(now), JSON.stringify(result)]);
+            await auditW('coupang_product_update', { seller_product_id: spid, order_id: orderId, backup_id: row.id, patch_keys: Object.keys(req.patch), requested: body.requested, status_after });
+        } else {
+            await db.query(`UPDATE coupang_item_backups SET reverted_at = NOW(), result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+                [row.id, JSON.stringify({ reverted: true, revert_requested: body.requested, revert_status_after: status_after })]);
+            await auditW('coupang_product_revert', { seller_product_id: spid, order_id: orderId, backup_id: row.id, requested: body.requested, status_after });
+        }
+        return { ok: true, op, seller_product_id: spid, backup_id: row.id, saved, requested: body.requested, status_after,
+            approval_note: saved ? CPW_SAVED_NOTE : CPW_APPROVAL_NOTE, ...(op === 'update_full' ? { patch_keys: Object.keys(req.patch) } : {}),
+            ...(now ? {} : { error_note: '저장은 됐지만 재조회 실패 — Wing 에서 확인' }) };
+    } finally { cpwInFlight.delete(key); }
+}
+// approval — 읽기만(지시 불필요): 단건 statusName + 이력 최근 10줄(반려 사유 comment)
+async function cpwApproval(req, x) {
+    const { callG, fail, cpErr } = x;
+    const spid = String(req.seller_product_id || '').replace(/\D/g, '');
+    if (!spid) return fail('seller_product_id 가 필요해요');
+    let j;
+    try { j = await callG({ method: 'GET', path: CPW_PATH.product(spid) }); } catch (e) { return cpErr(e, '상품 조회'); }
+    let hist = [], hist_error = null;
+    try {
+        const h = await callG({ method: 'GET', path: CPW_PATH.histories(spid), query: { maxPerPage: 10 } });
+        hist = (Array.isArray(h) ? h : []).slice(0, 10).map(r => ({ status: r.status || r.statusName || null, comment: r.comment ? String(r.comment).slice(0, 300) : null, at: r.createdAt || null, by: r.createdBy || null }));
+    } catch (e) { hist_error = e && e.status || 'error'; }
+    const status = j && (j.statusName || j.status) || null;
+    const denied = /반려|DENIED/.test(String(status || ''));
+    return { ok: true, op: 'approval', seller_product_id: spid, status, saved: cpwIsSaved(j), name: j && j.sellerProductName || null,
+        denied, deny_reason: denied ? ((hist.find(r => r.comment) || {}).comment || null) : null, histories: hist, ...(hist_error ? { hist_error } : {}) };
 }
 // #728 끝
 setInterval(async () => {

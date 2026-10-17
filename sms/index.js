@@ -1175,10 +1175,13 @@ module.exports = function mountSms(app, deps) {
             else { args.push('%' + qt.replace(/[\\%_]/g, '\\$&') + '%'); where.push(`(t.last_in_text ILIKE $${args.length} ESCAPE '\\' OR t.last_out_text ILIKE $${args.length} ESCAPE '\\' OR EXISTS (SELECT 1 FROM sms_messages x WHERE x.thread_id = t.id AND x.body ILIKE $${args.length} ESCAPE '\\'))`); }   // #635 「이전 대화 보기」 검색 = 오간 글 전체에서
         }
         if (!deps.testMode) where.push(`t.phone_digits NOT LIKE '0999%'`);   // #648: 목록 전 갈래(active·all·찾기·상태)에서 시험 번호 대화를 뺀다(대화 한 건 조회는 id 직접이라 그대로)
-        args.push(limit);
-        const rows = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE ${where.join(' AND ')} ORDER BY COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT $${args.length}`, args)).rows;
+        // #730(대표 10/18 「나머지도 다 보여야」): offset = 앞에서 본 줄 수(「더 보기」 · 0~5000) · 한 줄 더 읽어 more(다음 쪽 있음)를 알린다 · 같은 정렬(시각 → id)이라 이어 붙여도 겹침 없음(사이에 새 글이 오면 한 줄 겹칠 수 있어 화면이 id 로 거른다)
+        const offset = Math.min(5000, Math.max(0, parseInt(req.query.offset, 10) || 0));
+        args.push(limit + 1); const limI = args.length; args.push(offset);
+        const got = (await pool.query(`SELECT t.*, ${UNREAD_SQL} AS unread FROM sms_threads t WHERE ${where.join(' AND ')} ORDER BY COALESCE(GREATEST(t.last_in_at, t.last_out_at), t.updated_at) DESC, t.id DESC LIMIT $${limI} OFFSET $${args.length}`, args)).rows;
+        const more = got.length > limit, rows = more ? got.slice(0, limit) : got;
         await fillHints(rows);   // #672 「주문을 찾지 못한 번호」가 낡았으면 구매이력으로 고쳐 보여 준다
-        res.json({ scope: (hasStatus && status !== 'all') ? 'status' : q ? 'all' : (scope || 'legacy'), items: rows.map(pub) });
+        res.json({ scope: (hasStatus && status !== 'all') ? 'status' : q ? 'all' : (scope || 'legacy'), items: rows.map(pub), offset, more });
     }));
     app.get('/api/sms/threads/:id', authMiddleware, wrap(async (req, res) => {
         const id = parseInt(req.params.id, 10); if (!id) return res.status(400).json({ ok: false, error: 'id' });

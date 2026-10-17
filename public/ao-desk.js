@@ -1527,13 +1527,36 @@
         SMS.lbusy = true; SMS.listAt = asked;
         if (!quiet && !SMS.items) $('sms-list').innerHTML = '<li class="desk-empty ship-empty">불러오는 중</li>';
         let d, err = '';
-        try { d = await api('/api/sms/threads?scope=' + (SMS.scope === 'open' && SMS.sum && !('open_threads' in SMS.sum) ? 'active' : SMS.scope) + '&q=' + encodeURIComponent(q) + '&limit=50'); } catch (e) { err = (e && e.message) || '불러오지 못했어요'; }
+        try { d = await api(smsListUrl(q)); } catch (e) { err = (e && e.message) || '불러오지 못했어요'; }
         if (seq !== SMS.seq) return;
         SMS.lbusy = false;
         if (!err && !(d && Array.isArray(d.items))) err = (d && d.error) || '불러오지 못했어요';
         if (err && quiet && SMS.items) return;   // 뒤에서 다시 받다 실패하면 보이던 목록을 그대로 둔다
-        SMS.err = err; SMS.items = err ? [] : d.items; SMS.itemsAt = asked;
+        // #730 「더 보기」: 첫 쪽만 다시 받고, 더 보기로 붙인 뒤쪽(tail)은 이어 둔다 · 목록을 새로 시작하면(items = null · 찾기·탭 바꿈) 뒤쪽을 버린다
+        //   옛 서버(more 칸 없음) = 종전 그대로(50건 안내 글)
+        if (err || !SMS.items || d.more === false) { SMS.tail = []; SMS.more = !err && d.more === true; }
+        else if (!(SMS.tail || []).length) SMS.more = d.more === true;
+        SMS.oldSrv = !err && typeof d.more !== 'boolean';
+        if (err) SMS.items = [];
+        else { const ids = new Set(d.items.map(x => x.id)); SMS.tail = (SMS.tail || []).filter(x => !ids.has(x.id)); SMS.items = d.items.concat(SMS.tail); }
+        SMS.err = err; SMS.itemsAt = asked;
         smsHead(); smsRenderList();
+    }
+    const smsListUrl = (q, offset) => '/api/sms/threads?scope=' + (SMS.scope === 'open' && SMS.sum && !('open_threads' in SMS.sum) ? 'active' : SMS.scope) + '&q=' + encodeURIComponent(q) + '&limit=50' + (offset ? '&offset=' + offset : '');
+    // #730(대표 10/18 「50건까지만 보여요 — 나머지도」): 목록 맨 아래 [더 보기] = 다음 50건을 이어 붙임(찾기 결과에도) · 다 보면 「끝」
+    async function smsMore() {
+        if (SMS.mbusy || !SMS.more || !SMS.items) return;
+        const key = SMS.scope + '\u0001' + SMS.q, have = SMS.items;
+        SMS.mbusy = true; SMS.sig = ''; smsRenderList();
+        let d = null, err = '';
+        try { d = await api(smsListUrl(SMS.q, have.length)); } catch (e) { err = (e && e.message) || '더 불러오지 못했어요'; }
+        SMS.mbusy = false; SMS.sig = '';
+        if (!SMS.items || key !== SMS.scope + '\u0001' + SMS.q) return;   // 그사이 찾기·탭이 바뀜 — 버린다
+        if (err || !(d && Array.isArray(d.items))) { smsRenderList(); showToast(err || '더 불러오지 못했어요'); return; }
+        const ids = new Set(SMS.items.map(x => x.id)), add = d.items.filter(x => !ids.has(x.id));   // 사이에 새 글이 와서 한 줄 밀렸으면 겹친 줄은 뺀다
+        SMS.tail = (SMS.tail || []).concat(add); SMS.items = SMS.items.concat(add); SMS.more = d.more === true;
+        smsRenderList();
+        const li = document.querySelectorAll('#sms-list .sms-item')[have.length]; if (li) { const b = li.querySelector('.sms-row'); if (b) b.focus({ preventScroll: true }); if (li.scrollIntoView) li.scrollIntoView({ block: 'nearest' }); }
     }
     // #624(대표 10/10 「번호 다 뜨게」): 서버가 phone_full(숫자만)을 주면 전체 번호를 010-1234-5678 꼴로 — 없으면(옛 서버) 종전 가림 글. 대화 머리의 번호는 누르면 전화(tel:)
     const smsFmtNo = d => { d = String(d || '').replace(/\D/g, ''); return d.length === 11 ? d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7) : d.length === 10 ? (d.startsWith('02') ? '02-' + d.slice(2, 6) + '-' + d.slice(6) : d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6)) : d.length === 12 ? d.slice(0, 4) + '-' + d.slice(4, 8) + '-' + d.slice(8) : d; };
@@ -1571,8 +1594,13 @@
             if (at >= 0) { SMS.openRow = items[at]; SMS.openAt = at; }
             else if (SMS.openRow) items.splice(Math.min(SMS.openAt, items.length), 0, SMS.openRow);
         }
-        const sig = smsSig([items, SMS.scope, SMS.only, SMS.q, SMS.open, SMS.err, TYP.lsig]);
-        const cnt = $('sms-count'); if (cnt) cnt.textContent = SMS.err ? '' : (items.length >= 50 && !SMS.only ? '50건까지 보여요. 끝 4자리·전체 번호나 글로 찾아보세요.' : (SMS.only ? '직원 확인만 · ' : '') + nfmt(items.length) + '건' + (SMS.only && (SMS.items || []).length >= 50 ? ' · 최근 50건 안에서' : ''));
+        const sig = smsSig([items, SMS.scope, SMS.only, SMS.q, SMS.open, SMS.err, TYP.lsig, SMS.more, SMS.mbusy]);
+        const all = (SMS.items || []).length;
+        const cnt = $('sms-count'); if (cnt) cnt.textContent = SMS.err ? ''
+            : SMS.oldSrv ? (items.length >= 50 && !SMS.only ? '50건까지 보여요. 끝 4자리·전체 번호나 글로 찾아보세요.' : (SMS.only ? '직원 확인만 · ' : '') + nfmt(items.length) + '건' + (SMS.only && all >= 50 ? ' · 최근 50건 안에서' : ''))   // 옛 서버(더 보기 없음)
+            : SMS.only ? '직원 확인만 · ' + nfmt(items.length) + '건' + (SMS.more ? ' · 불러온 ' + nfmt(all) + '건 안에서 · 더 보기로 이어서' : '')
+            : SMS.more ? (SMS.q ? '찾은 ' + nfmt(all) + '건 · 더 보기로 이어서' : '최근 ' + nfmt(all) + '건 · 더 보기로 이어서 · 끝 4자리·전체 번호·글로 찾으면 전체에서')
+            : nfmt(items.length) + '건';
         if (sig === SMS.sig && ul.firstChild) return;
         SMS.sig = sig;
         let html = items.map(smsRowHtml).join('');
@@ -1581,6 +1609,10 @@
             : SMS.only ? '<li class="desk-empty ship-empty">직원 확인이 필요한 대화가 없어요.</li>'
             : SMS.scope === 'all' ? '<li class="desk-empty ship-empty">아직 들어온 문자가 없어요.</li>'
             : '<li class="desk-empty ship-empty sms-none"><span>미처리 문자가 없어요.</span><button type="button" class="desk-btn sm sms-empty-go">전체 대화 보기</button></li>';
+        if (!SMS.err && all && !SMS.oldSrv) {
+            if (SMS.more) html += `<li class="desk-empty ship-empty sms-none sms-more-li"><button type="button" class="desk-btn sm sms-more"${SMS.mbusy ? ' disabled aria-busy="true"' : ''}>${SMS.mbusy ? '불러오는 중' : '더 보기(50건씩)'}</button></li>`;
+            else if (all > 50) html += '<li class="desk-empty ship-empty sms-end">끝 — 더 없어요</li>';
+        }
         const top = ul.scrollTop;
         ul.innerHTML = html;
         ul.scrollTop = top;
@@ -1963,6 +1995,7 @@
             if (e.target.closest('#sms-th-x')) { smsThreadClose(true); return; }
             if (e.target.closest('#sms-done')) { smsDone(); return; }
             if (e.target.closest('.sms-empty-go')) { smsScope('all'); return; }
+            if (e.target.closest('.sms-more')) { smsMore(); return; }   // #730
             { const tk = e.target.closest('.sms-trk'); if (tk) { copyText(tk.dataset.trk, '송장번호를 복사했어요', tk); return; } }   // #644
             if (e.target.closest('.sms-hold')) { smsHold(); return; }   // #651
             if (e.target.closest('#sms-buy-next')) { const had = document.querySelectorAll('#sms-buy-rest .sms-buy-i').length; SMS.buyShow = (Number(SMS.buyShow) || 5) + 5; smsBuyRender(); const nx = document.getElementById('sms-buy-next') || document.getElementById('sms-buy-more'); if (nx) nx.focus({ preventScroll: true }); const it = document.querySelectorAll('#sms-buy-rest .sms-buy-i')[had]; if (it && it.scrollIntoView) it.scrollIntoView({ block: 'nearest' }); return; }
