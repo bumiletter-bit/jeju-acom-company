@@ -77,6 +77,8 @@ function planRows(before, patch) {
     const op = (before && before.originProduct) || {};
     const rows = [], warns = [], stops = [];
     if ('detail_html' in patch) {
+        // #720-D 실시험(10/17): 네이버 API 가 상세의 스마트에디터 편집 자료(script 블록)·그림 링크 속성·style 을 걸러 저장 → 원본 그대로 되돌리기 불가 · 서버 잠금(detail_enabled)
+        warns.push('API 로 상세를 저장하면 스마트에디터 편집 자료가 빠지고 되돌리기도 원본 그대로는 안 됨 — 대표 확정 전 잠금(상세는 당분간 스마트스토어센터에서)');
         const d = htmlDelta(op.detailContent, patch.detail_html);
         if (d) rows.push({ field: '상세', before: `${won(d.len_before)}자 · 그림 ${d.imgs_before}장 · 「${d.before}」`, after: `${won(d.len_after)}자 · 그림 ${d.imgs_after}장 · 「${d.after}」` });
         const fi = foreignImages(patch.detail_html);
@@ -187,7 +189,7 @@ async function main(argv, deps) {
         if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
         const res = await R.send({ op: 'apply', order_id: orderId, backup_id: row.id, product_no: row.product_no, patch, created_by: await R.orderBy(orderId) });
         if (!res.ok) return out({ ok: false, error: res.error || '수정 실패', code: res.code || null, drift_paths: res.drift_paths || undefined,
-            note: res.drift_paths ? '보관한 뒤 네이버에서 누가 고쳤어요 — 바꾼 것 없음 · show 로 새로 보관하고 다시 plan' : '네이버가 받지 않았어요 — 바꾼 것 없음일 가능성이 높지만 show 로 지금 값을 확인하세요', undo });
+            note: res.drift_paths ? '보관한 뒤 네이버에서 누가 고쳤어요 — 바꾼 것 없음 · show 로 새로 보관하고 다시 plan' : (res.code ? '네이버가 받지 않았어요 — 바꾼 것 없음일 가능성이 높지만 show 로 지금 값을 확인하세요' : '서버가 거절했어요(위 error 그대로 전하기) — 바꾼 것 없음'), undo });
         const bad = (res.unexpected_paths || []), miss = (res.not_applied || []);
         const extra = P.warns.filter(w => /상태만 바꿈/.test(w));
         if (bad.length) extra.push(`🔴 예상 밖으로 바뀐 칸 ${bad.length}곳: ${bad.slice(0, 5).join(' · ')}${bad.length > 5 ? ' …' : ''} — 되돌리기를 권합니다`);

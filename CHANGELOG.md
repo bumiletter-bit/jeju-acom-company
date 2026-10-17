@@ -1,3 +1,9 @@
+## v5.9.539 (2026-10-17) — #720-D 첫 실 PUT 시험 결과 · 상세 쓰기 잠금(기본) · 판매 상태 왕복 성공
+
+- **실시험(워커1 · VIP 선물페이지 10801253976 비공개 · 시험 지시 2915 → 삭제 · 보관본 1·2 보존)**: A 상세 = 숨김 한 줄 apply → changed detailContent 1 · unexpected 0 · 400/429 없음 **그러나 네이버가 저장 때 상세 HTML 을 거름** — 스마트에디터 재편집 자료 `<script type="text/data">` 43블록 삭제 · 그림 링크 33개의 onclick·data-link* ·빈 style 삭제(`<!-- Not Allowed Attribute Filtered -->` 34개) · 우리 `style="display:none"` 도 삭제돼 `<p>720-test</p>` 가 약 1분 보이는 글로(비공개 · 손님 영향 0) → 105,636 → 93,739자 · revert 뒤 93,660자 = **원본 바이트 복구 불가**(글·그림 33장은 유지 · 손님 화면 동일 여부 미확인). B 판매 상태 = SALE → SUSPENSION(change-status 하나 · 통째 PUT 0 · 상세 바이트 동일) → revert SALE · residual 0 · 19초/13초. audit naver-product-write 6행(targetId null 로 정상). 원본 상세 = naver_product_backups id 1 before_json.
+- **조치**: server.js +6 — detail_html apply 는 설정 `agent_office_config naver_product_write {detail_enabled:true}` 가 아니면 고정 문구로 거절(행 없음 = 잠김 · 상태 apply 무관 · verify 76/76) · 창구 도구 plan --detail 카드 ⚠ · 서버 거절 문구 그대로 전달 · 업무지식 머리 「🔴 상세는 당분간 스마트스토어센터에서 · API 는 판매 상태만」 · 계약서 9절 「알려진 한계」.
+- **대표 결정 대기**: ①센터에서 VIP 상세 모양·에디터 편집 가능 여부 눈 확인(안 되면 보관본 원본 HTML 을 「HTML 직접 입력」으로) ②방향 = ⓐ 상세는 센터 · API 는 상태만(추천) / ⓑ 상세도 API(에디터 자료 빠짐 감수 · 잠금 해제 = 설정 한 줄). 다음 바퀴 후보 = 잔여 대조를 「거름 적용 원본」 기준 · 숨김은 HTML 주석 · 품절→판매 복귀 change-status 에 stockQuantity(조합 합).
+
 ## v5.9.538 (2026-10-17) — #720 네이버 상품 쓰기 1차(상세 HTML 문구·그림 + 판매 상태) · 「전체 보관 → 그 자리만 → 재조회 대조 → 되돌리기」를 코드가 강제
 
 - **배경(대표 10/17 「고」)**: 네이버 커머스 API 에 상품 수정은 다 있으나 중계서버 허용 목록이 읽기 + 답변 PUT 뿐이라 막혀 있었음. 10/14 직원이 네이버 옵션을 옛 값으로 되돌린 사고 → API 가 보관·대조·되돌리기를 강제하면 사람 실수가 줄어듦. 총괄 claude-c7(Fable) · 워커3 claude-d7(Fable · 공식 문서 확정 docs/720-naver-write-api.md · relay 읽기 점검) · 워커1 claude-80(Opus · server.js 러너) · 워커2 claude-49(Opus · relay · 창구 도구 · 업무지식 · server.js 읽기 점검). Fable 사용량 84% 라 Fable 몫은 문서 확정 1건 + 짧은 점검으로 줄임.

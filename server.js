@@ -15822,6 +15822,7 @@ function npwTagCount(h) { const c = {}; for (const m of String(h || '').matchAll
 const NPW_STRIP = [];      // PUT 바디에서 뺄 읽기 전용 칸(경로 배열들) — 첫 실 PUT 400 message 로 채움
 const NPW_VOLATILE = [];   // 조회마다 바뀌는 칸(신선도 대조 제외) — 10/17 VIP 10801253976 30초 간격 2회 실측 = 없음
 const NPW_MAX_IMAGES = 10, NPW_MAX_IMAGE_BYTES = 10 * 1024 * 1024 - 1;
+const NPW_DETAIL_LOCK_MSG = '상세 수정은 대표 확정 대기 — 네이버가 스마트에디터 자료를 걸러 원본 복구가 안 됨(#720-D)';
 const NPW_TEST_UID_MIN = 990000;   // = DESK_TEST_UID_MIN(시험 번호 계정 · 라이브 창구는 그 계정 지시를 안 집음)
 const npwInFlight = new Set();
 
@@ -15996,6 +15997,11 @@ async function naverProductWriteRun(req, deps) {
             const perr = npwCheckPatch(patch, before);
             if (perr) return fail(perr);
             if ('status' in patch && !row.origin_product_no) return fail('원상품 번호를 못 찾은 보관본이라 판매 상태를 바꿀 수 없어요');
+            // #720-D: 상세 수정은 잠금(설정 'naver_product_write' { detail_enabled:true } 일 때만) — 네이버가 스마트에디터 자료를 걸러 원본 복구가 안 됨
+            if ('detail_html' in patch) {
+                const cfg = (await db.query(`SELECT value FROM agent_office_config WHERE key = 'naver_product_write'`)).rows[0];
+                if (!(cfg && cfg.value && cfg.value.detail_enabled === true)) return fail(NPW_DETAIL_LOCK_MSG);
+            }
             // 신선도 — 보관한 뒤 누가 네이버에서 고쳤으면 그 위에 덮지 않는다(재고 칸은 주문으로 늘 움직여 제외 · 아래 바디가 지금 값을 쓴다)
             let cur;
             try { cur = await getNow(); } catch (e) { return naverErr(e, '상품 조회'); }

@@ -16,12 +16,13 @@ const ok = (cond, name, extra) => { if (cond) { pass++; console.log('  ✅', nam
 const quiet = async (fn) => { const o = console.error; console.error = () => {}; try { return await fn(); } finally { console.error = o; } };
 
 // ── 가짜 pool ──────────────────────────────────────────
-function fakePool(orders) {
+function fakePool(orders, cfg = { detail_enabled: true }) {   // cfg = 'naver_product_write' 설정 행(null = 행 없음)
     const backups = []; let seq = 0;
     const find = (id) => backups.find(x => x.id === id);
     return {
         backups,
         async query(sql, p = []) {
+            if (/FROM agent_office_config WHERE key = 'naver_product_write'/.test(sql)) return { rows: cfg ? [{ value: cfg }] : [] };
             if (/FROM pending_orders WHERE id = ANY/.test(sql)) return { rows: orders.filter(o => p[0].includes(o.id)) };
             if (/FROM pending_orders o LEFT JOIN users u/.test(sql)) return { rows: orders.filter(o => o.id === p[0]).map(o => ({ ...o, approved_at: o.approved_at || null, role: o.role || null, position: o.position || null })) };
             if (/^\s*INSERT INTO naver_product_backups \(product_no, origin_product_no, order_id, before_json, created_by\)/.test(sql)) {
@@ -324,6 +325,19 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const gp = mk(); const t0 = Date.now();
         await mod.naverProductWriteRun({ op: 'backup', product_no: CH, order_id: 101 }, { ...gp.deps, gapMs: 60 });   // GET + search = 2콜
         ok(Date.now() - t0 >= 55, '호출 사이 간격 적용(gapMs)', Date.now() - t0);
+    }
+
+    console.log('⑨ #720-D 상세 잠금(설정 행 없음·꺼짐 = 거절 · 상태는 허용)');
+    {
+        for (const [cfg, name] of [[null, '설정 행 없음'], [{ detail_enabled: false }, 'detail_enabled false']]) {
+            const db = fakePool(ORDERS, cfg), nv = fakeNaver(PRODUCT);
+            const deps = { pool: db, call: nv.call, audit };
+            const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, deps);
+            const x = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { detail_html: NEW_HTML } }, deps);
+            ok(!x.ok && /상세 수정은 대표 확정 대기/.test(x.error) && nv.puts.length === 0 && !db.backups[0].applied_at, `${name} → 상세 apply 거절(쓰기 0 · 적용 표시 0)`, x);
+            const y = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { status: 'SUSPENSION' } }, deps);
+            ok(y.ok && nv.statusPuts.length === 1, `${name} → 판매 상태 apply 는 됨`, y);
+        }
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

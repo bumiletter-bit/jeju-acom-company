@@ -71,3 +71,10 @@
 - 상세 HTML 안 외부 그림 주소 = 미명시 → ⑤로 올린 주소만 쓸 것.
 - 통째 PUT 이 `statusType` 을 같이 바꾸는지 = 미확인(바디엔 보관본 값 그대로라 무해) · revert 는 재조회로 상태를 보고 다르면 change-status 로 마저 맞춤.
 - 첫 실 PUT = 배포 뒤 VIP 10801253976 상세 맨 아래 한 줄(총괄 줄 세움) · 사람 손 복구용 원본 = 워커1 스크래치 `720/p1.json`.
+
+## 9. 알려진 한계 — 네이버 상세 거름(#720-D · 10/17 첫 실 PUT · VIP 10801253976)
+- 상세 HTML 을 API 로 PUT 하면 네이버가 저장 때 거른다(실측): ①스마트에디터 `<script type="text/data">` 블록 43개(에디터 재편집용 모듈 자료) 통째 삭제 ②그림 링크 `<a>` 33개의 `onclick` · `data-linktype` · `data-linkdata` · 빈 `style` 삭제 ③우리가 넣은 `style="display:none"` 삭제(→ 숨김 글이 보이는 글이 됨). 지운 자리에 `<!-- Not Allowed Attribute Filtered ( … ) -->` 주석을 남김(34개). 그림 33장·src·글은 그대로.
+- 결과: 105,636자 → 적용 93,739자 → 되돌림 93,660자. **되돌리기도 같은 거름을 거쳐 원본 바이트로는 못 돌아감**(잔여 = detailContent 하나 · 다른 칸 0). 원본 = 보관본 id 1 before_json.
+- 그래서 서버가 상세 수정을 잠근다: 설정 `agent_office_config 'naver_product_write'` = `{ detail_enabled: true }` 일 때만 `detail_html` apply · 행 없음·false = 「상세 수정은 대표 확정 대기 — 네이버가 스마트에디터 자료를 걸러 원본 복구가 안 됨(#720-D)」 거절. 판매 상태는 그대로 허용.
+- 판매 상태 왕복(SALE → SUSPENSION → SALE)은 실측 정상 · 잔여 0 · 상세 바이트 동일.
+- 다음 바퀴 후보(지금 안 함): 상세 갈래 잔여 비교를 「거름 적용한 원본」 기준으로 · 숨김 표시는 style 대신 HTML 주석 · 품절 → 판매 복귀는 change-status 에 stockQuantity(조합 합) — 문서 ④ 「품절에서 판매 중으로 변경 시 재고 수량 입력 필수」.
