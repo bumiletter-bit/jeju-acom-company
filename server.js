@@ -16990,6 +16990,13 @@ async function cpwProductRun(op, req, x) {
             const cfg = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'coupang_item_write'`)).rows[0] || {}).value || {};
             const strip = Array.isArray(cfg.create_strip) ? cfg.create_strip.map(String) : CPW_CREATE_STRIP;
             const body = cpwStrip(JSON.parse(JSON.stringify(src)), strip);
+            // 덮어쓸 값(설정 create_set {점 경로: 값} · 「items.칸」 = 모든 옵션 · strip 뒤에) — 실측 10/18: brandId 없는 브랜드 상품 = 거절 → 시험은 {"brand":"GENERIC"}
+            const set = cfg.create_set && typeof cfg.create_set === 'object' && !Array.isArray(cfg.create_set) ? cfg.create_set : {};
+            for (const [p, v] of Object.entries(set)) {
+                const [a, k] = String(p).split('.');
+                if (k && a === 'items') { for (const it of (body.items || [])) it[k] = v; }
+                else if (!k && a !== 'items' && a !== 'requested' && a !== 'sellerProductName') body[a] = v;   // 이름·requested 는 아래가 정함
+            }
             body.sellerProductName = name;
             if ('displayProductName' in body) body.displayProductName = name;
             body.requested = false;   // 🔴 임시저장(SAVED) — 승인 요청 안 함

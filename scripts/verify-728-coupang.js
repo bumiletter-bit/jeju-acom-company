@@ -533,6 +533,14 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
         const kcs = mkp(); kcs.db.cfg = { create_strip: ['sellerProductId', 'statusName', 'items.sellerProductItemId', 'items.vendorItemId'] };
         await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트' }, kcs.deps);
         ok('mdId' in kcs.cp.posts[0], '설정 create_strip 이 기본 목록을 덮음(mdId 남음)');
+        // create_set = strip 뒤에 덮음(brand 를 strip 해도 GENERIC 이 들어감) · items.칸 = 모든 옵션 · 이름·requested 는 못 덮음
+        const kset = mkp(); kset.cp.prods[SPC].brand = '제주아꼼이네'; kset.cp.prods[SPC].brandId = null;
+        kset.db.cfg = { create_strip: ['sellerProductId', 'statusName', 'items.sellerProductItemId', 'items.vendorItemId', 'brand', 'brandId'],
+            create_set: { brand: 'GENERIC', 'items.adultOnly': 'EVERYONE', requested: true, sellerProductName: '덮기' } };
+        const cs = await run({ op: 'create_saved', ...base, from_seller_product_id: SPC, name: '테스트 카라향(시험용)', items: [{ itemName: '시험 3kg', price: 29800, stock: 0 }] }, kset.deps);
+        const sb = kset.cp.posts[0];
+        ok(cs.ok && sb.brand === 'GENERIC' && !('brandId' in sb), 'create_set brand GENERIC 이 strip 뒤에 덮임(brandId 빠짐)', sb && [sb.brand, sb.brandId]);
+        ok(sb.items.every(it => it.adultOnly === 'EVERYONE') && sb.requested === false && sb.sellerProductName === '테스트 카라향(시험용)' && sb.items[0].maximumBuyCount === 0, 'items.칸 = 모든 옵션 · requested·이름은 못 덮음', sb && [sb.requested, sb.sellerProductName]);
 
         // 등록 보관행으로 update 거절
         const xc = await run({ op: 'update_full', ...base, backup_id: kc.db.backups[0].id, patch: { name: '테스트' } }, kc.deps);

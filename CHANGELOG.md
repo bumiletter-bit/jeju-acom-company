@@ -1,3 +1,8 @@
+## v5.9.551 (2026-10-18) — #729 쿠팡 임시저장 등록 = 쿠팡이 brandId 요구 → 설정 create_set(덮어쓸 값)으로 brand GENERIC
+
+- 실시험(워커1 · 본뜰 카라향 상품 · 임시저장 「테스트 카라향(시험용)」): 1차 = 「브랜드 ID가 필요합니다」(본뜬 JSON brand 「제주아꼼이네」 · brandId null = 기존 상품은 브랜드명만으로 통과돼 있던 것) → brand·brandId 를 빼도 2차 거절 「brandId 입력이 필요합니다 … 브랜드가 없는 상품은 brand 에 GENERIC」 → 서버에 설정 `coupang_item_write.create_set`(점 경로 → 값 · strip 뒤에 덮음) 추가 · 실DB = create_set {brand:"GENERIC"} · create_strip 에서 brand 제외(brandId 는 뺌).
+- 🔴 실제 새 상품을 쿠팡에 올릴 때는 brandId 필요(「브랜드 상품을 ID 없이 = 불이익」) → 길 = 브랜드 검색 API(relay 허용 줄 추가) 또는 대표가 윙 브랜드 관리에서 「제주아꼼이네」 등록 → brandId 를 create_set 으로. 시험용 임시저장은 GENERIC 으로 충분(노출 0).
+
 ## v5.9.550 (2026-10-18) — #729 쿠팡 2차(임시저장 등록 · 전체 수정 = 승인행 · 승인 상태 · 임시저장 삭제) · #730 문자 목록 「더 보기」(50건 상한 · 검색 결과도)
 
 - **#729(대표 「2차도 다 진행」)**: 중계서버 2차 6줄(PUT /seller-products 전체 수정 · PUT /{id}/partial · POST /seller-products 등록 · PUT /{id}/approvals 승인 요청 · DELETE /{id} · GET /{id}/histories · 2026-10-18.2 설치 끝 23:36Z). 서버(워커1) op get_full(전체 JSON 보관 kind product) · create_saved(조회 JSON 복사 → 이름·옵션 → requested:false 임시저장 · 노출 0 · 설정 create_strip · 하루 3) · update_full(보관본 위에 name·item_names·detail·images 만 → 통째 PUT → 결과 「승인 대기 · 승인 전 옛 모습 · 반려면 사유」 · 되돌리기도 승인행) · approval(단건 statusName + histories) · delete_saved(SAVED 만) · request_approval(PUT approvals · 실제 올릴 때만 · 시험 안 씀). 창구(워커2) coupang-item.js full/plan-full/apply-full/approval/create-saved/delete-saved · 업무지식 2차 줄 · 창구 CLAUDE.md 4-1 줄. 실시험 = 임시저장 「테스트 카라향(시험용)」 생성 → 10분 뒤 전체 조회 → 이름·옵션명·상세 수정 → 상태 → 삭제(승인 0회 · 아래 결과 줄).
