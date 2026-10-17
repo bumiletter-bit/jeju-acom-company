@@ -593,7 +593,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
         const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, k.deps);
         const d = k.nv.puts[0].originProduct.detailContent;
-        ok(ap.ok && ap.links_converted === 2 && ap.links_after === 2 && /href="https:\/\/smartstore\.naver\.com\/akkome\/products\/1" target="_blank"/.test(d) && /href="https:\/\/brand\.naver\.com\/jejuakkome\/products\/2"/.test(d), '옵션만 바꾼 PUT 도 상세 링크 2개(속성·주석) → 일반 href · links_converted 2 · links_after 2', [ap.links_converted, ap.links_after]);
+        ok(ap.ok && ap.links_converted === 2 && ap.links_after === 2 && /href="https:\/\/smartstore\.naver\.com\/akkome\/products\/1" rel="noopener"/.test(d) && !/target="_blank"/.test(d) && /href="https:\/\/brand\.naver\.com\/jejuakkome\/products\/2"/.test(d), '옵션만 바꾼 PUT 도 상세 링크 2개(속성·주석) → 일반 href · links_converted 2 · links_after 2', [ap.links_converted, ap.links_after]);
         ok(!ap.unexpected_paths.includes('originProduct.detailContent') && ap.detail_filtered === true && ap.sale_ok.ok === true && ap.sale_ok.detail === 'filtered', '#724: 보낸 상세(링크 href)와 재조회가 같으면 거름 판정 = detail_filtered · unexpected 아님 · sale_ok detail ✓', [ap.unexpected_paths, ap.detail_filtered, ap.sale_ok]);
         // 네이버가 일반 href 까지 지우면 links_after 0 으로 드러남
         const sk = mk(PL, { stripLinks: true });
@@ -785,6 +785,8 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         ok(a3.ok && a3.detail_filtered === true && !a3.not_applied.includes('detail_html') && a3.sale_ok.ok === true, '상세 patch 도 거름만 다르면 not_applied 아님 · sale_ok ✓', [a3.detail_filtered, a3.not_applied, a3.sale_ok]);
         // 정규화 함수 단독
         ok(mod.npwDetailSame('<p class="a ">x</p><!-- c --><img src="y" />', '<p class="a">x</p><img src="y">') && !mod.npwDetailSame('<p>x</p>', '<p>y</p>'), 'npwDetailSame: 거름만 다르면 같음 · 글이 다르면 다름');
+        // #726 실측: 네이버가 target="_blank" 를 지움(레드키위·VIP) → 그 차이만이면 같음 · href 가 다르면 다름
+        ok(mod.npwDetailSame('<a href="https://x/1" target="_blank" rel="noopener" class="l">', '<a href="https://x/1" rel="noopener" class="l">') && !mod.npwDetailSame('<a href="https://x/1" target="_blank">', '<a href="https://x/2">'), 'npwDetailSame: target 만 지워진 것 = 같음 · 링크 주소가 다르면 다름');
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

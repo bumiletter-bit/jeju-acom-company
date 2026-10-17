@@ -1,3 +1,8 @@
+## v5.9.547 (2026-10-17) — #725 VIP·레드키위 그림 링크 API 복구 · #726 target="_blank" 는 네이버가 지움(모듈에서 제거 · 정규화 비교에서 무시)
+
+- **#725(워커1 · 시험 계정 지시 · 22:27~)**: 레드키위 13782816361 = 지금 상세 + 모듈(주석에서 href 되살림) + 5kg 재고 99,975 → 99,976 을 한 apply 로 → **링크 4 복구 ✓**(smartstore 6400134206 · brand 5531798664·6400134206·11126666859) · 가격·다른 옵션·할인·대표 그림 동일 · 옵션 id 유지 · 판매중 · unexpected 0. VIP 10801253976 = **링크 5 복구 ✓**(#720-E 의 5장 그대로 · 22초) · 65,500 · 옵션 0/+5,300/+22,300 · 재고 99,996/99,997/99,998 · 대표 그림·가격 동일 · unexpected 0 · 상세 93,660 → 94,338. 두 건 모두 판매중·전시 ON · audit backup 2·apply 2 · 시험 지시 2921 삭제. → **대표 챙길 일 22(센터에서 링크 수기) 불필요 = 닫음** · 남은 결정 없음(ⓐ 확정).
+- **실측**: 네이버가 일반 링크의 `target="_blank"` 만 지움(href·rel·class 남음) → sale_ok 가 detail ⚠(차이 4곳 전부 target) 로 멈춤(실해 0 · 링크는 같은 창에서 열림). → **#726** naver-detail-links.js 가 target 을 안 넣음(워커2) + npwDetailNorm 이 target 속성 무시(워커1) → 같은 경우 detail_filtered ✓.
+
 ## v5.9.546 (2026-10-17) — #724 통째 수정 잠금 해제(대표 ⓐ · 실DB put_enabled·detail_enabled true) · 품절 풀기 = ④ 통째 PUT(statusType SALE + 재고) 먼저 · 상세 거름 = 「예상된 변화」(정규화 비교) · 창구 문구
 
 - **테스트 한라봉 13817259794 전 기능 왕복 통과(워커1 · 21:59~22:21 · CHANGELOG 545)**: 품절 풀기 실측 = ① 재고 PUT(바디 OUTOFSTOCK) 400 statusType · ② change-status SALE 400 · ③ +stockQuantity 400 · **④ 통째 PUT statusType SALE + 옵션 재고 = 성공** → 「바디 statusType 바꾸면 400」은 SALE→OUTOFSTOCK 방향만 · change-status 로는 OUTOFSTOCK 에서 못 나옴. 그림 올리기 ✓(PNG 549KB) · 일반 href 생존 ✓ · audit 25행 · 시험 지시 2919·2920 삭제 · 테스트 상품은 남김(앞으로 시험용 · 판매중지·전시중지·쇼핑 미노출).

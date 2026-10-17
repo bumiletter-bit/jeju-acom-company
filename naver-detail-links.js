@@ -4,7 +4,8 @@
  * - 스마트에디터 꼴: <a href="#" class="se-module-image-link-use …" onclick="return false;" data-linktype="img"
  *   data-linkdata="{…&quot;linkUse&quot; : &quot;true&quot;, &quot;link&quot; : &quot;https://…&quot;…}">
  *   → API 로 저장하면 네이버가 onclick·data-*·style 을 걸러 링크가 죽는다(#720-D · 그림 5장).
- * - 바꾸는 것 = linkUse true + link 가 http(s) 인 <a> 여는 태그 하나뿐 → <a href="link" target="_blank" rel="noopener" class="…">
+ * - 바꾸는 것 = linkUse true + link 가 http(s) 인 <a> 여는 태그 하나뿐 → <a href="link" rel="noopener" class="…">
+ *   (target="_blank" 는 안 넣음 — 네이버가 저장 때 target 만 지움 · #725 레드키위 실측 10/17 · href·rel·class 는 남음)
  *   (class 는 그대로 둠 — 모양 유지 · 나머지 바이트 무변경 · 닫는 </a>·<img> 무접촉)
  * - fromComments(기본 켬 · { fromComments:false } 로 끔): 이미 걸러진 상세에는 네이버가
  *   「<!-- Not Allowed Attribute Filtered ( … data-linkdata="…" ) -->」 주석을 걸러진 <a> 바로 앞에 남긴다
@@ -74,7 +75,7 @@ function convertImageLinks(html, opts) {
         if (!L.link || L.skip) { if (L.skip) skipped.push({ offset, from, reason: L.skip, link: L.link || null }); return tok; }
         const cls = a['class'] != null ? ` class="${a['class']}"` : '';
         links.push({ offset, from, link: L.link, src: L.src, id: L.id });
-        return `<a href="${escAttr(L.link)}" target="_blank" rel="noopener"${cls}>`;
+        return `<a href="${escAttr(L.link)}" rel="noopener"${cls}>`;
     });
     return { html: out, converted: links.length, links, skipped };
 }

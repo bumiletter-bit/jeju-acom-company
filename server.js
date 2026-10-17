@@ -15864,6 +15864,7 @@ function npwDetailNorm(h) {
         .replace(/\s(?:onclick|data-[\w-]+)\s*=\s*("[^"]*"|'[^']*')/gi, '')
         .replace(/\sstyle\s*=\s*(""|'')/gi, '')
         .replace(/\shref\s*=\s*("#"|'#')/gi, '')
+        .replace(/\starget\s*=\s*("[^"]*"|'[^']*')/gi, '')   // #726 실측: 네이버가 a 태그 target 을 지움(레드키위·VIP 10/17)
         .replace(/\sclass\s*=\s*"([^"]*)"/gi, (m, v) => ' class="' + v.trim().replace(/\s+/g, ' ') + '"')
         .replace(/&quot;/g, '"')
         .replace(/\s*\/>/g, '>')
