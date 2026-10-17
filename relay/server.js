@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-10-17.1'; // #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-10-17.2'; // #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -96,6 +96,7 @@ const ALLOW = [
     { m: 'PUT',  re: /^\/external\/v2\/products\/channel-products\/\d+$/ },                       // #720 채널 상품 수정(상세·그림·옵션 재고 통째) — 쓰기 4번째
     { m: 'PUT',  re: /^\/external\/v1\/products\/origin-products\/\d+\/change-status$/ },        // #720 판매 상태·재고 변경(원상품 번호 · 바디 statusType·stockQuantity 만) — 쓰기 5번째
     { m: 'POST', re: /^\/external\/v1\/product-images\/upload$/ },                                // #720 그림 올리기(multipart · MULTIPART_ALLOW 와 짝 · allowed() 를 먼저 타므로 여기도 필요)
+    { m: 'POST', re: /^\/external\/v2\/products$/ },                                              // #723 신규 상품 등록(대표 확정 10/17 「2번으로」 · 정확일치 · 뒤에 붙은 경로 없음)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 
