@@ -54,7 +54,7 @@ async function relayHealth(withToken = false) {
 
 // 네이버 API 호출 (중계서버 경유). 실패 시 notify(text)로 알림 후 예외.
 async function callNaver(opts, notify) {
-    const { method = 'GET', path, query = null, body = null } = opts || {};
+    const { method = 'GET', path, query = null, body = null, timeoutMs = 20000 } = opts || {};   // #720: 그림 올리기만 60초(기본 20초 그대로)
     if (!configured()) throw new Error('중계서버 환경변수(NAVER_RELAY_URL / NAVER_RELAY_TOKEN) 미설정');
     if (!path) throw new Error('path 필요');
     const notifySafe = async (t) => { try { if (notify) await notify(t); } catch (_) { /* 무시 */ } };
@@ -64,6 +64,7 @@ async function callNaver(opts, notify) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken()}` },
             body: JSON.stringify({ method, path, query, body }),
+            timeoutMs,
         });
     } catch (e) {
         await notifySafe(`🛰️ 네이버 중계서버 연결 실패 — ${method} ${path}\n${e.message}`);
