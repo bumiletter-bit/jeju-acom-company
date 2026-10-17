@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-10-17.2'; // #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-10-18.1'; // #728 쿠팡 상품 1차(vendorItem 가격·재고·판매중지·재개 PUT + 상품 조회 GET · 경로 자리 = 숫자만) · 종전 2026-10-17.2 = #723 신규 상품 등록(POST /external/v2/products) · 종전 2026-10-17.1 = #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -198,7 +198,7 @@ app.post('/naver', async (req, res) => {
 });
 
 // ══════════════ 쿠팡 OPEN API 중계 (2026-07-26 — 지시문_쿠팡_송장변환_연동 v2) ══════════════
-// 원칙: 배송/주문 '조회' 2종만 허용(상품·가격 API 호출 코드 자체 없음). 쿠팡 키는 이 서버 .env에만.
+// 원칙: 아래 허용목록 경로만(주문 조회 2 · 발주확인 · #728 상품 조회 3·가격·재고·판매중지/재개). 쿠팡 키는 이 서버 .env에만.
 // HMAC 서명 (쿠팡 공식 문서 PHP/Java 예제 그대로):
 //   datetime(UTC yyMMdd'T'HHmmss'Z') + METHOD + path + query → HMAC-SHA256(hex, secret)
 //   Authorization: CEA algorithm=HmacSHA256, access-key=…, signed-date=…, signature=…
@@ -213,13 +213,42 @@ function coupangSign(method, urlPath, queryString) {
 }
 
 // 허용목록: 경로 '템플릿'과 정확 일치해야 하며, {vendorId}는 서버가 .env 값으로 강제 치환(경로 위조 차단).
+// #728: 템플릿의 그 밖 자리({vendorItemId}·{sellerProductId}·{price}·{quantity})는 요청 path 에 실제 숫자로 오고 숫자(1~15자리)만 통과
+//   · vendorId 자리는 요청이 '{vendorId}' 글자 그대로 보내야 함(숫자 넣으면 차단) · qVendor = query.vendorId 도 .env 값으로 강제
+const CP_MKT = '/v2/providers/seller_api/apis/api/v1/marketplace';
 const COUPANG_ALLOW = [
     { m: 'GET', tpl: '/v2/providers/openapi/apis/api/v5/vendors/{vendorId}/ordersheets' },     // 발주서(상품준비중) 목록
     { m: 'GET', tpl: '/v2/providers/openapi/apis/api/v6/vendors/{vendorId}/returnRequests' },  // 반품/취소 요청 목록
     // #402(2026-08-24 대표 확정): 발주확인 = 결제완료 → 상품준비중 (알림 발송 성공 건 한정 — 회사프로그램이 판단).
     //   공식 스펙: PATCH·body {vendorId, shipmentBoxIds[]} 최대 50개·결제완료 상태만 적용.
     { m: 'PATCH', tpl: '/v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/acknowledgement' },
+    // #728 쿠팡 상품 1차(대표 「쿠팡도 고」 10/18) — 조회 3 + 즉시 반영 쓰기 4(상품명·옵션명·상세·등록 = 승인 심사 경로라 2차 · 여기 없음)
+    { m: 'GET', tpl: CP_MKT + '/seller-products', qVendor: true },                       // 상품 목록(query vendorId 강제)
+    { m: 'GET', tpl: CP_MKT + '/seller-products/{sellerProductId}' },                    // 상품 하나(옵션 = items[].vendorItemId)
+    { m: 'GET', tpl: CP_MKT + '/vendor-items/{vendorItemId}/inventories' },              // 옵션 재고·가격·판매 상태
+    { m: 'PUT', tpl: CP_MKT + '/vendor-items/{vendorItemId}/prices/{price}' },           // 가격 변경(query forceSalePriceUpdate)
+    { m: 'PUT', tpl: CP_MKT + '/vendor-items/{vendorItemId}/quantities/{quantity}' },    // 재고 변경
+    { m: 'PUT', tpl: CP_MKT + '/vendor-items/{vendorItemId}/sales/stop' },               // 판매 중지
+    { m: 'PUT', tpl: CP_MKT + '/vendor-items/{vendorItemId}/sales/resume' },             // 판매 재개
 ];
+const CP_MAX = { '{price}': 10000000, '{quantity}': 999999 };   // 값 자리 상한(0 하나 더 붙인 실수 막기)
+// 요청 path → 허용 규칙 + 실제 경로(vendorId 치환) · 안 맞으면 null
+function coupangMatch(method, reqPath) {
+    const segs = String(reqPath).split('/');
+    for (const rule of COUPANG_ALLOW) {
+        if (rule.m !== method) continue;
+        const t = rule.tpl.split('/');
+        if (t.length !== segs.length) continue;
+        let ok = true;
+        for (let i = 0; i < t.length && ok; i++) {
+            if (t[i] === '{vendorId}') ok = segs[i] === '{vendorId}';
+            else if (/^\{[A-Za-z]+\}$/.test(t[i])) ok = /^\d{1,15}$/.test(segs[i]) && !(t[i] in CP_MAX && Number(segs[i]) > CP_MAX[t[i]]);
+            else ok = t[i] === segs[i];
+        }
+        if (ok) return { rule, realPath: segs.join('/').replace('{vendorId}', COUPANG_VENDOR_ID) };
+    }
+    return null;
+}
 
 // 쿠팡 호출 중계: POST /coupang  { method, path(템플릿 그대로), query?, body? }
 app.post('/coupang', async (req, res) => {
@@ -230,15 +259,17 @@ app.post('/coupang', async (req, res) => {
     if (!COUPANG_ACCESS_KEY || !COUPANG_SECRET_KEY || !COUPANG_VENDOR_ID) {
         return res.status(503).json({ error: 'coupang_keys_not_set' });
     }
-    const rule = COUPANG_ALLOW.find(a => a.m === method && a.tpl === reqPath);
+    const hit = coupangMatch(method, reqPath);
+    const rule = hit && hit.rule;
     if (!rule) {
         log('쿠팡 차단(허용목록 외)', method, reqPath);
         return res.status(403).json({ error: 'path_not_allowed', method, path: reqPath });
     }
-    const realPath = rule.tpl.replace('{vendorId}', COUPANG_VENDOR_ID);
+    const realPath = hit.realPath;
     try {
         // 서명과 실제 요청의 쿼리 문자열은 반드시 동일 바이트 — 같은 문자열을 두 곳에 사용
-        const qs = query && typeof query === 'object' ? new URLSearchParams(query).toString() : '';
+        const q2 = query && typeof query === 'object' ? (rule.qVendor ? { ...query, vendorId: COUPANG_VENDOR_ID } : query) : (rule.qVendor ? { vendorId: COUPANG_VENDOR_ID } : null);
+        const qs = q2 ? new URLSearchParams(q2).toString() : '';
         const auth = coupangSign(method, realPath, qs);
         const url = `${COUPANG_API_BASE}${realPath}${qs ? '?' + qs : ''}`;
         // #402: body의 vendorId는 경로와 동일하게 .env 값으로 강제(위조 차단) — GET은 body 없음(종전 동일)
