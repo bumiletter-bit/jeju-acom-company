@@ -88,7 +88,11 @@ sale_ok: { … }                 // B1 칸 · 단 가격·옵션을 바꾼 apply
 - `changed_paths` 에 옵션별 전 → 후는 options_table 로 · 경로 문자열은 종전 꼴(`originProduct.detailAttribute.optionInfo.optionCombinations[n].price` 등).
 - revert = 우리가 바꾼 칸만 보관본 값으로(지금 값 위에 · 남의 변경·판매로 줄어든 재고는 안 덮음 · 단 patch 에 stock 이 있던 옵션은 보관본 재고로).
 
-**v5.9.545 손질(실측 10/17 테스트 한라봉 · 품절 상품에 재고 PUT = 400)** — 품절 → 판매(apply SALE · auto_sale · 품절 apply 의 revert)는 멈추지 않고 순차 시도: ① 통째 PUT(재고만) ② change-status {statusType:SALE} ③ change-status {statusType:SALE, stockQuantity: 재고 합} ④ 통째 PUT(statusType SALE + 재고) → 하나라도 SALE 이면, 재고가 아직 모자라면 재고 PUT 한 번 더(상태 SALE 인 채 · via channel-restock). 시도마다 (성공 결과 ) ·  는 종전 이름(channel·status). revert 의 다른 실패(통째 PUT·판매 상태)도  를 응답과 보관본  에 남김. 성공한 길만 남기는 정리는 실측 뒤.
+**v5.9.546 정리(#724 · 실측 10/17 테스트 한라봉 13817259794 반영 · 아래 545 줄보다 우선)**
+- **품절 풀기 = 통째 PUT(바디 statusType SALE + 옵션 재고)** — 실측에서 이 길만 먹음(재고만 PUT·change-status {SALE}·change-status {SALE, stockQuantity} = 셋 다 400 invalid statusType). 순서 = `channel+SALE` 먼저 → 안 되면 `channel` → `change-status` → `change-status+stock`(안전망) → SALE 이면 재고 모자랄 때 `channel-restock`. 「바디 statusType 을 바꾸면 400」 은 SALE → OUTOFSTOCK 방향만(품절 걸기 = 재고 0 PUT · 상태는 네이버가 바꿈).
+- **상세 거름 = 예상된 변화**: 통째 PUT 뒤 재조회 상세가 기대(보관본 또는 보관본+patch)와 바이트가 달라도, 실제로 보낸 상세(링크 모듈 적용 뒤)와 정규화(`npwDetailSame` = 스크립트·주석·onclick·data-*·빈 style·href="#"·class 끝 공백·&quot;·자기닫기·공백 무시)해 같으면 → `detail_filtered:true` · `changed_paths`/`unexpected_paths`/`residual_paths`/`not_applied` 에서 상세를 뺌 · `sale_ok.detail:'filtered'`(detail 은 bad 아님). 정규화 뒤에도 다르면(글자·그림이 바뀜) 종전대로 unexpected · sale_ok ⚠ detail.
+
+**v5.9.545 손질(실측 10/17 테스트 한라봉 · 품절 상품에 재고 PUT = 400)** — 품절 → 판매(apply SALE · auto_sale · 품절 apply 의 revert)는 멈추지 않고 순차 시도: ① 통째 PUT(재고만) ② change-status {statusType:SALE} ③ change-status {statusType:SALE, stockQuantity: 재고 합} ④ 통째 PUT(statusType SALE + 재고) → 하나라도 SALE 이면, 재고가 아직 모자라면 재고 PUT 한 번 더(상태 SALE 인 채 · via channel-restock). 시도마다 `attempts:[{ via, code, invalid_fields, status_after, stock_after }]`(성공 결과엔 `sale_attempts`) · `steps` 는 종전 이름(channel·status). revert 의 다른 실패(통째 PUT·판매 상태)도 `invalid_fields` 를 응답과 보관본 `result_json.revert_failed` 에 남김. 성공한 길만 남기는 정리는 실측 뒤.
 
 **v5.9.542 손질(실측 10/17 레드키위 반영 · 아래 v5.9.541 줄보다 우선)**
 - 실측: 통째 PUT 바디 `statusType` 을 바꾸면 400(invalidInputs `originProduct.statusType`) → **품절 걸기 = 바디에서 옵션 재고만 전부 0(statusType 은 지금 값 그대로)** → 재조회가 OUTOFSTOCK 이 아니면 `not_applied:['status']`. **풀기 = 재고만 채운 통째 PUT → 재조회 SALE 아니면 change-status SALE 1회**(attempts 에 둘 다). 되돌려 다시 품절로 = 재고 0 PUT.

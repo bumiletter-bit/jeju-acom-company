@@ -9,7 +9,7 @@ const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const a = src.indexOf('// #720-B 시작'), b = src.indexOf('// #720-B 끝');
 if (a < 0 || b <= a) { console.error('server.js 에서 #720-B 구간을 못 찾음'); process.exit(1); }
-const mod = new Function(src.slice(a, b) + '\nreturn { naverProductWriteRun, npwDiff, npwSummary, NPW_FIELDS };')();
+const mod = new Function(src.slice(a, b) + '\nreturn { naverProductWriteRun, npwDiff, npwSummary, NPW_FIELDS, npwDetailSame };')();
 
 let pass = 0, failN = 0;
 const ok = (cond, name, extra) => { if (cond) { pass++; console.log('  ✅', name); } else { failN++; console.log('  ❌', name, extra !== undefined ? JSON.stringify(extra).slice(0, 400) : ''); } };
@@ -199,7 +199,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         k2.nv.call = (orig => async (req) => { if (req.method === 'PUT' && /channel-products/.test(req.path)) { const keep = k2.nv.product.originProduct.statusType; const r = await orig(req); k2.nv.product.originProduct.statusType = keep; return r; } return orig(req); })(k2.nv.call);
         const rv4 = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: b4.backup_id }, { pool: k2.db, call: k2.nv.call, audit }));
         ok(rv4.ok && rv4.same_as_before && rv4.steps.join() === 'channel,status' && rv4.status_after_put === 'OUTOFSTOCK' && k2.nv.statusPuts.length === 1 && JSON.stringify(k2.nv.statusPuts[0]) === '{"statusType":"SALE"}'
-            && rv4.sale_attempts.map(x => x.via + ':' + x.code + ':' + x.status_after).join() === 'channel:null:OUTOFSTOCK,change-status:null:SALE' && rv4.sale_ok.ok,
+            && rv4.sale_attempts.map(x => x.via + ':' + x.code + ':' + x.status_after).join() === 'channel+SALE:400:OUTOFSTOCK,channel:null:OUTOFSTOCK,change-status:null:SALE' && rv4.sale_ok.ok,
             '#721-B 안전망: 통째 PUT 뒤 품절이면 change-status SALE 1회 → 판매 · attempts 두 줄', rv4);
         // 안전망도 400 이면 오류 · attempts 에 두 code · 재고 복원 ✓ · 상태 남음
         const k3 = mk(null, { statusFromOut400: true });
@@ -207,7 +207,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         await run({ op: 'apply', order_id: 101, backup_id: b5.backup_id, patch: { status: 'OUTOFSTOCK' } }, k3.deps);
         k3.nv.call = (orig => async (req) => { if (req.method === 'PUT' && /channel-products/.test(req.path)) { const keep = k3.nv.product.originProduct.statusType; const r = await orig(req); k3.nv.product.originProduct.statusType = keep; return r; } return orig(req); })(k3.nv.call);
         const rv5 = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: b5.backup_id }, { pool: k3.db, call: k3.nv.call, audit }));
-        ok(!rv5.ok && rv5.steps_done.join() === 'channel' && rv5.attempts.map(x => x.via + ':' + x.code).join() === 'channel:null,change-status:400,change-status+stock:400,channel+SALE:400' && rv5.stock_restored === true && rv5.status_now === 'OUTOFSTOCK' && /판매중이 아님/.test(rv5.note) && !k3.db.backups[0].reverted_at,
+        ok(!rv5.ok && rv5.steps_done.join() === 'channel' && rv5.attempts.map(x => x.via + ':' + x.code).join() === 'channel+SALE:400,channel:null,change-status:400,change-status+stock:400' && rv5.stock_restored === true && rv5.status_now === 'OUTOFSTOCK' && /판매중이 아님/.test(rv5.note) && !k3.db.backups[0].reverted_at,
             '#723-D 네 가지 시도 전부 실패 → 오류 · attempts 4줄(code) · 재고 복원 ✓ · 상태 남음 · reverted_at 없음', rv5);
         // 원상품 번호를 못 푼 보관본
         const n = mk(null, { noOrigin: true });
@@ -437,7 +437,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const bn = await run({ op: 'backup', product_no: CH, order_id: 101 }, n.deps);
         await run({ op: 'apply', order_id: 101, backup_id: bn.backup_id, patch: { status: 'OUTOFSTOCK' } }, n.deps);
         const rn = await run({ op: 'revert', order_id: 101, backup_id: bn.backup_id }, n.deps);
-        ok(rn.ok && rn.sale_ok.ok && n.nv.statusPuts.length === 0 && rn.status_after_put === 'SALE' && rn.steps.join() === 'channel', '재고 채우면 네이버가 판매로 되돌리는 경우 = PUT 하나로 끝 · change-status 0', rn);
+        ok(rn.ok && rn.sale_ok.ok && n.nv.statusPuts.length === 0 && rn.sale_attempts.map(x => x.via + ':' + x.code).join() === 'channel+SALE:400,channel:null' && rn.steps.join() === 'channel', '재고 채우면 네이버가 판매로 되돌리는 경우 = PUT 하나로 끝 · change-status 0', rn);
         // 판매중지 되돌림은 종전대로 change-status statusType 하나
         const u = mk();
         const bu = await run({ op: 'backup', product_no: CH, order_id: 101 }, u.deps);
@@ -459,7 +459,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         await run({ op: 'apply', order_id: 101, backup_id: bq.backup_id, patch: { status: 'OUTOFSTOCK' } }, q.deps);
         qo.putFail = true;
         const rq = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: bq.backup_id }, q.deps));
-        ok(!rq.ok && rq.attempts[0].via === 'channel' && rq.attempts[0].code === 400 && JSON.stringify(rq.attempts[0].invalid_fields) === '["originProduct.foo"]' && rq.attempts.length === 4 && rq.status_now === 'OUTOFSTOCK' && rq.stock_restored === false && !JSON.stringify(rq).includes('원문'), 'PUT 400 → 다음 시도로 · 칸 이름은 attempts 에 · 품절 그대로 · 원문 안 나감', rq);
+        ok(!rq.ok && rq.attempts[1].via === 'channel' && rq.attempts[1].code === 400 && JSON.stringify(rq.attempts[1].invalid_fields) === '["originProduct.foo"]' && rq.attempts.length === 4 && rq.status_now === 'OUTOFSTOCK' && rq.stock_restored === false && !JSON.stringify(rq).includes('원문'), 'PUT 400 → 다음 시도로 · 칸 이름은 attempts 에 · 품절 그대로 · 원문 안 나감', rq);
         // apply 품절 → 판매(보관본 재고 있음) = change-status SALE + 재고 합
         const os = JSON.parse(JSON.stringify(PRODUCT)); os.originProduct.statusType = 'OUTOFSTOCK';
         const o = mk(os);
@@ -594,7 +594,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, k.deps);
         const d = k.nv.puts[0].originProduct.detailContent;
         ok(ap.ok && ap.links_converted === 2 && ap.links_after === 2 && /href="https:\/\/smartstore\.naver\.com\/akkome\/products\/1" target="_blank"/.test(d) && /href="https:\/\/brand\.naver\.com\/jejuakkome\/products\/2"/.test(d), '옵션만 바꾼 PUT 도 상세 링크 2개(속성·주석) → 일반 href · links_converted 2 · links_after 2', [ap.links_converted, ap.links_after]);
-        ok(ap.unexpected_paths.includes('originProduct.detailContent'), '상세가 달라진 것은 숨기지 않고 unexpected 로 보고', ap.unexpected_paths);
+        ok(!ap.unexpected_paths.includes('originProduct.detailContent') && ap.detail_filtered === true && ap.sale_ok.ok === true && ap.sale_ok.detail === 'filtered', '#724: 보낸 상세(링크 href)와 재조회가 같으면 거름 판정 = detail_filtered · unexpected 아님 · sale_ok detail ✓', [ap.unexpected_paths, ap.detail_filtered, ap.sale_ok]);
         // 네이버가 일반 href 까지 지우면 links_after 0 으로 드러남
         const sk = mk(PL, { stripLinks: true });
         const bs = await run({ op: 'backup', product_no: CH, order_id: 101 }, sk.deps);
@@ -742,10 +742,10 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
             return rv;
         };
         const r1 = await run4({ putStockWhileOut400: true, csSaleNeedsStock: true }, '재고 PUT 400 → change-status 400 → change-status+재고 = SALE → 재고 PUT 다시(상태 SALE) → 원본',
-            'channel:400:OUTOFSTOCK,change-status:400:OUTOFSTOCK,change-status+stock:null:SALE,channel-restock:null:SALE', 'status,channel');
-        ok(JSON.stringify(r1.sale_attempts[0].invalid_fields) === '["originProduct.detailAttribute.optionInfo.optionCombinations[0].stockQuantity"]', '실패 시도마다 invalid_fields(칸 이름) 기록', r1.sale_attempts[0]);
-        await run4({ putStockWhileOut400: true, statusFromOut400: true, putSaleOk: true }, '①②③ 실패 → ④ 통째 PUT(statusType SALE + 재고) 성공',
-            'channel:400:OUTOFSTOCK,change-status:400:OUTOFSTOCK,change-status+stock:400:OUTOFSTOCK,channel+SALE:null:SALE', 'channel');
+            'channel+SALE:400:OUTOFSTOCK,channel:400:OUTOFSTOCK,change-status:400:OUTOFSTOCK,change-status+stock:null:SALE,channel-restock:null:SALE', 'status,channel');
+        ok(JSON.stringify(r1.sale_attempts[1].invalid_fields) === '["originProduct.detailAttribute.optionInfo.optionCombinations[0].stockQuantity"]', '실패 시도마다 invalid_fields(칸 이름) 기록', r1.sale_attempts[0]);
+        await run4({ putStockWhileOut400: true, statusFromOut400: true, putSaleOk: true }, '#724: 실측 길(통째 PUT statusType SALE + 재고)이 첫 시도에 먹음 → 400 0번',
+            'channel+SALE:null:SALE', 'channel');
         // revert 실패 길에도 invalid_fields 가 보관본에
         const k = mk();
         const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
@@ -754,6 +754,37 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const rf = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, { ...k.deps, call: k.nv.call }));
         const row = k.db.backups[0];
         ok(!rf.ok && JSON.stringify(rf.invalid_fields) === '["originProduct.bar"]' && row.result_json.revert_failed && JSON.stringify(row.result_json.revert_failed.invalid_fields) === '["originProduct.bar"]' && !row.reverted_at, 'revert 통째 PUT 400 → invalid_fields 응답·보관본 둘 다 · reverted_at 없음', [rf, row.result_json.revert_failed]);
+    }
+
+    console.log('⑮ #724 상세 거름 = 예상된 변화(정규화 같음 → detail_filtered · sale_ok ✓) · 진짜 변화 = ⚠');
+    {
+        // 네이버가 저장 때 스마트에디터 자료를 걸러 내는 척(스크립트 삭제 · onclick·data-* 를 주석으로 · 빈 style·class 끝 공백·자기닫기)
+        const SE = '<div class="se-a ">  <a href="#" class="se-module-image-link " style="" onclick="return false;" data-linktype="img" data-linkdata="{&quot;linkUse&quot;:&quot;false&quot;}"><img src="https://x/a.jpg" /></a></div><script type="text/data">{"x":1}</script><p>본문</p>';
+        const PF = JSON.parse(JSON.stringify(PRODUCT)); PF.originProduct.detailContent = SE;
+        const filt = (x) => { x.originProduct.detailContent = x.originProduct.detailContent
+            .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/ style="" onclick="return false;" data-linktype="img" data-linkdata="[^"]*"/, '')
+            .replace(/<a href="#"/, '<!-- Not Allowed Attribute Filtered ( style="" onclick="return false;" ) --><a href="#"')
+            .replace('class="se-a "', 'class="se-a"').replace(' />', '>'); };
+        const k = mk(PF, { sideEffect: filt });
+        const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+        const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, k.deps);
+        ok(ap.ok && k.nv.product.originProduct.detailContent !== SE && ap.detail_filtered === true && !ap.changed_paths.includes('originProduct.detailContent') && ap.unexpected_paths.length === 0 && ap.sale_ok.ok === true,
+            '옵션만 바꾼 PUT 에서 네이버 거름(바이트 다름) = detail_filtered · changed·unexpected 에서 빠짐 · sale_ok ✓', [ap.detail_filtered, ap.changed_paths, ap.unexpected_paths, ap.sale_ok]);
+        const rv = await run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps);
+        ok(rv.ok && rv.same_as_before === true && rv.detail_filtered === true && rv.sale_ok.ok === true, 'revert 도 거름만 남으면 same_as_before · detail_filtered · sale_ok ✓', rv);
+        // 진짜 변화(글자가 바뀜)는 종전대로 ⚠
+        const k2 = mk(PF, { sideEffect: (x) => { filt(x); x.originProduct.detailContent = x.originProduct.detailContent.replace('본문', '다른 글'); } });
+        const b2 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k2.deps);
+        const a2 = await run({ op: 'apply', order_id: 101, backup_id: b2.backup_id, patch: { sale_price: 30000 } }, k2.deps);
+        ok(a2.ok && !a2.detail_filtered && a2.unexpected_paths.includes('originProduct.detailContent') && a2.sale_ok.bad.includes('detail'), '거름 밖 변화(글자) = unexpected · sale_ok ⚠ detail', [a2.detail_filtered, a2.unexpected_paths, a2.sale_ok]);
+        // 상세를 바꾼 apply 도: 보낸 상세와 거름만 다르면 not_applied 에서 detail_html 빠짐
+        const k3 = mk(PF, { sideEffect: filt });
+        const b3 = await run({ op: 'backup', product_no: CH, order_id: 101 }, k3.deps);
+        const a3 = await run({ op: 'apply', order_id: 101, backup_id: b3.backup_id, patch: { detail_html: SE.replace('본문', '본문 고침') } }, k3.deps);
+        ok(a3.ok && a3.detail_filtered === true && !a3.not_applied.includes('detail_html') && a3.sale_ok.ok === true, '상세 patch 도 거름만 다르면 not_applied 아님 · sale_ok ✓', [a3.detail_filtered, a3.not_applied, a3.sale_ok]);
+        // 정규화 함수 단독
+        ok(mod.npwDetailSame('<p class="a ">x</p><!-- c --><img src="y" />', '<p class="a">x</p><img src="y">') && !mod.npwDetailSame('<p>x</p>', '<p>y</p>'), 'npwDetailSame: 거름만 다르면 같음 · 글이 다르면 다름');
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

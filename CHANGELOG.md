@@ -1,3 +1,11 @@
+## v5.9.546 (2026-10-17) — #724 통째 수정 잠금 해제(대표 ⓐ · 실DB put_enabled·detail_enabled true) · 품절 풀기 = ④ 통째 PUT(statusType SALE + 재고) 먼저 · 상세 거름 = 「예상된 변화」(정규화 비교) · 창구 문구
+
+- **테스트 한라봉 13817259794 전 기능 왕복 통과(워커1 · 21:59~22:21 · CHANGELOG 545)**: 품절 풀기 실측 = ① 재고 PUT(바디 OUTOFSTOCK) 400 statusType · ② change-status SALE 400 · ③ +stockQuantity 400 · **④ 통째 PUT statusType SALE + 옵션 재고 = 성공** → 「바디 statusType 바꾸면 400」은 SALE→OUTOFSTOCK 방향만 · change-status 로는 OUTOFSTOCK 에서 못 나옴. 그림 올리기 ✓(PNG 549KB) · 일반 href 생존 ✓ · audit 25행 · 시험 지시 2919·2920 삭제 · 테스트 상품은 남김(앞으로 시험용 · 판매중지·전시중지·쇼핑 미노출).
+- **잠금 해제(총괄 · 22:2x)**: agent_office_config 'naver_product_write' = {put_enabled:true, detail_enabled:true}(audit naver_product_write_unlock · source orchestrator). 대표 결정 ⓐ = 편집기 자료 손실 감수(통째 수정을 거친 상품 상세는 센터에서 「HTML 작성」으로 열림 · 손님 화면 동일 · 그 뒤 상세 수정은 창구에 말로) · 그림 링크 = 창구가 일반 href 로 살려 보냄(테스트에서 생존 확인) · 재고 관례 99999.
+- **서버(워커1)**: toSale = ④ 먼저(①②③ 은 뒤 안전망) · 상세를 안 바꾼 patch 에서 재조회 detailContent 가 달라져도 정규화 비교(script type=text/data·주석·onclick/data-*/빈 style·href="#"·자기닫기·class 끝 공백 제외)로 같으면 unexpected 아님 → result.detail_filtered:true · sale_ok detail ✓(거름) · 진짜 변화만 unexpected.
+- **창구(워커2)**: 업무지식 머리 줄 = 전부 열림 + HTML 작성 안내 + 링크 자동 복구 · 카드 「상세는 네이버가 편집기 자료를 걸러 다시 저장(예상된 변화 · 손님 화면 동일)」 · 🔴 되돌리기 권고는 진짜 unexpected 때만 · 링크 줄 「n개 보냄 · 남은 m개」 · 창구 CLAUDE.md 표 줄.
+- 다음 = #725 VIP 10801253976 · 레드키위 13782816361 그림 링크 복구(apply detail = 지금 상세 + 모듈 href · 레드키위 5kg 재고 99,976 복원 같이) → 대표 챙길 일 22 정리.
+
 ## v5.9.545 (2026-10-17) — #723-D 테스트 한라봉(13817259794) 전 기능 실시험 결과 · 품절 → 판매 풀기 400 → 시도 3종 순차 + invalid_fields 기록
 
 - **테스트 한라봉 생성 성공(22:07 · 16초)**: 본뜬 상품 한라봉 4840212264(옵션 2단이라 name1/name2 둘 다 필요 — 첫 시도 400 optionName2 · 요청만 바꿔 재시도) → 새 채널 13817259794 / 원상품 13756006591 · 판매중지·전시중지·쇼핑 미노출(hidden_ok) · 대표 그림 재업로드 URL · **상세 그림 링크 일반 href 생존 ✓**(6 보냄 → 재조회 8 = 네이버가 일반 `<a href>` 는 남김 → 링크 끊김은 모듈로 해결 가능).
