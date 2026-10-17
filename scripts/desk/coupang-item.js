@@ -1,0 +1,256 @@
+// #728 창구용 — 쿠팡 옵션(vendorItem) 판매가 · 재고 · 판매중지/재개 (1차 · 대표 「쿠팡도 고」 10/18 · 쿠팡 승인 심사 없이 즉시 반영되는 셋만)
+//   node scripts/desk/coupang-item.js list [검색어]                                  상품·옵션 표(상품 번호 · vendorItemId · 판매가 · 재고 · 판매 상태) — 고를 때는 vendorItemId 로
+//   node scripts/desk/coupang-item.js show <vendorItemId> <상품 번호> <지시 id>        그 옵션 지금 값을 서버가 보관(backup) → 요약 + 「건들기 전 판매 정상」
+//   node scripts/desk/coupang-item.js plan <backup_id> --price <원> | --stock <수> | --stop | --resume   전/후 카드(보내지 않음 · 쓰기 0 · 한 번에 한 칸)
+//   node scripts/desk/coupang-item.js apply <backup_id> <지시 id> (plan 과 같은 인자)   실행 → 서버가 다시 읽어 대조 → 결과 카드(끝 두 줄 = 판매 정상 전/후)
+//   node scripts/desk/coupang-item.js revert <backup_id> <지시 id> [--force]          적용한 칸만 보관한 값으로(그 뒤 쿠팡에서 또 바뀌었으면 멈춤 · 덮는 --force 는 되묻기 1회 뒤)
+//   길 = 요청 줄 agent_office_config 'coupang_item_write_request' → 실서버 20초 틱 → 'coupang_item_write_result'(계약 docs/728-coupang-contract.md)
+//        이 도구는 쿠팡 키도 주소도 모른다 — 요청 줄 INSERT 와 결과 읽기, 보관본(coupang_item_backups) 읽기뿐.
+//   🔴 평일 08:30~10:30(발송 직전)엔 apply·revert 를 하지 않는다(plan 은 됨). 밖 = 상품명·옵션명·상세·대표 그림·등록(쿠팡 승인 심사 = 2차 · 윙에서 직접)
+const REQ_KEY = 'coupang_item_write_request', RES_KEY = 'coupang_item_write_result';
+const PRICE_MAX = 10000000, PRICE_UNIT = 10, STOCK_MAX = 99999;   // 서버 계약과 같게(10원 단위 · 재고 99999 이하 · 가격은 중계 상한)
+const BAD_KO = { on_sale: '판매중지', stock: '재고 0', price: '판매가', read: '다시 읽기 실패' };
+const won = n => n == null ? '(없음)' : Number(n).toLocaleString('ko-KR');
+const saleKo = v => v === true ? '판매중' : v === false ? '판매중지' : '(모름)';
+
+// ── 시각(KST) · 발송 직전 막기
+function kstParts(now) { const d = new Date(now + 9 * 3600000); return { dow: d.getUTCDay(), hm: d.getUTCHours() * 60 + d.getUTCMinutes() }; }
+function busyWindow(now) { const k = kstParts(now); return k.dow >= 1 && k.dow <= 5 && k.hm >= 8 * 60 + 30 && k.hm < 10 * 60 + 30; }
+
+// ── 인자
+function parseOpts(args) {
+    const o = {}, rest = [];
+    for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === '--price' || a === '--stock') o[a.slice(2)] = args[++i];
+        else if (a === '--stop') o.stop = true;
+        else if (a === '--resume') o.resume = true;
+        else if (a === '--force') o.force = true;
+        else rest.push(a);
+    }
+    return { o, rest };
+}
+const toInt = v => { const n = Number(String(v == null ? '' : v).replace(/[,원개\s]/g, '')); return Number.isInteger(n) ? n : null; };
+
+// 서버 값(보관본 before · after · now · list 옵션) → { price, stock, on_sale, item_name, product_name, seller_product_id }
+function norm(b) {
+    b = b || {};
+    const pick = (...ks) => { for (const k of ks) if (b[k] != null) return b[k]; return null; };
+    const num = v => v == null || v === '' ? null : Number(v);
+    const os = pick('on_sale', 'saleStatus', 'onSale');
+    return {
+        price: num(pick('price', 'salePrice')),
+        stock: num(pick('stock', 'quantity', 'amountInStock')),
+        on_sale: os == null ? null : (os === true || os === 'ON_SALE' || String(os).toLowerCase() === 'true') ? true : false,
+        item_name: pick('item_name', 'itemName'),
+        product_name: pick('product_name', 'name', 'sellerProductName'),
+        seller_product_id: pick('seller_product_id', 'sellerProductId') == null ? null : String(pick('seller_product_id', 'sellerProductId')),
+    };
+}
+// 판매 정상(서버 cpwSaleCheck 와 같은 칸) — 서버 sale_ok 가 오면 그쪽 우선
+function saleOkSelf(n) {
+    const bad = [];
+    if (n.on_sale !== true) bad.push('on_sale');
+    if (!(n.stock > 0)) bad.push('stock');
+    if (!(n.price > 0)) bad.push('price');
+    return { ok: !bad.length, bad };
+}
+// 일부러 바꿔서 bad 로 잡히는 게 정상인 칸
+function expectBad(patch) {
+    const e = [];
+    if (patch.sales === 'stop') e.push('on_sale');
+    if (patch.stock === 0) e.push('stock');
+    return e;
+}
+function saleLine(label, s, expect) {
+    if (!s) return `${label} 판매 정상 ?(확인 못 함 — show 로 다시 보기)`;
+    const bad = (s.bad || []).filter(x => !(expect || []).includes(x));
+    const intended = (s.bad || []).filter(x => (expect || []).includes(x));
+    if (!bad.length) return `${label} 판매 정상 ✓` + (intended.length ? `(일부러 바꾼 칸 = ${intended.map(x => BAD_KO[x] || x).join('·')} · 정상)` : '');
+    return `${label} 판매 정상 ⚠ ${bad.map(x => BAD_KO[x] || x).join('·')}`;
+}
+
+// ── 바꿀 것 → { patch(계약 꼴 · 한 칸), rows, stops, errs, warns, n }
+function planRows(before, o) {
+    const n = norm(before), patch = {}, rows = [], stops = [], errs = [], warns = [];
+    const picks = (o.price != null ? 1 : 0) + (o.stock != null ? 1 : 0) + (o.stop ? 1 : 0) + (o.resume ? 1 : 0);
+    if (!picks) errs.push('바꿀 것을 주세요: --price <원> | --stock <수> | --stop | --resume');
+    if (picks > 1) errs.push('한 번에 한 칸만 바꿔요(--price · --stock · --stop · --resume 중 하나) — 둘 다면 apply 를 두 번(show 부터 다시)');
+    if (errs.length) return { patch, rows, stops, errs, warns, n };
+    if (o.price != null) {
+        const p = toInt(o.price);
+        if (p == null) errs.push('--price 는 원 단위 정수예요');
+        else if (p <= 0) stops.push('판매가가 0원 이하예요 — 숫자를 다시 확인해 주세요');
+        else if (p > PRICE_MAX) stops.push(`판매가 상한(${won(PRICE_MAX)}원)을 넘어요 — 숫자를 다시 확인해 주세요`);
+        else if (p % PRICE_UNIT) stops.push(`쿠팡 판매가는 10원 단위만 돼요(${won(p)}원) — 끝자리를 0 으로`);
+        else if (n.price === p) stops.push(`판매가가 이미 ${won(p)}원이에요`);
+        else if (n.price > 0 && (p >= n.price * 10 || p * 10 <= n.price)) stops.push(`판매가가 10배 넘게 바뀌어요(${won(n.price)} → ${won(p)}원) — 0 을 더 붙이거나 뺐는지 요청하신 분께 되묻기`);
+        else if (n.price > 0 && (p * 2 < n.price || p > n.price * 2)) stops.push(`쿠팡 기본 제한(지금 값의 50% 아래로 내리기 · 2배 넘게 올리기) 밖이에요(${won(n.price)} → ${won(p)}원) — 쿠팡이 거절해요 · 정말 이 값이면 쿠팡 윙(wing.coupang.com)에서 직접`);
+        else { patch.price = p; rows.push({ field: '판매가', before: won(n.price) + '원', after: won(p) + '원' }); }
+    }
+    if (o.stock != null) {
+        const s = toInt(o.stock);
+        if (s == null) errs.push('--stock 은 정수예요');
+        else if (s < 0) stops.push('재고가 음수예요 — 숫자를 다시 확인해 주세요');
+        else if (s > STOCK_MAX) stops.push(`재고는 ${won(STOCK_MAX)} 까지예요`);
+        else if (n.stock === s) stops.push(`재고가 이미 ${won(s)}예요`);
+        else { patch.stock = s; rows.push({ field: '재고', before: won(n.stock), after: won(s) }); if (s === 0) warns.push('재고를 0 으로 두면 쿠팡에서 품절로 보여요'); }
+    }
+    if (o.stop || o.resume) {
+        const want = !!o.resume;
+        if (n.on_sale === want) stops.push(`이미 ${saleKo(want)}이에요`);
+        else if (want && n.stock === 0) stops.push('재고가 0 이라 다시 팔아도 품절이에요 — 먼저 재고를 넣고(--stock <수> · 재고 수는 요청하신 분께 되묻기) 그다음 --resume');
+        else { patch.sales = want ? 'resume' : 'stop'; rows.push({ field: '판매 상태', before: saleKo(n.on_sale), after: saleKo(want) }); }
+    }
+    return { patch, rows, stops, errs, warns, n };
+}
+function card(head, n, vid, rows, extra) {
+    const L = [`━━━ 쿠팡 옵션 ${head} ━━━`, `상품: ${n.product_name || '(이름 모름)'}${n.item_name ? ' · 옵션 ' + n.item_name : ''} (vendorItemId ${vid || '?'})`];
+    if (Array.isArray(rows) && !rows.length) L.push('바뀌는 곳 없음 — 지금 값과 같아요');
+    for (const r of (rows || [])) L.push(`· ${r.field}: ${r.before} → ${r.after}`);
+    for (const x of (extra || [])) L.push(x);
+    return L.join('\n');
+}
+// 서버 결과 두 값 → 카드 줄(바뀐 칸만)
+function resultRows(b, a) {
+    const B = norm(b), A = norm(a), rows = [];
+    if (B.price !== A.price) rows.push({ field: '판매가', before: won(B.price) + '원', after: won(A.price) + '원' });
+    if (B.stock !== A.stock) rows.push({ field: '재고', before: won(B.stock), after: won(A.stock) });
+    if (B.on_sale !== A.on_sale) rows.push({ field: '판매 상태', before: saleKo(B.on_sale), after: saleKo(A.on_sale) });
+    return rows;
+}
+const KEY_KO = { price: '판매가', stock: '재고', on_sale: '판매 상태', sales: '판매 상태' };
+
+// ── 요청 줄 → 결과 (한 칸 · 다른 작업이 걸려 있으면 멈춤)
+function makeRunner(deps) {
+    const { pool, sleep, now } = deps;
+    const cfgGet = async k => { const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [k]); return r.rows.length ? r.rows[0].value : null; };
+    async function send(req, ms = 150000) {
+        if (await cfgGet(REQ_KEY)) throw new Error('다른 쿠팡 상품 요청이 아직 처리 중이에요 — 1분 뒤 다시');
+        await pool.query(`DELETE FROM agent_office_config WHERE key = $1`, [RES_KEY]);
+        await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [REQ_KEY, JSON.stringify(req)]);
+        const t0 = now();
+        while (now() - t0 < ms) {
+            await sleep(5000);
+            const v = await cfgGet(RES_KEY);
+            if (v && (v.order_id == null || String(v.order_id) === String(req.order_id)) && (!v.op || v.op === req.op)) { await pool.query(`DELETE FROM agent_office_config WHERE key = $1`, [RES_KEY]); return v; }
+        }
+        throw new Error('쿠팡 상품 러너 응답 없음(2분 30초) — 실서버가 깨어 있는지 확인해 주세요(요청 줄은 서버가 깨면 그대로 실행돼요 — 다시 보내지 말고 총괄에게)');
+    }
+    async function orderBy(orderId) {
+        const o = (await pool.query(`SELECT id, created_by FROM pending_orders WHERE id = $1`, [orderId])).rows[0];
+        if (!o) throw new Error('없는 지시입니다: ' + orderId);
+        return '클코(창구) · ' + (o.created_by || '요청자 미상');
+    }
+    async function backupRow(arg) {
+        const id = parseInt(String(arg || '').replace(/\D/g, ''), 10);
+        if (!(id > 0)) throw new Error('backup_id 가 필요해요(show 결과)');
+        const r = (await pool.query(`SELECT id, seller_product_id, vendor_item_id, order_id, before_json, patch_json, applied_at, reverted_at FROM coupang_item_backups WHERE id = $1`, [id])).rows[0];
+        if (!r) throw new Error(`보관본 ${id} 를 못 찾았어요 — 먼저 show`);
+        const j = v => typeof v === 'string' ? JSON.parse(v) : v;
+        return Object.assign(r, { before_json: j(r.before_json), patch_json: j(r.patch_json) });
+    }
+    return { send, orderBy, backupRow };
+}
+
+// 실패 결과 → 사람 말
+function failNote(res) {
+    const e = String((res && res.error) || '');
+    if (res && res.note) return res.note + ' — 다시 보내지 말고 기다렸다가';   // 429 = 서버 고정 글
+    if (res && res.resume_note) return res.resume_note + '(판매자콜센터)';
+    if (/보관한 뒤 쿠팡에서 바뀐/.test(e)) return '보관한 뒤 쿠팡에서 값이 또 바뀌었어요 — show 로 다시 보관한 뒤 plan 부터';
+    if (/적용 뒤 그 칸이 또 바뀌었어요/.test(e)) return '적용한 뒤 쿠팡에서 그 칸이 또 바뀌었어요 — 지금 값(now)을 요청자에게 보여 주고(되묻기 1회) 「그래도 되돌려」면 --force';
+    if (/진행 중/.test(e)) return '같은 옵션에 다른 작업이 진행 중이에요 — 1분 뒤 다시';
+    if (/윙에서/.test(e)) return '쿠팡 기본 제한 밖 — 「쿠팡 윙에서 직접」으로 답하기';
+    return '바꾸지 못했어요 — 위 error 그대로 전하기 · 다시 보내기 전에 show 로 지금 값 확인';
+}
+
+async function main(argv, deps) {
+    const out = deps.out || (o => console.log(JSON.stringify(o, null, 1)));
+    const R = makeRunner(deps);
+    const cmd = argv[0], { o, rest } = parseOpts(argv.slice(1));
+    const oid = n => { const v = parseInt(n, 10); if (!(v > 0)) throw new Error('지시 id 가 필요해요(누가 시켰는지 기록)'); return v; };
+    const num = (v, what) => { const s = String(v || '').replace(/\D/g, ''); if (!/^\d{1,15}$/.test(s)) throw new Error(what + '를 주세요(list 의 숫자)'); return s; };
+
+    if (cmd === 'list') {
+        const q = rest.join(' ').trim();
+        const res = await R.send({ op: 'list', q: q || null });
+        if (!res.ok) return out({ ok: false, error: res.error || '목록 실패', code: res.code || null, note: res.note || '바꾼 것 없음' });
+        const lines = [];
+        for (const p of (res.products || [])) {
+            lines.push(`[상품 ${p.sellerProductId}] ${p.name || '(이름 없음)'}${p.status ? ' · ' + p.status : ''}`);
+            for (const v of (p.vendorItems || [])) { const n = norm(v); lines.push(`  ${v.vendorItemId} · ${n.item_name || ''} · ${won(n.price)}원 · 재고 ${won(n.stock)} · ${saleKo(n.on_sale)}`); }
+            if (!(p.vendorItems || []).length) lines.push('  (판매 옵션 번호 없음 — 승인 전이거나 조회 실패)');
+        }
+        return out({ ok: true, q: q || null, products: res.products || [], truncated: !!res.truncated, table: lines.join('\n') || '(맞는 상품 없음)',
+            note: (res.products || []).length ? `바꿀 옵션은 vendorItemId 로 고르기(이름으로 짐작 금지 · 비슷하면 표를 보여 주고 되묻기) · 다음 = show <vendorItemId> <상품 번호> <지시 id>${res.truncated ? ' · 목록이 잘렸어요(상품 30 · 옵션 80) — 검색어를 좁혀 다시' : ''}` : '검색어를 바꿔 다시 · 쿠팡 윙의 상품 이름 글자로' });
+    }
+    if (cmd === 'show') {
+        if (rest.length < 3) throw new Error('show <vendorItemId> <상품 번호(sellerProductId)> <지시 id> — 셋 다 주세요(번호는 list 로)');
+        const vid = num(rest[0], 'vendorItemId '), spid = num(rest[1], '상품 번호(sellerProductId)'), orderId = oid(rest[2]);
+        const res = await R.send({ op: 'backup', order_id: orderId, vendor_item_id: vid, seller_product_id: spid, created_by: await R.orderBy(orderId) });
+        if (!res.ok) return out({ ok: false, error: res.error || '보관 실패', code: res.code || null, note: res.note || '바꾼 것 없음' });
+        const n = norm(res.before);
+        return out({ ok: true, backup_id: res.backup_id, now: n,
+            card: card('지금 값', n, vid, null, [`판매가 ${won(n.price)}원 · 재고 ${won(n.stock)} · ${saleKo(n.on_sale)}`, saleLine('건들기 전', res.sale_ok || saleOkSelf(n))]),
+            note: `다음 = plan ${res.backup_id} --price <원> | --stock <수> | --stop | --resume(한 칸씩)` });
+    }
+    if (cmd === 'plan' || cmd === 'apply') {
+        const row = await R.backupRow(rest[0]);
+        if (row.applied_at) throw new Error(`보관본 ${row.id} 는 이미 적용했어요 — 새로 고치려면 show 부터`);
+        if (row.reverted_at) throw new Error(`보관본 ${row.id} 는 되돌린 것이에요 — show 부터`);
+        const P = planRows(row.before_json, o);
+        if (P.errs.length) throw new Error(P.errs.join(' · '));
+        if (P.stops.length) return out({ ok: false, stopped: true, stops: P.stops, can_apply: false, note: '보낸 것 없음 — 멈춘 문구 그대로 전하고 되묻기' });
+        const s0 = saleOkSelf(P.n);
+        if (cmd === 'plan') return out({ ok: true, backup_id: row.id, patch: P.patch, warnings: P.warns, can_apply: true,
+            card: card('고치기 계획(아직 안 보냄)', P.n, row.vendor_item_id, P.rows, P.warns.map(w => '⚠ ' + w).concat([saleLine('건들기 전', s0), '이대로 바꿀까요?'])),
+            next: `apply ${row.id} <지시 id> ` + argv.slice(2).join(' ') });
+        const orderId = oid(rest[1]);
+        if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
+        const res = await R.send({ op: 'apply', order_id: orderId, backup_id: row.id, vendor_item_id: row.vendor_item_id, patch: P.patch, created_by: await R.orderBy(orderId) });
+        if (!res.ok) return out({ ok: false, error: res.error || '쿠팡 반영 실패', code: res.code || null, coupang_message: res.coupang_message || undefined, drift: res.drift || undefined, now: res.now || undefined, note: failNote(res) });
+        const before = res.before || row.before_json, after = res.after || null;
+        const exp = expectBad(P.patch), unexpected = res.unexpected || [], notApplied = res.not_applied || [];
+        const sb = res.sale_ok_before || saleOkSelf(norm(before)), sa = res.sale_ok || null;
+        const lost = sb.ok && sa && (sa.bad || []).some(x => !exp.includes(x));   // 팔리던 옵션이 안 팔리게 됨
+        const red = unexpected.length || notApplied.length || lost || !after;
+        const extra = [];
+        if (unexpected.length) extra.push(`🔴 예상 밖으로 바뀐 칸: ${unexpected.map(k => KEY_KO[k] || k).join(' · ')} — 되돌리기를 권합니다`);
+        if (notApplied.length) extra.push(`🔴 다시 읽어 봐도 아직 안 바뀐 칸: ${notApplied.map(k => KEY_KO[k] || k).join(' · ')} — 몇 분 뒤 show 로 다시 확인(다시 보내지 않기)`);
+        if (!after) extra.push('⚠ ' + (res.error_note || '바꾸기는 됐지만 다시 읽기 실패 — 쿠팡 윙에서 확인'));
+        extra.push(saleLine('건들기 전', sb), saleLine('건든 뒤', sa, exp));
+        extra.push(`되돌리기: revert ${row.id} <지시 id>`);
+        return out({ ok: true, backup_id: row.id, changed: res.changed || [], unexpected, not_applied: notApplied,
+            card: card(red ? '고치기 결과 — 🔴 확인 필요' : '고치기 결과', Object.assign(norm(before), { item_name: res.item_name || norm(row.before_json).item_name, product_name: norm(row.before_json).product_name }), row.vendor_item_id, after ? resultRows(before, after) : P.rows, extra),
+            note: red ? '🔴·⚠ 줄을 답 맨 위에 · 되돌리기 권하기' : '카드 그대로 전하기(전/후 + 판매 정상 두 줄)' });
+    }
+    if (cmd === 'revert') {
+        const row = await R.backupRow(rest[0]);
+        const orderId = oid(rest[1]);
+        if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 급하면 총괄에게', note: '보낸 것 없음' });
+        const res = await R.send({ op: 'revert', order_id: orderId, backup_id: row.id, vendor_item_id: row.vendor_item_id, force: o.force === true, created_by: await R.orderBy(orderId) });
+        if (!res.ok) return out({ ok: false, error: res.error || '되돌리기 실패', code: res.code || null, coupang_message: res.coupang_message || undefined, now: res.now || undefined, note: failNote(res) });
+        const nb = norm(row.before_json);
+        const extra = [];
+        if (res.put === false) extra.push('이미 보관한 값이라 쿠팡에 보낸 것 없음');
+        if ((res.unexpected || []).length) extra.push(`🔴 예상 밖으로 바뀐 칸: ${res.unexpected.map(k => KEY_KO[k] || k).join(' · ')}`);
+        if (res.same_as_before === false) extra.push('🔴 다시 읽어 봐도 보관한 값이 아니에요 — 몇 분 뒤 show 로 확인');
+        if (res.error_note) extra.push('⚠ ' + res.error_note);
+        extra.push(saleLine('되돌린 뒤', res.sale_ok || null));
+        const from = res.before_put || null, to = res.now || null;
+        return out({ ok: true, backup_id: row.id, put: res.put, same_as_before: res.same_as_before,
+            card: card('되돌리기 결과', nb, row.vendor_item_id, from && to ? resultRows(from, to) : null, extra),
+            note: '보관한 값으로 되돌렸어요 — 카드 그대로' });
+    }
+    throw new Error('명령: list · show · plan · apply · revert');
+}
+
+module.exports = { main, makeRunner, parseOpts, planRows, norm, saleOkSelf, saleLine, expectBad, resultRows, card, busyWindow, failNote, REQ_KEY, RES_KEY };
+
+if (require.main === module) {
+    const { pool } = require('./_db');
+    main(process.argv.slice(2), { pool, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now() })
+        .catch(e => { console.log(JSON.stringify({ ok: false, error: e.message }, null, 1)); process.exitCode = 1; })
+        .finally(() => pool.end().catch(() => { }));
+}

@@ -1,3 +1,12 @@
+## v5.9.549 (2026-10-18) — #728 쿠팡 상품 옵션 쓰기 1차(가격·재고·판매중지/재개 · 전용 PUT · 즉시 · 승인 불요) · 보관 → 그 자리만 → 재조회 대조 → 되돌리기 · 창구 coupang-item.js · 업무지식
+
+- **배경(대표 10/18 「쿠팡도 진행 · 고 · 테스트 상품 올리면 승인 안 날 것 같은데 참고」)**: 총괄 claude-c7 · 워커3 공식 문서(docs/728-coupang-write-api.md) · 워커1 서버 · 워커2 relay·도구·업무지식·점검. **더 좋은 방향** = 1차(옵션 가격·재고·판매중지/재개)는 테스트 상품 불필요(전용 호출 · 승인 0 · 상세 무관) → 승인완료인 비시즌 판매중지 옵션으로 왕복 시험 · 2차(상품명·옵션명·상세·이미지·등록 = 전체 수정 PUT · 승인행)는 requested:false 임시저장 상품으로 꼴 검증 뒤.
+- **공식 근거(워커3)**: 목록 GET …/marketplace/seller-products?vendorId&status · 단건 GET …/seller-products/{id}(vendorItemId 는 승인완료 뒤만) · 옵션 GET …/vendor-items/{id}/inventories(amountInStock·salePrice·onSale) · 가격 PUT …/prices/{price}(10원 단위 · forceSalePriceUpdate 기본 false = 현재가 −50%~+100% 안 · 안 씀) · 재고 PUT …/quantities/{n} · PUT …/sales/stop · …/sales/resume(쿠팡 모니터링 중지는 API 로 못 살림) · 전체 수정 PUT …/seller-products(통째 · 「승인 후 반영」) · partial = 배송·반품지만 · 등록 requested:false = SAVED(임시저장 · 노출 0) · vendorId 초당 5(2026-03-17).
+- **중계서버(워커2 · 2026-10-18.1 · 설치 끝 22:49Z)**: COUPANG_ALLOW +7(목록·단건·inventories GET · 가격·재고·stop·resume PUT) · 매칭 = 조각 일치 + 숫자 자리 \d{1,15} + 상한(가격 ≤ 1천만 · 수량 ≤ 99만9천) · 목록 query vendorId .env 강제 · 2차 6줄은 안 넣음.
+- **서버(워커1 · server.js +307 · verify-728-coupang 84/84 · verify-720 190/190 무회귀)**: 표 coupang_item_backups · 러너 'coupang_item_write_request' → '_result' · op list/backup/apply/revert · 전용 PUT · 재조회 inventories 2초 → 5초 1회 더 · 가격 10원·−50%~+100% 밖 거절(「윙에서」) · 간격 0.5초 · 429 = 실패 + 「몇 분 뒤」 · resume 실패 = 모니터링 안내 · backup before = inventories + 단건 상품의 그 item(seller_product_id 필수) · sale_ok = onSale·재고>0·가격 같음 · 승인 필요 칸 = 「2차」 거절 · 승인 검사 0(지시 있음·반려·삭제만 · 되묻기 1회는 창구 몫) · 신선도(가격·판매 여부 바뀜·재고 늘어남 = 거절 · 주문으로 준 재고 통과) · revert force · 이미 원래 값이면 PUT 0 · audit coupang-item-write.
+- **창구(워커2)**: coupang-item.js list/show/plan/apply/revert(멈춤 14종 · 카드 두 줄 · 429·모니터링 안내) · 업무지식 「쿠팡 상품 고치기(#728)」 + 344행 「쿠팡 가격 조회 수단 없음」 → 이 도구 · 창구 CLAUDE.md 4-1 줄.
+- 다음 = 배포 뒤 비시즌 판매중지 옵션 1개로 재고 ±1 · 가격 ±10원 · 재개 30초 왕복 실시험(아래 결과 줄).
+
 ## v5.9.548 (2026-10-18) — #727 네이버 상품 고치기 승인 선 = 누구나 되묻기 1회(직원 승인 강제 철회 · 대표 9/30 규칙) · 상세에 「그림 + 링크」 넣는 꼴
 
 - **배경(대표 10/18 「직원 승인 뒤인데 에이전트오피스에 직원들 권한 다 줬는데 그럼 되는 거 아니야?」)**: 총괄이 10/17 둔 예외(직원 지시 = approval → [승인] 뒤 apply · 서버 approved_at 강제)는 9/30 「쿠폰·가격·발송·외부 설정은 누구나 승인 없이」와 어긋남 → 철회. 되묻기 1회(전/후 카드 → 「응」)는 누구나 · 창구 규칙 몫 · 서버 승인 검사 제거(워커1 · apply·revert --force·create) · 도구 approval 분기 제거 + 업무지식·창구 CLAUDE.md(워커2·총괄).

@@ -1,0 +1,49 @@
+# #728 쿠팡 옵션 쓰기 — 러너 계약 (1차: 가격 · 재고 · 판매중지/재개)
+
+> 근거 = `docs/728-coupang-write-api.md`(워커3 · 공식 문서) · 코드 = server.js `// #728 시작` ~ `// #728 끝` (`coupangItemWriteRun`) · 검증 = `node scripts/verify-728-coupang.js`(가짜 pool·가짜 쿠팡 · 실DB·쿠팡 호출 0).
+> 네이버 #720(통째 PUT)과 달리 **칸마다 따로 있는 전용 PUT** — 다른 칸·상세는 안 건드림 · 즉시 반영(승인 심사 없음). **한 요청 = 한 칸.**
+
+## 요청 / 결과
+- 요청 `agent_office_config 'coupang_item_write_request'` → 결과 `'coupang_item_write_result'`(러너 20초 틱 · 요청 선제거 · 결과에 `at`·`order_id`).
+- 쿠팡 호출은 `naverRelay.callCoupang` 직접(**재시도 없음** — 429 는 몇 분 차단이라 재시도 무의미 · 쓰기 두 번 방지) · 호출 사이 0.5초(쿠팡 vendorId 초당 5회).
+- 쿠팡 응답 `{ code, message, data }` — HTTP 200 이어도 `code` 가 `SUCCESS`(또는 200)가 아니면 실패.
+
+## op
+| op | 입력 | 하는 일 | 결과 |
+|---|---|---|---|
+| `list` | `{ q? }`(지시 불필요 · 읽기만) | 판매자 상품 목록(쪽 nextToken · q = sellerProductName) → 상품마다 단건 조회(items) → 옵션마다 inventories | `products[{ sellerProductId, name, status(승인 상태 statusName), vendorItems[{ vendorItemId, itemName, salePrice, quantity, saleStatus: ON_SALE\|STOP }] }]` · `truncated`(상품 30 · 옵션 80 상한) |
+| `backup` | `{ order_id, vendor_item_id, seller_product_id, created_by? }` | 옵션 지금 값(inventories) + 단건 상품의 그 item(이름·상품 번호) → 표 `coupang_item_backups` 1행 | `backup_id` · `before{ price, stock, on_sale, item_name, seller_product_id, product_name }` · `sale_ok` |
+| `apply` | `{ order_id, backup_id, patch }` | 검사 → 신선도 → 전용 PUT → 재조회(2초 · 기대와 다르면 5초 뒤 한 번 더) → 대조 | `before`(PUT 직전 값) · `after` · `changed` · `unexpected` · `not_applied` · `sale_ok_before` · `sale_ok` · `item_name` · `scope_note` |
+| `revert` | `{ order_id, backup_id, force? }` | 적용한 칸만 보관본 값으로 같은 전용 PUT → 재조회 대조 | `put`(이미 원래 값이면 false · PUT 없음) · `before_put` · `now` · `same_as_before` · `unexpected` · `sale_ok` |
+
+## patch (한 칸만)
+| 칸 | 값 | 전용 PUT | 거절 |
+|---|---|---|---|
+| `price` | 정수 | `PUT …/vendor-items/{id}/prices/{price}`(쿼리 없음 · forceSalePriceUpdate 안 씀) | 0 이하·음수·정수 아님 · **10원 단위 아님** · **지금 가격의 −50%~+100% 밖(「윙에서」)** · 지금과 같음 |
+| `stock` | 0 이상 정수 | `PUT …/vendor-items/{id}/quantities/{n}` | 음수·소수 · 99999 초과 · 지금과 같음(0 은 허용) |
+| `sales` | `'stop'` \| `'resume'` | `PUT …/vendor-items/{id}/sales/stop` · `…/sales/resume` | 그 밖 값 · 이미 그 상태 |
+- 그 밖 칸(상품명·상세·이미지 등) = 거절 + 「승인 필요 칸(전체 수정 = 쿠팡 심사행)이라 2차」 · 성공 결과에도 `scope_note` 로 같은 글.
+- 승인 검사 없음(#727 과 같음) — 지시가 있고 반려·삭제 아니면 실행 · 되묻기 1회는 창구 규칙 몫.
+
+## 판정
+- **sale_ok(쿠팡판)** = `on_sale === true` · `stock > 0` · `price > 0` 이고 기대 가격과 같음 → `{ ok, bad[] }`(bad = on_sale · stock · price · read). 중지·재고 0 은 그대로 ⚠ 로 보고(숨기지 않음).
+- **신선도(apply)** = 보관본과 지금 값의 price·on_sale 이 다르거나 재고가 **늘었으면** 거절(`drift`) · 주문으로 재고가 준 것은 통과(지금 값 기준으로 진행).
+- **revert** = 적용 뒤 그 칸이 또 바뀌었으면 거절(`force: true` 면 덮음) · 재고가 주문으로 준 것은 통과.
+- `changed` = PUT 직전 값 대비 바뀐 칸 · `unexpected` = 고친 칸 말고 바뀐 칸(주문으로 준 재고 제외) · `not_applied` = 재조회 두 번 뒤에도 기대 값이 아님.
+- 재조회 실패 = `ok:true` + `error_note`(「Wing 에서 확인」) · after_json null.
+
+## 실패 꼴
+- 고정 문구 `쿠팡 ○○ 실패` + `code` + `coupang_message`(원문 200자) · **429 = `note` 「쿠팡 호출 한도(초당 5회) — 몇 분 뒤 다시」**(재시도 0) · 재개 실패(429 아님) = `resume_note` 「쿠팡 모니터링으로 중지된 옵션은 API 로 못 살림 — 윙에서 확인」.
+- apply PUT 실패 = `applied_at` 없이 `result_json{ ok:false, step, code }` · revert PUT 실패 = `result_json.revert_failed{ code, at }` · `reverted_at` 없음.
+- 같은 옵션 동시 작업 = 하나만(`같은 옵션에 다른 작업이 진행 중`).
+
+## 표 `coupang_item_backups`
+`id, seller_product_id, vendor_item_id, order_id, before_json, patch_json, after_json, applied_at, reverted_at, result_json, created_by, created_at` · 인덱스 (vendor_item_id, id DESC).
+
+## audit
+source `coupang-item-write` · targetType `coupang_item` · targetId null(번호는 changes 에 vendor_item_id·order_id·backup_id) · action = `coupang_item_backup` · `coupang_item_apply` · `coupang_item_apply_failed` · `coupang_item_revert` · `coupang_item_revert_failed`(list 는 기록 없음).
+
+## 🔴 배포·실시험 전에 필요한 것(이 러너 밖)
+1. **중계서버 COUPANG_ALLOW**(워커2 몫 · 728-coupang-write-api.md ⑥): 지금은 경로 글자 정확 일치라 번호가 든 경로(`vendor-items/{id}/…` · `seller-products/{id}`)가 전부 403 → 템플릿별 숫자 정규식 매칭 + GET 3종(목록·단건·inventories) · PUT 4종(prices·quantities·stop·resume).
+2. **목록 쿼리 vendorId**: 문서상 `seller-products` 목록은 쿼리에 `vendorId` 가 필요한데 회사프로그램은 vendorId 를 모름(중계 .env 에만) → 중계가 그 경로의 쿼리에 vendorId 를 넣어 줘야 함(경로·바디 주입과 같은 꼴). 안 되면 list 만 실패 · backup·apply·revert 는 무관(경로에 vendorId 없음).
+3. 실시험 가격은 **10원 단위**(±1 원 = 400) — 「현재가 그대로」는 서버가 「같아요」로 거절하므로 ±10 왕복.

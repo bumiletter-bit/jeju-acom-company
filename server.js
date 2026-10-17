@@ -1444,6 +1444,24 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE naver_product_backups ADD COLUMN IF NOT EXISTS origin_product_no VARCHAR(30)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS naver_product_backups_pno_idx ON naver_product_backups (product_no, id DESC)`);
+    // #728: 쿠팡 옵션(vendorItem) 쓰기 — 바꾸기 전 그 옵션 값 보관(되돌리기 원본) · 바꾼 뒤 재조회 · 되돌린 시각
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS coupang_item_backups (
+            id SERIAL PRIMARY KEY,
+            seller_product_id VARCHAR(30),
+            vendor_item_id VARCHAR(30) NOT NULL,
+            order_id INTEGER,
+            before_json JSONB NOT NULL,
+            patch_json JSONB,
+            after_json JSONB,
+            applied_at TIMESTAMP,
+            reverted_at TIMESTAMP,
+            result_json JSONB,
+            created_by TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS coupang_item_backups_vid_idx ON coupang_item_backups (vendor_item_id, id DESC)`);
 
     console.log('DB 테이블 초기화 완료');
 }
@@ -16542,6 +16560,298 @@ setInterval(async () => {
         await naverCfgSet(NPW_RES_KEY, { at: new Date().toISOString(), order_id: req && req.order_id || null, ...out });
     } catch (e) {
         try { await naverCfgSet(NPW_RES_KEY, { at: new Date().toISOString(), ok: false, error: '러너 오류' }); } catch (_) { /* 다음 주기 */ }
+    }
+}, 20000);
+
+// #728 시작 — 쿠팡 옵션(vendorItem) 쓰기 러너(1차: 가격 · 재고 · 판매중지/재개 — 전용 PUT · 즉시 반영 · 상세 무관)
+//   🔴 vendorItemId(승인완료 뒤 발급) 옵션만 · 쿠팡 초당 5회 넘으면 429 로 몇 분 차단 → 호출 사이 0.5초 · 429 는 재시도 안 함(러너는 callCoupang 직접)
+//   요청 agent_office_config 'coupang_item_write_request' → 결과 'coupang_item_write_result'(선제거 · at 포함). 계약 = docs/728-coupang-contract.md · 근거 = docs/728-coupang-write-api.md(워커3)
+//   🔴 순서는 네이버 #720-B 와 같다: backup(그 옵션 지금 값 보관) → apply(한 칸만 전용 PUT → 재조회 → 바뀐 칸 대조) → revert(보관본 값으로 같은 전용 PUT → 재조회 대조)
+//   통째 저장이 아니라 칸마다 따로 있는 전용 PUT 이라 다른 칸·상세는 건드리지 않는다. 한 요청 = 한 칸.
+//   이 블록은 verify-728-coupang.js 가 표식 사이를 떼어 가짜 deps 로 돌린다(deps = { pool, call, audit }) — 바깥 이름을 직접 쓰지 말 것.
+const CPW_REQ_KEY = 'coupang_item_write_request', CPW_RES_KEY = 'coupang_item_write_result';
+// 경로 = 한 곳만 고친다(워커3 문서로 확정 · {vendorId} 는 중계가 .env 값으로 바꿈)
+const CPW_BASE = '/v2/providers/seller_api/apis/api/v1/marketplace';
+const CPW_PATH = {
+    list: `${CPW_BASE}/seller-products`,                                          // GET 판매자 상품 목록(쪽 = nextToken)
+    product: (spid) => `${CPW_BASE}/seller-products/${spid}`,                    // GET 상품 하나(옵션 items[])
+    inventory: (vid) => `${CPW_BASE}/vendor-items/${vid}/inventories`,           // GET 옵션 지금 값(가격 · 재고 · 판매 여부)
+    price: (vid, p) => `${CPW_BASE}/vendor-items/${vid}/prices/${p}`,            // PUT 가격
+    stock: (vid, n) => `${CPW_BASE}/vendor-items/${vid}/quantities/${n}`,        // PUT 재고
+    stop: (vid) => `${CPW_BASE}/vendor-items/${vid}/sales/stop`,                 // PUT 판매중지
+    resume: (vid) => `${CPW_BASE}/vendor-items/${vid}/sales/resume`,             // PUT 판매재개
+};
+const CPW_PRICE_QUERY = null;   // forceSalePriceUpdate 는 안 씀(총괄 10/18) — 쿠팡 기본 = 변경 전 가격의 −50%~+100% 안만 · 밖이면 서버가 먼저 거절(윙에서)
+const CPW_PRICE_UNIT = 10;      // 쿠팡 판매가는 10원 단위(문서 · 1원 단위 = 400)
+const CPW_MAX_STOCK = 99999;    // 재고 관례 상한(네이버와 같음)
+const CPW_LIST_MAX_PRODUCTS = 30, CPW_LIST_MAX_ITEMS = 80;   // list 한 번에 볼 상한(옵션마다 재고 조회 1번)
+const CPW_REREAD_MS = 2000, CPW_REREAD2_MS = 5000;   // PUT 뒤 재조회 2초 · 기대와 안 맞으면 5초 뒤 한 번 더(반영 지연은 문서 없음)
+const cpwInFlight = new Set();
+const CPW_SCOPE_NOTE = '상품명·상세·이미지는 승인 필요 칸(전체 수정 = 쿠팡 심사행)이라 2차';
+const CPW_RESUME_FAIL_NOTE = '쿠팡 모니터링으로 중지된 옵션은 API 로 못 살림 — 윙에서 확인';
+
+// 쿠팡 응답 = { code:'SUCCESS'|'ERROR', message, data } — HTTP 200 이어도 code 가 SUCCESS 가 아니면 실패로
+function cpwData(r) {
+    if (r && typeof r === 'object' && 'code' in r && !(r.code === 'SUCCESS' || r.code === 200 || r.code === '200')) {
+        const e = new Error('coupang_code_' + r.code); e.status = 200; e.data = r; throw e;
+    }
+    return r && typeof r === 'object' && 'data' in r ? r.data : r;
+}
+// 옵션 지금 값(재고 조회 응답) → 우리 꼴 { price, stock, on_sale }
+function cpwItemOf(d) {
+    if (!d || typeof d !== 'object') return null;
+    const num = (v) => (v == null || v === '' ? null : Number(v));
+    const on = d.onSale != null ? d.onSale : d.saleStatus != null ? d.saleStatus : null;
+    return { price: num(d.salePrice), stock: num(d.amountInStock != null ? d.amountInStock : d.quantity), on_sale: on === true || on === 'true' || on === 'ON_SALE' ? true : on === false || on === 'false' || on === 'SUSPENDED' || on === 'STOP' ? false : null };
+}
+// 판매 정상(쿠팡판) = 판매중 · 재고 > 0 · 가격 > 0 (ref 가 있으면 가격이 ref 와 같아야)
+function cpwSaleCheck(it, ref) {
+    if (!it) return { ok: false, bad: ['read'] };
+    const bad = [];
+    if (it.on_sale !== true) bad.push('on_sale');
+    if (!(it.stock > 0)) bad.push('stock');
+    if (!(it.price > 0) || (ref && ref.price != null && it.price !== ref.price)) bad.push('price');
+    return { ok: bad.length === 0, bad, on_sale: it.on_sale, stock: it.stock, price: it.price };
+}
+const CPW_PATCH_KEYS = ['price', 'stock', 'sales'];
+// patch 검사 — 한 칸만 · 거절이면 글, 통과면 null
+function cpwCheckPatch(patch, before) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return 'patch 가 필요해요';
+    const keys = Object.keys(patch);
+    const bad = keys.filter(k => !CPW_PATCH_KEYS.includes(k));
+    if (bad.length) return '허용되지 않은 칸 ' + bad.join(', ') + ' — price · stock · sales 중 하나(' + CPW_SCOPE_NOTE + ')';
+    if (keys.length !== 1) return '한 요청에 한 칸만(price · stock · sales 중 하나)';
+    if ('price' in patch) {
+        const p = patch.price;
+        if (!Number.isInteger(p) || p <= 0) return '가격은 0 보다 큰 정수';
+        if (p % CPW_PRICE_UNIT !== 0) return `가격은 ${CPW_PRICE_UNIT}원 단위`;
+        if (before.price > 0 && (p * 2 < before.price || p > before.price * 2)) return '가격은 지금 가격의 −50%~+100% 안만 — 그 밖은 윙에서';
+        if (p === before.price) return '지금 가격과 같아요';
+    }
+    if ('stock' in patch) {
+        const n = patch.stock;
+        if (!Number.isInteger(n) || n < 0) return '재고는 0 이상 정수';
+        if (n > CPW_MAX_STOCK) return `재고는 ${CPW_MAX_STOCK} 이하`;
+        if (n === before.stock) return '지금 재고와 같아요';
+    }
+    if ('sales' in patch) {
+        if (!['stop', 'resume'].includes(patch.sales)) return "sales 는 'stop' 또는 'resume'";
+        if (patch.sales === 'stop' && before.on_sale === false) return '이미 판매중지예요';
+        if (patch.sales === 'resume' && before.on_sale === true) return '이미 판매중이에요';
+    }
+    return null;
+}
+// patch → 기대 값(그 칸만)
+function cpwExpected(patch, base) {
+    const x = { ...base };
+    if ('price' in patch) x.price = patch.price;
+    if ('stock' in patch) x.stock = patch.stock;
+    if ('sales' in patch) x.on_sale = patch.sales === 'resume';
+    return x;
+}
+const CPW_FIELD_OF = { price: 'price', stock: 'stock', sales: 'on_sale' };
+// 두 값의 달라진 칸
+const cpwDiff = (a, b) => ['price', 'stock', 'on_sale'].filter(k => (a || {})[k] !== (b || {})[k]);
+
+async function coupangItemWriteRun(req, deps) {
+    const db = deps.pool, call = deps.call, audit = deps.audit;
+    const gap = deps.gapMs != null ? deps.gapMs : 500, reread = deps.rereadMs != null ? deps.rereadMs : CPW_REREAD_MS;
+    let lastAt = 0;
+    const callRaw = async (r) => { const w = lastAt + gap - Date.now(); if (w > 0) await new Promise(res => setTimeout(res, w)); try { return await call(r); } finally { lastAt = Date.now(); } };   // 원응답(목록 nextToken 용)
+    const callG = async (r) => cpwData(await callRaw(r));
+    const op = req && req.op;
+    const fail = (error, extra) => ({ ok: false, op, error, ...(extra || {}) });
+    if (!['list', 'backup', 'apply', 'revert'].includes(op)) return fail('op 는 list·backup·apply·revert 중 하나');
+    const by = req.created_by ? String(req.created_by).slice(0, 80) : null;
+    // audit_logs.target_id 는 INTEGER — 쿠팡 번호(10자리↑)는 넘치므로 null · 번호는 changes 에
+    const auditW = (action, changes) => audit({ action, targetType: 'coupang_item', targetId: null,
+        changes, source: 'coupang-item-write', actor: { id: null, name: by || '창구(#728)' } }).catch(() => {});
+    const cpErr = (e, where, extra) => {   // 쿠팡 원문은 로그 + 짧게(message 200자 · 개인정보 없는 칸)
+        console.error(`[#728 쿠팡 쓰기] ${where} 실패:`, e && e.status, e && e.message);
+        const m = e && e.data && (e.data.message || e.data.error) ? String(e.data.message || e.data.error).slice(0, 200) : null;
+        const note = e && e.status === 429 ? '쿠팡 호출 한도(초당 5회) — 몇 분 뒤 다시' : null;
+        return fail(`쿠팡 ${where} 실패`, { code: e && e.status || null, coupang_message: m, ...(note ? { note } : {}), ...(extra || {}) });
+    };
+
+    // list — 읽기만 · 지시 없어도 됨
+    if (op === 'list') {
+        const q = req.q ? String(req.q).trim().slice(0, 50) : '';
+        const out = [];
+        let nextToken = '', items = 0, truncated = false;
+        try {
+            for (let page = 0; page < 10 && out.length < CPW_LIST_MAX_PRODUCTS; page++) {
+                const query = { maxPerPage: 50, ...(nextToken ? { nextToken } : {}), ...(q ? { sellerProductName: q } : {}) };
+                const r = await callRaw({ method: 'GET', path: CPW_PATH.list, query });
+                const list = cpwData(r) || [];
+                for (const p of (Array.isArray(list) ? list : [])) {
+                    if (out.length >= CPW_LIST_MAX_PRODUCTS) { truncated = true; break; }
+                    const spid = String(p.sellerProductId || '');
+                    if (!spid) continue;
+                    let det = null;
+                    try { det = await callG({ method: 'GET', path: CPW_PATH.product(spid) }); } catch (e) { console.error('[#728 쿠팡 쓰기] 상품 조회 실패:', spid, e && e.status); }
+                    const vis = [];
+                    for (const it of ((det && det.items) || [])) {
+                        const vid = String(it.vendorItemId || '');
+                        if (!vid) continue;
+                        if (items >= CPW_LIST_MAX_ITEMS) { truncated = true; break; }
+                        items++;
+                        let cur = null;
+                        try { cur = cpwItemOf(await callG({ method: 'GET', path: CPW_PATH.inventory(vid) })); } catch (e) { /* 그 옵션만 빈칸 */ }
+                        vis.push({ vendorItemId: vid, itemName: it.itemName || null, salePrice: cur ? cur.price : (it.salePrice != null ? Number(it.salePrice) : null),
+                            quantity: cur ? cur.stock : null, saleStatus: cur ? (cur.on_sale === true ? 'ON_SALE' : cur.on_sale === false ? 'STOP' : null) : null });
+                    }
+                    out.push({ sellerProductId: spid, name: p.sellerProductName || (det && det.sellerProductName) || null, status: p.statusName || p.status || (det && (det.statusName || det.status)) || null, vendorItems: vis });
+                }
+                nextToken = r && r.nextToken ? String(r.nextToken) : '';
+                if (!nextToken) break;
+            }
+        } catch (e) { return cpErr(e, '상품 목록 조회'); }
+        return { ok: true, op, q: q || null, products: out, truncated };
+    }
+
+    // 쓰기·보관은 지시가 있어야(누구 지시든 · 승인 검사 없음 — 되묻기 1회는 창구 규칙 몫 · #727 과 같음)
+    const orderId = parseInt(req && req.order_id, 10);
+    if (!(orderId > 0)) return fail('order_id 가 필요해요');
+    const ord = (await db.query(`SELECT id, status, is_deleted, created_by_id FROM pending_orders WHERE id = $1`, [orderId])).rows[0];
+    if (!ord || ord.is_deleted) return fail('지시를 찾지 못했어요');
+    if (ord.status === '반려') return fail('반려된 지시라 실행하지 않아요');
+
+    let vid = String(req.vendor_item_id || '').replace(/\D/g, '');
+    let row = null;
+    if (op !== 'backup') {
+        const bid = parseInt(req.backup_id, 10);
+        if (!(bid > 0)) return fail('backup_id 가 필요해요');
+        row = (await db.query(`SELECT * FROM coupang_item_backups WHERE id = $1`, [bid])).rows[0];
+        if (!row) return fail('보관본을 찾지 못했어요');
+        if (vid && vid !== row.vendor_item_id) return fail('보관본의 옵션 번호와 요청 옵션 번호가 달라요');
+        vid = row.vendor_item_id;
+    }
+    if (!vid) return fail('vendor_item_id 가 필요해요');
+    if (cpwInFlight.has(vid)) return fail('같은 옵션에 다른 작업이 진행 중이에요');
+    cpwInFlight.add(vid);
+    try {
+        const getNow = async () => cpwItemOf(await callG({ method: 'GET', path: CPW_PATH.inventory(vid) }));
+        const putField = async (key, val) => {
+            if (key === 'price') return callG({ method: 'PUT', path: CPW_PATH.price(vid, val), ...(CPW_PRICE_QUERY ? { query: CPW_PRICE_QUERY } : {}) });
+            if (key === 'stock') return callG({ method: 'PUT', path: CPW_PATH.stock(vid, val) });
+            return callG({ method: 'PUT', path: val === 'resume' ? CPW_PATH.resume(vid) : CPW_PATH.stop(vid) });
+        };
+        const reread2 = deps.reread2Ms != null ? deps.reread2Ms : CPW_REREAD2_MS;
+        // 재조회: 2초 뒤 · 기대(field = want)와 다르면 5초 뒤 한 번 더 · 두 번째 실패면 첫 결과
+        const rereadNow = async (field, want) => {
+            if (reread > 0) await new Promise(res => setTimeout(res, reread));
+            const first = await getNow();
+            if (!field || (first && first[field] === want)) return first;
+            if (reread2 > 0) await new Promise(res => setTimeout(res, reread2));
+            try { return (await getNow()) || first; } catch (_) { return first; }
+        };
+
+        if (op === 'backup') {
+            let before;
+            try { before = await getNow(); } catch (e) { return cpErr(e, '옵션 조회'); }
+            if (!before || before.price == null || before.on_sale == null) return fail('쿠팡 응답에 옵션 값이 없어요');
+            // 단건 상품의 그 옵션(이름 · 상품 번호) — 못 찾으면 거절(다른 상품 번호를 잘못 넣은 것)
+            const spid = String(req.seller_product_id || '').replace(/\D/g, '');
+            if (!spid) return fail('seller_product_id 가 필요해요(list 로 확인)');
+            let det;
+            try { det = await callG({ method: 'GET', path: CPW_PATH.product(spid) }); } catch (e) { return cpErr(e, '상품 조회'); }
+            const item = ((det && det.items) || []).find(it => String(it.vendorItemId || '') === vid);
+            if (!item) return fail('그 상품에 이 옵션 번호가 없어요(승인 전 옵션은 번호가 없음)');
+            before.item_name = item.itemName || null; before.seller_product_id = spid; before.product_name = det.sellerProductName || null;
+            const ins = await db.query(`INSERT INTO coupang_item_backups (seller_product_id, vendor_item_id, order_id, before_json, created_by) VALUES ($1, $2, $3, $4::jsonb, $5) RETURNING id`,
+                [spid, vid, orderId, JSON.stringify(before), by]);
+            const backup_id = ins.rows[0].id, sale_ok = cpwSaleCheck(before, before);
+            await auditW('coupang_item_backup', { vendor_item_id: vid, seller_product_id: spid, order_id: orderId, backup_id, before, sale_ok });
+            return { ok: true, op, vendor_item_id: vid, seller_product_id: spid, backup_id, before, sale_ok };
+        }
+
+        if (op === 'apply') {
+            if (row.applied_at) return fail('이미 적용한 보관본이에요 — 새로 backup 하세요');
+            if (row.reverted_at) return fail('되돌린 보관본이에요 — 새로 backup 하세요');
+            const before = row.before_json, patch = req.patch;
+            const perr = cpwCheckPatch(patch, before);
+            if (perr) return fail(perr);
+            const key = Object.keys(patch)[0];
+            // 신선도 — 보관한 뒤 누가 쿠팡에서 고쳤으면 덮지 않는다(재고는 주문으로 줄기만 하면 통과 · 늘었거나 다른 칸이 바뀌면 거절)
+            let cur;
+            try { cur = await getNow(); } catch (e) { return cpErr(e, '옵션 조회'); }
+            if (!cur || cur.price == null || cur.on_sale == null) return fail('쿠팡 응답에 옵션 값이 없어요');
+            const drift = cpwDiff(before, cur).filter(k => !(k === 'stock' && cur.stock != null && before.stock != null && cur.stock < before.stock));
+            if (drift.length) return fail('보관한 뒤 쿠팡에서 바뀐 곳이 있어요 — 새로 backup 하세요', { drift, now: cur });
+            const sale_ok_before = cpwSaleCheck(cur, cur);
+            try { await putField(key, patch[key]); }
+            catch (e) {
+                await db.query(`UPDATE coupang_item_backups SET patch_json = $2::jsonb, result_json = $3::jsonb WHERE id = $1`, [row.id, JSON.stringify(patch), JSON.stringify({ ok: false, step: key, code: e && e.status || null })]);
+                await auditW('coupang_item_apply_failed', { vendor_item_id: vid, order_id: orderId, backup_id: row.id, patch, code: e && e.status || null });
+                return cpErr(e, key === 'price' ? '가격 변경' : key === 'stock' ? '재고 변경' : patch.sales === 'stop' ? '판매중지' : '판매재개', { backup_id: row.id, sale_ok_before, ...(patch.sales === 'resume' && e && e.status !== 429 ? { resume_note: CPW_RESUME_FAIL_NOTE } : {}) });
+            }
+            await db.query(`UPDATE coupang_item_backups SET patch_json = $2::jsonb, applied_at = COALESCE(applied_at, NOW()) WHERE id = $1`, [row.id, JSON.stringify(patch)]);
+            let after = null;
+            const expect = cpwExpected(patch, cur);
+            const field = CPW_FIELD_OF[key];
+            try { after = await rereadNow(field, expect[field]); } catch (e) { console.error('[#728 쿠팡 쓰기] 재조회 실패:', e && e.status); }
+            const changed = after ? cpwDiff(cur, after) : [];
+            // 기대 밖 변화 = 고친 칸 말고 바뀐 칸(재고가 주문으로 준 것은 빼고)
+            const unexpected = after ? changed.filter(k => k !== field && !(k === 'stock' && after.stock < cur.stock)) : [];
+            const not_applied = after && after[field] !== expect[field] ? [key] : [];
+            const ref = cpwExpected(patch, cur);
+            const sale_ok = after ? cpwSaleCheck(after, ref) : null;
+            const result = { ok: true, op, field: key, changed, unexpected, not_applied, reread: !!after };
+            await db.query(`UPDATE coupang_item_backups SET after_json = $2::jsonb, result_json = $3::jsonb WHERE id = $1`, [row.id, JSON.stringify(after), JSON.stringify(result)]);
+            await auditW('coupang_item_apply', { vendor_item_id: vid, seller_product_id: row.seller_product_id, order_id: orderId, backup_id: row.id, patch, before: cur, after, changed, unexpected, not_applied });
+            return { ok: true, op, vendor_item_id: vid, backup_id: row.id, item_name: before.item_name || null, scope_note: CPW_SCOPE_NOTE, patch, before: cur, after, changed, unexpected, not_applied, sale_ok_before, sale_ok,
+                ...(after ? {} : { error_note: '바꾸기는 됐지만 재조회 실패 — Wing 에서 확인' }) };
+        }
+
+        // revert — 적용한 칸만 보관본 값으로(같은 전용 PUT)
+        if (!row.applied_at) return fail('아직 적용하지 않은 보관본이에요');
+        if (row.reverted_at) return fail('이미 되돌린 보관본이에요');
+        const before = row.before_json, patch = row.patch_json || {};
+        const key = Object.keys(patch)[0];
+        if (!CPW_PATCH_KEYS.includes(key)) return fail('보관본에 적용 기록(patch)이 없어요');
+        const field = CPW_FIELD_OF[key];
+        let cur;
+        try { cur = await getNow(); } catch (e) { return cpErr(e, '옵션 조회'); }
+        if (!cur || cur.price == null || cur.on_sale == null) return fail('쿠팡 응답에 옵션 값이 없어요');
+        // 적용 뒤 그 칸을 누가 또 바꿨으면 덮지 않는다(force 면 덮음) · 재고는 주문으로 준 것이면 통과
+        const afterV = row.after_json ? row.after_json[field] : cpwExpected(patch, before)[field];
+        const moved = cur[field] !== afterV && !(field === 'stock' && cur.stock != null && afterV != null && cur.stock < afterV);
+        if (moved && req.force !== true) return fail('적용 뒤 그 칸이 또 바뀌었어요 — 덮으려면 force', { now: cur, after: row.after_json });
+        if (cur[field] === before[field]) {   // 이미 원래 값 — PUT 없이 끝
+            await db.query(`UPDATE coupang_item_backups SET reverted_at = NOW(), result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`, [row.id, JSON.stringify({ reverted: true, put: false })]);
+            await auditW('coupang_item_revert', { vendor_item_id: vid, order_id: orderId, backup_id: row.id, field: key, put: false, now: cur });
+            return { ok: true, op, vendor_item_id: vid, backup_id: row.id, field: key, put: false, now: cur, same_as_before: true, sale_ok: cpwSaleCheck(cur, before) };
+        }
+        const val = key === 'sales' ? (before.on_sale ? 'resume' : 'stop') : before[field];
+        try { await putField(key, val); }
+        catch (e) {
+            await db.query(`UPDATE coupang_item_backups SET result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`, [row.id, JSON.stringify({ revert_failed: { code: e && e.status || null, at: new Date().toISOString() } })]);
+            await auditW('coupang_item_revert_failed', { vendor_item_id: vid, order_id: orderId, backup_id: row.id, field: key, code: e && e.status || null });
+            return cpErr(e, '되돌리기', { backup_id: row.id, ...(val === 'resume' && e && e.status !== 429 ? { resume_note: CPW_RESUME_FAIL_NOTE } : {}) });
+        }
+        let now = null;
+        try { now = await rereadNow(field, before[field]); } catch (e) { console.error('[#728 쿠팡 쓰기] 재조회 실패:', e && e.status); }
+        const same_as_before = now ? now[field] === before[field] : null;
+        const unexpected = now ? cpwDiff(cur, now).filter(k => k !== field && !(k === 'stock' && now.stock < cur.stock)) : [];
+        await db.query(`UPDATE coupang_item_backups SET reverted_at = NOW(), result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+            [row.id, JSON.stringify({ reverted: true, put: true, same_as_before, unexpected })]);
+        await auditW('coupang_item_revert', { vendor_item_id: vid, order_id: orderId, backup_id: row.id, field: key, put: true, before_put: cur, now, same_as_before, unexpected });
+        return { ok: true, op, vendor_item_id: vid, backup_id: row.id, field: key, put: true, before_put: cur, now, same_as_before, unexpected, sale_ok: now ? cpwSaleCheck(now, before) : null,
+            ...(now ? {} : { error_note: '되돌리기는 됐지만 재조회 실패 — Wing 에서 확인' }) };
+    } finally { cpwInFlight.delete(vid); }
+}
+// #728 끝
+setInterval(async () => {
+    try {
+        const req = await naverCfgGet(CPW_REQ_KEY);
+        if (req == null) return;
+        await pool.query(`DELETE FROM agent_office_config WHERE key = $1`, [CPW_REQ_KEY]);   // 선제거 — 반복 실행 방지
+        let out;
+        try { out = await coupangItemWriteRun(req, { pool, call: (r) => naverRelay.callCoupang(r, null), audit: writeAudit }); }   // 재시도 없음(429 는 몇 분 차단 · 쓰기 두 번 방지)
+        catch (e) { console.error('[#728 쿠팡 쓰기] 러너 오류:', e && e.message); out = { ok: false, op: req && req.op, error: '러너 오류' }; }
+        await naverCfgSet(CPW_RES_KEY, { at: new Date().toISOString(), order_id: req && req.order_id || null, ...out });
+    } catch (e) {
+        try { await naverCfgSet(CPW_RES_KEY, { at: new Date().toISOString(), ok: false, error: '러너 오류' }); } catch (_) { /* 다음 주기 */ }
     }
 }, 20000);
 
