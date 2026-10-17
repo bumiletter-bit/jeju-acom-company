@@ -15,7 +15,7 @@ const https = require('https');
 const path = require('path');
 
 // 중계서버 버전 — install.sh 재실행으로 최신 코드가 반영됐는지 확인용(/health에 노출).
-const RELAY_VERSION = '2026-08-24.1'; // #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
+const RELAY_VERSION = '2026-10-17.1'; // #720 상품 쓰기 1차(상세·상태·재고 + 그림 올리기 multipart) · 종전 2026-08-24.1 = #402: 쿠팡 발주확인(PATCH acknowledgement) 허용 + /coupang body 전달(vendorId 강제 주입)
 
 const {
     PORT = 4000,
@@ -91,11 +91,44 @@ const ALLOW = [
     { m: 'POST', re: /^\/external\/v1\/pay-order\/seller\/product-orders\/confirm$/ }, // 발주확인 — 쓰기 3번째 (지시 #92: 알림톡 발송 성공 건만, 회사프로그램 KAKAO_NOTIFY 스위치 종속)
     { m: 'POST', re: /^\/external\/v1\/products\/search$/ },                       // 상품 목록 조회 (POST지만 읽기 — 지시 #103·#104 자사몰 실데이터)
     { m: 'GET',  re: /^\/external\/v2\/products\// },                              // 원상품·채널상품 단건 조회 (대표이미지·가격·옵션·상세 — 읽기)
+    // #720 상품 쓰기 1차(상세 문구·그림 + 판매 상태) — 대표 확정 10/17 · 번호는 숫자 정확일치만(와일드카드 금지)
+    //   허용 줄 = docs/720-naver-write-api.md ⑦ 그대로(워커3 #720-A) · 2차 후보(option-stock · multi-update · 신규 등록)는 안 넣음
+    { m: 'PUT',  re: /^\/external\/v2\/products\/channel-products\/\d+$/ },                       // #720 채널 상품 수정(상세·그림·옵션 재고 통째) — 쓰기 4번째
+    { m: 'PUT',  re: /^\/external\/v1\/products\/origin-products\/\d+\/change-status$/ },        // #720 판매 상태·재고 변경(원상품 번호 · 바디 statusType·stockQuantity 만) — 쓰기 5번째
+    { m: 'POST', re: /^\/external\/v1\/product-images\/upload$/ },                                // #720 그림 올리기(multipart · MULTIPART_ALLOW 와 짝 · allowed() 를 먼저 타므로 여기도 필요)
 ];
 function allowed(method, path) { return ALLOW.some(a => a.m === method && a.re.test(path)); }
 
+// #720 그림 올리기만 multipart — 회사프로그램이 body = { __multipart: { field, files:[{ name, mime, b64 }] } } 로 보낸다.
+//   이 경로에서만 FormData 로 바꿔 보내고, 다른 경로에 __multipart 가 오면 400. 그 밖 JSON 길은 종전 그대로.
+const MULTIPART_ALLOW = [
+    { m: 'POST', re: /^\/external\/v1\/product-images\/upload$/, field: 'imageFiles', maxFiles: 10, maxTotalBytes: 10 * 1024 * 1024 },   // 네이버 = 10장/회 · 한 호출 합 10MB 미만 · 같은 계정 동시 1건(문서 ⑤)
+];
+function multipartRule(method, path) { return MULTIPART_ALLOW.find(a => a.m === method && a.re.test(path)) || null; }
+// FormData 만들기(실패하면 { error } — 칸 이름·장수·크기·형식을 여기서 거른다)
+function buildMultipart(rule, mp) {
+    const field = String((mp && mp.field) || rule.field);
+    if (field !== rule.field) return { error: 'multipart_field_not_allowed' };
+    const files = Array.isArray(mp && mp.files) ? mp.files : [];
+    if (!files.length) return { error: 'multipart_no_files' };
+    if (files.length > rule.maxFiles) return { error: 'multipart_too_many_files' };
+    const fd = new FormData();   // Node 20 내장 (undici) — /aligo image_b64 와 같은 꼴
+    let total = 0;
+    for (const f of files) {
+        const mime = String((f && f.mime) || '').toLowerCase();
+        if (!/^image\/(jpeg|png|gif|bmp)$/.test(mime)) return { error: 'multipart_bad_mime' };
+        const buf = Buffer.from(String((f && f.b64) || ''), 'base64');
+        if (!buf.length) return { error: 'multipart_empty_file' };
+        total += buf.length;
+        if (total >= rule.maxTotalBytes) return { error: 'image_too_large' };   // 합 10MB 미만
+        const name = String((f && f.name) || 'image').replace(/[^\w.\-]/g, '_').slice(0, 60) || 'image';
+        fd.append(field, new Blob([buf], { type: mime }), name);
+    }
+    return { fd };
+}
+
 const app = express();
-app.use(express.json({ limit: '4mb' }));   // 지시 #100: 알림톡 이미지(≤500KB, base64 ~680KB) 수용 여유분
+app.use(express.json({ limit: '25mb' }));   // 지시 #100: 알림톡 이미지(≤500KB, base64 ~680KB) 수용 여유분 · #720: 상품 그림 합 10MB(b64 ~13.4MB) 수용 → 4mb → 25mb(받는 크기 상한만 · JSON 해석·전달 바이트 무변경)
 
 // 헬스체크 (인증 불필요) — 토큰 발급까지 시험하려면 ?token=1
 app.get('/health', async (req, res) => {
@@ -130,6 +163,19 @@ app.post('/naver', async (req, res) => {
         log('차단(허용목록 외)', method, path);
         return res.status(403).json({ error: 'path_not_allowed', method, path });
     }
+    // #720 multipart 는 그림 올리기 경로에서만 — 다른 경로에 오면 네이버로 보내지 않고 거절
+    const mp = body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, '__multipart') ? body.__multipart : null;
+    const mpRule = mp ? multipartRule(method, path) : null;
+    if (mp && !mpRule) {
+        log('차단(multipart 허용 경로 외)', method, path);
+        return res.status(400).json({ error: 'multipart_not_allowed', method, path });
+    }
+    let mpForm = null;
+    if (mpRule) {
+        const built = buildMultipart(mpRule, mp);
+        if (built.error) { log('차단(multipart 형식)', method, path, built.error); return res.status(built.error === 'image_too_large' ? 413 : 400).json({ error: built.error }); }
+        mpForm = built.fd;
+    }
     try {
         const qs = query && typeof query === 'object' ? '?' + new URLSearchParams(query).toString() : '';
         const token = await getAccessToken();
@@ -137,7 +183,8 @@ app.post('/naver', async (req, res) => {
             method,
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
         };
-        if (body && method !== 'GET') opt.body = JSON.stringify(body);   // PUT(답변 등록)도 바디 전달 — POST 한정이던 버그 수정 (2026-07-27 실검증 #683035819)
+        if (mpForm) { delete opt.headers['Content-Type']; opt.body = mpForm; }   // #720 경계(boundary)는 fetch 가 붙인다
+        else if (body && method !== 'GET') opt.body = JSON.stringify(body);   // PUT(답변 등록)도 바디 전달 — POST 한정이던 버그 수정 (2026-07-27 실검증 #683035819)
         const nres = await fetch(`${NAVER_API_BASE}${path}${qs}`, opt);
         const text = await nres.text();
         let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
