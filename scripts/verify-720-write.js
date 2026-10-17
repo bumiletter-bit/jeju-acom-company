@@ -158,7 +158,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         await run({ op: 'apply', order_id: 101, backup_id: b4.backup_id, patch: { status: 'OUTOFSTOCK' } }, k2.deps);
         k2.nv.call = (orig => async (req) => { if (req.method === 'PUT' && /channel-products/.test(req.path)) { const keep = k2.nv.product.originProduct.statusType; const r = await orig(req); k2.nv.product.originProduct.statusType = keep; return r; } return orig(req); })(k2.nv.call);
         const rv4 = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: b4.backup_id }, { pool: k2.db, call: k2.nv.call, audit }));
-        ok(rv4.ok && rv4.same_as_before && rv4.steps.join() === 'channel,status' && rv4.status_after_put === 'OUTOFSTOCK' && k2.nv.statusPuts.length === 2 && JSON.stringify(k2.nv.statusPuts[1]) === '{"statusType":"SALE"}'
+        ok(rv4.ok && rv4.same_as_before && rv4.steps.join() === 'channel,status' && rv4.status_after_put === 'OUTOFSTOCK' && k2.nv.statusPuts.length === 1 && JSON.stringify(k2.nv.statusPuts[0]) === '{"statusType":"SALE"}'
             && rv4.sale_attempts.map(x => x.via + ':' + x.code + ':' + x.status_after).join() === 'channel:null:OUTOFSTOCK,change-status:null:SALE' && rv4.sale_ok.ok,
             '#721-B 안전망: 통째 PUT 뒤 품절이면 change-status SALE 1회 → 판매 · attempts 두 줄', rv4);
         // 안전망도 400 이면 오류 · attempts 에 두 code · 재고 복원 ✓ · 상태 남음
@@ -207,7 +207,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, deps);
         const t = async (patch, re, name) => { const x = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch }, deps); ok(!x.ok && re.test(x.error), name, x); };
         await t({ salePrice: 1 }, /허용되지 않은 칸/, '화이트리스트 밖 키(salePrice) 거절');
-        await t({ stock: 10 }, /옵션 상품 재고는 2차/, '재고 = 고정 문구로 거절');
+        await t({ stock: 10 }, /재고는 옵션별로/, '상품 단위 재고 = 「옵션별로」 고정 문구로 거절');
         await t({}, /비었/, '빈 patch 거절');
         await t({ status: 'DELETE' }, /판매 상태/, '판매 상태 꼴 밖 거절');
         await t({ status: 'SALE' }, /이미 SALE/, '같은 상태 거절');
@@ -369,8 +369,9 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { status: 'OUTOFSTOCK' } }, k.deps);
         ok(ap.ok && ap.sale_ok.ok === false && ap.sale_ok.bad.join() === 'status,stock', '품절 apply 뒤 sale_ok = ⚠ status·stock 만(가격·상세·그림 그대로)', ap.sale_ok);
         const rv = await run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps);
-        const put0 = k.nv.puts[0];
-        ok(rv.ok && rv.steps.join() === 'channel' && rv.status_after_put === 'SALE' && k.nv.statusPuts.length === 1, '복귀 = 통째 PUT 하나(change-status 0 · 품절 걸 때 1회뿐)', [rv, k.nv.statusPuts]);
+        const putOut = k.nv.puts[0], put0 = k.nv.puts[1];
+        ok(ap.steps.join() === 'channel' && putOut.originProduct.statusType === 'OUTOFSTOCK' && first(putOut).every(o => o.stockQuantity === 0), '#721-B2 실측 반영: 품절 걸기 = 통째 PUT 하나(옵션 재고 0 + statusType OUTOFSTOCK) · change-status 0', [ap.steps, putOut && putOut.originProduct.statusType]);
+        ok(rv.ok && rv.steps.join() === 'channel' && rv.status_after_put === 'SALE' && k.nv.statusPuts.length === 0, '복귀 = 통째 PUT 하나(change-status 0)', [rv, k.nv.statusPuts]);
         ok(put0.originProduct.statusType === 'SALE' && first(put0).map(o => o.stockQuantity).join() === '20,30' && put0.originProduct.stockQuantity === 0, 'PUT 바디 = statusType SALE + 옵션 재고 20·30 · 상품 단위 재고는 안 고침(지금 값 0 그대로)', put0 && put0.originProduct);
         ok(rv.same_as_before && rv.sale_ok.ok === true && JSON.stringify(k.nv.product) === JSON.stringify(PRODUCT), '복귀 뒤 sale_ok ✓ · 잔여 0 · 상품 = 원본', rv.sale_ok);
         ok(k.db.backups[0].result_json.revert_sale_ok.ok === true && k.db.backups[0].result_json.revert_status_after_put === 'SALE', '보관본 result_json 에 revert_sale_ok · status_after_put');
@@ -379,7 +380,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const bn = await run({ op: 'backup', product_no: CH, order_id: 101 }, n.deps);
         await run({ op: 'apply', order_id: 101, backup_id: bn.backup_id, patch: { status: 'OUTOFSTOCK' } }, n.deps);
         const rn = await run({ op: 'revert', order_id: 101, backup_id: bn.backup_id }, n.deps);
-        ok(rn.ok && rn.sale_ok.ok && n.nv.statusPuts.length === 1, 'change-status 품절 복귀 400 인 네이버도 복귀 성공(PUT 이 판매로 바꾸면 그 길 안 씀)', rn);
+        ok(rn.ok && rn.sale_ok.ok && n.nv.statusPuts.length === 0, 'change-status 품절 복귀 400 인 네이버도 복귀 성공(PUT 이 판매로 바꾸면 그 길 안 씀)', rn);
         // 판매중지 되돌림은 종전대로 change-status statusType 하나
         const u = mk();
         const bu = await run({ op: 'backup', product_no: CH, order_id: 101 }, u.deps);
@@ -413,7 +414,115 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const g = mk(null, { sideEffect: (x) => { first(x)[0].price = 1000; x.originProduct.images.representativeImage.url = 'https://x/9.jpg'; first(x)[1].usable = false; } });
         const bg = await run({ op: 'backup', product_no: CH, order_id: 101 }, g.deps);
         const ag = await run({ op: 'apply', order_id: 101, backup_id: bg.backup_id, patch: { detail_html: NEW_HTML } }, g.deps);
-        ok(ag.ok && ag.sale_ok.ok === false && ['options_usable', 'option_price', 'detail', 'rep_image'].every(x => ag.sale_ok.bad.includes(x)) && !ag.sale_ok.bad.includes('sale_price'), 'sale_ok ⚠ = usable·옵션 가격·상세·대표 그림을 칸 이름으로', ag.sale_ok);
+        ok(ag.ok && ag.sale_ok.ok === false && ag.sale_ok.bad.join() === 'options_usable,option_price,rep_image', 'sale_ok ⚠ = usable·옵션 가격·대표 그림을 칸 이름으로 · 바꾼 상세는 ref(보관본+patch)와 같아 bad 아님', ag.sale_ok);
+    }
+
+    console.log('⑪ #721-B3 옵션·단가·품목명 · 재고만 넣어 판매 복귀 · 거절 상한');
+    {
+        const OC = (x) => x.originProduct.detailAttribute.optionInfo.optionCombinations;
+        const OP = '/^originProduct\\.detailAttribute\\.optionInfo\\.optionCombinations/';
+        // 판매가 + 옵션 추가금 + 품목명 = 통째 PUT 한 번 · 할인 칸 그대로 · 되돌리면 원본
+        const P2 = JSON.parse(JSON.stringify(PRODUCT));
+        P2.originProduct.customerBenefit = { immediateDiscountPolicy: { discountMethod: { value: 1000, unitType: 'WON' } } };
+        P2.smartstoreChannelProduct.channelProductName = '하우스감귤';
+        const k = mk(P2);
+        const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+        const patch = { sale_price: 30000, name: '제주 하우스감귤', options: [{ id: 2, price: 10000 }] };
+        const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch }, k.deps);
+        const put = k.nv.puts[0];
+        ok(ap.ok && ap.steps.join() === 'channel' && k.nv.puts.length === 1 && k.nv.statusPuts.length === 0, '판매가·품목명·옵션 = 통째 PUT 한 번(change-status 0)', ap);
+        ok(put.originProduct.salePrice === 30000 && put.originProduct.name === '제주 하우스감귤' && put.smartstoreChannelProduct.channelProductName === '제주 하우스감귤' && OC(put)[1].price === 10000 && OC(put)[0].price === 0
+            && JSON.stringify(put.originProduct.customerBenefit) === JSON.stringify(P2.originProduct.customerBenefit) && OC(put)[1].stockQuantity === 30, 'PUT 바디 = 준 칸만(채널 상품명도 같은 글 · 할인·다른 옵션·재고 그대로)', put && put.originProduct);
+        ok(['originProduct.salePrice', 'originProduct.name', 'smartstoreChannelProduct.channelProductName', 'originProduct.detailAttribute.optionInfo.optionCombinations[1].price'].every(p => ap.changed_paths.includes(p))
+            && ap.unexpected_paths.length === 0 && ap.not_applied.length === 0 && ap.option_ids_kept === true, 'changed = 4칸 · unexpected 0 · not_applied 0 · 옵션 id 유지', ap.changed_paths);
+        ok(ap.sale_ok.ok === true, 'sale_ok ref = 보관본+patch → 바꾼 가격은 bad 아님', ap.sale_ok);
+        const row2 = ap.options_table.find(r => r.id === 2), row1 = ap.options_table.find(r => r.id === 1);
+        ok(row2.before.pay === 37000 && row2.after.pay === 39000 && row2.changed.join() === 'price,pay' && row1.before.pay === 28000 && row1.after.pay === 29000 && row1.changed.join() === 'pay', '옵션 표 결제가 = 판매가 − 할인(원 1,000) + 추가금 · 전 → 후', ap.options_table);
+        ok(ap.price_basis.sale_price_before === 29000 && ap.price_basis.sale_price_after === 30000 && ap.price_basis.discount.unitType === 'WON', 'price_basis', ap.price_basis);
+        const rv = await run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps);
+        ok(rv.ok && rv.same_as_before && JSON.stringify(k.nv.product) === JSON.stringify(P2) && rv.steps.join() === 'channel' && rv.sale_ok.ok, '되돌리기 = 판매가·품목명·채널 상품명·추가금 보관본 값 · 상품 = 원본', rv);
+        // 채널 상품명이 비어 있으면 원상품 이름만
+        const e = mk();
+        const be = await run({ op: 'backup', product_no: CH, order_id: 101 }, e.deps);
+        await run({ op: 'apply', order_id: 101, backup_id: be.backup_id, patch: { name: '새 이름' } }, e.deps);
+        ok(e.nv.puts[0].originProduct.name === '새 이름' && !('channelProductName' in e.nv.puts[0].smartstoreChannelProduct), '채널 상품명 빈 상품 = originProduct.name 만');
+        // PERCENT 할인 결제가
+        const P3 = JSON.parse(JSON.stringify(PRODUCT)); P3.originProduct.customerBenefit = { immediateDiscountPolicy: { discountMethod: { value: 10, unitType: 'PERCENT' } } };
+        const pc = mk(P3);
+        const bpc = await run({ op: 'backup', product_no: CH, order_id: 101 }, pc.deps);
+        const apc = await run({ op: 'apply', order_id: 101, backup_id: bpc.backup_id, patch: { options: [{ id: 2, price: 9500 }] } }, pc.deps);
+        ok(apc.ok && apc.options_table.find(r => r.id === 2).after.pay === 29000 - 2900 + 9500 && apc.options_table.find(r => r.id === 1).before.pay === 26100, '결제가 PERCENT = floor(판매가×10%) 차감', apc.options_table);
+        // 옵션 재고 −1 → 기대 경로(stock_paths 아님) · 되돌리면 보관본 재고
+        const s = mk();
+        const bs = await run({ op: 'backup', product_no: CH, order_id: 101 }, s.deps);
+        const as = await run({ op: 'apply', order_id: 101, backup_id: bs.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, s.deps);
+        ok(as.ok && as.changed_paths.includes('originProduct.detailAttribute.optionInfo.optionCombinations[0].stockQuantity') && as.unexpected_paths.length === 0 && as.stock_paths.length === 0 && OC(s.nv.product)[0].stockQuantity === 19 && OC(s.nv.product)[1].stockQuantity === 30, '옵션 재고 −1 = 그 옵션만 · 기대 경로 · 상품 재고 합 변화도 기대', as);
+        const rs = await run({ op: 'revert', order_id: 101, backup_id: bs.backup_id }, s.deps);
+        ok(rs.ok && rs.same_as_before && OC(s.nv.product)[0].stockQuantity === 20 && rs.sale_ok.ok, '되돌리면 그 옵션 재고 20(보관본)', rs);
+        // 숨김 = usable:false · sale_ok 는 ref 에도 숨김이라 bad 아님
+        const h = mk();
+        const bh = await run({ op: 'backup', product_no: CH, order_id: 101 }, h.deps);
+        const ah = await run({ op: 'apply', order_id: 101, backup_id: bh.backup_id, patch: { options: [{ id: 2, usable: false }] } }, h.deps);
+        ok(ah.ok && OC(h.nv.product).length === 2 && OC(h.nv.product)[1].usable === false && ah.sale_ok.ok === true, '숨김 = usable:false(배열에서 안 뺌) · 일부러 숨긴 옵션은 sale_ok bad 아님', ah.sale_ok);
+        const bh2 = await run({ op: 'backup', product_no: CH, order_id: 101 }, h.deps);
+        ok(bh2.sale_ok.ok === true, '숨긴 옵션이 있는 상품도 backup sale_ok ✓(영원히 ⚠ 아님)', bh2.sale_ok);
+        // 재조회에서 옵션 id·관리코드가 바뀌면 unexpected 'option_regenerated'
+        const g = mk(null, { sideEffect: (x) => { OC(x)[0].sellerManagerCode = 'NEW'; } });
+        const bg = await run({ op: 'backup', product_no: CH, order_id: 101 }, g.deps);
+        const ag = await run({ op: 'apply', order_id: 101, backup_id: bg.backup_id, patch: { options: [{ id: 2, price: 9100 }] } }, g.deps);
+        ok(ag.ok && ag.option_ids_kept === false && ag.unexpected_paths.includes('option_regenerated:1'), '옵션 관리코드 바뀜 → option_regenerated · option_ids_kept false', ag);
+        // 품절 상품에 재고만 넣기 = 판매 복귀 길(auto_sale) · 되돌리면 다시 품절
+        const O0 = JSON.parse(JSON.stringify(PRODUCT)); O0.originProduct.statusType = 'OUTOFSTOCK'; O0.originProduct.stockQuantity = 0; for (const o of OC(O0)) o.stockQuantity = 0;
+        const a0 = mk(O0);
+        const ba = await run({ op: 'backup', product_no: CH, order_id: 101 }, a0.deps);
+        const aa = await run({ op: 'apply', order_id: 101, backup_id: ba.backup_id, patch: { options: [{ id: 1, stock: 5 }] } }, a0.deps);
+        ok(aa.ok && aa.auto_sale === true && aa.steps.join() === 'channel' && a0.nv.product.originProduct.statusType === 'SALE' && OC(a0.nv.product)[0].stockQuantity === 5 && OC(a0.nv.product)[1].stockQuantity === 0 && aa.unexpected_paths.length === 0, '품절 + 재고만 = auto_sale(통째 PUT statusType SALE) · 준 옵션만 재고', aa);
+        const ra = await run({ op: 'revert', order_id: 101, backup_id: ba.backup_id }, a0.deps);
+        ok(ra.ok && ra.same_as_before && a0.nv.product.originProduct.statusType === 'OUTOFSTOCK' && OC(a0.nv.product).every(o => o.stockQuantity === 0) && a0.nv.statusPuts.length === 0, '되돌리기 = 통째 PUT 으로 다시 품절(재고 0) · change-status 0', ra);
+        // 품절 → 판매(status SALE) + 재고 같이
+        const a1 = mk(O0);
+        const bb = await run({ op: 'backup', product_no: CH, order_id: 101 }, a1.deps);
+        const ab = await run({ op: 'apply', order_id: 101, backup_id: bb.backup_id, patch: { status: 'SALE', options: [{ id: 2, stock: 7 }] } }, a1.deps);
+        ok(ab.ok && ab.auto_sale === false && a1.nv.product.originProduct.statusType === 'SALE' && OC(a1.nv.product)[1].stockQuantity === 7, '품절 → 판매 + 옵션 재고 = 한 번에', ab);
+        // 판매중지 + 판매가 = PUT 먼저 → change-status
+        const ss = mk();
+        const bss = await run({ op: 'backup', product_no: CH, order_id: 101 }, ss.deps);
+        const ass = await run({ op: 'apply', order_id: 101, backup_id: bss.backup_id, patch: { status: 'SUSPENSION', sale_price: 28000 } }, ss.deps);
+        ok(ass.ok && ass.steps.join() === 'channel,status' && ss.nv.product.originProduct.salePrice === 28000 && ss.nv.product.originProduct.statusType === 'SUSPENSION', '판매중지 + 판매가 = 통째 PUT → change-status', ass);
+        // 원상품 번호 없어도 품절 걸기는 됨(채널 번호 통째 PUT)
+        const no = mk(null, { noOrigin: true });
+        const bno = await run({ op: 'backup', product_no: CH, order_id: 101 }, no.deps);
+        const ano = await run({ op: 'apply', order_id: 101, backup_id: bno.backup_id, patch: { status: 'OUTOFSTOCK' } }, no.deps);
+        ok(ano.ok && no.nv.product.originProduct.statusType === 'OUTOFSTOCK', '원상품 번호 없어도 품절 걸기 됨(채널 통째 PUT)', ano);
+        // 전이표: 품절 → 판매중지 거절(change-status 는 SALE↔SUSPENSION 만)
+        const tz = mk(O0);
+        const btz = await run({ op: 'backup', product_no: CH, order_id: 101 }, tz.deps);
+        const xtz = await run({ op: 'apply', order_id: 101, backup_id: btz.backup_id, patch: { status: 'SUSPENSION' } }, tz.deps);
+        ok(!xtz.ok && /바꿀 수 없는 전이/.test(xtz.error), '품절 → 판매중지 거절(전이표 정정)', xtz);
+        // 거절 상한
+        const r = mk();
+        const br = await run({ op: 'backup', product_no: CH, order_id: 101 }, r.deps);
+        const t = async (patch, re, name) => { const x = await run({ op: 'apply', order_id: 101, backup_id: br.backup_id, patch }, r.deps); ok(!x.ok && re.test(x.error), name, x); };
+        await t({ options: [{ price: 1000 }] }, /새 옵션 추가/, '새 옵션(id 없음) 거절');
+        await t({ options: [{ id: 99, price: 1000 }] }, /이 상품에 없어요/, '없는 옵션 id 거절');
+        await t({ options: [{ id: 1, price: 100 }, { id: 1, price: 200 }] }, /두 번/, '같은 id 두 번 거절');
+        await t({ options: [{ id: 2, price: 9000 }] }, /지금과 같은 값/, '같은 값 거절');
+        await t({ options: [{ id: 1, price: 1.5 }] }, /정수/, '추가금 소수 거절');
+        await t({ options: [{ id: 1, stock: -1 }] }, /0 이상 정수/, '재고 음수 거절');
+        await t({ options: [{ id: 1, foo: 1 }] }, /허용되지 않은 칸 foo/, '옵션 모르는 칸 거절');
+        await t({ options: [{ id: 1, name1: '' }] }, /1~50자/, '옵션명 빈 글 거절');
+        await t({ options: Array.from({ length: 21 }, (_, i) => ({ id: i + 1, price: 1 })) }, /20개까지/, '옵션 21개 거절');
+        await t({ options: [{ id: 1, price: 300000 }] }, /10배/, '결제가 10배 이상 거절');
+        await t({ sale_price: 2000 }, /10배/, '결제가 1/10 이하 거절');
+        await t({ sale_price: 0 }, /0 보다 큰 정수/, '판매가 0 거절');
+        await t({ sale_price: 29000 }, /지금과 같아요/, '판매가 같은 값 거절');
+        await t({ options: [{ id: 1, price: -29500 }] }, /0 이하/, '결제가 0 이하 거절');
+        await t({ name: '' }, /품목명이 비었/, '품목명 빈 글 거절');
+        await t({ name: 'x'.repeat(101) }, /100자/, '품목명 100자 초과 거절');
+        await t({ status: 'OUTOFSTOCK', options: [{ id: 1, stock: 3 }] }, /같이 바꿀 수 없어요/, '품절 + 옵션 재고 거절');
+        await t({ customerBenefit: {} }, /허용되지 않은 칸/, '할인 칸 거절');
+        ok(r.nv.puts.length === 0 && r.nv.statusPuts.length === 0, '거절된 요청은 쓰기 0');
+        void OP;
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

@@ -88,6 +88,15 @@ sale_ok: { … }                 // B1 칸 · 단 가격·옵션을 바꾼 apply
 - `changed_paths` 에 옵션별 전 → 후는 options_table 로 · 경로 문자열은 종전 꼴(`originProduct.detailAttribute.optionInfo.optionCombinations[n].price` 등).
 - revert = 우리가 바꾼 칸만 보관본 값으로(지금 값 위에 · 남의 변경·판매로 줄어든 재고는 안 덮음 · 단 patch 에 stock 이 있던 옵션은 보관본 재고로).
 
+**구현 확정(v5.9.541 · 위 초안과 다른 점·더한 점)**
+- **판매 상태 길 정정(#721-B2 실측 10/17 · 레드키위 change-status OUTOFSTOCK = 400)**: 품절 걸기 = 통째 PUT 하나(지금 값 위에 옵션 재고 전부 0 + `statusType:'OUTOFSTOCK'`) · 품절 풀기 = B1 toSale · change-status 는 SALE↔SUSPENSION 만. 전이표 = `SALE → OUTOFSTOCK·SUSPENSION` · `OUTOFSTOCK → SALE` · `SUSPENSION → SALE`(품절 → 판매중지 · WAIT 는 거절). 원상품 번호는 판매중지·재개 때만 필요.
+- 한 apply 의 칸은 통째 PUT **한 번**에 모음 · 판매중지/재개가 같이 있으면 PUT 뒤 change-status · `steps` = `['detail']`(상세만) · `['channel']`(그 밖 PUT) · `['status']` · 조합.
+- **auto_sale**: 지금 품절이고 `status` 없이 `options[].stock > 0` 을 주면 판매 복귀 길(toSale)을 같이 탐 → 결과 `auto_sale:true`. 되돌리면 통째 PUT 으로 다시 품절(옵션 재고 0).
+- `status:'SALE'`(품절 → 판매)에 `options[].stock` 을 같이 주면 그 재고로 · 안 준 옵션은 보관본 재고(0 이면 그대로) · 합이 0 이면 거절.
+- **sale_ok ref** = apply 는 보관본 + patch(일부러 바꾼 가격·숨긴 옵션·상세는 bad 아님) · backup·revert 는 보관본. `options_usable` 은 ref 에서 숨김이 아닌 옵션이 숨겨졌을 때만 bad.
+- 결과 칸(apply): `steps, auto_sale, changed_paths, unexpected_paths(+ 'option_regenerated:<id>'), not_applied(키 또는 'options.<id>.<칸>'), stock_paths, sale_ok, sale_attempts, options_table, price_basis, option_ids_kept, before_summary, after_summary`. revert 도 `options_table`(지금 → 되돌린 뒤) · `price_basis` · `option_ids_kept`.
+- 거절 문구(쓰기 0): 새 옵션(id 없음) · 없는 id · 같은 id 두 번 · 바꿀 칸 없음 · 지금과 같은 값(옵션·판매가·품목명) · 모르는 옵션 칸 · 옵션명 1~50자 · 추가금 정수 · 재고 0 이상 정수 · usable true/false · 옵션 21개↑ · 판매가 0 이하·정수 아님 · 품목명 빈 글·100자 초과 · 결제가 0 이하 · 결제가 10배↑/10분의 1↓ · 품절 + 옵션 재고 동시 · 상품 단위 `stock` 키(「재고는 옵션별로」) · `customerBenefit` 등 허용 밖 키.
+
 ### upload_image
 `{ op:'upload_image', order_id, order_ids:[…] }` — `order_ids` 생략이면 `[order_id]` · 최대 10 · 합계 10MB 미만.
 - 각 지시의 첨부 = `pending_orders.image_data`(data URL · 지시 1건당 1장) · jpg/png/gif/bmp 만(MIME 실제값 그대로).
