@@ -6,6 +6,8 @@
 //   node scripts/desk/naver-detail.js apply <backup_id> <지시 id> (plan 과 같은 인자)   실행 → 서버가 재조회해 바뀐 경로 대조 → 결과 카드
 //   node scripts/desk/naver-detail.js revert <backup_id> <지시 id> [--force]   보관해 둔 전체로 되돌림(적용 뒤 또 바뀐 곳이 있으면 멈춤 · 그래도 덮는 --force 는 관리자 계정 지시만)
 //   node scripts/desk/naver-detail.js upload <지시 id> [지시 id …]              지시에 붙은 그림을 네이버에 올려 주소 목록(상세 HTML 에는 이 주소만)
+//   node scripts/desk/naver-detail.js create <지시 id> --from <본뜰 상품번호> --name "<새 이름>" [--opt-name1 "<이름1>[|<이름2>[|<이름3>]]=<추가금>" …] [--price <판매가>] [--stock <재고>] [--dry]
+//                                                                              #723 신규 등록(3차) — 기본 손님에게 안 보임(판매중지·전시중지·쇼핑 미노출) · 재고 기본 99999 · --dry = 카드만(보내지 않음)
 //   길 = 요청 줄 agent_office_config 'naver_product_write_request' → 실서버 20초 틱 → 'naver_product_write_result'(계약 docs/720-write-contract.md).
 //        이 도구는 토큰도 네이버 주소도 모른다 — 요청 줄 INSERT 와 결과 읽기, 보관본(naver_product_backups) 읽기뿐.
 //   🔴 평일 08:30~10:30(발송 직전)엔 apply·revert 를 하지 않는다(plan 은 됨). 밖 = 옵션 추가·옵션 그룹(3차)·신규 등록·즉시할인·대표 이미지 · 상세는 서버 잠금(#720-D).
@@ -16,7 +18,7 @@ const REQ_KEY = 'naver_product_write_request', RES_KEY = 'naver_product_write_re
 const TMP = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'akkome', 'naver-detail');
 const STATUS_KO = { SALE: '판매중', SUSPENSION: '판매중지', OUTOFSTOCK: '품절' };
 // 서버(#720-B NPW_STATUS_MOVES · #721-B3)와 같은 전이표 — 사람이 바꾸는 판매 상태만 · 품절 → 판매중은 (보관본 + 넣을 재고) 합이 있을 때만
-const STATUS_MOVES = { SALE: ['OUTOFSTOCK', 'SUSPENSION'], OUTOFSTOCK: ['SALE'], SUSPENSION: ['SALE'] };
+const STATUS_MOVES = { SALE: ['OUTOFSTOCK', 'SUSPENSION'], OUTOFSTOCK: ['SALE'], SUSPENSION: ['SALE'], WAIT: ['SUSPENSION'] };   // WAIT = create 뒤 판매중지 전환이 실패한 새 상품(#723)
 const OPT_MAX = 20, NAME_MAX = 100;   // 서버 상한과 같게(계약 #721-B 3)
 const OPT_KEYS = ['name1', 'name2', 'name3', 'price', 'stock', 'usable'];
 const BAD_KO = { status: '판매 상태', options_usable: '판매 안 함 옵션', stock: '재고 0', sale_price: '판매가', option_price: '옵션 추가금', detail: '상세', rep_image: '대표 그림' };
@@ -35,6 +37,9 @@ function parseOpts(args) {
         const a = args[i];
         if (a === '--detail' || a === '--status' || a === '--stock' || a === '--name') o[a.slice(2)] = args[++i];
         else if (a === '--sale-price') o.sale_price = args[++i];
+        else if (a === '--from' || a === '--price') o[a.slice(2)] = args[++i];
+        else if (a === '--opt-name1') (o.newOpt = o.newOpt || []).push(args[++i]);
+        else if (a === '--dry') o.dry = true;
         else if (a === '--opt') {   // --opt <id> k=v k=v … (다음 -- 까지)
             const one = { id: args[++i], kv: [] };
             while (i + 1 < args.length && !/^--/.test(args[i + 1])) one.kv.push(args[++i]);
@@ -222,6 +227,34 @@ function usesPut(before, patch) {
     const st = (((before || {}).originProduct) || {}).statusType;
     return ['detail_html', 'sale_price', 'name', 'options'].some(k => k in patch) || patch.status === 'OUTOFSTOCK' || (patch.status === 'SALE' && st === 'OUTOFSTOCK');
 }
+// 그림 링크 = 대표 확정(10/17): 직원이 센터에서 손으로 다시 건다 · 창구는 「링크 n개 끊김 → 센터에서」 한 줄만
+function linkLine(res) {
+    const n = Number(res && res.links_converted) || 0, m = Number(res && res.links_after) || 0;
+    return n > m ? `그림 링크 ${n - m}개 끊김 → 스마트스토어센터(스마트에디터)에서 다시 걸어 주세요` : null;
+}
+// create --opt-name1 "이름1|이름2=추가금" → 계약 options[{ name1, name2?, name3?, price, stock? }]
+function parseNewOpts(list, stock) {
+    const opts = [], errs = [];
+    for (const raw of (list || [])) {
+        const m = /^([^=]*)(?:=([\s\S]*))?$/.exec(String(raw == null ? '' : raw).trim());
+        const names = (m ? m[1] : '').split('|').map(x => x.trim());
+        if (!names[0]) { errs.push(`옵션 「${raw}」: 이름이 비었어요`); continue; }
+        if (names.length > 3) { errs.push(`옵션 「${raw}」: 이름 칸은 3개까지(| 로 나눔)`); continue; }
+        if (names.some(x => !x)) { errs.push(`옵션 「${raw}」: | 사이가 비었어요`); continue; }
+        if (names.some(x => x.length > 50)) { errs.push(`옵션 「${raw}」: 이름 칸은 50자까지`); continue; }
+        const price = m && m[2] != null ? toInt(m[2]) : 0;   // 「=」 뒤는 정수만(1.5·글자 = 거절)
+        if (price == null) { errs.push(`옵션 「${raw}」: 추가금은 정수예요`); continue; }
+        const one = { name1: names[0], price };
+        if (names[1]) one.name2 = names[1];
+        if (names[2]) one.name3 = names[2];
+        if (stock != null) one.stock = stock;
+        opts.push(one);
+    }
+    if (opts.length > OPT_MAX) errs.push(`옵션은 ${OPT_MAX}개까지예요(${opts.length}개)`);
+    if (new Set(opts.map(x => x.name3 ? 3 : x.name2 ? 2 : 1)).size > 1) errs.push('옵션마다 이름 칸 수(| 개수)가 같아야 해요');
+    return { opts, errs };
+}
+const HIDDEN_LINE = '손님에게 안 보임(판매중지·전시중지·쇼핑 미노출) — 열기는 센터에서';
 // 서버 options_table → 카드 줄(바뀐 칸만 · 결제가 포함)
 function optionRows(table) {
     const F = { name: '이름', price: '추가금', stock: '재고', usable: '판매', pay: '결제가' };
@@ -248,8 +281,8 @@ function halfSale(res) {
 }
 function card(head, pno, name, rows, extra) {
     const L = [`━━━ 네이버 상품 ${head} ━━━`, `상품: ${name ? name + ' ' : ''}(${pno})`];
-    if (!rows.length) L.push('바뀌는 곳 없음 — 지금 값과 같아요');
-    for (const r of rows) L.push(`· ${r.field}: ${r.before} → ${r.after}`);
+    if (Array.isArray(rows) && !rows.length) L.push('바뀌는 곳 없음 — 지금 값과 같아요');   // rows null = 전/후 표가 없는 카드(create)
+    for (const r of (rows || [])) L.push(`· ${r.field}: ${r.before} → ${r.after}`);
     for (const x of (extra || [])) L.push(x);
     return L.join('\n');
 }
@@ -280,7 +313,7 @@ function makeRunner(deps) {
         if (!s) throw new Error('backup_id 또는 상품번호가 필요해요');
         const q = s.length <= 9
             ? await pool.query(`SELECT id, product_no, order_id, before_json, applied_at, reverted_at FROM naver_product_backups WHERE id = $1`, [parseInt(s, 10)])
-            : await pool.query(`SELECT id, product_no, order_id, before_json, applied_at, reverted_at FROM naver_product_backups WHERE product_no = $1 AND applied_at IS NULL ORDER BY id DESC LIMIT 1`, [s]);
+            : await pool.query(`SELECT id, product_no, order_id, before_json, applied_at, reverted_at FROM naver_product_backups WHERE product_no = $1 AND applied_at IS NULL AND COALESCE(result_json->>'op', '') <> 'create_failed' ORDER BY id DESC LIMIT 1`, [s]);
         const r = q.rows[0];
         if (!r) throw new Error(s.length <= 9 ? `보관본 ${s} 를 못 찾았어요` : `상품 ${s} 의 아직 적용 안 한 보관본이 없어요 — 먼저 show`);
         return Object.assign(r, { before_json: typeof r.before_json === 'string' ? JSON.parse(r.before_json) : r.before_json });
@@ -357,7 +390,7 @@ async function main(argv, deps) {
         const bad = (res.unexpected_paths || []), miss = (res.not_applied || []);
         const extra = P.warns.filter(w => /상태만 바꿈/.test(w));
         if (bad.length) extra.push(`🔴 예상 밖으로 바뀐 칸 ${bad.length}곳: ${bad.slice(0, 5).join(' · ')}${bad.length > 5 ? ' …' : ''} — 되돌리기를 권합니다`);
-        if (res.links_converted > 0 || res.links_after != null) extra.push(`그림 링크: 일반 링크로 ${won(res.links_converted || 0)}개 보냄 · 다시 읽은 상세에 남은 링크 ${won(res.links_after || 0)}개${res.links_converted > 0 && !(res.links_after > 0) ? ' — ⚠ 네이버가 링크를 걸러 냄(센터 스마트에디터에서 다시 걸기)' : ''}`);
+        if (linkLine(res)) extra.push(linkLine(res));
         if (res.option_ids_kept === false) extra.push('⚠ 네이버가 옵션을 새로 만들었어요(옵션 id 가 바뀜) — 주문 연결은 판매자 관리코드라 큰 해는 없지만 총괄에게 알려 주세요');
         if (miss.length) extra.push(`⚠ 요청했는데 그대로인 칸: ${miss.map(k => ({ detail_html: '상세', status: '판매 상태', stock: '재고', options: '옵션', sale_price: '판매가', name: '상품명' })[k] || k).join(' · ')}`);
         const rowsAfter = res.options_table ? P.rows.filter(r => !/^옵션 「/.test(r.field)).concat(optionRows(res.options_table)) : P.rows;
@@ -386,7 +419,7 @@ async function main(argv, deps) {
             note: halfSale(res) || (res.drift_paths ? '적용한 뒤 네이버에서 또 바뀐 곳이 있어요 — 그 칸(drift_paths)을 요청자에게 보여 주고 「그래도 되돌려」면 --force' : '되돌리지 못했어요 — 총괄에게') });
         const name = (row.before_json.originProduct || {}).name;
         const sb = saleOkSelf(row.before_json), lines = [res.same_as_before ? '보관해 둔 그대로 돌아왔어요(다시 읽어 확인)' : `⚠ 보관본과 아직 다른 칸 ${(res.residual_paths || []).length}곳: ${(res.residual_paths || []).slice(0, 5).join(' · ')}`];
-        if (res.links_converted > 0) lines.push(`그림 링크: 일반 링크로 ${won(res.links_converted)}개 보냄 · 다시 읽은 상세에 남은 링크 ${won(res.links_after || 0)}개`);
+        if (linkLine(res)) lines.push(linkLine(res));
         lines.push(saleLine('건들기 전 판매 정상', sb), saleLine('되돌린 뒤 판매 정상', res.sale_ok || null));
         const back = !sb.ok || !res.sale_ok || res.sale_ok.ok;   // 원래 팔리던 상품이면 되돌린 뒤에도 팔려야
         if (!back) lines.push('🔴 원래 팔리던 상품인데 되돌린 뒤 아직 정상이 아니에요 — 총괄에게');
@@ -394,6 +427,55 @@ async function main(argv, deps) {
             options_table: res.options_table || undefined, sale_ok_before: sb, sale_ok_after: res.sale_ok || null,
             card: card('되돌리기 결과', row.product_no, name, res.options_table ? optionRows(res.options_table) : [], lines),
             note: res.same_as_before && back ? '되돌렸어요' : '되돌렸지만 확인할 것이 남았어요 — 총괄에게' });
+    }
+    if (cmd === 'create') {
+        const orderId = oid(rest[0]);
+        const from = String(o.from || '').replace(/\D/g, '');
+        if (!/^\d{6,}$/.test(from)) throw new Error('--from <본뜰 네이버 상품번호> 가 필요해요(배송·반품·고시 칸을 그 상품에서 그대로 가져와요)');
+        const name = String(o.name == null ? '' : o.name).trim();
+        if (!name) throw new Error('--name "<새 상품 이름>" 이 필요해요');
+        if (name.length > NAME_MAX) throw new Error(`상품 이름은 ${NAME_MAX}자까지예요(${name.length}자)`);
+        let stock = null; if (o.stock != null) { stock = toInt(o.stock); if (stock == null || stock < 0) throw new Error('--stock 은 0 이상 정수예요'); }
+        let sale_price = null; if (o.price != null) { sale_price = toInt(o.price); if (sale_price == null || sale_price <= 0) throw new Error('--price(판매가)는 1원 이상 정수예요'); }
+        const P = parseNewOpts(o.newOpt, stock);
+        if (P.errs.length) throw new Error(P.errs.join(' · '));
+        const req = { op: 'create', order_id: orderId, from_product_no: from, name, hidden: true };
+        if (P.opts.length) req.options = P.opts;
+        if (sale_price != null) req.sale_price = sale_price;
+        if (stock != null && !P.opts.length) req.stock = stock;
+        const L = [`본뜰 상품: ${from}(배송·반품·A/S·원산지·고시·할인·상세를 그대로 복사)`, `새 이름: ${name}`];
+        if (sale_price != null) L.push(`판매가: ${won(sale_price)}원(즉시할인은 본뜬 상품 그대로 · 결제가 = 판매가 − 할인 + 추가금)`);
+        if (P.opts.length) for (const x of P.opts) L.push(`옵션: ${[x.name1, x.name2, x.name3].filter(Boolean).join(' / ')} · 추가금 ${won(x.price)}원 · 재고 ${won(x.stock != null ? x.stock : 99999)}`);
+        else L.push(`옵션: 본뜬 상품 옵션 그대로 · 재고 99999${stock != null ? '(옵션 상품이면 --stock 은 안 먹어요)' : ''}`);
+        L.push(HIDDEN_LINE);
+        if (o.dry) return out({ ok: true, dry: true, request: req, card: card('새 상품 등록 계획(아직 안 보냄)', '새 번호는 등록 뒤', name, null, L.concat(['이대로 등록할까요?'])), note: '미리 보기 — 보낸 것 없음' });
+        if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 등록하지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
+        const res = await R.send(Object.assign(req, { created_by: await R.orderBy(orderId) }), 240000);
+        if (!res.ok) {
+            const e = String(res.error || '');
+            const note = /승인 뒤 실행/.test(e) ? '승인이 필요해요 — approval 로 올리고 [승인] 뒤 같은 명령'
+                : /24시간/.test(e) ? '오늘 등록 상한(24시간 3개)이에요 — 내일 다시'
+                : /번호를 못 찾았어요/.test(e) ? '🔴 등록은 됐을 수 있어요 — 다시 보내지 말고 스마트스토어센터에서 확인 · 총괄에게'
+                : (res.invalid_fields || []).length ? `네이버가 받지 않은 칸: ${res.invalid_fields.join(' · ')} — 등록 안 됨 · 총괄에게(설정으로 고쳐 다시)`
+                : '등록 안 됨 — 위 error 그대로 전하기';
+            return out({ ok: false, error: res.error || '등록 실패', code: res.code || null, invalid_fields: res.invalid_fields || undefined, origin_product_no: res.origin_product_no || undefined, note });
+        }
+        const sk = (res.sale_ok || {}).stock_total, sm = res.summary || {};
+        const R2 = [`새 상품번호: ${res.product_no}(원상품 ${res.origin_product_no || '?'}) · 본뜬 상품 ${res.from_product_no || from}`, `이름: ${name}`, `옵션 ${won(sm.options_n || 0)}개 · 재고 합 ${won(sk)}`];
+        const shopTxt = res.shopping === false ? '미노출' : String(res.shopping);
+        if (res.hidden_ok === true) R2.push(HIDDEN_LINE);
+        else if (res.status_now === 'WAIT') R2.push(`⚠ 판매 대기(WAIT)로 남았어요 — 판매중지로: show ${res.product_no} <지시 id> → apply <backup_id> <지시 id> --status 판매중지 (전시 ${res.display || '?'} · 쇼핑 ${shopTxt})`);
+        else R2.push(`⚠ 안 보이게 됐는지 확인 필요 — 상태 ${stKo(res.status_now)} · 전시 ${res.display || '?'} · 쇼핑 ${shopTxt} — 스마트스토어센터에서 확인`);
+        if (res.hidden_forced) R2.push('노출 요청은 오늘 규칙상 막혀 비노출로 등록했어요');
+        if (!(sk > 0)) R2.push('⚠ 옵션 재고가 안 들어갔어요 → 재고·옵션은 스마트스토어센터에서 최종 세팅');
+        if (linkLine(res)) R2.push(linkLine(res));
+        if (res.error_note) R2.push('⚠ ' + res.error_note);
+        R2.push('판매 시작(전시 ON · 판매중 · 쇼핑 노출)은 스마트스토어센터에서');
+        const okHidden = res.hidden_ok === true;
+        return out({ ok: true, product_no: res.product_no, origin_product_no: res.origin_product_no || null, backup_id: res.backup_id || null,
+            hidden_ok: res.hidden_ok, status_now: res.status_now, display: res.display, shopping: res.shopping,
+            card: card(okHidden ? '새 상품 등록 결과' : '새 상품 등록 결과 — 🔴 확인 필요', res.product_no, name, null, R2),
+            note: okHidden ? '등록했어요 — 손님에게 안 보이는 상태 · 새 상품번호와 카드 그대로 전하기' : '등록은 됐지만 확인할 것이 있어요 — 카드의 ⚠ 줄 그대로 답 맨 위에' });
     }
     if (cmd === 'upload') {
         const ids = rest.map(n => parseInt(n, 10)).filter(n => n > 0);
@@ -403,10 +485,10 @@ async function main(argv, deps) {
         return out({ ok: !!res.ok, urls: res.urls || [], error: res.error || undefined,
             html: (res.urls || []).map(u => `<img src="${u}" alt="">`), note: '상세 HTML 에는 이 주소만 넣어요(다른 사이트 주소 금지)' });
     }
-    throw new Error('명령: show · plan · apply · revert · upload');
+    throw new Error('명령: show · plan · apply · revert · upload · create');
 }
 
-module.exports = { main, makeRunner, planRows, htmlDelta, foreignImages, buildPatch, busyWindow, card, parseOpts, parseOptArgs, optionTable, optionRows, payOf, discountOf, saleOkSelf, saleLine, expectBad, halfSale, REQ_KEY, RES_KEY };
+module.exports = { main, makeRunner, parseNewOpts, linkLine, planRows, htmlDelta, foreignImages, buildPatch, busyWindow, card, parseOpts, parseOptArgs, optionTable, optionRows, payOf, discountOf, saleOkSelf, saleLine, expectBad, halfSale, REQ_KEY, RES_KEY };
 
 if (require.main === module) {
     const { pool } = require('./_db');

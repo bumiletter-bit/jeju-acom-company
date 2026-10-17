@@ -104,6 +104,21 @@ sale_ok: { … }                 // B1 칸 · 단 가격·옵션을 바꾼 apply
 - 결과 칸(apply): `steps, auto_sale, changed_paths, unexpected_paths(+ 'option_regenerated:<id>'), not_applied(키 또는 'options.<id>.<칸>'), stock_paths, sale_ok, sale_attempts, options_table, price_basis, option_ids_kept, before_summary, after_summary`. revert 도 `options_table`(지금 → 되돌린 뒤) · `price_basis` · `option_ids_kept`.
 - 거절 문구(쓰기 0): 새 옵션(id 없음) · 없는 id · 같은 id 두 번 · 바꿀 칸 없음 · 지금과 같은 값(옵션·판매가·품목명) · 모르는 옵션 칸 · 옵션명 1~50자 · 추가금 정수 · 재고 0 이상 정수 · usable true/false · 옵션 21개↑ · 판매가 0 이하·정수 아님 · 품목명 빈 글·100자 초과 · 결제가 0 이하 · 결제가 10배↑/10분의 1↓ · 품절 + 옵션 재고 동시 · 상품 단위 `stock` 키(「재고는 옵션별로」) · `customerBenefit` 등 허용 밖 키.
 
+### create(#723-C · 있는 상품을 본떠 새 상품 등록 · v5.9.543 · 근거 = docs/720-naver-write-api.md 「3차 신규 등록」)
+`{ op:'create', order_id, from_product_no, name, options?:[{ name1, name2?, name3?, price, stock? }], sale_price?, stock?(옵션 없는 상품), hidden?(기본 true) }`
+→ `{ ok, op, product_no(새 채널 번호), origin_product_no, from_product_no, backup_id, found_by:'response'|'search', hidden, hidden_forced, hidden_ok, status_now, display, shopping, status_step, rep_image, links_converted, links_after, summary, sale_ok }`
+- **바디** = 본뜰 상품 조회 응답 두 객체(originProduct + smartstoreChannelProduct) 깊은 복사 → 이름(+채널 상품명이 있으면 같은 글)·판매가·옵션만 바꿈 · 상세 안 그림 주소 그대로(그림 링크는 일반 href 로).
+- **뺄 칸** = 점 경로 배열 · 코드 기본 `NPW_CREATE_STRIP`(originProduct.originProductNo · smartstoreChannelProduct.channelProductNo · originProduct.regDate · originProduct.modifiedDate · originProduct.detailAttribute.naverShoppingSearchInfo · originProduct.detailAttribute.seoInfo) · **설정 `naver_product_write.create_strip`(배열)이 있으면 그것으로 덮음**(첫 등록 400 의 칸 이름을 보고 총괄이 설정만 고쳐 다시 넣음 · 재배포 없음) · 옵션 id·sellerManagerCode 는 코드가 따로 뺌.
+- **옵션** = id 없이 새로 · 재고 기본 99999(대표 관례 · stock 주면 그 값) · `useStockManagement:true` · 상품 재고 = 옵션 합. options 를 안 주면 본뜬 옵션을 새 옵션으로(재고 99999).
+- **대표 그림** = 본뜬 상품 대표 그림(우리 그림 CDN `shop-phinf.pstatic.net` 주소만)을 받아 그림 올리기 API 로 다시 올린 새 주소(「upload API 가 준 URL 만」 #1964 · 그림 올리기 실검증 겸함) · 받기·올리기 실패면 등록 안 함.
+- **비노출(기본)** = 등록 바디 `originProduct.statusType:'WAIT'` + `smartstoreChannelProduct.channelProductDisplayStatusType:'SUSPENSION'` + `naverShoppingRegistration:false` → 등록 성공 뒤 원상품 번호로 change-status `SUSPENSION`(WAIT → SUSPENSION) → 재조회로 `hidden_ok`(SUSPENSION · SUSPENSION · false) · 결과 고정 칸 `status_now`(WAIT/SUSPENSION) · `display` · `shopping`. 판매중지 전환이 실패하면 `status_now:'WAIT'` · `status_step.ok:false` 로 남음 → 창구 apply `{ status:'SUSPENSION' }` 로 풂(전이표 `WAIT → SUSPENSION` · WAIT → SALE 은 없음).
+- **판매 시작(전시 ON · 네이버쇼핑 등록 · SALE)은 create 밖**(센터 또는 다음 확장). 노출(`hidden:false`)은 설정 `create_enabled === true` + 대표/승인 지시 + 이름에 「테스트」가 있을 때만(오늘 규칙) · 시험 번호 계정은 늘 비노출 · 못 열면 `hidden_forced:true`.
+- **번호** = 응답의 `smartstoreChannelProductNo`·`originProductNo`(칸 이름 미확정 → 응답 원문을 서버 로그 「상품 등록 응답 원문」 에 통째로) · 없으면 `/v1/products/search` 에서 같은 이름의 가장 큰 채널 번호(`found_by:'search'`).
+- **실패** = 1요청 1회(러너 재시도 없음) · 400 은 응답에 고정 문구 + `invalid_fields` 칸 이름만 · 보관본 행(`result_json.op:'create_failed'` · invalid_fields · strip · rep_image · before_json = 본뜬 상품)에 남김 · 상한엔 안 셈.
+- **등록됐을 수 있는 경우**(응답·검색 모두 번호 없음 · 새 번호 재조회 실패) = 보관본 행 `result_json.op:'create_unknown'`(before_json = 본뜬 상품 · 이 행으로 apply·revert 거절) · 상한에 셈(중복 등록 방지) · 번호 못 찾음은 ok:false · 재조회 실패는 ok:true + `backup_id:null` + `error_note`.
+- 대표 그림 받기 = 다른 곳으로 넘기는 응답 안 따라감(redirect error) · content-length 10MB 초과면 받기 전에 거절 · 받은 뒤에도 10MB 검사 · 20초.
+- 승인 필요(apply 와 같은 선 · 시험 계정 통과) · 24시간 3개 상한(성공 + create_unknown) · 동시 1건 · audit `naver_product_create` · 성공 보관본(`result_json.op:'create'` · before_json = 생성 직후 재조회) 뒤로는 backup·apply·revert 종전 길.
+
 ### upload_image
 `{ op:'upload_image', order_id, order_ids:[…] }` — `order_ids` 생략이면 `[order_id]` · 최대 10 · 합계 10MB 미만.
 - 각 지시의 첨부 = `pending_orders.image_data`(data URL · 지시 1건당 1장) · jpg/png/gif/bmp 만(MIME 실제값 그대로).

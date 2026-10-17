@@ -33,6 +33,11 @@ function fakePool(orders, cfg = { detail_enabled: true, put_enabled: true }) {  
             if (/SET patch_json = \$2::jsonb, applied_at = COALESCE\(applied_at, NOW\(\)\)/.test(sql)) { const r = find(p[0]); r.patch_json = JSON.parse(p[1]); r.applied_at = r.applied_at || new Date(); return { rows: [] }; }
             if (/SET patch_json = \$2::jsonb, result_json = \$3::jsonb/.test(sql)) { const r = find(p[0]); r.patch_json = JSON.parse(p[1]); r.result_json = JSON.parse(p[2]); return { rows: [] }; }
             if (/SET after_json = \$2::jsonb, result_json = \$3::jsonb/.test(sql)) { const r = find(p[0]); r.after_json = JSON.parse(p[1]); r.result_json = JSON.parse(p[2]); return { rows: [] }; }
+            if (/count\(\*\)::int AS n FROM naver_product_backups WHERE result_json->>'op' IN \('create', 'create_unknown'\)/.test(sql)) return { rows: [{ n: backups.filter(x => x.result_json && ['create', 'create_unknown'].includes(x.result_json.op)).length }] };
+            if (/^\s*INSERT INTO naver_product_backups \(product_no, origin_product_no, order_id, before_json, created_by, result_json\)/.test(sql)) {
+                const r = { id: ++seq, product_no: p[0], origin_product_no: p[1], order_id: p[2], before_json: JSON.parse(p[3]), created_by: p[4], patch_json: null, after_json: null, applied_at: null, reverted_at: null, result_json: JSON.parse(p[5]) };
+                backups.push(r); return { rows: [{ id: r.id }] };
+            }
             if (/SET result_json = \$2::jsonb WHERE id = \$1/.test(sql)) { const r = find(p[0]); r.result_json = JSON.parse(p[1]); return { rows: [] }; }
             if (/SET result_json = COALESCE\(result_json, '\{\}'::jsonb\) \|\| \$2::jsonb WHERE id = \$1/.test(sql)) { const r = find(p[0]); r.result_json = { ...(r.result_json || {}), ...JSON.parse(p[1]) }; return { rows: [] }; }
             if (/SET reverted_at = NOW\(\)/.test(sql)) { const r = find(p[0]); r.reverted_at = new Date(); r.result_json = { ...(r.result_json || {}), ...JSON.parse(p[1]) }; return { rows: [] }; }
@@ -49,6 +54,29 @@ function fakeNaver(product, opts = {}) {
         st.calls.push(r.method + ' ' + r.path);
         if (opts.delay) await new Promise(res => setTimeout(res, opts.delay));
         if (r.method === 'GET' && r.path === `/external/v2/products/channel-products/${CH}`) return JSON.parse(JSON.stringify(st.product));
+        // #723-C 새 상품 등록 · 새 번호 GET(새 상품은 st.made 에 따로 · PUT 은 CH 만)
+        if (r.method === 'POST' && r.path === '/external/v2/products') {
+            if (opts.createFail) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.leafCategoryId' }] }; throw e; }
+            st.creates = st.creates || []; st.creates.push(r.body);
+            const no = String(7000 + st.creates.length), made = JSON.parse(JSON.stringify(r.body));
+            made.originProduct.detailAttribute.optionInfo.optionCombinations.forEach((o, i) => { o.id = 80000 + i; });
+            st.made = st.made || {}; st.made[no] = made;
+            st.madeOrigin = st.madeOrigin || {}; st.madeOrigin[String(9500 + st.creates.length)] = no;
+            if (opts.createNoNumbers && opts.searchNone) return {};
+            if (opts.createNoNumbers) { st.searchMade = { originProductNo: 9500 + st.creates.length, channelProducts: [{ channelProductNo: Number(no), name: made.originProduct.name }] }; return {}; }
+            return { originProductNo: 9500 + st.creates.length, smartstoreChannelProductNo: Number(no) };
+        }
+        if (r.method === 'GET' && st.made && st.made[r.path.split('/').pop()]) {
+            if (opts.madeGetFail) { const e = new Error('naver_relay_error_500'); e.status = 500; throw e; }
+            return JSON.parse(JSON.stringify(st.made[r.path.split('/').pop()]));
+        }
+        // 새 상품 change-status(원상품 95xx)
+        const mo = r.method === 'PUT' && st.madeOrigin && (r.path.match(/origin-products\/(\d+)\/change-status$/) || [])[1];
+        if (mo && st.madeOrigin[mo]) {
+            st.madeStatusPuts = st.madeStatusPuts || []; st.madeStatusPuts.push(r.body);
+            if (opts.madeStatusFail) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문' }; throw e; }
+            st.made[st.madeOrigin[mo]].originProduct.statusType = r.body.statusType; return {};
+        }
         if (r.method === 'PUT' && r.path === `/external/v2/products/channel-products/${CH}`) {
             if (opts.putFail) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.foo', message: 'x' }] }; throw e; }
             // 실측(10/17 레드키위): 바디의 statusType 이 지금과 다르면 400 invalid originProduct.statusType
@@ -65,7 +93,7 @@ function fakeNaver(product, opts = {}) {
             return {};
         }
         if (r.method === 'POST' && r.path === '/external/v1/products/search') {
-            return { contents: opts.noOrigin ? [] : [{ originProductNo: Number(ORIGIN), channelProducts: [{ channelProductNo: Number(CH) }] }] };
+            return { contents: [...(opts.noOrigin ? [] : [{ originProductNo: Number(ORIGIN), channelProducts: [{ channelProductNo: Number(CH) }] }]), ...(st.searchMade ? [st.searchMade] : [])] };
         }
         if (r.method === 'PUT' && r.path === `/external/v1/products/origin-products/${ORIGIN}/change-status`) {
             st.statusPuts.push(r.body);
@@ -585,6 +613,111 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const bz = await run({ op: 'backup', product_no: CH, order_id: 101 }, z.deps);
         const az = await run({ op: 'apply', order_id: 101, backup_id: bz.backup_id, patch: { status: 'OUTOFSTOCK' } }, z.deps);
         ok(az.ok && az.not_applied.includes('status') && z.nv.statusPuts.length === 0, '재고 0 뒤에도 판매중이면 not_applied status(change-status 로 우회 안 함)', az);
+    }
+
+    console.log('⑬ #723-C create — 본떠 새 상품 등록 · 비노출(WAIT → SUSPENSION) · 대표 그림 다시 올림 · 뺄 칸 설정 · 하루 상한 · 승인');
+    {
+        const TN = '테스트 한라봉(시험용 · 구매 금지)';
+        const OCs = (x) => x.originProduct.detailAttribute.optionInfo.optionCombinations;
+        const PC = JSON.parse(JSON.stringify(PRODUCT));
+        PC.originProduct.images.representativeImage.url = 'https://shop-phinf.pstatic.net/20261001_1/rep.jpg';
+        PC.originProduct.detailAttribute.seoInfo = { pageTitle: 'x' };
+        OCs(PC)[0].sellerManagerCode = 'S1';
+        const fetched = [];
+        const fetchImage = async (u) => { fetched.push(u); return { mime: 'image/jpeg', b64: '/9j/4AAQ' }; };
+        const mkc = (opts, cfg) => { const db = fakePool(ORDERS, cfg === undefined ? { detail_enabled: true, put_enabled: true } : cfg), nv = fakeNaver(PC, opts || {}); return { db, nv, deps: { pool: db, call: nv.call, audit, convertImageLinks: LINKS.convertImageLinks, fetchImage } }; };
+        const k = mkc();
+        const c = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN, created_by: '시험' }, k.deps);
+        const body = k.nv.creates && k.nv.creates[0];
+        ok(c.ok && c.product_no === '7001' && c.origin_product_no === '9501' && c.found_by === 'response' && c.backup_id, '시험 계정 create = 새 번호(응답) · 보관본', c);
+        ok(body.originProduct.name === TN && body.originProduct.statusType === 'WAIT' && body.smartstoreChannelProduct.channelProductDisplayStatusType === 'SUSPENSION' && body.smartstoreChannelProduct.naverShoppingRegistration === false,
+            '등록 바디 = 새 이름 · 판매 대기(WAIT) · 전시중지 · 네이버쇼핑 미등록', body && { st: body.originProduct.statusType, ch: body.smartstoreChannelProduct });
+        ok(JSON.stringify(k.nv.madeStatusPuts) === '[{"statusType":"SUSPENSION"}]' && c.status_step.ok && c.hidden === true && c.hidden_ok === true && c.status_now === 'SUSPENSION' && c.display === 'SUSPENSION' && c.shopping === false,
+            '등록 뒤 change-status SUSPENSION · 결과 status_now·display·shopping 고정 칸 · hidden_ok', c);
+        ok(OCs(body).every(o => o.id == null && o.sellerManagerCode == null && o.stockQuantity === 99999) && OCs(body).length === 2 && body.originProduct.detailAttribute.optionInfo.useStockManagement === true && body.originProduct.stockQuantity === 199998,
+            '옵션 id·관리코드 빼고 본뜸 · 재고 99999 · useStockManagement true · 상품 재고 = 합', OCs(body));
+        ok(!('seoInfo' in body.originProduct.detailAttribute) && !('naverShoppingSearchInfo' in body.originProduct.detailAttribute) && body.originProduct.salePrice === 29000 && body.originProduct.detailContent === PRODUCT.originProduct.detailContent,
+            '기본 뺄 칸(seoInfo·naverShoppingSearchInfo) 제거 · 판매가·상세 그대로', Object.keys(body.originProduct.detailAttribute));
+        ok(fetched[0] === PC.originProduct.images.representativeImage.url && body.originProduct.images.representativeImage.url === 'https://shop-phinf.pstatic.net/fake/0.jpg' && c.rep_image === 'https://shop-phinf.pstatic.net/fake/0.jpg'
+            && k.nv.calls.indexOf('POST /external/v1/product-images/upload') < k.nv.calls.indexOf('POST /external/v2/products'), '대표 그림 = 받아서 그림 올리기 API 로 다시 올린 새 주소(등록 전에)', [fetched, c.rep_image]);
+        ok(JSON.stringify(k.nv.product) === JSON.stringify(PC) && k.nv.puts.length === 0 && k.nv.statusPuts.length === 0, '원본 상품 쓰기 0(PUT·change-status 0)');
+        const row = k.db.backups.find(x => x.id === c.backup_id);
+        ok(row && row.product_no === '7001' && row.origin_product_no === '9501' && row.result_json.op === 'create' && row.result_json.from_product_no === CH && !row.applied_at && row.before_json.originProduct.statusType === 'SUSPENSION', '보관본 = 생성 직후 재조회 · op create', row && row.result_json);
+        ok(audits.some(x => x.action === 'naver_product_create' && x.changes.product_no === '7001'), 'audit naver_product_create');
+        // 그 보관본으로 바로 backup·apply 길이 이어짐(새 번호 GET)
+        const bb = await run({ op: 'backup', product_no: '7001', order_id: 105 }, k.deps);
+        ok(bb.ok && bb.summary.name === TN, '새 상품 번호로 backup 됨', bb);
+        // 옵션·판매가 지정(재고 없으면 99999)
+        const k2 = mkc();
+        const c2 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN, sale_price: 30000, options: [{ name1: '3kg', price: 0 }, { name1: '5kg', price: 12000, stock: 10 }, { name1: '10kg', price: 30000 }] }, k2.deps);
+        const b2 = k2.nv.creates[0];
+        ok(c2.ok && OCs(b2).map(o => o.optionName1 + ':' + o.price + ':' + o.stockQuantity).join() === '3kg:0:99999,5kg:12000:10,10kg:30000:99999' && b2.originProduct.stockQuantity === 200008 && b2.originProduct.salePrice === 30000, '옵션 3개·판매가 지정 · 재고 기본 99999 · 합 자동', OCs(b2));
+        // 뺄 칸 = 설정 create_strip 이 있으면 그것으로 덮음
+        const k3 = mkc(null, { put_enabled: true, create_strip: ['originProduct.detailAttribute.seoInfo', 'originProduct.customerBenefit'] });
+        const c3 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, k3.deps);
+        const b3 = k3.nv.creates[0];
+        ok(c3.ok && !('seoInfo' in b3.originProduct.detailAttribute) && ('naverShoppingSearchInfo' in b3.originProduct.detailAttribute) && k3.db.backups.find(x => x.id === c3.backup_id).result_json.strip.length === 2, '설정 create_strip 이 코드 기본을 덮음(재배포 없이)', Object.keys(b3.originProduct.detailAttribute));
+        // 응답에 번호가 없으면 상품 목록에서 같은 이름으로
+        const k4 = mkc({ createNoNumbers: true });
+        const c4 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, k4.deps);
+        ok(c4.ok && c4.product_no === '7001' && c4.origin_product_no === '9501' && c4.found_by === 'search', '응답에 번호 없음 → 이름으로 찾아 채움', c4);
+        // 판매중지 전환 실패 → WAIT 로 남음 · 결과에 보임 · 창구 apply status SUSPENSION 으로 풂(WAIT → SUSPENSION 전이)
+        const k5 = mkc({ madeStatusFail: true });
+        const c5 = await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, k5.deps));
+        ok(c5.ok && c5.status_now === 'WAIT' && c5.status_step.ok === false && c5.hidden_ok === false, '판매중지 전환 실패 = status_now WAIT · hidden_ok false 로 드러남', c5);
+        const nv5call = k5.nv.call;
+        const ap5 = await run({ op: 'apply', order_id: 105, backup_id: c5.backup_id, patch: { status: 'SUSPENSION' } }, { ...k5.deps, call: async (r) => { if (/change-status/.test(r.path)) { k5.nv.made['7001'].originProduct.statusType = r.body.statusType; return {}; } return nv5call(r); } });
+        ok(ap5.ok && ap5.after_summary.status === 'SUSPENSION', 'WAIT → SUSPENSION apply 로 풂(전이표 WAIT)', ap5);
+        // 「등록됐을 수 있는」 경우(번호 못 찾음 · 재조회 실패) = op create_unknown 행 · 상한에 셈 · 그 행으로 apply 안 됨
+        const u1 = mkc({ createNoNumbers: true, searchNone: true });
+        const cu1 = await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, u1.deps));
+        const ur1 = u1.db.backups.find(x => x.result_json.op === 'create_unknown');
+        ok(!cu1.ok && /번호를 못 찾았어요/.test(cu1.error) && ur1 && ur1.result_json.note === 'no_channel_no', '번호 못 찾음 → 실패 응답 + create_unknown 행', [cu1, ur1 && ur1.result_json]);
+        const u2 = mkc({ madeGetFail: true });
+        const cu2 = await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, u2.deps));
+        const ur2 = u2.db.backups.find(x => x.result_json.op === 'create_unknown');
+        ok(cu2.ok && cu2.backup_id === null && /재조회 실패/.test(cu2.error_note) && ur2 && ur2.product_no === '7001', '재조회 실패 → create_unknown 행(backup_id 없음)', [cu2, ur2 && ur2.result_json]);
+        const xa = await run({ op: 'apply', order_id: 105, backup_id: ur2.id, patch: { sale_price: 1 } }, u2.deps);
+        ok(!xa.ok && /등록 실패·불명 기록/.test(xa.error), 'create_unknown 행으로 apply 거절', xa);
+        for (let i = 0; i < 2; i++) await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, u2.deps));
+        const cu4 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, u2.deps);
+        ok(!cu4.ok && /3개까지/.test(cu4.error), 'create_unknown 도 24시간 상한에 셈(중복 등록 방지)', cu4);
+        // 노출 요청: 시험 계정 = 비노출 강제 · 대표 + create_enabled + 이름 「테스트」 = 노출(상태는 본뜬 값 · change-status 0) · 이름에 「테스트」 없으면 강제
+        const h1 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN, hidden: false }, mkc().deps);
+        ok(h1.ok && h1.hidden === true && h1.hidden_forced === true, '시험 계정 hidden:false → 비노출 강제', h1);
+        const k6 = mkc(null, { put_enabled: true, create_enabled: true });
+        const h2 = await run({ op: 'create', order_id: 101, from_product_no: CH, name: TN, hidden: false }, k6.deps);
+        ok(h2.ok && h2.hidden === false && k6.nv.creates[0].originProduct.statusType === 'SALE' && !k6.nv.madeStatusPuts, '대표 지시 + create_enabled + 이름 「테스트」 = 노출 허용(change-status 0)', h2);
+        const h3 = await run({ op: 'create', order_id: 101, from_product_no: CH, name: '제주 한라봉 선물', hidden: false }, k6.deps);
+        ok(h3.ok && h3.hidden === true && h3.hidden_forced === true, '이름에 「테스트」 없으면 비노출 강제', h3);
+        const h4 = await run({ op: 'create', order_id: 101, from_product_no: CH, name: TN, hidden: false }, mkc(null, { put_enabled: true }).deps);
+        ok(h4.ok && h4.hidden === true, 'create_enabled 없으면 비노출', h4);
+        // 하루 상한 3(실패한 등록은 셈하지 않음)
+        const m = mkc();
+        for (let i = 0; i < 3; i++) await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, m.deps);
+        const m4 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, m.deps);
+        ok(!m4.ok && /3개까지/.test(m4.error) && m.nv.creates.length === 3, '24시간 3개 상한', m4);
+        // 승인·꼴·그림·네이버 400
+        const x1 = await run({ op: 'create', order_id: 103, from_product_no: CH, name: TN }, mkc().deps);
+        ok(!x1.ok && x1.error === '승인 뒤 실행', '승인 없는 직원 지시 create 거절', x1);
+        const x2 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: '' }, mkc().deps);
+        ok(!x2.ok && /이름/.test(x2.error), '이름 없음 거절');
+        const x3 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN, options: [{ name1: '3kg', price: 0, stock: -1 }] }, mkc().deps);
+        ok(!x3.ok && /0 이상 정수/.test(x3.error), '옵션 재고 음수 거절');
+        const x4 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN, options: [{ name1: '3kg', price: 0, stock: 1, id: 5 }] }, mkc().deps);
+        ok(!x4.ok && /허용되지 않은 칸 id/.test(x4.error), '옵션에 id 거절(새 옵션만)');
+        const x7 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, mk().deps);
+        ok(!x7.ok && /그림 CDN/.test(x7.error), '대표 그림이 우리 CDN 주소가 아니면 거절(받지 않음)', x7);
+        const ng = mkc(); delete ng.deps.fetchImage;
+        const x8 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, ng.deps);
+        ok(!x8.ok && /fetchImage/.test(x8.error) && !ng.nv.creates, 'fetchImage 없으면 등록 안 함', x8);
+        const fk = mkc({ createFail: true });
+        const x5 = await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, fk.deps));
+        const frow = fk.db.backups[0];
+        ok(!x5.ok && x5.code === 400 && JSON.stringify(x5.invalid_fields) === '["originProduct.leafCategoryId"]' && !JSON.stringify(x5).includes('원문')
+            && frow && frow.result_json.op === 'create_failed' && JSON.stringify(frow.result_json.invalid_fields) === '["originProduct.leafCategoryId"]' && Array.isArray(frow.result_json.strip), '네이버 400 → 응답은 칸 이름만 · 보관본 result_json(create_failed)에 invalid_fields·strip', [x5, frow && frow.result_json]);
+        const fk2 = await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, fk.deps));
+        ok(!fk2.ok && fk.nv.calls.filter(c => c === 'POST /external/v2/products').length === 2 && fk.db.backups.filter(x => x.result_json.op === 'create').length === 0, '실패는 상한에 안 셈 · 1요청 1회(두 번 넣으면 두 번 · 재시도 없음)', fk.nv.calls.filter(c => /v2\/products$/.test(c)));
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

@@ -113,3 +113,47 @@
 - **옵션 상품의 change-status OUTOFSTOCK = 400**(SALE → OUTOFSTOCK) → change-status 는 SALE↔SUSPENSION 만.
 - **옵션 `price` = 판매가 대비 추가금 · 음수 가능**(레드키위 5kg 0 · 3kg −17,000 · 10kg +43,000 · 판매가 98,800 · 즉시할인 WON 48,000 → 결제가 50,800 · 33,800 · 93,800) → 미확정 2-2 닫힘.
 - **통째 PUT 은 상세를 안 바꿔도 네이버가 상세를 걸러 냄**: 옵션 재고 −1 만 바꾼 PUT 에서 detailContent 71,083 → 62,996자(스마트에디터 `script type=text/data` 30블록 삭제 · 그림 a 태그의 style·onclick·data-linktype·data-linkdata 는 `<!-- Not Allowed Attribute Filtered ( … ) -->` 주석으로 옮겨짐 · 그림 23장·글자 그대로 · 실손실 = 그림 링크 4곳). 재조회 옵션 id 그대로(관리코드 없음).
+
+---
+
+# 3차 신규 등록(#723-A · 워커3 · 2026-10-17) — 시험용 상품(「테스트 한라봉」) API 등록
+
+> 공식 등록 페이지(…/current/create-product-product)는 Request·Response 칸이 비어 나와, 바디는 구조체 스키마 + 포럼 요청 예시(#595 2023-04 · #2216 2025-01 · #1922 2024-09)로, 필수 칸은 구조체 REQUIRED 표시 + 포럼 400 사례로 채웠다. **응답 꼴은 어디에도 없음(미확정 3차-1)**. 위 #721-B 실측(통째 PUT 에서 statusType 바꾸면 400 · 네이버가 상세를 걸러 냄)은 등록에도 그대로 적용된다고 본다.
+
+## ① 바디 꼴 = 조회 응답과 같은 두 객체
+- `POST /v2/products` · 바디 최상위 = `originProduct` + `smartstoreChannelProduct`(같은 최상위 · originProduct 안에 넣으면 400 NotNull · #1922 2024-09-02) · 쇼핑윈도 없음 → `windowChannelProduct` 안 보냄. 옛 v1 예시(#595)엔 최상위 `customerBenefit` 도 있었으나 현행 구조체는 `originProduct.customerBenefit`.
+- **「우리 상품 조회 응답을 복사해 이름·가격·상세만 바꿔 등록」 이 가장 안전한 길**(배송·반품 주소·A/S·원산지·고시·세금 칸을 같은 판매자 값으로 그대로 얻음). 빼야 할 칸(문서 없음 → **미확정 3차-2 · 첫 등록 400 invalidInputs 로 확정**): 번호·날짜 칸(조회 응답에 있다면 originProductNo·channelProductNo·regDate·modifiedDate 류) · `optionCombinations[].id`(⑤) · `detailAttribute.naverShoppingSearchInfo`(카탈로그 매칭 상품이면 빼기 · #1883) · `seoInfo`(비면 제거되니 빼도 됨) · `mobileDiscountMethod`(deprecated) · `saleStartDate/EndDate`(비워 둠). 운영자 원칙 = 「요청 메시지 내 본문은 필요한 정보만 포함」(#241 2022-11-24) · 고시(productInfoProvidedNotice)는 **유형 하나 + 그 유형의 하위 하나만**(「WEAR 면 wear 만」).
+- 근거: https://github.com/commerce-api-naver/commerce-api/discussions/1922 · /discussions/241 · /discussions/595
+
+## ② 필수 칸
+| 출처 | 칸 |
+|---|---|
+| 공식 구조체 REQUIRED(최상위) | `originProduct.statusType` · `name` · `detailContent` · `images`(representativeImage.url) · `salePrice` · `detailAttribute` / `smartstoreChannelProduct.naverShoppingRegistration` · `channelProductDisplayStatusType` |
+| 포럼 400 실사례(제3자 등록 기록 PR #875 · 비공식이나 400 메시지 기준) | `leafCategoryId`(400) · `detailAttribute.minorPurchasable`(400) · `productInfoProvidedNotice.productInfoProvidedNoticeType`(400) · 문서상 required = `afterServiceInfo.afterServiceTelephoneNumber·afterServiceGuideContent` · `originAreaInfo.originAreaCode·content` |
+| 등록 예시에 늘 들어가는 칸(없으면 400 가능성 · 조회 응답 복사로 해결) | `deliveryInfo{deliveryType, deliveryAttributeType, deliveryCompany, deliveryFee{deliveryFeeType, baseFee}, claimDeliveryInfo{returnDeliveryCompanyPriorityType, returnDeliveryFee, exchangeDeliveryFee, shippingAddressId, returnAddressId}}` · `detailAttribute.taxType` · `sellerCodeInfo` · `stockQuantity`(옵션 상품이면 무시) |
+- 고시 유형 = `GET /v1/products-for-provided-notice?categoryId=대분류ID` 로 그 카테고리 추천 유형과 **하위 칸 목록(fieldName·fieldMaxLength)** 을 받을 수 있음(enum 에 FOOD · GENERAL_FOOD · DIET_FOOD · ETC 등 · 농산물은 우리 기존 상품 응답의 값을 그대로 복사하면 됨). 이 GET 은 `/external/v1/products-for-provided-notice` 라 **지금 허용 목록(GET /v2/products/·POST /v1/products/search)에 없음** → 필요하면 워커2에 GET 한 줄(조회 응답 복사면 불필요).
+- 근거: 공식 …/schemas/원상품-정보-구조체 · …/current/get-all-product-info-provided-notice-type-vo-product · https://github.com/Kohgane/proxy-commerce/pull/875(비공식)
+
+## ③ 손님에게 안 보이게 등록하는 값
+| 칸 | 넣을 값 | 근거 |
+|---|---|---|
+| `smartstoreChannelProduct.channelProductDisplayStatusType` | **`SUSPENSION`**(전시 중지) — 「상품 등록/수정 시 전시 상태 코드 필드 값은 ON 과 SUSPENSION 만」(운영자 2025-01-06 · WAIT 넣으면 NotValidEnum) | #2216 |
+| `smartstoreChannelProduct.naverShoppingRegistration` | **`false`**(네이버쇼핑 미등록 · 광고주 아니면 어차피 false 저장) | 공식 구조체 |
+| `originProduct.statusType` | 등록 때 쓰인 값 = 포럼 예시 `WAIT`(판매 대기 · #595 · #241) 또는 `SALE`(#2216 · #1922). **`SUSPENSION` 으로 바로 등록되는지는 문서 없음(미확정 3차-3)**. 추천 = **`WAIT` 로 등록 → 응답 원상품 번호로 change-status `SUSPENSION`**(문서 전이표 「SALE·OUTOFSTOCK·WAIT → SUSPENSION」 허용 · 이미 허용 목록에 있는 경로). 🔴 #721-B 실측대로 **통째 PUT 으로는 statusType 을 못 바꾸므로** 상태는 change-status 로만. | 공식 …/current/read-channel-product-product(판매 상태 변경) · #2216 · #595 |
+- 세 값을 함께 쓰면 「판매 대기/중지 + 전시 중지 + 쇼핑 미노출」 = 스토어·검색 어디에도 안 보임(전시 중지 상품이 URL 직접 접근에서도 안 보이는지는 센터 동작 · 문서 없음 · 대표 폰으로 1회 확인).
+
+## ④ 응답에서 번호 칸
+- **미확정 3차-1** — 공식 페이지 Response 비어 나옴 · 포럼에 성공 응답을 붙인 글 0건(전부 오류 응답만). 성공 200 바디에 원상품 번호·채널 상품 번호가 올 것으로 보나 칸 이름(originProductNo · smartstoreChannelProductNo 추정)은 **첫 등록 응답 원문을 통째로 로그에 남겨 확정**. 응답에 번호가 없으면 `POST /v1/products/search`(이미 허용 · 상품명으로)로 찾는다.
+
+## ⑤ 옵션 등록 꼴
+- `originProduct.detailAttribute.optionInfo` 하위(자리 틀리면 조용히 「설정안함」 · #2305 2025-02-14) = `optionCombinationSortType`(정렬 · 예시 CREATE) · `optionCombinationGroupNames{ optionGroupName1[, 2, 3] }` · `optionCombinations[{ optionName1[,2,3], stockQuantity, price(판매가 대비 추가금 · 음수 가능 = #721-B 실측), usable:true, sellerManagerCode? }]` · `useStockManagement:true`. **`id` 는 넣지 않는다**(네이버 자동 부여 · #1637) → 등록 뒤 조회로 id 확인. 옵션 그룹 최대 3 · 조합형·단독형·표준형 혼용 불가(#1194). 옵션 상품이면 `originProduct.stockQuantity` 는 무시(합산 자동).
+- 근거: https://github.com/commerce-api-naver/commerce-api/discussions/2305 · /discussions/1194 · /discussions/1637
+
+## ⑥ 대표 이미지 URL 재사용
+- 공식·운영자 = 「`representativeImage.url` 은 '상품 이미지 다건 등록API' 를 통하여 반환된 URL 로만 설정 가능」(#1964 2024-09-20). **우리 다른 상품 조회 응답의 url(같은 네이버 CDN)을 새 상품에 그대로 넣어도 되는지는 문서·포럼에 없음(미확정 3차-4)** — 같은 계정이 업로드한 URL 이라 될 가능성이 크지만, 안전한 길 = **그 URL 을 받아 업로드 API 로 다시 올려 새 URL 을 쓴다**(10장·10MB·MIME 실제값 · 비용 0). 상세 HTML 안 그림은 기존 CDN 주소 그대로 두어도 됨(#721-B 실측: PUT 뒤 그림 23장 유지).
+
+## 미확정 3차(4) — 닫는 법
+1. 등록 성공 응답의 번호 칸 이름 → 첫 등록 응답 원문 로그.
+2. 조회 응답 복사 때 빼야 할 칸 → 첫 등록 400 invalidInputs/message(「InvalidInputs 가 없거나 부족하면 message 로 판단」 공식).
+3. statusType 을 SUSPENSION 으로 바로 등록 가능한지 → 안 시험(WAIT 등록 + change-status 로 우회).
+4. 다른 상품 이미지 URL 재사용 → 안 시험(재업로드로 우회).
