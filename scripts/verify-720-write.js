@@ -80,7 +80,9 @@ function fakeNaver(product, opts = {}) {
         if (r.method === 'PUT' && r.path === `/external/v2/products/channel-products/${CH}`) {
             if (opts.putFail) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.foo', message: 'x' }] }; throw e; }
             // 실측(10/17 레드키위): 바디의 statusType 이 지금과 다르면 400 invalid originProduct.statusType
-            if (r.body.originProduct.statusType !== st.product.originProduct.statusType) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.statusType' }] }; throw e; }
+            if (r.body.originProduct.statusType !== st.product.originProduct.statusType && !(opts.putSaleOk && r.body.originProduct.statusType === 'SALE')) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.statusType' }] }; throw e; }
+            // #723-D 실측 흉내: 품절 상품에 재고 PUT(상태 그대로) = 400
+            if (opts.putStockWhileOut400 && st.product.originProduct.statusType === 'OUTOFSTOCK' && r.body.originProduct.statusType === 'OUTOFSTOCK' && r.body.originProduct.detailAttribute.optionInfo.optionCombinations.some(o => o.stockQuantity > 0)) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.detailAttribute.optionInfo.optionCombinations[0].stockQuantity' }] }; throw e; }
             st.puts.push(r.body);
             const wasOut = st.product.originProduct.statusType === 'OUTOFSTOCK';
             st.product = JSON.parse(JSON.stringify(r.body));
@@ -98,6 +100,10 @@ function fakeNaver(product, opts = {}) {
         if (r.method === 'PUT' && r.path === `/external/v1/products/origin-products/${ORIGIN}/change-status`) {
             st.statusPuts.push(r.body);
             if (opts.statusFromOut400 && r.body.statusType === 'SALE' && st.product.originProduct.statusType === 'OUTOFSTOCK') { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '재고 수량 필수' }; throw e; }
+            if (opts.csSaleNeedsStock && r.body.statusType === 'SALE' && st.product.originProduct.statusType === 'OUTOFSTOCK') {
+                if (!(r.body.stockQuantity > 0)) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '재고 수량 필수' }; throw e; }
+                st.product.originProduct.statusType = 'SALE'; return {};   // 상태만 판매 · 옵션 재고는 그대로 0(재고 PUT 이 따로 필요한 꼴)
+            }
             st.product.originProduct.statusType = r.body.statusType;
             if (r.body.statusType === 'SALE' && st.product.originProduct.stockQuantity === 0) st.product.originProduct.statusType = 'OUTOFSTOCK';   // 문서: 재고 0 이면 품절 유지
             if (r.body.statusType === 'OUTOFSTOCK') { for (const o of st.product.originProduct.detailAttribute.optionInfo.optionCombinations) o.stockQuantity = 0; sum(); }
@@ -201,8 +207,8 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         await run({ op: 'apply', order_id: 101, backup_id: b5.backup_id, patch: { status: 'OUTOFSTOCK' } }, k3.deps);
         k3.nv.call = (orig => async (req) => { if (req.method === 'PUT' && /channel-products/.test(req.path)) { const keep = k3.nv.product.originProduct.statusType; const r = await orig(req); k3.nv.product.originProduct.statusType = keep; return r; } return orig(req); })(k3.nv.call);
         const rv5 = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: b5.backup_id }, { pool: k3.db, call: k3.nv.call, audit }));
-        ok(!rv5.ok && rv5.steps_done.join() === 'channel' && rv5.attempts.map(x => x.via + ':' + x.code).join() === 'channel:null,change-status:400' && rv5.stock_restored === true && rv5.status_now === 'OUTOFSTOCK' && /판매중이 아님/.test(rv5.note) && !k3.db.backups[0].reverted_at,
-            '안전망 400 → 오류 · attempts(channel·change-status 400) · 재고 복원 ✓ · 상태 남음 · reverted_at 없음', rv5);
+        ok(!rv5.ok && rv5.steps_done.join() === 'channel' && rv5.attempts.map(x => x.via + ':' + x.code).join() === 'channel:null,change-status:400,change-status+stock:400,channel+SALE:400' && rv5.stock_restored === true && rv5.status_now === 'OUTOFSTOCK' && /판매중이 아님/.test(rv5.note) && !k3.db.backups[0].reverted_at,
+            '#723-D 네 가지 시도 전부 실패 → 오류 · attempts 4줄(code) · 재고 복원 ✓ · 상태 남음 · reverted_at 없음', rv5);
         // 원상품 번호를 못 푼 보관본
         const n = mk(null, { noOrigin: true });
         const b3 = await run({ op: 'backup', product_no: CH, order_id: 101 }, n.deps);
@@ -445,7 +451,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         fo.putZeroStock = true;
         const rf = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: bf.backup_id }, f.deps));
         const rowf = f.db.backups[0];
-        ok(!rf.ok && rf.steps_done.join() === 'channel,status' && rf.attempts.length === 2 && rf.stock_restored === false && rf.status_now === 'OUTOFSTOCK' && rf.note === '재고 0 이라 품절 유지', '재고 0 → 「재고 0 이라 품절 유지」 · 재고 복원 ✗ · 상태 남음', rf);
+        ok(!rf.ok && rf.steps_done.join() === 'channel,status,status' && rf.attempts.length === 4 && rf.stock_restored === false && rf.status_now === 'OUTOFSTOCK' && rf.note === '재고 0 이라 품절 유지', '재고 0 → 「재고 0 이라 품절 유지」 · 재고 복원 ✗ · 상태 남음', rf);
         ok(rf.sale_ok && rf.sale_ok.bad.join() === 'status,stock' && !rowf.reverted_at && rowf.result_json.revert_failed, 'sale_ok ⚠ status·stock · reverted_at 없음 · 보관본에 revert_failed', [rf.sale_ok, rowf.result_json]);
         // 통째 PUT 400 → 지금 상태 나눠 보고 · 원문 안 나감
         const qo = {}; const q = mk(null, qo);
@@ -453,7 +459,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         await run({ op: 'apply', order_id: 101, backup_id: bq.backup_id, patch: { status: 'OUTOFSTOCK' } }, q.deps);
         qo.putFail = true;
         const rq = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: bq.backup_id }, q.deps));
-        ok(!rq.ok && rq.code === 400 && rq.steps_done.length === 0 && rq.status_now === 'OUTOFSTOCK' && rq.stock_restored === false && !JSON.stringify(rq).includes('원문'), 'PUT 400 → 쓰기 0 · 품절 그대로 · 원문 안 나감', rq);
+        ok(!rq.ok && rq.attempts[0].via === 'channel' && rq.attempts[0].code === 400 && JSON.stringify(rq.attempts[0].invalid_fields) === '["originProduct.foo"]' && rq.attempts.length === 4 && rq.status_now === 'OUTOFSTOCK' && rq.stock_restored === false && !JSON.stringify(rq).includes('원문'), 'PUT 400 → 다음 시도로 · 칸 이름은 attempts 에 · 품절 그대로 · 원문 안 나감', rq);
         // apply 품절 → 판매(보관본 재고 있음) = change-status SALE + 재고 합
         const os = JSON.parse(JSON.stringify(PRODUCT)); os.originProduct.statusType = 'OUTOFSTOCK';
         const o = mk(os);
@@ -722,6 +728,32 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
             && frow && frow.result_json.op === 'create_failed' && JSON.stringify(frow.result_json.invalid_fields) === '["originProduct.leafCategoryId"]' && Array.isArray(frow.result_json.strip), '네이버 400 → 응답은 칸 이름만 · 보관본 result_json(create_failed)에 invalid_fields·strip', [x5, frow && frow.result_json]);
         const fk2 = await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, fk.deps));
         ok(!fk2.ok && fk.nv.calls.filter(c => c === 'POST /external/v2/products').length === 2 && fk.db.backups.filter(x => x.result_json.op === 'create').length === 0, '실패는 상한에 안 셈 · 1요청 1회(두 번 넣으면 두 번 · 재시도 없음)', fk.nv.calls.filter(c => /v2\/products$/.test(c)));
+    }
+
+    console.log('⑭ #723-D 품절 → 판매 순차 시도(재고 PUT 400 실측) · 성공 지점 · revert 실패 칸 이름');
+    {
+        const run4 = async (opts, name, expVia, expSteps) => {
+            const k = mk(null, opts);
+            const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+            await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { status: 'OUTOFSTOCK' } }, k.deps);
+            const rv = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps));
+            const vias = (rv.sale_attempts || rv.attempts || []).map(x => x.via + ':' + x.code + ':' + x.status_after).join();
+            ok(rv.ok && vias === expVia && rv.steps.join() === expSteps && rv.same_as_before && rv.sale_ok.ok && JSON.stringify(k.nv.product) === JSON.stringify(PRODUCT), name, [vias, rv.steps, rv.sale_ok]);
+            return rv;
+        };
+        const r1 = await run4({ putStockWhileOut400: true, csSaleNeedsStock: true }, '재고 PUT 400 → change-status 400 → change-status+재고 = SALE → 재고 PUT 다시(상태 SALE) → 원본',
+            'channel:400:OUTOFSTOCK,change-status:400:OUTOFSTOCK,change-status+stock:null:SALE,channel-restock:null:SALE', 'status,channel');
+        ok(JSON.stringify(r1.sale_attempts[0].invalid_fields) === '["originProduct.detailAttribute.optionInfo.optionCombinations[0].stockQuantity"]', '실패 시도마다 invalid_fields(칸 이름) 기록', r1.sale_attempts[0]);
+        await run4({ putStockWhileOut400: true, statusFromOut400: true, putSaleOk: true }, '①②③ 실패 → ④ 통째 PUT(statusType SALE + 재고) 성공',
+            'channel:400:OUTOFSTOCK,change-status:400:OUTOFSTOCK,change-status+stock:400:OUTOFSTOCK,channel+SALE:null:SALE', 'channel');
+        // revert 실패 길에도 invalid_fields 가 보관본에
+        const k = mk();
+        const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+        await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, k.deps);
+        k.nv.call = (orig => async (req) => { if (req.method === 'PUT' && /channel-products/.test(req.path)) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.bar' }] }; throw e; } return orig(req); })(k.nv.call);
+        const rf = await quiet(() => run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, { ...k.deps, call: k.nv.call }));
+        const row = k.db.backups[0];
+        ok(!rf.ok && JSON.stringify(rf.invalid_fields) === '["originProduct.bar"]' && row.result_json.revert_failed && JSON.stringify(row.result_json.revert_failed.invalid_fields) === '["originProduct.bar"]' && !row.reverted_at, 'revert 통째 PUT 400 → invalid_fields 응답·보관본 둘 다 · reverted_at 없음', [rf, row.result_json.revert_failed]);
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);

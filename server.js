@@ -16272,27 +16272,40 @@ async function naverProductWriteRun(req, deps) {
         //   안전망(총괄 10/17): PUT 뒤에도 판매중이 아니면 change-status { statusType:'SALE' } 한 번 더(문서상 400 날 수 있음) · attempts 에 두 시도와 각 code
         //   🔴 실측(10/17 레드키위): 통째 PUT 바디의 statusType 을 바꾸면 400 invalid originProduct.statusType → 바디엔 재고만 · 상태는 재조회로 판정
         const toSale = async (on, body, steps, ref) => {
+            // #723-D 실측(10/17 테스트 한라봉): 품절 상품에 재고 PUT = 400 → 멈추지 말고 순차 시도 · 각 시도의 code·invalid_fields·status_after 를 attempts 에
+            //   ① 통째 PUT(재고만) ② change-status {SALE} ③ change-status {SALE, stockQuantity: 재고 합} ④ 통째 PUT(statusType SALE + 재고)
+            //   어느 하나로 SALE 이 되면, 재고가 아직 채워지지 않았을 때 재고 PUT 한 번 더(상태 SALE 인 채) → 재조회
             const attempts = [];
-            const partial = async (now, extra) => ({ attempts, status_now: now ? npwGet(now, NPW_FIELDS.status) : null, stock_total_now: now ? npwStockTotal(now) : null,
-                stock_restored: now ? npwStockTotal(now) > 0 : null, sale_ok: now ? npwSaleCheck(now, ref) : null, ...(extra || {}) });
             const getQuiet = async () => { try { return await getNow(); } catch (_) { return null; } };
-            try { await putChannel(body); }
-            catch (e) { attempts.push({ via: 'channel', code: (e && e.status) || null }); e.partial = await partial(await getQuiet()); throw e; }
-            steps.push('channel');
-            let now = await getQuiet();
-            const status_after_put = now ? npwGet(now, NPW_FIELDS.status) : null;
-            attempts.push({ via: 'channel', code: null, status_after: status_after_put });
-            if (status_after_put === 'SALE') return { status_after_put, attempts };
-            if (on) {
-                let code = null;
-                try { await changeStatus(on, 'SALE'); } catch (e) { code = (e && e.status) || 'error'; console.error('[#720 상품 쓰기] 품절 → 판매 change-status 재시도 실패:', e && e.message, e && e.data ? JSON.stringify(e.data).slice(0, 400) : ''); }
-                if (code == null) steps.push('status');
-                now = await getQuiet();
-                attempts.push({ via: 'change-status', code, status_after: now ? npwGet(now, NPW_FIELDS.status) : null });
-                if (now && npwGet(now, NPW_FIELDS.status) === 'SALE') return { status_after_put, attempts };
-            }
+            const stOf = (j) => j ? npwGet(j, NPW_FIELDS.status) : null;
+            const want = npwOptions(body).map(o => ({ id: o.id, stock: o.stockQuantity }));
+            const wantTotal = npwStockTotal(body);
+            const withStock = (j) => {   // 지금 값 위에 원하는 재고만(옵션 없는 상품은 상품 재고)
+                const c = npwClone(j);
+                if (want.length) for (const o of npwOptions(c)) { const w = want.find(x => x.id === o.id); if (w) o.stockQuantity = w.stock; }
+                else npwSet(c, ['originProduct', 'stockQuantity'], npwGet(body, ['originProduct', 'stockQuantity']));
+                return c;
+            };
+            const tryStep = async (via, fn) => {
+                let code = null, invalid_fields = [];
+                try { await fn(); steps.push(/^change-status/.test(via) ? 'status' : 'channel'); }   // steps 는 종전 이름(channel·status) · 자세한 길은 attempts.via
+                catch (e) { code = (e && e.status) || 'error'; invalid_fields = npwInvalidFields(e); console.error(`[#720 상품 쓰기] 품절 → 판매 ${via} 실패:`, e && e.message, e && e.data ? JSON.stringify(e.data).slice(0, 600) : ''); }
+                const now = await getQuiet();
+                attempts.push({ via, code, invalid_fields, status_after: stOf(now), stock_after: now ? npwStockTotal(now) : null });
+                return now;
+            };
+            let now = await tryStep('channel', () => putChannel(body));
+            const status_after_put = stOf(now);
+            if (stOf(now) !== 'SALE' && on) now = await tryStep('change-status', () => changeStatus(on, 'SALE'));
+            if (stOf(now) !== 'SALE' && on) now = await tryStep('change-status+stock', () => callG({ method: 'PUT', path: NPW_STATUS_PATH(on), body: { statusType: 'SALE', stockQuantity: wantTotal } }));
+            // ④ = patch 칸까지 담은 바디 그대로 + statusType SALE(① 이 실패했으면 patch 칸도 여기서 같이 감)
+            if (stOf(now) !== 'SALE') now = await tryStep('channel+SALE', () => { const c = npwClone(body); npwSet(c, NPW_FIELDS.status, 'SALE'); return putChannel(c); });
+            // 판매로 바뀌었는데 재고가 아직 안 채워졌으면 재고 PUT 한 번 더(상태는 지금 값 SALE 그대로)
+            if (stOf(now) === 'SALE' && npwStockTotal(now) < wantTotal) { const snap = now; now = await tryStep('channel-restock', () => { const c = withStock(snap); return putChannel(c); }); }
+            if (stOf(now) === 'SALE') return { status_after_put, attempts };
             const e = new Error('npw_still_not_sale'); e.status = null;
-            e.partial = await partial(now, { status_after_put, note: now && !(npwStockTotal(now) > 0) ? '재고 0 이라 품절 유지' : '통째 PUT·change-status 뒤에도 판매중이 아님' });
+            e.partial = { attempts, status_after_put, status_now: stOf(now), stock_total_now: now ? npwStockTotal(now) : null, stock_restored: now ? npwStockTotal(now) > 0 : null,
+                sale_ok: now ? npwSaleCheck(now, ref) : null, note: now && !(npwStockTotal(now) > 0) ? '재고 0 이라 품절 유지' : '네 가지 시도 뒤에도 판매중이 아님' };
             throw e;
         };
         if (op === 'backup') {
@@ -16410,6 +16423,9 @@ async function naverProductWriteRun(req, deps) {
         const since = row.after_json ? npwNoStock(npwDiff(npwStripVolatile(row.after_json), npwStripVolatile(cur))) : [];
         if (since.length && req.force !== true) return fail('적용한 뒤 네이버에서 또 바뀐 곳이 있어요 — 확인 뒤 force 로', { drift_paths: since.slice(0, 50) });
         const steps = [];
+        // 되돌리기 실패도 원인(네이버가 짚은 칸 이름)을 보관본에 남김 — 렌더 로그를 못 볼 때 판단 근거(#723-D)
+        const revertFailNote = (e, extra) => db.query(`UPDATE naver_product_backups SET result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+            [row.id, JSON.stringify({ revert_failed: { code: (e && e.status) || null, steps_done: steps, ...(extra || {}) } })]).catch(() => {});
         // ① 바디 = 지금 값(cur) 깊은 복사 + 우리가 바꾼 칸만 보관본으로 — 남의 변경·판매로 줄어든 재고는 안 덮는다(과판매 방지)
         const body = npwClone(cur);
         let needPut = false;
@@ -16451,7 +16467,7 @@ async function naverProductWriteRun(req, deps) {
                 needPut = true;   // statusType 은 바디에서 안 바꿈(400) · 재고 0 → 네이버가 품절로
             }
             if (needPut) {
-                try { await putChannel(body); } catch (e) { return naverErr(e, '되돌리기(상품 통째)', { steps_done: steps }); }
+                try { await putChannel(body); } catch (e) { const invalid_fields = npwInvalidFields(e); await revertFailNote(e, { invalid_fields, step: 'channel' }); return naverErr(e, '되돌리기(상품 통째)', { steps_done: steps, invalid_fields }); }
                 steps.push('channel');
             }
             // ② 판매 중지·재개는 change-status 로 보관본 값(SALE↔SUSPENSION 만 · 품절은 위 통째 PUT)
@@ -16461,7 +16477,7 @@ async function naverProductWriteRun(req, deps) {
                 if (needPut) status_after_put = npwGet(mid, NPW_FIELDS.status);
                 if (npwGet(mid, NPW_FIELDS.status) !== bs) {
                     try { await changeStatus(row.origin_product_no, bs); }
-                    catch (e) { return naverErr(e, '되돌리기(판매 상태)', { steps_done: steps }); }
+                    catch (e) { const invalid_fields = npwInvalidFields(e); await revertFailNote(e, { invalid_fields, step: 'status' }); return naverErr(e, '되돌리기(판매 상태)', { steps_done: steps, invalid_fields }); }
                     steps.push('status');
                 }
             }

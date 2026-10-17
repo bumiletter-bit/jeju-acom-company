@@ -1,3 +1,10 @@
+## v5.9.545 (2026-10-17) — #723-D 테스트 한라봉(13817259794) 전 기능 실시험 결과 · 품절 → 판매 풀기 400 → 시도 3종 순차 + invalid_fields 기록
+
+- **테스트 한라봉 생성 성공(22:07 · 16초)**: 본뜬 상품 한라봉 4840212264(옵션 2단이라 name1/name2 둘 다 필요 — 첫 시도 400 optionName2 · 요청만 바꿔 재시도) → 새 채널 13817259794 / 원상품 13756006591 · 판매중지·전시중지·쇼핑 미노출(hidden_ok) · 대표 그림 재업로드 URL · **상세 그림 링크 일반 href 생존 ✓**(6 보냄 → 재조회 8 = 네이버가 일반 `<a href>` 는 남김 → 링크 끊김은 모듈로 해결 가능).
+- **성공한 것(잔여 0)**: D1 상세 교체(+「시험 720」 · 네이버 정규화로 바이트 조금 변함 · 그 뒤 고정) · D2 옵션(이름2 개명·추가금 1,000·재고 50 → 그 옵션만 · id 유지 · 결제가 32,500 → 33,500) · D3 판매가 ±1,000 · D4 상품명(+채널 상품명) · D5 판매중지 → 판매중(change-status) · **품절 걸기 = 옵션 재고 0 PUT → 네이버가 OUTOFSTOCK 으로 ✓**(statusType 안 바꿔도 됨).
+- **남은 결함 1**: 품절 → 판매 풀기(재고 복원 PUT)가 400 → 테스트 상품이 OUTOFSTOCK·재고 0 으로 남음(손님 영향 0 · 보관본 16 revert 가능). 원인 칸은 revert 실패 길이 invalid_fields 를 안 남겨 미확정(추정 = 바디 statusType OUTOFSTOCK 인데 재고 > 0 이라 거절). → 고침(워커1): 풀기 = 재고 PUT 400 이어도 (a) change-status SALE → (b) change-status SALE + stockQuantity(합) → (c) 통째 PUT statusType SALE + 재고 를 순차 시도 · attempts 에 code·invalid_fields·status_after · revert 실패 길에도 invalid_fields.
+- 다음 = 테스트 상품에서 revert 재시도 → 먹은 길만 남기기 → put_enabled(+detail_enabled) 켬(대표 ⓐ) → 대표 보고.
+
 ## v5.9.544 (2026-10-17) — #723 핫픽스: 신규 등록 statusType WAIT 를 네이버가 거절(400 invalid_fields originProduct.statusType) → SALE + 전시 SUSPENSION + 쇼핑 false 로 등록 → 즉시 change-status SUSPENSION · 설정 create_status 로 덮기
 
 - D0 실측(22:02 · 본뜰 상품 한라봉 4840212264): 등록 400 · invalid_fields ["originProduct.statusType"] → 새 상품 0 · 원본 무접촉 · 대표 그림 재업로드는 통과(안 쓰인 그림 1장 = 무해). 🔵 21:59 첫 시도는 렌더 교체 중 옛 인스턴스가 집음(「op 는 …」 거절 · 쓰기 0).

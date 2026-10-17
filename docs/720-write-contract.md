@@ -88,6 +88,8 @@ sale_ok: { … }                 // B1 칸 · 단 가격·옵션을 바꾼 apply
 - `changed_paths` 에 옵션별 전 → 후는 options_table 로 · 경로 문자열은 종전 꼴(`originProduct.detailAttribute.optionInfo.optionCombinations[n].price` 등).
 - revert = 우리가 바꾼 칸만 보관본 값으로(지금 값 위에 · 남의 변경·판매로 줄어든 재고는 안 덮음 · 단 patch 에 stock 이 있던 옵션은 보관본 재고로).
 
+**v5.9.545 손질(실측 10/17 테스트 한라봉 · 품절 상품에 재고 PUT = 400)** — 품절 → 판매(apply SALE · auto_sale · 품절 apply 의 revert)는 멈추지 않고 순차 시도: ① 통째 PUT(재고만) ② change-status {statusType:SALE} ③ change-status {statusType:SALE, stockQuantity: 재고 합} ④ 통째 PUT(statusType SALE + 재고) → 하나라도 SALE 이면, 재고가 아직 모자라면 재고 PUT 한 번 더(상태 SALE 인 채 · via channel-restock). 시도마다 (성공 결과 ) ·  는 종전 이름(channel·status). revert 의 다른 실패(통째 PUT·판매 상태)도  를 응답과 보관본  에 남김. 성공한 길만 남기는 정리는 실측 뒤.
+
 **v5.9.542 손질(실측 10/17 레드키위 반영 · 아래 v5.9.541 줄보다 우선)**
 - 실측: 통째 PUT 바디 `statusType` 을 바꾸면 400(invalidInputs `originProduct.statusType`) → **품절 걸기 = 바디에서 옵션 재고만 전부 0(statusType 은 지금 값 그대로)** → 재조회가 OUTOFSTOCK 이 아니면 `not_applied:['status']`. **풀기 = 재고만 채운 통째 PUT → 재조회 SALE 아니면 change-status SALE 1회**(attempts 에 둘 다). 되돌려 다시 품절로 = 재고 0 PUT.
 - 실측: **통째 PUT 은 상세를 안 바꿔도 네이버가 상세를 걸러 냄**(옵션 재고 −1 PUT 에서 71,083 → 62,996자 · 그림 링크 4곳 끊김) → **모든 통째 PUT 바디의 detailContent 에 `naver-detail-links.convertImageLinks`(fromComments 기본)를 적용**(속성·걸러진 주석의 그림 링크 → 일반 `<a href target=_blank rel=noopener>`). 결과 `links_converted`(보낸 링크 수) · `links_after`(재조회 상세의 일반 http href 수 — 네이버가 남기는지 판정 칸). 상세가 달라진 것은 `unexpected_paths` 에 그대로 보임(숨기지 않음).
