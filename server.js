@@ -15811,10 +15811,10 @@ const NPW_CREATE_DAILY_MAX = 3;                    // 24시간에 새 상품 3�
 //   옵션 id·sellerManagerCode 는 코드가 따로 뺌
 const NPW_CREATE_STRIP = ['originProduct.originProductNo', 'smartstoreChannelProduct.channelProductNo', 'originProduct.regDate', 'originProduct.modifiedDate',
     'originProduct.detailAttribute.naverShoppingSearchInfo', 'originProduct.detailAttribute.seoInfo'];
-// 비노출 등록 값(워커3 #723-A ③): 판매 대기(WAIT)로 등록 → 원상품 번호로 change-status SUSPENSION · 전시 중지 · 네이버쇼핑 미등록
-//   (전시 상태는 ON·SUSPENSION 만 · statusType 을 SUSPENSION 으로 바로 등록되는지는 미확정이라 WAIT 로 우회)
+// 비노출 등록 값: 판매중(SALE)으로 등록 + 전시 중지 + 네이버쇼핑 미등록 → 원상품 번호로 change-status SUSPENSION(몇 초 SALE 이어도 전시중지라 손님 못 봄)
+//   실측(10/17 #723-D): statusType 'WAIT' 등록 = 400 invalid originProduct.statusType · 설정 'naver_product_write'.create_status 가 있으면 그 값으로 덮음(재배포 없이)
 const NPW_HIDDEN_SET = [
-    [['originProduct', 'statusType'], 'WAIT'],
+    [['originProduct', 'statusType'], 'SALE'],
     [['smartstoreChannelProduct', 'channelProductDisplayStatusType'], 'SUSPENSION'],
     [['smartstoreChannelProduct', 'naverShoppingRegistration'], false],
 ];
@@ -16151,7 +16151,7 @@ async function naverProductWriteRun(req, deps) {
                 npwSet(body, ['originProduct', 'detailAttribute', 'optionInfo', 'useStockManagement'], true);
                 npwSet(body, ['originProduct', 'stockQuantity'], npwStockTotal(body));
             } else npwSet(body, ['originProduct', 'stockQuantity'], req.stock != null ? req.stock : NPW_CREATE_STOCK);
-            if (hidden) for (const [p, v] of NPW_HIDDEN_SET) npwSet(body, p, v);
+            if (hidden) for (const [p, v] of NPW_HIDDEN_SET) npwSet(body, p, p[1] === 'statusType' && typeof cfg.create_status === 'string' && cfg.create_status ? cfg.create_status : v);
             // 상세 그림 링크 = 일반 href(통째 PUT 과 같은 이유) · 상세 안 그림 주소는 그대로
             let links_converted = 0;
             const d = npwGet(body, NPW_FIELDS.detail_html);

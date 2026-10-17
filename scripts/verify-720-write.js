@@ -630,8 +630,8 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const c = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN, created_by: '시험' }, k.deps);
         const body = k.nv.creates && k.nv.creates[0];
         ok(c.ok && c.product_no === '7001' && c.origin_product_no === '9501' && c.found_by === 'response' && c.backup_id, '시험 계정 create = 새 번호(응답) · 보관본', c);
-        ok(body.originProduct.name === TN && body.originProduct.statusType === 'WAIT' && body.smartstoreChannelProduct.channelProductDisplayStatusType === 'SUSPENSION' && body.smartstoreChannelProduct.naverShoppingRegistration === false,
-            '등록 바디 = 새 이름 · 판매 대기(WAIT) · 전시중지 · 네이버쇼핑 미등록', body && { st: body.originProduct.statusType, ch: body.smartstoreChannelProduct });
+        ok(body.originProduct.name === TN && body.originProduct.statusType === 'SALE' && body.smartstoreChannelProduct.channelProductDisplayStatusType === 'SUSPENSION' && body.smartstoreChannelProduct.naverShoppingRegistration === false,
+            '등록 바디 = 새 이름 · SALE(WAIT 는 400 실측) · 전시중지 · 네이버쇼핑 미등록', body && { st: body.originProduct.statusType, ch: body.smartstoreChannelProduct });
         ok(JSON.stringify(k.nv.madeStatusPuts) === '[{"statusType":"SUSPENSION"}]' && c.status_step.ok && c.hidden === true && c.hidden_ok === true && c.status_now === 'SUSPENSION' && c.display === 'SUSPENSION' && c.shopping === false,
             '등록 뒤 change-status SUSPENSION · 결과 status_now·display·shopping 고정 칸 · hidden_ok', c);
         ok(OCs(body).every(o => o.id == null && o.sellerManagerCode == null && o.stockQuantity === 99999) && OCs(body).length === 2 && body.originProduct.detailAttribute.optionInfo.useStockManagement === true && body.originProduct.stockQuantity === 199998,
@@ -664,7 +664,11 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         // 판매중지 전환 실패 → WAIT 로 남음 · 결과에 보임 · 창구 apply status SUSPENSION 으로 풂(WAIT → SUSPENSION 전이)
         const k5 = mkc({ madeStatusFail: true });
         const c5 = await quiet(() => run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, k5.deps));
-        ok(c5.ok && c5.status_now === 'WAIT' && c5.status_step.ok === false && c5.hidden_ok === false, '판매중지 전환 실패 = status_now WAIT · hidden_ok false 로 드러남', c5);
+        ok(c5.ok && c5.status_now === 'SALE' && c5.status_step.ok === false && c5.hidden_ok === false && c5.display === 'SUSPENSION', '판매중지 전환 실패 = status_now SALE(전시는 중지) · hidden_ok false 로 드러남', c5);
+        // 설정 create_status 가 있으면 등록 statusType 을 덮음(재배포 없이)
+        const k7 = mkc(null, { put_enabled: true, create_status: 'SUSPENSION' });
+        const c7 = await run({ op: 'create', order_id: 105, from_product_no: CH, name: TN }, k7.deps);
+        ok(c7.ok && k7.nv.creates[0].originProduct.statusType === 'SUSPENSION' && c7.hidden_ok === true, '설정 create_status = 등록 statusType 덮음', [k7.nv.creates[0].originProduct.statusType, c7.hidden_ok]);
         const nv5call = k5.nv.call;
         const ap5 = await run({ op: 'apply', order_id: 105, backup_id: c5.backup_id, patch: { status: 'SUSPENSION' } }, { ...k5.deps, call: async (r) => { if (/change-status/.test(r.path)) { k5.nv.made['7001'].originProduct.statusType = r.body.statusType; return {}; } return nv5call(r); } });
         ok(ap5.ok && ap5.after_summary.status === 'SUSPENSION', 'WAIT → SUSPENSION apply 로 풂(전이표 WAIT)', ap5);

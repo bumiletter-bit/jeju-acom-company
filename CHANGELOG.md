@@ -1,3 +1,8 @@
+## v5.9.544 (2026-10-17) — #723 핫픽스: 신규 등록 statusType WAIT 를 네이버가 거절(400 invalid_fields originProduct.statusType) → SALE + 전시 SUSPENSION + 쇼핑 false 로 등록 → 즉시 change-status SUSPENSION · 설정 create_status 로 덮기
+
+- D0 실측(22:02 · 본뜰 상품 한라봉 4840212264): 등록 400 · invalid_fields ["originProduct.statusType"] → 새 상품 0 · 원본 무접촉 · 대표 그림 재업로드는 통과(안 쓰인 그림 1장 = 무해). 🔵 21:59 첫 시도는 렌더 교체 중 옛 인스턴스가 집음(「op 는 …」 거절 · 쓰기 0).
+- 고침(워커1): NPW_HIDDEN_SET 의 statusType WAIT → **SALE**(포럼 #2216·#1922 등록 예시) + 설정 `agent_office_config naver_product_write {create_status}` 가 있으면 그 값(다음 거절 땐 재배포 없이 SUSPENSION 직접 등록 시도 가능) · 등록 직후 change-status SUSPENSION 은 종전대로(전시중지·쇼핑 미노출이라 몇 초 SALE 이어도 손님 못 봄).
+
 ## v5.9.543 (2026-10-17) — #723 네이버 상품 신규 등록(3차 · 시험용 상품 생성용 · 기본 비노출) · 대표 결정 ⓐ(통째 수정 열기 · 링크는 직원 수기 · 재고 99999)
 
 - **배경(대표 10/17 밤)**: 시험용 상품 「테스트 한라봉」을 센터에서 복사하려던 것이 Claude 브라우저의 사이트 차단(sell.smartstore.naver.com)으로 불가 → 대표 「2번으로」 = API 신규 등록 앞당김. 결정 ⓐ = 통째 수정(옵션·가격·상품명·품절·상세) 열기 원함 · 「링크 넣는 데 연연하지 말 것 · 그림 링크는 직원이 센터에서 수기」 · 「옵션 재고는 보통 99999 · 세팅 안 되면 최종 세팅은 우리가」 → 시험용 상품에서 전부 확인 뒤 put_enabled 켬.
