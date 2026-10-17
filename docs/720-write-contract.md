@@ -51,6 +51,43 @@
 ### revert
 `{ op:'revert', order_id, backup_id, force? }` → `{ ok, op, product_no, backup_id, steps:['channel'|'status'], same_as_before, residual_paths[], after_summary }`
 
+### #721-B 1 — 품절 → 판매 복귀 · 「판매 정상 확인」(sale_ok)
+- **sale_ok** = `{ ok, bad:[], status, stock_total, options_n }` — backup(건들기 전 · 보관본 자기 자신과 대조) · apply(재조회 vs 보관본) · revert(재조회 vs 보관본) 결과에 늘 붙음 · 보관본 result_json(`sale_ok` · `revert_sale_ok`)과 audit 에도.
+  - ok = 아래 전부: `statusType` SALE · 옵션 `usable:false` 0개 · 재고 합(옵션 합 · 옵션 없으면 상품 재고) > 0 · `salePrice` · 옵션별 `price`(id 기준) · `detailContent` 바이트 · 대표 그림 url 이 보관본과 같음.
+  - 하나라도 아니면 `bad` 에 칸 이름: `status` · `options_usable` · `stock` · `sale_price` · `option_price` · `detail` · `rep_image`. (품절·판매중지로 바꾼 apply 는 `status`·`stock` 이 bad 인 게 정상.)
+- **품절 → 판매**(apply status SALE · 또는 품절 apply 의 revert) = **채널 상품 통째 PUT 하나**(지금 값 위에 · 지금 0 인 옵션 재고만 보관본 값 · `statusType:'SALE'`) — change-status 는 SALE↔SUSPENSION 에만(워커3 문서 2차 ④). 옵션 상품의 상품 단위 `stockQuantity` 는 안 고침(합 불일치 400).
+  - apply 는 보관본 재고 합 0 이면 거절(「품절 → 판매는 재고가 있어야 해요」 · 옵션 재고 입력은 B3).
+  - 안전망(총괄 10/17): PUT 뒤 재조회가 SALE 이 아니면 change-status `{ statusType:'SALE' }` 를 **한 번 더**(문서상 400 날 수 있음) · 시도 기록 `attempts:[{ via:'channel'|'change-status', code, status_after }]`(성공 결과엔 `sale_attempts`).
+  - 그래도 SALE 이 아니면 **오류**: `{ ok:false, error, code, steps_done, attempts, status_after_put, status_now, stock_total_now, stock_restored, sale_ok, note }` · note = 「재고 0 이라 품절 유지」 또는 「통째 PUT·change-status 뒤에도 판매중이 아님」 · revert 는 `reverted_at` 을 안 적음(보관본 result_json.revert_failed).
+  - revert 성공 결과에 `status_after_put`(PUT 직후 상태).
+
+### #721-B 3 — 옵션·단가·품목명(2차 · 계약 먼저 · 코드는 B2 뒤)
+apply `patch` 에 키 3개 추가(기존 detail_html · status 와 같이 써도 됨 · 통째 PUT 한 번에 모음):
+```
+patch: {
+  options:    [{ id, name1?, name2?, name3?, price?, stock?, usable? }],   // 최대 20개
+  sale_price: 29000,                                                     // → originProduct.salePrice
+  name:       '제주 하우스감귤 …',                                        // → originProduct.name (+ 아래 규칙)
+}
+```
+- **options**: `id` = 지금 상품(재조회 cur)의 `optionCombinations[].id` 에 있어야 함 · 없는 id·id 없는 항목(새 옵션) = 거절(3차) · 같은 id 두 번 = 거절 · **삭제 금지**(배열에서 빼지 않음 · 숨김은 `usable:false` 로만). 준 칸만 cur 위에 바꾸고 나머지 칸(sellerManagerCode·skuYn·optionName4 등)은 그대로. `name1~3` → `optionName1~3` · `price` → 옵션 추가금 칸 `price` · `stock` → `stockQuantity` · `usable` → `usable`.
+- **sale_price** → `originProduct.salePrice`. **할인(customerBenefit)은 절대 안 건드림**(키 없음 · 바디는 cur 값 그대로).
+- **name**: `originProduct.name` 을 바꾸고, `smartstoreChannelProduct.channelProductName` 이 차 있으면 같은 글로 둘 다 · 비어 있으면 name 만.
+- 상한(거절): sale_price 정수 아님·0 이하 · 바뀐 결제가(아래)가 보관본 대비 10배 이상 또는 1/10 이하 · 결제가 0 이하 · stock 음수·정수 아님 · name 빈 글·100자 초과 · options 21개 이상.
+- 재고: patch 에 stock 이 있으면 그 옵션 재고 칸은 **기대 경로**(대조 안 · unexpected 아님) · 없으면 종전대로 stock_paths 로 따로.
+- 전이표 무관(상태와 별개) · 승인·신선도·보관본 1회·동시 거절은 종전 그대로.
+
+결과(apply · revert 공통 추가 칸):
+```
+options_table: [{ id, before:{ name, price, stock, usable, pay }, after:{ … } , changed:['name'|'price'|'stock'|'usable'|'pay'] }],
+price_basis:   { sale_price_before, sale_price_after, discount:{ unitType:'PERCENT'|'WON'|null, value } },
+option_ids_kept: true|false,   // 재조회에서 id·sellerManagerCode 가 그대로인지 — 아니면 unexpected_paths 에 'option_regenerated:<id>'
+sale_ok: { … }                 // B1 칸 · 단 가격·옵션을 바꾼 apply 는 ref = 「보관본 + patch」 기대값이라 바꾼 칸은 bad 에 안 들어감
+```
+- `pay`(결제가) = `salePrice − 즉시할인 + 옵션 price` · 즉시할인 = `customerBenefit.immediateDiscountPolicy.discountMethod` — WON 이면 value · PERCENT 이면 floor(salePrice × value / 100) · 없으면 0. 🔵 PERCENT 끝자리 처리(원 단위 절사 여부)는 첫 실조회를 스냅샷 결제가(discPrice+price)와 맞춰 확정(워커3 문서 2차-2).
+- `changed_paths` 에 옵션별 전 → 후는 options_table 로 · 경로 문자열은 종전 꼴(`originProduct.detailAttribute.optionInfo.optionCombinations[n].price` 등).
+- revert = 우리가 바꾼 칸만 보관본 값으로(지금 값 위에 · 남의 변경·판매로 줄어든 재고는 안 덮음 · 단 patch 에 stock 이 있던 옵션은 보관본 재고로).
+
 ### upload_image
 `{ op:'upload_image', order_id, order_ids:[…] }` — `order_ids` 생략이면 `[order_id]` · 최대 10 · 합계 10MB 미만.
 - 각 지시의 첨부 = `pending_orders.image_data`(data URL · 지시 1건당 1장) · jpg/png/gif/bmp 만(MIME 실제값 그대로).

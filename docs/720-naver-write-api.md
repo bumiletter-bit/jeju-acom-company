@@ -64,3 +64,46 @@
 4. 상세 HTML 안 **외부 이미지 URL 허용 여부** — 미명시 · 오류 문구상 업로드 URL 만 안전.
 5. option-stock **요청 바디** — 문서 페이지에 안 뜸(2차).
 6. 수정 뒤 **반영 지연** — 문서 없음 · 재조회 대조로.
+
+---
+
+# 2차(#721-A · 워커3 · 2026-10-17) — 옵션명·단가·품목명·재고 복귀·option-stock·링크
+
+> 대표 「고」 = 네이버도 자사몰처럼 옵션명·품목명·단가·재고·상세까지 자동 수정. 공식 구조체 페이지는 옵션·할인 칸을 **예시 JSON 으로만** 보여 주고 설명이 없어, 뜻은 포럼 운영자 답변으로 채웠다. 못 채운 것은 「미확정 2차」(전부 실조회 1건 + 실 PUT 1건으로 닫힘).
+
+## ① 옵션 수정(채널 상품 통째 PUT)
+| 항목 | 확정 내용 | 근거 |
+|---|---|---|
+| 자리 | `originProduct.detailAttribute.optionInfo` **(detailAttribute 하위 — 다른 자리면 옵션이 조용히 안 저장됨)** · 조합형 = `optionCombinationGroupNames{optionGroupName1..}` + `optionCombinations[]` · `useStockManagement:true` · 옵션 그룹 최대 3개 · 조합형·단독형·표준형 혼용 불가 | #2305 (2025-02-14) · #1194 (2023-11-14) · #605 (2023-04-11) |
+| optionCombinations[n] 칸 | `id`(integer) · `optionName1`~`optionName4` · `price`(integer) · `stockQuantity` · `usable`(boolean) · `sellerManagerCode`(string) · `skuYn` — 공식 구조체엔 예시 JSON 뿐(설명 0) | 공식 …/schemas/원상품-정보-구조체 |
+| `id` 의 뜻 | **네이버가 자동 부여**(「optionCode는 상품의 옵션이 설정되어 있다면 자동으로 등록되는 id · 스마트스토어센터 내에서는 제공하지 않음」) · 운영자 권고 = 옵션 식별·조회는 **판매자가 정하는 `sellerManagerCode`** 로 · 주문 상세의 `productOrder.optionManageCode` = `sellerManagerCode` **같은 값**(주문 이력 ↔ 옵션 연결 열쇠는 이것) | https://github.com/commerce-api-naver/commerce-api/discussions/1637 (2024-04-24) |
+| 옵션명 바꿀 때 id 유지? · id 없는 항목 = 새 옵션? · 삭제 = 배열에서 빼기? | **미확정 2차-1** — 문서·포럼 답변 없음. 유일한 단서 = 같은 옵션 id 를 두 번 보내면 거절(#1894 2024-08-20 · 표준형). → 실 PUT 규칙(계약에 넣을 것): ⓐ 옵션명·가격·재고 수정은 **조회 응답의 `id` 를 그대로 둔 채 그 칸만** 바꾸고, 재조회에서 **id·sellerManagerCode 가 그대로인지** 대조(바뀌면 「옵션 재생성」으로 기록 · 주문 옵션 연결은 sellerManagerCode 로 하니 실해는 작음) ⓑ 새 옵션 = id 없이 항목 추가(응답에서 id 부여 확인) ⓒ **삭제는 배열에서 빼지 말고 `usable:false`**(공식: 「사용 여부를 false 로 설정할 경우 해당 옵션 조합은 재고 유무와 관계없이 구매자에게 표시되지 않습니다」 · 되돌리기 쉬움 · 주문 이력 보존) — 배열에서 빼는 건 3차 이후 대표 확정 때만 | #1194 · #1894 |
+| `price` 의 뜻 | 공식 설명 없음 → **미확정 2차-2**(추정 = 스마트스토어센터 「옵션가」와 같은 **판매가 대비 추가 금액**(0 이상 · 음수 가능 여부 미확인) · 포럼 예시엔 null/0 · 제3자 구현도 「salePrice = 가장 싼 조합 · price = 그보다 비싼 만큼」). → 실조회 1건에서 우리 옵션별 결제가(스냅샷 discPrice+price)와 `salePrice − 즉시할인 + price` 가 맞는지로 확정. 센터의 옵션가 범위 규칙(판매가 대비 −50%~+100%)은 API 문서엔 없음 → 넘으면 400 message 로 알게 됨 | #1650 · #241 · Kohgane/proxy-commerce PR #860(비공식) |
+
+## ② 단가 = 어느 칸
+- **판매가** = `originProduct.salePrice`(필수 · ≤ 999,999,990) · **즉시할인** = `originProduct.customerBenefit.immediateDiscountPolicy.discountMethod { value, unitType: PERCENT|WON, startDate?, endDate? }`(운영자 2023-03-21: 「상품 등록/수정 시 immediateDiscountPolicy 필드의 칠드런으로 설정 · 정률(판매가 대비 비율)·정액(판매가 대비 금액) · 시작·종료일은 매 시각 지정된 분으로만」 · multi-update 문서: 시작 분 00/10/20/30/40/50 · 종료 분 09/19/29/39/49/59) · `mobileDiscountMethod` 는 deprecated(무시 · #1469). 손님 결제가 = salePrice − 즉시할인 + 옵션 price.
+- 「단가」를 바꾸는 칸은 **실조회 1건으로 우리 상품이 어느 꼴인지 본 뒤 정한다**(ⓐ salePrice 만 쓰고 할인 0 · ⓑ salePrice + 즉시할인 · ⓒ 옵션 price 로 차등). 우리 스냅샷이 discPrice 를 따로 들고 있으므로 ⓑ 일 가능성 → 그때는 **할인 칸은 그대로 두고 salePrice 또는 옵션 price 만** 바꾸는 것이 안전(할인을 건드리면 날짜 분 규칙에 걸려 400). 상품 단위 일괄은 `PATCH /v1/products/origin-products/multi-update`(SALE_PRICE · IMMEDIATE_DISCOUNT · STOCK · PRODUCT_STATUS_SALE/SUSPENSION · 원상품 번호) 도 있음(옵션 price 는 못 바꿈).
+- 근거: https://github.com/commerce-api-naver/commerce-api/discussions/539 (2023-03-21) · 공식 …/current/update-multi-products-product
+
+## ③ 품목명 = 어느 칸
+- `originProduct.name`(필수 · 「상품명」) = 원상품명. `smartstoreChannelProduct.channelProductName` = 「채널 상품 전용 상품명을 사용하는 경우 입력합니다. **미입력 시 원상품명으로 적용**됩니다」(공식 구조체). → **손님 화면 이름 = channelProductName 이 차 있으면 그것, 비어 있으면 name**. 통째 PUT 이라 둘 다 보내진다 — 실조회에서 channelProductName 이 비어 있으면 `name` 만 바꾸면 되고, 차 있으면 **둘 다 같은 글로** 바꿀 것(한쪽만 바꾸면 화면과 원상품이 갈림).
+- 근거: 공식 …/schemas/스마트스토어-채널상품-정보-구조체
+
+## ④ 품절 → 판매중 복귀(옵션 상품)
+- change-status 문서: 「품절에서 판매 중으로 변경 시 재고 수량 입력 필수」 · 「재고 수량이 0인 경우 상태는 전달된 값과 무관하게 OUTOFSTOCK 유지」. **옵션 상품에서 그 stockQuantity 가 옵션 합이어야 하는지는 문서에 없음(미확정 2차-3)** — 포럼 실사례: 옵션 상품에 상품 단위 재고를 넣으니 「조합형 옵션 상품인 경우 상품의 재고수량과 조합형옵션 재고수량의 합은 같아야 합니다」 400(#1194 질문) → 운영자 답 = **옵션 상품의 품절·복귀는 옵션 재고로**(조합 전부 0 = 품절 · 조합 재고 넣으면 복귀 · 총 재고는 자동 합산).
+- → **추천(우리 상품 = 전부 옵션 상품)**: 품절·복귀는 **채널 상품 통째 PUT 하나로 `optionCombinations[].stockQuantity` + `originProduct.statusType:'SALE'` 을 한 번에**(한 번의 PUT · 재조회 대조 1회). change-status 전용 경로는 **SALE ↔ SUSPENSION(판매 중지·재개)** 에만 쓰고, OUTOFSTOCK 복귀엔 쓰지 않는다(옵션 합과 다른 값이면 400 · 같은 값이면 되는지 실 PUT 로 확인 가능하나 1차에 필요 없음). 옵션 재고가 전부 0 인 채 statusType SALE 을 보내면 문서 규칙대로 OUTOFSTOCK 유지(오류 아님 · 재조회에서 statusType 이 그대로면 그 이유).
+- 근거: 공식 …/current/read-channel-product-product(판매 상태 변경) · https://github.com/commerce-api-naver/commerce-api/discussions/1194
+
+## ⑤ option-stock 전용 경로
+- `PUT /v1/products/origin-products/{originProductNo}/option-stock` 「상품 옵션의 재고, 가격, 할인가를 변경합니다」 — **요청 바디 = 여전히 미확정(2차-4)**: 공식 페이지 Request 칸이 비어 나오고(2회 시도) 포럼에 사용 글 0건(2025-01-08 제공 · #2183). 통째 PUT 은 포럼 실사례·운영자 권고가 있는 검증된 길이므로 **2차도 통째 PUT 으로 가고, option-stock 은 대표가 「옵션만 자주 바꾼다」 할 때 실호출 1건으로 바디를 알아낸 뒤 쓴다**(허용 목록엔 지금 안 넣음).
+- 근거: 공식 …/current/update-options-product · https://github.com/commerce-api-naver/commerce-api/discussions/2183
+
+## ⑥ 상세 HTML 의 `<a href>`
+- 문서·포럼에 허용·금지 글 없음 → **미확정 2차-5 · 실 PUT 로**. 운영자가 든 금지 태그는 HTML·META·SCRIPT·STYLE·BODY·HEAD 뿐(#2216 2025-01-06)이라 `<a>` 는 그 목록 밖. 넣을 때는 재조회한 detailContent 에 `<a href` 가 남아 있는지(네이버가 조용히 벗겨 내는지)로 판정 · 1차 상세 문구 수정엔 링크 없이.
+
+## 미확정 2차(5) — 닫는 법
+1. 옵션 id 유지·신규·삭제 규칙 → 실 PUT 1건(옵션명 한 글자 바꿔 재조회 id 대조) · 삭제는 usable:false 로 우회.
+2. 옵션 `price` 의 뜻(추가금 · 범위) → 실조회 1건을 스냅샷 결제가와 맞춤.
+3. change-status 복귀 때 옵션 상품의 stockQuantity → 안 씀(통째 PUT 으로 우회).
+4. option-stock 요청 바디 → 안 씀(통째 PUT).
+5. 상세 `<a href>` → 실 PUT 재조회.
