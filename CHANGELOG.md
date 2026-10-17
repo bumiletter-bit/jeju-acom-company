@@ -5,7 +5,7 @@
 - **중계서버(워커2 · 2026-10-18.1 · 설치 끝 22:49Z)**: COUPANG_ALLOW +7(목록·단건·inventories GET · 가격·재고·stop·resume PUT) · 매칭 = 조각 일치 + 숫자 자리 \d{1,15} + 상한(가격 ≤ 1천만 · 수량 ≤ 99만9천) · 목록 query vendorId .env 강제 · 2차 6줄은 안 넣음.
 - **서버(워커1 · server.js +307 · verify-728-coupang 84/84 · verify-720 190/190 무회귀)**: 표 coupang_item_backups · 러너 'coupang_item_write_request' → '_result' · op list/backup/apply/revert · 전용 PUT · 재조회 inventories 2초 → 5초 1회 더 · 가격 10원·−50%~+100% 밖 거절(「윙에서」) · 간격 0.5초 · 429 = 실패 + 「몇 분 뒤」 · resume 실패 = 모니터링 안내 · backup before = inventories + 단건 상품의 그 item(seller_product_id 필수) · sale_ok = onSale·재고>0·가격 같음 · 승인 필요 칸 = 「2차」 거절 · 승인 검사 0(지시 있음·반려·삭제만 · 되묻기 1회는 창구 몫) · 신선도(가격·판매 여부 바뀜·재고 늘어남 = 거절 · 주문으로 준 재고 통과) · revert force · 이미 원래 값이면 PUT 0 · audit coupang-item-write.
 - **창구(워커2)**: coupang-item.js list/show/plan/apply/revert(멈춤 14종 · 카드 두 줄 · 429·모니터링 안내) · 업무지식 「쿠팡 상품 고치기(#728)」 + 344행 「쿠팡 가격 조회 수단 없음」 → 이 도구 · 창구 CLAUDE.md 4-1 줄.
-- 다음 = 배포 뒤 비시즌 판매중지 옵션 1개로 재고 ±1 · 가격 ±10원 · 재개 30초 왕복 실시험(아래 결과 줄).
+- **실시험 전부 통과(워커1 · 카라향 가정용 3kg 95059733579 · 재고 0·STOP·29,800 = 재개 30초에도 주문 불가)**: 재고 0→1→0 · 가격 29,800→29,810→29,800 · 재개 → 30초 → 중지 · unexpected 0 · not_applied 0 · 쿠팡 응답 PUT 4종 SUCCESS · 429 0 · 끝 상태 = 시작과 같음 · 보관본 1~3 applied·reverted · audit 9 · 시험 지시 2923 삭제. 🔵 list 는 상품 30개 상한(94초 · truncated) — 후보 = q 필터·상한 올리기(대표 말할 때만).
 
 ## v5.9.548 (2026-10-18) — #727 네이버 상품 고치기 승인 선 = 누구나 되묻기 1회(직원 승인 강제 철회 · 대표 9/30 규칙) · 상세에 「그림 + 링크」 넣는 꼴
 
