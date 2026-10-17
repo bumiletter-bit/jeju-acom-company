@@ -15830,6 +15830,10 @@ const NPW_STRIP = [];      // PUT 바디에서 뺄 읽기 전용 칸(경로 배�
 const NPW_VOLATILE = [];   // 조회마다 바뀌는 칸(신선도 대조 제외) — 10/17 VIP 10801253976 30초 간격 2회 실측 = 없음
 const NPW_MAX_IMAGES = 10, NPW_MAX_IMAGE_BYTES = 10 * 1024 * 1024 - 1;
 const NPW_DETAIL_LOCK_MSG = '상세 수정은 대표 확정 대기 — 네이버가 스마트에디터 자료를 걸러 원본 복구가 안 됨(#720-D)';
+// #721-B 통째 PUT 잠금 — 상세를 안 바꿔도 통째 PUT 이면 네이버가 상세 편집기 자료를 걸러 냄(실측 10/17 레드키위 71,083 → 62,996자 · 그림 링크 4)
+const NPW_PUT_LOCK_MSG = '통째 수정은 네이버가 상세 편집기 자료를 걸러 대표 확정 대기 — 지금은 판매중지/재개만';
+const NPW_HREF_RE = /<a\b[^>]*\bhref="https?:/gi;   // 일반 링크 수(링크 보존 모듈이 넣은 것이 재조회에 남는지)
+const npwHrefCount = (j) => (String(npwGet(j, ['originProduct', 'detailContent']) || '').match(NPW_HREF_RE) || []).length;
 const NPW_TEST_UID_MIN = 990000;   // = DESK_TEST_UID_MIN(시험 번호 계정 · 라이브 창구는 그 계정 지시를 안 집음)
 const npwInFlight = new Set();
 
@@ -16084,7 +16088,16 @@ async function naverProductWriteRun(req, deps) {
     npwInFlight.add(pno);
     try {
         const getNow = async () => callG({ method: 'GET', path: NPW_PRODUCT_PATH(pno) });
-        const putChannel = async (j) => callG({ method: 'PUT', path: NPW_PRODUCT_PATH(pno), body: npwPutBody(j) });
+        // 통째 PUT 은 늘 상세가 같이 감 → 상세 그림 링크를 일반 <a href> 로(걸러진 주석에서도 되살림 · deps.convertImageLinks = naver-detail-links.js)
+        let links_converted = 0;
+        const putChannel = async (j) => {
+            const b = npwPutBody(j), d = npwGet(b, NPW_FIELDS.detail_html);
+            if (typeof deps.convertImageLinks === 'function' && typeof d === 'string') {
+                const r = deps.convertImageLinks(d);
+                if (r && r.converted > 0 && typeof r.html === 'string') { npwSet(b, NPW_FIELDS.detail_html, r.html); links_converted += r.converted; }
+            }
+            return callG({ method: 'PUT', path: NPW_PRODUCT_PATH(pno), body: b });
+        };
         // 채널 번호 → 원상품 번호(조회 응답엔 번호 칸이 없음 — 10/17 실측) · 상품 목록에서 찾는다
         const originNo = async () => {
             for (let page = 1; page <= 5; page++) {
@@ -16100,8 +16113,8 @@ async function naverProductWriteRun(req, deps) {
         //   옵션 상품엔 상품 단위 stockQuantity 를 고치지 않는다(조합 합과 다르면 400 · 네이버가 자동 합산) · 재고 전부 0 이면 네이버가 OUTOFSTOCK 유지
         //   PUT 뒤에도 판매중이 아니면 오류로 — 지금 상태·재고 복원 여부를 나눠 e.partial 에
         //   안전망(총괄 10/17): PUT 뒤에도 판매중이 아니면 change-status { statusType:'SALE' } 한 번 더(문서상 400 날 수 있음) · attempts 에 두 시도와 각 code
+        //   🔴 실측(10/17 레드키위): 통째 PUT 바디의 statusType 을 바꾸면 400 invalid originProduct.statusType → 바디엔 재고만 · 상태는 재조회로 판정
         const toSale = async (on, body, steps, ref) => {
-            npwSet(body, NPW_FIELDS.status, 'SALE');
             const attempts = [];
             const partial = async (now, extra) => ({ attempts, status_now: now ? npwGet(now, NPW_FIELDS.status) : null, stock_total_now: now ? npwStockTotal(now) : null,
                 stock_restored: now ? npwStockTotal(now) > 0 : null, sale_ok: now ? npwSaleCheck(now, ref) : null, ...(extra || {}) });
@@ -16145,10 +16158,14 @@ async function naverProductWriteRun(req, deps) {
             if (perr) return fail(perr);
             // 원상품 번호 = change-status 길(판매 중지·재개)에만 필요 — 품절 걸기·풀기는 채널 번호 통째 PUT
             if ((patch && patch.status === 'SUSPENSION' || (patch && patch.status === 'SALE' && npwGet(before, NPW_FIELDS.status) === 'SUSPENSION')) && !row.origin_product_no) return fail('원상품 번호를 못 찾은 보관본이라 판매 상태를 바꿀 수 없어요');
-            // #720-D: 상세 수정은 잠금(설정 'naver_product_write' { detail_enabled:true } 일 때만) — 네이버가 스마트에디터 자료를 걸러 원본 복구가 안 됨
-            if ('detail_html' in patch) {
-                const cfg = (await db.query(`SELECT value FROM agent_office_config WHERE key = 'naver_product_write'`)).rows[0];
-                if (!(cfg && cfg.value && cfg.value.detail_enabled === true)) return fail(NPW_DETAIL_LOCK_MSG);
+            // #721-B 통째 PUT 잠금: 통째 PUT 을 타는 길(상세·옵션·판매가·품목명·품절 걸기/풀기)은 설정 'naver_product_write'.put_enabled === true 일 때만
+            //   · change-status 길(판매중지·재개)은 늘 열림 · 시험 번호 계정(≥990000) 지시는 통과 · 상세는 그 안에서 detail_enabled 로 한 번 더(#720-D)
+            const usesPut = ['detail_html', 'sale_price', 'name', 'options'].some(k => k in patch) || patch.status === 'OUTOFSTOCK' || (patch.status === 'SALE' && npwGet(before, NPW_FIELDS.status) === 'OUTOFSTOCK');
+            const isTest = Number(ord.created_by_id) >= NPW_TEST_UID_MIN;
+            if (usesPut && !isTest) {
+                const cfg = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'naver_product_write'`)).rows[0] || {}).value || {};
+                if (cfg.put_enabled !== true) return fail(NPW_PUT_LOCK_MSG);
+                if ('detail_html' in patch && cfg.detail_enabled !== true) return fail(NPW_DETAIL_LOCK_MSG);
             }
             // 신선도 — 보관한 뒤 누가 네이버에서 고쳤으면 그 위에 덮지 않는다(재고 칸은 주문으로 늘 움직여 제외 · 아래 바디가 지금 값을 쓴다)
             let cur;
@@ -16165,21 +16182,21 @@ async function naverProductWriteRun(req, deps) {
             // 품절 상품에 옵션 재고만 넣는 patch 도 판매 복귀 길로(네이버가 재고만으로 저절로 SALE 되는지 미확인 · 총괄 10/17)
             const auto_sale = !('status' in patch) && curStatus === 'OUTOFSTOCK' && (patch.options || []).some(p => p && p.stock > 0);
             const toSaleNow = auto_sale || (patch.status === 'SALE' && curStatus === 'OUTOFSTOCK');
-            const putStep = Object.keys(patch).every(k => k === 'detail_html' || k === 'status') ? 'detail' : 'channel';   // 상세만이면 종전 이름
+            // 상세만(+판매중지·재개) 바꾸는 PUT 이면 종전 이름 'detail' · 그 밖 PUT 은 'channel'(품절 걸기 포함)
+            const putStep = 'detail_html' in patch && patch.status !== 'OUTOFSTOCK' && Object.keys(patch).every(k => k === 'detail_html' || k === 'status') ? 'detail' : 'channel';
             const putFail = async (e) => {
-                await db.query(`UPDATE naver_product_backups SET patch_json = $2::jsonb, result_json = $3::jsonb WHERE id = $1`, [row.id, JSON.stringify(patch), JSON.stringify({ ok: false, step: putStep, code: e && e.status || null, invalid_fields: npwInvalidFields(e) })]);
+                await db.query(`UPDATE naver_product_backups SET patch_json = $2::jsonb, result_json = $3::jsonb WHERE id = $1`, [row.id, JSON.stringify(patch), JSON.stringify({ ok: false, step: putStep, code: e && e.status || null, invalid_fields: npwInvalidFields(e), links_converted })]);
                 return naverErr(e, '상품 수정');
             };
             try {
                 if (patch.status === 'OUTOFSTOCK') {
-                    // 품절 걸기 = 통째 PUT 하나(옵션 재고 전부 0 + statusType OUTOFSTOCK) · 되돌리기는 보관본 재고로(toSale)
+                    // 품절 걸기 = 통째 PUT 하나(옵션 재고 전부 0 · statusType 은 바디에서 안 바꿈 — 바꾸면 400) → 재조회로 OUTOFSTOCK 판정(아니면 not_applied 'status')
                     for (const o of npwOptions(body)) o.stockQuantity = 0;
                     if (!npwOptions(body).length) npwSet(body, ['originProduct', 'stockQuantity'], 0);
-                    npwSet(body, NPW_FIELDS.status, 'OUTOFSTOCK');
                     try { await putChannel(body); } catch (e) { return await putFail(e); }
                     await markApplied(); steps.push('channel');
                 } else if (toSaleNow) {
-                    // 품절 → 판매: patch 로 재고를 안 준 옵션 중 지금 0 인 것만 보관본 재고로 → 통째 PUT(statusType SALE) → 아직 품절이면 change-status 1회
+                    // 품절 → 판매: patch 로 재고를 안 준 옵션 중 지금 0 인 것만 보관본 재고로 → 통째 PUT(재고만) → 아직 품절이면 change-status SALE 1회
                     if (!auto_sale) {
                         const bOpt = npwOptions(before), given = new Set((patch.options || []).filter(p => p && 'stock' in p).map(p => String(p.id)));
                         for (const o of npwOptions(body)) { const bo = bOpt.find(x => x.id === o.id); if (bo && !given.has(String(o.id)) && o.stockQuantity === 0 && bo.stockQuantity > 0) o.stockQuantity = bo.stockQuantity; }
@@ -16222,10 +16239,10 @@ async function naverProductWriteRun(req, deps) {
             const sale_ok = npwSaleCheck(after, ref);   // 품절·판매중지로 바꾼 apply 면 status·stock 이 bad 인 게 정상
             const options_table = npwOptTable(before, after), price_basis = npwPriceBasis(before, after), option_ids_kept = regen.length === 0;
             await db.query(`UPDATE naver_product_backups SET after_json = $2::jsonb, result_json = $3::jsonb WHERE id = $1`,
-                [row.id, JSON.stringify(after), JSON.stringify({ steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, stock_paths, sale_ok, option_ids_kept, price_basis })]);
+                [row.id, JSON.stringify(after), JSON.stringify({ steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, stock_paths, sale_ok, option_ids_kept, price_basis, links_converted, links_after: npwHrefCount(after) })]);
             await auditW('naver_product_apply', { product_no: pno, order_id: orderId, backup_id: row.id, patch_keys: Object.keys(patch), steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, sale_ok, price_basis });
             return { ok: true, op, product_no: pno, backup_id: row.id, steps, auto_sale, changed_paths: changed, unexpected_paths: unexpected, not_applied, stock_paths, sale_ok, sale_attempts,
-                options_table, price_basis, option_ids_kept, before_summary: npwSummary(before), after_summary: npwSummary(after) };
+                options_table, price_basis, option_ids_kept, links_converted, links_after: npwHrefCount(after), before_summary: npwSummary(before), after_summary: npwSummary(after) };
         }
         // revert — 적용한 보관본만 · 적용 뒤 또 바뀌었으면 force 없이는 안 덮음(재고 칸은 판매로 움직이니 제외)
         if (!row.applied_at) return fail('아직 적용하지 않은 보관본이에요');
@@ -16270,11 +16287,11 @@ async function naverProductWriteRun(req, deps) {
                 return naverErr(e, '되돌리기(품절 → 판매)', { steps_done: steps, ...(e && e.partial || {}) });
             }
         } else {
-            // 판매로 풀었던 것(품절 → 판매 · 재고만 넣어 판매 복귀)을 되돌림 = 통째 PUT 에 품절(옵션 재고 0 + statusType OUTOFSTOCK)
+            // 판매로 풀었던 것(품절 → 판매 · 재고만 넣어 판매 복귀)을 되돌림 = 통째 PUT 에 옵션 재고 0(statusType 은 안 바꿈 · 네이버가 품절로)
             if (bs === 'OUTOFSTOCK' && cs !== 'OUTOFSTOCK') {
                 for (const o of npwOptions(body)) o.stockQuantity = 0;
                 if (!npwOptions(body).length) npwSet(body, ['originProduct', 'stockQuantity'], 0);
-                npwSet(body, NPW_FIELDS.status, 'OUTOFSTOCK'); needPut = true;
+                needPut = true;   // statusType 은 바디에서 안 바꿈(400) · 재고 0 → 네이버가 품절로
             }
             if (needPut) {
                 try { await putChannel(body); } catch (e) { return naverErr(e, '되돌리기(상품 통째)', { steps_done: steps }); }
@@ -16299,10 +16316,10 @@ async function naverProductWriteRun(req, deps) {
         const sale_ok = npwSaleCheck(back, before);   // 보관본이 판매중이었다면 ok true 여야 「되돌림 = 다시 팔림」
         const options_table = npwOptTable(cur, back), price_basis = npwPriceBasis(cur, back);
         await db.query(`UPDATE naver_product_backups SET reverted_at = NOW(), result_json = COALESCE(result_json, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-            [row.id, JSON.stringify({ revert_steps: steps, revert_residual_paths: residual, revert_stock_paths: stock_paths, revert_forced: since.length > 0, revert_status_after_put: status_after_put, revert_sale_attempts: sale_attempts, revert_sale_ok: sale_ok })]);
+            [row.id, JSON.stringify({ revert_steps: steps, revert_residual_paths: residual, revert_stock_paths: stock_paths, revert_forced: since.length > 0, revert_status_after_put: status_after_put, revert_sale_attempts: sale_attempts, revert_sale_ok: sale_ok, revert_links_converted: links_converted, revert_links_after: npwHrefCount(back) })]);
         await auditW('naver_product_revert', { product_no: pno, order_id: orderId, backup_id: row.id, steps, residual_paths: residual, forced_over: since.slice(0, 50), sale_ok });
         return { ok: true, op, product_no: pno, backup_id: row.id, steps, same_as_before: residual.length === 0, residual_paths: residual, stock_paths, status_after_put, sale_attempts, sale_ok,
-            options_table, price_basis, option_ids_kept: npwOptRegen(before, back).length === 0, after_summary: npwSummary(back) };
+            options_table, price_basis, option_ids_kept: npwOptRegen(before, back).length === 0, links_converted, links_after: npwHrefCount(back), after_summary: npwSummary(back) };
     } finally { npwInFlight.delete(pno); }
 }
 // #720-B 끝
@@ -16312,7 +16329,7 @@ setInterval(async () => {
         if (req == null) return;
         await pool.query(`DELETE FROM agent_office_config WHERE key = $1`, [NPW_REQ_KEY]);   // 선제거 — 반복 실행 방지
         let out;
-        try { out = await naverProductWriteRun(req, { pool, call: naverCallWithRetry, audit: writeAudit }); }
+        try { out = await naverProductWriteRun(req, { pool, call: naverCallWithRetry, audit: writeAudit, convertImageLinks: require('./naver-detail-links.js').convertImageLinks }); }
         catch (e) { console.error('[#720 상품 쓰기] 러너 오류:', e && e.message); out = { ok: false, op: req && req.op, error: '러너 오류' }; }
         await naverCfgSet(NPW_RES_KEY, { at: new Date().toISOString(), order_id: req && req.order_id || null, ...out });
     } catch (e) {

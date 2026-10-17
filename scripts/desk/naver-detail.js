@@ -216,6 +216,12 @@ function planRows(before, patch) {
     }
     return { rows: stops.length ? [] : rows, warns, stops };
 }
+// 통째 PUT 을 타는 patch(서버 usesPut 과 같음) — 설정 'naver_product_write'.put_enabled 가 true 일 때만 서버가 받음(#721-B · 판매중지·재개는 늘 열림)
+const PUT_LOCK_TEXT = '통째 수정은 대표 확정 대기 — 지금은 판매중지/재개만';
+function usesPut(before, patch) {
+    const st = (((before || {}).originProduct) || {}).statusType;
+    return ['detail_html', 'sale_price', 'name', 'options'].some(k => k in patch) || patch.status === 'OUTOFSTOCK' || (patch.status === 'SALE' && st === 'OUTOFSTOCK');
+}
 // 서버 options_table → 카드 줄(바뀐 칸만 · 결제가 포함)
 function optionRows(table) {
     const F = { name: '이름', price: '추가금', stock: '재고', usable: '판매', pay: '결제가' };
@@ -283,7 +289,8 @@ function makeRunner(deps) {
         const r = (await pool.query(`SELECT u.role FROM pending_orders o JOIN users u ON u.id = o.created_by_id AND u.deleted_at IS NULL WHERE o.id = $1`, [orderId])).rows[0];
         return !!r && r.role === 'admin';
     }
-    return { send, orderBy, backupRow, isAdmin };
+    async function writeCfg() { try { const v = await cfgGet('naver_product_write'); return (v && typeof v === 'object') ? v : {}; } catch (_) { return {}; } }
+    return { send, orderBy, backupRow, isAdmin, writeCfg };
 }
 
 async function main(argv, deps) {
@@ -317,6 +324,8 @@ async function main(argv, deps) {
         if (errs.length) throw new Error(errs.join(' · '));
         const op = row.before_json.originProduct || {};
         const P = planRows(row.before_json, patch);
+        const locked = usesPut(row.before_json, patch) && (await R.writeCfg()).put_enabled !== true;
+        if (locked) P.warns.unshift(PUT_LOCK_TEXT + '(apply 가 거절해요 · 옵션·가격·상품명·품절·상세는 스마트스토어센터에서)');
         const undo = `되돌리기: node scripts/desk/naver-detail.js revert ${row.id} <지시 id>`;
         if (cmd === 'plan') {
             if (P.stops.length) return out({ ok: false, stopped: true, product_no: row.product_no, backup_id: row.id, stops: P.stops, can_apply: false, note: '멈췄어요 — 바꾼 것 없음' });
@@ -336,6 +345,9 @@ async function main(argv, deps) {
         if (busyWindow(deps.now())) return out({ ok: false, stopped: true, why: '평일 08:30~10:30(발송 직전)엔 바꾸지 않아요 — 10:30 뒤에 같은 명령으로', note: '보낸 것 없음' });
         const res = await R.send({ op: 'apply', order_id: orderId, backup_id: row.id, product_no: row.product_no, patch, created_by: await R.orderBy(orderId) });
         if (!res.ok) {
+            if (/통째 수정은/.test(String(res.error || ''))) return out({ ok: false, stopped: true, locked: true, error: res.error,
+                card: card('수정 안 함 — 잠김', row.product_no, op.name, P.rows, ['🔒 ' + PUT_LOCK_TEXT, '옵션·가격·상품명·품절·상세는 스마트스토어센터에서 직접 해 주세요']),
+                note: PUT_LOCK_TEXT + ' — 바꾼 것 없음 · 위 카드 그대로 전하기' });
             const half = halfSale(res);   // 품절 → 판매에서 PUT 은 나갔는데 아직 품절(계약 #721-B 1 오류 칸)
             return out({ ok: false, error: res.error || '수정 실패', code: res.code || null, drift_paths: res.drift_paths || undefined, steps_done: res.steps_done || undefined,
                 status_now: res.status_now || undefined, stock_restored: res.stock_restored == null ? undefined : res.stock_restored, attempts: res.attempts || undefined,
@@ -345,6 +357,7 @@ async function main(argv, deps) {
         const bad = (res.unexpected_paths || []), miss = (res.not_applied || []);
         const extra = P.warns.filter(w => /상태만 바꿈/.test(w));
         if (bad.length) extra.push(`🔴 예상 밖으로 바뀐 칸 ${bad.length}곳: ${bad.slice(0, 5).join(' · ')}${bad.length > 5 ? ' …' : ''} — 되돌리기를 권합니다`);
+        if (res.links_converted > 0 || res.links_after != null) extra.push(`그림 링크: 일반 링크로 ${won(res.links_converted || 0)}개 보냄 · 다시 읽은 상세에 남은 링크 ${won(res.links_after || 0)}개${res.links_converted > 0 && !(res.links_after > 0) ? ' — ⚠ 네이버가 링크를 걸러 냄(센터 스마트에디터에서 다시 걸기)' : ''}`);
         if (res.option_ids_kept === false) extra.push('⚠ 네이버가 옵션을 새로 만들었어요(옵션 id 가 바뀜) — 주문 연결은 판매자 관리코드라 큰 해는 없지만 총괄에게 알려 주세요');
         if (miss.length) extra.push(`⚠ 요청했는데 그대로인 칸: ${miss.map(k => ({ detail_html: '상세', status: '판매 상태', stock: '재고', options: '옵션', sale_price: '판매가', name: '상품명' })[k] || k).join(' · ')}`);
         const rowsAfter = res.options_table ? P.rows.filter(r => !/^옵션 「/.test(r.field)).concat(optionRows(res.options_table)) : P.rows;
@@ -373,6 +386,7 @@ async function main(argv, deps) {
             note: halfSale(res) || (res.drift_paths ? '적용한 뒤 네이버에서 또 바뀐 곳이 있어요 — 그 칸(drift_paths)을 요청자에게 보여 주고 「그래도 되돌려」면 --force' : '되돌리지 못했어요 — 총괄에게') });
         const name = (row.before_json.originProduct || {}).name;
         const sb = saleOkSelf(row.before_json), lines = [res.same_as_before ? '보관해 둔 그대로 돌아왔어요(다시 읽어 확인)' : `⚠ 보관본과 아직 다른 칸 ${(res.residual_paths || []).length}곳: ${(res.residual_paths || []).slice(0, 5).join(' · ')}`];
+        if (res.links_converted > 0) lines.push(`그림 링크: 일반 링크로 ${won(res.links_converted)}개 보냄 · 다시 읽은 상세에 남은 링크 ${won(res.links_after || 0)}개`);
         lines.push(saleLine('건들기 전 판매 정상', sb), saleLine('되돌린 뒤 판매 정상', res.sale_ok || null));
         const back = !sb.ok || !res.sale_ok || res.sale_ok.ok;   // 원래 팔리던 상품이면 되돌린 뒤에도 팔려야
         if (!back) lines.push('🔴 원래 팔리던 상품인데 되돌린 뒤 아직 정상이 아니에요 — 총괄에게');

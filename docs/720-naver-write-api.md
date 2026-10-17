@@ -107,3 +107,9 @@
 3. change-status 복귀 때 옵션 상품의 stockQuantity → 안 씀(통째 PUT 으로 우회).
 4. option-stock 요청 바디 → 안 씀(통째 PUT).
 5. 상세 `<a href>` → 실 PUT 재조회.
+
+## 실측 결과(#721-B · 워커1 · 2026-10-17 · 레드키위 13782816361 · 시험 계정 지시)
+- **통째 PUT 바디의 `statusType` 을 지금 값과 다르게 보내면 400** · invalidInputs = `originProduct.statusType` → 통째 PUT 으로 상태값 변경 불가. 품절 걸기·풀기는 바디의 옵션 재고만 바꾸고 상태는 재조회로 판정(풀기는 안 되면 change-status SALE 1회 안전망).
+- **옵션 상품의 change-status OUTOFSTOCK = 400**(SALE → OUTOFSTOCK) → change-status 는 SALE↔SUSPENSION 만.
+- **옵션 `price` = 판매가 대비 추가금 · 음수 가능**(레드키위 5kg 0 · 3kg −17,000 · 10kg +43,000 · 판매가 98,800 · 즉시할인 WON 48,000 → 결제가 50,800 · 33,800 · 93,800) → 미확정 2-2 닫힘.
+- **통째 PUT 은 상세를 안 바꿔도 네이버가 상세를 걸러 냄**: 옵션 재고 −1 만 바꾼 PUT 에서 detailContent 71,083 → 62,996자(스마트에디터 `script type=text/data` 30블록 삭제 · 그림 a 태그의 style·onclick·data-linktype·data-linkdata 는 `<!-- Not Allowed Attribute Filtered ( … ) -->` 주석으로 옮겨짐 · 그림 23장·글자 그대로 · 실손실 = 그림 링크 4곳). 재조회 옵션 id 그대로(관리코드 없음).

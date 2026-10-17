@@ -88,6 +88,13 @@ sale_ok: { … }                 // B1 칸 · 단 가격·옵션을 바꾼 apply
 - `changed_paths` 에 옵션별 전 → 후는 options_table 로 · 경로 문자열은 종전 꼴(`originProduct.detailAttribute.optionInfo.optionCombinations[n].price` 등).
 - revert = 우리가 바꾼 칸만 보관본 값으로(지금 값 위에 · 남의 변경·판매로 줄어든 재고는 안 덮음 · 단 patch 에 stock 이 있던 옵션은 보관본 재고로).
 
+**v5.9.542 손질(실측 10/17 레드키위 반영 · 아래 v5.9.541 줄보다 우선)**
+- 실측: 통째 PUT 바디 `statusType` 을 바꾸면 400(invalidInputs `originProduct.statusType`) → **품절 걸기 = 바디에서 옵션 재고만 전부 0(statusType 은 지금 값 그대로)** → 재조회가 OUTOFSTOCK 이 아니면 `not_applied:['status']`. **풀기 = 재고만 채운 통째 PUT → 재조회 SALE 아니면 change-status SALE 1회**(attempts 에 둘 다). 되돌려 다시 품절로 = 재고 0 PUT.
+- 실측: **통째 PUT 은 상세를 안 바꿔도 네이버가 상세를 걸러 냄**(옵션 재고 −1 PUT 에서 71,083 → 62,996자 · 그림 링크 4곳 끊김) → **모든 통째 PUT 바디의 detailContent 에 `naver-detail-links.convertImageLinks`(fromComments 기본)를 적용**(속성·걸러진 주석의 그림 링크 → 일반 `<a href target=_blank rel=noopener>`). 결과 `links_converted`(보낸 링크 수) · `links_after`(재조회 상세의 일반 http href 수 — 네이버가 남기는지 판정 칸). 상세가 달라진 것은 `unexpected_paths` 에 그대로 보임(숨기지 않음).
+- **통째 PUT 잠금**: 통째 PUT 을 타는 apply(상세·옵션·판매가·품목명·품절 걸기/풀기)는 설정 `agent_office_config 'naver_product_write'.put_enabled === true` 일 때만 · 아니면 「통째 수정은 네이버가 상세 편집기 자료를 걸러 대표 확정 대기 — 지금은 판매중지/재개만」. 상세는 그 안에서 `detail_enabled` 로 한 번 더. 판매중지·재개(change-status)는 늘 열림 · 시험 번호 계정(≥990000) 지시는 두 잠금 통과 · revert 는 잠금 무관.
+- 실패 step 이름: 상세만(+판매중지·재개) PUT = `'detail'` · 그 밖 통째 PUT(품절 걸기 포함) = `'channel'`.
+- 실측: 옵션 `price` = 판매가 대비 추가금 · 음수 가능(레드키위 3kg −17,000).
+
 **구현 확정(v5.9.541 · 위 초안과 다른 점·더한 점)**
 - **판매 상태 길 정정(#721-B2 실측 10/17 · 레드키위 change-status OUTOFSTOCK = 400)**: 품절 걸기 = 통째 PUT 하나(지금 값 위에 옵션 재고 전부 0 + `statusType:'OUTOFSTOCK'`) · 품절 풀기 = B1 toSale · change-status 는 SALE↔SUSPENSION 만. 전이표 = `SALE → OUTOFSTOCK·SUSPENSION` · `OUTOFSTOCK → SALE` · `SUSPENSION → SALE`(품절 → 판매중지 · WAIT 는 거절). 원상품 번호는 판매중지·재개 때만 필요.
 - 한 apply 의 칸은 통째 PUT **한 번**에 모음 · 판매중지/재개가 같이 있으면 PUT 뒤 change-status · `steps` = `['detail']`(상세만) · `['channel']`(그 밖 PUT) · `['status']` · 조합.

@@ -16,7 +16,7 @@ const ok = (cond, name, extra) => { if (cond) { pass++; console.log('  ✅', nam
 const quiet = async (fn) => { const o = console.error; console.error = () => {}; try { return await fn(); } finally { console.error = o; } };
 
 // ── 가짜 pool ──────────────────────────────────────────
-function fakePool(orders, cfg = { detail_enabled: true }) {   // cfg = 'naver_product_write' 설정 행(null = 행 없음)
+function fakePool(orders, cfg = { detail_enabled: true, put_enabled: true }) {   // cfg = 'naver_product_write' 설정 행(null = 행 없음)
     const backups = []; let seq = 0;
     const find = (id) => backups.find(x => x.id === id);
     return {
@@ -51,11 +51,16 @@ function fakeNaver(product, opts = {}) {
         if (r.method === 'GET' && r.path === `/external/v2/products/channel-products/${CH}`) return JSON.parse(JSON.stringify(st.product));
         if (r.method === 'PUT' && r.path === `/external/v2/products/channel-products/${CH}`) {
             if (opts.putFail) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.foo', message: 'x' }] }; throw e; }
+            // 실측(10/17 레드키위): 바디의 statusType 이 지금과 다르면 400 invalid originProduct.statusType
+            if (r.body.originProduct.statusType !== st.product.originProduct.statusType) { const e = new Error('naver_relay_error_400'); e.status = 400; e.data = { message: '원문', invalidInputs: [{ name: 'originProduct.statusType' }] }; throw e; }
             st.puts.push(r.body);
+            const wasOut = st.product.originProduct.statusType === 'OUTOFSTOCK';
             st.product = JSON.parse(JSON.stringify(r.body));
             if (opts.putZeroStock) for (const o of st.product.originProduct.detailAttribute.optionInfo.optionCombinations) o.stockQuantity = 0;   // 재고가 0 으로 들어간 척
             sum();
-            if (st.product.originProduct.statusType === 'SALE' && st.product.originProduct.stockQuantity === 0) st.product.originProduct.statusType = 'OUTOFSTOCK';   // 문서: 재고 0 이면 품절 유지
+            if (st.product.originProduct.stockQuantity === 0) st.product.originProduct.statusType = 'OUTOFSTOCK';   // 문서: 조합 전부 0 = 품절
+            else if (wasOut && opts.putAutoSale) st.product.originProduct.statusType = 'SALE';   // 재고 채우면 네이버가 판매로 되돌리는 척(미확정)
+            if (opts.stripLinks) st.product.originProduct.detailContent = st.product.originProduct.detailContent.replace(/\shref="[^"]*"/g, '');   // 일반 href 도 지우는 네이버인 척
             if (opts.sideEffect) opts.sideEffect(st.product);   // 네이버가 다른 칸까지 바꾼 척
             return {};
         }
@@ -97,7 +102,8 @@ const ORDERS = [{ id: 101, status: '처리중', is_deleted: false, created_by_id
     { id: 203, status: '완료', is_deleted: false, image_data: 'data:image/jpeg;base64,' + 'A'.repeat(14 * 1024 * 1024), image_mime: 'image/jpeg', file_name: null }];
 const audits = [];
 const audit = async (x) => { audits.push(x); };
-const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(product || PRODUCT, opts); return { db, nv, deps: { pool: db, call: nv.call, audit } }; };
+const LINKS = require(path.join(__dirname, '..', 'naver-detail-links.js'));
+const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(product || PRODUCT, opts); return { db, nv, deps: { pool: db, call: nv.call, audit, convertImageLinks: LINKS.convertImageLinks } }; };
 
 (async () => {
     const run = (req, deps) => mod.naverProductWriteRun(req, { gapMs: 0, ...deps });
@@ -346,16 +352,33 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         ok(Date.now() - t0 >= 55, '호출 사이 간격 적용(gapMs)', Date.now() - t0);
     }
 
-    console.log('⑨ #720-D 상세 잠금(설정 행 없음·꺼짐 = 거절 · 상태는 허용)');
+    console.log('⑨ #720-D 상세 잠금 · #721-B 통째 PUT 잠금(put_enabled) · 판매중지/재개는 늘 열림 · 시험 계정 통과');
     {
-        for (const [cfg, name] of [[null, '설정 행 없음'], [{ detail_enabled: false }, 'detail_enabled false']]) {
+        for (const [cfg, name, re] of [[null, '설정 행 없음', /통째 수정은 네이버가/], [{ detail_enabled: true }, 'put_enabled 없음', /통째 수정은 네이버가/], [{ put_enabled: true, detail_enabled: false }, 'put_enabled · detail_enabled false', /상세 수정은 대표 확정 대기/]]) {
             const db = fakePool(ORDERS, cfg), nv = fakeNaver(PRODUCT);
             const deps = { pool: db, call: nv.call, audit };
             const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, deps);
             const x = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { detail_html: NEW_HTML } }, deps);
-            ok(!x.ok && /상세 수정은 대표 확정 대기/.test(x.error) && nv.puts.length === 0 && !db.backups[0].applied_at, `${name} → 상세 apply 거절(쓰기 0 · 적용 표시 0)`, x);
+            ok(!x.ok && re.test(x.error) && nv.puts.length === 0 && !db.backups[0].applied_at, `${name} → 상세 apply 거절(쓰기 0 · 적용 표시 0)`, x);
             const y = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { status: 'SUSPENSION' } }, deps);
             ok(y.ok && nv.statusPuts.length === 1, `${name} → 판매 상태 apply 는 됨`, y);
+        }
+        // 잠금 아래: 옵션·판매가·품목명·품절 걸기도 거절 · 판매중지만 됨
+        {
+            const db = fakePool(ORDERS, null), nv = fakeNaver(PRODUCT);
+            const deps = { pool: db, call: nv.call, audit };
+            const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, deps);
+            for (const [p, nm] of [[{ options: [{ id: 1, stock: 19 }] }, '옵션 재고'], [{ sale_price: 28000 }, '판매가'], [{ name: '새 이름' }, '품목명'], [{ status: 'OUTOFSTOCK' }, '품절 걸기']]) {
+                const x = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: p }, deps);
+                ok(!x.ok && /통째 수정은 네이버가/.test(x.error), `잠금 → ${nm} 거절`, x);
+            }
+            ok(nv.puts.length === 0 && !db.backups[0].applied_at, '잠금 거절들 = 쓰기 0');
+            // 시험 번호 계정(≥990000) 지시는 잠금 통과(상세 포함)
+            const bt = await run({ op: 'backup', product_no: CH, order_id: 105 }, deps);
+            const xt = await run({ op: 'apply', order_id: 105, backup_id: bt.backup_id, patch: { detail_html: NEW_HTML, options: [{ id: 1, stock: 19 }] } }, deps);
+            ok(xt.ok && nv.puts.length === 1, '시험 계정 지시 = 잠금 통과(상세+옵션)', xt);
+            const rt = await run({ op: 'revert', order_id: 105, backup_id: bt.backup_id }, deps);
+            ok(rt.ok && rt.same_as_before, '잠금 아래에서도 revert 는 됨', rt);
         }
     }
 
@@ -370,17 +393,17 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         ok(ap.ok && ap.sale_ok.ok === false && ap.sale_ok.bad.join() === 'status,stock', '품절 apply 뒤 sale_ok = ⚠ status·stock 만(가격·상세·그림 그대로)', ap.sale_ok);
         const rv = await run({ op: 'revert', order_id: 101, backup_id: b.backup_id }, k.deps);
         const putOut = k.nv.puts[0], put0 = k.nv.puts[1];
-        ok(ap.steps.join() === 'channel' && putOut.originProduct.statusType === 'OUTOFSTOCK' && first(putOut).every(o => o.stockQuantity === 0), '#721-B2 실측 반영: 품절 걸기 = 통째 PUT 하나(옵션 재고 0 + statusType OUTOFSTOCK) · change-status 0', [ap.steps, putOut && putOut.originProduct.statusType]);
-        ok(rv.ok && rv.steps.join() === 'channel' && rv.status_after_put === 'SALE' && k.nv.statusPuts.length === 0, '복귀 = 통째 PUT 하나(change-status 0)', [rv, k.nv.statusPuts]);
-        ok(put0.originProduct.statusType === 'SALE' && first(put0).map(o => o.stockQuantity).join() === '20,30' && put0.originProduct.stockQuantity === 0, 'PUT 바디 = statusType SALE + 옵션 재고 20·30 · 상품 단위 재고는 안 고침(지금 값 0 그대로)', put0 && put0.originProduct);
+        ok(ap.steps.join() === 'channel' && putOut.originProduct.statusType === 'SALE' && first(putOut).every(o => o.stockQuantity === 0) && ap.not_applied.length === 0 && ap.after_summary.status === 'OUTOFSTOCK', '실측 반영(10/17 레드키위 400 statusType): 품절 걸기 = 통째 PUT 재고 0 만(바디 statusType 그대로) → 재조회 OUTOFSTOCK', [ap.steps, putOut && putOut.originProduct.statusType]);
+        ok(rv.ok && rv.steps.join() === 'channel,status' && rv.status_after_put === 'OUTOFSTOCK' && k.nv.statusPuts.length === 1 && JSON.stringify(k.nv.statusPuts[0]) === '{"statusType":"SALE"}', '복귀 = 통째 PUT 재고만 → 품절 그대로면 change-status SALE 안전망', [rv, k.nv.statusPuts]);
+        ok(put0.originProduct.statusType === 'OUTOFSTOCK' && first(put0).map(o => o.stockQuantity).join() === '20,30' && put0.originProduct.stockQuantity === 0, '복귀 PUT 바디 = 옵션 재고 20·30 · statusType 은 지금 값(안 바꿈) · 상품 단위 재고 안 고침', put0 && put0.originProduct);
         ok(rv.same_as_before && rv.sale_ok.ok === true && JSON.stringify(k.nv.product) === JSON.stringify(PRODUCT), '복귀 뒤 sale_ok ✓ · 잔여 0 · 상품 = 원본', rv.sale_ok);
-        ok(k.db.backups[0].result_json.revert_sale_ok.ok === true && k.db.backups[0].result_json.revert_status_after_put === 'SALE', '보관본 result_json 에 revert_sale_ok · status_after_put');
+        ok(k.db.backups[0].result_json.revert_sale_ok.ok === true && k.db.backups[0].result_json.revert_status_after_put === 'OUTOFSTOCK', '보관본 result_json 에 revert_sale_ok · status_after_put');
         // change-status 로 품절 복귀를 하는 네이버(400)여도 안 씀 → 통과
-        const n = mk(null, { statusFromOut400: true });
+        const n = mk(null, { statusFromOut400: true, putAutoSale: true });
         const bn = await run({ op: 'backup', product_no: CH, order_id: 101 }, n.deps);
         await run({ op: 'apply', order_id: 101, backup_id: bn.backup_id, patch: { status: 'OUTOFSTOCK' } }, n.deps);
         const rn = await run({ op: 'revert', order_id: 101, backup_id: bn.backup_id }, n.deps);
-        ok(rn.ok && rn.sale_ok.ok && n.nv.statusPuts.length === 0, 'change-status 품절 복귀 400 인 네이버도 복귀 성공(PUT 이 판매로 바꾸면 그 길 안 씀)', rn);
+        ok(rn.ok && rn.sale_ok.ok && n.nv.statusPuts.length === 0 && rn.status_after_put === 'SALE' && rn.steps.join() === 'channel', '재고 채우면 네이버가 판매로 되돌리는 경우 = PUT 하나로 끝 · change-status 0', rn);
         // 판매중지 되돌림은 종전대로 change-status statusType 하나
         const u = mk();
         const bu = await run({ op: 'backup', product_no: CH, order_id: 101 }, u.deps);
@@ -409,7 +432,7 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const bo = await run({ op: 'backup', product_no: CH, order_id: 101 }, o.deps);
         ok(bo.sale_ok.ok === false && bo.sale_ok.bad.join() === 'status', '품절 상품 backup sale_ok = ⚠ status', bo.sale_ok);
         const ao = await run({ op: 'apply', order_id: 101, backup_id: bo.backup_id, patch: { status: 'SALE' } }, o.deps);
-        ok(ao.ok && ao.steps.join() === 'channel' && o.nv.statusPuts.length === 0 && o.nv.puts[0].originProduct.statusType === 'SALE' && ao.sale_ok.ok && ao.unexpected_paths.length === 0 && o.db.backups[0].applied_at, 'apply 품절 → 판매 = 통째 PUT 하나(statusType SALE) · sale_ok ✓ · 적용 표시', [ao, o.nv.statusPuts]);
+        ok(ao.ok && ao.steps.join() === 'channel,status' && o.nv.statusPuts.length === 1 && o.nv.puts[0].originProduct.statusType === 'OUTOFSTOCK' && ao.sale_ok.ok && ao.unexpected_paths.length === 0 && o.db.backups[0].applied_at, 'apply 품절 → 판매 = 통째 PUT(재고만) → change-status SALE · sale_ok ✓ · 적용 표시', [ao, o.nv.statusPuts]);
         // sale_ok 가 잡는 칸 — 옵션 가격 · 대표 그림 · 옵션 usable
         const g = mk(null, { sideEffect: (x) => { first(x)[0].price = 1000; x.originProduct.images.representativeImage.url = 'https://x/9.jpg'; first(x)[1].usable = false; } });
         const bg = await run({ op: 'backup', product_no: CH, order_id: 101 }, g.deps);
@@ -476,9 +499,9 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         const a0 = mk(O0);
         const ba = await run({ op: 'backup', product_no: CH, order_id: 101 }, a0.deps);
         const aa = await run({ op: 'apply', order_id: 101, backup_id: ba.backup_id, patch: { options: [{ id: 1, stock: 5 }] } }, a0.deps);
-        ok(aa.ok && aa.auto_sale === true && aa.steps.join() === 'channel' && a0.nv.product.originProduct.statusType === 'SALE' && OC(a0.nv.product)[0].stockQuantity === 5 && OC(a0.nv.product)[1].stockQuantity === 0 && aa.unexpected_paths.length === 0, '품절 + 재고만 = auto_sale(통째 PUT statusType SALE) · 준 옵션만 재고', aa);
+        ok(aa.ok && aa.auto_sale === true && aa.steps.join() === 'channel,status' && a0.nv.product.originProduct.statusType === 'SALE' && OC(a0.nv.product)[0].stockQuantity === 5 && OC(a0.nv.product)[1].stockQuantity === 0 && aa.unexpected_paths.length === 0, '품절 + 재고만 = auto_sale(통째 PUT 재고 → change-status SALE) · 준 옵션만 재고', aa);
         const ra = await run({ op: 'revert', order_id: 101, backup_id: ba.backup_id }, a0.deps);
-        ok(ra.ok && ra.same_as_before && a0.nv.product.originProduct.statusType === 'OUTOFSTOCK' && OC(a0.nv.product).every(o => o.stockQuantity === 0) && a0.nv.statusPuts.length === 0, '되돌리기 = 통째 PUT 으로 다시 품절(재고 0) · change-status 0', ra);
+        ok(ra.ok && ra.same_as_before && a0.nv.product.originProduct.statusType === 'OUTOFSTOCK' && OC(a0.nv.product).every(o => o.stockQuantity === 0) && a0.nv.statusPuts.length === 1 && a0.nv.puts[a0.nv.puts.length - 1].originProduct.statusType === 'SALE', '되돌리기 = 통째 PUT 재고 0(바디 statusType 그대로) → 네이버가 품절 · change-status 추가 0', ra);
         // 품절 → 판매(status SALE) + 재고 같이
         const a1 = mk(O0);
         const bb = await run({ op: 'backup', product_no: CH, order_id: 101 }, a1.deps);
@@ -523,6 +546,45 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         await t({ customerBenefit: {} }, /허용되지 않은 칸/, '할인 칸 거절');
         ok(r.nv.puts.length === 0 && r.nv.statusPuts.length === 0, '거절된 요청은 쓰기 0');
         void OP;
+    }
+
+    console.log('⑫ #721-B 통째 PUT 상세 링크 보존 · 실패 step 이름 · 품절 판정');
+    {
+        // 스마트에디터 그림 링크(속성) · 이미 걸러진 링크(주석) 둘 다 → 일반 <a href> 로 PUT
+        const LD = (u) => `{&quot;id&quot;:&quot;SE-1&quot;,&quot;linkUse&quot;:&quot;true&quot;,&quot;link&quot;:&quot;${u}&quot;}`;
+        const PL = JSON.parse(JSON.stringify(PRODUCT));
+        PL.originProduct.detailContent = `<p>글</p><a href="#" class="se-module-image-link" onclick="return false;" data-linktype="img" data-linkdata="${LD('https://smartstore.naver.com/akkome/products/1')}"><img src="https://x/a.jpg"></a>`
+            + `<!-- Not Allowed Attribute Filtered ( onclick="return false;" data-linktype="img" data-linkdata="${LD('https://brand.naver.com/jejuakkome/products/2')}" ) --><a class="se-module-image-link"><img src="https://x/b.jpg"></a>`;
+        const k = mk(PL);
+        const b = await run({ op: 'backup', product_no: CH, order_id: 101 }, k.deps);
+        const ap = await run({ op: 'apply', order_id: 101, backup_id: b.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, k.deps);
+        const d = k.nv.puts[0].originProduct.detailContent;
+        ok(ap.ok && ap.links_converted === 2 && ap.links_after === 2 && /href="https:\/\/smartstore\.naver\.com\/akkome\/products\/1" target="_blank"/.test(d) && /href="https:\/\/brand\.naver\.com\/jejuakkome\/products\/2"/.test(d), '옵션만 바꾼 PUT 도 상세 링크 2개(속성·주석) → 일반 href · links_converted 2 · links_after 2', [ap.links_converted, ap.links_after]);
+        ok(ap.unexpected_paths.includes('originProduct.detailContent'), '상세가 달라진 것은 숨기지 않고 unexpected 로 보고', ap.unexpected_paths);
+        // 네이버가 일반 href 까지 지우면 links_after 0 으로 드러남
+        const sk = mk(PL, { stripLinks: true });
+        const bs = await run({ op: 'backup', product_no: CH, order_id: 101 }, sk.deps);
+        const as = await run({ op: 'apply', order_id: 101, backup_id: bs.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, sk.deps);
+        ok(as.ok && as.links_converted === 2 && as.links_after === 0, '네이버가 href 를 지우면 links_after 0(실측 판정 칸)', [as.links_converted, as.links_after]);
+        // 링크 함수가 없는 deps(옛 호출)면 그대로 보냄
+        const nl = mk(PL); delete nl.deps.convertImageLinks;
+        const bnl = await run({ op: 'backup', product_no: CH, order_id: 101 }, nl.deps);
+        const anl = await run({ op: 'apply', order_id: 101, backup_id: bnl.backup_id, patch: { options: [{ id: 1, stock: 19 }] } }, nl.deps);
+        ok(anl.ok && anl.links_converted === 0 && nl.nv.puts[0].originProduct.detailContent === PL.originProduct.detailContent, 'convertImageLinks 없으면 상세 바이트 그대로', anl.links_converted);
+        // 품절 걸기 PUT 실패 step 이름 = channel(종전 'detail' 오기)
+        const fo = { putFail: true }; const f = mk(null, fo);
+        const bf = await run({ op: 'backup', product_no: CH, order_id: 101 }, f.deps);
+        await quiet(() => run({ op: 'apply', order_id: 101, backup_id: bf.backup_id, patch: { status: 'OUTOFSTOCK' } }, f.deps));
+        ok(f.db.backups[0].result_json.step === 'channel' && !f.db.backups[0].applied_at, '품절 걸기 PUT 실패 step = channel · 적용 표시 0', f.db.backups[0].result_json);
+        const f2 = mk(null, { putFail: true });
+        const bf2 = await run({ op: 'backup', product_no: CH, order_id: 101 }, f2.deps);
+        await quiet(() => run({ op: 'apply', order_id: 101, backup_id: bf2.backup_id, patch: { detail_html: NEW_HTML } }, f2.deps));
+        ok(f2.db.backups[0].result_json.step === 'detail', '상세만 PUT 실패 step = detail(종전 이름 유지)', f2.db.backups[0].result_json);
+        // 재고 0 으로 보냈는데 네이버가 판매중으로 두면 not_applied 'status'
+        const z = mk(null, { sideEffect: (x) => { x.originProduct.statusType = 'SALE'; } });
+        const bz = await run({ op: 'backup', product_no: CH, order_id: 101 }, z.deps);
+        const az = await run({ op: 'apply', order_id: 101, backup_id: bz.backup_id, patch: { status: 'OUTOFSTOCK' } }, z.deps);
+        ok(az.ok && az.not_applied.includes('status') && z.nv.statusPuts.length === 0, '재고 0 뒤에도 판매중이면 not_applied status(change-status 로 우회 안 함)', az);
     }
 
     console.log(`\n결과 ${pass}/${pass + failN}`);
