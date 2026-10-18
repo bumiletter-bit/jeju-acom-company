@@ -16868,7 +16868,10 @@ const CPW_SAVED_NOTE = '임시저장(SAVED) — 승인 요청 안 함 · 손님 
 const CPW_APPROVAL_NOTE = '쿠팡 승인 전까지 손님 화면은 옛 모습 · 승인되면 반영 · 반려면 사유(approval 로 확인)';
 const cpwIsSaved = (j) => CPW_SAVED.includes(String((j && (j.statusName || j.status)) || ''));
 // 바뀌는지 볼 칸(신선도) — 이름 · 옵션(번호·이름·상세·이미지)
-const cpwFingerprint = (j) => JSON.stringify({ n: j && j.sellerProductName, d: j && j.displayProductName,
+//   🔴 키 순서 무시(실측 10/18: 보관본은 jsonb 라 객체 키 순서가 바뀌어 돌아옴 → 그냥 JSON.stringify 면 안 바뀌어도 「바뀜」)
+const cpwCanon = (v) => Array.isArray(v) ? '[' + v.map(cpwCanon).join(',') + ']'
+    : v && typeof v === 'object' ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + cpwCanon(v[k])).join(',') + '}' : JSON.stringify(v === undefined ? null : v);
+const cpwFingerprint = (j) => cpwCanon({ n: j && j.sellerProductName, d: j && j.displayProductName,
     i: ((j && j.items) || []).map(it => [it.sellerProductItemId || null, it.vendorItemId || null, it.itemName || null, it.contents || null, it.images || null]) });
 // 상세(contents) 꼴 요약 — 「글 한 칸」 이어야 detail_html 로 바꿀 수 있음
 const cpwContentsShape = (it) => ((it && it.contents) || []).map(c => `${c.contentsType || '?'}:${((c.contentDetails) || []).map(d => d.detailType || '?').join('+')}`).join(',');

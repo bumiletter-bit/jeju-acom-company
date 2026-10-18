@@ -16,6 +16,8 @@ const ok = (cond, name, extra) => { if (cond) { pass++; console.log('  ✅', nam
 const quiet = async (fn) => { const o = console.error; console.error = () => {}; try { return await fn(); } finally { console.error = o; } };
 
 // ── 가짜 pool ──────────────────────────────────────────
+// PostgreSQL jsonb 흉내 — 객체 키를 (길이, 글자) 순으로 다시 늘어놓음(실측 10/18: 보관본 키 순서가 바뀌어 돌아와 신선도 대조가 헛걸림)
+const jsonb = (v) => Array.isArray(v) ? v.map(jsonb) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort((x, y) => x.length - y.length || (x < y ? -1 : x > y ? 1 : 0)).map(k => [k, jsonb(v[k])])) : v;
 function fakePool(orders) {
     const backups = []; let seq = 0;
     const find = (id) => backups.find(x => x.id === id);
@@ -30,11 +32,11 @@ function fakePool(orders) {
             // #729 상품 단위
             if (/FROM agent_office_config WHERE key = 'coupang_item_write'/.test(sql)) return { rows: this.cfg ? [{ value: this.cfg }] : [] };
             if (/^\s*INSERT INTO coupang_item_backups \(kind, seller_product_id, vendor_item_id, order_id, before_json, created_by, result_json\) VALUES \('product', \$1, NULL/.test(sql)) {
-                const r = { id: ++seq, kind: 'product', seller_product_id: p[0], vendor_item_id: null, order_id: p[1], before_json: JSON.parse(p[2]), created_by: p[3], result_json: JSON.parse(p[4]), patch_json: null, after_json: null, applied_at: null, reverted_at: null, created_at: new Date() };
+                const r = { id: ++seq, kind: 'product', seller_product_id: p[0], vendor_item_id: null, order_id: p[1], before_json: jsonb(JSON.parse(p[2])), created_by: p[3], result_json: JSON.parse(p[4]), patch_json: null, after_json: null, applied_at: null, reverted_at: null, created_at: new Date() };
                 backups.push(r); return { rows: [{ id: r.id }] };
             }
             if (/^\s*INSERT INTO coupang_item_backups \(kind, seller_product_id, vendor_item_id, order_id, before_json, created_by\) VALUES \('product', \$1, NULL/.test(sql)) {
-                const r = { id: ++seq, kind: 'product', seller_product_id: p[0], vendor_item_id: null, order_id: p[1], before_json: JSON.parse(p[2]), created_by: p[3], result_json: null, patch_json: null, after_json: null, applied_at: null, reverted_at: null, created_at: new Date() };
+                const r = { id: ++seq, kind: 'product', seller_product_id: p[0], vendor_item_id: null, order_id: p[1], before_json: jsonb(JSON.parse(p[2])), created_by: p[3], result_json: null, patch_json: null, after_json: null, applied_at: null, reverted_at: null, created_at: new Date() };
                 backups.push(r); return { rows: [{ id: r.id }] };
             }
             if (/count\(\*\)::int AS n FROM coupang_item_backups WHERE kind = 'product' AND result_json->>'op' IN \('create_saved', 'create_unknown'\)/.test(sql))

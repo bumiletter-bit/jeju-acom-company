@@ -1,3 +1,7 @@
+## v5.9.552 (2026-10-18) — #729 핫픽스: 전체 수정 신선도 지문이 jsonb 키 순서에 흔들려 늘 「바뀜」 → 키 정렬 직렬화(cpwCanon)
+
+- 실시험(임시저장 16418375236 「테스트 카라향(시험용)」 · GENERIC 등록 성공 6초 · 10분 뒤 get_full 10초 · statusName 「임시저장」(한글) · 상세 = IMAGE_NO_SPACE 그림 10칸): 상세 한 줄 = 서버 거절 꼴 ✓ / update_full(이름+옵션명) = 「보관한 뒤 쿠팡에서 바뀐 곳이 있어요」 로 PUT 0 — 원인 = 신선도 지문 JSON.stringify 가 PostgreSQL jsonb 로 돌아온 보관본(키 순서 바뀜)과 늘 달라짐(칸별 비교 차이 0) · 가짜 pool 은 키 순서를 안 바꿔 못 잡음 → 고침 = cpwCanon(키 정렬) · verify 가짜 pool 이 jsonb 처럼 키 재배열 · 141/141. 1차 옵션 op 는 스칼라 비교라 무관. 🔴 교훈 = jsonb 보관본과 비교할 땐 키 정렬 직렬화(네이버 #720 은 깊은 비교라 무관).
+
 ## v5.9.551 (2026-10-18) — #729 쿠팡 임시저장 등록 = 쿠팡이 brandId 요구 → 설정 create_set(덮어쓸 값)으로 brand GENERIC
 
 - 실시험(워커1 · 본뜰 카라향 상품 · 임시저장 「테스트 카라향(시험용)」): 1차 = 「브랜드 ID가 필요합니다」(본뜬 JSON brand 「제주아꼼이네」 · brandId null = 기존 상품은 브랜드명만으로 통과돼 있던 것) → brand·brandId 를 빼도 2차 거절 「brandId 입력이 필요합니다 … 브랜드가 없는 상품은 brand 에 GENERIC」 → 서버에 설정 `coupang_item_write.create_set`(점 경로 → 값 · strip 뒤에 덮음) 추가 · 실DB = create_set {brand:"GENERIC"} · create_strip 에서 brand 제외(brandId 는 뺌).
