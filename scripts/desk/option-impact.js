@@ -68,14 +68,40 @@ async function mallRead(cno) {
     const c = await M.c24Product(cno);
     return { cno: String(cno), name: c.name, groups, vars: c.vars };
 }
+// 쿠팡 주문 글(vendorItemName) — 서버의 쿠팡 송장(노출상품명(옵션명))·발송안내(optText)가 쓰는 글. 목록 응답엔 없어서
+//   ①최근 60일 쿠팡 알림 기록(product_name = 매칭 실패 때 vendorItemName 원문)에서 옵션명 낱말이 다 들어 있는 글을 찾고 ②없으면 관찰된 꼴
+//   「상품명, 1박스, 옵션명(「1박스」 뺀 것)」 으로 만든다(추정 표시)
+let _cpSeen = null;
+async function cpSeenNames() {
+    if (_cpSeen) return _cpSeen;
+    const set = new Set();
+    for (const t of ['kakao_notify_log', 'lms_guide_log']) {
+        try { const r = await M.pool.query(`SELECT DISTINCT product_name p FROM ${t} WHERE order_key LIKE 'cp:%' AND created_at > NOW() - interval '60 days'`); r.rows.forEach(x => { const p = String(x.p || '').replace(/\s*\(안내문 미등록\)\s*$/, '').trim(); if (p.includes(', ')) set.add(p); }); } catch (_) { }
+    }
+    return (_cpSeen = [...set]);
+}
+function cpVendorItemName(pname, itemName, seen) {
+    const toks = String(itemName || '').split(/\s+/).filter(Boolean);
+    const hit = seen.find(t => t.startsWith(pname + ',') && toks.every(w => t.includes(w)));
+    if (hit) return { text: hit, guessed: false };
+    const rest = String(itemName || '').replace(/\s*1박스\s*/, ' ').replace(/\s+/g, ' ').trim();
+    return { text: `${pname}, 1박스, ${rest}`, guessed: true };
+}
 async function coupangRead(spid) {
     const CI = require('./coupang-item');
     const R = CI.makeRunner({ pool: M.pool, sleep: M.sleep, now: () => Date.now() });
-    const res = await R.send({ op: 'list', q: null });
+    let res = await R.send({ op: 'list', q: null }, 280000);
     if (!res.ok) throw new Error('쿠팡 목록 조회 실패: ' + (res.error || ''));
-    const p = (res.products || []).find(x => String(x.sellerProductId) === String(spid));
+    let p = (res.products || []).find(x => String(x.sellerProductId) === String(spid));
+    if (p && !(p.vendorItems || []).length && res.truncated) {   // 목록이 잘려 옵션을 못 받았으면 상품명 낱말로 다시
+        const q = String(p.name || '').replace(/^제주아꼼이네\s*제철\s*/, '').split(/\s+/).filter(w => w.length >= 2).slice(-2).join(' ');
+        const r2 = await R.send({ op: 'list', q }, 280000);
+        const p2 = r2.ok ? (r2.products || []).find(x => String(x.sellerProductId) === String(spid)) : null;
+        if (p2) p = p2;
+    }
     if (!p) throw new Error(`쿠팡 상품 ${spid} 를 목록에서 못 찾았어요(승인 전이면 옵션 번호가 없어요)`);
-    return { spid: String(spid), name: p.name || '', items: (p.vendorItems || []).map(v => { const n = CI.norm(v); return { vid: String(v.vendorItemId), name: n.item_name || '', on_sale: n.on_sale, stock: n.stock }; }) };
+    const seen = await cpSeenNames();
+    return { spid: String(spid), name: p.name || '', items: (p.vendorItems || []).map(v => { const n = CI.norm(v); const vn = cpVendorItemName(p.name || '', n.item_name || '', seen); return { vid: String(v.vendorItemId), name: n.item_name || '', vin: vn.text, vinGuessed: vn.guessed, on_sale: n.on_sale, stock: n.stock }; }) };
 }
 const naverOptText = o => (o.n1 && o.n2) ? `${o.n1} · ${o.n2}` : (o.n2 || o.n1 || '');
 const naverProductOption = (groups, o) => [o.n1, o.n2, o.n3].map((v, i) => v ? `${groups[i] || '옵션' + (i + 1)}: ${v}` : null).filter(Boolean).join(' / ');
@@ -158,11 +184,12 @@ async function check(channel, product, filters, deps) {
         const snapKeys = new Set(); if (snap) for (const it of snap.items || []) for (const o of (it.opts || [])) if (o.usable !== false) { const k = pkey([o.n1, o.n2].filter(Boolean), names); if (k) snapKeys.add(k); }
         for (const it of P.items) {
             if (!want(it.name)) continue;
-            const inv = invoiceCheck(`${P.name} ${it.name}`, names);
-            const nt = notifyCell(KN.matchNotifyProductLoose(`${P.name} ${it.name}`, bp) || KN.matchNotifyAlias(it.name, bp, alias));
+            const inv = invoiceCheck(`${P.name} ${it.vin}`, names);   // 송장변환 = 등록상품명 + 노출상품명(옵션명)=vendorItemName
+            const nt = notifyCell(KN.matchNotifyProductLoose(it.vin, bp) || KN.matchNotifyAlias(it.vin, bp, alias));   // 서버 collectCoupangGuide 와 같은 글
+            if (it.vinGuessed) { inv.why = (inv.why ? inv.why + ' · ' : '') + '(주문 글 꼴 추정 — 쿠팡 주문 기록 없음)'; nt.why = (nt.why ? nt.why + ' · ' : '') + '(주문 글 꼴 추정)'; }
             const k = pkey([P.name, it.name], names);
             const price = !k ? { mark: '🔴', why: '특징을 못 읽음', fix: '옵션 이름에 품목·kg·크기 넣기 · 또는 연결표 coupang_item_map 에 짝(coupang-item.js map --set)' } : snapKeys.has(k) ? { mark: '✓' } : { mark: '🟡', why: '네이버에 같은 상품 옵션 없음' };
-            rows.push({ option: it.name, usable: it.on_sale !== false, vid: it.vid, cells: { invoice: inv, notify: nt, price, dawn: { mark: '—' }, skin: { mark: '—' } } });
+            rows.push({ option: it.name + (it.vinGuessed ? ' (글 꼴 추정)' : ''), usable: it.on_sale !== false, vid: it.vid, cells: { invoice: inv, notify: nt, price, dawn: { mark: '—' }, skin: { mark: '—' } } });
         }
     }
     const COLS = [['invoice', '송장 매칭'], ['notify', '발송안내'], ['price', '가격 짝'], ['dawn', '새벽 비교'], ['skin', '자사몰 담기']];
