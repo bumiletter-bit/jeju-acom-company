@@ -128,6 +128,7 @@ function coupangPolicy(blocks, opts) {
     const out = [], removed = [], images = [], relinked = []; let unlinked = 0;
     const linkMap = (opts && opts.linkMap && typeof opts.linkMap === 'object') ? opts.linkMap : {};
     (blocks || []).forEach((b, bi) => {
+        if (b && b.type === 'html_raw') { out.push(b); return; }   // #752 contentsType HTML 블록 — 정리 없이 그대로(시험·opt-in)
         if (!b || b.type !== 'html') { if (b && b.type === 'image') { images.push(b.url); out.push(b); } return; }
         let h = String(b.html || '');
         const stack = []; let kept = 0;
@@ -163,6 +164,7 @@ function toCoupangContents(blocks, opts) {
     if (mode === 'html') return [{ contentsType: CP.htmlType, contentDetails: [{ content: toPreviewHtml(blocks), detailType: CP.detailText }] }];
     return (blocks || []).map(b => b.type === 'image'
         ? { contentsType: CP.imageType, contentDetails: [{ content: b.url, detailType: CP.detailImage }] }
+        : b.type === 'html_raw' ? { contentsType: CP.htmlType, contentDetails: [{ content: b.html, detailType: CP.detailText }] }   // #752
         : { contentsType: CP.textType, contentDetails: [{ content: b.html, detailType: CP.detailText }] });
 }
 // 블록 요약(카드용) — 그림 n · 링크 그림 n · 글 n

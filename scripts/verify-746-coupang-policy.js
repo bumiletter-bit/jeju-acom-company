@@ -62,5 +62,11 @@ const NAVER = [
     ok(/쿠팡 방금 쿠팡에서 읽음\(러너\)/.test(T) && rep.source.coupang_from, '자료 줄 = 출처 글', T.split('\n').pop());
     const T0 = PC.toText(rep, {});
     ok(!/━━━ 쿠팡/.test(T0), 'coupang 옵션 없으면(서버·텔레그램) 종전 글 그대로');
+    console.log('⑥ #752 html_raw = 쿠팡 HTML 블록(기본 길 무변경)');
+    const RAW = '<p>[H]</p><img src="https://x.test/a.webp">';
+    const cc = D.toCoupangContents([{ type: 'html', html: '<p>글</p>' }, { type: 'html_raw', html: RAW }, { type: 'image', url: 'https://x.test/b.gif' }]);
+    ok(cc.length === 3 && cc[0].contentsType === 'TEXT' && cc[1].contentsType === 'HTML' && cc[1].contentDetails[0].content === RAW && cc[1].contentDetails[0].detailType === 'TEXT' && cc[2].contentsType === 'IMAGE_NO_SPACE', 'html = TEXT 그대로 · html_raw = HTML · 글 바이트 그대로 · image 그대로', JSON.stringify(cc));
+    const pr = D.coupangPolicy([{ type: 'html_raw', html: '<a href="https://smartstore.naver.com/x/products/1"><img src="https://x.test/c.gif"></a>' }, { type: 'html', html: '<img src="https://x.test/d.gif">' }]).blocks;
+    ok(pr.length === 2 && pr[0].type === 'html_raw' && /smartstore/.test(pr[0].html) && pr[1].type === 'image', '정리 = html_raw 무접촉 · 글 없는 html 그림은 종전대로 image 로', JSON.stringify(pr));
     console.log(`\n결과 ${pass}/${pass + fail}`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.log('크래시', e); process.exit(1); });

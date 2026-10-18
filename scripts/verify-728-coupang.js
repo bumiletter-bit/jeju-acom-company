@@ -590,7 +590,7 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
             const tb = async (patch, re, name) => { const x = await run({ op: 'update_full', ...base, backup_id: gb.backup_id, patch }, kb.deps); ok(!x.ok && re.test(x.error), name, x); };
             await tb({ detail_blocks: [{ type: 'image', url: 'http://x.example/a.jpg' }] }, /https:\/\/ 공개 주소만/, 'http 그림 거절(설정 켜도)');
             await tb({ detail_blocks: [{ type: 'html', html: '<script>x</script>' }] }, /script/, '블록 html script 거절');
-            await tb({ detail_blocks: [{ type: 'video', url: 'https://a/b' }] }, /image 또는 html/, '블록 type 거절');
+            await tb({ detail_blocks: [{ type: 'video', url: 'https://a/b' }] }, /image · html · html_raw/, '블록 type 거절');
             await tb({ detail_blocks: BL, detail_html: '<p>x</p>' }, /하나만/, 'detail_html + detail_blocks 같이 거절');
             await tb({ detail_blocks: Array.from({ length: 121 }, () => ({ type: 'html', html: '<p>x</p>' })) }, /1~120개/, '#746 상한 120 — 121블록 거절');
             ok(!mod.cpwApplyFull(kb.cp.prods[SPC], { detail_blocks: Array.from({ length: 68 }, (_, i) => ({ type: 'html', html: '<p>' + i + '</p>' })) }, { allowExternal: true }).error, '#746 68블록(감귤 상세) = 통과');

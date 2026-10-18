@@ -17258,6 +17258,7 @@ function cpwBlocksToContents(blocks, conv) {
     if (typeof conv === 'function') return conv(blocks);
     return blocks.map(b => b.type === 'image'
         ? { contentsType: 'IMAGE_NO_SPACE', contentDetails: [{ content: b.url, detailType: 'IMAGE' }] }
+        : b.type === 'html_raw' ? { contentsType: 'HTML', contentDetails: [{ content: b.html, detailType: 'TEXT' }] }   // #752 contentsType HTML
         : { contentsType: 'TEXT', contentDetails: [{ content: b.html, detailType: 'TEXT' }] });
 }
 // update_full patch 검사 + 적용(보관본 깊은 복사 위에 그 칸만) → { body } 또는 { error }
@@ -17326,7 +17327,7 @@ function cpwApplyFull(before, patch, opt = {}) {
         const bl = patch.detail_blocks;
         if (!Array.isArray(bl) || !bl.length || bl.length > CPW_MAX_BLOCKS) return { error: `detail_blocks 는 1~${CPW_MAX_BLOCKS}개` };
         for (const [i, x] of bl.entries()) {
-            if (!x || typeof x !== 'object' || !['image', 'html'].includes(x.type)) return { error: `detail_blocks ${i + 1}: type 은 image 또는 html` };
+            if (!x || typeof x !== 'object' || !['image', 'html', 'html_raw'].includes(x.type)) return { error: `detail_blocks ${i + 1}: type 은 image · html · html_raw(#752 HTML 블록)` };
             if (x.type === 'image') { const e = cpwImgOk(x.url, opt.allowExternal); if (e) return { error: `detail_blocks ${i + 1}: ${e}` }; }
             else if (typeof x.html !== 'string' || !x.html.trim() || x.html.length > CPW_MAX_DETAIL) return { error: `detail_blocks ${i + 1}: html 은 1~${CPW_MAX_DETAIL}자` };
             else if (/<\s*\/?\s*script\b/i.test(x.html)) return { error: `detail_blocks ${i + 1}: script 는 못 넣어요` };
@@ -17441,12 +17442,14 @@ async function cpwProductRun(op, req, x) {
         if (cpwInFlight.has('create')) return fail('다른 등록이 진행 중이에요');
         cpwInFlight.add('create');
         try {
+            const cfg = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'coupang_item_write'`)).rows[0] || {}).value || {};
+            // #752 상한 = 설정 create_daily_max(1~20 정수)가 있으면 그것 · 없으면 기본 3
+            const dailyMax = Number.isInteger(cfg.create_daily_max) && cfg.create_daily_max >= 1 && cfg.create_daily_max <= 20 ? cfg.create_daily_max : CPW_CREATE_DAILY_MAX;
             const made = (await db.query(`SELECT count(*)::int AS n FROM coupang_item_backups WHERE kind = 'product' AND result_json->>'op' IN ('create_saved', 'create_unknown') AND created_at > NOW() - INTERVAL '24 hours'`)).rows[0];
-            if (made && made.n >= CPW_CREATE_DAILY_MAX) return fail(`새 상품 등록은 24시간에 ${CPW_CREATE_DAILY_MAX}개까지`);
+            if (made && made.n >= dailyMax) return fail(`새 상품 등록은 24시간에 ${dailyMax}개까지`);
             let src;
             try { src = await getFull(from); } catch (e) { return cpErr(e, '본뜰 상품 조회'); }
             if (!src || typeof src !== 'object' || !Array.isArray(src.items) || !src.items.length) return fail('본뜰 상품 응답에 옵션이 없어요');
-            const cfg = ((await db.query(`SELECT value FROM agent_office_config WHERE key = 'coupang_item_write'`)).rows[0] || {}).value || {};
             const strip = Array.isArray(cfg.create_strip) ? cfg.create_strip.map(String) : CPW_CREATE_STRIP;
             const body = cpwStrip(JSON.parse(JSON.stringify(src)), strip);
             // 덮어쓸 값(설정 create_set {점 경로: 값} · 「items.칸」 = 모든 옵션 · strip 뒤에) — 실측 10/18: brandId 없는 브랜드 상품 = 거절 → 시험은 {"brand":"GENERIC"}
