@@ -16860,13 +16860,17 @@ CPW_PATH.approvals = (spid) => `${CPW_BASE}/seller-products/${spid}/approvals`; 
 const CPW_APPROVABLE = ['임시저장', 'SAVED', '승인반려', 'DENIED'];
 const CPW_CREATE_DAILY_MAX = 3;
 const CPW_MAX_NAME = 100, CPW_MAX_ITEM_NAME = 150, CPW_MAX_DETAIL = 320000, CPW_MAX_CREATE_ITEMS = 20;
-const CPW_SAVED = ['임시저장', 'SAVED'];
+// 실측 10/18: 임시저장 상품을 전체 수정하면 상태가 잠시 「임시저장중」 → 저장 계열은 글자 포함으로 · 승인 요청(requested true)은 아래 「승인된 상태」일 때만
+const CPW_SAVED = ['임시저장', '임시저장중', '저장중', 'SAVED', 'SAVING'];
+const CPW_SAVED_RE = /임시저장|저장중|^SAV(ED|ING)$/;
+const CPW_APPROVED = ['승인완료', '부분승인완료', '승인반려', 'APPROVED', 'PARTIAL_APPROVED', 'DENIED'];
 // 등록 바디에서 뺄 칸(점 경로 · items[] 는 「items.칸」) — 조회 응답의 번호·승인·날짜 칸 · 설정 'coupang_item_write'.create_strip(배열)이 있으면 그것으로 덮음(재배포 없이)
 const CPW_CREATE_STRIP = ['sellerProductId', 'productId', 'statusName', 'status', 'mdId', 'mdName', 'createdAt', 'updatedAt', 'approvedAt', 'requestedAt',
     'items.sellerProductItemId', 'items.vendorItemId', 'items.itemId', 'items.offerCondition'];
 const CPW_SAVED_NOTE = '임시저장(SAVED) — 승인 요청 안 함 · 손님 노출 0 · 등록·수정 직후 조회는 약 10분 뒤';
 const CPW_APPROVAL_NOTE = '쿠팡 승인 전까지 손님 화면은 옛 모습 · 승인되면 반영 · 반려면 사유(approval 로 확인)';
-const cpwIsSaved = (j) => CPW_SAVED.includes(String((j && (j.statusName || j.status)) || ''));
+const cpwStatus = (j) => String((j && (j.statusName || j.status)) || '');
+const cpwIsSaved = (j) => { const st = cpwStatus(j); return CPW_SAVED.includes(st) || CPW_SAVED_RE.test(st); };
 // 바뀌는지 볼 칸(신선도) — 이름 · 옵션(번호·이름·상세·이미지)
 //   🔴 키 순서 무시(실측 10/18: 보관본은 jsonb 라 객체 키 순서가 바뀌어 돌아옴 → 그냥 JSON.stringify 면 안 바뀌어도 「바뀜」)
 const cpwCanon = (v) => Array.isArray(v) ? '[' + v.map(cpwCanon).join(',') + ']'
@@ -17108,7 +17112,9 @@ async function cpwProductRun(op, req, x) {
             if (!c) continue;   // 지금 쿠팡에 없는 옵션은 보관본 값 그대로(되돌리기에서 쿠팡이 판단)
             for (const k of ['salePrice', 'originalPrice', 'maximumBuyCount']) if (k in c) it[k] = c[k];
         }
-        const saved = cpwIsSaved(cur);
+        // 저장 계열(지금 또는 보관 때)이면 저장만 · 보관 때 승인된 상품이면 저장 + 승인 요청(되돌리기는 심사 중이어도) · 그 밖(모르는 값) = 거절 — 임시저장이 뜻밖에 심사에 올라가지 않게
+        const saved = cpwIsSaved(cur) || cpwIsSaved(before);
+        if (!saved && !CPW_APPROVED.includes(cpwStatus(before))) return fail(`보관 때 상태(${cpwStatus(before) || '모름'})를 몰라 전체 수정을 보내지 않아요 — 승인완료·임시저장 상품만`, { status: cpwStatus(before) || null, status_now: cpwStatus(cur) || null });
         body.sellerProductId = Number(spid);
         body.requested = !saved;   // 임시저장은 저장만 · 승인된 상품은 저장 + 승인 요청(승인 뒤 반영)
         try { cpwInner(await callG({ method: 'PUT', path: CPW_PATH.products, body })); }

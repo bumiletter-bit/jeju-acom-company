@@ -554,8 +554,18 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
         const us = await run({ op: 'update_full', ...base, backup_id: gs.backup_id, patch: { name: '테스트 카라향(시험용) 고침', detail_html: '<p>한 줄 고침</p>' } }, kc.deps);
         const pu = kc.cp.puts[kc.cp.puts.length - 1];
         ok(us.ok && us.saved === true && us.requested === false && pu.requested === false && us.status_after === '임시저장' && /임시저장/.test(us.approval_note), '임시저장 update = requested false(승인 요청 안 함)', us);
+        // 실측 10/18: 임시저장 수정 직후 상태 = 「임시저장중」 → 되돌리기도 requested false(심사에 안 올라감) · 삭제도 됨
+        kc.cp.prods[SAVEDID].statusName = '임시저장중';
+        const rs = await run({ op: 'revert_full', ...base, backup_id: gs.backup_id }, kc.deps);
+        ok(rs.ok && rs.saved === true && rs.requested === false && kc.cp.puts[kc.cp.puts.length - 1].requested === false, '「임시저장중」 되돌리기 = requested false(승인 요청 안 함)', rs);
+        // 보관 때 상태를 모르는 상품 = 전체 수정 거절(뜻밖의 승인 요청 방지)
+        const kq = mkp(); kq.cp.prods[SPC].statusName = '이상한상태';
+        const gq = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kq.deps);
+        const uq = await run({ op: 'update_full', ...base, backup_id: gq.backup_id, patch: { name: '테스트' } }, kq.deps);
+        ok(!uq.ok && /상태\(이상한상태\)를 몰라/.test(uq.error) && kq.cp.puts.length === 0, '모르는 상태 = 전체 수정 거절 · PUT 0', uq);
+        kc.cp.prods[SAVEDID].statusName = '임시저장중';
         const ap = await run({ op: 'approval', seller_product_id: SAVEDID }, kc.deps);
-        ok(ap.ok && ap.status === '임시저장' && ap.saved === true && ap.histories.length === 2 && kc.cp.approvals.length === 0, 'approval = 상태 + 이력 읽기만(승인 요청 PUT 0) · 지시 불필요', ap);
+        ok(ap.ok && ap.status === '임시저장중' && ap.saved === true && ap.histories.length === 2 && kc.cp.approvals.length === 0, 'approval = 상태 + 이력 읽기만(승인 요청 PUT 0) · 지시 불필요', ap);
         const kd = mkp(); kd.cp.prods[SPC].statusName = '승인반려';
         const apd = await run({ op: 'approval', seller_product_id: SPC }, kd.deps);
         ok(apd.ok && apd.denied === true && apd.deny_reason === '상세에 금지 문구', '반려 = 사유(histories comment)', apd);
