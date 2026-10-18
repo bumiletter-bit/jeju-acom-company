@@ -232,67 +232,7 @@ function pcard(head, name, spid, rows, extra) {
     return L.join('\n');
 }
 // #733 미리보기 PNG — 블록 미리보기 HTML 을 폭 860 으로 찍는다(Playwright · 창구 PC) → 파일 경로
-async function renderPng(html, name) {
-    const os = require('os'), dir = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'akkome', 'coupang-preview');
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, name + '.jpg');   // JPEG 70 — 상세 전체(세로 수만 px)를 PNG 로 찍으면 수십 MB
-    const { chromium } = require('playwright');
-    const b = await chromium.launch();
-    try {
-        const pg = await b.newPage({ viewport: { width: 860, height: 1200 } });
-        await pg.setContent('<!doctype html><meta charset="utf-8"><style>body{margin:0 auto;max-width:860px;font-family:sans-serif}img{max-width:100%;display:block;margin:0 auto}.db-html{padding:6px 12px}</style><body>' + html, { waitUntil: 'networkidle', timeout: 60000 });
-        await pg.screenshot({ path: file, fullPage: true, type: 'jpeg', quality: 70 });
-    } finally { await b.close(); }
-    return file;
-}
-// ── #733 쿠팡 연결표(전체 가격 확인) — 묶음 열쇠는 price-check.js optionKey 와 같은 매칭기
-const MAP_KEY = 'coupang_item_map';
-async function mapCmd(o, rest, deps, R, out, oid) {
-    const pool = deps.pool;
-    const PC = require(path.join(__dirname, '..', '..', 'price-check.js'));
-    const cur = await (async () => { const r = await pool.query(`SELECT value FROM agent_office_config WHERE key = $1`, [MAP_KEY]); const v = r.rows.length ? r.rows[0].value : null; return v && typeof v === 'object' ? v : {}; })();
-    const save = async (map, orderId, what) => {
-        await pool.query(`INSERT INTO agent_office_config (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [MAP_KEY, JSON.stringify(map)]);
-        try { await pool.query(`INSERT INTO audit_logs (action, target_type, target_id, changes, source, actor_name) VALUES ('update', 'coupang_item_map', $1, $2, 'desk', '클코(창구)')`, [orderId, JSON.stringify(what)]); } catch (e) { /* 기록 실패는 무시 */ }
-    };
-    const pricingNames = async () => { try { const today = new Date(deps.now() + 9 * 3600e3).toISOString().slice(0, 10); const r = await pool.query(`SELECT items FROM pricing WHERE start_date <= $1::date AND end_date >= $1::date`, [today]); const set = new Set(); for (const x of r.rows) for (const it of (x.items || [])) if (it && it.name) set.add(it.name); return [...set]; } catch (e) { return []; } };
-    const line = (vid, e) => `${vid} · ${e.product_name || ''}${e.item_name ? ' / ' + e.item_name : ''}${e.bot_product_id ? ' · 판매현황 #' + e.bot_product_id : ''}${e.label ? ' · 이름 「' + e.label + '」' : ''}${e.separate ? ' · 따로(안 견줌)' : ''}${e.ignore ? ' · 끔' : ''}`;
-    if (o.mapSet) {
-        const vid = String(rest[0] || '').replace(/\D/g, ''); if (!/^\d{1,15}$/.test(vid)) throw new Error('map --set <vendorItemId> <지시 id> 칸=값 …');
-        const orderId = oid(rest[1]); const kv = rest.slice(2);
-        if (!kv.length) throw new Error('바꿀 칸을 주세요: bot=<판매현황 id> · label=<단가표 이름> · separate=true|false · ignore=true|false · clear=true');
-        const map = Object.assign({}, cur), e = Object.assign({}, map[vid] || {}), before = map[vid] || null;
-        for (const x of kv) {
-            const i = String(x).indexOf('='), k = i > 0 ? String(x).slice(0, i).trim() : '', v = i > 0 ? String(x).slice(i + 1).trim() : '';
-            if (k === 'bot') { const n = parseInt(v, 10); if (!(n > 0)) throw new Error('bot=<판매현황 id 숫자>'); e.bot_product_id = n; }
-            else if (k === 'label') { if (!v) delete e.label; else e.label = v.slice(0, 120); }
-            else if (k === 'separate' || k === 'ignore') { if (!/^(true|false)$/.test(v)) throw new Error(k + '=true 또는 false'); if (v === 'true') e[k] = true; else delete e[k]; }
-            else if (k === 'clear' && v === 'true') { delete e.bot_product_id; delete e.label; delete e.separate; delete e.ignore; }
-            else throw new Error(`모르는 칸 「${x}」 — bot · label · separate · ignore · clear`);
-        }
-        map[vid] = e; await save(map, orderId, { vid, before, after: e });
-        return out({ ok: true, vid, entry: e, card: '쿠팡 연결표 고침: ' + line(vid, e), note: '다음 「전체 가격 확인」(10분 캐시 뒤 · [다시 확인])부터 반영' });
-    }
-    if (o.suggest || o.mapApply) {
-        const orderId = o.mapApply ? oid(rest.shift()) : null; const q = rest.join(' ').trim();
-        const res = await R.send({ op: 'list', q: q || null });
-        if (!res.ok) return out({ ok: false, error: res.error || '쿠팡 목록 실패', note: res.note || '바꾼 것 없음' });
-        const names = await pricingNames(), rows = [];
-        for (const p of (res.products || [])) for (const v of (p.vendorItems || [])) {
-            const k = PC.optionKey([p.name, v.itemName].filter(Boolean), names), had = cur[String(v.vendorItemId)];
-            rows.push({ vid: String(v.vendorItemId), spid: String(p.sellerProductId), product_name: p.name || null, item_name: v.itemName || null, price: v.salePrice, matched: k.by === 'match', label: k.label, had: !!had, manual: !!(had && (had.bot_product_id || had.label || had.separate || had.ignore)) });
-        }
-        const T = rows.map(r => `${r.had ? '●' : '○'} ${r.vid} · ${r.product_name || ''} / ${r.item_name || ''} · ${won(r.price)}원 → ${r.manual ? '손으로 정함(그대로)' : r.matched ? '짝 「' + r.label + '」' : '짝 못 찾음 — map --set ' + r.vid + ' <지시 id> bot=<판매현황 id> 또는 label=<단가표 이름>'}`);
-        const nm = rows.filter(r => !r.matched && !r.manual).length;
-        if (o.suggest) return out({ ok: true, count: rows.length, unmatched: nm, truncated: !!res.truncated, table: T.join('\n') || '(쿠팡 옵션 없음)', note: `● = 이미 연결표에 있음 · 제안대로 넣기 = map --apply <지시 id>${q ? ' ' + q : ''}${res.truncated ? ' · 목록이 잘렸어요(검색어로 나눠서)' : ''}` });
-        const map = Object.assign({}, cur); let added = 0;
-        for (const r of rows) { const e = Object.assign({}, map[r.vid] || {}); if (!map[r.vid]) added++; e.seller_product_id = r.spid; e.product_name = r.product_name; e.item_name = r.item_name; map[r.vid] = e; }
-        await save(map, orderId, { applied: rows.length, added, q: q || null });
-        return out({ ok: true, applied: rows.length, added, unmatched: nm, table: T.join('\n'), card: `쿠팡 연결표에 옵션 ${rows.length}개(새로 ${added}) — 짝 못 찾음 ${nm}개는 「전체 가격 확인」에 「쿠팡 짝 없음」으로 보여요(map --set 으로 지정)`, note: '다음 「전체 가격 확인」([다시 확인])부터 쿠팡 줄이 보여요' });
-    }
-    const ents = Object.entries(cur).filter(([k]) => /^\d{1,15}$/.test(k));
-    return out({ ok: true, count: ents.length, table: ents.map(([k, e]) => line(k, e)).join('\n') || '(비어 있음 — map --suggest 로 제안 보기)', note: ents.length ? '고치기 = map --set <vendorItemId> <지시 id> 칸=값' : '처음이면 map --suggest → map --apply <지시 id>' });
-}
+async function renderPng(html, name) { return require('./_preview.js').renderOne(html, name, { width: 860 }); }   // #736 공용 미리보기(scripts/desk/_preview.js · JPEG 70)
 function failFull(res) {
     const e = String((res && res.error) || '');
     if (res && res.note) return res.note + ' — 다시 보내지 말고 기다렸다가';

@@ -7,6 +7,11 @@
 //   node scripts/desk/naver-detail.js apply <backup_id> <지시 id> (plan 과 같은 인자)   실행 → 서버가 재조회해 바뀐 경로 대조 → 결과 카드
 //   node scripts/desk/naver-detail.js revert <backup_id> <지시 id> [--force]   보관해 둔 전체로 되돌림(적용 뒤 또 바뀐 곳이 있으면 멈춤 · 그래도 덮는 --force 는 되묻기 1회 뒤 · 누구든 #727)
 //   node scripts/desk/naver-detail.js upload <지시 id> [지시 id …]              지시에 붙은 그림을 네이버에 올려 주소 목록(상세 HTML 에는 이 주소만)
+//   #736 plan … --detail <html> 은 미리보기 그림 2장(PC 860 · 폰 390 · 한 장에 「지금 | 새」 좌우 · JPEG)을 만들어 preview[] 로 준다(--no-preview 로 끔) — 창구는 respond attachments 로 붙여 되묻기
+//   node scripts/desk/naver-detail.js draft <backup_id> <지시 id> --img <공유폴더 경로|https 주소> [--link <상품 주소>] … --text "<글>" … [--place replace|top|bottom] [--no-preview]
+//                                                                              #736 상세 초안 — 재료를 적은 순서대로(그림 · 글) HTML 로 · 그림은 네이버에 올림(쓰기 = 그림 올리기뿐 · 같은 파일은 다시 안 올림) · 바로 plan 과 같은 카드 + 미리보기
+//                                                                              --ref <공유폴더 폴더>(참고 사진 목록 · 번호 · 올리기 없음) → --img ref:<번호> 로 골라 씀 · --img 없이 --ref 만 주면 목록만 보여 주고 멈춤
+//                                                                              place = replace(통째 새로 · 기본) | top(지금 상세 위에) | bottom(아래에) · 결과 html 파일로 apply <backup_id> <지시 id> --detail <그 파일>
 //   node scripts/desk/naver-detail.js create <지시 id> --from <본뜰 상품번호> --name "<새 이름>" [--opt-name1 "<이름1>[|<이름2>[|<이름3>]]=<추가금>" …] [--price <판매가>] [--stock <재고>] [--dry]
 //                                                                              #723 신규 등록(3차) — 기본 손님에게 안 보임(판매중지·전시중지·쇼핑 미노출) · 재고 기본 99999 · --dry = 카드만(보내지 않음)
 //   길 = 요청 줄 agent_office_config 'naver_product_write_request' → 실서버 20초 틱 → 'naver_product_write_result'(계약 docs/720-write-contract.md).
@@ -48,6 +53,12 @@ function parseOpts(args) {
             (o.opt = o.opt || []).push(one);
         }
         else if (a === '--force') o.force = true;
+        else if (a === '--no-preview') o.noPreview = true;
+        else if (a === '--place') o.place = args[++i];
+        else if (a === '--ref') o.ref = args[++i];
+        else if (a === '--img') (o.parts = o.parts || []).push({ img: args[++i] });   // #736 재료는 적은 순서 그대로
+        else if (a === '--text') (o.parts = o.parts || []).push({ text: args[++i] });
+        else if (a === '--link') { const p = (o.parts || []).slice(-1)[0]; if (!p || !p.img) o.linkErr = '--link 는 바로 앞 --img 에 붙어요'; else p.link = args[++i]; }
         else rest.push(a);
     }
     return { o, rest };
@@ -328,6 +339,66 @@ function halfSale(res) {
     if (res.stock_restored === false) return `재고가 0 이라 아직 ${stKo(res.status_now)} — 옵션 재고를 넣어야 팔려요(--opt <옵션 id> stock=<수> · 재고 수는 되묻기)`;
     return `아직 ${stKo(res.status_now)} 상태예요 — show 로 지금 값을 확인해 주세요`;
 }
+// ── #736 미리보기 · 상세 초안
+async function makePreview(deps, before, after, name) {
+    try { const files = await (deps.renderPreview || require('./_preview.js').renderCompare)({ before, after, name, widths: [860, 390] }); return { files: files.map(x => x.file) }; }
+    catch (e) { return { error: String((e && e.message) || e).slice(0, 120) }; }
+}
+const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const NAVER_IMG = /^https:\/\/([a-z0-9-]+\.)*(pstatic\.net|naver\.net)\//i;
+const IMG_EXT = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.bmp': 'image/bmp' };
+const UP_BATCH = 3, UP_MAX_BYTES = 10 * 1024 * 1024;
+// 재료 그림 → 네이버 주소 { map: 재료 → 주소 } · 네이버 주소는 그대로 · 같은 내용(sha1)은 전에 올린 주소를 다시 씀(초안 고칠 때 또 안 올림)
+async function draftUpload(list, orderId, R, deps) {
+    const crypto = require('crypto'), map = {}; let uploaded = 0, cached = 0, kept = 0;
+    const cacheFile = path.join(TMP, 'uploaded.json'); let cache = {};
+    try { cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch (_) { cache = {}; }
+    const need = [];
+    for (const src of [...new Set(list)]) {
+        const t = String(src).trim();
+        if (NAVER_IMG.test(t)) { map[src] = t; kept++; continue; }
+        let buf, name;
+        try {
+            if (/^https:\/\//i.test(t)) { const r = await (deps.fetch || fetch)(t); if (!r.ok) throw new Error('받기 실패 ' + r.status); buf = Buffer.from(await r.arrayBuffer()); name = path.basename(new URL(t).pathname) || 'image.jpg'; }
+            else if (/^http:\/\//i.test(t)) return { error: `https 주소만 받아요: ${t.slice(0, 80)}` };
+            else { buf = (deps.readFileBuf || fs.readFileSync)(t); name = path.basename(t); }
+        } catch (e) { return { error: `그림을 못 읽었어요(${String(t).slice(0, 80)}): ${String(e.message || e).slice(0, 80)}` }; }
+        let ext = path.extname(name).toLowerCase(); if (!IMG_EXT[ext]) ext = buf[0] === 0x89 ? '.png' : buf[0] === 0x47 ? '.gif' : buf[0] === 0x42 ? '.bmp' : '.jpg';
+        if (buf.length > UP_MAX_BYTES) return { error: `그림 한 장이 10MB 를 넘어요(${name}) — 줄여서 다시` };
+        const h = crypto.createHash('sha1').update(buf).digest('hex');
+        if (cache[h]) { map[src] = cache[h]; cached++; continue; }
+        need.push({ src, h, file: { name: 'akkome-' + h.slice(0, 10) + ext, mime: IMG_EXT[ext], b64: buf.toString('base64') }, size: buf.length });
+    }
+    const done = [];
+    for (let i = 0; i < need.length;) {   // 3장씩 · 합 10MB 안
+        const batch = []; let bytes = 0;
+        while (i < need.length && batch.length < UP_BATCH && bytes + need[i].size <= UP_MAX_BYTES) { bytes += need[i].size; batch.push(need[i++]); }
+        if (!batch.length) batch.push(need[i++]);
+        const res = await R.send({ op: 'upload_image', order_id: orderId, files: batch.map(x => x.file), created_by: await R.orderBy(orderId) }, 180000);
+        if (!res.ok || (res.urls || []).length !== batch.length) {
+            const old = /order_ids/.test(String(res.error || ''));
+            return { error: res.error || '그림 올리기 실패', done, note: old ? '서버가 아직 파일 올리기(files)를 몰라요 — 총괄에게(#736 서버 한 줄)' : '그림 올리기 실패 — 위 error 그대로 · 상세는 안 바꿨어요' };
+        }
+        batch.forEach((x, k) => { map[x.src] = res.urls[k]; cache[x.h] = res.urls[k]; done.push(res.urls[k]); uploaded++; });
+        try { fs.mkdirSync(TMP, { recursive: true }); fs.writeFileSync(cacheFile, JSON.stringify(cache)); } catch (_) { }
+    }
+    return { map, uploaded, cached, kept, done };
+}
+// 재료 → 상세 HTML(가운데 정렬 · 그림 = 폭 맞춤 · 글 = 그림 밖 HTML 글(그림 속 글자 아님) · 빈 줄 = 단락)
+function draftHtml(parts, map) {
+    const out = ['<div style="max-width:860px;margin:0 auto;text-align:center">'];
+    for (const p of parts) {
+        if (p.img) {
+            const img = `<img src="${escHtml(map[p.img])}" alt="" style="max-width:100%;height:auto;display:block;margin:0 auto">`;
+            out.push(`<p style="margin:0">${p.link ? `<a href="${escHtml(String(p.link).trim())}" rel="noopener">${img}</a>` : img}</p>`);
+        } else if (p.text != null) {
+            for (const para of String(p.text).split(/\n\s*\n/).map(x => x.trim()).filter(Boolean))
+                out.push(`<p style="margin:28px 16px;font-size:17px;line-height:1.75;word-break:keep-all;color:#222">${escHtml(para).replace(/\n/g, '<br>')}</p>`);
+        }
+    }
+    out.push('</div>');
+    return out.join('\n');
+}
 function card(head, pno, name, rows, extra) {
     const L = [`━━━ 네이버 상품 ${head} ━━━`, `상품: ${name ? name + ' ' : ''}(${pno})`];
     if (Array.isArray(rows) && !rows.length) L.push('바뀌는 곳 없음 — 지금 값과 같아요');   // rows null = 전/후 표가 없는 카드(create)
@@ -414,11 +485,13 @@ async function main(argv, deps) {
             if (P.stops.length) return out({ ok: false, stopped: true, product_no: row.product_no, backup_id: row.id, stops: P.stops, can_apply: false, note: '멈췄어요 — 바꾼 것 없음' });
             if (row.applied_at) P.warns.unshift('이 보관본은 이미 적용했어요 — 다시 바꾸려면 show 로 새로 보관');
             const blocked = busyWindow(deps.now());
+            const pv = ('detail_html' in patch && !o.noPreview) ? await makePreview(deps, op.detailContent, patch.detail_html, `naver-${row.product_no}-${row.id}`) : null;
             return out({ ok: true, product_no: row.product_no, backup_id: row.id, changes: P.rows, warnings: P.warns, can_apply: P.rows.length > 0 && !row.applied_at,
+                ...(pv ? { preview: pv.files || undefined, preview_error: pv.error || undefined } : {}),
                 time_block: blocked ? '지금은 평일 08:30~10:30(발송 직전)이라 apply 는 10:30 뒤에' : null,
                 sale_ok_before: saleOkSelf(row.before_json),
-                card: card('수정 계획(아직 안 보냄)', row.product_no, op.name, P.rows, P.warns.map(w => '⚠ ' + w).concat([saleLine('건들기 전 판매 정상', saleOkSelf(row.before_json)), '이대로 바꿀까요?'])),
-                note: '미리 보기 — 아직 아무것도 바꾸지 않았어요' });
+                card: card('수정 계획(아직 안 보냄)', row.product_no, op.name, P.rows, P.warns.map(w => '⚠ ' + w).concat([saleLine('건들기 전 판매 정상', saleOkSelf(row.before_json))], pv && pv.files ? ['미리보기 그림 2장(PC · 폰 · 왼쪽 지금 / 오른쪽 새)을 붙였어요'] : [], ['이대로 바꿀까요?' + ('detail_html' in patch ? ' 고칠 곳(몇 번째 그림·문구)이 있으면 말씀해 주세요' : '')])),
+                note: pv && pv.files ? '미리 보기 — 아직 아무것도 바꾸지 않았어요 · preview 의 그림 파일들을 respond attachments 로 붙여 카드와 함께 되묻기' : '미리 보기 — 아직 아무것도 바꾸지 않았어요' + (pv && pv.error ? ` · 미리보기 그림 못 만듦(${pv.error}) — 카드로만` : '') });
         }
         // apply
         const orderId = oid(rest[1]);
@@ -534,6 +607,49 @@ async function main(argv, deps) {
             card: card(okHidden ? '새 상품 등록 결과' : '새 상품 등록 결과 — 🔴 확인 필요', res.product_no, name, null, R2),
             note: okHidden ? '등록했어요 — 손님에게 안 보이는 상태 · 새 상품번호와 카드 그대로 전하기' : '등록은 됐지만 확인할 것이 있어요 — 카드의 ⚠ 줄 그대로 답 맨 위에' });
     }
+    if (cmd === 'draft') {   // #736 상세 초안 — 재료(공유폴더 사진 · 힉스필드 주소 · 글) → HTML → 그림 올리기 → plan 과 같은 카드 + 미리보기
+        const row = await R.backupRow(rest[0]);
+        const orderId = oid(rest[1]);
+        if (o.linkErr) throw new Error(o.linkErr);
+        const parts = o.parts || [];
+        let refs = null;
+        if (o.ref != null) {   // #736 참고 사진 폴더 — 목록(이름순)만 · 올리기는 --img 로 고른 것만
+            const dir = String(o.ref);
+            let names;
+            try { names = (deps.readDir || fs.readdirSync)(dir).filter(n => IMG_EXT[path.extname(n).toLowerCase()]).sort((a, b) => a.localeCompare(b, 'ko', { numeric: true })); }
+            catch (e) { throw new Error('공유폴더를 못 열었어요: ' + dir + ' — 경로를 다시 확인(예: \\\\192.168.0.10\\공유폴더\\…)'); }
+            refs = names.map((n, i) => ({ no: i + 1, file: path.join(dir, n) }));
+            if (!refs.length) throw new Error('그 폴더에 사진(jpg·png·gif·bmp)이 없어요: ' + dir);
+            for (const p of parts) if (p.img && /^ref:\d+$/i.test(p.img)) { const r = refs[Number(p.img.slice(4)) - 1]; if (!r) throw new Error(`${p.img}: 참고 사진은 1~${refs.length}번`); p.img = r.file; }
+            if (!parts.some(p => p.img)) return out({ ok: true, step: 'pick', ref_dir: dir, ref_images: refs, table: refs.map(r => `${r.no}. ${path.basename(r.file)}`).join('\n'),
+                note: '참고 사진 목록(아직 올린 것·바꾼 것 없음) — 그대로 쓸 사진은 --img ref:<번호> 로 적은 순서대로 · 힉스필드로 새로 만들 사진은 재료로 넘긴 뒤 결과 주소를 --img 로' });
+        }
+        if (parts.some(p => p.img && /^ref:/i.test(p.img))) throw new Error('--img ref:<번호> 는 --ref <폴더> 와 같이 써요');
+        if (!parts.some(p => p.img)) throw new Error('재료를 주세요: --img <공유폴더 경로|https 주소> (여러 번 · 적은 순서대로) · --text "<글>" · 그림 링크는 그 --img 바로 뒤 --link <주소>');
+        const place = o.place || 'replace';
+        if (!['replace', 'top', 'bottom'].includes(place)) throw new Error('--place 는 replace(통째 새로) · top(지금 상세 위에) · bottom(아래에)');
+        for (const p of parts) if (p.link != null && !/^https?:\/\/[^\s"'<>]+$/i.test(String(p.link).trim())) throw new Error('--link 는 http(s) 주소예요: ' + p.link);
+        const up = await draftUpload(parts.filter(p => p.img).map(p => p.img), orderId, R, deps);
+        if (up.error) return out({ ok: false, stopped: true, error: up.error, uploaded: up.done, note: up.note || '그림을 올리지 못했어요 — 상세는 안 바꿨어요' });
+        const html = draftHtml(parts, up.map);
+        const cur = (row.before_json.originProduct || {}).detailContent || '';
+        const full = place === 'top' ? html + '\n' + cur : place === 'bottom' ? cur + '\n' + html : html;
+        fs.mkdirSync(TMP, { recursive: true });
+        const file = path.join(TMP, `draft-${row.product_no}-${row.id}-${orderId}.html`);
+        fs.writeFileSync(file, full);
+        const patch = { detail_html: full }, op = row.before_json.originProduct || {};
+        const P = planRows(row.before_json, patch);
+        if (P.stops.length) return out({ ok: false, stopped: true, stops: P.stops, html_file: file, note: '멈췄어요 — 바꾼 것 없음' });
+        const pv = o.noPreview ? null : await makePreview(deps, cur, full, `naver-${row.product_no}-${row.id}-draft`);
+        const L = [`재료: 그림 ${parts.filter(p => p.img).length}장(새로 올림 ${up.uploaded} · 전에 올린 것 ${up.cached} · 네이버 주소 그대로 ${up.kept}) · 글 ${parts.filter(p => p.text).length}개 · 그림 링크 ${parts.filter(p => p.link).length} · ${({ replace: '상세 통째 새로', top: '지금 상세 위에 붙임', bottom: '지금 상세 아래 붙임' })[place]}`];
+        L.push(...P.warns.map(w => '⚠ ' + w), saleLine('건들기 전 판매 정상', saleOkSelf(row.before_json)));
+        if (pv && pv.files) L.push('미리보기 그림 2장(PC · 폰 · 왼쪽 지금 / 오른쪽 새)을 붙였어요');
+        L.push('이렇게 진행할까요? 고칠 곳(몇 번째 그림·문구)을 말씀해 주세요');
+        return out({ ok: true, product_no: row.product_no, backup_id: row.id, html_file: file, preview: pv && pv.files || undefined, preview_error: pv && pv.error || undefined, changes: P.rows,
+            card: card('상세 초안(아직 안 바꿈)', row.product_no, op.name, P.rows, L),
+            next: `고칠 말이 오면 같은 draft 를 고친 재료로 다시(올린 그림은 다시 안 올림) · 「응/진행」이면 apply ${row.id} <지시 id> --detail "${file}"`,
+            note: '초안 — 네이버 상세는 아직 그대로 · preview 그림을 respond attachments 로 붙여 카드와 함께 question 으로 되묻기' });
+    }
     if (cmd === 'upload') {
         const ids = rest.map(n => parseInt(n, 10)).filter(n => n > 0);
         if (!ids.length) throw new Error('그림이 붙은 지시 id 를 주세요');
@@ -545,7 +661,7 @@ async function main(argv, deps) {
     throw new Error('명령: show · plan · apply · revert · upload · create');
 }
 
-module.exports = { main, makeRunner, parseNewOpts, parseAddOpts, linkLine, planRows, htmlDelta, foreignImages, buildPatch, busyWindow, card, parseOpts, parseOptArgs, optionTable, optionRows, payOf, discountOf, saleOkSelf, saleLine, expectBad, halfSale, REQ_KEY, RES_KEY };
+module.exports = { main, makeRunner, parseNewOpts, parseAddOpts, draftHtml, draftUpload, linkLine, planRows, htmlDelta, foreignImages, buildPatch, busyWindow, card, parseOpts, parseOptArgs, optionTable, optionRows, payOf, discountOf, saleOkSelf, saleLine, expectBad, halfSale, REQ_KEY, RES_KEY };
 
 if (require.main === module) {
     const { pool } = require('./_db');

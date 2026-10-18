@@ -16160,11 +16160,32 @@ async function naverProductWriteRun(req, deps) {
     };
 
     if (op === 'upload_image') {
-        const ids = (Array.isArray(req.order_ids) ? req.order_ids : [orderId]).map(n => parseInt(n, 10)).filter(n => n > 0);
+        // #736 그림을 요청에 바로 실어 보내는 길 — files:[{ name, mime, b64(data: 없이) }] · order_ids 와 둘 중 하나 · order_id 는 기록용(위에서 이미 검사)
+        //   쓰임 = 공유폴더 사진·힉스필드 그림을 상세에 넣기(워커2 도구가 3~4장씩 나눠 보냄) · 결과 urls 순서 = files 순서
+        const direct = req.files != null;
+        if (direct && req.order_ids != null) return fail('files 와 order_ids 는 둘 중 하나만');
+        const ids = direct ? [orderId] : (Array.isArray(req.order_ids) ? req.order_ids : [orderId]).map(n => parseInt(n, 10)).filter(n => n > 0);
         if (!ids.length) return fail('그림이 붙은 지시 번호(order_ids)가 필요해요');
-        if (ids.length > NPW_MAX_IMAGES) return fail(`한 번에 ${NPW_MAX_IMAGES}장까지`);
-        const rows = (await db.query(`SELECT id, status, is_deleted, image_data, image_mime, file_name FROM pending_orders WHERE id = ANY($1::int[])`, [ids])).rows;
+        if (!direct && ids.length > NPW_MAX_IMAGES) return fail(`한 번에 ${NPW_MAX_IMAGES}장까지`);
         const files = []; let bytes = 0;
+        if (direct) {
+            const fs0 = req.files;
+            if (!Array.isArray(fs0) || !fs0.length) return fail('files 가 비었어요');
+            if (fs0.length > NPW_MAX_IMAGES) return fail(`한 번에 ${NPW_MAX_IMAGES}장까지`);
+            for (const [i, f] of fs0.entries()) {
+                if (!f || typeof f !== 'object' || Array.isArray(f)) return fail(`files ${i + 1}: 꼴이 달라요`);
+                const ex = Object.keys(f).filter(k => !['name', 'mime', 'b64'].includes(k));
+                if (ex.length) return fail(`files ${i + 1}: 허용되지 않은 칸 ${ex.join(', ')}`);
+                if (!/^image\/(jpeg|png|gif|bmp)$/.test(String(f.mime || ''))) return fail(`files ${i + 1}: mime 은 image/jpeg·png·gif·bmp`);
+                const b64 = typeof f.b64 === 'string' ? f.b64.replace(/\s+/g, '') : '';
+                if (!b64 || /^data:/i.test(String(f.b64)) || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return fail(`files ${i + 1}: b64 는 data: 없이 base64 글자만`);
+                const ext = f.mime.split('/')[1].replace('jpeg', 'jpg');
+                const base = String(f.name || '').replace(/^.*[\\/]/, '').replace(/[^\w.\-가-힣]/g, '_').replace(/\.[^.]*$/, '').slice(0, 80) || `akkome-${orderId}-${i + 1}`;
+                bytes += Math.floor(b64.length * 3 / 4);
+                files.push({ name: `${base}.${ext}`, mime: f.mime, b64 });
+            }
+        } else {
+        const rows = (await db.query(`SELECT id, status, is_deleted, image_data, image_mime, file_name FROM pending_orders WHERE id = ANY($1::int[])`, [ids])).rows;
         for (const id of ids) {
             const r = rows.find(x => x.id === id);
             if (!r || r.is_deleted || r.status === '반려') return fail(`지시 ${id} 를 쓸 수 없어요`);
@@ -16172,6 +16193,7 @@ async function naverProductWriteRun(req, deps) {
             if (!m || r.file_name) return fail(`지시 ${id} 에 그림(jpg·png·gif·bmp)이 없어요`);
             bytes += Math.floor(m[2].length * 3 / 4);
             files.push({ name: `akkome-${id}.${m[1].split('/')[1].replace('jpeg', 'jpg')}`, mime: m[1], b64: m[2] });
+        }
         }
         if (bytes > NPW_MAX_IMAGE_BYTES) return fail('그림 합계가 10MB 를 넘어요 — 나눠서 올리세요');
         if (npwInFlight.has('image')) return fail('다른 그림 올리기가 진행 중이에요');   // 같은 스토어 계정에서 동시에 1건만(문서 ⑤)
@@ -16181,7 +16203,7 @@ async function naverProductWriteRun(req, deps) {
         catch (e) { return naverErr(e, '그림 올리기'); }
         finally { npwInFlight.delete('image'); }
         const urls = (Array.isArray(res && res.images) ? res.images : []).map(x => x && x.url).filter(Boolean);
-        await auditW('naver_product_image_upload', { order_ids: ids, urls });
+        await auditW('naver_product_image_upload', { order_ids: ids, urls, ...(direct ? { files: files.map(f => f.name), bytes } : {}) });
         return { ok: urls.length === files.length, op, urls, ...(urls.length !== files.length ? { error: `올린 ${files.length}장 중 ${urls.length}장만 주소를 받았어요` } : {}) };
     }
 

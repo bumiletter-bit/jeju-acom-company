@@ -309,6 +309,20 @@ const mk = (product, opts) => { const db = fakePool(ORDERS), nv = fakeNaver(prod
         ok(!u3.ok && /10장/.test(u3.error), '11장 거절');
         const u4 = await run({ op: 'upload_image', order_id: 201, order_ids: [203] }, deps);
         ok(!u4.ok && /10MB/.test(u4.error), '합계 10MB 초과 거절');
+        // #736 files 로 바로 싣기 — order_id 는 기록용 · 결과 urls 순서 = files 순서 · 이름 정리
+        const spy = []; const dS = { ...deps, call: async (r) => { if (r.path === '/external/v1/product-images/upload') spy.push(r.body.__multipart.files); return deps.call(r); } };
+        const PNG = 'iVBORw0KGgo=', JPG = '/9j/4AAQ';
+        const f1 = await run({ op: 'upload_image', order_id: 101, files: [{ name: '공유폴더/타이벡 1.png', mime: 'image/png', b64: PNG }, { name: 'h2.jpeg', mime: 'image/jpeg', b64: JPG }] }, dS);
+        ok(f1.ok && f1.urls.length === 2 && spy[0].length === 2 && spy[0][0].name === '타이벡_1.png' && spy[0][1].name === 'h2.jpg' && spy[0][0].b64 === PNG && spy[0][1].mime === 'image/jpeg',
+            'files 2장 = multipart 2장(순서 · 이름 정리 · 확장자 = mime) · urls 2', [f1, spy[0] && spy[0].map(x => x.name)]);
+        const fx = async (req, re, name) => { const x = await run({ op: 'upload_image', order_id: 101, ...req }, deps); ok(!x.ok && re.test(x.error), name, x); };
+        await fx({ files: [{ name: 'a', mime: 'image/png', b64: PNG }], order_ids: [201] }, /둘 중 하나만/, 'files + order_ids 같이 = 거절');
+        await fx({ files: [{ name: 'a', mime: 'image/png', b64: 'data:image/png;base64,' + PNG }] }, /data: 없이/, 'b64 에 data: 머리 = 거절');
+        await fx({ files: [{ name: 'a', mime: 'image/webp', b64: PNG }] }, /mime 은/, 'mime webp = 거절');
+        await fx({ files: Array.from({ length: 11 }, () => ({ name: 'a', mime: 'image/png', b64: PNG })) }, /10장까지/, 'files 11장 = 거절');
+        await fx({ files: [{ name: 'a', mime: 'image/png', b64: 'A'.repeat(14 * 1024 * 1024) }] }, /10MB/, 'files 합 10MB 넘음 = 거절');
+        await fx({ files: [] }, /비었어요/, 'files 빈 배열 = 거절');
+        await fx({ files: [{ name: 'a', mime: 'image/png', b64: PNG, url: 'x' }] }, /허용되지 않은 칸 url/, 'files 모르는 칸 = 거절');
         const [q1, q2] = await Promise.all([run({ op: 'upload_image', order_id: 201, order_ids: [201] }, deps), run({ op: 'upload_image', order_id: 201, order_ids: [201] }, deps)]);
         ok([q1, q2].filter(x => x.ok).length === 1 && /진행 중/.test([q1, q2].find(x => !x.ok).error), '그림 올리기 동시 1건만');
     }
