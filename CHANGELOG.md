@@ -1,3 +1,8 @@
+## v5.9.562 (2026-10-18) — #745 쿠팡 기존 옵션 구매옵션 값(item_attrs) 고치기 — 쿠팡은 손님 화면 옵션 글자를 노출 구매옵션 값(「농산물 중량」)으로 보여 줌
+
+- 배경(대표 「쿠팡 황금향 선물용 대과 → 중대과로」): 워커1이 쓰기 전 멈춤 = 쿠팡 16279623654 선물용 2옵션 itemName 「선물용 - 3kg(대과 7~15과) 1박스」·「5kg(대과 13~23과) 1박스」와 함께 attributes 「농산물 중량」(EXPOSED)에 같은 글자 → itemName 만 바꾸면 손님 글자는 그대로일 가능성.
+- 고침(워커1 · verify-728 174): update_full 에 item_attrs { vendorItemId|sellerProductItemId: { 구매옵션 이름: 새 값 } } · 이미 있는 칸만 · 1~150자 · 같은 값·묶음 겹침 거절 · 그 칸 값만 바꿈 · 신선도 지문·revert 느슨 비교에 attributes 포함. 실제 변경 = 아래 결과 줄(승인행 1회 · 지시 2937). 창구 도구 --item-attr 은 다음 바퀴(워커2).
+
 ## v5.9.561 (2026-10-18) — #741 쿠팡 가격 연결 25개 · 창구 가격 확인에 쿠팡 · #744 쿠팡 가격 5건 네이버와 맞춤 · #742 자사몰 담기 짝(c24t) · #743 황금향 오진·복구 기록
 
 - **#741**: 쿠팡 연결표 coupang_item_map 지금 파는 25개 자동 짝 25/25(map --apply 2935 --live) · 가격 카드 쿠팡 25/25 읽힘 · 창구 price-check.js 가 price_check_last 의 쿠팡(12시간 안)으로 견줌 · 서버 price_check_last = 자사몰·쿠팡 live 칸만 덮기 · 🔴 워커2 회귀 = #736 커밋(568ad05)에서 coupang-item.js mapCmd 48줄이 지워져 v5.9.557~ map 명령 ReferenceError → 되살림 + verify-741-coupang-map 23/23.

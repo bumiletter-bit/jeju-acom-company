@@ -17201,7 +17201,7 @@ const cpwIsSaved = (j) => { const st = cpwStatus(j); return CPW_SAVED.includes(s
 const cpwCanon = (v) => Array.isArray(v) ? '[' + v.map(cpwCanon).join(',') + ']'
     : v && typeof v === 'object' ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + cpwCanon(v[k])).join(',') + '}' : JSON.stringify(v === undefined ? null : v);
 const cpwFingerprint = (j) => cpwCanon({ n: j && j.sellerProductName, d: j && j.displayProductName,
-    i: ((j && j.items) || []).map(it => [it.sellerProductItemId || null, it.vendorItemId || null, it.itemName || null, it.contents || null, it.images || null]) });
+    i: ((j && j.items) || []).map(it => [it.sellerProductItemId || null, it.vendorItemId || null, it.itemName || null, it.contents || null, it.images || null, it.attributes || null]) });   // #745 구매옵션 값도
 // 상세(contents) 꼴 요약 — 「글 한 칸」 이어야 detail_html 로 바꿀 수 있음
 const cpwContentsShape = (it) => ((it && it.contents) || []).map(c => `${c.contentsType || '?'}:${((c.contentDetails) || []).map(d => d.detailType || '?').join('+')}`).join(',');
 function cpwOneText(it) {   // 그 옵션 상세의 「글 한 칸」 위치(contents 하나 · contentDetails 하나 · TEXT) — 아니면 null
@@ -17246,9 +17246,9 @@ function cpwBlocksToContents(blocks, conv) {
 //   opt = { allowExternal, convert }(#733-B)
 function cpwApplyFull(before, patch, opt = {}) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return { error: 'patch 가 필요해요' };
-    const OK = ['name', 'item_names', 'detail_html', 'detail_blocks', 'images', 'items_add'];
+    const OK = ['name', 'item_names', 'item_attrs', 'detail_html', 'detail_blocks', 'images', 'items_add'];
     const bad = Object.keys(patch).filter(k => !OK.includes(k));
-    if (bad.length) return { error: '허용되지 않은 칸 ' + bad.join(', ') + ' — name · item_names · detail_html · detail_blocks · images · items_add (가격·재고·판매는 1차 옵션 op)' };
+    if (bad.length) return { error: '허용되지 않은 칸 ' + bad.join(', ') + ' — name · item_names · item_attrs · detail_html · detail_blocks · images · items_add (가격·재고·판매는 1차 옵션 op)' };
     if ('detail_html' in patch && 'detail_blocks' in patch) return { error: 'detail_html 과 detail_blocks 는 하나만' };
     if (!Object.keys(patch).length) return { error: '바꿀 칸이 없어요' };
     const b = JSON.parse(JSON.stringify(before));
@@ -17271,6 +17271,28 @@ function cpwApplyFull(before, patch, opt = {}) {
             if (items.some(it => it !== hit[0] && it.itemName === nv)) return { error: `옵션명 「${nv}」 이 다른 옵션과 겹쳐요` };
             hit[0].itemName = nv;
         }
+    }
+    // #745 기존 옵션의 구매옵션 값(attributes · 「농산물 중량」 등 · 손님 화면 옵션 글자) — 이미 있는 이름 칸만 · 새 칸 추가 거절 · 값 묶음이 다른 옵션과 같아지면 거절
+    if ('item_attrs' in patch) {
+        const m = patch.item_attrs;
+        if (!m || typeof m !== 'object' || Array.isArray(m) || !Object.keys(m).length) return { error: 'item_attrs 는 { vendorItemId: { 구매옵션 이름: 새 값 } }' };
+        for (const [k, kv] of Object.entries(m)) {
+            const hit = items.filter(it => String(it.vendorItemId || '') === k || String(it.sellerProductItemId || '') === k);
+            if (hit.length !== 1) return { error: `item_attrs: 옵션 「${k}」 을 하나로 찾지 못했어요(번호로만 · ${hit.length}개)` };
+            if (!kv || typeof kv !== 'object' || Array.isArray(kv) || !Object.keys(kv).length) return { error: `item_attrs ${k}: { 구매옵션 이름: 새 값 } 꼴` };
+            const at = Array.isArray(hit[0].attributes) ? hit[0].attributes : [];
+            for (const [tn, val] of Object.entries(kv)) {
+                const a = at.find(x => x && x.attributeTypeName === tn);
+                if (!a) return { error: `item_attrs ${k}: 구매옵션 「${tn}」 칸이 이 옵션에 없어요(새 칸 추가는 안 함)` };
+                const nv = typeof val === 'string' ? val.trim() : '';
+                if (!nv || nv.length > CPW_MAX_ITEM_NAME) return { error: `item_attrs ${k}: 「${tn}」 값은 1~${CPW_MAX_ITEM_NAME}자` };
+                if (a.attributeValueName === nv) return { error: `item_attrs ${k}: 「${tn}」 값이 지금과 같아요` };
+                a.attributeValueName = nv;
+            }
+        }
+        const atKey = (x) => cpwCanon(((x.attributes) || []).filter(a => a && String(a.attributeValueName || '') !== '').map(a => [a.attributeTypeName, a.attributeValueName]).sort());
+        const seen = new Map();
+        for (const it of items) { const kk = atKey(it); if (kk === '[]') continue; if (seen.has(kk)) return { error: `item_attrs: 구매옵션 값 묶음이 다른 옵션(${seen.get(kk)})과 같아져요` }; seen.set(kk, it.itemName); }
     }
     if ('detail_html' in patch) {
         const h = patch.detail_html;
@@ -17500,7 +17522,7 @@ async function cpwProductRun(op, req, x) {
         // 되돌리기 비교 = 엄격(보관본·보낸 값) 또는 느슨(이름·옵션명만 — 쿠팡이 그림 주소를 CDN 으로 바꾸고 새 옵션에 번호를 붙이면 엄격 비교가 늘 어긋남 · #733-B)
         const sentBody = row.patch_json && row.patch_json.body || {};
         //   느슨 = 상품명 + 옵션마다 (옵션명 · 상세 꼴 · 그림 장수) — Wing 에서 상세·그림만 바꾼 것도 잡힘(주소 값만 CDN 으로 바뀐 건 통과)
-        const loose = (j) => cpwCanon({ n: j && j.sellerProductName, i: ((j && j.items) || []).map(it => [it.itemName || null, cpwContentsShape(it), ((it.images) || []).length]).sort((p, q) => String(p[0]).localeCompare(String(q[0]))) });
+        const loose = (j) => cpwCanon({ n: j && j.sellerProductName, i: ((j && j.items) || []).map(it => [it.itemName || null, cpwContentsShape(it), ((it.images) || []).length, ((it.attributes) || []).filter(a => a && String(a.attributeValueName || '') !== '').map(a => a.attributeTypeName + '=' + a.attributeValueName).sort().join('|')]).sort((p, q) => String(p[0]).localeCompare(String(q[0]))) });
         if (op === 'revert_full' && req.force !== true && ![cpwFingerprint(before), cpwFingerprint(sentBody)].includes(cpwFingerprint(cur)) && loose(cur) !== loose(sentBody))
             return fail('적용 뒤 쿠팡에서 또 바뀌었어요 — 덮으려면 force');
         // 가격·재고는 지금 값(cur)으로 덮는다 — 보관본의 옛 가격·재고가 실려 가면 주문으로 준 재고가 되살아나 과판매 · 1차로 바꾼 가격이 되돌아감(#721 「지금 값 위에 바꾼 칸만」)

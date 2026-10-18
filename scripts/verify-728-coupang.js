@@ -640,6 +640,31 @@ const run = (req, deps) => mod.coupangItemWriteRun(req, deps);
             const yt = await run({ op: 'update_full', ...base, backup_id: gt.backup_id, patch: { items_add: [{ itemName: '카라향 10kg', price: 69800, stock: 1, attributes: [{ attributeTypeName: '중량', attributeValueName: '10kg' }] }] } }, kt.deps);
             const at3 = kt.cp.puts[0] && kt.cp.puts[0].items[2].attributes;
             ok(yt.ok && at3 && at3.length === 2 && at3[0].attributeValueName === '10kg' && at3[1].attributeTypeName === '등급' && kt.cp.puts[0].items[1].attributes[0].attributeValueName === '5kg', 'attributes 주면 그 칸만 10kg · 틀(5kg 옵션)은 그대로', at3);
+            // #745 기존 옵션 구매옵션 값(item_attrs) — 이름 칸만 · 새 칸 거절 · 겹침 거절 · 되돌리기 = 보관본 값
+            {
+                const ka = mkp();
+                ka.cp.prods[SPC].items[0].attributes = [{ attributeTypeName: '농산물 중량', attributeValueName: '선물용 - 3kg(대과 7~15과)', exposed: 'EXPOSED' }, { attributeTypeName: '수량', attributeValueName: '1박스' }];
+                ka.cp.prods[SPC].items[1].attributes = [{ attributeTypeName: '농산물 중량', attributeValueName: '선물용 - 5kg(대과 13~23과)', exposed: 'EXPOSED' }, { attributeTypeName: '수량', attributeValueName: '1박스' }];
+                const ga = await run({ op: 'get_full', ...base, seller_product_id: SPC }, ka.deps);
+                const tx = async (patch, re, name) => { const x = await run({ op: 'update_full', ...base, backup_id: ga.backup_id, patch }, ka.deps); ok(!x.ok && re.test(x.error), name, x); };
+                await tx({ item_attrs: { '95059733579': { '등급': '특' } } }, /칸이 이 옵션에 없어요/, 'item_attrs 없는 칸 = 거절(새 칸 추가 안 함)');
+                await tx({ item_attrs: { '95059733579': { '농산물 중량': '선물용 - 5kg(대과 13~23과)' } } }, /다른 옵션.*같아져요/, 'item_attrs 다른 옵션과 묶음 겹침 = 거절');
+                await tx({ item_attrs: { '카라향 3kg': { '농산물 중량': 'x' } } }, /번호로만/, 'item_attrs 옵션은 번호로만');
+                await tx({ item_attrs: { '95059733579': { '농산물 중량': '선물용 - 3kg(대과 7~15과)' } } }, /지금과 같아요/, 'item_attrs 같은 값 = 거절');
+                ok(ka.cp.puts.length === 0, 'item_attrs 거절 동안 PUT 0');
+                const ua = await run({ op: 'update_full', ...base, backup_id: ga.backup_id, patch: { item_names: { '95059733579': '선물용 - 3kg(중대과 7~15과) 1박스' }, item_attrs: { '95059733579': { '농산물 중량': '선물용 - 3kg(중대과 7~15과)' } } } }, ka.deps);
+                const pa = ka.cp.puts[0] && ka.cp.puts[0].items;
+                ok(ua.ok && pa[0].itemName === '선물용 - 3kg(중대과 7~15과) 1박스' && pa[0].attributes[0].attributeValueName === '선물용 - 3kg(중대과 7~15과)' && pa[0].attributes[0].exposed === 'EXPOSED' && pa[0].attributes[1].attributeValueName === '1박스' && pa[1].attributes[0].attributeValueName === '선물용 - 5kg(대과 13~23과)',
+                    'itemName + 구매옵션 값 한 PUT · 다른 칸(exposed·수량)·다른 옵션 그대로', pa && pa.map(it => [it.itemName, it.attributes]));
+                const ra = await run({ op: 'revert_full', ...base, backup_id: ga.backup_id }, ka.deps);
+                ok(ra.ok && ka.cp.puts[1].items[0].attributes[0].attributeValueName === '선물용 - 3kg(대과 7~15과)' && ka.cp.puts[1].items[0].itemName === '카라향 3kg', 'revert_full = 보관본 구매옵션 값·옵션명으로', ra);
+                // 보관 뒤 Wing 에서 구매옵션 값만 바뀜 = update 신선도 거절
+                const kw = mkp(); kw.cp.prods[SPC].items[0].attributes = [{ attributeTypeName: '농산물 중량', attributeValueName: 'A' }];
+                const gw = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kw.deps);
+                kw.cp.prods[SPC].items[0].attributes[0].attributeValueName = 'B';
+                const uw = await run({ op: 'update_full', ...base, backup_id: gw.backup_id, patch: { name: '테스트' } }, kw.deps);
+                ok(!uw.ok && /바뀐 곳/.test(uw.error) && kw.cp.puts.length === 0, '보관 뒤 구매옵션 값만 바뀜 = 신선도 거절(지문에 attributes)', uw);
+            }
             // revert 느슨 비교 = 상세 꼴·그림 장수까지 — 임시저장 이름 수정 뒤 Wing 에서 상세만 바꾸면 force 없이 거절
             const kl = mkp(); kl.cp.prods[SPC].statusName = '임시저장';
             const gl = await run({ op: 'get_full', ...base, seller_product_id: SPC }, kl.deps);
