@@ -71,10 +71,24 @@ function dropEmpty(h) {
 }
 const tidy = h => dropEmpty(h).replace(/[ \t]*\r?\n[ \t\r\n]*/g, '\n').trim();
 
+// #753 그림 설명글(se-caption) 등 — 정렬이 p 가 아니라 틀 div(se-section-align-*)에 있음 → 정렬 없는 안쪽 p 에 se-text-paragraph-align-* 를 붙여 classCss 가 옮기게
+function inheritSectionAlign(src) {
+    const st = [];   // 열린 div 마다 그 정렬(없으면 null)
+    return src.replace(/<(\/?)(div|p)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (t, close, name) => {
+        name = name.toLowerCase();
+        if (name === 'div') { if (close) st.pop(); else if (!/\/>$/.test(t)) { const a = (String(attr(t, 'class') || '').match(/(?:^|\s)se-section-align-(center|right|justify|left)(?:\s|$)/) || [])[1]; st.push(a || null); } return t; }
+        if (close) return t;
+        const al = [...st].reverse().find(Boolean);
+        const cls = String(attr(t, 'class') || '');
+        if (!al || /(?:^|\s)se-text-paragraph-align-(center|right|justify|left)(?:\s|$)/.test(cls)) return t;
+        return /\sclass\s*=\s*"/i.test(t) ? t.replace(/\sclass\s*=\s*"/i, m => `${m}se-text-paragraph-align-${al} `) : t.replace(/^<p\b/i, `<p class="se-text-paragraph-align-${al}"`);
+    });
+}
 function fromNaverHtml(html, opts) {
     let src = String(html == null ? '' : html);
     if ((!opts || opts.links !== false) && linksMod) src = linksMod.convertImageLinks(src).html;   // 걸러진 그림 링크도 일반 <a href> 로
     src = src.replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '');
+    src = inheritSectionAlign(src);
     const blocks = []; let buf = '', images = 0, linked = 0, dropped = 0;
     let openA = null;   // 지금 열린 <a href> (그림을 감싸는지 보려고)
     const flush = () => { const h = tidy(buf); buf = ''; if (h && visible(h)) blocks.push({ type: 'html', html: h }); };
