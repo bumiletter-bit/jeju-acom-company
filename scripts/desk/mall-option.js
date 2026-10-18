@@ -3,7 +3,8 @@
 //   node scripts/desk/mall-option.js rename-plan <상품> "<지금 값>" "<새 값>"    전/후 표 + 막을 일 검사(카페24 쓰기 0)
 //   node scripts/desk/mall-option.js rename <상품> "<지금 값>" "<새 값>" <지시 id> 실제로 바꿈(러너 op option_rename) → 다시 읽어 확인
 //   node scripts/desk/mall-option.js revert <상품> <지시 id>                    이 도구로 바꾼 마지막 것을 되돌림(새 값 → 옛 값)
-//   <상품> = 네이버 상품번호 · c92 같은 카페24 번호(동기화 매핑 cafe24_sync_map 에 있는 상품만)
+//   <상품> = 네이버 상품번호 · c92 같은 카페24 번호(동기화 매핑 cafe24_sync_map 에 있는 상품만 · #759 시험 상품 c120(설정 cafe24_test_products)은 이름 왕복만)
+//   #759 rename/revert 끝 = done 다섯 줄(카페24 이름 · 공개 응답 c24t · 담기 · 결제창 금액(화면가 = 카페24 결제가) · 영향표 🔴 0) — 다 ✓ 일 때만 ok
 //   규칙(🔴 바꾸면 안 되는 이유가 있다 — 송장변환 매칭·05:10 네이버↔자사몰 비교·스냅샷이 옵션 「글자」로 묶여 있음):
 //     ①(#740 대표 10/18) 글자가 같을 필요는 없고 **품목 특징(품목·kg·크기·용도)이 같아야** 한다 = price-check.js 의 옵션 열쇠(app.js 매칭기 → 단가표 이름)
 //       새 값 열쇠 = 네이버 판매 중 옵션 중 하나의 열쇠 · 옛 값 열쇠 = 새 값 열쇠(다른 상품으로 바뀌면 멈춤) · 열쇠를 못 읽으면(매칭기 실패) 멈춤
@@ -34,8 +35,39 @@ async function resolve(arg) {
     if (/^\d{9,}$/.test(s)) nno = s;
     else if (/^c\d+$/i.test(s)) nno = (Object.entries(map).find(([, m]) => String(m.c24) === s.slice(1)) || [])[0];
     else throw new Error('상품은 네이버 상품번호 또는 c92 꼴로 알려 주세요');
+    if (!nno && /^c\d+$/i.test(s)) {   // #759 시험 상품(설정 cafe24_test_products · 진열·판매 안 함) = 연결 없이 이름 왕복만
+        const tp = (((await M.cfgGet('cafe24_test_products')) || {}).products || []).map(p => String(p.product_no));
+        if (tp.includes(s.slice(1))) return { nno: null, cno: s.slice(1), test: true };
+    }
     if (!nno || !map[nno]) throw new Error('자사몰과 연결된 상품이 아니에요(동기화 매핑에 없음): ' + s);
     return { nno, cno: String(map[nno].c24) };
+}
+// #759 공개 스냅샷 c24t 예측 = server.js storeSnapshotForMall 과 같은 규칙(같은 열쇠가 딱 하나 · 네이버 글자와 같으면 안 붙임)
+//   list = 설정 cafe24_option_texts.by[카페24번호] · 네이버 옵션 { parts:[n1,n2] } → 붙을 글자 또는 null
+function c24tFor(list, nvParts) {
+    if (!Array.isArray(list) || !list.length) return null;
+    const n1 = (nvParts || [])[0] || '', n2 = (nvParts || [])[1] || '';
+    const k = PC.cafe24OptKey(n1 + ' ' + n2); if (!k) return null;
+    const hit = list.filter(x => x && x.k === k);
+    if (hit.length !== 1 || typeof hit[0].t !== 'string' || !hit[0].t) return null;
+    const t = hit[0].t;
+    return (t === n1 || t === n2 || t === (n1 + ' / ' + n2) || t === (n1 + ' ' + n2)) ? null : t;
+}
+// 이름 바꾼 뒤 설정 cafe24_option_texts 의 그 상품 줄에서 옛 글자 → 새 글자(열쇠 다시 계산 · 05:10 동기화가 다음 날 같은 값으로 덮음) · 줄이 없으면 null(그 상품은 c24t 짝이 없음)
+async function patchOptionTexts(cno, from, to) {
+    const cfg = await M.cfgGet('cafe24_option_texts'); const list = cfg && cfg.by && Array.isArray(cfg.by[cno]) ? cfg.by[cno] : null;
+    if (!list) return { patched: false, why: '그 상품의 옵션 글자 기록이 없어요(c24t 짝 없음)' };
+    let n = 0; const next = list.map(x => { if (x && nrm(x.t) === nrm(from)) { n++; return { t: to, k: PC.cafe24OptKey(to) }; } return x; });
+    if (!n) return { patched: false, why: `기록에 「${noNum(from).slice(-30)}」 가 없어요(판매·진열 중이 아니었을 수 있음)` };
+    await M.cfgSet('cafe24_option_texts', { ...cfg, by: { ...cfg.by, [cno]: next }, at: new Date().toISOString(), patched_by: 'mall-option #759' });
+    return { patched: true, n };
+}
+// 공개 응답(자사몰 화면이 받는 것)에서 그 네이버 옵션 줄의 c24t
+async function publicC24t(nno, parts) {
+    const snap = await M.publicSnapshot(); const it = (snap.items || []).find(x => String(x.no) === String(nno));
+    const on = v => String(v || '').normalize('NFC').replace(/\s+/g, ' ').trim();
+    const o = it ? (it.opts || []).find(x => on(x.n1) === on(parts[0]) && on(x.n2) === on(parts[1])) : null;
+    return o ? { found: true, c24t: o.c24t || null, n1: o.n1, n2: o.n2, price: Number(snap.items && it.discPrice) + Number(o.price || 0) } : { found: false };
 }
 // 카페24 옵션 구성 + 품목
 async function readC24(cno) {
@@ -58,8 +90,9 @@ async function naverOpts(nno) {
     }
 }
 async function plan(arg, from, to) {
-    const R = await resolve(arg); const C = await readC24(R.cno); const N = await naverOpts(R.nno);
-    const stops = [], notes = []; let P_MATCH = null;
+    const R = await resolve(arg); const C = await readC24(R.cno); const N = R.test ? { source: '시험 상품(네이버 연결 없음)', texts: [], opts: [] } : await naverOpts(R.nno);
+    const stops = [], notes = []; let P_MATCH = null, NV = null, C24T = null;
+    if (R.test) notes.push('시험 상품이에요 — 품목 특징·네이버·스킨 검사는 건너뛰고 이름 왕복만 봐요(진열·판매 안 함 · 담기·결제창은 해당 없음)');
     if (C.groups.length !== 1) notes.push(`옵션 묶음이 ${C.groups.length}개예요(${C.groups.map(g => g.name).join(' · ')}) — 값 글자는 묶음 안에서 찾습니다`);
     const f = nrm(from), hits = [];
     C.groups.forEach((g, gi) => g.values.forEach((v, vi) => { if (nrm(v) === f || noNum(v) === noNum(f)) hits.push({ gi, vi, v }); }));
@@ -68,8 +101,13 @@ async function plan(arg, from, to) {
     const h = hits[0];
     const fromText = h ? h.v : from;
     const toText = h ? (numOf(to) ? nrm(to) : numOf(fromText) + noNum(to)) : nrm(to);
-    if (h) {
-        if (nrm(fromText) === nrm(toText)) stops.push('지금 값과 새 값이 같아요');
+    if (h && nrm(fromText) === nrm(toText)) stops.push('지금 값과 새 값이 같아요');
+    if (h && R.test) {
+        const dup = C.groups[h.gi].values.filter((v, i) => i !== h.vi && nrm(v) === nrm(toText));
+        if (dup.length) stops.push(`새 값과 같은 글자의 값이 이미 있어요(「${dup[0]}」)`);
+        if (toText.length > 100) stops.push('새 값이 너무 길어요(서버 상한 100자)');
+    }
+    if (h && !R.test) {
         const names = await pricingNames();
         const kTo = keyOf(mallParts(toText), names), kFrom = keyOf(mallParts(fromText), names);
         if (!kTo) stops.push(`새 값 「${noNum(toText)}」 의 특징을 못 읽었어요 — 이름에 품목·kg·크기(로얄과·소과 등)·용도(가정용·선물용)를 넣어 주세요`);
@@ -81,11 +119,20 @@ async function plan(arg, from, to) {
         const ckFrom = PC.cafe24OptKey(fromText), ckTo = PC.cafe24OptKey(toText);
         if (ckFrom !== ckTo) stops.push(`새벽 비교 열쇠가 바뀌어요(${ckFrom || '없음'} → ${ckTo || '없음'}) — 과일·용도(가정용·선물용)·kg·크기 낱말은 옛 이름과 같게 두세요`);
         // #743 교훈: 자사몰 스킨은 번호만 다른 옵션이면 내장 STORE_DATA 의 글자(= 카페24 「찾는 글자」)로 담는다 → 카페24 이름을 그 글자와 다르게 바꾸면 원터치가 깨짐
-        //   (스킨 내장 글자는 스킨 갱신(#537) 때만 바뀜 · 스킨 짝 c24t 배포 전까지 이 검사로 막는다)
+        // #759: 스킨(#742)은 공개 응답의 c24t 가 있으면 그 글자로 담는다 → 바꾼 뒤 c24t 가 새 이름으로 붙는 옵션(설정 cafe24_option_texts 에 그 상품 줄이 있고
+        //   새 이름이 네이버 글자와 다름)이면 스킨 내장 글자 검사로 막지 않는다 · 안 붙으면(짝 기록 없음 · 새 이름 = 네이버 글자) 종전 검사 그대로
         if (nvHit.length) {
+            NV = nvHit[0];
+            const texts = ((await M.cfgGet('cafe24_option_texts')) || {}).by || {};
+            const list = Array.isArray(texts[R.cno]) ? texts[R.cno] : null;
+            const after = list && list.some(x => x && nrm(x.t) === nrm(fromText)) ? list.map(x => x && nrm(x.t) === nrm(fromText) ? { t: toText, k: PC.cafe24OptKey(toText) } : x) : null;
+            C24T = { now: c24tFor(list, NV.parts), after: c24tFor(after, NV.parts) };
+            if (C24T.after && nrm(C24T.after) === nrm(toText)) notes.push(`스킨은 c24t(카페24 실제 글자)로 담아요 — 바꾼 뒤 이 도구가 c24t 를 새 이름으로 고치고 공개 응답·결제창까지 확인해요`);
+        }
+        if (nvHit.length && !(C24T && C24T.after && nrm(C24T.after) === nrm(toText))) {
             let skinSearch = null; try { const SD = M.storeData(M.readLocal().toString('utf8')).D; const it = (SD.items || []).find(x => String(x.no) === String(R.nno)); const on = v => String(v || '').normalize('NFC').replace(/^\d+\.\s*/, '').replace(/\s+/g, ' ').trim(); const nv = nvHit[0]; const e = it ? (it.opts || []).find(x => on(x.n1) === on(nv.parts[0]) && on(x.n2) === on(nv.parts[1])) : null; skinSearch = e ? ((e.n1 && e.n2) ? `${e.n1} · ${e.n2}` : (e.n2 || e.n1)) : nv.text; } catch (_) { skinSearch = null; }
             const sk = t => String(t || '').replace(/\s*\(\+[\d,]+원\)\s*$/, '').replace(/\s+/g, ' ').trim();
-            if (skinSearch && sk(skinSearch) !== sk(toText)) stops.push(`자사몰 담기 원터치가 깨져요 — 스킨이 찾는 글자는 「${skinSearch}」 인데 새 이름은 「${toText}」(스킨 내장 글자는 스킨 갱신 때만 바뀜 · 스킨 짝(c24t) 배포 전까지 이 이름으로는 못 바꿔요)`);
+            if (skinSearch && sk(skinSearch) !== sk(toText)) stops.push(`자사몰 담기 원터치가 깨져요 — 스킨이 찾는 글자는 「${skinSearch}」 인데 새 이름은 「${toText}」(이 옵션은 c24t 짝이 안 붙어 스킨 내장 글자로 담아요 — 새 이름을 네이버 글자와 다르게 하거나 스킨 갱신(#537) 뒤에)`);
             if (skinSearch && sk(skinSearch) === sk(fromText)) notes.push(`지금 이름이 스킨이 찾는 글자와 같아요 — 담기는 지금 정상이에요(바꾸면 깨질 수 있음)`);
         }
         if (kTo && nvHit.length) P_MATCH = `네이버 「${noNum(nvHit[0].text)}」 ↔ 자사몰 「${noNum(toText)}」 = 같은 상품(${kTo.label} · 품목·kg·크기·용도)` + (noNum(nvHit[0].text) === noNum(toText) ? ' · 글자도 같음' : ' · 글자는 다름(괜찮음)');
@@ -99,7 +146,7 @@ async function plan(arg, from, to) {
     if (ignore.length) notes.push(`옛 값에 걸린 새벽 비교 예외 열쇠가 있어요(${ignore.join(' · ')}) — 바꾼 뒤 그 열쇠가 계속 필요한지 총괄에게 알려 주세요`);
     const variant = h ? C.vars.find(v => nrm(v.name) === nrm(fromText) || noNum(v.name) === noNum(fromText)) : null;
     if (h && !variant && C.groups.length === 1) notes.push('그 값의 품목을 못 찾았어요(품목 이름이 값 글자와 다를 수 있음) — 바꾼 뒤 list 로 확인');
-    return { R, C, N, stops, notes, gi: h ? h.gi : null, vi: h ? h.vi : null, from: fromText, to: toText, variant,
+    return { R, C, N, NV, C24T, stops, notes, gi: h ? h.gi : null, vi: h ? h.vi : null, from: fromText, to: toText, variant,
         table: [`묶음 「${h ? C.groups[h.gi].name : '?'}」`, `지금: ${fromText}`, `새로: ${toText}`, ...(P_MATCH ? [P_MATCH] : []), variant ? `품목 ${variant.code} · 추가금 ${won(variant.add)} · 결제가 ${won(C.base + variant.add)} · 판매 ${variant.selling}/진열 ${variant.display} → 그대로` : '품목: 못 찾음'] };
 }
 // 러너 요청(워커1 계약 = server.js 「#739 시작~끝」 cafe24OptRun · 결과는 cafe24_product_result 의 opt 칸) — 바꿀 값 한 쌍만 보냄 · 바디 꼴(options·original_options)은 서버가 지금 값을 다시 읽어 만든다
@@ -140,26 +187,60 @@ async function confirmRename(cno, group, from, to, before) {
     }
     return { confirmed, polls, waited_sec: waited, last_seen: last, kept, var_bad };
 }
-const LATE_NOTE = '카페24 반영이 늦어요 — 몇 분 뒤 list 로 확인해 주세요(🔴 다시 보내지 않기 · 이미 보낸 요청이 늦게 반영되는 중일 수 있어요)';
+const LATE_NOTE = '카페24 반영이 늦어요 — 몇 분 뒤 list 로 확인해 주세요(🔴 다시 보내지 않기 · 이미 보낸 요청이 늦게 반영되는 중일 수 있어요) · 반영 확인되면 list 결과의 c24t 줄도 확인(c24t 는 이미 새 이름으로 고쳐 둠)';
+// #759 05:10 동기화가 cafe24_option_texts 를 통째로 쓰는 시간(KST 05:00~05:20)에는 이름 바꾸기·되돌리기를 멈춤(겹쳐 쓰기 방지)
+const inDawnSync = () => { const d = new Date(Date.now() + 9 * 3600e3); const m = d.getUTCHours() * 60 + d.getUTCMinutes(); return m >= 300 && m < 320; };
+const DAWN_NOTE = '새벽 동기화 시간(05:00~05:20)이라 멈췄어요 — 05:20 뒤에 다시 시켜 주세요(바꾼 것 없음)';
 const NOT_APPLIED_NOTE = '카페24 가 이름을 안 바꿨어요 — 관리자 화면에서 바꿔 주세요(상품 [수정] → 옵션/재고 설정 → 옵션값 글자 고치기 → 저장 · 품목은 그대로)';
 const isNotApplied = res => !!res && res.ok === true && (res.not_applied === true || (Array.isArray(res.not_applied) && res.not_applied.length > 0));
+// #759 끝 다섯 줄(대표 「자사몰은 결제까지 해서 금액 맞아야」) = ①카페24 이름 ②공개 응답 c24t ③담기(확인 레이어 없이) ④결제창 금액 = 화면가 = 카페24 결제가 ⑤영향표 🔴 0
+//   ctx = { test, cno, nno, from, to, nv:{text,parts}, want(카페24 결제가), cf(confirmRename), impact } · 다 ✓ 여야 ok
+async function finishLines(ctx) {
+    const L = [], mark = (ok, label, why) => { L.push(`${ok === null ? '—' : ok ? '✓' : '🔴'} ${label}${why ? ' — ' + why : ''}`); return ok; };
+    const okName = mark(ctx.cf.confirmed && ctx.cf.kept !== false, '카페24 이름', ctx.cf.confirmed ? (ctx.cf.kept === false ? ctx.cf.var_bad.join(' · ') : `「${noNum(ctx.to).slice(-30)}」 · 품목 그대로`) : '반영 확인 안 됨');
+    if (ctx.test) { ['스냅샷 c24t', '담기', '결제창 금액', '영향표'].forEach(x => mark(null, x, '시험 상품(진열·판매 안 함 · 해당 없음)')); return { ok: !!okName, lines: L }; }
+    if (!okName || !ctx.nv) { ['스냅샷 c24t', '담기', '결제창 금액', '영향표'].forEach(x => mark(false, x, okName ? '네이버 짝 옵션을 못 찾음' : '이름 반영 먼저')); return { ok: false, lines: L }; }
+    let okC = false, expC = null;
+    try {
+        const p = ctx.prePatched || await patchOptionTexts(ctx.cno, ctx.from, ctx.to);
+        const pub = await publicC24t(ctx.nno, ctx.nv.parts);
+        const list = (((await M.cfgGet('cafe24_option_texts')) || {}).by || {})[ctx.cno];
+        expC = c24tFor(list, ctx.nv.parts);
+        if (!pub.found) okC = mark(false, '스냅샷 c24t', '공개 응답에 그 옵션 줄이 없음');
+        else if (expC) okC = mark(pub.c24t != null && nrm(pub.c24t) === nrm(ctx.to), '스냅샷 c24t', `공개 응답 c24t 「${noNum(pub.c24t || '없음').slice(-30)}」${p.patched ? '' : ' · ' + p.why}`);
+        else okC = mark(true, '스냅샷 c24t', 'c24t 짝 없음 = 스킨 내장 글자로 담음(아래 담기로 확인)');
+    } catch (e) { okC = mark(false, '스냅샷 c24t', '확인 실패: ' + String(e.message || e).slice(0, 80)); }
+    let co = null;
+    try { co = await require('./mall-checkout').checkout(ctx.nno, noNum(ctx.nv.parts[1] || ctx.nv.parts[0] || ctx.nv.text), ctx.want); }
+    catch (e) { co = { ok: false, error: String(e.message || e).slice(0, 100) }; }
+    const okCart = mark(!!co && !co.error && co.layer === false && (!expC || nrm(co.row_c24t) === nrm(ctx.to)), '담기', co.error ? co.error : co.layer ? '카페24 확인 레이어가 떴어요(글자를 못 찾음 = 원터치 깨짐)' : `확인 레이어 없이 장바구니${co.row_c24t ? ' · 담은 글자 = c24t' : ''}`);
+    mark(okCart && co.ok && co.row_price === ctx.want, '결제창 금액', co.final != null ? `결제창 ${won(co.final)}원 · 화면 ${won(co.row_price)}원 · 카페24 결제가 ${won(ctx.want)}원` : '결제창까지 못 감');
+    const okImp = mark(!!ctx.impact && !ctx.impact.error && Array.isArray(ctx.impact.reds) && ctx.impact.reds.length === 0, '영향표', ctx.impact ? (ctx.impact.error || `🔴 ${(ctx.impact.reds || []).length}`) : '점검 안 함');
+    return { ok: L.every(x => x.startsWith('✓')), lines: L, checkout: co };
+}
 (async () => {
     const [cmd, ...args] = process.argv.slice(2);
     if (cmd === 'list') {
         const R = await resolve(args[0]); const C = await readC24(R.cno);
-        console.log(JSON.stringify({ ok: true, nno: R.nno, cno: 'c' + R.cno, name: C.name, base: C.base, option_type: C.option_type, list_type: C.list_type,
+        // #759 늦게 반영된 이름 바꾸기 = 이 도구의 마지막 기록(새 이름)이 카페24 에 보이는데 옵션 글자 기록(c24t 재료)이 옛 글자면 그 한 줄만 새 글자로
+        let c24tSync;
+        if (!R.test) { try { const last = ((((await M.cfgGet(LAST_KEY)) || {})[R.nno]) || []).slice(-1)[0]; const vals = last ? ((C.groups.find(g => g.name === last.group) || {}).values || []) : [];
+            if (last && vals.some(v => nrm(v) === nrm(last.to)) && !vals.some(v => nrm(v) === nrm(last.from))) { const p = await patchOptionTexts(R.cno, last.from, last.to); c24tSync = p.patched ? `c24t 옛 글자 → 「${noNum(last.to).slice(-30)}」 로 맞춤` : 'c24t = 새 이름(맞음)'; } } catch (e) { c24tSync = 'c24t 확인 실패: ' + String(e.message || e).slice(0, 80); } }
+        console.log(JSON.stringify({ ok: true, c24t: c24tSync, nno: R.nno, cno: 'c' + R.cno, name: C.name, base: C.base, option_type: C.option_type, list_type: C.list_type,
             groups: C.groups.map(g => ({ name: g.name, n: g.values.length, values: g.values })),
             variants: C.vars.map(v => `${v.code} | ${v.selling}/${v.display} | 추가금 ${won(v.add)} | 결제가 ${won(C.base + v.add)} | ${v.name}`), add_guide: ADD_GUIDE }, null, 1));
     } else if (cmd === 'rename-plan' || cmd === 'rename') {
         const orderId = cmd === 'rename' ? parseInt(args[3], 10) : null;
         if (args.length < 3 || (cmd === 'rename' && !orderId)) throw new Error(`사용: ${cmd} <상품> "<지금 값>" "<새 값>"${cmd === 'rename' ? ' <지시 id>' : ''}`);
         const P = await plan(args[0], args[1], args[2]);
-        const out = { nno: P.R.nno, cno: 'c' + P.R.cno, source: P.N.source, table: P.table, stops: P.stops, notes: P.notes, add_guide: ADD_GUIDE };
+        const LK = P.R.nno || 'c' + P.R.cno;
+        const out = { nno: LK, cno: 'c' + P.R.cno, source: P.N.source, table: P.table, stops: P.stops, notes: P.notes, add_guide: ADD_GUIDE };
         if (P.stops.length) { console.log(JSON.stringify({ ok: false, stopped: true, ...out, note: '멈췄어요 — 바꾼 것 없음' }, null, 1)); await M.pool.end(); return; }
-        if (cmd === 'rename-plan') { console.log(JSON.stringify({ ok: true, plan_only: true, ...out, next: `node scripts/desk/mall-option.js rename ${P.R.nno} ${JSON.stringify(P.from)} ${JSON.stringify(P.to)} <지시 id>` }, null, 1)); await M.pool.end(); return; }
+        if (cmd === 'rename-plan') { console.log(JSON.stringify({ ok: true, plan_only: true, ...out, next: `node scripts/desk/mall-option.js rename ${LK} ${JSON.stringify(P.from)} ${JSON.stringify(P.to)} <지시 id>` }, null, 1)); await M.pool.end(); return; }
+        if (inDawnSync()) { console.log(JSON.stringify({ ok: false, stopped: true, ...out, note: DAWN_NOTE }, null, 1)); await M.pool.end(); return; }
         const actor = await M.who(orderId);
-        const prev = (await M.cfgGet(LAST_KEY)) || {}; const list = Array.isArray(prev[P.R.nno]) ? prev[P.R.nno] : [];
-        const rec = { at: new Date().toISOString(), order_id: orderId, by: actor, cno: P.R.cno, group: P.C.groups[P.gi].name, from: P.from, to: P.to, variant: P.variant ? P.variant.code : null };
+        const prev = (await M.cfgGet(LAST_KEY)) || {}; const list = Array.isArray(prev[LK]) ? prev[LK] : [];
+        const rec = { at: new Date().toISOString(), order_id: orderId, by: actor, cno: P.R.cno, group: P.C.groups[P.gi].name, from: P.from, to: P.to, variant: P.variant ? P.variant.code : null, test: !!P.R.test || undefined, nv: P.NV || undefined, want: P.variant ? P.C.base + P.variant.add : undefined };
         await M.stepLog(orderId, `자사몰 옵션 이름: 「${noNum(P.from).slice(-24)}」 → 「${noNum(P.to).slice(-24)}」`);
         const res = await runRename(P, orderId, actor, 'rename');
         const accepted = !!res && res.ok === true && !isNotApplied(res);
@@ -169,34 +250,45 @@ const isNotApplied = res => !!res && res.ok === true && (res.not_applied === tru
             await M.pool.end(); return;
         }
         // PUT 통과 = 되돌리기 기록부터(반영이 늦어도 revert 길이 열려 있게)
-        list.push({ ...rec, pending: true }); prev[P.R.nno] = list.slice(-5); await M.cfgSet(LAST_KEY, prev);
+        list.push({ ...rec, pending: true }); prev[LK] = list.slice(-5); await M.cfgSet(LAST_KEY, prev);
+        // #759 반영 확인이 늦어도(3분 넘김) c24t 가 다음 새벽까지 옛 글자로 남지 않게 PUT 통과 즉시 고침
+        let prePatched = null; if (!P.R.test) { try { prePatched = await patchOptionTexts(P.R.cno, P.from, P.to); } catch (e) { prePatched = { patched: false, why: 'c24t 고치기 실패: ' + String(e.message || e).slice(0, 60) }; } }
         await M.stepLog(orderId, '자사몰 옵션 이름: 카페24 반영 확인 중(15초마다 · 최대 3분)');
         const before = Array.isArray(res.variants_before) && res.variants_before.length ? res.variants_before : P.C.vars.map(v => ({ code: v.code, add: v.add, selling: v.selling, display: v.display }));
         const cf = await confirmRename(P.R.cno, P.C.groups[P.gi].name, P.from, P.to, before);
-        if (cf.confirmed) { list[list.length - 1].pending = false; prev[P.R.nno] = list.slice(-5); await M.cfgSet(LAST_KEY, prev); }
+        if (cf.confirmed) { list[list.length - 1].pending = false; prev[LK] = list.slice(-5); await M.cfgSet(LAST_KEY, prev); }
         await M.audit('cafe24_option_rename_confirm', 'cafe24_product', P.R.cno, { tool: 'mall-option', order_id: orderId, naver_no: P.R.nno, from: P.from, to: P.to, ...cf }, actor);
         // #740 영향 점검(쓰기 0) — 바꾼 옵션 하나
         let impact = null;
-        if (cf.confirmed) { try { const r = await require('./option-impact').check('mall', 'c' + P.R.cno, [noNum(P.to)]); impact = { summary: r.summary, reds: r.reds, table: r.table, refs_skin: r.refs, ...(r.reds.length ? { ask: '이름은 바뀌었지만 위 옵션은 송장 매칭·발송안내 등이 안 맞아요 — 옵션 이름을 다시 고칠까요?' } : {}) }; } catch (e) { impact = { error: '영향 점검 실패(반영과는 무관): ' + String(e.message || e).slice(0, 160) }; } }
-        console.log(JSON.stringify({ ok: cf.confirmed && cf.kept !== false, changed: true, confirmed: cf.confirmed, confirm: cf, ...out, impact: impact || undefined, undo: `node scripts/desk/mall-option.js revert ${P.R.nno} <지시 id>`,
-            note: !cf.confirmed ? LATE_NOTE : cf.kept === false ? '🔴 이름은 바뀌었는데 품목 값이 달라졌어요 — 총괄에게 바로: ' + cf.var_bad.join(' · ') : '바뀌었어요(품목 그대로) — 네이버와 같은 이름이에요. 자사몰 화면은 네이버 스냅샷으로 그려져 이미 네이버 글자예요.' }, null, 1));
+        if (cf.confirmed && !P.R.test) { try { const r = await require('./option-impact').check('mall', 'c' + P.R.cno, [noNum(P.to)]); impact = { summary: r.summary, reds: r.reds, table: r.table, refs_skin: r.refs, ...(r.reds.length ? { ask: '이름은 바뀌었지만 위 옵션은 송장 매칭·발송안내 등이 안 맞아요 — 옵션 이름을 다시 고칠까요?' } : {}) }; } catch (e) { impact = { error: '영향 점검 실패(반영과는 무관): ' + String(e.message || e).slice(0, 160) }; } }
+        if (cf.confirmed) await M.stepLog(orderId, '자사몰 옵션 이름: c24t·담기·결제창 확인 중(2~3분)');
+        const fin = await finishLines({ test: !!P.R.test, cno: P.R.cno, nno: P.R.nno, from: P.from, to: P.to, nv: P.NV, want: rec.want, cf, impact, prePatched });
+        console.log(JSON.stringify({ ok: fin.ok, done: fin.lines, changed: true, confirmed: cf.confirmed, confirm: cf, ...out, impact: impact || undefined, checkout: fin.checkout || undefined, undo: `node scripts/desk/mall-option.js revert ${LK} <지시 id>`,
+            note: !cf.confirmed ? LATE_NOTE : cf.kept === false ? '🔴 이름은 바뀌었는데 품목 값이 달라졌어요 — 총괄에게 바로: ' + cf.var_bad.join(' · ') : (P.R.test ? '시험 상품 이름이 바뀌었어요(품목 그대로)' : fin.ok ? '바뀌었어요 — 다섯 줄 다 ✓(카페24 이름 · c24t · 담기 · 결제창 · 영향표)' : '이름은 바뀌었는데 위 done 에 🔴 가 있어요 — 그 줄부터 확인(되돌리기 = undo)') }, null, 1));
     } else if (cmd === 'revert') {
         const orderId = parseInt(args[1], 10); if (!orderId) throw new Error('사용: revert <상품> <지시 id>');
+        if (inDawnSync()) { console.log(JSON.stringify({ ok: false, reverted: false, note: DAWN_NOTE }, null, 1)); await M.pool.end(); return; }
         const R = await resolve(args[0]); const actor = await M.who(orderId);
-        const prev = (await M.cfgGet(LAST_KEY)) || {}; const list = Array.isArray(prev[R.nno]) ? prev[R.nno] : []; const last = list[list.length - 1];
+        const LK = R.nno || 'c' + R.cno; const prev = (await M.cfgGet(LAST_KEY)) || {}; const list = Array.isArray(prev[LK]) ? prev[LK] : []; const last = list[list.length - 1];
         if (!last) throw new Error('이 도구로 바꾼 기록이 없어요');
-        const C = await readC24(R.cno); const gi = C.groups.findIndex(g => g.name === last.group);
+        // #759 실측: 바꾼 직후 카페24 읽기가 옛 글자를 줄 때가 있다(반영 지연) → 새 글자가 보일 때까지 15초 간격 최대 4번 다시 읽음
+        let C = await readC24(R.cno), gi = C.groups.findIndex(g => g.name === last.group);
+        for (let k = 0; k < 3 && (gi < 0 || !C.groups[gi].values.some(v => nrm(v) === nrm(last.to))); k++) { await M.sleep(CONFIRM_GAP); C = await readC24(R.cno); gi = C.groups.findIndex(g => g.name === last.group); }
         if (gi < 0 || !C.groups[gi].values.some(v => nrm(v) === nrm(last.to))) throw new Error(`지금 카페24에 「${last.to}」 값이 없어요 — 그 뒤 누가 바꿨을 수 있어요(되돌리지 않음 · list 로 확인)`);
         if (C.groups[gi].values.some(v => nrm(v) === nrm(last.from))) throw new Error(`옛 값 「${last.from}」 과 같은 값이 이미 있어요 — 되돌리면 같은 이름이 둘이 돼요(되돌리지 않음)`);
         const res = await c24Opt({ action: 'option_rename', product_no: Number(R.cno), group: last.group, from: last.to, to: last.from, order_id: orderId, revert: true, created_by: actor });
         const accepted = res.ok === true && !isNotApplied(res);
         await M.audit('cafe24_option_rename', 'cafe24_product', R.cno, { tool: 'mall-option', mode: 'revert', order_id: orderId, naver_no: R.nno, back_from: last.to, back_to: last.from, result: res }, actor);
         if (!accepted) { console.log(JSON.stringify({ ok: false, reverted: false, runner: res, not_applied: isNotApplied(res) || undefined, note: isNotApplied(res) ? '카페24 가 이름을 안 바꿨어요 — 관리자 화면에서 옛 이름으로 고쳐 주세요' : '카페24가 거절했어요 — 바꾼 것 없음' }, null, 1)); await M.pool.end(); return; }
-        prev[R.nno] = list.slice(0, -1); await M.cfgSet(LAST_KEY, prev);
+        prev[LK] = list.slice(0, -1); await M.cfgSet(LAST_KEY, prev);
+        let prePatched = null; if (!R.test) { try { prePatched = await patchOptionTexts(R.cno, last.to, last.from); } catch (e) { prePatched = { patched: false, why: 'c24t 고치기 실패: ' + String(e.message || e).slice(0, 60) }; } }
         const before = Array.isArray(res.variants_before) && res.variants_before.length ? res.variants_before : C.vars.map(v => ({ code: v.code, add: v.add, selling: v.selling, display: v.display }));
         const cf = await confirmRename(R.cno, last.group, last.to, last.from, before);
         await M.audit('cafe24_option_rename_confirm', 'cafe24_product', R.cno, { tool: 'mall-option', mode: 'revert', order_id: orderId, naver_no: R.nno, from: last.to, to: last.from, ...cf }, actor);
-        console.log(JSON.stringify({ ok: cf.confirmed && cf.kept !== false, reverted: true, confirmed: cf.confirmed, confirm: cf, from: last.to, to: last.from,
+        let impact = null;
+        if (cf.confirmed && !R.test) { try { const r = await require('./option-impact').check('mall', 'c' + R.cno, [noNum(last.from)]); impact = { summary: r.summary, reds: r.reds, table: r.table }; } catch (e) { impact = { error: '영향 점검 실패: ' + String(e.message || e).slice(0, 160) }; } }
+        const fin = await finishLines({ test: !!R.test, cno: R.cno, nno: R.nno, from: last.to, to: last.from, nv: last.nv, want: last.want, cf, impact, prePatched });
+        console.log(JSON.stringify({ ok: fin.ok, done: fin.lines, reverted: true, confirmed: cf.confirmed, confirm: cf, from: last.to, to: last.from, impact: impact || undefined, checkout: fin.checkout || undefined,
             note: !cf.confirmed ? LATE_NOTE : cf.kept === false ? '🔴 되돌렸는데 품목 값이 달라졌어요 — 총괄에게 바로: ' + cf.var_bad.join(' · ') : '옛 이름으로 되돌렸어요(품목 그대로)' }, null, 1));
     } else {
         console.log('사용: list <상품> | rename-plan <상품> "<지금 값>" "<새 값>" | rename <…> <지시 id> | revert <상품> <지시 id>\n' + ADD_GUIDE);
