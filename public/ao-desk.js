@@ -3255,6 +3255,8 @@
     // #666(대표 10/12 「지금 챙길 일을 밑으로 — 원래 있던 자리에」): #653-다에서 위(PC 오른쪽 칸 맨 위 · 좁은 폭 채팅 목록 앞)로 올렸던 것을 되돌림
     //   = 현황판 셋째 칸(채널별 주문 · 최근 7일 발송 박스 다음). 현황판을 다시 그릴 때마다 같이 그려지므로 누름은 현황판(#desk-board)에 한 번만 건다. 좁은 폭의 「N건 더 보기」 접기는 없앰(전부 보임)
     const todoPr = t => t.key === 'botfail' ? 0 : t.key === 'remind' && (t.when || '오늘') === '오늘' ? 1 : 2;   // 봇 실패 · 오늘 일정 알림은 맨 앞
+    // #735(대표 10/18 「글 크기가 안 맞고 정리가 안 됨」): 대표 챙길 일(owner) 줄 = [언제 알약] + 본문(최대 2줄 · 누르면 펼침) / 아래 어디서 한 줄
+    const ownerTodoHtml = t => { const w = String(t.when || '확인'); return `<li class="own"><div class="own-h"><i class="own-when"${/\d/.test(w) ? ' data-k="date"' : ''}>${esc(w)}</i><span class="own-t" role="button" tabindex="0" aria-expanded="false" title="눌러서 펼치기">${esc(t.label)}</span></div><small class="own-w">${esc(t.where)}</small></li>`; };
     function todoBind() {
         const box = $('desk-board');
         if (!box) return;
@@ -3262,9 +3264,10 @@
             if (!e.target.closest('#desk-todo-box')) return;
             const cu = e.target.closest('.cu-go'); if (cu) { if (cu.dataset.cu === 'sms') smsOpen('active'); else inbOpen(cu.dataset.cu); return; }
             const bf = e.target.closest('.bf-go'); if (bf) { botFailGo(bf.dataset.bf); return; }
+            { const ot = e.target.closest('.own-t'); if (ot) { const on = ot.getAttribute('aria-expanded') !== 'true'; ot.setAttribute('aria-expanded', String(on)); ot.closest('li').classList.toggle('open', on); return; } }   // #735 펼침/접힘
             const li = e.target.closest('.sms-todo'); if (li) { if (li.dataset.sms === 'cust') inbOpenFirst(); else smsOpen(li.dataset.sms === 'active' ? 'active' : undefined); }
         });
-        box.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('sms-todo') && e.target.closest('#desk-todo-box')) { e.preventDefault(); e.target.click(); } });
+        box.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && (e.target.classList.contains('sms-todo') || e.target.classList.contains('own-t')) && e.target.closest('#desk-todo-box')) { e.preventDefault(); e.target.click(); } });
     }
     function renderBoard() {
         const d = S.board, box = $('desk-board');
@@ -3291,7 +3294,7 @@
         if (!Array.isArray(d.todo) && smsLi) todoHtml = `<ul class="desk-todo">${smsLi}</ul>`;
         if (Array.isArray(d.todo)) {
             todoHtml = d.todo.length || smsLi
-                ? `<ul class="desk-todo">${smsLi}${d.todo.slice().sort((a, b) => todoPr(a) - todoPr(b)).map(t => t.key === 'botfail' ? botFailHtml(t) : `<li${todoPr(t) === 1 ? ' class="pin"' : ''}><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
+                ? `<ul class="desk-todo">${smsLi}${d.todo.slice().sort((a, b) => todoPr(a) - todoPr(b)).map(t => t.key === 'botfail' ? botFailHtml(t) : t.key === 'owner' ? ownerTodoHtml(t) : `<li${todoPr(t) === 1 ? ' class="pin"' : ''}><span>${esc(t.label)}</span><b>${t.key === 'remind' ? esc(t.when || '오늘') : t.key === 'owner' ? esc(t.when || '확인') : t.key === 'pricing' ? '확인' : t.count + '건'}</b><small>${esc(t.where)}</small></li>`).join('')}</ul>`
                 : '<div class="desk-empty">지금 챙길 일이 없어요.</div>';
         }
         const todoN = (todoHtml.match(/<li[\s>]/g) || []).length;

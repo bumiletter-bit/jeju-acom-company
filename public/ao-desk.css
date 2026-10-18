@@ -144,6 +144,17 @@
 .desk-todo li > span { min-width: 0; overflow-wrap: anywhere; }
 .desk-todo b { min-width: 0; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; color: var(--d-accent); font-size: 13px; }
 .desk-todo small { grid-column: 1 / -1; color: var(--d-dim); font-size: 11.5px; }
+/* #735 대표 챙길 일(owner) 줄 — 언제 알약 왼쪽 · 본문 14px 최대 2줄(누르면 펼침) · 어디서 12px 한 줄 · 줄 사이 구분선 · 색은 --d-* 토큰만(야간은 토큰이 바뀜) */
+.desk-todo li.own { display: block; padding-top: 10px; border-top: 1px solid var(--d-line); }
+.desk-todo li.own:first-child { padding-top: 0; border-top: 0; }
+.desk-todo li.own + li:not(.own) { padding-top: 10px; border-top: 1px solid var(--d-line); }   /* owner 줄 다음 다른 줄도 같은 구분선 */
+.desk-todo .own-h { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.desk-todo .own-when { flex: none; margin-top: 1px; padding: 2px 8px; border: 1px solid var(--d-line); border-radius: 999px; background: var(--d-soft); color: var(--d-sub); font-size: 11.5px; font-style: normal; font-weight: 700; line-height: 1.4; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.desk-todo .own-when[data-k="date"] { border-color: var(--d-accent); color: var(--d-accent); }
+.desk-todo .own-t { flex: 1 1 auto; min-width: 0; font-size: 14px; line-height: 1.45; color: var(--d-ink); overflow-wrap: anywhere; cursor: pointer; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.desk-todo li.own.open .own-t { display: block; -webkit-line-clamp: unset; line-clamp: unset; overflow: visible; }
+.desk-todo .own-t:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; border-radius: 4px; }
+.desk-todo small.own-w { display: block; margin-top: 3px; font-size: 12px; color: var(--d-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── 오른쪽: LIVE 로그 · 오늘 일정 · 업무 현황 ── */
 .desk-live { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
