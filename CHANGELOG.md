@@ -1,7 +1,7 @@
 ## v5.9.554 (2026-10-18) — #731·#732 쿠팡 brandId 찾기(윙 티켓 승인완료인데 검색에 없음 → 브랜드 검색 API)
 
 - **#731(대표 「대표가 할 거 창 띄워줘 · 로그인할게 · 니가 진행해」)**: 크롬 확장으로 윙 열림(차단 없음) · 상품관리 › 브랜드 관리 「신규 브랜드 등록」 탭에 **「제주아꼼이네」 티켓 599149514 · 승인완료 2026-08-18** 이미 있음 → 새 등록 불필요 · 그런데 브랜드 검색(제주아꼼이네·아꼼이)·내 브랜드 목록(0건)에 없어 brandId 를 못 읽음 · 워커1 쓰기 0 · 멈춤.
-- **#732**: relay 2026-10-18.3 = POST …/marketplace/brands/search(바디 brandName·countPerPage ≤10·page · vendorId 없음) · 서버 op brand_search { q, page? }(읽기 · 지시 불필요) → { total, brands[{brandId("KR-5" 꼴 글자), brandName, …}], exact } · 배포 뒤 제주아꼼이네·아꼼이네·jejuakkome·akkome 4가지 검색(아래 결과 줄).
+- **#732**: relay 2026-10-18.3 = POST …/marketplace/brands/search(바디 brandName·countPerPage ≤10·page · vendorId 없음) · 서버 op brand_search { q, page? }(읽기 · 지시 불필요) → { total, brands[{brandId("KR-5" 꼴 글자), brandName, …}], exact } · **검색 결과 = 우리 brandId 없음**(제주아꼼이네 → 제주아이·대박이네 / 아꼼이네 0 / jejuakkome 0 / akkome 43 비슷한 글자 / 아꼼 → 아꼼(a-kkom) KR-315586·아꼼데 = 남의 것일 수 있어 안 씀) → 티켓 승인은 됐으나 브랜드 사전에 없음 → **대표 몫 = 쿠팡 판매자 문의(티켓 599149514 · brandId 요청 · owner_todo 23)** · 그때까지 create_set brand GENERIC 유지(임시저장 시험 OK · 실제 새 상품 등록만 보류 · 기존 상품 수정은 무관).
 
 ## v5.9.553 (2026-10-18) — #729 쿠팡 2차 실시험 끝(임시저장 왕복 · 승인 요청 0회 · 삭제 확인) · 핫픽스: 「임시저장중」 상태 = 저장 계열(되돌리기가 심사에 올라가는 틈 차단)
 
