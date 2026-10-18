@@ -67,6 +67,11 @@ const NAVER = [
     const cc = D.toCoupangContents([{ type: 'html', html: '<p>글</p>' }, { type: 'html_raw', html: RAW }, { type: 'image', url: 'https://x.test/b.gif' }]);
     ok(cc.length === 3 && cc[0].contentsType === 'TEXT' && cc[1].contentsType === 'HTML' && cc[1].contentDetails[0].content === RAW && cc[1].contentDetails[0].detailType === 'TEXT' && cc[2].contentsType === 'IMAGE_NO_SPACE', 'html = TEXT 그대로 · html_raw = HTML · 글 바이트 그대로 · image 그대로', JSON.stringify(cc));
     const pr = D.coupangPolicy([{ type: 'html_raw', html: '<a href="https://smartstore.naver.com/x/products/1"><img src="https://x.test/c.gif"></a>' }, { type: 'html', html: '<img src="https://x.test/d.gif">' }]).blocks;
+    console.log('⑦ #753 네이버 class → inline(정렬·글자 크기)');
+    const n7 = D.fromNaverHtml('<div class="se-component se-text"><p class="se-text-paragraph se-text-paragraph-align-center" style="line-height:1.8;" id="a"><span style="color:#ac9a00;" class="se-fs-fs19 se-ff-"><b>제주 그린레몬</b></span></p><p class="se-text-paragraph se-text-paragraph-align-"><span class="se-fs- se-style-unset">기본</span></p></div>').blocks;
+    ok(n7.length === 1 && n7[0].html === '<p style="line-height:1.8;text-align:center;"><span style="color:#ac9a00;font-size:19px;"><b>제주 그린레몬</b></span></p><p><span>기본</span></p>', '가운데·19px 옮김 · 빈 정렬·빈 크기·unset 은 무시 · class·id 는 지움', n7);
+    const n7b = D.fromNaverHtml('<p class="se-text-paragraph-align-center se-fs-fs30" style="text-align:left;font-size:12px">이미</p>').blocks;
+    ok(n7b[0].html === '<p style="text-align:left;font-size:12px">이미</p>' && JSON.stringify(D.fromNaverHtml(D.toPreviewHtml(n7)).blocks) === JSON.stringify(n7), 'style 에 이미 있으면 덮지 않음 · 미리보기 왕복 같음', n7b);
     ok(pr.length === 2 && pr[0].type === 'html_raw' && /smartstore/.test(pr[0].html) && pr[1].type === 'image', '정리 = html_raw 무접촉 · 글 없는 html 그림은 종전대로 image 로', JSON.stringify(pr));
     console.log(`\n결과 ${pass}/${pass + fail}`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.log('크래시', e); process.exit(1); });

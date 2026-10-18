@@ -38,11 +38,25 @@ function attrsOf(tag) {
 }
 const attr = (tag, k) => { const a = attrsOf(tag).find(x => x[0] === k); return a ? (a[1] == null ? '' : decodeEnt(a[1])) : null; };
 const isHttp = u => /^https?:\/\/[^\s"'<>]+$/i.test(String(u || '').trim());
+// #753 네이버 스마트에디터 class → CSS [속성, 값] — se-text-paragraph-align-center|right|justify|left · se-fs-fsN(px) · 그 밖(-unset · 글꼴 se-ff-)은 버림
+function classCss(cls) {
+    const out = [], c = ' ' + String(cls || '') + ' ';
+    const al = c.match(/\sse-text-paragraph-align-(center|right|justify|left)\s/); if (al) out.push(['text-align', al[1]]);
+    const fs = c.match(/\sse-fs-fs(\d{1,2})\s/); if (fs && +fs[1] >= 8 && +fs[1] <= 72) out.push(['font-size', fs[1] + 'px']);
+    return out;
+}
 // 남길 태그의 속성 정리 — id·class·data-*·on* 지움 · style 은 남김 · a 는 href(http)·rel 만
 function cleanTag(tag, name, closing) {
     if (closing) return `</${name}>`;
     if (name === 'a') { const h = attr(tag, 'href'); return isHttp(h) ? `<a href="${escAttr(h.trim())}" rel="noopener">` : '<a>'; }
-    const keep = attrsOf(tag).filter(([k]) => k === 'style' || k === 'colspan' || k === 'rowspan' || (name === 'font' && (k === 'color' || k === 'size')));
+    let keep = attrsOf(tag).filter(([k]) => k === 'style' || k === 'colspan' || k === 'rowspan' || (name === 'font' && (k === 'color' || k === 'size')));
+    // #753 네이버 편집기 class(정렬·글자 크기)는 쿠팡에 그 CSS 가 없어 사라짐 → 같은 뜻의 inline style 로 옮김(이미 style 에 같은 속성이 있으면 그대로)
+    const css = classCss(attr(tag, 'class'));
+    if (css.length) {
+        const st = keep.find(([k]) => k === 'style'), cur = st ? decodeEnt(st[1] || '') : '';
+        const add = css.filter(([p]) => !new RegExp('(^|;)\\s*' + p + '\\s*:', 'i').test(cur)).map(([p, v]) => `${p}:${v};`).join('');
+        if (add) { const v = cur.trim() ? cur.trim().replace(/;?$/, ';') + add : add; keep = st ? keep.map(x => x === st ? ['style', v] : x) : [['style', v], ...keep]; }
+    }
     const self = /\/>$/.test(tag) || name === 'br' || name === 'hr';
     return `<${name}${keep.map(([k, v]) => v == null ? ` ${k}` : ` ${k}="${escAttr(decodeEnt(v))}"`).join('')}${self && (name === 'br' || name === 'hr') ? '>' : '>'}`;
 }

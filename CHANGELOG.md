@@ -1,3 +1,8 @@
+## v5.9.568 (2026-10-18) — #753 쿠팡 상세 가운데 정렬·글씨 크기 유지(네이버 class → inline style) · #752 결론(쿠팡 API = 움직이는 그림 불가) · 시험 파일 삭제
+
+- **#752 결론(시험 상품 16418758985 · 삭제)**: 9가지 꼴(GIF 860/500 · TEXT 안 img · 원본 1.6MB · 우리 서버 .gif · 움직이는 WebP · 확장자 속임 · TEXT 안 WebP · HTML 칸) 전부 쿠팡이 받아 가며 **첫 장 PNG 1장으로 저장**(파일 자체가 1장 · 내용 해시 중복 제거) → API 로는 움직이는 그림 불가 · 판매자 글 근거 = 윙 화면 직접 WebP 업로드(미검증) · 정지판 유지. 설정 create_daily_max 3 으로 되돌림. public/t752 삭제.
+- **#753(대표 「쿠팡 상세가 네이버처럼 가운데 정렬부터 안 나오고 그냥 텍스트로 맞춰진 느낌」)**: 원인 = 네이버는 가운데·글씨 크기를 class(se-text-paragraph-align-center · se-fs-fs19)로 정하는데 쿠팡엔 그 CSS 가 없고 detail-blocks.fromNaverHtml 이 class 를 지워 색만 남음 · 시험 = class→inline 이면 쿠팡이 text-align·font-size·color 다 남김 → 고침(워커1) = cleanTag 가 class 를 지우기 전 같은 뜻 inline style 붙임(이미 있으면 안 덮음 · 글꼴·unset 무시) · 굵기·밑줄은 <b>/<u> 라 이미 남음 · 쿠팡 변환에만 쓰임 · verify-746 26 · 728 179 · 원본 9개 옛/새 변환 = 넣은 style 빼면 9/9 바이트 같음. 5상품 재반영 = 아래.
+
 ## v5.9.567 (2026-10-18) — #752 쿠팡 상세 움직이는 그림 시험 준비(HTML 블록 html_raw · 임시저장 하루 상한 설정 · public/t752 WebP·GIF 시험 파일)
 
 - 배경(대표 「쿠팡도 GIF 움직이게 · 다른 업체들은 GIF 를 씀 · 시험해」): 실측 = 쿠팡이 IMAGE 블록·TEXT 안 <img> 모두 받아 가며 GIF 를 첫 장 PNG/JPG 로 바꿈 · 판매자 글 근거 = 쿠팡은 움직이는 WebP 로 올림(780폭 · 8MB 안) · 유튜브 HTML.
