@@ -9972,7 +9972,7 @@ app.get('/api/public/store-snapshot', async (req, res) => {
         } catch (_) { /* 산출 실패 시 null — 화면은 '수집 기준일 확인 불가' 폴백 */ }
         // #689: 자사몰에는 「네이버 전용」 옵션(설정 cafe24_sync_ignore_opts · 연결표 상품 · 팔리는 옵션만)을 빼고 준다 — 설정을 못 읽으면 종전 그대로(원본)
         let mallItems = r.rows[0].items;
-        try { const [mapCfg, ignoreCfg] = await Promise.all([naverCfgGet('cafe24_sync_map'), naverCfgGet('cafe24_sync_ignore_opts')]); mallItems = storeSnapshotForMall(r.rows[0].items, mapCfg, ignoreCfg); } catch (_) { mallItems = r.rows[0].items; }
+        try { const [mapCfg, ignoreCfg, textCfg] = await Promise.all([naverCfgGet('cafe24_sync_map'), naverCfgGet('cafe24_sync_ignore_opts'), naverCfgGet('cafe24_option_texts')]); mallItems = storeSnapshotForMall(r.rows[0].items, mapCfg, ignoreCfg, textCfg); } catch (_) { mallItems = r.rows[0].items; }   // #742 textCfg = 옵션마다 c24t
         res.json({ at: r.rows[0].run_at, total: r.rows[0].total, items: mallItems, reviews: r.rows[0].reviews || null, reviews_fresh_at: reviewsFreshAt, store: r.rows[0].store_meta || null });   // 지시 #310: store = 관심고객수·누적 리뷰·가중 평점(매일 갱신)
     } catch (e) { console.error('[공개 store-snapshot] 오류:', String(e.message || e).slice(0, 200)); res.status(500).json({ error: '잠시 후 다시 시도해 주세요' }); }   // #704: 오류 원문은 로그에만
 });
@@ -10607,7 +10607,15 @@ app.get('/api/price-check', authMiddleware, async (req, res) => {
             const report = await mod.build({ pool, cafe24Get: require('./cafe24.js').apiGet, cfg: { naverCfgGet }, log: console,
                 coupangGet: async (vid) => cpwItemOf(cpwData(await naverRelay.callCoupang({ method: 'GET', path: CPW_PATH.inventory(vid) }, null))) });   // #733-C 쿠팡 옵션 값(연결표 coupang_item_map 이 비면 호출 0 · 간격·실패는 모듈)   // 워커4 계약 · 자사몰 옵션 조회 약 20~25회 · 15초
             _priceCheckCache = { at: Date.now(), report };
-            try { if (report && report.source && report.source.mall === 'live' && Array.isArray(report.mall_raw)) await naverCfgSet('price_check_last', { at: new Date().toISOString(), mall: report.mall_raw }); } catch (_) { }   // 창구 도구(scripts/desk/price-check.js)가 12시간 안 자료로 씀
+            // 창구 도구(scripts/desk/price-check.js)가 12시간 안 자료로 씀 · #741 쿠팡도(coupang · coupang_at) — 이번에 실제로 읽은(live) 칸만 덮고 나머지 칸은 앞 값 유지
+            try {
+                const src = (report && report.source) || {};
+                const mallLive = src.mall === 'live' && Array.isArray(report.mall_raw), cpLive = src.coupang === 'live' && Array.isArray(report.coupang_raw);
+                if (mallLive || cpLive) {
+                    const now = new Date().toISOString(), prev = (await naverCfgGet('price_check_last')) || {};
+                    await naverCfgSet('price_check_last', { ...prev, ...(mallLive ? { at: now, mall: report.mall_raw } : {}), ...(cpLive ? { coupang: report.coupang_raw, coupang_at: now } : {}) });
+                }
+            } catch (_) { }
             return report;
         })().finally(() => { _priceCheckBusy = null; });
         const report = await _priceCheckBusy;
@@ -15247,15 +15255,37 @@ function cafe24OptKey(s) {
 // #689(대표 「고」 10/14 · 워커1 설계): 자사몰 공개 스냅샷(/api/public/store-snapshot)에서 「네이버 전용」 옵션을 뺀다 — 스킨 무접촉.
 //   네이버 전용 = 설정 cafe24_sync_ignore_opts.keys(05:10 경보·가격 확인·창구 mall-price 가 같이 쓰는 열쇠 한 곳)에 든 옵션 가운데, 연결표(cafe24_sync_map)에 있는 상품의 · 팔리는(usable · 재고 > 0) 옵션만.
 //   재고 0 옵션(황금향 못난이 등)은 그대로 둔다(스킨이 품절로 그린다) · 전부 빠지면 원본 유지(상품이 비어 보이지 않게) · 원본 배열·객체는 바꾸지 않고 복사본을 돌려준다.
-function storeSnapshotForMall(items, mapCfg, ignoreCfg) {
+// #742(대표 「글자가 달라도 특징이 같으면 통과」): textCfg = 설정 'cafe24_option_texts' { by:{ 카페24번호:[{ t:카페24 옵션 실제 글자, k:cafe24OptKey }] } }(05:10 동기화가 이미 읽는 품목에서 적어 둠 · 새 호출 0)
+//   → 옵션마다 `c24t` = 짝 카페24 옵션 글자(같은 상품 · 같은 열쇠가 딱 하나일 때만 · 네이버 글자와 같으면 안 붙임) — 스킨 akmC24Flow 가 카페24 select 를 이 글자로 찾게(워커2)
+function storeSnapshotForMall(items, mapCfg, ignoreCfg, textCfg) {
     const map = (mapCfg && mapCfg.map && typeof mapCfg.map === 'object') ? mapCfg.map : {};
     const keys = new Set(Array.isArray(ignoreCfg && ignoreCfg.keys) ? ignoreCfg.keys.map(String) : []);
-    if (!Array.isArray(items) || !keys.size || !Object.keys(map).length) return items;
+    const texts = (textCfg && textCfg.by && typeof textCfg.by === 'object') ? textCfg.by : {};
+    if (!Array.isArray(items) || !Object.keys(map).length || (!keys.size && !Object.keys(texts).length)) return items;
     return items.map(it => {
         if (!it || !map[String(it.no)] || !Array.isArray(it.opts) || !it.opts.length) return it;
-        const kept = it.opts.filter(o => !(o && o.usable !== false && Number(o.stock) > 0 && keys.has(cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || '')))));
-        if (kept.length === it.opts.length || !kept.length) return it;
-        return Object.assign({}, it, { opts: kept });
+        let opts = it.opts;
+        if (keys.size) {
+            const kept = opts.filter(o => !(o && o.usable !== false && Number(o.stock) > 0 && keys.has(cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || '')))));
+            if (kept.length !== opts.length && kept.length) opts = kept;
+        }
+        const list = Array.isArray(texts[String(map[String(it.no)].c24)]) ? texts[String(map[String(it.no)].c24)] : null;
+        if (list && list.length) {
+            let touched = false;
+            const next = opts.map(o => {
+                if (!o) return o;
+                const k = cafe24OptKey((o.n1 || '') + ' ' + (o.n2 || ''));
+                if (!k) return o;
+                const hit = list.filter(x => x && x.k === k);
+                if (hit.length !== 1 || typeof hit[0].t !== 'string' || !hit[0].t) return o;
+                const t = hit[0].t, n1 = o.n1 || '', n2 = o.n2 || '';
+                if (t === n1 || t === n2 || t === (n1 + ' / ' + n2) || t === (n1 + ' ' + n2)) return o;   // 글자 같음 = 안 붙임
+                touched = true;
+                return Object.assign({}, o, { c24t: t });
+            });
+            if (touched) opts = next;
+        }
+        return opts === it.opts ? it : Object.assign({}, it, { opts });
     });
 }
 async function collectCafe24Sync(modeOverride, opt) {
@@ -15347,6 +15377,7 @@ async function collectCafe24Sync(modeOverride, opt) {
     rep.optMismatch = []; rep.optMissing = [];   // #442: optMissing = 네이버엔 있는데 카페24 판매 variant에 이름으로 없는 옵션
     let ignoreKeys = new Set();
     try { const ig = await naverCfgGet('cafe24_sync_ignore_opts'); ignoreKeys = new Set(Array.isArray(ig && ig.keys) ? ig.keys : []); } catch (_) { /* 없으면 전부 감지 */ }
+    const optTexts = {};   // #742 카페24 옵션 실제 글자(상품별) → 끝에 설정 'cafe24_option_texts' 로
     try {
         for (const [nno, m] of entries) {
             const sn = snapBy[nno], cp = curBy[String(m.c24)];
@@ -15362,6 +15393,9 @@ async function collectCafe24Sync(modeOverride, opt) {
             try { vr = await cafe24.apiGet(`/api/v2/admin/products/${m.c24}/variants`, { limit: 100 }); }
             catch (e) { rep.errors.push(`c${m.c24} variant 조회 실패(옵션감지): ` + String(e.reason || e.message).slice(0, 50)); continue; }
             const base = Math.round(Number(cp.price));
+            // #742 공개 스냅샷 c24t 재료 — 판매·진열 중 · 옵션 묶음 하나(값 = select 의 실제 글자)인 품목만 { t, k } (새 호출 없음 · 이미 읽은 품목)
+            optTexts[String(m.c24)] = (vr.variants || []).filter(v => v.display === 'T' && v.selling === 'T' && (v.options || []).length === 1)
+                .map(v => ({ t: String(v.options[0].value || ''), k: cafe24OptKey(String(v.options[0].value || '')) })).filter(x => x.t && x.k);
             const c24Keys = new Set();
             for (const v of (vr.variants || [])) {
                 if (v.display !== 'T' || v.selling !== 'T') continue;
@@ -15382,6 +15416,11 @@ async function collectCafe24Sync(modeOverride, opt) {
             await new Promise(r => setTimeout(r, 300));
         }
     } catch (e) { rep.errors.push('옵션 결제가 감지 실패: ' + String(e.message).slice(0, 80)); }
+    // #742: 읽은 상품만 덮어씀(못 읽은 상품은 어제 값 유지 — 하루 늦어도 공개 응답에 c24t 가 비지 않게)
+    if (Object.keys(optTexts).length) {
+        try { const prev = await naverCfgGet('cafe24_option_texts'); await naverCfgSet('cafe24_option_texts', { at: new Date().toISOString(), by: { ...((prev && prev.by) || {}), ...optTexts } }); }
+        catch (e) { rep.errors.push('옵션 글자 저장 실패: ' + String(e.message).slice(0, 60)); }
+    }
     await naverCfgSet('cafe24_sync_last', { at: new Date().toISOString(), snapshot_at: snapQ.rows[0].run_at, ...rep });
     const fmtP = i => `${i.name} ${i.current}→${i.expected}원`;
     const parts = [];
