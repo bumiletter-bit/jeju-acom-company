@@ -665,7 +665,22 @@ module.exports = { main, makeRunner, parseNewOpts, parseAddOpts, draftHtml, draf
 
 if (require.main === module) {
     const { pool } = require('./_db');
-    main(process.argv.slice(2), { pool, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now() })
+    // #740: 옵션 이름 바꾸기·옵션 추가(apply)가 성공하면 결과 끝에 옵션 영향 점검(option-impact.js · 쓰기 0)을 붙인다 — 🔴 이면 되묻기 문구
+    let captured = null;
+    const argv = process.argv.slice(2);
+    main(argv, { pool, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now(), out: o => { captured = o; } })
+        .then(async () => {
+            const o = captured;
+            if (o && argv[0] === 'apply' && o.ok && o.changed && o.product_no && (o.new_options || /--(opt|add-opt|option)/.test(argv.join(' ')))) {
+                try {
+                    const fl = (o.new_options || []).map(x => x && x.name).filter(Boolean);
+                    const r = await require('./option-impact').check('naver', o.product_no, fl);
+                    o.impact = { summary: r.summary, reds: r.reds, table: r.table, refs_skin: r.refs };
+                    if (r.reds.length) o.impact.ask = '반영은 됐지만 위 옵션은 송장 매칭·발송안내 등이 안 맞아요 — 옵션 이름을 다시 고칠까요, 아니면 단가표·연결표를 맞출까요?';
+                } catch (e) { o.impact = { error: '영향 점검 실패(반영과는 무관): ' + String(e.message || e).slice(0, 160), retry: `node scripts/desk/option-impact.js check naver ${o.product_no}` }; }
+            }
+            if (o) console.log(JSON.stringify(o, null, 1));
+        })
         .catch(e => console.log(JSON.stringify({ ok: false, error: e.message }, null, 1)))
         .finally(() => pool.end().catch(() => { }));
 }

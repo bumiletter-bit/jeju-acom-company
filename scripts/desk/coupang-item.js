@@ -488,6 +488,7 @@ async function main(argv, deps) {
         if (res.error_note) L.push('⚠ ' + res.error_note);
         if (res.items_add_note) L.push(res.items_add_note);
         if (Array.isArray(res.items_after) && P.patch.detail_blocks) { const imgs = res.items_after.flatMap(it => it.content_images || []); const ext = imgs.filter(u => !/coupangcdn|vendor_inventory/.test(String(u))).length; L.push(`다시 읽은 상세 그림(앞 몇 장): 쿠팡 저장소 ${imgs.length - ext} · 아직 바깥 주소 ${ext}${ext ? '(승인 대기 중엔 옛 값일 수 있음 — approval 뒤 full 로 다시 보기)' : ''}`); }
+        if (P.patch.item_names || P.patch.items_add) L.push(`옵션 이름·추가는 쿠팡 승인 뒤 반영 — 승인되면 영향 점검: node scripts/desk/option-impact.js check coupang ${row.seller_product_id}(송장 매칭·발송안내·가격 짝 · 🔴 면 되묻기)`);
         L.push(`되돌리기: revert-full ${row.id} <지시 id>(이것도 승인행${P.patch.items_add && !res.saved ? ' · 승인된 상품의 새 옵션은 못 지움 → 윙에서 그 옵션 판매중지' : ''})`);
         return out({ ok: true, backup_id: row.id, saved: !!res.saved, status_after: res.status_after || null,
             card: pcard(res.saved ? '고치기 결과(임시저장)' : '고치기 결과 — 🟡 쿠팡 승인 대기', pname, row.seller_product_id, P.rows, L),
